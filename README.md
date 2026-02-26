@@ -1,10 +1,9 @@
-# QuakeSpasm-OpenVR
+# QuakeSpasm-OpenVR (Custom Build)
 
-[![Latest Release](https://img.shields.io/github/v/release/gameflorist/quakespasm-openvr?display_name=tag&label=Download%20Latest%20Release&style=for-the-badge)](https://github.com/gameflorist/quakespasm-openvr/releases)
+This is a customized fork of QuakeSpasm-OpenVR, optimized for VR gameplay with dual-binding support and classic engine defaults.
 
-[![Windows Build Status](https://img.shields.io/github/actions/workflow/status/gameflorist/quakespasm-openvr/build-windows.yml?label=Windows%20Build%20Status&style=flat-square)](https://github.com/gameflorist/quakespasm-openvr/actions/workflows/build-windows.yml)
-
-OpenVR support integrated into QuakeSpasm. The goal of this fork is primarily to keep it up-to-date with the current versions of QuakeSpasm and OpenVR. This allows maximized MOD support and support for the Enhanced Edition aka Re-Release of Quake.
+> [!IMPORTANT]
+> **VR Multiplayer Fix**: This build specifically addresses and fixes issues with VR clients in multiplayer sessions, ensuring stable connectivity and synchronized gameplay between VR and non-VR players.
 
 There is however no big further development planned apart from minor features and bugfixes.
 
@@ -15,10 +14,11 @@ Here are the changes to the last iterations of QuakeSpasm-OpenVR by [vittoriorom
 - Update to most current [QuakeSpasm](https://github.com/sezero/quakespasm) (v0.96.3)
 - 64bit build
 - Added head-based movment (in addition to controller-based movement)
-- Fixed Multiplayer (Cross-Play with non-VR players should be possible!)
-- Improved controller binding
+- **Fixed Multiplayer (VR clients are now fully supported in multi-client sessions!)**
+- Improved controller binding with Dual-Bind support (Triggers/Buttons work alongside desktop keys)
 - Support for [enhanced weapon models](#enhanced-models)
-- Various other fixes and tweaks
+- Default setting: Linear texture filtering and blocky particles for classic look.
+- Various other fixes and tweaks for cross-platform compatibility.
 
 ## Quake VR vs QuakeSpasm-OpenVR?
 
@@ -57,7 +57,7 @@ There are also 3 mods available containing enhanced models for enemies and weapo
 
 - [__Plague's Weapon Pack for VR__](https://github.com/gameflorist/quake-plague-weapons-vr/releases):
 
-  This pack contains the fully modelled weapons by [Plague](https://members.optusnet.com.au/%7eplaguespak/), adapted and animated for VR by Skizot, and expansion weapons added by codeflorist. This pack is perfect for VR.
+  This pack contains the fully modelled weapons by [Plague](https://members.optusnet.com.au/%7eplaguespak/), adapted and animated for VR by Skizot, and expansion weapons added. This pack is perfect for VR.
 
   To use them with QuakeSpasm-OpenVR, extract `pakz.pak` into your `id1` subfolder and rename it by changing the `z` to a number higher then the highest existing `pak`-file inside your `id1` folder. If you are using `pak` files from vanilla Quake this will be `pak2.pak`, and if you're using the Re-Release, it will be `pak1.pak`.
   
@@ -115,7 +115,7 @@ Input from VR Controllers are mapped to various joystick-related input (except t
 - In SteamVR's default Legacy bindings, controllers with a dedicated `A` button (e.g. Index Controllers) cannot use this button independently from the `Grip` button. To change this, map `A Button` Click to `Left/Right A Button` instead of `Grip Button` in SteamVR's controller binding for `quakespasm-openvr.exe`. Now `A` buttons and `Grip` can be mapped independently.
 - `Right Axis 2 Press` is not mapped at all in SteamVR's default Legacy bindings. You can bind it e.g. to the `Right Touchpad Click` to get an additional button.
 - By default, the right pad/stick is configured for smooth/snap turning. If you use real roomscale-turning, you can set `Turn Speed` in the VR-Settings to the lowest setting (0) to turn this off. Then you can rebind the pad/stick like a D-Pad with 4 directions. You can use these 4 additional bindings e.g. for quick-loading/-saving or mapping of specific weapons.
-- Check out the Community Binding `Index Controller Bindings` by `gameflorist` in SteamVR for a preset for Index Controllers, that makes the maximum buttons available for binding.
+- Check out the Community Binding `Index Controller Bindings` in SteamVR for a preset for Index Controllers, that makes the maximum buttons available for binding.
 
 #### Tips on weapon selection
 
