@@ -83,6 +83,11 @@ static const char default_cfg[] =
     "bind RSHOULDER +jump\n"
     "bind ABUTTON +showscores\n"
     "bind XBUTTON \"impulse 12\"\n"
+    "bind YBUTTON \"\"\n"
+    "bind UPARROW \"\"\n"
+    "bind DOWNARROW \"\"\n"
+    "bind LEFTARROW \"\"\n"
+    "bind RIGHTARROW \"\"\n"
 
     "gamma 1.0\n"
     "volume 0.7\n"

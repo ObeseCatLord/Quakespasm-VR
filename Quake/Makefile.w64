@@ -38,11 +38,12 @@ DEBUG ?= 0
 # build variables
 # ---------------------------
 
-CC = gcc
-LINKER = $(CC)
-WINDRES = windres
+CC = x86_64-w64-mingw32-gcc
+CXX = x86_64-w64-mingw32-g++
+LINKER = $(CXX)
+WINDRES = x86_64-w64-mingw32-windres
 
-STRIP = strip
+STRIP = x86_64-w64-mingw32-strip
 
 CPUFLAGS=
 LDFLAGS?= -m64 -mwindows -static-libgcc

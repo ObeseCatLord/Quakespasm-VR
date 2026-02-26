@@ -1615,6 +1615,7 @@ void VR_ResetOrientation() {
 int axisTrackpad = -1;
 int axisJoystick = -1;
 int axisTrigger = -1;
+int axisGrip = -1;
 bool identified = false;
 
 void IdentifyAxes(int device) {
@@ -1639,6 +1640,8 @@ void IdentifyAxes(int device) {
     case vr::k_eControllerAxis_Trigger:
       if (axisTrigger == -1) {
         axisTrigger = i;
+      } else if (axisGrip == -1) {
+        axisGrip = i;
       }
       break;
     }
@@ -1695,6 +1698,18 @@ void DoKey(vr_controller *controller, vr::EVRButtonId vrButton, int quakeKey) {
   }
 }
 
+void DoGrip(vr_controller *controller, int quakeKey) {
+  if (axisGrip != -1) {
+    bool gripWasDown = controller->lastState.rAxis[axisGrip].x > 0.8f;
+    bool gripDown = controller->state.rAxis[axisGrip].x > 0.8f;
+    if (gripDown != gripWasDown) {
+      Key_Event(quakeKey, gripDown);
+    }
+  } else {
+    // Fallback to digital grip button if no analog grip axis found
+    DoKey(controller, vr::k_EButton_Grip, quakeKey);
+  }
+}
 void DoTrigger(vr_controller *controller, int quakeKey) {
   if (axisTrigger != -1) {
     bool triggerWasDown = controller->lastState.rAxis[axisTrigger].x > 0.5f;
@@ -1732,9 +1747,9 @@ void VR_Move(usercmd_t *cmd) {
   DoTrigger(&controllers[0], K_LTRIGGER);
   DoTrigger(&controllers[1], K_RTRIGGER);
 
-  // k_EButton_Grip
-  DoKey(&controllers[0], vr::k_EButton_Grip, K_LSHOULDER);
-  DoKey(&controllers[1], vr::k_EButton_Grip, K_RSHOULDER);
+  // k_EButton_Grip (uses DoGrip for squeeze-only behavior on Index)
+  DoGrip(&controllers[0], K_LSHOULDER);
+  DoGrip(&controllers[1], K_RSHOULDER);
 
   // k_EButton_Axis0 === k_EButton_SteamVR_Touchpad
   DoKey(&controllers[0], vr::k_EButton_SteamVR_Touchpad, K_LTHUMB);
