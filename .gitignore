@@ -1,5 +1,22 @@
-Windows/VisualStudio/.vs
-Windows/VisualStudio/Build*
-Windows/VisualStudio/*.user
-Windows/VisualStudio/history.txt
-Windows/VisualStudio/id1
+# QuakeSpasm-OpenVR .gitignore
+# Build Artifacts
+Quake/*.o
+Quake/*.d
+Quake/*.res
+Quake/quakespasm-openvr
+Quake/quakespasm.exe
+Quake/vrclient.so
+*.log
+*.pid
+Build/
+quakespasm-openvr
+quakespasm.exe
+script_pid.txt
+*.sh
+!launch_native_vr.sh
+!test_interactive_mixed.sh
+!test_multi_client_mixed.sh
+!test_multi_client_desktop.sh
+!test_server.sh
+!test_client_desktop.sh
+!test_client_vr.sh

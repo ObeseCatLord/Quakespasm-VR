@@ -5,28 +5,49 @@
 #ifndef __R_VR_H
 #define __R_VR_H
 
-#define VR_AIMMODE_HEAD_MYAW 1 // Head Aiming; View YAW is mouse+head, PITCH is head
-#define VR_AIMMODE_HEAD_MYAW_MPITCH 2 // Head Aiming; View YAW and PITCH is mouse+head
-#define VR_AIMMODE_MOUSE_MYAW 3 // Mouse Aiming; View YAW is mouse+head, PITCH is head
-#define VR_AIMMODE_MOUSE_MYAW_MPITCH 4 // Mouse Aiming; View YAW and PITCH is mouse+head
-#define VR_AIMMODE_BLENDED 5 // Blended Aiming; Mouse aims, with YAW decoupled for limited area
-#define VR_AIMMODE_BLENDED_NOPITCH 6 // Blended Aiming; Mouse aims, with YAW decoupled for limited area, pitch decoupled entirely
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+#define VR_AIMMODE_HEAD_MYAW                                                   \
+  1 // Head Aiming; View YAW is mouse+head, PITCH is head
+#define VR_AIMMODE_HEAD_MYAW_MPITCH                                            \
+  2 // Head Aiming; View YAW and PITCH is mouse+head
+#define VR_AIMMODE_MOUSE_MYAW                                                  \
+  3 // Mouse Aiming; View YAW is mouse+head, PITCH is head
+#define VR_AIMMODE_MOUSE_MYAW_MPITCH                                           \
+  4 // Mouse Aiming; View YAW and PITCH is mouse+head
+#define VR_AIMMODE_BLENDED                                                     \
+  5 // Blended Aiming; Mouse aims, with YAW decoupled for limited area
+#define VR_AIMMODE_BLENDED_NOPITCH                                             \
+  6 // Blended Aiming; Mouse aims, with YAW decoupled for limited area, pitch
+    // decoupled entirely
 #define VR_AIMMODE_CONTROLLER 7 // Controller Aiming
 
-#define	VR_CROSSHAIR_NONE 0 // No crosshair
-#define	VR_CROSSHAIR_POINT 1 // Point crosshair projected to depth of object it is in front of
-#define	VR_CROSSHAIR_LINE 2 // Line crosshair
+#define VR_CROSSHAIR_NONE 0 // No crosshair
+#define VR_CROSSHAIR_POINT                                                     \
+  1 // Point crosshair projected to depth of object it is in front of
+#define VR_CROSSHAIR_LINE 2 // Line crosshair
 
 #define VR_MOVEMENT_MODE_FOLLOW_HEAD 0
 #define VR_MOVEMENT_MODE_FOLLOW_HAND 1
 #define VR_MOVEMENT_MODE_RAW_INPUT 2
 #define VR_MAX_MOVEMENT_MODE VR_MOVEMENT_MODE_RAW_INPUT
 
-#define VR_GUNMODELOFFSETS_VANILLA 0    // Gun model offset defaults for vanilla models
-#define VR_GUNMODELOFFSETS_ENHANCED 1   // Gun model offset defaults for enhanced models pack (https://quakeone.com/forum/quake-mod-releases/finished-works/283295-osjc-s-enhanced-quake1-model-conversions-pack-v1)
-#define VR_GUNMODELOFFSETS_AUTHENTIC 2   // Gun model offset defaults for authentic models pack (https://github.com/NightFright2k19/quake_authmdl)
-#define VR_GUNMODELOFFSETS_PLAGUE 3   // Gun model offset defaults for plague's models pack (https://github.com/NightFright2k19/quake_authmdl)
-#define VR_GUNMODELOFFSETS_BLOCKQUAKE 4   // Gun model offset defaults for Block Quake's model pack (https://kebby-quake.itch.io/block-quake)
+#define VR_GUNMODELOFFSETS_VANILLA                                             \
+  0 // Gun model offset defaults for vanilla models
+#define VR_GUNMODELOFFSETS_ENHANCED                                            \
+  1 // Gun model offset defaults for enhanced models pack
+    // (https://quakeone.com/forum/quake-mod-releases/finished-works/283295-osjc-s-enhanced-quake1-model-conversions-pack-v1)
+#define VR_GUNMODELOFFSETS_AUTHENTIC                                           \
+  2 // Gun model offset defaults for authentic models pack
+    // (https://github.com/NightFright2k19/quake_authmdl)
+#define VR_GUNMODELOFFSETS_PLAGUE                                              \
+  3 // Gun model offset defaults for plague's models pack
+    // (https://github.com/NightFright2k19/quake_authmdl)
+#define VR_GUNMODELOFFSETS_BLOCKQUAKE                                          \
+  4 // Gun model offset defaults for Block Quake's model pack
+    // (https://kebby-quake.itch.io/block-quake)
 #define VR_MAX_GUNMODELOFFSETS VR_GUNMODELOFFSETS_BLOCKQUAKE
 
 void VID_VR_Init();
@@ -63,10 +84,14 @@ extern cvar_t vr_projectilespawn_z_offset;
 extern cvar_t vr_hud_scale;
 extern cvar_t vr_menu_scale;
 
-#define MAX_WEAPONS 25 //not sure what this number should actually be...
+#define MAX_WEAPONS 25 // not sure what this number should actually be...
 #define VARS_PER_WEAPON 5
 
 extern cvar_t vr_weapon_offset[MAX_WEAPONS * VARS_PER_WEAPON];
 extern int weaponCVarEntry;
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif
