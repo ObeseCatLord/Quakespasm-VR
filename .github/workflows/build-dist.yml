@@ -12,7 +12,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
 
     - name: Install dependencies
       run: |
@@ -62,13 +62,13 @@ jobs:
         cp Quake/quakespasm.pak dist/Linux/
 
     - name: Upload Windows Build
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: quakespasm-openvr-windows
         path: dist/Windows/
 
     - name: Upload Linux Build
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: quakespasm-openvr-linux
         path: dist/Linux/
