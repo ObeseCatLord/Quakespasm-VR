@@ -3,7 +3,7 @@
 This is a customized fork of QuakeSpasm-OpenVR, optimized for VR gameplay with dual-binding support and classic engine defaults.
 
 > [!IMPORTANT]
-> **VR Multiplayer Fix**: This build specifically addresses and fixes issues with VR clients in multiplayer sessions, ensuring stable connectivity and synchronized gameplay between VR and non-VR players.
+> **VR Multiplayer Fixes**: This build specifically addresses and fixes issues with VR clients in multiplayer sessions, ensuring stable connectivity and synchronized gameplay. This includes robust synchronization of **weapon positions** and **playspace offsets**, ensuring VR players are correctly represented for all participants.
 
 There is however no big further development planned apart from minor features and bugfixes.
 
@@ -14,7 +14,7 @@ Here are the changes to the last iterations of QuakeSpasm-OpenVR by [vittoriorom
 - Update to most current [QuakeSpasm](https://github.com/sezero/quakespasm) (v0.96.3)
 - 64bit build
 - Added head-based movment (in addition to controller-based movement)
-- **Fixed Multiplayer (VR clients are now fully supported in multi-client sessions!)**
+- **Advanced Networking**: VR clients are now fully supported in multi-client sessions with accurate weapon and playspace synchronization.
 - Improved controller binding with Dual-Bind support (Triggers/Buttons work alongside desktop keys)
 - Support for [enhanced weapon models](#enhanced-models)
 - Default setting: Linear texture filtering and blocky particles for classic look.
@@ -41,7 +41,7 @@ This fork of [QuakeSpasm](https://github.com/sezero/quakespasm)...
 
 ## Setup and Usage
 
-Extract the most recent [release](https://github.com/gameflorist/quakespasm-openvr/releases) into your `Quake` or `Quake\rerelease` folder (where the subfolder `Id1` resides).
+Extract the most recent release into your `Quake` or `Quake\rerelease` folder (where the subfolder `Id1` resides).
 
 Launch `quakespasm-openvr.exe`.
 
@@ -55,7 +55,7 @@ You can also download a HD texture pack for __Arcane Dimensions__ [here](https:/
 
 There are also 3 mods available containing enhanced models for enemies and weapons. These can also be used with QuakeSpasm-OpenVR.
 
-- [__Plague's Weapon Pack for VR__](https://github.com/gameflorist/quake-plague-weapons-vr/releases):
+- [__Plague's Weapon Pack for VR__]:
 
   This pack contains the fully modelled weapons by [Plague](https://members.optusnet.com.au/%7eplaguespak/), adapted and animated for VR by Skizot, and expansion weapons added. This pack is perfect for VR.
 
