@@ -70,10 +70,14 @@ void VR_HandleGammaCorrect();
 void InitAllWeaponCVars();
 
 extern cvar_t vr_enabled;
+extern cvar_t vr_aimmode;
 extern cvar_t vr_crosshair;
 extern cvar_t vr_msaa;
 extern cvar_t vr_movement_mode;
 extern cvar_t vr_gunangle;
+extern cvar_t vr_deadzone;
+extern cvar_t vr_snap_turn;
+extern cvar_t vr_turn_speed;
 extern cvar_t vr_gunmodeloffsets;
 extern cvar_t vr_gunmodelpitch;
 extern cvar_t vr_gunmodelscale;
@@ -89,6 +93,7 @@ extern cvar_t vr_menu_scale;
 
 extern cvar_t vr_weapon_offset[MAX_WEAPONS * VARS_PER_WEAPON];
 extern int weaponCVarEntry;
+extern vec3_t vr_room_scale_move;
 
 #ifdef __cplusplus
 }

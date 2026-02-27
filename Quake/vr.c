@@ -1,3 +1,5 @@
+
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -5,6 +7,10 @@ extern "C" {
 #include "vr.h"
 #include "quakedef.h"
 #include "vr_menu.h"
+
+#ifdef __cplusplus
+}
+#endif
 
 #ifdef _WIN32
 #include <GL/gl.h>
@@ -34,6 +40,10 @@ typedef void(APIENTRYP PFNGLTEXIMAGE2DMULTISAMPLEPROC)(
     GLsizei height, GLboolean fixedsamplelocations);
 #endif
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 extern void VID_Refocus();
 
 // main screen & 2D drawing
@@ -52,6 +62,9 @@ extern void SCR_DrawDevStats(void);
 extern void SCR_DrawFPS(void);
 extern void SCR_DrawClock(void);
 extern void SCR_DrawConsole(void);
+extern void Sbar_IntermissionOverlay();
+extern void Sbar_FinaleOverlay();
+extern void M_Draw();
 
 // rendering
 extern void R_SetupView(void);
@@ -74,6 +87,10 @@ extern int glwidth, glheight;
 #undef UNICODE
 
 #include "openvr.h"
+
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 // extern void VID_Refocus();
 
@@ -137,18 +154,14 @@ struct {
     {NULL, NULL},
 };
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 // rendering externs moved to top extern "C" block
 
 static float vrYaw;
 static bool readbackYaw;
 
 vec3_t vr_viewOffset;
-vec3_t lastHudPosition{0.0, 0.0, 0.0};
-vec3_t lastMenuPosition{0.0, 0.0, 0.0};
+static vec3_t lastHudPosition{0.0, 0.0, 0.0};
+static vec3_t lastMenuPosition{0.0, 0.0, 0.0};
 
 static vr::IVRSystem *ovrHMD;
 static vr::TrackedDevicePose_t ovr_DevicePose[vr::k_unMaxTrackedDeviceCount];
@@ -913,12 +926,10 @@ void VID_VR_Init() {
   VR_Menu_Init();
 
   // Set the cvar if invoked from a command line parameter
-  {
-    // int i = COM_CheckParm("-vr");
-    // if (i && i < com_argc - 1) {
-    Cvar_SetQuick(&vr_enabled, "1");
-    //}
-  }
+  // int i = COM_CheckParm("-vr");
+  // if (i && i < com_argc - 1) {
+  Cvar_SetQuick(&vr_enabled, "1");
+  //}
 }
 
 void VR_InitGame() { InitAllWeaponCVars(); }

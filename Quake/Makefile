@@ -8,7 +8,7 @@
 DO_USERDIRS=0
 
 ### Enable/Disable SDL2
-USE_SDL2=0
+USE_SDL2=1
 
 ### Enable/Disable codecs for streaming music support
 USE_CODEC_WAVE=1
@@ -44,7 +44,8 @@ DEBUG ?= 0
 # ---------------------------
 
 CC ?= gcc
-LINKER = $(CC)
+CXX ?= g++
+LINKER = $(CXX)
 
 STRIP ?= strip
 PKG_CONFIG ?= pkg-config
@@ -165,7 +166,7 @@ endif
 ifeq ($(HOST_OS),haiku)
 COMMON_LIBS= -lGL
 else
-COMMON_LIBS= -lGL -lm
+COMMON_LIBS= -lGL -lm -L. -lopenvr_api
 endif
 
 LIBS = $(COMMON_LIBS) $(NET_LIBS) $(CODECLIBS)
@@ -257,6 +258,8 @@ OBJS = strlcat.o \
 	sv_user.o \
 	world.o \
 	zone.o \
+	vr.o \
+	vr_menu.o \
 	$(SYSOBJ_SYS) $(SYSOBJ_MAIN)
 
 # ---------------------------
@@ -270,6 +273,12 @@ all: $(DEFAULT_TARGET)
 
 %.o:	%.c
 	$(CC) $(DFLAGS) -c $(CFLAGS) $(SDL_CFLAGS) -o $@ $<
+
+# VR files need C++ compiler
+vr.o: vr.c
+	$(CXX) $(DFLAGS) -c $(CFLAGS) $(SDL_CFLAGS) -o $@ $<
+vr_menu.o: vr_menu.c
+	$(CXX) $(DFLAGS) -c $(CFLAGS) $(SDL_CFLAGS) -o $@ $<
 
 quakespasm:	$(OBJS)
 	$(LINKER) $(OBJS) $(LDFLAGS) $(LIBS) $(SDL_LIBS) -o $@
