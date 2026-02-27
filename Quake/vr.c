@@ -137,6 +137,10 @@ struct {
     {NULL, NULL},
 };
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 // rendering externs moved to top extern "C" block
 
 static float vrYaw;
@@ -146,8 +150,8 @@ vec3_t vr_viewOffset;
 vec3_t lastHudPosition{0.0, 0.0, 0.0};
 vec3_t lastMenuPosition{0.0, 0.0, 0.0};
 
-vr::IVRSystem *ovrHMD;
-vr::TrackedDevicePose_t ovr_DevicePose[vr::k_unMaxTrackedDeviceCount];
+static vr::IVRSystem *ovrHMD;
+static vr::TrackedDevicePose_t ovr_DevicePose[vr::k_unMaxTrackedDeviceCount];
 
 static vr_eye_t eyes[2];
 static vr_eye_t *current_eye = NULL;
@@ -1888,3 +1892,7 @@ void VR_Move(usercmd_t *cmd) {
     }
   }
 }
+
+#ifdef __cplusplus
+}
+#endif
