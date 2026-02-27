@@ -1,0 +1,38 @@
+Implementation Plan: Spatial VR Weapon Selection for Quakespasm-OpenVR
+
+Based on the architectural analysis of Quakespasm-OpenVR and the q3vr spatial menu design, here is the detailed plan to implement a native, mod-compatible VR weapon selection wheel.
+
+1. Input Handling and State Management (cl_input.c)
+- Register new client commands: `+vr_weaponmenu` and `-vr_weaponmenu`.
+- Create a global boolean state flag: `cl.in_vr_weaponmenu`.
+- When active, suppress standard attack inputs to prevent accidental firing.
+- Map the command to a VR controller button via the existing OpenVR binding matrix.
+
+2. Configuration and Data-Driven Schema (Resource Parsing)
+- Implement a parser (JSON or simple custom config) to load weapon schema from the active mod directory (e.g., `id1/vr_weapons.json` or `mod/vr_weapons.json`).
+- Schema will define: Bitmask value, Model Path (e.g., `progs/v_rock.mdl`), Impulse Command, and Optional scale/offsets.
+- Cache the required AliasModels using `Mod_ForName()` at initialization to prevent mid-game stutter.
+
+3. Engine-Side Rendering Loop Integration (gl_rmain.c / vr_menu.c)
+- Hook into the main rendering loop `R_RenderView()` immediately after the world and standard entities are drawn.
+- Issue `glClear(GL_DEPTH_BUFFER_BIT)` to ensure the 3D models float on top of level geometry.
+- For each weapon present in the inventory (by checking `cl.stats[STAT_ITEMS] & weapon.bitmask`), construct a temporary `entity_t`.
+- Lock frame index to 0, use full-bright shading to ignore BSP lighting dips.
+- Render via `R_DrawAliasModel()`.
+
+4. Spatial Distribution and Tracking Mathematics (vr.c / vr_math.c)
+- Extract controller position ($C_{pos}$) and directional vectors ($V_{fwd}$, $V_{right}$, $V_{up}$) from the `vr_aimmode` matrix.
+- Distribute available weapons evenly along a circular path at depth $D$ and radius $R$.
+- Apply `vectoangles(Normalize(HMD_{pos} - Weapon_{pos}))` to ensure all models constantly face the player's headset, regardless of wheel orientation.
+
+5. Raycast Selection and Haptic Feedback
+- While the menu is active, calculate the Dot Product between the controller's forward sweep vector and the direction vector to each weapon model.
+- Identify the weapon yielding the highest score above a predefined threshold (e.g., $0.85$).
+- Apply a scale multiplier (e.g., 1.3x) and a slow sine-wave rotation to the selected model for visual feedback.
+- Call `IVRSystem::TriggerHapticPulse()` whenever the active selection index changes.
+
+6. Impulse Execution and Network Synchronization
+- Upon releasing the menu button (`-vr_weaponmenu`), query the newly selected target.
+- Retrieve the designated integer impulse command from the configuration schema.
+- Inject the command into the client execution queue using `Cbuf_AddText("impulse <N>\n");`.
+- Implement visual depletion logic (grey-out models) if the client engine detects 0 ammunition for the mapped statistics (`cl.stats[STAT_SHELLS]`, etc.), aborting selection to prevent sync desync.

@@ -482,7 +482,7 @@ void R_SetupGL(void) {
   }
 
   //	glCullFace(GL_BACK); //johnfitz -- glquake used CCW with backwards
-  //culling -- let's do it right
+  // culling -- let's do it right
 
   glMatrixMode(GL_MODELVIEW);
   glLoadIdentity();
@@ -666,6 +666,9 @@ void R_DrawViewModel(void) {
 
   if (vr_enabled.value && vr_crosshair.value)
     VR_ShowCrosshair();
+
+  if (vr_enabled.value && cl.in_vr_weaponmenu)
+    VR_DrawWeaponMenu();
 
   currententity = &cl.viewent;
   if (!currententity->model)

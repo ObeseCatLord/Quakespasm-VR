@@ -24,6 +24,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 // Quake is a trademark of Id Software, Inc., (c) 1996 Id Software, Inc. All
 // rights reserved.
 
+#include "keys.h"
 #include "quakedef.h"
 #include "vr.h"
 
@@ -56,6 +57,7 @@ kbutton_t in_left, in_right, in_forward, in_back;
 kbutton_t in_lookup, in_lookdown, in_moveleft, in_moveright;
 kbutton_t in_strafe, in_speed, in_use, in_jump, in_attack;
 kbutton_t in_up, in_down;
+kbutton_t in_vr_weaponmenu;
 
 int in_impulse;
 
@@ -155,6 +157,28 @@ void IN_UseDown(void) { KeyDown(&in_use); }
 void IN_UseUp(void) { KeyUp(&in_use); }
 void IN_JumpDown(void) { KeyDown(&in_jump); }
 void IN_JumpUp(void) { KeyUp(&in_jump); }
+
+void IN_VRWeaponMenuDown(void) {
+  KeyDown(&in_vr_weaponmenu);
+  cl.in_vr_weaponmenu = true;
+}
+
+void IN_VRWeaponMenuUp(void) {
+  KeyUp(&in_vr_weaponmenu);
+  cl.in_vr_weaponmenu = false;
+
+  // If a weapon is selected when the menu is released, send the impulse
+  if (vr_weaponmenu_selection >= 0 &&
+      vr_weaponmenu_selection < num_vr_weapons) {
+    int impulse = vr_weapons[vr_weaponmenu_selection].impulse;
+    if (impulse > 0) {
+      char cmd[32];
+      snprintf(cmd, sizeof(cmd), "impulse %d\n", impulse);
+      Cbuf_AddText(cmd);
+    }
+  }
+  vr_weaponmenu_selection = -1; // Reset selection
+}
 
 void IN_Impulse(void) { in_impulse = Q_atoi(Cmd_Argv(1)); }
 
@@ -356,8 +380,10 @@ void CL_SendMove(const usercmd_t *cmd) {
   //
   bits = 0;
 
-  if (in_attack.state & 3)
-    bits |= 1;
+  if (!cl.in_vr_weaponmenu) {
+    if (in_attack.state & 3)
+      bits |= 1;
+  }
   in_attack.state &= ~2;
 
   if (in_jump.state & 3)
@@ -445,4 +471,6 @@ void CL_InitInput(void) {
   Cmd_AddCommand("-klook", IN_KLookUp);
   Cmd_AddCommand("+mlook", IN_MLookDown);
   Cmd_AddCommand("-mlook", IN_MLookUp);
+  Cmd_AddCommand("+vr_weaponmenu", IN_VRWeaponMenuDown);
+  Cmd_AddCommand("-vr_weaponmenu", IN_VRWeaponMenuUp);
 }

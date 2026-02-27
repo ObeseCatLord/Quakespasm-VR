@@ -6,7 +6,9 @@ extern "C" {
 
 #include "vr.h"
 #include "quakedef.h"
+#include "sys.h"
 #include "vr_menu.h"
+#include "zone.h"
 
 #ifdef __cplusplus
 }
@@ -163,6 +165,9 @@ vec3_t vr_viewOffset;
 static vec3_t lastHudPosition{0.0, 0.0, 0.0};
 static vec3_t lastMenuPosition{0.0, 0.0, 0.0};
 
+vr_weapon_cmd_t vr_weapons[MAX_VR_WEAPONS];
+int num_vr_weapons = 0;
+
 static vr::IVRSystem *ovrHMD;
 static vr::TrackedDevicePose_t ovr_DevicePose[vr::k_unMaxTrackedDeviceCount];
 
@@ -173,6 +178,9 @@ static vec3_t lastOrientation = {0, 0, 0};
 static vec3_t lastAim = {0, 0, 0};
 
 static qboolean vr_initialized = false;
+extern "C" int vr_weaponmenu_selection = -1;
+
+// Unused variables, marking them explicitly or removing them later
 static GLuint mirror_texture = 0;
 static GLuint mirror_fbo = 0;
 static int attempt_to_refocus_retry = 0;
@@ -932,7 +940,81 @@ void VID_VR_Init() {
   //}
 }
 
-void VR_InitGame() { InitAllWeaponCVars(); }
+void VR_LoadWeaponSchema(void) {
+  int length;
+  char *data;
+  char *start;
+  char key[64];
+
+  num_vr_weapons = 0;
+
+  // Try to load vr_weapons.txt from game dir
+  data = (char *)COM_LoadTempFile("vr_weapons.txt", NULL);
+  if (!data) {
+    Con_Printf("VR: No vr_weapons.txt found.\n");
+    return;
+  }
+
+  start = data;
+  while (1) {
+    start = (char *)COM_Parse(start);
+    if (!start || !com_token[0])
+      break;
+
+    if (!Q_strcmp(com_token, "{")) {
+      if (num_vr_weapons >= MAX_VR_WEAPONS) {
+        Con_Printf("VR: Too many weapons in vr_weapons.txt (max %d)\n",
+                   MAX_VR_WEAPONS);
+        break;
+      }
+
+      vr_weapon_cmd_t *w = &vr_weapons[num_vr_weapons];
+      memset(w, 0, sizeof(*w));
+      w->scale = 1.0f; // Default scale
+
+      while (1) {
+        start = (char *)COM_Parse(start);
+        if (!start || !com_token[0] || !Q_strcmp(com_token, "}"))
+          break;
+
+        Q_strncpy(key, com_token, sizeof(key));
+        start = (char *)COM_Parse(start); // Get value
+        if (!start || !com_token[0])
+          break;
+
+        if (!Q_strcmp(key, "bitmask")) {
+          w->bitmask = Q_atoi(com_token);
+        } else if (!Q_strcmp(key, "model")) {
+          Q_strncpy(w->model_path, com_token, sizeof(w->model_path));
+        } else if (!Q_strcmp(key, "impulse")) {
+          w->impulse = Q_atoi(com_token);
+        } else if (!Q_strcmp(key, "scale")) {
+          w->scale = Q_atof(com_token);
+        } else if (!Q_strcmp(key, "offset")) {
+          w->offset[0] = Q_atof(com_token);
+          start = (char *)COM_Parse(start);
+          w->offset[1] = Q_atof(com_token);
+          start = (char *)COM_Parse(start);
+          w->offset[2] = Q_atof(com_token);
+        }
+      }
+      num_vr_weapons++;
+    }
+  }
+
+  Z_Free(data);
+  Con_Printf("VR: Loaded %d weapons from vr_weapons.txt\n", num_vr_weapons);
+
+  // Precache models
+  for (int i = 0; i < num_vr_weapons; i++) {
+    Mod_ForName(vr_weapons[i].model_path, false);
+  }
+}
+
+void VR_InitGame() {
+  InitAllWeaponCVars();
+  VR_LoadWeaponSchema();
+}
 
 qboolean VR_Enable() {
   if (vr_initialized) {
@@ -1902,6 +1984,118 @@ void VR_Move(usercmd_t *cmd) {
           vr_turn_speed.value;
     }
   }
+}
+
+extern "C" void VR_TriggerHaptic(int controller, float durationSeconds) {
+  if (vr::VRSystem()) {
+    // Convert seconds to microseconds for openvr
+    unsigned short usDuration = (unsigned short)(durationSeconds * 1000000.0f);
+    vr::VRSystem()->TriggerHapticPulse(controller, 0, usDuration);
+  }
+}
+
+void VR_DrawWeaponMenu(void) {
+  if (num_vr_weapons == 0)
+    return;
+
+  // Use right controller for the menu origin (controllers[1] is typically right
+  // hand in OpenVR/SteamVR, but need to check index. For now using 0)
+  vr_controller *ctrl = &controllers[0];
+  vec3_t origin;
+  VectorCopy(ctrl->position, origin);
+
+  // Get offset and orientation
+  vec3_t forward, right, up;
+  AngleVectors(ctrl->orientation, forward, right, up);
+
+  // Move the menu slightly forward and up from the controller
+  VectorMA(origin, 15.0f, forward, origin);
+  VectorMA(origin, 5.0f, up, origin);
+
+  // Calculate angle step
+  float angle_step = (2.0f * M_PI) / num_vr_weapons;
+  float radius = 15.0f;
+
+  // Setup drawing state
+  glDisable(GL_DEPTH_TEST);
+  glClear(GL_DEPTH_BUFFER_BIT);
+  glEnable(GL_DEPTH_TEST);
+
+  extern void R_DrawAliasModel(entity_t * e);
+
+  for (int i = 0; i < num_vr_weapons; i++) {
+    vr_weapon_cmd_t *w = &vr_weapons[i];
+
+    // Skip weapons we don't have
+    if (w->bitmask != 0 && !(cl.items & w->bitmask)) {
+      // Optional: draw grayed out or skip completely
+      continue;
+    }
+
+    float angle = i * angle_step;
+
+    // Calculate position in the circle relative to the controller
+    vec3_t pos;
+    VectorCopy(origin, pos);
+    VectorMA(pos, cos(angle) * radius, right, pos);
+    // negate sin(angle) because quake Z is up, but standard math is Y up.
+    // Assuming we want a vertical dial around the hand.
+    VectorMA(pos, sin(angle) * radius, up, pos);
+
+    // Orient the weapon model
+    // Pitch it up 90 degrees so it stands vertically in the circle,
+    // and spin it slowly
+    vec3_t angles;
+    VectorCopy(ctrl->orientation, angles);
+    angles[PITCH] -= 90.0f;
+    angles[YAW] += cl.time * 45.0f; // Spin animation
+
+    // Apply weapon-specific offsets locally to the orientation
+    vec3_t w_forward, w_right, w_up;
+    AngleVectors(angles, w_forward, w_right, w_up);
+    VectorMA(pos, w->offset[0], w_forward, pos);
+    VectorMA(pos, w->offset[1], w_right, pos);
+    VectorMA(pos, w->offset[2], w_up, pos);
+
+    // Setup a temporary entity for rendering
+    entity_t ent;
+    memset(&ent, 0, sizeof(ent));
+    VectorCopy(pos, ent.origin);
+    VectorCopy(angles, ent.angles);
+    ent.model = Mod_ForName(w->model_path, true);
+    if (!ent.model)
+      continue;
+
+    ent.frame = 0;
+    ent.colormap = vid.colormap;
+
+    // Highlight selection
+    if (i == vr_weaponmenu_selection) {
+      ent.scale =
+          ENTSCALE_ENCODE((w->scale * 1.5f) != 0.0f ? (w->scale * 1.5f)
+                                                    : 1); // Scale up selected
+    } else {
+      ent.scale = ENTSCALE_ENCODE(w->scale != 0.0f ? w->scale : 1);
+    }
+
+    ent.alpha = ENTALPHA_ENCODE(1.0f);
+
+    // Render the model
+    currententity = &ent;
+    R_DrawAliasModel(&ent);
+  }
+
+  // Trigger haptic if selection changed
+  static int last_vr_weaponmenu_selection = -1;
+  if (vr_weaponmenu_selection != last_vr_weaponmenu_selection &&
+      vr_weaponmenu_selection != -1) {
+    // Short pulse on right controller (index 0 for our menu logic)
+    VR_TriggerHaptic(0, 0.05f);
+  }
+  last_vr_weaponmenu_selection = vr_weaponmenu_selection;
+
+  // Restore currententity reference
+  currententity = &cl.viewent;
 }
 
 #ifdef __cplusplus

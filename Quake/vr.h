@@ -57,8 +57,13 @@ void VID_VR_Disable();
 
 void VR_UpdateScreenContent();
 void VR_ShowCrosshair();
+void VR_DrawWeaponMenu();
+extern int vr_weaponmenu_selection;
+void VR_TriggerHaptic(int controller, float durationSeconds);
+void VR_Draw2D();
 void VR_Draw2D();
 void VR_Move(usercmd_t *cmd);
+void VR_LoadWeaponSchema();
 void VR_InitGame();
 void VR_PushYaw();
 void VR_DrawSbar();
@@ -94,6 +99,19 @@ extern cvar_t vr_menu_scale;
 extern cvar_t vr_weapon_offset[MAX_WEAPONS * VARS_PER_WEAPON];
 extern int weaponCVarEntry;
 extern vec3_t vr_room_scale_move;
+
+#define MAX_VR_WEAPONS 16
+
+typedef struct {
+  int bitmask;
+  char model_path[64];
+  int impulse;
+  float scale;
+  vec3_t offset;
+} vr_weapon_cmd_t;
+
+extern vr_weapon_cmd_t vr_weapons[MAX_VR_WEAPONS];
+extern int num_vr_weapons;
 
 #ifdef __cplusplus
 }
