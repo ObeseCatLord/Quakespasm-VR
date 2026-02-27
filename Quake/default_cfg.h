@@ -56,6 +56,7 @@ static const char default_cfg[] =
     "bind F12 \"screenshot\"\n"
 
     "bind \\ +mlook\n"
+    "bind LSHOULDER +vr_weaponmenu\n"
 
     "bind PAUSE \"pause\"\n"
     "bind ESCAPE \"togglemenu\"\n"
