@@ -189,7 +189,7 @@ typedef struct {
   qboolean discovered;  // has the model been discovered at runtime?
 } vr_dyn_weapon_t;
 
-#define MAX_DYN_WEAPONS 16
+#define MAX_DYN_WEAPONS 32
 static vr_dyn_weapon_t dyn_weapons[] = {
   { 4096, 1, "progs/g_axe.mdl",    0, false },  // IT_AXE (pickup model)
   { 1,    2, "progs/g_shot.mdl",   0, false },  // IT_SHOTGUN
@@ -202,6 +202,14 @@ static vr_dyn_weapon_t dyn_weapons[] = {
 };
 static int num_dyn_weapons = 8;
 static int last_tracked_activeweapon = -1;
+
+// Impulse sniffing/discovery state
+extern "C" int vr_last_sent_impulse = 0;
+extern "C" double vr_last_sent_impulse_time = 0;
+static int vr_autoscan_impulse = 0;
+static double vr_autoscan_next_time = 0;
+static bool vr_autoscan_active = false;
+double vr_next_weapon_switch_time = 0; // Debounce for switching
 
 // Unused variables, marking them explicitly or removing them later
 static GLuint mirror_texture = 0;
@@ -1423,14 +1431,14 @@ void VR_UpdateScreenContent() {
       Mod_Weapon(cl.viewent.model->name, hdr);
     }
 
-    SetHandPos(0, player);
-    SetHandPos(1, player);
-
     VectorCopy(cl.handrot[1], cl.aimangles); // Sets the shooting angle
-    // TODO: what sets the shooting origin?
 
     break;
   }
+
+  SetHandPos(0, player);
+  SetHandPos(1, player);
+
   cl.viewangles[ROLL] = orientation[ROLL];
 
   VectorCopy(orientation, lastOrientation);
@@ -2038,12 +2046,15 @@ void VR_Move(usercmd_t *cmd) {
         // Stick released - close weapon menu and fire selection
         rStickWeaponMenuActive = false;
         cl.in_vr_weaponmenu = false;
-        if (vr_weaponmenu_selection >= 0) {
+        if (vr_weaponmenu_selection >= 0 && Sys_DoubleTime() >= vr_next_weapon_switch_time) {
           int impulse = VR_GetSelectedWeaponImpulse(vr_weaponmenu_selection);
           if (impulse > 0) {
-            char cmd[64];
-            q_snprintf(cmd, sizeof(cmd), "impulse %d\n", impulse);
-            Cbuf_AddText(cmd);
+            if (true) { // Always send for now as mods have aliases
+                vr_next_weapon_switch_time = Sys_DoubleTime() + 0.3; // 300ms debounce
+                char cmd[64];
+                q_snprintf(cmd, sizeof(cmd), "impulse %d\n", impulse);
+                Cbuf_AddText(cmd);
+            }
           }
           vr_weaponmenu_selection = -1;
         }
@@ -2087,50 +2098,74 @@ void VR_TrackWeapons(void) {
   if (active == 0 || model_idx == 0)
     return;
 
+  // Pulse auto-scanner if active
+  if (vr_autoscan_active && Sys_DoubleTime() > vr_autoscan_next_time) {
+    if (vr_autoscan_impulse < 12) {
+      vr_autoscan_impulse++;
+      char cmd[32];
+      q_snprintf(cmd, sizeof(cmd), "impulse %d\n", vr_autoscan_impulse);
+      Cbuf_AddText(cmd);
+      vr_autoscan_next_time = Sys_DoubleTime() + 2.0; // 2.0s between probes (passive)
+    } else {
+      vr_autoscan_active = false;
+      Con_Printf("VR: Weapon auto-scan complete.\n");
+    }
+  }
+
   // Check if we already know this weapon's model
-  qboolean already_known = false;
+  vr_dyn_weapon_t *w = NULL;
   for (int i = 0; i < num_dyn_weapons; i++) {
     if (dyn_weapons[i].bitmask == active) {
-      if (dyn_weapons[i].discovered && dyn_weapons[i].model_index == model_idx)
-        already_known = true;
-      else {
-        dyn_weapons[i].model_index = model_idx;
-        dyn_weapons[i].discovered = true;
-      }
+      w = &dyn_weapons[i];
       break;
     }
   }
 
-  // New weapon from a mod - add it if not found and we have space
-  if (!already_known) {
-    qboolean found = false;
-    for (int i = 0; i < num_dyn_weapons; i++) {
-      if (dyn_weapons[i].bitmask == active) {
-        found = true;
-        break;
-      }
+  // Learned info for existing weapon
+  if (w) {
+    if (!w->discovered || w->model_index != model_idx) {
+       w->model_index = model_idx;
+       w->discovered = true;
     }
-    if (!found && num_dyn_weapons < MAX_DYN_WEAPONS) {
-      vr_dyn_weapon_t *w = &dyn_weapons[num_dyn_weapons];
-      w->bitmask = active;
-      w->impulse = 0; // unknown impulse for mod weapons
-      w->model_index = model_idx;
-      w->discovered = true;
-      num_dyn_weapons++;
-      Con_Printf("VR: Discovered new weapon bitmask %d, model index %d\n", active, model_idx);
+    
+    // Sniff impulse association if it was sent recently (last 0.5s)
+    if (w->impulse == 0 && vr_last_sent_impulse > 0 && 
+        (Sys_DoubleTime() - vr_last_sent_impulse_time) < 0.5) {
+      w->impulse = vr_last_sent_impulse;
+      Con_Printf("VR: Learned impulse %d for weapon bitmask %d\n", w->impulse, active);
     }
+  }
+  // Fully new weapon from a mod (not in base table)
+  else if (num_dyn_weapons < MAX_DYN_WEAPONS) {
+    w = &dyn_weapons[num_dyn_weapons];
+    w->bitmask = active;
+    w->model_index = model_idx;
+    w->model_path = NULL;
+    w->discovered = true;
+    
+    // Attempt to sniff impulse immediately
+    if (vr_last_sent_impulse > 0 && (Sys_DoubleTime() - vr_last_sent_impulse_time) < 0.5) {
+        w->impulse = vr_last_sent_impulse;
+    } else {
+        w->impulse = 0;
+    }
+    
+    num_dyn_weapons++;
+    Con_Printf("VR: Discovered new mod weapon bitmask %d (impulse %d)\n", active, w->impulse);
   }
 }
 
-// Reset weapon tracking (call on map change / disconnect)
+// Start/Reset weapon tracking (call on map change / disconnect)
 void VR_ResetWeaponTracking(void) {
   last_tracked_activeweapon = -1;
-  for (int i = 0; i < num_dyn_weapons; i++) {
-    dyn_weapons[i].discovered = false;
-    dyn_weapons[i].model_index = 0;
+  // Note: We DO NOT reset num_dyn_weapons or discovery state here anymore
+  // so that mod weapon knowledge persists across map loads.
+  // We just reset the scanning flag if needed.
+  if (cls.state != ca_connected) {
+      vr_autoscan_active = true;
+      vr_autoscan_impulse = 0;
+      vr_autoscan_next_time = Sys_DoubleTime() + 2.0; // Wait 2s after load to start scan
   }
-  // Keep num_dyn_weapons at the base 8 — mod weapons will be re-discovered
-  num_dyn_weapons = 8;
 }
 
 // Build visible weapon list filtered by cl.items, returns count
@@ -2228,12 +2263,17 @@ void VR_DrawWeaponMenu(void) {
   vec3_t forward, right, up;
   AngleVectors(r_refdef.viewangles, forward, right, up);
 
-  // Move the menu forward and slightly down from the camera
-  VectorMA(origin, 65.0f, forward, origin);
-  VectorMA(origin, -10.0f, up, origin);
-
-  // Calculate angle step based on visible weapons
+  // Calculate angle step and base radius based on visible weapons
+  float base_radius = 8.0f;
+  if (num_visible > 8) {
+    base_radius += (num_visible - 8) * 0.4f;
+  }
+  float wheel_dist = 65.0f + (base_radius * 0.5f);
   float angle_step = (2.0f * M_PI) / num_visible;
+
+  // Move the menu forward and slightly down from the camera
+  VectorMA(origin, wheel_dist, forward, origin);
+  VectorMA(origin, -10.0f, up, origin);
 
   // Setup drawing state - clear depth so menu draws on top of world
   glDisable(GL_DEPTH_TEST);
@@ -2271,19 +2311,20 @@ void VR_DrawWeaponMenu(void) {
     if (!mdl || mdl->type != mod_alias)
       continue;
 
-    float angle = i * angle_step;
-
-    float radius = 5.0f + (num_visible * 1.5f);
+    // Alternate items into an inner and outer ring
+    float inner_radius = base_radius * 0.65f;
+    float current_radius = base_radius;
     if (num_visible > 4) {
-      // Alternate items into an inner and outer ring that also scales
-      radius = (i % 2 == 0) ? (radius * 0.55f) : radius;
+      current_radius = (i % 2 == 0) ? inner_radius : base_radius;
     }
+
+    float angle = i * angle_step;
 
     // Calculate position in the circle relative to the view
     vec3_t pos;
     VectorCopy(origin, pos);
-    VectorMA(pos, cos(angle) * radius, right, pos);
-    VectorMA(pos, sin(angle) * radius, up, pos);
+    VectorMA(pos, cos(angle) * current_radius, right, pos);
+    VectorMA(pos, sin(angle) * current_radius, up, pos);
 
     // Orient the weapon model to face the player
     vec3_t angles;

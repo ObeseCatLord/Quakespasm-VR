@@ -28,7 +28,7 @@ static const int gl_solid_format = 3;
 static const int gl_alpha_format = 4;
 
 static cvar_t gl_texturemode = {"gl_texturemode", "", CVAR_ARCHIVE};
-static cvar_t gl_texture_anisotropy = {"gl_texture_anisotropy", "1",
+static cvar_t gl_texture_anisotropy = {"gl_texture_anisotropy", "16",
                                        CVAR_ARCHIVE};
 static cvar_t gl_max_size = {"gl_max_size", "0", CVAR_NONE};
 static cvar_t gl_picmip = {"gl_picmip", "0", CVAR_NONE};

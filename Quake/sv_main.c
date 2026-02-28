@@ -33,6 +33,7 @@ int		sv_protocol = PROTOCOL_FITZQUAKE; //johnfitz
 
 extern qboolean	pr_alpha_supported; //johnfitz
 extern int pr_effects_mask;
+cvar_t sv_maxpacketsize = {"sv_maxpacketsize", "8192", CVAR_NONE}; // increased for AD
 
 //============================================================================
 
@@ -108,6 +109,7 @@ void SV_Init (void)
 	Cvar_RegisterVariable (&sv_freezenonclients);
 	Cvar_RegisterVariable (&sv_altnoclip); //johnfitz
 	Cvar_RegisterVariable (&sv_gameplayfix_elevators);
+	Cvar_RegisterVariable (&sv_maxpacketsize); // increased for AD
 
 	Cmd_AddCommand ("sv_protocol", &SV_Protocol_f); //johnfitz
 
@@ -1024,7 +1026,7 @@ qboolean SV_SendClientDatagram (client_t *client)
 
 	//johnfitz -- if client is nonlocal, use smaller max size so packets aren't fragmented
 	if (Q_strcmp(NET_QSocketGetAddressString(client->netconnection), "LOCAL") != 0)
-		msg.maxsize = DATAGRAM_MTU;
+		msg.maxsize = (int)sv_maxpacketsize.value;
 	//johnfitz
 
 	MSG_WriteByte (&msg, svc_time);
