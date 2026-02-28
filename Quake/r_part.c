@@ -23,11 +23,11 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 
 #include "quakedef.h"
 
-#define ABSOLUTE_MAX_PARTICLES 32768 // default max # of particles at one time
+#define ABSOLUTE_MAX_PARTICLES 65536 // default max # of particles at one time
 #define ABSOLUTE_MIN_PARTICLES                                                 \
   512 // no fewer than this no matter what's
       //  on the command line
-#define DEFAULT_NUM_PARTICLES 16384
+#define DEFAULT_NUM_PARTICLES 32768
 
 static int ramp1[8] = {0x6f, 0x6d, 0x6b, 0x69, 0x67, 0x65, 0x63, 0x61};
 static int ramp2[8] = {0x6f, 0x6e, 0x6d, 0x6c, 0x6b, 0x6a, 0x68, 0x66};
@@ -327,7 +327,7 @@ void R_ParseParticleEffect(void) {
   color = MSG_ReadByte();
 
   if (msgcount == 255)
-    count = 1024;
+    count = 4096;
   else
     count = msgcount;
 
@@ -343,7 +343,7 @@ void R_ParticleExplosion(vec3_t org) {
   int i, j;
   particle_t *p;
 
-  for (i = 0; i < 1024; i++) {
+  for (i = 0; i < 4096; i++) {
     if (!free_particles)
       return;
     p = free_particles;
@@ -380,7 +380,7 @@ void R_ParticleExplosion2(vec3_t org, int colorStart, int colorLength) {
   particle_t *p;
   int colorMod = 0;
 
-  for (i = 0; i < 512; i++) {
+  for (i = 0; i < 1024; i++) {
     if (!free_particles)
       return;
     p = free_particles;
@@ -409,7 +409,7 @@ void R_BlobExplosion(vec3_t org) {
   int i, j;
   particle_t *p;
 
-  for (i = 0; i < 1024; i++) {
+  for (i = 0; i < 4096; i++) {
     if (!free_particles)
       return;
     p = free_particles;
@@ -454,7 +454,7 @@ void R_RunParticleEffect(vec3_t org, vec3_t dir, int color, int count) {
     p->next = active_particles;
     active_particles = p;
 
-    if (count == 1024) { // rocket explosion
+    if (count == 4096) { // rocket explosion
       p->die = cl.time + 5;
       p->color = ramp1[0];
       p->ramp = rand() & 3;
@@ -765,6 +765,8 @@ void CL_RunParticles(void) {
     }
   }
 }
+
+
 
 /*
 ===============

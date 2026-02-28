@@ -2266,9 +2266,9 @@ void VR_DrawWeaponMenu(void) {
   // Calculate angle step and base radius based on visible weapons
   float base_radius = 8.0f;
   if (num_visible > 8) {
-    base_radius += (num_visible - 8) * 0.4f;
+    base_radius += (num_visible - 8) * 0.8f; // More aggressive growth for AD
   }
-  float wheel_dist = 65.0f + (base_radius * 0.5f);
+  float wheel_dist = 70.0f + base_radius; // Push it further away as it grows
   float angle_step = (2.0f * M_PI) / num_visible;
 
   // Move the menu forward and slightly down from the camera
@@ -2312,7 +2312,7 @@ void VR_DrawWeaponMenu(void) {
       continue;
 
     // Alternate items into an inner and outer ring
-    float inner_radius = base_radius * 0.65f;
+    float inner_radius = base_radius * 0.70f; // Slightly larger inner ring
     float current_radius = base_radius;
     if (num_visible > 4) {
       current_radius = (i % 2 == 0) ? inner_radius : base_radius;
