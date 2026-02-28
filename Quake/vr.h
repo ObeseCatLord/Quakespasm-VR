@@ -85,6 +85,7 @@ extern cvar_t vr_movement_mode;
 extern cvar_t vr_gunangle;
 extern cvar_t vr_deadzone;
 extern cvar_t vr_snap_turn;
+extern cvar_t vr_180_snap_turn;
 extern cvar_t vr_turn_speed;
 extern cvar_t vr_gunmodeloffsets;
 extern cvar_t vr_gunmodelpitch;

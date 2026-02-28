@@ -1,0 +1,9 @@
+@echo off
+echo Starting Quake server...
+start "" "quakespasm-openvr.exe" -dedicated 16 -ip 127.0.0.1 +coop 1 +sv_cheats 1 +map start -novr -condebug
+
+echo Waiting 3 seconds for the server to start...
+timeout /t 3 /nobreak >nul
+
+echo Starting Quake VR client and connecting to server...
+start "" "quakespasm-openvr.exe" -ip 127.0.0.1 -condebug +connect 127.0.0.1 +sv_cheats 1 +delay_give

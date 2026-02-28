@@ -243,7 +243,8 @@ DEFINE_CVAR(vr_crosshairy, 0, CVAR_ARCHIVE);
 DEFINE_CVAR(vr_world_scale, 1.0, CVAR_ARCHIVE);
 DEFINE_CVAR(vr_floor_offset, -16, CVAR_ARCHIVE);
 DEFINE_CVAR(vr_snap_turn, 0, CVAR_ARCHIVE);
-DEFINE_CVAR(vr_turn_speed, 1, CVAR_ARCHIVE);
+DEFINE_CVAR(vr_180_snap_turn, 1, CVAR_ARCHIVE);
+DEFINE_CVAR(vr_turn_speed, 2, CVAR_ARCHIVE);
 DEFINE_CVAR(vr_msaa, 4, CVAR_ARCHIVE);
 DEFINE_CVAR(vr_movement_mode, 0, CVAR_ARCHIVE);
 DEFINE_CVAR(vr_joystick_yaw_multi, 1.0, CVAR_ARCHIVE);
@@ -942,6 +943,7 @@ void VID_VR_Init() {
   Cvar_RegisterVariable(&vr_movement_mode);
   Cvar_RegisterVariable(&vr_msaa);
   Cvar_RegisterVariable(&vr_snap_turn);
+  Cvar_RegisterVariable(&vr_180_snap_turn);
   Cvar_RegisterVariable(&vr_turn_speed);
   Cvar_RegisterVariable(&vr_world_scale);
   Cvar_RegisterVariable(&vr_projectilespawn_z_offset);
@@ -2008,22 +2010,31 @@ void VR_Move(usercmd_t *cmd) {
     // Right stick forward (Y-axis on controller 1) activates weapon wheel
     float rStickY = GetAxis(&controllers[1].state, 1, 0.0);
     static qboolean rStickWeaponMenuActive = false;
+    static qboolean rStickSnap180Active = false;
+
     if (rStickY > 0.5f && !rStickWeaponMenuActive) {
       // Stick pushed forward - open weapon menu
       rStickWeaponMenuActive = true;
       cl.in_vr_weaponmenu = true;
-    } else if (rStickY < 0.3f && rStickWeaponMenuActive) {
-      // Stick released - close weapon menu and fire selection
-      rStickWeaponMenuActive = false;
-      cl.in_vr_weaponmenu = false;
-      if (vr_weaponmenu_selection >= 0) {
-        int impulse = VR_GetSelectedWeaponImpulse(vr_weaponmenu_selection);
-        if (impulse > 0) {
-          char cmd[64];
-          q_snprintf(cmd, sizeof(cmd), "impulse %d\n", impulse);
-          Cbuf_AddText(cmd);
+    } else if (rStickY < -0.5f && !rStickSnap180Active && vr_180_snap_turn.value) {
+      // Stick pulled back - 180 snap turn
+      rStickSnap180Active = true;
+      vrYaw -= 180.0f;
+    } else if (rStickY < 0.3f && rStickY > -0.3f) {
+      rStickSnap180Active = false;
+      if (rStickWeaponMenuActive) {
+        // Stick released - close weapon menu and fire selection
+        rStickWeaponMenuActive = false;
+        cl.in_vr_weaponmenu = false;
+        if (vr_weaponmenu_selection >= 0) {
+          int impulse = VR_GetSelectedWeaponImpulse(vr_weaponmenu_selection);
+          if (impulse > 0) {
+            char cmd[64];
+            q_snprintf(cmd, sizeof(cmd), "impulse %d\n", impulse);
+            Cbuf_AddText(cmd);
+          }
+          vr_weaponmenu_selection = -1;
         }
-        vr_weaponmenu_selection = -1;
       }
     }
   }
@@ -2178,14 +2189,6 @@ void VR_DrawWeaponMenu(void) {
   vr_dyn_weapon_t *visible[MAX_DYN_WEAPONS];
   int num_visible = VR_GetVisibleWeapons(visible, MAX_DYN_WEAPONS);
 
-  static int debug_throttle = 0;
-  if (debug_throttle++ % 60 == 0) {
-    Con_Printf("VR: DrawWeaponMenu called, num_visible=%d, cl.items=%d, num_dyn=%d\\n", num_visible, cl.items, num_dyn_weapons);
-    for (int d = 0; d < num_dyn_weapons; d++) {
-      Con_Printf("  weapon[%d]: bitmask=%d, impulse=%d, model=%d, discovered=%d\\n",
-        d, dyn_weapons[d].bitmask, dyn_weapons[d].impulse, dyn_weapons[d].model_index, dyn_weapons[d].discovered);
-    }
-  }
 
   if (num_visible == 0)
     return;

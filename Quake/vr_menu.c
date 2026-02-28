@@ -15,6 +15,7 @@ extern cvar_t vr_aimmode;
 extern cvar_t vr_deadzone;
 extern cvar_t vr_world_scale;
 extern cvar_t vr_snap_turn;
+extern cvar_t vr_180_snap_turn;
 extern cvar_t vr_turn_speed;
 
 extern void M_DrawSlider(int x, int y, float range, float value,
@@ -177,6 +178,9 @@ static void VR_MenuPrintOptionValue(int cx, int cy, int option) {
       value_string = value_buffer;
     }
     break;
+  case VR_OPTION_180_SNAP_TURN:
+    M_DrawCheckbox(cx, cy, (int)vr_180_snap_turn.value);
+    break;
   case VR_OPTION_TURN_SPEED:
     M_DrawSlider(cx, cy, vr_turn_speed.value / VR_MAX_TURN_SPEED,
                  vr_turn_speed.value, "%.2f");
@@ -332,6 +336,9 @@ void VR_MenuKeyOption(int key, int option) {
     break;
   case VR_OPTION_SNAP_TURN:
     adjustI(vr_snap_turn, 45, 0.f, 90.f);
+    break;
+  case VR_OPTION_180_SNAP_TURN:
+    adjustI(vr_180_snap_turn, 1, 0.f, 1.f);
     break;
   case VR_OPTION_TURN_SPEED:
     adjustF(vr_turn_speed, 0.25f, 0.f, VR_MAX_TURN_SPEED);
@@ -494,6 +501,10 @@ void VR_MenuDraw(void) {
       break;
     case VR_OPTION_SNAP_TURN:
       M_Print(16, y, "                     Turn");
+      VR_MenuPrintOptionValue(240, y, i);
+      break;
+    case VR_OPTION_180_SNAP_TURN:
+      M_Print(16, y, "            180 Snap Turn");
       VR_MenuPrintOptionValue(240, y, i);
       break;
     case VR_OPTION_TURN_SPEED:

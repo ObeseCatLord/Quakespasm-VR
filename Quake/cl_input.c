@@ -401,9 +401,27 @@ void CL_SendMove(const usercmd_t *cmd) {
   // VR Data Sync
   if (vr_enabled.value && (int)vr_aimmode.value == VR_AIMMODE_CONTROLLER) {
     MSG_WriteByte(&buf, 1); // VR flag active
-    MSG_WriteFloat(&buf, cl.handpos[1][0]);
-    MSG_WriteFloat(&buf, cl.handpos[1][1]);
-    MSG_WriteFloat(&buf, cl.handpos[1][2]);
+    
+    vec3_t adj;
+    _VectorCopy(cl.handpos[1], adj);
+    
+    vec3_t ofs = {
+        vr_weapon_offset[weaponCVarEntry * VARS_PER_WEAPON].value,
+        vr_weapon_offset[weaponCVarEntry * VARS_PER_WEAPON + 1].value,
+        vr_weapon_offset[weaponCVarEntry * VARS_PER_WEAPON + 2].value +
+            vr_gunmodely.value};
+
+    vec3_t fwd2, right, up;
+    AngleVectors(cl.handrot[1], fwd2, right, up);
+    fwd2[0] *= vr_gunmodelscale.value * ofs[2];
+    fwd2[1] *= vr_gunmodelscale.value * ofs[2];
+    fwd2[2] *= vr_gunmodelscale.value * ofs[2];
+    VectorAdd(adj, fwd2, adj);
+    adj[2] -= vr_projectilespawn_z_offset.value; // quakec assumes 16 offset
+
+    MSG_WriteFloat(&buf, adj[0]);
+    MSG_WriteFloat(&buf, adj[1]);
+    MSG_WriteFloat(&buf, adj[2]);
     MSG_WriteFloat(&buf, cl.handrot[1][0]);
     MSG_WriteFloat(&buf, cl.handrot[1][1]);
     MSG_WriteFloat(&buf, cl.handrot[1][2]);
