@@ -1213,6 +1213,9 @@ void SetHandPos(int index, entity_t *player) {
 
 void IdentifyAxes(int device);
 
+static bool modelIdentified[2] = {false, false};
+static bool isViveWand[2] = {false, false};
+
 void VR_UpdateScreenContent() {
   int i;
   vec3_t orientation;
@@ -1310,6 +1313,15 @@ void VR_UpdateScreenContent() {
         vr_controller *controller = &controllers[controllerIndex];
 
         IdentifyAxes(iDevice);
+
+        if (!modelIdentified[controllerIndex]) {
+            char modelNumber[1024];
+            vr::VRSystem()->GetStringTrackedDeviceProperty(iDevice, vr::Prop_ModelNumber_String, modelNumber, sizeof(modelNumber), nullptr);
+            if (strstr(modelNumber, "Vive") || strstr(modelNumber, "VIVE")) {
+                isViveWand[controllerIndex] = true;
+            }
+            modelIdentified[controllerIndex] = true;
+        }
 
         controller->lastState = controller->state;
         vr::VRSystem()->GetControllerState(iDevice, &controller->state,
@@ -2034,6 +2046,20 @@ void VR_Move(usercmd_t *cmd) {
             Cbuf_AddText(cmd);
           }
           vr_weaponmenu_selection = -1;
+        }
+      }
+    }
+
+    if (isViveWand[1]) {
+      // Vive wands only have a trackpad and a menu button. Provide trackpad click left/right to cycle weapons.
+      bool wasClick = (controllers[1].lastState.ulButtonPressed & vr::ButtonMaskFromId(vr::k_EButton_SteamVR_Touchpad)) != 0;
+      bool isClick = (controllers[1].state.ulButtonPressed & vr::ButtonMaskFromId(vr::k_EButton_SteamVR_Touchpad)) != 0;
+      if (isClick && !wasClick) {
+        float x = GetAxis(&controllers[1].state, 0, 0.0);
+        if (x > 0.3f) {
+          Cbuf_AddText("impulse 10\n");
+        } else if (x < -0.3f) {
+          Cbuf_AddText("impulse 12\n");
         }
       }
     }
