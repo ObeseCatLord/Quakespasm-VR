@@ -161,6 +161,7 @@ void IN_JumpUp(void) { KeyUp(&in_jump); }
 void IN_VRWeaponMenuDown(void) {
   KeyDown(&in_vr_weaponmenu);
   cl.in_vr_weaponmenu = true;
+  Con_Printf("VR: Weapon menu DOWN - cl.in_vr_weaponmenu = true, cl.items = %d\n", cl.items);
 }
 
 void IN_VRWeaponMenuUp(void) {
@@ -168,16 +169,18 @@ void IN_VRWeaponMenuUp(void) {
   cl.in_vr_weaponmenu = false;
 
   // If a weapon is selected when the menu is released, send the impulse
-  if (vr_weaponmenu_selection >= 0 &&
-      vr_weaponmenu_selection < num_vr_weapons) {
-    int impulse = vr_weapons[vr_weaponmenu_selection].impulse;
+  int sel = vr_weaponmenu_selection;
+  vr_weaponmenu_selection = -1; // Reset selection first
+
+  if (sel >= 0) {
+    int impulse = VR_GetSelectedWeaponImpulse(sel);
     if (impulse > 0) {
-      char cmd[32];
-      snprintf(cmd, sizeof(cmd), "impulse %d\n", impulse);
+      char cmd[64];
+      q_snprintf(cmd, sizeof(cmd), "impulse %d\n", impulse);
       Cbuf_AddText(cmd);
+      Con_Printf("VR: Selected weapon impulse %d\n", impulse);
     }
   }
-  vr_weaponmenu_selection = -1; // Reset selection
 }
 
 void IN_Impulse(void) { in_impulse = Q_atoi(Cmd_Argv(1)); }

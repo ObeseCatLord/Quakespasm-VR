@@ -42,7 +42,7 @@ static gltexture_t *particletexture, *particletexture1, *particletexture2,
 static float texturescalefactor; // johnfitz -- compensate for apparent size of
                                  // different particle textures
 
-cvar_t r_particles = {"r_particles", "2", CVAR_ARCHIVE};         // johnfitz
+cvar_t r_particles = {"r_particles", "2", CVAR_ARCHIVE};
 cvar_t r_quadparticles = {"r_quadparticles", "1", CVAR_ARCHIVE}; // johnfitz
 
 /*

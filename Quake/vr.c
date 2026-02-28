@@ -180,6 +180,29 @@ static vec3_t lastAim = {0, 0, 0};
 static qboolean vr_initialized = false;
 extern "C" int vr_weaponmenu_selection = -1;
 
+// Dynamic weapon tracking
+typedef struct {
+  int bitmask;          // IT_* bitmask value
+  int impulse;          // impulse number to switch to this weapon
+  const char *model_path; // viewmodel path (NULL for dynamically discovered weapons)
+  int model_index;      // precache model index (learned at runtime for mod weapons)
+  qboolean discovered;  // has the model been discovered at runtime?
+} vr_dyn_weapon_t;
+
+#define MAX_DYN_WEAPONS 16
+static vr_dyn_weapon_t dyn_weapons[] = {
+  { 4096, 1, "progs/g_axe.mdl",    0, false },  // IT_AXE (pickup model)
+  { 1,    2, "progs/g_shot.mdl",   0, false },  // IT_SHOTGUN
+  { 2,    3, "progs/g_shot2.mdl",  0, false },  // IT_SUPER_SHOTGUN
+  { 4,    4, "progs/g_nail.mdl",   0, false },  // IT_NAILGUN
+  { 8,    5, "progs/g_nail2.mdl",  0, false },  // IT_SUPER_NAILGUN
+  { 16,   6, "progs/g_rock.mdl",   0, false },  // IT_GRENADE_LAUNCHER
+  { 32,   7, "progs/g_rock2.mdl",  0, false },  // IT_ROCKET_LAUNCHER
+  { 64,   8, "progs/g_light.mdl",  0, false },  // IT_LIGHTNING
+};
+static int num_dyn_weapons = 8;
+static int last_tracked_activeweapon = -1;
+
 // Unused variables, marking them explicitly or removing them later
 static GLuint mirror_texture = 0;
 static GLuint mirror_fbo = 0;
@@ -1193,6 +1216,12 @@ void VR_UpdateScreenContent() {
   vec3_t orientation;
   GLint w, h;
 
+  if (!vr_enabled.value) {
+    return;
+  }
+
+  VR_TrackWeapons();
+
   // Last chance to enable VR Mode - we get here when the game already start up
   // with vr_enabled 1 If enabling fails, unset the cvar and return.
   if (!vr_initialized && !VR_Enable()) {
@@ -1796,16 +1825,8 @@ void DoKey(vr_controller *controller, vr::EVRButtonId vrButton, int quakeKey) {
 }
 
 void DoGrip(vr_controller *controller, int quakeKey) {
-  if (axisGrip != -1) {
-    bool gripWasDown = controller->lastState.rAxis[axisGrip].x > 0.8f;
-    bool gripDown = controller->state.rAxis[axisGrip].x > 0.8f;
-    if (gripDown != gripWasDown) {
-      Key_Event(quakeKey, gripDown);
-    }
-  } else {
-    // Fallback to digital grip button if no analog grip axis found
-    DoKey(controller, vr::k_EButton_Grip, quakeKey);
-  }
+  // Always use digital grip button for reliable input on all controllers
+  DoKey(controller, vr::k_EButton_Grip, quakeKey);
 }
 void DoTrigger(vr_controller *controller, int quakeKey) {
   if (axisTrigger != -1) {
@@ -1886,8 +1907,8 @@ void VR_Move(usercmd_t *cmd) {
   } else {
     DoAxis(&controllers[1], 0, K_LEFTARROW, K_RIGHTARROW,
            vr_joystick_axis_menu_deadzone_extra.value);
-    DoAxis(&controllers[1], 1, K_DOWNARROW, K_UPARROW,
-           vr_joystick_axis_menu_deadzone_extra.value);
+    // Right stick Y-axis intentionally unbound to prevent accidental forward movement
+    // It is used exclusively for opening the weapon wheel.
 
     vec3_t lfwd, lright, lup;
 
@@ -1903,9 +1924,9 @@ void VR_Move(usercmd_t *cmd) {
 
     if (vr_movement_mode.value == VR_MOVEMENT_MODE_RAW_INPUT) {
       cmd->forwardmove +=
-          cl_forwardspeed.value * GetAxis(&controllers[0].state, 1, 0.0);
+          cl_forwardspeed.value * GetAxis(&controllers[0].state, 1, 0.15f);
       cmd->sidemove +=
-          cl_forwardspeed.value * GetAxis(&controllers[0].state, 0, 0.0);
+          cl_forwardspeed.value * GetAxis(&controllers[0].state, 0, 0.15f);
     } else {
       vec3_t vfwd;
 
@@ -1939,8 +1960,8 @@ void VR_Move(usercmd_t *cmd) {
       }
 
       vec3_t move = {0, 0, 0};
-      VectorMA(move, GetAxis(&controllers[0].state, 1, 0.0), lfwd, move);
-      VectorMA(move, GetAxis(&controllers[0].state, 0, 0.0), lright, move);
+      VectorMA(move, GetAxis(&controllers[0].state, 1, 0.15f), lfwd, move);
+      VectorMA(move, GetAxis(&controllers[0].state, 0, 0.15f), lright, move);
 
       float fwd = DotProduct(move, vfwd);
       float right = DotProduct(move, vright);
@@ -1958,7 +1979,7 @@ void VR_Move(usercmd_t *cmd) {
     }
 
     cmd->upmove +=
-        cl_upspeed.value * GetAxis(&controllers[0].state, 1, 0.0) * lfwd[2];
+        cl_upspeed.value * GetAxis(&controllers[0].state, 1, 0.15f) * lfwd[2];
 
     if (cl_forwardspeed.value > 200 && cl_movespeedkey.value) {
       cmd->forwardmove /= cl_movespeedkey.value;
@@ -1983,114 +2004,392 @@ void VR_Move(usercmd_t *cmd) {
           (yawMove * host_frametime * 100.0f * vr_joystick_yaw_multi.value) *
           vr_turn_speed.value;
     }
+
+    // Right stick forward (Y-axis on controller 1) activates weapon wheel
+    float rStickY = GetAxis(&controllers[1].state, 1, 0.0);
+    static qboolean rStickWeaponMenuActive = false;
+    if (rStickY > 0.5f && !rStickWeaponMenuActive) {
+      // Stick pushed forward - open weapon menu
+      rStickWeaponMenuActive = true;
+      cl.in_vr_weaponmenu = true;
+    } else if (rStickY < 0.3f && rStickWeaponMenuActive) {
+      // Stick released - close weapon menu and fire selection
+      rStickWeaponMenuActive = false;
+      cl.in_vr_weaponmenu = false;
+      if (vr_weaponmenu_selection >= 0) {
+        int impulse = VR_GetSelectedWeaponImpulse(vr_weaponmenu_selection);
+        if (impulse > 0) {
+          char cmd[64];
+          q_snprintf(cmd, sizeof(cmd), "impulse %d\n", impulse);
+          Cbuf_AddText(cmd);
+        }
+        vr_weaponmenu_selection = -1;
+      }
+    }
   }
 }
 
 extern "C" void VR_TriggerHaptic(int controller, float durationSeconds) {
-  if (vr::VRSystem()) {
-    // Convert seconds to microseconds for openvr
+    if (!vr::VRSystem()) return;
     unsigned short usDuration = (unsigned short)(durationSeconds * 1000000.0f);
-    vr::VRSystem()->TriggerHapticPulse(controller, 0, usDuration);
+    
+    vr::TrackedDeviceIndex_t deviceIndex = vr::VRSystem()->GetTrackedDeviceIndexForControllerRole(
+        controller == 0 ? vr::TrackedControllerRole_LeftHand : vr::TrackedControllerRole_RightHand
+    );
+    
+    if (deviceIndex != vr::k_unTrackedDeviceIndexInvalid) {
+        vr::VRSystem()->TriggerHapticPulse(deviceIndex, 0, usDuration);
+    }
+}
+
+// Track weapon changes each frame to discover model mappings
+void VR_TrackWeapons(void) {
+  int active = cl.stats[STAT_ACTIVEWEAPON];
+  int model_idx = cl.stats[STAT_WEAPON];
+
+  if (active == 0 || model_idx == 0)
+    return;
+
+  // Check if we already know this weapon's model
+  qboolean already_known = false;
+  for (int i = 0; i < num_dyn_weapons; i++) {
+    if (dyn_weapons[i].bitmask == active) {
+      if (dyn_weapons[i].discovered && dyn_weapons[i].model_index == model_idx)
+        already_known = true;
+      else {
+        dyn_weapons[i].model_index = model_idx;
+        dyn_weapons[i].discovered = true;
+      }
+      break;
+    }
+  }
+
+  // New weapon from a mod - add it if not found and we have space
+  if (!already_known) {
+    qboolean found = false;
+    for (int i = 0; i < num_dyn_weapons; i++) {
+      if (dyn_weapons[i].bitmask == active) {
+        found = true;
+        break;
+      }
+    }
+    if (!found && num_dyn_weapons < MAX_DYN_WEAPONS) {
+      vr_dyn_weapon_t *w = &dyn_weapons[num_dyn_weapons];
+      w->bitmask = active;
+      w->impulse = 0; // unknown impulse for mod weapons
+      w->model_index = model_idx;
+      w->discovered = true;
+      num_dyn_weapons++;
+      Con_Printf("VR: Discovered new weapon bitmask %d, model index %d\n", active, model_idx);
+    }
   }
 }
 
+// Reset weapon tracking (call on map change / disconnect)
+void VR_ResetWeaponTracking(void) {
+  last_tracked_activeweapon = -1;
+  for (int i = 0; i < num_dyn_weapons; i++) {
+    dyn_weapons[i].discovered = false;
+    dyn_weapons[i].model_index = 0;
+  }
+  // Keep num_dyn_weapons at the base 8 — mod weapons will be re-discovered
+  num_dyn_weapons = 8;
+}
+
+// Build visible weapon list filtered by cl.items, returns count
+static int VR_GetVisibleWeapons(vr_dyn_weapon_t **out, int max) {
+  int count = 0;
+  for (int i = 0; i < num_dyn_weapons && count < max; i++) {
+    if (cl.items & dyn_weapons[i].bitmask) {
+      out[count++] = &dyn_weapons[i];
+    }
+  }
+  return count;
+}
+
+// Get impulse for the selected weapon in the visible list
+extern "C" int VR_GetSelectedWeaponImpulse(int selection) {
+  vr_dyn_weapon_t *visible[MAX_DYN_WEAPONS];
+  int num_visible = VR_GetVisibleWeapons(visible, MAX_DYN_WEAPONS);
+  if (selection >= 0 && selection < num_visible) {
+    return visible[selection]->impulse;
+  }
+  return 0;
+}
+extern gltexture_t *char_texture;
+extern void GL_Bind(gltexture_t *tex);
+
+vec3_t vr_weaponcolor = {1.0f, 1.0f, 1.0f};
+
+static void VR_DrawText3D(vec3_t origin, vec3_t right, vec3_t up, const char *str, float scale, vec3_t color) {
+  if (!char_texture) return;
+
+  glDisable(GL_DEPTH_TEST);
+  glDisable(GL_CULL_FACE);
+  glDisable(GL_BLEND);
+  glEnable(GL_ALPHA_TEST);
+  glTexEnvf(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
+  glColor3fv(color);
+  
+  GL_Bind(char_texture);
+  glBegin(GL_QUADS);
+  
+  float char_width = 8.0f * scale;
+  float char_height = 8.0f * scale;
+  
+  vec3_t cur_pos;
+  VectorCopy(origin, cur_pos);
+  
+  int len = strlen(str);
+  VectorMA(cur_pos, -(len * char_width) / 2.0f, right, cur_pos);
+  
+  for (int i = 0; i < len; i++) {
+    char c = str[i];
+    if (c != ' ') {
+      int row = c >> 4;
+      int col = c & 15;
+      float frow = row * 0.0625f;
+      float fcol = col * 0.0625f;
+      float size = 0.0625f;
+
+      vec3_t p0, p1, p2, p3;
+      VectorCopy(cur_pos, p0);
+      VectorMA(p0, -char_height/2.0f, up, p0);
+      
+      VectorCopy(p0, p1);  VectorMA(p1, char_width, right, p1);
+      VectorCopy(p1, p2);  VectorMA(p2, char_height, up, p2);
+      VectorCopy(p0, p3);  VectorMA(p3, char_height, up, p3);
+
+      glTexCoord2f(fcol, frow + size); glVertex3fv(p0);
+      glTexCoord2f(fcol + size, frow + size); glVertex3fv(p1);
+      glTexCoord2f(fcol + size, frow); glVertex3fv(p2);
+      glTexCoord2f(fcol, frow); glVertex3fv(p3);
+    }
+    VectorMA(cur_pos, char_width, right, cur_pos);
+  }
+  glEnd();
+  glColor3f(1.0f, 1.0f, 1.0f);
+  glEnable(GL_DEPTH_TEST);
+  glEnable(GL_CULL_FACE);
+  glTexEnvf(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_REPLACE);
+}
+
 void VR_DrawWeaponMenu(void) {
-  if (num_vr_weapons == 0)
+  vr_dyn_weapon_t *visible[MAX_DYN_WEAPONS];
+  int num_visible = VR_GetVisibleWeapons(visible, MAX_DYN_WEAPONS);
+
+  static int debug_throttle = 0;
+  if (debug_throttle++ % 60 == 0) {
+    Con_Printf("VR: DrawWeaponMenu called, num_visible=%d, cl.items=%d, num_dyn=%d\\n", num_visible, cl.items, num_dyn_weapons);
+    for (int d = 0; d < num_dyn_weapons; d++) {
+      Con_Printf("  weapon[%d]: bitmask=%d, impulse=%d, model=%d, discovered=%d\\n",
+        d, dyn_weapons[d].bitmask, dyn_weapons[d].impulse, dyn_weapons[d].model_index, dyn_weapons[d].discovered);
+    }
+  }
+
+  if (num_visible == 0)
     return;
 
-  // Use right controller for the menu origin (controllers[1] is typically right
-  // hand in OpenVR/SteamVR, but need to check index. For now using 0)
-  vr_controller *ctrl = &controllers[0];
+  // Position the weapon wheel in front of the player's view
+  extern refdef_t r_refdef;
   vec3_t origin;
-  VectorCopy(ctrl->position, origin);
+  VectorCopy(r_refdef.vieworg, origin);
 
-  // Get offset and orientation
+  // Get forward/right/up from the view direction
   vec3_t forward, right, up;
-  AngleVectors(ctrl->orientation, forward, right, up);
+  AngleVectors(r_refdef.viewangles, forward, right, up);
 
-  // Move the menu slightly forward and up from the controller
-  VectorMA(origin, 15.0f, forward, origin);
-  VectorMA(origin, 5.0f, up, origin);
+  // Move the menu forward and slightly down from the camera
+  VectorMA(origin, 65.0f, forward, origin);
+  VectorMA(origin, -10.0f, up, origin);
 
-  // Calculate angle step
-  float angle_step = (2.0f * M_PI) / num_vr_weapons;
-  float radius = 15.0f;
+  // Calculate angle step based on visible weapons
+  float angle_step = (2.0f * M_PI) / num_visible;
 
-  // Setup drawing state
+  // Setup drawing state - clear depth so menu draws on top of world
   glDisable(GL_DEPTH_TEST);
   glClear(GL_DEPTH_BUFFER_BIT);
   glEnable(GL_DEPTH_TEST);
 
-  extern void R_DrawAliasModel(entity_t * e);
+  // Use R_DrawAliasModel_NoCull to bypass frustum culling for UI models
+  extern void R_DrawAliasModel_NoCull(entity_t *e);
 
-  for (int i = 0; i < num_vr_weapons; i++) {
-    vr_weapon_cmd_t *w = &vr_weapons[i];
+  // Store weapon positions for raycast selection
+  vec3_t weapon_positions[MAX_DYN_WEAPONS];
 
-    // Skip weapons we don't have
-    if (w->bitmask != 0 && !(cl.items & w->bitmask)) {
-      // Optional: draw grayed out or skip completely
-      continue;
+  for (int i = 0; i < num_visible; i++) {
+    vr_dyn_weapon_t *w = visible[i];
+
+    // Load the model by path
+    qmodel_t *mdl = NULL;
+    if (w->model_path) {
+      mdl = Mod_ForName(w->model_path, false);
+      // If pickup model not found, try viewmodel as fallback
+      if (!mdl || mdl->type != mod_alias) {
+        // Replace g_ with v_ for viewmodel fallback
+        char vmodel[64];
+        q_strlcpy(vmodel, w->model_path, sizeof(vmodel));
+        char *g_pos = strstr(vmodel, "/g_");
+        if (g_pos) {
+          g_pos[1] = 'v';
+          mdl = Mod_ForName(vmodel, false);
+        }
+      }
     }
+    if (!mdl && w->discovered && w->model_index > 0 && w->model_index < MAX_MODELS) {
+      mdl = cl.model_precache[w->model_index];
+    }
+    if (!mdl || mdl->type != mod_alias)
+      continue;
 
     float angle = i * angle_step;
 
-    // Calculate position in the circle relative to the controller
+    float radius = 5.0f + (num_visible * 1.5f);
+    if (num_visible > 4) {
+      // Alternate items into an inner and outer ring that also scales
+      radius = (i % 2 == 0) ? (radius * 0.55f) : radius;
+    }
+
+    // Calculate position in the circle relative to the view
     vec3_t pos;
     VectorCopy(origin, pos);
     VectorMA(pos, cos(angle) * radius, right, pos);
-    // negate sin(angle) because quake Z is up, but standard math is Y up.
-    // Assuming we want a vertical dial around the hand.
     VectorMA(pos, sin(angle) * radius, up, pos);
 
-    // Orient the weapon model
-    // Pitch it up 90 degrees so it stands vertically in the circle,
-    // and spin it slowly
+    // Orient the weapon model to face the player
     vec3_t angles;
-    VectorCopy(ctrl->orientation, angles);
-    angles[PITCH] -= 90.0f;
-    angles[YAW] += cl.time * 45.0f; // Spin animation
-
-    // Apply weapon-specific offsets locally to the orientation
-    vec3_t w_forward, w_right, w_up;
-    AngleVectors(angles, w_forward, w_right, w_up);
-    VectorMA(pos, w->offset[0], w_forward, pos);
-    VectorMA(pos, w->offset[1], w_right, pos);
-    VectorMA(pos, w->offset[2], w_up, pos);
+    angles[PITCH] = 0;
+    angles[YAW] = r_refdef.viewangles[YAW] + 180.0f + cl.time * 30.0f;
+    angles[ROLL] = 0;
 
     // Setup a temporary entity for rendering
     entity_t ent;
     memset(&ent, 0, sizeof(ent));
     VectorCopy(pos, ent.origin);
     VectorCopy(angles, ent.angles);
-    ent.model = Mod_ForName(w->model_path, true);
-    if (!ent.model)
-      continue;
-
+    ent.model = mdl;
     ent.frame = 0;
     ent.colormap = vid.colormap;
 
-    // Highlight selection
-    if (i == vr_weaponmenu_selection) {
-      ent.scale =
-          ENTSCALE_ENCODE((w->scale * 1.5f) != 0.0f ? (w->scale * 1.5f)
-                                                    : 1); // Scale up selected
-    } else {
-      ent.scale = ENTSCALE_ENCODE(w->scale != 0.0f ? w->scale : 1);
-    }
-
+    // Scale and highlight based on selection
+    qboolean is_selected = (i == vr_weaponmenu_selection);
+    qboolean is_equipped = (w->bitmask == cl.stats[STAT_ACTIVEWEAPON]);
+    
+    float scale = is_selected ? 0.35f : 0.20f;
+    ent.scale = ENTSCALE_ENCODE(scale);
     ent.alpha = ENTALPHA_ENCODE(1.0f);
 
-    // Render the model
+    // Render without frustum culling
     currententity = &ent;
-    R_DrawAliasModel(&ent);
+
+    if (is_selected) {
+      vr_weaponcolor[0] = 0.5f;
+      vr_weaponcolor[1] = 3.0f;
+      vr_weaponcolor[2] = 0.5f;
+    } else if (is_equipped) {
+      vr_weaponcolor[0] = 3.0f;
+      vr_weaponcolor[1] = 3.0f;
+      vr_weaponcolor[2] = 0.0f;
+    } else {
+      vr_weaponcolor[0] = 0.05f;
+      vr_weaponcolor[1] = 0.05f;
+      vr_weaponcolor[2] = 0.05f;
+    }
+
+    R_DrawAliasModel_NoCull(&ent);
+    
+    vr_weaponcolor[0] = 1.0f;
+    vr_weaponcolor[1] = 1.0f;
+    vr_weaponcolor[2] = 1.0f;
+
+    // Draw Ammo Text
+    int ammo = -1;
+    int max_ammo = 0;
+    switch (w->bitmask) {
+      case IT_SHOTGUN:
+      case IT_SUPER_SHOTGUN:
+        ammo = cl.stats[STAT_SHELLS]; max_ammo = 100; break;
+      case IT_NAILGUN:
+      case IT_SUPER_NAILGUN:
+        ammo = cl.stats[STAT_NAILS]; max_ammo = 200; break;
+      case IT_GRENADE_LAUNCHER:
+      case IT_ROCKET_LAUNCHER:
+        ammo = cl.stats[STAT_ROCKETS]; max_ammo = 100; break;
+      case IT_LIGHTNING:
+        ammo = cl.stats[STAT_CELLS]; max_ammo = 100; break;
+    }
+    
+    if (ammo >= 0) {
+      char ammo_str[32];
+      q_snprintf(ammo_str, sizeof(ammo_str), "%d/%d", ammo, max_ammo);
+      vec3_t text_color = {1.0f, 1.0f, 1.0f}; // white
+      if (ammo == 0) {
+          text_color[0] = 1.0f; text_color[1] = 0.0f; text_color[2] = 0.0f; // red
+      }
+      
+      vec3_t text_pos;
+      VectorCopy(pos, text_pos);
+      // Move slightly forward towards the camera and UP over the weapon
+      VectorMA(text_pos, -2.0f, forward, text_pos);
+      VectorMA(text_pos, 2.5f, up, text_pos);
+      
+      float tscale = 0.15f;
+      if (is_selected) {
+          tscale = 0.20f; // Bigger for selected
+      }
+
+      VR_DrawText3D(text_pos, right, up, ammo_str, tscale, text_color);
+    }
+
+    // Save position for selection raycasting
+    VectorCopy(pos, weapon_positions[i]);
   }
+
+  // --- Pointer-based selection: determine which weapon the right controller is aiming at ---
+  vec3_t aim_fwd, aim_right_dummy, aim_up_dummy;
+  AngleVectors(cl.handrot[1], aim_fwd, aim_right_dummy, aim_up_dummy);
+
+  float best_score = 0.85f; // Minimum threshold (~31 degree cone)
+  int best_index = -1;
+
+  for (int i = 0; i < num_visible; i++) {
+    vec3_t dir;
+    VectorSubtract(weapon_positions[i], cl.handpos[1], dir);
+    VectorNormalize(dir);
+
+    float score = DotProduct(aim_fwd, dir);
+    if (score > best_score) {
+      best_score = score;
+      best_index = i;
+    }
+  }
+
+  // If controller aiming doesn't work (zero pos), fallback to view direction
+  if (cl.handpos[1][0] == 0 && cl.handpos[1][1] == 0 && cl.handpos[1][2] == 0) {
+    vec3_t view_fwd, view_right_dummy, view_up_dummy;
+    AngleVectors(r_refdef.viewangles, view_fwd, view_right_dummy, view_up_dummy);
+
+    best_score = 0.85f;
+    best_index = -1;
+    for (int i = 0; i < num_visible; i++) {
+      vec3_t dir;
+      VectorSubtract(weapon_positions[i], r_refdef.vieworg, dir);
+      VectorNormalize(dir);
+      float score = DotProduct(view_fwd, dir);
+      if (score > best_score) {
+        best_score = score;
+        best_index = i;
+      }
+    }
+  }
+
+  vr_weaponmenu_selection = best_index;
 
   // Trigger haptic if selection changed
   static int last_vr_weaponmenu_selection = -1;
   if (vr_weaponmenu_selection != last_vr_weaponmenu_selection &&
       vr_weaponmenu_selection != -1) {
-    // Short pulse on right controller (index 0 for our menu logic)
-    VR_TriggerHaptic(0, 0.05f);
+    VR_TriggerHaptic(1, 0.05f); // Haptic on right controller
   }
   last_vr_weaponmenu_selection = vr_weaponmenu_selection;
 

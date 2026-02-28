@@ -905,6 +905,85 @@ cleanup:
 	glPopMatrix ();
 }
 
+/*
+=================
+R_DrawAliasModel_NoCull -- VR weapon wheel: identical to R_DrawAliasModel
+but WITHOUT R_CullModelForEntity frustum check, so UI elements always render.
+=================
+*/
+void R_DrawAliasModel_NoCull (entity_t *e)
+{
+	aliashdr_t	*paliashdr;
+	int	anim, skinnum;
+	gltexture_t	*tx, *fb;
+	lerpdata_t	lerpdata;
+
+	if (!e || !e->model)
+		return;
+
+	paliashdr = (aliashdr_t *)Mod_Extradata (e->model);
+	if (!paliashdr)
+		return;
+
+	R_SetupAliasFrame (paliashdr, e->frame, &lerpdata);
+	R_SetupEntityTransform (e, &lerpdata);
+
+	glPushMatrix ();
+	R_RotateForEntity (lerpdata.origin, lerpdata.angles, e->scale);
+	glTranslatef (paliashdr->scale_origin[0], paliashdr->scale_origin[1], paliashdr->scale_origin[2]);
+	glScalef (paliashdr->scale[0], paliashdr->scale[1], paliashdr->scale[2]);
+
+	overbright = false;
+	shading = false;
+
+	entalpha = ENTALPHA_DECODE(e->alpha);
+	if (entalpha == 0)
+		goto cleanup_nocull;
+
+	rs_aliaspolys += paliashdr->numtris;
+
+	GL_DisableMultitexture();
+	anim = (int)(cl.time*10) & 3;
+	skinnum = e->skinnum;
+	if ((skinnum >= paliashdr->numskins) || (skinnum < 0))
+		skinnum = 0;
+	tx = paliashdr->gltextures[skinnum][anim];
+	fb = paliashdr->fbtextures[skinnum][anim];
+
+	GL_Bind(tx);
+	glTexEnvf(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
+	
+	extern vec3_t vr_weaponcolor;
+	if (vr_weaponcolor[0] != 1.0f || vr_weaponcolor[1] != 1.0f || vr_weaponcolor[2] != 1.0f) {
+		glColor4f(vr_weaponcolor[0], vr_weaponcolor[1], vr_weaponcolor[2], entalpha);
+	} else {
+		glColor4f(1, 1, 1, entalpha);
+	}
+	GL_DrawAliasFrame (paliashdr, lerpdata);
+
+	if (fb)
+	{
+		GL_Bind(fb);
+		glEnable(GL_BLEND);
+		glBlendFunc (GL_ONE, GL_ONE);
+		glDepthMask(GL_FALSE);
+		glColor3f(entalpha, entalpha, entalpha);
+		GL_DrawAliasFrame (paliashdr, lerpdata);
+		glDepthMask(GL_TRUE);
+		glBlendFunc (GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+		glDisable(GL_BLEND);
+	}
+
+cleanup_nocull:
+	glTexEnvf(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_REPLACE);
+	glHint (GL_PERSPECTIVE_CORRECTION_HINT, GL_NICEST);
+	glShadeModel (GL_FLAT);
+	glDepthMask(GL_TRUE);
+	glDisable(GL_BLEND);
+	glColor3f(1,1,1);
+	glPopMatrix ();
+}
+
 //johnfitz -- values for shadow matrix
 #define SHADOW_SKEW_X -0.7 //skew along x axis. -0.7 to mimic glquake shadows
 #define SHADOW_SKEW_Y 0 //skew along y axis. 0 to mimic glquake shadows

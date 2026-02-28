@@ -68,7 +68,7 @@ static glmode_t glmodes[] = {
     {GL_LINEAR, GL_LINEAR_MIPMAP_LINEAR, "GL_LINEAR_MIPMAP_LINEAR"},
 };
 #define NUM_GLMODES (int)Q_COUNTOF(glmodes)
-static int glmode_idx = 3; /* linear */
+static int glmode_idx = 2; /* GL_NEAREST_MIPMAP_LINEAR */
 
 /*
 ===============

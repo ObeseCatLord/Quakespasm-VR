@@ -74,6 +74,7 @@ CL_ClearState
 */
 void CL_ClearState (void)
 {
+	VR_ResetWeaponTracking();
 	if (!sv.active)
 		Host_ClearMemory ();
 
