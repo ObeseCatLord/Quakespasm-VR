@@ -990,7 +990,7 @@ void SV_Physics_Client(edict_t *ent, int num) {
     } else {
       _VectorCopy(cl.handpos[1], adj);
       _VectorCopy(cl.handrot[1], handrot);
-      
+
       vec3_t ofs = {
           vr_weapon_offset[weaponCVarEntry * VARS_PER_WEAPON].value,
           vr_weapon_offset[weaponCVarEntry * VARS_PER_WEAPON + 1].value,

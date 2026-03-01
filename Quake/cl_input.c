@@ -161,7 +161,9 @@ void IN_JumpUp(void) { KeyUp(&in_jump); }
 void IN_VRWeaponMenuDown(void) {
   KeyDown(&in_vr_weaponmenu);
   cl.in_vr_weaponmenu = true;
-  Con_Printf("VR: Weapon menu DOWN - cl.in_vr_weaponmenu = true, cl.items = %d\n", cl.items);
+  Con_Printf(
+      "VR: Weapon menu DOWN - cl.in_vr_weaponmenu = true, cl.items = %d\n",
+      cl.items);
 }
 
 void IN_VRWeaponMenuUp(void) {
@@ -401,10 +403,10 @@ void CL_SendMove(const usercmd_t *cmd) {
   // VR Data Sync
   if (vr_enabled.value && (int)vr_aimmode.value == VR_AIMMODE_CONTROLLER) {
     MSG_WriteByte(&buf, 1); // VR flag active
-    
+
     vec3_t adj;
     _VectorCopy(cl.handpos[1], adj);
-    
+
     vec3_t ofs = {
         vr_weapon_offset[weaponCVarEntry * VARS_PER_WEAPON].value,
         vr_weapon_offset[weaponCVarEntry * VARS_PER_WEAPON + 1].value,
