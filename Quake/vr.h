@@ -94,6 +94,7 @@ extern cvar_t vr_gunmodely;
 extern cvar_t vr_crosshairy;
 extern cvar_t vr_floor_offset;
 extern cvar_t vr_projectilespawn_z_offset;
+extern cvar_t vr_haptic;
 extern cvar_t vr_hud_scale;
 extern cvar_t vr_menu_scale;
 

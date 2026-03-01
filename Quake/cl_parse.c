@@ -178,6 +178,11 @@ void CL_ParseStartSoundPacket(void) {
   for (i = 0; i < 3; i++)
     pos[i] = MSG_ReadCoord(cl.protocolflags);
 
+  // VR weapon haptics: vibrate right controller when local player fires
+  if (vr_enabled.value && vr_haptic.value && ent == cl.viewentity &&
+      channel == 1)
+    VR_TriggerHaptic(1, 0.0015f); // 1.5ms pulse on right controller
+
   S_StartSound(ent, channel, cl.sound_precache[sound_num], pos, volume / 255.0,
                attenuation);
 }

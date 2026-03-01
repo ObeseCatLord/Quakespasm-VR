@@ -254,6 +254,7 @@ DEFINE_CVAR(vr_floor_offset, -16, CVAR_ARCHIVE);
 DEFINE_CVAR(vr_snap_turn, 0, CVAR_ARCHIVE);
 DEFINE_CVAR(vr_180_snap_turn, 1, CVAR_ARCHIVE);
 DEFINE_CVAR(vr_turn_speed, 2, CVAR_ARCHIVE);
+DEFINE_CVAR(vr_haptic, 1, CVAR_ARCHIVE);
 DEFINE_CVAR(vr_msaa, 4, CVAR_ARCHIVE);
 DEFINE_CVAR(vr_movement_mode, 0, CVAR_ARCHIVE);
 DEFINE_CVAR(vr_joystick_yaw_multi, 1.0, CVAR_ARCHIVE);
@@ -947,6 +948,7 @@ void VID_VR_Init() {
   Cvar_RegisterVariable(&vr_joystick_axis_exponent);
   Cvar_RegisterVariable(&vr_joystick_deadzone_trunc);
   Cvar_RegisterVariable(&vr_joystick_yaw_multi);
+  Cvar_RegisterVariable(&vr_haptic);
   Cvar_RegisterVariable(&vr_joystick_axis_menu_deadzone_extra);
   Cvar_RegisterVariable(&vr_lefthanded);
   Cvar_RegisterVariable(&vr_movement_mode);
