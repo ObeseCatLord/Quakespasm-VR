@@ -14,6 +14,8 @@ find_package(CURL)
 
 find_package(PkgConfig)
 
+option(USE_VR "Build with OpenXR VR support" ON)
+
 if (PKG_CONFIG_FOUND)
     pkg_check_modules(PC_MPG123 IMPORTED_TARGET libmpg123)
     pkg_check_modules(PC_MAD IMPORTED_TARGET mad)
@@ -24,6 +26,9 @@ if (PKG_CONFIG_FOUND)
     pkg_check_modules(PC_MIKMOD IMPORTED_TARGET libmikmod)
     pkg_check_modules(PC_MODPLUG IMPORTED_TARGET libmodplug)
     pkg_check_modules(PC_XMP IMPORTED_TARGET libxmp)
+    if (USE_VR)
+        pkg_check_modules(PC_OPENXR IMPORTED_TARGET openxr)
+    endif()
 endif()
 
 if (WIN32)
@@ -82,6 +87,17 @@ if (CURL_FOUND)
 	target_link_libraries(ironwail PRIVATE CURL::libcurl)
 else()
 	target_compile_definitions(ironwail PRIVATE WITHOUT_CURL)
+endif()
+
+if (USE_VR AND PC_OPENXR_FOUND)
+	target_compile_definitions(ironwail PRIVATE VR_ENABLED)
+	target_link_libraries(ironwail PRIVATE PkgConfig::PC_OPENXR)
+	if (UNIX)
+		# OpenXR on Linux requires X11/GLX bindings
+		target_link_libraries(ironwail PRIVATE X11 GL)
+	endif()
+elseif (USE_VR AND NOT PC_OPENXR_FOUND)
+	message(WARNING "USE_VR=ON but openxr not found via pkg-config; building without VR support")
 endif()
 
 if (OpenGL::OpenGL)
