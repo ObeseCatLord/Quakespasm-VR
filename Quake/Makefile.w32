@@ -8,6 +8,9 @@
 ### Enable/disable SDL2
 USE_SDL2=1
 
+### Enable/Disable OpenXR VR support
+USE_VR=1
+
 ### Enable/Disable Curl
 USE_CURL=1
 
@@ -104,6 +107,15 @@ CFLAGS     += -I../Windows/curl/include
 LDFLAGS    += -L../Windows/curl/lib/x86
 else
 CFLAGS     += -DWITHOUT_CURL
+endif
+
+ifeq ($(USE_VR),1)
+VR_OBJS    = vr_openxr.o vr_render.o vr_weapons.o vr_input.o vr_menu.o
+CFLAGS     += -DVR_ENABLED -I../Windows/openxr/include
+LDFLAGS    += -L../Windows/openxr/lib/x86
+NET_LIBS   += -lopenxr_loader
+else
+VR_OBJS    =
 endif
 
 ifneq ($(VORBISLIB),vorbis)
@@ -282,7 +294,8 @@ OBJS = strlcat.o \
 	sv_user.o \
 	world.o \
 	zone.o \
-	$(SYSOBJ_SYS) $(SYSOBJ_MAIN)
+	$(SYSOBJ_SYS) $(SYSOBJ_MAIN) \
+	$(VR_OBJS)
 
 OBJDEPS := $(OBJS:%.o=%.d)
 OBJS += $(SYSOBJ_RES)

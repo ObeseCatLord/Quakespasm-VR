@@ -25,19 +25,20 @@
 #ifndef _BGMUSIC_H_
 #define _BGMUSIC_H_
 
-extern qboolean	bgmloop;
-extern cvar_t	bgm_extmusic;
+#include "quakedef.h"
 
-qboolean BGM_Init (void);
-void BGM_Shutdown (void);
+extern qboolean bgmloop;
+extern cvar_t bgm_extmusic;
 
-void BGM_Play (const char *filename);
-void BGM_Stop (void);
-void BGM_Update (void);
-void BGM_Pause (void);
-void BGM_Resume (void);
+qboolean BGM_Init(void);
+void BGM_Shutdown(void);
 
-void BGM_PlayCDtrack (byte track, qboolean looping);
+void BGM_Play(const char *filename);
+void BGM_Stop(void);
+void BGM_Update(void);
+void BGM_Pause(void);
+void BGM_Resume(void);
 
-#endif	/* _BGMUSIC_H_ */
+void BGM_PlayCDtrack(byte track, qboolean looping);
 
+#endif /* _BGMUSIC_H_ */

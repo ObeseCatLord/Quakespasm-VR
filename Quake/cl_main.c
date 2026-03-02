@@ -167,6 +167,10 @@ void CL_Disconnect (void)
 
 void CL_Disconnect_f (void)
 {
+#ifdef VR_ENABLED
+	if (VR_Enabled ())
+		VR_ResetWeaponTracking ();
+#endif
 	CL_Disconnect ();
 	BGM_Stop ();
 	CDAudio_Stop ();
@@ -515,6 +519,11 @@ void CL_RelinkEntities (void)
 // determine partial update time
 	frac = CL_LerpPoint ();
 
+#ifdef VR_ENABLED
+	if (VR_Enabled ())
+		VR_TrackWeapons ();
+#endif
+
 	cl_numvisedicts = 0;
 
 //
@@ -801,6 +810,9 @@ void CL_AccumulateCmd (void)
 
 		//accumulate movement from other devices
 		IN_Move (&cl.pendingcmd);
+#ifdef VR_ENABLED
+		VR_Move (&cl.pendingcmd);
+#endif
 	}
 }
 

@@ -161,6 +161,13 @@ typedef struct client_s
 	int				oldstats_i[MAX_CL_STATS];		//previous values of stats. if these differ from the current values, reflag resendstats.
 	float			oldstats_f[MAX_CL_STATS];		//previous values of stats. if these differ from the current values, reflag resendstats.
 	char			*oldstats_s[MAX_CL_STATS];
+
+#ifdef VR_ENABLED
+	qboolean		is_vr_client;
+	vec3_t			vr_handpos;
+	vec3_t			vr_handrot;
+	vec3_t			vr_roomscale_accum;
+#endif
 } client_t;
 
 
@@ -304,6 +311,7 @@ void SV_MoveToGoal (void);
 
 void SV_CheckForNewClients (void);
 void SV_RunClients (void);
+void SV_ReadClientMove (usercmd_t *move, qboolean is_vr);
 void SV_SaveSpawnparms (void);
 void SV_SpawnServer (const char *server);
 

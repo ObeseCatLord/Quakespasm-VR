@@ -25,6 +25,9 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 // rights reserved.
 
 #include "quakedef.h"
+#ifdef VR_ENABLED
+#include "vr.h"
+#endif
 
 extern cvar_t cl_maxpitch; //johnfitz -- variable pitch clamping
 extern cvar_t cl_minpitch; //johnfitz -- variable pitch clamping
@@ -384,9 +387,9 @@ void CL_SendMove (const usercmd_t *cmd)
 	int		i;
 	int		bits;
 	sizebuf_t	buf;
-	byte	data[128];
+	byte	data[256];
 
-	buf.maxsize = 128;
+	buf.maxsize = 256;
 	buf.cursize = 0;
 	buf.data = data;
 
@@ -397,17 +400,35 @@ void CL_SendMove (const usercmd_t *cmd)
 	//
 	// send the movement message
 	//
+#ifdef VR_ENABLED
+		if (VR_Enabled () && !vr_vanilla_compat.value)
+			MSG_WriteByte (&buf, clc_vrmove);
+		else
+#endif
 		MSG_WriteByte (&buf, clc_move);
 
 		MSG_WriteFloat (&buf, cl.mtime[0]);	// so server can get ping times
 
+	// VR aim mode: override sent angles with controller direction
+	{
+		vec3_t	send_angles;
+		VectorCopy (cl.viewangles, send_angles);
+#ifdef VR_ENABLED
+		if (VR_Enabled () && vr_aimmode.value == VR_AIMMODE_CONTROLLER)
+		{
+			vec3_t	hpos, hangles;
+			VR_GetHandPose (VR_HAND_RIGHT, hpos, hangles);
+			VectorCopy (hangles, send_angles);
+		}
+#endif
 		for (i=0 ; i<3 ; i++)
 			//johnfitz -- 16-bit angles for PROTOCOL_FITZQUAKE
 			if (cl.protocol == PROTOCOL_NETQUAKE)
-				MSG_WriteAngle (&buf, cl.viewangles[i], cl.protocolflags);
+				MSG_WriteAngle (&buf, send_angles[i], cl.protocolflags);
 			else
-				MSG_WriteAngle16 (&buf, cl.viewangles[i], cl.protocolflags);
+				MSG_WriteAngle16 (&buf, send_angles[i], cl.protocolflags);
 			//johnfitz
+	}
 
 		MSG_WriteShort (&buf, cmd->forwardmove);
 		MSG_WriteShort (&buf, cmd->sidemove);
@@ -420,6 +441,13 @@ void CL_SendMove (const usercmd_t *cmd)
 
 		if ( in_attack.state & 3 )
 			bits |= 1;
+		if (in_attack.state & 2)
+		{
+#ifdef VR_ENABLED
+			if (VR_Enabled ())
+				VR_TriggerHaptic (VR_HAND_RIGHT, 0.1f, 0, 0.7f);
+#endif
+		}
 		in_attack.state &= ~2;
 
 		if (in_jump.state & 3)
@@ -428,8 +456,34 @@ void CL_SendMove (const usercmd_t *cmd)
 
 		MSG_WriteByte (&buf, bits);
 
+#ifdef VR_ENABLED
+		if (in_impulse > 0 && VR_Enabled ())
+		{
+			vr_last_sent_impulse = in_impulse;
+			vr_last_sent_impulse_time = realtime;
+		}
+#endif
 		MSG_WriteByte (&buf, in_impulse);
 		in_impulse = 0;
+
+#ifdef VR_ENABLED
+		if (VR_Enabled () && !vr_vanilla_compat.value)
+		{
+			vec3_t	pos, angles, roomscale;
+			VR_GetHandPose (VR_HAND_RIGHT, pos, angles);
+			VR_GetRoomscaleAccum (roomscale);
+
+			MSG_WriteFloat (&buf, pos[0]);
+			MSG_WriteFloat (&buf, pos[1]);
+			MSG_WriteFloat (&buf, pos[2]);
+			MSG_WriteFloat (&buf, angles[0]);
+			MSG_WriteFloat (&buf, angles[1]);
+			MSG_WriteFloat (&buf, angles[2]);
+			MSG_WriteFloat (&buf, roomscale[0]);
+			MSG_WriteFloat (&buf, roomscale[1]);
+			MSG_WriteFloat (&buf, roomscale[2]);
+		}
+#endif
 	}
 
 //

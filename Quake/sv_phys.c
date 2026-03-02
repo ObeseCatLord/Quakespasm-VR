@@ -946,9 +946,25 @@ Player character actions
 void SV_Physics_Client (edict_t	*ent, int num)
 {
 	qboolean wasunderwater, forceunderwater;
+#ifdef VR_ENABLED
+	client_t	*cl = &svs.clients[num-1];
+	vec3_t		saved_origin;
+#endif
 
 	if ( ! svs.clients[num-1].active )
 		return;		// unconnected slot
+
+#ifdef VR_ENABLED
+	if (cl->is_vr_client)
+	{
+		// apply accumulated roomscale delta so the player entity tracks physical movement
+		VectorAdd (ent->v.origin, cl->vr_roomscale_accum, ent->v.origin);
+		VectorClear (cl->vr_roomscale_accum);
+		// shift origin to hand position so QC fires projectiles from the hand
+		VectorCopy (ent->v.origin, saved_origin);
+		VectorCopy (cl->vr_handpos, ent->v.origin);
+	}
+#endif
 
 //
 // call standard client pre-think
@@ -956,6 +972,14 @@ void SV_Physics_Client (edict_t	*ent, int num)
 	pr_global_struct->time = qcvm->time;
 	pr_global_struct->self = EDICT_TO_PROG(ent);
 	PR_ExecuteProgram (pr_global_struct->PlayerPreThink);
+
+#ifdef VR_ENABLED
+	if (cl->is_vr_client)
+	{
+		// restore origin after pre-think; projectile spawning is done
+		VectorCopy (saved_origin, ent->v.origin);
+	}
+#endif
 
 //
 // do a move

@@ -435,7 +435,7 @@ void SV_ClientThink (void)
 SV_ReadClientMove
 ===================
 */
-void SV_ReadClientMove (usercmd_t *move)
+void SV_ReadClientMove (usercmd_t *move, qboolean is_vr)
 {
 	int		i;
 	vec3_t	angle;
@@ -470,6 +470,28 @@ void SV_ReadClientMove (usercmd_t *move)
 	i = MSG_ReadByte ();
 	if (i)
 		host_client->edict->v.impulse = i;
+
+#ifdef VR_ENABLED
+	if (is_vr)
+	{
+		vec3_t	rs;
+		host_client->is_vr_client = true;
+		host_client->vr_handpos[0] = MSG_ReadFloat ();
+		host_client->vr_handpos[1] = MSG_ReadFloat ();
+		host_client->vr_handpos[2] = MSG_ReadFloat ();
+		host_client->vr_handrot[0] = MSG_ReadFloat ();
+		host_client->vr_handrot[1] = MSG_ReadFloat ();
+		host_client->vr_handrot[2] = MSG_ReadFloat ();
+		rs[0] = MSG_ReadFloat ();
+		rs[1] = MSG_ReadFloat ();
+		rs[2] = MSG_ReadFloat ();
+		VectorAdd (host_client->vr_roomscale_accum, rs, host_client->vr_roomscale_accum);
+	}
+	else
+	{
+		host_client->is_vr_client = false;
+	}
+#endif
 }
 
 /*
@@ -600,8 +622,14 @@ nextmsg:
 				return false;
 
 			case clc_move:
-				SV_ReadClientMove (&host_client->cmd);
+				SV_ReadClientMove (&host_client->cmd, false);
 				break;
+
+#ifdef VR_ENABLED
+			case clc_vrmove:
+				SV_ReadClientMove (&host_client->cmd, true);
+				break;
+#endif
 			}
 		}
 	} while (ret == 1);

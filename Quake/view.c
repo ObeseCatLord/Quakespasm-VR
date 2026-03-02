@@ -343,6 +343,14 @@ void V_ParseDamage (void)
 	v_dmg_pitch = count*side*v_kickpitch.value;
 
 	v_dmg_time = v_kicktime.value;
+
+#ifdef VR_ENABLED
+	if (VR_Enabled ())
+	{
+		VR_TriggerHaptic (VR_HAND_LEFT, 0.2f, 0, 0.8f);
+		VR_TriggerHaptic (VR_HAND_RIGHT, 0.2f, 0, 0.8f);
+	}
+#endif
 }
 
 
@@ -891,6 +899,11 @@ void V_CalcRefdef (void)
 
 	if (chase_active.value)
 		Chase_UpdateForDrawing (); //johnfitz
+
+#ifdef VR_ENABLED
+	if (VR_Enabled ())
+		VR_ApplyViewOverride (r_refdef.vieworg, r_refdef.viewangles);
+#endif
 }
 
 /*

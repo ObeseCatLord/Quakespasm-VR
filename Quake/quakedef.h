@@ -290,6 +290,10 @@ typedef struct
 #include "cdaudio.h"
 #include "glquake.h"
 
+#ifdef VR_ENABLED
+#include "vr.h"
+#endif
+
 
 //=============================================================================
 

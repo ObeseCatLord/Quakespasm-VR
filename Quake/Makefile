@@ -10,6 +10,9 @@ DO_USERDIRS=1
 ### Enable/Disable SDL2
 USE_SDL2=1
 
+### Enable/Disable OpenXR VR support
+USE_VR=1
+
 ### Enable/Disable Curl
 USE_CURL=1
 
@@ -106,6 +109,14 @@ NET_LIBS   += -lcurl
 CFLAGS     += $(shell $(PKG_CONFIG) --cflags libcurl)
 else
 CFLAGS     += -DWITHOUT_CURL
+endif
+
+ifeq ($(USE_VR),1)
+VR_OBJS    = vr_openxr.o vr_render.o vr_weapons.o vr_input.o vr_menu.o
+CFLAGS     += -DVR_ENABLED $(shell $(PKG_CONFIG) --cflags openxr)
+NET_LIBS   += $(shell $(PKG_CONFIG) --libs openxr)
+else
+VR_OBJS    =
 endif
 
 ifneq ($(VORBISLIB),vorbis)
@@ -276,7 +287,8 @@ OBJS = strlcat.o \
 	sv_user.o \
 	world.o \
 	zone.o \
-	$(SYSOBJ_SYS) $(SYSOBJ_MAIN)
+	$(SYSOBJ_SYS) $(SYSOBJ_MAIN) \
+	$(VR_OBJS)
 
 OBJDEPS := $(OBJS:%.o=%.d)
 OBJS += $(SYSOBJ_RES)

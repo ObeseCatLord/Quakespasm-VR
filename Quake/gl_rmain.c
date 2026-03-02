@@ -22,6 +22,9 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 // r_main.c
 
 #include "quakedef.h"
+#ifdef VR_ENABLED
+#include "vr.h"
+#endif
 
 qboolean	r_cache_thrash;		// compatability
 
@@ -1157,6 +1160,36 @@ void R_DrawViewModel (void)
 	if (!R_IsViewModelVisible ())
 		return;
 
+#ifdef VR_ENABLED
+	if (VR_Enabled ())
+	{
+		vec3_t	hand_origin, hand_angles, offset;
+		float	scale;
+		vec3_t	v_forward, v_right, v_up;
+
+		VR_GetHandPose (VR_HAND_RIGHT, hand_origin, hand_angles);
+		VR_GetWeaponOffset (e->model->name, offset, &scale);
+
+		hand_angles[0] += vr_gunmodelpitch.value;
+		hand_angles[1] += vr_gunangle.value;
+
+		AngleVectors (hand_angles, v_forward, v_right, v_up);
+
+		VectorCopy (hand_origin, e->origin);
+		VectorMA (e->origin, offset[0], v_right, e->origin);
+		VectorMA (e->origin, offset[1], v_up, e->origin);
+		VectorMA (e->origin, offset[2], v_forward, e->origin);
+
+		VectorCopy (hand_angles, e->angles);
+		e->scale = ENTSCALE_ENCODE (scale * vr_gunmodelscale.value);
+
+		if (VR_CheckWallCollision (hand_origin, hand_angles))
+			e->alpha = 128;
+		else
+			e->alpha = 255;
+	}
+#endif
+
 	GL_BeginGroup ("View model");
 
 	// hack the depth range to prevent view model from poking into walls
@@ -1921,6 +1954,10 @@ void R_RenderScene (void)
 	R_ShowBoundingBoxes (); //johnfitz
 
 	R_ShowPointFile ();
+
+#ifdef VR_ENABLED
+	VR_DrawWeaponMenu ();
+#endif
 }
 
 /*
@@ -2012,6 +2049,14 @@ void R_RenderView (void)
 
 	if (r_norefresh.value)
 		return;
+
+#ifdef VR_ENABLED
+	if (VR_Enabled ())
+	{
+		VR_Render ();
+		return;
+	}
+#endif
 
 	if (!cl.worldmodel)
 		Sys_Error ("R_RenderView: NULL worldmodel");

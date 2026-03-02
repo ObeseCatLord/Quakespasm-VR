@@ -1173,6 +1173,22 @@ void SV_WriteClientdataToMessage (edict_t *ent, sizebuf_t *msg)
 	}
 }
 
+#ifdef VR_ENABLED
+/*
+=======================
+SV_WriteVRPosesToClient
+
+Send VR hand/head poses of all VR clients to the given client.
+Stub — reserved for future multiplayer VR hand tracking.
+=======================
+*/
+static void SV_WriteVRPosesToClient (client_t *client, sizebuf_t *msg)
+{
+	(void)client;
+	(void)msg;
+}
+#endif
+
 /*
 =======================
 SV_SendClientDatagram
@@ -1197,6 +1213,10 @@ qboolean SV_SendClientDatagram (client_t *client)
 
 // add the client specific data to the datagram
 	SV_WriteClientdataToMessage (client->edict, &msg);
+
+#ifdef VR_ENABLED
+	SV_WriteVRPosesToClient (client, &msg);
+#endif
 
 	SV_WriteEntitiesToClient (client->edict, &msg);
 

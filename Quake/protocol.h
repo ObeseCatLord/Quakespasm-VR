@@ -233,6 +233,10 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #define	clc_move		3		// [usercmd_t]
 #define	clc_stringcmd	4		// [string] message
 
+#ifdef VR_ENABLED
+#define	clc_vrmove		10		// [usercmd_t] + VR tracking data (pos, rot, roomscale)
+#endif
+
 //
 // temp entity events
 //

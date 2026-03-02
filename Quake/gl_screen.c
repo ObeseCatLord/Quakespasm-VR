@@ -2111,6 +2111,15 @@ void SCR_UpdateScreen (void)
 
 	V_RenderView ();
 
+#ifdef VR_ENABLED
+	if (VR_Enabled ())
+	{
+		GL_EndGroup ();
+		GL_EndRendering ();
+		return;
+	}
+#endif
+
 	GL_BeginGroup ("2D");
 
 	GL_Set2D ();

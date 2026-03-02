@@ -1176,6 +1176,10 @@ void CL_ParseServerMessage (void)
 		case svc_serverinfo:
 			CL_ParseServerInfo ();
 			vid.recalc_refdef = true;	// leave intermission full screen
+#ifdef VR_ENABLED
+			if (VR_Enabled ())
+				VR_ResetWeaponTracking ();
+#endif
 			break;
 
 		case svc_setangle:

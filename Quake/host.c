@@ -1280,6 +1280,9 @@ void _Host_Frame (double time)
 	if (host_speeds.value)
 		time2 = Sys_DoubleTime ();
 
+#ifdef VR_ENABLED
+	VR_UpdatePoses ();
+#endif
 	SCR_UpdateScreen ();
 
 	CL_RunParticles (); //johnfitz -- seperated from rendering
@@ -1397,6 +1400,9 @@ void Host_Init (void)
 	Cmd_Init ();
 	LOG_Init (host_parms);
 	Cvar_Init (); //johnfitz
+#ifdef VR_ENABLED
+	VR_InitCommands ();
+#endif
 	COM_Init ();
 	COM_InitFilesystem ();
 	Host_InitLocal ();
@@ -1439,6 +1445,10 @@ void Host_Init (void)
 		SaveList_Init ();
 		SkyList_Init ();
 		M_CheckMods ();
+#ifdef VR_ENABLED
+		VR_OpenXR_Init ();
+		VR_OpenXR_InitActions ();
+#endif
 	}
 
 	LOC_Init (); // for 2021 rerelease support.
@@ -1521,6 +1531,9 @@ void Host_Shutdown(void)
 		S_Shutdown ();
 		IN_Shutdown ();
 		VID_Shutdown();
+#ifdef VR_ENABLED
+		VR_OpenXR_Shutdown ();
+#endif
 	}
 
 	LOG_Close ();
