@@ -114,7 +114,7 @@ endif
 ifeq ($(USE_VR),1)
 VR_OBJS    = vr_openxr.o vr_render.o vr_weapons.o vr_input.o vr_menu.o
 CFLAGS     += -DVR_ENABLED $(shell $(PKG_CONFIG) --cflags openxr)
-NET_LIBS   += $(shell $(PKG_CONFIG) --libs openxr)
+NET_LIBS   += $(shell $(PKG_CONFIG) --libs openxr) -lX11 -lGL
 else
 VR_OBJS    =
 endif

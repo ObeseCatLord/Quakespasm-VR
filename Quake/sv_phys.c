@@ -948,7 +948,7 @@ void SV_Physics_Client (edict_t	*ent, int num)
 	qboolean wasunderwater, forceunderwater;
 #ifdef VR_ENABLED
 	client_t	*cl = &svs.clients[num-1];
-	vec3_t		saved_origin;
+	vec3_t		saved_origin = {0, 0, 0};
 #endif
 
 	if ( ! svs.clients[num-1].active )
@@ -959,7 +959,7 @@ void SV_Physics_Client (edict_t	*ent, int num)
 	{
 		// apply accumulated roomscale delta so the player entity tracks physical movement
 		VectorAdd (ent->v.origin, cl->vr_roomscale_accum, ent->v.origin);
-		VectorClear (cl->vr_roomscale_accum);
+		VectorCopy (vec3_origin, cl->vr_roomscale_accum);
 		// shift origin to hand position so QC fires projectiles from the hand
 		VectorCopy (ent->v.origin, saved_origin);
 		VectorCopy (cl->vr_handpos, ent->v.origin);
