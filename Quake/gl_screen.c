@@ -1024,7 +1024,7 @@ void SCR_UpdateScreenContent(void)
 {
 	V_RenderView();
 
-	if (vr_enabled.value && !con_forcedup)
+	if (vr_enabled.value)
 	{
 		VR_Draw2D();
 	}
@@ -1120,7 +1120,7 @@ void SCR_UpdateScreen (void)
 //
 	SCR_SetUpToDrawConsole ();
 
-	if (vr_enabled.value && !con_forcedup)
+	if (vr_enabled.value)
 	{
 		VR_UpdateScreenContent(); // phoboslab
 	}
