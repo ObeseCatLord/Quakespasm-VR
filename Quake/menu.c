@@ -1299,7 +1299,8 @@ const char *bindnames[][2] = {{"+attack", "attack"},
                               {"+klook", "keyboard look"},
                               {"+moveup", "swim up"},
                               {"+movedown", "swim down"},
-                              {"+vr_weaponmenu", "VR weapon wheel"}};
+                              {"+vr_weaponmenu", "VR weapon wheel"},
+                              {"vr_turn180", "180 snap turn"}};
 
 #define NUMCOMMANDS Q_COUNTOF(bindnames)
 

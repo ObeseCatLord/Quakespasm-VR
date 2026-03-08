@@ -1922,12 +1922,14 @@ void VR_Move(usercmd_t *cmd) {
   DoKey(&controllers[1], vr::k_EButton_Axis4, K_JOY4);
 
   if (key_dest == key_menu) {
-    for (int i = 0; i < 2; i++) {
-      DoAxis(&controllers[i], 0, K_LEFTARROW, K_RIGHTARROW,
-             vr_joystick_axis_menu_deadzone_extra.value);
-      DoAxis(&controllers[i], 1, K_DOWNARROW, K_UPARROW,
-             vr_joystick_axis_menu_deadzone_extra.value);
-    }
+    DoAxis(&controllers[0], 0, K_LEFTARROW, K_RIGHTARROW,
+           vr_joystick_axis_menu_deadzone_extra.value);
+    DoAxis(&controllers[0], 1, K_DOWNARROW, K_UPARROW,
+           vr_joystick_axis_menu_deadzone_extra.value);
+
+    // Allow binding right stick in menu
+    DoAxis(&controllers[1], 1, K_VR_RIGHT_STICK_DOWN, K_VR_RIGHT_STICK_UP,
+           vr_joystick_axis_menu_deadzone_extra.value);
 
     // Enter in menu with Trigger
     DoTrigger(&controllers[1], K_ENTER);
@@ -2032,42 +2034,8 @@ void VR_Move(usercmd_t *cmd) {
           vr_turn_speed.value;
     }
 
-    // Right stick forward (Y-axis on controller 1) activates weapon wheel
-    float rStickY = GetAxis(&controllers[1].state, 1, 0.0);
-    static qboolean rStickWeaponMenuActive = false;
-    static qboolean rStickSnap180Active = false;
-
-    if (rStickY > 0.5f && !rStickWeaponMenuActive) {
-      // Stick pushed forward - open weapon menu
-      rStickWeaponMenuActive = true;
-      cl.in_vr_weaponmenu = true;
-    } else if (rStickY < -0.5f && !rStickSnap180Active &&
-               vr_180_snap_turn.value) {
-      // Stick pulled back - 180 snap turn
-      rStickSnap180Active = true;
-      vrYaw -= 180.0f;
-    } else if (rStickY < 0.3f && rStickY > -0.3f) {
-      rStickSnap180Active = false;
-      if (rStickWeaponMenuActive) {
-        // Stick released - close weapon menu and fire selection
-        rStickWeaponMenuActive = false;
-        cl.in_vr_weaponmenu = false;
-
-        // ONLY send network command upon release!
-        if (vr_weaponmenu_selection >= 0 &&
-            Sys_DoubleTime() >= vr_next_weapon_switch_time) {
-          int impulse = VR_GetSelectedWeaponImpulse(vr_weaponmenu_selection);
-          if (impulse > 0) {
-            vr_next_weapon_switch_time =
-                Sys_DoubleTime() + 0.3; // 300ms debounce
-            char cmd[64];
-            q_snprintf(cmd, sizeof(cmd), "impulse %d\n", impulse);
-            Cbuf_AddText(cmd);
-          }
-          vr_weaponmenu_selection = -1;
-        }
-      }
-    }
+    DoAxis(&controllers[1], 1, K_VR_RIGHT_STICK_DOWN, K_VR_RIGHT_STICK_UP,
+           vr_joystick_axis_menu_deadzone_extra.value);
 
     if (isViveWand[1]) {
       // Vive wands only have a trackpad and a menu button. Provide trackpad
@@ -2087,6 +2055,12 @@ void VR_Move(usercmd_t *cmd) {
         }
       }
     }
+  }
+}
+
+extern "C" void IN_VRTurn180_f(void) {
+  if (vr_enabled.value && vr_180_snap_turn.value) {
+    vrYaw -= 180.0f;
   }
 }
 

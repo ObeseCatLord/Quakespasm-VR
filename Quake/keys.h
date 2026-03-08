@@ -156,6 +156,8 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #define K_YBUTTON 250
 #define K_LTRIGGER 251
 #define K_RTRIGGER 252
+#define K_VR_RIGHT_STICK_UP 253
+#define K_VR_RIGHT_STICK_DOWN 254
 
 #define MAX_KEYS 256
 

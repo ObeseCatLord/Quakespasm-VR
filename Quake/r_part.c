@@ -69,6 +69,7 @@ int R_ParticleTextureLookup(int x, int y, int sharpness) {
 R_InitParticleTextures -- johnfitz -- rewritten
 ===============
 */
+static void R_SetParticleTexture_f(cvar_t *var); // forward declaration
 void R_InitParticleTextures(void) {
   int x, y;
   static byte particle1_data[64 * 64 * 4];
@@ -97,7 +98,7 @@ void R_InitParticleTextures(void) {
       *dst++ = 255;
       *dst++ = 255;
       *dst++ = 255;
-      *dst++ = x || y ? 0 : 255;
+      *dst++ = 255;
     }
   particletexture2 =
       TexMgr_LoadImage(NULL, "particle2", 2, 2, SRC_RGBA, particle2_data, "",
@@ -118,9 +119,8 @@ void R_InitParticleTextures(void) {
                        (src_offset_t)particle3_data,
                        TEXPREF_PERSIST | TEXPREF_ALPHA | TEXPREF_LINEAR);
 
-  // set default
-  particletexture = particletexture1;
-  texturescalefactor = 1.27;
+  // set default based on cvar
+  R_SetParticleTexture_f(NULL);
 }
 
 /*
@@ -765,8 +765,6 @@ void CL_RunParticles(void) {
     }
   }
 }
-
-
 
 /*
 ===============

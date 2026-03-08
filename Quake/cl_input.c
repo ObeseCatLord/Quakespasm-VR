@@ -161,9 +161,6 @@ void IN_JumpUp(void) { KeyUp(&in_jump); }
 void IN_VRWeaponMenuDown(void) {
   KeyDown(&in_vr_weaponmenu);
   cl.in_vr_weaponmenu = true;
-  Con_Printf(
-      "VR: Weapon menu DOWN - cl.in_vr_weaponmenu = true, cl.items = %d\n",
-      cl.items);
 }
 
 void IN_VRWeaponMenuUp(void) {
@@ -180,7 +177,6 @@ void IN_VRWeaponMenuUp(void) {
       char cmd[64];
       q_snprintf(cmd, sizeof(cmd), "impulse %d\n", impulse);
       Cbuf_AddText(cmd);
-      Con_Printf("VR: Selected weapon impulse %d\n", impulse);
     }
   }
 }
@@ -415,11 +411,11 @@ void CL_SendMove(const usercmd_t *cmd) {
 
     vec3_t fwd2, right, up;
     AngleVectors(cl.handrot[1], fwd2, right, up);
-    fwd2[0] *= vr_gunmodelscale.value * ofs[2];
-    fwd2[1] *= vr_gunmodelscale.value * ofs[2];
-    fwd2[2] *= vr_gunmodelscale.value * ofs[2];
-    VectorAdd(adj, fwd2, adj);
-    adj[2] -= vr_projectilespawn_z_offset.value; // quakec assumes 16 offset
+
+    // Quake model coordinates: X = Forward, Y = Left (-Right), Z = Up
+    VectorMA(adj, vr_gunmodelscale.value * ofs[0], fwd2, adj);
+    VectorMA(adj, -(vr_gunmodelscale.value * ofs[1]), right, adj);
+    VectorMA(adj, vr_gunmodelscale.value * ofs[2], up, adj);
 
     MSG_WriteFloat(&buf, adj[0]);
     MSG_WriteFloat(&buf, adj[1]);
@@ -496,4 +492,5 @@ void CL_InitInput(void) {
   Cmd_AddCommand("-mlook", IN_MLookUp);
   Cmd_AddCommand("+vr_weaponmenu", IN_VRWeaponMenuDown);
   Cmd_AddCommand("-vr_weaponmenu", IN_VRWeaponMenuUp);
+  Cmd_AddCommand("vr_turn180", IN_VRTurn180_f);
 }

@@ -54,6 +54,7 @@ void VID_VR_Init();
 void VID_VR_Shutdown();
 qboolean VR_Enable();
 void VID_VR_Disable();
+void IN_VRTurn180_f(void);
 
 void VR_UpdateScreenContent();
 void VR_ShowCrosshair();
