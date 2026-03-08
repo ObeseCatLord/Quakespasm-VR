@@ -894,11 +894,15 @@ static void SV_ApplyVRWeaponOffset(edict_t *ent, int num, qboolean is_remote_vr,
     // because those push projectiles out to the actual gun muzzle and simulate
     // alternate barrels (like the super nailgun).
     // Grenades use a different logic in QuakeC so we don't subtract the massive
-    // Z offset.
-    if ((int)ent->v.weapon != IT_GRENADE_LAUNCHER) {
-      adj[2] -= vr_projectilespawn_z_offset.value; // Cancellation of flat +16 Z
+    // Z offset. Nailguns and grenade launcher spawn slightly high so they get
+    // a small additional downward nudge.
+    int weapon = (int)ent->v.weapon;
+    if (weapon == IT_NAILGUN || weapon == IT_SUPER_NAILGUN) {
+      adj[2] -= vr_projectilespawn_z_offset.value + 9.0f;
+    } else if (weapon == IT_GRENADE_LAUNCHER) {
+      adj[2] -= 9.0f;
     } else {
-      adj[2] -= 8.0f; // Pull it down roughly 8 units to fix "above weapon"
+      adj[2] -= vr_projectilespawn_z_offset.value; // Cancellation of flat +16 Z
     }
 
     _VectorCopy(handrot, ent->v.v_angle);
