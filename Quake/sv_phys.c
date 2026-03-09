@@ -861,33 +861,57 @@ static void SV_ApplyVRWeaponOffset(edict_t *ent, int num, qboolean is_remote_vr,
   _VectorCopy(ent->v.origin, restoreOrigin); // always save so restore is safe
   _VectorCopy(ent->v.v_angle, restoreAngles);
 
-  if ((vr_enabled.value && num == cl.viewentity) || is_remote_vr) {
+  if (is_remote_vr || (vr_enabled.value && (!isDedicated && num == 1))) {
     vec3_t adj;
     vec3_t handrot;
 
+    int weapon = (int)ent->v.weapon;
     if (is_remote_vr) {
       _VectorCopy(svs.clients[num - 1].vr_handpos, adj);
       _VectorCopy(svs.clients[num - 1].vr_handrot, handrot);
     } else {
       _VectorCopy(cl.handpos[1], adj);
       _VectorCopy(cl.handrot[1], handrot);
-
-      vec3_t ofs = {
-          vr_weapon_offset[weaponCVarEntry * VARS_PER_WEAPON].value,
-          vr_weapon_offset[weaponCVarEntry * VARS_PER_WEAPON + 1].value,
-          vr_weapon_offset[weaponCVarEntry * VARS_PER_WEAPON + 2].value +
-              vr_gunmodely.value};
-
-      vec3_t fwd2, right, up;
-      AngleVectors(handrot, fwd2, right, up);
-
-      // Apply the precise visual model mesh offset as a spatial translation
-      // so the projectile originates EXACTLY from the rendered barrel
-      // Quake model coordinates: X = Forward, Y = Left (-Right), Z = Up
-      VectorMA(adj, vr_gunmodelscale.value * ofs[0], fwd2, adj);
-      VectorMA(adj, -(vr_gunmodelscale.value * ofs[1]), right, adj);
-      VectorMA(adj, vr_gunmodelscale.value * ofs[2], up, adj);
     }
+
+    // Lookup the correct model offsets from the CVar table.
+    // weaponCVarEntry is updated by the client when it renders a weapon model.
+    int idx = (weaponCVarEntry >= 0 && weaponCVarEntry < MAX_WEAPONS)
+                  ? weaponCVarEntry
+                  : 0;
+    vec3_t ofs = {vr_weapon_offset[idx * VARS_PER_WEAPON].value,
+                  vr_weapon_offset[idx * VARS_PER_WEAPON + 1].value,
+                  vr_weapon_offset[idx * VARS_PER_WEAPON + 2].value +
+                      vr_gunmodely.value};
+
+    // Correct mapping for these model packs:
+    float fwd_val = ofs[2];   // Z is Forward
+    float right_val = ofs[0]; // X is Right (positive moves right)
+    float up_val = ofs[1];    // Y is Up (positive moves up)
+
+    // Apply refinements in weapon-space to fix tilting and alignment.
+    if (weapon & IT_NAILGUN) {
+      up_val -= 16.0f / vr_gunmodelscale.value;   // Even further down
+      right_val += 9.5f / vr_gunmodelscale.value; // Slightly more right
+    } else if (weapon & IT_SUPER_NAILGUN) {
+      up_val -= 21.0f / vr_gunmodelscale.value;   // Slightly down
+      right_val += 2.5f / vr_gunmodelscale.value; // Slightly more right
+    } else if (weapon & IT_ROCKET_LAUNCHER) {
+      up_val -= 28.5f / vr_gunmodelscale.value;   // Slightly down
+      right_val -= 1.4f / vr_gunmodelscale.value; // Left further (to -1.4)
+    } else if (weapon & IT_GRENADE_LAUNCHER) {
+      fwd_val -= 8.0f / vr_gunmodelscale.value;   // Closer
+      up_val += 1.0f / vr_gunmodelscale.value;    // Up 2 units (from -1.0)
+      right_val -= 8.5f / vr_gunmodelscale.value; // Right 0.5 units (to -8.5)
+    }
+
+    vec3_t fwd2, right, up;
+    AngleVectors(handrot, fwd2, right, up);
+
+    VectorMA(adj, vr_gunmodelscale.value * fwd_val, fwd2, adj);
+    VectorMA(adj, vr_gunmodelscale.value * right_val, right,
+             adj); // Corrected sign (no minus)
+    VectorMA(adj, vr_gunmodelscale.value * up_val, up, adj);
 
     // We only cancel the Z offset that QuakeC natively adds to all projectiles
     // (usually +16). We intentionally LEAVE QuakeC's forward and right offsets,
@@ -896,14 +920,10 @@ static void SV_ApplyVRWeaponOffset(edict_t *ent, int num, qboolean is_remote_vr,
     // Grenades use a different logic in QuakeC so we don't subtract the massive
     // Z offset. Nailguns and grenade launcher spawn slightly high so they get
     // a small additional downward nudge.
-    int weapon = (int)ent->v.weapon;
-    if (weapon == IT_NAILGUN || weapon == IT_SUPER_NAILGUN) {
-      adj[2] -= vr_projectilespawn_z_offset.value + 9.0f;
-    } else if (weapon == IT_GRENADE_LAUNCHER) {
-      adj[2] -= 9.0f;
-    } else {
-      adj[2] -= vr_projectilespawn_z_offset.value; // Cancellation of flat +16 Z
-    }
+    // Standard world-space Z addition in QuakeC is 16 units.
+    // We cancel it here so that our weapon-space offsets (up_val) are relative
+    // to the player's actual hand/grip position (0,0,0 in viewmodel space).
+    adj[2] -= 16.0f;
 
     _VectorCopy(handrot, ent->v.v_angle);
     _VectorCopy(adj, ent->v.origin);
