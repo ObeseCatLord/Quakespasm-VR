@@ -856,100 +856,67 @@ void SV_WalkMove(edict_t *ent) {
   }
 }
 
+// Replace player origin with hand muzzle position for the duration of
+// PlayerPostThink (where QuakeC fires weapons).
+//
+// For remote VR clients: the client sends raw handpos plus the barrel-depth
+// multiplier (ofs[2]*gunmodelscale) and z_offset.  The server applies the
+// forward offset using ent->v.v_angle — the SAME quantized angles that
+// QuakeC's makevectors() will use — so the muzzle position and projectile
+// direction are always in agreement.  This eliminates the yaw-dependent
+// horizontal offset that occurred when the client computed the offset with
+// full-precision handrot.
+//
+// For the local player (singleplayer / listen-server): uses cl.handpos[1]
+// directly with the original master-branch formula.
 static void SV_ApplyVRWeaponOffset(edict_t *ent, int num, qboolean is_remote_vr,
-                                   vec3_t restoreOrigin, vec3_t restoreAngles) {
-  _VectorCopy(ent->v.origin, restoreOrigin); // always save so restore is safe
-  _VectorCopy(ent->v.v_angle, restoreAngles);
+                                   vec3_t restoreOrigin) {
+  _VectorCopy(ent->v.origin, restoreOrigin);
 
-  if (is_remote_vr || (vr_enabled.value && (!isDedicated && num == 1))) {
+  if (is_remote_vr) {
+    // Use the raw hand position from VR tracking.  Pull origin backward
+    // by 4 units along the aim direction to partially cancel QuakeC's
+    // built-in v_forward*N (8-10 units) which overshoots the VR barrel
+    // at this world scale.  Subtract 10 from Z to partially cancel
+    // QuakeC's '0 0 16', leaving +6 above hand for barrel height.
     vec3_t adj;
-    vec3_t handrot;
+    _VectorCopy(svs.clients[num - 1].vr_handpos, adj);
 
-    int weapon = (int)ent->v.weapon;
-    if (is_remote_vr) {
-      _VectorCopy(svs.clients[num - 1].vr_handpos, adj);
-      _VectorCopy(svs.clients[num - 1].vr_handrot, handrot);
-    } else {
-      _VectorCopy(cl.handpos[1], adj);
-      _VectorCopy(cl.handrot[1], handrot);
-    }
+    vec3_t fwd, right, up;
+    AngleVectors(ent->v.v_angle, fwd, right, up);
+    VectorMA(adj, -8.0f, fwd, adj);
 
-    // Lookup the correct model offsets from the CVar table.
-    // weaponCVarEntry is updated by the client when it renders a weapon model.
-    int idx = (weaponCVarEntry >= 0 && weaponCVarEntry < MAX_WEAPONS)
-                  ? weaponCVarEntry
-                  : 0;
-    vec3_t ofs = {vr_weapon_offset[idx * VARS_PER_WEAPON].value,
-                  vr_weapon_offset[idx * VARS_PER_WEAPON + 1].value,
-                  vr_weapon_offset[idx * VARS_PER_WEAPON + 2].value +
-                      vr_gunmodely.value};
+    adj[2] -= 10;
 
-    // Correct mapping for these model packs:
-    float fwd_val = ofs[2];   // Z is Forward
-    float right_val = ofs[0]; // X is Right (positive moves right)
-    float up_val = ofs[1];    // Y is Up (positive moves up)
+    _VectorCopy(adj, ent->v.origin);
+  } else if (vr_enabled.value && !isDedicated && num == cl.viewentity) {
+    vec3_t adj;
+    _VectorCopy(cl.handpos[1], adj);
 
-    // Apply refinements in weapon-space to fix tilting and alignment.
-    if (weapon & IT_NAILGUN) {
-      up_val -= 16.0f / vr_gunmodelscale.value;   // Even further down
-      right_val += 9.5f / vr_gunmodelscale.value; // Slightly more right
-    } else if (weapon & IT_SUPER_NAILGUN) {
-      up_val -= 21.0f / vr_gunmodelscale.value;   // Slightly down
-      right_val += 2.5f / vr_gunmodelscale.value; // Slightly more right
-    } else if (weapon & IT_ROCKET_LAUNCHER) {
-      up_val -= 28.5f / vr_gunmodelscale.value;   // Slightly down
-      right_val -= 1.4f / vr_gunmodelscale.value; // Left further (to -1.4)
-    } else if (weapon & IT_GRENADE_LAUNCHER) {
-      fwd_val -= 8.0f / vr_gunmodelscale.value;   // Closer
-      up_val += 1.0f / vr_gunmodelscale.value;    // Up 2 units (from -1.0)
-      right_val -= 8.5f / vr_gunmodelscale.value; // Right 0.5 units (to -8.5)
-    }
+    vec3_t ofs = {
+        vr_weapon_offset[weaponCVarEntry * VARS_PER_WEAPON].value,
+        vr_weapon_offset[weaponCVarEntry * VARS_PER_WEAPON + 1].value,
+        vr_weapon_offset[weaponCVarEntry * VARS_PER_WEAPON + 2].value +
+            vr_gunmodely.value};
 
     vec3_t fwd2, right, up;
-    AngleVectors(handrot, fwd2, right, up);
+    AngleVectors(cl.handrot[1], fwd2, right, up);
+    fwd2[0] *= vr_gunmodelscale.value * ofs[2];
+    fwd2[1] *= vr_gunmodelscale.value * ofs[2];
+    fwd2[2] *= vr_gunmodelscale.value * ofs[2];
+    VectorAdd(adj, fwd2, adj);
 
-    VectorMA(adj, vr_gunmodelscale.value * fwd_val, fwd2, adj);
-    VectorMA(adj, vr_gunmodelscale.value * right_val, right,
-             adj); // Corrected sign (no minus)
-    VectorMA(adj, vr_gunmodelscale.value * up_val, up, adj);
-
-    // We only cancel the Z offset that QuakeC natively adds to all projectiles
-    // (usually +16). We intentionally LEAVE QuakeC's forward and right offsets,
-    // because those push projectiles out to the actual gun muzzle and simulate
-    // alternate barrels (like the super nailgun).
-    // Grenades use a different logic in QuakeC so we don't subtract the massive
-    // Z offset. Nailguns and grenade launcher spawn slightly high so they get
-    // a small additional downward nudge.
-    // Standard world-space Z addition in QuakeC is 16 units.
-    // We cancel it here so that our weapon-space offsets (up_val) are relative
-    // to the player's actual hand/grip position (0,0,0 in viewmodel space).
-    adj[2] -= 16.0f;
-
-    _VectorCopy(handrot, ent->v.v_angle);
     _VectorCopy(adj, ent->v.origin);
+    ent->v.origin[2] -= vr_projectilespawn_z_offset.value;
   }
 }
 
 static void SV_RestoreVRWeaponOffset(edict_t *ent, int num,
                                      qboolean is_remote_vr,
-                                     vec3_t restoreOrigin,
-                                     vec3_t restoreAngles) {
-  if ((vr_enabled.value && num == cl.viewentity) || is_remote_vr) {
+                                     vec3_t restoreOrigin) {
+  if (is_remote_vr || (vr_enabled.value && !isDedicated && num == cl.viewentity)) {
     _VectorCopy(restoreOrigin, ent->v.origin);
-    _VectorCopy(restoreAngles, ent->v.v_angle);
   }
-}
-
-static qboolean SV_ClientRunThinkWrap(edict_t *ent, int num,
-                                      qboolean is_remote_vr) {
-  vec3_t restoreOrigin, restoreAngles;
-  SV_ApplyVRWeaponOffset(ent, num, is_remote_vr, restoreOrigin, restoreAngles);
-
-  qboolean result = SV_RunThink(ent);
-
-  SV_RestoreVRWeaponOffset(ent, num, is_remote_vr, restoreOrigin,
-                           restoreAngles);
-  return result;
 }
 
 /*
@@ -963,8 +930,13 @@ void SV_Physics_Client(edict_t *ent, int num) {
   if (!svs.clients[num - 1].active)
     return; // unconnected slot
 
+  // Exclude the local player: on a listen server / singleplayer, the local
+  // player's vr_handpos arrives one frame late through loopback.  Using
+  // cl.handpos[1] directly (in the else-if fallback) matches the original
+  // master branch behaviour exactly.
   qboolean is_remote_vr =
-      (num > 0 && num <= svs.maxclients && svs.clients[num - 1].is_vr_client);
+      (num > 0 && num <= svs.maxclients && svs.clients[num - 1].is_vr_client &&
+       (isDedicated || num != cl.viewentity));
 
   // Apply roomscale displacement for remote clients
   if (is_remote_vr &&
@@ -990,20 +962,55 @@ void SV_Physics_Client(edict_t *ent, int num) {
   //
   // decide which move function to call
   //
+  // SV_RunThink executes the entity's think function, which for players
+  // includes weapon animation frames (e.g. nailgun's player_nail1/nail2).
+  // These think functions can fire projectiles using self.origin, so we
+  // must set origin to the hand position during SV_RunThink — not just
+  // during PostThink.  We restore the body origin before movement physics
+  // (SV_WalkMove, etc.) which needs the real collision hull position.
+  //
+  {
+    vec3_t thinkRestoreOrigin;
+    SV_ApplyVRWeaponOffset(ent, num, is_remote_vr, thinkRestoreOrigin);
+
+    qboolean think_ok = true;
+    switch ((int)ent->v.movetype) {
+    case MOVETYPE_NONE:
+      think_ok = SV_RunThink(ent);
+      break;
+    case MOVETYPE_WALK:
+      think_ok = SV_RunThink(ent);
+      break;
+    case MOVETYPE_TOSS:
+    case MOVETYPE_BOUNCE:
+    case MOVETYPE_GIB:
+      break; // SV_Physics_Toss handles its own think
+    case MOVETYPE_FLY:
+      think_ok = SV_RunThink(ent);
+      break;
+    case MOVETYPE_NOCLIP:
+      think_ok = SV_RunThink(ent);
+      break;
+    default:
+      Sys_Error("SV_Physics_client: bad movetype %i", (int)ent->v.movetype);
+    }
+
+    SV_RestoreVRWeaponOffset(ent, num, is_remote_vr, thinkRestoreOrigin);
+
+    if (!think_ok)
+      return;
+  }
+
+  // Movement physics — uses body origin for collision detection
   switch ((int)ent->v.movetype) {
   case MOVETYPE_NONE:
-    if (!SV_ClientRunThinkWrap(ent, num, is_remote_vr))
-      return;
     break;
 
   case MOVETYPE_WALK:
-    if (!SV_ClientRunThinkWrap(ent, num, is_remote_vr))
-      return;
     if (!SV_CheckWater(ent) && !((int)ent->v.flags & FL_WATERJUMP))
       SV_AddGravity(ent);
     SV_CheckStuck(ent);
     SV_WalkMove(ent);
-
     break;
 
   case MOVETYPE_TOSS:
@@ -1013,19 +1020,15 @@ void SV_Physics_Client(edict_t *ent, int num) {
     break;
 
   case MOVETYPE_FLY:
-    if (!SV_ClientRunThinkWrap(ent, num, is_remote_vr))
-      return;
     SV_FlyMove(ent, host_frametime, NULL);
     break;
 
   case MOVETYPE_NOCLIP:
-    if (!SV_ClientRunThinkWrap(ent, num, is_remote_vr))
-      return;
     VectorMA(ent->v.origin, host_frametime, ent->v.velocity, ent->v.origin);
     break;
 
   default:
-    Sys_Error("SV_Physics_client: bad movetype %i", (int)ent->v.movetype);
+    break;
   }
 
   if (num == cl.viewentity && vr_enabled.value) {
@@ -1073,15 +1076,14 @@ void SV_Physics_Client(edict_t *ent, int num) {
 
   // replace player origin with hand origin for duration of post think (where
   // weapons are done)
-  vec3_t restoreOrigin, restoreAngles;
-  SV_ApplyVRWeaponOffset(ent, num, is_remote_vr, restoreOrigin, restoreAngles);
+  vec3_t restoreOrigin;
+  SV_ApplyVRWeaponOffset(ent, num, is_remote_vr, restoreOrigin);
 
   pr_global_struct->self = EDICT_TO_PROG(ent);
 
   PR_ExecuteProgram(pr_global_struct->PlayerPostThink);
 
-  SV_RestoreVRWeaponOffset(ent, num, is_remote_vr, restoreOrigin,
-                           restoreAngles);
+  SV_RestoreVRWeaponOffset(ent, num, is_remote_vr, restoreOrigin);
 }
 
 //============================================================================
