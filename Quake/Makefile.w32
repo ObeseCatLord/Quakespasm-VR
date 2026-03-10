@@ -41,7 +41,8 @@ WINSOCK2 ?= 0
 # ---------------------------
 
 CC = gcc
-LINKER = $(CC)
+CXX = g++
+LINKER = $(CXX)
 WINDRES = windres
 
 STRIP = strip
@@ -51,6 +52,7 @@ LDFLAGS?= -m32 -mwindows -static-libgcc
 DFLAGS ?=
 CFLAGS ?= -m32 -Wall -Wno-trigraphs -MMD
 CFLAGS += $(call check_gcc,-std=gnu11,)
+CFLAGS += -DVR_SUPPORT
 CFLAGS += $(CPUFLAGS)
 ifneq ($(DEBUG),0)
 DFLAGS += -DDEBUG
@@ -170,7 +172,7 @@ CFLAGS+= -DUSE_CODEC_UMX
 endif
 CFLAGS+= $(CODEC_INC)
 
-COMMON_LIBS= -lopengl32 -lwinmm
+COMMON_LIBS= -lopengl32 -lwinmm -L../Windows/OpenVR/lib/win32 -lopenvr_api
 
 LIBS = $(COMMON_LIBS) $(NET_LIBS) $(CODEC_LINK) $(CODECLIBS)
 
@@ -262,6 +264,8 @@ OBJS = strlcat.o \
 	sv_user.o \
 	world.o \
 	zone.o \
+	vr.o \
+	vr_menu.o \
 	$(SYSOBJ_SYS) $(SYSOBJ_MAIN)
 
 # ---------------------------
@@ -275,6 +279,11 @@ all: $(DEFAULT_TARGET)
 
 %.o:	%.c
 	$(CC) $(DFLAGS) -c $(CFLAGS) $(SDL_CFLAGS) -o $@ $<
+# VR files need C++ compiler
+vr.o: vr.c
+	$(CXX) $(DFLAGS) -c $(CFLAGS) $(SDL_CFLAGS) -o $@ $<
+vr_menu.o: vr_menu.c
+	$(CXX) $(DFLAGS) -c $(CFLAGS) $(SDL_CFLAGS) -o $@ $<
 %.res:	../Windows/%.rc
 	$(WINDRES) -I../Windows --output-format=coff --target=pe-i386 -o $@ $<
 
