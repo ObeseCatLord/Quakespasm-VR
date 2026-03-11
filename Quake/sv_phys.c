@@ -884,7 +884,7 @@ static void SV_ApplyVRWeaponOffset(edict_t *ent, int num, qboolean is_remote_vr,
 
     vec3_t fwd, right, up;
     AngleVectors(ent->v.v_angle, fwd, right, up);
-    VectorMA(adj, -8.0f, fwd, adj);
+    VectorMA(adj, -12.0f, fwd, adj);
 
     adj[2] -= 10;
 

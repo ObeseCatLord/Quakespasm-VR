@@ -441,25 +441,30 @@ void SV_ReadClientMove(usercmd_t *move) {
   if (i)
     host_client->edict->v.impulse = i;
 
-  // Read VR Data Sync Flag
-  i = MSG_ReadByte();
-  if (i == 1) {
-    host_client->is_vr_client = true;
-    host_client->vr_handpos[0] = MSG_ReadFloat();
-    host_client->vr_handpos[1] = MSG_ReadFloat();
-    host_client->vr_handpos[2] = MSG_ReadFloat();
-    host_client->vr_handrot[0] = MSG_ReadFloat();
-    host_client->vr_handrot[1] = MSG_ReadFloat();
-    host_client->vr_handrot[2] = MSG_ReadFloat();
-    host_client->vr_roomscalemove[0] = MSG_ReadFloat();
-    host_client->vr_roomscalemove[1] = MSG_ReadFloat();
-    host_client->vr_roomscalemove[2] = MSG_ReadFloat();
+  // Read VR Data Sync Flag — optional: stock Quakespasm clients don't send it.
+  // Check if there is remaining data in the message before reading.
+  if (msg_readcount < net_message.cursize && !msg_badread) {
+    i = MSG_ReadByte();
+    if (i == 1 && !msg_badread) {
+      host_client->is_vr_client = true;
+      host_client->vr_handpos[0] = MSG_ReadFloat();
+      host_client->vr_handpos[1] = MSG_ReadFloat();
+      host_client->vr_handpos[2] = MSG_ReadFloat();
+      host_client->vr_handrot[0] = MSG_ReadFloat();
+      host_client->vr_handrot[1] = MSG_ReadFloat();
+      host_client->vr_handrot[2] = MSG_ReadFloat();
+      host_client->vr_roomscalemove[0] = MSG_ReadFloat();
+      host_client->vr_roomscalemove[1] = MSG_ReadFloat();
+      host_client->vr_roomscalemove[2] = MSG_ReadFloat();
 
-    // Accumulate room-scale movement
-    VectorAdd(host_client->vr_roomscale_accum, host_client->vr_roomscalemove,
-              host_client->vr_roomscale_accum);
+      // Accumulate room-scale movement
+      VectorAdd(host_client->vr_roomscale_accum, host_client->vr_roomscalemove,
+                host_client->vr_roomscale_accum);
+    } else {
+      host_client->is_vr_client = false;
+    }
   } else {
-    host_client->is_vr_client = false;
+    host_client->is_vr_client = false; // Stock client — no VR data
   }
 }
 

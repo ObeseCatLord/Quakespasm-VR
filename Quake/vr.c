@@ -2151,6 +2151,11 @@ void VR_TrackWeapons(void) {
 // Start/Reset weapon tracking (call on map change / disconnect)
 void VR_ResetWeaponTracking(void) {
   last_tracked_activeweapon = -1;
+
+  // Rogue expansion uses different bitmasks: RIT_AXE=2048, and reuses
+  // 4096 for RIT_LAVA_NAILGUN. Fix up the axe entry accordingly.
+  dyn_weapons[0].bitmask = rogue ? 2048 : 4096;
+
   // Note: We DO NOT reset num_dyn_weapons or discovery state here anymore
   // so that mod weapon knowledge persists across map loads.
   // We just reset the scanning flag if needed.
@@ -2382,6 +2387,12 @@ void VR_DrawWeaponMenu(void) {
 
       float scale =
           is_selected ? 0.40f : 0.25f; // Larger models against a smaller wheel
+
+      // Center model vertically using its bounding box so weapons with
+      // low origins (axe, super shotgun) don't clip into neighbours.
+      float vert_center = (mdl->mins[2] + mdl->maxs[2]) / 2.0f;
+      VectorMA(ent.origin, -vert_center * scale, up, ent.origin);
+
       ent.scale = ENTSCALE_ENCODE(scale);
       ent.alpha = ENTALPHA_ENCODE(1.0f);
 

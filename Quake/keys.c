@@ -917,8 +917,11 @@ void Key_EventWithKeycode(int key, qboolean down, int keycode) {
     if (keydown[key]) {
       if (key_dest == key_game && !con_forcedup)
         return; // ignore autorepeats in game mode
-    } else if (key >= 200 && !keybindings[key])
-      Con_Printf("%s is unbound, hit F4 to set.\n", Key_KeynumToString(key));
+    } else if (key >= 200 && !keybindings[key]) {
+      // Silently ignore unbound buttons — VR controllers send many
+      // button events for axes/buttons that have no binding, and the
+      // "hit F4 to set" message is not actionable in VR.
+    }
   } else if (!keydown[key])
     return; // ignore stray key up events
 
