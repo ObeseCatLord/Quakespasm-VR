@@ -1276,6 +1276,18 @@ void SV_Physics(void) {
   int entity_cap; // For sv_freezenonclients
   edict_t *ent;
 
+  // sv_nofriendlyfire: force all co-op players onto the same team so
+  // QuakeC's T_Damage teamplay check blocks player-vs-player damage.
+  if (sv_nofriendlyfire.value && coop.value) {
+    if (pr_global_struct->teamplay < 1)
+      pr_global_struct->teamplay = 1;
+    for (i = 1; i <= svs.maxclients; i++) {
+      edict_t *cl = EDICT_NUM(i);
+      if (!cl->free && svs.clients[i - 1].active)
+        cl->v.team = 1;
+    }
+  }
+
   // let the progs know that a new frame has started
   pr_global_struct->self = EDICT_TO_PROG(sv.edicts);
   pr_global_struct->other = EDICT_TO_PROG(sv.edicts);
