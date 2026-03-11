@@ -275,9 +275,9 @@ all: $(DEFAULT_TARGET)
 	$(CC) $(DFLAGS) -c $(CFLAGS) $(SDL_CFLAGS) -o $@ $<
 # VR files need C++ compiler
 vr.o: vr.c
-	$(CXX) $(DFLAGS) -c $(CFLAGS) $(SDL_CFLAGS) -o $@ $<
+	$(CXX) $(DFLAGS) -c $(subst -std=gnu11,,$(CFLAGS)) $(SDL_CFLAGS) -o $@ $<
 vr_menu.o: vr_menu.c
-	$(CXX) $(DFLAGS) -c $(CFLAGS) $(SDL_CFLAGS) -o $@ $<
+	$(CXX) $(DFLAGS) -c $(subst -std=gnu11,,$(CFLAGS)) $(SDL_CFLAGS) -o $@ $<
 %.res:	../Windows/%.rc
 	$(WINDRES) -I../Windows --output-format=coff --target=pe-x86-64 -o $@ $<
 

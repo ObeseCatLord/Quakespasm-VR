@@ -177,16 +177,32 @@ LIBS = $(COMMON_LIBS) $(NET_LIBS) $(CODECLIBS)
 
 MUSIC_OBJS= bgmusic.o \
 	snd_codec.o \
-	snd_flac.o \
 	snd_wave.o \
-	snd_vorbis.o \
-	snd_opus.o \
 	$(mp3_obj).o \
-	snd_mp3tag.o \
-	snd_mikmod.o \
-	snd_modplug.o \
-	snd_xmp.o \
-	snd_umx.o
+	snd_mp3tag.o
+
+ifeq ($(USE_CODEC_FLAC),1)
+MUSIC_OBJS += snd_flac.o
+endif
+ifeq ($(USE_CODEC_OPUS),1)
+MUSIC_OBJS += snd_opus.o
+endif
+ifeq ($(USE_CODEC_VORBIS),1)
+MUSIC_OBJS += snd_vorbis.o
+endif
+ifeq ($(USE_CODEC_MIKMOD),1)
+MUSIC_OBJS += snd_mikmod.o
+endif
+ifeq ($(USE_CODEC_MODPLUG),1)
+MUSIC_OBJS += snd_modplug.o
+endif
+ifeq ($(USE_CODEC_XMP),1)
+MUSIC_OBJS += snd_xmp.o
+endif
+ifeq ($(USE_CODEC_UMX),1)
+MUSIC_OBJS += snd_umx.o
+endif
+
 COMOBJ_SND = snd_dma.o snd_mix.o snd_mem.o $(MUSIC_OBJS)
 SYSOBJ_SND = snd_sdl.o
 SYSOBJ_CDA = cd_sdl.o
@@ -276,9 +292,9 @@ all: $(DEFAULT_TARGET)
 
 # VR files need C++ compiler
 vr.o: vr.c
-	$(CXX) $(DFLAGS) -c $(CFLAGS) $(SDL_CFLAGS) -o $@ $<
+	$(CXX) $(DFLAGS) -c $(subst -std=gnu11,,$(CFLAGS)) $(SDL_CFLAGS) -o $@ $<
 vr_menu.o: vr_menu.c
-	$(CXX) $(DFLAGS) -c $(CFLAGS) $(SDL_CFLAGS) -o $@ $<
+	$(CXX) $(DFLAGS) -c $(subst -std=gnu11,,$(CFLAGS)) $(SDL_CFLAGS) -o $@ $<
 
 quakespasm:	$(OBJS)
 	$(LINKER) $(OBJS) $(LDFLAGS) $(LIBS) $(SDL_LIBS) -o $@

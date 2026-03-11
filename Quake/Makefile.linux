@@ -271,6 +271,7 @@ OBJS = strlcat.o \
 .PHONY:	clean debug release
 
 DEFAULT_TARGET = quakespasm-openvr
+BINARY_TARGET = $(DEFAULT_TARGET).bin
 all: $(DEFAULT_TARGET)
 
 %.o:	%.c
@@ -283,26 +284,43 @@ vr.o: vr.c
 vr_menu.o: vr_menu.c
 	$(CXX) $(DFLAGS) -c $(CFLAGS) $(SDL_CFLAGS) -o $@ $<
 
-$(DEFAULT_TARGET):	$(OBJS)
+$(BINARY_TARGET):	$(OBJS)
 	$(LINKER) $(OBJS) $(LDFLAGS) $(LIBS) $(SDL_LIBS) -o $@
 	$(call do_strip,$@)
+
+# Generate launcher script that finds OpenVR for both SteamVR and system installs
+$(DEFAULT_TARGET): $(BINARY_TARGET)
+	@echo '#!/bin/sh' > $@
+	@echo '# Auto-generated launcher — detects SteamVR or system OpenVR runtime' >> $@
+	@echo 'SCRIPT_DIR="$$(cd "$$(dirname "$$0")" && pwd)"' >> $@
+	@echo 'for p in \' >> $@
+	@echo '  "$$HOME/.steam/steam/steamapps/common/SteamVR/bin/linux64" \' >> $@
+	@echo '  "$$HOME/.local/share/Steam/steamapps/common/SteamVR/bin/linux64" \' >> $@
+	@echo '  "$$HOME/.steam/debian-installation/steamapps/common/SteamVR/bin/linux64"; do' >> $@
+	@echo '  if [ -f "$$p/libopenvr_api.so" ]; then' >> $@
+	@echo '    export LD_LIBRARY_PATH="$${LD_LIBRARY_PATH:+$$LD_LIBRARY_PATH:}$$p"' >> $@
+	@echo '    break' >> $@
+	@echo '  fi' >> $@
+	@echo 'done' >> $@
+	@echo 'exec "$$SCRIPT_DIR/$(BINARY_TARGET)" "$$@"' >> $@
+	chmod +x $@
 
 release:	$(DEFAULT_TARGET)
 debug:
 	$(error Use "make DEBUG=1")
 
 clean:
-	$(RM) *.o *.d $(DEFAULT_TARGET)
+	$(RM) *.o *.d $(DEFAULT_TARGET) $(BINARY_TARGET)
 
 ifeq ($(HOST_OS),haiku)
 QS_APP_DIR=$(shell finddir B_APPS_DIRECTORY)/QuakeSpasm/
 install:	$(DEFAULT_TARGET)
 	mkdir -p $(QS_APP_DIR)
-	cp $(DEFAULT_TARGET) $(QS_APP_DIR)
+	cp $(DEFAULT_TARGET) $(BINARY_TARGET) $(QS_APP_DIR)
 	cp quakespasm.pak $(QS_APP_DIR)
 else
 install:	$(DEFAULT_TARGET)
-	cp $(DEFAULT_TARGET) /usr/local/games/quake
+	cp $(DEFAULT_TARGET) $(BINARY_TARGET) /usr/local/games/quake
 endif
 
 sinclude $(OBJS:.o=.d)
