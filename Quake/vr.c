@@ -888,17 +888,17 @@ void InitAllWeaponCVars() {
                       "0.33"); // laser
       InitWeaponCVars(i++, "progs/v_prox.mdl", "10", "1.5", "13",
                       "0.5"); // proximity - same as grenade
-      // rogue weapons
-      InitWeaponCVars(i++, "progs/v_lava.mdl", "-5", "3", "15",
-                      "0.5"); // lava nailgun - same as nailgun
-      InitWeaponCVars(i++, "progs/v_lava2.mdl", "0", "3", "19",
-                      "0.5"); // lava supernailgun - same as supernailgun
-      InitWeaponCVars(i++, "progs/v_multi.mdl", "10", "1.5", "13",
-                      "0.5"); // multigrenade - same as grenade
-      InitWeaponCVars(i++, "progs/v_multi2.mdl", "10", "7", "19",
-                      "0.5"); // multirocket - same as rocket
-      InitWeaponCVars(i++, "progs/v_plasma.mdl", "3", "4", "13",
-                      "0.5"); // plasma - same as lightning
+      // rogue weapons — tuned for rogue model barrel heights
+      InitWeaponCVars(i++, "progs/v_lava.mdl", "-5", "1", "15",
+                      "0.5"); // lava nailgun
+      InitWeaponCVars(i++, "progs/v_lava2.mdl", "0", "1", "19",
+                      "0.5"); // lava supernailgun
+      InitWeaponCVars(i++, "progs/v_multi.mdl", "10", "0", "13",
+                      "0.5"); // multigrenade
+      InitWeaponCVars(i++, "progs/v_multi2.mdl", "10", "3", "17",
+                      "0.5"); // multirocket (lower barrel, shorter forward push)
+      InitWeaponCVars(i++, "progs/v_plasma.mdl", "3", "1", "11",
+                      "0.5"); // plasma gun
     }
 
     // axe from copper mod (used by many mods, including Underdark Overbright,
@@ -961,7 +961,8 @@ void VID_VR_Init() {
   Cvar_RegisterVariable(&vr_projectilespawn_z_offset);
   Cvar_RegisterVariable(&vr_hud_scale);
   Cvar_RegisterVariable(&vr_menu_scale);
-  Cvar_RegisterVariable(&vr_movement_instant_stop);
+  // vr_movement_instant_stop is registered in SV_Init so it's available on
+  // dedicated servers too; skip re-registration here.
   Cvar_SetCallback(&vr_deadzone, VR_Deadzone_f);
 
   InitAllWeaponCVars();
@@ -2100,7 +2101,7 @@ void VR_TrackWeapons(void) {
           Sys_DoubleTime() + 2.0; // 2.0s between probes (passive)
     } else {
       vr_autoscan_active = false;
-      Con_Printf("VR: Weapon auto-scan complete.\n");
+      Con_DPrintf("VR: Weapon auto-scan complete.\n");
     }
   }
 
@@ -2124,8 +2125,8 @@ void VR_TrackWeapons(void) {
     if (w->impulse == 0 && vr_last_sent_impulse > 0 &&
         (Sys_DoubleTime() - vr_last_sent_impulse_time) < 0.5) {
       w->impulse = vr_last_sent_impulse;
-      Con_Printf("VR: Learned impulse %d for weapon bitmask %d\n", w->impulse,
-                 active);
+      Con_DPrintf("VR: Learned impulse %d for weapon bitmask %d\n", w->impulse,
+                  active);
     }
   }
   // Fully new weapon from a mod (not in base table)
@@ -2145,8 +2146,8 @@ void VR_TrackWeapons(void) {
     }
 
     num_dyn_weapons++;
-    Con_Printf("VR: Discovered new mod weapon bitmask %d (impulse %d)\n",
-               active, w->impulse);
+    Con_DPrintf("VR: Discovered new mod weapon bitmask %d (impulse %d)\n",
+                active, w->impulse);
   }
 }
 
@@ -2322,7 +2323,7 @@ void VR_DrawWeaponMenu(void) {
     if (items_on_this_ring <= 0)
       break;
 
-    float current_radius = (r == 0) ? 0.0f : base_radius + ((r - 1) * 45.0f);
+    float current_radius = (r == 0) ? 0.0f : base_radius + ((r - 1) * 20.0f);
     float angle_step = (r == 0) ? 0.0f : (2.0f * M_PI) / items_on_this_ring;
 
     for (int i = 0; i < items_on_this_ring; i++) {
@@ -2457,10 +2458,11 @@ void VR_DrawWeaponMenu(void) {
         }
 
         vec3_t text_pos;
-        VectorCopy(pos, text_pos);
-        // Move slightly forward towards the camera and UP over the weapon
+        // Use ent.origin (already vertically centred on the model) so text
+        // tracks above the actual barrel on every ring, not the raw ring pos.
+        VectorCopy(ent.origin, text_pos);
         VectorMA(text_pos, -2.0f, forward, text_pos);
-        VectorMA(text_pos, 2.5f, up, text_pos);
+        VectorMA(text_pos, 2.5f * (is_selected ? scale / 0.25f : 1.0f), up, text_pos);
 
         float tscale = 0.15f;
         if (is_selected) {

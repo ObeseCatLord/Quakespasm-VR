@@ -337,8 +337,7 @@ void SV_AirMove(void) {
   if (sv_player->v.movetype == MOVETYPE_NOCLIP) { // noclip
     VectorCopy(wishvel, velocity);
   } else if (onground) {
-    if (vr_enabled.value && vr_movement_instant_stop.value &&
-        wishspeed == 0) {
+    if (vr_movement_instant_stop.value && wishspeed == 0) {
       velocity[0] = 0;
       velocity[1] = 0;
     } else {

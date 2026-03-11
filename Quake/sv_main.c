@@ -80,6 +80,7 @@ void SV_Init (void)
 	extern	cvar_t	sv_maxvelocity;
 	extern	cvar_t	sv_gravity;
 	extern	cvar_t	sv_nostep;
+	extern	cvar_t	vr_movement_instant_stop;
 	extern	cvar_t	sv_freezenonclients;
 	extern	cvar_t	sv_friction;
 	extern	cvar_t	sv_edgefriction;
@@ -110,6 +111,7 @@ void SV_Init (void)
 	Cvar_RegisterVariable (&sv_altnoclip); //johnfitz
 	Cvar_RegisterVariable (&sv_gameplayfix_elevators);
 	Cvar_RegisterVariable (&sv_maxpacketsize); // increased for AD
+	Cvar_RegisterVariable (&vr_movement_instant_stop);
 
 	Cmd_AddCommand ("sv_protocol", &SV_Protocol_f); //johnfitz
 
