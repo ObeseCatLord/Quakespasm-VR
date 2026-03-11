@@ -907,6 +907,46 @@ cleanup:
 
 /*
 =================
+R_DrawAliasModelOutline -- Draw a flat-colored alias model mesh.
+Used for player outline rendering (visible through walls in co-op VR).
+No frustum culling, no texturing, no lighting -- just a solid color mesh.
+=================
+*/
+void R_DrawAliasModelOutline (entity_t *e, float r, float g, float b, float a, float inflate)
+{
+	aliashdr_t	*paliashdr;
+	lerpdata_t	lerpdata;
+
+	paliashdr = (aliashdr_t *)Mod_Extradata (e->model);
+	R_SetupAliasFrame (paliashdr, e->frame, &lerpdata);
+	R_SetupEntityTransform (e, &lerpdata);
+
+	glPushMatrix ();
+	R_RotateForEntity (lerpdata.origin, lerpdata.angles, e->scale);
+	glTranslatef (paliashdr->scale_origin[0], paliashdr->scale_origin[1], paliashdr->scale_origin[2]);
+	glScalef (paliashdr->scale[0], paliashdr->scale[1], paliashdr->scale[2]);
+
+	// Scale around approximate model center for outline inflation
+	if (inflate != 1.0f)
+	{
+		glTranslatef (127.5f, 127.5f, 127.5f);
+		glScalef (inflate, inflate, inflate);
+		glTranslatef (-127.5f, -127.5f, -127.5f);
+	}
+
+	GL_DisableMultitexture ();
+	glDisable (GL_TEXTURE_2D);
+	shading = false;
+	entalpha = a;
+	glColor4f (r, g, b, a);
+	GL_DrawAliasFrame (paliashdr, lerpdata);
+	glEnable (GL_TEXTURE_2D);
+
+	glPopMatrix ();
+}
+
+/*
+=================
 R_DrawAliasModel_NoCull -- VR weapon wheel: identical to R_DrawAliasModel
 but WITHOUT R_CullModelForEntity frustum check, so UI elements always render.
 =================

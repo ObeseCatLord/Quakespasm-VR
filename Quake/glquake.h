@@ -374,6 +374,7 @@ void R_UpdateWarpTextures (void);
 
 void R_DrawWorld (void);
 void R_DrawAliasModel (entity_t *e);
+void R_DrawAliasModelOutline (entity_t *e, float r, float g, float b, float a, float inflate);
 void R_DrawBrushModel (entity_t *e);
 void R_DrawSpriteModel (entity_t *e);
 

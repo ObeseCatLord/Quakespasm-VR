@@ -42,5 +42,7 @@ void Sbar_IntermissionOverlay (void);
 
 void Sbar_FinaleOverlay (void);
 
+qboolean Sbar_IsShowingScores (void);
+
 #endif	/* _QUAKE_SBAR_H */
 

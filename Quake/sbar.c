@@ -99,6 +99,18 @@ void Sbar_DontShowScores (void)
 
 /*
 ===============
+Sbar_IsShowingScores
+
+Returns true if the scoreboard button is currently held
+===============
+*/
+qboolean Sbar_IsShowingScores (void)
+{
+	return sb_showscores;
+}
+
+/*
+===============
 Sbar_Changed
 ===============
 */

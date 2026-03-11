@@ -896,6 +896,81 @@ void R_DrawShadows(void) {
 
 /*
 ================
+R_DrawPlayerOutlines -- Draw colored outlines around other players, visible
+through walls, when holding the scoreboard button in co-op VR mode.
+Uses a two-pass stencil technique per player:
+  Pass 1: write stencil mask at normal model scale (no color output)
+  Pass 2: draw inflated model only outside stencil mask, with shirt color
+================
+*/
+static void R_DrawPlayerOutlines (void)
+{
+	int		i, playernum, topcolor;
+	entity_t	*e;
+	byte		*rgb;
+	float		r, g, b;
+
+	if (!vr_enabled.value)
+		return;
+	if (!Sbar_IsShowingScores ())
+		return;
+	if (cl.gametype != GAME_COOP)
+		return;
+	if (!gl_stencilbits)
+		return;
+
+	for (i = 1; i <= cl.maxclients; i++)
+	{
+		e = &cl_entities[i];
+
+		if (!e->model)
+			continue;
+		if (e->model->type != mod_alias)
+			continue;
+		if (i == cl.viewentity)
+			continue;
+
+		playernum = i - 1;
+		topcolor = (cl.scores[playernum].colors >> 4) & 0xF;
+		rgb = (byte *)&d_8to24table[topcolor * 16 + 8];
+		r = rgb[0] / 255.0f;
+		g = rgb[1] / 255.0f;
+		b = rgb[2] / 255.0f;
+
+		currententity = e;
+
+		// Pass 1: stencil mask at normal scale -- mark the model's screen area
+		glClear (GL_STENCIL_BUFFER_BIT);
+		glEnable (GL_STENCIL_TEST);
+		glStencilFunc (GL_ALWAYS, 1, 0xFF);
+		glStencilOp (GL_KEEP, GL_KEEP, GL_REPLACE);
+		glColorMask (GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
+		glDepthMask (GL_FALSE);
+		glDisable (GL_DEPTH_TEST);
+
+		R_DrawAliasModelOutline (e, 0, 0, 0, 1.0f, 1.0f);
+
+		// Pass 2: draw inflated outline where stencil != 1 (the ring around the model)
+		glStencilFunc (GL_NOTEQUAL, 1, 0xFF);
+		glStencilOp (GL_KEEP, GL_KEEP, GL_KEEP);
+		glColorMask (GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+		glEnable (GL_BLEND);
+		glBlendFunc (GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+		R_DrawAliasModelOutline (e, r, g, b, 0.7f, 1.05f);
+
+		glDisable (GL_BLEND);
+		glDisable (GL_STENCIL_TEST);
+	}
+
+	// Restore state
+	glDepthMask (GL_TRUE);
+	glEnable (GL_DEPTH_TEST);
+	glColor3f (1, 1, 1);
+}
+
+/*
+================
 R_RenderScene
 ================
 */
@@ -927,6 +1002,8 @@ void R_RenderScene(void) {
   R_DrawParticles();
 
   Fog_DisableGFog(); // johnfitz
+
+  R_DrawPlayerOutlines(); // co-op VR player outlines through walls
 
   R_DrawViewModel(); // johnfitz -- moved here from R_RenderView
 
