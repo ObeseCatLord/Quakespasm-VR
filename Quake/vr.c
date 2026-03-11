@@ -1059,7 +1059,9 @@ void VR_InitGame() {
   // saved config may override the compiled default.  Force-set here so
   // game-specific values always take effect.
   if (rogue) {
-    Cvar_SetValueQuick(&vr_projectilespawn_z_offset, 24);
+    // Rogue's QuakeC uses larger spawn offsets than base Quake.
+    // This value compensates so projectiles exit at the barrel tip.
+    Cvar_SetValueQuick(&vr_projectilespawn_z_offset, 52);
   }
 }
 
@@ -2351,7 +2353,7 @@ void VR_DrawWeaponMenu(void) {
     if (items_on_this_ring <= 0)
       break;
 
-    float current_radius = (r == 0) ? 0.0f : base_radius + ((r - 1) * 20.0f);
+    float current_radius = (r == 0) ? 0.0f : base_radius + ((r - 1) * 15.0f);
     float angle_step = (r == 0) ? 0.0f : (2.0f * M_PI) / items_on_this_ring;
 
     for (int i = 0; i < items_on_this_ring; i++) {
@@ -2507,13 +2509,12 @@ void VR_DrawWeaponMenu(void) {
         VR_DrawText3D(text_pos, right, up, ammo_str, tscale, text_color);
       }
 
-      // Save position for selection raycasting
+      // Save position for selection raycasting.
+      // Use ent.origin (vertically centred) plus a small rightward nudge
+      // to align with the visual weapon mass.
       vec3_t target_pos;
-      VectorCopy(pos, target_pos);
-      // Offset raycast target up and right to align with the visual center of
-      // VR weapon models (which are heavily offset)
-      VectorMA(target_pos, 5.0f, up, target_pos);
-      VectorMA(target_pos, 5.0f, right, target_pos);
+      VectorCopy(ent.origin, target_pos);
+      VectorMA(target_pos, 3.0f, right, target_pos);
       VectorCopy(target_pos, weapon_positions[w_index]);
     }
     current_assigned_index += items_on_this_ring;
