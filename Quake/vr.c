@@ -247,7 +247,7 @@ DEFINE_CVAR(vr_gunmodeloffsets, 0, CVAR_ARCHIVE);
 DEFINE_CVAR(vr_gunmodelpitch, 0, CVAR_ARCHIVE);
 DEFINE_CVAR(vr_gunmodelscale, 1.0, CVAR_ARCHIVE);
 DEFINE_CVAR(vr_gunmodely, 0, CVAR_ARCHIVE);
-DEFINE_CVAR(vr_projectilespawn_z_offset, 24, CVAR_ARCHIVE);
+DEFINE_CVAR(vr_projectilespawn_z_offset, 16, CVAR_ARCHIVE);
 DEFINE_CVAR(vr_crosshairy, 0, CVAR_ARCHIVE);
 DEFINE_CVAR(vr_world_scale, 1.0, CVAR_ARCHIVE);
 DEFINE_CVAR(vr_floor_offset, -16, CVAR_ARCHIVE);
@@ -264,6 +264,7 @@ DEFINE_CVAR(vr_joystick_axis_exponent, 1.0, CVAR_ARCHIVE);
 DEFINE_CVAR(vr_joystick_deadzone_trunc, 1, CVAR_ARCHIVE);
 DEFINE_CVAR(vr_hud_scale, 0.025, CVAR_ARCHIVE);
 DEFINE_CVAR(vr_menu_scale, 0.13, CVAR_ARCHIVE);
+DEFINE_CVAR(vr_movement_instant_stop, 1, CVAR_ARCHIVE);
 
 static qboolean InitOpenGLExtensions() {
   int i;

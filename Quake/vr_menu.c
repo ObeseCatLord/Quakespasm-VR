@@ -18,6 +18,7 @@ extern cvar_t vr_snap_turn;
 extern cvar_t vr_180_snap_turn;
 extern cvar_t vr_turn_speed;
 extern cvar_t vr_haptic;
+extern cvar_t vr_movement_instant_stop;
 
 extern void M_DrawSlider(int x, int y, float range, float value,
                          const char *format);
@@ -244,6 +245,9 @@ static void VR_MenuPrintOptionValue(int cx, int cy, int option) {
   case VR_OPTION_HAPTIC:
     M_DrawCheckbox(cx, cy, (int)vr_haptic.value);
     break;
+  case VR_OPTION_INSTANT_STOP:
+    M_DrawCheckbox(cx, cy, (int)vr_movement_instant_stop.value);
+    break;
   case VR_OPTION_IMPULSE9:
     break;
   case VR_OPTION_GOD:
@@ -384,6 +388,9 @@ void VR_MenuKeyOption(int key, int option) {
     break;
   case VR_OPTION_HAPTIC:
     adjustI(vr_haptic, 1, 0, 1);
+    break;
+  case VR_OPTION_INSTANT_STOP:
+    adjustI(vr_movement_instant_stop, 1, 0, 1);
     break;
   case VR_OPTION_IMPULSE9:
     VR_MenuPlaySound("items/r_item2.wav", 0.5);
@@ -563,7 +570,11 @@ void VR_MenuDraw(void) {
       VR_MenuPrintOptionValue(240, y, i);
       break;
     case VR_OPTION_HAPTIC:
-      M_Print(16, y, "         Weapon Haptics");
+      M_Print(16, y, "          Weapon Haptics");
+      VR_MenuPrintOptionValue(240, y, i);
+      break;
+    case VR_OPTION_INSTANT_STOP:
+      M_Print(16, y, "            Instant Stop");
       VR_MenuPrintOptionValue(240, y, i);
       break;
     case VR_OPTION_IMPULSE9:

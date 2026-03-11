@@ -98,6 +98,7 @@ extern cvar_t vr_projectilespawn_z_offset;
 extern cvar_t vr_haptic;
 extern cvar_t vr_hud_scale;
 extern cvar_t vr_menu_scale;
+extern cvar_t vr_movement_instant_stop;
 
 #define MAX_WEAPONS 25 // not sure what this number should actually be...
 #define VARS_PER_WEAPON 5

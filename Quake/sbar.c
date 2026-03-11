@@ -23,6 +23,8 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 
 #include "quakedef.h"
 
+extern cvar_t vr_enabled;
+
 static int		sb_updates;		// if >= vid.numpages, no update needed
 
 #define STAT_MINUS		10	// num frame for '-' stats digit
@@ -928,7 +930,7 @@ void Sbar_Draw (void)
 
 	GL_SetCanvas (CANVAS_SBAR); //johnfitz
 
-	if (scr_viewsize.value < 110) //johnfitz -- check viewsize instead of sb_lines
+	if (scr_viewsize.value < 110 || vr_enabled.value) //johnfitz -- check viewsize instead of sb_lines; VR always draws full sbar
 	{
 		Sbar_DrawInventory ();
 		if (cl.maxclients != 1)
@@ -941,7 +943,7 @@ void Sbar_Draw (void)
 		Sbar_DrawScoreboard ();
 		sb_updates = 0;
 	}
-	else if (scr_viewsize.value < 120) //johnfitz -- check viewsize instead of sb_lines
+	else if (scr_viewsize.value < 120 || vr_enabled.value) //johnfitz -- check viewsize instead of sb_lines; VR always draws sbar
 	{
 		Sbar_DrawPicAlpha (0, 0, sb_sbar, scr_sbaralpha.value); //johnfitz -- scr_sbaralpha
 
