@@ -961,6 +961,7 @@ void VID_VR_Init() {
   Cvar_RegisterVariable(&vr_projectilespawn_z_offset);
   Cvar_RegisterVariable(&vr_hud_scale);
   Cvar_RegisterVariable(&vr_menu_scale);
+  Cvar_RegisterVariable(&vr_movement_instant_stop);
   Cvar_SetCallback(&vr_deadzone, VR_Deadzone_f);
 
   InitAllWeaponCVars();
