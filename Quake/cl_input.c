@@ -403,19 +403,17 @@ void CL_SendMove(const usercmd_t *cmd) {
     vec3_t adj;
     _VectorCopy(cl.handpos[1], adj);
 
-    vec3_t ofs = {
-        vr_weapon_offset[weaponCVarEntry * VARS_PER_WEAPON].value,
-        vr_weapon_offset[weaponCVarEntry * VARS_PER_WEAPON + 1].value,
-        vr_weapon_offset[weaponCVarEntry * VARS_PER_WEAPON + 2].value +
-            vr_gunmodely.value};
+    // Push the hand position forward to the barrel tip, matching the
+    // local-player path in SV_ApplyVRWeaponOffset.  Only the forward
+    // depth (ofs[2]) matters for projectile spawn — X/Y are visual only.
+    if (weaponCVarEntry >= 0) {
+      float ofs_z = vr_weapon_offset[weaponCVarEntry * VARS_PER_WEAPON + 2].value +
+                    vr_gunmodely.value;
 
-    vec3_t fwd2, right, up;
-    AngleVectors(cl.handrot[1], fwd2, right, up);
-
-    // Quake model coordinates: X = Forward, Y = Left (-Right), Z = Up
-    VectorMA(adj, vr_gunmodelscale.value * ofs[0], fwd2, adj);
-    VectorMA(adj, -(vr_gunmodelscale.value * ofs[1]), right, adj);
-    VectorMA(adj, vr_gunmodelscale.value * ofs[2], up, adj);
+      vec3_t fwd2, right_dummy, up_dummy;
+      AngleVectors(cl.handrot[1], fwd2, right_dummy, up_dummy);
+      VectorMA(adj, vr_gunmodelscale.value * ofs_z, fwd2, adj);
+    }
 
     MSG_WriteFloat(&buf, adj[0]);
     MSG_WriteFloat(&buf, adj[1]);

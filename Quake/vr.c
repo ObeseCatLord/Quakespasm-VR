@@ -191,7 +191,7 @@ typedef struct {
 } vr_dyn_weapon_t;
 
 #define MAX_DYN_WEAPONS 32
-static vr_dyn_weapon_t dyn_weapons[] = {
+static vr_dyn_weapon_t dyn_weapons[MAX_DYN_WEAPONS] = {
     {4096, 1, "progs/g_axe.mdl", 0, false}, // IT_AXE (pickup model)
     {1, 2, "progs/g_shot.mdl", 0, false},   // IT_SHOTGUN
     {2, 3, "progs/g_shot2.mdl", 0, false},  // IT_SUPER_SHOTGUN
@@ -202,6 +202,7 @@ static vr_dyn_weapon_t dyn_weapons[] = {
     {64, 8, "progs/g_light.mdl", 0, false}, // IT_LIGHTNING
 };
 static int num_dyn_weapons = 8;
+static qboolean rogue_weapons_added = false;
 static int last_tracked_activeweapon = -1;
 
 // Impulse sniffing/discovery state
@@ -247,7 +248,7 @@ DEFINE_CVAR(vr_gunmodeloffsets, 0, CVAR_ARCHIVE);
 DEFINE_CVAR(vr_gunmodelpitch, 0, CVAR_ARCHIVE);
 DEFINE_CVAR(vr_gunmodelscale, 1.0, CVAR_ARCHIVE);
 DEFINE_CVAR(vr_gunmodely, 0, CVAR_ARCHIVE);
-DEFINE_CVAR(vr_projectilespawn_z_offset, 16, CVAR_ARCHIVE);
+DEFINE_CVAR(vr_projectilespawn_z_offset, 24, CVAR_ARCHIVE);
 DEFINE_CVAR(vr_crosshairy, 0, CVAR_ARCHIVE);
 DEFINE_CVAR(vr_world_scale, 1.0, CVAR_ARCHIVE);
 DEFINE_CVAR(vr_floor_offset, -16, CVAR_ARCHIVE);
@@ -888,17 +889,17 @@ void InitAllWeaponCVars() {
                       "0.33"); // laser
       InitWeaponCVars(i++, "progs/v_prox.mdl", "10", "1.5", "13",
                       "0.5"); // proximity - same as grenade
-      // rogue weapons — tuned for rogue model barrel heights
-      InitWeaponCVars(i++, "progs/v_lava.mdl", "-5", "1", "15",
-                      "0.5"); // lava nailgun
-      InitWeaponCVars(i++, "progs/v_lava2.mdl", "0", "1", "19",
-                      "0.5"); // lava supernailgun
-      InitWeaponCVars(i++, "progs/v_multi.mdl", "10", "0", "13",
-                      "0.5"); // multigrenade
-      InitWeaponCVars(i++, "progs/v_multi2.mdl", "10", "3", "17",
-                      "0.5"); // multirocket (lower barrel, shorter forward push)
-      InitWeaponCVars(i++, "progs/v_plasma.mdl", "3", "1", "11",
-                      "0.5"); // plasma gun
+      // rogue weapons — offsets matching master branch (quakevr)
+      InitWeaponCVars(i++, "progs/v_lava.mdl", "-5", "3", "15",
+                      "0.5"); // lava nailgun (same as nailgun)
+      InitWeaponCVars(i++, "progs/v_lava2.mdl", "0", "3", "19",
+                      "0.5"); // lava supernailgun (same as supernailgun)
+      InitWeaponCVars(i++, "progs/v_multi.mdl", "10", "1.5", "13",
+                      "0.5"); // multigrenade (same as grenade)
+      InitWeaponCVars(i++, "progs/v_multi2.mdl", "10", "7", "19",
+                      "0.5"); // multirocket (same as rocket)
+      InitWeaponCVars(i++, "progs/v_plasma.mdl", "3", "4", "13",
+                      "0.5"); // plasma gun (same as lightning)
     }
 
     // axe from copper mod (used by many mods, including Underdark Overbright,
@@ -1053,6 +1054,13 @@ void VR_LoadWeaponSchema(void) {
 void VR_InitGame() {
   InitAllWeaponCVars();
   VR_LoadWeaponSchema();
+
+  // Per-game projectile spawn tuning.  The cvar is CVAR_ARCHIVE so a
+  // saved config may override the compiled default.  Force-set here so
+  // game-specific values always take effect.
+  if (rogue) {
+    Cvar_SetValueQuick(&vr_projectilespawn_z_offset, 24);
+  }
 }
 
 qboolean VR_Enable() {
@@ -2159,6 +2167,24 @@ void VR_ResetWeaponTracking(void) {
   // 4096 for RIT_LAVA_NAILGUN. Fix up the axe entry accordingly.
   dyn_weapons[0].bitmask = rogue ? 2048 : 4096;
 
+  // Add Rogue-specific weapons to the table (once) so they have proper
+  // model paths and impulses instead of relying on dynamic discovery.
+  if (rogue && !rogue_weapons_added) {
+    int i = num_dyn_weapons;
+    dyn_weapons[i++] = (vr_dyn_weapon_t){RIT_LAVA_NAILGUN, 4,
+                                          "progs/g_nail.mdl", 0, false};
+    dyn_weapons[i++] = (vr_dyn_weapon_t){RIT_LAVA_SUPER_NAILGUN, 5,
+                                          "progs/g_nail2.mdl", 0, false};
+    dyn_weapons[i++] = (vr_dyn_weapon_t){RIT_MULTI_GRENADE, 6,
+                                          "progs/g_rock.mdl", 0, false};
+    dyn_weapons[i++] = (vr_dyn_weapon_t){RIT_MULTI_ROCKET, 7,
+                                          "progs/g_rock2.mdl", 0, false};
+    dyn_weapons[i++] = (vr_dyn_weapon_t){RIT_PLASMA_GUN, 8,
+                                          "progs/g_light.mdl", 0, false};
+    num_dyn_weapons = i;
+    rogue_weapons_added = true;
+  }
+
   // Note: We DO NOT reset num_dyn_weapons or discovery state here anymore
   // so that mod weapon knowledge persists across map loads.
   // We just reset the scanning flag if needed.
@@ -2308,8 +2334,10 @@ void VR_DrawWeaponMenu(void) {
   // Use R_DrawAliasModel_NoCull to bypass frustum culling for UI models
   extern void R_DrawAliasModel_NoCull(entity_t * e);
 
-  // Store weapon positions for raycast selection
+  // Store weapon positions for raycast selection (zero-init to avoid
+  // garbage positions for weapons whose models fail to load)
   vec3_t weapon_positions[MAX_DYN_WEAPONS];
+  memset(weapon_positions, 0, sizeof(weapon_positions));
 
   int current_assigned_index = 0;
 
@@ -2433,15 +2461,20 @@ void VR_DrawWeaponMenu(void) {
         break;
       case IT_NAILGUN:
       case IT_SUPER_NAILGUN:
+      case RIT_LAVA_NAILGUN:
+      case RIT_LAVA_SUPER_NAILGUN:
         ammo = cl.stats[STAT_NAILS];
         max_ammo = 200;
         break;
       case IT_GRENADE_LAUNCHER:
       case IT_ROCKET_LAUNCHER:
+      case RIT_MULTI_GRENADE:
+      case RIT_MULTI_ROCKET:
         ammo = cl.stats[STAT_ROCKETS];
         max_ammo = 100;
         break;
       case IT_LIGHTNING:
+      case RIT_PLASMA_GUN:
         ammo = cl.stats[STAT_CELLS];
         max_ammo = 100;
         break;
@@ -2458,11 +2491,13 @@ void VR_DrawWeaponMenu(void) {
         }
 
         vec3_t text_pos;
-        // Use ent.origin (already vertically centred on the model) so text
-        // tracks above the actual barrel on every ring, not the raw ring pos.
+        // Position text above the model's visual top.  ent.origin is the
+        // vertically-centered model origin; add the distance from center to
+        // model top so text always clears the weapon.
+        float model_top = (mdl->maxs[2] - vert_center) * scale;
         VectorCopy(ent.origin, text_pos);
         VectorMA(text_pos, -2.0f, forward, text_pos);
-        VectorMA(text_pos, 2.5f * (is_selected ? scale / 0.25f : 1.0f), up, text_pos);
+        VectorMA(text_pos, model_top + 1.5f, up, text_pos);
 
         float tscale = 0.15f;
         if (is_selected) {

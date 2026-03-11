@@ -874,21 +874,14 @@ static void SV_ApplyVRWeaponOffset(edict_t *ent, int num, qboolean is_remote_vr,
   _VectorCopy(ent->v.origin, restoreOrigin);
 
   if (is_remote_vr) {
-    // Use the raw hand position from VR tracking.  Pull origin backward
-    // by 4 units along the aim direction to partially cancel QuakeC's
-    // built-in v_forward*N (8-10 units) which overshoots the VR barrel
-    // at this world scale.  Subtract 10 from Z to partially cancel
-    // QuakeC's '0 0 16', leaving +6 above hand for barrel height.
+    // The client sends handpos + forward barrel push (matching the local
+    // path).  Apply the same z_offset compensation as the local path so
+    // projectile spawn positions are consistent between local and remote.
     vec3_t adj;
     _VectorCopy(svs.clients[num - 1].vr_handpos, adj);
 
-    vec3_t fwd, right, up;
-    AngleVectors(ent->v.v_angle, fwd, right, up);
-    VectorMA(adj, -12.0f, fwd, adj);
-
-    adj[2] -= 10;
-
     _VectorCopy(adj, ent->v.origin);
+    ent->v.origin[2] -= vr_projectilespawn_z_offset.value;
   } else if (vr_enabled.value && !isDedicated && num == cl.viewentity) {
     vec3_t adj;
     _VectorCopy(cl.handpos[1], adj);
