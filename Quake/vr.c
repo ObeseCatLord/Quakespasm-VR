@@ -203,6 +203,7 @@ static vr_dyn_weapon_t dyn_weapons[MAX_DYN_WEAPONS] = {
 };
 static int num_dyn_weapons = 8;
 static qboolean rogue_weapons_added = false;
+static qboolean hipnotic_weapons_added = false;
 static int last_tracked_activeweapon = -1;
 
 // Impulse sniffing/discovery state
@@ -2168,7 +2169,7 @@ void VR_ResetWeaponTracking(void) {
   // 4096 for RIT_LAVA_NAILGUN. Fix up the axe entry accordingly.
   dyn_weapons[0].bitmask = rogue ? 2048 : 4096;
 
-  // Add Rogue-specific weapons to the table (once) so they have proper
+  // Add expansion-specific weapons to the table (once) so they have proper
   // model paths and impulses instead of relying on dynamic discovery.
   if (rogue && !rogue_weapons_added) {
     int i = num_dyn_weapons;
@@ -2184,6 +2185,17 @@ void VR_ResetWeaponTracking(void) {
                                           "progs/g_light.mdl", 0, false};
     num_dyn_weapons = i;
     rogue_weapons_added = true;
+  }
+  if (hipnotic && !hipnotic_weapons_added) {
+    int i = num_dyn_weapons;
+    dyn_weapons[i++] = (vr_dyn_weapon_t){HIT_MJOLNIR, 1,
+                                          "progs/g_hammer.mdl", 0, false};
+    dyn_weapons[i++] = (vr_dyn_weapon_t){HIT_LASER_CANNON, 8,
+                                          "progs/g_laserg.mdl", 0, false};
+    dyn_weapons[i++] = (vr_dyn_weapon_t){HIT_PROXIMITY_GUN, 6,
+                                          "progs/g_prox.mdl", 0, false};
+    num_dyn_weapons = i;
+    hipnotic_weapons_added = true;
   }
 
   // Note: We DO NOT reset num_dyn_weapons or discovery state here anymore
@@ -2475,8 +2487,18 @@ void VR_DrawWeaponMenu(void) {
         max_ammo = 100;
         break;
       case IT_LIGHTNING:
-      case RIT_PLASMA_GUN:
+      case HIT_LASER_CANNON:
         ammo = cl.stats[STAT_CELLS];
+        max_ammo = 100;
+        break;
+      // HIT_PROXIMITY_GUN and RIT_PLASMA_GUN share bitmask 65536.
+      // Disambiguate by active game type.
+      case 65536:
+        if (rogue) {
+          ammo = cl.stats[STAT_CELLS];  // plasma gun
+        } else {
+          ammo = cl.stats[STAT_ROCKETS]; // proximity gun
+        }
         max_ammo = 100;
         break;
       }
