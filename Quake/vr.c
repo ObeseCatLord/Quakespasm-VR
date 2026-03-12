@@ -1051,18 +1051,17 @@ void VR_LoadWeaponSchema(void) {
   }
 }
 
+// Per-game extra Z compensation applied on top of vr_projectilespawn_z_offset.
+// Stored as a plain C float so config.cfg can never override it.
+float vr_game_projectile_z_extra = 0.0f;
+
 void VR_InitGame() {
   InitAllWeaponCVars();
   VR_LoadWeaponSchema();
 
-  // Per-game projectile spawn tuning.  The cvar is CVAR_ARCHIVE so a
-  // saved config may override the compiled default.  Force-set here so
-  // game-specific values always take effect.
-  if (rogue) {
-    // Rogue's QuakeC uses larger spawn offsets than base Quake.
-    // This value compensates so projectiles exit at the barrel tip.
-    Cvar_SetValueQuick(&vr_projectilespawn_z_offset, 52);
-  }
+  // Per-game extra Z offset — cannot be overridden by config.cfg unlike the cvar.
+  // Rogue's QuakeC has slightly different spawn offsets.
+  vr_game_projectile_z_extra = rogue ? 16.0f : 0.0f;
 }
 
 qboolean VR_Enable() {

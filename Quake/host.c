@@ -880,6 +880,7 @@ void Host_Init (void)
 		CL_Init ();
 	}
 
+	VR_InitGame (); // per-game weapon offsets + projectile tuning
 	LOC_Init (); // for 2021 rerelease support.
 
 	Hunk_AllocName (0, "-HOST_HUNKLEVEL-");
