@@ -885,7 +885,8 @@ static void SV_ApplyVRWeaponOffset(edict_t *ent, int num, qboolean is_remote_vr,
     VectorMA(adj, -6.0f, fwd, adj);
 
     _VectorCopy(adj, ent->v.origin);
-    ent->v.origin[2] -= vr_projectilespawn_z_offset.value + vr_game_projectile_z_extra;
+    ent->v.origin[2] -=
+        vr_projectilespawn_z_offset.value + vr_game_projectile_z_extra;
   } else if (vr_enabled.value && !isDedicated && num == cl.viewentity) {
     vec3_t adj;
     _VectorCopy(cl.handpos[1], adj);
@@ -906,14 +907,16 @@ static void SV_ApplyVRWeaponOffset(edict_t *ent, int num, qboolean is_remote_vr,
     }
 
     _VectorCopy(adj, ent->v.origin);
-    ent->v.origin[2] -= vr_projectilespawn_z_offset.value + vr_game_projectile_z_extra;
+    ent->v.origin[2] -=
+        vr_projectilespawn_z_offset.value + vr_game_projectile_z_extra;
   }
 }
 
 static void SV_RestoreVRWeaponOffset(edict_t *ent, int num,
                                      qboolean is_remote_vr,
                                      vec3_t restoreOrigin) {
-  if (is_remote_vr || (vr_enabled.value && !isDedicated && num == cl.viewentity)) {
+  if (is_remote_vr ||
+      (vr_enabled.value && !isDedicated && num == cl.viewentity)) {
     _VectorCopy(restoreOrigin, ent->v.origin);
   }
 }
