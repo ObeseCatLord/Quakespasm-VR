@@ -1918,7 +1918,12 @@ void VR_Move(usercmd_t *cmd) {
   DoKey(&controllers[1], vr::k_EButton_ApplicationMenu, K_BBUTTON);
 
   // k_EButton_A
-  DoKey(&controllers[0], vr::k_EButton_A, K_ABUTTON);
+  if (controllers[0].state.ulButtonPressed & vr::ButtonMaskFromId(vr::k_EButton_A)) {
+    if (!(controllers[0].lastState.ulButtonPressed & vr::ButtonMaskFromId(vr::k_EButton_A))) {
+      Con_DPrintf("VR: Left Controller A pressed -> K_TAB\n");
+    }
+  }
+  DoKey(&controllers[0], vr::k_EButton_A, K_TAB);
   DoKey(&controllers[1], vr::k_EButton_A, K_XBUTTON);
 
   // k_EButton_Axis2 === SteamVR-binding "Right Axis 2 Press" (at least on Index
