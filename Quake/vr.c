@@ -2173,27 +2173,27 @@ void VR_ResetWeaponTracking(void) {
   // model paths and impulses instead of relying on dynamic discovery.
   if (rogue && !rogue_weapons_added) {
     int i = num_dyn_weapons;
-    dyn_weapons[i++] = (vr_dyn_weapon_t){RIT_LAVA_NAILGUN, 4,
-                                          "progs/g_nail.mdl", 0, false};
-    dyn_weapons[i++] = (vr_dyn_weapon_t){RIT_LAVA_SUPER_NAILGUN, 5,
-                                          "progs/g_nail2.mdl", 0, false};
-    dyn_weapons[i++] = (vr_dyn_weapon_t){RIT_MULTI_GRENADE, 6,
-                                          "progs/g_rock.mdl", 0, false};
-    dyn_weapons[i++] = (vr_dyn_weapon_t){RIT_MULTI_ROCKET, 7,
-                                          "progs/g_rock2.mdl", 0, false};
-    dyn_weapons[i++] = (vr_dyn_weapon_t){RIT_PLASMA_GUN, 8,
-                                          "progs/g_light.mdl", 0, false};
+    dyn_weapons[i++] = vr_dyn_weapon_t{RIT_LAVA_NAILGUN, 4,
+                                       "progs/g_nail.mdl", 0, false};
+    dyn_weapons[i++] = vr_dyn_weapon_t{RIT_LAVA_SUPER_NAILGUN, 5,
+                                       "progs/g_nail2.mdl", 0, false};
+    dyn_weapons[i++] = vr_dyn_weapon_t{RIT_MULTI_GRENADE, 6,
+                                       "progs/g_rock.mdl", 0, false};
+    dyn_weapons[i++] = vr_dyn_weapon_t{RIT_MULTI_ROCKET, 7,
+                                       "progs/g_rock2.mdl", 0, false};
+    dyn_weapons[i++] = vr_dyn_weapon_t{RIT_PLASMA_GUN, 8,
+                                       "progs/g_light.mdl", 0, false};
     num_dyn_weapons = i;
     rogue_weapons_added = true;
   }
   if (hipnotic && !hipnotic_weapons_added) {
     int i = num_dyn_weapons;
-    dyn_weapons[i++] = (vr_dyn_weapon_t){HIT_MJOLNIR, 1,
-                                          "progs/g_hammer.mdl", 0, false};
-    dyn_weapons[i++] = (vr_dyn_weapon_t){HIT_LASER_CANNON, 8,
-                                          "progs/g_laserg.mdl", 0, false};
-    dyn_weapons[i++] = (vr_dyn_weapon_t){HIT_PROXIMITY_GUN, 6,
-                                          "progs/g_prox.mdl", 0, false};
+    dyn_weapons[i++] = vr_dyn_weapon_t{HIT_MJOLNIR, 1,
+                                       "progs/g_hammer.mdl", 0, false};
+    dyn_weapons[i++] = vr_dyn_weapon_t{HIT_LASER_CANNON, 8,
+                                       "progs/g_laserg.mdl", 0, false};
+    dyn_weapons[i++] = vr_dyn_weapon_t{HIT_PROXIMITY_GUN, 6,
+                                       "progs/g_prox.mdl", 0, false};
     num_dyn_weapons = i;
     hipnotic_weapons_added = true;
   }
