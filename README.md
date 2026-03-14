@@ -101,7 +101,7 @@ Input from VR Controllers are mapped to various joystick-related input (except t
 | Left Pad/Stick Click | `LTHUMB` | Run |
 | Right Pad/Stick Click | `RTHUMB` | Jump |
 | Left Grip | `LSHOULDER` | Show Scores |
-| Right Grip  | `RSHOULDER` |  Jump  |
+| Right Grip  | `RSHOULDER` |  Show Scores  |
 | Left A Button | `ABUTTON` | Show Scores |
 | Right A Button | `XBUTTON` | Previous Weapon |
 | Right Axis 2 Press | `YBUTTON` | _none_ |

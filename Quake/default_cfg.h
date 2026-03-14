@@ -80,7 +80,7 @@ static const char default_cfg[] =
     "bind BBUTTON \"impulse 10\"\n"
     "bind LTHUMB \"+speed\"\n"
     "bind LSHOULDER \"+vr_weaponmenu\"\n"
-    "bind RSHOULDER \"+jump\"\n"
+    "bind RSHOULDER \"+showscores\"\n"
     "bind ABUTTON \"+showscores\"\n"
     "bind XBUTTON \"impulse 12\"\n"
     "bind VR_RIGHT_STICK_UP \"+vr_weaponmenu\"\n"
