@@ -907,8 +907,7 @@ static void SV_ApplyVRWeaponOffset(edict_t *ent, int num, qboolean is_remote_vr,
     }
 
     _VectorCopy(adj, ent->v.origin);
-    ent->v.origin[2] -=
-        vr_projectilespawn_z_offset.value + vr_game_projectile_z_extra;
+    ent->v.origin[2] -= vr_projectilespawn_z_offset.value;
   }
 }
 
@@ -1278,9 +1277,9 @@ void SV_Physics(void) {
   int entity_cap; // For sv_freezenonclients
   edict_t *ent;
 
-  // sv_nofriendlyfire: force all co-op players onto the same team so
-  // QuakeC's T_Damage teamplay check blocks player-vs-player damage.
-  if (sv_nofriendlyfire.value && coop.value) {
+  // Force all co-op players onto the same team so QuakeC's T_Damage
+  // teamplay check blocks player-vs-player damage unconditionally.
+  if (coop.value) {
     if (pr_global_struct->teamplay < 1)
       pr_global_struct->teamplay = 1;
     for (i = 1; i <= svs.maxclients; i++) {

@@ -636,11 +636,16 @@ void SV_WriteEntitiesToClient (edict_t	*clent, sizebuf_t *msg)
 			if (sv.protocol == PROTOCOL_NETQUAKE && (int)ent->v.modelindex & 0xFF00)
 				continue;
 
+			// in co-op, always send other players regardless of PVS
+			// so VR outline feature can show them through walls
+			if (coop.value && e >= 1 && e <= svs.maxclients)
+				goto skip_pvs_cull;
+
 			// ignore if not touching a PV leaf
 			for (i=0 ; i < ent->num_leafs ; i++)
 				if (pvs[ent->leafnums[i] >> 3] & (1 << (ent->leafnums[i]&7) ))
 					break;
-			
+
 			// ericw -- added ent->num_leafs < MAX_ENT_LEAFS condition.
 			//
 			// if ent->num_leafs == MAX_ENT_LEAFS, the ent is visible from too many leafs
@@ -649,6 +654,7 @@ void SV_WriteEntitiesToClient (edict_t	*clent, sizebuf_t *msg)
 			// spanning the entire map, or really tall lifts, etc.
 			if (i == ent->num_leafs && ent->num_leafs < MAX_ENT_LEAFS)
 				continue;		// not visible
+skip_pvs_cull: ;
 		}
 
 		// johnfitz -- max size for protocol 15 is 18 bytes, not 16 as originally

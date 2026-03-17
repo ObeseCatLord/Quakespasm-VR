@@ -277,10 +277,27 @@ static void PF_setsize (void)
 {
 	edict_t	*e;
 	float	*minvec, *maxvec;
+	vec3_t	scaledmins, scaledmaxs;
+	int	entnum;
 
 	e = G_EDICT(OFS_PARM0);
 	minvec = G_VECTOR(OFS_PARM1);
 	maxvec = G_VECTOR(OFS_PARM2);
+
+	// Shrink player colliders to 1/3 size
+	entnum = NUM_FOR_EDICT(e);
+	if (entnum >= 1 && entnum <= svs.maxclients)
+	{
+		scaledmins[0] = minvec[0] / 3.0f;
+		scaledmins[1] = minvec[1] / 3.0f;
+		scaledmins[2] = minvec[2] / 3.0f;
+		scaledmaxs[0] = maxvec[0] / 3.0f;
+		scaledmaxs[1] = maxvec[1] / 3.0f;
+		scaledmaxs[2] = maxvec[2] / 3.0f;
+		SetMinMaxSize (e, scaledmins, scaledmaxs, false);
+		return;
+	}
+
 	SetMinMaxSize (e, minvec, maxvec, false);
 }
 

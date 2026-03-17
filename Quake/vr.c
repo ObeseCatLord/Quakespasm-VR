@@ -267,6 +267,7 @@ DEFINE_CVAR(vr_joystick_deadzone_trunc, 1, CVAR_ARCHIVE);
 DEFINE_CVAR(vr_hud_scale, 0.025, CVAR_ARCHIVE);
 DEFINE_CVAR(vr_menu_scale, 0.13, CVAR_ARCHIVE);
 DEFINE_CVAR(vr_movement_instant_stop, 1, CVAR_ARCHIVE);
+DEFINE_CVAR(vr_movement_speed, 1.5, CVAR_ARCHIVE);
 
 static qboolean InitOpenGLExtensions() {
   int i;
@@ -955,6 +956,7 @@ void VID_VR_Init() {
   Cvar_RegisterVariable(&vr_joystick_axis_menu_deadzone_extra);
   Cvar_RegisterVariable(&vr_lefthanded);
   Cvar_RegisterVariable(&vr_movement_mode);
+  Cvar_RegisterVariable(&vr_movement_speed);
   Cvar_RegisterVariable(&vr_msaa);
   Cvar_RegisterVariable(&vr_snap_turn);
   Cvar_RegisterVariable(&vr_180_snap_turn);
@@ -2027,6 +2029,13 @@ void VR_Move(usercmd_t *cmd) {
 
     cmd->upmove +=
         cl_upspeed.value * GetAxis(&controllers[0].state, 1, 0.15f) * lfwd[2];
+
+    // Compensate for instant stop removing momentum-based speed
+    if (vr_movement_speed.value != 1.0f) {
+      cmd->forwardmove *= vr_movement_speed.value;
+      cmd->sidemove *= vr_movement_speed.value;
+      cmd->upmove *= vr_movement_speed.value;
+    }
 
     if (cl_forwardspeed.value > 200 && cl_movespeedkey.value) {
       cmd->forwardmove /= cl_movespeedkey.value;
