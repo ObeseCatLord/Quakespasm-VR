@@ -24,6 +24,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "quakedef.h"
 #include "bgmusic.h"
 #include "vr.h"
+#include "debug_log.h"
 
 // we need to declare some mouse variables here, because the menu system
 // references them even when on a unix system.
@@ -105,6 +106,8 @@ This is also called on Host_Error, so it shouldn't cause any errors
 */
 void CL_Disconnect (void)
 {
+	DebugLog("CL_Disconnect: state=%d signon=%d\n", cls.state, cls.signon);
+
 	if (key_dest == key_message)
 		Key_EndChat ();	// don't get stuck in chat mode
 
@@ -186,6 +189,7 @@ void CL_SignonReply (void)
 {
 	char 	str[8192];
 
+	DebugLog("CL_SignonReply: signon=%d\n", cls.signon);
 	Con_DPrintf ("CL_SignonReply: %i\n", cls.signon);
 
 	switch (cls.signon)

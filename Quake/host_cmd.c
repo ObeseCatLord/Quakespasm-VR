@@ -26,6 +26,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include <dirent.h>
 #endif
 #include "vr.h"
+#include "debug_log.h"
 
 extern cvar_t pausable;
 
@@ -849,8 +850,10 @@ static void Host_Reconnect_f(void) {
   if (cls.demoplayback) // cross-map demo playback fix from Baker
     return;
 
+  DebugLog("Host_Reconnect_f: signon=%d state=%d\n", cls.signon, cls.state);
   SCR_BeginLoadingPlaque();
   CL_ClearSignons(); // need new connection messages
+  DebugLog("Host_Reconnect_f: signons cleared, waiting for new signon data\n");
 }
 
 /*

@@ -25,6 +25,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "quakedef.h"
 #include "bgmusic.h"
 #include "vr.h"
+#include "debug_log.h"
 
 const char *svc_strings[] = {
     "svc_bad", "svc_nop", "svc_disconnect", "svc_updatestat",
@@ -276,6 +277,7 @@ void CL_ParseServerInfo(void) {
   char model_precache[MAX_MODELS][MAX_QPATH];
   char sound_precache[MAX_SOUNDS][MAX_QPATH];
 
+  DebugLog("CL_ParseServerInfo: BEGIN (signon=%d, state=%d)\n", cls.signon, cls.state);
   Con_DPrintf("Serverinfo packet received.\n");
 
   // ericw -- bring up loading plaque for map changes within a demo.
@@ -297,6 +299,7 @@ void CL_ParseServerInfo(void) {
                PROTOCOL_NETQUAKE, PROTOCOL_FITZQUAKE, PROTOCOL_RMQ);
   }
   cl.protocol = i;
+  DebugLog("CL_ParseServerInfo: protocol=%d\n", i);
   // johnfitz
 
   if (cl.protocol == PROTOCOL_RMQ) {
@@ -317,7 +320,9 @@ void CL_ParseServerInfo(void) {
 
   // parse maxclients
   cl.maxclients = MSG_ReadByte();
+  DebugLog("CL_ParseServerInfo: maxclients=%d\n", cl.maxclients);
   if (cl.maxclients < 1 || cl.maxclients > MAX_SCOREBOARD) {
+    DebugLog("CL_ParseServerInfo: FATAL bad maxclients %d\n", cl.maxclients);
     Host_Error("Bad maxclients (%u) from server", cl.maxclients);
   }
   cl.scores = (scoreboard_t *)Hunk_AllocName(cl.maxclients * sizeof(*cl.scores),
@@ -358,6 +363,7 @@ void CL_ParseServerInfo(void) {
   if (nummodels >= 256)
     Con_DWarning("%i models exceeds standard limit of 256 (max = %d).\n",
                  nummodels, MAX_MODELS);
+  DebugLog("CL_ParseServerInfo: %d models precached\n", nummodels);
   // johnfitz
 
   // precache sounds
@@ -377,6 +383,7 @@ void CL_ParseServerInfo(void) {
   if (numsounds >= 256)
     Con_DWarning("%i sounds exceeds standard limit of 256 (max = %d).\n",
                  numsounds, MAX_SOUNDS);
+  DebugLog("CL_ParseServerInfo: %d sounds precached\n", numsounds);
   // johnfitz
 
   //
@@ -388,8 +395,10 @@ void CL_ParseServerInfo(void) {
                      sizeof(cl.mapname));
 
   for (i = 1; i < nummodels; i++) {
+    DebugLog("CL_ParseServerInfo: loading model %d/%d: %s\n", i, nummodels - 1, model_precache[i]);
     cl.model_precache[i] = Mod_ForName(model_precache[i], false);
     if (cl.model_precache[i] == NULL) {
+      DebugLog("CL_ParseServerInfo: FATAL model not found: %s\n", model_precache[i]);
       Host_Error("Model %s not found", model_precache[i]);
     }
     CL_KeepaliveMessage();
@@ -405,6 +414,7 @@ void CL_ParseServerInfo(void) {
   // local state
   cl_entities[0].model = cl.worldmodel = cl.model_precache[1];
 
+  DebugLog("CL_ParseServerInfo: calling R_NewMap for %s\n", cl.mapname);
   R_NewMap();
 
   // johnfitz -- clear out string; we don't consider identical
@@ -423,6 +433,8 @@ void CL_ParseServerInfo(void) {
   memset(&dev_stats, 0, sizeof(dev_stats));
   memset(&dev_peakstats, 0, sizeof(dev_peakstats));
   memset(&dev_overflows, 0, sizeof(dev_overflows));
+  DebugLog("CL_ParseServerInfo: END OK (map=%s, protocol=%d, %d models, %d sounds)\n",
+           cl.mapname, cl.protocol, nummodels, numsounds);
 }
 
 /*
@@ -984,8 +996,12 @@ void CL_ParseServerMessage(void) {
 
   lastcmd = 0;
   while (1) {
-    if (msg_badread)
+    if (msg_badread) {
+      DebugLog("CL_ParseServerMessage: FATAL bad read after cmd=%d (%s), msg cursize=%d readcount=%d\n",
+               lastcmd, (lastcmd < (int)NUM_SVC_STRINGS) ? svc_strings[lastcmd] : "???",
+               net_message.cursize, msg_readcount);
       Host_Error("CL_ParseServerMessage: Bad server message");
+    }
 
     cmd = MSG_ReadByte();
 
@@ -1010,6 +1026,8 @@ void CL_ParseServerMessage(void) {
     switch (cmd) {
     default:
       //	CL_DumpPacket ();
+      DebugLog("CL_ParseServerMessage: FATAL illegible cmd=%d prev=%d (%s), msg cursize=%d readcount=%d\n",
+               cmd, lastcmd, svc_strings[lastcmd], net_message.cursize, msg_readcount);
       Host_Error(
           "Illegible server message %d (previous was %s)", cmd,
           svc_strings[lastcmd]); // johnfitz -- added svc_strings[lastcmd]
@@ -1041,6 +1059,7 @@ void CL_ParseServerMessage(void) {
       break;
 
     case svc_disconnect:
+      DebugLog("svc_disconnect received\n");
       Host_EndGame("Server disconnected\n");
 
     case svc_print:
@@ -1056,7 +1075,9 @@ void CL_ParseServerMessage(void) {
       break;
 
     case svc_stufftext:
-      Cbuf_AddText(MSG_ReadString());
+      str = MSG_ReadString();
+      DebugLog("svc_stufftext: \"%s\"\n", str);
+      Cbuf_AddText(str);
       break;
 
     case svc_damage:
@@ -1166,8 +1187,11 @@ void CL_ParseServerMessage(void) {
 
     case svc_signonnum:
       i = MSG_ReadByte();
-      if (i <= cls.signon)
+      DebugLog("svc_signonnum: %d (was %d)\n", i, cls.signon);
+      if (i <= cls.signon) {
+        DebugLog("svc_signonnum: FATAL out-of-order signon %d <= %d\n", i, cls.signon);
         Host_Error("Received signon %i when at %i", i, cls.signon);
+      }
       cls.signon = i;
       // johnfitz -- if signonnum==2, signon packet has been fully parsed, so
       // check for excessive static ents and efrags

@@ -26,6 +26,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "q_ctype.h"
 #include <errno.h>
 #include "vr.h"
+#include "debug_log.h"
 
 #include "miniz.h"
 
@@ -1001,6 +1002,8 @@ void *SZ_GetSpace (sizebuf_t *buf, int length)
 
 	if (buf->cursize + length > buf->maxsize)
 	{
+		DebugLog("SZ_GetSpace: OVERFLOW cursize=%d + length=%d > maxsize=%d (allowoverflow=%d)\n",
+			 buf->cursize, length, buf->maxsize, buf->allowoverflow);
 		if (!buf->allowoverflow)
 			Host_Error ("SZ_GetSpace: overflow without allowoverflow set"); // ericw -- made Host_Error to be less annoying
 
@@ -2643,17 +2646,19 @@ void LOC_LoadFile (const char *file)
 
 	Con_Printf("\nLanguage initialization\n");
 
-	memset(&archive, 0, sizeof(archive));
-	q_snprintf(path, sizeof(path), "%s/%s", com_basedir, file);
-	rw = SDL_RWFromFile(path, "rb");
-	#if defined(DO_USERDIRS)
-	if (!rw) {
-		q_snprintf(path, sizeof(path), "%s/%s", host_parms->userdir, file);
-		rw = SDL_RWFromFile(path, "rb");
-	}
-	#endif
-	if (!rw)
+	unsigned int path_id;
+	
+	// Try loading from standard virtual file system (PAK files, folders)
+	localization.text = (char *)COM_LoadMallocFile(file, &path_id);
+	
+	if (localization.text)
 	{
+		// COM_LoadMallocFile null-terminates the buffer
+	}
+	else
+	{
+		// Fallback to QuakeEX.kpf for Nightdive rerelease specifically
+		memset(&archive, 0, sizeof(archive));
 		q_snprintf(path, sizeof(path), "%s/QuakeEX.kpf", com_basedir);
 		rw = SDL_RWFromFile(path, "rb");
 		#if defined(DO_USERDIRS)
@@ -2675,20 +2680,13 @@ void LOC_LoadFile (const char *file)
 		localization.text = (char *) realloc(localization.text, size+1);
 		localization.text[size] = 0;
 	}
-	else
+
+	if (!localization.text)
 	{
-		sz = SDL_RWsize(rw);
-		if (sz <= 0) goto fail;
-		localization.text = (char *) calloc(1, sz+1);
-		if (!localization.text)
-		{
-fail:			mz_zip_reader_end(&archive);
-			if (rw) SDL_RWclose(rw);
-			Con_Printf("Couldn't load '%s'\nfrom '%s'\n", file, com_basedir);
-			return;
-		}
-		SDL_RWread(rw, localization.text, 1, sz);
-		SDL_RWclose(rw);
+fail:	mz_zip_reader_end(&archive);
+		if (rw) SDL_RWclose(rw);
+		Con_Printf("Couldn't load '%s'\nfrom '%s'\n", file, com_basedir);
+		return;
 	}
 
 	cursor = localization.text;
@@ -2920,7 +2918,42 @@ Returns localized string if available, or input string otherwise
 const char* LOC_GetString (const char *key)
 {
 	const char* value = LOC_GetRawString(key);
-	return value ? value : key;
+	if (value)
+		return value;
+
+	// Graceful fallback if the loc_english.txt is missing from Nightdive PAKs
+	if (key && (key[0] == '$') && (key[1] == 'q' || key[1] == 'Q') && (key[2] == 'c' || key[2] == 'C') && (key[3] == '_'))
+	{
+		static char fallback_buffers[8][128];
+		static int fallback_idx = 0;
+		char *buf;
+		int i, j;
+
+		// Specific hardcoded translations
+		if (!q_strcasecmp(key, "$QC_Door"))
+			return "This door is opened elsewhere.";
+
+		fallback_idx = (fallback_idx + 1) % 8;
+		buf = fallback_buffers[fallback_idx];
+
+		// Auto-format things like $qc_enemy_killed_no_bonus -> Enemy killed no bonus
+		// Skip "$QC_"
+		for (i = 4, j = 0; key[i] && j < 127; i++, j++)
+		{
+			if (key[i] == '_')
+				buf[j] = ' ';
+			else
+				buf[j] = key[i];
+		}
+		buf[j] = '\0';
+		
+		if (j > 0 && buf[0] >= 'a' && buf[0] <= 'z')
+			buf[0] = buf[0] - ('a' - 'A'); // Capitalize first letter
+
+		return buf;
+	}
+
+	return key;
 }
 
 /*

@@ -26,6 +26,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "bgmusic.h"
 #include <setjmp.h>
 #include "vr.h"
+#include "debug_log.h"
 
 /*
 
@@ -75,7 +76,7 @@ cvar_t	noexit = {"noexit","0",CVAR_NOTIFY|CVAR_SERVERINFO};
 cvar_t	skill = {"skill","1",CVAR_NONE};			// 0 - 3
 cvar_t	deathmatch = {"deathmatch","0",CVAR_NONE};	// 0, 1, or 2
 cvar_t	coop = {"coop","0",CVAR_NONE};			// 0 or 1
-cvar_t	sv_nofriendlyfire = {"sv_nofriendlyfire","0",CVAR_NOTIFY|CVAR_SERVERINFO};
+cvar_t	sv_nofriendlyfire = {"sv_nofriendlyfire","1",CVAR_NOTIFY|CVAR_SERVERINFO};
 
 cvar_t	pausable = {"pausable","1",CVAR_NONE};
 
@@ -166,6 +167,7 @@ void Host_Error (const char *error, ...)
 	va_start (argptr,error);
 	q_vsnprintf (string, sizeof(string), error, argptr);
 	va_end (argptr);
+	DebugLog("Host_Error: %s\n", string);
 	Con_Printf ("Host_Error: %s\n",string);
 
 	if (sv.active)

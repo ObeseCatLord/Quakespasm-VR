@@ -109,6 +109,62 @@ void SV_CheckVelocity(edict_t *ent) {
 
 /*
 =============
+Friendly-fire protection helpers
+
+When sv_nofriendlyfire is active in coop, we temporarily:
+  - set teamplay = 0  (so QuakeC's teamplay check doesn't block self-damage)
+  - set all OTHER players' takedamage = DAMAGE_NO  (so T_Damage skips them)
+This allows self-damage (rocket jumping) while blocking inter-player damage.
+=============
+*/
+static float  ff_saved_takedamage[MAX_SCOREBOARD];
+static int    ff_saved_teamplay;
+static qboolean ff_active = false;
+
+static void SV_FriendlyFireBegin(edict_t *ent) {
+  int owner_num;
+
+  if (!sv_nofriendlyfire.value || !coop.value || ff_active)
+    return;
+
+  // Determine who the "owner" is — either the entity itself (if it's a
+  // player, e.g. during PostThink for hitscan) or the entity's .owner field
+  // (if it's a projectile).
+  int ent_num = NUM_FOR_EDICT(ent);
+  if (ent_num >= 1 && ent_num <= svs.maxclients)
+    owner_num = ent_num;
+  else {
+    edict_t *owner = PROG_TO_EDICT(ent->v.owner);
+    owner_num = NUM_FOR_EDICT(owner);
+    if (owner_num < 1 || owner_num > svs.maxclients)
+      return; // not player-owned, nothing to protect
+  }
+
+  ff_active = true;
+  ff_saved_teamplay = pr_global_struct->teamplay;
+  pr_global_struct->teamplay = 0;
+
+  for (int i = 1; i <= svs.maxclients; i++) {
+    edict_t *cl = EDICT_NUM(i);
+    ff_saved_takedamage[i - 1] = cl->v.takedamage;
+    if (i != owner_num && !cl->free && svs.clients[i - 1].active)
+      cl->v.takedamage = DAMAGE_NO;
+  }
+}
+
+static void SV_FriendlyFireEnd(void) {
+  if (!ff_active)
+    return;
+  pr_global_struct->teamplay = ff_saved_teamplay;
+  for (int i = 1; i <= svs.maxclients; i++) {
+    edict_t *cl = EDICT_NUM(i);
+    cl->v.takedamage = ff_saved_takedamage[i - 1];
+  }
+  ff_active = false;
+}
+
+/*
+=============
 SV_RunThink
 
 Runs thinking code if time.  There is some play in the exact time the think
@@ -136,7 +192,10 @@ qboolean SV_RunThink(edict_t *ent) {
   pr_global_struct->time = thinktime;
   pr_global_struct->self = EDICT_TO_PROG(ent);
   pr_global_struct->other = EDICT_TO_PROG(sv.edicts);
+
+  SV_FriendlyFireBegin(ent);
   PR_ExecuteProgram(ent->v.think);
+  SV_FriendlyFireEnd();
 
   return !ent->free;
 }
@@ -158,13 +217,17 @@ void SV_Impact(edict_t *e1, edict_t *e2) {
   if (e1->v.touch && e1->v.solid != SOLID_NOT) {
     pr_global_struct->self = EDICT_TO_PROG(e1);
     pr_global_struct->other = EDICT_TO_PROG(e2);
+    SV_FriendlyFireBegin(e1);
     PR_ExecuteProgram(e1->v.touch);
+    SV_FriendlyFireEnd();
   }
 
   if (e2->v.touch && e2->v.solid != SOLID_NOT) {
     pr_global_struct->self = EDICT_TO_PROG(e2);
     pr_global_struct->other = EDICT_TO_PROG(e1);
+    SV_FriendlyFireBegin(e2);
     PR_ExecuteProgram(e2->v.touch);
+    SV_FriendlyFireEnd();
   }
 
   pr_global_struct->self = old_self;
@@ -885,8 +948,10 @@ static void SV_ApplyVRWeaponOffset(edict_t *ent, int num, qboolean is_remote_vr,
     VectorMA(adj, -6.0f, fwd, adj);
 
     _VectorCopy(adj, ent->v.origin);
-    ent->v.origin[2] -=
-        vr_projectilespawn_z_offset.value + vr_game_projectile_z_extra;
+    // Subtract exactly 16 to cancel QuakeC's '0 0 16' spawn offset.
+    // The local path uses vr_projectilespawn_z_offset (24) because the
+    // barrel-push forward has a Z component that needs extra compensation.
+    ent->v.origin[2] -= 16.0f;
   } else if (vr_enabled.value && !isDedicated && num == cl.viewentity) {
     vec3_t adj;
     _VectorCopy(cl.handpos[1], adj);
@@ -1082,7 +1147,9 @@ void SV_Physics_Client(edict_t *ent, int num) {
 
   pr_global_struct->self = EDICT_TO_PROG(ent);
 
+  SV_FriendlyFireBegin(ent);
   PR_ExecuteProgram(pr_global_struct->PlayerPostThink);
+  SV_FriendlyFireEnd();
 
   SV_RestoreVRWeaponOffset(ent, num, is_remote_vr, restoreOrigin);
 }
@@ -1276,18 +1343,6 @@ void SV_Physics(void) {
   int i;
   int entity_cap; // For sv_freezenonclients
   edict_t *ent;
-
-  // Force all co-op players onto the same team so QuakeC's T_Damage
-  // teamplay check blocks player-vs-player damage unconditionally.
-  if (coop.value) {
-    if (pr_global_struct->teamplay < 1)
-      pr_global_struct->teamplay = 1;
-    for (i = 1; i <= svs.maxclients; i++) {
-      edict_t *cl = EDICT_NUM(i);
-      if (!cl->free && svs.clients[i - 1].active)
-        cl->v.team = 1;
-    }
-  }
 
   // let the progs know that a new frame has started
   pr_global_struct->self = EDICT_TO_PROG(sv.edicts);
