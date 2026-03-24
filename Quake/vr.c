@@ -1910,7 +1910,7 @@ void VR_Move(usercmd_t *cmd) {
 
   // k_EButton_Grip (uses DoGrip for squeeze-only behavior on Index)
   DoGrip(&controllers[0], K_LSHOULDER);
-  DoGrip(&controllers[1], K_RSHOULDER);
+  DoGrip(&controllers[1], K_XBUTTON);
 
   // k_EButton_Axis0 === k_EButton_SteamVR_Touchpad
   DoKey(&controllers[0], vr::k_EButton_SteamVR_Touchpad, K_LTHUMB);
@@ -1927,7 +1927,7 @@ void VR_Move(usercmd_t *cmd) {
     }
   }
   DoKey(&controllers[0], vr::k_EButton_A, K_TAB);
-  DoKey(&controllers[1], vr::k_EButton_A, K_ABUTTON);
+  DoKey(&controllers[1], vr::k_EButton_A, K_XBUTTON);
 
   // k_EButton_Axis2 === SteamVR-binding "Right Axis 2 Press" (at least on Index
   // Controller)
