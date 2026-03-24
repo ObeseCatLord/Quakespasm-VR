@@ -1,4 +1,4 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
+<?xml version="1.0" encoding="utf-8"?>
 <Project DefaultTargets="Build" ToolsVersion="Current" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup Label="ProjectConfigurations">
     <ProjectConfiguration Include="Debug|Win32">
@@ -227,6 +227,7 @@ copy "$(SolutionDir)\..\static-release-files\*.*" "$(TargetDir)"</Command>
     <ClCompile Include="..\..\Quake\console.c" />
     <ClCompile Include="..\..\Quake\crc.c" />
     <ClCompile Include="..\..\Quake\cvar.c" />
+    <ClCompile Include="..\..\Quake\debug_log.c" />
     <ClCompile Include="..\..\Quake\gl_draw.c" />
     <ClCompile Include="..\..\Quake\gl_fog.c" />
     <ClCompile Include="..\..\Quake\gl_mesh.c" />
@@ -318,6 +319,7 @@ copy "$(SolutionDir)\..\static-release-files\*.*" "$(TargetDir)"</Command>
     <ClInclude Include="..\..\Quake\console.h" />
     <ClInclude Include="..\..\Quake\crc.h" />
     <ClInclude Include="..\..\Quake\cvar.h" />
+    <ClInclude Include="..\..\Quake\debug_log.h" />
     <ClInclude Include="..\..\Quake\draw.h" />
     <ClInclude Include="..\..\Quake\glquake.h" />
     <ClInclude Include="..\..\Quake\gl_model.h" />
