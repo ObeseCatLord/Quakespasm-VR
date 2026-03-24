@@ -303,6 +303,7 @@ OBJS = strlcat.o \
 	sv_user.o \
 	world.o \
 	zone.o \
+	debug_log.o \
 	$(SYSOBJ_SYS) \
 	$(SYSOBJ_LAUNCHER) $(SYSOBJ_MAIN)
 

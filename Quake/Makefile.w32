@@ -266,6 +266,7 @@ OBJS = strlcat.o \
 	zone.o \
 	vr.o \
 	vr_menu.o \
+	debug_log.o \
 	$(SYSOBJ_SYS) $(SYSOBJ_MAIN)
 
 # ---------------------------
