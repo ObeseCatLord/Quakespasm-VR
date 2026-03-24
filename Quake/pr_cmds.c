@@ -283,8 +283,6 @@ static void PF_setsize (void)
 	maxvec = G_VECTOR(OFS_PARM2);
 
 	SetMinMaxSize (e, minvec, maxvec, false);
-
-	SetMinMaxSize (e, minvec, maxvec, false);
 }
 
 
