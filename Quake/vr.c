@@ -1927,7 +1927,7 @@ void VR_Move(usercmd_t *cmd) {
     }
   }
   DoKey(&controllers[0], vr::k_EButton_A, K_TAB);
-  DoKey(&controllers[1], vr::k_EButton_A, K_XBUTTON);
+  DoKey(&controllers[1], vr::k_EButton_A, K_ABUTTON);
 
   // k_EButton_Axis2 === SteamVR-binding "Right Axis 2 Press" (at least on Index
   // Controller)
