@@ -55,6 +55,9 @@ LDFLAGS?=
 DFLAGS ?=
 CFLAGS ?= -Wall -Wno-trigraphs -MMD
 CFLAGS += $(call check_gcc,-std=gnu11,)
+# Allow GCC to inline math builtins (sqrtf → sqrtss) instead of calling glibc,
+# avoiding versioned symbol deps that break on older distros (e.g. sqrtf@GLIBC_2.43).
+CFLAGS += -fno-math-errno
 CFLAGS += $(CPUFLAGS)
 ifneq ($(DEBUG),0)
 DFLAGS += -DDEBUG
