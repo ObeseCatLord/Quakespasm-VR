@@ -129,7 +129,14 @@ CFLAGS+= -DUSE_CODEC_WAVE
 endif
 ifeq ($(USE_CODEC_FLAC),1)
 CFLAGS+= -DUSE_CODEC_FLAC
+# Link FLAC statically if a prebuilt static library is provided, to avoid
+# libFLAC.so version mismatches across distros (e.g. .so.14 on Arch vs .so.12 on Mint).
+# Usage: make FLAC_STATIC_LIB=/path/to/libFLAC.a
+ifdef FLAC_STATIC_LIB
+CODECLIBS+= $(FLAC_STATIC_LIB)
+else
 CODECLIBS+= -lFLAC
+endif
 endif
 ifeq ($(USE_CODEC_OPUS),1)
 CFLAGS+= -DUSE_CODEC_OPUS
