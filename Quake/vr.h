@@ -76,6 +76,7 @@ void VR_SetAngles(vec3_t angles);
 void VR_ResetOrientation();
 void VR_SetMatrices();
 void VR_HandleGammaCorrect();
+void VR_PollPoses();
 void InitAllWeaponCVars();
 
 extern cvar_t vr_enabled;

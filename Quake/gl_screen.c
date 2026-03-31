@@ -1035,8 +1035,11 @@ void SCR_UpdateScreen(void) {
     if (realtime - scr_disabled_time > 60) {
       scr_disabled_for_loading = false;
       Con_Printf("load failed.\n");
-    } else
+    } else {
+      if (vr_enabled.value)
+        VR_PollPoses();
       return;
+    }
   }
 
   if (!scr_initialized || !con_initialized)

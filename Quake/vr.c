@@ -1243,6 +1243,13 @@ void IdentifyAxes(int device);
 static bool modelIdentified[2] = {false, false};
 static bool isViveWand[2] = {false, false};
 
+void VR_PollPoses() {
+  if (vr_initialized) {
+    vr::VRCompositor()->WaitGetPoses(ovr_DevicePose,
+                                     vr::k_unMaxTrackedDeviceCount, nullptr, 0);
+  }
+}
+
 void VR_UpdateScreenContent() {
   int i;
   vec3_t orientation;
