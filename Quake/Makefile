@@ -260,6 +260,7 @@ OBJS = strlcat.o \
 	common.o \
 	miniz.o \
 	crc.o \
+	debug_log.o \
 	cvar.o \
 	cfgfile.o \
 	host.o \
