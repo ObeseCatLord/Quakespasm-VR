@@ -132,10 +132,15 @@ CFLAGS+= -DUSE_CODEC_WAVE
 endif
 ifeq ($(USE_CODEC_FLAC),1)
 CFLAGS+= -DUSE_CODEC_FLAC
-# Link FLAC statically if a prebuilt static library is provided, to avoid
-# libFLAC.so version mismatches across distros (e.g. .so.14 on Arch vs .so.12 on Mint).
-# Usage: make FLAC_STATIC_LIB=/path/to/libFLAC.a
-ifdef FLAC_STATIC_LIB
+# A bundled static libFLAC.a (FLAC 1.4.3, built from xiph source) is checked in at
+# external/libFLAC.a so the produced binary is portable across distros — Arch ships
+# libFLAC.so.14 (FLAC 1.5) while Mint/Ubuntu still ship .so.12, and a dynamically
+# linked binary fails to load on the older systems.
+# Override with FLAC_STATIC_LIB=/path or FLAC_DYNAMIC=1 to use the system -lFLAC.
+FLAC_STATIC_LIB ?= $(wildcard external/libFLAC.a)
+ifdef FLAC_DYNAMIC
+CODECLIBS+= -lFLAC
+else ifneq ($(FLAC_STATIC_LIB),)
 CODECLIBS+= $(FLAC_STATIC_LIB)
 else
 CODECLIBS+= -lFLAC
