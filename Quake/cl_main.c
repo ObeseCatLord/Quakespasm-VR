@@ -632,10 +632,19 @@ int CL_ReadFromServer (void)
 	beam_t		*b; //johnfitz
 	dlight_t	*l; //johnfitz
 	int			i; //johnfitz
+	// Diagnostic state for the reconnect-wait window: snapshot waiting status
+	// for this frame and accumulate packet stats between 1Hz heartbeat ticks.
+	qboolean	waiting_for_serverinfo;
+	int			pkts_this_frame = 0;
+	static double	last_wait_tick_time = 0;
+	static int		pkts_since_last_tick = 0;
+	static int		nonzero_rets_since_last_tick = 0;
 
 
 	cl.oldtime = cl.time;
 	cl.time += host_frametime;
+
+	waiting_for_serverinfo = (cls.state == ca_connected && cls.signon < SIGNONS);
 
 	do
 	{
@@ -645,9 +654,40 @@ int CL_ReadFromServer (void)
 		if (!ret)
 			break;
 
+		if (waiting_for_serverinfo)
+		{
+			byte first = (net_message.cursize > 0) ? (byte)net_message.data[0] : 0xff;
+			DebugLog("CL_GetMessage(waiting): ret=%d size=%d firstByte=%d signon=%d\n",
+				ret, net_message.cursize, first, cls.signon);
+			pkts_this_frame++;
+			pkts_since_last_tick++;
+		}
+
 		cl.last_received_message = realtime;
 		CL_ParseServerMessage ();
 	} while (ret && cls.state == ca_connected);
+
+	if (waiting_for_serverinfo)
+	{
+		if (pkts_this_frame > 0)
+			nonzero_rets_since_last_tick++;
+		if ((realtime - last_wait_tick_time) >= 1.0)
+		{
+			DebugLog("CL_ReadFromServer: WAITING signon=%d state=%d pkts=%d frames_with_pkts=%d staleness=%.2fs\n",
+				cls.signon, cls.state, pkts_since_last_tick,
+				nonzero_rets_since_last_tick, realtime - cl.last_received_message);
+			last_wait_tick_time = realtime;
+			pkts_since_last_tick = 0;
+			nonzero_rets_since_last_tick = 0;
+		}
+	}
+	else
+	{
+		// Reset accumulators when we're no longer waiting so the next reconnect starts clean.
+		last_wait_tick_time = realtime;
+		pkts_since_last_tick = 0;
+		nonzero_rets_since_last_tick = 0;
+	}
 
 	if (cl_shownet.value)
 		Con_Printf ("\n");
