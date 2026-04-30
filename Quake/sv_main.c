@@ -33,7 +33,7 @@ int		sv_protocol = PROTOCOL_FITZQUAKE; //johnfitz
 
 extern qboolean	pr_alpha_supported; //johnfitz
 extern int pr_effects_mask;
-cvar_t sv_maxpacketsize = {"sv_maxpacketsize", "32768", CVAR_NONE}; // increased for AD
+cvar_t sv_maxpacketsize = {"sv_maxpacketsize", "1400", CVAR_NONE}; // 1400 = single IP MTU, avoids UDP fragmentation
 
 //============================================================================
 
