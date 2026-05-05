@@ -1061,9 +1061,11 @@ void SCR_UpdateScreen(void) {
   if (vr_enabled.value && !con_forcedup) {
     VR_UpdateScreenContent(); // phoboslab
   } else {
-    VectorCopy(cl.aimangles, cl.viewangles);
-    VectorCopy(cl.aimangles, r_refdef.viewangles);
-    VectorCopy(cl.aimangles, r_refdef.aimangles);
+    // Flat mode: viewangles is the camera (mouse + demo recordings write here);
+    // aimangles must follow it so CL_SendMove / r_refdef stay in sync.
+    VectorCopy(cl.viewangles, cl.aimangles);
+    VectorCopy(cl.viewangles, r_refdef.viewangles);
+    VectorCopy(cl.viewangles, r_refdef.aimangles);
 
     SCR_UpdateScreenContent();
     GLSLGamma_GammaCorrect();

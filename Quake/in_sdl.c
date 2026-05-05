@@ -22,6 +22,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 */
 
 #include "quakedef.h"
+#include "vr.h"
 #if defined(SDL_FRAMEWORK) || defined(NO_SDL_CONFIG)
 #if defined(USE_SDL2)
 #include <SDL2/SDL.h>
@@ -697,6 +698,10 @@ void IN_JoyMove (usercmd_t *cmd)
 		cl.viewangles[PITCH] = cl_maxpitch.value;
 	if (cl.viewangles[PITCH] < cl_minpitch.value)
 		cl.viewangles[PITCH] = cl_minpitch.value;
+
+	/* Flat mode: keep aimangles in step so CL_SendMove sends mouse/joy yaw. */
+	if (!vr_enabled.value)
+		VectorCopy(cl.viewangles, cl.aimangles);
 #endif
 }
 
@@ -741,6 +746,10 @@ void IN_MouseMove(usercmd_t *cmd)
 		else
 			cmd->forwardmove -= m_forward.value * dmy;
 	}
+
+	/* Flat mode: keep aimangles in step so CL_SendMove sends mouse-driven yaw/pitch. */
+	if (!vr_enabled.value)
+		VectorCopy(cl.viewangles, cl.aimangles);
 }
 
 void IN_Move(usercmd_t *cmd)
@@ -849,7 +858,7 @@ static inline int IN_SDL_KeysymToQuakeKey(SDLKey sym)
 	case SDLK_BREAK: return K_PAUSE;
 	case SDLK_PAUSE: return K_PAUSE;
 
-	case SDLK_WORLD_18: return '~'; // the '²' key
+	case SDLK_WORLD_18: return '~'; // the 'ï¿½' key
 
 	default: return 0;
 	}

@@ -297,6 +297,11 @@ void CL_AdjustAngles(void) {
     cl.aimangles[ROLL] = 50;
   if (cl.aimangles[ROLL] < -50)
     cl.aimangles[ROLL] = -50;
+
+  // Flat (non-VR) play has no head/aim divergence — keyboard look must
+  // also turn the rendered camera, so mirror aim to view.
+  if (!vr_enabled.value)
+    VectorCopy(cl.aimangles, cl.viewangles);
 }
 
 /*
