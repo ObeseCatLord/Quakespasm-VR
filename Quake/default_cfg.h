@@ -17,8 +17,12 @@ static const char default_cfg[] =
     "bind c +movedown\n"
     "bind SHIFT +speed\n"
     "bind CTRL +attack\n"
+    "bind UPARROW +forward\n"
     "bind w +forward\n"
+    "bind DOWNARROW +back\n"
     "bind s +back\n"
+    "bind LEFTARROW +left\n"
+    "bind RIGHTARROW +right\n"
 
     "bind SPACE +jump\n"
 
