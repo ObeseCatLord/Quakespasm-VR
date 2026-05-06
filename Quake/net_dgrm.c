@@ -313,12 +313,20 @@ int	Datagram_GetMessage (qsocket_t *sock)
 			return -1;
 		}
 
-		if (sfunc.AddrCompare(&readaddr, &sock->addr) != 0)
 		{
-			Con_Printf("Forged packet received\n");
-			Con_Printf("Expected: %s\n", StrAddr (&sock->addr));
-			Con_Printf("Received: %s\n", StrAddr (&readaddr));
-			continue;
+			int cmp = sfunc.AddrCompare(&readaddr, &sock->addr);
+			if (cmp < 0)
+			{
+				Con_Printf("Forged packet received\n");
+				Con_Printf("Expected: %s\n", StrAddr (&sock->addr));
+				Con_Printf("Received: %s\n", StrAddr (&readaddr));
+				continue;
+			}
+			if (cmp > 0)
+			{
+				/* Same IP, different port: symmetric-NAT remap. Track new port. */
+				sock->addr = readaddr;
+			}
 		}
 
 		if (length < NET_HEADERSIZE)
