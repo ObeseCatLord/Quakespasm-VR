@@ -35,6 +35,11 @@ cvar_t	cl_color = {"_cl_color", "0", CVAR_ARCHIVE};
 
 cvar_t	cl_shownet = {"cl_shownet","0",CVAR_NONE};	// can be 0, 1, or 2
 cvar_t	cl_nolerp = {"cl_nolerp","0",CVAR_NONE};
+// Max seconds of linear extrapolation past the latest server snapshot.
+// At sys_ticrate 0.05 (20 Hz) a fast client renders many frames between
+// snapshots and would otherwise freeze entities at frac=1 until the next
+// packet, producing visible 20 Hz judder. 0 reproduces the legacy clamp.
+cvar_t	cl_extrapolate = {"cl_extrapolate","0.05",CVAR_ARCHIVE};
 
 cvar_t	cfg_unbindall = {"cfg_unbindall", "1", CVAR_ARCHIVE};
 
@@ -393,9 +398,28 @@ float	CL_LerpPoint (void)
 	}
 	else if (frac > 1)
 	{
-		if (frac > 1.01)
-			cl.time = cl.mtime[0];
-		frac = 1;
+		// Bounded linear extrapolation past mtime[0]: instead of freezing
+		// entities at the latest snapshot, allow up to cl_extrapolate
+		// seconds of forward projection using the last inter-snapshot delta.
+		// Eliminates the "freeze then snap" stutter when the render rate
+		// exceeds the server tick rate. A small cap keeps overshoot bounded
+		// when entities suddenly stop or change direction.
+		float maxextrap = cl_extrapolate.value;
+		if (maxextrap > 0 && (cl.time - cl.mtime[0]) <= maxextrap)
+		{
+			float maxfrac = 1.0f + (maxextrap / f);
+			if (frac > maxfrac)
+			{
+				cl.time = cl.mtime[0] + maxextrap;
+				frac = maxfrac;
+			}
+		}
+		else
+		{
+			if (frac > 1.01)
+				cl.time = cl.mtime[0];
+			frac = 1;
+		}
 	}
 
 	//johnfitz -- better nolerp behavior
@@ -862,6 +886,7 @@ void CL_Init (void)
 	Cvar_RegisterVariable (&cl_anglespeedkey);
 	Cvar_RegisterVariable (&cl_shownet);
 	Cvar_RegisterVariable (&cl_nolerp);
+	Cvar_RegisterVariable (&cl_extrapolate);
 	Cvar_RegisterVariable (&lookspring);
 	Cvar_RegisterVariable (&lookstrafe);
 	Cvar_RegisterVariable (&sensitivity);

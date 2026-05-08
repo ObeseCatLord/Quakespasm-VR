@@ -63,6 +63,7 @@ cvar_t	host_framerate = {"host_framerate","0",CVAR_NONE};	// set for slow motion
 cvar_t	host_speeds = {"host_speeds","0",CVAR_NONE};			// set for running times
 cvar_t	host_maxfps = {"host_maxfps", "72", CVAR_ARCHIVE}; //johnfitz
 cvar_t	host_timescale = {"host_timescale", "0", CVAR_NONE}; //johnfitz
+cvar_t	cl_netfps = {"cl_netfps", "72", CVAR_ARCHIVE};	// CL_SendCmd cap to a remote server, 0 = uncapped
 cvar_t	max_edicts = {"max_edicts", "8192", CVAR_NONE}; //johnfitz //ericw -- changed from 2048 to 8192, removed CVAR_ARCHIVE
 
 cvar_t	sys_ticrate = {"sys_ticrate","0.05",CVAR_NONE}; // dedicated server
@@ -266,6 +267,7 @@ void Host_InitLocal (void)
 	Cvar_RegisterVariable (&host_maxfps); //johnfitz
 	Cvar_SetCallback (&host_maxfps, Max_Fps_f);
 	Cvar_RegisterVariable (&host_timescale); //johnfitz
+	Cvar_RegisterVariable (&cl_netfps); // QSS-style network send pacing
 
 	Cvar_RegisterVariable (&max_edicts); //johnfitz
 	Cvar_SetCallback (&max_edicts, Max_Edicts_f);
@@ -734,9 +736,34 @@ void _Host_Frame (float time)
 //-------------------
 
 // if running the server remotely, send intentions now after
-// the incoming messages have been read
+// the incoming messages have been read.
+// QSS-style send pacing: clamp to cl_netfps so a 90/120 Hz VR client doesn't
+// blast move packets faster than the server can act on them. Local listen
+// servers are unaffected (their CL_SendCmd above is in-process).
 	if (!sv.active)
-		CL_SendCmd ();
+	{
+		static double cl_send_accum = 0;
+		double interval = 0;
+
+		if (cl_netfps.value > 0)
+			interval = 1.0 / CLAMP(10.0f, cl_netfps.value, 144.0f);
+
+		cl_send_accum += host_frametime;
+
+		if (interval <= 0)
+		{
+			CL_SendCmd ();
+			cl_send_accum = 0;
+		}
+		else if (cl_send_accum >= interval)
+		{
+			CL_SendCmd ();
+			cl_send_accum -= interval;
+			// don't accumulate more than one tick so a hitch can't unleash a flood
+			if (cl_send_accum > interval)
+				cl_send_accum = 0;
+		}
+	}
 
 // fetch results from server
 	if (cls.state == ca_connected)
