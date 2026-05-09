@@ -34,6 +34,12 @@ int		sv_protocol = PROTOCOL_FITZQUAKE; //johnfitz
 extern qboolean	pr_alpha_supported; //johnfitz
 extern int pr_effects_mask;
 cvar_t sv_maxpacketsize = {"sv_maxpacketsize", "1400", CVAR_NONE}; // 1400 = single IP MTU, avoids UDP fragmentation
+// When SV_WriteEntitiesToClient overflows the per-client datagram, the entity
+// that gets evicted is whichever the loop reached last. With sv_netsort=1
+// (ironwail's heuristic) entities are sorted by distance-to-player and PVS
+// orientation first, so when packets get clipped it's distant or behind-camera
+// entities that drop, not your weapon hand or the player next to you.
+cvar_t sv_netsort = {"sv_netsort", "1", CVAR_NONE};
 
 //============================================================================
 
@@ -111,6 +117,7 @@ void SV_Init (void)
 	Cvar_RegisterVariable (&sv_altnoclip); //johnfitz
 	Cvar_RegisterVariable (&sv_gameplayfix_elevators);
 	Cvar_RegisterVariable (&sv_maxpacketsize); // increased for AD
+	Cvar_RegisterVariable (&sv_netsort); // ironwail-style entity priority sorting
 	Cvar_RegisterVariable (&vr_movement_instant_stop);
 
 	Cmd_AddCommand ("sv_protocol", &SV_Protocol_f); //johnfitz
@@ -601,6 +608,13 @@ qboolean SV_VisibleToClient (edict_t *client, edict_t *test, qmodel_t *worldmode
 
 //=============================================================================
 
+#define MAX_NET_EDICTS 65536
+
+static uint16_t net_edicts[MAX_NET_EDICTS];
+static byte     net_edict_dists[MAX_NET_EDICTS];
+static int      net_edict_bins[256];
+static uint16_t net_edicts_sorted[MAX_NET_EDICTS];
+
 /*
 =============
 SV_WriteEntitiesToClient
@@ -609,11 +623,11 @@ SV_WriteEntitiesToClient
 */
 void SV_WriteEntitiesToClient (edict_t	*clent, sizebuf_t *msg)
 {
-	int		e, i;
+	int		e, i, j, numents;
 	int		bits;
 	byte	*pvs;
-	vec3_t	org;
-	float	miss;
+	vec3_t	org, forward, right, up;
+	float	miss, dist, size;
 	edict_t	*ent;
 	eval_t	*val;
 
@@ -621,41 +635,119 @@ void SV_WriteEntitiesToClient (edict_t	*clent, sizebuf_t *msg)
 	VectorAdd (clent->v.origin, clent->v.view_ofs, org);
 	pvs = SV_FatPVS (org, sv.worldmodel);
 
-// send over all entities (excpet the client) that touch the pvs
+// find the client's orientation (for "behind camera" sort key)
+	AngleVectors (clent->v.v_angle, forward, right, up);
+
+// reset sorting bins
+	memset (net_edict_bins, 0, sizeof (net_edict_bins));
+
+// add clent first - always sent and gets the highest priority bin
+	if (sv_netsort.value)
+	{
+		net_edicts[0] = NUM_FOR_EDICT (clent);
+		net_edict_dists[0] = 0;
+		net_edict_bins[0] = 1;
+	}
+	else
+	{
+		net_edicts_sorted[0] = NUM_FOR_EDICT (clent);
+	}
+	numents = 1;
+
+// add all other entities that touch the pvs (or that the coop hack forces in)
 	ent = NEXT_EDICT(sv.edicts);
 	for (e=1 ; e<sv.num_edicts ; e++, ent = NEXT_EDICT(ent))
 	{
+		if (ent == clent)
+			continue;	// already added before the loop
 
-		if (ent != clent)	// clent is ALLWAYS sent
+		// ignore ents without visible models
+		if (!ent->v.modelindex || !PR_GetString(ent->v.model)[0])
+			continue;
+
+		//johnfitz -- don't send model>255 entities if protocol is 15
+		if (sv.protocol == PROTOCOL_NETQUAKE && (int)ent->v.modelindex & 0xFF00)
+			continue;
+
+		// in co-op, always send other players regardless of PVS
+		// so VR outline feature can show them through walls
+		if (coop.value && e >= 1 && e <= svs.maxclients)
+			goto skip_pvs_cull;
+
+		// ignore if not touching a PV leaf
+		for (i=0 ; i < ent->num_leafs ; i++)
+			if (pvs[ent->leafnums[i] >> 3] & (1 << (ent->leafnums[i]&7) ))
+				break;
+
+		// ericw -- added ent->num_leafs < MAX_ENT_LEAFS condition.
+		//
+		// if ent->num_leafs == MAX_ENT_LEAFS, the ent is visible from too many leafs
+		// for us to say whether it's in the PVS, so don't try to vis cull it.
+		// this commonly happens with rotators, because they often have huge bboxes
+		// spanning the entire map, or really tall lifts, etc.
+		if (i == ent->num_leafs && ent->num_leafs < MAX_ENT_LEAFS)
+			continue;		// not visible
+
+skip_pvs_cull:
+		if (sv_netsort.value)
 		{
-			// ignore ents without visible models
-			if (!ent->v.modelindex || !PR_GetString(ent->v.model)[0])
-				continue;
+			// distance from view origin to closest point on ent's bbox,
+			// scaled by ent size; sqrt-of-sqrt keeps bins evenly populated
+			// across an entire level rather than clustered at low distances.
+			dist = size = 0.f;
+			for (i=0 ; i<3 ; i++)
+			{
+				float delta = CLAMP (ent->v.absmin[i], org[i], ent->v.absmax[i]) - org[i];
+				dist += delta * delta;
+				delta = ent->v.absmax[i] - ent->v.absmin[i];
+				size += delta * delta;
+			}
+			size = q_max (1.f, size);
 
-			//johnfitz -- don't send model>255 entities if protocol is 15
-			if (sv.protocol == PROTOCOL_NETQUAKE && (int)ent->v.modelindex & 0xFF00)
-				continue;
+			dist = 8.f * sqrt (sqrt (dist/size));
+			net_edict_dists[numents] = (int) q_min (dist, 255.f);
+			net_edicts[numents] = e;
 
-			// in co-op, always send other players regardless of PVS
-			// so VR outline feature can show them through walls
-			if (coop.value && e >= 1 && e <= svs.maxclients)
-				goto skip_pvs_cull;
+			// if the entire bbox is behind the eye, set the high bit so
+			// the entity sorts after everything in front (bins 128..255).
+			dist = 0.f;
+			for (i=0 ; i<3 ; i++)
+				dist += ((forward[i] < 0.f ? ent->v.absmin[i] : ent->v.absmax[i]) - org[i]) * forward[i];
+			if (dist < 0.f)
+				net_edict_dists[numents] |= 128;
 
-			// ignore if not touching a PV leaf
-			for (i=0 ; i < ent->num_leafs ; i++)
-				if (pvs[ent->leafnums[i] >> 3] & (1 << (ent->leafnums[i]&7) ))
-					break;
-
-			// ericw -- added ent->num_leafs < MAX_ENT_LEAFS condition.
-			//
-			// if ent->num_leafs == MAX_ENT_LEAFS, the ent is visible from too many leafs
-			// for us to say whether it's in the PVS, so don't try to vis cull it.
-			// this commonly happens with rotators, because they often have huge bboxes
-			// spanning the entire map, or really tall lifts, etc.
-			if (i == ent->num_leafs && ent->num_leafs < MAX_ENT_LEAFS)
-				continue;		// not visible
-skip_pvs_cull: ;
+			net_edict_bins[net_edict_dists[numents]]++;
 		}
+		else
+		{
+			net_edicts_sorted[numents] = e;
+		}
+
+		if (++numents == MAX_NET_EDICTS)
+			break;
+	}
+
+	if (sv_netsort.value)
+	{
+		// prefix sum bins -> insertion offsets
+		e = 0;
+		for (i=0 ; i<256 ; i++)
+		{
+			int tmp = net_edict_bins[i];
+			net_edict_bins[i] = e;
+			e += tmp;
+		}
+
+		// place each edict into its sorted slot
+		for (e=0 ; e<numents ; e++)
+			net_edicts_sorted[net_edict_bins[net_edict_dists[e]]++] = net_edicts[e];
+	}
+
+// send entities, closest/most-relevant first
+	for (j=0 ; j<numents ; j++)
+	{
+		e = net_edicts_sorted[j];
+		ent = EDICT_NUM (e);
 
 		// johnfitz -- max size for protocol 15 is 18 bytes, not 16 as originally
 		// assumed here.  And, for protocol 85 the max size is actually 24 bytes.
