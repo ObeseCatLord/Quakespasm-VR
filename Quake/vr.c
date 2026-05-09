@@ -976,11 +976,12 @@ void VID_VR_Init() {
 
   VR_Menu_Init();
 
-  // Set the cvar if invoked from a command line parameter
-  // int i = COM_CheckParm("-vr");
-  // if (i && i < com_argc - 1) {
-  Cvar_SetQuick(&vr_enabled, "1");
-  //}
+  // Only enable VR if -vr was passed on the command line. Without this gate
+  // the binary forces VR mode at every launch even when the user just wants
+  // to run a desktop client (the SetQuick triggers VR_Enabled_f -> VR_Enable
+  // which grabs the GL context via xrizer/OpenVR and produces a black window).
+  if (COM_CheckParm("-vr"))
+    Cvar_SetQuick(&vr_enabled, "1");
 }
 
 void VR_LoadWeaponSchema(void) {
