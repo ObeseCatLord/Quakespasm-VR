@@ -1,0 +1,37 @@
+QuakeSpasm-OpenVR SteamVR Controller Bindings
+=============================================
+
+Windows SteamVR's default legacy bindings for Valve Index controllers do not
+expose every button cleanly to QuakeSpasm-OpenVR. In particular, the Index A
+buttons are often folded into Grip, and Axis2 is usually left unavailable.
+
+The included binding installer imports a recommended legacy binding for Index
+controllers:
+
+- Index A buttons map to the real legacy A buttons.
+- Grip remains a force/squeeze grip.
+- B buttons remain Application Menu buttons.
+- Thumbsticks remain movement/turning axes with stick click on Axis0.
+- Trackpad click maps to Axis2 for one extra bindable button.
+
+Setup:
+
+1. Start SteamVR.
+2. If QuakeSpasm-OpenVR has never appeared in SteamVR's controller binding UI,
+   launch quakespasm-openvr.exe once, then close it.
+3. Run "Install SteamVR Controller Bindings.bat".
+4. Restart quakespasm-openvr.exe before testing the controllers.
+
+Advanced:
+
+The installer applies bindings to the normal Windows app key
+"system.generated.quakespasm-openvr.exe". It also tries the native Linux and
+test binary keys used by SteamVR logs:
+
+- system.generated.quakespasm-openvr
+- system.generated.quakespasm-openvr.bin
+
+If you renamed the executable, run the PowerShell script directly and pass your
+SteamVR app key:
+
+    powershell.exe -NoProfile -ExecutionPolicy Bypass -File setup-steamvr-bindings.ps1 -AppKey system.generated.my-renamed-quake.exe
