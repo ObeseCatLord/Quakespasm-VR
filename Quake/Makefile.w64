@@ -274,11 +274,13 @@ all: $(DEFAULT_TARGET)
 
 %.o:	%.c
 	$(CC) $(DFLAGS) -c $(CFLAGS) $(SDL_CFLAGS) -o $@ $<
-# VR files need C++ compiler
+# VR files need C++ compiler. -fno-exceptions -fno-rtti avoids DWARF-2/SEH
+# mismatch when linking against openvr_api.dll (MSVC/SEH) from a DWARF-2
+# MinGW cross-compiler.
 vr.o: vr.c
-	$(CXX) $(DFLAGS) -c $(subst -std=gnu11,,$(CFLAGS)) $(SDL_CFLAGS) -o $@ $<
+	$(CXX) $(DFLAGS) -c $(subst -std=gnu11,,$(CFLAGS)) $(SDL_CFLAGS) -fno-exceptions -fno-rtti -o $@ $<
 vr_menu.o: vr_menu.c
-	$(CXX) $(DFLAGS) -c $(subst -std=gnu11,,$(CFLAGS)) $(SDL_CFLAGS) -o $@ $<
+	$(CXX) $(DFLAGS) -c $(subst -std=gnu11,,$(CFLAGS)) $(SDL_CFLAGS) -fno-exceptions -fno-rtti -o $@ $<
 %.res:	../Windows/%.rc
 	$(WINDRES) -I../Windows --output-format=coff --target=pe-x86-64 -o $@ $<
 
