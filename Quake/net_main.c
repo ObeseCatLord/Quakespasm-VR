@@ -113,6 +113,7 @@ qsocket_t *NET_NewQSocket (void)
 	sock->canSend = true;
 	sock->sendNext = false;
 	sock->lastMessageTime = net_time;
+	sock->lastDatagramTime = 0;
 	sock->ackSequence = 0;
 	sock->sendSequence = 0;
 	sock->unreliableSendSequence = 0;
@@ -903,4 +904,3 @@ void SchedulePollProcedure(PollProcedure *proc, double timeOffset)
 	proc->next = pp;
 	prev->next = proc;
 }
-

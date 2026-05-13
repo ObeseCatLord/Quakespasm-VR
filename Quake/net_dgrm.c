@@ -51,6 +51,8 @@ static struct
 } packetBuffer;
 
 static int myDriverLevel;
+static cvar_t net_lagdebug = {"net_lagdebug", "0", CVAR_NONE};
+static cvar_t net_lagdebug_threshold = {"net_lagdebug_threshold", "0.25", CVAR_NONE};
 
 extern qboolean m_return_onerror;
 extern char m_return_reason[32];
@@ -320,17 +322,16 @@ int	Datagram_GetMessage (qsocket_t *sock)
 
 		{
 			int cmp = sfunc.AddrCompare(&readaddr, &sock->addr);
-			if (cmp < 0)
+			if (cmp != 0)
 			{
-				Con_Printf("Forged packet received\n");
-				Con_Printf("Expected: %s\n", StrAddr (&sock->addr));
-				Con_Printf("Received: %s\n", StrAddr (&readaddr));
+				if (net_lagdebug.value)
+				{
+					Con_Printf("net_lagdebug: ignoring packet (%s)\n",
+						cmp > 0 ? "same IP, different port" : "different address");
+					Con_Printf("  expected: %s\n", StrAddr (&sock->addr));
+					Con_Printf("  received: %s\n", StrAddr (&readaddr));
+				}
 				continue;
-			}
-			if (cmp > 0)
-			{
-				/* Same IP, different port: symmetric-NAT remap. Track new port. */
-				sock->addr = readaddr;
 			}
 		}
 
@@ -349,6 +350,13 @@ int	Datagram_GetMessage (qsocket_t *sock)
 
 		sequence = BigLong(packetBuffer.sequence);
 		packetsReceived++;
+		if (net_lagdebug.value && sock->lastDatagramTime > 0 &&
+			net_time - sock->lastDatagramTime > net_lagdebug_threshold.value)
+		{
+			Con_Printf("net_lagdebug: %.3f sec datagram gap from %s (seq=%u flags=0x%x len=%u)\n",
+				net_time - sock->lastDatagramTime, sock->address, sequence, flags, length);
+		}
+		sock->lastDatagramTime = net_time;
 
 		if (flags & NETFLAG_UNRELIABLE)
 		{
@@ -804,6 +812,8 @@ int Datagram_Init (void)
 	myDriverLevel = net_driverlevel;
 
 	Cmd_AddCommand ("net_stats", NET_Stats_f);
+	Cvar_RegisterVariable (&net_lagdebug);
+	Cvar_RegisterVariable (&net_lagdebug_threshold);
 
 	if (safemode || COM_CheckParm("-nolan"))
 		return -1;
@@ -1039,8 +1049,18 @@ static qsocket_t *_Datagram_CheckNewConnections (void)
 		ret = dfunc.AddrCompare(&clientaddr, &s->addr);
 		if (ret >= 0)
 		{
+			if (ret > 0)
+			{
+				if (net_lagdebug.value)
+				{
+					Con_Printf("net_lagdebug: allowing same-IP client on a different port\n");
+					Con_Printf("  existing: %s\n", StrAddr (&s->addr));
+					Con_Printf("  incoming: %s\n", StrAddr (&clientaddr));
+				}
+				continue;
+			}
 			// is this a duplicate connection reqeust?
-			if (ret == 0 && net_time - s->connecttime < 2.0)
+			if (net_time - s->connecttime < 2.0)
 			{
 				// yes, so send a duplicate reply
 				SZ_Clear(&net_message);
@@ -1431,4 +1451,3 @@ qsocket_t *Datagram_Connect (const char *host)
 	}
 	return ret;
 }
-

@@ -405,8 +405,8 @@ void CL_SendMove(const usercmd_t *cmd) {
   if (vr_enabled.value && (int)vr_aimmode.value == VR_AIMMODE_CONTROLLER) {
     MSG_WriteByte(&buf, 1); // VR flag active
 
-    // Send raw hand position — the server handles all projectile
-    // spawn compensation uniformly via vr_game_projectile_z_extra.
+    // Send raw hand position; the server mirrors the same QuakeC projectile
+    // spawn compensation used for rockets.
     MSG_WriteFloat(&buf, cl.handpos[1][0]);
     MSG_WriteFloat(&buf, cl.handpos[1][1]);
     MSG_WriteFloat(&buf, cl.handpos[1][2]);

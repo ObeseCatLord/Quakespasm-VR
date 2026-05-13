@@ -117,6 +117,8 @@ typedef struct {
 typedef struct {
   vr::VRControllerState_t state;
   vr::VRControllerState_t lastState;
+  qboolean seenThisFrame;
+  qboolean triggerDown;
   vec3_t position;
   vec3_t orientation;
   vr::HmdVector3_t rawvector;
@@ -174,6 +176,22 @@ static vr::TrackedDevicePose_t ovr_DevicePose[vr::k_unMaxTrackedDeviceCount];
 static vr_eye_t eyes[2];
 static vr_eye_t *current_eye = NULL;
 static vr_controller controllers[2];
+
+static void VR_SetTrigger(vr_controller *controller, int quakeKey,
+                          qboolean down) {
+  if (controller->triggerDown == down) {
+    return;
+  }
+
+  controller->triggerDown = down;
+  Key_Event(quakeKey, down);
+}
+
+static void VR_ReleaseControllerInputs(void) {
+  VR_SetTrigger(&controllers[0], K_LTRIGGER, false);
+  VR_SetTrigger(&controllers[1], K_RTRIGGER, false);
+}
+
 static vec3_t lastOrientation = {0, 0, 0};
 static vec3_t lastAim = {0, 0, 0};
 
@@ -1136,6 +1154,7 @@ void VID_VR_Disable() {
     return;
   }
 
+  VR_ReleaseControllerInputs();
   vr::VR_Shutdown();
   ovrHMD = NULL;
 
@@ -1278,6 +1297,9 @@ void VR_UpdateScreenContent() {
   vr::VRCompositor()->WaitGetPoses(ovr_DevicePose,
                                    vr::k_unMaxTrackedDeviceCount, nullptr, 0);
 
+  controllers[0].seenThisFrame = false;
+  controllers[1].seenThisFrame = false;
+
   // Get the VR devices' orientation and position
   for (uint32_t iDevice = 0; iDevice < vr::k_unMaxTrackedDeviceCount;
        iDevice++) {
@@ -1361,8 +1383,12 @@ void VR_UpdateScreenContent() {
         }
 
         controller->lastState = controller->state;
-        vr::VRSystem()->GetControllerState(iDevice, &controller->state,
-                                           sizeof(controller->state));
+        if (!vr::VRSystem()->GetControllerState(iDevice, &controller->state,
+                                                sizeof(controller->state))) {
+          continue;
+        }
+
+        controller->seenThisFrame = true;
         controller->rawvector = rawControllerPos;
         controller->raworientation = rawControllerQuat;
         controller->position[0] =
@@ -1374,6 +1400,11 @@ void VR_UpdateScreenContent() {
       }
     }
   }
+
+  if (!controllers[0].seenThisFrame)
+    VR_SetTrigger(&controllers[0], K_LTRIGGER, false);
+  if (!controllers[1].seenThisFrame)
+    VR_SetTrigger(&controllers[1], K_RTRIGGER, false);
 
   // Reset the aim roll value before calculation, incase the user switches
   // aimmode from 7 to another.
@@ -1880,12 +1911,21 @@ void DoGrip(vr_controller *controller, int quakeKey) {
   DoKey(controller, vr::k_EButton_Grip, quakeKey);
 }
 void DoTrigger(vr_controller *controller, int quakeKey) {
+  const float triggerDownThreshold = 0.55f;
+  const float triggerUpThreshold = 0.45f;
+
+  if (!controller->seenThisFrame) {
+    VR_SetTrigger(controller, quakeKey, false);
+    return;
+  }
+
   if (axisTrigger != -1) {
-    bool triggerWasDown = controller->lastState.rAxis[axisTrigger].x > 0.5f;
-    bool triggerDown = controller->state.rAxis[axisTrigger].x > 0.5f;
-    if (triggerDown != triggerWasDown) {
-      Key_Event(quakeKey, triggerDown);
-    }
+    float triggerValue = controller->state.rAxis[axisTrigger].x;
+
+    if (!controller->triggerDown && triggerValue > triggerDownThreshold)
+      VR_SetTrigger(controller, quakeKey, true);
+    else if (controller->triggerDown && triggerValue < triggerUpThreshold)
+      VR_SetTrigger(controller, quakeKey, false);
   }
 }
 
@@ -1909,6 +1949,7 @@ void DoAxis(vr_controller *controller, int axis, int quakeKeyNeg,
 
 void VR_Move(usercmd_t *cmd) {
   if (!vr_enabled.value) {
+    VR_ReleaseControllerInputs();
     return;
   }
 

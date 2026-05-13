@@ -452,6 +452,12 @@ void SV_ReadClientMove(usercmd_t *move) {
   if (msg_readcount < net_message.cursize && !msg_badread) {
     i = MSG_ReadByte();
     if (i == 1 && !msg_badread) {
+      if (net_message.cursize - msg_readcount < 9 * 4) {
+        msg_badread = true;
+        host_client->is_vr_client = false;
+        return;
+      }
+
       host_client->is_vr_client = true;
       host_client->vr_handpos[0] = MSG_ReadFloat();
       host_client->vr_handpos[1] = MSG_ReadFloat();

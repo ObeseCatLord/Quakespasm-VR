@@ -133,6 +133,7 @@ typedef struct qsocket_s
 	double		connecttime;
 	double		lastMessageTime;
 	double		lastSendTime;
+	double		lastDatagramTime;
 
 	qboolean	disconnected;
 	qboolean	canSend;
@@ -257,4 +258,3 @@ typedef struct _PollProcedure
 void SchedulePollProcedure(PollProcedure *pp, double timeOffset);
 
 #endif	/* __NET_DEFS_H */
-

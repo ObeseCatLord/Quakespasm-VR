@@ -932,29 +932,39 @@ void SV_WalkMove(edict_t *ent) {
 //
 // For the local player (singleplayer / listen-server): uses cl.handpos[1]
 // directly with the original master-branch formula.
+static qboolean SV_VRWeaponSpawnsAtSelfOrigin(edict_t *ent) {
+  return (int)ent->v.weapon == IT_GRENADE_LAUNCHER;
+}
+
 static void SV_ApplyVRWeaponOffset(edict_t *ent, int num, qboolean is_remote_vr,
                                    vec3_t restoreOrigin) {
   _VectorCopy(ent->v.origin, restoreOrigin);
 
   if (is_remote_vr) {
-    // The client sends the raw hand position.  Pull back along the aim
-    // direction to cancel QuakeC's v_forward*8, and subtract Z to cancel
-    // QuakeC's '0 0 16'.
+    // The client sends raw hand position. Rockets add v_forward*8 and
+    // '0 0 16' in QuakeC, while grenades in vanilla/AD-style QC spawn exactly
+    // at self.origin. Put grenade self.origin where the rocket would end up.
     vec3_t adj;
-    _VectorCopy(svs.clients[num - 1].vr_handpos, adj);
-
     vec3_t fwd, r_dummy, u_dummy;
+    qboolean spawns_at_self_origin = SV_VRWeaponSpawnsAtSelfOrigin(ent);
+
+    _VectorCopy(svs.clients[num - 1].vr_handpos, adj);
     AngleVectors(ent->v.v_angle, fwd, r_dummy, u_dummy);
-    VectorMA(adj, -6.0f, fwd, adj);
+
+    if (spawns_at_self_origin) {
+      VectorMA(adj, 2.0f, fwd, adj);
+    } else {
+      VectorMA(adj, -6.0f, fwd, adj);
+      adj[2] -= 16.0f;
+    }
 
     _VectorCopy(adj, ent->v.origin);
-    // Subtract exactly 16 to cancel QuakeC's '0 0 16' spawn offset.
-    // The local path uses vr_projectilespawn_z_offset (24) because the
-    // barrel-push forward has a Z component that needs extra compensation.
-    ent->v.origin[2] -= 16.0f;
   } else if (vr_enabled.value && !isDedicated && num == cl.viewentity) {
     vec3_t adj;
+    vec3_t fwd, right, up;
+    qboolean spawns_at_self_origin = SV_VRWeaponSpawnsAtSelfOrigin(ent);
     _VectorCopy(cl.handpos[1], adj);
+    AngleVectors(cl.handrot[1], fwd, right, up);
 
     if (weaponCVarEntry >= 0) {
       vec3_t ofs = {
@@ -963,8 +973,8 @@ static void SV_ApplyVRWeaponOffset(edict_t *ent, int num, qboolean is_remote_vr,
           vr_weapon_offset[weaponCVarEntry * VARS_PER_WEAPON + 2].value +
               vr_gunmodely.value};
 
-      vec3_t fwd2, right, up;
-      AngleVectors(cl.handrot[1], fwd2, right, up);
+      vec3_t fwd2;
+      VectorCopy(fwd, fwd2);
       fwd2[0] *= vr_gunmodelscale.value * ofs[2];
       fwd2[1] *= vr_gunmodelscale.value * ofs[2];
       fwd2[2] *= vr_gunmodelscale.value * ofs[2];
@@ -972,7 +982,12 @@ static void SV_ApplyVRWeaponOffset(edict_t *ent, int num, qboolean is_remote_vr,
     }
 
     _VectorCopy(adj, ent->v.origin);
-    ent->v.origin[2] -= vr_projectilespawn_z_offset.value;
+    if (spawns_at_self_origin) {
+      VectorMA(ent->v.origin, 8.0f, fwd, ent->v.origin);
+      ent->v.origin[2] += 16.0f - vr_projectilespawn_z_offset.value;
+    } else {
+      ent->v.origin[2] -= vr_projectilespawn_z_offset.value;
+    }
   }
 }
 
