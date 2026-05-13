@@ -20,3 +20,4 @@ script_pid.txt
 !test_server.sh
 !test_client_desktop.sh
 !test_client_vr.sh
+!Quake/build_cross_win64-openvr.sh
