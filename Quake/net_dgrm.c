@@ -450,29 +450,36 @@ int	Datagram_GetMessage (qsocket_t *sock)
 
 		if (flags & NETFLAG_DATA)
 		{
-			// The ACK is sent to readaddr regardless, so a duplicate from a
-			// remapped port still gets ACK'd at its real source. The remap
-			// itself is committed only after we confirm this is a genuine
-			// next-in-sequence data packet.
+			// The ACK goes to readaddr regardless, so a duplicate from a
+			// remapped port still gets ACK'd at its real source.
 			packetBuffer.length = BigLong(NET_HEADERSIZE | NETFLAG_ACK);
 			packetBuffer.sequence = BigLong(sequence);
 			sfunc.Write (sock->socket, (byte *)&packetBuffer, NET_HEADERSIZE, &readaddr);
+
+			// Commit the NAT remap here - before the duplicate-sequence check
+			// rather than after it. The ACK we just sent proves the new port
+			// is live; if this is a retransmission from a NAT-remapped client
+			// (the original ACK was sent to the old, now-dead mapping and
+			// lost), the duplicate-skip would otherwise stop the client
+			// retransmitting while our future sends still target the dead
+			// port. Stale stream-retransmits from the *old* port would have
+			// cmp <= 0 (sock->addr was last set to the live new port), so
+			// they don't reach this branch and can't redirect us backward.
+			if (pendingRemap)
+			{
+				if (net_lagdebug.value)
+				{
+					Con_Printf("net_lagdebug: NAT remap on DATA (same IP, different port)\n");
+					Con_Printf("  was:  %s\n", StrAddr (&sock->addr));
+					Con_Printf("  now:  %s\n", StrAddr (&readaddr));
+				}
+				sock->addr = readaddr;
+			}
 
 			if (sequence != sock->receiveSequence)
 			{
 				receivedDuplicateCount++;
 				continue;
-			}
-			// Valid in-order DATA - safe to commit the NAT remap now.
-			if (pendingRemap)
-			{
-				if (net_lagdebug.value)
-				{
-					Con_Printf("net_lagdebug: NAT remap on valid DATA (same IP, different port)\n");
-					Con_Printf("  was:  %s\n", StrAddr (&sock->addr));
-					Con_Printf("  now:  %s\n", StrAddr (&readaddr));
-				}
-				sock->addr = readaddr;
 			}
 			sock->receiveSequence++;
 
