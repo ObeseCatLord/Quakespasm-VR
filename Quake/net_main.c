@@ -122,6 +122,14 @@ qsocket_t *NET_NewQSocket (void)
 	sock->unreliableReceiveSequence = 0;
 	sock->receiveMessageLength = 0;
 
+	// Clear the NAT-straggler-detection memory. qsocket_t slots are recycled
+	// from net_freeSockets, so a fresh connection on a previously-used slot
+	// would otherwise inherit prevAddr/prevAddrTime from its prior occupant
+	// and could misclassify its first same-IP/different-port packet as a
+	// straggler, suppressing a legitimate NAT remap.
+	memset (&sock->prevAddr, 0, sizeof (sock->prevAddr));
+	sock->prevAddrTime = 0.0;
+
 	return sock;
 }
 
