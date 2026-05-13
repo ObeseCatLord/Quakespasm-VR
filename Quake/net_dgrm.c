@@ -322,16 +322,30 @@ int	Datagram_GetMessage (qsocket_t *sock)
 
 		{
 			int cmp = sfunc.AddrCompare(&readaddr, &sock->addr);
-			if (cmp != 0)
+			if (cmp < 0)
 			{
+				// Different IP entirely - genuine forged/misdirected packet.
 				if (net_lagdebug.value)
 				{
-					Con_Printf("net_lagdebug: ignoring packet (%s)\n",
-						cmp > 0 ? "same IP, different port" : "different address");
+					Con_Printf("net_lagdebug: ignoring packet (different address)\n");
 					Con_Printf("  expected: %s\n", StrAddr (&sock->addr));
 					Con_Printf("  received: %s\n", StrAddr (&readaddr));
 				}
 				continue;
+			}
+			if (cmp > 0)
+			{
+				// Same IP, different port: symmetric NAT remapped the client's
+				// external port mid-connection. Track the new port instead of
+				// dropping the packet, otherwise the connection stalls every
+				// time the home NAT rotates ports during a long signon.
+				if (net_lagdebug.value)
+				{
+					Con_Printf("net_lagdebug: NAT remap (same IP, different port)\n");
+					Con_Printf("  was:  %s\n", StrAddr (&sock->addr));
+					Con_Printf("  now:  %s\n", StrAddr (&readaddr));
+				}
+				sock->addr = readaddr;
 			}
 		}
 
