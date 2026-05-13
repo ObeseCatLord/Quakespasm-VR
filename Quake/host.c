@@ -78,6 +78,7 @@ cvar_t	skill = {"skill","1",CVAR_NONE};			// 0 - 3
 cvar_t	deathmatch = {"deathmatch","0",CVAR_NONE};	// 0, 1, or 2
 cvar_t	coop = {"coop","0",CVAR_NONE};			// 0 or 1
 cvar_t	sv_nofriendlyfire = {"sv_nofriendlyfire","1",CVAR_NOTIFY|CVAR_SERVERINFO};
+cvar_t	sv_coop_noplayerclip = {"sv_coop_noplayerclip","1",CVAR_NOTIFY|CVAR_SERVERINFO};
 
 cvar_t	pausable = {"pausable","1",CVAR_NONE};
 
@@ -290,6 +291,7 @@ void Host_InitLocal (void)
 	Cvar_RegisterVariable (&developer);
 	Cvar_RegisterVariable (&coop);
 	Cvar_RegisterVariable (&sv_nofriendlyfire);
+	Cvar_RegisterVariable (&sv_coop_noplayerclip);
 	Cvar_RegisterVariable (&deathmatch);
 
 	Cvar_RegisterVariable (&campaign);
