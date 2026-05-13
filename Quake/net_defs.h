@@ -158,6 +158,13 @@ typedef struct qsocket_s
 	struct qsockaddr	addr;
 	char		address[NET_NAMELEN];
 
+	// Memory of the address we last moved AWAY from when committing a NAT
+	// remap, used in Datagram_GetMessage to reject delayed stragglers from
+	// the old mapping that would otherwise redirect sock->addr backward to
+	// a dead port. prevAddrTime == 0 means no prior abandonment.
+	struct qsockaddr	prevAddr;
+	double		prevAddrTime;
+
 } qsocket_t;
 
 extern qsocket_t	*net_activeSockets;

@@ -337,12 +337,33 @@ int	Datagram_GetMessage (qsocket_t *sock)
 			}
 			if (cmp > 0)
 			{
-				// Same IP, different port: symmetric NAT remapped the client's
-				// external port mid-connection. Don't commit sock->addr yet -
-				// a delayed stale packet from the old port could otherwise
-				// redirect the socket and break the live stream. Defer until
-				// the packet passes its sequence-specific validation below.
-				pendingRemap = true;
+				// Same IP, different port. Two possibilities:
+				//   (a) genuine NAT remap to a new external port
+				//   (b) delayed straggler from a recently abandoned port -
+				//       a packet that was already in flight when the NAT
+				//       last remapped, arriving after we've moved on.
+				// Distinguish via the prevAddr memory: if this readaddr
+				// matches the port we just moved away from, AND we moved
+				// away from it recently, treat as a straggler and process
+				// the packet without redirecting sock->addr backward.
+				if (sock->prevAddrTime != 0.0 &&
+					(net_time - sock->prevAddrTime) < 3.0 &&
+					sfunc.AddrCompare(&readaddr, &sock->prevAddr) == 0)
+				{
+					if (net_lagdebug.value)
+					{
+						Con_Printf("net_lagdebug: straggler from recently abandoned port - processing without remap\n");
+						Con_Printf("  abandoned: %s (%.3fs ago)\n",
+							StrAddr (&sock->prevAddr),
+							net_time - sock->prevAddrTime);
+					}
+					// leave pendingRemap = false; the packet still gets
+					// processed in its respective path, sock->addr unchanged.
+				}
+				else
+				{
+					pendingRemap = true;
+				}
 			}
 		}
 
@@ -386,6 +407,8 @@ int	Datagram_GetMessage (qsocket_t *sock)
 					Con_Printf("  was:  %s\n", StrAddr (&sock->addr));
 					Con_Printf("  now:  %s\n", StrAddr (&readaddr));
 				}
+				sock->prevAddr = sock->addr;
+				sock->prevAddrTime = net_time;
 				sock->addr = readaddr;
 			}
 			if (sequence != sock->unreliableReceiveSequence)
@@ -432,6 +455,8 @@ int	Datagram_GetMessage (qsocket_t *sock)
 					Con_Printf("  was:  %s\n", StrAddr (&sock->addr));
 					Con_Printf("  now:  %s\n", StrAddr (&readaddr));
 				}
+				sock->prevAddr = sock->addr;
+				sock->prevAddrTime = net_time;
 				sock->addr = readaddr;
 			}
 			sock->sendMessageLength -= DATAGRAM_MTU;
@@ -462,9 +487,9 @@ int	Datagram_GetMessage (qsocket_t *sock)
 			// (the original ACK was sent to the old, now-dead mapping and
 			// lost), the duplicate-skip would otherwise stop the client
 			// retransmitting while our future sends still target the dead
-			// port. Stale stream-retransmits from the *old* port would have
-			// cmp <= 0 (sock->addr was last set to the live new port), so
-			// they don't reach this branch and can't redirect us backward.
+			// port. Stragglers from a recently abandoned port were already
+			// filtered out above by the prevAddr/prevAddrTime check, so
+			// pendingRemap here is a genuine new-port signal.
 			if (pendingRemap)
 			{
 				if (net_lagdebug.value)
@@ -473,6 +498,8 @@ int	Datagram_GetMessage (qsocket_t *sock)
 					Con_Printf("  was:  %s\n", StrAddr (&sock->addr));
 					Con_Printf("  now:  %s\n", StrAddr (&readaddr));
 				}
+				sock->prevAddr = sock->addr;
+				sock->prevAddrTime = net_time;
 				sock->addr = readaddr;
 			}
 
