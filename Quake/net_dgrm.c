@@ -298,6 +298,7 @@ int	Datagram_GetMessage (qsocket_t *sock)
 	struct qsockaddr readaddr;
 	unsigned int	sequence;
 	unsigned int	count;
+	qboolean		pendingRemap;
 
 	if (!sock->canSend)
 		if ((net_time - sock->lastSendTime) > 1.0)
@@ -320,6 +321,7 @@ int	Datagram_GetMessage (qsocket_t *sock)
 			return -1;
 		}
 
+		pendingRemap = false;
 		{
 			int cmp = sfunc.AddrCompare(&readaddr, &sock->addr);
 			if (cmp < 0)
@@ -336,16 +338,11 @@ int	Datagram_GetMessage (qsocket_t *sock)
 			if (cmp > 0)
 			{
 				// Same IP, different port: symmetric NAT remapped the client's
-				// external port mid-connection. Track the new port instead of
-				// dropping the packet, otherwise the connection stalls every
-				// time the home NAT rotates ports during a long signon.
-				if (net_lagdebug.value)
-				{
-					Con_Printf("net_lagdebug: NAT remap (same IP, different port)\n");
-					Con_Printf("  was:  %s\n", StrAddr (&sock->addr));
-					Con_Printf("  now:  %s\n", StrAddr (&readaddr));
-				}
-				sock->addr = readaddr;
+				// external port mid-connection. Don't commit sock->addr yet -
+				// a delayed stale packet from the old port could otherwise
+				// redirect the socket and break the live stream. Defer until
+				// the packet passes its sequence-specific validation below.
+				pendingRemap = true;
 			}
 		}
 
@@ -379,6 +376,17 @@ int	Datagram_GetMessage (qsocket_t *sock)
 				Con_DPrintf("Got a stale datagram\n");
 				ret = 0;
 				break;
+			}
+			// Valid unreliable - safe to commit the NAT remap now.
+			if (pendingRemap)
+			{
+				if (net_lagdebug.value)
+				{
+					Con_Printf("net_lagdebug: NAT remap on valid unreliable (same IP, different port)\n");
+					Con_Printf("  was:  %s\n", StrAddr (&sock->addr));
+					Con_Printf("  now:  %s\n", StrAddr (&readaddr));
+				}
+				sock->addr = readaddr;
 			}
 			if (sequence != sock->unreliableReceiveSequence)
 			{
@@ -415,6 +423,17 @@ int	Datagram_GetMessage (qsocket_t *sock)
 				Con_DPrintf("Duplicate ACK received\n");
 				continue;
 			}
+			// Valid in-order ACK - safe to commit the NAT remap now.
+			if (pendingRemap)
+			{
+				if (net_lagdebug.value)
+				{
+					Con_Printf("net_lagdebug: NAT remap on valid ACK (same IP, different port)\n");
+					Con_Printf("  was:  %s\n", StrAddr (&sock->addr));
+					Con_Printf("  now:  %s\n", StrAddr (&readaddr));
+				}
+				sock->addr = readaddr;
+			}
 			sock->sendMessageLength -= DATAGRAM_MTU;
 			if (sock->sendMessageLength > 0)
 			{
@@ -431,6 +450,10 @@ int	Datagram_GetMessage (qsocket_t *sock)
 
 		if (flags & NETFLAG_DATA)
 		{
+			// The ACK is sent to readaddr regardless, so a duplicate from a
+			// remapped port still gets ACK'd at its real source. The remap
+			// itself is committed only after we confirm this is a genuine
+			// next-in-sequence data packet.
 			packetBuffer.length = BigLong(NET_HEADERSIZE | NETFLAG_ACK);
 			packetBuffer.sequence = BigLong(sequence);
 			sfunc.Write (sock->socket, (byte *)&packetBuffer, NET_HEADERSIZE, &readaddr);
@@ -439,6 +462,17 @@ int	Datagram_GetMessage (qsocket_t *sock)
 			{
 				receivedDuplicateCount++;
 				continue;
+			}
+			// Valid in-order DATA - safe to commit the NAT remap now.
+			if (pendingRemap)
+			{
+				if (net_lagdebug.value)
+				{
+					Con_Printf("net_lagdebug: NAT remap on valid DATA (same IP, different port)\n");
+					Con_Printf("  was:  %s\n", StrAddr (&sock->addr));
+					Con_Printf("  now:  %s\n", StrAddr (&readaddr));
+				}
+				sock->addr = readaddr;
 			}
 			sock->receiveSequence++;
 
