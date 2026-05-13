@@ -44,6 +44,45 @@ typedef struct
 	edict_t		*passedict;
 } moveclip_t;
 
+static qboolean SV_IsActiveClientEdict (edict_t *ent)
+{
+	int entnum;
+
+	if (!ent || ent->free)
+		return false;
+
+	entnum = NUM_FOR_EDICT(ent);
+	if (entnum < 1 || entnum > svs.maxclients)
+		return false;
+
+	if (!svs.clients[entnum - 1].active || !svs.clients[entnum - 1].spawned)
+		return false;
+
+	return ((int)ent->v.flags & FL_CLIENT) != 0;
+}
+
+static qboolean SV_IsPointMove (moveclip_t *clip)
+{
+	return clip->mins[0] == clip->maxs[0]
+		&& clip->mins[1] == clip->maxs[1]
+		&& clip->mins[2] == clip->maxs[2];
+}
+
+static qboolean SV_ShouldSkipCoopPlayerClip (moveclip_t *clip, edict_t *touch)
+{
+	if (!sv_coop_noplayerclip.value || !coop.value)
+		return false;
+	if (!clip->passedict)
+		return false;
+	if (clip->type == MOVE_MISSILE)
+		return false;
+	if (SV_IsPointMove(clip))
+		return false;	// point traces should still hit players
+
+	return SV_IsActiveClientEdict(clip->passedict)
+		&& SV_IsActiveClientEdict(touch);
+}
+
 
 int SV_HullPointContents (hull_t *hull, int num, vec3_t p);
 
@@ -828,6 +867,8 @@ void SV_ClipToLinks ( areanode_t *node, moveclip_t *clip )
 			if (PROG_TO_EDICT(clip->passedict->v.owner) == touch)
 				continue;	// don't clip against owner
 		}
+		if (SV_ShouldSkipCoopPlayerClip(clip, touch))
+			continue;
 
 		if ((int)touch->v.flags & FL_MONSTER)
 			trace = SV_ClipMoveToEntity (touch, clip->start, clip->mins2, clip->maxs2, clip->end);
@@ -934,4 +975,3 @@ trace_t SV_Move (vec3_t start, vec3_t mins, vec3_t maxs, vec3_t end, int type, e
 
 	return clip.trace;
 }
-
