@@ -230,6 +230,14 @@ void R_UpdateWarpTextures (void)
 		return;
 
 	warptess = 128.0f/CLAMP (3.0f, floorf(r_waterquality.value), 64.0f);
+	GL_DisableMultitexture ();
+	glEnable (GL_TEXTURE_2D);
+	glDisable (GL_BLEND);
+	glDisable (GL_ALPHA_TEST);
+	glDisable (GL_DEPTH_TEST);
+	glDepthMask (GL_FALSE);
+	glTexEnvf (GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_REPLACE);
+	glColor4f (1, 1, 1, 1);
 
 	for (i=0; i<cl.worldmodel->numtextures; i++)
 	{
@@ -264,6 +272,10 @@ void R_UpdateWarpTextures (void)
 
 		tx->update_warp = false;
 	}
+
+	glDepthMask (GL_TRUE);
+	glEnable (GL_DEPTH_TEST);
+	glColor4f (1, 1, 1, 1);
 
 	// ericw -- workaround for osx 10.6 driver bug when using FSAA. R_Clear only clears the warpimage part of the screen.
 	GL_SetCanvas(CANVAS_DEFAULT);

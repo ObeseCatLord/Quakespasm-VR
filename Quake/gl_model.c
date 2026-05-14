@@ -463,8 +463,7 @@ static void Mod_LoadTextures (lump_t *l)
 	src_offset_t		offset;
 	int			mark, fwidth, fheight;
 	char		filename[MAX_OSPATH], mapname[MAX_OSPATH];
-	byte		*data;
-	extern byte *hunk_base;
+	byte		*data, *dummy;
 //johnfitz
 	unsigned int	flags;
 
@@ -582,15 +581,18 @@ static void Mod_LoadTextures (lump_t *l)
 						SRC_INDEXED, (byte *)(tx+1), loadmodel->name, offset, TEXPREF_NONE);
 				}
 
-				//now create the warpimage, using dummy data from the hunk to create the initial image
-				Hunk_Alloc (gl_warpimagesize*gl_warpimagesize*4); //make sure hunk is big enough so we don't reach an illegal address
+				//now create the warpimage with deterministic dummy data; it will be updated before drawing
 				Hunk_FreeToLowMark (mark);
+				mark = Hunk_LowMark ();
+				dummy = (byte *) Hunk_Alloc (gl_warpimagesize*gl_warpimagesize*4);
+				memset (dummy, 0, gl_warpimagesize*gl_warpimagesize*4);
 				q_snprintf (texturename, sizeof(texturename), "%s_warp", texturename);
 				flags = TEXPREF_NOPICMIP | TEXPREF_WARPIMAGE;
 				if (GL_GenerateMipmap)
 					flags |= TEXPREF_MIPMAP;
 				tx->warpimage = TexMgr_LoadImage (loadmodel, texturename, gl_warpimagesize,
-					gl_warpimagesize, SRC_RGBA, hunk_base, "", (src_offset_t)hunk_base, flags);
+					gl_warpimagesize, SRC_RGBA, dummy, "", (src_offset_t)dummy, flags);
+				Hunk_FreeToLowMark (mark);
 				tx->update_warp = true;
 			}
 			else //regular texture
@@ -3094,4 +3096,3 @@ static void Mod_Print (void)
 	}
 	Con_Printf ("%i models\n",mod_numknown); //johnfitz -- print the total too
 }
-

@@ -540,8 +540,8 @@ static void VR_Deadzone_f(cvar_t *var) {
 // Weapon scale/position stuff
 cvar_t vr_weapon_offset[MAX_WEAPONS * VARS_PER_WEAPON];
 
-aliashdr_t *lastWeaponHeader;
-int weaponCVarEntry;
+aliashdr_t *lastWeaponHeader = NULL;
+int weaponCVarEntry = -1;
 
 void Mod_Weapon(const char *name, aliashdr_t *hdr) {
   if (lastWeaponHeader != hdr) {
@@ -627,8 +627,16 @@ void InitAllWeaponCVars() {
     // ad specific models
     InitWeaponCVars(i++, "progs/v_shadaxe0.mdl", "-1.5", "43.1", "41",
                     "0.25"); // shadow axe
+    InitWeaponCVars(i++, "progs/v_shadaxe1.mdl", "-1.5", "43.1", "41",
+                    "0.25"); // shadow axe glow variant
+    InitWeaponCVars(i++, "progs/v_shadaxe2.mdl", "-1.5", "43.1", "41",
+                    "0.25"); // shadow axe glow variant
     InitWeaponCVars(i++, "progs/v_shadaxe3.mdl", "-1.5", "43.1", "41",
                     "0.25"); // shadow axe upgrade, same numbers
+    InitWeaponCVars(i++, "progs/v_shadaxe4.mdl", "-1.5", "43.1", "41",
+                    "0.25"); // shadow axe upgrade glow variant
+    InitWeaponCVars(i++, "progs/v_shadaxe5.mdl", "-1.5", "43.1", "41",
+                    "0.25"); // shadow axe upgrade glow variant
     InitWeaponCVars(i++, "progs/v_shot3.mdl", "-3.5", "0.4", "8.5",
                     "0.8"); // triple barrel shotgun ("Widowmaker")
 
@@ -1080,6 +1088,8 @@ float vr_game_projectile_z_extra = 0.0f;
 void VR_InitGame() {
   InitAllWeaponCVars();
   VR_LoadWeaponSchema();
+  lastWeaponHeader = NULL;
+  weaponCVarEntry = -1;
 
   // Per-game extra Z offset — currently 0 for all games.
   // The base vr_projectilespawn_z_offset cvar (default 24) handles QuakeC's
@@ -1588,19 +1598,20 @@ void VR_ShowCrosshair() {
   if (vr_aimmode.value == VR_AIMMODE_CONTROLLER) {
     VectorCopy(cl.handpos[1], start);
 
-    vec3_t ofs = {
-        vr_weapon_offset[weaponCVarEntry * VARS_PER_WEAPON].value,
-        vr_weapon_offset[weaponCVarEntry * VARS_PER_WEAPON + 1].value,
-        vr_weapon_offset[weaponCVarEntry * VARS_PER_WEAPON + 2].value +
-            vr_gunmodely.value};
-
     AngleVectors(cl.handrot[1], forward, right, up);
-    vec3_t fwd2;
-    VectorCopy(forward, fwd2);
-    fwd2[0] *= vr_gunmodelscale.value * ofs[2];
-    fwd2[1] *= vr_gunmodelscale.value * ofs[2];
-    fwd2[2] *= vr_gunmodelscale.value * ofs[2];
-    VectorAdd(start, fwd2, start);
+    if (weaponCVarEntry >= 0) {
+      vec3_t ofs = {
+          vr_weapon_offset[weaponCVarEntry * VARS_PER_WEAPON].value,
+          vr_weapon_offset[weaponCVarEntry * VARS_PER_WEAPON + 1].value,
+          vr_weapon_offset[weaponCVarEntry * VARS_PER_WEAPON + 2].value +
+              vr_gunmodely.value};
+      vec3_t fwd2;
+      VectorCopy(forward, fwd2);
+      fwd2[0] *= vr_gunmodelscale.value * ofs[2];
+      fwd2[1] *= vr_gunmodelscale.value * ofs[2];
+      fwd2[2] *= vr_gunmodelscale.value * ofs[2];
+      VectorAdd(start, fwd2, start);
+    }
   } else {
     VectorCopy(cl.viewent.origin, start);
     start[2] -= cl.viewheight - 10;
