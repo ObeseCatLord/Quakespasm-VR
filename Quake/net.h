@@ -40,6 +40,9 @@ extern int		DEFAULTnet_hostport;
 extern int		net_hostport;
 
 extern cvar_t		hostname;
+extern cvar_t		net_lagdebug;
+extern cvar_t		net_lagdebug_threshold;
+extern cvar_t		net_lagdebug_frame_threshold;
 
 extern	double		net_time;
 extern	sizebuf_t	net_message;

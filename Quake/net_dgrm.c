@@ -51,8 +51,9 @@ static struct
 } packetBuffer;
 
 static int myDriverLevel;
-static cvar_t net_lagdebug = {"net_lagdebug", "0", CVAR_NONE};
-static cvar_t net_lagdebug_threshold = {"net_lagdebug_threshold", "0.25", CVAR_NONE};
+cvar_t net_lagdebug = {"net_lagdebug", "0", CVAR_NONE};
+cvar_t net_lagdebug_threshold = {"net_lagdebug_threshold", "0.25", CVAR_NONE};
+cvar_t net_lagdebug_frame_threshold = {"net_lagdebug_frame_threshold", "0.05", CVAR_NONE};
 static cvar_t net_singlesocket = {"net_singlesocket", "1", CVAR_NONE};
 static cvar_t cl_netport = {"cl_netport", "0", CVAR_ARCHIVE};
 static cvar_t cl_portpingprobe_enable = {"cl_portpingprobe_enable", "1", CVAR_ARCHIVE};
@@ -71,6 +72,7 @@ typedef struct
 	sys_socket_t	socket;
 	struct qsockaddr addr;
 	unsigned int	wireLength;
+	double		queuedTime;
 	struct
 	{
 		unsigned int	length;
@@ -88,6 +90,7 @@ typedef struct
 	sys_socket_t	socket;
 	struct qsockaddr addr;
 	int		length;
+	double		queuedTime;
 	byte		data[NET_MAXMESSAGE];
 } pending_control_datagram_t;
 
@@ -135,6 +138,7 @@ static void Datagram_QueuePacket (qsocket_t *sock, struct qsockaddr *addr, unsig
 	pendingDatagrams[slot].socket = sock->socket;
 	pendingDatagrams[slot].addr = *addr;
 	pendingDatagrams[slot].wireLength = wireLength;
+	pendingDatagrams[slot].queuedTime = net_time;
 	Q_memcpy(&pendingDatagrams[slot].packet, &packetBuffer, sizeof(packetBuffer));
 }
 
@@ -167,6 +171,7 @@ static void Datagram_QueueControlPacket (sys_socket_t socket, struct qsockaddr *
 	pendingControlDatagrams[slot].socket = socket;
 	pendingControlDatagrams[slot].addr = *addr;
 	pendingControlDatagrams[slot].length = length;
+	pendingControlDatagrams[slot].queuedTime = net_time;
 	Q_memcpy(pendingControlDatagrams[slot].data, data, length);
 }
 
@@ -310,6 +315,13 @@ static qboolean Datagram_DequeuePacket (qsocket_t *sock, unsigned int *wireLengt
 		*wireLength = pendingDatagrams[i].wireLength;
 		*addr = pendingDatagrams[i].addr;
 		Q_memcpy(&packetBuffer, &pendingDatagrams[i].packet, sizeof(packetBuffer));
+		if (net_lagdebug.value && pendingDatagrams[i].queuedTime > 0 &&
+			net_time - pendingDatagrams[i].queuedTime > net_lagdebug_frame_threshold.value)
+		{
+			Con_Printf("net_lagdebug: queued datagram delay %.3f sec for %s len=%u\n",
+				net_time - pendingDatagrams[i].queuedTime,
+				sock->address, pendingDatagrams[i].wireLength);
+		}
 		pendingDatagrams[i].valid = false;
 		return true;
 	}
@@ -1289,6 +1301,7 @@ int Datagram_Init (void)
 	Cmd_AddCommand ("net_stats", NET_Stats_f);
 	Cvar_RegisterVariable (&net_lagdebug);
 	Cvar_RegisterVariable (&net_lagdebug_threshold);
+	Cvar_RegisterVariable (&net_lagdebug_frame_threshold);
 	Cvar_RegisterVariable (&net_singlesocket);
 	Cvar_RegisterVariable (&cl_netport);
 	Cvar_RegisterVariable (&cl_portpingprobe_enable);
