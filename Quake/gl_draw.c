@@ -121,7 +121,7 @@ typedef struct cachepic_s
 	byte		padding[32];	// for appended glpic
 } cachepic_t;
 
-#define	MAX_CACHED_PICS		128
+#define	MAX_CACHED_PICS		512
 cachepic_t	menu_cachepics[MAX_CACHED_PICS];
 int			menu_numcachepics;
 
@@ -185,8 +185,7 @@ int Scrap_AllocBlock (int w, int h, int *x, int *y)
 		return texnum;
 	}
 
-	Sys_Error ("Scrap_AllocBlock: full"); //johnfitz -- correct function name
-	return 0; //johnfitz -- shut up compiler
+	return -1;
 }
 
 /*
@@ -214,38 +213,81 @@ void Scrap_Upload (void)
 Draw_PicFromWad
 ================
 */
-qpic_t *Draw_PicFromWad (const char *name)
+qpic_t *Draw_PicFromWad2 (const char *name, unsigned int texflags)
 {
+	cachepic_t	*pic;
+	int			i;
 	qpic_t	*p;
 	glpic_t	gl;
 	src_offset_t offset; //johnfitz
+	lumpinfo_t *info;
 
-	p = (qpic_t *) W_GetLumpName (name);
-	if (!p) return pic_nul; //johnfitz
+	for (pic=menu_cachepics, i=0 ; i<menu_numcachepics ; pic++, i++)
+	{
+		if (!strcmp (name, pic->name))
+			return &pic->pic;
+	}
+	if (menu_numcachepics == MAX_CACHED_PICS)
+		Sys_Error ("menu_numcachepics == MAX_CACHED_PICS");
+
+	p = (qpic_t *) W_GetLumpName (name, &info);
+	if (!p)
+		return NULL;
+	if (info->type != TYP_QPIC)
+	{
+		Con_SafePrintf ("Draw_PicFromWad: lump \"%s\" is not a qpic\n", name);
+		return pic_nul;
+	}
+	if ((size_t)info->size < sizeof(int)*2)
+	{
+		Con_SafePrintf ("Draw_PicFromWad: pic \"%s\" is too small for its qpic header (%u bytes)\n", name, info->size);
+		return pic_nul;
+	}
+	if (p->width <= 0 || p->height <= 0)
+	{
+		Con_SafePrintf ("Draw_PicFromWad: pic \"%s\" has bad size (%dx%d)\n", name, p->width, p->height);
+		return pic_nul;
+	}
+	if ((size_t)info->size < sizeof(int)*2 + (size_t)p->width * (size_t)p->height)
+	{
+		Con_SafePrintf ("Draw_PicFromWad: pic \"%s\" truncated (%d*%d requires %zu bytes)\n",
+						name, p->width, p->height, sizeof(int)*2 + (size_t)p->width * (size_t)p->height);
+		return pic_nul;
+	}
 
 	// load little ones into the scrap
-	if (p->width < 64 && p->height < 64)
+	if (p->width < 64 && p->height < 64 &&
+		(texflags & TEXPREF_PAD) &&
+		!(texflags & (TEXPREF_MIPMAP | TEXPREF_NEAREST | TEXPREF_LINEAR)))
 	{
 		int		x, y;
-		int		i, j, k;
+		int		row, col, k;
 		int		texnum;
 
 		texnum = Scrap_AllocBlock (p->width, p->height, &x, &y);
-		scrap_dirty = true;
-		k = 0;
-		for (i=0 ; i<p->height ; i++)
+		if (texnum >= 0)
 		{
-			for (j=0 ; j<p->width ; j++, k++)
-				scrap_texels[texnum][(y+i)*BLOCK_WIDTH + x + j] = p->data[k];
+			scrap_dirty = true;
+			k = 0;
+			for (row=0 ; row<p->height ; row++)
+			{
+				for (col=0 ; col<p->width ; col++, k++)
+					scrap_texels[texnum][(y+row)*BLOCK_WIDTH + x + col] = p->data[k];
+			}
+			gl.gltexture = scrap_textures[texnum]; //johnfitz -- changed to an array
+			//johnfitz -- no longer go from 0.01 to 0.99
+			gl.sl = x/(float)BLOCK_WIDTH;
+			gl.sh = (x+p->width)/(float)BLOCK_WIDTH;
+			gl.tl = y/(float)BLOCK_WIDTH;
+			gl.th = (y+p->height)/(float)BLOCK_WIDTH;
 		}
-		gl.gltexture = scrap_textures[texnum]; //johnfitz -- changed to an array
-		//johnfitz -- no longer go from 0.01 to 0.99
-		gl.sl = x/(float)BLOCK_WIDTH;
-		gl.sh = (x+p->width)/(float)BLOCK_WIDTH;
-		gl.tl = y/(float)BLOCK_WIDTH;
-		gl.th = (y+p->height)/(float)BLOCK_WIDTH;
+		else
+			gl.gltexture = NULL;
 	}
 	else
+		gl.gltexture = NULL;
+
+	if (!gl.gltexture)
 	{
 		char texturename[64]; //johnfitz
 		q_snprintf (texturename, sizeof(texturename), "%s:%s", WADFILENAME, name); //johnfitz
@@ -253,16 +295,25 @@ qpic_t *Draw_PicFromWad (const char *name)
 		offset = (src_offset_t)p - (src_offset_t)wad_base + sizeof(int)*2; //johnfitz
 
 		gl.gltexture = TexMgr_LoadImage (NULL, texturename, p->width, p->height, SRC_INDEXED, p->data, WADFILENAME,
-										  offset, TEXPREF_ALPHA | TEXPREF_PAD | TEXPREF_NOPICMIP); //johnfitz -- TexMgr
+										  offset, texflags); //johnfitz -- TexMgr
 		gl.sl = 0;
-		gl.sh = (float)p->width/(float)TexMgr_PadConditional(p->width); //johnfitz
+		gl.sh = (texflags & TEXPREF_PAD) ? (float)p->width/(float)TexMgr_PadConditional(p->width) : 1; //johnfitz
 		gl.tl = 0;
-		gl.th = (float)p->height/(float)TexMgr_PadConditional(p->height); //johnfitz
+		gl.th = (texflags & TEXPREF_PAD) ? (float)p->height/(float)TexMgr_PadConditional(p->height) : 1; //johnfitz
 	}
 
-	memcpy (p->data, &gl, sizeof(glpic_t));
+	menu_numcachepics++;
+	strcpy (pic->name, name);
+	pic->pic = *p;
+	memcpy (pic->pic.data, &gl, sizeof(glpic_t));
 
-	return p;
+	return &pic->pic;
+}
+
+qpic_t *Draw_PicFromWad (const char *name)
+{
+	qpic_t *pic = Draw_PicFromWad2 (name, TEXPREF_ALPHA | TEXPREF_PAD | TEXPREF_NOPICMIP);
+	return pic ? pic : pic_nul;
 }
 
 /*
@@ -315,6 +366,45 @@ qpic_t	*Draw_CachePic (const char *path)
 	return &pic->pic;
 }
 
+qpic_t *Draw_TryCachePic (const char *path, unsigned int texflags)
+{
+	cachepic_t	*pic;
+	int			i;
+	qpic_t		*dat;
+	glpic_t		gl;
+
+	for (pic=menu_cachepics, i=0 ; i<menu_numcachepics ; pic++, i++)
+	{
+		if (!strcmp (path, pic->name))
+			return &pic->pic;
+	}
+	if (menu_numcachepics == MAX_CACHED_PICS)
+		Sys_Error ("menu_numcachepics == MAX_CACHED_PICS");
+
+	dat = (qpic_t *)COM_LoadTempFile (path, NULL);
+	if (!dat)
+		return NULL;
+	SwapPic (dat);
+
+	pic = &menu_cachepics[menu_numcachepics++];
+	strcpy (pic->name, path);
+
+	pic->pic.width = dat->width;
+	pic->pic.height = dat->height;
+
+	if (!texflags)
+		texflags = TEXPREF_ALPHA | TEXPREF_PAD | TEXPREF_NOPICMIP;
+	gl.gltexture = TexMgr_LoadImage (NULL, path, dat->width, dat->height, SRC_INDEXED, dat->data, path,
+									  sizeof(int)*2, texflags);
+	gl.sl = 0;
+	gl.sh = (float)dat->width/(float)TexMgr_PadConditional(dat->width);
+	gl.tl = 0;
+	gl.th = (float)dat->height/(float)TexMgr_PadConditional(dat->height);
+	memcpy (pic->pic.data, &gl, sizeof(glpic_t));
+
+	return &pic->pic;
+}
+
 /*
 ================
 Draw_MakePic -- johnfitz -- generate pics from internal data
@@ -356,7 +446,7 @@ void Draw_LoadPics (void)
 	byte		*data;
 	src_offset_t	offset;
 
-	data = (byte *) W_GetLumpName ("conchars");
+	data = (byte *) W_GetLumpName ("conchars", NULL);
 	if (!data) Sys_Error ("Draw_LoadPics: couldn't load conchars");
 	offset = (src_offset_t)data - (src_offset_t)wad_base;
 	char_texture = TexMgr_LoadImage (NULL, WADFILENAME":conchars", 128, 128, SRC_INDEXED, data,
@@ -382,16 +472,17 @@ void Draw_NewGame (void)
 
 	Scrap_Upload (); //creates 2 empty gltextures
 
+	// empty lmp cache
+	for (pic = menu_cachepics, i = 0; i < menu_numcachepics; pic++, i++)
+		pic->name[0] = 0;
+	menu_numcachepics = 0;
+
 	// reload wad pics
 	W_LoadWadFile (); //johnfitz -- filename is now hard-coded for honesty
 	Draw_LoadPics ();
 	SCR_LoadPics ();
 	Sbar_LoadPics ();
-
-	// empty lmp cache
-	for (pic = menu_cachepics, i = 0; i < menu_numcachepics; pic++, i++)
-		pic->name[0] = 0;
-	menu_numcachepics = 0;
+	PR_ReloadPics (false);
 }
 
 /*
@@ -474,6 +565,37 @@ void Draw_Character (int x, int y, int num)
 	glEnd ();
 }
 
+void Draw_CharacterEx (float x, float y, float w, float h, int num)
+{
+	int		row, col;
+	float	frow, fcol, size;
+
+	if (y <= -h)
+		return;
+
+	num &= 255;
+	if (num == 32)
+		return;
+
+	row = num >> 4;
+	col = num & 15;
+	frow = row * 0.0625f;
+	fcol = col * 0.0625f;
+	size = 0.0625f;
+
+	GL_Bind (char_texture);
+	glBegin (GL_QUADS);
+	glTexCoord2f (fcol, frow);
+	glVertex2f (x, y);
+	glTexCoord2f (fcol + size, frow);
+	glVertex2f (x + w, y);
+	glTexCoord2f (fcol + size, frow + size);
+	glVertex2f (x + w, y + h);
+	glTexCoord2f (fcol, frow + size);
+	glVertex2f (x, y + h);
+	glEnd ();
+}
+
 /*
 ================
 Draw_String -- johnfitz -- modified to call Draw_CharacterQuad
@@ -521,6 +643,38 @@ void Draw_Pic (int x, int y, qpic_t *pic)
 	glTexCoord2f (gl->sl, gl->th);
 	glVertex2f (x, y+pic->height);
 	glEnd ();
+}
+
+void Draw_SubPic (float x, float y, float w, float h, qpic_t *pic,
+	float s1, float t1, float s2, float t2, const float *rgb, float alpha)
+{
+	glpic_t	*gl;
+	float	sl, sh, tl, th;
+
+	if (!pic)
+		return;
+	if (scrap_dirty)
+		Scrap_Upload ();
+
+	gl = (glpic_t *)pic->data;
+	sl = gl->sl + (gl->sh - gl->sl) * s1;
+	sh = gl->sl + (gl->sh - gl->sl) * s2;
+	tl = gl->tl + (gl->th - gl->tl) * t1;
+	th = gl->tl + (gl->th - gl->tl) * t2;
+
+	GL_SetCanvasColor (rgb ? rgb[0] : 1.f, rgb ? rgb[1] : 1.f, rgb ? rgb[2] : 1.f, alpha);
+	GL_Bind (gl->gltexture);
+	glBegin (GL_QUADS);
+	glTexCoord2f (sl, tl);
+	glVertex2f (x, y);
+	glTexCoord2f (sh, tl);
+	glVertex2f (x + w, y);
+	glTexCoord2f (sh, th);
+	glVertex2f (x + w, y + h);
+	glTexCoord2f (sl, th);
+	glVertex2f (x, y + h);
+	glEnd ();
+	GL_SetCanvasColor (1.f, 1.f, 1.f, 1.f);
 }
 
 /*
@@ -644,6 +798,46 @@ void Draw_Fill (int x, int y, int w, int h, int c, float alpha) //johnfitz -- ad
 	glEnable (GL_TEXTURE_2D);
 }
 
+void Draw_FillEx (float x, float y, float w, float h, const float *rgb, float alpha)
+{
+	glDisable (GL_TEXTURE_2D);
+	glEnable (GL_BLEND);
+	glDisable (GL_ALPHA_TEST);
+	glColor4f (rgb ? rgb[0] : 1.f, rgb ? rgb[1] : 1.f, rgb ? rgb[2] : 1.f, alpha);
+
+	glBegin (GL_QUADS);
+	glVertex2f (x, y);
+	glVertex2f (x + w, y);
+	glVertex2f (x + w, y + h);
+	glVertex2f (x, y + h);
+	glEnd ();
+
+	glColor4f (1, 1, 1, 1);
+	glDisable (GL_BLEND);
+	glEnable (GL_ALPHA_TEST);
+	glEnable (GL_TEXTURE_2D);
+}
+
+void Draw_Flush (void)
+{
+}
+
+void GL_SetCanvasColor (float r, float g, float b, float a)
+{
+	if (a < 1.f)
+	{
+		glEnable (GL_BLEND);
+		glDisable (GL_ALPHA_TEST);
+		glTexEnvf (GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
+	}
+	else
+	{
+		glDisable (GL_BLEND);
+		glEnable (GL_ALPHA_TEST);
+	}
+	glColor4f (r, g, b, a);
+}
+
 /*
 ================
 Draw_FadeScreen -- johnfitz -- revised
@@ -700,6 +894,10 @@ void GL_SetCanvas (canvastype newcanvas)
 
 	switch(newcanvas)
 	{
+	case CANVAS_CSQC:
+		glOrtho (0, vid.conwidth, vid.conheight, 0, -99999, 99999);
+		glViewport (glx, gly, glwidth, glheight);
+		break;
 	case CANVAS_DEFAULT:
 		glOrtho (0, glwidth, glheight, 0, -99999, 99999);
 		glViewport (glx, gly, glwidth, glheight);

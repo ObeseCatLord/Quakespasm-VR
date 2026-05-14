@@ -360,64 +360,66 @@ void CL_SendMove(const usercmd_t *cmd) {
   buf.cursize = 0;
   buf.data = data;
 
-  cl.cmd = *cmd;
+  if (cmd) {
+    cl.cmd = *cmd;
 
-  //
-  // send the movement message
-  //
-  MSG_WriteByte(&buf, clc_move);
+    //
+    // send the movement message
+    //
+    MSG_WriteByte(&buf, clc_move);
 
-  MSG_WriteFloat(&buf, cl.mtime[0]); // so server can get ping times
+    MSG_WriteFloat(&buf, cl.mtime[0]); // so server can get ping times
 
-  for (i = 0; i < 3; i++)
-    // johnfitz -- 16-bit angles for PROTOCOL_FITZQUAKE
-    if (cl.protocol == PROTOCOL_NETQUAKE)
-      MSG_WriteAngle(&buf, cl.aimangles[i], cl.protocolflags);
-    else
-      MSG_WriteAngle16(&buf, cl.aimangles[i], cl.protocolflags);
-  // johnfitz
+    for (i = 0; i < 3; i++)
+      // johnfitz -- 16-bit angles for PROTOCOL_FITZQUAKE
+      if (cl.protocol == PROTOCOL_NETQUAKE)
+        MSG_WriteAngle(&buf, cl.aimangles[i], cl.protocolflags);
+      else
+        MSG_WriteAngle16(&buf, cl.aimangles[i], cl.protocolflags);
+    // johnfitz
 
-  MSG_WriteShort(&buf, cmd->forwardmove);
-  MSG_WriteShort(&buf, cmd->sidemove);
-  MSG_WriteShort(&buf, cmd->upmove);
+    MSG_WriteShort(&buf, cmd->forwardmove);
+    MSG_WriteShort(&buf, cmd->sidemove);
+    MSG_WriteShort(&buf, cmd->upmove);
 
-  //
-  // send button bits
-  //
-  bits = 0;
+    //
+    // send button bits
+    //
+    bits = 0;
 
-  if (!cl.in_vr_weaponmenu) {
-    if (in_attack.state & 3)
-      bits |= 1;
-  }
-  in_attack.state &= ~2;
+    if (!cl.in_vr_weaponmenu) {
+      if (in_attack.state & 3)
+        bits |= 1;
+    }
+    in_attack.state &= ~2;
 
-  if (in_jump.state & 3)
-    bits |= 2;
-  in_jump.state &= ~2;
+    if (in_jump.state & 3)
+      bits |= 2;
+    in_jump.state &= ~2;
 
-  MSG_WriteByte(&buf, bits);
+    MSG_WriteByte(&buf, bits);
 
-  MSG_WriteByte(&buf, in_impulse);
-  in_impulse = 0;
+    MSG_WriteByte(&buf, in_impulse);
+    in_impulse = 0;
 
-  // VR Data Sync
-  if (vr_enabled.value && (int)vr_aimmode.value == VR_AIMMODE_CONTROLLER) {
-    MSG_WriteByte(&buf, 1); // VR flag active
+    // VR Data Sync
+    if (vr_enabled.value && (int)vr_aimmode.value == VR_AIMMODE_CONTROLLER) {
+      MSG_WriteByte(&buf, 1); // VR flag active
 
-    // Send raw hand position; the server mirrors the same QuakeC projectile
-    // spawn compensation used for rockets.
-    MSG_WriteFloat(&buf, cl.handpos[1][0]);
-    MSG_WriteFloat(&buf, cl.handpos[1][1]);
-    MSG_WriteFloat(&buf, cl.handpos[1][2]);
-    MSG_WriteFloat(&buf, cl.handrot[1][0]);
-    MSG_WriteFloat(&buf, cl.handrot[1][1]);
-    MSG_WriteFloat(&buf, cl.handrot[1][2]);
-    MSG_WriteFloat(&buf, vr_room_scale_move[0]);
-    MSG_WriteFloat(&buf, vr_room_scale_move[1]);
-    MSG_WriteFloat(&buf, vr_room_scale_move[2]);
-  } else {
-    MSG_WriteByte(&buf, 0); // VR flag inactive
+      // Send raw hand position. The server handles projectile spawn
+      // compensation uniformly via vr_game_projectile_z_extra.
+      MSG_WriteFloat(&buf, cl.handpos[1][0]);
+      MSG_WriteFloat(&buf, cl.handpos[1][1]);
+      MSG_WriteFloat(&buf, cl.handpos[1][2]);
+      MSG_WriteFloat(&buf, cl.handrot[1][0]);
+      MSG_WriteFloat(&buf, cl.handrot[1][1]);
+      MSG_WriteFloat(&buf, cl.handrot[1][2]);
+      MSG_WriteFloat(&buf, vr_room_scale_move[0]);
+      MSG_WriteFloat(&buf, vr_room_scale_move[1]);
+      MSG_WriteFloat(&buf, vr_room_scale_move[2]);
+    } else {
+      MSG_WriteByte(&buf, 0); // VR flag inactive
+    }
   }
 
   //

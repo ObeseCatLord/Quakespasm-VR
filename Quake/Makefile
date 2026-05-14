@@ -258,9 +258,9 @@ OBJS = strlcat.o \
 	wad.o \
 	cmd.o \
 	common.o \
+	debug_log.o \
 	miniz.o \
 	crc.o \
-	debug_log.o \
 	cvar.o \
 	cfgfile.o \
 	host.o \

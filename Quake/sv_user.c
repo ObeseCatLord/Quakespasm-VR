@@ -270,7 +270,7 @@ void SV_WaterMove(void) {
 }
 
 void SV_WaterJump(void) {
-  if (sv.time > sv_player->v.teleport_time || !sv_player->v.waterlevel) {
+  if (qcvm->time > sv_player->v.teleport_time || !sv_player->v.waterlevel) {
     sv_player->v.flags = (int)sv_player->v.flags & ~FL_WATERJUMP;
     sv_player->v.teleport_time = 0;
   }
@@ -316,7 +316,7 @@ void SV_AirMove(void) {
   smove = cmd.sidemove;
 
   // hack to not let you back into teleporter
-  if (sv.time < sv_player->v.teleport_time && fmove < 0)
+  if (qcvm->time < sv_player->v.teleport_time && fmove < 0)
     fmove = 0;
 
   for (i = 0; i < 3; i++)
@@ -419,7 +419,7 @@ void SV_ReadClientMove(usercmd_t *move) {
 
   // read ping time
   host_client->ping_times[host_client->num_pings % NUM_PING_TIMES] =
-      sv.time - MSG_ReadFloat();
+      qcvm->time - MSG_ReadFloat();
   host_client->num_pings++;
 
   // read current angles
@@ -520,6 +520,16 @@ static qboolean SV_ParseClientMessage(void) {
 
     case clc_stringcmd:
       s = MSG_ReadString();
+      if (q_strncasecmp(s, "spawn", 5) && q_strncasecmp(s, "begin", 5) &&
+          q_strncasecmp(s, "prespawn", 8) && qcvm->extfuncs.SV_ParseClientCommand) {
+        client_t *ohc = host_client;
+        G_INT(OFS_PARM0) = PR_SetEngineString(s);
+        pr_global_struct->time = qcvm->time;
+        pr_global_struct->self = EDICT_TO_PROG(host_client->edict);
+        PR_ExecuteProgram(qcvm->extfuncs.SV_ParseClientCommand);
+        host_client = ohc;
+        break;
+      }
       allowed = 0;
       if (q_strncasecmp(s, "status", 6) == 0)
         allowed = 1;

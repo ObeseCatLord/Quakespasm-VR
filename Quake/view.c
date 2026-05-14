@@ -545,6 +545,10 @@ void V_UpdateBlend (void)
 		V_CalcBlend ();
 }
 
+void V_ResetEffects (void)
+{
+}
+
 /*
 ============
 V_PolyBlend -- johnfitz -- moved here from gl_rmain.c, and rewritten to use glOrtho
@@ -1044,4 +1048,3 @@ void V_Init (void)
 
 	Cvar_RegisterVariable (&r_viewmodel_quake); //MarkV
 }
-
