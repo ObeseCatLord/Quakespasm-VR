@@ -715,6 +715,10 @@ void _Host_Frame (float time)
 
 	NET_Poll();
 
+// sample client input every rendered frame; CL_SendCmd drains the accumulated
+// move at the paced network tick.
+	CL_AccumulateCmd();
+
 // if running the server locally, make intentions now
 	if (sv.active)
 		CL_SendCmd ();

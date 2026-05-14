@@ -127,6 +127,9 @@ CCREP_RULE_INFO
 #define CCREP_PLAYER_INFO	0x84
 #define CCREP_RULE_INFO		0x85
 
+#define MOD_PROQUAKE		1
+#define PQF_IGNOREPORT		0x80	/* server uses the accept socket for game traffic */
+
 typedef struct qsocket_s
 {
 	struct qsocket_s	*next;
@@ -136,6 +139,7 @@ typedef struct qsocket_s
 	double		lastDatagramTime;
 
 	qboolean	disconnected;
+	qboolean	isvirtual;	// shared datagram socket; close only the qsocket
 	qboolean	canSend;
 	qboolean	sendNext;
 

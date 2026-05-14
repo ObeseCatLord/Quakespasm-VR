@@ -53,6 +53,31 @@ static struct
 static int myDriverLevel;
 static cvar_t net_lagdebug = {"net_lagdebug", "0", CVAR_NONE};
 static cvar_t net_lagdebug_threshold = {"net_lagdebug_threshold", "0.25", CVAR_NONE};
+static cvar_t net_singlesocket = {"net_singlesocket", "1", CVAR_NONE};
+static cvar_t cl_netport = {"cl_netport", "0", CVAR_ARCHIVE};
+static cvar_t cl_portpingprobe_enable = {"cl_portpingprobe_enable", "1", CVAR_ARCHIVE};
+static cvar_t cl_portpingprobe_probes = {"cl_portpingprobe_probes", "6", CVAR_ARCHIVE};
+static cvar_t cl_portpingprobe_delay = {"cl_portpingprobe_delay", "0.20", CVAR_ARCHIVE};
+
+#define MAX_PENDING_DATAGRAMS	64
+#define MAX_PORTPING_PROBES	16
+
+typedef struct
+{
+	qboolean	valid;
+	int		landriver;
+	sys_socket_t	socket;
+	struct qsockaddr addr;
+	unsigned int	wireLength;
+	struct
+	{
+		unsigned int	length;
+		unsigned int	sequence;
+		byte	data[MAX_DATAGRAM];
+	} packet;
+} pending_datagram_t;
+
+static pending_datagram_t pendingDatagrams[MAX_PENDING_DATAGRAMS];
 
 extern qboolean m_return_onerror;
 extern char m_return_reason[32];
@@ -67,6 +92,98 @@ static char *StrAddr (struct qsockaddr *addr)
 	for (n = 0; n < 16; n++)
 		sprintf (buf + n * 2, "%02x", *p++);
 	return buf;
+}
+
+static void Datagram_QueuePacket (qsocket_t *sock, struct qsockaddr *addr, unsigned int wireLength)
+{
+	int i, slot;
+
+	slot = -1;
+	for (i = 0; i < MAX_PENDING_DATAGRAMS; i++)
+	{
+		if (!pendingDatagrams[i].valid)
+		{
+			slot = i;
+			break;
+		}
+	}
+
+	if (slot < 0)
+	{
+		slot = 0;
+		if (net_lagdebug.value)
+			Con_Printf("net_lagdebug: pending datagram queue full, dropping oldest packet\n");
+	}
+
+	pendingDatagrams[slot].valid = true;
+	pendingDatagrams[slot].landriver = sock->landriver;
+	pendingDatagrams[slot].socket = sock->socket;
+	pendingDatagrams[slot].addr = *addr;
+	pendingDatagrams[slot].wireLength = wireLength;
+	Q_memcpy(&pendingDatagrams[slot].packet, &packetBuffer, sizeof(packetBuffer));
+}
+
+static qboolean Datagram_QueueIfForAnotherSocket (qsocket_t *sock, struct qsockaddr *addr, unsigned int wireLength)
+{
+	qsocket_t *s;
+	net_landriver_t *ld;
+	int cmp;
+
+	if (!sock->isvirtual)
+		return false;
+
+	ld = &net_landrivers[sock->landriver];
+	cmp = ld->AddrCompare(addr, &sock->addr);
+	if (cmp == 0)
+		return false;
+
+	for (s = net_activeSockets; s; s = s->next)
+	{
+		if (s == sock || s->disconnected || !s->isvirtual)
+			continue;
+		if (s->driver != sock->driver || s->landriver != sock->landriver || s->socket != sock->socket)
+			continue;
+		if (ld->AddrCompare(addr, &s->addr) == 0)
+		{
+			Datagram_QueuePacket(sock, addr, wireLength);
+			return true;
+		}
+	}
+
+	// Same IP/different port is handled as a NAT remap for the current qsocket.
+	if (cmp > 0)
+		return false;
+
+	return false;
+}
+
+static qboolean Datagram_DequeuePacket (qsocket_t *sock, unsigned int *wireLength, struct qsockaddr *addr)
+{
+	int i;
+	net_landriver_t *ld;
+
+	if (!sock->isvirtual)
+		return false;
+
+	ld = &net_landrivers[sock->landriver];
+	for (i = 0; i < MAX_PENDING_DATAGRAMS; i++)
+	{
+		if (!pendingDatagrams[i].valid)
+			continue;
+		if (pendingDatagrams[i].landriver != sock->landriver ||
+			pendingDatagrams[i].socket != sock->socket)
+			continue;
+		if (ld->AddrCompare(&pendingDatagrams[i].addr, &sock->addr) != 0)
+			continue;
+
+		*wireLength = pendingDatagrams[i].wireLength;
+		*addr = pendingDatagrams[i].addr;
+		Q_memcpy(&packetBuffer, &pendingDatagrams[i].packet, sizeof(packetBuffer));
+		pendingDatagrams[i].valid = false;
+		return true;
+	}
+
+	return false;
 }
 
 
@@ -290,40 +407,18 @@ int Datagram_SendUnreliableMessage (qsocket_t *sock, sizebuf_t *data)
 }
 
 
-int	Datagram_GetMessage (qsocket_t *sock)
+static int Datagram_ProcessPacket (qsocket_t *sock, struct qsockaddr *readaddr, unsigned int wireLength)
 {
 	unsigned int	length;
 	unsigned int	flags;
-	int				ret = 0;
-	struct qsockaddr readaddr;
 	unsigned int	sequence;
 	unsigned int	count;
 	qboolean		pendingRemap;
 
-	if (!sock->canSend)
-		if ((net_time - sock->lastSendTime) > 1.0)
-			ReSendMessage (sock);
-
-	while (1)
 	{
-		length = (unsigned int) sfunc.Read(sock->socket, (byte *)&packetBuffer,
-							NET_DATAGRAMSIZE, &readaddr);
-
-	//	if ((rand() & 255) > 220)
-	//		continue;
-
-		if (length == 0)
-			break;
-
-		if (length == (unsigned int)-1)
-		{
-			Con_Printf("Read error\n");
-			return -1;
-		}
-
 		pendingRemap = false;
 		{
-			int cmp = sfunc.AddrCompare(&readaddr, &sock->addr);
+			int cmp = sfunc.AddrCompare(readaddr, &sock->addr);
 			if (cmp < 0)
 			{
 				// Different IP entirely - genuine forged/misdirected packet.
@@ -331,9 +426,9 @@ int	Datagram_GetMessage (qsocket_t *sock)
 				{
 					Con_Printf("net_lagdebug: ignoring packet (different address)\n");
 					Con_Printf("  expected: %s\n", StrAddr (&sock->addr));
-					Con_Printf("  received: %s\n", StrAddr (&readaddr));
+					Con_Printf("  received: %s\n", StrAddr (readaddr));
 				}
-				continue;
+				return 0;
 			}
 			if (cmp > 0)
 			{
@@ -348,7 +443,7 @@ int	Datagram_GetMessage (qsocket_t *sock)
 				// the packet without redirecting sock->addr backward.
 				if (sock->prevAddrTime != 0.0 &&
 					(net_time - sock->prevAddrTime) < 3.0 &&
-					sfunc.AddrCompare(&readaddr, &sock->prevAddr) == 0)
+					sfunc.AddrCompare(readaddr, &sock->prevAddr) == 0)
 				{
 					if (net_lagdebug.value)
 					{
@@ -367,10 +462,10 @@ int	Datagram_GetMessage (qsocket_t *sock)
 			}
 		}
 
-		if (length < NET_HEADERSIZE)
+		if (wireLength < NET_HEADERSIZE)
 		{
 			shortPacketCount++;
-			continue;
+			return 0;
 		}
 
 		length = BigLong(packetBuffer.length);
@@ -378,7 +473,7 @@ int	Datagram_GetMessage (qsocket_t *sock)
 		length &= NETFLAG_LENGTH_MASK;
 
 		if (flags & NETFLAG_CTL)
-			continue;
+			return 0;
 
 		sequence = BigLong(packetBuffer.sequence);
 		packetsReceived++;
@@ -395,8 +490,7 @@ int	Datagram_GetMessage (qsocket_t *sock)
 			if (sequence < sock->unreliableReceiveSequence)
 			{
 				Con_DPrintf("Got a stale datagram\n");
-				ret = 0;
-				break;
+				return 0;
 			}
 			// Valid unreliable - safe to commit the NAT remap now.
 			if (pendingRemap)
@@ -405,11 +499,11 @@ int	Datagram_GetMessage (qsocket_t *sock)
 				{
 					Con_Printf("net_lagdebug: NAT remap on valid unreliable (same IP, different port)\n");
 					Con_Printf("  was:  %s\n", StrAddr (&sock->addr));
-					Con_Printf("  now:  %s\n", StrAddr (&readaddr));
+					Con_Printf("  now:  %s\n", StrAddr (readaddr));
 				}
 				sock->prevAddr = sock->addr;
 				sock->prevAddrTime = net_time;
-				sock->addr = readaddr;
+				sock->addr = *readaddr;
 			}
 			if (sequence != sock->unreliableReceiveSequence)
 			{
@@ -424,8 +518,7 @@ int	Datagram_GetMessage (qsocket_t *sock)
 			SZ_Clear (&net_message);
 			SZ_Write (&net_message, packetBuffer.data, length);
 
-			ret = 2;
-			break;
+			return 2;
 		}
 
 		if (flags & NETFLAG_ACK)
@@ -433,7 +526,7 @@ int	Datagram_GetMessage (qsocket_t *sock)
 			if (sequence != (sock->sendSequence - 1))
 			{
 				Con_DPrintf("Stale ACK received\n");
-				continue;
+				return 0;
 			}
 			if (sequence == sock->ackSequence)
 			{
@@ -444,7 +537,7 @@ int	Datagram_GetMessage (qsocket_t *sock)
 			else
 			{
 				Con_DPrintf("Duplicate ACK received\n");
-				continue;
+				return 0;
 			}
 			// Valid in-order ACK - safe to commit the NAT remap now.
 			if (pendingRemap)
@@ -453,11 +546,11 @@ int	Datagram_GetMessage (qsocket_t *sock)
 				{
 					Con_Printf("net_lagdebug: NAT remap on valid ACK (same IP, different port)\n");
 					Con_Printf("  was:  %s\n", StrAddr (&sock->addr));
-					Con_Printf("  now:  %s\n", StrAddr (&readaddr));
+					Con_Printf("  now:  %s\n", StrAddr (readaddr));
 				}
 				sock->prevAddr = sock->addr;
 				sock->prevAddrTime = net_time;
-				sock->addr = readaddr;
+				sock->addr = *readaddr;
 			}
 			sock->sendMessageLength -= DATAGRAM_MTU;
 			if (sock->sendMessageLength > 0)
@@ -470,7 +563,7 @@ int	Datagram_GetMessage (qsocket_t *sock)
 				sock->sendMessageLength = 0;
 				sock->canSend = true;
 			}
-			continue;
+			return 0;
 		}
 
 		if (flags & NETFLAG_DATA)
@@ -479,7 +572,7 @@ int	Datagram_GetMessage (qsocket_t *sock)
 			// remapped port still gets ACK'd at its real source.
 			packetBuffer.length = BigLong(NET_HEADERSIZE | NETFLAG_ACK);
 			packetBuffer.sequence = BigLong(sequence);
-			sfunc.Write (sock->socket, (byte *)&packetBuffer, NET_HEADERSIZE, &readaddr);
+			sfunc.Write (sock->socket, (byte *)&packetBuffer, NET_HEADERSIZE, readaddr);
 
 			// Commit the NAT remap here - before the duplicate-sequence check
 			// rather than after it. The ACK we just sent proves the new port
@@ -496,17 +589,17 @@ int	Datagram_GetMessage (qsocket_t *sock)
 				{
 					Con_Printf("net_lagdebug: NAT remap on DATA (same IP, different port)\n");
 					Con_Printf("  was:  %s\n", StrAddr (&sock->addr));
-					Con_Printf("  now:  %s\n", StrAddr (&readaddr));
+					Con_Printf("  now:  %s\n", StrAddr (readaddr));
 				}
 				sock->prevAddr = sock->addr;
 				sock->prevAddrTime = net_time;
-				sock->addr = readaddr;
+				sock->addr = *readaddr;
 			}
 
 			if (sequence != sock->receiveSequence)
 			{
 				receivedDuplicateCount++;
-				continue;
+				return 0;
 			}
 			sock->receiveSequence++;
 
@@ -514,21 +607,80 @@ int	Datagram_GetMessage (qsocket_t *sock)
 
 			if (flags & NETFLAG_EOM)
 			{
+				if (sock->receiveMessageLength + length > (unsigned int)net_message.maxsize)
+				{
+					Con_Printf("Over-sized reliable\n");
+					sock->receiveMessageLength = 0;
+					return -1;
+				}
 				SZ_Clear(&net_message);
 				SZ_Write(&net_message, sock->receiveMessage, sock->receiveMessageLength);
 				SZ_Write(&net_message, packetBuffer.data, length);
 				sock->receiveMessageLength = 0;
 
-				ret = 1;
-				break;
+				return 1;
 			}
 
+			if (sock->receiveMessageLength + length > sizeof(sock->receiveMessage))
+			{
+				Con_Printf("Over-sized reliable\n");
+				sock->receiveMessageLength = 0;
+				return -1;
+			}
 			Q_memcpy(sock->receiveMessage + sock->receiveMessageLength, packetBuffer.data, length);
 			sock->receiveMessageLength += length;
-			continue;
+			return 0;
 		}
 	}
 
+	return 0;
+}
+
+
+int	Datagram_GetMessage (qsocket_t *sock)
+{
+	int				ret = 0;
+	int				readLength;
+	struct qsockaddr readaddr;
+	unsigned int	queuedLength;
+
+	if (!sock->canSend)
+		if ((net_time - sock->lastSendTime) > 1.0)
+			ReSendMessage (sock);
+
+	while (Datagram_DequeuePacket(sock, &queuedLength, &readaddr))
+	{
+		ret = Datagram_ProcessPacket(sock, &readaddr, queuedLength);
+		if (ret)
+			goto done;
+	}
+
+	while (1)
+	{
+		readLength = sfunc.Read(sock->socket, (byte *)&packetBuffer,
+							NET_DATAGRAMSIZE, &readaddr);
+
+	//	if ((rand() & 255) > 220)
+	//		continue;
+
+		if (readLength == 0)
+			break;
+
+		if (readLength == -1)
+		{
+			Con_Printf("Read error\n");
+			return -1;
+		}
+
+		if (Datagram_QueueIfForAnotherSocket(sock, &readaddr, (unsigned int)readLength))
+			continue;
+
+		ret = Datagram_ProcessPacket(sock, &readaddr, (unsigned int)readLength);
+		if (ret)
+			break;
+	}
+
+done:
 	if (sock->sendNext)
 		SendMessageNext (sock);
 
@@ -896,6 +1048,11 @@ int Datagram_Init (void)
 	Cmd_AddCommand ("net_stats", NET_Stats_f);
 	Cvar_RegisterVariable (&net_lagdebug);
 	Cvar_RegisterVariable (&net_lagdebug_threshold);
+	Cvar_RegisterVariable (&net_singlesocket);
+	Cvar_RegisterVariable (&cl_netport);
+	Cvar_RegisterVariable (&cl_portpingprobe_enable);
+	Cvar_RegisterVariable (&cl_portpingprobe_probes);
+	Cvar_RegisterVariable (&cl_portpingprobe_delay);
 
 	if (safemode || COM_CheckParm("-nolan"))
 		return -1;
@@ -944,7 +1101,8 @@ void Datagram_Shutdown (void)
 
 void Datagram_Close (qsocket_t *sock)
 {
-	sfunc.Close_Socket(sock->socket);
+	if (!sock->isvirtual)
+		sfunc.Close_Socket(sock->socket);
 }
 
 
@@ -972,6 +1130,7 @@ static qsocket_t *_Datagram_CheckNewConnections (void)
 	int			command;
 	int			control;
 	int			ret;
+	qboolean		singleSocket;
 
 	acceptsock = dfunc.CheckNewConnections();
 	if (acceptsock == INVALID_SOCKET)
@@ -1151,6 +1310,12 @@ static qsocket_t *_Datagram_CheckNewConnections (void)
 				MSG_WriteByte(&net_message, CCREP_ACCEPT);
 				dfunc.GetSocketAddr(s->socket, &newaddr);
 				MSG_WriteLong(&net_message, dfunc.GetSocketPort(&newaddr));
+				if (s->isvirtual)
+				{
+					MSG_WriteByte(&net_message, MOD_PROQUAKE);
+					MSG_WriteByte(&net_message, 30);
+					MSG_WriteByte(&net_message, PQF_IGNOREPORT);
+				}
 				*((int *)net_message.data) = BigLong(NETFLAG_CTL | (net_message.cursize & NETFLAG_LENGTH_MASK));
 				dfunc.Write (acceptsock, net_message.data, net_message.cursize, &clientaddr);
 				SZ_Clear(&net_message);
@@ -1178,24 +1343,33 @@ static qsocket_t *_Datagram_CheckNewConnections (void)
 		return NULL;
 	}
 
-	// allocate a network socket
-	newsock = dfunc.Open_Socket(0);
-	if (newsock == INVALID_SOCKET)
+	singleSocket = (net_singlesocket.value != 0);
+	if (singleSocket)
 	{
-		NET_FreeQSocket(sock);
-		return NULL;
+		newsock = acceptsock;
 	}
-
-	// connect to the client
-	if (dfunc.Connect (newsock, &clientaddr) == -1)
+	else
 	{
-		dfunc.Close_Socket(newsock);
-		NET_FreeQSocket(sock);
-		return NULL;
+		// allocate a network socket
+		newsock = dfunc.Open_Socket(0);
+		if (newsock == INVALID_SOCKET)
+		{
+			NET_FreeQSocket(sock);
+			return NULL;
+		}
+
+		// connect to the client
+		if (dfunc.Connect (newsock, &clientaddr) == -1)
+		{
+			dfunc.Close_Socket(newsock);
+			NET_FreeQSocket(sock);
+			return NULL;
+		}
 	}
 
 	// everything is allocated, just fill in the details
 	sock->socket = newsock;
+	sock->isvirtual = singleSocket;
 	sock->landriver = net_landriverlevel;
 	sock->addr = clientaddr;
 	Q_strcpy(sock->address, dfunc.AddrToString(&clientaddr));
@@ -1207,6 +1381,12 @@ static qsocket_t *_Datagram_CheckNewConnections (void)
 	MSG_WriteByte(&net_message, CCREP_ACCEPT);
 	dfunc.GetSocketAddr(newsock, &newaddr);
 	MSG_WriteLong(&net_message, dfunc.GetSocketPort(&newaddr));
+	if (singleSocket)
+	{
+		MSG_WriteByte(&net_message, MOD_PROQUAKE);
+		MSG_WriteByte(&net_message, 30);
+		MSG_WriteByte(&net_message, PQF_IGNOREPORT);
+	}
 //	MSG_WriteString(&net_message, dfunc.AddrToString(&newaddr));
 	*((int *)net_message.data) = BigLong(NETFLAG_CTL | (net_message.cursize & NETFLAG_LENGTH_MASK));
 	dfunc.Write (acceptsock, net_message.data, net_message.cursize, &clientaddr);
@@ -1345,6 +1525,147 @@ void Datagram_SearchForHosts (qboolean xmit)
 }
 
 
+static int Datagram_ClientPort (void)
+{
+	int i, port;
+
+	i = COM_CheckParm("-clientport");
+	if (i && i < com_argc - 1)
+	{
+		port = Q_atoi(com_argv[i + 1]);
+		if (port > 0 && port < 65536)
+			return port;
+	}
+
+	port = (int)cl_netport.value;
+	if (port > 0 && port < 65536)
+		return port;
+
+	return 0;
+}
+
+
+static sys_socket_t Datagram_OpenClientSocket (void)
+{
+	int port;
+	sys_socket_t sock;
+
+	port = Datagram_ClientPort();
+	if (port > 0)
+	{
+		sock = dfunc.Open_Socket(port);
+		if (sock != INVALID_SOCKET)
+			return sock;
+		Con_Printf("Unable to bind client UDP port %d, using an ephemeral port\n", port);
+	}
+
+	return dfunc.Open_Socket(0);
+}
+
+
+static void Datagram_SendServerInfoProbe (sys_socket_t sock, struct qsockaddr *sendaddr)
+{
+	SZ_Clear(&net_message);
+	MSG_WriteLong(&net_message, 0);
+	MSG_WriteByte(&net_message, CCREQ_SERVER_INFO);
+	MSG_WriteString(&net_message, "QUAKE");
+	MSG_WriteByte(&net_message, NET_PROTOCOL_VERSION);
+	*((int *)net_message.data) = BigLong(NETFLAG_CTL | (net_message.cursize & NETFLAG_LENGTH_MASK));
+	dfunc.Write(sock, net_message.data, net_message.cursize, sendaddr);
+	SZ_Clear(&net_message);
+}
+
+
+static qboolean Datagram_IsServerInfoReply (int len, struct qsockaddr *readaddr, struct qsockaddr *sendaddr)
+{
+	int control;
+
+	if (len < (int)sizeof(int))
+		return false;
+	if (dfunc.AddrCompare(readaddr, sendaddr) != 0)
+		return false;
+
+	net_message.cursize = len;
+	MSG_BeginReading();
+	control = BigLong(*((int *)net_message.data));
+	MSG_ReadLong();
+	if (control == -1)
+		return false;
+	if ((control & (~NETFLAG_LENGTH_MASK)) != (int)NETFLAG_CTL)
+		return false;
+	if ((control & NETFLAG_LENGTH_MASK) != len)
+		return false;
+	if (MSG_ReadByte() != CCREP_SERVER_INFO)
+		return false;
+
+	return true;
+}
+
+
+static sys_socket_t Datagram_OpenProbedClientSocket (struct qsockaddr *sendaddr)
+{
+	sys_socket_t sockets[MAX_PORTPING_PROBES];
+	struct qsockaddr readaddr;
+	int probes, i, chosen, len;
+	double deadline;
+
+	if (Datagram_ClientPort() > 0 || cl_portpingprobe_enable.value == 0)
+		return Datagram_OpenClientSocket();
+
+	probes = (int)cl_portpingprobe_probes.value;
+	probes = CLAMP(1, probes, MAX_PORTPING_PROBES);
+
+	for (i = 0; i < probes; i++)
+	{
+		sockets[i] = dfunc.Open_Socket(0);
+		if (sockets[i] != INVALID_SOCKET)
+			Datagram_SendServerInfoProbe(sockets[i], sendaddr);
+	}
+
+	chosen = -1;
+	deadline = Sys_DoubleTime() + CLAMP(0.02, cl_portpingprobe_delay.value, 1.0);
+	while (Sys_DoubleTime() < deadline && chosen < 0)
+	{
+		for (i = 0; i < probes; i++)
+		{
+			if (sockets[i] == INVALID_SOCKET)
+				continue;
+			len = dfunc.Read(sockets[i], net_message.data, net_message.maxsize, &readaddr);
+			if (len > 0 && Datagram_IsServerInfoReply(len, &readaddr, sendaddr))
+			{
+				chosen = i;
+				break;
+			}
+		}
+		if (chosen < 0)
+			Sys_Sleep(1);
+	}
+
+	if (chosen < 0)
+	{
+		for (i = 0; i < probes; i++)
+		{
+			if (sockets[i] != INVALID_SOCKET)
+			{
+				chosen = i;
+				break;
+			}
+		}
+	}
+
+	for (i = 0; i < probes; i++)
+	{
+		if (sockets[i] != INVALID_SOCKET && i != chosen)
+			dfunc.Close_Socket(sockets[i]);
+	}
+
+	if (chosen < 0)
+		return INVALID_SOCKET;
+
+	return sockets[chosen];
+}
+
+
 static qsocket_t *_Datagram_Connect (const char *host)
 {
 	struct qsockaddr sendaddr;
@@ -1364,7 +1685,7 @@ static qsocket_t *_Datagram_Connect (const char *host)
 		return NULL;
 	}
 
-	newsock = dfunc.Open_Socket (0);
+	newsock = Datagram_OpenProbedClientSocket (&sendaddr);
 	if (newsock == INVALID_SOCKET)
 		return NULL;
 
@@ -1476,8 +1797,20 @@ static qsocket_t *_Datagram_Connect (const char *host)
 
 	if (ret == CCREP_ACCEPT)
 	{
+		int acceptPort;
+		qboolean ignorePort = false;
+
 		Q_memcpy(&sock->addr, &sendaddr, sizeof(struct qsockaddr));
-		dfunc.SetSocketPort (&sock->addr, MSG_ReadLong());
+		acceptPort = MSG_ReadLong();
+		if (msg_readcount + 3 <= net_message.cursize)
+		{
+			int mod = MSG_ReadByte();
+			MSG_ReadByte();	// ProQuake version, ignored.
+			if (mod == MOD_PROQUAKE && (MSG_ReadByte() & PQF_IGNOREPORT))
+				ignorePort = true;
+		}
+		if (!ignorePort)
+			dfunc.SetSocketPort (&sock->addr, acceptPort);
 	}
 	else
 	{

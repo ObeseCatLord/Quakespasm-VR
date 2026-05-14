@@ -614,6 +614,9 @@ static uint16_t net_edicts[MAX_NET_EDICTS];
 static byte     net_edict_dists[MAX_NET_EDICTS];
 static int      net_edict_bins[256];
 static uint16_t net_edicts_sorted[MAX_NET_EDICTS];
+static int      net_edict_write_start;
+static int      net_edict_write_next;
+static int      net_edict_write_total;
 
 /*
 =============
@@ -743,8 +746,11 @@ skip_pvs_cull:
 			net_edicts_sorted[net_edict_bins[net_edict_dists[e]]++] = net_edicts[e];
 	}
 
+	net_edict_write_total = numents;
+	net_edict_write_next = numents;
+
 // send entities, closest/most-relevant first
-	for (j=0 ; j<numents ; j++)
+	for (j=net_edict_write_start ; j<numents ; j++)
 	{
 		e = net_edicts_sorted[j];
 		ent = EDICT_NUM (e);
@@ -755,14 +761,8 @@ skip_pvs_cull:
 		// FIXME: Use tighter limit according to protocol flags and send bits.
 		if (msg->cursize + 40 > msg->maxsize)
 		{
-			//johnfitz -- less spammy overflow message
-			if (!dev_overflows.packetsize || dev_overflows.packetsize + CONSOLE_RESPAM_TIME < realtime )
-			{
-				Con_Printf ("Packet overflow!\n");
-				dev_overflows.packetsize = realtime;
-			}
+			net_edict_write_next = j;
 			goto stats;
-			//johnfitz
 		}
 
 // send an update
@@ -1119,34 +1119,90 @@ qboolean SV_SendClientDatagram (client_t *client)
 {
 	byte		buf[MAX_DATAGRAM];
 	sizebuf_t	msg;
+	int		maxsize;
+	int		entity_start;
+	int		prev_entity_start;
+	int		datagram_offset;
+	int		packet_count;
+	qboolean	first_packet;
 
 	msg.data = buf;
-	msg.maxsize = sizeof(buf);
-	msg.cursize = 0;
+	maxsize = sizeof(buf);
 
 	//johnfitz -- if client is nonlocal, use smaller max size so packets aren't fragmented
 	if (Q_strcmp(NET_QSocketGetAddressString(client->netconnection), "LOCAL") != 0)
-		msg.maxsize = (int)sv_maxpacketsize.value;
+		maxsize = (int)sv_maxpacketsize.value;
 	//johnfitz
 
-	MSG_WriteByte (&msg, svc_time);
-	MSG_WriteFloat (&msg, sv.time);
+	maxsize = CLAMP(512, maxsize, (int)sizeof(buf));
+
+	entity_start = 0;
+	datagram_offset = 0;
+	packet_count = 0;
+	first_packet = true;
+
+	do
+	{
+		msg.maxsize = maxsize;
+		msg.cursize = 0;
+
+		MSG_WriteByte (&msg, svc_time);
+		MSG_WriteFloat (&msg, sv.time);
 
 // add the client specific data to the datagram
-	SV_WriteClientdataToMessage (client->edict, &msg);
+		if (first_packet)
+			SV_WriteClientdataToMessage (client->edict, &msg);
 
-	SV_WriteEntitiesToClient (client->edict, &msg);
+		prev_entity_start = entity_start;
+		net_edict_write_start = entity_start;
+		SV_WriteEntitiesToClient (client->edict, &msg);
+		entity_start = net_edict_write_next;
 
 // copy the server datagram if there is space
-	if (msg.cursize + sv.datagram.cursize < msg.maxsize)
-		SZ_Write (&msg, sv.datagram.data, sv.datagram.cursize);
+		if (entity_start >= net_edict_write_total && datagram_offset < sv.datagram.cursize)
+		{
+			int remaining = sv.datagram.cursize - datagram_offset;
+			int space = msg.maxsize - msg.cursize;
+
+			if (remaining <= space)
+			{
+				SZ_Write (&msg, sv.datagram.data + datagram_offset, remaining);
+				datagram_offset = sv.datagram.cursize;
+			}
+			else if (remaining > msg.maxsize - 5)
+			{
+				if (!dev_overflows.packetsize || dev_overflows.packetsize + CONSOLE_RESPAM_TIME < realtime )
+				{
+					Con_Printf ("Server datagram too large to split safely (%d bytes, max packet %d)\n",
+						remaining, msg.maxsize);
+					dev_overflows.packetsize = realtime;
+				}
+				datagram_offset = sv.datagram.cursize;
+			}
+		}
 
 // send the datagram
-	if (NET_SendUnreliableMessage (client->netconnection, &msg) == -1)
-	{
-		SV_DropClient (true);// if the message couldn't send, kick off
-		return false;
+		if (NET_SendUnreliableMessage (client->netconnection, &msg) == -1)
+		{
+			SV_DropClient (true);// if the message couldn't send, kick off
+			return false;
+		}
+
+		packet_count++;
+		first_packet = false;
+
+		if (entity_start == prev_entity_start && entity_start < net_edict_write_total)
+		{
+			Con_Printf ("SV_SendClientDatagram: entity update could not fit in %d byte packet\n", msg.maxsize);
+			break;
+		}
+		if (packet_count >= 128)
+		{
+			Con_Printf ("SV_SendClientDatagram: too many split packets\n");
+			break;
+		}
 	}
+	while (entity_start < net_edict_write_total || datagram_offset < sv.datagram.cursize);
 
 	return true;
 }
@@ -1724,4 +1780,3 @@ void SV_SpawnServer (const char *server)
 
 	Con_DPrintf ("Server spawned.\n");
 }
-

@@ -313,6 +313,8 @@ extern kbutton_t in_speed;
 
 void CL_InitInput(void);
 void CL_SendCmd(void);
+void CL_AccumulateCmd(void);
+void CL_ClearPendingCmd(void);
 void CL_SendMove(const usercmd_t *cmd);
 int CL_ReadFromServer(void);
 void CL_BaseMove(usercmd_t *cmd);
