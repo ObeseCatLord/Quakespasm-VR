@@ -69,6 +69,10 @@ int	NET_GetMessage (struct qsocket_s *sock);
 // returns 2 if an unreliable message was received
 // returns -1 if the connection died
 
+void	NET_GetServerMessages (void (*callback)(struct qsocket_s *sock));
+qboolean NET_IsVirtualConnection (struct qsocket_s *sock);
+qboolean NET_IsTimedOut (struct qsocket_s *sock);
+
 int	NET_SendMessage (struct qsocket_s *sock, sizebuf_t *data);
 int	NET_SendUnreliableMessage (struct qsocket_s *sock, sizebuf_t *data);
 // returns 0 if the message connot be delivered reliably, but the connection
@@ -112,4 +116,3 @@ extern	char		my_ipx_address[NET_NAMELEN];
 extern	char		my_tcpip_address[NET_NAMELEN];
 
 #endif	/* _QUAKE_NET_H */
-

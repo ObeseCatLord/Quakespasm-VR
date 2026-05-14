@@ -213,6 +213,7 @@ typedef struct
 	void		(*SearchForHosts) (qboolean xmit);
 	qsocket_t	*(*Connect) (const char *host);
 	qsocket_t	*(*CheckNewConnections) (void);
+	void		(*QGetAnyMessages) (void (*callback)(qsocket_t *sock));
 	int		(*QGetMessage) (qsocket_t *sock);
 	int		(*QSendMessage) (qsocket_t *sock, sizebuf_t *data);
 	int		(*SendUnreliableMessage) (qsocket_t *sock, sizebuf_t *data);

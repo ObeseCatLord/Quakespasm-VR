@@ -122,6 +122,12 @@ qsocket_t *Loop_CheckNewConnections (void)
 }
 
 
+void Loop_GetAnyMessages (void (*callback)(qsocket_t *sock))
+{
+	(void)callback;
+}
+
+
 static int IntAlign(int value)
 {
 	return (value + (sizeof(int) - 1)) & (~(sizeof(int) - 1));
@@ -247,4 +253,3 @@ void Loop_Close (qsocket_t *sock)
 	else
 		loop_server = NULL;
 }
-

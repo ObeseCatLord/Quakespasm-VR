@@ -60,6 +60,7 @@ static cvar_t cl_portpingprobe_probes = {"cl_portpingprobe_probes", "6", CVAR_AR
 static cvar_t cl_portpingprobe_delay = {"cl_portpingprobe_delay", "0.20", CVAR_ARCHIVE};
 
 #define MAX_PENDING_DATAGRAMS	64
+#define MAX_PENDING_CONTROL_DATAGRAMS	8
 #define MAX_PORTPING_PROBES	16
 
 typedef struct
@@ -78,6 +79,18 @@ typedef struct
 } pending_datagram_t;
 
 static pending_datagram_t pendingDatagrams[MAX_PENDING_DATAGRAMS];
+
+typedef struct
+{
+	qboolean	valid;
+	int		landriver;
+	sys_socket_t	socket;
+	struct qsockaddr addr;
+	int		length;
+	byte		data[NET_MAXMESSAGE];
+} pending_control_datagram_t;
+
+static pending_control_datagram_t pendingControlDatagrams[MAX_PENDING_CONTROL_DATAGRAMS];
 
 extern qboolean m_return_onerror;
 extern char m_return_reason[32];
@@ -121,6 +134,60 @@ static void Datagram_QueuePacket (qsocket_t *sock, struct qsockaddr *addr, unsig
 	pendingDatagrams[slot].addr = *addr;
 	pendingDatagrams[slot].wireLength = wireLength;
 	Q_memcpy(&pendingDatagrams[slot].packet, &packetBuffer, sizeof(packetBuffer));
+}
+
+static void Datagram_QueueControlPacket (sys_socket_t socket, struct qsockaddr *addr, byte *data, int length)
+{
+	int i, slot;
+
+	if (length <= 0 || length > NET_MAXMESSAGE)
+		return;
+
+	slot = -1;
+	for (i = 0; i < MAX_PENDING_CONTROL_DATAGRAMS; i++)
+	{
+		if (!pendingControlDatagrams[i].valid)
+		{
+			slot = i;
+			break;
+		}
+	}
+
+	if (slot < 0)
+	{
+		slot = 0;
+		if (net_lagdebug.value)
+			Con_Printf("net_lagdebug: pending control datagram queue full, dropping oldest packet\n");
+	}
+
+	pendingControlDatagrams[slot].valid = true;
+	pendingControlDatagrams[slot].landriver = net_landriverlevel;
+	pendingControlDatagrams[slot].socket = socket;
+	pendingControlDatagrams[slot].addr = *addr;
+	pendingControlDatagrams[slot].length = length;
+	Q_memcpy(pendingControlDatagrams[slot].data, data, length);
+}
+
+static qboolean Datagram_DequeueControlPacket (sys_socket_t *socket, struct qsockaddr *addr, int *length)
+{
+	int i;
+
+	for (i = 0; i < MAX_PENDING_CONTROL_DATAGRAMS; i++)
+	{
+		if (!pendingControlDatagrams[i].valid)
+			continue;
+		if (pendingControlDatagrams[i].landriver != net_landriverlevel)
+			continue;
+
+		*socket = pendingControlDatagrams[i].socket;
+		*addr = pendingControlDatagrams[i].addr;
+		*length = pendingControlDatagrams[i].length;
+		Q_memcpy(net_message.data, pendingControlDatagrams[i].data, pendingControlDatagrams[i].length);
+		pendingControlDatagrams[i].valid = false;
+		return true;
+	}
+
+	return false;
 }
 
 static void Datagram_DropQueuedPackets (qsocket_t *sock)
@@ -768,6 +835,108 @@ done:
 }
 
 
+static void Datagram_ServerMessageResult (qsocket_t *sock, int ret, void (*callback)(qsocket_t *sock))
+{
+	if (ret < 0)
+	{
+		NET_Close(sock);
+		return;
+	}
+
+	if (ret == 0 || sock->disconnected)
+		return;
+
+	sock->lastMessageTime = net_time;
+	if (ret == 1)
+		messagesReceived++;
+	else if (ret == 2)
+		unreliableMessagesReceived++;
+	callback(sock);
+}
+
+
+void Datagram_GetAnyMessages (void (*callback)(qsocket_t *sock))
+{
+	qsocket_t		*sock;
+	qsocket_t		*next;
+	sys_socket_t		acceptsock;
+	struct qsockaddr	readaddr;
+	unsigned int		queuedLength;
+	int			readLength;
+	int			ret;
+	unsigned int		header;
+
+	for (net_landriverlevel = 0; net_landriverlevel < net_numlandrivers; net_landriverlevel++)
+	{
+		if (!net_landrivers[net_landriverlevel].initialized)
+			continue;
+
+		for (sock = net_activeSockets; sock; sock = next)
+		{
+			next = sock->next;
+			if (sock->disconnected || !sock->isvirtual)
+				continue;
+			if (sock->driver != net_driverlevel || sock->landriver != net_landriverlevel)
+				continue;
+
+			while (Datagram_DequeuePacket(sock, &queuedLength, &readaddr))
+			{
+				ret = Datagram_ProcessPacket(sock, &readaddr, queuedLength);
+				Datagram_ServerMessageResult(sock, ret, callback);
+				if (sock->disconnected)
+					break;
+			}
+		}
+
+		while ((acceptsock = dfunc.CheckNewConnections()) != INVALID_SOCKET)
+		{
+			readLength = dfunc.Read(acceptsock, (byte *)&packetBuffer, NET_DATAGRAMSIZE, &readaddr);
+			if (readLength == 0)
+				break;
+			if (readLength == -1)
+			{
+				Con_Printf("Read error\n");
+				break;
+			}
+			if (readLength < (int)sizeof(int))
+				continue;
+
+			header = BigLong(packetBuffer.length);
+			if (header & NETFLAG_CTL)
+			{
+				Datagram_QueueControlPacket(acceptsock, &readaddr, (byte *)&packetBuffer, readLength);
+				continue;
+			}
+
+			sock = Datagram_FindVirtualSocketForPacket(acceptsock, &readaddr);
+			if (!sock)
+			{
+				if (net_lagdebug.value)
+					Con_Printf("net_lagdebug: ignoring unmatched datagram on shared socket from %s\n",
+						dfunc.AddrToString(&readaddr));
+				continue;
+			}
+
+			ret = Datagram_ProcessPacket(sock, &readaddr, (unsigned int)readLength);
+			Datagram_ServerMessageResult(sock, ret, callback);
+		}
+
+		for (sock = net_activeSockets; sock; sock = next)
+		{
+			next = sock->next;
+			if (sock->disconnected || !sock->isvirtual)
+				continue;
+			if (sock->driver != net_driverlevel || sock->landriver != net_landriverlevel)
+				continue;
+			if (sock->sendNext)
+				SendMessageNext(sock);
+			if (!sock->canSend && (net_time - sock->lastSendTime) > 1.0)
+				ReSendMessage(sock);
+		}
+	}
+}
+
+
 static void PrintStats(qsocket_t *s)
 {
 	Con_Printf("canSend = %4u   \n", s->canSend);
@@ -1215,15 +1384,18 @@ static qsocket_t *_Datagram_CheckNewConnections (void)
 
 	singleSocket = (net_singlesocket.value != 0);
 
-	acceptsock = dfunc.CheckNewConnections();
-	if (acceptsock == INVALID_SOCKET)
-		return NULL;
-
 	SZ_Clear(&net_message);
 
-	len = dfunc.Read (acceptsock, net_message.data, net_message.maxsize, &clientaddr);
-	if (len < (int) sizeof(int))
-		return NULL;
+	if (!Datagram_DequeueControlPacket(&acceptsock, &clientaddr, &len))
+	{
+		acceptsock = dfunc.CheckNewConnections();
+		if (acceptsock == INVALID_SOCKET)
+			return NULL;
+
+		len = dfunc.Read (acceptsock, net_message.data, net_message.maxsize, &clientaddr);
+		if (len < (int) sizeof(int))
+			return NULL;
+	}
 	net_message.cursize = len;
 
 	MSG_BeginReading ();
