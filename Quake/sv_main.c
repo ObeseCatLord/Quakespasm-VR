@@ -1125,6 +1125,13 @@ qboolean SV_SendClientDatagram (client_t *client)
 	int		datagram_offset;
 	int		packet_count;
 	qboolean	first_packet;
+	int		total_bytes;
+	int		max_packet_bytes;
+	int		last_packet_bytes;
+	int		client_index;
+	double		send_gap;
+	static double	last_gap_log[MAX_SCOREBOARD];
+	static double	last_update_log[MAX_SCOREBOARD];
 
 	msg.data = buf;
 	maxsize = sizeof(buf);
@@ -1140,6 +1147,26 @@ qboolean SV_SendClientDatagram (client_t *client)
 	datagram_offset = 0;
 	packet_count = 0;
 	first_packet = true;
+	total_bytes = 0;
+	max_packet_bytes = 0;
+	last_packet_bytes = 0;
+	client_index = (int)(client - svs.clients);
+	if (client_index < 0 || client_index >= MAX_SCOREBOARD)
+		client_index = -1;
+
+	if (net_lagdebug.value && client->last_message > 0)
+	{
+		send_gap = realtime - client->last_message;
+		if (send_gap > net_lagdebug_frame_threshold.value &&
+			(client_index < 0 || realtime - last_gap_log[client_index] > 0.5))
+		{
+			Con_Printf ("net_lagdebug: server update gap to %s (%s): %.3f sec host_dt=%.3f sv_time=%.3f\n",
+				client->name, NET_QSocketGetAddressString(client->netconnection),
+				send_gap, host_frametime, sv.time);
+			if (client_index >= 0)
+				last_gap_log[client_index] = realtime;
+		}
+	}
 
 	do
 	{
@@ -1193,6 +1220,10 @@ qboolean SV_SendClientDatagram (client_t *client)
 			return false;
 		}
 
+		total_bytes += msg.cursize;
+		if (msg.cursize > max_packet_bytes)
+			max_packet_bytes = msg.cursize;
+		last_packet_bytes = msg.cursize;
 		packet_count++;
 		first_packet = false;
 
@@ -1208,6 +1239,19 @@ qboolean SV_SendClientDatagram (client_t *client)
 		}
 	}
 	while (entity_start < net_edict_write_total || datagram_offset < sv.datagram.cursize);
+
+	if (net_lagdebug.value &&
+		(packet_count > 1 || max_packet_bytes > (maxsize * 9) / 10) &&
+		(client_index < 0 || realtime - last_update_log[client_index] > 1.0))
+	{
+		Con_Printf ("net_lagdebug: server update to %s (%s): packets=%d bytes=%d max=%d last=%d ents=%d/%d sv_datagram=%d/%d maxpacket=%d\n",
+			client->name, NET_QSocketGetAddressString(client->netconnection),
+			packet_count, total_bytes, max_packet_bytes, last_packet_bytes,
+			entity_start, net_edict_write_total,
+			datagram_offset, sv.datagram.cursize, maxsize);
+		if (client_index >= 0)
+			last_update_log[client_index] = realtime;
+	}
 
 	return true;
 }

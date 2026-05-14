@@ -978,6 +978,8 @@ void CL_ParseServerMessage(void) {
   int i;
   const char *str;       // johnfitz
   int total, j, lastcmd; // johnfitz
+  float newtime;
+  static double last_svctime_log;
 
   //
   // if recording demos, copy the message out
@@ -1038,8 +1040,19 @@ void CL_ParseServerMessage(void) {
       break;
 
     case svc_time:
+      newtime = MSG_ReadFloat();
+      if (net_lagdebug.value && cls.state == ca_connected && cls.signon == SIGNONS &&
+          cl.mtime[0] > 0 && realtime - last_svctime_log > 0.5 &&
+          (newtime <= cl.mtime[0] || newtime - cl.mtime[0] > net_lagdebug_frame_threshold.value))
+      {
+        Con_Printf("net_lagdebug: client svc_time %s old=%.3f new=%.3f delta=%.3f lastmsg_age=%.3f msgsize=%d\n",
+                   (newtime <= cl.mtime[0]) ? "non-advancing" : "gap",
+                   cl.mtime[0], newtime, newtime - cl.mtime[0],
+                   realtime - cl.last_received_message, net_message.cursize);
+        last_svctime_log = realtime;
+      }
       cl.mtime[1] = cl.mtime[0];
-      cl.mtime[0] = MSG_ReadFloat();
+      cl.mtime[0] = newtime;
       break;
 
     case svc_clientdata:

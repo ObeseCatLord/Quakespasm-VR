@@ -375,17 +375,33 @@ should be put at.
 float	CL_LerpPoint (void)
 {
 	float	f, frac;
+	static double	last_lerp_log;
 
 	f = cl.mtime[0] - cl.mtime[1];
 
 	if (!f || cls.timedemo || sv.active)
 	{
+		if (!f && !cls.timedemo && !sv.active && net_lagdebug.value &&
+			cls.state == ca_connected && cls.signon == SIGNONS &&
+			cl.mtime[0] > 0 && realtime - last_lerp_log > 0.5)
+		{
+			Con_Printf ("net_lagdebug: client interpolation collapsed mtime=%.3f cl_time=%.3f lastmsg_age=%.3f\n",
+				cl.mtime[0], cl.time, realtime - cl.last_received_message);
+			last_lerp_log = realtime;
+		}
 		cl.time = cl.mtime[0];
 		return 1;
 	}
 
 	if (f > 0.1) // dropped packet, or start of demo
 	{
+		if (net_lagdebug.value && cls.state == ca_connected && cls.signon == SIGNONS &&
+			realtime - last_lerp_log > 0.5)
+		{
+			Con_Printf ("net_lagdebug: client snapshot gap mtime_delta=%.3f cl_time=%.3f lastmsg_age=%.3f\n",
+				f, cl.time, realtime - cl.last_received_message);
+			last_lerp_log = realtime;
+		}
 		cl.mtime[1] = cl.mtime[0] - 0.1;
 		f = 0.1;
 	}
@@ -400,6 +416,15 @@ float	CL_LerpPoint (void)
 	}
 	else if (frac > 1)
 	{
+		if (net_lagdebug.value && cls.state == ca_connected && cls.signon == SIGNONS &&
+			cl.time - cl.mtime[0] > net_lagdebug_frame_threshold.value &&
+			realtime - last_lerp_log > 0.5)
+		{
+			Con_Printf ("net_lagdebug: client interpolation overrun over=%.3f frac=%.3f mtime_delta=%.3f maxextrap=%.3f lastmsg_age=%.3f\n",
+				cl.time - cl.mtime[0], frac, f, cl_extrapolate.value,
+				realtime - cl.last_received_message);
+			last_lerp_log = realtime;
+		}
 		// Bounded linear extrapolation past mtime[0]: instead of freezing
 		// entities at the latest snapshot, allow up to cl_extrapolate
 		// seconds of forward projection using the last inter-snapshot delta.

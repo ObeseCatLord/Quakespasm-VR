@@ -638,25 +638,40 @@ Host_ServerFrame
 */
 void Host_ServerFrame (void)
 {
-	int		i, active; //johnfitz
+	int		i, active, clients_active; //johnfitz
 	edict_t	*ent; //johnfitz
+	qboolean	lagdebug_timing;
+	double		frame_start, after_clear, after_accept, after_clients, after_physics, after_send;
+	static double	last_server_frame_log;
 
 // run the world state
 	pr_global_struct->frametime = host_frametime;
+	lagdebug_timing = net_lagdebug.value ? true : false;
+	frame_start = after_clear = after_accept = after_clients = after_physics = after_send = 0;
+	if (lagdebug_timing)
+		frame_start = Sys_DoubleTime ();
 
 // set the time and clear the general datagram
 	SV_ClearDatagram ();
+	if (lagdebug_timing)
+		after_clear = Sys_DoubleTime ();
 
 // check for new clients
 	SV_CheckForNewClients ();
+	if (lagdebug_timing)
+		after_accept = Sys_DoubleTime ();
 
 // read client messages
 	SV_RunClients ();
+	if (lagdebug_timing)
+		after_clients = Sys_DoubleTime ();
 
 // move things around and think
 // always pause in single player if in console or menus
 	if (!sv.paused && (svs.maxclients > 1 || key_dest == key_game) )
 		SV_Physics ();
+	if (lagdebug_timing)
+		after_physics = Sys_DoubleTime ();
 
 //johnfitz -- devstats
 	if (cls.signon == SIGNONS)
@@ -676,6 +691,29 @@ void Host_ServerFrame (void)
 
 // send all messages to the clients
 	SV_SendClientMessages ();
+	if (lagdebug_timing)
+	{
+		after_send = Sys_DoubleTime ();
+		if (after_send - frame_start > net_lagdebug_frame_threshold.value &&
+			realtime - last_server_frame_log > 0.5)
+		{
+			clients_active = 0;
+			for (i = 0; i < svs.maxclients; i++)
+			{
+				if (svs.clients[i].active)
+					clients_active++;
+			}
+			Con_Printf ("net_lagdebug: server frame spike total=%.3f host_dt=%.3f clear=%.3f accept=%.3f clients=%.3f physics=%.3f send=%.3f active_clients=%d map=%s\n",
+				after_send - frame_start, host_frametime,
+				after_clear - frame_start,
+				after_accept - after_clear,
+				after_clients - after_accept,
+				after_physics - after_clients,
+				after_send - after_physics,
+				clients_active, sv.name);
+			last_server_frame_log = realtime;
+		}
+	}
 }
 
 /*
@@ -691,6 +729,9 @@ void _Host_Frame (float time)
 	static double		time2 = 0;
 	static double		time3 = 0;
 	int			pass1, pass2, pass3;
+	qboolean		lagdebug_frame;
+	double			lagdebug_start, lagdebug_after_server, lagdebug_after_read, lagdebug_after_screen, lagdebug_after_audio;
+	static double		last_client_frame_log;
 
 	if (setjmp (host_abortserver) )
 		return;			// something bad happened, or the server disconnected
@@ -701,6 +742,10 @@ void _Host_Frame (float time)
 // decide the simulation time
 	if (!Host_FilterTime (time))
 		return;			// don't run too fast, or packets will flood out
+	lagdebug_frame = (net_lagdebug.value && !isDedicated) ? true : false;
+	lagdebug_start = lagdebug_after_server = lagdebug_after_read = lagdebug_after_screen = lagdebug_after_audio = 0;
+	if (lagdebug_frame)
+		lagdebug_start = Sys_DoubleTime ();
 
 // get new key events
 	Key_UpdateForDest ();
@@ -734,6 +779,8 @@ void _Host_Frame (float time)
 
 	if (sv.active)
 		Host_ServerFrame ();
+	if (lagdebug_frame)
+		lagdebug_after_server = Sys_DoubleTime ();
 
 //-------------------
 //
@@ -774,6 +821,8 @@ void _Host_Frame (float time)
 // fetch results from server
 	if (cls.state == ca_connected)
 		CL_ReadFromServer ();
+	if (lagdebug_frame)
+		lagdebug_after_read = Sys_DoubleTime ();
 
 // update video
 	if (host_speeds.value)
@@ -782,6 +831,8 @@ void _Host_Frame (float time)
 	SCR_UpdateScreen ();
 
 	CL_RunParticles (); //johnfitz -- seperated from rendering
+	if (lagdebug_frame)
+		lagdebug_after_screen = Sys_DoubleTime ();
 
 	if (host_speeds.value)
 		time2 = Sys_DoubleTime ();
@@ -797,6 +848,24 @@ void _Host_Frame (float time)
 		S_Update (vec3_origin, vec3_origin, vec3_origin, vec3_origin);
 
 	CDAudio_Update();
+	if (lagdebug_frame)
+	{
+		lagdebug_after_audio = Sys_DoubleTime ();
+		if ((lagdebug_after_audio - lagdebug_start > net_lagdebug_frame_threshold.value ||
+			lagdebug_after_screen - lagdebug_after_read > net_lagdebug_frame_threshold.value ||
+			lagdebug_after_read - lagdebug_after_server > net_lagdebug_frame_threshold.value) &&
+			realtime - last_client_frame_log > 0.5)
+		{
+			Con_Printf ("net_lagdebug: client frame spike total=%.3f host_dt=%.3f pre_net=%.3f netread=%.3f gfx=%.3f snd=%.3f state=%d signon=%d lastmsg_age=%.3f\n",
+				lagdebug_after_audio - lagdebug_start, host_frametime,
+				lagdebug_after_server - lagdebug_start,
+				lagdebug_after_read - lagdebug_after_server,
+				lagdebug_after_screen - lagdebug_after_read,
+				lagdebug_after_audio - lagdebug_after_screen,
+				cls.state, cls.signon, realtime - cl.last_received_message);
+			last_client_frame_log = realtime;
+		}
+	}
 
 	if (host_speeds.value)
 	{
