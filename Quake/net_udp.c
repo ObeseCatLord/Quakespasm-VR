@@ -263,6 +263,7 @@ int UDP_Connect (sys_socket_t socketid, struct qsockaddr *addr)
 sys_socket_t UDP_CheckNewConnections (void)
 {
 	int		available;
+	int		ret;
 	struct sockaddr_in	from;
 	socklen_t	fromlen;
 	char		buff[1];
@@ -277,8 +278,19 @@ sys_socket_t UDP_CheckNewConnections (void)
 	}
 	if (available)
 		return net_acceptsocket;
-	// quietly absorb empty packets
-	recvfrom (net_acceptsocket, buff, 0, 0, (struct sockaddr *) &from, &fromlen);
+
+	// FIONREAD reports zero for a queued zero-length datagram. Peek first so
+	// a real packet that races in after the ioctl is left for the normal read.
+	fromlen = sizeof(from);
+	ret = recvfrom (net_acceptsocket, buff, sizeof(buff), MSG_PEEK, (struct sockaddr *) &from, &fromlen);
+	if (ret > 0)
+		return net_acceptsocket;
+	if (ret == 0)
+	{
+		// Quietly absorb the empty packet.
+		fromlen = sizeof(from);
+		recvfrom (net_acceptsocket, buff, sizeof(buff), 0, (struct sockaddr *) &from, &fromlen);
+	}
 	return INVALID_SOCKET;
 }
 
@@ -477,4 +489,3 @@ int UDP_SetSocketPort (struct qsockaddr *addr, int port)
 }
 
 //=============================================================================
-
