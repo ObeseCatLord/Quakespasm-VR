@@ -110,6 +110,7 @@ qsocket_t *NET_NewQSocket (void)
 	sock->driver = net_driverlevel;
 	sock->socket = 0;
 	sock->driverdata = NULL;
+	sock->isvirtual = false;
 	sock->canSend = true;
 	sock->sendNext = false;
 	sock->lastMessageTime = net_time;

@@ -81,6 +81,7 @@ CL_ClearState
 void CL_ClearState (void)
 {
 	VR_ResetWeaponTracking();
+	CL_ClearPendingCmd();
 	if (!sv.active)
 		Host_ClearMemory ();
 
@@ -112,6 +113,7 @@ This is also called on Host_Error, so it shouldn't cause any errors
 void CL_Disconnect (void)
 {
 	DebugLog("CL_Disconnect: state=%d signon=%d\n", cls.state, cls.signon);
+	CL_ClearPendingCmd();
 
 	if (key_dest == key_message)
 		Key_EndChat ();	// don't get stuck in chat mode
@@ -764,6 +766,32 @@ int CL_ReadFromServer (void)
 CL_SendCmd
 =================
 */
+static usercmd_t cl_pendingcmd;
+static int cl_pendingcmd_samples;
+
+void CL_ClearPendingCmd (void)
+{
+	Q_memset(&cl_pendingcmd, 0, sizeof(cl_pendingcmd));
+	cl_pendingcmd_samples = 0;
+}
+
+void CL_AccumulateCmd (void)
+{
+	usercmd_t cmd;
+
+	if (cls.state != ca_connected || cls.signon != SIGNONS)
+		return;
+
+	CL_BaseMove (&cmd);
+	IN_Move (&cmd);
+	VR_Move (&cmd);
+
+	cl_pendingcmd.forwardmove += cmd.forwardmove;
+	cl_pendingcmd.sidemove += cmd.sidemove;
+	cl_pendingcmd.upmove += cmd.upmove;
+	cl_pendingcmd_samples++;
+}
+
 void CL_SendCmd (void)
 {
 	usercmd_t		cmd;
@@ -773,13 +801,17 @@ void CL_SendCmd (void)
 
 	if (cls.signon == SIGNONS)
 	{
-	// get basic movement from keyboard
-		CL_BaseMove (&cmd);
+		if (!cl_pendingcmd_samples)
+			CL_AccumulateCmd ();
 
-	// allow mice or other external controllers to add to the move
-		IN_Move (&cmd);
-
-		VR_Move (&cmd);
+		cmd = cl_pendingcmd;
+		if (cl_pendingcmd_samples > 1)
+		{
+			cmd.forwardmove /= cl_pendingcmd_samples;
+			cmd.sidemove /= cl_pendingcmd_samples;
+			cmd.upmove /= cl_pendingcmd_samples;
+		}
+		CL_ClearPendingCmd ();
 
 	// send the unreliable message
 		CL_SendMove (&cmd);
@@ -915,4 +947,3 @@ void CL_Init (void)
 	Cmd_AddCommand ("tracepos", CL_Tracepos_f); //johnfitz
 	Cmd_AddCommand ("viewpos", CL_Viewpos_f); //johnfitz
 }
-
