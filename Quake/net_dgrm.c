@@ -123,6 +123,78 @@ static void Datagram_QueuePacket (qsocket_t *sock, struct qsockaddr *addr, unsig
 	Q_memcpy(&pendingDatagrams[slot].packet, &packetBuffer, sizeof(packetBuffer));
 }
 
+static void Datagram_DropQueuedPackets (qsocket_t *sock)
+{
+	net_landriver_t *ld;
+	int i;
+
+	if (!sock->isvirtual)
+		return;
+
+	ld = &net_landrivers[sock->landriver];
+	for (i = 0; i < MAX_PENDING_DATAGRAMS; i++)
+	{
+		if (!pendingDatagrams[i].valid)
+			continue;
+		if (pendingDatagrams[i].landriver != sock->landriver ||
+			pendingDatagrams[i].socket != sock->socket)
+			continue;
+		if (ld->AddrCompare(&pendingDatagrams[i].addr, &sock->addr) != 0)
+			continue;
+		pendingDatagrams[i].valid = false;
+	}
+}
+
+static qsocket_t *Datagram_FindVirtualSocketForPacket (sys_socket_t socket, struct qsockaddr *addr)
+{
+	qsocket_t *s;
+	qsocket_t *sameIp = NULL;
+	net_landriver_t *ld;
+	int sameIpCount = 0;
+	int cmp;
+
+	ld = &net_landrivers[net_landriverlevel];
+	for (s = net_activeSockets; s; s = s->next)
+	{
+		if (s->disconnected || !s->isvirtual)
+			continue;
+		if (s->driver != net_driverlevel || s->landriver != net_landriverlevel || s->socket != socket)
+			continue;
+
+		cmp = ld->AddrCompare(addr, &s->addr);
+		if (cmp == 0)
+			return s;
+		if (cmp > 0)
+		{
+			sameIp = s;
+			sameIpCount++;
+		}
+	}
+
+	// Let the normal per-client receive path decide whether this is a valid
+	// NAT remap, but only when same-IP routing is unambiguous.
+	if (sameIpCount == 1)
+		return sameIp;
+
+	return NULL;
+}
+
+static qboolean Datagram_QueueAcceptedPacket (sys_socket_t socket, struct qsockaddr *addr, byte *data, unsigned int wireLength)
+{
+	qsocket_t *sock;
+	unsigned int copyLength;
+
+	sock = Datagram_FindVirtualSocketForPacket(socket, addr);
+	if (!sock)
+		return false;
+
+	copyLength = q_min(wireLength, (unsigned int)sizeof(packetBuffer));
+	memset(&packetBuffer, 0, sizeof(packetBuffer));
+	Q_memcpy(&packetBuffer, data, copyLength);
+	Datagram_QueuePacket(sock, addr, copyLength);
+	return true;
+}
+
 static qboolean Datagram_QueueIfForAnotherSocket (qsocket_t *sock, struct qsockaddr *addr, unsigned int wireLength)
 {
 	qsocket_t *s;
@@ -1109,6 +1181,7 @@ void Datagram_Shutdown (void)
 
 void Datagram_Close (qsocket_t *sock)
 {
+	Datagram_DropQueuedPackets(sock);
 	if (!sock->isvirtual)
 		sfunc.Close_Socket(sock->socket);
 }
@@ -1140,6 +1213,8 @@ static qsocket_t *_Datagram_CheckNewConnections (void)
 	int			ret;
 	qboolean		singleSocket;
 
+	singleSocket = (net_singlesocket.value != 0);
+
 	acceptsock = dfunc.CheckNewConnections();
 	if (acceptsock == INVALID_SOCKET)
 		return NULL;
@@ -1157,7 +1232,11 @@ static qsocket_t *_Datagram_CheckNewConnections (void)
 	if (control == -1)
 		return NULL;
 	if ((control & (~NETFLAG_LENGTH_MASK)) != (int)NETFLAG_CTL)
+	{
+		if (singleSocket)
+			Datagram_QueueAcceptedPacket(acceptsock, &clientaddr, net_message.data, (unsigned int)len);
 		return NULL;
+	}
 	if ((control & NETFLAG_LENGTH_MASK) != len)
 		return NULL;
 
@@ -1351,7 +1430,6 @@ static qsocket_t *_Datagram_CheckNewConnections (void)
 		return NULL;
 	}
 
-	singleSocket = (net_singlesocket.value != 0);
 	if (singleSocket)
 	{
 		newsock = acceptsock;
@@ -1684,6 +1762,7 @@ static qsocket_t *_Datagram_Connect (const char *host)
 	int			reps;
 	double		start_time;
 	int			control;
+	int			reply;
 	const char		*reason;
 
 	// see if we can resolve the host name
@@ -1711,6 +1790,7 @@ static qsocket_t *_Datagram_Connect (const char *host)
 	Con_Printf("trying...\n");
 	SCR_UpdateScreen ();
 	start_time = net_time;
+	reply = 0;
 
 	for (reps = 0; reps < 3; reps++)
 	{
@@ -1766,6 +1846,18 @@ static qsocket_t *_Datagram_Connect (const char *host)
 					ret = 0;
 					continue;
 				}
+
+				reply = MSG_ReadByte();
+				if (reply == CCREP_SERVER_INFO)
+				{
+					ret = 0;
+					continue;
+				}
+				if (reply != CCREP_ACCEPT && reply != CCREP_REJECT)
+				{
+					ret = 0;
+					continue;
+				}
 			}
 		}
 		while (ret == 0 && (SetNetTime() - start_time) < 2.5);
@@ -1794,8 +1886,7 @@ static qsocket_t *_Datagram_Connect (const char *host)
 		goto ErrorReturn;
 	}
 
-	ret = MSG_ReadByte();
-	if (ret == CCREP_REJECT)
+	if (reply == CCREP_REJECT)
 	{
 		reason = MSG_ReadString();
 		Con_Printf("%s\n", reason);
@@ -1803,7 +1894,7 @@ static qsocket_t *_Datagram_Connect (const char *host)
 		goto ErrorReturn;
 	}
 
-	if (ret == CCREP_ACCEPT)
+	if (reply == CCREP_ACCEPT)
 	{
 		int acceptPort;
 		qboolean ignorePort = false;

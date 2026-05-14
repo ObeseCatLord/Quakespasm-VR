@@ -1148,8 +1148,11 @@ qboolean SV_SendClientDatagram (client_t *client)
 		msg.allowoverflow = false;
 		msg.overflowed = false;
 
-		MSG_WriteByte (&msg, svc_time);
-		MSG_WriteFloat (&msg, sv.time);
+		if (first_packet)
+		{
+			MSG_WriteByte (&msg, svc_time);
+			MSG_WriteFloat (&msg, sv.time);
+		}
 
 // add the client specific data to the datagram
 		if (first_packet)
