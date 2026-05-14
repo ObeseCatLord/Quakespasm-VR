@@ -732,7 +732,9 @@ static void Host_Map_f(void) {
   p = strstr(name, ".bsp");
   if (p && p[4] == '\0')
     *p = '\0';
+  PR_SwitchQCVM(&sv.qcvm);
   SV_SpawnServer(name);
+  PR_SwitchQCVM(NULL);
   if (!sv.active)
     return;
 
@@ -808,9 +810,11 @@ static void Host_Changelevel_f(void) {
   if (cls.state != ca_dedicated)
     IN_Activate();     // -- S.A.
   key_dest = key_game; // remove console or menu
+  PR_SwitchQCVM(&sv.qcvm);
   SV_SaveSpawnparms();
   q_strlcpy(level, Cmd_Argv(1), sizeof(level));
   SV_SpawnServer(level);
+  PR_SwitchQCVM(NULL);
   // also issue an error if spawn failed -- O.S.
   if (!sv.active)
     Host_Error("cannot run map %s", level);
@@ -833,7 +837,9 @@ static void Host_Restart_f(void) {
     return;
   q_strlcpy(mapname, sv.name,
             sizeof(mapname)); // mapname gets cleared in spawnserver
+  PR_SwitchQCVM(&sv.qcvm);
   SV_SpawnServer(mapname);
+  PR_SwitchQCVM(NULL);
   if (!sv.active)
     Host_Error("cannot restart map %s", mapname);
 }
@@ -981,6 +987,8 @@ static void Host_Savegame_f(void) {
     return;
   }
 
+  PR_SwitchQCVM(&sv.qcvm);
+
   fprintf(f, "%i\n", SAVEGAME_VERSION);
   Host_SavegameComment(comment);
   fprintf(f, "%s\n", comment);
@@ -988,7 +996,7 @@ static void Host_Savegame_f(void) {
     fprintf(f, "%f\n", svs.clients->spawn_parms[i]);
   fprintf(f, "%d\n", current_skill);
   fprintf(f, "%s\n", sv.name);
-  fprintf(f, "%f\n", sv.time);
+  fprintf(f, "%f\n", qcvm->time);
 
   // write the light styles
   for (i = 0; i < MAX_LIGHTSTYLES; i++) {
@@ -999,12 +1007,13 @@ static void Host_Savegame_f(void) {
   }
 
   ED_WriteGlobals(f);
-  for (i = 0; i < sv.num_edicts; i++) {
+  for (i = 0; i < qcvm->num_edicts; i++) {
     ED_Write(f, EDICT_NUM(i));
     fflush(f);
   }
   fclose(f);
   Con_Printf("done.\n");
+  PR_SwitchQCVM(NULL);
 }
 
 /*
@@ -1082,9 +1091,11 @@ static void Host_Loadgame_f(void) {
 
   CL_Disconnect_f();
 
+  PR_SwitchQCVM(&sv.qcvm);
   SV_SpawnServer(mapname);
 
   if (!sv.active) {
+    PR_SwitchQCVM(NULL);
     free(start);
     start = NULL;
     SCR_EndLoadingPlaque();
@@ -1114,11 +1125,11 @@ static void Host_Loadgame_f(void) {
       data = ED_ParseGlobals(data);
     } else { // parse an edict
       ent = EDICT_NUM(entnum);
-      if (entnum < sv.num_edicts) {
+      if (entnum < qcvm->num_edicts) {
         ent->free = false;
-        memset(&ent->v, 0, progs->entityfields * 4);
+        memset(&ent->v, 0, qcvm->progs->entityfields * 4);
       } else {
-        memset(ent, 0, pr_edict_size);
+        memset(ent, 0, qcvm->edict_size);
         ent->baseline.scale = ENTSCALE_DEFAULT;
       }
       data = ED_ParseEdict(data, ent);
@@ -1133,17 +1144,19 @@ static void Host_Loadgame_f(void) {
 
   // Free edicts allocated during map loading but no longer used after restoring
   // saved game state
-  for (i = entnum; i < sv.num_edicts; i++)
+  for (i = entnum; i < qcvm->num_edicts; i++)
     ED_Free(EDICT_NUM(i));
 
-  sv.num_edicts = entnum;
-  sv.time = time;
+  qcvm->num_edicts = entnum;
+  qcvm->time = time;
 
   free(start);
   start = NULL;
 
   for (i = 0; i < NUM_SPAWN_PARMS; i++)
     svs.clients->spawn_parms[i] = spawn_parms[i];
+
+  PR_SwitchQCVM(NULL);
 
   if (cls.state != ca_dedicated) {
     CL_EstablishConnection("local");
@@ -1389,7 +1402,7 @@ static void Host_Kill_f(void) {
     return;
   }
 
-  pr_global_struct->time = sv.time;
+  pr_global_struct->time = qcvm->time;
   pr_global_struct->self = EDICT_TO_PROG(sv_player);
   PR_ExecuteProgram(pr_global_struct->ClientKill);
 }
@@ -1480,7 +1493,7 @@ static void Host_Spawn_f(void) {
     // set up the edict
     ent = host_client->edict;
 
-    memset(&ent->v, 0, progs->entityfields * 4);
+    memset(&ent->v, 0, qcvm->progs->entityfields * 4);
     ent->v.colormap = NUM_FOR_EDICT(ent);
     ent->v.team = (host_client->colors & 15) + 1;
     ent->v.netname = PR_SetEngineString(host_client->name);
@@ -1489,12 +1502,12 @@ static void Host_Spawn_f(void) {
     for (i = 0; i < NUM_SPAWN_PARMS; i++)
       (&pr_global_struct->parm1)[i] = host_client->spawn_parms[i];
     // call the spawn function
-    pr_global_struct->time = sv.time;
+    pr_global_struct->time = qcvm->time;
     pr_global_struct->self = EDICT_TO_PROG(sv_player);
     PR_ExecuteProgram(pr_global_struct->ClientConnect);
 
     if ((Sys_DoubleTime() - NET_QSocketGetTime(host_client->netconnection)) <=
-        sv.time)
+        qcvm->time)
       Sys_Printf("%s entered the game\n", host_client->name);
 
     PR_ExecuteProgram(pr_global_struct->PutClientInServer);
@@ -1505,7 +1518,7 @@ static void Host_Spawn_f(void) {
 
   // send time of update
   MSG_WriteByte(&host_client->message, svc_time);
-  MSG_WriteFloat(&host_client->message, sv.time);
+  MSG_WriteFloat(&host_client->message, qcvm->time);
 
   for (i = 0, client = svs.clients; i < svs.maxclients; i++, client++) {
     MSG_WriteByte(&host_client->message, svc_updatename);
@@ -1719,7 +1732,7 @@ static void Host_Give_f(void) {
 
   case 's':
     if (rogue) {
-      val = GetEdictFieldValue(sv_player, "ammo_shells1");
+      val = GetEdictFieldValueByName(sv_player, "ammo_shells1");
       if (val)
         val->_float = v;
     }
@@ -1728,7 +1741,7 @@ static void Host_Give_f(void) {
 
   case 'n':
     if (rogue) {
-      val = GetEdictFieldValue(sv_player, "ammo_nails1");
+      val = GetEdictFieldValueByName(sv_player, "ammo_nails1");
       if (val) {
         val->_float = v;
         if (sv_player->v.weapon <= IT_LIGHTNING)
@@ -1741,7 +1754,7 @@ static void Host_Give_f(void) {
 
   case 'l':
     if (rogue) {
-      val = GetEdictFieldValue(sv_player, "ammo_lava_nails");
+      val = GetEdictFieldValueByName(sv_player, "ammo_lava_nails");
       if (val) {
         val->_float = v;
         if (sv_player->v.weapon > IT_LIGHTNING)
@@ -1752,7 +1765,7 @@ static void Host_Give_f(void) {
 
   case 'r':
     if (rogue) {
-      val = GetEdictFieldValue(sv_player, "ammo_rockets1");
+      val = GetEdictFieldValueByName(sv_player, "ammo_rockets1");
       if (val) {
         val->_float = v;
         if (sv_player->v.weapon <= IT_LIGHTNING)
@@ -1765,7 +1778,7 @@ static void Host_Give_f(void) {
 
   case 'm':
     if (rogue) {
-      val = GetEdictFieldValue(sv_player, "ammo_multi_rockets");
+      val = GetEdictFieldValueByName(sv_player, "ammo_multi_rockets");
       if (val) {
         val->_float = v;
         if (sv_player->v.weapon > IT_LIGHTNING)
@@ -1780,7 +1793,7 @@ static void Host_Give_f(void) {
 
   case 'c':
     if (rogue) {
-      val = GetEdictFieldValue(sv_player, "ammo_cells1");
+      val = GetEdictFieldValueByName(sv_player, "ammo_cells1");
       if (val) {
         val->_float = v;
         if (sv_player->v.weapon <= IT_LIGHTNING)
@@ -1793,7 +1806,7 @@ static void Host_Give_f(void) {
 
   case 'p':
     if (rogue) {
-      val = GetEdictFieldValue(sv_player, "ammo_plasma");
+      val = GetEdictFieldValueByName(sv_player, "ammo_plasma");
       if (val) {
         val->_float = v;
         if (sv_player->v.weapon > IT_LIGHTNING)
@@ -1869,15 +1882,20 @@ static void Host_Give_f(void) {
 
 static edict_t *FindViewthing(void) {
   int i;
-  edict_t *e;
+  edict_t *e = NULL;
 
-  for (i = 0; i < sv.num_edicts; i++) {
+  PR_SwitchQCVM(&sv.qcvm);
+  for (i = 0; i < qcvm->num_edicts; i++) {
     e = EDICT_NUM(i);
     if (!strcmp(PR_GetString(e->v.classname), "viewthing"))
-      return e;
+      break;
   }
-  Con_Printf("No viewthing on map\n");
-  return NULL;
+  if (i == qcvm->num_edicts) {
+    e = NULL;
+    Con_Printf("No viewthing on map\n");
+  }
+  PR_SwitchQCVM(NULL);
+  return e;
 }
 
 /*
@@ -1899,8 +1917,10 @@ static void Host_Viewmodel_f(void) {
     return;
   }
 
+  PR_SwitchQCVM(&sv.qcvm);
   e->v.frame = 0;
   cl.model_precache[(int)e->v.modelindex] = m;
+  PR_SwitchQCVM(NULL);
 }
 
 /*
@@ -2090,34 +2110,34 @@ void Host_InitCommands(void) {
   Cmd_AddCommand("mapname", Host_Mapname_f); // johnfitz
   Cmd_AddCommand("randmap", Host_Randmap_f); // ericw
 
-  Cmd_AddCommand("status", Host_Status_f);
+  Cmd_AddCommand_ClientCommand("status", Host_Status_f);
   Cmd_AddCommand("quit", Host_Quit_f);
-  Cmd_AddCommand("god", Host_God_f);
-  Cmd_AddCommand("notarget", Host_Notarget_f);
-  Cmd_AddCommand("fly", Host_Fly_f);
+  Cmd_AddCommand_ClientCommand("god", Host_God_f);
+  Cmd_AddCommand_ClientCommand("notarget", Host_Notarget_f);
+  Cmd_AddCommand_ClientCommand("fly", Host_Fly_f);
   Cmd_AddCommand("map", Host_Map_f);
   Cmd_AddCommand("restart", Host_Restart_f);
   Cmd_AddCommand("changelevel", Host_Changelevel_f);
   Cmd_AddCommand("connect", Host_Connect_f);
-  Cmd_AddCommand("reconnect", Host_Reconnect_f);
-  Cmd_AddCommand("name", Host_Name_f);
-  Cmd_AddCommand("noclip", Host_Noclip_f);
-  Cmd_AddCommand("setpos", Host_SetPos_f); // QuakeSpasm
+  Cmd_AddCommand_Console("reconnect", Host_Reconnect_f);
+  Cmd_AddCommand_ClientCommand("name", Host_Name_f);
+  Cmd_AddCommand_ClientCommand("noclip", Host_Noclip_f);
+  Cmd_AddCommand_ClientCommand("setpos", Host_SetPos_f); // QuakeSpasm
 
-  Cmd_AddCommand("say", Host_Say_f);
-  Cmd_AddCommand("say_team", Host_Say_Team_f);
-  Cmd_AddCommand("tell", Host_Tell_f);
-  Cmd_AddCommand("color", Host_Color_f);
-  Cmd_AddCommand("kill", Host_Kill_f);
-  Cmd_AddCommand("pause", Host_Pause_f);
-  Cmd_AddCommand("spawn", Host_Spawn_f);
-  Cmd_AddCommand("begin", Host_Begin_f);
-  Cmd_AddCommand("prespawn", Host_PreSpawn_f);
-  Cmd_AddCommand("kick", Host_Kick_f);
-  Cmd_AddCommand("ping", Host_Ping_f);
+  Cmd_AddCommand_ClientCommand("say", Host_Say_f);
+  Cmd_AddCommand_ClientCommand("say_team", Host_Say_Team_f);
+  Cmd_AddCommand_ClientCommand("tell", Host_Tell_f);
+  Cmd_AddCommand_ClientCommand("color", Host_Color_f);
+  Cmd_AddCommand_ClientCommand("kill", Host_Kill_f);
+  Cmd_AddCommand_ClientCommand("pause", Host_Pause_f);
+  Cmd_AddCommand_ClientCommand("spawn", Host_Spawn_f);
+  Cmd_AddCommand_ClientCommand("begin", Host_Begin_f);
+  Cmd_AddCommand_ClientCommand("prespawn", Host_PreSpawn_f);
+  Cmd_AddCommand_ClientCommand("kick", Host_Kick_f);
+  Cmd_AddCommand_ClientCommand("ping", Host_Ping_f);
   Cmd_AddCommand("load", Host_Loadgame_f);
   Cmd_AddCommand("save", Host_Savegame_f);
-  Cmd_AddCommand("give", Host_Give_f);
+  Cmd_AddCommand_ClientCommand("give", Host_Give_f);
 
   Cmd_AddCommand("startdemos", Host_Startdemos_f);
   Cmd_AddCommand("demos", Host_Demos_f);

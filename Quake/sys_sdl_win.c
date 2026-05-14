@@ -21,11 +21,25 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 
 */
 
+#ifndef MICROSOFT_WINDOWS_WINBASE_H_DEFINE_INTERLOCKED_CPLUSPLUS_OVERLOADS
+#define MICROSOFT_WINDOWS_WINBASE_H_DEFINE_INTERLOCKED_CPLUSPLUS_OVERLOADS 0
+#endif
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
 #include <windows.h>
 #include <mmsystem.h>
+#include <winreg.h>
+#include <versionhelpers.h>
+
+#ifdef _MSC_VER
+#pragma warning (push)
+#pragma warning (disable : 4091) // 'typedef ': ignored on left of 'tagGPFIDL_FLAGS' when no variable is declared
+#endif
+#include <shlobj.h>
+#ifdef _MSC_VER
+#pragma warning (pop)
+#endif
 
 #include "quakedef.h"
 
@@ -35,25 +49,20 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include <direct.h>
 
 #if defined(SDL_FRAMEWORK) || defined(NO_SDL_CONFIG)
-#if defined(USE_SDL2)
 #include <SDL2/SDL.h>
-#else
-#include <SDL/SDL.h>
-#endif
 #else
 #include "SDL.h"
 #endif
 
 
 qboolean		isDedicated;
-qboolean	Win95, Win95old, WinNT, WinVista;
-cvar_t		sys_throttle = {"sys_throttle", "0.02", CVAR_ARCHIVE};
 
 static HANDLE		hinput, houtput;
 
 #define	MAX_HANDLES		32	/* johnfitz -- was 10 */
 static FILE		*sys_handles[MAX_HANDLES];
 
+static double counter_freq;
 
 static int findhandle (void)
 {
@@ -66,6 +75,46 @@ static int findhandle (void)
 	}
 	Sys_Error ("out of handles");
 	return -1;
+}
+
+static void UTF8ToWideString (const char *src, wchar_t *dst, size_t maxchars)
+{
+	if (!MultiByteToWideChar (CP_UTF8, 0, src, -1, dst, maxchars))
+		Sys_Error ("MultiByteToWideChar failed: %lu", GetLastError ());
+}
+
+static void WideStringToUTF8 (const wchar_t *src, char *dst, size_t maxbytes)
+{
+	if (!WideCharToMultiByte (CP_UTF8, 0, src, -1, dst, maxbytes, NULL, NULL))
+		Sys_Error ("WideCharToMultiByte failed: %lu", GetLastError ());
+}
+
+FILE *Sys_fopen (const char *path, const char *mode)
+{
+	wchar_t	wpath[MAX_PATH];
+	wchar_t	wmode[8];
+	int		i;
+	FILE	*f;
+
+	for (i = 0; mode[i]; i++)
+	{
+		if (i == countof (wmode) - 1)
+			Sys_Error ("Sys_fopen: invalid mode \"%s\"", mode);
+		wmode[i] = mode[i];
+	}
+	wmode[i] = 0;
+
+	UTF8ToWideString (path, wpath, countof (wpath));
+	f = _wfopen (wpath, wmode);
+
+	return f;
+}
+
+int Sys_remove (const char *path)
+{
+	wchar_t	wpath[MAX_PATH];
+	UTF8ToWideString (path, wpath, countof (wpath));
+	return _wremove (wpath);
 }
 
 long Sys_filelength (FILE *f)
@@ -83,10 +132,10 @@ long Sys_filelength (FILE *f)
 int Sys_FileOpenRead (const char *path, int *hndl)
 {
 	FILE	*f;
-	int	i, retval;
+	int		i, retval;
 
 	i = findhandle ();
-	f = fopen(path, "rb");
+	f = Sys_fopen (path, "rb");
 
 	if (!f)
 	{
@@ -109,7 +158,7 @@ int Sys_FileOpenWrite (const char *path)
 	int		i;
 
 	i = findhandle ();
-	f = fopen(path, "wb");
+	f = Sys_fopen (path, "wb");
 
 	if (!f)
 		Sys_Error ("Error opening %s: %s", path, strerror(errno));
@@ -139,19 +188,90 @@ int Sys_FileWrite (int handle, const void *data, int count)
 	return fwrite (data, 1, count, sys_handles[handle]);
 }
 
-#ifndef INVALID_FILE_ATTRIBUTES
-#define INVALID_FILE_ATTRIBUTES	((DWORD)-1)
-#endif
-int Sys_FileType (const char *path)
+int Sys_FileTime (const char *path)
 {
-	DWORD result = GetFileAttributes(path);
+	FILE	*f;
 
-	if (result == INVALID_FILE_ATTRIBUTES)
-		return FS_ENT_NONE;
-	if (result & FILE_ATTRIBUTE_DIRECTORY)
-		return FS_ENT_DIRECTORY;
+	f = Sys_fopen (path, "rb");
 
-	return FS_ENT_FILE;
+	if (f)
+	{
+		fclose(f);
+		return 1;
+	}
+
+	return -1;
+}
+
+qboolean Sys_GetSteamDir (char *path, size_t pathsize)
+{
+	LSTATUS		err;
+	HKEY		key;
+	WCHAR		wpath[MAX_PATH + 1];
+	DWORD		size, type;
+
+	err = RegOpenKeyExW (HKEY_CURRENT_USER, L"Software\\Valve\\Steam", 0, KEY_READ, &key);
+	if (err != ERROR_SUCCESS)
+		return false;
+
+	// Note: string might not contain a terminating null character
+	// https://docs.microsoft.com/en-us/windows/win32/api/winreg/nf-winreg-regqueryvalueexw#remarks
+
+	err = RegQueryValueExW (key, L"SteamPath", NULL, &type, NULL, &size);
+	if (err != ERROR_SUCCESS || type != REG_SZ || size > sizeof (wpath) - sizeof (wpath[0]))
+	{
+		RegCloseKey (key);
+		return false;
+	}
+
+	err = RegQueryValueExW (key, L"SteamPath", NULL, &type, (BYTE *)wpath, &size);
+	RegCloseKey (key);
+	if (err != ERROR_SUCCESS || type != REG_SZ)
+		return false;
+
+	wpath[size / sizeof (wpath[0])] = 0;
+
+	return WideCharToMultiByte (CP_UTF8, 0, wpath, -1, path, pathsize, NULL, NULL) != 0;
+}
+
+// https://github.com/libsdl-org/SDL/blob/120c76c84bbce4c1bfed4e9eb74e10678bd83120/src/core/windows/SDL_windows.c#L88-L99
+static HRESULT Sys_InitCOM (void)
+{
+	HRESULT hr = CoInitializeEx (NULL, COINIT_APARTMENTTHREADED);
+	if (hr == RPC_E_CHANGED_MODE)
+		hr = CoInitializeEx (NULL, COINIT_MULTITHREADED);
+
+	/* S_FALSE means success, but someone else already initialized. */
+	/* You still need to call CoUninitialize in this case! */
+	if (hr == S_FALSE)
+		return S_OK;
+
+	return hr;
+}
+
+qboolean Sys_GetSteamQuakeUserDir (char *path, size_t pathsize, const char *library)
+{
+	const char SUBDIR[] = "\\Nightdive Studios\\Quake";
+	PWSTR wpath;
+	HRESULT hr;
+	qboolean ret;
+
+	hr = Sys_InitCOM ();
+	if (FAILED (hr))
+		return false;
+
+	hr = SHGetKnownFolderPath (&FOLDERID_SavedGames, 0, NULL, &wpath);
+	if (FAILED (hr))
+	{
+		CoUninitialize ();
+		return false;
+	}
+
+	ret = WideCharToMultiByte (CP_UTF8, 0, wpath, -1, path, pathsize, NULL, NULL) != 0;
+	CoTaskMemFree (wpath);
+	CoUninitialize ();
+
+	return ret && (size_t) q_strlcat (path, SUBDIR, pathsize) < pathsize;
 }
 
 static char	cwd[1024];
@@ -160,10 +280,17 @@ static void Sys_GetBasedir (char *argv0, char *dst, size_t dstsize)
 {
 	char *tmp;
 	size_t rc;
+	wchar_t wpath[MAX_PATH];
 
-	rc = GetCurrentDirectory(dstsize, dst);
-	if (rc == 0 || rc > dstsize)
-		Sys_Error ("Couldn't determine current directory");
+	rc = GetCurrentDirectoryW (0, NULL);
+	if (rc == 0)
+		Sys_Error ("Couldn't determine current directory name length (error %lu)", GetLastError ());
+	if (rc >= countof (wpath))
+		Sys_Error ("Current directory name too long (%lu)", (DWORD)rc);
+	if (!GetCurrentDirectoryW (rc, wpath))
+		Sys_Error ("Couldn't determine current directory (error %lu)", GetLastError ());
+
+	WideStringToUTF8 (wpath, dst, dstsize);
 
 	tmp = dst;
 	while (*tmp != 0)
@@ -173,6 +300,92 @@ static void Sys_GetBasedir (char *argv0, char *dst, size_t dstsize)
 		--tmp;
 		if (tmp != dst && (*tmp == '/' || *tmp == '\\'))
 			*tmp = 0;
+	}
+}
+
+static char exedir[1024];
+
+static const char *Sys_GetExeDir (void)
+{
+	wchar_t wpath[MAX_PATH];
+	char *p, *slash;
+
+	if (!GetModuleFileNameW (NULL, wpath, countof (wpath)))
+		return NULL;
+
+	if (!WideCharToMultiByte (CP_UTF8, 0, wpath, -1, exedir, sizeof (exedir), NULL, NULL))
+		return NULL;
+
+	for (p = exedir, slash = NULL; *p; p++)
+		if (*p == '/' || *p == '\\')
+			slash = p;
+	if (slash)
+		*slash = 0;
+
+	return exedir;
+}
+
+typedef struct winfindfile_s {
+	findfile_t			base;
+	WIN32_FIND_DATAW	data;
+	HANDLE				handle;
+} winfindfile_t;
+
+static void Sys_FillFindData (winfindfile_t *find)
+{
+	WideStringToUTF8 (find->data.cFileName, find->base.name, countof (find->base.name));
+	find->base.attribs = 0;
+	if (find->data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
+		find->base.attribs |= FA_DIRECTORY;
+}
+
+findfile_t *Sys_FindFirst (const char *dir, const char *ext)
+{
+	winfindfile_t		*ret;
+	char				pattern[MAX_PATH];
+	wchar_t				wpattern[MAX_PATH];
+	HANDLE				handle;
+	WIN32_FIND_DATAW	data;
+
+	if (!ext)
+		ext = "*";
+	else if (*ext == '.')
+		++ext;
+	q_snprintf (pattern, sizeof (pattern), "%s/*.%s", dir, ext);
+
+	UTF8ToWideString (pattern, wpattern, countof (wpattern));
+	handle = FindFirstFileW (wpattern, &data);
+
+	if (handle == INVALID_HANDLE_VALUE)
+		return NULL;
+
+	ret = (winfindfile_t *) calloc (1, sizeof (winfindfile_t));
+	ret->handle = handle;
+	ret->data = data;
+	Sys_FillFindData (ret);
+
+	return (findfile_t *) ret;
+}
+
+findfile_t *Sys_FindNext (findfile_t *find)
+{
+	winfindfile_t *wfind = (winfindfile_t *) find;
+	if (!FindNextFileW (wfind->handle, &wfind->data))
+	{
+		Sys_FindClose (find);
+		return NULL;
+	}
+	Sys_FillFindData (wfind);
+	return find;
+}
+
+void Sys_FindClose (findfile_t *find)
+{
+	if (find)
+	{
+		winfindfile_t *wfind = (winfindfile_t *) find;
+		FindClose (wfind->handle);
+		free (wfind);
 	}
 }
 
@@ -219,7 +432,7 @@ static void Sys_SetTimerResolution(void)
 
 void Sys_Init (void)
 {
-	OSVERSIONINFO	vinfo;
+	SYSTEM_INFO info;
 
 	Sys_SetTimerResolution ();
 	Sys_SetDPIAware ();
@@ -228,44 +441,19 @@ void Sys_Init (void)
 	Sys_GetBasedir(NULL, cwd, sizeof(cwd));
 	host_parms->basedir = cwd;
 
+	host_parms->exedir = Sys_GetExeDir ();
+
 	/* userdirs not really necessary for windows guys.
 	 * can be done if necessary, though... */
 	host_parms->userdir = host_parms->basedir; /* code elsewhere relies on this ! */
 
-	vinfo.dwOSVersionInfoSize = sizeof(vinfo);
+	if (!IsWindowsXPOrGreater ())
+		Sys_Error ("This engine requires Windows XP or newer");
 
-	if (!GetVersionEx (&vinfo))
-		Sys_Error ("Couldn't get OS info");
-
-	if ((vinfo.dwMajorVersion < 4) ||
-		(vinfo.dwPlatformId == VER_PLATFORM_WIN32s))
-	{
-		Sys_Error ("QuakeSpasm requires at least Win95 or NT 4.0");
-	}
-
-	if (vinfo.dwPlatformId == VER_PLATFORM_WIN32_NT)
-	{
-		SYSTEM_INFO info;
-		WinNT = true;
-		if (vinfo.dwMajorVersion >= 6)
-			WinVista = true;
-		GetSystemInfo(&info);
-		host_parms->numcpus = info.dwNumberOfProcessors;
-		if (host_parms->numcpus < 1)
-			host_parms->numcpus = 1;
-	}
-	else
-	{
-		WinNT = false; /* Win9x or WinME */
+	GetSystemInfo(&info);
+	host_parms->numcpus = info.dwNumberOfProcessors;
+	if (host_parms->numcpus < 1)
 		host_parms->numcpus = 1;
-		if ((vinfo.dwMajorVersion == 4) && (vinfo.dwMinorVersion == 0))
-		{
-			Win95 = true;
-			/* Win95-gold or Win95A can't switch bpp automatically */
-			if (vinfo.szCSDVersion[1] != 'C' && vinfo.szCSDVersion[1] != 'B')
-				Win95old = true;
-		}
-	}
 	Sys_Printf("Detected %d CPUs.\n", host_parms->numcpus);
 
 	if (isDedicated)
@@ -279,24 +467,34 @@ void Sys_Init (void)
 		hinput = GetStdHandle (STD_INPUT_HANDLE);
 		houtput = GetStdHandle (STD_OUTPUT_HANDLE);
 	}
+
+	counter_freq = (double)SDL_GetPerformanceFrequency();
 }
 
 void Sys_mkdir (const char *path)
 {
-	if (CreateDirectory(path, NULL) != 0)
+	wchar_t wpath[MAX_PATH];
+	BOOL result;
+	DWORD err;
+
+	UTF8ToWideString (path, wpath, countof (wpath));
+	result = CreateDirectoryW (wpath, NULL);
+	if (result)
 		return;
-	if (GetLastError() != ERROR_ALREADY_EXISTS)
-		Sys_Error("Unable to create directory %s", path);
+
+	err = GetLastError ();
+	if (err != ERROR_ALREADY_EXISTS)
+		Sys_Error ("Unable to create directory %s (error %lu)", path, err);
 }
 
-static const char errortxt1[] = "\nERROR-OUT BEGIN\n\n";
-static const char errortxt2[] = "\nQUAKE ERROR: ";
+static const wchar_t errortxt1[] = L"\nERROR-OUT BEGIN\n\n";
+static const wchar_t errortxt2[] = L"\nQUAKE ERROR: ";
 
 void Sys_Error (const char *error, ...)
 {
 	va_list		argptr;
 	char		text[1024];
-	DWORD		dummy;
+	wchar_t		wtext[1024];
 
 	host_parms->errstate++;
 
@@ -304,24 +502,32 @@ void Sys_Error (const char *error, ...)
 	q_vsnprintf (text, sizeof(text), error, argptr);
 	va_end (argptr);
 
+	PR_SwitchQCVM(NULL);
+
+	if (!MultiByteToWideChar (CP_UTF8, 0, text, -1, wtext, countof (wtext)))
+		wcscpy (wtext, L"An unknown error has occurred");
+
 	if (isDedicated)
-		WriteFile (houtput, errortxt1, strlen(errortxt1), &dummy, NULL);
+		WriteConsoleW (houtput, errortxt1, wcslen(errortxt1), NULL, NULL);
 	/* SDL will put these into its own stderr log,
 	   so print to stderr even in graphical mode. */
-	fputs (errortxt1, stderr);
+	fputws (errortxt1, stderr);
 	Host_Shutdown ();
-	fputs (errortxt2, stderr);
-	fputs (text, stderr);
-	fputs ("\n\n", stderr);
+	fputws (errortxt2, stderr);
+	fputws (wtext, stderr);
+	fputws (L"\n\n", stderr);
 	if (!isDedicated)
-		PL_ErrorDialog(text);
+		PL_ErrorDialog (text);
 	else
 	{
-		WriteFile (houtput, errortxt2, strlen(errortxt2), &dummy, NULL);
-		WriteFile (houtput, text,      strlen(text),      &dummy, NULL);
-		WriteFile (houtput, "\r\n",    2,		  &dummy, NULL);
+		WriteConsoleW (houtput, errortxt2, wcslen(errortxt2), NULL, NULL);
+		WriteConsoleW (houtput, wtext,     wcslen(wtext),     NULL, NULL);
+		WriteConsoleW (houtput, L"\r\n",   2,		          NULL, NULL);
 		SDL_Delay (3000);	/* show the console 3 more seconds */
 	}
+
+	if (IsDebuggerPresent ())
+		DebugBreak ();
 
 	exit (1);
 }
@@ -330,21 +536,27 @@ void Sys_Printf (const char *fmt, ...)
 {
 	va_list		argptr;
 	char		text[1024];
-	DWORD		dummy;
+	wchar_t		wtext[1024];
+	int			len;
 
 	va_start (argptr,fmt);
 	q_vsnprintf (text, sizeof(text), fmt, argptr);
 	va_end (argptr);
 
+	len = MultiByteToWideChar (CP_UTF8, 0, text, -1, wtext, countof (wtext));
+	if (!len)
+		return;
+
 	if (isDedicated)
 	{
-		WriteFile(houtput, text, strlen(text), &dummy, NULL);
+		WriteConsoleW (houtput, wtext, len, NULL, NULL);
 	}
 	else
 	{
 	/* SDL will put these into its own stdout log,
 	   so print to stdout even in graphical mode. */
-		fputs (text, stdout);
+		fputws (wtext, stdout);
+		OutputDebugStringW (wtext);
 	}
 }
 
@@ -360,7 +572,7 @@ void Sys_Quit (void)
 
 double Sys_DoubleTime (void)
 {
-	return SDL_GetTicks() / 1000.0;
+	return (double)SDL_GetPerformanceCounter() / counter_freq;
 }
 
 const char *Sys_ConsoleInput (void)
@@ -440,4 +652,3 @@ void Sys_SendKeyEvents (void)
 	IN_Commands();		//ericw -- allow joysticks to add keys so they can be used to confirm SCR_ModalMessage
 	IN_SendKeyEvents();
 }
-

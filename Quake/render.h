@@ -91,6 +91,8 @@ typedef struct entity_s
 	vec3_t					currentorigin;	//johnfitz -- transform lerping
 	vec3_t					previousangles;	//johnfitz -- transform lerping
 	vec3_t					currentangles;	//johnfitz -- transform lerping
+	float					traildelay;
+	vec3_t					trailorg;
 } entity_t;
 
 // !!! if this is changed, it must be changed in asm_draw.h too !!!

@@ -206,23 +206,27 @@ typedef struct {
       *model_path; // viewmodel path (NULL for dynamically discovered weapons)
   int model_index; // precache model index (learned at runtime for mod weapons)
   qboolean discovered; // has the model been discovered at runtime?
+  float scale; // weapon wheel model scale multiplier
+  vec3_t offset; // weapon wheel model offset
 } vr_dyn_weapon_t;
 
 #define MAX_DYN_WEAPONS 32
 static vr_dyn_weapon_t dyn_weapons[MAX_DYN_WEAPONS] = {
-    {4096, 1, "progs/g_axe.mdl", 0, false}, // IT_AXE (pickup model)
-    {1, 2, "progs/g_shot.mdl", 0, false},   // IT_SHOTGUN
-    {2, 3, "progs/g_shot2.mdl", 0, false},  // IT_SUPER_SHOTGUN
-    {4, 4, "progs/g_nail.mdl", 0, false},   // IT_NAILGUN
-    {8, 5, "progs/g_nail2.mdl", 0, false},  // IT_SUPER_NAILGUN
-    {16, 6, "progs/g_rock.mdl", 0, false},  // IT_GRENADE_LAUNCHER
-    {32, 7, "progs/g_rock2.mdl", 0, false}, // IT_ROCKET_LAUNCHER
-    {64, 8, "progs/g_light.mdl", 0, false}, // IT_LIGHTNING
+    {4096, 1, "progs/g_axe.mdl", 0, false, 1.0f, {0, 0, 0}}, // IT_AXE
+    {1, 2, "progs/g_shot.mdl", 0, false, 1.0f, {0, 0, 0}},   // IT_SHOTGUN
+    {2, 3, "progs/g_shot2.mdl", 0, false, 1.0f, {0, 0, 0}},  // IT_SUPER_SHOTGUN
+    {4, 4, "progs/g_nail.mdl", 0, false, 1.0f, {0, 0, 0}},   // IT_NAILGUN
+    {8, 5, "progs/g_nail2.mdl", 0, false, 1.0f, {0, 0, 0}},  // IT_SUPER_NAILGUN
+    {16, 6, "progs/g_rock.mdl", 0, false, 1.0f, {0, 0, 0}},  // IT_GRENADE_LAUNCHER
+    {32, 7, "progs/g_rock2.mdl", 0, false, 1.0f, {0, 0, 0}}, // IT_ROCKET_LAUNCHER
+    {64, 8, "progs/g_light.mdl", 0, false, 1.0f, {0, 0, 0}}, // IT_LIGHTNING
 };
 static int num_dyn_weapons = 8;
 static qboolean rogue_weapons_added = false;
 static qboolean hipnotic_weapons_added = false;
 static int last_tracked_activeweapon = -1;
+
+static void VR_ApplyWeaponSchema(void);
 
 // Impulse sniffing/discovery state
 extern "C" int vr_last_sent_impulse = 0;
@@ -755,6 +759,27 @@ void InitAllWeaponCVars() {
     InitWeaponCVars(i++, "progs/ee_v_legal.mdl", "0", "55", "29",
                     "0.2"); // Legal Notice
 
+  }
+  // weapons for QBJ3
+  else if (!strcmp(COM_SkipPath(com_gamedir), "qbj3")) {
+    InitWeaponCVars(i++, "progs/v_wrench.mdl", "0", "0", "0",
+                    "0.15"); // Wrench
+    InitWeaponCVars(i++, "progs/v_pistol.mdl", "0", "0", "0",
+                    "0.15"); // Pistol
+    InitWeaponCVars(i++, "progs/v_flakshotgun.mdl", "0", "0", "0",
+                    "0.15"); // Flak Shotgun
+    InitWeaponCVars(i++, "progs/v_tnailgun.mdl", "0", "0", "0",
+                    "0.15"); // Twin Nailgun
+    InitWeaponCVars(i++, "progs/v_rebar.mdl", "0", "0", "0",
+                    "0.15"); // Rebar Cannon
+    InitWeaponCVars(i++, "progs/v_grenlauncher.mdl", "0", "0", "0",
+                    "0.15"); // Grenade Launcher
+    InitWeaponCVars(i++, "progs/v_mmml.mdl", "0", "0", "0",
+                    "0.15"); // Multi-Missile Launcher
+    InitWeaponCVars(i++, "progs/v_invoker.mdl", "0", "0", "0",
+                    "0.15"); // The Invoker
+    InitWeaponCVars(i++, "progs/v_berserk.mdl", "0", "0", "0",
+                    "0.15"); // Berserk wrench replacement
   } else {
     // weapons for vanilla Quake, Scourge of Armagon, Dissolution of Eternity
 
@@ -1072,8 +1097,8 @@ void VR_LoadWeaponSchema(void) {
     }
   }
 
-  Z_Free(data);
   Con_Printf("VR: Loaded %d weapons from vr_weapons.txt\n", num_vr_weapons);
+  VR_ApplyWeaponSchema();
 
   // Precache models
   for (int i = 0; i < num_vr_weapons; i++) {
@@ -1095,6 +1120,37 @@ void VR_InitGame() {
   // The base vr_projectilespawn_z_offset cvar (default 24) handles QuakeC's
   // '0 0 16' compensation for both local and remote paths.
   vr_game_projectile_z_extra = 0.0f;
+}
+
+static void VR_ApplyWeaponSchema(void) {
+  for (int i = 0; i < num_vr_weapons; i++) {
+    vr_weapon_cmd_t *schema = &vr_weapons[i];
+    vr_dyn_weapon_t *target = NULL;
+
+    if (!schema->bitmask || !schema->model_path[0])
+      continue;
+
+    for (int j = 0; j < num_dyn_weapons; j++) {
+      if (dyn_weapons[j].bitmask == schema->bitmask) {
+        target = &dyn_weapons[j];
+        break;
+      }
+    }
+
+    if (!target && num_dyn_weapons < MAX_DYN_WEAPONS)
+      target = &dyn_weapons[num_dyn_weapons++];
+
+    if (!target)
+      continue;
+
+    target->bitmask = schema->bitmask;
+    target->impulse = schema->impulse;
+    target->model_path = schema->model_path;
+    target->model_index = 0;
+    target->discovered = false;
+    target->scale = schema->scale > 0.0f ? schema->scale : 1.0f;
+    VectorCopy(schema->offset, target->offset);
+  }
 }
 
 qboolean VR_Enable() {
@@ -1393,11 +1449,8 @@ void VR_UpdateScreenContent() {
         }
 
         controller->lastState = controller->state;
-        if (!vr::VRSystem()->GetControllerState(iDevice, &controller->state,
-                                                sizeof(controller->state))) {
-          continue;
-        }
-
+        vr::VRSystem()->GetControllerState(iDevice, &controller->state,
+                                           sizeof(controller->state));
         controller->seenThisFrame = true;
         controller->rawvector = rawControllerPos;
         controller->raworientation = rawControllerQuat;
@@ -1964,6 +2017,10 @@ void VR_Move(usercmd_t *cmd) {
     return;
   }
 
+  if (!current_eye) {
+    return;
+  }
+
   // k_EButton_Axis1 === k_EButton_SteamVR_Trigger
   DoTrigger(&controllers[0], K_LTRIGGER);
   DoTrigger(&controllers[1], K_RTRIGGER);
@@ -2216,6 +2273,8 @@ void VR_TrackWeapons(void) {
     w->model_index = model_idx;
     w->model_path = NULL;
     w->discovered = true;
+    w->scale = 1.0f;
+    w->offset[0] = w->offset[1] = w->offset[2] = 0.0f;
 
     // Attempt to sniff impulse immediately
     if (vr_last_sent_impulse > 0 &&
@@ -2244,26 +2303,34 @@ void VR_ResetWeaponTracking(void) {
   if (rogue && !rogue_weapons_added) {
     int i = num_dyn_weapons;
     dyn_weapons[i++] = vr_dyn_weapon_t{RIT_LAVA_NAILGUN, 4,
-                                       "progs/g_nail.mdl", 0, false};
+                                       "progs/g_nail.mdl", 0, false, 1.0f,
+                                       {0, 0, 0}};
     dyn_weapons[i++] = vr_dyn_weapon_t{RIT_LAVA_SUPER_NAILGUN, 5,
-                                       "progs/g_nail2.mdl", 0, false};
+                                       "progs/g_nail2.mdl", 0, false, 1.0f,
+                                       {0, 0, 0}};
     dyn_weapons[i++] = vr_dyn_weapon_t{RIT_MULTI_GRENADE, 6,
-                                       "progs/g_rock.mdl", 0, false};
+                                       "progs/g_rock.mdl", 0, false, 1.0f,
+                                       {0, 0, 0}};
     dyn_weapons[i++] = vr_dyn_weapon_t{RIT_MULTI_ROCKET, 7,
-                                       "progs/g_rock2.mdl", 0, false};
+                                       "progs/g_rock2.mdl", 0, false, 1.0f,
+                                       {0, 0, 0}};
     dyn_weapons[i++] = vr_dyn_weapon_t{RIT_PLASMA_GUN, 8,
-                                       "progs/g_light.mdl", 0, false};
+                                       "progs/g_light.mdl", 0, false, 1.0f,
+                                       {0, 0, 0}};
     num_dyn_weapons = i;
     rogue_weapons_added = true;
   }
   if (hipnotic && !hipnotic_weapons_added) {
     int i = num_dyn_weapons;
     dyn_weapons[i++] = vr_dyn_weapon_t{HIT_MJOLNIR, 1,
-                                       "progs/g_hammer.mdl", 0, false};
+                                       "progs/g_hammer.mdl", 0, false, 1.0f,
+                                       {0, 0, 0}};
     dyn_weapons[i++] = vr_dyn_weapon_t{HIT_LASER_CANNON, 8,
-                                       "progs/g_laserg.mdl", 0, false};
+                                       "progs/g_laserg.mdl", 0, false, 1.0f,
+                                       {0, 0, 0}};
     dyn_weapons[i++] = vr_dyn_weapon_t{HIT_PROXIMITY_GUN, 6,
-                                       "progs/g_prox.mdl", 0, false};
+                                       "progs/g_prox.mdl", 0, false, 1.0f,
+                                       {0, 0, 0}};
     num_dyn_weapons = i;
     hipnotic_weapons_added = true;
   }
@@ -2499,13 +2566,18 @@ void VR_DrawWeaponMenu(void) {
       qboolean is_selected = (w_index == vr_weaponmenu_selection);
       qboolean is_equipped = (w->bitmask == cl.stats[STAT_ACTIVEWEAPON]);
 
-      float scale =
-          is_selected ? 0.40f : 0.25f; // Larger models against a smaller wheel
+      float schema_scale = w->scale > 0.0f ? w->scale : 1.0f;
+      float scale = (is_selected ? 0.40f : 0.25f) * schema_scale;
+      if (scale > 0.0f && scale < (1.0f / ENTSCALE_DEFAULT))
+        scale = 1.0f / ENTSCALE_DEFAULT;
 
       // Center model vertically using its bounding box so weapons with
       // low origins (axe, super shotgun) don't clip into neighbours.
       float vert_center = (mdl->mins[2] + mdl->maxs[2]) / 2.0f;
       VectorMA(ent.origin, -vert_center * scale, up, ent.origin);
+      VectorMA(ent.origin, w->offset[0], right, ent.origin);
+      VectorMA(ent.origin, w->offset[1], up, ent.origin);
+      VectorMA(ent.origin, w->offset[2], forward, ent.origin);
 
       ent.scale = ENTSCALE_ENCODE(scale);
       ent.alpha = ENTALPHA_ENCODE(1.0f);
