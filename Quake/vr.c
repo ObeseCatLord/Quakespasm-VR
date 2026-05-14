@@ -1011,15 +1011,15 @@ void VID_VR_Init() {
 }
 
 void VR_LoadWeaponSchema(void) {
-  int length;
   char *data;
   char *start;
   char key[64];
 
   num_vr_weapons = 0;
 
-  // Try to load vr_weapons.txt from game dir
-  data = (char *)COM_LoadTempFile("vr_weapons.txt", NULL);
+  // Try to load vr_weapons.txt from the active search path. This is freed
+  // below, so it must come from the zone allocator rather than temp hunk.
+  data = (char *)COM_LoadZoneFile("vr_weapons.txt", NULL);
   if (!data) {
     Con_Printf("VR: No vr_weapons.txt found.\n");
     return;

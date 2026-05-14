@@ -1145,6 +1145,8 @@ qboolean SV_SendClientDatagram (client_t *client)
 	{
 		msg.maxsize = maxsize;
 		msg.cursize = 0;
+		msg.allowoverflow = false;
+		msg.overflowed = false;
 
 		MSG_WriteByte (&msg, svc_time);
 		MSG_WriteFloat (&msg, sv.time);
