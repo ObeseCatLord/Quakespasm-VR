@@ -474,6 +474,14 @@ static int Datagram_ProcessPacket (qsocket_t *sock, struct qsockaddr *readaddr, 
 
 		if (flags & NETFLAG_CTL)
 			return 0;
+		if (length < NET_HEADERSIZE || length > wireLength)
+		{
+			shortPacketCount++;
+			if (net_lagdebug.value)
+				Con_Printf("net_lagdebug: invalid datagram length header len=%u wire=%u flags=0x%x\n",
+					length, wireLength, flags);
+			return 0;
+		}
 
 		sequence = BigLong(packetBuffer.sequence);
 		packetsReceived++;
