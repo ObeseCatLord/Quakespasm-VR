@@ -66,6 +66,7 @@ static cvar_t cl_portpingprobe_delay = {"cl_portpingprobe_delay", "0.20", CVAR_A
 typedef struct
 {
 	qboolean	valid;
+	qsocket_t	*owner;
 	int		landriver;
 	sys_socket_t	socket;
 	struct qsockaddr addr;
@@ -129,6 +130,7 @@ static void Datagram_QueuePacket (qsocket_t *sock, struct qsockaddr *addr, unsig
 	}
 
 	pendingDatagrams[slot].valid = true;
+	pendingDatagrams[slot].owner = sock;
 	pendingDatagrams[slot].landriver = sock->landriver;
 	pendingDatagrams[slot].socket = sock->socket;
 	pendingDatagrams[slot].addr = *addr;
@@ -192,21 +194,16 @@ static qboolean Datagram_DequeueControlPacket (sys_socket_t *socket, struct qsoc
 
 static void Datagram_DropQueuedPackets (qsocket_t *sock)
 {
-	net_landriver_t *ld;
 	int i;
 
 	if (!sock->isvirtual)
 		return;
 
-	ld = &net_landrivers[sock->landriver];
 	for (i = 0; i < MAX_PENDING_DATAGRAMS; i++)
 	{
 		if (!pendingDatagrams[i].valid)
 			continue;
-		if (pendingDatagrams[i].landriver != sock->landriver ||
-			pendingDatagrams[i].socket != sock->socket)
-			continue;
-		if (ld->AddrCompare(&pendingDatagrams[i].addr, &sock->addr) != 0)
+		if (pendingDatagrams[i].owner != sock)
 			continue;
 		pendingDatagrams[i].valid = false;
 	}
@@ -284,7 +281,7 @@ static qboolean Datagram_QueueIfForAnotherSocket (qsocket_t *sock, struct qsocka
 			continue;
 		if (ld->AddrCompare(addr, &s->addr) == 0)
 		{
-			Datagram_QueuePacket(sock, addr, wireLength);
+			Datagram_QueuePacket(s, addr, wireLength);
 			return true;
 		}
 	}
@@ -299,20 +296,15 @@ static qboolean Datagram_QueueIfForAnotherSocket (qsocket_t *sock, struct qsocka
 static qboolean Datagram_DequeuePacket (qsocket_t *sock, unsigned int *wireLength, struct qsockaddr *addr)
 {
 	int i;
-	net_landriver_t *ld;
 
 	if (!sock->isvirtual)
 		return false;
 
-	ld = &net_landrivers[sock->landriver];
 	for (i = 0; i < MAX_PENDING_DATAGRAMS; i++)
 	{
 		if (!pendingDatagrams[i].valid)
 			continue;
-		if (pendingDatagrams[i].landriver != sock->landriver ||
-			pendingDatagrams[i].socket != sock->socket)
-			continue;
-		if (ld->AddrCompare(&pendingDatagrams[i].addr, &sock->addr) != 0)
+		if (pendingDatagrams[i].owner != sock)
 			continue;
 
 		*wireLength = pendingDatagrams[i].wireLength;
