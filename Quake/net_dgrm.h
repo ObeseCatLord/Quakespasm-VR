@@ -27,6 +27,7 @@ void		Datagram_Listen (qboolean state);
 void		Datagram_SearchForHosts (qboolean xmit);
 qsocket_t	*Datagram_Connect (const char *host);
 qsocket_t	*Datagram_CheckNewConnections (void);
+void		Datagram_GetAnyMessages (void (*callback)(qsocket_t *sock));
 int			Datagram_GetMessage (qsocket_t *sock);
 int			Datagram_SendMessage (qsocket_t *sock, sizebuf_t *data);
 int			Datagram_SendUnreliableMessage (qsocket_t *sock, sizebuf_t *data);
@@ -36,4 +37,3 @@ void		Datagram_Close (qsocket_t *sock);
 void		Datagram_Shutdown (void);
 
 #endif	/* __NET_DATAGRAM_H */
-

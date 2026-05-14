@@ -605,6 +605,48 @@ int	NET_GetMessage (qsocket_t *sock)
 }
 
 
+static void NET_DiscardServerMessage (qsocket_t *sock)
+{
+	(void)sock;
+}
+
+
+void NET_GetServerMessages (void (*callback)(qsocket_t *sock))
+{
+	if (!callback)
+		callback = NET_DiscardServerMessage;
+
+	SetNetTime();
+
+	for (net_driverlevel = 0; net_driverlevel < net_numdrivers; net_driverlevel++)
+	{
+		if (net_drivers[net_driverlevel].initialized == false)
+			continue;
+		if (!IS_LOOP_DRIVER(net_driverlevel) && listening == false)
+			continue;
+		dfunc.QGetAnyMessages (callback);
+	}
+}
+
+
+qboolean NET_IsVirtualConnection (qsocket_t *sock)
+{
+	return sock && sock->isvirtual;
+}
+
+
+qboolean NET_IsTimedOut (qsocket_t *sock)
+{
+	if (!sock || sock->disconnected)
+		return true;
+	if (IS_LOOP_DRIVER(sock->driver))
+		return false;
+
+	SetNetTime();
+	return net_time - sock->lastMessageTime > net_messagetimeout.value;
+}
+
+
 /*
 ==================
 NET_SendMessage
