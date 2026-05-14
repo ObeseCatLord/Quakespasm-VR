@@ -538,6 +538,7 @@ void TexMgr_RecalcWarpImageSize(void) {
   //
   mark = Hunk_LowMark();
   dummy = (byte *)Hunk_Alloc(gl_warpimagesize * gl_warpimagesize * 4);
+  memset(dummy, 0, gl_warpimagesize * gl_warpimagesize * 4);
 
   for (glt = active_gltextures; glt; glt = glt->next) {
     if (glt->flags & TEXPREF_WARPIMAGE) {

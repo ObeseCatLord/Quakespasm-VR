@@ -2228,8 +2228,6 @@ static void COM_Game_f (void)
 		CL_Disconnect ();
 		Host_ShutdownServer(true);
 
-		VR_InitGame();
-
 		//Write config file
 		Host_WriteConfiguration ();
 
@@ -2282,6 +2280,8 @@ static void COM_Game_f (void)
 						   host_parms->userdir : com_basedir,
 					GAMENAME);
 		}
+
+		VR_InitGame();
 
 		//clear out and reload appropriate data
 		Cache_Flush ();
