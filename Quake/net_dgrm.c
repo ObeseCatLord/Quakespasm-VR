@@ -54,6 +54,7 @@ static int myDriverLevel;
 cvar_t net_lagdebug = {"net_lagdebug", "0", CVAR_NONE};
 cvar_t net_lagdebug_threshold = {"net_lagdebug_threshold", "0.25", CVAR_NONE};
 cvar_t net_lagdebug_frame_threshold = {"net_lagdebug_frame_threshold", "0.05", CVAR_NONE};
+static cvar_t net_sameip_stale_timeout = {"net_sameip_stale_timeout", "3.0", CVAR_NONE};
 static cvar_t net_singlesocket = {"net_singlesocket", "1", CVAR_NONE};
 static cvar_t cl_netport = {"cl_netport", "0", CVAR_ARCHIVE};
 static cvar_t cl_portpingprobe_enable = {"cl_portpingprobe_enable", "1", CVAR_ARCHIVE};
@@ -213,6 +214,74 @@ static void Datagram_DropQueuedPackets (qsocket_t *sock)
 			continue;
 		pendingDatagrams[i].valid = false;
 	}
+}
+
+static double Datagram_SocketLastInboundTime (const qsocket_t *sock)
+{
+	if (sock->lastDatagramTime > 0)
+		return sock->lastDatagramTime;
+	if (sock->lastMessageTime > 0)
+		return sock->lastMessageTime;
+	return sock->connecttime;
+}
+
+static qboolean Datagram_SocketIsStaleSameIpCandidate (const qsocket_t *sock)
+{
+	double timeout;
+	double lastTime;
+
+	timeout = net_sameip_stale_timeout.value;
+	if (timeout <= 0)
+		return false;
+
+	lastTime = Datagram_SocketLastInboundTime(sock);
+	if (lastTime <= 0)
+		return false;
+
+	return net_time - lastTime > timeout;
+}
+
+static qboolean Datagram_CloseClientSocket (qsocket_t *sock, const char *reason,
+	struct qsockaddr *incoming)
+{
+	client_t *saved_host_client;
+	client_t *client;
+	int i;
+
+	saved_host_client = host_client;
+	for (i = 0, client = svs.clients; i < svs.maxclients; i++, client++)
+	{
+		if (!client->active || client->netconnection != sock)
+			continue;
+
+		if (net_lagdebug.value)
+		{
+			Con_Printf("net_lagdebug: dropping stale same-IP client for reconnect (%s)\n",
+				reason);
+			Con_Printf("  client:   %s\n", client->name[0] ? client->name : "<unnamed>");
+			Con_Printf("  existing: %s age=%.3f\n", StrAddr (&sock->addr),
+				net_time - Datagram_SocketLastInboundTime(sock));
+			Con_Printf("  incoming: %s\n", StrAddr (incoming));
+		}
+
+		host_client = client;
+		SV_DropClient(false);
+		host_client = saved_host_client;
+		return true;
+	}
+
+	if (net_lagdebug.value)
+	{
+		Con_Printf("net_lagdebug: closing stale same-IP qsocket for reconnect (%s)\n",
+			reason);
+		Con_Printf("  existing: %s age=%.3f\n", StrAddr (&sock->addr),
+			net_time - Datagram_SocketLastInboundTime(sock));
+		Con_Printf("  incoming: %s\n", StrAddr (incoming));
+	}
+
+	NET_Close(sock);
+	host_client = saved_host_client;
+	return true;
 }
 
 static qsocket_t *Datagram_FindVirtualSocketForPacket (sys_socket_t socket, struct qsockaddr *addr)
@@ -1426,6 +1495,7 @@ int Datagram_Init (void)
 	Cvar_RegisterVariable (&net_lagdebug);
 	Cvar_RegisterVariable (&net_lagdebug_threshold);
 	Cvar_RegisterVariable (&net_lagdebug_frame_threshold);
+	Cvar_RegisterVariable (&net_sameip_stale_timeout);
 	Cvar_RegisterVariable (&net_singlesocket);
 	Cvar_RegisterVariable (&cl_netport);
 	Cvar_RegisterVariable (&cl_portpingprobe_enable);
@@ -1671,6 +1741,7 @@ static qsocket_t *_Datagram_CheckNewConnections (void)
 #endif
 
 	// see if this guy is already connected
+RestartDuplicateScan:
 	for (s = net_activeSockets; s; s = s->next)
 	{
 		if (s->driver != net_driverlevel)
@@ -1680,6 +1751,13 @@ static qsocket_t *_Datagram_CheckNewConnections (void)
 		{
 			if (ret > 0)
 			{
+				if (singleSocket && s->isvirtual &&
+					Datagram_SocketIsStaleSameIpCandidate(s))
+				{
+					Datagram_CloseClientSocket(s, "same-IP different-port connect",
+						&clientaddr);
+					goto RestartDuplicateScan;
+				}
 				if (net_lagdebug.value)
 				{
 					Con_Printf("net_lagdebug: allowing same-IP client on a different port\n");

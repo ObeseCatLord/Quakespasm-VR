@@ -40,7 +40,7 @@ DEBUG ?= 0
 
 CC = x86_64-w64-mingw32-gcc
 CXX = x86_64-w64-mingw32-g++
-LINKER = $(CXX)
+LINKER = x86_64-w64-mingw32-g++
 WINDRES = x86_64-w64-mingw32-windres
 
 STRIP = x86_64-w64-mingw32-strip
