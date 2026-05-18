@@ -97,6 +97,7 @@ void SV_Init (void)
 	extern	cvar_t	sv_aim;
 	extern	cvar_t	sv_altnoclip; //johnfitz
 	extern	cvar_t	sv_gameplayfix_elevators;
+	extern	cvar_t	sv_inputtimeout;
 
 	sv.edicts = NULL; // ericw -- sv.edicts switched to use malloc()
 
@@ -116,6 +117,7 @@ void SV_Init (void)
 	Cvar_RegisterVariable (&sv_freezenonclients);
 	Cvar_RegisterVariable (&sv_altnoclip); //johnfitz
 	Cvar_RegisterVariable (&sv_gameplayfix_elevators);
+	Cvar_RegisterVariable (&sv_inputtimeout);
 	Cvar_RegisterVariable (&sv_maxpacketsize); // increased for AD
 	Cvar_RegisterVariable (&sv_netsort); // ironwail-style entity priority sorting
 	Cvar_RegisterVariable (&vr_movement_instant_stop);

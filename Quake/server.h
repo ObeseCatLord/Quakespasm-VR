@@ -102,6 +102,8 @@ typedef struct client_s {
 
   usercmd_t cmd;  // movement
   vec3_t wishdir; // intended motion calced from cmd
+  double last_move_time;
+  qboolean input_stale;
 
   sizebuf_t message; // can be added to at any time,
                      // copied and clear once per frame
