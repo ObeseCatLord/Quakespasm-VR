@@ -1129,8 +1129,9 @@ qboolean SV_SendClientDatagram (client_t *client)
 	int		max_packet_bytes;
 	int		last_packet_bytes;
 	int		client_index;
-	double		send_gap;
+	double		update_gap;
 	static double	last_gap_log[MAX_SCOREBOARD];
+	static double	last_update_sent[MAX_SCOREBOARD];
 	static double	last_update_log[MAX_SCOREBOARD];
 
 	msg.data = buf;
@@ -1154,17 +1155,19 @@ qboolean SV_SendClientDatagram (client_t *client)
 	if (client_index < 0 || client_index >= MAX_SCOREBOARD)
 		client_index = -1;
 
-	if (net_lagdebug.value && client->last_message > 0)
+	if (client_index >= 0 && last_update_sent[client_index] < NET_QSocketGetTime(client->netconnection))
+		last_update_sent[client_index] = 0;
+
+	if (net_lagdebug.value && client_index >= 0 && last_update_sent[client_index] > 0)
 	{
-		send_gap = realtime - client->last_message;
-		if (send_gap > net_lagdebug_frame_threshold.value &&
-			(client_index < 0 || realtime - last_gap_log[client_index] > 0.5))
+		update_gap = realtime - last_update_sent[client_index];
+		if (update_gap > net_lagdebug_frame_threshold.value &&
+			realtime - last_gap_log[client_index] > 0.5)
 		{
-			Con_Printf ("net_lagdebug: server update gap to %s (%s): %.3f sec host_dt=%.3f sv_time=%.3f\n",
+			Con_Printf ("net_lagdebug: server unreliable update gap to %s (%s): %.3f sec host_dt=%.3f sv_time=%.3f\n",
 				client->name, NET_QSocketGetAddressString(client->netconnection),
-				send_gap, host_frametime, sv.time);
-			if (client_index >= 0)
-				last_gap_log[client_index] = realtime;
+				update_gap, host_frametime, sv.time);
+			last_gap_log[client_index] = realtime;
 		}
 	}
 
@@ -1252,6 +1255,9 @@ qboolean SV_SendClientDatagram (client_t *client)
 		if (client_index >= 0)
 			last_update_log[client_index] = realtime;
 	}
+
+	if (client_index >= 0)
+		last_update_sent[client_index] = realtime;
 
 	return true;
 }
