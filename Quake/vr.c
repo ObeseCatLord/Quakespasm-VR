@@ -546,11 +546,18 @@ cvar_t vr_weapon_offset[MAX_WEAPONS * VARS_PER_WEAPON];
 
 aliashdr_t *lastWeaponHeader = NULL;
 int weaponCVarEntry = -1;
+static char vr_current_weapon_model[MAX_QPATH];
+static qboolean vr_weapons_edit_active = false;
+
+#define VR_WEAPON_OFFSETS_FILE "vrweapons.txt"
+#define VR_WEAPONS_MOVE_STEP 1.0f
+#define VR_WEAPONS_SCALE_STEP 0.01f
 
 void Mod_Weapon(const char *name, aliashdr_t *hdr) {
   if (lastWeaponHeader != hdr) {
     lastWeaponHeader = hdr;
     weaponCVarEntry = -1;
+    q_strlcpy(vr_current_weapon_model, name, sizeof(vr_current_weapon_model));
     for (int i = 0; i < MAX_WEAPONS; i++) {
       if (!strcmp(vr_weapon_offset[i * VARS_PER_WEAPON + 4].string, name)) {
         weaponCVarEntry = i;
@@ -621,6 +628,434 @@ void InitWeaponCVars(int i, const char *id, const char *offsetX,
   InitWeaponCVar(&vr_weapon_offset[i * VARS_PER_WEAPON + 3], nameScale, i,
                  scale);
   InitWeaponCVar(&vr_weapon_offset[i * VARS_PER_WEAPON + 4], nameID, i, id);
+}
+
+static qboolean VR_WeaponOffsetSlotValid(int i) {
+  const char *id;
+
+  if (i < 0 || i >= MAX_WEAPONS)
+    return false;
+
+  id = vr_weapon_offset[i * VARS_PER_WEAPON + 4].string;
+  return id && id[0] && Q_strcmp(id, "-1");
+}
+
+static int VR_FindWeaponOffsetEntry(const char *model) {
+  if (!model || !model[0])
+    return -1;
+
+  for (int i = 0; i < MAX_WEAPONS; i++) {
+    if (VR_WeaponOffsetSlotValid(i) &&
+        !Q_strcmp(vr_weapon_offset[i * VARS_PER_WEAPON + 4].string, model))
+      return i;
+  }
+
+  return -1;
+}
+
+static int VR_FindFreeWeaponOffsetEntry(void) {
+  const char *id;
+
+  for (int i = 0; i < MAX_WEAPONS; i++) {
+    id = vr_weapon_offset[i * VARS_PER_WEAPON + 4].string;
+    if (!id || !id[0] || !Q_strcmp(id, "-1"))
+      return i;
+  }
+
+  return -1;
+}
+
+static void VR_SetWeaponOffsetEntry(int i, const char *model, float x, float y,
+                                    float z, float scale) {
+  if (i < 0 || i >= MAX_WEAPONS)
+    return;
+
+  Cvar_SetValueQuick(&vr_weapon_offset[i * VARS_PER_WEAPON], x);
+  Cvar_SetValueQuick(&vr_weapon_offset[i * VARS_PER_WEAPON + 1], y);
+  Cvar_SetValueQuick(&vr_weapon_offset[i * VARS_PER_WEAPON + 2], z);
+  Cvar_SetValueQuick(&vr_weapon_offset[i * VARS_PER_WEAPON + 3],
+                     q_max(0.01f, scale));
+  Cvar_SetQuick(&vr_weapon_offset[i * VARS_PER_WEAPON + 4], model);
+}
+
+static qboolean VR_AppendText(char *buf, size_t size, size_t *len,
+                              const char *format, ...) {
+  int ret;
+  va_list argptr;
+
+  if (*len >= size)
+    return false;
+
+  va_start(argptr, format);
+  ret = q_vsnprintf(buf + *len, size - *len, format, argptr);
+  va_end(argptr);
+
+  if (ret < 0 || (size_t)ret >= size - *len) {
+    buf[size - 1] = '\0';
+    *len = size - 1;
+    return false;
+  }
+
+  *len += ret;
+  return true;
+}
+
+static qboolean VR_SaveWeaponOffsetFile(qboolean quiet) {
+  char buf[32768];
+  size_t len = 0;
+  int count = 0;
+
+  buf[0] = '\0';
+
+  for (int i = 0; i < MAX_WEAPONS; i++) {
+    const char *model;
+
+    if (!VR_WeaponOffsetSlotValid(i))
+      continue;
+
+    model = vr_weapon_offset[i * VARS_PER_WEAPON + 4].string;
+    if (!VR_AppendText(buf, sizeof(buf), &len,
+                       "{\n"
+                       "model %s\n"
+                       "offset %.6g %.6g %.6g\n"
+                       "scale %.6g\n"
+                       "}\n",
+                       model,
+                       vr_weapon_offset[i * VARS_PER_WEAPON].value,
+                       vr_weapon_offset[i * VARS_PER_WEAPON + 1].value,
+                       vr_weapon_offset[i * VARS_PER_WEAPON + 2].value,
+                       vr_weapon_offset[i * VARS_PER_WEAPON + 3].value)) {
+      Con_Printf("VR: %s is too large to write.\n", VR_WEAPON_OFFSETS_FILE);
+      return false;
+    }
+    count++;
+  }
+
+  COM_WriteFile(VR_WEAPON_OFFSETS_FILE, buf, (int)len);
+
+  if (!quiet)
+    Con_Printf("VR: wrote %d weapon offsets to %s/%s\n", count, com_gamedir,
+               VR_WEAPON_OFFSETS_FILE);
+
+  return true;
+}
+
+static int VR_LoadWeaponOffsetFile(void) {
+  char *data;
+  char *start;
+  char key[64];
+  char path[MAX_OSPATH];
+  int handle;
+  int len;
+  int read;
+  int loaded = 0;
+
+  q_snprintf(path, sizeof(path), "%s/%s", com_gamedir,
+             VR_WEAPON_OFFSETS_FILE);
+  len = Sys_FileOpenRead(path, &handle);
+  if (len < 0)
+    return 0;
+
+  data = (char *)Z_Malloc(len + 1);
+  data[len] = '\0';
+  read = Sys_FileRead(handle, data, len);
+  Sys_FileClose(handle);
+  if (read != len) {
+    Z_Free(data);
+    Con_Printf("VR: failed reading %s\n", path);
+    return 0;
+  }
+
+  start = data;
+  while (1) {
+    start = (char *)COM_Parse(start);
+    if (!start || !com_token[0])
+      break;
+
+    if (!Q_strcmp(com_token, "{")) {
+      char model[MAX_QPATH];
+      qboolean have_x = false, have_y = false, have_z = false;
+      qboolean have_scale = false;
+      float x = 0.0f, y = 0.0f, z = 0.0f, scale = 1.0f;
+
+      model[0] = '\0';
+
+      while (1) {
+        start = (char *)COM_Parse(start);
+        if (!start || !com_token[0] || !Q_strcmp(com_token, "}"))
+          break;
+
+        q_strlcpy(key, com_token, sizeof(key));
+        start = (char *)COM_Parse(start);
+        if (!start || !com_token[0])
+          break;
+
+        if (!Q_strcmp(key, "model") || !Q_strcmp(key, "id")) {
+          q_strlcpy(model, com_token, sizeof(model));
+        } else if (!Q_strcmp(key, "offset")) {
+          x = Q_atof(com_token);
+          have_x = true;
+          start = (char *)COM_Parse(start);
+          if (!start || !com_token[0])
+            break;
+          y = Q_atof(com_token);
+          have_y = true;
+          start = (char *)COM_Parse(start);
+          if (!start || !com_token[0])
+            break;
+          z = Q_atof(com_token);
+          have_z = true;
+        } else if (!Q_strcmp(key, "x")) {
+          x = Q_atof(com_token);
+          have_x = true;
+        } else if (!Q_strcmp(key, "y")) {
+          y = Q_atof(com_token);
+          have_y = true;
+        } else if (!Q_strcmp(key, "z")) {
+          z = Q_atof(com_token);
+          have_z = true;
+        } else if (!Q_strcmp(key, "scale")) {
+          scale = Q_atof(com_token);
+          have_scale = true;
+        }
+      }
+
+      if (model[0]) {
+        int entry = VR_FindWeaponOffsetEntry(model);
+        qboolean existing = (entry >= 0);
+
+        if (entry < 0)
+          entry = VR_FindFreeWeaponOffsetEntry();
+
+        if (entry < 0) {
+          Con_Printf("VR: no free weapon-offset slot for %s\n", model);
+          continue;
+        }
+
+        if (existing) {
+          if (!have_x)
+            x = vr_weapon_offset[entry * VARS_PER_WEAPON].value;
+          if (!have_y)
+            y = vr_weapon_offset[entry * VARS_PER_WEAPON + 1].value;
+          if (!have_z)
+            z = vr_weapon_offset[entry * VARS_PER_WEAPON + 2].value;
+          if (!have_scale)
+            scale = vr_weapon_offset[entry * VARS_PER_WEAPON + 3].value;
+        }
+
+        VR_SetWeaponOffsetEntry(entry, model, x, y, z, scale);
+        loaded++;
+      }
+    }
+  }
+
+  Z_Free(data);
+
+  if (loaded > 0) {
+    lastWeaponHeader = NULL;
+    weaponCVarEntry = -1;
+    Con_Printf("VR: loaded %d hand weapon offsets from %s\n", loaded,
+               VR_WEAPON_OFFSETS_FILE);
+  }
+
+  return loaded;
+}
+
+static qboolean VR_GetEditableWeaponEntry(int *entry) {
+  int i;
+
+  if (weaponCVarEntry >= 0 && VR_WeaponOffsetSlotValid(weaponCVarEntry)) {
+    *entry = weaponCVarEntry;
+    return true;
+  }
+
+  i = VR_FindWeaponOffsetEntry(vr_current_weapon_model);
+  if (i >= 0) {
+    weaponCVarEntry = i;
+    *entry = i;
+    return true;
+  }
+
+  if (!vr_current_weapon_model[0]) {
+    Con_Printf("VR: no active weapon model to edit yet.\n");
+    return false;
+  }
+
+  i = VR_FindFreeWeaponOffsetEntry();
+  if (i < 0) {
+    Con_Printf("VR: no free weapon-offset slots left for %s\n",
+               vr_current_weapon_model);
+    return false;
+  }
+
+  VR_SetWeaponOffsetEntry(i, vr_current_weapon_model, 0.0f, 0.0f, 0.0f, 1.0f);
+  weaponCVarEntry = i;
+  *entry = i;
+  Con_Printf("VR: added hand weapon offset entry for %s\n",
+             vr_current_weapon_model);
+  return true;
+}
+
+static void VR_PrintWeaponEditStatus(void) {
+  int entry;
+
+  if (!VR_GetEditableWeaponEntry(&entry))
+    return;
+
+  Con_Printf("VR weapons: %s  x %.2f  y %.2f  z %.2f  scale %.3f\n",
+             vr_weapon_offset[entry * VARS_PER_WEAPON + 4].string,
+             vr_weapon_offset[entry * VARS_PER_WEAPON].value,
+             vr_weapon_offset[entry * VARS_PER_WEAPON + 1].value,
+             vr_weapon_offset[entry * VARS_PER_WEAPON + 2].value,
+             vr_weapon_offset[entry * VARS_PER_WEAPON + 3].value);
+}
+
+static void VR_AdjustCurrentWeaponOffset(int field, float delta) {
+  int entry;
+  cvar_t *var;
+
+  if (!VR_GetEditableWeaponEntry(&entry))
+    return;
+
+  var = &vr_weapon_offset[entry * VARS_PER_WEAPON + field];
+  Cvar_SetValueQuick(var, var->value + delta);
+  VR_SaveWeaponOffsetFile(true);
+  VR_PrintWeaponEditStatus();
+}
+
+static void VR_AdjustAllWeaponScales(float delta) {
+  int changed = 0;
+
+  for (int i = 0; i < MAX_WEAPONS; i++) {
+    cvar_t *scale;
+
+    if (!VR_WeaponOffsetSlotValid(i))
+      continue;
+
+    scale = &vr_weapon_offset[i * VARS_PER_WEAPON + 3];
+    Cvar_SetValueQuick(scale, q_max(0.01f, scale->value + delta));
+    changed++;
+  }
+
+  if (changed > 0)
+    VR_SaveWeaponOffsetFile(true);
+
+  VR_PrintWeaponEditStatus();
+}
+
+static void VR_Weapons_f(void) {
+  const char *arg;
+
+  if (Cmd_Argc() > 1) {
+    arg = Cmd_Argv(1);
+
+    if (!q_strcasecmp(arg, "save")) {
+      VR_SaveWeaponOffsetFile(false);
+      return;
+    }
+    if (!q_strcasecmp(arg, "reload")) {
+      VR_LoadWeaponOffsetFile();
+      return;
+    }
+    if (!q_strcasecmp(arg, "status")) {
+      VR_PrintWeaponEditStatus();
+      return;
+    }
+    if (!q_strcasecmp(arg, "off")) {
+      vr_weapons_edit_active = false;
+      VR_SaveWeaponOffsetFile(false);
+      Con_Printf("VR weapons edit mode off.\n");
+      return;
+    }
+    if (!q_strcasecmp(arg, "on")) {
+      vr_weapons_edit_active = true;
+    }
+  } else {
+    vr_weapons_edit_active = !vr_weapons_edit_active;
+  }
+
+  if (!vr_weapons_edit_active) {
+    VR_SaveWeaponOffsetFile(false);
+    Con_Printf("VR weapons edit mode off.\n");
+    return;
+  }
+
+  if (cls.state == ca_connected) {
+    IN_Activate();
+    key_dest = key_game;
+  }
+
+  Con_Printf("VR weapons edit mode on. Arrows move hand X/Y, PGUP/PGDN move Z, KP +/- scales all, ESC exits.\n");
+  VR_PrintWeaponEditStatus();
+}
+
+qboolean VR_WeaponsKey(int key, qboolean down) {
+  if (!vr_weapons_edit_active)
+    return false;
+
+  switch (key) {
+  case K_ESCAPE:
+  case K_LEFTARROW:
+  case K_RIGHTARROW:
+  case K_UPARROW:
+  case K_DOWNARROW:
+  case K_KP_LEFTARROW:
+  case K_KP_RIGHTARROW:
+  case K_KP_UPARROW:
+  case K_KP_DOWNARROW:
+  case K_PGUP:
+  case K_PGDN:
+  case K_KP_PGUP:
+  case K_KP_PGDN:
+  case K_KP_PLUS:
+  case K_KP_MINUS:
+    break;
+  default:
+    return false;
+  }
+
+  if (!down)
+    return true;
+
+  switch (key) {
+  case K_ESCAPE:
+    vr_weapons_edit_active = false;
+    VR_SaveWeaponOffsetFile(false);
+    Con_Printf("VR weapons edit mode off.\n");
+    break;
+  case K_LEFTARROW:
+  case K_KP_LEFTARROW:
+    VR_AdjustCurrentWeaponOffset(0, -VR_WEAPONS_MOVE_STEP);
+    break;
+  case K_RIGHTARROW:
+  case K_KP_RIGHTARROW:
+    VR_AdjustCurrentWeaponOffset(0, VR_WEAPONS_MOVE_STEP);
+    break;
+  case K_UPARROW:
+  case K_KP_UPARROW:
+    VR_AdjustCurrentWeaponOffset(1, VR_WEAPONS_MOVE_STEP);
+    break;
+  case K_DOWNARROW:
+  case K_KP_DOWNARROW:
+    VR_AdjustCurrentWeaponOffset(1, -VR_WEAPONS_MOVE_STEP);
+    break;
+  case K_PGUP:
+  case K_KP_PGUP:
+    VR_AdjustCurrentWeaponOffset(2, VR_WEAPONS_MOVE_STEP);
+    break;
+  case K_PGDN:
+  case K_KP_PGDN:
+    VR_AdjustCurrentWeaponOffset(2, -VR_WEAPONS_MOVE_STEP);
+    break;
+  case K_KP_PLUS:
+    VR_AdjustAllWeaponScales(VR_WEAPONS_SCALE_STEP);
+    break;
+  case K_KP_MINUS:
+    VR_AdjustAllWeaponScales(-VR_WEAPONS_SCALE_STEP);
+    break;
+  }
+
+  return true;
 }
 
 void InitAllWeaponCVars() {
@@ -973,6 +1408,8 @@ void InitAllWeaponCVars() {
   while (i < MAX_WEAPONS) {
     InitWeaponCVars(i++, "-1", "1.5", "1", "10", "0.5");
   }
+
+  VR_LoadWeaponOffsetFile();
 }
 
 // ----------------------------------------------------------------------------
@@ -1021,6 +1458,7 @@ void VID_VR_Init() {
   Cvar_SetCallback(&vr_deadzone, VR_Deadzone_f);
 
   InitAllWeaponCVars();
+  Cmd_AddCommand("vrweapons", VR_Weapons_f);
 
   // Sickness stuff
   Cvar_RegisterVariable(&vr_viewkick);
@@ -1104,6 +1542,8 @@ void VR_LoadWeaponSchema(void) {
   for (int i = 0; i < num_vr_weapons; i++) {
     Mod_ForName(vr_weapons[i].model_path, false);
   }
+
+  Z_Free(data);
 }
 
 // Per-game extra Z compensation applied on top of vr_projectilespawn_z_offset.

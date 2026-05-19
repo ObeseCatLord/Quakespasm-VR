@@ -23,6 +23,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 
 #include "arch_def.h"
 #include "quakedef.h"
+#include "vr.h"
 
 
 /* key up events are sent even if in console mode */
@@ -911,6 +912,9 @@ void Key_EventWithKeycode(int key, qboolean down, int keycode) {
     VID_Toggle();
     return;
   }
+
+  if (VR_WeaponsKey(key, down))
+    return;
 
   // handle autorepeats and stray key up events
   if (down) {
