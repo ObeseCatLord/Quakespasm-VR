@@ -83,6 +83,84 @@ static qboolean SV_ShouldSkipCoopPlayerClip (moveclip_t *clip, edict_t *touch)
 		&& SV_IsActiveClientEdict(touch);
 }
 
+static qboolean SV_EdictStringFieldSet (edict_t *ent, const char *fieldname)
+{
+	eval_t	*val;
+
+	val = GetEdictFieldValue(ent, fieldname);
+	return val && val->string && PR_GetString(val->string)[0];
+}
+
+static qboolean SV_CoopWeaponHasTargets (edict_t *weapon)
+{
+	return SV_EdictStringFieldSet(weapon, "target")
+		|| SV_EdictStringFieldSet(weapon, "killtarget")
+		|| SV_EdictStringFieldSet(weapon, "target2")
+		|| SV_EdictStringFieldSet(weapon, "target3")
+		|| SV_EdictStringFieldSet(weapon, "target4");
+}
+
+static qboolean SV_IsCoopWeaponTargetFixCandidate (edict_t *weapon, edict_t *player)
+{
+	const char	*classname;
+
+	if (!sv_coop_weapon_targetfix.value || !coop.value)
+		return false;
+	if (!SV_IsActiveClientEdict(player))
+		return false;
+	if (!weapon || weapon->free || weapon->v.solid != SOLID_TRIGGER)
+		return false;
+
+	classname = PR_GetString(weapon->v.classname);
+	if (q_strncasecmp(classname, "weapon_", 7))
+		return false;
+
+	return SV_CoopWeaponHasTargets(weapon);
+}
+
+static void SV_ClearEdictStringField (edict_t *ent, const char *fieldname)
+{
+	eval_t	*val;
+
+	val = GetEdictFieldValue(ent, fieldname);
+	if (val)
+		val->string = 0;
+}
+
+static void SV_ClearCoopWeaponTargets (edict_t *weapon)
+{
+	SV_ClearEdictStringField(weapon, "target");
+	SV_ClearEdictStringField(weapon, "killtarget");
+	SV_ClearEdictStringField(weapon, "target2");
+	SV_ClearEdictStringField(weapon, "target3");
+	SV_ClearEdictStringField(weapon, "target4");
+}
+
+static void SV_FireCoopWeaponTargets (edict_t *weapon, edict_t *player)
+{
+	ddef_t		*activator_def;
+	dfunction_t	*use_targets;
+
+	if (!SV_CoopWeaponHasTargets(weapon))
+		return;
+
+	activator_def = ED_FindGlobal("activator");
+	use_targets = ED_FindFunction("SUB_UseTargets");
+	if (!activator_def || !use_targets || ((activator_def->type & ~DEF_SAVEGLOBAL) != ev_entity))
+		return;
+
+	Con_DPrintf("sv_coop_weapon_targetfix: firing targets for %s\n", PR_GetString(weapon->v.classname));
+
+	pr_global_struct->self = EDICT_TO_PROG(weapon);
+	pr_global_struct->other = EDICT_TO_PROG(player);
+	pr_global_struct->time = sv.time;
+	G_INT(activator_def->ofs) = EDICT_TO_PROG(player);
+	PR_ExecuteProgram ((func_t)(use_targets - pr_functions));
+
+	if (!weapon->free)
+		SV_ClearCoopWeaponTargets(weapon);
+}
+
 
 int SV_HullPointContents (hull_t *hull, int num, vec3_t p);
 
@@ -378,6 +456,7 @@ void SV_TouchLinks (edict_t *ent)
 	int		old_self, old_other;
 	int		i, listcount;
 	int		mark;
+	qboolean	coop_weapon_targetfix;
 	
 	mark = Hunk_LowMark ();
 	list = (edict_t **) Hunk_Alloc (sv.num_edicts*sizeof(edict_t *));
@@ -403,11 +482,15 @@ void SV_TouchLinks (edict_t *ent)
 			continue;
 		old_self = pr_global_struct->self;
 		old_other = pr_global_struct->other;
+		coop_weapon_targetfix = SV_IsCoopWeaponTargetFixCandidate(touch, ent);
 
 		pr_global_struct->self = EDICT_TO_PROG(touch);
 		pr_global_struct->other = EDICT_TO_PROG(ent);
 		pr_global_struct->time = sv.time;
 		PR_ExecuteProgram (touch->v.touch);
+
+		if (coop_weapon_targetfix && !touch->free && touch->v.solid == SOLID_TRIGGER)
+			SV_FireCoopWeaponTargets(touch, ent);
 
 		pr_global_struct->self = old_self;
 		pr_global_struct->other = old_other;

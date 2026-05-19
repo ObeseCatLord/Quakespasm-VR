@@ -40,6 +40,7 @@ cvar_t sv_maxpacketsize = {"sv_maxpacketsize", "1400", CVAR_NONE}; // 1400 = sin
 // orientation first, so when packets get clipped it's distant or behind-camera
 // entities that drop, not your weapon hand or the player next to you.
 cvar_t sv_netsort = {"sv_netsort", "1", CVAR_NONE};
+cvar_t sv_coop_weapon_targetfix = {"sv_coop_weapon_targetfix", "1", CVAR_NONE};
 
 //============================================================================
 
@@ -120,6 +121,7 @@ void SV_Init (void)
 	Cvar_RegisterVariable (&sv_inputtimeout);
 	Cvar_RegisterVariable (&sv_maxpacketsize); // increased for AD
 	Cvar_RegisterVariable (&sv_netsort); // ironwail-style entity priority sorting
+	Cvar_RegisterVariable (&sv_coop_weapon_targetfix);
 	Cvar_RegisterVariable (&vr_movement_instant_stop);
 
 	Cmd_AddCommand ("sv_protocol", &SV_Protocol_f); //johnfitz
@@ -1135,6 +1137,7 @@ qboolean SV_SendClientDatagram (client_t *client)
 	static double	last_gap_log[MAX_SCOREBOARD];
 	static double	last_update_sent[MAX_SCOREBOARD];
 	static double	last_update_log[MAX_SCOREBOARD];
+	static struct qsocket_s	*last_update_socket[MAX_SCOREBOARD];
 
 	msg.data = buf;
 	maxsize = sizeof(buf);
@@ -1157,8 +1160,13 @@ qboolean SV_SendClientDatagram (client_t *client)
 	if (client_index < 0 || client_index >= MAX_SCOREBOARD)
 		client_index = -1;
 
-	if (client_index >= 0 && last_update_sent[client_index] < NET_QSocketGetTime(client->netconnection))
+	if (client_index >= 0 && last_update_socket[client_index] != client->netconnection)
+	{
+		last_update_socket[client_index] = client->netconnection;
 		last_update_sent[client_index] = 0;
+		last_update_log[client_index] = 0;
+		last_gap_log[client_index] = 0;
+	}
 
 	if (net_lagdebug.value && client_index >= 0 && last_update_sent[client_index] > 0)
 	{
