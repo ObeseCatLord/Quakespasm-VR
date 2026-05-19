@@ -2302,6 +2302,7 @@ static void COM_Game_f (void)
 		VID_Lock ();
 		Cbuf_AddText ("exec quake.rc\n");
 		Cbuf_AddText ("vid_unlock\n");
+		Cmd_QueuePostConfigAfterGameChange ();
 
 		if (vr_enabled.value)
 		{

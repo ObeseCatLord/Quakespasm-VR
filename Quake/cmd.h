@@ -57,6 +57,9 @@ void Cbuf_Execute (void);
 // Normally called once per frame, but may be explicitly invoked.
 // Do not call inside a command function!
 
+void Cmd_QueuePostConfig (void);
+void Cmd_QueuePostConfigAfterGameChange (void);
+
 //===========================================================================
 
 /*
@@ -124,4 +127,3 @@ void	Cmd_Print (const char *text);
 // passed as a print message to the client
 
 #endif	/* _QUAKE_CMD_H */
-

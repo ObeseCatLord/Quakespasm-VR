@@ -40,6 +40,11 @@ cmdalias_t *cmd_alias;
 
 qboolean cmd_wait;
 
+static int cmd_postcfg_generation;
+static int cmd_postcfg_executed_generation = -1;
+
+static void Cmd_InsertPostConfigFiles(void);
+
 //=============================================================================
 
 /*
@@ -264,6 +269,119 @@ void Cmd_Exec_f(void) {
   if (f != default_cfg) {
     Hunk_FreeToLowMark(mark);
   }
+}
+
+static qboolean Cmd_IsAbsoluteOSPath(const char *path) {
+  return path[0] == '/' || path[0] == '\\' ||
+         (path[0] && path[1] == ':');
+}
+
+static const char *Cmd_LoadPostConfig(const char *filename, int *mark,
+                                      qboolean *malloced) {
+  char os_path[MAX_OSPATH];
+  const char *f;
+
+  *mark = Hunk_LowMark();
+  *malloced = false;
+
+  if (Cmd_IsAbsoluteOSPath(filename))
+    f = (const char *)COM_LoadMallocFile_TextMode_OSPath(filename, NULL);
+  else {
+    q_snprintf(os_path, sizeof(os_path), "%s/%s", com_basedir, filename);
+    f = (const char *)COM_LoadMallocFile_TextMode_OSPath(os_path, NULL);
+  }
+
+  if (f) {
+    *malloced = true;
+    return f;
+  }
+
+  if (Cmd_IsAbsoluteOSPath(filename)) {
+    Hunk_FreeToLowMark(*mark);
+    return NULL;
+  }
+
+  f = (const char *)COM_LoadHunkFile(filename, NULL);
+  if (!f)
+    Hunk_FreeToLowMark(*mark);
+
+  return f;
+}
+
+static void Cmd_InsertPostConfig(const char *filename) {
+  const char *f;
+  int mark;
+  qboolean malloced;
+
+  f = Cmd_LoadPostConfig(filename, &mark, &malloced);
+  if (!f) {
+    Con_Printf("couldn't exec postcfg %s\n", filename);
+    return;
+  }
+
+  Con_Printf("execing postcfg %s\n", filename);
+  Cbuf_InsertText(f);
+
+  if (malloced)
+    free((void *)f);
+  else
+    Hunk_FreeToLowMark(mark);
+}
+
+static void Cmd_ExecPostConfig_f(void) {
+  int generation;
+
+  if (Cmd_Argc() != 2)
+    return;
+
+  generation = Q_atoi(Cmd_Argv(1));
+  if (generation != cmd_postcfg_generation ||
+      generation == cmd_postcfg_executed_generation)
+    return;
+
+  cmd_postcfg_executed_generation = generation;
+  Cmd_InsertPostConfigFiles();
+}
+
+static void Cmd_InsertPostConfigFiles(void) {
+  const char *filenames[MAX_NUM_ARGVS];
+  int i, count;
+
+  count = 0;
+  for (i = 1; i < com_argc; i++) {
+    if (!com_argv[i] || Q_strcmp(com_argv[i], "-postcfg"))
+      continue;
+
+    if (i + 1 >= com_argc || !com_argv[i + 1] ||
+        com_argv[i + 1][0] == '-' || com_argv[i + 1][0] == '+') {
+      Con_Printf("-postcfg requires a cfg filename\n");
+      continue;
+    }
+
+    i++;
+    filenames[count++] = com_argv[i];
+  }
+
+  while (count > 0)
+    Cmd_InsertPostConfig(filenames[--count]);
+}
+
+static void Cmd_QueuePostConfigCommand(qboolean supersede_pending) {
+  if (!COM_CheckParm("-postcfg"))
+    return;
+
+  if (supersede_pending)
+    cmd_postcfg_generation++;
+
+  Cbuf_AddText(va("exec_postcfg %d\n", cmd_postcfg_generation));
+}
+
+void Cmd_QueuePostConfig(void) {
+  Cmd_QueuePostConfigCommand(false);
+}
+
+void Cmd_QueuePostConfigAfterGameChange(void) {
+  Cmd_QueuePostConfigCommand(true);
 }
 
 /*
@@ -530,6 +648,7 @@ void Cmd_Init(void) {
 
   Cmd_AddCommand("stuffcmds", Cmd_StuffCmds_f);
   Cmd_AddCommand("exec", Cmd_Exec_f);
+  Cmd_AddCommand("exec_postcfg", Cmd_ExecPostConfig_f);
   Cmd_AddCommand("echo", Cmd_Echo_f);
   Cmd_AddCommand("alias", Cmd_Alias_f);
   Cmd_AddCommand("cmd", Cmd_ForwardToServer);
