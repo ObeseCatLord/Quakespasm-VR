@@ -100,6 +100,22 @@ static qboolean SV_CoopWeaponHasTargets (edict_t *weapon)
 		|| SV_EdictStringFieldSet(weapon, "target4");
 }
 
+static qboolean SV_IsDirectWeaponTouch (func_t touchfunc)
+{
+	static dprograms_t	*cached_progs;
+	static func_t		weapon_touch;
+	dfunction_t			*func;
+
+	if (cached_progs != progs)
+	{
+		cached_progs = progs;
+		func = ED_FindFunction("weapon_touch");
+		weapon_touch = func ? (func_t)(func - pr_functions) : 0;
+	}
+
+	return weapon_touch && touchfunc == weapon_touch;
+}
+
 static qboolean SV_IsCoopWeaponTargetFixCandidate (edict_t *weapon, edict_t *player)
 {
 	const char	*classname;
@@ -109,6 +125,8 @@ static qboolean SV_IsCoopWeaponTargetFixCandidate (edict_t *weapon, edict_t *pla
 	if (!SV_IsActiveClientEdict(player))
 		return false;
 	if (!weapon || weapon->free || weapon->v.solid != SOLID_TRIGGER)
+		return false;
+	if (!SV_IsDirectWeaponTouch(weapon->v.touch))
 		return false;
 
 	classname = PR_GetString(weapon->v.classname);
