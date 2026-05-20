@@ -81,6 +81,8 @@ cvar_t	deathmatch = {"deathmatch","0",CVAR_NONE};	// 0, 1, or 2
 cvar_t	coop = {"coop","0",CVAR_NONE};			// 0 or 1
 cvar_t	sv_nofriendlyfire = {"sv_nofriendlyfire","1",CVAR_NOTIFY|CVAR_SERVERINFO};
 cvar_t	sv_coop_noplayerclip = {"sv_coop_noplayerclip","1",CVAR_NOTIFY|CVAR_SERVERINFO};
+cvar_t	sv_save_multiplayer = {"sv_save_multiplayer","0",CVAR_NONE};
+cvar_t	sv_cmdfile = {"sv_cmdfile","",CVAR_NONE};
 
 cvar_t	pausable = {"pausable","1",CVAR_NONE};
 
@@ -299,6 +301,8 @@ void Host_InitLocal (void)
 	Cvar_RegisterVariable (&coop);
 	Cvar_RegisterVariable (&sv_nofriendlyfire);
 	Cvar_RegisterVariable (&sv_coop_noplayerclip);
+	Cvar_RegisterVariable (&sv_save_multiplayer);
+	Cvar_RegisterVariable (&sv_cmdfile);
 	Cvar_RegisterVariable (&deathmatch);
 
 	Cvar_RegisterVariable (&campaign);
@@ -636,6 +640,11 @@ Add them exactly as if they had been typed at the console
 void Host_GetConsoleCommands (void)
 {
 	const char	*cmd;
+	FILE		*f;
+	char		name[MAX_OSPATH];
+	char		*text;
+	long		len;
+	size_t		readlen;
 
 	if (!isDedicated)
 		return;	// no stdin necessary in graphical mode
@@ -647,6 +656,59 @@ void Host_GetConsoleCommands (void)
 			break;
 		Cbuf_AddText (cmd);
 	}
+
+	if (!sv_cmdfile.string[0])
+		return;
+
+	if (sv_cmdfile.string[0] == '/' || sv_cmdfile.string[0] == '\\' ||
+		strstr(sv_cmdfile.string, "..") || strchr(sv_cmdfile.string, ':'))
+	{
+		static char bad_cmdfile[MAX_OSPATH];
+
+		if (strcmp(bad_cmdfile, sv_cmdfile.string))
+		{
+			Con_Printf ("sv_cmdfile must be a relative file inside the current game directory\n");
+			q_strlcpy (bad_cmdfile, sv_cmdfile.string, sizeof(bad_cmdfile));
+		}
+		return;
+	}
+
+	q_snprintf (name, sizeof(name), "%s/%s", com_gamedir, sv_cmdfile.string);
+	f = fopen (name, "rb");
+	if (!f)
+		return;
+
+	if (fseek (f, 0, SEEK_END) != 0)
+	{
+		fclose (f);
+		return;
+	}
+	len = ftell (f);
+	if (len <= 0)
+	{
+		fclose (f);
+		remove (name);
+		return;
+	}
+	if (len > 16384)
+	{
+		Con_Printf ("sv_cmdfile: ignoring oversized command file %s\n", name);
+		fclose (f);
+		remove (name);
+		return;
+	}
+	rewind (f);
+
+	text = (char *) Z_Malloc (len + 2);
+	readlen = fread (text, 1, len, f);
+	fclose (f);
+	remove (name);
+
+	text[readlen] = '\n';
+	text[readlen + 1] = 0;
+	Con_Printf ("Executing server command file %s\n", name);
+	Cbuf_AddText (text);
+	Z_Free (text);
 }
 
 /*
@@ -1087,12 +1149,14 @@ void Host_Init (void)
 	// johnfitz -- in case the vid mode was locked during vid_init, we can unlock it now.
 		// note: two leading newlines because the command buffer swallows one of them.
 		Cbuf_AddText ("\n\nvid_unlock\n");
+		Cmd_QueuePostConfig ();
 	}
 
 	if (cls.state == ca_dedicated)
 	{
 		Cbuf_AddText ("exec autoexec.cfg\n");
-		Cbuf_AddText ("stuffcmds");
+		Cbuf_AddText ("stuffcmds\n");
+		Cmd_QueuePostConfig ();
 		Cbuf_Execute ();
 		if (!sv.active)
 			Cbuf_AddText ("map start\n");

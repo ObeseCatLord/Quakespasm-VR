@@ -110,6 +110,8 @@ typedef struct client_s
 
 	usercmd_t		cmd;				// movement
 	vec3_t			wishdir;			// intended motion calced from cmd
+	double			last_move_time;
+	qboolean		input_stale;
 
 	sizebuf_t		message;			// can be added to at any time,
 										// copied and clear once per frame
@@ -208,6 +210,9 @@ extern cvar_t deathmatch;
 extern cvar_t coop;
 extern cvar_t sv_nofriendlyfire;
 extern cvar_t sv_coop_noplayerclip;
+extern cvar_t sv_coop_weapon_targetfix;
+extern cvar_t sv_save_multiplayer;
+extern cvar_t sv_cmdfile;
 extern cvar_t fraglimit;
 extern cvar_t timelimit;
 

@@ -60,6 +60,8 @@ kbutton_t in_up, in_down;
 kbutton_t in_vr_weaponmenu;
 
 int in_impulse;
+static double cl_lagdebug_last_sendmove;
+static double cl_lagdebug_last_sendmove_log;
 
 void KeyDown(kbutton_t *b) {
   int k;
@@ -352,7 +354,8 @@ CL_SendMove
 */
 void CL_SendMove(const usercmd_t *cmd) {
   int i;
-  int bits;
+  int bits = 0;
+  int impulse = 0;
   sizebuf_t buf;
   byte data[1024];
 
@@ -385,8 +388,6 @@ void CL_SendMove(const usercmd_t *cmd) {
     //
     // send button bits
     //
-    bits = 0;
-
     if (!cl.in_vr_weaponmenu) {
       if (in_attack.state & 3)
         bits |= 1;
@@ -399,7 +400,8 @@ void CL_SendMove(const usercmd_t *cmd) {
 
     MSG_WriteByte(&buf, bits);
 
-    MSG_WriteByte(&buf, in_impulse);
+    impulse = in_impulse;
+    MSG_WriteByte(&buf, impulse);
     in_impulse = 0;
 
     // VR Data Sync
@@ -432,8 +434,23 @@ void CL_SendMove(const usercmd_t *cmd) {
   // allways dump the first two message, because it may contain leftover inputs
   // from the last level
   //
-  if (++cl.movemessages <= 2)
+  if (++cl.movemessages <= 2) {
+    cl_lagdebug_last_sendmove = 0;
     return;
+  }
+
+  if (cmd && net_lagdebug.value && cl_lagdebug_last_sendmove > 0) {
+    double gap = realtime - cl_lagdebug_last_sendmove;
+    if (gap > net_lagdebug_threshold.value &&
+        realtime - cl_lagdebug_last_sendmove_log > 0.5) {
+      Con_Printf("net_lagdebug: client sendmove gap %.3f sec host_dt=%.3f move=(%g,%g,%g) buttons=%d impulse=%d state=%d signon=%d lastmsg_age=%.3f\n",
+                 gap, host_frametime, cmd->forwardmove, cmd->sidemove,
+                 cmd->upmove, bits, impulse, cls.state, cls.signon,
+                 realtime - cl.last_received_message);
+      cl_lagdebug_last_sendmove_log = realtime;
+    }
+  }
+  cl_lagdebug_last_sendmove = realtime;
 
   if (NET_SendUnreliableMessage(cls.netcon, &buf) == -1) {
     Con_Printf("CL_SendMove: lost server connection\n");

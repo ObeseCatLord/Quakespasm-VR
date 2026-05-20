@@ -39,6 +39,7 @@ cvar_t sv_maxpacketsize = {"sv_maxpacketsize", "1400", CVAR_NONE}; // 1400 = sin
 // orientation first, so when packets get clipped it's distant or behind-camera
 // entities that drop, not your weapon hand or the player next to you.
 cvar_t sv_netsort = {"sv_netsort", "1", CVAR_NONE};
+cvar_t sv_coop_weapon_targetfix = {"sv_coop_weapon_targetfix", "1", CVAR_NONE};
 
 //============================================================================
 
@@ -163,6 +164,7 @@ void SV_Init (void)
 	extern	cvar_t	sv_altnoclip; //johnfitz
 	extern	cvar_t	sv_gameplayfix_random;
 	extern	cvar_t	sv_gameplayfix_elevators;
+	extern	cvar_t	sv_inputtimeout;
 
 	Cvar_RegisterVariable (&sv_maxvelocity);
 	Cvar_RegisterVariable (&sv_gravity);
@@ -182,7 +184,9 @@ void SV_Init (void)
 	Cvar_RegisterVariable (&sv_altnoclip); //johnfitz
 	Cvar_RegisterVariable (&sv_gameplayfix_elevators);
 	Cvar_RegisterVariable (&sv_gameplayfix_random);
+	Cvar_RegisterVariable (&sv_inputtimeout);
 	Cvar_RegisterVariable (&sv_maxpacketsize);
+	Cvar_RegisterVariable (&sv_coop_weapon_targetfix);
 	Cvar_RegisterVariable (&vr_movement_instant_stop);
 	Cvar_RegisterVariable (&sv_netsort); // ironwail-style entity priority sorting
 
@@ -1201,9 +1205,11 @@ qboolean SV_SendClientDatagram (client_t *client)
 	int		max_packet_bytes;
 	int		last_packet_bytes;
 	int		client_index;
-	double		send_gap;
+	double		update_gap;
 	static double	last_gap_log[MAX_SCOREBOARD];
+	static double	last_update_sent[MAX_SCOREBOARD];
 	static double	last_update_log[MAX_SCOREBOARD];
+	static struct qsocket_s	*last_update_socket[MAX_SCOREBOARD];
 
 	msg.data = buf;
 	maxsize = sizeof(buf);
@@ -1226,17 +1232,24 @@ qboolean SV_SendClientDatagram (client_t *client)
 	if (client_index < 0 || client_index >= MAX_SCOREBOARD)
 		client_index = -1;
 
-	if (net_lagdebug.value && client->last_message > 0)
+	if (client_index >= 0 && last_update_socket[client_index] != client->netconnection)
 	{
-		send_gap = realtime - client->last_message;
-		if (send_gap > net_lagdebug_frame_threshold.value &&
-			(client_index < 0 || realtime - last_gap_log[client_index] > 0.5))
+		last_update_socket[client_index] = client->netconnection;
+		last_update_sent[client_index] = 0;
+		last_update_log[client_index] = 0;
+		last_gap_log[client_index] = 0;
+	}
+
+	if (net_lagdebug.value && client_index >= 0 && last_update_sent[client_index] > 0)
+	{
+		update_gap = realtime - last_update_sent[client_index];
+		if (update_gap > net_lagdebug_frame_threshold.value &&
+			realtime - last_gap_log[client_index] > 0.5)
 		{
-			Con_Printf ("net_lagdebug: server update gap to %s (%s): %.3f sec host_dt=%.3f sv_time=%.3f\n",
+			Con_Printf ("net_lagdebug: server unreliable update gap to %s (%s): %.3f sec host_dt=%.3f sv_time=%.3f\n",
 				client->name, NET_QSocketGetAddressString(client->netconnection),
-				send_gap, host_frametime, qcvm->time);
-			if (client_index >= 0)
-				last_gap_log[client_index] = realtime;
+				update_gap, host_frametime, qcvm->time);
+			last_gap_log[client_index] = realtime;
 		}
 	}
 
@@ -1324,6 +1337,9 @@ qboolean SV_SendClientDatagram (client_t *client)
 		if (client_index >= 0)
 			last_update_log[client_index] = realtime;
 	}
+
+	if (client_index >= 0)
+		last_update_sent[client_index] = realtime;
 
 	return true;
 }

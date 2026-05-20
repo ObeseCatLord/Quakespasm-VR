@@ -43,6 +43,7 @@ usercmd_t cmd;
 
 cvar_t sv_idealpitchscale = {"sv_idealpitchscale", "0.8", CVAR_NONE};
 cvar_t sv_altnoclip = {"sv_altnoclip", "1", CVAR_ARCHIVE}; // johnfitz
+cvar_t sv_inputtimeout = {"sv_inputtimeout", "0.25", CVAR_NONE};
 
 /*
 ===============
@@ -478,6 +479,56 @@ void SV_ReadClientMove(usercmd_t *move) {
   } else {
     host_client->is_vr_client = false; // Stock client — no VR data
   }
+
+  if (!msg_badread) {
+    host_client->last_move_time = realtime;
+    host_client->input_stale = false;
+  }
+}
+
+static qboolean SV_ClientHasInput(const client_t *client) {
+  return client->cmd.forwardmove || client->cmd.sidemove ||
+         client->cmd.upmove || client->edict->v.button0 ||
+         client->edict->v.button2 || client->edict->v.impulse ||
+         client->vr_roomscalemove[0] || client->vr_roomscalemove[1] ||
+         client->vr_roomscalemove[2];
+}
+
+static void SV_ClearStaleClientInput(client_t *client) {
+  double age;
+  double timeout;
+
+  timeout = sv_inputtimeout.value;
+  if (timeout <= 0 || client->last_move_time <= 0)
+    return;
+
+  age = realtime - client->last_move_time;
+  if (age <= timeout) {
+    client->input_stale = false;
+    return;
+  }
+
+  if (!client->input_stale) {
+    if (net_lagdebug.value && SV_ClientHasInput(client)) {
+      Con_Printf("net_lagdebug: clearing stale input for %s (%s) age=%.3f timeout=%.3f move=(%g,%g,%g) buttons=%g/%g impulse=%g vrmove=(%.3f,%.3f,%.3f)\n",
+                 client->name,
+                 NET_QSocketGetAddressString(client->netconnection), age,
+                 timeout, client->cmd.forwardmove, client->cmd.sidemove,
+                 client->cmd.upmove, client->edict->v.button0,
+                 client->edict->v.button2, client->edict->v.impulse,
+                 client->vr_roomscalemove[0], client->vr_roomscalemove[1],
+                 client->vr_roomscalemove[2]);
+    }
+    client->input_stale = true;
+  }
+
+  client->cmd.forwardmove = 0;
+  client->cmd.sidemove = 0;
+  client->cmd.upmove = 0;
+  client->edict->v.button0 = 0;
+  client->edict->v.button2 = 0;
+  client->edict->v.impulse = 0;
+  VectorCopy(vec3_origin, client->vr_roomscalemove);
 }
 
 /*
@@ -660,11 +711,14 @@ void SV_RunClients(void) {
     if (!host_client->spawned) {
       // clear client movement until a new packet is received
       memset(&host_client->cmd, 0, sizeof(host_client->cmd));
+      host_client->input_stale = false;
       continue;
     }
 
     // always pause in single player if in console or menus
-    if (!sv.paused && (svs.maxclients > 1 || key_dest == key_game))
+    if (!sv.paused && (svs.maxclients > 1 || key_dest == key_game)) {
+      SV_ClearStaleClientInput(host_client);
       SV_ClientThink();
+    }
   }
 }

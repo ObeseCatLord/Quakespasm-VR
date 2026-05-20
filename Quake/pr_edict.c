@@ -335,7 +335,7 @@ int ED_FindFieldOffset (const char *name)
 ED_FindGlobal
 ============
 */
-static ddef_t *ED_FindGlobal (const char *name)
+ddef_t *ED_FindGlobal (const char *name)
 {
 	ddef_t		*def;
 	int			i;
@@ -363,7 +363,7 @@ static ddef_t *ED_FindGlobal (const char *name)
 ED_FindFunction
 ============
 */
-static dfunction_t *ED_FindFunction (const char *fn_name)
+dfunction_t *ED_FindFunction (const char *fn_name)
 {
 	dfunction_t		*func;
 	int				i;

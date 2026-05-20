@@ -60,6 +60,8 @@ void Cbuf_Execute (void);
 
 void Cbuf_Waited (void);
 // Clears the wait latch after a host frame has advanced.
+void Cmd_QueuePostConfig (void);
+void Cmd_QueuePostConfigAfterGameChange (void);
 
 //===========================================================================
 

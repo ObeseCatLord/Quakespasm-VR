@@ -956,8 +956,27 @@ static void Host_Savegame_f(void) {
   }
 
   if (svs.maxclients != 1) {
-    Con_Printf("Can't save multiplayer games.\n");
-    return;
+    int active_clients = 0;
+    int active_slot = -1;
+
+    if (!sv_save_multiplayer.value) {
+      Con_Printf("Can't save multiplayer games unless sv_save_multiplayer is 1.\n");
+      return;
+    }
+    if (!coop.value || deathmatch.value) {
+      Con_Printf("Multiplayer saves are only supported for coop games.\n");
+      return;
+    }
+    for (i = 0; i < svs.maxclients; i++) {
+      if (!svs.clients[i].active)
+        continue;
+      active_clients++;
+      active_slot = i;
+    }
+    if (active_clients > 1 || active_slot > 0) {
+      Con_Printf("Multiplayer saves currently support only client slot 0.\n");
+      return;
+    }
   }
 
   if (Cmd_Argc() != 2) {

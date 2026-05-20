@@ -40,7 +40,13 @@ DEBUG ?= 0
 
 CC = x86_64-w64-mingw32-gcc
 CXX = x86_64-w64-mingw32-g++
-LINKER = $(CXX)
+# Use CC (gcc), not g++, as the linker. On DW2-configured MinGW toolchains,
+# g++ always inserts C++ startup code that imports libgcc_s_dw2-1.dll, and
+# -static-libgcc cannot prevent it because DW2 exception infrastructure must
+# live in a shared DLL to work process-wide. gcc as linker skips that startup
+# entirely. The only g++-compiled files (vr.c, vr_menu.c) use -fno-exceptions
+# -fno-rtti and have no libstdc++ dependencies, so the C linker works fine.
+LINKER = $(CC)
 WINDRES = x86_64-w64-mingw32-windres
 
 STRIP = x86_64-w64-mingw32-strip
