@@ -308,6 +308,8 @@ FUNC_NORETURN void PR_RunError (const char *error, ...) FUNC_PRINTF(1,2);
 void ED_PrintEdicts (void);
 void ED_PrintNum (int ent);
 
+ddef_t *ED_FindGlobal (const char *name);
+dfunction_t *ED_FindFunction (const char *fn_name);
 eval_t *GetEdictFieldValue(edict_t *ed, int fldofs);
 eval_t *GetEdictFieldValueByName(edict_t *ed, const char *name);
 
