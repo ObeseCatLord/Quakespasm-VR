@@ -179,6 +179,57 @@ static void SV_FireCoopWeaponTargets (edict_t *weapon, edict_t *player)
 		SV_ClearCoopWeaponTargets(weapon);
 }
 
+// Vanilla-style progs often hide ammo after pickup but only schedule SUB_regen
+// in deathmatch. This opt-in coop fix reuses the mod's own respawn function.
+static qboolean SV_IsAmmoClassname (const char *classname)
+{
+	return !q_strcasecmp(classname, "item_shells")
+		|| !q_strcasecmp(classname, "item_spikes")
+		|| !q_strcasecmp(classname, "item_rockets")
+		|| !q_strcasecmp(classname, "item_cells")
+		|| !q_strcasecmp(classname, "item_lava_spikes")
+		|| !q_strcasecmp(classname, "item_multi_rockets")
+		|| !q_strcasecmp(classname, "item_plasma");
+}
+
+static qboolean SV_IsCoopAmmoRespawnCandidate (edict_t *ammo, edict_t *player)
+{
+	if (!sv_coop_ammo_respawn.value || !coop.value)
+		return false;
+	if (!SV_IsActiveClientEdict(player))
+		return false;
+	if (!ammo || ammo->free || ammo->v.solid != SOLID_TRIGGER)
+		return false;
+	if (!ammo->v.classname)
+		return false;
+
+	return SV_IsAmmoClassname(PR_GetString(ammo->v.classname));
+}
+
+static void SV_ScheduleCoopAmmoRespawn (edict_t *ammo)
+{
+	dfunction_t	*regen_func;
+	float		respawn_time;
+
+	if (!ammo || ammo->free || ammo->v.solid == SOLID_TRIGGER)
+		return;
+
+	regen_func = ED_FindFunction("SUB_regen");
+	if (!regen_func)
+		return;
+
+	respawn_time = sv_coop_ammo_respawn_time.value;
+	if (respawn_time < 1)
+		respawn_time = 1;
+
+	ammo->v.think = (func_t)(regen_func - pr_functions);
+	ammo->v.nextthink = sv.time + respawn_time;
+
+	Con_DPrintf("sv_coop_ammo_respawn: scheduled %s in %.1f seconds\n",
+		ammo->v.classname ? PR_GetString(ammo->v.classname) : "ammo",
+		respawn_time);
+}
+
 
 int SV_HullPointContents (hull_t *hull, int num, vec3_t p);
 
@@ -475,6 +526,7 @@ void SV_TouchLinks (edict_t *ent)
 	int		i, listcount;
 	int		mark;
 	qboolean	coop_weapon_targetfix;
+	qboolean	coop_ammo_respawn;
 	
 	mark = Hunk_LowMark ();
 	list = (edict_t **) Hunk_Alloc (sv.num_edicts*sizeof(edict_t *));
@@ -501,6 +553,7 @@ void SV_TouchLinks (edict_t *ent)
 		old_self = pr_global_struct->self;
 		old_other = pr_global_struct->other;
 		coop_weapon_targetfix = SV_IsCoopWeaponTargetFixCandidate(touch, ent);
+		coop_ammo_respawn = SV_IsCoopAmmoRespawnCandidate(touch, ent);
 
 		pr_global_struct->self = EDICT_TO_PROG(touch);
 		pr_global_struct->other = EDICT_TO_PROG(ent);
@@ -509,6 +562,8 @@ void SV_TouchLinks (edict_t *ent)
 
 		if (coop_weapon_targetfix && !touch->free && touch->v.solid == SOLID_TRIGGER)
 			SV_FireCoopWeaponTargets(touch, ent);
+		if (coop_ammo_respawn)
+			SV_ScheduleCoopAmmoRespawn(touch);
 
 		pr_global_struct->self = old_self;
 		pr_global_struct->other = old_other;

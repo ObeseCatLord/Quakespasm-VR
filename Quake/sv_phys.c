@@ -165,6 +165,301 @@ static void SV_FriendlyFireEnd(void) {
 
 /*
 =============
+Coop revive helpers
+
+Dead clients are SOLID_NOT in the stock and AD QuakeC, so melee traces do not
+reliably hit trace_ent.  During PlayerPostThink, short player-owned traces are
+matched against dead client hulls, then the revive is applied after QuakeC
+weapon code returns so its trace globals are not clobbered.
+=============
+*/
+#define COOP_REVIVE_TRACE_PADDING 16.0f
+#define COOP_REVIVE_TRACE_EPSILON 0.01f
+
+static edict_t *coop_revive_trace_owner = NULL;
+static edict_t *coop_revive_pending_attacker = NULL;
+static edict_t *coop_revive_pending_target = NULL;
+static float coop_revive_pending_fraction = 0.0f;
+static vec3_t coop_revive_pending_origin;
+static vec3_t coop_revive_pending_angles;
+static vec3_t coop_revive_pending_v_angle;
+
+static qboolean SV_CoopReviveIsActiveClient(edict_t *ent) {
+  int entnum;
+
+  if (!ent || ent->free)
+    return false;
+
+  entnum = NUM_FOR_EDICT(ent);
+  return entnum >= 1 && entnum <= svs.maxclients &&
+         svs.clients[entnum - 1].active && svs.clients[entnum - 1].spawned;
+}
+
+static qboolean SV_CoopReviveIsDeadClient(edict_t *ent) {
+  return SV_CoopReviveIsActiveClient(ent) &&
+         (ent->v.health <= 0 || ent->v.deadflag >= DEAD_DYING);
+}
+
+static void SV_CoopReviveClientBounds(edict_t *ent, vec3_t mins,
+                                      vec3_t maxs) {
+  int i;
+
+  if (ent->v.size[0] || ent->v.size[1] || ent->v.size[2]) {
+    VectorAdd(ent->v.origin, ent->v.mins, mins);
+    VectorAdd(ent->v.origin, ent->v.maxs, maxs);
+  } else {
+    mins[0] = ent->v.origin[0] - 16;
+    mins[1] = ent->v.origin[1] - 16;
+    mins[2] = ent->v.origin[2] - 24;
+    maxs[0] = ent->v.origin[0] + 16;
+    maxs[1] = ent->v.origin[1] + 16;
+    maxs[2] = ent->v.origin[2] + 32;
+  }
+
+  for (i = 0; i < 3; i++) {
+    mins[i] -= COOP_REVIVE_TRACE_PADDING;
+    maxs[i] += COOP_REVIVE_TRACE_PADDING;
+  }
+}
+
+static qboolean SV_CoopReviveTraceIntersectsBounds(vec3_t start, vec3_t delta,
+                                                   vec3_t mins, vec3_t maxs,
+                                                   float *fraction) {
+  int i;
+  float t1, t2, temp;
+  float tmin = 0.0f;
+  float tmax = 1.0f;
+
+  for (i = 0; i < 3; i++) {
+    if (fabs(delta[i]) < 0.0001f) {
+      if (start[i] < mins[i] || start[i] > maxs[i])
+        return false;
+      continue;
+    }
+
+    t1 = (mins[i] - start[i]) / delta[i];
+    t2 = (maxs[i] - start[i]) / delta[i];
+    if (t1 > t2) {
+      temp = t1;
+      t1 = t2;
+      t2 = temp;
+    }
+
+    if (t1 > tmin)
+      tmin = t1;
+    if (t2 < tmax)
+      tmax = t2;
+    if (tmin > tmax)
+      return false;
+  }
+
+  *fraction = tmin;
+  return true;
+}
+
+static qboolean SV_CoopReviveTraceIsClear(vec3_t start, vec3_t end,
+                                          edict_t *attacker) {
+  trace_t trace;
+
+  trace = SV_Move(start, vec3_origin, vec3_origin, end, MOVE_NOMONSTERS,
+                  attacker);
+  return !trace.allsolid && !trace.startsolid &&
+         trace.fraction >= 1.0f - COOP_REVIVE_TRACE_EPSILON;
+}
+
+static qboolean SV_CoopReviveCanPlaceAt(edict_t *ent, vec3_t origin) {
+  trace_t trace;
+
+  trace = SV_Move(origin, ent->v.mins, ent->v.maxs, origin, MOVE_NORMAL, ent);
+  return !trace.allsolid && !trace.startsolid;
+}
+
+static void SV_CoopReviveSetOrigin(edict_t *ent, vec3_t origin) {
+  vec3_t test_origin;
+  static const float offsets[] = {0, 8, 16, 24, 32};
+  size_t i;
+
+  for (i = 0; i < sizeof(offsets) / sizeof(offsets[0]); i++) {
+    VectorCopy(origin, test_origin);
+    test_origin[2] += offsets[i];
+    if (SV_CoopReviveCanPlaceAt(ent, test_origin)) {
+      VectorCopy(test_origin, ent->v.origin);
+      return;
+    }
+  }
+
+  VectorCopy(origin, ent->v.origin);
+}
+
+static void SV_CoopReviveRemoveSpawnTeledeath(edict_t *owner) {
+  int i;
+  edict_t *ent;
+
+  for (i = svs.maxclients + 1; i < sv.num_edicts; i++) {
+    ent = EDICT_NUM(i);
+    if (ent->free)
+      continue;
+    if (PROG_TO_EDICT(ent->v.owner) != owner)
+      continue;
+    if (strcmp(PR_GetString(ent->v.classname), "teledeath"))
+      continue;
+
+    ED_Free(ent);
+  }
+}
+
+void SV_CoopReviveBeginPostThink(edict_t *ent) {
+  coop_revive_trace_owner = ent;
+  coop_revive_pending_attacker = NULL;
+  coop_revive_pending_target = NULL;
+  coop_revive_pending_fraction = 0.0f;
+}
+
+void SV_CoopReviveEndPostThink(void) { coop_revive_trace_owner = NULL; }
+
+void SV_CoopReviveFromTrace(vec3_t start, vec3_t end, edict_t *ent,
+                            float trace_fraction) {
+  int i;
+  float range;
+  float trace_len;
+  vec3_t delta;
+  vec3_t mins, maxs;
+  vec3_t hit;
+  edict_t *target;
+  float target_fraction;
+
+  if (!coop.value || !sv_coop_revive.value || !coop_revive_trace_owner)
+    return;
+  if (ent != coop_revive_trace_owner ||
+      !SV_CoopReviveIsActiveClient(coop_revive_trace_owner))
+    return;
+  if (!sv.active || sv.state != ss_active)
+    return;
+
+  range = sv_coop_revive_range.value;
+  if (range <= 0)
+    return;
+
+  VectorSubtract(end, start, delta);
+  trace_len = VectorLength(delta);
+  if (trace_len <= 0 || trace_len > range)
+    return;
+
+  for (i = 1; i <= svs.maxclients; i++) {
+    target = EDICT_NUM(i);
+    if (target == ent || !SV_CoopReviveIsDeadClient(target))
+      continue;
+
+    SV_CoopReviveClientBounds(target, mins, maxs);
+    if (!SV_CoopReviveTraceIntersectsBounds(start, delta, mins, maxs,
+                                            &target_fraction))
+      continue;
+    if (target_fraction < 0.0f || target_fraction > 1.0f)
+      continue;
+    if (target_fraction > trace_fraction + COOP_REVIVE_TRACE_EPSILON)
+      continue;
+
+    hit[0] = start[0] + delta[0] * target_fraction;
+    hit[1] = start[1] + delta[1] * target_fraction;
+    hit[2] = start[2] + delta[2] * target_fraction;
+    if (!SV_CoopReviveTraceIsClear(start, hit, ent))
+      continue;
+
+    if (!coop_revive_pending_target ||
+        target_fraction < coop_revive_pending_fraction) {
+      coop_revive_pending_attacker = ent;
+      coop_revive_pending_target = target;
+      coop_revive_pending_fraction = target_fraction;
+      VectorCopy(target->v.origin, coop_revive_pending_origin);
+      VectorCopy(target->v.angles, coop_revive_pending_angles);
+      VectorCopy(target->v.v_angle, coop_revive_pending_v_angle);
+    }
+  }
+}
+
+void SV_CoopReviveApplyPending(void) {
+  client_t *client;
+  client_t *old_host_client;
+  edict_t *old_sv_player;
+  edict_t *attacker;
+  edict_t *target;
+  int target_num;
+  int i;
+  int old_self, old_other;
+  float old_time;
+  float old_force_retouch;
+  vec3_t old_v_forward, old_v_right, old_v_up;
+  float health;
+
+  attacker = coop_revive_pending_attacker;
+  target = coop_revive_pending_target;
+  coop_revive_pending_attacker = NULL;
+  coop_revive_pending_target = NULL;
+
+  if (!coop.value || !sv_coop_revive.value)
+    return;
+  if (!SV_CoopReviveIsActiveClient(attacker) ||
+      !SV_CoopReviveIsDeadClient(target))
+    return;
+
+  target_num = NUM_FOR_EDICT(target);
+  client = &svs.clients[target_num - 1];
+
+  old_self = pr_global_struct->self;
+  old_other = pr_global_struct->other;
+  old_time = pr_global_struct->time;
+  old_force_retouch = pr_global_struct->force_retouch;
+  VectorCopy(pr_global_struct->v_forward, old_v_forward);
+  VectorCopy(pr_global_struct->v_right, old_v_right);
+  VectorCopy(pr_global_struct->v_up, old_v_up);
+  old_host_client = host_client;
+  old_sv_player = sv_player;
+
+  for (i = 0; i < NUM_SPAWN_PARMS; i++)
+    (&pr_global_struct->parm1)[i] = client->spawn_parms[i];
+
+  host_client = client;
+  sv_player = target;
+  pr_global_struct->time = sv.time;
+  pr_global_struct->self = EDICT_TO_PROG(target);
+  pr_global_struct->other = EDICT_TO_PROG(attacker);
+  PR_ExecuteProgram(pr_global_struct->PutClientInServer);
+  SV_CoopReviveRemoveSpawnTeledeath(target);
+  pr_global_struct->force_retouch = old_force_retouch;
+
+  health = sv_coop_revive_health.value;
+  if (health < 1)
+    health = 1;
+
+  SV_CoopReviveSetOrigin(target, coop_revive_pending_origin);
+  VectorCopy(coop_revive_pending_angles, target->v.angles);
+  VectorCopy(coop_revive_pending_v_angle, target->v.v_angle);
+  VectorClear(target->v.velocity);
+  target->v.health = health;
+  target->v.deadflag = DEAD_NO;
+  target->v.takedamage = DAMAGE_AIM;
+  target->v.solid = SOLID_SLIDEBOX;
+  target->v.movetype = MOVETYPE_WALK;
+  target->v.button0 = target->v.button1 = target->v.button2 = 0;
+  target->v.fixangle = true;
+  SV_LinkEdict(target, false);
+
+  SV_BroadcastPrintf("%s revived %s\n",
+                     svs.clients[NUM_FOR_EDICT(attacker) - 1].name,
+                     client->name);
+
+  pr_global_struct->self = old_self;
+  pr_global_struct->other = old_other;
+  pr_global_struct->time = old_time;
+  VectorCopy(old_v_forward, pr_global_struct->v_forward);
+  VectorCopy(old_v_right, pr_global_struct->v_right);
+  VectorCopy(old_v_up, pr_global_struct->v_up);
+  host_client = old_host_client;
+  sv_player = old_sv_player;
+}
+
+/*
+=============
 SV_RunThink
 
 Runs thinking code if time.  There is some play in the exact time the think
@@ -1162,11 +1457,14 @@ void SV_Physics_Client(edict_t *ent, int num) {
 
   pr_global_struct->self = EDICT_TO_PROG(ent);
 
+  SV_CoopReviveBeginPostThink(ent);
   SV_FriendlyFireBegin(ent);
   PR_ExecuteProgram(pr_global_struct->PlayerPostThink);
   SV_FriendlyFireEnd();
+  SV_CoopReviveEndPostThink();
 
   SV_RestoreVRWeaponOffset(ent, num, is_remote_vr, restoreOrigin);
+  SV_CoopReviveApplyPending();
 }
 
 //============================================================================
