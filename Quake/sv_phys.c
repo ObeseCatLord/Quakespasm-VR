@@ -434,7 +434,7 @@ void SV_CoopReviveApplyPending(void) {
   SV_CoopReviveSetOrigin(target, coop_revive_pending_origin);
   VectorCopy(coop_revive_pending_angles, target->v.angles);
   VectorCopy(coop_revive_pending_v_angle, target->v.v_angle);
-  VectorClear(target->v.velocity);
+  VectorCopy(vec3_origin, target->v.velocity);
   target->v.health = health;
   target->v.deadflag = DEAD_NO;
   target->v.takedamage = DAMAGE_AIM;

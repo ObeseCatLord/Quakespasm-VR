@@ -41,6 +41,9 @@ cvar_t sv_maxpacketsize = {"sv_maxpacketsize", "1400", CVAR_NONE}; // 1400 = sin
 // entities that drop, not your weapon hand or the player next to you.
 cvar_t sv_netsort = {"sv_netsort", "1", CVAR_NONE};
 cvar_t sv_coop_weapon_targetfix = {"sv_coop_weapon_targetfix", "1", CVAR_NONE};
+cvar_t sv_coop_pickup_targetlog = {"sv_coop_pickup_targetlog", "0", CVAR_NONE};
+cvar_t sv_coop_pickup_targetfix = {"sv_coop_pickup_targetfix", "0", CVAR_NONE};
+cvar_t sv_coop_pickup_targetfix_classes = {"sv_coop_pickup_targetfix_classes", "", CVAR_NONE};
 cvar_t sv_coop_ammo_respawn = {"sv_coop_ammo_respawn", "0", CVAR_NOTIFY | CVAR_SERVERINFO};
 cvar_t sv_coop_ammo_respawn_time = {"sv_coop_ammo_respawn_time", "30", CVAR_NOTIFY | CVAR_SERVERINFO};
 cvar_t sv_coop_revive = {"sv_coop_revive", "1", CVAR_NOTIFY | CVAR_SERVERINFO};
@@ -127,6 +130,9 @@ void SV_Init (void)
 	Cvar_RegisterVariable (&sv_maxpacketsize); // increased for AD
 	Cvar_RegisterVariable (&sv_netsort); // ironwail-style entity priority sorting
 	Cvar_RegisterVariable (&sv_coop_weapon_targetfix);
+	Cvar_RegisterVariable (&sv_coop_pickup_targetlog);
+	Cvar_RegisterVariable (&sv_coop_pickup_targetfix);
+	Cvar_RegisterVariable (&sv_coop_pickup_targetfix_classes);
 	Cvar_RegisterVariable (&sv_coop_ammo_respawn);
 	Cvar_RegisterVariable (&sv_coop_ammo_respawn_time);
 	Cvar_RegisterVariable (&sv_coop_revive);

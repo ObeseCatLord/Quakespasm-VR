@@ -183,7 +183,11 @@ void IN_VRWeaponMenuUp(void) {
   }
 }
 
-void IN_Impulse(void) { in_impulse = Q_atoi(Cmd_Argv(1)); }
+void IN_Impulse(void) {
+  in_impulse = Q_atoi(Cmd_Argv(1));
+  vr_last_sent_impulse = in_impulse;
+  vr_last_sent_impulse_time = Sys_DoubleTime();
+}
 
 /*
 ===============
