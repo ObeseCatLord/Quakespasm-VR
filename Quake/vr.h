@@ -111,7 +111,7 @@ extern cvar_t vr_weapon_offset[MAX_WEAPONS * VARS_PER_WEAPON];
 extern int weaponCVarEntry;
 extern vec3_t vr_room_scale_move;
 
-#define MAX_VR_WEAPONS 16
+#define MAX_VR_WEAPONS 64
 
 typedef struct {
   int bitmask;
@@ -119,10 +119,19 @@ typedef struct {
   int impulse;
   float scale;
   vec3_t offset;
+  qboolean has_offset;
+  int owned_stat;
+  int owned_mask;
+  int active_stat;
+  int active_mask;
+  int ammo_stat;
+  int ammo_max;
 } vr_weapon_cmd_t;
 
 extern vr_weapon_cmd_t vr_weapons[MAX_VR_WEAPONS];
 extern int num_vr_weapons;
+extern int vr_last_sent_impulse;
+extern double vr_last_sent_impulse_time;
 
 #ifdef __cplusplus
 }

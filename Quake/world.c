@@ -91,6 +91,87 @@ static qboolean SV_EdictStringFieldSet (edict_t *ent, const char *fieldname)
 	return val && val->string && PR_GetString(val->string)[0];
 }
 
+#define SV_COOP_TARGET_FIELD_COUNT 5
+
+static const char *sv_coop_target_fields[SV_COOP_TARGET_FIELD_COUNT] =
+{
+	"target",
+	"killtarget",
+	"target2",
+	"target3",
+	"target4"
+};
+
+typedef struct
+{
+	string_t	values[SV_COOP_TARGET_FIELD_COUNT];
+	qboolean	has_any;
+} sv_coop_target_state_t;
+
+static string_t SV_EdictStringFieldValue (edict_t *ent, const char *fieldname)
+{
+	eval_t	*val;
+
+	val = GetEdictFieldValueByName(ent, fieldname);
+	if (!val || !val->string || !PR_GetString(val->string)[0])
+		return 0;
+	return val->string;
+}
+
+static void SV_CaptureCoopTargetState (edict_t *ent, sv_coop_target_state_t *state)
+{
+	int	i;
+
+	memset(state, 0, sizeof(*state));
+	for (i = 0; i < SV_COOP_TARGET_FIELD_COUNT; i++)
+	{
+		state->values[i] = SV_EdictStringFieldValue(ent, sv_coop_target_fields[i]);
+		if (state->values[i])
+			state->has_any = true;
+	}
+}
+
+static qboolean SV_CoopTargetStateUnchanged (edict_t *ent, const sv_coop_target_state_t *state)
+{
+	int	i;
+
+	for (i = 0; i < SV_COOP_TARGET_FIELD_COUNT; i++)
+	{
+		if (SV_EdictStringFieldValue(ent, sv_coop_target_fields[i]) != state->values[i])
+			return false;
+	}
+	return true;
+}
+
+static qboolean SV_ClassnameMatchesList (const char *classname, const char *list)
+{
+	const char	*p;
+	size_t		len;
+
+	if (!classname || !classname[0] || !list || !list[0])
+		return false;
+
+	p = list;
+	while (*p)
+	{
+		while (*p && ((unsigned char)*p <= ' ' || *p == ',' || *p == ';'))
+			p++;
+		if (!*p)
+			break;
+
+		len = 0;
+		while (p[len] && (unsigned char)p[len] > ' ' && p[len] != ',' && p[len] != ';')
+			len++;
+
+		if (strlen(classname) == len && !q_strncasecmp(classname, p, len))
+			return true;
+
+		p += len;
+	}
+
+	return false;
+}
+
 static qboolean SV_CoopWeaponHasTargets (edict_t *weapon)
 {
 	return SV_EdictStringFieldSet(weapon, "target")
@@ -119,21 +200,52 @@ static qboolean SV_IsDirectWeaponTouch (func_t touchfunc)
 static qboolean SV_IsCoopWeaponTargetFixCandidate (edict_t *weapon, edict_t *player)
 {
 	const char	*classname;
+	int		fixlevel;
 
-	if (!sv_coop_weapon_targetfix.value || !coop.value)
+	fixlevel = (int)sv_coop_weapon_targetfix.value;
+	if (fixlevel <= 0 || !coop.value)
 		return false;
 	if (!SV_IsActiveClientEdict(player))
 		return false;
 	if (!weapon || weapon->free || weapon->v.solid != SOLID_TRIGGER)
-		return false;
-	if (!SV_IsDirectWeaponTouch(weapon->v.touch))
 		return false;
 
 	classname = PR_GetString(weapon->v.classname);
 	if (q_strncasecmp(classname, "weapon_", 7))
 		return false;
 
+	// Level 1 preserves the original conservative behavior: only the common
+	// QuakeC weapon_touch path is patched. Level 2 also covers custom weapon
+	// touch handlers, but still verifies after the touch that the mod did not
+	// consume or rewrite the targets itself.
+	if (fixlevel < 2 && !SV_IsDirectWeaponTouch(weapon->v.touch))
+		return false;
+
 	return SV_CoopWeaponHasTargets(weapon);
+}
+
+static qboolean SV_IsCoopPickupTargetFixCandidate (edict_t *pickup, edict_t *player)
+{
+	const char	*classname;
+
+	if (!sv_coop_pickup_targetfix.value || !coop.value)
+		return false;
+	if (!SV_IsActiveClientEdict(player))
+		return false;
+	if (!pickup || pickup->free || pickup->v.solid != SOLID_TRIGGER)
+		return false;
+	if (!pickup->v.classname)
+		return false;
+
+	classname = PR_GetString(pickup->v.classname);
+	if (!q_strncasecmp(classname, "weapon_", 7))
+		return false; // handled by sv_coop_weapon_targetfix
+	if (q_strncasecmp(classname, "item_", 5) && q_strncasecmp(classname, "ammo_", 5))
+		return false;
+	if (!SV_ClassnameMatchesList(classname, sv_coop_pickup_targetfix_classes.string))
+		return false;
+
+	return SV_CoopWeaponHasTargets(pickup);
 }
 
 static void SV_ClearEdictStringField (edict_t *ent, const char *fieldname)
@@ -154,7 +266,7 @@ static void SV_ClearCoopWeaponTargets (edict_t *weapon)
 	SV_ClearEdictStringField(weapon, "target4");
 }
 
-static void SV_FireCoopWeaponTargets (edict_t *weapon, edict_t *player)
+static void SV_FireCoopPickupTargets (edict_t *weapon, edict_t *player, const char *reason)
 {
 	ddef_t		*activator_def;
 	dfunction_t	*use_targets;
@@ -167,7 +279,7 @@ static void SV_FireCoopWeaponTargets (edict_t *weapon, edict_t *player)
 	if (!activator_def || !use_targets || ((activator_def->type & ~DEF_SAVEGLOBAL) != ev_entity))
 		return;
 
-	Con_DPrintf("sv_coop_weapon_targetfix: firing targets for %s\n", PR_GetString(weapon->v.classname));
+	Con_DPrintf("%s: firing targets for %s\n", reason, PR_GetString(weapon->v.classname));
 
 	pr_global_struct->self = EDICT_TO_PROG(weapon);
 	pr_global_struct->other = EDICT_TO_PROG(player);
@@ -177,6 +289,82 @@ static void SV_FireCoopWeaponTargets (edict_t *weapon, edict_t *player)
 
 	if (!weapon->free)
 		SV_ClearCoopWeaponTargets(weapon);
+}
+
+static void SV_LogCoopPickupTargets (edict_t *pickup, edict_t *player, const char *note)
+{
+	static double	last_log_time;
+	const char	*classname;
+	const char	*target;
+	const char	*killtarget;
+
+	if (!sv_coop_pickup_targetlog.value || !coop.value)
+		return;
+	if (qcvm->time - last_log_time < 1.0)
+		return;
+	if (!pickup || pickup->free || !pickup->v.classname)
+		return;
+
+	classname = PR_GetString(pickup->v.classname);
+	target = PR_GetString(SV_EdictStringFieldValue(pickup, "target"));
+	killtarget = PR_GetString(SV_EdictStringFieldValue(pickup, "killtarget"));
+
+	Con_Printf("sv_coop_pickup_targetlog: %s %s after touch by %s target=\"%s\" killtarget=\"%s\"\n",
+		classname, note,
+		player && player->v.netname ? PR_GetString(player->v.netname) : "client",
+		target ? target : "", killtarget ? killtarget : "");
+	last_log_time = qcvm->time;
+}
+
+// Vanilla-style progs often hide ammo after pickup but only schedule SUB_regen
+// in deathmatch. This opt-in coop fix reuses the mod's own respawn function.
+static qboolean SV_IsAmmoClassname (const char *classname)
+{
+	return !q_strcasecmp(classname, "item_shells")
+		|| !q_strcasecmp(classname, "item_spikes")
+		|| !q_strcasecmp(classname, "item_rockets")
+		|| !q_strcasecmp(classname, "item_cells")
+		|| !q_strcasecmp(classname, "item_lava_spikes")
+		|| !q_strcasecmp(classname, "item_multi_rockets")
+		|| !q_strcasecmp(classname, "item_plasma");
+}
+
+static qboolean SV_IsCoopAmmoRespawnCandidate (edict_t *ammo, edict_t *player)
+{
+	if (!sv_coop_ammo_respawn.value || !coop.value)
+		return false;
+	if (!SV_IsActiveClientEdict(player))
+		return false;
+	if (!ammo || ammo->free || ammo->v.solid != SOLID_TRIGGER)
+		return false;
+	if (!ammo->v.classname)
+		return false;
+
+	return SV_IsAmmoClassname(PR_GetString(ammo->v.classname));
+}
+
+static void SV_ScheduleCoopAmmoRespawn (edict_t *ammo)
+{
+	dfunction_t	*regen_func;
+	float		respawn_time;
+
+	if (!ammo || ammo->free || ammo->v.solid == SOLID_TRIGGER)
+		return;
+
+	regen_func = ED_FindFunction("SUB_regen");
+	if (!regen_func)
+		return;
+
+	respawn_time = sv_coop_ammo_respawn_time.value;
+	if (respawn_time < 1)
+		respawn_time = 1;
+
+	ammo->v.think = (func_t)(regen_func - qcvm->functions);
+	ammo->v.nextthink = qcvm->time + respawn_time;
+
+	Con_DPrintf("sv_coop_ammo_respawn: scheduled %s in %.1f seconds\n",
+		ammo->v.classname ? PR_GetString(ammo->v.classname) : "ammo",
+		respawn_time);
 }
 
 
@@ -475,6 +663,10 @@ void SV_TouchLinks (edict_t *ent)
 	int		i, listcount;
 	int		mark;
 	qboolean	coop_weapon_targetfix;
+	qboolean	coop_pickup_targetfix;
+	qboolean	coop_targetlog;
+	qboolean	coop_ammo_respawn;
+	sv_coop_target_state_t	coop_targets_before;
 
 	mark = Hunk_LowMark ();
 	list = (edict_t **) Hunk_Alloc (qcvm->num_edicts*sizeof(edict_t *));
@@ -501,14 +693,33 @@ void SV_TouchLinks (edict_t *ent)
 		old_self = pr_global_struct->self;
 		old_other = pr_global_struct->other;
 		coop_weapon_targetfix = SV_IsCoopWeaponTargetFixCandidate(touch, ent);
+		coop_pickup_targetfix = SV_IsCoopPickupTargetFixCandidate(touch, ent);
+		coop_targetlog = coop.value && sv_coop_pickup_targetlog.value
+			&& !touch->free && SV_IsActiveClientEdict(ent)
+			&& touch->v.classname && SV_CoopWeaponHasTargets(touch);
+		if (coop_weapon_targetfix || coop_pickup_targetfix || coop_targetlog)
+			SV_CaptureCoopTargetState(touch, &coop_targets_before);
+		else
+			memset(&coop_targets_before, 0, sizeof(coop_targets_before));
+		coop_ammo_respawn = SV_IsCoopAmmoRespawnCandidate(touch, ent);
 
 		pr_global_struct->self = EDICT_TO_PROG(touch);
 		pr_global_struct->other = EDICT_TO_PROG(ent);
 		pr_global_struct->time = qcvm->time;
 		PR_ExecuteProgram (touch->v.touch);
 
-		if (coop_weapon_targetfix && !touch->free && touch->v.solid == SOLID_TRIGGER)
-			SV_FireCoopWeaponTargets(touch, ent);
+		if (coop_weapon_targetfix && !touch->free && touch->v.solid == SOLID_TRIGGER
+			&& SV_CoopTargetStateUnchanged(touch, &coop_targets_before))
+			SV_FireCoopPickupTargets(touch, ent, "sv_coop_weapon_targetfix");
+		if (coop_pickup_targetfix && !touch->free && touch->v.solid == SOLID_TRIGGER
+			&& SV_CoopTargetStateUnchanged(touch, &coop_targets_before))
+			SV_FireCoopPickupTargets(touch, ent, "sv_coop_pickup_targetfix");
+		if (coop_targetlog && !touch->free && touch->v.solid == SOLID_TRIGGER
+			&& coop_targets_before.has_any
+			&& SV_CoopTargetStateUnchanged(touch, &coop_targets_before))
+			SV_LogCoopPickupTargets(touch, ent, "still has unchanged targets");
+		if (coop_ammo_respawn)
+			SV_ScheduleCoopAmmoRespawn(touch);
 
 		pr_global_struct->self = old_self;
 		pr_global_struct->other = old_other;
