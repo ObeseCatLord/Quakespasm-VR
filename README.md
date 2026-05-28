@@ -20,6 +20,21 @@ Here are the changes to the last iterations of QuakeSpasm-OpenVR by [vittoriorom
 - Default setting: Linear texture filtering and blocky particles for classic look.
 - Various other fixes and tweaks for cross-platform compatibility.
 
+## Functional Changes From Main
+
+This branch carries additional mod-compatibility, co-op, and multiplayer networking changes beyond the main/master branch.
+
+- **CSQC compatibility:** the client can load a lightweight `csprogs.dat` and run supported CSQC entry points such as `CSQC_Init`, `CSQC_DrawHud`, and `CSQC_DrawScores`. It also supports CSQC drawing helpers, client stat reads, string helpers, and command checks needed by several modern mods. Full DarkPlaces/QuakeWorld CSQC is still not implemented.
+- **Extended client stats:** the protocol-side stat table was expanded to 256 slots, with integer, float, and string stat support. Server-side QuakeC can register extra stats through `clientstat`, and the client exposes them through `getstati`, `getstatf`, and `getstats`.
+- **Modern protocol defaults:** the default server protocol is RMQ protocol `999`, with higher model/entity/cache limits for large mods. Protocol `15` and FitzQuake protocol `666` remain available through `sv_protocol` or `-protocol`.
+- **Large update handling:** server unreliable updates honor `sv_maxpacketsize`, split oversized updates without repeating snapshot timing data, and prioritize nearby/front-facing entities when packets are tight.
+- **Networking hardening:** the datagram layer has a shared-socket path, NAT port-remap recovery, client port probing, stale-input clearing, send pacing, and lag diagnostics aimed at reducing VR multiplayer judder and delayed movement after packet gaps.
+- **Co-op fixes:** players can be made non-solid to each other in co-op, weapon pickup targets can fire correctly for all players, optional pickup/ammo target fixes are available for mods, and co-op revive/ammo respawn helpers are available.
+- **Gameplay compatibility fixes:** elevator/pusher behavior is more tolerant, QuakeC `random()` avoids returning exact 0/1 by default, and entity scaling is kept compatible with mods such as QBJ3 that break when static/baseline scale is encoded into signon data.
+- **Weapon wheel compatibility:** the VR weapon wheel and weapon-offset presets include additional mod weapons, including Arcane Dimensions, Alkaline, Enyo, Tomb of Thunder, and QBJ3 model sets.
+- **Config control:** `-postcfg <file.cfg>` executes a config after normal startup/game configs, which is useful for universal local bindings that should win over mod `quake.rc` or `autoexec.cfg` files.
+- **Multiplayer save opt-in:** co-op multiplayer saves can be enabled for controlled server testing, but the current save format still supports only one active player in client slot 0.
+
 ## Quake VR vs QuakeSpasm-OpenVR?
 
 Vittorio Romeo expanded `QuakeSpasm-OpenVR` considerably into the most excellent [Quake VR](https://github.com/vittorioromeo/quakevr), which is definitely a much more feature rich VR implementation - including teleportation, finger tracking, VR interactions, two-handed weapons, dual wielding, holsters and much more.
@@ -189,6 +204,53 @@ __New cvars for analog stick (and touchpad?) tuning on VR controllers.__ Default
 - `vr_joystick_axis_exponent` - 1.0: Exponent for axis input, suggested 2.0. Larger numbers increase the 'low speed' portion of the movement range, numbers under 1.0: decrease it, 1.0 is linear response. 2.0 makes it easier to make fine adjustments at low speed
 - `vr_joystick_deadzone_trunc` - 1 If enabled (value 1) then minimum movement speed will be given by the deadzone value, so it will be impossible to move at speeds below the deadzone value. When disabled (value 0) movement speed will ramp up from complete standstill to maximum speed while above the deadzone, so any speed is possible. Suggest setting to 0 to disable
 
+### Additional Branch Cvars
+
+These cvars are custom additions or important changed defaults in this branch compared with main/master.
+
+| Cvar | Default | Description |
+| ---- | ------- | ----------- |
+| `cl_nocsqc` | `0` | Set to `1` to disable loading client-side QC/CSQC. Useful when isolating a mod HUD or CSQC compatibility issue. |
+| `cl_netfps` | `72` | Caps remote-client `CL_SendCmd` rate. Set to `0` to disable the cap. Helps VR clients avoid flooding a lower-rate server with redundant move packets. |
+| `cfg_unbindall` | `1` | Controls whether generated `config.cfg` files start with `unbindall`. Set to `0` if you need persisted binds to merge instead of clearing first. |
+| `cl_extrapolate` | `0.05` | Allows a small amount of client interpolation/extrapolation tolerance for remote snapshots. |
+| `pr_checkextension` | `1` | Controls advertised QuakeC extension support. This branch advertises only implemented extensions such as `FTE_QC_CHECKCOMMAND`. |
+| `sv_maxpacketsize` | `1400` | Maximum unreliable datagram size sent to remote clients. Keep near MTU to avoid UDP fragmentation; raise only for controlled networks. |
+| `sv_netsort` | `1` | Uses an Ironwail/QSS-style entity priority sort so packet pressure drops distant or behind-camera entities before nearby/high-priority entities. |
+| `sv_inputtimeout` | `0.25` | Clears stale movement/buttons after this many seconds without fresh input from a client. Set to `0` to disable. |
+| `sv_freezenonclients` | `0` | When enabled, server physics runs clients/world only. This is mainly a diagnostic or special server control, not a normal gameplay setting. |
+| `sv_gameplayfix_elevators` | `2` | Pusher/elevator fix. `0` off, `1` clients only, `2` all entities. Helps prevent entities from blocking lifts due to tiny contact errors. |
+| `sv_gameplayfix_random` | `1` | Makes QuakeC `random()` return values strictly between 0 and 1, avoiding exact edge cases that can break some logic. |
+| `sv_coop_noplayerclip` | `1` | In co-op, lets active players pass through each other for normal movement traces while preserving missile and point traces. |
+| `sv_coop_weapon_targetfix` | `1` | In co-op, fires weapon pickup targets for later players when the mod's `weapon_touch` path would otherwise consume the trigger. `2` also attempts custom weapon touch handlers. |
+| `sv_coop_pickup_targetfix` | `0` | Optional co-op target fix for non-weapon pickups. Requires class filtering through `sv_coop_pickup_targetfix_classes`. |
+| `sv_coop_pickup_targetfix_classes` | empty | Comma/semicolon/space-separated classnames eligible for `sv_coop_pickup_targetfix`, for example `item_artifact_super_damage,item_health`. |
+| `sv_coop_pickup_targetlog` | `0` | Logs pickup target state after touches to help audit mods for co-op trigger issues. |
+| `sv_coop_ammo_respawn` | `0` | Respawns supported ammo pickups in co-op using the mod's `SUB_regen` path when available. |
+| `sv_coop_ammo_respawn_time` | `30` | Respawn delay, in seconds, for `sv_coop_ammo_respawn`. |
+| `sv_coop_revive` | `1` | Enables the co-op melee revive helper. |
+| `sv_coop_revive_health` | `25` | Health restored by the co-op revive helper. |
+| `sv_coop_revive_range` | `96` | Trace range for co-op revive attempts. |
+| `sv_save_multiplayer` | `0` | Allows saving co-op multiplayer games only when set to `1`. Current save/load support is intentionally limited to one active client in slot 0. |
+| `sv_cmdfile` | empty | Dedicated-server command file name relative to the current game directory. When present, the server executes and deletes the file each frame after reading it. |
+| `net_lagdebug` | `0` | Enables verbose network/judder diagnostics for datagram gaps, dropped unreliable packets, frame spikes, stale input, and interpolation overruns. |
+| `net_lagdebug_threshold` | `0.25` | Datagram-gap threshold, in seconds, for `net_lagdebug` messages. |
+| `net_lagdebug_frame_threshold` | `0.05` | Frame/update-gap threshold, in seconds, for `net_lagdebug` messages. |
+| `net_singlesocket` | `1` | Uses one UDP socket for accept/control and game traffic on the server, with queued dispatch to per-client logic. |
+| `net_sameip_stale_timeout` | `3.0` | Time before stale same-IP connection state can be discarded during reconnect/NAT-remap handling. |
+| `cl_netport` | `0` | Preferred local UDP port for the client. `0` lets the OS choose. |
+| `cl_portpingprobe_enable` | `1` | Enables client connect-time server-info probes across candidate local ports. |
+| `cl_portpingprobe_probes` | `6` | Number of local-port probes to try when `cl_portpingprobe_enable` is on. |
+| `cl_portpingprobe_delay` | `0.20` | Seconds to wait for port-probe replies before falling back. |
+
+### Additional Launch Flags And Commands
+
+| Option | Description |
+| ------ | ----------- |
+| `-postcfg <file.cfg>` | Executes a relative config file after normal startup configs. With `+game`, it is queued after the new game's `quake.rc`/autoexec path. Multiple `-postcfg` entries are allowed and execute in command-line order. |
+| `-protocol <15\|666\|999>` | Selects the server protocol before startup. RMQ `999` is the default in this branch. |
+| `sv_protocol <15\|666\|999>` | Console command to view or change the protocol used on the next level load. |
+
 ### Note about weapons
 
 Quake's weapons don't seem to be particularly consistently sized or offset. To work around this there are cvars to position/scale correct the weapons. Working default offsets are included for the following weapons:
@@ -199,6 +261,7 @@ Quake's weapons don't seem to be particularly consistently sized or offset. To w
 - Weapons for [_Block-Quake_](https://kebby-quake.itch.io/block-quake) (set `Gun Model Offsets` in the `VR Options` to `Block-Quake`).
 - Weapons for _Slave Zero X: Episode Enyo_ (be sure to use folder-name `enyo` and start game with `-game enyo` to have them applied).
 - Weapons for [_Tomb of Thunder_](https://youtu.be/iA56E7Rvc6A) (be sure to use folder-name `tombofthunder` and start game with `-game tombofthunder` to have them applied).
+- Weapons for _QBJ3_ (be sure to use folder-name `qbj3` and start game with `-game qbj3` to have them applied).
 
 Unsupported mods may require new offsets. You can modify offsets by using the following cvars:
 

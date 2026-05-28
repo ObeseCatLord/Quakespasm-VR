@@ -44,6 +44,7 @@ quakeparms_t *host_parms;
 qboolean	host_initialized;		// true if into command execution
 
 double		host_frametime;
+float		host_netinterval;
 double		realtime;				// without any filtering or bounding
 double		oldrealtime;			// last frame run
 
@@ -65,6 +66,7 @@ cvar_t	host_maxfps = {"host_maxfps", "72", CVAR_ARCHIVE}; //johnfitz
 cvar_t	host_timescale = {"host_timescale", "0", CVAR_NONE}; //johnfitz
 cvar_t	cl_netfps = {"cl_netfps", "72", CVAR_ARCHIVE};	// CL_SendCmd cap to a remote server, 0 = uncapped
 cvar_t	max_edicts = {"max_edicts", "8192", CVAR_NONE}; //johnfitz //ericw -- changed from 2048 to 8192, removed CVAR_ARCHIVE
+cvar_t	cl_nocsqc = {"cl_nocsqc", "0", CVAR_NONE};
 
 cvar_t	sys_ticrate = {"sys_ticrate","0.05",CVAR_NONE}; // dedicated server
 cvar_t	serverprofile = {"serverprofile","0",CVAR_NONE};
@@ -135,6 +137,8 @@ void Host_EndGame (const char *message, ...)
 	va_end (argptr);
 	Con_DPrintf ("Host_EndGame: %s\n",string);
 
+	PR_SwitchQCVM(NULL);
+
 	if (sv.active)
 		Host_ShutdownServer (false);
 
@@ -165,6 +169,8 @@ void Host_Error (const char *error, ...)
 	if (inerror)
 		Sys_Error ("Host_Error: recursively entered");
 	inerror = true;
+
+	PR_SwitchQCVM(NULL);
 
 	SCR_EndLoadingPlaque ();		// reenable screen updates
 
@@ -272,6 +278,7 @@ void Host_InitLocal (void)
 	Cvar_RegisterVariable (&host_timescale); //johnfitz
 	Cvar_RegisterVariable (&cl_netfps); // QSS-style network send pacing
 
+	Cvar_RegisterVariable (&cl_nocsqc);
 	Cvar_RegisterVariable (&max_edicts); //johnfitz
 	Cvar_SetCallback (&max_edicts, Max_Edicts_f);
 	Cvar_RegisterVariable (&devstats); //johnfitz
@@ -537,9 +544,11 @@ void Host_ShutdownServer(qboolean crash)
 	if (count)
 		Con_Printf("Host_ShutdownServer: NET_SendToAll failed for %u clients\n", count);
 
+	PR_SwitchQCVM(&sv.qcvm);
 	for (i = 0, host_client = svs.clients; i < svs.maxclients; i++, host_client++)
 		if (host_client->active)
 			SV_DropClient(crash);
+	PR_SwitchQCVM(NULL);
 
 //
 // clear structures
@@ -559,16 +568,25 @@ not reinitialize anything.
 */
 void Host_ClearMemory (void)
 {
+	if (cl.qcvm.extfuncs.CSQC_Shutdown)
+	{
+		PR_SwitchQCVM(&cl.qcvm);
+		PR_ExecuteProgram(qcvm->extfuncs.CSQC_Shutdown);
+		qcvm->extfuncs.CSQC_Shutdown = 0;
+		PR_SwitchQCVM(NULL);
+	}
+
 	Con_DPrintf ("Clearing memory\n");
 	D_FlushCaches ();
 	Mod_ClearAll ();
 	Sky_ClearAll();
+	PR_ClearProgs(&sv.qcvm);
+	PR_ClearProgs(&cl.qcvm);
 /* host_hunklevel MUST be set at this point */
 	Hunk_FreeToLowMark (host_hunklevel);
 	cls.signon = 0; // not CL_ClearSignons()
-	free(sv.edicts); // ericw -- sv.edicts switched to use malloc()
 	memset (&sv, 0, sizeof(sv));
-	memset (&cl, 0, sizeof(cl));
+	CL_FreeState ();
 }
 
 
@@ -738,14 +756,14 @@ void Host_ServerFrame (void)
 //johnfitz -- devstats
 	if (cls.signon == SIGNONS)
 	{
-		for (i=0, active=0; i<sv.num_edicts; i++)
+		for (i=0, active=0; i<qcvm->num_edicts; i++)
 		{
 			ent = EDICT_NUM(i);
 			if (!ent->free)
 				active++;
 		}
 		if (active > 600 && dev_peakstats.edicts <= 600)
-			Con_DWarning ("%i edicts exceeds standard limit of 600 (max = %d).\n", active, sv.max_edicts);
+			Con_DWarning ("%i edicts exceeds standard limit of 600 (max = %d).\n", active, qcvm->max_edicts);
 		dev_stats.edicts = active;
 		dev_peakstats.edicts = q_max(active, dev_peakstats.edicts);
 	}
@@ -775,6 +793,53 @@ void Host_ServerFrame (void)
 				clients_active, sv.name);
 			last_server_frame_log = realtime;
 		}
+	}
+}
+
+static void CL_LoadCSProgs (void)
+{
+	PR_ClearProgs (&cl.qcvm);
+	if (!cl_nocsqc.value)
+	{
+		PR_SwitchQCVM (&cl.qcvm);
+
+		if ((PR_LoadProgs ("csprogs.dat", false) && (qcvm->extfuncs.CSQC_DrawHud || qcvm->extfuncs.CSQC_DrawScores)) ||
+		    (PR_LoadProgs ("progs.dat", false) && qcvm->extfuncs.CSQC_DrawHud))
+		{
+			qcvm->max_edicts = CLAMP (MIN_EDICTS, (int)max_edicts.value, MAX_EDICTS);
+			qcvm->edicts = (edict_t *)malloc (qcvm->max_edicts * qcvm->edict_size);
+			qcvm->num_edicts = qcvm->reserved_edicts = 1;
+			memset (qcvm->edicts, 0, qcvm->num_edicts * qcvm->edict_size);
+
+			if (qcvm->extglobals.maxclients)
+				*qcvm->extglobals.maxclients = cl.maxclients;
+			pr_global_struct->time = cl.time;
+			pr_global_struct->mapname = PR_SetEngineString (cl.mapname);
+			pr_global_struct->total_monsters = cl.stats[STAT_TOTALMONSTERS];
+			pr_global_struct->total_secrets = cl.stats[STAT_TOTALSECRETS];
+			pr_global_struct->deathmatch = cl.gametype;
+			pr_global_struct->coop = (cl.gametype == GAME_COOP) && cl.maxclients != 1;
+			if (qcvm->extglobals.player_localnum)
+				*qcvm->extglobals.player_localnum = cl.viewentity - 1;
+
+			qcvm->edicts->v.solid = SOLID_BSP;
+			qcvm->edicts->v.modelindex = 1;
+			qcvm->edicts->v.model = PR_SetEngineString (cl.worldmodel->name);
+			VectorCopy (cl.worldmodel->mins, qcvm->edicts->v.mins);
+			VectorCopy (cl.worldmodel->maxs, qcvm->edicts->v.maxs);
+			qcvm->edicts->v.message = PR_SetEngineString (cl.levelname);
+
+			if (qcvm->extfuncs.CSQC_Init)
+			{
+				G_FLOAT (OFS_PARM0) = false;
+				G_INT (OFS_PARM1) = PR_SetEngineString ("quakespasm-openvr");
+				G_FLOAT (OFS_PARM2) = QUAKESPASM_VERSION;
+				PR_ExecuteProgram (qcvm->extfuncs.CSQC_Init);
+			}
+		}
+		else
+			PR_ClearProgs (qcvm);
+		PR_SwitchQCVM (NULL);
 	}
 }
 
@@ -826,6 +891,16 @@ void _Host_Frame (float time)
 // move at the paced network tick.
 	CL_AccumulateCmd();
 
+	if (cl.sendprespawn)
+	{
+		CL_LoadCSProgs();
+
+		cl.sendprespawn = false;
+		MSG_WriteByte (&cls.message, clc_stringcmd);
+		MSG_WriteString (&cls.message, "prespawn");
+		vid.recalc_refdef = true;
+	}
+
 // if running the server locally, make intentions now
 	if (sv.active)
 		CL_SendCmd ();
@@ -840,7 +915,11 @@ void _Host_Frame (float time)
 	Host_GetConsoleCommands ();
 
 	if (sv.active)
+	{
+		PR_SwitchQCVM(&sv.qcvm);
 		Host_ServerFrame ();
+		PR_SwitchQCVM(NULL);
+	}
 	if (lagdebug_frame)
 		lagdebug_after_server = Sys_DoubleTime ();
 
@@ -938,6 +1017,8 @@ void _Host_Frame (float time)
 		Con_Printf ("%3i tot %3i server %3i gfx %3i snd\n",
 					pass1+pass2+pass3, pass1, pass2, pass3);
 	}
+
+	Cbuf_Waited ();
 
 	host_framecount++;
 

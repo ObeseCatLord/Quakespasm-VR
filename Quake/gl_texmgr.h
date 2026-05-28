@@ -38,6 +38,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #define TEXPREF_NOBRIGHT		0x0200	// use nobright mask palette
 #define TEXPREF_CONCHARS		0x0400	// use conchars palette
 #define TEXPREF_WARPIMAGE		0x0800	// resize this texture when warpimagesize changes
+#define TEXPREF_CLAMP			0x0000	// compatibility no-op for CSQC pic loading
 
 enum srcformat {SRC_INDEXED, SRC_LIGHTMAP, SRC_RGBA};
 
@@ -105,4 +106,3 @@ void GL_Bind (gltexture_t *texture);
 void GL_ClearBindings (void);
 
 #endif	/* _GL_TEXMAN_H */
-

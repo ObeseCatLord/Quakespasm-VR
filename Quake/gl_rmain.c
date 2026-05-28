@@ -740,6 +740,7 @@ void R_ShowBoundingBoxes(void) {
   vec3_t mins, maxs;
   edict_t *ed;
   int i;
+  qcvm_t *oldvm;
 
   if (!r_showbboxes.value || cl.maxclients > 1 || !r_drawentities.value ||
       !sv.active)
@@ -752,7 +753,11 @@ void R_ShowBoundingBoxes(void) {
   glDisable(GL_CULL_FACE);
   glColor3f(1, 1, 1);
 
-  for (i = 1, ed = NEXT_EDICT(sv.edicts); i < sv.num_edicts;
+  oldvm = qcvm;
+  PR_SwitchQCVM(NULL);
+  PR_SwitchQCVM(&sv.qcvm);
+
+  for (i = 1, ed = NEXT_EDICT(qcvm->edicts); i < qcvm->num_edicts;
        i++, ed = NEXT_EDICT(ed)) {
     if (ed == sv_player || ed->free)
       continue; // don't draw player's own bbox or freed edicts
@@ -779,6 +784,9 @@ void R_ShowBoundingBoxes(void) {
   glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
   GL_PolygonOffset(OFFSET_NONE);
   glEnable(GL_DEPTH_TEST);
+
+  PR_SwitchQCVM(NULL);
+  PR_SwitchQCVM(oldvm);
 
   Sbar_Changed(); // so we don't get dots collecting on the statusbar
 }

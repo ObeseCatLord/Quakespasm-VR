@@ -1000,6 +1000,27 @@ void InitAllWeaponCVars() {
     InitWeaponCVars(i++, "progs/ee_v_legal.mdl", "0", "55", "29",
                     "0.2"); // Legal Notice
 
+  }
+  // weapons for QBJ3
+  else if (!strcmp(COM_SkipPath(com_gamedir), "qbj3")) {
+    InitWeaponCVars(i++, "progs/v_wrench.mdl", "0", "0", "0",
+                    "0.15"); // Wrench
+    InitWeaponCVars(i++, "progs/v_pistol.mdl", "0", "0", "0",
+                    "0.15"); // Pistol
+    InitWeaponCVars(i++, "progs/v_flakshotgun.mdl", "0", "0", "0",
+                    "0.15"); // Flak Shotgun
+    InitWeaponCVars(i++, "progs/v_tnailgun.mdl", "0", "0", "0",
+                    "0.15"); // Twin Nailgun
+    InitWeaponCVars(i++, "progs/v_rebar.mdl", "0", "0", "0",
+                    "0.15"); // Rebar Cannon
+    InitWeaponCVars(i++, "progs/v_grenlauncher.mdl", "0", "0", "0",
+                    "0.15"); // Grenade Launcher
+    InitWeaponCVars(i++, "progs/v_mmml.mdl", "0", "0", "0",
+                    "0.15"); // Multi-Missile Launcher
+    InitWeaponCVars(i++, "progs/v_invoker.mdl", "0", "0", "0",
+                    "0.15"); // The Invoker
+    InitWeaponCVars(i++, "progs/v_berserk.mdl", "0", "0", "0",
+                    "0.15"); // Berserk wrench replacement
   } else {
     // weapons for vanilla Quake, Scourge of Armagon, Dissolution of Eternity
 
@@ -2787,7 +2808,10 @@ void VR_DrawWeaponMenu(void) {
       qboolean is_selected = (w_index == vr_weaponmenu_selection);
       qboolean is_equipped = VR_WeaponIsActive(w);
 
-      float scale = (is_selected ? 0.40f : 0.25f) * w->scale;
+      float schema_scale = w->scale > 0.0f ? w->scale : 1.0f;
+      float scale = (is_selected ? 0.40f : 0.25f) * schema_scale;
+      if (scale > 0.0f && scale < (1.0f / ENTSCALE_DEFAULT))
+        scale = 1.0f / ENTSCALE_DEFAULT;
 
       // Center model vertically using its bounding box so weapons with
       // low origins (axe, super shotgun) don't clip into neighbours.
