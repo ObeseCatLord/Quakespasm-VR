@@ -51,6 +51,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 //define	PARANOID			// speed sapping error checking
 
 #define	GAMENAME	"id1"		// directory to look in by default
+#define	CONFIG_NAME	"config.cfg"
 
 #include "q_stdinc.h"
 
@@ -98,7 +99,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #define	MAX_EDICTS	32000		// johnfitz -- highest allowed value for max_edicts cvar
 						// ents past 8192 can't play sounds in the standard protocol
 #define	MAX_LIGHTSTYLES	64
-#define	MAX_MODELS	2048		// johnfitz -- was 256
+#define	MAX_MODELS	4096		// johnfitz -- was 256
 #define	MAX_SOUNDS	2048		// johnfitz -- was 256
 
 #define	SAVEGAME_COMMENT_LENGTH	39
@@ -108,7 +109,8 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 //
 // stats are integers communicated to the client by the server
 //
-#define	MAX_CL_STATS		32
+#define	MAX_CL_BASE_STATS	32
+#define	MAX_CL_STATS		256
 #define	STAT_HEALTH		0
 #define	STAT_FRAGS		1
 #define	STAT_WEAPON		2
@@ -124,6 +126,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #define	STAT_TOTALMONSTERS	12
 #define	STAT_SECRETS		13	// bumped on client side by svc_foundsecret
 #define	STAT_MONSTERS		14	// bumped by svc_killedmonster
+#define STAT_ITEMS			15	//replaces clc_clientdata info
 
 // stock defines
 //
@@ -339,4 +342,3 @@ extern qboolean		isDedicated;
 extern int		minimum_memory;
 
 #endif	/* QUAKEDEFS_H */
-

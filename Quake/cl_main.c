@@ -43,6 +43,7 @@ cvar_t	cl_extrapolate = {"cl_extrapolate","0.05",CVAR_ARCHIVE};
 
 cvar_t	cfg_unbindall = {"cfg_unbindall", "1", CVAR_ARCHIVE};
 
+cvar_t	freelook = {"freelook","1", CVAR_ARCHIVE};
 cvar_t	lookspring = {"lookspring","0", CVAR_ARCHIVE};
 cvar_t	lookstrafe = {"lookstrafe","0", CVAR_ARCHIVE};
 cvar_t	sensitivity = {"sensitivity","3", CVAR_ARCHIVE};
@@ -55,7 +56,12 @@ cvar_t	m_side = {"m_side","0.8", CVAR_ARCHIVE};
 cvar_t	cl_maxpitch = {"cl_maxpitch", "90", CVAR_ARCHIVE}; //johnfitz -- variable pitch clamping
 cvar_t	cl_minpitch = {"cl_minpitch", "-90", CVAR_ARCHIVE}; //johnfitz -- variable pitch clamping
 
+cvar_t	cl_mwheelpitch = {"cl_mwheelpitch", "5", CVAR_ARCHIVE};
+
 cvar_t	cl_startdemos = {"cl_startdemos", "1", CVAR_ARCHIVE};
+cvar_t	cl_confirmquit = {"cl_confirmquit", "0", CVAR_ARCHIVE};
+
+cvar_t	cl_mousemenu = {"cl_mousemenu", "1", CVAR_ARCHIVE};
 
 client_static_t	cls;
 client_state_t	cl;
@@ -71,6 +77,18 @@ int				cl_numvisedicts;
 entity_t		*cl_visedicts[MAX_VISEDICTS];
 
 extern cvar_t	r_lerpmodels, r_lerpmove; //johnfitz
+extern float	host_netinterval;	//Spike
+
+extern vec3_t	v_punchangles[2];
+
+void CL_FreeState(void)
+{
+	int i;
+	for (i = 0; i < MAX_CL_STATS; i++)
+		free (cl.statss[i]);
+	PR_ClearProgs (&cl.qcvm);
+	memset (&cl, 0, sizeof(cl));
+}
 
 /*
 =====================
@@ -82,11 +100,20 @@ void CL_ClearState (void)
 {
 	VR_ResetWeaponTracking();
 	CL_ClearPendingCmd();
+
+	if (cl.qcvm.extfuncs.CSQC_Shutdown)
+	{
+		PR_SwitchQCVM(&cl.qcvm);
+		PR_ExecuteProgram(qcvm->extfuncs.CSQC_Shutdown);
+		qcvm->extfuncs.CSQC_Shutdown = 0;
+		PR_SwitchQCVM(NULL);
+	}
+
 	if (!sv.active)
 		Host_ClearMemory ();
 
 // wipe the entire cl structure
-	memset (&cl, 0, sizeof(cl));
+	CL_FreeState ();
 
 	SZ_Clear (&cls.message);
 
@@ -100,6 +127,8 @@ void CL_ClearState (void)
 	cl_max_edicts = CLAMP (MIN_EDICTS,(int)max_edicts.value,MAX_EDICTS);
 	cl_entities = (entity_t *) Hunk_AllocName (cl_max_edicts*sizeof(entity_t), "cl_entities");
 	//johnfitz
+
+	memset (v_punchangles, 0, sizeof (v_punchangles));
 }
 
 /*
@@ -146,7 +175,10 @@ void CL_Disconnect (void)
 	cls.demoplayback = cls.timedemo = false;
 	cls.demopaused = false;
 	cl.intermission = 0;
+	cl.sendprespawn = false;
 	CL_ClearSignons ();
+
+	V_ResetEffects ();
 }
 
 void CL_Disconnect_f (void)
@@ -196,14 +228,13 @@ void CL_SignonReply (void)
 {
 	char 	str[8192];
 
-	DebugLog("CL_SignonReply: signon=%d\n", cls.signon);
+	DebugLog ("CL_SignonReply: signon=%d\n", cls.signon);
 	Con_DPrintf ("CL_SignonReply: %i\n", cls.signon);
 
 	switch (cls.signon)
 	{
 	case 1:
-		MSG_WriteByte (&cls.message, clc_stringcmd);
-		MSG_WriteString (&cls.message, "prespawn");
+		cl.sendprespawn = true;
 		break;
 
 	case 2:
@@ -258,7 +289,7 @@ void CL_NextDemo (void)
 
 	SCR_BeginLoadingPlaque ();
 
-	sprintf (str,"playdemo %s\n", cls.demos[cls.demonum]);
+	sprintf (str,"playdemo %s 1\n", cls.demos[cls.demonum]);
 	Cbuf_InsertText (str);
 	cls.demonum++;
 }
@@ -379,7 +410,7 @@ float	CL_LerpPoint (void)
 
 	f = cl.mtime[0] - cl.mtime[1];
 
-	if (!f || cls.timedemo || sv.active)
+	if (!f || cls.timedemo || (sv.active && !host_netinterval))
 	{
 		if (!f && !cls.timedemo && !sv.active && net_lagdebug.value &&
 			cls.state == ca_connected && cls.signon == SIGNONS &&
@@ -459,6 +490,33 @@ float	CL_LerpPoint (void)
 
 /*
 ===============
+CL_ResetTrail
+===============
+*/
+static void CL_ResetTrail (entity_t *ent)
+{
+	ent->traildelay = 1.f / 72.f;
+	VectorCopy (ent->origin, ent->trailorg);
+}
+
+/*
+===============
+CL_RocketTrail
+
+Rate-limiting wrapper over R_RocketTrail
+===============
+*/
+static void CL_RocketTrail (entity_t *ent, int type)
+{
+	ent->traildelay -= cl.time - cl.oldtime;
+	if (ent->traildelay > 0.f)
+		return;
+	R_RocketTrail (ent->trailorg, ent->origin, type);
+	CL_ResetTrail (ent);
+}
+
+/*
+===============
 CL_RelinkEntities
 ===============
 */
@@ -469,7 +527,6 @@ void CL_RelinkEntities (void)
 	float		frac, f, d;
 	vec3_t		delta;
 	float		bobjrotate;
-	vec3_t		oldorg;
 	dlight_t	*dl;
 
 // determine partial update time
@@ -521,8 +578,6 @@ void CL_RelinkEntities (void)
 			continue;
 		}
 
-		VectorCopy (ent->origin, oldorg);
-
 		if (ent->forcelink)
 		{	// the entity was not updated in the last message
 			// so move to the final spot
@@ -539,10 +594,6 @@ void CL_RelinkEntities (void)
 				{
 					f = 1;		// assume a teleportation, not a motion
 					ent->lerpflags |= LERP_RESETMOVE; //johnfitz -- don't lerp teleports
-					if (ent == &cl_entities[cl.viewentity])
-					{
-						VR_PushYaw();
-					}
 				}
 			}
 
@@ -564,6 +615,9 @@ void CL_RelinkEntities (void)
 				ent->angles[j] = ent->msg_angles[1][j] + f*d;
 			}
 		}
+
+		if (ent->forcelink || ent->lerpflags & LERP_RESETMOVE)
+			CL_ResetTrail (ent);
 
 // rotate binary objects locally
 		if (ent->model->flags & EF_ROTATE)
@@ -633,25 +687,27 @@ void CL_RelinkEntities (void)
 		}
 
 		if (ent->model->flags & EF_GIB)
-			R_RocketTrail (oldorg, ent->origin, 2);
+			CL_RocketTrail (ent, 2);
 		else if (ent->model->flags & EF_ZOMGIB)
-			R_RocketTrail (oldorg, ent->origin, 4);
+			CL_RocketTrail (ent, 4);
 		else if (ent->model->flags & EF_TRACER)
-			R_RocketTrail (oldorg, ent->origin, 3);
+			CL_RocketTrail (ent, 3);
 		else if (ent->model->flags & EF_TRACER2)
-			R_RocketTrail (oldorg, ent->origin, 5);
+			CL_RocketTrail (ent, 5);
 		else if (ent->model->flags & EF_ROCKET)
 		{
-			R_RocketTrail (oldorg, ent->origin, 0);
+			CL_RocketTrail (ent, 0);
 			dl = CL_AllocDlight (i);
 			VectorCopy (ent->origin, dl->origin);
 			dl->radius = 200;
 			dl->die = cl.time + 0.01;
 		}
 		else if (ent->model->flags & EF_GRENADE)
-			R_RocketTrail (oldorg, ent->origin, 1);
+			CL_RocketTrail (ent, 1);
 		else if (ent->model->flags & EF_TRACER3)
-			R_RocketTrail (oldorg, ent->origin, 6);
+			CL_RocketTrail (ent, 6);
+		else
+			CL_ResetTrail (ent);
 
 		ent->forcelink = false;
 
@@ -896,11 +952,13 @@ display client's position and angles
 */
 void CL_Viewpos_f (void)
 {
+	char buf[256];
 	if (cls.state != ca_connected)
 		return;
 #if 0
 	//camera position
-	Con_Printf ("Viewpos: (%i %i %i) %i %i %i\n",
+	q_snprintf (buf, sizeof (buf),
+		"(%i %i %i) %i %i %i",
 		(int)r_refdef.vieworg[0],
 		(int)r_refdef.vieworg[1],
 		(int)r_refdef.vieworg[2],
@@ -909,14 +967,63 @@ void CL_Viewpos_f (void)
 		(int)r_refdef.viewangles[ROLL]);
 #else
 	//player position
-	Con_Printf ("Viewpos: (%i %i %i) %i %i %i\n",
+	q_snprintf (buf, sizeof (buf),
+		"(%i %i %i) %i %i %i",
 		(int)cl_entities[cl.viewentity].origin[0],
 		(int)cl_entities[cl.viewentity].origin[1],
 		(int)cl_entities[cl.viewentity].origin[2],
 		(int)cl.viewangles[PITCH],
 		(int)cl.viewangles[YAW],
-		(int)cl.viewangles[ROLL]);
+		(int)cl.viewangles[ROLL]
+	);
 #endif
+	Con_Printf ("Viewpos: %s\n", buf);
+
+	if (Cmd_Argc () >= 2 && !q_strcasecmp (Cmd_Argv (1), "copy"))
+		if (SDL_SetClipboardText (buf) < 0)
+			Con_Printf ("Clipboard copy failed: %s\n", SDL_GetError ());
+}
+
+/*
+=============
+CL_SetStat_f
+=============
+*/
+void CL_SetStat_f (void)
+{
+	int i, argc, stnum;
+	double value;
+
+	for (i = 1, argc = Cmd_Argc (); i + 1 < argc; i += 2)
+	{
+		stnum = atoi (Cmd_Argv (i));
+		if (stnum < 0 || stnum >= MAX_CL_STATS)
+			Host_Error ("CL_SetStat_f: stnum(%d) >= MAX_CL_STATS\n", stnum);
+
+		value = atof (Cmd_Argv (i + 1));
+		cl.statsf[stnum] = (float)value;
+		cl.stats[stnum] = (int)value;
+	}
+}
+
+/*
+=============
+CL_SetStatString_f
+=============
+*/
+void CL_SetStatString_f (void)
+{
+	int i, argc, stnum;
+
+	for (i = 1, argc = Cmd_Argc (); i + 1 < argc; i += 2)
+	{
+		stnum = atoi (Cmd_Argv (i));
+		if (stnum < 0 || stnum >= MAX_CL_STATS)
+			Host_Error ("CL_SetStatString_f: stnum(%d) >= MAX_CL_STATS\n", stnum);
+
+		free (cl.statss[stnum]);
+		cl.statss[stnum] = strdup (Cmd_Argv (i + 1));
+	}
 }
 
 /*
@@ -944,6 +1051,7 @@ void CL_Init (void)
 	Cvar_RegisterVariable (&cl_shownet);
 	Cvar_RegisterVariable (&cl_nolerp);
 	Cvar_RegisterVariable (&cl_extrapolate);
+	Cvar_RegisterVariable (&freelook);
 	Cvar_RegisterVariable (&lookspring);
 	Cvar_RegisterVariable (&lookstrafe);
 	Cvar_RegisterVariable (&sensitivity);
@@ -960,7 +1068,12 @@ void CL_Init (void)
 	Cvar_RegisterVariable (&cl_maxpitch); //johnfitz -- variable pitch clamping
 	Cvar_RegisterVariable (&cl_minpitch); //johnfitz -- variable pitch clamping
 
+	Cvar_RegisterVariable (&cl_mwheelpitch);
+
 	Cvar_RegisterVariable (&cl_startdemos);
+	Cvar_RegisterVariable (&cl_confirmquit);
+
+	Cvar_RegisterVariable (&cl_mousemenu);
 
 	Cmd_AddCommand ("entities", CL_PrintEntities_f);
 	Cmd_AddCommand ("disconnect", CL_Disconnect_f);
@@ -971,4 +1084,7 @@ void CL_Init (void)
 
 	Cmd_AddCommand ("tracepos", CL_Tracepos_f); //johnfitz
 	Cmd_AddCommand ("viewpos", CL_Viewpos_f); //johnfitz
+
+	Cmd_AddCommand_ServerCommand ("st", CL_SetStat_f);
+	Cmd_AddCommand_ServerCommand ("sts", CL_SetStatString_f);
 }

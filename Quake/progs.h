@@ -39,7 +39,8 @@ typedef union eval_s
 #define	MAX_ENT_LEAFS	32
 typedef struct edict_s
 {
-	qboolean	free;
+	qboolean	free;			/* don't modify directly, use ED_AddToFreeList/ED_RemoveFromFreeList */
+	link_t		freechain;
 	link_t		area;			/* linked to a division node or leaf */
 
 	int		num_leafs;
@@ -47,10 +48,10 @@ typedef struct edict_s
 
 	entity_state_t	baseline;
 	unsigned char	alpha;			/* johnfitz -- hack to support alpha since it's not part of entvars_t */
-	unsigned char	scale;			/* Quakespasm: added for model scale support. */
-	qboolean	sendinterval;		/* johnfitz -- send time until nextthink to client for better lerp timing */
+	unsigned char	scale;
 	float		oldframe;
 	float		oldthinktime;
+	qboolean	sendinterval;		/* johnfitz -- send time until nextthink to client for better lerp timing */
 
 	float		freetime;		/* sv.time when the object was freed */
 	entvars_t	v;			/* C exported fields from progs */
@@ -62,28 +63,193 @@ typedef struct edict_s
 
 //============================================================================
 
-extern	dprograms_t	*progs;
-extern	dfunction_t	*pr_functions;
-extern	dstatement_t	*pr_statements;
+#define MAX_BUILTINS		1280
+typedef void (*builtin_t) (void);
+
+typedef struct
+{
+	int		s;
+	dfunction_t	*f;
+} prstack_t;
+
+typedef struct prhashtable_s
+{
+	int			capacity;
+	const char	**strings;
+	int			*indices;
+} prhashtable_t;
+
+struct pr_extfuncs_s
+{
+/*ssqc*/
+#define QCEXTFUNCS_SV \
+	QCEXTFUNC(SV_ParseClientCommand,	"void(string cmd)")		\
+/*csqc*/
+#define QCEXTFUNCS_CS \
+	QCEXTFUNC(CSQC_Init,				"void(float apilevel, string enginename, float engineversion)")	\
+	QCEXTFUNC(CSQC_Shutdown,			"void()")	\
+	QCEXTFUNC(CSQC_DrawHud,				"void(vector virtsize, float showscores)")							/*simple: for the simple(+limited) hud-only csqc interface.*/	\
+	QCEXTFUNC(CSQC_DrawScores,			"void(vector virtsize, float showscores)")							/*simple: (optional) for the simple hud-only csqc interface.*/		\
+
+#define QCEXTFUNC(n,t) func_t n;
+	QCEXTFUNCS_SV
+	QCEXTFUNCS_CS
+#undef QCEXTFUNC
+};
+extern	cvar_t	pr_checkextension;	//if 0, extensions are disabled (unless they'd be fatal, but they're still spammy)
+
+struct pr_extglobals_s
+{
+#define QCEXTGLOBALS_CSQC \
+	QCEXTGLOBAL_FLOAT(cltime)\
+	QCEXTGLOBAL_FLOAT(clframetime)\
+	QCEXTGLOBAL_FLOAT(maxclients)\
+	QCEXTGLOBAL_FLOAT(intermission)\
+	QCEXTGLOBAL_FLOAT(intermission_time)\
+	QCEXTGLOBAL_FLOAT(player_localnum)\
+	QCEXTGLOBAL_FLOAT(player_localentnum)\
+	QCEXTGLOBAL_VECTOR(view_angles)\
+	QCEXTGLOBAL_FLOAT(clientcommandframe)\
+	QCEXTGLOBAL_FLOAT(servercommandframe)\
+	//end
+#define QCEXTGLOBAL_FLOAT(n) float *n;
+#define QCEXTGLOBAL_INT(n) int *n;
+#define QCEXTGLOBAL_VECTOR(n) float *n;
+	QCEXTGLOBALS_CSQC
+#undef QCEXTGLOBAL_FLOAT
+#undef QCEXTGLOBAL_INT
+#undef QCEXTGLOBAL_VECTOR
+};
+
+struct pr_extfields_s
+{	//various fields that might be wanted by the engine. -1 == invalid
+
+#define QCEXTFIELDS_ALL	\
+	/*renderscene means we need a number of fields here*/	\
+	QCEXTFIELD(alpha,					".float")				/*float*/	\
+	QCEXTFIELD(scale,					".float")				/*float*/	\
+	QCEXTFIELD(colormod,				".vector")			/*vector*/	\
+	/*end of list*/
+#define QCEXTFIELDS_GAME	\
+	/*stuff used by csqc+ssqc, but not menu*/	\
+	QCEXTFIELD(customphysics,			".void()")/*function*/	\
+	QCEXTFIELD(gravity,					".float")			/*float*/	\
+	//end of list
+#define QCEXTFIELDS_SS	\
+	/*ssqc-only*/	\
+	QCEXTFIELD(items2,					"//.float")				/*float*/	\
+	QCEXTFIELD(movement,				".vector")			/*vector*/	\
+	QCEXTFIELD(viewmodelforclient,		".entity")	/*entity*/	\
+	QCEXTFIELD(exteriormodeltoclient,	".entity")	/*entity*/	\
+	QCEXTFIELD(traileffectnum,			".float")		/*float*/	\
+	QCEXTFIELD(emiteffectnum,			".float")		/*float*/	\
+	QCEXTFIELD(button3,					".float")			/*float*/	\
+	QCEXTFIELD(button4,					".float")			/*float*/	\
+	QCEXTFIELD(button5,					".float")			/*float*/	\
+	QCEXTFIELD(button6,					".float")			/*float*/	\
+	QCEXTFIELD(button7,					".float")			/*float*/	\
+	QCEXTFIELD(button8,					".float")			/*float*/	\
+	QCEXTFIELD(viewzoom,				".float")			/*float*/	\
+	QCEXTFIELD(SendEntity,				".float(entity to, float changedflags)")			/*function*/	\
+	QCEXTFIELD(SendFlags,				".float")			/*float. :( */	\
+	//end of list
+
+#define QCEXTFIELD(n,t) int n;
+	QCEXTFIELDS_ALL
+	QCEXTFIELDS_GAME
+	QCEXTFIELDS_SS
+#undef QCEXTFIELD
+};
+
+typedef struct qcvm_s
+{
+	dprograms_t		*progs;
+	dfunction_t		*functions;
+	dstatement_t	*statements;
+	float			*globals;	/* same as pr_global_struct */
+	ddef_t			*fielddefs;	//yay reflection.
+
+	int				edict_size;	/* in bytes */
+
+	int				effects_mask; // only enable 2021 rerelease quad/penta dlights when applicable
+
+	builtin_t		builtins[MAX_BUILTINS];
+	int				numbuiltins;
+
+	int				argc;
+
+	qboolean		trace;
+	dfunction_t		*xfunction;
+	int				xstatement;
+
+	unsigned short	crc;
+
+	struct pr_extfuncs_s extfuncs;
+	struct pr_extglobals_s extglobals;
+	struct pr_extfields_s extfields;
+
+	//was static inside pr_edict
+	char			*strings;
+	int				stringssize;
+	const char		**knownstrings;
+	int				maxknownstrings;
+	int				numknownstrings;
+	const char		**firstfreeknownstring; // free list (singly linked)
+
+	unsigned char	*knownzone;
+	size_t			knownzonesize;
+
+	ddef_t			*globaldefs;
+
+	prhashtable_t	ht_fields;
+	prhashtable_t	ht_functions;
+	prhashtable_t	ht_globals;
+
+	//originally defined in pr_exec, but moved into the switchable qcvm struct
+#define	MAX_STACK_DEPTH		1024 /*was 64*/	/* was 32 */
+	prstack_t		stack[MAX_STACK_DEPTH];
+	int				depth;
+
+#define	LOCALSTACK_SIZE		16384 /* was 2048*/
+	int				localstack[LOCALSTACK_SIZE];
+	int				localstack_used;
+
+	//originally part of the sv_state_t struct
+	//FIXME: put worldmodel in here too.
+	double		time;
+	int			num_edicts;
+	int			reserved_edicts;
+	int			max_edicts;
+	link_t		free_edicts;		// linked list of free edicts
+	edict_t		*edicts;			// can NOT be array indexed, because
+									// edict_t is variable sized, but can
+									// be used to reference the world ent
+} qcvm_t;
+
 extern	globalvars_t	*pr_global_struct;
-extern	float		*pr_globals;	/* same as pr_global_struct */
 
-extern	int		pr_edict_size;	/* in bytes */
-
+extern qcvm_t *qcvm;
+void PR_SwitchQCVM(qcvm_t *nvm);
 
 void PR_Init (void);
 
 void PR_ExecuteProgram (func_t fnum);
-void PR_LoadProgs (void);
+void PR_ClearProgs(qcvm_t *vm);
+qboolean PR_LoadProgs (const char *filename, qboolean fatal);
+void PR_EnableExtensions (void);
+
+void PR_ReloadPics (qboolean purge);					//for gamedir or video changes
 
 const char *PR_GetString (int num);
 int PR_SetEngineString (const char *s);
+void PR_ClearEngineString (int num);
 int PR_AllocString (int bufferlength, char **ptr);
 
 void PR_Profile_f (void);
 
 edict_t *ED_Alloc (void);
 void ED_Free (edict_t *ed);
+void ED_ClearEdict (edict_t *e);
 
 void ED_Print (edict_t *ed);
 void ED_Write (FILE *f, edict_t *ed);
@@ -101,45 +267,38 @@ void ED_LoadFromFile (const char *data);
 edict_t *EDICT_NUM(int);
 int NUM_FOR_EDICT(edict_t*);
 
-#define	NEXT_EDICT(e)		((edict_t *)( (byte *)e + pr_edict_size))
+#define	NEXT_EDICT(e)		((edict_t *)( (byte *)e + qcvm->edict_size))
 
-#define	EDICT_TO_PROG(e)	(int)((byte *)e - (byte *)sv.edicts)
-#define PROG_TO_EDICT(e)	((edict_t *)((byte *)sv.edicts + e))
+#define	EDICT_TO_PROG(e)	((byte *)e - (byte *)qcvm->edicts)
+#define PROG_TO_EDICT(e)	((edict_t *)((byte *)qcvm->edicts + e))
 
-#define	G_FLOAT(o)		(pr_globals[o])
-#define	G_INT(o)		(*(int *)&pr_globals[o])
-#define	G_EDICT(o)		((edict_t *)((byte *)sv.edicts+ *(int *)&pr_globals[o]))
+#define	G_FLOAT(o)		(qcvm->globals[o])
+#define	G_INT(o)		(*(int *)&qcvm->globals[o])
+#define	G_EDICT(o)		((edict_t *)((byte *)qcvm->edicts+ *(int *)&qcvm->globals[o]))
 #define G_EDICTNUM(o)		NUM_FOR_EDICT(G_EDICT(o))
-#define	G_VECTOR(o)		(&pr_globals[o])
-#define	G_STRING(o)		(PR_GetString(*(string_t *)&pr_globals[o]))
-#define	G_FUNCTION(o)		(*(func_t *)&pr_globals[o])
+#define	G_VECTOR(o)		(&qcvm->globals[o])
+#define	G_STRING(o)		(PR_GetString(*(string_t *)&qcvm->globals[o]))
+#define	G_FUNCTION(o)		(*(func_t *)&qcvm->globals[o])
+
+#define G_VECTORSET(r,x,y,z) do{G_FLOAT((r)+0) = x; G_FLOAT((r)+1) = y;G_FLOAT((r)+2) = z;}while(0)
 
 #define	E_FLOAT(e,o)		(((float*)&e->v)[o])
 #define	E_INT(e,o)		(*(int *)&((float*)&e->v)[o])
 #define	E_VECTOR(e,o)		(&((float*)&e->v)[o])
 #define	E_STRING(e,o)		(PR_GetString(*(string_t *)&((float*)&e->v)[o]))
 
-#define NUM_TYPE_SIZES 8
-extern const int	type_size[NUM_TYPE_SIZES];
+extern	int		type_size[8];
 
-typedef void (*builtin_t) (void);
-extern const builtin_t *pr_builtins;
-extern const int pr_numbuiltins;
+typedef struct builtindef_s
+{
+	const char	*name;
+	builtin_t	ssqcfunc;
+	builtin_t	csqcfunc;
+	int			number;
+} builtindef_t;
 
-/* for 2021 re-release */
-typedef struct {
-	const char *name;
-	int first_statement;
-	int patch_statement;
-} exbuiltin_t;
-
-extern	int		pr_argc;
-
-extern	qboolean	pr_trace;
-extern	dfunction_t	*pr_xfunction;
-extern	int		pr_xstatement;
-
-extern	unsigned short	pr_crc;
+extern builtindef_t	pr_builtindefs[];
+extern int			pr_numbuiltindefs;
 
 FUNC_NORETURN void PR_RunError (const char *error, ...) FUNC_PRINTF(1,2);
 #ifdef __WATCOMC__
@@ -151,6 +310,7 @@ void ED_PrintNum (int ent);
 
 ddef_t *ED_FindGlobal (const char *name);
 dfunction_t *ED_FindFunction (const char *fn_name);
-eval_t *GetEdictFieldValue(edict_t *ed, const char *field);
+eval_t *GetEdictFieldValue(edict_t *ed, int fldofs);
+eval_t *GetEdictFieldValueByName(edict_t *ed, const char *name);
 
 #endif	/* QUAKE_PROGS_H */

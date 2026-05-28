@@ -355,6 +355,36 @@ void CL_Record_f (void)
 			MSG_WriteString (&net_message, cl_lightstyle[i].map);
 		}
 
+		//stats
+		for (i = 0; i < MAX_CL_STATS; i++)
+		{
+			if (!cl.stats[i] && !cl.statsf[i])
+				continue;
+
+			if (net_message.cursize > 4096)
+			{	//periodically flush so that large maps don't need larger than vanilla limits
+				CL_WriteDemoMessage();
+				SZ_Clear (&net_message);
+			}
+
+			if ((double)cl.stats[i] != cl.statsf[i] && (unsigned int)cl.stats[i] <= 0x00ffffff)
+			{	//if the float representation seems to have more precision then use that, unless its getting huge in which case we're probably getting fpu truncation, so go back to more compatible ints
+				MSG_WriteByte (&net_message, svc_stufftext);
+				MSG_WriteString (&net_message, va ("//st %i %g\n", i, cl.statsf[i]));
+			}
+			else if (i >= MAX_CL_BASE_STATS)
+			{
+				MSG_WriteByte (&net_message, svc_stufftext);
+				MSG_WriteString (&net_message, va ("//st %i %i\n", i, cl.stats[i]));
+			}
+			else
+			{
+				MSG_WriteByte (&net_message, svc_updatestat);
+				MSG_WriteByte (&net_message, i);
+				MSG_WriteLong (&net_message, cl.stats[i]);
+			}
+		}
+
 		// what about the CD track or SVC fog... future consideration.
 		MSG_WriteByte (&net_message, svc_updatestat);
 		MSG_WriteByte (&net_message, STAT_TOTALSECRETS);

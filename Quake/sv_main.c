@@ -2,6 +2,7 @@
 Copyright (C) 1996-2001 Id Software, Inc.
 Copyright (C) 2002-2009 John Fitzgibbons and others
 Copyright (C) 2010-2014 QuakeSpasm developers
+Copyright (C) 2016      Spike
 
 This program is free software; you can redistribute it and/or
 modify it under the terms of the GNU General Public License
@@ -22,17 +23,15 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 // sv_main.c -- server main program
 
 #include "quakedef.h"
-#include "vr.h"
 
 server_t	sv;
 server_static_t	svs;
 
 static char	localmodels[MAX_MODELS][8];	// inline model names for precache
 
-int		sv_protocol = PROTOCOL_FITZQUAKE; //johnfitz
+int		sv_protocol = PROTOCOL_RMQ; //johnfitz
 
-extern qboolean	pr_alpha_supported; //johnfitz
-extern int pr_effects_mask;
+extern cvar_t nomonsters;
 cvar_t sv_maxpacketsize = {"sv_maxpacketsize", "1400", CVAR_NONE}; // 1400 = single IP MTU, avoids UDP fragmentation
 // When SV_WriteEntitiesToClient overflows the per-client datagram, the entity
 // that gets evicted is whichever the loop reached last. With sv_netsort=1
@@ -51,6 +50,71 @@ cvar_t sv_coop_revive_health = {"sv_coop_revive_health", "25", CVAR_NOTIFY | CVA
 cvar_t sv_coop_revive_range = {"sv_coop_revive_range", "96", CVAR_NOTIFY | CVAR_SERVERINFO};
 
 //============================================================================
+
+void SV_CalcStats(client_t *client, int *statsi, float *statsf, const char **statss)
+{
+	size_t i;
+	edict_t *ent = client->edict;
+	//FIXME: string stats!
+	int items;
+	eval_t *val = GetEdictFieldValue(ent, qcvm->extfields.items2);
+	if (val)
+		items = (int)ent->v.items | ((int)val->_float << 23);
+	else
+		items = (int)ent->v.items | ((int)pr_global_struct->serverflags << 28);
+
+	memset(statsi, 0, sizeof(*statsi)*MAX_CL_STATS);
+	memset(statsf, 0, sizeof(*statsf)*MAX_CL_STATS);
+	memset((void*)statss, 0, sizeof(*statss)*MAX_CL_STATS);
+	statsf[STAT_HEALTH] = ent->v.health;
+//	statsf[STAT_FRAGS] = ent->v.frags;	//obsolete
+	statsi[STAT_WEAPON] = SV_ModelIndex(PR_GetString(ent->v.weaponmodel));
+	//if ((unsigned int)statsi[STAT_WEAPON] >= client->limit_models)
+	//	statsi[STAT_WEAPON] = 0;
+	statsf[STAT_AMMO] = ent->v.currentammo;
+	statsf[STAT_ARMOR] = ent->v.armorvalue;
+	statsf[STAT_WEAPONFRAME] = ent->v.weaponframe;
+	statsf[STAT_SHELLS] = ent->v.ammo_shells;
+	statsf[STAT_NAILS] = ent->v.ammo_nails;
+	statsf[STAT_ROCKETS] = ent->v.ammo_rockets;
+	statsf[STAT_CELLS] = ent->v.ammo_cells;
+	statsf[STAT_ACTIVEWEAPON] = ent->v.weapon;	//sent in a way that does NOT depend upon the current mod...
+	statsi[STAT_ITEMS] = items;
+
+	for (i = 0; i < sv.numcustomstats; i++)
+	{
+		eval_t *eval = sv.customstats[i].ptr;
+		if (!eval)
+			eval = GetEdictFieldValue(ent, sv.customstats[i].fld);
+
+		switch(sv.customstats[i].type)
+		{
+		case ev_ext_integer:
+			statsi[sv.customstats[i].idx] = eval->_int;
+			break;
+		case ev_entity:
+			statsi[sv.customstats[i].idx] = NUM_FOR_EDICT(PROG_TO_EDICT(eval->edict));
+			break;
+		case ev_float:
+			statsf[sv.customstats[i].idx] = eval->_float;
+			break;
+		case ev_vector:
+			statsf[sv.customstats[i].idx+0] = eval->vector[0];
+			statsf[sv.customstats[i].idx+1] = eval->vector[1];
+			statsf[sv.customstats[i].idx+2] = eval->vector[2];
+			break;
+		case ev_string:		//not supported in this build... send with svcfte_updatestatstring on change, which is annoying.
+			statss[sv.customstats[i].idx] = PR_GetString(eval->string);
+			break;
+		case ev_void:		//nothing...
+		case ev_field:		//panic! everyone panic!
+		case ev_function:	//doesn't make much sense
+		case ev_pointer:	//doesn't make sense
+		default:
+			break;
+		}
+	}
+}
 
 /*
 ===============
@@ -105,10 +169,9 @@ void SV_Init (void)
 	extern	cvar_t	sv_idealpitchscale;
 	extern	cvar_t	sv_aim;
 	extern	cvar_t	sv_altnoclip; //johnfitz
+	extern	cvar_t	sv_gameplayfix_random;
 	extern	cvar_t	sv_gameplayfix_elevators;
 	extern	cvar_t	sv_inputtimeout;
-
-	sv.edicts = NULL; // ericw -- sv.edicts switched to use malloc()
 
 	Cvar_RegisterVariable (&sv_maxvelocity);
 	Cvar_RegisterVariable (&sv_gravity);
@@ -124,11 +187,12 @@ void SV_Init (void)
 	Cvar_RegisterVariable (&sv_aim);
 	Cvar_RegisterVariable (&sv_nostep);
 	Cvar_RegisterVariable (&sv_freezenonclients);
+	Cvar_RegisterVariable (&pr_checkextension);
 	Cvar_RegisterVariable (&sv_altnoclip); //johnfitz
 	Cvar_RegisterVariable (&sv_gameplayfix_elevators);
+	Cvar_RegisterVariable (&sv_gameplayfix_random);
 	Cvar_RegisterVariable (&sv_inputtimeout);
-	Cvar_RegisterVariable (&sv_maxpacketsize); // increased for AD
-	Cvar_RegisterVariable (&sv_netsort); // ironwail-style entity priority sorting
+	Cvar_RegisterVariable (&sv_maxpacketsize);
 	Cvar_RegisterVariable (&sv_coop_weapon_targetfix);
 	Cvar_RegisterVariable (&sv_coop_pickup_targetlog);
 	Cvar_RegisterVariable (&sv_coop_pickup_targetfix);
@@ -144,6 +208,7 @@ void SV_Init (void)
 	Cvar_SetCallback (&sv_coop_revive_health, Host_Callback_Notify);
 	Cvar_SetCallback (&sv_coop_revive_range, Host_Callback_Notify);
 	Cvar_RegisterVariable (&vr_movement_instant_stop);
+	Cvar_RegisterVariable (&sv_netsort); // ironwail-style entity priority sorting
 
 	Cmd_AddCommand ("sv_protocol", &SV_Protocol_f); //johnfitz
 
@@ -374,7 +439,7 @@ void SV_SendServerinfo (client_t *client)
 	int				i; //johnfitz
 
 	MSG_WriteByte (&client->message, svc_print);
-	sprintf (message, "%c\nFITZQUAKE %1.2f SERVER (%i CRC)\n", 2, FITZQUAKE_VERSION, pr_crc); //johnfitz -- include fitzquake version
+	sprintf (message, "%c\nFITZQUAKE %1.2f SERVER (%i CRC)\n", 2, FITZQUAKE_VERSION, qcvm->crc); //johnfitz -- include fitzquake version
 	MSG_WriteString (&client->message,message);
 
 	MSG_WriteByte (&client->message, svc_serverinfo);
@@ -393,7 +458,7 @@ void SV_SendServerinfo (client_t *client)
 	else
 		MSG_WriteByte (&client->message, GAME_COOP);
 
-	MSG_WriteString (&client->message, PR_GetString(sv.edicts->v.message));
+	MSG_WriteString (&client->message, PR_GetString(qcvm->edicts->v.message));
 
 	//johnfitz -- only send the first 256 model and sound precaches if protocol is 15
 	for (i = 1, s = sv.model_precache+1; *s; s++,i++)
@@ -409,8 +474,8 @@ void SV_SendServerinfo (client_t *client)
 
 // send music
 	MSG_WriteByte (&client->message, svc_cdtrack);
-	MSG_WriteByte (&client->message, sv.edicts->v.sounds);
-	MSG_WriteByte (&client->message, sv.edicts->v.sounds);
+	MSG_WriteByte (&client->message, qcvm->edicts->v.sounds);
+	MSG_WriteByte (&client->message, qcvm->edicts->v.sounds);
 
 // set view
 	MSG_WriteByte (&client->message, svc_setview);
@@ -419,7 +484,7 @@ void SV_SendServerinfo (client_t *client)
 	MSG_WriteByte (&client->message, svc_signonnum);
 	MSG_WriteByte (&client->message, 1);
 
-	client->sendsignon = PRESPAWN_FLUSH;
+	client->sendsignon = true;
 	client->spawned = false;		// need prespawn, spawn, etc
 }
 
@@ -610,6 +675,20 @@ byte *SV_FatPVS (vec3_t org, qmodel_t *worldmodel) //johnfitz -- added worldmode
 
 /*
 =============
+SV_EdictInPVS
+=============
+*/
+qboolean SV_EdictInPVS (edict_t *test, byte *pvs)
+{
+	int i;
+	for (i = 0 ; i < test->num_leafs ; i++)
+		if (pvs[test->leafnums[i] >> 3] & (1 << (test->leafnums[i] & 7)))
+			return true;
+	return false;
+}
+
+/*
+=============
 SV_VisibleToClient -- johnfitz
 
 PVS test encapsulated in a nice function
@@ -619,16 +698,11 @@ qboolean SV_VisibleToClient (edict_t *client, edict_t *test, qmodel_t *worldmode
 {
 	byte	*pvs;
 	vec3_t	org;
-	int		i;
 
 	VectorAdd (client->v.origin, client->v.view_ofs, org);
 	pvs = SV_FatPVS (org, worldmodel);
 
-	for (i=0 ; i < test->num_leafs ; i++)
-		if (pvs[test->leafnums[i] >> 3] & (1 << (test->leafnums[i]&7) ))
-			return true;
-
-	return false;
+	return SV_EdictInPVS (test, pvs);
 }
 
 //=============================================================================
@@ -656,8 +730,8 @@ void SV_WriteEntitiesToClient (edict_t	*clent, sizebuf_t *msg)
 	byte	*pvs;
 	vec3_t	org, forward, right, up;
 	float	miss, dist, size;
-	edict_t	*ent;
 	eval_t	*val;
+	edict_t	*ent;
 
 // find the client's PVS
 	VectorAdd (clent->v.origin, clent->v.view_ofs, org);
@@ -683,8 +757,8 @@ void SV_WriteEntitiesToClient (edict_t	*clent, sizebuf_t *msg)
 	numents = 1;
 
 // add all other entities that touch the pvs (or that the coop hack forces in)
-	ent = NEXT_EDICT(sv.edicts);
-	for (e=1 ; e<sv.num_edicts ; e++, ent = NEXT_EDICT(ent))
+	ent = NEXT_EDICT(qcvm->edicts);
+	for (e=1 ; e<qcvm->num_edicts ; e++, ent = NEXT_EDICT(ent))
 	{
 		if (ent == clent)
 			continue;	// already added before the loop
@@ -821,27 +895,24 @@ skip_pvs_cull:
 		if (ent->baseline.frame != ent->v.frame)
 			bits |= U_FRAME;
 
-		if ((ent->baseline.effects ^ (int)ent->v.effects) & pr_effects_mask)
+		if ((ent->baseline.effects ^ (int)ent->v.effects) & qcvm->effects_mask)
 			bits |= U_EFFECTS;
 
 		if (ent->baseline.modelindex != ent->v.modelindex)
 			bits |= U_MODEL;
 
 		//johnfitz -- alpha
-		if (pr_alpha_supported)
-		{
-			// TODO: find a cleaner place to put this code
-			val = GetEdictFieldValue(ent, "alpha");
-			if (val)
-				ent->alpha = ENTALPHA_ENCODE(val->_float);
-		}
+		// TODO: find a cleaner place to put this code
+		val = GetEdictFieldValueByName(ent, "alpha");
+		if (val)
+			ent->alpha = ENTALPHA_ENCODE(val->_float);
 
 		//don't send invisible entities unless they have effects
-		if (ent->alpha == ENTALPHA_ZERO && !((int)ent->v.effects & pr_effects_mask))
+		if (ent->alpha == ENTALPHA_ZERO && !((int)ent->v.effects & qcvm->effects_mask))
 			continue;
 		//johnfitz
 
-		val = GetEdictFieldValue(ent, "scale");
+		val = GetEdictFieldValueByName(ent, "scale");
 		if (val)
 			ent->scale = ENTSCALE_ENCODE(val->_float);
 		else
@@ -896,7 +967,7 @@ skip_pvs_cull:
 		if (bits & U_SKIN)
 			MSG_WriteByte (msg, ent->v.skin);
 		if (bits & U_EFFECTS)
-			MSG_WriteByte (msg, (int)ent->v.effects & pr_effects_mask);
+			MSG_WriteByte (msg, (int)ent->v.effects & qcvm->effects_mask);
 		if (bits & U_ORIGIN1)
 			MSG_WriteCoord (msg, ent->v.origin[0], sv.protocolflags);
 		if (bits & U_ANGLE1)
@@ -920,7 +991,7 @@ skip_pvs_cull:
 		if (bits & U_MODEL2)
 			MSG_WriteByte(msg, (int)ent->v.modelindex >> 8);
 		if (bits & U_LERPFINISH)
-			MSG_WriteByte(msg, (byte)(Q_rint((ent->v.nextthink-sv.time)*255)));
+			MSG_WriteByte(msg, (byte)(Q_rint((ent->v.nextthink-qcvm->time)*255)));
 		//johnfitz
 	}
 
@@ -944,8 +1015,8 @@ void SV_CleanupEnts (void)
 	int		e;
 	edict_t	*ent;
 
-	ent = NEXT_EDICT(sv.edicts);
-	for (e=1 ; e<sv.num_edicts ; e++, ent = NEXT_EDICT(ent))
+	ent = NEXT_EDICT(qcvm->edicts);
+	for (e=1 ; e<qcvm->num_edicts ; e++, ent = NEXT_EDICT(ent))
 	{
 		ent->v.effects = (int)ent->v.effects & ~EF_MUZZLEFLASH;
 	}
@@ -1005,7 +1076,7 @@ void SV_WriteClientdataToMessage (edict_t *ent, sizebuf_t *msg)
 
 // stuff the sigil bits into the high bits of items for sbar, or else
 // mix in items2
-	val = GetEdictFieldValue(ent, "items2");
+	val = GetEdictFieldValueByName(ent, "items2");
 
 	if (val)
 		items = (int)ent->v.items | ((int)val->_float << 23);
@@ -1197,7 +1268,7 @@ qboolean SV_SendClientDatagram (client_t *client)
 		{
 			Con_Printf ("net_lagdebug: server unreliable update gap to %s (%s): %.3f sec host_dt=%.3f sv_time=%.3f\n",
 				client->name, NET_QSocketGetAddressString(client->netconnection),
-				update_gap, host_frametime, sv.time);
+				update_gap, host_frametime, qcvm->time);
 			last_gap_log[client_index] = realtime;
 		}
 	}
@@ -1212,7 +1283,7 @@ qboolean SV_SendClientDatagram (client_t *client)
 		if (first_packet)
 		{
 			MSG_WriteByte (&msg, svc_time);
-			MSG_WriteFloat (&msg, sv.time);
+			MSG_WriteFloat (&msg, qcvm->time);
 		}
 
 // add the client specific data to the datagram
@@ -1295,6 +1366,74 @@ qboolean SV_SendClientDatagram (client_t *client)
 
 /*
 =======================
+SV_WriteStats
+
+TODO: group multiple stats in a single stuffcmd, the client already supports this
+=======================
+*/
+void SV_WriteStats (client_t *client)
+{
+	int			statsi[MAX_CL_STATS];
+	float		statsf[MAX_CL_STATS];
+	const char	*statss[MAX_CL_STATS];
+	int			i;
+
+	SV_CalcStats (client, statsi, statsf, statss);
+
+	for (i = 0; i < MAX_CL_STATS; i++)
+	{
+		//small cleanup
+		if (!statsi[i])
+			statsi[i] =	statsf[i];
+		else
+			statsf[i] =	0;//statsi[i];
+
+		if (statsi[i] != client->oldstats_i[i] || statsf[i] != client->oldstats_f[i])
+		{
+			client->oldstats_i[i] = statsi[i];
+			client->oldstats_f[i] = statsf[i];
+
+			if ((double)statsi[i] != statsf[i] && statsf[i])
+			{	//didn't round nicely, so send as a float
+				MSG_WriteByte (&client->message, svc_stufftext);
+				MSG_WriteString (&client->message, va ("//st %i %g\n", i, statsf[i]));
+			}
+			else
+			{
+				if (i < MAX_CL_BASE_STATS)
+				{
+					MSG_WriteByte (&client->message, svc_updatestat);
+					MSG_WriteByte (&client->message, i);
+					MSG_WriteLong (&client->message, statsi[i]);
+				}
+				else
+				{
+					MSG_WriteByte (&client->message, svc_stufftext);
+					MSG_WriteString (&client->message, va ("//st %i %i\n", i, statsi[i]));
+				}
+			}
+		}
+
+		if (statss[i] || client->oldstats_s[i])
+		{
+			const char *os = client->oldstats_s[i];
+			const char *ns = statss[i];
+			if (!ns)	ns="";
+			if (!os)	os="";
+			if (strcmp(os,ns))
+			{
+				free(client->oldstats_s[i]);
+				client->oldstats_s[i] = strdup(ns);
+
+				MSG_WriteByte (&client->message, svc_stufftext);
+				MSG_WriteString (&client->message, va ("//sts %i \"%s\"\n", i, ns));
+			}
+		}
+	}
+}
+
+/*
+=======================
 SV_UpdateToReliableMessages
 =======================
 */
@@ -1325,6 +1464,7 @@ void SV_UpdateToReliableMessages (void)
 	{
 		if (!client->active)
 			continue;
+		SV_WriteStats (client);
 		SZ_Write (&client->message, sv.reliable_datagram.data, sv.reliable_datagram.cursize);
 	}
 
@@ -1533,7 +1673,7 @@ void SV_CreateBaseline (void)
 	int			entnum;
 	int			bits; //johnfitz -- PROTOCOL_FITZQUAKE
 
-	for (entnum = 0; entnum < sv.num_edicts ; entnum++)
+	for (entnum = 0; entnum < qcvm->num_edicts ; entnum++)
 	{
 	// get the current server version
 		svent = EDICT_NUM(entnum);
@@ -1554,21 +1694,12 @@ void SV_CreateBaseline (void)
 			svent->baseline.colormap = entnum;
 			svent->baseline.modelindex = SV_ModelIndex("progs/player.mdl");
 			svent->baseline.alpha = ENTALPHA_DEFAULT; //johnfitz -- alpha support
-			svent->baseline.scale = ENTSCALE_DEFAULT;
 		}
 		else
 		{
 			svent->baseline.colormap = 0;
 			svent->baseline.modelindex = SV_ModelIndex(PR_GetString(svent->v.model));
 			svent->baseline.alpha = svent->alpha; //johnfitz -- alpha support
-			svent->baseline.scale = ENTSCALE_DEFAULT;
-			if (sv.protocol == PROTOCOL_RMQ)
-			{
-				eval_t* val;
-				val = GetEdictFieldValue(svent, "scale");
-				if (val)
-					svent->baseline.scale = ENTSCALE_ENCODE(val->_float);
-			}
 		}
 
 		//johnfitz -- PROTOCOL_FITZQUAKE
@@ -1580,7 +1711,6 @@ void SV_CreateBaseline (void)
 			if (svent->baseline.frame & 0xFF00)
 				svent->baseline.frame = 0;
 			svent->baseline.alpha = ENTALPHA_DEFAULT;
-			svent->baseline.scale = ENTSCALE_DEFAULT;
 		}
 		else //decide which extra data needs to be sent
 		{
@@ -1590,8 +1720,7 @@ void SV_CreateBaseline (void)
 				bits |= B_LARGEFRAME;
 			if (svent->baseline.alpha != ENTALPHA_DEFAULT)
 				bits |= B_ALPHA;
-			if (svent->baseline.scale != ENTSCALE_DEFAULT)
-				bits |= B_SCALE;
+			// Baseline scale is not signon-encoded; dynamic U_SCALE still works.
 		}
 		//johnfitz
 
@@ -1636,9 +1765,6 @@ void SV_CreateBaseline (void)
 		if (bits & B_ALPHA)
 			MSG_WriteByte (sv.signon, svent->baseline.alpha);
 		//johnfitz
-
-		if (bits & B_SCALE)
-			MSG_WriteByte (sv.signon, svent->baseline.scale);
 	}
 }
 
@@ -1709,6 +1835,7 @@ void SV_SpawnServer (const char *server)
 	static char	dummy[8] = { 0,0,0,0,0,0,0,0 };
 	edict_t		*ent;
 	int			i, signonsize;
+	qcvm_t		*vm = qcvm;
 
 	// let's not have any servers with no name
 	if (hostname.string[0] == 0)
@@ -1717,6 +1844,8 @@ void SV_SpawnServer (const char *server)
 
 	Con_DPrintf ("SpawnServer: %s\n",server);
 	svs.changelevel_issued = false;		// now safe to issue another
+
+	PR_SwitchQCVM(NULL);
 
 //
 // tell all connected clients that we are going to a new level
@@ -1757,13 +1886,15 @@ void SV_SpawnServer (const char *server)
 	}
 	else sv.protocolflags = 0;
 
+	PR_SwitchQCVM(vm);
 // load progs to get entity field count
-	PR_LoadProgs ();
+	PR_LoadProgs ("progs.dat", true);
 
 // allocate server memory
 	/* Host_ClearMemory() called above already cleared the whole sv structure */
-	sv.max_edicts = CLAMP (MIN_EDICTS,(int)max_edicts.value,MAX_EDICTS); //johnfitz -- max_edicts cvar
-	sv.edicts = (edict_t *) malloc (sv.max_edicts*pr_edict_size); // ericw -- sv.edicts switched to use malloc()
+	qcvm->max_edicts = CLAMP (MIN_EDICTS,(int)max_edicts.value,MAX_EDICTS); //johnfitz -- max_edicts cvar
+	qcvm->edicts = (edict_t *) malloc (qcvm->max_edicts*qcvm->edict_size); // ericw -- sv.edicts switched to use malloc()
+	ClearLink (&qcvm->free_edicts);
 
 	sv.datagram.maxsize = sizeof(sv.datagram_buf);
 	sv.datagram.cursize = 0;
@@ -1776,8 +1907,8 @@ void SV_SpawnServer (const char *server)
 	SV_AddSignonBuffer ();
 
 // leave slots at start for clients only
-	sv.num_edicts = svs.maxclients+1;
-	memset(sv.edicts, 0, sv.num_edicts*pr_edict_size); // ericw -- sv.edicts switched to use malloc()
+	qcvm->num_edicts = svs.maxclients+1;
+	memset(qcvm->edicts, 0, qcvm->num_edicts*qcvm->edict_size); // ericw -- sv.edicts switched to use malloc()
 	for (i=0 ; i<svs.maxclients ; i++)
 	{
 		ent = EDICT_NUM(i+1);
@@ -1786,8 +1917,9 @@ void SV_SpawnServer (const char *server)
 
 	sv.state = ss_loading;
 	sv.paused = false;
+	sv.nomonsters = (nomonsters.value != 0.f);
 
-	sv.time = 1.0;
+	qcvm->time = 1.0;
 
 	q_strlcpy (sv.name, server, sizeof(sv.name));
 	q_snprintf (sv.modelname, sizeof(sv.modelname), "maps/%s.bsp", server);
@@ -1818,8 +1950,7 @@ void SV_SpawnServer (const char *server)
 // load the rest of the entities
 //
 	ent = EDICT_NUM(0);
-	memset (&ent->v, 0, progs->entityfields * 4);
-	ent->free = false;
+	memset (&ent->v, 0, qcvm->progs->entityfields * 4);
 	ent->v.model = PR_SetEngineString(sv.worldmodel->name);
 	ent->v.modelindex = 1;		// world model
 	ent->v.solid = SOLID_BSP;

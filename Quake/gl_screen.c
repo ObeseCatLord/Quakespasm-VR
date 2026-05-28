@@ -300,7 +300,7 @@ static void SCR_CalcRefdef(void) {
   size = scr_viewsize.value;
   scale = CLAMP(1.0f, scr_sbarscale.value, (float)glwidth / 320.0f);
 
-  if (size >= 120 || cl.intermission ||
+  if (size >= 120 || cl.intermission || cl.qcvm.extfuncs.CSQC_DrawHud ||
       scr_sbaralpha.value < 1) // johnfitz -- scr_sbaralpha.value
     sb_lines = 0;
   else if (size >= 110)

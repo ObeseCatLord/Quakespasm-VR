@@ -87,7 +87,7 @@ static qboolean SV_EdictStringFieldSet (edict_t *ent, const char *fieldname)
 {
 	eval_t	*val;
 
-	val = GetEdictFieldValue(ent, fieldname);
+	val = GetEdictFieldValueByName(ent, fieldname);
 	return val && val->string && PR_GetString(val->string)[0];
 }
 
@@ -112,7 +112,7 @@ static string_t SV_EdictStringFieldValue (edict_t *ent, const char *fieldname)
 {
 	eval_t	*val;
 
-	val = GetEdictFieldValue(ent, fieldname);
+	val = GetEdictFieldValueByName(ent, fieldname);
 	if (!val || !val->string || !PR_GetString(val->string)[0])
 		return 0;
 	return val->string;
@@ -187,11 +187,11 @@ static qboolean SV_IsDirectWeaponTouch (func_t touchfunc)
 	static func_t		weapon_touch;
 	dfunction_t			*func;
 
-	if (cached_progs != progs)
+	if (cached_progs != qcvm->progs)
 	{
-		cached_progs = progs;
+		cached_progs = qcvm->progs;
 		func = ED_FindFunction("weapon_touch");
-		weapon_touch = func ? (func_t)(func - pr_functions) : 0;
+		weapon_touch = func ? (func_t)(func - qcvm->functions) : 0;
 	}
 
 	return weapon_touch && touchfunc == weapon_touch;
@@ -252,7 +252,7 @@ static void SV_ClearEdictStringField (edict_t *ent, const char *fieldname)
 {
 	eval_t	*val;
 
-	val = GetEdictFieldValue(ent, fieldname);
+	val = GetEdictFieldValueByName(ent, fieldname);
 	if (val)
 		val->string = 0;
 }
@@ -283,9 +283,9 @@ static void SV_FireCoopPickupTargets (edict_t *weapon, edict_t *player, const ch
 
 	pr_global_struct->self = EDICT_TO_PROG(weapon);
 	pr_global_struct->other = EDICT_TO_PROG(player);
-	pr_global_struct->time = sv.time;
+	pr_global_struct->time = qcvm->time;
 	G_INT(activator_def->ofs) = EDICT_TO_PROG(player);
-	PR_ExecuteProgram ((func_t)(use_targets - pr_functions));
+	PR_ExecuteProgram ((func_t)(use_targets - qcvm->functions));
 
 	if (!weapon->free)
 		SV_ClearCoopWeaponTargets(weapon);
@@ -300,7 +300,7 @@ static void SV_LogCoopPickupTargets (edict_t *pickup, edict_t *player, const cha
 
 	if (!sv_coop_pickup_targetlog.value || !coop.value)
 		return;
-	if (sv.time - last_log_time < 1.0)
+	if (qcvm->time - last_log_time < 1.0)
 		return;
 	if (!pickup || pickup->free || !pickup->v.classname)
 		return;
@@ -313,7 +313,7 @@ static void SV_LogCoopPickupTargets (edict_t *pickup, edict_t *player, const cha
 		classname, note,
 		player && player->v.netname ? PR_GetString(player->v.netname) : "client",
 		target ? target : "", killtarget ? killtarget : "");
-	last_log_time = sv.time;
+	last_log_time = qcvm->time;
 }
 
 // Vanilla-style progs often hide ammo after pickup but only schedule SUB_regen
@@ -359,8 +359,8 @@ static void SV_ScheduleCoopAmmoRespawn (edict_t *ammo)
 	if (respawn_time < 1)
 		respawn_time = 1;
 
-	ammo->v.think = (func_t)(regen_func - pr_functions);
-	ammo->v.nextthink = sv.time + respawn_time;
+	ammo->v.think = (func_t)(regen_func - qcvm->functions);
+	ammo->v.nextthink = qcvm->time + respawn_time;
 
 	Con_DPrintf("sv_coop_ammo_respawn: scheduled %s in %.1f seconds\n",
 		ammo->v.classname ? PR_GetString(ammo->v.classname) : "ammo",
@@ -515,8 +515,8 @@ typedef struct areanode_s
 	link_t	solid_edicts;
 } areanode_t;
 
-#define	AREA_DEPTH	4
-#define	AREA_NODES	32
+#define	AREA_DEPTH	7
+#define	AREA_NODES	(2<<AREA_DEPTH)
 
 static	areanode_t	sv_areanodes[AREA_NODES];
 static	int			sv_numareanodes;
@@ -649,7 +649,7 @@ SV_AreaTriggerEdicts ( edict_t *ent, areanode_t *node, edict_t **list, int *list
 ====================
 SV_TouchLinks
 
-ericw -- copy the touching edicts to an array (on the hunk) so we can avoid
+ericw -- copy the touching edicts to an array so we can avoid
 iteating the trigger_edicts linked list while calling PR_ExecuteProgram
 which could potentially corrupt the list while it's being iterated.
 Based on code from Spike.
@@ -667,12 +667,12 @@ void SV_TouchLinks (edict_t *ent)
 	qboolean	coop_targetlog;
 	qboolean	coop_ammo_respawn;
 	sv_coop_target_state_t	coop_targets_before;
-	
+
 	mark = Hunk_LowMark ();
-	list = (edict_t **) Hunk_Alloc (sv.num_edicts*sizeof(edict_t *));
-	
+	list = (edict_t **) Hunk_Alloc (qcvm->num_edicts*sizeof(edict_t *));
+
 	listcount = 0;
-	SV_AreaTriggerEdicts (ent, sv_areanodes, list, &listcount, sv.num_edicts);
+	SV_AreaTriggerEdicts (ent, sv_areanodes, list, &listcount, qcvm->num_edicts);
 
 	for (i = 0; i < listcount; i++)
 	{
@@ -705,7 +705,7 @@ void SV_TouchLinks (edict_t *ent)
 
 		pr_global_struct->self = EDICT_TO_PROG(touch);
 		pr_global_struct->other = EDICT_TO_PROG(ent);
-		pr_global_struct->time = sv.time;
+		pr_global_struct->time = qcvm->time;
 		PR_ExecuteProgram (touch->v.touch);
 
 		if (coop_weapon_targetfix && !touch->free && touch->v.solid == SOLID_TRIGGER
@@ -746,13 +746,13 @@ void SV_FindTouchedLeafs (edict_t *ent, mnode_t *node)
 	if (node->contents == CONTENTS_SOLID)
 		return;
 
-	if (ent->num_leafs == MAX_ENT_LEAFS)
-		return;
-
 // add an efrag if the node is a leaf
 
 	if ( node->contents < 0)
 	{
+		if (ent->num_leafs == MAX_ENT_LEAFS)
+			return;
+
 		leaf = (mleaf_t *)node;
 		leafnum = leaf - sv.worldmodel->leafs - 1;
 
@@ -776,6 +776,40 @@ void SV_FindTouchedLeafs (edict_t *ent, mnode_t *node)
 
 /*
 ===============
+SV_BoxInPVS
+===============
+*/
+qboolean SV_BoxInPVS (vec3_t mins, vec3_t maxs, byte *pvs, mnode_t *node)
+{
+	mplane_t	*splitplane;
+	mleaf_t		*leaf;
+	int			sides;
+	int			leafnum;
+
+	if (node->contents == CONTENTS_SOLID)
+		return false;
+
+	if (node->contents < 0)
+	{
+		leaf = (mleaf_t *)node;
+		leafnum = leaf - sv.worldmodel->leafs - 1;
+		return pvs[leafnum >> 3] & (1 << (leafnum & 7));
+	}
+
+	splitplane = node->plane;
+	sides = BOX_ON_PLANE_SIDE(mins, maxs, splitplane);
+
+	if (sides & 1 && SV_BoxInPVS (mins, maxs, pvs, node->children[0]))
+		return true;
+
+	if (sides & 2 && SV_BoxInPVS (mins, maxs, pvs, node->children[1]))
+		return true;
+
+	return false;
+}
+
+/*
+===============
 SV_LinkEdict
 
 ===============
@@ -787,7 +821,7 @@ void SV_LinkEdict (edict_t *ent, qboolean touch_triggers)
 	if (ent->area.prev)
 		SV_UnlinkEdict (ent);	// unlink from old position
 
-	if (ent == sv.edicts)
+	if (ent == qcvm->edicts)
 		return;		// don't add the world
 
 	if (ent->free)
@@ -934,7 +968,7 @@ edict_t	*SV_TestEntityPosition (edict_t *ent)
 	trace = SV_Move (ent->v.origin, ent->v.mins, ent->v.maxs, ent->v.origin, 0, ent);
 
 	if (trace.startsolid)
-		return trace.ent ? trace.ent : sv.edicts;
+		return qcvm->edicts;
 
 	return NULL;
 }
@@ -1256,7 +1290,7 @@ trace_t SV_Move (vec3_t start, vec3_t mins, vec3_t maxs, vec3_t end, int type, e
 	memset ( &clip, 0, sizeof ( moveclip_t ) );
 
 // clip to world
-	clip.trace = SV_ClipMoveToEntity ( sv.edicts, start, mins, maxs, end );
+	clip.trace = SV_ClipMoveToEntity ( qcvm->edicts, start, mins, maxs, end );
 
 	clip.start = start;
 	clip.end = end;

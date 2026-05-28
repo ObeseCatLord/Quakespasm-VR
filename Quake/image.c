@@ -221,19 +221,30 @@ byte *Image_LoadTGA (FILE *fin, int *width, int *height)
 	}
 	else
 	{
-		if (targa_header.image_type!=2 && targa_header.image_type!=10)
+		if (targa_header.image_type!=2 && targa_header.image_type!=3 && targa_header.image_type!=10)
 		{
 			/* JFIF magic FF D8 in the first two bytes makes id_length=0xFF and
 			   image_type=0xFF; addon paks sometimes ship JPEGs renamed to .tga.
 			   Warn and let the caller fall back instead of crashing the game. */
-			Con_Warning ("Image_LoadTGA: %s is not a type 2 or type 10 targa (%i)\n", loadfilename, targa_header.image_type);
+			Con_Warning ("Image_LoadTGA: %s is not a type 2, 3, or 10 targa (%i)\n", loadfilename, targa_header.image_type);
 			return NULL;
 		}
 
-		if (targa_header.colormap_type !=0 || (targa_header.pixel_size!=32 && targa_header.pixel_size!=24))
+		if (targa_header.image_type == 3)
 		{
-			Con_Warning ("Image_LoadTGA: %s is not a 24bit or 32bit targa\n", loadfilename);
-			return NULL;
+			if (targa_header.colormap_type != 0 || targa_header.pixel_size != 8)
+			{
+				Con_Warning ("Image_LoadTGA: %s is not an 8bit grayscale targa\n", loadfilename);
+				return NULL;
+			}
+		}
+		else
+		{
+			if (targa_header.colormap_type !=0 || (targa_header.pixel_size!=32 && targa_header.pixel_size!=24))
+			{
+				Con_Warning ("Image_LoadTGA: %s is not a 24bit or 32bit targa\n", loadfilename);
+				return NULL;
+			}
 		}
 	}
 
@@ -256,10 +267,10 @@ byte *Image_LoadTGA (FILE *fin, int *width, int *height)
 		//palette data comes first
 		for (i = 0; i < targa_header.colormap_length; i++)
 		{	//this palette data is bgr.
-			palette[i*3+2] = Buf_GetC(buf);
-			palette[i*3+1] = Buf_GetC(buf);
-			palette[i*3+0] = Buf_GetC(buf);
-			palette[i*3+3] = 255;
+			palette[i*4+2] = Buf_GetC(buf);
+			palette[i*4+1] = Buf_GetC(buf);
+			palette[i*4+0] = Buf_GetC(buf);
+			palette[i*4+3] = 255;
 		}
 		for (i = targa_header.colormap_length*4; i < sizeof(palette); i++)
 			palette[i] = 0;
@@ -271,10 +282,10 @@ byte *Image_LoadTGA (FILE *fin, int *width, int *height)
 			for(column=0; column<columns; column++)
 			{
 				i = Buf_GetC(buf);
-				*pixbuf++= palette[i*3+0];
-				*pixbuf++= palette[i*3+1];
-				*pixbuf++= palette[i*3+2];
-				*pixbuf++= palette[i*3+3];
+				*pixbuf++= palette[i*4+0];
+				*pixbuf++= palette[i*4+1];
+				*pixbuf++= palette[i*4+2];
+				*pixbuf++= palette[i*4+3];
 			}
 		}
 	}
@@ -311,6 +322,24 @@ byte *Image_LoadTGA (FILE *fin, int *width, int *height)
 					*pixbuf++ = alphabyte;
 					break;
 				}
+			}
+		}
+	}
+	else if (targa_header.image_type==3) // Uncompressed grayscale images
+	{
+		for(row=rows-1; row>=0; row--)
+		{
+			realrow = upside_down ? row : rows - 1 - row;
+			pixbuf = targa_rgba + realrow*columns*4;
+
+			for(column=0; column<columns; column++)
+			{
+				unsigned char gray = Buf_GetC(buf);
+
+				*pixbuf++ = gray;
+				*pixbuf++ = gray;
+				*pixbuf++ = gray;
+				*pixbuf++ = 255;
 			}
 		}
 	}
