@@ -211,6 +211,14 @@ extern cvar_t coop;
 extern cvar_t sv_nofriendlyfire;
 extern cvar_t sv_coop_noplayerclip;
 extern cvar_t sv_coop_weapon_targetfix;
+extern cvar_t sv_coop_pickup_targetlog;
+extern cvar_t sv_coop_pickup_targetfix;
+extern cvar_t sv_coop_pickup_targetfix_classes;
+extern cvar_t sv_coop_ammo_respawn;
+extern cvar_t sv_coop_ammo_respawn_time;
+extern cvar_t sv_coop_revive;
+extern cvar_t sv_coop_revive_health;
+extern cvar_t sv_coop_revive_range;
 extern cvar_t sv_save_multiplayer;
 extern cvar_t sv_cmdfile;
 extern cvar_t fraglimit;
@@ -251,6 +259,11 @@ void SV_ClientPrintf (const char *fmt, ...) FUNC_PRINTF(1,2);
 void SV_BroadcastPrintf (const char *fmt, ...) FUNC_PRINTF(1,2);
 
 void SV_Physics (void);
+void SV_CoopReviveBeginPostThink(edict_t *ent);
+void SV_CoopReviveEndPostThink(void);
+void SV_CoopReviveApplyPending(void);
+void SV_CoopReviveFromTrace(vec3_t start, vec3_t end, edict_t *ent,
+                            float trace_fraction);
 
 qboolean SV_CheckBottom (edict_t *ent);
 qboolean SV_movestep (edict_t *ent, vec3_t move, qboolean relink);

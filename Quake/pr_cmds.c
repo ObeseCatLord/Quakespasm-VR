@@ -726,6 +726,7 @@ static void PF_traceline (void)
 		v2[0] = v2[1] = v2[2] = 0;
 
 	trace = SV_Move (v1, vec3_origin, vec3_origin, v2, nomonsters, ent);
+	SV_CoopReviveFromTrace (v1, v2, ent, trace.fraction);
 
 	pr_global_struct->trace_allsolid = trace.allsolid;
 	pr_global_struct->trace_startsolid = trace.startsolid;
