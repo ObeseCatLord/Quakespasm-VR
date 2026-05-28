@@ -1217,16 +1217,14 @@ void SV_WalkMove(edict_t *ent) {
 // Replace player origin with hand muzzle position for the duration of
 // PlayerPostThink (where QuakeC fires weapons).
 //
-// For remote VR clients: the client sends raw handpos plus the barrel-depth
-// multiplier (ofs[2]*gunmodelscale) and z_offset.  The server applies the
-// forward offset using ent->v.v_angle — the SAME quantized angles that
-// QuakeC's makevectors() will use — so the muzzle position and projectile
-// direction are always in agreement.  This eliminates the yaw-dependent
-// horizontal offset that occurred when the client computed the offset with
-// full-precision handrot.
+// For remote VR clients: the client sends its calibrated muzzle/controller
+// position.  The server applies only the QuakeC self.origin compensation using
+// ent->v.v_angle — the SAME quantized angles that QuakeC's makevectors() will
+// use — so the muzzle position and projectile direction are always in
+// agreement.
 //
-// For the local player (singleplayer / listen-server): uses cl.handpos[1]
-// directly with the original master-branch formula.
+// For the local player (singleplayer / listen-server): uses the same
+// calibrated muzzle/controller position directly.
 static qboolean SV_VRWeaponSpawnsAtSelfOrigin(edict_t *ent) {
   return (int)ent->v.weapon == IT_GRENADE_LAUNCHER;
 }
@@ -1258,23 +1256,8 @@ static void SV_ApplyVRWeaponOffset(edict_t *ent, int num, qboolean is_remote_vr,
     vec3_t adj;
     vec3_t fwd, right, up;
     qboolean spawns_at_self_origin = SV_VRWeaponSpawnsAtSelfOrigin(ent);
-    _VectorCopy(cl.handpos[1], adj);
+    VR_GetMuzzleAdjustedHandPos(adj);
     AngleVectors(cl.handrot[1], fwd, right, up);
-
-    if (weaponCVarEntry >= 0) {
-      vec3_t ofs = {
-          vr_weapon_offset[weaponCVarEntry * VARS_PER_WEAPON].value,
-          vr_weapon_offset[weaponCVarEntry * VARS_PER_WEAPON + 1].value,
-          vr_weapon_offset[weaponCVarEntry * VARS_PER_WEAPON + 2].value +
-              vr_gunmodely.value};
-
-      vec3_t fwd2;
-      VectorCopy(fwd, fwd2);
-      fwd2[0] *= vr_gunmodelscale.value * ofs[2];
-      fwd2[1] *= vr_gunmodelscale.value * ofs[2];
-      fwd2[2] *= vr_gunmodelscale.value * ofs[2];
-      VectorAdd(adj, fwd2, adj);
-    }
 
     _VectorCopy(adj, ent->v.origin);
     if (spawns_at_self_origin) {

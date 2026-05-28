@@ -261,17 +261,72 @@ Quake's weapons don't seem to be particularly consistently sized or offset. To w
 - Weapons for [_Block-Quake_](https://kebby-quake.itch.io/block-quake) (set `Gun Model Offsets` in the `VR Options` to `Block-Quake`).
 - Weapons for _Slave Zero X: Episode Enyo_ (be sure to use folder-name `enyo` and start game with `-game enyo` to have them applied).
 - Weapons for [_Tomb of Thunder_](https://youtu.be/iA56E7Rvc6A) (be sure to use folder-name `tombofthunder` and start game with `-game tombofthunder` to have them applied).
-- Weapons for _QBJ3_ (be sure to use folder-name `qbj3` and start game with `-game qbj3` to have them applied).
+- Weapons for _QBJ3_ can be supplied by that mod's `vr_weapons.txt`.
 
 Unsupported mods may require new offsets. You can modify offsets by using the following cvars:
 
-There are 25 slots for weapon VR offsets. There are 5 cvars for each (nn can be 01 to 25):
+There are 64 slots for weapon VR offsets. There are 5 cvars for each (nn can be 01 to 64):
 
 - `vr_wofs_id_nn` : The model name to offset (this name will be shown when equipping a weapon that doesn't have a VR offset
 - `vr_wofs_scale_nn` : The model's scale
 - `vr_wofs_x_nn` : X offset
 - `vr_wofs_y_nn` : Y offset
 - `vr_wofs_z_nn` : Z offset
+- `vr_wmuzzle_x_nn`, `vr_wmuzzle_y_nn`, `vr_wmuzzle_z_nn` : projectile and
+  crosshair origin offset for that weapon
+
+Mods can also define these held-weapon transforms in a mod-local `vr_weapons.txt`
+entry instead of relying on hardcoded presets or `vr_wofs_*` cvars:
+
+```
+{
+bitmask 1
+model progs/v_pistol.mdl
+viewmodel progs/v_pistol.mdl
+impulse 2
+scale 0.2
+offset 0 0 0
+held_scale 0.15
+held_offset 2.8 44.7 64.5
+muzzle_offset 0 0 64.5
+muzzle_source_viewofs 1
+muzzle_source_offset 8 -8 16
+}
+```
+
+`model`, `scale`, and `offset` still control weapon wheel display. `viewmodel`,
+`held_scale`, and `held_offset` control the held VR model matched against the
+active first-person viewmodel. `muzzle_offset` separately controls the
+projectile/crosshair origin sent to the server, so visual weapon alignment does
+not have to move where bullets spawn. `muzzle_source_offset` is an optional
+right/up/forward source offset for mods whose QuakeC spawns bullets or
+projectiles away from `self.origin`; `muzzle_source_viewofs 1` additionally
+accounts for `self.view_ofs`. Those source fields are used by the crosshair and
+`vradjustmuzzle` calibration so the controller target is the final projectile
+source, not the intermediate engine origin. `held_model` is accepted as an alias
+for `viewmodel`, and held-only entries are valid for alternate viewmodels.
+
+For mods where every weapon shares one transform, `vr_weapons.txt` can define
+top-level defaults before the weapon blocks:
+
+```
+global_held_scale 0.2
+global_held_offset 12 52 64
+global_muzzle_offset 0 0 64
+```
+
+VR calibration commands:
+
+- `vradjustweapon` freezes the held weapon mesh. Move the controller to the
+  desired grip point and press fire; the command saves the new `held_offset` to
+  the active mod's `vr_weapons.txt`.
+- `vradjustmuzzle` freezes the held weapon mesh. Move the controller to the
+  desired projectile/bullet origin and press fire; the command saves the new
+  `muzzle_offset` to `vr_weapons.txt`.
+- `vrweaponoffsetglobal` copies the current weapon's held and muzzle offsets to
+  `global_held_*` and `global_muzzle_offset`, removes per-entry held/muzzle
+  overrides from the active mod's `vr_weapons.txt`, and applies those values to
+  the currently loaded schema weapons. `vrglobalweaponoffset` is an alias.
 
 Here are the `nn` values for all vanilla and mission pack weapons:
 

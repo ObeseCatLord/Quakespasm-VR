@@ -1,0 +1,10 @@
+vradjustweapon
+vrmuzzleadjust
+vradjustmuzzle
+impulse9
+impulse 9
+vrglobalweaponoffset
+vrmuzzleadjust
+vradjustweapon
+vrmuzzleadjust
+vradjustmuzzle

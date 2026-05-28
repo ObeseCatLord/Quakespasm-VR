@@ -422,13 +422,16 @@ void CL_SendMove(const usercmd_t *cmd) {
 
     // VR Data Sync
     if (vr_enabled.value && (int)vr_aimmode.value == VR_AIMMODE_CONTROLLER) {
+      vec3_t vr_muzzlepos;
+
       MSG_WriteByte(&buf, 1); // VR flag active
 
-      // Send raw hand position. The server handles projectile spawn
-      // compensation uniformly via vr_game_projectile_z_extra.
-      MSG_WriteFloat(&buf, cl.handpos[1][0]);
-      MSG_WriteFloat(&buf, cl.handpos[1][1]);
-      MSG_WriteFloat(&buf, cl.handpos[1][2]);
+      // Send the calibrated muzzle/controller position. The server still
+      // applies the QuakeC self.origin compensation for each weapon class.
+      VR_GetMuzzleAdjustedHandPos(vr_muzzlepos);
+      MSG_WriteFloat(&buf, vr_muzzlepos[0]);
+      MSG_WriteFloat(&buf, vr_muzzlepos[1]);
+      MSG_WriteFloat(&buf, vr_muzzlepos[2]);
       MSG_WriteFloat(&buf, cl.handrot[1][0]);
       MSG_WriteFloat(&buf, cl.handrot[1][1]);
       MSG_WriteFloat(&buf, cl.handrot[1][2]);
