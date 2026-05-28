@@ -674,7 +674,15 @@ void IN_JoyMove (usercmd_t *cmd)
 	moveEased = IN_ApplyEasing(moveDeadzone, joy_exponent_move.value);
 	lookEased = IN_ApplyEasing(lookDeadzone, joy_exponent.value);
 
-	if ((in_speed.state & 1) ^ (cl_alwaysrun.value != 0.0 || cl_forwardspeed.value >= sv_maxspeed.value))
+	if (!vr_enabled.value && cl_desktop_vanilla_run.value && !cl_alwaysrun.value
+		&& cl_forwardspeed.value == 200.0f)
+	{
+		speed = cl_forwardspeed.value * cl_movespeedkey.value;
+		if (in_speed.state & 1)
+			speed *= cl_movespeedkey.value;
+		speed = q_min(sv_maxspeed.value, speed);
+	}
+	else if ((in_speed.state & 1) ^ (cl_alwaysrun.value != 0.0 || cl_forwardspeed.value >= sv_maxspeed.value))
 		// running
 		speed = sv_maxspeed.value;
 	else if (cl_forwardspeed.value >= sv_maxspeed.value)

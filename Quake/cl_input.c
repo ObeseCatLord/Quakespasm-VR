@@ -244,6 +244,7 @@ cvar_t cl_upspeed = {"cl_upspeed", "200", CVAR_NONE};
 cvar_t cl_forwardspeed = {"cl_forwardspeed", "200", CVAR_ARCHIVE};
 cvar_t cl_backspeed = {"cl_backspeed", "200", CVAR_ARCHIVE};
 cvar_t cl_sidespeed = {"cl_sidespeed", "350", CVAR_NONE};
+cvar_t cl_desktop_vanilla_run = {"cl_desktop_vanilla_run", "1", CVAR_ARCHIVE};
 
 cvar_t cl_movespeedkey = {"cl_movespeedkey", "2.0", CVAR_NONE};
 
@@ -318,12 +319,23 @@ Send the intended movement message to the server
 ================
 */
 void CL_BaseMove(usercmd_t *cmd) {
+  float forwardspeed, backspeed;
+
   if (cls.signon != SIGNONS)
     return;
 
   CL_AdjustAngles();
 
   Q_memset(cmd, 0, sizeof(*cmd));
+
+  forwardspeed = cl_forwardspeed.value;
+  backspeed = cl_backspeed.value;
+  if (!vr_enabled.value && cl_desktop_vanilla_run.value && !cl_alwaysrun.value) {
+    if (forwardspeed == 200.0f)
+      forwardspeed *= cl_movespeedkey.value;
+    if (backspeed == 200.0f)
+      backspeed *= cl_movespeedkey.value;
+  }
 
   if (in_strafe.state & 1) {
     cmd->sidemove += cl_sidespeed.value * CL_KeyState(&in_right);
@@ -337,8 +349,8 @@ void CL_BaseMove(usercmd_t *cmd) {
   cmd->upmove -= cl_upspeed.value * CL_KeyState(&in_down);
 
   if (!(in_klook.state & 1)) {
-    cmd->forwardmove += cl_forwardspeed.value * CL_KeyState(&in_forward);
-    cmd->forwardmove -= cl_backspeed.value * CL_KeyState(&in_back);
+    cmd->forwardmove += forwardspeed * CL_KeyState(&in_forward);
+    cmd->forwardmove -= backspeed * CL_KeyState(&in_back);
   }
 
   //
