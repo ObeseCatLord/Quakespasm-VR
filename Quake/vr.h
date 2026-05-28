@@ -103,10 +103,12 @@ extern cvar_t vr_movement_instant_stop;
 extern cvar_t vr_movement_speed;
 extern float vr_game_projectile_z_extra;
 
-#define MAX_WEAPONS 25 // not sure what this number should actually be...
+#define MAX_WEAPONS 64 // schema-driven mod offsets can exceed the old presets
 #define VARS_PER_WEAPON 5
+#define VARS_PER_WEAPON_MUZZLE 3
 
 extern cvar_t vr_weapon_offset[MAX_WEAPONS * VARS_PER_WEAPON];
+extern cvar_t vr_weapon_muzzle_offset[MAX_WEAPONS * VARS_PER_WEAPON_MUZZLE];
 extern int weaponCVarEntry;
 extern vec3_t vr_room_scale_move;
 
@@ -115,10 +117,21 @@ extern vec3_t vr_room_scale_move;
 typedef struct {
   int bitmask;
   char model_path[64];
+  char viewmodel_path[64];
   int impulse;
   float scale;
   vec3_t offset;
   qboolean has_offset;
+  float held_scale;
+  vec3_t held_offset;
+  qboolean has_held_scale;
+  qboolean has_held_offset;
+  vec3_t muzzle_offset;
+  qboolean has_muzzle_offset;
+  vec3_t muzzle_source_offset;
+  qboolean has_muzzle_source_offset;
+  qboolean muzzle_source_viewofs;
+  qboolean has_muzzle_source_viewofs;
   int owned_stat;
   int owned_mask;
   int active_stat;
@@ -129,6 +142,8 @@ typedef struct {
 
 extern vr_weapon_cmd_t vr_weapons[MAX_VR_WEAPONS];
 extern int num_vr_weapons;
+
+void VR_GetMuzzleAdjustedHandPos(vec3_t out);
 extern int vr_last_sent_impulse;
 extern double vr_last_sent_impulse_time;
 
