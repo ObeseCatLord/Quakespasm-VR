@@ -693,6 +693,7 @@ void CL_ParseBaseline (entity_t *ent, int version) //johnfitz -- added argument
 	ent->baseline.scale = (bits & B_SCALE) ? MSG_ReadByte() : ENTSCALE_DEFAULT;
 }
 
+#define CL_SetHudStat(stat) cl.statsf[stat] = cl.stats[stat]
 
 /*
 ==================
@@ -854,6 +855,18 @@ void CL_ParseClientdata (void)
 	else
 		cl.viewent.alpha = ENTALPHA_DEFAULT;
 	//johnfitz
+
+	CL_SetHudStat (STAT_ITEMS);
+	CL_SetHudStat (STAT_WEAPONFRAME);
+	CL_SetHudStat (STAT_ARMOR);
+	CL_SetHudStat (STAT_WEAPON);
+	/* SV_WriteStats carries the untruncated weapon bitfield for CSQC HUDs. */
+	CL_SetHudStat (STAT_HEALTH);
+	CL_SetHudStat (STAT_AMMO);
+	CL_SetHudStat (STAT_SHELLS);
+	CL_SetHudStat (STAT_NAILS);
+	CL_SetHudStat (STAT_ROCKETS);
+	CL_SetHudStat (STAT_CELLS);
 
 	//johnfitz -- lerping
 	//ericw -- this was done before the upper 8 bits of cl.stats[STAT_WEAPON] were filled in, breaking on large maps like zendar.bsp
@@ -1302,10 +1315,12 @@ void CL_ParseServerMessage (void)
 
 		case svc_killedmonster:
 			cl.stats[STAT_MONSTERS]++;
+			cl.statsf[STAT_MONSTERS] = cl.stats[STAT_MONSTERS];
 			break;
 
 		case svc_foundsecret:
 			cl.stats[STAT_SECRETS]++;
+			cl.statsf[STAT_SECRETS] = cl.stats[STAT_SECRETS];
 			break;
 
 		case svc_updatestat:

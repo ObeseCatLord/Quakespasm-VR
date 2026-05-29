@@ -289,6 +289,7 @@ offset 0 0 0
 held_scale 0.15
 held_offset 2.8 44.7 64.5
 muzzle_offset 0 0 64.5
+mp_muzzle_offset 0 0 0
 muzzle_source_viewofs 1
 muzzle_source_offset 8 -8 16
 }
@@ -305,6 +306,11 @@ accounts for `self.view_ofs`. Those source fields are used by the crosshair and
 `vradjustmuzzle` calibration so the controller target is the final projectile
 source, not the intermediate engine origin. `held_model` is accepted as an alias
 for `viewmodel`, and held-only entries are valid for alternate viewmodels.
+`mp_muzzle_offset` is an optional delta applied only while connected to a
+multiplayer server (`cl.maxclients > 1`), so a mod can correct remote-server
+projectile alignment without disturbing singleplayer calibration.
+`mp_held_offset` is also accepted for rare cases where the held mesh itself
+needs a multiplayer-only visual correction.
 
 For mods where every weapon shares one transform, `vr_weapons.txt` can define
 top-level defaults before the weapon blocks:
@@ -313,6 +319,7 @@ top-level defaults before the weapon blocks:
 global_held_scale 0.2
 global_held_offset 12 52 64
 global_muzzle_offset 0 0 64
+global_mp_muzzle_offset 0 0 0
 ```
 
 VR calibration commands:
@@ -323,6 +330,10 @@ VR calibration commands:
 - `vradjustmuzzle` freezes the held weapon mesh. Move the controller to the
   desired projectile/bullet origin and press fire; the command saves the new
   `muzzle_offset` to `vr_weapons.txt`.
+- `vradjustmpmuzzle` does the same calibration for multiplayer only. It saves
+  the difference from the active weapon's base `muzzle_offset` as
+  `global_mp_muzzle_offset`, applies it to all weapons in the active
+  `vr_weapons.txt`, and leaves the singleplayer projectile origin unchanged.
 - `vrweaponoffsetglobal` copies the current weapon's held and muzzle offsets to
   `global_held_*` and `global_muzzle_offset`, removes per-entry held/muzzle
   overrides from the active mod's `vr_weapons.txt`, and applies those values to

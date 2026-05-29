@@ -906,6 +906,11 @@ void Sbar_DrawFace (void)
 Sbar_Draw
 ===============
 */
+static float Sbar_CSQCScale (void)
+{
+	return CLAMP (1.0, scr_sbarscale.value, (float)glwidth / 320.0);
+}
+
 void Sbar_Draw (void)
 {
 	float w; //johnfitz
@@ -916,7 +921,9 @@ void Sbar_Draw (void)
 	if (cl.qcvm.extfuncs.CSQC_DrawHud && !qcvm)
 	{
 		qboolean deathmatchoverlay = false;
-		float s = CLAMP (1.0, scr_sbarscale.value, (float)glwidth / 320.0);
+		float s = Sbar_CSQCScale ();
+		float csqc_w = glwidth / s;
+		float csqc_h = glheight / s;
 		sb_updates++;
 		GL_SetCanvas (CANVAS_CSQC); //johnfitz
 		PR_SwitchQCVM(&cl.qcvm);
@@ -929,12 +936,12 @@ void Sbar_Draw (void)
 			*qcvm->extglobals.player_localentnum = cl.viewentity;
 		pr_global_struct->time = cl.time;
 		Sbar_SortFrags ();
-		G_VECTORSET(OFS_PARM0, vid.width/s, vid.height/s, 0);
+		G_VECTORSET(OFS_PARM0, csqc_w, csqc_h, 0);
 		G_FLOAT(OFS_PARM1) = sb_showscores;
 		PR_ExecuteProgram(cl.qcvm.extfuncs.CSQC_DrawHud);
 		if (cl.qcvm.extfuncs.CSQC_DrawScores)
 		{
-			G_VECTORSET(OFS_PARM0, vid.width/s, vid.height/s, 0);
+			G_VECTORSET(OFS_PARM0, csqc_w, csqc_h, 0);
 			G_FLOAT(OFS_PARM1) = sb_showscores;
 			if (key_dest != key_menu)
 				PR_ExecuteProgram(cl.qcvm.extfuncs.CSQC_DrawScores);
@@ -991,7 +998,7 @@ void Sbar_Draw (void)
 	{
 		if (cl.qcvm.extfuncs.CSQC_DrawScores && !cl.qcvm.extfuncs.CSQC_DrawHud && !qcvm)
 		{
-			float s = CLAMP (1.0, scr_sbarscale.value, (float)glwidth / 320.0);
+			float s = Sbar_CSQCScale ();
 			GL_SetCanvas (CANVAS_CSQC);
 			PR_SwitchQCVM(&cl.qcvm);
 			pr_global_struct->frametime = host_frametime;
@@ -1003,7 +1010,7 @@ void Sbar_Draw (void)
 				*qcvm->extglobals.player_localentnum = cl.viewentity;
 			pr_global_struct->time = cl.time;
 			Sbar_SortFrags ();
-			G_VECTORSET(OFS_PARM0, vid.width/s, vid.height/s, 0);
+			G_VECTORSET(OFS_PARM0, glwidth/s, glheight/s, 0);
 			G_FLOAT(OFS_PARM1) = sb_showscores;
 			if (key_dest != key_menu)
 				PR_ExecuteProgram(cl.qcvm.extfuncs.CSQC_DrawScores);
@@ -1362,7 +1369,7 @@ void Sbar_IntermissionOverlay (void)
 
 	if (cl.qcvm.extfuncs.CSQC_DrawScores && !qcvm)
 	{
-		float s = CLAMP (1.0, scr_sbarscale.value, (float)glwidth / 320.0);
+		float s = Sbar_CSQCScale ();
 		GL_SetCanvas (CANVAS_CSQC);
 		PR_SwitchQCVM(&cl.qcvm);
 		if (qcvm->extglobals.cltime)
@@ -1378,7 +1385,7 @@ void Sbar_IntermissionOverlay (void)
 		pr_global_struct->time = cl.time;
 		pr_global_struct->frametime = host_frametime;
 		Sbar_SortFrags ();
-		G_VECTORSET(OFS_PARM0, vid.width/s, vid.height/s, 0);
+		G_VECTORSET(OFS_PARM0, glwidth/s, glheight/s, 0);
 		G_FLOAT(OFS_PARM1) = sb_showscores;
 		PR_ExecuteProgram(cl.qcvm.extfuncs.CSQC_DrawScores);
 		PR_SwitchQCVM(NULL);
