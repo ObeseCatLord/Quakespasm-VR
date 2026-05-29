@@ -319,6 +319,7 @@ top-level defaults before the weapon blocks:
 global_held_scale 0.2
 global_held_offset 12 52 64
 global_muzzle_offset 0 0 64
+global_mp_held_offset 0 0 0
 global_mp_muzzle_offset 0 0 0
 ```
 
@@ -327,6 +328,10 @@ VR calibration commands:
 - `vradjustweapon` freezes the held weapon mesh. Move the controller to the
   desired grip point and press fire; the command saves the new `held_offset` to
   the active mod's `vr_weapons.txt`.
+- `vradjustmpweapon` does the same calibration for multiplayer only. It saves
+  the difference from the active weapon's base `held_offset` as
+  `global_mp_held_offset`, applies it to all weapons in the active
+  `vr_weapons.txt`, and leaves the singleplayer held position unchanged.
 - `vradjustmuzzle` freezes the held weapon mesh. Move the controller to the
   desired projectile/bullet origin and press fire; the command saves the new
   `muzzle_offset` to `vr_weapons.txt`.
