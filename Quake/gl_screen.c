@@ -102,6 +102,7 @@ cvar_t gl_triplebuffer = {"gl_triplebuffer", "1", CVAR_ARCHIVE};
 cvar_t cl_gun_fovscale = {"cl_gun_fovscale", "1", CVAR_ARCHIVE}; // Qrack
 
 extern cvar_t crosshair;
+extern char crosshair_char;
 
 qboolean scr_initialized; // ready to draw
 
@@ -631,7 +632,7 @@ void SCR_DrawCrosshair(void) {
     return;
 
   GL_SetCanvas(CANVAS_CROSSHAIR);
-  Draw_Character(-4, -4, '+'); // 0,0 is center of viewport
+  Draw_Character(-4, -4, crosshair_char); // 0,0 is center of viewport
 }
 
 //=============================================================================

@@ -59,6 +59,7 @@ cvar_t	v_ipitch_level = {"v_ipitch_level", "0.3", CVAR_NONE};
 cvar_t	v_idlescale = {"v_idlescale", "0", CVAR_NONE};
 
 cvar_t	crosshair = {"crosshair", "0", CVAR_ARCHIVE};
+char	crosshair_char = '\0';
 
 cvar_t	gl_cshiftpercent = {"gl_cshiftpercent", "100", CVAR_NONE};
 cvar_t	gl_cshiftpercent_contents = {"gl_cshiftpercent_contents", "100", CVAR_NONE}; // QuakeSpasm
@@ -1005,6 +1006,33 @@ void V_RenderView (void)
 
 /*
 =============
+V_Crosshair_f
+
+Called when crosshair changes
+=============
+*/
+static void V_Crosshair_f (cvar_t *var)
+{
+	int i;
+
+	if (var->string && *var->string && sscanf (var->string, "%d", &i) != 1)
+	{
+		Cvar_SetValueQuick (var, -(float)(unsigned char)*var->string);
+		return;
+	}
+
+	if (!var->value)
+		crosshair_char = '\0';
+	else if (var->value < 0)
+		crosshair_char = ((int) -var->value) & 255;
+	else if (var->value > 1)
+		crosshair_char = 15;
+	else
+		crosshair_char = '+';
+}
+
+/*
+=============
 V_Init
 =============
 */
@@ -1026,6 +1054,7 @@ void V_Init (void)
 
 	Cvar_RegisterVariable (&v_idlescale);
 	Cvar_RegisterVariable (&crosshair);
+	Cvar_SetCallback (&crosshair, V_Crosshair_f);
 	Cvar_RegisterVariable (&gl_cshiftpercent);
 	Cvar_RegisterVariable (&gl_cshiftpercent_contents); // QuakeSpasm
 	Cvar_RegisterVariable (&gl_cshiftpercent_damage); // QuakeSpasm
