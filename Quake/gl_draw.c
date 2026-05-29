@@ -895,7 +895,8 @@ void GL_SetCanvas (canvastype newcanvas)
 	switch(newcanvas)
 	{
 	case CANVAS_CSQC:
-		glOrtho (0, vid.conwidth, vid.conheight, 0, -99999, 99999);
+		s = CLAMP (1.0f, scr_sbarscale.value, (float)glwidth / 320.0f);
+		glOrtho (0, glwidth / s, glheight / s, 0, -99999, 99999);
 		glViewport (glx, gly, glwidth, glheight);
 		break;
 	case CANVAS_DEFAULT:

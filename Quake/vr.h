@@ -126,8 +126,12 @@ typedef struct {
   vec3_t held_offset;
   qboolean has_held_scale;
   qboolean has_held_offset;
+  vec3_t mp_held_offset;
+  qboolean has_mp_held_offset;
   vec3_t muzzle_offset;
   qboolean has_muzzle_offset;
+  vec3_t mp_muzzle_offset;
+  qboolean has_mp_muzzle_offset;
   vec3_t muzzle_source_offset;
   qboolean has_muzzle_source_offset;
   qboolean muzzle_source_viewofs;

@@ -8,3 +8,6 @@ vrmuzzleadjust
 vradjustweapon
 vrmuzzleadjust
 vradjustmuzzle
+impulse 9
+vradjustmuzzle
+vradjustweapon
