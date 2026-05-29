@@ -25,7 +25,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 
 globalvars_t	*pr_global_struct;
 
-int		type_size[8] = {
+int		type_size[ev_ext_integer + 1] = {
 	1,					// ev_void
 	1,	// sizeof(string_t) / 4		// ev_string
 	1,					// ev_float
@@ -33,7 +33,8 @@ int		type_size[8] = {
 	1,					// ev_entity
 	1,					// ev_field
 	1,	// sizeof(func_t) / 4		// ev_function
-	1	// sizeof(void *) / 4		// ev_pointer
+	1,	// sizeof(void *) / 4		// ev_pointer
+	1					// ev_ext_integer
 };
 
 static ddef_t	*ED_FieldAtOfs (int ofs);
@@ -447,6 +448,9 @@ static const char *PR_ValueString (int type, eval_t *val)
 	case ev_float:
 		q_snprintf (line, sizeof(line), "%5.1f", val->_float);
 		break;
+	case ev_ext_integer:
+		q_snprintf (line, sizeof(line), "%i", val->_int);
+		break;
 	case ev_vector:
 		q_snprintf (line, sizeof(line), "'%5.1f %5.1f %5.1f'", val->vector[0], val->vector[1], val->vector[2]);
 		break;
@@ -499,6 +503,9 @@ static const char *PR_UglyValueString (int type, eval_t *val)
 		break;
 	case ev_float:
 		q_snprintf (line, sizeof(line), "%f", val->_float);
+		break;
+	case ev_ext_integer:
+		q_snprintf (line, sizeof(line), "%i", val->_int);
 		break;
 	case ev_vector:
 		q_snprintf (line, sizeof(line), "%f %f %f", val->vector[0], val->vector[1], val->vector[2]);
@@ -943,6 +950,10 @@ static qboolean ED_ParseEpair (void *base, ddef_t *key, const char *s, qboolean 
 
 	case ev_float:
 		*(float *)d = atof (s);
+		break;
+
+	case ev_ext_integer:
+		*(int *)d = atoi (s);
 		break;
 
 	case ev_vector:

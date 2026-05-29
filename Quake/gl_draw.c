@@ -397,9 +397,9 @@ qpic_t *Draw_TryCachePic (const char *path, unsigned int texflags)
 	gl.gltexture = TexMgr_LoadImage (NULL, path, dat->width, dat->height, SRC_INDEXED, dat->data, path,
 									  sizeof(int)*2, texflags);
 	gl.sl = 0;
-	gl.sh = (float)dat->width/(float)TexMgr_PadConditional(dat->width);
+	gl.sh = (texflags & TEXPREF_PAD) ? (float)dat->width/(float)TexMgr_PadConditional(dat->width) : 1;
 	gl.tl = 0;
-	gl.th = (float)dat->height/(float)TexMgr_PadConditional(dat->height);
+	gl.th = (texflags & TEXPREF_PAD) ? (float)dat->height/(float)TexMgr_PadConditional(dat->height) : 1;
 	memcpy (pic->pic.data, &gl, sizeof(glpic_t));
 
 	return &pic->pic;
