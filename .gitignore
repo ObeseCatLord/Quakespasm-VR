@@ -3,13 +3,17 @@
 Quake/*.o
 Quake/*.d
 Quake/*.res
+Quake/quakespasm
 Quake/quakespasm-openvr
+Quake/quakespasm-openvr.bin
 Quake/quakespasm.exe
 Quake/vrclient.so
 *.log
 *.pid
 Build/
+quakespasm
 quakespasm-openvr
+quakespasm-openvr.bin
 quakespasm.exe
 script_pid.txt
 *.sh

@@ -117,6 +117,7 @@ typedef struct {
 typedef struct {
   vr::VRControllerState_t state;
   vr::VRControllerState_t lastState;
+  vr::TrackedDeviceIndex_t deviceIndex;
   qboolean seenThisFrame;
   qboolean triggerDown;
   int triggerKey;
@@ -1148,15 +1149,6 @@ static qboolean VR_AdjustmentVisualsActive(void) {
   return vr_adjust_mode != VR_ADJUST_NONE || vr_adjust_muzzle_return_to_grip;
 }
 
-static vr::ETrackedControllerRole VR_ControllerRoleForHand(int hand) {
-  if (vr_lefthanded.value)
-    return hand == 0 ? vr::TrackedControllerRole_RightHand
-                     : vr::TrackedControllerRole_LeftHand;
-
-  return hand == 0 ? vr::TrackedControllerRole_LeftHand
-                   : vr::TrackedControllerRole_RightHand;
-}
-
 static void VR_FreeControllerRenderModel(vr_controller_render_model_t *cache) {
   vr::IVRRenderModels *render_models = vr::VRRenderModels();
 
@@ -1207,8 +1199,7 @@ static vr_controller_render_model_t *VR_GetControllerRenderModel(int hand) {
   if (!ovrHMD || !render_models)
     return NULL;
 
-  device =
-      ovrHMD->GetTrackedDeviceIndexForControllerRole(VR_ControllerRoleForHand(hand));
+  device = controllers[hand].deviceIndex;
   if (device == vr::k_unTrackedDeviceIndexInvalid ||
       device >= vr::k_unMaxTrackedDeviceCount)
     return NULL;
@@ -1266,69 +1257,90 @@ static vr_controller_render_model_t *VR_GetControllerRenderModel(int hand) {
   return cache;
 }
 
-static void VR_ControllerVertexToWorld(const vr::RenderModel_Vertex_t *vertex,
-                                       const vec3_t origin,
-                                       const vec3_t forward,
-                                       const vec3_t right, const vec3_t up,
-                                       vec3_t out) {
-  vec3_t local;
+static void VR_TrackingPointToWorld(const vr::HmdVector3_t point,
+                                    vec3_t out) {
+  entity_t *player = &cl_entities[cl.viewentity];
+  vec3_t tracking, headLocalPreRot, headLocal;
 
-  local[0] = vertex->vPosition.v[2] * meters_to_units;
-  local[1] = vertex->vPosition.v[0] * meters_to_units;
-  local[2] = vertex->vPosition.v[1] * meters_to_units;
+  tracking[0] = (point.v[2] - lastHeadOrigin[0]) * meters_to_units;
+  tracking[1] = (point.v[0] - lastHeadOrigin[1]) * meters_to_units;
+  tracking[2] = point.v[1] * meters_to_units;
 
-  out[0] = origin[0] + local[0] * forward[0] + local[1] * right[0] +
-           local[2] * up[0];
-  out[1] = origin[1] + local[0] * forward[1] + local[1] * right[1] +
-           local[2] * up[1];
-  out[2] = origin[2] + local[0] * forward[2] + local[1] * right[2] +
-           local[2] * up[2];
+  _VectorSubtract(tracking, headOrigin, headLocalPreRot);
+  Vec3RotateZ(headLocalPreRot, vrYaw * M_PI_DIV_180, headLocal);
+  _VectorAdd(headLocal, headOrigin, headLocal);
+
+  out[0] = -headLocal[0] + player->origin[0];
+  out[1] = -headLocal[1] + player->origin[1];
+  out[2] = headLocal[2] + player->origin[2] + vr_floor_offset.value;
 }
 
-static void VR_DrawControllerFallback(const vec3_t origin,
-                                      const vec3_t angles) {
-  vec3_t forward, right, up, end, base_angles, base_origin;
+static qboolean VR_DeviceLocalToWorld(int hand, float x, float y, float z,
+                                      vec3_t out) {
+  vr::TrackedDeviceIndex_t device = controllers[hand].deviceIndex;
+  vr::HmdMatrix34_t *matrix;
+  vr::HmdVector3_t tracking;
 
-  VectorCopy(angles, base_angles);
-  VectorCopy(origin, base_origin);
-  AngleVectors(base_angles, forward, right, up);
+  if (device == vr::k_unTrackedDeviceIndexInvalid ||
+      device >= vr::k_unMaxTrackedDeviceCount ||
+      !ovr_DevicePose[device].bPoseIsValid)
+    return false;
+
+  matrix = &ovr_DevicePose[device].mDeviceToAbsoluteTracking;
+  tracking.v[0] =
+      matrix->m[0][0] * x + matrix->m[0][1] * y + matrix->m[0][2] * z +
+      matrix->m[0][3];
+  tracking.v[1] =
+      matrix->m[1][0] * x + matrix->m[1][1] * y + matrix->m[1][2] * z +
+      matrix->m[1][3];
+  tracking.v[2] =
+      matrix->m[2][0] * x + matrix->m[2][1] * y + matrix->m[2][2] * z +
+      matrix->m[2][3];
+
+  VR_TrackingPointToWorld(tracking, out);
+  return true;
+}
+
+static void VR_DrawControllerFallback(int hand) {
+  vec3_t origin, end;
+
+  if (!VR_DeviceLocalToWorld(hand, 0.0f, 0.0f, 0.0f, origin))
+    return;
 
   glDisable(GL_TEXTURE_2D);
   glLineWidth(3.0f);
   glBegin(GL_LINES);
   glColor4f(1.0f, 0.2f, 0.2f, 0.9f);
-  VectorMA(base_origin, 10.0f, forward, end);
-  glVertex3fv(origin);
-  glVertex3fv(end);
+  if (VR_DeviceLocalToWorld(hand, 0.08f, 0.0f, 0.0f, end)) {
+    glVertex3fv(origin);
+    glVertex3fv(end);
+  }
   glColor4f(0.2f, 1.0f, 0.2f, 0.9f);
-  VectorMA(base_origin, 7.0f, right, end);
-  glVertex3fv(origin);
-  glVertex3fv(end);
+  if (VR_DeviceLocalToWorld(hand, 0.0f, 0.08f, 0.0f, end)) {
+    glVertex3fv(origin);
+    glVertex3fv(end);
+  }
   glColor4f(0.2f, 0.4f, 1.0f, 0.9f);
-  VectorMA(base_origin, 7.0f, up, end);
-  glVertex3fv(origin);
-  glVertex3fv(end);
+  if (VR_DeviceLocalToWorld(hand, 0.0f, 0.0f, -0.12f, end)) {
+    glVertex3fv(origin);
+    glVertex3fv(end);
+  }
   glEnd();
   glLineWidth(1.0f);
 }
 
 static void VR_DrawControllerRenderModel(vr_controller_render_model_t *cache,
-                                         const vec3_t origin,
-                                         const vec3_t angles) {
-  vec3_t forward, right, up;
-  vec3_t base_angles;
+                                         int hand) {
   const vr::RenderModel_t *model;
   qboolean textured;
 
   if (!cache || !cache->model) {
-    VR_DrawControllerFallback(origin, angles);
+    VR_DrawControllerFallback(hand);
     return;
   }
 
   model = cache->model;
   textured = cache->texture_id != 0;
-  VectorCopy(angles, base_angles);
-  AngleVectors(base_angles, forward, right, up);
 
   if (textured) {
     glEnable(GL_TEXTURE_2D);
@@ -1345,9 +1357,12 @@ static void VR_DrawControllerRenderModel(vr_controller_render_model_t *cache,
         &model->rVertexData[model->rIndexData[i]];
     vec3_t point;
 
+    if (!VR_DeviceLocalToWorld(hand, vertex->vPosition.v[0],
+                               vertex->vPosition.v[1],
+                               vertex->vPosition.v[2], point))
+      continue;
     if (textured)
       glTexCoord2f(vertex->rfTextureCoord[0], vertex->rfTextureCoord[1]);
-    VR_ControllerVertexToWorld(vertex, origin, forward, right, up, point);
     glVertex3fv(point);
   }
   glEnd();
@@ -1364,23 +1379,8 @@ void VR_DrawAdjustmentControllers(void) {
   glEnable(GL_BLEND);
   glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
-  for (int hand = 0; hand < 2; hand++) {
-    vec3_t origin, angles;
-
-    if (!controllers[hand].seenThisFrame)
-      continue;
-
-    if (hand == 1) {
-      VectorCopy(vr_adjust_current_handpos, origin);
-      VectorCopy(vr_adjust_current_handrot, angles);
-    } else {
-      VectorCopy(cl.handpos[hand], origin);
-      VectorCopy(cl.handrot[hand], angles);
-    }
-
-    VR_DrawControllerRenderModel(VR_GetControllerRenderModel(hand), origin,
-                                 angles);
-  }
+  if (controllers[1].seenThisFrame)
+    VR_DrawControllerRenderModel(VR_GetControllerRenderModel(1), 1);
 
   glPopAttrib();
   GL_ClearBindings();
@@ -3261,6 +3261,8 @@ void VR_UpdateScreenContent() {
 
   controllers[0].seenThisFrame = false;
   controllers[1].seenThisFrame = false;
+  controllers[0].deviceIndex = vr::k_unTrackedDeviceIndexInvalid;
+  controllers[1].deviceIndex = vr::k_unTrackedDeviceIndexInvalid;
 
   // Get the VR devices' orientation and position
   for (uint32_t iDevice = 0; iDevice < vr::k_unMaxTrackedDeviceCount;
@@ -3351,6 +3353,7 @@ void VR_UpdateScreenContent() {
         }
 
         controller->seenThisFrame = true;
+        controller->deviceIndex = iDevice;
         controller->rawvector = rawControllerPos;
         controller->raworientation = rawControllerQuat;
         controller->position[0] =
