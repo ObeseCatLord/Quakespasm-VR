@@ -3,11 +3,13 @@
 Quake/*.o
 Quake/*.d
 Quake/*.res
+Quake/*.dll
 Quake/quakespasm
 Quake/quakespasm-openvr
 Quake/quakespasm-openvr.bin
 Quake/quakespasm.exe
 Quake/vrclient.so
+Windows/VisualStudio/Build-*/
 *.log
 *.pid
 Build/

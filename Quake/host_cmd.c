@@ -1145,8 +1145,7 @@ static void Host_Loadgame_f(void) {
     } else { // parse an edict
       ent = EDICT_NUM(entnum);
       if (entnum < qcvm->num_edicts) {
-        ent->free = false;
-        memset(&ent->v, 0, qcvm->progs->entityfields * 4);
+        ED_ClearEdict(ent);
       } else {
         memset(ent, 0, qcvm->edict_size);
         ent->baseline.scale = ENTSCALE_DEFAULT;
@@ -1161,10 +1160,11 @@ static void Host_Loadgame_f(void) {
     entnum++;
   }
 
-  // Free edicts allocated during map loading but no longer used after restoring
-  // saved game state
+  // Clear edicts allocated during map loading but no longer used after
+  // restoring saved game state.  Do not ED_Free() these, because they are
+  // about to be outside num_edicts and must not be queued for reuse.
   for (i = entnum; i < qcvm->num_edicts; i++)
-    ED_Free(EDICT_NUM(i));
+    ED_ClearEdict(EDICT_NUM(i));
 
   qcvm->num_edicts = entnum;
   qcvm->time = time;
