@@ -180,8 +180,11 @@ Sets everything to NULL
 */
 void ED_ClearEdict (edict_t *e)
 {
+	if (!e->free)
+		SV_UnlinkEdict (e);
+	else
+		ED_RemoveFromFreeList (e);
 	memset (&e->v, 0, qcvm->progs->entityfields * 4);
-	ED_RemoveFromFreeList (e);
 }
 
 /*
@@ -218,6 +221,7 @@ edict_t *ED_Alloc (void)
 
 	e = EDICT_NUM(qcvm->num_edicts++);
 	memset(e, 0, qcvm->edict_size); // ericw -- switched sv.edicts to malloc(), so we are accessing uninitialized memory and must fully zero it, not just ED_ClearEdict
+	e->baseline.scale = ENTSCALE_DEFAULT;
 
 	return e;
 }
