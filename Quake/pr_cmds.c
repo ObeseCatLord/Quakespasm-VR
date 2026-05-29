@@ -3278,6 +3278,7 @@ static struct svcustomstat_s *PR_CustomStat(int idx, int type)
 	case ev_ext_integer:
 	case ev_float:
 	case ev_entity:
+	case ev_string:
 		break;
 	case ev_vector:
 		if (idx > MAX_CL_STATS - 3)

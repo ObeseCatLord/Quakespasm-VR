@@ -287,7 +287,7 @@ int NUM_FOR_EDICT(edict_t*);
 #define	E_VECTOR(e,o)		(&((float*)&e->v)[o])
 #define	E_STRING(e,o)		(PR_GetString(*(string_t *)&((float*)&e->v)[o]))
 
-extern	int		type_size[8];
+extern	int		type_size[ev_ext_integer + 1];
 
 typedef struct builtindef_s
 {
