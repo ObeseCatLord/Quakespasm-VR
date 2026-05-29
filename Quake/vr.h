@@ -59,6 +59,7 @@ void IN_VRTurn180_f(void);
 void VR_UpdateScreenContent();
 void VR_ShowCrosshair();
 void VR_DrawWeaponMenu();
+void VR_DrawAdjustmentControllers();
 extern int vr_weaponmenu_selection;
 void VR_TriggerHaptic(int controller, float durationSeconds);
 void VR_Draw2D();
@@ -132,6 +133,8 @@ typedef struct {
   qboolean has_muzzle_offset;
   vec3_t mp_muzzle_offset;
   qboolean has_mp_muzzle_offset;
+  vec3_t schema_mp_muzzle_offset;
+  qboolean has_schema_mp_muzzle_offset;
   vec3_t muzzle_source_offset;
   qboolean has_muzzle_source_offset;
   qboolean muzzle_source_viewofs;

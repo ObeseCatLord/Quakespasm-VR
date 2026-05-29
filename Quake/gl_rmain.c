@@ -686,6 +686,9 @@ void R_DrawViewModel(void) {
 
   R_DrawAliasModel(currententity);
 
+  if (vr_enabled.value)
+    VR_DrawAdjustmentControllers();
+
   if (!vr_enabled.value)
     glDepthRange(0, 1);
 }
