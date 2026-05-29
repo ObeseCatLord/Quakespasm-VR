@@ -126,6 +126,15 @@ typedef struct {
   vr::HmdQuaternion_t raworientation;
 } vr_controller;
 
+typedef struct {
+  char name[256];
+  vr::RenderModel_t *model;
+  vr::RenderModel_TextureMap_t *texture_map;
+  GLuint texture_id;
+  qboolean model_failed;
+  qboolean texture_failed;
+} vr_controller_render_model_t;
+
 // OpenGL Extensions
 #define GL_READ_FRAMEBUFFER_EXT 0x8CA8
 #define GL_DRAW_FRAMEBUFFER_EXT 0x8CA9
@@ -177,11 +186,13 @@ static vr::TrackedDevicePose_t ovr_DevicePose[vr::k_unMaxTrackedDeviceCount];
 static vr_eye_t eyes[2];
 static vr_eye_t *current_eye = NULL;
 static vr_controller controllers[2];
+static vr_controller_render_model_t controller_render_models[2];
 static qboolean vr_adjust_suppressed_rtrigger = false;
 static qboolean vr_adjust_muzzle_return_to_grip = false;
 
 static void VR_AdjustWeaponUpdatePose(void);
 static qboolean VR_AdjustWeaponConsumeTrigger(void);
+static void VR_FreeControllerRenderModels(void);
 
 static void VR_SetTrigger(vr_controller *controller, int quakeKey,
                           qboolean down) {
@@ -219,6 +230,8 @@ static vec3_t lastAim = {0, 0, 0};
 
 static qboolean vr_initialized = false;
 extern "C" int vr_weaponmenu_selection = -1;
+
+extern void GL_ClearBindings(void);
 
 // Dynamic weapon tracking
 typedef struct {
@@ -810,6 +823,8 @@ static vec3_t vr_weapon_mp_held_offset[MAX_WEAPONS];
 static qboolean vr_weapon_has_mp_held_offset[MAX_WEAPONS];
 static vec3_t vr_weapon_mp_muzzle_offset[MAX_WEAPONS];
 static qboolean vr_weapon_has_mp_muzzle_offset[MAX_WEAPONS];
+static vec3_t vr_weapon_schema_mp_muzzle_offset[MAX_WEAPONS];
+static qboolean vr_weapon_has_schema_mp_muzzle_offset[MAX_WEAPONS];
 static vec3_t vr_weapon_muzzle_source_offset[MAX_WEAPONS];
 static qboolean vr_weapon_has_muzzle_source_offset[MAX_WEAPONS];
 static qboolean vr_weapon_muzzle_source_viewofs[MAX_WEAPONS];
@@ -849,10 +864,6 @@ void Mod_Weapon(const char *name, aliashdr_t *hdr) {
         vr_weapon_offset[weaponCVarEntry * VARS_PER_WEAPON].value,
         vr_weapon_offset[weaponCVarEntry * VARS_PER_WEAPON + 1].value,
         vr_weapon_offset[weaponCVarEntry * VARS_PER_WEAPON + 2].value};
-
-    if (VR_IsMultiplayerClient() &&
-        vr_weapon_has_mp_held_offset[weaponCVarEntry])
-      VectorAdd(ofs, vr_weapon_mp_held_offset[weaponCVarEntry], ofs);
 
     ofs[2] += vr_gunmodely.value;
 
@@ -922,6 +933,10 @@ void InitWeaponCVars(int i, const char *id, const char *offsetX,
   vr_weapon_mp_muzzle_offset[i][1] = 0.0f;
   vr_weapon_mp_muzzle_offset[i][2] = 0.0f;
   vr_weapon_has_mp_muzzle_offset[i] = false;
+  vr_weapon_schema_mp_muzzle_offset[i][0] = 0.0f;
+  vr_weapon_schema_mp_muzzle_offset[i][1] = 0.0f;
+  vr_weapon_schema_mp_muzzle_offset[i][2] = 0.0f;
+  vr_weapon_has_schema_mp_muzzle_offset[i] = false;
   vr_weapon_muzzle_source_offset[i][0] = 0.0f;
   vr_weapon_muzzle_source_offset[i][1] = 0.0f;
   vr_weapon_muzzle_source_offset[i][2] = 0.0f;
@@ -1038,7 +1053,9 @@ static void VR_RegisterWeaponMPHeldOffset(const char *id,
 }
 
 static void VR_RegisterWeaponMPMuzzleOffset(const char *id,
-                                            const vec3_t offset) {
+                                            const vec3_t offset,
+                                            qboolean has_schema_offset,
+                                            const vec3_t schema_offset) {
   int slot;
   int free_slot = -1;
 
@@ -1059,6 +1076,16 @@ static void VR_RegisterWeaponMPMuzzleOffset(const char *id,
 
   VectorCopy(offset, vr_weapon_mp_muzzle_offset[slot]);
   vr_weapon_has_mp_muzzle_offset[slot] = true;
+
+  if (has_schema_offset) {
+    VectorCopy(schema_offset, vr_weapon_schema_mp_muzzle_offset[slot]);
+    vr_weapon_has_schema_mp_muzzle_offset[slot] = true;
+  } else {
+    vr_weapon_schema_mp_muzzle_offset[slot][0] = 0.0f;
+    vr_weapon_schema_mp_muzzle_offset[slot][1] = 0.0f;
+    vr_weapon_schema_mp_muzzle_offset[slot][2] = 0.0f;
+    vr_weapon_has_schema_mp_muzzle_offset[slot] = false;
+  }
 }
 
 static void VR_RegisterWeaponMuzzleSource(const char *id,
@@ -1116,6 +1143,248 @@ static vec3_t vr_adjust_current_handrot = {0, 0, 0};
 static vec3_t vr_adjust_original_scale_origin = {0, 0, 0};
 static int vr_adjust_slot = -1;
 static char vr_adjust_model[64];
+
+static qboolean VR_AdjustmentVisualsActive(void) {
+  return vr_adjust_mode != VR_ADJUST_NONE || vr_adjust_muzzle_return_to_grip;
+}
+
+static vr::ETrackedControllerRole VR_ControllerRoleForHand(int hand) {
+  if (vr_lefthanded.value)
+    return hand == 0 ? vr::TrackedControllerRole_RightHand
+                     : vr::TrackedControllerRole_LeftHand;
+
+  return hand == 0 ? vr::TrackedControllerRole_LeftHand
+                   : vr::TrackedControllerRole_RightHand;
+}
+
+static void VR_FreeControllerRenderModel(vr_controller_render_model_t *cache) {
+  vr::IVRRenderModels *render_models = vr::VRRenderModels();
+
+  if (cache->model && render_models)
+    render_models->FreeRenderModel(cache->model);
+  if (cache->texture_map && render_models)
+    render_models->FreeTexture(cache->texture_map);
+  if (cache->texture_id) {
+    glDeleteTextures(1, &cache->texture_id);
+    GL_ClearBindings();
+  }
+
+  memset(cache, 0, sizeof(*cache));
+}
+
+static void VR_FreeControllerRenderModels(void) {
+  for (int i = 0; i < 2; i++)
+    VR_FreeControllerRenderModel(&controller_render_models[i]);
+}
+
+static void VR_UploadControllerRenderModelTexture(
+    vr_controller_render_model_t *cache) {
+  if (!cache->texture_map || cache->texture_id)
+    return;
+
+  if (cache->texture_map->format != vr::VRRenderModelTextureFormat_RGBA8_SRGB)
+    return;
+
+  glGenTextures(1, &cache->texture_id);
+  glBindTexture(GL_TEXTURE_2D, cache->texture_id);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP);
+  glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, cache->texture_map->unWidth,
+               cache->texture_map->unHeight, 0, GL_RGBA, GL_UNSIGNED_BYTE,
+               cache->texture_map->rubTextureMapData);
+  GL_ClearBindings();
+}
+
+static vr_controller_render_model_t *VR_GetControllerRenderModel(int hand) {
+  vr::IVRRenderModels *render_models = vr::VRRenderModels();
+  vr_controller_render_model_t *cache;
+  vr::TrackedDeviceIndex_t device;
+  vr::ETrackedPropertyError prop_error = vr::TrackedProp_Success;
+  char name[sizeof(controller_render_models[0].name)];
+
+  if (!ovrHMD || !render_models)
+    return NULL;
+
+  device =
+      ovrHMD->GetTrackedDeviceIndexForControllerRole(VR_ControllerRoleForHand(hand));
+  if (device == vr::k_unTrackedDeviceIndexInvalid ||
+      device >= vr::k_unMaxTrackedDeviceCount)
+    return NULL;
+
+  name[0] = 0;
+  ovrHMD->GetStringTrackedDeviceProperty(
+      device, vr::Prop_RenderModelName_String, name, sizeof(name),
+      &prop_error);
+  if (prop_error != vr::TrackedProp_Success || !name[0])
+    return NULL;
+
+  cache = &controller_render_models[hand];
+  if (strcmp(cache->name, name)) {
+    VR_FreeControllerRenderModel(cache);
+    q_strlcpy(cache->name, name, sizeof(cache->name));
+  }
+
+  if (!cache->model && !cache->model_failed) {
+    vr::RenderModel_t *model = NULL;
+    vr::EVRRenderModelError error =
+        render_models->LoadRenderModel_Async(cache->name, &model);
+
+    if (error == vr::VRRenderModelError_Loading)
+      return NULL;
+    if (error != vr::VRRenderModelError_None) {
+      cache->model_failed = true;
+      Con_DPrintf("VR: could not load controller render model %s (%d)\n",
+                  cache->name, (int)error);
+      return NULL;
+    }
+
+    cache->model = model;
+  }
+
+  if (cache->model &&
+      cache->model->diffuseTextureId != vr::INVALID_TEXTURE_ID &&
+      !cache->texture_map && !cache->texture_failed) {
+    vr::RenderModel_TextureMap_t *texture_map = NULL;
+    vr::EVRRenderModelError error = render_models->LoadTexture_Async(
+        cache->model->diffuseTextureId, &texture_map);
+
+    if (error == vr::VRRenderModelError_Loading)
+      return cache;
+    if (error != vr::VRRenderModelError_None) {
+      cache->texture_failed = true;
+      Con_DPrintf("VR: could not load controller texture for %s (%d)\n",
+                  cache->name, (int)error);
+      return cache;
+    }
+
+    cache->texture_map = texture_map;
+  }
+
+  VR_UploadControllerRenderModelTexture(cache);
+  return cache;
+}
+
+static void VR_ControllerVertexToWorld(const vr::RenderModel_Vertex_t *vertex,
+                                       const vec3_t origin,
+                                       const vec3_t forward,
+                                       const vec3_t right, const vec3_t up,
+                                       vec3_t out) {
+  vec3_t local;
+
+  local[0] = vertex->vPosition.v[2] * meters_to_units;
+  local[1] = vertex->vPosition.v[0] * meters_to_units;
+  local[2] = vertex->vPosition.v[1] * meters_to_units;
+
+  out[0] = origin[0] + local[0] * forward[0] + local[1] * right[0] +
+           local[2] * up[0];
+  out[1] = origin[1] + local[0] * forward[1] + local[1] * right[1] +
+           local[2] * up[1];
+  out[2] = origin[2] + local[0] * forward[2] + local[1] * right[2] +
+           local[2] * up[2];
+}
+
+static void VR_DrawControllerFallback(const vec3_t origin,
+                                      const vec3_t angles) {
+  vec3_t forward, right, up, end, base_angles, base_origin;
+
+  VectorCopy(angles, base_angles);
+  VectorCopy(origin, base_origin);
+  AngleVectors(base_angles, forward, right, up);
+
+  glDisable(GL_TEXTURE_2D);
+  glLineWidth(3.0f);
+  glBegin(GL_LINES);
+  glColor4f(1.0f, 0.2f, 0.2f, 0.9f);
+  VectorMA(base_origin, 10.0f, forward, end);
+  glVertex3fv(origin);
+  glVertex3fv(end);
+  glColor4f(0.2f, 1.0f, 0.2f, 0.9f);
+  VectorMA(base_origin, 7.0f, right, end);
+  glVertex3fv(origin);
+  glVertex3fv(end);
+  glColor4f(0.2f, 0.4f, 1.0f, 0.9f);
+  VectorMA(base_origin, 7.0f, up, end);
+  glVertex3fv(origin);
+  glVertex3fv(end);
+  glEnd();
+  glLineWidth(1.0f);
+}
+
+static void VR_DrawControllerRenderModel(vr_controller_render_model_t *cache,
+                                         const vec3_t origin,
+                                         const vec3_t angles) {
+  vec3_t forward, right, up;
+  vec3_t base_angles;
+  const vr::RenderModel_t *model;
+  qboolean textured;
+
+  if (!cache || !cache->model) {
+    VR_DrawControllerFallback(origin, angles);
+    return;
+  }
+
+  model = cache->model;
+  textured = cache->texture_id != 0;
+  VectorCopy(angles, base_angles);
+  AngleVectors(base_angles, forward, right, up);
+
+  if (textured) {
+    glEnable(GL_TEXTURE_2D);
+    glBindTexture(GL_TEXTURE_2D, cache->texture_id);
+    glTexEnvf(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
+  } else {
+    glDisable(GL_TEXTURE_2D);
+  }
+
+  glColor4f(1.0f, 1.0f, 1.0f, 0.88f);
+  glBegin(GL_TRIANGLES);
+  for (uint32_t i = 0; i < model->unTriangleCount * 3; i++) {
+    const vr::RenderModel_Vertex_t *vertex =
+        &model->rVertexData[model->rIndexData[i]];
+    vec3_t point;
+
+    if (textured)
+      glTexCoord2f(vertex->rfTextureCoord[0], vertex->rfTextureCoord[1]);
+    VR_ControllerVertexToWorld(vertex, origin, forward, right, up, point);
+    glVertex3fv(point);
+  }
+  glEnd();
+}
+
+void VR_DrawAdjustmentControllers(void) {
+  if (!VR_AdjustmentVisualsActive() || !vr_initialized)
+    return;
+
+  glPushAttrib(GL_ENABLE_BIT | GL_CURRENT_BIT | GL_TEXTURE_BIT |
+               GL_POLYGON_BIT | GL_LINE_BIT);
+  glDisable(GL_DEPTH_TEST);
+  glDisable(GL_CULL_FACE);
+  glEnable(GL_BLEND);
+  glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+  for (int hand = 0; hand < 2; hand++) {
+    vec3_t origin, angles;
+
+    if (!controllers[hand].seenThisFrame)
+      continue;
+
+    if (hand == 1) {
+      VectorCopy(vr_adjust_current_handpos, origin);
+      VectorCopy(vr_adjust_current_handrot, angles);
+    } else {
+      VectorCopy(cl.handpos[hand], origin);
+      VectorCopy(cl.handrot[hand], angles);
+    }
+
+    VR_DrawControllerRenderModel(VR_GetControllerRenderModel(hand), origin,
+                                 angles);
+  }
+
+  glPopAttrib();
+  GL_ClearBindings();
+}
 
 static qboolean VR_AdjustModeIsMuzzle(vr_adjust_mode_t mode) {
   return mode == VR_ADJUST_MUZZLE || mode == VR_ADJUST_MP_MUZZLE;
@@ -1334,11 +1603,11 @@ static qboolean VR_AppendAdjustmentLines(vr_textbuf_t *buf, int slot) {
       return false;
   }
 
-  if (vr_weapon_has_mp_muzzle_offset[slot]) {
+  if (vr_weapon_has_schema_mp_muzzle_offset[slot]) {
     q_snprintf(line, sizeof(line), "mp_muzzle_offset %.7g %.7g %.7g",
-               vr_weapon_mp_muzzle_offset[slot][0],
-               vr_weapon_mp_muzzle_offset[slot][1],
-               vr_weapon_mp_muzzle_offset[slot][2]);
+               vr_weapon_schema_mp_muzzle_offset[slot][0],
+               vr_weapon_schema_mp_muzzle_offset[slot][1],
+               vr_weapon_schema_mp_muzzle_offset[slot][2]);
     if (!VR_TextAppendLine(buf, line))
       return false;
   }
@@ -1621,6 +1890,10 @@ static void VR_ApplyGlobalMPMuzzleOffsetToSchemaSlots(const vec3_t offset) {
 
     VectorCopy(offset, vr_weapon_mp_muzzle_offset[slot]);
     vr_weapon_has_mp_muzzle_offset[slot] = true;
+    vr_weapon_schema_mp_muzzle_offset[slot][0] = 0.0f;
+    vr_weapon_schema_mp_muzzle_offset[slot][1] = 0.0f;
+    vr_weapon_schema_mp_muzzle_offset[slot][2] = 0.0f;
+    vr_weapon_has_schema_mp_muzzle_offset[slot] = false;
   }
 
   lastWeaponHeader = NULL;
@@ -1976,7 +2249,9 @@ static qboolean VR_AdjustWeaponCommit(void) {
   if (vr_adjust_mode == VR_ADJUST_NONE)
     return false;
 
-  if (slot < 0 || slot >= MAX_WEAPONS ||
+  if (slot < 0 || slot >= MAX_WEAPONS || weaponCVarEntry != slot ||
+      !cl.viewent.model ||
+      Q_strcmp(cl.viewent.model->name, vr_adjust_model) ||
       Q_strcmp(vr_weapon_offset[slot * VARS_PER_WEAPON + 4].string,
                vr_adjust_model)) {
     Con_Printf("vradjust: active weapon changed; cancelled.\n");
@@ -2582,7 +2857,9 @@ void VR_LoadWeaponSchema(void) {
           w->mp_muzzle_offset[1] = Q_atof(com_token);
           start = (char *)COM_Parse(start);
           w->mp_muzzle_offset[2] = Q_atof(com_token);
+          VectorCopy(w->mp_muzzle_offset, w->schema_mp_muzzle_offset);
           w->has_mp_muzzle_offset = true;
+          w->has_schema_mp_muzzle_offset = true;
         } else if (!Q_strcmp(key, "muzzle_source_offset")) {
           w->muzzle_source_offset[0] = Q_atof(com_token);
           start = (char *)COM_Parse(start);
@@ -2737,7 +3014,9 @@ void VR_LoadWeaponSchema(void) {
       VR_RegisterWeaponMPHeldOffset(w->viewmodel_path, w->mp_held_offset);
     if (w->viewmodel_path[0] && w->has_mp_muzzle_offset)
       VR_RegisterWeaponMPMuzzleOffset(w->viewmodel_path,
-                                      w->mp_muzzle_offset);
+                                      w->mp_muzzle_offset,
+                                      w->has_schema_mp_muzzle_offset,
+                                      w->schema_mp_muzzle_offset);
     if (w->viewmodel_path[0] &&
         (w->has_muzzle_source_offset || w->has_muzzle_source_viewofs))
       VR_RegisterWeaponMuzzleSource(w->viewmodel_path, w->muzzle_source_offset,
@@ -2837,6 +3116,7 @@ void VID_VR_Disable() {
   }
 
   VR_ReleaseControllerInputs();
+  VR_FreeControllerRenderModels();
   vr::VR_Shutdown();
   ovrHMD = NULL;
 
