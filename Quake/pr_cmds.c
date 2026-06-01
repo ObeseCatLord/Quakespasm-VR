@@ -1747,6 +1747,23 @@ static void PF_Fixme (void)
 	PR_RunError ("unimplemented builtin");
 }
 
+#define PF_FIXME_1	PF_Fixme
+#define PF_FIXME_2	PF_FIXME_1, PF_FIXME_1
+#define PF_FIXME_4	PF_FIXME_2, PF_FIXME_2
+#define PF_FIXME_8	PF_FIXME_4, PF_FIXME_4
+#define PF_FIXME_16	PF_FIXME_8, PF_FIXME_8
+#define PF_FIXME_32	PF_FIXME_16, PF_FIXME_16
+#define PF_FIXME_64	PF_FIXME_32, PF_FIXME_32
+#define PF_FIXME_128	PF_FIXME_64, PF_FIXME_64
+#define PF_FIXME_256	PF_FIXME_128, PF_FIXME_128
+
+/* Some rerelease progs use sparse high-number builtins for the ex_ helpers.
+ * Keep unimplemented entries explicit so the known compatibility builtins land
+ * on their numbered slots without moving the classic table.
+ */
+#define PF_FIXME_93_TO_429	PF_FIXME_256, PF_FIXME_64, PF_FIXME_16, PF_FIXME_1
+#define PF_FIXME_431_TO_435	PF_FIXME_4, PF_FIXME_1
+
 
 static builtin_t pr_builtin[] =
 {
@@ -1854,7 +1871,12 @@ static builtin_t pr_builtin[] =
 	PF_CheckPlayerEXFlags,
 	PF_walkpathtogoal,
 
-	PF_Fixme,
+	PF_Fixme,		// #92
+
+	PF_FIXME_93_TO_429,
+	PF_CheckPlayerEXFlags,	// float(entity player) ex_CheckPlayerEXFlags = #430
+	PF_FIXME_431_TO_435,
+	PF_CheckPlayerEXFlags,	// alternate CheckPlayerEXFlags slot seen in rerelease progs
 };
 
 const builtin_t *pr_builtins = pr_builtin;
