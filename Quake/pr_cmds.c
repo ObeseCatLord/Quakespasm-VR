@@ -3499,7 +3499,9 @@ builtindef_t pr_builtindefs[] =
 
 	{"registercommand",			PF_CSQC(PF_cl_registercommand),	352},	// void(string cmdname)
 
+	{"ex_CheckPlayerEXFlags",	PF_SSQC(PF_CheckPlayerEXFlags),	430},	// rerelease sparse slot used by mod progs
 	{"vectorvectors",			PF_BOTH(PF_vectorvectors),		432},	// void(vector dir)
+	{"ex_CheckPlayerEXFlags",	PF_SSQC(PF_CheckPlayerEXFlags),	436},	// alternate sparse slot seen in rerelease progs
 
 	{"clientcommand",			PF_SSQC(PF_clientcommand),		440},	// void(entity e, string s)
 	{"tokenize",				PF_BOTH(PF_Tokenize),			441},	// float(string s)
