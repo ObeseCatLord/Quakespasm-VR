@@ -1087,18 +1087,25 @@ const char *ED_ParseEdict (const char *data, edict_t *ent)
 		// keynames with a leading underscore are used for utility comments,
 		// and are immediately discarded by quake
 		if (keyname[0] == '_')
+		{
+			if (qcvm == &sv.qcvm && ent == sv.qcvm.edicts && !strcmp (keyname, "_skyroom"))
+				SV_SetupSkyRoom (com_token);
 			continue;
+		}
 
 		//johnfitz -- hack to support .alpha even when progs.dat doesn't know about it
 		if (!strcmp(keyname, "alpha"))
 			ent->alpha = ENTALPHA_ENCODE(Q_atof(com_token));
 		//johnfitz
 
+		if (qcvm == &sv.qcvm && ent == sv.qcvm.edicts && !strcmp (keyname, "skyroom"))
+			SV_SetupSkyRoom (com_token);
+
 		key = ED_FindField (keyname);
 		if (!key)
 		{
 			//johnfitz -- HACK -- suppress error becuase fog/sky/alpha fields might not be mentioned in defs.qc
-			if (strncmp(keyname, "sky", 3) && strcmp(keyname, "fog") && strcmp(keyname, "alpha"))
+			if (strcmp (keyname, "skyroom") && strncmp(keyname, "sky", 3) && strcmp(keyname, "fog") && strcmp(keyname, "alpha"))
 				Con_DPrintf ("\"%s\" is not a field\n", keyname); //johnfitz -- was Con_Printf
 			continue;
 		}

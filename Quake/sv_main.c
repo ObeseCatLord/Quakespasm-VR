@@ -48,6 +48,7 @@ cvar_t sv_coop_ammo_respawn_time = {"sv_coop_ammo_respawn_time", "30", CVAR_NOTI
 cvar_t sv_coop_revive = {"sv_coop_revive", "1", CVAR_NOTIFY | CVAR_SERVERINFO};
 cvar_t sv_coop_revive_health = {"sv_coop_revive_health", "25", CVAR_NOTIFY | CVAR_SERVERINFO};
 cvar_t sv_coop_revive_range = {"sv_coop_revive_range", "96", CVAR_NOTIFY | CVAR_SERVERINFO};
+cvar_t sv_skyroom_pvs = {"sv_skyroom_pvs", "1", CVAR_NONE};
 
 //============================================================================
 
@@ -202,6 +203,7 @@ void SV_Init (void)
 	Cvar_RegisterVariable (&sv_coop_revive);
 	Cvar_RegisterVariable (&sv_coop_revive_health);
 	Cvar_RegisterVariable (&sv_coop_revive_range);
+	Cvar_RegisterVariable (&sv_skyroom_pvs);
 	Cvar_SetCallback (&sv_coop_ammo_respawn, Host_Callback_Notify);
 	Cvar_SetCallback (&sv_coop_ammo_respawn_time, Host_Callback_Notify);
 	Cvar_SetCallback (&sv_coop_revive, Host_Callback_Notify);
@@ -235,6 +237,34 @@ void SV_Init (void)
 		return; /* silence compiler */
 	}
 	Sys_Printf ("Server using protocol %i (%s)\n", sv_protocol, p);
+}
+
+void SV_SetupSkyRoom (const char *value)
+{
+	char	*end;
+	int	i;
+	float	vals[4] = {0, 0, 0, 0};
+
+	for (i = 0; i < 4; i++)
+	{
+		while (*value == ' ' || *value == '\t')
+			value++;
+		if (!*value)
+			break;
+		vals[i] = strtod (value, &end);
+		if (end == value)
+			break;
+		value = end;
+	}
+
+	if (i < 3)
+		return;
+
+	sv.skyroom_pos_known = true;
+	sv.skyroom_pos[0] = vals[0];
+	sv.skyroom_pos[1] = vals[1];
+	sv.skyroom_pos[2] = vals[2];
+	sv.skyroom_pos[3] = (i >= 4) ? vals[3] : 0;
 }
 
 /*
@@ -736,6 +766,13 @@ void SV_WriteEntitiesToClient (edict_t	*clent, sizebuf_t *msg)
 // find the client's PVS
 	VectorAdd (clent->v.origin, clent->v.view_ofs, org);
 	pvs = SV_FatPVS (org, sv.worldmodel);
+	if (sv_skyroom_pvs.value && sv.skyroom_pos_known)
+	{
+		vec3_t skyorg;
+
+		VectorMA (sv.skyroom_pos, sv.skyroom_pos[3], org, skyorg);
+		SV_AddToFatPVS (skyorg, sv.worldmodel->nodes, sv.worldmodel);
+	}
 
 // find the client's orientation (for "behind camera" sort key)
 	AngleVectors (clent->v.v_angle, forward, right, up);
