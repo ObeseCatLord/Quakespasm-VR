@@ -56,6 +56,8 @@ typedef struct
 	char		name[64];			// map name
 	char		modelname[64];		// maps/<name>.bsp, for model_precache[0]
 	struct qmodel_s	*worldmodel;
+	qboolean	skyroom_pos_known;
+	vec4_t		skyroom_pos;
 	const char	*model_precache[MAX_MODELS];	// NULL terminated
 	struct qmodel_s	*models[MAX_MODELS];
 	const char	*sound_precache[MAX_SOUNDS];	// NULL terminated
@@ -84,6 +86,8 @@ typedef struct
 	} customstats[MAX_CL_STATS*2];	//strings or numeric...
 	size_t		numcustomstats;
 } server_t;
+
+void SV_SetupSkyRoom (const char *value);
 
 
 #define	NUM_PING_TIMES		16

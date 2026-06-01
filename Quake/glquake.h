@@ -415,6 +415,9 @@ void GL_MakeAliasModelDisplayLists (qmodel_t *m, aliashdr_t *hdr);
 void Sky_Init (void);
 void Sky_ClearAll (void);
 void Sky_DrawSky (void);
+qboolean Sky_DrawSkyRoom (void);
+extern qboolean skyroom_drawing;
+extern qboolean skyroom_drawn;
 void Sky_NewMap (void);
 void Sky_LoadTexture (qmodel_t *m, texture_t *mt);
 void Sky_LoadTextureQ64 (qmodel_t *m, texture_t *mt);
@@ -426,6 +429,8 @@ void R_ClearTextureChains (qmodel_t *mod, texchain_t chain);
 void R_ChainSurface (msurface_t *surf, texchain_t chain);
 void R_DrawTextureChains (qmodel_t *model, entity_t *ent, texchain_t chain);
 void R_DrawWorld_Water (void);
+void R_SetupView (void);
+void R_RenderScene (void);
 
 void GL_BindBuffer (GLenum target, GLuint buffer);
 void GL_ClearBufferBindings (void);

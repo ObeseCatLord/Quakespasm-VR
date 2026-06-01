@@ -45,6 +45,13 @@ static cvar_t r_fastsky = {"r_fastsky", "0", CVAR_NONE};
 static cvar_t r_sky_quality = {"r_sky_quality", "12", CVAR_NONE};
 static cvar_t r_skyalpha = {"r_skyalpha", "1", CVAR_NONE};
 static cvar_t r_skyfog = {"r_skyfog","0.5",CVAR_NONE};
+cvar_t r_skyroom = {"r_skyroom", "0", CVAR_ARCHIVE};
+qboolean skyroom_drawing;
+qboolean skyroom_drawn;
+static qboolean skyroom_enabled;
+static qboolean skyroom_visible;
+static vec4_t skyroom_origin;
+static vec4_t skyroom_orientation;
 
 static const int skytexorder[6] = {0,2,1,3,4,5}; //for skybox
 
@@ -289,6 +296,55 @@ void Sky_ClearAll (void)
 		skybox_textures[i] = NULL;
 	solidskytexture = NULL;
 	alphaskytexture = NULL;
+	skyroom_enabled = false;
+	skyroom_visible = false;
+	skyroom_drawing = false;
+	skyroom_drawn = false;
+	skyroom_origin[0] = skyroom_origin[1] = skyroom_origin[2] = 0;
+	skyroom_orientation[0] = skyroom_orientation[1] = skyroom_orientation[2] = 0;
+	skyroom_origin[3] = 0;
+	skyroom_orientation[3] = 0;
+}
+
+static void Sky_SetSkyRoom (const char *value)
+{
+	char	*end;
+	int	i;
+	float	vals[8] = {0, 0, 0, 0, 0, 0, 0, 0};
+
+	for (i = 0; i < 8; i++)
+	{
+		while (*value == ' ' || *value == '\t')
+			value++;
+		if (!*value)
+			break;
+		vals[i] = strtod (value, &end);
+		if (end == value)
+			break;
+		value = end;
+	}
+
+	if (i < 3)
+	{
+		skyroom_enabled = false;
+		skyroom_visible = false;
+		skyroom_origin[0] = skyroom_origin[1] = skyroom_origin[2] = 0;
+		skyroom_orientation[0] = skyroom_orientation[1] = skyroom_orientation[2] = 0;
+		skyroom_origin[3] = 0;
+		skyroom_orientation[3] = 0;
+		return;
+	}
+
+	skyroom_enabled = true;
+	skyroom_visible = true;
+	skyroom_origin[0] = vals[0];
+	skyroom_origin[1] = vals[1];
+	skyroom_origin[2] = vals[2];
+	skyroom_origin[3] = (i >= 4) ? vals[3] : 0;
+	skyroom_orientation[3] = (i >= 5) ? vals[4] : 0;
+	skyroom_orientation[0] = (i >= 6) ? vals[5] : 0;
+	skyroom_orientation[1] = (i >= 7) ? vals[6] : 0;
+	skyroom_orientation[2] = (i >= 8) ? vals[7] : 0;
 }
 
 /*
@@ -298,10 +354,18 @@ Sky_NewMap
 */
 void Sky_NewMap (void)
 {
-	char	key[128], value[4096];
+	char	key[128], rawkey[128], value[4096];
 	const char	*data;
 
 	skyfog = r_skyfog.value;
+	skyroom_enabled = false;
+	skyroom_visible = false;
+	skyroom_drawing = false;
+	skyroom_drawn = false;
+	skyroom_origin[0] = skyroom_origin[1] = skyroom_origin[2] = 0;
+	skyroom_orientation[0] = skyroom_orientation[1] = skyroom_orientation[2] = 0;
+	skyroom_origin[3] = 0;
+	skyroom_orientation[3] = 0;
 
 	//
 	// read worldspawn (this is so ugly, and shouldn't it be done on the server?)
@@ -323,10 +387,13 @@ void Sky_NewMap (void)
 			return; // error
 		if (com_token[0] == '}')
 			break; // end of worldspawn
-		if (com_token[0] == '_')
-			q_strlcpy(key, com_token + 1, sizeof(key));
+		q_strlcpy(rawkey, com_token, sizeof(rawkey));
+		while (rawkey[0] && rawkey[strlen(rawkey)-1] == ' ') // remove trailing spaces
+			rawkey[strlen(rawkey)-1] = 0;
+		if (rawkey[0] == '_')
+			q_strlcpy(key, rawkey + 1, sizeof(key));
 		else
-			q_strlcpy(key, com_token, sizeof(key));
+			q_strlcpy(key, rawkey, sizeof(key));
 		while (key[0] && key[strlen(key)-1] == ' ') // remove trailing spaces
 			key[strlen(key)-1] = 0;
 		data = COM_ParseEx(data, CPE_ALLOWTRUNC);
@@ -339,13 +406,86 @@ void Sky_NewMap (void)
 
 		if (!strcmp("skyfog", key))
 			skyfog = atof(value);
-#if 1 /* also accept non-standard keys */
+		else if (!strcmp("skyroom", key) || !strcmp("_skyroom", rawkey))
+			Sky_SetSkyRoom(value);
+	#if 1 /* also accept non-standard keys */
 		else if (!strcmp("skyname", key)) //half-life
 			Sky_LoadSkyBox(value);
 		else if (!strcmp("qlsky", key)) //quake lives
 			Sky_LoadSkyBox(value);
 #endif
 	}
+}
+
+static void Sky_RotateVectorAroundAxis (vec3_t out, const vec3_t axis, const vec3_t in, float angle)
+{
+	float	c, s, t, dot;
+	vec3_t	cross;
+
+	angle *= M_PI_DIV_180;
+	c = cos (angle);
+	s = sin (angle);
+	t = 1.0f - c;
+	dot = DotProduct (axis, in);
+	cross[0] = axis[1] * in[2] - axis[2] * in[1];
+	cross[1] = axis[2] * in[0] - axis[0] * in[2];
+	cross[2] = axis[0] * in[1] - axis[1] * in[0];
+
+	out[0] = in[0] * c + cross[0] * s + axis[0] * dot * t;
+	out[1] = in[1] * c + cross[1] * s + axis[1] * dot * t;
+	out[2] = in[2] * c + cross[2] * s + axis[2] * dot * t;
+}
+
+qboolean Sky_DrawSkyRoom (void)
+{
+	int saved_numvisedicts;
+	vec3_t vieworg, viewang;
+
+	skyroom_drawn = false;
+
+	if (!r_skyroom.value || !skyroom_enabled || !skyroom_visible || r_fastsky.value || !r_drawworld.value)
+		return false;
+
+	VectorCopy (r_refdef.vieworg, vieworg);
+	VectorCopy (r_refdef.viewangles, viewang);
+	VectorMA (skyroom_origin, skyroom_origin[3], vieworg, r_refdef.vieworg);
+
+	if (skyroom_orientation[3])
+	{
+		vec3_t axis, forward, right, up, mat[3];
+		float angle = skyroom_orientation[3] * cl.time;
+
+		AngleVectors (viewang, forward, right, up);
+		if (!skyroom_orientation[0] && !skyroom_orientation[1] && !skyroom_orientation[2])
+		{
+			axis[0] = 0;
+			axis[1] = 0;
+			axis[2] = 1;
+		}
+		else
+		{
+			VectorCopy (skyroom_orientation, axis);
+			VectorNormalize (axis);
+		}
+
+		Sky_RotateVectorAroundAxis (mat[0], axis, forward, angle);
+		Sky_RotateVectorAroundAxis (mat[1], axis, right, angle);
+		Sky_RotateVectorAroundAxis (mat[2], axis, up, angle);
+		VectorInverse (mat[1]);
+		AngleVectorFromRotMat (mat, r_refdef.viewangles);
+	}
+
+	saved_numvisedicts = cl_numvisedicts;
+	skyroom_drawing = true;
+	R_SetupView ();
+	R_RenderScene ();
+	skyroom_drawing = false;
+	cl_numvisedicts = saved_numvisedicts;
+
+	VectorCopy (vieworg, r_refdef.vieworg);
+	VectorCopy (viewang, r_refdef.viewangles);
+	skyroom_drawn = true;
+	return true;
 }
 
 /*
@@ -392,6 +532,7 @@ void Sky_Init (void)
 	Cvar_RegisterVariable (&r_sky_quality);
 	Cvar_RegisterVariable (&r_skyalpha);
 	Cvar_RegisterVariable (&r_skyfog);
+	Cvar_RegisterVariable (&r_skyroom);
 	Cvar_SetCallback (&r_skyfog, R_SetSkyfog_f);
 
 	Cmd_AddCommand ("sky",Sky_SkyCommand_f);
@@ -654,6 +795,9 @@ void Sky_ProcessTextureChains (void)
 		if (!t || !t->texturechains[chain_world] || !(t->texturechains[chain_world]->flags & SURF_DRAWSKY))
 			continue;
 
+		if (!skyroom_drawing)
+			skyroom_visible = true;
+
 		for (s = t->texturechains[chain_world]; s; s = s->texturechain)
 			Sky_ProcessPoly (s->polys);
 	}
@@ -713,6 +857,9 @@ void Sky_ProcessEntities (void)
 				if (((s->flags & SURF_PLANEBACK) && (dot < -BACKFACE_EPSILON)) ||
 					(!(s->flags & SURF_PLANEBACK) && (dot > BACKFACE_EPSILON)))
 				{
+					if (!skyroom_drawing)
+						skyroom_visible = true;
+
 					//copy the polygon and translate manually, since Sky_ProcessPoly needs it to be in world space
 					mark = Hunk_LowMark();
 					p = (glpoly_t *) Hunk_Alloc (sizeof(*s->polys)); //FIXME: don't allocate for each poly
@@ -1086,9 +1233,23 @@ void Sky_DrawSky (void)
 {
 	int i;
 
+	if (!skyroom_drawing)
+		skyroom_visible = false;
+
 	//in these special render modes, the sky faces are handled in the normal world/brush renderer
 	if (r_drawflat_cheatsafe || r_lightmap_cheatsafe)
 		return;
+
+	if (skyroom_drawn && !skyroom_drawing)
+	{
+		glColorMask (false, false, false, false);
+		glDisable (GL_TEXTURE_2D);
+		Sky_ProcessTextureChains ();
+		Sky_ProcessEntities ();
+		glEnable (GL_TEXTURE_2D);
+		glColorMask (true, true, true, true);
+		return;
+	}
 
 	//
 	// reset sky bounds

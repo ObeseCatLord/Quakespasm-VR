@@ -521,7 +521,7 @@ void R_Clear(void) {
   // don't use it
   if (gl_stencilbits)
     clearbits |= GL_STENCIL_BUFFER_BIT;
-  if (gl_clear.value)
+  if ((gl_clear.value || skyroom_drawing) && !skyroom_drawn)
     clearbits |= GL_COLOR_BUFFER_BIT;
   glClear(clearbits);
 }
@@ -584,7 +584,8 @@ void R_SetupView(void) {
 
   R_MarkSurfaces(); // johnfitz -- create texture chains from PVS
 
-  R_UpdateWarpTextures(); // johnfitz -- do this before R_Clear
+  if (!skyroom_drawn)
+    R_UpdateWarpTextures(); // johnfitz -- do this before R_Clear
 
   R_Clear();
 
@@ -658,6 +659,9 @@ R_DrawViewModel -- johnfitz -- gutted
 =============
 */
 void R_DrawViewModel(void) {
+  if (skyroom_drawing)
+    return;
+
   if (!r_drawviewmodel.value || !r_drawentities.value || chase_active.value)
     return;
 
@@ -1014,7 +1018,8 @@ void R_RenderScene(void) {
 
   Fog_DisableGFog(); // johnfitz
 
-  R_DrawPlayerOutlines(); // co-op VR player outlines through walls
+  if (!skyroom_drawing)
+    R_DrawPlayerOutlines(); // co-op VR player outlines through walls
 
   R_DrawViewModel(); // johnfitz -- moved here from R_RenderView
 
@@ -1150,6 +1155,8 @@ void R_RenderView(void) {
         rs_aliaspasses = rs_skypasses = rs_brushpasses = 0;
   } else if (gl_finish.value)
     glFinish();
+
+  Sky_DrawSkyRoom();
 
   R_SetupView(); // johnfitz -- this does everything that should be done once
                  // per frame
