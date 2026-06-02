@@ -3447,8 +3447,8 @@ builtindef_t pr_builtindefs[] =
 	{"ex_bprint",				PF_SSQC(PF_bprint)},					// void(string s, ...)
 	{"ex_sprint",				PF_SSQC(PF_sprint)},					// void(entity client, string s, ...)
 	{"ex_finalefinished",		PF_SSQC(PF_finalefinished)},			// float()
-	{"ex_CheckPlayerEXFlags",	PF_SSQC(PF_CheckPlayerEXFlags)},		// float(entity playerEnt)
-	{"ex_walkpathtogoal",		PF_SSQC(PF_walkpathtogoal)},			// float(float movedist, vector goal)
+	{"ex_CheckPlayerEXFlags",	PF_SSQC(PF_CheckPlayerEXFlags),	90},	// float(entity playerEnt)
+	{"ex_walkpathtogoal",		PF_SSQC(PF_walkpathtogoal),		91},	// float(float movedist, vector goal)
 	{"ex_localsound",			PF_SSQC(PF_localsound)},				// void(entity client, string sample)
 
 	{"min",						PF_BOTH(PF_min),				94},	// float(float a, float b, ...)
