@@ -1135,6 +1135,165 @@ static void CL_ParseMoveAck (void)
 CL_ParseSnapshotHeader
 =====================
 */
+typedef struct
+{
+	qboolean	active;
+	struct qsocket_s	*netcon;
+	int		seq;
+	int		next_part;
+	int		totalents;
+	int		cursize;
+	byte		data[MAX_DATAGRAM];
+} cl_snapshot_assembly_t;
+
+static cl_snapshot_assembly_t cl_snapshot_assembly;
+
+static int CL_ExpandSnapshotSequence (int seq16)
+{
+	int seq;
+	int base;
+
+	if (cl_snapshot_assembly.active)
+		base = cl_snapshot_assembly.seq;
+	else if (cl.net_snapshot_have)
+		base = cl.net_snapshot_sequence;
+	else
+		return seq16;
+
+	seq = (base & ~0xffff) | seq16;
+	if (seq <= base - 0x8000)
+		seq += 0x10000;
+	else if (seq > base + 0x8000)
+		seq -= 0x10000;
+	return seq;
+}
+
+static void CL_ResetSnapshotAssembly (void)
+{
+	memset (&cl_snapshot_assembly, 0, sizeof(cl_snapshot_assembly));
+}
+
+/*
+=====================
+CL_PrepareSnapshotMessage
+
+Snapshot datagrams are split at the UDP layer on busy maps.  Buffer every
+piece and expose only the fully assembled payload to the normal parser so
+svc_time/clientdata/entity deltas are applied once as one coherent frame.
+=====================
+*/
+static qboolean CL_PrepareSnapshotMessage (void)
+{
+	byte	*data;
+	int	seq, part, flags, firstent, totalents;
+	int	payload_offset, payload_size;
+
+	if (net_message.cursize <= 0 || net_message.data[0] != svc_snapshot)
+		return true;
+
+	if (net_message.cursize < 9)
+	{
+		if (net_lagdebug.value)
+			Con_Printf ("net_lagdebug: ignoring truncated snapshot header size=%d\n",
+				net_message.cursize);
+		return false;
+	}
+
+	if (cl_snapshot_assembly.active && cl_snapshot_assembly.netcon != cls.netcon)
+		CL_ResetSnapshotAssembly ();
+
+	data = net_message.data;
+	seq = CL_ExpandSnapshotSequence ((data[1] | (data[2] << 8)) & 0xffff);
+	part = data[3];
+	flags = data[4];
+	firstent = (short)(data[5] | (data[6] << 8));
+	totalents = (short)(data[7] | (data[8] << 8));
+	payload_offset = 9;
+	payload_size = net_message.cursize - payload_offset;
+
+	cl.net_snapshot_packets++;
+
+	if (cl.net_snapshot_have && seq < cl.net_snapshot_sequence)
+	{
+		if (net_lagdebug.value)
+			Con_DPrintf ("net_lagdebug: dropping stale snapshot seq=%d current=%d part=%d flags=%d\n",
+				seq, cl.net_snapshot_sequence, part, flags);
+		return false;
+	}
+
+	if (!cl_snapshot_assembly.active || cl_snapshot_assembly.seq != seq)
+	{
+		if (cl_snapshot_assembly.active && net_lagdebug.value)
+			Con_DPrintf ("net_lagdebug: discarding incomplete snapshot seq=%d at part=%d for newer seq=%d\n",
+				cl_snapshot_assembly.seq, cl_snapshot_assembly.next_part, seq);
+		CL_ResetSnapshotAssembly ();
+
+		if (!(flags & SNAPSHOT_FIRST) || part != 0)
+		{
+			if (net_lagdebug.value)
+				Con_DPrintf ("net_lagdebug: ignoring snapshot without first part seq=%d part=%d flags=%d firstent=%d total=%d\n",
+					seq, part, flags, firstent, totalents);
+			return false;
+		}
+
+		if (cl.net_snapshot_have && seq > cl.net_snapshot_sequence + 1)
+		{
+			cl.net_snapshot_drops += seq - cl.net_snapshot_sequence - 1;
+			if (net_lagdebug.value)
+				Con_DPrintf ("net_lagdebug: client snapshot sequence gap old=%d new=%d missing=%d\n",
+					cl.net_snapshot_sequence, seq,
+					seq - cl.net_snapshot_sequence - 1);
+		}
+
+		cl_snapshot_assembly.active = true;
+		cl_snapshot_assembly.netcon = cls.netcon;
+		cl_snapshot_assembly.seq = seq;
+		cl_snapshot_assembly.next_part = 0;
+		cl_snapshot_assembly.totalents = totalents;
+	}
+
+	if (part != cl_snapshot_assembly.next_part)
+	{
+		if (net_lagdebug.value)
+			Con_DPrintf ("net_lagdebug: client snapshot part jump seq=%d expected=%d got=%d flags=%d firstent=%d total=%d\n",
+				seq, cl_snapshot_assembly.next_part, part, flags,
+				firstent, totalents);
+		CL_ResetSnapshotAssembly ();
+		return false;
+	}
+
+	if (cl_snapshot_assembly.cursize + payload_size > (int)sizeof(cl_snapshot_assembly.data) ||
+		cl_snapshot_assembly.cursize + payload_size > net_message.maxsize)
+	{
+		if (net_lagdebug.value)
+			Con_Printf ("net_lagdebug: dropping oversized assembled snapshot seq=%d size=%d add=%d max=%d\n",
+				seq, cl_snapshot_assembly.cursize, payload_size,
+				net_message.maxsize);
+		CL_ResetSnapshotAssembly ();
+		return false;
+	}
+
+	memcpy (cl_snapshot_assembly.data + cl_snapshot_assembly.cursize,
+		data + payload_offset, payload_size);
+	cl_snapshot_assembly.cursize += payload_size;
+	cl_snapshot_assembly.next_part++;
+
+	if (!(flags & SNAPSHOT_LAST))
+		return false;
+
+	if (cl_snapshot_assembly.cursize > 0)
+		memcpy (net_message.data, cl_snapshot_assembly.data,
+			cl_snapshot_assembly.cursize);
+	net_message.cursize = cl_snapshot_assembly.cursize;
+
+	cl.net_snapshot_have = true;
+	cl.net_snapshot_sequence = seq;
+	cl.net_snapshot_last_part = part;
+
+	CL_ResetSnapshotAssembly ();
+	return true;
+}
+
 static void CL_ParseSnapshotHeader (void)
 {
 	int seq16;
@@ -1194,6 +1353,9 @@ void CL_ParseServerMessage (void)
 	int			total, j, lastcmd; //johnfitz
 	float			newtime;
 	static double		last_svctime_log;
+
+	if (!CL_PrepareSnapshotMessage ())
+		return;
 
 //
 // if recording demos, copy the message out

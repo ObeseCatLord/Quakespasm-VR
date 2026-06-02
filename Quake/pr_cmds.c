@@ -2611,6 +2611,129 @@ static void PF_chr2str(void)
 	G_INT(OFS_RETURN) = PR_SetEngineString(ret);
 }
 
+static int PF_chrconv_number(int i, int base, int conv)
+{
+	i -= base;
+	switch (conv)
+	{
+	default:
+	case 5:
+	case 6:
+	case 0:
+		break;
+	case 1:
+		base = '0';
+		break;
+	case 2:
+		base = '0' + 128;
+		break;
+	case 3:
+		base = '0' - 30;
+		break;
+	case 4:
+		base = '0' + 128 - 30;
+		break;
+	}
+	return i + base;
+}
+
+static int PF_chrconv_punct(int i, int base, int conv)
+{
+	i -= base;
+	switch (conv)
+	{
+	default:
+	case 0:
+		break;
+	case 1:
+		base = 0;
+		break;
+	case 2:
+		base = 128;
+		break;
+	}
+	return i + base;
+}
+
+static int PF_chrconv_alpha(int i, int basec, int baset, int convc, int convt, int charnum)
+{
+	i -= baset + basec;
+	switch (convt)
+	{
+	default:
+	case 0:
+		break;
+	case 1:
+		baset = 0;
+		break;
+	case 2:
+		baset = 128;
+		break;
+	case 5:
+	case 6:
+		baset = 128 * ((charnum & 1) == (convt - 5));
+		break;
+	}
+
+	switch (convc)
+	{
+	default:
+	case 0:
+		break;
+	case 1:
+		basec = 'a';
+		break;
+	case 2:
+		basec = 'A';
+		break;
+	}
+	return i + basec + baset;
+}
+
+static void PF_strconv(void)
+{
+	int ccase = G_FLOAT(OFS_PARM0);
+	int redalpha = G_FLOAT(OFS_PARM1);
+	int rednum = G_FLOAT(OFS_PARM2);
+	const unsigned char *string = (const unsigned char *)PF_VarString(3);
+	int len = strlen((const char *)string);
+	int i;
+	unsigned char *resbuf = (unsigned char *)PR_GetTempString();
+	unsigned char *result = resbuf;
+
+	if (len >= STRINGTEMP_LENGTH)
+		len = STRINGTEMP_LENGTH - 1;
+
+	for (i = 0; i < len; i++, string++, result++)
+	{
+		if (*string >= '0' && *string <= '9')
+			*result = PF_chrconv_number(*string, '0', rednum);
+		else if (*string >= '0' + 128 && *string <= '9' + 128)
+			*result = PF_chrconv_number(*string, '0' + 128, rednum);
+		else if (*string >= '0' + 128 - 30 && *string <= '9' + 128 - 30)
+			*result = PF_chrconv_number(*string, '0' + 128 - 30, rednum);
+		else if (*string >= '0' - 30 && *string <= '9' - 30)
+			*result = PF_chrconv_number(*string, '0' - 30, rednum);
+		else if (*string >= 'a' && *string <= 'z')
+			*result = PF_chrconv_alpha(*string, 'a', 0, ccase, redalpha, i);
+		else if (*string >= 'A' && *string <= 'Z')
+			*result = PF_chrconv_alpha(*string, 'A', 0, ccase, redalpha, i);
+		else if (*string >= 'a' + 128 && *string <= 'z' + 128)
+			*result = PF_chrconv_alpha(*string, 'a', 128, ccase, redalpha, i);
+		else if (*string >= 'A' + 128 && *string <= 'Z' + 128)
+			*result = PF_chrconv_alpha(*string, 'A', 128, ccase, redalpha, i);
+		else if ((*string & 127) < 16 || !redalpha)
+			*result = *string;
+		else if (*string < 128)
+			*result = PF_chrconv_punct(*string, 0, redalpha);
+		else
+			*result = PF_chrconv_punct(*string, 128, redalpha);
+	}
+	*result = '\0';
+
+	G_INT(OFS_RETURN) = PR_SetEngineString((char *)resbuf);
+}
+
 static void PF_sprintf_internal (const char *s, int firstarg, char *outbuf, int outbuflen)
 {
 	const char *s0;
@@ -3467,10 +3590,12 @@ builtindef_t pr_builtindefs[] =
 
 	{"str2chr",					PF_BOTH(PF_str2chr),			222},	// float(string str, float index)
 	{"chr2str",					PF_BOTH(PF_chr2str),			223},	// string(float chr, ...)
+	{"strconv",					PF_BOTH(PF_strconv),			224},	// string(float ccase, float redalpha, float redchars, string str, ...)
 
 	{"clientstat",				PF_SSQC(PF_clientstat),			232},	// void(float num, float type, .__variant fld)
 
 	{"mod",						PF_BOTH(PF_mod),				245},	// float(float a, float n)
+	{"strconv",					PF_BOTH(PF_strconv),			249},	// alternate FTE/QSS slot used by AD CSQC
 
 	{"ftoi",					PF_BOTH(PF_ftoi)},						// int(float)
 	{"itof",					PF_BOTH(PF_itof)},						// float(int)

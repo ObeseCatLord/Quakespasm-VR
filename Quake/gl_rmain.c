@@ -1056,8 +1056,10 @@ static void R_DrawCoopNametags(void) {
   if (!char_texture)
     return;
 
+  GL_DisableMultitexture();
   GL_Bind(char_texture);
   glEnable(GL_BLEND);
+  glDisable(GL_ALPHA_TEST);
   glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
   glTexEnvf(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
   glDepthMask(GL_FALSE);
@@ -1094,8 +1096,9 @@ static void R_DrawCoopNametags(void) {
 
   glDepthMask(GL_TRUE);
   glDisable(GL_BLEND);
+  glDisable(GL_ALPHA_TEST);
   glTexEnvf(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_REPLACE);
-  glColor3f(1, 1, 1);
+  glColor4f(1, 1, 1, 1);
 }
 
 /*
@@ -1272,6 +1275,11 @@ void R_RenderView(void) {
   } else if (gl_finish.value)
     glFinish();
 
+  // If the previous frame preserved a skyroom, update any pending warp
+  // textures before drawing this frame's skyroom. The skyroom color clear will
+  // erase the framebuffer scratch area before the user can see it.
+  if (skyroom_drawn)
+    R_UpdateWarpTextures();
   Sky_DrawSkyRoom();
 
   R_SetupView(); // johnfitz -- this does everything that should be done once

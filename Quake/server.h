@@ -318,6 +318,7 @@ qboolean SV_CoopRespawnPlaceNearPlayer(edict_t *ent);
 qboolean SV_CheckBottom (edict_t *ent);
 qboolean SV_movestep (edict_t *ent, vec3_t move, qboolean relink);
 
+void SV_ResetClientMoveState (client_t *client);
 void SV_WriteClientdataToMessage (edict_t *ent, sizebuf_t *msg);
 
 void SV_MoveToGoal (void);

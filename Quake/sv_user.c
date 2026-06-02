@@ -62,6 +62,41 @@ static void SV_ClearTrustedClientMove(client_t *client) {
   VectorCopy(vec3_origin, client->trusted_clientmove_velocity);
 }
 
+void SV_ResetClientMoveState(client_t *client) {
+  Q_memset(&client->cmd, 0, sizeof(client->cmd));
+  VectorCopy(vec3_origin, client->wishdir);
+  client->last_move_time = 0;
+  client->input_stale = false;
+  client->moveext = false;
+  client->lastmovemessage = -1;
+
+  client->net_move_packets_received = 0;
+  client->net_move_cmds_received = 0;
+  client->net_move_cmds_accepted = 0;
+  client->net_move_cmds_stale = 0;
+  client->net_move_bundle_max = 0;
+  client->net_move_last_bundle = 0;
+  client->net_move_last_gap = 0;
+  client->net_snapshot_sequence = 0;
+  client->net_snapshot_ack = -1;
+  client->net_snapshot_packets_sent = 0;
+  client->net_snapshot_split_packets = 0;
+  client->net_snapshot_unsent_entities = 0;
+
+  client->is_vr_client = false;
+  VectorCopy(vec3_origin, client->vr_handpos);
+  VectorCopy(vec3_origin, client->vr_handrot);
+  VectorCopy(vec3_origin, client->vr_roomscalemove);
+  VectorCopy(vec3_origin, client->vr_roomscale_accum);
+  SV_ClearTrustedClientMove(client);
+
+  if (client->edict && !client->edict->free) {
+    client->edict->v.button0 = 0;
+    client->edict->v.button2 = 0;
+    client->edict->v.impulse = 0;
+  }
+}
+
 void SV_ApplyTrustedClientMove(client_t *client) {
   edict_t *ent;
   float delta_len;

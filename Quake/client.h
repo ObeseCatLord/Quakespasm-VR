@@ -283,6 +283,7 @@ extern	cvar_t	cl_backspeed;
 extern	cvar_t	cl_sidespeed;
 extern	cvar_t	cl_desktop_vanilla_run;
 extern	cvar_t	cl_trusted_clientmove;
+extern	cvar_t	cl_trusted_clientmove_desktop;
 extern	cvar_t	cl_predictmove;
 extern	cvar_t	cl_move_redundancy;
 extern	cvar_t	cl_move_packetdup;
