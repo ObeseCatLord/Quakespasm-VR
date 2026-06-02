@@ -81,7 +81,7 @@ cvar_t	deathmatch = {"deathmatch","0",CVAR_NONE};	// 0, 1, or 2
 cvar_t	coop = {"coop","0",CVAR_NONE};			// 0 or 1
 cvar_t	sv_nofriendlyfire = {"sv_nofriendlyfire","1",CVAR_NOTIFY|CVAR_SERVERINFO};
 cvar_t	sv_coop_noplayerclip = {"sv_coop_noplayerclip","1",CVAR_NOTIFY|CVAR_SERVERINFO};
-cvar_t	sv_save_multiplayer = {"sv_save_multiplayer","0",CVAR_NONE};
+cvar_t	sv_save_multiplayer = {"sv_save_multiplayer","1",CVAR_NONE};
 cvar_t	sv_cmdfile = {"sv_cmdfile","",CVAR_NONE};
 
 cvar_t	pausable = {"pausable","1",CVAR_NONE};
@@ -749,7 +749,10 @@ void Host_ServerFrame (void)
 // move things around and think
 // always pause in single player if in console or menus
 	if (!sv.paused && (svs.maxclients > 1 || key_dest == key_game) )
+	{
 		SV_Physics ();
+		Host_CoopAutosaveFrame ();
+	}
 	if (lagdebug_timing)
 		after_physics = Sys_DoubleTime ();
 

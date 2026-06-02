@@ -73,6 +73,11 @@ static void Cmd_CfgMarker_f (void)
 	in_cfg_exec = false;
 }
 
+qboolean Cmd_IsExecutingConfig (void)
+{
+	return in_cfg_exec;
+}
+
 /*
 =============================================================================
 

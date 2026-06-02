@@ -78,6 +78,7 @@ cvar_t gl_polyblend = {"gl_polyblend", "1", CVAR_NONE};
 cvar_t gl_flashblend = {"gl_flashblend", "0", CVAR_ARCHIVE};
 cvar_t gl_playermip = {"gl_playermip", "0", CVAR_NONE};
 cvar_t gl_nocolors = {"gl_nocolors", "0", CVAR_NONE};
+cvar_t cl_coop_nametags = {"cl_coop_nametags", "1", CVAR_ARCHIVE};
 
 // johnfitz -- new cvars
 cvar_t r_stereo = {"r_stereo", "0", CVAR_NONE};
@@ -984,6 +985,119 @@ static void R_DrawPlayerOutlines (void)
 	glColor3f (1, 1, 1);
 }
 
+#define NAMETAG_CHAR_WIDTH 3.0f
+#define NAMETAG_CHAR_HEIGHT 3.0f
+#define NAMETAG_HEAD_OFFSET 12.0f
+#define NAMETAG_SHADOW_OFFSET 0.35f
+
+static void R_EmitNametagChar(vec3_t pos, unsigned char ch,
+                              float char_width, float char_height) {
+  int row, col;
+  float frow, fcol, size;
+  vec3_t p0, p1, p2, p3;
+
+  row = ch >> 4;
+  col = ch & 15;
+  frow = row * 0.0625f;
+  fcol = col * 0.0625f;
+  size = 0.0625f;
+
+  VectorCopy(pos, p0);
+  VectorMA(pos, char_width, vright, p1);
+  VectorMA(p1, char_height, vup, p2);
+  VectorMA(pos, char_height, vup, p3);
+
+  glTexCoord2f(fcol, frow);
+  glVertex3fv(p0);
+  glTexCoord2f(fcol + size, frow);
+  glVertex3fv(p1);
+  glTexCoord2f(fcol + size, frow + size);
+  glVertex3fv(p2);
+  glTexCoord2f(fcol, frow + size);
+  glVertex3fv(p3);
+}
+
+static void R_DrawNametagString(vec3_t origin, const char *str, float r,
+                                float g, float b, float alpha) {
+  int i, len;
+  vec3_t pos;
+
+  len = (int)strlen(str);
+  if (!len)
+    return;
+
+  VectorMA(origin, -0.5f * len * NAMETAG_CHAR_WIDTH, vright, pos);
+
+  glColor4f(r, g, b, alpha);
+  glBegin(GL_QUADS);
+  for (i = 0; i < len; i++) {
+    if ((unsigned char)str[i] != 32)
+      R_EmitNametagChar(pos, (unsigned char)str[i], NAMETAG_CHAR_WIDTH,
+                        NAMETAG_CHAR_HEIGHT);
+    VectorMA(pos, NAMETAG_CHAR_WIDTH, vright, pos);
+  }
+  glEnd();
+}
+
+static void R_DrawCoopNametags(void) {
+  int i, playernum, topcolor;
+  entity_t *e;
+  byte *rgb;
+  vec3_t tagorg, shadoworg;
+  float scale, r, g, b;
+  extern gltexture_t *char_texture;
+
+  if (!cl_coop_nametags.value)
+    return;
+  if (cl.gametype != GAME_COOP)
+    return;
+  if (!r_drawentities.value)
+    return;
+  if (!char_texture)
+    return;
+
+  GL_Bind(char_texture);
+  glEnable(GL_BLEND);
+  glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+  glTexEnvf(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
+  glDepthMask(GL_FALSE);
+
+  for (i = 1; i <= cl.maxclients; i++) {
+    if (i == cl.viewentity)
+      continue;
+
+    e = &cl_entities[i];
+    if (!e->model || e->model->type != mod_alias)
+      continue;
+    if (R_CullModelForEntity(e))
+      continue;
+
+    playernum = i - 1;
+    if (!cl.scores[playernum].name[0])
+      continue;
+
+    topcolor = (cl.scores[playernum].colors >> 4) & 0xF;
+    rgb = (byte *)&d_8to24table[topcolor * 16 + 8];
+    r = rgb[0] / 255.0f;
+    g = rgb[1] / 255.0f;
+    b = rgb[2] / 255.0f;
+
+    scale = ENTSCALE_DECODE(e->scale);
+    VectorCopy(e->origin, tagorg);
+    tagorg[2] += e->model->maxs[2] * scale + NAMETAG_HEAD_OFFSET;
+
+    VectorMA(tagorg, NAMETAG_SHADOW_OFFSET, vright, shadoworg);
+    VectorMA(shadoworg, -NAMETAG_SHADOW_OFFSET, vup, shadoworg);
+    R_DrawNametagString(shadoworg, cl.scores[playernum].name, 0, 0, 0, 0.65f);
+    R_DrawNametagString(tagorg, cl.scores[playernum].name, r, g, b, 0.95f);
+  }
+
+  glDepthMask(GL_TRUE);
+  glDisable(GL_BLEND);
+  glTexEnvf(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_REPLACE);
+  glColor3f(1, 1, 1);
+}
+
 /*
 ================
 R_RenderScene
@@ -1018,8 +1132,10 @@ void R_RenderScene(void) {
 
   Fog_DisableGFog(); // johnfitz
 
-  if (!skyroom_drawing)
+  if (!skyroom_drawing) {
     R_DrawPlayerOutlines(); // co-op VR player outlines through walls
+    R_DrawCoopNametags();
+  }
 
   R_DrawViewModel(); // johnfitz -- moved here from R_RenderView
 

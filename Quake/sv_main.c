@@ -33,6 +33,7 @@ int		sv_protocol = PROTOCOL_RMQ; //johnfitz
 
 extern cvar_t nomonsters;
 cvar_t sv_maxpacketsize = {"sv_maxpacketsize", "1400", CVAR_NONE}; // 1400 = single IP MTU, avoids UDP fragmentation
+cvar_t sv_snapshot_splits = {"sv_snapshot_splits", "0", CVAR_ARCHIVE};
 // When SV_WriteEntitiesToClient overflows the per-client datagram, the entity
 // that gets evicted is whichever the loop reached last. With sv_netsort=1
 // (ironwail's heuristic) entities are sorted by distance-to-player and PVS
@@ -52,9 +53,14 @@ cvar_t sv_coop_revive_health = {"sv_coop_revive_health", "25", CVAR_NOTIFY | CVA
 cvar_t sv_coop_revive_range = {"sv_coop_revive_range", "96", CVAR_NOTIFY | CVAR_SERVERINFO};
 cvar_t sv_coop_respawn_near_player = {"sv_coop_respawn_near_player", "1", CVAR_NOTIFY | CVAR_SERVERINFO};
 cvar_t sv_coop_respawn_keep_weapons_ammo = {"sv_coop_respawn_keep_weapons_ammo", "1", CVAR_NOTIFY | CVAR_SERVERINFO};
+cvar_t sv_coop_autosave = {"sv_coop_autosave", "1", CVAR_NOTIFY | CVAR_SERVERINFO};
+cvar_t sv_coop_autosave_slots = {"sv_coop_autosave_slots", "4", CVAR_NONE};
+cvar_t sv_coop_autosave_min_interval = {"sv_coop_autosave_min_interval", "30", CVAR_NONE};
+cvar_t sv_coop_autosave_kill_interval = {"sv_coop_autosave_kill_interval", "10", CVAR_NONE};
 cvar_t sv_coop_trusted_clientmove = {"sv_coop_trusted_clientmove", "1", CVAR_NOTIFY | CVAR_SERVERINFO};
 cvar_t sv_coop_trusted_clientmove_maxdelta = {"sv_coop_trusted_clientmove_maxdelta", "96", CVAR_NONE};
 cvar_t sv_coop_predictmove = {"sv_coop_predictmove", "1", CVAR_NOTIFY | CVAR_SERVERINFO};
+cvar_t sv_vr_jump_velocity = {"sv_vr_jump_velocity", "300", CVAR_NOTIFY | CVAR_SERVERINFO};
 cvar_t sv_skyroom_pvs = {"sv_skyroom_pvs", "1", CVAR_NONE};
 
 //============================================================================
@@ -157,6 +163,48 @@ void SV_Protocol_f (void)
 
 /*
 ===============
+SV_NetDiag_f
+===============
+*/
+static void SV_NetDiag_f (void)
+{
+	int i;
+
+	Con_Printf ("client netdiag: moves packets=%d cmds=%d dup_packets=%d last_cmds=%d ack=%d moveacks=%d staleacks=%d\n",
+		cl.net_move_packets_sent, cl.net_move_cmds_sent,
+		cl.net_move_dup_packets_sent, cl.net_move_last_packet_cmds,
+		cl.ackedmovemessages, cl.net_move_acks, cl.net_move_stale_acks);
+	Con_Printf ("client netdiag: snapshots seq=%d packets=%d drops=%d acks_sent=%d pred=%d movetype=%d flags=%d vel=(%.1f %.1f %.1f)\n",
+		cl.net_snapshot_sequence, cl.net_snapshot_packets,
+		cl.net_snapshot_drops, cl.net_snapshot_acks_sent,
+		cl.predstate_valid, cl.predstate_movetype, cl.predstate_flags,
+		cl.predstate_velocity[0], cl.predstate_velocity[1],
+		cl.predstate_velocity[2]);
+
+	if (!sv.active)
+		return;
+
+	for (i = 0; i < svs.maxclients; i++)
+	{
+		client_t *client = &svs.clients[i];
+		if (!client->active)
+			continue;
+		Con_Printf ("server netdiag: #%d %s moves packets=%d cmds=%d accepted=%d stale=%d last=%d bundle=%d maxbundle=%d gap=%d\n",
+			i + 1, client->name, client->net_move_packets_received,
+			client->net_move_cmds_received, client->net_move_cmds_accepted,
+			client->net_move_cmds_stale, client->lastmovemessage,
+			client->net_move_last_bundle, client->net_move_bundle_max,
+			client->net_move_last_gap);
+		Con_Printf ("server netdiag: #%d snapshots seq=%d ack=%d packets=%d split_packets=%d clipped_ents=%d\n",
+			i + 1, client->net_snapshot_sequence, client->net_snapshot_ack,
+			client->net_snapshot_packets_sent,
+			client->net_snapshot_split_packets,
+			client->net_snapshot_unsent_entities);
+	}
+}
+
+/*
+===============
 SV_Init
 ===============
 */
@@ -201,6 +249,7 @@ void SV_Init (void)
 	Cvar_RegisterVariable (&sv_gameplayfix_random);
 	Cvar_RegisterVariable (&sv_inputtimeout);
 	Cvar_RegisterVariable (&sv_maxpacketsize);
+	Cvar_RegisterVariable (&sv_snapshot_splits);
 	Cvar_RegisterVariable (&sv_coop_weapon_targetfix);
 	Cvar_RegisterVariable (&sv_coop_pickup_targetlog);
 	Cvar_RegisterVariable (&sv_coop_pickup_targetfix);
@@ -214,9 +263,14 @@ void SV_Init (void)
 	Cvar_RegisterVariable (&sv_coop_revive_range);
 	Cvar_RegisterVariable (&sv_coop_respawn_near_player);
 	Cvar_RegisterVariable (&sv_coop_respawn_keep_weapons_ammo);
+	Cvar_RegisterVariable (&sv_coop_autosave);
+	Cvar_RegisterVariable (&sv_coop_autosave_slots);
+	Cvar_RegisterVariable (&sv_coop_autosave_min_interval);
+	Cvar_RegisterVariable (&sv_coop_autosave_kill_interval);
 	Cvar_RegisterVariable (&sv_coop_trusted_clientmove);
 	Cvar_RegisterVariable (&sv_coop_trusted_clientmove_maxdelta);
 	Cvar_RegisterVariable (&sv_coop_predictmove);
+	Cvar_RegisterVariable (&sv_vr_jump_velocity);
 	Cvar_RegisterVariable (&sv_skyroom_pvs);
 	Cvar_SetCallback (&sv_coop_ammo_respawn, Host_Callback_Notify);
 	Cvar_SetCallback (&sv_coop_ammo_respawn_time, Host_Callback_Notify);
@@ -227,9 +281,12 @@ void SV_Init (void)
 	Cvar_SetCallback (&sv_coop_revive_range, Host_Callback_Notify);
 	Cvar_SetCallback (&sv_coop_respawn_near_player, Host_Callback_Notify);
 	Cvar_SetCallback (&sv_coop_respawn_keep_weapons_ammo, Host_Callback_Notify);
+	Cvar_SetCallback (&sv_coop_autosave, Host_Callback_Notify);
+	Cvar_SetCallback (&sv_vr_jump_velocity, Host_Callback_Notify);
 	Cvar_RegisterVariable (&vr_movement_instant_stop);
 	Cvar_RegisterVariable (&sv_netsort); // ironwail-style entity priority sorting
 
+	Cmd_AddCommand ("netdiag", SV_NetDiag_f);
 	Cmd_AddCommand ("sv_protocol", &SV_Protocol_f); //johnfitz
 
 	for (i=0 ; i<MAX_MODELS ; i++)
@@ -563,6 +620,9 @@ void SV_ConnectClient (int clientnum)
 	struct qsocket_s *netconnection;
 	int				i;
 	float			spawn_parms[NUM_SPAWN_PARMS];
+	qboolean		loaded_client;
+	int				old_frags;
+	int				colors;
 
 	client = svs.clients + clientnum;
 
@@ -575,11 +635,23 @@ void SV_ConnectClient (int clientnum)
 // set up the client_t
 	netconnection = client->netconnection;
 
-	if (sv.loadgame)
+	loaded_client = sv.loadgame && clientnum >= 0 && clientnum < MAX_SCOREBOARD
+	    && sv.loadgame_client_saved[clientnum] && sv.loadgame_client_edicts;
+	if (loaded_client)
+	{
 		memcpy (spawn_parms, client->spawn_parms, sizeof(spawn_parms));
+		old_frags = client->old_frags;
+		colors = client->colors;
+	}
+	else
+	{
+		old_frags = 0;
+		colors = 0;
+	}
 	memset (client, 0, sizeof(*client));
 	client->netconnection = netconnection;
 	client->lastmovemessage = -1;
+	client->net_snapshot_ack = -1;
 
 	strcpy (client->name, "unconnected");
 	client->active = true;
@@ -589,8 +661,12 @@ void SV_ConnectClient (int clientnum)
 	client->message.maxsize = sizeof(client->msgbuf);
 	client->message.allowoverflow = true;		// we can catch it
 
-	if (sv.loadgame)
+	if (loaded_client)
+	{
 		memcpy (client->spawn_parms, spawn_parms, sizeof(spawn_parms));
+		client->old_frags = old_frags;
+		client->colors = colors;
+	}
 	else
 	{
 	// call the progs to get default spawn parms for the new client
@@ -1278,6 +1354,51 @@ void SV_WriteClientdataToMessage (edict_t *ent, sizebuf_t *msg)
 SV_SendClientDatagram
 =======================
 */
+static void SV_WriteMoveAckToMessage(client_t *client, sizebuf_t *msg)
+{
+	edict_t	*ent;
+	int	i;
+	int	flags;
+	int	ival;
+
+	MSG_WriteByte (msg, svc_moveack);
+	MSG_WriteShort (msg, client->lastmovemessage & 0xffff);
+
+	ent = client->edict;
+	flags = 0;
+	if (ent && !ent->free)
+	{
+		flags |= PREDINFO_VALID;
+		if ((int)ent->v.flags & FL_ONGROUND)
+			flags |= PREDINFO_ONGROUND;
+		if ((int)ent->v.flags & FL_INWATER)
+			flags |= PREDINFO_INWATER;
+		if ((int)ent->v.flags & FL_WATERJUMP)
+			flags |= PREDINFO_WATERJUMP;
+	}
+
+	MSG_WriteByte (msg, flags);
+	MSG_WriteByte (msg, ent ? (int)ent->v.movetype : MOVETYPE_NONE);
+	for (i = 0; i < 3; i++)
+	{
+		ival = Q_rint ((ent ? ent->v.velocity[i] : 0) * 8.0f);
+		ival = CLAMP (-32768, ival, 32767);
+		MSG_WriteShort (msg, ival);
+	}
+	for (i = 0; i < 3; i++)
+	{
+		ival = Q_rint (ent ? ent->v.mins[i] : 0);
+		ival = CLAMP (-128, ival, 127);
+		MSG_WriteChar (msg, ival);
+	}
+	for (i = 0; i < 3; i++)
+	{
+		ival = Q_rint (ent ? ent->v.maxs[i] : 0);
+		ival = CLAMP (-128, ival, 127);
+		MSG_WriteChar (msg, ival);
+	}
+}
+
 qboolean SV_SendClientDatagram (client_t *client)
 {
 	byte		buf[MAX_DATAGRAM];
@@ -1287,6 +1408,7 @@ qboolean SV_SendClientDatagram (client_t *client)
 	int		prev_entity_start;
 	int		datagram_offset;
 	int		packet_count;
+	int		snapshot_sequence;
 	qboolean	first_packet;
 	int		total_bytes;
 	int		max_packet_bytes;
@@ -1311,6 +1433,7 @@ qboolean SV_SendClientDatagram (client_t *client)
 	entity_start = 0;
 	datagram_offset = 0;
 	packet_count = 0;
+	snapshot_sequence = ++client->net_snapshot_sequence;
 	first_packet = true;
 	total_bytes = 0;
 	max_packet_bytes = 0;
@@ -1347,20 +1470,49 @@ qboolean SV_SendClientDatagram (client_t *client)
 		msg.allowoverflow = false;
 		msg.overflowed = false;
 
+		MSG_WriteByte (&msg, svc_snapshot);
+		MSG_WriteShort (&msg, snapshot_sequence & 0xffff);
+		MSG_WriteByte (&msg, packet_count & 0xff);
+		MSG_WriteByte (&msg, first_packet ? SNAPSHOT_FIRST : 0);
+		MSG_WriteShort (&msg, CLAMP (0, entity_start, 32767));
+		MSG_WriteShort (&msg, CLAMP (0, qcvm->num_edicts, 32767));
+
 		if (first_packet)
 		{
 			MSG_WriteByte (&msg, svc_time);
 			MSG_WriteFloat (&msg, qcvm->time);
 			if (client->lastmovemessage >= 0)
-			{
-				MSG_WriteByte (&msg, svc_moveack);
-				MSG_WriteShort (&msg, client->lastmovemessage & 0xffff);
-			}
+				SV_WriteMoveAckToMessage (client, &msg);
 		}
 
 // add the client specific data to the datagram
 		if (first_packet)
 			SV_WriteClientdataToMessage (client->edict, &msg);
+
+// With split snapshots disabled, send frame events before entity data so
+// important sounds/temp entities are not crowded out by a large PVS.
+		if (!sv_snapshot_splits.value && first_packet &&
+			datagram_offset < sv.datagram.cursize)
+		{
+			int remaining = sv.datagram.cursize - datagram_offset;
+			int space = msg.maxsize - msg.cursize;
+
+			if (remaining <= space)
+			{
+				SZ_Write (&msg, sv.datagram.data + datagram_offset, remaining);
+				datagram_offset = sv.datagram.cursize;
+			}
+			else if (net_lagdebug.value &&
+				(client_index < 0 || realtime - last_update_log[client_index] > 1.0))
+			{
+				Con_Printf ("net_lagdebug: dropping oversized server datagram before snapshot for %s (%s): datagram=%d space=%d maxpacket=%d\n",
+					client->name, NET_QSocketGetAddressString(client->netconnection),
+					remaining, space, maxsize);
+				if (client_index >= 0)
+					last_update_log[client_index] = realtime;
+				datagram_offset = sv.datagram.cursize;
+			}
+		}
 
 		prev_entity_start = entity_start;
 		net_edict_write_start = entity_start;
@@ -1402,7 +1554,26 @@ qboolean SV_SendClientDatagram (client_t *client)
 			max_packet_bytes = msg.cursize;
 		last_packet_bytes = msg.cursize;
 		packet_count++;
+		client->net_snapshot_packets_sent++;
 		first_packet = false;
+
+		if (!sv_snapshot_splits.value &&
+			(entity_start < net_edict_write_total || datagram_offset < sv.datagram.cursize))
+		{
+			client->net_snapshot_unsent_entities += net_edict_write_total - entity_start;
+			if (net_lagdebug.value &&
+				(client_index < 0 || realtime - last_update_log[client_index] > 1.0))
+			{
+				Con_Printf ("net_lagdebug: clipped oversized snapshot for %s (%s): sent_ents=%d/%d sv_datagram=%d/%d bytes=%d maxpacket=%d ack=%d\n",
+					client->name, NET_QSocketGetAddressString(client->netconnection),
+					entity_start, net_edict_write_total,
+					datagram_offset, sv.datagram.cursize, msg.cursize, maxsize,
+					client->net_snapshot_ack);
+				if (client_index >= 0)
+					last_update_log[client_index] = realtime;
+			}
+			break;
+		}
 
 		if (entity_start == prev_entity_start && entity_start < net_edict_write_total)
 		{
@@ -1417,15 +1588,21 @@ qboolean SV_SendClientDatagram (client_t *client)
 	}
 	while (entity_start < net_edict_write_total || datagram_offset < sv.datagram.cursize);
 
+	if (packet_count > 1)
+		client->net_snapshot_split_packets += packet_count - 1;
+
 	if (net_lagdebug.value &&
 		(packet_count > 1 || max_packet_bytes > (maxsize * 9) / 10) &&
 		(client_index < 0 || realtime - last_update_log[client_index] > 1.0))
 	{
-		Con_Printf ("net_lagdebug: server update to %s (%s): packets=%d bytes=%d max=%d last=%d ents=%d/%d sv_datagram=%d/%d maxpacket=%d\n",
+		Con_Printf ("net_lagdebug: server update to %s (%s): packets=%d bytes=%d max=%d last=%d ents=%d/%d sv_datagram=%d/%d maxpacket=%d snap=%d ack=%d splits=%d clipped=%d\n",
 			client->name, NET_QSocketGetAddressString(client->netconnection),
 			packet_count, total_bytes, max_packet_bytes, last_packet_bytes,
 			entity_start, net_edict_write_total,
-			datagram_offset, sv.datagram.cursize, maxsize);
+			datagram_offset, sv.datagram.cursize, maxsize,
+			snapshot_sequence, client->net_snapshot_ack,
+			client->net_snapshot_split_packets,
+			client->net_snapshot_unsent_entities);
 		if (client_index >= 0)
 			last_update_log[client_index] = realtime;
 	}

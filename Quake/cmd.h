@@ -135,6 +135,9 @@ qboolean Cmd_ExecuteString (const char *text, cmd_source_t src);
 // Parses a single line of text into arguments and tries to execute it.
 // The text can come from the command buffer, a remote client, or stdin.
 
+qboolean Cmd_IsExecutingConfig (void);
+// True while commands inserted by exec'ed cfg/script files are being processed.
+
 void	Cmd_ForwardToServer (void);
 // adds the current command line as a clc_stringcmd to the client message.
 // things like godmode, noclip, etc, are commands directed to the server,

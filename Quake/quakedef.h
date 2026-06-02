@@ -309,6 +309,7 @@ extern filelist_item_t	*demolist;
 
 void Host_ClearMemory (void);
 void Host_ServerFrame (void);
+void Host_CoopAutosaveFrame (void);
 void Host_InitCommands (void);
 void Host_Init (void);
 void Host_Shutdown(void);

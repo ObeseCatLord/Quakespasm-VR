@@ -890,7 +890,10 @@ LOAD / SAVE GAME
 ===============================================================================
 */
 
-#define SAVEGAME_VERSION 5
+#define SAVEGAME_LEGACY_VERSION 5
+#define SAVEGAME_VERSION 6
+#define COOP_AUTOSAVE_MAPSTART_DELAY 3.0
+#define COOP_AUTOSAVE_MAX_SLOTS 20
 
 /*
 ===============
@@ -901,17 +904,30 @@ Writes a SAVEGAME_COMMENT_LENGTH character comment describing the current
 */
 static void Host_SavegameComment(char text[SAVEGAME_COMMENT_LENGTH + 1]) {
   int i;
+  int killed;
+  int total;
   char kills[20];
+  const char *levelname;
   char *p;
 
   for (i = 0; i < SAVEGAME_COMMENT_LENGTH; i++)
     text[i] = ' ';
   text[SAVEGAME_COMMENT_LENGTH] = '\0';
 
-  i = (int)strlen(cl.levelname);
+  levelname = cl.levelname;
+  killed = cl.stats[STAT_MONSTERS];
+  total = cl.stats[STAT_TOTALMONSTERS];
+  if (sv.active && pr_global_struct) {
+    if (!levelname[0])
+      levelname = sv.name;
+    killed = (int)pr_global_struct->killed_monsters;
+    total = (int)pr_global_struct->total_monsters;
+  }
+
+  i = (int)strlen(levelname);
   if (i > 22)
     i = 22;
-  memcpy(text, cl.levelname, (size_t)i);
+  memcpy(text, levelname, (size_t)i);
 
   // Remove CR/LFs from level name to avoid broken saves, e.g. with autumn_sp
   // map: https://celephais.net/board/view_thread.php?id=60452&start=3666
@@ -920,8 +936,7 @@ static void Host_SavegameComment(char text[SAVEGAME_COMMENT_LENGTH + 1]) {
   while ((p = strchr(text, '\r')) != NULL)
     *p = ' ';
 
-  sprintf(kills, "kills:%3i/%3i", cl.stats[STAT_MONSTERS],
-          cl.stats[STAT_TOTALMONSTERS]);
+  sprintf(kills, "kills:%3i/%3i", killed, total);
   memcpy(text + 22, kills, strlen(kills));
 
   // convert space to _ to make stdio happy
@@ -931,88 +946,108 @@ static void Host_SavegameComment(char text[SAVEGAME_COMMENT_LENGTH + 1]) {
   }
 }
 
-/*
-===============
-Host_Savegame_f
-===============
-*/
-static void Host_Savegame_f(void) {
-  char name[MAX_OSPATH];
-  FILE *f;
+static int Host_SavegameActiveClients(void) {
   int i;
-  char comment[SAVEGAME_COMMENT_LENGTH + 1];
+  int active_clients;
 
-  if (cmd_source != src_command)
-    return;
+  active_clients = 0;
+  for (i = 0; i < svs.maxclients; i++) {
+    if (svs.clients[i].active)
+      active_clients++;
+  }
+  return active_clients;
+}
+
+static qboolean Host_SavegameCanSave(qboolean quiet) {
+  int i;
 
   if (!sv.active) {
-    Con_Printf("Not playing a local game.\n");
-    return;
+    if (!quiet)
+      Con_Printf("Not playing a local game.\n");
+    return false;
   }
 
   if (cl.intermission) {
-    Con_Printf("Can't save in intermission.\n");
-    return;
+    if (!quiet)
+      Con_Printf("Can't save in intermission.\n");
+    return false;
   }
 
   if (svs.maxclients != 1) {
-    int active_clients = 0;
-    int active_slot = -1;
-
     if (!sv_save_multiplayer.value) {
-      Con_Printf("Can't save multiplayer games unless sv_save_multiplayer is 1.\n");
-      return;
+      if (!quiet)
+        Con_Printf("Can't save multiplayer games unless sv_save_multiplayer is 1.\n");
+      return false;
     }
     if (!coop.value || deathmatch.value) {
-      Con_Printf("Multiplayer saves are only supported for coop games.\n");
-      return;
+      if (!quiet)
+        Con_Printf("Multiplayer saves are only supported for coop games.\n");
+      return false;
     }
-    for (i = 0; i < svs.maxclients; i++) {
-      if (!svs.clients[i].active)
-        continue;
-      active_clients++;
-      active_slot = i;
-    }
-    if (active_clients > 1 || active_slot > 0) {
-      Con_Printf("Multiplayer saves currently support only client slot 0.\n");
-      return;
-    }
-  }
-
-  if (Cmd_Argc() != 2) {
-    Con_Printf("save <savename> : save a game\n");
-    return;
-  }
-
-  if (strstr(Cmd_Argv(1), "..")) {
-    Con_Printf("Relative pathnames are not allowed.\n");
-    return;
   }
 
   for (i = 0; i < svs.maxclients; i++) {
     if (svs.clients[i].active && (svs.clients[i].edict->v.health <= 0)) {
-      Con_Printf("Can't savegame with a dead player\n");
-      return;
+      if (!quiet)
+        Con_Printf("Can't savegame with a dead player\n");
+      return false;
     }
   }
 
-  q_snprintf(name, sizeof(name), "%s/%s", com_gamedir, Cmd_Argv(1));
-  COM_AddExtension(name, ".sav", sizeof(name));
+  return true;
+}
 
-  Con_Printf("Saving game to %s...\n", name);
-  f = fopen(name, "w");
-  if (!f) {
-    Con_Printf("ERROR: couldn't open.\n");
-    return;
+static qboolean Host_SavegameWrite(const char *savename, qboolean quiet) {
+  char name[MAX_OSPATH];
+  FILE *f;
+  int i, j;
+  int frags;
+  char comment[SAVEGAME_COMMENT_LENGTH + 1];
+  qboolean switched_qcvm;
+
+  if (!Host_SavegameCanSave(quiet))
+    return false;
+
+  if (strstr(savename, "..")) {
+    if (!quiet)
+      Con_Printf("Relative pathnames are not allowed.\n");
+    return false;
   }
 
-  PR_SwitchQCVM(&sv.qcvm);
+  q_snprintf(name, sizeof(name), "%s/%s", com_gamedir, savename);
+  COM_AddExtension(name, ".sav", sizeof(name));
+
+  if (!quiet)
+    Con_Printf("Saving game to %s...\n", name);
+  f = fopen(name, "w");
+  if (!f) {
+    if (!quiet)
+      Con_Printf("ERROR: couldn't open.\n");
+    else
+      Con_DPrintf("Coop autosave: couldn't open %s\n", name);
+    return false;
+  }
+
+  switched_qcvm = false;
+  if (qcvm != &sv.qcvm) {
+    PR_SwitchQCVM(&sv.qcvm);
+    switched_qcvm = true;
+  }
 
   fprintf(f, "%i\n", SAVEGAME_VERSION);
   Host_SavegameComment(comment);
   fprintf(f, "%s\n", comment);
-  for (i = 0; i < NUM_SPAWN_PARMS; i++)
-    fprintf(f, "%f\n", svs.clients->spawn_parms[i]);
+  fprintf(f, "%i\n", svs.maxclients);
+  for (i = 0; i < svs.maxclients; i++) {
+    frags = 0;
+    if (svs.clients[i].edict)
+      frags = (int)svs.clients[i].edict->v.frags;
+    fprintf(f, "%i\n", svs.clients[i].active ? 1 : 0);
+    fprintf(f, "%i\n", svs.clients[i].colors);
+    fprintf(f, "%i\n", frags);
+    for (j = 0; j < NUM_SPAWN_PARMS; j++)
+      fprintf(f, "%f\n", svs.clients[i].spawn_parms[j]);
+  }
   fprintf(f, "%d\n", current_skill);
   fprintf(f, "%s\n", sv.name);
   fprintf(f, "%f\n", qcvm->time);
@@ -1027,12 +1062,142 @@ static void Host_Savegame_f(void) {
 
   ED_WriteGlobals(f);
   for (i = 0; i < qcvm->num_edicts; i++) {
-    ED_Write(f, EDICT_NUM(i));
+    if (i > 0 && i <= svs.maxclients && !svs.clients[i - 1].active)
+      fprintf(f, "{\n}\n");
+    else
+      ED_Write(f, EDICT_NUM(i));
     fflush(f);
   }
   fclose(f);
-  Con_Printf("done.\n");
-  PR_SwitchQCVM(NULL);
+  if (!quiet)
+    Con_Printf("done.\n");
+
+  if (switched_qcvm)
+    PR_SwitchQCVM(NULL);
+  return true;
+}
+
+static void Host_LoadgameMaybeClearLoadedFlag(void) {
+  int i;
+
+  for (i = 0; i < svs.maxclients && i < MAX_SCOREBOARD; i++) {
+    if (sv.loadgame_client_saved[i])
+      return;
+  }
+  sv.loadgame = false;
+  sv.paused = false;
+}
+
+static byte *Host_LoadgameClientEdictSnapshot(int clientnum) {
+  if (!sv.loadgame_client_edicts)
+    sv.loadgame_client_edicts =
+        (byte *)Hunk_AllocName(MAX_SCOREBOARD * qcvm->edict_size, "loadclients");
+
+  return sv.loadgame_client_edicts + clientnum * qcvm->edict_size;
+}
+
+static void Host_LoadgameRestoreClientEdict(int clientnum, edict_t *ent) {
+  memcpy(ent, Host_LoadgameClientEdictSnapshot(clientnum), qcvm->edict_size);
+  ent->free = false;
+  ClearLink(&ent->area);
+}
+
+void Host_CoopAutosaveFrame(void) {
+  int found_secrets;
+  int killed_monsters;
+  int kill_interval;
+  int kill_bucket;
+  int serverflags;
+  int slots;
+  float min_interval;
+  const char *reason;
+  char savename[MAX_QPATH];
+
+  if (!sv.active || sv.state != ss_active || sv.paused ||
+      svs.maxclients <= 1 || !coop.value || deathmatch.value ||
+      !sv_save_multiplayer.value || !sv_coop_autosave.value) {
+    sv.coop_autosave_initialized = false;
+    return;
+  }
+
+  if (Host_SavegameActiveClients() <= 0)
+    return;
+
+  found_secrets = (int)pr_global_struct->found_secrets;
+  killed_monsters = (int)pr_global_struct->killed_monsters;
+  kill_interval = (int)sv_coop_autosave_kill_interval.value;
+  if (kill_interval < 1)
+    kill_interval = 1;
+  kill_bucket = killed_monsters / kill_interval;
+  serverflags = (int)pr_global_struct->serverflags;
+
+  if (!sv.coop_autosave_initialized) {
+    sv.coop_autosave_initialized = true;
+    sv.coop_autosave_mapstart_done = false;
+    sv.coop_autosave_last_time = 0;
+    sv.coop_autosave_last_secrets = found_secrets;
+    sv.coop_autosave_last_kill_bucket = kill_bucket;
+    sv.coop_autosave_last_serverflags = serverflags;
+  }
+
+  reason = NULL;
+  if (!sv.coop_autosave_mapstart_done &&
+      qcvm->time >= COOP_AUTOSAVE_MAPSTART_DELAY) {
+    reason = "map start";
+  } else if (found_secrets > sv.coop_autosave_last_secrets) {
+    reason = "secret";
+  } else if (kill_bucket > sv.coop_autosave_last_kill_bucket) {
+    reason = "monster progress";
+  } else if (serverflags != sv.coop_autosave_last_serverflags) {
+    reason = "serverflags";
+  }
+
+  if (!reason)
+    return;
+
+  min_interval = sv_coop_autosave_min_interval.value;
+  if (min_interval < 0)
+    min_interval = 0;
+  if (sv.coop_autosave_last_time > 0 &&
+      qcvm->time - sv.coop_autosave_last_time < min_interval)
+    return;
+
+  slots = (int)sv_coop_autosave_slots.value;
+  if (slots < 1)
+    slots = 1;
+  if (slots > COOP_AUTOSAVE_MAX_SLOTS)
+    slots = COOP_AUTOSAVE_MAX_SLOTS;
+
+  q_snprintf(savename, sizeof(savename), "coop_auto%i",
+             sv.coop_autosave_next_slot % slots);
+  if (!Host_SavegameWrite(savename, true))
+    return;
+
+  Con_Printf("Coop autosaved %s.sav (%s).\n", savename, reason);
+  sv.coop_autosave_next_slot = (sv.coop_autosave_next_slot + 1) % slots;
+  sv.coop_autosave_last_time = qcvm->time;
+  sv.coop_autosave_last_secrets = found_secrets;
+  sv.coop_autosave_last_kill_bucket = kill_bucket;
+  sv.coop_autosave_last_serverflags = serverflags;
+  if (!strcmp(reason, "map start"))
+    sv.coop_autosave_mapstart_done = true;
+}
+
+/*
+===============
+Host_Savegame_f
+===============
+*/
+static void Host_Savegame_f(void) {
+  if (cmd_source != src_command)
+    return;
+
+  if (Cmd_Argc() != 2) {
+    Con_Printf("save <savename> : save a game\n");
+    return;
+  }
+
+  Host_SavegameWrite(Cmd_Argv(1), false);
 }
 
 /*
@@ -1048,10 +1213,16 @@ static void Host_Loadgame_f(void) {
   float time, tfloat;
   const char *data;
   int i;
+  int j;
   edict_t *ent;
   int entnum;
   int version;
-  float spawn_parms[NUM_SPAWN_PARMS];
+  int saved_maxclients;
+  int active;
+  qboolean saved_active[MAX_SCOREBOARD];
+  int saved_colors[MAX_SCOREBOARD];
+  int saved_frags[MAX_SCOREBOARD];
+  float spawn_parms[MAX_SCOREBOARD][NUM_SPAWN_PARMS];
 
   if (cmd_source != src_command)
     return;
@@ -1089,15 +1260,47 @@ static void Host_Loadgame_f(void) {
 
   data = start;
   data = COM_ParseIntNewline(data, &version);
-  if (version != SAVEGAME_VERSION) {
+  if (version != SAVEGAME_VERSION && version != SAVEGAME_LEGACY_VERSION) {
     free(start);
     start = NULL;
-    Host_Error("Savegame is version %i, not %i", version, SAVEGAME_VERSION);
+    Host_Error("Savegame is version %i, not %i or %i", version,
+               SAVEGAME_LEGACY_VERSION, SAVEGAME_VERSION);
     return;
   }
   data = COM_ParseStringNewline(data);
-  for (i = 0; i < NUM_SPAWN_PARMS; i++)
-    data = COM_ParseFloatNewline(data, &spawn_parms[i]);
+  memset(saved_active, 0, sizeof(saved_active));
+  memset(saved_colors, 0, sizeof(saved_colors));
+  memset(saved_frags, 0, sizeof(saved_frags));
+  memset(spawn_parms, 0, sizeof(spawn_parms));
+  if (version == SAVEGAME_VERSION) {
+    data = COM_ParseIntNewline(data, &saved_maxclients);
+    if (saved_maxclients < 1 || saved_maxclients > MAX_SCOREBOARD) {
+      free(start);
+      start = NULL;
+      Host_Error("Savegame has invalid maxplayers %i", saved_maxclients);
+      return;
+    }
+    if (saved_maxclients != svs.maxclients) {
+      free(start);
+      start = NULL;
+      Host_Error("Savegame was made with maxplayers %i, current maxplayers is %i. Set maxplayers %i before loading.",
+                 saved_maxclients, svs.maxclients, saved_maxclients);
+      return;
+    }
+    for (i = 0; i < saved_maxclients; i++) {
+      data = COM_ParseIntNewline(data, &active);
+      saved_active[i] = active ? true : false;
+      data = COM_ParseIntNewline(data, &saved_colors[i]);
+      data = COM_ParseIntNewline(data, &saved_frags[i]);
+      for (j = 0; j < NUM_SPAWN_PARMS; j++)
+        data = COM_ParseFloatNewline(data, &spawn_parms[i][j]);
+    }
+  } else {
+    saved_maxclients = 1;
+    saved_active[0] = true;
+    for (i = 0; i < NUM_SPAWN_PARMS; i++)
+      data = COM_ParseFloatNewline(data, &spawn_parms[0][i]);
+  }
   // this silliness is so we can load 1.06 save files, which have float skill
   // values
   data = COM_ParseFloatNewline(data, &tfloat);
@@ -1172,8 +1375,24 @@ static void Host_Loadgame_f(void) {
   free(start);
   start = NULL;
 
-  for (i = 0; i < NUM_SPAWN_PARMS; i++)
-    svs.clients->spawn_parms[i] = spawn_parms[i];
+  for (i = 0; i < svs.maxclients && i < MAX_SCOREBOARD; i++) {
+    qboolean has_saved_edict;
+
+    ent = EDICT_NUM(i + 1);
+    has_saved_edict = saved_active[i] && !ent->free;
+    if (has_saved_edict) {
+      saved_frags[i] = (int)ent->v.frags;
+      memcpy(Host_LoadgameClientEdictSnapshot(i), ent, qcvm->edict_size);
+      ED_ClearEdict(ent);
+    }
+
+    sv.loadgame_client_saved[i] = has_saved_edict;
+    svs.clients[i].colors = saved_colors[i];
+    svs.clients[i].old_frags = saved_frags[i];
+    for (j = 0; j < NUM_SPAWN_PARMS; j++)
+      svs.clients[i].spawn_parms[j] = spawn_parms[i][j];
+  }
+  Host_LoadgameMaybeClearLoadedFlag();
 
   PR_SwitchQCVM(NULL);
 
@@ -1491,8 +1710,10 @@ Host_Spawn_f
 */
 static void Host_Spawn_f(void) {
   int i;
+  int clientnum;
   client_t *client;
   edict_t *ent;
+  qboolean loaded_client;
 
   if (cmd_source == src_command) {
     Con_Printf("spawn is not valid from the console\n");
@@ -1504,14 +1725,26 @@ static void Host_Spawn_f(void) {
     return;
   }
 
+  clientnum = host_client - svs.clients;
+  loaded_client = sv.loadgame && clientnum >= 0 && clientnum < MAX_SCOREBOARD
+      && sv.loadgame_client_saved[clientnum] && sv.loadgame_client_edicts;
+
   // run the entrance script
-  if (sv.loadgame) { // loaded games are fully inited already
-    // if this is the last client to be connected, unpause
+  if (loaded_client) { // saved client edicts are fully inited already
+    ent = host_client->edict;
+    Host_LoadgameRestoreClientEdict(clientnum, ent);
+    ent->v.netname = PR_SetEngineString(host_client->name);
+    ent->v.team = (host_client->colors & 15) + 1;
+    host_client->old_frags = (int)ent->v.frags;
+    SV_LinkEdict(ent, false);
+    sv.loadgame_client_saved[clientnum] = false;
+    Host_LoadgameMaybeClearLoadedFlag();
     sv.paused = false;
   } else {
     // set up the edict
     ent = host_client->edict;
 
+    ent->free = false;
     memset(&ent->v, 0, qcvm->progs->entityfields * 4);
     ent->v.colormap = NUM_FOR_EDICT(ent);
     ent->v.team = (host_client->colors & 15) + 1;
@@ -1530,6 +1763,8 @@ static void Host_Spawn_f(void) {
       Sys_Printf("%s entered the game\n", host_client->name);
 
     PR_ExecuteProgram(pr_global_struct->PutClientInServer);
+    if (sv.loadgame)
+      sv.paused = false;
   }
 
   // send all current names, colors, and frag counts

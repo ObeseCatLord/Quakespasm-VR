@@ -48,6 +48,7 @@ extern cvar_t sv_friction;
 extern cvar_t sv_gravity;
 extern cvar_t sv_maxspeed;
 extern cvar_t sv_stopspeed;
+extern cvar_t sv_vr_jump_velocity;
 extern cvar_t vr_movement_instant_stop;
 
 cvar_t	freelook = {"freelook","1", CVAR_ARCHIVE};
@@ -551,10 +552,11 @@ are still validated on the server through the trusted movement trace.
 */
 static qboolean CL_PredictWorldTrace (vec3_t start, vec3_t end, trace_t *trace)
 {
-	static const vec3_t player_mins = {-16, -16, -24};
+	static const vec3_t default_player_mins = {-16, -16, -24};
 	qmodel_t	*model;
 	hull_t		*hull;
 	vec3_t		offset;
+	vec3_t		player_mins;
 	vec3_t		start_l, end_l;
 
 	memset (trace, 0, sizeof(*trace));
@@ -569,6 +571,15 @@ static qboolean CL_PredictWorldTrace (vec3_t start, vec3_t end, trace_t *trace)
 	hull = &model->hulls[1];
 	if (hull->firstclipnode > hull->lastclipnode)
 		return false;
+
+	if (cl.predstate_valid)
+	{
+		VectorCopy (cl.predstate_mins, player_mins);
+	}
+	else
+	{
+		VectorCopy (default_player_mins, player_mins);
+	}
 
 	VectorSubtract (hull->clip_mins, player_mins, offset);
 	VectorSubtract (start, offset, start_l);
@@ -772,6 +783,22 @@ static void CL_PredictFriction (vec3_t velocity, float frametime)
 	velocity[2] *= newspeed;
 }
 
+static void CL_PredictFriction3D (vec3_t velocity, float frametime)
+{
+	float	speed, newspeed;
+
+	speed = VectorLength (velocity);
+	if (!speed)
+		return;
+
+	newspeed = speed - frametime * speed * sv_friction.value;
+	if (newspeed < 0)
+		newspeed = 0;
+	newspeed /= speed;
+
+	VectorScale (velocity, newspeed, velocity);
+}
+
 static void CL_PredictAccelerate (vec3_t velocity, const vec3_t wishdir, float wishspeed, float frametime)
 {
 	int		i;
@@ -831,16 +858,37 @@ static qboolean CL_PredictRunCommand (const usercmd_t *cmd, vec3_t origin, vec3_
 
 	onground = CL_PredictGrounded (origin);
 
-	VectorCopy (cmd->viewangles, angles);
-	angles[PITCH] = 0;
-	AngleVectors (angles, forward, right, up);
-
 	fmove = cmd->forwardmove;
 	smove = cmd->sidemove;
 
+	VectorCopy (cmd->viewangles, angles);
+	if (cl.predstate_valid && cl.predstate_movetype == MOVETYPE_NOCLIP)
+	{
+		AngleVectors (angles, forward, right, up);
+		for (i = 0; i < 3; i++)
+			wishvel[i] = forward[i] * fmove + right[i] * smove;
+		wishvel[2] += cmd->upmove * 2;
+		wishspeed = VectorLength (wishvel);
+		if (wishspeed > sv_maxspeed.value)
+			VectorScale (wishvel, sv_maxspeed.value / wishspeed, wishvel);
+		for (i = 0; i < 3; i++)
+			origin[i] += wishvel[i] * frametime;
+		VectorCopy (wishvel, velocity);
+		return false;
+	}
+
+	angles[PITCH] = 0;
+	AngleVectors (angles, forward, right, up);
+
 	for (i = 0; i < 3; i++)
 		wishvel[i] = forward[i] * fmove + right[i] * smove;
-	wishvel[2] = 0;
+	if (cl.predstate_valid &&
+		(cl.predstate_movetype == MOVETYPE_NOCLIP ||
+		 cl.predstate_movetype == MOVETYPE_FLY ||
+		 (cl.predstate_flags & PREDINFO_INWATER)))
+		wishvel[2] += cmd->upmove;
+	else
+		wishvel[2] = 0;
 
 	VectorCopy (wishvel, wishdir);
 	wishspeed = VectorNormalize (wishdir);
@@ -850,11 +898,31 @@ static qboolean CL_PredictRunCommand (const usercmd_t *cmd, vec3_t origin, vec3_
 		wishspeed = sv_maxspeed.value;
 	}
 
+	if (cl.predstate_valid &&
+		(cl.predstate_movetype == MOVETYPE_FLY ||
+		 (cl.predstate_flags & PREDINFO_INWATER)))
+	{
+		if (cl.predstate_flags & PREDINFO_INWATER)
+		{
+			VectorScale (wishvel, 0.7f, wishvel);
+			wishspeed *= 0.7f;
+		}
+		CL_PredictFriction3D (velocity, frametime);
+		CL_PredictAccelerate (velocity, wishdir, wishspeed, frametime);
+		CL_PredictSlideMove (origin, velocity, frametime);
+		return CL_PredictGrounded (origin);
+	}
+
+	if (cl.predstate_valid && cl.predstate_sequence == cl.ackedmovemessages &&
+		(cl.predstate_flags & PREDINFO_ONGROUND))
+		onground = true;
+
 	if (onground)
 	{
 		if ((cmd->buttons & 2) && velocity[2] <= 0)
 		{
-			velocity[2] = 270;
+			velocity[2] = (vr_enabled.value && sv_vr_jump_velocity.value > 270) ?
+				sv_vr_jump_velocity.value : 270;
 			onground = false;
 		}
 		else
@@ -890,13 +958,20 @@ static qboolean CL_PredictPlayer (entity_t *ent)
 
 	if (!cl_predictmove.value || cl_nopred.value || cls.demoplayback ||
 		cls.state != ca_connected || cls.signon != SIGNONS ||
-		!cls.moveext_allowed || cl.inwater || !cl.worldmodel || cl.viewentity <= 0)
+		!cls.moveext_allowed || !cl.worldmodel || cl.viewentity <= 0)
 		return false;
 	if (ent != &cl_entities[cl.viewentity])
 		return false;
 
 	VectorCopy (ent->msg_origins[0], origin);
-	VectorCopy (cl.mvelocity[0], velocity);
+	if (cl.predstate_valid && cl.predstate_sequence >= cl.ackedmovemessages)
+	{
+		VectorCopy (cl.predstate_velocity, velocity);
+	}
+	else
+	{
+		VectorCopy (cl.mvelocity[0], velocity);
+	}
 
 	startseq = cl.ackedmovemessages + 1;
 	if (startseq < 2)
@@ -1485,6 +1560,7 @@ void CL_Init (void)
 	Cvar_RegisterVariable (&cl_trusted_clientmove);
 	Cvar_RegisterVariable (&cl_predictmove);
 	Cvar_RegisterVariable (&cl_move_redundancy);
+	Cvar_RegisterVariable (&cl_move_packetdup);
 	Cvar_RegisterVariable (&cl_nopred);
 	Cvar_RegisterVariable (&cl_movespeedkey);
 	Cvar_RegisterVariable (&cl_yawspeed);

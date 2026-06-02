@@ -53,6 +53,7 @@ cvar_t sv_nostep = {"sv_nostep", "0", CVAR_NONE};
 cvar_t sv_freezenonclients = {"sv_freezenonclients", "0", CVAR_NONE};
 
 #define MOVE_EPSILON 0.01
+#define SV_VANILLA_JUMP_VELOCITY 270.0f
 
 void SV_Physics_Toss(edict_t *ent);
 
@@ -1812,6 +1813,35 @@ static void SV_RestoreVRWeaponOffset(edict_t *ent, int num,
   }
 }
 
+static qboolean SV_IsVRClientSlot(int num) {
+  if (num <= 0 || num > svs.maxclients)
+    return false;
+
+  if (svs.clients[num - 1].is_vr_client)
+    return true;
+
+  return vr_enabled.value && !isDedicated && num == cl.viewentity;
+}
+
+static void SV_AdjustVRJumpVelocity(edict_t *ent, int num,
+                                    qboolean was_onground,
+                                    float prethink_velocity_z) {
+  float target = sv_vr_jump_velocity.value;
+
+  if (target <= SV_VANILLA_JUMP_VELOCITY)
+    return;
+  if (!was_onground || !ent->v.button2 || prethink_velocity_z > 0)
+    return;
+  if ((int)ent->v.movetype != MOVETYPE_WALK)
+    return;
+  if (!SV_IsVRClientSlot(num))
+    return;
+
+  if (ent->v.velocity[2] >= SV_VANILLA_JUMP_VELOCITY &&
+      ent->v.velocity[2] < target)
+    ent->v.velocity[2] = target;
+}
+
 /*
 ================
 SV_Physics_Client
@@ -1820,6 +1850,9 @@ Player character actions
 ================
 */
 void SV_Physics_Client(edict_t *ent, int num) {
+  qboolean was_onground;
+  float prethink_velocity_z;
+
   if (!svs.clients[num - 1].active)
     return; // unconnected slot
 
@@ -1840,12 +1873,16 @@ void SV_Physics_Client(edict_t *ent, int num) {
     SV_LinkEdict(ent, true);
   }
 
+  was_onground = ((int)ent->v.flags & FL_ONGROUND) != 0;
+  prethink_velocity_z = ent->v.velocity[2];
+
   //
   // call standard client pre-think
   //
   pr_global_struct->time = qcvm->time;
   pr_global_struct->self = EDICT_TO_PROG(ent);
   PR_ExecuteProgram(pr_global_struct->PlayerPreThink);
+  SV_AdjustVRJumpVelocity(ent, num, was_onground, prethink_velocity_z);
 
   //
   // do a move
