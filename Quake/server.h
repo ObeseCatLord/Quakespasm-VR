@@ -146,12 +146,22 @@ typedef struct client_s
 	int				net_snapshot_updates_sent;
 	int				net_snapshot_last_packets;
 	int				net_snapshot_last_bytes;
-	int				net_snapshot_max_bytes;
-	int				net_snapshot_max_packets;
-	int				net_snapshot_ack_lag_max;
-	double			net_snapshot_last_summary_time;
+		int				net_snapshot_max_bytes;
+		int				net_snapshot_max_packets;
+		int				net_snapshot_ack_lag_max;
+		double			net_snapshot_last_summary_time;
+		int				net_snapshot_partial_ack_seq;
+		int				net_snapshot_partial_ack_last_part;
+		unsigned int	net_snapshot_partial_ack_mask[SNAPSHOT_ACK_MASK_WORDS];
+		double			net_snapshot_partial_ack_time;
+		int				net_snapshot_resend_sequence;
+		int				net_snapshot_resend_parts;
+		int				net_snapshot_resend_part_len[SNAPSHOT_RESEND_MAX_PARTS];
+		byte			net_snapshot_resend_part_data[SNAPSHOT_RESEND_MAX_PARTS][SNAPSHOT_RESEND_MAX_PACKET];
+		double			net_snapshot_last_part_resend_time;
+		int				net_snapshot_part_resends;
 
-	sizebuf_t		message;			// can be added to at any time,
+		sizebuf_t		message;			// can be added to at any time,
 										// copied and clear once per frame
 	byte			msgbuf[MAX_MSGLEN];
 	edict_t			*edict;				// EDICT_NUM(clientnum+1)
@@ -275,6 +285,8 @@ extern cvar_t sv_coop_predictmove;
 extern cvar_t sv_vr_jump_velocity;
 extern cvar_t sv_snapshot_splits;
 extern cvar_t sv_snapshot_packetdup;
+extern cvar_t sv_snapshot_partresend;
+extern cvar_t sv_snapshot_partresend_interval;
 extern cvar_t sv_netdiag_interval;
 extern cvar_t sv_save_multiplayer;
 extern cvar_t sv_cmdfile;

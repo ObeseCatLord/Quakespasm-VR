@@ -43,6 +43,7 @@ cvar_t	cl_extrapolate = {"cl_extrapolate","0.05",CVAR_ARCHIVE};
 cvar_t	cl_extrapolate_adaptive = {"cl_extrapolate_adaptive","0",CVAR_ARCHIVE};
 cvar_t	cl_extrapolate_adaptive_max = {"cl_extrapolate_adaptive_max","0.12",CVAR_ARCHIVE};
 cvar_t	cl_extrapolate_adaptive_time = {"cl_extrapolate_adaptive_time","0.75",CVAR_NONE};
+cvar_t	cl_net_lerpbuffer = {"cl_net_lerpbuffer","0.025",CVAR_ARCHIVE};
 
 cvar_t	cfg_unbindall = {"cfg_unbindall", "1", CVAR_ARCHIVE};
 
@@ -435,10 +436,12 @@ should be put at.
 */
 float	CL_LerpPoint (void)
 {
-	float	f, frac;
+	float	f, frac, lerptime, lerpbuffer;
 	static double	last_lerp_log;
 
 	f = cl.mtime[0] - cl.mtime[1];
+	lerpbuffer = CLAMP (0.0f, cl_net_lerpbuffer.value, 0.2f);
+	lerptime = cl.time - lerpbuffer;
 
 	if (!f || cls.timedemo || (sv.active && !host_netinterval))
 	{
@@ -447,7 +450,7 @@ float	CL_LerpPoint (void)
 			cl.mtime[0] > 0 && realtime - last_lerp_log > 0.5)
 		{
 			Con_Printf ("net_lagdebug: client interpolation collapsed mtime=%.3f cl_time=%.3f lastmsg_age=%.3f\n",
-				cl.mtime[0], cl.time, realtime - cl.last_received_message);
+				cl.mtime[0], lerptime, realtime - cl.last_received_message);
 			last_lerp_log = realtime;
 		}
 		cl.time = cl.mtime[0];
@@ -460,19 +463,19 @@ float	CL_LerpPoint (void)
 			realtime - last_lerp_log > 0.5)
 		{
 			Con_Printf ("net_lagdebug: client snapshot gap mtime_delta=%.3f cl_time=%.3f lastmsg_age=%.3f\n",
-				f, cl.time, realtime - cl.last_received_message);
+				f, lerptime, realtime - cl.last_received_message);
 			last_lerp_log = realtime;
 		}
 		cl.mtime[1] = cl.mtime[0] - 0.1;
 		f = 0.1;
 	}
 
-	frac = (cl.time - cl.mtime[1]) / f;
+	frac = (lerptime - cl.mtime[1]) / f;
 
 	if (frac < 0)
 	{
 		if (frac < -0.01)
-			cl.time = cl.mtime[1];
+			cl.time = cl.mtime[1] + lerpbuffer;
 		frac = 0;
 	}
 	else if (frac > 1)
@@ -480,7 +483,7 @@ float	CL_LerpPoint (void)
 		float maxextrap = cl_extrapolate.value;
 
 		if (cl_extrapolate_adaptive.value &&
-			(cl.time - cl.mtime[0] > net_lagdebug_frame_threshold.value ||
+			(lerptime - cl.mtime[0] > net_lagdebug_frame_threshold.value ||
 			 realtime < cl.net_snapshot_smooth_until))
 		{
 			cl.net_snapshot_smooth_until = realtime +
@@ -489,12 +492,12 @@ float	CL_LerpPoint (void)
 				maxextrap = cl_extrapolate_adaptive_max.value;
 		}
 		if (net_lagdebug.value && cls.state == ca_connected && cls.signon == SIGNONS &&
-			cl.time - cl.mtime[0] > net_lagdebug_frame_threshold.value &&
+			lerptime - cl.mtime[0] > net_lagdebug_frame_threshold.value &&
 			realtime - last_lerp_log > 0.5)
 		{
 			cl.net_snapshot_interpolation_overruns++;
-			Con_Printf ("net_lagdebug: client interpolation overrun over=%.3f frac=%.3f mtime_delta=%.3f maxextrap=%.3f lastmsg_age=%.3f\n",
-				cl.time - cl.mtime[0], frac, f, maxextrap,
+			Con_Printf ("net_lagdebug: client interpolation overrun over=%.3f frac=%.3f mtime_delta=%.3f maxextrap=%.3f lerpbuffer=%.3f lastmsg_age=%.3f\n",
+				lerptime - cl.mtime[0], frac, f, maxextrap, lerpbuffer,
 				realtime - cl.last_received_message);
 			last_lerp_log = realtime;
 		}
@@ -504,19 +507,19 @@ float	CL_LerpPoint (void)
 		// Eliminates the "freeze then snap" stutter when the render rate
 		// exceeds the server tick rate. A small cap keeps overshoot bounded
 		// when entities suddenly stop or change direction.
-		if (maxextrap > 0 && (cl.time - cl.mtime[0]) <= maxextrap)
+		if (maxextrap > 0 && (lerptime - cl.mtime[0]) <= maxextrap)
 		{
 			float maxfrac = 1.0f + (maxextrap / f);
 			if (frac > maxfrac)
 			{
-				cl.time = cl.mtime[0] + maxextrap;
+				cl.time = cl.mtime[0] + maxextrap + lerpbuffer;
 				frac = maxfrac;
 			}
 		}
 		else
 		{
 			if (frac > 1.01)
-				cl.time = cl.mtime[0];
+				cl.time = cl.mtime[0] + lerpbuffer;
 			frac = 1;
 		}
 	}
@@ -1594,6 +1597,7 @@ void CL_Init (void)
 	Cvar_RegisterVariable (&cl_extrapolate_adaptive);
 	Cvar_RegisterVariable (&cl_extrapolate_adaptive_max);
 	Cvar_RegisterVariable (&cl_extrapolate_adaptive_time);
+	Cvar_RegisterVariable (&cl_net_lerpbuffer);
 	Cvar_RegisterVariable (&freelook);
 	Cvar_RegisterVariable (&lookspring);
 	Cvar_RegisterVariable (&lookstrafe);
