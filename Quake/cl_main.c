@@ -40,12 +40,6 @@ cvar_t	cl_nolerp = {"cl_nolerp","0",CVAR_NONE};
 // snapshots and would otherwise freeze entities at frac=1 until the next
 // packet, producing visible 20 Hz judder. 0 reproduces the legacy clamp.
 cvar_t	cl_extrapolate = {"cl_extrapolate","0.05",CVAR_ARCHIVE};
-cvar_t	cl_extrapolate_adaptive = {"cl_extrapolate_adaptive","1",CVAR_ARCHIVE};
-cvar_t	cl_extrapolate_adaptive_max = {"cl_extrapolate_adaptive_max","0.12",CVAR_ARCHIVE};
-cvar_t	cl_extrapolate_adaptive_time = {"cl_extrapolate_adaptive_time","0.75",CVAR_NONE};
-cvar_t	cl_predict_smooth = {"cl_predict_smooth","1",CVAR_ARCHIVE};
-cvar_t	cl_predict_smooth_time = {"cl_predict_smooth_time","0.08",CVAR_ARCHIVE};
-cvar_t	cl_predict_smooth_maxerror = {"cl_predict_smooth_maxerror","48",CVAR_ARCHIVE};
 
 cvar_t	cfg_unbindall = {"cfg_unbindall", "1", CVAR_ARCHIVE};
 
@@ -480,24 +474,12 @@ float	CL_LerpPoint (void)
 	}
 	else if (frac > 1)
 	{
-		float maxextrap = cl_extrapolate.value;
-
-		if (cl_extrapolate_adaptive.value &&
-			(cl.time - cl.mtime[0] > net_lagdebug_frame_threshold.value ||
-			 realtime < cl.net_snapshot_smooth_until))
-		{
-			cl.net_snapshot_smooth_until = realtime +
-				q_max (0.0, cl_extrapolate_adaptive_time.value);
-			if (cl_extrapolate_adaptive_max.value > maxextrap)
-				maxextrap = cl_extrapolate_adaptive_max.value;
-		}
 		if (net_lagdebug.value && cls.state == ca_connected && cls.signon == SIGNONS &&
 			cl.time - cl.mtime[0] > net_lagdebug_frame_threshold.value &&
 			realtime - last_lerp_log > 0.5)
 		{
-			cl.net_snapshot_interpolation_overruns++;
 			Con_Printf ("net_lagdebug: client interpolation overrun over=%.3f frac=%.3f mtime_delta=%.3f maxextrap=%.3f lastmsg_age=%.3f\n",
-				cl.time - cl.mtime[0], frac, f, maxextrap,
+				cl.time - cl.mtime[0], frac, f, cl_extrapolate.value,
 				realtime - cl.last_received_message);
 			last_lerp_log = realtime;
 		}
@@ -507,6 +489,7 @@ float	CL_LerpPoint (void)
 		// Eliminates the "freeze then snap" stutter when the render rate
 		// exceeds the server tick rate. A small cap keeps overshoot bounded
 		// when entities suddenly stop or change direction.
+		float maxextrap = cl_extrapolate.value;
 		if (maxextrap > 0 && (cl.time - cl.mtime[0]) <= maxextrap)
 		{
 			float maxfrac = 1.0f + (maxextrap / f);
@@ -975,10 +958,8 @@ static qboolean CL_PredictPlayer (entity_t *ent)
 	qboolean	predicted;
 	qboolean	onground;
 	qboolean	jump_released;
-	qboolean	smooth_enabled;
 	usercmd_t	pending;
 	vec3_t		origin, velocity;
-	vec3_t		raw_origin;
 
 	if (!cl_predictmove.value || cl_nopred.value || cls.demoplayback ||
 		cls.state != ca_connected || cls.signon != SIGNONS ||
@@ -1027,61 +1008,7 @@ static qboolean CL_PredictPlayer (entity_t *ent)
 	if (!predicted)
 		return false;
 
-	smooth_enabled = cl_predict_smooth.value != 0;
-	VectorCopy (origin, raw_origin);
-	if (smooth_enabled)
-	{
-		double smooth_time;
-		double dt;
-
-		smooth_time = q_max (0.0, cl_predict_smooth_time.value);
-		if (cl.predict_smooth_valid &&
-			(cl.predict_smooth_mtime != cl.mtime[0] ||
-			 cl.predict_smooth_ack != cl.ackedmovemessages))
-		{
-			vec3_t correction;
-			float maxerror;
-
-			VectorSubtract (cl.predict_smooth_origin, raw_origin, correction);
-			maxerror = q_max (0.0, cl_predict_smooth_maxerror.value);
-			if (DotProduct(correction, correction) <= maxerror * maxerror)
-			{
-				VectorCopy (correction, cl.predict_smooth_error);
-				cl.predict_smooth_time = realtime;
-			}
-			else
-			{
-				VectorCopy (vec3_origin, cl.predict_smooth_error);
-				cl.predict_smooth_time = 0;
-			}
-		}
-
-		dt = realtime - cl.predict_smooth_time;
-		if (smooth_time > 0 && dt >= 0 && dt < smooth_time)
-		{
-			float frac = 1.0f - (float)(dt / smooth_time);
-			VectorMA (origin, frac, cl.predict_smooth_error, origin);
-		}
-		else
-		{
-			VectorCopy (vec3_origin, cl.predict_smooth_error);
-			cl.predict_smooth_time = 0;
-		}
-	}
-	else
-	{
-		cl.predict_smooth_valid = false;
-		VectorCopy (vec3_origin, cl.predict_smooth_error);
-	}
-
 	VectorCopy (origin, ent->origin);
-	if (smooth_enabled)
-	{
-		VectorCopy (origin, cl.predict_smooth_origin);
-		cl.predict_smooth_mtime = cl.mtime[0];
-		cl.predict_smooth_ack = cl.ackedmovemessages;
-		cl.predict_smooth_valid = true;
-	}
 	VectorCopy (velocity, cl.velocity);
 	cl.onground = onground;
 	return true;
@@ -1650,12 +1577,6 @@ void CL_Init (void)
 	Cvar_RegisterVariable (&cl_shownet);
 	Cvar_RegisterVariable (&cl_nolerp);
 	Cvar_RegisterVariable (&cl_extrapolate);
-	Cvar_RegisterVariable (&cl_extrapolate_adaptive);
-	Cvar_RegisterVariable (&cl_extrapolate_adaptive_max);
-	Cvar_RegisterVariable (&cl_extrapolate_adaptive_time);
-	Cvar_RegisterVariable (&cl_predict_smooth);
-	Cvar_RegisterVariable (&cl_predict_smooth_time);
-	Cvar_RegisterVariable (&cl_predict_smooth_maxerror);
 	Cvar_RegisterVariable (&freelook);
 	Cvar_RegisterVariable (&lookspring);
 	Cvar_RegisterVariable (&lookstrafe);
