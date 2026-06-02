@@ -105,6 +105,19 @@ void SV_SetupSkyRoom (const char *value);
 
 #define	NUM_PING_TIMES		16
 #define	NUM_SPAWN_PARMS		16
+#define	SV_SNAPSHOT_HISTORY	4
+#define	SV_SNAPSHOT_RETRANS_MAX_PACKET	2048
+
+typedef struct sv_snapshot_history_s
+{
+	qboolean	valid;
+	int		sequence;
+	int		part_count;
+	int		part_size[SNAPSHOT_PART_MAX];
+	double		last_resend_time;
+	unsigned int	last_resend_mask;
+	byte		part_data[SNAPSHOT_PART_MAX][SV_SNAPSHOT_RETRANS_MAX_PACKET];
+} sv_snapshot_history_t;
 
 typedef struct client_s
 {
@@ -143,6 +156,17 @@ typedef struct client_s
 	int				net_snapshot_packets_sent;
 	int				net_snapshot_split_packets;
 	int				net_snapshot_unsent_entities;
+	int				net_snapshot_updates_sent;
+	int				net_snapshot_last_packets;
+	int				net_snapshot_last_bytes;
+	int				net_snapshot_max_bytes;
+	int				net_snapshot_max_packets;
+	int				net_snapshot_ack_lag_max;
+	int				net_snapshot_adaptive_dup;
+	int				net_snapshot_part_ack_requests;
+	int				net_snapshot_part_retransmits;
+	double			net_snapshot_last_summary_time;
+	sv_snapshot_history_t	net_snapshot_history[SV_SNAPSHOT_HISTORY];
 
 	sizebuf_t		message;			// can be added to at any time,
 										// copied and clear once per frame
@@ -268,12 +292,20 @@ extern cvar_t sv_coop_predictmove;
 extern cvar_t sv_vr_jump_velocity;
 extern cvar_t sv_snapshot_splits;
 extern cvar_t sv_snapshot_packetdup;
+extern cvar_t sv_snapshot_packetdup_auto;
+extern cvar_t sv_snapshot_packetdup_max;
+extern cvar_t sv_snapshot_packetdup_acklag;
+extern cvar_t sv_snapshot_retransmit;
+extern cvar_t sv_snapshot_retransmit_interval;
+extern cvar_t sv_snapshot_retransmit_maxparts;
 extern cvar_t sv_save_multiplayer;
 extern cvar_t sv_cmdfile;
 extern cvar_t fraglimit;
 extern cvar_t timelimit;
 
 extern	server_static_t	svs;				// persistant server info
+
+void SV_HandleSnapshotPartAck (client_t *client, int sequence, unsigned int part_mask);
 extern	server_t		sv;					// local server
 
 extern	client_t	*host_client;
