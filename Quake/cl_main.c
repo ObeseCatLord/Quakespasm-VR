@@ -43,7 +43,7 @@ cvar_t	cl_extrapolate = {"cl_extrapolate","0.05",CVAR_ARCHIVE};
 cvar_t	cl_extrapolate_adaptive = {"cl_extrapolate_adaptive","1",CVAR_ARCHIVE};
 cvar_t	cl_extrapolate_adaptive_max = {"cl_extrapolate_adaptive_max","0.12",CVAR_ARCHIVE};
 cvar_t	cl_extrapolate_adaptive_time = {"cl_extrapolate_adaptive_time","0.75",CVAR_NONE};
-cvar_t	cl_predict_smooth = {"cl_predict_smooth","0",CVAR_ARCHIVE};
+cvar_t	cl_predict_smooth = {"cl_predict_smooth","1",CVAR_ARCHIVE};
 cvar_t	cl_predict_smooth_time = {"cl_predict_smooth_time","0.08",CVAR_ARCHIVE};
 cvar_t	cl_predict_smooth_maxerror = {"cl_predict_smooth_maxerror","48",CVAR_ARCHIVE};
 
@@ -1077,7 +1077,7 @@ static qboolean CL_PredictPlayer (entity_t *ent)
 	VectorCopy (origin, ent->origin);
 	if (smooth_enabled)
 	{
-		VectorCopy (raw_origin, cl.predict_smooth_origin);
+		VectorCopy (origin, cl.predict_smooth_origin);
 		cl.predict_smooth_mtime = cl.mtime[0];
 		cl.predict_smooth_ack = cl.ackedmovemessages;
 		cl.predict_smooth_valid = true;
