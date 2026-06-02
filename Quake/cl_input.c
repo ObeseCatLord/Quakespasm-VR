@@ -432,6 +432,8 @@ void CL_SendMove(const usercmd_t *cmd) {
   int dup;
   int sendseqs[MOVE_BUNDLE_MAX];
   int flags;
+  int snapshot_part_seq;
+  unsigned int snapshot_part_mask;
   usercmd_t sendcmd;
   sizebuf_t buf;
   byte data[MAX_DATAGRAM];
@@ -557,6 +559,10 @@ void CL_SendMove(const usercmd_t *cmd) {
   flags = 0;
   if (cl.net_snapshot_have)
     flags |= MOVE_BUNDLE_SNAPSHOTACK;
+  snapshot_part_seq = 0;
+  snapshot_part_mask = 0;
+  if (CL_GetSnapshotPartAck(&snapshot_part_seq, &snapshot_part_mask))
+    flags |= MOVE_BUNDLE_SNAPSHOTPARTACK;
 
   MSG_WriteByte(&buf, clc_move);
   MSG_WriteShort(&buf, seq & 0xffff);
@@ -565,6 +571,11 @@ void CL_SendMove(const usercmd_t *cmd) {
   if (flags & MOVE_BUNDLE_SNAPSHOTACK) {
     MSG_WriteShort(&buf, cl.net_snapshot_sequence & 0xffff);
     cl.net_snapshot_acks_sent++;
+  }
+  if (flags & MOVE_BUNDLE_SNAPSHOTPARTACK) {
+    MSG_WriteShort(&buf, snapshot_part_seq & 0xffff);
+    MSG_WriteLong(&buf, (int)snapshot_part_mask);
+    cl.net_snapshot_part_acks_sent++;
   }
 
   for (i = 0; i < count; i++) {

@@ -35,6 +35,13 @@ extern cvar_t nomonsters;
 cvar_t sv_maxpacketsize = {"sv_maxpacketsize", "1400", CVAR_NONE}; // 1400 = single IP MTU, avoids UDP fragmentation
 cvar_t sv_snapshot_splits = {"sv_snapshot_splits", "1", CVAR_ARCHIVE};
 cvar_t sv_snapshot_packetdup = {"sv_snapshot_packetdup", "0", CVAR_NONE};
+cvar_t sv_snapshot_packetdup_auto = {"sv_snapshot_packetdup_auto", "1", CVAR_NONE};
+cvar_t sv_snapshot_packetdup_max = {"sv_snapshot_packetdup_max", "2", CVAR_NONE};
+cvar_t sv_snapshot_packetdup_acklag = {"sv_snapshot_packetdup_acklag", "4", CVAR_NONE};
+cvar_t sv_snapshot_retransmit = {"sv_snapshot_retransmit", "1", CVAR_NONE};
+cvar_t sv_snapshot_retransmit_interval = {"sv_snapshot_retransmit_interval", "0.05", CVAR_NONE};
+cvar_t sv_snapshot_retransmit_maxparts = {"sv_snapshot_retransmit_maxparts", "4", CVAR_NONE};
+cvar_t sv_netdiag_interval = {"sv_netdiag_interval", "5", CVAR_NONE};
 // When SV_WriteEntitiesToClient overflows the per-client datagram, the entity
 // that gets evicted is whichever the loop reached last. With sv_netsort=1
 // (ironwail's heuristic) entities are sorted by distance-to-player and PVS
@@ -181,6 +188,10 @@ static void SV_NetDiag_f (void)
 		cl.predstate_valid, cl.predstate_movetype, cl.predstate_flags,
 		cl.predstate_velocity[0], cl.predstate_velocity[1],
 		cl.predstate_velocity[2]);
+	Con_Printf ("client netdiag: snapshot parts part_acks=%d dup_parts=%d incomplete=%d reassembled=%d overruns=%d\n",
+		cl.net_snapshot_part_acks_sent, cl.net_snapshot_duplicate_parts,
+		cl.net_snapshot_incomplete, cl.net_snapshot_reassembled,
+		cl.net_snapshot_interpolation_overruns);
 
 	if (!sv.active)
 		return;
@@ -196,10 +207,15 @@ static void SV_NetDiag_f (void)
 			client->net_move_cmds_stale, client->lastmovemessage,
 			client->net_move_last_bundle, client->net_move_bundle_max,
 			client->net_move_last_gap);
-		Con_Printf ("server netdiag: #%d snapshots seq=%d ack=%d packets=%d split_packets=%d clipped_ents=%d\n",
+		Con_Printf ("server netdiag: #%d snapshots seq=%d ack=%d packets=%d split_packets=%d last_packets=%d max_packets=%d max_bytes=%d acklag_max=%d dup=%d retrans_req=%d retrans_parts=%d clipped_ents=%d\n",
 			i + 1, client->net_snapshot_sequence, client->net_snapshot_ack,
 			client->net_snapshot_packets_sent,
-			client->net_snapshot_split_packets,
+			client->net_snapshot_split_packets, client->net_snapshot_last_packets,
+			client->net_snapshot_max_packets, client->net_snapshot_max_bytes,
+			client->net_snapshot_ack_lag_max,
+			client->net_snapshot_adaptive_dup,
+			client->net_snapshot_part_ack_requests,
+			client->net_snapshot_part_retransmits,
 			client->net_snapshot_unsent_entities);
 	}
 }
@@ -252,6 +268,13 @@ void SV_Init (void)
 	Cvar_RegisterVariable (&sv_maxpacketsize);
 	Cvar_RegisterVariable (&sv_snapshot_splits);
 	Cvar_RegisterVariable (&sv_snapshot_packetdup);
+	Cvar_RegisterVariable (&sv_snapshot_packetdup_auto);
+	Cvar_RegisterVariable (&sv_snapshot_packetdup_max);
+	Cvar_RegisterVariable (&sv_snapshot_packetdup_acklag);
+	Cvar_RegisterVariable (&sv_snapshot_retransmit);
+	Cvar_RegisterVariable (&sv_snapshot_retransmit_interval);
+	Cvar_RegisterVariable (&sv_snapshot_retransmit_maxparts);
+	Cvar_RegisterVariable (&sv_netdiag_interval);
 	Cvar_RegisterVariable (&sv_coop_weapon_targetfix);
 	Cvar_RegisterVariable (&sv_coop_pickup_targetlog);
 	Cvar_RegisterVariable (&sv_coop_pickup_targetfix);
@@ -1403,6 +1426,174 @@ static void SV_WriteMoveAckToMessage(client_t *client, sizebuf_t *msg)
 	}
 }
 
+static sv_snapshot_history_t *SV_GetSnapshotHistory (client_t *client, int sequence, qboolean create)
+{
+	sv_snapshot_history_t *hist;
+	int i;
+
+	for (i = 0; i < SV_SNAPSHOT_HISTORY; i++)
+	{
+		hist = &client->net_snapshot_history[i];
+		if (hist->valid && hist->sequence == sequence)
+			return hist;
+	}
+
+	if (!create)
+		return NULL;
+
+	hist = &client->net_snapshot_history[sequence & (SV_SNAPSHOT_HISTORY - 1)];
+	memset (hist, 0, sizeof(*hist));
+	hist->valid = true;
+	hist->sequence = sequence;
+	return hist;
+}
+
+static void SV_StoreSnapshotPart (client_t *client, int sequence, int part, const sizebuf_t *msg)
+{
+	sv_snapshot_history_t *hist;
+
+	if (part < 0 || part >= SNAPSHOT_PART_MAX)
+		return;
+	if (msg->cursize <= 0 || msg->cursize > SV_SNAPSHOT_RETRANS_MAX_PACKET)
+		return;
+
+	hist = SV_GetSnapshotHistory (client, sequence, true);
+	if (!hist)
+		return;
+
+	memcpy (hist->part_data[part], msg->data, msg->cursize);
+	hist->part_size[part] = msg->cursize;
+	if (part + 1 > hist->part_count)
+		hist->part_count = part + 1;
+}
+
+void SV_HandleSnapshotPartAck (client_t *client, int sequence, unsigned int part_mask)
+{
+	sv_snapshot_history_t *hist;
+	unsigned int full_mask;
+	double interval;
+	int maxparts;
+	int sent;
+	int i;
+
+	if (!client || !client->active || !sv_snapshot_retransmit.value)
+		return;
+	if (sequence <= client->net_snapshot_ack)
+		return;
+
+	hist = SV_GetSnapshotHistory (client, sequence, false);
+	if (!hist || hist->part_count <= 0)
+		return;
+
+	full_mask = hist->part_count >= 32 ? 0xffffffffu : ((1u << hist->part_count) - 1u);
+	part_mask &= full_mask;
+	if (part_mask == full_mask)
+		return;
+
+	interval = q_max (0.0, sv_snapshot_retransmit_interval.value);
+	if (hist->last_resend_time > 0 &&
+		realtime - hist->last_resend_time < interval &&
+		hist->last_resend_mask == part_mask)
+		return;
+
+	maxparts = CLAMP (1, (int)sv_snapshot_retransmit_maxparts.value, SNAPSHOT_PART_MAX);
+	client->net_snapshot_part_ack_requests++;
+	sent = 0;
+	for (i = 0; i < hist->part_count && sent < maxparts; i++)
+	{
+		sizebuf_t resend;
+
+		if (part_mask & (1u << i))
+			continue;
+		if (hist->part_size[i] <= 0)
+			continue;
+
+		resend.data = hist->part_data[i];
+		resend.cursize = hist->part_size[i];
+		resend.maxsize = hist->part_size[i];
+		resend.allowoverflow = false;
+		resend.overflowed = false;
+		if (NET_SendUnreliableMessage (client->netconnection, &resend) == -1)
+		{
+			SV_DropClient (true);
+			return;
+		}
+		client->net_snapshot_packets_sent++;
+		client->net_snapshot_part_retransmits++;
+		sent++;
+	}
+
+	if (sent > 0 && net_lagdebug.value > 1)
+		Con_Printf ("net_lagdebug: resent %d snapshot part(s) to %s seq=%d have=0x%08x parts=%d\n",
+			sent, client->name, sequence, part_mask, hist->part_count);
+
+	hist->last_resend_time = realtime;
+	hist->last_resend_mask = part_mask;
+}
+
+static int SV_SnapshotDupForClient (client_t *client, int snapshot_sequence)
+{
+	int dup;
+	int auto_dup;
+	int maxdup;
+	int acklag;
+	int threshold;
+
+	dup = CLAMP (0, (int)sv_snapshot_packetdup.value, 3);
+	if (!sv_snapshot_packetdup_auto.value)
+	{
+		client->net_snapshot_adaptive_dup = dup;
+		return dup;
+	}
+
+	maxdup = CLAMP (dup, (int)sv_snapshot_packetdup_max.value, 3);
+	threshold = q_max (1, (int)sv_snapshot_packetdup_acklag.value);
+	acklag = client->net_snapshot_ack >= 0 ? snapshot_sequence - client->net_snapshot_ack : 0;
+	if (acklag > client->net_snapshot_ack_lag_max)
+		client->net_snapshot_ack_lag_max = acklag;
+
+	auto_dup = 0;
+	if (acklag >= threshold || client->net_snapshot_last_packets >= 3)
+		auto_dup = 1;
+	if (acklag >= threshold * 2 || client->net_snapshot_last_packets >= 5)
+		auto_dup = 2;
+
+	if (auto_dup > maxdup)
+		auto_dup = maxdup;
+	if (auto_dup > dup)
+		dup = auto_dup;
+
+	client->net_snapshot_adaptive_dup = dup;
+	return dup;
+}
+
+static void SV_MaybePrintSnapshotSummary (client_t *client, int client_index)
+{
+	double interval;
+	int avg_packets;
+
+	if (!net_lagdebug.value || client_index < 0)
+		return;
+	interval = sv_netdiag_interval.value;
+	if (interval <= 0 || realtime - client->net_snapshot_last_summary_time < interval)
+		return;
+
+	avg_packets = client->net_snapshot_updates_sent ?
+		(client->net_snapshot_split_packets + client->net_snapshot_updates_sent) /
+			client->net_snapshot_updates_sent : 0;
+	Con_Printf ("net_lagdebug: server summary to %s (%s): updates=%d last_packets=%d avg_packets=%d max_packets=%d last_bytes=%d max_bytes=%d snap=%d ack=%d max_acklag=%d dup=%d retrans_req=%d retrans_parts=%d clipped=%d\n",
+		client->name, NET_QSocketGetAddressString(client->netconnection),
+		client->net_snapshot_updates_sent, client->net_snapshot_last_packets,
+		avg_packets, client->net_snapshot_max_packets,
+		client->net_snapshot_last_bytes, client->net_snapshot_max_bytes,
+		client->net_snapshot_sequence, client->net_snapshot_ack,
+		client->net_snapshot_ack_lag_max, client->net_snapshot_adaptive_dup,
+		client->net_snapshot_part_ack_requests,
+		client->net_snapshot_part_retransmits,
+		client->net_snapshot_unsent_entities);
+	client->net_snapshot_last_summary_time = realtime;
+}
+
 qboolean SV_SendClientDatagram (client_t *client)
 {
 	byte		buf[MAX_DATAGRAM];
@@ -1448,7 +1639,7 @@ qboolean SV_SendClientDatagram (client_t *client)
 	client_index = (int)(client - svs.clients);
 	if (client_index < 0 || client_index >= MAX_SCOREBOARD)
 		client_index = -1;
-	snapshot_dup = CLAMP(0, (int)sv_snapshot_packetdup.value, 3);
+	snapshot_dup = SV_SnapshotDupForClient (client, snapshot_sequence);
 
 	if (client_index >= 0 &&
 		(last_update_socket[client_index] != client->netconnection ||
@@ -1565,7 +1756,9 @@ qboolean SV_SendClientDatagram (client_t *client)
 			msg.data[snapshot_flags_offset] |= SNAPSHOT_LAST;
 		}
 
-	// send the datagram
+		SV_StoreSnapshotPart (client, snapshot_sequence, packet_count, &msg);
+
+		// send the datagram
 		for (i = 0; i <= snapshot_dup; i++)
 		{
 			if (NET_SendUnreliableMessage (client->netconnection, &msg) == -1)
@@ -1616,8 +1809,15 @@ qboolean SV_SendClientDatagram (client_t *client)
 
 	if (packet_count > 1)
 		client->net_snapshot_split_packets += packet_count - 1;
+	client->net_snapshot_updates_sent++;
+	client->net_snapshot_last_packets = packet_count;
+	client->net_snapshot_last_bytes = total_bytes;
+	if (packet_count > client->net_snapshot_max_packets)
+		client->net_snapshot_max_packets = packet_count;
+	if (total_bytes > client->net_snapshot_max_bytes)
+		client->net_snapshot_max_bytes = total_bytes;
 
-	if (net_lagdebug.value &&
+	if (net_lagdebug.value > 1 &&
 		(packet_count > 1 || max_packet_bytes > (maxsize * 9) / 10) &&
 		(client_index < 0 || realtime - last_update_log[client_index] > 1.0))
 	{
@@ -1632,6 +1832,7 @@ qboolean SV_SendClientDatagram (client_t *client)
 		if (client_index >= 0)
 			last_update_log[client_index] = realtime;
 	}
+	SV_MaybePrintSnapshotSummary (client, client_index);
 
 	if (client_index >= 0)
 	{

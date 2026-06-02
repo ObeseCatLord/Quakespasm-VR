@@ -164,6 +164,13 @@ typedef struct
 	int			net_snapshot_packets;
 	int			net_snapshot_drops;
 	int			net_snapshot_acks_sent;
+	int			net_snapshot_part_acks_sent;
+	int			net_snapshot_duplicate_parts;
+	int			net_snapshot_part_jumps;
+	int			net_snapshot_incomplete;
+	int			net_snapshot_reassembled;
+	int			net_snapshot_interpolation_overruns;
+	double		net_snapshot_smooth_until;
 	int			net_snapshot_last_part;
 	qboolean	net_snapshot_have;
 	double		net_last_diag_time;
@@ -174,6 +181,12 @@ typedef struct
 	vec3_t		predstate_velocity;
 	vec3_t		predstate_mins;
 	vec3_t		predstate_maxs;
+	qboolean	predict_smooth_valid;
+	double		predict_smooth_mtime;
+	int			predict_smooth_ack;
+	double		predict_smooth_time;
+	vec3_t		predict_smooth_origin;
+	vec3_t		predict_smooth_error;
 
 // information for local display
 	int			stats[MAX_CL_STATS];	// health, etc
@@ -302,6 +315,13 @@ extern	cvar_t	cl_autofire;
 
 extern	cvar_t	cl_shownet;
 extern	cvar_t	cl_nolerp;
+extern	cvar_t	cl_extrapolate;
+extern	cvar_t	cl_extrapolate_adaptive;
+extern	cvar_t	cl_extrapolate_adaptive_max;
+extern	cvar_t	cl_extrapolate_adaptive_time;
+extern	cvar_t	cl_predict_smooth;
+extern	cvar_t	cl_predict_smooth_time;
+extern	cvar_t	cl_predict_smooth_maxerror;
 
 extern	cvar_t	cfg_unbindall;
 
@@ -400,6 +420,7 @@ void CL_TimeDemo_f (void);
 //
 void CL_ParseServerMessage (void);
 void CL_NewTranslation (int slot);
+qboolean CL_GetSnapshotPartAck (int *sequence, unsigned int *part_mask);
 
 //
 // view
