@@ -727,6 +727,7 @@ static void Host_Map_f(void) {
   SCR_BeginLoadingPlaque();
 
   svs.serverflags = 0; // haven't completed an episode yet
+  svs.coop_loadgame_late_join_spawns_near = false;
   q_strlcpy(name, Cmd_Argv(1), sizeof(name));
   // remove (any) trailing ".bsp" from mapname -- S.A.
   p = strstr(name, ".bsp");
@@ -997,6 +998,9 @@ static qboolean Host_SavegameCanSave(qboolean quiet) {
   return true;
 }
 
+static qboolean Host_LoadgameHasPendingClients(void);
+static void Host_LoadgameDiscardPendingClients(qboolean quiet);
+
 static qboolean Host_SavegameWrite(const char *savename, qboolean quiet) {
   char name[MAX_OSPATH];
   FILE *f;
@@ -1027,6 +1031,8 @@ static qboolean Host_SavegameWrite(const char *savename, qboolean quiet) {
       Con_DPrintf("Coop autosave: couldn't open %s\n", name);
     return false;
   }
+
+  Host_LoadgameDiscardPendingClients(quiet);
 
   switched_qcvm = false;
   if (qcvm != &sv.qcvm) {
@@ -1086,6 +1092,29 @@ static void Host_LoadgameMaybeClearLoadedFlag(void) {
   }
   sv.loadgame = false;
   sv.paused = false;
+}
+
+static qboolean Host_LoadgameHasPendingClients(void) {
+  int i;
+
+  for (i = 0; i < svs.maxclients && i < MAX_SCOREBOARD; i++) {
+    if (sv.loadgame_client_saved[i])
+      return true;
+  }
+  return false;
+}
+
+static void Host_LoadgameDiscardPendingClients(qboolean quiet) {
+  int i;
+
+  if (!Host_LoadgameHasPendingClients())
+    return;
+
+  for (i = 0; i < svs.maxclients && i < MAX_SCOREBOARD; i++)
+    sv.loadgame_client_saved[i] = false;
+  sv.loadgame = false;
+  if (!quiet)
+    Con_Printf("Discarded pending saved co-op player states.\n");
 }
 
 static byte *Host_LoadgameClientEdictSnapshot(int clientnum) {
@@ -1326,6 +1355,9 @@ static void Host_Loadgame_f(void) {
   }
   sv.paused = true; // pause until all clients connect
   sv.loadgame = true;
+  sv.loadgame_resumed = false;
+  svs.coop_loadgame_late_join_spawns_near =
+      (svs.maxclients > 1 && coop.value && !deathmatch.value);
 
   // load the light styles
   for (i = 0; i < MAX_LIGHTSTYLES; i++) {
@@ -1726,8 +1758,9 @@ static void Host_Spawn_f(void) {
   }
 
   clientnum = host_client - svs.clients;
-  loaded_client = sv.loadgame && clientnum >= 0 && clientnum < MAX_SCOREBOARD
-      && sv.loadgame_client_saved[clientnum] && sv.loadgame_client_edicts;
+  loaded_client = sv.loadgame && !sv.loadgame_resumed &&
+      clientnum >= 0 && clientnum < MAX_SCOREBOARD &&
+      sv.loadgame_client_saved[clientnum] && sv.loadgame_client_edicts;
 
   // run the entrance script
   if (loaded_client) { // saved client edicts are fully inited already
@@ -1738,7 +1771,8 @@ static void Host_Spawn_f(void) {
     host_client->old_frags = (int)ent->v.frags;
     SV_LinkEdict(ent, false);
     sv.loadgame_client_saved[clientnum] = false;
-    Host_LoadgameMaybeClearLoadedFlag();
+    sv.loadgame_resumed = true;
+    Host_LoadgameDiscardPendingClients(true);
     sv.paused = false;
   } else {
     // set up the edict
@@ -1763,8 +1797,14 @@ static void Host_Spawn_f(void) {
       Sys_Printf("%s entered the game\n", host_client->name);
 
     PR_ExecuteProgram(pr_global_struct->PutClientInServer);
-    if (sv.loadgame)
+    if (svs.coop_loadgame_late_join_spawns_near &&
+        sv_coop_respawn_near_player.value)
+      SV_CoopRespawnPlaceNearPlayer(ent);
+    if (sv.loadgame) {
+      sv.loadgame_resumed = true;
+      Host_LoadgameDiscardPendingClients(true);
       sv.paused = false;
+    }
   }
 
   // send all current names, colors, and frag counts

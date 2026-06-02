@@ -943,6 +943,34 @@ static void SV_CoopRespawnRelocate(
   SV_LinkEdict(ent, false);
 }
 
+qboolean SV_CoopRespawnPlaceNearPlayer(edict_t *ent) {
+  int entnum;
+  edict_t *anchor = NULL;
+  vec3_t spot;
+  coop_respawn_postthink_state_t state;
+
+  if (!coop.value || !sv_coop_respawn_near_player.value || !ent || ent->free)
+    return false;
+
+  entnum = NUM_FOR_EDICT(ent);
+  if (entnum < 1 || entnum > svs.maxclients ||
+      !svs.clients[entnum - 1].active || ent->v.health <= 0 ||
+      ent->v.deadflag != DEAD_NO || ent->v.solid == SOLID_NOT)
+    return false;
+
+  memset(&state, 0, sizeof(state));
+  state.old_force_retouch = pr_global_struct->force_retouch;
+  VectorCopy(ent->v.origin, state.death_origin);
+  VectorCopy(ent->v.angles, state.death_angles);
+  VectorCopy(ent->v.v_angle, state.death_v_angle);
+
+  if (!SV_CoopRespawnFindSpot(ent, state.death_origin, &anchor, spot))
+    return false;
+
+  SV_CoopRespawnRelocate(ent, anchor, spot, &state);
+  return true;
+}
+
 static void SV_CoopRespawnBeginPostThink(
     edict_t *ent, int num, coop_respawn_postthink_state_t *state) {
   int index;
