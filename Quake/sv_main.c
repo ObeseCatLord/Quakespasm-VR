@@ -33,7 +33,7 @@ int		sv_protocol = PROTOCOL_RMQ; //johnfitz
 
 extern cvar_t nomonsters;
 cvar_t sv_maxpacketsize = {"sv_maxpacketsize", "1400", CVAR_NONE}; // 1400 = single IP MTU, avoids UDP fragmentation
-cvar_t sv_snapshot_splits = {"sv_snapshot_splits", "1", CVAR_ARCHIVE};
+cvar_t sv_snapshot_splits = {"sv_snapshot_splits", "0", CVAR_ARCHIVE};
 cvar_t sv_snapshot_packetdup = {"sv_snapshot_packetdup", "0", CVAR_NONE};
 cvar_t sv_snapshot_partresend = {"sv_snapshot_partresend", "1", CVAR_NONE};
 cvar_t sv_snapshot_partresend_interval = {"sv_snapshot_partresend_interval", "0.04", CVAR_NONE};
