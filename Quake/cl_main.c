@@ -648,6 +648,7 @@ static int CL_PredictSlideMove (vec3_t origin, vec3_t velocity, float frametime)
 		if (trace.fraction > 0)
 		{
 			VectorCopy (trace.endpos, origin);
+			VectorCopy (velocity, original_velocity);
 			numplanes = 0;
 		}
 
@@ -889,7 +890,7 @@ static qboolean CL_PredictPlayer (entity_t *ent)
 
 	if (!cl_predictmove.value || cl_nopred.value || cls.demoplayback ||
 		cls.state != ca_connected || cls.signon != SIGNONS ||
-		!cls.moveext_allowed || !cl.worldmodel || cl.viewentity <= 0)
+		!cls.moveext_allowed || cl.inwater || !cl.worldmodel || cl.viewentity <= 0)
 		return false;
 	if (ent != &cl_entities[cl.viewentity])
 		return false;
