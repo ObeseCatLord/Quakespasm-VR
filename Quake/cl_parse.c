@@ -1061,19 +1061,13 @@ static void CL_ParseStuffText(const char *msg)
 CL_ParseMoveAck
 =====================
 */
-static void CL_ParseMoveAck (void)
+static void CL_ApplyMoveAck (int ack16, int flags, int movetype,
+	const vec3_t velocity, const vec3_t mins, const vec3_t maxs)
 {
-	int ack16;
 	int ack;
-	int flags;
-	int movetype;
 	int i;
 	qboolean use_predstate;
-	vec3_t velocity;
-	vec3_t mins;
-	vec3_t maxs;
 
-	ack16 = MSG_ReadShort () & 0xffff;
 	if (ack16 == 0xffff && cl.ackedmovemessages < 0)
 		ack = -1;
 	else if (cl.ackedmovemessages < 0)
@@ -1101,15 +1095,6 @@ static void CL_ParseMoveAck (void)
 		use_predstate = false;
 	}
 
-	flags = MSG_ReadByte ();
-	movetype = MSG_ReadByte ();
-	for (i = 0; i < 3; i++)
-		velocity[i] = MSG_ReadShort () * (1.0f / 8.0f);
-	for (i = 0; i < 3; i++)
-		mins[i] = MSG_ReadChar ();
-	for (i = 0; i < 3; i++)
-		maxs[i] = MSG_ReadChar ();
-
 	if (!use_predstate)
 	{
 		if (net_lagdebug.value)
@@ -1128,6 +1113,67 @@ static void CL_ParseMoveAck (void)
 		cl.predstate_mins[i] = mins[i];
 	for (i = 0; i < 3; i++)
 		cl.predstate_maxs[i] = maxs[i];
+}
+
+static void CL_ParseMoveAck (void)
+{
+	int ack16;
+	int flags;
+	int movetype;
+	int i;
+	vec3_t velocity;
+	vec3_t mins;
+	vec3_t maxs;
+
+	ack16 = MSG_ReadShort () & 0xffff;
+	flags = MSG_ReadByte ();
+	movetype = MSG_ReadByte ();
+	for (i = 0; i < 3; i++)
+		velocity[i] = MSG_ReadShort () * (1.0f / 8.0f);
+	for (i = 0; i < 3; i++)
+		mins[i] = MSG_ReadChar ();
+	for (i = 0; i < 3; i++)
+		maxs[i] = MSG_ReadChar ();
+
+	CL_ApplyMoveAck (ack16, flags, movetype, velocity, mins, maxs);
+}
+
+static void CL_ParseSnapshotPartMoveAck (const byte *payload, int payload_size)
+{
+	int offset;
+	int ack16;
+	int flags;
+	int movetype;
+	int i;
+	int value;
+	vec3_t velocity;
+	vec3_t mins;
+	vec3_t maxs;
+
+	if (payload_size < 5 || payload[0] != svc_time)
+		return;
+
+	offset = 5;
+	if (payload_size - offset < 17 || payload[offset] != svc_moveack)
+		return;
+
+	offset++;
+	ack16 = (payload[offset] | (payload[offset + 1] << 8)) & 0xffff;
+	offset += 2;
+	flags = payload[offset++];
+	movetype = payload[offset++];
+	for (i = 0; i < 3; i++)
+	{
+		value = (short)(payload[offset] | (payload[offset + 1] << 8));
+		velocity[i] = value * (1.0f / 8.0f);
+		offset += 2;
+	}
+	for (i = 0; i < 3; i++)
+		mins[i] = (signed char)payload[offset++];
+	for (i = 0; i < 3; i++)
+		maxs[i] = (signed char)payload[offset++];
+
+	CL_ApplyMoveAck (ack16, flags, movetype, velocity, mins, maxs);
 }
 
 /*
@@ -1415,6 +1461,8 @@ static qboolean CL_PrepareSnapshotMessage (void)
 
 	if (!CL_SnapshotAssemblyComplete ())
 	{
+		if (part == 0 && (flags & SNAPSHOT_FIRST))
+			CL_ParseSnapshotPartMoveAck (data + payload_offset, payload_size);
 		CL_UpdateSnapshotPartialAck ();
 		return false;
 	}

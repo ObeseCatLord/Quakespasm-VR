@@ -69,6 +69,9 @@ void SV_ResetClientMoveState(client_t *client) {
   client->input_stale = false;
   client->moveext = false;
   client->lastmovemessage = -1;
+  client->lastreceivedmovemessage = -1;
+  client->pendingmovemessage = -1;
+  client->move_pending = false;
 
   client->net_move_packets_received = 0;
   client->net_move_cmds_received = 0;
@@ -511,6 +514,11 @@ void SV_ClientThink(void) {
 
   cmd = host_client->cmd;
   host_client->cmd.seconds = 0;
+  if (host_client->move_pending) {
+    host_client->lastmovemessage = host_client->pendingmovemessage;
+    host_client->pendingmovemessage = -1;
+    host_client->move_pending = false;
+  }
 
   if (sv_player->v.movetype == MOVETYPE_NONE)
     return;
@@ -570,15 +578,18 @@ SV_ReadClientMove
 */
 static int SV_ExpandClientSequence(int sequence16) {
   int sequence;
+  int base;
 
   sequence16 &= 0xffff;
-  if (host_client->lastmovemessage < 0)
+  base = host_client->lastreceivedmovemessage > host_client->lastmovemessage ?
+         host_client->lastreceivedmovemessage : host_client->lastmovemessage;
+  if (base < 0)
     return sequence16;
 
-  sequence = (host_client->lastmovemessage & ~0xffff) | sequence16;
-  if (sequence <= host_client->lastmovemessage - 0x8000)
+  sequence = (base & ~0xffff) | sequence16;
+  if (sequence <= base - 0x8000)
     sequence += 0x10000;
-  else if (sequence > host_client->lastmovemessage + 0x8000)
+  else if (sequence > base + 0x8000)
     sequence -= 0x10000;
 
   return sequence;
@@ -663,6 +674,85 @@ static qboolean SV_ReadUsercmd(usercmd_t *readcmd, int sequence) {
   return !msg_badread;
 }
 
+static void SV_AccumulateAcceptedUsercmd(const usercmd_t *acceptedcmd) {
+  usercmd_t *framecmd;
+  float oldseconds;
+  float newseconds;
+  float totalseconds;
+
+  framecmd = &host_client->cmd;
+
+  if (!host_client->move_pending) {
+    *framecmd = *acceptedcmd;
+  } else {
+    oldseconds = framecmd->seconds > 0 ? framecmd->seconds : 0;
+    newseconds = acceptedcmd->seconds > 0 ? acceptedcmd->seconds : 0;
+    totalseconds = oldseconds + newseconds;
+
+    if (totalseconds > 0) {
+      framecmd->forwardmove =
+          (framecmd->forwardmove * oldseconds +
+           acceptedcmd->forwardmove * newseconds) /
+          totalseconds;
+      framecmd->sidemove =
+          (framecmd->sidemove * oldseconds + acceptedcmd->sidemove * newseconds) /
+          totalseconds;
+      framecmd->upmove =
+          (framecmd->upmove * oldseconds + acceptedcmd->upmove * newseconds) /
+          totalseconds;
+      framecmd->seconds = CLAMP(0.001f, totalseconds, 0.1f);
+    } else {
+      framecmd->forwardmove = acceptedcmd->forwardmove;
+      framecmd->sidemove = acceptedcmd->sidemove;
+      framecmd->upmove = acceptedcmd->upmove;
+      framecmd->seconds = 0;
+    }
+
+    framecmd->sequence = acceptedcmd->sequence;
+    framecmd->servertime = acceptedcmd->servertime;
+    VectorCopy(acceptedcmd->viewangles, framecmd->viewangles);
+    framecmd->buttons |= acceptedcmd->buttons;
+    if (acceptedcmd->impulse)
+      framecmd->impulse = acceptedcmd->impulse;
+  }
+
+  host_client->ping_times[host_client->num_pings % NUM_PING_TIMES] =
+      qcvm->time - acceptedcmd->servertime;
+  host_client->num_pings++;
+
+  VectorCopy(host_client->cmd.viewangles, host_client->edict->v.v_angle);
+  host_client->edict->v.button0 = host_client->cmd.buttons & 1;
+  host_client->edict->v.button2 = (host_client->cmd.buttons & 2) >> 1;
+  if (host_client->cmd.impulse)
+    host_client->edict->v.impulse = host_client->cmd.impulse;
+
+  if (acceptedcmd->vr_active) {
+    host_client->is_vr_client = true;
+    VectorCopy(acceptedcmd->vr_handpos, host_client->vr_handpos);
+    VectorCopy(acceptedcmd->vr_handrot, host_client->vr_handrot);
+    VectorCopy(acceptedcmd->vr_roomscalemove, host_client->vr_roomscalemove);
+    VectorAdd(host_client->vr_roomscale_accum, acceptedcmd->vr_roomscalemove,
+              host_client->vr_roomscale_accum);
+  } else {
+    host_client->is_vr_client = false;
+    VectorCopy(vec3_origin, host_client->vr_roomscalemove);
+  }
+
+  if (acceptedcmd->trusted_active) {
+    host_client->trusted_clientmove_valid = true;
+    VectorCopy(acceptedcmd->trusted_origin, host_client->trusted_clientmove_origin);
+    VectorCopy(acceptedcmd->trusted_velocity,
+               host_client->trusted_clientmove_velocity);
+  } else {
+    SV_ClearTrustedClientMove(host_client);
+  }
+
+  host_client->last_move_time = realtime;
+  host_client->input_stale = false;
+  host_client->pendingmovemessage = acceptedcmd->sequence;
+  host_client->move_pending = true;
+}
+
 void SV_ReadClientMove(usercmd_t *move) {
   int i;
   int latest16;
@@ -671,13 +761,8 @@ void SV_ReadClientMove(usercmd_t *move) {
   int count;
   int flags;
   int accepted;
-  int bundled_buttons;
-  int bundled_impulse;
-  float bundled_seconds;
-  float latest_seconds;
-  vec3_t bundled_roomscale;
+  int accepted_base;
   usercmd_t readcmd;
-  usercmd_t mergedcmd;
 
   latest16 = MSG_ReadShort() & 0xffff;
   count = MSG_ReadByte();
@@ -714,12 +799,7 @@ void SV_ReadClientMove(usercmd_t *move) {
   latest = SV_ExpandClientSequence(latest16);
   first = latest - count + 1;
   accepted = 0;
-  bundled_buttons = 0;
-  bundled_impulse = 0;
-  bundled_seconds = 0;
-  latest_seconds = 0;
-  VectorCopy(vec3_origin, bundled_roomscale);
-  Q_memset(&mergedcmd, 0, sizeof(mergedcmd));
+  accepted_base = host_client->lastreceivedmovemessage;
 
   host_client->net_move_packets_received++;
   host_client->net_move_cmds_received += count;
@@ -734,36 +814,26 @@ void SV_ReadClientMove(usercmd_t *move) {
     if (!SV_ReadUsercmd(&readcmd, sequence))
       return;
 
-    if (host_client->lastmovemessage >= 0 &&
-        sequence <= host_client->lastmovemessage) {
+    if (accepted_base >= 0 && sequence <= accepted_base) {
       host_client->net_move_cmds_stale++;
       if (net_lagdebug.value) {
         Con_DPrintf("net_lagdebug: dropping stale bundled move from %s seq=%d last=%d\n",
-                    host_client->name, sequence, host_client->lastmovemessage);
+                    host_client->name, sequence, accepted_base);
       }
       continue;
     }
 
-    gap = host_client->lastmovemessage >= 0 ?
-          sequence - host_client->lastmovemessage - 1 : 0;
+    gap = accepted_base >= 0 ? sequence - accepted_base - 1 : 0;
     if (gap > 0) {
       host_client->net_move_last_gap = gap;
       if (net_lagdebug.value)
         Con_DPrintf("net_lagdebug: accepted move gap from %s gap=%d seq=%d last=%d bundle=%d\n",
-                    host_client->name, gap, sequence,
-                    host_client->lastmovemessage, count);
+                    host_client->name, gap, sequence, accepted_base, count);
     }
 
-    host_client->lastmovemessage = sequence;
-    mergedcmd = readcmd;
-    bundled_seconds += readcmd.seconds;
-    latest_seconds = readcmd.seconds;
-    bundled_buttons |= readcmd.buttons;
-    if (readcmd.impulse)
-      bundled_impulse = readcmd.impulse;
-    if (readcmd.vr_active)
-      VectorAdd(bundled_roomscale, readcmd.vr_roomscalemove, bundled_roomscale);
+    SV_AccumulateAcceptedUsercmd(&readcmd);
     accepted++;
+    accepted_base = sequence;
   }
 
   if (!accepted)
@@ -771,51 +841,13 @@ void SV_ReadClientMove(usercmd_t *move) {
 
   host_client->moveext = true;
   host_client->net_move_cmds_accepted += accepted;
-  mergedcmd.buttons |= bundled_buttons;
-  if (bundled_impulse)
-    mergedcmd.impulse = bundled_impulse;
-  if (latest_seconds > 0)
-    mergedcmd.seconds = CLAMP(0.001f, latest_seconds, 0.05f);
-  if (mergedcmd.vr_active)
-    VectorCopy(bundled_roomscale, mergedcmd.vr_roomscalemove);
-  *move = mergedcmd;
+  host_client->lastreceivedmovemessage = accepted_base;
+  *move = host_client->cmd;
 
-  if (net_lagdebug.value && accepted > 1 && bundled_seconds > mergedcmd.seconds + 0.001f)
-    Con_DPrintf("net_lagdebug: accepted redundant moves for %s cmds=%d latest_dt=%.3f total_dt=%.3f using_latest_dt\n",
-                host_client->name, accepted, mergedcmd.seconds, bundled_seconds);
-
-  host_client->ping_times[host_client->num_pings % NUM_PING_TIMES] =
-      qcvm->time - mergedcmd.servertime;
-  host_client->num_pings++;
-
-  VectorCopy(mergedcmd.viewangles, host_client->edict->v.v_angle);
-  host_client->edict->v.button0 = mergedcmd.buttons & 1;
-  host_client->edict->v.button2 = (mergedcmd.buttons & 2) >> 1;
-  if (mergedcmd.impulse)
-    host_client->edict->v.impulse = mergedcmd.impulse;
-
-  if (mergedcmd.vr_active) {
-    host_client->is_vr_client = true;
-    VectorCopy(mergedcmd.vr_handpos, host_client->vr_handpos);
-    VectorCopy(mergedcmd.vr_handrot, host_client->vr_handrot);
-    VectorCopy(mergedcmd.vr_roomscalemove, host_client->vr_roomscalemove);
-    VectorAdd(host_client->vr_roomscale_accum, host_client->vr_roomscalemove,
-              host_client->vr_roomscale_accum);
-  } else {
-    host_client->is_vr_client = false;
-    VectorCopy(vec3_origin, host_client->vr_roomscalemove);
-  }
-
-  if (mergedcmd.trusted_active) {
-    host_client->trusted_clientmove_valid = true;
-    VectorCopy(mergedcmd.trusted_origin, host_client->trusted_clientmove_origin);
-    VectorCopy(mergedcmd.trusted_velocity, host_client->trusted_clientmove_velocity);
-  } else {
-    SV_ClearTrustedClientMove(host_client);
-  }
-
-  host_client->last_move_time = realtime;
-  host_client->input_stale = false;
+  if (net_lagdebug.value && accepted > 1)
+    Con_DPrintf("net_lagdebug: accumulated bundled moves for %s cmds=%d latest_seq=%d pending_ack=%d ack=%d\n",
+                host_client->name, accepted, accepted_base,
+                host_client->pendingmovemessage, host_client->lastmovemessage);
 }
 
 static qboolean SV_ClientHasInput(const client_t *client) {
@@ -858,6 +890,8 @@ static void SV_ClearStaleClientInput(client_t *client) {
   client->cmd.sidemove = 0;
   client->cmd.upmove = 0;
   client->cmd.seconds = 0;
+  client->pendingmovemessage = -1;
+  client->move_pending = false;
   client->edict->v.button0 = 0;
   client->edict->v.button2 = 0;
   client->edict->v.impulse = 0;
@@ -1046,6 +1080,8 @@ void SV_RunClients(void) {
       // clear client movement until a new packet is received
       memset(&host_client->cmd, 0, sizeof(host_client->cmd));
       host_client->input_stale = false;
+      host_client->pendingmovemessage = -1;
+      host_client->move_pending = false;
       SV_ClearTrustedClientMove(host_client);
       continue;
     }
