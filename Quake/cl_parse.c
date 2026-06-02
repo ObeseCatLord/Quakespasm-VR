@@ -1220,6 +1220,14 @@ static qboolean CL_PrepareSnapshotMessage (void)
 				seq, cl.net_snapshot_sequence, part, flags);
 		return false;
 	}
+	if (!cl_snapshot_assembly.active && cl.net_snapshot_have &&
+		seq == cl.net_snapshot_sequence)
+	{
+		if (net_lagdebug.value)
+			Con_DPrintf ("net_lagdebug: dropping duplicate complete snapshot seq=%d part=%d flags=%d\n",
+				seq, part, flags);
+		return false;
+	}
 
 	if (!cl_snapshot_assembly.active || cl_snapshot_assembly.seq != seq)
 	{
@@ -1250,6 +1258,15 @@ static qboolean CL_PrepareSnapshotMessage (void)
 		cl_snapshot_assembly.seq = seq;
 		cl_snapshot_assembly.next_part = 0;
 		cl_snapshot_assembly.totalents = totalents;
+	}
+
+	if (part < cl_snapshot_assembly.next_part)
+	{
+		if (net_lagdebug.value)
+			Con_DPrintf ("net_lagdebug: ignoring duplicate snapshot part seq=%d part=%d next=%d flags=%d firstent=%d total=%d\n",
+				seq, part, cl_snapshot_assembly.next_part, flags,
+				firstent, totalents);
+		return false;
 	}
 
 	if (part != cl_snapshot_assembly.next_part)
