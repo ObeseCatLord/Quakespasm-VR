@@ -45,9 +45,16 @@ cvar_t sv_coop_pickup_targetfix = {"sv_coop_pickup_targetfix", "0", CVAR_NONE};
 cvar_t sv_coop_pickup_targetfix_classes = {"sv_coop_pickup_targetfix_classes", "", CVAR_NONE};
 cvar_t sv_coop_ammo_respawn = {"sv_coop_ammo_respawn", "0", CVAR_NOTIFY | CVAR_SERVERINFO};
 cvar_t sv_coop_ammo_respawn_time = {"sv_coop_ammo_respawn_time", "30", CVAR_NOTIFY | CVAR_SERVERINFO};
+cvar_t sv_coop_progression_item_respawn = {"sv_coop_progression_item_respawn", "1", CVAR_NOTIFY | CVAR_SERVERINFO};
+cvar_t sv_coop_progression_item_respawn_classes = {"sv_coop_progression_item_respawn_classes", "item_jboots item_jboots_timed", CVAR_NOTIFY | CVAR_SERVERINFO};
 cvar_t sv_coop_revive = {"sv_coop_revive", "1", CVAR_NOTIFY | CVAR_SERVERINFO};
 cvar_t sv_coop_revive_health = {"sv_coop_revive_health", "25", CVAR_NOTIFY | CVAR_SERVERINFO};
 cvar_t sv_coop_revive_range = {"sv_coop_revive_range", "96", CVAR_NOTIFY | CVAR_SERVERINFO};
+cvar_t sv_coop_respawn_near_player = {"sv_coop_respawn_near_player", "1", CVAR_NOTIFY | CVAR_SERVERINFO};
+cvar_t sv_coop_respawn_keep_weapons_ammo = {"sv_coop_respawn_keep_weapons_ammo", "1", CVAR_NOTIFY | CVAR_SERVERINFO};
+cvar_t sv_coop_trusted_clientmove = {"sv_coop_trusted_clientmove", "1", CVAR_NOTIFY | CVAR_SERVERINFO};
+cvar_t sv_coop_trusted_clientmove_maxdelta = {"sv_coop_trusted_clientmove_maxdelta", "96", CVAR_NONE};
+cvar_t sv_coop_predictmove = {"sv_coop_predictmove", "1", CVAR_NOTIFY | CVAR_SERVERINFO};
 cvar_t sv_skyroom_pvs = {"sv_skyroom_pvs", "1", CVAR_NONE};
 
 //============================================================================
@@ -200,15 +207,26 @@ void SV_Init (void)
 	Cvar_RegisterVariable (&sv_coop_pickup_targetfix_classes);
 	Cvar_RegisterVariable (&sv_coop_ammo_respawn);
 	Cvar_RegisterVariable (&sv_coop_ammo_respawn_time);
+	Cvar_RegisterVariable (&sv_coop_progression_item_respawn);
+	Cvar_RegisterVariable (&sv_coop_progression_item_respawn_classes);
 	Cvar_RegisterVariable (&sv_coop_revive);
 	Cvar_RegisterVariable (&sv_coop_revive_health);
 	Cvar_RegisterVariable (&sv_coop_revive_range);
+	Cvar_RegisterVariable (&sv_coop_respawn_near_player);
+	Cvar_RegisterVariable (&sv_coop_respawn_keep_weapons_ammo);
+	Cvar_RegisterVariable (&sv_coop_trusted_clientmove);
+	Cvar_RegisterVariable (&sv_coop_trusted_clientmove_maxdelta);
+	Cvar_RegisterVariable (&sv_coop_predictmove);
 	Cvar_RegisterVariable (&sv_skyroom_pvs);
 	Cvar_SetCallback (&sv_coop_ammo_respawn, Host_Callback_Notify);
 	Cvar_SetCallback (&sv_coop_ammo_respawn_time, Host_Callback_Notify);
+	Cvar_SetCallback (&sv_coop_progression_item_respawn, Host_Callback_Notify);
+	Cvar_SetCallback (&sv_coop_progression_item_respawn_classes, Host_Callback_Notify);
 	Cvar_SetCallback (&sv_coop_revive, Host_Callback_Notify);
 	Cvar_SetCallback (&sv_coop_revive_health, Host_Callback_Notify);
 	Cvar_SetCallback (&sv_coop_revive_range, Host_Callback_Notify);
+	Cvar_SetCallback (&sv_coop_respawn_near_player, Host_Callback_Notify);
+	Cvar_SetCallback (&sv_coop_respawn_keep_weapons_ammo, Host_Callback_Notify);
 	Cvar_RegisterVariable (&vr_movement_instant_stop);
 	Cvar_RegisterVariable (&sv_netsort); // ironwail-style entity priority sorting
 
@@ -507,9 +525,20 @@ void SV_SendServerinfo (client_t *client)
 	MSG_WriteByte (&client->message, qcvm->edicts->v.sounds);
 	MSG_WriteByte (&client->message, qcvm->edicts->v.sounds);
 
-// set view
+	// set view
 	MSG_WriteByte (&client->message, svc_setview);
 	MSG_WriteShort (&client->message, NUM_FOR_EDICT(client->edict));
+
+	if (coop.value && sv_coop_trusted_clientmove.value)
+	{
+		MSG_WriteByte (&client->message, svc_stufftext);
+		MSG_WriteString (&client->message, "//cl_trustedmove_ack\n");
+	}
+	if (coop.value && sv_coop_predictmove.value)
+	{
+		MSG_WriteByte (&client->message, svc_stufftext);
+		MSG_WriteString (&client->message, "//cl_moveext_ack\n");
+	}
 
 	MSG_WriteByte (&client->message, svc_signonnum);
 	MSG_WriteByte (&client->message, 1);
@@ -550,6 +579,7 @@ void SV_ConnectClient (int clientnum)
 		memcpy (spawn_parms, client->spawn_parms, sizeof(spawn_parms));
 	memset (client, 0, sizeof(*client));
 	client->netconnection = netconnection;
+	client->lastmovemessage = -1;
 
 	strcpy (client->name, "unconnected");
 	client->active = true;
@@ -1321,6 +1351,11 @@ qboolean SV_SendClientDatagram (client_t *client)
 		{
 			MSG_WriteByte (&msg, svc_time);
 			MSG_WriteFloat (&msg, qcvm->time);
+			if (client->lastmovemessage >= 0)
+			{
+				MSG_WriteByte (&msg, svc_moveack);
+				MSG_WriteShort (&msg, client->lastmovemessage & 0xffff);
+			}
 		}
 
 // add the client specific data to the datagram

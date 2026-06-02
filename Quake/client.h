@@ -89,6 +89,7 @@ typedef struct
 #define	MAX_MAPSTRING	2048
 #define	MAX_DEMOS		8
 #define	MAX_DEMONAME	16
+#define	CL_MOVE_HISTORY	64
 
 typedef enum {
 ca_dedicated, 		// a dedicated server with no ability to start a client
@@ -132,6 +133,8 @@ typedef struct
 	int		signon;			// 0 to SIGNONS
 	struct qsocket_s	*netcon;
 	sizebuf_t	message;		// writing buffer to send to server
+	qboolean	trusted_clientmove_allowed;	// server negotiated trusted co-op movement
+	qboolean	moveext_allowed;		// server negotiated sequenced/redundant movement
 
 } client_static_t;
 
@@ -149,6 +152,8 @@ typedef struct
 								// first frame
 	usercmd_t	cmd;			// last command sent to the server
 	usercmd_t	pendingcmd;		// accumulated state from mice+joysticks.
+	int			ackedmovemessages;	// last sequenced move accepted by server
+	usercmd_t	movecmds[CL_MOVE_HISTORY];
 
 // information for local display
 	int			stats[MAX_CL_STATS];	// health, etc
@@ -257,6 +262,10 @@ extern	cvar_t	cl_forwardspeed;
 extern	cvar_t	cl_backspeed;
 extern	cvar_t	cl_sidespeed;
 extern	cvar_t	cl_desktop_vanilla_run;
+extern	cvar_t	cl_trusted_clientmove;
+extern	cvar_t	cl_predictmove;
+extern	cvar_t	cl_move_redundancy;
+extern	cvar_t	cl_nopred;
 
 extern	cvar_t	cl_movespeedkey;
 
@@ -335,6 +344,7 @@ typedef struct
 extern	kbutton_t	in_mlook, in_klook;
 extern 	kbutton_t 	in_strafe;
 extern 	kbutton_t 	in_speed;
+extern 	kbutton_t 	in_attack, in_jump;
 
 void CL_InitInput(void);
 void CL_SendCmd(void);

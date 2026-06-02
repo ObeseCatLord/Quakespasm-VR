@@ -245,6 +245,10 @@ cvar_t cl_forwardspeed = {"cl_forwardspeed", "200", CVAR_ARCHIVE};
 cvar_t cl_backspeed = {"cl_backspeed", "200", CVAR_ARCHIVE};
 cvar_t cl_sidespeed = {"cl_sidespeed", "350", CVAR_NONE};
 cvar_t cl_desktop_vanilla_run = {"cl_desktop_vanilla_run", "1", CVAR_ARCHIVE};
+cvar_t cl_trusted_clientmove = {"cl_trusted_clientmove", "1", CVAR_ARCHIVE};
+cvar_t cl_predictmove = {"cl_predictmove", "1", CVAR_ARCHIVE};
+cvar_t cl_move_redundancy = {"cl_move_redundancy", "3", CVAR_ARCHIVE};
+cvar_t cl_nopred = {"cl_nopred", "0", CVAR_NONE};
 
 cvar_t cl_movespeedkey = {"cl_movespeedkey", "2.0", CVAR_NONE};
 
@@ -369,9 +373,11 @@ CL_SendMove
 ==============
 */
 void CL_SendMove(const usercmd_t *cmd) {
-  int i;
-  int bits = 0;
-  int impulse = 0;
+  int seq;
+  int start;
+  int redundancy;
+  int s;
+  usercmd_t sendcmd;
   sizebuf_t buf;
   byte data[1024];
 
@@ -379,81 +385,75 @@ void CL_SendMove(const usercmd_t *cmd) {
   buf.cursize = 0;
   buf.data = data;
 
-  if (cmd) {
-    cl.cmd = *cmd;
-
-    //
-    // send the movement message
-    //
-    MSG_WriteByte(&buf, clc_move);
-
-    MSG_WriteFloat(&buf, cl.mtime[0]); // so server can get ping times
-
-    for (i = 0; i < 3; i++)
-      // johnfitz -- 16-bit angles for PROTOCOL_FITZQUAKE
-      if (cl.protocol == PROTOCOL_NETQUAKE)
-        MSG_WriteAngle(&buf, cl.aimangles[i], cl.protocolflags);
-      else
-        MSG_WriteAngle16(&buf, cl.aimangles[i], cl.protocolflags);
-    // johnfitz
-
-    MSG_WriteShort(&buf, cmd->forwardmove);
-    MSG_WriteShort(&buf, cmd->sidemove);
-    MSG_WriteShort(&buf, cmd->upmove);
-
-    //
-    // send button bits
-    //
-    if (!cl.in_vr_weaponmenu) {
-      if (in_attack.state & 3)
-        bits |= 1;
-    }
-    in_attack.state &= ~2;
-
-    if (in_jump.state & 3)
-      bits |= 2;
-    in_jump.state &= ~2;
-
-    MSG_WriteByte(&buf, bits);
-
-    impulse = in_impulse;
-    MSG_WriteByte(&buf, impulse);
-    in_impulse = 0;
-
-    // VR Data Sync
-    if (vr_enabled.value && (int)vr_aimmode.value == VR_AIMMODE_CONTROLLER) {
-      vec3_t vr_muzzlepos;
-
-      MSG_WriteByte(&buf, 1); // VR flag active
-
-      // Send the calibrated muzzle/controller position. The server still
-      // applies the QuakeC self.origin compensation for each weapon class.
-      VR_GetMuzzleAdjustedHandPos(vr_muzzlepos);
-      MSG_WriteFloat(&buf, vr_muzzlepos[0]);
-      MSG_WriteFloat(&buf, vr_muzzlepos[1]);
-      MSG_WriteFloat(&buf, vr_muzzlepos[2]);
-      MSG_WriteFloat(&buf, cl.handrot[1][0]);
-      MSG_WriteFloat(&buf, cl.handrot[1][1]);
-      MSG_WriteFloat(&buf, cl.handrot[1][2]);
-      MSG_WriteFloat(&buf, vr_room_scale_move[0]);
-      MSG_WriteFloat(&buf, vr_room_scale_move[1]);
-      MSG_WriteFloat(&buf, vr_room_scale_move[2]);
-    } else {
-      MSG_WriteByte(&buf, 0); // VR flag inactive
-    }
-  }
-
   //
   // deliver the message
   //
   if (cls.demoplayback)
     return;
 
+  if (!cmd)
+    return;
+
+  sendcmd = *cmd;
+  VectorCopy(cl.aimangles, sendcmd.viewangles);
+  sendcmd.servertime = cl.time;
+  if (sendcmd.seconds <= 0)
+    sendcmd.seconds = host_frametime;
+
+  //
+  // Capture edge-triggered inputs into this command before putting it in the
+  // resend history. Redundant sends must replay the original command, not this
+  // frame's current button/impulse state.
+  //
+  sendcmd.buttons = 0;
+  if (!cl.in_vr_weaponmenu && (in_attack.state & 3))
+    sendcmd.buttons |= 1;
+  in_attack.state &= ~2;
+
+  if (in_jump.state & 3)
+    sendcmd.buttons |= 2;
+  in_jump.state &= ~2;
+
+  sendcmd.impulse = in_impulse;
+  in_impulse = 0;
+
+  Q_memset(sendcmd.vr_handpos, 0, sizeof(sendcmd.vr_handpos));
+  Q_memset(sendcmd.vr_handrot, 0, sizeof(sendcmd.vr_handrot));
+  Q_memset(sendcmd.vr_roomscalemove, 0, sizeof(sendcmd.vr_roomscalemove));
+  sendcmd.vr_active = false;
+
+  if (vr_enabled.value && (int)vr_aimmode.value == VR_AIMMODE_CONTROLLER) {
+    sendcmd.vr_active = true;
+    VR_GetMuzzleAdjustedHandPos(sendcmd.vr_handpos);
+    VectorCopy(cl.handrot[1], sendcmd.vr_handrot);
+    VectorCopy(vr_room_scale_move, sendcmd.vr_roomscalemove);
+  }
+
+  Q_memset(sendcmd.trusted_origin, 0, sizeof(sendcmd.trusted_origin));
+  Q_memset(sendcmd.trusted_velocity, 0, sizeof(sendcmd.trusted_velocity));
+  sendcmd.trusted_active = false;
+
+  if (cl_trusted_clientmove.value && cls.trusted_clientmove_allowed &&
+      cls.state == ca_connected && cls.signon == SIGNONS &&
+      cl.viewentity > 0 && cl.viewentity < cl.num_entities &&
+      cl_entities[cl.viewentity].model) {
+    entity_t *ent = &cl_entities[cl.viewentity];
+    sendcmd.trusted_active = true;
+    VectorCopy(ent->origin, sendcmd.trusted_origin);
+    VectorCopy(cl.velocity, sendcmd.trusted_velocity);
+  }
+
   //
   // allways dump the first two message, because it may contain leftover inputs
   // from the last level
   //
-  if (++cl.movemessages <= 2) {
+  seq = cl.movemessages++;
+  sendcmd.sequence = seq;
+  cl.movecmds[seq & (CL_MOVE_HISTORY - 1)] = sendcmd;
+  cl.cmd = sendcmd;
+
+  if (seq < 2) {
+    cl.ackedmovemessages = seq;
     cl_lagdebug_last_sendmove = 0;
     return;
   }
@@ -464,12 +464,75 @@ void CL_SendMove(const usercmd_t *cmd) {
         realtime - cl_lagdebug_last_sendmove_log > 0.5) {
       Con_Printf("net_lagdebug: client sendmove gap %.3f sec host_dt=%.3f move=(%g,%g,%g) buttons=%d impulse=%d state=%d signon=%d lastmsg_age=%.3f\n",
                  gap, host_frametime, cmd->forwardmove, cmd->sidemove,
-                 cmd->upmove, bits, impulse, cls.state, cls.signon,
+                 cmd->upmove, sendcmd.buttons, sendcmd.impulse, cls.state, cls.signon,
                  realtime - cl.last_received_message);
       cl_lagdebug_last_sendmove_log = realtime;
     }
   }
   cl_lagdebug_last_sendmove = realtime;
+
+  redundancy = (int)cl_move_redundancy.value;
+  if (redundancy < 0)
+    redundancy = 0;
+  if (redundancy > 8)
+    redundancy = 8;
+
+  start = seq - redundancy;
+  if (start < 2)
+    start = 2;
+  if (cl.ackedmovemessages >= 2 && start < cl.ackedmovemessages + 1)
+    start = cl.ackedmovemessages + 1;
+  if (start > seq)
+    start = seq;
+
+  for (s = start; s <= seq; s++) {
+    const usercmd_t *histcmd = &cl.movecmds[s & (CL_MOVE_HISTORY - 1)];
+    int i;
+    int extbits = 0;
+
+    if (histcmd->sequence != s)
+      continue;
+
+    if (histcmd->vr_active)
+      extbits |= MOVEEXT_VR;
+    if (histcmd->trusted_active)
+      extbits |= MOVEEXT_TRUSTED;
+
+    MSG_WriteByte(&buf, clc_move);
+    MSG_WriteShort(&buf, histcmd->sequence & 0xffff);
+    MSG_WriteFloat(&buf, histcmd->servertime);
+
+    for (i = 0; i < 3; i++)
+      MSG_WriteAngle16(&buf, histcmd->viewangles[i], cl.protocolflags);
+
+    MSG_WriteShort(&buf, histcmd->forwardmove);
+    MSG_WriteShort(&buf, histcmd->sidemove);
+    MSG_WriteShort(&buf, histcmd->upmove);
+    MSG_WriteByte(&buf, histcmd->buttons);
+    MSG_WriteByte(&buf, histcmd->impulse);
+    MSG_WriteByte(&buf, extbits);
+
+    if (extbits & MOVEEXT_VR) {
+      MSG_WriteFloat(&buf, histcmd->vr_handpos[0]);
+      MSG_WriteFloat(&buf, histcmd->vr_handpos[1]);
+      MSG_WriteFloat(&buf, histcmd->vr_handpos[2]);
+      MSG_WriteFloat(&buf, histcmd->vr_handrot[0]);
+      MSG_WriteFloat(&buf, histcmd->vr_handrot[1]);
+      MSG_WriteFloat(&buf, histcmd->vr_handrot[2]);
+      MSG_WriteFloat(&buf, histcmd->vr_roomscalemove[0]);
+      MSG_WriteFloat(&buf, histcmd->vr_roomscalemove[1]);
+      MSG_WriteFloat(&buf, histcmd->vr_roomscalemove[2]);
+    }
+
+    if (extbits & MOVEEXT_TRUSTED) {
+      MSG_WriteFloat(&buf, histcmd->trusted_origin[0]);
+      MSG_WriteFloat(&buf, histcmd->trusted_origin[1]);
+      MSG_WriteFloat(&buf, histcmd->trusted_origin[2]);
+      MSG_WriteFloat(&buf, histcmd->trusted_velocity[0]);
+      MSG_WriteFloat(&buf, histcmd->trusted_velocity[1]);
+      MSG_WriteFloat(&buf, histcmd->trusted_velocity[2]);
+    }
+  }
 
   if (NET_SendUnreliableMessage(cls.netcon, &buf) == -1) {
     Con_Printf("CL_SendMove: lost server connection\n");

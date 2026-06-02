@@ -261,6 +261,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #define svc_levelcompleted 54
 #define svc_backtolobby 55
 #define svc_localsound 56
+#define svc_moveack 57 // [short] last accepted sequenced move
 
 //
 // client to server
@@ -268,8 +269,11 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #define clc_bad 0
 #define clc_nop 1
 #define clc_disconnect 2
-#define clc_move 3      // [usercmd_t]
+#define clc_move 3      // [sequenced usercmd_t with extension bits]
 #define clc_stringcmd 4 // [string] message
+
+#define MOVEEXT_VR 1
+#define MOVEEXT_TRUSTED 2
 
 //
 // temp entity events
@@ -305,6 +309,9 @@ typedef struct {
 } entity_state_t;
 
 typedef struct {
+  int sequence;
+  float servertime;
+  float seconds;
   vec3_t viewangles;
 
   // intended velocities
@@ -312,11 +319,18 @@ typedef struct {
   float sidemove;
   float upmove;
 
+  int buttons;
+  int impulse;
+
   // VR Data
   vec3_t vr_handpos;
   vec3_t vr_handrot;
   vec3_t vr_roomscalemove;
   qboolean vr_active;
+
+  qboolean trusted_active;
+  vec3_t trusted_origin;
+  vec3_t trusted_velocity;
 } usercmd_t;
 
 #endif /* _QUAKE_PROTOCOL_H */
