@@ -343,27 +343,43 @@ static qboolean SV_IsCoopAmmoRespawnCandidate (edict_t *ammo, edict_t *player)
 	return SV_IsAmmoClassname(PR_GetString(ammo->v.classname));
 }
 
-static void SV_ScheduleCoopAmmoRespawn (edict_t *ammo)
+static qboolean SV_IsCoopProgressionItemRespawnCandidate (edict_t *item, edict_t *player)
+{
+	const char	*classname;
+
+	if (!sv_coop_progression_item_respawn.value || !coop.value)
+		return false;
+	if (!SV_IsActiveClientEdict(player))
+		return false;
+	if (!item || item->free || item->v.solid != SOLID_TRIGGER)
+		return false;
+	if (!item->v.classname)
+		return false;
+
+	classname = PR_GetString(item->v.classname);
+	return SV_ClassnameMatchesList(classname, sv_coop_progression_item_respawn_classes.string);
+}
+
+static void SV_ScheduleCoopPickupRespawn (edict_t *pickup, float respawn_time, const char *reason)
 {
 	dfunction_t	*regen_func;
-	float		respawn_time;
 
-	if (!ammo || ammo->free || ammo->v.solid == SOLID_TRIGGER)
+	if (!pickup || pickup->free || pickup->v.solid == SOLID_TRIGGER)
 		return;
 
 	regen_func = ED_FindFunction("SUB_regen");
 	if (!regen_func)
 		return;
 
-	respawn_time = sv_coop_ammo_respawn_time.value;
 	if (respawn_time < 1)
 		respawn_time = 1;
 
-	ammo->v.think = (func_t)(regen_func - qcvm->functions);
-	ammo->v.nextthink = qcvm->time + respawn_time;
+	pickup->v.think = (func_t)(regen_func - qcvm->functions);
+	pickup->v.nextthink = qcvm->time + respawn_time;
 
-	Con_DPrintf("sv_coop_ammo_respawn: scheduled %s in %.1f seconds\n",
-		ammo->v.classname ? PR_GetString(ammo->v.classname) : "ammo",
+	Con_DPrintf("%s: scheduled %s in %.1f seconds\n",
+		reason,
+		pickup->v.classname ? PR_GetString(pickup->v.classname) : "pickup",
 		respawn_time);
 }
 
@@ -666,6 +682,7 @@ void SV_TouchLinks (edict_t *ent)
 	qboolean	coop_pickup_targetfix;
 	qboolean	coop_targetlog;
 	qboolean	coop_ammo_respawn;
+	qboolean	coop_progression_item_respawn;
 	sv_coop_target_state_t	coop_targets_before;
 
 	mark = Hunk_LowMark ();
@@ -702,6 +719,7 @@ void SV_TouchLinks (edict_t *ent)
 		else
 			memset(&coop_targets_before, 0, sizeof(coop_targets_before));
 		coop_ammo_respawn = SV_IsCoopAmmoRespawnCandidate(touch, ent);
+		coop_progression_item_respawn = SV_IsCoopProgressionItemRespawnCandidate(touch, ent);
 
 		pr_global_struct->self = EDICT_TO_PROG(touch);
 		pr_global_struct->other = EDICT_TO_PROG(ent);
@@ -719,7 +737,9 @@ void SV_TouchLinks (edict_t *ent)
 			&& SV_CoopTargetStateUnchanged(touch, &coop_targets_before))
 			SV_LogCoopPickupTargets(touch, ent, "still has unchanged targets");
 		if (coop_ammo_respawn)
-			SV_ScheduleCoopAmmoRespawn(touch);
+			SV_ScheduleCoopPickupRespawn(touch, sv_coop_ammo_respawn_time.value, "sv_coop_ammo_respawn");
+		if (coop_progression_item_respawn)
+			SV_ScheduleCoopPickupRespawn(touch, sv_coop_ammo_respawn_time.value, "sv_coop_progression_item_respawn");
 
 		pr_global_struct->self = old_self;
 		pr_global_struct->other = old_other;

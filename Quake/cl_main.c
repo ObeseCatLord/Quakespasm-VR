@@ -43,6 +43,13 @@ cvar_t	cl_extrapolate = {"cl_extrapolate","0.05",CVAR_ARCHIVE};
 
 cvar_t	cfg_unbindall = {"cfg_unbindall", "1", CVAR_ARCHIVE};
 
+extern cvar_t sv_accelerate;
+extern cvar_t sv_friction;
+extern cvar_t sv_gravity;
+extern cvar_t sv_maxspeed;
+extern cvar_t sv_stopspeed;
+extern cvar_t vr_movement_instant_stop;
+
 cvar_t	freelook = {"freelook","1", CVAR_ARCHIVE};
 cvar_t	lookspring = {"lookspring","0", CVAR_ARCHIVE};
 cvar_t	lookstrafe = {"lookstrafe","0", CVAR_ARCHIVE};
@@ -100,6 +107,8 @@ void CL_ClearState (void)
 {
 	VR_ResetWeaponTracking();
 	CL_ClearPendingCmd();
+	cls.trusted_clientmove_allowed = false;
+	cls.moveext_allowed = false;
 
 	if (cl.qcvm.extfuncs.CSQC_Shutdown)
 	{
@@ -129,6 +138,7 @@ void CL_ClearState (void)
 	//johnfitz
 
 	memset (v_punchangles, 0, sizeof (v_punchangles));
+	cl.ackedmovemessages = -1;
 }
 
 /*
@@ -143,6 +153,8 @@ void CL_Disconnect (void)
 {
 	DebugLog("CL_Disconnect: state=%d signon=%d\n", cls.state, cls.signon);
 	CL_ClearPendingCmd();
+	cls.trusted_clientmove_allowed = false;
+	cls.moveext_allowed = false;
 
 	if (key_dest == key_message)
 		Key_EndChat ();	// don't get stuck in chat mode
@@ -179,6 +191,20 @@ void CL_Disconnect (void)
 	CL_ClearSignons ();
 
 	V_ResetEffects ();
+}
+
+static void CL_TrustedClientMoveAck_f (void)
+{
+	cls.trusted_clientmove_allowed = true;
+	if (net_lagdebug.value)
+		Con_Printf ("net_lagdebug: server enabled trusted co-op client movement\n");
+}
+
+static void CL_MoveExtAck_f (void)
+{
+	cls.moveext_allowed = true;
+	if (net_lagdebug.value)
+		Con_Printf ("net_lagdebug: server enabled sequenced co-op client movement\n");
 }
 
 void CL_Disconnect_f (void)
@@ -516,6 +542,396 @@ static void CL_RocketTrail (entity_t *ent, int type)
 }
 
 /*
+====================
+CL_PredictWorldTrace
+
+Runs the player-sized hull against the static world BSP. Dynamic brush entities
+are still validated on the server through the trusted movement trace.
+====================
+*/
+static qboolean CL_PredictWorldTrace (vec3_t start, vec3_t end, trace_t *trace)
+{
+	static const vec3_t player_mins = {-16, -16, -24};
+	qmodel_t	*model;
+	hull_t		*hull;
+	vec3_t		offset;
+	vec3_t		start_l, end_l;
+
+	memset (trace, 0, sizeof(*trace));
+	trace->fraction = 1;
+	trace->allsolid = true;
+	VectorCopy (end, trace->endpos);
+
+	model = cl.worldmodel;
+	if (!model || model->type != mod_brush)
+		return false;
+
+	hull = &model->hulls[1];
+	if (hull->firstclipnode > hull->lastclipnode)
+		return false;
+
+	VectorSubtract (hull->clip_mins, player_mins, offset);
+	VectorSubtract (start, offset, start_l);
+	VectorSubtract (end, offset, end_l);
+
+	SV_RecursiveHullCheck (hull, hull->firstclipnode, 0, 1, start_l, end_l, trace);
+
+	if (trace->fraction != 1)
+		VectorAdd (trace->endpos, offset, trace->endpos);
+
+	return true;
+}
+
+static void CL_PredictClipVelocity (vec3_t in, vec3_t normal, vec3_t out)
+{
+	float	backoff;
+	float	change;
+	int		i;
+
+	backoff = DotProduct (in, normal);
+	for (i = 0; i < 3; i++)
+	{
+		change = normal[i] * backoff;
+		out[i] = in[i] - change;
+		if (out[i] > -0.1f && out[i] < 0.1f)
+			out[i] = 0;
+	}
+}
+
+static qboolean CL_PredictGrounded (vec3_t origin)
+{
+	trace_t	trace;
+	vec3_t	end;
+
+	VectorCopy (origin, end);
+	end[2] -= 1;
+	if (!CL_PredictWorldTrace (origin, end, &trace))
+		return false;
+	return trace.fraction < 1 && trace.plane.normal[2] >= 0.7f;
+}
+
+static int CL_PredictSlideMove (vec3_t origin, vec3_t velocity, float frametime)
+{
+	int		bumpcount, numbumps;
+	int		numplanes;
+	int		i, j;
+	int		blocked;
+	float	d;
+	float	time_left;
+	vec3_t	end;
+	vec3_t	dir;
+	vec3_t	planes[5];
+	vec3_t	primal_velocity, original_velocity;
+	trace_t	trace;
+
+	numbumps = 4;
+	blocked = 0;
+	numplanes = 0;
+	time_left = frametime;
+	VectorCopy (velocity, original_velocity);
+	VectorCopy (velocity, primal_velocity);
+
+	for (bumpcount = 0; bumpcount < numbumps; bumpcount++)
+	{
+		for (i = 0; i < 3; i++)
+			end[i] = origin[i] + time_left * velocity[i];
+
+		if (!CL_PredictWorldTrace (origin, end, &trace))
+			return blocked;
+
+		if (trace.startsolid || trace.allsolid)
+		{
+			VectorCopy (vec3_origin, velocity);
+			return 3;
+		}
+
+		if (trace.fraction > 0)
+		{
+			VectorCopy (trace.endpos, origin);
+			numplanes = 0;
+		}
+
+		if (trace.fraction == 1)
+			break;
+
+		if (trace.plane.normal[2] >= 0.7f)
+			blocked |= 1;
+		else if (!trace.plane.normal[2])
+			blocked |= 2;
+		else
+			blocked |= 4;
+
+		time_left -= time_left * trace.fraction;
+		if (numplanes >= 5)
+		{
+			VectorCopy (vec3_origin, velocity);
+			break;
+		}
+
+		VectorCopy (trace.plane.normal, planes[numplanes]);
+		numplanes++;
+
+		for (i = 0; i < numplanes; i++)
+		{
+			CL_PredictClipVelocity (original_velocity, planes[i], velocity);
+			for (j = 0; j < numplanes; j++)
+				if (j != i && DotProduct (velocity, planes[j]) < 0)
+					break;
+			if (j == numplanes)
+				break;
+		}
+
+		if (i == numplanes)
+		{
+			if (numplanes != 2)
+			{
+				VectorCopy (vec3_origin, velocity);
+				break;
+			}
+			CrossProduct (planes[0], planes[1], dir);
+			d = DotProduct (dir, velocity);
+			VectorScale (dir, d, velocity);
+		}
+
+		if (DotProduct (velocity, primal_velocity) <= 0)
+		{
+			VectorCopy (vec3_origin, velocity);
+			break;
+		}
+	}
+
+	return blocked;
+}
+
+static void CL_PredictStepSlideMove (vec3_t origin, vec3_t velocity, float frametime)
+{
+	vec3_t	start_o, start_v;
+	vec3_t	down_o, down_v;
+	vec3_t	up, down;
+	trace_t	trace;
+	float	down_dist, up_dist;
+
+	VectorCopy (origin, start_o);
+	VectorCopy (velocity, start_v);
+
+	CL_PredictSlideMove (origin, velocity, frametime);
+	VectorCopy (origin, down_o);
+	VectorCopy (velocity, down_v);
+
+	VectorCopy (start_o, up);
+	up[2] += 18;
+	if (!CL_PredictWorldTrace (start_o, up, &trace) || trace.startsolid || trace.allsolid)
+		return;
+	VectorCopy (trace.endpos, up);
+
+	VectorCopy (up, origin);
+	VectorCopy (start_v, velocity);
+	CL_PredictSlideMove (origin, velocity, frametime);
+
+	VectorCopy (origin, down);
+	down[2] -= 18;
+	if (CL_PredictWorldTrace (origin, down, &trace) && !trace.allsolid)
+	{
+		VectorCopy (trace.endpos, origin);
+		if (trace.fraction < 1 && trace.plane.normal[2] < 0.7f)
+		{
+			VectorCopy (down_o, origin);
+			VectorCopy (down_v, velocity);
+			return;
+		}
+	}
+
+	down_dist = (down_o[0] - start_o[0]) * (down_o[0] - start_o[0]) +
+				(down_o[1] - start_o[1]) * (down_o[1] - start_o[1]);
+	up_dist = (origin[0] - start_o[0]) * (origin[0] - start_o[0]) +
+			  (origin[1] - start_o[1]) * (origin[1] - start_o[1]);
+	if (down_dist > up_dist)
+	{
+		VectorCopy (down_o, origin);
+		VectorCopy (down_v, velocity);
+	}
+}
+
+static void CL_PredictFriction (vec3_t velocity, float frametime)
+{
+	float	speed, newspeed, control;
+
+	speed = sqrt (velocity[0] * velocity[0] + velocity[1] * velocity[1]);
+	if (!speed)
+		return;
+
+	control = speed < sv_stopspeed.value ? sv_stopspeed.value : speed;
+	newspeed = speed - frametime * control * sv_friction.value;
+	if (newspeed < 0)
+		newspeed = 0;
+	newspeed /= speed;
+
+	velocity[0] *= newspeed;
+	velocity[1] *= newspeed;
+	velocity[2] *= newspeed;
+}
+
+static void CL_PredictAccelerate (vec3_t velocity, const vec3_t wishdir, float wishspeed, float frametime)
+{
+	int		i;
+	float	addspeed, accelspeed, currentspeed;
+
+	currentspeed = DotProduct (velocity, wishdir);
+	addspeed = wishspeed - currentspeed;
+	if (addspeed <= 0)
+		return;
+
+	accelspeed = sv_accelerate.value * frametime * wishspeed;
+	if (accelspeed > addspeed)
+		accelspeed = addspeed;
+
+	for (i = 0; i < 3; i++)
+		velocity[i] += accelspeed * wishdir[i];
+}
+
+static void CL_PredictAirAccelerate (vec3_t velocity, vec3_t wishvel, float wishspeed, float frametime)
+{
+	int		i;
+	float	wishspd, currentspeed, addspeed, accelspeed;
+
+	wishspd = VectorNormalize (wishvel);
+	if (wishspd > 30)
+		wishspd = 30;
+
+	currentspeed = DotProduct (velocity, wishvel);
+	addspeed = wishspd - currentspeed;
+	if (addspeed <= 0)
+		return;
+
+	accelspeed = sv_accelerate.value * wishspeed * frametime;
+	if (accelspeed > addspeed)
+		accelspeed = addspeed;
+
+	for (i = 0; i < 3; i++)
+		velocity[i] += accelspeed * wishvel[i];
+}
+
+static qboolean CL_PredictRunCommand (const usercmd_t *cmd, vec3_t origin, vec3_t velocity)
+{
+	int		i;
+	float	frametime;
+	float	wishspeed;
+	float	fmove, smove;
+	qboolean	onground;
+	vec3_t	angles;
+	vec3_t	forward, right, up;
+	vec3_t	wishvel, wishdir;
+
+	frametime = cmd->seconds;
+	if (frametime <= 0)
+		return CL_PredictGrounded (origin);
+	if (frametime > 0.1f)
+		frametime = 0.1f;
+
+	onground = CL_PredictGrounded (origin);
+
+	VectorCopy (cmd->viewangles, angles);
+	angles[PITCH] = 0;
+	AngleVectors (angles, forward, right, up);
+
+	fmove = cmd->forwardmove;
+	smove = cmd->sidemove;
+
+	for (i = 0; i < 3; i++)
+		wishvel[i] = forward[i] * fmove + right[i] * smove;
+	wishvel[2] = 0;
+
+	VectorCopy (wishvel, wishdir);
+	wishspeed = VectorNormalize (wishdir);
+	if (wishspeed > sv_maxspeed.value)
+	{
+		VectorScale (wishvel, sv_maxspeed.value / wishspeed, wishvel);
+		wishspeed = sv_maxspeed.value;
+	}
+
+	if (onground)
+	{
+		if ((cmd->buttons & 2) && velocity[2] <= 0)
+		{
+			velocity[2] = 270;
+			onground = false;
+		}
+		else
+		{
+			if (!(vr_movement_instant_stop.value && vr_enabled.value && wishspeed == 0))
+				CL_PredictFriction (velocity, frametime);
+			else
+			{
+				velocity[0] = 0;
+				velocity[1] = 0;
+			}
+			CL_PredictAccelerate (velocity, wishdir, wishspeed, frametime);
+		}
+	}
+	else
+		CL_PredictAirAccelerate (velocity, wishvel, wishspeed, frametime);
+
+	if (!onground)
+		velocity[2] -= sv_gravity.value * frametime;
+
+	CL_PredictStepSlideMove (origin, velocity, frametime);
+	return CL_PredictGrounded (origin);
+}
+
+static qboolean CL_PredictPlayer (entity_t *ent)
+{
+	int		seq;
+	int		startseq;
+	qboolean	predicted;
+	qboolean	onground;
+	usercmd_t	pending;
+	vec3_t		origin, velocity;
+
+	if (!cl_predictmove.value || cl_nopred.value || cls.demoplayback ||
+		cls.state != ca_connected || cls.signon != SIGNONS ||
+		!cls.moveext_allowed || !cl.worldmodel || cl.viewentity <= 0)
+		return false;
+	if (ent != &cl_entities[cl.viewentity])
+		return false;
+
+	VectorCopy (ent->msg_origins[0], origin);
+	VectorCopy (cl.mvelocity[0], velocity);
+
+	startseq = cl.ackedmovemessages + 1;
+	if (startseq < 2)
+		startseq = 2;
+	if (startseq < cl.movemessages - CL_MOVE_HISTORY)
+		startseq = cl.movemessages - CL_MOVE_HISTORY;
+
+	predicted = false;
+	onground = cl.onground;
+	for (seq = startseq; seq < cl.movemessages; seq++)
+	{
+		const usercmd_t *histcmd = &cl.movecmds[seq & (CL_MOVE_HISTORY - 1)];
+		if (histcmd->sequence != seq)
+			continue;
+		onground = CL_PredictRunCommand (histcmd, origin, velocity);
+		predicted = true;
+	}
+
+	pending = cl.pendingcmd;
+	if (pending.seconds > 0)
+	{
+		VectorCopy (cl.aimangles, pending.viewangles);
+		onground = CL_PredictRunCommand (&pending, origin, velocity);
+		predicted = true;
+	}
+
+	if (!predicted)
+		return false;
+
+	VectorCopy (origin, ent->origin);
+	VectorCopy (velocity, cl.velocity);
+	cl.onground = onground;
+	return true;
+}
+
+/*
 ===============
 CL_RelinkEntities
 ===============
@@ -614,6 +1030,12 @@ void CL_RelinkEntities (void)
 					d += 360;
 				ent->angles[j] = ent->msg_angles[1][j] + f*d;
 			}
+		}
+
+		if (i == cl.viewentity && CL_PredictPlayer (ent))
+		{
+			VectorCopy (cl.aimangles, ent->angles);
+			ent->angles[PITCH] *= -1.0f / 3.0f;
 		}
 
 		if (ent->forcelink || ent->lerpflags & LERP_RESETMOVE)
@@ -849,11 +1271,14 @@ CL_SendCmd
 */
 static usercmd_t cl_pendingcmd;
 static int cl_pendingcmd_samples;
+static float cl_pendingcmd_seconds;
 
 void CL_ClearPendingCmd (void)
 {
 	Q_memset(&cl_pendingcmd, 0, sizeof(cl_pendingcmd));
+	Q_memset(&cl.pendingcmd, 0, sizeof(cl.pendingcmd));
 	cl_pendingcmd_samples = 0;
+	cl_pendingcmd_seconds = 0;
 }
 
 void CL_AccumulateCmd (void)
@@ -871,6 +1296,16 @@ void CL_AccumulateCmd (void)
 	cl_pendingcmd.sidemove += cmd.sidemove;
 	cl_pendingcmd.upmove += cmd.upmove;
 	cl_pendingcmd_samples++;
+	cl_pendingcmd_seconds += host_frametime;
+
+	cl.pendingcmd = cl_pendingcmd;
+	cl.pendingcmd.seconds = cl_pendingcmd_seconds;
+	VectorCopy(cl.aimangles, cl.pendingcmd.viewangles);
+	cl.pendingcmd.buttons = 0;
+	if (!cl.in_vr_weaponmenu && (in_attack.state & 1))
+		cl.pendingcmd.buttons |= 1;
+	if (in_jump.state & 1)
+		cl.pendingcmd.buttons |= 2;
 }
 
 void CL_SendCmd (void)
@@ -892,6 +1327,7 @@ void CL_SendCmd (void)
 			cmd.sidemove /= cl_pendingcmd_samples;
 			cmd.upmove /= cl_pendingcmd_samples;
 		}
+		cmd.seconds = cl_pendingcmd_seconds;
 		CL_ClearPendingCmd ();
 
 	// send the unreliable message
@@ -1045,6 +1481,10 @@ void CL_Init (void)
 	Cvar_RegisterVariable (&cl_backspeed);
 	Cvar_RegisterVariable (&cl_sidespeed);
 	Cvar_RegisterVariable (&cl_desktop_vanilla_run);
+	Cvar_RegisterVariable (&cl_trusted_clientmove);
+	Cvar_RegisterVariable (&cl_predictmove);
+	Cvar_RegisterVariable (&cl_move_redundancy);
+	Cvar_RegisterVariable (&cl_nopred);
 	Cvar_RegisterVariable (&cl_movespeedkey);
 	Cvar_RegisterVariable (&cl_yawspeed);
 	Cvar_RegisterVariable (&cl_pitchspeed);
@@ -1088,4 +1528,6 @@ void CL_Init (void)
 
 	Cmd_AddCommand_ServerCommand ("st", CL_SetStat_f);
 	Cmd_AddCommand_ServerCommand ("sts", CL_SetStatString_f);
+	Cmd_AddCommand_ServerCommand ("cl_trustedmove_ack", CL_TrustedClientMoveAck_f);
+	Cmd_AddCommand_ServerCommand ("cl_moveext_ack", CL_MoveExtAck_f);
 }

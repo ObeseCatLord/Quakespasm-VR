@@ -116,6 +116,8 @@ typedef struct client_s
 	vec3_t			wishdir;			// intended motion calced from cmd
 	double			last_move_time;
 	qboolean		input_stale;
+	qboolean		moveext;
+	int				lastmovemessage;
 
 	sizebuf_t		message;			// can be added to at any time,
 										// copied and clear once per frame
@@ -143,6 +145,10 @@ typedef struct client_s
 	vec3_t			vr_handrot;
 	vec3_t			vr_roomscalemove;
 	vec3_t			vr_roomscale_accum;
+
+	qboolean		trusted_clientmove_valid;
+	vec3_t			trusted_clientmove_origin;
+	vec3_t			trusted_clientmove_velocity;
 } client_t;
 
 
@@ -220,9 +226,16 @@ extern cvar_t sv_coop_pickup_targetfix;
 extern cvar_t sv_coop_pickup_targetfix_classes;
 extern cvar_t sv_coop_ammo_respawn;
 extern cvar_t sv_coop_ammo_respawn_time;
+extern cvar_t sv_coop_progression_item_respawn;
+extern cvar_t sv_coop_progression_item_respawn_classes;
 extern cvar_t sv_coop_revive;
 extern cvar_t sv_coop_revive_health;
 extern cvar_t sv_coop_revive_range;
+extern cvar_t sv_coop_respawn_near_player;
+extern cvar_t sv_coop_respawn_keep_weapons_ammo;
+extern cvar_t sv_coop_trusted_clientmove;
+extern cvar_t sv_coop_trusted_clientmove_maxdelta;
+extern cvar_t sv_coop_predictmove;
 extern cvar_t sv_save_multiplayer;
 extern cvar_t sv_cmdfile;
 extern cvar_t fraglimit;
@@ -257,6 +270,7 @@ void SV_SetIdealPitch (void);
 void SV_AddUpdates (void);
 
 void SV_ClientThink (void);
+void SV_ApplyTrustedClientMove(client_t *client);
 void SV_AddClientToServer (struct qsocket_s	*ret);
 
 void SV_ClientPrintf (const char *fmt, ...) FUNC_PRINTF(1,2);

@@ -96,7 +96,8 @@ const char *svc_strings[] =
 	"svc_chat", // 53
 	"svc_levelcompleted", // 54
 	"svc_backtolobby", // 55
-	"svc_localsound" // 56
+	"svc_localsound", // 56
+	"svc_moveack" // 57
 };
 #define	NUM_SVC_STRINGS	(sizeof(svc_strings) / sizeof(svc_strings[0]))
 
@@ -1056,6 +1057,34 @@ static void CL_ParseStuffText(const char *msg)
 
 /*
 =====================
+CL_ParseMoveAck
+=====================
+*/
+static void CL_ParseMoveAck (void)
+{
+	int ack16;
+	int ack;
+
+	ack16 = MSG_ReadShort () & 0xffff;
+	if (ack16 == 0xffff && cl.ackedmovemessages < 0)
+		ack = -1;
+	else if (cl.ackedmovemessages < 0)
+		ack = ack16;
+	else
+	{
+		ack = (cl.ackedmovemessages & ~0xffff) | ack16;
+		if (ack <= cl.ackedmovemessages - 0x8000)
+			ack += 0x10000;
+		else if (ack > cl.ackedmovemessages + 0x8000)
+			ack -= 0x10000;
+	}
+
+	if (ack > cl.ackedmovemessages)
+		cl.ackedmovemessages = ack;
+}
+
+/*
+=====================
 CL_ParseServerMessage
 =====================
 */
@@ -1139,6 +1168,10 @@ void CL_ParseServerMessage (void)
 			}
 			cl.mtime[1] = cl.mtime[0];
 			cl.mtime[0] = newtime;
+			break;
+
+		case svc_moveack:
+			CL_ParseMoveAck ();
 			break;
 
 		case svc_clientdata:
