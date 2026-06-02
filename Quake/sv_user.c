@@ -82,6 +82,13 @@ void SV_ResetClientMoveState(client_t *client) {
   client->net_snapshot_packets_sent = 0;
   client->net_snapshot_split_packets = 0;
   client->net_snapshot_unsent_entities = 0;
+  client->net_snapshot_updates_sent = 0;
+  client->net_snapshot_last_packets = 0;
+  client->net_snapshot_last_bytes = 0;
+  client->net_snapshot_max_bytes = 0;
+  client->net_snapshot_max_packets = 0;
+  client->net_snapshot_ack_lag_max = 0;
+  client->net_snapshot_last_summary_time = 0;
 
   client->is_vr_client = false;
   VectorCopy(vec3_origin, client->vr_handpos);

@@ -143,6 +143,13 @@ typedef struct client_s
 	int				net_snapshot_packets_sent;
 	int				net_snapshot_split_packets;
 	int				net_snapshot_unsent_entities;
+	int				net_snapshot_updates_sent;
+	int				net_snapshot_last_packets;
+	int				net_snapshot_last_bytes;
+	int				net_snapshot_max_bytes;
+	int				net_snapshot_max_packets;
+	int				net_snapshot_ack_lag_max;
+	double			net_snapshot_last_summary_time;
 
 	sizebuf_t		message;			// can be added to at any time,
 										// copied and clear once per frame
@@ -268,6 +275,7 @@ extern cvar_t sv_coop_predictmove;
 extern cvar_t sv_vr_jump_velocity;
 extern cvar_t sv_snapshot_splits;
 extern cvar_t sv_snapshot_packetdup;
+extern cvar_t sv_netdiag_interval;
 extern cvar_t sv_save_multiplayer;
 extern cvar_t sv_cmdfile;
 extern cvar_t fraglimit;

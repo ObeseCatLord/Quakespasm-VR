@@ -164,6 +164,12 @@ typedef struct
 	int			net_snapshot_packets;
 	int			net_snapshot_drops;
 	int			net_snapshot_acks_sent;
+	int			net_snapshot_duplicate_parts;
+	int			net_snapshot_part_jumps;
+	int			net_snapshot_incomplete;
+	int			net_snapshot_reassembled;
+	int			net_snapshot_interpolation_overruns;
+	double		net_snapshot_smooth_until;
 	int			net_snapshot_last_part;
 	qboolean	net_snapshot_have;
 	double		net_last_diag_time;
@@ -302,6 +308,10 @@ extern	cvar_t	cl_autofire;
 
 extern	cvar_t	cl_shownet;
 extern	cvar_t	cl_nolerp;
+extern	cvar_t	cl_extrapolate;
+extern	cvar_t	cl_extrapolate_adaptive;
+extern	cvar_t	cl_extrapolate_adaptive_max;
+extern	cvar_t	cl_extrapolate_adaptive_time;
 
 extern	cvar_t	cfg_unbindall;
 

@@ -1226,18 +1226,27 @@ static qboolean CL_PrepareSnapshotMessage (void)
 		if (net_lagdebug.value)
 			Con_DPrintf ("net_lagdebug: dropping duplicate complete snapshot seq=%d part=%d flags=%d\n",
 				seq, part, flags);
+		cl.net_snapshot_duplicate_parts++;
 		return false;
 	}
 
 	if (!cl_snapshot_assembly.active || cl_snapshot_assembly.seq != seq)
 	{
-		if (cl_snapshot_assembly.active && net_lagdebug.value)
-			Con_DPrintf ("net_lagdebug: discarding incomplete snapshot seq=%d at part=%d for newer seq=%d\n",
-				cl_snapshot_assembly.seq, cl_snapshot_assembly.next_part, seq);
+		if (cl_snapshot_assembly.active)
+		{
+			cl.net_snapshot_incomplete++;
+			if (cl_extrapolate_adaptive.value)
+				cl.net_snapshot_smooth_until = realtime +
+					q_max (0.0, cl_extrapolate_adaptive_time.value);
+			if (net_lagdebug.value)
+				Con_DPrintf ("net_lagdebug: discarding incomplete snapshot seq=%d at part=%d for newer seq=%d\n",
+					cl_snapshot_assembly.seq, cl_snapshot_assembly.next_part, seq);
+		}
 		CL_ResetSnapshotAssembly ();
 
 		if (!(flags & SNAPSHOT_FIRST) || part != 0)
 		{
+			cl.net_snapshot_part_jumps++;
 			if (net_lagdebug.value)
 				Con_DPrintf ("net_lagdebug: ignoring snapshot without first part seq=%d part=%d flags=%d firstent=%d total=%d\n",
 					seq, part, flags, firstent, totalents);
@@ -1247,6 +1256,9 @@ static qboolean CL_PrepareSnapshotMessage (void)
 		if (cl.net_snapshot_have && seq > cl.net_snapshot_sequence + 1)
 		{
 			cl.net_snapshot_drops += seq - cl.net_snapshot_sequence - 1;
+			if (cl_extrapolate_adaptive.value)
+				cl.net_snapshot_smooth_until = realtime +
+					q_max (0.0, cl_extrapolate_adaptive_time.value);
 			if (net_lagdebug.value)
 				Con_DPrintf ("net_lagdebug: client snapshot sequence gap old=%d new=%d missing=%d\n",
 					cl.net_snapshot_sequence, seq,
@@ -1266,11 +1278,17 @@ static qboolean CL_PrepareSnapshotMessage (void)
 			Con_DPrintf ("net_lagdebug: ignoring duplicate snapshot part seq=%d part=%d next=%d flags=%d firstent=%d total=%d\n",
 				seq, part, cl_snapshot_assembly.next_part, flags,
 				firstent, totalents);
+		cl.net_snapshot_duplicate_parts++;
 		return false;
 	}
 
 	if (part != cl_snapshot_assembly.next_part)
 	{
+		cl.net_snapshot_part_jumps++;
+		cl.net_snapshot_incomplete++;
+		if (cl_extrapolate_adaptive.value)
+			cl.net_snapshot_smooth_until = realtime +
+				q_max (0.0, cl_extrapolate_adaptive_time.value);
 		if (net_lagdebug.value)
 			Con_DPrintf ("net_lagdebug: client snapshot part jump seq=%d expected=%d got=%d flags=%d firstent=%d total=%d\n",
 				seq, cl_snapshot_assembly.next_part, part, flags,
@@ -1286,6 +1304,10 @@ static qboolean CL_PrepareSnapshotMessage (void)
 			Con_Printf ("net_lagdebug: dropping oversized assembled snapshot seq=%d size=%d add=%d max=%d\n",
 				seq, cl_snapshot_assembly.cursize, payload_size,
 				net_message.maxsize);
+		cl.net_snapshot_incomplete++;
+		if (cl_extrapolate_adaptive.value)
+			cl.net_snapshot_smooth_until = realtime +
+				q_max (0.0, cl_extrapolate_adaptive_time.value);
 		CL_ResetSnapshotAssembly ();
 		return false;
 	}
@@ -1306,6 +1328,7 @@ static qboolean CL_PrepareSnapshotMessage (void)
 	cl.net_snapshot_have = true;
 	cl.net_snapshot_sequence = seq;
 	cl.net_snapshot_last_part = part;
+	cl.net_snapshot_reassembled++;
 
 	CL_ResetSnapshotAssembly ();
 	return true;
