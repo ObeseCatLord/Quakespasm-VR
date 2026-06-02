@@ -839,7 +839,7 @@ static void CL_PredictAirAccelerate (vec3_t velocity, vec3_t wishvel, float wish
 		velocity[i] += accelspeed * wishvel[i];
 }
 
-static qboolean CL_PredictRunCommand (const usercmd_t *cmd, vec3_t origin, vec3_t velocity)
+static qboolean CL_PredictRunCommand (const usercmd_t *cmd, vec3_t origin, vec3_t velocity, qboolean *jump_released)
 {
 	int		i;
 	float	frametime;
@@ -855,6 +855,9 @@ static qboolean CL_PredictRunCommand (const usercmd_t *cmd, vec3_t origin, vec3_
 		return CL_PredictGrounded (origin);
 	if (frametime > 0.1f)
 		frametime = 0.1f;
+
+	if (!(cmd->buttons & 2))
+		*jump_released = true;
 
 	onground = CL_PredictGrounded (origin);
 
@@ -919,10 +922,11 @@ static qboolean CL_PredictRunCommand (const usercmd_t *cmd, vec3_t origin, vec3_
 
 	if (onground)
 	{
-		if ((cmd->buttons & 2) && velocity[2] <= 0)
+		if ((cmd->buttons & 2) && *jump_released && velocity[2] <= 0)
 		{
 			velocity[2] = (vr_enabled.value && sv_vr_jump_velocity.value > 270) ?
 				sv_vr_jump_velocity.value : 270;
+			*jump_released = false;
 			onground = false;
 		}
 		else
@@ -953,6 +957,7 @@ static qboolean CL_PredictPlayer (entity_t *ent)
 	int		startseq;
 	qboolean	predicted;
 	qboolean	onground;
+	qboolean	jump_released;
 	usercmd_t	pending;
 	vec3_t		origin, velocity;
 
@@ -981,12 +986,14 @@ static qboolean CL_PredictPlayer (entity_t *ent)
 
 	predicted = false;
 	onground = cl.onground;
+	jump_released = !cl.predstate_valid ||
+		(cl.predstate_flags & PREDINFO_JUMPRELEASED);
 	for (seq = startseq; seq < cl.movemessages; seq++)
 	{
 		const usercmd_t *histcmd = &cl.movecmds[seq & (CL_MOVE_HISTORY - 1)];
 		if (histcmd->sequence != seq)
 			continue;
-		onground = CL_PredictRunCommand (histcmd, origin, velocity);
+		onground = CL_PredictRunCommand (histcmd, origin, velocity, &jump_released);
 		predicted = true;
 	}
 
@@ -994,7 +1001,7 @@ static qboolean CL_PredictPlayer (entity_t *ent)
 	if (pending.seconds > 0)
 	{
 		VectorCopy (cl.aimangles, pending.viewangles);
-		onground = CL_PredictRunCommand (&pending, origin, velocity);
+		onground = CL_PredictRunCommand (&pending, origin, velocity, &jump_released);
 		predicted = true;
 	}
 
@@ -1558,6 +1565,7 @@ void CL_Init (void)
 	Cvar_RegisterVariable (&cl_sidespeed);
 	Cvar_RegisterVariable (&cl_desktop_vanilla_run);
 	Cvar_RegisterVariable (&cl_trusted_clientmove);
+	Cvar_RegisterVariable (&cl_trusted_clientmove_desktop);
 	Cvar_RegisterVariable (&cl_predictmove);
 	Cvar_RegisterVariable (&cl_move_redundancy);
 	Cvar_RegisterVariable (&cl_move_packetdup);

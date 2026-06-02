@@ -33,7 +33,7 @@ int		sv_protocol = PROTOCOL_RMQ; //johnfitz
 
 extern cvar_t nomonsters;
 cvar_t sv_maxpacketsize = {"sv_maxpacketsize", "1400", CVAR_NONE}; // 1400 = single IP MTU, avoids UDP fragmentation
-cvar_t sv_snapshot_splits = {"sv_snapshot_splits", "0", CVAR_ARCHIVE};
+cvar_t sv_snapshot_splits = {"sv_snapshot_splits", "1", CVAR_ARCHIVE};
 // When SV_WriteEntitiesToClient overflows the per-client datagram, the entity
 // that gets evicted is whichever the loop reached last. With sv_netsort=1
 // (ironwail's heuristic) entities are sorted by distance-to-player and PVS
@@ -651,8 +651,7 @@ void SV_ConnectClient (int clientnum)
 	}
 	memset (client, 0, sizeof(*client));
 	client->netconnection = netconnection;
-	client->lastmovemessage = -1;
-	client->net_snapshot_ack = -1;
+	SV_ResetClientMoveState (client);
 
 	strcpy (client->name, "unconnected");
 	client->active = true;
@@ -1376,6 +1375,8 @@ static void SV_WriteMoveAckToMessage(client_t *client, sizebuf_t *msg)
 			flags |= PREDINFO_INWATER;
 		if ((int)ent->v.flags & FL_WATERJUMP)
 			flags |= PREDINFO_WATERJUMP;
+		if ((int)ent->v.flags & FL_JUMPRELEASED)
+			flags |= PREDINFO_JUMPRELEASED;
 	}
 
 	MSG_WriteByte (msg, flags);
@@ -1419,6 +1420,7 @@ qboolean SV_SendClientDatagram (client_t *client)
 	static double	last_gap_log[MAX_SCOREBOARD];
 	static double	last_update_sent[MAX_SCOREBOARD];
 	static double	last_update_log[MAX_SCOREBOARD];
+	static int	last_update_snapshot[MAX_SCOREBOARD];
 	static struct qsocket_s	*last_update_socket[MAX_SCOREBOARD];
 
 	msg.data = buf;
@@ -1443,7 +1445,9 @@ qboolean SV_SendClientDatagram (client_t *client)
 	if (client_index < 0 || client_index >= MAX_SCOREBOARD)
 		client_index = -1;
 
-	if (client_index >= 0 && last_update_socket[client_index] != client->netconnection)
+	if (client_index >= 0 &&
+		(last_update_socket[client_index] != client->netconnection ||
+		 snapshot_sequence <= last_update_snapshot[client_index]))
 	{
 		last_update_socket[client_index] = client->netconnection;
 		last_update_sent[client_index] = 0;
@@ -1466,6 +1470,8 @@ qboolean SV_SendClientDatagram (client_t *client)
 
 	do
 	{
+		int		snapshot_flags_offset;
+
 		msg.maxsize = maxsize;
 		msg.cursize = 0;
 		msg.allowoverflow = false;
@@ -1474,6 +1480,7 @@ qboolean SV_SendClientDatagram (client_t *client)
 		MSG_WriteByte (&msg, svc_snapshot);
 		MSG_WriteShort (&msg, snapshot_sequence & 0xffff);
 		MSG_WriteByte (&msg, packet_count & 0xff);
+		snapshot_flags_offset = msg.cursize;
 		MSG_WriteByte (&msg, first_packet ? SNAPSHOT_FIRST : 0);
 		MSG_WriteShort (&msg, CLAMP (0, entity_start, 32767));
 		MSG_WriteShort (&msg, CLAMP (0, qcvm->num_edicts, 32767));
@@ -1543,6 +1550,16 @@ qboolean SV_SendClientDatagram (client_t *client)
 			}
 		}
 
+		if (!sv_snapshot_splits.value ||
+			(entity_start >= net_edict_write_total &&
+			 datagram_offset >= sv.datagram.cursize) ||
+			(entity_start == prev_entity_start &&
+			 entity_start < net_edict_write_total) ||
+			packet_count >= 127)
+		{
+			msg.data[snapshot_flags_offset] |= SNAPSHOT_LAST;
+		}
+
 // send the datagram
 		if (NET_SendUnreliableMessage (client->netconnection, &msg) == -1)
 		{
@@ -1609,7 +1626,10 @@ qboolean SV_SendClientDatagram (client_t *client)
 	}
 
 	if (client_index >= 0)
+	{
 		last_update_sent[client_index] = realtime;
+		last_update_snapshot[client_index] = snapshot_sequence;
+	}
 
 	return true;
 }
@@ -2163,6 +2183,7 @@ void SV_SpawnServer (const char *server)
 	{
 		ent = EDICT_NUM(i+1);
 		svs.clients[i].edict = ent;
+		SV_ResetClientMoveState (&svs.clients[i]);
 	}
 
 	sv.state = ss_loading;

@@ -286,6 +286,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #define PREDINFO_ONGROUND 2
 #define PREDINFO_INWATER 4
 #define PREDINFO_WATERJUMP 8
+#define PREDINFO_JUMPRELEASED 16
 
 //
 // temp entity events

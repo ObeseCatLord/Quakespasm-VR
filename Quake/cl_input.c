@@ -246,9 +246,10 @@ cvar_t cl_backspeed = {"cl_backspeed", "200", CVAR_ARCHIVE};
 cvar_t cl_sidespeed = {"cl_sidespeed", "350", CVAR_NONE};
 cvar_t cl_desktop_vanilla_run = {"cl_desktop_vanilla_run", "1", CVAR_ARCHIVE};
 cvar_t cl_trusted_clientmove = {"cl_trusted_clientmove", "1", CVAR_ARCHIVE};
+cvar_t cl_trusted_clientmove_desktop = {"cl_trusted_clientmove_desktop", "0", CVAR_ARCHIVE};
 cvar_t cl_predictmove = {"cl_predictmove", "1", CVAR_ARCHIVE};
 cvar_t cl_move_redundancy = {"cl_move_redundancy", "3", CVAR_ARCHIVE};
-cvar_t cl_move_packetdup = {"cl_move_packetdup", "0", CVAR_ARCHIVE};
+cvar_t cl_move_packetdup = {"cl_move_packetdup", "1", CVAR_ARCHIVE};
 cvar_t cl_nopred = {"cl_nopred", "0", CVAR_NONE};
 
 cvar_t cl_movespeedkey = {"cl_movespeedkey", "2.0", CVAR_NONE};
@@ -487,7 +488,8 @@ void CL_SendMove(const usercmd_t *cmd) {
   Q_memset(sendcmd.trusted_velocity, 0, sizeof(sendcmd.trusted_velocity));
   sendcmd.trusted_active = false;
 
-  if (cl_trusted_clientmove.value && cls.trusted_clientmove_allowed &&
+  if (cl_trusted_clientmove.value && (vr_enabled.value || cl_trusted_clientmove_desktop.value) &&
+      cls.trusted_clientmove_allowed &&
       cls.state == ca_connected && cls.signon == SIGNONS &&
       cl.viewentity > 0 && cl.viewentity < cl.num_entities &&
       cl_entities[cl.viewentity].model) {
