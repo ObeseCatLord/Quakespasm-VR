@@ -34,6 +34,7 @@ int		sv_protocol = PROTOCOL_RMQ; //johnfitz
 extern cvar_t nomonsters;
 cvar_t sv_maxpacketsize = {"sv_maxpacketsize", "1400", CVAR_NONE}; // 1400 = single IP MTU, avoids UDP fragmentation
 cvar_t sv_snapshot_splits = {"sv_snapshot_splits", "1", CVAR_ARCHIVE};
+cvar_t sv_snapshot_packetdup = {"sv_snapshot_packetdup", "0", CVAR_NONE};
 // When SV_WriteEntitiesToClient overflows the per-client datagram, the entity
 // that gets evicted is whichever the loop reached last. With sv_netsort=1
 // (ironwail's heuristic) entities are sorted by distance-to-player and PVS
@@ -250,6 +251,7 @@ void SV_Init (void)
 	Cvar_RegisterVariable (&sv_inputtimeout);
 	Cvar_RegisterVariable (&sv_maxpacketsize);
 	Cvar_RegisterVariable (&sv_snapshot_splits);
+	Cvar_RegisterVariable (&sv_snapshot_packetdup);
 	Cvar_RegisterVariable (&sv_coop_weapon_targetfix);
 	Cvar_RegisterVariable (&sv_coop_pickup_targetlog);
 	Cvar_RegisterVariable (&sv_coop_pickup_targetfix);
@@ -1406,11 +1408,13 @@ qboolean SV_SendClientDatagram (client_t *client)
 	byte		buf[MAX_DATAGRAM];
 	sizebuf_t	msg;
 	int		maxsize;
+	int		i;
 	int		entity_start;
 	int		prev_entity_start;
 	int		datagram_offset;
 	int		packet_count;
 	int		snapshot_sequence;
+	int		snapshot_dup;
 	qboolean	first_packet;
 	int		total_bytes;
 	int		max_packet_bytes;
@@ -1444,6 +1448,7 @@ qboolean SV_SendClientDatagram (client_t *client)
 	client_index = (int)(client - svs.clients);
 	if (client_index < 0 || client_index >= MAX_SCOREBOARD)
 		client_index = -1;
+	snapshot_dup = CLAMP(0, (int)sv_snapshot_packetdup.value, 3);
 
 	if (client_index >= 0 &&
 		(last_update_socket[client_index] != client->netconnection ||
@@ -1560,19 +1565,22 @@ qboolean SV_SendClientDatagram (client_t *client)
 			msg.data[snapshot_flags_offset] |= SNAPSHOT_LAST;
 		}
 
-// send the datagram
-		if (NET_SendUnreliableMessage (client->netconnection, &msg) == -1)
+	// send the datagram
+		for (i = 0; i <= snapshot_dup; i++)
 		{
-			SV_DropClient (true);// if the message couldn't send, kick off
-			return false;
+			if (NET_SendUnreliableMessage (client->netconnection, &msg) == -1)
+			{
+				SV_DropClient (true);// if the message couldn't send, kick off
+				return false;
+			}
 		}
 
-		total_bytes += msg.cursize;
+		total_bytes += msg.cursize * (snapshot_dup + 1);
 		if (msg.cursize > max_packet_bytes)
 			max_packet_bytes = msg.cursize;
 		last_packet_bytes = msg.cursize;
 		packet_count++;
-		client->net_snapshot_packets_sent++;
+		client->net_snapshot_packets_sent += snapshot_dup + 1;
 		first_packet = false;
 
 		if (!sv_snapshot_splits.value &&
@@ -1613,9 +1621,9 @@ qboolean SV_SendClientDatagram (client_t *client)
 		(packet_count > 1 || max_packet_bytes > (maxsize * 9) / 10) &&
 		(client_index < 0 || realtime - last_update_log[client_index] > 1.0))
 	{
-		Con_Printf ("net_lagdebug: server update to %s (%s): packets=%d bytes=%d max=%d last=%d ents=%d/%d sv_datagram=%d/%d maxpacket=%d snap=%d ack=%d splits=%d clipped=%d\n",
+		Con_Printf ("net_lagdebug: server update to %s (%s): packets=%d dup=%d bytes=%d max=%d last=%d ents=%d/%d sv_datagram=%d/%d maxpacket=%d snap=%d ack=%d splits=%d clipped=%d\n",
 			client->name, NET_QSocketGetAddressString(client->netconnection),
-			packet_count, total_bytes, max_packet_bytes, last_packet_bytes,
+			packet_count, snapshot_dup, total_bytes, max_packet_bytes, last_packet_bytes,
 			entity_start, net_edict_write_total,
 			datagram_offset, sv.datagram.cursize, maxsize,
 			snapshot_sequence, client->net_snapshot_ack,

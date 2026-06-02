@@ -656,6 +656,7 @@ void SV_ReadClientMove(usercmd_t *move) {
   int bundled_buttons;
   int bundled_impulse;
   float bundled_seconds;
+  float latest_seconds;
   vec3_t bundled_roomscale;
   usercmd_t readcmd;
   usercmd_t mergedcmd;
@@ -682,6 +683,7 @@ void SV_ReadClientMove(usercmd_t *move) {
   bundled_buttons = 0;
   bundled_impulse = 0;
   bundled_seconds = 0;
+  latest_seconds = 0;
   VectorCopy(vec3_origin, bundled_roomscale);
   Q_memset(&mergedcmd, 0, sizeof(mergedcmd));
 
@@ -721,6 +723,7 @@ void SV_ReadClientMove(usercmd_t *move) {
     host_client->lastmovemessage = sequence;
     mergedcmd = readcmd;
     bundled_seconds += readcmd.seconds;
+    latest_seconds = readcmd.seconds;
     bundled_buttons |= readcmd.buttons;
     if (readcmd.impulse)
       bundled_impulse = readcmd.impulse;
@@ -737,11 +740,15 @@ void SV_ReadClientMove(usercmd_t *move) {
   mergedcmd.buttons |= bundled_buttons;
   if (bundled_impulse)
     mergedcmd.impulse = bundled_impulse;
-  if (bundled_seconds > 0)
-    mergedcmd.seconds = CLAMP(0.001f, bundled_seconds, 0.1f);
+  if (latest_seconds > 0)
+    mergedcmd.seconds = CLAMP(0.001f, latest_seconds, 0.05f);
   if (mergedcmd.vr_active)
     VectorCopy(bundled_roomscale, mergedcmd.vr_roomscalemove);
   *move = mergedcmd;
+
+  if (net_lagdebug.value && accepted > 1 && bundled_seconds > mergedcmd.seconds + 0.001f)
+    Con_DPrintf("net_lagdebug: accepted redundant moves for %s cmds=%d latest_dt=%.3f total_dt=%.3f using_latest_dt\n",
+                host_client->name, accepted, mergedcmd.seconds, bundled_seconds);
 
   host_client->ping_times[host_client->num_pings % NUM_PING_TIMES] =
       qcvm->time - mergedcmd.servertime;
