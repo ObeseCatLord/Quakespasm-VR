@@ -32,6 +32,7 @@ typedef struct
 	struct client_s	*clients;		// [maxclients]
 	int			serverflags;		// episode completion information
 	qboolean	changelevel_issued;	// cleared when at SV_SpawnServer
+	qboolean	coop_loadgame_late_join_spawns_near;
 } server_static_t;
 
 //=============================================================================
@@ -46,6 +47,7 @@ typedef struct
 
 	qboolean	paused;
 	qboolean	loadgame;			// handle connections specially
+	qboolean	loadgame_resumed;
 	qboolean	nomonsters;			// server started with 'nomonsters' cvar active
 
 	qboolean	loadgame_client_saved[MAX_SCOREBOARD];
@@ -311,6 +313,7 @@ void SV_CoopReviveEndPostThink(void);
 void SV_CoopReviveApplyPending(void);
 void SV_CoopReviveFromTrace(vec3_t start, vec3_t end, edict_t *ent,
                             float trace_fraction);
+qboolean SV_CoopRespawnPlaceNearPlayer(edict_t *ent);
 
 qboolean SV_CheckBottom (edict_t *ent);
 qboolean SV_movestep (edict_t *ent, vec3_t move, qboolean relink);

@@ -635,8 +635,9 @@ void SV_ConnectClient (int clientnum)
 // set up the client_t
 	netconnection = client->netconnection;
 
-	loaded_client = sv.loadgame && clientnum >= 0 && clientnum < MAX_SCOREBOARD
-	    && sv.loadgame_client_saved[clientnum] && sv.loadgame_client_edicts;
+	loaded_client = sv.loadgame && !sv.loadgame_resumed &&
+	    clientnum >= 0 && clientnum < MAX_SCOREBOARD &&
+	    sv.loadgame_client_saved[clientnum] && sv.loadgame_client_edicts;
 	if (loaded_client)
 	{
 		memcpy (spawn_parms, client->spawn_parms, sizeof(spawn_parms));
