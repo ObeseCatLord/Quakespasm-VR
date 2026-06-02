@@ -35,6 +35,8 @@ extern cvar_t nomonsters;
 cvar_t sv_maxpacketsize = {"sv_maxpacketsize", "1400", CVAR_NONE}; // 1400 = single IP MTU, avoids UDP fragmentation
 cvar_t sv_snapshot_splits = {"sv_snapshot_splits", "1", CVAR_ARCHIVE};
 cvar_t sv_snapshot_packetdup = {"sv_snapshot_packetdup", "0", CVAR_NONE};
+cvar_t sv_snapshot_partresend = {"sv_snapshot_partresend", "1", CVAR_NONE};
+cvar_t sv_snapshot_partresend_interval = {"sv_snapshot_partresend_interval", "0.04", CVAR_NONE};
 cvar_t sv_netdiag_interval = {"sv_netdiag_interval", "5", CVAR_NONE};
 // When SV_WriteEntitiesToClient overflows the per-client datagram, the entity
 // that gets evicted is whichever the loop reached last. With sv_netsort=1
@@ -186,6 +188,13 @@ static void SV_NetDiag_f (void)
 		cl.net_snapshot_duplicate_parts, cl.net_snapshot_part_jumps,
 		cl.net_snapshot_incomplete, cl.net_snapshot_reassembled,
 		cl.net_snapshot_interpolation_overruns);
+	Con_Printf ("client netdiag: snapshot partial active=%d seq=%d last=%d mask=%08x/%08x/%08x/%08x partacks=%d out_of_order=%d\n",
+		cl.net_snapshot_partial_active, cl.net_snapshot_partial_sequence,
+		cl.net_snapshot_partial_last_part,
+		cl.net_snapshot_partial_mask[0], cl.net_snapshot_partial_mask[1],
+		cl.net_snapshot_partial_mask[2], cl.net_snapshot_partial_mask[3],
+		cl.net_snapshot_part_resend_acks_sent,
+		cl.net_snapshot_out_of_order_parts);
 
 	if (!sv.active)
 		return;
@@ -201,13 +210,16 @@ static void SV_NetDiag_f (void)
 			client->net_move_cmds_stale, client->lastmovemessage,
 			client->net_move_last_bundle, client->net_move_bundle_max,
 			client->net_move_last_gap);
-		Con_Printf ("server netdiag: #%d snapshots seq=%d ack=%d packets=%d split_packets=%d last_packets=%d max_packets=%d last_bytes=%d max_bytes=%d acklag_max=%d clipped_ents=%d\n",
+		Con_Printf ("server netdiag: #%d snapshots seq=%d ack=%d packets=%d split_packets=%d last_packets=%d max_packets=%d last_bytes=%d max_bytes=%d acklag_max=%d clipped_ents=%d part_resends=%d partial_seq=%d partial_last=%d\n",
 			i + 1, client->net_snapshot_sequence, client->net_snapshot_ack,
 			client->net_snapshot_packets_sent,
 			client->net_snapshot_split_packets, client->net_snapshot_last_packets,
 			client->net_snapshot_max_packets, client->net_snapshot_last_bytes,
 			client->net_snapshot_max_bytes, client->net_snapshot_ack_lag_max,
-			client->net_snapshot_unsent_entities);
+			client->net_snapshot_unsent_entities,
+			client->net_snapshot_part_resends,
+			client->net_snapshot_partial_ack_seq,
+			client->net_snapshot_partial_ack_last_part);
 	}
 }
 
@@ -259,6 +271,8 @@ void SV_Init (void)
 	Cvar_RegisterVariable (&sv_maxpacketsize);
 	Cvar_RegisterVariable (&sv_snapshot_splits);
 	Cvar_RegisterVariable (&sv_snapshot_packetdup);
+	Cvar_RegisterVariable (&sv_snapshot_partresend);
+	Cvar_RegisterVariable (&sv_snapshot_partresend_interval);
 	Cvar_RegisterVariable (&sv_netdiag_interval);
 	Cvar_RegisterVariable (&sv_coop_weapon_targetfix);
 	Cvar_RegisterVariable (&sv_coop_pickup_targetlog);
@@ -1436,6 +1450,102 @@ static void SV_MaybePrintSnapshotSummary (client_t *client, int client_index)
 	client->net_snapshot_last_summary_time = realtime;
 }
 
+static qboolean SV_SnapshotAckMaskHasPart (client_t *client, int part)
+{
+	if (part < 0 || part >= SNAPSHOT_MAX_PARTS)
+		return false;
+	return (client->net_snapshot_partial_ack_mask[part >> 5] &
+		(1u << (part & 31))) != 0;
+}
+
+static void SV_StoreSnapshotPart (client_t *client, int sequence, int part, sizebuf_t *msg)
+{
+	if (part == 0 || client->net_snapshot_resend_sequence != sequence)
+	{
+		client->net_snapshot_resend_sequence = sequence;
+		client->net_snapshot_resend_parts = 0;
+		Q_memset (client->net_snapshot_resend_part_len, 0,
+			sizeof(client->net_snapshot_resend_part_len));
+	}
+
+	if (part < 0 || part >= SNAPSHOT_RESEND_MAX_PARTS ||
+		msg->cursize > SNAPSHOT_RESEND_MAX_PACKET)
+		return;
+
+	client->net_snapshot_resend_part_len[part] = msg->cursize;
+	Q_memcpy (client->net_snapshot_resend_part_data[part], msg->data,
+		msg->cursize);
+	if (part + 1 > client->net_snapshot_resend_parts)
+		client->net_snapshot_resend_parts = part + 1;
+}
+
+static qboolean SV_MaybeResendSnapshotParts (client_t *client)
+{
+	sizebuf_t msg;
+	double interval;
+	int part;
+	int parts;
+	int sent;
+
+	if (!sv_snapshot_partresend.value ||
+		client->net_snapshot_partial_ack_seq != client->net_snapshot_resend_sequence ||
+		client->net_snapshot_resend_parts <= 0)
+		return true;
+
+	if (client->net_snapshot_partial_ack_seq <= client->net_snapshot_ack)
+	{
+		client->net_snapshot_partial_ack_seq = -1;
+		return true;
+	}
+
+	interval = q_max (0.0, sv_snapshot_partresend_interval.value);
+	if (interval > 0 && realtime - client->net_snapshot_last_part_resend_time < interval)
+		return true;
+
+	parts = client->net_snapshot_resend_parts;
+	if (client->net_snapshot_partial_ack_last_part != SNAPSHOT_PART_UNKNOWN &&
+		client->net_snapshot_partial_ack_last_part + 1 < parts)
+		parts = client->net_snapshot_partial_ack_last_part + 1;
+
+	sent = 0;
+	for (part = 0; part < parts; part++)
+	{
+		if (SV_SnapshotAckMaskHasPart (client, part) ||
+			client->net_snapshot_resend_part_len[part] <= 0)
+			continue;
+
+		msg.data = client->net_snapshot_resend_part_data[part];
+		msg.maxsize = client->net_snapshot_resend_part_len[part];
+		msg.cursize = client->net_snapshot_resend_part_len[part];
+		msg.allowoverflow = false;
+		msg.overflowed = false;
+
+		if (NET_SendUnreliableMessage (client->netconnection, &msg) == -1)
+		{
+			SV_DropClient (true);
+			return false;
+		}
+		client->net_snapshot_packets_sent++;
+		client->net_snapshot_part_resends++;
+		sent++;
+	}
+
+	if (sent > 0)
+	{
+		client->net_snapshot_last_part_resend_time = realtime;
+		if (net_lagdebug.value)
+			Con_DPrintf ("net_lagdebug: resent %d snapshot parts to %s seq=%d mask=%08x/%08x/%08x/%08x last=%d\n",
+				sent, client->name, client->net_snapshot_partial_ack_seq,
+				client->net_snapshot_partial_ack_mask[0],
+				client->net_snapshot_partial_ack_mask[1],
+				client->net_snapshot_partial_ack_mask[2],
+				client->net_snapshot_partial_ack_mask[3],
+				client->net_snapshot_partial_ack_last_part);
+	}
+
+	return true;
+}
+
 qboolean SV_SendClientDatagram (client_t *client)
 {
 	byte		buf[MAX_DATAGRAM];
@@ -1465,11 +1575,14 @@ qboolean SV_SendClientDatagram (client_t *client)
 	maxsize = sizeof(buf);
 
 	//johnfitz -- if client is nonlocal, use smaller max size so packets aren't fragmented
-	if (Q_strcmp(NET_QSocketGetAddressString(client->netconnection), "LOCAL") != 0)
-		maxsize = (int)sv_maxpacketsize.value;
+		if (Q_strcmp(NET_QSocketGetAddressString(client->netconnection), "LOCAL") != 0)
+			maxsize = (int)sv_maxpacketsize.value;
 	//johnfitz
 
 	maxsize = CLAMP(512, maxsize, (int)sizeof(buf));
+
+	if (!SV_MaybeResendSnapshotParts (client))
+		return false;
 
 	entity_start = 0;
 	datagram_offset = 0;
@@ -1604,6 +1717,7 @@ qboolean SV_SendClientDatagram (client_t *client)
 		}
 
 	// send the datagram
+		SV_StoreSnapshotPart (client, snapshot_sequence, packet_count, &msg);
 		for (i = 0; i <= snapshot_dup; i++)
 		{
 			if (NET_SendUnreliableMessage (client->netconnection, &msg) == -1)

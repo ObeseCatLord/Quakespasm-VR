@@ -89,6 +89,17 @@ void SV_ResetClientMoveState(client_t *client) {
   client->net_snapshot_max_packets = 0;
   client->net_snapshot_ack_lag_max = 0;
   client->net_snapshot_last_summary_time = 0;
+  client->net_snapshot_partial_ack_seq = -1;
+  client->net_snapshot_partial_ack_last_part = SNAPSHOT_PART_UNKNOWN;
+  Q_memset(client->net_snapshot_partial_ack_mask, 0,
+           sizeof(client->net_snapshot_partial_ack_mask));
+  client->net_snapshot_partial_ack_time = 0;
+  client->net_snapshot_resend_sequence = -1;
+  client->net_snapshot_resend_parts = 0;
+  Q_memset(client->net_snapshot_resend_part_len, 0,
+           sizeof(client->net_snapshot_resend_part_len));
+  client->net_snapshot_last_part_resend_time = 0;
+  client->net_snapshot_part_resends = 0;
 
   client->is_vr_client = false;
   VectorCopy(vec3_origin, client->vr_handpos);
@@ -673,7 +684,7 @@ void SV_ReadClientMove(usercmd_t *move) {
   flags = MSG_ReadByte();
 
   if (count <= 0 || count > MOVE_BUNDLE_MAX ||
-      (flags & ~MOVE_BUNDLE_SNAPSHOTACK)) {
+      (flags & ~(MOVE_BUNDLE_SNAPSHOTACK | MOVE_BUNDLE_SNAPSHOTPARTS))) {
     msg_badread = true;
     return;
   }
@@ -682,6 +693,22 @@ void SV_ReadClientMove(usercmd_t *move) {
     int snapshot_ack = SV_ExpandSnapshotAck(MSG_ReadShort() & 0xffff);
     if (snapshot_ack > host_client->net_snapshot_ack)
       host_client->net_snapshot_ack = snapshot_ack;
+  }
+  if (host_client->net_snapshot_partial_ack_seq <= host_client->net_snapshot_ack)
+    host_client->net_snapshot_partial_ack_seq = -1;
+  if (flags & MOVE_BUNDLE_SNAPSHOTPARTS) {
+    int snapshot_ack = SV_ExpandSnapshotAck(MSG_ReadShort() & 0xffff);
+    int last_part = MSG_ReadByte();
+    if (snapshot_ack > host_client->net_snapshot_ack) {
+      host_client->net_snapshot_partial_ack_seq = snapshot_ack;
+      host_client->net_snapshot_partial_ack_last_part = last_part;
+      for (i = 0; i < SNAPSHOT_ACK_MASK_WORDS; i++)
+        host_client->net_snapshot_partial_ack_mask[i] = MSG_ReadLong();
+      host_client->net_snapshot_partial_ack_time = realtime;
+    } else {
+      for (i = 0; i < SNAPSHOT_ACK_MASK_WORDS; i++)
+        MSG_ReadLong();
+    }
   }
 
   latest = SV_ExpandClientSequence(latest16);

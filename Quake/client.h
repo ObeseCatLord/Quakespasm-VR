@@ -172,6 +172,12 @@ typedef struct
 	double		net_snapshot_smooth_until;
 	int			net_snapshot_last_part;
 	qboolean	net_snapshot_have;
+	qboolean	net_snapshot_partial_active;
+	int			net_snapshot_partial_sequence;
+	int			net_snapshot_partial_last_part;
+	unsigned int	net_snapshot_partial_mask[SNAPSHOT_ACK_MASK_WORDS];
+	int			net_snapshot_part_resend_acks_sent;
+	int			net_snapshot_out_of_order_parts;
 	double		net_last_diag_time;
 	qboolean	predstate_valid;
 	int			predstate_sequence;
@@ -312,6 +318,7 @@ extern	cvar_t	cl_extrapolate;
 extern	cvar_t	cl_extrapolate_adaptive;
 extern	cvar_t	cl_extrapolate_adaptive_max;
 extern	cvar_t	cl_extrapolate_adaptive_time;
+extern	cvar_t	cl_net_lerpbuffer;
 
 extern	cvar_t	cfg_unbindall;
 
