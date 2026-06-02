@@ -248,6 +248,7 @@ cvar_t cl_desktop_vanilla_run = {"cl_desktop_vanilla_run", "1", CVAR_ARCHIVE};
 cvar_t cl_trusted_clientmove = {"cl_trusted_clientmove", "1", CVAR_ARCHIVE};
 cvar_t cl_predictmove = {"cl_predictmove", "1", CVAR_ARCHIVE};
 cvar_t cl_move_redundancy = {"cl_move_redundancy", "3", CVAR_ARCHIVE};
+cvar_t cl_move_packetdup = {"cl_move_packetdup", "0", CVAR_ARCHIVE};
 cvar_t cl_nopred = {"cl_nopred", "0", CVAR_NONE};
 
 cvar_t cl_movespeedkey = {"cl_movespeedkey", "2.0", CVAR_NONE};
@@ -372,16 +373,69 @@ void CL_BaseMove(usercmd_t *cmd) {
 CL_SendMove
 ==============
 */
+static void CL_WriteUsercmd(sizebuf_t *buf, const usercmd_t *histcmd) {
+  int i;
+  int extbits = 0;
+  int msec;
+
+  if (histcmd->vr_active)
+    extbits |= MOVEEXT_VR;
+  if (histcmd->trusted_active)
+    extbits |= MOVEEXT_TRUSTED;
+
+  msec = (int)(histcmd->seconds * 1000.0f + 0.5f);
+  msec = CLAMP(1, msec, 255);
+
+  MSG_WriteByte(buf, msec);
+  MSG_WriteFloat(buf, histcmd->servertime);
+
+  for (i = 0; i < 3; i++)
+    MSG_WriteAngle16(buf, histcmd->viewangles[i], cl.protocolflags);
+
+  MSG_WriteShort(buf, histcmd->forwardmove);
+  MSG_WriteShort(buf, histcmd->sidemove);
+  MSG_WriteShort(buf, histcmd->upmove);
+  MSG_WriteByte(buf, histcmd->buttons);
+  MSG_WriteByte(buf, histcmd->impulse);
+  MSG_WriteByte(buf, extbits);
+
+  if (extbits & MOVEEXT_VR) {
+    MSG_WriteFloat(buf, histcmd->vr_handpos[0]);
+    MSG_WriteFloat(buf, histcmd->vr_handpos[1]);
+    MSG_WriteFloat(buf, histcmd->vr_handpos[2]);
+    MSG_WriteFloat(buf, histcmd->vr_handrot[0]);
+    MSG_WriteFloat(buf, histcmd->vr_handrot[1]);
+    MSG_WriteFloat(buf, histcmd->vr_handrot[2]);
+    MSG_WriteFloat(buf, histcmd->vr_roomscalemove[0]);
+    MSG_WriteFloat(buf, histcmd->vr_roomscalemove[1]);
+    MSG_WriteFloat(buf, histcmd->vr_roomscalemove[2]);
+  }
+
+  if (extbits & MOVEEXT_TRUSTED) {
+    MSG_WriteFloat(buf, histcmd->trusted_origin[0]);
+    MSG_WriteFloat(buf, histcmd->trusted_origin[1]);
+    MSG_WriteFloat(buf, histcmd->trusted_origin[2]);
+    MSG_WriteFloat(buf, histcmd->trusted_velocity[0]);
+    MSG_WriteFloat(buf, histcmd->trusted_velocity[1]);
+    MSG_WriteFloat(buf, histcmd->trusted_velocity[2]);
+  }
+}
+
 void CL_SendMove(const usercmd_t *cmd) {
   int seq;
   int start;
   int redundancy;
   int s;
+  int i;
+  int count;
+  int dup;
+  int sendseqs[MOVE_BUNDLE_MAX];
+  int flags;
   usercmd_t sendcmd;
   sizebuf_t buf;
-  byte data[1024];
+  byte data[MAX_DATAGRAM];
 
-  buf.maxsize = 1024;
+  buf.maxsize = sizeof(data);
   buf.cursize = 0;
   buf.data = data;
 
@@ -474,8 +528,8 @@ void CL_SendMove(const usercmd_t *cmd) {
   redundancy = (int)cl_move_redundancy.value;
   if (redundancy < 0)
     redundancy = 0;
-  if (redundancy > 8)
-    redundancy = 8;
+  if (redundancy > MOVE_BUNDLE_MAX - 1)
+    redundancy = MOVE_BUNDLE_MAX - 1;
 
   start = seq - redundancy;
   if (start < 2)
@@ -485,59 +539,62 @@ void CL_SendMove(const usercmd_t *cmd) {
   if (start > seq)
     start = seq;
 
+  count = 0;
   for (s = start; s <= seq; s++) {
     const usercmd_t *histcmd = &cl.movecmds[s & (CL_MOVE_HISTORY - 1)];
-    int i;
-    int extbits = 0;
-
     if (histcmd->sequence != s)
       continue;
+    if (count < MOVE_BUNDLE_MAX)
+      sendseqs[count++] = s;
+  }
 
-    if (histcmd->vr_active)
-      extbits |= MOVEEXT_VR;
-    if (histcmd->trusted_active)
-      extbits |= MOVEEXT_TRUSTED;
+  if (!count) {
+    sendseqs[count++] = seq;
+  }
 
-    MSG_WriteByte(&buf, clc_move);
-    MSG_WriteShort(&buf, histcmd->sequence & 0xffff);
-    MSG_WriteFloat(&buf, histcmd->servertime);
+  flags = 0;
+  if (cl.net_snapshot_have)
+    flags |= MOVE_BUNDLE_SNAPSHOTACK;
 
-    for (i = 0; i < 3; i++)
-      MSG_WriteAngle16(&buf, histcmd->viewangles[i], cl.protocolflags);
+  MSG_WriteByte(&buf, clc_move);
+  MSG_WriteShort(&buf, seq & 0xffff);
+  MSG_WriteByte(&buf, count);
+  MSG_WriteByte(&buf, flags);
+  if (flags & MOVE_BUNDLE_SNAPSHOTACK) {
+    MSG_WriteShort(&buf, cl.net_snapshot_sequence & 0xffff);
+    cl.net_snapshot_acks_sent++;
+  }
 
-    MSG_WriteShort(&buf, histcmd->forwardmove);
-    MSG_WriteShort(&buf, histcmd->sidemove);
-    MSG_WriteShort(&buf, histcmd->upmove);
-    MSG_WriteByte(&buf, histcmd->buttons);
-    MSG_WriteByte(&buf, histcmd->impulse);
-    MSG_WriteByte(&buf, extbits);
+  for (i = 0; i < count; i++) {
+    const usercmd_t *histcmd = &cl.movecmds[sendseqs[i] & (CL_MOVE_HISTORY - 1)];
+    CL_WriteUsercmd(&buf, histcmd);
+  }
 
-    if (extbits & MOVEEXT_VR) {
-      MSG_WriteFloat(&buf, histcmd->vr_handpos[0]);
-      MSG_WriteFloat(&buf, histcmd->vr_handpos[1]);
-      MSG_WriteFloat(&buf, histcmd->vr_handpos[2]);
-      MSG_WriteFloat(&buf, histcmd->vr_handrot[0]);
-      MSG_WriteFloat(&buf, histcmd->vr_handrot[1]);
-      MSG_WriteFloat(&buf, histcmd->vr_handrot[2]);
-      MSG_WriteFloat(&buf, histcmd->vr_roomscalemove[0]);
-      MSG_WriteFloat(&buf, histcmd->vr_roomscalemove[1]);
-      MSG_WriteFloat(&buf, histcmd->vr_roomscalemove[2]);
-    }
+  if (buf.overflowed) {
+    Con_Printf("CL_SendMove: move bundle overflowed (%d cmds)\n", count);
+    return;
+  }
 
-    if (extbits & MOVEEXT_TRUSTED) {
-      MSG_WriteFloat(&buf, histcmd->trusted_origin[0]);
-      MSG_WriteFloat(&buf, histcmd->trusted_origin[1]);
-      MSG_WriteFloat(&buf, histcmd->trusted_origin[2]);
-      MSG_WriteFloat(&buf, histcmd->trusted_velocity[0]);
-      MSG_WriteFloat(&buf, histcmd->trusted_velocity[1]);
-      MSG_WriteFloat(&buf, histcmd->trusted_velocity[2]);
+  dup = (int)cl_move_packetdup.value;
+  dup = CLAMP(0, dup, 3);
+
+  for (i = 0; i <= dup; i++) {
+    if (NET_SendUnreliableMessage(cls.netcon, &buf) == -1) {
+      Con_Printf("CL_SendMove: lost server connection\n");
+      CL_Disconnect();
+      return;
     }
   }
 
-  if (NET_SendUnreliableMessage(cls.netcon, &buf) == -1) {
-    Con_Printf("CL_SendMove: lost server connection\n");
-    CL_Disconnect();
-  }
+  cl.net_move_packets_sent += dup + 1;
+  cl.net_move_dup_packets_sent += dup;
+  cl.net_move_cmds_sent += count;
+  cl.net_move_last_packet_cmds = count;
+
+  if (net_lagdebug.value && (count > 1 || dup > 0))
+    Con_DPrintf("net_lagdebug: client sent move bundle seq=%d cmds=%d dup=%d acksnap=%d bytes=%d\n",
+                seq, count, dup, (flags & MOVE_BUNDLE_SNAPSHOTACK) ? cl.net_snapshot_sequence : -1,
+                buf.cursize);
 }
 
 /*

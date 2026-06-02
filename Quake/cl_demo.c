@@ -440,6 +440,13 @@ void CL_PlayDemo_f (void)
 		return;
 	}
 
+	if (!cl_startdemos.value && Cmd_IsExecutingConfig())
+	{
+		cls.demonum = -1;
+		Con_DPrintf ("Skipping startup demo %s because cl_startdemos is 0.\n", Cmd_Argv(1));
+		return;
+	}
+
 // disconnect from server
 	CL_Disconnect ();
 
@@ -528,4 +535,3 @@ void CL_TimeDemo_f (void)
 	cls.td_startframe = host_framecount;
 	cls.td_lastframe = -1;	// get a new message this frame
 }
-

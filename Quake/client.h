@@ -154,6 +154,26 @@ typedef struct
 	usercmd_t	pendingcmd;		// accumulated state from mice+joysticks.
 	int			ackedmovemessages;	// last sequenced move accepted by server
 	usercmd_t	movecmds[CL_MOVE_HISTORY];
+	int			net_move_packets_sent;
+	int			net_move_cmds_sent;
+	int			net_move_dup_packets_sent;
+	int			net_move_last_packet_cmds;
+	int			net_move_acks;
+	int			net_move_stale_acks;
+	int			net_snapshot_sequence;
+	int			net_snapshot_packets;
+	int			net_snapshot_drops;
+	int			net_snapshot_acks_sent;
+	int			net_snapshot_last_part;
+	qboolean	net_snapshot_have;
+	double		net_last_diag_time;
+	qboolean	predstate_valid;
+	int			predstate_sequence;
+	int			predstate_movetype;
+	int			predstate_flags;
+	vec3_t		predstate_velocity;
+	vec3_t		predstate_mins;
+	vec3_t		predstate_maxs;
 
 // information for local display
 	int			stats[MAX_CL_STATS];	// health, etc
@@ -265,6 +285,7 @@ extern	cvar_t	cl_desktop_vanilla_run;
 extern	cvar_t	cl_trusted_clientmove;
 extern	cvar_t	cl_predictmove;
 extern	cvar_t	cl_move_redundancy;
+extern	cvar_t	cl_move_packetdup;
 extern	cvar_t	cl_nopred;
 
 extern	cvar_t	cl_movespeedkey;

@@ -97,7 +97,8 @@ const char *svc_strings[] =
 	"svc_levelcompleted", // 54
 	"svc_backtolobby", // 55
 	"svc_localsound", // 56
-	"svc_moveack" // 57
+	"svc_moveack", // 57
+	"svc_snapshot" // 58
 };
 #define	NUM_SVC_STRINGS	(sizeof(svc_strings) / sizeof(svc_strings[0]))
 
@@ -1064,6 +1065,13 @@ static void CL_ParseMoveAck (void)
 {
 	int ack16;
 	int ack;
+	int flags;
+	int movetype;
+	int i;
+	qboolean use_predstate;
+	vec3_t velocity;
+	vec3_t mins;
+	vec3_t maxs;
 
 	ack16 = MSG_ReadShort () & 0xffff;
 	if (ack16 == 0xffff && cl.ackedmovemessages < 0)
@@ -1080,7 +1088,97 @@ static void CL_ParseMoveAck (void)
 	}
 
 	if (ack > cl.ackedmovemessages)
+	{
 		cl.ackedmovemessages = ack;
+		cl.net_move_acks++;
+		use_predstate = true;
+	}
+	else if (ack == cl.ackedmovemessages)
+		use_predstate = true;
+	else
+	{
+		cl.net_move_stale_acks++;
+		use_predstate = false;
+	}
+
+	flags = MSG_ReadByte ();
+	movetype = MSG_ReadByte ();
+	for (i = 0; i < 3; i++)
+		velocity[i] = MSG_ReadShort () * (1.0f / 8.0f);
+	for (i = 0; i < 3; i++)
+		mins[i] = MSG_ReadChar ();
+	for (i = 0; i < 3; i++)
+		maxs[i] = MSG_ReadChar ();
+
+	if (!use_predstate)
+	{
+		if (net_lagdebug.value)
+			Con_DPrintf ("net_lagdebug: ignored stale prediction state ack=%d current=%d\n",
+				ack, cl.ackedmovemessages);
+		return;
+	}
+
+	cl.predstate_flags = flags;
+	cl.predstate_valid = (flags & PREDINFO_VALID) != 0;
+	cl.predstate_sequence = ack;
+	cl.predstate_movetype = movetype;
+	for (i = 0; i < 3; i++)
+		cl.predstate_velocity[i] = velocity[i];
+	for (i = 0; i < 3; i++)
+		cl.predstate_mins[i] = mins[i];
+	for (i = 0; i < 3; i++)
+		cl.predstate_maxs[i] = maxs[i];
+}
+
+/*
+=====================
+CL_ParseSnapshotHeader
+=====================
+*/
+static void CL_ParseSnapshotHeader (void)
+{
+	int seq16;
+	int seq;
+	int part;
+	int flags;
+	int firstent;
+	int totalents;
+
+	seq16 = MSG_ReadShort () & 0xffff;
+	if (!cl.net_snapshot_have)
+		seq = seq16;
+	else
+	{
+		seq = (cl.net_snapshot_sequence & ~0xffff) | seq16;
+		if (seq <= cl.net_snapshot_sequence - 0x8000)
+			seq += 0x10000;
+		else if (seq > cl.net_snapshot_sequence + 0x8000)
+			seq -= 0x10000;
+	}
+
+	part = MSG_ReadByte ();
+	flags = MSG_ReadByte ();
+	firstent = MSG_ReadShort ();
+	totalents = MSG_ReadShort ();
+
+	if (cl.net_snapshot_have && seq > cl.net_snapshot_sequence + 1)
+	{
+		cl.net_snapshot_drops += seq - cl.net_snapshot_sequence - 1;
+		if (net_lagdebug.value)
+			Con_DPrintf ("net_lagdebug: client snapshot sequence gap old=%d new=%d missing=%d\n",
+				cl.net_snapshot_sequence, seq, seq - cl.net_snapshot_sequence - 1);
+	}
+	if (cl.net_snapshot_have && seq == cl.net_snapshot_sequence &&
+		part != cl.net_snapshot_last_part + 1 && net_lagdebug.value)
+	{
+		Con_DPrintf ("net_lagdebug: client snapshot part jump seq=%d oldpart=%d newpart=%d flags=%d firstent=%d total=%d\n",
+			seq, cl.net_snapshot_last_part, part, flags, firstent, totalents);
+	}
+
+	cl.net_snapshot_have = true;
+	cl.net_snapshot_sequence = seq;
+	cl.net_snapshot_last_part = part;
+	cl.net_snapshot_packets++;
 }
 
 /*
@@ -1172,6 +1270,10 @@ void CL_ParseServerMessage (void)
 
 		case svc_moveack:
 			CL_ParseMoveAck ();
+			break;
+
+		case svc_snapshot:
+			CL_ParseSnapshotHeader ();
 			break;
 
 		case svc_clientdata:

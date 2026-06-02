@@ -46,6 +46,7 @@ extern cvar_t r_lerpmodels;
 extern cvar_t r_lerpmove;
 extern cvar_t r_nolerp_list;
 extern cvar_t r_noshadow_list;
+extern cvar_t cl_coop_nametags;
 //johnfitz
 extern cvar_t gl_zfix; // QuakeSpasm z-fighting fix
 
@@ -192,6 +193,7 @@ void R_Init (void)
 	Cvar_RegisterVariable (&gl_flashblend);
 	Cvar_RegisterVariable (&gl_playermip);
 	Cvar_RegisterVariable (&gl_nocolors);
+	Cvar_RegisterVariable (&cl_coop_nametags);
 
 	//johnfitz -- new cvars
 	Cvar_RegisterVariable (&r_stereo);

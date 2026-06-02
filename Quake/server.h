@@ -48,6 +48,17 @@ typedef struct
 	qboolean	loadgame;			// handle connections specially
 	qboolean	nomonsters;			// server started with 'nomonsters' cvar active
 
+	qboolean	loadgame_client_saved[MAX_SCOREBOARD];
+	byte		*loadgame_client_edicts;
+
+	qboolean	coop_autosave_initialized;
+	qboolean	coop_autosave_mapstart_done;
+	int			coop_autosave_next_slot;
+	double		coop_autosave_last_time;
+	int			coop_autosave_last_secrets;
+	int			coop_autosave_last_kill_bucket;
+	int			coop_autosave_last_serverflags;
+
 	int			lastcheck;			// used by PF_checkclient
 	double		lastchecktime;
 
@@ -118,6 +129,18 @@ typedef struct client_s
 	qboolean		input_stale;
 	qboolean		moveext;
 	int				lastmovemessage;
+	int				net_move_packets_received;
+	int				net_move_cmds_received;
+	int				net_move_cmds_accepted;
+	int				net_move_cmds_stale;
+	int				net_move_bundle_max;
+	int				net_move_last_bundle;
+	int				net_move_last_gap;
+	int				net_snapshot_sequence;
+	int				net_snapshot_ack;
+	int				net_snapshot_packets_sent;
+	int				net_snapshot_split_packets;
+	int				net_snapshot_unsent_entities;
 
 	sizebuf_t		message;			// can be added to at any time,
 										// copied and clear once per frame
@@ -233,9 +256,15 @@ extern cvar_t sv_coop_revive_health;
 extern cvar_t sv_coop_revive_range;
 extern cvar_t sv_coop_respawn_near_player;
 extern cvar_t sv_coop_respawn_keep_weapons_ammo;
+extern cvar_t sv_coop_autosave;
+extern cvar_t sv_coop_autosave_slots;
+extern cvar_t sv_coop_autosave_min_interval;
+extern cvar_t sv_coop_autosave_kill_interval;
 extern cvar_t sv_coop_trusted_clientmove;
 extern cvar_t sv_coop_trusted_clientmove_maxdelta;
 extern cvar_t sv_coop_predictmove;
+extern cvar_t sv_vr_jump_velocity;
+extern cvar_t sv_snapshot_splits;
 extern cvar_t sv_save_multiplayer;
 extern cvar_t sv_cmdfile;
 extern cvar_t fraglimit;

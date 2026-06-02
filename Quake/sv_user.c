@@ -454,6 +454,10 @@ the angle fields specify an exact angular motion in degrees
 */
 void SV_ClientThink(void) {
   vec3_t v_angle;
+  float saved_host_frametime;
+
+  cmd = host_client->cmd;
+  host_client->cmd.seconds = 0;
 
   if (sv_player->v.movetype == MOVETYPE_NONE)
     return;
@@ -474,7 +478,9 @@ void SV_ClientThink(void) {
   //
   // angles
   // show 1/3 the pitch angle and all the roll angle
-  cmd = host_client->cmd;
+  saved_host_frametime = host_frametime;
+  if (cmd.seconds > 0)
+    host_frametime = CLAMP(0.001f, cmd.seconds, 0.1f);
   angles = sv_player->v.angles;
 
   VectorAdd(sv_player->v.v_angle, sv_player->v.punchangle, v_angle);
@@ -486,6 +492,7 @@ void SV_ClientThink(void) {
 
   if ((int)sv_player->v.flags & FL_WATERJUMP) {
     SV_WaterJump();
+    host_frametime = saved_host_frametime;
     return;
   }
   //
@@ -500,6 +507,7 @@ void SV_ClientThink(void) {
   else
     SV_AirMove();
   // johnfitz
+  host_frametime = saved_host_frametime;
 }
 
 /*
@@ -507,120 +515,214 @@ void SV_ClientThink(void) {
 SV_ReadClientMove
 ===================
 */
-void SV_ReadClientMove(usercmd_t *move) {
-  int i;
-  int bits;
-  int extbits;
+static int SV_ExpandClientSequence(int sequence16) {
   int sequence;
-  int sequence16;
-  int impulse;
-  float servertime;
-  qboolean stale;
-  usercmd_t readcmd;
 
-  Q_memset(&readcmd, 0, sizeof(readcmd));
-
-  sequence16 = MSG_ReadShort() & 0xffff;
+  sequence16 &= 0xffff;
   if (host_client->lastmovemessage < 0)
-    sequence = sequence16;
-  else {
-    sequence = (host_client->lastmovemessage & ~0xffff) | sequence16;
-    if (sequence <= host_client->lastmovemessage - 0x8000)
-      sequence += 0x10000;
-    else if (sequence > host_client->lastmovemessage + 0x8000)
-      sequence -= 0x10000;
-  }
+    return sequence16;
 
-  readcmd.sequence = sequence;
-  servertime = MSG_ReadFloat();
-  readcmd.servertime = servertime;
+  sequence = (host_client->lastmovemessage & ~0xffff) | sequence16;
+  if (sequence <= host_client->lastmovemessage - 0x8000)
+    sequence += 0x10000;
+  else if (sequence > host_client->lastmovemessage + 0x8000)
+    sequence -= 0x10000;
 
-  for (i = 0; i < 3; i++) {
-    readcmd.viewangles[i] = MSG_ReadAngle16(sv.protocolflags);
-  }
+  return sequence;
+}
 
-  readcmd.forwardmove = MSG_ReadShort();
-  readcmd.sidemove = MSG_ReadShort();
-  readcmd.upmove = MSG_ReadShort();
+static int SV_ExpandSnapshotAck(int ack16) {
+  int ack;
 
-  bits = MSG_ReadByte();
-  readcmd.buttons = bits;
+  ack16 &= 0xffff;
+  if (host_client->net_snapshot_ack < 0)
+    return ack16;
 
-  impulse = MSG_ReadByte();
-  readcmd.impulse = impulse;
+  ack = (host_client->net_snapshot_ack & ~0xffff) | ack16;
+  if (ack <= host_client->net_snapshot_ack - 0x8000)
+    ack += 0x10000;
+  else if (ack > host_client->net_snapshot_ack + 0x8000)
+    ack -= 0x10000;
+
+  return ack;
+}
+
+static qboolean SV_ReadUsercmd(usercmd_t *readcmd, int sequence) {
+  int i;
+  int extbits;
+  int msec;
+
+  Q_memset(readcmd, 0, sizeof(*readcmd));
+  readcmd->sequence = sequence;
+  msec = MSG_ReadByte();
+  readcmd->seconds = CLAMP(1, msec, 255) * 0.001f;
+  readcmd->servertime = MSG_ReadFloat();
+
+  for (i = 0; i < 3; i++)
+    readcmd->viewangles[i] = MSG_ReadAngle16(sv.protocolflags);
+
+  readcmd->forwardmove = MSG_ReadShort();
+  readcmd->sidemove = MSG_ReadShort();
+  readcmd->upmove = MSG_ReadShort();
+  readcmd->buttons = MSG_ReadByte();
+  readcmd->impulse = MSG_ReadByte();
 
   extbits = MSG_ReadByte();
   if (extbits & ~(MOVEEXT_VR | MOVEEXT_TRUSTED)) {
     msg_badread = true;
-    return;
+    return false;
   }
 
   if (extbits & MOVEEXT_VR) {
     if (net_message.cursize - msg_readcount < 9 * 4) {
       msg_badread = true;
-      return;
+      return false;
     }
 
-    readcmd.vr_active = true;
-    readcmd.vr_handpos[0] = MSG_ReadFloat();
-    readcmd.vr_handpos[1] = MSG_ReadFloat();
-    readcmd.vr_handpos[2] = MSG_ReadFloat();
-    readcmd.vr_handrot[0] = MSG_ReadFloat();
-    readcmd.vr_handrot[1] = MSG_ReadFloat();
-    readcmd.vr_handrot[2] = MSG_ReadFloat();
-    readcmd.vr_roomscalemove[0] = MSG_ReadFloat();
-    readcmd.vr_roomscalemove[1] = MSG_ReadFloat();
-    readcmd.vr_roomscalemove[2] = MSG_ReadFloat();
+    readcmd->vr_active = true;
+    readcmd->vr_handpos[0] = MSG_ReadFloat();
+    readcmd->vr_handpos[1] = MSG_ReadFloat();
+    readcmd->vr_handpos[2] = MSG_ReadFloat();
+    readcmd->vr_handrot[0] = MSG_ReadFloat();
+    readcmd->vr_handrot[1] = MSG_ReadFloat();
+    readcmd->vr_handrot[2] = MSG_ReadFloat();
+    readcmd->vr_roomscalemove[0] = MSG_ReadFloat();
+    readcmd->vr_roomscalemove[1] = MSG_ReadFloat();
+    readcmd->vr_roomscalemove[2] = MSG_ReadFloat();
   }
 
   if (extbits & MOVEEXT_TRUSTED) {
     if (net_message.cursize - msg_readcount < 6 * 4) {
       msg_badread = true;
       SV_ClearTrustedClientMove(host_client);
+      return false;
+    }
+
+    readcmd->trusted_active = true;
+    readcmd->trusted_origin[0] = MSG_ReadFloat();
+    readcmd->trusted_origin[1] = MSG_ReadFloat();
+    readcmd->trusted_origin[2] = MSG_ReadFloat();
+    readcmd->trusted_velocity[0] = MSG_ReadFloat();
+    readcmd->trusted_velocity[1] = MSG_ReadFloat();
+    readcmd->trusted_velocity[2] = MSG_ReadFloat();
+  }
+
+  return !msg_badread;
+}
+
+void SV_ReadClientMove(usercmd_t *move) {
+  int i;
+  int latest16;
+  int latest;
+  int first;
+  int count;
+  int flags;
+  int accepted;
+  int bundled_buttons;
+  int bundled_impulse;
+  float bundled_seconds;
+  vec3_t bundled_roomscale;
+  usercmd_t readcmd;
+  usercmd_t mergedcmd;
+
+  latest16 = MSG_ReadShort() & 0xffff;
+  count = MSG_ReadByte();
+  flags = MSG_ReadByte();
+
+  if (count <= 0 || count > MOVE_BUNDLE_MAX ||
+      (flags & ~MOVE_BUNDLE_SNAPSHOTACK)) {
+    msg_badread = true;
+    return;
+  }
+
+  if (flags & MOVE_BUNDLE_SNAPSHOTACK) {
+    int snapshot_ack = SV_ExpandSnapshotAck(MSG_ReadShort() & 0xffff);
+    if (snapshot_ack > host_client->net_snapshot_ack)
+      host_client->net_snapshot_ack = snapshot_ack;
+  }
+
+  latest = SV_ExpandClientSequence(latest16);
+  first = latest - count + 1;
+  accepted = 0;
+  bundled_buttons = 0;
+  bundled_impulse = 0;
+  bundled_seconds = 0;
+  VectorCopy(vec3_origin, bundled_roomscale);
+  Q_memset(&mergedcmd, 0, sizeof(mergedcmd));
+
+  host_client->net_move_packets_received++;
+  host_client->net_move_cmds_received += count;
+  host_client->net_move_last_bundle = count;
+  if (count > host_client->net_move_bundle_max)
+    host_client->net_move_bundle_max = count;
+
+  for (i = 0; i < count; i++) {
+    int sequence = first + i;
+    int gap;
+
+    if (!SV_ReadUsercmd(&readcmd, sequence))
       return;
+
+    if (host_client->lastmovemessage >= 0 &&
+        sequence <= host_client->lastmovemessage) {
+      host_client->net_move_cmds_stale++;
+      if (net_lagdebug.value) {
+        Con_DPrintf("net_lagdebug: dropping stale bundled move from %s seq=%d last=%d\n",
+                    host_client->name, sequence, host_client->lastmovemessage);
+      }
+      continue;
     }
 
-    readcmd.trusted_active = true;
-    readcmd.trusted_origin[0] = MSG_ReadFloat();
-    readcmd.trusted_origin[1] = MSG_ReadFloat();
-    readcmd.trusted_origin[2] = MSG_ReadFloat();
-    readcmd.trusted_velocity[0] = MSG_ReadFloat();
-    readcmd.trusted_velocity[1] = MSG_ReadFloat();
-    readcmd.trusted_velocity[2] = MSG_ReadFloat();
-  }
-
-  if (msg_badread)
-    return;
-
-  stale = host_client->lastmovemessage >= 0 &&
-          sequence <= host_client->lastmovemessage;
-  if (stale) {
-    if (net_lagdebug.value) {
-      Con_DPrintf("net_lagdebug: dropping stale move from %s seq=%d last=%d\n",
-                  host_client->name, sequence, host_client->lastmovemessage);
+    gap = host_client->lastmovemessage >= 0 ?
+          sequence - host_client->lastmovemessage - 1 : 0;
+    if (gap > 0) {
+      host_client->net_move_last_gap = gap;
+      if (net_lagdebug.value)
+        Con_DPrintf("net_lagdebug: accepted move gap from %s gap=%d seq=%d last=%d bundle=%d\n",
+                    host_client->name, gap, sequence,
+                    host_client->lastmovemessage, count);
     }
-    return;
+
+    host_client->lastmovemessage = sequence;
+    mergedcmd = readcmd;
+    bundled_seconds += readcmd.seconds;
+    bundled_buttons |= readcmd.buttons;
+    if (readcmd.impulse)
+      bundled_impulse = readcmd.impulse;
+    if (readcmd.vr_active)
+      VectorAdd(bundled_roomscale, readcmd.vr_roomscalemove, bundled_roomscale);
+    accepted++;
   }
+
+  if (!accepted)
+    return;
 
   host_client->moveext = true;
-  host_client->lastmovemessage = sequence;
-  *move = readcmd;
+  host_client->net_move_cmds_accepted += accepted;
+  mergedcmd.buttons |= bundled_buttons;
+  if (bundled_impulse)
+    mergedcmd.impulse = bundled_impulse;
+  if (bundled_seconds > 0)
+    mergedcmd.seconds = CLAMP(0.001f, bundled_seconds, 0.1f);
+  if (mergedcmd.vr_active)
+    VectorCopy(bundled_roomscale, mergedcmd.vr_roomscalemove);
+  *move = mergedcmd;
 
   host_client->ping_times[host_client->num_pings % NUM_PING_TIMES] =
-      qcvm->time - servertime;
+      qcvm->time - mergedcmd.servertime;
   host_client->num_pings++;
 
-  VectorCopy(readcmd.viewangles, host_client->edict->v.v_angle);
-  host_client->edict->v.button0 = bits & 1;
-  host_client->edict->v.button2 = (bits & 2) >> 1;
-  if (impulse)
-    host_client->edict->v.impulse = impulse;
+  VectorCopy(mergedcmd.viewangles, host_client->edict->v.v_angle);
+  host_client->edict->v.button0 = mergedcmd.buttons & 1;
+  host_client->edict->v.button2 = (mergedcmd.buttons & 2) >> 1;
+  if (mergedcmd.impulse)
+    host_client->edict->v.impulse = mergedcmd.impulse;
 
-  if (readcmd.vr_active) {
+  if (mergedcmd.vr_active) {
     host_client->is_vr_client = true;
-    VectorCopy(readcmd.vr_handpos, host_client->vr_handpos);
-    VectorCopy(readcmd.vr_handrot, host_client->vr_handrot);
-    VectorCopy(readcmd.vr_roomscalemove, host_client->vr_roomscalemove);
+    VectorCopy(mergedcmd.vr_handpos, host_client->vr_handpos);
+    VectorCopy(mergedcmd.vr_handrot, host_client->vr_handrot);
+    VectorCopy(mergedcmd.vr_roomscalemove, host_client->vr_roomscalemove);
     VectorAdd(host_client->vr_roomscale_accum, host_client->vr_roomscalemove,
               host_client->vr_roomscale_accum);
   } else {
@@ -628,10 +730,10 @@ void SV_ReadClientMove(usercmd_t *move) {
     VectorCopy(vec3_origin, host_client->vr_roomscalemove);
   }
 
-  if (readcmd.trusted_active) {
+  if (mergedcmd.trusted_active) {
     host_client->trusted_clientmove_valid = true;
-    VectorCopy(readcmd.trusted_origin, host_client->trusted_clientmove_origin);
-    VectorCopy(readcmd.trusted_velocity, host_client->trusted_clientmove_velocity);
+    VectorCopy(mergedcmd.trusted_origin, host_client->trusted_clientmove_origin);
+    VectorCopy(mergedcmd.trusted_velocity, host_client->trusted_clientmove_velocity);
   } else {
     SV_ClearTrustedClientMove(host_client);
   }
@@ -679,6 +781,7 @@ static void SV_ClearStaleClientInput(client_t *client) {
   client->cmd.forwardmove = 0;
   client->cmd.sidemove = 0;
   client->cmd.upmove = 0;
+  client->cmd.seconds = 0;
   client->edict->v.button0 = 0;
   client->edict->v.button2 = 0;
   client->edict->v.impulse = 0;
