@@ -82,17 +82,6 @@ void SV_ResetClientMoveState(client_t *client) {
   client->net_snapshot_packets_sent = 0;
   client->net_snapshot_split_packets = 0;
   client->net_snapshot_unsent_entities = 0;
-  client->net_snapshot_updates_sent = 0;
-  client->net_snapshot_last_packets = 0;
-  client->net_snapshot_last_bytes = 0;
-  client->net_snapshot_max_bytes = 0;
-  client->net_snapshot_max_packets = 0;
-  client->net_snapshot_ack_lag_max = 0;
-  client->net_snapshot_adaptive_dup = 0;
-  client->net_snapshot_part_ack_requests = 0;
-  client->net_snapshot_part_retransmits = 0;
-  client->net_snapshot_last_summary_time = 0;
-  Q_memset(client->net_snapshot_history, 0, sizeof(client->net_snapshot_history));
 
   client->is_vr_client = false;
   VectorCopy(vec3_origin, client->vr_handpos);
@@ -677,7 +666,7 @@ void SV_ReadClientMove(usercmd_t *move) {
   flags = MSG_ReadByte();
 
   if (count <= 0 || count > MOVE_BUNDLE_MAX ||
-      (flags & ~(MOVE_BUNDLE_SNAPSHOTACK | MOVE_BUNDLE_SNAPSHOTPARTACK))) {
+      (flags & ~MOVE_BUNDLE_SNAPSHOTACK)) {
     msg_badread = true;
     return;
   }
@@ -686,13 +675,6 @@ void SV_ReadClientMove(usercmd_t *move) {
     int snapshot_ack = SV_ExpandSnapshotAck(MSG_ReadShort() & 0xffff);
     if (snapshot_ack > host_client->net_snapshot_ack)
       host_client->net_snapshot_ack = snapshot_ack;
-  }
-  if (flags & MOVE_BUNDLE_SNAPSHOTPARTACK) {
-    int snapshot_seq = SV_ExpandSnapshotAck(MSG_ReadShort() & 0xffff);
-    unsigned int part_mask = (unsigned int)MSG_ReadLong();
-
-    if (!msg_badread && part_mask)
-      SV_HandleSnapshotPartAck(host_client, snapshot_seq, part_mask);
   }
 
   latest = SV_ExpandClientSequence(latest16);

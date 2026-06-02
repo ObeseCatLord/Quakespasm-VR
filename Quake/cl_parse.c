@@ -1140,27 +1140,13 @@ typedef struct
 	qboolean	active;
 	struct qsocket_s	*netcon;
 	int		seq;
-	int		last_part;
+	int		next_part;
 	int		totalents;
 	int		cursize;
-	unsigned int	received_mask;
-	int		part_offsets[SNAPSHOT_PART_MAX];
-	int		part_sizes[SNAPSHOT_PART_MAX];
 	byte		data[MAX_DATAGRAM];
 } cl_snapshot_assembly_t;
 
 static cl_snapshot_assembly_t cl_snapshot_assembly;
-
-qboolean CL_GetSnapshotPartAck (int *sequence, unsigned int *part_mask)
-{
-	if (!cl_snapshot_assembly.active || !cl_snapshot_assembly.received_mask)
-		return false;
-	if (sequence)
-		*sequence = cl_snapshot_assembly.seq;
-	if (part_mask)
-		*part_mask = cl_snapshot_assembly.received_mask;
-	return true;
-}
 
 static int CL_ExpandSnapshotSequence (int seq16)
 {
@@ -1201,7 +1187,6 @@ static qboolean CL_PrepareSnapshotMessage (void)
 	byte	*data;
 	int	seq, part, flags, firstent, totalents;
 	int	payload_offset, payload_size;
-	unsigned int	part_bit;
 
 	if (net_message.cursize <= 0 || net_message.data[0] != svc_snapshot)
 		return true;
@@ -1244,44 +1229,24 @@ static qboolean CL_PrepareSnapshotMessage (void)
 		return false;
 	}
 
-	if (part < 0 || part >= SNAPSHOT_PART_MAX)
-	{
-		if (net_lagdebug.value)
-			Con_Printf ("net_lagdebug: dropping snapshot part outside reassembly window seq=%d part=%d max=%d flags=%d\n",
-				seq, part, SNAPSHOT_PART_MAX, flags);
-		cl.net_snapshot_part_jumps++;
-		if (cl_extrapolate_adaptive.value)
-			cl.net_snapshot_smooth_until = realtime +
-				q_max (0.0, cl_extrapolate_adaptive_time.value);
-		if (cl_snapshot_assembly.active && cl_snapshot_assembly.seq == seq)
-		{
-			cl.net_snapshot_incomplete++;
-			CL_ResetSnapshotAssembly ();
-		}
-		return false;
-	}
-
 	if (!cl_snapshot_assembly.active || cl_snapshot_assembly.seq != seq)
 	{
 		if (cl_snapshot_assembly.active && net_lagdebug.value)
-			Con_DPrintf ("net_lagdebug: discarding incomplete snapshot seq=%d mask=0x%08x last=%d for newer seq=%d\n",
-				cl_snapshot_assembly.seq, cl_snapshot_assembly.received_mask,
-				cl_snapshot_assembly.last_part, seq);
-		if (cl_snapshot_assembly.active)
-		{
-			cl.net_snapshot_incomplete++;
-			if (cl_extrapolate_adaptive.value)
-				cl.net_snapshot_smooth_until = realtime +
-					q_max (0.0, cl_extrapolate_adaptive_time.value);
-		}
+			Con_DPrintf ("net_lagdebug: discarding incomplete snapshot seq=%d at part=%d for newer seq=%d\n",
+				cl_snapshot_assembly.seq, cl_snapshot_assembly.next_part, seq);
 		CL_ResetSnapshotAssembly ();
+
+		if (!(flags & SNAPSHOT_FIRST) || part != 0)
+		{
+			if (net_lagdebug.value)
+				Con_DPrintf ("net_lagdebug: ignoring snapshot without first part seq=%d part=%d flags=%d firstent=%d total=%d\n",
+					seq, part, flags, firstent, totalents);
+			return false;
+		}
 
 		if (cl.net_snapshot_have && seq > cl.net_snapshot_sequence + 1)
 		{
 			cl.net_snapshot_drops += seq - cl.net_snapshot_sequence - 1;
-			if (cl_extrapolate_adaptive.value)
-				cl.net_snapshot_smooth_until = realtime +
-					q_max (0.0, cl_extrapolate_adaptive_time.value);
 			if (net_lagdebug.value)
 				Con_DPrintf ("net_lagdebug: client snapshot sequence gap old=%d new=%d missing=%d\n",
 					cl.net_snapshot_sequence, seq,
@@ -1291,32 +1256,26 @@ static qboolean CL_PrepareSnapshotMessage (void)
 		cl_snapshot_assembly.active = true;
 		cl_snapshot_assembly.netcon = cls.netcon;
 		cl_snapshot_assembly.seq = seq;
-		cl_snapshot_assembly.last_part = -1;
+		cl_snapshot_assembly.next_part = 0;
 		cl_snapshot_assembly.totalents = totalents;
 	}
 
-	if (cl_snapshot_assembly.last_part >= 0 && part > cl_snapshot_assembly.last_part)
+	if (part < cl_snapshot_assembly.next_part)
 	{
 		if (net_lagdebug.value)
-			Con_DPrintf ("net_lagdebug: dropping snapshot part past known last seq=%d part=%d last=%d flags=%d firstent=%d total=%d\n",
-				seq, part, cl_snapshot_assembly.last_part, flags,
+			Con_DPrintf ("net_lagdebug: ignoring duplicate snapshot part seq=%d part=%d next=%d flags=%d firstent=%d total=%d\n",
+				seq, part, cl_snapshot_assembly.next_part, flags,
 				firstent, totalents);
-		cl.net_snapshot_part_jumps++;
-		if (cl_extrapolate_adaptive.value)
-			cl.net_snapshot_smooth_until = realtime +
-				q_max (0.0, cl_extrapolate_adaptive_time.value);
-		CL_ResetSnapshotAssembly ();
 		return false;
 	}
 
-	part_bit = 1u << part;
-	if (cl_snapshot_assembly.received_mask & part_bit)
+	if (part != cl_snapshot_assembly.next_part)
 	{
 		if (net_lagdebug.value)
-			Con_DPrintf ("net_lagdebug: ignoring duplicate snapshot part seq=%d part=%d mask=0x%08x flags=%d firstent=%d total=%d\n",
-				seq, part, cl_snapshot_assembly.received_mask, flags,
+			Con_DPrintf ("net_lagdebug: client snapshot part jump seq=%d expected=%d got=%d flags=%d firstent=%d total=%d\n",
+				seq, cl_snapshot_assembly.next_part, part, flags,
 				firstent, totalents);
-		cl.net_snapshot_duplicate_parts++;
+		CL_ResetSnapshotAssembly ();
 		return false;
 	}
 
@@ -1333,54 +1292,20 @@ static qboolean CL_PrepareSnapshotMessage (void)
 
 	memcpy (cl_snapshot_assembly.data + cl_snapshot_assembly.cursize,
 		data + payload_offset, payload_size);
-	cl_snapshot_assembly.part_offsets[part] = cl_snapshot_assembly.cursize;
-	cl_snapshot_assembly.part_sizes[part] = payload_size;
 	cl_snapshot_assembly.cursize += payload_size;
-	cl_snapshot_assembly.received_mask |= part_bit;
-	if (flags & SNAPSHOT_LAST)
-		cl_snapshot_assembly.last_part = part;
+	cl_snapshot_assembly.next_part++;
 
-	if (cl_snapshot_assembly.last_part < 0)
+	if (!(flags & SNAPSHOT_LAST))
 		return false;
 
-	{
-		unsigned int complete_mask;
-		int i;
-		int assembled_size;
-
-		complete_mask = (cl_snapshot_assembly.last_part == 31) ?
-			0xffffffffu : ((1u << (cl_snapshot_assembly.last_part + 1)) - 1u);
-		if ((cl_snapshot_assembly.received_mask & complete_mask) != complete_mask)
-			return false;
-
-		assembled_size = 0;
-		for (i = 0; i <= cl_snapshot_assembly.last_part; i++)
-		{
-			if (assembled_size + cl_snapshot_assembly.part_sizes[i] > net_message.maxsize)
-			{
-				if (net_lagdebug.value)
-					Con_Printf ("net_lagdebug: dropping oversized ordered snapshot seq=%d size=%d add=%d max=%d\n",
-						seq, assembled_size, cl_snapshot_assembly.part_sizes[i],
-						net_message.maxsize);
-				cl.net_snapshot_incomplete++;
-				if (cl_extrapolate_adaptive.value)
-					cl.net_snapshot_smooth_until = realtime +
-						q_max (0.0, cl_extrapolate_adaptive_time.value);
-				CL_ResetSnapshotAssembly ();
-				return false;
-			}
-			memcpy (net_message.data + assembled_size,
-				cl_snapshot_assembly.data + cl_snapshot_assembly.part_offsets[i],
-				cl_snapshot_assembly.part_sizes[i]);
-			assembled_size += cl_snapshot_assembly.part_sizes[i];
-		}
-		net_message.cursize = assembled_size;
-	}
+	if (cl_snapshot_assembly.cursize > 0)
+		memcpy (net_message.data, cl_snapshot_assembly.data,
+			cl_snapshot_assembly.cursize);
+	net_message.cursize = cl_snapshot_assembly.cursize;
 
 	cl.net_snapshot_have = true;
 	cl.net_snapshot_sequence = seq;
-	cl.net_snapshot_last_part = cl_snapshot_assembly.last_part;
-	cl.net_snapshot_reassembled++;
+	cl.net_snapshot_last_part = part;
 
 	CL_ResetSnapshotAssembly ();
 	return true;
