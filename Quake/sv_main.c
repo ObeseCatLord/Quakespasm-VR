@@ -35,6 +35,7 @@ extern cvar_t nomonsters;
 cvar_t sv_maxpacketsize = {"sv_maxpacketsize", "1400", CVAR_NONE}; // 1400 = single IP MTU, avoids UDP fragmentation
 cvar_t sv_snapshot_splits = {"sv_snapshot_splits", "1", CVAR_ARCHIVE};
 cvar_t sv_snapshot_packetdup = {"sv_snapshot_packetdup", "0", CVAR_NONE};
+cvar_t sv_netdiag_interval = {"sv_netdiag_interval", "5", CVAR_NONE};
 // When SV_WriteEntitiesToClient overflows the per-client datagram, the entity
 // that gets evicted is whichever the loop reached last. With sv_netsort=1
 // (ironwail's heuristic) entities are sorted by distance-to-player and PVS
@@ -181,6 +182,10 @@ static void SV_NetDiag_f (void)
 		cl.predstate_valid, cl.predstate_movetype, cl.predstate_flags,
 		cl.predstate_velocity[0], cl.predstate_velocity[1],
 		cl.predstate_velocity[2]);
+	Con_Printf ("client netdiag: snapshot parts dup=%d jumps=%d incomplete=%d reassembled=%d overruns=%d\n",
+		cl.net_snapshot_duplicate_parts, cl.net_snapshot_part_jumps,
+		cl.net_snapshot_incomplete, cl.net_snapshot_reassembled,
+		cl.net_snapshot_interpolation_overruns);
 
 	if (!sv.active)
 		return;
@@ -196,10 +201,12 @@ static void SV_NetDiag_f (void)
 			client->net_move_cmds_stale, client->lastmovemessage,
 			client->net_move_last_bundle, client->net_move_bundle_max,
 			client->net_move_last_gap);
-		Con_Printf ("server netdiag: #%d snapshots seq=%d ack=%d packets=%d split_packets=%d clipped_ents=%d\n",
+		Con_Printf ("server netdiag: #%d snapshots seq=%d ack=%d packets=%d split_packets=%d last_packets=%d max_packets=%d last_bytes=%d max_bytes=%d acklag_max=%d clipped_ents=%d\n",
 			i + 1, client->net_snapshot_sequence, client->net_snapshot_ack,
 			client->net_snapshot_packets_sent,
-			client->net_snapshot_split_packets,
+			client->net_snapshot_split_packets, client->net_snapshot_last_packets,
+			client->net_snapshot_max_packets, client->net_snapshot_last_bytes,
+			client->net_snapshot_max_bytes, client->net_snapshot_ack_lag_max,
 			client->net_snapshot_unsent_entities);
 	}
 }
@@ -252,6 +259,7 @@ void SV_Init (void)
 	Cvar_RegisterVariable (&sv_maxpacketsize);
 	Cvar_RegisterVariable (&sv_snapshot_splits);
 	Cvar_RegisterVariable (&sv_snapshot_packetdup);
+	Cvar_RegisterVariable (&sv_netdiag_interval);
 	Cvar_RegisterVariable (&sv_coop_weapon_targetfix);
 	Cvar_RegisterVariable (&sv_coop_pickup_targetlog);
 	Cvar_RegisterVariable (&sv_coop_pickup_targetfix);
@@ -1403,6 +1411,31 @@ static void SV_WriteMoveAckToMessage(client_t *client, sizebuf_t *msg)
 	}
 }
 
+static void SV_MaybePrintSnapshotSummary (client_t *client, int client_index)
+{
+	double interval;
+	int avg_packets;
+
+	if (!net_lagdebug.value || client_index < 0)
+		return;
+	interval = sv_netdiag_interval.value;
+	if (interval <= 0 || realtime - client->net_snapshot_last_summary_time < interval)
+		return;
+
+	avg_packets = client->net_snapshot_updates_sent ?
+		(client->net_snapshot_split_packets + client->net_snapshot_updates_sent) /
+			client->net_snapshot_updates_sent : 0;
+	Con_Printf ("net_lagdebug: server summary to %s (%s): updates=%d last_packets=%d avg_packets=%d max_packets=%d last_bytes=%d max_bytes=%d snap=%d ack=%d max_acklag=%d clipped=%d\n",
+		client->name, NET_QSocketGetAddressString(client->netconnection),
+		client->net_snapshot_updates_sent, client->net_snapshot_last_packets,
+		avg_packets, client->net_snapshot_max_packets,
+		client->net_snapshot_last_bytes, client->net_snapshot_max_bytes,
+		client->net_snapshot_sequence, client->net_snapshot_ack,
+		client->net_snapshot_ack_lag_max,
+		client->net_snapshot_unsent_entities);
+	client->net_snapshot_last_summary_time = realtime;
+}
+
 qboolean SV_SendClientDatagram (client_t *client)
 {
 	byte		buf[MAX_DATAGRAM];
@@ -1421,6 +1454,7 @@ qboolean SV_SendClientDatagram (client_t *client)
 	int		last_packet_bytes;
 	int		client_index;
 	double		update_gap;
+	int		ack_lag;
 	static double	last_gap_log[MAX_SCOREBOARD];
 	static double	last_update_sent[MAX_SCOREBOARD];
 	static double	last_update_log[MAX_SCOREBOARD];
@@ -1449,6 +1483,10 @@ qboolean SV_SendClientDatagram (client_t *client)
 	if (client_index < 0 || client_index >= MAX_SCOREBOARD)
 		client_index = -1;
 	snapshot_dup = CLAMP(0, (int)sv_snapshot_packetdup.value, 3);
+	ack_lag = client->net_snapshot_ack >= 0 ?
+		snapshot_sequence - client->net_snapshot_ack : 0;
+	if (ack_lag > client->net_snapshot_ack_lag_max)
+		client->net_snapshot_ack_lag_max = ack_lag;
 
 	if (client_index >= 0 &&
 		(last_update_socket[client_index] != client->netconnection ||
@@ -1616,6 +1654,13 @@ qboolean SV_SendClientDatagram (client_t *client)
 
 	if (packet_count > 1)
 		client->net_snapshot_split_packets += packet_count - 1;
+	client->net_snapshot_updates_sent++;
+	client->net_snapshot_last_packets = packet_count;
+	client->net_snapshot_last_bytes = total_bytes;
+	if (packet_count > client->net_snapshot_max_packets)
+		client->net_snapshot_max_packets = packet_count;
+	if (total_bytes > client->net_snapshot_max_bytes)
+		client->net_snapshot_max_bytes = total_bytes;
 
 	if (net_lagdebug.value &&
 		(packet_count > 1 || max_packet_bytes > (maxsize * 9) / 10) &&
@@ -1632,6 +1677,7 @@ qboolean SV_SendClientDatagram (client_t *client)
 		if (client_index >= 0)
 			last_update_log[client_index] = realtime;
 	}
+	SV_MaybePrintSnapshotSummary (client, client_index);
 
 	if (client_index >= 0)
 	{

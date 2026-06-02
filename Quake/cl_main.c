@@ -40,6 +40,9 @@ cvar_t	cl_nolerp = {"cl_nolerp","0",CVAR_NONE};
 // snapshots and would otherwise freeze entities at frac=1 until the next
 // packet, producing visible 20 Hz judder. 0 reproduces the legacy clamp.
 cvar_t	cl_extrapolate = {"cl_extrapolate","0.05",CVAR_ARCHIVE};
+cvar_t	cl_extrapolate_adaptive = {"cl_extrapolate_adaptive","0",CVAR_ARCHIVE};
+cvar_t	cl_extrapolate_adaptive_max = {"cl_extrapolate_adaptive_max","0.12",CVAR_ARCHIVE};
+cvar_t	cl_extrapolate_adaptive_time = {"cl_extrapolate_adaptive_time","0.75",CVAR_NONE};
 
 cvar_t	cfg_unbindall = {"cfg_unbindall", "1", CVAR_ARCHIVE};
 
@@ -474,12 +477,24 @@ float	CL_LerpPoint (void)
 	}
 	else if (frac > 1)
 	{
+		float maxextrap = cl_extrapolate.value;
+
+		if (cl_extrapolate_adaptive.value &&
+			(cl.time - cl.mtime[0] > net_lagdebug_frame_threshold.value ||
+			 realtime < cl.net_snapshot_smooth_until))
+		{
+			cl.net_snapshot_smooth_until = realtime +
+				q_max (0.0, cl_extrapolate_adaptive_time.value);
+			if (cl_extrapolate_adaptive_max.value > maxextrap)
+				maxextrap = cl_extrapolate_adaptive_max.value;
+		}
 		if (net_lagdebug.value && cls.state == ca_connected && cls.signon == SIGNONS &&
 			cl.time - cl.mtime[0] > net_lagdebug_frame_threshold.value &&
 			realtime - last_lerp_log > 0.5)
 		{
+			cl.net_snapshot_interpolation_overruns++;
 			Con_Printf ("net_lagdebug: client interpolation overrun over=%.3f frac=%.3f mtime_delta=%.3f maxextrap=%.3f lastmsg_age=%.3f\n",
-				cl.time - cl.mtime[0], frac, f, cl_extrapolate.value,
+				cl.time - cl.mtime[0], frac, f, maxextrap,
 				realtime - cl.last_received_message);
 			last_lerp_log = realtime;
 		}
@@ -489,7 +504,6 @@ float	CL_LerpPoint (void)
 		// Eliminates the "freeze then snap" stutter when the render rate
 		// exceeds the server tick rate. A small cap keeps overshoot bounded
 		// when entities suddenly stop or change direction.
-		float maxextrap = cl_extrapolate.value;
 		if (maxextrap > 0 && (cl.time - cl.mtime[0]) <= maxextrap)
 		{
 			float maxfrac = 1.0f + (maxextrap / f);
@@ -1577,6 +1591,9 @@ void CL_Init (void)
 	Cvar_RegisterVariable (&cl_shownet);
 	Cvar_RegisterVariable (&cl_nolerp);
 	Cvar_RegisterVariable (&cl_extrapolate);
+	Cvar_RegisterVariable (&cl_extrapolate_adaptive);
+	Cvar_RegisterVariable (&cl_extrapolate_adaptive_max);
+	Cvar_RegisterVariable (&cl_extrapolate_adaptive_time);
 	Cvar_RegisterVariable (&freelook);
 	Cvar_RegisterVariable (&lookspring);
 	Cvar_RegisterVariable (&lookstrafe);
