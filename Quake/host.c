@@ -461,6 +461,7 @@ void SV_DropClient (qboolean crash)
 // break the net connection
 	NET_Close (host_client->netconnection);
 	host_client->netconnection = NULL;
+	SVFTE_DestroyFrames (host_client);
 
 // free the client (the body stays around)
 	host_client->active = false;
@@ -806,8 +807,10 @@ static void CL_LoadCSProgs (void)
 	{
 		PR_SwitchQCVM (&cl.qcvm);
 
-		if ((PR_LoadProgs ("csprogs.dat", false) && (qcvm->extfuncs.CSQC_DrawHud || qcvm->extfuncs.CSQC_DrawScores)) ||
-		    (PR_LoadProgs ("progs.dat", false) && qcvm->extfuncs.CSQC_DrawHud))
+		if ((PR_LoadProgs ("csprogs.dat", false) &&
+			 (qcvm->extfuncs.CSQC_DrawHud || qcvm->extfuncs.CSQC_DrawScores || qcvm->extfuncs.CSQC_Ent_Update)) ||
+		    (PR_LoadProgs ("progs.dat", false) &&
+			 (qcvm->extfuncs.CSQC_DrawHud || qcvm->extfuncs.CSQC_Ent_Update)))
 		{
 			qcvm->max_edicts = CLAMP (MIN_EDICTS, (int)max_edicts.value, MAX_EDICTS);
 			qcvm->edicts = (edict_t *)malloc (qcvm->max_edicts * qcvm->edict_size);
@@ -832,14 +835,19 @@ static void CL_LoadCSProgs (void)
 			VectorCopy (cl.worldmodel->maxs, qcvm->edicts->v.maxs);
 			qcvm->edicts->v.message = PR_SetEngineString (cl.levelname);
 
-			if (qcvm->extfuncs.CSQC_Init)
-			{
-				G_FLOAT (OFS_PARM0) = false;
-				G_INT (OFS_PARM1) = PR_SetEngineString ("quakespasm-openvr");
-				G_FLOAT (OFS_PARM2) = QUAKESPASM_VERSION;
-				PR_ExecuteProgram (qcvm->extfuncs.CSQC_Init);
+				if (qcvm->extfuncs.CSQC_Init)
+				{
+					G_FLOAT (OFS_PARM0) = false;
+					G_INT (OFS_PARM1) = PR_SetEngineString ("quakespasm-openvr");
+					G_FLOAT (OFS_PARM2) = QUAKESPASM_VERSION;
+					PR_ExecuteProgram (qcvm->extfuncs.CSQC_Init);
+				}
+				if (qcvm->extfuncs.CSQC_Ent_Update && cls.state == ca_connected)
+				{
+					MSG_WriteByte (&cls.message, clc_stringcmd);
+					MSG_WriteString (&cls.message, "enablecsqc");
+				}
 			}
-		}
 		else
 			PR_ClearProgs (qcvm);
 		PR_SwitchQCVM (NULL);

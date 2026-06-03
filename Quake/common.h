@@ -186,6 +186,7 @@ void MSG_WriteString (sizebuf_t *sb, const char *s);
 void MSG_WriteCoord (sizebuf_t *sb, float f, unsigned int flags);
 void MSG_WriteAngle (sizebuf_t *sb, float f, unsigned int flags);
 void MSG_WriteAngle16 (sizebuf_t *sb, float f, unsigned int flags); //johnfitz
+void MSG_WriteEntity (sizebuf_t *sb, unsigned int entnum, unsigned int pext2);
 
 extern	int			msg_readcount;
 extern	qboolean	msg_badread;		// set if a read goes beyond end of message
@@ -201,6 +202,7 @@ const char *MSG_ReadString (void);
 float MSG_ReadCoord (unsigned int flags);
 float MSG_ReadAngle (unsigned int flags);
 float MSG_ReadAngle16 (unsigned int flags); //johnfitz
+unsigned int MSG_ReadEntity (unsigned int pext2);
 
 //============================================================================
 
@@ -409,4 +411,3 @@ extern qboolean		fitzmode;
 	/* if true, run in fitzquake mode disabling custom quakespasm hacks */
 
 #endif	/* _Q_COMMON_H */
-

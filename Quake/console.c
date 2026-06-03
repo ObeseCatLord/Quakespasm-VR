@@ -508,6 +508,9 @@ void Con_Printf (const char *fmt, ...)
 	if (!con_initialized)
 		return;
 
+	if (cls.state != ca_dedicated && !strncmp(msg, "net_lagdebug:", 13))
+		return;		// keep diagnostics in stdout/qconsole without HUD spam
+
 	if (cls.state == ca_dedicated)
 		return;		// no graphics mode
 
@@ -1307,4 +1310,3 @@ void LOG_Close (void)
 	close (log_fd);
 	log_fd = -1;
 }
-

@@ -22,6 +22,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 // sv_phys.c
 
 #include "quakedef.h"
+#include "pmove.h"
 #include "vr.h"
 
 /*
@@ -811,7 +812,7 @@ static void SV_CoopRespawnBasis(edict_t *anchor, vec3_t forward,
   }
 }
 
-static qboolean SV_CoopRespawnFindNearbySpot(edict_t *ent, vec3_t base,
+static qboolean SV_CoopRespawnFindNearbySpot(edict_t *ent, const vec3_t base,
                                              edict_t *anchor,
                                              const float *radii,
                                              int num_radii,
@@ -860,7 +861,7 @@ static qboolean SV_CoopRespawnFindNearbySpot(edict_t *ent, vec3_t base,
   return false;
 }
 
-static edict_t *SV_CoopRespawnFindAnchor(edict_t *ent, vec3_t death_origin) {
+static edict_t *SV_CoopRespawnFindAnchor(edict_t *ent, const vec3_t death_origin) {
   int i;
   float dist, best_dist = 0.0f;
   qboolean have_best = false;
@@ -884,7 +885,7 @@ static edict_t *SV_CoopRespawnFindAnchor(edict_t *ent, vec3_t death_origin) {
   return best;
 }
 
-static qboolean SV_CoopRespawnFindSpot(edict_t *ent, vec3_t death_origin,
+static qboolean SV_CoopRespawnFindSpot(edict_t *ent, const vec3_t death_origin,
                                        edict_t **anchor_out, vec3_t spot) {
   edict_t *anchor;
   static const float player_radii[] = {48.0f, 64.0f, 80.0f, 96.0f, 128.0f};
@@ -1013,9 +1014,14 @@ static void SV_CoopRespawnEndPostThink(
     if (sv_coop_respawn_keep_weapons_ammo.value && state->inventory_valid)
       SV_CoopRespawnRestoreInventory(ent, &state->inventory);
 
-    if (sv_coop_respawn_near_player.value &&
-        SV_CoopRespawnFindSpot(ent, state->death_origin, &anchor, spot))
-      SV_CoopRespawnRelocate(ent, anchor, spot, state);
+    if (sv_coop_respawn_near_player.value) {
+      if (SV_CoopRespawnFindSpot(ent, state->death_origin, &anchor, spot))
+        SV_CoopRespawnRelocate(ent, anchor, spot, state);
+      else if (net_lagdebug.value)
+        Con_Printf("net_lagdebug: coop respawn could not find a safe near-death or teammate spot for client %d death_origin=(%.1f %.1f %.1f)\n",
+                   num, state->death_origin[0], state->death_origin[1],
+                   state->death_origin[2]);
+    }
   }
 
   SV_CoopRespawnRememberAliveInventory(ent, num);
@@ -1870,6 +1876,235 @@ static void SV_AdjustVRJumpVelocity(edict_t *ent, int num,
     ent->v.velocity[2] = target;
 }
 
+static int SV_PMoveTypeForEdict(edict_t *ent) {
+  switch ((int)ent->v.movetype) {
+  case MOVETYPE_WALK:
+    return PM_NORMAL;
+  case MOVETYPE_TOSS:
+  case MOVETYPE_BOUNCE:
+  case MOVETYPE_GIB:
+    return PM_DEAD;
+  case MOVETYPE_FLY:
+    return PM_FLY;
+  case MOVETYPE_NOCLIP:
+    return PM_SPECTATOR;
+  case MOVETYPE_NONE:
+  case MOVETYPE_STEP:
+  case MOVETYPE_PUSH:
+  case MOVETYPE_FLYMISSILE:
+  default:
+    return PM_NONE;
+  }
+}
+
+static void SV_PMoveSetWater(edict_t *ent) {
+  ent->v.waterlevel = pmove.waterlevel;
+  if (pmove.watertype & CONTENTBIT_SOLID)
+    ent->v.watertype = CONTENTS_SOLID;
+  else if (pmove.watertype & CONTENTBIT_SKY)
+    ent->v.watertype = CONTENTS_SKY;
+  else if (pmove.watertype & CONTENTBIT_LAVA)
+    ent->v.watertype = CONTENTS_LAVA;
+  else if (pmove.watertype & CONTENTBIT_SLIME)
+    ent->v.watertype = CONTENTS_SLIME;
+  else if (pmove.watertype & CONTENTBIT_WATER)
+    ent->v.watertype = CONTENTS_WATER;
+  else
+    ent->v.watertype = CONTENTS_EMPTY;
+}
+
+void SV_RunPMoveForEntity(edict_t *ent, const usercmd_t *cmd) {
+  static vec3_t extents = {256, 256, 256};
+  vec3_t bounds[2];
+  eval_t *entgrav;
+  eval_t *pmflags;
+  unsigned int pmflagbits;
+  int i;
+
+  PMSV_UpdateMovevars();
+  entgrav = GetEdictFieldValue(ent, qcvm->extfields.gravity);
+  if (entgrav && entgrav->_float)
+    movevars.entgravity = entgrav->_float;
+
+  pmflags = GetEdictFieldValue(ent, qcvm->extfields.pmove_flags);
+  pmflagbits = (pmflags && pmflags->_float) ? (unsigned int)pmflags->_float : 0;
+
+  memset(&pmove, 0, sizeof(pmove));
+  VectorCopy(ent->v.mins, pmove.player_mins);
+  VectorCopy(ent->v.maxs, pmove.player_maxs);
+  VectorCopy(ent->v.oldorigin, pmove.safeorigin);
+  pmove.safeorigin_known = true;
+  VectorCopy(ent->v.origin, pmove.origin);
+  VectorCopy(ent->v.velocity, pmove.velocity);
+  VectorClear(pmove.gravitydir);
+  pmove.waterjumptime =
+      (ent->v.teleport_time > qcvm->time) ? ent->v.teleport_time - qcvm->time : 0;
+  pmove.jump_held = pmflags ? !!(pmflagbits & PMF_JUMP_HELD) :
+      !((int)ent->v.flags & FL_JUMPRELEASED);
+  pmove.onladder = !!(pmflagbits & PMF_LADDER);
+  pmove.jump_secs = 0;
+  pmove.onground = !!((int)ent->v.flags & FL_ONGROUND);
+  pmove.pm_type = SV_PMoveTypeForEdict(ent);
+  if (cmd)
+    pmove.cmd = *cmd;
+
+  VectorSubtract(ent->v.absmin, extents, bounds[0]);
+  VectorAdd(ent->v.absmax, extents, bounds[1]);
+  World_AddEntsToPmove(ent, bounds);
+
+  PM_PlayerMove(1);
+
+  VectorCopy(pmove.safeorigin, ent->v.oldorigin);
+  VectorCopy(pmove.origin, ent->v.origin);
+  VectorCopy(pmove.velocity, ent->v.velocity);
+  ent->v.teleport_time =
+      (pmove.waterjumptime > 0) ? qcvm->time + pmove.waterjumptime : 0;
+
+  if (pmove.jump_held)
+    ent->v.flags = (int)ent->v.flags & ~FL_JUMPRELEASED;
+  else
+    ent->v.flags = (int)ent->v.flags | FL_JUMPRELEASED;
+
+  if (pmflags) {
+    pmflagbits &= ~(PMF_JUMP_HELD | PMF_LADDER);
+    if (pmove.jump_held)
+      pmflagbits |= PMF_JUMP_HELD;
+    if (pmove.onladder)
+      pmflagbits |= PMF_LADDER;
+    pmflags->_float = pmflagbits;
+  }
+
+  if (pmove.onground) {
+    int ground = pmove.physents[pmove.groundent].info;
+    ent->v.flags = (int)ent->v.flags | FL_ONGROUND;
+    ent->v.groundentity = (ground < 0) ? 0 : EDICT_TO_PROG(EDICT_NUM(ground));
+  } else {
+    ent->v.flags = (int)ent->v.flags & ~FL_ONGROUND;
+    ent->v.groundentity = 0;
+  }
+
+  SV_PMoveSetWater(ent);
+  SV_LinkEdict(ent, true);
+
+  for (i = 0; i < pmove.numtouch && !ent->free; i++) {
+    int n = pmove.physents[pmove.touchindex[i]].info;
+    if (n < 0 || n >= qcvm->num_edicts)
+      continue;
+    SV_Impact(ent, EDICT_NUM(n));
+  }
+}
+
+static void SV_SetQCInputGlobals(const usercmd_t *cmd) {
+  if (qcvm->extglobals.input_sequence)
+    *qcvm->extglobals.input_sequence = cmd->sequence;
+  if (qcvm->extglobals.input_servertime)
+    *qcvm->extglobals.input_servertime = cmd->servertime;
+  if (qcvm->extglobals.input_timelength)
+    *qcvm->extglobals.input_timelength = cmd->seconds;
+  if (qcvm->extglobals.input_movevalues) {
+    qcvm->extglobals.input_movevalues[0] = cmd->forwardmove;
+    qcvm->extglobals.input_movevalues[1] = cmd->sidemove;
+    qcvm->extglobals.input_movevalues[2] = cmd->upmove;
+  }
+  if (qcvm->extglobals.input_angles)
+    VectorCopy(cmd->viewangles, qcvm->extglobals.input_angles);
+  if (qcvm->extglobals.input_buttons)
+    *qcvm->extglobals.input_buttons = cmd->buttons;
+  if (qcvm->extglobals.input_impulse)
+    *qcvm->extglobals.input_impulse = cmd->impulse;
+  if (qcvm->extglobals.input_weapon)
+    *qcvm->extglobals.input_weapon = cmd->weapon;
+  if (qcvm->extglobals.input_cursor_screen) {
+    qcvm->extglobals.input_cursor_screen[0] = cmd->cursor_screen[0];
+    qcvm->extglobals.input_cursor_screen[1] = cmd->cursor_screen[1];
+  }
+  if (qcvm->extglobals.input_cursor_trace_start)
+    VectorCopy(cmd->cursor_start, qcvm->extglobals.input_cursor_trace_start);
+  if (qcvm->extglobals.input_cursor_trace_endpos)
+    VectorCopy(cmd->cursor_impact, qcvm->extglobals.input_cursor_trace_endpos);
+  if (qcvm->extglobals.input_cursor_entitynumber)
+    *qcvm->extglobals.input_cursor_entitynumber = cmd->cursor_entitynumber;
+}
+
+static void SV_Physics_ClientPMove(edict_t *ent, int num, qboolean is_remote_vr) {
+  client_t *client = &svs.clients[num - 1];
+  usercmd_t queuedcmd;
+  double saved_host_frametime = host_frametime;
+  int processed = 0;
+
+  while (!ent->free && SV_PopQueuedUsercmd(client, &queuedcmd)) {
+    vec3_t thinkRestoreOrigin;
+    vec3_t restoreOrigin;
+    vec3_t prethink_velocity;
+    qboolean think_ok;
+    coop_respawn_postthink_state_t coop_respawn_state;
+
+    SV_ApplyQueuedUsercmd(client, &queuedcmd);
+    SV_SetQCInputGlobals(&client->cmd);
+    host_frametime = CLAMP(0.001f, client->cmd.seconds, 0.1f);
+    pr_global_struct->frametime = host_frametime;
+    SV_CoopRespawnBeginPostThink(ent, num, &coop_respawn_state);
+
+    if (client->is_vr_client && VectorLength(client->vr_roomscalemove) > 0) {
+      VectorAdd(ent->v.origin, client->vr_roomscalemove, ent->v.origin);
+      VectorCopy(vec3_origin, client->vr_roomscalemove);
+      VectorCopy(vec3_origin, client->vr_roomscale_accum);
+      SV_LinkEdict(ent, true);
+    }
+
+    VectorCopy(ent->v.velocity, prethink_velocity);
+
+    pr_global_struct->time = qcvm->time;
+    pr_global_struct->self = EDICT_TO_PROG(ent);
+    PR_ExecuteProgram(pr_global_struct->PlayerPreThink);
+    if (ent->free)
+      break;
+    if (!qcvm->extfuncs.SV_RunClientCommand)
+      VectorCopy(prethink_velocity, ent->v.velocity);
+    SV_CheckVelocity(ent);
+
+    SV_ApplyVRWeaponOffset(ent, num, is_remote_vr, thinkRestoreOrigin);
+    think_ok = SV_RunThink(ent);
+    SV_RestoreVRWeaponOffset(ent, num, is_remote_vr, thinkRestoreOrigin);
+    if (!think_ok || ent->free)
+      break;
+
+    if (qcvm->extfuncs.SV_RunClientCommand) {
+      pr_global_struct->self = EDICT_TO_PROG(ent);
+      PR_ExecuteProgram(qcvm->extfuncs.SV_RunClientCommand);
+      SV_LinkEdict(ent, true);
+    } else {
+      SV_RunPMoveForEntity(ent, &client->cmd);
+    }
+    if (ent->free)
+      break;
+
+    SV_ApplyTrustedClientMove(client);
+    SV_LinkEdict(ent, true);
+
+    pr_global_struct->time = qcvm->time;
+    SV_ApplyVRWeaponOffset(ent, num, is_remote_vr, restoreOrigin);
+    pr_global_struct->self = EDICT_TO_PROG(ent);
+    SV_CoopReviveBeginPostThink(ent);
+    SV_FriendlyFireBegin(ent);
+    PR_ExecuteProgram(pr_global_struct->PlayerPostThink);
+    SV_FriendlyFireEnd();
+    SV_CoopReviveEndPostThink();
+    SV_RestoreVRWeaponOffset(ent, num, is_remote_vr, restoreOrigin);
+    SV_CoopRespawnEndPostThink(ent, num, &coop_respawn_state);
+    SV_CoopReviveApplyPending();
+
+    SV_FinishQueuedUsercmd(client);
+    processed++;
+  }
+
+  host_frametime = saved_host_frametime;
+  pr_global_struct->frametime = host_frametime;
+
+  if (!processed)
+    client->cmd.seconds = 0;
+}
+
 /*
 ================
 SV_Physics_Client
@@ -1880,6 +2115,7 @@ Player character actions
 void SV_Physics_Client(edict_t *ent, int num) {
   qboolean was_onground;
   float prethink_velocity_z;
+  coop_respawn_postthink_state_t coop_respawn_state;
 
   if (!svs.clients[num - 1].active)
     return; // unconnected slot
@@ -1892,6 +2128,11 @@ void SV_Physics_Client(edict_t *ent, int num) {
       (num > 0 && num <= svs.maxclients && svs.clients[num - 1].is_vr_client &&
        (isDedicated || num != cl.viewentity));
 
+  if (svs.clients[num - 1].usingpmove) {
+    SV_Physics_ClientPMove(ent, num, is_remote_vr);
+    return;
+  }
+
   // Apply roomscale displacement for remote clients
   if (is_remote_vr &&
       VectorLength(svs.clients[num - 1].vr_roomscale_accum) > 0) {
@@ -1903,6 +2144,7 @@ void SV_Physics_Client(edict_t *ent, int num) {
 
   was_onground = ((int)ent->v.flags & FL_ONGROUND) != 0;
   prethink_velocity_z = ent->v.velocity[2];
+  SV_CoopRespawnBeginPostThink(ent, num, &coop_respawn_state);
 
   //
   // call standard client pre-think
@@ -2032,9 +2274,6 @@ void SV_Physics_Client(edict_t *ent, int num) {
   SV_LinkEdict(ent, true);
 
   pr_global_struct->time = qcvm->time;
-
-  coop_respawn_postthink_state_t coop_respawn_state;
-  SV_CoopRespawnBeginPostThink(ent, num, &coop_respawn_state);
 
   // replace player origin with hand origin for duration of post think (where
   // weapons are done)

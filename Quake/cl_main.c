@@ -25,6 +25,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "bgmusic.h"
 #include "vr.h"
 #include "debug_log.h"
+#include "pmove.h"
 
 // we need to declare some mouse variables here, because the menu system
 // references them even when on a unix system.
@@ -44,6 +45,11 @@ cvar_t	cl_extrapolate_adaptive = {"cl_extrapolate_adaptive","0",CVAR_ARCHIVE};
 cvar_t	cl_extrapolate_adaptive_max = {"cl_extrapolate_adaptive_max","0.12",CVAR_ARCHIVE};
 cvar_t	cl_extrapolate_adaptive_time = {"cl_extrapolate_adaptive_time","0.75",CVAR_NONE};
 cvar_t	cl_net_lerpbuffer = {"cl_net_lerpbuffer","0.025",CVAR_ARCHIVE};
+cvar_t	cl_predict_smooth = {"cl_predict_smooth","1",CVAR_ARCHIVE};
+cvar_t	cl_predict_smooth_time = {"cl_predict_smooth_time","0.08",CVAR_ARCHIVE};
+cvar_t	cl_predict_smooth_min = {"cl_predict_smooth_min","0.5",CVAR_NONE};
+cvar_t	cl_predict_smooth_max = {"cl_predict_smooth_max","64",CVAR_NONE};
+cvar_t	cl_predict_error_log = {"cl_predict_error_log","1",CVAR_NONE};
 
 cvar_t	cfg_unbindall = {"cfg_unbindall", "1", CVAR_ARCHIVE};
 
@@ -99,6 +105,7 @@ void CL_FreeState(void)
 	for (i = 0; i < MAX_CL_STATS; i++)
 		free (cl.statss[i]);
 	PR_ClearProgs (&cl.qcvm);
+	free (cl.ssqc_to_csqc);
 	memset (&cl, 0, sizeof(cl));
 }
 
@@ -968,7 +975,7 @@ static qboolean CL_PredictRunCommand (const usercmd_t *cmd, vec3_t origin, vec3_
 	return CL_PredictGrounded (origin);
 }
 
-static qboolean CL_PredictPlayer (entity_t *ent)
+static qboolean CL_PredictPlayerLegacy (entity_t *ent)
 {
 	int		seq;
 	int		startseq;
@@ -977,13 +984,6 @@ static qboolean CL_PredictPlayer (entity_t *ent)
 	qboolean	jump_released;
 	usercmd_t	pending;
 	vec3_t		origin, velocity;
-
-	if (!cl_predictmove.value || cl_nopred.value || cls.demoplayback ||
-		cls.state != ca_connected || cls.signon != SIGNONS ||
-		!cls.moveext_allowed || !cl.worldmodel || cl.viewentity <= 0)
-		return false;
-	if (ent != &cl_entities[cl.viewentity])
-		return false;
 
 	VectorCopy (ent->msg_origins[0], origin);
 	if (cl.predstate_valid && cl.predstate_sequence >= cl.ackedmovemessages)
@@ -1028,6 +1028,253 @@ static qboolean CL_PredictPlayer (entity_t *ent)
 	VectorCopy (origin, ent->origin);
 	VectorCopy (velocity, cl.velocity);
 	cl.onground = onground;
+	return true;
+}
+
+static void CL_PredictDecodeSolidSize (unsigned int solidsize, vec3_t mins, vec3_t maxs)
+{
+	maxs[0] = maxs[1] = solidsize & 255;
+	mins[0] = mins[1] = -maxs[0];
+	mins[2] = -(int)((solidsize >> 8) & 255);
+	maxs[2] = (int)((solidsize >> 16) & 65535) - 32768;
+}
+
+static int CL_PredictPMoveType (int movetype)
+{
+	switch (movetype & 63)
+	{
+	case MOVETYPE_WALK:
+		return PM_NORMAL;
+	case MOVETYPE_TOSS:
+	case MOVETYPE_BOUNCE:
+	case MOVETYPE_GIB:
+		return PM_DEAD;
+	case MOVETYPE_FLY:
+		return PM_FLY;
+	case MOVETYPE_NOCLIP:
+		return PM_SPECTATOR;
+	case MOVETYPE_NONE:
+	case MOVETYPE_STEP:
+	case MOVETYPE_PUSH:
+	case MOVETYPE_FLYMISSILE:
+	default:
+		return PM_NONE;
+	}
+}
+
+static void CL_RecordPredictedMove (int seq, const vec3_t origin, const vec3_t velocity)
+{
+	int index;
+
+	if (seq < 0)
+		return;
+	index = seq & (CL_MOVE_HISTORY - 1);
+	cl.predicted_move_sequence[index] = seq;
+	VectorCopy (origin, cl.predicted_move_origin[index]);
+	VectorCopy (velocity, cl.predicted_move_velocity[index]);
+}
+
+static void CL_CheckPredictionError (entity_t *ent)
+{
+	int		ack;
+	int		index;
+	float	err;
+	float	minerr;
+	float	maxerr;
+	vec3_t	delta;
+
+	if (!cl.predstate_valid || cl.ackedmovemessages < 2)
+		return;
+
+	ack = cl.ackedmovemessages;
+	index = ack & (CL_MOVE_HISTORY - 1);
+	if (cl.predicted_move_sequence[index] != ack)
+		return;
+	if (cl.net_prediction_error_last_sequence == ack)
+		return;
+
+	VectorSubtract (cl.predicted_move_origin[index], ent->msg_origins[0], delta);
+	err = VectorLength (delta);
+	cl.net_prediction_error_last_sequence = ack;
+	cl.net_prediction_error_last = err;
+	if (err > cl.net_prediction_error_max)
+		cl.net_prediction_error_max = err;
+
+	minerr = q_max (0.0f, cl_predict_smooth_min.value);
+	maxerr = q_max (minerr, cl_predict_smooth_max.value);
+	if (err < minerr)
+		return;
+
+	cl.net_prediction_errors++;
+	if (net_lagdebug.value && cl_predict_error_log.value)
+		Con_DPrintf ("net_lagdebug: prediction error ack=%d err=%.2f server=(%.1f %.1f %.1f) predicted=(%.1f %.1f %.1f) vel=(%.1f %.1f %.1f)\n",
+			ack, err,
+			ent->msg_origins[0][0], ent->msg_origins[0][1], ent->msg_origins[0][2],
+			cl.predicted_move_origin[index][0],
+			cl.predicted_move_origin[index][1],
+			cl.predicted_move_origin[index][2],
+			cl.predicted_move_velocity[index][0],
+			cl.predicted_move_velocity[index][1],
+			cl.predicted_move_velocity[index][2]);
+
+	if (!cl_predict_smooth.value || err > maxerr || cl_predict_smooth_time.value <= 0)
+	{
+		VectorClear (cl.prediction_error);
+		cl.prediction_error_time = 0;
+		cl.prediction_error_sequence = ack;
+		return;
+	}
+
+	VectorCopy (delta, cl.prediction_error);
+	cl.prediction_error_time = realtime + CLAMP (0.01f, cl_predict_smooth_time.value, 0.25f);
+	cl.prediction_error_sequence = ack;
+}
+
+static void CL_ApplyPredictionSmoothing (vec3_t origin)
+{
+	float	frac;
+	float	duration;
+	int		i;
+
+	if (!cl_predict_smooth.value || cl.prediction_error_time <= realtime)
+	{
+		VectorClear (cl.prediction_error);
+		cl.prediction_error_time = 0;
+		return;
+	}
+
+	duration = CLAMP (0.01f, cl_predict_smooth_time.value, 0.25f);
+	frac = (cl.prediction_error_time - realtime) / duration;
+	frac = CLAMP (0.0f, frac, 1.0f);
+	for (i = 0; i < 3; i++)
+		origin[i] += cl.prediction_error[i] * frac;
+}
+
+static qboolean CL_PredictPlayer (entity_t *ent)
+{
+	static struct
+	{
+		int seq;
+		float waterjumptime;
+	} propagate[CL_MOVE_HISTORY];
+	int		seq;
+	int		startseq;
+	int		i;
+	int		raw_pmovetype;
+	qboolean	predicted;
+	usercmd_t	pending;
+	vec3_t		bounds[2];
+	vec3_t		default_player_mins = {-16, -16, -24};
+	vec3_t		default_player_maxs = {16, 16, 32};
+	unsigned int	solidsize;
+
+	if (!cl_predictmove.value || cl_nopred.value || cls.demoplayback ||
+		cls.state != ca_connected || cls.signon != SIGNONS ||
+		!cls.moveext_allowed || !cl.worldmodel || cl.viewentity <= 0)
+		return false;
+	if (ent != &cl_entities[cl.viewentity])
+		return false;
+	if (sv.active && svs.maxclients <= 1)
+		return false;
+	if (!(cl.protocol_pext2 & PEXT2_REPLACEMENTDELTAS))
+		return CL_PredictPlayerLegacy (ent);
+	if (!cl.predstate_valid || cl.predstate_sequence < cl.ackedmovemessages)
+		return false;
+
+	PMCL_SetMoveVars ();
+	memset (&pmove, 0, sizeof(pmove));
+
+	VectorCopy (ent->msg_origins[0], pmove.origin);
+	solidsize = ent->netstate.solidsize;
+	if (solidsize && solidsize != ES_SOLID_BSP)
+	{
+		CL_PredictDecodeSolidSize (solidsize, pmove.player_mins, pmove.player_maxs);
+	}
+	else if (cl.predstate_valid)
+	{
+		VectorCopy (cl.predstate_mins, pmove.player_mins);
+		VectorCopy (cl.predstate_maxs, pmove.player_maxs);
+	}
+	else
+	{
+		VectorCopy (default_player_mins, pmove.player_mins);
+		VectorCopy (default_player_maxs, pmove.player_maxs);
+	}
+	for (i = 0; i < 3; i++)
+	{
+		pmove.velocity[i] = ent->netstate.velocity[i] * (1.0f / 8.0f);
+		bounds[0][i] = pmove.origin[i] + pmove.player_mins[i] - 256;
+		bounds[1][i] = pmove.origin[i] + pmove.player_maxs[i] + 256;
+	}
+	VectorClear (pmove.gravitydir);
+
+	raw_pmovetype = ent->netstate.pmovetype;
+	if (!raw_pmovetype && cl.predstate_valid)
+	{
+		raw_pmovetype = cl.predstate_movetype;
+		if (cl.predstate_flags & PREDINFO_ONGROUND)
+			raw_pmovetype |= 0x80;
+		if (!(cl.predstate_flags & PREDINFO_JUMPRELEASED))
+			raw_pmovetype |= 0x40;
+	}
+	pmove.pm_type = CL_PredictPMoveType (raw_pmovetype);
+	if (pmove.pm_type == PM_NONE)
+		return false;
+	pmove.onground = (raw_pmovetype & 0x80) != 0;
+	pmove.jump_held = (raw_pmovetype & 0x40) != 0;
+	pmove.safeorigin_known = false;
+	pmove.onladder = false;
+	pmove.waterjumptime = 0;
+	pmove.jump_secs = 0;
+	pmove.skipent = -cl.viewentity;
+	World_AddEntsToPmove (NULL, bounds);
+	CL_CheckPredictionError (ent);
+
+	startseq = cl.ackedmovemessages + 1;
+	if (startseq < 2)
+		startseq = 2;
+	if (startseq < cl.movemessages - CL_MOVE_HISTORY)
+		startseq = cl.movemessages - CL_MOVE_HISTORY;
+	if (propagate[startseq & (CL_MOVE_HISTORY - 1)].seq == startseq)
+		pmove.waterjumptime =
+			propagate[startseq & (CL_MOVE_HISTORY - 1)].waterjumptime;
+
+	predicted = false;
+	for (seq = startseq; seq < cl.movemessages; seq++)
+	{
+		const usercmd_t *histcmd = &cl.movecmds[seq & (CL_MOVE_HISTORY - 1)];
+		if (histcmd->sequence != seq)
+			continue;
+		pmove.cmd = *histcmd;
+		if (pmove.cmd.seconds > 0.1f)
+			pmove.cmd.seconds = 0.1f;
+		PM_PlayerMove (1);
+		CL_RecordPredictedMove (seq, pmove.origin, pmove.velocity);
+		propagate[(seq + 1) & (CL_MOVE_HISTORY - 1)].seq = seq + 1;
+		propagate[(seq + 1) & (CL_MOVE_HISTORY - 1)].waterjumptime =
+			pmove.waterjumptime;
+		predicted = true;
+	}
+
+	pending = cl.pendingcmd;
+	if (pending.seconds > 0)
+	{
+		VectorCopy (cl.aimangles, pending.viewangles);
+		pmove.cmd = pending;
+		if (pmove.cmd.seconds > 0.1f)
+			pmove.cmd.seconds = 0.1f;
+		PM_PlayerMove (1);
+		predicted = true;
+	}
+
+	if (!predicted)
+		return false;
+
+	CL_ApplyPredictionSmoothing (pmove.origin);
+	VectorCopy (pmove.origin, ent->origin);
+	VectorCopy (pmove.velocity, cl.velocity);
+	cl.onground = pmove.onground;
+	cl.inwater = pmove.waterlevel >= 2;
 	return true;
 }
 
@@ -1087,7 +1334,8 @@ void CL_RelinkEntities (void)
 		}
 
 // if the object wasn't included in the last packet, remove it
-		if (ent->msgtime != cl.mtime[0])
+		if (!(cl.protocol_pext2 & PEXT2_REPLACEMENTDELTAS) &&
+			ent->msgtime != cl.mtime[0])
 		{
 			ent->model = NULL;
 			ent->lerpflags |= LERP_RESETMOVE|LERP_RESETANIM; //johnfitz -- next time this entity slot is reused, the lerp will need to be reset
@@ -1587,6 +1835,11 @@ void CL_Init (void)
 	Cvar_RegisterVariable (&cl_move_redundancy);
 	Cvar_RegisterVariable (&cl_move_packetdup);
 	Cvar_RegisterVariable (&cl_nopred);
+	Cvar_RegisterVariable (&cl_predict_smooth);
+	Cvar_RegisterVariable (&cl_predict_smooth_time);
+	Cvar_RegisterVariable (&cl_predict_smooth_min);
+	Cvar_RegisterVariable (&cl_predict_smooth_max);
+	Cvar_RegisterVariable (&cl_predict_error_log);
 	Cvar_RegisterVariable (&cl_movespeedkey);
 	Cvar_RegisterVariable (&cl_yawspeed);
 	Cvar_RegisterVariable (&cl_pitchspeed);
