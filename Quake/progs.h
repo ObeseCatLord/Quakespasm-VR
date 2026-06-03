@@ -84,12 +84,15 @@ struct pr_extfuncs_s
 /*ssqc*/
 #define QCEXTFUNCS_SV \
 	QCEXTFUNC(SV_ParseClientCommand,	"void(string cmd)")		\
+	QCEXTFUNC(SV_RunClientCommand,		"void()")		\
 /*csqc*/
-#define QCEXTFUNCS_CS \
-	QCEXTFUNC(CSQC_Init,				"void(float apilevel, string enginename, float engineversion)")	\
-	QCEXTFUNC(CSQC_Shutdown,			"void()")	\
-	QCEXTFUNC(CSQC_DrawHud,				"void(vector virtsize, float showscores)")							/*simple: for the simple(+limited) hud-only csqc interface.*/	\
-	QCEXTFUNC(CSQC_DrawScores,			"void(vector virtsize, float showscores)")							/*simple: (optional) for the simple hud-only csqc interface.*/		\
+	#define QCEXTFUNCS_CS \
+		QCEXTFUNC(CSQC_Init,				"void(float apilevel, string enginename, float engineversion)")	\
+		QCEXTFUNC(CSQC_Shutdown,			"void()")	\
+		QCEXTFUNC(CSQC_DrawHud,				"void(vector virtsize, float showscores)")							/*simple: for the simple(+limited) hud-only csqc interface.*/	\
+		QCEXTFUNC(CSQC_DrawScores,			"void(vector virtsize, float showscores)")							/*simple: (optional) for the simple hud-only csqc interface.*/		\
+		QCEXTFUNC(CSQC_Ent_Update,			"void(float isnew)")												/*full CSQC entity networking*/	\
+		QCEXTFUNC(CSQC_Ent_Remove,			"void()")															/*full CSQC entity networking*/	\
 
 #define QCEXTFUNC(n,t) func_t n;
 	QCEXTFUNCS_SV
@@ -112,10 +115,25 @@ struct pr_extglobals_s
 	QCEXTGLOBAL_FLOAT(clientcommandframe)\
 	QCEXTGLOBAL_FLOAT(servercommandframe)\
 	//end
+#define QCEXTGLOBALS_INPUTS \
+	QCEXTGLOBAL_FLOAT(input_sequence)\
+	QCEXTGLOBAL_FLOAT(input_servertime)\
+	QCEXTGLOBAL_FLOAT(input_timelength)\
+	QCEXTGLOBAL_VECTOR(input_movevalues)\
+	QCEXTGLOBAL_VECTOR(input_angles)\
+	QCEXTGLOBAL_FLOAT(input_buttons)\
+	QCEXTGLOBAL_FLOAT(input_impulse)\
+	QCEXTGLOBAL_INT(input_weapon)\
+	QCEXTGLOBAL_VECTOR(input_cursor_screen)\
+	QCEXTGLOBAL_VECTOR(input_cursor_trace_start)\
+	QCEXTGLOBAL_VECTOR(input_cursor_trace_endpos)\
+	QCEXTGLOBAL_INT(input_cursor_entitynumber)\
+	//end
 #define QCEXTGLOBAL_FLOAT(n) float *n;
 #define QCEXTGLOBAL_INT(n) int *n;
 #define QCEXTGLOBAL_VECTOR(n) float *n;
 	QCEXTGLOBALS_CSQC
+	QCEXTGLOBALS_INPUTS
 #undef QCEXTGLOBAL_FLOAT
 #undef QCEXTGLOBAL_INT
 #undef QCEXTGLOBAL_VECTOR
@@ -130,10 +148,12 @@ struct pr_extfields_s
 	QCEXTFIELD(scale,					".float")				/*float*/	\
 	QCEXTFIELD(colormod,				".vector")			/*vector*/	\
 	/*end of list*/
-#define QCEXTFIELDS_GAME	\
-	/*stuff used by csqc+ssqc, but not menu*/	\
-	QCEXTFIELD(customphysics,			".void()")/*function*/	\
-	QCEXTFIELD(gravity,					".float")			/*float*/	\
+	#define QCEXTFIELDS_GAME	\
+		/*stuff used by csqc+ssqc, but not menu*/	\
+		QCEXTFIELD(entnum,					".float")				/*server entity number for CSQC entity networking*/	\
+		QCEXTFIELD(customphysics,			".void()")/*function*/	\
+		QCEXTFIELD(gravity,					".float")			/*float*/	\
+		QCEXTFIELD(pmove_flags,				".float")			/*float*/	\
 	//end of list
 #define QCEXTFIELDS_SS	\
 	/*ssqc-only*/	\
@@ -225,6 +245,9 @@ typedef struct qcvm_s
 									// edict_t is variable sized, but can
 									// be used to reference the world ent
 } qcvm_t;
+
+#define GetEdictFieldValid(fld) (qcvm->extfields.fld >= 0)
+#define GetEdictFieldEval(ed, fld) ((eval_t *)((float *)&(ed)->v + qcvm->extfields.fld))
 
 extern	globalvars_t	*pr_global_struct;
 

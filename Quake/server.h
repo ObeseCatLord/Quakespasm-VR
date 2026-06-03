@@ -80,6 +80,9 @@ typedef struct
 	sizebuf_t	datagram;
 	byte		datagram_buf[MAX_DATAGRAM];
 
+	sizebuf_t	multicast;			// temporary QC message buffer, used for CSQC entity payloads
+	byte		multicast_buf[MAX_DATAGRAM];
+
 	sizebuf_t	reliable_datagram;	// copied to all clients at end of frame
 	byte		reliable_datagram_buf[MAX_DATAGRAM];
 
@@ -126,8 +129,12 @@ typedef struct client_s
 	struct qsocket_s *netconnection;	// communications handle
 
 	usercmd_t		cmd;				// movement
+	usercmd_t		move_queue[MOVE_BUNDLE_MAX * 4];
+	int				move_queue_start;
+	int				move_queue_count;
 	vec3_t			wishdir;			// intended motion calced from cmd
 	double			last_move_time;
+	double			lastmovetime;
 	qboolean		input_stale;
 	qboolean		moveext;
 	int				lastmovemessage;
@@ -138,9 +145,12 @@ typedef struct client_s
 	int				net_move_cmds_received;
 	int				net_move_cmds_accepted;
 	int				net_move_cmds_stale;
+	int				net_move_cmds_simulated;
 	int				net_move_bundle_max;
 	int				net_move_last_bundle;
 	int				net_move_last_gap;
+	int				net_move_queue_max;
+	float			net_move_last_sim_seconds;
 	int				net_snapshot_sequence;
 	int				net_snapshot_ack;
 	int				net_snapshot_packets_sent;
@@ -167,6 +177,8 @@ typedef struct client_s
 		sizebuf_t		message;			// can be added to at any time,
 										// copied and clear once per frame
 	byte			msgbuf[MAX_MSGLEN];
+	sizebuf_t		datagram;			// private unreliable data for this client
+	byte			datagram_buf[MAX_DATAGRAM];
 	edict_t			*edict;				// EDICT_NUM(clientnum+1)
 	char			name[32];			// for printing to other people
 	int				colors;
@@ -184,6 +196,46 @@ typedef struct client_s
 	float			oldstats_f[MAX_CL_STATS];		//previous values of stats. if these differ from the current values, reflag resendstats.
 	char			*oldstats_s[MAX_CL_STATS];
 
+	qboolean		pextknown;
+	unsigned int	protocol_pext1;
+	unsigned int	protocol_pext2;
+	unsigned int	resendstatsnum[MAX_CL_STATS / 32];
+	unsigned int	resendstatsstr[MAX_CL_STATS / 32];
+	struct entity_num_state_s
+	{
+		unsigned int	num;
+		entity_state_t state;
+	}				*previousentities;
+	size_t			numpreviousentities;
+	size_t			maxpreviousentities;
+	unsigned int	snapshotresume;
+	unsigned int	*pendingentities_bits;
+	size_t			numpendingentities;
+	unsigned int	*pendingcsqcentities_bits;
+#define	SENDFLAG_PRESENT	0x80000000u
+#define	SENDFLAG_REMOVE		0x40000000u
+#define	SENDFLAG_USABLE		0x00ffffffu
+	size_t			numpendingcsqcentities;
+	struct deltaframe_s
+	{
+		int			sequence;
+		float		timestamp;
+		unsigned int	resendstatsnum[MAX_CL_STATS / 32];
+		unsigned int	resendstatsstr[MAX_CL_STATS / 32];
+		struct
+			{
+				unsigned int num;
+				unsigned int ebits;
+				unsigned int csqcbits;
+			}			*ents;
+			int			numents;
+			int			maxents;
+	}				*frames;
+	size_t			numframes;
+	int				lastacksequence;
+	qboolean		csqcactive;
+	qboolean		usingpmove;
+
 	// VR Data
 	qboolean		is_vr_client;
 	vec3_t			vr_handpos;
@@ -196,6 +248,8 @@ typedef struct client_s
 	vec3_t			trusted_clientmove_velocity;
 } client_t;
 
+void SVFTE_Ack (client_t *client, int sequence);
+void SVFTE_DestroyFrames (client_t *client);
 
 //=============================================================================
 
@@ -326,6 +380,9 @@ void SV_AddUpdates (void);
 
 void SV_ClientThink (void);
 void SV_ApplyTrustedClientMove(client_t *client);
+qboolean SV_PopQueuedUsercmd(client_t *client, usercmd_t *out);
+void SV_ApplyQueuedUsercmd(client_t *client, const usercmd_t *queuedcmd);
+void SV_FinishQueuedUsercmd(client_t *client);
 void SV_AddClientToServer (struct qsocket_s	*ret);
 
 void SV_ClientPrintf (const char *fmt, ...) FUNC_PRINTF(1,2);

@@ -1735,6 +1735,24 @@ static void Host_PreSpawn_f(void) {
   host_client->signonidx = 0;
 }
 
+static void Host_EnableCSQC_f(void) {
+  size_t e;
+
+  if (cmd_source != src_client)
+    return;
+
+  host_client->csqcactive = true;
+  for (e = 1; e < host_client->numpendingcsqcentities; e++)
+    if (host_client->pendingcsqcentities_bits[e] & SENDFLAG_PRESENT)
+      host_client->pendingcsqcentities_bits[e] |= SENDFLAG_USABLE;
+}
+
+static void Host_DisableCSQC_f(void) {
+  if (cmd_source != src_client)
+    return;
+  host_client->csqcactive = false;
+}
+
 /*
 ==================
 Host_Spawn_f
@@ -2427,6 +2445,8 @@ void Host_InitCommands(void) {
   Cmd_AddCommand_ClientCommand("spawn", Host_Spawn_f);
   Cmd_AddCommand_ClientCommand("begin", Host_Begin_f);
   Cmd_AddCommand_ClientCommand("prespawn", Host_PreSpawn_f);
+  Cmd_AddCommand_ClientCommand("enablecsqc", Host_EnableCSQC_f);
+  Cmd_AddCommand_ClientCommand("disablecsqc", Host_DisableCSQC_f);
   Cmd_AddCommand_ClientCommand("kick", Host_Kick_f);
   Cmd_AddCommand_ClientCommand("ping", Host_Ping_f);
   Cmd_AddCommand("load", Host_Loadgame_f);

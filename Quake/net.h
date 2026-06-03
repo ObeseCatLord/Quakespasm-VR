@@ -60,6 +60,8 @@ struct qsocket_s	*NET_Connect (const char *host);
 
 double NET_QSocketGetTime (const struct qsocket_s *sock);
 const char *NET_QSocketGetAddressString (const struct qsocket_s *sock);
+int NET_QSocketGetSequenceIn (const struct qsocket_s *sock);
+int NET_QSocketGetSequenceOut (const struct qsocket_s *sock);
 
 qboolean NET_CanSendMessage (struct qsocket_s *sock);
 // Returns true or false if the given qsocket can currently accept a

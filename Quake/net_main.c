@@ -169,6 +169,15 @@ double NET_QSocketGetTime (const qsocket_t *s)
 	return s->connecttime;
 }
 
+int NET_QSocketGetSequenceIn (const qsocket_t *s)
+{
+	return (int)(s->unreliableReceiveSequence - 1);
+}
+
+int NET_QSocketGetSequenceOut (const qsocket_t *s)
+{
+	return (int)s->unreliableSendSequence;
+}
 
 const char *NET_QSocketGetAddressString (const qsocket_t *s)
 {

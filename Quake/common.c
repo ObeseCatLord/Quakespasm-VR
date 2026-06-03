@@ -61,6 +61,21 @@ char	**com_argv;
 char	com_cmdline[CMDLINE_LENGTH];
 
 qboolean standard_quake = true, rogue, hipnotic;
+entity_state_t nullentitystate;
+
+static void COM_SetupNullState (void)
+{
+	memset (&nullentitystate, 0, sizeof(nullentitystate));
+	nullentitystate.colormod[0] = 32;
+	nullentitystate.colormod[1] = 32;
+	nullentitystate.colormod[2] = 32;
+	nullentitystate.glowmod[0] = 32;
+	nullentitystate.glowmod[1] = 32;
+	nullentitystate.glowmod[2] = 32;
+	nullentitystate.alpha = ENTALPHA_DEFAULT;
+	nullentitystate.scale = ENTSCALE_DEFAULT;
+	nullentitystate.solidsize = ES_SOLID_NOT;
+}
 
 // this graphic needs to be in the pak file to use registered features
 static unsigned short pop[] =
@@ -800,6 +815,19 @@ void MSG_WriteAngle16 (sizebuf_t *sb, float f, unsigned int flags)
 }
 //johnfitz
 
+void MSG_WriteEntity (sizebuf_t *sb, unsigned int entnum, unsigned int pext2)
+{
+	if (entnum > 0x7fff && (pext2 & PEXT2_REPLACEMENTDELTAS))
+	{
+		MSG_WriteShort (sb, 0x8000 | (entnum >> 8));
+		MSG_WriteByte (sb, entnum & 0xff);
+	}
+	else
+	{
+		MSG_WriteShort (sb, entnum);
+	}
+}
+
 //
 // reading functions
 //
@@ -970,6 +998,16 @@ float MSG_ReadAngle16 (unsigned int flags)
 	else return MSG_ReadShort () * (360.0 / 65536);
 }
 //johnfitz
+
+unsigned int MSG_ReadEntity (unsigned int pext2)
+{
+	unsigned int e;
+
+	e = (unsigned short)MSG_ReadShort ();
+	if ((pext2 & PEXT2_REPLACEMENTDELTAS) && (e & 0x8000))
+		e = ((e & 0x7fff) << 8) | MSG_ReadByte ();
+	return e;
+}
 
 //===========================================================================
 
@@ -1500,6 +1538,8 @@ void COM_Init (void)
 
 	if (COM_CheckParm("-fitz"))
 		fitzmode = true;
+
+	COM_SetupNullState ();
 }
 
 

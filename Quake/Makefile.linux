@@ -269,6 +269,7 @@ OBJS = strlcat.o \
 	pr_cmds.o \
 	pr_edict.o \
 	pr_exec.o \
+	pmove.o \
 	sv_main.o \
 	sv_move.o \
 	sv_phys.o \

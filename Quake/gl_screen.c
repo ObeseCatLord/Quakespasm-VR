@@ -84,6 +84,7 @@ cvar_t scr_sbaralpha = {"scr_sbaralpha", "0.75", CVAR_ARCHIVE};
 cvar_t scr_conwidth = {"scr_conwidth", "0", CVAR_ARCHIVE};
 cvar_t scr_conscale = {"scr_conscale", "1", CVAR_ARCHIVE};
 cvar_t scr_crosshairscale = {"scr_crosshairscale", "1", CVAR_ARCHIVE};
+cvar_t scr_crosshair_desktop_fallback = {"scr_crosshair_desktop_fallback", "1", CVAR_ARCHIVE};
 cvar_t scr_showfps = {"scr_showfps", "0", CVAR_NONE};
 cvar_t scr_clock = {"scr_clock", "0", CVAR_NONE};
 // johnfitz
@@ -396,6 +397,7 @@ void SCR_Init(void) {
   Cvar_RegisterVariable(&scr_conwidth);
   Cvar_RegisterVariable(&scr_conscale);
   Cvar_RegisterVariable(&scr_crosshairscale);
+  Cvar_RegisterVariable(&scr_crosshair_desktop_fallback);
   Cvar_RegisterVariable(&scr_showfps);
   Cvar_RegisterVariable(&scr_clock);
   // johnfitz
@@ -628,11 +630,21 @@ SCR_DrawCrosshair -- johnfitz
 ==============
 */
 void SCR_DrawCrosshair(void) {
-  if (!crosshair.value)
-    return;
+  int ch;
+
+  if (!crosshair.value) {
+    if (vr_enabled.value || !scr_crosshair_desktop_fallback.value ||
+        q_strcasecmp(COM_SkipPath(com_gamedir), "vr") ||
+        cls.state != ca_connected || cls.signon != SIGNONS ||
+        key_dest != key_game)
+      return;
+    ch = '+';
+  } else {
+    ch = crosshair_char ? crosshair_char : '+';
+  }
 
   GL_SetCanvas(CANVAS_CROSSHAIR);
-  Draw_Character(-4, -4, crosshair_char); // 0,0 is center of viewport
+  Draw_Character(-4, -4, ch); // 0,0 is center of viewport
 }
 
 //=============================================================================

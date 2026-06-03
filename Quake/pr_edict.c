@@ -185,6 +185,9 @@ void ED_ClearEdict (edict_t *e)
 	else
 		ED_RemoveFromFreeList (e);
 	memset (&e->v, 0, qcvm->progs->entityfields * 4);
+	e->baseline = nullentitystate;
+	e->alpha = ENTALPHA_DEFAULT;
+	e->scale = ENTSCALE_DEFAULT;
 }
 
 /*
@@ -221,7 +224,9 @@ edict_t *ED_Alloc (void)
 
 	e = EDICT_NUM(qcvm->num_edicts++);
 	memset(e, 0, qcvm->edict_size); // ericw -- switched sv.edicts to malloc(), so we are accessing uninitialized memory and must fully zero it, not just ED_ClearEdict
-	e->baseline.scale = ENTSCALE_DEFAULT;
+	e->baseline = nullentitystate;
+	e->alpha = ENTALPHA_DEFAULT;
+	e->scale = ENTSCALE_DEFAULT;
 
 	return e;
 }
@@ -1330,6 +1335,7 @@ void PR_EnableExtensions (void)
 	else
 	{	//ssqc
 		QCEXTFUNCS_SV
+		QCEXTGLOBALS_INPUTS
 	}
 
 #undef QCEXTGLOBAL_FLOAT
@@ -1362,12 +1368,14 @@ static void PR_MergeEngineFieldDefs (void)
 		//{"pflags",		ev_float},	//for rtlights
 		//{"drawflags",		ev_float},	//hexen2 compat
 		//{"abslight",		ev_float},	//hexen2 compat
-		{"colormod",		ev_vector},	//lighting tints
-		//{"glowmod",		ev_vector},	//fullbright tints
-		//{"fatness",		ev_float},	//bloated rendering...
-		//{"gravitydir",	ev_vector},	//says which direction gravity should act for this ent...
+			{"colormod",		ev_vector},	//lighting tints
+			//{"glowmod",		ev_vector},	//fullbright tints
+			//{"fatness",		ev_float},	//bloated rendering...
+			//{"gravitydir",	ev_vector},	//says which direction gravity should act for this ent...
+			{"entnum",			ev_float},	//server entity number for csqc entity networking
+			{"pmove_flags",		ev_float},	//standard player PMove jump/ladder state
 
-	};
+		};
 	int maxofs = qcvm->progs->entityfields;
 	int maxdefs = qcvm->progs->numfielddefs;
 	unsigned int j, a;

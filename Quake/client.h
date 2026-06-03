@@ -152,9 +152,19 @@ typedef struct
 								// first frame
 	usercmd_t	cmd;			// last command sent to the server
 	usercmd_t	pendingcmd;		// accumulated state from mice+joysticks.
-	int			ackedmovemessages;	// last sequenced move accepted by server
-	usercmd_t	movecmds[CL_MOVE_HISTORY];
-	int			net_move_packets_sent;
+		int			ackedmovemessages;	// last sequenced move accepted by server
+		usercmd_t	movecmds[CL_MOVE_HISTORY];
+		int			predicted_move_sequence[CL_MOVE_HISTORY];
+		vec3_t		predicted_move_origin[CL_MOVE_HISTORY];
+		vec3_t		predicted_move_velocity[CL_MOVE_HISTORY];
+		vec3_t		prediction_error;
+		double		prediction_error_time;
+		int			prediction_error_sequence;
+		int			net_prediction_errors;
+		float		net_prediction_error_last;
+		float		net_prediction_error_max;
+		int			net_prediction_error_last_sequence;
+		int			net_move_packets_sent;
 	int			net_move_cmds_sent;
 	int			net_move_dup_packets_sent;
 	int			net_move_last_packet_cmds;
@@ -178,6 +188,9 @@ typedef struct
 	unsigned int	net_snapshot_partial_mask[SNAPSHOT_ACK_MASK_WORDS];
 	int			net_snapshot_part_resend_acks_sent;
 	int			net_snapshot_out_of_order_parts;
+	int			ackframes[SNAPSHOT_MAX_PARTS];
+	unsigned int	ackframes_count;
+	qboolean	requestresend;
 	double		net_last_diag_time;
 	qboolean	predstate_valid;
 	int			predstate_sequence;
@@ -274,12 +287,16 @@ typedef struct
 
 	unsigned	protocol; //johnfitz
 	unsigned	protocolflags;
+	unsigned	protocol_pext1;
+	unsigned	protocol_pext2;
 
 	qboolean	sendprespawn;
 
 	char		stuffcmdbuf[1024];	//comment-extensions are a thing with certain servers, make sure we can handle them properly without further hacks/breakages. there's also some server->client only console commands that we might as well try to handle a bit better, like reconnect
 
 	qcvm_t		qcvm;	//for csqc.
+	size_t		ssqc_to_csqc_max;
+	edict_t		**ssqc_to_csqc;	// maps server entity numbers to client-side CSQC edicts
 } client_state_t;
 
 
@@ -300,6 +317,11 @@ extern	cvar_t	cl_predictmove;
 extern	cvar_t	cl_move_redundancy;
 extern	cvar_t	cl_move_packetdup;
 extern	cvar_t	cl_nopred;
+extern	cvar_t	cl_predict_smooth;
+extern	cvar_t	cl_predict_smooth_time;
+extern	cvar_t	cl_predict_smooth_min;
+extern	cvar_t	cl_predict_smooth_max;
+extern	cvar_t	cl_predict_error_log;
 
 extern	cvar_t	cl_movespeedkey;
 

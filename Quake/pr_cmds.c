@@ -23,6 +23,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 
 #include "quakedef.h"
 #include "q_ctype.h"
+#include "pmove.h"
 
 #define	STRINGTEMP_BUFFERS		1024
 #define	STRINGTEMP_LENGTH		1024
@@ -40,6 +41,8 @@ static char *PR_GetTempString (void)
 #define	MSG_ONE		1		// reliable to one (msg_entity)
 #define	MSG_ALL		2		// reliable to all
 #define	MSG_INIT	3		// write to the init string
+#define	MSG_EXT_MULTICAST	4	// temporary extended QC message buffer
+#define	MSG_EXT_ENTITY	5		// temporary CSQC entity message buffer
 
 /*
 ===============================================================================
@@ -1535,6 +1538,10 @@ static sizebuf_t *WriteDest (void)
 	case MSG_INIT:
 		return sv.signon;
 
+	case MSG_EXT_MULTICAST:
+	case MSG_EXT_ENTITY:
+		return &sv.multicast;
+
 	default:
 		PR_RunError ("WriteDest: bad destination");
 		break;
@@ -2042,6 +2049,53 @@ static void PF_cl_playerkey_f(void)
 	int playernum = G_FLOAT(OFS_PARM0);
 	const char *keyname = G_STRING(OFS_PARM1);
 	PF_cl_playerkey_internal(playernum, keyname, true);
+}
+
+static void PF_cl_readbyte(void)
+{
+	G_FLOAT(OFS_RETURN) = MSG_ReadByte();
+}
+
+static void PF_cl_readchar(void)
+{
+	G_FLOAT(OFS_RETURN) = MSG_ReadChar();
+}
+
+static void PF_cl_readshort(void)
+{
+	G_FLOAT(OFS_RETURN) = MSG_ReadShort();
+}
+
+static void PF_cl_readlong(void)
+{
+	G_FLOAT(OFS_RETURN) = MSG_ReadLong();
+}
+
+static void PF_cl_readcoord(void)
+{
+	G_FLOAT(OFS_RETURN) = MSG_ReadCoord(cl.protocolflags);
+}
+
+static void PF_cl_readangle(void)
+{
+	G_FLOAT(OFS_RETURN) = MSG_ReadAngle(cl.protocolflags);
+}
+
+static void PF_cl_readstring(void)
+{
+	char *result = PR_GetTempString();
+	q_strlcpy(result, MSG_ReadString(), STRINGTEMP_LENGTH);
+	G_INT(OFS_RETURN) = PR_SetEngineString(result);
+}
+
+static void PF_cl_readfloat(void)
+{
+	G_FLOAT(OFS_RETURN) = MSG_ReadFloat();
+}
+
+static void PF_cl_readentitynum(void)
+{
+	G_FLOAT(OFS_RETURN) = MSG_ReadEntity(cl.protocol_pext2);
 }
 
 static struct
@@ -3619,10 +3673,20 @@ builtindef_t pr_builtindefs[] =
 	{"getstatf",				PF_CSQC(PF_cl_getstat_float),	331},	// #define getstatbits getstatf\nfloat(float stnum, optional float firstbit, optional float bitcount)
 	{"getstats",				PF_CSQC(PF_cl_getstat_string),	332},	// string(float stnum)
 
+	{"runstandardplayerphysics",	PF_SSQC(PF_sv_pmove),			347},	// void(entity ent)
 	{"getplayerkeyvalue",		PF_CSQC(PF_cl_playerkey_s),		348},	// string(float playernum, string keyname)
 	{"getplayerkeyfloat",		PF_CSQC(PF_cl_playerkey_f)},			// float(float playernum, string keyname, optional float assumevalue)
 
 	{"registercommand",			PF_CSQC(PF_cl_registercommand),	352},	// void(string cmdname)
+	{"readbyte",				PF_CSQC(PF_cl_readbyte),			360},	// float()
+	{"readchar",				PF_CSQC(PF_cl_readchar),			361},	// float()
+	{"readshort",				PF_CSQC(PF_cl_readshort),			362},	// float()
+	{"readlong",				PF_CSQC(PF_cl_readlong),			363},	// float()
+	{"readcoord",				PF_CSQC(PF_cl_readcoord),			364},	// float()
+	{"readangle",				PF_CSQC(PF_cl_readangle),			365},	// float()
+	{"readstring",				PF_CSQC(PF_cl_readstring),			366},	// string()
+	{"readfloat",				PF_CSQC(PF_cl_readfloat),			367},	// float()
+	{"readentitynum",			PF_CSQC(PF_cl_readentitynum),		368},	// float()
 
 	{"ex_CheckPlayerEXFlags",	PF_SSQC(PF_CheckPlayerEXFlags),	430},	// rerelease sparse slot used by mod progs
 	{"vectorvectors",			PF_BOTH(PF_vectorvectors),		432},	// void(vector dir)

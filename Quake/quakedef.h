@@ -84,7 +84,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #define	MAX_MSGLEN	64000		// max length of a reliable message //ericw -- was 32000
 #define	MAX_DATAGRAM	64000		// max length of unreliable message //johnfitz -- was 1024
 
-#define DATAGRAM_MTU 1400
+#define DATAGRAM_MTU 1200
 		// Bounds both unreliable per-client packets (via sv_maxpacketsize)
 		// and the reliable-channel fragment chunk size in net_dgrm.c so
 		// every UDP datagram fits within a single-hop IP MTU and avoids
@@ -127,6 +127,31 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #define	STAT_SECRETS		13	// bumped on client side by svc_foundsecret
 #define	STAT_MONSTERS		14	// bumped by svc_killedmonster
 #define STAT_ITEMS			15	//replaces clc_clientdata info
+#define STAT_VIEWHEIGHT		16
+#define STAT_VIEWZOOM		21
+#define STAT_PUNCHANGLE_X	26
+#define STAT_PUNCHANGLE_Y	27
+#define STAT_PUNCHANGLE_Z	28
+#define STAT_MOVEFLAGS		225
+#define STAT_MOVEVARS_WATERSINKSPEED	226
+#define STAT_MOVEVARS_FLYFRICTION		227
+#define STAT_MOVEVARS_BUNNYSPEEDCAP		228
+#define STAT_MOVEVARS_KTJUMP			229
+#define STAT_MOVEVARS_FRICTION			238
+#define STAT_MOVEVARS_WATERFRICTION		239
+#define STAT_MOVEVARS_TIMESCALE			241
+#define STAT_MOVEVARS_GRAVITY			242
+#define STAT_MOVEVARS_STOPSPEED			243
+#define STAT_MOVEVARS_MAXSPEED			244
+#define STAT_MOVEVARS_SPECTATORMAXSPEED	245
+#define STAT_MOVEVARS_ACCELERATE		246
+#define STAT_MOVEVARS_AIRACCELERATE		247
+#define STAT_MOVEVARS_WATERACCELERATE	248
+#define STAT_MOVEVARS_ENTGRAVITY		249
+#define STAT_MOVEVARS_JUMPVELOCITY		250
+#define STAT_MOVEVARS_EDGEFRICTION		251
+#define STAT_MOVEVARS_MAXAIRSPEED		252
+#define STAT_MOVEVARS_STEPHEIGHT		253
 
 // stock defines
 //

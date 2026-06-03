@@ -29,6 +29,10 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #define PROTOCOL_FITZQUAKE                                                     \
   666 // johnfitz -- added new protocol for fitzquake 0.85
 #define PROTOCOL_RMQ 999
+#define PROTOCOL_FTE_PEXT1                                                     \
+  (('F' << 0) + ('T' << 8) + ('E' << 16) + ('X' << 24))
+#define PROTOCOL_FTE_PEXT2                                                     \
+  (('F' << 0) + ('T' << 8) + ('E' << 16) + ('2' << 24))
 
 // PROTOCOL_RMQ protocol flags
 #define PRFL_SHORTANGLE (1 << 1)
@@ -39,6 +43,28 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #define PRFL_ALPHASANITY (1 << 6) // cleanup insanity with alpha
 #define PRFL_INT32COORD (1 << 7)
 #define PRFL_MOREFLAGS (1 << 31) // not supported
+
+// FTE protocol extension flags. This fork assumes latest client/server pairs
+// for its private movement protocol, but uses these QSS-M/FTE flags internally
+// for replacement-delta snapshots and future PMove prediction.
+#define PEXT1_CSQC 0x40000000
+#define PEXT1_SUPPORTED_CLIENT (PEXT1_CSQC)
+#define PEXT1_SUPPORTED_SERVER (PEXT1_CSQC)
+#define PEXT1_ACCEPTED_CLIENT (PEXT1_SUPPORTED_CLIENT)
+
+#define PEXT2_PRYDONCURSOR 0x00000001
+#define PEXT2_SETANGLEDELTA 0x00000004
+#define PEXT2_REPLACEMENTDELTAS 0x00000008
+#define PEXT2_MAXPLAYERS 0x00000010
+#define PEXT2_PREDINFO 0x00000020
+#define PEXT2_NEWSIZEENCODING 0x00000040
+#define PEXT2_SUPPORTED_CLIENT                                                  \
+  (PEXT2_PRYDONCURSOR | PEXT2_SETANGLEDELTA | PEXT2_REPLACEMENTDELTAS |        \
+   PEXT2_MAXPLAYERS | PEXT2_PREDINFO | PEXT2_NEWSIZEENCODING)
+#define PEXT2_SUPPORTED_SERVER                                                  \
+  (PEXT2_PRYDONCURSOR | PEXT2_REPLACEMENTDELTAS | PEXT2_PREDINFO |             \
+   PEXT2_NEWSIZEENCODING)
+#define PEXT2_ACCEPTED_CLIENT (PEXT2_SUPPORTED_CLIENT)
 
 // if the high bit of the servercmd is set, the low bits are fast update flags:
 #define U_MOREBITS (1 << 0)
@@ -78,6 +104,52 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 // johnfitz -- PROTOCOL_NEHAHRA transparency
 #define U_TRANS (1 << 15)
 // johnfitz
+
+// QSS-M/FTE replacement-delta entity flags.
+#define UF_FRAME (1u << 0)
+#define UF_ORIGINXY (1u << 1)
+#define UF_ORIGINZ (1u << 2)
+#define UF_ANGLESXZ (1u << 3)
+#define UF_ANGLESY (1u << 4)
+#define UF_EFFECTS (1u << 5)
+#define UF_PREDINFO (1u << 6)
+#define UF_EXTEND1 (1u << 7)
+
+#define UF_RESET (1u << 8)
+#define UF_16BIT (1u << 9)
+#define UF_MODEL (1u << 10)
+#define UF_SKIN (1u << 11)
+#define UF_COLORMAP (1u << 12)
+#define UF_SOLID (1u << 13)
+#define UF_FLAGS (1u << 14)
+#define UF_EXTEND2 (1u << 15)
+
+#define UF_ALPHA (1u << 16)
+#define UF_SCALE (1u << 17)
+#define UF_BONEDATA (1u << 18)
+#define UF_DRAWFLAGS (1u << 19)
+#define UF_TAGINFO (1u << 20)
+#define UF_LIGHT (1u << 21)
+#define UF_TRAILEFFECT (1u << 22)
+#define UF_EXTEND3 (1u << 23)
+
+#define UF_COLORMOD (1u << 24)
+#define UF_GLOW (1u << 25)
+#define UF_FATNESS (1u << 26)
+#define UF_MODELINDEX2 (1u << 27)
+#define UF_GRAVITYDIR (1u << 28)
+#define UF_EFFECTS2 (1u << 29)
+#define UF_UNUSED2 (1u << 30)
+#define UF_UNUSED1 (1u << 31)
+
+#define UFP_FORWARD (1u << 0)
+#define UFP_SIDE (1u << 1)
+#define UFP_UP (1u << 2)
+#define UFP_MOVETYPE (1u << 3)
+#define UFP_VELOCITYXY (1u << 4)
+#define UFP_VELOCITYZ (1u << 5)
+#define UFP_MSEC (1u << 6)
+#define UFP_VIEWANGLE (1u << 7)
 
 #define SU_VIEWHEIGHT (1 << 0)
 #define SU_IDEALPITCH (1 << 1)
@@ -264,6 +336,27 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #define svc_moveack 57 // [short] last accepted sequenced move, prediction state
 #define svc_snapshot 58 // [short] frame [byte] part [byte] flags [short] firstent [short] totalents
 
+// QSS-M/FTE/DP service ids used by replacement deltas. Some numeric values
+// intentionally overlap the 2021 rerelease/private ids above; only dispatch
+// through these names when the corresponding protocol extension is active.
+#define svcdp_downloaddata 50
+#define svcdp_updatestatbyte 51
+#define svcdp_effect 52
+#define svcdp_effect2 53
+#define svcdp_precache 54
+#define svcdp_spawnbaseline2 55
+#define svcdp_spawnstatic2 56
+#define svcdp_entities 57
+#define svcdp_csqcentities 58
+#define svcdp_spawnstaticsound2 59
+#define svcfte_spawnbaseline2 66
+#define svcfte_updatestatstring 78
+#define svcfte_updatestatfloat 79
+#define svcfte_csqcentities 76
+#define svcfte_cgamepacket 83
+#define svcfte_setangledelta 85
+#define svcfte_updateentities 86
+
 //
 // client to server
 //
@@ -272,9 +365,11 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #define clc_disconnect 2
 #define clc_move 3      // [bundled sequenced usercmd_t records]
 #define clc_stringcmd 4 // [string] message
+#define clcdp_ackframe 50
 
 #define MOVEEXT_VR 1
 #define MOVEEXT_TRUSTED 2
+#define MOVEEXT_QCINPUT 4
 
 #define MOVE_BUNDLE_MAX 16
 #define MOVE_BUNDLE_SNAPSHOTACK 1
@@ -320,12 +415,37 @@ typedef struct {
   vec3_t angles;
   unsigned short modelindex; // johnfitz -- was int
   unsigned short frame;      // johnfitz -- was int
-  unsigned char colormap;    // johnfitz -- was int
-  unsigned char skin;        // johnfitz -- was int
-  unsigned char alpha;       // johnfitz -- added
-  unsigned char scale;       // Quakespasm: for model scale support.
   int effects;
+  unsigned char colormap; // johnfitz -- was int
+  unsigned char skin;     // johnfitz -- was int
+  unsigned char scale;    // Quakespasm: for model scale support.
+  unsigned char pmovetype;
+  unsigned short traileffectnum;
+  unsigned short emiteffectnum;
+  short velocity[3];
+  unsigned char eflags;
+  unsigned char tagindex;
+  unsigned short tagentity;
+  unsigned short pad;
+  unsigned char colormod[3];
+  unsigned char glowmod[3];
+  unsigned char alpha;       // johnfitz -- added
+  unsigned char drawflags;
+  unsigned int solidsize;
+#define ES_SOLID_NOT 0
+#define ES_SOLID_BSP 31
+#define ES_SOLID_HULL1 0x80201810u
+#define ES_SOLID_HULL2 0x80401820u
+#define ES_SOLID_HAS_EXTRA_BITS(solid)                                         \
+  (((solid)&0x0707) || ((((solid) >> 16) - 32768 + 32) & 7))
 } entity_state_t;
+#define EFLAGS_STEP 1
+#define EFLAGS_VIEWMODEL 4
+#define EFLAGS_EXTERIORMODEL 8
+#define EFLAGS_COLOURMAPPED 32
+#define EFLAGS_ONGROUND 128
+
+extern entity_state_t nullentitystate;
 
 typedef struct {
   int sequence;
@@ -340,6 +460,11 @@ typedef struct {
 
   int buttons;
   int impulse;
+  int weapon;
+  float cursor_screen[2];
+  vec3_t cursor_start;
+  vec3_t cursor_impact;
+  int cursor_entitynumber;
 
   // VR Data
   vec3_t vr_handpos;

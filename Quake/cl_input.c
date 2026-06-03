@@ -383,6 +383,11 @@ static void CL_WriteUsercmd(sizebuf_t *buf, const usercmd_t *histcmd) {
     extbits |= MOVEEXT_VR;
   if (histcmd->trusted_active)
     extbits |= MOVEEXT_TRUSTED;
+  if (histcmd->weapon || histcmd->cursor_screen[0] || histcmd->cursor_screen[1] ||
+      histcmd->cursor_start[0] || histcmd->cursor_start[1] || histcmd->cursor_start[2] ||
+      histcmd->cursor_impact[0] || histcmd->cursor_impact[1] || histcmd->cursor_impact[2] ||
+      histcmd->cursor_entitynumber)
+    extbits |= MOVEEXT_QCINPUT;
 
   msec = (int)(histcmd->seconds * 1000.0f + 0.5f);
   msec = CLAMP(1, msec, 255);
@@ -420,6 +425,19 @@ static void CL_WriteUsercmd(sizebuf_t *buf, const usercmd_t *histcmd) {
     MSG_WriteFloat(buf, histcmd->trusted_velocity[1]);
     MSG_WriteFloat(buf, histcmd->trusted_velocity[2]);
   }
+
+  if (extbits & MOVEEXT_QCINPUT) {
+    MSG_WriteLong(buf, histcmd->weapon);
+    MSG_WriteShort(buf, histcmd->cursor_screen[0] * 32767);
+    MSG_WriteShort(buf, histcmd->cursor_screen[1] * 32767);
+    MSG_WriteFloat(buf, histcmd->cursor_start[0]);
+    MSG_WriteFloat(buf, histcmd->cursor_start[1]);
+    MSG_WriteFloat(buf, histcmd->cursor_start[2]);
+    MSG_WriteFloat(buf, histcmd->cursor_impact[0]);
+    MSG_WriteFloat(buf, histcmd->cursor_impact[1]);
+    MSG_WriteFloat(buf, histcmd->cursor_impact[2]);
+    MSG_WriteEntity(buf, histcmd->cursor_entitynumber, cl.protocol_pext2);
+  }
 }
 
 void CL_SendMove(const usercmd_t *cmd) {
@@ -439,6 +457,8 @@ void CL_SendMove(const usercmd_t *cmd) {
   buf.maxsize = sizeof(data);
   buf.cursize = 0;
   buf.data = data;
+  buf.allowoverflow = false;
+  buf.overflowed = false;
 
   //
   // deliver the message
@@ -554,13 +574,21 @@ void CL_SendMove(const usercmd_t *cmd) {
     sendseqs[count++] = seq;
   }
 
+  for (i = 0; i < cl.ackframes_count; i++) {
+    MSG_WriteByte(&buf, clcdp_ackframe);
+    MSG_WriteLong(&buf, cl.ackframes[i]);
+  }
+  cl.ackframes_count = 0;
+
   flags = 0;
-  if (cl.net_snapshot_have)
-    flags |= MOVE_BUNDLE_SNAPSHOTACK;
-  if (cl.net_snapshot_partial_active &&
-      (!cl.net_snapshot_have ||
-       cl.net_snapshot_partial_sequence > cl.net_snapshot_sequence))
-    flags |= MOVE_BUNDLE_SNAPSHOTPARTS;
+  if (!(cl.protocol_pext2 & PEXT2_REPLACEMENTDELTAS)) {
+    if (cl.net_snapshot_have)
+      flags |= MOVE_BUNDLE_SNAPSHOTACK;
+    if (cl.net_snapshot_partial_active &&
+        (!cl.net_snapshot_have ||
+         cl.net_snapshot_partial_sequence > cl.net_snapshot_sequence))
+      flags |= MOVE_BUNDLE_SNAPSHOTPARTS;
+  }
 
   MSG_WriteByte(&buf, clc_move);
   MSG_WriteShort(&buf, seq & 0xffff);

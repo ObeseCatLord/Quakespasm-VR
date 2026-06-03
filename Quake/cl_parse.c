@@ -130,7 +130,8 @@ entity_t	*CL_EntityNum (int num)
 		{
 			cl_entities[cl.num_entities].colormap = vid.colormap;
 			cl_entities[cl.num_entities].lerpflags |= LERP_RESETMOVE|LERP_RESETANIM; //johnfitz
-			cl_entities[cl.num_entities].baseline.scale = ENTSCALE_DEFAULT;
+			cl_entities[cl.num_entities].baseline = nullentitystate;
+			cl_entities[cl.num_entities].netstate = nullentitystate;
 			cl.num_entities++;
 		}
 	}
@@ -331,6 +332,12 @@ void CL_ParseServerInfo (void)
 	}
 	else cl.protocolflags = 0;
 
+	cl.protocol_pext1 = 0;
+	cl.protocol_pext2 = PEXT2_REPLACEMENTDELTAS | PEXT2_PREDINFO | PEXT2_NEWSIZEENCODING;
+	cl.requestresend = true;
+	cl.ackframes_count = 1;
+	cl.ackframes[0] = -1;
+
 // parse maxclients
 	cl.maxclients = MSG_ReadByte ();
 	if (cl.maxclients < 1 || cl.maxclients > MAX_SCOREBOARD)
@@ -442,6 +449,100 @@ void CL_ParseServerInfo (void)
 	memset(&dev_stats, 0, sizeof(dev_stats));
 	memset(&dev_peakstats, 0, sizeof(dev_peakstats));
 	memset(&dev_overflows, 0, sizeof(dev_overflows));
+}
+
+static void CSQC_ClearCsEdictForSSQC (size_t entnum)
+{
+	edict_t *ed;
+
+	if (entnum >= cl.ssqc_to_csqc_max)
+		return;
+
+	ed = cl.ssqc_to_csqc[entnum];
+	if (!ed)
+		return;
+
+	cl.ssqc_to_csqc[entnum] = NULL;
+	pr_global_struct->self = EDICT_TO_PROG(ed);
+	if (qcvm->extfuncs.CSQC_Ent_Remove)
+		PR_ExecuteProgram(qcvm->extfuncs.CSQC_Ent_Remove);
+	else
+		ED_Free(ed);
+}
+
+static void CSQC_UpdateCsEdictForSSQC (size_t entnum)
+{
+	edict_t *ed;
+	eval_t *ev;
+	qboolean isnew;
+
+	if (entnum >= cl.ssqc_to_csqc_max)
+	{
+		size_t nc;
+		void *nptr;
+
+		if (entnum >= MAX_EDICTS)
+			Host_Error ("CSQC_UpdateCsEdictForSSQC: entnum %zu >= MAX_EDICTS", entnum);
+		nc = q_min((size_t)MAX_EDICTS, entnum + 64);
+		nptr = realloc(cl.ssqc_to_csqc, nc * sizeof(*cl.ssqc_to_csqc));
+		if (!nptr)
+			Sys_Error ("CSQC_UpdateCsEdictForSSQC: realloc failed");
+		cl.ssqc_to_csqc = nptr;
+		memset(cl.ssqc_to_csqc + cl.ssqc_to_csqc_max, 0,
+			(nc - cl.ssqc_to_csqc_max) * sizeof(*cl.ssqc_to_csqc));
+		cl.ssqc_to_csqc_max = nc;
+	}
+
+	ed = cl.ssqc_to_csqc[entnum];
+	if (!ed)
+	{
+		ed = cl.ssqc_to_csqc[entnum] = ED_Alloc();
+		ev = GetEdictFieldValue(ed, qcvm->extfields.entnum);
+		if (ev)
+			ev->_float = entnum;
+		isnew = true;
+	}
+	else
+		isnew = false;
+
+	G_FLOAT(OFS_PARM0) = isnew;
+	pr_global_struct->self = EDICT_TO_PROG(ed);
+	PR_ExecuteProgram(cl.qcvm.extfuncs.CSQC_Ent_Update);
+}
+
+static void CLFTE_ParseCSQCEntitiesUpdate (void)
+{
+	unsigned int entnum;
+	qboolean removeflag;
+
+	if (!qcvm->extfuncs.CSQC_Ent_Update)
+		Host_Error ("Received svc_csqcentities but CSQC_Ent_Update is missing");
+
+	for (;;)
+	{
+		entnum = (unsigned short)MSG_ReadShort();
+		removeflag = !!(entnum & 0x8000);
+		if (entnum & 0x4000)
+			entnum = (entnum & 0x3fff) | (MSG_ReadByte() << 14);
+		else
+			entnum &= ~0x8000;
+
+		if ((!entnum && !removeflag) || msg_badread)
+			break;
+
+		if (removeflag)
+		{
+			if (cl_shownet.value >= 3)
+				Con_Printf ("%3i:     CSQC remove %u\n", msg_readcount, entnum);
+			CSQC_ClearCsEdictForSSQC(entnum);
+		}
+		else
+		{
+			if (cl_shownet.value >= 3)
+				Con_Printf ("%3i:     CSQC update %u\n", msg_readcount, entnum);
+			CSQC_UpdateCsEdictForSSQC(entnum);
+		}
+	}
 }
 
 /*
@@ -678,6 +779,7 @@ void CL_ParseBaseline (entity_t *ent, int version) //johnfitz -- added argument
 	int bits; //johnfitz
 
 	//johnfitz -- PROTOCOL_FITZQUAKE
+	ent->baseline = nullentitystate;
 	bits = (version == 2) ? MSG_ReadByte() : 0;
 	ent->baseline.modelindex = (bits & B_LARGEMODEL) ? MSG_ReadShort() : MSG_ReadByte();
 	ent->baseline.frame = (bits & B_LARGEFRAME) ? MSG_ReadShort() : MSG_ReadByte();
@@ -693,6 +795,411 @@ void CL_ParseBaseline (entity_t *ent, int version) //johnfitz -- added argument
 
 	ent->baseline.alpha = (bits & B_ALPHA) ? MSG_ReadByte() : ENTALPHA_DEFAULT; //johnfitz -- PROTOCOL_FITZQUAKE
 	ent->baseline.scale = (bits & B_SCALE) ? MSG_ReadByte() : ENTSCALE_DEFAULT;
+	ent->netstate = ent->baseline;
+}
+
+static int MSG_ReadSize16 (void)
+{
+	unsigned short ssolid = MSG_ReadShort ();
+	if (ssolid == ES_SOLID_BSP)
+		return ssolid;
+	else
+	{
+		int solid = (((ssolid >> 7) & 0x1f8) - 32 + 32768) << 16;
+		solid |= ((ssolid & 0x1f) << 3);
+		solid |= ((ssolid & 0x3e0) << 6);
+		return solid;
+	}
+}
+
+static unsigned int CLFTE_ReadDelta (unsigned int entnum, entity_state_t *news,
+	const entity_state_t *olds, const entity_state_t *baseline)
+{
+	unsigned int bits;
+	unsigned int predbits = 0;
+
+	bits = MSG_ReadByte ();
+	if (bits & UF_EXTEND1)
+		bits |= MSG_ReadByte () << 8;
+	if (bits & UF_EXTEND2)
+		bits |= MSG_ReadByte () << 16;
+	if (bits & UF_EXTEND3)
+		bits |= MSG_ReadByte () << 24;
+
+	if (cl_shownet.value >= 3)
+		Con_SafePrintf ("%3i:     FTE update %4u 0x%x\n", msg_readcount, entnum, bits);
+
+	if (bits & UF_RESET)
+		*news = *baseline;
+	else if (olds)
+		*news = *olds;
+	else
+		*news = *baseline;
+
+	if (bits & UF_FRAME)
+		news->frame = (bits & UF_16BIT) ? MSG_ReadShort () : MSG_ReadByte ();
+	if (bits & UF_ORIGINXY)
+	{
+		news->origin[0] = MSG_ReadCoord (cl.protocolflags);
+		news->origin[1] = MSG_ReadCoord (cl.protocolflags);
+	}
+	if (bits & UF_ORIGINZ)
+		news->origin[2] = MSG_ReadCoord (cl.protocolflags);
+	if ((bits & UF_PREDINFO) && !(cl.protocol_pext2 & PEXT2_PREDINFO))
+	{
+		if (bits & UF_ANGLESXZ)
+		{
+			news->angles[0] = MSG_ReadAngle16 (cl.protocolflags);
+			news->angles[2] = MSG_ReadAngle16 (cl.protocolflags);
+		}
+		if (bits & UF_ANGLESY)
+			news->angles[1] = MSG_ReadAngle16 (cl.protocolflags);
+	}
+	else
+	{
+		if (bits & UF_ANGLESXZ)
+		{
+			news->angles[0] = MSG_ReadAngle (cl.protocolflags);
+			news->angles[2] = MSG_ReadAngle (cl.protocolflags);
+		}
+		if (bits & UF_ANGLESY)
+			news->angles[1] = MSG_ReadAngle (cl.protocolflags);
+	}
+	if ((bits & (UF_EFFECTS | UF_EFFECTS2)) == (UF_EFFECTS | UF_EFFECTS2))
+		news->effects = MSG_ReadLong ();
+	else if (bits & UF_EFFECTS2)
+		news->effects = (unsigned short)MSG_ReadShort ();
+	else if (bits & UF_EFFECTS)
+		news->effects = MSG_ReadByte ();
+
+	news->velocity[0] = news->velocity[1] = news->velocity[2] = 0;
+	if (bits & UF_PREDINFO)
+	{
+		predbits = MSG_ReadByte ();
+		if (predbits & UFP_FORWARD)
+			MSG_ReadShort ();
+		if (predbits & UFP_SIDE)
+			MSG_ReadShort ();
+		if (predbits & UFP_UP)
+			MSG_ReadShort ();
+		if (predbits & UFP_MOVETYPE)
+			news->pmovetype = MSG_ReadByte ();
+		if (predbits & UFP_VELOCITYXY)
+		{
+			news->velocity[0] = MSG_ReadShort ();
+			news->velocity[1] = MSG_ReadShort ();
+		}
+		if (predbits & UFP_VELOCITYZ)
+			news->velocity[2] = MSG_ReadShort ();
+		if (predbits & UFP_MSEC)
+			MSG_ReadByte ();
+		if ((cl.protocol_pext2 & PEXT2_PREDINFO) && (predbits & UFP_VIEWANGLE))
+		{
+			if (bits & UF_ANGLESXZ)
+			{
+				MSG_ReadShort ();
+				MSG_ReadShort ();
+			}
+			if (bits & UF_ANGLESY)
+				MSG_ReadShort ();
+		}
+	}
+
+	if (bits & UF_MODEL)
+		news->modelindex = (bits & UF_16BIT) ? MSG_ReadShort () : MSG_ReadByte ();
+	if (bits & UF_SKIN)
+		news->skin = (bits & UF_16BIT) ? MSG_ReadShort () : MSG_ReadByte ();
+	if (bits & UF_COLORMAP)
+		news->colormap = MSG_ReadByte ();
+	if (bits & UF_SOLID)
+	{
+		if (cl.protocol_pext2 & PEXT2_NEWSIZEENCODING)
+		{
+			byte enc = MSG_ReadByte ();
+			if (enc == 0)
+				news->solidsize = ES_SOLID_NOT;
+			else if (enc == 1)
+				news->solidsize = ES_SOLID_BSP;
+			else if (enc == 2)
+				news->solidsize = ES_SOLID_HULL1;
+			else if (enc == 3)
+				news->solidsize = ES_SOLID_HULL2;
+			else if (enc == 16)
+				news->solidsize = MSG_ReadSize16 ();
+			else if (enc == 32)
+				news->solidsize = MSG_ReadLong ();
+			else
+				Host_Error ("CLFTE_ReadDelta: unknown solid encoding %u", enc);
+		}
+		else
+			news->solidsize = MSG_ReadSize16 ();
+	}
+	if (bits & UF_FLAGS)
+		news->eflags = MSG_ReadByte ();
+	if (bits & UF_ALPHA)
+		news->alpha = (MSG_ReadByte () + 1) & 0xff;
+	if (bits & UF_SCALE)
+		news->scale = MSG_ReadByte ();
+	if (bits & UF_BONEDATA)
+	{
+		unsigned char fl = MSG_ReadByte ();
+		if (fl & 0x80)
+		{
+			int i, bonecount = MSG_ReadByte ();
+			for (i = 0; i < bonecount * 7; i++)
+				MSG_ReadShort ();
+		}
+		if (fl & 0x40)
+		{
+			MSG_ReadByte ();
+			MSG_ReadShort ();
+		}
+		if (fl & 0x3f)
+			Host_Error ("CLFTE_ReadDelta: unsupported bone delta");
+	}
+	if (bits & UF_DRAWFLAGS)
+		news->drawflags = MSG_ReadByte ();
+	if (bits & UF_TAGINFO)
+	{
+		news->tagentity = MSG_ReadEntity (cl.protocol_pext2);
+		news->tagindex = MSG_ReadByte ();
+	}
+	if (bits & UF_LIGHT)
+	{
+		MSG_ReadShort (); MSG_ReadShort (); MSG_ReadShort (); MSG_ReadShort ();
+		MSG_ReadByte (); MSG_ReadByte ();
+	}
+	if (bits & UF_TRAILEFFECT)
+	{
+		unsigned short v = MSG_ReadShort ();
+		news->emiteffectnum = 0;
+		news->traileffectnum = v & 0x3fff;
+		if (v & 0x8000)
+			news->emiteffectnum = MSG_ReadShort () & 0x3fff;
+	}
+	if (bits & UF_COLORMOD)
+	{
+		news->colormod[0] = MSG_ReadByte ();
+		news->colormod[1] = MSG_ReadByte ();
+		news->colormod[2] = MSG_ReadByte ();
+	}
+	if (bits & UF_GLOW)
+	{
+		MSG_ReadByte ();
+		MSG_ReadByte ();
+		news->glowmod[0] = MSG_ReadByte ();
+		news->glowmod[1] = MSG_ReadByte ();
+		news->glowmod[2] = MSG_ReadByte ();
+	}
+	if (bits & UF_FATNESS)
+		MSG_ReadByte ();
+	if (bits & UF_MODELINDEX2)
+	{
+		if (bits & UF_16BIT)
+			MSG_ReadShort ();
+		else
+			MSG_ReadByte ();
+	}
+	if (bits & UF_GRAVITYDIR)
+	{
+		MSG_ReadByte ();
+		MSG_ReadByte ();
+	}
+	if (bits & (UF_UNUSED1 | UF_UNUSED2))
+		Host_Error ("CLFTE_ReadDelta: unsupported entity delta bits");
+	return bits;
+}
+
+static void CLFTE_EntitiesDeltaed (void)
+{
+	int newnum;
+	entity_t *ent;
+	qmodel_t *model;
+	qboolean forcelink;
+
+	for (newnum = 1; newnum < cl.num_entities; newnum++)
+	{
+		ent = CL_EntityNum (newnum);
+		if (!ent->update_type)
+			continue;
+		if (ent->msgtime == cl.mtime[0])
+			forcelink = false;
+		else
+		{
+			forcelink = ent->msgtime != cl.mtime[1];
+			if (ent->msgtime + 0.2 < cl.mtime[0])
+				ent->lerpflags |= LERP_RESETANIM;
+			ent->msgtime = cl.mtime[0];
+			VectorCopy (ent->msg_origins[0], ent->msg_origins[1]);
+			VectorCopy (ent->msg_angles[0], ent->msg_angles[1]);
+			VectorCopy (ent->netstate.origin, ent->msg_origins[0]);
+			VectorCopy (ent->netstate.angles, ent->msg_angles[0]);
+		}
+
+		ent->skinnum = ent->netstate.skin;
+		ent->effects = ent->netstate.effects;
+		if (ent->netstate.eflags & EFLAGS_STEP)
+		{
+			ent->lerpflags |= LERP_MOVESTEP;
+			ent->forcelink = true;
+		}
+		else
+			ent->lerpflags &= ~LERP_MOVESTEP;
+		ent->alpha = ent->netstate.alpha;
+		ent->scale = ent->netstate.scale;
+
+		if (!ent->netstate.colormap)
+			ent->colormap = vid.colormap;
+		else if (ent->netstate.colormap <= cl.maxclients)
+			ent->colormap = cl.scores[ent->netstate.colormap - 1].translations;
+		else
+			ent->colormap = vid.colormap;
+
+		model = cl.model_precache[ent->netstate.modelindex];
+		if (model != ent->model)
+		{
+			ent->model = model;
+			if (model)
+			{
+				if (model->synctype == ST_RAND)
+					ent->syncbase = (float)(rand() & 0x7fff) / 0x7fff;
+				else
+					ent->syncbase = 0.0;
+			}
+			else
+				forcelink = true;
+			ent->lerpflags |= LERP_RESETANIM;
+		}
+		ent->frame = ent->netstate.frame;
+
+		if (forcelink)
+		{
+			VectorCopy (ent->msg_origins[0], ent->msg_origins[1]);
+			VectorCopy (ent->msg_origins[0], ent->origin);
+			VectorCopy (ent->msg_angles[0], ent->msg_angles[1]);
+			VectorCopy (ent->msg_angles[0], ent->angles);
+			ent->forcelink = true;
+		}
+	}
+}
+
+static int CL_ExpandMoveAck16 (int ack16)
+{
+	int ack;
+
+	if (ack16 == 0xffff && cl.ackedmovemessages < 0)
+		return -1;
+	if (cl.ackedmovemessages < 0)
+		return ack16;
+
+	ack = (cl.ackedmovemessages & ~0xffff) | (ack16 & 0xffff);
+	if (ack <= cl.ackedmovemessages - 0x8000)
+		ack += 0x10000;
+	else if (ack > cl.ackedmovemessages + 0x8000)
+		ack -= 0x10000;
+	return ack;
+}
+
+static qboolean CL_UpdateMoveAck (int ack)
+{
+	if (ack > cl.ackedmovemessages)
+	{
+		cl.ackedmovemessages = ack;
+		if (cl.qcvm.extglobals.servercommandframe)
+			*cl.qcvm.extglobals.servercommandframe = cl.ackedmovemessages;
+		cl.net_move_acks++;
+		return true;
+	}
+	if (ack == cl.ackedmovemessages)
+		return true;
+
+	cl.net_move_stale_acks++;
+	return false;
+}
+
+static void CLFTE_QueueAckFrame (int sequence)
+{
+	if (!cls.netcon)
+		return;
+	if (cl.ackframes_count < sizeof(cl.ackframes) / sizeof(cl.ackframes[0]))
+		cl.ackframes[cl.ackframes_count++] = sequence;
+	else
+		cl.ackframes[countof(cl.ackframes) - 1] = sequence;
+}
+
+static void CLFTE_ParseEntitiesUpdate (void)
+{
+	int newnum;
+	qboolean removeflag;
+	entity_t *ent;
+	float newtime;
+
+	if (cls.netcon)
+		CLFTE_QueueAckFrame (NET_QSocketGetSequenceIn (cls.netcon));
+
+	if (cl.protocol_pext2 & PEXT2_PREDINFO)
+	{
+		int seq = CL_ExpandMoveAck16 (MSG_ReadShort () & 0xffff);
+		if (!CL_UpdateMoveAck (seq) && net_lagdebug.value)
+			Con_DPrintf ("net_lagdebug: ignored stale replacement move ack=%d current=%d\n",
+				seq, cl.ackedmovemessages);
+	}
+
+	newtime = MSG_ReadFloat ();
+	if (newtime != cl.mtime[0])
+	{
+		cl.mtime[1] = cl.mtime[0];
+		cl.mtime[0] = newtime;
+	}
+
+	for (;;)
+	{
+		newnum = (unsigned short)(short)MSG_ReadShort ();
+		removeflag = !!(newnum & 0x8000);
+		if (newnum & 0x4000)
+			newnum = (newnum & 0x3fff) | (MSG_ReadByte () << 14);
+		else
+			newnum &= ~0x8000;
+
+		if ((!newnum && !removeflag) || msg_badread)
+			break;
+
+		ent = CL_EntityNum (newnum);
+		if (removeflag)
+		{
+			if (!newnum)
+			{
+				for (newnum = 1; newnum < cl.num_entities; newnum++)
+				{
+					cl_entities[newnum].update_type = false;
+					cl_entities[newnum].netstate = nullentitystate;
+					cl_entities[newnum].model = NULL;
+				}
+				cl.requestresend = false;
+				continue;
+			}
+			ent->update_type = false;
+			ent->netstate = nullentitystate;
+			ent->model = NULL;
+			ent->lerpflags |= LERP_RESETMOVE | LERP_RESETANIM;
+			continue;
+		}
+		if (ent->update_type)
+			CLFTE_ReadDelta (newnum, &ent->netstate, &ent->netstate, &ent->baseline);
+		else
+		{
+			ent->update_type = true;
+			CLFTE_ReadDelta (newnum, &ent->netstate, NULL, &ent->baseline);
+			ent->lerpflags |= LERP_RESETMOVE | LERP_RESETANIM;
+		}
+	}
+
+	CLFTE_EntitiesDeltaed ();
+	if (!cl.requestresend && cls.signon == SIGNONS - 1)
+	{
+		cls.signon = SIGNONS;
+		CL_SignonReply ();
+	}
 }
 
 #define CL_SetHudStat(stat) cl.statsf[stat] = cl.stats[stat]
@@ -1068,32 +1575,8 @@ static void CL_ApplyMoveAck (int ack16, int flags, int movetype,
 	int i;
 	qboolean use_predstate;
 
-	if (ack16 == 0xffff && cl.ackedmovemessages < 0)
-		ack = -1;
-	else if (cl.ackedmovemessages < 0)
-		ack = ack16;
-	else
-	{
-		ack = (cl.ackedmovemessages & ~0xffff) | ack16;
-		if (ack <= cl.ackedmovemessages - 0x8000)
-			ack += 0x10000;
-		else if (ack > cl.ackedmovemessages + 0x8000)
-			ack -= 0x10000;
-	}
-
-	if (ack > cl.ackedmovemessages)
-	{
-		cl.ackedmovemessages = ack;
-		cl.net_move_acks++;
-		use_predstate = true;
-	}
-	else if (ack == cl.ackedmovemessages)
-		use_predstate = true;
-	else
-	{
-		cl.net_move_stale_acks++;
-		use_predstate = false;
-	}
+	ack = CL_ExpandMoveAck16 (ack16);
+	use_predstate = CL_UpdateMoveAck (ack);
 
 	if (!use_predstate)
 	{
@@ -1639,6 +2122,12 @@ void CL_ParseServerMessage (void)
 			CL_ParseSnapshotHeader ();
 			break;
 
+		case svcfte_csqcentities:
+			PR_SwitchQCVM(&cl.qcvm);
+			CLFTE_ParseCSQCEntitiesUpdate();
+			PR_SwitchQCVM(NULL);
+			break;
+
 		case svc_clientdata:
 			CL_ParseClientdata (); //johnfitz -- removed bits parameter, we will read this inside CL_ParseClientdata()
 			break;
@@ -1827,6 +2316,45 @@ void CL_ParseServerMessage (void)
 				Sys_Error ("svc_updatestat: %i is invalid", i);
 			cl.stats[i] = MSG_ReadLong ();
 			cl.statsf[i] = cl.stats[i];
+			break;
+
+		case svcdp_updatestatbyte:
+			if (!(cl.protocol_pext2 & PEXT2_REPLACEMENTDELTAS))
+				Host_Error ("CL_ParseServerMessage: unexpected svc_seq/updatestatbyte");
+			i = MSG_ReadByte ();
+			if (i < 0 || i >= MAX_CL_STATS)
+				Sys_Error ("svcdp_updatestatbyte: %i is invalid", i);
+			cl.stats[i] = MSG_ReadByte ();
+			cl.statsf[i] = cl.stats[i];
+			Sbar_Changed ();
+			break;
+
+		case svcfte_updatestatfloat:
+			if (!(cl.protocol_pext2 & PEXT2_REPLACEMENTDELTAS))
+				Host_Error ("CL_ParseServerMessage: unexpected svcfte_updatestatfloat");
+			i = MSG_ReadByte ();
+			if (i < 0 || i >= MAX_CL_STATS)
+				Sys_Error ("svcfte_updatestatfloat: %i is invalid", i);
+			cl.statsf[i] = MSG_ReadFloat ();
+			cl.stats[i] = cl.statsf[i];
+			Sbar_Changed ();
+			break;
+
+		case svcfte_updatestatstring:
+			if (!(cl.protocol_pext2 & PEXT2_REPLACEMENTDELTAS))
+				Host_Error ("CL_ParseServerMessage: unexpected svcfte_updatestatstring");
+			i = MSG_ReadByte ();
+			if (i < 0 || i >= MAX_CL_STATS)
+				Sys_Error ("svcfte_updatestatstring: %i is invalid", i);
+			free (cl.statss[i]);
+			cl.statss[i] = strdup (MSG_ReadString ());
+			Sbar_Changed ();
+			break;
+
+		case svcfte_updateentities:
+			if (!(cl.protocol_pext2 & PEXT2_REPLACEMENTDELTAS))
+				Host_Error ("CL_ParseServerMessage: unexpected svcfte_updateentities");
+			CLFTE_ParseEntitiesUpdate ();
 			break;
 
 		case svc_spawnstaticsound:
