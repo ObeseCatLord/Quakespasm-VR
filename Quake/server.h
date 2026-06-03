@@ -209,6 +209,7 @@ typedef struct client_s
 	size_t			numpreviousentities;
 	size_t			maxpreviousentities;
 	unsigned int	snapshotresume;
+	unsigned int	snapshotnextdelta;
 	unsigned int	*pendingentities_bits;
 	size_t			numpendingentities;
 	unsigned int	*pendingcsqcentities_bits;
@@ -216,6 +217,7 @@ typedef struct client_s
 #define	SENDFLAG_REMOVE		0x40000000u
 #define	SENDFLAG_USABLE		0x00ffffffu
 	size_t			numpendingcsqcentities;
+	unsigned int	csqcsnapshotnextdelta;
 	struct deltaframe_s
 	{
 		int			sequence;

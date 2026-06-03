@@ -151,6 +151,8 @@ typedef struct qsocket_s
 	unsigned int	ackSequence;
 	unsigned int	sendSequence;
 	unsigned int	unreliableSendSequence;
+	int		max_datagram;
+	int		pending_max_datagram;
 	int		sendMessageLength;
 	byte		sendMessage [NET_MAXMESSAGE];
 

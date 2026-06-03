@@ -85,12 +85,9 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #define	MAX_DATAGRAM	64000		// max length of unreliable message //johnfitz -- was 1024
 
 #define DATAGRAM_MTU 1200
-		// Bounds both unreliable per-client packets (via sv_maxpacketsize)
-		// and the reliable-channel fragment chunk size in net_dgrm.c so
-		// every UDP datagram fits within a single-hop IP MTU and avoids
-		// kernel-level IP fragmentation. Reliable messages can still be
-		// up to MAX_MSGLEN total; they're just transmitted in 1400-byte
-		// chunks instead of 64000-byte chunks.
+		// Default UDP payload target. sv_maxpacketsize controls active
+		// nonlocal server packets and now also feeds the reliable-channel
+		// fragment MSS for each qsocket.
 
 //
 // per-level limits
