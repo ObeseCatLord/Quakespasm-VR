@@ -485,20 +485,20 @@ int Datagram_SendMessage (qsocket_t *sock, sizebuf_t *data)
 
 	Q_memcpy(sock->sendMessage, data->data, data->cursize);
 	sock->sendMessageLength = data->cursize;
+	sock->max_datagram = sock->pending_max_datagram;
 
-	// Chunk reliable messages at DATAGRAM_MTU so each fragment fits in a
-	// single IP packet on the wire. The old behaviour used MAX_DATAGRAM
-	// (64000), which forces the kernel to IP-fragment large signon /
-	// precache bursts; losing any one fragment then stalls the reliable
-	// channel and the client hangs at signon.
-	if (data->cursize <= DATAGRAM_MTU)
+	// Chunk reliable messages at the qsocket MSS so each fragment fits in a
+	// single IP packet on the wire. Keep the active chunk size fixed until the
+	// current reliable message is fully ACKed; changing it mid-resend would
+	// desynchronize the receiver's reliable stream.
+	if (data->cursize <= sock->max_datagram)
 	{
 		dataLen = data->cursize;
 		eom = NETFLAG_EOM;
 	}
 	else
 	{
-		dataLen = DATAGRAM_MTU;
+		dataLen = sock->max_datagram;
 		eom = 0;
 	}
 	packetLen = NET_HEADERSIZE + dataLen;
@@ -524,14 +524,14 @@ static int SendMessageNext (qsocket_t *sock)
 	unsigned int	dataLen;
 	unsigned int	eom;
 
-	if (sock->sendMessageLength <= DATAGRAM_MTU)
+	if (sock->sendMessageLength <= sock->max_datagram)
 	{
 		dataLen = sock->sendMessageLength;
 		eom = NETFLAG_EOM;
 	}
 	else
 	{
-		dataLen = DATAGRAM_MTU;
+		dataLen = sock->max_datagram;
 		eom = 0;
 	}
 	packetLen = NET_HEADERSIZE + dataLen;
@@ -557,14 +557,14 @@ static int ReSendMessage (qsocket_t *sock)
 	unsigned int	dataLen;
 	unsigned int	eom;
 
-	if (sock->sendMessageLength <= DATAGRAM_MTU)
+	if (sock->sendMessageLength <= sock->max_datagram)
 	{
 		dataLen = sock->sendMessageLength;
 		eom = NETFLAG_EOM;
 	}
 	else
 	{
-		dataLen = DATAGRAM_MTU;
+		dataLen = sock->max_datagram;
 		eom = 0;
 	}
 	packetLen = NET_HEADERSIZE + dataLen;
@@ -796,10 +796,10 @@ static int Datagram_ProcessPacket (qsocket_t *sock, struct qsockaddr *readaddr, 
 				sock->prevAddrTime = net_time;
 				sock->addr = *readaddr;
 			}
-			sock->sendMessageLength -= DATAGRAM_MTU;
+			sock->sendMessageLength -= sock->max_datagram;
 			if (sock->sendMessageLength > 0)
 			{
-				memmove (sock->sendMessage, sock->sendMessage + DATAGRAM_MTU, sock->sendMessageLength);
+				memmove (sock->sendMessage, sock->sendMessage + sock->max_datagram, sock->sendMessageLength);
 				sock->sendNext = true;
 			}
 			else

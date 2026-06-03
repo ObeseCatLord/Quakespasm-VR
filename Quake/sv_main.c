@@ -73,6 +73,23 @@ cvar_t sv_skyroom_pvs = {"sv_skyroom_pvs", "1", CVAR_NONE};
 static void SVFTE_SetupFrames (client_t *client);
 static qboolean SVFTE_SendClientDatagram (client_t *client, int maxsize);
 
+static int SV_ClientMaxPacketSize (client_t *client)
+{
+	int maxsize;
+
+	maxsize = MAX_DATAGRAM;
+	if (client && client->netconnection &&
+		Q_strcmp(NET_QSocketGetAddressString(client->netconnection), "LOCAL") != 0)
+		maxsize = (int)sv_maxpacketsize.value;
+	return CLAMP(512, maxsize, MAX_DATAGRAM);
+}
+
+static void SV_UpdateClientMSS (client_t *client)
+{
+	if (client && client->netconnection)
+		NET_QSocketSetMSS (client->netconnection, SV_ClientMaxPacketSize(client));
+}
+
 void SV_CalcStats(client_t *client, int *statsi, float *statsf, const char **statss)
 {
 	size_t i;
@@ -622,6 +639,7 @@ void SV_SendServerinfo (client_t *client)
 	client->protocol_pext1 = 0;
 	client->protocol_pext2 = PEXT2_REPLACEMENTDELTAS | PEXT2_PREDINFO | PEXT2_NEWSIZEENCODING;
 	SVFTE_SetupFrames (client);
+	SV_UpdateClientMSS (client);
 
 	MSG_WriteByte (&client->message, svc_print);
 	sprintf (message, "%c\nFITZQUAKE %1.2f SERVER (%i CRC)\n", 2, FITZQUAKE_VERSION, qcvm->crc); //johnfitz -- include fitzquake version
@@ -1208,6 +1226,8 @@ void SVFTE_DestroyFrames (client_t *client)
 	client->numframes = 0;
 	client->lastacksequence = 0;
 	client->snapshotresume = 0;
+	client->snapshotnextdelta = 0;
+	client->csqcsnapshotnextdelta = 0;
 }
 
 static void SVFTE_SetupFrames (client_t *client)
@@ -1493,6 +1513,7 @@ static void SVFTE_CalcEntityDeltas (client_t *client)
 	{
 		client->numpreviousentities = 0;
 		client->pendingentities_bits[0] = UF_REMOVE;
+		client->snapshotnextdelta = 0;
 	}
 
 	news = snapshot_entstate;
@@ -1635,6 +1656,7 @@ static void SVFTE_WriteEntitiesToClient (client_t *client, sizebuf_t *msg)
 	struct deltaframe_s *frame;
 	unsigned int entbits, logbits, netbits;
 	size_t entnum;
+	size_t nextdelta;
 	int sequence;
 	int header_need;
 	byte entbuf[MAX_DATAGRAM];
@@ -1644,6 +1666,9 @@ static void SVFTE_WriteEntitiesToClient (client_t *client, sizebuf_t *msg)
 	frame = SVFTE_BeginFrame (client, sequence);
 	state = client->previousentities;
 	stateend = state + client->numpreviousentities;
+	nextdelta = client->snapshotnextdelta;
+	if (nextdelta >= client->numpendingentities)
+		nextdelta = 0;
 
 	SVFTE_WriteStatsToClient (client, msg, frame);
 
@@ -1662,6 +1687,9 @@ static void SVFTE_WriteEntitiesToClient (client_t *client, sizebuf_t *msg)
 	{
 		entbits = client->pendingentities_bits[entnum];
 		if (!(entbits & ~UF_RESET2))
+			continue;
+		if (!client->snapshotresume && nextdelta &&
+			entnum < nextdelta && entnum > (size_t)svs.maxclients)
 			continue;
 
 		entmsg.data = entbuf;
@@ -1749,6 +1777,10 @@ static void SVFTE_WriteEntitiesToClient (client_t *client, sizebuf_t *msg)
 	}
 	MSG_WriteShort (msg, 0);
 	client->snapshotresume = entnum;
+	if (entnum >= client->numpendingentities)
+		client->snapshotnextdelta = 0;
+	else if (entnum > (size_t)svs.maxclients)
+		client->snapshotnextdelta = entnum;
 	dev_stats.packetsize = msg->cursize;
 	dev_peakstats.packetsize = q_max (msg->cursize, dev_peakstats.packetsize);
 }
@@ -1759,6 +1791,7 @@ static void SVFTE_WriteCSQCEntitiesToClient (client_t *client, sizebuf_t *msg)
 	struct deltaframe_s *frame;
 	unsigned int bits, originalbits, logbits;
 	size_t entnum;
+	size_t nextdelta;
 	int sequence;
 	qboolean wroteheader = false;
 	qboolean candidate_has_header;
@@ -1772,11 +1805,16 @@ static void SVFTE_WriteCSQCEntitiesToClient (client_t *client, sizebuf_t *msg)
 
 	sequence = NET_QSocketGetSequenceOut (client->netconnection);
 	frame = SVFTE_BeginFrame (client, sequence);
+	nextdelta = client->csqcsnapshotnextdelta;
+	if (nextdelta >= client->numpendingcsqcentities)
+		nextdelta = 0;
 
 	for (entnum = 1; entnum < client->numpendingcsqcentities; entnum++)
 	{
 		bits = client->pendingcsqcentities_bits[entnum];
 		if (!(bits & ~SENDFLAG_PRESENT))
+			continue;
+		if (nextdelta && entnum < nextdelta && entnum > (size_t)svs.maxclients)
 			continue;
 
 		originalbits = bits;
@@ -1888,6 +1926,10 @@ static void SVFTE_WriteCSQCEntitiesToClient (client_t *client, sizebuf_t *msg)
 
 	if (wroteheader)
 		MSG_WriteShort (msg, 0);
+	if (entnum >= client->numpendingcsqcentities)
+		client->csqcsnapshotnextdelta = 0;
+	else if (entnum > (size_t)svs.maxclients)
+		client->csqcsnapshotnextdelta = entnum;
 	SZ_Clear (&sv.multicast);
 	dev_stats.packetsize = msg->cursize;
 	dev_peakstats.packetsize = q_max (msg->cursize, dev_peakstats.packetsize);
@@ -2865,14 +2907,8 @@ qboolean SV_SendClientDatagram (client_t *client)
 	static struct qsocket_s	*last_update_socket[MAX_SCOREBOARD];
 
 	msg.data = buf;
-	maxsize = sizeof(buf);
-
-	//johnfitz -- if client is nonlocal, use smaller max size so packets aren't fragmented
-		if (Q_strcmp(NET_QSocketGetAddressString(client->netconnection), "LOCAL") != 0)
-			maxsize = (int)sv_maxpacketsize.value;
-	//johnfitz
-
-	maxsize = CLAMP(512, maxsize, (int)sizeof(buf));
+	maxsize = SV_ClientMaxPacketSize (client);
+	SV_UpdateClientMSS (client);
 
 	if (client->protocol_pext2 & PEXT2_REPLACEMENTDELTAS)
 		return SVFTE_SendClientDatagram (client, maxsize);

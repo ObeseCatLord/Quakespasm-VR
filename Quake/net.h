@@ -62,6 +62,7 @@ double NET_QSocketGetTime (const struct qsocket_s *sock);
 const char *NET_QSocketGetAddressString (const struct qsocket_s *sock);
 int NET_QSocketGetSequenceIn (const struct qsocket_s *sock);
 int NET_QSocketGetSequenceOut (const struct qsocket_s *sock);
+void NET_QSocketSetMSS (struct qsocket_s *sock, int mss);
 
 qboolean NET_CanSendMessage (struct qsocket_s *sock);
 // Returns true or false if the given qsocket can currently accept a

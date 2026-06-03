@@ -118,6 +118,8 @@ qsocket_t *NET_NewQSocket (void)
 	sock->ackSequence = 0;
 	sock->sendSequence = 0;
 	sock->unreliableSendSequence = 0;
+	sock->max_datagram = DATAGRAM_MTU;
+	sock->pending_max_datagram = DATAGRAM_MTU;
 	sock->sendMessageLength = 0;
 	sock->receiveSequence = 0;
 	sock->unreliableReceiveSequence = 0;
@@ -177,6 +179,13 @@ int NET_QSocketGetSequenceIn (const qsocket_t *s)
 int NET_QSocketGetSequenceOut (const qsocket_t *s)
 {
 	return (int)s->unreliableSendSequence;
+}
+
+void NET_QSocketSetMSS (qsocket_t *s, int mss)
+{
+	if (!s)
+		return;
+	s->pending_max_datagram = CLAMP (512, mss, NET_MAXMESSAGE);
 }
 
 const char *NET_QSocketGetAddressString (const qsocket_t *s)
