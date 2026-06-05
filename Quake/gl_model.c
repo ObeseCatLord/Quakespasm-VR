@@ -1725,6 +1725,109 @@ static void Mod_LoadLeafs (lump_t *l, int bsp2)
 
 /*
 =================
+Mod_CheckWaterVis
+=================
+*/
+static void Mod_CheckWaterVis (void)
+{
+	mleaf_t *leaf, *other;
+	msurface_t *surf;
+	int i, j, k;
+	int numclusters = loadmodel->submodels[0].visleafs;
+	int contentfound = 0;
+	int contenttransparent = 0;
+	int contenttype;
+	unsigned int hascontents = 0;
+
+	if (r_novis.value)
+	{
+		loadmodel->contentstransparent = SURF_DRAWWATER | SURF_DRAWTELE | SURF_DRAWSLIME | SURF_DRAWLAVA;
+		return;
+	}
+
+	for (i = 0, leaf = loadmodel->leafs + 1; i < numclusters; i++, leaf++)
+	{
+		byte *vis;
+
+		if (leaf->contents < 0 && -leaf->contents < 32)
+			hascontents |= 1u << -leaf->contents;
+		if (leaf->contents == CONTENTS_WATER)
+		{
+			if ((contenttransparent & (SURF_DRAWWATER | SURF_DRAWTELE)) == (SURF_DRAWWATER | SURF_DRAWTELE))
+				continue;
+			for (contenttype = 0, j = 0; j < leaf->nummarksurfaces; j++)
+			{
+				surf = leaf->firstmarksurface[j];
+				if (surf->flags & (SURF_DRAWWATER | SURF_DRAWTELE))
+				{
+					contenttype = surf->flags & (SURF_DRAWWATER | SURF_DRAWTELE);
+					break;
+				}
+			}
+			if (!contenttype)
+				continue;
+		}
+		else if (leaf->contents == CONTENTS_SLIME)
+			contenttype = SURF_DRAWSLIME;
+		else if (leaf->contents == CONTENTS_LAVA)
+			contenttype = SURF_DRAWLAVA;
+		else
+			continue;
+
+		if (contenttransparent & contenttype)
+		{
+nextleaf:
+			continue;
+		}
+		contentfound |= contenttype;
+		vis = Mod_DecompressVis(leaf->compressed_vis, loadmodel);
+		for (j = 0; j < (numclusters + 7) / 8; j++)
+		{
+			if (!vis[j])
+				continue;
+			for (k = 0; k < 8; k++)
+			{
+				int othercluster = (j << 3) + k;
+
+				if (othercluster >= numclusters)
+					continue;
+				if (!(vis[j] & (1u << k)))
+					continue;
+				other = &loadmodel->leafs[othercluster + 1];
+				if (leaf->contents != other->contents)
+				{
+					contenttransparent |= contenttype;
+					goto nextleaf;
+				}
+			}
+		}
+	}
+
+	if (!contenttransparent)
+	{
+		if (hascontents & ((1u << -CONTENTS_WATER) | (1u << -CONTENTS_SLIME) | (1u << -CONTENTS_LAVA)))
+			Con_DPrintf("%s is not watervised\n", loadmodel->name);
+	}
+	else
+	{
+		Con_DPrintf2("%s is vised for transparent", loadmodel->name);
+		if (contenttransparent & SURF_DRAWWATER)
+			Con_DPrintf2(" water");
+		if (contenttransparent & SURF_DRAWTELE)
+			Con_DPrintf2(" tele");
+		if (contenttransparent & SURF_DRAWLAVA)
+			Con_DPrintf2(" lava");
+		if (contenttransparent & SURF_DRAWSLIME)
+			Con_DPrintf2(" slime");
+		Con_DPrintf2("\n");
+	}
+
+	loadmodel->contentstransparent = contenttransparent |
+		(~contentfound & (SURF_DRAWWATER | SURF_DRAWTELE | SURF_DRAWSLIME | SURF_DRAWLAVA));
+}
+
+/*
+=================
 Mod_LoadClipnodes
 =================
 */
@@ -2284,6 +2387,7 @@ visdone:
 	Mod_LoadClipnodes (&header->lumps[LUMP_CLIPNODES], bsp2);
 	Mod_LoadEntities (&header->lumps[LUMP_ENTITIES]);
 	Mod_LoadSubmodels (&header->lumps[LUMP_MODELS]);
+	Mod_CheckWaterVis ();
 
 	Mod_MakeHull0 ();
 

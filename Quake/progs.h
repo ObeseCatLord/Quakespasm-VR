@@ -260,11 +260,13 @@ void PR_ExecuteProgram (func_t fnum);
 void PR_ClearProgs(qcvm_t *vm);
 qboolean PR_LoadProgs (const char *filename, qboolean fatal);
 void PR_EnableExtensions (void);
+void PR_ClearBuiltinState(qcvm_t *vm);
 
 void PR_ReloadPics (qboolean purge);					//for gamedir or video changes
 
 const char *PR_GetString (int num);
 int PR_SetEngineString (const char *s);
+int PR_MakeTempString (const char *s);
 void PR_ClearEngineString (int num);
 int PR_AllocString (int bufferlength, char **ptr);
 
@@ -289,6 +291,10 @@ void ED_LoadFromFile (const char *data);
 */
 edict_t *EDICT_NUM(int);
 int NUM_FOR_EDICT(edict_t*);
+ddef_t *ED_FindField (const char *name);
+int ED_FindFieldOffset (const char *name);
+qboolean ED_ParseEpair (void *base, ddef_t *key, const char *s, qboolean zoned);
+const char *PR_UglyValueString (int type, eval_t *val);
 
 #define	NEXT_EDICT(e)		((edict_t *)( (byte *)e + qcvm->edict_size))
 

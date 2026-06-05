@@ -38,7 +38,7 @@ int		type_size[ev_ext_integer + 1] = {
 };
 
 static ddef_t	*ED_FieldAtOfs (int ofs);
-static qboolean	ED_ParseEpair (void *base, ddef_t *key, const char *s, qboolean zoned);
+qboolean	ED_ParseEpair (void *base, ddef_t *key, const char *s, qboolean zoned);
 
 cvar_t	nomonsters = {"nomonsters", "0", CVAR_NONE};
 cvar_t	gamecfg = {"gamecfg", "0", CVAR_NONE};
@@ -304,7 +304,7 @@ static ddef_t *ED_FieldAtOfs (int ofs)
 ED_FindField
 ============
 */
-static ddef_t *ED_FindField (const char *name)
+ddef_t *ED_FindField (const char *name)
 {
 	ddef_t		*def;
 	int			i;
@@ -483,7 +483,7 @@ Returns a string describing *data in a type specific manner
 Easier to parse than PR_ValueString
 =============
 */
-static const char *PR_UglyValueString (int type, eval_t *val)
+const char *PR_UglyValueString (int type, eval_t *val)
 {
 	static char	line[1024];
 	ddef_t		*def;
@@ -936,7 +936,7 @@ Can parse either fields or globals
 returns false if error
 =============
 */
-static qboolean ED_ParseEpair (void *base, ddef_t *key, const char *s, qboolean zoned)
+qboolean ED_ParseEpair (void *base, ddef_t *key, const char *s, qboolean zoned)
 {
 	int		i;
 	char	string[128];
@@ -1284,6 +1284,7 @@ void PR_ClearProgs(qcvm_t *vm)
 		return;	//wasn't loaded.
 	qcvm = NULL;
 	PR_SwitchQCVM(vm);
+	PR_ClearBuiltinState(qcvm);
 	PR_ShutdownExtensions();
 
 	if (qcvm->knownstrings)

@@ -143,6 +143,7 @@ extern	cvar_t	r_slimealpha;
 extern	cvar_t	r_litwater;
 extern	cvar_t	r_dynamic;
 extern	cvar_t	r_novis;
+extern	cvar_t	r_alphasort;
 extern	cvar_t	r_scale;
 
 extern	cvar_t	gl_clear;
@@ -335,7 +336,7 @@ typedef struct glsl_attrib_binding_s {
 	GLuint attrib;
 } glsl_attrib_binding_t;
 
-extern float	map_wateralpha, map_lavaalpha, map_telealpha, map_slimealpha; //ericw
+extern float	map_wateralpha, map_lavaalpha, map_telealpha, map_slimealpha, map_fallbackalpha; //ericw
 
 #define NUMVERTEXNORMALS	162
 extern const float	r_avertexnormals[NUMVERTEXNORMALS][3];

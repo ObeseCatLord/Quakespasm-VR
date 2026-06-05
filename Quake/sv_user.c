@@ -1042,6 +1042,67 @@ SV_ParseClientMessage
 Returns false if the client should be killed
 ===================
 */
+static void SV_ReadQCRequest(void) {
+  char args[9];
+  int i = 0;
+  int type;
+  const char *eventname;
+  const char *funcname;
+  dfunction_t *func;
+
+  while (i < 8) {
+    type = MSG_ReadByte();
+    if (!type)
+      break;
+    switch (type) {
+    case ev_float:
+      args[i] = 'f';
+      G_FLOAT(OFS_PARM0 + i * 3) = MSG_ReadFloat();
+      break;
+    case ev_vector:
+      args[i] = 'v';
+      G_FLOAT(OFS_PARM0 + i * 3 + 0) = MSG_ReadFloat();
+      G_FLOAT(OFS_PARM0 + i * 3 + 1) = MSG_ReadFloat();
+      G_FLOAT(OFS_PARM0 + i * 3 + 2) = MSG_ReadFloat();
+      break;
+    case ev_ext_integer:
+      args[i] = 'i';
+      G_INT(OFS_PARM0 + i * 3) = MSG_ReadLong();
+      break;
+    case ev_string:
+      args[i] = 's';
+      G_INT(OFS_PARM0 + i * 3) = PR_MakeTempString(MSG_ReadString());
+      break;
+    case ev_entity: {
+      unsigned int entnum = MSG_ReadEntity(host_client->protocol_pext2);
+      args[i] = 'e';
+      if (entnum >= (unsigned int)qcvm->num_edicts)
+        entnum = 0;
+      G_INT(OFS_PARM0 + i * 3) = EDICT_TO_PROG(EDICT_NUM(entnum));
+      break;
+    }
+    default:
+      Con_DPrintf("SV_ReadQCRequest: unsupported argument type %i\n", type);
+      MSG_ReadString();
+      return;
+    }
+    i++;
+  }
+
+  args[i] = 0;
+  eventname = MSG_ReadString();
+  funcname = i ? va("CSEv_%s_%s", eventname, args) : va("CSEv_%s", eventname);
+  func = ED_FindFunction(funcname);
+  if (!func) {
+    SV_ClientPrintf("qcrequest \"%s\" not supported\n", funcname);
+    return;
+  }
+
+  pr_global_struct->time = qcvm->time;
+  pr_global_struct->self = EDICT_TO_PROG(host_client->edict);
+  PR_ExecuteProgram(func - qcvm->functions);
+}
+
 static qboolean SV_ParseClientMessage(void) {
   int ccmd;
   const char *s;
@@ -1148,6 +1209,10 @@ static qboolean SV_ParseClientMessage(void) {
 
     case clcdp_ackframe:
       SVFTE_Ack(host_client, MSG_ReadLong());
+      break;
+
+    case clcfte_qcrequest:
+      SV_ReadQCRequest();
       break;
     }
   }
