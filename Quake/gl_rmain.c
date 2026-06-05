@@ -116,12 +116,13 @@ extern cvar_t r_vfog;
 
 cvar_t gl_zfix = {"gl_zfix", "0", CVAR_NONE}; // QuakeSpasm z-fighting fix
 
+cvar_t r_alphasort = {"r_alphasort", "1", CVAR_ARCHIVE};
 cvar_t r_lavaalpha = {"r_lavaalpha", "0", CVAR_NONE};
 cvar_t r_telealpha = {"r_telealpha", "0", CVAR_NONE};
 cvar_t r_slimealpha = {"r_slimealpha", "0", CVAR_NONE};
 cvar_t r_part_density = {"r_part_density", "1", CVAR_ARCHIVE};
 
-float map_wateralpha, map_lavaalpha, map_telealpha, map_slimealpha;
+float map_wateralpha, map_lavaalpha, map_telealpha, map_slimealpha, map_fallbackalpha;
 
 qboolean r_drawflat_cheatsafe, r_fullbright_cheatsafe, r_lightmap_cheatsafe,
     r_drawworld_cheatsafe; // johnfitz
@@ -651,6 +652,29 @@ static int R_AliasEntitySortCompare(const void *pa, const void *pb) {
   return (ak > bk) - (ak < bk);
 }
 
+typedef struct sorted_alpha_entity_s {
+  entity_t *ent;
+  float dist;
+} sorted_alpha_entity_t;
+
+static int R_AlphaEntitySortCompare(const void *pa, const void *pb) {
+  const sorted_alpha_entity_t *a = (const sorted_alpha_entity_t *)pa;
+  const sorted_alpha_entity_t *b = (const sorted_alpha_entity_t *)pb;
+
+  if (a->dist < b->dist)
+    return 1;
+  if (a->dist > b->dist)
+    return -1;
+  return 0;
+}
+
+static float R_AlphaEntitySortDistance(entity_t *ent) {
+  vec3_t delta;
+
+  VectorSubtract(ent->origin, r_refdef.vieworg, delta);
+  return DotProduct(delta, vpn);
+}
+
 static void R_DrawCurrentEntityOnList(void) {
   switch (currententity->model->type) {
   case mod_alias:
@@ -673,6 +697,32 @@ void R_DrawEntitiesOnList(qboolean alphapass) // johnfitz -- added parameter
 
   if (!r_drawentities.value)
     return;
+
+  if (alphapass && r_alphasort.value) {
+    sorted_alpha_entity_t alpha_ents[MAX_VISEDICTS];
+    int alpha_count = 0;
+
+    for (i = 0; i < cl_numvisedicts; i++) {
+      currententity = cl_visedicts[i];
+      if (ENTALPHA_DECODE(currententity->alpha) == 1)
+        continue;
+      if (currententity == &cl_entities[cl.viewentity])
+        currententity->angles[0] *= 0.3;
+      alpha_ents[alpha_count].ent = currententity;
+      alpha_ents[alpha_count].dist = R_AlphaEntitySortDistance(currententity);
+      alpha_count++;
+    }
+
+    if (alpha_count > 1)
+      qsort(alpha_ents, alpha_count, sizeof(alpha_ents[0]),
+            R_AlphaEntitySortCompare);
+
+    for (i = 0; i < alpha_count; i++) {
+      currententity = alpha_ents[i].ent;
+      R_DrawCurrentEntityOnList();
+    }
+    return;
+  }
 
   if (!alphapass && r_alias_batching.value) {
     for (i = 0; i < cl_numvisedicts; i++) {

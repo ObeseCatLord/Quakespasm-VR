@@ -369,6 +369,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #define clc_move 3      // [bundled sequenced usercmd_t records]
 #define clc_stringcmd 4 // [string] message
 #define clcdp_ackframe 50
+#define clcfte_qcrequest 81
 
 #define MOVEEXT_VR 1
 #define MOVEEXT_TRUSTED 2

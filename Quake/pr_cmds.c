@@ -24,6 +24,15 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "quakedef.h"
 #include "q_ctype.h"
 #include "pmove.h"
+#include "crc.h"
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#else
+#include <dirent.h>
+#endif
 
 #define	STRINGTEMP_BUFFERS		1024
 #define	STRINGTEMP_LENGTH		1024
@@ -33,6 +42,14 @@ static	byte	pr_string_tempindex = 0;
 static char *PR_GetTempString (void)
 {
 	return pr_string_temp[(STRINGTEMP_BUFFERS-1) & ++pr_string_tempindex];
+}
+
+int PR_MakeTempString (const char *s)
+{
+	char *tmp = PR_GetTempString();
+
+	q_strlcpy(tmp, s ? s : "", STRINGTEMP_LENGTH);
+	return PR_SetEngineString(tmp);
 }
 
 #define	RETURN_EDICT(e) (((int *)qcvm->globals)[OFS_RETURN] = EDICT_TO_PROG(e))
@@ -2174,24 +2191,41 @@ static qboolean PF_ExtensionSupported(const char *extname)
 		"DP_QC_CVAR_DESCRIPTION",
 		"DP_QC_CVAR_STRING",
 		"DP_QC_CVAR_TYPE",
+		"DP_QC_COPYENTITY",
+		"DP_QC_CRC16",
+		"DP_QC_EDICT_NUM",
+		"DP_QC_ENTITYDATA",
 		"DP_QC_GETSURFACE",
 		"DP_QC_GETSURFACEPOINTATTRIBUTE",
 		"DP_QC_GETSURFACETRIANGLE",
 		"DP_GFX_FOG",
 		"DP_QC_ETOS",
+		"DP_QC_FINDCHAIN",
+		"DP_QC_FINDCHAINFLOAT",
+		"DP_QC_FINDFLAGS",
+		"DP_QC_FINDFLOAT",
 		"DP_QC_MINMAXBOUND",
+		"DP_QC_NUM_FOR_EDICT",
+		"DP_QC_SEARCH",
 		"DP_QC_SINCOSSQRTPOW",
 		"DP_QC_SPRINTF",
 		"DP_QC_STRFTIME",
+		"DP_QC_STRINGBUFFERS",
 		"DP_QC_STRING_CASE_FUNCTIONS",
+		"DP_QC_STRINGCOLORFUNCTIONS",
 		"DP_QC_TOKENIZEBYSEPARATOR",
 		"DP_QC_TOKENIZE_CONSOLE",
+		"DP_QC_STRREPLACE",
+		"DP_QC_URI_ESCAPE",
 		"DP_QC_VECTORVECTORS",
+		"DP_QC_WHICHPACK",
 		"DP_TE_PARTICLERAIN",
 		"DP_TE_PARTICLESNOW",
 		"DP_SV_POINTPARTICLES",
 		"DP_SV_SETCOLOR",
 		"DP_ENT_TRAILEFFECTNUM",
+		"FTE_CALLFUNCTION",
+		"FTE_QC_CHECKBUILTIN",
 		"FTE_PART_SCRIPT",
 		"FTE_PART_NAMESPACES",
 		"FTE_PART_NAMESPACE_EFFECTINFO",
@@ -2229,6 +2263,62 @@ static void PF_checkbuiltin(void)
 			qcvm->builtins[binum] != PF_Fixme)
 			G_FLOAT(OFS_RETURN) = 1;
 	}
+}
+
+static void PF_builtin_find(void)
+{
+	const char *name = G_STRING(OFS_PARM0);
+	int i;
+
+	G_FLOAT(OFS_RETURN) = 0;
+	if (!name || !*name)
+		return;
+
+	for (i = 0; i < pr_numbuiltindefs; i++)
+	{
+		if (!q_strcasecmp(name, pr_builtindefs[i].name))
+		{
+			G_FLOAT(OFS_RETURN) = pr_builtindefs[i].number;
+			return;
+		}
+	}
+}
+
+static void PF_cl_print(void)
+{
+	Con_Printf("%s", PF_VarString(0));
+}
+
+static void PF_cl_cprint(void)
+{
+	SCR_CenterPrint(PF_VarString(0));
+}
+
+static void PF_wasfreed(void)
+{
+	edict_t *ed = G_EDICT(OFS_PARM0);
+
+	G_FLOAT(OFS_RETURN) = ed->free;
+}
+
+static void PF_gettime(void)
+{
+	int timer = qcvm->argc > 0 ? (int)G_FLOAT(OFS_PARM0) : 0;
+
+	switch (timer)
+	{
+	case 1:
+		G_FLOAT(OFS_RETURN) = realtime;
+		break;
+	default:
+		G_FLOAT(OFS_RETURN) = Sys_DoubleTime();
+		break;
+	}
+}
+
+static void PF_cl_getresolution(void)
+{
+	G_VECTORSET(OFS_RETURN, vid.conwidth, vid.conheight, 0);
 }
 
 static float PR_GetVMScale(void)
@@ -4493,6 +4583,1250 @@ static void PF_clientstat(void)
 	stat->fld = fldofs;
 }
 
+/*
+===============================================================================
+
+	QSS/FTE/DP compatibility builtins used by modern mods
+
+===============================================================================
+*/
+
+static qboolean PF_QCPathAllowed(const char *name)
+{
+	const char *p;
+
+	if (!name || !*name)
+		return false;
+	if (name[0] == '/' || name[0] == '\\' || strchr(name, ':'))
+		return false;
+	for (p = name; *p; p++)
+	{
+		if (*p == '\\')
+			return false;
+		if (p[0] == '.' && p[1] == '.' &&
+			(p == name || p[-1] == '/') &&
+			(p[2] == 0 || p[2] == '/'))
+			return false;
+	}
+	return true;
+}
+
+static void PF_QCCreatePath(char *path)
+{
+	char *s;
+
+	for (s = path + 1; *s; s++)
+	{
+		if (*s == '/')
+		{
+			*s = 0;
+			Sys_mkdir(path);
+			*s = '/';
+		}
+	}
+}
+
+#define QC_FILE_BASE 1
+#define MAX_QC_FILES 32
+typedef struct qcfile_s
+{
+	qcvm_t	*owner;
+	FILE	*file;
+	int	mode;
+	int	size;
+	int	pos;
+} qcfile_t;
+static qcfile_t qcfiles[MAX_QC_FILES];
+
+static qcfile_t *PF_GetQCFile(int handle)
+{
+	handle -= QC_FILE_BASE;
+	if ((unsigned int)handle >= MAX_QC_FILES)
+		return NULL;
+	if (!qcfiles[handle].file || qcfiles[handle].owner != qcvm)
+		return NULL;
+	return &qcfiles[handle];
+}
+
+static void PF_fopen(void)
+{
+	const char *name = G_STRING(OFS_PARM0);
+	int mode = G_FLOAT(OFS_PARM1);
+	FILE *file = NULL;
+	char path[MAX_OSPATH];
+	int i, size = 0;
+
+	G_FLOAT(OFS_RETURN) = -1;
+	if (!PF_QCPathAllowed(name))
+	{
+		Con_Printf("PF_fopen: access denied: %s\n", name);
+		return;
+	}
+
+	if (mode == 0)
+	{
+		size = COM_FOpenFile(name, &file, NULL);
+		if (size < 0 || !file)
+			return;
+	}
+	else if (mode == 1 || mode == 2)
+	{
+		q_snprintf(path, sizeof(path), "%s/%s", com_gamedir, name);
+		PF_QCCreatePath(path);
+		file = fopen(path, mode == 1 ? "ab" : "wb");
+		if (!file)
+			return;
+	}
+	else
+	{
+		Con_Warning("PF_fopen: unsupported mode %i\n", mode);
+		return;
+	}
+
+	for (i = 0; i < MAX_QC_FILES; i++)
+	{
+		if (!qcfiles[i].file)
+		{
+			qcfiles[i].owner = qcvm;
+			qcfiles[i].file = file;
+			qcfiles[i].mode = mode;
+			qcfiles[i].size = size;
+			qcfiles[i].pos = 0;
+			G_FLOAT(OFS_RETURN) = i + QC_FILE_BASE;
+			return;
+		}
+	}
+
+	fclose(file);
+}
+
+static void PF_fclose(void)
+{
+	qcfile_t *file = PF_GetQCFile(G_FLOAT(OFS_PARM0));
+
+	if (!file)
+		return;
+	fclose(file->file);
+	memset(file, 0, sizeof(*file));
+}
+
+static void PF_fgets(void)
+{
+	qcfile_t *file = PF_GetQCFile(G_FLOAT(OFS_PARM0));
+	char *out = PR_GetTempString();
+	int c, len = 0;
+
+	G_INT(OFS_RETURN) = 0;
+	if (!file || file->mode != 0)
+		return;
+
+	while (file->pos < file->size && len < STRINGTEMP_LENGTH - 1)
+	{
+		c = fgetc(file->file);
+		if (c == EOF)
+			break;
+		file->pos++;
+		if (c == '\n')
+			break;
+		if (c == '\r')
+			continue;
+		out[len++] = c;
+	}
+	if (!len && file->pos >= file->size)
+		return;
+	out[len] = 0;
+	G_INT(OFS_RETURN) = PR_SetEngineString(out);
+}
+
+static void PF_fputs(void)
+{
+	qcfile_t *file = PF_GetQCFile(G_FLOAT(OFS_PARM0));
+
+	if (!file || file->mode == 0)
+		return;
+	fputs(PF_VarString(1), file->file);
+}
+
+#define MAX_QC_SEARCHES 16
+typedef struct qcsearchfile_s
+{
+	char		name[MAX_QPATH];
+	int		size;
+	searchpath_t	*searchpath;
+} qcsearchfile_t;
+
+typedef struct qcsearch_s
+{
+	qcvm_t		*owner;
+	qcsearchfile_t	*files;
+	int		numfiles;
+	int		maxfiles;
+} qcsearch_t;
+
+static qcsearch_t qcsearches[MAX_QC_SEARCHES];
+
+static qboolean PF_WildMatch(const char *pattern, const char *text)
+{
+	while (*pattern)
+	{
+		if (*pattern == '*')
+		{
+			while (*pattern == '*')
+				pattern++;
+			if (!*pattern)
+				return true;
+			while (*text)
+			{
+				if (PF_WildMatch(pattern, text))
+					return true;
+				text++;
+			}
+			return false;
+		}
+		if (*pattern == '?')
+		{
+			if (!*text)
+				return false;
+			pattern++;
+			text++;
+			continue;
+		}
+		if (q_tolower(*pattern) != q_tolower(*text))
+			return false;
+		pattern++;
+		text++;
+	}
+	return !*text;
+}
+
+static void PF_SearchAdd(qcsearch_t *search, const char *name, int size, searchpath_t *spath)
+{
+	int i;
+
+	for (i = 0; i < search->numfiles; i++)
+		if (!q_strcasecmp(search->files[i].name, name))
+			return;
+
+	if (search->numfiles == search->maxfiles)
+	{
+		search->maxfiles = search->maxfiles ? search->maxfiles * 2 : 32;
+		search->files = Z_Realloc(search->files, search->maxfiles * sizeof(*search->files));
+	}
+	q_strlcpy(search->files[search->numfiles].name, name, sizeof(search->files[search->numfiles].name));
+	search->files[search->numfiles].size = size;
+	search->files[search->numfiles].searchpath = spath;
+	search->numfiles++;
+}
+
+static void PF_SearchLooseDir(qcsearch_t *out, searchpath_t *spath, const char *pattern)
+{
+	char dirname[MAX_QPATH], basename[MAX_QPATH], osdir[MAX_OSPATH], qname[MAX_QPATH];
+	const char *slash;
+#ifdef _WIN32
+	char findpattern[MAX_OSPATH];
+	WIN32_FIND_DATA fdat;
+	HANDLE fhnd;
+#else
+	DIR *dir;
+	struct dirent *ent;
+#endif
+
+	slash = strrchr(pattern, '/');
+	if (slash)
+	{
+		size_t len = slash - pattern;
+		if (len >= sizeof(dirname))
+			return;
+		memcpy(dirname, pattern, len);
+		dirname[len] = 0;
+		q_strlcpy(basename, slash + 1, sizeof(basename));
+		q_snprintf(osdir, sizeof(osdir), "%s/%s", spath->filename, dirname);
+	}
+	else
+	{
+		dirname[0] = 0;
+		q_strlcpy(basename, pattern, sizeof(basename));
+		q_strlcpy(osdir, spath->filename, sizeof(osdir));
+	}
+
+#ifdef _WIN32
+	q_snprintf(findpattern, sizeof(findpattern), "%s/%s", osdir, basename);
+	fhnd = FindFirstFile(findpattern, &fdat);
+	if (fhnd == INVALID_HANDLE_VALUE)
+		return;
+	do
+	{
+		uint64_t filesize;
+
+		if (!strcmp(fdat.cFileName, ".") || !strcmp(fdat.cFileName, ".."))
+			continue;
+		if (fdat.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
+			continue;
+		if (dirname[0])
+			q_snprintf(qname, sizeof(qname), "%s/%s", dirname, fdat.cFileName);
+		else
+			q_strlcpy(qname, fdat.cFileName, sizeof(qname));
+		filesize = ((uint64_t)fdat.nFileSizeHigh << 32) | fdat.nFileSizeLow;
+		PF_SearchAdd(out, qname, filesize > INT_MAX ? INT_MAX : (int)filesize, spath);
+	} while (FindNextFile(fhnd, &fdat));
+	FindClose(fhnd);
+#else
+	dir = opendir(osdir);
+	if (!dir)
+		return;
+	while ((ent = readdir(dir)) != NULL)
+	{
+		char ospath[MAX_OSPATH];
+		FILE *f;
+		int size;
+
+		if (!strcmp(ent->d_name, ".") || !strcmp(ent->d_name, ".."))
+			continue;
+		if (!PF_WildMatch(basename, ent->d_name))
+			continue;
+		if (dirname[0])
+			q_snprintf(qname, sizeof(qname), "%s/%s", dirname, ent->d_name);
+		else
+			q_strlcpy(qname, ent->d_name, sizeof(qname));
+		q_snprintf(ospath, sizeof(ospath), "%s/%s", spath->filename, qname);
+		if (!(Sys_FileType(ospath) & FS_ENT_FILE))
+			continue;
+		f = fopen(ospath, "rb");
+		if (!f)
+			continue;
+		fseek(f, 0, SEEK_END);
+		size = ftell(f);
+		fclose(f);
+		PF_SearchAdd(out, qname, size, spath);
+	}
+	closedir(dir);
+#endif
+}
+
+static qcsearch_t *PF_GetQCSearch(int handle)
+{
+	if ((unsigned int)handle >= MAX_QC_SEARCHES)
+		return NULL;
+	if (qcsearches[handle].owner != qcvm)
+		return NULL;
+	return &qcsearches[handle];
+}
+
+static void PF_search_begin(void)
+{
+	const char *pattern = G_STRING(OFS_PARM0);
+	searchpath_t *spath;
+	int i, j;
+
+	G_FLOAT(OFS_RETURN) = -1;
+	if (!PF_QCPathAllowed(pattern))
+		return;
+
+	for (i = 0; i < MAX_QC_SEARCHES; i++)
+		if (!qcsearches[i].owner)
+			break;
+	if (i == MAX_QC_SEARCHES)
+		return;
+
+	qcsearches[i].owner = qcvm;
+	qcsearches[i].numfiles = 0;
+	qcsearches[i].maxfiles = 0;
+	qcsearches[i].files = NULL;
+
+	for (spath = com_searchpaths; spath; spath = spath->next)
+	{
+		if (spath->pack)
+		{
+			for (j = 0; j < spath->pack->numfiles; j++)
+				if (PF_WildMatch(pattern, spath->pack->files[j].name))
+					PF_SearchAdd(&qcsearches[i], spath->pack->files[j].name,
+						spath->pack->files[j].filelen, spath);
+		}
+		else
+			PF_SearchLooseDir(&qcsearches[i], spath, pattern);
+	}
+
+	if (!qcsearches[i].numfiles)
+	{
+		qcsearches[i].owner = NULL;
+		if (qcsearches[i].files)
+			Z_Free(qcsearches[i].files);
+		qcsearches[i].files = NULL;
+		return;
+	}
+	G_FLOAT(OFS_RETURN) = i;
+}
+
+static void PF_search_end(void)
+{
+	qcsearch_t *search = PF_GetQCSearch(G_FLOAT(OFS_PARM0));
+
+	if (!search)
+		return;
+	if (search->files)
+		Z_Free(search->files);
+	memset(search, 0, sizeof(*search));
+}
+
+static void PF_search_getsize(void)
+{
+	qcsearch_t *search = PF_GetQCSearch(G_FLOAT(OFS_PARM0));
+
+	G_FLOAT(OFS_RETURN) = search ? search->numfiles : 0;
+}
+
+static void PF_search_getfilename(void)
+{
+	qcsearch_t *search = PF_GetQCSearch(G_FLOAT(OFS_PARM0));
+	int index = G_FLOAT(OFS_PARM1);
+	char *out;
+
+	G_INT(OFS_RETURN) = 0;
+	if (!search || (unsigned int)index >= (unsigned int)search->numfiles)
+		return;
+	out = PR_GetTempString();
+	q_strlcpy(out, search->files[index].name, STRINGTEMP_LENGTH);
+	G_INT(OFS_RETURN) = PR_SetEngineString(out);
+}
+
+static void PF_whichpack(void)
+{
+	const char *name = G_STRING(OFS_PARM0);
+	searchpath_t *spath;
+	int i;
+
+	G_INT(OFS_RETURN) = 0;
+	if (!PF_QCPathAllowed(name))
+		return;
+
+	for (spath = com_searchpaths; spath; spath = spath->next)
+	{
+		if (spath->pack)
+		{
+			for (i = 0; i < spath->pack->numfiles; i++)
+			{
+				if (!strcmp(spath->pack->files[i].name, name))
+				{
+					char *out = PR_GetTempString();
+					q_strlcpy(out, COM_SkipPath(spath->pack->filename), STRINGTEMP_LENGTH);
+					G_INT(OFS_RETURN) = PR_SetEngineString(out);
+					return;
+				}
+			}
+		}
+		else
+		{
+			char path[MAX_OSPATH];
+			q_snprintf(path, sizeof(path), "%s/%s", spath->filename, name);
+			if (Sys_FileType(path) & FS_ENT_FILE)
+			{
+				char *out = PR_GetTempString();
+				q_strlcpy(out, COM_SkipPath(spath->filename), STRINGTEMP_LENGTH);
+				G_INT(OFS_RETURN) = PR_SetEngineString(out);
+				return;
+			}
+		}
+	}
+}
+
+#define BUFSTRBASE 1
+#define NUMSTRINGBUFS 64u
+typedef struct qcstrbuf_s
+{
+	qcvm_t		*owner;
+	char		**strings;
+	unsigned int	used;
+	unsigned int	allocated;
+} qcstrbuf_t;
+static qcstrbuf_t strbuflist[NUMSTRINGBUFS];
+
+static qcstrbuf_t *PF_GetStrBuf(int handle)
+{
+	handle -= BUFSTRBASE;
+	if ((unsigned int)handle >= NUMSTRINGBUFS)
+		return NULL;
+	if (strbuflist[handle].owner != qcvm)
+		return NULL;
+	return &strbuflist[handle];
+}
+
+static void PF_StrBufClear(qcstrbuf_t *buf)
+{
+	unsigned int i;
+
+	for (i = 0; i < buf->used; i++)
+		if (buf->strings[i])
+			Z_Free(buf->strings[i]);
+	if (buf->strings)
+		Z_Free(buf->strings);
+	buf->strings = NULL;
+	buf->used = 0;
+	buf->allocated = 0;
+}
+
+void PR_ClearBuiltinState(qcvm_t *vm)
+{
+	unsigned int i;
+
+	for (i = 0; i < MAX_QC_FILES; i++)
+	{
+		if (qcfiles[i].owner == vm)
+		{
+			if (qcfiles[i].file)
+				fclose(qcfiles[i].file);
+			memset(&qcfiles[i], 0, sizeof(qcfiles[i]));
+		}
+	}
+
+	for (i = 0; i < MAX_QC_SEARCHES; i++)
+	{
+		if (qcsearches[i].owner == vm)
+		{
+			if (qcsearches[i].files)
+				Z_Free(qcsearches[i].files);
+			memset(&qcsearches[i], 0, sizeof(qcsearches[i]));
+		}
+	}
+
+	for (i = 0; i < NUMSTRINGBUFS; i++)
+	{
+		if (strbuflist[i].owner == vm)
+		{
+			PF_StrBufClear(&strbuflist[i]);
+			memset(&strbuflist[i], 0, sizeof(strbuflist[i]));
+		}
+	}
+}
+
+static void PF_StrBufSet(qcstrbuf_t *buf, unsigned int index, const char *string)
+{
+	unsigned int old;
+
+	if (index >= buf->allocated)
+	{
+		old = buf->allocated;
+		buf->allocated = index + 256;
+		buf->strings = Z_Realloc(buf->strings, buf->allocated * sizeof(*buf->strings));
+		memset(buf->strings + old, 0, (buf->allocated - old) * sizeof(*buf->strings));
+	}
+	if (buf->strings[index])
+		Z_Free(buf->strings[index]);
+	buf->strings[index] = Z_Strdup(string);
+	if (index >= buf->used)
+		buf->used = index + 1;
+}
+
+static int PF_StrBufAdd(qcstrbuf_t *buf, const char *string, qboolean append)
+{
+	unsigned int index;
+
+	if (append)
+		index = buf->used;
+	else
+	{
+		for (index = 0; index < buf->used; index++)
+			if (!buf->strings[index])
+				break;
+	}
+	PF_StrBufSet(buf, index, string);
+	return index;
+}
+
+static void PF_buf_create(void)
+{
+	unsigned int i;
+
+	G_FLOAT(OFS_RETURN) = -1;
+	if (qcvm->argc > 0 && q_strcasecmp(G_STRING(OFS_PARM0), "string"))
+		return;
+
+	for (i = 0; i < NUMSTRINGBUFS; i++)
+	{
+		if (!strbuflist[i].owner)
+		{
+			memset(&strbuflist[i], 0, sizeof(strbuflist[i]));
+			strbuflist[i].owner = qcvm;
+			G_FLOAT(OFS_RETURN) = i + BUFSTRBASE;
+			return;
+		}
+	}
+}
+
+static void PF_buf_del(void)
+{
+	qcstrbuf_t *buf = PF_GetStrBuf(G_FLOAT(OFS_PARM0));
+
+	if (!buf)
+		return;
+	PF_StrBufClear(buf);
+	buf->owner = NULL;
+}
+
+static void PF_buf_getsize(void)
+{
+	qcstrbuf_t *buf = PF_GetStrBuf(G_FLOAT(OFS_PARM0));
+
+	G_FLOAT(OFS_RETURN) = buf ? buf->used : 0;
+}
+
+static void PF_buf_copy(void)
+{
+	qcstrbuf_t *from = PF_GetStrBuf(G_FLOAT(OFS_PARM0));
+	qcstrbuf_t *to = PF_GetStrBuf(G_FLOAT(OFS_PARM1));
+	unsigned int i;
+
+	if (!from || !to || from == to)
+		return;
+	PF_StrBufClear(to);
+	for (i = 0; i < from->used; i++)
+		if (from->strings[i])
+			PF_StrBufSet(to, i, from->strings[i]);
+	to->used = from->used;
+}
+
+static int PF_buf_sort_prefixlen;
+static int PF_buf_sort_ascending(const void *a, const void *b)
+{
+	const char *sa = *(const char *const *)a;
+	const char *sb = *(const char *const *)b;
+	return strncmp(sa ? sa : "", sb ? sb : "", PF_buf_sort_prefixlen);
+}
+
+static int PF_buf_sort_descending(const void *a, const void *b)
+{
+	return -PF_buf_sort_ascending(a, b);
+}
+
+static void PF_buf_sort(void)
+{
+	qcstrbuf_t *buf = PF_GetStrBuf(G_FLOAT(OFS_PARM0));
+	int prefix = G_FLOAT(OFS_PARM1);
+	int backwards = G_FLOAT(OFS_PARM2);
+	unsigned int s, d, oldused;
+
+	if (!buf)
+		return;
+	oldused = buf->used;
+	for (s = 0, d = 0; s < oldused; s++)
+	{
+		if (!buf->strings[s])
+			continue;
+		buf->strings[d++] = buf->strings[s];
+	}
+	if (d < oldused)
+		memset(buf->strings + d, 0, (oldused - d) * sizeof(*buf->strings));
+	buf->used = d;
+	PF_buf_sort_prefixlen = prefix > 0 ? prefix : 0x7fffffff;
+	qsort(buf->strings, buf->used, sizeof(*buf->strings),
+		backwards ? PF_buf_sort_descending : PF_buf_sort_ascending);
+}
+
+static void PF_buf_implode(void)
+{
+	qcstrbuf_t *buf = PF_GetStrBuf(G_FLOAT(OFS_PARM0));
+	const char *glue = G_STRING(OFS_PARM1);
+	char *out = PR_GetTempString();
+	size_t gluelen = strlen(glue), len = 0;
+	unsigned int i;
+
+	G_INT(OFS_RETURN) = 0;
+	if (!buf)
+		return;
+	out[0] = 0;
+	for (i = 0; i < buf->used; i++)
+	{
+		size_t slen;
+		if (!buf->strings[i])
+			continue;
+		if (len && gluelen)
+		{
+			if (len + gluelen >= STRINGTEMP_LENGTH)
+				break;
+			memcpy(out + len, glue, gluelen);
+			len += gluelen;
+		}
+		slen = strlen(buf->strings[i]);
+		if (len + slen >= STRINGTEMP_LENGTH)
+			slen = STRINGTEMP_LENGTH - len - 1;
+		memcpy(out + len, buf->strings[i], slen);
+		len += slen;
+		if (len >= STRINGTEMP_LENGTH - 1)
+			break;
+	}
+	out[len] = 0;
+	G_INT(OFS_RETURN) = PR_SetEngineString(out);
+}
+
+static void PF_bufstr_get(void)
+{
+	qcstrbuf_t *buf = PF_GetStrBuf(G_FLOAT(OFS_PARM0));
+	int index = G_FLOAT(OFS_PARM1);
+	char *out;
+
+	G_INT(OFS_RETURN) = 0;
+	if (!buf || (unsigned int)index >= buf->used || !buf->strings[index])
+		return;
+	out = PR_GetTempString();
+	q_strlcpy(out, buf->strings[index], STRINGTEMP_LENGTH);
+	G_INT(OFS_RETURN) = PR_SetEngineString(out);
+}
+
+static void PF_bufstr_set(void)
+{
+	qcstrbuf_t *buf = PF_GetStrBuf(G_FLOAT(OFS_PARM0));
+	int index = G_FLOAT(OFS_PARM1);
+
+	if (!buf || index < 0)
+		return;
+	PF_StrBufSet(buf, index, G_STRING(OFS_PARM2));
+}
+
+static void PF_bufstr_add(void)
+{
+	qcstrbuf_t *buf = PF_GetStrBuf(G_FLOAT(OFS_PARM0));
+
+	G_FLOAT(OFS_RETURN) = -1;
+	if (!buf)
+		return;
+	G_FLOAT(OFS_RETURN) = PF_StrBufAdd(buf, G_STRING(OFS_PARM1), G_FLOAT(OFS_PARM2));
+}
+
+static void PF_bufstr_free(void)
+{
+	qcstrbuf_t *buf = PF_GetStrBuf(G_FLOAT(OFS_PARM0));
+	int index = G_FLOAT(OFS_PARM1);
+
+	if (!buf || (unsigned int)index >= buf->used)
+		return;
+	if (buf->strings[index])
+		Z_Free(buf->strings[index]);
+	buf->strings[index] = NULL;
+}
+
+static void PF_buf_cvarlist(void)
+{
+	qcstrbuf_t *buf = PF_GetStrBuf(G_FLOAT(OFS_PARM0));
+	const char *pattern = G_STRING(OFS_PARM1);
+	const char *antipattern = qcvm->argc > 2 ? G_STRING(OFS_PARM2) : "";
+	cvar_t *var;
+
+	if (!buf)
+		return;
+	PF_StrBufClear(buf);
+	for (var = Cvar_FindVarAfter("", CVAR_NONE); var; var = var->next)
+	{
+		if (*pattern && !PF_WildMatch(pattern, var->name))
+			continue;
+		if (*antipattern && PF_WildMatch(antipattern, var->name))
+			continue;
+		PF_StrBufAdd(buf, var->name, true);
+	}
+	PF_buf_sort_prefixlen = 0x7fffffff;
+	qsort(buf->strings, buf->used, sizeof(*buf->strings), PF_buf_sort_ascending);
+}
+
+static void PF_buf_loadfile(void)
+{
+	const char *name = G_STRING(OFS_PARM0);
+	qcstrbuf_t *buf = PF_GetStrBuf(G_FLOAT(OFS_PARM1));
+	char *data, *line;
+
+	G_FLOAT(OFS_RETURN) = 0;
+	if (!buf || !PF_QCPathAllowed(name))
+		return;
+	data = (char *)COM_LoadTempFile(name, NULL);
+	if (!data)
+		return;
+	line = data;
+	while (line && *line)
+	{
+		char *nl = strchr(line, '\n');
+		if (nl)
+			*nl++ = 0;
+		if (*line && line[strlen(line) - 1] == '\r')
+			line[strlen(line) - 1] = 0;
+		PF_StrBufAdd(buf, line, true);
+		line = nl;
+	}
+	G_FLOAT(OFS_RETURN) = 1;
+}
+
+static void PF_buf_writefile(void)
+{
+	qcfile_t *file = PF_GetQCFile(G_FLOAT(OFS_PARM0));
+	qcstrbuf_t *buf = PF_GetStrBuf(G_FLOAT(OFS_PARM1));
+	unsigned int start = qcvm->argc > 2 ? q_max(0, (int)G_FLOAT(OFS_PARM2)) : 0;
+	unsigned int end = buf ? buf->used : 0;
+	unsigned int i;
+
+	G_FLOAT(OFS_RETURN) = 0;
+	if (!file || file->mode == 0 || !buf)
+		return;
+	if (qcvm->argc > 3)
+		end = q_min(end, start + q_max(0, (int)G_FLOAT(OFS_PARM3)));
+	for (i = start; i < end; i++)
+		if (buf->strings[i])
+			fprintf(file->file, "%s\n", buf->strings[i]);
+	G_FLOAT(OFS_RETURN) = 1;
+}
+
+static void PF_copyentity(void)
+{
+	edict_t *src = G_EDICT(OFS_PARM0);
+	edict_t *dst = qcvm->argc > 1 ? G_EDICT(OFS_PARM1) : ED_Alloc();
+
+	if (src->free || dst->free)
+	{
+		Con_Printf("PF_copyentity: entity is free\n");
+		RETURN_EDICT(qcvm->edicts);
+		return;
+	}
+	memcpy(&dst->v, &src->v, qcvm->progs->entityfields * 4);
+	dst->alpha = src->alpha;
+	dst->scale = src->scale;
+	dst->sendinterval = src->sendinterval;
+	if (qcvm == &sv.qcvm)
+		SV_LinkEdict(dst, false);
+	RETURN_EDICT(dst);
+}
+
+static void PF_edict_for_num(void)
+{
+	int num = G_FLOAT(OFS_PARM0);
+
+	if (num < 0 || num >= qcvm->num_edicts)
+		num = 0;
+	RETURN_EDICT(EDICT_NUM(num));
+}
+
+static void PF_num_for_edict(void)
+{
+	G_FLOAT(OFS_RETURN) = G_EDICTNUM(OFS_PARM0);
+}
+
+static void PF_findfloat(void)
+{
+	int e = G_EDICTNUM(OFS_PARM0);
+	int f = G_INT(OFS_PARM1);
+	float match = G_FLOAT(OFS_PARM2);
+	edict_t *ed;
+
+	for (e++; e < qcvm->num_edicts; e++)
+	{
+		ed = EDICT_NUM(e);
+		if (!ed->free && E_FLOAT(ed, f) == match)
+		{
+			RETURN_EDICT(ed);
+			return;
+		}
+	}
+	RETURN_EDICT(qcvm->edicts);
+}
+
+static void PF_findchain(void)
+{
+	edict_t *ent = NEXT_EDICT(qcvm->edicts), *chain = qcvm->edicts;
+	int i, field = G_INT(OFS_PARM0);
+	const char *match = G_STRING(OFS_PARM1);
+	int chainfield = qcvm->argc > 2 ? G_INT(OFS_PARM2) : (int *)(&ent->v.chain) - (int *)(&ent->v);
+
+	for (i = 1; i < qcvm->num_edicts; i++, ent = NEXT_EDICT(ent))
+	{
+		if (ent->free || strcmp(E_STRING(ent, field), match))
+			continue;
+		((int *)&ent->v)[chainfield] = EDICT_TO_PROG(chain);
+		chain = ent;
+	}
+	RETURN_EDICT(chain);
+}
+
+static void PF_findchainfloat(void)
+{
+	edict_t *ent = NEXT_EDICT(qcvm->edicts), *chain = qcvm->edicts;
+	int i, field = G_INT(OFS_PARM0);
+	float match = G_FLOAT(OFS_PARM1);
+	int chainfield = qcvm->argc > 2 ? G_INT(OFS_PARM2) : (int *)(&ent->v.chain) - (int *)(&ent->v);
+
+	for (i = 1; i < qcvm->num_edicts; i++, ent = NEXT_EDICT(ent))
+	{
+		if (ent->free || E_FLOAT(ent, field) != match)
+			continue;
+		((int *)&ent->v)[chainfield] = EDICT_TO_PROG(chain);
+		chain = ent;
+	}
+	RETURN_EDICT(chain);
+}
+
+static void PF_findflags(void)
+{
+	int e = G_EDICTNUM(OFS_PARM0);
+	int f = G_INT(OFS_PARM1);
+	int match = G_FLOAT(OFS_PARM2);
+	edict_t *ed;
+
+	for (e++; e < qcvm->num_edicts; e++)
+	{
+		ed = EDICT_NUM(e);
+		if (!ed->free && ((int)E_FLOAT(ed, f) & match))
+		{
+			RETURN_EDICT(ed);
+			return;
+		}
+	}
+	RETURN_EDICT(qcvm->edicts);
+}
+
+static void PF_findchainflags(void)
+{
+	edict_t *ent = NEXT_EDICT(qcvm->edicts), *chain = qcvm->edicts;
+	int i, field = G_INT(OFS_PARM0);
+	int match = G_FLOAT(OFS_PARM1);
+	int chainfield = qcvm->argc > 2 ? G_INT(OFS_PARM2) : (int *)(&ent->v.chain) - (int *)(&ent->v);
+
+	for (i = 1; i < qcvm->num_edicts; i++, ent = NEXT_EDICT(ent))
+	{
+		if (ent->free || !((int)E_FLOAT(ent, field) & match))
+			continue;
+		((int *)&ent->v)[chainfield] = EDICT_TO_PROG(chain);
+		chain = ent;
+	}
+	RETURN_EDICT(chain);
+}
+
+static void PF_numentityfields(void)
+{
+	G_FLOAT(OFS_RETURN) = qcvm->progs->numfielddefs;
+}
+
+static void PF_findentityfield(void)
+{
+	ddef_t *field = ED_FindField(G_STRING(OFS_PARM0));
+	G_FLOAT(OFS_RETURN) = field ? field - qcvm->fielddefs : 0;
+}
+
+static void PF_entityfieldref(void)
+{
+	unsigned int idx = G_FLOAT(OFS_PARM0);
+	G_INT(OFS_RETURN) = idx < (unsigned int)qcvm->progs->numfielddefs ? qcvm->fielddefs[idx].ofs : 0;
+}
+
+static void PF_entityfieldname(void)
+{
+	unsigned int idx = G_FLOAT(OFS_PARM0);
+	G_INT(OFS_RETURN) = idx < (unsigned int)qcvm->progs->numfielddefs ? qcvm->fielddefs[idx].s_name : 0;
+}
+
+static void PF_entityfieldtype(void)
+{
+	unsigned int idx = G_FLOAT(OFS_PARM0);
+	G_FLOAT(OFS_RETURN) = idx < (unsigned int)qcvm->progs->numfielddefs ? (qcvm->fielddefs[idx].type & ~DEF_SAVEGLOBAL) : ev_void;
+}
+
+static void PF_getentityfieldstring(void)
+{
+	unsigned int idx = G_FLOAT(OFS_PARM0);
+	edict_t *ent = G_EDICT(OFS_PARM1);
+	char *out;
+
+	G_INT(OFS_RETURN) = 0;
+	if (idx >= (unsigned int)qcvm->progs->numfielddefs)
+		return;
+	out = PR_GetTempString();
+	q_strlcpy(out, PR_UglyValueString(qcvm->fielddefs[idx].type,
+		(eval_t *)((float *)&ent->v + qcvm->fielddefs[idx].ofs)), STRINGTEMP_LENGTH);
+	G_INT(OFS_RETURN) = PR_SetEngineString(out);
+}
+
+static void PF_putentityfieldstring(void)
+{
+	unsigned int idx = G_FLOAT(OFS_PARM0);
+	edict_t *ent = G_EDICT(OFS_PARM1);
+
+	G_FLOAT(OFS_RETURN) = 0;
+	if (idx >= (unsigned int)qcvm->progs->numfielddefs)
+		return;
+	G_FLOAT(OFS_RETURN) = ED_ParseEpair((void *)&ent->v, qcvm->fielddefs + idx, G_STRING(OFS_PARM2), qcvm != &sv.qcvm);
+	if (qcvm == &sv.qcvm)
+		SV_LinkEdict(ent, false);
+}
+
+static void PF_globalstat(void)
+{
+	int idx = G_FLOAT(OFS_PARM0);
+	int type = G_FLOAT(OFS_PARM1);
+	ddef_t *global = ED_FindGlobal(G_STRING(OFS_PARM2));
+	struct svcustomstat_s *stat;
+
+	if (!global)
+		return;
+	stat = PR_CustomStat(idx, type);
+	if (!stat)
+		return;
+	stat->fld = 0;
+	stat->ptr = (eval_t *)&qcvm->globals[global->ofs];
+}
+
+static void PF_isbackbuffered(void)
+{
+	edict_t *ed = G_EDICT(OFS_PARM0);
+	int idx = NUM_FOR_EDICT(ed) - 1;
+
+	G_FLOAT(OFS_RETURN) = 0;
+	if ((unsigned int)idx < (unsigned int)svs.maxclients && svs.clients[idx].active)
+		G_FLOAT(OFS_RETURN) = svs.clients[idx].message.cursize > 0;
+}
+
+static void PF_parseentitydata(void)
+{
+	edict_t *ent = G_EDICT(OFS_PARM0);
+	const char *data = G_STRING(OFS_PARM1);
+	int offset = qcvm->argc > 2 ? G_FLOAT(OFS_PARM2) : 0;
+	const char *start, *end;
+
+	G_FLOAT(OFS_RETURN) = 0;
+	if (offset < 0)
+		offset = 0;
+	if (offset >= (int)strlen(data))
+		return;
+	start = data + offset;
+	end = COM_Parse(start);
+	if (!end || com_token[0] != '{')
+		return;
+	end = ED_ParseEdict(end, ent);
+	G_FLOAT(OFS_RETURN) = end ? end - data : 0;
+}
+
+static void PF_callfunction(void)
+{
+	const char *name = G_STRING(OFS_PARM0 + (qcvm->argc - 1) * 3);
+	dfunction_t *func = ED_FindFunction(name);
+
+	if (func)
+		PR_ExecuteProgram(func - qcvm->functions);
+}
+
+static void PF_isfunction(void)
+{
+	G_FLOAT(OFS_RETURN) = ED_FindFunction(G_STRING(OFS_PARM0)) != NULL;
+}
+
+static qboolean PF_IsColorCode(const char *s)
+{
+	if (s[0] != '^')
+		return false;
+	if (s[1] >= '0' && s[1] <= '9')
+		return true;
+	if (s[1] == 'x' && q_isxdigit(s[2]) && q_isxdigit(s[3]) && q_isxdigit(s[4]))
+		return true;
+	return false;
+}
+
+static int PF_ColorCodeLength(const char *s)
+{
+	if (s[1] == 'x')
+		return 5;
+	return 2;
+}
+
+static void PF_strlennocol(void)
+{
+	const char *s = G_STRING(OFS_PARM0);
+	int len = 0;
+
+	while (*s)
+	{
+		if (PF_IsColorCode(s))
+		{
+			s += PF_ColorCodeLength(s);
+			continue;
+		}
+		s++;
+		len++;
+	}
+	G_FLOAT(OFS_RETURN) = len;
+}
+
+static void PF_strdecolorize(void)
+{
+	const char *s = G_STRING(OFS_PARM0);
+	char *out = PR_GetTempString(), *d = out;
+
+	while (*s && d < out + STRINGTEMP_LENGTH - 1)
+	{
+		if (PF_IsColorCode(s))
+		{
+			s += PF_ColorCodeLength(s);
+			continue;
+		}
+		*d++ = *s++;
+	}
+	*d = 0;
+	G_INT(OFS_RETURN) = PR_SetEngineString(out);
+}
+
+static void PF_strreplace_internal(qboolean insensitive)
+{
+	const char *search = G_STRING(OFS_PARM0);
+	const char *replace = G_STRING(OFS_PARM1);
+	const char *subject = G_STRING(OFS_PARM2);
+	char *out = PR_GetTempString();
+	size_t slen = strlen(search), rlen = strlen(replace), len = 0;
+
+	if (!slen)
+	{
+		q_strlcpy(out, subject, STRINGTEMP_LENGTH);
+		G_INT(OFS_RETURN) = PR_SetEngineString(out);
+		return;
+	}
+	while (*subject && len < STRINGTEMP_LENGTH - 1)
+	{
+		qboolean match = insensitive ? !q_strncasecmp(subject, search, slen) : !strncmp(subject, search, slen);
+		if (match)
+		{
+			size_t copy = q_min(rlen, (size_t)(STRINGTEMP_LENGTH - len - 1));
+			memcpy(out + len, replace, copy);
+			len += copy;
+			subject += slen;
+		}
+		else
+			out[len++] = *subject++;
+	}
+	out[len] = 0;
+	G_INT(OFS_RETURN) = PR_SetEngineString(out);
+}
+
+static void PF_strreplace(void)
+{
+	PF_strreplace_internal(false);
+}
+
+static void PF_strireplace(void)
+{
+	PF_strreplace_internal(true);
+}
+
+static void PF_uri_escape(void)
+{
+	const char *s = G_STRING(OFS_PARM0);
+	char *out = PR_GetTempString(), *d = out;
+	static const char hex[] = "0123456789ABCDEF";
+
+	while (*s && d < out + STRINGTEMP_LENGTH - 1)
+	{
+		unsigned char c = (unsigned char)*s++;
+		if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+			(c >= '0' && c <= '9') || c == '-' || c == '_' || c == '.' || c == '~')
+			*d++ = c;
+		else if (d < out + STRINGTEMP_LENGTH - 3)
+		{
+			*d++ = '%';
+			*d++ = hex[c >> 4];
+			*d++ = hex[c & 15];
+		}
+	}
+	*d = 0;
+	G_INT(OFS_RETURN) = PR_SetEngineString(out);
+}
+
+static int PF_HexValue(int c)
+{
+	if (c >= '0' && c <= '9')
+		return c - '0';
+	if (c >= 'a' && c <= 'f')
+		return c - 'a' + 10;
+	if (c >= 'A' && c <= 'F')
+		return c - 'A' + 10;
+	return -1;
+}
+
+static void PF_uri_unescape(void)
+{
+	const char *s = G_STRING(OFS_PARM0);
+	char *out = PR_GetTempString(), *d = out;
+
+	while (*s && d < out + STRINGTEMP_LENGTH - 1)
+	{
+		if (*s == '%' && PF_HexValue(s[1]) >= 0 && PF_HexValue(s[2]) >= 0)
+		{
+			*d++ = (PF_HexValue(s[1]) << 4) | PF_HexValue(s[2]);
+			s += 3;
+		}
+		else if (*s == '+')
+		{
+			*d++ = ' ';
+			s++;
+		}
+		else
+			*d++ = *s++;
+	}
+	*d = 0;
+	G_INT(OFS_RETURN) = PR_SetEngineString(out);
+}
+
+static void PF_crc16(void)
+{
+	qboolean insensitive = G_FLOAT(OFS_PARM0);
+	const char *s = PF_VarString(1);
+	unsigned short crc;
+
+	CRC_Init(&crc);
+	while (*s)
+	{
+		unsigned char c = (unsigned char)*s++;
+		if (insensitive && c >= 'A' && c <= 'Z')
+			c += 'a' - 'A';
+		CRC_ProcessByte(&crc, c);
+	}
+	G_FLOAT(OFS_RETURN) = CRC_Value(crc);
+}
+
+static void PF_cl_sendevent(void)
+{
+	const char *eventname = G_STRING(OFS_PARM0);
+	const char *eventargs = G_STRING(OFS_PARM1);
+	int a;
+
+	if (cls.state != ca_connected)
+		return;
+	MSG_WriteByte(&cls.message, clcfte_qcrequest);
+	for (a = 2; a < 8 && *eventargs; a++, eventargs++)
+	{
+		switch (*eventargs)
+		{
+		case 's':
+			MSG_WriteByte(&cls.message, ev_string);
+			MSG_WriteString(&cls.message, G_STRING(OFS_PARM0 + a * 3));
+			break;
+		case 'f':
+			MSG_WriteByte(&cls.message, ev_float);
+			MSG_WriteFloat(&cls.message, G_FLOAT(OFS_PARM0 + a * 3));
+			break;
+		case 'i':
+			MSG_WriteByte(&cls.message, ev_ext_integer);
+			MSG_WriteLong(&cls.message, G_INT(OFS_PARM0 + a * 3));
+			break;
+		case 'v':
+			MSG_WriteByte(&cls.message, ev_vector);
+			MSG_WriteFloat(&cls.message, G_FLOAT(OFS_PARM0 + a * 3 + 0));
+			MSG_WriteFloat(&cls.message, G_FLOAT(OFS_PARM0 + a * 3 + 1));
+			MSG_WriteFloat(&cls.message, G_FLOAT(OFS_PARM0 + a * 3 + 2));
+			break;
+		case 'e':
+		{
+			edict_t *ed = G_EDICT(OFS_PARM0 + a * 3);
+			eval_t *entnum = GetEdictFieldValue(ed, ED_FindFieldOffset("entnum"));
+			MSG_WriteByte(&cls.message, ev_entity);
+			MSG_WriteEntity(&cls.message, entnum ? entnum->_float : NUM_FOR_EDICT(ed), cl.protocol_pext2);
+			break;
+		}
+		default:
+			break;
+		}
+	}
+	MSG_WriteByte(&cls.message, 0);
+	MSG_WriteString(&cls.message, eventname);
+}
+
 static void PF_checkcommand(void)
 {
 	const char *name = G_STRING(OFS_PARM0);
@@ -4638,9 +5972,17 @@ builtindef_t pr_builtindefs[] =
 	{"max",						PF_BOTH(PF_max),				95},	// float(float a, float b, ...)
 	{"bound",					PF_BOTH(PF_bound),				96},	// float(float minimum, float val, float maximum)
 	{"pow",						PF_BOTH(PF_pow),				97},	// float(float value, float exp)
+	{"findfloat",				PF_BOTH(PF_findfloat),			98},	// entity(entity start, .__variant fld, __variant match)
 
 	{"checkextension",			PF_BOTH(PF_checkextension),		99},	// float(string extname)
+	{"builtin_find",			PF_BOTH(PF_builtin_find),		100},	// float(string name)
 	{"checkbuiltin",			PF_BOTH(PF_checkbuiltin)},				// float(function builtinref)
+	{"anglemod",				PF_BOTH(PF_anglemod),			102},	// float(float angle)
+
+	{"fopen",					PF_BOTH(PF_fopen),				110},	// filestream(string filename, float mode)
+	{"fclose",					PF_BOTH(PF_fclose),				111},	// void(filestream fhandle)
+	{"fgets",					PF_BOTH(PF_fgets),				112},	// string(filestream fhandle)
+	{"fputs",					PF_BOTH(PF_fputs),				113},	// void(filestream fhandle, string s, ...)
 
 	{"strlen",					PF_BOTH(PF_strlen),				114},	// float(string s)
 	{"strcat",					PF_BOTH(PF_strcat),				115},	// string(string s1, optional string s2, optional string s3, optional string s4, optional string s5, optional string s6, optional string s7, optional string s8)
@@ -4656,11 +5998,14 @@ builtindef_t pr_builtindefs[] =
 	{"strconv",					PF_BOTH(PF_strconv),			224},	// string(float ccase, float redalpha, float redchars, string str, ...)
 	{"strstrofs",				PF_BOTH(PF_strstrofs),			221},	// float(string s1, string sub, optional float startidx)
 	{"strpad",					PF_BOTH(PF_strpad),				225},	// string(float pad, string str1, ...)
+	{"bitshift",				PF_BOTH(PF_bitshift),			218},	// float(float bitmask, float shift)
 	{"strncmp",					PF_BOTH(PF_strncmp),			228},	// float(string s1, string s2, optional float len, optional float s1ofs, optional float s2ofs)
 	{"strcasecmp",				PF_BOTH(PF_strncasecmp),		229},	// float(string s1, string s2)
 	{"strncasecmp",				PF_BOTH(PF_strncasecmp),		230},	// float(string s1, string s2, float len, optional float s1ofs, optional float s2ofs)
 
 	{"clientstat",				PF_SSQC(PF_clientstat),			232},	// void(float num, float type, .__variant fld)
+	{"globalstat",				PF_SSQC(PF_globalstat),			233},	// void(float num, float type, string name)
+	{"isbackbuffered",			PF_SSQC(PF_isbackbuffered),		234},	// float(entity player)
 
 	{"mod",						PF_BOTH(PF_mod),				245},	// float(float a, float n)
 	{"strconv",					PF_BOTH(PF_strconv),			249},	// alternate FTE/QSS slot used by AD CSQC
@@ -4701,6 +6046,8 @@ builtindef_t pr_builtindefs[] =
 	{"particleeffectnum",		PF_BOTH(PF_particleeffectnum),	335},	// float(string effectname)
 	{"trailparticles",			PF_BOTH(PF_trailparticles),		336},	// void(float effectnum, entity ent, vector start, vector end)
 	{"pointparticles",			PF_BOTH(PF_pointparticles),		337},	// void(float effectnum, vector origin, optional vector dir, optional float count)
+	{"cprint",					PF_CSQC(PF_cl_cprint),			338},	// void(string s, ...)
+	{"print",					PF_CSQC(PF_cl_print),			339},	// void(string s, ...)
 
 	{"setcursormode",			PF_CSQC(PF_cl_setcursormode),	343},	// void(float usecursor, ...)
 	{"runstandardplayerphysics",	PF_SSQC(PF_sv_pmove),			347},	// void(entity ent)
@@ -4708,9 +6055,11 @@ builtindef_t pr_builtindefs[] =
 	{"getplayerkeyfloat",		PF_CSQC(PF_cl_playerkey_f)},			// float(float playernum, string keyname, optional float assumevalue)
 
 	{"registercommand",			PF_CSQC(PF_cl_registercommand),	352},	// void(string cmdname)
+	{"wasfreed",				PF_BOTH(PF_wasfreed),			353},	// float(entity ent)
 	{"serverkey",				PF_BOTH(PF_serverkey_s),		354},	// string(string key)
 	{"serverkeyfloat",			PF_BOTH(PF_serverkey_f)},				// float(string key, optional float assumevalue)
 	{"loadfont",				PF_CSQC(PF_cl_loadfont),		357},	// float(string fontname, string fontmaps, string sizes, float slot, ...)
+	{"sendevent",				PF_CSQC(PF_cl_sendevent),		359},	// void(string evname, string evargs, ...)
 	{"readbyte",				PF_CSQC(PF_cl_readbyte),			360},	// float()
 	{"readchar",				PF_CSQC(PF_cl_readchar),			361},	// float()
 	{"readshort",				PF_CSQC(PF_cl_readshort),			362},	// float()
@@ -4720,7 +6069,10 @@ builtindef_t pr_builtindefs[] =
 	{"readstring",				PF_CSQC(PF_cl_readstring),			366},	// string()
 	{"readfloat",				PF_CSQC(PF_cl_readfloat),			367},	// float()
 	{"readentitynum",			PF_CSQC(PF_cl_readentitynum),		368},	// float()
+	{"copyentity",				PF_BOTH(PF_copyentity),			400},	// entity(entity from, optional entity to)
 	{"setcolors",				PF_SSQC(PF_setcolors),		401},	// void(entity ent, float colors)
+	{"findchain",				PF_BOTH(PF_findchain),			402},	// entity(.string fld, string match, optional .entity chainfield)
+	{"findchainfloat",			PF_BOTH(PF_findchainfloat),		403},	// entity(.float fld, float match, optional .entity chainfield)
 	{"te_particlerain",			PF_BOTH(PF_te_particlerain),	409},	// void(vector min, vector max, vector vel, float count, float color)
 	{"te_particlesnow",			PF_BOTH(PF_te_particlesnow),	410},	// void(vector min, vector max, vector vel, float count, float color)
 
@@ -4737,25 +6089,67 @@ builtindef_t pr_builtindefs[] =
 	{"tokenize",				PF_BOTH(PF_Tokenize),			441},	// float(string s)
 	{"argv",					PF_BOTH(PF_ArgV),				442},	// string(float n)
 	{"argc",					PF_BOTH(PF_ArgC)},						// float()
+	{"search_begin",			PF_BOTH(PF_search_begin),		444},	// searchhandle(string pattern, float flags, float quiet, optional string filterpackage)
+	{"search_end",				PF_BOTH(PF_search_end),			445},	// void(searchhandle handle)
+	{"search_getsize",			PF_BOTH(PF_search_getsize),		446},	// float(searchhandle handle)
+	{"search_getfilename",		PF_BOTH(PF_search_getfilename),	447},	// string(searchhandle handle, float num)
 	{"cvar_string",				PF_BOTH(PF_cvar_string),		448},	// string(string cvarname)
+	{"findflags",				PF_BOTH(PF_findflags),			449},	// entity(entity start, .float fld, float match)
+	{"findchainflags",			PF_BOTH(PF_findchainflags),		450},	// entity(.float fld, float match, optional .entity chainfield)
+	{"edict_num",				PF_BOTH(PF_edict_for_num),		459},	// entity(float entnum)
+	{"buf_create",				PF_BOTH(PF_buf_create),			460},	// strbuf()
+	{"buf_del",					PF_BOTH(PF_buf_del),			461},	// void(strbuf bufhandle)
+	{"buf_getsize",				PF_BOTH(PF_buf_getsize),		462},	// float(strbuf bufhandle)
+	{"buf_copy",				PF_BOTH(PF_buf_copy),			463},	// void(strbuf from, strbuf to)
+	{"buf_sort",				PF_BOTH(PF_buf_sort),			464},	// void(strbuf bufhandle, float sortprefixlen, float backward)
+	{"buf_implode",				PF_BOTH(PF_buf_implode),		465},	// string(strbuf bufhandle, string glue)
+	{"bufstr_get",				PF_BOTH(PF_bufstr_get),			466},	// string(strbuf bufhandle, float string_index)
+	{"bufstr_set",				PF_BOTH(PF_bufstr_set),			467},	// void(strbuf bufhandle, float string_index, string str)
+	{"bufstr_add",				PF_BOTH(PF_bufstr_add),			468},	// float(strbuf bufhandle, string str, float order)
+	{"bufstr_free",				PF_BOTH(PF_bufstr_free),		469},	// void(strbuf bufhandle, float string_index)
 
 	{"asin",					PF_BOTH(PF_asin),				471},	// float(float s)
 	{"acos",					PF_BOTH(PF_acos),				472},	// float(float c)
 	{"atan",					PF_BOTH(PF_atan),				473},	// float(float t)
 	{"atan2",					PF_BOTH(PF_atan2),				474},	// float(float c, float s)
 	{"tan",						PF_BOTH(PF_tan),				475},	// float(float a)
+	{"strlennocol",				PF_BOTH(PF_strlennocol),		476},	// float(string s)
+	{"strdecolorize",			PF_BOTH(PF_strdecolorize),		477},	// string(string s)
 	{"strftime",				PF_BOTH(PF_strftime),			478},	// string(float uselocaltime, string format, ...)
 	{"tokenizebyseparator",		PF_BOTH(PF_tokenizebyseparator),	479},	// float(string s, string separator1, ...)
 	{"strtolower",				PF_BOTH(PF_strtolower),			480},	// string(string s)
 	{"strtoupper",				PF_BOTH(PF_strtoupper),			481},	// string(string s)
 	{"cvar_defstring",			PF_BOTH(PF_cvar_defstring),		482},	// string(string cvarname)
+	{"strreplace",				PF_BOTH(PF_strreplace),			484},	// string(string search, string replace, string subject)
+	{"strireplace",				PF_BOTH(PF_strireplace),		485},	// string(string search, string replace, string subject)
 	{"getsurfacepointattribute",	PF_BOTH(PF_getsurfacepointattribute),	486},	// vector(entity e, float s, float n, float a)
+	{"crc16",					PF_BOTH(PF_crc16),				494},	// float(float caseinsensitive, string s, ...)
 	{"cvar_type",				PF_BOTH(PF_cvar_type),			495},	// float(string cvarname)
+	{"numentityfields",			PF_BOTH(PF_numentityfields),	496},	// float()
+	{"findentityfield",			PF_BOTH(PF_findentityfield)},			// float(string fieldname)
+	{"entityfieldref",			PF_BOTH(PF_entityfieldref)},			// .__variant(float fieldnum)
+	{"entityfieldname",			PF_BOTH(PF_entityfieldname),	497},	// string(float fieldnum)
+	{"entityfieldtype",			PF_BOTH(PF_entityfieldtype),	498},	// float(float fieldnum)
+	{"getentityfieldstring",	PF_BOTH(PF_getentityfieldstring),	499},	// string(float fieldnum, entity ent)
+	{"putentityfieldstring",	PF_BOTH(PF_putentityfieldstring),	500},	// float(float fieldnum, entity ent, string s)
+	{"whichpack",				PF_BOTH(PF_whichpack),			503},	// string(string filename)
+	{"uri_escape",				PF_BOTH(PF_uri_escape),			510},	// string(string in)
+	{"uri_unescape",			PF_BOTH(PF_uri_unescape),		511},	// string(string in)
+	{"num_for_edict",			PF_BOTH(PF_num_for_edict),		512},	// float(entity ent)
 
 	{"tokenize_console",		PF_BOTH(PF_tokenize_console),	514},	// float(string str)
 	{"argv_start_index",		PF_BOTH(PF_argv_start_index),	515},	// float(float idx)
 	{"argv_end_index",			PF_BOTH(PF_argv_end_index),		516},	// float(float idx)
+	{"buf_cvarlist",			PF_BOTH(PF_buf_cvarlist),		517},	// void(strbuf strbuf, string pattern, string antipattern)
 	{"cvar_description",		PF_BOTH(PF_cvar_description),	518},	// string(string cvarname)
+	{"gettime",					PF_BOTH(PF_gettime),			519},	// float(optional float timer)
+	{"log",						PF_BOTH(PF_Logarithm),			532},	// float(float value, optional float base)
+	{"buf_loadfile",			PF_BOTH(PF_buf_loadfile),		535},	// float(string filename, strbuf bufhandle)
+	{"buf_writefile",			PF_BOTH(PF_buf_writefile),		536},	// float(filestream filehandle, strbuf bufhandle, optional float startpos, optional float numstrings)
+	{"callfunction",			PF_BOTH(PF_callfunction),		605},	// void(..., string funcname)
+	{"isfunction",				PF_BOTH(PF_isfunction),			607},	// float(string s)
+	{"getresolution",			PF_CSQC(PF_cl_getresolution),	608},	// vector(optional float virtual)
+	{"parseentitydata",			PF_BOTH(PF_parseentitydata),		613},	// float(entity e, string s, optional float offset)
 
 	{"sprintf",					PF_BOTH(PF_sprintf),			627},	// string(string fmt, ...)
 	{"getsurfacenumtriangles",	PF_BOTH(PF_getsurfacenumtriangles),	628},	// float(entity e, float s)

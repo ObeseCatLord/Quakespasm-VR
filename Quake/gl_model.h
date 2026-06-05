@@ -491,6 +491,7 @@ typedef struct qmodel_s
 
 	int			bspversion;
 	qboolean	haslitwater;
+	int			contentstransparent;
 #ifdef PSET_SCRIPT
 	int			emiteffect;
 	int			traileffect;
