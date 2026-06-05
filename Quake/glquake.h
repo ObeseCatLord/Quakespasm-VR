@@ -406,6 +406,8 @@ void R_UpdateWarpTextures (void);
 
 void R_DrawWorld (void);
 void R_DrawAliasModel (entity_t *e);
+void R_BeginAliasBatchScope (void);
+void R_EndAliasBatchScope (void);
 void R_DrawAliasModelOutline (entity_t *e, float r, float g, float b, float a, float inflate);
 void R_DrawBrushModel (entity_t *e);
 void R_DrawSpriteModel (entity_t *e);
@@ -464,6 +466,7 @@ void R_DrawWorld_Water (void);
 void R_SetupView (void);
 void R_RenderScene (void);
 
+void GL_UseProgram (GLuint program);
 void GL_BindBuffer (GLenum target, GLuint buffer);
 void GL_ClearBufferBindings (void);
 

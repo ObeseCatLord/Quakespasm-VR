@@ -47,6 +47,7 @@ extern cvar_t r_lerpmodels;
 extern cvar_t r_lerpmove;
 extern cvar_t r_nolerp_list;
 extern cvar_t r_noshadow_list;
+extern cvar_t r_alias_batching;
 extern cvar_t r_part_density;
 extern cvar_t cl_coop_nametags;
 //johnfitz
@@ -220,6 +221,7 @@ void R_Init (void)
 	Cvar_RegisterVariable (&gl_overbright_models);
 	Cvar_RegisterVariable (&r_lerpmodels);
 	Cvar_RegisterVariable (&r_lerpmove);
+	Cvar_RegisterVariable (&r_alias_batching);
 	Cvar_RegisterVariable (&r_nolerp_list);
 	Cvar_SetCallback (&r_nolerp_list, R_Model_ExtraFlags_List_f);
 	Cvar_RegisterVariable (&r_noshadow_list);
@@ -595,12 +597,35 @@ void R_DeleteShaders (void)
 	if (!gl_glsl_able)
 		return;
 
+	GL_UseProgram (0);
+
 	for (i = 0; i < gl_num_programs; i++)
 	{
 		GL_DeleteProgramFunc (gl_programs[i]);
 		gl_programs[i] = 0;
 	}
 	gl_num_programs = 0;
+}
+
+static GLuint current_program;
+
+/*
+====================
+GL_UseProgram
+
+glUseProgram wrapper
+====================
+*/
+void GL_UseProgram (GLuint program)
+{
+	if (!GL_UseProgramFunc)
+		return;
+
+	if (current_program != program)
+	{
+		current_program = program;
+		GL_UseProgramFunc (program);
+	}
 }
 
 static GLuint current_array_buffer, current_element_array_buffer;
