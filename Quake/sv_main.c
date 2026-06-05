@@ -675,6 +675,13 @@ void SV_SendServerinfo (client_t *client)
 	MSG_WriteByte (&client->message, 0);
 	//johnfitz
 
+	for (i = 1, s = sv.particle_precache+1; i < MAX_PARTICLETYPES && *s; s++, i++)
+	{
+		MSG_WriteByte (&client->message, svcdp_precache);
+		MSG_WriteShort (&client->message, 0x4000 | i);
+		MSG_WriteString (&client->message, *s);
+	}
+
 // send music
 	MSG_WriteByte (&client->message, svc_cdtrack);
 	MSG_WriteByte (&client->message, qcvm->edicts->v.sounds);

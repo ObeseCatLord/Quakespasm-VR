@@ -83,7 +83,51 @@ void PerpendicularVector( vec3_t dst, const vec3_t src )
 	VectorNormalize( dst );
 }
 
-//johnfitz -- removed RotatePointAroundVector() becuase it's no longer used and my compiler fucked it up anyway
+void RotatePointAroundVector (vec3_t dst, const vec3_t dir, const vec3_t point, float degrees)
+{
+	float	m[3][3];
+	float	im[3][3];
+	float	zrot[3][3];
+	float	tmpmat[3][3];
+	float	rot[3][3];
+	int		i;
+	vec3_t	vr, vup, vf;
+
+	VectorCopy (dir, vf);
+	PerpendicularVector (vr, dir);
+	CrossProduct (vr, vf, vup);
+
+	m[0][0] = vr[0];
+	m[1][0] = vr[1];
+	m[2][0] = vr[2];
+	m[0][1] = vup[0];
+	m[1][1] = vup[1];
+	m[2][1] = vup[2];
+	m[0][2] = vf[0];
+	m[1][2] = vf[1];
+	m[2][2] = vf[2];
+
+	memcpy (im, m, sizeof(im));
+	im[0][1] = m[1][0];
+	im[0][2] = m[2][0];
+	im[1][0] = m[0][1];
+	im[1][2] = m[2][1];
+	im[2][0] = m[0][2];
+	im[2][1] = m[1][2];
+
+	memset (zrot, 0, sizeof(zrot));
+	zrot[0][0] = zrot[1][1] = zrot[2][2] = 1.0F;
+	zrot[0][0] = cos (DEG2RAD(degrees));
+	zrot[0][1] = sin (DEG2RAD(degrees));
+	zrot[1][0] = -sin (DEG2RAD(degrees));
+	zrot[1][1] = cos (DEG2RAD(degrees));
+
+	R_ConcatRotations (m, zrot, tmpmat);
+	R_ConcatRotations (tmpmat, im, rot);
+
+	for (i = 0; i < 3; i++)
+		dst[i] = rot[i][0] * point[0] + rot[i][1] * point[1] + rot[i][2] * point[2];
+}
 
 /*-----------------------------------------------------------------*/
 
@@ -500,4 +544,3 @@ fixed16_t Invert24To16(fixed16_t val)
 	return (fixed16_t)
 			(((double)0x10000 * (double)0x1000000 / (double)val) + 0.5);
 }
-

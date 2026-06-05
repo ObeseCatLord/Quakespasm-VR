@@ -354,6 +354,7 @@ void COM_LoadCacheFile (const char *path, struct cache_user_s *cu,
 	// uses cache mem for allocating the buffer.
 byte *COM_LoadMallocFile (const char *path, unsigned int *path_id);
 	// allocates the buffer on the system mem (malloc).
+void COM_Effectinfo_Enumerate (int (*cb)(const char *pname));
 
 // Opens the given path directly, ignoring search paths.
 // Returns NULL on failure, or else a '\0'-terminated malloc'ed buffer.

@@ -117,7 +117,7 @@ void Fog_FogCommand_f (void)
 {
 	float d, r, g, b, t;
 
-	switch (Cmd_Argc())
+	switch (q_min(Cmd_Argc(), 6))
 	{
 	default:
 	case 1:

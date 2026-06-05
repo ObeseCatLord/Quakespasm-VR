@@ -230,6 +230,9 @@ void Mod_ClearAll (void)
 		{
 			mod->needload = true;
 			TexMgr_FreeTexturesForOwner (mod); //johnfitz
+#ifdef PSET_SCRIPT
+			PScript_ClearSurfaceParticles (mod);
+#endif
 		}
 	}
 }
@@ -245,10 +248,24 @@ void Mod_ResetAll (void)
 	for (i=0 , mod=mod_known ; i<mod_numknown ; i++, mod++)
 	{
 		if (!mod->needload) //otherwise Mod_ClearAll() did it already
+		{
 			TexMgr_FreeTexturesForOwner (mod);
+#ifdef PSET_SCRIPT
+			PScript_ClearSurfaceParticles (mod);
+#endif
+		}
 		memset(mod, 0, sizeof(qmodel_t));
 	}
 	mod_numknown = 0;
+}
+
+void Mod_ForEachModel (void (*callback)(qmodel_t *mod))
+{
+	int		i;
+	qmodel_t	*mod;
+
+	for (i=0, mod=mod_known; i<mod_numknown; i++, mod++)
+		callback (mod);
 }
 
 /*
@@ -377,6 +394,10 @@ static qmodel_t *Mod_LoadModel (qmodel_t *mod, qboolean crash)
 		Mod_LoadBrushModel (mod, buf);
 		break;
 	}
+
+#ifdef PSET_SCRIPT
+	PScript_UpdateModelEffects (mod);
+#endif
 
 	return mod;
 }

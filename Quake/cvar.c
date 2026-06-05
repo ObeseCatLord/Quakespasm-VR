@@ -524,6 +524,33 @@ void Cvar_SetValueROM (const char *var_name, const float value)
 
 /*
 ============
+Cvar_Create -- spike
+
+Creates a persistent user/mod cvar if it does not already exist.
+============
+*/
+cvar_t *Cvar_Create (const char *name, const char *value)
+{
+	cvar_t *newvar;
+
+	newvar = Cvar_FindVar (name);
+	if (newvar)
+		return newvar;
+	if (Cmd_Exists (name))
+		return NULL;
+
+	newvar = (cvar_t *)Z_Malloc (sizeof(*newvar) + strlen(name) + 1);
+	newvar->name = (char *)(newvar + 1);
+	strcpy ((char *)(newvar + 1), name);
+	newvar->flags = CVAR_USERDEFINED | CVAR_ARCHIVE;
+	newvar->string = value && *value ? value : "0";
+
+	Cvar_RegisterVariable (newvar);
+	return newvar;
+}
+
+/*
+============
 Cvar_RegisterVariable
 
 Adds a freestanding variable to the variable list.
@@ -649,4 +676,3 @@ void Cvar_WriteVariables (FILE *f)
 			fprintf (f, "%s \"%s\"\n", var->name, var->string);
 	}
 }
-

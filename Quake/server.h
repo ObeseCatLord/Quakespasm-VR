@@ -75,6 +75,7 @@ typedef struct
 	const char	*model_precache[MAX_MODELS];	// NULL terminated
 	struct qmodel_s	*models[MAX_MODELS];
 	const char	*sound_precache[MAX_SOUNDS];	// NULL terminated
+	const char	*particle_precache[MAX_PARTICLETYPES];
 	const char	*lightstyles[MAX_LIGHTSTYLES];
 	server_state_t	state;			// some actions are only valid during load
 

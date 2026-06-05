@@ -368,6 +368,38 @@ void R_DrawParticles (void);
 void CL_RunParticles (void);
 void R_ClearParticles (void);
 
+#define P_INVALID -1
+#ifdef PSET_SCRIPT
+void PScript_InitParticles (void);
+void PScript_Shutdown (void);
+void PScript_DrawParticles (void);
+struct trailstate_s;
+int PScript_ParticleTrail (vec3_t startpos, vec3_t end, int type, float timeinterval, int dlkey, vec3_t axis[3], struct trailstate_s **tsk);
+int PScript_RunParticleEffectState (vec3_t org, vec3_t dir, float count, int typenum, struct trailstate_s **tsk);
+void PScript_RunParticleWeather (vec3_t minb, vec3_t maxb, vec3_t dir, float count, int colour, const char *efname);
+void PScript_EmitSkyEffectTris (qmodel_t *mod, msurface_t *fa, int ptype);
+int PScript_FindParticleType (const char *fullname);
+int PScript_RunParticleEffectTypeString (vec3_t org, vec3_t dir, float count, const char *name);
+int PScript_EntParticleTrail (vec3_t oldorg, entity_t *ent, const char *name);
+int PScript_RunParticleEffect (vec3_t org, vec3_t dir, int color, int count);
+void PScript_DelinkTrailstate (struct trailstate_s **tsk);
+void PScript_ClearParticles (void);
+void PScript_UpdateModelEffects (qmodel_t *mod);
+void PScript_ClearSurfaceParticles (qmodel_t *mod);
+extern int r_trace_line_cache_counter;
+#define InvalidateTraceLineCache() do { ++r_trace_line_cache_counter; } while (0)
+#else
+#define PScript_RunParticleEffectState(o,d,c,t,s) true
+#define PScript_RunParticleEffectTypeString(o,d,c,n) true
+#define PScript_EntParticleTrail(o,e,n) true
+#define PScript_ParticleTrail(o,e,t,d,k,a,s) true
+#define PScript_RunParticleEffect(o,d,p,c) true
+#define PScript_RunParticleWeather(min,max,d,c,p,n) true
+#define PScript_ClearSurfaceParticles(m)
+#define PScript_DelinkTrailstate(tsp)
+#define InvalidateTraceLineCache()
+#endif
+
 void R_TranslatePlayerSkin (int playernum);
 void R_TranslateNewPlayerSkin (int playernum); //johnfitz -- this handles cases when the actual texture changes
 void R_UpdateWarpTextures (void);

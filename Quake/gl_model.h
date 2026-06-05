@@ -379,8 +379,8 @@ typedef struct {
 	maliasframedesc_t	frames[1];	// variable sized
 } aliashdr_t;
 
-#define	MAXALIASVERTS	2000 //johnfitz -- was 1024
-#define	MAXALIASFRAMES	1024 //spike -- was 256
+#define	MAXALIASVERTS	0x7fff //spike/Ironwail -- 16-bit index buffer + onseam duplication
+#define	MAXALIASFRAMES	4096 //spike -- was 256; Keep/Mjolnir includes >1024-frame alias models
 #define	MAXALIASTRIS	4096 //ericw -- was 2048
 extern	aliashdr_t	*pheader;
 extern	stvert_t	stverts[MAXALIASVERTS];
@@ -409,6 +409,8 @@ typedef enum {mod_brush, mod_sprite, mod_alias} modtype_t;
 #define	MOD_NOLERP		256		//don't lerp when animating
 #define	MOD_NOSHADOW	512		//don't cast a shadow
 #define	MOD_FBRIGHTHACK	1024	//when fullbrights are disabled, use a hack to render this model brighter
+#define MOD_EMITREPLACE	2048	//script particle effect replaces the model
+#define MOD_EMITFORWARDS 4096	//script particle effect emits forwards instead of down
 //johnfitz
 
 typedef struct qmodel_s
@@ -489,6 +491,13 @@ typedef struct qmodel_s
 
 	int			bspversion;
 	qboolean	haslitwater;
+#ifdef PSET_SCRIPT
+	int			emiteffect;
+	int			traileffect;
+	struct skytris_s		*skytris;
+	struct skytriblock_s	*skytrimem;
+	double		skytime;
+#endif
 //
 // alias model
 //
@@ -514,6 +523,7 @@ void	Mod_ResetAll (void); // for gamedir changes (Host_Game_f)
 qmodel_t *Mod_ForName (const char *name, qboolean crash);
 void	*Mod_Extradata (qmodel_t *mod);	// handles caching
 void	Mod_TouchModel (const char *name);
+void	Mod_ForEachModel (void (*callback)(qmodel_t *mod));
 
 mleaf_t *Mod_PointInLeaf (vec3_t p, qmodel_t *model);
 byte	*Mod_LeafPVS (mleaf_t *leaf, qmodel_t *model);

@@ -38,6 +38,7 @@ cvar_t	cl_shownet = {"cl_shownet","0",CVAR_NONE};	// can be 0, 1, or 2
 cvar_t	cl_nolerp = {"cl_nolerp","0",CVAR_NONE};
 cvar_t	cl_lerpdebug = {"cl_lerpdebug","0",CVAR_NONE};
 cvar_t	cl_lerpdebug_models = {"cl_lerpdebug_models","",CVAR_NONE};
+cvar_t	cl_beams_polygons = {"cl_beams_polygons","0",CVAR_ARCHIVE};
 // Max seconds of linear extrapolation past the latest server snapshot.
 // At sys_ticrate 0.05 (20 Hz) a fast client renders many frames between
 // snapshots and would otherwise freeze entities at frac=1 until the next
@@ -101,11 +102,37 @@ extern float	host_netinterval;	//Spike
 
 extern vec3_t	v_punchangles[2];
 
+#ifdef PSET_SCRIPT
+void CL_ClearTrailStates(void)
+{
+	int i;
+
+	for (i = 0; i < cl.num_statics; i++)
+	{
+		PScript_DelinkTrailstate (&cl_static_entities[i].trailstate);
+		PScript_DelinkTrailstate (&cl_static_entities[i].emitstate);
+	}
+	if (cl_entities)
+	{
+		for (i = 0; i < cl_max_edicts; i++)
+		{
+			PScript_DelinkTrailstate (&cl_entities[i].trailstate);
+			PScript_DelinkTrailstate (&cl_entities[i].emitstate);
+		}
+	}
+	for (i = 0; i < MAX_BEAMS; i++)
+		PScript_DelinkTrailstate (&cl_beams[i].trailstate);
+}
+#endif
+
 void CL_FreeState(void)
 {
 	int i;
 	for (i = 0; i < MAX_CL_STATS; i++)
 		free (cl.statss[i]);
+#ifdef PSET_SCRIPT
+	CL_ClearTrailStates ();
+#endif
 	PR_ClearProgs (&cl.qcvm);
 	free (cl.ssqc_to_csqc);
 	memset (&cl, 0, sizeof(cl));
@@ -550,6 +577,87 @@ static void CL_ResetTrail (entity_t *ent)
 {
 	ent->traildelay = 1.f / 72.f;
 	VectorCopy (ent->origin, ent->trailorg);
+}
+
+int CL_ParticleEffectColor (int effectnum)
+{
+	const char *name;
+
+	if (effectnum <= 0 || effectnum >= MAX_PARTICLETYPES)
+		return 0;
+
+#ifdef PSET_SCRIPT
+	name = cl.particle_precache[effectnum].name;
+	if (!name)
+		return 0;
+#else
+	name = cl.particle_precache[effectnum];
+#endif
+	if (q_strcasestr (name, "blood") || q_strcasestr (name, "gib"))
+		return 67;
+	if (q_strcasestr (name, "poison") || q_strcasestr (name, "acid") ||
+		q_strcasestr (name, "slime"))
+		return 68;
+	if (q_strcasestr (name, "plasma") || q_strcasestr (name, "laser") ||
+		q_strcasestr (name, "bolt"))
+		return 224;
+	if (q_strcasestr (name, "fire") || q_strcasestr (name, "flame") ||
+		q_strcasestr (name, "pyro") || q_strcasestr (name, "rocket") ||
+		q_strcasestr (name, "explode"))
+		return 230;
+	if (q_strcasestr (name, "smoke"))
+		return 4;
+	if (q_strcasestr (name, "snow"))
+		return 15;
+	if (q_strcasestr (name, "rain") || q_strcasestr (name, "water"))
+		return 73;
+	if (q_strcasestr (name, "secret"))
+		return 150;
+
+	return (effectnum * 13) & 255;
+}
+
+void CL_RunNamedParticleEffect (int effectnum, vec3_t org, vec3_t dir, int count)
+{
+	if (effectnum <= 0 || count <= 0)
+		return;
+#ifdef PSET_SCRIPT
+	if (effectnum < MAX_PARTICLETYPES && cl.particle_precache[effectnum].name)
+	{
+		PScript_RunParticleEffectState (org, dir, count, cl.particle_precache[effectnum].index, NULL);
+		return;
+	}
+#endif
+	R_RunParticleEffect (org, dir, CL_ParticleEffectColor (effectnum), CLAMP (1, count, 255));
+}
+
+static void CL_NamedParticleTrail (entity_t *ent, int effectnum)
+{
+	vec3_t dir, org, step;
+	float len;
+	int samples, i;
+
+	ent->traildelay -= cl.time - cl.oldtime;
+	if (ent->traildelay > 0.f)
+		return;
+
+	VectorSubtract (ent->origin, ent->trailorg, dir);
+	len = VectorNormalize (dir);
+	if (len <= 0)
+	{
+		CL_ResetTrail (ent);
+		return;
+	}
+
+	samples = CLAMP (1, (int)(len / 32.0f) + 1, 16);
+	VectorScale (dir, len / samples, step);
+	VectorCopy (ent->trailorg, org);
+	for (i = 0; i < samples; i++)
+	{
+		CL_RunNamedParticleEffect (effectnum, org, dir, 1);
+		VectorAdd (org, step, org);
+	}
+	CL_ResetTrail (ent);
 }
 
 /*
@@ -1467,7 +1575,32 @@ void CL_RelinkEntities (void)
 			dl->color[2] = 0.25f;
 		}
 
-		if (ent->model->flags & EF_GIB)
+#ifdef PSET_SCRIPT
+		if (cl.paused)
+			;
+		else if (ent->netstate.traileffectnum > 0 && ent->netstate.traileffectnum < MAX_PARTICLETYPES &&
+			cl.particle_precache[ent->netstate.traileffectnum].name)
+		{
+			vec3_t axis[3];
+			AngleVectors (ent->angles, axis[0], axis[1], axis[2]);
+			PScript_ParticleTrail (ent->trailorg, ent->origin,
+				cl.particle_precache[ent->netstate.traileffectnum].index,
+				cl.time - cl.oldtime, i, axis, &ent->trailstate);
+			CL_ResetTrail (ent);
+		}
+		else if (ent->model->traileffect >= 0)
+		{
+			vec3_t axis[3];
+			AngleVectors (ent->angles, axis[0], axis[1], axis[2]);
+			PScript_ParticleTrail (ent->trailorg, ent->origin,
+				ent->model->traileffect, cl.time - cl.oldtime, i, axis, &ent->trailstate);
+			CL_ResetTrail (ent);
+		}
+		else
+#endif
+		if (ent->netstate.traileffectnum)
+			CL_NamedParticleTrail (ent, ent->netstate.traileffectnum);
+		else if (ent->model->flags & EF_GIB)
 			CL_RocketTrail (ent, 2);
 		else if (ent->model->flags & EF_ZOMGIB)
 			CL_RocketTrail (ent, 4);
@@ -1492,6 +1625,30 @@ void CL_RelinkEntities (void)
 
 		ent->forcelink = false;
 
+#ifdef PSET_SCRIPT
+		if (ent->netstate.emiteffectnum > 0 && ent->netstate.emiteffectnum < MAX_PARTICLETYPES &&
+			cl.particle_precache[ent->netstate.emiteffectnum].name)
+		{
+			vec3_t axis[3];
+			AngleVectors (ent->angles, axis[0], axis[1], axis[2]);
+			if (ent->model->type == mod_alias)
+				axis[0][2] *= -1;
+			PScript_RunParticleEffectState (ent->origin, axis[0], cl.time - cl.oldtime,
+				cl.particle_precache[ent->netstate.emiteffectnum].index, &ent->emitstate);
+		}
+		else if (ent->model->emiteffect >= 0)
+		{
+			vec3_t axis[3];
+			AngleVectors (ent->angles, axis[0], axis[1], axis[2]);
+			VectorScale (axis[2], -1, axis[0]);
+			PScript_RunParticleEffectState (ent->origin, axis[0], cl.time - cl.oldtime,
+				ent->model->emiteffect, &ent->emitstate);
+		}
+		else
+#endif
+		if (ent->netstate.emiteffectnum)
+			CL_RunNamedParticleEffect (ent->netstate.emiteffectnum, ent->origin, vec3_origin, 1);
+
 		if (i == cl.viewentity && !chase_active.value)
 			continue;
 
@@ -1502,6 +1659,29 @@ void CL_RelinkEntities (void)
 		}
 	}
 }
+
+#ifdef PSET_SCRIPT
+int CL_GenerateRandomParticlePrecache(const char *pname)
+{
+	int i;
+
+	if (!pname || !pname[0])
+		return 0;
+
+	for (i = 1; i < MAX_PARTICLETYPES; i++)
+	{
+		if (!cl.particle_precache[i].name)
+		{
+			cl.particle_precache[i].name = strcpy (Hunk_AllocName (strlen(pname) + 1, "particles"), pname);
+			cl.particle_precache[i].index = PScript_FindParticleType (cl.particle_precache[i].name);
+			return i;
+		}
+		if (!strcmp (cl.particle_precache[i].name, pname))
+			return i;
+	}
+	return 0;
+}
+#endif
 
 
 /*
@@ -1859,6 +2039,7 @@ void CL_Init (void)
 	Cvar_RegisterVariable (&cl_nolerp);
 	Cvar_RegisterVariable (&cl_lerpdebug);
 	Cvar_RegisterVariable (&cl_lerpdebug_models);
+	Cvar_RegisterVariable (&cl_beams_polygons);
 	Cvar_RegisterVariable (&cl_extrapolate);
 	Cvar_RegisterVariable (&cl_extrapolate_adaptive);
 	Cvar_RegisterVariable (&cl_extrapolate_adaptive_max);
