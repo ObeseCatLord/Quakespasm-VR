@@ -100,6 +100,126 @@ const char *svc_strings[] =
 	"svc_moveack", // 57
 	"svc_snapshot" // 58
 };
+
+static const char *CL_LerpDebugModelName (qmodel_t *model)
+{
+	return (model && model->name[0]) ? model->name : "<none>";
+}
+
+static qmodel_t *CL_LerpDebugModelForIndex (int modelindex)
+{
+	if (modelindex > 0 && modelindex < MAX_MODELS)
+		return cl.model_precache[modelindex];
+	return NULL;
+}
+
+static qboolean CL_LerpDebugHasFilter (void)
+{
+	return cl_lerpdebug_models.string && cl_lerpdebug_models.string[0];
+}
+
+static qboolean CL_LerpDebugNameMatchesFilter (const char *modelname)
+{
+	const char *filter, *end;
+	char token[128];
+	size_t len;
+
+	if (!CL_LerpDebugHasFilter ())
+		return true;
+	if (!modelname || !modelname[0])
+		return false;
+
+	filter = cl_lerpdebug_models.string;
+	while (*filter)
+	{
+		while (*filter == ',' || *filter <= ' ')
+			filter++;
+		if (!*filter)
+			break;
+		end = filter;
+		while (*end && *end != ',' && *end > ' ')
+			end++;
+		len = end - filter;
+		if (len >= sizeof(token))
+			len = sizeof(token) - 1;
+		if (len > 0)
+		{
+			memcpy (token, filter, len);
+			token[len] = 0;
+			if (q_strcasestr (modelname, token))
+				return true;
+		}
+		filter = end;
+	}
+	return false;
+}
+
+static qboolean CL_LerpDebugModelsMatchFilter (qmodel_t *oldmodel, qmodel_t *newmodel)
+{
+	return CL_LerpDebugNameMatchesFilter (CL_LerpDebugModelName(oldmodel))
+		|| CL_LerpDebugNameMatchesFilter (CL_LerpDebugModelName(newmodel));
+}
+
+static qboolean CL_LerpDebugStatesMatchFilter (const entity_state_t *olds, const entity_state_t *news)
+{
+	qmodel_t *oldmodel = olds ? CL_LerpDebugModelForIndex (olds->modelindex) : NULL;
+	qmodel_t *newmodel = news ? CL_LerpDebugModelForIndex (news->modelindex) : NULL;
+
+	return CL_LerpDebugModelsMatchFilter (oldmodel, newmodel);
+}
+
+static void CL_LerpDebugResetAnim (int entnum, const char *path,
+	const char *reason, float gap, qmodel_t *oldmodel, qmodel_t *newmodel,
+	int oldframe, int newframe)
+{
+	if (!cl_lerpdebug.value)
+		return;
+	if (!CL_LerpDebugModelsMatchFilter (oldmodel, newmodel))
+		return;
+	if (!CL_LerpDebugHasFilter () && cl_lerpdebug.value < 2
+		&& !q_strcasecmp (reason, "model change") && !oldmodel)
+		return;
+
+	Con_Printf ("cl_lerpdebug: resetanim path=%s ent=%d reason=%s gap=%.3f "
+		"old=%s:%d new=%s:%d mtime=%.3f\n",
+		path, entnum, reason, gap, CL_LerpDebugModelName(oldmodel), oldframe,
+		CL_LerpDebugModelName(newmodel), newframe, cl.mtime[0]);
+}
+
+static void CL_LerpDebugDeltaReset (int entnum, unsigned int bits,
+	const entity_state_t *olds, const entity_state_t *news)
+{
+	qmodel_t *oldmodel, *newmodel;
+
+	if (!cl_lerpdebug.value || !(bits & UF_RESET))
+		return;
+	if (!CL_LerpDebugHasFilter () && cl_lerpdebug.value < 2)
+		return;
+	if (!CL_LerpDebugStatesMatchFilter (olds, news))
+		return;
+
+	oldmodel = olds ? CL_LerpDebugModelForIndex (olds->modelindex) : NULL;
+	newmodel = news ? CL_LerpDebugModelForIndex (news->modelindex) : NULL;
+	Con_Printf ("cl_lerpdebug: delta reset ent=%d bits=0x%x old=%s:%d new=%s:%d mtime=%.3f\n",
+		entnum, bits, CL_LerpDebugModelName(oldmodel), olds ? olds->frame : 0,
+		CL_LerpDebugModelName(newmodel), news ? news->frame : 0, cl.mtime[0]);
+}
+
+static void CL_LerpDebugEntityEvent (const char *event, int entnum, entity_t *ent)
+{
+	if (!cl_lerpdebug.value)
+		return;
+	if (ent && !CL_LerpDebugModelsMatchFilter (ent->model, CL_LerpDebugModelForIndex(ent->netstate.modelindex)))
+		return;
+	if (!CL_LerpDebugHasFilter () && cl_lerpdebug.value < 2 && entnum > 0)
+		return;
+
+	Con_Printf ("cl_lerpdebug: entity %s ent=%d model=%s:%d net=%s:%d mtime=%.3f\n",
+		event, entnum,
+		ent ? CL_LerpDebugModelName(ent->model) : "<none>", ent ? ent->frame : 0,
+		ent ? CL_LerpDebugModelName(CL_LerpDebugModelForIndex(ent->netstate.modelindex)) : "<none>",
+		ent ? ent->netstate.frame : 0, cl.mtime[0]);
+}
 #define	NUM_SVC_STRINGS	(sizeof(svc_strings) / sizeof(svc_strings[0]))
 
 qboolean warn_about_nehahra_protocol; //johnfitz
@@ -563,6 +683,9 @@ void CL_ParseUpdate (int bits)
 	entity_t	*ent;
 	int		num;
 	int		skin;
+	float		oldmsgtime;
+	qmodel_t	*oldmodel;
+	int		oldframe;
 
 	if (cls.signon == SIGNONS - 1)
 	{	// first update is the final signon stage
@@ -592,6 +715,9 @@ void CL_ParseUpdate (int bits)
 		num = MSG_ReadByte ();
 
 	ent = CL_EntityNum (num);
+	oldmsgtime = ent->msgtime;
+	oldmodel = ent->model;
+	oldframe = ent->frame;
 
 	if (ent->msgtime != cl.mtime[1])
 		forcelink = true;	// no previous frame to lerp from
@@ -600,7 +726,11 @@ void CL_ParseUpdate (int bits)
 
 	//johnfitz -- lerping
 	if (ent->msgtime + 0.2 < cl.mtime[0]) //more than 0.2 seconds since the last message (most entities think every 0.1 sec)
+	{
 		ent->lerpflags |= LERP_RESETANIM; //if we missed a think, we'd be lerping from the wrong frame
+		CL_LerpDebugResetAnim (num, "legacy", "message gap",
+			cl.mtime[0] - oldmsgtime, oldmodel, oldmodel, oldframe, oldframe);
+	}
 	//johnfitz
 
 	ent->msgtime = cl.mtime[0];
@@ -739,6 +869,8 @@ void CL_ParseUpdate (int bits)
 	model = cl.model_precache[modnum];
 	if (model != ent->model)
 	{
+		qmodel_t *previousmodel = ent->model;
+
 		ent->model = model;
 	// automatic animation (torches, etc) can be either all together
 	// or randomized
@@ -755,6 +887,8 @@ void CL_ParseUpdate (int bits)
 			R_TranslateNewPlayerSkin (num - 1); //johnfitz -- was R_TranslatePlayerSkin
 
 		ent->lerpflags |= LERP_RESETANIM; //johnfitz -- don't lerp animation across model changes
+		CL_LerpDebugResetAnim (num, "legacy", "model change", -1.0f,
+			previousmodel, model, oldframe, ent->frame);
 	}
 	//johnfitz
 
@@ -1007,6 +1141,7 @@ static unsigned int CLFTE_ReadDelta (unsigned int entnum, entity_state_t *news,
 	}
 	if (bits & (UF_UNUSED1 | UF_UNUSED2))
 		Host_Error ("CLFTE_ReadDelta: unsupported entity delta bits");
+	CL_LerpDebugDeltaReset (entnum, bits, olds, news);
 	return bits;
 }
 
@@ -1019,16 +1154,29 @@ static void CLFTE_EntitiesDeltaed (void)
 
 	for (newnum = 1; newnum < cl.num_entities; newnum++)
 	{
+		float oldmsgtime;
+		qmodel_t *oldmodel;
+		int oldframe;
+
 		ent = CL_EntityNum (newnum);
 		if (!ent->update_type)
 			continue;
+		oldmsgtime = ent->msgtime;
+		oldmodel = ent->model;
+		oldframe = ent->frame;
+
 		if (ent->msgtime == cl.mtime[0])
 			forcelink = false;
 		else
 		{
 			forcelink = ent->msgtime != cl.mtime[1];
 			if (ent->msgtime + 0.2 < cl.mtime[0])
+			{
 				ent->lerpflags |= LERP_RESETANIM;
+				CL_LerpDebugResetAnim (newnum, "replacement-delta",
+					"message gap", cl.mtime[0] - oldmsgtime,
+					oldmodel, oldmodel, oldframe, oldframe);
+			}
 			ent->msgtime = cl.mtime[0];
 			VectorCopy (ent->msg_origins[0], ent->msg_origins[1]);
 			VectorCopy (ent->msg_angles[0], ent->msg_angles[1]);
@@ -1058,6 +1206,8 @@ static void CLFTE_EntitiesDeltaed (void)
 		model = cl.model_precache[ent->netstate.modelindex];
 		if (model != ent->model)
 		{
+			qmodel_t *previousmodel = ent->model;
+
 			ent->model = model;
 			if (model)
 			{
@@ -1069,6 +1219,9 @@ static void CLFTE_EntitiesDeltaed (void)
 			else
 				forcelink = true;
 			ent->lerpflags |= LERP_RESETANIM;
+			CL_LerpDebugResetAnim (newnum, "replacement-delta",
+				"model change", -1.0f, previousmodel, model,
+				oldframe, ent->netstate.frame);
 		}
 		ent->frame = ent->netstate.frame;
 
@@ -1121,6 +1274,8 @@ static void CLFTE_QueueAckFrame (int sequence)
 {
 	if (!cls.netcon)
 		return;
+	if (sequence < 0)
+		return;
 	if (cl.ackframes_count < sizeof(cl.ackframes) / sizeof(cl.ackframes[0]))
 		cl.ackframes[cl.ackframes_count++] = sequence;
 	else
@@ -1169,6 +1324,7 @@ static void CLFTE_ParseEntitiesUpdate (void)
 		{
 			if (!newnum)
 			{
+				CL_LerpDebugEntityEvent ("full-remove-reset", 0, NULL);
 				for (newnum = 1; newnum < cl.num_entities; newnum++)
 				{
 					cl_entities[newnum].update_type = false;
@@ -1178,6 +1334,7 @@ static void CLFTE_ParseEntitiesUpdate (void)
 				cl.requestresend = false;
 				continue;
 			}
+			CL_LerpDebugEntityEvent ("remove", newnum, ent);
 			ent->update_type = false;
 			ent->netstate = nullentitystate;
 			ent->model = NULL;
@@ -1191,6 +1348,7 @@ static void CLFTE_ParseEntitiesUpdate (void)
 			ent->update_type = true;
 			CLFTE_ReadDelta (newnum, &ent->netstate, NULL, &ent->baseline);
 			ent->lerpflags |= LERP_RESETMOVE | LERP_RESETANIM;
+			CL_LerpDebugEntityEvent ("first-update", newnum, ent);
 		}
 	}
 

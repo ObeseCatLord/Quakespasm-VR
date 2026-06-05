@@ -336,6 +336,8 @@ extern	cvar_t	cl_autofire;
 
 extern	cvar_t	cl_shownet;
 extern	cvar_t	cl_nolerp;
+extern	cvar_t	cl_lerpdebug;
+extern	cvar_t	cl_lerpdebug_models;
 extern	cvar_t	cl_extrapolate;
 extern	cvar_t	cl_extrapolate_adaptive;
 extern	cvar_t	cl_extrapolate_adaptive_max;

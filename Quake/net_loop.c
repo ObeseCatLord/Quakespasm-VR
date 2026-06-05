@@ -30,6 +30,15 @@ static qboolean	localconnectpending = false;
 static qsocket_t	*loop_client = NULL;
 static qsocket_t	*loop_server = NULL;
 
+static void Loop_ResetSequences (qsocket_t *sock)
+{
+	sock->ackSequence = 0;
+	sock->sendSequence = 0;
+	sock->unreliableSendSequence = 0;
+	sock->receiveSequence = 0;
+	sock->unreliableReceiveSequence = 0;
+}
+
 int Loop_Init (void)
 {
 	if (cls.state == ca_dedicated)
@@ -85,6 +94,7 @@ qsocket_t *Loop_Connect (const char *host)
 	loop_client->receiveMessageLength = 0;
 	loop_client->sendMessageLength = 0;
 	loop_client->canSend = true;
+	Loop_ResetSequences (loop_client);
 
 	if (!loop_server)
 	{
@@ -98,6 +108,7 @@ qsocket_t *Loop_Connect (const char *host)
 	loop_server->receiveMessageLength = 0;
 	loop_server->sendMessageLength = 0;
 	loop_server->canSend = true;
+	Loop_ResetSequences (loop_server);
 
 	loop_client->driverdata = (void *)loop_server;
 	loop_server->driverdata = (void *)loop_client;
@@ -156,6 +167,8 @@ int Loop_GetMessage (qsocket_t *sock)
 
 	if (sock->driverdata && ret == 1)
 		((qsocket_t *)sock->driverdata)->canSend = true;
+	if (ret == 2)
+		sock->unreliableReceiveSequence++;
 
 	return ret;
 }
@@ -223,6 +236,7 @@ int Loop_SendUnreliableMessage (qsocket_t *sock, sizebuf_t *data)
 	// message
 	Q_memcpy(buffer, data->data, data->cursize);
 	*bufferLength = IntAlign(*bufferLength + data->cursize + 4);
+	sock->unreliableSendSequence++;
 	return 1;
 }
 

@@ -1081,11 +1081,35 @@ void PM_LadderMove (void)
 //
 // user intentions
 //
-	for (i=0 ; i<3 ; i++)
-		wishvel[i] = forward[i]*pmove.cmd.forwardmove + right[i]*pmove.cmd.sidemove + up[i]*pmove.cmd.upmove;
+	if (pmove.cmd.vr_active)
+	{
+		vec3_t yawangles, ladder_forward, ladder_right, ladder_up;
 
-	if (wishvel[2] >= 100 || wishvel[2] <= -100)	//large up/down move
-		wishvel[2]*=10;
+		VectorCopy (pmove.angles, yawangles);
+		yawangles[PITCH] = 0;
+		yawangles[ROLL] = 0;
+		AngleVectors (yawangles, ladder_forward, ladder_right, ladder_up);
+
+		VectorMA (ladder_forward, -DotProduct(ladder_forward, pmove.gravitydir), pmove.gravitydir, ladder_forward);
+		if (VectorNormalize (ladder_forward) < 0.001f)
+			VectorClear (ladder_forward);
+		VectorMA (ladder_right, -DotProduct(ladder_right, pmove.gravitydir), pmove.gravitydir, ladder_right);
+		if (VectorNormalize (ladder_right) < 0.001f)
+			VectorClear (ladder_right);
+
+		VectorClear (wishvel);
+		VectorMA (wishvel, pmove.cmd.forwardmove * 0.35f, ladder_forward, wishvel);
+		VectorMA (wishvel, pmove.cmd.sidemove, ladder_right, wishvel);
+		VectorMA (wishvel, -pmove.cmd.forwardmove, pmove.gravitydir, wishvel);
+	}
+	else
+	{
+		for (i=0 ; i<3 ; i++)
+			wishvel[i] = forward[i]*pmove.cmd.forwardmove + right[i]*pmove.cmd.sidemove + up[i]*pmove.cmd.upmove;
+
+		if (wishvel[2] >= 100 || wishvel[2] <= -100)	//large up/down move
+			wishvel[2]*=10;
+	}
 
 	if (pmove.cmd.buttons & 2)
 	{

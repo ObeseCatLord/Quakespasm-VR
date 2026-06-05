@@ -60,6 +60,7 @@ void VR_UpdateScreenContent();
 void VR_ShowCrosshair();
 void VR_DrawWeaponMenu();
 void VR_DrawAdjustmentControllers();
+void VR_ApplyCurrentViewWeaponTransform();
 extern int vr_weaponmenu_selection;
 void VR_TriggerHaptic(int controller, float durationSeconds);
 void VR_Draw2D();

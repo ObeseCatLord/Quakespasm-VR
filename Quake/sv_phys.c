@@ -861,12 +861,27 @@ static qboolean SV_CoopRespawnFindNearbySpot(edict_t *ent, const vec3_t base,
   return false;
 }
 
-static edict_t *SV_CoopRespawnFindAnchor(edict_t *ent, const vec3_t death_origin) {
-  int i;
-  float dist, best_dist = 0.0f;
-  qboolean have_best = false;
+typedef struct {
+  edict_t *ent;
+  float score;
+  float dist;
+} coop_respawn_anchor_candidate_t;
+
+static qboolean SV_CoopRespawnAnchorIsBetter(
+    const coop_respawn_anchor_candidate_t *a,
+    const coop_respawn_anchor_candidate_t *b) {
+  if (a->score != b->score)
+    return a->score > b->score;
+  return a->dist < b->dist;
+}
+
+static int SV_CoopRespawnBuildAnchorCandidates(
+    edict_t *ent, const vec3_t death_origin,
+    coop_respawn_anchor_candidate_t *candidates, int max_candidates) {
+  int i, j, count = 0;
   vec3_t delta;
-  edict_t *client, *best = NULL;
+  edict_t *client;
+  coop_respawn_anchor_candidate_t candidate;
 
   for (i = 1; i <= svs.maxclients; i++) {
     client = EDICT_NUM(i);
@@ -874,33 +889,67 @@ static edict_t *SV_CoopRespawnFindAnchor(edict_t *ent, const vec3_t death_origin
       continue;
 
     VectorSubtract(client->v.origin, death_origin, delta);
-    dist = DotProduct(delta, delta);
-    if (!have_best || dist < best_dist) {
-      best = client;
-      best_dist = dist;
-      have_best = true;
+    candidate.ent = client;
+    candidate.score = client->v.frags;
+    candidate.dist = DotProduct(delta, delta);
+
+    if (max_candidates <= 0)
+      break;
+
+    if (count == max_candidates &&
+        !SV_CoopRespawnAnchorIsBetter(&candidate, &candidates[count - 1]))
+      continue;
+
+    if (count < max_candidates)
+      count++;
+
+    for (j = count - 1; j > 0 &&
+         SV_CoopRespawnAnchorIsBetter(&candidate, &candidates[j - 1]);
+         j--)
+      candidates[j] = candidates[j - 1];
+
+    candidates[j] = candidate;
+  }
+
+  return count;
+}
+
+static qboolean SV_CoopRespawnFindAnchorSpot(edict_t *ent,
+                                             const vec3_t death_origin,
+                                             edict_t **anchor_out,
+                                             vec3_t spot) {
+  int i, count;
+  coop_respawn_anchor_candidate_t candidates[MAX_SCOREBOARD];
+  static const float player_radii[] = {48.0f, 64.0f, 80.0f, 96.0f, 128.0f};
+
+  count = SV_CoopRespawnBuildAnchorCandidates(
+      ent, death_origin, candidates,
+      (int)(sizeof(candidates) / sizeof(candidates[0])));
+
+  for (i = 0; i < count; i++) {
+    if (SV_CoopRespawnFindNearbySpot(
+            ent, candidates[i].ent->v.origin, candidates[i].ent, player_radii,
+            (int)(sizeof(player_radii) / sizeof(player_radii[0])), spot)) {
+      if (anchor_out)
+        *anchor_out = candidates[i].ent;
+      return true;
     }
   }
 
-  return best;
+  return false;
 }
 
 static qboolean SV_CoopRespawnFindSpot(edict_t *ent, const vec3_t death_origin,
-                                       edict_t **anchor_out, vec3_t spot) {
-  edict_t *anchor;
-  static const float player_radii[] = {48.0f, 64.0f, 80.0f, 96.0f, 128.0f};
+                                       edict_t **anchor_out, vec3_t spot,
+                                       qboolean allow_death_fallback) {
   static const float death_radii[] = {0.0f, 40.0f, 64.0f, 96.0f, 128.0f,
                                       160.0f};
 
-  anchor = SV_CoopRespawnFindAnchor(ent, death_origin);
-  if (anchor &&
-      SV_CoopRespawnFindNearbySpot(
-          ent, anchor->v.origin, anchor, player_radii,
-          (int)(sizeof(player_radii) / sizeof(player_radii[0])), spot)) {
-    if (anchor_out)
-      *anchor_out = anchor;
+  if (SV_CoopRespawnFindAnchorSpot(ent, death_origin, anchor_out, spot))
     return true;
-  }
+
+  if (!allow_death_fallback)
+    return false;
 
   if (SV_CoopRespawnFindNearbySpot(
           ent, death_origin, NULL, death_radii,
@@ -965,7 +1014,7 @@ qboolean SV_CoopRespawnPlaceNearPlayer(edict_t *ent) {
   VectorCopy(ent->v.angles, state.death_angles);
   VectorCopy(ent->v.v_angle, state.death_v_angle);
 
-  if (!SV_CoopRespawnFindSpot(ent, state.death_origin, &anchor, spot))
+  if (!SV_CoopRespawnFindSpot(ent, state.death_origin, &anchor, spot, false))
     return false;
 
   SV_CoopRespawnRelocate(ent, anchor, spot, &state);
@@ -1015,7 +1064,7 @@ static void SV_CoopRespawnEndPostThink(
       SV_CoopRespawnRestoreInventory(ent, &state->inventory);
 
     if (sv_coop_respawn_near_player.value) {
-      if (SV_CoopRespawnFindSpot(ent, state->death_origin, &anchor, spot))
+      if (SV_CoopRespawnFindSpot(ent, state->death_origin, &anchor, spot, true))
         SV_CoopRespawnRelocate(ent, anchor, spot, state);
       else if (net_lagdebug.value)
         Con_Printf("net_lagdebug: coop respawn could not find a safe near-death or teammate spot for client %d death_origin=(%.1f %.1f %.1f)\n",

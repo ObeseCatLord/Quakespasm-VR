@@ -689,6 +689,8 @@ void R_DrawViewModel(void) {
   if (!vr_enabled.value)
     glDepthRange(0, 0.3);
 
+  VR_ApplyCurrentViewWeaponTransform();
+
   R_DrawAliasModel(currententity);
 
   if (vr_enabled.value)

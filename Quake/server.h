@@ -33,6 +33,7 @@ typedef struct
 	int			serverflags;		// episode completion information
 	qboolean	changelevel_issued;	// cleared when at SV_SpawnServer
 	qboolean	coop_loadgame_late_join_spawns_near;
+	qboolean	coop_initial_spawn_client[MAX_SCOREBOARD];
 } server_static_t;
 
 //=============================================================================

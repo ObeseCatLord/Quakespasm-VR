@@ -725,6 +725,8 @@ void SV_ConnectClient (int clientnum)
 	int				colors;
 
 	client = svs.clients + clientnum;
+	if (clientnum >= 0 && clientnum < MAX_SCOREBOARD)
+		svs.coop_initial_spawn_client[clientnum] = false;
 
 	Con_DPrintf ("Client %s connected\n", NET_QSocketGetAddressString(client->netconnection));
 
@@ -3788,9 +3790,15 @@ void SV_SpawnServer (const char *server)
 	//johnfitz
 
 // send serverinfo to all connected clients
+	for (i = 0; i < MAX_SCOREBOARD; i++)
+		svs.coop_initial_spawn_client[i] = false;
 	for (i=0,host_client = svs.clients ; i<svs.maxclients ; i++, host_client++)
 		if (host_client->active)
+		{
+			if (i < MAX_SCOREBOARD)
+				svs.coop_initial_spawn_client[i] = true;
 			SV_SendServerinfo (host_client);
+		}
 
 	Con_DPrintf ("Server spawned.\n");
 }

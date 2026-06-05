@@ -450,6 +450,7 @@ void CL_SendMove(const usercmd_t *cmd) {
   int dup;
   int sendseqs[MOVE_BUNDLE_MAX];
   int flags;
+  qboolean local_singleplayer;
   usercmd_t sendcmd;
   sizebuf_t buf;
   byte data[MAX_DATAGRAM];
@@ -468,6 +469,8 @@ void CL_SendMove(const usercmd_t *cmd) {
 
   if (!cmd)
     return;
+
+  local_singleplayer = sv.active && svs.maxclients <= 1;
 
   sendcmd = *cmd;
   VectorCopy(cl.aimangles, sendcmd.viewangles);
@@ -508,7 +511,8 @@ void CL_SendMove(const usercmd_t *cmd) {
   Q_memset(sendcmd.trusted_velocity, 0, sizeof(sendcmd.trusted_velocity));
   sendcmd.trusted_active = false;
 
-  if (cl_trusted_clientmove.value && (vr_enabled.value || cl_trusted_clientmove_desktop.value) &&
+  if (!local_singleplayer &&
+      cl_trusted_clientmove.value && (vr_enabled.value || cl_trusted_clientmove_desktop.value) &&
       cls.trusted_clientmove_allowed &&
       cls.state == ca_connected && cls.signon == SIGNONS &&
       cl.viewentity > 0 && cl.viewentity < cl.num_entities &&
@@ -519,16 +523,19 @@ void CL_SendMove(const usercmd_t *cmd) {
     VectorCopy(cl.velocity, sendcmd.trusted_velocity);
   }
 
-  //
-  // allways dump the first two message, because it may contain leftover inputs
-  // from the last level
-  //
   seq = cl.movemessages++;
   sendcmd.sequence = seq;
   cl.movecmds[seq & (CL_MOVE_HISTORY - 1)] = sendcmd;
   cl.cmd = sendcmd;
 
-  if (seq < 2) {
+  if (local_singleplayer) {
+    cl.ackedmovemessages = seq;
+    cl_lagdebug_last_sendmove = 0;
+  } else if (seq < 2) {
+    //
+    // Always dump the first two network moves, because they may contain
+    // leftover inputs from the last level.
+    //
     cl.ackedmovemessages = seq;
     cl_lagdebug_last_sendmove = 0;
     return;
@@ -547,7 +554,7 @@ void CL_SendMove(const usercmd_t *cmd) {
   }
   cl_lagdebug_last_sendmove = realtime;
 
-  redundancy = (int)cl_move_redundancy.value;
+  redundancy = local_singleplayer ? 0 : (int)cl_move_redundancy.value;
   if (redundancy < 0)
     redundancy = 0;
   if (redundancy > MOVE_BUNDLE_MAX - 1)
@@ -617,7 +624,7 @@ void CL_SendMove(const usercmd_t *cmd) {
     return;
   }
 
-  dup = (int)cl_move_packetdup.value;
+  dup = local_singleplayer ? 0 : (int)cl_move_packetdup.value;
   dup = CLAMP(0, dup, 3);
 
   for (i = 0; i <= dup; i++) {
