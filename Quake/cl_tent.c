@@ -255,6 +255,33 @@ void CL_ParseTEnt (void)
 		S_StartSound (-1, 0, cl_sfx_r_exp3, pos, 1, 1);
 		break;
 
+	case TEDP_PARTICLERAIN:
+	case TEDP_PARTICLESNOW:
+		{
+			vec3_t maxs, dir;
+			int count, color;
+
+			pos[0] = MSG_ReadCoord (cl.protocolflags);
+			pos[1] = MSG_ReadCoord (cl.protocolflags);
+			pos[2] = MSG_ReadCoord (cl.protocolflags);
+			maxs[0] = MSG_ReadCoord (cl.protocolflags);
+			maxs[1] = MSG_ReadCoord (cl.protocolflags);
+			maxs[2] = MSG_ReadCoord (cl.protocolflags);
+			dir[0] = MSG_ReadCoord (cl.protocolflags);
+			dir[1] = MSG_ReadCoord (cl.protocolflags);
+			dir[2] = MSG_ReadCoord (cl.protocolflags);
+			count = (unsigned short)MSG_ReadShort ();
+			color = MSG_ReadByte ();
+
+#ifdef PSET_SCRIPT
+			PScript_RunParticleWeather (pos, maxs, dir, count, color,
+				(type == TEDP_PARTICLESNOW) ? "snow" : "rain");
+#else
+			R_RunParticleEffect (pos, dir, color, CLAMP(1, count, 255));
+#endif
+		}
+		break;
+
 	default:
 		Sys_Error ("CL_ParseTEnt: bad type");
 	}

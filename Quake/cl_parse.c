@@ -132,7 +132,7 @@ static qboolean CL_LerpDebugNameMatchesFilter (const char *modelname)
 	filter = cl_lerpdebug_models.string;
 	while (*filter)
 	{
-		while (*filter == ',' || *filter <= ' ')
+		while (*filter && (*filter == ',' || (unsigned char)*filter <= ' '))
 			filter++;
 		if (!*filter)
 			break;
@@ -338,6 +338,149 @@ void CL_ParseLocalSound(void)
 		Host_Error ("CL_ParseLocalSound: %i > MAX_SOUNDS", sound_num);
 
 	S_LocalSound (cl.sound_precache[sound_num]->name);
+}
+
+static void CL_ParseDPPrecache (void)
+{
+	unsigned short code = MSG_ReadShort ();
+	unsigned int index = code & 0x3fff;
+	const char *name = MSG_ReadString ();
+
+	switch ((code >> 14) & 3)
+	{
+	case 1:
+		if (index < MAX_PARTICLETYPES)
+		{
+#ifdef PSET_SCRIPT
+			if (*name)
+			{
+				cl.particle_precache[index].name = strcpy (Hunk_AllocName (strlen(name) + 1, "particles"), name);
+				cl.particle_precache[index].index = PScript_FindParticleType (cl.particle_precache[index].name);
+			}
+			else
+			{
+				cl.particle_precache[index].name = NULL;
+				cl.particle_precache[index].index = P_INVALID;
+			}
+#else
+			q_strlcpy (cl.particle_precache[index], name, sizeof(cl.particle_precache[index]));
+#endif
+		}
+		break;
+	default:
+		Con_DPrintf ("CL_ParseDPPrecache: unsupported type %u for %s\n",
+			(unsigned int)((code >> 14) & 3), name);
+		break;
+	}
+}
+
+#ifdef PSET_SCRIPT
+int CL_GenerateRandomParticlePrecache(const char *pname);
+
+static void CL_ForceProtocolParticles(void)
+{
+	cl.protocol_particles = true;
+	PScript_FindParticleType ("effectinfo.");
+	COM_Effectinfo_Enumerate (CL_GenerateRandomParticlePrecache);
+	Con_DPrintf ("Received protocol particles before explicit particle extension setup\n");
+}
+
+void CL_RegisterParticles(void)
+{
+	int i;
+
+	PScript_FindParticleType ("effectinfo.");
+	for (i = 0; i < MAX_PARTICLETYPES; i++)
+	{
+		if (cl.particle_precache[i].name)
+			cl.particle_precache[i].index = PScript_FindParticleType (cl.particle_precache[i].name);
+		else
+			cl.particle_precache[i].index = P_INVALID;
+
+		if (cl.local_particle_precache[i].name)
+			cl.local_particle_precache[i].index = PScript_FindParticleType (cl.local_particle_precache[i].name);
+		else
+			cl.local_particle_precache[i].index = P_INVALID;
+	}
+	Mod_ForEachModel (PScript_UpdateModelEffects);
+}
+#endif
+
+static void CL_ParseDPPointParticles (qboolean compact)
+{
+	int effectnum = MSG_ReadShort ();
+	int count = 1;
+	vec3_t org, dir;
+
+	org[0] = MSG_ReadCoord (cl.protocolflags);
+	org[1] = MSG_ReadCoord (cl.protocolflags);
+	org[2] = MSG_ReadCoord (cl.protocolflags);
+	if (compact)
+	{
+		VectorCopy (vec3_origin, dir);
+	}
+	else
+	{
+		dir[0] = MSG_ReadCoord (cl.protocolflags);
+		dir[1] = MSG_ReadCoord (cl.protocolflags);
+		dir[2] = MSG_ReadCoord (cl.protocolflags);
+		count = MSG_ReadShort ();
+	}
+
+#ifdef PSET_SCRIPT
+	if (!cl.protocol_particles)
+		CL_ForceProtocolParticles ();
+	if (effectnum > 0 && effectnum < MAX_PARTICLETYPES && cl.particle_precache[effectnum].name)
+	{
+		PScript_RunParticleEffectState (org, dir, count, cl.particle_precache[effectnum].index, NULL);
+		return;
+	}
+#endif
+	CL_RunNamedParticleEffect (effectnum, org, dir, count);
+}
+
+static void CL_ParseDPTrailParticles (void)
+{
+	int entnum = MSG_ReadShort ();
+	int effectnum = MSG_ReadShort ();
+#ifdef PSET_SCRIPT
+	entity_t *ent;
+#endif
+	vec3_t start, end, dir, org, step;
+	float len;
+	int samples, i;
+
+	start[0] = MSG_ReadCoord (cl.protocolflags);
+	start[1] = MSG_ReadCoord (cl.protocolflags);
+	start[2] = MSG_ReadCoord (cl.protocolflags);
+	end[0] = MSG_ReadCoord (cl.protocolflags);
+	end[1] = MSG_ReadCoord (cl.protocolflags);
+	end[2] = MSG_ReadCoord (cl.protocolflags);
+
+#ifdef PSET_SCRIPT
+	if (!cl.protocol_particles)
+		CL_ForceProtocolParticles ();
+	if (effectnum > 0 && effectnum < MAX_PARTICLETYPES && cl.particle_precache[effectnum].name)
+	{
+		ent = CL_EntityNum (entnum);
+		PScript_ParticleTrail (start, end, cl.particle_precache[effectnum].index, 1, entnum, NULL, &ent->trailstate);
+		return;
+	}
+#else
+	(void)entnum;
+#endif
+	VectorSubtract (end, start, dir);
+	len = VectorNormalize (dir);
+	if (len <= 0)
+		return;
+	samples = CLAMP (1, (int)(len / 32.0f) + 1, 16);
+	VectorScale (dir, len / samples, step);
+	VectorCopy (start, org);
+	for (i = 0; i < samples; i++)
+	{
+		CL_RunNamedParticleEffect (effectnum, org, dir, 1);
+		VectorAdd (org, step, org);
+	}
 }
 
 /*
@@ -2590,6 +2733,22 @@ void CL_ParseServerMessage (void)
 			CL_ParseStaticSound (2);
 			break;
 		//johnfitz
+
+		case svcdp_precache:
+			CL_ParseDPPrecache ();
+			break;
+
+		case svcdp_trailparticles:
+			CL_ParseDPTrailParticles ();
+			break;
+
+		case svcdp_pointparticles:
+			CL_ParseDPPointParticles (false);
+			break;
+
+		case svcdp_pointparticles1:
+			CL_ParseDPPointParticles (true);
+			break;
 
 		//used by the 2021 rerelease
 		case svc_achievement:

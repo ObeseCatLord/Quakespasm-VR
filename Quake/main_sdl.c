@@ -55,7 +55,7 @@ static void Sys_InitSDL(void) {
 }
 
 #define DEFAULT_MEMORY                                                         \
-  (256 * 1024 * 1024) // ericw -- was 72MB (64-bit) / 64MB (32-bit)
+  (512 * 1024 * 1024) // ericw -- was 72MB (64-bit) / 64MB (32-bit)
 
 static quakeparms_t parms;
 

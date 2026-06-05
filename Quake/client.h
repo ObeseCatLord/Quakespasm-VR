@@ -84,6 +84,9 @@ typedef struct
 	struct qmodel_s	*model;
 	float	endtime;
 	vec3_t	start, end;
+#ifdef PSET_SCRIPT
+	struct trailstate_s *trailstate;
+#endif
 } beam_t;
 
 #define	MAX_MAPSTRING	2048
@@ -264,6 +267,21 @@ typedef struct
 //
 	struct qmodel_s		*model_precache[MAX_MODELS];
 	struct sfx_s		*sound_precache[MAX_SOUNDS];
+#ifdef PSET_SCRIPT
+	qboolean	protocol_particles;
+	struct
+	{
+		const char	*name;
+		int			index;
+	} particle_precache[MAX_PARTICLETYPES];
+	struct
+	{
+		const char	*name;
+		int			index;
+	} local_particle_precache[MAX_PARTICLETYPES];
+#else
+	char		particle_precache[MAX_PARTICLETYPES][MAX_QPATH];
+#endif
 
 	char		mapname[128];
 	char		levelname[128];	// for display on solo scoreboard //johnfitz -- was 40.
@@ -386,6 +404,12 @@ extern	int				cl_max_edicts; //johnfitz -- only changes when new map loads
 //
 dlight_t *CL_AllocDlight (int key);
 void	CL_DecayLights (void);
+int		CL_ParticleEffectColor (int effectnum);
+void	CL_RunNamedParticleEffect (int effectnum, vec3_t org, vec3_t dir, int count);
+#ifdef PSET_SCRIPT
+void	CL_ClearTrailStates (void);
+void	CL_RegisterParticles (void);
+#endif
 
 void CL_Init (void);
 

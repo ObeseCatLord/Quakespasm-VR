@@ -576,6 +576,323 @@ static void PF_particle (void)
 	SV_StartParticle (org, dir, color, count);
 }
 
+static const char *PF_ParticleEffectName (int effectnum)
+{
+#ifdef PSET_SCRIPT
+	if (qcvm == &cl.qcvm && effectnum < 0)
+	{
+		effectnum = -effectnum;
+		if (effectnum <= 0 || effectnum >= MAX_PARTICLETYPES ||
+			!cl.local_particle_precache[effectnum].name)
+			return "";
+		return cl.local_particle_precache[effectnum].name;
+	}
+#endif
+	if (effectnum <= 0 || effectnum >= MAX_PARTICLETYPES)
+		return "";
+#ifdef PSET_SCRIPT
+	if (qcvm == &cl.qcvm)
+		return cl.particle_precache[effectnum].name ? cl.particle_precache[effectnum].name : "";
+#else
+	if (qcvm == &cl.qcvm)
+		return cl.particle_precache[effectnum];
+#endif
+	return sv.particle_precache[effectnum] ? sv.particle_precache[effectnum] : "";
+}
+
+static int PF_ParticleEffectColor (int effectnum)
+{
+	const char *name = PF_ParticleEffectName (effectnum);
+
+	if (q_strcasestr (name, "blood") || q_strcasestr (name, "gib"))
+		return 67;
+	if (q_strcasestr (name, "poison") || q_strcasestr (name, "acid") ||
+		q_strcasestr (name, "slime"))
+		return 68;
+	if (q_strcasestr (name, "plasma") || q_strcasestr (name, "laser") ||
+		q_strcasestr (name, "bolt"))
+		return 224;
+	if (q_strcasestr (name, "fire") || q_strcasestr (name, "flame") ||
+		q_strcasestr (name, "pyro") || q_strcasestr (name, "rocket") ||
+		q_strcasestr (name, "explode"))
+		return 230;
+	if (q_strcasestr (name, "smoke"))
+		return 4;
+	if (q_strcasestr (name, "snow"))
+		return 15;
+	if (q_strcasestr (name, "rain") || q_strcasestr (name, "water"))
+		return 73;
+	if (q_strcasestr (name, "secret"))
+		return 150;
+
+	return (effectnum * 13) & 255;
+}
+
+static int PF_RegisterParticleEffect (const char *name)
+{
+	int i;
+
+	if (!name || !name[0])
+		return 0;
+
+	if (qcvm == &cl.qcvm)
+	{
+#ifdef PSET_SCRIPT
+		for (i = 1; i < MAX_PARTICLETYPES; i++)
+		{
+			if (!cl.particle_precache[i].name)
+				break;
+			if (!strcmp (cl.particle_precache[i].name, name))
+				return i;
+		}
+		for (i = 1; i < MAX_PARTICLETYPES; i++)
+		{
+			if (!cl.local_particle_precache[i].name)
+			{
+				cl.local_particle_precache[i].name = strcpy (Hunk_AllocName (strlen(name) + 1, "particles"), name);
+				cl.local_particle_precache[i].index = PScript_FindParticleType (cl.local_particle_precache[i].name);
+				return -i;
+			}
+			if (!strcmp (cl.local_particle_precache[i].name, name))
+				return -i;
+		}
+#else
+		for (i = 1; i < MAX_PARTICLETYPES; i++)
+		{
+			if (!cl.particle_precache[i][0])
+			{
+				q_strlcpy (cl.particle_precache[i], name, sizeof(cl.particle_precache[i]));
+				return i;
+			}
+			if (!strcmp (cl.particle_precache[i], name))
+				return i;
+		}
+#endif
+	}
+	else
+	{
+#ifdef PSET_SCRIPT
+		if (!sv.particle_precache[1] && !strncmp (name, "effectinfo.", 11))
+			COM_Effectinfo_Enumerate (PF_RegisterParticleEffect);
+#endif
+		for (i = 1; i < MAX_PARTICLETYPES; i++)
+		{
+			if (!sv.particle_precache[i])
+			{
+				sv.particle_precache[i] = strcpy (Hunk_AllocName (strlen(name) + 1, "particles"), name);
+#ifdef PSET_SCRIPT
+				if (sv.state != ss_loading)
+				{
+					MSG_WriteByte (&sv.reliable_datagram, svcdp_precache);
+					MSG_WriteShort (&sv.reliable_datagram, 0x4000 | i);
+					MSG_WriteString (&sv.reliable_datagram, sv.particle_precache[i]);
+				}
+#endif
+				return i;
+			}
+			if (!strcmp (sv.particle_precache[i], name))
+				return i;
+		}
+	}
+
+	PR_RunError ("particleeffectnum: overflow");
+	return 0;
+}
+
+#ifdef PSET_SCRIPT
+static int PF_CL_GetParticle (int effectnum)
+{
+	if (effectnum < 0)
+	{
+		effectnum = -effectnum;
+		if (effectnum >= MAX_PARTICLETYPES)
+			return P_INVALID;
+		return cl.local_particle_precache[effectnum].index;
+	}
+	if (effectnum <= 0 || effectnum >= MAX_PARTICLETYPES)
+		return P_INVALID;
+	return cl.particle_precache[effectnum].index;
+}
+#endif
+
+static void PF_particleeffectnum (void)
+{
+	G_FLOAT(OFS_RETURN) = PF_RegisterParticleEffect (G_STRING(OFS_PARM0));
+}
+
+static void PF_StartClassicParticleFallback (int effectnum, const float *org,
+	const float *dir, int count)
+{
+	int color = PF_ParticleEffectColor (effectnum);
+
+	count = CLAMP (1, count, 255);
+	if (qcvm == &cl.qcvm)
+		R_RunParticleEffect ((float *)org, (float *)dir, color, count);
+	else
+		SV_StartParticle ((float *)org, (float *)dir, color, count);
+}
+
+static void PF_pointparticles (void)
+{
+	int effectnum = G_FLOAT(OFS_PARM0);
+	float *org = G_VECTOR(OFS_PARM1);
+	float *dir = qcvm->argc > 2 ? G_VECTOR(OFS_PARM2) : vec3_origin;
+	int count = qcvm->argc > 3 ? G_FLOAT(OFS_PARM3) : 1;
+
+	if (effectnum <= 0 || count <= 0)
+		return;
+#ifdef PSET_SCRIPT
+	if (qcvm == &cl.qcvm)
+	{
+		PScript_RunParticleEffectState (org, dir, count, PF_CL_GetParticle (effectnum), NULL);
+		return;
+	}
+	if (count > 65535)
+		count = 65535;
+	if (count == 1 && !dir[0] && !dir[1] && !dir[2])
+	{
+		MSG_WriteByte (&sv.datagram, svcdp_pointparticles1);
+		MSG_WriteShort (&sv.datagram, effectnum);
+		MSG_WriteCoord (&sv.datagram, org[0], sv.protocolflags);
+		MSG_WriteCoord (&sv.datagram, org[1], sv.protocolflags);
+		MSG_WriteCoord (&sv.datagram, org[2], sv.protocolflags);
+	}
+	else
+	{
+		MSG_WriteByte (&sv.datagram, svcdp_pointparticles);
+		MSG_WriteShort (&sv.datagram, effectnum);
+		MSG_WriteCoord (&sv.datagram, org[0], sv.protocolflags);
+		MSG_WriteCoord (&sv.datagram, org[1], sv.protocolflags);
+		MSG_WriteCoord (&sv.datagram, org[2], sv.protocolflags);
+		MSG_WriteCoord (&sv.datagram, dir[0], sv.protocolflags);
+		MSG_WriteCoord (&sv.datagram, dir[1], sv.protocolflags);
+		MSG_WriteCoord (&sv.datagram, dir[2], sv.protocolflags);
+		MSG_WriteShort (&sv.datagram, count);
+	}
+#else
+	PF_StartClassicParticleFallback (effectnum, org, dir, count);
+#endif
+}
+
+static void PF_trailparticles (void)
+{
+	int effectnum;
+	float *start, *end;
+#ifdef PSET_SCRIPT
+	edict_t *ent;
+#else
+	vec3_t org, dir, step;
+	float len;
+	int samples, i;
+#endif
+
+	if (qcvm->argc < 4)
+		return;
+
+	effectnum = G_FLOAT(OFS_PARM0);
+	ent = G_EDICT(OFS_PARM1);
+	start = G_VECTOR(OFS_PARM2);
+	end = G_VECTOR(OFS_PARM3);
+
+	if (effectnum <= 0)
+		return;
+
+#ifdef PSET_SCRIPT
+	if (qcvm == &cl.qcvm)
+	{
+		PScript_ParticleTrail (start, end, PF_CL_GetParticle (effectnum), host_frametime,
+			-NUM_FOR_EDICT(ent), NULL, NULL);
+		return;
+	}
+	MSG_WriteByte (&sv.datagram, svcdp_trailparticles);
+	MSG_WriteShort (&sv.datagram, NUM_FOR_EDICT(ent));
+	MSG_WriteShort (&sv.datagram, effectnum);
+	MSG_WriteCoord (&sv.datagram, start[0], sv.protocolflags);
+	MSG_WriteCoord (&sv.datagram, start[1], sv.protocolflags);
+	MSG_WriteCoord (&sv.datagram, start[2], sv.protocolflags);
+	MSG_WriteCoord (&sv.datagram, end[0], sv.protocolflags);
+	MSG_WriteCoord (&sv.datagram, end[1], sv.protocolflags);
+	MSG_WriteCoord (&sv.datagram, end[2], sv.protocolflags);
+#else
+	VectorSubtract (end, start, dir);
+	len = VectorNormalize (dir);
+	samples = CLAMP (1, (int)(len / 32.0f) + 1, 16);
+	VectorScale (dir, len / samples, step);
+	VectorCopy (start, org);
+	for (i = 0; i < samples; i++)
+	{
+		PF_StartClassicParticleFallback (effectnum, org, dir, 1);
+		VectorAdd (org, step, org);
+	}
+#endif
+}
+
+static void PF_te_particleweather (qboolean snow)
+{
+	float *mins = G_VECTOR(OFS_PARM0);
+	float *maxs = G_VECTOR(OFS_PARM1);
+	float *vel = G_VECTOR(OFS_PARM2);
+	int count = G_FLOAT(OFS_PARM3);
+	int basecolor = G_FLOAT(OFS_PARM4);
+#ifdef PSET_SCRIPT
+	int type = snow ? TEDP_PARTICLESNOW : TEDP_PARTICLERAIN;
+
+	if (qcvm == &cl.qcvm)
+	{
+		PScript_RunParticleWeather (mins, maxs, vel, count, basecolor, snow ? "snow" : "rain");
+		return;
+	}
+
+	MSG_WriteByte (&sv.datagram, svc_temp_entity);
+	MSG_WriteByte (&sv.datagram, type);
+	MSG_WriteCoord (&sv.datagram, mins[0], sv.protocolflags);
+	MSG_WriteCoord (&sv.datagram, mins[1], sv.protocolflags);
+	MSG_WriteCoord (&sv.datagram, mins[2], sv.protocolflags);
+	MSG_WriteCoord (&sv.datagram, maxs[0], sv.protocolflags);
+	MSG_WriteCoord (&sv.datagram, maxs[1], sv.protocolflags);
+	MSG_WriteCoord (&sv.datagram, maxs[2], sv.protocolflags);
+	MSG_WriteCoord (&sv.datagram, vel[0], sv.protocolflags);
+	MSG_WriteCoord (&sv.datagram, vel[1], sv.protocolflags);
+	MSG_WriteCoord (&sv.datagram, vel[2], sv.protocolflags);
+	MSG_WriteShort (&sv.datagram, CLAMP(0, count, 65535));
+	MSG_WriteByte (&sv.datagram, CLAMP(0, basecolor, 255));
+#else
+	vec3_t org, dir;
+	int i, j;
+
+	count = CLAMP (0, count, 32);
+	VectorCopy (vel, dir);
+	if (!VectorNormalize (dir))
+	{
+		dir[0] = dir[1] = dir[2] = 0;
+		dir[2] = snow ? -0.25f : -1.0f;
+	}
+
+	if (basecolor <= 0)
+		basecolor = snow ? 15 : 73;
+
+	for (i = 0; i < count; i++)
+	{
+		for (j = 0; j < 3; j++)
+			org[j] = mins[j] + ((rand() & 0x7fff) / 32767.0f) * (maxs[j] - mins[j]);
+		if (qcvm == &cl.qcvm)
+			R_RunParticleEffect (org, dir, basecolor, 1);
+		else
+			SV_StartParticle (org, dir, basecolor, 1);
+	}
+#endif
+}
+
+static void PF_te_particlerain (void)
+{
+	PF_te_particleweather (false);
+}
+
+static void PF_te_particlesnow (void)
+{
+	PF_te_particleweather (true);
+}
+
 
 /*
 =================
@@ -959,6 +1276,98 @@ static void PF_cvar_set (void)
 	val = G_STRING(OFS_PARM1);
 
 	Cvar_Set (var, val);
+}
+
+static void PF_cvar_setf (void)
+{
+	const char	*var;
+	char	val[32];
+
+	var = G_STRING(OFS_PARM0);
+	q_snprintf (val, sizeof(val), "%g", G_FLOAT(OFS_PARM1));
+	Cvar_Set (var, val);
+}
+
+static void PF_setcolors(void)
+{
+	edict_t *ed = G_EDICT(OFS_PARM0);
+	int colors = (int)G_FLOAT(OFS_PARM1) & 0xff;
+	int clientnum = NUM_FOR_EDICT(ed) - 1;
+
+	if (clientnum < 0 || clientnum >= svs.maxclients ||
+		!svs.clients[clientnum].active)
+	{
+		Con_Printf("tried to setcolor a non-client\n");
+		return;
+	}
+
+	svs.clients[clientnum].colors = colors;
+	ed->v.team = (colors & 15) + 1;
+
+	MSG_WriteByte(&sv.reliable_datagram, svc_updatecolors);
+	MSG_WriteByte(&sv.reliable_datagram, clientnum);
+	MSG_WriteByte(&sv.reliable_datagram, colors);
+}
+
+static void PF_registercvar (void)
+{
+	const char	*var, *val;
+
+	var = G_STRING(OFS_PARM0);
+	val = qcvm->argc > 1 ? G_STRING(OFS_PARM1) : "0";
+	G_FLOAT(OFS_RETURN) = Cvar_Create (var, val) ? 1 : 0;
+}
+
+static void PF_cvar_string (void)
+{
+	const char	*varname = G_STRING(OFS_PARM0);
+	cvar_t		*var = Cvar_FindVar (varname);
+
+	if (var && var->string)
+	{
+		char *result = PR_GetTempString();
+		q_strlcpy (result, var->string, STRINGTEMP_LENGTH);
+		G_INT(OFS_RETURN) = PR_SetEngineString(result);
+	}
+	else if (!Q_strcmp (varname, "game"))
+	{
+		char *result = PR_GetTempString();
+		q_strlcpy (result, COM_SkipPath(com_gamedir), STRINGTEMP_LENGTH);
+		G_INT(OFS_RETURN) = PR_SetEngineString(result);
+	}
+	else
+		G_INT(OFS_RETURN) = 0;
+}
+
+static void PF_cvar_defstring (void)
+{
+	cvar_t	*var = Cvar_FindVar (G_STRING(OFS_PARM0));
+
+	if (var && var->default_string)
+		G_INT(OFS_RETURN) = PR_SetEngineString(var->default_string);
+	else
+		G_INT(OFS_RETURN) = 0;
+}
+
+static void PF_cvar_type (void)
+{
+	cvar_t	*var = Cvar_FindVar (G_STRING(OFS_PARM0));
+	int		ret = 0;
+
+	if (var)
+	{
+		ret |= 1;	/* CVAR_TYPE_EXISTS */
+		if (var->flags & CVAR_ARCHIVE)
+			ret |= 2;	/* CVAR_TYPE_SAVED */
+		if (!(var->flags & CVAR_USERDEFINED))
+			ret |= 8;	/* CVAR_TYPE_ENGINE */
+	}
+	G_FLOAT(OFS_RETURN) = ret;
+}
+
+static void PF_cvar_description (void)
+{
+	G_INT(OFS_RETURN) = 0;
 }
 
 /*
@@ -1755,16 +2164,71 @@ EXTENSION BUILT-INS
 
 cvar_t pr_checkextension = {"pr_checkextension", "1", CVAR_NONE};	//spike - enables qc extensions. if 0 then they're ALL BLOCKED! MWAHAHAHA! *cough* *splutter*
 
+static qboolean PF_ExtensionSupported(const char *extname)
+{
+	static const char *supported[] = {
+		"FTE_QC_CHECKCOMMAND",
+		"FTE_STRINGS",
+		"DP_QC_ASINACOSATANATAN2TAN",
+		"DP_QC_CVAR_DEFSTRING",
+		"DP_QC_CVAR_DESCRIPTION",
+		"DP_QC_CVAR_STRING",
+		"DP_QC_CVAR_TYPE",
+		"DP_QC_GETSURFACE",
+		"DP_QC_GETSURFACEPOINTATTRIBUTE",
+		"DP_QC_GETSURFACETRIANGLE",
+		"DP_GFX_FOG",
+		"DP_QC_ETOS",
+		"DP_QC_MINMAXBOUND",
+		"DP_QC_SINCOSSQRTPOW",
+		"DP_QC_SPRINTF",
+		"DP_QC_STRFTIME",
+		"DP_QC_STRING_CASE_FUNCTIONS",
+		"DP_QC_TOKENIZEBYSEPARATOR",
+		"DP_QC_TOKENIZE_CONSOLE",
+		"DP_QC_VECTORVECTORS",
+		"DP_TE_PARTICLERAIN",
+		"DP_TE_PARTICLESNOW",
+		"DP_SV_POINTPARTICLES",
+		"DP_SV_SETCOLOR",
+		"DP_ENT_TRAILEFFECTNUM",
+		"FTE_PART_SCRIPT",
+		"FTE_PART_NAMESPACES",
+		"FTE_PART_NAMESPACE_EFFECTINFO",
+		"FTE_SV_POINTPARTICLES",
+		"FRIK_FILE",
+		"ZQ_QC_STRINGS",
+		NULL
+	};
+	const char **name;
+
+	for (name = supported; *name; name++)
+		if (!q_strcasecmp(extname, *name))
+			return true;
+	return false;
+}
+
 static void PF_checkextension(void)
 {
 	const char *extname = G_STRING(OFS_PARM0);
 
-	/*
-	 * AD and related mods check this to avoid DarkPlaces-specific command
-	 * paths. Only advertise the extension we actually implement below.
-	 */
 	G_FLOAT(OFS_RETURN) = pr_checkextension.value &&
-		!q_strcasecmp(extname, "FTE_QC_CHECKCOMMAND");
+		PF_ExtensionSupported(extname);
+}
+
+static void PF_checkbuiltin(void)
+{
+	func_t funcref = G_FUNCTION(OFS_PARM0);
+
+	G_FLOAT(OFS_RETURN) = 0;
+	if ((unsigned int)funcref < (unsigned int)qcvm->progs->numfunctions)
+	{
+		dfunction_t *func = &qcvm->functions[funcref];
+		int binum = -func->first_statement;
+		if (binum > 0 && binum < qcvm->numbuiltins &&
+			qcvm->builtins[binum] != PF_Fixme)
+			G_FLOAT(OFS_RETURN) = 1;
+	}
 }
 
 static float PR_GetVMScale(void)
@@ -2051,6 +2515,62 @@ static void PF_cl_playerkey_f(void)
 	PF_cl_playerkey_internal(playernum, keyname, true);
 }
 
+static void PF_serverkey_internal(const char *key, qboolean retfloat)
+{
+	char buf[1024];
+	const char *ret = NULL;
+
+	if (!strcmp(key, "constate"))
+	{
+		if (cls.state != ca_connected)
+			ret = "disconnected";
+		else if (cls.signon == SIGNONS)
+			ret = "active";
+		else
+			ret = "connecting";
+	}
+	else if (!strcmp(key, "deathmatch"))
+		ret = qcvm == &sv.qcvm ? (deathmatch.value ? "1" : "0") :
+			(cl.gametype == GAME_DEATHMATCH ? "1" : "0");
+	else if (!strcmp(key, "coop"))
+		ret = qcvm == &sv.qcvm ? (coop.value ? "1" : "0") :
+			((cl.maxclients > 1 && cl.gametype != GAME_DEATHMATCH) ? "1" : "0");
+	else if (!strcmp(key, "teamplay"))
+		ret = qcvm == &sv.qcvm ? (teamplay.value ? "1" : "0") :
+			Cvar_VariableString(key);
+	else if (!strcmp(key, "maxclients"))
+	{
+		q_snprintf(buf, sizeof(buf), "%i", qcvm == &sv.qcvm ? svs.maxclients : cl.maxclients);
+		ret = buf;
+	}
+	else if (!strcmp(key, "mapname"))
+		ret = qcvm == &sv.qcvm ? sv.name : cl.mapname;
+	else
+		ret = Cvar_VariableString(key);
+
+	if (!ret || !*ret)
+		ret = "";
+
+	if (retfloat)
+		G_FLOAT(OFS_RETURN) = atof(ret);
+	else
+	{
+		char *result = PR_GetTempString();
+		q_strlcpy(result, ret, STRINGTEMP_LENGTH);
+		G_INT(OFS_RETURN) = PR_SetEngineString(result);
+	}
+}
+
+static void PF_serverkey_s(void)
+{
+	PF_serverkey_internal(G_STRING(OFS_PARM0), false);
+}
+
+static void PF_serverkey_f(void)
+{
+	PF_serverkey_internal(G_STRING(OFS_PARM0), true);
+}
+
 static void PF_cl_readbyte(void)
 {
 	G_FLOAT(OFS_RETURN) = MSG_ReadByte();
@@ -2272,6 +2792,393 @@ static void PF_cl_stringwidth(void)
 
 	//primitive and lame, but hey.
 	G_FLOAT(OFS_RETURN) = fontsize[0] * r;
+}
+
+static void PF_cl_drawline(void)
+{
+	float width = qcvm->argc > 0 ? G_FLOAT(OFS_PARM0) : 1;
+	float *pos1 = G_VECTOR(OFS_PARM1);
+	float *pos2 = G_VECTOR(OFS_PARM2);
+	float *rgb = G_VECTOR(OFS_PARM3);
+	float alpha = qcvm->argc > 4 ? G_FLOAT(OFS_PARM4) : 1;
+
+	Draw_Flush ();
+	glDisable (GL_TEXTURE_2D);
+	glEnable (GL_BLEND);
+	glDisable (GL_ALPHA_TEST);
+	glLineWidth (q_max(1.0f, width * PR_GetVMScale()));
+	glColor4f (rgb[0], rgb[1], rgb[2], alpha);
+	glBegin (GL_LINES);
+	glVertex2f (pos1[0], pos1[1]);
+	glVertex2f (pos2[0], pos2[1]);
+	glEnd ();
+	glLineWidth (1);
+	glColor4f (1, 1, 1, 1);
+	glDisable (GL_BLEND);
+	glEnable (GL_ALPHA_TEST);
+	glEnable (GL_TEXTURE_2D);
+}
+
+static void PF_modelnameforindex(void)
+{
+	int idx = G_FLOAT(OFS_PARM0);
+	const char *name = NULL;
+
+	if (qcvm == &sv.qcvm)
+	{
+		if (idx >= 0 && idx < MAX_MODELS)
+			name = sv.model_precache[idx];
+	}
+	else if (qcvm == &cl.qcvm)
+	{
+		if (idx >= 0 && idx < MAX_MODELS && cl.model_precache[idx])
+			name = cl.model_precache[idx]->name;
+	}
+
+	if (name && *name)
+	{
+		char *result = PR_GetTempString();
+		q_strlcpy(result, name, STRINGTEMP_LENGTH);
+		G_INT(OFS_RETURN) = PR_SetEngineString(result);
+	}
+	else
+		G_INT(OFS_RETURN) = 0;
+}
+
+static qmodel_t *PF_ModelForEdict(edict_t *ed)
+{
+	int idx = (int)ed->v.modelindex;
+
+	if (idx <= 0 || idx >= MAX_MODELS)
+		return NULL;
+	if (qcvm == &sv.qcvm)
+		return sv.models[idx];
+	if (qcvm == &cl.qcvm)
+		return cl.model_precache[idx];
+	return NULL;
+}
+
+static qboolean PF_GetBrushSurface(edict_t *ed, unsigned int surfidx,
+	qmodel_t **model, msurface_t **surface)
+{
+	qmodel_t *mod = PF_ModelForEdict(ed);
+	unsigned int absolute;
+
+	if (!mod || mod->type != mod_brush || mod->needload ||
+		surfidx >= (unsigned int)mod->nummodelsurfaces)
+		return false;
+
+	absolute = mod->firstmodelsurface + surfidx;
+	if (absolute >= (unsigned int)mod->numsurfaces)
+		return false;
+
+	*model = mod;
+	*surface = &mod->surfaces[absolute];
+	return true;
+}
+
+static void PF_ReturnVector(vec3_t v)
+{
+	G_FLOAT(OFS_RETURN + 0) = v[0];
+	G_FLOAT(OFS_RETURN + 1) = v[1];
+	G_FLOAT(OFS_RETURN + 2) = v[2];
+}
+
+static void PF_ReturnZeroVector(void)
+{
+	G_FLOAT(OFS_RETURN + 0) = 0;
+	G_FLOAT(OFS_RETURN + 1) = 0;
+	G_FLOAT(OFS_RETURN + 2) = 0;
+}
+
+static mvertex_t *PF_GetSurfaceVertex(qmodel_t *mod, msurface_t *surf,
+	unsigned int vert)
+{
+	int edge = mod->surfedges[surf->firstedge + vert];
+
+	if (edge >= 0)
+		return &mod->vertexes[mod->edges[edge].v[0]];
+	return &mod->vertexes[mod->edges[-edge].v[1]];
+}
+
+static void PF_getsurfacenumpoints(void)
+{
+	edict_t *ed = G_EDICT(OFS_PARM0);
+	unsigned int surfidx = (unsigned int)G_FLOAT(OFS_PARM1);
+	qmodel_t *mod;
+	msurface_t *surf;
+
+	if (PF_GetBrushSurface(ed, surfidx, &mod, &surf))
+		G_FLOAT(OFS_RETURN) = surf->numedges;
+	else
+		G_FLOAT(OFS_RETURN) = 0;
+}
+
+static void PF_getsurfacepoint(void)
+{
+	edict_t *ed = G_EDICT(OFS_PARM0);
+	unsigned int surfidx = (unsigned int)G_FLOAT(OFS_PARM1);
+	unsigned int point = (unsigned int)G_FLOAT(OFS_PARM2);
+	qmodel_t *mod;
+	msurface_t *surf;
+	mvertex_t *v;
+
+	if (PF_GetBrushSurface(ed, surfidx, &mod, &surf) &&
+		point < (unsigned int)surf->numedges)
+	{
+		v = PF_GetSurfaceVertex(mod, surf, point);
+		PF_ReturnVector(v->position);
+	}
+	else
+		PF_ReturnZeroVector();
+}
+
+static void PF_getsurfacenumtriangles(void)
+{
+	edict_t *ed = G_EDICT(OFS_PARM0);
+	unsigned int surfidx = (unsigned int)G_FLOAT(OFS_PARM1);
+	qmodel_t *mod;
+	msurface_t *surf;
+
+	if (PF_GetBrushSurface(ed, surfidx, &mod, &surf) && surf->numedges >= 3)
+		G_FLOAT(OFS_RETURN) = surf->numedges - 2;
+	else
+		G_FLOAT(OFS_RETURN) = 0;
+}
+
+static void PF_getsurfacetriangle(void)
+{
+	edict_t *ed = G_EDICT(OFS_PARM0);
+	unsigned int surfidx = (unsigned int)G_FLOAT(OFS_PARM1);
+	unsigned int triangleidx = (unsigned int)G_FLOAT(OFS_PARM2);
+	qmodel_t *mod;
+	msurface_t *surf;
+
+	if (PF_GetBrushSurface(ed, surfidx, &mod, &surf) &&
+		surf->numedges >= 3 && triangleidx < (unsigned int)surf->numedges - 2)
+	{
+		G_FLOAT(OFS_RETURN + 0) = 0;
+		G_FLOAT(OFS_RETURN + 1) = triangleidx + 1;
+		G_FLOAT(OFS_RETURN + 2) = triangleidx + 2;
+	}
+	else
+		PF_ReturnZeroVector();
+}
+
+static void PF_getsurfacenormal(void)
+{
+	edict_t *ed = G_EDICT(OFS_PARM0);
+	unsigned int surfidx = (unsigned int)G_FLOAT(OFS_PARM1);
+	qmodel_t *mod;
+	msurface_t *surf;
+	vec3_t normal;
+
+	if (PF_GetBrushSurface(ed, surfidx, &mod, &surf))
+	{
+		VectorCopy(surf->plane->normal, normal);
+		if (surf->flags & SURF_PLANEBACK)
+			VectorInverse(normal);
+		PF_ReturnVector(normal);
+	}
+	else
+		PF_ReturnZeroVector();
+}
+
+static void PF_getsurfacetexture(void)
+{
+	edict_t *ed = G_EDICT(OFS_PARM0);
+	unsigned int surfidx = (unsigned int)G_FLOAT(OFS_PARM1);
+	qmodel_t *mod;
+	msurface_t *surf;
+
+	if (PF_GetBrushSurface(ed, surfidx, &mod, &surf) &&
+		surf->texinfo && surf->texinfo->texture)
+		G_INT(OFS_RETURN) =
+			PR_SetEngineString(surf->texinfo->texture->name);
+	else
+		G_INT(OFS_RETURN) = 0;
+}
+
+static float PF_SurfaceClipPointPoly(qmodel_t *model, msurface_t *surf,
+	vec3_t point, vec3_t bestcpoint, float bestdist)
+{
+	int e, edge;
+	vec3_t edgedir, edgenormal, cpoint, temp;
+	mvertex_t *v1, *v2;
+	float dist = DotProduct(point, surf->plane->normal) - surf->plane->dist;
+
+	if (dist * dist >= bestdist)
+		return bestdist;
+
+	VectorMA(point, -dist, surf->plane->normal, cpoint);
+	for (e = surf->firstedge + surf->numedges; e > surf->firstedge;)
+	{
+		edge = model->surfedges[--e];
+		if (edge < 0)
+		{
+			v1 = &model->vertexes[model->edges[-edge].v[0]];
+			v2 = &model->vertexes[model->edges[-edge].v[1]];
+		}
+		else
+		{
+			v2 = &model->vertexes[model->edges[edge].v[0]];
+			v1 = &model->vertexes[model->edges[edge].v[1]];
+		}
+
+		VectorSubtract(v1->position, v2->position, edgedir);
+		CrossProduct(edgedir, surf->plane->normal, edgenormal);
+		if (!(surf->flags & SURF_PLANEBACK))
+			VectorInverse(edgenormal);
+		VectorNormalize(edgenormal);
+
+		dist = DotProduct(v1->position, edgenormal) -
+			DotProduct(cpoint, edgenormal);
+		if (dist < 0)
+			VectorMA(cpoint, dist, edgenormal, cpoint);
+	}
+
+	VectorSubtract(cpoint, point, temp);
+	dist = DotProduct(temp, temp);
+	if (dist < bestdist)
+	{
+		bestdist = dist;
+		VectorCopy(cpoint, bestcpoint);
+	}
+	return bestdist;
+}
+
+static void PF_getsurfacenearpoint(void)
+{
+	edict_t *ed = G_EDICT(OFS_PARM0);
+	float *point = G_VECTOR(OFS_PARM1);
+	qmodel_t *model = PF_ModelForEdict(ed);
+	msurface_t *surf;
+	vec3_t cpoint = {0, 0, 0};
+	float bestdist = 256, dist;
+	int i, bestsurf = -1;
+
+	if (!model || model->type != mod_brush || model->needload)
+	{
+		G_FLOAT(OFS_RETURN) = -1;
+		return;
+	}
+
+	surf = model->surfaces + model->firstmodelsurface;
+	for (i = 0; i < model->nummodelsurfaces; i++, surf++)
+	{
+		dist = PF_SurfaceClipPointPoly(model, surf, point, cpoint, bestdist);
+		if (dist < bestdist)
+		{
+			bestdist = dist;
+			bestsurf = i;
+		}
+	}
+	G_FLOAT(OFS_RETURN) = bestsurf;
+}
+
+static void PF_getsurfaceclippedpoint(void)
+{
+	edict_t *ed = G_EDICT(OFS_PARM0);
+	unsigned int surfidx = (unsigned int)G_FLOAT(OFS_PARM1);
+	float *point = G_VECTOR(OFS_PARM2);
+	float *result = G_VECTOR(OFS_RETURN);
+	qmodel_t *model;
+	msurface_t *surf;
+
+	VectorCopy(point, result);
+	if (PF_GetBrushSurface(ed, surfidx, &model, &surf))
+		PF_SurfaceClipPointPoly(model, surf, point, result, 0x7fffffff);
+}
+
+enum
+{
+	SPA_POSITION = 0,
+	SPA_S_AXIS = 1,
+	SPA_T_AXIS = 2,
+	SPA_R_AXIS = 3,
+	SPA_TEXCOORDS0 = 4,
+	SPA_LIGHTMAP0_TEXCOORDS = 5,
+	SPA_LIGHTMAP0_COLOR = 6
+};
+
+static void PF_getsurfacepointattribute(void)
+{
+	edict_t *ed = G_EDICT(OFS_PARM0);
+	unsigned int surfidx = (unsigned int)G_FLOAT(OFS_PARM1);
+	unsigned int point = (unsigned int)G_FLOAT(OFS_PARM2);
+	unsigned int attribute = (unsigned int)G_FLOAT(OFS_PARM3);
+	qmodel_t *mod;
+	msurface_t *fa;
+	mvertex_t *v;
+	float texwidth, texheight;
+	float sc;
+
+	if (!PF_GetBrushSurface(ed, surfidx, &mod, &fa) ||
+		point >= (unsigned int)fa->numedges)
+	{
+		PF_ReturnZeroVector();
+		return;
+	}
+
+	v = PF_GetSurfaceVertex(mod, fa, point);
+	switch (attribute)
+	{
+	case SPA_POSITION:
+		PF_ReturnVector(v->position);
+		break;
+	case SPA_S_AXIS:
+	case SPA_T_AXIS:
+		sc = -DotProduct(fa->plane->normal, fa->texinfo->vecs[attribute - 1]);
+		VectorMA(fa->texinfo->vecs[attribute - 1], sc,
+			fa->plane->normal, G_VECTOR(OFS_RETURN));
+		VectorNormalize(G_VECTOR(OFS_RETURN));
+		break;
+	case SPA_R_AXIS:
+		VectorCopy(fa->plane->normal, G_VECTOR(OFS_RETURN));
+		if (fa->flags & SURF_PLANEBACK)
+			VectorInverse(G_VECTOR(OFS_RETURN));
+		break;
+	case SPA_TEXCOORDS0:
+		texwidth = fa->texinfo->texture ? fa->texinfo->texture->width : 1;
+		texheight = fa->texinfo->texture ? fa->texinfo->texture->height : 1;
+		G_FLOAT(OFS_RETURN + 0) =
+			(DotProduct(v->position, fa->texinfo->vecs[0]) +
+			fa->texinfo->vecs[0][3]) / texwidth;
+		G_FLOAT(OFS_RETURN + 1) =
+			(DotProduct(v->position, fa->texinfo->vecs[1]) +
+			fa->texinfo->vecs[1][3]) / texheight;
+		G_FLOAT(OFS_RETURN + 2) = 0;
+		break;
+	case SPA_LIGHTMAP0_TEXCOORDS:
+		G_FLOAT(OFS_RETURN + 0) =
+			(DotProduct(v->position, fa->texinfo->vecs[0]) +
+			fa->texinfo->vecs[0][3] + fa->light_s) / LMBLOCK_WIDTH;
+		G_FLOAT(OFS_RETURN + 1) =
+			(DotProduct(v->position, fa->texinfo->vecs[1]) +
+			fa->texinfo->vecs[1][3] + fa->light_t) / LMBLOCK_HEIGHT;
+		G_FLOAT(OFS_RETURN + 2) = 0;
+		break;
+	case SPA_LIGHTMAP0_COLOR:
+		G_FLOAT(OFS_RETURN + 0) = 1;
+		G_FLOAT(OFS_RETURN + 1) = 1;
+		G_FLOAT(OFS_RETURN + 2) = 1;
+		break;
+	default:
+		Con_Warning("PF_getsurfacepointattribute: attribute %u not supported\n",
+			attribute);
+		PF_ReturnZeroVector();
+		break;
+	}
+}
+
+static void PF_cl_setcursormode(void)
+{
+	/* CSQC cursor grabbing/hardware cursors are outside this port's HUD scope. */
+}
+
+static void PF_cl_loadfont(void)
+{
+	G_FLOAT(OFS_RETURN) = 0;
 }
 
 
@@ -2626,6 +3533,103 @@ static void PF_strunzone(void)
 	}
 	else
 		Con_Warning("PF_strunzone: string wasn't strzoned\n");
+}
+
+static void PF_strstrofs(void)
+{
+	const char *instr = G_STRING(OFS_PARM0);
+	const char *match = G_STRING(OFS_PARM1);
+	int firstofs = qcvm->argc > 2 ? G_FLOAT(OFS_PARM2) : 0;
+	const char *found;
+
+	if (firstofs < 0 || firstofs > (int)strlen(instr))
+	{
+		G_FLOAT(OFS_RETURN) = -1;
+		return;
+	}
+
+	found = strstr(instr + firstofs, match);
+	G_FLOAT(OFS_RETURN) = found ? found - instr : -1;
+}
+
+static void PF_strpad(void)
+{
+	char *destbuf = PR_GetTempString();
+	int pad = G_FLOAT(OFS_PARM0);
+	const char *src = PF_VarString(1);
+	size_t srclen = strlen(src);
+	int spaces;
+
+	if (pad < 0)
+	{
+		spaces = -pad - (int)srclen;
+		if (spaces < 0)
+			spaces = 0;
+		if (spaces >= STRINGTEMP_LENGTH)
+			spaces = STRINGTEMP_LENGTH - 1;
+		memset(destbuf, ' ', spaces);
+		q_strlcpy(destbuf + spaces, src, STRINGTEMP_LENGTH - spaces);
+	}
+	else
+	{
+		char *out;
+		spaces = pad - (int)srclen;
+		if (spaces < 0)
+			spaces = 0;
+		q_strlcpy(destbuf, src, STRINGTEMP_LENGTH);
+		out = destbuf + strlen(destbuf);
+		while (spaces-- > 0 && out < destbuf + STRINGTEMP_LENGTH - 1)
+			*out++ = ' ';
+		*out = 0;
+	}
+
+	G_INT(OFS_RETURN) = PR_SetEngineString(destbuf);
+}
+
+static void PF_strncmp(void)
+{
+	const char *a = G_STRING(OFS_PARM0);
+	const char *b = G_STRING(OFS_PARM1);
+	int alen = strlen(a);
+	int blen = strlen(b);
+	int len = qcvm->argc > 2 ? G_FLOAT(OFS_PARM2) : -1;
+	int aofs = qcvm->argc > 3 ? G_FLOAT(OFS_PARM3) : 0;
+	int bofs = qcvm->argc > 4 ? G_FLOAT(OFS_PARM4) : 0;
+
+	if (aofs < 0)
+		aofs = 0;
+	if (bofs < 0)
+		bofs = 0;
+	if (aofs > alen)
+		aofs = alen;
+	if (bofs > blen)
+		bofs = blen;
+
+	G_FLOAT(OFS_RETURN) = len >= 0 ? Q_strncmp(a + aofs, b + bofs, len) :
+		Q_strcmp(a + aofs, b + bofs);
+}
+
+static void PF_strncasecmp(void)
+{
+	const char *a = G_STRING(OFS_PARM0);
+	const char *b = G_STRING(OFS_PARM1);
+	int alen = strlen(a);
+	int blen = strlen(b);
+	int len = qcvm->argc > 2 ? G_FLOAT(OFS_PARM2) : -1;
+	int aofs = qcvm->argc > 3 ? G_FLOAT(OFS_PARM3) : 0;
+	int bofs = qcvm->argc > 4 ? G_FLOAT(OFS_PARM4) : 0;
+
+	if (aofs < 0)
+		aofs = 0;
+	if (bofs < 0)
+		bofs = 0;
+	if (aofs > alen)
+		aofs = alen;
+	if (bofs > blen)
+		bofs = blen;
+
+	G_FLOAT(OFS_RETURN) = len >= 0 ? q_strncasecmp(a + aofs, b + bofs, len) :
+		q_strcasecmp(a + aofs, b + bofs);
 }
 
 static qboolean qc_isascii(unsigned int u)
@@ -3550,7 +4554,7 @@ builtindef_t pr_builtindefs[] =
 	{"findradius",				PF_SSQC(PF_findradius),			22},	// entity(vector org, float rad) findradius	= #22
 	{"bprint",					PF_SSQC(PF_bprint),				23},	// void(string s) bprint		= #23
 	{"sprint",					PF_SSQC(PF_sprint),				24},	// void(entity client, string s) sprint	= #24
-	{"dprint",					PF_SSQC(PF_dprint),				25},	// void(string s) dprint		= #25
+	{"dprint",					PF_BOTH(PF_dprint),				25},	// void(string s) dprint		= #25
 	{"ftos",					PF_BOTH(PF_ftos),				26},	// void(string s) ftos			= #26
 	{"vtos",					PF_BOTH(PF_vtos),				27},	// void(string s) vtos			= #27
 	{"coredump",				PF_SSQC(PF_coredump),			28},
@@ -3596,6 +4600,7 @@ builtindef_t pr_builtindefs[] =
 	{"changelevel",				PF_SSQC(PF_changelevel),		70},
 
 	{"cvar_set",				PF_BOTH(PF_cvar_set),			72},
+	{"cvar_setlong",			PF_BOTH(PF_cvar_set),			72},
 	{"centerprint",				PF_SSQC(PF_centerprint),		73},
 
 	{"ambientsound",			PF_SSQC(PF_ambientsound),		74},
@@ -3628,12 +4633,14 @@ builtindef_t pr_builtindefs[] =
 	{"ex_walkpathtogoal",		PF_SSQC(PF_walkpathtogoal),		91},	// float(float movedist, vector goal)
 	{"ex_localsound",			PF_SSQC(PF_localsound)},				// void(entity client, string sample)
 
+	{"registercvar",			PF_BOTH(PF_registercvar),		93},	// float(string cvarname, string defaultvalue)
 	{"min",						PF_BOTH(PF_min),				94},	// float(float a, float b, ...)
 	{"max",						PF_BOTH(PF_max),				95},	// float(float a, float b, ...)
 	{"bound",					PF_BOTH(PF_bound),				96},	// float(float minimum, float val, float maximum)
 	{"pow",						PF_BOTH(PF_pow),				97},	// float(float value, float exp)
 
 	{"checkextension",			PF_BOTH(PF_checkextension),		99},	// float(string extname)
+	{"checkbuiltin",			PF_BOTH(PF_checkbuiltin)},				// float(function builtinref)
 
 	{"strlen",					PF_BOTH(PF_strlen),				114},	// float(string s)
 	{"strcat",					PF_BOTH(PF_strcat),				115},	// string(string s1, optional string s2, optional string s3, optional string s4, optional string s5, optional string s6, optional string s7, optional string s8)
@@ -3642,23 +4649,39 @@ builtindef_t pr_builtindefs[] =
 	{"strzone",					PF_BOTH(PF_strzone),			118},	// string(string s, ...)
 	{"strunzone",				PF_BOTH(PF_strunzone),			119},	// void(string s)
 
+	{"cvar_setf",				PF_BOTH(PF_cvar_setf),			176},	// void(string cvar, float val)
+
 	{"str2chr",					PF_BOTH(PF_str2chr),			222},	// float(string str, float index)
 	{"chr2str",					PF_BOTH(PF_chr2str),			223},	// string(float chr, ...)
 	{"strconv",					PF_BOTH(PF_strconv),			224},	// string(float ccase, float redalpha, float redchars, string str, ...)
+	{"strstrofs",				PF_BOTH(PF_strstrofs),			221},	// float(string s1, string sub, optional float startidx)
+	{"strpad",					PF_BOTH(PF_strpad),				225},	// string(float pad, string str1, ...)
+	{"strncmp",					PF_BOTH(PF_strncmp),			228},	// float(string s1, string s2, optional float len, optional float s1ofs, optional float s2ofs)
+	{"strcasecmp",				PF_BOTH(PF_strncasecmp),		229},	// float(string s1, string s2)
+	{"strncasecmp",				PF_BOTH(PF_strncasecmp),		230},	// float(string s1, string s2, float len, optional float s1ofs, optional float s2ofs)
 
 	{"clientstat",				PF_SSQC(PF_clientstat),			232},	// void(float num, float type, .__variant fld)
 
 	{"mod",						PF_BOTH(PF_mod),				245},	// float(float a, float n)
 	{"strconv",					PF_BOTH(PF_strconv),			249},	// alternate FTE/QSS slot used by AD CSQC
 
+	{"stoi",					PF_BOTH(PF_stoi),				259},	// int(string)
+	{"itos",					PF_BOTH(PF_itos),				260},	// string(int)
+	{"stoh",					PF_BOTH(PF_stoh),				261},	// int(string)
+	{"htos",					PF_BOTH(PF_htos),				262},	// string(int)
+
 	{"ftoi",					PF_BOTH(PF_ftoi)},						// int(float)
 	{"itof",					PF_BOTH(PF_itof)},						// float(int)
 
+	{"dprint",					PF_CSQC(PF_dprint),				277},	// Mjolnir CSQC debug-print alias
+
 	{"checkcommand",			PF_BOTH(PF_checkcommand),		294},	// float(string name)
 
+	{"drawline",				PF_CSQC(PF_cl_drawline),		315},	// void(float width, vector pos1, vector pos2, vector rgb, float alpha, optional float drawflag)
 	{"iscachedpic",				PF_CSQC(PF_cl_iscachedpic),		316},	// float(string name)
 	{"precache_pic",			PF_CSQC(PF_cl_precachepic),		317},	// string(string name, optional float flags)
 	{"drawgetimagesize",		PF_CSQC(PF_cl_getimagesize),	318},	// #define draw_getimagesize drawgetimagesize\nvector(string picname)
+	{"draw_getimagesize",		PF_CSQC(PF_cl_getimagesize),	318},	// vector(string picname)
 	{"drawcharacter",			PF_CSQC(PF_cl_drawcharacter),	320},	// float(vector position, float character, vector size, vector rgb, float alpha, optional float drawflag)
 	{"drawrawstring",			PF_CSQC(PF_cl_drawrawstring),	321},	// float(vector position, string text, vector size, vector rgb, float alpha, optional float drawflag)
 	{"drawpic",					PF_CSQC(PF_cl_drawpic),			322},	// float(vector position, string pic, vector size, vector rgb, float alpha, optional float drawflag)
@@ -3666,18 +4689,28 @@ builtindef_t pr_builtindefs[] =
 	{"drawsetcliparea",			PF_CSQC(PF_cl_drawsetclip),		324},	// void(float x, float y, float width, float height)
 	{"drawresetcliparea",		PF_CSQC(PF_cl_drawresetclip),	325},	// void(void)
 	{"drawstring",				PF_CSQC(PF_cl_drawstring),		326},	// float(vector position, string text, vector size, vector rgb, float alpha, float drawflag)
+	{"drawcolorcodedstring",	PF_CSQC(PF_cl_drawstring),		326},	// DP alias; best-effort with QSS/FTE drawstring signature
+	{"drawcolorcodedstring2",	PF_CSQC(PF_cl_drawstring),		326},	// DP alias with explicit color
 	{"stringwidth",				PF_CSQC(PF_cl_stringwidth),		327},	// float(string text, float usecolours, vector fontsize='8 8')
 	{"drawsubpic",				PF_CSQC(PF_cl_drawsubpic),		328},	// void(vector pos, vector sz, string pic, vector srcpos, vector srcsz, vector rgb, float alpha, optional float drawflag)
 
 	{"getstati",				PF_CSQC(PF_cl_getstat_int),		330},	// #define getstati_punf(stnum) (float)(__variant)getstati(stnum)\nint(float stnum)
 	{"getstatf",				PF_CSQC(PF_cl_getstat_float),	331},	// #define getstatbits getstatf\nfloat(float stnum, optional float firstbit, optional float bitcount)
 	{"getstats",				PF_CSQC(PF_cl_getstat_string),	332},	// string(float stnum)
+	{"modelnameforindex",		PF_BOTH(PF_modelnameforindex),	334},	// string(float mdlindex)
+	{"particleeffectnum",		PF_BOTH(PF_particleeffectnum),	335},	// float(string effectname)
+	{"trailparticles",			PF_BOTH(PF_trailparticles),		336},	// void(float effectnum, entity ent, vector start, vector end)
+	{"pointparticles",			PF_BOTH(PF_pointparticles),		337},	// void(float effectnum, vector origin, optional vector dir, optional float count)
 
+	{"setcursormode",			PF_CSQC(PF_cl_setcursormode),	343},	// void(float usecursor, ...)
 	{"runstandardplayerphysics",	PF_SSQC(PF_sv_pmove),			347},	// void(entity ent)
 	{"getplayerkeyvalue",		PF_CSQC(PF_cl_playerkey_s),		348},	// string(float playernum, string keyname)
 	{"getplayerkeyfloat",		PF_CSQC(PF_cl_playerkey_f)},			// float(float playernum, string keyname, optional float assumevalue)
 
 	{"registercommand",			PF_CSQC(PF_cl_registercommand),	352},	// void(string cmdname)
+	{"serverkey",				PF_BOTH(PF_serverkey_s),		354},	// string(string key)
+	{"serverkeyfloat",			PF_BOTH(PF_serverkey_f)},				// float(string key, optional float assumevalue)
+	{"loadfont",				PF_CSQC(PF_cl_loadfont),		357},	// float(string fontname, string fontmaps, string sizes, float slot, ...)
 	{"readbyte",				PF_CSQC(PF_cl_readbyte),			360},	// float()
 	{"readchar",				PF_CSQC(PF_cl_readchar),			361},	// float()
 	{"readshort",				PF_CSQC(PF_cl_readshort),			362},	// float()
@@ -3687,25 +4720,46 @@ builtindef_t pr_builtindefs[] =
 	{"readstring",				PF_CSQC(PF_cl_readstring),			366},	// string()
 	{"readfloat",				PF_CSQC(PF_cl_readfloat),			367},	// float()
 	{"readentitynum",			PF_CSQC(PF_cl_readentitynum),		368},	// float()
+	{"setcolors",				PF_SSQC(PF_setcolors),		401},	// void(entity ent, float colors)
+	{"te_particlerain",			PF_BOTH(PF_te_particlerain),	409},	// void(vector min, vector max, vector vel, float count, float color)
+	{"te_particlesnow",			PF_BOTH(PF_te_particlesnow),	410},	// void(vector min, vector max, vector vel, float count, float color)
 
 	{"ex_CheckPlayerEXFlags",	PF_SSQC(PF_CheckPlayerEXFlags),	430},	// rerelease sparse slot used by mod progs
 	{"vectorvectors",			PF_BOTH(PF_vectorvectors),		432},	// void(vector dir)
-	{"ex_CheckPlayerEXFlags",	PF_SSQC(PF_CheckPlayerEXFlags),	436},	// alternate sparse slot seen in rerelease progs
+	{"getsurfacenumpoints",		PF_BOTH(PF_getsurfacenumpoints),	434},	// float(entity e, float s)
+	{"getsurfacepoint",			PF_BOTH(PF_getsurfacepoint),	435},	// vector(entity e, float s, float n)
+	{"getsurfacenormal",		PF_BOTH(PF_getsurfacenormal),	436},	// vector(entity e, float s)
+	{"getsurfacetexture",		PF_BOTH(PF_getsurfacetexture),	437},	// string(entity e, float s)
+	{"getsurfacenearpoint",		PF_BOTH(PF_getsurfacenearpoint),	438},	// float(entity e, vector p)
+	{"getsurfaceclippedpoint",	PF_BOTH(PF_getsurfaceclippedpoint),	439},	// vector(entity e, float s, vector p)
 
 	{"clientcommand",			PF_SSQC(PF_clientcommand),		440},	// void(entity e, string s)
 	{"tokenize",				PF_BOTH(PF_Tokenize),			441},	// float(string s)
 	{"argv",					PF_BOTH(PF_ArgV),				442},	// string(float n)
 	{"argc",					PF_BOTH(PF_ArgC)},						// float()
+	{"cvar_string",				PF_BOTH(PF_cvar_string),		448},	// string(string cvarname)
 
 	{"asin",					PF_BOTH(PF_asin),				471},	// float(float s)
 	{"acos",					PF_BOTH(PF_acos),				472},	// float(float c)
 	{"atan",					PF_BOTH(PF_atan),				473},	// float(float t)
 	{"atan2",					PF_BOTH(PF_atan2),				474},	// float(float c, float s)
 	{"tan",						PF_BOTH(PF_tan),				475},	// float(float a)
+	{"strftime",				PF_BOTH(PF_strftime),			478},	// string(float uselocaltime, string format, ...)
+	{"tokenizebyseparator",		PF_BOTH(PF_tokenizebyseparator),	479},	// float(string s, string separator1, ...)
+	{"strtolower",				PF_BOTH(PF_strtolower),			480},	// string(string s)
+	{"strtoupper",				PF_BOTH(PF_strtoupper),			481},	// string(string s)
+	{"cvar_defstring",			PF_BOTH(PF_cvar_defstring),		482},	// string(string cvarname)
+	{"getsurfacepointattribute",	PF_BOTH(PF_getsurfacepointattribute),	486},	// vector(entity e, float s, float n, float a)
+	{"cvar_type",				PF_BOTH(PF_cvar_type),			495},	// float(string cvarname)
 
 	{"tokenize_console",		PF_BOTH(PF_tokenize_console),	514},	// float(string str)
+	{"argv_start_index",		PF_BOTH(PF_argv_start_index),	515},	// float(float idx)
+	{"argv_end_index",			PF_BOTH(PF_argv_end_index),		516},	// float(float idx)
+	{"cvar_description",		PF_BOTH(PF_cvar_description),	518},	// string(string cvarname)
 
 	{"sprintf",					PF_BOTH(PF_sprintf),			627},	// string(string fmt, ...)
+	{"getsurfacenumtriangles",	PF_BOTH(PF_getsurfacenumtriangles),	628},	// float(entity e, float s)
+	{"getsurfacetriangle",		PF_BOTH(PF_getsurfacetriangle),	629},	// vector(entity e, float s, float n)
 };
 int pr_numbuiltindefs = countof (pr_builtindefs);
 

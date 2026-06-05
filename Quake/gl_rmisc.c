@@ -36,6 +36,7 @@ extern cvar_t gl_farclip;
 extern cvar_t gl_overbright;
 extern cvar_t gl_overbright_models;
 extern cvar_t r_waterquality;
+extern cvar_t r_useportalculling;
 extern cvar_t r_oldwater;
 extern cvar_t r_waterwarp;
 extern cvar_t r_oldskyleaf;
@@ -46,6 +47,7 @@ extern cvar_t r_lerpmodels;
 extern cvar_t r_lerpmove;
 extern cvar_t r_nolerp_list;
 extern cvar_t r_noshadow_list;
+extern cvar_t r_part_density;
 extern cvar_t cl_coop_nametags;
 //johnfitz
 extern cvar_t gl_zfix; // QuakeSpasm z-fighting fix
@@ -178,6 +180,7 @@ void R_Init (void)
 	Cvar_RegisterVariable (&r_shadows);
 	Cvar_RegisterVariable (&r_wateralpha);
 	Cvar_SetCallback (&r_wateralpha, R_SetWateralpha_f);
+	Cvar_RegisterVariable (&r_useportalculling);
 	Cvar_RegisterVariable (&r_litwater);
 	Cvar_RegisterVariable (&r_dynamic);
 	Cvar_RegisterVariable (&r_novis);
@@ -229,12 +232,16 @@ void R_Init (void)
 	Cvar_RegisterVariable (&r_lavaalpha);
 	Cvar_RegisterVariable (&r_telealpha);
 	Cvar_RegisterVariable (&r_slimealpha);
+	Cvar_RegisterVariable (&r_part_density);
 	Cvar_RegisterVariable (&r_scale);
 	Cvar_SetCallback (&r_lavaalpha, R_SetLavaalpha_f);
 	Cvar_SetCallback (&r_telealpha, R_SetTelealpha_f);
 	Cvar_SetCallback (&r_slimealpha, R_SetSlimealpha_f);
 
 	R_InitParticles ();
+#ifdef PSET_SCRIPT
+	PScript_InitParticles ();
+#endif
 	R_SetClearColor_f (&r_clearcolor); //johnfitz
 
 	Sky_Init (); //johnfitz
@@ -393,6 +400,9 @@ void R_NewMap (void)
 
 	r_viewleaf = NULL;
 	R_ClearParticles ();
+#ifdef PSET_SCRIPT
+	PScript_ClearParticles ();
+#endif
 
 	GL_BuildLightmaps ();
 	GL_BuildBModelVertexBuffer ();

@@ -44,6 +44,7 @@ extern cvar_t gl_farclip;
 static cvar_t r_fastsky = {"r_fastsky", "0", CVAR_NONE};
 static cvar_t r_sky_quality = {"r_sky_quality", "12", CVAR_NONE};
 static cvar_t r_skyalpha = {"r_skyalpha", "1", CVAR_NONE};
+static cvar_t r_skywind = {"r_skywind", "0", CVAR_ARCHIVE};
 static cvar_t r_skyfog = {"r_skyfog","0.5",CVAR_NONE};
 cvar_t r_skyroom = {"r_skyroom", "0", CVAR_ARCHIVE};
 qboolean skyroom_drawing;
@@ -519,6 +520,24 @@ static void R_SetSkyfog_f (cvar_t *var)
 	skyfog = var->value;
 }
 
+static void Skywind_f (void)
+{
+	if (Cmd_Argc() > 1)
+		Cvar_Set ("r_skywind", Cmd_Args());
+	else
+		Con_Printf ("skywind %s\n", r_skywind.string);
+}
+
+static void Skywind_Load_f (void)
+{
+	Con_DPrintf ("skywind_load: sky wind rendering is not active in this build\n");
+}
+
+static void Skywind_Save_f (void)
+{
+	Con_DPrintf ("skywind_save: sky wind rendering is not active in this build\n");
+}
+
 /*
 =============
 Sky_Init
@@ -531,11 +550,15 @@ void Sky_Init (void)
 	Cvar_RegisterVariable (&r_fastsky);
 	Cvar_RegisterVariable (&r_sky_quality);
 	Cvar_RegisterVariable (&r_skyalpha);
+	Cvar_RegisterVariable (&r_skywind);
 	Cvar_RegisterVariable (&r_skyfog);
 	Cvar_RegisterVariable (&r_skyroom);
 	Cvar_SetCallback (&r_skyfog, R_SetSkyfog_f);
 
 	Cmd_AddCommand ("sky",Sky_SkyCommand_f);
+	Cmd_AddCommand ("skywind",Skywind_f);
+	Cmd_AddCommand ("skywind_load",Skywind_Load_f);
+	Cmd_AddCommand ("skywind_save",Skywind_Save_f);
 
 	skybox_name[0] = 0;
 	for (i=0; i<6; i++)

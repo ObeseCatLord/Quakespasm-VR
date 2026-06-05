@@ -98,6 +98,9 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #define	MAX_LIGHTSTYLES	64
 #define	MAX_MODELS	4096		// johnfitz -- was 256
 #define	MAX_SOUNDS	2048		// johnfitz -- was 256
+#define	MAX_PARTICLETYPES 1024	// named DP/FTE particle effect ids
+#define	PSET_SCRIPT				// QSS-M/FTE-style script particles
+#define	PSET_SCRIPT_EFFECTINFO	// parse DarkPlaces effectinfo.txt particle definitions
 
 #define	SAVEGAME_COMMENT_LENGTH	39
 

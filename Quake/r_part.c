@@ -37,8 +37,8 @@ static particle_t *active_particles, *free_particles, *particles;
 
 static int r_numparticles;
 
-static gltexture_t *particletexture, *particletexture1, *particletexture2,
-    *particletexture3;           // johnfitz
+gltexture_t *particletexture1; // used by the QSS-M/FTE script particle path
+static gltexture_t *particletexture, *particletexture2, *particletexture3; // johnfitz
 static float texturescalefactor; // johnfitz -- compensate for apparent size of
                                  // different particle textures
 

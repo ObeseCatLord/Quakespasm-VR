@@ -530,6 +530,8 @@ void CL_SendMove(const usercmd_t *cmd) {
 
   if (local_singleplayer) {
     cl.ackedmovemessages = seq;
+    if (cl.qcvm.extglobals.servercommandframe)
+      *cl.qcvm.extglobals.servercommandframe = cl.ackedmovemessages;
     cl_lagdebug_last_sendmove = 0;
   } else if (seq < 2) {
     //

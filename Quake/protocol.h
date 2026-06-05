@@ -356,6 +356,9 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #define svcfte_cgamepacket 83
 #define svcfte_setangledelta 85
 #define svcfte_updateentities 86
+#define svcdp_trailparticles 60
+#define svcdp_pointparticles 61
+#define svcdp_pointparticles1 62
 
 //
 // client to server
@@ -409,6 +412,21 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 // PGM 01/21/97
 #define TE_BEAM 13
 // PGM 01/21/97
+
+// DarkPlaces/FTE temp-entity particle extensions.
+#define TEDP_BLOOD			50
+#define TEDP_SPARK			51
+#define TEDP_BLOODSHOWER	52
+#define TEDP_EXPLOSIONRGB	53
+#define TEDP_PARTICLECUBE	54
+#define TEDP_PARTICLERAIN	55
+#define TEDP_PARTICLESNOW	56
+#define TEDP_GUNSHOTQUAD	57
+#define TEDP_SPIKEQUAD		58
+#define TEDP_SUPERSPIKEQUAD	59
+#define TEDP_EXPLOSIONQUAD	70
+#define TEDP_SMALLFLASH		72
+#define TEDP_CUSTOMFLASH	73
 
 typedef struct {
   vec3_t origin;
