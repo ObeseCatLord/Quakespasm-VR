@@ -622,7 +622,7 @@ void R_DrawTextureChains_Water (qmodel_t *model, entity_t *ent, texchain_t chain
 
 		has_lit_water = true;
 
-		GL_UseProgramFunc (r_world_program);
+		GL_UseProgram (r_world_program);
 
 		// Bind the buffers
 		GL_BindBuffer (GL_ARRAY_BUFFER, gl_bmodel_vbo);
@@ -706,7 +706,7 @@ void R_DrawTextureChains_Water (qmodel_t *model, entity_t *ent, texchain_t chain
 		GL_DisableVertexAttribArrayFunc (vertAttrIndex);
 		GL_DisableVertexAttribArrayFunc (texCoordsAttrIndex);
 		GL_DisableVertexAttribArrayFunc (LMCoordsAttrIndex);
-		GL_UseProgramFunc (0);
+		GL_UseProgram (0);
 		GL_SelectTexture (GL_TEXTURE0);
 	}
 	else
@@ -931,7 +931,7 @@ void R_DrawTextureChains_GLSL (qmodel_t *model, entity_t *ent, texchain_t chain)
 		glEnable (GL_BLEND);
 	}
 
-	GL_UseProgramFunc (r_world_program);
+	GL_UseProgram (r_world_program);
 
 // Bind the buffers
 	GL_BindBuffer (GL_ARRAY_BUFFER, gl_bmodel_vbo);
@@ -1013,7 +1013,7 @@ void R_DrawTextureChains_GLSL (qmodel_t *model, entity_t *ent, texchain_t chain)
 	GL_DisableVertexAttribArrayFunc (texCoordsAttrIndex);
 	GL_DisableVertexAttribArrayFunc (LMCoordsAttrIndex);
 
-	GL_UseProgramFunc (0);
+	GL_UseProgram (0);
 	GL_SelectTexture (GL_TEXTURE0);
 
 	if (entalpha < 1)
@@ -1038,7 +1038,7 @@ void R_DrawLightmapChains_GLSL(qmodel_t* model, entity_t* ent, texchain_t chain)
 	texture_t* t;
 	int		lastlightmap;
 
-	GL_UseProgramFunc(r_world_program);
+	GL_UseProgram(r_world_program);
 
 	// Bind the buffers
 	GL_BindBuffer(GL_ARRAY_BUFFER, gl_bmodel_vbo);
@@ -1103,7 +1103,7 @@ void R_DrawLightmapChains_GLSL(qmodel_t* model, entity_t* ent, texchain_t chain)
 	GL_DisableVertexAttribArrayFunc(texCoordsAttrIndex);
 	GL_DisableVertexAttribArrayFunc(LMCoordsAttrIndex);
 
-	GL_UseProgramFunc(0);
+	GL_UseProgram(0);
 	GL_SelectTexture(GL_TEXTURE0);
 }
 

@@ -634,7 +634,6 @@ void SCR_DrawCrosshair(void) {
 
   if (!crosshair.value) {
     if (vr_enabled.value || !scr_crosshair_desktop_fallback.value ||
-        q_strcasecmp(COM_SkipPath(com_gamedir), "vr") ||
         cls.state != ca_connected || cls.signon != SIGNONS ||
         key_dest != key_game)
       return;

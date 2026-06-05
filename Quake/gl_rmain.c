@@ -24,6 +24,8 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "quakedef.h"
 #include "vr.h"
 
+extern cvar_t r_alias_batching;
+
 vec3_t modelorg, r_entorigin;
 entity_t *currententity;
 
@@ -245,7 +247,7 @@ void GLSLGamma_GammaCorrect(void) {
   glCopyTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, glx, gly, glwidth, glheight);
 
   // draw the texture back to the framebuffer with a fragment shader
-  GL_UseProgramFunc(r_gamma_program);
+  GL_UseProgram(r_gamma_program);
   GL_Uniform1fFunc(gammaLoc, vid_gamma.value);
   GL_Uniform1fFunc(contrastLoc, q_min(2.0f, q_max(1.0f, vid_contrast.value)));
   GL_Uniform1iFunc(textureLoc, 0); // use texture unit 0
@@ -272,7 +274,7 @@ void GLSLGamma_GammaCorrect(void) {
 
   glEnable(GL_CULL_FACE);
 
-  GL_UseProgramFunc(0);
+  GL_UseProgram(0);
 
   // clear cached binding
   GL_ClearBindings();
@@ -537,6 +539,24 @@ in stereo mode
 */
 void R_SetupScene(void) { R_SetupGL(); }
 
+static void R_SetupCheatSafeDrawModes(void) {
+  // johnfitz -- cheat-protect some draw modes
+  r_drawflat_cheatsafe = r_fullbright_cheatsafe = r_lightmap_cheatsafe = false;
+  r_drawworld_cheatsafe = true;
+  if (cl.maxclients == 1) {
+    if (!r_drawworld.value)
+      r_drawworld_cheatsafe = false;
+
+    if (r_drawflat.value)
+      r_drawflat_cheatsafe = true;
+    else if (r_fullbright.value || !cl.worldmodel->lightdata)
+      r_fullbright_cheatsafe = true;
+    else if (r_lightmap.value)
+      r_lightmap_cheatsafe = true;
+  }
+  // johnfitz
+}
+
 /*
 ===============
 R_SetupView -- johnfitz -- this is the stuff that needs to be done once per
@@ -545,7 +565,7 @@ frame, even in stereo mode
 */
 void R_SetupView(void) {
   // Need to do those early because we now update dynamic light maps during
-  // R_MarkSurfaces
+  // R_MarkSurfaces.
   R_PushDlights();
   R_AnimateLight();
   r_framecount++;
@@ -592,21 +612,7 @@ void R_SetupView(void) {
 
   R_Clear();
 
-  // johnfitz -- cheat-protect some draw modes
-  r_drawflat_cheatsafe = r_fullbright_cheatsafe = r_lightmap_cheatsafe = false;
-  r_drawworld_cheatsafe = true;
-  if (cl.maxclients == 1) {
-    if (!r_drawworld.value)
-      r_drawworld_cheatsafe = false;
-
-    if (r_drawflat.value)
-      r_drawflat_cheatsafe = true;
-    else if (r_fullbright.value || !cl.worldmodel->lightdata)
-      r_fullbright_cheatsafe = true;
-    else if (r_lightmap.value)
-      r_lightmap_cheatsafe = true;
-  }
-  // johnfitz
+  R_SetupCheatSafeDrawModes();
 }
 
 //==============================================================================
@@ -620,12 +626,89 @@ void R_SetupView(void) {
 R_DrawEntitiesOnList
 =============
 */
+static int R_AliasEntitySortCompare(const void *pa, const void *pb) {
+  const entity_t *a = *(const entity_t *const *)pa;
+  const entity_t *b = *(const entity_t *const *)pb;
+  uintptr_t ak, bk;
+
+  if (a->model != b->model) {
+    ak = (uintptr_t)a->model;
+    bk = (uintptr_t)b->model;
+    return (ak > bk) - (ak < bk);
+  }
+  if (a->skinnum != b->skinnum)
+    return (a->skinnum > b->skinnum) - (a->skinnum < b->skinnum);
+  if (a->colormap != b->colormap) {
+    ak = (uintptr_t)a->colormap;
+    bk = (uintptr_t)b->colormap;
+    return (ak > bk) - (ak < bk);
+  }
+  if (a->alpha != b->alpha)
+    return (a->alpha > b->alpha) - (a->alpha < b->alpha);
+
+  ak = (uintptr_t)a;
+  bk = (uintptr_t)b;
+  return (ak > bk) - (ak < bk);
+}
+
+static void R_DrawCurrentEntityOnList(void) {
+  switch (currententity->model->type) {
+  case mod_alias:
+    R_DrawAliasModel(currententity);
+    break;
+  case mod_brush:
+    R_DrawBrushModel(currententity);
+    break;
+  case mod_sprite:
+    R_DrawSpriteModel(currententity);
+    break;
+  }
+}
+
 void R_DrawEntitiesOnList(qboolean alphapass) // johnfitz -- added parameter
 {
   int i;
+  entity_t *alias_ents[MAX_VISEDICTS];
+  int alias_count = 0;
 
   if (!r_drawentities.value)
     return;
+
+  if (!alphapass && r_alias_batching.value) {
+    for (i = 0; i < cl_numvisedicts; i++) {
+      currententity = cl_visedicts[i];
+
+      if (ENTALPHA_DECODE(currententity->alpha) < 1)
+        continue;
+
+      // johnfitz -- chasecam
+      if (currententity == &cl_entities[cl.viewentity])
+        currententity->angles[0] *= 0.3;
+      // johnfitz
+
+      if (currententity->model->type == mod_alias) {
+        if (alias_count < MAX_VISEDICTS)
+          alias_ents[alias_count++] = currententity;
+        continue;
+      }
+
+      R_DrawCurrentEntityOnList();
+    }
+
+    if (alias_count > 1)
+      qsort(alias_ents, alias_count, sizeof(alias_ents[0]),
+            R_AliasEntitySortCompare);
+
+    R_BeginAliasBatchScope();
+    for (i = 0; i < alias_count; i++) {
+      currententity = alias_ents[i];
+      R_DrawAliasModel(currententity);
+    }
+    R_EndAliasBatchScope();
+    return;
+  }
+
+  R_BeginAliasBatchScope();
 
   // johnfitz -- sprites are not a special case
   for (i = 0; i < cl_numvisedicts; i++) {
@@ -642,18 +725,14 @@ void R_DrawEntitiesOnList(qboolean alphapass) // johnfitz -- added parameter
       currententity->angles[0] *= 0.3;
     // johnfitz
 
-    switch (currententity->model->type) {
-    case mod_alias:
-      R_DrawAliasModel(currententity);
-      break;
-    case mod_brush:
-      R_DrawBrushModel(currententity);
-      break;
-    case mod_sprite:
-      R_DrawSpriteModel(currententity);
-      break;
-    }
+    if (currententity->model->type != mod_alias)
+      R_EndAliasBatchScope();
+    R_DrawCurrentEntityOnList();
+    if (currententity->model->type != mod_alias)
+      R_BeginAliasBatchScope();
   }
+
+  R_EndAliasBatchScope();
 }
 
 /*

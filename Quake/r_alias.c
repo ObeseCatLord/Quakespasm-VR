@@ -27,6 +27,8 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 extern cvar_t r_drawflat, gl_overbright_models, gl_fullbrights, r_lerpmodels, r_lerpmove; //johnfitz
 extern cvar_t scr_fov, cl_gun_fovscale, vr_enabled;
 
+cvar_t r_alias_batching = {"r_alias_batching", "1", CVAR_ARCHIVE};
+
 //up to 16 color translated skins
 gltexture_t *playertextures[MAX_SCOREBOARD]; //johnfitz -- changed to an array of pointers
 
@@ -52,6 +54,10 @@ static float	entalpha; //johnfitz
 static qboolean overbright; //johnfitz
 
 static qboolean shading = true; //johnfitz -- if false, disable vertex shading for various reasons (fullbright, r_lightmap, showtris, etc)
+
+static qboolean r_alias_batch_scope;
+static qboolean r_alias_glsl_batch_active;
+static qmodel_t *r_alias_glsl_batch_model;
 
 //johnfitz -- struct for passing lerp information to drawing functions
 typedef struct {
@@ -109,6 +115,64 @@ static void *GLARB_GetNormalOffset (aliashdr_t *hdr, int pose)
 {
 	const int normaloffs = offsetof (meshxyz_t, normal);
 	return (void *)(currententity->model->vboxyzofs + (hdr->numverts_vbo * pose * sizeof (meshxyz_t)) + normaloffs);
+}
+
+static void GL_AliasBatch_End (void)
+{
+	if (!r_alias_glsl_batch_active)
+		return;
+
+	GL_DisableVertexAttribArrayFunc (texCoordsAttrIndex);
+	GL_DisableVertexAttribArrayFunc (pose1VertexAttrIndex);
+	GL_DisableVertexAttribArrayFunc (pose2VertexAttrIndex);
+	GL_DisableVertexAttribArrayFunc (pose1NormalAttrIndex);
+	GL_DisableVertexAttribArrayFunc (pose2NormalAttrIndex);
+
+	GL_UseProgram (0);
+	GL_SelectTexture (GL_TEXTURE0);
+
+	r_alias_glsl_batch_active = false;
+	r_alias_glsl_batch_model = NULL;
+}
+
+void R_BeginAliasBatchScope (void)
+{
+	if (!r_alias_batching.value)
+		return;
+	r_alias_batch_scope = true;
+}
+
+void R_EndAliasBatchScope (void)
+{
+	GL_AliasBatch_End ();
+	r_alias_batch_scope = false;
+}
+
+static void GL_AliasBatch_Begin (void)
+{
+	if (r_alias_glsl_batch_active && r_alias_glsl_batch_model == currententity->model)
+		return;
+
+	GL_AliasBatch_End ();
+
+	GL_UseProgram (r_alias_program);
+
+	GL_BindBuffer (GL_ARRAY_BUFFER, currententity->model->meshvbo);
+	GL_BindBuffer (GL_ELEMENT_ARRAY_BUFFER, currententity->model->meshindexesvbo);
+
+	GL_EnableVertexAttribArrayFunc (texCoordsAttrIndex);
+	GL_EnableVertexAttribArrayFunc (pose1VertexAttrIndex);
+	GL_EnableVertexAttribArrayFunc (pose2VertexAttrIndex);
+	GL_EnableVertexAttribArrayFunc (pose1NormalAttrIndex);
+	GL_EnableVertexAttribArrayFunc (pose2NormalAttrIndex);
+
+	GL_VertexAttribPointerFunc (texCoordsAttrIndex, 2, GL_FLOAT, GL_FALSE, 0, (void *)(intptr_t)currententity->model->vbostofs);
+
+	GL_Uniform1iFunc (texLoc, 0);
+	GL_Uniform1iFunc (fullbrightTexLoc, 1);
+
+	r_alias_glsl_batch_active = true;
+	r_alias_glsl_batch_model = currententity->model;
 }
 
 /*
@@ -235,7 +299,42 @@ void GL_DrawAliasFrame_GLSL (aliashdr_t *paliashdr, lerpdata_t lerpdata, gltextu
 		blend = 0;
 	}
 
-	GL_UseProgramFunc (r_alias_program);
+	if (r_alias_batch_scope && r_alias_batching.value)
+	{
+		GL_AliasBatch_Begin ();
+
+		GL_VertexAttribPointerFunc (pose1VertexAttrIndex, 4, GL_UNSIGNED_BYTE, GL_FALSE, sizeof (meshxyz_t), GLARB_GetXYZOffset (paliashdr, lerpdata.pose1));
+		GL_VertexAttribPointerFunc (pose2VertexAttrIndex, 4, GL_UNSIGNED_BYTE, GL_FALSE, sizeof (meshxyz_t), GLARB_GetXYZOffset (paliashdr, lerpdata.pose2));
+	// GL_TRUE to normalize the signed bytes to [-1 .. 1]
+		GL_VertexAttribPointerFunc (pose1NormalAttrIndex, 4, GL_BYTE, GL_TRUE, sizeof (meshxyz_t), GLARB_GetNormalOffset (paliashdr, lerpdata.pose1));
+		GL_VertexAttribPointerFunc (pose2NormalAttrIndex, 4, GL_BYTE, GL_TRUE, sizeof (meshxyz_t), GLARB_GetNormalOffset (paliashdr, lerpdata.pose2));
+
+	// set uniforms
+		GL_Uniform1fFunc (blendLoc, blend);
+		GL_Uniform3fFunc (shadevectorLoc, shadevector[0], shadevector[1], shadevector[2]);
+		GL_Uniform4fFunc (lightColorLoc, lightcolor[0], lightcolor[1], lightcolor[2], entalpha);
+		GL_Uniform1iFunc (useFullbrightTexLoc, (fb != NULL) ? 1 : 0);
+		GL_Uniform1fFunc (useOverbrightLoc, overbright);
+		GL_Uniform1iFunc (useAlphaTestLoc, (currententity->model->flags & MF_HOLEY) ? 1 : 0);
+
+	// set textures
+		GL_SelectTexture (GL_TEXTURE0);
+		GL_Bind (tx);
+
+		if (fb)
+		{
+			GL_SelectTexture (GL_TEXTURE1);
+			GL_Bind (fb);
+		}
+
+	// draw
+		glDrawElements (GL_TRIANGLES, paliashdr->numindexes, GL_UNSIGNED_SHORT, (void *)(intptr_t)currententity->model->vboindexofs);
+
+		rs_aliaspasses += paliashdr->numtris;
+		return;
+	}
+
+	GL_UseProgram (r_alias_program);
 
 	GL_BindBuffer (GL_ARRAY_BUFFER, currententity->model->meshvbo);
 	GL_BindBuffer (GL_ELEMENT_ARRAY_BUFFER, currententity->model->meshindexesvbo);
@@ -283,7 +382,7 @@ void GL_DrawAliasFrame_GLSL (aliashdr_t *paliashdr, lerpdata_t lerpdata, gltextu
 	GL_DisableVertexAttribArrayFunc (pose1NormalAttrIndex);
 	GL_DisableVertexAttribArrayFunc (pose2NormalAttrIndex);
 
-	GL_UseProgramFunc (0);
+	GL_UseProgram (0);
 	GL_SelectTexture (GL_TEXTURE0);
 
 	rs_aliaspasses += paliashdr->numtris;
