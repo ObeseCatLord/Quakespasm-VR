@@ -879,6 +879,17 @@ void Mod_Weapon(const char *name, aliashdr_t *hdr) {
   }
 }
 
+void VR_ApplyCurrentViewWeaponTransform(void) {
+  aliashdr_t *hdr;
+
+  if (!vr_enabled.value || !cl.viewent.model ||
+      cl.viewent.model->type != mod_alias)
+    return;
+
+  hdr = (aliashdr_t *)Mod_Extradata(cl.viewent.model);
+  Mod_Weapon(cl.viewent.model->name, hdr);
+}
+
 char *CopyWithNumeral(const char *str, int i) {
   int len = strlen(str);
   char *ret = (char *)malloc(len + 1);
@@ -2436,7 +2447,7 @@ static qboolean VR_AdjustWeaponCommit(void) {
 
   if (VR_AdjustModeIsWeapon(vr_adjust_mode)) {
     vec3_t old_offset, old_anchor_world, target_delta_world;
-    vec3_t frozen_angles, current_angles, new_scale_origin;
+    vec3_t frozen_angles, new_scale_origin;
     vec3_t base_offset, mp_held_offset, new_effective_offset, new_base_offset;
     float scaleCorrect =
         (vr_world_scale.value / 0.75f) * vr_gunmodelscale.value;
@@ -2457,10 +2468,11 @@ static qboolean VR_AdjustWeaponCommit(void) {
                           old_anchor_world);
     VectorAdd(vr_adjust_frozen_handpos, old_anchor_world, old_anchor_world);
 
-    VR_HandRotToViewmodelAngles(vr_adjust_current_handrot, current_angles);
     VectorSubtract(old_anchor_world, vr_adjust_current_handpos,
                    target_delta_world);
-    VR_WorldToModelOffset(target_delta_world, current_angles, scaleCorrect,
+    // Weapon adjustment is a recentering tool. Use the frozen rotation so
+    // wrist movement while placing the controller cannot skew the saved offset.
+    VR_WorldToModelOffset(target_delta_world, frozen_angles, scaleCorrect,
                           new_scale_origin);
 
     VectorSubtract(new_scale_origin, vr_adjust_original_scale_origin,
@@ -3653,10 +3665,7 @@ void VR_UpdateScreenContent() {
       AngleVectorFromRotMat(mat, cl.handrot[i]);
     }
 
-    if (cl.viewent.model) {
-      aliashdr_t *hdr = (aliashdr_t *)Mod_Extradata(cl.viewent.model);
-      Mod_Weapon(cl.viewent.model->name, hdr);
-    }
+    VR_ApplyCurrentViewWeaponTransform();
 
     VectorCopy(cl.handrot[1], cl.aimangles); // Sets the shooting angle
 

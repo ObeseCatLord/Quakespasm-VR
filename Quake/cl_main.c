@@ -36,6 +36,8 @@ cvar_t	cl_color = {"_cl_color", "0", CVAR_ARCHIVE};
 
 cvar_t	cl_shownet = {"cl_shownet","0",CVAR_NONE};	// can be 0, 1, or 2
 cvar_t	cl_nolerp = {"cl_nolerp","0",CVAR_NONE};
+cvar_t	cl_lerpdebug = {"cl_lerpdebug","0",CVAR_NONE};
+cvar_t	cl_lerpdebug_models = {"cl_lerpdebug_models","",CVAR_NONE};
 // Max seconds of linear extrapolation past the latest server snapshot.
 // At sys_ticrate 0.05 (20 Hz) a fast client renders many frames between
 // snapshots and would otherwise freeze entities at frac=1 until the next
@@ -975,6 +977,11 @@ static qboolean CL_PredictRunCommand (const usercmd_t *cmd, vec3_t origin, vec3_
 	return CL_PredictGrounded (origin);
 }
 
+static qboolean CL_LocalSingleplayerActive (void)
+{
+	return sv.active && svs.maxclients <= 1;
+}
+
 static qboolean CL_PredictPlayerLegacy (entity_t *ent)
 {
 	int		seq;
@@ -984,6 +991,9 @@ static qboolean CL_PredictPlayerLegacy (entity_t *ent)
 	qboolean	jump_released;
 	usercmd_t	pending;
 	vec3_t		origin, velocity;
+
+	if (CL_LocalSingleplayerActive ())
+		return false;
 
 	VectorCopy (ent->msg_origins[0], origin);
 	if (cl.predstate_valid && cl.predstate_sequence >= cl.ackedmovemessages)
@@ -1168,13 +1178,14 @@ static qboolean CL_PredictPlayer (entity_t *ent)
 	vec3_t		default_player_maxs = {16, 16, 32};
 	unsigned int	solidsize;
 
+	if (CL_LocalSingleplayerActive ())
+		return false;
+
 	if (!cl_predictmove.value || cl_nopred.value || cls.demoplayback ||
 		cls.state != ca_connected || cls.signon != SIGNONS ||
 		!cls.moveext_allowed || !cl.worldmodel || cl.viewentity <= 0)
 		return false;
 	if (ent != &cl_entities[cl.viewentity])
-		return false;
-	if (sv.active && svs.maxclients <= 1)
 		return false;
 	if (!(cl.protocol_pext2 & PEXT2_REPLACEMENTDELTAS))
 		return CL_PredictPlayerLegacy (ent);
@@ -1846,6 +1857,8 @@ void CL_Init (void)
 	Cvar_RegisterVariable (&cl_anglespeedkey);
 	Cvar_RegisterVariable (&cl_shownet);
 	Cvar_RegisterVariable (&cl_nolerp);
+	Cvar_RegisterVariable (&cl_lerpdebug);
+	Cvar_RegisterVariable (&cl_lerpdebug_models);
 	Cvar_RegisterVariable (&cl_extrapolate);
 	Cvar_RegisterVariable (&cl_extrapolate_adaptive);
 	Cvar_RegisterVariable (&cl_extrapolate_adaptive_max);

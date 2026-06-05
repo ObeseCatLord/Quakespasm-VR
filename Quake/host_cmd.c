@@ -1764,6 +1764,7 @@ static void Host_Spawn_f(void) {
   client_t *client;
   edict_t *ent;
   qboolean loaded_client;
+  qboolean initial_spawn_client;
 
   if (cmd_source == src_command) {
     Con_Printf("spawn is not valid from the console\n");
@@ -1779,6 +1780,8 @@ static void Host_Spawn_f(void) {
   loaded_client = sv.loadgame && !sv.loadgame_resumed &&
       clientnum >= 0 && clientnum < MAX_SCOREBOARD &&
       sv.loadgame_client_saved[clientnum] && sv.loadgame_client_edicts;
+  initial_spawn_client = clientnum >= 0 && clientnum < MAX_SCOREBOARD &&
+      svs.coop_initial_spawn_client[clientnum];
 
   // run the entrance script
   if (loaded_client) { // saved client edicts are fully inited already
@@ -1789,6 +1792,8 @@ static void Host_Spawn_f(void) {
     host_client->old_frags = (int)ent->v.frags;
     SV_LinkEdict(ent, false);
     sv.loadgame_client_saved[clientnum] = false;
+    if (clientnum >= 0 && clientnum < MAX_SCOREBOARD)
+      svs.coop_initial_spawn_client[clientnum] = false;
     sv.loadgame_resumed = true;
     Host_LoadgameDiscardPendingClients(true);
     sv.paused = false;
@@ -1815,7 +1820,9 @@ static void Host_Spawn_f(void) {
       Sys_Printf("%s entered the game\n", host_client->name);
 
     PR_ExecuteProgram(pr_global_struct->PutClientInServer);
-    if (svs.coop_loadgame_late_join_spawns_near &&
+    if (clientnum >= 0 && clientnum < MAX_SCOREBOARD)
+      svs.coop_initial_spawn_client[clientnum] = false;
+    if ((svs.coop_loadgame_late_join_spawns_near || !initial_spawn_client) &&
         sv_coop_respawn_near_player.value)
       SV_CoopRespawnPlaceNearPlayer(ent);
     if (sv.loadgame) {
