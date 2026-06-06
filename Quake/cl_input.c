@@ -516,8 +516,8 @@ void CL_SendMove(const usercmd_t *cmd) {
       cls.trusted_clientmove_allowed &&
       cls.state == ca_connected && cls.signon == SIGNONS &&
       cl.viewentity > 0 && cl.viewentity < cl.num_entities &&
-      cl_entities[cl.viewentity].model) {
-    entity_t *ent = &cl_entities[cl.viewentity];
+      cl.entities[cl.viewentity].model) {
+    entity_t *ent = &cl.entities[cl.viewentity];
     sendcmd.trusted_active = true;
     VectorCopy(ent->origin, sendcmd.trusted_origin);
     VectorCopy(cl.velocity, sendcmd.trusted_velocity);

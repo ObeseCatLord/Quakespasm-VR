@@ -681,7 +681,7 @@ float CL_TraceLine (vec3_t start, vec3_t end, vec3_t impact, vec3_t normal, int 
 		num_trace_line_ents = 0;
 		for (i = 0; i < cl.num_entities; i++)
 		{
-			ent = &cl_entities[i];
+			ent = &cl.entities[i];
 			if (!ent->model || ent->model->needload || ent->model->type != mod_brush)
 				continue;
 			trace_line_ents[num_trace_line_ents++] = i;
@@ -693,7 +693,7 @@ float CL_TraceLine (vec3_t start, vec3_t end, vec3_t impact, vec3_t normal, int 
 		*entnum = 0;
 	for (i = 0; i < num_trace_line_ents; i++)
 	{
-		ent = &cl_entities[trace_line_ents[i]];
+		ent = &cl.entities[trace_line_ents[i]];
 		if (!ent->model || ent->model->needload || ent->model->type != mod_brush)
 			continue;
 
@@ -3315,6 +3315,10 @@ static void P_ImportEffectInfo(const char *config, char *line, qboolean part_par
 			ptype->orgwrand[1] = atof(arg[2]);
 			ptype->orgwrand[2] = atof(arg[3]);
 		}
+		else if (!strcmp(arg[0], "originjitter") && args == 1)
+		{
+			VectorClear(ptype->orgwrand);
+		}
 		else if (!strcmp(arg[0], "gravity") && args == 2)
 		{
 			ptype->gravity = 800*atof(arg[1]);
@@ -4046,10 +4050,34 @@ void PScript_EmitSkyEffectTris(qmodel_t *mod, msurface_t 	*fa, int ptype)
 }
 
 // Trailstate functions
+static qboolean P_TrailstateInPool(const trailstate_t *ts)
+{
+	uintptr_t addr, start, end;
+
+	if (!trailstates || r_numtrailstates <= 0 || !ts)
+		return false;
+	addr = (uintptr_t)ts;
+	start = (uintptr_t)trailstates;
+	end = (uintptr_t)(trailstates + r_numtrailstates);
+	return addr >= start && addr < end;
+}
+
+static qboolean P_BeamsegInPool(const beamseg_t *bs)
+{
+	uintptr_t addr, start, end;
+
+	if (!beams || r_numbeams <= 0 || !bs)
+		return false;
+	addr = (uintptr_t)bs;
+	start = (uintptr_t)beams;
+	end = (uintptr_t)(beams + r_numbeams);
+	return addr >= start && addr < end;
+}
+
 static void P_CleanTrailstate(trailstate_t *ts)
 {
 	// clear LASTSEG flag from lastbeam so it can be reused
-	if (ts->lastbeam)
+	if (P_BeamsegInPool(ts->lastbeam))
 	{
 		ts->lastbeam->flags &= ~BS_LASTSEG;
 		ts->lastbeam->flags |= BS_NODRAW;
@@ -4070,6 +4098,9 @@ void PScript_DelinkTrailstate(trailstate_t **tsk)
 	ts = *tsk; // store old pointer
 	*tsk = NULL; // clear pointer
 
+	if (!P_TrailstateInPool(ts))
+		return; // stale pointer from a freed client hunk/entity
+
 	if (ts->key != tsk)
 		return; // prevent overwrite
 
@@ -4077,7 +4108,7 @@ void PScript_DelinkTrailstate(trailstate_t **tsk)
 	P_CleanTrailstate(ts); // clean directly linked trailstate
 
 	// clean trailstates assoc linked
-	while (assoc)
+	while (P_TrailstateInPool(assoc))
 	{
 		ts = assoc->assoc;
 		P_CleanTrailstate(assoc);
@@ -5538,7 +5569,7 @@ int PScript_EntParticleTrail(vec3_t oldorg, entity_t *ent, const char *name)
 		return 1;
 
 	AngleVectors(ent->angles, axis[0], axis[1], axis[2]);
-	return PScript_ParticleTrail(oldorg, ent->origin, type, timeinterval, ent - cl_entities, axis, &ent->trailstate);
+	return PScript_ParticleTrail(oldorg, ent->origin, type, timeinterval, ent - cl.entities, axis, &ent->trailstate);
 }
 
 /*
@@ -7849,7 +7880,7 @@ void PScript_DrawParticles (void)
 	{
 		for (i = 0; i < cl.num_entities; i++)
 		{
-			ent = &cl_entities[i];
+			ent = &cl.entities[i];
 			if (!ent->model || ent->model->needload)
 				continue;
 			if (!ent->model->skytris)

@@ -1292,7 +1292,7 @@ static vr_controller_render_model_t *VR_GetControllerRenderModel(int hand) {
 
 static void VR_TrackingPointToWorld(const vr::HmdVector3_t point,
                                     vec3_t out) {
-  entity_t *player = &cl_entities[cl.viewentity];
+  entity_t *player = &cl.entities[cl.viewentity];
   vec3_t tracking, headLocalPreRot, headLocal;
 
   tracking[0] = (point.v[2] - lastHeadOrigin[0]) * meters_to_units;
@@ -3467,7 +3467,7 @@ void VR_UpdateScreenContent() {
   w = glwidth;
   h = glheight;
 
-  entity_t *player = &cl_entities[cl.viewentity];
+  entity_t *player = &cl.entities[cl.viewentity];
 
   // Update poses
   vr::VRCompositor()->WaitGetPoses(ovr_DevicePose,
