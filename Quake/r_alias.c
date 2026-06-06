@@ -681,7 +681,7 @@ void R_SetupAliasLighting (entity_t	*e)
 	}
 
 	// minimum light value on players (8)
-	if (currententity > cl_entities && currententity <= cl_entities + cl.maxclients)
+	if (currententity > cl.entities && currententity <= cl.entities + cl.maxclients)
 	{
 		add = 24.0f - (lightcolor[0] + lightcolor[1] + lightcolor[2]);
 		if (add > 0.0f)
@@ -812,8 +812,8 @@ void R_DrawAliasModel (entity_t *e)
 	fb = paliashdr->fbtextures[skinnum][anim];
 	if (e->colormap != vid.colormap && !gl_nocolors.value)
 	{
-		if ((uintptr_t)e >= (uintptr_t)&cl_entities[1] && (uintptr_t)e <= (uintptr_t)&cl_entities[cl.maxclients]) /* && !strcmp (currententity->model->name, "progs/player.mdl") */
-			tx = playertextures[e - cl_entities - 1];
+		if ((uintptr_t)e >= (uintptr_t)&cl.entities[1] && (uintptr_t)e <= (uintptr_t)&cl.entities[cl.maxclients]) /* && !strcmp (currententity->model->name, "progs/player.mdl") */
+			tx = playertextures[e - cl.entities - 1];
 	}
 	if (!gl_fullbrights.value)
 		fb = NULL;

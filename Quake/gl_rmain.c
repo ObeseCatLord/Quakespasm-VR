@@ -706,7 +706,7 @@ void R_DrawEntitiesOnList(qboolean alphapass) // johnfitz -- added parameter
       currententity = cl_visedicts[i];
       if (ENTALPHA_DECODE(currententity->alpha) == 1)
         continue;
-      if (currententity == &cl_entities[cl.viewentity])
+      if (currententity == &cl.entities[cl.viewentity])
         currententity->angles[0] *= 0.3;
       alpha_ents[alpha_count].ent = currententity;
       alpha_ents[alpha_count].dist = R_AlphaEntitySortDistance(currententity);
@@ -732,7 +732,7 @@ void R_DrawEntitiesOnList(qboolean alphapass) // johnfitz -- added parameter
         continue;
 
       // johnfitz -- chasecam
-      if (currententity == &cl_entities[cl.viewentity])
+      if (currententity == &cl.entities[cl.viewentity])
         currententity->angles[0] *= 0.3;
       // johnfitz
 
@@ -771,7 +771,7 @@ void R_DrawEntitiesOnList(qboolean alphapass) // johnfitz -- added parameter
       continue;
 
     // johnfitz -- chasecam
-    if (currententity == &cl_entities[cl.viewentity])
+    if (currententity == &cl.entities[cl.viewentity])
       currententity->angles[0] *= 0.3;
     // johnfitz
 
@@ -961,7 +961,7 @@ void R_ShowTris(void) {
     for (i = 0; i < cl_numvisedicts; i++) {
       currententity = cl_visedicts[i];
 
-      if (currententity == &cl_entities[cl.viewentity]) // chasecam
+      if (currententity == &cl.entities[cl.viewentity]) // chasecam
         currententity->angles[0] *= 0.3;
 
       switch (currententity->model->type) {
@@ -1070,7 +1070,7 @@ static void R_DrawPlayerOutlines (void)
 
 	for (i = 1; i <= cl.maxclients; i++)
 	{
-		e = &cl_entities[i];
+		e = &cl.entities[i];
 
 		if (!e->model)
 			continue;
@@ -1201,7 +1201,7 @@ static void R_DrawCoopNametags(void) {
     if (i == cl.viewentity)
       continue;
 
-    e = &cl_entities[i];
+    e = &cl.entities[i];
     if (!e->model || e->model->type != mod_alias)
       continue;
     if (R_CullModelForEntity(e))
@@ -1460,9 +1460,9 @@ void R_RenderView(void) {
   time2 = Sys_DoubleTime();
   if (r_pos.value)
     Con_Printf("x %i y %i z %i (pitch %i yaw %i roll %i)\n",
-               (int)cl_entities[cl.viewentity].origin[0],
-               (int)cl_entities[cl.viewentity].origin[1],
-               (int)cl_entities[cl.viewentity].origin[2],
+               (int)cl.entities[cl.viewentity].origin[0],
+               (int)cl.entities[cl.viewentity].origin[1],
+               (int)cl.entities[cl.viewentity].origin[2],
                (int)cl.viewangles[PITCH], (int)cl.viewangles[YAW],
                (int)cl.viewangles[ROLL]);
   else if (r_speeds.value == 2)

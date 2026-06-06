@@ -1968,10 +1968,10 @@ void World_AddEntsToPmove (edict_t *ignore, vec3_t boxminmax[2])
 	pmove.physents[0].info = 0;
 	pmove.numphysent = 1;
 
-	if (!cl.worldmodel || !cl_entities)
+	if (!cl.worldmodel || !cl.entities)
 		return;
 
-	for (i = 1, touch = cl_entities + 1; i < cl.num_entities; i++, touch++)
+	for (i = 1, touch = cl.entities + 1; i < cl.num_entities; i++, touch++)
 	{
 		unsigned int solidsize;
 		signed char contents_skin;

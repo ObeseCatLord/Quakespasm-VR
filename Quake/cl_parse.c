@@ -244,19 +244,19 @@ entity_t	*CL_EntityNum (int num)
 
 	if (num >= cl.num_entities)
 	{
-		if (num >= cl_max_edicts) //johnfitz -- no more MAX_EDICTS
+		if (num >= cl.max_edicts) //johnfitz -- no more MAX_EDICTS
 			Host_Error ("CL_EntityNum: %i is an invalid number",num);
 		while (cl.num_entities<=num)
 		{
-			cl_entities[cl.num_entities].colormap = vid.colormap;
-			cl_entities[cl.num_entities].lerpflags |= LERP_RESETMOVE|LERP_RESETANIM; //johnfitz
-			cl_entities[cl.num_entities].baseline = nullentitystate;
-			cl_entities[cl.num_entities].netstate = nullentitystate;
+			cl.entities[cl.num_entities].colormap = vid.colormap;
+			cl.entities[cl.num_entities].lerpflags |= LERP_RESETMOVE|LERP_RESETANIM; //johnfitz
+			cl.entities[cl.num_entities].baseline = nullentitystate;
+			cl.entities[cl.num_entities].netstate = nullentitystate;
 			cl.num_entities++;
 		}
 	}
 
-	return &cl_entities[num];
+	return &cl.entities[num];
 }
 
 
@@ -311,7 +311,7 @@ void CL_ParseStartSoundPacket(void)
 		Host_Error ("CL_ParseStartSoundPacket: %i > MAX_SOUNDS", sound_num);
 	//johnfitz
 
-	if (ent > cl_max_edicts) //johnfitz -- no more MAX_EDICTS
+	if (ent > cl.max_edicts) //johnfitz -- no more MAX_EDICTS
 		Host_Error ("CL_ParseStartSoundPacket: ent = %i", ent);
 
 	for (i = 0; i < 3; i++)
@@ -693,7 +693,7 @@ void CL_ParseServerInfo (void)
 	S_EndPrecaching ();
 
 // local state
-	cl_entities[0].model = cl.worldmodel = cl.model_precache[1];
+	cl.entities[0].model = cl.worldmodel = cl.model_precache[1];
 
 	R_NewMap ();
 
@@ -1470,9 +1470,9 @@ static void CLFTE_ParseEntitiesUpdate (void)
 				CL_LerpDebugEntityEvent ("full-remove-reset", 0, NULL);
 				for (newnum = 1; newnum < cl.num_entities; newnum++)
 				{
-					cl_entities[newnum].update_type = false;
-					cl_entities[newnum].netstate = nullentitystate;
-					cl_entities[newnum].model = NULL;
+					cl.entities[newnum].update_type = false;
+					cl.entities[newnum].netstate = nullentitystate;
+					cl.entities[newnum].model = NULL;
 				}
 				cl.requestresend = false;
 				continue;

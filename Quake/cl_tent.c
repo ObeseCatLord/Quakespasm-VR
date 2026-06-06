@@ -346,7 +346,7 @@ void CL_UpdateTEnts (void)
 			}
 			else
 			{
-				VectorCopy(cl_entities[cl.viewentity].origin, b->start);
+				VectorCopy(cl.entities[cl.viewentity].origin, b->start);
 			}
 		}
 

@@ -305,7 +305,7 @@ void R_TranslateNewPlayerSkin (int playernum)
 	int		skinnum;
 
 //get correct texture pixels
-	currententity = &cl_entities[1+playernum];
+	currententity = &cl.entities[1+playernum];
 
 	if (!currententity->model || currententity->model->type != mod_alias)
 		return;

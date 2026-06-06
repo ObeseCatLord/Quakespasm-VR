@@ -293,7 +293,9 @@ typedef struct
 	struct qmodel_s	*worldmodel;	// cl_entitites[0].model
 	struct efrag_s	*free_efrags;
 	int			num_efrags;
-	int			num_entities;	// held in cl_entities array
+	entity_t	*entities;		// johnfitz -- was a static array, now on hunk
+	int			max_edicts;		// only changes when new map loads
+	int			num_entities;	// held in cl.entities array
 	int			num_statics;	// held in cl_staticentities array
 	entity_t	viewent;			// the gun model
 	qboolean	in_vr_weaponmenu;
@@ -393,9 +395,6 @@ extern	entity_t		cl_temp_entities[MAX_TEMP_ENTITIES];
 extern	beam_t			cl_beams[MAX_BEAMS];
 extern	entity_t		*cl_visedicts[MAX_VISEDICTS];
 extern	int				cl_numvisedicts;
-
-extern	entity_t		*cl_entities; //johnfitz -- was a static array, now on hunk
-extern	int				cl_max_edicts; //johnfitz -- only changes when new map loads
 
 //=============================================================================
 
