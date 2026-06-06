@@ -122,6 +122,9 @@ static void GL_AliasBatch_End (void)
 	if (!r_alias_glsl_batch_active)
 		return;
 
+	if (r_perfdebug.value)
+		r_perf_alias_batch_flushes++;
+
 	GL_DisableVertexAttribArrayFunc (texCoordsAttrIndex);
 	GL_DisableVertexAttribArrayFunc (pose1VertexAttrIndex);
 	GL_DisableVertexAttribArrayFunc (pose2VertexAttrIndex);
@@ -328,6 +331,8 @@ void GL_DrawAliasFrame_GLSL (aliashdr_t *paliashdr, lerpdata_t lerpdata, gltextu
 		}
 
 	// draw
+		if (r_perfdebug.value)
+			r_perf_alias_glsl_draws++;
 		glDrawElements (GL_TRIANGLES, paliashdr->numindexes, GL_UNSIGNED_SHORT, (void *)(intptr_t)currententity->model->vboindexofs);
 
 		rs_aliaspasses += paliashdr->numtris;
@@ -372,7 +377,9 @@ void GL_DrawAliasFrame_GLSL (aliashdr_t *paliashdr, lerpdata_t lerpdata, gltextu
 		GL_Bind (fb);
 	}
 
-// draw
+	// draw
+	if (r_perfdebug.value)
+		r_perf_alias_glsl_draws++;
 	glDrawElements (GL_TRIANGLES, paliashdr->numindexes, GL_UNSIGNED_SHORT, (void *)(intptr_t)currententity->model->vboindexofs);
 
 // clean up
@@ -738,6 +745,9 @@ void R_DrawAliasModel (entity_t *e)
 	qboolean	alphatest = !!(e->model->flags & MF_HOLEY);
 	float		fovscale = 1.0f;
 
+	if (r_perfdebug.value)
+		r_perf_alias_draws++;
+
 	//
 	// setup pose/lerp data -- do it first so we don't miss updates due to culling
 	//
@@ -749,7 +759,11 @@ void R_DrawAliasModel (entity_t *e)
 	// cull it
 	//
 	if (R_CullModelForEntity(e))
+	{
+		if (r_perfdebug.value)
+			r_perf_alias_culled++;
 		return;
+	}
 
 	//
 	// transform it

@@ -1,0 +1,1180 @@
+QuakeSpasmVR performance analysis: mj4m1, Ironwail, and VKQuake
+Date: 2026-06-06
+
+Scope
+=====
+
+This note compares the current quakespasm-openvr fork against:
+
+- Ironwail: /home/obesecatlord/Documents/ironwailVR/ironwail
+- VKQuake: /home/obesecatlord/Documents/quakespasmvr/vkquake
+- Current fork: /home/obesecatlord/Documents/quakespasmvr/quakespasm-openvr
+
+The immediate performance problem that prompted this analysis was mjolnir map
+mj4m1 running poorly in VR with frame drops. The goal is to list the renderer
+and engine features that Ironwail and VKQuake use for better performance, how
+those differ from this fork, and how to copy or implement them here in a way
+that can be picked up later without repeating this investigation.
+
+
+Executive summary
+=================
+
+mj4m1 is a worst-case map for QuakeSpasmVR's current renderer. It is BSP2, has
+no visibility lump, has hundreds of thousands of faces, and has many static and
+alias entities. The current fork still uses a mostly classic QuakeSpasm CPU
+renderer path:
+
+- Each rendered view runs CPU PVS/leaf/surface marking.
+- Brush/world surfaces are chained and drawn through older texture/lightmap
+  chains.
+- Alias models are sorted a little, but still submitted one entity at a time.
+- VR renders each eye through the screen/render path separately, so CPU scene
+  setup and entity processing are effectively doubled.
+
+Ironwail is faster mainly because it moved major parts of the OpenGL renderer
+to GPU-driven or batched paths:
+
+- GPU surface marking/culling using compute shaders.
+- Prebuilt world/brush model GPU buffers.
+- Indirect/multidraw brush rendering.
+- Entity sorting by model type and model.
+- True instanced alias rendering.
+- Persistent/frame resource upload buffers.
+- Clustered dynamic light data.
+
+VKQuake is faster for similar reasons but through a Vulkan renderer:
+
+- A render task graph.
+- Parallel and SIMD surface marking.
+- Vulkan indirect brush draws.
+- GPU lightmap update compute.
+- Compute pipelines for warp, interpolation, skinning, and indirect draw setup.
+- Staging buffers and descriptor-managed GPU resources.
+
+The highest-value practical improvement path for this fork is:
+
+1. Add better renderer timing counters for VR and large maps.
+2. Share VR visibility/entity setup between eyes where possible.
+3. Port Ironwail-style entity sorting and alias instancing first.
+4. Port Ironwail's brush/world GPU buffer and indirect draw path next.
+5. Add Ironwail-style frame upload buffers.
+6. Add or adapt VKQuake-style tasking only after the render state is cleanly
+   separated from CPU-only prep work.
+
+Porting VKQuake's whole Vulkan backend is much larger than the likely benefit
+for this fork. Ironwail's GL renderer is the better source for code to copy
+first because it shares more ancestry with QuakeSpasm and this fork.
+
+
+Current mj4m1 evidence
+=====================
+
+Installed map:
+
+- /home/obesecatlord/Windows/Games/quakespasm_straight/mjolnir/maps/mj4m1.bsp
+
+Map lump summary:
+
+- BSP version: BSP2
+- File size: 93,575,884 bytes
+- VIS lump size: 0 bytes
+- Planes: 197,499
+- Vertices: 574,712
+- BSP2 nodes: 248,946
+- Texinfo: 99,909
+- BSP2 faces: 427,881
+- BSP2 leaves: 220,457
+- BSP2 marksurfaces: 543,349
+- BSP2 edges: 1,036,066
+- Surfedges: 2,035,245
+- Models: 702
+- Entity text contains roughly 7,300 entities.
+
+Top entity classes seen in mj4m1:
+
+- light: 3,967
+- misc_model: 663
+- path_corner: 198
+- func_door: 191
+- func_illusionary: 180
+- light_flame_large_yellow: 155
+
+Runtime log evidence seen from this fork:
+
+- 125,212 visleafs
+- 452 lightmaps
+- 373 static entities
+- 4,651 efrags
+- 2,119 visedicts
+- 69,985 byte signon buffer
+
+Existing profile logs in:
+
+- /home/obesecatlord/Windows/Games/quakespasm_straight/mj4m1_profile.log
+- /home/obesecatlord/Windows/Games/quakespasm_straight/mj4m1_noents_profile.log
+
+Profile summary with normal entities:
+
+- Frames sampled: 1,764
+- Frame ms: min 1.0, median 2.0, p95 37.0, max 1555.0
+- World polygons: min 12,826, median 12,835, p95 170,125, max 170,991
+- World passes: min 13,143, median 13,152, p95 172,886, max 173,754
+- Entity polygons: min 7,515, median 7,643, p95 361,662, max 361,914
+- Entity passes: min 7,515, median 7,643, p95 361,662, max 361,914
+- Lightmap uploads: min 0, median 1, p95 27, max 37
+- Sky polygons: min 0, median 0, p95 3, max 3
+- Sky passes: min 0, median 0, p95 6, max 6
+- Multitexture percentage: min 16.9, median 31.9, p95 104.9, max 104.9
+
+Profile summary with entities disabled:
+
+- Frames sampled: 1,961
+- Frame ms: min 0.0, median 1.0, p95 25.0, max 1515.0
+- World polygons: min 237, median 2,095, p95 134,425, max 135,299
+- World passes: min 413, median 2,412, p95 137,186, max 138,062
+- Entity polygons: 0
+- Entity passes: 0
+- Lightmap uploads: min 0, median 2, p95 19, max 27
+- Sky polygons: min 0, median 0, p95 3, max 3
+- Sky passes: min 0, median 0, p95 6, max 6
+- Multitexture percentage: min 4.1, median 7.0, p95 47.5, max 47.6
+
+Interpretation:
+
+- mj4m1 is expensive even with all entities disabled, so the world/brush path
+  alone is a real bottleneck.
+- Entities add a large additional cost. Alias/entity batching and instancing
+  are likely to help.
+- In VR, the same expensive setup is repeated per eye. That makes any CPU
+  renderer bottleneck worse.
+- The missing VIS lump means the engine has to handle an unusually large
+  potentially-visible set. Any improvement that avoids walking or drawing
+  irrelevant leaves/surfaces/entities matters more here than on normal maps.
+
+
+Current fork renderer shape
+===========================
+
+Important current code paths:
+
+- Quake/gl_rmain.c:567
+  R_SetupView prepares the view, calls R_MarkSurfaces, updates warp textures,
+  and clears.
+
+- Quake/r_world.c:95
+  R_MarkSurfaces is the classic CPU path. It clears chains, gets PVS or novis
+  PVS, loops leaves, frustum-culls leaves, loops marksurfaces, culls surfaces,
+  chains surfaces, updates dynamic lightmaps, and stores efrags.
+
+- Quake/gl_rmain.c:1242
+  R_RenderScene draws the world, entities, water, particles, and related passes.
+
+- Quake/gl_rmain.c:1394
+  R_RenderView calls setup and scene rendering.
+
+- Quake/vr.c:3802
+  The VR eye loop renders each eye separately.
+
+- Quake/vr.c:3498
+  RenderScreenForCurrentEye_OVR calls SCR_UpdateScreenContent.
+
+- Quake/gl_screen.c:984
+  SCR_UpdateScreenContent enters the normal screen/render path.
+
+- Quake/view.c:982
+  V_RenderView calls R_RenderView.
+
+- Quake/gl_rmain.c:692
+  R_DrawEntitiesOnList has optional r_alias_batching sorting, but each alias
+  model is still ultimately drawn one entity at a time.
+
+- Quake/r_alias.c:729
+  R_DrawAliasModel does per-entity setup and draw submission.
+
+- Quake/gl_model.c:2361
+  External .vis loading is gated on mod->bspversion == BSPVERSION. BSP2 maps
+  like mj4m1 do not currently benefit from this path.
+
+Current fork already has useful compatibility work and some renderer cvars, but
+it does not yet have Ironwail's GPU-driven world path or true alias instancing.
+
+
+External VIS note
+=================
+
+mj4m1 has an empty VIS lump. That is a content-side performance problem.
+
+Current fork, Ironwail, and VKQuake all have external .vis loading paths that
+are gated to normal BSP29 in the inspected code:
+
+- Current fork: Quake/gl_model.c:2361
+- Ironwail: /home/obesecatlord/Documents/ironwailVR/ironwail/Quake/gl_model.c:2440
+- VKQuake: /home/obesecatlord/Documents/quakespasmvr/vkquake/Quake/gl_model.c:3113
+
+That means simply adding a .vis file for mj4m1 may not work unless this fork is
+extended to accept the relevant external VIS format for BSP2, and unless a valid
+VIS file for the map exists. No installed mjolnir .vis file was observed during
+this analysis.
+
+Implementation option:
+
+1. Short term: add a clear warning/log line for BSP2 maps with empty VIS:
+   "BSP2 map has no VIS; performance may be poor."
+2. Medium term: investigate whether the map source can be vised and rebuilt, or
+   whether the mjolnir distribution includes an external visibility file under
+   a nonstandard name.
+3. Engine term: extend external VIS loading to BSP2 only after confirming a
+   real BSP2 external VIS format to support. Do not invent a format unless a
+   toolchain will produce it.
+
+
+Ironwail comparison
+===================
+
+Ironwail is the best source to copy from first because it is OpenGL based and
+shares more QuakeSpasm ancestry than VKQuake.
+
+
+1. GPU surface marking and culling
+----------------------------------
+
+Ironwail code:
+
+- /home/obesecatlord/Documents/ironwailVR/ironwail/Quake/r_world.c:58
+  R_MarkVisSurfaces uploads PVS and frame data to GPU, clears indirect buffers,
+  and dispatches a compute shader to mark visible surfaces.
+
+- /home/obesecatlord/Documents/ironwailVR/ironwail/Quake/r_world.c:111
+  R_MarkSurfaces chooses the PVS and calls R_MarkVisSurfaces.
+
+Current fork:
+
+- Quake/r_world.c:95
+  R_MarkSurfaces walks the BSP, marks surfaces, builds texture chains, updates
+  lightmaps, and stores efrags on the CPU every view.
+
+Why it matters:
+
+- mj4m1 has 220,457 leaves and 543,349 marksurfaces. CPU walking this data per
+  view is expensive, and VR doubles the cost.
+- GPU marking avoids much of the serial CPU traversal and prepares data for
+  indirect draws.
+
+How to implement here:
+
+1. Add a cvar such as r_gpuworld, default 0 at first.
+2. Copy Ironwail's GPU surface metadata structures and compute shader support
+   into this fork's GL renderer.
+3. During model load, build GPU buffers for surface metadata, mark surfaces, and
+   indirect draw commands.
+4. In R_MarkSurfaces, keep the old CPU path as fallback. When r_gpuworld is on
+   and GL 4.3/compute support exists, upload PVS/frustum/view data and dispatch
+   the mark compute shader.
+5. Make VR use one common GPU mark for both eyes where possible, using a
+   conservative stereo frustum or union-frustum data.
+6. Validate against AD, mjolnir, dwell, qbj3, and normal id1 maps.
+
+Risks:
+
+- Requires GL 4.3 compute/SSBO support.
+- Needs careful fallback for older hardware and for VR-specific render paths.
+- Must preserve dynamic lightmap and efrag behavior.
+
+
+2. Prebuilt world and brush model GPU buffers
+--------------------------------------------
+
+Ironwail code:
+
+- /home/obesecatlord/Documents/ironwailVR/ironwail/Quake/r_brush.c:578
+  GL_BuildBModelVertexBuffer builds one large GPU vertex buffer for world and
+  brush surfaces.
+
+- /home/obesecatlord/Documents/ironwailVR/ironwail/Quake/r_brush.c:749
+  GL_BuildBModelMarkBuffers builds index buffers, indirect command buffers,
+  marksurface buffers, and surface metadata buffers.
+
+- /home/obesecatlord/Documents/ironwailVR/ironwail/Quake/r_brush.c:895
+  Allocates gl_bmodel_indirect_buffer, gl_bmodel_ibo, gl_bmodel_surf_buffer,
+  and gl_bmodel_marksurf_buffer.
+
+- /home/obesecatlord/Documents/ironwailVR/ironwail/Quake/gl_rmisc.c:521
+  Calls GL_BuildBModelVertexBuffer and GL_BuildBModelMarkBuffers during setup.
+
+Current fork:
+
+- Still mostly walks and draws chains through older GL paths.
+
+Why it matters:
+
+- A huge BSP2 map with hundreds of thousands of surfaces benefits from static
+  GPU buffers. CPU-side surface walking and repeated pointer chasing become
+  bigger than the raw polygon cost.
+
+How to implement here:
+
+1. Port Ironwail's bmodel vertex/index/metadata buffer builders.
+2. Add the GPU fields needed to msurface_t/model_t or equivalent local structs.
+3. Upload static world/brush geometry once at map load.
+4. Leave existing texture-chain draw path available until the indirect path is
+   feature complete.
+5. Add a debug cvar to compare old and new draw path counts in r_speeds.
+
+
+3. Indirect and multidraw brush rendering
+-----------------------------------------
+
+Ironwail code:
+
+- /home/obesecatlord/Documents/ironwailVR/ironwail/Quake/r_world.c:199
+  R_InitBModelInstance prepares per-instance brush model state.
+
+- /home/obesecatlord/Documents/ironwailVR/ironwail/Quake/r_world.c:231
+  R_FlushBModelCalls gathers indirect commands and uses
+  GL_MultiDrawElementsIndirectFunc when possible.
+
+- /home/obesecatlord/Documents/ironwailVR/ironwail/Quake/r_world.c:387
+  R_DrawBrushModels_Real.
+
+- /home/obesecatlord/Documents/ironwailVR/ironwail/Quake/r_world.c:660
+  R_DrawBrushModels.
+
+Current fork:
+
+- Brush/world rendering is older and more CPU/state-change heavy.
+
+Why it matters:
+
+- mj4m1 has 702 models and many func_ entities. Indirect draws reduce draw call
+  and state setup overhead.
+
+How to implement here:
+
+1. Port Ironwail's bmodel instance and flush structures.
+2. Route world and brush entity draws through a shared indirect submission path.
+3. Keep transparent/water/special-surface handling on the old path initially if
+   needed, then migrate those after opaque works.
+4. Test on maps with moving doors, plats, skyroom, water, and alpha brush
+   entities.
+
+
+4. Entity sorting by model type and model
+-----------------------------------------
+
+Ironwail code:
+
+- /home/obesecatlord/Documents/ironwailVR/ironwail/Quake/gl_rmain.c:635
+  R_SortEntities culls brush models early, builds sort keys, radix-sorts
+  cl_visedicts, and records offsets by model type.
+
+- /home/obesecatlord/Documents/ironwailVR/ironwail/Quake/gl_rmain.c:1108
+  R_DrawEntitiesOnList draws brush, alias, and sprite groups separately.
+
+Current fork:
+
+- Quake/gl_rmain.c:692 has some optional alias batching sort behavior, but the
+  code is still not a full model/type grouping system like Ironwail.
+
+Why it matters:
+
+- Sorting entities by model/type reduces state changes and is a prerequisite for
+  effective alias instancing.
+
+How to implement here:
+
+1. Port Ironwail's sort-key approach.
+2. Keep current VR weapon/viewmodel rendering outside the world entity batch.
+3. Preserve current alpha ordering rules for transparent entities.
+4. Add r_speeds counters for sorted alias groups, brush groups, and sprite
+   groups.
+
+
+5. True alias model instancing
+------------------------------
+
+Ironwail code:
+
+- /home/obesecatlord/Documents/ironwailVR/ironwail/Quake/r_alias.c:54
+  aliasinstance_t stores per-instance data.
+
+- /home/obesecatlord/Documents/ironwailVR/ironwail/Quake/r_alias.c:294
+  R_FlushAliasInstances uploads instance data and uses instanced draws.
+
+- /home/obesecatlord/Documents/ironwailVR/ironwail/Quake/r_alias.c:426
+  GL_DrawElementsInstancedFunc path.
+
+- /home/obesecatlord/Documents/ironwailVR/ironwail/Quake/r_alias.c:470
+  R_Alias_CanAddToBatch.
+
+- /home/obesecatlord/Documents/ironwailVR/ironwail/Quake/r_alias.c:496
+  R_DrawAliasModel_Real queues instances.
+
+- /home/obesecatlord/Documents/ironwailVR/ironwail/Quake/r_alias.c:610
+  R_DrawAliasModels batches a list and flushes.
+
+Current fork:
+
+- Quake/r_alias.c:729 R_DrawAliasModel still handles one alias entity at a time.
+- Quake/gl_rmain.c:692 can sort for r_alias_batching but does not perform true
+  GPU instancing.
+
+Why it matters:
+
+- mj4m1 has many misc_model/static/alias entities. Profile data shows entity
+  polygons/passes can dominate bad views.
+- Alias instancing is likely the highest-value contained renderer port.
+
+How to implement here:
+
+1. Add a new cvar r_alias_instancing, default 1 if GL support exists, else 0.
+2. Copy Ironwail's alias instance structure and batching rules.
+3. Add/port shader support for per-instance transform, color, pose, lerp,
+   lighting, alpha, and flags.
+4. Use instancing only for world alias entities first.
+5. Exclude VR held weapons, weapon wheel models, viewmodels, beam/special
+   objects, and debugging/controller preview models until confirmed safe.
+6. Keep the current R_DrawAliasModel path as fallback.
+7. Test AD, mjolnir, dwell, qbj3, ravenkeep, and normal id1.
+
+
+6. Persistent/frame resource upload buffers
+-------------------------------------------
+
+Ironwail code:
+
+- /home/obesecatlord/Documents/ironwailVR/ironwail/Quake/gl_rmisc.c:767
+  Frame resource buffer structures.
+
+- /home/obesecatlord/Documents/ironwailVR/ironwail/Quake/gl_rmisc.c:970
+  GL_Upload.
+
+- /home/obesecatlord/Documents/ironwailVR/ironwail/Quake/gl_rmisc.c:1005
+  GL_ReserveDeviceMemory.
+
+Current fork:
+
+- Uses older upload patterns in multiple renderer paths.
+
+Why it matters:
+
+- Batching and instancing need frequent per-frame uploads. A frame upload ring
+  reduces GL buffer churn and stalls.
+
+How to implement here:
+
+1. Port Ironwail's frame resource buffer layer.
+2. Convert new alias instancing uploads to use it first.
+3. Convert particles, dynamic draw data, and brush instance data after that.
+4. Add debug counters for host/device buffer usage and growth.
+
+
+7. Clustered dynamic lights
+---------------------------
+
+Ironwail code:
+
+- /home/obesecatlord/Documents/ironwailVR/ironwail/Quake/gl_rlight.c:94
+  Cluster texture and GPU cluster input structures.
+
+- /home/obesecatlord/Documents/ironwailVR/ironwail/Quake/gl_rlight.c:139
+  Light cluster setup.
+
+- /home/obesecatlord/Documents/ironwailVR/ironwail/Quake/gl_rlight.c:192
+  Compute shader cluster_lights dispatch.
+
+Current fork:
+
+- Uses older dynamic light/lightmap handling.
+
+Why it matters:
+
+- mj4m1 has thousands of light entities in the map data. Static lights are baked,
+  but dynamic lights and lightmap updates still become expensive in effect-heavy
+  scenes.
+
+How to implement here:
+
+1. Treat this as a later phase after world/alias batching.
+2. Port Ironwail's cluster data and shader path if dynamic lights still show up
+   as a meaningful profile cost.
+3. Keep old dynamic light path as fallback.
+
+
+8. Particle batching and OIT transparency
+-----------------------------------------
+
+Ironwail code:
+
+- /home/obesecatlord/Documents/ironwailVR/ironwail/Quake/r_part.c:663
+  Uploads particle verts once per frame.
+
+- /home/obesecatlord/Documents/ironwailVR/ironwail/Quake/r_part.c:702
+  OIT/dither particle shader paths.
+
+- /home/obesecatlord/Documents/ironwailVR/ironwail/Quake/r_part.c:715
+  Particle instanced attribute/state setup.
+
+- /home/obesecatlord/Documents/ironwailVR/ironwail/Quake/gl_rmain.c:582
+  ALPHAMODE_OIT.
+
+- /home/obesecatlord/Documents/ironwailVR/ironwail/Quake/gl_rmain.c:1840
+  OIT framebuffer setup.
+
+- /home/obesecatlord/Documents/ironwailVR/ironwail/Quake/gl_rmain.c:1860
+  OIT resolve.
+
+Current fork:
+
+- This fork has compatibility-focused particle work, including FTE-style
+  particle support, but particle rendering is not the main mj4m1 bottleneck in
+  the gathered profile.
+
+Why it matters:
+
+- Mjolnir and dwell use modern effects. Better particle upload/draw paths help
+  effect-heavy scenes and reduce alpha sorting problems.
+
+How to implement here:
+
+1. Do not start here for mj4m1 performance unless profiles show particles as a
+   top cost.
+2. Once world/alias bottlenecks are improved, port Ironwail's particle upload
+   batching and OIT paths as quality/performance follow-up.
+
+
+VKQuake comparison
+==================
+
+VKQuake is useful as a reference for architecture and CPU parallelism, but most
+of its renderer code is Vulkan-specific. Copying concepts is safer than trying
+to directly paste large Vulkan systems into this OpenGL fork.
+
+
+1. Render task graph
+--------------------
+
+VKQuake code:
+
+- /home/obesecatlord/Documents/quakespasmvr/vkquake/Quake/host.c:1106
+  Tasks_Init.
+
+- /home/obesecatlord/Documents/quakespasmvr/vkquake/Quake/tasks.c:405
+  Task system initialization.
+
+- /home/obesecatlord/Documents/quakespasmvr/vkquake/Quake/tasks.c:421
+  Worker count based on logical cores.
+
+- /home/obesecatlord/Documents/quakespasmvr/vkquake/Quake/gl_rmain.c:1057
+  R_RenderView accepts task handles.
+
+- /home/obesecatlord/Documents/quakespasmvr/vkquake/Quake/gl_rmain.c:1092
+  Creates setup/mark/draw tasks.
+
+- /home/obesecatlord/Documents/quakespasmvr/vkquake/Quake/gl_rmain.c:1133
+  Indexed entity draw task.
+
+- /home/obesecatlord/Documents/quakespasmvr/vkquake/Quake/gl_rmain.c:1151
+  Lightmap/indirect update task.
+
+Current fork:
+
+- Single-threaded render path.
+
+Why it matters:
+
+- mj4m1's CPU setup cost is large. Parallelizing CPU-only culling/marking/entity
+  sorting can help if GPU-driven marking is not yet available.
+
+How to implement here:
+
+1. Port VKQuake's generic task system only if needed.
+2. First use it for CPU-only work:
+   - entity sort key generation
+   - static model culling
+   - surface culling into temporary bitsets
+   - model loading operations
+3. Do not call OpenGL from worker threads unless this fork gets a deliberate GL
+   command recording layer, which is not currently present.
+4. Keep the initial task system optional by cvar, for example r_tasks 0/1.
+
+
+2. Parallel and SIMD surface marking
+------------------------------------
+
+VKQuake code:
+
+- /home/obesecatlord/Documents/quakespasmvr/vkquake/Quake/r_world.c:39
+  r_parallelmark cvar.
+
+- /home/obesecatlord/Documents/quakespasmvr/vkquake/Quake/r_world.c:205
+  R_BackFaceCullSIMD.
+
+- /home/obesecatlord/Documents/quakespasmvr/vkquake/Quake/r_world.c:246
+  R_CullBoxSIMD.
+
+- /home/obesecatlord/Documents/quakespasmvr/vkquake/Quake/r_world.c:368
+  R_MarkVisSurfacesSIMD.
+
+- /home/obesecatlord/Documents/quakespasmvr/vkquake/Quake/r_world.c:456
+  R_MarkLeafsSIMD.
+
+- /home/obesecatlord/Documents/quakespasmvr/vkquake/Quake/r_world.c:546
+  R_BackfaceCullSurfacesSIMD.
+
+- /home/obesecatlord/Documents/quakespasmvr/vkquake/Quake/r_world.c:601
+  R_StoreLeafEFrags.
+
+- /home/obesecatlord/Documents/quakespasmvr/vkquake/Quake/r_world.c:624
+  R_ChainVisSurfaces.
+
+- /home/obesecatlord/Documents/quakespasmvr/vkquake/Quake/r_world.c:716
+  R_MarkLeafsParallel.
+
+- /home/obesecatlord/Documents/quakespasmvr/vkquake/Quake/r_world.c:809
+  R_BackfaceCullSurfacesParallel.
+
+- /home/obesecatlord/Documents/quakespasmvr/vkquake/Quake/r_world.c:942
+  R_MarkSurfacesPrepare.
+
+- /home/obesecatlord/Documents/quakespasmvr/vkquake/Quake/r_world.c:1033
+  R_MarkSurfaces orchestrates the parallel/SIMD path.
+
+Current fork:
+
+- CPU marking is scalar and single-threaded.
+
+Why it matters:
+
+- This is a lower-risk bridge before Ironwail GPU marking, because it still uses
+  CPU-visible structures.
+
+How to implement here:
+
+1. Port VKQuake's SIMD culling helpers with compile guards.
+2. Add a CPU mark-prep pass that writes visibility into temporary arrays or
+   bitsets rather than mutating shared surface chains from multiple threads.
+3. Add parallel leaf/surface culling using the task system.
+4. Keep final chain building on the render thread until the data structures are
+   made thread-safe.
+5. Measure against mj4m1 no-entities first to isolate world cost.
+
+
+3. Vulkan indirect brush draw
+-----------------------------
+
+VKQuake code:
+
+- /home/obesecatlord/Documents/quakespasmvr/vkquake/Quake/r_brush.c:778
+  R_DrawIndirectBrushes uses vkCmdDrawIndexedIndirect.
+
+- /home/obesecatlord/Documents/quakespasmvr/vkquake/Quake/r_brush.c:1244
+  PrepareIndirectDraws.
+
+- /home/obesecatlord/Documents/quakespasmvr/vkquake/Quake/r_brush.c:1445
+  GL_AllocateIndirectBuffer.
+
+- /home/obesecatlord/Documents/quakespasmvr/vkquake/Quake/r_brush.c:1544
+  R_InitVisibilityBuffers.
+
+- /home/obesecatlord/Documents/quakespasmvr/vkquake/Quake/r_brush.c:1569
+  R_UploadVisibility.
+
+- /home/obesecatlord/Documents/quakespasmvr/vkquake/Quake/r_brush.c:1805
+  GL_SetupIndirectDraws.
+
+Current fork:
+
+- Does not have a Vulkan backend.
+
+Why it matters:
+
+- The concept maps to Ironwail's OpenGL indirect draw path. The VKQuake code is
+  useful for architecture but should not be directly ported unless a Vulkan
+  backend is planned.
+
+How to implement here:
+
+1. Prefer Ironwail's OpenGL indirect brush path for this fork.
+2. Use VKQuake as a reference for indirect-buffer layout, visibility upload
+   concepts, and debug counters.
+
+
+4. GPU lightmap update compute
+------------------------------
+
+VKQuake code:
+
+- /home/obesecatlord/Documents/quakespasmvr/vkquake/Quake/r_brush.c:259
+  Lightmap compute surface data.
+
+- /home/obesecatlord/Documents/quakespasmvr/vkquake/Quake/r_brush.c:271
+  Lightmap compute light data.
+
+- /home/obesecatlord/Documents/quakespasmvr/vkquake/Quake/r_brush.c:1389
+  R_AllocateLightmapComputeBuffers.
+
+- /home/obesecatlord/Documents/quakespasmvr/vkquake/Quake/r_brush.c:1415
+  GL_AllocateSurfaceDataBuffer.
+
+- /home/obesecatlord/Documents/quakespasmvr/vkquake/Quake/r_brush.c:1477
+  GL_AllocateWorkgroupBoundsBuffers.
+
+- /home/obesecatlord/Documents/quakespasmvr/vkquake/Quake/r_brush.c:3242
+  R_UpdateLightmapsAndIndirect.
+
+- /home/obesecatlord/Documents/quakespasmvr/vkquake/Quake/gl_rmisc.c:3889
+  Compute pipeline creation for lightmap updates.
+
+Current fork:
+
+- Uses older lightmap update path.
+
+Why it matters:
+
+- Dynamic lightmap updates appeared in profile data, but world/entity draw cost
+  is larger for mj4m1. This is a later optimization unless a specific map/effect
+  shows lightmaps dominating.
+
+How to implement here:
+
+1. Defer until brush GPU buffers exist.
+2. Use VKQuake's lightmap compute data layout as a reference.
+3. In OpenGL, either port Ironwail's relevant dynamic light approach or add GL
+   compute versions only after the world buffer system exists.
+
+
+5. Compute pipelines for warp, mesh interpolation, and skinning
+---------------------------------------------------------------
+
+VKQuake code:
+
+- /home/obesecatlord/Documents/quakespasmvr/vkquake/Quake/gl_rmisc.c:2614
+  Texture warp compute.
+
+- /home/obesecatlord/Documents/quakespasmvr/vkquake/Quake/gl_rmisc.c:2721
+  Mesh interpolate compute.
+
+- /home/obesecatlord/Documents/quakespasmvr/vkquake/Quake/gl_rmisc.c:2738
+  Skinning compute.
+
+- /home/obesecatlord/Documents/quakespasmvr/vkquake/Quake/gl_rmisc.c:3927
+  Indirect compute.
+
+- /home/obesecatlord/Documents/quakespasmvr/vkquake/Quake/gl_rmisc.c:3941
+  Indirect clear compute.
+
+Current fork:
+
+- Uses older OpenGL paths. Some GLSL alias paths exist, but not the same broad
+  compute architecture.
+
+Why it matters:
+
+- These are helpful after the main bottlenecks are fixed, especially for large
+  alias-heavy scenes and water/warp-heavy maps.
+
+How to implement here:
+
+1. Treat this as a later phase.
+2. Port only if profiles still show warp/interpolation/skinning as a top cost.
+3. Prefer Ironwail's OpenGL versions where available.
+
+
+Implementation plan for this fork
+=================================
+
+Phase 0: instrumentation
+------------------------
+
+Goal:
+
+- Make future renderer work measurable and prevent guessing.
+
+Implementation:
+
+1. Add high-resolution timers around:
+   - VR per-eye setup
+   - R_MarkSurfaces
+   - R_StoreEfrags / static entity work
+   - R_DrawWorld
+   - R_DrawEntitiesOnList
+   - R_DrawAliasModel / alias batch flush
+   - R_DrawBrushModels
+   - R_RenderDlights / dynamic lightmap updates
+   - particles
+   - skyroom
+2. Add counters:
+   - leaves scanned
+   - marksurfaces scanned
+   - surfaces chained
+   - efrags visited
+   - visedicts
+   - alias models drawn
+   - alias batch groups
+   - brush model groups
+   - GL draw calls if practical
+3. Log to file only when a cvar such as r_perfdebug is enabled.
+4. Add a profile command or cvar preset for mj4m1:
+   - r_speeds 2
+   - r_perfdebug 1
+   - timedemo or fixed camera if possible
+
+Validation:
+
+- Re-run mj4m1 with normal entities and with r_drawentities 0.
+- Capture desktop and VR numbers separately.
+
+
+Phase 1: content and VIS handling
+---------------------------------
+
+Goal:
+
+- Avoid spending engine time compensating for bad or missing visibility if a
+  real visibility solution exists.
+
+Implementation:
+
+1. Add better warnings for BSP2 maps with empty VIS.
+2. Search the mjolnir package for map sources or external VIS data.
+3. If a valid BSP2 external VIS file exists or can be generated, extend the
+   external VIS loader to support BSP2 safely.
+4. If no VIS data exists, continue renderer optimization. Engine-side GPU
+   marking/indirect draw is still needed.
+
+
+Phase 2: shared VR visibility/entity setup
+------------------------------------------
+
+Goal:
+
+- Stop duplicating expensive CPU scene setup for left and right eye.
+
+Current problem:
+
+- Quake/vr.c renders each eye separately through SCR_UpdateScreenContent.
+- That reruns R_SetupView and R_MarkSurfaces for each eye.
+
+Implementation:
+
+1. Split current render setup into:
+   - common frame setup
+   - common visibility/entity setup
+   - per-eye projection/view setup
+   - per-eye draw submission
+2. For VR, compute common visibility from the HMD/head center, not from each eye
+   separately.
+3. Use a conservative stereo frustum:
+   - union of left and right frusta, or
+   - center frustum inflated by IPD and near-plane margin.
+4. Build texture chains and cl_visedicts once.
+5. Draw each eye using the cached visible set.
+6. Do not double-apply dynamic lightmap updates. Mark/update them once per
+   frame, then render both eyes.
+7. Keep a cvar fallback, for example vr_shared_scene_setup 1.
+
+Risks:
+
+- If the shared frustum is too narrow, one eye can miss near-edge surfaces.
+- If it is too wide, it may draw slightly more than necessary, but that is
+  usually better than CPU-scanning the map twice.
+- Need to ensure stereo-correct text/HUD/VR weapon rendering remains per-eye.
+
+Tests:
+
+- mj4m1 in VR, standing near doorways and near geometry.
+- AD/dwell/qbj3 maps with high detail.
+- Water/warp/skyroom maps.
+- VR text and weapon alignment.
+
+
+Phase 3: entity sorting and alias instancing
+--------------------------------------------
+
+Goal:
+
+- Reduce CPU and GL draw overhead from many alias entities.
+
+Implementation order:
+
+1. Port Ironwail's entity sorting:
+   - gl_rmain.c R_SortEntities
+   - sorted visedict array
+   - model type offsets
+2. Preserve special ordering for alpha entities and sprites.
+3. Add Ironwail-style aliasinstance_t and alias batch flush.
+4. Port shader support for per-instance data.
+5. Route only world alias entities through the instanced path at first.
+6. Keep VR held weapons, controller previews, weapon wheel, and viewmodels on
+   the existing path.
+
+Expected benefit:
+
+- Major improvement on maps with many repeated alias models, misc_model usage,
+  and decorative entities.
+- Lower per-eye CPU cost in VR after shared visibility/entity setup.
+
+
+Phase 4: Ironwail OpenGL brush/world GPU path
+---------------------------------------------
+
+Goal:
+
+- Move the biggest mj4m1 world bottleneck away from CPU chain walking and
+  per-surface draw setup.
+
+Implementation order:
+
+1. Port bmodel vertex/index/metadata buffer building from Ironwail r_brush.c.
+2. Add GL resource lifetime handling on map load/unload.
+3. Add compute-based surface marking if GL 4.3 is available.
+4. Add indirect/multidraw brush rendering.
+5. Keep old draw path as fallback.
+6. Make VR shared setup use the GPU world mark once per frame.
+
+Expected benefit:
+
+- Highest likely improvement for mj4m1 because the map has no VIS and huge
+  surface counts.
+
+Risks:
+
+- Largest code integration effort.
+- Requires careful interaction with:
+  - dynamic lightmaps
+  - water/warp surfaces
+  - skyroom rendering
+  - alpha/transparent brush entities
+  - brush model movement
+  - CSQC draws
+
+
+Phase 5: frame upload/resource buffer
+-------------------------------------
+
+Goal:
+
+- Prevent new batching paths from introducing GL upload stalls.
+
+Implementation:
+
+1. Port Ironwail's GL_Upload / GL_ReserveDeviceMemory frame resource system.
+2. Use it for alias instance data first.
+3. Use it for brush instance data and particles next.
+4. Add diagnostic counters for upload usage.
+
+
+Phase 6: dynamic light and particle follow-up
+---------------------------------------------
+
+Goal:
+
+- Improve effect-heavy modern mod scenes after the world/entity bottlenecks are
+  addressed.
+
+Implementation:
+
+1. Re-profile AD, dwell, mjolnir, and qbj3 after phases 2-5.
+2. If dynamic light/lightmap update cost is still high, port Ironwail clustered
+   light data or VKQuake-inspired compute lightmap updates.
+3. If particles are high, port Ironwail's particle upload batching and OIT
+   transparency path.
+
+
+Phase 7: VKQuake-style CPU tasking
+----------------------------------
+
+Goal:
+
+- Parallelize CPU-only render preparation where it still exists.
+
+Implementation:
+
+1. Port VKQuake's tasks.c/task API or write a small compatible subset.
+2. Use tasks for CPU-only work:
+   - model loading
+   - entity sort-key generation
+   - static model culling
+   - CPU visibility/culling fallback
+3. Keep GL calls on the render thread.
+4. Use a cvar r_tasks, default on only after stable.
+
+This should come after or alongside a cleaner renderer split. Adding threads to
+the current mutable texture-chain renderer directly is risky.
+
+
+Short-term cvars and workarounds
+================================
+
+Until the renderer is improved:
+
+- r_drawentities 0 confirms entity cost but is not playable.
+- r_particles 0 can help effect-heavy scenes but changes visuals.
+- r_dynamic 0 may reduce dynamic light/lightmap work but changes visuals.
+- r_scale can reduce rendered resolution as a VR fallback, but does not fix CPU
+  scene setup.
+- r_skyroom 0 should stay off by default unless a map needs it.
+- A future vr_shared_scene_setup 1 would be a high-value default once stable.
+- A future r_alias_instancing 1 should default on when supported.
+- A future r_gpuworld 1 should default on only after broad testing.
+
+
+Recommended next implementation tasks
+=====================================
+
+Task 1: add renderer performance logging
+
+- Files likely touched:
+  - Quake/gl_rmain.c
+  - Quake/r_world.c
+  - Quake/r_alias.c
+  - Quake/vr.c
+  - Quake/gl_screen.c
+- Output:
+  - file logging gated by r_perfdebug
+  - per-eye and per-frame timing
+  - counters for leaves/surfaces/entities/draw calls
+
+Task 2: VR shared scene setup prototype
+
+- Files likely touched:
+  - Quake/vr.c
+  - Quake/gl_rmain.c
+  - Quake/r_world.c
+  - Quake/render.h or local renderer headers
+- Keep behind cvar:
+  - vr_shared_scene_setup 0/1
+- First target:
+  - reuse visibility and entity list between eyes
+  - do not yet restructure all draw code
+
+Task 3: port Ironwail entity sorting
+
+- Source reference:
+  - /home/obesecatlord/Documents/ironwailVR/ironwail/Quake/gl_rmain.c:635
+  - /home/obesecatlord/Documents/ironwailVR/ironwail/Quake/gl_rmain.c:1108
+- Target:
+  - sorted visible entity list in this fork
+  - grouped draw by modtype/model
+
+Task 4: port Ironwail alias instancing
+
+- Source reference:
+  - /home/obesecatlord/Documents/ironwailVR/ironwail/Quake/r_alias.c:54
+  - /home/obesecatlord/Documents/ironwailVR/ironwail/Quake/r_alias.c:294
+  - /home/obesecatlord/Documents/ironwailVR/ironwail/Quake/r_alias.c:470
+  - /home/obesecatlord/Documents/ironwailVR/ironwail/Quake/r_alias.c:610
+- Target:
+  - world alias entities only
+  - exclude VR held weapons and weapon wheel at first
+  - old path fallback
+
+Task 5: start Ironwail brush GPU path branch
+
+- Source reference:
+  - /home/obesecatlord/Documents/ironwailVR/ironwail/Quake/r_brush.c:578
+  - /home/obesecatlord/Documents/ironwailVR/ironwail/Quake/r_brush.c:749
+  - /home/obesecatlord/Documents/ironwailVR/ironwail/Quake/r_world.c:58
+  - /home/obesecatlord/Documents/ironwailVR/ironwail/Quake/r_world.c:231
+- Target:
+  - optional r_gpuworld path
+  - old path fallback
+  - first prove opaque world surfaces, then add brush entities and special
+    surfaces.
+
+
+Regression tests before enabling defaults
+=========================================
+
+Performance tests:
+
+- mjolnir mj4m1 desktop with entities
+- mjolnir mj4m1 desktop with r_drawentities 0
+- mjolnir mj4m1 VR
+- AD large map in desktop and VR
+- dwell detailed map in desktop and VR
+
+Correctness tests:
+
+- id1 start/e1m1
+- AD map with CSQC HUD and particles
+- dwell map with particles/weather
+- mjolnir hub and mj4m1
+- qbj3 with CSQC and custom weapon models
+- ravenkeep with VR weapons and animation interpolation
+- water/warp texture map
+- skyroom map with r_skyroom enabled
+- transparent brush entities and sprites
+- moving doors, plats, ladders, and elevators
+
+VR-specific tests:
+
+- stereo text/HUD correctness
+- held weapon transforms
+- weapon wheel
+- controller preview
+- per-eye culling near walls/doorways
+- frame pacing with no missed compositor frames
+
+
+Bottom line
+===========
+
+For this fork, the best practical path is not to port all of VKQuake or all of
+Ironwail at once. The next durable performance work should be:
+
+1. Measure better.
+2. Stop repeating expensive scene setup per VR eye.
+3. Port Ironwail's entity sort and alias instancing.
+4. Port Ironwail's OpenGL world/brush GPU buffer and indirect draw path.
+5. Add Ironwail-style frame resource uploads.
+6. Use VKQuake tasking/SIMD ideas for remaining CPU fallback paths.
+
+Those changes directly target the mj4m1 evidence: huge no-VIS BSP2 world cost,
+many entities, and VR doubling of CPU render setup.
+
+
+Implementation status started on 2026-06-06
+===========================================
+
+The first safe implementation step has been added in this working tree:
+
+- r_perfdebug
+  - 0: disabled. This is the default and should have no practical runtime
+    effect.
+  - 1: log slow rendered views whose total render time is at least
+    r_perfdebug_min_ms.
+  - 2: log every rendered view.
+
+- r_perfdebug_min_ms
+  - Default: 8.
+  - Used only when r_perfdebug is 1.
+
+Logs are written with DebugLog to debug_mapchange.log, not as onscreen console
+spam. The instrumentation records:
+
+- total rendered-view time
+- skyroom, setup, surface marking, warp update, scene, and scale timings
+- world, water, opaque entity, alpha entity, dynamic light, particle, outline,
+  viewmodel, and debug-draw timings
+- PVS source counts: normal leaf PVS, fat PVS, novis
+- leaf scan, visible leaf, culled leaf, marksurface, unique surface, culled
+  surface, chained surface, and efrag-leaf counts
+- opaque/alpha entity counts by alias, brush, and sprite type
+- alias draw, alias cull, GLSL alias draw, and GLSL alias batch flush counts
+
+Also added:
+
+- A debug-log-only warning when a BSP2 map loads with no VIS data. This is meant
+  to flag maps like mj4m1 without adding HUD/console noise.
+
+Networking impact:
+
+- No networking files or packet paths were changed by this instrumentation step.
+
+VR impact:
+
+- VR rendering behavior is unchanged. The instrumentation only records timings
+  around existing calls. VR-specific rendering paths and input paths are not
+  modified.

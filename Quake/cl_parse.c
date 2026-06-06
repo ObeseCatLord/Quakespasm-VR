@@ -382,7 +382,7 @@ static void CL_ForceProtocolParticles(void)
 	cl.protocol_particles = true;
 	PScript_FindParticleType ("effectinfo.");
 	COM_Effectinfo_Enumerate (CL_GenerateRandomParticlePrecache);
-	Con_DPrintf ("Received protocol particles before explicit particle extension setup\n");
+	Con_DPrintf2 ("Received protocol particles before explicit particle extension setup\n");
 }
 
 void CL_RegisterParticles(void)

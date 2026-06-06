@@ -25,6 +25,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 // on the same machine.
 
 #include "quakedef.h"
+#include "debug_log.h"
 
 static qmodel_t*	loadmodel;
 static char	loadname[32];	// for hunk tags
@@ -178,7 +179,7 @@ static byte *Mod_DecompressVis (byte *in, qmodel_t *model)
 			{
 				if(!model->viswarn) {
 					model->viswarn = true;
-					Con_Warning("Mod_DecompressVis: output overrun on model \"%s\"\n", model->name);
+					DebugLog("Mod_DecompressVis: output overrun on model \"%s\"\n", model->name);
 				}
 				return mod_decompressed;
 			}
@@ -1306,7 +1307,7 @@ static void Mod_LoadFaces (lump_t *l, qboolean bsp2)
 
 		out->flags = 0;
 		if (out->numedges < 3)
-			Con_Warning("surfnum %d: bad numedges %d\n", surfnum, out->numedges);
+			DebugLog("Mod_LoadFaces: %s surfnum %d has bad numedges %d\n", loadmodel->name, surfnum, out->numedges);
 
 		if (side)
 			out->flags |= SURF_PLANEBACK;
@@ -2382,8 +2383,12 @@ static void Mod_LoadBrushModel (qmodel_t *mod, void *buffer)
 
 	Mod_LoadVisibility (&header->lumps[LUMP_VISIBILITY]);
 	Mod_LoadLeafs (&header->lumps[LUMP_LEAFS], bsp2);
-visdone:
-	Mod_LoadNodes (&header->lumps[LUMP_NODES], bsp2);
+	if (bsp2 && !loadmodel->visdata)
+		DebugLog("perf: %s is BSP2 with no VIS data; renderer may scan very large leaf/surface sets (leafs=%d surfaces=%d marksurfaces=%d)\n",
+			loadmodel->name, loadmodel->numleafs, loadmodel->numsurfaces,
+			loadmodel->nummarksurfaces);
+	visdone:
+		Mod_LoadNodes (&header->lumps[LUMP_NODES], bsp2);
 	Mod_LoadClipnodes (&header->lumps[LUMP_CLIPNODES], bsp2);
 	Mod_LoadEntities (&header->lumps[LUMP_ENTITIES]);
 	Mod_LoadSubmodels (&header->lumps[LUMP_MODELS]);
