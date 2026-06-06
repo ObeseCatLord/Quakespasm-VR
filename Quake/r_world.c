@@ -99,7 +99,9 @@ void R_MarkSurfaces (void)
 	msurface_t	*surf, **mark;
 	int			i, j;
 	qboolean	nearwaterportal;
+	qboolean	perf;
 
+	perf = r_perfdebug.value != 0;
 	// clear lightmap chains
 	for (i=0 ; i<lightmap_count ; i++)
 		lightmaps[i].polys = NULL;
@@ -113,11 +115,23 @@ void R_MarkSurfaces (void)
 
 	// choose vis data
 	if (r_novis.value || r_viewleaf->contents == CONTENTS_SOLID || r_viewleaf->contents == CONTENTS_SKY)
+	{
 		vis = Mod_NoVisPVS (cl.worldmodel);
+		if (perf)
+			r_perf_pvs_novis++;
+	}
 	else if (nearwaterportal)
+	{
 		vis = SV_FatPVS (r_origin, cl.worldmodel);
+		if (perf)
+			r_perf_pvs_fat++;
+	}
 	else
+	{
 		vis = Mod_LeafPVS (r_viewleaf, cl.worldmodel);
+		if (perf)
+			r_perf_pvs_leaf++;
+	}
 
 	r_visframecount++;
 
@@ -130,32 +144,54 @@ void R_MarkSurfaces (void)
 	leaf = &cl.worldmodel->leafs[1];
 	for (i=0 ; i<cl.worldmodel->numleafs ; i++, leaf++)
 	{
+		if (perf)
+			r_perf_leaves_scanned++;
 		if (vis[i>>3] & (1<<(i&7)))
 		{
+			if (perf)
+				r_perf_leaves_visible++;
 			if (R_CullBox(leaf->minmaxs, leaf->minmaxs + 3))
+			{
+				if (perf)
+					r_perf_leaves_culled++;
 				continue;
+			}
 
 			if (r_oldskyleaf.value || leaf->contents != CONTENTS_SKY)
+			{
+				if (perf)
+					r_perf_marksurfaces_scanned += leaf->nummarksurfaces;
 				for (j=0, mark = leaf->firstmarksurface; j<leaf->nummarksurfaces; j++, mark++)
 				{
 					surf = *mark;
 					if (surf->visframe != r_visframecount)
 					{
+						if (perf)
+							r_perf_surfaces_unique++;
 						surf->visframe = r_visframecount;
 						if (!R_CullBox(surf->mins, surf->maxs) && !R_BackFaceCull (surf))
 						{
 							rs_brushpolys++; //count wpolys here
 							R_ChainSurface(surf, chain_world);
 							R_RenderDynamicLightmaps(surf);
+							if (perf)
+								r_perf_surfaces_chained++;
 							if (surf->texinfo->texture->warpimage)
 								surf->texinfo->texture->update_warp = true;
 						}
+						else if (perf)
+							r_perf_surfaces_culled++;
 					}
 				}
+			}
 
 			// add static models
 			if (leaf->efrags)
+			{
+				if (perf)
+					r_perf_efrag_leaves++;
 				R_StoreEfrags (&leaf->efrags);
+			}
 		}
 	}
 }

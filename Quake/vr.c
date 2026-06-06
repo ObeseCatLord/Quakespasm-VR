@@ -9,6 +9,7 @@ extern "C" {
 #include "sys.h"
 #include "vr_menu.h"
 #include "zone.h"
+#include "debug_log.h"
 
 #ifdef __cplusplus
 }
@@ -177,6 +178,7 @@ static bool readbackYaw;
 vec3_t vr_viewOffset;
 static vec3_t lastHudPosition{0.0, 0.0, 0.0};
 static vec3_t lastMenuPosition{0.0, 0.0, 0.0};
+static qboolean lastMenuPositionValid = false;
 
 vr_weapon_cmd_t vr_weapons[MAX_VR_WEAPONS];
 int num_vr_weapons = 0;
@@ -286,6 +288,13 @@ static int vr_autoscan_impulse = 0;
 static double vr_autoscan_next_time = 0;
 static bool vr_autoscan_active = false;
 double vr_next_weapon_switch_time = 0; // Debounce for switching
+static int vr_weapon_cycle_target = -1;
+static int vr_weapon_cycle_impulse = 0;
+static int vr_weapon_cycle_attempts = 0;
+static double vr_weapon_cycle_next_time = 0;
+
+#define VR_WEAPON_CYCLE_MAX_ATTEMPTS 8
+#define VR_WEAPON_CYCLE_INTERVAL 0.10
 
 static int VR_ParseStatName(const char *value, int *default_max) {
   if (default_max)
@@ -339,18 +348,108 @@ static void VR_InitDynWeapon(vr_dyn_weapon_t *w) {
   w->ammo_stat = -1;
 }
 
+static qboolean VR_DynWeaponHasModelDiscriminator(const vr_dyn_weapon_t *w) {
+  return (w->model_path && w->model_path[0]) || w->model_index > 0;
+}
+
+static qboolean VR_DynWeaponModelMatches(const vr_dyn_weapon_t *w,
+                                         const char *model_path,
+                                         int model_index) {
+  qboolean query_has_model =
+      (model_path && model_path[0]) || model_index > 0;
+
+  if (!query_has_model || !VR_DynWeaponHasModelDiscriminator(w))
+    return true;
+  if (model_path && model_path[0] && w->model_path && w->model_path[0] &&
+      !q_strcasecmp(model_path, w->model_path))
+    return true;
+  if (model_index > 0 && w->model_index == model_index)
+    return true;
+  return false;
+}
+
+static qboolean VR_ModelIndexMatchesPath(int model_index, const char *path) {
+  qmodel_t *model;
+
+  if (model_index <= 0 || model_index >= MAX_MODELS || !path || !path[0])
+    return false;
+  model = cl.model_precache[model_index];
+  if (!model || !model->name[0])
+    return false;
+  return !q_strcasecmp(model->name, path);
+}
+
 static int VR_FindDynWeapon(int bitmask, int owned_stat, int owned_mask,
-                            int active_stat, int active_mask) {
+                            int active_stat, int active_mask,
+                            const char *model_path, int model_index) {
   for (int i = 0; i < num_dyn_weapons; i++) {
+    qboolean selector_match = false;
+
     if (bitmask && dyn_weapons[i].bitmask == bitmask)
-      return i;
+      selector_match = true;
     if (owned_stat >= 0 && dyn_weapons[i].owned_stat == owned_stat &&
         dyn_weapons[i].owned_mask == owned_mask)
-      return i;
+      selector_match = true;
     if (active_stat >= 0 && dyn_weapons[i].active_stat == active_stat &&
         dyn_weapons[i].active_mask == active_mask)
+      selector_match = true;
+
+    if (selector_match &&
+        VR_DynWeaponModelMatches(&dyn_weapons[i], model_path, model_index))
       return i;
   }
+
+  return -1;
+}
+
+static int VR_FindDynWeaponForActive(int active, int model_index) {
+  int unlearned = -1;
+
+  for (int i = 0; i < num_dyn_weapons; i++) {
+    vr_dyn_weapon_t *w = &dyn_weapons[i];
+    qboolean active_match = false;
+
+    if (w->active_stat >= 0) {
+      int value = cl.stats[w->active_stat];
+      active_match = w->active_mask ? ((value & w->active_mask) != 0)
+                                    : (value != 0);
+    } else if (w->bitmask) {
+      active_match = (w->bitmask == active);
+    }
+
+    if (!active_match)
+      continue;
+    if (w->model_index > 0 && w->model_index == model_index)
+      return i;
+    if (w->model_index == 0 && VR_ModelIndexMatchesPath(model_index,
+                                                        w->model_path))
+      return i;
+    if (w->model_index == 0 && unlearned < 0)
+      unlearned = i;
+  }
+
+  return unlearned;
+}
+
+static int VR_FindImpulseForActiveBit(int active) {
+  for (int i = 0; i < num_dyn_weapons; i++) {
+    if (dyn_weapons[i].bitmask == active && dyn_weapons[i].impulse > 0)
+      return dyn_weapons[i].impulse;
+  }
+  return 0;
+}
+
+static int VR_FindOwnershipStatForBitmask(int bitmask) {
+  if (!bitmask || (cl.items & bitmask))
+    return -1;
+
+  for (int i = MAX_CL_BASE_STATS; i < MAX_CL_STATS; i++) {
+    if (i == STAT_ACTIVEWEAPON || i == STAT_WEAPON)
+      continue;
+    if (cl.stats[i] & bitmask)
+      return i;
+  }
+
   return -1;
 }
 
@@ -360,7 +459,7 @@ static vr_dyn_weapon_t *VR_AddOrUpdateDynWeapon(
     int owned_stat, int owned_mask, int active_stat, int active_mask,
     int ammo_stat, int ammo_max, qboolean from_schema) {
   int index = VR_FindDynWeapon(bitmask, owned_stat, owned_mask, active_stat,
-                               active_mask);
+                               active_mask, model_path, model_index);
   vr_dyn_weapon_t *w;
 
   if (index >= 0) {
@@ -409,6 +508,27 @@ static vr_dyn_weapon_t *VR_AddOrUpdateDynWeapon(
   return w;
 }
 
+static qboolean VR_WeaponIsActive(const vr_dyn_weapon_t *w) {
+  qboolean active;
+
+  if (w->active_stat >= 0) {
+    int value = cl.stats[w->active_stat];
+    if (w->active_mask)
+      active = (value & w->active_mask) != 0;
+    else
+      active = value != 0;
+  } else {
+    active = w->bitmask && w->bitmask == cl.stats[STAT_ACTIVEWEAPON];
+  }
+
+  if (!active)
+    return false;
+  if (w->model_index > 0 && cl.stats[STAT_WEAPON] > 0 &&
+      w->model_index != cl.stats[STAT_WEAPON])
+    return false;
+  return true;
+}
+
 static qboolean VR_WeaponIsOwned(const vr_dyn_weapon_t *w) {
   if (w->owned_stat >= 0) {
     int value = cl.stats[w->owned_stat];
@@ -417,21 +537,10 @@ static qboolean VR_WeaponIsOwned(const vr_dyn_weapon_t *w) {
     return value != 0;
   }
 
-  if (w->bitmask)
-    return (cl.items & w->bitmask) != 0;
+  if (w->bitmask && (cl.items & w->bitmask))
+    return true;
 
-  return false;
-}
-
-static qboolean VR_WeaponIsActive(const vr_dyn_weapon_t *w) {
-  if (w->active_stat >= 0) {
-    int value = cl.stats[w->active_stat];
-    if (w->active_mask)
-      return (value & w->active_mask) != 0;
-    return value != 0;
-  }
-
-  return w->bitmask && w->bitmask == cl.stats[STAT_ACTIVEWEAPON];
+  return VR_WeaponIsActive(w);
 }
 
 static qboolean VR_GetWeaponAmmo(const vr_dyn_weapon_t *w, int *ammo,
@@ -849,7 +958,7 @@ void Mod_Weapon(const char *name, aliashdr_t *hdr) {
       }
     }
     if (weaponCVarEntry == -1) {
-      Con_Printf("No VR offset for weapon: %s\n", name);
+      DebugLog("VR: no weapon offset for %s\n", name);
     }
   }
 
@@ -2984,7 +3093,7 @@ void VR_LoadWeaponSchema(void) {
   // below, so it must come from the zone allocator rather than temp hunk.
   data = (char *)COM_LoadZoneFile("vr_weapons.txt", NULL);
   if (!data) {
-    Con_Printf("VR: No vr_weapons.txt found.\n");
+    DebugLog("VR: no vr_weapons.txt found for %s\n", com_gamedir);
     return;
   }
 
@@ -3138,6 +3247,9 @@ void VR_LoadWeaponSchema(void) {
         Q_strncpy(w->viewmodel_path, w->model_path, sizeof(w->viewmodel_path));
       }
 
+      if (!w->model_path[0] && w->viewmodel_path[0])
+        Q_strncpy(w->model_path, w->viewmodel_path, sizeof(w->model_path));
+
       if (!w->bitmask && w->owned_stat < 0 && w->active_stat >= 0) {
         w->owned_stat = w->active_stat;
         w->owned_mask = w->active_mask;
@@ -3255,6 +3367,7 @@ void VR_InitGame() {
   VR_LoadWeaponSchema();
   lastWeaponHeader = NULL;
   weaponCVarEntry = -1;
+  lastMenuPositionValid = false;
 
   // Per-game extra Z offset — currently 0 for all games.
   // The base vr_projectilespawn_z_offset cvar (default 24) handles QuakeC's
@@ -3309,6 +3422,7 @@ qboolean VR_Enable() {
 
   vr::VRCompositor()->SetTrackingSpace(vr::TrackingUniverseStanding);
   VR_ResetOrientation(); // Recenter the HMD
+  lastMenuPositionValid = false;
 
   Cbuf_AddText(
       "exec vr_autoexec.cfg\n"); // Load the vr autosec config file incase
@@ -3336,6 +3450,7 @@ void VID_VR_Disable() {
 
   // Reset the view height
   cl.viewheight = DEFAULT_VIEWHEIGHT;
+  lastMenuPositionValid = false;
 
   // TODO: Cleanup frame buffers
 
@@ -3869,7 +3984,14 @@ void VR_Draw2D() {
   VectorMA(r_refdef.vieworg, 48, forward, target);
 
   vec3_t smoothedTarget;
-  vec3lerp(smoothedTarget, lastMenuPosition, target, 0.2);
+  vec3_t menuDelta;
+  VectorSubtract(target, lastMenuPosition, menuDelta);
+  if (!lastMenuPositionValid || DotProduct(menuDelta, menuDelta) > 64.0f) {
+    VectorCopy(target, smoothedTarget);
+    lastMenuPositionValid = true;
+  } else {
+    vec3lerp(smoothedTarget, lastMenuPosition, target, 0.2);
+  }
   VectorCopy(smoothedTarget, lastMenuPosition);
 
   glTranslatef(smoothedTarget[0], smoothedTarget[1], smoothedTarget[2]);
@@ -3985,6 +4107,7 @@ void VR_SetAngles(vec3_t angles) {
 void VR_ResetOrientation() {
   cl.aimangles[YAW] = cl.viewangles[YAW];
   cl.aimangles[PITCH] = cl.viewangles[PITCH];
+  lastMenuPositionValid = false;
   if (vr_enabled.value) {
     // IVRSystem_ResetSeatedZeroPose(ovrHMD);
     VectorCopy(cl.aimangles, lastAim);
@@ -4331,21 +4454,54 @@ extern "C" void VR_TriggerHaptic(int controller, float durationSeconds) {
   }
 }
 
+static void VR_SendWeaponImpulse(int impulse) {
+  char cmd[32];
+
+  if (impulse <= 0)
+    return;
+  q_snprintf(cmd, sizeof(cmd), "impulse %d\n", impulse);
+  Cbuf_AddText(cmd);
+}
+
+static void VR_ContinueWeaponSelection(void) {
+  if (vr_weapon_cycle_target < 0 ||
+      vr_weapon_cycle_target >= num_dyn_weapons ||
+      vr_weapon_cycle_impulse <= 0)
+    return;
+
+  if (VR_WeaponIsActive(&dyn_weapons[vr_weapon_cycle_target])) {
+    vr_weapon_cycle_target = -1;
+    return;
+  }
+
+  if (vr_weapon_cycle_attempts >= VR_WEAPON_CYCLE_MAX_ATTEMPTS) {
+    vr_weapon_cycle_target = -1;
+    return;
+  }
+
+  if (Sys_DoubleTime() < vr_weapon_cycle_next_time)
+    return;
+
+  VR_SendWeaponImpulse(vr_weapon_cycle_impulse);
+  vr_weapon_cycle_attempts++;
+  vr_weapon_cycle_next_time = Sys_DoubleTime() + VR_WEAPON_CYCLE_INTERVAL;
+}
+
 // Track weapon changes each frame to discover model mappings
 void VR_TrackWeapons(void) {
   int active = cl.stats[STAT_ACTIVEWEAPON];
   int model_idx = cl.stats[STAT_WEAPON];
 
-  if (active == 0 || model_idx == 0)
+  if (active == 0 || model_idx == 0) {
+    VR_ContinueWeaponSelection();
     return;
+  }
 
   // Pulse auto-scanner if active
   if (vr_autoscan_active && Sys_DoubleTime() > vr_autoscan_next_time) {
     if (vr_autoscan_impulse < 12) {
       vr_autoscan_impulse++;
-      char cmd[32];
-      q_snprintf(cmd, sizeof(cmd), "impulse %d\n", vr_autoscan_impulse);
-      Cbuf_AddText(cmd);
+      VR_SendWeaponImpulse(vr_autoscan_impulse);
       vr_autoscan_next_time =
           Sys_DoubleTime() + 2.0; // 2.0s between probes (passive)
     } else {
@@ -4354,7 +4510,7 @@ void VR_TrackWeapons(void) {
     }
   }
 
-  int found = VR_FindDynWeapon(active, -1, 0, -1, 0);
+  int found = VR_FindDynWeaponForActive(active, model_idx);
   vr_dyn_weapon_t *w = (found >= 0) ? &dyn_weapons[found] : NULL;
 
   // Learned info for existing weapon
@@ -4375,27 +4531,37 @@ void VR_TrackWeapons(void) {
   // Fully new weapon from a mod (not in base table)
   else if (num_dyn_weapons < MAX_DYN_WEAPONS) {
     int impulse;
+    int owned_stat = -1;
+    int owned_mask = 0;
+
     if (vr_last_sent_impulse > 0 &&
         (Sys_DoubleTime() - vr_last_sent_impulse_time) < 0.5) {
       impulse = vr_last_sent_impulse;
     } else {
-      impulse = 0;
+      impulse = VR_FindImpulseForActiveBit(active);
     }
 
+    owned_stat = VR_FindOwnershipStatForBitmask(active);
+    if (owned_stat >= 0)
+      owned_mask = active;
+
     w = VR_AddOrUpdateDynWeapon(active, impulse, NULL, model_idx, true, 1.0f,
-                                vec3_origin, false, -1, 0, -1, 0, -1, 0,
-                                false);
+                                vec3_origin, false, owned_stat, owned_mask, -1,
+                                0, -1, 0, false);
     if (!w)
       return;
 
-    Con_DPrintf("VR: Discovered new mod weapon bitmask %d (impulse %d)\n",
-                active, w->impulse);
+    Con_DPrintf("VR: Discovered mod weapon bitmask %d model %d impulse %d owned_stat %d\n",
+                active, model_idx, w->impulse, owned_stat);
   }
+
+  VR_ContinueWeaponSelection();
 }
 
 // Start/Reset weapon tracking (call on map change / disconnect)
 void VR_ResetWeaponTracking(void) {
   last_tracked_activeweapon = -1;
+  vr_weapon_cycle_target = -1;
 
   // Rogue expansion uses different bitmasks: RIT_AXE=2048, and reuses
   // 4096 for RIT_LAVA_NAILGUN. Fix up the axe entry accordingly.
@@ -4465,6 +4631,39 @@ extern "C" int VR_GetSelectedWeaponImpulse(int selection) {
   }
   return 0;
 }
+
+extern "C" void VR_SelectWeaponFromMenu(int selection) {
+  vr_dyn_weapon_t *visible[MAX_DYN_WEAPONS];
+  int num_visible = VR_GetVisibleWeapons(visible, MAX_DYN_WEAPONS);
+  vr_dyn_weapon_t *w;
+  int index;
+
+  vr_weapon_cycle_target = -1;
+
+  if (selection < 0 || selection >= num_visible)
+    return;
+
+  w = visible[selection];
+  if (w->impulse <= 0) {
+    DebugLog("VR: selected weapon has no impulse bitmask=%d model=%d\n",
+             w->bitmask, w->model_index);
+    return;
+  }
+
+  if (VR_WeaponIsActive(w))
+    return;
+
+  index = (int)(w - dyn_weapons);
+  if (index < 0 || index >= num_dyn_weapons)
+    return;
+
+  VR_SendWeaponImpulse(w->impulse);
+  vr_weapon_cycle_target = index;
+  vr_weapon_cycle_impulse = w->impulse;
+  vr_weapon_cycle_attempts = 1;
+  vr_weapon_cycle_next_time = Sys_DoubleTime() + VR_WEAPON_CYCLE_INTERVAL;
+}
+
 extern gltexture_t *char_texture;
 extern void GL_Bind(gltexture_t *tex);
 

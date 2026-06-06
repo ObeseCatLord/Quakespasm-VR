@@ -72,6 +72,7 @@ void VR_PushYaw();
 void VR_TrackWeapons();
 void VR_ResetWeaponTracking();
 int VR_GetSelectedWeaponImpulse(int selection);
+void VR_SelectWeaponFromMenu(int selection);
 void VR_DrawSbar();
 void VR_AddOrientationToViewAngles(vec3_t angles);
 void VR_SetAngles(vec3_t angles);

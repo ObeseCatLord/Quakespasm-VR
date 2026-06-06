@@ -173,14 +173,8 @@ void IN_VRWeaponMenuUp(void) {
   int sel = vr_weaponmenu_selection;
   vr_weaponmenu_selection = -1; // Reset selection first
 
-  if (sel >= 0) {
-    int impulse = VR_GetSelectedWeaponImpulse(sel);
-    if (impulse > 0) {
-      char cmd[64];
-      q_snprintf(cmd, sizeof(cmd), "impulse %d\n", impulse);
-      Cbuf_AddText(cmd);
-    }
-  }
+  if (sel >= 0)
+    VR_SelectWeaponFromMenu(sel);
 }
 
 void IN_Impulse(void) {

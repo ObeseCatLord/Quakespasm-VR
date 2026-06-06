@@ -22,6 +22,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 // r_main.c
 
 #include "quakedef.h"
+#include "debug_log.h"
 #include "vr.h"
 
 extern cvar_t r_alias_batching;
@@ -62,6 +63,8 @@ cvar_t r_norefresh = {"r_norefresh", "0", CVAR_NONE};
 cvar_t r_drawentities = {"r_drawentities", "1", CVAR_NONE};
 cvar_t r_drawviewmodel = {"r_drawviewmodel", "1", CVAR_NONE};
 cvar_t r_speeds = {"r_speeds", "0", CVAR_NONE};
+cvar_t r_perfdebug = {"r_perfdebug", "0", CVAR_NONE};
+cvar_t r_perfdebug_min_ms = {"r_perfdebug_min_ms", "8", CVAR_NONE};
 cvar_t r_pos = {"r_pos", "0", CVAR_NONE};
 cvar_t r_fullbright = {"r_fullbright", "0", CVAR_NONE};
 cvar_t r_lightmap = {"r_lightmap", "0", CVAR_NONE};
@@ -121,6 +124,131 @@ cvar_t r_lavaalpha = {"r_lavaalpha", "0", CVAR_NONE};
 cvar_t r_telealpha = {"r_telealpha", "0", CVAR_NONE};
 cvar_t r_slimealpha = {"r_slimealpha", "0", CVAR_NONE};
 cvar_t r_part_density = {"r_part_density", "1", CVAR_ARCHIVE};
+
+int r_perf_pvs_leaf;
+int r_perf_pvs_fat;
+int r_perf_pvs_novis;
+int r_perf_leaves_scanned;
+int r_perf_leaves_visible;
+int r_perf_leaves_culled;
+int r_perf_marksurfaces_scanned;
+int r_perf_surfaces_unique;
+int r_perf_surfaces_culled;
+int r_perf_surfaces_chained;
+int r_perf_efrag_leaves;
+int r_perf_alias_draws;
+int r_perf_alias_culled;
+int r_perf_alias_glsl_draws;
+int r_perf_alias_batch_flushes;
+
+static int r_perf_setup_calls;
+static int r_perf_scene_calls;
+static int r_perf_entities_opaque;
+static int r_perf_entities_alpha;
+static int r_perf_entities_alias;
+static int r_perf_entities_brush;
+static int r_perf_entities_sprite;
+static double r_perf_skyroom_ms;
+static double r_perf_setup_ms;
+static double r_perf_mark_ms;
+static double r_perf_warp_ms;
+static double r_perf_scene_ms;
+static double r_perf_sky_ms;
+static double r_perf_world_ms;
+static double r_perf_shadows_ms;
+static double r_perf_entities_opaque_ms;
+static double r_perf_water_ms;
+static double r_perf_entities_alpha_ms;
+static double r_perf_dlights_ms;
+static double r_perf_particles_ms;
+static double r_perf_outlines_ms;
+static double r_perf_viewmodel_ms;
+static double r_perf_debugdraw_ms;
+static double r_perf_scale_ms;
+
+static qboolean R_PerfActive(void) { return r_perfdebug.value != 0; }
+
+static double R_PerfStart(void) {
+  return R_PerfActive() ? Sys_DoubleTime() : 0.0;
+}
+
+static void R_PerfAdd(double *accum, double start) {
+  if (R_PerfActive())
+    *accum += (Sys_DoubleTime() - start) * 1000.0;
+}
+
+static void R_PerfResetFrame(void) {
+  r_perf_pvs_leaf = r_perf_pvs_fat = r_perf_pvs_novis = 0;
+  r_perf_leaves_scanned = r_perf_leaves_visible = r_perf_leaves_culled = 0;
+  r_perf_marksurfaces_scanned = r_perf_surfaces_unique = 0;
+  r_perf_surfaces_culled = r_perf_surfaces_chained = r_perf_efrag_leaves = 0;
+  r_perf_alias_draws = r_perf_alias_culled = r_perf_alias_glsl_draws = 0;
+  r_perf_alias_batch_flushes = 0;
+  r_perf_setup_calls = r_perf_scene_calls = 0;
+  r_perf_entities_opaque = r_perf_entities_alpha = 0;
+  r_perf_entities_alias = r_perf_entities_brush = r_perf_entities_sprite = 0;
+  r_perf_skyroom_ms = r_perf_setup_ms = r_perf_mark_ms = r_perf_warp_ms = 0.0;
+  r_perf_scene_ms = r_perf_sky_ms = r_perf_world_ms = r_perf_shadows_ms = 0.0;
+  r_perf_entities_opaque_ms = r_perf_water_ms = r_perf_entities_alpha_ms = 0.0;
+  r_perf_dlights_ms = r_perf_particles_ms = r_perf_outlines_ms = 0.0;
+  r_perf_viewmodel_ms = r_perf_debugdraw_ms = r_perf_scale_ms = 0.0;
+}
+
+static void R_PerfCountEntity(entity_t *ent, qboolean alphapass) {
+  if (!R_PerfActive() || !ent || !ent->model)
+    return;
+
+  if (alphapass)
+    r_perf_entities_alpha++;
+  else
+    r_perf_entities_opaque++;
+
+  switch (ent->model->type) {
+  case mod_alias:
+    r_perf_entities_alias++;
+    break;
+  case mod_brush:
+    r_perf_entities_brush++;
+    break;
+  case mod_sprite:
+    r_perf_entities_sprite++;
+    break;
+  }
+}
+
+static void R_PerfLogFrame(double total_ms) {
+  if (!R_PerfActive())
+    return;
+
+  if (r_perfdebug.value < 2 &&
+      total_ms < q_max(0.0f, r_perfdebug_min_ms.value))
+    return;
+
+  DebugLog("r_perfdebug: map=%s vr=%d total=%.3f skyroom=%.3f setup=%.3f "
+           "mark=%.3f warp=%.3f scene=%.3f scale=%.3f calls(setup=%d "
+           "scene=%d) pvs(leaf=%d fat=%d novis=%d) leaves(scan=%d vis=%d "
+           "cull=%d) marks=%d surf(unique=%d cull=%d chain=%d) efragleaf=%d "
+           "ents(opaque=%d alpha=%d alias=%d brush=%d sprite=%d) "
+           "draw(world=%.3f water=%.3f entopq=%.3f entalpha=%.3f aliasdraw=%d "
+           "aliascull=%d aliasglsl=%d aliasflush=%d sky=%.3f shadows=%.3f "
+           "dlights=%.3f particles=%.3f outlines=%.3f viewmodel=%.3f "
+           "debugdraw=%.3f)\n",
+           cl.worldmodel ? cl.worldmodel->name : "<none>",
+           (int)vr_enabled.value, total_ms, r_perf_skyroom_ms, r_perf_setup_ms,
+           r_perf_mark_ms, r_perf_warp_ms, r_perf_scene_ms, r_perf_scale_ms,
+           r_perf_setup_calls, r_perf_scene_calls, r_perf_pvs_leaf,
+           r_perf_pvs_fat, r_perf_pvs_novis, r_perf_leaves_scanned,
+           r_perf_leaves_visible, r_perf_leaves_culled,
+           r_perf_marksurfaces_scanned, r_perf_surfaces_unique,
+           r_perf_surfaces_culled, r_perf_surfaces_chained,
+           r_perf_efrag_leaves, r_perf_entities_opaque, r_perf_entities_alpha,
+           r_perf_entities_alias, r_perf_entities_brush, r_perf_entities_sprite,
+           r_perf_world_ms, r_perf_water_ms, r_perf_entities_opaque_ms,
+           r_perf_entities_alpha_ms, r_perf_alias_draws, r_perf_alias_culled,
+           r_perf_alias_glsl_draws, r_perf_alias_batch_flushes, r_perf_sky_ms,
+           r_perf_shadows_ms, r_perf_dlights_ms, r_perf_particles_ms,
+           r_perf_outlines_ms, r_perf_viewmodel_ms, r_perf_debugdraw_ms);
+}
 
 float map_wateralpha, map_lavaalpha, map_telealpha, map_slimealpha, map_fallbackalpha;
 
@@ -565,6 +693,12 @@ frame, even in stereo mode
 ===============
 */
 void R_SetupView(void) {
+  double perf_start, perf_mark_start, perf_warp_start;
+
+  perf_start = R_PerfStart();
+  if (R_PerfActive())
+    r_perf_setup_calls++;
+
   // Need to do those early because we now update dynamic light maps during
   // R_MarkSurfaces.
   R_PushDlights();
@@ -606,14 +740,20 @@ void R_SetupView(void) {
 
   R_SetFrustum(r_fovx, r_fovy); // johnfitz -- use r_fov* vars
 
+  perf_mark_start = R_PerfStart();
   R_MarkSurfaces(); // johnfitz -- create texture chains from PVS
+  R_PerfAdd(&r_perf_mark_ms, perf_mark_start);
 
-  if (!skyroom_drawn)
+  if (!skyroom_drawn) {
+    perf_warp_start = R_PerfStart();
     R_UpdateWarpTextures(); // johnfitz -- do this before R_Clear
+    R_PerfAdd(&r_perf_warp_ms, perf_warp_start);
+  }
 
   R_Clear();
 
   R_SetupCheatSafeDrawModes();
+  R_PerfAdd(&r_perf_setup_ms, perf_start);
 }
 
 //==============================================================================
@@ -676,6 +816,8 @@ static float R_AlphaEntitySortDistance(entity_t *ent) {
 }
 
 static void R_DrawCurrentEntityOnList(void) {
+  R_PerfCountEntity(currententity, ENTALPHA_DECODE(currententity->alpha) < 1);
+
   switch (currententity->model->type) {
   case mod_alias:
     R_DrawAliasModel(currententity);
@@ -1240,47 +1382,76 @@ R_RenderScene
 ================
 */
 void R_RenderScene(void) {
+  double perf_scene_start, perf_start;
+
+  perf_scene_start = R_PerfStart();
+  if (R_PerfActive())
+    r_perf_scene_calls++;
+
   R_SetupScene(); // johnfitz -- this does everything that should be done once
                   // per call to RenderScene
 
   Fog_EnableGFog(); // johnfitz
 
+  perf_start = R_PerfStart();
   Sky_DrawSky(); // johnfitz
+  R_PerfAdd(&r_perf_sky_ms, perf_start);
 
+  perf_start = R_PerfStart();
   R_DrawWorld();
+  R_PerfAdd(&r_perf_world_ms, perf_start);
 
   S_ExtraUpdate(); // don't let sound get messed up if going slow
 
+  perf_start = R_PerfStart();
   R_DrawShadows(); // johnfitz -- render entity shadows
+  R_PerfAdd(&r_perf_shadows_ms, perf_start);
 
+  perf_start = R_PerfStart();
   R_DrawEntitiesOnList(
       false); // johnfitz -- false means this is the pass for nonalpha entities
+  R_PerfAdd(&r_perf_entities_opaque_ms, perf_start);
 
+  perf_start = R_PerfStart();
   R_DrawWorld_Water(); // johnfitz -- drawn here since they might have
                        // transparency
+  R_PerfAdd(&r_perf_water_ms, perf_start);
 
+  perf_start = R_PerfStart();
   R_DrawEntitiesOnList(
       true); // johnfitz -- true means this is the pass for alpha entities
+  R_PerfAdd(&r_perf_entities_alpha_ms, perf_start);
 
+  perf_start = R_PerfStart();
   R_RenderDlights(); // triangle fan dlights -- johnfitz -- moved after water
+  R_PerfAdd(&r_perf_dlights_ms, perf_start);
 
+  perf_start = R_PerfStart();
   R_DrawParticles();
 #ifdef PSET_SCRIPT
   PScript_DrawParticles();
 #endif
+  R_PerfAdd(&r_perf_particles_ms, perf_start);
 
   Fog_DisableGFog(); // johnfitz
 
   if (!skyroom_drawing) {
+    perf_start = R_PerfStart();
     R_DrawPlayerOutlines(); // co-op VR player outlines through walls
     R_DrawCoopNametags();
+    R_PerfAdd(&r_perf_outlines_ms, perf_start);
   }
 
+  perf_start = R_PerfStart();
   R_DrawViewModel(); // johnfitz -- moved here from R_RenderView
+  R_PerfAdd(&r_perf_viewmodel_ms, perf_start);
 
+  perf_start = R_PerfStart();
   R_ShowTris(); // johnfitz
 
   R_ShowBoundingBoxes(); // johnfitz
+  R_PerfAdd(&r_perf_debugdraw_ms, perf_start);
+  R_PerfAdd(&r_perf_scene_ms, perf_scene_start);
 }
 
 static GLuint r_scaleview_texture;
@@ -1392,13 +1563,17 @@ R_RenderView
 ================
 */
 void R_RenderView(void) {
-  double time1, time2;
+  double time1, time2, perf_frame_start, perf_start;
 
   if (r_norefresh.value)
     return;
 
   if (!cl.worldmodel)
     Sys_Error("R_RenderView: NULL worldmodel");
+
+  perf_frame_start = R_PerfStart();
+  if (R_PerfActive())
+    R_PerfResetFrame();
 
   time1 = 0; /* avoid compiler warning */
   if (r_speeds.value) {
@@ -1414,9 +1589,14 @@ void R_RenderView(void) {
   // If the previous frame preserved a skyroom, update any pending warp
   // textures before drawing this frame's skyroom. The skyroom color clear will
   // erase the framebuffer scratch area before the user can see it.
-  if (skyroom_drawn)
+  if (skyroom_drawn) {
+    perf_start = R_PerfStart();
     R_UpdateWarpTextures();
+    R_PerfAdd(&r_perf_warp_ms, perf_start);
+  }
+  perf_start = R_PerfStart();
   Sky_DrawSkyRoom();
+  R_PerfAdd(&r_perf_skyroom_ms, perf_start);
 
   R_SetupView(); // johnfitz -- this does everything that should be done once
                  // per frame
@@ -1454,10 +1634,13 @@ void R_RenderView(void) {
   }
   // johnfitz
 
+  perf_start = R_PerfStart();
   R_ScaleView();
+  R_PerfAdd(&r_perf_scale_ms, perf_start);
 
   // johnfitz -- modified r_speeds output
   time2 = Sys_DoubleTime();
+  R_PerfLogFrame((time2 - perf_frame_start) * 1000.0);
   if (r_pos.value)
     Con_Printf("x %i y %i z %i (pitch %i yaw %i roll %i)\n",
                (int)cl.entities[cl.viewentity].origin[0],

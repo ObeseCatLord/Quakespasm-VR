@@ -49,6 +49,8 @@ extern cvar_t r_nolerp_list;
 extern cvar_t r_noshadow_list;
 extern cvar_t r_alias_batching;
 extern cvar_t r_alphasort;
+extern cvar_t r_perfdebug;
+extern cvar_t r_perfdebug_min_ms;
 extern cvar_t r_part_density;
 extern cvar_t cl_coop_nametags;
 //johnfitz
@@ -204,6 +206,8 @@ void R_Init (void)
 	Cvar_RegisterVariable (&r_dynamic);
 	Cvar_RegisterVariable (&r_novis);
 	Cvar_RegisterVariable (&r_speeds);
+	Cvar_RegisterVariable (&r_perfdebug);
+	Cvar_RegisterVariable (&r_perfdebug_min_ms);
 	Cvar_RegisterVariable (&r_pos);
 
 	Cvar_RegisterVariable (&gl_finish);
