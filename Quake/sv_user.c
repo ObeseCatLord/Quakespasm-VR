@@ -123,6 +123,8 @@ void SV_ResetClientMoveState(client_t *client) {
   client->net_snapshot_max_bytes = 0;
   client->net_snapshot_max_packets = 0;
   client->net_snapshot_ack_lag_max = 0;
+  client->net_snapshot_last_ack_time = 0;
+  client->net_snapshot_ack_age_max = 0;
   client->net_snapshot_last_summary_time = 0;
   client->net_snapshot_partial_ack_seq = -1;
   client->net_snapshot_partial_ack_last_part = SNAPSHOT_PART_UNKNOWN;

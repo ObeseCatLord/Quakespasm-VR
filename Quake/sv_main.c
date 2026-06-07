@@ -1399,6 +1399,7 @@ void SVFTE_Ack (client_t *client, int sequence)
 	while (dropseq < sequence)
 		SVFTE_DroppedFrame (client, dropseq++);
 	client->lastacksequence = sequence;
+	client->net_snapshot_last_ack_time = realtime;
 
 	frame = &client->frames[sequence & (client->numframes - 1)];
 	if (frame->sequence == sequence)
@@ -2748,6 +2749,7 @@ static void SV_MaybePrintSnapshotSummary (client_t *client, int client_index)
 	int sequence;
 	int ack;
 	int acklag;
+	double ackage;
 
 	if (!net_lagdebug.value || client_index < 0)
 		return;
@@ -2762,16 +2764,20 @@ static void SV_MaybePrintSnapshotSummary (client_t *client, int client_index)
 		client->lastacksequence : -1) : client->net_snapshot_ack;
 	acklag = replacement ? SV_ReplacementAckLag (client, sequence) :
 		client->net_snapshot_ack_lag_max;
+	ackage = client->net_snapshot_last_ack_time > 0 ?
+		realtime - client->net_snapshot_last_ack_time : -1;
+	if (ackage > client->net_snapshot_ack_age_max)
+		client->net_snapshot_ack_age_max = ackage;
 	avg_packets = client->net_snapshot_updates_sent ?
 		(client->net_snapshot_split_packets + client->net_snapshot_updates_sent) /
 			client->net_snapshot_updates_sent : 0;
-	Con_Printf ("net_lagdebug: server summary to %s (%s): replacement=%d updates=%d last_packets=%d avg_packets=%d max_packets=%d last_bytes=%d max_bytes=%d seq=%d ack=%d acklag=%d clipped=%d\n",
+	Con_Printf ("net_lagdebug: server summary to %s (%s): replacement=%d updates=%d last_packets=%d avg_packets=%d max_packets=%d last_bytes=%d max_bytes=%d seq=%d ack=%d acklag=%d ackage=%.3f max_ackage=%.3f clipped=%d\n",
 		client->name, NET_QSocketGetAddressString(client->netconnection),
 		replacement ? 1 : 0,
 		client->net_snapshot_updates_sent, client->net_snapshot_last_packets,
 		avg_packets, client->net_snapshot_max_packets,
 		client->net_snapshot_last_bytes, client->net_snapshot_max_bytes,
-		sequence, ack, acklag,
+		sequence, ack, acklag, ackage, client->net_snapshot_ack_age_max,
 		client->net_snapshot_unsent_entities);
 	client->net_snapshot_last_summary_time = realtime;
 }
