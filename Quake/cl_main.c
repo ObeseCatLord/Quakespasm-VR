@@ -1241,6 +1241,18 @@ static void CL_RecordPredictedMove (int seq, const vec3_t origin, const vec3_t v
 	VectorCopy (velocity, cl.predicted_move_velocity[index]);
 }
 
+static void CL_ClearPredictionHistory (void)
+{
+	int i;
+
+	for (i = 0; i < CL_MOVE_HISTORY; i++)
+		cl.predicted_move_sequence[i] = -1;
+	VectorClear (cl.prediction_error);
+	cl.prediction_error_time = 0;
+	cl.prediction_error_sequence = -1;
+	cl.net_prediction_error_last_sequence = -1;
+}
+
 static void CL_CheckPredictionError (entity_t *ent)
 {
 	int		ack;
@@ -1397,7 +1409,10 @@ static qboolean CL_PredictPlayer (entity_t *ent)
 	pmove.jump_secs = 0;
 	pmove.skipent = -cl.viewentity;
 	World_AddEntsToPmove (NULL, bounds);
-	CL_CheckPredictionError (ent);
+	if (ent->forcelink || (ent->lerpflags & LERP_RESETMOVE))
+		CL_ClearPredictionHistory ();
+	else
+		CL_CheckPredictionError (ent);
 
 	startseq = cl.ackedmovemessages + 1;
 	if (startseq < 2)
