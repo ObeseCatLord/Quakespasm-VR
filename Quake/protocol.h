@@ -366,7 +366,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #define clc_bad 0
 #define clc_nop 1
 #define clc_disconnect 2
-#define clc_move 3      // [bundled sequenced usercmd_t records]
+#define clc_move 3      // [short sequence][float servertime][angles][move][buttons][impulse][extbits]
 #define clc_stringcmd 4 // [string] message
 #define clcdp_ackframe 50
 #define clcfte_qcrequest 81
@@ -375,9 +375,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #define MOVEEXT_TRUSTED 2
 #define MOVEEXT_QCINPUT 4
 
-#define MOVE_BUNDLE_MAX 16
-#define MOVE_BUNDLE_SNAPSHOTACK 1
-#define MOVE_BUNDLE_SNAPSHOTPARTS 2
+#define MOVE_BUNDLE_MAX 16 // max repeated clc_move records per datagram
 
 #define SNAPSHOT_FIRST 1
 #define SNAPSHOT_LAST 2

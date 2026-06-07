@@ -173,6 +173,8 @@ static byte *Mod_DecompressVis (byte *in, qmodel_t *model)
 
 		c = in[1];
 		in += 2;
+		if (c > row - (out - mod_decompressed))
+			c = row - (out - mod_decompressed);
 		while (c)
 		{
 			if (out == outend)

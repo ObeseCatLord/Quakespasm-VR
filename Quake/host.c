@@ -64,7 +64,7 @@ cvar_t	host_framerate = {"host_framerate","0",CVAR_NONE};	// set for slow motion
 cvar_t	host_speeds = {"host_speeds","0",CVAR_NONE};			// set for running times
 cvar_t	host_maxfps = {"host_maxfps", "72", CVAR_ARCHIVE}; //johnfitz
 cvar_t	host_timescale = {"host_timescale", "0", CVAR_NONE}; //johnfitz
-cvar_t	cl_netfps = {"cl_netfps", "72", CVAR_ARCHIVE};	// CL_SendCmd cap to a remote server, 0 = uncapped
+cvar_t	cl_netfps = {"cl_netfps", "20", CVAR_ARCHIVE};	// CL_SendCmd cap to a remote server, 0 = uncapped
 cvar_t	max_edicts = {"max_edicts", "8192", CVAR_NONE}; //johnfitz //ericw -- changed from 2048 to 8192, removed CVAR_ARCHIVE
 cvar_t	cl_nocsqc = {"cl_nocsqc", "0", CVAR_NONE};
 
@@ -867,7 +867,11 @@ void _Host_Frame (float time)
 	static double		time3 = 0;
 	int			pass1, pass2, pass3;
 	qboolean		lagdebug_frame;
-	double			lagdebug_start, lagdebug_after_server, lagdebug_after_read, lagdebug_after_screen, lagdebug_after_audio;
+	double			lagdebug_start, lagdebug_after_events, lagdebug_after_commands;
+	double			lagdebug_after_cbuf, lagdebug_after_netpoll, lagdebug_after_accumulate;
+	double			lagdebug_after_send, lagdebug_after_server, lagdebug_after_remote_send;
+	double			lagdebug_after_read;
+	double			lagdebug_after_screen, lagdebug_after_audio;
 	static double		last_client_frame_log;
 
 	if (setjmp (host_abortserver) )
@@ -880,7 +884,11 @@ void _Host_Frame (float time)
 	if (!Host_FilterTime (time))
 		return;			// don't run too fast, or packets will flood out
 	lagdebug_frame = (net_lagdebug.value && !isDedicated) ? true : false;
-	lagdebug_start = lagdebug_after_server = lagdebug_after_read = lagdebug_after_screen = lagdebug_after_audio = 0;
+	lagdebug_start = lagdebug_after_events = lagdebug_after_commands = 0;
+	lagdebug_after_cbuf = lagdebug_after_netpoll = lagdebug_after_accumulate = 0;
+	lagdebug_after_send = lagdebug_after_server = lagdebug_after_remote_send = 0;
+	lagdebug_after_read = 0;
+	lagdebug_after_screen = lagdebug_after_audio = 0;
 	if (lagdebug_frame)
 		lagdebug_start = Sys_DoubleTime ();
 
@@ -888,18 +896,28 @@ void _Host_Frame (float time)
 	Key_UpdateForDest ();
 	IN_UpdateInputMode ();
 	Sys_SendKeyEvents ();
+	if (lagdebug_frame)
+		lagdebug_after_events = Sys_DoubleTime ();
 
 // allow mice or other external controllers to add commands
 	IN_Commands ();
+	if (lagdebug_frame)
+		lagdebug_after_commands = Sys_DoubleTime ();
 
 // process console commands
 	Cbuf_Execute ();
+	if (lagdebug_frame)
+		lagdebug_after_cbuf = Sys_DoubleTime ();
 
 	NET_Poll();
+	if (lagdebug_frame)
+		lagdebug_after_netpoll = Sys_DoubleTime ();
 
 // sample client input every rendered frame; CL_SendCmd drains the accumulated
 // move at the paced network tick.
 	CL_AccumulateCmd();
+	if (lagdebug_frame)
+		lagdebug_after_accumulate = Sys_DoubleTime ();
 
 	if (cl.sendprespawn)
 	{
@@ -914,6 +932,8 @@ void _Host_Frame (float time)
 // if running the server locally, make intentions now
 	if (sv.active)
 		CL_SendCmd ();
+	if (lagdebug_frame)
+		lagdebug_after_send = Sys_DoubleTime ();
 
 //-------------------
 //
@@ -968,6 +988,8 @@ void _Host_Frame (float time)
 				cl_send_accum = 0;
 		}
 	}
+	if (lagdebug_frame)
+		lagdebug_after_remote_send = Sys_DoubleTime ();
 
 // fetch results from server
 	if (cls.state == ca_connected)
@@ -1004,13 +1026,21 @@ void _Host_Frame (float time)
 		lagdebug_after_audio = Sys_DoubleTime ();
 		if ((lagdebug_after_audio - lagdebug_start > net_lagdebug_frame_threshold.value ||
 			lagdebug_after_screen - lagdebug_after_read > net_lagdebug_frame_threshold.value ||
-			lagdebug_after_read - lagdebug_after_server > net_lagdebug_frame_threshold.value) &&
+			lagdebug_after_remote_send - lagdebug_after_server > net_lagdebug_frame_threshold.value ||
+			lagdebug_after_read - lagdebug_after_remote_send > net_lagdebug_frame_threshold.value) &&
 			realtime - last_client_frame_log > 0.5)
 		{
-			Con_Printf ("net_lagdebug: client frame spike total=%.3f host_dt=%.3f pre_net=%.3f netread=%.3f gfx=%.3f snd=%.3f state=%d signon=%d lastmsg_age=%.3f\n",
+			Con_Printf ("net_lagdebug: client frame spike total=%.3f host_dt=%.3f events=%.3f cmds=%.3f cbuf=%.3f netpoll=%.3f accum=%.3f localsend=%.3f server=%.3f remotesend=%.3f netread=%.3f gfx=%.3f snd=%.3f state=%d signon=%d lastmsg_age=%.3f\n",
 				lagdebug_after_audio - lagdebug_start, host_frametime,
-				lagdebug_after_server - lagdebug_start,
-				lagdebug_after_read - lagdebug_after_server,
+				lagdebug_after_events - lagdebug_start,
+				lagdebug_after_commands - lagdebug_after_events,
+				lagdebug_after_cbuf - lagdebug_after_commands,
+				lagdebug_after_netpoll - lagdebug_after_cbuf,
+				lagdebug_after_accumulate - lagdebug_after_netpoll,
+				lagdebug_after_send - lagdebug_after_accumulate,
+				lagdebug_after_server - lagdebug_after_send,
+				lagdebug_after_remote_send - lagdebug_after_server,
+				lagdebug_after_read - lagdebug_after_remote_send,
 				lagdebug_after_screen - lagdebug_after_read,
 				lagdebug_after_audio - lagdebug_after_screen,
 				cls.state, cls.signon, realtime - cl.last_received_message);

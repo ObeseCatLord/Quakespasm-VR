@@ -172,6 +172,7 @@ keyname_t keynames[] = {
     {"RTRIGGER", K_RTRIGGER},
     {"VR_RIGHT_STICK_UP", K_VR_RIGHT_STICK_UP},
     {"VR_RIGHT_STICK_DOWN", K_VR_RIGHT_STICK_DOWN},
+    {"VR_ALTFIRE", K_VR_ALTFIRE},
 
     {NULL, 0}};
 

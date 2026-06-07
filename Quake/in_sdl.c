@@ -728,7 +728,7 @@ void IN_MouseMove(usercmd_t *cmd)
 		return;
 
 	if ( (in_strafe.state & 1) || (lookstrafe.value && (in_mlook.state & 1) ))
-		cmd->sidemove += m_side.value * dmx;
+		cl.accummoves[1] += m_side.value * dmx;
 	else
 		cl.viewangles[YAW] -= m_yaw.value * dmx;
 
@@ -750,9 +750,9 @@ void IN_MouseMove(usercmd_t *cmd)
 	else
 	{
 		if ((in_strafe.state & 1) && noclip_anglehack)
-			cmd->upmove -= m_forward.value * dmy;
+			cl.accummoves[2] -= m_forward.value * dmy;
 		else
-			cmd->forwardmove -= m_forward.value * dmy;
+			cl.accummoves[0] -= m_forward.value * dmy;
 	}
 
 	/* Flat mode: keep aimangles in step so CL_SendMove sends mouse-driven yaw/pitch. */

@@ -81,6 +81,7 @@ qboolean NET_IsTimedOut (struct qsocket_s *sock);
 
 int	NET_SendMessage (struct qsocket_s *sock, sizebuf_t *data);
 int	NET_SendUnreliableMessage (struct qsocket_s *sock, sizebuf_t *data);
+int	NET_SendUnreliableMessageAgain (struct qsocket_s *sock, sizebuf_t *data);
 // returns 0 if the message connot be delivered reliably, but the connection
 //		is still considered valid
 // returns 1 if the message was sent properly

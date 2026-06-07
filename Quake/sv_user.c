@@ -46,8 +46,28 @@ cvar_t sv_idealpitchscale = {"sv_idealpitchscale", "0.8", CVAR_NONE};
 cvar_t sv_altnoclip = {"sv_altnoclip", "1", CVAR_ARCHIVE}; // johnfitz
 cvar_t sv_inputtimeout = {"sv_inputtimeout", "0.25", CVAR_NONE};
 cvar_t sv_pmove = {"sv_pmove", "1", CVAR_NONE};
-cvar_t sv_pmove_legacy = {"sv_pmove_legacy", "0", CVAR_NONE};
+cvar_t sv_pmove_legacy = {"sv_pmove_legacy", "1", CVAR_NONE};
 cvar_t sv_move_timeclamp = {"sv_move_timeclamp", "1", CVAR_NONE};
+
+static void SV_SetExtendedButtons(edict_t *ent, int buttons) {
+  eval_t *val;
+
+  if (!ent || ent->free)
+    return;
+
+  if ((val = GetEdictFieldValue(ent, qcvm->extfields.button3)))
+    val->_float = (buttons & (1 << 2)) >> 2;
+  if ((val = GetEdictFieldValue(ent, qcvm->extfields.button4)))
+    val->_float = (buttons & (1 << 3)) >> 3;
+  if ((val = GetEdictFieldValue(ent, qcvm->extfields.button5)))
+    val->_float = (buttons & (1 << 4)) >> 4;
+  if ((val = GetEdictFieldValue(ent, qcvm->extfields.button6)))
+    val->_float = (buttons & (1 << 5)) >> 5;
+  if ((val = GetEdictFieldValue(ent, qcvm->extfields.button7)))
+    val->_float = (buttons & (1 << 6)) >> 6;
+  if ((val = GetEdictFieldValue(ent, qcvm->extfields.button8)))
+    val->_float = (buttons & (1 << 7)) >> 7;
+}
 
 static qboolean SV_TrustedClientMoveVectorOK(const vec3_t v, float limit) {
   int i;
@@ -85,10 +105,12 @@ void SV_ResetClientMoveState(client_t *client) {
   client->net_move_cmds_accepted = 0;
   client->net_move_cmds_stale = 0;
   client->net_move_cmds_simulated = 0;
+  client->net_move_stale_log_suppressed = 0;
   client->net_move_bundle_max = 0;
   client->net_move_last_bundle = 0;
   client->net_move_last_gap = 0;
   client->net_move_queue_max = 0;
+  client->net_move_stale_log_time = 0;
   client->net_move_last_sim_seconds = 0;
   client->net_snapshot_sequence = 0;
   client->net_snapshot_ack = -1;
@@ -124,6 +146,7 @@ void SV_ResetClientMoveState(client_t *client) {
   if (client->edict && !client->edict->free) {
     client->edict->v.button0 = 0;
     client->edict->v.button2 = 0;
+    SV_SetExtendedButtons(client->edict, 0);
     client->edict->v.impulse = 0;
   }
 }
@@ -599,31 +622,12 @@ static int SV_ExpandClientSequence(int sequence16) {
   return sequence;
 }
 
-static int SV_ExpandSnapshotAck(int ack16) {
-  int ack;
-
-  ack16 &= 0xffff;
-  if (host_client->net_snapshot_ack < 0)
-    return ack16;
-
-  ack = (host_client->net_snapshot_ack & ~0xffff) | ack16;
-  if (ack <= host_client->net_snapshot_ack - 0x8000)
-    ack += 0x10000;
-  else if (ack > host_client->net_snapshot_ack + 0x8000)
-    ack -= 0x10000;
-
-  return ack;
-}
-
 static qboolean SV_ReadUsercmd(usercmd_t *readcmd, int sequence) {
   int i;
   int extbits;
-  int msec;
 
   Q_memset(readcmd, 0, sizeof(*readcmd));
   readcmd->sequence = sequence;
-  msec = MSG_ReadByte();
-  readcmd->seconds = CLAMP(1, msec, 255) * 0.001f;
   readcmd->servertime = MSG_ReadFloat();
 
   for (i = 0; i < 3; i++)
@@ -699,13 +703,15 @@ static qboolean SV_ReadUsercmd(usercmd_t *readcmd, int sequence) {
 static void SV_NormalizeAcceptedUsercmd(client_t *client, usercmd_t *acceptedcmd)
 {
   float original_seconds;
+  float fallback_seconds;
   double timestamp;
   double clamped_timestamp;
   double seconds_from_time;
 
+  fallback_seconds = CLAMP(0.001f, host_frametime, 0.1f);
   original_seconds = acceptedcmd->seconds;
   if (original_seconds <= 0 || original_seconds > 0.1f)
-    original_seconds = CLAMP(0.001f, original_seconds, 0.1f);
+    original_seconds = fallback_seconds;
 
   acceptedcmd->seconds = original_seconds;
   if (!sv_move_timeclamp.value || acceptedcmd->servertime <= 0)
@@ -730,8 +736,8 @@ static void SV_NormalizeAcceptedUsercmd(client_t *client, usercmd_t *acceptedcmd
 
   /*
    * QSS-M derives independent movement time from the client timestamp and
-   * clamps it to server time. Keep the packet msec as a fallback when the
-   * client's interpolation clock does not advance during a receive-side gap.
+   * clamps it to server time. The frame time fallback is only used for the
+   * first command or malformed timestamps.
    */
   if (seconds_from_time >= 0.001 && seconds_from_time <= 0.1)
     acceptedcmd->seconds = seconds_from_time;
@@ -849,6 +855,7 @@ void SV_ApplyQueuedUsercmd(client_t *client, const usercmd_t *queuedcmd) {
   VectorCopy(client->cmd.viewangles, client->edict->v.v_angle);
   client->edict->v.button0 = client->cmd.buttons & 1;
   client->edict->v.button2 = (client->cmd.buttons & 2) >> 1;
+  SV_SetExtendedButtons(client->edict, client->cmd.buttons);
   if (client->cmd.impulse)
     client->edict->v.impulse = client->cmd.impulse;
 
@@ -886,107 +893,58 @@ void SV_FinishQueuedUsercmd(client_t *client) {
 }
 
 void SV_ReadClientMove(usercmd_t *move) {
-  int i;
-  int latest16;
-  int latest;
-  int first;
-  int count;
-  int flags;
-  int accepted;
+  int sequence16;
+  int sequence;
+  int gap;
   int accepted_base;
   usercmd_t readcmd;
 
-  latest16 = MSG_ReadShort() & 0xffff;
-  count = MSG_ReadByte();
-  flags = MSG_ReadByte();
-
-  if (count <= 0 || count > MOVE_BUNDLE_MAX ||
-      (flags & ~(MOVE_BUNDLE_SNAPSHOTACK | MOVE_BUNDLE_SNAPSHOTPARTS))) {
-    msg_badread = true;
-    return;
-  }
-
-  if (flags & MOVE_BUNDLE_SNAPSHOTACK) {
-    int snapshot_ack = SV_ExpandSnapshotAck(MSG_ReadShort() & 0xffff);
-    if (snapshot_ack > host_client->net_snapshot_ack)
-      host_client->net_snapshot_ack = snapshot_ack;
-  }
-  if (host_client->net_snapshot_partial_ack_seq <= host_client->net_snapshot_ack)
-    host_client->net_snapshot_partial_ack_seq = -1;
-  if (flags & MOVE_BUNDLE_SNAPSHOTPARTS) {
-    int snapshot_ack = SV_ExpandSnapshotAck(MSG_ReadShort() & 0xffff);
-    int last_part = MSG_ReadByte();
-    if (snapshot_ack > host_client->net_snapshot_ack) {
-      host_client->net_snapshot_partial_ack_seq = snapshot_ack;
-      host_client->net_snapshot_partial_ack_last_part = last_part;
-      for (i = 0; i < SNAPSHOT_ACK_MASK_WORDS; i++)
-        host_client->net_snapshot_partial_ack_mask[i] = MSG_ReadLong();
-      host_client->net_snapshot_partial_ack_time = realtime;
-    } else {
-      for (i = 0; i < SNAPSHOT_ACK_MASK_WORDS; i++)
-        MSG_ReadLong();
-    }
-  }
-
-  latest = SV_ExpandClientSequence(latest16);
-  first = latest - count + 1;
-  accepted = 0;
+  sequence16 = MSG_ReadShort() & 0xffff;
+  sequence = SV_ExpandClientSequence(sequence16);
   accepted_base = host_client->lastreceivedmovemessage;
 
   host_client->net_move_packets_received++;
-  host_client->net_move_cmds_received += count;
-  host_client->net_move_last_bundle = count;
-  if (count > host_client->net_move_bundle_max)
-    host_client->net_move_bundle_max = count;
+  host_client->net_move_cmds_received++;
+  host_client->net_move_last_bundle = 1;
+  if (host_client->net_move_bundle_max < 1)
+    host_client->net_move_bundle_max = 1;
 
-  for (i = 0; i < count; i++) {
-    int sequence = first + i;
-    int gap;
-
+  if (accepted_base >= 0 && sequence <= accepted_base) {
+    host_client->net_move_cmds_stale++;
     if (!SV_ReadUsercmd(&readcmd, sequence))
       return;
-
-    if (accepted_base >= 0 && sequence <= accepted_base) {
-      host_client->net_move_cmds_stale++;
-      if (net_lagdebug.value) {
-        Con_DPrintf("net_lagdebug: dropping stale bundled move from %s seq=%d last=%d\n",
-                    host_client->name, sequence, accepted_base);
-      }
-      continue;
-    }
-
-    gap = accepted_base >= 0 ? sequence - accepted_base - 1 : 0;
-    if (gap > 0) {
-      host_client->net_move_last_gap = gap;
-      if (net_lagdebug.value)
-        Con_DPrintf("net_lagdebug: accepted move gap from %s gap=%d seq=%d last=%d bundle=%d\n",
-                    host_client->name, gap, sequence, accepted_base, count);
-    }
-
-    if (!SV_QueueAcceptedUsercmd(&readcmd))
-      continue;
-    accepted++;
-    accepted_base = sequence;
+    return;
   }
 
-  if (!accepted)
+  if (!SV_ReadUsercmd(&readcmd, sequence))
+    return;
+
+  gap = accepted_base >= 0 ? sequence - accepted_base - 1 : 0;
+  if (gap > 0) {
+    host_client->net_move_last_gap = gap;
+    if (net_lagdebug.value)
+      Con_DPrintf("net_lagdebug: accepted move gap from %s gap=%d seq=%d last=%d\n",
+                  host_client->name, gap, sequence, accepted_base);
+  }
+
+  if (!SV_QueueAcceptedUsercmd(&readcmd))
     return;
 
   host_client->moveext = true;
-  host_client->net_move_cmds_accepted += accepted;
-  host_client->lastreceivedmovemessage = accepted_base;
+  host_client->net_move_cmds_accepted++;
+  host_client->lastreceivedmovemessage = sequence;
   *move = host_client->cmd;
 
-  if (net_lagdebug.value && accepted > 1)
-    Con_DPrintf("net_lagdebug: accumulated bundled moves for %s cmds=%d latest_seq=%d pending_ack=%d ack=%d\n",
-                host_client->name, accepted, accepted_base,
-                host_client->pendingmovemessage, host_client->lastmovemessage);
+  if (host_client->usingpmove && host_client->spawned && !sv.paused &&
+      (svs.maxclients > 1 || key_dest == key_game))
+    SV_RunClientPMoveCommands(host_client);
 }
 
 static qboolean SV_ClientHasInput(const client_t *client) {
   return client->cmd.forwardmove || client->cmd.sidemove ||
          client->cmd.upmove || client->edict->v.button0 ||
-         client->edict->v.button2 || client->edict->v.impulse ||
+         client->edict->v.button2 || (client->cmd.buttons & ~3) ||
+         client->edict->v.impulse ||
          client->vr_roomscalemove[0] || client->vr_roomscalemove[1] ||
          client->vr_roomscalemove[2];
 }
@@ -1030,6 +988,7 @@ static void SV_ClearStaleClientInput(client_t *client) {
   client->move_queue_count = 0;
   client->edict->v.button0 = 0;
   client->edict->v.button2 = 0;
+  SV_SetExtendedButtons(client->edict, 0);
   client->edict->v.impulse = 0;
   VectorCopy(vec3_origin, client->vr_roomscalemove);
   SV_ClearTrustedClientMove(client);
@@ -1243,6 +1202,26 @@ qboolean SV_ReadClientMessage(void) {
   return true;
 }
 
+static void SV_UpdateClientPMoveMode(client_t *client) {
+  qboolean usingpmove;
+
+  if (!client || !client->active)
+    return;
+
+  usingpmove = client->spawned && sv_pmove.value &&
+    (client->protocol_pext2 & PEXT2_PREDINFO) &&
+    (qcvm->extfuncs.SV_RunClientCommand || sv_pmove_legacy.value);
+
+  if (usingpmove != client->usingpmove && net_lagdebug.value)
+    Con_Printf("net_lagdebug: server PMove %s for %s pext2=0x%x sv_runclientcommand=%d sv_pmove_legacy=%d\n",
+               usingpmove ? "enabled" : "disabled",
+               client->name,
+               client->protocol_pext2,
+               qcvm->extfuncs.SV_RunClientCommand ? 1 : 0,
+               sv_pmove_legacy.value ? 1 : 0);
+  client->usingpmove = usingpmove;
+}
+
 static void SV_GotServerMessage(struct qsocket_s *sock) {
   int i;
 
@@ -1250,6 +1229,7 @@ static void SV_GotServerMessage(struct qsocket_s *sock) {
        i++, host_client++) {
     if (host_client->netconnection == sock) {
       sv_player = host_client->edict;
+      SV_UpdateClientPMoveMode(host_client);
       if (!SV_ParseClientMessage())
         SV_DropClient(false);
       break;
@@ -1273,6 +1253,7 @@ void SV_RunClients(void) {
       continue;
 
     sv_player = host_client->edict;
+    SV_UpdateClientPMoveMode(host_client);
 
     if (NET_IsVirtualConnection(host_client->netconnection)) {
       if (NET_IsTimedOut(host_client->netconnection)) {
@@ -1299,9 +1280,7 @@ void SV_RunClients(void) {
       continue;
     }
 
-    host_client->usingpmove = sv_pmove.value &&
-        (host_client->protocol_pext2 & PEXT2_PREDINFO) &&
-        (qcvm->extfuncs.SV_RunClientCommand || sv_pmove_legacy.value);
+    SV_UpdateClientPMoveMode(host_client);
 
     // always pause in single player if in console or menus
     if (!sv.paused && (svs.maxclients > 1 || key_dest == key_game)) {

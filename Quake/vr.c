@@ -177,8 +177,6 @@ static bool readbackYaw;
 
 vec3_t vr_viewOffset;
 static vec3_t lastHudPosition{0.0, 0.0, 0.0};
-static vec3_t lastMenuPosition{0.0, 0.0, 0.0};
-static qboolean lastMenuPositionValid = false;
 
 vr_weapon_cmd_t vr_weapons[MAX_VR_WEAPONS];
 int num_vr_weapons = 0;
@@ -3367,7 +3365,6 @@ void VR_InitGame() {
   VR_LoadWeaponSchema();
   lastWeaponHeader = NULL;
   weaponCVarEntry = -1;
-  lastMenuPositionValid = false;
 
   // Per-game extra Z offset — currently 0 for all games.
   // The base vr_projectilespawn_z_offset cvar (default 24) handles QuakeC's
@@ -3422,7 +3419,6 @@ qboolean VR_Enable() {
 
   vr::VRCompositor()->SetTrackingSpace(vr::TrackingUniverseStanding);
   VR_ResetOrientation(); // Recenter the HMD
-  lastMenuPositionValid = false;
 
   Cbuf_AddText(
       "exec vr_autoexec.cfg\n"); // Load the vr autosec config file incase
@@ -3450,7 +3446,6 @@ void VID_VR_Disable() {
 
   // Reset the view height
   cl.viewheight = DEFAULT_VIEWHEIGHT;
-  lastMenuPositionValid = false;
 
   // TODO: Cleanup frame buffers
 
@@ -3553,6 +3548,16 @@ void IdentifyAxes(int device);
 
 static bool modelIdentified[2] = {false, false};
 static bool isViveWand[2] = {false, false};
+static bool isIndexController[2] = {false, false};
+
+static qboolean VR_IsIndexControllerName(const char *name) {
+  return name && (q_strcasestr(name, "index") || q_strcasestr(name, "knuckles")
+                  || q_strcasestr(name, "knu"));
+}
+
+static qboolean VR_RightAltFireUsesTouchpad(void) {
+  return isIndexController[1];
+}
 
 void VR_PollPoses() {
   if (vr_initialized) {
@@ -3665,12 +3670,20 @@ void VR_UpdateScreenContent() {
         IdentifyAxes(iDevice);
 
         if (!modelIdentified[controllerIndex]) {
-          char modelNumber[1024];
+          char modelNumber[1024] = {0};
+          char renderModel[1024] = {0};
           vr::VRSystem()->GetStringTrackedDeviceProperty(
               iDevice, vr::Prop_ModelNumber_String, modelNumber,
               sizeof(modelNumber), nullptr);
+          vr::VRSystem()->GetStringTrackedDeviceProperty(
+              iDevice, vr::Prop_RenderModelName_String, renderModel,
+              sizeof(renderModel), nullptr);
           if (strstr(modelNumber, "Vive") || strstr(modelNumber, "VIVE")) {
             isViveWand[controllerIndex] = true;
+          }
+          if (VR_IsIndexControllerName(modelNumber) ||
+              VR_IsIndexControllerName(renderModel)) {
+            isIndexController[controllerIndex] = true;
           }
           modelIdentified[controllerIndex] = true;
         }
@@ -3951,9 +3964,38 @@ void vec3lerp(vec3_t out, vec3_t start, vec3_t end, double f) {
   out[2] = lerp(start[2], end[2], f);
 }
 
+static void VR_GetHeadCenterViewOrg(vec3_t out) {
+  entity_t *player;
+  vr::HmdVector3_t center;
+  vec3_t temp, orientation, center_offset;
+
+  if (!current_eye) {
+    VectorCopy(r_refdef.vieworg, out);
+    return;
+  }
+
+  player = &cl.entities[cl.viewentity];
+  center.v[0] = (eyes[0].position.v[0] + eyes[1].position.v[0]) * 0.5f;
+  center.v[1] = (eyes[0].position.v[1] + eyes[1].position.v[1]) * 0.5f;
+  center.v[2] = (eyes[0].position.v[2] + eyes[1].position.v[2]) * 0.5f;
+
+  QuatToYawPitchRoll(current_eye->orientation, orientation);
+  temp[0] = -center.v[2] * meters_to_units;
+  temp[1] = -center.v[0] * meters_to_units;
+  temp[2] = center.v[1] * meters_to_units;
+  Vec3RotateZ(temp, (r_refdef.viewangles[YAW] - orientation[YAW]) * M_PI_DIV_180,
+              center_offset);
+  center_offset[2] += vr_floor_offset.value;
+
+  VectorAdd(player->origin, center_offset, out);
+  out[0] += 1.0f / 32.0f;
+  out[1] += 1.0f / 32.0f;
+  out[2] += 1.0f / 32.0f;
+}
+
 void VR_Draw2D() {
   qboolean draw_sbar = false;
-  vec3_t menu_angles, forward, right, up, target;
+  vec3_t menu_angles, forward, right, up, target, head_center;
   float scale_hud = vr_menu_scale.value;
 
   int oldglwidth = glwidth, oldglheight = glheight, oldconwidth = vid.conwidth,
@@ -3981,20 +4023,9 @@ void VR_Draw2D() {
 
   AngleVectors(menu_angles, forward, right, up);
 
-  VectorMA(r_refdef.vieworg, 48, forward, target);
-
-  vec3_t smoothedTarget;
-  vec3_t menuDelta;
-  VectorSubtract(target, lastMenuPosition, menuDelta);
-  if (!lastMenuPositionValid || DotProduct(menuDelta, menuDelta) > 64.0f) {
-    VectorCopy(target, smoothedTarget);
-    lastMenuPositionValid = true;
-  } else {
-    vec3lerp(smoothedTarget, lastMenuPosition, target, 0.2);
-  }
-  VectorCopy(smoothedTarget, lastMenuPosition);
-
-  glTranslatef(smoothedTarget[0], smoothedTarget[1], smoothedTarget[2]);
+  VR_GetHeadCenterViewOrg(head_center);
+  VectorMA(head_center, 48, forward, target);
+  glTranslatef(target[0], target[1], target[2]);
 
   glRotatef(menu_angles[YAW] - 90, 0, 0, 1); // rotate around z
   glRotatef(90 + menu_angles[PITCH], -1, 0,
@@ -4107,7 +4138,6 @@ void VR_SetAngles(vec3_t angles) {
 void VR_ResetOrientation() {
   cl.aimangles[YAW] = cl.viewangles[YAW];
   cl.aimangles[PITCH] = cl.viewangles[PITCH];
-  lastMenuPositionValid = false;
   if (vr_enabled.value) {
     // IVRSystem_ResetSeatedZeroPose(ovrHMD);
     VectorCopy(cl.aimangles, lastAim);
@@ -4264,11 +4294,13 @@ void VR_Move(usercmd_t *cmd) {
 
   // k_EButton_Grip (uses DoGrip for squeeze-only behavior on Index)
   DoGrip(&controllers[0], K_LSHOULDER);
-  DoGrip(&controllers[1], K_RSHOULDER);
+  DoGrip(&controllers[1],
+         VR_RightAltFireUsesTouchpad() ? K_RSHOULDER : K_VR_ALTFIRE);
 
   // k_EButton_Axis0 === k_EButton_SteamVR_Touchpad
   DoKey(&controllers[0], vr::k_EButton_SteamVR_Touchpad, K_LTHUMB);
-  DoKey(&controllers[1], vr::k_EButton_SteamVR_Touchpad, K_RTHUMB);
+  DoKey(&controllers[1], vr::k_EButton_SteamVR_Touchpad,
+        VR_RightAltFireUsesTouchpad() ? K_VR_ALTFIRE : K_RTHUMB);
 
   // k_EButton_ApplicationMenu / k_EButton_IndexController_B
   DoKey(&controllers[0], vr::k_EButton_ApplicationMenu, K_ESCAPE);

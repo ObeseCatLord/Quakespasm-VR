@@ -55,7 +55,8 @@ state bit 2 is edge triggered on the down to up transition
 kbutton_t in_mlook, in_klook;
 kbutton_t in_left, in_right, in_forward, in_back;
 kbutton_t in_lookup, in_lookdown, in_moveleft, in_moveright;
-kbutton_t in_strafe, in_speed, in_use, in_jump, in_attack;
+kbutton_t in_strafe, in_speed, in_jump, in_attack;
+kbutton_t in_button3, in_button4, in_button5, in_button6, in_button7, in_button8;
 kbutton_t in_up, in_down;
 kbutton_t in_vr_weaponmenu;
 
@@ -155,10 +156,22 @@ void IN_StrafeUp(void) { KeyUp(&in_strafe); }
 void IN_AttackDown(void) { KeyDown(&in_attack); }
 void IN_AttackUp(void) { KeyUp(&in_attack); }
 
-void IN_UseDown(void) { KeyDown(&in_use); }
-void IN_UseUp(void) { KeyUp(&in_use); }
+void IN_UseDown(void) { KeyDown(&in_button3); }
+void IN_UseUp(void) { KeyUp(&in_button3); }
 void IN_JumpDown(void) { KeyDown(&in_jump); }
 void IN_JumpUp(void) { KeyUp(&in_jump); }
+void IN_Button3Down(void) { KeyDown(&in_button3); }
+void IN_Button3Up(void) { KeyUp(&in_button3); }
+void IN_Button4Down(void) { KeyDown(&in_button4); }
+void IN_Button4Up(void) { KeyUp(&in_button4); }
+void IN_Button5Down(void) { KeyDown(&in_button5); }
+void IN_Button5Up(void) { KeyUp(&in_button5); }
+void IN_Button6Down(void) { KeyDown(&in_button6); }
+void IN_Button6Up(void) { KeyUp(&in_button6); }
+void IN_Button7Down(void) { KeyDown(&in_button7); }
+void IN_Button7Up(void) { KeyUp(&in_button7); }
+void IN_Button8Down(void) { KeyDown(&in_button8); }
+void IN_Button8Up(void) { KeyUp(&in_button8); }
 
 void IN_VRWeaponMenuDown(void) {
   KeyDown(&in_vr_weaponmenu);
@@ -193,7 +206,7 @@ Returns 0.25 if a key was pressed and released during the frame,
 1.0 if held for the entire time
 ===============
 */
-float CL_KeyState(kbutton_t *key) {
+float CL_KeyState(kbutton_t *key, qboolean isfinal) {
   float val;
   qboolean impulsedown, impulseup, down;
 
@@ -227,7 +240,8 @@ float CL_KeyState(kbutton_t *key) {
       val = 0.25; // pressed and released this frame
   }
 
-  key->state &= 1; // clear impulses
+  if (isfinal)
+    key->state &= 1; // clear impulses
 
   return val;
 }
@@ -273,19 +287,19 @@ void CL_AdjustAngles(void) {
     speed = host_frametime;
 
   if (!(in_strafe.state & 1)) {
-    cl.aimangles[YAW] -= speed * cl_yawspeed.value * CL_KeyState(&in_right);
-    cl.aimangles[YAW] += speed * cl_yawspeed.value * CL_KeyState(&in_left);
+    cl.aimangles[YAW] -= speed * cl_yawspeed.value * CL_KeyState(&in_right, true);
+    cl.aimangles[YAW] += speed * cl_yawspeed.value * CL_KeyState(&in_left, true);
     cl.aimangles[YAW] = anglemod(cl.aimangles[YAW]);
   }
   if (in_klook.state & 1) {
     V_StopPitchDrift();
     cl.aimangles[PITCH] -=
-        speed * cl_pitchspeed.value * CL_KeyState(&in_forward);
-    cl.aimangles[PITCH] += speed * cl_pitchspeed.value * CL_KeyState(&in_back);
+        speed * cl_pitchspeed.value * CL_KeyState(&in_forward, true);
+    cl.aimangles[PITCH] += speed * cl_pitchspeed.value * CL_KeyState(&in_back, true);
   }
 
-  up = CL_KeyState(&in_lookup);
-  down = CL_KeyState(&in_lookdown);
+  up = CL_KeyState(&in_lookup, true);
+  down = CL_KeyState(&in_lookdown, true);
 
   cl.aimangles[PITCH] -= speed * cl_pitchspeed.value * up;
   cl.aimangles[PITCH] += speed * cl_pitchspeed.value * down;
@@ -318,15 +332,13 @@ CL_BaseMove
 Send the intended movement message to the server
 ================
 */
-void CL_BaseMove(usercmd_t *cmd) {
+void CL_BaseMove(usercmd_t *cmd, qboolean isfinal) {
   float forwardspeed, backspeed;
+
+  Q_memset(cmd, 0, sizeof(*cmd));
 
   if (cls.signon != SIGNONS)
     return;
-
-  CL_AdjustAngles();
-
-  Q_memset(cmd, 0, sizeof(*cmd));
 
   forwardspeed = cl_forwardspeed.value;
   backspeed = cl_backspeed.value;
@@ -338,19 +350,19 @@ void CL_BaseMove(usercmd_t *cmd) {
   }
 
   if (in_strafe.state & 1) {
-    cmd->sidemove += cl_sidespeed.value * CL_KeyState(&in_right);
-    cmd->sidemove -= cl_sidespeed.value * CL_KeyState(&in_left);
+    cmd->sidemove += cl_sidespeed.value * CL_KeyState(&in_right, isfinal);
+    cmd->sidemove -= cl_sidespeed.value * CL_KeyState(&in_left, isfinal);
   }
 
-  cmd->sidemove += cl_sidespeed.value * CL_KeyState(&in_moveright);
-  cmd->sidemove -= cl_sidespeed.value * CL_KeyState(&in_moveleft);
+  cmd->sidemove += cl_sidespeed.value * CL_KeyState(&in_moveright, isfinal);
+  cmd->sidemove -= cl_sidespeed.value * CL_KeyState(&in_moveleft, isfinal);
 
-  cmd->upmove += cl_upspeed.value * CL_KeyState(&in_up);
-  cmd->upmove -= cl_upspeed.value * CL_KeyState(&in_down);
+  cmd->upmove += cl_upspeed.value * CL_KeyState(&in_up, isfinal);
+  cmd->upmove -= cl_upspeed.value * CL_KeyState(&in_down, isfinal);
 
   if (!(in_klook.state & 1)) {
-    cmd->forwardmove += forwardspeed * CL_KeyState(&in_forward);
-    cmd->forwardmove -= backspeed * CL_KeyState(&in_back);
+    cmd->forwardmove += forwardspeed * CL_KeyState(&in_forward, isfinal);
+    cmd->forwardmove -= backspeed * CL_KeyState(&in_back, isfinal);
   }
 
   //
@@ -363,6 +375,48 @@ void CL_BaseMove(usercmd_t *cmd) {
   }
 }
 
+void CL_FinishMove(usercmd_t *cmd, qboolean isfinal)
+{
+  static kbutton_t *buttons[] = {
+      &in_attack,
+      &in_jump,
+      &in_button3,
+      &in_button4,
+      &in_button5,
+      &in_button6,
+      &in_button7,
+      &in_button8,
+  };
+  int i;
+
+  cmd->buttons = 0;
+  for (i = 0; i < (int)countof(buttons); i++) {
+    if (buttons[i]->state & 3) {
+      if (i != 0 || !cl.in_vr_weaponmenu)
+        cmd->buttons |= 1 << i;
+      if (isfinal)
+        buttons[i]->state &= ~2;
+    }
+  }
+
+  cmd->impulse = in_impulse;
+  if (isfinal)
+    in_impulse = 0;
+
+  cmd->forwardmove += cl.accummoves[0];
+  cmd->sidemove += cl.accummoves[1];
+  cmd->upmove += cl.accummoves[2];
+
+  if (vr_enabled.value && (int)vr_aimmode.value == VR_AIMMODE_CONTROLLER)
+    VectorAdd(cmd->vr_roomscalemove, cl.vr_roomscalemove_accum,
+              cmd->vr_roomscalemove);
+
+  if (isfinal) {
+    VectorCopy(vec3_origin, cl.accummoves);
+    VectorCopy(vec3_origin, cl.vr_roomscalemove_accum);
+  }
+}
+
 /*
 ==============
 CL_SendMove
@@ -371,7 +425,6 @@ CL_SendMove
 static void CL_WriteUsercmd(sizebuf_t *buf, const usercmd_t *histcmd) {
   int i;
   int extbits = 0;
-  int msec;
 
   if (histcmd->vr_active)
     extbits |= MOVEEXT_VR;
@@ -383,10 +436,6 @@ static void CL_WriteUsercmd(sizebuf_t *buf, const usercmd_t *histcmd) {
       histcmd->cursor_entitynumber)
     extbits |= MOVEEXT_QCINPUT;
 
-  msec = (int)(histcmd->seconds * 1000.0f + 0.5f);
-  msec = CLAMP(1, msec, 255);
-
-  MSG_WriteByte(buf, msec);
   MSG_WriteFloat(buf, histcmd->servertime);
 
   for (i = 0; i < 3; i++)
@@ -443,7 +492,6 @@ void CL_SendMove(const usercmd_t *cmd) {
   int count;
   int dup;
   int sendseqs[MOVE_BUNDLE_MAX];
-  int flags;
   qboolean local_singleplayer;
   usercmd_t sendcmd;
   sizebuf_t buf;
@@ -468,37 +516,21 @@ void CL_SendMove(const usercmd_t *cmd) {
 
   sendcmd = *cmd;
   VectorCopy(cl.aimangles, sendcmd.viewangles);
-  sendcmd.servertime = cl.time;
+  if (sendcmd.servertime <= 0)
+    sendcmd.servertime = cl.cmdtime > 0 ? cl.cmdtime : cl.time;
   if (sendcmd.seconds <= 0)
     sendcmd.seconds = host_frametime;
 
-  //
-  // Capture edge-triggered inputs into this command before putting it in the
-  // resend history. Redundant sends must replay the original command, not this
-  // frame's current button/impulse state.
-  //
-  sendcmd.buttons = 0;
-  if (!cl.in_vr_weaponmenu && (in_attack.state & 3))
-    sendcmd.buttons |= 1;
-  in_attack.state &= ~2;
-
-  if (in_jump.state & 3)
-    sendcmd.buttons |= 2;
-  in_jump.state &= ~2;
-
-  sendcmd.impulse = in_impulse;
-  in_impulse = 0;
-
   Q_memset(sendcmd.vr_handpos, 0, sizeof(sendcmd.vr_handpos));
   Q_memset(sendcmd.vr_handrot, 0, sizeof(sendcmd.vr_handrot));
-  Q_memset(sendcmd.vr_roomscalemove, 0, sizeof(sendcmd.vr_roomscalemove));
   sendcmd.vr_active = false;
 
   if (vr_enabled.value && (int)vr_aimmode.value == VR_AIMMODE_CONTROLLER) {
     sendcmd.vr_active = true;
     VR_GetMuzzleAdjustedHandPos(sendcmd.vr_handpos);
     VectorCopy(cl.handrot[1], sendcmd.vr_handrot);
-    VectorCopy(vr_room_scale_move, sendcmd.vr_roomscalemove);
+  } else {
+    VectorCopy(vec3_origin, sendcmd.vr_roomscalemove);
   }
 
   Q_memset(sendcmd.trusted_origin, 0, sizeof(sendcmd.trusted_origin));
@@ -583,41 +615,16 @@ void CL_SendMove(const usercmd_t *cmd) {
   }
   cl.ackframes_count = 0;
 
-  flags = 0;
-  if (!(cl.protocol_pext2 & PEXT2_REPLACEMENTDELTAS)) {
-    if (cl.net_snapshot_have)
-      flags |= MOVE_BUNDLE_SNAPSHOTACK;
-    if (cl.net_snapshot_partial_active &&
-        (!cl.net_snapshot_have ||
-         cl.net_snapshot_partial_sequence > cl.net_snapshot_sequence))
-      flags |= MOVE_BUNDLE_SNAPSHOTPARTS;
-  }
-
-  MSG_WriteByte(&buf, clc_move);
-  MSG_WriteShort(&buf, seq & 0xffff);
-  MSG_WriteByte(&buf, count);
-  MSG_WriteByte(&buf, flags);
-  if (flags & MOVE_BUNDLE_SNAPSHOTACK) {
-    MSG_WriteShort(&buf, cl.net_snapshot_sequence & 0xffff);
-    cl.net_snapshot_acks_sent++;
-  }
-  if (flags & MOVE_BUNDLE_SNAPSHOTPARTS) {
-    MSG_WriteShort(&buf, cl.net_snapshot_partial_sequence & 0xffff);
-    MSG_WriteByte(&buf, cl.net_snapshot_partial_last_part >= 0 ?
-                  cl.net_snapshot_partial_last_part : SNAPSHOT_PART_UNKNOWN);
-    for (i = 0; i < SNAPSHOT_ACK_MASK_WORDS; i++)
-      MSG_WriteLong(&buf, cl.net_snapshot_partial_mask[i]);
-    cl.net_snapshot_part_resend_acks_sent++;
-  }
-
   for (i = 0; i < count; i++) {
     const usercmd_t *histcmd = &cl.movecmds[sendseqs[i] & (CL_MOVE_HISTORY - 1)];
-    CL_WriteUsercmd(&buf, histcmd);
-  }
 
-  if (buf.overflowed) {
-    Con_Printf("CL_SendMove: move bundle overflowed (%d cmds)\n", count);
-    return;
+    MSG_WriteByte(&buf, clc_move);
+    MSG_WriteShort(&buf, histcmd->sequence & 0xffff);
+    CL_WriteUsercmd(&buf, histcmd);
+    if (buf.overflowed) {
+      Con_Printf("CL_SendMove: move packet overflowed (%d cmds)\n", count);
+      return;
+    }
   }
 
   dup = local_singleplayer ? 0 : (int)cl_move_packetdup.value;
@@ -637,9 +644,8 @@ void CL_SendMove(const usercmd_t *cmd) {
   cl.net_move_last_packet_cmds = count;
 
   if (net_lagdebug.value && (count > 1 || dup > 0))
-    Con_DPrintf("net_lagdebug: client sent move bundle seq=%d cmds=%d dup=%d acksnap=%d bytes=%d\n",
-                seq, count, dup, (flags & MOVE_BUNDLE_SNAPSHOTACK) ? cl.net_snapshot_sequence : -1,
-                buf.cursize);
+    Con_DPrintf("net_lagdebug: client sent qss-style moves seq=%d cmds=%d dup=%d bytes=%d\n",
+                seq, count, dup, buf.cursize);
 }
 
 /*
@@ -676,6 +682,18 @@ void CL_InitInput(void) {
   Cmd_AddCommand("-attack", IN_AttackUp);
   Cmd_AddCommand("+use", IN_UseDown);
   Cmd_AddCommand("-use", IN_UseUp);
+  Cmd_AddCommand("+button3", IN_Button3Down);
+  Cmd_AddCommand("-button3", IN_Button3Up);
+  Cmd_AddCommand("+button4", IN_Button4Down);
+  Cmd_AddCommand("-button4", IN_Button4Up);
+  Cmd_AddCommand("+button5", IN_Button5Down);
+  Cmd_AddCommand("-button5", IN_Button5Up);
+  Cmd_AddCommand("+button6", IN_Button6Down);
+  Cmd_AddCommand("-button6", IN_Button6Up);
+  Cmd_AddCommand("+button7", IN_Button7Down);
+  Cmd_AddCommand("-button7", IN_Button7Up);
+  Cmd_AddCommand("+button8", IN_Button8Down);
+  Cmd_AddCommand("-button8", IN_Button8Up);
   Cmd_AddCommand("+jump", IN_JumpDown);
   Cmd_AddCommand("-jump", IN_JumpUp);
   Cmd_AddCommand("impulse", IN_Impulse);
