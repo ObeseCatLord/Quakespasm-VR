@@ -122,6 +122,40 @@ static void Max_Fps_f (cvar_t *var)
 		Con_Warning ("host_maxfps above 72 breaks physics.\n");
 }
 
+static double Host_ClientNetInterval (void)
+{
+	if (cl_netfps.value <= 0)
+		return 0;
+	return 1.0 / CLAMP (10.0f, cl_netfps.value, 144.0f);
+}
+
+static qboolean Host_ShouldIsolateNetworkFrame (void)
+{
+	if (isDedicated)
+		return false;
+	if (!sv.active)
+		return cls.state == ca_connected;
+	return svs.maxclients > 1;
+}
+
+static qboolean Host_BeginNetworkFrame (double *accum, double interval,
+	double *saved_frametime)
+{
+	if (interval <= 0)
+		return true;
+
+	*accum += host_frametime;
+	if (*accum < interval)
+		return false;
+
+	*saved_frametime = host_frametime;
+	host_frametime = CLAMP (0.001, *accum, 0.1);
+	*accum -= interval;
+	if (*accum > interval)
+		*accum = 0;
+	return true;
+}
+
 /*
 ================
 Host_EndGame
@@ -873,6 +907,13 @@ void _Host_Frame (float time)
 	double			lagdebug_after_read;
 	double			lagdebug_after_screen, lagdebug_after_audio;
 	static double		last_client_frame_log;
+	static double		net_accum;
+	static double		net_last_interval;
+	static qboolean		net_last_isolated;
+	qboolean		net_frame_due;
+	qboolean		net_isolated;
+	double			net_interval;
+	double			saved_host_frametime;
 
 	if (setjmp (host_abortserver) )
 		return;			// something bad happened, or the server disconnected
@@ -929,8 +970,19 @@ void _Host_Frame (float time)
 		vid.recalc_refdef = true;
 	}
 
+	net_isolated = Host_ShouldIsolateNetworkFrame ();
+	net_interval = net_isolated ? Host_ClientNetInterval () : 0;
+	if (net_isolated != net_last_isolated || net_interval != net_last_interval)
+		net_accum = 0;
+	net_last_isolated = net_isolated;
+	net_last_interval = net_interval;
+	host_netinterval = (float)net_interval;
+	saved_host_frametime = host_frametime;
+	net_frame_due = Host_BeginNetworkFrame (&net_accum, net_interval,
+		&saved_host_frametime);
+
 // if running the server locally, make intentions now
-	if (sv.active)
+	if (sv.active && net_frame_due)
 		CL_SendCmd ();
 	if (lagdebug_frame)
 		lagdebug_after_send = Sys_DoubleTime ();
@@ -944,7 +996,7 @@ void _Host_Frame (float time)
 // check for commands typed to the host
 	Host_GetConsoleCommands ();
 
-	if (sv.active)
+	if (sv.active && net_frame_due)
 	{
 		PR_SwitchQCVM(&sv.qcvm);
 		Host_ServerFrame ();
@@ -960,34 +1012,12 @@ void _Host_Frame (float time)
 //-------------------
 
 // if running the server remotely, send intentions now after
-// the incoming messages have been read.
-// QSS-style send pacing: clamp to cl_netfps so a 90/120 Hz VR client doesn't
-// blast move packets faster than the server can act on them. Local listen
-// servers are unaffected (their CL_SendCmd above is in-process).
-	if (!sv.active)
-	{
-		static double cl_send_accum = 0;
-		double interval = 0;
-
-		if (cl_netfps.value > 0)
-			interval = 1.0 / CLAMP(10.0f, cl_netfps.value, 144.0f);
-
-		cl_send_accum += host_frametime;
-
-		if (interval <= 0)
-		{
-			CL_SendCmd ();
-			cl_send_accum = 0;
-		}
-		else if (cl_send_accum >= interval)
-		{
-			CL_SendCmd ();
-			cl_send_accum -= interval;
-			// don't accumulate more than one tick so a hitch can't unleash a flood
-			if (cl_send_accum > interval)
-				cl_send_accum = 0;
-		}
-	}
+// the incoming messages have been read. The same accumulator also paces
+// listen-server multiplayer above, matching QSS-M's renderer/network split.
+	if (!sv.active && net_frame_due)
+		CL_SendCmd ();
+	if (net_frame_due && net_interval > 0)
+		host_frametime = saved_host_frametime;
 	if (lagdebug_frame)
 		lagdebug_after_remote_send = Sys_DoubleTime ();
 

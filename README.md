@@ -214,7 +214,7 @@ These cvars are custom additions or important changed defaults in this branch co
 | Cvar | Default | Description |
 | ---- | ------- | ----------- |
 | `cl_nocsqc` | `0` | Set to `1` to disable loading client-side QC/CSQC. Useful when isolating a mod HUD or CSQC compatibility issue. |
-| `cl_netfps` | `72` | Caps remote-client `CL_SendCmd` rate. Set to `0` to disable the cap. Matches QSS-M's default renderer/network isolation cadence so the server receives finer-grained movement history even when the dedicated server simulates at 20 Hz. |
+| `cl_netfps` | `72` | Drives the QSS-style network interval for remote clients and listen-server multiplayer. Set to `0` to disable the cap. Matches QSS-M's default renderer/network isolation cadence so the server receives finer-grained movement history even when the dedicated server simulates at 20 Hz. |
 | `cl_move_redundancy` | `3` | Sends previous QSS-style `clc_move` records with each new move so short upstream loss bursts do not lose input frames. Command duration is derived from the QSS-style server-time stamp instead of a separate msec byte. |
 | `cl_move_packetdup` | `1` | Sends one duplicate movement packet by default for trusted co-op testing, reducing the chance that a single upstream UDP drop becomes a visible input hitch. |
 | Move timestamps | QSS-M-style | Remote movement commands are timed from client simulation time minus the local interpolation buffer, then bounded near the latest server timestamp. This avoids banking future render-buffer time that the server would clamp away during bundled loss recovery. |
