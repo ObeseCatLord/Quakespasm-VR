@@ -662,8 +662,13 @@ void CL_SendMove(const usercmd_t *cmd) {
   dup = local_singleplayer ? 0 : (int)cl_move_packetdup.value;
   dup = CLAMP(0, dup, 3);
 
-  for (i = 0; i <= dup; i++) {
-    if (NET_SendUnreliableMessage(cls.netcon, &buf) == -1) {
+  if (NET_SendUnreliableMessage(cls.netcon, &buf) == -1) {
+    Con_Printf("CL_SendMove: lost server connection\n");
+    CL_Disconnect();
+    return;
+  }
+  for (i = 0; i < dup; i++) {
+    if (NET_SendUnreliableMessageAgain(cls.netcon, &buf) == -1) {
       Con_Printf("CL_SendMove: lost server connection\n");
       CL_Disconnect();
       return;
