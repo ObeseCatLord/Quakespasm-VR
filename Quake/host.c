@@ -907,6 +907,7 @@ void _Host_Frame (float time)
 	double			lagdebug_after_read;
 	double			lagdebug_after_screen, lagdebug_after_audio;
 	static double		last_client_frame_log;
+	static double		last_host_gap_log;
 	static double		net_accum;
 	static double		net_last_interval;
 	static qboolean		net_last_isolated;
@@ -914,6 +915,8 @@ void _Host_Frame (float time)
 	qboolean		net_isolated;
 	double			net_interval;
 	double			saved_host_frametime;
+	double			host_gap_threshold;
+	const char		*host_gap_map;
 
 	if (setjmp (host_abortserver) )
 		return;			// something bad happened, or the server disconnected
@@ -924,6 +927,20 @@ void _Host_Frame (float time)
 // decide the simulation time
 	if (!Host_FilterTime (time))
 		return;			// don't run too fast, or packets will flood out
+	if (net_lagdebug.value)
+	{
+		host_gap_threshold = net_lagdebug_threshold.value;
+		if (host_gap_threshold <= 0)
+			host_gap_threshold = 0.25;
+		if (time > host_gap_threshold && realtime - last_host_gap_log > 0.5)
+		{
+			host_gap_map = sv.active ? sv.name : (cl.worldmodel ? cl.worldmodel->name : "");
+			Con_Printf ("net_lagdebug: host frame gap total=%.3f host_dt=%.3f dedicated=%d sv_active=%d cls_state=%d signon=%d map=%s\n",
+				time, host_frametime, isDedicated ? 1 : 0, sv.active ? 1 : 0,
+				cls.state, cls.signon, host_gap_map);
+			last_host_gap_log = realtime;
+		}
+	}
 	lagdebug_frame = (net_lagdebug.value && !isDedicated) ? true : false;
 	lagdebug_start = lagdebug_after_events = lagdebug_after_commands = 0;
 	lagdebug_after_cbuf = lagdebug_after_netpoll = lagdebug_after_accumulate = 0;
