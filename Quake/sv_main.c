@@ -2934,6 +2934,9 @@ static qboolean SVFTE_SendClientDatagram (client_t *client, int maxsize)
 	int			packet_budget;
 	int			packet_dup;
 	int			packet_dup_this;
+	int			private_datagram_initial;
+	int			private_datagram_written;
+	int			global_datagram_written;
 	int			dup_sent_total;
 	int			dup_bytes_total;
 	int			i;
@@ -2992,6 +2995,9 @@ static qboolean SVFTE_SendClientDatagram (client_t *client, int maxsize)
 	entity_pending_before = SVFTE_CountPendingEntityDeltas (client);
 	entity_pending = SVFTE_CountPendingEntityDeltasFrom (client, client->snapshotresume);
 	csqc_pending = SVFTE_CountPendingCSQCEntities (client);
+	private_datagram_initial = client->datagram.cursize;
+	private_datagram_written = 0;
+	global_datagram_written = 0;
 	client->net_replacement_diag_hardurgent = 0;
 	client->net_replacement_diag_radiusurgent = 0;
 	client->net_replacement_diag_nonurgent = 0;
@@ -3047,9 +3053,17 @@ static qboolean SVFTE_SendClientDatagram (client_t *client, int maxsize)
 		}
 
 		if (!msg.overflowed)
-			SV_WritePrivateDatagramToMessage (client, &msg);
+		{
+			int before = msg.cursize;
+			if (SV_WritePrivateDatagramToMessage (client, &msg))
+				private_datagram_written += msg.cursize - before;
+		}
 		if (!msg.overflowed && datagram_offset < sv.datagram.cursize)
-			SVFTE_WriteDatagramToMessage (&msg, &datagram_offset);
+		{
+			int before = datagram_offset;
+			if (SVFTE_WriteDatagramToMessage (&msg, &datagram_offset))
+				global_datagram_written += datagram_offset - before;
+		}
 		if (msg.overflowed)
 		{
 			Con_Printf ("SVFTE_SendClientDatagram: packet overflow for %s\n", client->name);
@@ -3144,11 +3158,13 @@ static qboolean SVFTE_SendClientDatagram (client_t *client, int maxsize)
 		int sequence = SV_ReplacementLastSentSequence (client);
 		int ack = client->lastacksequence >= 0 ? client->lastacksequence : -1;
 		entity_pending_after = SVFTE_CountPendingEntityDeltas (client);
-		Con_Printf ("net_lagdebug: server replacement update to %s (%s): packets=%d dup=%d bytes=%d dupbytes=%d max=%d ents=%zu/%zu pending=%zu->%zu maxpacket=%d seq=%d ack=%d acklag=%d deferred=%d prio=%d/%d/%d limit=%d/%d\n",
+		Con_Printf ("net_lagdebug: server replacement update to %s (%s): packets=%d dup=%d bytes=%d dupbytes=%d max=%d ents=%zu/%zu pending=%zu->%zu svdg=%d/%d priv=%d/%d maxpacket=%d seq=%d ack=%d acklag=%d deferred=%d prio=%d/%d/%d limit=%d/%d\n",
 			client->name, NET_QSocketGetAddressString(client->netconnection),
 			packet_count, dup_sent_total, total_bytes, dup_bytes_total, max_packet_bytes,
 			(size_t)client->snapshotresume, client->numpendingentities,
-			entity_pending_before, entity_pending_after, maxsize,
+			entity_pending_before, entity_pending_after,
+			global_datagram_written, sv.datagram.cursize,
+			private_datagram_written, private_datagram_initial, maxsize,
 			sequence, ack, SV_ReplacementAckLag (client, sequence),
 			deferred_by_budget,
 			client->net_replacement_diag_hardurgent,
