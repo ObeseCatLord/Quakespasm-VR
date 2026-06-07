@@ -239,6 +239,7 @@ These cvars are custom additions or important changed defaults in this branch co
 | `sv_replacement_pacing` | `1` | Enables a soft packet cap for non-critical replacement deltas so ordinary entity churn does not fill every UDP packet to the hard MTU limit. |
 | `sv_replacement_softmaxbytes` | `1000` | Soft packet target used by `sv_replacement_pacing`. Critical player, reset, removal, solid, and effect deltas may still bypass it. |
 | `sv_replacement_priority_radius` | `0` | Radius for letting nearby non-critical replacement deltas bypass the soft cap. `0` keeps the soft cap strict except for critical player, reset, removal, solid, and effect deltas. |
+| `sv_replacement_particle_maxbytes` | `256` | Maximum cosmetic particle bytes copied from the global unreliable datagram into one replacement update. Excess particle-only traffic is dropped before it forces extra UDP packets; sounds/temp entities remain prioritized. |
 | `sv_inputtimeout` | `0.25` | Clears stale movement/buttons after this many seconds without fresh input from a client. Set to `0` to disable. |
 | `sv_freezenonclients` | `0` | When enabled, server physics runs clients/world only. This is mainly a diagnostic or special server control, not a normal gameplay setting. |
 | `sv_gameplayfix_elevators` | `2` | Pusher/elevator fix. `0` off, `1` clients only, `2` all entities. Helps prevent entities from blocking lifts due to tiny contact errors. |

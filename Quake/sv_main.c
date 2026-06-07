@@ -42,6 +42,7 @@ cvar_t sv_replacement_packetdup_all = {"sv_replacement_packetdup_all", "0", CVAR
 cvar_t sv_replacement_pacing = {"sv_replacement_pacing", "1", CVAR_NONE};
 cvar_t sv_replacement_softmaxbytes = {"sv_replacement_softmaxbytes", "1000", CVAR_NONE};
 cvar_t sv_replacement_priority_radius = {"sv_replacement_priority_radius", "0", CVAR_NONE};
+cvar_t sv_replacement_particle_maxbytes = {"sv_replacement_particle_maxbytes", "256", CVAR_NONE};
 cvar_t sv_snapshot_partresend = {"sv_snapshot_partresend", "1", CVAR_NONE};
 cvar_t sv_snapshot_partresend_interval = {"sv_snapshot_partresend_interval", "0.04", CVAR_NONE};
 cvar_t sv_netdiag_interval = {"sv_netdiag_interval", "5", CVAR_NONE};
@@ -339,6 +340,7 @@ void SV_Init (void)
 	Cvar_RegisterVariable (&sv_replacement_pacing);
 	Cvar_RegisterVariable (&sv_replacement_softmaxbytes);
 	Cvar_RegisterVariable (&sv_replacement_priority_radius);
+	Cvar_RegisterVariable (&sv_replacement_particle_maxbytes);
 	Cvar_RegisterVariable (&sv_snapshot_partresend);
 	Cvar_RegisterVariable (&sv_snapshot_partresend_interval);
 	Cvar_RegisterVariable (&sv_netdiag_interval);
@@ -2956,10 +2958,45 @@ static int SV_DPParticleDatagramSize (const byte *buf, int remaining)
 	return size <= remaining ? size : 0;
 }
 
+#define SV_DGRAM_OTHER		0
+#define SV_DGRAM_SOUND		1
+#define SV_DGRAM_TEMP		2
+#define SV_DGRAM_PARTICLE	3
+#define SV_DGRAM_DPPARTICLE	4
+
+static int SV_DatagramCommandSize (const byte *buf, int remaining, int *type)
+{
+	int size;
+
+	if ((size = SV_SoundDatagramSize (buf, remaining)) != 0)
+	{
+		*type = SV_DGRAM_SOUND;
+		return size;
+	}
+	if ((size = SV_TempEntityDatagramSize (buf, remaining)) != 0)
+	{
+		*type = SV_DGRAM_TEMP;
+		return size;
+	}
+	if ((size = SV_ParticleSize (buf)) != 0 && size <= remaining)
+	{
+		*type = SV_DGRAM_PARTICLE;
+		return size;
+	}
+	if ((size = SV_DPParticleDatagramSize (buf, remaining)) != 0)
+	{
+		*type = SV_DGRAM_DPPARTICLE;
+		return size;
+	}
+
+	*type = SV_DGRAM_OTHER;
+	return remaining;
+}
+
 static void SV_DatagramDebugStats (int *sound, int *temp, int *particle,
 	int *dpparticle, int *other)
 {
-	int position, remaining, size;
+	int position, remaining, size, type;
 	const byte *buf;
 
 	*sound = *temp = *particle = *dpparticle = *other = 0;
@@ -2968,58 +3005,75 @@ static void SV_DatagramDebugStats (int *sound, int *temp, int *particle,
 	{
 		buf = &sv.datagram.data[position];
 		remaining = sv.datagram.cursize - position;
-		if ((size = SV_SoundDatagramSize (buf, remaining)) != 0)
-			*sound += size;
-		else if ((size = SV_TempEntityDatagramSize (buf, remaining)) != 0)
-			*temp += size;
-		else if ((size = SV_ParticleSize (buf)) != 0 && size <= remaining)
-			*particle += size;
-		else if ((size = SV_DPParticleDatagramSize (buf, remaining)) != 0)
-			*dpparticle += size;
-		else
+		size = SV_DatagramCommandSize (buf, remaining, &type);
+		switch (type)
 		{
-			*other += remaining;
+		case SV_DGRAM_SOUND:
+			*sound += size;
+			break;
+		case SV_DGRAM_TEMP:
+			*temp += size;
+			break;
+		case SV_DGRAM_PARTICLE:
+			*particle += size;
+			break;
+		case SV_DGRAM_DPPARTICLE:
+			*dpparticle += size;
+			break;
+		default:
+			*other += size;
 			break;
 		}
 		position += size;
 	}
 }
 
-static qboolean SVFTE_WriteDatagramToMessage (sizebuf_t *msg, int *offset)
+static int SVFTE_WriteDatagramToMessage (sizebuf_t *msg, int *offset,
+	int *particle_budget)
 {
-	int position, size, remaining;
-	qboolean wrote = false;
+	int position, size, remaining, type, written;
+	qboolean cosmetic_particle;
 
 	position = *offset;
-	while (position < sv.datagram.cursize &&
-		(size = SV_ParticleSize (&sv.datagram.data[position])) != 0)
+	written = 0;
+	while (position < sv.datagram.cursize)
 	{
+		remaining = sv.datagram.cursize - position;
+		size = SV_DatagramCommandSize (&sv.datagram.data[position],
+			remaining, &type);
+		cosmetic_particle = type == SV_DGRAM_PARTICLE ||
+			type == SV_DGRAM_DPPARTICLE;
+
+		if (cosmetic_particle && particle_budget)
+		{
+			if (*particle_budget <= 0 || size > *particle_budget ||
+				msg->cursize + size >= msg->maxsize)
+			{
+				position += size;
+				continue;
+			}
+		}
+
 		if (msg->cursize + size >= msg->maxsize)
+		{
+			if (size >= msg->maxsize)
+			{
+				Con_DPrintf ("SVFTE_WriteDatagramToMessage: dropping oversized server datagram command (%d bytes, max %d)\n",
+					size, msg->maxsize);
+				position += size;
+				continue;
+			}
 			break;
+		}
+
 		SZ_Write (msg, &sv.datagram.data[position], size);
+		if (cosmetic_particle && particle_budget)
+			*particle_budget -= size;
 		position += size;
-		wrote = true;
+		written += size;
 	}
 	*offset = position;
-
-	remaining = sv.datagram.cursize - *offset;
-	if (remaining <= 0)
-		return wrote;
-
-	if (msg->cursize + remaining < msg->maxsize)
-	{
-		SZ_Write (msg, &sv.datagram.data[*offset], remaining);
-		*offset = sv.datagram.cursize;
-		return true;
-	}
-
-	if (remaining >= msg->maxsize)
-	{
-		Con_DPrintf ("SVFTE_WriteDatagramToMessage: dropping oversized server datagram tail (%d bytes, max %d)\n",
-			remaining, msg->maxsize);
-		*offset = sv.datagram.cursize;
-	}
-	return wrote;
+	return written;
 }
 
 static qboolean SV_WritePrivateDatagramToMessage (client_t *client, sizebuf_t *msg)
@@ -3063,6 +3117,7 @@ static qboolean SVFTE_SendClientDatagram (client_t *client, int maxsize)
 	int			private_datagram_initial;
 	int			private_datagram_written;
 	int			global_datagram_written;
+	int			global_particle_budget;
 	int			global_datagram_sound_bytes;
 	int			global_datagram_temp_bytes;
 	int			global_datagram_particle_bytes;
@@ -3129,6 +3184,8 @@ static qboolean SVFTE_SendClientDatagram (client_t *client, int maxsize)
 	private_datagram_initial = client->datagram.cursize;
 	private_datagram_written = 0;
 	global_datagram_written = 0;
+	global_particle_budget = sv_replacement_particle_maxbytes.value > 0 ?
+		(int)sv_replacement_particle_maxbytes.value : 0x7fffffff;
 	SV_DatagramDebugStats (&global_datagram_sound_bytes,
 		&global_datagram_temp_bytes,
 		&global_datagram_particle_bytes,
@@ -3196,9 +3253,8 @@ static qboolean SVFTE_SendClientDatagram (client_t *client, int maxsize)
 		}
 		if (!msg.overflowed && datagram_offset < sv.datagram.cursize)
 		{
-			int before = datagram_offset;
-			if (SVFTE_WriteDatagramToMessage (&msg, &datagram_offset))
-				global_datagram_written += datagram_offset - before;
+			global_datagram_written += SVFTE_WriteDatagramToMessage (&msg,
+				&datagram_offset, &global_particle_budget);
 		}
 		if (msg.overflowed)
 		{
