@@ -541,6 +541,46 @@ static qboolean Datagram_QueueIfForAnotherSocket (qsocket_t *sock, struct qsocka
 	return false;
 }
 
+static void Datagram_PruneStaleSameIpSockets (sys_socket_t socket)
+{
+	qsocket_t *sock;
+	qsocket_t *next;
+	qsocket_t *other;
+	net_landriver_t *ld;
+
+	if (!sv.active || net_sameip_stale_timeout.value <= 0)
+		return;
+
+	ld = &net_landrivers[net_landriverlevel];
+	for (sock = net_activeSockets; sock; sock = next)
+	{
+		next = sock->next;
+		if (sock->disconnected || !sock->isvirtual)
+			continue;
+		if (sock->driver != net_driverlevel || sock->landriver != net_landriverlevel ||
+			sock->socket != socket)
+			continue;
+		if (!Datagram_SocketIsStaleSameIpCandidate(sock))
+			continue;
+
+		for (other = net_activeSockets; other; other = other->next)
+		{
+			if (other == sock || other->disconnected || !other->isvirtual)
+				continue;
+			if (other->driver != sock->driver || other->landriver != sock->landriver ||
+				other->socket != sock->socket)
+				continue;
+			if (ld->AddrCompare(&sock->addr, &other->addr) > 0 ||
+				ld->AddrCompare(&other->addr, &sock->addr) > 0)
+			{
+				Datagram_CloseClientSocket(sock, "stale same-IP duplicate",
+					&other->addr);
+				break;
+			}
+		}
+	}
+}
+
 static qboolean Datagram_DequeuePacket (qsocket_t *sock, unsigned int *wireLength, struct qsockaddr *addr)
 {
 	int i;
@@ -1330,6 +1370,8 @@ void Datagram_GetAnyMessages (void (*callback)(qsocket_t *sock))
 			ret = Datagram_ProcessServerPacket(sock, &readaddr, (unsigned int)readLength);
 			Datagram_ServerMessageResult(sock, ret, callback);
 		}
+
+		Datagram_PruneStaleSameIpSockets(acceptsock);
 
 		for (sock = net_activeSockets; sock; sock = next)
 		{

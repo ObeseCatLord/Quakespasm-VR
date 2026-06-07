@@ -264,7 +264,7 @@ These cvars are custom additions or important changed defaults in this branch co
 | `net_lagdebug_frame_threshold` | `0.05` | Frame/update-gap threshold, in seconds, for `net_lagdebug` messages. |
 | `net_reorder_timeout` | `0.012` | Maximum seconds to wait for the missing unreliable datagram before advancing past it. |
 | `net_singlesocket` | `1` | Uses one UDP socket for accept/control and game traffic on the server, with queued dispatch to per-client logic. |
-| `net_sameip_stale_timeout` | `3.0` | Time before stale same-IP connection state can be discarded during reconnect/NAT-remap handling. |
+| `net_sameip_stale_timeout` | `3.0` | Time before stale same-IP connection state can be discarded during reconnect/NAT-remap handling, including stale duplicate ports left behind by a reconnect. |
 | `cl_netport` | `0` | Preferred local UDP port for the client. `0` lets the OS choose. |
 | `cl_portpingprobe_enable` | `1` | Enables client connect-time server-info probes across candidate local ports. |
 | `cl_portpingprobe_probes` | `6` | Number of local-port probes to try when `cl_portpingprobe_enable` is on. |
