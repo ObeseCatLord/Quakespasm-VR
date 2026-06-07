@@ -565,8 +565,16 @@ void CL_SendMove(const usercmd_t *cmd) {
   if (cls.demoplayback)
     return;
 
-  if (!cmd)
+  if (!cmd) {
+    CL_WriteAckFrames(&buf);
+    if (!buf.cursize)
+      return;
+    if (NET_SendUnreliableMessage(cls.netcon, &buf) == -1) {
+      Con_Printf("CL_SendMove: lost server connection\n");
+      CL_Disconnect();
+    }
     return;
+  }
 
   local_singleplayer = sv.active && svs.maxclients <= 1;
 

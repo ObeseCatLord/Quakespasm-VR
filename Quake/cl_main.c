@@ -1973,6 +1973,10 @@ void CL_SendCmd (void)
 		CL_ClearPendingCmd ();
 		cl.lastcmdtime = cmd.servertime;
 	}
+	else
+	{
+		CL_SendMove (NULL);
+	}
 
 	if (cls.demoplayback)
 	{
