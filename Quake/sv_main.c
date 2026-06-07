@@ -95,8 +95,15 @@ static int SV_ClientMaxPacketSize (client_t *client)
 
 static void SV_UpdateClientMSS (client_t *client)
 {
-	if (client && client->netconnection)
-		NET_QSocketSetMSS (client->netconnection, SV_ClientMaxPacketSize(client));
+	int maxsize;
+
+	if (!client || !client->netconnection)
+		return;
+
+	maxsize = SV_ClientMaxPacketSize(client);
+	NET_QSocketSetMSS (client->netconnection, maxsize);
+	if (client->datagram.data == client->datagram_buf)
+		client->datagram.maxsize = q_min ((int)sizeof(client->datagram_buf), maxsize);
 }
 
 void SV_CalcStats(client_t *client, int *statsi, float *statsf, const char **statss)
@@ -809,7 +816,8 @@ void SV_ConnectClient (int clientnum)
 	client->message.maxsize = sizeof(client->msgbuf);
 	client->message.allowoverflow = true;		// we can catch it
 	client->datagram.data = client->datagram_buf;
-	client->datagram.maxsize = sizeof(client->datagram_buf);
+	client->datagram.maxsize = q_min ((int)sizeof(client->datagram_buf),
+		SV_ClientMaxPacketSize(client));
 	client->datagram.cursize = 0;
 	client->datagram.allowoverflow = true;
 
