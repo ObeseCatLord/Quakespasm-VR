@@ -738,11 +738,14 @@ static void SV_NormalizeAcceptedUsercmd(client_t *client, usercmd_t *acceptedcmd
 
   /*
    * QSS-M derives independent movement time from the client timestamp and
-   * clamps it to server time. The frame time fallback is only used for the
-   * first command or malformed timestamps.
+   * clamps it to server time. Keep that delta even after a loss burst, but
+   * bound one accepted command to a sane PMove step instead of replaying a
+   * huge frame or discarding the elapsed time entirely.
    */
-  if (seconds_from_time >= 0.001 && seconds_from_time <= 0.1)
-    acceptedcmd->seconds = seconds_from_time;
+  if (seconds_from_time <= 0)
+    acceptedcmd->seconds = 0;
+  else
+    acceptedcmd->seconds = CLAMP(0.001f, (float)seconds_from_time, 0.1f);
 }
 
 static qboolean SV_QueueAcceptedUsercmd(const usercmd_t *acceptedcmd) {
