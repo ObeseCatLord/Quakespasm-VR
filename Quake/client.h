@@ -154,7 +154,11 @@ typedef struct
 								// doesn't accidentally do something the
 								// first frame
 	usercmd_t	cmd;			// last command sent to the server
-	usercmd_t	pendingcmd;		// accumulated state from mice+joysticks.
+	usercmd_t	pendingcmd;		// current unsent state from mice+joysticks.
+	vec3_t		accummoves;		// accumulated mouse movement for paced sends
+	vec3_t		vr_roomscalemove_accum; // accumulated room-scale movement for paced sends
+	float		cmdtime;		// input command clock, independent of render lerp
+	float		lastcmdtime;	// server time of last sent move command
 		int			ackedmovemessages;	// last sequenced move accepted by server
 		usercmd_t	movecmds[CL_MOVE_HISTORY];
 		int			predicted_move_sequence[CL_MOVE_HISTORY];
@@ -341,6 +345,7 @@ extern	cvar_t	cl_predict_smooth;
 extern	cvar_t	cl_predict_smooth_time;
 extern	cvar_t	cl_predict_smooth_min;
 extern	cvar_t	cl_predict_smooth_max;
+extern	cvar_t	cl_predict_legacy;
 extern	cvar_t	cl_predict_error_log;
 
 extern	cvar_t	cl_movespeedkey;
@@ -363,6 +368,12 @@ extern	cvar_t	cl_extrapolate_adaptive;
 extern	cvar_t	cl_extrapolate_adaptive_max;
 extern	cvar_t	cl_extrapolate_adaptive_time;
 extern	cvar_t	cl_net_lerpbuffer;
+extern	cvar_t	cl_net_lerpbuffer_adaptive;
+extern	cvar_t	cl_net_lerpbuffer_adaptive_max;
+extern	cvar_t	cl_net_lerpbuffer_adaptive_time;
+
+double CL_NetLagDebugFrameThreshold (void);
+void CL_NetSnapshotStartSmoothing (void);
 
 extern	cvar_t	cfg_unbindall;
 
@@ -439,7 +450,8 @@ void CL_ClearPendingCmd(void);
 void CL_SendMove(const usercmd_t *cmd);
 int CL_ReadFromServer(void);
 void CL_AdjustAngles(void);
-void CL_BaseMove(usercmd_t *cmd);
+void CL_BaseMove(usercmd_t *cmd, qboolean isfinal);
+void CL_FinishMove(usercmd_t *cmd, qboolean isfinal);
 
 void CL_ParseTEnt (void);
 void CL_UpdateTEnts (void);

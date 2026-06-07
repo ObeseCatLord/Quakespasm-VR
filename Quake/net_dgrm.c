@@ -54,12 +54,18 @@ static int myDriverLevel;
 cvar_t net_lagdebug = {"net_lagdebug", "0", CVAR_NONE};
 cvar_t net_lagdebug_threshold = {"net_lagdebug_threshold", "0.25", CVAR_NONE};
 cvar_t net_lagdebug_frame_threshold = {"net_lagdebug_frame_threshold", "0.05", CVAR_NONE};
+static cvar_t net_reorder_window = {"net_reorder_window", "0", CVAR_NONE};
+static cvar_t net_reorder_timeout = {"net_reorder_timeout", "0.012", CVAR_NONE};
 static cvar_t net_sameip_stale_timeout = {"net_sameip_stale_timeout", "3.0", CVAR_NONE};
 static cvar_t net_singlesocket = {"net_singlesocket", "1", CVAR_NONE};
 static cvar_t cl_netport = {"cl_netport", "0", CVAR_ARCHIVE};
 static cvar_t cl_portpingprobe_enable = {"cl_portpingprobe_enable", "1", CVAR_ARCHIVE};
 static cvar_t cl_portpingprobe_probes = {"cl_portpingprobe_probes", "6", CVAR_ARCHIVE};
 static cvar_t cl_portpingprobe_delay = {"cl_portpingprobe_delay", "0.20", CVAR_ARCHIVE};
+static int net_lagdebug_unmatched_suppressed;
+static double net_lagdebug_unmatched_time;
+static qboolean net_reorder_force_drop;
+static qboolean net_server_receive_path;
 
 #define MAX_PENDING_DATAGRAMS	64
 #define MAX_PENDING_CONTROL_DATAGRAMS	32
@@ -100,11 +106,14 @@ static pending_control_datagram_t pendingControlDatagrams[MAX_PENDING_CONTROL_DA
 extern qboolean m_return_onerror;
 extern char m_return_reason[32];
 
+static int Datagram_ProcessPacket (qsocket_t *sock, struct qsockaddr *readaddr, unsigned int wireLength);
+
 static qboolean Datagram_IsSnapshotPayload (unsigned int payloadLength)
 {
 	return payloadLength > 0 && packetBuffer.data[0] == svc_snapshot;
 }
 
+static void Datagram_ClearReorderedUnreliable (qsocket_t *sock);
 
 static char *StrAddr (struct qsockaddr *addr)
 {
@@ -208,6 +217,8 @@ static void Datagram_DropQueuedPackets (qsocket_t *sock)
 {
 	int i;
 
+	Datagram_ClearReorderedUnreliable (sock);
+
 	if (!sock->isvirtual)
 		return;
 
@@ -219,6 +230,163 @@ static void Datagram_DropQueuedPackets (qsocket_t *sock)
 			continue;
 		pendingDatagrams[i].valid = false;
 	}
+}
+
+static void Datagram_ClearReorderedUnreliable (qsocket_t *sock)
+{
+	memset (sock->unreliableReorder, 0, sizeof(sock->unreliableReorder));
+}
+
+static int Datagram_UnreliableSeqDiff (unsigned int sequence, unsigned int expected)
+{
+	return (int)(sequence - expected);
+}
+
+static int Datagram_ReorderWindow (void)
+{
+	return CLAMP (0, (int)net_reorder_window.value, NET_UNRELIABLE_REORDER);
+}
+
+static qboolean Datagram_QueueReorderedUnreliable (qsocket_t *sock,
+	struct qsockaddr *addr, unsigned int sequence, unsigned int wireLength)
+{
+	int i, slot, worst, diff, worstdiff, window;
+
+	window = Datagram_ReorderWindow ();
+	diff = Datagram_UnreliableSeqDiff (sequence, sock->unreliableReceiveSequence);
+	if (window <= 0 || diff <= 0 || diff > window)
+		return false;
+
+	slot = -1;
+	worst = -1;
+	worstdiff = -1;
+	for (i = 0; i < NET_UNRELIABLE_REORDER; i++)
+	{
+		qsocket_reorder_t *hold = &sock->unreliableReorder[i];
+		int holddiff;
+
+		if (!hold->valid)
+		{
+			if (slot < 0)
+				slot = i;
+			continue;
+		}
+
+		holddiff = Datagram_UnreliableSeqDiff (hold->sequence,
+			sock->unreliableReceiveSequence);
+		if (holddiff <= 0 || holddiff > window)
+		{
+			hold->valid = false;
+			if (slot < 0)
+				slot = i;
+			continue;
+		}
+		if (hold->sequence == sequence)
+			return true;
+		if (holddiff > worstdiff)
+		{
+			worst = i;
+			worstdiff = holddiff;
+		}
+	}
+
+	if (slot < 0)
+	{
+		if (worst < 0 || worstdiff <= diff)
+			return false;
+		slot = worst;
+	}
+
+	sock->unreliableReorder[slot].valid = true;
+	sock->unreliableReorder[slot].sequence = sequence;
+	sock->unreliableReorder[slot].wireLength = wireLength;
+	sock->unreliableReorder[slot].queuedTime = net_time;
+	sock->unreliableReorder[slot].addr = *addr;
+	Q_memcpy (&sock->unreliableReorder[slot].packet, &packetBuffer,
+		sizeof(packetBuffer));
+	return true;
+}
+
+static int Datagram_FindReadyReorderedUnreliable (qsocket_t *sock, qboolean *force)
+{
+	int i, best, bestdiff, diff, window;
+	double timeout, oldest;
+
+	window = Datagram_ReorderWindow ();
+	timeout = CLAMP (0.0, net_reorder_timeout.value, 0.100);
+	best = -1;
+	bestdiff = 0x7fffffff;
+	oldest = 0;
+	*force = false;
+
+	for (i = 0; i < NET_UNRELIABLE_REORDER; i++)
+	{
+		qsocket_reorder_t *hold = &sock->unreliableReorder[i];
+
+		if (!hold->valid)
+			continue;
+
+		diff = Datagram_UnreliableSeqDiff (hold->sequence,
+			sock->unreliableReceiveSequence);
+		if (diff < 0 || diff > window || window <= 0)
+		{
+			hold->valid = false;
+			continue;
+		}
+		if (diff == 0)
+			return i;
+		if (diff < bestdiff)
+		{
+			best = i;
+			bestdiff = diff;
+			oldest = hold->queuedTime;
+		}
+	}
+
+	if (best >= 0 && (timeout <= 0 || net_time - oldest >= timeout))
+	{
+		*force = true;
+		return best;
+	}
+
+	return -1;
+}
+
+static int Datagram_ProcessReadyReorderedUnreliable (qsocket_t *sock)
+{
+	int ret, slot;
+	qboolean force, saved_force;
+	struct qsockaddr readaddr;
+	unsigned int wireLength;
+
+	slot = Datagram_FindReadyReorderedUnreliable (sock, &force);
+	if (slot < 0)
+		return 0;
+
+	readaddr = sock->unreliableReorder[slot].addr;
+	wireLength = sock->unreliableReorder[slot].wireLength;
+	Q_memcpy (&packetBuffer, &sock->unreliableReorder[slot].packet,
+		sizeof(packetBuffer));
+	sock->unreliableReorder[slot].valid = false;
+
+	saved_force = net_reorder_force_drop;
+	net_reorder_force_drop = force;
+	ret = Datagram_ProcessPacket (sock, &readaddr, wireLength);
+	net_reorder_force_drop = saved_force;
+	return ret;
+}
+
+static int Datagram_ProcessServerPacket (qsocket_t *sock,
+	struct qsockaddr *readaddr, unsigned int wireLength)
+{
+	int ret;
+	qboolean saved_server_path;
+
+	saved_server_path = net_server_receive_path;
+	net_server_receive_path = true;
+	ret = Datagram_ProcessPacket (sock, readaddr, wireLength);
+	net_server_receive_path = saved_server_path;
+	return ret;
 }
 
 static double Datagram_SocketLastInboundTime (const qsocket_t *sock)
@@ -727,6 +895,7 @@ static int Datagram_ProcessPacket (qsocket_t *sock, struct qsockaddr *readaddr, 
 					Con_DPrintf("net_lagdebug: passing stale snapshot datagram from %s seq=%u expected=%u\n",
 						sock->address, sequence, sock->unreliableReceiveSequence);
 			}
+
 			// Valid unreliable - safe to commit the NAT remap now.
 			if (pendingRemap)
 			{
@@ -740,6 +909,18 @@ static int Datagram_ProcessPacket (qsocket_t *sock, struct qsockaddr *readaddr, 
 				sock->prevAddrTime = net_time;
 				sock->addr = *readaddr;
 			}
+
+			if (!staleSnapshot && !net_server_receive_path &&
+				!net_reorder_force_drop &&
+				sequence > sock->unreliableReceiveSequence &&
+				Datagram_QueueReorderedUnreliable (sock, readaddr, sequence, wireLength))
+			{
+				if (net_lagdebug.value)
+					Con_DPrintf("net_lagdebug: queued out-of-order unreliable datagram from %s seq=%u expected=%u\n",
+						sock->address, sequence, sock->unreliableReceiveSequence);
+				return 0;
+			}
+
 			if (!staleSnapshot && sequence != sock->unreliableReceiveSequence)
 			{
 				count = sequence - sock->unreliableReceiveSequence;
@@ -748,6 +929,9 @@ static int Datagram_ProcessPacket (qsocket_t *sock, struct qsockaddr *readaddr, 
 				if (net_lagdebug.value)
 					Con_Printf("net_lagdebug: dropped %u unreliable datagram(s) from %s seq=%u expected=%u\n",
 						count, sock->address, sequence, sock->unreliableReceiveSequence);
+				if (!isDedicated && cls.state == ca_connected && sock == cls.netcon &&
+					!(cl.protocol_pext2 & PEXT2_REPLACEMENTDELTAS))
+					CL_NetSnapshotStartSmoothing ();
 			}
 			if (!staleSnapshot)
 				sock->unreliableReceiveSequence = sequence + 1;
@@ -891,6 +1075,10 @@ int	Datagram_GetMessage (qsocket_t *sock)
 	if (!sock->canSend)
 		if ((net_time - sock->lastSendTime) > 1.0)
 			ReSendMessage (sock);
+
+	ret = Datagram_ProcessReadyReorderedUnreliable (sock);
+	if (ret)
+		goto done;
 
 	while (Datagram_DequeuePacket(sock, &queuedLength, &readaddr))
 	{
@@ -1088,9 +1276,11 @@ void Datagram_GetAnyMessages (void (*callback)(qsocket_t *sock))
 			if (sock->driver != net_driverlevel || sock->landriver != net_landriverlevel)
 				continue;
 
+			Datagram_ClearReorderedUnreliable(sock);
+
 			while (Datagram_DequeuePacket(sock, &queuedLength, &readaddr))
 			{
-				ret = Datagram_ProcessPacket(sock, &readaddr, queuedLength);
+				ret = Datagram_ProcessServerPacket(sock, &readaddr, queuedLength);
 				Datagram_ServerMessageResult(sock, ret, callback);
 				if (sock->disconnected)
 					break;
@@ -1124,12 +1314,20 @@ void Datagram_GetAnyMessages (void (*callback)(qsocket_t *sock))
 			if (!sock)
 			{
 				if (net_lagdebug.value)
-					Con_Printf("net_lagdebug: ignoring unmatched datagram on shared socket from %s\n",
-						dfunc.AddrToString(&readaddr));
+				{
+					net_lagdebug_unmatched_suppressed++;
+					if (net_time - net_lagdebug_unmatched_time >= 1.0)
+					{
+						Con_Printf("net_lagdebug: ignored unmatched shared-socket datagrams suppressed=%d latest=%s\n",
+							net_lagdebug_unmatched_suppressed, dfunc.AddrToString(&readaddr));
+						net_lagdebug_unmatched_suppressed = 0;
+						net_lagdebug_unmatched_time = net_time;
+					}
+				}
 				continue;
 			}
 
-			ret = Datagram_ProcessPacket(sock, &readaddr, (unsigned int)readLength);
+			ret = Datagram_ProcessServerPacket(sock, &readaddr, (unsigned int)readLength);
 			Datagram_ServerMessageResult(sock, ret, callback);
 		}
 
@@ -1510,6 +1708,8 @@ int Datagram_Init (void)
 	Cvar_RegisterVariable (&net_lagdebug);
 	Cvar_RegisterVariable (&net_lagdebug_threshold);
 	Cvar_RegisterVariable (&net_lagdebug_frame_threshold);
+	Cvar_RegisterVariable (&net_reorder_window);
+	Cvar_RegisterVariable (&net_reorder_timeout);
 	Cvar_RegisterVariable (&net_sameip_stale_timeout);
 	Cvar_RegisterVariable (&net_singlesocket);
 	Cvar_RegisterVariable (&cl_netport);

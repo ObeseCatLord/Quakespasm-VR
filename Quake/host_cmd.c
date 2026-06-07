@@ -1164,6 +1164,7 @@ void Host_CoopAutosaveFrame(void) {
     sv.coop_autosave_initialized = true;
     sv.coop_autosave_mapstart_done = false;
     sv.coop_autosave_last_time = 0;
+    sv.coop_autosave_last_realtime = 0;
     sv.coop_autosave_last_secrets = found_secrets;
     sv.coop_autosave_last_kill_bucket = kill_bucket;
     sv.coop_autosave_last_serverflags = serverflags;
@@ -1187,8 +1188,8 @@ void Host_CoopAutosaveFrame(void) {
   min_interval = sv_coop_autosave_min_interval.value;
   if (min_interval < 0)
     min_interval = 0;
-  if (sv.coop_autosave_last_time > 0 &&
-      qcvm->time - sv.coop_autosave_last_time < min_interval)
+  if (sv.coop_autosave_last_realtime > 0 &&
+      realtime - sv.coop_autosave_last_realtime < min_interval)
     return;
 
   slots = (int)sv_coop_autosave_slots.value;
@@ -1205,6 +1206,7 @@ void Host_CoopAutosaveFrame(void) {
   Con_Printf("Coop autosaved %s.sav (%s).\n", savename, reason);
   sv.coop_autosave_next_slot = (sv.coop_autosave_next_slot + 1) % slots;
   sv.coop_autosave_last_time = qcvm->time;
+  sv.coop_autosave_last_realtime = realtime;
   sv.coop_autosave_last_secrets = found_secrets;
   sv.coop_autosave_last_kill_bucket = kill_bucket;
   sv.coop_autosave_last_serverflags = serverflags;

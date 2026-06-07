@@ -2125,9 +2125,7 @@ static qboolean CL_PrepareSnapshotMessage (void)
 		if (cl_snapshot_assembly.active)
 		{
 			cl.net_snapshot_incomplete++;
-			if (cl_extrapolate_adaptive.value)
-				cl.net_snapshot_smooth_until = realtime +
-					q_max (0.0, cl_extrapolate_adaptive_time.value);
+			CL_NetSnapshotStartSmoothing ();
 			if (net_lagdebug.value)
 				Con_DPrintf ("net_lagdebug: discarding incomplete snapshot seq=%d mask=%08x/%08x/%08x/%08x last=%d for newer seq=%d\n",
 					cl_snapshot_assembly.seq,
@@ -2140,9 +2138,7 @@ static qboolean CL_PrepareSnapshotMessage (void)
 		if (cl.net_snapshot_have && seq > cl.net_snapshot_sequence + 1)
 		{
 			cl.net_snapshot_drops += seq - cl.net_snapshot_sequence - 1;
-			if (cl_extrapolate_adaptive.value)
-				cl.net_snapshot_smooth_until = realtime +
-					q_max (0.0, cl_extrapolate_adaptive_time.value);
+			CL_NetSnapshotStartSmoothing ();
 			if (net_lagdebug.value)
 				Con_DPrintf ("net_lagdebug: client snapshot sequence gap old=%d new=%d missing=%d\n",
 					cl.net_snapshot_sequence, seq,
@@ -2181,9 +2177,7 @@ static qboolean CL_PrepareSnapshotMessage (void)
 	{
 		cl.net_snapshot_part_jumps++;
 		cl.net_snapshot_incomplete++;
-		if (cl_extrapolate_adaptive.value)
-			cl.net_snapshot_smooth_until = realtime +
-				q_max (0.0, cl_extrapolate_adaptive_time.value);
+		CL_NetSnapshotStartSmoothing ();
 		if (net_lagdebug.value)
 			Con_DPrintf ("net_lagdebug: snapshot FIRST flag on nonzero part seq=%d part=%d flags=%d firstent=%d total=%d\n",
 				seq, part, flags,
@@ -2226,9 +2220,7 @@ static qboolean CL_PrepareSnapshotMessage (void)
 				seq, cl_snapshot_assembly.cursize, payload_size,
 				net_message.maxsize);
 		cl.net_snapshot_incomplete++;
-		if (cl_extrapolate_adaptive.value)
-			cl.net_snapshot_smooth_until = realtime +
-				q_max (0.0, cl_extrapolate_adaptive_time.value);
+		CL_NetSnapshotStartSmoothing ();
 		CL_ResetSnapshotAssembly ();
 		return false;
 	}
@@ -2308,6 +2300,7 @@ static void CL_ParseSnapshotHeader (void)
 	if (cl.net_snapshot_have && seq > cl.net_snapshot_sequence + 1)
 	{
 		cl.net_snapshot_drops += seq - cl.net_snapshot_sequence - 1;
+		CL_NetSnapshotStartSmoothing ();
 		if (net_lagdebug.value)
 			Con_DPrintf ("net_lagdebug: client snapshot sequence gap old=%d new=%d missing=%d\n",
 				cl.net_snapshot_sequence, seq, seq - cl.net_snapshot_sequence - 1);
@@ -2403,7 +2396,7 @@ void CL_ParseServerMessage (void)
 			newtime = MSG_ReadFloat ();
 			if (net_lagdebug.value && cls.state == ca_connected && cls.signon == SIGNONS &&
 				cl.mtime[0] > 0 && realtime - last_svctime_log > 0.5 &&
-				(newtime <= cl.mtime[0] || newtime - cl.mtime[0] > net_lagdebug_frame_threshold.value))
+				(newtime <= cl.mtime[0] || newtime - cl.mtime[0] > CL_NetLagDebugFrameThreshold ()))
 			{
 				Con_Printf ("net_lagdebug: client svc_time %s old=%.3f new=%.3f delta=%.3f lastmsg_age=%.3f msgsize=%d\n",
 					(newtime <= cl.mtime[0]) ? "non-advancing" : "gap",

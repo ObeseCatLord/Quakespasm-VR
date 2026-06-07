@@ -1281,6 +1281,7 @@ void M_Options_Key(int k) {
 /* KEYS MENU */
 
 const char *bindnames[][2] = {{"+attack", "attack"},
+                              {"impulse 228", "alt fire"},
                               {"impulse 10", "next weapon"},
                               {"impulse 12", "prev weapon"},
                               {"+jump", "jump / swim up"},

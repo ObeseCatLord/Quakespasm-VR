@@ -115,14 +115,17 @@ Input from VR Controllers are mapped to various joystick-related input (except t
 | Right Application Menu / B Button | `BBUTTON` | Next Weapon |
 | Left Pad/Stick Click | `LTHUMB` | Run |
 | Right Pad/Stick Click | `RTHUMB` | Jump |
+| Index Right Touchpad / Other Right Grip | `VR_ALTFIRE` | Alt Fire |
 | Left Grip | `LSHOULDER` | Show Scores |
-| Right Grip  | `RSHOULDER` |  Show Scores  |
+| Right Grip on Index | `RSHOULDER` | Show Scores |
 | Left A Button | `ABUTTON` | Show Scores |
 | Right A Button | `XBUTTON` | Previous Weapon |
 | Right Axis 2 Press | `YBUTTON` | _none_ |
 | Right Pad/Stick Up | `UPARROW` | _none_ |
 | Right Pad/Stick Down | `DOWNARROW` | _none_ |
 | Right Pad/Stick Left | `LEFTARROW` | _none_ |
+
+On desktop/no-VR, right mouse defaults to `impulse 228` for mods that expose secondary fire.
 | Right Pad/Stick Right | `RIGHTARROW` | _none_ |
 
 #### Important infos
@@ -211,12 +214,30 @@ These cvars are custom additions or important changed defaults in this branch co
 | Cvar | Default | Description |
 | ---- | ------- | ----------- |
 | `cl_nocsqc` | `0` | Set to `1` to disable loading client-side QC/CSQC. Useful when isolating a mod HUD or CSQC compatibility issue. |
-| `cl_netfps` | `72` | Caps remote-client `CL_SendCmd` rate. Set to `0` to disable the cap. Helps VR clients avoid flooding a lower-rate server with redundant move packets. |
+| `cl_netfps` | `20` | Caps remote-client `CL_SendCmd` rate. Set to `0` to disable the cap. Matches the default 20 Hz dedicated server tick while prediction and command redundancy keep input responsive between sends. |
+| `cl_move_redundancy` | `3` | Sends previous QSS-style `clc_move` records with each new move so short upstream loss bursts do not lose input frames. Command duration is derived from the QSS-style server-time stamp instead of a separate msec byte. |
+| `cl_move_packetdup` | `1` | Sends one duplicate movement packet by default for trusted co-op testing, reducing the chance that a single upstream UDP drop becomes a visible input hitch. |
 | `cfg_unbindall` | `1` | Controls whether generated `config.cfg` files start with `unbindall`. Set to `0` if you need persisted binds to merge instead of clearing first. |
-| `cl_extrapolate` | `0.05` | Allows a small amount of client interpolation/extrapolation tolerance for remote snapshots. |
+| `cl_extrapolate` | `0.02` | Allows a small amount of client interpolation/extrapolation tolerance for remote snapshots. |
+| `cl_extrapolate_adaptive` | `0` | Temporarily raises extrapolation tolerance after snapshot gaps or interpolation overruns when enabled for diagnostics. |
+| `cl_net_lerpbuffer` | `0.10` | Delays remote snapshot interpolation by two 20 Hz server ticks so small timing jitter does not immediately overrun the latest snapshot. |
+| `cl_net_lerpbuffer_adaptive` | `0` | Temporarily widens `cl_net_lerpbuffer` after snapshot gaps, incomplete fragments, or interpolation overruns when enabled for diagnostics. |
+| `cl_net_lerpbuffer_adaptive_max` | `0.30` | Maximum adaptive interpolation buffer in seconds. |
+| `cl_net_lerpbuffer_adaptive_time` | `0.75` | Time in seconds over which the adaptive interpolation buffer decays after a network gap. |
+| `cl_predict_smooth` | `0` | Blends local prediction-error corrections when enabled. It defaults off because PMove plus replacement deltas should correct from authoritative state directly; enable only when testing visual smoothing. |
+| `cl_predict_legacy` | `0` | Debug fallback for the old non-replacement-delta prediction path. Normal latest-client/latest-server play should use PMove prediction instead. |
+| `net_reorder_window` | `0` | Optional client-side unreliable packet reorder holdback. It is off by default because QSS/FTE-style replacement deltas recover from drops without delaying newer packets. |
 | `pr_checkextension` | `1` | Controls advertised QuakeC extension support. This branch advertises only implemented extensions such as `FTE_QC_CHECKCOMMAND`. |
-| `sv_maxpacketsize` | `1400` | Maximum unreliable datagram size sent to remote clients. Keep near MTU to avoid UDP fragmentation; raise only for controlled networks. |
+| `sv_maxpacketsize` | `1200` | Maximum unreliable datagram size sent to remote clients. Keep below MTU to avoid UDP fragmentation; raise only for controlled networks. |
 | `sv_netsort` | `1` | Uses an Ironwail/QSS-style entity priority sort so packet pressure drops distant or behind-camera entities before nearby/high-priority entities. |
+| `sv_pmove` | `1` | Enables QSS/FTE-style server PMove plus acknowledged movement frames when the client supports prediction info. |
+| `sv_pmove_legacy` | `1` | Applies server PMove to normal QuakeC mods that do not define `SV_RunClientCommand`, replacing legacy server-authoritative movement while preserving the mod's `PlayerPreThink`/`PlayerPostThink` hooks. |
+| `sv_move_timeclamp` | `1` | Clamps accepted client command time against server time, following QSS-M's bounded independent movement timing. |
+| `sv_replacement_maxpackets` | `0` | Maximum replacement-delta datagrams emitted to one client per server update. `0` means flush pending deltas up to the engine safety cap, matching QSS-M's independent multi-datagram replacement-delta behavior instead of deferring large-map updates behind a one-packet budget. |
+| `sv_replacement_packetdup` | `1` | Sends one same-sequence duplicate of each replacement-delta datagram to remote clients by default. The duplicate is dropped as stale if both copies arrive, but it can hide a single downstream UDP loss without replaying temp entities. |
+| `sv_replacement_pacing` | `1` | Enables a soft packet cap for non-critical replacement deltas so ordinary entity churn does not fill every UDP packet to the hard MTU limit. |
+| `sv_replacement_softmaxbytes` | `1000` | Soft packet target used by `sv_replacement_pacing`. Critical player, reset, removal, solid, and effect deltas may still bypass it. |
+| `sv_replacement_priority_radius` | `768` | Radius for letting nearby non-critical replacement deltas bypass the soft cap. |
 | `sv_inputtimeout` | `0.25` | Clears stale movement/buttons after this many seconds without fresh input from a client. Set to `0` to disable. |
 | `sv_freezenonclients` | `0` | When enabled, server physics runs clients/world only. This is mainly a diagnostic or special server control, not a normal gameplay setting. |
 | `sv_gameplayfix_elevators` | `2` | Pusher/elevator fix. `0` off, `1` clients only, `2` all entities. Helps prevent entities from blocking lifts due to tiny contact errors. |

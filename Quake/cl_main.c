@@ -43,16 +43,66 @@ cvar_t	cl_beams_polygons = {"cl_beams_polygons","0",CVAR_ARCHIVE};
 // At sys_ticrate 0.05 (20 Hz) a fast client renders many frames between
 // snapshots and would otherwise freeze entities at frac=1 until the next
 // packet, producing visible 20 Hz judder. 0 reproduces the legacy clamp.
-cvar_t	cl_extrapolate = {"cl_extrapolate","0.05",CVAR_ARCHIVE};
+cvar_t	cl_extrapolate = {"cl_extrapolate","0.02",CVAR_ARCHIVE};
 cvar_t	cl_extrapolate_adaptive = {"cl_extrapolate_adaptive","0",CVAR_ARCHIVE};
 cvar_t	cl_extrapolate_adaptive_max = {"cl_extrapolate_adaptive_max","0.12",CVAR_ARCHIVE};
 cvar_t	cl_extrapolate_adaptive_time = {"cl_extrapolate_adaptive_time","0.75",CVAR_NONE};
-cvar_t	cl_net_lerpbuffer = {"cl_net_lerpbuffer","0.025",CVAR_ARCHIVE};
-cvar_t	cl_predict_smooth = {"cl_predict_smooth","1",CVAR_ARCHIVE};
+cvar_t	cl_net_lerpbuffer = {"cl_net_lerpbuffer","0.10",CVAR_ARCHIVE};
+cvar_t	cl_net_lerpbuffer_adaptive = {"cl_net_lerpbuffer_adaptive","0",CVAR_ARCHIVE};
+cvar_t	cl_net_lerpbuffer_adaptive_max = {"cl_net_lerpbuffer_adaptive_max","0.30",CVAR_ARCHIVE};
+cvar_t	cl_net_lerpbuffer_adaptive_time = {"cl_net_lerpbuffer_adaptive_time","0.75",CVAR_NONE};
+cvar_t	cl_predict_smooth = {"cl_predict_smooth","0",CVAR_ARCHIVE};
 cvar_t	cl_predict_smooth_time = {"cl_predict_smooth_time","0.08",CVAR_ARCHIVE};
 cvar_t	cl_predict_smooth_min = {"cl_predict_smooth_min","0.5",CVAR_NONE};
 cvar_t	cl_predict_smooth_max = {"cl_predict_smooth_max","64",CVAR_NONE};
+cvar_t	cl_predict_legacy = {"cl_predict_legacy","0",CVAR_NONE};
 cvar_t	cl_predict_error_log = {"cl_predict_error_log","1",CVAR_NONE};
+
+double CL_NetLagDebugFrameThreshold (void)
+{
+	double threshold;
+
+	threshold = net_lagdebug_frame_threshold.value;
+	if (threshold < 0.055)
+		threshold = 0.055;
+	return threshold;
+}
+
+void CL_NetSnapshotStartSmoothing (void)
+{
+	double smooth_time;
+
+	if (!cl_extrapolate_adaptive.value && !cl_net_lerpbuffer_adaptive.value)
+		return;
+
+	smooth_time = 0;
+	if (cl_extrapolate_adaptive.value)
+		smooth_time = q_max (smooth_time, q_max (0.0, cl_extrapolate_adaptive_time.value));
+	if (cl_net_lerpbuffer_adaptive.value)
+		smooth_time = q_max (smooth_time, q_max (0.0, cl_net_lerpbuffer_adaptive_time.value));
+	if (smooth_time <= 0)
+		return;
+
+	if (cl.net_snapshot_smooth_until < realtime + smooth_time)
+		cl.net_snapshot_smooth_until = realtime + smooth_time;
+}
+
+static float CL_EffectiveNetLerpBuffer (void)
+{
+	float base, adaptive, blend;
+	double smooth_time, remaining;
+
+	base = CLAMP (0.0f, cl_net_lerpbuffer.value, 0.35f);
+	if (!cl_net_lerpbuffer_adaptive.value || realtime >= cl.net_snapshot_smooth_until)
+		return base;
+
+	adaptive = CLAMP (base, cl_net_lerpbuffer_adaptive_max.value, 0.35f);
+	smooth_time = q_max (0.001, cl_net_lerpbuffer_adaptive_time.value);
+	remaining = cl.net_snapshot_smooth_until - realtime;
+	blend = CLAMP (0.0f, (float)(remaining / smooth_time), 1.0f);
+
+	return base + (adaptive - base) * blend;
+}
 
 cvar_t	cfg_unbindall = {"cfg_unbindall", "1", CVAR_ARCHIVE};
 
@@ -476,7 +526,7 @@ float	CL_LerpPoint (void)
 	static double	last_lerp_log;
 
 	f = cl.mtime[0] - cl.mtime[1];
-	lerpbuffer = CLAMP (0.0f, cl_net_lerpbuffer.value, 0.2f);
+	lerpbuffer = CL_EffectiveNetLerpBuffer ();
 	lerptime = cl.time - lerpbuffer;
 
 	if (!f || cls.timedemo || (sv.active && !host_netinterval))
@@ -518,17 +568,16 @@ float	CL_LerpPoint (void)
 	{
 		float maxextrap = cl_extrapolate.value;
 
-		if (cl_extrapolate_adaptive.value &&
-			(lerptime - cl.mtime[0] > net_lagdebug_frame_threshold.value ||
+		if ((cl_extrapolate_adaptive.value || cl_net_lerpbuffer_adaptive.value) &&
+			(lerptime - cl.mtime[0] > CL_NetLagDebugFrameThreshold () ||
 			 realtime < cl.net_snapshot_smooth_until))
 		{
-			cl.net_snapshot_smooth_until = realtime +
-				q_max (0.0, cl_extrapolate_adaptive_time.value);
-			if (cl_extrapolate_adaptive_max.value > maxextrap)
+			CL_NetSnapshotStartSmoothing ();
+			if (cl_extrapolate_adaptive.value && cl_extrapolate_adaptive_max.value > maxextrap)
 				maxextrap = cl_extrapolate_adaptive_max.value;
 		}
 		if (net_lagdebug.value && cls.state == ca_connected && cls.signon == SIGNONS &&
-			lerptime - cl.mtime[0] > net_lagdebug_frame_threshold.value &&
+			lerptime - cl.mtime[0] > CL_NetLagDebugFrameThreshold () &&
 			realtime - last_lerp_log > 0.5)
 		{
 			cl.net_snapshot_interpolation_overruns++;
@@ -1201,7 +1250,7 @@ static void CL_CheckPredictionError (entity_t *ent)
 	float	maxerr;
 	vec3_t	delta;
 
-	if (!cl.predstate_valid || cl.ackedmovemessages < 2)
+	if (cl.ackedmovemessages < 2)
 		return;
 
 	ack = cl.ackedmovemessages;
@@ -1296,8 +1345,9 @@ static qboolean CL_PredictPlayer (entity_t *ent)
 	if (ent != &cl.entities[cl.viewentity])
 		return false;
 	if (!(cl.protocol_pext2 & PEXT2_REPLACEMENTDELTAS))
-		return CL_PredictPlayerLegacy (ent);
-	if (!cl.predstate_valid || cl.predstate_sequence < cl.ackedmovemessages)
+		return cl_predict_legacy.value ? CL_PredictPlayerLegacy (ent) : false;
+	if (!ent->netstate.pmovetype &&
+		(!cl.predstate_valid || cl.predstate_sequence < cl.ackedmovemessages))
 		return false;
 
 	PMCL_SetMoveVars ();
@@ -1809,42 +1859,86 @@ CL_SendCmd
 =================
 */
 static usercmd_t cl_pendingcmd;
-static int cl_pendingcmd_samples;
-static float cl_pendingcmd_seconds;
+static qboolean cl_pendingcmd_valid;
+static int cl_cmdtime_frame = -1;
 
 void CL_ClearPendingCmd (void)
 {
 	Q_memset(&cl_pendingcmd, 0, sizeof(cl_pendingcmd));
 	Q_memset(&cl.pendingcmd, 0, sizeof(cl.pendingcmd));
-	cl_pendingcmd_samples = 0;
-	cl_pendingcmd_seconds = 0;
+	VectorCopy(vec3_origin, cl.accummoves);
+	VectorCopy(vec3_origin, cl.vr_roomscalemove_accum);
+	cl_pendingcmd_valid = false;
+}
+
+static float CL_UpdateCommandTime (void)
+{
+	if (cl_cmdtime_frame == host_framecount && cl.cmdtime > 0)
+		return cl.cmdtime;
+
+	if (cl.cmdtime <= 0)
+	{
+		cl.cmdtime = cl.mtime[0] > 0 ? cl.mtime[0] : cl.time;
+		cl.lastcmdtime = cl.cmdtime;
+	}
+
+	cl.cmdtime += host_frametime;
+	if (cl.mtime[0] > 0)
+	{
+		float mintime = cl.mtime[0] - 0.25f;
+		float maxtime = cl.mtime[0] + 0.25f;
+
+		if (cl.cmdtime < mintime)
+			cl.cmdtime = mintime;
+		else if (cl.cmdtime > maxtime)
+			cl.cmdtime = maxtime;
+	}
+
+	cl_cmdtime_frame = host_framecount;
+	return cl.cmdtime;
+}
+
+static void CL_AccumulateVRRoomScaleMove (void)
+{
+	if (vr_enabled.value && (int)vr_aimmode.value == VR_AIMMODE_CONTROLLER)
+		VectorAdd (cl.vr_roomscalemove_accum, vr_room_scale_move,
+			cl.vr_roomscalemove_accum);
 }
 
 void CL_AccumulateCmd (void)
 {
 	usercmd_t cmd;
+	float cmdtime;
 
 	if (cls.state != ca_connected || cls.signon != SIGNONS)
+	{
+		CL_ClearPendingCmd ();
+		cl.cmdtime = cl.mtime[0] > 0 ? cl.mtime[0] : cl.time;
+		cl.lastcmdtime = cl.cmdtime;
+		cl_cmdtime_frame = host_framecount;
 		return;
+	}
 
-	CL_BaseMove (&cmd);
+	cmdtime = CL_UpdateCommandTime ();
+
+	CL_AdjustAngles ();
+	CL_BaseMove (&cmd, false);
 	IN_Move (&cmd);
 	VR_Move (&cmd);
+	CL_AccumulateVRRoomScaleMove ();
+	CL_FinishMove (&cmd, false);
 
-	cl_pendingcmd.forwardmove += cmd.forwardmove;
-	cl_pendingcmd.sidemove += cmd.sidemove;
-	cl_pendingcmd.upmove += cmd.upmove;
-	cl_pendingcmd_samples++;
-	cl_pendingcmd_seconds += host_frametime;
+	cmd.servertime = cmdtime;
+	cmd.seconds = cmdtime - cl.lastcmdtime;
+	if (cmd.seconds <= 0)
+		cmd.seconds = host_frametime;
+	if (cmd.seconds > 0.1f)
+		cmd.seconds = 0.1f;
+	VectorCopy (cl.aimangles, cmd.viewangles);
 
+	cl_pendingcmd = cmd;
+	cl_pendingcmd_valid = true;
 	cl.pendingcmd = cl_pendingcmd;
-	cl.pendingcmd.seconds = cl_pendingcmd_seconds;
-	VectorCopy(cl.aimangles, cl.pendingcmd.viewangles);
-	cl.pendingcmd.buttons = 0;
-	if (!cl.in_vr_weaponmenu && (in_attack.state & 1))
-		cl.pendingcmd.buttons |= 1;
-	if (in_jump.state & 1)
-		cl.pendingcmd.buttons |= 2;
 }
 
 void CL_SendCmd (void)
@@ -1856,21 +1950,28 @@ void CL_SendCmd (void)
 
 	if (cls.signon == SIGNONS)
 	{
-		if (!cl_pendingcmd_samples)
+		if (!cl_pendingcmd_valid)
 			CL_AccumulateCmd ();
 
-		cmd = cl_pendingcmd;
-		if (cl_pendingcmd_samples > 1)
-		{
-			cmd.forwardmove /= cl_pendingcmd_samples;
-			cmd.sidemove /= cl_pendingcmd_samples;
-			cmd.upmove /= cl_pendingcmd_samples;
-		}
-		cmd.seconds = cl_pendingcmd_seconds;
-		CL_ClearPendingCmd ();
+		// Build the actual network command at the send tick, like QSS-M.
+		// CL_AccumulateCmd keeps prediction current between sends, while
+		// CL_FinishMove drains accumulated mouse/room-scale deltas here.
+		CL_BaseMove (&cmd, true);
+		IN_Move (&cmd);
+		VR_Move (&cmd);
+		CL_FinishMove (&cmd, true);
+		if (cmd.servertime <= 0)
+			cmd.servertime = CL_UpdateCommandTime ();
+		cmd.seconds = cmd.servertime - cl.lastcmdtime;
+		if (cmd.seconds <= 0)
+			cmd.seconds = host_frametime;
+		if (cmd.seconds > 0.1f)
+			cmd.seconds = 0.1f;
 
 	// send the unreliable message
 		CL_SendMove (&cmd);
+		CL_ClearPendingCmd ();
+		cl.lastcmdtime = cmd.servertime;
 	}
 
 	if (cls.demoplayback)
@@ -2030,6 +2131,7 @@ void CL_Init (void)
 	Cvar_RegisterVariable (&cl_predict_smooth_time);
 	Cvar_RegisterVariable (&cl_predict_smooth_min);
 	Cvar_RegisterVariable (&cl_predict_smooth_max);
+	Cvar_RegisterVariable (&cl_predict_legacy);
 	Cvar_RegisterVariable (&cl_predict_error_log);
 	Cvar_RegisterVariable (&cl_movespeedkey);
 	Cvar_RegisterVariable (&cl_yawspeed);
@@ -2045,6 +2147,9 @@ void CL_Init (void)
 	Cvar_RegisterVariable (&cl_extrapolate_adaptive_max);
 	Cvar_RegisterVariable (&cl_extrapolate_adaptive_time);
 	Cvar_RegisterVariable (&cl_net_lerpbuffer);
+	Cvar_RegisterVariable (&cl_net_lerpbuffer_adaptive);
+	Cvar_RegisterVariable (&cl_net_lerpbuffer_adaptive_max);
+	Cvar_RegisterVariable (&cl_net_lerpbuffer_adaptive_time);
 	Cvar_RegisterVariable (&freelook);
 	Cvar_RegisterVariable (&lookspring);
 	Cvar_RegisterVariable (&lookstrafe);

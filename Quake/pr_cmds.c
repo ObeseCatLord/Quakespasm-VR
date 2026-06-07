@@ -186,6 +186,17 @@ static void PF_makevectors (void)
 	AngleVectors (G_VECTOR(OFS_PARM0), pr_global_struct->v_forward, pr_global_struct->v_right, pr_global_struct->v_up);
 }
 
+static void SV_DebugLogSetOrigin (edict_t *ent, const vec3_t oldorg,
+	const vec3_t neworg);
+static void SV_DebugLogCenterprint (int entnum, const char *s);
+static const char *SV_DebugFieldNameForOffset (int ofs);
+static void SV_DebugLogFindTargetMatch (edict_t *ent, const char *fieldname,
+	const char *match);
+static qboolean SV_ShouldSuppressShubRoundResultFind (int fieldofs,
+	const char *fieldname, const char *match);
+static qboolean SV_ShouldSuppressShubCleanupFind (int fieldofs,
+	const char *fieldname, const char *match);
+
 /*
 =================
 PF_setorigin
@@ -204,11 +215,14 @@ static void PF_setorigin (void)
 {
 	edict_t	*e;
 	float	*org;
+	vec3_t	oldorg;
 
 	e = G_EDICT(OFS_PARM0);
 	org = G_VECTOR(OFS_PARM1);
+	VectorCopy (e->v.origin, oldorg);
 	VectorCopy (org, e->v.origin);
 	SV_LinkEdict (e, false);
+	SV_DebugLogSetOrigin (e, oldorg, org);
 }
 
 
@@ -428,6 +442,7 @@ static void PF_centerprint (void)
 
 	client = &svs.clients[entnum-1];
 
+	SV_DebugLogCenterprint (entnum, s);
 	MSG_WriteChar (&client->message,svc_centerprint);
 	MSG_WriteString (&client->message, s);
 }
@@ -1025,6 +1040,302 @@ static void PF_break (void)
 //	PR_RunError ("break statement");
 }
 
+static const char *SV_DebugEdictStringField (edict_t *ent, const char *fieldname)
+{
+	eval_t	*val;
+
+	val = GetEdictFieldValueByName(ent, fieldname);
+	if (!val || !val->string)
+		return "";
+	return PR_GetString(val->string);
+}
+
+static qboolean SV_DebugEdictStringEquals (edict_t *ent, const char *fieldname,
+	const char *match)
+{
+	return !strcmp(SV_DebugEdictStringField(ent, fieldname), match);
+}
+
+static float SV_DebugEdictFloatField (edict_t *ent, const char *fieldname)
+{
+	eval_t	*val;
+
+	val = GetEdictFieldValueByName(ent, fieldname);
+	if (!val)
+		return 0;
+	return val->_float;
+}
+
+static const char *SV_DebugFieldNameForOffset (int ofs)
+{
+	int		i;
+	ddef_t	*def;
+
+	for (i = 0; i < qcvm->progs->numfielddefs; i++)
+	{
+		def = &qcvm->fielddefs[i];
+		if (def->ofs == ofs)
+			return PR_GetString(def->s_name);
+	}
+	return "";
+}
+
+static qboolean SV_DebugIsTargetnameField (const char *fieldname)
+{
+	return !strcmp(fieldname, "targetname")
+		|| !strcmp(fieldname, "targetname2")
+		|| !strcmp(fieldname, "targetname3")
+		|| !strcmp(fieldname, "targetname4");
+}
+
+static void SV_DebugLogFindTargetMatch (edict_t *ent, const char *fieldname,
+	const char *match)
+{
+	if (sv_triggerdebug.value < 2 || !SV_DebugIsTargetnameField(fieldname))
+		return;
+
+	Con_Printf("sv_triggerdebug: find %s=\"%s\" -> #%d %s targetname=\"%s\" targetname2=\"%s\" target=\"%s\" target2=\"%s\" target3=\"%s\" target4=\"%s\" count=%.0f cnt=%.0f state=%.0f\n",
+		fieldname, match, NUM_FOR_EDICT(ent),
+		ent->v.classname ? PR_GetString(ent->v.classname) : "",
+		SV_DebugEdictStringField(ent, "targetname"),
+		SV_DebugEdictStringField(ent, "targetname2"),
+		SV_DebugEdictStringField(ent, "target"),
+		SV_DebugEdictStringField(ent, "target2"),
+		SV_DebugEdictStringField(ent, "target3"),
+		SV_DebugEdictStringField(ent, "target4"),
+		SV_DebugEdictFloatField(ent, "count"),
+		SV_DebugEdictFloatField(ent, "cnt"),
+		SV_DebugEdictFloatField(ent, "state"));
+}
+
+static void SV_DebugLogCenterprint (int entnum, const char *s)
+{
+	if (!sv_triggerdebug.value || !s || !*s)
+		return;
+
+	Con_Printf("sv_triggerdebug: centerprint to #%d: %s\n", entnum, s);
+}
+
+static qboolean SV_DebugIsToggleWall (edict_t *ent)
+{
+	const char	*classname;
+
+	if (!ent || ent == qcvm->edicts || ent->free || !ent->v.classname)
+		return false;
+	classname = PR_GetString(ent->v.classname);
+	return !strcmp(classname, "togglewall");
+}
+
+static void SV_DebugLogSetOrigin (edict_t *ent, const vec3_t oldorg,
+	const vec3_t neworg)
+{
+	if (!sv_triggerdebug.value || !SV_DebugIsToggleWall(ent))
+		return;
+
+	Con_Printf("sv_triggerdebug: setorigin #%d %s targetname=\"%s\" old=(%.1f %.1f %.1f) new=(%.1f %.1f %.1f) state=%.0f\n",
+		NUM_FOR_EDICT(ent), ent->v.classname ? PR_GetString(ent->v.classname) : "",
+		SV_DebugEdictStringField(ent, "targetname"),
+		oldorg[0], oldorg[1], oldorg[2],
+		neworg[0], neworg[1], neworg[2],
+		SV_DebugEdictFloatField(ent, "state"));
+}
+
+static qboolean SV_ValidServerProgEdict (int prog, edict_t **out)
+{
+	edict_t	*ent;
+	int		num;
+
+	if (!qcvm || qcvm != &sv.qcvm || prog <= 0)
+		return false;
+	if (prog % qcvm->edict_size)
+		return false;
+
+	num = prog / qcvm->edict_size;
+	if (num <= 0 || num >= qcvm->num_edicts)
+		return false;
+
+	ent = PROG_TO_EDICT(prog);
+	if (ent->free)
+		return false;
+
+	if (out)
+		*out = ent;
+	return true;
+}
+
+static qboolean SV_IsShubCleanupAttacker (edict_t *attacker)
+{
+	const char	*classname;
+
+	if (!attacker || attacker == qcvm->edicts || attacker->free || !attacker->v.classname)
+		return false;
+
+	classname = PR_GetString(attacker->v.classname);
+	if (!strcmp(classname, "trigger_hurt"))
+		return SV_DebugEdictStringEquals(attacker, "targetname", "hurter");
+
+	/* Shub's Wager also routes cleanup through a targeted teleporter. */
+	return !strcmp(classname, "trigger_teleport")
+		|| !strcmp(classname, "teledeath");
+}
+
+static qboolean SV_IsShubWagerMap (void)
+{
+	return qcvm == &sv.qcvm && sv.active && !q_strcasecmp(sv.name, "shubswager");
+}
+
+static int SV_ShubsWagerResultForTarget (const char *match)
+{
+	if (!match)
+		return 0;
+	if (!strcmp(match, "win") || !strcmp(match, "wincnt"))
+		return 1;
+	if (!strcmp(match, "loss") || !strcmp(match, "losscnt"))
+		return -1;
+	return 0;
+}
+
+static qboolean SV_ShubsWagerSelfTargetsResult (int result)
+{
+	edict_t	*self;
+
+	if (!SV_ValidServerProgEdict(pr_global_struct->self, &self))
+		return false;
+	if (!self->v.classname || q_strncasecmp(PR_GetString(self->v.classname), "monster_", 8))
+		return false;
+	if (!SV_DebugEdictStringEquals(self, "target2", "clearer"))
+		return false;
+
+	return (result > 0 && SV_DebugEdictStringEquals(self, "target", "win"))
+		|| (result < 0 && SV_DebugEdictStringEquals(self, "target", "loss"));
+}
+
+static qboolean SV_ShouldSuppressShubRoundResultFind (int fieldofs,
+	const char *fieldname, const char *match)
+{
+	static int	result_latch;
+	int			result;
+
+	if (!SV_IsShubWagerMap())
+	{
+		result_latch = 0;
+		return false;
+	}
+	if (!fieldname || !*fieldname)
+		fieldname = SV_DebugFieldNameForOffset(fieldofs);
+	if (!SV_DebugIsTargetnameField(fieldname))
+		return false;
+
+	if (!strcmp(match, "rounds"))
+	{
+		if (result_latch && sv_triggerdebug.value)
+			Con_Printf("sv_triggerdebug: shubswager round result latch reset\n");
+		result_latch = 0;
+		return false;
+	}
+
+	result = SV_ShubsWagerResultForTarget(match);
+	if (result)
+	{
+		if (result_latch && result_latch != result)
+		{
+			if (sv_triggerdebug.value)
+				Con_Printf("sv_triggerdebug: suppressed shubswager late %s after %s result latched\n",
+					match, result_latch > 0 ? "win" : "loss");
+			return true;
+		}
+		if (!strcmp(match, "wincnt") || !strcmp(match, "losscnt"))
+		{
+			result_latch = result;
+			if (sv_triggerdebug.value)
+				Con_Printf("sv_triggerdebug: shubswager latched %s result\n",
+					result > 0 ? "win" : "loss");
+		}
+		return false;
+	}
+
+	if (!strcmp(match, "clearer") && result_latch
+		&& SV_ShubsWagerSelfTargetsResult(-result_latch))
+	{
+		if (sv_triggerdebug.value)
+			Con_Printf("sv_triggerdebug: suppressed shubswager late clearer after %s result latched\n",
+				result_latch > 0 ? "win" : "loss");
+		return true;
+	}
+
+	return false;
+}
+
+static qboolean SV_ShouldSuppressShubCleanupFind (int fieldofs,
+	const char *fieldname, const char *match)
+{
+	edict_t		*self, *attacker;
+	const char	*classname;
+
+	if (!SV_IsShubWagerMap())
+		return false;
+	if (!match || (strcmp(match, "win") && strcmp(match, "loss") && strcmp(match, "clearer")))
+		return false;
+	if (!fieldname || !*fieldname)
+		fieldname = SV_DebugFieldNameForOffset(fieldofs);
+	if (!SV_DebugIsTargetnameField(fieldname))
+		return false;
+	if (!SV_ValidServerProgEdict(pr_global_struct->self, &self))
+		return false;
+	if (!self->v.classname)
+		return false;
+
+	classname = PR_GetString(self->v.classname);
+	if (q_strncasecmp(classname, "monster_", 8))
+		return false;
+	if (!SV_DebugEdictStringEquals(self, "target2", "clearer"))
+		return false;
+	if (!SV_DebugEdictStringEquals(self, "target", "win")
+		&& !SV_DebugEdictStringEquals(self, "target", "loss"))
+		return false;
+	if (!SV_ValidServerProgEdict(self->v.enemy, &attacker)
+		|| !SV_IsShubCleanupAttacker(attacker))
+		return false;
+
+	if (sv_triggerdebug.value)
+		Con_Printf("sv_triggerdebug: suppressed shubswager cleanup target %s from #%d %s killed by #%d %s\n",
+			match, NUM_FOR_EDICT(self), classname, NUM_FOR_EDICT(attacker),
+			attacker->v.classname ? PR_GetString(attacker->v.classname) : "");
+	return true;
+}
+
+static qboolean SV_DebugShouldLogDamageableTrigger (edict_t *ent)
+{
+	const char	*classname;
+
+	if (!sv_triggerdebug.value || !ent || ent == qcvm->edicts || ent->free)
+		return false;
+	if (!ent->v.classname || (ent->v.health <= 0 && ent->v.takedamage <= DAMAGE_NO))
+		return false;
+
+	classname = PR_GetString(ent->v.classname);
+	return !q_strncasecmp(classname, "trigger_", 8)
+		|| !q_strncasecmp(classname, "func_", 5);
+}
+
+static void SV_DebugLogTraceTrigger (edict_t *ent, const vec3_t start,
+	const vec3_t end, const trace_t *trace)
+{
+	if (!SV_DebugShouldLogDamageableTrigger(ent))
+		return;
+
+	Con_Printf("sv_triggerdebug: traceline hit #%d %s solid=%d health=%.1f takedamage=%.0f frac=%.3f start=(%.1f %.1f %.1f) end=(%.1f %.1f %.1f) targetname=\"%s\" target=\"%s\" target2=\"%s\" target3=\"%s\" target4=\"%s\"\n",
+		NUM_FOR_EDICT(ent), ent->v.classname ? PR_GetString(ent->v.classname) : "",
+		(int)ent->v.solid, ent->v.health, ent->v.takedamage,
+		trace ? trace->fraction : 1.0f,
+		start[0], start[1], start[2], end[0], end[1], end[2],
+		SV_DebugEdictStringField(ent, "targetname"),
+		SV_DebugEdictStringField(ent, "target"),
+		SV_DebugEdictStringField(ent, "target2"),
+		SV_DebugEdictStringField(ent, "target3"),
+		SV_DebugEdictStringField(ent, "target4"));
+}
+
 /*
 =================
 PF_traceline
@@ -1063,6 +1374,7 @@ static void PF_traceline (void)
 		v2[0] = v2[1] = v2[2] = 0;
 
 	trace = SV_Move (v1, vec3_origin, vec3_origin, v2, nomonsters, ent);
+	SV_DebugLogTraceTrigger(trace.ent, v1, v2, &trace);
 	SV_CoopReviveFromTrace (v1, v2, ent, trace.fraction);
 
 	pr_global_struct->trace_allsolid = trace.allsolid;
@@ -1502,6 +1814,7 @@ static void PF_Find (void)
 	int		e;
 	int		f;
 	const char	*s, *t;
+	const char	*fieldname;
 	edict_t	*ed;
 
 	e = G_EDICTNUM(OFS_PARM0);
@@ -1510,6 +1823,17 @@ static void PF_Find (void)
 	if (!s)
 		PR_RunError ("PF_Find: bad search string");
 
+	fieldname = sv_triggerdebug.value >= 2 ? SV_DebugFieldNameForOffset(f) : "";
+	if (SV_ShouldSuppressShubRoundResultFind(f, fieldname, s))
+	{
+		RETURN_EDICT(qcvm->edicts);
+		return;
+	}
+	if (SV_ShouldSuppressShubCleanupFind(f, fieldname, s))
+	{
+		RETURN_EDICT(qcvm->edicts);
+		return;
+	}
 	for (e++ ; e < qcvm->num_edicts ; e++)
 	{
 		ed = EDICT_NUM(e);
@@ -1520,6 +1844,7 @@ static void PF_Find (void)
 			continue;
 		if (!strcmp(t,s))
 		{
+			SV_DebugLogFindTargetMatch (ed, fieldname, s);
 			RETURN_EDICT(ed);
 			return;
 		}
