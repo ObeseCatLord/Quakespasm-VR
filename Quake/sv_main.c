@@ -3380,15 +3380,6 @@ static qboolean SVFTE_SendClientDatagram (client_t *client, int maxsize)
 				msg.maxsize);
 			break;
 		}
-		if (client->snapshot_priority_deferred &&
-			entity_pending &&
-			!csqc_pending &&
-			datagram_offset >= sv.datagram.cursize &&
-			!client->datagram.cursize)
-		{
-			deferred_by_budget = true;
-			break;
-		}
 		if (packet_count >= packet_budget &&
 			(entity_pending ||
 			 csqc_pending ||
