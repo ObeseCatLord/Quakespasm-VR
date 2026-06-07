@@ -1795,8 +1795,6 @@ static void SVFTE_WriteEntitiesToClient (client_t *client, sizebuf_t *msg)
 	if (nextdelta >= client->numpendingentities)
 		nextdelta = 0;
 
-	SVFTE_WriteStatsToClient (client, msg, frame);
-
 	header_need = 1 + 4 + 2;
 	if (client->protocol_pext2 & PEXT2_PREDINFO)
 		header_need += 2;
@@ -2991,7 +2989,14 @@ static qboolean SVFTE_SendClientDatagram (client_t *client, int maxsize)
 		msg.overflowed = false;
 
 		if (packet_count == 0)
+		{
+			struct deltaframe_s *frame;
+
 			SV_WriteDamageToMessage (client->edict, &msg);
+			frame = SVFTE_BeginFrame (client,
+				NET_QSocketGetSequenceOut (client->netconnection));
+			SVFTE_WriteStatsToClient (client, &msg, frame);
+		}
 
 		prev_resume = client->snapshotresume;
 		prev_datagram_offset = datagram_offset;
