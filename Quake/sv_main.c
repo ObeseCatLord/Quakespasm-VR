@@ -44,6 +44,8 @@ cvar_t sv_replacement_softmaxbytes = {"sv_replacement_softmaxbytes", "1000", CVA
 cvar_t sv_replacement_datagram_reserve = {"sv_replacement_datagram_reserve", "1", CVAR_NONE};
 cvar_t sv_replacement_priority_radius = {"sv_replacement_priority_radius", "0", CVAR_NONE};
 cvar_t sv_replacement_particle_maxbytes = {"sv_replacement_particle_maxbytes", "256", CVAR_NONE};
+cvar_t sv_moveack_independent = {"sv_moveack_independent", "1", CVAR_NONE};
+cvar_t sv_moveack_packetdup = {"sv_moveack_packetdup", "1", CVAR_NONE};
 cvar_t sv_snapshot_partresend = {"sv_snapshot_partresend", "1", CVAR_NONE};
 cvar_t sv_snapshot_partresend_interval = {"sv_snapshot_partresend_interval", "0.04", CVAR_NONE};
 cvar_t sv_netdiag_interval = {"sv_netdiag_interval", "5", CVAR_NONE};
@@ -350,6 +352,8 @@ void SV_Init (void)
 	Cvar_RegisterVariable (&sv_replacement_datagram_reserve);
 	Cvar_RegisterVariable (&sv_replacement_priority_radius);
 	Cvar_RegisterVariable (&sv_replacement_particle_maxbytes);
+	Cvar_RegisterVariable (&sv_moveack_independent);
+	Cvar_RegisterVariable (&sv_moveack_packetdup);
 	Cvar_RegisterVariable (&sv_snapshot_partresend);
 	Cvar_RegisterVariable (&sv_snapshot_partresend_interval);
 	Cvar_RegisterVariable (&sv_netdiag_interval);
@@ -2741,6 +2745,51 @@ static void SV_WriteMoveAckToMessage(client_t *client, sizebuf_t *msg)
 	}
 }
 
+static qboolean SV_SendIndependentMoveAck (client_t *client)
+{
+	byte	buf[64];
+	sizebuf_t	msg;
+	int	dup;
+	int	i;
+
+	if (!sv_moveack_independent.value)
+		return true;
+	if (!client->active || !client->spawned || !client->netconnection)
+		return true;
+	if (!(client->protocol_pext2 & PEXT2_PREDINFO))
+		return true;
+	if (!SV_UsesReplacementDeltas (client))
+		return true;
+	if (client->lastmovemessage < 0)
+		return true;
+
+	msg.data = buf;
+	msg.maxsize = sizeof(buf);
+	msg.cursize = 0;
+	msg.allowoverflow = false;
+	msg.overflowed = false;
+
+	SV_WriteMoveAckToMessage (client, &msg);
+	if (NET_SendUnreliableMessage (client->netconnection, &msg) == -1)
+	{
+		SV_DropClient (true);
+		return false;
+	}
+
+	dup = CLAMP (0, (int)sv_moveack_packetdup.value, 3);
+	for (i = 0; i < dup; i++)
+	{
+		if (NET_SendUnreliableMessageAgain (client->netconnection, &msg) == -1)
+		{
+			SV_DropClient (true);
+			return false;
+		}
+	}
+
+	client->net_snapshot_packets_sent += 1 + dup;
+	return true;
+}
+
 static void SV_MaybePrintSnapshotSummary (client_t *client, int client_index)
 {
 	double interval;
@@ -3866,6 +3915,8 @@ void SV_SendClientMessages (void)
 
 		if (host_client->spawned)
 		{
+			if (!SV_SendIndependentMoveAck (host_client))
+				continue;
 			if (!SV_SendClientDatagram (host_client))
 				continue;
 		}
