@@ -216,6 +216,11 @@ typedef struct client_s
 	unsigned int	snapshotresume;
 	unsigned int	snapshotnextdelta;
 	qboolean		snapshot_priority_deferred;
+	int				net_replacement_diag_hardurgent;
+	int				net_replacement_diag_radiusurgent;
+	int				net_replacement_diag_nonurgent;
+	int				net_replacement_diag_softdefer;
+	int				net_replacement_diag_harddefer;
 	unsigned int	*pendingentities_bits;
 	size_t			numpendingentities;
 	unsigned int	*pendingcsqcentities_bits;
