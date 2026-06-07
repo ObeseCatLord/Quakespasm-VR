@@ -362,6 +362,7 @@ extern cvar_t sv_replacement_packetdup_all;
 extern cvar_t sv_replacement_pacing;
 extern cvar_t sv_replacement_softmaxbytes;
 extern cvar_t sv_replacement_priority_radius;
+extern cvar_t sv_replacement_particle_maxbytes;
 extern cvar_t sv_snapshot_partresend;
 extern cvar_t sv_snapshot_partresend_interval;
 extern cvar_t sv_netdiag_interval;
