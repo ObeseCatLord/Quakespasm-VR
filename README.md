@@ -228,7 +228,7 @@ These cvars are custom additions or important changed defaults in this branch co
 | `cl_net_lerpbuffer_adaptive_time` | `0.75` | Time in seconds over which the adaptive interpolation buffer decays after a network gap. |
 | `cl_predict_smooth` | `0` | Blends local prediction-error corrections when enabled. It defaults off because PMove plus replacement deltas should correct from authoritative state directly; enable only when testing visual smoothing. |
 | `cl_predict_legacy` | `0` | Debug fallback for the old non-replacement-delta prediction path. Normal latest-client/latest-server play should use PMove prediction instead. |
-| `net_reorder_window` | `0` | Optional client-side unreliable packet reorder holdback. It is off by default because QSS/FTE-style replacement deltas recover from drops without delaying newer packets. |
+| `net_reorder_window` | `2` | Small unreliable packet reorder window used on both client and server receive paths. It catches same-burst UDP reordering before the old NetQuake sequence layer marks the skipped packet as dropped. |
 | `pr_checkextension` | `1` | Controls advertised QuakeC extension support. This branch advertises only implemented extensions such as `FTE_QC_CHECKCOMMAND`. |
 | `sv_maxpacketsize` | `1400` | Maximum unreliable datagram size sent to remote clients. The default stays below typical Ethernet MTU after UDP/IP headers while reducing multi-datagram updates on large co-op maps. Lower it for VPNs or paths with smaller MTUs. |
 | `sv_netsort` | `1` | Uses an Ironwail/QSS-style entity priority sort so packet pressure drops distant or behind-camera entities before nearby/high-priority entities. |
@@ -262,7 +262,7 @@ These cvars are custom additions or important changed defaults in this branch co
 | `net_lagdebug` | `0` | Enables verbose network/judder diagnostics for datagram gaps, dropped unreliable packets, frame spikes, stale input, and interpolation overruns. |
 | `net_lagdebug_threshold` | `0.25` | Datagram-gap threshold, in seconds, for `net_lagdebug` messages. |
 | `net_lagdebug_frame_threshold` | `0.05` | Frame/update-gap threshold, in seconds, for `net_lagdebug` messages. |
-| `net_reorder_timeout` | `0.012` | Maximum seconds to wait for the missing unreliable datagram before advancing past it. |
+| `net_reorder_timeout` | `0` | Maximum seconds to wait for the missing unreliable datagram before advancing past it. The default forces queued packets at the end of the current receive drain so reordering recovery does not add a server tick of latency. |
 | `net_singlesocket` | `1` | Uses one UDP socket for accept/control and game traffic on the server, with queued dispatch to per-client logic. |
 | `net_sameip_stale_timeout` | `3.0` | Time before stale same-IP connection state can be discarded during reconnect/NAT-remap handling, including stale duplicate ports left behind by a reconnect. |
 | `cl_netport` | `0` | Preferred local UDP port for the client. `0` lets the OS choose. |
