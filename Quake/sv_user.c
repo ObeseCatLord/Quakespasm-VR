@@ -755,7 +755,7 @@ static qboolean SV_QueueAcceptedUsercmd(const usercmd_t *acceptedcmd) {
 
   if (host_client->move_queue_count == (int)countof(host_client->move_queue)) {
     if (net_lagdebug.value)
-      Con_DPrintf("net_lagdebug: move queue overflow for %s, rejecting seq=%d last_ack=%d queued=%d\n",
+      Con_Printf("net_lagdebug: move queue overflow for %s, rejecting seq=%d last_ack=%d queued=%d\n",
                   host_client->name, acceptedcmd->sequence,
                   host_client->lastmovemessage,
                   host_client->move_queue_count);
@@ -928,7 +928,7 @@ void SV_ReadClientMove(usercmd_t *move) {
   if (gap > 0) {
     host_client->net_move_last_gap = gap;
     if (net_lagdebug.value)
-      Con_DPrintf("net_lagdebug: accepted move gap from %s gap=%d seq=%d last=%d\n",
+      Con_Printf("net_lagdebug: accepted move gap from %s gap=%d seq=%d last=%d\n",
                   host_client->name, gap, sequence, accepted_base);
   }
 
@@ -1202,7 +1202,7 @@ qboolean SV_ReadClientMessage(void) {
       return true;
     if (!SV_ParseClientMessage())
       return false;
-  } while (ret == 1);
+  } while (ret > 0);
 
   return true;
 }
