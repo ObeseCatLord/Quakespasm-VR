@@ -2130,6 +2130,7 @@ void CL_Init (void)
 	Cvar_RegisterVariable (&cl_trusted_clientmove_desktop);
 	Cvar_RegisterVariable (&cl_predictmove);
 	Cvar_RegisterVariable (&cl_move_redundancy);
+	Cvar_RegisterVariable (&cl_move_maxpacketbytes);
 	Cvar_RegisterVariable (&cl_move_packetdup);
 	Cvar_RegisterVariable (&cl_nopred);
 	Cvar_RegisterVariable (&cl_predict_smooth);

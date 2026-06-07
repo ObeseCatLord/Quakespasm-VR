@@ -375,7 +375,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #define MOVEEXT_TRUSTED 2
 #define MOVEEXT_QCINPUT 4
 
-#define MOVE_BUNDLE_MAX 16 // max repeated clc_move records per datagram
+#define MOVE_BUNDLE_MAX 24 // max repeated clc_move records per datagram
 
 #define SNAPSHOT_FIRST 1
 #define SNAPSHOT_LAST 2

@@ -339,6 +339,7 @@ extern	cvar_t	cl_trusted_clientmove;
 extern	cvar_t	cl_trusted_clientmove_desktop;
 extern	cvar_t	cl_predictmove;
 extern	cvar_t	cl_move_redundancy;
+extern	cvar_t	cl_move_maxpacketbytes;
 extern	cvar_t	cl_move_packetdup;
 extern	cvar_t	cl_nopred;
 extern	cvar_t	cl_predict_smooth;
