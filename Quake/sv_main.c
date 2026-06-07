@@ -478,6 +478,42 @@ void SV_StartParticle (vec3_t org, vec3_t dir, int color, int count)
 	MSG_WriteByte (&sv.datagram, color);
 }
 
+static qboolean SV_WriteSoundToMessage (sizebuf_t *msg, edict_t *entity,
+	int ent, int channel, int sound_num, int field_mask, int volume,
+	float attenuation)
+{
+	int i, wire_channel;
+
+	if (msg->overflowed)
+		return false;
+	if (msg->cursize > msg->maxsize - 21)
+		return false;
+
+	wire_channel = channel & 7;
+	MSG_WriteByte (msg, svc_sound);
+	MSG_WriteByte (msg, field_mask);
+	if (field_mask & SND_VOLUME)
+		MSG_WriteByte (msg, volume);
+	if (field_mask & SND_ATTENUATION)
+		MSG_WriteByte (msg, attenuation * 64);
+	if (field_mask & SND_LARGEENTITY)
+	{
+		MSG_WriteShort (msg, ent);
+		MSG_WriteByte (msg, wire_channel);
+	}
+	else
+		MSG_WriteShort (msg, (ent << 3) | wire_channel);
+	if (field_mask & SND_LARGESOUND)
+		MSG_WriteShort (msg, sound_num);
+	else
+		MSG_WriteByte (msg, sound_num);
+	for (i = 0; i < 3; i++)
+		MSG_WriteCoord (msg, entity->v.origin[i] +
+			0.5 * (entity->v.mins[i] + entity->v.maxs[i]), sv.protocolflags);
+
+	return !msg->overflowed;
+}
+
 /*
 ==================
 SV_StartSound
@@ -497,18 +533,24 @@ void SV_StartSound (edict_t *entity, int channel, const char *sample, int volume
 {
 	int			sound_num, ent;
 	int			i, field_mask;
+	qboolean	unicast;
+	client_t	*client;
 
-	if (volume < 0 || volume > 255)
+	if (volume < 0)
 		Host_Error ("SV_StartSound: volume = %i", volume);
+	if (volume > 255)
+	{
+		Con_DPrintf ("SV_StartSound: volume = %i\n", volume);
+		volume = 255;
+	}
 
 	if (attenuation < 0 || attenuation > 4)
 		Host_Error ("SV_StartSound: attenuation = %f", attenuation);
 
-	if (channel < 0 || channel > 7)
+	if (channel < 0 || channel > 255)
 		Host_Error ("SV_StartSound: channel = %i", channel);
-
-	if (sv.datagram.cursize > MAX_DATAGRAM-21)
-		return;
+	if (channel > 15)
+		Con_DPrintf ("SV_StartSound: unsupported channel flags %i\n", channel);
 
 // find precache number for sound
 	for (sound_num = 1; sound_num < MAX_SOUNDS && sv.sound_precache[sound_num]; sound_num++)
@@ -524,6 +566,7 @@ void SV_StartSound (edict_t *entity, int channel, const char *sample, int volume
 	}
 
 	ent = NUM_FOR_EDICT(entity);
+	unicast = (channel & 8) && ent >= 1 && ent <= svs.maxclients;
 
 	field_mask = 0;
 	if (volume != DEFAULT_SOUND_PACKET_VOLUME)
@@ -538,7 +581,7 @@ void SV_StartSound (edict_t *entity, int channel, const char *sample, int volume
 			return; //don't send any info protocol can't support
 		field_mask |= SND_LARGEENTITY;
 	}
-	if (sound_num >= 256 || channel >= 8)
+	if (sound_num >= 256)
 	{
 		if (sv.protocol == PROTOCOL_NETQUAKE)
 			return; //don't send any info protocol can't support
@@ -546,62 +589,23 @@ void SV_StartSound (edict_t *entity, int channel, const char *sample, int volume
 	}
 	//johnfitz
 
-	if ((channel & 8) && ent >= 1 && ent <= svs.maxclients)
+	if (unicast)
 	{
-		client_t *target = &svs.clients[ent - 1];
-		if (!target->active || !target->spawned)
+		client = &svs.clients[ent - 1];
+		if (!client->active || !client->spawned)
 			return;
-		if (target->datagram.cursize > target->datagram.maxsize - 21)
-			return;
-
-		MSG_WriteByte (&target->datagram, svc_sound);
-		MSG_WriteByte (&target->datagram, field_mask);
-		if (field_mask & SND_VOLUME)
-			MSG_WriteByte (&target->datagram, volume);
-		if (field_mask & SND_ATTENUATION)
-			MSG_WriteByte (&target->datagram, attenuation*64);
-		if (field_mask & SND_LARGEENTITY)
-		{
-			MSG_WriteShort (&target->datagram, ent);
-			MSG_WriteByte (&target->datagram, channel & 7);
-		}
-		else
-			MSG_WriteShort (&target->datagram, (ent<<3) | (channel & 7));
-		if (field_mask & SND_LARGESOUND)
-			MSG_WriteShort (&target->datagram, sound_num);
-		else
-			MSG_WriteByte (&target->datagram, sound_num);
-		for (i = 0; i < 3; i++)
-			MSG_WriteCoord (&target->datagram, entity->v.origin[i]+0.5*(entity->v.mins[i]+entity->v.maxs[i]), sv.protocolflags);
+		SV_WriteSoundToMessage (&client->datagram, entity, ent, channel,
+			sound_num, field_mask, volume, attenuation);
 		return;
 	}
 
-	if (sv.datagram.cursize > MAX_DATAGRAM-21)
-		return;
-
-	MSG_WriteByte (&sv.datagram, svc_sound);
-	MSG_WriteByte (&sv.datagram, field_mask);
-	if (field_mask & SND_VOLUME)
-		MSG_WriteByte (&sv.datagram, volume);
-	if (field_mask & SND_ATTENUATION)
-		MSG_WriteByte (&sv.datagram, attenuation*64);
-
-	//johnfitz -- PROTOCOL_FITZQUAKE
-	if (field_mask & SND_LARGEENTITY)
+	for (i = 0, client = svs.clients; i < svs.maxclients; i++, client++)
 	{
-		MSG_WriteShort (&sv.datagram, ent);
-		MSG_WriteByte (&sv.datagram, channel);
+		if (!client->active || !client->spawned)
+			continue;
+		SV_WriteSoundToMessage (&client->datagram, entity, ent, channel,
+			sound_num, field_mask, volume, attenuation);
 	}
-	else
-		MSG_WriteShort (&sv.datagram, (ent<<3) | channel);
-	if (field_mask & SND_LARGESOUND)
-		MSG_WriteShort (&sv.datagram, sound_num);
-	else
-		MSG_WriteByte (&sv.datagram, sound_num);
-	//johnfitz
-
-	for (i = 0; i < 3; i++)
-		MSG_WriteCoord (&sv.datagram, entity->v.origin[i]+0.5*(entity->v.mins[i]+entity->v.maxs[i]), sv.protocolflags);
 }
 
 /*
