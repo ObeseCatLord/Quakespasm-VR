@@ -257,7 +257,7 @@ cvar_t cl_trusted_clientmove = {"cl_trusted_clientmove", "1", CVAR_ARCHIVE};
 cvar_t cl_trusted_clientmove_desktop = {"cl_trusted_clientmove_desktop", "0", CVAR_ARCHIVE};
 cvar_t cl_predictmove = {"cl_predictmove", "1", CVAR_ARCHIVE};
 cvar_t cl_move_redundancy = {"cl_move_redundancy", "3", CVAR_ARCHIVE};
-cvar_t cl_move_packetdup = {"cl_move_packetdup", "1", CVAR_ARCHIVE};
+cvar_t cl_move_packetdup = {"cl_move_packetdup", "0", CVAR_ARCHIVE};
 cvar_t cl_nopred = {"cl_nopred", "0", CVAR_NONE};
 
 cvar_t cl_movespeedkey = {"cl_movespeedkey", "2.0", CVAR_NONE};
