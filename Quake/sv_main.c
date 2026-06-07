@@ -41,6 +41,7 @@ cvar_t sv_replacement_packetdup = {"sv_replacement_packetdup", "1", CVAR_NONE};
 cvar_t sv_replacement_packetdup_all = {"sv_replacement_packetdup_all", "0", CVAR_NONE};
 cvar_t sv_replacement_pacing = {"sv_replacement_pacing", "1", CVAR_NONE};
 cvar_t sv_replacement_softmaxbytes = {"sv_replacement_softmaxbytes", "1000", CVAR_NONE};
+cvar_t sv_replacement_datagram_reserve = {"sv_replacement_datagram_reserve", "1", CVAR_NONE};
 cvar_t sv_replacement_priority_radius = {"sv_replacement_priority_radius", "0", CVAR_NONE};
 cvar_t sv_replacement_particle_maxbytes = {"sv_replacement_particle_maxbytes", "256", CVAR_NONE};
 cvar_t sv_snapshot_partresend = {"sv_snapshot_partresend", "1", CVAR_NONE};
@@ -339,6 +340,7 @@ void SV_Init (void)
 	Cvar_RegisterVariable (&sv_replacement_packetdup_all);
 	Cvar_RegisterVariable (&sv_replacement_pacing);
 	Cvar_RegisterVariable (&sv_replacement_softmaxbytes);
+	Cvar_RegisterVariable (&sv_replacement_datagram_reserve);
 	Cvar_RegisterVariable (&sv_replacement_priority_radius);
 	Cvar_RegisterVariable (&sv_replacement_particle_maxbytes);
 	Cvar_RegisterVariable (&sv_snapshot_partresend);
@@ -1730,16 +1732,25 @@ static int SV_ReplacementAckLag (const client_t *client, int sequence)
 	return sequence - client->lastacksequence;
 }
 
-static int SVFTE_ReplacementSoftLimit (const sizebuf_t *msg)
+static int SVFTE_ReplacementSoftLimit (const sizebuf_t *msg, int reserve_bytes)
 {
-	int soft, minsoft, maxsoft;
+	int soft, minsoft, maxsoft, reserve_soft;
 
-	if (!sv_replacement_pacing.value)
+	if (!sv_replacement_pacing.value &&
+		(!sv_replacement_datagram_reserve.value || reserve_bytes <= 0))
 		return msg->maxsize;
-	if (sv_replacement_softmaxbytes.value > 0)
+	if (sv_replacement_pacing.value && sv_replacement_softmaxbytes.value > 0)
 		soft = (int)sv_replacement_softmaxbytes.value;
-	else
+	else if (sv_replacement_pacing.value)
 		soft = msg->maxsize - 160;
+	else
+		soft = msg->maxsize;
+
+	if (sv_replacement_datagram_reserve.value && reserve_bytes > 0)
+	{
+		reserve_soft = msg->maxsize - reserve_bytes - 16;
+		soft = q_min (soft, reserve_soft);
+	}
 
 	minsoft = q_min (512, msg->maxsize);
 	maxsoft = q_max (minsoft, msg->maxsize - 16);
@@ -1781,7 +1792,8 @@ static int SVFTE_EntityDeltaPriority (client_t *client, size_t entnum,
 		SVFTE_DELTA_RADIUSURGENT : SVFTE_DELTA_NONURGENT;
 }
 
-static void SVFTE_WriteEntitiesToClient (client_t *client, sizebuf_t *msg)
+static void SVFTE_WriteEntitiesToClient (client_t *client, sizebuf_t *msg,
+	int reserve_bytes)
 {
 	struct entity_num_state_s *state, *stateend;
 	struct deltaframe_s *frame;
@@ -1811,7 +1823,7 @@ static void SVFTE_WriteEntitiesToClient (client_t *client, sizebuf_t *msg)
 	if (msg->cursize + header_need > msg->maxsize)
 		return;
 
-	soft_limit = SVFTE_ReplacementSoftLimit (msg);
+	soft_limit = SVFTE_ReplacementSoftLimit (msg, reserve_bytes);
 	wrote_entity = false;
 	MSG_WriteByte (msg, svcfte_updateentities);
 	if (client->protocol_pext2 & PEXT2_PREDINFO)
@@ -3076,6 +3088,50 @@ static int SVFTE_WriteDatagramToMessage (sizebuf_t *msg, int *offset,
 	return written;
 }
 
+static int SVFTE_DatagramReserveBytes (int offset, int particle_budget)
+{
+	int position, size, remaining, type, reserve;
+	qboolean cosmetic_particle;
+
+	if (!sv_replacement_datagram_reserve.value)
+		return 0;
+
+	position = offset;
+	reserve = 0;
+	while (position < sv.datagram.cursize)
+	{
+		remaining = sv.datagram.cursize - position;
+		size = SV_DatagramCommandSize (&sv.datagram.data[position],
+			remaining, &type);
+		cosmetic_particle = type == SV_DGRAM_PARTICLE ||
+			type == SV_DGRAM_DPPARTICLE;
+
+		if (cosmetic_particle && particle_budget >= 0)
+		{
+			if (particle_budget <= 0 || size > particle_budget)
+			{
+				position += size;
+				continue;
+			}
+			particle_budget -= size;
+		}
+
+		reserve += size;
+		position += size;
+	}
+
+	return reserve;
+}
+
+static int SVFTE_PrivateDatagramReserveBytes (client_t *client)
+{
+	if (!sv_replacement_datagram_reserve.value)
+		return 0;
+	if (!client->datagram.cursize || client->datagram.overflowed)
+		return 0;
+	return client->datagram.cursize;
+}
+
 static qboolean SV_WritePrivateDatagramToMessage (client_t *client, sizebuf_t *msg)
 {
 	if (!client->datagram.cursize)
@@ -3123,6 +3179,8 @@ static qboolean SVFTE_SendClientDatagram (client_t *client, int maxsize)
 	int			global_datagram_particle_bytes;
 	int			global_datagram_dpparticle_bytes;
 	int			global_datagram_other_bytes;
+	int			datagram_reserve;
+	int			max_datagram_reserve;
 	int			dup_sent_total;
 	int			dup_bytes_total;
 	int			i;
@@ -3186,6 +3244,7 @@ static qboolean SVFTE_SendClientDatagram (client_t *client, int maxsize)
 	global_datagram_written = 0;
 	global_particle_budget = sv_replacement_particle_maxbytes.value > 0 ?
 		(int)sv_replacement_particle_maxbytes.value : 0x7fffffff;
+	max_datagram_reserve = 0;
 	SV_DatagramDebugStats (&global_datagram_sound_bytes,
 		&global_datagram_temp_bytes,
 		&global_datagram_particle_bytes,
@@ -3239,7 +3298,14 @@ static qboolean SVFTE_SendClientDatagram (client_t *client, int maxsize)
 			wrote_update_header && packet_count == 0 && !entity_pending && !csqc_pending;
 		if (wrote_update_header)
 		{
-			SVFTE_WriteEntitiesToClient (client, &msg);
+			datagram_reserve =
+				SVFTE_PrivateDatagramReserveBytes (client) +
+				SVFTE_DatagramReserveBytes (datagram_offset,
+					global_particle_budget);
+			if (datagram_reserve > max_datagram_reserve)
+				max_datagram_reserve = datagram_reserve;
+			SVFTE_WriteEntitiesToClient (client, &msg,
+				datagram_reserve);
 			SVFTE_WriteCSQCEntitiesToClient (client, &msg);
 			entity_pending = SVFTE_CountPendingEntityDeltasFrom (client, client->snapshotresume);
 			csqc_pending = SVFTE_CountPendingCSQCEntities (client);
@@ -3350,13 +3416,14 @@ static qboolean SVFTE_SendClientDatagram (client_t *client, int maxsize)
 		int sequence = SV_ReplacementLastSentSequence (client);
 		int ack = client->lastacksequence >= 0 ? client->lastacksequence : -1;
 		entity_pending_after = SVFTE_CountPendingEntityDeltas (client);
-		Con_Printf ("net_lagdebug: server replacement update to %s (%s): packets=%d dup=%d bytes=%d dupbytes=%d max=%d ents=%zu/%zu pending=%zu->%zu svdg=%d/%d priv=%d/%d dgtype=%d/%d/%d/%d/%d maxpacket=%d seq=%d ack=%d acklag=%d deferred=%d prio=%d/%d/%d limit=%d/%d\n",
+		Con_Printf ("net_lagdebug: server replacement update to %s (%s): packets=%d dup=%d bytes=%d dupbytes=%d max=%d ents=%zu/%zu pending=%zu->%zu svdg=%d/%d priv=%d/%d reserve=%d dgtype=%d/%d/%d/%d/%d maxpacket=%d seq=%d ack=%d acklag=%d deferred=%d prio=%d/%d/%d limit=%d/%d\n",
 			client->name, NET_QSocketGetAddressString(client->netconnection),
 			packet_count, dup_sent_total, total_bytes, dup_bytes_total, max_packet_bytes,
 			(size_t)client->snapshotresume, client->numpendingentities,
 			entity_pending_before, entity_pending_after,
 			global_datagram_written, sv.datagram.cursize,
 			private_datagram_written, private_datagram_initial,
+			max_datagram_reserve,
 			global_datagram_sound_bytes, global_datagram_temp_bytes,
 			global_datagram_particle_bytes, global_datagram_dpparticle_bytes,
 			global_datagram_other_bytes, maxsize,
