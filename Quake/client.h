@@ -197,6 +197,8 @@ typedef struct
 	int			net_snapshot_out_of_order_parts;
 	int			ackframes[SNAPSHOT_MAX_PARTS];
 	unsigned int	ackframes_count;
+	int			ackframes_history[8];
+	unsigned int	ackframes_history_count;
 	qboolean	requestresend;
 	double		net_last_diag_time;
 	qboolean	predstate_valid;
@@ -341,6 +343,7 @@ extern	cvar_t	cl_predictmove;
 extern	cvar_t	cl_move_redundancy;
 extern	cvar_t	cl_move_maxpacketbytes;
 extern	cvar_t	cl_move_packetdup;
+extern	cvar_t	cl_ack_redundancy;
 extern	cvar_t	cl_nopred;
 extern	cvar_t	cl_predict_smooth;
 extern	cvar_t	cl_predict_smooth_time;
