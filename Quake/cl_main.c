@@ -51,10 +51,10 @@ cvar_t	cl_net_lerpbuffer = {"cl_net_lerpbuffer","0.10",CVAR_ARCHIVE};
 cvar_t	cl_net_lerpbuffer_adaptive = {"cl_net_lerpbuffer_adaptive","0",CVAR_ARCHIVE};
 cvar_t	cl_net_lerpbuffer_adaptive_max = {"cl_net_lerpbuffer_adaptive_max","0.30",CVAR_ARCHIVE};
 cvar_t	cl_net_lerpbuffer_adaptive_time = {"cl_net_lerpbuffer_adaptive_time","0.75",CVAR_NONE};
-cvar_t	cl_predict_smooth = {"cl_predict_smooth","0",CVAR_ARCHIVE};
-cvar_t	cl_predict_smooth_time = {"cl_predict_smooth_time","0.08",CVAR_ARCHIVE};
-cvar_t	cl_predict_smooth_min = {"cl_predict_smooth_min","0.5",CVAR_NONE};
-cvar_t	cl_predict_smooth_max = {"cl_predict_smooth_max","64",CVAR_NONE};
+cvar_t	cl_predict_smooth = {"cl_predict_smooth","1",CVAR_ARCHIVE};
+cvar_t	cl_predict_smooth_time = {"cl_predict_smooth_time","0.04",CVAR_ARCHIVE};
+cvar_t	cl_predict_smooth_min = {"cl_predict_smooth_min","0.25",CVAR_NONE};
+cvar_t	cl_predict_smooth_max = {"cl_predict_smooth_max","8",CVAR_NONE};
 cvar_t	cl_predict_legacy = {"cl_predict_legacy","0",CVAR_NONE};
 cvar_t	cl_predict_error_log = {"cl_predict_error_log","1",CVAR_NONE};
 
