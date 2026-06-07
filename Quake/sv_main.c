@@ -1742,34 +1742,39 @@ static int SVFTE_ReplacementSoftLimit (const sizebuf_t *msg)
 	return CLAMP (minsoft, soft, maxsoft);
 }
 
-static qboolean SVFTE_EntityDeltaIsUrgent (client_t *client, size_t entnum,
+#define SVFTE_DELTA_NONURGENT		0
+#define SVFTE_DELTA_HARDURGENT		1
+#define SVFTE_DELTA_RADIUSURGENT	2
+
+static int SVFTE_EntityDeltaPriority (client_t *client, size_t entnum,
 	unsigned int entbits, const entity_state_t *state)
 {
 	float radius, dist2;
 	vec3_t delta;
 
 	if (entnum <= (size_t)svs.maxclients)
-		return true;
+		return SVFTE_DELTA_HARDURGENT;
 	if (client->edict && entnum == (size_t)NUM_FOR_EDICT(client->edict))
-		return true;
+		return SVFTE_DELTA_HARDURGENT;
 	if (entbits & (UF_REMOVE | UF_RESET | UF_RESET2 | UF_PREDINFO |
 		UF_MOVETYPE | UF_MODEL | UF_MODELINDEX2 | UF_TAGINFO |
 		UF_SOLID | UF_TRAILEFFECT | UF_LIGHT))
-		return true;
+		return SVFTE_DELTA_HARDURGENT;
 	if (state && (state->effects || state->emiteffectnum || state->traileffectnum))
-		return true;
+		return SVFTE_DELTA_HARDURGENT;
 	if (!state || !client->edict)
-		return false;
+		return SVFTE_DELTA_NONURGENT;
 
 	// Radius priority is optional because treating every nearby animation or
 	// origin delta as urgent can fill MTU-sized packets every frame on large
 	// co-op maps. Critical state above still bypasses the soft cap.
 	radius = sv_replacement_priority_radius.value;
 	if (radius <= 0)
-		return false;
+		return SVFTE_DELTA_NONURGENT;
 	VectorSubtract (state->origin, client->edict->v.origin, delta);
 	dist2 = DotProduct (delta, delta);
-	return dist2 <= radius * radius;
+	return dist2 <= radius * radius ?
+		SVFTE_DELTA_RADIUSURGENT : SVFTE_DELTA_NONURGENT;
 }
 
 static void SVFTE_WriteEntitiesToClient (client_t *client, sizebuf_t *msg)
@@ -1781,6 +1786,7 @@ static void SVFTE_WriteEntitiesToClient (client_t *client, sizebuf_t *msg)
 	size_t nextdelta;
 	int sequence;
 	int header_need;
+	int priority;
 	int soft_limit;
 	byte entbuf[MAX_DATAGRAM];
 	sizebuf_t entmsg;
@@ -1828,6 +1834,7 @@ static void SVFTE_WriteEntitiesToClient (client_t *client, sizebuf_t *msg)
 		if (entbits & UF_REMOVE)
 		{
 			urgent = true;
+			client->net_replacement_diag_hardurgent++;
 			if (entnum > 0x3fff)
 			{
 				MSG_WriteShort (&entmsg, 0xc000 | (entnum & 0x3fff));
@@ -1843,11 +1850,19 @@ static void SVFTE_WriteEntitiesToClient (client_t *client, sizebuf_t *msg)
 				state++;
 			if (state < stateend && state->num == entnum)
 			{
-				urgent = SVFTE_EntityDeltaIsUrgent (client, entnum,
+				priority = SVFTE_EntityDeltaPriority (client, entnum,
 					entbits, &state->state);
+				urgent = priority != SVFTE_DELTA_NONURGENT;
+				if (priority == SVFTE_DELTA_HARDURGENT)
+					client->net_replacement_diag_hardurgent++;
+				else if (priority == SVFTE_DELTA_RADIUSURGENT)
+					client->net_replacement_diag_radiusurgent++;
+				else
+					client->net_replacement_diag_nonurgent++;
 				if (wrote_entity && msg->cursize >= soft_limit && !urgent)
 				{
 					client->snapshot_priority_deferred = true;
+					client->net_replacement_diag_softdefer++;
 					break;
 				}
 
@@ -1886,6 +1901,7 @@ static void SVFTE_WriteEntitiesToClient (client_t *client, sizebuf_t *msg)
 
 		if (entmsg.overflowed || msg->cursize + entmsg.cursize + 2 > msg->maxsize)
 		{
+			client->net_replacement_diag_harddefer++;
 			client->pendingentities_bits[entnum] = entbits;
 			break;
 		}
@@ -2973,6 +2989,11 @@ static qboolean SVFTE_SendClientDatagram (client_t *client, int maxsize)
 	entity_pending_before = SVFTE_CountPendingEntityDeltas (client);
 	entity_pending = SVFTE_CountPendingEntityDeltasFrom (client, client->snapshotresume);
 	csqc_pending = SVFTE_CountPendingCSQCEntities (client);
+	client->net_replacement_diag_hardurgent = 0;
+	client->net_replacement_diag_radiusurgent = 0;
+	client->net_replacement_diag_nonurgent = 0;
+	client->net_replacement_diag_softdefer = 0;
+	client->net_replacement_diag_harddefer = 0;
 	packet_budget = (sv_replacement_maxpackets.value > 0) ?
 		CLAMP (1, (int)sv_replacement_maxpackets.value, 32) : 128;
 	packet_dup = CLAMP (0, (int)sv_replacement_packetdup.value, 3);
@@ -3118,13 +3139,18 @@ static qboolean SVFTE_SendClientDatagram (client_t *client, int maxsize)
 		int sequence = SV_ReplacementLastSentSequence (client);
 		int ack = client->lastacksequence >= 0 ? client->lastacksequence : -1;
 		entity_pending_after = SVFTE_CountPendingEntityDeltas (client);
-		Con_Printf ("net_lagdebug: server replacement update to %s (%s): packets=%d dup=%d bytes=%d dupbytes=%d max=%d ents=%zu/%zu pending=%zu->%zu maxpacket=%d seq=%d ack=%d acklag=%d deferred=%d\n",
+		Con_Printf ("net_lagdebug: server replacement update to %s (%s): packets=%d dup=%d bytes=%d dupbytes=%d max=%d ents=%zu/%zu pending=%zu->%zu maxpacket=%d seq=%d ack=%d acklag=%d deferred=%d prio=%d/%d/%d limit=%d/%d\n",
 			client->name, NET_QSocketGetAddressString(client->netconnection),
 			packet_count, dup_sent_total, total_bytes, dup_bytes_total, max_packet_bytes,
 			(size_t)client->snapshotresume, client->numpendingentities,
 			entity_pending_before, entity_pending_after, maxsize,
 			sequence, ack, SV_ReplacementAckLag (client, sequence),
-			deferred_by_budget);
+			deferred_by_budget,
+			client->net_replacement_diag_hardurgent,
+			client->net_replacement_diag_radiusurgent,
+			client->net_replacement_diag_nonurgent,
+			client->net_replacement_diag_softdefer,
+			client->net_replacement_diag_harddefer);
 		if (client_index >= 0)
 			last_update_log[client_index] = realtime;
 	}
