@@ -600,6 +600,7 @@ void CL_ParseServerInfo (void)
 	cl.requestresend = true;
 	cl.ackframes_count = 1;
 	cl.ackframes[0] = -1;
+	cl.ackframes_history_count = 0;
 
 // parse maxclients
 	cl.maxclients = MSG_ReadByte ();
@@ -1415,6 +1416,8 @@ static qboolean CL_UpdateMoveAck (int ack)
 
 static void CLFTE_QueueAckFrame (int sequence)
 {
+	unsigned int i;
+
 	if (!cls.netcon)
 		return;
 	if (sequence < 0)
@@ -1423,6 +1426,21 @@ static void CLFTE_QueueAckFrame (int sequence)
 		cl.ackframes[cl.ackframes_count++] = sequence;
 	else
 		cl.ackframes[countof(cl.ackframes) - 1] = sequence;
+
+	if (cl.ackframes_history_count &&
+		cl.ackframes_history[cl.ackframes_history_count - 1] == sequence)
+		return;
+	for (i = 0; i < cl.ackframes_history_count; i++)
+		if (cl.ackframes_history[i] == sequence)
+			return;
+	if (cl.ackframes_history_count < countof(cl.ackframes_history))
+		cl.ackframes_history[cl.ackframes_history_count++] = sequence;
+	else
+	{
+		memmove(cl.ackframes_history, cl.ackframes_history + 1,
+			(countof(cl.ackframes_history) - 1) * sizeof(cl.ackframes_history[0]));
+		cl.ackframes_history[countof(cl.ackframes_history) - 1] = sequence;
+	}
 }
 
 static void CLFTE_ParseEntitiesUpdate (void)

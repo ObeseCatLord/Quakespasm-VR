@@ -908,11 +908,7 @@ void SV_ReadClientMove(usercmd_t *move) {
   sequence = SV_ExpandClientSequence(sequence16);
   accepted_base = host_client->lastreceivedmovemessage;
 
-  host_client->net_move_packets_received++;
   host_client->net_move_cmds_received++;
-  host_client->net_move_last_bundle = 1;
-  if (host_client->net_move_bundle_max < 1)
-    host_client->net_move_bundle_max = 1;
 
   if (accepted_base >= 0 && sequence <= accepted_base) {
     host_client->net_move_cmds_stale++;
@@ -1070,6 +1066,7 @@ static void SV_ReadQCRequest(void) {
 static qboolean SV_ParseClientMessage(void) {
   int ccmd;
   const char *s;
+  int movecommands = 0;
 
   MSG_BeginReading();
 
@@ -1088,6 +1085,12 @@ static qboolean SV_ParseClientMessage(void) {
 
     switch (ccmd) {
     case -1:
+      if (movecommands > 0) {
+        host_client->net_move_packets_received++;
+        host_client->net_move_last_bundle = movecommands;
+        if (host_client->net_move_bundle_max < movecommands)
+          host_client->net_move_bundle_max = movecommands;
+      }
       return true; // end of message
 
     default:
@@ -1168,6 +1171,7 @@ static qboolean SV_ParseClientMessage(void) {
       return false;
 
     case clc_move:
+      movecommands++;
       SV_ReadClientMove(&host_client->cmd);
       break;
 

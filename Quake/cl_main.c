@@ -2127,6 +2127,7 @@ void CL_Init (void)
 	Cvar_RegisterVariable (&cl_move_redundancy);
 	Cvar_RegisterVariable (&cl_move_maxpacketbytes);
 	Cvar_RegisterVariable (&cl_move_packetdup);
+	Cvar_RegisterVariable (&cl_ack_redundancy);
 	Cvar_RegisterVariable (&cl_nopred);
 	Cvar_RegisterVariable (&cl_predict_smooth);
 	Cvar_RegisterVariable (&cl_predict_smooth_time);
