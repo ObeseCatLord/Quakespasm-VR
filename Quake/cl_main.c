@@ -1878,21 +1878,16 @@ static float CL_UpdateCommandTime (void)
 	if (cl_cmdtime_frame == host_framecount && cl.cmdtime > 0)
 		return cl.cmdtime;
 
-	cmdtime = cl.time;
-	if (!CL_LocalSingleplayerActive () && cls.state == ca_connected &&
-		cls.signon == SIGNONS)
-		cmdtime -= CL_EffectiveNetLerpBuffer ();
-	if (cmdtime <= 0)
+	if (cl.cmdtime > 0)
+		cmdtime = cl.cmdtime + q_max (0.0f, host_frametime);
+	else
 		cmdtime = cl.mtime[0] > 0 ? cl.mtime[0] : cl.time;
 	if (cl.mtime[0] > 0)
 	{
 		float mintime = cl.mtime[0] - 0.25f;
-		float maxtime = cl.mtime[0] + q_max (0.0f, cl_extrapolate.value);
 
 		if (cmdtime < mintime)
 			cmdtime = mintime;
-		else if (cmdtime > maxtime)
-			cmdtime = maxtime;
 	}
 
 	if (cl.lastcmdtime <= 0 || cl.lastcmdtime > cmdtime)
