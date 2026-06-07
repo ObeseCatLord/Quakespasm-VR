@@ -28,7 +28,7 @@ void Cmd_ForwardToServer (void);
 
 #define	MAX_ALIAS_NAME	32
 
-#define CMDLINE_LENGTH 256 //johnfitz -- mirrored in common.c
+#define CMDLINE_LENGTH 4096 //johnfitz -- mirrored in common.c
 
 typedef struct cmdalias_s
 {
