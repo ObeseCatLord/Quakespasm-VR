@@ -1431,9 +1431,21 @@ static void CLFTE_ParseEntitiesUpdate (void)
 	qboolean removeflag;
 	entity_t *ent;
 	float newtime;
+	int frame_sequence;
 
-	if (cls.netcon)
-		CLFTE_QueueAckFrame (NET_QSocketGetSequenceIn (cls.netcon));
+	frame_sequence = MSG_ReadLong ();
+	CLFTE_QueueAckFrame (frame_sequence);
+	if (cl.net_snapshot_have && frame_sequence > cl.net_snapshot_sequence + 1)
+	{
+		cl.net_snapshot_drops += frame_sequence - cl.net_snapshot_sequence - 1;
+		if (net_lagdebug.value)
+			Con_DPrintf ("net_lagdebug: replacement frame gap old=%d new=%d missing=%d\n",
+				cl.net_snapshot_sequence, frame_sequence,
+				frame_sequence - cl.net_snapshot_sequence - 1);
+	}
+	cl.net_snapshot_have = true;
+	cl.net_snapshot_sequence = frame_sequence;
+	cl.net_snapshot_packets++;
 
 	if (cl.protocol_pext2 & PEXT2_PREDINFO)
 	{

@@ -355,7 +355,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #define svcfte_csqcentities 76
 #define svcfte_cgamepacket 83
 #define svcfte_setangledelta 85
-#define svcfte_updateentities 86
+#define svcfte_updateentities 86 // [long] logical replacement-frame sequence, then optional predinfo/time/entity deltas
 #define svcdp_trailparticles 60
 #define svcdp_pointparticles 61
 #define svcdp_pointparticles1 62
