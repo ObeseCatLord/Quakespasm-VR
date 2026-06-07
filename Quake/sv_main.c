@@ -2846,17 +2846,143 @@ static qboolean SV_MaybeResendSnapshotParts (client_t *client)
 	return true;
 }
 
+static int SV_ProtocolCoordSize (void);
+
 static int SV_ParticleSize (const byte *buf)
 {
-	int coord_size = 2;
+	int coord_size;
 
 	if (buf[0] != svc_particle)
 		return 0;
-	if (sv.protocolflags & PRFL_24BITCOORD)
-		coord_size = 3;
-	else if (sv.protocolflags & (PRFL_FLOATCOORD | PRFL_INT32COORD))
-		coord_size = 4;
+	coord_size = SV_ProtocolCoordSize ();
 	return 6 + 3 * coord_size;
+}
+
+static int SV_ProtocolCoordSize (void)
+{
+	if (sv.protocolflags & PRFL_24BITCOORD)
+		return 3;
+	if (sv.protocolflags & (PRFL_FLOATCOORD | PRFL_INT32COORD))
+		return 4;
+	return 2;
+}
+
+static int SV_SoundDatagramSize (const byte *buf, int remaining)
+{
+	int coord_size, field_mask, size;
+
+	if (remaining < 2 || buf[0] != svc_sound)
+		return 0;
+	coord_size = SV_ProtocolCoordSize ();
+	field_mask = buf[1];
+	size = 2;
+	if (field_mask & SND_VOLUME)
+		size++;
+	if (field_mask & SND_ATTENUATION)
+		size++;
+	if (field_mask & SND_LARGEENTITY)
+		size += 3;
+	else
+		size += 2;
+	if (field_mask & SND_LARGESOUND)
+		size += 2;
+	else
+		size++;
+	size += 3 * coord_size;
+	return size <= remaining ? size : 0;
+}
+
+static int SV_TempEntityDatagramSize (const byte *buf, int remaining)
+{
+	int coord_size, type, size;
+
+	if (remaining < 2 || buf[0] != svc_temp_entity)
+		return 0;
+	coord_size = SV_ProtocolCoordSize ();
+	type = buf[1];
+	switch (type)
+	{
+	case TE_SPIKE:
+	case TE_SUPERSPIKE:
+	case TE_GUNSHOT:
+	case TE_EXPLOSION:
+	case TE_TAREXPLOSION:
+	case TE_WIZSPIKE:
+	case TE_KNIGHTSPIKE:
+	case TE_LAVASPLASH:
+	case TE_TELEPORT:
+		size = 2 + 3 * coord_size;
+		break;
+	case TE_EXPLOSION2:
+		size = 2 + 3 * coord_size + 2;
+		break;
+	case TE_LIGHTNING1:
+	case TE_LIGHTNING2:
+	case TE_LIGHTNING3:
+	case TE_BEAM:
+		size = 2 + 2 + 6 * coord_size;
+		break;
+	case TEDP_PARTICLERAIN:
+	case TEDP_PARTICLESNOW:
+		size = 2 + 9 * coord_size + 2 + 1;
+		break;
+	default:
+		return 0;
+	}
+	return size <= remaining ? size : 0;
+}
+
+static int SV_DPParticleDatagramSize (const byte *buf, int remaining)
+{
+	int coord_size, size;
+
+	if (remaining < 1)
+		return 0;
+	coord_size = SV_ProtocolCoordSize ();
+	switch (buf[0])
+	{
+	case svcdp_trailparticles:
+		size = 1 + 2 + 2 + 6 * coord_size;
+		break;
+	case svcdp_pointparticles:
+		size = 1 + 2 + 6 * coord_size + 2;
+		break;
+	case svcdp_pointparticles1:
+		size = 1 + 2 + 3 * coord_size;
+		break;
+	default:
+		return 0;
+	}
+	return size <= remaining ? size : 0;
+}
+
+static void SV_DatagramDebugStats (int *sound, int *temp, int *particle,
+	int *dpparticle, int *other)
+{
+	int position, remaining, size;
+	const byte *buf;
+
+	*sound = *temp = *particle = *dpparticle = *other = 0;
+	position = 0;
+	while (position < sv.datagram.cursize)
+	{
+		buf = &sv.datagram.data[position];
+		remaining = sv.datagram.cursize - position;
+		if ((size = SV_SoundDatagramSize (buf, remaining)) != 0)
+			*sound += size;
+		else if ((size = SV_TempEntityDatagramSize (buf, remaining)) != 0)
+			*temp += size;
+		else if ((size = SV_ParticleSize (buf)) != 0 && size <= remaining)
+			*particle += size;
+		else if ((size = SV_DPParticleDatagramSize (buf, remaining)) != 0)
+			*dpparticle += size;
+		else
+		{
+			*other += remaining;
+			break;
+		}
+		position += size;
+	}
 }
 
 static qboolean SVFTE_WriteDatagramToMessage (sizebuf_t *msg, int *offset)
@@ -2937,6 +3063,11 @@ static qboolean SVFTE_SendClientDatagram (client_t *client, int maxsize)
 	int			private_datagram_initial;
 	int			private_datagram_written;
 	int			global_datagram_written;
+	int			global_datagram_sound_bytes;
+	int			global_datagram_temp_bytes;
+	int			global_datagram_particle_bytes;
+	int			global_datagram_dpparticle_bytes;
+	int			global_datagram_other_bytes;
 	int			dup_sent_total;
 	int			dup_bytes_total;
 	int			i;
@@ -2998,6 +3129,11 @@ static qboolean SVFTE_SendClientDatagram (client_t *client, int maxsize)
 	private_datagram_initial = client->datagram.cursize;
 	private_datagram_written = 0;
 	global_datagram_written = 0;
+	SV_DatagramDebugStats (&global_datagram_sound_bytes,
+		&global_datagram_temp_bytes,
+		&global_datagram_particle_bytes,
+		&global_datagram_dpparticle_bytes,
+		&global_datagram_other_bytes);
 	client->net_replacement_diag_hardurgent = 0;
 	client->net_replacement_diag_radiusurgent = 0;
 	client->net_replacement_diag_nonurgent = 0;
@@ -3158,13 +3294,16 @@ static qboolean SVFTE_SendClientDatagram (client_t *client, int maxsize)
 		int sequence = SV_ReplacementLastSentSequence (client);
 		int ack = client->lastacksequence >= 0 ? client->lastacksequence : -1;
 		entity_pending_after = SVFTE_CountPendingEntityDeltas (client);
-		Con_Printf ("net_lagdebug: server replacement update to %s (%s): packets=%d dup=%d bytes=%d dupbytes=%d max=%d ents=%zu/%zu pending=%zu->%zu svdg=%d/%d priv=%d/%d maxpacket=%d seq=%d ack=%d acklag=%d deferred=%d prio=%d/%d/%d limit=%d/%d\n",
+		Con_Printf ("net_lagdebug: server replacement update to %s (%s): packets=%d dup=%d bytes=%d dupbytes=%d max=%d ents=%zu/%zu pending=%zu->%zu svdg=%d/%d priv=%d/%d dgtype=%d/%d/%d/%d/%d maxpacket=%d seq=%d ack=%d acklag=%d deferred=%d prio=%d/%d/%d limit=%d/%d\n",
 			client->name, NET_QSocketGetAddressString(client->netconnection),
 			packet_count, dup_sent_total, total_bytes, dup_bytes_total, max_packet_bytes,
 			(size_t)client->snapshotresume, client->numpendingentities,
 			entity_pending_before, entity_pending_after,
 			global_datagram_written, sv.datagram.cursize,
-			private_datagram_written, private_datagram_initial, maxsize,
+			private_datagram_written, private_datagram_initial,
+			global_datagram_sound_bytes, global_datagram_temp_bytes,
+			global_datagram_particle_bytes, global_datagram_dpparticle_bytes,
+			global_datagram_other_bytes, maxsize,
 			sequence, ack, SV_ReplacementAckLag (client, sequence),
 			deferred_by_budget,
 			client->net_replacement_diag_hardurgent,
