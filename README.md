@@ -217,6 +217,7 @@ These cvars are custom additions or important changed defaults in this branch co
 | `cl_netfps` | `20` | Caps remote-client `CL_SendCmd` rate. Set to `0` to disable the cap. Matches the default 20 Hz dedicated server tick while prediction and command redundancy keep input responsive between sends. |
 | `cl_move_redundancy` | `3` | Sends previous QSS-style `clc_move` records with each new move so short upstream loss bursts do not lose input frames. Command duration is derived from the QSS-style server-time stamp instead of a separate msec byte. |
 | `cl_move_packetdup` | `1` | Sends one duplicate movement packet by default for trusted co-op testing, reducing the chance that a single upstream UDP drop becomes a visible input hitch. |
+| Move timestamps | QSS-M-style | Remote movement commands are timed from client simulation time minus the local interpolation buffer, then bounded near the latest server timestamp. This avoids banking future render-buffer time that the server would clamp away during bundled loss recovery. |
 | `cfg_unbindall` | `1` | Controls whether generated `config.cfg` files start with `unbindall`. Set to `0` if you need persisted binds to merge instead of clearing first. |
 | `cl_extrapolate` | `0.02` | Allows a small amount of client interpolation/extrapolation tolerance for remote snapshots. |
 | `cl_extrapolate_adaptive` | `0` | Temporarily raises extrapolation tolerance after snapshot gaps or interpolation overruns when enabled for diagnostics. |

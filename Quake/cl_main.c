@@ -1873,27 +1873,32 @@ void CL_ClearPendingCmd (void)
 
 static float CL_UpdateCommandTime (void)
 {
+	float cmdtime;
+
 	if (cl_cmdtime_frame == host_framecount && cl.cmdtime > 0)
 		return cl.cmdtime;
 
-	if (cl.cmdtime <= 0)
-	{
-		cl.cmdtime = cl.mtime[0] > 0 ? cl.mtime[0] : cl.time;
-		cl.lastcmdtime = cl.cmdtime;
-	}
-
-	cl.cmdtime += host_frametime;
+	cmdtime = cl.time;
+	if (!CL_LocalSingleplayerActive () && cls.state == ca_connected &&
+		cls.signon == SIGNONS)
+		cmdtime -= CL_EffectiveNetLerpBuffer ();
+	if (cmdtime <= 0)
+		cmdtime = cl.mtime[0] > 0 ? cl.mtime[0] : cl.time;
 	if (cl.mtime[0] > 0)
 	{
 		float mintime = cl.mtime[0] - 0.25f;
-		float maxtime = cl.mtime[0] + 0.25f;
+		float maxtime = cl.mtime[0] + q_max (0.0f, cl_extrapolate.value);
 
-		if (cl.cmdtime < mintime)
-			cl.cmdtime = mintime;
-		else if (cl.cmdtime > maxtime)
-			cl.cmdtime = maxtime;
+		if (cmdtime < mintime)
+			cmdtime = mintime;
+		else if (cmdtime > maxtime)
+			cmdtime = maxtime;
 	}
 
+	if (cl.lastcmdtime <= 0 || cl.lastcmdtime > cmdtime)
+		cl.lastcmdtime = cmdtime;
+
+	cl.cmdtime = cmdtime;
 	cl_cmdtime_frame = host_framecount;
 	return cl.cmdtime;
 }
