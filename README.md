@@ -262,7 +262,6 @@ These cvars are custom additions or important changed defaults in this branch co
 | `net_lagdebug` | `0` | Enables verbose network/judder diagnostics for datagram gaps, dropped unreliable packets, frame spikes, stale input, and interpolation overruns. |
 | `net_lagdebug_threshold` | `0.25` | Datagram-gap threshold, in seconds, for `net_lagdebug` messages. |
 | `net_lagdebug_frame_threshold` | `0.05` | Frame/update-gap threshold, in seconds, for `net_lagdebug` messages. |
-| `net_reorder_window` | `4` | Buffers small out-of-order unreliable UDP bursts before declaring a dropped server snapshot. Set to `0` to process unreliable datagrams immediately. |
 | `net_reorder_timeout` | `0.012` | Maximum seconds to wait for the missing unreliable datagram before advancing past it. |
 | `net_singlesocket` | `1` | Uses one UDP socket for accept/control and game traffic on the server, with queued dispatch to per-client logic. |
 | `net_sameip_stale_timeout` | `3.0` | Time before stale same-IP connection state can be discarded during reconnect/NAT-remap handling. |
