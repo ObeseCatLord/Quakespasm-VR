@@ -1274,7 +1274,7 @@ static void CL_CheckPredictionError (entity_t *ent)
 
 	cl.net_prediction_errors++;
 	if (net_lagdebug.value && cl_predict_error_log.value)
-		Con_DPrintf ("net_lagdebug: prediction error ack=%d err=%.2f server=(%.1f %.1f %.1f) predicted=(%.1f %.1f %.1f) vel=(%.1f %.1f %.1f)\n",
+		Con_Printf ("net_lagdebug: prediction error ack=%d err=%.2f server=(%.1f %.1f %.1f) predicted=(%.1f %.1f %.1f) vel=(%.1f %.1f %.1f)\n",
 			ack, err,
 			ent->msg_origins[0][0], ent->msg_origins[0][1], ent->msg_origins[0][2],
 			cl.predicted_move_origin[index][0],
