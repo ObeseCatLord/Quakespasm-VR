@@ -1284,6 +1284,7 @@ void SVFTE_DestroyFrames (client_t *client)
 	client->frames = NULL;
 	client->numframes = 0;
 	client->lastacksequence = 0;
+	client->net_snapshot_sequence = 0;
 	client->snapshotresume = 0;
 	client->snapshotnextdelta = 0;
 	client->snapshot_priority_deferred = false;
@@ -1307,6 +1308,7 @@ static void SVFTE_SetupFrames (client_t *client)
 	client->frames = (struct deltaframe_s *)calloc (client->numframes, sizeof(*client->frames));
 	if (!client->frames)
 		Sys_Error ("SVFTE_SetupFrames: calloc frames failed");
+	client->net_snapshot_sequence = -1;
 	client->lastacksequence = (int)0x80000000u;
 	for (i = 0; i < client->numframes; i++)
 		client->frames[i].sequence = client->lastacksequence;
@@ -1629,7 +1631,7 @@ static void SVFTE_WriteStatsToClient (client_t *client, sizebuf_t *msg,
 	int			i, reserve;
 
 	SV_CalcStats (client, statsi, statsf, statss);
-	reserve = (client->protocol_pext2 & PEXT2_PREDINFO) ? 9 : 7;
+	reserve = (client->protocol_pext2 & PEXT2_PREDINFO) ? 13 : 11;
 
 	for (i = 0; i < MAX_CL_STATS; i++)
 	{
@@ -1732,12 +1734,7 @@ static qboolean SV_UsesReplacementDeltas (const client_t *client)
 
 static int SV_ReplacementLastSentSequence (const client_t *client)
 {
-	int sequence;
-
-	if (!client->netconnection)
-		return -1;
-	sequence = NET_QSocketGetSequenceOut (client->netconnection);
-	return sequence > 0 ? sequence - 1 : -1;
+	return client->net_snapshot_sequence;
 }
 
 static int SV_ReplacementAckLag (const client_t *client, int sequence)
@@ -1810,14 +1807,12 @@ static int SVFTE_EntityDeltaPriority (client_t *client, size_t entnum,
 }
 
 static void SVFTE_WriteEntitiesToClient (client_t *client, sizebuf_t *msg,
-	int reserve_bytes)
+	struct deltaframe_s *frame, int sequence, int reserve_bytes)
 {
 	struct entity_num_state_s *state, *stateend;
-	struct deltaframe_s *frame;
 	unsigned int entbits, logbits, netbits;
 	size_t entnum;
 	size_t nextdelta;
-	int sequence;
 	int header_need;
 	int priority;
 	int soft_limit;
@@ -1826,15 +1821,13 @@ static void SVFTE_WriteEntitiesToClient (client_t *client, sizebuf_t *msg,
 	qboolean wrote_entity;
 	qboolean urgent;
 
-	sequence = NET_QSocketGetSequenceOut (client->netconnection);
-	frame = SVFTE_BeginFrame (client, sequence);
 	state = client->previousentities;
 	stateend = state + client->numpreviousentities;
 	nextdelta = client->snapshotnextdelta;
 	if (nextdelta >= client->numpendingentities)
 		nextdelta = 0;
 
-	header_need = 1 + 4 + 2;
+	header_need = 1 + 4 + 4 + 2;
 	if (client->protocol_pext2 & PEXT2_PREDINFO)
 		header_need += 2;
 	if (msg->cursize + header_need > msg->maxsize)
@@ -1843,6 +1836,7 @@ static void SVFTE_WriteEntitiesToClient (client_t *client, sizebuf_t *msg,
 	soft_limit = SVFTE_ReplacementSoftLimit (msg, reserve_bytes);
 	wrote_entity = false;
 	MSG_WriteByte (msg, svcfte_updateentities);
+	MSG_WriteLong (msg, sequence);
 	if (client->protocol_pext2 & PEXT2_PREDINFO)
 		MSG_WriteShort (msg, client->lastmovemessage & 0xffff);
 	MSG_WriteFloat (msg, qcvm->time);
@@ -1969,14 +1963,13 @@ static void SVFTE_WriteEntitiesToClient (client_t *client, sizebuf_t *msg,
 	dev_peakstats.packetsize = q_max (msg->cursize, dev_peakstats.packetsize);
 }
 
-static void SVFTE_WriteCSQCEntitiesToClient (client_t *client, sizebuf_t *msg)
+static void SVFTE_WriteCSQCEntitiesToClient (client_t *client, sizebuf_t *msg,
+	struct deltaframe_s *frame)
 {
 	edict_t *ed;
-	struct deltaframe_s *frame;
 	unsigned int bits, originalbits, logbits;
 	size_t entnum;
 	size_t nextdelta;
-	int sequence;
 	qboolean wroteheader = false;
 	qboolean candidate_has_header;
 	byte entbuf[MAX_DATAGRAM];
@@ -1987,8 +1980,6 @@ static void SVFTE_WriteCSQCEntitiesToClient (client_t *client, sizebuf_t *msg)
 	if (!client->pendingcsqcentities_bits)
 		return;
 
-	sequence = NET_QSocketGetSequenceOut (client->netconnection);
-	frame = SVFTE_BeginFrame (client, sequence);
 	nextdelta = client->csqcsnapshotnextdelta;
 	if (nextdelta >= client->numpendingcsqcentities)
 		nextdelta = 0;
@@ -3258,6 +3249,8 @@ static qboolean SVFTE_SendClientDatagram (client_t *client, int maxsize)
 	size_t		entity_pending;
 	size_t		entity_pending_before;
 	size_t		entity_pending_after;
+	struct deltaframe_s	*replacement_frame;
+	int			replacement_sequence;
 	qboolean	made_progress;
 	qboolean	deferred_by_budget;
 	qboolean	wrote_update_header;
@@ -3337,14 +3330,24 @@ static qboolean SVFTE_SendClientDatagram (client_t *client, int maxsize)
 		msg.allowoverflow = false;
 		msg.overflowed = false;
 
+		wrote_update_header = packet_count == 0 || entity_pending || csqc_pending;
+		header_counts_as_progress =
+			wrote_update_header && packet_count == 0 && !entity_pending && !csqc_pending;
+		replacement_sequence = -1;
+		replacement_frame = NULL;
+		if (wrote_update_header)
+		{
+			replacement_sequence = ++client->net_snapshot_sequence;
+			replacement_frame = SVFTE_BeginFrame (client,
+				replacement_sequence);
+		}
+
 		if (packet_count == 0)
 		{
-			struct deltaframe_s *frame;
-
 			SV_WriteDamageToMessage (client->edict, &msg);
-			frame = SVFTE_BeginFrame (client,
-				NET_QSocketGetSequenceOut (client->netconnection));
-			SVFTE_WriteStatsToClient (client, &msg, frame);
+			if (replacement_frame)
+				SVFTE_WriteStatsToClient (client, &msg,
+					replacement_frame);
 		}
 
 		prev_resume = client->snapshotresume;
@@ -3360,9 +3363,6 @@ static qboolean SVFTE_SendClientDatagram (client_t *client, int maxsize)
 		 * client prediction; private datagrams and temp entities can spill into
 		 * later packets without stalling command acks.
 		 */
-		wrote_update_header = packet_count == 0 || entity_pending || csqc_pending;
-		header_counts_as_progress =
-			wrote_update_header && packet_count == 0 && !entity_pending && !csqc_pending;
 		if (wrote_update_header)
 		{
 			datagram_reserve =
@@ -3372,8 +3372,10 @@ static qboolean SVFTE_SendClientDatagram (client_t *client, int maxsize)
 			if (datagram_reserve > max_datagram_reserve)
 				max_datagram_reserve = datagram_reserve;
 			SVFTE_WriteEntitiesToClient (client, &msg,
+				replacement_frame, replacement_sequence,
 				datagram_reserve);
-			SVFTE_WriteCSQCEntitiesToClient (client, &msg);
+			SVFTE_WriteCSQCEntitiesToClient (client, &msg,
+				replacement_frame);
 			entity_pending = SVFTE_CountPendingEntityDeltasFrom (client, client->snapshotresume);
 			csqc_pending = SVFTE_CountPendingCSQCEntities (client);
 		}
