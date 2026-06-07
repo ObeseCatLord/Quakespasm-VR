@@ -33,7 +33,7 @@ static char	localmodels[MAX_MODELS][8];	// inline model names for precache
 int		sv_protocol = PROTOCOL_RMQ; //johnfitz
 
 extern cvar_t nomonsters;
-cvar_t sv_maxpacketsize = {"sv_maxpacketsize", "1200", CVAR_NONE}; // conservative UDP payload size, avoids common MTU fragmentation
+cvar_t sv_maxpacketsize = {"sv_maxpacketsize", "1400", CVAR_NONE}; // below typical Ethernet MTU while reducing large-map packet splits
 cvar_t sv_snapshot_splits = {"sv_snapshot_splits", "0", CVAR_ARCHIVE};
 cvar_t sv_snapshot_packetdup = {"sv_snapshot_packetdup", "0", CVAR_NONE};
 cvar_t sv_replacement_maxpackets = {"sv_replacement_maxpackets", "0", CVAR_NONE};
