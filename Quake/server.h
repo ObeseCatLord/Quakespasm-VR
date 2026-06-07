@@ -358,6 +358,7 @@ extern cvar_t sv_snapshot_splits;
 extern cvar_t sv_snapshot_packetdup;
 extern cvar_t sv_replacement_maxpackets;
 extern cvar_t sv_replacement_packetdup;
+extern cvar_t sv_replacement_packetdup_all;
 extern cvar_t sv_replacement_pacing;
 extern cvar_t sv_replacement_softmaxbytes;
 extern cvar_t sv_replacement_priority_radius;

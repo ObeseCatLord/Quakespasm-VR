@@ -38,6 +38,7 @@ cvar_t sv_snapshot_splits = {"sv_snapshot_splits", "0", CVAR_ARCHIVE};
 cvar_t sv_snapshot_packetdup = {"sv_snapshot_packetdup", "0", CVAR_NONE};
 cvar_t sv_replacement_maxpackets = {"sv_replacement_maxpackets", "0", CVAR_NONE};
 cvar_t sv_replacement_packetdup = {"sv_replacement_packetdup", "1", CVAR_NONE};
+cvar_t sv_replacement_packetdup_all = {"sv_replacement_packetdup_all", "0", CVAR_NONE};
 cvar_t sv_replacement_pacing = {"sv_replacement_pacing", "1", CVAR_NONE};
 cvar_t sv_replacement_softmaxbytes = {"sv_replacement_softmaxbytes", "1000", CVAR_NONE};
 cvar_t sv_replacement_priority_radius = {"sv_replacement_priority_radius", "0", CVAR_NONE};
@@ -334,6 +335,7 @@ void SV_Init (void)
 	Cvar_RegisterVariable (&sv_snapshot_packetdup);
 	Cvar_RegisterVariable (&sv_replacement_maxpackets);
 	Cvar_RegisterVariable (&sv_replacement_packetdup);
+	Cvar_RegisterVariable (&sv_replacement_packetdup_all);
 	Cvar_RegisterVariable (&sv_replacement_pacing);
 	Cvar_RegisterVariable (&sv_replacement_softmaxbytes);
 	Cvar_RegisterVariable (&sv_replacement_priority_radius);
@@ -2931,6 +2933,7 @@ static qboolean SVFTE_SendClientDatagram (client_t *client, int maxsize)
 	int			prev_private_datagram_size;
 	int			packet_budget;
 	int			packet_dup;
+	int			packet_dup_this;
 	int			dup_sent_total;
 	int			dup_bytes_total;
 	int			i;
@@ -3058,7 +3061,9 @@ static qboolean SVFTE_SendClientDatagram (client_t *client, int maxsize)
 			SV_DropClient (true);
 			return false;
 		}
-		for (i = 0; i < packet_dup; i++)
+		packet_dup_this = packet_count == 0 || sv_replacement_packetdup_all.value ?
+			packet_dup : 0;
+		for (i = 0; i < packet_dup_this; i++)
 		{
 			if (NET_SendUnreliableMessageAgain (client->netconnection, &msg) == -1)
 			{
@@ -3073,7 +3078,7 @@ static qboolean SVFTE_SendClientDatagram (client_t *client, int maxsize)
 		total_bytes += msg.cursize;
 		if (msg.cursize > max_packet_bytes)
 			max_packet_bytes = msg.cursize;
-		client->net_snapshot_packets_sent += 1 + packet_dup;
+		client->net_snapshot_packets_sent += 1 + packet_dup_this;
 
 		made_progress = client->snapshotresume != prev_resume ||
 			entity_pending != prev_entity_pending ||
