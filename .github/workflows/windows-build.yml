@@ -1,0 +1,62 @@
+name: Windows MSVC Build
+
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+    branches:
+      - master
+  workflow_dispatch:
+
+jobs:
+  build-windows:
+    name: Build Windows ${{ matrix.platform }}
+    runs-on: windows-2022
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: x64
+            artifact-platform: x64
+            output-dir: Windows/VisualStudio/Build-quakespasm-sdl2/x64/Release
+          - platform: Win32
+            artifact-platform: x86
+            output-dir: Windows/VisualStudio/Build-quakespasm-sdl2/x86/Release
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up MSBuild
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Build
+        shell: pwsh
+        run: |
+          $options = @(
+            '-property:Configuration=Release',
+            '-property:Platform=${{ matrix.platform }}',
+            '-maxcpucount',
+            '-verbosity:minimal'
+          )
+          msbuild Windows\VisualStudio\quakespasm.sln $options
+          if ($LASTEXITCODE -ne 0) { throw "MSBuild failed with exit code $LASTEXITCODE" }
+
+      - name: Verify build outputs
+        shell: pwsh
+        run: |
+          $out = '${{ matrix.output-dir }}'
+          $exe = Join-Path $out 'quakespasm-openvr.exe'
+          if (!(Test-Path $exe)) { throw "Missing $exe" }
+          foreach ($dll in @('SDL2.dll', 'openvr_api.dll')) {
+            $path = Join-Path $out $dll
+            if (!(Test-Path $path)) { throw "Missing $path" }
+          }
+          Get-ChildItem $out | Sort-Object Name | Select-Object Name, Length
+
+      - name: Upload Windows build
+        uses: actions/upload-artifact@v4
+        with:
+          name: quakespasm-openvr-windows-${{ matrix.artifact-platform }}
+          path: ${{ matrix.output-dir }}/**
