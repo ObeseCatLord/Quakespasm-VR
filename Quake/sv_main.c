@@ -312,6 +312,7 @@ void SV_Init (void)
 	extern	cvar_t	sv_idealpitchscale;
 	extern	cvar_t	sv_pmove;
 	extern	cvar_t	sv_pmove_legacy;
+	extern	cvar_t	sv_pmove_legacy_preserve_qc_velocity;
 	extern	cvar_t	sv_aim;
 	extern	cvar_t	sv_altnoclip; //johnfitz
 	extern	cvar_t	sv_gameplayfix_random;
@@ -332,6 +333,7 @@ void SV_Init (void)
 	Cvar_RegisterVariable (&sv_idealpitchscale);
 	Cvar_RegisterVariable (&sv_pmove);
 	Cvar_RegisterVariable (&sv_pmove_legacy);
+	Cvar_RegisterVariable (&sv_pmove_legacy_preserve_qc_velocity);
 	Cvar_RegisterVariable (&sv_aim);
 	Cvar_RegisterVariable (&sv_nostep);
 	Cvar_RegisterVariable (&sv_freezenonclients);
