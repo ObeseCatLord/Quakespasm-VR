@@ -39,7 +39,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #define TEXPREF_CONCHARS		0x0400	// use conchars palette
 #define TEXPREF_WARPIMAGE		0x0800	// resize this texture when warpimagesize changes
 #define TEXPREF_PREMULTIPLY	0x1000	// accepted for QSS-M particle configs
-#define TEXPREF_CLAMP			0x0000	// compatibility no-op for CSQC pic loading
+#define TEXPREF_CLAMP			0x2000	// clamp texture edges instead of repeating
 
 enum srcformat {SRC_INDEXED, SRC_LIGHTMAP, SRC_RGBA};
 

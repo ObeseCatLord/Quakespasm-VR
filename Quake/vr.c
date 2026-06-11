@@ -377,6 +377,47 @@ static qboolean VR_ModelIndexMatchesPath(int model_index, const char *path) {
   return !q_strcasecmp(model->name, path);
 }
 
+static const char *VR_ModelPathForIndex(int model_index) {
+  qmodel_t *model;
+
+  if (model_index <= 0 || model_index >= MAX_MODELS)
+    return NULL;
+  model = cl.model_precache[model_index];
+  if (!model || !model->name[0])
+    return NULL;
+  return model->name;
+}
+
+static qboolean VR_ModelPathLooksWeapon(const char *path) {
+  const char *base;
+  static const char *blocked[] = {
+      "player", "rune", "sigil", "key", "armor", "health",
+      "backpack", "gib", "head", "corpse", NULL};
+
+  if (!path || !path[0])
+    return false;
+
+  base = COM_SkipPath(path);
+  for (int i = 0; blocked[i]; i++) {
+    if (q_strcasestr(base, blocked[i]))
+      return false;
+  }
+
+  if ((base[0] == 'v' || base[0] == 'V') && base[1] == '_')
+    return true;
+  if ((base[0] == 'g' || base[0] == 'G') && base[1] == '_')
+    return true;
+
+  return q_strcasestr(base, "weapon") || q_strcasestr(base, "gun") ||
+         q_strcasestr(base, "shot") || q_strcasestr(base, "rifle") ||
+         q_strcasestr(base, "pistol") || q_strcasestr(base, "launcher") ||
+         q_strcasestr(base, "wrench") || q_strcasestr(base, "hammer");
+}
+
+static qboolean VR_ModelIndexLooksWeapon(int model_index) {
+  return VR_ModelPathLooksWeapon(VR_ModelPathForIndex(model_index));
+}
+
 static int VR_FindDynWeapon(int bitmask, int owned_stat, int owned_mask,
                             int active_stat, int active_mask,
                             const char *model_path, int model_index) {
@@ -4306,8 +4347,8 @@ void VR_Move(usercmd_t *cmd) {
   DoKey(&controllers[0], vr::k_EButton_ApplicationMenu, K_ESCAPE);
   DoKey(&controllers[1], vr::k_EButton_ApplicationMenu, K_BBUTTON);
 
-  // k_EButton_A
-  DoKey(&controllers[0], vr::k_EButton_A, K_ABUTTON);
+  // k_EButton_A is also used as a face/menu button by some OpenVR runtimes.
+  DoKey(&controllers[0], vr::k_EButton_A, K_ESCAPE);
   DoKey(&controllers[1], vr::k_EButton_A, K_XBUTTON);
 
   // k_EButton_Axis2 === SteamVR-binding "Right Axis 2 Press" (at least on Index
@@ -4523,8 +4564,15 @@ static void VR_ContinueWeaponSelection(void) {
 void VR_TrackWeapons(void) {
   int active = cl.stats[STAT_ACTIVEWEAPON];
   int model_idx = cl.stats[STAT_WEAPON];
+  const char *model_path;
 
   if (active == 0 || model_idx == 0) {
+    VR_ContinueWeaponSelection();
+    return;
+  }
+
+  model_path = VR_ModelPathForIndex(model_idx);
+  if (!VR_ModelPathLooksWeapon(model_path)) {
     VR_ContinueWeaponSelection();
     return;
   }
@@ -4647,9 +4695,26 @@ void VR_ResetWeaponTracking(void) {
 static int VR_GetVisibleWeapons(vr_dyn_weapon_t **out, int max) {
   int count = 0;
   for (int i = 0; i < num_dyn_weapons && count < max; i++) {
-    if (VR_WeaponIsOwned(&dyn_weapons[i])) {
-      out[count++] = &dyn_weapons[i];
+    vr_dyn_weapon_t *w = &dyn_weapons[i];
+    qboolean hidden_by_schema = false;
+
+    if (w->discovered && w->model_index > 0 &&
+        !VR_ModelIndexLooksWeapon(w->model_index))
+      continue;
+
+    if (!w->from_schema && w->bitmask) {
+      for (int j = 0; j < num_dyn_weapons; j++) {
+        if (dyn_weapons[j].from_schema &&
+            dyn_weapons[j].bitmask == w->bitmask &&
+            VR_WeaponIsOwned(&dyn_weapons[j])) {
+          hidden_by_schema = true;
+          break;
+        }
+      }
     }
+
+    if (!hidden_by_schema && VR_WeaponIsOwned(w))
+      out[count++] = w;
   }
   return count;
 }
@@ -4843,9 +4908,14 @@ void VR_DrawWeaponMenu(void) {
 
       vr_dyn_weapon_t *w = visible[w_index];
 
-      // Load the model by path
+      // Load learned/schema models first so mods can replace vanilla slots.
       qmodel_t *mdl = NULL;
-      if (w->model_path) {
+      if ((w->discovered || w->from_schema) && w->model_index > 0 &&
+          w->model_index < MAX_MODELS &&
+          VR_ModelIndexLooksWeapon(w->model_index)) {
+        mdl = cl.model_precache[w->model_index];
+      }
+      if ((!mdl || mdl->type != mod_alias) && w->model_path) {
         mdl = Mod_ForName(w->model_path, false);
         // If pickup model not found, try viewmodel as fallback
         if (!mdl || mdl->type != mod_alias) {
@@ -4858,10 +4928,6 @@ void VR_DrawWeaponMenu(void) {
             mdl = Mod_ForName(vmodel, false);
           }
         }
-      }
-      if (!mdl && w->discovered && w->model_index > 0 &&
-          w->model_index < MAX_MODELS) {
-        mdl = cl.model_precache[w->model_index];
       }
       if (!mdl || mdl->type != mod_alias) {
         // We still increment the assigned index so the wheel spacing isn't

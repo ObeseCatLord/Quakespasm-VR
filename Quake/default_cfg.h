@@ -75,7 +75,7 @@ static const char default_cfg[] =
     "bind INS +klook\n"
 
     "bind MOUSE1 +attack\n"
-    "bind MOUSE2 \"impulse 228\"\n"
+    "bind MOUSE2 \"+button3\"\n"
 
     // VR Controller bindings
     "bind LTRIGGER \"+jump\"\n"
@@ -83,7 +83,7 @@ static const char default_cfg[] =
     "bind BBUTTON \"impulse 10\"\n"
     "bind LTHUMB \"+speed\"\n"
     "bind RTHUMB \"+jump\"\n"
-    "bind VR_ALTFIRE \"impulse 228\"\n"
+    "bind VR_ALTFIRE \"+button3\"\n"
     "bind LSHOULDER \"+showscores\"\n"
     "bind RSHOULDER \"+showscores\"\n"
     "bind ABUTTON \"+showscores\"\n"

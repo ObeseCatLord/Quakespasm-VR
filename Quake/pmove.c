@@ -1099,8 +1099,8 @@ void PM_LadderMove (void)
 
 		VectorClear (wishvel);
 		VectorMA (wishvel, pmove.cmd.forwardmove * 0.35f, ladder_forward, wishvel);
-		VectorMA (wishvel, pmove.cmd.sidemove, ladder_right, wishvel);
-		VectorMA (wishvel, -pmove.cmd.forwardmove, pmove.gravitydir, wishvel);
+		VectorMA (wishvel, pmove.cmd.sidemove * 0.35f, ladder_right, wishvel);
+		VectorMA (wishvel, -pmove.cmd.forwardmove * 0.35f, pmove.gravitydir, wishvel);
 	}
 	else
 	{
