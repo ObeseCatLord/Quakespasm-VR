@@ -47,6 +47,8 @@ cvar_t sv_altnoclip = {"sv_altnoclip", "1", CVAR_ARCHIVE}; // johnfitz
 cvar_t sv_inputtimeout = {"sv_inputtimeout", "0.50", CVAR_NONE};
 cvar_t sv_pmove = {"sv_pmove", "1", CVAR_NONE};
 cvar_t sv_pmove_legacy = {"sv_pmove_legacy", "1", CVAR_NONE};
+cvar_t sv_pmove_legacy_preserve_qc_velocity = {
+    "sv_pmove_legacy_preserve_qc_velocity", "1", CVAR_NONE};
 cvar_t sv_move_timeclamp = {"sv_move_timeclamp", "1", CVAR_NONE};
 
 static void SV_SetExtendedButtons(edict_t *ent, int buttons) {

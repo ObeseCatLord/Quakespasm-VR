@@ -52,6 +52,7 @@ cvar_t sv_gravity = {"sv_gravity", "800", CVAR_NOTIFY | CVAR_SERVERINFO};
 cvar_t sv_maxvelocity = {"sv_maxvelocity", "2000", CVAR_NONE};
 cvar_t sv_nostep = {"sv_nostep", "0", CVAR_NONE};
 cvar_t sv_freezenonclients = {"sv_freezenonclients", "0", CVAR_NONE};
+extern cvar_t sv_pmove_legacy_preserve_qc_velocity;
 
 #define MOVE_EPSILON 0.01
 #define SV_VANILLA_JUMP_VELOCITY 270.0f
@@ -2094,6 +2095,84 @@ static void SV_PMoveSetWater(edict_t *ent) {
     ent->v.watertype = CONTENTS_EMPTY;
 }
 
+static float SV_PMoveLegacySwimJumpSpeed(int watertype) {
+  if (watertype == CONTENTS_WATER)
+    return 100.0f;
+  if (watertype == CONTENTS_SLIME)
+    return 80.0f;
+  return 50.0f;
+}
+
+static void SV_FilterLegacyPMoveQCVelocityDelta(
+    const usercmd_t *cmd, const vec3_t prethink_velocity,
+    const vec3_t postthink_velocity, int prethink_flags, int postthink_flags,
+    int prethink_waterlevel, int prethink_watertype, int prethink_movetype,
+    float prethink_health, float prethink_deadflag, vec3_t out_delta) {
+  vec3_t qcbase;
+  vec3_t water_delta;
+  float speed;
+  float zdelta;
+  int i;
+
+  VectorSubtract(postthink_velocity, prethink_velocity, out_delta);
+  if (!sv_pmove_legacy_preserve_qc_velocity.value) {
+    VectorClear(out_delta);
+    return;
+  }
+
+  VectorCopy(prethink_velocity, qcbase);
+
+  /*
+   * Legacy PlayerPreThink runs old NQ movement helpers before mod logic. PMove
+   * reproduces those helpers itself, so remove their expected velocity edits
+   * and preserve only the remaining QC-authored force, such as a grappling hook.
+   */
+  if (prethink_health >= 0 && prethink_movetype != MOVETYPE_NOCLIP &&
+      prethink_waterlevel >= 2 && !(prethink_flags & FL_WATERJUMP)) {
+    VectorScale(qcbase, -0.8f * prethink_waterlevel * host_frametime,
+                water_delta);
+    VectorAdd(qcbase, water_delta, qcbase);
+    VectorSubtract(out_delta, water_delta, out_delta);
+  }
+
+  if (!(prethink_flags & FL_WATERJUMP) && (postthink_flags & FL_WATERJUMP)) {
+    zdelta = 225.0f - qcbase[2];
+    qcbase[2] = 225.0f;
+    out_delta[2] -= zdelta;
+  } else if ((cmd->buttons & BUTTON_JUMP) && prethink_deadflag < DEAD_DYING &&
+             prethink_waterlevel >= 2) {
+    speed = SV_PMoveLegacySwimJumpSpeed(prethink_watertype);
+    zdelta = speed - qcbase[2];
+    qcbase[2] = speed;
+    out_delta[2] -= zdelta;
+  } else if ((cmd->buttons & BUTTON_JUMP) &&
+             prethink_deadflag < DEAD_DYING &&
+             (prethink_flags & FL_ONGROUND) &&
+             (prethink_flags & FL_JUMPRELEASED) &&
+             !(postthink_flags & FL_JUMPRELEASED) &&
+             !(prethink_flags & FL_WATERJUMP) &&
+             out_delta[2] > SV_VANILLA_JUMP_VELOCITY - 1.0f) {
+    out_delta[2] -= SV_VANILLA_JUMP_VELOCITY;
+  }
+
+  for (i = 0; i < 3; i++) {
+    if (fabs(out_delta[i]) < MOVE_EPSILON)
+      out_delta[i] = 0;
+  }
+}
+
+static void SV_RestoreLegacyPMoveOwnedState(edict_t *ent, int prethink_flags,
+                                            int postthink_flags,
+                                            float prethink_teleport_time) {
+  int flags = (int)ent->v.flags;
+
+  flags &= ~(FL_JUMPRELEASED | FL_WATERJUMP);
+  flags |= prethink_flags & (FL_JUMPRELEASED | FL_WATERJUMP);
+  ent->v.flags = flags;
+  if ((prethink_flags | postthink_flags) & FL_WATERJUMP)
+    ent->v.teleport_time = prethink_teleport_time;
+}
+
 void SV_RunPMoveForEntity(edict_t *ent, const usercmd_t *cmd) {
   static vec3_t extents = {256, 256, 256};
   vec3_t bounds[2];
@@ -2235,6 +2314,16 @@ qboolean SV_RunClientPMoveCommands(client_t *client) {
     vec3_t thinkRestoreOrigin;
     vec3_t restoreOrigin;
     vec3_t prethink_velocity;
+    vec3_t postthink_velocity;
+    vec3_t preserved_velocity_delta;
+    int prethink_flags;
+    int postthink_flags;
+    int prethink_waterlevel;
+    int prethink_watertype;
+    int prethink_movetype;
+    float prethink_health;
+    float prethink_deadflag;
+    float prethink_teleport_time;
     qboolean think_ok;
     coop_respawn_postthink_state_t coop_respawn_state;
 
@@ -2252,14 +2341,31 @@ qboolean SV_RunClientPMoveCommands(client_t *client) {
     }
 
     VectorCopy(ent->v.velocity, prethink_velocity);
+    prethink_flags = (int)ent->v.flags;
+    prethink_waterlevel = (int)ent->v.waterlevel;
+    prethink_watertype = (int)ent->v.watertype;
+    prethink_movetype = (int)ent->v.movetype;
+    prethink_health = ent->v.health;
+    prethink_deadflag = ent->v.deadflag;
+    prethink_teleport_time = ent->v.teleport_time;
 
     pr_global_struct->time = qcvm->time;
     pr_global_struct->self = EDICT_TO_PROG(ent);
     PR_ExecuteProgram(pr_global_struct->PlayerPreThink);
     if (ent->free)
       break;
-    if (!qcvm->extfuncs.SV_RunClientCommand)
-      VectorCopy(prethink_velocity, ent->v.velocity);
+    if (!qcvm->extfuncs.SV_RunClientCommand) {
+      VectorCopy(ent->v.velocity, postthink_velocity);
+      postthink_flags = (int)ent->v.flags;
+      SV_FilterLegacyPMoveQCVelocityDelta(
+          &client->cmd, prethink_velocity, postthink_velocity, prethink_flags,
+          postthink_flags, prethink_waterlevel, prethink_watertype,
+          prethink_movetype, prethink_health, prethink_deadflag,
+          preserved_velocity_delta);
+      VectorAdd(prethink_velocity, preserved_velocity_delta, ent->v.velocity);
+      SV_RestoreLegacyPMoveOwnedState(ent, prethink_flags, postthink_flags,
+                                      prethink_teleport_time);
+    }
     SV_CheckVelocity(ent);
 
     SV_ApplyVRWeaponOffset(ent, num, is_remote_vr, thinkRestoreOrigin);
