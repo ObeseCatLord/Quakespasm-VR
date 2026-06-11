@@ -1,426 +1,441 @@
-# QuakeSpasm-OpenVR (Custom Build)
+# QuakeSpasm-OpenVR
 
-This is a customized fork of QuakeSpasm-OpenVR, optimized for VR gameplay with dual-binding support and classic engine defaults.
+This repository is a custom QuakeSpasm-OpenVR fork focused on VR play,
+modern single-player mods, and trusted co-op multiplayer. It keeps the
+QuakeSpasm-OpenVR lineage and VR controls from the old main branch, then adds
+CSQC compatibility, QSS-M-inspired networking, co-op quality-of-life behavior,
+modern particle/weather support, and per-mod VR weapon calibration.
 
-> [!IMPORTANT]
-> **VR Multiplayer Fixes**: This build specifically addresses and fixes issues with VR clients in multiplayer sessions, ensuring stable connectivity and synchronized gameplay. This includes robust synchronization of **weapon positions** and **playspace offsets**, ensuring VR players are correctly represented for all participants.
+The pre-integration default branch is preserved as `legacymain`. The current
+default branch is the active VR/co-op/mod-compatibility branch.
 
-There is however no big further development planned apart from minor features and bugfixes.
+## Goals
 
-If your are looking for a much more feature rich VR experience, check out [Quake VR](https://github.com/vittorioromeo/quakevr) (see section below on differences between both projects).
+- Keep QuakeSpasm-OpenVR usable for both VR and `-novr` desktop play.
+- Support large modern mods such as Arcane Dimensions, Alkaline, Dwell,
+  Mjolnir, QBJ3, Raven Keep, Peril, Enyo, and Quake VR-derived mods.
+- Prefer smooth trusted co-op over legacy client interoperability. Networked
+  clients and servers are expected to run the same build.
+- Keep behavior close to QuakeSpasm, Ironwail, QSS-M, vkQuake, and FTEQW where
+  those ports have established compatibility behavior.
 
-Here are the changes to the last iterations of QuakeSpasm-OpenVR by [vittorioromero](https://github.com/vittorioromeo/Quakespasm-OpenVR/tree/wip) and [Fishbiter](https://github.com/Fishbiter/Quakespasm-OpenVR):
+## Lineage And Credits
 
-- Update to most current [QuakeSpasm](https://github.com/sezero/quakespasm) (v0.96.3)
-- 64bit build
-- Added head-based movment (in addition to controller-based movement)
-- **Advanced Networking**: VR clients are now fully supported in multi-client sessions with accurate weapon and playspace synchronization.
-- Improved controller binding with Dual-Bind support (Triggers/Buttons work alongside desktop keys)
-- Support for [enhanced weapon models](#enhanced-models)
-- Default setting: Linear texture filtering and blocky particles for classic look.
-- Various other fixes and tweaks for cross-platform compatibility.
+This fork descends from:
 
-## Functional Changes From Main
+- [QuakeSpasm](https://github.com/sezero/quakespasm), currently based on
+  QuakeSpasm 0.96.3.
+- Dominic Szablewski's Phoboslab Oculus/Rift QuakeSpasm work.
+- Ben Newhouse's OpenVR C wrapper.
+- Zackin5's OpenVR port.
+- Fishbiter's QuakeSpasm-OpenVR improvements.
+- Vittorio Romeo's QuakeSpasm-OpenVR and Quake VR work.
+- The previous main branch by gameflorist/hiina, which contributed the modern
+  QuakeSpasm base, 64-bit build, head/controller movement, VR multiplayer
+  weapon and playspace sync, dual desktop/VR bindings, enhanced model support,
+  classic visual defaults, SteamVR binding work, and cross-platform fixes.
 
-This branch carries additional mod-compatibility, co-op, and multiplayer networking changes beyond the main/master branch.
+This branch also references behavior and code from QSS-M, Ironwail, vkQuake,
+and FTEQW for networking, mod compatibility, particles, rendering behavior, and
+extended protocol support.
 
-- **CSQC compatibility:** the client can load a lightweight `csprogs.dat` and run supported CSQC entry points such as `CSQC_Init`, `CSQC_DrawHud`, and `CSQC_DrawScores`. It also supports CSQC drawing helpers, client stat reads, string helpers, and command checks needed by several modern mods. Full DarkPlaces/QuakeWorld CSQC is still not implemented.
-- **Extended client stats:** the protocol-side stat table was expanded to 256 slots, with integer, float, and string stat support. Server-side QuakeC can register extra stats through `clientstat`, and the client exposes them through `getstati`, `getstatf`, and `getstats`.
-- **Modern protocol defaults:** the default server protocol is RMQ protocol `999`, with higher model/entity/cache limits for large mods. Protocol `15` and FitzQuake protocol `666` remain available through `sv_protocol` or `-protocol`.
-- **Large update handling:** server unreliable updates honor `sv_maxpacketsize`, split oversized updates without repeating snapshot timing data, and prioritize nearby/front-facing entities when packets are tight.
-- **Networking hardening:** the datagram layer has a shared-socket path, NAT port-remap recovery, client port probing, stale-input clearing, QSS-M-style per-client sound delivery, send pacing, and lag diagnostics aimed at reducing VR multiplayer judder and delayed movement after packet gaps.
-- **Co-op fixes:** players can be made non-solid to each other in co-op, weapon pickup targets can fire correctly for all players, optional pickup/ammo target fixes are available for mods, and co-op revive/ammo respawn helpers are available.
-- **Gameplay compatibility fixes:** elevator/pusher behavior is more tolerant, QuakeC `random()` avoids returning exact 0/1 by default, and entity scaling is kept compatible with mods such as QBJ3 that break when static/baseline scale is encoded into signon data.
-- **Weapon wheel compatibility:** the VR weapon wheel and weapon-offset presets include additional mod weapons, including Arcane Dimensions, Alkaline, Enyo, Tomb of Thunder, and QBJ3 model sets.
-- **Config control:** `-postcfg <file.cfg>` executes a config after normal startup/game configs, which is useful for universal local bindings that should win over mod `quake.rc` or `autoexec.cfg` files.
-- **Multiplayer save opt-in:** co-op multiplayer saves can be enabled for controlled server testing, but the current save format still supports only one active player in client slot 0.
+## Major Changes Since Legacy Main
 
-## Quake VR vs QuakeSpasm-OpenVR?
+### VR
 
-Vittorio Romeo expanded `QuakeSpasm-OpenVR` considerably into the most excellent [Quake VR](https://github.com/vittorioromeo/quakevr), which is definitely a much more feature rich VR implementation - including teleportation, finger tracking, VR interactions, two-handed weapons, dual wielding, holsters and much more.
+- VR and desktop modes are both first-class. Use `-vr` or `-novr`.
+- VR multiplayer sends weapon pose, muzzle pose, playspace information, and
+  controller-related state.
+- The VR weapon wheel detects more mod weapons, supports multiple weapons in a
+  shared slot, and avoids non-weapon inventory models.
+- `vrweapons.txt` can define held-weapon offsets, muzzle offsets, scales, and
+  multiplayer-only deltas without hardcoding a mod in C.
+- In-game calibration commands can freeze the current weapon and save
+  controller-aligned held or muzzle offsets back to `vrweapons.txt`.
+- Default bindings expose secondary fire through `+button3`: right mouse in
+  `-novr`, Index right touchpad in VR, and right grip on other controllers.
+- Text, menus, controller input, and desktop fallback crosshairs were adjusted
+  for VR stereo correctness and desktop compatibility.
 
-It is however a heavily modified version of QuakeSpasm, which is not compatible with enhanced mods (like Arcane Dimensions) out-of-the-box, and does not allow multiplayer-crossplay with non-VR players.
+### Networking
 
-I would recommend you to enjoy [Quake VR](https://github.com/vittorioromeo/quakevr) primarily with vanilla Quake, it's official expansions as well as supported maps.
+- Clients and servers use an extended movement path with numbered movement
+  commands, redundant command sends, movement ACKs, and prediction state.
+- Co-op servers can use PMove-based movement and QSS-M-style prediction to
+  reduce movement judder.
+- Replacement-delta entity updates reduce the need for unsafe split snapshots.
+- Snapshot resend, packet duplication, entity prioritization, and pacing help
+  busy co-op maps stay playable under packet loss.
+- The datagram layer has shared-socket support, client port probing, NAT
+  remap recovery, same-IP stale socket handling, and reorder recovery.
+- Network diagnostics can log gaps, reorder events, overflows, prediction
+  corrections, and per-client send behavior without requiring on-screen spam.
 
-For a more bare-bone experience supporting all features of current QuakeSpasm (e.g. support for Arcane Dimensions and the Enhanced Edition), or cross-play multiplayer with non-VR-players QuakeSpasm-OpenVR would probably be the better option.
+### Co-op
 
-## History
+- Co-op defaults are tuned for trusted play: no friendly fire, non-solid
+  players, PMove prediction, weapon-target fixes, revive support, optional ammo
+  respawn, autosaves, and death-location respawn helpers.
+- Co-op respawn can keep vanilla weapons/ammo plus known extra weapon, ammo,
+  item, key, and string-key fields used by modern mods.
+- Optional respawn delay gives the team time to recover; if all players are
+  dead, respawn falls back to standard spawn points.
+- Pickup target fixes let co-op-only players trigger weapon and progression
+  pickup logic that some single-player maps attach to item touches.
+- Multiplayer save/load can be enabled for controlled co-op testing.
 
-This fork of [QuakeSpasm](https://github.com/sezero/quakespasm)...
+### Mod Compatibility
 
-- builds on the most current `QuakeSpasm-OpenVR` version from [vittorioromeo/Quakespasm-OpenVR](https://github.com/vittorioromeo/Quakespasm-OpenVR/tree/wip)
-  - which was forked from [Fishbiter's improvement on Zackin5's version](https://github.com/Fishbiter/Quakespasm-OpenVR)
-    - which was forked from [Zackin5's OpenVR port of Dominic Szablewski's (Phoboslab) Oculus modification of Quakespasm](https://github.com/Zackin5/Quakespasm-OpenVR)
-      - which was forked from [Dominic Szablewski's (Phoboslab) Oculus modification of Quakespasm](https://github.com/phoboslab/Quakespasm-Rift) and utilizing the [OpenVR C wrapper by Ben Newhouse](https://github.com/newhouseb/openvr-c).
+- Lightweight CSQC support can load `csprogs.dat` and run supported entry
+  points such as `CSQC_Init`, `CSQC_DrawHud`, and `CSQC_DrawScores`.
+- Extended client stats support integer, float, vector, and string stat data
+  for modern HUDs.
+- Engine extension queries and Quake 2021/rerelease builtin aliases are
+  recognized by QuakeC/CSQC where this fork implements them.
+- FTE/Ironwail/QSS-style particles, decals, rain, weather, beam polygons,
+  particle descriptors, and expanded particle limits are available.
+- Skyboxes, alpha sorting, skywind, optional skyroom rendering, and skyroom PVS
+  support were added for mods that rely on newer source-port behavior.
+- Entity and protocol limits are raised for large maps. Protocol 999 is the
+  default server protocol, while older protocols remain selectable.
+- Menu/config startup supports `-postcfg` for a final local config that runs
+  after mod startup files.
 
-## Setup and Usage
+### Rendering And Performance
 
-Extract the most recent release into your `Quake` or `Quake\rerelease` folder (where the subfolder `Id1` resides).
+- Alias model batching is available for repeated model draws.
+- Alpha surfaces are sorted more safely for water, glass, and other translucent
+  content.
+- Warp texture rendering was kept compatible with classic QuakeSpasm behavior.
+- Portal culling, skyroom rendering, particle density, and performance logging
+  have cvars so expensive paths can be isolated during testing.
+- Model interpolation and shadow exclusion lists include additional modern mod
+  models that should not lerp or cast shadows.
 
-Launch `quakespasm-openvr.exe`.
+## Running
 
-### HD Textures
+Place the executable beside your `id1` folder or Quake rerelease game data.
 
-There is a [HD textures](https://drive.google.com/file/d/1UAH4la2uOv3lwMkMk05yZuYmiPIyExU_/view?usp=sharing) package available. Simply extract the zip-file into the `Id1` subfolder (where `PAK0.PAK` is located).
+```sh
+./quakespasm-openvr.bin -vr -game ad
+./quakespasm-openvr.bin -novr -game ad
+./quakespasm-openvr.bin -dedicated 16 -game vr +coop 1 +map start
+```
 
-You can also download a HD texture pack for __Arcane Dimensions__ [here](https://www.moddb.com/games/quake/addons/hires-texture-pack-for-arcane-dimensions). Simply extract the `textures` folder into your `ad` directory.
+For a final local config that should win after mod configs:
 
-### Enhanced Models
+```sh
+./quakespasm-openvr.bin -game ad -postcfg local.cfg
+```
 
-There are also 3 mods available containing enhanced models for enemies and weapons. These can also be used with QuakeSpasm-OpenVR.
-
-- [__Plague's Weapon Pack for VR__]:
-
-  This pack contains the fully modelled weapons by [Plague](https://members.optusnet.com.au/%7eplaguespak/), adapted and animated for VR by Skizot, and expansion weapons added. This pack is perfect for VR.
-
-  To use them with QuakeSpasm-OpenVR, extract `pakz.pak` into your `id1` subfolder and rename it by changing the `z` to a number higher then the highest existing `pak`-file inside your `id1` folder. If you are using `pak` files from vanilla Quake this will be `pak2.pak`, and if you're using the Re-Release, it will be `pak1.pak`.
-  
-  For the expansions, as as well as Arcane Dimensions, do exactly the same with the `hipnotic`, `rogue` and `ad` subfolders. There is also a special pack available for the Alkaline mod. Simply extract it into the `alk` subfolder.
-  
-  You will notice, that the weapon offsets and scaling will be off. To switch to the correct offsets, access the `VR Options` in Quake's main menu and switch `Gun Model Offsets` from `Vanilla` to `Plague`. (Note that you will have to do that for each expansion/add-on you load, since Quake writes separate configs per mod.)
-
-- [__Enhanced Model Conversions Pack__](https://quakeone.com/forum/quake-mod-releases/finished-works/283295-osjc-s-enhanced-quake1-model-conversions-pack-v1):
-
-  This pack is a conversion of the enhanced models from Quake's Re-Release. Models from the expansions are missing though. There are 2 ways to use it with QuakeSpasm-OpenVR:
-
-  - Extract the `enhanced` folder of the downloaded archive into your `Quake` folder, and start the game with `-game enhanced`. This should automatically load vanilla Quake with the new models and correctly apply the correct weapon offsets.
-  - If you want to use the new models globally with all expansions and add-ons, rename `pak0.pak` from the `enhanced` folder by changing the `0` to a number higher then the highest existing `pak`-file inside your `id1` folder. If you are using `pak` files from vanilla Quake this will be `pak2.pak`, and if you're using the Re-Release, it will be `pak1.pak`. You will notice, that the weapon offsets and scaling will be off. To switch to the correct offsets, access the `VR Options` in Quake's main menu and switch `Gun Model Offsets` from `Vanilla` to `Enhanced`. (Note that you will have to do that for each expansion/add-on you load, since Quake writes separate configs per mod.)
-
-- [__Authentic Model Improvements__](https://github.com/NightFright2k19/quake_authmdl):
-
-  This pack contains considerably more models as the one above - including converted ones from the Re-Release, but some weapons look worse than Plague's Weapon Pack and the Enhanced Model Conversion Pack linked above. To use them with QuakeSpasm-OpenVR, extract it into your `Quake` folder and rename the `pakz.pak` files by changing the `z` to a number higher then the highest existing `pak`-file inside your `id1`, `hipnotic`, and `rogue` folders. You will notice, that the weapon offsets and scaling will be off. To switch to the correct offsets, access the `VR Options` in Quake's main menu and switch `Gun Model Offsets` from `Vanilla` to `Authentic`. (Note that you will have to do that for each expansion/add-on you load, since Quake writes separate configs per mod.)
-
-- [__Block-Quake__](https://kebby-quake.itch.io/block-quake):
-
-  A total conversion mod for Quake  featuring familiar plastic blocks.
-
-  To use them with QuakeSpasm-OpenVR, extract `blockquake_vanilla.pak` into your `id1` (or any mod) subfolder and rename it to a number higher then the highest existing `pak`-file inside your `id1` folder. If you are using `pak` files from vanilla Quake this will be `pak2.pak`, and if you're using the Re-Release, it will be `pak1.pak`.
-  
-  You will notice, that the weapon offsets and scaling will be off. To switch to the correct offsets, access the `VR Options` in Quake's main menu and switch `Gun Model Offsets` to `Block-Quake`. (Note that you will have to do that for each expansion/add-on you load, since Quake writes separate configs per mod.)
-
-You can also use multiple MODs in conjunction. E.g. load the Authentic pack first as e.g. `pak1.pak` to get the wide arrange of models and then the Plague's Weapon Pack second e.g. as `pak2.pak` to get the better VR-optimized weapon models. Of course you have to set `Gun Model Offsets` to `Plague` in this case.
-
-### Controls
-
-Both head-based (default) and controller-based movement is supported. You can change it in the VR options.
-
-Input from VR Controllers are mapped to various joystick-related input (except the left Application Menu button is bound to `ESCAPE`). The fork comes with the following reasonable default binding:
-
-| Controller Button | Key Mapping | Default Action |
-| ----------------- | ----------- | -------------- |
-| Left Trigger | `LTRIGGER` | Jump |
-| Right Trigger | `RTRIGGER` | Attack / Enter in Menu |
-| Left Application Menu / B Button | `ESCAPE` | Toggle Menu / Escape |
-| Right Application Menu / B Button | `BBUTTON` | Next Weapon |
-| Left Pad/Stick Click | `LTHUMB` | Run |
-| Right Pad/Stick Click | `RTHUMB` | Jump |
-| Index Right Touchpad / Other Right Grip | `VR_ALTFIRE` | Alt Fire |
-| Left Grip | `LSHOULDER` | Show Scores |
-| Right Grip on Index | `RSHOULDER` | Show Scores |
-| Left A Button | `ABUTTON` | Show Scores |
-| Right A Button | `XBUTTON` | Previous Weapon |
-| Right Axis 2 Press | `YBUTTON` | _none_ |
-| Right Pad/Stick Up | `UPARROW` | _none_ |
-| Right Pad/Stick Down | `DOWNARROW` | _none_ |
-| Right Pad/Stick Left | `LEFTARROW` | _none_ |
-
-On desktop/no-VR, right mouse defaults to `+button3` for mods that expose secondary fire.
-| Right Pad/Stick Right | `RIGHTARROW` | _none_ |
-
-#### Important infos
-
-- On Windows SteamVR, run the included `Install SteamVR Controller Bindings.bat` after starting SteamVR to import the recommended Valve Index legacy bindings automatically. If the game has never appeared in SteamVR's controller binding UI, launch `quakespasm-openvr.exe` once first.
-- In SteamVR's default Legacy bindings, controllers with a dedicated `A` button (e.g. Index Controllers) cannot use this button independently from the `Grip` button. The included binding installer fixes this by mapping `A Button` Click to `Left/Right A Button` instead of `Grip Button`.
-- `Right Axis 2 Press` is not mapped at all in SteamVR's default Legacy bindings. The included Index binding maps it to `Right Touchpad Click` to expose an additional button.
-- By default, the right pad/stick is configured for smooth/snap turning. If you use real roomscale-turning, you can set `Turn Speed` in the VR-Settings to the lowest setting (0) to turn this off. Then you can rebind the pad/stick like a D-Pad with 4 directions. You can use these 4 additional bindings e.g. for quick-loading/-saving or mapping of specific weapons.
-- Check out the Community Binding `Index Controller Bindings` in SteamVR for a preset for Index Controllers, that makes the maximum buttons available for binding.
-
-#### Tips on weapon selection
-
-Quick weapon selection is not so easily achievable with the limited buttons available on VR controllers, and just relying on next/previous weapon buttons is a disadvantage. There is a trick to mitigate this:
-
-In Quake the normal _Nailgun_ gets arguably obsolete, once the _Super Nailgun_ is obtained. It is the same with the _Shotguns_, as well as _Grenade- and Rocket-Launchers_.
-
-__QuakeSpasm__ allows a button-binding e.g. like this: `impulse 4; wait; impulse 5`. This will select the _Nailgun_, if you have it, and then immediately try to select the _Super Nailgun_, if you have it. Effectively using this button as "___Gimme the best nailgun!___".
-
-Now, if you use roomscale-turning, you have the right stick free for additional bindings. You could e.g. bind the directions like this in the `config.cfg`:
+For trusted co-op servers, the intended baseline is:
 
 ```txt
-bind "UPARROW" "impulse 2; wait; impulse 3"
-bind "DOWNARROW" "impulse 6; wait; impulse 7"
-bind "LEFTARROW" "impulse 8"
-bind "RIGHTARROW" "impulse 4; wait; impulse 5"
+coop 1
+deathmatch 0
+sv_protocol 999
+sv_maxpacketsize 1400
+sv_pmove 1
+sv_pmove_legacy 1
+sv_coop_predictmove 1
+sv_coop_trusted_clientmove 1
+sv_coop_noplayerclip 1
+sv_nofriendlyfire 1
+sv_coop_weapon_targetfix 1
+sv_coop_revive 1
 ```
 
-Throw in `bind "RTHUMB" "impulse 1"` to select the Axe on stick-press, and the perfect weapon for the current situation will always just a push or click away.
+Use `-novr` for desktop clients and `-vr` for headset clients. Desktop trusted
+client movement is off by default even though VR trusted movement is available.
 
-### Mission Packs, Add-Ons and Mods
+## Building
 
-All mission packs, add-ons and mods (supported by QuakeSpasm) should work out of the box. This includes:
+Linux:
 
-- Scourge of Armagon
-- Dissolution of Eternity
-- Dimension of the Past
-- Dimension of the Machine
-- Arcane Dimensions (be sure to place it in a `ad` subfolder)
-- [Alkaline](https://alkalinequake.wordpress.com/) (be sure to place it in a `alk` subfolder)
-- [Slave Zero X: Episode Enyo](https://poppyworks.itch.io/episode-enyo) (be sure to place it in a `enyo` subfolder)
-- [Tomb of Thunder](https://youtu.be/iA56E7Rvc6A) (be sure to place it in a `tombofthunder` subfolder)
-- [Block-Quake](https://kebby-quake.itch.io/block-quake) (be sure to set `Gun Model Offsets` in the `VR Options` to `Block-Quake`)
-- etc.
-
-As usual, expansion packs and mods are placed inside subfolders and then launched by stating the subfolder via the `game` parameter (e.g. `quakespasm-openvr.exe -game hipnotic`).
-
-Quake Enhanced Edtion (aka Re-Release) stores it's Add-Ons in `C:\Users\<your-user>\Saved Games\Nightdive Studios\Quake\`. You have to copy the subfolders (e.g. `honey` or `q64`) of this folder into the folder where `quakespasm-openvr.exe` is located and launch the Add-On like stated above.
-
-#### Known Issues
-
-- Arcane Dimensions, and Alkaline
-  - When launching one of these mods, it will not display anything in VR at first. Press the __Enter__ key twice in order to get in game and play in VR.
-    Alternatively you can also add `+map start` to your start script to circumvent this problem. (e.g. `quakespasm-openvr.exe -game ad +map start`)
-- The Spiritworld
-  - When launching this mod, it will not display anything in VR at first. Press the __Esc__ key and then the __Enter__ key twice in order to get in game and play in VR.
-    Alternatively you can also add `+map start` to your start script to circumvent this problem. (e.g. `quakespasm-openvr.exe -game spiritworld +map start`)
-- Underdark Overbright & Copper
-  - Water is rendered differently per eye in Underdark Overbright & Copper. The problem can be alleviated a bit by setting `r_wateralpha "0"` in your `config.cfg`.
-
-### Cvars
-
-- `vr_enabled` – 0: disabled, 1: enabled
-- `vr_crosshair` – 0: disabled, 1: point, 2: laser sight
-- `vr_crosshair_size` - Sets the diameter of the crosshair dot/laser from 1-32 pixels wide. Default 3.
-- `vr_crosshair_depth` – Projection depth for the crosshair. Use `0` to automatically project on nearest wall/entity. Default 0.
-- `vr_crosshair_alpha` – Sets the opacity for the crosshair dot/laser. Default 0.25.
-- `vr_aimmode` – 7: Head Aiming, 2: Head Aiming + mouse pitch, 3: Mouse aiming, 4: Mouse aiming + mouse pitch, 5: Mouse aims, with YAW decoupled for limited area, 6: Mouse aims, with YAW decoupled for limited area and pitch decoupled completely, 7: controller attached. Default 7. (Note I haven't been very careful about maintaining these other modes, since they're obsolete from my point of view).
-- `vr_deadzone` – Deadzone in degrees for `vr_aimmode 5`. Default 30.
-- `vr_viewkick`– 0: disables viewkick on player damage/gun fire, 1: enable
-- `vr_world_scale` - 1: Size of the player compared to normal quake character.
-- `vr_floor_offset` - -16: height (in Quake units) of the player's origin off the ground (probably not useful to change)
-- `vr_snap_turn` - 0: If 0, smooth turning, otherwise the size in degrees of each snap turn.
-
----
-__New cvars for analog stick (and touchpad?) tuning on VR controllers.__ Default values should behave the same as before, but note that this version has not been tested with snap turning enabled. These have only been tested with analog sticks (Oculus Touch and Index Controllers), no idea how they behave with Vive touchpads.
-
-- `vr_joystick_yaw_multi` - 1.0: Adjusts turn speed when using VR controllers, suggested 2.0-3.0
-- `vr_joystick_axis_deadzone` - 0.25: Deadzone value for joysticks, suggested 0.1-0.2
-- `vr_joystick_axis_exponent` - 1.0: Exponent for axis input, suggested 2.0. Larger numbers increase the 'low speed' portion of the movement range, numbers under 1.0: decrease it, 1.0 is linear response. 2.0 makes it easier to make fine adjustments at low speed
-- `vr_joystick_deadzone_trunc` - 1 If enabled (value 1) then minimum movement speed will be given by the deadzone value, so it will be impossible to move at speeds below the deadzone value. When disabled (value 0) movement speed will ramp up from complete standstill to maximum speed while above the deadzone, so any speed is possible. Suggest setting to 0 to disable
-
-### Additional Branch Cvars
-
-These cvars are custom additions or important changed defaults in this branch compared with main/master.
-
-| Cvar | Default | Description |
-| ---- | ------- | ----------- |
-| `cl_nocsqc` | `0` | Set to `1` to disable loading client-side QC/CSQC. Useful when isolating a mod HUD or CSQC compatibility issue. |
-| `cl_netfps` | `72` | Drives the QSS-style network interval for remote clients and listen-server multiplayer. Set to `0` to disable the cap. Matches QSS-M's default renderer/network isolation cadence so the server receives finer-grained movement history even when the dedicated server simulates at 20 Hz. |
-| `cl_move_redundancy` | `18` | Sends previous QSS-style `clc_move` records with each new move so upstream loss bursts do not lose input frames. Command duration is derived from the QSS-style server-time stamp instead of a separate msec byte. |
-| `cl_move_maxpacketbytes` | `1400` | Soft size cap for bundled movement packets. The sender keeps the newest commands that fit, so normal/VR clients get a longer recovery window without creating oversized upstream UDP packets. |
-| `cl_move_packetdup` | `1` | Sends duplicate movement datagrams by default so isolated upstream UDP loss does not delay player input. `cl_move_redundancy` still carries prior commands for longer loss bursts. |
-| Move timestamps | QSS-M-style | Remote movement commands use a monotonic client input clock. The client only pulls the clock forward if it falls far behind the latest server timestamp; the server clamps future timestamps. Snapshot interpolation gaps do not collapse command duration, so PMove keeps receiving steady frame times while visual updates recover. |
-| Replacement frame IDs | Latest-only | Replacement-delta updates carry an explicit logical frame id that clients ack with `clcdp_ackframe`. This keeps entity-delta recovery independent from extra tiny movement-ack datagrams sent on the same UDP socket. |
-| `cfg_unbindall` | `1` | Controls whether generated `config.cfg` files start with `unbindall`. Set to `0` if you need persisted binds to merge instead of clearing first. |
-| `cl_extrapolate` | `0.02` | Allows a small amount of client interpolation/extrapolation tolerance for remote snapshots. |
-| `cl_extrapolate_adaptive` | `0` | Temporarily raises extrapolation tolerance after snapshot gaps or interpolation overruns when enabled for diagnostics. |
-| `cl_net_lerpbuffer` | `0.10` | Delays remote snapshot interpolation by two 20 Hz server ticks so small timing jitter does not immediately overrun the latest snapshot. |
-| `cl_net_lerpbuffer_adaptive` | `0` | Temporarily widens `cl_net_lerpbuffer` after snapshot gaps, incomplete fragments, or interpolation overruns when enabled for diagnostics. |
-| `cl_net_lerpbuffer_adaptive_max` | `0.30` | Maximum adaptive interpolation buffer in seconds. |
-| `cl_net_lerpbuffer_adaptive_time` | `0.75` | Time in seconds over which the adaptive interpolation buffer decays after a network gap. |
-| `cl_predict_smooth` | `1` | Blends small local prediction-error corrections by default. The default smoothing window is short (`cl_predict_smooth_time 0.04`) and only applies to corrections between `cl_predict_smooth_min 0.25` and `cl_predict_smooth_max 8`, so wall-contact micro errors are hidden without smoothing large authoritative corrections into rubberbanding. |
-| `cl_predict_legacy` | `0` | Debug fallback for the old non-replacement-delta prediction path. Normal latest-client/latest-server play should use PMove prediction instead. |
-| `net_reorder_window` | `2` | Small unreliable packet reorder window used on both client and server receive paths. It catches same-burst UDP reordering before the old NetQuake sequence layer marks the skipped packet as dropped. |
-| `pr_checkextension` | `1` | Controls advertised QuakeC extension support. This branch advertises only implemented extensions such as `FTE_QC_CHECKCOMMAND`. |
-| `sv_maxpacketsize` | `1400` | Maximum unreliable datagram size sent to remote clients. The default stays below typical Ethernet MTU after UDP/IP headers while reducing multi-datagram updates on large co-op maps. Lower it for VPNs or paths with smaller MTUs. |
-| `sv_netsort` | `1` | Uses an Ironwail/QSS-style entity priority sort so packet pressure drops distant or behind-camera entities before nearby/high-priority entities. |
-| `sv_pmove` | `1` | Enables QSS/FTE-style server PMove plus acknowledged movement frames when the client supports prediction info. |
-| `sv_pmove_legacy` | `1` | Applies server PMove to normal QuakeC mods that do not define `SV_RunClientCommand`, replacing legacy 20 Hz server-authoritative movement with acknowledged command replay while preserving the mod's `PlayerPreThink`/`PlayerPostThink` hooks. Set to `0` only for a mod that proves incompatible with engine PMove fallback. |
-| `sv_move_timeclamp` | `1` | Clamps accepted client command time against server time, following QSS-M's bounded independent movement timing. |
-| `sv_replacement_maxpackets` | `0` | Maximum replacement-delta datagrams emitted to one client per server update. `0` means flush pending deltas up to the engine safety cap, matching QSS-M's independent multi-datagram replacement-delta behavior instead of deferring large-map updates behind a one-packet budget. |
-| `sv_replacement_packetdup` | `1` | Sends one duplicate copy of replacement-delta datagrams. This protects move acks and entity state against isolated downstream UDP loss. |
-| `sv_replacement_packetdup_all` | `1` | Duplicates continuation packets from large replacement-delta frames too. This costs more downstream bandwidth but avoids single lost continuations creating visible hitches on large co-op maps. |
-| `sv_replacement_pacing` | `1` | Enables a soft per-packet cap for non-critical replacement deltas. Soft-capped deltas spill into independent continuation packets in the same server frame instead of waiting for the next tick. |
-| `sv_replacement_softmaxbytes` | `1000` | Soft per-packet target used by `sv_replacement_pacing`. Critical player, reset, removal, solid, and effect deltas may still bypass it. |
-| `sv_replacement_datagram_reserve` | `1` | Reserves space for pending sounds/temp entities/private datagrams before writing non-critical replacement entity deltas, mirroring QSS-M's preference for preserving frame events under packet pressure. |
-| `sv_replacement_priority_radius` | `0` | Radius for letting nearby non-critical replacement deltas bypass the soft cap. `0` keeps the soft cap strict except for critical player, reset, removal, solid, and effect deltas. |
-| `sv_replacement_particle_maxbytes` | `256` | Maximum cosmetic particle bytes copied from the global unreliable datagram into one replacement update. Excess particle-only traffic is dropped before it forces extra UDP packets; sounds/temp entities remain prioritized. |
-| `sv_moveack_independent` | `0` | Sends a tiny standalone movement-ack/prediction-state datagram before replacement-delta snapshots when enabled. It defaults off because QSS-M-style replacement deltas carry the move ack in the entity update, keeping the acknowledged command and authoritative player origin synchronized. |
-| `sv_moveack_packetdup` | `1` | Duplicate count for independent movement-ack datagrams. The duplicate uses the same unreliable sequence, so it protects isolated loss without creating fake skipped sequence gaps when both copies arrive. |
-| `sv_inputtimeout` | `0.50` | Clears stale movement/buttons after this many seconds without fresh input from a client. The default tolerates brief WAN input holes before zeroing movement; set to `0` to disable. |
-| `sv_freezenonclients` | `0` | When enabled, server physics runs clients/world only. This is mainly a diagnostic or special server control, not a normal gameplay setting. |
-| `sv_gameplayfix_elevators` | `2` | Pusher/elevator fix. `0` off, `1` clients only, `2` all entities. Helps prevent entities from blocking lifts due to tiny contact errors. |
-| `sv_gameplayfix_random` | `1` | Makes QuakeC `random()` return values strictly between 0 and 1, avoiding exact edge cases that can break some logic. |
-| `sv_coop_noplayerclip` | `1` | In co-op, lets active players pass through each other for normal movement traces while preserving missile and point traces. |
-| `sv_coop_weapon_targetfix` | `1` | In co-op, fires weapon pickup targets for later players when the mod's `weapon_touch` path would otherwise consume the trigger. `2` also attempts custom weapon touch handlers. |
-| `sv_coop_pickup_targetfix` | `0` | Optional co-op target fix for non-weapon pickups. Requires class filtering through `sv_coop_pickup_targetfix_classes`. |
-| `sv_coop_pickup_targetfix_classes` | empty | Comma/semicolon/space-separated classnames eligible for `sv_coop_pickup_targetfix`, for example `item_artifact_super_damage,item_health`. |
-| `sv_coop_pickup_targetlog` | `0` | Logs pickup target state after touches to help audit mods for co-op trigger issues. |
-| `sv_coop_ammo_respawn` | `0` | Respawns supported ammo pickups in co-op using the mod's `SUB_regen` path when available. |
-| `sv_coop_ammo_respawn_time` | `30` | Respawn delay, in seconds, for `sv_coop_ammo_respawn`. |
-| `sv_coop_revive` | `1` | Enables the co-op melee revive helper. |
-| `sv_coop_revive_health` | `25` | Health restored by the co-op revive helper. |
-| `sv_coop_revive_range` | `96` | Trace range for co-op revive attempts. |
-| `sv_coop_respawn_near_player` | `1` | In co-op, lets QuakeC perform its normal respawn first, then relocates the player to a safe spot near their last safe/death position or near a living teammate. If all active players are dead together, the next respawn for those players keeps the mod's standard spawn point instead. |
-| `sv_coop_respawn_delay` | `10` | Seconds to wait before accepting respawn input while `sv_coop_respawn_near_player` is active. Set to `0` to disable the wait. |
-| `sv_coop_respawn_keep_weapons_ammo` | `1` | Restores carried weapons, ammo, keys, and supported mod inventory fields after a co-op respawn. |
-| `sv_save_multiplayer` | `0` | Allows saving co-op multiplayer games only when set to `1`. Current save/load support is intentionally limited to one active client in slot 0. |
-| `sv_cmdfile` | empty | Dedicated-server command file name relative to the current game directory. When present, the server executes and deletes the file each frame after reading it. |
-| `net_lagdebug` | `0` | Enables verbose network/judder diagnostics for datagram gaps, dropped unreliable packets, frame spikes, stale input, and interpolation overruns. |
-| `net_lagdebug_threshold` | `0.25` | Datagram-gap threshold, in seconds, for `net_lagdebug` messages. |
-| `net_lagdebug_frame_threshold` | `0.05` | Frame/update-gap threshold, in seconds, for `net_lagdebug` messages. |
-| `net_reorder_timeout` | `0` | Maximum seconds to wait for the missing unreliable datagram before advancing past it. The default forces queued packets at the end of the current receive drain so reordering recovery does not add a server tick of latency. |
-| `net_singlesocket` | `1` | Uses one UDP socket for accept/control and game traffic on the server, with queued dispatch to per-client logic. |
-| `net_sameip_stale_timeout` | `3.0` | Time before stale same-IP connection state can be discarded during reconnect/NAT-remap handling, including stale duplicate ports left behind by a reconnect. |
-| `cl_netport` | `0` | Preferred local UDP port for the client. `0` lets the OS choose. |
-| `cl_portpingprobe_enable` | `1` | Enables client connect-time server-info probes across candidate local ports. |
-| `cl_portpingprobe_probes` | `6` | Number of local-port probes to try when `cl_portpingprobe_enable` is on. |
-| `cl_portpingprobe_delay` | `0.20` | Seconds to wait for port-probe replies before falling back. |
-
-### Additional Launch Flags And Commands
-
-| Option | Description |
-| ------ | ----------- |
-| `-postcfg <file.cfg>` | Executes a relative config file after normal startup configs. With `+game`, it is queued after the new game's `quake.rc`/autoexec path. Multiple `-postcfg` entries are allowed and execute in command-line order. |
-| `-protocol <15\|666\|999>` | Selects the server protocol before startup. RMQ `999` is the default in this branch. |
-| `sv_protocol <15\|666\|999>` | Console command to view or change the protocol used on the next level load. |
-
-### Note about weapons
-
-Quake's weapons don't seem to be particularly consistently sized or offset. To work around this there are cvars to position/scale correct the weapons. Working default offsets are included for the following weapons:
-
-- Vanilla _Quake_, _Scourge of Armagon_ and _Dissolution of Eternity_ weapons (including the VR versions of Plague's weapon pack and Enhanced and Authentic Model Packs - [see info above for details](#enhanced-models)!)
-- _Arcane Dimensions_ weapons (be sure to use folder-name `ad` and start game with `-game ad` to have them applied, [see info above for use of VR weapons](#enhanced-models))
-- _Alkaline_ weapons (be sure to use folder-name `alk` and start game with `-game alk` to have them applied, [see info above for use of VR weapons](#enhanced-models))
-- Weapons for [_Block-Quake_](https://kebby-quake.itch.io/block-quake) (set `Gun Model Offsets` in the `VR Options` to `Block-Quake`).
-- Weapons for _Slave Zero X: Episode Enyo_ (be sure to use folder-name `enyo` and start game with `-game enyo` to have them applied).
-- Weapons for [_Tomb of Thunder_](https://youtu.be/iA56E7Rvc6A) (be sure to use folder-name `tombofthunder` and start game with `-game tombofthunder` to have them applied).
-- Weapons for _QBJ3_ can be supplied by that mod's `vr_weapons.txt`.
-
-Unsupported mods may require new offsets. You can modify offsets by using the following cvars:
-
-There are 64 slots for weapon VR offsets. There are 5 cvars for each (nn can be 01 to 64):
-
-- `vr_wofs_id_nn` : The model name to offset (this name will be shown when equipping a weapon that doesn't have a VR offset
-- `vr_wofs_scale_nn` : The model's scale
-- `vr_wofs_x_nn` : X offset
-- `vr_wofs_y_nn` : Y offset
-- `vr_wofs_z_nn` : Z offset
-- `vr_wmuzzle_x_nn`, `vr_wmuzzle_y_nn`, `vr_wmuzzle_z_nn` : projectile and
-  crosshair origin offset for that weapon
-
-Mods can also define these held-weapon transforms in a mod-local `vr_weapons.txt`
-entry instead of relying on hardcoded presets or `vr_wofs_*` cvars:
-
-```
-{
-bitmask 1
-model progs/v_pistol.mdl
-viewmodel progs/v_pistol.mdl
-impulse 2
-scale 0.2
-offset 0 0 0
-held_scale 0.15
-held_offset 2.8 44.7 64.5
-muzzle_offset 0 0 64.5
-mp_muzzle_offset 0 0 0
-muzzle_source_viewofs 1
-muzzle_source_offset 8 -8 16
-}
+```sh
+make -C Quake -f Makefile.linux -j$(nproc)
 ```
 
-`model`, `scale`, and `offset` still control weapon wheel display. `viewmodel`,
-`held_scale`, and `held_offset` control the held VR model matched against the
-active first-person viewmodel. `muzzle_offset` separately controls the
-projectile/crosshair origin sent to the server, so visual weapon alignment does
-not have to move where bullets spawn. `muzzle_source_offset` is an optional
-right/up/forward source offset for mods whose QuakeC spawns bullets or
-projectiles away from `self.origin`; `muzzle_source_viewofs 1` additionally
-accounts for `self.view_ofs`. Those source fields are used by the crosshair and
-`vradjustmuzzle` calibration so the controller target is the final projectile
-source, not the intermediate engine origin. `held_model` is accepted as an alias
-for `viewmodel`, and held-only entries are valid for alternate viewmodels.
-`mp_muzzle_offset` is an optional delta applied only while connected to a
-multiplayer server (`cl.maxclients > 1`), so a mod can correct remote-server
-projectile alignment without disturbing singleplayer calibration.
-`mp_held_offset` is also accepted for rare cases where the held mesh itself
-needs a multiplayer-only visual correction.
+Windows cross-builds are produced through the repository's Windows build
+scripts and must not depend on MinGW/GCC DLLs at runtime. Do not commit built
+executables, object files, local logs, or generated Visual Studio output.
 
-For mods where every weapon shares one transform, `vr_weapons.txt` can define
-top-level defaults before the weapon blocks:
+## Controls
 
-```
-global_held_scale 0.2
-global_held_offset 12 52 64
-global_muzzle_offset 0 0 64
-global_mp_held_offset 0 0 0
-global_mp_muzzle_offset 0 0 0
-```
+The engine supports head-based movement and controller-based movement. VR
+controllers are exposed through Quake key/button names so mods and configs can
+bind them normally.
 
-VR calibration commands:
+| Controller input | Quake binding | Default action |
+| --- | --- | --- |
+| Left trigger | `LTRIGGER` | Jump |
+| Right trigger | `RTRIGGER` | Attack / menu select |
+| Left menu / left B | `ESCAPE` | Menu / escape |
+| Right menu / right B | `BBUTTON` | Next weapon |
+| Left stick/pad click | `LTHUMB` | Run |
+| Right stick/pad click | `RTHUMB` | Jump |
+| Index right touchpad / other right grip | `VR_ALTFIRE` / `+button3` | Alt fire |
+| Left grip | `LSHOULDER` | Scores |
+| Right grip on Index | `RSHOULDER` | Scores |
+| Left A | `ABUTTON` | Scores |
+| Right A | `XBUTTON` | Previous weapon |
+| Right stick/pad directions | Arrow keys | Available for custom binds |
 
-- `vradjustweapon` freezes the held weapon mesh. Move the controller to the
-  desired grip point and press fire; the command saves the new `held_offset` to
-  the active mod's `vr_weapons.txt`.
-- `vradjustmpweapon` does the same calibration for multiplayer only. It saves
-  the difference from the active weapon's base `held_offset` as
-  `global_mp_held_offset`, applies it to all weapons in the active
-  `vr_weapons.txt`, and leaves the singleplayer held position unchanged.
-- `vradjustmuzzle` freezes the held weapon mesh. Move the controller to the
-  desired projectile/bullet origin and press fire; the command saves the new
-  `muzzle_offset` to `vr_weapons.txt`.
-- `vradjustmpmuzzle` does the same calibration for multiplayer only. It saves
-  the difference from the active weapon's base `muzzle_offset` as
-  `global_mp_muzzle_offset`, applies it to all weapons in the active
-  `vr_weapons.txt`, and leaves the singleplayer projectile origin unchanged.
-- `vrweaponoffsetglobal` copies the current weapon's held and muzzle offsets to
-  `global_held_*` and `global_muzzle_offset`, removes per-entry held/muzzle
-  overrides from the active mod's `vr_weapons.txt`, and applies those values to
-  the currently loaded schema weapons. `vrglobalweaponoffset` is an alias.
+In desktop/no-VR mode, right mouse defaults to `+button3` for secondary fire.
 
-Here are the `nn` values for all vanilla and mission pack weapons:
+Useful commands:
 
-| Weapon | nn |
-| ----------------- | ----------- |
-| Axe | 01 |
-| Shotgun | 02 |
-| Super Shotgun | 03 |
-| Nailgun | 04 |
-| Super Nailgun | 05 |
-| Grenade Launcher | 06 |
-| Rocket Launcher | 07 |
-| ___Scourge of Armagon (hipnotic):___ |
-| Thunderbold | 08 |
-| Mjolnir Hammer | 09 |
-| Laser Cannon | 10 |
-| Proximity Launcher | 11 |
-| ___Dissolution of Eternity (rogue):___ |
-| Lava Nailgun | 12 |
-| Lava Super Nailgun | 13 |
-| Multi Grenade Launcher | 14 |
-| Multi Rocket Launcher | 15 |
-| Plasma Gun | 16 |
+| Command | Purpose |
+| --- | --- |
+| `menu_vr` | Opens the VR options menu. |
+| `+vr_weaponmenu` | Opens the VR weapon wheel while held. |
+| `vr_turn180` | Performs a 180-degree snap turn. |
+| `vradjustweapon` | Freeze the current weapon and save a controller-aligned held offset. |
+| `vradjustmpweapon` | Save a multiplayer-only held offset delta. |
+| `vradjustmuzzle` | Freeze the current muzzle/projectile origin and save a muzzle offset. |
+| `vradjustmpmuzzle` | Save a multiplayer-only muzzle offset delta. |
+| `vrweaponoffsetglobal` | Promote the current weapon offset to a global mod offset. |
+| `vrglobalweaponoffset` | Alias for `vrweaponoffsetglobal`. |
 
-You can place any modified cvars in an `autoexec.cfg` in the mod's directory to apply them for a mod, or in `id1` to apply them globally.
+## Mod Notes
 
-If you have found working values for a mod, feel free to create an issue, and i will try to include support for them out-of-the-box!
+- Arcane Dimensions: supported with CSQC HUD/stat compatibility, modern
+  particles, extended stats, and co-op networking fixes.
+- Alkaline: supported with extra weapon wheel detection and co-op trigger fixes.
+- Dwell: supported with raised limits, particles/weather behavior, and modern
+  source-port compatibility paths.
+- Mjolnir: supported through expanded limits, particle/weather compatibility,
+  player model handling, and modern entity/protocol behavior.
+- QBJ3: supported with CSQC compatibility, custom weapon wheel entries, and
+  `vrweapons.txt` calibration.
+- Raven Keep, Peril, Enyo, Honey, and similar modern mods are expected to run,
+  but individual maps can still expose unsupported CSQC builtins or expensive
+  rendering paths. Use the diagnostics below when isolating issues.
 
-## Development and Building
+Optional skyroom rendering is intentionally off by default. Enable it only for
+maps that need it:
 
-### Merging current QuakeSpasm
-
-Here is how to merge the current version of QuakeSpasm:
-
-```git
-git remote add sezero https://github.com/sezero/quakespasm.git
-git fetch sezero --tags
-git merge quakespasm-0.95.1 // use tag of new version to merge
+```txt
+r_skyroom 1
 ```
 
-### Building on Windows
+## Cvars
 
-Here is how to build this fork on Windows:
+This table includes the previous main branch's VR cvars and the cvars added or
+changed by this active branch. It does not list every vanilla QuakeSpasm cvar.
 
-1. Install current version of Visual Studio (17.5.3 at the time of writing) with C++ workloads.
-2. Open the file `.\Windows\VisualStudio\quakespasm.sln` in Visual Studio
-3. Build `quakespasm-sdl2`.
-4. As usual you also need a `id1` folder with a `PAK0.PAK` to be able to launch the game.
+| Cvar | Default | Area | Description |
+| --- | --- | --- | --- |
+| `vr_enabled` | `0` | VR | Enables VR rendering and input. Set by `-vr`; cleared by `-novr`. |
+| `vr_aimmode` | `7` | VR | Aiming mode. `7` is controller-attached aiming. |
+| `vr_crosshair` | `1` | VR | VR crosshair mode. |
+| `vr_crosshair_depth` | `0` | VR | Crosshair projection depth; `0` traces to nearby surfaces. |
+| `vr_crosshair_size` | `3.0` | VR | Crosshair point/laser size. |
+| `vr_crosshair_alpha` | `0.25` | VR | Crosshair opacity. |
+| `vr_crosshairy` | `0` | VR | Vertical crosshair offset. |
+| `vr_deadzone` | `30` | VR | Angular deadzone for older aim modes. |
+| `vr_floor_offset` | `-16` | VR | Player origin floor offset in Quake units. |
+| `vr_gunangle` | `32` | VR | Legacy gun pitch angle adjustment. |
+| `vr_gunmodeloffsets` | `0` | VR | Selects built-in weapon offset presets. |
+| `vr_gunmodelpitch` | `0` | VR | Extra weapon pitch adjustment. |
+| `vr_gunmodelscale` | `1.0` | VR | Global held-weapon scale. |
+| `vr_gunmodely` | `0` | VR | Extra weapon vertical adjustment. |
+| `vr_haptic` | `1` | VR | Enables VR haptics. |
+| `vr_hud_scale` | `0.025` | VR | VR HUD scale. |
+| `vr_joystick_axis_deadzone` | `0.25` | VR | Stick/touchpad deadzone. |
+| `vr_joystick_axis_exponent` | `1.0` | VR | Stick response curve. |
+| `vr_joystick_axis_menu_deadzone_extra` | `0.25` | VR | Extra menu deadzone. |
+| `vr_joystick_deadzone_trunc` | `1` | VR | Truncates stick output at the deadzone edge. |
+| `vr_joystick_yaw_multi` | `1.0` | VR | VR stick turn multiplier. |
+| `vr_lefthanded` | `0` | VR | Left-handed weapon/control mode. |
+| `vr_menu_scale` | `0.13` | VR | VR menu scale. |
+| `vr_movement_instant_stop` | `1` | VR | Stops VR locomotion immediately when input stops. |
+| `vr_movement_mode` | `0` | VR | Selects VR movement direction mode. |
+| `vr_movement_speed` | `1.5` | VR | VR locomotion multiplier. |
+| `vr_msaa` | `4` | VR | VR render MSAA sample count. |
+| `vr_projectilespawn_z_offset` | `24` | VR | Legacy projectile spawn vertical offset. |
+| `vr_snap_turn` | `0` | VR | Snap-turn angle; `0` means smooth turning. |
+| `vr_180_snap_turn` | `1` | VR | Enables 180-degree snap-turn command support. |
+| `vr_turn_speed` | `2` | VR | Smooth turn speed. |
+| `vr_viewkick` | `0` | VR | Enables/disables damage and weapon view kick in VR. |
+| `vr_world_scale` | `1.0` | VR | World-to-player scale. |
+| `vr_wofs_*` | generated | VR weapons | Per-weapon held offsets generated for VR weapon slots. |
+| `vr_wmuzzle_*` | generated | VR weapons | Per-weapon muzzle offsets generated for VR weapon slots. |
+| `cl_ack_redundancy` | `4` | Networking | Sends redundant movement ACK data. |
+| `cl_beams_polygons` | `0` | Rendering | Enables polygon beam rendering path for supported effects. |
+| `cl_confirmquit` | `0` | UI | Adds an optional quit confirmation. |
+| `cl_coop_nametags` | `1` | Co-op | Draws co-op player nametags. |
+| `cl_desktop_vanilla_run` | `1` | Input | Keeps faster vanilla-style desktop movement behavior in `-novr`. |
+| `cl_extrapolate` | `0.02` | Networking | Maximum normal entity extrapolation window. |
+| `cl_extrapolate_adaptive` | `0` | Networking | Temporarily increases extrapolation after detected gaps. |
+| `cl_extrapolate_adaptive_max` | `0.12` | Networking | Maximum adaptive extrapolation window. |
+| `cl_extrapolate_adaptive_time` | `0.75` | Networking | Adaptive extrapolation decay time. |
+| `cl_lerpdebug` | `0` | Diagnostics | Logs model/entity interpolation reset causes. |
+| `cl_lerpdebug_models` | `""` | Diagnostics | Comma-separated model filter for `cl_lerpdebug`. |
+| `cl_mousemenu` | `1` | UI | Enables mouse menu interaction. |
+| `cl_move_maxpacketbytes` | `1400` | Networking | Soft cap for bundled client movement packets. |
+| `cl_move_packetdup` | `1` | Networking | Duplicates client movement packets. |
+| `cl_move_redundancy` | `18` | Networking | Bundles prior movement commands with new commands. |
+| `cl_mwheelpitch` | `5` | Input | Mouse-wheel pitch tuning. |
+| `cl_net_lerpbuffer` | `0.10` | Networking | Interpolation buffer for networked snapshots. |
+| `cl_net_lerpbuffer_adaptive` | `0` | Networking | Temporarily increases snapshot lerp buffer after gaps. |
+| `cl_net_lerpbuffer_adaptive_max` | `0.30` | Networking | Maximum adaptive lerp buffer. |
+| `cl_net_lerpbuffer_adaptive_time` | `0.75` | Networking | Adaptive lerp buffer decay time. |
+| `cl_netfps` | `72` | Networking | Client network send cadence cap. |
+| `cl_netport` | `0` | Networking | Requested local UDP client port; `0` lets the OS choose. |
+| `cl_nocsqc` | `0` | CSQC | Disables client-side QC loading when set. |
+| `cl_nopred` | `0` | Networking | Runtime prediction disable/debug switch. |
+| `cl_portpingprobe_delay` | `0.20` | Networking | Delay before port-probe connect fallback. |
+| `cl_portpingprobe_enable` | `1` | Networking | Enables client UDP port probe selection. |
+| `cl_portpingprobe_probes` | `6` | Networking | Number of client port probes. |
+| `cl_predict_error_log` | `1` | Diagnostics | Logs prediction error corrections. |
+| `cl_predict_legacy` | `0` | Networking | Uses legacy prediction behavior for comparison/debug. |
+| `cl_predict_smooth` | `1` | Networking | Smooths small prediction corrections. |
+| `cl_predict_smooth_max` | `8` | Networking | Largest prediction error eligible for smoothing. |
+| `cl_predict_smooth_min` | `0.25` | Networking | Smallest prediction error eligible for smoothing. |
+| `cl_predict_smooth_time` | `0.04` | Networking | Prediction correction smoothing time. |
+| `cl_predictmove` | `1` | Networking | Enables client-side movement prediction for remote play. |
+| `cl_trusted_clientmove` | `1` | Networking | Client opt-in for trusted movement extensions. |
+| `cl_trusted_clientmove_desktop` | `0` | Networking | Desktop trusted movement opt-in; off by default. |
+| `cfg_unbindall` | `1` | Config | Allows configs to execute `unbindall`; set `0` to ignore it. |
+| `freelook` | `1` | Input | Default mouse look behavior. |
+| `net_lagdebug` | `0` | Diagnostics | Logs datagram gaps, delayed packets, and lag events. |
+| `net_lagdebug_frame_threshold` | `0.05` | Diagnostics | Frame-gap threshold for lag logs. |
+| `net_lagdebug_threshold` | `0.25` | Diagnostics | Network-gap threshold for lag logs. |
+| `net_reorder_timeout` | `0` | Networking | Timeout for unreliable packet reorder buffering. |
+| `net_reorder_window` | `2` | Networking | Reorder window for packet recovery. |
+| `net_sameip_stale_timeout` | `3.0` | Networking | Stale timeout for same-IP virtual sockets. |
+| `net_singlesocket` | `1` | Networking | Uses one UDP accept socket with virtual client sockets. |
+| `pm_airstep` | `""` | PMove | PMove air-step compatibility setting. |
+| `pm_autobunny` | `""` | PMove | PMove auto-bunny compatibility setting. |
+| `pm_bunnyfriction` | `1` | PMove | PMove bunny friction behavior. |
+| `pm_bunnyspeedcap` | `""` | PMove | PMove bunny speed cap compatibility setting. |
+| `pm_edgefriction` | `2` | PMove | PMove edge friction. |
+| `pm_flyfriction` | `""` | PMove | PMove fly friction compatibility setting. |
+| `pm_ktjump` | `""` | PMove | PMove jump compatibility setting. |
+| `pm_pground` | `""` | PMove | PMove ground detection compatibility setting. |
+| `pm_slidefix` | `1` | PMove | Enables slide/corner compatibility fixes. |
+| `pm_slidyslopes` | `""` | PMove | PMove slope compatibility setting. |
+| `pm_stepdown` | `""` | PMove | PMove step-down compatibility setting. |
+| `pm_stepheight` | `""` | PMove | PMove step height override. |
+| `pm_walljump` | `""` | PMove | PMove wall-jump compatibility setting. |
+| `pm_watersinkspeed` | `""` | PMove | PMove water sink speed compatibility setting. |
+| `pr_checkextension` | `1` | QC | Enables `checkextension` responses for supported extensions. |
+| `r_alias_batching` | `1` | Performance | Batches alias model drawing where possible. |
+| `r_alphasort` | `1` | Rendering | Sorts alpha surfaces for correct translucent rendering. |
+| `r_bloodstains` | `1` | Particles | Enables blood stain decals. |
+| `r_bouncysparks` | `1` | Particles | Enables bouncy spark behavior. |
+| `r_decal_noperpendicular` | `1` | Particles | Avoids perpendicular decal placement artifacts. |
+| `r_lightflicker` | `1` | Rendering | Enables light flicker behavior used by some maps. |
+| `r_part_beams` | `1` | Particles | Enables particle beam effects. |
+| `r_part_contentswitch` | `1` | Particles | Enables particle behavior changes by contents. |
+| `r_part_density` | `1` | Particles | Particle density multiplier. |
+| `r_part_maxdecals` | `8192` | Particles | Maximum decal count. |
+| `r_part_maxparticles` | `65536` | Particles | Maximum particle count. |
+| `r_part_rain` | `1` | Particles | Enables rain/weather particles. |
+| `r_part_rain_quantity` | `1` | Particles | Rain particle quantity multiplier. |
+| `r_part_sparks` | `1` | Particles | Enables spark particles. |
+| `r_part_sparks_textured` | `1` | Particles | Uses textured spark particles. |
+| `r_part_sparks_trifan` | `1` | Particles | Uses trifan spark drawing. |
+| `r_particle_tracelimit` | `0x7fffffff` | Particles | Particle trace limit. |
+| `r_particledesc` | `classic` | Particles | Particle descriptor set. |
+| `r_particles` | `2` | Particles | Changed default particle mode. |
+| `r_perfdebug` | `0` | Diagnostics | Logs expensive render frames. |
+| `r_perfdebug_min_ms` | `8` | Diagnostics | Minimum render time for performance logs. |
+| `r_skyroom` | `0` | Rendering | Enables optional QSS-style skyroom rendering. |
+| `r_skywind` | `0` | Rendering | Sky wind amount parsed from worldspawn or set manually. |
+| `r_useportalculling` | `0` | Performance | Enables portal/PVS culling experiment. |
+| `scr_crosshair_desktop_fallback` | `1` | UI | Draws a fallback desktop crosshair when mod HUDs omit one. |
+| `sv_airaccelerate` | `-1` | PMove | PMove air acceleration; negative means compatibility default. |
+| `sv_cmdfile` | `""` | Server | Server command file hook. |
+| `sv_coop_ammo_respawn` | `0` | Co-op | Enables co-op ammo respawn. |
+| `sv_coop_ammo_respawn_time` | `30` | Co-op | Ammo respawn delay in seconds. |
+| `sv_coop_autosave` | `1` | Co-op | Enables co-op autosaves. |
+| `sv_coop_autosave_kill_interval` | `10` | Co-op | Kill-count interval for autosaves. |
+| `sv_coop_autosave_min_interval` | `30` | Co-op | Minimum seconds between autosaves. |
+| `sv_coop_autosave_slots` | `4` | Co-op | Number of rotating autosave slots. |
+| `sv_coop_noplayerclip` | `1` | Co-op | Makes co-op players non-solid to each other. |
+| `sv_coop_pickup_targetfix` | `0` | Co-op | Enables generic pickup target firing for configured classes. |
+| `sv_coop_pickup_targetfix_classes` | `""` | Co-op | Class list for generic pickup target fixes. |
+| `sv_coop_pickup_targetlog` | `0` | Diagnostics | Logs pickup target decisions. |
+| `sv_coop_predictmove` | `1` | Co-op | Enables co-op movement prediction support. |
+| `sv_coop_progression_item_respawn` | `1` | Co-op | Respawns configured progression items. |
+| `sv_coop_progression_item_respawn_classes` | `item_jboots item_jboots_timed` | Co-op | Classes treated as progression respawn items. |
+| `sv_coop_respawn_delay` | `10` | Co-op | Delay before co-op respawn; `0` disables the delay. |
+| `sv_coop_respawn_keep_weapons_ammo` | `1` | Co-op | Preserves weapons, ammo, keycards, and supported mod extra fields on respawn. |
+| `sv_coop_respawn_near_player` | `1` | Co-op | Respawns near the death spot or living teammates when safe. |
+| `sv_coop_revive` | `1` | Co-op | Enables reviving dead teammates. |
+| `sv_coop_revive_health` | `25` | Co-op | Health restored by revive. |
+| `sv_coop_revive_range` | `96` | Co-op | Revive range in Quake units. |
+| `sv_coop_trusted_clientmove` | `1` | Co-op | Allows trusted client movement on co-op servers. |
+| `sv_coop_trusted_clientmove_maxdelta` | `96` | Co-op | Maximum trusted move correction distance. |
+| `sv_coop_weapon_targetfix` | `1` | Co-op | Allows weapon pickup trigger targets to fire in co-op. |
+| `sv_gameplayfix_elevators` | `2` | Gameplay | Elevator/pusher step recovery; `0` off, `1` clients, `2` all entities. |
+| `sv_gameplayfix_random` | `1` | QC | Avoids exact `0`/`1` returns from QuakeC `random()`. |
+| `sv_inputtimeout` | `0.50` | Networking | Clears stale movement input after this many seconds. |
+| `sv_maxpacketsize` | `1400` | Networking | Server datagram size cap. |
+| `sv_move_timeclamp` | `1` | Networking | Clamps excessive movement command time. |
+| `sv_moveack_independent` | `0` | Networking | Sends movement ACKs as independent datagrams. |
+| `sv_moveack_packetdup` | `1` | Networking | Duplicates movement ACK datagrams. |
+| `sv_netdiag_interval` | `5` | Diagnostics | Periodic network diagnostic interval in seconds. |
+| `sv_netsort` | `1` | Networking | Sorts entity updates by priority before packet clipping. |
+| `sv_nofriendlyfire` | `1` | Co-op | Disables friendly fire in co-op. |
+| `sv_pmove` | `1` | PMove | Enables PMove server movement path. |
+| `sv_pmove_legacy` | `1` | PMove | Wraps legacy QuakeC mods that do not implement PMove hooks. |
+| `sv_pmove_legacy_preserve_qc_velocity` | `1` | PMove | Preserves QC velocity pushes such as grapples through legacy PMove. |
+| `sv_replacement_datagram_reserve` | `1` | Networking | Reserves datagram room for replacement deltas. |
+| `sv_replacement_maxpackets` | `0` | Networking | Maximum replacement packets; `0` uses automatic behavior. |
+| `sv_replacement_pacing` | `1` | Networking | Paces replacement-delta sends. |
+| `sv_replacement_packetdup` | `1` | Networking | Duplicates replacement-delta packets. |
+| `sv_replacement_packetdup_all` | `1` | Networking | Duplicates all replacement packets, not just priority paths. |
+| `sv_replacement_particle_maxbytes` | `256` | Networking | Per-packet particle byte budget. |
+| `sv_replacement_priority_radius` | `0` | Networking | Radius boost for nearby replacement priority; `0` disables radius boost. |
+| `sv_replacement_softmaxbytes` | `1000` | Networking | Soft byte target for replacement packets. |
+| `sv_save_multiplayer` | `1` | Save/load | Allows multiplayer/co-op saves in controlled use. |
+| `sv_skyroom_pvs` | `1` | Rendering/server | Adds skyroom PVS for skyroom entity visibility. |
+| `sv_snapshot_packetdup` | `0` | Networking | Duplicates legacy split snapshot packets. |
+| `sv_snapshot_partresend` | `1` | Networking | Resends missing split snapshot parts when that path is enabled. |
+| `sv_snapshot_partresend_interval` | `0.04` | Networking | Minimum resend interval for snapshot parts. |
+| `sv_snapshot_splits` | `0` | Networking | Legacy split snapshot path; off by default in favor of replacement deltas. |
+| `sv_spectatormaxspeed` | `500` | PMove | Spectator max speed. |
+| `sv_triggerdebug` | `0` | Diagnostics | Logs trigger/touch decisions. |
+| `sv_vr_jump_velocity` | `300` | VR/co-op | VR jump velocity override. |
+| `sv_wateraccelerate` | `-1` | PMove | PMove water acceleration; negative means compatibility default. |
+| `sv_waterfriction` | `4` | PMove | PMove water friction. |
+
+Important changed defaults from legacy main:
+
+| Cvar | Current default | Legacy default | Reason |
+| --- | --- | --- | --- |
+| `gl_texture_anisotropy` | `16` | `1` | Sharper texture filtering by default. |
+| `r_particles` | `2` | `1` | Uses the extended particle path by default. |
+| `r_nolerp_list` | expanded | shorter | Prevents interpolation on additional flame/saw/fist/fire models. |
+| `r_noshadow_list` | expanded | shorter | Prevents shadows on additional beam/bolt/laser effects. |
+
+## Diagnostics
+
+Use these together with `-condebug` when investigating networking or mod
+compatibility:
+
+```txt
+net_lagdebug 1
+sv_netdiag_interval 5
+cl_predict_error_log 1
+cl_lerpdebug 1
+r_perfdebug 1
+sv_triggerdebug 1
+```
+
+`net_lagdebug` and related diagnostics should be treated as log tools, not as
+normal player-facing output.
+
+## Compatibility Caveats
+
+- Full DarkPlaces/FTE CSQC is not implemented. This fork implements the subset
+  needed by tested Quake mods and keeps expanding it as real mods require more.
+- Legacy clients and servers are not a compatibility target. Run matching builds
+  on the server and all clients.
+- `r_skyroom` defaults to `0` to avoid an extra VR render pass on maps that do
+  not need it.
+- Very large maps can still be CPU-heavy in VR because this remains an older
+  OpenGL QuakeSpasm renderer, not Ironwail's or vkQuake's newer renderer.
