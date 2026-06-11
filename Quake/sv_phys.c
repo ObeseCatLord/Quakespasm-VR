@@ -472,13 +472,15 @@ safe spot near a living teammate before falling back to the mod's spawn point.
 */
 #define COOP_RESPAWN_TRACE_EPSILON 0.01f
 #define COOP_RESPAWN_ALL_ITEM_BITS (-1)
+#define COOP_RESPAWN_DRAKE_CUSTOM_KEYS (8192 | 16384 | 32768 | 65536)
 #define COOP_RESPAWN_AD_KEEP_MODITEMS                                           \
   (2 | 64 | 128 | 4096 | 131072 | 262144 | 524288 | 1048576 | 2097152 |        \
-   4194304)
+   4194304 | COOP_RESPAWN_DRAKE_CUSTOM_KEYS)
 
 typedef enum {
   COOP_RESPAWN_EXTRA_ITEMS2,
   COOP_RESPAWN_EXTRA_MODITEMS,
+  COOP_RESPAWN_EXTRA_CUSTOMKEYS,
   COOP_RESPAWN_EXTRA_AMMO_SHELLS1,
   COOP_RESPAWN_EXTRA_AMMO_NAILS1,
   COOP_RESPAWN_EXTRA_AMMO_LAVA_NAILS,
@@ -500,12 +502,18 @@ typedef enum {
   COOP_RESPAWN_EXTRA_JUMPBOOTS_AIRMAX,
   COOP_RESPAWN_EXTRA_JUMPBOOTS_HEIGHT,
   COOP_RESPAWN_EXTRA_JUMPBOOTS_FORWARD,
+  COOP_RESPAWN_EXTRA_KEYNAME,
+  COOP_RESPAWN_EXTRA_CKEYNAME1,
+  COOP_RESPAWN_EXTRA_CKEYNAME2,
+  COOP_RESPAWN_EXTRA_CKEYNAME3,
+  COOP_RESPAWN_EXTRA_CKEYNAME4,
   COOP_RESPAWN_EXTRA_COUNT
 } coop_respawn_extra_field_id_t;
 
 typedef enum {
   COOP_RESPAWN_EXTRA_BITMASK,
-  COOP_RESPAWN_EXTRA_MAXFLOAT
+  COOP_RESPAWN_EXTRA_MAXFLOAT,
+  COOP_RESPAWN_EXTRA_STRING
 } coop_respawn_extra_policy_t;
 
 typedef struct {
@@ -524,7 +532,9 @@ typedef struct {
   float ammo_rockets;
   float ammo_cells;
   qboolean extra_valid[COOP_RESPAWN_EXTRA_COUNT];
+  int extra_bits[COOP_RESPAWN_EXTRA_COUNT];
   float extra_value[COOP_RESPAWN_EXTRA_COUNT];
+  string_t extra_string[COOP_RESPAWN_EXTRA_COUNT];
 } coop_respawn_inventory_t;
 
 typedef struct {
@@ -546,6 +556,7 @@ typedef struct {
 static const coop_respawn_extra_field_t coop_respawn_extra_fields[] = {
     {"items2", COOP_RESPAWN_EXTRA_BITMASK, COOP_RESPAWN_ALL_ITEM_BITS},
     {"moditems", COOP_RESPAWN_EXTRA_BITMASK, COOP_RESPAWN_AD_KEEP_MODITEMS},
+    {"customkeys", COOP_RESPAWN_EXTRA_BITMASK, COOP_RESPAWN_ALL_ITEM_BITS},
     {"ammo_shells1", COOP_RESPAWN_EXTRA_MAXFLOAT, 0},
     {"ammo_nails1", COOP_RESPAWN_EXTRA_MAXFLOAT, 0},
     {"ammo_lava_nails", COOP_RESPAWN_EXTRA_MAXFLOAT, 0},
@@ -567,6 +578,11 @@ static const coop_respawn_extra_field_t coop_respawn_extra_fields[] = {
     {"jumpboots_airmax", COOP_RESPAWN_EXTRA_MAXFLOAT, 0},
     {"jumpboots_height", COOP_RESPAWN_EXTRA_MAXFLOAT, 0},
     {"jumpboots_forward", COOP_RESPAWN_EXTRA_MAXFLOAT, 0},
+    {"keyname", COOP_RESPAWN_EXTRA_STRING, 0},
+    {"ckeyname1", COOP_RESPAWN_EXTRA_STRING, 0},
+    {"ckeyname2", COOP_RESPAWN_EXTRA_STRING, 0},
+    {"ckeyname3", COOP_RESPAWN_EXTRA_STRING, 0},
+    {"ckeyname4", COOP_RESPAWN_EXTRA_STRING, 0},
 };
 
 static coop_respawn_inventory_t
@@ -735,9 +751,40 @@ static int SV_CoopRespawnKeepItemMask(void) {
   return mask;
 }
 
+static eval_t *SV_CoopRespawnGetExtraField(edict_t *ent, int index,
+                                           int *type_out) {
+  const coop_respawn_extra_field_t *field;
+  ddef_t *def;
+  int type;
+
+  if (!ent || ent->free || index < 0 || index >= COOP_RESPAWN_EXTRA_COUNT)
+    return NULL;
+
+  field = &coop_respawn_extra_fields[index];
+  def = ED_FindField(field->name);
+  if (!def)
+    return NULL;
+
+  type = def->type & ~DEF_SAVEGLOBAL;
+  if (field->policy == COOP_RESPAWN_EXTRA_STRING) {
+    if (type != ev_string)
+      return NULL;
+  } else if (field->policy == COOP_RESPAWN_EXTRA_BITMASK) {
+    if (type != ev_float && type != ev_ext_integer)
+      return NULL;
+  } else if (type != ev_float) {
+    return NULL;
+  }
+
+  if (type_out)
+    *type_out = type;
+  return GetEdictFieldValue(ent, def->ofs);
+}
+
 static void SV_CoopRespawnSaveInventory(edict_t *ent,
                                         coop_respawn_inventory_t *inventory) {
   int i;
+  int type;
   eval_t *val;
 
   memset(inventory, 0, sizeof(*inventory));
@@ -751,22 +798,35 @@ static void SV_CoopRespawnSaveInventory(edict_t *ent,
   inventory->ammo_cells = ent->v.ammo_cells;
 
   for (i = 0; i < COOP_RESPAWN_EXTRA_COUNT; i++) {
-    val = GetEdictFieldValueByName(ent, coop_respawn_extra_fields[i].name);
+    val = SV_CoopRespawnGetExtraField(ent, i, &type);
     if (!val)
       continue;
 
-    inventory->extra_valid[i] = true;
-    if (coop_respawn_extra_fields[i].policy == COOP_RESPAWN_EXTRA_BITMASK)
-      inventory->extra_value[i] =
-          (int)val->_float & coop_respawn_extra_fields[i].mask;
-    else
-      inventory->extra_value[i] = val->_float;
+    if (coop_respawn_extra_fields[i].policy == COOP_RESPAWN_EXTRA_STRING) {
+      if (val->string && PR_GetString(val->string)[0]) {
+        inventory->extra_valid[i] = true;
+        inventory->extra_string[i] = val->string;
+      }
+    } else {
+      inventory->extra_valid[i] = true;
+      if (coop_respawn_extra_fields[i].policy == COOP_RESPAWN_EXTRA_BITMASK) {
+        if (type == ev_ext_integer)
+          inventory->extra_bits[i] =
+              val->_int & coop_respawn_extra_fields[i].mask;
+        else
+          inventory->extra_bits[i] =
+              (int)val->_float & coop_respawn_extra_fields[i].mask;
+      } else {
+        inventory->extra_value[i] = val->_float;
+      }
+    }
   }
 }
 
 static void SV_CoopRespawnRestoreInventory(
     edict_t *ent, const coop_respawn_inventory_t *inventory) {
   int i;
+  int type;
   eval_t *val;
 
   ent->v.items = (int)ent->v.items | inventory->items;
@@ -788,15 +848,22 @@ static void SV_CoopRespawnRestoreInventory(
     if (!inventory->extra_valid[i])
       continue;
 
-    val = GetEdictFieldValueByName(ent, coop_respawn_extra_fields[i].name);
+    val = SV_CoopRespawnGetExtraField(ent, i, &type);
     if (!val)
       continue;
 
-    if (coop_respawn_extra_fields[i].policy == COOP_RESPAWN_EXTRA_BITMASK)
-      val->_float = (int)val->_float | (int)inventory->extra_value[i];
-    else
+    if (coop_respawn_extra_fields[i].policy == COOP_RESPAWN_EXTRA_STRING) {
+      val->string = inventory->extra_string[i];
+    } else if (coop_respawn_extra_fields[i].policy ==
+               COOP_RESPAWN_EXTRA_BITMASK) {
+      if (type == ev_ext_integer)
+        val->_int = val->_int | inventory->extra_bits[i];
+      else
+        val->_float = (int)val->_float | inventory->extra_bits[i];
+    } else {
       val->_float =
           SV_CoopRespawnMaxFloat(val->_float, inventory->extra_value[i]);
+    }
   }
 
   if (inventory->weapon > 0)
