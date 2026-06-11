@@ -2,8 +2,8 @@
 
 This repository is a custom QuakeSpasm-OpenVR fork focused on VR play,
 modern single-player mods, and trusted co-op multiplayer. It keeps the
-QuakeSpasm-OpenVR lineage and VR controls from the old main branch, then adds
-CSQC compatibility, QSS-M-inspired networking, co-op quality-of-life behavior,
+gameflorist's QuakeSpasm-OpenVR lineage and VR controls, then adds CSQC
+compatibility, QSS-M-inspired networking, co-op quality-of-life behavior,
 modern particle/weather support, and per-mod VR weapon calibration.
 
 The pre-integration default branch is preserved as `legacymain`. The current
@@ -30,16 +30,16 @@ This fork descends from:
 - Zackin5's OpenVR port.
 - Fishbiter's QuakeSpasm-OpenVR improvements.
 - Vittorio Romeo's QuakeSpasm-OpenVR and Quake VR work.
-- The previous main branch by gameflorist/hiina, which contributed the modern
-  QuakeSpasm base, 64-bit build, head/controller movement, VR multiplayer
-  weapon and playspace sync, dual desktop/VR bindings, enhanced model support,
-  classic visual defaults, SteamVR binding work, and cross-platform fixes.
+- gameflorist's QuakeSpasm-OpenVR, which contributed the modern QuakeSpasm
+  base, 64-bit build, head/controller movement, VR multiplayer weapon and
+  playspace sync, dual desktop/VR bindings, enhanced model support, classic
+  visual defaults, SteamVR binding work, and cross-platform fixes.
 
 This branch also references behavior and code from QSS-M, Ironwail, vkQuake,
 and FTEQW for networking, mod compatibility, particles, rendering behavior, and
 extended protocol support.
 
-## Major Changes Since Legacy Main
+## Major Changes Since gameflorist's QuakeSpasm-OpenVR
 
 ### VR
 
@@ -197,32 +197,11 @@ Useful commands:
 | `vrweaponoffsetglobal` | Promote the current weapon offset to a global mod offset. |
 | `vrglobalweaponoffset` | Alias for `vrweaponoffsetglobal`. |
 
-## Mod Notes
-
-- Arcane Dimensions: supported with CSQC HUD/stat compatibility, modern
-  particles, extended stats, and co-op networking fixes.
-- Alkaline: supported with extra weapon wheel detection and co-op trigger fixes.
-- Dwell: supported with raised limits, particles/weather behavior, and modern
-  source-port compatibility paths.
-- Mjolnir: supported through expanded limits, particle/weather compatibility,
-  player model handling, and modern entity/protocol behavior.
-- QBJ3: supported with CSQC compatibility, custom weapon wheel entries, and
-  `vrweapons.txt` calibration.
-- Raven Keep, Peril, Enyo, Honey, and similar modern mods are expected to run,
-  but individual maps can still expose unsupported CSQC builtins or expensive
-  rendering paths. Use the diagnostics below when isolating issues.
-
-Optional skyroom rendering is intentionally off by default. Enable it only for
-maps that need it:
-
-```txt
-r_skyroom 1
-```
-
 ## Cvars
 
-This table includes the previous main branch's VR cvars and the cvars added or
-changed by this active branch. It does not list every vanilla QuakeSpasm cvar.
+This table includes gameflorist's QuakeSpasm-OpenVR VR cvars and the cvars
+added or changed by this active branch. It does not list every vanilla
+QuakeSpasm cvar.
 
 | Cvar | Default | Area | Description |
 | --- | --- | --- | --- |
@@ -403,7 +382,7 @@ changed by this active branch. It does not list every vanilla QuakeSpasm cvar.
 | `sv_wateraccelerate` | `-1` | PMove | PMove water acceleration; negative means compatibility default. |
 | `sv_waterfriction` | `4` | PMove | PMove water friction. |
 
-Important changed defaults from legacy main:
+Important changed defaults from gameflorist's QuakeSpasm-OpenVR:
 
 | Cvar | Current default | Legacy default | Reason |
 | --- | --- | --- | --- |
