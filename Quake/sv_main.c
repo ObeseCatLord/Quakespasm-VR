@@ -2518,6 +2518,19 @@ SV_WriteClientdataToMessage
 
 ==================
 */
+static void SV_WriteSetAngleToMessage (edict_t *ent, sizebuf_t *msg)
+{
+	int		i;
+
+	if (!ent->v.fixangle)
+		return;
+
+	MSG_WriteByte (msg, svc_setangle);
+	for (i=0 ; i < 3 ; i++)
+		MSG_WriteAngle (msg, ent->v.angles[i], sv.protocolflags );
+	ent->v.fixangle = 0;
+}
+
 void SV_WriteClientdataToMessage (edict_t *ent, sizebuf_t *msg)
 {
 	int		bits;
@@ -2536,13 +2549,7 @@ void SV_WriteClientdataToMessage (edict_t *ent, sizebuf_t *msg)
 	SV_SetIdealPitch ();		// how much to look up / down ideally
 
 // a fixangle might get lost in a dropped packet.  Oh well.
-	if ( ent->v.fixangle )
-	{
-		MSG_WriteByte (msg, svc_setangle);
-		for (i=0 ; i < 3 ; i++)
-			MSG_WriteAngle (msg, ent->v.angles[i], sv.protocolflags );
-		ent->v.fixangle = 0;
-	}
+	SV_WriteSetAngleToMessage (ent, msg);
 
 	bits = 0;
 
@@ -3347,6 +3354,7 @@ static qboolean SVFTE_SendClientDatagram (client_t *client, int maxsize)
 		if (packet_count == 0)
 		{
 			SV_WriteDamageToMessage (client->edict, &msg);
+			SV_WriteSetAngleToMessage (client->edict, &msg);
 			if (replacement_frame)
 				SVFTE_WriteStatsToClient (client, &msg,
 					replacement_frame);

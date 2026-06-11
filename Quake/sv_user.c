@@ -1215,21 +1215,33 @@ qboolean SV_ReadClientMessage(void) {
 
 static void SV_UpdateClientPMoveMode(client_t *client) {
   qboolean usingpmove;
+  qboolean legacy_qc_ladder_mod;
 
   if (!client || !client->active)
     return;
 
+  /*
+   * Mods like qbj3 implement ladders in QuakeC by setting waterlevel/gravity
+   * and a one-frame .onladder marker. QSS-M leaves those legacy NQ mods on the
+   * classic movement path by default; forcing PMove here bypasses that QC
+   * contract and can leave the player swimming/flying after touching ladders.
+   */
+  legacy_qc_ladder_mod =
+      qcvm->extfields.onladder >= 0 && !qcvm->extfuncs.SV_RunClientCommand;
+
   usingpmove = client->spawned && sv_pmove.value &&
     (client->protocol_pext2 & PEXT2_PREDINFO) &&
-    (qcvm->extfuncs.SV_RunClientCommand || sv_pmove_legacy.value);
+    (qcvm->extfuncs.SV_RunClientCommand ||
+     (sv_pmove_legacy.value && !legacy_qc_ladder_mod));
 
   if (usingpmove != client->usingpmove && net_lagdebug.value)
-    Con_Printf("net_lagdebug: server PMove %s for %s pext2=0x%x sv_runclientcommand=%d sv_pmove_legacy=%d\n",
+    Con_Printf("net_lagdebug: server PMove %s for %s pext2=0x%x sv_runclientcommand=%d sv_pmove_legacy=%d legacy_qc_ladder=%d\n",
                usingpmove ? "enabled" : "disabled",
                client->name,
                client->protocol_pext2,
                qcvm->extfuncs.SV_RunClientCommand ? 1 : 0,
-               sv_pmove_legacy.value ? 1 : 0);
+               sv_pmove_legacy.value ? 1 : 0,
+               legacy_qc_ladder_mod ? 1 : 0);
   client->usingpmove = usingpmove;
 }
 
