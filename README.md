@@ -260,6 +260,9 @@ These cvars are custom additions or important changed defaults in this branch co
 | `sv_coop_revive` | `1` | Enables the co-op melee revive helper. |
 | `sv_coop_revive_health` | `25` | Health restored by the co-op revive helper. |
 | `sv_coop_revive_range` | `96` | Trace range for co-op revive attempts. |
+| `sv_coop_respawn_near_player` | `1` | In co-op, lets QuakeC perform its normal respawn first, then relocates the player to a safe spot near their last safe/death position or near a living teammate. If all active players are dead together, the next respawn for those players keeps the mod's standard spawn point instead. |
+| `sv_coop_respawn_delay` | `10` | Seconds to wait before accepting respawn input while `sv_coop_respawn_near_player` is active. Set to `0` to disable the wait. |
+| `sv_coop_respawn_keep_weapons_ammo` | `1` | Restores carried weapons, ammo, keys, and supported mod inventory fields after a co-op respawn. |
 | `sv_save_multiplayer` | `0` | Allows saving co-op multiplayer games only when set to `1`. Current save/load support is intentionally limited to one active client in slot 0. |
 | `sv_cmdfile` | empty | Dedicated-server command file name relative to the current game directory. When present, the server executes and deletes the file each frame after reading it. |
 | `net_lagdebug` | `0` | Enables verbose network/judder diagnostics for datagram gaps, dropped unreliable packets, frame spikes, stale input, and interpolation overruns. |
