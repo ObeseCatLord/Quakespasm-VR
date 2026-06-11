@@ -1,0 +1,53 @@
+name: Linux CI
+
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+    branches:
+      - master
+  workflow_dispatch:
+
+jobs:
+  build-linux:
+    name: Build Linux
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            libgl1-mesa-dev \
+            libmad0-dev \
+            libogg-dev \
+            libopenvr-dev \
+            libopusfile-dev \
+            libsdl2-dev \
+            libvorbis-dev \
+            libxmp-dev \
+            pkg-config
+
+      - name: Build
+        run: |
+          make -C Quake -f Makefile.linux clean
+          make -C Quake -f Makefile.linux -j"$(nproc)"
+
+      - name: Verify build outputs
+        run: |
+          test -x Quake/quakespasm-openvr
+          test -x Quake/quakespasm-openvr.bin
+          ldd Quake/quakespasm-openvr.bin
+
+      - name: Upload Linux build
+        uses: actions/upload-artifact@v4
+        with:
+          name: quakespasm-openvr-linux
+          path: |
+            Quake/quakespasm-openvr
+            Quake/quakespasm-openvr.bin
