@@ -23,6 +23,26 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 
 #include "quakedef.h"
 
+#ifdef __GNUC__
+	#pragma GCC diagnostic push
+	#pragma GCC diagnostic ignored "-Wunused-function"
+#endif
+
+#define STB_IMAGE_IMPLEMENTATION
+#define STB_IMAGE_STATIC
+#define STBI_NO_BMP
+#define STBI_NO_PSD
+#define STBI_NO_GIF
+#define STBI_NO_HDR
+#define STBI_NO_PIC
+#define STBI_NO_PNM
+#define STBI_NO_LINEAR
+#include "stb_image.h"
+
+#ifdef __GNUC__
+	#pragma GCC diagnostic pop
+#endif
+
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #define STB_IMAGE_WRITE_STATIC
 #include "stb_image_write.h"
@@ -69,6 +89,70 @@ static inline int Buf_GetC(stdio_buffer_t *buf)
 	return buf->buffer[buf->pos++];
 }
 
+static byte *Image_LoadSTBI (FILE *f, int *width, int *height)
+{
+	byte	*stbidata, *data;
+	int		components, numbytes;
+
+	stbidata = stbi_load_from_file (f, width, height, &components, 4);
+	fclose (f);
+
+	if (!stbidata)
+	{
+		Con_Warning ("couldn't load %s (%s)\n", loadfilename, stbi_failure_reason ());
+		return NULL;
+	}
+
+	if (*width <= 0 || *height <= 0 || *width > 32768 || *height > 32768 || *width > INT_MAX / *height / 4)
+	{
+		Con_Warning ("couldn't load %s: invalid image dimensions %ix%i\n", loadfilename, *width, *height);
+		stbi_image_free (stbidata);
+		return NULL;
+	}
+
+	numbytes = (*width) * (*height) * 4;
+	data = (byte *) Hunk_Alloc (numbytes);
+	memcpy (data, stbidata, numbytes);
+	stbi_image_free (stbidata);
+	return data;
+}
+
+static qboolean Image_FileHasMagic (FILE *f, const byte *magic, size_t magicsize)
+{
+	byte	buffer[8];
+	long	start;
+	size_t	readsize;
+
+	if (magicsize > sizeof(buffer))
+		return false;
+
+	start = ftell (f);
+	readsize = fread (buffer, 1, magicsize, f);
+	fseek (f, start, SEEK_SET);
+
+	return readsize == magicsize && !memcmp (buffer, magic, magicsize);
+}
+
+static byte *Image_LoadByExtensionOrMagic (FILE *f, const char *extension, int *width, int *height)
+{
+	static const byte jpegmagic[2] = {0xff, 0xd8};
+	static const byte pngmagic[8] = {0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'};
+
+	/* Some addon paks ship JPEG data under .tga names. Match Ironwail/QSS-M
+	   by letting stb_image handle PNG/JPEG content regardless of extension. */
+	if (Image_FileHasMagic (f, jpegmagic, sizeof(jpegmagic)) ||
+		Image_FileHasMagic (f, pngmagic, sizeof(pngmagic)))
+		return Image_LoadSTBI (f, width, height);
+
+	if (!q_strcasecmp (extension, "tga"))
+		return Image_LoadTGA (f, width, height);
+
+	if (!q_strcasecmp (extension, "pcx"))
+		return Image_LoadPCX (f, width, height);
+
+	return Image_LoadSTBI (f, width, height);
+}
+
 /*
 ============
 Image_LoadImage
@@ -80,17 +164,17 @@ TODO: search order: tga png jpg pcx lmp
 */
 byte *Image_LoadImage (const char *name, int *width, int *height)
 {
+	static const char *const extensions[] = {"tga", "png", "jpg", "jpeg", "pcx", NULL};
 	FILE	*f;
+	int		i;
 
-	q_snprintf (loadfilename, sizeof(loadfilename), "%s.tga", name);
-	COM_FOpenFile (loadfilename, &f, NULL);
-	if (f)
-		return Image_LoadTGA (f, width, height);
-
-	q_snprintf (loadfilename, sizeof(loadfilename), "%s.pcx", name);
-	COM_FOpenFile (loadfilename, &f, NULL);
-	if (f)
-		return Image_LoadPCX (f, width, height);
+	for (i = 0; extensions[i]; i++)
+	{
+		q_snprintf (loadfilename, sizeof(loadfilename), "%s.%s", name, extensions[i]);
+		COM_FOpenFile (loadfilename, &f, NULL);
+		if (f)
+			return Image_LoadByExtensionOrMagic (f, extensions[i], width, height);
+	}
 
 	return NULL;
 }
