@@ -16,6 +16,9 @@ game/test_*.bat
 script_input.txt
 *.log
 *.pid
+history.txt
+Quake/history.txt
+PERFORMANCE_ANALYSIS*.txt
 Build/
 quakespasm
 quakespasm-openvr
