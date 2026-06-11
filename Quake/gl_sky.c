@@ -255,7 +255,7 @@ void Sky_LoadSkyBox (const char *name)
 		data = Image_LoadImage (filename, &width, &height);
 		if (data)
 		{
-			skybox_textures[i] = TexMgr_LoadImage (cl.worldmodel, filename, width, height, SRC_RGBA, data, filename, 0, TEXPREF_NONE);
+			skybox_textures[i] = TexMgr_LoadImage (cl.worldmodel, filename, width, height, SRC_RGBA, data, filename, 0, TEXPREF_CLAMP | TEXPREF_NOPICMIP);
 			nonefound = false;
 		}
 		else

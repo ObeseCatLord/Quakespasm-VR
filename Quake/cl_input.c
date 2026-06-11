@@ -624,10 +624,30 @@ void CL_SendMove(const usercmd_t *cmd) {
       *cl.qcvm.extglobals.servercommandframe = cl.ackedmovemessages;
     cl_lagdebug_last_sendmove = 0;
   } else if (seq < 2) {
+    usercmd_t startupcmd;
+
     //
-    // Always dump the first two network moves, because they may contain
-    // leftover inputs from the last level.
+    // Always dump movement from the first two network moves, because it may
+    // contain leftover inputs from the last level. Preserve explicit impulses
+    // so console commands such as "impulse 9" are not eaten just after spawn.
     //
+    if (sendcmd.impulse) {
+      startupcmd = sendcmd;
+      startupcmd.forwardmove = 0;
+      startupcmd.sidemove = 0;
+      startupcmd.upmove = 0;
+      startupcmd.buttons = 0;
+      VectorCopy(vec3_origin, startupcmd.vr_roomscalemove);
+
+      CL_WriteAckFrames(&buf);
+      MSG_WriteByte(&buf, clc_move);
+      MSG_WriteShort(&buf, startupcmd.sequence & 0xffff);
+      CL_WriteUsercmd(&buf, &startupcmd);
+      if (NET_SendUnreliableMessage(cls.netcon, &buf) == -1) {
+        Con_Printf("CL_SendMove: lost server connection\n");
+        CL_Disconnect();
+      }
+    }
     cl.ackedmovemessages = seq;
     cl_lagdebug_last_sendmove = 0;
     return;

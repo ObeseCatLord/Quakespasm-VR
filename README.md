@@ -125,7 +125,7 @@ Input from VR Controllers are mapped to various joystick-related input (except t
 | Right Pad/Stick Down | `DOWNARROW` | _none_ |
 | Right Pad/Stick Left | `LEFTARROW` | _none_ |
 
-On desktop/no-VR, right mouse defaults to `impulse 228` for mods that expose secondary fire.
+On desktop/no-VR, right mouse defaults to `+button3` for mods that expose secondary fire.
 | Right Pad/Stick Right | `RIGHTARROW` | _none_ |
 
 #### Important infos

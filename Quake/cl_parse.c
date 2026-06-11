@@ -1301,6 +1301,7 @@ static void CLFTE_EntitiesDeltaed (void)
 		float oldmsgtime;
 		qmodel_t *oldmodel;
 		int oldframe;
+		int oldskin;
 
 		ent = CL_EntityNum (newnum);
 		if (!ent->update_type)
@@ -1308,6 +1309,7 @@ static void CLFTE_EntitiesDeltaed (void)
 		oldmsgtime = ent->msgtime;
 		oldmodel = ent->model;
 		oldframe = ent->frame;
+		oldskin = ent->skinnum;
 
 		if (ent->msgtime == cl.mtime[0])
 			forcelink = false;
@@ -1368,6 +1370,9 @@ static void CLFTE_EntitiesDeltaed (void)
 				oldframe, ent->netstate.frame);
 		}
 		ent->frame = ent->netstate.frame;
+		if (newnum <= cl.maxclients && (oldmodel != ent->model ||
+			oldskin != ent->skinnum))
+			R_TranslateNewPlayerSkin (newnum - 1);
 
 		if (forcelink)
 		{
