@@ -346,6 +346,7 @@ extern cvar_t sv_coop_revive;
 extern cvar_t sv_coop_revive_health;
 extern cvar_t sv_coop_revive_range;
 extern cvar_t sv_coop_respawn_near_player;
+extern cvar_t sv_coop_respawn_delay;
 extern cvar_t sv_coop_respawn_keep_weapons_ammo;
 extern cvar_t sv_coop_autosave;
 extern cvar_t sv_coop_autosave_slots;

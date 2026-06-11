@@ -530,7 +530,13 @@ typedef struct {
 typedef struct {
   qboolean was_dead;
   qboolean inventory_valid;
+  qboolean force_standard_spawn;
+  qboolean suppress_respawn_input;
   float old_force_retouch;
+  float saved_button0;
+  float saved_button1;
+  float saved_button2;
+  int saved_cmd_buttons;
   vec3_t death_origin;
   vec3_t death_angles;
   vec3_t death_v_angle;
@@ -574,12 +580,107 @@ static vec3_t coop_respawn_death_anchor[MAX_SCOREBOARD];
 static vec3_t coop_respawn_death_angles[MAX_SCOREBOARD];
 static vec3_t coop_respawn_death_v_angle[MAX_SCOREBOARD];
 static qboolean coop_respawn_death_anchor_valid[MAX_SCOREBOARD];
+static double coop_respawn_dead_since[MAX_SCOREBOARD];
+static qboolean coop_respawn_force_standard_spawn[MAX_SCOREBOARD];
 
 static qboolean SV_CoopRespawnCanPlaceAt(edict_t *ent, vec3_t origin);
 
 static qboolean SV_CoopRespawnIsAliveClient(edict_t *ent) {
   return SV_CoopReviveIsActiveClient(ent) && ent->v.health > 0 &&
          ent->v.deadflag == DEAD_NO && ent->v.solid != SOLID_NOT;
+}
+
+static qboolean SV_CoopRespawnDelayApplies(void) {
+  return coop.value && sv_coop_respawn_near_player.value &&
+         sv_coop_respawn_delay.value > 0.0f;
+}
+
+static void SV_CoopRespawnSetExtendedButtons(edict_t *ent, int buttons) {
+  eval_t *val;
+
+  if (!ent || ent->free)
+    return;
+
+  if ((val = GetEdictFieldValue(ent, qcvm->extfields.button3)))
+    val->_float = (buttons & (1 << 2)) >> 2;
+  if ((val = GetEdictFieldValue(ent, qcvm->extfields.button4)))
+    val->_float = (buttons & (1 << 3)) >> 3;
+  if ((val = GetEdictFieldValue(ent, qcvm->extfields.button5)))
+    val->_float = (buttons & (1 << 4)) >> 4;
+  if ((val = GetEdictFieldValue(ent, qcvm->extfields.button6)))
+    val->_float = (buttons & (1 << 5)) >> 5;
+  if ((val = GetEdictFieldValue(ent, qcvm->extfields.button7)))
+    val->_float = (buttons & (1 << 6)) >> 6;
+  if ((val = GetEdictFieldValue(ent, qcvm->extfields.button8)))
+    val->_float = (buttons & (1 << 7)) >> 7;
+}
+
+static qboolean SV_CoopRespawnAnyAliveClient(void) {
+  int i;
+
+  for (i = 1; i <= svs.maxclients; i++) {
+    if (SV_CoopRespawnIsAliveClient(EDICT_NUM(i)))
+      return true;
+  }
+
+  return false;
+}
+
+static void SV_CoopRespawnMarkTeamWipe(void) {
+  int i;
+  edict_t *client;
+
+  for (i = 1; i <= svs.maxclients; i++) {
+    client = EDICT_NUM(i);
+    if (SV_CoopReviveIsDeadClient(client))
+      coop_respawn_force_standard_spawn[i - 1] = true;
+  }
+}
+
+static void SV_CoopRespawnSuppressInput(
+    edict_t *ent, int num, coop_respawn_postthink_state_t *state) {
+  client_t *client;
+
+  if (state->suppress_respawn_input)
+    return;
+  if (num < 1 || num > svs.maxclients)
+    return;
+
+  client = &svs.clients[num - 1];
+  state->suppress_respawn_input = true;
+  state->saved_button0 = ent->v.button0;
+  state->saved_button1 = ent->v.button1;
+  state->saved_button2 = ent->v.button2;
+  state->saved_cmd_buttons = client->cmd.buttons;
+
+  ent->v.button0 = ent->v.button1 = ent->v.button2 = 0;
+  ent->v.impulse = 0;
+  client->cmd.buttons = 0;
+  client->cmd.impulse = 0;
+  SV_CoopRespawnSetExtendedButtons(ent, 0);
+}
+
+static void SV_CoopRespawnRestoreSuppressedInput(
+    edict_t *ent, int num, const coop_respawn_postthink_state_t *state) {
+  client_t *client;
+
+  if (!state->suppress_respawn_input)
+    return;
+  if (num < 1 || num > svs.maxclients)
+    return;
+
+  client = &svs.clients[num - 1];
+  client->cmd.buttons = state->saved_cmd_buttons;
+  client->cmd.impulse = 0;
+
+  if (!ent || ent->free)
+    return;
+
+  ent->v.button0 = state->saved_button0;
+  ent->v.button1 = state->saved_button1;
+  ent->v.button2 = state->saved_button2;
+  ent->v.impulse = 0;
+  SV_CoopRespawnSetExtendedButtons(ent, state->saved_cmd_buttons);
 }
 
 static float SV_CoopRespawnMaxFloat(float a, float b) {
@@ -769,6 +870,8 @@ static void SV_CoopRespawnRecordDeathAnchor(
     VectorCopy(state->death_v_angle, coop_respawn_death_v_angle[index]);
   }
   coop_respawn_death_anchor_valid[index] = true;
+  if (coop_respawn_dead_since[index] <= 0)
+    coop_respawn_dead_since[index] = qcvm->time;
 }
 
 static void SV_CoopRespawnUseDeathAnchor(
@@ -1104,6 +1207,7 @@ qboolean SV_CoopRespawnPlaceNearPlayer(edict_t *ent) {
 static void SV_CoopRespawnBeginPostThink(
     edict_t *ent, int num, coop_respawn_postthink_state_t *state) {
   int index;
+  double dead_time;
 
   memset(state, 0, sizeof(*state));
   state->was_dead = SV_CoopReviveIsDeadClient(ent);
@@ -1115,22 +1219,42 @@ static void SV_CoopRespawnBeginPostThink(
   if (!coop.value)
     return;
 
+  index = num - 1;
+  if (index < 0 || index >= MAX_SCOREBOARD)
+    return;
+
   if (!state->was_dead) {
+    coop_respawn_dead_since[index] = 0;
+    coop_respawn_force_standard_spawn[index] = false;
     SV_CoopRespawnRememberAliveState(ent, num);
     return;
   }
 
+  if (!SV_CoopRespawnAnyAliveClient())
+    SV_CoopRespawnMarkTeamWipe();
+  state->force_standard_spawn = coop_respawn_force_standard_spawn[index];
+
   SV_CoopRespawnUseDeathAnchor(num, state);
 
-  index = num - 1;
-  if (index >= 0 && index < MAX_SCOREBOARD &&
-      coop_respawn_last_inventory_valid[index]) {
+  if (coop_respawn_last_inventory_valid[index]) {
     state->inventory = coop_respawn_last_inventory[index];
     state->inventory_valid = true;
   } else {
     SV_CoopRespawnSaveInventory(ent, &state->inventory);
     state->inventory_valid = true;
   }
+
+  if (!SV_CoopRespawnDelayApplies())
+    return;
+
+  dead_time = coop_respawn_dead_since[index];
+  if (dead_time <= 0) {
+    dead_time = qcvm->time;
+    coop_respawn_dead_since[index] = dead_time;
+  }
+
+  if (qcvm->time - dead_time < sv_coop_respawn_delay.value)
+    SV_CoopRespawnSuppressInput(ent, num, state);
 }
 
 static void SV_CoopRespawnEndPostThink(
@@ -1139,11 +1263,16 @@ static void SV_CoopRespawnEndPostThink(
   edict_t *anchor = NULL;
   vec3_t spot;
 
-  if (!coop.value)
+  if (!coop.value) {
+    SV_CoopRespawnRestoreSuppressedInput(ent, num, state);
     return;
+  }
 
   if (!state->was_dead && SV_CoopReviveIsDeadClient(ent)) {
     SV_CoopRespawnRecordDeathAnchor(ent, num, state);
+    if (!SV_CoopRespawnAnyAliveClient())
+      SV_CoopRespawnMarkTeamWipe();
+    SV_CoopRespawnRestoreSuppressedInput(ent, num, state);
     return;
   }
 
@@ -1151,7 +1280,7 @@ static void SV_CoopRespawnEndPostThink(
     if (sv_coop_respawn_keep_weapons_ammo.value && state->inventory_valid)
       SV_CoopRespawnRestoreInventory(ent, &state->inventory);
 
-    if (sv_coop_respawn_near_player.value) {
+    if (sv_coop_respawn_near_player.value && !state->force_standard_spawn) {
       if (SV_CoopRespawnFindSpot(ent, state->death_origin, &anchor, spot, true))
         SV_CoopRespawnRelocate(ent, anchor, spot, state);
       else if (net_lagdebug.value)
@@ -1160,10 +1289,14 @@ static void SV_CoopRespawnEndPostThink(
                    state->death_origin[2]);
     }
     index = num - 1;
-    if (index >= 0 && index < MAX_SCOREBOARD)
+    if (index >= 0 && index < MAX_SCOREBOARD) {
       coop_respawn_death_anchor_valid[index] = false;
+      coop_respawn_dead_since[index] = 0;
+      coop_respawn_force_standard_spawn[index] = false;
+    }
   }
 
+  SV_CoopRespawnRestoreSuppressedInput(ent, num, state);
   SV_CoopRespawnRememberAliveState(ent, num);
 }
 
@@ -2163,14 +2296,23 @@ static void SV_FilterLegacyPMoveQCVelocityDelta(
 
 static void SV_RestoreLegacyPMoveOwnedState(edict_t *ent, int prethink_flags,
                                             int postthink_flags,
-                                            float prethink_teleport_time) {
+                                            float prethink_teleport_time,
+                                            float postthink_teleport_time) {
   int flags = (int)ent->v.flags;
 
   flags &= ~(FL_JUMPRELEASED | FL_WATERJUMP);
-  flags |= prethink_flags & (FL_JUMPRELEASED | FL_WATERJUMP);
-  ent->v.flags = flags;
-  if ((prethink_flags | postthink_flags) & FL_WATERJUMP)
+  flags |= prethink_flags & FL_JUMPRELEASED;
+  if (postthink_flags & FL_WATERJUMP) {
+    flags |= FL_WATERJUMP;
+    ent->v.teleport_time = postthink_teleport_time;
+  } else if ((prethink_flags & FL_WATERJUMP) &&
+             prethink_teleport_time > qcvm->time) {
+    flags |= FL_WATERJUMP;
     ent->v.teleport_time = prethink_teleport_time;
+  } else if (prethink_flags & FL_WATERJUMP) {
+    ent->v.teleport_time = 0;
+  }
+  ent->v.flags = flags;
 }
 
 void SV_RunPMoveForEntity(edict_t *ent, const usercmd_t *cmd) {
@@ -2324,14 +2466,15 @@ qboolean SV_RunClientPMoveCommands(client_t *client) {
     float prethink_health;
     float prethink_deadflag;
     float prethink_teleport_time;
+    float postthink_teleport_time;
     qboolean think_ok;
     coop_respawn_postthink_state_t coop_respawn_state;
 
     SV_ApplyQueuedUsercmd(client, &queuedcmd);
-    SV_SetQCInputGlobals(&client->cmd);
     host_frametime = CLAMP(0.001f, client->cmd.seconds, 0.1f);
     pr_global_struct->frametime = host_frametime;
     SV_CoopRespawnBeginPostThink(ent, num, &coop_respawn_state);
+    SV_SetQCInputGlobals(&client->cmd);
 
     if (client->is_vr_client && VectorLength(client->vr_roomscalemove) > 0) {
       VectorAdd(ent->v.origin, client->vr_roomscalemove, ent->v.origin);
@@ -2352,11 +2495,14 @@ qboolean SV_RunClientPMoveCommands(client_t *client) {
     pr_global_struct->time = qcvm->time;
     pr_global_struct->self = EDICT_TO_PROG(ent);
     PR_ExecuteProgram(pr_global_struct->PlayerPreThink);
-    if (ent->free)
+    if (ent->free) {
+      SV_CoopRespawnRestoreSuppressedInput(ent, num, &coop_respawn_state);
       break;
+    }
     if (!qcvm->extfuncs.SV_RunClientCommand) {
       VectorCopy(ent->v.velocity, postthink_velocity);
       postthink_flags = (int)ent->v.flags;
+      postthink_teleport_time = ent->v.teleport_time;
       SV_FilterLegacyPMoveQCVelocityDelta(
           &client->cmd, prethink_velocity, postthink_velocity, prethink_flags,
           postthink_flags, prethink_waterlevel, prethink_watertype,
@@ -2364,15 +2510,18 @@ qboolean SV_RunClientPMoveCommands(client_t *client) {
           preserved_velocity_delta);
       VectorAdd(prethink_velocity, preserved_velocity_delta, ent->v.velocity);
       SV_RestoreLegacyPMoveOwnedState(ent, prethink_flags, postthink_flags,
-                                      prethink_teleport_time);
+                                      prethink_teleport_time,
+                                      postthink_teleport_time);
     }
     SV_CheckVelocity(ent);
 
     SV_ApplyVRWeaponOffset(ent, num, is_remote_vr, thinkRestoreOrigin);
     think_ok = SV_RunThink(ent);
     SV_RestoreVRWeaponOffset(ent, num, is_remote_vr, thinkRestoreOrigin);
-    if (!think_ok || ent->free)
+    if (!think_ok || ent->free) {
+      SV_CoopRespawnRestoreSuppressedInput(ent, num, &coop_respawn_state);
       break;
+    }
 
     if (qcvm->extfuncs.SV_RunClientCommand) {
       pr_global_struct->self = EDICT_TO_PROG(ent);
@@ -2381,8 +2530,10 @@ qboolean SV_RunClientPMoveCommands(client_t *client) {
     } else {
       SV_RunPMoveForEntity(ent, &client->cmd);
     }
-    if (ent->free)
+    if (ent->free) {
+      SV_CoopRespawnRestoreSuppressedInput(ent, num, &coop_respawn_state);
       break;
+    }
 
     SV_ApplyTrustedClientMove(client);
     SV_LinkEdict(ent, true);
@@ -2461,6 +2612,10 @@ void SV_Physics_Client(edict_t *ent, int num) {
   pr_global_struct->time = qcvm->time;
   pr_global_struct->self = EDICT_TO_PROG(ent);
   PR_ExecuteProgram(pr_global_struct->PlayerPreThink);
+  if (ent->free) {
+    SV_CoopRespawnRestoreSuppressedInput(ent, num, &coop_respawn_state);
+    return;
+  }
   SV_AdjustVRJumpVelocity(ent, num, was_onground, prethink_velocity_z);
 
   //
@@ -2506,8 +2661,10 @@ void SV_Physics_Client(edict_t *ent, int num) {
 
     SV_RestoreVRWeaponOffset(ent, num, is_remote_vr, thinkRestoreOrigin);
 
-    if (!think_ok)
+    if (!think_ok) {
+      SV_CoopRespawnRestoreSuppressedInput(ent, num, &coop_respawn_state);
       return;
+    }
   }
 
   // Movement physics — uses body origin for collision detection

@@ -67,6 +67,7 @@ cvar_t sv_coop_revive = {"sv_coop_revive", "1", CVAR_NOTIFY | CVAR_SERVERINFO};
 cvar_t sv_coop_revive_health = {"sv_coop_revive_health", "25", CVAR_NOTIFY | CVAR_SERVERINFO};
 cvar_t sv_coop_revive_range = {"sv_coop_revive_range", "96", CVAR_NOTIFY | CVAR_SERVERINFO};
 cvar_t sv_coop_respawn_near_player = {"sv_coop_respawn_near_player", "1", CVAR_NOTIFY | CVAR_SERVERINFO};
+cvar_t sv_coop_respawn_delay = {"sv_coop_respawn_delay", "10", CVAR_NOTIFY | CVAR_SERVERINFO};
 cvar_t sv_coop_respawn_keep_weapons_ammo = {"sv_coop_respawn_keep_weapons_ammo", "1", CVAR_NOTIFY | CVAR_SERVERINFO};
 cvar_t sv_coop_autosave = {"sv_coop_autosave", "1", CVAR_NOTIFY | CVAR_SERVERINFO};
 cvar_t sv_coop_autosave_slots = {"sv_coop_autosave_slots", "4", CVAR_NONE};
@@ -371,6 +372,7 @@ void SV_Init (void)
 	Cvar_RegisterVariable (&sv_coop_revive_health);
 	Cvar_RegisterVariable (&sv_coop_revive_range);
 	Cvar_RegisterVariable (&sv_coop_respawn_near_player);
+	Cvar_RegisterVariable (&sv_coop_respawn_delay);
 	Cvar_RegisterVariable (&sv_coop_respawn_keep_weapons_ammo);
 	Cvar_RegisterVariable (&sv_coop_autosave);
 	Cvar_RegisterVariable (&sv_coop_autosave_slots);
@@ -391,6 +393,7 @@ void SV_Init (void)
 	Cvar_SetCallback (&sv_coop_revive_health, Host_Callback_Notify);
 	Cvar_SetCallback (&sv_coop_revive_range, Host_Callback_Notify);
 	Cvar_SetCallback (&sv_coop_respawn_near_player, Host_Callback_Notify);
+	Cvar_SetCallback (&sv_coop_respawn_delay, Host_Callback_Notify);
 	Cvar_SetCallback (&sv_coop_respawn_keep_weapons_ammo, Host_Callback_Notify);
 	Cvar_SetCallback (&sv_coop_autosave, Host_Callback_Notify);
 	Cvar_SetCallback (&sv_vr_jump_velocity, Host_Callback_Notify);

@@ -10,7 +10,6 @@ Quake/quakespasm-openvr.bin
 Quake/quakespasm.exe
 Quake/vrclient.so
 Windows/VisualStudio/Build-*/
-Quake/external/*.a
 Quake/id1/
 Quake/libvrclient.so
 game/test_*.bat
