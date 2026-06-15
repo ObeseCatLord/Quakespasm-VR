@@ -69,6 +69,10 @@ extern void Sbar_IntermissionOverlay();
 extern void Sbar_FinaleOverlay();
 extern void M_Draw();
 
+static qboolean VR_InputDebugEnabled(void) {
+  return Cvar_VariableValue("in_debugkeys") != 0;
+}
+
 // rendering
 extern void R_SetupView(void);
 extern void R_RenderScene(void);
@@ -118,6 +122,7 @@ typedef struct {
 typedef struct {
   vr::VRControllerState_t state;
   vr::VRControllerState_t lastState;
+  uint64_t emittedButtonPressed;
   vr::TrackedDeviceIndex_t deviceIndex;
   qboolean seenThisFrame;
   qboolean triggerDown;
@@ -193,6 +198,8 @@ static qboolean vr_adjust_muzzle_return_to_grip = false;
 
 static void VR_AdjustWeaponUpdatePose(void);
 static qboolean VR_AdjustWeaponConsumeTrigger(void);
+static void VR_AimOffsetToWorld(const vec3_t local, const vec3_t angles,
+                                float scale, vec3_t world);
 static void VR_FreeControllerRenderModels(void);
 
 static void VR_SetTrigger(vr_controller *controller, int quakeKey,
@@ -326,6 +333,8 @@ static int VR_ParseStatName(const char *value, int *default_max) {
     return STAT_ACTIVEWEAPON;
   if (!q_strcasecmp(value, "weapon"))
     return STAT_WEAPON;
+  if (!q_strcasecmp(value, "weapons"))
+    return STAT_VR_WEAPONS;
 
   if ((value[0] >= '0' && value[0] <= '9') ||
       ((value[0] == '-' || value[0] == '+') && value[1] >= '0' &&
@@ -579,6 +588,16 @@ static qboolean VR_WeaponIsOwned(const vr_dyn_weapon_t *w) {
   if (w->bitmask && (cl.items & w->bitmask))
     return true;
 
+  if (w->from_schema && w->bitmask &&
+      (cl.stats[STAT_VR_WEAPONS] & w->bitmask))
+    return true;
+
+  if (w->from_schema && w->bitmask) {
+    int stat = VR_FindOwnershipStatForBitmask(w->bitmask);
+    if (stat >= 0 && (cl.stats[stat] & w->bitmask))
+      return true;
+  }
+
   return VR_WeaponIsActive(w);
 }
 
@@ -595,8 +614,13 @@ static qboolean VR_GetWeaponAmmo(const vr_dyn_weapon_t *w, int *ammo,
       break;
     case IT_NAILGUN:
     case IT_SUPER_NAILGUN:
+      stat = STAT_NAILS;
+      *max_ammo = 200;
+      break;
     case RIT_LAVA_NAILGUN:
     case RIT_LAVA_SUPER_NAILGUN:
+      if (!rogue)
+        return false;
       stat = STAT_NAILS;
       *max_ammo = 200;
       break;
@@ -980,6 +1004,8 @@ static vec3_t vr_weapon_muzzle_source_offset[MAX_WEAPONS];
 static qboolean vr_weapon_has_muzzle_source_offset[MAX_WEAPONS];
 static qboolean vr_weapon_muzzle_source_viewofs[MAX_WEAPONS];
 static qboolean vr_weapon_has_muzzle_source_viewofs[MAX_WEAPONS];
+static qboolean vr_weapon_spawn_at_self_origin[MAX_WEAPONS];
+static qboolean vr_weapon_has_spawn_at_self_origin[MAX_WEAPONS];
 
 aliashdr_t *lastWeaponHeader = NULL;
 int weaponCVarEntry = -1;
@@ -1113,6 +1139,8 @@ void InitWeaponCVars(int i, const char *id, const char *offsetX,
   vr_weapon_has_muzzle_source_offset[i] = false;
   vr_weapon_muzzle_source_viewofs[i] = false;
   vr_weapon_has_muzzle_source_viewofs[i] = false;
+  vr_weapon_spawn_at_self_origin[i] = false;
+  vr_weapon_has_spawn_at_self_origin[i] = false;
 }
 
 static int VR_FindWeaponOffsetSlot(const char *id, int *free_slot) {
@@ -1300,6 +1328,80 @@ static void VR_RegisterWeaponMuzzleSource(const char *id,
   if (has_viewofs) {
     vr_weapon_muzzle_source_viewofs[slot] = viewofs;
     vr_weapon_has_muzzle_source_viewofs[slot] = true;
+  }
+}
+
+static void VR_RegisterWeaponSpawnStyle(const char *id,
+                                        qboolean spawn_at_self_origin) {
+  int slot;
+  int free_slot = -1;
+
+  if (!id || !id[0])
+    return;
+
+  slot = VR_FindWeaponOffsetSlot(id, &free_slot);
+  if (slot < 0) {
+    slot = free_slot;
+    if (slot >= 0)
+      InitWeaponCVars(slot, id, "0", "0", "0", "1");
+  }
+
+  if (slot < 0) {
+    Con_Printf("VR: No free projectile spawn style slot for %s\n", id);
+    return;
+  }
+
+  vr_weapon_spawn_at_self_origin[slot] = spawn_at_self_origin;
+  vr_weapon_has_spawn_at_self_origin[slot] = true;
+}
+
+qboolean VR_WeaponSpawnsAtSelfOrigin(const char *viewmodel, int weapon_bit) {
+  int slot;
+
+  if (viewmodel && viewmodel[0]) {
+    slot = VR_FindWeaponOffsetSlot(viewmodel, NULL);
+    if (slot >= 0 && slot < MAX_WEAPONS &&
+        vr_weapon_has_spawn_at_self_origin[slot])
+      return vr_weapon_spawn_at_self_origin[slot];
+  }
+
+  return weapon_bit == IT_GRENADE_LAUNCHER;
+}
+
+void VR_GetWeaponProjectileSourceOffset(const char *viewmodel, int weapon_bit,
+                                        const vec3_t angles, float viewheight,
+                                        vec3_t out) {
+  int slot = -1;
+  qboolean spawn_at_self_origin;
+
+  out[0] = out[1] = out[2] = 0.0f;
+
+  spawn_at_self_origin = VR_WeaponSpawnsAtSelfOrigin(viewmodel, weapon_bit);
+  if (!spawn_at_self_origin) {
+    vec3_t forward, right, up;
+    vec3_t mutable_angles;
+
+    VectorCopy(angles, mutable_angles);
+    AngleVectors(mutable_angles, forward, right, up);
+    VectorMA(out, 8.0f, forward, out);
+    out[2] += 16.0f;
+  }
+
+  if (viewmodel && viewmodel[0])
+    slot = VR_FindWeaponOffsetSlot(viewmodel, NULL);
+  if (slot < 0 || slot >= MAX_WEAPONS)
+    return;
+
+  if (vr_weapon_has_muzzle_source_viewofs[slot] &&
+      vr_weapon_muzzle_source_viewofs[slot])
+    out[2] += viewheight;
+
+  if (vr_weapon_has_muzzle_source_offset[slot]) {
+    vec3_t source_world;
+
+    VR_AimOffsetToWorld(vr_weapon_muzzle_source_offset[slot], angles, 1.0f,
+                        source_world);
+    VectorAdd(out, source_world, out);
   }
 }
 
@@ -2330,6 +2432,9 @@ static qboolean VR_GetMuzzleSourceCompensation(int slot, const vec3_t angles,
   if (slot < 0 || slot >= MAX_WEAPONS)
     return false;
 
+  if (VR_IsMultiplayerClient())
+    return false;
+
   has_source = vr_weapon_has_muzzle_source_offset[slot] ||
                vr_weapon_has_muzzle_source_viewofs[slot];
   if (!has_source)
@@ -3230,6 +3335,11 @@ void VR_LoadWeaponSchema(void) {
         } else if (!Q_strcmp(key, "muzzle_source_viewofs")) {
           w->muzzle_source_viewofs = Q_atoi(com_token) != 0;
           w->has_muzzle_source_viewofs = true;
+        } else if (!Q_strcmp(key, "spawn_at_self_origin") ||
+                   !Q_strcmp(key, "muzzle_spawn_at_self_origin") ||
+                   !Q_strcmp(key, "projectile_spawn_at_self_origin")) {
+          w->spawn_at_self_origin = Q_atoi(com_token) != 0;
+          w->has_spawn_at_self_origin = true;
         } else if (!Q_strcmp(key, "owned_stat")) {
           w->owned_stat = VR_ParseStatName(com_token, NULL);
         } else if (!Q_strcmp(key, "owned_mask")) {
@@ -3388,6 +3498,9 @@ void VR_LoadWeaponSchema(void) {
                                     w->has_muzzle_source_offset,
                                     w->muzzle_source_viewofs,
                                     w->has_muzzle_source_viewofs);
+    if (w->viewmodel_path[0] && w->has_spawn_at_self_origin)
+      VR_RegisterWeaponSpawnStyle(w->viewmodel_path,
+                                  w->spawn_at_self_origin);
     if (w->bitmask || w->owned_stat >= 0 || w->active_stat >= 0)
       VR_AddOrUpdateDynWeapon(w->bitmask, w->impulse, w->model_path, 0, false,
                               w->scale, w->offset, w->has_offset,
@@ -3585,7 +3698,7 @@ void SetHandPos(int index, entity_t *player) {
       headLocal[2] + player->origin[2] + vr_floor_offset.value;
 }
 
-void IdentifyAxes(int device);
+void IdentifyAxes(int controllerIndex, int device);
 
 static bool modelIdentified[2] = {false, false};
 static bool isViveWand[2] = {false, false};
@@ -3598,6 +3711,51 @@ static qboolean VR_IsIndexControllerName(const char *name) {
 
 static qboolean VR_RightAltFireUsesTouchpad(void) {
   return isIndexController[1];
+}
+
+static void VR_IdentifyControllerModel(int controllerIndex,
+                                       vr::TrackedDeviceIndex_t device) {
+  char modelNumber[1024] = {0};
+  char renderModel[1024] = {0};
+
+  if (modelIdentified[controllerIndex])
+    return;
+
+  vr::VRSystem()->GetStringTrackedDeviceProperty(
+      device, vr::Prop_ModelNumber_String, modelNumber, sizeof(modelNumber),
+      nullptr);
+  vr::VRSystem()->GetStringTrackedDeviceProperty(
+      device, vr::Prop_RenderModelName_String, renderModel, sizeof(renderModel),
+      nullptr);
+  if (strstr(modelNumber, "Vive") || strstr(modelNumber, "VIVE")) {
+    isViveWand[controllerIndex] = true;
+  }
+  if (VR_IsIndexControllerName(modelNumber) ||
+      VR_IsIndexControllerName(renderModel)) {
+    isIndexController[controllerIndex] = true;
+  }
+  modelIdentified[controllerIndex] = true;
+}
+
+static void VR_PollControllerInputOnly(int controllerIndex,
+                                       vr::TrackedDeviceIndex_t device) {
+  vr_controller *controller;
+
+  if (device == vr::k_unTrackedDeviceIndexInvalid)
+    return;
+
+  controller = &controllers[controllerIndex];
+  VR_IdentifyControllerModel(controllerIndex, device);
+  IdentifyAxes(controllerIndex, device);
+
+  controller->lastState = controller->state;
+  if (!vr::VRSystem()->GetControllerState(device, &controller->state,
+                                          sizeof(controller->state))) {
+    return;
+  }
+
+  controller->seenThisFrame = true;
+  controller->deviceIndex = device;
 }
 
 void VR_PollPoses() {
@@ -3708,26 +3866,9 @@ void VR_UpdateScreenContent() {
       if (controllerIndex != -1) {
         vr_controller *controller = &controllers[controllerIndex];
 
-        IdentifyAxes(iDevice);
+        VR_IdentifyControllerModel(controllerIndex, iDevice);
 
-        if (!modelIdentified[controllerIndex]) {
-          char modelNumber[1024] = {0};
-          char renderModel[1024] = {0};
-          vr::VRSystem()->GetStringTrackedDeviceProperty(
-              iDevice, vr::Prop_ModelNumber_String, modelNumber,
-              sizeof(modelNumber), nullptr);
-          vr::VRSystem()->GetStringTrackedDeviceProperty(
-              iDevice, vr::Prop_RenderModelName_String, renderModel,
-              sizeof(renderModel), nullptr);
-          if (strstr(modelNumber, "Vive") || strstr(modelNumber, "VIVE")) {
-            isViveWand[controllerIndex] = true;
-          }
-          if (VR_IsIndexControllerName(modelNumber) ||
-              VR_IsIndexControllerName(renderModel)) {
-            isIndexController[controllerIndex] = true;
-          }
-          modelIdentified[controllerIndex] = true;
-        }
+        IdentifyAxes(controllerIndex, iDevice);
 
         controller->lastState = controller->state;
         if (!vr::VRSystem()->GetControllerState(iDevice, &controller->state,
@@ -3747,6 +3888,21 @@ void VR_UpdateScreenContent() {
         QuatToYawPitchRoll(rawControllerQuat, controller->orientation);
       }
     }
+  }
+
+  if (!controllers[0].seenThisFrame) {
+    vr::TrackedDeviceIndex_t device =
+        ovrHMD->GetTrackedDeviceIndexForControllerRole(
+            vr_lefthanded.value ? vr::TrackedControllerRole_RightHand
+                                : vr::TrackedControllerRole_LeftHand);
+    VR_PollControllerInputOnly(0, device);
+  }
+  if (!controllers[1].seenThisFrame) {
+    vr::TrackedDeviceIndex_t device =
+        ovrHMD->GetTrackedDeviceIndexForControllerRole(
+            vr_lefthanded.value ? vr::TrackedControllerRole_LeftHand
+                                : vr::TrackedControllerRole_RightHand);
+    VR_PollControllerInputOnly(1, device);
   }
 
   if (!controllers[0].seenThisFrame)
@@ -4185,14 +4341,28 @@ void VR_ResetOrientation() {
   }
 }
 
-int axisTrackpad = -1;
-int axisJoystick = -1;
-int axisTrigger = -1;
-int axisGrip = -1;
-bool identified = false;
+typedef struct {
+  int trackpad;
+  int joystick;
+  int trigger;
+  int grip;
+  qboolean identified;
+} vr_controller_axes_t;
 
-void IdentifyAxes(int device) {
-  if (identified) {
+static vr_controller_axes_t controllerAxes[2] = {
+    {-1, -1, -1, -1, false},
+    {-1, -1, -1, -1, false},
+};
+
+static int VR_ControllerIndex(const vr_controller *controller) {
+  return controller == &controllers[1] ? 1 : 0;
+}
+
+void IdentifyAxes(int controllerIndex, int device) {
+  vr_controller_axes_t *axes = &controllerAxes[controllerIndex];
+
+  if (axes->identified && axes->trigger != -1 &&
+      (axes->joystick != -1 || axes->trackpad != -1)) {
     return;
   }
 
@@ -4201,46 +4371,98 @@ void IdentifyAxes(int device) {
         device, (vr::ETrackedDeviceProperty)(vr::Prop_Axis0Type_Int32 + i),
         nullptr)) {
     case vr::k_eControllerAxis_TrackPad:
-      if (axisTrackpad == -1) {
-        axisTrackpad = i;
+      if (axes->trackpad == -1) {
+        axes->trackpad = i;
       }
       break;
     case vr::k_eControllerAxis_Joystick:
-      if (axisJoystick == -1) {
-        axisJoystick = i;
+      if (axes->joystick == -1) {
+        axes->joystick = i;
       }
       break;
     case vr::k_eControllerAxis_Trigger:
-      if (axisTrigger == -1) {
-        axisTrigger = i;
-      } else if (axisGrip == -1) {
-        axisGrip = i;
+      if (axes->trigger == -1) {
+        axes->trigger = i;
+      } else if (axes->grip == -1) {
+        axes->grip = i;
       }
       break;
     }
   }
 
-  identified = true;
+  axes->identified = true;
 }
 
-float GetAxis(vr::VRControllerState_t *state, int axis, double deadzoneExtra) {
-  float v = 0;
+static qboolean VR_AddAxisCandidate(int *axes, int *count, int axis) {
+  if (axis < 0 || axis >= (int)vr::k_unControllerStateAxisCount) {
+    return false;
+  }
 
-  if (axis == 0) {
-    if (axisTrackpad != -1) {
-      v += state->rAxis[axisTrackpad].x;
-    }
-    if (axisJoystick != -1) {
-      v += state->rAxis[axisJoystick].x;
-    }
-  } else {
-    if (axisTrackpad != -1) {
-      v += state->rAxis[axisTrackpad].y;
-    }
-    if (axisJoystick != -1) {
-      v += state->rAxis[axisJoystick].y;
+  for (int i = 0; i < *count; i++) {
+    if (axes[i] == axis) {
+      return false;
     }
   }
+
+  axes[(*count)++] = axis;
+  return true;
+}
+
+static float VR_ReadStickAxis(vr::VRControllerState_t *state,
+                              int controllerIndex, int axis) {
+  vr_controller_axes_t *axes = &controllerAxes[controllerIndex];
+  int candidates[4];
+  int candidateCount = 0;
+  float best = 0.0f;
+
+  if (axes->joystick != -1) {
+    VR_AddAxisCandidate(candidates, &candidateCount, axes->joystick);
+  }
+
+  if (isIndexController[controllerIndex]) {
+    VR_AddAxisCandidate(candidates, &candidateCount, 3);
+  }
+
+  if (axes->trackpad != -1) {
+    VR_AddAxisCandidate(candidates, &candidateCount, axes->trackpad);
+  }
+
+  VR_AddAxisCandidate(candidates, &candidateCount, 0);
+
+  for (int i = 0; i < candidateCount; i++) {
+    float value = axis == 0 ? state->rAxis[candidates[i]].x
+                            : state->rAxis[candidates[i]].y;
+    if (fabsf(value) > fabsf(best)) {
+      best = value;
+    }
+  }
+
+  return best;
+}
+
+static float VR_ReadTrigger(vr_controller *controller, int controllerIndex) {
+  vr_controller_axes_t *axes = &controllerAxes[controllerIndex];
+  float triggerValue = 0.0f;
+
+  if (axes->trigger != -1) {
+    triggerValue = controller->state.rAxis[axes->trigger].x;
+  }
+
+  if (fabsf(controller->state.rAxis[1].x) > fabsf(triggerValue)) {
+    triggerValue = controller->state.rAxis[1].x;
+  }
+
+  if (controller->state.ulButtonPressed &
+      vr::ButtonMaskFromId(vr::k_EButton_SteamVR_Trigger)) {
+    triggerValue = 1.0f;
+  }
+
+  return triggerValue;
+}
+
+float GetAxis(vr::VRControllerState_t *state, int controllerIndex, int axis,
+              double deadzoneExtra) {
+  float v = VR_ReadStickAxis(state, controllerIndex, axis);
 
   int sign = (v > 0) - (v < 0);
   v = fabsf(v);
@@ -4262,11 +4484,22 @@ float GetAxis(vr::VRControllerState_t *state, int axis, double deadzoneExtra) {
 }
 
 void DoKey(vr_controller *controller, vr::EVRButtonId vrButton, int quakeKey) {
-  bool wasDown = (controller->lastState.ulButtonPressed &
-                  vr::ButtonMaskFromId(vrButton)) != 0;
+  uint64_t mask = vr::ButtonMaskFromId(vrButton);
+  bool wasDown = (controller->emittedButtonPressed & mask) != 0;
   bool isDown =
-      (controller->state.ulButtonPressed & vr::ButtonMaskFromId(vrButton)) != 0;
+      (controller->state.ulButtonPressed & mask) != 0;
   if (isDown != wasDown) {
+    if (VR_InputDebugEnabled()) {
+      DebugLog("VR_KEY hand=%d vrbutton=%d quakekey=%s down=%d pressed=0x%llx touched=0x%llx\n",
+               VR_ControllerIndex(controller), (int)vrButton,
+               Key_KeynumToString(quakeKey), isDown ? 1 : 0,
+               (unsigned long long)controller->state.ulButtonPressed,
+               (unsigned long long)controller->state.ulButtonTouched);
+    }
+    if (isDown)
+      controller->emittedButtonPressed |= mask;
+    else
+      controller->emittedButtonPressed &= ~mask;
     Key_Event(quakeKey, isDown);
   }
 }
@@ -4278,37 +4511,46 @@ void DoGrip(vr_controller *controller, int quakeKey) {
 void DoTrigger(vr_controller *controller, int quakeKey) {
   const float triggerDownThreshold = 0.55f;
   const float triggerUpThreshold = 0.45f;
+  int controllerIndex = VR_ControllerIndex(controller);
 
   if (!controller->seenThisFrame) {
     VR_SetTrigger(controller, quakeKey, false);
     return;
   }
 
-  if (axisTrigger != -1) {
-    float triggerValue = controller->state.rAxis[axisTrigger].x;
+  float triggerValue = VR_ReadTrigger(controller, controllerIndex);
 
-    if (!controller->triggerDown && triggerValue > triggerDownThreshold) {
-      if (quakeKey == K_RTRIGGER && VR_AdjustWeaponConsumeTrigger()) {
-        controller->triggerDown = true;
-        vr_adjust_suppressed_rtrigger = true;
-        return;
-      }
-      VR_SetTrigger(controller, quakeKey, true);
-    } else if (controller->triggerDown && triggerValue < triggerUpThreshold) {
-      if (quakeKey == K_RTRIGGER && vr_adjust_suppressed_rtrigger) {
-        controller->triggerDown = false;
-        vr_adjust_suppressed_rtrigger = false;
-        return;
-      }
-      VR_SetTrigger(controller, quakeKey, false);
+  if (!controller->triggerDown && triggerValue > triggerDownThreshold) {
+    if (quakeKey == K_RTRIGGER && VR_AdjustWeaponConsumeTrigger()) {
+      controller->triggerDown = true;
+      vr_adjust_suppressed_rtrigger = true;
+      return;
     }
+    if (VR_InputDebugEnabled()) {
+      DebugLog("VR_TRIGGER hand=%d quakekey=%s down=1 value=%.3f\n",
+               controllerIndex, Key_KeynumToString(quakeKey), triggerValue);
+    }
+    VR_SetTrigger(controller, quakeKey, true);
+  } else if (controller->triggerDown && triggerValue < triggerUpThreshold) {
+    if (quakeKey == K_RTRIGGER && vr_adjust_suppressed_rtrigger) {
+      controller->triggerDown = false;
+      vr_adjust_suppressed_rtrigger = false;
+      return;
+    }
+    if (VR_InputDebugEnabled()) {
+      DebugLog("VR_TRIGGER hand=%d quakekey=%s down=0 value=%.3f\n",
+               controllerIndex, Key_KeynumToString(quakeKey), triggerValue);
+    }
+    VR_SetTrigger(controller, quakeKey, false);
   }
 }
 
 void DoAxis(vr_controller *controller, int axis, int quakeKeyNeg,
             int quakeKeyPos, double deadzoneExtra) {
-  float lastVal = GetAxis(&controller->lastState, axis, deadzoneExtra);
-  float val = GetAxis(&controller->state, axis, deadzoneExtra);
+  int controllerIndex = VR_ControllerIndex(controller);
+  float lastVal =
+      GetAxis(&controller->lastState, controllerIndex, axis, deadzoneExtra);
+  float val = GetAxis(&controller->state, controllerIndex, axis, deadzoneExtra);
 
   bool posWasDown = lastVal > 0.0f;
   bool posDown = val > 0.0f;
@@ -4347,8 +4589,8 @@ void VR_Move(usercmd_t *cmd) {
   DoKey(&controllers[0], vr::k_EButton_ApplicationMenu, K_ESCAPE);
   DoKey(&controllers[1], vr::k_EButton_ApplicationMenu, K_BBUTTON);
 
-  // k_EButton_A is also used as a face/menu button by some OpenVR runtimes.
-  DoKey(&controllers[0], vr::k_EButton_A, K_ESCAPE);
+  // k_EButton_A
+  DoKey(&controllers[0], vr::k_EButton_A, K_ABUTTON);
   DoKey(&controllers[1], vr::k_EButton_A, K_XBUTTON);
 
   // k_EButton_Axis2 === SteamVR-binding "Right Axis 2 Press" (at least on Index
@@ -4394,9 +4636,9 @@ void VR_Move(usercmd_t *cmd) {
 
     if (vr_movement_mode.value == VR_MOVEMENT_MODE_RAW_INPUT) {
       cmd->forwardmove +=
-          cl_forwardspeed.value * GetAxis(&controllers[0].state, 1, 0.15f);
+          cl_forwardspeed.value * GetAxis(&controllers[0].state, 0, 1, 0.15f);
       cmd->sidemove +=
-          cl_forwardspeed.value * GetAxis(&controllers[0].state, 0, 0.15f);
+          cl_forwardspeed.value * GetAxis(&controllers[0].state, 0, 0, 0.15f);
     } else {
       vec3_t vfwd;
 
@@ -4430,8 +4672,9 @@ void VR_Move(usercmd_t *cmd) {
       }
 
       vec3_t move = {0, 0, 0};
-      VectorMA(move, GetAxis(&controllers[0].state, 1, 0.15f), lfwd, move);
-      VectorMA(move, GetAxis(&controllers[0].state, 0, 0.15f), lright, move);
+      VectorMA(move, GetAxis(&controllers[0].state, 0, 1, 0.15f), lfwd, move);
+      VectorMA(move, GetAxis(&controllers[0].state, 0, 0, 0.15f), lright,
+               move);
 
       float fwd = DotProduct(move, vfwd);
       float right = DotProduct(move, vright);
@@ -4449,7 +4692,8 @@ void VR_Move(usercmd_t *cmd) {
     }
 
     cmd->upmove +=
-        cl_upspeed.value * GetAxis(&controllers[0].state, 1, 0.15f) * lfwd[2];
+        cl_upspeed.value * GetAxis(&controllers[0].state, 0, 1, 0.15f) *
+        lfwd[2];
 
     // Compensate for instant stop removing momentum-based speed
     if (vr_movement_speed.value != 1.0f) {
@@ -4467,7 +4711,7 @@ void VR_Move(usercmd_t *cmd) {
       cmd->upmove *= cl_movespeedkey.value;
     }
 
-    float yawMove = GetAxis(&controllers[1].state, 0, 0.0);
+    float yawMove = GetAxis(&controllers[1].state, 1, 0, 0.0);
 
     if (vr_snap_turn.value != 0) {
       static int lastSnap = 0;
@@ -4495,7 +4739,7 @@ void VR_Move(usercmd_t *cmd) {
           (controllers[1].state.ulButtonPressed &
            vr::ButtonMaskFromId(vr::k_EButton_SteamVR_Touchpad)) != 0;
       if (isClick && !wasClick) {
-        float x = GetAxis(&controllers[1].state, 0, 0.0);
+        float x = GetAxis(&controllers[1].state, 1, 0, 0.0);
         if (x > 0.3f) {
           Cbuf_AddText("impulse 10\n");
         } else if (x < -0.3f) {

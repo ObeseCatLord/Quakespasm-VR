@@ -74,8 +74,8 @@ extended protocol support.
 ### Co-op
 
 - Co-op defaults are tuned for trusted play: no friendly fire, non-solid
-  players, PMove prediction, weapon-target fixes, revive support, optional ammo
-  respawn, autosaves, and death-location respawn helpers.
+  players, PMove prediction, weapon-target fixes, optional ammo respawn,
+  autosaves, and death-location respawn helpers.
 - Co-op respawn can keep vanilla weapons/ammo plus known extra weapon, ammo,
   item, key, and string-key fields used by modern mods.
 - Optional respawn delay gives the team time to recover; if all players are
@@ -138,15 +138,15 @@ sv_maxpacketsize 1400
 sv_pmove 1
 sv_pmove_legacy 1
 sv_coop_predictmove 1
-sv_coop_trusted_clientmove 1
+sv_coop_trusted_clientmove 0
 sv_coop_noplayerclip 1
 sv_nofriendlyfire 1
 sv_coop_weapon_targetfix 1
-sv_coop_revive 1
 ```
 
-Use `-novr` for desktop clients and `-vr` for headset clients. Desktop trusted
-client movement is off by default even though VR trusted movement is available.
+Use `-novr` for desktop clients and `-vr` for headset clients. Trusted client
+movement is currently off by default; PMove prediction remains the preferred
+smooth co-op path.
 
 ## Building
 
@@ -274,7 +274,7 @@ QuakeSpasm cvar.
 | `cl_predict_smooth_min` | `0.25` | Networking | Smallest prediction error eligible for smoothing. |
 | `cl_predict_smooth_time` | `0.04` | Networking | Prediction correction smoothing time. |
 | `cl_predictmove` | `1` | Networking | Enables client-side movement prediction for remote play. |
-| `cl_trusted_clientmove` | `1` | Networking | Client opt-in for trusted movement extensions. |
+| `cl_trusted_clientmove` | `0` | Networking | Client opt-in for trusted movement extensions. |
 | `cl_trusted_clientmove_desktop` | `0` | Networking | Desktop trusted movement opt-in; off by default. |
 | `cfg_unbindall` | `1` | Config | Allows configs to execute `unbindall`; set `0` to ignore it. |
 | `freelook` | `1` | Input | Default mouse look behavior. |
@@ -343,10 +343,7 @@ QuakeSpasm cvar.
 | `sv_coop_respawn_delay` | `10` | Co-op | Delay before co-op respawn; `0` disables the delay. |
 | `sv_coop_respawn_keep_weapons_ammo` | `1` | Co-op | Preserves weapons, ammo, keycards, and supported mod extra fields on respawn. |
 | `sv_coop_respawn_near_player` | `1` | Co-op | Respawns near the death spot or living teammates when safe. |
-| `sv_coop_revive` | `1` | Co-op | Enables reviving dead teammates. |
-| `sv_coop_revive_health` | `25` | Co-op | Health restored by revive. |
-| `sv_coop_revive_range` | `96` | Co-op | Revive range in Quake units. |
-| `sv_coop_trusted_clientmove` | `1` | Co-op | Allows trusted client movement on co-op servers. |
+| `sv_coop_trusted_clientmove` | `0` | Co-op | Allows trusted client movement on co-op servers. |
 | `sv_coop_trusted_clientmove_maxdelta` | `96` | Co-op | Maximum trusted move correction distance. |
 | `sv_coop_weapon_targetfix` | `1` | Co-op | Allows weapon pickup trigger targets to fire in co-op. |
 | `sv_gameplayfix_elevators` | `2` | Gameplay | Elevator/pusher step recovery; `0` off, `1` clients, `2` all entities. |
@@ -359,6 +356,7 @@ QuakeSpasm cvar.
 | `sv_netdiag_interval` | `5` | Diagnostics | Periodic network diagnostic interval in seconds. |
 | `sv_netsort` | `1` | Networking | Sorts entity updates by priority before packet clipping. |
 | `sv_nofriendlyfire` | `1` | Co-op | Disables friendly fire in co-op. |
+| `sv_nqplayerphysics` | `1` | PMove | QSS-M-compatible gate for legacy QuakeC mods; `1` keeps classic NetQuake server physics, `0` allows legacy PMove/prediction when supported. |
 | `sv_pmove` | `1` | PMove | Enables PMove server movement path. |
 | `sv_pmove_legacy` | `1` | PMove | Wraps legacy QuakeC mods that do not implement PMove hooks. |
 | `sv_pmove_legacy_preserve_qc_velocity` | `1` | PMove | Preserves QC velocity pushes such as grapples through legacy PMove. |

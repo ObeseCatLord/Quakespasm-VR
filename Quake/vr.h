@@ -143,6 +143,8 @@ typedef struct {
   qboolean has_muzzle_source_offset;
   qboolean muzzle_source_viewofs;
   qboolean has_muzzle_source_viewofs;
+  qboolean spawn_at_self_origin;
+  qboolean has_spawn_at_self_origin;
   int owned_stat;
   int owned_mask;
   int active_stat;
@@ -155,6 +157,10 @@ extern vr_weapon_cmd_t vr_weapons[MAX_VR_WEAPONS];
 extern int num_vr_weapons;
 
 void VR_GetMuzzleAdjustedHandPos(vec3_t out);
+qboolean VR_WeaponSpawnsAtSelfOrigin(const char *viewmodel, int weapon_bit);
+void VR_GetWeaponProjectileSourceOffset(const char *viewmodel, int weapon_bit,
+                                        const vec3_t angles,
+                                        float viewheight, vec3_t out);
 extern int vr_last_sent_impulse;
 extern double vr_last_sent_impulse_time;
 
