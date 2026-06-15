@@ -155,6 +155,7 @@ typedef struct client_s
 	int				net_move_last_gap;
 	int				net_move_queue_max;
 	double			net_move_stale_log_time;
+	double			net_move_input_log_time;
 	float			net_move_last_sim_seconds;
 	int				net_snapshot_sequence;
 	int				net_snapshot_ack;
@@ -261,6 +262,7 @@ typedef struct client_s
 	qboolean		trusted_clientmove_valid;
 	vec3_t			trusted_clientmove_origin;
 	vec3_t			trusted_clientmove_velocity;
+	double			net_trustedmove_log_time;
 } client_t;
 
 void SVFTE_Ack (client_t *client, int sequence);
@@ -342,9 +344,6 @@ extern cvar_t sv_coop_ammo_respawn;
 extern cvar_t sv_coop_ammo_respawn_time;
 extern cvar_t sv_coop_progression_item_respawn;
 extern cvar_t sv_coop_progression_item_respawn_classes;
-extern cvar_t sv_coop_revive;
-extern cvar_t sv_coop_revive_health;
-extern cvar_t sv_coop_revive_range;
 extern cvar_t sv_coop_respawn_near_player;
 extern cvar_t sv_coop_respawn_delay;
 extern cvar_t sv_coop_respawn_keep_weapons_ammo;
@@ -414,11 +413,6 @@ void SV_ClientPrintf (const char *fmt, ...) FUNC_PRINTF(1,2);
 void SV_BroadcastPrintf (const char *fmt, ...) FUNC_PRINTF(1,2);
 
 void SV_Physics (void);
-void SV_CoopReviveBeginPostThink(edict_t *ent);
-void SV_CoopReviveEndPostThink(void);
-void SV_CoopReviveApplyPending(void);
-void SV_CoopReviveFromTrace(vec3_t start, vec3_t end, edict_t *ent,
-                            float trace_fraction);
 qboolean SV_CoopRespawnPlaceNearPlayer(edict_t *ent);
 
 qboolean SV_CheckBottom (edict_t *ent);

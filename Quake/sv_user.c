@@ -46,6 +46,8 @@ cvar_t sv_idealpitchscale = {"sv_idealpitchscale", "0.8", CVAR_NONE};
 cvar_t sv_altnoclip = {"sv_altnoclip", "1", CVAR_ARCHIVE}; // johnfitz
 cvar_t sv_inputtimeout = {"sv_inputtimeout", "0.50", CVAR_NONE};
 cvar_t sv_pmove = {"sv_pmove", "1", CVAR_NONE};
+cvar_t sv_nqplayerphysics = {"sv_nqplayerphysics", "1",
+                             CVAR_ARCHIVE | CVAR_SERVERINFO};
 cvar_t sv_pmove_legacy = {"sv_pmove_legacy", "1", CVAR_NONE};
 cvar_t sv_pmove_legacy_preserve_qc_velocity = {
     "sv_pmove_legacy_preserve_qc_velocity", "1", CVAR_NONE};
@@ -113,6 +115,7 @@ void SV_ResetClientMoveState(client_t *client) {
   client->net_move_last_gap = 0;
   client->net_move_queue_max = 0;
   client->net_move_stale_log_time = 0;
+  client->net_move_input_log_time = 0;
   client->net_move_last_sim_seconds = 0;
   client->net_snapshot_sequence = 0;
   client->net_snapshot_ack = -1;
@@ -145,6 +148,7 @@ void SV_ResetClientMoveState(client_t *client) {
   VectorCopy(vec3_origin, client->vr_handrot);
   VectorCopy(vec3_origin, client->vr_roomscalemove);
   VectorCopy(vec3_origin, client->vr_roomscale_accum);
+  client->net_trustedmove_log_time = 0;
   SV_ClearTrustedClientMove(client);
 
   if (client->edict && !client->edict->free) {
@@ -165,6 +169,16 @@ void SV_ApplyTrustedClientMove(client_t *client) {
 
   if (!client->trusted_clientmove_valid)
     return;
+
+  if (!client->usingpmove) {
+    if (net_lagdebug.value && realtime - client->net_trustedmove_log_time > 1.0) {
+      Con_Printf("net_lagdebug: ignored trusted client movement for %s because server PMove is disabled\n",
+                 client->name);
+      client->net_trustedmove_log_time = realtime;
+    }
+    SV_ClearTrustedClientMove(client);
+    return;
+  }
 
   if (!coop.value || !sv_coop_trusted_clientmove.value) {
     SV_ClearTrustedClientMove(client);
@@ -754,6 +768,7 @@ static qboolean SV_QueueAcceptedUsercmd(const usercmd_t *acceptedcmd) {
   usercmd_t *slot;
   int index;
   usercmd_t queuedcmd;
+  qboolean has_input;
 
   if (host_client->move_queue_count == (int)countof(host_client->move_queue)) {
     if (net_lagdebug.value)
@@ -787,6 +802,25 @@ static qboolean SV_QueueAcceptedUsercmd(const usercmd_t *acceptedcmd) {
   host_client->last_move_time = realtime;
   host_client->input_stale = false;
   host_client->pendingmovemessage = queuedcmd.sequence;
+
+  has_input = queuedcmd.forwardmove || queuedcmd.sidemove || queuedcmd.upmove ||
+              queuedcmd.buttons || queuedcmd.impulse ||
+              queuedcmd.vr_roomscalemove[0] ||
+              queuedcmd.vr_roomscalemove[1] ||
+              queuedcmd.vr_roomscalemove[2];
+  if (net_lagdebug.value && has_input &&
+      (queuedcmd.impulse ||
+       realtime - host_client->net_move_input_log_time > 0.25)) {
+    Con_Printf("net_lagdebug: accepted input from %s seq=%d q=%d pmove=%d move=(%g,%g,%g) buttons=%d impulse=%d seconds=%.3f vr=%d vrmove=(%.3f,%.3f,%.3f)\n",
+               host_client->name, queuedcmd.sequence,
+               host_client->move_queue_count, host_client->usingpmove ? 1 : 0,
+               queuedcmd.forwardmove, queuedcmd.sidemove, queuedcmd.upmove,
+               queuedcmd.buttons, queuedcmd.impulse, queuedcmd.seconds,
+               queuedcmd.vr_active ? 1 : 0, queuedcmd.vr_roomscalemove[0],
+               queuedcmd.vr_roomscalemove[1], queuedcmd.vr_roomscalemove[2]);
+    host_client->net_move_input_log_time = realtime;
+  }
+
   return true;
 }
 
@@ -1107,7 +1141,9 @@ static qboolean SV_ParseClientMessage(void) {
       s = MSG_ReadString();
       if (q_strncasecmp(s, "spawn", 5) && q_strncasecmp(s, "begin", 5) &&
           q_strncasecmp(s, "prespawn", 8) && q_strncasecmp(s, "enablecsqc", 10) &&
-          q_strncasecmp(s, "disablecsqc", 11) && qcvm->extfuncs.SV_ParseClientCommand) {
+          q_strncasecmp(s, "disablecsqc", 11) &&
+          q_strncasecmp(s, "sv_giveall", 10) &&
+          qcvm->extfuncs.SV_ParseClientCommand) {
         client_t *ohc = host_client;
         G_INT(OFS_PARM0) = PR_SetEngineString(s);
         pr_global_struct->time = qcvm->time;
@@ -1158,6 +1194,8 @@ static qboolean SV_ParseClientMessage(void) {
       else if (q_strncasecmp(s, "ping", 4) == 0)
         allowed = 1;
       else if (q_strncasecmp(s, "give", 4) == 0)
+        allowed = 1;
+      else if (q_strncasecmp(s, "sv_giveall", 10) == 0)
         allowed = 1;
       else if (q_strncasecmp(s, "ban", 3) == 0)
         allowed = 1;
@@ -1216,6 +1254,7 @@ qboolean SV_ReadClientMessage(void) {
 static void SV_UpdateClientPMoveMode(client_t *client) {
   qboolean usingpmove;
   qboolean legacy_qc_ladder_mod;
+  qboolean legacy_independent_pmove;
 
   if (!client || !client->active)
     return;
@@ -1228,18 +1267,23 @@ static void SV_UpdateClientPMoveMode(client_t *client) {
    */
   legacy_qc_ladder_mod =
       qcvm->extfields.onladder >= 0 && !qcvm->extfuncs.SV_RunClientCommand;
+  legacy_independent_pmove =
+      !sv_nqplayerphysics.value &&
+      (sv_nqplayerphysics.string[0] || deathmatch.value);
 
   usingpmove = client->spawned && sv_pmove.value &&
     (client->protocol_pext2 & PEXT2_PREDINFO) &&
     (qcvm->extfuncs.SV_RunClientCommand ||
-     (sv_pmove_legacy.value && !legacy_qc_ladder_mod));
+     (sv_pmove_legacy.value && legacy_independent_pmove &&
+      !legacy_qc_ladder_mod));
 
   if (usingpmove != client->usingpmove && net_lagdebug.value)
-    Con_Printf("net_lagdebug: server PMove %s for %s pext2=0x%x sv_runclientcommand=%d sv_pmove_legacy=%d legacy_qc_ladder=%d\n",
+    Con_Printf("net_lagdebug: server PMove %s for %s pext2=0x%x sv_runclientcommand=%d sv_nqplayerphysics=%g sv_pmove_legacy=%d legacy_qc_ladder=%d\n",
                usingpmove ? "enabled" : "disabled",
                client->name,
                client->protocol_pext2,
                qcvm->extfuncs.SV_RunClientCommand ? 1 : 0,
+               sv_nqplayerphysics.value,
                sv_pmove_legacy.value ? 1 : 0,
                legacy_qc_ladder_mod ? 1 : 0);
   client->usingpmove = usingpmove;

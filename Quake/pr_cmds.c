@@ -1375,7 +1375,6 @@ static void PF_traceline (void)
 
 	trace = SV_Move (v1, vec3_origin, vec3_origin, v2, nomonsters, ent);
 	SV_DebugLogTraceTrigger(trace.ent, v1, v2, &trace);
-	SV_CoopReviveFromTrace (v1, v2, ent, trace.fraction);
 
 	pr_global_struct->trace_allsolid = trace.allsolid;
 	pr_global_struct->trace_startsolid = trace.startsolid;

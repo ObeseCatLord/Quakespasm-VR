@@ -2201,6 +2201,187 @@ static void Host_Give_f(void) {
   // johnfitz
 }
 
+static client_t *Host_FindClientByCommandArgs(int firstarg) {
+  int i;
+
+  if (Cmd_Argc() <= firstarg) {
+    if (cmd_source == src_client && host_client && host_client->active)
+      return host_client;
+    for (i = 0; i < svs.maxclients; i++)
+      if (svs.clients[i].active)
+        return &svs.clients[i];
+    return NULL;
+  }
+
+  if (Cmd_Argc() > firstarg + 1 && Q_strcmp(Cmd_Argv(firstarg), "#") == 0) {
+    i = Q_atoi(Cmd_Argv(firstarg + 1)) - 1;
+    if (i < 0 || i >= svs.maxclients || !svs.clients[i].active)
+      return NULL;
+    return &svs.clients[i];
+  }
+
+  for (i = 0; i < svs.maxclients; i++) {
+    if (!svs.clients[i].active)
+      continue;
+    if (q_strcasecmp(svs.clients[i].name, Cmd_Argv(firstarg)) == 0)
+      return &svs.clients[i];
+  }
+
+  return NULL;
+}
+
+static void Host_GiveAllFallback(client_t *client) {
+  const int vanilla_weapon_bits = IT_AXE | IT_SHOTGUN | IT_SUPER_SHOTGUN |
+                                  IT_NAILGUN | IT_SUPER_NAILGUN |
+                                  IT_GRENADE_LAUNCHER | IT_ROCKET_LAUNCHER |
+                                  IT_LIGHTNING;
+  const int mod_weapon_bits = 1 | 2 | 4 | 8 | 16 | 32 | 64 | 256 | 512 |
+                              1024 | 4096 | 8192;
+  eval_t *val;
+
+  sv_player = client->edict;
+
+  /*
+   * Grant broad weapon bits rather than only vanilla Quake's set.  Mods such
+   * as Enyo keep extra weapons in higher stock-item-compatible bits.
+   */
+  sv_player->v.items = (int)sv_player->v.items | vanilla_weapon_bits |
+                       mod_weapon_bits | HIT_PROXIMITY_GUN |
+                       HIT_LASER_CANNON | HIT_MJOLNIR;
+  val = GetEdictFieldValueByName(sv_player, "weapons");
+  if (val)
+    val->_float = (int)val->_float | vanilla_weapon_bits | mod_weapon_bits |
+                  HIT_PROXIMITY_GUN | HIT_LASER_CANNON | HIT_MJOLNIR;
+
+  sv_player->v.weapon = IT_SHOTGUN;
+  sv_player->v.ammo_shells = q_max(sv_player->v.ammo_shells, 100);
+  sv_player->v.ammo_nails = q_max(sv_player->v.ammo_nails, 200);
+  sv_player->v.ammo_rockets = q_max(sv_player->v.ammo_rockets, 100);
+  sv_player->v.ammo_cells = q_max(sv_player->v.ammo_cells, 100);
+  sv_player->v.currentammo = sv_player->v.ammo_shells;
+
+  val = GetEdictFieldValueByName(sv_player, "ammo_shells1");
+  if (val)
+    val->_float = q_max(val->_float, 100);
+  val = GetEdictFieldValueByName(sv_player, "ammo_nails1");
+  if (val)
+    val->_float = q_max(val->_float, 200);
+  val = GetEdictFieldValueByName(sv_player, "ammo_rockets1");
+  if (val)
+    val->_float = q_max(val->_float, 100);
+  val = GetEdictFieldValueByName(sv_player, "ammo_cells1");
+  if (val)
+    val->_float = q_max(val->_float, 100);
+  val = GetEdictFieldValueByName(sv_player, "ammo_lava_nails");
+  if (val)
+    val->_float = q_max(val->_float, 200);
+  val = GetEdictFieldValueByName(sv_player, "ammo_multi_rockets");
+  if (val)
+    val->_float = q_max(val->_float, 100);
+  val = GetEdictFieldValueByName(sv_player, "ammo_plasma");
+  if (val)
+    val->_float = q_max(val->_float, 100);
+}
+
+static void Host_SaveClientSpawnParms(client_t *client) {
+  int i;
+
+  if (!pr_global_struct->SetChangeParms)
+    return;
+
+  pr_global_struct->self = EDICT_TO_PROG(client->edict);
+  PR_ExecuteProgram(pr_global_struct->SetChangeParms);
+  for (i = 0; i < NUM_SPAWN_PARMS; i++)
+    client->spawn_parms[i] = (&pr_global_struct->parm1)[i];
+}
+
+static qboolean Host_GiveAllClient(client_t *client) {
+  client_t *old_host_client;
+  edict_t *old_sv_player;
+  dfunction_t *func;
+
+  if (!client || !client->active || !client->edict)
+    return false;
+
+  old_host_client = host_client;
+  old_sv_player = sv_player;
+  host_client = client;
+  sv_player = client->edict;
+
+  func = ED_FindFunction("GiveAllCommand");
+  if (func) {
+    pr_global_struct->self = EDICT_TO_PROG(client->edict);
+    pr_global_struct->time = qcvm->time;
+    PR_ExecuteProgram(func - qcvm->functions);
+  }
+
+  Host_GiveAllFallback(client);
+  Host_SaveClientSpawnParms(client);
+
+  host_client = old_host_client;
+  sv_player = old_sv_player;
+  return true;
+}
+
+/*
+==================
+Host_SV_GiveAll_f
+
+Server/admin give-all command for dedicated co-op testing.
+Usage: sv_giveall [playername | # slot | all]
+==================
+*/
+static void Host_SV_GiveAll_f(void) {
+  client_t *client;
+  qcvm_t *old_qcvm;
+  int i, count;
+
+  if (!sv.active) {
+    if (cmd_source == src_command) {
+      Cmd_ForwardToServer();
+      return;
+    }
+    Con_Printf("sv_giveall: no active server\n");
+    return;
+  }
+
+  old_qcvm = qcvm;
+  if (qcvm != &sv.qcvm) {
+    if (qcvm)
+      PR_SwitchQCVM(NULL);
+    PR_SwitchQCVM(&sv.qcvm);
+  }
+
+  count = 0;
+  if (Cmd_Argc() > 1 && q_strcasecmp(Cmd_Argv(1), "all") == 0) {
+    for (i = 0; i < svs.maxclients; i++) {
+      if (Host_GiveAllClient(&svs.clients[i])) {
+        Con_Printf("sv_giveall: gave all weapons/ammo to %s\n",
+                   svs.clients[i].name);
+        count++;
+      }
+    }
+  } else {
+    client = Host_FindClientByCommandArgs(1);
+    if (client) {
+      if (Host_GiveAllClient(client)) {
+        Con_Printf("sv_giveall: gave all weapons/ammo to %s\n",
+                   client->name);
+        count++;
+      }
+    }
+  }
+
+  if (!count)
+    Con_Printf("sv_giveall: no matching active client\n");
+
+  if (qcvm != old_qcvm) {
+    PR_SwitchQCVM(NULL);
+    if (old_qcvm)
+      PR_SwitchQCVM(old_qcvm);
+  }
+}
+
 static edict_t *FindViewthing(void) {
   int i;
   edict_t *e = NULL;
@@ -2461,6 +2642,7 @@ void Host_InitCommands(void) {
   Cmd_AddCommand("load", Host_Loadgame_f);
   Cmd_AddCommand("save", Host_Savegame_f);
   Cmd_AddCommand_ClientCommand("give", Host_Give_f);
+  Cmd_AddCommand_ClientCommand("sv_giveall", Host_SV_GiveAll_f);
 
   Cmd_AddCommand("startdemos", Host_Startdemos_f);
   Cmd_AddCommand("demos", Host_Demos_f);
