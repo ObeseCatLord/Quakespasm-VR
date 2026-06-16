@@ -1264,7 +1264,7 @@ static void R_DrawPlayerOutlines (void)
 #define NAMETAG_CHAR_HEIGHT 3.0f
 #define NAMETAG_HEAD_OFFSET 12.0f
 #define NAMETAG_SHADOW_OFFSET 0.35f
-#define NAMETAG_COLOR_FLOOR 0.30f
+#define NAMETAG_COLOR_FLOOR 0.45f
 
 static float R_BrightenNametagColor(float c) {
   return NAMETAG_COLOR_FLOOR + c * (1.0f - NAMETAG_COLOR_FLOOR);
@@ -1373,7 +1373,7 @@ static void R_DrawCoopNametags(void) {
     VectorMA(tagorg, NAMETAG_SHADOW_OFFSET, vright, shadoworg);
     VectorMA(shadoworg, -NAMETAG_SHADOW_OFFSET, vup, shadoworg);
     R_DrawNametagString(shadoworg, cl.scores[playernum].name, 0, 0, 0, 0.65f);
-    R_DrawNametagString(tagorg, cl.scores[playernum].name, r, g, b, 0.95f);
+    R_DrawNametagString(tagorg, cl.scores[playernum].name, r, g, b, 1.0f);
   }
 
   glDepthMask(GL_TRUE);

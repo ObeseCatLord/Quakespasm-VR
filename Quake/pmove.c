@@ -45,6 +45,8 @@ static qboolean	pm_initialized;
 static movevars_t	clmovevars;
 static qboolean	clmovevars_valid;
 
+#define PM_VANILLA_JUMP_VELOCITY 270.0f
+
 static cvar_t pm_bunnyspeedcap = {"pm_bunnyspeedcap", "", CVAR_SERVERINFO};
 static cvar_t pm_bunnyfriction = {"pm_bunnyfriction", "1", CVAR_SERVERINFO};
 static cvar_t pm_ktjump = {"pm_ktjump", "", CVAR_SERVERINFO};
@@ -169,8 +171,9 @@ static void PM_SetBaseMoveVars (movevars_t *mv, unsigned int protocolflags, qboo
 	mv->bunnyfriction = pm_bunnyfriction.value != 0;
 	mv->watersinkspeed = PM_CvarOrDefault (&pm_watersinkspeed, 60);
 	mv->edgefriction = PM_CvarOrDefault (&pm_edgefriction, sv_edgefriction.value);
-	jump_velocity = (server_side || vr_enabled.value) && sv_vr_jump_velocity.value > 270 ?
-		sv_vr_jump_velocity.value : 270;
+	jump_velocity = (!server_side && vr_enabled.value &&
+		sv_vr_jump_velocity.value > PM_VANILLA_JUMP_VELOCITY) ?
+		sv_vr_jump_velocity.value : PM_VANILLA_JUMP_VELOCITY;
 	mv->jumpspeed = jump_velocity;
 	mv->protocolflags = protocolflags;
 	mv->flags = MOVEFLAG_VALID | MOVEFLAG_NOGRAVITYONGROUND |
@@ -2096,8 +2099,15 @@ void PMSV_SetMoveStats (edict_t *plent, float *fstat, int *istat)
 {
 	eval_t *entgrav;
 	float entgravity;
+	float jumpspeed;
+	int clientnum;
 
 	PMSV_UpdateMovevars ();
+	clientnum = plent ? NUM_FOR_EDICT(plent) : 0;
+	jumpspeed = movevars.jumpspeed;
+	if (SV_IsVRClientSlot(clientnum) &&
+		sv_vr_jump_velocity.value > PM_VANILLA_JUMP_VELOCITY)
+		jumpspeed = sv_vr_jump_velocity.value;
 	fstat[STAT_MOVEVARS_STEPHEIGHT] = movevars.stepheight;
 	istat[STAT_MOVEFLAGS] = PM_PackMoveFlags (&movevars);
 	fstat[STAT_MOVEVARS_GRAVITY] = movevars.gravity;
@@ -2114,7 +2124,7 @@ void PMSV_SetMoveStats (edict_t *plent, float *fstat, int *istat)
 	entgravity = (entgrav && entgrav->_float) ? entgrav->_float : 1.0f;
 	fstat[STAT_MOVEVARS_ENTGRAVITY] = entgravity;
 	fstat[STAT_MOVEVARS_TIMESCALE] = 1;
-	fstat[STAT_MOVEVARS_JUMPVELOCITY] = movevars.jumpspeed;
+	fstat[STAT_MOVEVARS_JUMPVELOCITY] = jumpspeed;
 	fstat[STAT_MOVEVARS_MAXAIRSPEED] = movevars.maxairspeed;
 	fstat[STAT_MOVEVARS_WATERSINKSPEED] = movevars.watersinkspeed;
 	fstat[STAT_MOVEVARS_FLYFRICTION] = movevars.flyfriction;

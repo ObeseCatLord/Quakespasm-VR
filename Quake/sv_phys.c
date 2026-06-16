@@ -2240,7 +2240,7 @@ static void SV_RestoreVRWeaponOffset(edict_t *ent, int num,
   }
 }
 
-static qboolean SV_IsVRClientSlot(int num) {
+qboolean SV_IsVRClientSlot(int num) {
   if (num <= 0 || num > svs.maxclients)
     return false;
 
@@ -2402,6 +2402,10 @@ void SV_RunPMoveForEntity(edict_t *ent, const usercmd_t *cmd) {
   int i;
 
   PMSV_UpdateMovevars();
+  if (SV_IsVRClientSlot(NUM_FOR_EDICT(ent)) &&
+      sv_vr_jump_velocity.value > SV_VANILLA_JUMP_VELOCITY)
+    movevars.jumpspeed = sv_vr_jump_velocity.value;
+
   entgrav = GetEdictFieldValue(ent, qcvm->extfields.gravity);
   if (entgrav && entgrav->_float)
     movevars.entgravity = entgrav->_float;
