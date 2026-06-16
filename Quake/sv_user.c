@@ -1252,6 +1252,7 @@ static void SV_UpdateClientPMoveMode(client_t *client) {
   qboolean usingpmove;
   qboolean legacy_qc_ladder_mod;
   qboolean legacy_independent_pmove;
+  qboolean local_singleplayer;
 
   if (!client || !client->active)
     return;
@@ -1267,8 +1268,10 @@ static void SV_UpdateClientPMoveMode(client_t *client) {
   legacy_independent_pmove =
       !sv_nqplayerphysics.value &&
       (sv_nqplayerphysics.string[0] || deathmatch.value);
+  local_singleplayer = sv.active && svs.maxclients <= 1;
 
-  usingpmove = client->spawned && sv_pmove.value &&
+  usingpmove = !local_singleplayer &&
+    client->spawned && sv_pmove.value &&
     (client->protocol_pext2 & PEXT2_PREDINFO) &&
     (qcvm->extfuncs.SV_RunClientCommand ||
      (sv_pmove_legacy.value && legacy_independent_pmove &&

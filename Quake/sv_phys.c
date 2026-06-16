@@ -2779,10 +2779,10 @@ void SV_Physics_Client(edict_t *ent, int num) {
     break;
   }
 
-  if (num == cl.viewentity && vr_enabled.value) {
+  if (num == cl.viewentity && vr_enabled.value &&
+      VectorLength(vr_room_scale_move) > 0.001f) {
     vec3_t restoreVel;
     _VectorCopy(ent->v.velocity, restoreVel);
-    extern vec3_t vr_room_scale_move;
     VectorScale(vr_room_scale_move, 1.0f / host_frametime, ent->v.velocity);
 
     switch ((int)ent->v.movetype) {
