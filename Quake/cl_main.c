@@ -399,7 +399,8 @@ void CL_NextDemo (void)
 		{
 			Con_Printf ("No demos listed with startdemos\n");
 			cls.demonum = -1;
-			CL_Disconnect();
+			if (cls.state != ca_connected)
+				CL_Disconnect();
 			return;
 		}
 	}

@@ -2563,6 +2563,11 @@ Return to looping demos
 static void Host_Demos_f(void) {
   if (cls.state == ca_dedicated)
     return;
+  if (!cl_startdemos.value && Cmd_IsExecutingConfig()) {
+    cls.demonum = -1;
+    Con_DPrintf("Skipping startup demos because cl_startdemos is 0.\n");
+    return;
+  }
   if (cls.demonum == -1)
     cls.demonum = 1;
   CL_Disconnect_f();
