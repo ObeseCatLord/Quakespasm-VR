@@ -23,6 +23,9 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 
 #include "arch_def.h"
 #include "quakedef.h"
+#ifdef VR_SUPPORT
+#include "vr.h"
+#endif
 
 
 /* key up events are sent even if in console mode */
@@ -622,6 +625,10 @@ void Key_Unbindall_f(void) {
     if (keybindings[i])
       Key_SetBinding(i, NULL);
   }
+#ifdef VR_SUPPORT
+  if (vr_enabled.value)
+    VR_ApplyDefaultBindings(false);
+#endif
 }
 
 /*
