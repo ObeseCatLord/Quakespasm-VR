@@ -228,9 +228,9 @@ QuakeSpasm cvar.
 | `vr_joystick_yaw_multi` | `1.0` | VR | VR stick turn multiplier. |
 | `vr_lefthanded` | `0` | VR | Left-handed weapon/control mode. |
 | `vr_menu_scale` | `0.13` | VR | VR menu scale. |
-| `vr_movement_instant_stop` | `1` | VR | Stops VR locomotion immediately when input stops. |
+| `vr_movement_instant_stop` | `0` | VR | Optional instant stop for VR locomotion when input stops. |
 | `vr_movement_mode` | `0` | VR | Selects VR movement direction mode. |
-| `vr_movement_speed` | `1.5` | VR | VR locomotion multiplier. |
+| `vr_movement_speed` | `1.0` | VR | Optional VR locomotion multiplier. |
 | `vr_msaa` | `4` | VR | VR render MSAA sample count. |
 | `vr_projectilespawn_z_offset` | `24` | VR | Legacy projectile spawn vertical offset. |
 | `vr_snap_turn` | `0` | VR | Snap-turn angle; `0` means smooth turning. |
@@ -244,7 +244,7 @@ QuakeSpasm cvar.
 | `cl_beams_polygons` | `0` | Rendering | Enables polygon beam rendering path for supported effects. |
 | `cl_confirmquit` | `0` | UI | Adds an optional quit confirmation. |
 | `cl_coop_nametags` | `1` | Co-op | Draws co-op player nametags. |
-| `cl_desktop_vanilla_run` | `1` | Input | Keeps faster vanilla-style desktop movement behavior in `-novr`. |
+| `cl_desktop_vanilla_run` | `1` | Input | Keeps faster vanilla-style movement behavior for desktop and VR defaults. |
 | `cl_extrapolate` | `0.02` | Networking | Maximum normal entity extrapolation window. |
 | `cl_extrapolate_adaptive` | `0` | Networking | Temporarily increases extrapolation after detected gaps. |
 | `cl_extrapolate_adaptive_max` | `0.12` | Networking | Maximum adaptive extrapolation window. |
@@ -376,7 +376,7 @@ QuakeSpasm cvar.
 | `sv_snapshot_splits` | `0` | Networking | Legacy split snapshot path; off by default in favor of replacement deltas. |
 | `sv_spectatormaxspeed` | `500` | PMove | Spectator max speed. |
 | `sv_triggerdebug` | `0` | Diagnostics | Logs trigger/touch decisions. |
-| `sv_vr_jump_velocity` | `300` | VR/co-op | VR jump velocity override. |
+| `sv_vr_jump_velocity` | `270` | VR/co-op | Optional VR jump velocity override; `270` matches vanilla. |
 | `sv_wateraccelerate` | `-1` | PMove | PMove water acceleration; negative means compatibility default. |
 | `sv_waterfriction` | `4` | PMove | PMove water friction. |
 

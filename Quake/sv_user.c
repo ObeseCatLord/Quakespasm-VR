@@ -1142,7 +1142,6 @@ static qboolean SV_ParseClientMessage(void) {
       if (q_strncasecmp(s, "spawn", 5) && q_strncasecmp(s, "begin", 5) &&
           q_strncasecmp(s, "prespawn", 8) && q_strncasecmp(s, "enablecsqc", 10) &&
           q_strncasecmp(s, "disablecsqc", 11) &&
-          q_strncasecmp(s, "sv_giveall", 10) &&
           qcvm->extfuncs.SV_ParseClientCommand) {
         client_t *ohc = host_client;
         G_INT(OFS_PARM0) = PR_SetEngineString(s);
@@ -1194,8 +1193,6 @@ static qboolean SV_ParseClientMessage(void) {
       else if (q_strncasecmp(s, "ping", 4) == 0)
         allowed = 1;
       else if (q_strncasecmp(s, "give", 4) == 0)
-        allowed = 1;
-      else if (q_strncasecmp(s, "sv_giveall", 10) == 0)
         allowed = 1;
       else if (q_strncasecmp(s, "ban", 3) == 0)
         allowed = 1;

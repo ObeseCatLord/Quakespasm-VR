@@ -2642,7 +2642,7 @@ void Host_InitCommands(void) {
   Cmd_AddCommand("load", Host_Loadgame_f);
   Cmd_AddCommand("save", Host_Savegame_f);
   Cmd_AddCommand_ClientCommand("give", Host_Give_f);
-  Cmd_AddCommand_ClientCommand("sv_giveall", Host_SV_GiveAll_f);
+  Cmd_AddCommand("sv_giveall", Host_SV_GiveAll_f);
 
   Cmd_AddCommand("startdemos", Host_Startdemos_f);
   Cmd_AddCommand("demos", Host_Demos_f);

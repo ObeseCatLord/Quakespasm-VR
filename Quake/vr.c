@@ -487,20 +487,6 @@ static int VR_FindImpulseForActiveBit(int active) {
   return 0;
 }
 
-static int VR_FindOwnershipStatForBitmask(int bitmask) {
-  if (!bitmask || (cl.items & bitmask))
-    return -1;
-
-  for (int i = MAX_CL_BASE_STATS; i < MAX_CL_STATS; i++) {
-    if (i == STAT_ACTIVEWEAPON || i == STAT_WEAPON)
-      continue;
-    if (cl.stats[i] & bitmask)
-      return i;
-  }
-
-  return -1;
-}
-
 static vr_dyn_weapon_t *VR_AddOrUpdateDynWeapon(
     int bitmask, int impulse, const char *model_path, int model_index,
     qboolean discovered, float scale, const vec3_t offset, qboolean has_offset,
@@ -591,12 +577,6 @@ static qboolean VR_WeaponIsOwned(const vr_dyn_weapon_t *w) {
   if (w->from_schema && w->bitmask &&
       (cl.stats[STAT_VR_WEAPONS] & w->bitmask))
     return true;
-
-  if (w->from_schema && w->bitmask) {
-    int stat = VR_FindOwnershipStatForBitmask(w->bitmask);
-    if (stat >= 0 && (cl.stats[stat] & w->bitmask))
-      return true;
-  }
 
   return VR_WeaponIsActive(w);
 }
@@ -736,8 +716,8 @@ DEFINE_CVAR(vr_joystick_axis_exponent, 1.0, CVAR_ARCHIVE);
 DEFINE_CVAR(vr_joystick_deadzone_trunc, 1, CVAR_ARCHIVE);
 DEFINE_CVAR(vr_hud_scale, 0.025, CVAR_ARCHIVE);
 DEFINE_CVAR(vr_menu_scale, 0.13, CVAR_ARCHIVE);
-DEFINE_CVAR(vr_movement_instant_stop, 1, CVAR_ARCHIVE);
-DEFINE_CVAR(vr_movement_speed, 1.5, CVAR_ARCHIVE);
+DEFINE_CVAR(vr_movement_instant_stop, 0, CVAR_ARCHIVE);
+DEFINE_CVAR(vr_movement_speed, 1.0, CVAR_ARCHIVE);
 
 static qboolean InitOpenGLExtensions() {
   int i;
@@ -3391,7 +3371,7 @@ void VR_LoadWeaponSchema(void) {
           (w->has_held_scale || w->has_held_offset ||
            w->has_mp_held_offset || w->has_muzzle_offset ||
            w->has_mp_muzzle_offset || w->has_muzzle_source_offset ||
-           w->has_muzzle_source_viewofs) &&
+           w->has_muzzle_source_viewofs || w->has_spawn_at_self_origin) &&
           w->model_path[0]) {
         Q_strncpy(w->viewmodel_path, w->model_path, sizeof(w->viewmodel_path));
       }
@@ -3409,7 +3389,7 @@ void VR_LoadWeaponSchema(void) {
             (w->has_held_scale || w->has_held_offset ||
              w->has_mp_held_offset || w->has_muzzle_offset ||
              w->has_mp_muzzle_offset || w->has_muzzle_source_offset ||
-             w->has_muzzle_source_viewofs))) {
+             w->has_muzzle_source_viewofs || w->has_spawn_at_self_origin))) {
         Con_Printf("VR: Ignoring vr_weapons.txt entry without bitmask/stat ownership or held viewmodel\n");
         continue;
       }
@@ -4617,6 +4597,13 @@ void VR_Move(usercmd_t *cmd) {
            vr_joystick_axis_menu_deadzone_extra.value);
 
   } else {
+    float vr_movementspeed = cl_forwardspeed.value;
+
+    if (cl_desktop_vanilla_run.value && !cl_alwaysrun.value &&
+        vr_movementspeed == 200.0f) {
+      vr_movementspeed *= cl_movespeedkey.value;
+    }
+
     DoAxis(&controllers[1], 0, K_LEFTARROW, K_RIGHTARROW,
            vr_joystick_axis_menu_deadzone_extra.value);
     // Right stick Y-axis intentionally unbound to prevent accidental forward
@@ -4636,9 +4623,9 @@ void VR_Move(usercmd_t *cmd) {
 
     if (vr_movement_mode.value == VR_MOVEMENT_MODE_RAW_INPUT) {
       cmd->forwardmove +=
-          cl_forwardspeed.value * GetAxis(&controllers[0].state, 0, 1, 0.15f);
+          vr_movementspeed * GetAxis(&controllers[0].state, 0, 1, 0.0f);
       cmd->sidemove +=
-          cl_forwardspeed.value * GetAxis(&controllers[0].state, 0, 0, 0.15f);
+          vr_movementspeed * GetAxis(&controllers[0].state, 0, 0, 0.0f);
     } else {
       vec3_t vfwd;
 
@@ -4672,8 +4659,8 @@ void VR_Move(usercmd_t *cmd) {
       }
 
       vec3_t move = {0, 0, 0};
-      VectorMA(move, GetAxis(&controllers[0].state, 0, 1, 0.15f), lfwd, move);
-      VectorMA(move, GetAxis(&controllers[0].state, 0, 0, 0.15f), lright,
+      VectorMA(move, GetAxis(&controllers[0].state, 0, 1, 0.0f), lfwd, move);
+      VectorMA(move, GetAxis(&controllers[0].state, 0, 0, 0.0f), lright,
                move);
 
       float fwd = DotProduct(move, vfwd);
@@ -4681,8 +4668,8 @@ void VR_Move(usercmd_t *cmd) {
 
       // Quake run doesn't affect the value of cl_sidespeed.value, so just use
       // forward speed here for consistency
-      cmd->forwardmove += cl_forwardspeed.value * fwd;
-      cmd->sidemove += cl_forwardspeed.value * right;
+      cmd->forwardmove += vr_movementspeed * fwd;
+      cmd->sidemove += vr_movementspeed * right;
     }
 
     if (vr_movement_mode.value == VR_MOVEMENT_MODE_FOLLOW_HEAD) {
@@ -4692,20 +4679,16 @@ void VR_Move(usercmd_t *cmd) {
     }
 
     cmd->upmove +=
-        cl_upspeed.value * GetAxis(&controllers[0].state, 0, 1, 0.15f) *
+        cl_upspeed.value * GetAxis(&controllers[0].state, 0, 1, 0.0f) *
         lfwd[2];
 
-    // Compensate for instant stop removing momentum-based speed
     if (vr_movement_speed.value != 1.0f) {
       cmd->forwardmove *= vr_movement_speed.value;
       cmd->sidemove *= vr_movement_speed.value;
       cmd->upmove *= vr_movement_speed.value;
     }
 
-    if (cl_forwardspeed.value > 200 && cl_movespeedkey.value) {
-      cmd->forwardmove /= cl_movespeedkey.value;
-    }
-    if ((cl_forwardspeed.value > 200) ^ (in_speed.state & 1)) {
+    if ((in_speed.state & 1) ^ (cl_alwaysrun.value != 0.0)) {
       cmd->forwardmove *= cl_movespeedkey.value;
       cmd->sidemove *= cl_movespeedkey.value;
       cmd->upmove *= cl_movespeedkey.value;
@@ -4865,9 +4848,10 @@ void VR_TrackWeapons(void) {
       impulse = VR_FindImpulseForActiveBit(active);
     }
 
-    owned_stat = VR_FindOwnershipStatForBitmask(active);
-    if (owned_stat >= 0)
+    if (active && (cl.stats[STAT_VR_WEAPONS] & active)) {
+      owned_stat = STAT_VR_WEAPONS;
       owned_mask = active;
+    }
 
     w = VR_AddOrUpdateDynWeapon(active, impulse, NULL, model_idx, true, 1.0f,
                                 vec3_origin, false, owned_stat, owned_mask, -1,

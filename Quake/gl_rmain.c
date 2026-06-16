@@ -1264,6 +1264,11 @@ static void R_DrawPlayerOutlines (void)
 #define NAMETAG_CHAR_HEIGHT 3.0f
 #define NAMETAG_HEAD_OFFSET 12.0f
 #define NAMETAG_SHADOW_OFFSET 0.35f
+#define NAMETAG_COLOR_FLOOR 0.30f
+
+static float R_BrightenNametagColor(float c) {
+  return NAMETAG_COLOR_FLOOR + c * (1.0f - NAMETAG_COLOR_FLOOR);
+}
 
 static void R_EmitNametagChar(vec3_t pos, unsigned char ch,
                               float char_width, float char_height) {
@@ -1282,13 +1287,13 @@ static void R_EmitNametagChar(vec3_t pos, unsigned char ch,
   VectorMA(p1, char_height, vup, p2);
   VectorMA(pos, char_height, vup, p3);
 
-  glTexCoord2f(fcol, frow);
-  glVertex3fv(p0);
-  glTexCoord2f(fcol + size, frow);
-  glVertex3fv(p1);
-  glTexCoord2f(fcol + size, frow + size);
-  glVertex3fv(p2);
   glTexCoord2f(fcol, frow + size);
+  glVertex3fv(p0);
+  glTexCoord2f(fcol + size, frow + size);
+  glVertex3fv(p1);
+  glTexCoord2f(fcol + size, frow);
+  glVertex3fv(p2);
+  glTexCoord2f(fcol, frow);
   glVertex3fv(p3);
 }
 
@@ -1335,6 +1340,7 @@ static void R_DrawCoopNametags(void) {
   GL_Bind(char_texture);
   glEnable(GL_BLEND);
   glDisable(GL_ALPHA_TEST);
+  glDisable(GL_CULL_FACE);
   glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
   glTexEnvf(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
   glDepthMask(GL_FALSE);
@@ -1346,8 +1352,6 @@ static void R_DrawCoopNametags(void) {
     e = &cl.entities[i];
     if (!e->model || e->model->type != mod_alias)
       continue;
-    if (R_CullModelForEntity(e))
-      continue;
 
     playernum = i - 1;
     if (!cl.scores[playernum].name[0])
@@ -1358,6 +1362,9 @@ static void R_DrawCoopNametags(void) {
     r = rgb[0] / 255.0f;
     g = rgb[1] / 255.0f;
     b = rgb[2] / 255.0f;
+    r = R_BrightenNametagColor(r);
+    g = R_BrightenNametagColor(g);
+    b = R_BrightenNametagColor(b);
 
     scale = ENTSCALE_DECODE(e->scale);
     VectorCopy(e->origin, tagorg);
@@ -1370,6 +1377,10 @@ static void R_DrawCoopNametags(void) {
   }
 
   glDepthMask(GL_TRUE);
+  if (gl_cull.value)
+    glEnable(GL_CULL_FACE);
+  else
+    glDisable(GL_CULL_FACE);
   glDisable(GL_BLEND);
   glDisable(GL_ALPHA_TEST);
   glTexEnvf(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_REPLACE);
