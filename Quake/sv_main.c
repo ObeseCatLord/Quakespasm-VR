@@ -63,6 +63,9 @@ cvar_t sv_coop_ammo_respawn = {"sv_coop_ammo_respawn", "0", CVAR_NOTIFY | CVAR_S
 cvar_t sv_coop_ammo_respawn_time = {"sv_coop_ammo_respawn_time", "30", CVAR_NOTIFY | CVAR_SERVERINFO};
 cvar_t sv_coop_progression_item_respawn = {"sv_coop_progression_item_respawn", "1", CVAR_NOTIFY | CVAR_SERVERINFO};
 cvar_t sv_coop_progression_item_respawn_classes = {"sv_coop_progression_item_respawn_classes", "item_jboots item_jboots_timed", CVAR_NOTIFY | CVAR_SERVERINFO};
+cvar_t sv_coop_revive = {"sv_coop_revive", "1", CVAR_NOTIFY | CVAR_SERVERINFO};
+cvar_t sv_coop_revive_health = {"sv_coop_revive_health", "25", CVAR_NOTIFY | CVAR_SERVERINFO};
+cvar_t sv_coop_revive_range = {"sv_coop_revive_range", "96", CVAR_NOTIFY | CVAR_SERVERINFO};
 cvar_t sv_coop_respawn_near_player = {"sv_coop_respawn_near_player", "1", CVAR_NOTIFY | CVAR_SERVERINFO};
 cvar_t sv_coop_respawn_delay = {"sv_coop_respawn_delay", "10", CVAR_NOTIFY | CVAR_SERVERINFO};
 cvar_t sv_coop_respawn_keep_weapons_ammo = {"sv_coop_respawn_keep_weapons_ammo", "1", CVAR_NOTIFY | CVAR_SERVERINFO};
@@ -74,7 +77,7 @@ cvar_t sv_coop_trusted_clientmove = {"sv_coop_trusted_clientmove", "0", CVAR_NOT
 cvar_t sv_coop_trusted_clientmove_maxdelta = {"sv_coop_trusted_clientmove_maxdelta", "96", CVAR_NONE};
 cvar_t sv_coop_predictmove = {"sv_coop_predictmove", "1", CVAR_NOTIFY | CVAR_SERVERINFO};
 cvar_t sv_triggerdebug = {"sv_triggerdebug", "0", CVAR_NONE};
-cvar_t sv_vr_jump_velocity = {"sv_vr_jump_velocity", "300", CVAR_NOTIFY | CVAR_SERVERINFO};
+cvar_t sv_vr_jump_velocity = {"sv_vr_jump_velocity", "270", CVAR_NOTIFY | CVAR_SERVERINFO};
 cvar_t sv_skyroom_pvs = {"sv_skyroom_pvs", "1", CVAR_NONE};
 
 //============================================================================
@@ -370,6 +373,9 @@ void SV_Init (void)
 	Cvar_RegisterVariable (&sv_coop_ammo_respawn_time);
 	Cvar_RegisterVariable (&sv_coop_progression_item_respawn);
 	Cvar_RegisterVariable (&sv_coop_progression_item_respawn_classes);
+	Cvar_RegisterVariable (&sv_coop_revive);
+	Cvar_RegisterVariable (&sv_coop_revive_health);
+	Cvar_RegisterVariable (&sv_coop_revive_range);
 	Cvar_RegisterVariable (&sv_coop_respawn_near_player);
 	Cvar_RegisterVariable (&sv_coop_respawn_delay);
 	Cvar_RegisterVariable (&sv_coop_respawn_keep_weapons_ammo);
@@ -388,6 +394,9 @@ void SV_Init (void)
 	Cvar_SetCallback (&sv_coop_ammo_respawn_time, Host_Callback_Notify);
 	Cvar_SetCallback (&sv_coop_progression_item_respawn, Host_Callback_Notify);
 	Cvar_SetCallback (&sv_coop_progression_item_respawn_classes, Host_Callback_Notify);
+	Cvar_SetCallback (&sv_coop_revive, Host_Callback_Notify);
+	Cvar_SetCallback (&sv_coop_revive_health, Host_Callback_Notify);
+	Cvar_SetCallback (&sv_coop_revive_range, Host_Callback_Notify);
 	Cvar_SetCallback (&sv_coop_respawn_near_player, Host_Callback_Notify);
 	Cvar_SetCallback (&sv_coop_respawn_delay, Host_Callback_Notify);
 	Cvar_SetCallback (&sv_coop_respawn_keep_weapons_ammo, Host_Callback_Notify);

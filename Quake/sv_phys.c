@@ -206,6 +206,267 @@ static void SV_CoopRemoveSpawnTeledeath(edict_t *owner) {
 
 /*
 =============
+Coop revive helpers
+
+Dead clients are SOLID_NOT in the stock and AD QuakeC, so melee traces do not
+reliably hit trace_ent. During PlayerPostThink, short player-owned traces are
+matched against dead client hulls, then the revive is applied after QuakeC
+weapon code returns so its trace globals are not clobbered.
+=============
+*/
+#define COOP_REVIVE_TRACE_PADDING 16.0f
+#define COOP_REVIVE_TRACE_EPSILON 0.01f
+
+static edict_t *coop_revive_trace_owner = NULL;
+static edict_t *coop_revive_pending_attacker = NULL;
+static edict_t *coop_revive_pending_target = NULL;
+static float coop_revive_pending_fraction = 0.0f;
+static vec3_t coop_revive_pending_origin;
+static vec3_t coop_revive_pending_angles;
+static vec3_t coop_revive_pending_v_angle;
+
+static void SV_CoopReviveClientBounds(edict_t *ent, vec3_t mins,
+                                      vec3_t maxs) {
+  int i;
+
+  if (ent->v.size[0] || ent->v.size[1] || ent->v.size[2]) {
+    VectorAdd(ent->v.origin, ent->v.mins, mins);
+    VectorAdd(ent->v.origin, ent->v.maxs, maxs);
+  } else {
+    mins[0] = ent->v.origin[0] - 16;
+    mins[1] = ent->v.origin[1] - 16;
+    mins[2] = ent->v.origin[2] - 24;
+    maxs[0] = ent->v.origin[0] + 16;
+    maxs[1] = ent->v.origin[1] + 16;
+    maxs[2] = ent->v.origin[2] + 32;
+  }
+
+  for (i = 0; i < 3; i++) {
+    mins[i] -= COOP_REVIVE_TRACE_PADDING;
+    maxs[i] += COOP_REVIVE_TRACE_PADDING;
+  }
+}
+
+static qboolean SV_CoopReviveTraceIntersectsBounds(vec3_t start, vec3_t delta,
+                                                   vec3_t mins, vec3_t maxs,
+                                                   float *fraction) {
+  int i;
+  float t1, t2, temp;
+  float tmin = 0.0f;
+  float tmax = 1.0f;
+
+  for (i = 0; i < 3; i++) {
+    if (fabs(delta[i]) < 0.0001f) {
+      if (start[i] < mins[i] || start[i] > maxs[i])
+        return false;
+      continue;
+    }
+
+    t1 = (mins[i] - start[i]) / delta[i];
+    t2 = (maxs[i] - start[i]) / delta[i];
+    if (t1 > t2) {
+      temp = t1;
+      t1 = t2;
+      t2 = temp;
+    }
+
+    if (t1 > tmin)
+      tmin = t1;
+    if (t2 < tmax)
+      tmax = t2;
+    if (tmin > tmax)
+      return false;
+  }
+
+  *fraction = tmin;
+  return true;
+}
+
+static qboolean SV_CoopReviveTraceIsClear(vec3_t start, vec3_t end,
+                                          edict_t *attacker) {
+  trace_t trace;
+
+  trace = SV_Move(start, vec3_origin, vec3_origin, end, MOVE_NOMONSTERS,
+                  attacker);
+  return !trace.allsolid && !trace.startsolid &&
+         trace.fraction >= 1.0f - COOP_REVIVE_TRACE_EPSILON;
+}
+
+static qboolean SV_CoopReviveCanPlaceAt(edict_t *ent, vec3_t origin) {
+  trace_t trace;
+
+  trace = SV_Move(origin, ent->v.mins, ent->v.maxs, origin, MOVE_NORMAL, ent);
+  return !trace.allsolid && !trace.startsolid;
+}
+
+static void SV_CoopReviveSetOrigin(edict_t *ent, vec3_t origin) {
+  vec3_t test_origin;
+  static const float offsets[] = {0, 8, 16, 24, 32};
+  size_t i;
+
+  for (i = 0; i < sizeof(offsets) / sizeof(offsets[0]); i++) {
+    VectorCopy(origin, test_origin);
+    test_origin[2] += offsets[i];
+    if (SV_CoopReviveCanPlaceAt(ent, test_origin)) {
+      VectorCopy(test_origin, ent->v.origin);
+      return;
+    }
+  }
+
+  VectorCopy(origin, ent->v.origin);
+}
+
+void SV_CoopReviveBeginPostThink(edict_t *ent) {
+  coop_revive_trace_owner = ent;
+  coop_revive_pending_attacker = NULL;
+  coop_revive_pending_target = NULL;
+  coop_revive_pending_fraction = 0.0f;
+}
+
+void SV_CoopReviveEndPostThink(void) { coop_revive_trace_owner = NULL; }
+
+void SV_CoopReviveFromTrace(vec3_t start, vec3_t end, edict_t *ent,
+                            float trace_fraction) {
+  int i;
+  float range;
+  float trace_len;
+  vec3_t delta;
+  vec3_t mins, maxs;
+  vec3_t hit;
+  edict_t *target;
+  float target_fraction;
+
+  if (!coop.value || !sv_coop_revive.value || !coop_revive_trace_owner)
+    return;
+  if (ent != coop_revive_trace_owner ||
+      !SV_CoopIsActiveClient(coop_revive_trace_owner))
+    return;
+  if (!sv.active || sv.state != ss_active)
+    return;
+
+  range = sv_coop_revive_range.value;
+  if (range <= 0)
+    return;
+
+  VectorSubtract(end, start, delta);
+  trace_len = VectorLength(delta);
+  if (trace_len <= 0 || trace_len > range)
+    return;
+
+  for (i = 1; i <= svs.maxclients; i++) {
+    target = EDICT_NUM(i);
+    if (target == ent || !SV_CoopIsDeadClient(target))
+      continue;
+
+    SV_CoopReviveClientBounds(target, mins, maxs);
+    if (!SV_CoopReviveTraceIntersectsBounds(start, delta, mins, maxs,
+                                            &target_fraction))
+      continue;
+    if (target_fraction < 0.0f || target_fraction > 1.0f)
+      continue;
+    if (target_fraction > trace_fraction + COOP_REVIVE_TRACE_EPSILON)
+      continue;
+
+    hit[0] = start[0] + delta[0] * target_fraction;
+    hit[1] = start[1] + delta[1] * target_fraction;
+    hit[2] = start[2] + delta[2] * target_fraction;
+    if (!SV_CoopReviveTraceIsClear(start, hit, ent))
+      continue;
+
+    if (!coop_revive_pending_target ||
+        target_fraction < coop_revive_pending_fraction) {
+      coop_revive_pending_attacker = ent;
+      coop_revive_pending_target = target;
+      coop_revive_pending_fraction = target_fraction;
+      VectorCopy(target->v.origin, coop_revive_pending_origin);
+      VectorCopy(target->v.angles, coop_revive_pending_angles);
+      VectorCopy(target->v.v_angle, coop_revive_pending_v_angle);
+    }
+  }
+}
+
+void SV_CoopReviveApplyPending(void) {
+  client_t *client;
+  client_t *old_host_client;
+  edict_t *old_sv_player;
+  edict_t *attacker;
+  edict_t *target;
+  int target_num;
+  int i;
+  int old_self, old_other;
+  float old_time;
+  float old_force_retouch;
+  vec3_t old_v_forward, old_v_right, old_v_up;
+  float health;
+
+  attacker = coop_revive_pending_attacker;
+  target = coop_revive_pending_target;
+  coop_revive_pending_attacker = NULL;
+  coop_revive_pending_target = NULL;
+
+  if (!coop.value || !sv_coop_revive.value)
+    return;
+  if (!SV_CoopIsActiveClient(attacker) || !SV_CoopIsDeadClient(target))
+    return;
+
+  target_num = NUM_FOR_EDICT(target);
+  client = &svs.clients[target_num - 1];
+
+  old_self = pr_global_struct->self;
+  old_other = pr_global_struct->other;
+  old_time = pr_global_struct->time;
+  old_force_retouch = pr_global_struct->force_retouch;
+  VectorCopy(pr_global_struct->v_forward, old_v_forward);
+  VectorCopy(pr_global_struct->v_right, old_v_right);
+  VectorCopy(pr_global_struct->v_up, old_v_up);
+  old_host_client = host_client;
+  old_sv_player = sv_player;
+
+  for (i = 0; i < NUM_SPAWN_PARMS; i++)
+    (&pr_global_struct->parm1)[i] = client->spawn_parms[i];
+
+  host_client = client;
+  sv_player = target;
+  pr_global_struct->time = qcvm->time;
+  pr_global_struct->self = EDICT_TO_PROG(target);
+  pr_global_struct->other = EDICT_TO_PROG(attacker);
+  PR_ExecuteProgram(pr_global_struct->PutClientInServer);
+  SV_CoopRemoveSpawnTeledeath(target);
+  pr_global_struct->force_retouch = old_force_retouch;
+
+  health = sv_coop_revive_health.value;
+  if (health < 1)
+    health = 1;
+
+  SV_CoopReviveSetOrigin(target, coop_revive_pending_origin);
+  VectorCopy(coop_revive_pending_angles, target->v.angles);
+  VectorCopy(coop_revive_pending_v_angle, target->v.v_angle);
+  VectorCopy(vec3_origin, target->v.velocity);
+  target->v.health = health;
+  target->v.deadflag = DEAD_NO;
+  target->v.takedamage = DAMAGE_AIM;
+  target->v.solid = SOLID_SLIDEBOX;
+  target->v.movetype = MOVETYPE_WALK;
+  target->v.button0 = target->v.button1 = target->v.button2 = 0;
+  target->v.fixangle = true;
+  SV_LinkEdict(target, false);
+
+  SV_BroadcastPrintf("%s revived %s\n",
+                     svs.clients[NUM_FOR_EDICT(attacker) - 1].name,
+                     client->name);
+
+  pr_global_struct->self = old_self;
+  pr_global_struct->other = old_other;
+  pr_global_struct->time = old_time;
+  VectorCopy(old_v_forward, pr_global_struct->v_forward);
+  VectorCopy(old_v_right, pr_global_struct->v_right);
+  VectorCopy(old_v_up, pr_global_struct->v_up);
+  host_client = old_host_client;
+  sv_player = old_sv_player;
+}
+
+/*
+=============
 Coop respawn helpers
 
 Let QuakeC perform the normal coop respawn first, then relocate the freshly
@@ -224,6 +485,8 @@ typedef enum {
   COOP_RESPAWN_EXTRA_ITEMS2,
   COOP_RESPAWN_EXTRA_MODITEMS,
   COOP_RESPAWN_EXTRA_CUSTOMKEYS,
+  COOP_RESPAWN_EXTRA_WEAPONS,
+  COOP_RESPAWN_EXTRA_CURRENTWEAPON,
   COOP_RESPAWN_EXTRA_AMMO_SHELLS1,
   COOP_RESPAWN_EXTRA_AMMO_NAILS1,
   COOP_RESPAWN_EXTRA_AMMO_LAVA_NAILS,
@@ -234,9 +497,11 @@ typedef enum {
   COOP_RESPAWN_EXTRA_CAN_ROCKET,
   COOP_RESPAWN_EXTRA_ROCKET_LAUNCHER_MODE,
   COOP_RESPAWN_EXTRA_JBOOTS_GOT,
+  COOP_RESPAWN_EXTRA_JBOOTS_PREVLIMIT,
   COOP_RESPAWN_EXTRA_JBOOTS_RECHARGELIMIT,
   COOP_RESPAWN_EXTRA_JBOOTS_SFX,
   COOP_RESPAWN_EXTRA_JBOOTS_AMMO,
+  COOP_RESPAWN_EXTRA_JBOOTS_ONGROUND,
   COOP_RESPAWN_EXTRA_JBOOTS_FINISHED,
   COOP_RESPAWN_EXTRA_JBOOTS_TIME,
   COOP_RESPAWN_EXTRA_JUMPBOOTS_FINISHED,
@@ -256,6 +521,7 @@ typedef enum {
 typedef enum {
   COOP_RESPAWN_EXTRA_BITMASK,
   COOP_RESPAWN_EXTRA_MAXFLOAT,
+  COOP_RESPAWN_EXTRA_RESTORE_FLOAT,
   COOP_RESPAWN_EXTRA_STRING
 } coop_respawn_extra_policy_t;
 
@@ -300,6 +566,8 @@ static const coop_respawn_extra_field_t coop_respawn_extra_fields[] = {
     {"items2", COOP_RESPAWN_EXTRA_BITMASK, COOP_RESPAWN_ALL_ITEM_BITS},
     {"moditems", COOP_RESPAWN_EXTRA_BITMASK, COOP_RESPAWN_AD_KEEP_MODITEMS},
     {"customkeys", COOP_RESPAWN_EXTRA_BITMASK, COOP_RESPAWN_ALL_ITEM_BITS},
+    {"weapons", COOP_RESPAWN_EXTRA_BITMASK, COOP_RESPAWN_ALL_ITEM_BITS},
+    {"currentweapon", COOP_RESPAWN_EXTRA_RESTORE_FLOAT, 0},
     {"ammo_shells1", COOP_RESPAWN_EXTRA_MAXFLOAT, 0},
     {"ammo_nails1", COOP_RESPAWN_EXTRA_MAXFLOAT, 0},
     {"ammo_lava_nails", COOP_RESPAWN_EXTRA_MAXFLOAT, 0},
@@ -309,12 +577,14 @@ static const coop_respawn_extra_field_t coop_respawn_extra_fields[] = {
     {"ammo_plasma", COOP_RESPAWN_EXTRA_MAXFLOAT, 0},
     {"can_rocket", COOP_RESPAWN_EXTRA_MAXFLOAT, 0},
     {"rocket_launcher_mode", COOP_RESPAWN_EXTRA_MAXFLOAT, 0},
-    {"jboots_got", COOP_RESPAWN_EXTRA_MAXFLOAT, 0},
-    {"jboots_rechargelimit", COOP_RESPAWN_EXTRA_MAXFLOAT, 0},
-    {"jboots_sfx", COOP_RESPAWN_EXTRA_MAXFLOAT, 0},
-    {"jboots_ammo", COOP_RESPAWN_EXTRA_MAXFLOAT, 0},
-    {"jboots_finished", COOP_RESPAWN_EXTRA_MAXFLOAT, 0},
-    {"jboots_time", COOP_RESPAWN_EXTRA_MAXFLOAT, 0},
+    {"jboots_got", COOP_RESPAWN_EXTRA_RESTORE_FLOAT, 0},
+    {"jboots_prevlimit", COOP_RESPAWN_EXTRA_RESTORE_FLOAT, 0},
+    {"jboots_rechargelimit", COOP_RESPAWN_EXTRA_RESTORE_FLOAT, 0},
+    {"jboots_sfx", COOP_RESPAWN_EXTRA_RESTORE_FLOAT, 0},
+    {"jboots_ammo", COOP_RESPAWN_EXTRA_RESTORE_FLOAT, 0},
+    {"jboots_onground", COOP_RESPAWN_EXTRA_RESTORE_FLOAT, 0},
+    {"jboots_finished", COOP_RESPAWN_EXTRA_RESTORE_FLOAT, 0},
+    {"jboots_time", COOP_RESPAWN_EXTRA_RESTORE_FLOAT, 0},
     {"jumpboots_finished", COOP_RESPAWN_EXTRA_MAXFLOAT, 0},
     {"jumpboots_time", COOP_RESPAWN_EXTRA_MAXFLOAT, 0},
     {"jumpboots_airlvl", COOP_RESPAWN_EXTRA_MAXFLOAT, 0},
@@ -603,6 +873,9 @@ static void SV_CoopRespawnRestoreInventory(
         val->_int = val->_int | inventory->extra_bits[i];
       else
         val->_float = (int)val->_float | inventory->extra_bits[i];
+    } else if (coop_respawn_extra_fields[i].policy ==
+               COOP_RESPAWN_EXTRA_RESTORE_FLOAT) {
+      val->_float = inventory->extra_value[i];
     } else {
       val->_float =
           SV_CoopRespawnMaxFloat(val->_float, inventory->extra_value[i]);
@@ -941,6 +1214,9 @@ static qboolean SV_CoopRespawnFindSpot(edict_t *ent, const vec3_t death_origin,
   static const float death_radii[] = {0.0f, 40.0f, 64.0f, 96.0f, 128.0f,
                                       160.0f, 192.0f, 224.0f, 256.0f};
 
+  if (SV_CoopRespawnFindAnchorSpot(ent, death_origin, anchor_out, spot))
+    return true;
+
   if (allow_death_fallback) {
     if (SV_CoopRespawnFindNearbySpot(
             ent, death_origin, NULL, death_radii,
@@ -952,7 +1228,7 @@ static qboolean SV_CoopRespawnFindSpot(edict_t *ent, const vec3_t death_origin,
     }
   }
 
-  return SV_CoopRespawnFindAnchorSpot(ent, death_origin, anchor_out, spot);
+  return false;
 }
 
 static void
@@ -2343,11 +2619,14 @@ qboolean SV_RunClientPMoveCommands(client_t *client) {
     pr_global_struct->time = qcvm->time;
     SV_ApplyVRWeaponOffset(ent, num, is_remote_vr, restoreOrigin);
     pr_global_struct->self = EDICT_TO_PROG(ent);
+    SV_CoopReviveBeginPostThink(ent);
     SV_FriendlyFireBegin(ent);
     PR_ExecuteProgram(pr_global_struct->PlayerPostThink);
     SV_FriendlyFireEnd();
+    SV_CoopReviveEndPostThink();
     SV_RestoreVRWeaponOffset(ent, num, is_remote_vr, restoreOrigin);
     SV_CoopRespawnEndPostThink(ent, num, &coop_respawn_state);
+    SV_CoopReviveApplyPending();
 
     SV_FinishQueuedUsercmd(client);
     processed++;
@@ -2547,12 +2826,15 @@ void SV_Physics_Client(edict_t *ent, int num) {
 
   pr_global_struct->self = EDICT_TO_PROG(ent);
 
+  SV_CoopReviveBeginPostThink(ent);
   SV_FriendlyFireBegin(ent);
   PR_ExecuteProgram(pr_global_struct->PlayerPostThink);
   SV_FriendlyFireEnd();
+  SV_CoopReviveEndPostThink();
 
   SV_RestoreVRWeaponOffset(ent, num, is_remote_vr, restoreOrigin);
   SV_CoopRespawnEndPostThink(ent, num, &coop_respawn_state);
+  SV_CoopReviveApplyPending();
 }
 
 //============================================================================
