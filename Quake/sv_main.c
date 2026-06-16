@@ -77,7 +77,7 @@ cvar_t sv_coop_trusted_clientmove = {"sv_coop_trusted_clientmove", "0", CVAR_NOT
 cvar_t sv_coop_trusted_clientmove_maxdelta = {"sv_coop_trusted_clientmove_maxdelta", "96", CVAR_NONE};
 cvar_t sv_coop_predictmove = {"sv_coop_predictmove", "1", CVAR_NOTIFY | CVAR_SERVERINFO};
 cvar_t sv_triggerdebug = {"sv_triggerdebug", "0", CVAR_NONE};
-cvar_t sv_vr_jump_velocity = {"sv_vr_jump_velocity", "270", CVAR_NOTIFY | CVAR_SERVERINFO};
+cvar_t sv_vr_jump_velocity = {"sv_vr_jump_velocity", "297", CVAR_NOTIFY | CVAR_SERVERINFO};
 cvar_t sv_skyroom_pvs = {"sv_skyroom_pvs", "1", CVAR_NONE};
 
 //============================================================================

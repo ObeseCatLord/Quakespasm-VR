@@ -359,6 +359,7 @@ extern cvar_t sv_coop_trusted_clientmove_maxdelta;
 extern cvar_t sv_coop_predictmove;
 extern cvar_t sv_triggerdebug;
 extern cvar_t sv_vr_jump_velocity;
+qboolean SV_IsVRClientSlot(int num);
 extern cvar_t sv_snapshot_splits;
 extern cvar_t sv_snapshot_packetdup;
 extern cvar_t sv_replacement_maxpackets;
