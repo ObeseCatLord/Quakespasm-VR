@@ -92,7 +92,7 @@ static const char default_cfg[] =
     "bind VR_RIGHT_STICK_DOWN \"vr_turn180\"\n"
 
     "gamma 1.0\n"
-    "volume 0.7\n"
+    "volume 0.5\n"
     "sensitivity 3\n"
 
     "viewsize 110\n"
