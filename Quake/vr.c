@@ -221,6 +221,7 @@ static bool readbackYaw;
 
 vec3_t vr_viewOffset;
 static vec3_t lastHudPosition{0.0, 0.0, 0.0};
+static vec3_t lastMenuPosition{0.0, 0.0, 0.0};
 
 vr_weapon_cmd_t vr_weapons[MAX_VR_WEAPONS];
 int num_vr_weapons = 0;
@@ -4180,38 +4181,9 @@ void vec3lerp(vec3_t out, vec3_t start, vec3_t end, double f) {
   out[2] = lerp(start[2], end[2], f);
 }
 
-static void VR_GetHeadCenterViewOrg(vec3_t out) {
-  entity_t *player;
-  vr::HmdVector3_t center;
-  vec3_t temp, orientation, center_offset;
-
-  if (!current_eye) {
-    VectorCopy(r_refdef.vieworg, out);
-    return;
-  }
-
-  player = &cl.entities[cl.viewentity];
-  center.v[0] = (eyes[0].position.v[0] + eyes[1].position.v[0]) * 0.5f;
-  center.v[1] = (eyes[0].position.v[1] + eyes[1].position.v[1]) * 0.5f;
-  center.v[2] = (eyes[0].position.v[2] + eyes[1].position.v[2]) * 0.5f;
-
-  QuatToYawPitchRoll(current_eye->orientation, orientation);
-  temp[0] = -center.v[2] * meters_to_units;
-  temp[1] = -center.v[0] * meters_to_units;
-  temp[2] = center.v[1] * meters_to_units;
-  Vec3RotateZ(temp, (r_refdef.viewangles[YAW] - orientation[YAW]) * M_PI_DIV_180,
-              center_offset);
-  center_offset[2] += vr_floor_offset.value;
-
-  VectorAdd(player->origin, center_offset, out);
-  out[0] += 1.0f / 32.0f;
-  out[1] += 1.0f / 32.0f;
-  out[2] += 1.0f / 32.0f;
-}
-
 void VR_Draw2D() {
   qboolean draw_sbar = false;
-  vec3_t menu_angles, forward, right, up, target, head_center;
+  vec3_t menu_angles, forward, right, up, target, smoothedTarget;
   float scale_hud = vr_menu_scale.value;
 
   int oldglwidth = glwidth, oldglheight = glheight, oldconwidth = vid.conwidth,
@@ -4239,9 +4211,10 @@ void VR_Draw2D() {
 
   AngleVectors(menu_angles, forward, right, up);
 
-  VR_GetHeadCenterViewOrg(head_center);
-  VectorMA(head_center, 48, forward, target);
-  glTranslatef(target[0], target[1], target[2]);
+  VectorMA(r_refdef.vieworg, 48, forward, target);
+  vec3lerp(smoothedTarget, lastMenuPosition, target, 0.2);
+  VectorCopy(smoothedTarget, lastMenuPosition);
+  glTranslatef(smoothedTarget[0], smoothedTarget[1], smoothedTarget[2]);
 
   glRotatef(menu_angles[YAW] - 90, 0, 0, 1); // rotate around z
   glRotatef(90 + menu_angles[PITCH], -1, 0,
