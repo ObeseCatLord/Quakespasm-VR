@@ -53,6 +53,7 @@ extern "C" {
 void VID_VR_Init();
 void VID_VR_Shutdown();
 qboolean VR_Enable();
+void VR_ApplyDefaultBindings(qboolean overwrite);
 void VID_VR_Disable();
 void IN_VRTurn180_f(void);
 

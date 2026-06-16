@@ -73,6 +73,45 @@ static qboolean VR_InputDebugEnabled(void) {
   return Cvar_VariableValue("in_debugkeys") != 0;
 }
 
+typedef struct {
+  int key;
+  const char *binding;
+} vr_default_binding_t;
+
+static const vr_default_binding_t vr_default_bindings[] = {
+    {K_LTRIGGER, "+jump"},
+    {K_RTRIGGER, "+attack"},
+    {K_BBUTTON, "impulse 10"},
+    {K_LTHUMB, "+speed"},
+    {K_RTHUMB, "+jump"},
+    {K_VR_ALTFIRE, "+button3"},
+    {K_LSHOULDER, "+showscores"},
+    {K_RSHOULDER, "+showscores"},
+    {K_ABUTTON, "+showscores"},
+    {K_XBUTTON, "impulse 12"},
+    {K_VR_RIGHT_STICK_UP, "+vr_weaponmenu"},
+    {K_VR_RIGHT_STICK_DOWN, "vr_turn180"},
+};
+
+void VR_ApplyDefaultBindings(qboolean overwrite) {
+  size_t i;
+
+  if (!vr_enabled.value)
+    return;
+
+  for (i = 0; i < sizeof(vr_default_bindings) / sizeof(vr_default_bindings[0]);
+       i++) {
+    int key = vr_default_bindings[i].key;
+    if (key < 0 || key >= MAX_KEYS)
+      continue;
+    if (!overwrite && keybindings[key] && keybindings[key][0])
+      continue;
+    Key_SetBinding(key, vr_default_bindings[i].binding);
+  }
+}
+
+static void VR_DefaultBindings_f(void) { VR_ApplyDefaultBindings(false); }
+
 // rendering
 extern void R_SetupView(void);
 extern void R_RenderScene(void);
@@ -3182,6 +3221,7 @@ void VID_VR_Init() {
   Cmd_AddCommand("vradjustmpmuzzle", VR_AdjustMPMuzzle_f);
   Cmd_AddCommand("vrweaponoffsetglobal", VR_GlobalWeaponOffset_f);
   Cmd_AddCommand("vrglobalweaponoffset", VR_GlobalWeaponOffset_f);
+  Cmd_AddCommand("vr_defaultbindings", VR_DefaultBindings_f);
 
   // Sickness stuff
   Cvar_RegisterVariable(&vr_viewkick);
@@ -3554,9 +3594,9 @@ qboolean VR_Enable() {
   vr::VRCompositor()->SetTrackingSpace(vr::TrackingUniverseStanding);
   VR_ResetOrientation(); // Recenter the HMD
 
-  Cbuf_AddText(
-      "exec vr_autoexec.cfg\n"); // Load the vr autosec config file incase
-                                 // the user has settings they want
+  Cbuf_AddText("exec vr_autoexec.cfg\n"
+               "vr_defaultbindings\n"); // Load user VR settings, then ensure
+                                         // core controller actions exist.
 
   attempt_to_refocus_retry =
       900; // Try to refocus our for the first 900 frames :/
