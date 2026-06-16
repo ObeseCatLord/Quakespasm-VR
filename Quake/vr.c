@@ -613,8 +613,7 @@ static qboolean VR_WeaponIsOwned(const vr_dyn_weapon_t *w) {
   if (w->bitmask && (cl.items & w->bitmask))
     return true;
 
-  if (w->from_schema && w->bitmask &&
-      (cl.stats[STAT_VR_WEAPONS] & w->bitmask))
+  if (w->bitmask && (cl.stats[STAT_VR_WEAPONS] & w->bitmask))
     return true;
 
   return VR_WeaponIsActive(w);
