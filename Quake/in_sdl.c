@@ -594,7 +594,7 @@ void IN_Commands (void)
 	const float stickthreshold = 0.9;
 	const float triggerthreshold = joy_deadzone_trigger.value;
 	
-	if (!joy_enable.value)
+	if (!joy_enable.value || vr_enabled.value)
 		return;
 	
 	if (!joy_active_controller)

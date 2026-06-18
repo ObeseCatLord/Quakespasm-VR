@@ -2250,6 +2250,47 @@ qboolean SV_IsVRClientSlot(int num) {
   return vr_enabled.value && !isDedicated && num == cl.viewentity;
 }
 
+static edict_t *SV_CurrentGroundEntity(edict_t *ent) {
+  if (!ent || !((int)ent->v.flags & FL_ONGROUND) || !ent->v.groundentity)
+    return NULL;
+
+  return PROG_TO_EDICT(ent->v.groundentity);
+}
+
+static void SV_RestorePusherGroundContact(edict_t *ent, edict_t *ground) {
+  float drop;
+  trace_t trace;
+  vec3_t end;
+
+  if ((int)ent->v.flags & FL_ONGROUND)
+    return;
+  if (ent->v.velocity[2] > 0)
+    return;
+
+  if (ground && (ground->free || (int)ground->v.movetype != MOVETYPE_PUSH))
+    ground = NULL;
+
+  drop = 4.0f;
+  if (ground && ground->v.velocity[2] < 0)
+    drop += -ground->v.velocity[2] * host_frametime;
+
+  VectorCopy(ent->v.origin, end);
+  end[2] -= drop;
+  trace = SV_Move(ent->v.origin, ent->v.mins, ent->v.maxs, end, false, ent);
+  if (trace.startsolid || trace.allsolid || trace.fraction == 1.0f)
+    return;
+  if (!trace.ent || trace.ent->free ||
+      (int)trace.ent->v.movetype != MOVETYPE_PUSH ||
+      trace.plane.normal[2] <= 0.7f)
+    return;
+  if (ground && trace.ent != ground)
+    return;
+
+  VectorCopy(trace.endpos, ent->v.origin);
+  ent->v.flags = (int)ent->v.flags | FL_ONGROUND;
+  ent->v.groundentity = EDICT_TO_PROG(trace.ent);
+}
+
 static void SV_AdjustVRJumpVelocity(edict_t *ent, int num,
                                     qboolean was_onground,
                                     float prethink_velocity_z) {
@@ -2658,6 +2699,7 @@ void SV_Physics_Client(edict_t *ent, int num) {
   qboolean was_onground;
   float prethink_velocity_z;
   coop_respawn_postthink_state_t coop_respawn_state;
+  edict_t *prethink_groundentity;
 
   if (!svs.clients[num - 1].active)
     return; // unconnected slot
@@ -2685,6 +2727,7 @@ void SV_Physics_Client(edict_t *ent, int num) {
   }
 
   was_onground = ((int)ent->v.flags & FL_ONGROUND) != 0;
+  prethink_groundentity = SV_CurrentGroundEntity(ent);
   prethink_velocity_z = ent->v.velocity[2];
   SV_CoopRespawnBeginPostThink(ent, num, &coop_respawn_state);
 
@@ -2780,7 +2823,7 @@ void SV_Physics_Client(edict_t *ent, int num) {
   }
 
   if (num == cl.viewentity && vr_enabled.value &&
-      VectorLength(vr_room_scale_move) > 0.001f) {
+      VectorLength(vr_room_scale_move) > 0.0625f) {
     vec3_t restoreVel;
     _VectorCopy(ent->v.velocity, restoreVel);
     VectorScale(vr_room_scale_move, 1.0f / host_frametime, ent->v.velocity);
@@ -2814,6 +2857,8 @@ void SV_Physics_Client(edict_t *ent, int num) {
 
     _VectorCopy(restoreVel, ent->v.velocity);
   }
+
+  SV_RestorePusherGroundContact(ent, prethink_groundentity);
 
   //
   // call standard player post-think
