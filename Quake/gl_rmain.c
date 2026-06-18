@@ -47,6 +47,12 @@ vec3_t vpn;
 vec3_t vright;
 vec3_t r_origin;
 
+static qboolean r_vr_stereo_frame = false;
+static qboolean r_vr_sort_origin_valid = false;
+static int r_vr_eye_index = 0;
+static int r_vr_eye_count = 1;
+static vec3_t r_vr_sort_origin;
+
 float r_fovx, r_fovy; // johnfitz -- rendering fov may be different becuase of
                       // r_waterwarp and r_stereo
 
@@ -128,6 +134,41 @@ cvar_t r_part_density = {"r_part_density", "1", CVAR_ARCHIVE};
 int r_perf_pvs_leaf;
 int r_perf_pvs_fat;
 int r_perf_pvs_novis;
+
+void R_BeginVRFrame(void) {
+  r_vr_stereo_frame = true;
+  r_vr_sort_origin_valid = false;
+  r_vr_eye_index = 0;
+  r_vr_eye_count = 2;
+}
+
+void R_SetVREye(int eye_index, int eye_count) {
+  r_vr_eye_index = eye_index;
+  r_vr_eye_count = eye_count > 0 ? eye_count : 1;
+}
+
+void R_EndVRFrame(void) {
+  r_vr_stereo_frame = false;
+  r_vr_sort_origin_valid = false;
+  r_vr_eye_index = 0;
+  r_vr_eye_count = 1;
+}
+
+qboolean R_IsVRStereoFrame(void) { return r_vr_stereo_frame; }
+
+qboolean R_IsVRFirstEye(void) {
+  return !r_vr_stereo_frame || r_vr_eye_index == 0;
+}
+
+qboolean R_IsVRLastEye(void) {
+  return !r_vr_stereo_frame || r_vr_eye_index >= r_vr_eye_count - 1;
+}
+
+const vec_t *R_VRStereoSortOrigin(void) {
+  if (r_vr_sort_origin_valid)
+    return r_vr_sort_origin;
+  return r_refdef.vieworg;
+}
 int r_perf_leaves_scanned;
 int r_perf_leaves_visible;
 int r_perf_leaves_culled;
@@ -692,13 +733,7 @@ R_SetupView -- johnfitz -- this is the stuff that needs to be done once per
 frame, even in stereo mode
 ===============
 */
-void R_SetupView(void) {
-  double perf_start, perf_mark_start, perf_warp_start;
-
-  perf_start = R_PerfStart();
-  if (R_PerfActive())
-    r_perf_setup_calls++;
-
+static void R_SetupFrameState(void) {
   // Need to do those early because we now update dynamic light maps during
   // R_MarkSurfaces.
   R_PushDlights();
@@ -706,10 +741,26 @@ void R_SetupView(void) {
   r_framecount++;
 
   Fog_SetupFrame(); // johnfitz
+}
+
+void R_SetupView(void) {
+  double perf_start, perf_mark_start, perf_warp_start;
+
+  perf_start = R_PerfStart();
+  if (R_PerfActive())
+    r_perf_setup_calls++;
+
+  if (!R_IsVRStereoFrame() || R_IsVRFirstEye())
+    R_SetupFrameState();
 
   // build the transformation matrix for the given view angles
   VectorCopy(r_refdef.vieworg, r_origin);
   AngleVectors(r_refdef.viewangles, vpn, vright, vup);
+
+  if (R_IsVRStereoFrame() && !r_vr_sort_origin_valid) {
+    VectorCopy(r_refdef.vieworg, r_vr_sort_origin);
+    r_vr_sort_origin_valid = true;
+  }
 
   // current viewleaf
   r_oldviewleaf = r_viewleaf;
@@ -810,8 +861,10 @@ static int R_AlphaEntitySortCompare(const void *pa, const void *pb) {
 
 static float R_AlphaEntitySortDistance(entity_t *ent) {
   vec3_t delta;
+  const vec_t *sort_origin;
 
-  VectorSubtract(ent->origin, r_refdef.vieworg, delta);
+  sort_origin = R_IsVRStereoFrame() ? R_VRStereoSortOrigin() : r_refdef.vieworg;
+  VectorSubtract(ent->origin, sort_origin, delta);
   return DotProduct(delta, vpn);
 }
 

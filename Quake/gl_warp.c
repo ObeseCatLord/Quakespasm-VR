@@ -270,7 +270,8 @@ void R_UpdateWarpTextures (void)
 		if (GL_GenerateMipmap)
 			GL_GenerateMipmap (GL_TEXTURE_2D);
 
-		tx->update_warp = false;
+		if (!R_IsVRStereoFrame() || R_IsVRLastEye())
+			tx->update_warp = false;
 	}
 
 	glDepthMask (GL_TRUE);

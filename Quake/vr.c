@@ -4030,7 +4030,9 @@ void VR_UpdateScreenContent() {
   VectorCopy(cl.aimangles, r_refdef.aimangles);
 
   // Render the scene for each eye into their FBOs
+  R_BeginVRFrame();
   for (int i = 0; i < 2; i++) {
+    R_SetVREye(i, 2);
     current_eye = &eyes[i];
 
     vec3_t temp, orientation;
@@ -4048,6 +4050,7 @@ void VR_UpdateScreenContent() {
 
     RenderScreenForCurrentEye_OVR();
   }
+  R_EndVRFrame();
 
   // Blit mirror texture to backbuffer
   glBindFramebufferEXT(GL_READ_FRAMEBUFFER_EXT, eyes[0].fbo.framebuffer);
