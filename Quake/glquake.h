@@ -422,6 +422,13 @@ extern int r_trace_line_cache_counter;
 void R_TranslatePlayerSkin (int playernum);
 void R_TranslateNewPlayerSkin (int playernum); //johnfitz -- this handles cases when the actual texture changes
 void R_UpdateWarpTextures (void);
+void R_BeginVRFrame (void);
+void R_SetVREye (int eye_index, int eye_count);
+void R_EndVRFrame (void);
+qboolean R_IsVRStereoFrame (void);
+qboolean R_IsVRFirstEye (void);
+qboolean R_IsVRLastEye (void);
+const vec_t *R_VRStereoSortOrigin (void);
 
 void R_DrawWorld (void);
 void R_DrawAliasModel (entity_t *e);
