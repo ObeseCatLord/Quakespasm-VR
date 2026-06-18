@@ -4558,55 +4558,66 @@ void DoAxis(vr_controller *controller, int axis, int quakeKeyNeg,
 }
 
 void VR_Move(usercmd_t *cmd) {
+  static int input_events_frame = -1;
+  qboolean emit_input_events;
+
   if (!vr_enabled.value) {
     VR_ReleaseControllerInputs();
     return;
   }
 
-  // k_EButton_Axis1 === k_EButton_SteamVR_Trigger
-  DoTrigger(&controllers[0], K_LTRIGGER);
-  DoTrigger(&controllers[1], key_dest == key_menu ? K_ENTER : K_RTRIGGER);
+  emit_input_events = input_events_frame != host_framecount;
+  if (emit_input_events)
+    input_events_frame = host_framecount;
 
-  // k_EButton_Grip (uses DoGrip for squeeze-only behavior on Index)
-  DoGrip(&controllers[0], K_LSHOULDER);
-  DoGrip(&controllers[1],
-         VR_RightAltFireUsesTouchpad() ? K_RSHOULDER : K_VR_ALTFIRE);
+  if (emit_input_events) {
+    // k_EButton_Axis1 === k_EButton_SteamVR_Trigger
+    DoTrigger(&controllers[0], K_LTRIGGER);
+    DoTrigger(&controllers[1], key_dest == key_menu ? K_ENTER : K_RTRIGGER);
 
-  // k_EButton_Axis0 === k_EButton_SteamVR_Touchpad
-  DoKey(&controllers[0], vr::k_EButton_SteamVR_Touchpad, K_LTHUMB);
-  DoKey(&controllers[1], vr::k_EButton_SteamVR_Touchpad,
-        VR_RightAltFireUsesTouchpad() ? K_VR_ALTFIRE : K_RTHUMB);
+    // k_EButton_Grip (uses DoGrip for squeeze-only behavior on Index)
+    DoGrip(&controllers[0], K_LSHOULDER);
+    DoGrip(&controllers[1],
+           VR_RightAltFireUsesTouchpad() ? K_RSHOULDER : K_VR_ALTFIRE);
 
-  // k_EButton_ApplicationMenu / k_EButton_IndexController_B
-  DoKey(&controllers[0], vr::k_EButton_ApplicationMenu, K_ESCAPE);
-  DoKey(&controllers[1], vr::k_EButton_ApplicationMenu, K_BBUTTON);
+    // k_EButton_Axis0 === k_EButton_SteamVR_Touchpad
+    DoKey(&controllers[0], vr::k_EButton_SteamVR_Touchpad, K_LTHUMB);
+    DoKey(&controllers[1], vr::k_EButton_SteamVR_Touchpad,
+          VR_RightAltFireUsesTouchpad() ? K_VR_ALTFIRE : K_RTHUMB);
 
-  // k_EButton_A
-  DoKey(&controllers[0], vr::k_EButton_A, K_ABUTTON);
-  DoKey(&controllers[1], vr::k_EButton_A, K_XBUTTON);
+    // k_EButton_ApplicationMenu / k_EButton_IndexController_B
+    DoKey(&controllers[0], vr::k_EButton_ApplicationMenu, K_ESCAPE);
+    DoKey(&controllers[1], vr::k_EButton_ApplicationMenu, K_BBUTTON);
 
-  // k_EButton_Axis2 === SteamVR-binding "Right Axis 2 Press" (at least on Index
-  // Controller)
-  DoKey(&controllers[0], vr::k_EButton_Axis2, K_YBUTTON);
-  DoKey(&controllers[1], vr::k_EButton_Axis2, K_YBUTTON);
+    // k_EButton_A
+    DoKey(&controllers[0], vr::k_EButton_A, K_ABUTTON);
+    DoKey(&controllers[1], vr::k_EButton_A, K_XBUTTON);
 
-  // k_EButton_Axis3 (unknown if used by any controller at all)
-  DoKey(&controllers[0], vr::k_EButton_Axis3, K_JOY1);
-  DoKey(&controllers[1], vr::k_EButton_Axis3, K_JOY2);
+    // k_EButton_Axis2 === SteamVR-binding "Right Axis 2 Press" (at least on
+    // Index Controller)
+    DoKey(&controllers[0], vr::k_EButton_Axis2, K_YBUTTON);
+    DoKey(&controllers[1], vr::k_EButton_Axis2, K_YBUTTON);
 
-  // k_EButton_Axis4 (unknown if used by any controller at all)
-  DoKey(&controllers[0], vr::k_EButton_Axis4, K_JOY3);
-  DoKey(&controllers[1], vr::k_EButton_Axis4, K_JOY4);
+    // k_EButton_Axis3 (unknown if used by any controller at all)
+    DoKey(&controllers[0], vr::k_EButton_Axis3, K_JOY1);
+    DoKey(&controllers[1], vr::k_EButton_Axis3, K_JOY2);
+
+    // k_EButton_Axis4 (unknown if used by any controller at all)
+    DoKey(&controllers[0], vr::k_EButton_Axis4, K_JOY3);
+    DoKey(&controllers[1], vr::k_EButton_Axis4, K_JOY4);
+  }
 
   if (key_dest == key_menu) {
-    DoAxis(&controllers[0], 0, K_LEFTARROW, K_RIGHTARROW,
-           vr_joystick_axis_menu_deadzone_extra.value);
-    DoAxis(&controllers[0], 1, K_DOWNARROW, K_UPARROW,
-           vr_joystick_axis_menu_deadzone_extra.value);
+    if (emit_input_events) {
+      DoAxis(&controllers[0], 0, K_LEFTARROW, K_RIGHTARROW,
+             vr_joystick_axis_menu_deadzone_extra.value);
+      DoAxis(&controllers[0], 1, K_DOWNARROW, K_UPARROW,
+             vr_joystick_axis_menu_deadzone_extra.value);
 
-    // Allow binding right stick in menu
-    DoAxis(&controllers[1], 1, K_VR_RIGHT_STICK_DOWN, K_VR_RIGHT_STICK_UP,
-           vr_joystick_axis_menu_deadzone_extra.value);
+      // Allow binding right stick in menu
+      DoAxis(&controllers[1], 1, K_VR_RIGHT_STICK_DOWN, K_VR_RIGHT_STICK_UP,
+             vr_joystick_axis_menu_deadzone_extra.value);
+    }
 
   } else {
     float vr_movementspeed = cl_forwardspeed.value;
@@ -4616,8 +4627,10 @@ void VR_Move(usercmd_t *cmd) {
       vr_movementspeed *= cl_movespeedkey.value;
     }
 
-    DoAxis(&controllers[1], 0, K_LEFTARROW, K_RIGHTARROW,
-           vr_joystick_axis_menu_deadzone_extra.value);
+    if (emit_input_events) {
+      DoAxis(&controllers[1], 0, K_LEFTARROW, K_RIGHTARROW,
+             vr_joystick_axis_menu_deadzone_extra.value);
+    }
     // Right stick Y-axis intentionally unbound to prevent accidental forward
     // movement It is used exclusively for opening the weapon wheel.
 
@@ -4708,23 +4721,27 @@ void VR_Move(usercmd_t *cmd) {
 
     float yawMove = GetAxis(&controllers[1].state, 1, 0, 0.0);
 
-    if (vr_snap_turn.value != 0) {
-      static int lastSnap = 0;
-      int snap = yawMove > 0.0f ? 1 : yawMove < 0.0f ? -1 : 0;
-      if (snap != lastSnap) {
-        vrYaw -= snap * vr_snap_turn.value;
-        lastSnap = snap;
+    if (emit_input_events) {
+      if (vr_snap_turn.value != 0) {
+        static int lastSnap = 0;
+        int snap = yawMove > 0.0f ? 1 : yawMove < 0.0f ? -1 : 0;
+        if (snap != lastSnap) {
+          vrYaw -= snap * vr_snap_turn.value;
+          lastSnap = snap;
+        }
+      } else {
+        vrYaw -=
+            (yawMove * host_frametime * 100.0f * vr_joystick_yaw_multi.value) *
+            vr_turn_speed.value;
       }
-    } else {
-      vrYaw -=
-          (yawMove * host_frametime * 100.0f * vr_joystick_yaw_multi.value) *
-          vr_turn_speed.value;
     }
 
-    DoAxis(&controllers[1], 1, K_VR_RIGHT_STICK_DOWN, K_VR_RIGHT_STICK_UP,
-           vr_joystick_axis_menu_deadzone_extra.value);
+    if (emit_input_events) {
+      DoAxis(&controllers[1], 1, K_VR_RIGHT_STICK_DOWN, K_VR_RIGHT_STICK_UP,
+             vr_joystick_axis_menu_deadzone_extra.value);
+    }
 
-    if (isViveWand[1]) {
+    if (emit_input_events && isViveWand[1]) {
       // Vive wands only have a trackpad and a menu button. Provide trackpad
       // click left/right to cycle weapons.
       bool wasClick =
