@@ -141,6 +141,18 @@ void SV_CalcStats(client_t *client, int *statsi, float *statsf, const char **sta
 	val = GetEdictFieldValueByName(ent, "weapons");
 	if (val)
 		statsi[STAT_VR_WEAPONS] = (int)val->_float;
+	val = GetEdictFieldValueByName(ent, "items2");
+	if (val)
+		statsi[STAT_VR_ITEMS2] = (int)val->_float;
+	val = GetEdictFieldValueByName(ent, "moditems");
+	if (val)
+		statsi[STAT_VR_MODITEMS] = (int)val->_float;
+	val = GetEdictFieldValueByName(ent, "weapon2");
+	if (val)
+		statsi[STAT_VR_WEAPON2] = (int)val->_float;
+	val = GetEdictFieldValueByName(ent, "weapons2");
+	if (val)
+		statsi[STAT_VR_WEAPONS2] = (int)val->_float;
 	if (client->protocol_pext2 & PEXT2_PREDINFO)
 	{
 		statsf[STAT_VIEWHEIGHT] = ent->v.view_ofs[2];
