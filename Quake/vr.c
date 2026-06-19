@@ -298,26 +298,27 @@ typedef struct {
   int ammo_stat;
   int ammo_max;
   qboolean from_schema;
+  qboolean use_item_ownership;
 } vr_dyn_weapon_t;
 
 #define MAX_DYN_WEAPONS 64
 static vr_dyn_weapon_t dyn_weapons[MAX_DYN_WEAPONS] = {
     {4096, 1, "progs/g_axe.mdl", 0, false, 1.0f, {0, 0, 0}, false,
-     -1, 0, -1, 0, -1, 0, false}, // IT_AXE (pickup model)
+     -1, 0, -1, 0, -1, 0, false, true}, // IT_AXE (pickup model)
     {1, 2, "progs/g_shot.mdl", 0, false, 1.0f, {0, 0, 0}, false,
-     -1, 0, -1, 0, STAT_SHELLS, 100, false}, // IT_SHOTGUN
+     -1, 0, -1, 0, STAT_SHELLS, 100, false, true}, // IT_SHOTGUN
     {2, 3, "progs/g_shot2.mdl", 0, false, 1.0f, {0, 0, 0}, false,
-     -1, 0, -1, 0, STAT_SHELLS, 100, false}, // IT_SUPER_SHOTGUN
+     -1, 0, -1, 0, STAT_SHELLS, 100, false, true}, // IT_SUPER_SHOTGUN
     {4, 4, "progs/g_nail.mdl", 0, false, 1.0f, {0, 0, 0}, false,
-     -1, 0, -1, 0, STAT_NAILS, 200, false}, // IT_NAILGUN
+     -1, 0, -1, 0, STAT_NAILS, 200, false, true}, // IT_NAILGUN
     {8, 5, "progs/g_nail2.mdl", 0, false, 1.0f, {0, 0, 0}, false,
-     -1, 0, -1, 0, STAT_NAILS, 200, false}, // IT_SUPER_NAILGUN
+     -1, 0, -1, 0, STAT_NAILS, 200, false, true}, // IT_SUPER_NAILGUN
     {16, 6, "progs/g_rock.mdl", 0, false, 1.0f, {0, 0, 0}, false,
-     -1, 0, -1, 0, STAT_ROCKETS, 100, false}, // IT_GRENADE_LAUNCHER
+     -1, 0, -1, 0, STAT_ROCKETS, 100, false, true}, // IT_GRENADE_LAUNCHER
     {32, 7, "progs/g_rock2.mdl", 0, false, 1.0f, {0, 0, 0}, false,
-     -1, 0, -1, 0, STAT_ROCKETS, 100, false}, // IT_ROCKET_LAUNCHER
+     -1, 0, -1, 0, STAT_ROCKETS, 100, false, true}, // IT_ROCKET_LAUNCHER
     {64, 8, "progs/g_light.mdl", 0, false, 1.0f, {0, 0, 0}, false,
-     -1, 0, -1, 0, STAT_CELLS, 100, false}, // IT_LIGHTNING
+     -1, 0, -1, 0, STAT_CELLS, 100, false, true}, // IT_LIGHTNING
 };
 static int num_dyn_weapons = 8;
 static qboolean rogue_weapons_added = false;
@@ -375,6 +376,14 @@ static int VR_ParseStatName(const char *value, int *default_max) {
     return STAT_WEAPON;
   if (!q_strcasecmp(value, "weapons"))
     return STAT_VR_WEAPONS;
+  if (!q_strcasecmp(value, "items2"))
+    return STAT_VR_ITEMS2;
+  if (!q_strcasecmp(value, "moditems"))
+    return STAT_VR_MODITEMS;
+  if (!q_strcasecmp(value, "weapon2"))
+    return STAT_VR_WEAPON2;
+  if (!q_strcasecmp(value, "weapons2"))
+    return STAT_VR_WEAPONS2;
 
   if ((value[0] >= '0' && value[0] <= '9') ||
       ((value[0] == '-' || value[0] == '+') && value[1] >= '0' &&
@@ -397,6 +406,57 @@ static void VR_InitDynWeapon(vr_dyn_weapon_t *w) {
 
 static qboolean VR_DynWeaponHasModelDiscriminator(const vr_dyn_weapon_t *w) {
   return (w->model_path && w->model_path[0]) || w->model_index > 0;
+}
+
+static int VR_DynWeaponTrustedItemBits(void) {
+  int weapon_bits = IT_SHOTGUN | IT_SUPER_SHOTGUN | IT_NAILGUN |
+                    IT_SUPER_NAILGUN | IT_GRENADE_LAUNCHER |
+                    IT_ROCKET_LAUNCHER | IT_LIGHTNING;
+
+  if (rogue) {
+    weapon_bits |= RIT_AXE | RIT_LAVA_NAILGUN | RIT_LAVA_SUPER_NAILGUN |
+                   RIT_MULTI_GRENADE | RIT_MULTI_ROCKET | RIT_PLASMA_GUN;
+  } else {
+    weapon_bits |= IT_AXE;
+  }
+
+  if (hipnotic)
+    weapon_bits |= HIT_MJOLNIR | HIT_LASER_CANNON | HIT_PROXIMITY_GUN;
+
+  return weapon_bits;
+}
+
+static qboolean VR_DynWeaponCanUseItemOwnership(const vr_dyn_weapon_t *w) {
+  if (!w->use_item_ownership && !w->from_schema)
+    return false;
+  if (!w->bitmask)
+    return false;
+  return (w->bitmask & VR_DynWeaponTrustedItemBits()) == w->bitmask;
+}
+
+static qboolean VR_FindWeaponOwnedStatForActive(int active, int *owned_stat,
+                                                int *owned_mask) {
+  static const int ownership_stats[] = {
+      STAT_VR_WEAPONS,  STAT_VR_ITEMS2,  STAT_VR_MODITEMS,
+      STAT_VR_WEAPON2, STAT_VR_WEAPONS2,
+  };
+  size_t i;
+
+  if (!active)
+    return false;
+
+  for (i = 0; i < sizeof(ownership_stats) / sizeof(ownership_stats[0]); i++) {
+    int stat = ownership_stats[i];
+    if (cl.stats[stat] & active) {
+      if (owned_stat)
+        *owned_stat = stat;
+      if (owned_mask)
+        *owned_mask = active;
+      return true;
+    }
+  }
+
+  return false;
 }
 
 static qboolean VR_DynWeaponModelMatches(const vr_dyn_weapon_t *w,
@@ -576,6 +636,8 @@ static vr_dyn_weapon_t *VR_AddOrUpdateDynWeapon(
     w->ammo_stat = ammo_stat;
     w->ammo_max = ammo_max;
   }
+  if (!from_schema && !discovered && bitmask)
+    w->use_item_ownership = true;
   if (from_schema)
     w->from_schema = true;
 
@@ -604,6 +666,9 @@ static qboolean VR_WeaponIsActive(const vr_dyn_weapon_t *w) {
 }
 
 static qboolean VR_WeaponIsOwned(const vr_dyn_weapon_t *w) {
+  qboolean schema_has_weapon_stat =
+      w->from_schema && w->bitmask && cl.stats[STAT_VR_WEAPONS] != 0;
+
   if (w->owned_stat >= 0) {
     int value = cl.stats[w->owned_stat];
     if (w->owned_mask)
@@ -611,10 +676,13 @@ static qboolean VR_WeaponIsOwned(const vr_dyn_weapon_t *w) {
     return value != 0;
   }
 
-  if (w->bitmask && (cl.items & w->bitmask))
+  if (w->bitmask && (cl.stats[STAT_VR_WEAPONS] & w->bitmask))
     return true;
 
-  if (w->bitmask && (cl.stats[STAT_VR_WEAPONS] & w->bitmask))
+  if (schema_has_weapon_stat)
+    return VR_WeaponIsActive(w);
+
+  if (VR_DynWeaponCanUseItemOwnership(w) && (cl.items & w->bitmask))
     return true;
 
   return VR_WeaponIsActive(w);
@@ -4859,6 +4927,15 @@ void VR_TrackWeapons(void) {
       w->discovered = true;
     }
 
+    if (w->owned_stat < 0 && !VR_DynWeaponCanUseItemOwnership(w)) {
+      int owned_stat;
+      int owned_mask;
+      if (VR_FindWeaponOwnedStatForActive(active, &owned_stat, &owned_mask)) {
+        w->owned_stat = owned_stat;
+        w->owned_mask = owned_mask;
+      }
+    }
+
     // Sniff impulse association if it was sent recently (last 0.5s)
     if (w->impulse == 0 && vr_last_sent_impulse > 0 &&
         (Sys_DoubleTime() - vr_last_sent_impulse_time) < 0.5) {
@@ -4880,10 +4957,7 @@ void VR_TrackWeapons(void) {
       impulse = VR_FindImpulseForActiveBit(active);
     }
 
-    if (active && (cl.stats[STAT_VR_WEAPONS] & active)) {
-      owned_stat = STAT_VR_WEAPONS;
-      owned_mask = active;
-    }
+    VR_FindWeaponOwnedStatForActive(active, &owned_stat, &owned_mask);
 
     w = VR_AddOrUpdateDynWeapon(active, impulse, NULL, model_idx, true, 1.0f,
                                 vec3_origin, false, owned_stat, owned_mask, -1,
