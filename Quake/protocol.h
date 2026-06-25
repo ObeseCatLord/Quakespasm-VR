@@ -372,7 +372,6 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #define clcfte_qcrequest 81
 
 #define MOVEEXT_VR 1
-#define MOVEEXT_TRUSTED 2
 #define MOVEEXT_QCINPUT 4
 
 #define MOVE_BUNDLE_MAX 24 // max repeated clc_move records per datagram
@@ -488,10 +487,6 @@ typedef struct {
   vec3_t vr_handrot;
   vec3_t vr_roomscalemove;
   qboolean vr_active;
-
-  qboolean trusted_active;
-  vec3_t trusted_origin;
-  vec3_t trusted_velocity;
 } usercmd_t;
 
 #endif /* _QUAKE_PROTOCOL_H */

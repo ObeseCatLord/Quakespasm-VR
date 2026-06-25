@@ -136,7 +136,6 @@ typedef struct
 	int		signon;			// 0 to SIGNONS
 	struct qsocket_s	*netcon;
 	sizebuf_t	message;		// writing buffer to send to server
-	qboolean	trusted_clientmove_allowed;	// server negotiated trusted co-op movement
 	qboolean	moveext_allowed;		// server negotiated sequenced/redundant movement
 
 } client_static_t;
@@ -340,8 +339,6 @@ extern	cvar_t	cl_forwardspeed;
 extern	cvar_t	cl_backspeed;
 extern	cvar_t	cl_sidespeed;
 extern	cvar_t	cl_desktop_vanilla_run;
-extern	cvar_t	cl_trusted_clientmove;
-extern	cvar_t	cl_trusted_clientmove_desktop;
 extern	cvar_t	cl_predictmove;
 extern	cvar_t	cl_move_redundancy;
 extern	cvar_t	cl_move_maxpacketbytes;

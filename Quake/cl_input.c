@@ -265,8 +265,6 @@ cvar_t cl_forwardspeed = {"cl_forwardspeed", "200", CVAR_ARCHIVE};
 cvar_t cl_backspeed = {"cl_backspeed", "200", CVAR_ARCHIVE};
 cvar_t cl_sidespeed = {"cl_sidespeed", "350", CVAR_NONE};
 cvar_t cl_desktop_vanilla_run = {"cl_desktop_vanilla_run", "1", CVAR_ARCHIVE};
-cvar_t cl_trusted_clientmove = {"cl_trusted_clientmove", "0", CVAR_NONE};
-cvar_t cl_trusted_clientmove_desktop = {"cl_trusted_clientmove_desktop", "0", CVAR_NONE};
 cvar_t cl_predictmove = {"cl_predictmove", "1", CVAR_ARCHIVE};
 cvar_t cl_move_redundancy = {"cl_move_redundancy", "18", CVAR_ARCHIVE};
 cvar_t cl_move_maxpacketbytes = {"cl_move_maxpacketbytes", "1400", CVAR_ARCHIVE};
@@ -446,8 +444,6 @@ static void CL_WriteUsercmd(sizebuf_t *buf, const usercmd_t *histcmd) {
 
   if (histcmd->vr_active)
     extbits |= MOVEEXT_VR;
-  if (histcmd->trusted_active)
-    extbits |= MOVEEXT_TRUSTED;
   if (histcmd->weapon || histcmd->cursor_screen[0] || histcmd->cursor_screen[1] ||
       histcmd->cursor_start[0] || histcmd->cursor_start[1] || histcmd->cursor_start[2] ||
       histcmd->cursor_impact[0] || histcmd->cursor_impact[1] || histcmd->cursor_impact[2] ||
@@ -476,15 +472,6 @@ static void CL_WriteUsercmd(sizebuf_t *buf, const usercmd_t *histcmd) {
     MSG_WriteFloat(buf, histcmd->vr_roomscalemove[0]);
     MSG_WriteFloat(buf, histcmd->vr_roomscalemove[1]);
     MSG_WriteFloat(buf, histcmd->vr_roomscalemove[2]);
-  }
-
-  if (extbits & MOVEEXT_TRUSTED) {
-    MSG_WriteFloat(buf, histcmd->trusted_origin[0]);
-    MSG_WriteFloat(buf, histcmd->trusted_origin[1]);
-    MSG_WriteFloat(buf, histcmd->trusted_origin[2]);
-    MSG_WriteFloat(buf, histcmd->trusted_velocity[0]);
-    MSG_WriteFloat(buf, histcmd->trusted_velocity[1]);
-    MSG_WriteFloat(buf, histcmd->trusted_velocity[2]);
   }
 
   if (extbits & MOVEEXT_QCINPUT) {
@@ -611,22 +598,6 @@ void CL_SendMove(const usercmd_t *cmd) {
     VectorCopy(cl.handrot[1], sendcmd.vr_handrot);
   } else {
     VectorCopy(vec3_origin, sendcmd.vr_roomscalemove);
-  }
-
-  Q_memset(sendcmd.trusted_origin, 0, sizeof(sendcmd.trusted_origin));
-  Q_memset(sendcmd.trusted_velocity, 0, sizeof(sendcmd.trusted_velocity));
-  sendcmd.trusted_active = false;
-
-  if (!local_singleplayer &&
-      cl_trusted_clientmove.value && (vr_enabled.value || cl_trusted_clientmove_desktop.value) &&
-      cls.trusted_clientmove_allowed &&
-      cls.state == ca_connected && cls.signon == SIGNONS &&
-      cl.viewentity > 0 && cl.viewentity < cl.num_entities &&
-      cl.entities[cl.viewentity].model) {
-    entity_t *ent = &cl.entities[cl.viewentity];
-    sendcmd.trusted_active = true;
-    VectorCopy(ent->origin, sendcmd.trusted_origin);
-    VectorCopy(cl.velocity, sendcmd.trusted_velocity);
   }
 
   seq = cl.movemessages++;

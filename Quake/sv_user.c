@@ -50,7 +50,7 @@ cvar_t sv_idealpitchscale = {"sv_idealpitchscale", "0.8", CVAR_NONE};
 cvar_t sv_altnoclip = {"sv_altnoclip", "1", CVAR_ARCHIVE}; // johnfitz
 cvar_t sv_inputtimeout = {"sv_inputtimeout", "0", CVAR_NONE};
 cvar_t sv_pmove = {"sv_pmove", "1", CVAR_NONE};
-cvar_t sv_nqplayerphysics = {"sv_nqplayerphysics", "0",
+cvar_t sv_nqplayerphysics = {"sv_nqplayerphysics", "1",
                              CVAR_ARCHIVE | CVAR_SERVERINFO};
 cvar_t sv_pmove_legacy = {"sv_pmove_legacy", "1", CVAR_NONE};
 cvar_t sv_pmove_legacy_preserve_qc_velocity = {
@@ -92,23 +92,6 @@ static void SV_SetExtendedButtons(edict_t *ent, int buttons) {
     val->_float = (buttons & (1 << 6)) >> 6;
   if ((val = GetEdictFieldValue(ent, qcvm->extfields.button8)))
     val->_float = (buttons & (1 << 7)) >> 7;
-}
-
-static qboolean SV_TrustedClientMoveVectorOK(const vec3_t v, float limit) {
-  int i;
-
-  for (i = 0; i < 3; i++) {
-    if (IS_NAN(v[i]) || fabs(v[i]) > limit)
-      return false;
-  }
-
-  return true;
-}
-
-static void SV_ClearTrustedClientMove(client_t *client) {
-  client->trusted_clientmove_valid = false;
-  VectorCopy(vec3_origin, client->trusted_clientmove_origin);
-  VectorCopy(vec3_origin, client->trusted_clientmove_velocity);
 }
 
 void SV_ResetClientMoveState(client_t *client) {
@@ -169,8 +152,6 @@ void SV_ResetClientMoveState(client_t *client) {
   VectorCopy(vec3_origin, client->vr_handrot);
   VectorCopy(vec3_origin, client->vr_roomscalemove);
   VectorCopy(vec3_origin, client->vr_roomscale_accum);
-  client->net_trustedmove_log_time = 0;
-  SV_ClearTrustedClientMove(client);
 
   if (client->edict && !client->edict->free) {
     client->edict->v.button0 = 0;
@@ -178,116 +159,6 @@ void SV_ResetClientMoveState(client_t *client) {
     SV_SetExtendedButtons(client->edict, 0);
     client->edict->v.impulse = 0;
   }
-}
-
-qboolean SV_ApplyTrustedClientMove(client_t *client) {
-  edict_t *ent;
-  float delta_len;
-  float maxdelta;
-  float move_len;
-  vec3_t delta;
-  trace_t trace;
-  int ent_flags;
-
-  if (!client->trusted_clientmove_valid)
-    return false;
-
-  if (!client->usingpmove) {
-    if (net_lagdebug.value && realtime - client->net_trustedmove_log_time > 1.0) {
-      Con_Printf("net_lagdebug: ignored trusted client movement for %s because server PMove is disabled\n",
-                 client->name);
-      client->net_trustedmove_log_time = realtime;
-    }
-    SV_ClearTrustedClientMove(client);
-    return false;
-  }
-
-  if (!coop.value || !sv_coop_trusted_clientmove.value) {
-    SV_ClearTrustedClientMove(client);
-    return false;
-  }
-
-  ent = client->edict;
-  if (!ent || ent->free || (int)ent->v.movetype == MOVETYPE_NONE) {
-    SV_ClearTrustedClientMove(client);
-    return false;
-  }
-
-  ent_flags = (int)ent->v.flags;
-
-  if (ent->v.teleport_time > qcvm->time || ent->v.fixangle) {
-    SV_ClearTrustedClientMove(client);
-    return false;
-  }
-
-  /*
-   * Keep water movement server-authoritative.  Trusted movement is an optional
-   * co-op smoothing path, but it runs after PMove/QuakeC and can otherwise
-   * overwrite waterjump and swim-up velocity, making VR water exits sticky.
-   */
-  if ((ent_flags & FL_WATERJUMP) || ent->v.waterlevel >= 2) {
-    if (net_lagdebug.value && realtime - client->net_trustedmove_log_time > 1.0) {
-      Con_Printf("net_lagdebug: ignored trusted client movement for %s during server-owned water movement\n",
-                 client->name);
-      client->net_trustedmove_log_time = realtime;
-    }
-    SV_ClearTrustedClientMove(client);
-    return false;
-  }
-
-  if (!SV_TrustedClientMoveVectorOK(client->trusted_clientmove_origin, 65536.0f) ||
-      !SV_TrustedClientMoveVectorOK(client->trusted_clientmove_velocity, 10000.0f)) {
-    if (net_lagdebug.value)
-      Con_Printf("net_lagdebug: rejected trusted client movement for %s origin=(%g,%g,%g) velocity=(%g,%g,%g)\n",
-                 client->name,
-                 client->trusted_clientmove_origin[0],
-                 client->trusted_clientmove_origin[1],
-                 client->trusted_clientmove_origin[2],
-                 client->trusted_clientmove_velocity[0],
-                 client->trusted_clientmove_velocity[1],
-                 client->trusted_clientmove_velocity[2]);
-    SV_ClearTrustedClientMove(client);
-    return false;
-  }
-
-  VectorSubtract(client->trusted_clientmove_origin, ent->v.origin, delta);
-  maxdelta = sv_coop_trusted_clientmove_maxdelta.value;
-  if (maxdelta > 0) {
-    delta_len = VectorLength(delta);
-    if (delta_len > maxdelta) {
-      if (net_lagdebug.value)
-        Con_Printf("net_lagdebug: rejected trusted client movement for %s delta=%.1f max=%.1f\n",
-                   client->name, delta_len, maxdelta);
-      SV_ClearTrustedClientMove(client);
-      return false;
-    }
-  }
-
-  move_len = fabs(client->cmd.forwardmove) + fabs(client->cmd.sidemove) +
-             fabs(client->cmd.upmove);
-  if (move_len > 1 &&
-      DotProduct(delta, client->trusted_clientmove_velocity) < -1.0f) {
-    SV_ClearTrustedClientMove(client);
-    return false;
-  }
-
-  if (VectorLength(delta) > 0.1f) {
-    trace = SV_Move(ent->v.origin, ent->v.mins, ent->v.maxs,
-                    client->trusted_clientmove_origin, MOVE_NORMAL, ent);
-    if (trace.allsolid || trace.startsolid || trace.fraction < 1.0f) {
-      if (net_lagdebug.value)
-        Con_Printf("net_lagdebug: rejected trusted client movement for %s blocked fraction=%.3f startsolid=%d allsolid=%d\n",
-                   client->name, trace.fraction, trace.startsolid,
-                   trace.allsolid);
-      SV_ClearTrustedClientMove(client);
-      return false;
-    }
-  }
-
-  VectorCopy(client->trusted_clientmove_origin, ent->v.origin);
-  VectorCopy(client->trusted_clientmove_velocity, ent->v.velocity);
-  SV_ClearTrustedClientMove(client);
-  return true;
 }
 
 /*
@@ -712,7 +583,7 @@ static qboolean SV_ReadUsercmd(usercmd_t *readcmd, int sequence) {
   readcmd->impulse = MSG_ReadByte();
 
   extbits = MSG_ReadByte();
-  if (extbits & ~(MOVEEXT_VR | MOVEEXT_TRUSTED | MOVEEXT_QCINPUT)) {
+  if (extbits & ~(MOVEEXT_VR | MOVEEXT_QCINPUT)) {
     msg_badread = true;
     return false;
   }
@@ -733,22 +604,6 @@ static qboolean SV_ReadUsercmd(usercmd_t *readcmd, int sequence) {
     readcmd->vr_roomscalemove[0] = MSG_ReadFloat();
     readcmd->vr_roomscalemove[1] = MSG_ReadFloat();
     readcmd->vr_roomscalemove[2] = MSG_ReadFloat();
-  }
-
-  if (extbits & MOVEEXT_TRUSTED) {
-    if (net_message.cursize - msg_readcount < 6 * 4) {
-      msg_badread = true;
-      SV_ClearTrustedClientMove(host_client);
-      return false;
-    }
-
-    readcmd->trusted_active = true;
-    readcmd->trusted_origin[0] = MSG_ReadFloat();
-    readcmd->trusted_origin[1] = MSG_ReadFloat();
-    readcmd->trusted_origin[2] = MSG_ReadFloat();
-    readcmd->trusted_velocity[0] = MSG_ReadFloat();
-    readcmd->trusted_velocity[1] = MSG_ReadFloat();
-    readcmd->trusted_velocity[2] = MSG_ReadFloat();
   }
 
   if (extbits & MOVEEXT_QCINPUT) {
@@ -959,14 +814,6 @@ void SV_ApplyQueuedUsercmd(client_t *client, const usercmd_t *queuedcmd) {
     VectorCopy(vec3_origin, client->vr_roomscalemove);
   }
 
-  if (queuedcmd->trusted_active) {
-    client->trusted_clientmove_valid = true;
-    VectorCopy(queuedcmd->trusted_origin, client->trusted_clientmove_origin);
-    VectorCopy(queuedcmd->trusted_velocity, client->trusted_clientmove_velocity);
-  } else {
-    SV_ClearTrustedClientMove(client);
-  }
-
   client->pendingmovemessage = queuedcmd->sequence;
   client->move_pending = true;
 }
@@ -1075,7 +922,6 @@ static void SV_ClearStaleClientInput(client_t *client) {
   SV_SetExtendedButtons(client->edict, 0);
   client->edict->v.impulse = 0;
   VectorCopy(vec3_origin, client->vr_roomscalemove);
-  SV_ClearTrustedClientMove(client);
 }
 
 /*
@@ -1392,7 +1238,6 @@ void SV_RunClients(void) {
       host_client->move_pending = false;
       host_client->move_queue_start = 0;
       host_client->move_queue_count = 0;
-      SV_ClearTrustedClientMove(host_client);
       continue;
     }
 

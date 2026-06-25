@@ -2755,10 +2755,7 @@ qboolean SV_RunClientPMoveCommands(client_t *client) {
       break;
     }
 
-    if (SV_ApplyTrustedClientMove(client))
-      SV_LinkEdict(ent, true);
-    else
-      SV_LinkEdict(ent, false);
+    SV_LinkEdict(ent, false);
 
     pr_global_struct->time = qcvm->time;
     SV_ApplyVRWeaponOffset(ent, num, is_remote_vr, restoreOrigin);
@@ -2962,7 +2959,6 @@ void SV_Physics_Client(edict_t *ent, int num) {
   //
   // call standard player post-think
   //
-  SV_ApplyTrustedClientMove(&svs.clients[num - 1]);
   SV_LinkEdict(ent, true);
 
   pr_global_struct->time = qcvm->time;
