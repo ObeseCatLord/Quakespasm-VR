@@ -1419,6 +1419,8 @@ static qboolean CL_UpdateMoveAck (int ack)
 	return false;
 }
 
+static qboolean CL_ParseMoveAckPayload (void);
+
 static void CLFTE_QueueAckFrame (int sequence)
 {
 	unsigned int i;
@@ -1472,10 +1474,8 @@ static void CLFTE_ParseEntitiesUpdate (void)
 
 	if (cl.protocol_pext2 & PEXT2_PREDINFO)
 	{
-		int seq = CL_ExpandMoveAck16 (MSG_ReadShort () & 0xffff);
-		if (!CL_UpdateMoveAck (seq) && net_lagdebug.value)
-			Con_DPrintf ("net_lagdebug: ignored stale replacement move ack=%d current=%d\n",
-				seq, cl.ackedmovemessages);
+		if (!CL_ParseMoveAckPayload ())
+			return;
 	}
 
 	newtime = MSG_ReadFloat ();
@@ -1957,7 +1957,7 @@ static void CL_ApplyMoveAck (int ack16, int flags, int movetype, float servertim
 		cl.predstate_maxs[i] = maxs[i];
 }
 
-static void CL_ParseMoveAck (void)
+static qboolean CL_ParseMoveAckPayload (void)
 {
 	int ack16;
 	int flags;
@@ -1972,7 +1972,7 @@ static void CL_ParseMoveAck (void)
 	if (net_message.cursize - msg_readcount < 32)
 	{
 		msg_badread = true;
-		return;
+		return false;
 	}
 
 	ack16 = MSG_ReadShort () & 0xffff;
@@ -1990,6 +1990,12 @@ static void CL_ParseMoveAck (void)
 
 	CL_ApplyMoveAck (ack16, flags, movetype, servertime, origin, velocity,
 		mins, maxs);
+	return !msg_badread;
+}
+
+static void CL_ParseMoveAck (void)
+{
+	CL_ParseMoveAckPayload ();
 }
 
 static void CL_ParseSnapshotPartMoveAck (const byte *payload, int payload_size)

@@ -82,6 +82,7 @@ cvar_t sv_skyroom_pvs = {"sv_skyroom_pvs", "1", CVAR_NONE};
 
 static void SVFTE_SetupFrames (client_t *client);
 static qboolean SVFTE_SendClientDatagram (client_t *client, int maxsize);
+static void SV_WriteMoveAckPayloadToMessage (client_t *client, sizebuf_t *msg);
 
 static int SV_ClientMaxPacketSize (client_t *client)
 {
@@ -326,7 +327,6 @@ void SV_Init (void)
 	extern	cvar_t	sv_idealpitchscale;
 	extern	cvar_t	sv_pmove;
 	extern	cvar_t	sv_nqplayerphysics;
-	extern	cvar_t	sv_pmove_legacy;
 	extern	cvar_t	sv_pmove_legacy_preserve_qc_velocity;
 	extern	cvar_t	sv_aim;
 	extern	cvar_t	sv_altnoclip; //johnfitz
@@ -348,7 +348,6 @@ void SV_Init (void)
 	Cvar_RegisterVariable (&sv_idealpitchscale);
 	Cvar_RegisterVariable (&sv_pmove);
 	Cvar_RegisterVariable (&sv_nqplayerphysics);
-	Cvar_RegisterVariable (&sv_pmove_legacy);
 	Cvar_RegisterVariable (&sv_pmove_legacy_preserve_qc_velocity);
 	Cvar_RegisterVariable (&sv_aim);
 	Cvar_RegisterVariable (&sv_nostep);
@@ -1842,7 +1841,7 @@ static void SVFTE_WriteEntitiesToClient (client_t *client, sizebuf_t *msg,
 
 	header_need = 1 + 4 + 4 + 2;
 	if (client->protocol_pext2 & PEXT2_PREDINFO)
-		header_need += 2;
+		header_need += 32;
 	if (msg->cursize + header_need > msg->maxsize)
 		return;
 
@@ -1851,7 +1850,7 @@ static void SVFTE_WriteEntitiesToClient (client_t *client, sizebuf_t *msg,
 	MSG_WriteByte (msg, svcfte_updateentities);
 	MSG_WriteLong (msg, sequence);
 	if (client->protocol_pext2 & PEXT2_PREDINFO)
-		MSG_WriteShort (msg, client->lastmovemessage & 0xffff);
+		SV_WriteMoveAckPayloadToMessage (client, msg);
 	MSG_WriteFloat (msg, qcvm->time);
 
 	for (entnum = client->snapshotresume; entnum < client->numpendingentities; entnum++)
@@ -2709,12 +2708,17 @@ SV_SendClientDatagram
 */
 static void SV_WriteMoveAckToMessage(client_t *client, sizebuf_t *msg)
 {
+	MSG_WriteByte (msg, svc_moveack);
+	SV_WriteMoveAckPayloadToMessage (client, msg);
+}
+
+static void SV_WriteMoveAckPayloadToMessage(client_t *client, sizebuf_t *msg)
+{
 	edict_t	*ent;
 	int	i;
 	int	flags;
 	int	ival;
 
-	MSG_WriteByte (msg, svc_moveack);
 	MSG_WriteShort (msg, client->lastmovemessage & 0xffff);
 
 	ent = client->edict;

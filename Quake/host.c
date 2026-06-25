@@ -141,6 +141,8 @@ static qboolean Host_ShouldIsolateNetworkFrame (void)
 static qboolean Host_BeginNetworkFrame (double *accum, double interval,
 	double *saved_frametime)
 {
+	double network_frametime;
+
 	if (interval <= 0)
 		return true;
 
@@ -149,9 +151,10 @@ static qboolean Host_BeginNetworkFrame (double *accum, double interval,
 		return false;
 
 	*saved_frametime = host_frametime;
-	host_frametime = CLAMP (0.001, *accum, 0.1);
-	*accum -= interval;
-	if (*accum > interval)
+	network_frametime = CLAMP (0.001, *accum, 0.1);
+	host_frametime = network_frametime;
+	*accum -= network_frametime;
+	if (*accum < 0 || *accum > interval)
 		*accum = 0;
 	return true;
 }
