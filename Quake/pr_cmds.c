@@ -121,6 +121,81 @@ static char *PF_VarString (int	first)
 	return out;
 }
 
+void PR_GetSetInputs (usercmd_t *cmd, qboolean set)
+{
+	if (!cmd)
+		return;
+
+	if (set)
+	{
+		if (qcvm->extglobals.input_sequence)
+			*qcvm->extglobals.input_sequence = cmd->sequence;
+		if (qcvm->extglobals.input_servertime)
+			*qcvm->extglobals.input_servertime = cmd->servertime;
+		if (qcvm->extglobals.input_timelength)
+			*qcvm->extglobals.input_timelength = cmd->seconds;
+		if (qcvm->extglobals.input_angles)
+			VectorCopy (cmd->viewangles, qcvm->extglobals.input_angles);
+		if (qcvm->extglobals.input_movevalues)
+		{
+			qcvm->extglobals.input_movevalues[0] = cmd->forwardmove;
+			qcvm->extglobals.input_movevalues[1] = cmd->sidemove;
+			qcvm->extglobals.input_movevalues[2] = cmd->upmove;
+		}
+		if (qcvm->extglobals.input_buttons)
+			*qcvm->extglobals.input_buttons = cmd->buttons;
+		if (qcvm->extglobals.input_impulse)
+			*qcvm->extglobals.input_impulse = cmd->impulse;
+		if (qcvm->extglobals.input_weapon)
+			*qcvm->extglobals.input_weapon = cmd->weapon;
+		if (qcvm->extglobals.input_cursor_screen)
+		{
+			qcvm->extglobals.input_cursor_screen[0] = cmd->cursor_screen[0];
+			qcvm->extglobals.input_cursor_screen[1] = cmd->cursor_screen[1];
+		}
+		if (qcvm->extglobals.input_cursor_trace_start)
+			VectorCopy (cmd->cursor_start, qcvm->extglobals.input_cursor_trace_start);
+		if (qcvm->extglobals.input_cursor_trace_endpos)
+			VectorCopy (cmd->cursor_impact, qcvm->extglobals.input_cursor_trace_endpos);
+		if (qcvm->extglobals.input_cursor_entitynumber)
+			*qcvm->extglobals.input_cursor_entitynumber = cmd->cursor_entitynumber;
+	}
+	else
+	{
+		if (qcvm->extglobals.input_sequence)
+			cmd->sequence = *qcvm->extglobals.input_sequence;
+		if (qcvm->extglobals.input_servertime)
+			cmd->servertime = *qcvm->extglobals.input_servertime;
+		if (qcvm->extglobals.input_timelength)
+			cmd->seconds = *qcvm->extglobals.input_timelength;
+		if (qcvm->extglobals.input_angles)
+			VectorCopy (qcvm->extglobals.input_angles, cmd->viewangles);
+		if (qcvm->extglobals.input_movevalues)
+		{
+			cmd->forwardmove = qcvm->extglobals.input_movevalues[0];
+			cmd->sidemove = qcvm->extglobals.input_movevalues[1];
+			cmd->upmove = qcvm->extglobals.input_movevalues[2];
+		}
+		if (qcvm->extglobals.input_buttons)
+			cmd->buttons = *qcvm->extglobals.input_buttons;
+		if (qcvm->extglobals.input_impulse)
+			cmd->impulse = *qcvm->extglobals.input_impulse;
+		if (qcvm->extglobals.input_weapon)
+			cmd->weapon = *qcvm->extglobals.input_weapon;
+		if (qcvm->extglobals.input_cursor_screen)
+		{
+			cmd->cursor_screen[0] = qcvm->extglobals.input_cursor_screen[0];
+			cmd->cursor_screen[1] = qcvm->extglobals.input_cursor_screen[1];
+		}
+		if (qcvm->extglobals.input_cursor_trace_start)
+			VectorCopy (qcvm->extglobals.input_cursor_trace_start, cmd->cursor_start);
+		if (qcvm->extglobals.input_cursor_trace_endpos)
+			VectorCopy (qcvm->extglobals.input_cursor_trace_endpos, cmd->cursor_impact);
+		if (qcvm->extglobals.input_cursor_entitynumber)
+			cmd->cursor_entitynumber = *qcvm->extglobals.input_cursor_entitynumber;
+	}
+}
+
 
 /*
 =================

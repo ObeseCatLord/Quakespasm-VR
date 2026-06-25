@@ -91,6 +91,7 @@ struct pr_extfuncs_s
 		QCEXTFUNC(CSQC_Shutdown,			"void()")	\
 		QCEXTFUNC(CSQC_DrawHud,				"void(vector virtsize, float showscores)")							/*simple: for the simple(+limited) hud-only csqc interface.*/	\
 		QCEXTFUNC(CSQC_DrawScores,			"void(vector virtsize, float showscores)")							/*simple: (optional) for the simple hud-only csqc interface.*/		\
+		QCEXTFUNC(CSQC_Input_Frame,			"void()")															/*full only: input angles stuff.*/	\
 		QCEXTFUNC(CSQC_Ent_Update,			"void(float isnew)")												/*full CSQC entity networking*/	\
 		QCEXTFUNC(CSQC_Ent_Remove,			"void()")															/*full CSQC entity networking*/	\
 
@@ -264,6 +265,8 @@ void PR_EnableExtensions (void);
 void PR_ClearBuiltinState(qcvm_t *vm);
 
 void PR_ReloadPics (qboolean purge);					//for gamedir or video changes
+
+void PR_GetSetInputs (usercmd_t *cmd, qboolean set);
 
 const char *PR_GetString (int num);
 int PR_SetEngineString (const char *s);
