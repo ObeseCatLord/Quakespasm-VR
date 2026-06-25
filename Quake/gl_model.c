@@ -3022,9 +3022,20 @@ static void Mod_LoadAliasModel (qmodel_t *mod, void *buffer)
 	end = Hunk_LowMark ();
 	total = end - start;
 
+	// Hunk segments may not be contiguous in memory. Alias models rely on
+	// pheader + offset addressing, so refuse the load before anything walks
+	// those offsets.
+	if (!Hunk_IsContiguous (start, end))
+		Sys_Error ("Mod_LoadAliasModel: %s spans multiple hunk segments (try a larger -heapsize)", mod->name);
+
+	GLMesh_LoadVertexBuffer (mod, pheader);
+
 	Cache_Alloc (&mod->cache, total, loadname);
 	if (!mod->cache.data)
+	{
+		Hunk_FreeToLowMark (start);
 		return;
+	}
 	memcpy (mod->cache.data, pheader, total);
 
 	Hunk_FreeToLowMark (start);

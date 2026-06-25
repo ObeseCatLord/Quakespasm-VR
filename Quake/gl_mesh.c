@@ -280,7 +280,6 @@ static void BuildTris (void)
 }
 
 static void GL_MakeAliasModelDisplayLists_VBO (qmodel_t *, aliashdr_t *);
-static void GLMesh_LoadVertexBuffer (qmodel_t *m, const aliashdr_t *hdr);
 
 /*
 ================
@@ -362,6 +361,8 @@ static void GL_MakeAliasModelDisplayLists_VBO (qmodel_t *aliasmodel, aliashdr_t 
 	unsigned short *remap;
 	aliasmesh_t *desc;
 
+	(void)aliasmodel;
+
 	if (!gl_glsl_alias_able)
 		return;
 
@@ -429,9 +430,6 @@ static void GL_MakeAliasModelDisplayLists_VBO (qmodel_t *aliasmodel, aliashdr_t 
 
 	// free temporary data
 	Hunk_FreeToLowMark (mark);
-
-	// upload immediately
-	GLMesh_LoadVertexBuffer (aliasmodel, pheader);
 }
 
 /*
@@ -443,7 +441,7 @@ Upload the given alias model's mesh to a VBO
 Original code by MH from RMQEngine
 ================
 */
-static void GLMesh_LoadVertexBuffer (qmodel_t *m, const aliashdr_t *hdr)
+void GLMesh_LoadVertexBuffer (qmodel_t *m, const aliashdr_t *hdr)
 {
 	int totalvbosize = 0;
 	const aliasmesh_t *desc;
