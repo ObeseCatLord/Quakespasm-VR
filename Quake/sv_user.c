@@ -187,6 +187,7 @@ qboolean SV_ApplyTrustedClientMove(client_t *client) {
   float move_len;
   vec3_t delta;
   trace_t trace;
+  int ent_flags;
 
   if (!client->trusted_clientmove_valid)
     return false;
@@ -212,7 +213,24 @@ qboolean SV_ApplyTrustedClientMove(client_t *client) {
     return false;
   }
 
+  ent_flags = (int)ent->v.flags;
+
   if (ent->v.teleport_time > qcvm->time || ent->v.fixangle) {
+    SV_ClearTrustedClientMove(client);
+    return false;
+  }
+
+  /*
+   * Keep water movement server-authoritative.  Trusted movement is an optional
+   * co-op smoothing path, but it runs after PMove/QuakeC and can otherwise
+   * overwrite waterjump and swim-up velocity, making VR water exits sticky.
+   */
+  if ((ent_flags & FL_WATERJUMP) || ent->v.waterlevel >= 2) {
+    if (net_lagdebug.value && realtime - client->net_trustedmove_log_time > 1.0) {
+      Con_Printf("net_lagdebug: ignored trusted client movement for %s during server-owned water movement\n",
+                 client->name);
+      client->net_trustedmove_log_time = realtime;
+    }
     SV_ClearTrustedClientMove(client);
     return false;
   }
