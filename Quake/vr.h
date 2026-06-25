@@ -59,10 +59,17 @@ void IN_VRTurn180_f(void);
 
 void VR_UpdateScreenContent();
 void VR_ShowCrosshair();
+void VR_BeginWeaponMenu();
 void VR_DrawWeaponMenu();
 void VR_DrawAdjustmentControllers();
 void VR_ApplyCurrentViewWeaponTransform();
+enum {
+  VR_WEAPONMENU_SELECTION_NONE = 0,
+  VR_WEAPONMENU_SELECTION_WEAPON = 1,
+  VR_WEAPONMENU_SELECTION_PLAYER = 2
+};
 extern int vr_weaponmenu_selection;
+extern int vr_weaponmenu_selection_type;
 void VR_TriggerHaptic(int controller, float durationSeconds);
 void VR_Draw2D();
 void VR_Draw2D();
@@ -74,6 +81,7 @@ void VR_TrackWeapons();
 void VR_ResetWeaponTracking();
 int VR_GetSelectedWeaponImpulse(int selection);
 void VR_SelectWeaponFromMenu(int selection);
+void VR_SelectPlayerFromMenu(int selection);
 void VR_DrawSbar();
 void VR_AddOrientationToViewAngles(vec3_t angles);
 void VR_SetAngles(vec3_t angles);

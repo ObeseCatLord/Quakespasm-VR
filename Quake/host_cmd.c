@@ -1912,6 +1912,44 @@ static void Host_Begin_f(void) {
   host_client->spawned = true;
 }
 
+/*
+==================
+Host_CoopTeleportPlayer_f
+
+Co-op client helper used by the weapon wheel player list.
+Usage: coop_teleport_player <1-based player slot>
+==================
+*/
+static void Host_CoopTeleportPlayer_f(void) {
+  int slot;
+  client_t *target_client;
+
+  if (cmd_source == src_command) {
+    Cmd_ForwardToServer();
+    return;
+  }
+
+  if (!coop.value || pr_global_struct->deathmatch)
+    return;
+  if (!host_client || !host_client->active || !host_client->spawned ||
+      !sv_player)
+    return;
+  if (Cmd_Argc() < 2)
+    return;
+
+  slot = Q_atoi(Cmd_Argv(1)) - 1;
+  if (slot < 0 || slot >= svs.maxclients)
+    return;
+
+  target_client = &svs.clients[slot];
+  if (!target_client->active || !target_client->spawned ||
+      !target_client->edict || target_client == host_client)
+    return;
+
+  if (!SV_CoopRespawnTeleportToPlayer(sv_player, target_client->edict))
+    SV_ClientPrintf("No safe teleport spot near %s\n", target_client->name);
+}
+
 //===========================================================================
 
 /*
@@ -2517,11 +2555,80 @@ DEMO LOOP CONTROL
 Host_Startdemos_f
 ==================
 */
+static qboolean Host_CommandLineTokenMatches(const char *arg,
+                                             const char *command) {
+  size_t len;
+
+  if (!arg || arg[0] != '+')
+    return false;
+
+  len = strlen(command);
+  if (q_strncasecmp(arg + 1, command, len))
+    return false;
+
+  return arg[1 + len] == 0 || arg[1 + len] == ' ' || arg[1 + len] == '\t';
+}
+
+static qboolean Host_CommandLineHasStartupCommand(void) {
+  int i;
+
+  for (i = 1; i < com_argc; i++) {
+    if (Host_CommandLineTokenMatches(com_argv[i], "connect") ||
+        Host_CommandLineTokenMatches(com_argv[i], "map") ||
+        Host_CommandLineTokenMatches(com_argv[i], "load") ||
+        Host_CommandLineTokenMatches(com_argv[i], "playdemo") ||
+        Host_CommandLineTokenMatches(com_argv[i], "timedemo"))
+      return true;
+  }
+
+  return false;
+}
+
+static qboolean Host_CommandLineDisablesStartdemos(void) {
+  int i;
+  const char *arg;
+  const char *value;
+  size_t len = strlen("cl_startdemos");
+
+  for (i = 1; i < com_argc; i++) {
+    arg = com_argv[i];
+    if (!Host_CommandLineTokenMatches(arg, "cl_startdemos"))
+      continue;
+
+    value = arg + 1 + len;
+    while (*value == ' ' || *value == '\t')
+      value++;
+
+    if (!*value && i + 1 < com_argc)
+      value = com_argv[i + 1];
+    if (value && *value && Q_atof(value) == 0.0f)
+      return true;
+  }
+
+  return false;
+}
+
 static void Host_Startdemos_f(void) {
   int i, c;
+  qboolean command_line_startup;
 
   if (cls.state == ca_dedicated || cls.state == ca_connected)
     return;
+
+  command_line_startup = Host_CommandLineHasStartupCommand();
+  if (Cmd_IsExecutingConfig() &&
+      (command_line_startup || Host_CommandLineDisablesStartdemos())) {
+    cls.demonum = -1;
+    if (vr_enabled.value && !command_line_startup) {
+      Cbuf_AddText("maxplayers 1\n");
+      Cbuf_AddText("deathmatch 0\n");
+      Cbuf_AddText("coop 0\n");
+      Cbuf_AddText("map start\n");
+      Cbuf_AddText("centerview\n");
+    }
+    Con_DPrintf("Skipping startup demos because the command line controls startup.\n");
+    return;
+  }
 
   c = Cmd_Argc() - 1;
   if (c > MAX_DEMOS) {
@@ -2642,6 +2749,7 @@ void Host_InitCommands(void) {
   Cmd_AddCommand_ClientCommand("spawn", Host_Spawn_f);
   Cmd_AddCommand_ClientCommand("begin", Host_Begin_f);
   Cmd_AddCommand_ClientCommand("prespawn", Host_PreSpawn_f);
+  Cmd_AddCommand_ClientCommand("coop_teleport_player", Host_CoopTeleportPlayer_f);
   Cmd_AddCommand_ClientCommand("enablecsqc", Host_EnableCSQC_f);
   Cmd_AddCommand_ClientCommand("disablecsqc", Host_DisableCSQC_f);
   Cmd_AddCommand_ClientCommand("kick", Host_Kick_f);

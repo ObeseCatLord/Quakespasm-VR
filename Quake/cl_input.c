@@ -175,7 +175,11 @@ void IN_Button8Down(void) { KeyDown(&in_button8); }
 void IN_Button8Up(void) { KeyUp(&in_button8); }
 
 void IN_VRWeaponMenuDown(void) {
+  qboolean was_down = (in_vr_weaponmenu.state & 1) != 0;
+
   KeyDown(&in_vr_weaponmenu);
+  if (!was_down)
+    VR_BeginWeaponMenu();
   cl.in_vr_weaponmenu = true;
 }
 
@@ -185,9 +189,16 @@ void IN_VRWeaponMenuUp(void) {
 
   // If a weapon is selected when the menu is released, send the impulse
   int sel = vr_weaponmenu_selection;
+  int sel_type = vr_weaponmenu_selection_type;
   vr_weaponmenu_selection = -1; // Reset selection first
+  vr_weaponmenu_selection_type = VR_WEAPONMENU_SELECTION_NONE;
 
-  if (sel >= 0)
+  if (sel < 0)
+    return;
+
+  if (sel_type == VR_WEAPONMENU_SELECTION_PLAYER)
+    VR_SelectPlayerFromMenu(sel);
+  else
     VR_SelectWeaponFromMenu(sel);
 }
 

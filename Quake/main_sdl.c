@@ -55,7 +55,7 @@ static void Sys_InitSDL(void) {
 }
 
 #define DEFAULT_MEMORY                                                         \
-  (512 * 1024 * 1024) // ericw -- was 72MB (64-bit) / 64MB (32-bit)
+  (1536 * 1024 * 1024) // large modern mods ship BSP/LIT data that exceed 512MB
 
 static quakeparms_t parms;
 

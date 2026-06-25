@@ -470,8 +470,9 @@ void SV_CoopReviveApplyPending(void) {
 Coop respawn helpers
 
 Let QuakeC perform the normal coop respawn first, then relocate the freshly
-respawned player to a safe spot near the death origin. If that fails, try a
-safe spot near a living teammate before falling back to the mod's spawn point.
+respawned player to a safe spot near the death origin or last dry position. If
+that fails, try a safe spot near a living teammate before falling back to the
+mod's spawn point. Fresh late-join placement remains teammate-based.
 =============
 */
 #define COOP_RESPAWN_TRACE_EPSILON 0.01f
@@ -613,6 +614,7 @@ static double coop_respawn_dead_since[MAX_SCOREBOARD];
 static qboolean coop_respawn_force_standard_spawn[MAX_SCOREBOARD];
 
 static qboolean SV_CoopRespawnCanPlaceAt(edict_t *ent, vec3_t origin);
+static qboolean SV_CoopRespawnCanPlaceAtDry(edict_t *ent, vec3_t origin);
 
 static qboolean SV_CoopRespawnIsAliveClient(edict_t *ent) {
   return SV_CoopIsActiveClient(ent) && ent->v.health > 0 &&
@@ -915,7 +917,10 @@ static void SV_CoopRespawnRememberSafeOrigin(edict_t *ent, int num) {
   if (index < 0 || index >= MAX_SCOREBOARD)
     return;
 
-  if (!SV_CoopRespawnCanPlaceAt(ent, ent->v.origin))
+  if (ent->v.waterlevel > 0)
+    return;
+
+  if (!SV_CoopRespawnCanPlaceAtDry(ent, ent->v.origin))
     return;
 
   VectorCopy(ent->v.origin, coop_respawn_last_safe_origin[index]);
@@ -932,6 +937,7 @@ static void SV_CoopRespawnRememberAliveState(edict_t *ent, int num) {
 static void SV_CoopRespawnRecordDeathAnchor(
     edict_t *ent, int num, const coop_respawn_postthink_state_t *state) {
   int index;
+  vec3_t death_origin;
 
   if (!coop.value || !ent || ent->free)
     return;
@@ -940,7 +946,12 @@ static void SV_CoopRespawnRecordDeathAnchor(
   if (index < 0 || index >= MAX_SCOREBOARD)
     return;
 
-  if (coop_respawn_last_safe_valid[index]) {
+  VectorCopy(state->death_origin, death_origin);
+  if (SV_CoopRespawnCanPlaceAtDry(ent, death_origin)) {
+    VectorCopy(state->death_origin, coop_respawn_death_anchor[index]);
+    VectorCopy(state->death_angles, coop_respawn_death_angles[index]);
+    VectorCopy(state->death_v_angle, coop_respawn_death_v_angle[index]);
+  } else if (coop_respawn_last_safe_valid[index]) {
     VectorCopy(coop_respawn_last_safe_origin[index],
                coop_respawn_death_anchor[index]);
     VectorCopy(coop_respawn_last_safe_angles[index],
@@ -971,7 +982,8 @@ static void SV_CoopRespawnUseDeathAnchor(
   VectorCopy(coop_respawn_death_v_angle[index], state->death_v_angle);
 }
 
-static qboolean SV_CoopRespawnPointContentsOK(vec3_t origin, edict_t *ent) {
+static qboolean SV_CoopRespawnPointContentsOK(vec3_t origin, edict_t *ent,
+                                              qboolean allow_water) {
   int i, cont;
   vec3_t point;
   float checks[3];
@@ -987,6 +999,8 @@ static qboolean SV_CoopRespawnPointContentsOK(vec3_t origin, edict_t *ent) {
     if (cont == CONTENTS_SOLID || cont == CONTENTS_LAVA ||
         cont == CONTENTS_SLIME)
       return false;
+    if (!allow_water && cont == CONTENTS_WATER)
+      return false;
   }
 
   return true;
@@ -997,7 +1011,27 @@ static qboolean SV_CoopRespawnCanPlaceAt(edict_t *ent, vec3_t origin) {
   trace_t trace;
   vec3_t old_origin;
 
-  if (!SV_CoopRespawnPointContentsOK(origin, ent))
+  if (!SV_CoopRespawnPointContentsOK(origin, ent, true))
+    return false;
+
+  trace = SV_Move(origin, ent->v.mins, ent->v.maxs, origin, MOVE_NORMAL, ent);
+  if (trace.allsolid || trace.startsolid)
+    return false;
+
+  VectorCopy(ent->v.origin, old_origin);
+  VectorCopy(origin, ent->v.origin);
+  bottom = SV_CheckBottom(ent);
+  VectorCopy(old_origin, ent->v.origin);
+
+  return bottom;
+}
+
+static qboolean SV_CoopRespawnCanPlaceAtDry(edict_t *ent, vec3_t origin) {
+  qboolean bottom;
+  trace_t trace;
+  vec3_t old_origin;
+
+  if (!SV_CoopRespawnPointContentsOK(origin, ent, false))
     return false;
 
   trace = SV_Move(origin, ent->v.mins, ent->v.maxs, origin, MOVE_NORMAL, ent);
@@ -1024,6 +1058,7 @@ static qboolean SV_CoopRespawnTraceClear(vec3_t start, vec3_t end,
 
 static qboolean SV_CoopRespawnDropToFloor(edict_t *ent, vec3_t origin,
                                           float max_drop,
+                                          qboolean allow_water,
                                           vec3_t floor_origin) {
   int i;
   trace_t trace;
@@ -1043,7 +1078,8 @@ static qboolean SV_CoopRespawnDropToFloor(edict_t *ent, vec3_t origin,
     VectorCopy(trace.endpos, floor_origin);
     if (max_drop > 0 && floor_origin[2] < origin[2] - max_drop)
       continue;
-    if (SV_CoopRespawnCanPlaceAt(ent, floor_origin))
+    if ((allow_water && SV_CoopRespawnCanPlaceAt(ent, floor_origin)) ||
+        (!allow_water && SV_CoopRespawnCanPlaceAtDry(ent, floor_origin)))
       return true;
   }
 
@@ -1081,6 +1117,7 @@ static qboolean SV_CoopRespawnFindNearbySpot(edict_t *ent, const vec3_t base,
                                              const float *radii,
                                              int num_radii,
                                              float max_drop,
+                                             qboolean allow_water,
                                              vec3_t spot) {
   int i, j;
   vec3_t candidate, dropped, forward, right;
@@ -1109,7 +1146,8 @@ static qboolean SV_CoopRespawnFindNearbySpot(edict_t *ent, const vec3_t base,
       candidate[1] += (forward[1] * dirs[j][0] + right[1] * dirs[j][1]) *
                       radii[i];
 
-      if (!SV_CoopRespawnDropToFloor(ent, candidate, max_drop, dropped))
+      if (!SV_CoopRespawnDropToFloor(ent, candidate, max_drop, allow_water,
+                                     dropped))
         continue;
 
       if (anchor) {
@@ -1197,7 +1235,7 @@ static qboolean SV_CoopRespawnFindAnchorSpot(edict_t *ent,
   for (i = 0; i < count; i++) {
     if (SV_CoopRespawnFindNearbySpot(
             ent, candidates[i].ent->v.origin, candidates[i].ent, player_radii,
-            (int)(sizeof(player_radii) / sizeof(player_radii[0])), 384.0f,
+            (int)(sizeof(player_radii) / sizeof(player_radii[0])), 384.0f, true,
             spot)) {
       if (anchor_out)
         *anchor_out = candidates[i].ent;
@@ -1208,25 +1246,34 @@ static qboolean SV_CoopRespawnFindAnchorSpot(edict_t *ent,
   return false;
 }
 
-static qboolean SV_CoopRespawnFindSpot(edict_t *ent, const vec3_t death_origin,
-                                       edict_t **anchor_out, vec3_t spot,
-                                       qboolean allow_death_fallback) {
+static qboolean SV_CoopRespawnFindDeathSpot(edict_t *ent,
+                                            const vec3_t death_origin,
+                                            edict_t **anchor_out,
+                                            vec3_t spot) {
   static const float death_radii[] = {0.0f, 40.0f, 64.0f, 96.0f, 128.0f,
                                       160.0f, 192.0f, 224.0f, 256.0f};
 
-  if (SV_CoopRespawnFindAnchorSpot(ent, death_origin, anchor_out, spot))
+  if (SV_CoopRespawnFindNearbySpot(
+          ent, death_origin, NULL, death_radii,
+          (int)(sizeof(death_radii) / sizeof(death_radii[0])), 96.0f, false,
+          spot)) {
+    if (anchor_out)
+      *anchor_out = NULL;
+    return true;
+  }
+
+  return false;
+}
+
+static qboolean SV_CoopRespawnFindSpot(edict_t *ent, const vec3_t death_origin,
+                                       edict_t **anchor_out, vec3_t spot,
+                                       qboolean allow_teammate_fallback) {
+  if (SV_CoopRespawnFindDeathSpot(ent, death_origin, anchor_out, spot))
     return true;
 
-  if (allow_death_fallback) {
-    if (SV_CoopRespawnFindNearbySpot(
-            ent, death_origin, NULL, death_radii,
-            (int)(sizeof(death_radii) / sizeof(death_radii[0])), 96.0f,
-            spot)) {
-      if (anchor_out)
-        *anchor_out = NULL;
-      return true;
-    }
-  }
+  if (allow_teammate_fallback &&
+      SV_CoopRespawnFindAnchorSpot(ent, death_origin, anchor_out, spot))
+    return true;
 
   return false;
 }
@@ -1283,8 +1330,39 @@ qboolean SV_CoopRespawnPlaceNearPlayer(edict_t *ent) {
   VectorCopy(ent->v.angles, state.death_angles);
   VectorCopy(ent->v.v_angle, state.death_v_angle);
 
-  if (!SV_CoopRespawnFindSpot(ent, state.death_origin, &anchor, spot, false))
+  if (!SV_CoopRespawnFindAnchorSpot(ent, state.death_origin, &anchor, spot))
     return false;
+
+  SV_CoopRespawnRelocate(ent, anchor, spot, &state);
+  return true;
+}
+
+qboolean SV_CoopRespawnTeleportToPlayer(edict_t *ent, edict_t *target) {
+  edict_t *anchor;
+  vec3_t spot;
+  coop_respawn_postthink_state_t state;
+  static const float player_radii[] = {0.0f, 40.0f, 48.0f, 64.0f,
+                                       80.0f, 96.0f, 128.0f};
+
+  if (!coop.value || deathmatch.value || !ent || ent->free || !target ||
+      target->free || ent == target)
+    return false;
+  if (!SV_CoopRespawnIsAliveClient(ent) ||
+      !SV_CoopRespawnIsAliveClient(target))
+    return false;
+
+  anchor = target;
+  if (!SV_CoopRespawnFindNearbySpot(
+          ent, target->v.origin, target, player_radii,
+          (int)(sizeof(player_radii) / sizeof(player_radii[0])), 384.0f, true,
+          spot))
+    return false;
+
+  memset(&state, 0, sizeof(state));
+  state.old_force_retouch = pr_global_struct->force_retouch;
+  VectorCopy(ent->v.origin, state.death_origin);
+  VectorCopy(ent->v.angles, state.death_angles);
+  VectorCopy(ent->v.v_angle, state.death_v_angle);
 
   SV_CoopRespawnRelocate(ent, anchor, spot, &state);
   return true;

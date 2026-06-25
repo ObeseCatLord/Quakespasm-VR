@@ -27,6 +27,7 @@ static const char default_cfg[] =
     "bind SPACE +jump\n"
 
     "bind TAB +showscores\n"
+    "bind q \"+vr_weaponmenu\"\n"
 
     "bind 1 \"impulse 1\"\n"
     "bind 2 \"impulse 2\"\n"

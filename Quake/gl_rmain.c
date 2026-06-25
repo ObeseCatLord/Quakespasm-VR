@@ -998,9 +998,6 @@ void R_DrawViewModel(void) {
   if (vr_enabled.value && vr_crosshair.value)
     VR_ShowCrosshair();
 
-  if (vr_enabled.value && cl.in_vr_weaponmenu)
-    VR_DrawWeaponMenu();
-
   currententity = &cl.viewent;
   if (!currententity->model)
     return;
@@ -1241,7 +1238,7 @@ void R_DrawShadows(void) {
 /*
 ================
 R_DrawPlayerOutlines -- Draw colored outlines around other players, visible
-through walls, when holding the scoreboard button in co-op VR mode.
+through walls, when holding the scoreboard button in co-op.
 Uses a two-pass stencil technique per player:
   Pass 1: write stencil mask at normal model scale (no color output)
   Pass 2: draw inflated model only outside stencil mask, with shirt color
@@ -1254,8 +1251,6 @@ static void R_DrawPlayerOutlines (void)
 	byte		*rgb;
 	float		r, g, b;
 
-	if (!vr_enabled.value)
-		return;
 	if (!Sbar_IsShowingScores ())
 		return;
 	if (cl.gametype != GAME_COOP)
@@ -1501,10 +1496,13 @@ void R_RenderScene(void) {
 
   if (!skyroom_drawing) {
     perf_start = R_PerfStart();
-    R_DrawPlayerOutlines(); // co-op VR player outlines through walls
+    R_DrawPlayerOutlines(); // co-op player outlines through walls
     R_DrawCoopNametags();
     R_PerfAdd(&r_perf_outlines_ms, perf_start);
   }
+
+  if (!skyroom_drawing && cl.in_vr_weaponmenu)
+    VR_DrawWeaponMenu();
 
   perf_start = R_PerfStart();
   R_DrawViewModel(); // johnfitz -- moved here from R_RenderView
