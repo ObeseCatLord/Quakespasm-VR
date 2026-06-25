@@ -1244,19 +1244,122 @@ Uses a two-pass stencil technique per player:
   Pass 2: draw inflated model only outside stencil mask, with shirt color
 ================
 */
+static void R_DrawPlayerThroughWallSilhouette (entity_t *e, float r, float g, float b, float a)
+{
+	if (!e || !e->model || e->model->type != mod_alias)
+		return;
+
+	glDisable (GL_DEPTH_TEST);
+	glDepthMask (GL_FALSE);
+	glDisable (GL_CULL_FACE);
+	glEnable (GL_BLEND);
+	glBlendFunc (GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+	currententity = e;
+	R_DrawAliasModelOutline (e, r, g, b, a, 1.04f);
+
+	glDisable (GL_BLEND);
+	glDepthMask (GL_TRUE);
+	glEnable (GL_DEPTH_TEST);
+	if (gl_cull.value)
+		glEnable (GL_CULL_FACE);
+	else
+		glDisable (GL_CULL_FACE);
+	glColor4f (1, 1, 1, 1);
+}
+
+static void R_GetPlayerShirtColor (int playernum, float boost, float min_peak,
+		float *r, float *g, float *b)
+{
+	int	topcolor;
+	byte	*rgb;
+	float	maxc, scale;
+
+	topcolor = (cl.scores[playernum].colors >> 4) & 0xF;
+	rgb = (byte *)&d_8to24table[topcolor * 16 + 8];
+	*r = rgb[0] / 255.0f;
+	*g = rgb[1] / 255.0f;
+	*b = rgb[2] / 255.0f;
+
+	maxc = q_max (*r, q_max (*g, *b));
+	if (maxc <= 0)
+	{
+		*r = *g = *b = min_peak;
+		return;
+	}
+
+	scale = boost;
+	if (maxc * scale < min_peak)
+		scale = min_peak / maxc;
+
+	*r *= scale;
+	*g *= scale;
+	*b *= scale;
+}
+
+static void R_DrawWeaponMenuSelectedPlayerSilhouette (void)
+{
+	int		playernum, entnum;
+	float		r, g, b;
+	entity_t	*e;
+
+	if (!cl.in_vr_weaponmenu)
+		return;
+	if (!vr_weaponmenu_player_teleport.value)
+		return;
+	if (vr_weaponmenu_selection_type != VR_WEAPONMENU_SELECTION_PLAYER)
+		return;
+	if (cl.gametype != GAME_COOP || !cl.scores)
+		return;
+
+	playernum = vr_weaponmenu_selection;
+	if (playernum < 0 || playernum >= cl.maxclients || playernum >= MAX_SCOREBOARD)
+		return;
+	if (!cl.scores[playernum].name[0])
+		return;
+
+	entnum = playernum + 1;
+	if (entnum == cl.viewentity)
+		return;
+
+	e = &cl.entities[entnum];
+	if (!e->model || e->model->type != mod_alias)
+		return;
+
+	R_GetPlayerShirtColor (playernum, 1.8f, 0.5f, &r, &g, &b);
+	R_DrawPlayerThroughWallSilhouette (e, r, g, b, 0.52f);
+}
+
 static void R_DrawPlayerOutlines (void)
 {
-	int		i, playernum, topcolor;
+	int		i, playernum;
 	entity_t	*e;
-	byte		*rgb;
 	float		r, g, b;
 
 	if (!Sbar_IsShowingScores ())
 		return;
 	if (cl.gametype != GAME_COOP)
 		return;
-	if (!gl_stencilbits)
+
+	if (!vr_enabled.value || !gl_stencilbits)
+	{
+		for (i = 1; i <= cl.maxclients; i++)
+		{
+			e = &cl.entities[i];
+
+			if (i == cl.viewentity)
+				continue;
+
+			playernum = i - 1;
+			if (!cl.scores[playernum].name[0])
+				continue;
+
+			R_GetPlayerShirtColor (playernum, 1.5f, 0.45f, &r, &g, &b);
+			R_DrawPlayerThroughWallSilhouette (e, r, g, b, 0.35f);
+		}
+
 		return;
+	}
 
 	for (i = 1; i <= cl.maxclients; i++)
 	{
@@ -1270,11 +1373,9 @@ static void R_DrawPlayerOutlines (void)
 			continue;
 
 		playernum = i - 1;
-		topcolor = (cl.scores[playernum].colors >> 4) & 0xF;
-		rgb = (byte *)&d_8to24table[topcolor * 16 + 8];
-		r = rgb[0] / 255.0f;
-		g = rgb[1] / 255.0f;
-		b = rgb[2] / 255.0f;
+		if (!cl.scores[playernum].name[0])
+			continue;
+		R_GetPlayerShirtColor (playernum, 1.0f, 0.0f, &r, &g, &b);
 
 		currententity = e;
 
@@ -1310,14 +1411,8 @@ static void R_DrawPlayerOutlines (void)
 
 #define NAMETAG_CHAR_WIDTH 3.0f
 #define NAMETAG_CHAR_HEIGHT 3.0f
-#define NAMETAG_HEAD_OFFSET 10.0f
+#define NAMETAG_HEAD_OFFSET 7.0f
 #define NAMETAG_SHADOW_OFFSET 0.35f
-#define NAMETAG_COLOR_FLOOR 0.45f
-
-static float R_BrightenNametagColor(float c) {
-  return NAMETAG_COLOR_FLOOR + c * (1.0f - NAMETAG_COLOR_FLOOR);
-}
-
 static void R_EmitNametagChar(vec3_t pos, unsigned char ch,
                               float char_width, float char_height) {
   int row, col;
@@ -1368,9 +1463,8 @@ static void R_DrawNametagString(vec3_t origin, const char *str, float r,
 }
 
 static void R_DrawCoopNametags(void) {
-  int i, playernum, topcolor;
+  int i, playernum;
   entity_t *e;
-  byte *rgb;
   vec3_t tagorg, shadoworg;
   float scale, r, g, b;
   extern gltexture_t *char_texture;
@@ -1405,14 +1499,7 @@ static void R_DrawCoopNametags(void) {
     if (!cl.scores[playernum].name[0])
       continue;
 
-    topcolor = (cl.scores[playernum].colors >> 4) & 0xF;
-    rgb = (byte *)&d_8to24table[topcolor * 16 + 8];
-    r = rgb[0] / 255.0f;
-    g = rgb[1] / 255.0f;
-    b = rgb[2] / 255.0f;
-    r = R_BrightenNametagColor(r);
-    g = R_BrightenNametagColor(g);
-    b = R_BrightenNametagColor(b);
+    R_GetPlayerShirtColor(playernum, 1.65f, 0.55f, &r, &g, &b);
 
     scale = ENTSCALE_DECODE(e->scale);
     VectorCopy(e->origin, tagorg);
@@ -1497,6 +1584,7 @@ void R_RenderScene(void) {
   if (!skyroom_drawing) {
     perf_start = R_PerfStart();
     R_DrawPlayerOutlines(); // co-op player outlines through walls
+    R_DrawWeaponMenuSelectedPlayerSilhouette();
     R_DrawCoopNametags();
     R_PerfAdd(&r_perf_outlines_ms, perf_start);
   }
