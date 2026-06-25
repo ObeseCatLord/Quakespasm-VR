@@ -52,9 +52,8 @@ cvar_t sv_idealpitchscale = {"sv_idealpitchscale", "0.8", CVAR_NONE};
 cvar_t sv_altnoclip = {"sv_altnoclip", "1", CVAR_ARCHIVE}; // johnfitz
 cvar_t sv_inputtimeout = {"sv_inputtimeout", "0", CVAR_NONE};
 cvar_t sv_pmove = {"sv_pmove", "1", CVAR_NONE};
-cvar_t sv_nqplayerphysics = {"sv_nqplayerphysics", "1",
+cvar_t sv_nqplayerphysics = {"sv_nqplayerphysics", "0",
                              CVAR_ARCHIVE | CVAR_SERVERINFO};
-cvar_t sv_pmove_legacy = {"sv_pmove_legacy", "1", CVAR_NONE};
 cvar_t sv_pmove_legacy_preserve_qc_velocity = {
     "sv_pmove_legacy_preserve_qc_velocity", "1", CVAR_NONE};
 cvar_t sv_move_timeclamp = {"sv_move_timeclamp", "1", CVAR_NONE};
@@ -1091,31 +1090,24 @@ qboolean SV_ReadClientMessage(void) {
 
 static void SV_UpdateClientPMoveMode(client_t *client) {
   qboolean usingpmove;
-  qboolean legacy_independent_pmove;
   qboolean local_singleplayer;
 
   if (!client || !client->active)
     return;
 
-  legacy_independent_pmove =
-      !sv_nqplayerphysics.value &&
-      (sv_nqplayerphysics.string[0] || deathmatch.value);
   local_singleplayer = sv.active && svs.maxclients <= 1;
 
   usingpmove = !local_singleplayer &&
     client->spawned && sv_pmove.value &&
-    (client->protocol_pext2 & PEXT2_PREDINFO) &&
-    (qcvm->extfuncs.SV_RunClientCommand ||
-     (sv_pmove_legacy.value && legacy_independent_pmove));
+    (client->protocol_pext2 & PEXT2_PREDINFO);
 
   if (usingpmove != client->usingpmove && net_lagdebug.value)
-    Con_Printf("net_lagdebug: server PMove %s for %s pext2=0x%x sv_runclientcommand=%d sv_nqplayerphysics=%g sv_pmove_legacy=%d\n",
+    Con_Printf("net_lagdebug: server PMove %s for %s pext2=0x%x sv_runclientcommand=%d sv_nqplayerphysics=%g\n",
                usingpmove ? "enabled" : "disabled",
                client->name,
                client->protocol_pext2,
                qcvm->extfuncs.SV_RunClientCommand ? 1 : 0,
-               sv_nqplayerphysics.value,
-               sv_pmove_legacy.value ? 1 : 0);
+               sv_nqplayerphysics.value);
   client->usingpmove = usingpmove;
 }
 
