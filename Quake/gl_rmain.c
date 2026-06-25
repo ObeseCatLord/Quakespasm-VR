@@ -1315,7 +1315,7 @@ static void R_DrawPlayerOutlines (void)
 
 #define NAMETAG_CHAR_WIDTH 3.0f
 #define NAMETAG_CHAR_HEIGHT 3.0f
-#define NAMETAG_HEAD_OFFSET 12.0f
+#define NAMETAG_HEAD_OFFSET 10.0f
 #define NAMETAG_SHADOW_OFFSET 0.35f
 #define NAMETAG_COLOR_FLOOR 0.45f
 

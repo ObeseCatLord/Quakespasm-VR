@@ -26,6 +26,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 
 #include "keys.h"
 #include "quakedef.h"
+#include "pmove.h"
 #include "vr.h"
 
 extern cvar_t cl_maxpitch; // johnfitz -- variable pitch clamping
@@ -253,8 +254,8 @@ cvar_t cl_forwardspeed = {"cl_forwardspeed", "200", CVAR_ARCHIVE};
 cvar_t cl_backspeed = {"cl_backspeed", "200", CVAR_ARCHIVE};
 cvar_t cl_sidespeed = {"cl_sidespeed", "350", CVAR_NONE};
 cvar_t cl_desktop_vanilla_run = {"cl_desktop_vanilla_run", "1", CVAR_ARCHIVE};
-cvar_t cl_trusted_clientmove = {"cl_trusted_clientmove", "0", CVAR_ARCHIVE};
-cvar_t cl_trusted_clientmove_desktop = {"cl_trusted_clientmove_desktop", "0", CVAR_ARCHIVE};
+cvar_t cl_trusted_clientmove = {"cl_trusted_clientmove", "0", CVAR_NONE};
+cvar_t cl_trusted_clientmove_desktop = {"cl_trusted_clientmove_desktop", "0", CVAR_NONE};
 cvar_t cl_predictmove = {"cl_predictmove", "1", CVAR_ARCHIVE};
 cvar_t cl_move_redundancy = {"cl_move_redundancy", "18", CVAR_ARCHIVE};
 cvar_t cl_move_maxpacketbytes = {"cl_move_maxpacketbytes", "1400", CVAR_ARCHIVE};
@@ -408,6 +409,10 @@ void CL_FinishMove(usercmd_t *cmd, qboolean isfinal)
   cmd->forwardmove += cl.accummoves[0];
   cmd->sidemove += cl.accummoves[1];
   cmd->upmove += cl.accummoves[2];
+
+  if (vr_enabled.value && cl.inwater && (cmd->buttons & BUTTON_JUMP) &&
+      cmd->upmove < cl_upspeed.value)
+    cmd->upmove = cl_upspeed.value;
 
   if (vr_enabled.value && (int)vr_aimmode.value == VR_AIMMODE_CONTROLLER)
     VectorAdd(cmd->vr_roomscalemove, cl.vr_roomscalemove_accum,

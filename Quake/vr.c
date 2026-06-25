@@ -434,6 +434,14 @@ static qboolean VR_DynWeaponCanUseItemOwnership(const vr_dyn_weapon_t *w) {
   return (w->bitmask & VR_DynWeaponTrustedItemBits()) == w->bitmask;
 }
 
+static int VR_ClientItemBits(void) {
+  /*
+   * svc_clientdata mirrors cl.items into STAT_ITEMS, while newer stat update
+   * paths may update STAT_ITEMS without refreshing the legacy cl.items cache.
+   */
+  return cl.stats[STAT_ITEMS];
+}
+
 static qboolean VR_FindWeaponOwnedStatForActive(int active, int *owned_stat,
                                                 int *owned_mask) {
   static const int ownership_stats[] = {
@@ -682,7 +690,13 @@ static qboolean VR_WeaponIsOwned(const vr_dyn_weapon_t *w) {
   if (schema_has_weapon_stat)
     return VR_WeaponIsActive(w);
 
-  if (VR_DynWeaponCanUseItemOwnership(w) && (cl.items & w->bitmask))
+  /*
+   * Only stock/expansion weapon bits may use STAT_ITEMS ownership. Several
+   * custom schemas reuse item bits that mean ammo or armor to vanilla Quake,
+   * so treating those as item ownership exposes weapons the player lacks.
+   */
+  if (VR_DynWeaponCanUseItemOwnership(w) &&
+      (VR_ClientItemBits() & w->bitmask))
     return true;
 
   return VR_WeaponIsActive(w);

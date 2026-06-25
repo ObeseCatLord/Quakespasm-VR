@@ -1547,9 +1547,12 @@ static void PF_stuffcmd (void)
 	client_t	*old;
 
 	entnum = G_EDICTNUM(OFS_PARM0);
-	if (entnum < 1 || entnum > svs.maxclients)
-		PR_RunError ("Parm 0 not a client");
 	str = G_STRING(OFS_PARM1);
+	if (entnum < 1 || entnum > svs.maxclients)
+	{
+		Con_DPrintf ("PF_stuffcmd: ignored non-client entity %d\n", entnum);
+		return;
+	}
 
 	old = host_client;
 	host_client = &svs.clients[entnum-1];

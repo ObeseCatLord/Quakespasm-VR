@@ -46,6 +46,8 @@ static movevars_t	clmovevars;
 static qboolean	clmovevars_valid;
 
 #define PM_VANILLA_JUMP_VELOCITY 270.0f
+#define PM_VANILLA_WATERJUMP_VELOCITY 310.0f
+#define PM_VR_SWIM_JUMP_UPMOVE 200.0f
 
 static cvar_t pm_bunnyspeedcap = {"pm_bunnyspeedcap", "", CVAR_SERVERINFO};
 static cvar_t pm_bunnyfriction = {"pm_bunnyfriction", "1", CVAR_SERVERINFO};
@@ -96,6 +98,29 @@ static void PM_EnsureInitialized (void)
 static float PM_CvarOrDefault (const cvar_t *var, float fallback)
 {
 	return var->string[0] ? var->value : fallback;
+}
+
+static qboolean PM_IsVRMove (void)
+{
+	return pmove.cmd.vr_active || movevars.jumpspeed > PM_VANILLA_JUMP_VELOCITY;
+}
+
+static float PM_VRJumpScale (void)
+{
+	if (PM_IsVRMove () && movevars.jumpspeed > PM_VANILLA_JUMP_VELOCITY)
+		return movevars.jumpspeed / PM_VANILLA_JUMP_VELOCITY;
+	return 1.0f;
+}
+
+static float PM_WaterUpMove (void)
+{
+	float upmove = pmove.cmd.upmove;
+
+	if (PM_IsVRMove () && (pmove.cmd.buttons & BUTTON_JUMP) &&
+		upmove < PM_VR_SWIM_JUMP_UPMOVE)
+		upmove = PM_VR_SWIM_JUMP_UPMOVE;
+
+	return upmove;
 }
 
 static unsigned int PM_PackMoveFlags (const movevars_t *mv)
@@ -1003,6 +1028,7 @@ void PM_WaterMove (void)
 	vec3_t	wishvel;
 	float	wishspeed;
 	vec3_t	wishdir;
+	float	upmove;
 
 //
 // user intentions
@@ -1010,13 +1036,15 @@ void PM_WaterMove (void)
 	for (i=0 ; i<3 ; i++)
 		wishvel[i] = forward[i]*pmove.cmd.forwardmove + right[i]*pmove.cmd.sidemove;
 
-	if (pmove.pm_type != PM_FLY && !pmove.cmd.forwardmove && !pmove.cmd.sidemove && !pmove.cmd.upmove && !pmove.onladder)
+	upmove = PM_WaterUpMove ();
+
+	if (pmove.pm_type != PM_FLY && !pmove.cmd.forwardmove && !pmove.cmd.sidemove && !upmove && !pmove.onladder)
 	{
 		VectorMA(wishvel, movevars.watersinkspeed, pmove.gravitydir, wishvel);
 	}
 	else
 	{
-		VectorMA(wishvel, -pmove.cmd.upmove, pmove.gravitydir, wishvel);
+		VectorMA(wishvel, -upmove, pmove.gravitydir, wishvel);
 	}
 
 	VectorCopy (wishvel, wishdir);
@@ -1541,7 +1569,7 @@ static void PM_CheckWaterJump (void)
 
 	// jump out of water
 	VectorScale (flatforward, 50, pmove.velocity);
-	pmove.velocity[2] = 310;
+	pmove.velocity[2] = PM_VANILLA_WATERJUMP_VELOCITY * PM_VRJumpScale ();
 	pmove.waterjumptime = 2;	// safety net
 	pmove.jump_held = true;		// don't jump again until released
 }
