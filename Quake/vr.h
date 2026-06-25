@@ -113,6 +113,7 @@ extern cvar_t vr_hud_scale;
 extern cvar_t vr_menu_scale;
 extern cvar_t vr_movement_instant_stop;
 extern cvar_t vr_movement_speed;
+extern cvar_t vr_weaponmenu_player_teleport;
 extern float vr_game_projectile_z_extra;
 
 #define MAX_WEAPONS 64 // schema-driven mod offsets can exceed the old presets

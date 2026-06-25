@@ -282,7 +282,6 @@ int vr_weaponmenu_selection = -1;
 int vr_weaponmenu_selection_type = VR_WEAPONMENU_SELECTION_NONE;
 }
 static qboolean vr_weaponmenu_anchor_valid = false;
-static vec3_t vr_weaponmenu_anchor_vieworg;
 static vec3_t vr_weaponmenu_anchor_viewangles;
 
 extern void GL_ClearBindings(void);
@@ -845,6 +844,7 @@ DEFINE_CVAR(vr_hud_scale, 0.025, CVAR_ARCHIVE);
 DEFINE_CVAR(vr_menu_scale, 0.13, CVAR_ARCHIVE);
 DEFINE_CVAR(vr_movement_instant_stop, 0, CVAR_ARCHIVE);
 DEFINE_CVAR(vr_movement_speed, 1.0, CVAR_ARCHIVE);
+DEFINE_CVAR(vr_weaponmenu_player_teleport, 1, CVAR_ARCHIVE);
 
 static qboolean InitOpenGLExtensions() {
   int i;
@@ -3264,6 +3264,7 @@ void VID_VR_Init() {
   // This is only called once at game start
   Cvar_RegisterVariable(&vr_enabled);
   Cvar_SetCallback(&vr_enabled, VR_Enabled_f);
+  Cvar_RegisterVariable(&vr_weaponmenu_player_teleport);
   if (COM_CheckParm("-novr")) {
     return;
   }
@@ -5076,7 +5077,8 @@ static int VR_GetVisibleWeapons(vr_dyn_weapon_t **out, int max) {
 static int VR_GetWeaponMenuPlayers(int *out, int max) {
   int count = 0;
 
-  if (!cl.scores || cl.gametype != GAME_COOP)
+  if (!vr_weaponmenu_player_teleport.value || !cl.scores ||
+      cl.gametype != GAME_COOP)
     return 0;
 
   for (int i = 0; i < cl.maxclients && i < MAX_SCOREBOARD && count < max; i++) {
@@ -5135,8 +5137,10 @@ extern "C" void VR_SelectWeaponFromMenu(int selection) {
 extern "C" void VR_SelectPlayerFromMenu(int selection) {
   char cmd[48];
 
-  if (!cl.scores || selection < 0 || selection >= cl.maxclients ||
-      selection >= MAX_SCOREBOARD || !cl.scores[selection].name[0])
+  if (!vr_weaponmenu_player_teleport.value || !cl.scores ||
+      cl.gametype != GAME_COOP || selection < 0 ||
+      selection >= cl.maxclients || selection >= MAX_SCOREBOARD ||
+      !cl.scores[selection].name[0])
     return;
   if (selection + 1 == cl.viewentity)
     return;
@@ -5149,6 +5153,31 @@ extern gltexture_t *char_texture;
 extern void GL_Bind(gltexture_t *tex);
 
 vec3_t vr_weaponcolor = {1.0f, 1.0f, 1.0f};
+
+static void VR_GetPlayerShirtColor(int playernum, float boost, float min_peak,
+                                   vec3_t color) {
+  int topcolor = (cl.scores[playernum].colors >> 4) & 0xF;
+  byte *rgb = (byte *)&d_8to24table[topcolor * 16 + 8];
+  float maxc, scale;
+
+  color[0] = rgb[0] / 255.0f;
+  color[1] = rgb[1] / 255.0f;
+  color[2] = rgb[2] / 255.0f;
+
+  maxc = q_max(color[0], q_max(color[1], color[2]));
+  if (maxc <= 0.0f) {
+    color[0] = color[1] = color[2] = min_peak;
+    return;
+  }
+
+  scale = boost;
+  if (maxc * scale < min_peak)
+    scale = min_peak / maxc;
+
+  color[0] *= scale;
+  color[1] *= scale;
+  color[2] *= scale;
+}
 
 extern "C" void VR_BeginWeaponMenu(void) {
   vr_weaponmenu_selection = -1;
@@ -5237,16 +5266,17 @@ void VR_DrawWeaponMenu(void) {
     return;
   }
 
-  // Position the weapon wheel in front of the player's view
+  // Position the weapon wheel in front of the player's view. Desktop keeps the
+  // opening angle stable for look-to-select, but follows the player's origin so
+  // movement does not leave the wheel behind.
   extern refdef_t r_refdef;
   vec3_t origin, menu_angles;
   if (!vr_enabled.value) {
     if (!vr_weaponmenu_anchor_valid) {
-      VectorCopy(r_refdef.vieworg, vr_weaponmenu_anchor_vieworg);
       VectorCopy(r_refdef.viewangles, vr_weaponmenu_anchor_viewangles);
       vr_weaponmenu_anchor_valid = true;
     }
-    VectorCopy(vr_weaponmenu_anchor_vieworg, origin);
+    VectorCopy(r_refdef.vieworg, origin);
     VectorCopy(vr_weaponmenu_anchor_viewangles, menu_angles);
   } else {
     vr_weaponmenu_anchor_valid = false;
@@ -5474,16 +5504,14 @@ void VR_DrawWeaponMenu(void) {
   if (num_players > 0) {
     float outer_radius =
         base_radius + ((target_rings > 1) ? ((target_rings - 2) * 15.0f) : 0.0f);
-    float list_offset = outer_radius + 32.0f;
-    float text_scale = 0.24f;
+    float list_offset = outer_radius + 26.0f;
+    float text_scale = 0.30f;
     float char_width = 8.0f * text_scale;
     float line_spacing = 5.0f;
     float start_y = ((num_players - 1) * line_spacing) * 0.5f;
 
     for (int i = 0; i < num_players; i++) {
       int playernum = player_indices[i];
-      int topcolor = (cl.scores[playernum].colors >> 4) & 0xF;
-      byte *rgb = (byte *)&d_8to24table[topcolor * 16 + 8];
       vec3_t text_pos, text_center, text_color;
       char label[MAX_SCOREBOARDNAME + 3];
       const char *name = cl.scores[playernum].name;
@@ -5495,14 +5523,8 @@ void VR_DrawWeaponMenu(void) {
       q_snprintf(label, sizeof(label), "%s%s", is_selected ? "> " : "  ", name);
       len = strlen(label);
 
-      text_color[0] = q_max(0.45f, (rgb[0] / 255.0f) * 1.55f);
-      text_color[1] = q_max(0.45f, (rgb[1] / 255.0f) * 1.55f);
-      text_color[2] = q_max(0.45f, (rgb[2] / 255.0f) * 1.55f);
-      if (is_selected) {
-        text_color[0] = q_max(text_color[0], 1.0f);
-        text_color[1] = q_max(text_color[1], 1.0f);
-        text_color[2] = q_max(text_color[2], 1.0f);
-      }
+      VR_GetPlayerShirtColor(playernum, is_selected ? 2.4f : 0.9f,
+                             is_selected ? 0.85f : 0.38f, text_color);
 
       VectorCopy(origin, text_pos);
       VectorMA(text_pos, list_offset, right, text_pos);
