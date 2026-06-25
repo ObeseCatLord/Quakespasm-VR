@@ -1472,6 +1472,9 @@ static void SV_DebugLogTriggerImpact(edict_t *touch, edict_t *other) {
 void SV_Impact(edict_t *e1, edict_t *e2) {
   int old_self, old_other;
 
+  if (!e1 || !e2 || e1->free || e2->free)
+    return;
+
   old_self = pr_global_struct->self;
   old_other = pr_global_struct->other;
 
@@ -1487,7 +1490,7 @@ void SV_Impact(edict_t *e1, edict_t *e2) {
     SV_FriendlyFireEnd();
   }
 
-  if (e2->v.touch && e2->v.solid != SOLID_NOT) {
+  if (!e1->free && !e2->free && e2->v.touch && e2->v.solid != SOLID_NOT) {
     pr_global_struct->self = EDICT_TO_PROG(e2);
     pr_global_struct->other = EDICT_TO_PROG(e1);
     SV_FriendlyFireBegin(e2);
@@ -2440,7 +2443,10 @@ void SV_RunPMoveForEntity(edict_t *ent, const usercmd_t *cmd) {
   eval_t *entgrav;
   eval_t *pmflags;
   unsigned int pmflagbits;
-  int i;
+  float pre_link_teleport_time;
+  float pre_teleport_time;
+  int i, pre_flags;
+  qboolean pre_link_fixangle;
 
   PMSV_UpdateMovevars();
   if (SV_IsVRClientSlot(NUM_FOR_EDICT(ent)) &&
@@ -2453,6 +2459,8 @@ void SV_RunPMoveForEntity(edict_t *ent, const usercmd_t *cmd) {
 
   pmflags = GetEdictFieldValue(ent, qcvm->extfields.pmove_flags);
   pmflagbits = (pmflags && pmflags->_float) ? (unsigned int)pmflags->_float : 0;
+  pre_flags = (int)ent->v.flags;
+  pre_teleport_time = ent->v.teleport_time;
 
   memset(&pmove, 0, sizeof(pmove));
   VectorCopy(ent->v.mins, pmove.player_mins);
@@ -2462,13 +2470,14 @@ void SV_RunPMoveForEntity(edict_t *ent, const usercmd_t *cmd) {
   VectorCopy(ent->v.origin, pmove.origin);
   VectorCopy(ent->v.velocity, pmove.velocity);
   VectorClear(pmove.gravitydir);
-  pmove.waterjumptime =
-      (ent->v.teleport_time > qcvm->time) ? ent->v.teleport_time - qcvm->time : 0;
+  pmove.waterjumptime = ((pre_flags & FL_WATERJUMP) &&
+                         pre_teleport_time > qcvm->time) ?
+      pre_teleport_time - qcvm->time : 0;
   pmove.jump_held = pmflags ? !!(pmflagbits & PMF_JUMP_HELD) :
-      !((int)ent->v.flags & FL_JUMPRELEASED);
+      !(pre_flags & FL_JUMPRELEASED);
   pmove.onladder = !!(pmflagbits & PMF_LADDER);
   pmove.jump_secs = 0;
-  pmove.onground = !!((int)ent->v.flags & FL_ONGROUND);
+  pmove.onground = !!(pre_flags & FL_ONGROUND);
   pmove.pm_type = SV_PMoveTypeForEdict(ent);
   if (cmd)
     pmove.cmd = *cmd;
@@ -2482,8 +2491,12 @@ void SV_RunPMoveForEntity(edict_t *ent, const usercmd_t *cmd) {
   VectorCopy(pmove.safeorigin, ent->v.oldorigin);
   VectorCopy(pmove.origin, ent->v.origin);
   VectorCopy(pmove.velocity, ent->v.velocity);
-  ent->v.teleport_time =
-      (pmove.waterjumptime > 0) ? qcvm->time + pmove.waterjumptime : 0;
+  if (pmove.waterjumptime > 0)
+    ent->v.teleport_time = qcvm->time + pmove.waterjumptime;
+  else if (!(pre_flags & FL_WATERJUMP) && pre_teleport_time > qcvm->time)
+    ent->v.teleport_time = pre_teleport_time;
+  else
+    ent->v.teleport_time = 0;
 
   if (pmove.jump_held)
     ent->v.flags = (int)ent->v.flags & ~FL_JUMPRELEASED;
@@ -2509,7 +2522,13 @@ void SV_RunPMoveForEntity(edict_t *ent, const usercmd_t *cmd) {
   }
 
   SV_PMoveSetWater(ent);
+  pre_link_teleport_time = ent->v.teleport_time;
+  pre_link_fixangle = ent->v.fixangle;
   SV_LinkEdict(ent, true);
+  if (ent->free ||
+      ent->v.teleport_time > pre_link_teleport_time ||
+      (!pre_link_fixangle && ent->v.fixangle))
+    return;
 
   for (i = 0; i < pmove.numtouch && !ent->free; i++) {
     int n = pmove.physents[pmove.touchindex[i]].info;
@@ -2603,7 +2622,7 @@ qboolean SV_RunClientPMoveCommands(client_t *client) {
       VectorAdd(ent->v.origin, client->vr_roomscalemove, ent->v.origin);
       VectorCopy(vec3_origin, client->vr_roomscalemove);
       VectorCopy(vec3_origin, client->vr_roomscale_accum);
-      SV_LinkEdict(ent, true);
+      SV_LinkEdict(ent, false);
     }
 
     VectorCopy(ent->v.velocity, prethink_velocity);
@@ -2658,8 +2677,10 @@ qboolean SV_RunClientPMoveCommands(client_t *client) {
       break;
     }
 
-    SV_ApplyTrustedClientMove(client);
-    SV_LinkEdict(ent, true);
+    if (SV_ApplyTrustedClientMove(client))
+      SV_LinkEdict(ent, true);
+    else
+      SV_LinkEdict(ent, false);
 
     pr_global_struct->time = qcvm->time;
     SV_ApplyVRWeaponOffset(ent, num, is_remote_vr, restoreOrigin);

@@ -406,7 +406,7 @@ void SV_SetIdealPitch (void);
 void SV_AddUpdates (void);
 
 void SV_ClientThink (void);
-void SV_ApplyTrustedClientMove(client_t *client);
+qboolean SV_ApplyTrustedClientMove(client_t *client);
 qboolean SV_PopQueuedUsercmd(client_t *client, usercmd_t *out);
 void SV_ApplyQueuedUsercmd(client_t *client, const usercmd_t *queuedcmd);
 void SV_FinishQueuedUsercmd(client_t *client);

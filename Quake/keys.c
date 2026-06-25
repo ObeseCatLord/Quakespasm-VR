@@ -944,6 +944,12 @@ void Key_EventWithKeycode(int key, qboolean down, int keycode) {
     return;
   }
 
+  if (key == '`' || key == '~') {
+    if (down)
+      Con_ToggleConsole_f();
+    return;
+  }
+
   // handle escape specialy, so the user can never unbind it
   if (key == K_ESCAPE) {
     if (!down)

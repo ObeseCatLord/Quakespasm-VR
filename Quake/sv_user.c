@@ -42,6 +42,10 @@ qboolean onground;
 
 usercmd_t cmd;
 
+#define SV_VANILLA_JUMP_VELOCITY 270.0f
+#define SV_VANILLA_WATERJUMP_VELOCITY 225.0f
+#define SV_VR_SWIM_JUMP_UPMOVE 200.0f
+
 cvar_t sv_idealpitchscale = {"sv_idealpitchscale", "0.8", CVAR_NONE};
 cvar_t sv_altnoclip = {"sv_altnoclip", "1", CVAR_ARCHIVE}; // johnfitz
 cvar_t sv_inputtimeout = {"sv_inputtimeout", "0.50", CVAR_NONE};
@@ -52,6 +56,23 @@ cvar_t sv_pmove_legacy = {"sv_pmove_legacy", "1", CVAR_NONE};
 cvar_t sv_pmove_legacy_preserve_qc_velocity = {
     "sv_pmove_legacy_preserve_qc_velocity", "1", CVAR_NONE};
 cvar_t sv_move_timeclamp = {"sv_move_timeclamp", "1", CVAR_NONE};
+
+static float SV_VRJumpScale(void) {
+  if (host_client && host_client->is_vr_client &&
+      sv_vr_jump_velocity.value > SV_VANILLA_JUMP_VELOCITY)
+    return sv_vr_jump_velocity.value / SV_VANILLA_JUMP_VELOCITY;
+  return 1.0f;
+}
+
+static float SV_WaterUpMove(void) {
+  float upmove = cmd.upmove;
+
+  if (host_client && host_client->is_vr_client &&
+      (cmd.buttons & BUTTON_JUMP) && upmove < SV_VR_SWIM_JUMP_UPMOVE)
+    upmove = SV_VR_SWIM_JUMP_UPMOVE;
+
+  return upmove;
+}
 
 static void SV_SetExtendedButtons(edict_t *ent, int buttons) {
   eval_t *val;
@@ -159,7 +180,7 @@ void SV_ResetClientMoveState(client_t *client) {
   }
 }
 
-void SV_ApplyTrustedClientMove(client_t *client) {
+qboolean SV_ApplyTrustedClientMove(client_t *client) {
   edict_t *ent;
   float delta_len;
   float maxdelta;
@@ -168,7 +189,7 @@ void SV_ApplyTrustedClientMove(client_t *client) {
   trace_t trace;
 
   if (!client->trusted_clientmove_valid)
-    return;
+    return false;
 
   if (!client->usingpmove) {
     if (net_lagdebug.value && realtime - client->net_trustedmove_log_time > 1.0) {
@@ -177,18 +198,23 @@ void SV_ApplyTrustedClientMove(client_t *client) {
       client->net_trustedmove_log_time = realtime;
     }
     SV_ClearTrustedClientMove(client);
-    return;
+    return false;
   }
 
   if (!coop.value || !sv_coop_trusted_clientmove.value) {
     SV_ClearTrustedClientMove(client);
-    return;
+    return false;
   }
 
   ent = client->edict;
   if (!ent || ent->free || (int)ent->v.movetype == MOVETYPE_NONE) {
     SV_ClearTrustedClientMove(client);
-    return;
+    return false;
+  }
+
+  if (ent->v.teleport_time > qcvm->time || ent->v.fixangle) {
+    SV_ClearTrustedClientMove(client);
+    return false;
   }
 
   if (!SV_TrustedClientMoveVectorOK(client->trusted_clientmove_origin, 65536.0f) ||
@@ -203,7 +229,7 @@ void SV_ApplyTrustedClientMove(client_t *client) {
                  client->trusted_clientmove_velocity[1],
                  client->trusted_clientmove_velocity[2]);
     SV_ClearTrustedClientMove(client);
-    return;
+    return false;
   }
 
   VectorSubtract(client->trusted_clientmove_origin, ent->v.origin, delta);
@@ -215,7 +241,7 @@ void SV_ApplyTrustedClientMove(client_t *client) {
         Con_Printf("net_lagdebug: rejected trusted client movement for %s delta=%.1f max=%.1f\n",
                    client->name, delta_len, maxdelta);
       SV_ClearTrustedClientMove(client);
-      return;
+      return false;
     }
   }
 
@@ -224,7 +250,7 @@ void SV_ApplyTrustedClientMove(client_t *client) {
   if (move_len > 1 &&
       DotProduct(delta, client->trusted_clientmove_velocity) < -1.0f) {
     SV_ClearTrustedClientMove(client);
-    return;
+    return false;
   }
 
   if (VectorLength(delta) > 0.1f) {
@@ -236,13 +262,14 @@ void SV_ApplyTrustedClientMove(client_t *client) {
                    client->name, trace.fraction, trace.startsolid,
                    trace.allsolid);
       SV_ClearTrustedClientMove(client);
-      return;
+      return false;
     }
   }
 
   VectorCopy(client->trusted_clientmove_origin, ent->v.origin);
   VectorCopy(client->trusted_clientmove_velocity, ent->v.velocity);
   SV_ClearTrustedClientMove(client);
+  return true;
 }
 
 /*
@@ -418,6 +445,7 @@ void SV_WaterMove(void) {
   int i;
   vec3_t wishvel;
   float speed, newspeed, wishspeed, addspeed, accelspeed;
+  float upmove;
 
   //
   // user intentions
@@ -427,10 +455,12 @@ void SV_WaterMove(void) {
   for (i = 0; i < 3; i++)
     wishvel[i] = forward[i] * cmd.forwardmove + right[i] * cmd.sidemove;
 
-  if (!cmd.forwardmove && !cmd.sidemove && !cmd.upmove)
+  upmove = SV_WaterUpMove();
+
+  if (!cmd.forwardmove && !cmd.sidemove && !upmove)
     wishvel[2] -= 60; // drift towards bottom
   else
-    wishvel[2] += cmd.upmove;
+    wishvel[2] += upmove;
 
   wishspeed = VectorLength(wishvel);
   if (wishspeed > sv_maxspeed.value) {
@@ -471,12 +501,18 @@ void SV_WaterMove(void) {
 }
 
 void SV_WaterJump(void) {
+  float jumpvelocity;
+
   if (qcvm->time > sv_player->v.teleport_time || !sv_player->v.waterlevel) {
     sv_player->v.flags = (int)sv_player->v.flags & ~FL_WATERJUMP;
     sv_player->v.teleport_time = 0;
   }
   sv_player->v.velocity[0] = sv_player->v.movedir[0];
   sv_player->v.velocity[1] = sv_player->v.movedir[1];
+  jumpvelocity = SV_VANILLA_WATERJUMP_VELOCITY * SV_VRJumpScale();
+  if (sv_player->v.velocity[2] > 0 &&
+      sv_player->v.velocity[2] < jumpvelocity)
+    sv_player->v.velocity[2] = jumpvelocity;
 }
 
 /*
