@@ -266,9 +266,9 @@ cvar_t cl_backspeed = {"cl_backspeed", "200", CVAR_ARCHIVE};
 cvar_t cl_sidespeed = {"cl_sidespeed", "350", CVAR_NONE};
 cvar_t cl_desktop_vanilla_run = {"cl_desktop_vanilla_run", "1", CVAR_ARCHIVE};
 cvar_t cl_predictmove = {"cl_predictmove", "1", CVAR_ARCHIVE};
-cvar_t cl_move_redundancy = {"cl_move_redundancy", "18", CVAR_ARCHIVE};
+cvar_t cl_move_redundancy = {"cl_move_redundancy", "0", CVAR_ARCHIVE};
 cvar_t cl_move_maxpacketbytes = {"cl_move_maxpacketbytes", "1400", CVAR_ARCHIVE};
-cvar_t cl_move_packetdup = {"cl_move_packetdup", "1", CVAR_ARCHIVE};
+cvar_t cl_move_packetdup = {"cl_move_packetdup", "0", CVAR_ARCHIVE};
 cvar_t cl_ack_redundancy = {"cl_ack_redundancy", "4", CVAR_ARCHIVE};
 cvar_t cl_nopred = {"cl_nopred", "0", CVAR_NONE};
 
@@ -488,22 +488,6 @@ static void CL_WriteUsercmd(sizebuf_t *buf, const usercmd_t *histcmd) {
   }
 }
 
-static int CL_MoveRecordWireSize(const usercmd_t *histcmd) {
-  sizebuf_t tmp;
-  byte data[256];
-
-  tmp.maxsize = sizeof(data);
-  tmp.cursize = 0;
-  tmp.data = data;
-  tmp.allowoverflow = false;
-  tmp.overflowed = false;
-
-  MSG_WriteByte(&tmp, clc_move);
-  MSG_WriteShort(&tmp, histcmd->sequence & 0xffff);
-  CL_WriteUsercmd(&tmp, histcmd);
-  return tmp.overflowed ? MAX_DATAGRAM : tmp.cursize;
-}
-
 static qboolean CL_AckFramePending(int sequence)
 {
   unsigned int i;
@@ -542,19 +526,12 @@ static void CL_WriteAckFrames(sizebuf_t *buf)
 
 void CL_SendMove(const usercmd_t *cmd) {
   int seq;
-  int start;
-  int redundancy;
-  int s;
   int i;
-  int count;
   int dup;
-  int sendseqs[MOVE_BUNDLE_MAX];
   qboolean local_singleplayer;
   usercmd_t sendcmd;
   sizebuf_t buf;
   byte data[MAX_DATAGRAM];
-  int maxmovebytes;
-  int packetbytes;
 
   buf.maxsize = sizeof(data);
   buf.cursize = 0;
@@ -653,62 +630,14 @@ void CL_SendMove(const usercmd_t *cmd) {
   }
   cl_lagdebug_last_sendmove = realtime;
 
-  redundancy = local_singleplayer ? 0 : (int)cl_move_redundancy.value;
-  if (redundancy < 0)
-    redundancy = 0;
-  if (redundancy > MOVE_BUNDLE_MAX - 1)
-    redundancy = MOVE_BUNDLE_MAX - 1;
-
-  start = seq - redundancy;
-  if (start < 2)
-    start = 2;
-  if (cl.ackedmovemessages >= 2 && start < cl.ackedmovemessages + 1)
-    start = cl.ackedmovemessages + 1;
-  if (start > seq)
-    start = seq;
-
-  count = 0;
-  maxmovebytes = CLAMP(256, (int)cl_move_maxpacketbytes.value, MAX_DATAGRAM);
-  packetbytes =
-      (cl.ackframes_count +
-       (unsigned int)CLAMP(0, (int)cl_ack_redundancy.value,
-                           (int)cl.ackframes_history_count)) *
-      (1 + 4);
-  for (s = seq; s >= start; s--) {
-    const usercmd_t *histcmd = &cl.movecmds[s & (CL_MOVE_HISTORY - 1)];
-    int recordbytes;
-    if (count == MOVE_BUNDLE_MAX)
-      break;
-    if (histcmd->sequence != s)
-      continue;
-    recordbytes = CL_MoveRecordWireSize(histcmd);
-    if (count > 0 && packetbytes + recordbytes > maxmovebytes)
-      break;
-    sendseqs[count++] = s;
-    packetbytes += recordbytes;
-  }
-
-  if (!count) {
-    sendseqs[count++] = seq;
-  }
-  for (i = 0; i < count / 2; i++) {
-    int tmpseq = sendseqs[i];
-    sendseqs[i] = sendseqs[count - 1 - i];
-    sendseqs[count - 1 - i] = tmpseq;
-  }
-
   CL_WriteAckFrames(&buf);
 
-  for (i = 0; i < count; i++) {
-    const usercmd_t *histcmd = &cl.movecmds[sendseqs[i] & (CL_MOVE_HISTORY - 1)];
-
-    MSG_WriteByte(&buf, clc_move);
-    MSG_WriteShort(&buf, histcmd->sequence & 0xffff);
-    CL_WriteUsercmd(&buf, histcmd);
-    if (buf.overflowed) {
-      Con_Printf("CL_SendMove: move packet overflowed (%d cmds)\n", count);
-      return;
-    }
+  MSG_WriteByte(&buf, clc_move);
+  MSG_WriteShort(&buf, sendcmd.sequence & 0xffff);
+  CL_WriteUsercmd(&buf, &sendcmd);
+  if (buf.overflowed) {
+    Con_Printf("CL_SendMove: move packet overflowed\n");
+    return;
   }
 
   dup = local_singleplayer ? 0 : (int)cl_move_packetdup.value;
@@ -729,12 +658,12 @@ void CL_SendMove(const usercmd_t *cmd) {
 
   cl.net_move_packets_sent += dup + 1;
   cl.net_move_dup_packets_sent += dup;
-  cl.net_move_cmds_sent += count;
-  cl.net_move_last_packet_cmds = count;
+  cl.net_move_cmds_sent++;
+  cl.net_move_last_packet_cmds = 1;
 
-  if (net_lagdebug.value && (count > 1 || dup > 0))
-    Con_DPrintf("net_lagdebug: client sent qss-style moves seq=%d cmds=%d dup=%d bytes=%d maxbytes=%d\n",
-                seq, count, dup, buf.cursize, maxmovebytes);
+  if (net_lagdebug.value && dup > 0)
+    Con_DPrintf("net_lagdebug: client sent qss-style move seq=%d dup=%d bytes=%d\n",
+                seq, dup, buf.cursize);
 }
 
 /*
