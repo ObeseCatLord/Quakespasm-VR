@@ -1904,8 +1904,27 @@ static void CL_ParseStuffText(const char *msg)
 CL_ParseMoveAck
 =====================
 */
-static void CL_ApplyMoveAck (int ack16, int flags, int movetype,
-	const vec3_t velocity, const vec3_t mins, const vec3_t maxs)
+static float CL_ReadPayloadFloat (const byte *payload, int *offset)
+{
+	union
+	{
+		byte	b[4];
+		float	f;
+		int	l;
+	} dat;
+
+	dat.b[0] = payload[*offset + 0];
+	dat.b[1] = payload[*offset + 1];
+	dat.b[2] = payload[*offset + 2];
+	dat.b[3] = payload[*offset + 3];
+	*offset += 4;
+	dat.l = LittleLong (dat.l);
+	return dat.f;
+}
+
+static void CL_ApplyMoveAck (int ack16, int flags, int movetype, float servertime,
+	const vec3_t origin, const vec3_t velocity, const vec3_t mins,
+	const vec3_t maxs)
 {
 	int ack;
 	int i;
@@ -1924,8 +1943,12 @@ static void CL_ApplyMoveAck (int ack16, int flags, int movetype,
 
 	cl.predstate_flags = flags;
 	cl.predstate_valid = (flags & PREDINFO_VALID) != 0;
+	cl.predstate_has_origin = cl.predstate_valid;
 	cl.predstate_sequence = ack;
 	cl.predstate_movetype = movetype;
+	cl.predstate_time = servertime;
+	for (i = 0; i < 3; i++)
+		cl.predstate_origin[i] = origin[i];
 	for (i = 0; i < 3; i++)
 		cl.predstate_velocity[i] = velocity[i];
 	for (i = 0; i < 3; i++)
@@ -1940,13 +1963,24 @@ static void CL_ParseMoveAck (void)
 	int flags;
 	int movetype;
 	int i;
+	float servertime;
+	vec3_t origin;
 	vec3_t velocity;
 	vec3_t mins;
 	vec3_t maxs;
 
+	if (net_message.cursize - msg_readcount < 32)
+	{
+		msg_badread = true;
+		return;
+	}
+
 	ack16 = MSG_ReadShort () & 0xffff;
 	flags = MSG_ReadByte ();
 	movetype = MSG_ReadByte ();
+	servertime = MSG_ReadFloat ();
+	for (i = 0; i < 3; i++)
+		origin[i] = MSG_ReadFloat ();
 	for (i = 0; i < 3; i++)
 		velocity[i] = MSG_ReadShort () * (1.0f / 8.0f);
 	for (i = 0; i < 3; i++)
@@ -1954,7 +1988,8 @@ static void CL_ParseMoveAck (void)
 	for (i = 0; i < 3; i++)
 		maxs[i] = MSG_ReadChar ();
 
-	CL_ApplyMoveAck (ack16, flags, movetype, velocity, mins, maxs);
+	CL_ApplyMoveAck (ack16, flags, movetype, servertime, origin, velocity,
+		mins, maxs);
 }
 
 static void CL_ParseSnapshotPartMoveAck (const byte *payload, int payload_size)
@@ -1965,6 +2000,8 @@ static void CL_ParseSnapshotPartMoveAck (const byte *payload, int payload_size)
 	int movetype;
 	int i;
 	int value;
+	float servertime;
+	vec3_t origin;
 	vec3_t velocity;
 	vec3_t mins;
 	vec3_t maxs;
@@ -1973,7 +2010,7 @@ static void CL_ParseSnapshotPartMoveAck (const byte *payload, int payload_size)
 		return;
 
 	offset = 5;
-	if (payload_size - offset < 17 || payload[offset] != svc_moveack)
+	if (payload_size - offset < 33 || payload[offset] != svc_moveack)
 		return;
 
 	offset++;
@@ -1981,6 +2018,9 @@ static void CL_ParseSnapshotPartMoveAck (const byte *payload, int payload_size)
 	offset += 2;
 	flags = payload[offset++];
 	movetype = payload[offset++];
+	servertime = CL_ReadPayloadFloat (payload, &offset);
+	for (i = 0; i < 3; i++)
+		origin[i] = CL_ReadPayloadFloat (payload, &offset);
 	for (i = 0; i < 3; i++)
 	{
 		value = (short)(payload[offset] | (payload[offset + 1] << 8));
@@ -1992,7 +2032,8 @@ static void CL_ParseSnapshotPartMoveAck (const byte *payload, int payload_size)
 	for (i = 0; i < 3; i++)
 		maxs[i] = (signed char)payload[offset++];
 
-	CL_ApplyMoveAck (ack16, flags, movetype, velocity, mins, maxs);
+	CL_ApplyMoveAck (ack16, flags, movetype, servertime, origin, velocity,
+		mins, maxs);
 }
 
 /*

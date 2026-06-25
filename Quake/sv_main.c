@@ -44,7 +44,7 @@ cvar_t sv_replacement_softmaxbytes = {"sv_replacement_softmaxbytes", "1000", CVA
 cvar_t sv_replacement_datagram_reserve = {"sv_replacement_datagram_reserve", "1", CVAR_NONE};
 cvar_t sv_replacement_priority_radius = {"sv_replacement_priority_radius", "0", CVAR_NONE};
 cvar_t sv_replacement_particle_maxbytes = {"sv_replacement_particle_maxbytes", "256", CVAR_NONE};
-cvar_t sv_moveack_independent = {"sv_moveack_independent", "0", CVAR_NONE};
+cvar_t sv_moveack_independent = {"sv_moveack_independent", "1", CVAR_NONE};
 cvar_t sv_moveack_packetdup = {"sv_moveack_packetdup", "1", CVAR_NONE};
 cvar_t sv_snapshot_partresend = {"sv_snapshot_partresend", "1", CVAR_NONE};
 cvar_t sv_snapshot_partresend_interval = {"sv_snapshot_partresend_interval", "0.04", CVAR_NONE};
@@ -2744,6 +2744,10 @@ static void SV_WriteMoveAckToMessage(client_t *client, sizebuf_t *msg)
 	MSG_WriteByte (msg, flags);
 	MSG_WriteByte (msg, (ent && client->usingpmove) ?
 		(int)ent->v.movetype : MOVETYPE_NONE);
+	MSG_WriteFloat (msg, qcvm->time);
+	for (i = 0; i < 3; i++)
+		MSG_WriteFloat (msg, (ent && client->usingpmove) ?
+			ent->v.origin[i] : 0);
 	for (i = 0; i < 3; i++)
 	{
 		ival = Q_rint (((ent && client->usingpmove) ?

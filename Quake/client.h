@@ -202,9 +202,12 @@ typedef struct
 	qboolean	requestresend;
 	double		net_last_diag_time;
 	qboolean	predstate_valid;
+	qboolean	predstate_has_origin;
 	int			predstate_sequence;
 	int			predstate_movetype;
 	int			predstate_flags;
+	float		predstate_time;
+	vec3_t		predstate_origin;
 	vec3_t		predstate_velocity;
 	vec3_t		predstate_mins;
 	vec3_t		predstate_maxs;
