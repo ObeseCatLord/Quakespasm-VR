@@ -198,7 +198,6 @@ void CL_ClearState (void)
 {
 	VR_ResetWeaponTracking();
 	CL_ClearPendingCmd();
-	cls.trusted_clientmove_allowed = false;
 	cls.moveext_allowed = false;
 
 	if (cl.qcvm.extfuncs.CSQC_Shutdown)
@@ -244,7 +243,6 @@ void CL_Disconnect (void)
 {
 	DebugLog("CL_Disconnect: state=%d signon=%d\n", cls.state, cls.signon);
 	CL_ClearPendingCmd();
-	cls.trusted_clientmove_allowed = false;
 	cls.moveext_allowed = false;
 
 	if (key_dest == key_message)
@@ -282,13 +280,6 @@ void CL_Disconnect (void)
 	CL_ClearSignons ();
 
 	V_ResetEffects ();
-}
-
-static void CL_TrustedClientMoveAck_f (void)
-{
-	cls.trusted_clientmove_allowed = true;
-	if (net_lagdebug.value)
-		Con_Printf ("net_lagdebug: server enabled trusted co-op client movement\n");
 }
 
 static void CL_MoveExtAck_f (void)
@@ -731,7 +722,7 @@ static void CL_RocketTrail (entity_t *ent, int type)
 CL_PredictWorldTrace
 
 Runs the player-sized hull against the static world BSP. Dynamic brush entities
-are still validated on the server through the trusted movement trace.
+are still corrected by the authoritative server frame.
 ====================
 */
 static qboolean CL_PredictWorldTrace (vec3_t start, vec3_t end, trace_t *trace)
@@ -2169,8 +2160,6 @@ void CL_Init (void)
 	Cvar_RegisterVariable (&cl_backspeed);
 	Cvar_RegisterVariable (&cl_sidespeed);
 	Cvar_RegisterVariable (&cl_desktop_vanilla_run);
-	Cvar_RegisterVariable (&cl_trusted_clientmove);
-	Cvar_RegisterVariable (&cl_trusted_clientmove_desktop);
 	Cvar_RegisterVariable (&cl_predictmove);
 	Cvar_RegisterVariable (&cl_move_redundancy);
 	Cvar_RegisterVariable (&cl_move_maxpacketbytes);
@@ -2236,6 +2225,5 @@ void CL_Init (void)
 
 	Cmd_AddCommand_ServerCommand ("st", CL_SetStat_f);
 	Cmd_AddCommand_ServerCommand ("sts", CL_SetStatString_f);
-	Cmd_AddCommand_ServerCommand ("cl_trustedmove_ack", CL_TrustedClientMoveAck_f);
 	Cmd_AddCommand_ServerCommand ("cl_moveext_ack", CL_MoveExtAck_f);
 }

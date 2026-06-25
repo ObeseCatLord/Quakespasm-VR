@@ -73,8 +73,6 @@ cvar_t sv_coop_autosave = {"sv_coop_autosave", "1", CVAR_NOTIFY | CVAR_SERVERINF
 cvar_t sv_coop_autosave_slots = {"sv_coop_autosave_slots", "4", CVAR_NONE};
 cvar_t sv_coop_autosave_min_interval = {"sv_coop_autosave_min_interval", "30", CVAR_NONE};
 cvar_t sv_coop_autosave_kill_interval = {"sv_coop_autosave_kill_interval", "10", CVAR_NONE};
-cvar_t sv_coop_trusted_clientmove = {"sv_coop_trusted_clientmove", "0", CVAR_NOTIFY | CVAR_SERVERINFO};
-cvar_t sv_coop_trusted_clientmove_maxdelta = {"sv_coop_trusted_clientmove_maxdelta", "96", CVAR_NONE};
 cvar_t sv_coop_predictmove = {"sv_coop_predictmove", "1", CVAR_NOTIFY | CVAR_SERVERINFO};
 cvar_t sv_triggerdebug = {"sv_triggerdebug", "0", CVAR_NONE};
 cvar_t sv_vr_jump_velocity = {"sv_vr_jump_velocity", "297", CVAR_NOTIFY | CVAR_SERVERINFO};
@@ -395,8 +393,6 @@ void SV_Init (void)
 	Cvar_RegisterVariable (&sv_coop_autosave_slots);
 	Cvar_RegisterVariable (&sv_coop_autosave_min_interval);
 	Cvar_RegisterVariable (&sv_coop_autosave_kill_interval);
-	Cvar_RegisterVariable (&sv_coop_trusted_clientmove);
-	Cvar_RegisterVariable (&sv_coop_trusted_clientmove_maxdelta);
 	Cvar_RegisterVariable (&sv_coop_predictmove);
 	Cvar_RegisterVariable (&sv_triggerdebug);
 	Cvar_RegisterVariable (&sv_vr_jump_velocity);
@@ -762,11 +758,6 @@ void SV_SendServerinfo (client_t *client)
 	MSG_WriteByte (&client->message, svc_setview);
 	MSG_WriteShort (&client->message, NUM_FOR_EDICT(client->edict));
 
-	if (coop.value && sv_coop_trusted_clientmove.value)
-	{
-		MSG_WriteByte (&client->message, svc_stufftext);
-		MSG_WriteString (&client->message, "//cl_trustedmove_ack\n");
-	}
 	if (coop.value && sv_coop_predictmove.value)
 	{
 		MSG_WriteByte (&client->message, svc_stufftext);

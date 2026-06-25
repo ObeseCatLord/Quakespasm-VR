@@ -258,11 +258,6 @@ typedef struct client_s
 	vec3_t			vr_handrot;
 	vec3_t			vr_roomscalemove;
 	vec3_t			vr_roomscale_accum;
-
-	qboolean		trusted_clientmove_valid;
-	vec3_t			trusted_clientmove_origin;
-	vec3_t			trusted_clientmove_velocity;
-	double			net_trustedmove_log_time;
 } client_t;
 
 void SVFTE_Ack (client_t *client, int sequence);
@@ -354,8 +349,6 @@ extern cvar_t sv_coop_autosave;
 extern cvar_t sv_coop_autosave_slots;
 extern cvar_t sv_coop_autosave_min_interval;
 extern cvar_t sv_coop_autosave_kill_interval;
-extern cvar_t sv_coop_trusted_clientmove;
-extern cvar_t sv_coop_trusted_clientmove_maxdelta;
 extern cvar_t sv_coop_predictmove;
 extern cvar_t sv_triggerdebug;
 extern cvar_t sv_vr_jump_velocity;
@@ -406,7 +399,6 @@ void SV_SetIdealPitch (void);
 void SV_AddUpdates (void);
 
 void SV_ClientThink (void);
-qboolean SV_ApplyTrustedClientMove(client_t *client);
 qboolean SV_PopQueuedUsercmd(client_t *client, usercmd_t *out);
 void SV_ApplyQueuedUsercmd(client_t *client, const usercmd_t *queuedcmd);
 void SV_FinishQueuedUsercmd(client_t *client);
