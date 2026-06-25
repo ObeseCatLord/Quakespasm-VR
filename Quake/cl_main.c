@@ -2003,6 +2003,19 @@ void CL_SendCmd (void)
 		if (cmd.seconds > 0.1f)
 			cmd.seconds = 0.1f;
 
+		if (cl.qcvm.extfuncs.CSQC_Input_Frame)
+		{
+			PR_SwitchQCVM (&cl.qcvm);
+			PR_GetSetInputs (&cmd, true);
+			PR_ExecuteProgram (cl.qcvm.extfuncs.CSQC_Input_Frame);
+			PR_GetSetInputs (&cmd, false);
+			PR_SwitchQCVM (NULL);
+			if (cmd.seconds <= 0)
+				cmd.seconds = host_frametime;
+			if (cmd.seconds > 0.1f)
+				cmd.seconds = 0.1f;
+		}
+
 	// send the unreliable message
 		CL_SendMove (&cmd);
 		CL_ClearPendingCmd ();
