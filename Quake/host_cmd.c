@@ -1778,6 +1778,8 @@ static void Host_Spawn_f(void) {
     return;
   }
 
+  host_client->lastmovetime = qcvm->time;
+
   clientnum = host_client - svs.clients;
   loaded_client = sv.loadgame && !sv.loadgame_resumed &&
       clientnum >= 0 && clientnum < MAX_SCOREBOARD &&

@@ -283,12 +283,12 @@ static void SV_NetDiag_f (void)
 			client->lastacksequence : -1) : client->net_snapshot_ack;
 		acklag = replacement ? SV_ReplacementAckLag (client, sequence) :
 			client->net_snapshot_ack_lag_max;
-		Con_Printf ("server netdiag: #%d %s moves packets=%d cmds=%d accepted=%d simulated=%d stale=%d last=%d queued=%d maxqueue=%d bundle=%d maxbundle=%d gap=%d lastdt=%.3f\n",
+		Con_Printf ("server netdiag: #%d %s moves packets=%d cmds=%d accepted=%d simulated=%d stale=%d last=%d pending=%d bundle=%d maxbundle=%d gap=%d lastdt=%.3f\n",
 			i + 1, client->name, client->net_move_packets_received,
 			client->net_move_cmds_received, client->net_move_cmds_accepted,
 			client->net_move_cmds_simulated, client->net_move_cmds_stale,
-			client->lastmovemessage, client->move_queue_count,
-			client->net_move_queue_max, client->net_move_last_bundle,
+			client->lastmovemessage, client->move_pending ? 1 : 0,
+			client->net_move_last_bundle,
 			client->net_move_bundle_max, client->net_move_last_gap,
 			client->net_move_last_sim_seconds);
 		Con_Printf ("server netdiag: #%d snapshots replacement=%d seq=%d ack=%d packets=%d split_packets=%d last_packets=%d max_packets=%d last_bytes=%d max_bytes=%d acklag=%d clipped_ents=%d part_resends=%d partial_seq=%d partial_last=%d\n",
