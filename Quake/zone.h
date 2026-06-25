@@ -103,12 +103,15 @@ char *Z_Strdup (const char *s);
 #endif
 
 void *Hunk_Alloc (int size);		// returns 0 filled memory
+void *Hunk_AllocNoFill (int size);
 void *Hunk_AllocName (int size, const char *name);
+void *Hunk_AllocNameNoFill (int size, const char *name);
 void *Hunk_HighAllocName (int size, const char *name);
 char *Hunk_Strdup (const char *s, const char *name);
 
 int	Hunk_LowMark (void);
 void Hunk_FreeToLowMark (int mark);
+qboolean Hunk_IsContiguous (int from, int to);
 
 int	Hunk_HighMark (void);
 void Hunk_FreeToHighMark (int mark);
@@ -137,4 +140,3 @@ void *Cache_Alloc (cache_user_t *c, int size, const char *name);
 void Cache_Report (void);
 
 #endif	/* __ZZONE_H */
-

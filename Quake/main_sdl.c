@@ -55,7 +55,7 @@ static void Sys_InitSDL(void) {
 }
 
 #define DEFAULT_MEMORY                                                         \
-  (1536 * 1024 * 1024) // large modern mods ship BSP/LIT data that exceed 512MB
+  (384 * 1024 * 1024) // QSS-M-style startup heap; hunk segments grow on demand
 
 static quakeparms_t parms;
 
@@ -92,6 +92,10 @@ int main(int argc, char *argv[]) {
     t = COM_CheckParm("-heapsize") + 1;
     if (t < com_argc)
       parms.memsize = Q_atoi(com_argv[t]) * 1024;
+  } else if (COM_CheckParm("-mem")) {
+    t = COM_CheckParm("-mem") + 1;
+    if (t < com_argc)
+      parms.memsize = Q_atoi(com_argv[t]) * 1024 * 1024;
   }
 
   parms.membase = malloc(parms.memsize);

@@ -444,6 +444,7 @@ void R_RenderDlights (void);
 void GL_BuildLightmaps (void);
 void GL_DeleteBModelVertexBuffer (void);
 void GL_BuildBModelVertexBuffer (void);
+void GLMesh_LoadVertexBuffer (qmodel_t *m, const aliashdr_t *hdr);
 void GLMesh_LoadVertexBuffers (void);
 void GLMesh_DeleteVertexBuffers (void);
 void R_RebuildAllLightmaps (void);
