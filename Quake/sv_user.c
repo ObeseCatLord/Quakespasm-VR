@@ -48,9 +48,9 @@ usercmd_t cmd;
 
 cvar_t sv_idealpitchscale = {"sv_idealpitchscale", "0.8", CVAR_NONE};
 cvar_t sv_altnoclip = {"sv_altnoclip", "1", CVAR_ARCHIVE}; // johnfitz
-cvar_t sv_inputtimeout = {"sv_inputtimeout", "0.50", CVAR_NONE};
+cvar_t sv_inputtimeout = {"sv_inputtimeout", "0", CVAR_NONE};
 cvar_t sv_pmove = {"sv_pmove", "1", CVAR_NONE};
-cvar_t sv_nqplayerphysics = {"sv_nqplayerphysics", "1",
+cvar_t sv_nqplayerphysics = {"sv_nqplayerphysics", "0",
                              CVAR_ARCHIVE | CVAR_SERVERINFO};
 cvar_t sv_pmove_legacy = {"sv_pmove_legacy", "1", CVAR_NONE};
 cvar_t sv_pmove_legacy_preserve_qc_velocity = {
@@ -760,14 +760,19 @@ static void SV_NormalizeAcceptedUsercmd(client_t *client, usercmd_t *acceptedcmd
   float fallback_seconds;
   double timestamp;
   double clamped_timestamp;
-  double seconds_from_time;
 
   fallback_seconds = CLAMP(0.001f, host_frametime, 0.1f);
   original_seconds = acceptedcmd->seconds;
   if (original_seconds <= 0 || original_seconds > 0.1f)
     original_seconds = fallback_seconds;
 
-  acceptedcmd->seconds = original_seconds;
+  /*
+   * The client already sends the duration of this command. Trust that bounded
+   * duration for PMove timing, but not the client's position/velocity. Reusing
+   * the timestamp delta here collapses bundled reliable moves to zero time
+   * after loss bursts, which makes held jump/water/teleporter input get eaten.
+   */
+  acceptedcmd->seconds = CLAMP(0.001f, original_seconds, 0.1f);
   if (!sv_move_timeclamp.value || acceptedcmd->servertime <= 0)
     return;
 
@@ -785,19 +790,7 @@ static void SV_NormalizeAcceptedUsercmd(client_t *client, usercmd_t *acceptedcmd
   if (clamped_timestamp < client->lastmovetime)
     clamped_timestamp = client->lastmovetime;
 
-  seconds_from_time = clamped_timestamp - client->lastmovetime;
   client->lastmovetime = clamped_timestamp;
-
-  /*
-   * QSS-M derives independent movement time from the client timestamp and
-   * clamps it to server time. Keep that delta even after a loss burst, but
-   * bound one accepted command to a sane PMove step instead of replaying a
-   * huge frame or discarding the elapsed time entirely.
-   */
-  if (seconds_from_time <= 0)
-    acceptedcmd->seconds = 0;
-  else
-    acceptedcmd->seconds = CLAMP(0.001f, (float)seconds_from_time, 0.1f);
 }
 
 static qboolean SV_QueueAcceptedUsercmd(const usercmd_t *acceptedcmd) {
@@ -1391,8 +1384,8 @@ void SV_RunClients(void) {
     if (!sv.paused && (svs.maxclients > 1 || key_dest == key_game)) {
       usercmd_t queuedcmd;
 
-      SV_ClearStaleClientInput(host_client);
       if (!host_client->usingpmove) {
+        SV_ClearStaleClientInput(host_client);
         if (SV_CoalesceLegacyUsercmd(host_client, &queuedcmd)) {
           SV_ApplyQueuedUsercmd(host_client, &queuedcmd);
           SV_ClientThink();
