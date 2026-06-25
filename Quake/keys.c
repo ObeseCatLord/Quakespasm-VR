@@ -80,6 +80,7 @@ static const default_binding_t default_bindings[] = {
     {K_RIGHTARROW, "+right"},
     {K_SPACE, "+jump"},
     {K_TAB, "+showscores"},
+    {'q', "+vr_weaponmenu"},
     {'1', "impulse 1"},
     {'2', "impulse 2"},
     {'3', "impulse 3"},

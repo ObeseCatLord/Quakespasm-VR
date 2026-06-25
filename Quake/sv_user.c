@@ -1220,6 +1220,8 @@ static qboolean SV_ParseClientMessage(void) {
         allowed = 1;
       else if (q_strncasecmp(s, "prespawn", 8) == 0)
         allowed = 1;
+      else if (q_strncasecmp(s, "coop_teleport_player", 20) == 0)
+        allowed = 1;
       else if (q_strncasecmp(s, "enablecsqc", 10) == 0)
         allowed = 1;
       else if (q_strncasecmp(s, "disablecsqc", 11) == 0)

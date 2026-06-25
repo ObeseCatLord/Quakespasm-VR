@@ -423,6 +423,7 @@ void SV_CoopReviveApplyPending(void);
 void SV_CoopReviveFromTrace(vec3_t start, vec3_t end, edict_t *ent,
                             float trace_fraction);
 qboolean SV_CoopRespawnPlaceNearPlayer(edict_t *ent);
+qboolean SV_CoopRespawnTeleportToPlayer(edict_t *ent, edict_t *target);
 
 qboolean SV_CheckBottom (edict_t *ent);
 qboolean SV_movestep (edict_t *ent, vec3_t move, qboolean relink);
