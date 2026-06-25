@@ -128,7 +128,7 @@ For a final local config that should win after mod configs:
 ./quakespasm-openvr.bin -game ad -postcfg local.cfg
 ```
 
-For trusted co-op servers, the intended baseline is:
+For co-op servers, the intended baseline is:
 
 ```txt
 coop 1
@@ -138,15 +138,13 @@ sv_maxpacketsize 1400
 sv_pmove 1
 sv_pmove_legacy 1
 sv_coop_predictmove 1
-sv_coop_trusted_clientmove 0
 sv_coop_noplayerclip 1
 sv_nofriendlyfire 1
 sv_coop_weapon_targetfix 1
 ```
 
-Use `-novr` for desktop clients and `-vr` for headset clients. Trusted client
-movement is currently off by default; PMove prediction remains the preferred
-smooth co-op path.
+Use `-novr` for desktop clients and `-vr` for headset clients. PMove prediction
+remains the preferred smooth co-op path when a mod supports it.
 
 ## Building
 
@@ -252,9 +250,9 @@ QuakeSpasm cvar.
 | `cl_lerpdebug` | `0` | Diagnostics | Logs model/entity interpolation reset causes. |
 | `cl_lerpdebug_models` | `""` | Diagnostics | Comma-separated model filter for `cl_lerpdebug`. |
 | `cl_mousemenu` | `1` | UI | Enables mouse menu interaction. |
-| `cl_move_maxpacketbytes` | `1400` | Networking | Soft cap for bundled client movement packets. |
-| `cl_move_packetdup` | `1` | Networking | Duplicates client movement packets. |
-| `cl_move_redundancy` | `18` | Networking | Bundles prior movement commands with new commands. |
+| `cl_move_maxpacketbytes` | `1400` | Networking | Compatibility limit for client movement packet sizing. |
+| `cl_move_packetdup` | `0` | Networking | Optional duplicate sends for the current movement packet. |
+| `cl_move_redundancy` | `0` | Networking | Legacy movement bundling control; default sends only the current command. |
 | `cl_mwheelpitch` | `5` | Input | Mouse-wheel pitch tuning. |
 | `cl_net_lerpbuffer` | `0.10` | Networking | Interpolation buffer for networked snapshots. |
 | `cl_net_lerpbuffer_adaptive` | `0` | Networking | Temporarily increases snapshot lerp buffer after gaps. |
@@ -274,8 +272,6 @@ QuakeSpasm cvar.
 | `cl_predict_smooth_min` | `0.25` | Networking | Smallest prediction error eligible for smoothing. |
 | `cl_predict_smooth_time` | `0.04` | Networking | Prediction correction smoothing time. |
 | `cl_predictmove` | `1` | Networking | Enables client-side movement prediction for remote play. |
-| `cl_trusted_clientmove` | `0` | Networking | Client opt-in for trusted movement extensions. |
-| `cl_trusted_clientmove_desktop` | `0` | Networking | Desktop trusted movement opt-in; off by default. |
 | `cfg_unbindall` | `1` | Config | Allows configs to execute `unbindall`; set `0` to ignore it. |
 | `freelook` | `1` | Input | Default mouse look behavior. |
 | `net_lagdebug` | `0` | Diagnostics | Logs datagram gaps, delayed packets, and lag events. |
@@ -343,15 +339,13 @@ QuakeSpasm cvar.
 | `sv_coop_respawn_delay` | `10` | Co-op | Delay before co-op respawn; `0` disables the delay. |
 | `sv_coop_respawn_keep_weapons_ammo` | `1` | Co-op | Preserves weapons, ammo, keycards, and supported mod extra fields on respawn. |
 | `sv_coop_respawn_near_player` | `1` | Co-op | Respawns near the death spot or living teammates when safe. |
-| `sv_coop_trusted_clientmove` | `0` | Co-op | Allows trusted client movement on co-op servers. |
-| `sv_coop_trusted_clientmove_maxdelta` | `96` | Co-op | Maximum trusted move correction distance. |
 | `sv_coop_weapon_targetfix` | `1` | Co-op | Allows weapon pickup trigger targets to fire in co-op. |
 | `sv_gameplayfix_elevators` | `2` | Gameplay | Elevator/pusher step recovery; `0` off, `1` clients, `2` all entities. |
 | `sv_gameplayfix_random` | `1` | QC | Avoids exact `0`/`1` returns from QuakeC `random()`. |
-| `sv_inputtimeout` | `0.50` | Networking | Clears stale movement input after this many seconds. |
+| `sv_inputtimeout` | `0` | Networking | Optional stale movement-input timeout; disabled by default for QSS-M-style held input. |
 | `sv_maxpacketsize` | `1400` | Networking | Server datagram size cap. |
 | `sv_move_timeclamp` | `1` | Networking | Clamps excessive movement command time. |
-| `sv_moveack_independent` | `0` | Networking | Sends movement ACKs as independent datagrams. |
+| `sv_moveack_independent` | `0` | Networking | Sends PMove prediction ACKs as independent datagrams; vanilla physics uses snapshot-attached ACKs. |
 | `sv_moveack_packetdup` | `1` | Networking | Duplicates movement ACK datagrams. |
 | `sv_netdiag_interval` | `5` | Diagnostics | Periodic network diagnostic interval in seconds. |
 | `sv_netsort` | `1` | Networking | Sorts entity updates by priority before packet clipping. |
