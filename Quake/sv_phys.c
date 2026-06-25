@@ -2648,11 +2648,10 @@ static void SV_SetQCInputGlobals(const usercmd_t *cmd) {
     *qcvm->extglobals.input_cursor_entitynumber = cmd->cursor_entitynumber;
 }
 
-qboolean SV_RunClientPMoveCommands(client_t *client) {
+qboolean SV_RunClientPMoveCommand(client_t *client) {
   client_t *saved_host_client;
   edict_t *saved_sv_player;
   edict_t *ent;
-  usercmd_t queuedcmd;
   double saved_host_frametime = host_frametime;
   int num;
   int processed = 0;
@@ -2672,7 +2671,14 @@ qboolean SV_RunClientPMoveCommands(client_t *client) {
   host_client = client;
   sv_player = ent;
 
-  while (!ent->free && SV_PopQueuedUsercmd(client, &queuedcmd)) {
+  if (!client->move_pending) {
+    client->cmd.seconds = 0;
+    host_client = saved_host_client;
+    sv_player = saved_sv_player;
+    return false;
+  }
+
+  do {
     vec3_t thinkRestoreOrigin;
     vec3_t restoreOrigin;
     vec3_t prethink_velocity;
@@ -2690,8 +2696,7 @@ qboolean SV_RunClientPMoveCommands(client_t *client) {
     qboolean think_ok;
     coop_respawn_postthink_state_t coop_respawn_state;
 
-    SV_ApplyQueuedUsercmd(client, &queuedcmd);
-    host_frametime = CLAMP(0.001f, client->cmd.seconds, 0.1f);
+    host_frametime = CLAMP(0.0f, client->cmd.seconds, 0.1f);
     pr_global_struct->frametime = host_frametime;
     SV_CoopRespawnBeginPostThink(ent, num, &coop_respawn_state);
     SV_SetQCInputGlobals(&client->cmd);
@@ -2769,17 +2774,20 @@ qboolean SV_RunClientPMoveCommands(client_t *client) {
     SV_CoopRespawnEndPostThink(ent, num, &coop_respawn_state);
     SV_CoopReviveApplyPending();
 
-    SV_FinishQueuedUsercmd(client);
+    SV_FinishPMoveUsercmd(client);
     processed++;
-  }
+  } while (0);
 
   host_frametime = saved_host_frametime;
   pr_global_struct->frametime = host_frametime;
   host_client = saved_host_client;
   sv_player = saved_sv_player;
 
-  if (!processed)
+  if (!processed) {
+    client->pendingmovemessage = -1;
+    client->move_pending = false;
     client->cmd.seconds = 0;
+  }
 
   return processed > 0;
 }
@@ -2809,7 +2817,7 @@ void SV_Physics_Client(edict_t *ent, int num) {
        (isDedicated || num != cl.viewentity));
 
   if (svs.clients[num - 1].usingpmove) {
-    SV_RunClientPMoveCommands(&svs.clients[num - 1]);
+    SV_RunClientPMoveCommand(&svs.clients[num - 1]);
     return;
   }
 

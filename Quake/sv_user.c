@@ -107,8 +107,6 @@ void SV_ResetClientMoveState(client_t *client) {
   client->lastreceivedmovemessage = -1;
   client->pendingmovemessage = -1;
   client->move_pending = false;
-  client->move_queue_start = 0;
-  client->move_queue_count = 0;
 
   client->net_move_packets_received = 0;
   client->net_move_cmds_received = 0;
@@ -119,7 +117,6 @@ void SV_ResetClientMoveState(client_t *client) {
   client->net_move_bundle_max = 0;
   client->net_move_last_bundle = 0;
   client->net_move_last_gap = 0;
-  client->net_move_queue_max = 0;
   client->net_move_stale_log_time = 0;
   client->net_move_input_log_time = 0;
   client->net_move_last_sim_seconds = 0;
@@ -631,98 +628,94 @@ static qboolean SV_ReadUsercmd(usercmd_t *readcmd, int sequence) {
 
 static void SV_NormalizeAcceptedUsercmd(client_t *client, usercmd_t *acceptedcmd)
 {
-  float original_seconds;
   float fallback_seconds;
   double timestamp;
-  double clamped_timestamp;
+  double seconds;
 
   fallback_seconds = CLAMP(0.001f, host_frametime, 0.1f);
-  original_seconds = acceptedcmd->seconds;
-  if (original_seconds <= 0 || original_seconds > 0.1f)
-    original_seconds = fallback_seconds;
-
-  /*
-   * The client already sends the duration of this command. Trust that bounded
-   * duration for PMove timing, but not the client's position/velocity. Reusing
-   * the timestamp delta here collapses bundled reliable moves to zero time
-   * after loss bursts, which makes held jump/water/teleporter input get eaten.
-   */
-  acceptedcmd->seconds = CLAMP(0.001f, original_seconds, 0.1f);
   if (!sv_move_timeclamp.value || acceptedcmd->servertime <= 0)
+  {
+    acceptedcmd->seconds = fallback_seconds;
     return;
+  }
 
   timestamp = acceptedcmd->servertime;
-  clamped_timestamp = timestamp;
-  if (clamped_timestamp > qcvm->time)
-    clamped_timestamp = qcvm->time;
-  if (clamped_timestamp < qcvm->time - 0.5)
-    clamped_timestamp = qcvm->time - 0.5;
+  if (timestamp > qcvm->time)
+    timestamp = qcvm->time;
+  if (timestamp < qcvm->time - 0.5)
+    timestamp = qcvm->time - 0.5;
 
-  if (client->lastmovetime <= 0)
-    client->lastmovetime = clamped_timestamp - original_seconds;
   if (client->lastmovetime < qcvm->time - 0.5)
     client->lastmovetime = qcvm->time - 0.5;
-  if (clamped_timestamp < client->lastmovetime)
-    clamped_timestamp = client->lastmovetime;
+  if (client->lastmovetime <= 0)
+    client->lastmovetime = timestamp - fallback_seconds;
+  if (timestamp < client->lastmovetime)
+    timestamp = client->lastmovetime;
 
-  client->lastmovetime = clamped_timestamp;
+  seconds = timestamp - client->lastmovetime;
+  if (seconds < 0)
+    seconds = 0;
+  if (seconds > 0.1)
+    seconds = 0.1;
+  acceptedcmd->seconds = (float)seconds;
+  client->lastmovetime = timestamp;
 }
 
-static qboolean SV_QueueAcceptedUsercmd(const usercmd_t *acceptedcmd) {
-  usercmd_t *slot;
-  int index;
-  usercmd_t queuedcmd;
+static void SV_ApplyAcceptedUsercmd(client_t *client, const usercmd_t *acceptedcmd) {
+  client->cmd = *acceptedcmd;
+  VectorCopy(client->cmd.viewangles, client->edict->v.v_angle);
+  client->edict->v.button0 = client->cmd.buttons & 1;
+  client->edict->v.button2 = (client->cmd.buttons & 2) >> 1;
+  SV_SetExtendedButtons(client->edict, client->cmd.buttons);
+  if (client->cmd.impulse)
+    client->edict->v.impulse = client->cmd.impulse;
+
+  if (acceptedcmd->vr_active) {
+    client->is_vr_client = true;
+    VectorCopy(acceptedcmd->vr_handpos, client->vr_handpos);
+    VectorCopy(acceptedcmd->vr_handrot, client->vr_handrot);
+    VectorCopy(acceptedcmd->vr_roomscalemove, client->vr_roomscalemove);
+    VectorAdd(client->vr_roomscale_accum, acceptedcmd->vr_roomscalemove,
+              client->vr_roomscale_accum);
+  } else {
+    client->is_vr_client = false;
+    VectorCopy(vec3_origin, client->vr_roomscalemove);
+  }
+}
+
+static qboolean SV_AcceptPMoveUsercmd(client_t *client,
+                                      const usercmd_t *acceptedcmd) {
+  usercmd_t pmovecmd;
   qboolean has_input;
 
-  if (host_client->move_queue_count == (int)countof(host_client->move_queue)) {
-    if (net_lagdebug.value)
-      Con_Printf("net_lagdebug: move queue overflow for %s, rejecting seq=%d last_ack=%d queued=%d\n",
-                  host_client->name, acceptedcmd->sequence,
-                  host_client->lastmovemessage,
-                  host_client->move_queue_count);
-    return false;
-  }
-
-  host_client->ping_times[host_client->num_pings % NUM_PING_TIMES] =
+  client->ping_times[client->num_pings % NUM_PING_TIMES] =
       qcvm->time - acceptedcmd->servertime;
-  host_client->num_pings++;
+  client->num_pings++;
 
-  queuedcmd = *acceptedcmd;
-  SV_NormalizeAcceptedUsercmd(host_client, &queuedcmd);
+  pmovecmd = *acceptedcmd;
+  SV_NormalizeAcceptedUsercmd(client, &pmovecmd);
+  SV_ApplyAcceptedUsercmd(client, &pmovecmd);
 
-  index = (host_client->move_queue_start + host_client->move_queue_count) %
-          countof(host_client->move_queue);
-  slot = &host_client->move_queue[index];
-  *slot = queuedcmd;
-  host_client->move_queue_count++;
-  if (host_client->move_queue_count > host_client->net_move_queue_max)
-    host_client->net_move_queue_max = host_client->move_queue_count;
+  client->last_move_time = realtime;
+  client->input_stale = false;
+  client->pendingmovemessage = pmovecmd.sequence;
+  client->move_pending = true;
 
-  if (!host_client->move_pending) {
-    host_client->cmd = queuedcmd;
-    host_client->move_pending = true;
-  }
-
-  host_client->last_move_time = realtime;
-  host_client->input_stale = false;
-  host_client->pendingmovemessage = queuedcmd.sequence;
-
-  has_input = queuedcmd.forwardmove || queuedcmd.sidemove || queuedcmd.upmove ||
-              queuedcmd.buttons || queuedcmd.impulse ||
-              queuedcmd.vr_roomscalemove[0] ||
-              queuedcmd.vr_roomscalemove[1] ||
-              queuedcmd.vr_roomscalemove[2];
+  has_input = pmovecmd.forwardmove || pmovecmd.sidemove || pmovecmd.upmove ||
+              pmovecmd.buttons || pmovecmd.impulse ||
+              pmovecmd.vr_roomscalemove[0] ||
+              pmovecmd.vr_roomscalemove[1] ||
+              pmovecmd.vr_roomscalemove[2];
   if (net_lagdebug.value && has_input &&
-      (queuedcmd.impulse ||
-       realtime - host_client->net_move_input_log_time > 0.25)) {
-    Con_Printf("net_lagdebug: accepted input from %s seq=%d q=%d pmove=%d move=(%g,%g,%g) buttons=%d impulse=%d seconds=%.3f vr=%d vrmove=(%.3f,%.3f,%.3f)\n",
-               host_client->name, queuedcmd.sequence,
-               host_client->move_queue_count, host_client->usingpmove ? 1 : 0,
-               queuedcmd.forwardmove, queuedcmd.sidemove, queuedcmd.upmove,
-               queuedcmd.buttons, queuedcmd.impulse, queuedcmd.seconds,
-               queuedcmd.vr_active ? 1 : 0, queuedcmd.vr_roomscalemove[0],
-               queuedcmd.vr_roomscalemove[1], queuedcmd.vr_roomscalemove[2]);
-    host_client->net_move_input_log_time = realtime;
+      (pmovecmd.impulse ||
+       realtime - client->net_move_input_log_time > 0.25)) {
+    Con_Printf("net_lagdebug: accepted input from %s seq=%d q=direct pmove=1 move=(%g,%g,%g) buttons=%d impulse=%d seconds=%.3f vr=%d vrmove=(%.3f,%.3f,%.3f)\n",
+               client->name, pmovecmd.sequence,
+               pmovecmd.forwardmove, pmovecmd.sidemove, pmovecmd.upmove,
+               pmovecmd.buttons, pmovecmd.impulse, pmovecmd.seconds,
+               pmovecmd.vr_active ? 1 : 0, pmovecmd.vr_roomscalemove[0],
+               pmovecmd.vr_roomscalemove[1], pmovecmd.vr_roomscalemove[2]);
+    client->net_move_input_log_time = realtime;
   }
 
   return true;
@@ -740,25 +733,7 @@ static void SV_AcceptLatestUsercmd(client_t *client,
   latestcmd = *acceptedcmd;
   latestcmd.seconds = 0;
 
-  client->cmd = latestcmd;
-  VectorCopy(client->cmd.viewangles, client->edict->v.v_angle);
-  client->edict->v.button0 = client->cmd.buttons & 1;
-  client->edict->v.button2 = (client->cmd.buttons & 2) >> 1;
-  SV_SetExtendedButtons(client->edict, client->cmd.buttons);
-  if (client->cmd.impulse)
-    client->edict->v.impulse = client->cmd.impulse;
-
-  if (latestcmd.vr_active) {
-    client->is_vr_client = true;
-    VectorCopy(latestcmd.vr_handpos, client->vr_handpos);
-    VectorCopy(latestcmd.vr_handrot, client->vr_handrot);
-    VectorCopy(latestcmd.vr_roomscalemove, client->vr_roomscalemove);
-    VectorAdd(client->vr_roomscale_accum, latestcmd.vr_roomscalemove,
-              client->vr_roomscale_accum);
-  } else {
-    client->is_vr_client = false;
-    VectorCopy(vec3_origin, client->vr_roomscalemove);
-  }
+  SV_ApplyAcceptedUsercmd(client, &latestcmd);
 
   client->last_move_time = realtime;
   client->input_stale = false;
@@ -784,43 +759,7 @@ static void SV_AcceptLatestUsercmd(client_t *client,
   }
 }
 
-qboolean SV_PopQueuedUsercmd(client_t *client, usercmd_t *out) {
-  if (client->move_queue_count <= 0)
-    return false;
-
-  *out = client->move_queue[client->move_queue_start];
-  client->move_queue_start =
-      (client->move_queue_start + 1) % countof(client->move_queue);
-  client->move_queue_count--;
-  return true;
-}
-
-void SV_ApplyQueuedUsercmd(client_t *client, const usercmd_t *queuedcmd) {
-  client->cmd = *queuedcmd;
-  VectorCopy(client->cmd.viewangles, client->edict->v.v_angle);
-  client->edict->v.button0 = client->cmd.buttons & 1;
-  client->edict->v.button2 = (client->cmd.buttons & 2) >> 1;
-  SV_SetExtendedButtons(client->edict, client->cmd.buttons);
-  if (client->cmd.impulse)
-    client->edict->v.impulse = client->cmd.impulse;
-
-  if (queuedcmd->vr_active) {
-    client->is_vr_client = true;
-    VectorCopy(queuedcmd->vr_handpos, client->vr_handpos);
-    VectorCopy(queuedcmd->vr_handrot, client->vr_handrot);
-    VectorCopy(queuedcmd->vr_roomscalemove, client->vr_roomscalemove);
-    VectorAdd(client->vr_roomscale_accum, queuedcmd->vr_roomscalemove,
-              client->vr_roomscale_accum);
-  } else {
-    client->is_vr_client = false;
-    VectorCopy(vec3_origin, client->vr_roomscalemove);
-  }
-
-  client->pendingmovemessage = queuedcmd->sequence;
-  client->move_pending = true;
-}
-
-void SV_FinishQueuedUsercmd(client_t *client) {
+void SV_FinishPMoveUsercmd(client_t *client) {
   client->net_move_cmds_simulated++;
   client->net_move_last_sim_seconds = client->cmd.seconds;
   client->lastmovemessage = client->cmd.sequence;
@@ -862,7 +801,7 @@ void SV_ReadClientMove(usercmd_t *move) {
 
   SV_UpdateClientPMoveMode(host_client);
   if (host_client->usingpmove) {
-    if (!SV_QueueAcceptedUsercmd(&readcmd))
+    if (!SV_AcceptPMoveUsercmd(host_client, &readcmd))
       return;
   } else {
     SV_AcceptLatestUsercmd(host_client, &readcmd);
@@ -875,7 +814,7 @@ void SV_ReadClientMove(usercmd_t *move) {
 
   if (host_client->usingpmove && host_client->spawned && !sv.paused &&
       (svs.maxclients > 1 || key_dest == key_game))
-    SV_RunClientPMoveCommands(host_client);
+    SV_RunClientPMoveCommand(host_client);
 }
 
 static qboolean SV_ClientHasInput(const client_t *client) {
@@ -922,8 +861,6 @@ static void SV_ClearStaleClientInput(client_t *client) {
   client->lastmovetime = 0;
   client->pendingmovemessage = -1;
   client->move_pending = false;
-  client->move_queue_start = 0;
-  client->move_queue_count = 0;
   client->edict->v.button0 = 0;
   client->edict->v.button2 = 0;
   SV_SetExtendedButtons(client->edict, 0);
@@ -1154,21 +1091,12 @@ qboolean SV_ReadClientMessage(void) {
 
 static void SV_UpdateClientPMoveMode(client_t *client) {
   qboolean usingpmove;
-  qboolean legacy_qc_ladder_mod;
   qboolean legacy_independent_pmove;
   qboolean local_singleplayer;
 
   if (!client || !client->active)
     return;
 
-  /*
-   * Mods like qbj3 implement ladders in QuakeC by setting waterlevel/gravity
-   * and a one-frame .onladder marker. QSS-M leaves those legacy NQ mods on the
-   * classic movement path by default; forcing PMove here bypasses that QC
-   * contract and can leave the player swimming/flying after touching ladders.
-   */
-  legacy_qc_ladder_mod =
-      qcvm->extfields.onladder >= 0 && !qcvm->extfuncs.SV_RunClientCommand;
   legacy_independent_pmove =
       !sv_nqplayerphysics.value &&
       (sv_nqplayerphysics.string[0] || deathmatch.value);
@@ -1178,18 +1106,16 @@ static void SV_UpdateClientPMoveMode(client_t *client) {
     client->spawned && sv_pmove.value &&
     (client->protocol_pext2 & PEXT2_PREDINFO) &&
     (qcvm->extfuncs.SV_RunClientCommand ||
-     (sv_pmove_legacy.value && legacy_independent_pmove &&
-      !legacy_qc_ladder_mod));
+     (sv_pmove_legacy.value && legacy_independent_pmove));
 
   if (usingpmove != client->usingpmove && net_lagdebug.value)
-    Con_Printf("net_lagdebug: server PMove %s for %s pext2=0x%x sv_runclientcommand=%d sv_nqplayerphysics=%g sv_pmove_legacy=%d legacy_qc_ladder=%d\n",
+    Con_Printf("net_lagdebug: server PMove %s for %s pext2=0x%x sv_runclientcommand=%d sv_nqplayerphysics=%g sv_pmove_legacy=%d\n",
                usingpmove ? "enabled" : "disabled",
                client->name,
                client->protocol_pext2,
                qcvm->extfuncs.SV_RunClientCommand ? 1 : 0,
                sv_nqplayerphysics.value,
-               sv_pmove_legacy.value ? 1 : 0,
-               legacy_qc_ladder_mod ? 1 : 0);
+               sv_pmove_legacy.value ? 1 : 0);
   client->usingpmove = usingpmove;
 }
 
@@ -1245,8 +1171,6 @@ void SV_RunClients(void) {
       host_client->lastmovetime = 0;
       host_client->pendingmovemessage = -1;
       host_client->move_pending = false;
-      host_client->move_queue_start = 0;
-      host_client->move_queue_count = 0;
       continue;
     }
 

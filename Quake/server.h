@@ -132,9 +132,6 @@ typedef struct client_s
 	struct qsocket_s *netconnection;	// communications handle
 
 	usercmd_t		cmd;				// movement
-	usercmd_t		move_queue[MOVE_BUNDLE_MAX * 4];
-	int				move_queue_start;
-	int				move_queue_count;
 	vec3_t			wishdir;			// intended motion calced from cmd
 	double			last_move_time;
 	double			lastmovetime;
@@ -153,7 +150,6 @@ typedef struct client_s
 	int				net_move_bundle_max;
 	int				net_move_last_bundle;
 	int				net_move_last_gap;
-	int				net_move_queue_max;
 	double			net_move_stale_log_time;
 	double			net_move_input_log_time;
 	float			net_move_last_sim_seconds;
@@ -399,10 +395,8 @@ void SV_SetIdealPitch (void);
 void SV_AddUpdates (void);
 
 void SV_ClientThink (void);
-qboolean SV_PopQueuedUsercmd(client_t *client, usercmd_t *out);
-void SV_ApplyQueuedUsercmd(client_t *client, const usercmd_t *queuedcmd);
-void SV_FinishQueuedUsercmd(client_t *client);
-qboolean SV_RunClientPMoveCommands(client_t *client);
+void SV_FinishPMoveUsercmd(client_t *client);
+qboolean SV_RunClientPMoveCommand(client_t *client);
 void SV_AddClientToServer (struct qsocket_s	*ret);
 
 void SV_ClientPrintf (const char *fmt, ...) FUNC_PRINTF(1,2);
