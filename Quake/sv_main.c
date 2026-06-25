@@ -44,7 +44,7 @@ cvar_t sv_replacement_softmaxbytes = {"sv_replacement_softmaxbytes", "1000", CVA
 cvar_t sv_replacement_datagram_reserve = {"sv_replacement_datagram_reserve", "1", CVAR_NONE};
 cvar_t sv_replacement_priority_radius = {"sv_replacement_priority_radius", "0", CVAR_NONE};
 cvar_t sv_replacement_particle_maxbytes = {"sv_replacement_particle_maxbytes", "256", CVAR_NONE};
-cvar_t sv_moveack_independent = {"sv_moveack_independent", "1", CVAR_NONE};
+cvar_t sv_moveack_independent = {"sv_moveack_independent", "0", CVAR_NONE};
 cvar_t sv_moveack_packetdup = {"sv_moveack_packetdup", "1", CVAR_NONE};
 cvar_t sv_snapshot_partresend = {"sv_snapshot_partresend", "1", CVAR_NONE};
 cvar_t sv_snapshot_partresend_interval = {"sv_snapshot_partresend_interval", "0.04", CVAR_NONE};
@@ -2770,6 +2770,8 @@ static qboolean SV_SendIndependentMoveAck (client_t *client)
 	if (!sv_moveack_independent.value)
 		return true;
 	if (!client->active || !client->spawned || !client->netconnection)
+		return true;
+	if (!client->usingpmove)
 		return true;
 	if (!(client->protocol_pext2 & PEXT2_PREDINFO))
 		return true;
