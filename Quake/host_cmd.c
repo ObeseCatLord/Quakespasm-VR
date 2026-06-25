@@ -2231,27 +2231,25 @@ static client_t *Host_FindClientByCommandArgs(int firstarg) {
 }
 
 static void Host_GiveAllFallback(client_t *client) {
-  const int vanilla_weapon_bits = IT_AXE | IT_SHOTGUN | IT_SUPER_SHOTGUN |
-                                  IT_NAILGUN | IT_SUPER_NAILGUN |
-                                  IT_GRENADE_LAUNCHER | IT_ROCKET_LAUNCHER |
-                                  IT_LIGHTNING;
-  const int mod_weapon_bits = 1 | 2 | 4 | 8 | 16 | 32 | 64 | 256 | 512 |
-                              1024 | 4096 | 8192;
+  const int stock_weapon_bits =
+      IT_SHOTGUN | IT_SUPER_SHOTGUN | IT_NAILGUN | IT_SUPER_NAILGUN |
+      IT_GRENADE_LAUNCHER | IT_ROCKET_LAUNCHER | IT_LIGHTNING;
+  int weapon_bits;
   eval_t *val;
 
   sv_player = client->edict;
 
-  /*
-   * Grant broad weapon bits rather than only vanilla Quake's set.  Mods such
-   * as Enyo keep extra weapons in higher stock-item-compatible bits.
-   */
-  sv_player->v.items = (int)sv_player->v.items | vanilla_weapon_bits |
-                       mod_weapon_bits | HIT_PROXIMITY_GUN |
-                       HIT_LASER_CANNON | HIT_MJOLNIR;
+  weapon_bits = stock_weapon_bits | (rogue ? RIT_AXE : IT_AXE);
+  if (rogue)
+    weapon_bits |= RIT_LAVA_NAILGUN | RIT_LAVA_SUPER_NAILGUN |
+                   RIT_MULTI_GRENADE | RIT_MULTI_ROCKET | RIT_PLASMA_GUN;
+  if (hipnotic)
+    weapon_bits |= HIT_PROXIMITY_GUN | HIT_LASER_CANNON | HIT_MJOLNIR;
+
+  sv_player->v.items = (int)sv_player->v.items | weapon_bits;
   val = GetEdictFieldValueByName(sv_player, "weapons");
   if (val)
-    val->_float = (int)val->_float | vanilla_weapon_bits | mod_weapon_bits |
-                  HIT_PROXIMITY_GUN | HIT_LASER_CANNON | HIT_MJOLNIR;
+    val->_float = (int)val->_float | weapon_bits;
 
   sv_player->v.weapon = IT_SHOTGUN;
   sv_player->v.ammo_shells = q_max(sv_player->v.ammo_shells, 100);
@@ -2313,6 +2311,10 @@ static qboolean Host_GiveAllClient(client_t *client) {
     pr_global_struct->self = EDICT_TO_PROG(client->edict);
     pr_global_struct->time = qcvm->time;
     PR_ExecuteProgram(func - qcvm->functions);
+    Host_SaveClientSpawnParms(client);
+    host_client = old_host_client;
+    sv_player = old_sv_player;
+    return true;
   }
 
   Host_GiveAllFallback(client);

@@ -54,6 +54,82 @@ typedef struct {
   int keynum;
 } keyname_t;
 
+typedef struct {
+  int keynum;
+  const char *binding;
+} default_binding_t;
+
+static const default_binding_t default_bindings[] = {
+    {K_ALT, "+strafe"},
+    {',', "+moveleft"},
+    {'a', "+moveleft"},
+    {'.', "+moveright"},
+    {'d', "+moveright"},
+    {K_DEL, "+lookdown"},
+    {K_PGDN, "+lookup"},
+    {K_END, "centerview"},
+    {'e', "+moveup"},
+    {'c', "+movedown"},
+    {K_SHIFT, "+speed"},
+    {K_CTRL, "+attack"},
+    {K_UPARROW, "+forward"},
+    {'w', "+forward"},
+    {K_DOWNARROW, "+back"},
+    {'s', "+back"},
+    {K_LEFTARROW, "+left"},
+    {K_RIGHTARROW, "+right"},
+    {K_SPACE, "+jump"},
+    {K_TAB, "+showscores"},
+    {'1', "impulse 1"},
+    {'2', "impulse 2"},
+    {'3', "impulse 3"},
+    {'4', "impulse 4"},
+    {'5', "impulse 5"},
+    {'6', "impulse 6"},
+    {'7', "impulse 7"},
+    {'8', "impulse 8"},
+    {'0', "impulse 0"},
+    {'/', "impulse 10"},
+    {K_MWHEELDOWN, "impulse 10"},
+    {K_MWHEELUP, "impulse 12"},
+    {K_F11, "zoom_in"},
+    {K_F1, "help"},
+    {K_F2, "menu_save"},
+    {K_F3, "menu_load"},
+    {K_F4, "menu_options"},
+    {K_F5, "menu_multiplayer"},
+    {K_F6, "echo Quicksaving...; wait; save quick"},
+    {K_F9, "echo Quickloading...; wait; load quick"},
+    {K_F10, "quit"},
+    {K_F12, "screenshot"},
+    {'\\', "+mlook"},
+    {K_PAUSE, "pause"},
+    {K_ESCAPE, "togglemenu"},
+    {'~', "toggleconsole"},
+    {'`', "toggleconsole"},
+    {'t', "messagemode"},
+    {'+', "sizeup"},
+    {'=', "sizeup"},
+    {'-', "sizedown"},
+    {K_INS, "+klook"},
+    {K_MOUSE1, "+attack"},
+    {K_MOUSE2, "+button3"},
+};
+
+static void Key_ApplyDefaultBindings(qboolean overwrite) {
+  size_t i;
+
+  for (i = 0; i < sizeof(default_bindings) / sizeof(default_bindings[0]);
+       i++) {
+    int key = default_bindings[i].keynum;
+    if (key < 0 || key >= MAX_KEYS)
+      continue;
+    if (!overwrite && keybindings[key] && keybindings[key][0])
+      continue;
+    Key_SetBinding(key, default_bindings[i].binding);
+  }
+}
+
 keyname_t keynames[] = {
     {"TAB", K_TAB},
     {"ENTER", K_ENTER},
@@ -625,6 +701,7 @@ void Key_Unbindall_f(void) {
     if (keybindings[i])
       Key_SetBinding(i, NULL);
   }
+  Key_ApplyDefaultBindings(false);
 #ifdef VR_SUPPORT
   if (vr_enabled.value)
     VR_ApplyDefaultBindings(false);
