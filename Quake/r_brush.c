@@ -257,7 +257,7 @@ void R_DrawBrushModel_ShowTris (entity_t *e)
 		if (((psurf->flags & SURF_PLANEBACK) && (dot < -BACKFACE_EPSILON)) ||
 			(!(psurf->flags & SURF_PLANEBACK) && (dot > BACKFACE_EPSILON)))
 		{
-			if ((psurf->flags & SURF_DRAWTURB) && r_oldwater.value)
+			if ((psurf->flags & SURF_DRAWTURB) && r_oldwater.value && !psurf->texinfo->texture->warpimage)
 				for (p = psurf->polys->next; p; p = p->next)
 					DrawGLTriangleFan (p);
 			else
