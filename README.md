@@ -243,7 +243,7 @@ QuakeSpasm cvar.
 | `cl_confirmquit` | `0` | UI | Adds an optional quit confirmation. |
 | `cl_coop_nametags` | `1` | Co-op | Draws co-op player nametags. |
 | `cl_desktop_vanilla_run` | `1` | Input | Keeps faster vanilla-style movement behavior for desktop and VR defaults. |
-| `cl_extrapolate` | `0.02` | Networking | Maximum normal entity extrapolation window. |
+| `cl_extrapolate` | `0` | Networking | Optional normal entity extrapolation window; defaults to QSS-M-style clamping. |
 | `cl_extrapolate_adaptive` | `0` | Networking | Temporarily increases extrapolation after detected gaps. |
 | `cl_extrapolate_adaptive_max` | `0.12` | Networking | Maximum adaptive extrapolation window. |
 | `cl_extrapolate_adaptive_time` | `0.75` | Networking | Adaptive extrapolation decay time. |
@@ -254,7 +254,7 @@ QuakeSpasm cvar.
 | `cl_move_packetdup` | `0` | Networking | Optional duplicate sends for the current movement packet. |
 | `cl_move_redundancy` | `0` | Networking | Legacy movement bundling control; default sends only the current command. |
 | `cl_mwheelpitch` | `5` | Input | Mouse-wheel pitch tuning. |
-| `cl_net_lerpbuffer` | `0.10` | Networking | Interpolation buffer for networked snapshots. |
+| `cl_net_lerpbuffer` | `0` | Networking | Optional interpolation buffer for networked snapshots; defaults to QSS-M-style raw timing. |
 | `cl_net_lerpbuffer_adaptive` | `0` | Networking | Temporarily increases snapshot lerp buffer after gaps. |
 | `cl_net_lerpbuffer_adaptive_max` | `0.30` | Networking | Maximum adaptive lerp buffer. |
 | `cl_net_lerpbuffer_adaptive_time` | `0.75` | Networking | Adaptive lerp buffer decay time. |

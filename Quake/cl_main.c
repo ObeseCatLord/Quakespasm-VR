@@ -39,15 +39,13 @@ cvar_t	cl_nolerp = {"cl_nolerp","0",CVAR_NONE};
 cvar_t	cl_lerpdebug = {"cl_lerpdebug","0",CVAR_NONE};
 cvar_t	cl_lerpdebug_models = {"cl_lerpdebug_models","",CVAR_NONE};
 cvar_t	cl_beams_polygons = {"cl_beams_polygons","0",CVAR_ARCHIVE};
-// Max seconds of linear extrapolation past the latest server snapshot.
-// At sys_ticrate 0.05 (20 Hz) a fast client renders many frames between
-// snapshots and would otherwise freeze entities at frac=1 until the next
-// packet, producing visible 20 Hz judder. 0 reproduces the legacy clamp.
-cvar_t	cl_extrapolate = {"cl_extrapolate","0.02",CVAR_ARCHIVE};
+// Optional bounded interpolation helpers. Defaults mirror QSS-M: no synthetic
+// snapshot delay and no normal extrapolation past the latest server snapshot.
+cvar_t	cl_extrapolate = {"cl_extrapolate","0",CVAR_ARCHIVE};
 cvar_t	cl_extrapolate_adaptive = {"cl_extrapolate_adaptive","0",CVAR_ARCHIVE};
 cvar_t	cl_extrapolate_adaptive_max = {"cl_extrapolate_adaptive_max","0.12",CVAR_ARCHIVE};
 cvar_t	cl_extrapolate_adaptive_time = {"cl_extrapolate_adaptive_time","0.75",CVAR_NONE};
-cvar_t	cl_net_lerpbuffer = {"cl_net_lerpbuffer","0.10",CVAR_ARCHIVE};
+cvar_t	cl_net_lerpbuffer = {"cl_net_lerpbuffer","0",CVAR_ARCHIVE};
 cvar_t	cl_net_lerpbuffer_adaptive = {"cl_net_lerpbuffer_adaptive","0",CVAR_ARCHIVE};
 cvar_t	cl_net_lerpbuffer_adaptive_max = {"cl_net_lerpbuffer_adaptive_max","0.30",CVAR_ARCHIVE};
 cvar_t	cl_net_lerpbuffer_adaptive_time = {"cl_net_lerpbuffer_adaptive_time","0.75",CVAR_NONE};
@@ -102,6 +100,21 @@ static float CL_EffectiveNetLerpBuffer (void)
 	blend = CLAMP (0.0f, (float)(remaining / smooth_time), 1.0f);
 
 	return base + (adaptive - base) * blend;
+}
+
+static qboolean CL_ValueMatchesOldDefault (float value, float old_default)
+{
+	const float epsilon = 0.0001f;
+
+	return value > old_default - epsilon && value < old_default + epsilon;
+}
+
+static void CL_MigrateNetworkDefaults_f (void)
+{
+	if (CL_ValueMatchesOldDefault (cl_extrapolate.value, 0.02f))
+		Cvar_SetQuick (&cl_extrapolate, "0");
+	if (CL_ValueMatchesOldDefault (cl_net_lerpbuffer.value, 0.10f))
+		Cvar_SetQuick (&cl_net_lerpbuffer, "0");
 }
 
 cvar_t	cfg_unbindall = {"cfg_unbindall", "1", CVAR_ARCHIVE};
@@ -312,6 +325,7 @@ void CL_EstablishConnection (const char *host)
 	if (cls.demoplayback)
 		return;
 
+	CL_MigrateNetworkDefaults_f ();
 	CL_Disconnect ();
 
 	cls.netcon = NET_Connect (host);
@@ -2202,6 +2216,7 @@ void CL_Init (void)
 	Cvar_RegisterVariable (&cl_net_lerpbuffer_adaptive);
 	Cvar_RegisterVariable (&cl_net_lerpbuffer_adaptive_max);
 	Cvar_RegisterVariable (&cl_net_lerpbuffer_adaptive_time);
+	Cmd_AddCommand ("cl_migrate_network_defaults", CL_MigrateNetworkDefaults_f);
 	Cvar_RegisterVariable (&freelook);
 	Cvar_RegisterVariable (&lookspring);
 	Cvar_RegisterVariable (&lookstrafe);
