@@ -685,6 +685,7 @@ static qboolean SV_AcceptPMoveUsercmd(client_t *client,
 
   client->last_move_time = realtime;
   client->input_stale = false;
+  client->lastmovemessage = pmovecmd.sequence;
   client->pendingmovemessage = pmovecmd.sequence;
   client->move_pending = true;
 
