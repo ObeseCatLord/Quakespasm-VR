@@ -346,7 +346,7 @@ QuakeSpasm cvar.
 | `sv_maxpacketsize` | `1400` | Networking | Server datagram size cap. |
 | `sv_move_timeclamp` | `1` | Networking | Clamps excessive movement command time. |
 | `sv_moveack_independent` | `0` | Networking | Sends PMove prediction ACKs as independent datagrams; vanilla physics uses snapshot-attached ACKs. |
-| `sv_moveack_packetdup` | `1` | Networking | Duplicates movement ACK datagrams. |
+| `sv_moveack_packetdup` | `0` | Networking | Optional duplicate sends for movement ACK datagrams. |
 | `sv_netdiag_interval` | `5` | Diagnostics | Periodic network diagnostic interval in seconds. |
 | `sv_netsort` | `1` | Networking | Sorts entity updates by priority before packet clipping. |
 | `sv_nofriendlyfire` | `1` | Co-op | Disables friendly fire in co-op. |
@@ -356,8 +356,8 @@ QuakeSpasm cvar.
 | `sv_replacement_datagram_reserve` | `1` | Networking | Reserves datagram room for replacement deltas. |
 | `sv_replacement_maxpackets` | `0` | Networking | Maximum replacement packets; `0` uses automatic behavior. |
 | `sv_replacement_pacing` | `1` | Networking | Paces replacement-delta sends. |
-| `sv_replacement_packetdup` | `1` | Networking | Duplicates replacement-delta packets. |
-| `sv_replacement_packetdup_all` | `1` | Networking | Duplicates all replacement packets, not just priority paths. |
+| `sv_replacement_packetdup` | `0` | Networking | Optional duplicate sends for replacement-delta packets. |
+| `sv_replacement_packetdup_all` | `0` | Networking | Applies replacement packet duplication to all replacement packets instead of only priority paths. |
 | `sv_replacement_particle_maxbytes` | `256` | Networking | Per-packet particle byte budget. |
 | `sv_replacement_priority_radius` | `0` | Networking | Radius boost for nearby replacement priority; `0` disables radius boost. |
 | `sv_replacement_softmaxbytes` | `1000` | Networking | Soft byte target for replacement packets. |
