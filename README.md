@@ -346,14 +346,14 @@ QuakeSpasm cvar.
 | `sv_nqplayerphysics` | `0` | PMove | Retired no-op retained for old configs; latest multiplayer clients always use PMove. |
 | `sv_pmove` | `1` | PMove | Retired no-op retained for old configs; latest multiplayer clients always use PMove. |
 | `sv_pmove_legacy_preserve_qc_velocity` | `1` | PMove | Preserves QC velocity pushes such as grapples through legacy PMove. |
-| `sv_replacement_datagram_reserve` | `1` | Networking | Reserves datagram room for replacement deltas. |
+| `sv_replacement_datagram_reserve` | `0` | Networking | Optional datagram room reservation for replacement deltas; default off for QSS-M-style packet draining. |
 | `sv_replacement_maxpackets` | `0` | Networking | Maximum replacement packets; `0` uses automatic behavior. |
-| `sv_replacement_pacing` | `1` | Networking | Paces replacement-delta sends. |
+| `sv_replacement_pacing` | `0` | Networking | Optional soft pacing for replacement-delta sends; default off for latest-client/QSS-M behavior. |
 | `sv_replacement_packetdup` | `0` | Networking | Optional duplicate sends for replacement-delta packets. |
 | `sv_replacement_packetdup_all` | `0` | Networking | Applies replacement packet duplication to all replacement packets instead of only priority paths. |
-| `sv_replacement_particle_maxbytes` | `256` | Networking | Per-packet particle byte budget. |
+| `sv_replacement_particle_maxbytes` | `0` | Networking | Optional per-packet particle byte budget; `0` disables the cap. |
 | `sv_replacement_priority_radius` | `0` | Networking | Radius boost for nearby replacement priority; `0` disables radius boost. |
-| `sv_replacement_softmaxbytes` | `1000` | Networking | Soft byte target for replacement packets. |
+| `sv_replacement_softmaxbytes` | `0` | Networking | Optional soft byte target for replacement packets when pacing is enabled. |
 | `sv_save_multiplayer` | `1` | Save/load | Allows multiplayer/co-op saves in controlled use. |
 | `sv_skyroom_pvs` | `1` | Rendering/server | Adds skyroom PVS for skyroom entity visibility. |
 | `sv_spectatormaxspeed` | `500` | PMove | Spectator max speed. |
