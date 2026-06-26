@@ -334,7 +334,6 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #define svc_backtolobby 55
 #define svc_localsound 56
 #define svc_moveack 57 // [short] last accepted sequenced move
-#define svc_snapshot 58 // [short] frame [byte] part [byte] flags [short] firstent [short] totalents
 
 // QSS-M/FTE/DP service ids used by replacement deltas. Some numeric values
 // intentionally overlap the 2021 rerelease/private ids above; only dispatch
@@ -355,7 +354,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #define svcfte_csqcentities 76
 #define svcfte_cgamepacket 83
 #define svcfte_setangledelta 85
-#define svcfte_updateentities 86 // [long] logical replacement-frame sequence, then optional predinfo/time/entity deltas
+#define svcfte_updateentities 86 // optional predinfo/time/entity deltas, acked by the datagram sequence
 #define svcdp_trailparticles 60
 #define svcdp_pointparticles 61
 #define svcdp_pointparticles1 62
@@ -375,11 +374,6 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #define MOVEEXT_QCINPUT 4
 
 #define MOVE_BUNDLE_MAX 24 // retained server-side queue capacity for move records
-
-#define SNAPSHOT_FIRST 1
-#define SNAPSHOT_LAST 2
-#define SNAPSHOT_MAX_PARTS 128
-#define SNAPSHOT_ACK_MASK_WORDS 4
 #define SNAPSHOT_PART_UNKNOWN 255
 
 #define PREDINFO_VALID 1
