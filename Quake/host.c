@@ -1304,6 +1304,7 @@ void Host_Init (void)
 		Cmd_QueuePostConfig ();
 		Cbuf_AddText ("host_migrate_network_defaults\n");
 		Cbuf_AddText ("cl_migrate_network_defaults\n");
+		Cbuf_AddText ("vr_migrate_movement_defaults\n");
 	}
 
 	if (cls.state == ca_dedicated)
@@ -1312,6 +1313,7 @@ void Host_Init (void)
 		Cbuf_AddText ("stuffcmds\n");
 		Cmd_QueuePostConfig ();
 		Cbuf_AddText ("host_migrate_network_defaults\n");
+		Cbuf_AddText ("vr_migrate_movement_defaults\n");
 		Cbuf_Execute ();
 		if (!sv.active)
 			Cbuf_AddText ("map start\n");

@@ -24,6 +24,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 
 #include "quakedef.h"
 #include "pmove.h"
+#include "vr.h"
 
 server_t	sv;
 server_static_t	svs;
@@ -291,6 +292,7 @@ void SV_Init (void)
 	extern	cvar_t	sv_gravity;
 	extern	cvar_t	sv_nostep;
 	extern	cvar_t	vr_movement_instant_stop;
+	extern	cvar_t	vr_movement_defaults_version;
 	extern	cvar_t	sv_freezenonclients;
 	extern	cvar_t	sv_friction;
 	extern	cvar_t	sv_edgefriction;
@@ -365,6 +367,8 @@ void SV_Init (void)
 	Cvar_SetCallback (&sv_coop_autosave, Host_Callback_Notify);
 	Cvar_SetCallback (&sv_vr_jump_velocity, Host_Callback_Notify);
 	Cvar_RegisterVariable (&vr_movement_instant_stop);
+	Cvar_RegisterVariable (&vr_movement_defaults_version);
+	Cmd_AddCommand ("vr_migrate_movement_defaults", VR_MigrateMovementDefaults_f);
 	Cvar_RegisterVariable (&sv_netsort); // ironwail-style entity priority sorting
 
 	Cmd_AddCommand ("netdiag", SV_NetDiag_f);
