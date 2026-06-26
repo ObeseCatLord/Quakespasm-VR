@@ -698,7 +698,7 @@ qboolean Host_FilterTime (float time)
 	realtime += time;
 
 	//johnfitz -- max fps cvar
-	if ((host_maxfps.value > 0 || cls.state == ca_disconnected) && !cls.timedemo && !vr_enabled.value)
+	if ((host_maxfps.value > 0 || cls.state == ca_disconnected) && !cls.timedemo)
 	{
 		if (cls.state == ca_disconnected)
 		{
