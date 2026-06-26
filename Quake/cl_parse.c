@@ -1412,8 +1412,6 @@ static void CLFTE_QueueAckFrame (int sequence)
 		return;
 	if (cl.ackframes_count < sizeof(cl.ackframes) / sizeof(cl.ackframes[0]))
 		cl.ackframes[cl.ackframes_count++] = sequence;
-	else
-		cl.ackframes[countof(cl.ackframes) - 1] = sequence;
 }
 
 static void CLFTE_ParseEntitiesUpdate (void)

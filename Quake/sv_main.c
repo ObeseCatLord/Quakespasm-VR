@@ -1244,6 +1244,7 @@ static void SVFTE_SetupFrames (client_t *client)
 	memset (client->oldstats_f, 0, sizeof(client->oldstats_f));
 	memset (client->resendstatsnum, 0, sizeof(client->resendstatsnum));
 	memset (client->resendstatsstr, 0, sizeof(client->resendstatsstr));
+	client->lastmovemessage = 0;
 
 	client->numframes = 64;
 	client->frames = (struct deltaframe_s *)calloc (client->numframes, sizeof(*client->frames));
