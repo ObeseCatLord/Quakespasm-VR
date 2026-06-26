@@ -669,11 +669,8 @@ void SV_SendServerinfo (client_t *client)
 	MSG_WriteByte (&client->message, svc_serverinfo);
 	MSG_WriteLong (&client->message, sv.protocol); //johnfitz -- sv.protocol instead of PROTOCOL_VERSION
 	
-	if (sv.protocol == PROTOCOL_RMQ)
-	{
-		// mh - now send protocol flags so that the client knows the protocol features to expect
-		MSG_WriteLong (&client->message, sv.protocolflags);
-	}
+	// Latest-code servers always use RMQ, so protocol flags are mandatory.
+	MSG_WriteLong (&client->message, sv.protocolflags);
 	
 	MSG_WriteByte (&client->message, svs.maxclients);
 
@@ -3660,13 +3657,9 @@ void SV_SpawnServer (const char *server)
 
 	sv.protocol = sv_protocol; // johnfitz
 	
-	if (sv.protocol == PROTOCOL_RMQ)
-	{
-		// set up the protocol flags used by this server
-		// (note - these could be cvar-ised so that server admins could choose the protocol features used by their servers)
-		sv.protocolflags = PRFL_INT32COORD | PRFL_SHORTANGLE;
-	}
-	else sv.protocolflags = 0;
+	// Match QSS-M's active PEXT2/RMQ path: QC already uses float precision,
+	// and float coords avoid fixed-point origin nudging during prediction.
+	sv.protocolflags = PRFL_FLOATCOORD | PRFL_SHORTANGLE;
 
 	PR_SwitchQCVM(vm);
 // load progs to get entity field count
