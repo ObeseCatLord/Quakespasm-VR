@@ -2912,6 +2912,13 @@ qboolean SV_SendClientDatagram (client_t *client)
 {
 	int		maxsize;
 
+	if (!client || !client->netconnection)
+	{
+		if (client)
+			SZ_Clear (&client->datagram);
+		return true;
+	}
+
 	maxsize = SV_ClientMaxPacketSize (client);
 	SV_UpdateClientMSS (client);
 	return SVFTE_SendClientDatagram (client, maxsize);
