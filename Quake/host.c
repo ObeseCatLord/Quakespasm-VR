@@ -44,7 +44,8 @@ quakeparms_t *host_parms;
 qboolean	host_initialized;		// true if into command execution
 
 double		host_frametime;
-float		host_netinterval;
+float		host_netinterval = 1.0/72;
+static float	host_requested_netinterval = 1.0/72;
 double		realtime;				// without any filtering or bounding
 double		oldrealtime;			// last frame run
 
@@ -62,9 +63,9 @@ byte		*host_colormap;
 
 cvar_t	host_framerate = {"host_framerate","0",CVAR_NONE};	// set for slow motion
 cvar_t	host_speeds = {"host_speeds","0",CVAR_NONE};			// set for running times
-cvar_t	host_maxfps = {"host_maxfps", "72", CVAR_ARCHIVE}; //johnfitz
+cvar_t	host_maxfps = {"host_maxfps", "250", CVAR_ARCHIVE}; //johnfitz
 cvar_t	host_timescale = {"host_timescale", "0", CVAR_NONE}; //johnfitz
-cvar_t	cl_netfps = {"cl_netfps", "72", CVAR_ARCHIVE};	// CL_SendCmd cap to a remote server, 0 = uncapped
+cvar_t	cl_netfps = {"cl_netfps", "0", CVAR_ARCHIVE};	// legacy alias; QSS-M uses host_maxfps for network isolation
 cvar_t	max_edicts = {"max_edicts", "8192", CVAR_NONE}; //johnfitz //ericw -- changed from 2048 to 8192, removed CVAR_ARCHIVE
 cvar_t	cl_nocsqc = {"cl_nocsqc", "0", CVAR_NONE};
 
@@ -118,24 +119,56 @@ Max_Fps_f -- ericw
 */
 static void Max_Fps_f (cvar_t *var)
 {
-	if (var->value > 72)
-		Con_Warning ("host_maxfps above 72 breaks physics.\n");
+	if (var->value < 0)
+	{
+		if (!host_requested_netinterval)
+			Con_Printf ("Using renderer/network isolation.\n");
+		host_requested_netinterval = 1/-var->value;
+		if (host_requested_netinterval > 1/10.f)
+			host_requested_netinterval = 1/10.f;
+		if (host_requested_netinterval < 1/150.f)
+			host_requested_netinterval = 1/150.f;
+	}
+	else if (var->value > 72 || var->value <= 0)
+	{
+		if (!host_requested_netinterval)
+			Con_Printf ("Using renderer/network isolation.\n");
+		host_requested_netinterval = 1.0/72;
+	}
+	else
+	{
+		if (host_requested_netinterval)
+			Con_Printf ("Disabling renderer/network isolation.\n");
+		host_requested_netinterval = 0;
+
+		if (var->value > 72)
+			Con_Warning ("host_maxfps above 72 breaks physics.\n");
+	}
 }
 
-static double Host_ClientNetInterval (void)
+static double Host_EffectiveNetInterval (void)
 {
-	if (cl_netfps.value <= 0)
-		return 0;
-	return 1.0 / CLAMP (10.0f, cl_netfps.value, 144.0f);
+	if (host_requested_netinterval > 0)
+		return host_requested_netinterval;
+
+	// VR renders independently from vanilla Quake's stable server tick.  Keep
+	// local and remote command/server cadence isolated even if an old config
+	// explicitly set host_maxfps 72, which disables QSS-M's desktop isolation.
+	if (vr_enabled.value)
+		return 1.0 / 72.0;
+
+	return 0;
 }
 
-static qboolean Host_ShouldIsolateNetworkFrame (void)
+static qboolean Host_ShouldIsolateNetworkFrame (double interval)
 {
 	if (isDedicated)
 		return false;
+	if (interval <= 0)
+		return false;
 	if (!sv.active)
 		return cls.state == ca_connected;
-	return svs.maxclients > 1;
+	return true;
 }
 
 static qboolean Host_BeginNetworkFrame (double *accum, double interval,
@@ -313,7 +346,7 @@ void Host_InitLocal (void)
 	Cvar_RegisterVariable (&host_maxfps); //johnfitz
 	Cvar_SetCallback (&host_maxfps, Max_Fps_f);
 	Cvar_RegisterVariable (&host_timescale); //johnfitz
-	Cvar_RegisterVariable (&cl_netfps); // QSS-style network send pacing
+	Cvar_RegisterVariable (&cl_netfps); // legacy alias; host_maxfps now controls QSS-M pacing
 
 	Cvar_RegisterVariable (&cl_nocsqc);
 	Cvar_RegisterVariable (&max_edicts); //johnfitz
@@ -647,9 +680,23 @@ qboolean Host_FilterTime (float time)
 	realtime += time;
 
 	//johnfitz -- max fps cvar
-	maxfps = CLAMP (10.f, host_maxfps.value, 1000.f);
-	if (!cls.timedemo && realtime - oldrealtime < 1.0/maxfps && !vr_enabled.value)
-		return false; // framerate is too high
+	if ((host_maxfps.value > 0 || cls.state == ca_disconnected) && !cls.timedemo && !vr_enabled.value)
+	{
+		if (cls.state == ca_disconnected)
+		{
+			maxfps = 60.f;
+			if (host_maxfps.value > 0)
+				maxfps = q_min (maxfps, host_maxfps.value);
+			maxfps = CLAMP (10.f, maxfps, 5000.f);
+		}
+		else
+		{
+			maxfps = CLAMP (10.f, host_maxfps.value, 5000.f);
+		}
+
+		if (realtime - oldrealtime < 1.0/maxfps)
+			return false; // framerate is too high
+	}
 	//johnfitz
 
 	host_frametime = realtime - oldrealtime;
@@ -661,8 +708,8 @@ qboolean Host_FilterTime (float time)
 	//johnfitz
 	else if (host_framerate.value > 0)
 		host_frametime = host_framerate.value;
-	else // don't allow really long or short frames
-		host_frametime = CLAMP (0.001, host_frametime, 0.1); //johnfitz -- use CLAMP
+	else if (host_maxfps.value > 0) // don't allow really long or short frames
+		host_frametime = CLAMP (0.0001, host_frametime, 0.1); //johnfitz -- use CLAMP
 
 	return true;
 }
@@ -990,8 +1037,10 @@ void _Host_Frame (float time)
 		vid.recalc_refdef = true;
 	}
 
-	net_isolated = Host_ShouldIsolateNetworkFrame ();
-	net_interval = net_isolated ? Host_ClientNetInterval () : 0;
+	net_interval = Host_EffectiveNetInterval ();
+	net_isolated = Host_ShouldIsolateNetworkFrame (net_interval);
+	if (!net_isolated)
+		net_interval = 0;
 	if (net_isolated != net_last_isolated || net_interval != net_last_interval)
 		net_accum = 0;
 	net_last_isolated = net_isolated;
