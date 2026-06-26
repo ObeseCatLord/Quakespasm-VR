@@ -135,8 +135,6 @@ coop 1
 deathmatch 0
 sv_protocol 999
 sv_maxpacketsize 1400
-sv_pmove 1
-sv_nqplayerphysics 0
 sv_coop_predictmove 1
 sv_coop_noplayerclip 1
 sv_nofriendlyfire 1
@@ -144,7 +142,7 @@ sv_coop_weapon_targetfix 1
 ```
 
 Use `-novr` for desktop clients and `-vr` for headset clients. PMove prediction
-remains the preferred smooth co-op path when a mod supports it.
+is always used for spawned multiplayer clients in current builds.
 
 ## Building
 
@@ -258,7 +256,7 @@ QuakeSpasm cvar.
 | `cl_net_lerpbuffer_adaptive` | `0` | Networking | Temporarily increases snapshot lerp buffer after gaps. |
 | `cl_net_lerpbuffer_adaptive_max` | `0.30` | Networking | Maximum adaptive lerp buffer. |
 | `cl_net_lerpbuffer_adaptive_time` | `0.75` | Networking | Adaptive lerp buffer decay time. |
-| `cl_netfps` | `0` | Networking | Legacy no-op retained for old configs; QSS-M-style pacing is controlled by `host_maxfps`. |
+| `cl_netfps` | `0` | Networking | Retired no-op retained for old configs; QSS-M-style pacing is controlled by `host_maxfps`. |
 | `cl_netport` | `0` | Networking | Requested local UDP client port; `0` lets the OS choose. |
 | `cl_nocsqc` | `0` | CSQC | Disables client-side QC loading when set. |
 | `cl_nopred` | `0` | Networking | Runtime prediction disable/debug switch. |
@@ -345,8 +343,8 @@ QuakeSpasm cvar.
 | `sv_netdiag_interval` | `5` | Diagnostics | Periodic network diagnostic interval in seconds. |
 | `sv_netsort` | `1` | Networking | Sorts entity updates by priority before packet clipping. |
 | `sv_nofriendlyfire` | `1` | Co-op | Disables friendly fire in co-op. |
-| `sv_nqplayerphysics` | `0` | PMove | Keeps latest clients on the PMove/prediction path by default. |
-| `sv_pmove` | `1` | PMove | Enables PMove server movement path. |
+| `sv_nqplayerphysics` | `0` | PMove | Retired no-op retained for old configs; latest multiplayer clients always use PMove. |
+| `sv_pmove` | `1` | PMove | Retired no-op retained for old configs; latest multiplayer clients always use PMove. |
 | `sv_pmove_legacy_preserve_qc_velocity` | `1` | PMove | Preserves QC velocity pushes such as grapples through legacy PMove. |
 | `sv_replacement_datagram_reserve` | `1` | Networking | Reserves datagram room for replacement deltas. |
 | `sv_replacement_maxpackets` | `0` | Networking | Maximum replacement packets; `0` uses automatic behavior. |

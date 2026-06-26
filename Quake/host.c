@@ -65,7 +65,7 @@ cvar_t	host_framerate = {"host_framerate","0",CVAR_NONE};	// set for slow motion
 cvar_t	host_speeds = {"host_speeds","0",CVAR_NONE};			// set for running times
 cvar_t	host_maxfps = {"host_maxfps", "250", CVAR_ARCHIVE}; //johnfitz
 cvar_t	host_timescale = {"host_timescale", "0", CVAR_NONE}; //johnfitz
-cvar_t	cl_netfps = {"cl_netfps", "0", CVAR_ARCHIVE};	// legacy alias; QSS-M uses host_maxfps for network isolation
+cvar_t	cl_netfps = {"cl_netfps", "0", CVAR_NONE};	// retired alias; QSS-M-style pacing uses host_maxfps
 cvar_t	max_edicts = {"max_edicts", "8192", CVAR_NONE}; //johnfitz //ericw -- changed from 2048 to 8192, removed CVAR_ARCHIVE
 cvar_t	cl_nocsqc = {"cl_nocsqc", "0", CVAR_NONE};
 
@@ -112,6 +112,13 @@ static void Max_Edicts_f (cvar_t *var)
 		Con_Printf ("Changes to max_edicts will not take effect until the next time a map is loaded.\n");
 }
 
+static qboolean Host_ValueMatchesOldDefault (float value, float old_default)
+{
+	const float epsilon = 0.0001f;
+
+	return value > old_default - epsilon && value < old_default + epsilon;
+}
+
 /*
 ================
 Max_Fps_f -- ericw
@@ -151,10 +158,9 @@ static double Host_EffectiveNetInterval (void)
 	if (host_requested_netinterval > 0)
 		return host_requested_netinterval;
 
-	// VR renders independently from vanilla Quake's stable server tick.  Keep
-	// local and remote command/server cadence isolated even if an old config
-	// explicitly set host_maxfps 72, which disables QSS-M's desktop isolation.
-	if (vr_enabled.value)
+	// Keep command/server cadence isolated when stale configs explicitly set
+	// host_maxfps 72, which disabled the new default isolation in older builds.
+	if (Host_ValueMatchesOldDefault (host_maxfps.value, 72.0f))
 		return 1.0 / 72.0;
 
 	return 0;
@@ -346,7 +352,7 @@ void Host_InitLocal (void)
 	Cvar_RegisterVariable (&host_maxfps); //johnfitz
 	Cvar_SetCallback (&host_maxfps, Max_Fps_f);
 	Cvar_RegisterVariable (&host_timescale); //johnfitz
-	Cvar_RegisterVariable (&cl_netfps); // legacy alias; host_maxfps now controls QSS-M pacing
+	Cvar_RegisterVariable (&cl_netfps); // retired alias; host_maxfps controls QSS-M-style pacing
 
 	Cvar_RegisterVariable (&cl_nocsqc);
 	Cvar_RegisterVariable (&max_edicts); //johnfitz
