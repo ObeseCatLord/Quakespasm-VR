@@ -769,6 +769,7 @@ static int Datagram_ProcessPacket (qsocket_t *sock, struct qsockaddr *readaddr, 
 				Con_DPrintf("Got a stale datagram\n");
 				return 0;
 			}
+			count = 0;
 
 			// Valid unreliable - safe to commit the NAT remap now.
 			if (pendingRemap)
@@ -793,6 +794,7 @@ static int Datagram_ProcessPacket (qsocket_t *sock, struct qsockaddr *readaddr, 
 					Con_Printf("net_lagdebug: dropped %u unreliable datagram(s) from %s seq=%u expected=%u\n",
 						count, sock->address, sequence, sock->unreliableReceiveSequence);
 			}
+			NET_QSocketRecordUnreliableReceive (sock, count);
 			sock->unreliableReceiveSequence = sequence + 1;
 
 			length -= NET_HEADERSIZE;

@@ -62,6 +62,9 @@ double NET_QSocketGetTime (const struct qsocket_s *sock);
 const char *NET_QSocketGetAddressString (const struct qsocket_s *sock);
 int NET_QSocketGetSequenceIn (const struct qsocket_s *sock);
 int NET_QSocketGetSequenceOut (const struct qsocket_s *sock);
+void NET_QSocketClearPacketLoss (struct qsocket_s *sock);
+void NET_QSocketRecordUnreliableReceive (struct qsocket_s *sock, unsigned int dropped);
+int NET_QSocketGetPacketLoss (const struct qsocket_s *sock);
 void NET_QSocketSetMSS (struct qsocket_s *sock, int mss);
 
 qboolean NET_CanSendMessage (struct qsocket_s *sock);

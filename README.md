@@ -248,9 +248,6 @@ QuakeSpasm cvar.
 | `cl_lerpdebug` | `0` | Diagnostics | Logs model/entity interpolation reset causes. |
 | `cl_lerpdebug_models` | `""` | Diagnostics | Comma-separated model filter for `cl_lerpdebug`. |
 | `cl_mousemenu` | `1` | UI | Enables mouse menu interaction. |
-| `cl_move_maxpacketbytes` | `1400` | Networking | Compatibility limit for client movement packet sizing. |
-| `cl_move_packetdup` | `0` | Networking | Optional duplicate sends for the current movement packet. |
-| `cl_move_redundancy` | `0` | Networking | Legacy movement bundling control; default sends only the current command. |
 | `cl_mwheelpitch` | `5` | Input | Mouse-wheel pitch tuning. |
 | `cl_net_lerpbuffer` | `0` | Networking | Optional interpolation buffer for networked snapshots; defaults to QSS-M-style raw timing. |
 | `cl_net_lerpbuffer_adaptive` | `0` | Networking | Temporarily increases snapshot lerp buffer after gaps. |
@@ -270,10 +267,7 @@ QuakeSpasm cvar.
 | `net_lagdebug` | `0` | Diagnostics | Logs datagram gaps, delayed packets, and lag events. |
 | `net_lagdebug_frame_threshold` | `0.05` | Diagnostics | Frame-gap threshold for lag logs. |
 | `net_lagdebug_threshold` | `0.25` | Diagnostics | Network-gap threshold for lag logs. |
-| `net_reorder_timeout` | `0` | Networking | Timeout for unreliable packet reorder buffering. |
-| `net_reorder_window` | `0` | Networking | Optional unreliable packet reorder window; default off to match QSS-M immediate packet handling. |
 | `net_sameip_stale_timeout` | `3.0` | Networking | Stale timeout for same-IP virtual sockets. |
-| `net_singlesocket` | `1` | Networking | Uses one UDP accept socket with virtual client sockets. |
 | `pm_airstep` | `""` | PMove | PMove air-step compatibility setting. |
 | `pm_autobunny` | `""` | PMove | PMove auto-bunny compatibility setting. |
 | `pm_bunnyfriction` | `1` | PMove | PMove bunny friction behavior. |
@@ -338,22 +332,12 @@ QuakeSpasm cvar.
 | `sv_inputtimeout` | `0` | Networking | Optional stale movement-input timeout; disabled by default for QSS-M-style held input. |
 | `sv_maxpacketsize` | `1400` | Networking | Server datagram size cap. |
 | `sv_move_timeclamp` | `1` | Networking | Clamps excessive movement command time. |
-| `sv_moveack_independent` | `0` | Networking | Sends PMove prediction ACKs as independent datagrams; vanilla physics uses snapshot-attached ACKs. |
-| `sv_moveack_packetdup` | `0` | Networking | Optional duplicate sends for movement ACK datagrams. |
 | `sv_netdiag_interval` | `5` | Diagnostics | Periodic network diagnostic interval in seconds. |
 | `sv_netsort` | `1` | Networking | Sorts entity updates by priority before packet clipping. |
 | `sv_nofriendlyfire` | `1` | Co-op | Disables friendly fire in co-op. |
 | `sv_nqplayerphysics` | `0` | PMove | Retired no-op retained for old configs; latest multiplayer clients always use PMove. |
 | `sv_pmove` | `1` | PMove | Retired no-op retained for old configs; latest multiplayer clients always use PMove. |
 | `sv_pmove_legacy_preserve_qc_velocity` | `1` | PMove | Preserves QC velocity pushes such as grapples through legacy PMove. |
-| `sv_replacement_datagram_reserve` | `0` | Networking | Optional datagram room reservation for replacement deltas; default off for QSS-M-style packet draining. |
-| `sv_replacement_maxpackets` | `0` | Networking | Maximum replacement packets; `0` uses automatic behavior. |
-| `sv_replacement_pacing` | `0` | Networking | Optional soft pacing for replacement-delta sends; default off for latest-client/QSS-M behavior. |
-| `sv_replacement_packetdup` | `0` | Networking | Optional duplicate sends for replacement-delta packets. |
-| `sv_replacement_packetdup_all` | `0` | Networking | Applies replacement packet duplication to all replacement packets instead of only priority paths. |
-| `sv_replacement_particle_maxbytes` | `0` | Networking | Optional per-packet particle byte budget; `0` disables the cap. |
-| `sv_replacement_priority_radius` | `0` | Networking | Radius boost for nearby replacement priority; `0` disables radius boost. |
-| `sv_replacement_softmaxbytes` | `0` | Networking | Optional soft byte target for replacement packets when pacing is enabled. |
 | `sv_save_multiplayer` | `1` | Save/load | Allows multiplayer/co-op saves in controlled use. |
 | `sv_skyroom_pvs` | `1` | Rendering/server | Adds skyroom PVS for skyroom entity visibility. |
 | `sv_spectatormaxspeed` | `500` | PMove | Spectator max speed. |
