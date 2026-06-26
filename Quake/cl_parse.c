@@ -580,11 +580,10 @@ void CL_ParseServerInfo (void)
 	}
 	cl.protocol = i;
 
-	if (cl.protocol == PROTOCOL_RMQ)
 	{
 		const unsigned int supportedflags = (PRFL_SHORTANGLE | PRFL_FLOATANGLE | PRFL_24BITCOORD | PRFL_FLOATCOORD | PRFL_EDICTSCALE | PRFL_INT32COORD);
 
-		// mh - read protocol flags from server so that we know what protocol features to expect
+		// Latest-code servers always use RMQ and always send protocol flags.
 		cl.protocolflags = (unsigned int) MSG_ReadLong ();
 
 		if (0 != (cl.protocolflags & (~supportedflags)))
@@ -592,7 +591,6 @@ void CL_ParseServerInfo (void)
 			Con_Warning("PROTOCOL_RMQ protocolflags %i contains unsupported flags\n", cl.protocolflags);
 		}
 	}
-	else cl.protocolflags = 0;
 
 	cl.protocol_pext1 = 0;
 	cl.protocol_pext2 = PEXT2_REPLACEMENTDELTAS | PEXT2_PREDINFO | PEXT2_NEWSIZEENCODING;
