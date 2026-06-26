@@ -418,6 +418,13 @@ int WINS_Write (sys_socket_t socketid, byte *buf, int len, struct qsockaddr *add
 		int err = SOCKETERRNO;
 		if (err == NET_EWOULDBLOCK)
 			return 0;
+#ifdef NET_ENOBUFS
+		if (err == NET_ENOBUFS)
+		{
+			Con_DPrintf ("WINS_Write, sendto: %s (%s)\n", socketerror(err), WINS_AddrToString(addr));
+			return 0;
+		}
+#endif
 		Con_SafePrintf ("WINS_Write, sendto: %s\n", socketerror(err));
 	}
 	return ret;
@@ -541,4 +548,3 @@ int WINS_SetSocketPort (struct qsockaddr *addr, int port)
 }
 
 //=============================================================================
-

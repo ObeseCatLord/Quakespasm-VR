@@ -365,6 +365,13 @@ int UDP_Write (sys_socket_t socketid, byte *buf, int len, struct qsockaddr *addr
 		int err = SOCKETERRNO;
 		if (err == NET_EWOULDBLOCK)
 			return 0;
+#ifdef NET_ENOBUFS
+		if (err == NET_ENOBUFS)
+		{
+			Con_DPrintf ("UDP_Write, sendto: %s (%s)\n", socketerror(err), UDP_AddrToString(addr));
+			return 0;
+		}
+#endif
 		Con_SafePrintf ("UDP_Write, sendto: %s\n", socketerror(err));
 	}
 	return ret;
