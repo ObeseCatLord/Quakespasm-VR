@@ -921,15 +921,12 @@ static qboolean CL_PredictPlayer (entity_t *ent)
 	}
 
 	pending = cl.pendingcmd;
-	if (pending.seconds > 0)
-	{
-		VectorCopy (cl.aimangles, pending.viewangles);
-		pmove.cmd = pending;
-		if (pmove.cmd.seconds > 0.1f)
-			pmove.cmd.seconds = 0.1f;
-		PM_PlayerMove (1);
-		predicted = true;
-	}
+	VectorCopy (cl.aimangles, pending.viewangles);
+	pmove.cmd = pending;
+	if (pmove.cmd.seconds > 0.1f)
+		pmove.cmd.seconds = 0.1f;
+	PM_PlayerMove (1);
+	predicted = true;
 
 	if (!predicted)
 		return false;
@@ -1345,7 +1342,6 @@ CL_SendCmd
 */
 static usercmd_t cl_pendingcmd;
 static qboolean cl_pendingcmd_valid;
-static int cl_cmdtime_frame = -1;
 
 void CL_ClearPendingCmd (void)
 {
@@ -1354,33 +1350,6 @@ void CL_ClearPendingCmd (void)
 	VectorCopy(vec3_origin, cl.accummoves);
 	VectorCopy(vec3_origin, cl.vr_roomscalemove_accum);
 	cl_pendingcmd_valid = false;
-}
-
-static float CL_UpdateCommandTime (void)
-{
-	float cmdtime;
-
-	if (cl_cmdtime_frame == host_framecount && cl.cmdtime > 0)
-		return cl.cmdtime;
-
-	if (cl.cmdtime > 0)
-		cmdtime = cl.cmdtime + q_max (0.0f, host_frametime);
-	else
-		cmdtime = cl.mtime[0] > 0 ? cl.mtime[0] : cl.time;
-	if (cl.mtime[0] > 0)
-	{
-		float mintime = cl.mtime[0] - 0.25f;
-
-		if (cmdtime < mintime)
-			cmdtime = mintime;
-	}
-
-	if (cl.lastcmdtime <= 0 || cl.lastcmdtime > cmdtime)
-		cl.lastcmdtime = cmdtime;
-
-	cl.cmdtime = cmdtime;
-	cl_cmdtime_frame = host_framecount;
-	return cl.cmdtime;
 }
 
 static void CL_AccumulateVRRoomScaleMove (void)
@@ -1393,18 +1362,13 @@ static void CL_AccumulateVRRoomScaleMove (void)
 void CL_AccumulateCmd (void)
 {
 	usercmd_t cmd;
-	float cmdtime;
 
 	if (cls.state != ca_connected || cls.signon != SIGNONS)
 	{
 		CL_ClearPendingCmd ();
-		cl.cmdtime = cl.mtime[0] > 0 ? cl.mtime[0] : cl.time;
-		cl.lastcmdtime = cl.cmdtime;
-		cl_cmdtime_frame = host_framecount;
+		cl.lastcmdtime = cl.mtime[0] > 0 ? cl.mtime[0] : cl.time;
 		return;
 	}
-
-	cmdtime = CL_UpdateCommandTime ();
 
 	CL_AdjustAngles ();
 	CL_BaseMove (&cmd, false);
@@ -1412,13 +1376,6 @@ void CL_AccumulateCmd (void)
 	VR_Move (&cmd);
 	CL_AccumulateVRRoomScaleMove ();
 	CL_FinishMove (&cmd, false);
-
-	cmd.servertime = cmdtime;
-	cmd.seconds = cmdtime - cl.lastcmdtime;
-	if (cmd.seconds <= 0)
-		cmd.seconds = host_frametime;
-	if (cmd.seconds > 0.1f)
-		cmd.seconds = 0.1f;
 	VectorCopy (cl.aimangles, cmd.viewangles);
 
 	cl_pendingcmd = cmd;
@@ -1433,25 +1390,15 @@ void CL_SendCmd (void)
 	if (cls.state != ca_connected)
 		return;
 
+	CL_BaseMove (&cmd, true);
+	IN_Move (&cmd);
+	VR_Move (&cmd);
+	CL_FinishMove (&cmd, true);
+
 	if (cls.signon == SIGNONS)
 	{
 		if (!cl_pendingcmd_valid)
 			CL_AccumulateCmd ();
-
-		// Build the actual network command at the send tick, like QSS-M.
-		// CL_AccumulateCmd keeps prediction current between sends, while
-		// CL_FinishMove drains accumulated mouse/room-scale deltas here.
-		CL_BaseMove (&cmd, true);
-		IN_Move (&cmd);
-		VR_Move (&cmd);
-		CL_FinishMove (&cmd, true);
-		if (cmd.servertime <= 0)
-			cmd.servertime = CL_UpdateCommandTime ();
-		cmd.seconds = cmd.servertime - cl.lastcmdtime;
-		if (cmd.seconds <= 0)
-			cmd.seconds = host_frametime;
-		if (cmd.seconds > 0.1f)
-			cmd.seconds = 0.1f;
 
 		if (cl.qcvm.extfuncs.CSQC_Input_Frame)
 		{
@@ -1460,21 +1407,19 @@ void CL_SendCmd (void)
 			PR_ExecuteProgram (cl.qcvm.extfuncs.CSQC_Input_Frame);
 			PR_GetSetInputs (&cmd, false);
 			PR_SwitchQCVM (NULL);
-			if (cmd.seconds <= 0)
-				cmd.seconds = host_frametime;
-			if (cmd.seconds > 0.1f)
-				cmd.seconds = 0.1f;
 		}
 
 	// send the unreliable message
 		CL_SendMove (&cmd);
 		CL_ClearPendingCmd ();
-		cl.lastcmdtime = cmd.servertime;
 	}
 	else
 	{
 		CL_SendMove (NULL);
+		cmd.seconds = 0;
 	}
+	cl.pendingcmd.seconds = 0;
+	cl.lastcmdtime = cmd.servertime;
 
 	if (cls.demoplayback)
 	{

@@ -156,7 +156,6 @@ typedef struct
 	usercmd_t	pendingcmd;		// current unsent state from mice+joysticks.
 	vec3_t		accummoves;		// accumulated mouse movement for paced sends
 	vec3_t		vr_roomscalemove_accum; // accumulated room-scale movement for paced sends
-	float		cmdtime;		// input command clock, independent of render lerp
 	float		lastcmdtime;	// server time of last sent move command
 		int			ackedmovemessages;	// last sequenced move accepted by server
 		usercmd_t	movecmds[CL_MOVE_HISTORY];

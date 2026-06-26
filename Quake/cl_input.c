@@ -431,6 +431,10 @@ void CL_FinishMove(usercmd_t *cmd, qboolean isfinal)
     VectorCopy(vec3_origin, cl.accummoves);
     VectorCopy(vec3_origin, cl.vr_roomscalemove_accum);
   }
+
+  cmd->sequence = cl.movemessages;
+  cmd->servertime = cl.time;
+  cmd->seconds = cmd->servertime - cl.lastcmdtime;
 }
 
 /*
@@ -561,9 +565,7 @@ void CL_SendMove(const usercmd_t *cmd) {
   sendcmd = *cmd;
   VectorCopy(cl.aimangles, sendcmd.viewangles);
   if (sendcmd.servertime <= 0)
-    sendcmd.servertime = cl.cmdtime > 0 ? cl.cmdtime : cl.time;
-  if (sendcmd.seconds <= 0)
-    sendcmd.seconds = host_frametime;
+    sendcmd.servertime = cl.time;
 
   Q_memset(sendcmd.vr_handpos, 0, sizeof(sendcmd.vr_handpos));
   Q_memset(sendcmd.vr_handrot, 0, sizeof(sendcmd.vr_handrot));
