@@ -34,12 +34,6 @@ int		sv_protocol = PROTOCOL_RMQ; //johnfitz
 
 extern cvar_t nomonsters;
 cvar_t sv_maxpacketsize = {"sv_maxpacketsize", "1400", CVAR_NONE}; // below typical Ethernet MTU while reducing large-map packet splits
-cvar_t sv_replacement_maxpackets = {"sv_replacement_maxpackets", "0", CVAR_NONE};
-cvar_t sv_replacement_pacing = {"sv_replacement_pacing", "0", CVAR_NONE};
-cvar_t sv_replacement_softmaxbytes = {"sv_replacement_softmaxbytes", "0", CVAR_NONE};
-cvar_t sv_replacement_datagram_reserve = {"sv_replacement_datagram_reserve", "0", CVAR_NONE};
-cvar_t sv_replacement_priority_radius = {"sv_replacement_priority_radius", "0", CVAR_NONE};
-cvar_t sv_replacement_particle_maxbytes = {"sv_replacement_particle_maxbytes", "0", CVAR_NONE};
 cvar_t sv_netdiag_interval = {"sv_netdiag_interval", "5", CVAR_NONE};
 // When SV_WriteEntitiesToClient overflows the per-client datagram, the entity
 // that gets evicted is whichever the loop reached last. With sv_netsort=1
@@ -331,12 +325,6 @@ void SV_Init (void)
 	Cvar_RegisterVariable (&sv_gameplayfix_random);
 	Cvar_RegisterVariable (&sv_inputtimeout);
 	Cvar_RegisterVariable (&sv_maxpacketsize);
-	Cvar_RegisterVariable (&sv_replacement_maxpackets);
-	Cvar_RegisterVariable (&sv_replacement_pacing);
-	Cvar_RegisterVariable (&sv_replacement_softmaxbytes);
-	Cvar_RegisterVariable (&sv_replacement_datagram_reserve);
-	Cvar_RegisterVariable (&sv_replacement_priority_radius);
-	Cvar_RegisterVariable (&sv_replacement_particle_maxbytes);
 	Cvar_RegisterVariable (&sv_netdiag_interval);
 	Cvar_RegisterVariable (&sv_coop_weapon_targetfix);
 	Cvar_RegisterVariable (&sv_coop_pickup_targetlog);
@@ -1710,41 +1698,12 @@ static int SV_ReplacementAckLag (const client_t *client, int sequence)
 	return sequence - client->lastacksequence;
 }
 
-static int SVFTE_ReplacementSoftLimit (const sizebuf_t *msg, int reserve_bytes)
-{
-	int soft, minsoft, maxsoft, reserve_soft;
-
-	if (!sv_replacement_pacing.value &&
-		(!sv_replacement_datagram_reserve.value || reserve_bytes <= 0))
-		return msg->maxsize;
-	if (sv_replacement_pacing.value && sv_replacement_softmaxbytes.value > 0)
-		soft = (int)sv_replacement_softmaxbytes.value;
-	else if (sv_replacement_pacing.value)
-		soft = msg->maxsize - 160;
-	else
-		soft = msg->maxsize;
-
-	if (sv_replacement_datagram_reserve.value && reserve_bytes > 0)
-	{
-		reserve_soft = msg->maxsize - reserve_bytes - 16;
-		soft = q_min (soft, reserve_soft);
-	}
-
-	minsoft = q_min (512, msg->maxsize);
-	maxsoft = q_max (minsoft, msg->maxsize - 16);
-	return CLAMP (minsoft, soft, maxsoft);
-}
-
 #define SVFTE_DELTA_NONURGENT		0
 #define SVFTE_DELTA_HARDURGENT		1
-#define SVFTE_DELTA_RADIUSURGENT	2
 
 static int SVFTE_EntityDeltaPriority (client_t *client, size_t entnum,
 	unsigned int entbits, const entity_state_t *state)
 {
-	float radius, dist2;
-	vec3_t delta;
-
 	if (entnum <= (size_t)svs.maxclients)
 		return SVFTE_DELTA_HARDURGENT;
 	if (client->edict && entnum == (size_t)NUM_FOR_EDICT(client->edict))
@@ -1755,23 +1714,11 @@ static int SVFTE_EntityDeltaPriority (client_t *client, size_t entnum,
 		return SVFTE_DELTA_HARDURGENT;
 	if (state && (state->effects || state->emiteffectnum || state->traileffectnum))
 		return SVFTE_DELTA_HARDURGENT;
-	if (!state || !client->edict)
-		return SVFTE_DELTA_NONURGENT;
-
-	// Radius priority is optional because treating every nearby animation or
-	// origin delta as urgent can fill MTU-sized packets every frame on large
-	// co-op maps. Critical state above still bypasses the soft cap.
-	radius = sv_replacement_priority_radius.value;
-	if (radius <= 0)
-		return SVFTE_DELTA_NONURGENT;
-	VectorSubtract (state->origin, client->edict->v.origin, delta);
-	dist2 = DotProduct (delta, delta);
-	return dist2 <= radius * radius ?
-		SVFTE_DELTA_RADIUSURGENT : SVFTE_DELTA_NONURGENT;
+	return SVFTE_DELTA_NONURGENT;
 }
 
 static void SVFTE_WriteEntitiesToClient (client_t *client, sizebuf_t *msg,
-	struct deltaframe_s *frame, int sequence, int reserve_bytes)
+	struct deltaframe_s *frame, int sequence)
 {
 	struct entity_num_state_s *state, *stateend;
 	unsigned int entbits, logbits, netbits;
@@ -1795,7 +1742,7 @@ static void SVFTE_WriteEntitiesToClient (client_t *client, sizebuf_t *msg,
 	if (msg->cursize + header_need > msg->maxsize)
 		return;
 
-	soft_limit = SVFTE_ReplacementSoftLimit (msg, reserve_bytes);
+	soft_limit = msg->maxsize;
 	wrote_entity = false;
 	MSG_WriteByte (msg, svcfte_updateentities);
 	SV_WriteMoveAckPayloadToMessage (client, msg);
@@ -1842,8 +1789,6 @@ static void SVFTE_WriteEntitiesToClient (client_t *client, sizebuf_t *msg,
 				urgent = priority != SVFTE_DELTA_NONURGENT;
 				if (priority == SVFTE_DELTA_HARDURGENT)
 					client->net_replacement_diag_hardurgent++;
-				else if (priority == SVFTE_DELTA_RADIUSURGENT)
-					client->net_replacement_diag_radiusurgent++;
 				else
 					client->net_replacement_diag_nonurgent++;
 				if (wrote_entity && msg->cursize >= soft_limit && !urgent)
@@ -2928,50 +2873,6 @@ static int SVFTE_WriteDatagramToMessage (sizebuf_t *msg, int *offset,
 	return written;
 }
 
-static int SVFTE_DatagramReserveBytes (int offset, int particle_budget)
-{
-	int position, size, remaining, type, reserve;
-	qboolean cosmetic_particle;
-
-	if (!sv_replacement_datagram_reserve.value)
-		return 0;
-
-	position = offset;
-	reserve = 0;
-	while (position < sv.datagram.cursize)
-	{
-		remaining = sv.datagram.cursize - position;
-		size = SV_DatagramCommandSize (&sv.datagram.data[position],
-			remaining, &type);
-		cosmetic_particle = type == SV_DGRAM_PARTICLE ||
-			type == SV_DGRAM_DPPARTICLE;
-
-		if (cosmetic_particle && particle_budget >= 0)
-		{
-			if (particle_budget <= 0 || size > particle_budget)
-			{
-				position += size;
-				continue;
-			}
-			particle_budget -= size;
-		}
-
-		reserve += size;
-		position += size;
-	}
-
-	return reserve;
-}
-
-static int SVFTE_PrivateDatagramReserveBytes (client_t *client)
-{
-	if (!sv_replacement_datagram_reserve.value)
-		return 0;
-	if (!client->datagram.cursize || client->datagram.overflowed)
-		return 0;
-	return client->datagram.cursize;
-}
-
 static qboolean SV_WritePrivateDatagramToMessage (client_t *client, sizebuf_t *msg)
 {
 	if (!client->datagram.cursize)
@@ -3007,18 +2908,14 @@ static qboolean SVFTE_SendClientDatagram (client_t *client, int maxsize)
 	size_t		prev_resume;
 	int			prev_datagram_offset;
 	int			prev_private_datagram_size;
-	int			packet_budget;
 	int			private_datagram_initial;
 	int			private_datagram_written;
 	int			global_datagram_written;
-	int			global_particle_budget;
 	int			global_datagram_sound_bytes;
 	int			global_datagram_temp_bytes;
 	int			global_datagram_particle_bytes;
 	int			global_datagram_dpparticle_bytes;
 	int			global_datagram_other_bytes;
-	int			datagram_reserve;
-	int			max_datagram_reserve;
 	double		update_gap;
 	size_t		prev_csqc_pending;
 	size_t		csqc_pending;
@@ -3029,7 +2926,6 @@ static qboolean SVFTE_SendClientDatagram (client_t *client, int maxsize)
 	struct deltaframe_s	*replacement_frame;
 	int			replacement_sequence;
 	qboolean	made_progress;
-	qboolean	deferred_by_budget;
 	qboolean	wrote_update_header;
 	qboolean	header_counts_as_progress;
 	static double	last_gap_log[MAX_SCOREBOARD];
@@ -3079,22 +2975,15 @@ static qboolean SVFTE_SendClientDatagram (client_t *client, int maxsize)
 	private_datagram_initial = client->datagram.cursize;
 	private_datagram_written = 0;
 	global_datagram_written = 0;
-	global_particle_budget = sv_replacement_particle_maxbytes.value > 0 ?
-		(int)sv_replacement_particle_maxbytes.value : 0x7fffffff;
-	max_datagram_reserve = 0;
 	SV_DatagramDebugStats (&global_datagram_sound_bytes,
 		&global_datagram_temp_bytes,
 		&global_datagram_particle_bytes,
 		&global_datagram_dpparticle_bytes,
 		&global_datagram_other_bytes);
 	client->net_replacement_diag_hardurgent = 0;
-	client->net_replacement_diag_radiusurgent = 0;
 	client->net_replacement_diag_nonurgent = 0;
 	client->net_replacement_diag_softdefer = 0;
 	client->net_replacement_diag_harddefer = 0;
-	packet_budget = (sv_replacement_maxpackets.value > 0) ?
-		CLAMP (1, (int)sv_replacement_maxpackets.value, 32) : 128;
-	deferred_by_budget = false;
 
 	do
 	{
@@ -3141,15 +3030,8 @@ static qboolean SVFTE_SendClientDatagram (client_t *client, int maxsize)
 		 */
 		if (wrote_update_header)
 		{
-			datagram_reserve =
-				SVFTE_PrivateDatagramReserveBytes (client) +
-				SVFTE_DatagramReserveBytes (datagram_offset,
-					global_particle_budget);
-			if (datagram_reserve > max_datagram_reserve)
-				max_datagram_reserve = datagram_reserve;
 			SVFTE_WriteEntitiesToClient (client, &msg,
-				replacement_frame, replacement_sequence,
-				datagram_reserve);
+				replacement_frame, replacement_sequence);
 			SVFTE_WriteCSQCEntitiesToClient (client, &msg,
 				replacement_frame);
 			entity_pending = SVFTE_CountPendingEntityDeltasFrom (client, client->snapshotresume);
@@ -3165,7 +3047,7 @@ static qboolean SVFTE_SendClientDatagram (client_t *client, int maxsize)
 		if (!msg.overflowed && datagram_offset < sv.datagram.cursize)
 		{
 			global_datagram_written += SVFTE_WriteDatagramToMessage (&msg,
-				&datagram_offset, &global_particle_budget);
+				&datagram_offset, NULL);
 		}
 		if (msg.overflowed)
 		{
@@ -3200,15 +3082,6 @@ static qboolean SVFTE_SendClientDatagram (client_t *client, int maxsize)
 				msg.maxsize);
 			break;
 		}
-		if (packet_count >= packet_budget &&
-			(entity_pending ||
-			 csqc_pending ||
-			 datagram_offset < sv.datagram.cursize ||
-			 client->datagram.cursize))
-		{
-			deferred_by_budget = true;
-			break;
-		}
 		if (packet_count >= 128)
 		{
 			Con_Printf ("SVFTE_SendClientDatagram: too many replacement-delta packets\n");
@@ -3239,21 +3112,18 @@ static qboolean SVFTE_SendClientDatagram (client_t *client, int maxsize)
 		int sequence = SV_ReplacementLastSentSequence (client);
 		int ack = client->lastacksequence >= 0 ? client->lastacksequence : -1;
 		entity_pending_after = SVFTE_CountPendingEntityDeltas (client);
-		Con_Printf ("net_lagdebug: server replacement update to %s (%s): packets=%d bytes=%d max=%d ents=%zu/%zu pending=%zu->%zu svdg=%d/%d priv=%d/%d reserve=%d dgtype=%d/%d/%d/%d/%d maxpacket=%d seq=%d ack=%d acklag=%d deferred=%d prio=%d/%d/%d limit=%d/%d\n",
+		Con_Printf ("net_lagdebug: server replacement update to %s (%s): packets=%d bytes=%d max=%d ents=%zu/%zu pending=%zu->%zu svdg=%d/%d priv=%d/%d dgtype=%d/%d/%d/%d/%d maxpacket=%d seq=%d ack=%d acklag=%d prio=%d/%d limit=%d/%d\n",
 			client->name, NET_QSocketGetAddressString(client->netconnection),
 			packet_count, total_bytes, max_packet_bytes,
 			(size_t)client->snapshotresume, client->numpendingentities,
 			entity_pending_before, entity_pending_after,
 			global_datagram_written, sv.datagram.cursize,
 			private_datagram_written, private_datagram_initial,
-			max_datagram_reserve,
 			global_datagram_sound_bytes, global_datagram_temp_bytes,
 			global_datagram_particle_bytes, global_datagram_dpparticle_bytes,
 			global_datagram_other_bytes, maxsize,
 			sequence, ack, SV_ReplacementAckLag (client, sequence),
-			deferred_by_budget,
 			client->net_replacement_diag_hardurgent,
-			client->net_replacement_diag_radiusurgent,
 			client->net_replacement_diag_nonurgent,
 			client->net_replacement_diag_softdefer,
 			client->net_replacement_diag_harddefer);
