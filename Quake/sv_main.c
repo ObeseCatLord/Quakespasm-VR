@@ -245,9 +245,12 @@ static void SV_NetDiag_f (void)
 	Con_Printf ("client netdiag: snapshots seq=%d packets=%d drops=%d acks_sent=%d pred=%d movetype=%d flags=%d vel=(%.1f %.1f %.1f)\n",
 		cl.net_snapshot_sequence, cl.net_snapshot_packets,
 		cl.net_snapshot_drops, cl.net_snapshot_acks_sent,
-		cl.predstate_valid, cl.predstate_movetype, cl.predstate_flags,
-		cl.predstate_velocity[0], cl.predstate_velocity[1],
-		cl.predstate_velocity[2]);
+		cl.viewentity > 0 && cl.entities[cl.viewentity].netstate.pmovetype != 0,
+		cl.viewentity > 0 ? cl.entities[cl.viewentity].netstate.pmovetype : 0,
+		cl.viewentity > 0 ? cl.entities[cl.viewentity].netstate.pmovetype & 0xc0 : 0,
+		cl.viewentity > 0 ? cl.entities[cl.viewentity].netstate.velocity[0] * (1.0f / 8.0f) : 0,
+		cl.viewentity > 0 ? cl.entities[cl.viewentity].netstate.velocity[1] * (1.0f / 8.0f) : 0,
+		cl.viewentity > 0 ? cl.entities[cl.viewentity].netstate.velocity[2] * (1.0f / 8.0f) : 0);
 	Con_Printf ("client netdiag: snapshot parts dup=%d jumps=%d incomplete=%d reassembled=%d overruns=%d\n",
 		cl.net_snapshot_duplicate_parts, cl.net_snapshot_part_jumps,
 		cl.net_snapshot_incomplete, cl.net_snapshot_reassembled,
@@ -259,10 +262,9 @@ static void SV_NetDiag_f (void)
 		cl.net_snapshot_partial_mask[2], cl.net_snapshot_partial_mask[3],
 		cl.net_snapshot_part_resend_acks_sent,
 		cl.net_snapshot_out_of_order_parts);
-	Con_Printf ("client netdiag: prediction errors=%d last=%.2f max=%.2f smooth_seq=%d smooth_left=%.3f\n",
+	Con_Printf ("client netdiag: prediction errors=%d last=%.2f max=%.2f\n",
 		cl.net_prediction_errors, cl.net_prediction_error_last,
-		cl.net_prediction_error_max, cl.prediction_error_sequence,
-		q_max (0.0, cl.prediction_error_time - realtime));
+		cl.net_prediction_error_max);
 
 	if (!sv.active)
 		return;
@@ -1841,7 +1843,7 @@ static void SVFTE_WriteEntitiesToClient (client_t *client, sizebuf_t *msg,
 
 	header_need = 1 + 4 + 4 + 2;
 	if (client->protocol_pext2 & PEXT2_PREDINFO)
-		header_need += 32;
+		header_need += 2;
 	if (msg->cursize + header_need > msg->maxsize)
 		return;
 
@@ -2714,54 +2716,7 @@ static void SV_WriteMoveAckToMessage(client_t *client, sizebuf_t *msg)
 
 static void SV_WriteMoveAckPayloadToMessage(client_t *client, sizebuf_t *msg)
 {
-	edict_t	*ent;
-	int	i;
-	int	flags;
-	int	ival;
-
 	MSG_WriteShort (msg, client->lastmovemessage & 0xffff);
-
-	ent = client->edict;
-	flags = 0;
-	if (ent && !ent->free && client->usingpmove)
-	{
-		flags |= PREDINFO_VALID;
-		if ((int)ent->v.flags & FL_ONGROUND)
-			flags |= PREDINFO_ONGROUND;
-		if ((int)ent->v.flags & FL_INWATER)
-			flags |= PREDINFO_INWATER;
-		if ((int)ent->v.flags & FL_WATERJUMP)
-			flags |= PREDINFO_WATERJUMP;
-		if ((int)ent->v.flags & FL_JUMPRELEASED)
-			flags |= PREDINFO_JUMPRELEASED;
-	}
-
-	MSG_WriteByte (msg, flags);
-	MSG_WriteByte (msg, (ent && client->usingpmove) ?
-		(int)ent->v.movetype : MOVETYPE_NONE);
-	MSG_WriteFloat (msg, qcvm->time);
-	for (i = 0; i < 3; i++)
-		MSG_WriteFloat (msg, (ent && client->usingpmove) ?
-			ent->v.origin[i] : 0);
-	for (i = 0; i < 3; i++)
-	{
-		ival = Q_rint (((ent && client->usingpmove) ?
-			ent->v.velocity[i] : 0) * 8.0f);
-		ival = CLAMP (-32768, ival, 32767);
-		MSG_WriteShort (msg, ival);
-	}
-	for (i = 0; i < 3; i++)
-	{
-		ival = Q_rint (ent ? ent->v.mins[i] : 0);
-		ival = CLAMP (-128, ival, 127);
-		MSG_WriteChar (msg, ival);
-	}
-	for (i = 0; i < 3; i++)
-	{
-		ival = Q_rint (ent ? ent->v.maxs[i] : 0);
-		ival = CLAMP (-128, ival, 127);
-		MSG_WriteChar (msg, ival);
-	}
 }
 
 static qboolean SV_SendIndependentMoveAck (client_t *client)

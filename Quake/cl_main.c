@@ -1253,17 +1253,7 @@ static void CL_ClearPredictionHistory (void)
 
 	for (i = 0; i < CL_MOVE_HISTORY; i++)
 		cl.predicted_move_sequence[i] = -1;
-	VectorClear (cl.prediction_error);
-	cl.prediction_error_time = 0;
-	cl.prediction_error_sequence = -1;
 	cl.net_prediction_error_last_sequence = -1;
-}
-
-static qboolean CL_HasFreshPredictionBase (void)
-{
-	return cl.predstate_valid && cl.predstate_has_origin &&
-		cl.predstate_sequence >= cl.ackedmovemessages &&
-		(cl.mtime[0] <= 0 || cl.predstate_time + 0.0001f >= cl.mtime[0]);
 }
 
 static void CL_CheckPredictionError (entity_t *ent)
@@ -1271,10 +1261,7 @@ static void CL_CheckPredictionError (entity_t *ent)
 	int		ack;
 	int		index;
 	float	err;
-	float	minerr;
-	float	maxerr;
 	vec3_t	delta;
-	vec3_t	server_origin;
 
 	if (cl.ackedmovemessages < 2)
 		return;
@@ -1286,70 +1273,28 @@ static void CL_CheckPredictionError (entity_t *ent)
 	if (cl.net_prediction_error_last_sequence == ack)
 		return;
 
-	if (CL_HasFreshPredictionBase () && cl.predstate_sequence == ack)
-	{
-		VectorCopy (cl.predstate_origin, server_origin);
-	}
-	else
-	{
-		VectorCopy (ent->msg_origins[0], server_origin);
-	}
-
-	VectorSubtract (cl.predicted_move_origin[index], server_origin, delta);
+	VectorSubtract (cl.predicted_move_origin[index], ent->msg_origins[0], delta);
 	err = VectorLength (delta);
 	cl.net_prediction_error_last_sequence = ack;
 	cl.net_prediction_error_last = err;
 	if (err > cl.net_prediction_error_max)
 		cl.net_prediction_error_max = err;
 
-	minerr = q_max (0.0f, cl_predict_smooth_min.value);
-	maxerr = q_max (minerr, cl_predict_smooth_max.value);
-	if (err < minerr)
+	if (err < 0.25f)
 		return;
 
 	cl.net_prediction_errors++;
 	if (net_lagdebug.value && cl_predict_error_log.value)
 		Con_Printf ("net_lagdebug: prediction error ack=%d err=%.2f server=(%.1f %.1f %.1f) predicted=(%.1f %.1f %.1f) vel=(%.1f %.1f %.1f)\n",
 			ack, err,
-			server_origin[0], server_origin[1], server_origin[2],
+			ent->msg_origins[0][0], ent->msg_origins[0][1],
+			ent->msg_origins[0][2],
 			cl.predicted_move_origin[index][0],
 			cl.predicted_move_origin[index][1],
 			cl.predicted_move_origin[index][2],
 			cl.predicted_move_velocity[index][0],
 			cl.predicted_move_velocity[index][1],
 			cl.predicted_move_velocity[index][2]);
-
-	if (!cl_predict_smooth.value || err > maxerr || cl_predict_smooth_time.value <= 0)
-	{
-		VectorClear (cl.prediction_error);
-		cl.prediction_error_time = 0;
-		cl.prediction_error_sequence = ack;
-		return;
-	}
-
-	VectorCopy (delta, cl.prediction_error);
-	cl.prediction_error_time = realtime + CLAMP (0.01f, cl_predict_smooth_time.value, 0.25f);
-	cl.prediction_error_sequence = ack;
-}
-
-static void CL_ApplyPredictionSmoothing (vec3_t origin)
-{
-	float	frac;
-	float	duration;
-	int		i;
-
-	if (!cl_predict_smooth.value || cl.prediction_error_time <= realtime)
-	{
-		VectorClear (cl.prediction_error);
-		cl.prediction_error_time = 0;
-		return;
-	}
-
-	duration = CLAMP (0.01f, cl_predict_smooth_time.value, 0.25f);
-	frac = (cl.prediction_error_time - realtime) / duration;
-	frac = CLAMP (0.0f, frac, 1.0f);
-	for (i = 0; i < 3; i++)
-		origin[i] += cl.prediction_error[i] * frac;
 }
 
 static qboolean CL_PredictPlayer (entity_t *ent)
@@ -1366,9 +1311,6 @@ static qboolean CL_PredictPlayer (entity_t *ent)
 	qboolean	predicted;
 	usercmd_t	pending;
 	vec3_t		bounds[2];
-	vec3_t		default_player_mins = {-16, -16, -24};
-	vec3_t		default_player_maxs = {16, 16, 32};
-	qboolean	use_predbase;
 	unsigned int	solidsize;
 
 	if (CL_LocalSingleplayerActive ())
@@ -1382,56 +1324,25 @@ static qboolean CL_PredictPlayer (entity_t *ent)
 		return false;
 	if (!(cl.protocol_pext2 & PEXT2_REPLACEMENTDELTAS))
 		return cl_predict_legacy.value ? CL_PredictPlayerLegacy (ent) : false;
-	if (!ent->netstate.pmovetype &&
-		(!cl.predstate_valid || cl.predstate_sequence < cl.ackedmovemessages))
+	if (!ent->netstate.pmovetype)
 		return false;
 
 	PMCL_SetMoveVars ();
 	memset (&pmove, 0, sizeof(pmove));
-
-	use_predbase = CL_HasFreshPredictionBase ();
-	if (use_predbase)
-	{
-		VectorCopy (cl.predstate_origin, pmove.origin);
-	}
-	else
-	{
-		VectorCopy (ent->msg_origins[0], pmove.origin);
-	}
+	VectorCopy (ent->msg_origins[0], pmove.origin);
 
 	solidsize = ent->netstate.solidsize;
 	if (solidsize && solidsize != ES_SOLID_BSP)
-	{
 		CL_PredictDecodeSolidSize (solidsize, pmove.player_mins, pmove.player_maxs);
-	}
-	else if (cl.predstate_valid)
-	{
-		VectorCopy (cl.predstate_mins, pmove.player_mins);
-		VectorCopy (cl.predstate_maxs, pmove.player_maxs);
-	}
-	else
-	{
-		VectorCopy (default_player_mins, pmove.player_mins);
-		VectorCopy (default_player_maxs, pmove.player_maxs);
-	}
 	for (i = 0; i < 3; i++)
 	{
-		pmove.velocity[i] = use_predbase ?
-			cl.predstate_velocity[i] : ent->netstate.velocity[i] * (1.0f / 8.0f);
+		pmove.velocity[i] = ent->netstate.velocity[i] * (1.0f / 8.0f);
 		bounds[0][i] = pmove.origin[i] + pmove.player_mins[i] - 256;
 		bounds[1][i] = pmove.origin[i] + pmove.player_maxs[i] + 256;
 	}
 	VectorClear (pmove.gravitydir);
 
-	raw_pmovetype = use_predbase ? cl.predstate_movetype : ent->netstate.pmovetype;
-	if (!raw_pmovetype && cl.predstate_valid)
-	{
-		raw_pmovetype = cl.predstate_movetype;
-		if (cl.predstate_flags & PREDINFO_ONGROUND)
-			raw_pmovetype |= 0x80;
-		if (!(cl.predstate_flags & PREDINFO_JUMPRELEASED))
-			raw_pmovetype |= 0x40;
-	}
+	raw_pmovetype = ent->netstate.pmovetype;
 	pmove.pm_type = CL_PredictPMoveType (raw_pmovetype);
 	if (pmove.pm_type == PM_NONE)
 		return false;
@@ -1485,10 +1396,9 @@ static qboolean CL_PredictPlayer (entity_t *ent)
 		predicted = true;
 	}
 
-	if (!predicted && !use_predbase)
+	if (!predicted)
 		return false;
 
-	CL_ApplyPredictionSmoothing (pmove.origin);
 	VectorCopy (pmove.origin, ent->origin);
 	VectorCopy (pmove.velocity, cl.velocity);
 	cl.onground = pmove.onground;
