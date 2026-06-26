@@ -124,7 +124,6 @@ qsocket_t *NET_NewQSocket (void)
 	sock->receiveSequence = 0;
 	sock->unreliableReceiveSequence = 0;
 	sock->receiveMessageLength = 0;
-	memset (sock->unreliableReorder, 0, sizeof(sock->unreliableReorder));
 
 	// Clear the NAT-straggler-detection memory. qsocket_t slots are recycled
 	// from net_freeSockets, so a fresh connection on a previously-used slot

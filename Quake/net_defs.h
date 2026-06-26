@@ -37,7 +37,6 @@ struct qsockaddr
 
 #define NET_HEADERSIZE		(2 * sizeof(unsigned int))
 #define NET_DATAGRAMSIZE	(MAX_DATAGRAM + NET_HEADERSIZE)
-#define NET_UNRELIABLE_REORDER	8
 
 // NetHeader flags
 #define NETFLAG_LENGTH_MASK	0x0000ffff
@@ -131,21 +130,6 @@ CCREP_RULE_INFO
 #define MOD_PROQUAKE		1
 #define PQF_IGNOREPORT		0x80	/* server uses the accept socket for game traffic */
 
-typedef struct
-{
-	qboolean	valid;
-	unsigned int	sequence;
-	unsigned int	wireLength;
-	double		queuedTime;
-	struct qsockaddr	addr;
-	struct
-	{
-		unsigned int	length;
-		unsigned int	sequence;
-		byte	data[MAX_DATAGRAM];
-	} packet;
-} qsocket_reorder_t;
-
 typedef struct qsocket_s
 {
 	struct qsocket_s	*next;
@@ -176,7 +160,6 @@ typedef struct qsocket_s
 	unsigned int	unreliableReceiveSequence;
 	int		receiveMessageLength;
 	byte		receiveMessage [NET_MAXMESSAGE];
-	qsocket_reorder_t unreliableReorder[NET_UNRELIABLE_REORDER];
 
 	struct qsockaddr	addr;
 	char		address[NET_NAMELEN];
