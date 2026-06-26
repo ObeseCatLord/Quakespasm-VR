@@ -334,6 +334,7 @@ extern cvar_t sv_coop_autosave_slots;
 extern cvar_t sv_coop_autosave_min_interval;
 extern cvar_t sv_coop_autosave_kill_interval;
 extern cvar_t sv_coop_predictmove;
+extern cvar_t sv_nqplayerphysics;
 extern cvar_t sv_triggerdebug;
 extern cvar_t sv_vr_jump_velocity;
 qboolean SV_IsVRClientSlot(int num);

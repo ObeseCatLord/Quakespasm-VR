@@ -59,7 +59,7 @@ cvar_t sv_coop_autosave = {"sv_coop_autosave", "1", CVAR_NOTIFY | CVAR_SERVERINF
 cvar_t sv_coop_autosave_slots = {"sv_coop_autosave_slots", "4", CVAR_NONE};
 cvar_t sv_coop_autosave_min_interval = {"sv_coop_autosave_min_interval", "30", CVAR_NONE};
 cvar_t sv_coop_autosave_kill_interval = {"sv_coop_autosave_kill_interval", "10", CVAR_NONE};
-cvar_t sv_coop_predictmove = {"sv_coop_predictmove", "1", CVAR_NOTIFY | CVAR_SERVERINFO};
+cvar_t sv_coop_predictmove = {"sv_coop_predictmove", "0", CVAR_NOTIFY | CVAR_SERVERINFO};
 cvar_t sv_triggerdebug = {"sv_triggerdebug", "0", CVAR_NONE};
 cvar_t sv_vr_jump_velocity = {"sv_vr_jump_velocity", "297", CVAR_NOTIFY | CVAR_SERVERINFO};
 cvar_t sv_skyroom_pvs = {"sv_skyroom_pvs", "1", CVAR_NONE};
@@ -299,6 +299,7 @@ void SV_Init (void)
 	extern	cvar_t	sv_accelerate;
 	extern	cvar_t	sv_idealpitchscale;
 	extern	cvar_t	sv_pmove_legacy_preserve_qc_velocity;
+	extern	cvar_t	sv_nqplayerphysics;
 	extern	cvar_t	sv_aim;
 	extern	cvar_t	sv_altnoclip; //johnfitz
 	extern	cvar_t	sv_gameplayfix_random;
@@ -317,6 +318,7 @@ void SV_Init (void)
 	Cvar_RegisterVariable (&sv_accelerate);
 	Cvar_RegisterVariable (&sv_idealpitchscale);
 	Cvar_RegisterVariable (&sv_pmove_legacy_preserve_qc_velocity);
+	Cvar_RegisterVariable (&sv_nqplayerphysics);
 	Cvar_RegisterVariable (&sv_aim);
 	Cvar_RegisterVariable (&sv_nostep);
 	Cvar_RegisterVariable (&sv_freezenonclients);
