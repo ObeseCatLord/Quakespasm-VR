@@ -234,8 +234,6 @@ static void SV_NetDiag_f (void)
 		cl.viewentity > 0 ? cl.entities[cl.viewentity].netstate.velocity[0] * (1.0f / 8.0f) : 0,
 		cl.viewentity > 0 ? cl.entities[cl.viewentity].netstate.velocity[1] * (1.0f / 8.0f) : 0,
 		cl.viewentity > 0 ? cl.entities[cl.viewentity].netstate.velocity[2] * (1.0f / 8.0f) : 0);
-	Con_Printf ("client netdiag: snapshot overruns=%d\n",
-		cl.net_snapshot_interpolation_overruns);
 	Con_Printf ("client netdiag: prediction errors=%d last=%.2f max=%.2f\n",
 		cl.net_prediction_errors, cl.net_prediction_error_last,
 		cl.net_prediction_error_max);

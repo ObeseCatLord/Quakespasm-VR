@@ -39,8 +39,8 @@ cvar_t	cl_nolerp = {"cl_nolerp","0",CVAR_NONE};
 cvar_t	cl_lerpdebug = {"cl_lerpdebug","0",CVAR_NONE};
 cvar_t	cl_lerpdebug_models = {"cl_lerpdebug_models","",CVAR_NONE};
 cvar_t	cl_beams_polygons = {"cl_beams_polygons","0",CVAR_ARCHIVE};
-// Optional bounded interpolation helpers. Defaults mirror QSS-M: no synthetic
-// snapshot delay and no normal extrapolation past the latest server snapshot.
+// Retired compatibility cvars. QSS-M-style client interpolation does not add
+// synthetic snapshot delay or extrapolate past the latest server snapshot.
 cvar_t	cl_extrapolate = {"cl_extrapolate","0",CVAR_ARCHIVE};
 cvar_t	cl_extrapolate_adaptive = {"cl_extrapolate_adaptive","0",CVAR_ARCHIVE};
 cvar_t	cl_extrapolate_adaptive_max = {"cl_extrapolate_adaptive_max","0.12",CVAR_ARCHIVE};
@@ -64,42 +64,6 @@ double CL_NetLagDebugFrameThreshold (void)
 	return threshold;
 }
 
-void CL_NetSnapshotStartSmoothing (void)
-{
-	double smooth_time;
-
-	if (!cl_extrapolate_adaptive.value && !cl_net_lerpbuffer_adaptive.value)
-		return;
-
-	smooth_time = 0;
-	if (cl_extrapolate_adaptive.value)
-		smooth_time = q_max (smooth_time, q_max (0.0, cl_extrapolate_adaptive_time.value));
-	if (cl_net_lerpbuffer_adaptive.value)
-		smooth_time = q_max (smooth_time, q_max (0.0, cl_net_lerpbuffer_adaptive_time.value));
-	if (smooth_time <= 0)
-		return;
-
-	if (cl.net_snapshot_smooth_until < realtime + smooth_time)
-		cl.net_snapshot_smooth_until = realtime + smooth_time;
-}
-
-static float CL_EffectiveNetLerpBuffer (void)
-{
-	float base, adaptive, blend;
-	double smooth_time, remaining;
-
-	base = CLAMP (0.0f, cl_net_lerpbuffer.value, 0.35f);
-	if (!cl_net_lerpbuffer_adaptive.value || realtime >= cl.net_snapshot_smooth_until)
-		return base;
-
-	adaptive = CLAMP (base, cl_net_lerpbuffer_adaptive_max.value, 0.35f);
-	smooth_time = q_max (0.001, cl_net_lerpbuffer_adaptive_time.value);
-	remaining = cl.net_snapshot_smooth_until - realtime;
-	blend = CLAMP (0.0f, (float)(remaining / smooth_time), 1.0f);
-
-	return base + (adaptive - base) * blend;
-}
-
 static qboolean CL_ValueMatchesOldDefault (float value, float old_default)
 {
 	const float epsilon = 0.0001f;
@@ -109,10 +73,14 @@ static qboolean CL_ValueMatchesOldDefault (float value, float old_default)
 
 static void CL_MigrateNetworkDefaults_f (void)
 {
-	if (CL_ValueMatchesOldDefault (cl_extrapolate.value, 0.02f))
+	if (cl_extrapolate.value != 0 || CL_ValueMatchesOldDefault (cl_extrapolate.value, 0.02f))
 		Cvar_SetQuick (&cl_extrapolate, "0");
-	if (CL_ValueMatchesOldDefault (cl_net_lerpbuffer.value, 0.10f))
+	if (cl_extrapolate_adaptive.value != 0)
+		Cvar_SetQuick (&cl_extrapolate_adaptive, "0");
+	if (cl_net_lerpbuffer.value != 0 || CL_ValueMatchesOldDefault (cl_net_lerpbuffer.value, 0.10f))
 		Cvar_SetQuick (&cl_net_lerpbuffer, "0");
+	if (cl_net_lerpbuffer_adaptive.value != 0)
+		Cvar_SetQuick (&cl_net_lerpbuffer_adaptive, "0");
 	if (CL_ValueMatchesOldDefault (cl_netfps.value, 72.0f))
 		Cvar_SetQuick (&cl_netfps, "0");
 	if (CL_ValueMatchesOldDefault (host_maxfps.value, 72.0f))
@@ -521,12 +489,10 @@ should be put at.
 */
 float	CL_LerpPoint (void)
 {
-	float	f, frac, lerptime, lerpbuffer;
+	float	f, frac;
 	static double	last_lerp_log;
 
 	f = cl.mtime[0] - cl.mtime[1];
-	lerpbuffer = CL_EffectiveNetLerpBuffer ();
-	lerptime = cl.time - lerpbuffer;
 
 	if (!f || cls.timedemo || (sv.active && !host_netinterval))
 	{
@@ -535,7 +501,7 @@ float	CL_LerpPoint (void)
 			cl.mtime[0] > 0 && realtime - last_lerp_log > 0.5)
 		{
 			Con_Printf ("net_lagdebug: client interpolation collapsed mtime=%.3f cl_time=%.3f lastmsg_age=%.3f\n",
-				cl.mtime[0], lerptime, realtime - cl.last_received_message);
+				cl.mtime[0], cl.time, realtime - cl.last_received_message);
 			last_lerp_log = realtime;
 		}
 		cl.time = cl.mtime[0];
@@ -548,64 +514,35 @@ float	CL_LerpPoint (void)
 			realtime - last_lerp_log > 0.5)
 		{
 			Con_Printf ("net_lagdebug: client snapshot gap mtime_delta=%.3f cl_time=%.3f lastmsg_age=%.3f\n",
-				f, lerptime, realtime - cl.last_received_message);
+				f, cl.time, realtime - cl.last_received_message);
 			last_lerp_log = realtime;
 		}
 		cl.mtime[1] = cl.mtime[0] - 0.1;
 		f = 0.1;
 	}
 
-	frac = (lerptime - cl.mtime[1]) / f;
+	frac = (cl.time - cl.mtime[1]) / f;
 
 	if (frac < 0)
 	{
 		if (frac < -0.01)
-			cl.time = cl.mtime[1] + lerpbuffer;
+			cl.time = cl.mtime[1];
 		frac = 0;
 	}
 	else if (frac > 1)
 	{
-		float maxextrap = cl_extrapolate.value;
-
-		if ((cl_extrapolate_adaptive.value || cl_net_lerpbuffer_adaptive.value) &&
-			(lerptime - cl.mtime[0] > CL_NetLagDebugFrameThreshold () ||
-			 realtime < cl.net_snapshot_smooth_until))
-		{
-			CL_NetSnapshotStartSmoothing ();
-			if (cl_extrapolate_adaptive.value && cl_extrapolate_adaptive_max.value > maxextrap)
-				maxextrap = cl_extrapolate_adaptive_max.value;
-		}
 		if (net_lagdebug.value && cls.state == ca_connected && cls.signon == SIGNONS &&
-			lerptime - cl.mtime[0] > CL_NetLagDebugFrameThreshold () &&
+			cl.time - cl.mtime[0] > CL_NetLagDebugFrameThreshold () &&
 			realtime - last_lerp_log > 0.5)
 		{
-			cl.net_snapshot_interpolation_overruns++;
-			Con_Printf ("net_lagdebug: client interpolation overrun over=%.3f frac=%.3f mtime_delta=%.3f maxextrap=%.3f lerpbuffer=%.3f lastmsg_age=%.3f\n",
-				lerptime - cl.mtime[0], frac, f, maxextrap, lerpbuffer,
+			Con_Printf ("net_lagdebug: client interpolation overrun over=%.3f frac=%.3f mtime_delta=%.3f lastmsg_age=%.3f\n",
+				cl.time - cl.mtime[0], frac, f,
 				realtime - cl.last_received_message);
 			last_lerp_log = realtime;
 		}
-		// Bounded linear extrapolation past mtime[0]: instead of freezing
-		// entities at the latest snapshot, allow up to cl_extrapolate
-		// seconds of forward projection using the last inter-snapshot delta.
-		// Eliminates the "freeze then snap" stutter when the render rate
-		// exceeds the server tick rate. A small cap keeps overshoot bounded
-		// when entities suddenly stop or change direction.
-		if (maxextrap > 0 && (lerptime - cl.mtime[0]) <= maxextrap)
-		{
-			float maxfrac = 1.0f + (maxextrap / f);
-			if (frac > maxfrac)
-			{
-				cl.time = cl.mtime[0] + maxextrap + lerpbuffer;
-				frac = maxfrac;
-			}
-		}
-		else
-		{
-			if (frac > 1.01)
-				cl.time = cl.mtime[0] + lerpbuffer;
-			frac = 1;
-		}
+		if (frac > 1.01)
+			cl.time = cl.mtime[0];
+		frac = 1;
 	}
 
 	//johnfitz -- better nolerp behavior
