@@ -1445,9 +1445,10 @@ static void CLFTE_ParseEntitiesUpdate (void)
 	float newtime;
 	int frame_sequence;
 
-	frame_sequence = MSG_ReadLong ();
+	frame_sequence = cls.netcon ? NET_QSocketGetSequenceIn (cls.netcon) : -1;
 	CLFTE_QueueAckFrame (frame_sequence);
-	if (cl.net_snapshot_have && frame_sequence > cl.net_snapshot_sequence + 1)
+	if (frame_sequence >= 0 && cl.net_snapshot_have &&
+		frame_sequence > cl.net_snapshot_sequence + 1)
 	{
 		cl.net_snapshot_drops += frame_sequence - cl.net_snapshot_sequence - 1;
 		if (net_lagdebug.value)
@@ -1456,7 +1457,8 @@ static void CLFTE_ParseEntitiesUpdate (void)
 				frame_sequence - cl.net_snapshot_sequence - 1);
 	}
 	cl.net_snapshot_have = true;
-	cl.net_snapshot_sequence = frame_sequence;
+	if (frame_sequence >= 0)
+		cl.net_snapshot_sequence = frame_sequence;
 	cl.net_snapshot_packets++;
 
 	if (!CL_ParseMoveAckPayload ())
