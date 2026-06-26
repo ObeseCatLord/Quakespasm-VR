@@ -136,7 +136,6 @@ typedef struct
 	int		signon;			// 0 to SIGNONS
 	struct qsocket_s	*netcon;
 	sizebuf_t	message;		// writing buffer to send to server
-	qboolean	moveext_allowed;		// server negotiated sequenced/redundant movement
 
 } client_static_t;
 
