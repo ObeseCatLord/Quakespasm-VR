@@ -226,6 +226,7 @@ typedef struct client_s
 	}				*frames;
 	size_t			numframes;
 	int				lastacksequence;
+	qboolean		knowntoqc;			// PutClientInServer was called
 	qboolean		csqcactive;
 	qboolean		usingpmove;
 

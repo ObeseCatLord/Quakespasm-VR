@@ -662,6 +662,7 @@ void SV_SendServerinfo (client_t *client)
 	char			message[2048];
 	int				i; //johnfitz
 
+	client->knowntoqc = false;
 	client->protocol_pext1 = 0;
 	client->protocol_pext2 = PEXT2_REQUIRED_LATEST;
 	client->pextknown = true;
