@@ -180,7 +180,8 @@ typedef struct
 	int			net_snapshot_interpolation_overruns;
 	double		net_snapshot_smooth_until;
 	qboolean	net_snapshot_have;
-	int			ackframes[8];
+#define	CL_ACKFRAME_HISTORY	128
+	int			ackframes[CL_ACKFRAME_HISTORY];
 	unsigned int	ackframes_count;
 	qboolean	requestresend;
 	double		net_last_diag_time;
