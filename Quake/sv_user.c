@@ -50,6 +50,7 @@ static void SV_UpdateClientPMoveMode(client_t *client);
 
 cvar_t sv_idealpitchscale = {"sv_idealpitchscale", "0.8", CVAR_NONE};
 cvar_t sv_altnoclip = {"sv_altnoclip", "1", CVAR_ARCHIVE}; // johnfitz
+cvar_t sv_nqplayerphysics = {"sv_nqplayerphysics", "1", CVAR_ARCHIVE | CVAR_SERVERINFO};
 cvar_t sv_inputtimeout = {"sv_inputtimeout", "0", CVAR_NONE};
 cvar_t sv_pmove_legacy_preserve_qc_velocity = {
     "sv_pmove_legacy_preserve_qc_velocity", "1", CVAR_NONE};
@@ -1080,9 +1081,10 @@ static void SV_UpdateClientPMoveMode(client_t *client) {
 
   local_singleplayer = sv.active && svs.maxclients <= 1;
 
-  usingpmove = !local_singleplayer && client->spawned;
-  if (usingpmove && coop.value && !sv_coop_predictmove.value)
-    usingpmove = false;
+  usingpmove = !local_singleplayer && client->spawned &&
+      (qcvm->extfuncs.SV_RunClientCommand ||
+       (!sv_nqplayerphysics.value &&
+        (*sv_nqplayerphysics.string || deathmatch.value)));
 
   if (usingpmove != client->usingpmove && net_lagdebug.value)
     Con_Printf("net_lagdebug: server PMove %s for %s mode=%s sv_runclientcommand=%d\n",
