@@ -1569,7 +1569,6 @@ void CL_Init (void)
 	Cvar_RegisterVariable (&cl_sidespeed);
 	Cvar_RegisterVariable (&cl_desktop_vanilla_run);
 	Cvar_RegisterVariable (&cl_predictmove);
-	Cvar_RegisterVariable (&cl_ack_redundancy);
 	Cvar_RegisterVariable (&cl_nopred);
 	Cvar_RegisterVariable (&cl_predict_error_log);
 	Cvar_RegisterVariable (&cl_movespeedkey);

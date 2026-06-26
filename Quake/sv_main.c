@@ -40,7 +40,6 @@ cvar_t sv_replacement_softmaxbytes = {"sv_replacement_softmaxbytes", "0", CVAR_N
 cvar_t sv_replacement_datagram_reserve = {"sv_replacement_datagram_reserve", "0", CVAR_NONE};
 cvar_t sv_replacement_priority_radius = {"sv_replacement_priority_radius", "0", CVAR_NONE};
 cvar_t sv_replacement_particle_maxbytes = {"sv_replacement_particle_maxbytes", "0", CVAR_NONE};
-cvar_t sv_moveack_independent = {"sv_moveack_independent", "0", CVAR_NONE};
 cvar_t sv_netdiag_interval = {"sv_netdiag_interval", "5", CVAR_NONE};
 // When SV_WriteEntitiesToClient overflows the per-client datagram, the entity
 // that gets evicted is whichever the loop reached last. With sv_netsort=1
@@ -339,7 +338,6 @@ void SV_Init (void)
 	Cvar_RegisterVariable (&sv_replacement_datagram_reserve);
 	Cvar_RegisterVariable (&sv_replacement_priority_radius);
 	Cvar_RegisterVariable (&sv_replacement_particle_maxbytes);
-	Cvar_RegisterVariable (&sv_moveack_independent);
 	Cvar_RegisterVariable (&sv_netdiag_interval);
 	Cvar_RegisterVariable (&sv_coop_weapon_targetfix);
 	Cvar_RegisterVariable (&sv_coop_pickup_targetlog);
@@ -2656,46 +2654,9 @@ void SV_WriteClientdataToMessage (edict_t *ent, sizebuf_t *msg)
 SV_SendClientDatagram
 =======================
 */
-static void SV_WriteMoveAckToMessage(client_t *client, sizebuf_t *msg)
-{
-	MSG_WriteByte (msg, svc_moveack);
-	SV_WriteMoveAckPayloadToMessage (client, msg);
-}
-
 static void SV_WriteMoveAckPayloadToMessage(client_t *client, sizebuf_t *msg)
 {
 	MSG_WriteShort (msg, client->lastmovemessage & 0xffff);
-}
-
-static qboolean SV_SendIndependentMoveAck (client_t *client)
-{
-	byte	buf[64];
-	sizebuf_t	msg;
-
-	if (!sv_moveack_independent.value)
-		return true;
-	if (!client->active || !client->spawned || !client->netconnection)
-		return true;
-	if (!client->usingpmove)
-		return true;
-	if (client->lastmovemessage < 0)
-		return true;
-
-	msg.data = buf;
-	msg.maxsize = sizeof(buf);
-	msg.cursize = 0;
-	msg.allowoverflow = false;
-	msg.overflowed = false;
-
-	SV_WriteMoveAckToMessage (client, &msg);
-	if (NET_SendUnreliableMessage (client->netconnection, &msg) == -1)
-	{
-		SV_DropClient (true);
-		return false;
-	}
-
-	client->net_snapshot_packets_sent++;
-	return true;
 }
 
 static void SV_MaybePrintSnapshotSummary (client_t *client, int client_index)
@@ -3463,8 +3424,6 @@ void SV_SendClientMessages (void)
 
 		if (host_client->spawned)
 		{
-			if (!SV_SendIndependentMoveAck (host_client))
-				continue;
 			if (!SV_SendClientDatagram (host_client))
 				continue;
 		}
