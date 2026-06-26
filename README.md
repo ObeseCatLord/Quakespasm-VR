@@ -271,7 +271,7 @@ QuakeSpasm cvar.
 | `net_lagdebug_frame_threshold` | `0.05` | Diagnostics | Frame-gap threshold for lag logs. |
 | `net_lagdebug_threshold` | `0.25` | Diagnostics | Network-gap threshold for lag logs. |
 | `net_reorder_timeout` | `0` | Networking | Timeout for unreliable packet reorder buffering. |
-| `net_reorder_window` | `2` | Networking | Reorder window for packet recovery. |
+| `net_reorder_window` | `0` | Networking | Optional unreliable packet reorder window; default off to match QSS-M immediate packet handling. |
 | `net_sameip_stale_timeout` | `3.0` | Networking | Stale timeout for same-IP virtual sockets. |
 | `net_singlesocket` | `1` | Networking | Uses one UDP accept socket with virtual client sockets. |
 | `pm_airstep` | `""` | PMove | PMove air-step compatibility setting. |

@@ -54,7 +54,7 @@ static int myDriverLevel;
 cvar_t net_lagdebug = {"net_lagdebug", "0", CVAR_NONE};
 cvar_t net_lagdebug_threshold = {"net_lagdebug_threshold", "0.25", CVAR_NONE};
 cvar_t net_lagdebug_frame_threshold = {"net_lagdebug_frame_threshold", "0.05", CVAR_NONE};
-static cvar_t net_reorder_window = {"net_reorder_window", "2", CVAR_NONE};
+static cvar_t net_reorder_window = {"net_reorder_window", "0", CVAR_NONE};
 static cvar_t net_reorder_timeout = {"net_reorder_timeout", "0", CVAR_NONE};
 static cvar_t net_sameip_stale_timeout = {"net_sameip_stale_timeout", "3.0", CVAR_NONE};
 static cvar_t net_singlesocket = {"net_singlesocket", "1", CVAR_NONE};
