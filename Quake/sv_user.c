@@ -51,10 +51,8 @@ static void SV_UpdateClientPMoveMode(client_t *client);
 cvar_t sv_idealpitchscale = {"sv_idealpitchscale", "0.8", CVAR_NONE};
 cvar_t sv_altnoclip = {"sv_altnoclip", "1", CVAR_ARCHIVE}; // johnfitz
 cvar_t sv_inputtimeout = {"sv_inputtimeout", "0", CVAR_NONE};
-cvar_t sv_nqplayerphysics = {"sv_nqplayerphysics", "0", CVAR_NONE};
 cvar_t sv_pmove_legacy_preserve_qc_velocity = {
     "sv_pmove_legacy_preserve_qc_velocity", "1", CVAR_NONE};
-cvar_t sv_move_timeclamp = {"sv_move_timeclamp", "1", CVAR_NONE};
 
 static float SV_VRJumpScale(void) {
   if (host_client && host_client->is_vr_client &&
@@ -619,7 +617,7 @@ static void SV_NormalizeAcceptedUsercmd(client_t *client, usercmd_t *acceptedcmd
   double seconds;
 
   fallback_seconds = CLAMP(0.001f, host_frametime, 0.1f);
-  if (!sv_move_timeclamp.value || acceptedcmd->servertime <= 0)
+  if (acceptedcmd->servertime <= 0)
   {
     acceptedcmd->seconds = fallback_seconds;
     return;

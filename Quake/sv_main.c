@@ -305,14 +305,12 @@ void SV_Init (void)
 	extern	cvar_t	sv_maxspeed;
 	extern	cvar_t	sv_accelerate;
 	extern	cvar_t	sv_idealpitchscale;
-	extern	cvar_t	sv_nqplayerphysics;
 	extern	cvar_t	sv_pmove_legacy_preserve_qc_velocity;
 	extern	cvar_t	sv_aim;
 	extern	cvar_t	sv_altnoclip; //johnfitz
 	extern	cvar_t	sv_gameplayfix_random;
 	extern	cvar_t	sv_gameplayfix_elevators;
 	extern	cvar_t	sv_inputtimeout;
-	extern	cvar_t	sv_move_timeclamp;
 
 	Cvar_RegisterVariable (&sv_maxvelocity);
 	Cvar_RegisterVariable (&sv_gravity);
@@ -325,7 +323,6 @@ void SV_Init (void)
 	Cvar_SetCallback (&sv_maxspeed, Host_Callback_Notify);
 	Cvar_RegisterVariable (&sv_accelerate);
 	Cvar_RegisterVariable (&sv_idealpitchscale);
-	Cvar_RegisterVariable (&sv_nqplayerphysics);
 	Cvar_RegisterVariable (&sv_pmove_legacy_preserve_qc_velocity);
 	Cvar_RegisterVariable (&sv_aim);
 	Cvar_RegisterVariable (&sv_nostep);
@@ -335,7 +332,6 @@ void SV_Init (void)
 	Cvar_RegisterVariable (&sv_gameplayfix_elevators);
 	Cvar_RegisterVariable (&sv_gameplayfix_random);
 	Cvar_RegisterVariable (&sv_inputtimeout);
-	Cvar_RegisterVariable (&sv_move_timeclamp);
 	Cvar_RegisterVariable (&sv_maxpacketsize);
 	Cvar_RegisterVariable (&sv_replacement_maxpackets);
 	Cvar_RegisterVariable (&sv_replacement_pacing);
