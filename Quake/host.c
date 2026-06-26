@@ -69,7 +69,7 @@ cvar_t	cl_netfps = {"cl_netfps", "0", CVAR_NONE};	// retired alias; QSS-M-style 
 cvar_t	max_edicts = {"max_edicts", "8192", CVAR_NONE}; //johnfitz //ericw -- changed from 2048 to 8192, removed CVAR_ARCHIVE
 cvar_t	cl_nocsqc = {"cl_nocsqc", "0", CVAR_NONE};
 
-cvar_t	sys_ticrate = {"sys_ticrate","0.05",CVAR_NONE}; // dedicated server
+cvar_t	sys_ticrate = {"sys_ticrate","0.0138889",CVAR_NONE}; // dedicated server
 cvar_t	serverprofile = {"serverprofile","0",CVAR_NONE};
 
 cvar_t	fraglimit = {"fraglimit","0",CVAR_NOTIFY|CVAR_SERVERINFO};
@@ -117,6 +117,16 @@ static qboolean Host_ValueMatchesOldDefault (float value, float old_default)
 	const float epsilon = 0.0001f;
 
 	return value > old_default - epsilon && value < old_default + epsilon;
+}
+
+static void Host_MigrateNetworkDefaults_f (void)
+{
+	if (Host_ValueMatchesOldDefault (sys_ticrate.value, 0.05f))
+		Cvar_SetQuick (&sys_ticrate, "0.0138889");
+	if (Host_ValueMatchesOldDefault (cl_netfps.value, 72.0f))
+		Cvar_SetQuick (&cl_netfps, "0");
+	if (Host_ValueMatchesOldDefault (host_maxfps.value, 72.0f))
+		Cvar_SetQuick (&host_maxfps, "250");
 }
 
 /*
@@ -347,6 +357,7 @@ Host_InitLocal
 void Host_InitLocal (void)
 {
 	Cmd_AddCommand ("version", Host_Version_f);
+	Cmd_AddCommand ("host_migrate_network_defaults", Host_MigrateNetworkDefaults_f);
 
 	Host_InitCommands ();
 
@@ -1293,6 +1304,7 @@ void Host_Init (void)
 		// note: two leading newlines because the command buffer swallows one of them.
 		Cbuf_AddText ("\n\nvid_unlock\n");
 		Cmd_QueuePostConfig ();
+		Cbuf_AddText ("host_migrate_network_defaults\n");
 		Cbuf_AddText ("cl_migrate_network_defaults\n");
 	}
 
@@ -1301,6 +1313,7 @@ void Host_Init (void)
 		Cbuf_AddText ("exec autoexec.cfg\n");
 		Cbuf_AddText ("stuffcmds\n");
 		Cmd_QueuePostConfig ();
+		Cbuf_AddText ("host_migrate_network_defaults\n");
 		Cbuf_Execute ();
 		if (!sv.active)
 			Cbuf_AddText ("map start\n");
