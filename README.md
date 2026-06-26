@@ -243,18 +243,18 @@ QuakeSpasm cvar.
 | `cl_confirmquit` | `0` | UI | Adds an optional quit confirmation. |
 | `cl_coop_nametags` | `1` | Co-op | Draws co-op player nametags. |
 | `cl_desktop_vanilla_run` | `1` | Input | Keeps faster vanilla-style movement behavior for desktop and VR defaults. |
-| `cl_extrapolate` | `0` | Networking | Optional normal entity extrapolation window; defaults to QSS-M-style clamping. |
-| `cl_extrapolate_adaptive` | `0` | Networking | Temporarily increases extrapolation after detected gaps. |
-| `cl_extrapolate_adaptive_max` | `0.12` | Networking | Maximum adaptive extrapolation window. |
-| `cl_extrapolate_adaptive_time` | `0.75` | Networking | Adaptive extrapolation decay time. |
+| `cl_extrapolate` | `0` | Networking | Retired compatibility cvar; QSS-M-style client timing clamps at server snapshots. |
+| `cl_extrapolate_adaptive` | `0` | Networking | Retired compatibility cvar; adaptive extrapolation is not used. |
+| `cl_extrapolate_adaptive_max` | `0.12` | Networking | Retired compatibility cvar retained for old configs. |
+| `cl_extrapolate_adaptive_time` | `0.75` | Networking | Retired compatibility cvar retained for old configs. |
 | `cl_lerpdebug` | `0` | Diagnostics | Logs model/entity interpolation reset causes. |
 | `cl_lerpdebug_models` | `""` | Diagnostics | Comma-separated model filter for `cl_lerpdebug`. |
 | `cl_mousemenu` | `1` | UI | Enables mouse menu interaction. |
 | `cl_mwheelpitch` | `5` | Input | Mouse-wheel pitch tuning. |
-| `cl_net_lerpbuffer` | `0` | Networking | Optional interpolation buffer for networked snapshots; defaults to QSS-M-style raw timing. |
-| `cl_net_lerpbuffer_adaptive` | `0` | Networking | Temporarily increases snapshot lerp buffer after gaps. |
-| `cl_net_lerpbuffer_adaptive_max` | `0.30` | Networking | Maximum adaptive lerp buffer. |
-| `cl_net_lerpbuffer_adaptive_time` | `0.75` | Networking | Adaptive lerp buffer decay time. |
+| `cl_net_lerpbuffer` | `0` | Networking | Retired compatibility cvar; QSS-M-style client timing uses raw server snapshot times. |
+| `cl_net_lerpbuffer_adaptive` | `0` | Networking | Retired compatibility cvar; adaptive snapshot buffering is not used. |
+| `cl_net_lerpbuffer_adaptive_max` | `0.30` | Networking | Retired compatibility cvar retained for old configs. |
+| `cl_net_lerpbuffer_adaptive_time` | `0.75` | Networking | Retired compatibility cvar retained for old configs. |
 | `cl_netfps` | `0` | Networking | Retired no-op retained for old configs; QSS-M-style pacing is controlled by `host_maxfps`. |
 | `cl_netport` | `0` | Networking | Requested local UDP client port; `0` lets the OS choose. |
 | `cl_nocsqc` | `0` | CSQC | Disables client-side QC loading when set. |
