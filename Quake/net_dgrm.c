@@ -1114,6 +1114,7 @@ void Datagram_GetAnyMessages (void (*callback)(qsocket_t *sock))
 	qsocket_t		*sock;
 	qsocket_t		*next;
 	sys_socket_t		acceptsock;
+	sys_socket_t		prunesock;
 	struct qsockaddr	readaddr;
 	unsigned int		queuedLength;
 	int			readLength;
@@ -1124,6 +1125,8 @@ void Datagram_GetAnyMessages (void (*callback)(qsocket_t *sock))
 	{
 		if (!net_landrivers[net_landriverlevel].initialized)
 			continue;
+
+		prunesock = INVALID_SOCKET;
 
 		for (sock = net_activeSockets; sock; sock = next)
 		{
@@ -1144,6 +1147,7 @@ void Datagram_GetAnyMessages (void (*callback)(qsocket_t *sock))
 
 		while ((acceptsock = dfunc.CheckNewConnections()) != INVALID_SOCKET)
 		{
+			prunesock = acceptsock;
 			readLength = dfunc.Read(acceptsock, (byte *)&packetBuffer, NET_DATAGRAMSIZE, &readaddr);
 			if (readLength == 0)
 				break;
@@ -1186,7 +1190,8 @@ void Datagram_GetAnyMessages (void (*callback)(qsocket_t *sock))
 			Datagram_ServerMessageResult(sock, ret, callback);
 		}
 
-		Datagram_PruneStaleSameIpSockets(acceptsock);
+		if (prunesock != INVALID_SOCKET)
+			Datagram_PruneStaleSameIpSockets(prunesock);
 
 		for (sock = net_activeSockets; sock; sock = next)
 		{
