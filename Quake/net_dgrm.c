@@ -108,11 +108,6 @@ extern char m_return_reason[32];
 
 static int Datagram_ProcessPacket (qsocket_t *sock, struct qsockaddr *readaddr, unsigned int wireLength);
 
-static qboolean Datagram_IsSnapshotPayload (unsigned int payloadLength)
-{
-	return payloadLength > 0 && packetBuffer.data[0] == svc_snapshot;
-}
-
 static void Datagram_ClearReorderedUnreliable (qsocket_t *sock);
 
 static char *StrAddr (struct qsockaddr *addr)
@@ -844,7 +839,6 @@ static int Datagram_ProcessPacket (qsocket_t *sock, struct qsockaddr *readaddr, 
 	unsigned int	sequence;
 	unsigned int	count;
 	qboolean		pendingRemap;
-	qboolean		staleSnapshot;
 
 	{
 		pendingRemap = false;
@@ -926,18 +920,10 @@ static int Datagram_ProcessPacket (qsocket_t *sock, struct qsockaddr *readaddr, 
 
 		if (flags & NETFLAG_UNRELIABLE)
 		{
-			staleSnapshot = false;
 			if (sequence < sock->unreliableReceiveSequence)
 			{
-				if (!Datagram_IsSnapshotPayload(length - NET_HEADERSIZE))
-				{
-					Con_DPrintf("Got a stale datagram\n");
-					return 0;
-				}
-				staleSnapshot = true;
-				if (net_lagdebug.value)
-					Con_DPrintf("net_lagdebug: passing stale snapshot datagram from %s seq=%u expected=%u\n",
-						sock->address, sequence, sock->unreliableReceiveSequence);
+				Con_DPrintf("Got a stale datagram\n");
+				return 0;
 			}
 
 			// Valid unreliable - safe to commit the NAT remap now.
@@ -954,7 +940,7 @@ static int Datagram_ProcessPacket (qsocket_t *sock, struct qsockaddr *readaddr, 
 				sock->addr = *readaddr;
 			}
 
-			if (!staleSnapshot && !net_reorder_force_drop &&
+			if (!net_reorder_force_drop &&
 				sequence > sock->unreliableReceiveSequence &&
 				Datagram_QueueReorderedUnreliable (sock, readaddr, sequence, wireLength))
 			{
@@ -964,7 +950,7 @@ static int Datagram_ProcessPacket (qsocket_t *sock, struct qsockaddr *readaddr, 
 				return 0;
 			}
 
-			if (!staleSnapshot && sequence != sock->unreliableReceiveSequence)
+			if (sequence != sock->unreliableReceiveSequence)
 			{
 				count = sequence - sock->unreliableReceiveSequence;
 				droppedDatagrams += count;
@@ -973,8 +959,7 @@ static int Datagram_ProcessPacket (qsocket_t *sock, struct qsockaddr *readaddr, 
 					Con_Printf("net_lagdebug: dropped %u unreliable datagram(s) from %s seq=%u expected=%u\n",
 						count, sock->address, sequence, sock->unreliableReceiveSequence);
 			}
-			if (!staleSnapshot)
-				sock->unreliableReceiveSequence = sequence + 1;
+			sock->unreliableReceiveSequence = sequence + 1;
 
 			length -= NET_HEADERSIZE;
 			if (length > (unsigned int)net_message.maxsize)
