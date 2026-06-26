@@ -2414,6 +2414,7 @@ static void COM_Game_f (void)
 		Cbuf_AddText ("exec quake.rc\n");
 		Cbuf_AddText ("vid_unlock\n");
 		Cmd_QueuePostConfigAfterGameChange ();
+		Cbuf_AddText ("cl_migrate_network_defaults\n");
 
 		if (vr_enabled.value)
 		{
