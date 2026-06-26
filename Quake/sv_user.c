@@ -483,6 +483,17 @@ void SV_ClientThink(void) {
 
   DropPunchAngle();
 
+  if (host_client->usingpmove) {
+    if (!sv_player->v.fixangle) {
+      VectorAdd(sv_player->v.v_angle, sv_player->v.punchangle, v_angle);
+      sv_player->v.angles[ROLL] =
+          V_CalcRoll(sv_player->v.angles, sv_player->v.velocity) * 4;
+      sv_player->v.angles[PITCH] = -v_angle[PITCH] / 3;
+      sv_player->v.angles[YAW] = v_angle[YAW];
+    }
+    return;
+  }
+
   //
   // if dead, behave differently
   //
@@ -1036,7 +1047,8 @@ static qboolean SV_ParseClientMessage(void) {
 ===================
 SV_ReadClientMessage
 
-Legacy per-client receive path used by loopback and non-virtual datagram sockets.
+Legacy direct receive path. SV_RunClients normally uses NET_GetServerMessages so
+shared datagram sockets, loopback, and virtual clients are drained once per frame.
 ===================
 */
 qboolean SV_ReadClientMessage(void) {
@@ -1113,16 +1125,10 @@ void SV_RunClients(void) {
     sv_player = host_client->edict;
     SV_UpdateClientPMoveMode(host_client);
 
-    if (NET_IsVirtualConnection(host_client->netconnection)) {
-      if (NET_IsTimedOut(host_client->netconnection)) {
-        SV_DropClient(false);
-        continue;
-      }
-    } else {
-      if (!SV_ReadClientMessage()) {
-        SV_DropClient(false); // client misbehaved...
-        continue;
-      }
+    if (host_client->netconnection &&
+        NET_IsTimedOut(host_client->netconnection)) {
+      SV_DropClient(false);
+      continue;
     }
 
     if (!host_client->spawned) {
