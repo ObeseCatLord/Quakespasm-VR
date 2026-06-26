@@ -663,7 +663,7 @@ void SV_SendServerinfo (client_t *client)
 	int				i; //johnfitz
 
 	client->protocol_pext1 = 0;
-	client->protocol_pext2 = PEXT2_REPLACEMENTDELTAS | PEXT2_PREDINFO | PEXT2_NEWSIZEENCODING;
+	client->protocol_pext2 = PEXT2_SUPPORTED_SERVER;
 	client->pextknown = true;
 	SVFTE_SetupFrames (client);
 	SV_UpdateClientMSS (client);
@@ -673,10 +673,23 @@ void SV_SendServerinfo (client_t *client)
 	MSG_WriteString (&client->message,message);
 
 	MSG_WriteByte (&client->message, svc_serverinfo);
+	if (client->protocol_pext1)
+	{
+		MSG_WriteLong (&client->message, PROTOCOL_FTE_PEXT1);
+		MSG_WriteLong (&client->message, client->protocol_pext1);
+	}
+	if (client->protocol_pext2)
+	{
+		MSG_WriteLong (&client->message, PROTOCOL_FTE_PEXT2);
+		MSG_WriteLong (&client->message, client->protocol_pext2);
+	}
 	MSG_WriteLong (&client->message, sv.protocol); //johnfitz -- sv.protocol instead of PROTOCOL_VERSION
 	
 	// Latest-code servers always use RMQ, so protocol flags are mandatory.
 	MSG_WriteLong (&client->message, sv.protocolflags);
+
+	if (client->protocol_pext2 & PEXT2_PREDINFO)
+		MSG_WriteString (&client->message, COM_SkipPath (com_gamedir));
 	
 	MSG_WriteByte (&client->message, svs.maxclients);
 

@@ -558,6 +558,7 @@ void CL_ParseServerInfo (void)
 	int		nummodels, numsounds;
 	char	model_precache[MAX_MODELS][MAX_QPATH];
 	char	sound_precache[MAX_SOUNDS][MAX_QPATH];
+	unsigned int required_pext2;
 
 	Con_DPrintf ("Serverinfo packet received.\n");
 
@@ -572,7 +573,27 @@ void CL_ParseServerInfo (void)
 	CL_ClearState ();
 
 // parse protocol version number
-	i = MSG_ReadLong ();
+	for (;;)
+	{
+		i = MSG_ReadLong ();
+		if (i == PROTOCOL_FTE_PEXT1)
+		{
+			cl.protocol_pext1 = MSG_ReadLong ();
+			if (cl.protocol_pext1 & ~PEXT1_ACCEPTED_CLIENT)
+				Host_Error ("Server returned unsupported FTE1 protocol extensions %#x",
+					cl.protocol_pext1 & ~PEXT1_ACCEPTED_CLIENT);
+			continue;
+		}
+		if (i == PROTOCOL_FTE_PEXT2)
+		{
+			cl.protocol_pext2 = MSG_ReadLong ();
+			if (cl.protocol_pext2 & ~PEXT2_ACCEPTED_CLIENT)
+				Host_Error ("Server returned unsupported FTE2 protocol extensions %#x",
+					cl.protocol_pext2 & ~PEXT2_ACCEPTED_CLIENT);
+			continue;
+		}
+		break;
+	}
 	if (i != PROTOCOL_RMQ) {
 		Con_Printf ("\n"); //because there's no newline after serverinfo print
 		Host_Error ("Server returned version %i, expected %i (RMQ)", i,
@@ -592,11 +613,16 @@ void CL_ParseServerInfo (void)
 		}
 	}
 
-	cl.protocol_pext1 = 0;
-	cl.protocol_pext2 = PEXT2_REPLACEMENTDELTAS | PEXT2_PREDINFO | PEXT2_NEWSIZEENCODING;
+	required_pext2 = PEXT2_REPLACEMENTDELTAS | PEXT2_PREDINFO | PEXT2_NEWSIZEENCODING;
+	if ((cl.protocol_pext2 & required_pext2) != required_pext2)
+		Host_Error ("Server is missing required FTE2 protocol extensions %#x",
+			required_pext2 & ~cl.protocol_pext2);
 	cl.requestresend = true;
 	cl.ackframes_count = 1;
 	cl.ackframes[0] = -1;
+
+	if (cl.protocol_pext2 & PEXT2_PREDINFO)
+		MSG_ReadString ();
 
 // parse maxclients
 	cl.maxclients = MSG_ReadByte ();
