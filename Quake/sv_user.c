@@ -638,8 +638,8 @@ static void SV_NormalizeAcceptedUsercmd(client_t *client, usercmd_t *acceptedcmd
   seconds = timestamp - client->lastmovetime;
   if (seconds < 0)
     seconds = 0;
-  if (seconds > 0.1)
-    seconds = 0.1;
+  if (seconds > 0.5)
+    seconds = 0.5;
   acceptedcmd->seconds = (float)seconds;
   client->lastmovetime = timestamp;
 }

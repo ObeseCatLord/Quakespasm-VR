@@ -903,8 +903,8 @@ static qboolean CL_PredictPlayer (entity_t *ent)
 		if (histcmd->sequence != seq)
 			continue;
 		pmove.cmd = *histcmd;
-		if (pmove.cmd.seconds > 0.1f)
-			pmove.cmd.seconds = 0.1f;
+		if (pmove.cmd.seconds > 0.5f)
+			pmove.cmd.seconds = 0.5f;
 		PM_PlayerMove (1);
 		CL_RecordPredictedMove (seq, pmove.origin, pmove.velocity);
 		propagate[(seq + 1) & (CL_MOVE_HISTORY - 1)].seq = seq + 1;
@@ -916,8 +916,8 @@ static qboolean CL_PredictPlayer (entity_t *ent)
 	pending = cl.pendingcmd;
 	VectorCopy (cl.aimangles, pending.viewangles);
 	pmove.cmd = pending;
-	if (pmove.cmd.seconds > 0.1f)
-		pmove.cmd.seconds = 0.1f;
+	if (pmove.cmd.seconds > 0.5f)
+		pmove.cmd.seconds = 0.5f;
 	PM_PlayerMove (1);
 	predicted = true;
 

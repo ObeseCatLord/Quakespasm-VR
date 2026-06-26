@@ -2652,7 +2652,6 @@ qboolean SV_RunClientPMoveCommand(client_t *client) {
   client_t *saved_host_client;
   edict_t *saved_sv_player;
   edict_t *ent;
-  double saved_host_frametime = host_frametime;
   int num;
   int processed = 0;
   qboolean is_remote_vr;
@@ -2696,8 +2695,6 @@ qboolean SV_RunClientPMoveCommand(client_t *client) {
     qboolean think_ok;
     coop_respawn_postthink_state_t coop_respawn_state;
 
-    host_frametime = CLAMP(0.0f, client->cmd.seconds, 0.1f);
-    pr_global_struct->frametime = host_frametime;
     SV_CoopRespawnBeginPostThink(ent, num, &coop_respawn_state);
     SV_SetQCInputGlobals(&client->cmd);
 
@@ -2778,8 +2775,6 @@ qboolean SV_RunClientPMoveCommand(client_t *client) {
     processed++;
   } while (0);
 
-  host_frametime = saved_host_frametime;
-  pr_global_struct->frametime = host_frametime;
   host_client = saved_host_client;
   sv_player = saved_sv_player;
 
