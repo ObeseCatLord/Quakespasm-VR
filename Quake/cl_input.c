@@ -266,7 +266,6 @@ cvar_t cl_backspeed = {"cl_backspeed", "200", CVAR_ARCHIVE};
 cvar_t cl_sidespeed = {"cl_sidespeed", "350", CVAR_NONE};
 cvar_t cl_desktop_vanilla_run = {"cl_desktop_vanilla_run", "1", CVAR_ARCHIVE};
 cvar_t cl_predictmove = {"cl_predictmove", "1", CVAR_ARCHIVE};
-cvar_t cl_ack_redundancy = {"cl_ack_redundancy", "0", CVAR_NONE};
 cvar_t cl_nopred = {"cl_nopred", "0", CVAR_NONE};
 
 cvar_t cl_movespeedkey = {"cl_movespeedkey", "2.0", CVAR_NONE};
@@ -489,36 +488,13 @@ static void CL_WriteUsercmd(sizebuf_t *buf, const usercmd_t *histcmd) {
   }
 }
 
-static qboolean CL_AckFramePending(int sequence)
-{
-  unsigned int i;
-
-  for (i = 0; i < cl.ackframes_count; i++)
-    if (cl.ackframes[i] == sequence)
-      return true;
-  return false;
-}
-
 static void CL_WriteAckFrames(sizebuf_t *buf)
 {
   unsigned int i;
-  unsigned int start;
-  unsigned int redundancy;
 
   for (i = 0; i < cl.ackframes_count; i++) {
     MSG_WriteByte(buf, clcdp_ackframe);
     MSG_WriteLong(buf, cl.ackframes[i]);
-    cl.net_snapshot_acks_sent++;
-  }
-
-  redundancy = CLAMP(0, (int)cl_ack_redundancy.value,
-                     (int)cl.ackframes_history_count);
-  start = cl.ackframes_history_count - redundancy;
-  for (i = start; i < cl.ackframes_history_count; i++) {
-    if (CL_AckFramePending(cl.ackframes_history[i]))
-      continue;
-    MSG_WriteByte(buf, clcdp_ackframe);
-    MSG_WriteLong(buf, cl.ackframes_history[i]);
     cl.net_snapshot_acks_sent++;
   }
 

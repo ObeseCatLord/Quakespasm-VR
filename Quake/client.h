@@ -183,8 +183,6 @@ typedef struct
 	qboolean	net_snapshot_have;
 	int			ackframes[8];
 	unsigned int	ackframes_count;
-	int			ackframes_history[8];
-	unsigned int	ackframes_history_count;
 	qboolean	requestresend;
 	double		net_last_diag_time;
 
@@ -317,7 +315,6 @@ extern	cvar_t	cl_backspeed;
 extern	cvar_t	cl_sidespeed;
 extern	cvar_t	cl_desktop_vanilla_run;
 extern	cvar_t	cl_predictmove;
-extern	cvar_t	cl_ack_redundancy;
 extern	cvar_t	cl_nopred;
 extern	cvar_t	cl_predict_error_log;
 
