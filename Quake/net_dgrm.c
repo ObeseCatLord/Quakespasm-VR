@@ -55,7 +55,6 @@ cvar_t net_lagdebug = {"net_lagdebug", "0", CVAR_NONE};
 cvar_t net_lagdebug_threshold = {"net_lagdebug_threshold", "0.25", CVAR_NONE};
 cvar_t net_lagdebug_frame_threshold = {"net_lagdebug_frame_threshold", "0.05", CVAR_NONE};
 static cvar_t net_sameip_stale_timeout = {"net_sameip_stale_timeout", "3.0", CVAR_NONE};
-static cvar_t net_singlesocket = {"net_singlesocket", "1", CVAR_NONE};
 static cvar_t cl_netport = {"cl_netport", "0", CVAR_ARCHIVE};
 static cvar_t cl_portpingprobe_enable = {"cl_portpingprobe_enable", "1", CVAR_ARCHIVE};
 static cvar_t cl_portpingprobe_probes = {"cl_portpingprobe_probes", "6", CVAR_ARCHIVE};
@@ -1565,7 +1564,6 @@ int Datagram_Init (void)
 	Cvar_RegisterVariable (&net_lagdebug_threshold);
 	Cvar_RegisterVariable (&net_lagdebug_frame_threshold);
 	Cvar_RegisterVariable (&net_sameip_stale_timeout);
-	Cvar_RegisterVariable (&net_singlesocket);
 	Cvar_RegisterVariable (&cl_netport);
 	Cvar_RegisterVariable (&cl_portpingprobe_enable);
 	Cvar_RegisterVariable (&cl_portpingprobe_probes);
@@ -1648,9 +1646,6 @@ static qsocket_t *_Datagram_CheckNewConnections (void)
 	int			command;
 	int			control;
 	int			ret;
-	qboolean		singleSocket;
-
-	singleSocket = (net_singlesocket.value != 0);
 
 	SZ_Clear(&net_message);
 
@@ -1673,8 +1668,7 @@ static qsocket_t *_Datagram_CheckNewConnections (void)
 		return NULL;
 	if ((control & (~NETFLAG_LENGTH_MASK)) != (int)NETFLAG_CTL)
 	{
-		if (singleSocket)
-			Datagram_QueueAcceptedPacket(acceptsock, &clientaddr, net_message.data, (unsigned int)len);
+		Datagram_QueueAcceptedPacket(acceptsock, &clientaddr, net_message.data, (unsigned int)len);
 		return NULL;
 	}
 	if ((control & NETFLAG_LENGTH_MASK) != len)
@@ -1820,8 +1814,7 @@ RestartDuplicateScan:
 		{
 			if (ret > 0)
 			{
-				if (singleSocket && s->isvirtual &&
-					Datagram_SocketIsStaleSameIpCandidate(s))
+				if (s->isvirtual && Datagram_SocketIsStaleSameIpCandidate(s))
 				{
 					Datagram_CloseClientSocket(s, "same-IP different-port connect",
 						&clientaddr);
@@ -1878,32 +1871,11 @@ RestartDuplicateScan:
 		return NULL;
 	}
 
-	if (singleSocket)
-	{
-		newsock = acceptsock;
-	}
-	else
-	{
-		// allocate a network socket
-		newsock = dfunc.Open_Socket(0);
-		if (newsock == INVALID_SOCKET)
-		{
-			NET_FreeQSocket(sock);
-			return NULL;
-		}
-
-		// connect to the client
-		if (dfunc.Connect (newsock, &clientaddr) == -1)
-		{
-			dfunc.Close_Socket(newsock);
-			NET_FreeQSocket(sock);
-			return NULL;
-		}
-	}
+	newsock = acceptsock;
 
 	// everything is allocated, just fill in the details
 	sock->socket = newsock;
-	sock->isvirtual = singleSocket;
+	sock->isvirtual = true;
 	sock->landriver = net_landriverlevel;
 	sock->addr = clientaddr;
 	Q_strcpy(sock->address, dfunc.AddrToString(&clientaddr));
@@ -1915,12 +1887,9 @@ RestartDuplicateScan:
 	MSG_WriteByte(&net_message, CCREP_ACCEPT);
 	dfunc.GetSocketAddr(newsock, &newaddr);
 	MSG_WriteLong(&net_message, dfunc.GetSocketPort(&newaddr));
-	if (singleSocket)
-	{
-		MSG_WriteByte(&net_message, MOD_PROQUAKE);
-		MSG_WriteByte(&net_message, 30);
-		MSG_WriteByte(&net_message, PQF_IGNOREPORT);
-	}
+	MSG_WriteByte(&net_message, MOD_PROQUAKE);
+	MSG_WriteByte(&net_message, 30);
+	MSG_WriteByte(&net_message, PQF_IGNOREPORT);
 //	MSG_WriteString(&net_message, dfunc.AddrToString(&newaddr));
 	*((int *)net_message.data) = BigLong(NETFLAG_CTL | (net_message.cursize & NETFLAG_LENGTH_MASK));
 	dfunc.Write (acceptsock, net_message.data, net_message.cursize, &clientaddr);
