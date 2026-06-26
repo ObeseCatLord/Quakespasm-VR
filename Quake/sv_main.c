@@ -2952,8 +2952,6 @@ static qboolean SVFTE_SendClientDatagram (client_t *client, int maxsize)
 		}
 	}
 
-	SVFTE_BuildSnapshotForClient (client);
-	SVFTE_CalcEntityDeltas (client);
 	if (client->snapshotresume >= client->numpendingentities ||
 		!SVFTE_CountPendingEntityDeltasFrom (client, client->snapshotresume))
 		client->snapshotresume = 0;
@@ -3269,6 +3267,28 @@ void SV_SendNop (client_t *client)
 
 /*
 =======================
+SV_PresendClientDatagram
+
+Build replacement-delta state for all clients before any client datagrams are
+sent.  This matches QSS-M's send-frame ordering and keeps snapshots tied to one
+server frame instead of each client's send side effects.
+=======================
+*/
+static void SV_PresendClientDatagram (client_t *client)
+{
+	if (!client->netconnection)
+		return;
+	if (!client->spawned)
+		return;
+	if (!client->pendingentities_bits || !client->frames)
+		SVFTE_SetupFrames (client);
+	SVFTE_BuildSnapshotForClient (client);
+	SVFTE_CalcEntityDeltas (client);
+	client->snapshotresume = 0;
+}
+
+/*
+=======================
 SV_SendClientMessages
 =======================
 */
@@ -3278,6 +3298,13 @@ void SV_SendClientMessages (void)
 
 // update frags, names, etc
 	SV_UpdateToReliableMessages ();
+
+	for (i=0, host_client = svs.clients ; i<svs.maxclients ; i++, host_client++)
+	{
+		if (!host_client->active)
+			continue;
+		SV_PresendClientDatagram (host_client);
+	}
 
 // build individual updates
 	for (i=0, host_client = svs.clients ; i<svs.maxclients ; i++, host_client++)
