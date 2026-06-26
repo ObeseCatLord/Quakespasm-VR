@@ -853,6 +853,7 @@ int NET_SendToAll (sizebuf_t *data, double blocktime)
 	while (count)
 	{
 		count = 0;
+		NET_GetServerMessages(NULL);	// process ACKs on all shared server sockets before checking canSend
 		for (i = 0, host_client = svs.clients; i < svs.maxclients; i++, host_client++)
 		{
 			if (! msg_init[i])
@@ -861,10 +862,6 @@ int NET_SendToAll (sizebuf_t *data, double blocktime)
 				{
 					msg_init[i] = true;
 					NET_SendMessage(host_client->netconnection, data);
-				}
-				else
-				{
-					NET_GetMessage (host_client->netconnection);
 				}
 				count++;
 				continue;
@@ -875,10 +872,6 @@ int NET_SendToAll (sizebuf_t *data, double blocktime)
 				if (NET_CanSendMessage (host_client->netconnection))
 				{
 					msg_sent[i] = true;
-				}
-				else
-				{
-					NET_GetMessage (host_client->netconnection);
 				}
 				count++;
 				continue;
