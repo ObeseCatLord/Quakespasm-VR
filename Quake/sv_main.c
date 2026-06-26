@@ -2590,234 +2590,124 @@ static int SV_ProtocolCoordSize (void)
 	return 2;
 }
 
-static int SV_SoundDatagramSize (const byte *buf, int remaining)
+static void SVFTE_ClearDatagramMessage (sizebuf_t *msg)
 {
-	int coord_size, field_mask, size;
-
-	if (remaining < 2 || buf[0] != svc_sound)
-		return 0;
-	coord_size = SV_ProtocolCoordSize ();
-	field_mask = buf[1];
-	size = 2;
-	if (field_mask & SND_VOLUME)
-		size++;
-	if (field_mask & SND_ATTENUATION)
-		size++;
-	if (field_mask & SND_LARGEENTITY)
-		size += 3;
-	else
-		size += 2;
-	if (field_mask & SND_LARGESOUND)
-		size += 2;
-	else
-		size++;
-	size += 3 * coord_size;
-	return size <= remaining ? size : 0;
+	SZ_Clear (msg);
+	msg->overflowed = false;
 }
 
-static int SV_TempEntityDatagramSize (const byte *buf, int remaining)
+static qboolean SVFTE_SendBufferedDatagram (client_t *client, sizebuf_t *msg,
+	int *packet_count, int *total_bytes, int *max_packet_bytes)
 {
-	int coord_size, type, size;
-
-	if (remaining < 2 || buf[0] != svc_temp_entity)
-		return 0;
-	coord_size = SV_ProtocolCoordSize ();
-	type = buf[1];
-	switch (type)
+	if (!msg->cursize)
+		return true;
+	if (NET_SendUnreliableMessage (client->netconnection, msg) == -1)
 	{
-	case TE_SPIKE:
-	case TE_SUPERSPIKE:
-	case TE_GUNSHOT:
-	case TE_EXPLOSION:
-	case TE_TAREXPLOSION:
-	case TE_WIZSPIKE:
-	case TE_KNIGHTSPIKE:
-	case TE_LAVASPLASH:
-	case TE_TELEPORT:
-		size = 2 + 3 * coord_size;
-		break;
-	case TE_EXPLOSION2:
-		size = 2 + 3 * coord_size + 2;
-		break;
-	case TE_LIGHTNING1:
-	case TE_LIGHTNING2:
-	case TE_LIGHTNING3:
-	case TE_BEAM:
-		size = 2 + 2 + 6 * coord_size;
-		break;
-	case TEDP_PARTICLERAIN:
-	case TEDP_PARTICLESNOW:
-		size = 2 + 9 * coord_size + 2 + 1;
-		break;
-	default:
-		return 0;
-	}
-	return size <= remaining ? size : 0;
-}
-
-static int SV_DPParticleDatagramSize (const byte *buf, int remaining)
-{
-	int coord_size, size;
-
-	if (remaining < 1)
-		return 0;
-	coord_size = SV_ProtocolCoordSize ();
-	switch (buf[0])
-	{
-	case svcdp_trailparticles:
-		size = 1 + 2 + 2 + 6 * coord_size;
-		break;
-	case svcdp_pointparticles:
-		size = 1 + 2 + 6 * coord_size + 2;
-		break;
-	case svcdp_pointparticles1:
-		size = 1 + 2 + 3 * coord_size;
-		break;
-	default:
-		return 0;
-	}
-	return size <= remaining ? size : 0;
-}
-
-#define SV_DGRAM_OTHER		0
-#define SV_DGRAM_SOUND		1
-#define SV_DGRAM_TEMP		2
-#define SV_DGRAM_PARTICLE	3
-#define SV_DGRAM_DPPARTICLE	4
-
-static int SV_DatagramCommandSize (const byte *buf, int remaining, int *type)
-{
-	int size;
-
-	if ((size = SV_SoundDatagramSize (buf, remaining)) != 0)
-	{
-		*type = SV_DGRAM_SOUND;
-		return size;
-	}
-	if ((size = SV_TempEntityDatagramSize (buf, remaining)) != 0)
-	{
-		*type = SV_DGRAM_TEMP;
-		return size;
-	}
-	if ((size = SV_ParticleSize (buf)) != 0 && size <= remaining)
-	{
-		*type = SV_DGRAM_PARTICLE;
-		return size;
-	}
-	if ((size = SV_DPParticleDatagramSize (buf, remaining)) != 0)
-	{
-		*type = SV_DGRAM_DPPARTICLE;
-		return size;
-	}
-
-	*type = SV_DGRAM_OTHER;
-	return remaining;
-}
-
-static void SV_DatagramDebugStats (int *sound, int *temp, int *particle,
-	int *dpparticle, int *other)
-{
-	int position, remaining, size, type;
-	const byte *buf;
-
-	*sound = *temp = *particle = *dpparticle = *other = 0;
-	position = 0;
-	while (position < sv.datagram.cursize)
-	{
-		buf = &sv.datagram.data[position];
-		remaining = sv.datagram.cursize - position;
-		size = SV_DatagramCommandSize (buf, remaining, &type);
-		switch (type)
-		{
-		case SV_DGRAM_SOUND:
-			*sound += size;
-			break;
-		case SV_DGRAM_TEMP:
-			*temp += size;
-			break;
-		case SV_DGRAM_PARTICLE:
-			*particle += size;
-			break;
-		case SV_DGRAM_DPPARTICLE:
-			*dpparticle += size;
-			break;
-		default:
-			*other += size;
-			break;
-		}
-		position += size;
-	}
-}
-
-static int SVFTE_WriteDatagramToMessage (sizebuf_t *msg, int *offset,
-	int *particle_budget)
-{
-	int position, size, remaining, type, written;
-	qboolean cosmetic_particle;
-
-	position = *offset;
-	written = 0;
-	while (position < sv.datagram.cursize)
-	{
-		remaining = sv.datagram.cursize - position;
-		size = SV_DatagramCommandSize (&sv.datagram.data[position],
-			remaining, &type);
-		cosmetic_particle = type == SV_DGRAM_PARTICLE ||
-			type == SV_DGRAM_DPPARTICLE;
-
-		if (cosmetic_particle && particle_budget)
-		{
-			if (*particle_budget <= 0 || size > *particle_budget ||
-				msg->cursize + size >= msg->maxsize)
-			{
-				position += size;
-				continue;
-			}
-		}
-
-		if (msg->cursize + size >= msg->maxsize)
-		{
-			if (size >= msg->maxsize)
-			{
-				Con_DPrintf ("SVFTE_WriteDatagramToMessage: dropping oversized server datagram command (%d bytes, max %d)\n",
-					size, msg->maxsize);
-				position += size;
-				continue;
-			}
-			break;
-		}
-
-		SZ_Write (msg, &sv.datagram.data[position], size);
-		if (cosmetic_particle && particle_budget)
-			*particle_budget -= size;
-		position += size;
-		written += size;
-	}
-	*offset = position;
-	return written;
-}
-
-static qboolean SV_WritePrivateDatagramToMessage (client_t *client, sizebuf_t *msg)
-{
-	if (!client->datagram.cursize)
+		SV_DropClient (true);
 		return false;
+	}
+	(*packet_count)++;
+	*total_bytes += msg->cursize;
+	if (msg->cursize > *max_packet_bytes)
+		*max_packet_bytes = msg->cursize;
+	client->net_snapshot_packets_sent++;
+	SVFTE_ClearDatagramMessage (msg);
+	return true;
+}
+
+static int SVFTE_AppendPrivateDatagram (client_t *client, sizebuf_t *msg,
+	int *packet_count, int *total_bytes, int *max_packet_bytes)
+{
+	int written;
+
+	if (!client->datagram.cursize)
+		return 0;
 	if (client->datagram.overflowed)
 	{
 		SZ_Clear (&client->datagram);
-		return false;
+		return 0;
 	}
 	if (client->datagram.cursize >= msg->maxsize)
 	{
-		Con_DPrintf ("SV_WritePrivateDatagramToMessage: dropping oversized private datagram for %s (%d bytes, max %d)\n",
+		Con_DPrintf ("SVFTE_AppendPrivateDatagram: dropping oversized private datagram for %s (%d bytes, max %d)\n",
 			client->name, client->datagram.cursize, msg->maxsize);
 		SZ_Clear (&client->datagram);
-		return false;
+		return 0;
 	}
 	if (msg->cursize + client->datagram.cursize >= msg->maxsize)
-		return false;
+	{
+		if (!SVFTE_SendBufferedDatagram (client, msg, packet_count,
+				total_bytes, max_packet_bytes))
+			return -1;
+	}
+
+	written = client->datagram.cursize;
 	SZ_Write (msg, client->datagram.data, client->datagram.cursize);
 	SZ_Clear (&client->datagram);
-	return true;
+	return written;
+}
+
+static int SVFTE_AppendServerDatagram (client_t *client, sizebuf_t *msg,
+	int *packet_count, int *total_bytes, int *max_packet_bytes)
+{
+	int position, size, remaining, written;
+
+	if (!sv.datagram.cursize)
+		return 0;
+
+	if (msg->cursize + sv.datagram.cursize < msg->maxsize)
+	{
+		SZ_Write (msg, sv.datagram.data, sv.datagram.cursize);
+		return sv.datagram.cursize;
+	}
+
+	/*
+	 * Match QSS-M: split only a leading svc_particle run across packets.
+	 * The rest of the server datagram is kept whole or dropped for this
+	 * unreliable frame instead of producing an unbounded burst.
+	 */
+	position = 0;
+	written = 0;
+	while (position < sv.datagram.cursize &&
+		(size = SV_ParticleSize (&sv.datagram.data[position])) != 0)
+	{
+		if (msg->cursize + size < msg->maxsize)
+		{
+			SZ_Write (msg, &sv.datagram.data[position], size);
+			position += size;
+			written += size;
+		}
+		else
+		{
+			if (!SVFTE_SendBufferedDatagram (client, msg, packet_count,
+					total_bytes, max_packet_bytes))
+				return -1;
+		}
+	}
+
+	remaining = sv.datagram.cursize - position;
+	if (!remaining)
+		return written;
+	if (msg->cursize + remaining < msg->maxsize)
+	{
+		SZ_Write (msg, &sv.datagram.data[position], remaining);
+		written += remaining;
+	}
+	else if (remaining < msg->maxsize)
+	{
+		if (!SVFTE_SendBufferedDatagram (client, msg, packet_count,
+				total_bytes, max_packet_bytes))
+			return -1;
+		SZ_Write (msg, &sv.datagram.data[position], remaining);
+		written += remaining;
+	}
+	else
+	{
+		Con_DPrintf ("SVFTE_AppendServerDatagram: dropping oversized server datagram tail (%d bytes, max %d)\n",
+			remaining, msg->maxsize);
+	}
+
+	return written;
 }
 
 static qboolean SVFTE_SendClientDatagram (client_t *client, int maxsize)
@@ -2827,19 +2717,12 @@ static qboolean SVFTE_SendClientDatagram (client_t *client, int maxsize)
 	int			packet_count;
 	int			total_bytes;
 	int			max_packet_bytes;
-	int			datagram_offset;
 	int			client_index;
 	size_t		prev_resume;
-	int			prev_datagram_offset;
-	int			prev_private_datagram_size;
 	int			private_datagram_initial;
 	int			private_datagram_written;
 	int			global_datagram_written;
-	int			global_datagram_sound_bytes;
-	int			global_datagram_temp_bytes;
-	int			global_datagram_particle_bytes;
-	int			global_datagram_dpparticle_bytes;
-	int			global_datagram_other_bytes;
+	int			append_result;
 	double		update_gap;
 	size_t		prev_csqc_pending;
 	size_t		csqc_pending;
@@ -2850,8 +2733,6 @@ static qboolean SVFTE_SendClientDatagram (client_t *client, int maxsize)
 	struct deltaframe_s	*replacement_frame;
 	int			replacement_sequence;
 	qboolean	made_progress;
-	qboolean	wrote_update_header;
-	qboolean	header_counts_as_progress;
 	static double	last_gap_log[MAX_SCOREBOARD];
 	static double	last_update_sent[MAX_SCOREBOARD];
 	static double	last_update_log[MAX_SCOREBOARD];
@@ -2890,110 +2771,62 @@ static qboolean SVFTE_SendClientDatagram (client_t *client, int maxsize)
 	packet_count = 0;
 	total_bytes = 0;
 	max_packet_bytes = 0;
-	datagram_offset = 0;
 	entity_pending_before = SVFTE_CountPendingEntityDeltas (client);
 	entity_pending = SVFTE_CountPendingEntityDeltasFrom (client, client->snapshotresume);
 	csqc_pending = SVFTE_CountPendingCSQCEntities (client);
 	private_datagram_initial = client->datagram.cursize;
 	private_datagram_written = 0;
 	global_datagram_written = 0;
-	SV_DatagramDebugStats (&global_datagram_sound_bytes,
-		&global_datagram_temp_bytes,
-		&global_datagram_particle_bytes,
-		&global_datagram_dpparticle_bytes,
-		&global_datagram_other_bytes);
 
-	do
+	msg.data = buf;
+	msg.maxsize = maxsize;
+	msg.cursize = 0;
+	msg.allowoverflow = false;
+	msg.overflowed = false;
+
+	for (;;)
 	{
-		msg.data = buf;
-		msg.maxsize = maxsize;
-		msg.cursize = 0;
-		msg.allowoverflow = false;
-		msg.overflowed = false;
-
-		wrote_update_header = packet_count == 0 || entity_pending || csqc_pending;
-		header_counts_as_progress =
-			wrote_update_header && packet_count == 0 && !entity_pending && !csqc_pending;
-		replacement_sequence = -1;
-		replacement_frame = NULL;
-		if (wrote_update_header)
-		{
-			replacement_sequence = NET_QSocketGetSequenceOut (client->netconnection);
-			client->net_snapshot_sequence = replacement_sequence;
-			replacement_frame = SVFTE_BeginFrame (client,
-				replacement_sequence);
-		}
+		replacement_sequence = NET_QSocketGetSequenceOut (client->netconnection);
+		client->net_snapshot_sequence = replacement_sequence;
+		replacement_frame = SVFTE_BeginFrame (client,
+			replacement_sequence);
 
 		if (packet_count == 0)
 		{
 			SV_WriteDamageToMessage (client->edict, &msg);
 			SV_WriteSetAngleToMessage (client->edict, &msg);
-			if (replacement_frame)
-				SVFTE_WriteStatsToClient (client, &msg,
-					replacement_frame);
+			SVFTE_WriteStatsToClient (client, &msg,
+				replacement_frame);
 		}
 
 		prev_resume = client->snapshotresume;
-		prev_datagram_offset = datagram_offset;
-		prev_private_datagram_size = client->datagram.cursize;
 		prev_csqc_pending = csqc_pending;
 		prev_entity_pending = entity_pending;
 
-		/*
-		 * Keep the replacement entity header first in each server update.  It
-		 * carries the server time, movement ack, and stat/entity deltas used by
-		 * client prediction; private datagrams and temp entities can spill into
-		 * later packets without stalling command acks.
-		 */
-		if (wrote_update_header)
-		{
-			SVFTE_WriteEntitiesToClient (client, &msg,
-				replacement_frame, replacement_sequence);
-			SVFTE_WriteCSQCEntitiesToClient (client, &msg,
-				replacement_frame);
-			entity_pending = SVFTE_CountPendingEntityDeltasFrom (client, client->snapshotresume);
-			csqc_pending = SVFTE_CountPendingCSQCEntities (client);
-		}
+		SVFTE_WriteEntitiesToClient (client, &msg,
+			replacement_frame, replacement_sequence);
+		SVFTE_WriteCSQCEntitiesToClient (client, &msg,
+			replacement_frame);
+		entity_pending = SVFTE_CountPendingEntityDeltasFrom (client, client->snapshotresume);
+		csqc_pending = SVFTE_CountPendingCSQCEntities (client);
 
-		if (!msg.overflowed)
-		{
-			int before = msg.cursize;
-			if (SV_WritePrivateDatagramToMessage (client, &msg))
-				private_datagram_written += msg.cursize - before;
-		}
-		if (!msg.overflowed && datagram_offset < sv.datagram.cursize)
-		{
-			global_datagram_written += SVFTE_WriteDatagramToMessage (&msg,
-				&datagram_offset, NULL);
-		}
 		if (msg.overflowed)
 		{
 			Con_Printf ("SVFTE_SendClientDatagram: packet overflow for %s\n", client->name);
 			return true;
 		}
 
-		if (NET_SendUnreliableMessage (client->netconnection, &msg) == -1)
-		{
-			SV_DropClient (true);
-			return false;
-		}
-		packet_count++;
-		total_bytes += msg.cursize;
-		if (msg.cursize > max_packet_bytes)
-			max_packet_bytes = msg.cursize;
-		client->net_snapshot_packets_sent++;
-
 		made_progress = client->snapshotresume != prev_resume ||
 			entity_pending != prev_entity_pending ||
-			datagram_offset != prev_datagram_offset ||
-			csqc_pending != prev_csqc_pending ||
-			client->datagram.cursize != prev_private_datagram_size ||
-			header_counts_as_progress;
-		if (!made_progress &&
-			(entity_pending ||
-			 csqc_pending ||
-			 datagram_offset < sv.datagram.cursize ||
-			 client->datagram.cursize))
+			csqc_pending != prev_csqc_pending;
+		if (!entity_pending && !csqc_pending)
+			break;
+
+		if (!SVFTE_SendBufferedDatagram (client, &msg, &packet_count,
+				&total_bytes, &max_packet_bytes))
+			return false;
+
+		if (!made_progress)
 		{
 			Con_Printf ("SVFTE_SendClientDatagram: replacement packet made no progress (%d byte packet)\n",
 				msg.maxsize);
@@ -3005,10 +2838,28 @@ static qboolean SVFTE_SendClientDatagram (client_t *client, int maxsize)
 			break;
 		}
 	}
-	while (entity_pending ||
-			csqc_pending ||
-			datagram_offset < sv.datagram.cursize ||
-			client->datagram.cursize);
+
+	append_result = SVFTE_AppendPrivateDatagram (client, &msg, &packet_count,
+		&total_bytes, &max_packet_bytes);
+	if (append_result < 0)
+		return false;
+	private_datagram_written += append_result;
+
+	append_result = SVFTE_AppendServerDatagram (client, &msg, &packet_count,
+		&total_bytes, &max_packet_bytes);
+	if (append_result < 0)
+		return false;
+	global_datagram_written += append_result;
+
+	if (msg.overflowed)
+	{
+		Con_Printf ("SVFTE_SendClientDatagram: packet overflow for %s\n", client->name);
+		return true;
+	}
+
+	if (!SVFTE_SendBufferedDatagram (client, &msg, &packet_count,
+			&total_bytes, &max_packet_bytes))
+		return false;
 
 	if (packet_count > 1)
 		client->net_snapshot_split_packets += packet_count - 1;
@@ -3029,16 +2880,13 @@ static qboolean SVFTE_SendClientDatagram (client_t *client, int maxsize)
 		int sequence = SV_ReplacementLastSentSequence (client);
 		int ack = client->lastacksequence >= 0 ? client->lastacksequence : -1;
 		entity_pending_after = SVFTE_CountPendingEntityDeltas (client);
-		Con_Printf ("net_lagdebug: server replacement update to %s (%s): packets=%d bytes=%d max=%d ents=%zu/%zu pending=%zu->%zu svdg=%d/%d priv=%d/%d dgtype=%d/%d/%d/%d/%d maxpacket=%d seq=%d ack=%d acklag=%d\n",
+		Con_Printf ("net_lagdebug: server replacement update to %s (%s): packets=%d bytes=%d max=%d ents=%zu/%zu pending=%zu->%zu svdg=%d/%d priv=%d/%d maxpacket=%d seq=%d ack=%d acklag=%d\n",
 			client->name, NET_QSocketGetAddressString(client->netconnection),
 			packet_count, total_bytes, max_packet_bytes,
 			(size_t)client->snapshotresume, client->numpendingentities,
 			entity_pending_before, entity_pending_after,
 			global_datagram_written, sv.datagram.cursize,
-			private_datagram_written, private_datagram_initial,
-			global_datagram_sound_bytes, global_datagram_temp_bytes,
-			global_datagram_particle_bytes, global_datagram_dpparticle_bytes,
-			global_datagram_other_bytes, maxsize,
+			private_datagram_written, private_datagram_initial, maxsize,
 			sequence, ack, SV_ReplacementAckLag (client, sequence));
 		if (client_index >= 0)
 			last_update_log[client_index] = realtime;
