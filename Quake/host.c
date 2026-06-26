@@ -69,7 +69,7 @@ cvar_t	cl_netfps = {"cl_netfps", "0", CVAR_NONE};	// retired alias; QSS-M-style 
 cvar_t	max_edicts = {"max_edicts", "8192", CVAR_NONE}; //johnfitz //ericw -- changed from 2048 to 8192, removed CVAR_ARCHIVE
 cvar_t	cl_nocsqc = {"cl_nocsqc", "0", CVAR_NONE};
 
-cvar_t	sys_ticrate = {"sys_ticrate","0.0138889",CVAR_NONE}; // dedicated server
+cvar_t	sys_ticrate = {"sys_ticrate","0.05",CVAR_NOTIFY|CVAR_SERVERINFO}; // dedicated server -- match QSS-M
 cvar_t	serverprofile = {"serverprofile","0",CVAR_NONE};
 
 cvar_t	fraglimit = {"fraglimit","0",CVAR_NOTIFY|CVAR_SERVERINFO};
@@ -121,8 +121,6 @@ static qboolean Host_ValueMatchesOldDefault (float value, float old_default)
 
 static void Host_MigrateNetworkDefaults_f (void)
 {
-	if (Host_ValueMatchesOldDefault (sys_ticrate.value, 0.05f))
-		Cvar_SetQuick (&sys_ticrate, "0.0138889");
 	if (Host_ValueMatchesOldDefault (cl_netfps.value, 72.0f))
 		Cvar_SetQuick (&cl_netfps, "0");
 	if (Host_ValueMatchesOldDefault (host_maxfps.value, 72.0f))
