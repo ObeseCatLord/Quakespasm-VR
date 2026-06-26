@@ -213,7 +213,6 @@ void CL_ClearState (void)
 {
 	VR_ResetWeaponTracking();
 	CL_ClearPendingCmd();
-	cls.moveext_allowed = false;
 
 	if (cl.qcvm.extfuncs.CSQC_Shutdown)
 	{
@@ -258,7 +257,6 @@ void CL_Disconnect (void)
 {
 	DebugLog("CL_Disconnect: state=%d signon=%d\n", cls.state, cls.signon);
 	CL_ClearPendingCmd();
-	cls.moveext_allowed = false;
 
 	if (key_dest == key_message)
 		Key_EndChat ();	// don't get stuck in chat mode
@@ -295,13 +293,6 @@ void CL_Disconnect (void)
 	CL_ClearSignons ();
 
 	V_ResetEffects ();
-}
-
-static void CL_MoveExtAck_f (void)
-{
-	cls.moveext_allowed = true;
-	if (net_lagdebug.value)
-		Con_Printf ("net_lagdebug: server enabled sequenced co-op client movement\n");
 }
 
 void CL_Disconnect_f (void)
@@ -852,7 +843,7 @@ static qboolean CL_PredictPlayer (entity_t *ent)
 
 	if (!cl_predictmove.value || cl_nopred.value || cls.demoplayback ||
 		cls.state != ca_connected || cls.signon != SIGNONS ||
-		!cls.moveext_allowed || !cl.worldmodel || cl.viewentity <= 0)
+		!cl.worldmodel || cl.viewentity <= 0)
 		return false;
 	if (ent != &cl.entities[cl.viewentity])
 		return false;
@@ -1625,5 +1616,4 @@ void CL_Init (void)
 
 	Cmd_AddCommand_ServerCommand ("st", CL_SetStat_f);
 	Cmd_AddCommand_ServerCommand ("sts", CL_SetStatString_f);
-	Cmd_AddCommand_ServerCommand ("cl_moveext_ack", CL_MoveExtAck_f);
 }

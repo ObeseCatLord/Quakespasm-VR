@@ -1084,6 +1084,8 @@ static void SV_UpdateClientPMoveMode(client_t *client) {
   local_singleplayer = sv.active && svs.maxclients <= 1;
 
   usingpmove = !local_singleplayer && client->spawned;
+  if (usingpmove && coop.value && !sv_coop_predictmove.value)
+    usingpmove = false;
 
   if (usingpmove != client->usingpmove && net_lagdebug.value)
     Con_Printf("net_lagdebug: server PMove %s for %s mode=%s sv_runclientcommand=%d\n",

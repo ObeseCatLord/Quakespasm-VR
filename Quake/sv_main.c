@@ -711,14 +711,6 @@ void SV_SendServerinfo (client_t *client)
 	MSG_WriteByte (&client->message, svc_setview);
 	MSG_WriteShort (&client->message, NUM_FOR_EDICT(client->edict));
 
-	if (coop.value && sv_coop_predictmove.value)
-	{
-		MSG_WriteByte (&client->message, svc_stufftext);
-		MSG_WriteString (&client->message, "//cl_moveext_ack\n");
-	}
-	MSG_WriteByte (&client->message, svc_stufftext);
-	MSG_WriteString (&client->message, "//cl_moveext_ack\n");
-
 	MSG_WriteByte (&client->message, svc_signonnum);
 	MSG_WriteByte (&client->message, 1);
 
