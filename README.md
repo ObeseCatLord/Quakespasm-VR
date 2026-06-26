@@ -1,7 +1,7 @@
 # QuakeSpasm-OpenVR
 
 This repository is a custom QuakeSpasm-OpenVR fork focused on VR play,
-modern single-player mods, and trusted co-op multiplayer. It keeps the
+modern single-player mods, and same-build co-op multiplayer. It keeps the
 gameflorist's QuakeSpasm-OpenVR lineage and VR controls, then adds CSQC
 compatibility, QSS-M-inspired networking, co-op quality-of-life behavior,
 modern particle/weather support, and per-mod VR weapon calibration.
@@ -14,7 +14,7 @@ default branch is the active VR/co-op/mod-compatibility branch.
 - Keep QuakeSpasm-OpenVR usable for both VR and `-novr` desktop play.
 - Support large modern mods such as Arcane Dimensions, Alkaline, Dwell,
   Mjolnir, QBJ3, Raven Keep, Peril, Enyo, and Quake VR-derived mods.
-- Prefer smooth trusted co-op over legacy client interoperability. Networked
+- Prefer smooth latest-client co-op over legacy client interoperability. Networked
   clients and servers are expected to run the same build.
 - Keep behavior close to QuakeSpasm, Ironwail, QSS-M, vkQuake, and FTEQW where
   those ports have established compatibility behavior.
@@ -73,7 +73,7 @@ extended protocol support.
 
 ### Co-op
 
-- Co-op defaults are tuned for trusted play: no friendly fire, non-solid
+- Co-op defaults are tuned for same-build play: no friendly fire, non-solid
   players, PMove prediction, weapon-target fixes, optional ammo respawn,
   autosaves, and death-location respawn helpers.
 - Co-op respawn can keep vanilla weapons/ammo plus known extra weapon, ammo,
