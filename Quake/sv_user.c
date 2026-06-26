@@ -52,8 +52,7 @@ cvar_t sv_idealpitchscale = {"sv_idealpitchscale", "0.8", CVAR_NONE};
 cvar_t sv_altnoclip = {"sv_altnoclip", "1", CVAR_ARCHIVE}; // johnfitz
 cvar_t sv_inputtimeout = {"sv_inputtimeout", "0", CVAR_NONE};
 cvar_t sv_pmove = {"sv_pmove", "1", CVAR_NONE};
-cvar_t sv_nqplayerphysics = {"sv_nqplayerphysics", "0",
-                             CVAR_ARCHIVE | CVAR_SERVERINFO};
+cvar_t sv_nqplayerphysics = {"sv_nqplayerphysics", "0", CVAR_NONE};
 cvar_t sv_pmove_legacy_preserve_qc_velocity = {
     "sv_pmove_legacy_preserve_qc_velocity", "1", CVAR_NONE};
 cvar_t sv_move_timeclamp = {"sv_move_timeclamp", "1", CVAR_NONE};
@@ -1086,16 +1085,14 @@ static void SV_UpdateClientPMoveMode(client_t *client) {
 
   local_singleplayer = sv.active && svs.maxclients <= 1;
 
-  usingpmove = !local_singleplayer &&
-    client->spawned && sv_pmove.value;
+  usingpmove = !local_singleplayer && client->spawned;
 
   if (usingpmove != client->usingpmove && net_lagdebug.value)
-    Con_Printf("net_lagdebug: server PMove %s for %s pext2=0x%x sv_runclientcommand=%d sv_nqplayerphysics=%g\n",
+    Con_Printf("net_lagdebug: server PMove %s for %s mode=%s sv_runclientcommand=%d\n",
                usingpmove ? "enabled" : "disabled",
                client->name,
-               client->protocol_pext2,
-               qcvm->extfuncs.SV_RunClientCommand ? 1 : 0,
-               sv_nqplayerphysics.value);
+               local_singleplayer ? "local-singleplayer" : "latest-client",
+               qcvm->extfuncs.SV_RunClientCommand ? 1 : 0);
   client->usingpmove = usingpmove;
 }
 

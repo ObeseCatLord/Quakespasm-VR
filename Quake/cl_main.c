@@ -51,6 +51,9 @@ cvar_t	cl_net_lerpbuffer_adaptive_max = {"cl_net_lerpbuffer_adaptive_max","0.30"
 cvar_t	cl_net_lerpbuffer_adaptive_time = {"cl_net_lerpbuffer_adaptive_time","0.75",CVAR_NONE};
 cvar_t	cl_predict_error_log = {"cl_predict_error_log","1",CVAR_NONE};
 
+extern cvar_t host_maxfps;
+extern cvar_t cl_netfps;
+
 double CL_NetLagDebugFrameThreshold (void)
 {
 	double threshold;
@@ -110,6 +113,10 @@ static void CL_MigrateNetworkDefaults_f (void)
 		Cvar_SetQuick (&cl_extrapolate, "0");
 	if (CL_ValueMatchesOldDefault (cl_net_lerpbuffer.value, 0.10f))
 		Cvar_SetQuick (&cl_net_lerpbuffer, "0");
+	if (CL_ValueMatchesOldDefault (cl_netfps.value, 72.0f))
+		Cvar_SetQuick (&cl_netfps, "0");
+	if (CL_ValueMatchesOldDefault (host_maxfps.value, 72.0f))
+		Cvar_SetQuick (&host_maxfps, "250");
 }
 
 cvar_t	cfg_unbindall = {"cfg_unbindall", "1", CVAR_ARCHIVE};
