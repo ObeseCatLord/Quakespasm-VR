@@ -1617,7 +1617,7 @@ static void SVFTE_WriteStatsToClient (client_t *client, sizebuf_t *msg,
 	int			i, reserve;
 
 	SV_CalcStats (client, statsi, statsf, statss);
-	reserve = 13;
+	reserve = 9;
 
 	for (i = 0; i < MAX_CL_STATS; i++)
 	{
@@ -1814,14 +1814,13 @@ static void SVFTE_WriteEntitiesToClient (client_t *client, sizebuf_t *msg,
 	if (nextdelta >= client->numpendingentities)
 		nextdelta = 0;
 
-	header_need = 1 + 4 + 2 + 4 + 2;
+	header_need = 1 + 2 + 4 + 2;
 	if (msg->cursize + header_need > msg->maxsize)
 		return;
 
 	soft_limit = SVFTE_ReplacementSoftLimit (msg, reserve_bytes);
 	wrote_entity = false;
 	MSG_WriteByte (msg, svcfte_updateentities);
-	MSG_WriteLong (msg, sequence);
 	SV_WriteMoveAckPayloadToMessage (client, msg);
 	MSG_WriteFloat (msg, qcvm->time);
 
@@ -3192,7 +3191,8 @@ static qboolean SVFTE_SendClientDatagram (client_t *client, int maxsize)
 		replacement_frame = NULL;
 		if (wrote_update_header)
 		{
-			replacement_sequence = ++client->net_snapshot_sequence;
+			replacement_sequence = NET_QSocketGetSequenceOut (client->netconnection);
+			client->net_snapshot_sequence = replacement_sequence;
 			replacement_frame = SVFTE_BeginFrame (client,
 				replacement_sequence);
 		}

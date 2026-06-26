@@ -135,7 +135,11 @@ qsocket_t *Loop_CheckNewConnections (void)
 
 void Loop_GetAnyMessages (void (*callback)(qsocket_t *sock))
 {
-	(void)callback;
+	if (!callback || !loop_server)
+		return;
+
+	while (Loop_GetMessage(loop_server) > 0)
+		callback(loop_server);
 }
 
 
@@ -157,9 +161,21 @@ int Loop_GetMessage (qsocket_t *sock)
 	length = sock->receiveMessage[1] + (sock->receiveMessage[2] << 8);
 	// alignment byte skipped here
 	SZ_Clear (&net_message);
-	SZ_Write (&net_message, &sock->receiveMessage[4], length);
-
-	length = IntAlign(length + 4);
+	if (ret == 2)
+	{
+		sock->unreliableReceiveSequence = sock->receiveMessage[4] |
+			(sock->receiveMessage[5] << 8) |
+			(sock->receiveMessage[6] << 16) |
+			(sock->receiveMessage[7] << 24);
+		sock->unreliableReceiveSequence++;
+		SZ_Write (&net_message, &sock->receiveMessage[8], length);
+		length = IntAlign(length + 8);
+	}
+	else
+	{
+		SZ_Write (&net_message, &sock->receiveMessage[4], length);
+		length = IntAlign(length + 4);
+	}
 	sock->receiveMessageLength -= length;
 
 	if (sock->receiveMessageLength)
@@ -167,8 +183,6 @@ int Loop_GetMessage (qsocket_t *sock)
 
 	if (sock->driverdata && ret == 1)
 		((qsocket_t *)sock->driverdata)->canSend = true;
-	if (ret == 2)
-		sock->unreliableReceiveSequence++;
 
 	return ret;
 }
@@ -212,13 +226,15 @@ int Loop_SendUnreliableMessage (qsocket_t *sock, sizebuf_t *data)
 {
 	byte *buffer;
 	int  *bufferLength;
+	int   sequence;
 
 	if (!sock->driverdata)
 		return -1;
 
+	sequence = sock->unreliableSendSequence++;
 	bufferLength = &((qsocket_t *)sock->driverdata)->receiveMessageLength;
 
-	if ((*bufferLength + data->cursize + sizeof(byte) + sizeof(short)) > NET_MAXMESSAGE)
+	if ((*bufferLength + data->cursize + 8) > NET_MAXMESSAGE)
 		return 0;
 
 	buffer = ((qsocket_t *)sock->driverdata)->receiveMessage + *bufferLength;
@@ -233,10 +249,14 @@ int Loop_SendUnreliableMessage (qsocket_t *sock, sizebuf_t *data)
 	// align
 	buffer++;
 
+	*buffer++ = (sequence >>  0) & 0xff;
+	*buffer++ = (sequence >>  8) & 0xff;
+	*buffer++ = (sequence >> 16) & 0xff;
+	*buffer++ = (sequence >> 24) & 0xff;
+
 	// message
 	Q_memcpy(buffer, data->data, data->cursize);
-	*bufferLength = IntAlign(*bufferLength + data->cursize + 4);
-	sock->unreliableSendSequence++;
+	*bufferLength = IntAlign(*bufferLength + data->cursize + 8);
 	return 1;
 }
 
