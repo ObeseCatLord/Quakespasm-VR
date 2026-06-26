@@ -167,16 +167,6 @@ typedef struct client_s
 	double			net_snapshot_last_ack_time;
 	double			net_snapshot_ack_age_max;
 	double			net_snapshot_last_summary_time;
-	int				net_snapshot_partial_ack_seq;
-	int				net_snapshot_partial_ack_last_part;
-	unsigned int	net_snapshot_partial_ack_mask[SNAPSHOT_ACK_MASK_WORDS];
-	double			net_snapshot_partial_ack_time;
-	int				net_snapshot_resend_sequence;
-	int				net_snapshot_resend_parts;
-	int				net_snapshot_resend_part_len[SNAPSHOT_RESEND_MAX_PARTS];
-	byte			net_snapshot_resend_part_data[SNAPSHOT_RESEND_MAX_PARTS][SNAPSHOT_RESEND_MAX_PACKET];
-	double			net_snapshot_last_part_resend_time;
-	int				net_snapshot_part_resends;
 
 		sizebuf_t		message;			// can be added to at any time,
 										// copied and clear once per frame
@@ -349,8 +339,6 @@ extern cvar_t sv_coop_predictmove;
 extern cvar_t sv_triggerdebug;
 extern cvar_t sv_vr_jump_velocity;
 qboolean SV_IsVRClientSlot(int num);
-extern cvar_t sv_snapshot_splits;
-extern cvar_t sv_snapshot_packetdup;
 extern cvar_t sv_replacement_maxpackets;
 extern cvar_t sv_replacement_packetdup;
 extern cvar_t sv_replacement_packetdup_all;
@@ -358,8 +346,6 @@ extern cvar_t sv_replacement_pacing;
 extern cvar_t sv_replacement_softmaxbytes;
 extern cvar_t sv_replacement_priority_radius;
 extern cvar_t sv_replacement_particle_maxbytes;
-extern cvar_t sv_snapshot_partresend;
-extern cvar_t sv_snapshot_partresend_interval;
 extern cvar_t sv_netdiag_interval;
 extern cvar_t sv_save_multiplayer;
 extern cvar_t sv_cmdfile;

@@ -266,11 +266,6 @@ QuakeSpasm cvar.
 | `cl_portpingprobe_enable` | `1` | Networking | Enables client UDP port probe selection. |
 | `cl_portpingprobe_probes` | `6` | Networking | Number of client port probes. |
 | `cl_predict_error_log` | `1` | Diagnostics | Logs prediction mismatches. |
-| `cl_predict_legacy` | `0` | Networking | Uses legacy prediction behavior for comparison/debug. |
-| `cl_predict_smooth` | `1` | Networking | Legacy no-op retained for old configs; QSS-M-style prediction is unsmoothed. |
-| `cl_predict_smooth_max` | `8` | Networking | Legacy no-op retained for old configs. |
-| `cl_predict_smooth_min` | `0.25` | Networking | Legacy no-op retained for old configs. |
-| `cl_predict_smooth_time` | `0.04` | Networking | Legacy no-op retained for old configs. |
 | `cl_predictmove` | `1` | Networking | Enables client-side movement prediction for remote play. |
 | `cfg_unbindall` | `1` | Config | Allows configs to execute `unbindall`; set `0` to ignore it. |
 | `freelook` | `1` | Input | Default mouse look behavior. |
@@ -363,10 +358,6 @@ QuakeSpasm cvar.
 | `sv_replacement_softmaxbytes` | `1000` | Networking | Soft byte target for replacement packets. |
 | `sv_save_multiplayer` | `1` | Save/load | Allows multiplayer/co-op saves in controlled use. |
 | `sv_skyroom_pvs` | `1` | Rendering/server | Adds skyroom PVS for skyroom entity visibility. |
-| `sv_snapshot_packetdup` | `0` | Networking | Duplicates legacy split snapshot packets. |
-| `sv_snapshot_partresend` | `1` | Networking | Resends missing split snapshot parts when that path is enabled. |
-| `sv_snapshot_partresend_interval` | `0.04` | Networking | Minimum resend interval for snapshot parts. |
-| `sv_snapshot_splits` | `0` | Networking | Legacy split snapshot path; off by default in favor of replacement deltas. |
 | `sv_spectatormaxspeed` | `500` | PMove | Spectator max speed. |
 | `sv_triggerdebug` | `0` | Diagnostics | Logs trigger/touch decisions. |
 | `sv_vr_jump_velocity` | `270` | VR/co-op | Optional VR jump velocity override; `270` matches vanilla. |

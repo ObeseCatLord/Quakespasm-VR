@@ -133,17 +133,6 @@ void SV_ResetClientMoveState(client_t *client) {
   client->net_snapshot_last_ack_time = 0;
   client->net_snapshot_ack_age_max = 0;
   client->net_snapshot_last_summary_time = 0;
-  client->net_snapshot_partial_ack_seq = -1;
-  client->net_snapshot_partial_ack_last_part = SNAPSHOT_PART_UNKNOWN;
-  Q_memset(client->net_snapshot_partial_ack_mask, 0,
-           sizeof(client->net_snapshot_partial_ack_mask));
-  client->net_snapshot_partial_ack_time = 0;
-  client->net_snapshot_resend_sequence = -1;
-  client->net_snapshot_resend_parts = 0;
-  Q_memset(client->net_snapshot_resend_part_len, 0,
-           sizeof(client->net_snapshot_resend_part_len));
-  client->net_snapshot_last_part_resend_time = 0;
-  client->net_snapshot_part_resends = 0;
 
   client->is_vr_client = false;
   VectorCopy(vec3_origin, client->vr_handpos);
@@ -1098,8 +1087,7 @@ static void SV_UpdateClientPMoveMode(client_t *client) {
   local_singleplayer = sv.active && svs.maxclients <= 1;
 
   usingpmove = !local_singleplayer &&
-    client->spawned && sv_pmove.value &&
-    (client->protocol_pext2 & PEXT2_PREDINFO);
+    client->spawned && sv_pmove.value;
 
   if (usingpmove != client->usingpmove && net_lagdebug.value)
     Con_Printf("net_lagdebug: server PMove %s for %s pext2=0x%x sv_runclientcommand=%d sv_nqplayerphysics=%g\n",

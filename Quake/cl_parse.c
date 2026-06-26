@@ -1123,26 +1123,13 @@ static unsigned int CLFTE_ReadDelta (unsigned int entnum, entity_state_t *news,
 	}
 	if (bits & UF_ORIGINZ)
 		news->origin[2] = MSG_ReadCoord (cl.protocolflags);
-	if ((bits & UF_PREDINFO) && !(cl.protocol_pext2 & PEXT2_PREDINFO))
+	if (bits & UF_ANGLESXZ)
 	{
-		if (bits & UF_ANGLESXZ)
-		{
-			news->angles[0] = MSG_ReadAngle16 (cl.protocolflags);
-			news->angles[2] = MSG_ReadAngle16 (cl.protocolflags);
-		}
-		if (bits & UF_ANGLESY)
-			news->angles[1] = MSG_ReadAngle16 (cl.protocolflags);
+		news->angles[0] = MSG_ReadAngle (cl.protocolflags);
+		news->angles[2] = MSG_ReadAngle (cl.protocolflags);
 	}
-	else
-	{
-		if (bits & UF_ANGLESXZ)
-		{
-			news->angles[0] = MSG_ReadAngle (cl.protocolflags);
-			news->angles[2] = MSG_ReadAngle (cl.protocolflags);
-		}
-		if (bits & UF_ANGLESY)
-			news->angles[1] = MSG_ReadAngle (cl.protocolflags);
-	}
+	if (bits & UF_ANGLESY)
+		news->angles[1] = MSG_ReadAngle (cl.protocolflags);
 	if ((bits & (UF_EFFECTS | UF_EFFECTS2)) == (UF_EFFECTS | UF_EFFECTS2))
 		news->effects = MSG_ReadLong ();
 	else if (bits & UF_EFFECTS2)
@@ -1171,7 +1158,7 @@ static unsigned int CLFTE_ReadDelta (unsigned int entnum, entity_state_t *news,
 			news->velocity[2] = MSG_ReadShort ();
 		if (predbits & UFP_MSEC)
 			MSG_ReadByte ();
-		if ((cl.protocol_pext2 & PEXT2_PREDINFO) && (predbits & UFP_VIEWANGLE))
+		if (predbits & UFP_VIEWANGLE)
 		{
 			if (bits & UF_ANGLESXZ)
 			{
@@ -1472,11 +1459,8 @@ static void CLFTE_ParseEntitiesUpdate (void)
 	cl.net_snapshot_sequence = frame_sequence;
 	cl.net_snapshot_packets++;
 
-	if (cl.protocol_pext2 & PEXT2_PREDINFO)
-	{
-		if (!CL_ParseMoveAckPayload ())
-			return;
-	}
+	if (!CL_ParseMoveAckPayload ())
+		return;
 
 	newtime = MSG_ReadFloat ();
 	if (newtime != cl.mtime[0])
@@ -2602,8 +2586,6 @@ void CL_ParseServerMessage (void)
 			break;
 
 		case svcdp_updatestatbyte:
-			if (!(cl.protocol_pext2 & PEXT2_REPLACEMENTDELTAS))
-				Host_Error ("CL_ParseServerMessage: unexpected svc_seq/updatestatbyte");
 			i = MSG_ReadByte ();
 			if (i < 0 || i >= MAX_CL_STATS)
 				Sys_Error ("svcdp_updatestatbyte: %i is invalid", i);
@@ -2613,8 +2595,6 @@ void CL_ParseServerMessage (void)
 			break;
 
 		case svcfte_updatestatfloat:
-			if (!(cl.protocol_pext2 & PEXT2_REPLACEMENTDELTAS))
-				Host_Error ("CL_ParseServerMessage: unexpected svcfte_updatestatfloat");
 			i = MSG_ReadByte ();
 			if (i < 0 || i >= MAX_CL_STATS)
 				Sys_Error ("svcfte_updatestatfloat: %i is invalid", i);
@@ -2624,8 +2604,6 @@ void CL_ParseServerMessage (void)
 			break;
 
 		case svcfte_updatestatstring:
-			if (!(cl.protocol_pext2 & PEXT2_REPLACEMENTDELTAS))
-				Host_Error ("CL_ParseServerMessage: unexpected svcfte_updatestatstring");
 			i = MSG_ReadByte ();
 			if (i < 0 || i >= MAX_CL_STATS)
 				Sys_Error ("svcfte_updatestatstring: %i is invalid", i);
@@ -2635,8 +2613,6 @@ void CL_ParseServerMessage (void)
 			break;
 
 		case svcfte_updateentities:
-			if (!(cl.protocol_pext2 & PEXT2_REPLACEMENTDELTAS))
-				Host_Error ("CL_ParseServerMessage: unexpected svcfte_updateentities");
 			CLFTE_ParseEntitiesUpdate ();
 			break;
 

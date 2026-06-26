@@ -972,9 +972,6 @@ static int Datagram_ProcessPacket (qsocket_t *sock, struct qsockaddr *readaddr, 
 				if (net_lagdebug.value)
 					Con_Printf("net_lagdebug: dropped %u unreliable datagram(s) from %s seq=%u expected=%u\n",
 						count, sock->address, sequence, sock->unreliableReceiveSequence);
-				if (!isDedicated && cls.state == ca_connected && sock == cls.netcon &&
-					!(cl.protocol_pext2 & PEXT2_REPLACEMENTDELTAS))
-					CL_NetSnapshotStartSmoothing ();
 			}
 			if (!staleSnapshot)
 				sock->unreliableReceiveSequence = sequence + 1;

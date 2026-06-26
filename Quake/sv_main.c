@@ -34,8 +34,6 @@ int		sv_protocol = PROTOCOL_RMQ; //johnfitz
 
 extern cvar_t nomonsters;
 cvar_t sv_maxpacketsize = {"sv_maxpacketsize", "1400", CVAR_NONE}; // below typical Ethernet MTU while reducing large-map packet splits
-cvar_t sv_snapshot_splits = {"sv_snapshot_splits", "0", CVAR_ARCHIVE};
-cvar_t sv_snapshot_packetdup = {"sv_snapshot_packetdup", "0", CVAR_NONE};
 cvar_t sv_replacement_maxpackets = {"sv_replacement_maxpackets", "0", CVAR_NONE};
 cvar_t sv_replacement_packetdup = {"sv_replacement_packetdup", "0", CVAR_NONE};
 cvar_t sv_replacement_packetdup_all = {"sv_replacement_packetdup_all", "0", CVAR_NONE};
@@ -46,8 +44,6 @@ cvar_t sv_replacement_priority_radius = {"sv_replacement_priority_radius", "0", 
 cvar_t sv_replacement_particle_maxbytes = {"sv_replacement_particle_maxbytes", "256", CVAR_NONE};
 cvar_t sv_moveack_independent = {"sv_moveack_independent", "0", CVAR_NONE};
 cvar_t sv_moveack_packetdup = {"sv_moveack_packetdup", "0", CVAR_NONE};
-cvar_t sv_snapshot_partresend = {"sv_snapshot_partresend", "1", CVAR_NONE};
-cvar_t sv_snapshot_partresend_interval = {"sv_snapshot_partresend_interval", "0.04", CVAR_NONE};
 cvar_t sv_netdiag_interval = {"sv_netdiag_interval", "5", CVAR_NONE};
 // When SV_WriteEntitiesToClient overflows the per-client datagram, the entity
 // that gets evicted is whichever the loop reached last. With sv_netsort=1
@@ -152,12 +148,9 @@ void SV_CalcStats(client_t *client, int *statsi, float *statsf, const char **sta
 	val = GetEdictFieldValueByName(ent, "weapons2");
 	if (val)
 		statsi[STAT_VR_WEAPONS2] = (int)val->_float;
-	if (client->protocol_pext2 & PEXT2_PREDINFO)
-	{
-		statsf[STAT_VIEWHEIGHT] = ent->v.view_ofs[2];
-		if (client->usingpmove)
-			PMSV_SetMoveStats(ent, statsf, statsi);
-	}
+	statsf[STAT_VIEWHEIGHT] = ent->v.view_ofs[2];
+	if (client->usingpmove)
+		PMSV_SetMoveStats(ent, statsf, statsi);
 
 	for (i = 0; i < sv.numcustomstats; i++)
 	{
@@ -294,16 +287,13 @@ static void SV_NetDiag_f (void)
 			client->net_move_last_bundle,
 			client->net_move_bundle_max, client->net_move_last_gap,
 			client->net_move_last_sim_seconds);
-		Con_Printf ("server netdiag: #%d snapshots replacement=%d seq=%d ack=%d packets=%d split_packets=%d last_packets=%d max_packets=%d last_bytes=%d max_bytes=%d acklag=%d clipped_ents=%d part_resends=%d partial_seq=%d partial_last=%d\n",
+		Con_Printf ("server netdiag: #%d snapshots replacement=%d seq=%d ack=%d packets=%d split_packets=%d last_packets=%d max_packets=%d last_bytes=%d max_bytes=%d acklag=%d clipped_ents=%d\n",
 			i + 1, replacement ? 1 : 0, sequence, ack,
 			client->net_snapshot_packets_sent,
 			client->net_snapshot_split_packets, client->net_snapshot_last_packets,
 			client->net_snapshot_max_packets, client->net_snapshot_last_bytes,
 			client->net_snapshot_max_bytes, acklag,
-			client->net_snapshot_unsent_entities,
-			client->net_snapshot_part_resends,
-			client->net_snapshot_partial_ack_seq,
-			client->net_snapshot_partial_ack_last_part);
+			client->net_snapshot_unsent_entities);
 	}
 }
 
@@ -361,8 +351,6 @@ void SV_Init (void)
 	Cvar_RegisterVariable (&sv_inputtimeout);
 	Cvar_RegisterVariable (&sv_move_timeclamp);
 	Cvar_RegisterVariable (&sv_maxpacketsize);
-	Cvar_RegisterVariable (&sv_snapshot_splits);
-	Cvar_RegisterVariable (&sv_snapshot_packetdup);
 	Cvar_RegisterVariable (&sv_replacement_maxpackets);
 	Cvar_RegisterVariable (&sv_replacement_packetdup);
 	Cvar_RegisterVariable (&sv_replacement_packetdup_all);
@@ -373,8 +361,6 @@ void SV_Init (void)
 	Cvar_RegisterVariable (&sv_replacement_particle_maxbytes);
 	Cvar_RegisterVariable (&sv_moveack_independent);
 	Cvar_RegisterVariable (&sv_moveack_packetdup);
-	Cvar_RegisterVariable (&sv_snapshot_partresend);
-	Cvar_RegisterVariable (&sv_snapshot_partresend_interval);
 	Cvar_RegisterVariable (&sv_netdiag_interval);
 	Cvar_RegisterVariable (&sv_coop_weapon_targetfix);
 	Cvar_RegisterVariable (&sv_coop_pickup_targetlog);
@@ -1111,6 +1097,8 @@ static void MSGFTE_WriteEntityUpdate (unsigned int bits, entity_state_t *state,
 {
 	unsigned int predbits = 0;
 
+	pext2 |= PEXT2_REPLACEMENTDELTAS | PEXT2_PREDINFO | PEXT2_NEWSIZEENCODING;
+
 	if (bits & UF_MOVETYPE)
 	{
 		bits &= ~UF_MOVETYPE;
@@ -1156,26 +1144,13 @@ static void MSGFTE_WriteEntityUpdate (unsigned int bits, entity_state_t *state,
 	}
 	if (bits & UF_ORIGINZ)
 		MSG_WriteCoord (msg, state->origin[2], protocolflags);
-	if ((bits & UF_PREDINFO) && !(pext2 & PEXT2_PREDINFO))
+	if (bits & UF_ANGLESXZ)
 	{
-		if (bits & UF_ANGLESXZ)
-		{
-			MSG_WriteAngle16 (msg, state->angles[0], protocolflags);
-			MSG_WriteAngle16 (msg, state->angles[2], protocolflags);
-		}
-		if (bits & UF_ANGLESY)
-			MSG_WriteAngle16 (msg, state->angles[1], protocolflags);
+		MSG_WriteAngle (msg, state->angles[0], protocolflags);
+		MSG_WriteAngle (msg, state->angles[2], protocolflags);
 	}
-	else
-	{
-		if (bits & UF_ANGLESXZ)
-		{
-			MSG_WriteAngle (msg, state->angles[0], protocolflags);
-			MSG_WriteAngle (msg, state->angles[2], protocolflags);
-		}
-		if (bits & UF_ANGLESY)
-			MSG_WriteAngle (msg, state->angles[1], protocolflags);
-	}
+	if (bits & UF_ANGLESY)
+		MSG_WriteAngle (msg, state->angles[1], protocolflags);
 	if ((bits & (UF_EFFECTS | UF_EFFECTS2)) == (UF_EFFECTS | UF_EFFECTS2))
 		MSG_WriteLong (msg, state->effects);
 	else if (bits & UF_EFFECTS2)
@@ -1315,9 +1290,6 @@ static void SVFTE_SetupFrames (client_t *client)
 	memset (client->resendstatsnum, 0, sizeof(client->resendstatsnum));
 	memset (client->resendstatsstr, 0, sizeof(client->resendstatsstr));
 
-	if (!(client->protocol_pext2 & PEXT2_REPLACEMENTDELTAS))
-		return;
-
 	client->numframes = 64;
 	client->frames = (struct deltaframe_s *)calloc (client->numframes, sizeof(*client->frames));
 	if (!client->frames)
@@ -1403,7 +1375,7 @@ void SVFTE_Ack (client_t *client, int sequence)
 	int dropseq;
 	struct deltaframe_s *frame;
 
-	if (!client->numframes || !(client->protocol_pext2 & PEXT2_REPLACEMENTDELTAS))
+	if (!client->numframes)
 		return;
 	if (sequence == -1)
 	{
@@ -1645,7 +1617,7 @@ static void SVFTE_WriteStatsToClient (client_t *client, sizebuf_t *msg,
 	int			i, reserve;
 
 	SV_CalcStats (client, statsi, statsf, statss);
-	reserve = (client->protocol_pext2 & PEXT2_PREDINFO) ? 13 : 11;
+	reserve = 13;
 
 	for (i = 0; i < MAX_CL_STATS; i++)
 	{
@@ -1743,7 +1715,8 @@ static double SV_NetLagDebugFrameThreshold (void)
 
 static qboolean SV_UsesReplacementDeltas (const client_t *client)
 {
-	return (client->protocol_pext2 & PEXT2_REPLACEMENTDELTAS) != 0;
+	(void)client;
+	return true;
 }
 
 static int SV_ReplacementLastSentSequence (const client_t *client)
@@ -1841,9 +1814,7 @@ static void SVFTE_WriteEntitiesToClient (client_t *client, sizebuf_t *msg,
 	if (nextdelta >= client->numpendingentities)
 		nextdelta = 0;
 
-	header_need = 1 + 4 + 4 + 2;
-	if (client->protocol_pext2 & PEXT2_PREDINFO)
-		header_need += 2;
+	header_need = 1 + 4 + 2 + 4 + 2;
 	if (msg->cursize + header_need > msg->maxsize)
 		return;
 
@@ -1851,8 +1822,7 @@ static void SVFTE_WriteEntitiesToClient (client_t *client, sizebuf_t *msg,
 	wrote_entity = false;
 	MSG_WriteByte (msg, svcfte_updateentities);
 	MSG_WriteLong (msg, sequence);
-	if (client->protocol_pext2 & PEXT2_PREDINFO)
-		SV_WriteMoveAckPayloadToMessage (client, msg);
+	SV_WriteMoveAckPayloadToMessage (client, msg);
 	MSG_WriteFloat (msg, qcvm->time);
 
 	for (entnum = client->snapshotresume; entnum < client->numpendingentities; entnum++)
@@ -2732,10 +2702,6 @@ static qboolean SV_SendIndependentMoveAck (client_t *client)
 		return true;
 	if (!client->usingpmove)
 		return true;
-	if (!(client->protocol_pext2 & PEXT2_PREDINFO))
-		return true;
-	if (!SV_UsesReplacementDeltas (client))
-		return true;
 	if (client->lastmovemessage < 0)
 		return true;
 
@@ -2805,102 +2771,6 @@ static void SV_MaybePrintSnapshotSummary (client_t *client, int client_index)
 		sequence, ack, acklag, ackage, client->net_snapshot_ack_age_max,
 		client->net_snapshot_unsent_entities);
 	client->net_snapshot_last_summary_time = realtime;
-}
-
-static qboolean SV_SnapshotAckMaskHasPart (client_t *client, int part)
-{
-	if (part < 0 || part >= SNAPSHOT_MAX_PARTS)
-		return false;
-	return (client->net_snapshot_partial_ack_mask[part >> 5] &
-		(1u << (part & 31))) != 0;
-}
-
-static void SV_StoreSnapshotPart (client_t *client, int sequence, int part, sizebuf_t *msg)
-{
-	if (part == 0 || client->net_snapshot_resend_sequence != sequence)
-	{
-		client->net_snapshot_resend_sequence = sequence;
-		client->net_snapshot_resend_parts = 0;
-		Q_memset (client->net_snapshot_resend_part_len, 0,
-			sizeof(client->net_snapshot_resend_part_len));
-	}
-
-	if (part < 0 || part >= SNAPSHOT_RESEND_MAX_PARTS ||
-		msg->cursize > SNAPSHOT_RESEND_MAX_PACKET)
-		return;
-
-	client->net_snapshot_resend_part_len[part] = msg->cursize;
-	Q_memcpy (client->net_snapshot_resend_part_data[part], msg->data,
-		msg->cursize);
-	if (part + 1 > client->net_snapshot_resend_parts)
-		client->net_snapshot_resend_parts = part + 1;
-}
-
-static qboolean SV_MaybeResendSnapshotParts (client_t *client)
-{
-	sizebuf_t msg;
-	double interval;
-	int part;
-	int parts;
-	int sent;
-
-	if (!sv_snapshot_partresend.value ||
-		client->net_snapshot_partial_ack_seq != client->net_snapshot_resend_sequence ||
-		client->net_snapshot_resend_parts <= 0)
-		return true;
-
-	if (client->net_snapshot_partial_ack_seq <= client->net_snapshot_ack)
-	{
-		client->net_snapshot_partial_ack_seq = -1;
-		return true;
-	}
-
-	interval = q_max (0.0, sv_snapshot_partresend_interval.value);
-	if (interval > 0 && realtime - client->net_snapshot_last_part_resend_time < interval)
-		return true;
-
-	parts = client->net_snapshot_resend_parts;
-	if (client->net_snapshot_partial_ack_last_part != SNAPSHOT_PART_UNKNOWN &&
-		client->net_snapshot_partial_ack_last_part + 1 < parts)
-		parts = client->net_snapshot_partial_ack_last_part + 1;
-
-	sent = 0;
-	for (part = 0; part < parts; part++)
-	{
-		if (SV_SnapshotAckMaskHasPart (client, part) ||
-			client->net_snapshot_resend_part_len[part] <= 0)
-			continue;
-
-		msg.data = client->net_snapshot_resend_part_data[part];
-		msg.maxsize = client->net_snapshot_resend_part_len[part];
-		msg.cursize = client->net_snapshot_resend_part_len[part];
-		msg.allowoverflow = false;
-		msg.overflowed = false;
-
-		if (NET_SendUnreliableMessage (client->netconnection, &msg) == -1)
-		{
-			SV_DropClient (true);
-			return false;
-		}
-		client->net_snapshot_packets_sent++;
-		client->net_snapshot_part_resends++;
-		sent++;
-	}
-
-	if (sent > 0)
-	{
-		client->net_snapshot_last_part_resend_time = realtime;
-		if (net_lagdebug.value)
-			Con_DPrintf ("net_lagdebug: resent %d snapshot parts to %s seq=%d mask=%08x/%08x/%08x/%08x last=%d\n",
-				sent, client->name, client->net_snapshot_partial_ack_seq,
-				client->net_snapshot_partial_ack_mask[0],
-				client->net_snapshot_partial_ack_mask[1],
-				client->net_snapshot_partial_ack_mask[2],
-				client->net_snapshot_partial_ack_mask[3],
-				client->net_snapshot_partial_ack_last_part);
-	}
-
-	return true;
 }
 
 static int SV_ProtocolCoordSize (void);
@@ -3489,265 +3359,11 @@ static qboolean SVFTE_SendClientDatagram (client_t *client, int maxsize)
 
 qboolean SV_SendClientDatagram (client_t *client)
 {
-	byte		buf[MAX_DATAGRAM];
-	sizebuf_t	msg;
 	int		maxsize;
-	int		i;
-	int		entity_start;
-	int		prev_entity_start;
-	int		datagram_offset;
-	int		packet_count;
-	int		snapshot_sequence;
-	int		snapshot_dup;
-	qboolean	first_packet;
-	int		total_bytes;
-	int		max_packet_bytes;
-	int		last_packet_bytes;
-	int		client_index;
-	double		update_gap;
-	int		ack_lag;
-	static double	last_gap_log[MAX_SCOREBOARD];
-	static double	last_update_sent[MAX_SCOREBOARD];
-	static double	last_update_log[MAX_SCOREBOARD];
-	static int	last_update_snapshot[MAX_SCOREBOARD];
-	static struct qsocket_s	*last_update_socket[MAX_SCOREBOARD];
 
-	msg.data = buf;
 	maxsize = SV_ClientMaxPacketSize (client);
 	SV_UpdateClientMSS (client);
-
-	if (client->protocol_pext2 & PEXT2_REPLACEMENTDELTAS)
-		return SVFTE_SendClientDatagram (client, maxsize);
-
-	if (!SV_MaybeResendSnapshotParts (client))
-		return false;
-
-	entity_start = 0;
-	datagram_offset = 0;
-	packet_count = 0;
-	snapshot_sequence = ++client->net_snapshot_sequence;
-	first_packet = true;
-	total_bytes = 0;
-	max_packet_bytes = 0;
-	last_packet_bytes = 0;
-	client_index = (int)(client - svs.clients);
-	if (client_index < 0 || client_index >= MAX_SCOREBOARD)
-		client_index = -1;
-	snapshot_dup = CLAMP(0, (int)sv_snapshot_packetdup.value, 3);
-	ack_lag = client->net_snapshot_ack >= 0 ?
-		snapshot_sequence - client->net_snapshot_ack : 0;
-	if (ack_lag > client->net_snapshot_ack_lag_max)
-		client->net_snapshot_ack_lag_max = ack_lag;
-
-	if (client_index >= 0 &&
-		(last_update_socket[client_index] != client->netconnection ||
-		 snapshot_sequence <= last_update_snapshot[client_index]))
-	{
-		last_update_socket[client_index] = client->netconnection;
-		last_update_sent[client_index] = 0;
-		last_update_log[client_index] = 0;
-		last_gap_log[client_index] = 0;
-	}
-
-	if (net_lagdebug.value && client_index >= 0 && last_update_sent[client_index] > 0)
-	{
-		update_gap = realtime - last_update_sent[client_index];
-		if (update_gap > SV_NetLagDebugFrameThreshold () &&
-			realtime - last_gap_log[client_index] > 0.5)
-		{
-			Con_Printf ("net_lagdebug: server unreliable update gap to %s (%s): %.3f sec host_dt=%.3f sv_time=%.3f\n",
-				client->name, NET_QSocketGetAddressString(client->netconnection),
-				update_gap, host_frametime, qcvm->time);
-			last_gap_log[client_index] = realtime;
-		}
-	}
-
-	do
-	{
-		int		snapshot_flags_offset;
-
-		msg.maxsize = maxsize;
-		msg.cursize = 0;
-		msg.allowoverflow = false;
-		msg.overflowed = false;
-
-		MSG_WriteByte (&msg, svc_snapshot);
-		MSG_WriteShort (&msg, snapshot_sequence & 0xffff);
-		MSG_WriteByte (&msg, packet_count & 0xff);
-		snapshot_flags_offset = msg.cursize;
-		MSG_WriteByte (&msg, first_packet ? SNAPSHOT_FIRST : 0);
-		MSG_WriteShort (&msg, CLAMP (0, entity_start, 32767));
-		MSG_WriteShort (&msg, CLAMP (0, qcvm->num_edicts, 32767));
-
-		if (first_packet)
-		{
-			MSG_WriteByte (&msg, svc_time);
-			MSG_WriteFloat (&msg, qcvm->time);
-			if (client->lastmovemessage >= 0)
-				SV_WriteMoveAckToMessage (client, &msg);
-		}
-
-// add the client specific data to the datagram
-		if (first_packet)
-		{
-			SV_WriteClientdataToMessage (client->edict, &msg);
-			SV_WritePrivateDatagramToMessage (client, &msg);
-		}
-		else
-			SV_WritePrivateDatagramToMessage (client, &msg);
-
-// With split snapshots disabled, send frame events before entity data so
-// important sounds/temp entities are not crowded out by a large PVS.
-		if (!sv_snapshot_splits.value && first_packet &&
-			datagram_offset < sv.datagram.cursize)
-		{
-			int remaining = sv.datagram.cursize - datagram_offset;
-			int space = msg.maxsize - msg.cursize;
-
-			if (remaining <= space)
-			{
-				SZ_Write (&msg, sv.datagram.data + datagram_offset, remaining);
-				datagram_offset = sv.datagram.cursize;
-			}
-			else if (net_lagdebug.value &&
-				(client_index < 0 || realtime - last_update_log[client_index] > 1.0))
-			{
-				Con_Printf ("net_lagdebug: dropping oversized server datagram before snapshot for %s (%s): datagram=%d space=%d maxpacket=%d\n",
-					client->name, NET_QSocketGetAddressString(client->netconnection),
-					remaining, space, maxsize);
-				if (client_index >= 0)
-					last_update_log[client_index] = realtime;
-				datagram_offset = sv.datagram.cursize;
-			}
-		}
-
-		prev_entity_start = entity_start;
-		net_edict_write_start = entity_start;
-		SV_WriteEntitiesToClient (client->edict, &msg);
-		entity_start = net_edict_write_next;
-
-// copy the server datagram if there is space
-		if (entity_start >= net_edict_write_total && datagram_offset < sv.datagram.cursize)
-		{
-			int remaining = sv.datagram.cursize - datagram_offset;
-			int space = msg.maxsize - msg.cursize;
-
-			if (remaining <= space)
-			{
-				SZ_Write (&msg, sv.datagram.data + datagram_offset, remaining);
-				datagram_offset = sv.datagram.cursize;
-			}
-			else if (remaining > msg.maxsize - 5)
-			{
-				if (!dev_overflows.packetsize || dev_overflows.packetsize + CONSOLE_RESPAM_TIME < realtime )
-				{
-					Con_Printf ("Server datagram too large to split safely (%d bytes, max packet %d)\n",
-						remaining, msg.maxsize);
-					dev_overflows.packetsize = realtime;
-				}
-				datagram_offset = sv.datagram.cursize;
-			}
-		}
-
-		if (!sv_snapshot_splits.value ||
-			(entity_start >= net_edict_write_total &&
-			 datagram_offset >= sv.datagram.cursize &&
-			 !client->datagram.cursize) ||
-			(entity_start == prev_entity_start &&
-			 entity_start < net_edict_write_total) ||
-			packet_count >= 127)
-		{
-			msg.data[snapshot_flags_offset] |= SNAPSHOT_LAST;
-		}
-
-	// send the datagram
-		SV_StoreSnapshotPart (client, snapshot_sequence, packet_count, &msg);
-		for (i = 0; i <= snapshot_dup; i++)
-		{
-			if (NET_SendUnreliableMessage (client->netconnection, &msg) == -1)
-			{
-				SV_DropClient (true);// if the message couldn't send, kick off
-				return false;
-			}
-		}
-
-		total_bytes += msg.cursize * (snapshot_dup + 1);
-		if (msg.cursize > max_packet_bytes)
-			max_packet_bytes = msg.cursize;
-		last_packet_bytes = msg.cursize;
-		packet_count++;
-		client->net_snapshot_packets_sent += snapshot_dup + 1;
-		first_packet = false;
-
-		if (!sv_snapshot_splits.value &&
-			(entity_start < net_edict_write_total ||
-			 datagram_offset < sv.datagram.cursize ||
-			 client->datagram.cursize))
-		{
-			client->net_snapshot_unsent_entities += net_edict_write_total - entity_start;
-			if (net_lagdebug.value &&
-				(client_index < 0 || realtime - last_update_log[client_index] > 1.0))
-			{
-				Con_Printf ("net_lagdebug: clipped oversized snapshot for %s (%s): sent_ents=%d/%d sv_datagram=%d/%d bytes=%d maxpacket=%d ack=%d\n",
-					client->name, NET_QSocketGetAddressString(client->netconnection),
-					entity_start, net_edict_write_total,
-					datagram_offset, sv.datagram.cursize, msg.cursize, maxsize,
-					client->net_snapshot_ack);
-				if (client_index >= 0)
-					last_update_log[client_index] = realtime;
-			}
-			break;
-		}
-
-		if (entity_start == prev_entity_start && entity_start < net_edict_write_total)
-		{
-			Con_Printf ("SV_SendClientDatagram: entity update could not fit in %d byte packet\n", msg.maxsize);
-			break;
-		}
-		if (packet_count >= 128)
-		{
-			Con_Printf ("SV_SendClientDatagram: too many split packets\n");
-			break;
-		}
-	}
-	while (entity_start < net_edict_write_total ||
-		datagram_offset < sv.datagram.cursize ||
-		client->datagram.cursize);
-
-	if (packet_count > 1)
-		client->net_snapshot_split_packets += packet_count - 1;
-	client->net_snapshot_updates_sent++;
-	client->net_snapshot_last_packets = packet_count;
-	client->net_snapshot_last_bytes = total_bytes;
-	if (packet_count > client->net_snapshot_max_packets)
-		client->net_snapshot_max_packets = packet_count;
-	if (total_bytes > client->net_snapshot_max_bytes)
-		client->net_snapshot_max_bytes = total_bytes;
-
-	if (net_lagdebug.value &&
-		(packet_count > 1 || max_packet_bytes > (maxsize * 9) / 10) &&
-		(client_index < 0 || realtime - last_update_log[client_index] > 1.0))
-	{
-		Con_Printf ("net_lagdebug: server update to %s (%s): packets=%d dup=%d bytes=%d max=%d last=%d ents=%d/%d sv_datagram=%d/%d maxpacket=%d snap=%d ack=%d splits=%d clipped=%d\n",
-			client->name, NET_QSocketGetAddressString(client->netconnection),
-			packet_count, snapshot_dup, total_bytes, max_packet_bytes, last_packet_bytes,
-			entity_start, net_edict_write_total,
-			datagram_offset, sv.datagram.cursize, maxsize,
-			snapshot_sequence, client->net_snapshot_ack,
-			client->net_snapshot_split_packets,
-			client->net_snapshot_unsent_entities);
-		if (client_index >= 0)
-			last_update_log[client_index] = realtime;
-	}
-	SV_MaybePrintSnapshotSummary (client, client_index);
-
-	if (client_index >= 0)
-	{
-		last_update_sent[client_index] = realtime;
-		last_update_snapshot[client_index] = snapshot_sequence;
-	}
-
-	return true;
+	return SVFTE_SendClientDatagram (client, maxsize);
 }
 
 /*
@@ -3850,8 +3466,6 @@ void SV_UpdateToReliableMessages (void)
 	{
 		if (!client->active)
 			continue;
-		if (!(client->protocol_pext2 & PEXT2_REPLACEMENTDELTAS))
-			SV_WriteStats (client);
 		SZ_Write (&client->message, sv.reliable_datagram.data, sv.reliable_datagram.cursize);
 	}
 

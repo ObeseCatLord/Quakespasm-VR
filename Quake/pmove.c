@@ -2087,8 +2087,7 @@ void PMCL_SetMoveVars (void)
 	if (!clmovevars_valid)
 		PMCL_ServerinfoUpdated ();
 	movevars = clmovevars;
-	if ((cl.protocol_pext2 & PEXT2_PREDINFO) &&
-		(cl.stats[STAT_MOVEFLAGS] & MOVEFLAG_VALID))
+	if (cl.stats[STAT_MOVEFLAGS] & MOVEFLAG_VALID)
 	{
 		movevars.stepheight = cl.statsf[STAT_MOVEVARS_STEPHEIGHT];
 		movevars.flags = cl.stats[STAT_MOVEFLAGS];
