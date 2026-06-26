@@ -267,12 +267,13 @@ static void SV_NetDiag_f (void)
 			client->net_move_last_bundle,
 			client->net_move_bundle_max, client->net_move_last_gap,
 			client->net_move_last_sim_seconds);
-		Con_Printf ("server netdiag: #%d snapshots replacement=%d seq=%d ack=%d packets=%d split_packets=%d last_packets=%d max_packets=%d last_bytes=%d max_bytes=%d acklag=%d clipped_ents=%d\n",
+		Con_Printf ("server netdiag: #%d snapshots replacement=%d seq=%d ack=%d packets=%d split_packets=%d last_packets=%d max_packets=%d last_bytes=%d max_bytes=%d acklag=%d loss=%d clipped_ents=%d\n",
 			i + 1, replacement ? 1 : 0, sequence, ack,
 			client->net_snapshot_packets_sent,
 			client->net_snapshot_split_packets, client->net_snapshot_last_packets,
 			client->net_snapshot_max_packets, client->net_snapshot_last_bytes,
 			client->net_snapshot_max_bytes, acklag,
+			client->netconnection ? NET_QSocketGetPacketLoss(client->netconnection) : 0,
 			client->net_snapshot_unsent_entities);
 	}
 }
