@@ -200,16 +200,6 @@ typedef struct
 	unsigned int	ackframes_history_count;
 	qboolean	requestresend;
 	double		net_last_diag_time;
-	qboolean	predstate_valid;
-	qboolean	predstate_has_origin;
-	int			predstate_sequence;
-	int			predstate_movetype;
-	int			predstate_flags;
-	float		predstate_time;
-	vec3_t		predstate_origin;
-	vec3_t		predstate_velocity;
-	vec3_t		predstate_mins;
-	vec3_t		predstate_maxs;
 
 // information for local display
 	int			stats[MAX_CL_STATS];	// health, etc
@@ -345,11 +335,6 @@ extern	cvar_t	cl_move_maxpacketbytes;
 extern	cvar_t	cl_move_packetdup;
 extern	cvar_t	cl_ack_redundancy;
 extern	cvar_t	cl_nopred;
-extern	cvar_t	cl_predict_smooth;
-extern	cvar_t	cl_predict_smooth_time;
-extern	cvar_t	cl_predict_smooth_min;
-extern	cvar_t	cl_predict_smooth_max;
-extern	cvar_t	cl_predict_legacy;
 extern	cvar_t	cl_predict_error_log;
 
 extern	cvar_t	cl_movespeedkey;
