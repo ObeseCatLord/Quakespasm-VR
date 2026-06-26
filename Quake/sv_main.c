@@ -658,6 +658,7 @@ void SV_SendServerinfo (client_t *client)
 
 	client->protocol_pext1 = 0;
 	client->protocol_pext2 = PEXT2_REPLACEMENTDELTAS | PEXT2_PREDINFO | PEXT2_NEWSIZEENCODING;
+	client->pextknown = true;
 	SVFTE_SetupFrames (client);
 	SV_UpdateClientMSS (client);
 
@@ -3234,7 +3235,7 @@ void SV_UpdateToReliableMessages (void)
 
 	for (j=0, client = svs.clients ; j<svs.maxclients ; j++, client++)
 	{
-		if (!client->active)
+		if (!client->active || !client->pextknown)
 			continue;
 		SZ_Write (&client->message, sv.reliable_datagram.data, sv.reliable_datagram.cursize);
 	}
