@@ -266,9 +266,6 @@ cvar_t cl_backspeed = {"cl_backspeed", "200", CVAR_ARCHIVE};
 cvar_t cl_sidespeed = {"cl_sidespeed", "350", CVAR_NONE};
 cvar_t cl_desktop_vanilla_run = {"cl_desktop_vanilla_run", "1", CVAR_ARCHIVE};
 cvar_t cl_predictmove = {"cl_predictmove", "1", CVAR_ARCHIVE};
-cvar_t cl_move_redundancy = {"cl_move_redundancy", "0", CVAR_ARCHIVE};
-cvar_t cl_move_maxpacketbytes = {"cl_move_maxpacketbytes", "1400", CVAR_ARCHIVE};
-cvar_t cl_move_packetdup = {"cl_move_packetdup", "0", CVAR_ARCHIVE};
 cvar_t cl_ack_redundancy = {"cl_ack_redundancy", "0", CVAR_NONE};
 cvar_t cl_nopred = {"cl_nopred", "0", CVAR_NONE};
 
@@ -530,8 +527,6 @@ static void CL_WriteAckFrames(sizebuf_t *buf)
 
 void CL_SendMove(const usercmd_t *cmd) {
   int seq;
-  int i;
-  int dup;
   qboolean local_singleplayer;
   usercmd_t sendcmd;
   sizebuf_t buf;
@@ -630,30 +625,15 @@ void CL_SendMove(const usercmd_t *cmd) {
     return;
   }
 
-  dup = local_singleplayer ? 0 : (int)cl_move_packetdup.value;
-  dup = CLAMP(0, dup, 3);
-
   if (NET_SendUnreliableMessage(cls.netcon, &buf) == -1) {
     Con_Printf("CL_SendMove: lost server connection\n");
     CL_Disconnect();
     return;
   }
-  for (i = 0; i < dup; i++) {
-    if (NET_SendUnreliableMessageAgain(cls.netcon, &buf) == -1) {
-      Con_Printf("CL_SendMove: lost server connection\n");
-      CL_Disconnect();
-      return;
-    }
-  }
 
-  cl.net_move_packets_sent += dup + 1;
-  cl.net_move_dup_packets_sent += dup;
+  cl.net_move_packets_sent++;
   cl.net_move_cmds_sent++;
   cl.net_move_last_packet_cmds = 1;
-
-  if (net_lagdebug.value && dup > 0)
-    Con_DPrintf("net_lagdebug: client sent qss-style move seq=%d dup=%d bytes=%d\n",
-                seq, dup, buf.cursize);
 }
 
 /*

@@ -51,7 +51,6 @@ static void SV_UpdateClientPMoveMode(client_t *client);
 cvar_t sv_idealpitchscale = {"sv_idealpitchscale", "0.8", CVAR_NONE};
 cvar_t sv_altnoclip = {"sv_altnoclip", "1", CVAR_ARCHIVE}; // johnfitz
 cvar_t sv_inputtimeout = {"sv_inputtimeout", "0", CVAR_NONE};
-cvar_t sv_pmove = {"sv_pmove", "1", CVAR_NONE};
 cvar_t sv_nqplayerphysics = {"sv_nqplayerphysics", "0", CVAR_NONE};
 cvar_t sv_pmove_legacy_preserve_qc_velocity = {
     "sv_pmove_legacy_preserve_qc_velocity", "1", CVAR_NONE};
