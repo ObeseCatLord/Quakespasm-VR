@@ -2415,6 +2415,7 @@ static void COM_Game_f (void)
 		Cbuf_AddText ("vid_unlock\n");
 		Cmd_QueuePostConfigAfterGameChange ();
 		Cbuf_AddText ("cl_migrate_network_defaults\n");
+		Cbuf_AddText ("vr_migrate_movement_defaults\n");
 
 		if (vr_enabled.value)
 		{

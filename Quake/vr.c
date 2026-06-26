@@ -843,8 +843,23 @@ DEFINE_CVAR(vr_joystick_deadzone_trunc, 1, CVAR_ARCHIVE);
 DEFINE_CVAR(vr_hud_scale, 0.025, CVAR_ARCHIVE);
 DEFINE_CVAR(vr_menu_scale, 0.13, CVAR_ARCHIVE);
 DEFINE_CVAR(vr_movement_instant_stop, 0, CVAR_ARCHIVE);
+DEFINE_CVAR(vr_movement_defaults_version, 0, CVAR_ARCHIVE);
 DEFINE_CVAR(vr_movement_speed, 1.0, CVAR_ARCHIVE);
 DEFINE_CVAR(vr_weaponmenu_player_teleport, 1, CVAR_ARCHIVE);
+
+#define VR_MOVEMENT_DEFAULTS_VERSION 1
+
+void VR_MigrateMovementDefaults_f(void)
+{
+  if ((int)vr_movement_defaults_version.value >= VR_MOVEMENT_DEFAULTS_VERSION)
+    return;
+
+  if ((int)vr_movement_instant_stop.value == 1)
+    Cvar_SetQuick(&vr_movement_instant_stop, "0");
+
+  Cvar_SetQuick(&vr_movement_defaults_version,
+                va("%d", VR_MOVEMENT_DEFAULTS_VERSION));
+}
 
 static qboolean InitOpenGLExtensions() {
   int i;
@@ -3684,6 +3699,7 @@ qboolean VR_Enable() {
   VR_ResetOrientation(); // Recenter the HMD
 
   Cbuf_AddText("exec vr_autoexec.cfg\n"
+               "vr_migrate_movement_defaults\n"
                "vr_defaultbindings\n"); // Load user VR settings, then ensure
                                          // core controller actions exist.
 
