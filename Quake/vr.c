@@ -847,15 +847,33 @@ DEFINE_CVAR(vr_movement_defaults_version, 0, CVAR_ARCHIVE);
 DEFINE_CVAR(vr_movement_speed, 1.0, CVAR_ARCHIVE);
 DEFINE_CVAR(vr_weaponmenu_player_teleport, 1, CVAR_ARCHIVE);
 
-#define VR_MOVEMENT_DEFAULTS_VERSION 1
+#define VR_MOVEMENT_DEFAULTS_VERSION 2
+
+static qboolean VR_MovementDefaultMatches(float value, float old_default)
+{
+  const float epsilon = 0.0001f;
+
+  return value > old_default - epsilon && value < old_default + epsilon;
+}
 
 void VR_MigrateMovementDefaults_f(void)
 {
-  if ((int)vr_movement_defaults_version.value >= VR_MOVEMENT_DEFAULTS_VERSION)
+  int version = (int)vr_movement_defaults_version.value;
+
+  if (version >= VR_MOVEMENT_DEFAULTS_VERSION)
     return;
 
-  if ((int)vr_movement_instant_stop.value == 1)
+  if (version < 1 && (int)vr_movement_instant_stop.value == 1)
     Cvar_SetQuick(&vr_movement_instant_stop, "0");
+
+  if (version < 2) {
+    if (VR_MovementDefaultMatches(cl_forwardspeed.value, 400.0f))
+      Cvar_SetQuick(&cl_forwardspeed, "200");
+    if (VR_MovementDefaultMatches(cl_backspeed.value, 400.0f))
+      Cvar_SetQuick(&cl_backspeed, "200");
+    if (VR_MovementDefaultMatches(vr_movement_speed.value, 1.5f))
+      Cvar_SetQuick(&vr_movement_speed, "1.0");
+  }
 
   Cvar_SetQuick(&vr_movement_defaults_version,
                 va("%d", VR_MOVEMENT_DEFAULTS_VERSION));
