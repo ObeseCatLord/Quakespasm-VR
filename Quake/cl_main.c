@@ -845,6 +845,8 @@ static qboolean CL_PredictPlayer (entity_t *ent)
 		cls.state != ca_connected || cls.signon != SIGNONS ||
 		!cl.worldmodel || cl.viewentity <= 0)
 		return false;
+	if (cl.stats[STAT_HEALTH] <= 0 || cl.ackedmovemessages <= 0)
+		return false;
 	if (ent != &cl.entities[cl.viewentity])
 		return false;
 	if ((cl.protocol_pext2 & (PEXT2_REPLACEMENTDELTAS | PEXT2_PREDINFO)) !=
