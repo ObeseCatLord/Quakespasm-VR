@@ -142,9 +142,10 @@ sv_nofriendlyfire 1
 sv_coop_weapon_targetfix 1
 ```
 
-Use `-novr` for desktop clients and `-vr` for headset clients. Client-side
-prediction uses QSS-M-style move ACKs; server PMove/trusted movement is off by
-default unless a mod explicitly supplies `SV_RunClientCommand`.
+Use `-novr` for desktop clients and `-vr` for headset clients. The protocol uses
+QSS-M-style move ACKs; server PMove/trusted movement is off by default,
+including mods that supply `SV_RunClientCommand`; set
+`sv_nqplayerphysics 0` only when intentionally testing server PMove.
 
 ## Building
 
@@ -338,7 +339,7 @@ QuakeSpasm cvar.
 | `sv_netdiag_interval` | `5` | Diagnostics | Periodic network diagnostic interval in seconds. |
 | `sv_netsort` | `1` | Networking | Sorts entity updates by priority before packet clipping. |
 | `sv_nofriendlyfire` | `1` | Co-op | Disables friendly fire in co-op. |
-| `sv_nqplayerphysics` | `1` | PMove | Keeps server PMove/trusted movement disabled unless a mod explicitly supplies `SV_RunClientCommand`; set `0` only for testing PMove. |
+| `sv_nqplayerphysics` | `1` | PMove | Master default-off switch for server PMove/trusted movement, including mods with `SV_RunClientCommand`; set `0` only for testing PMove. |
 | `sv_pmove_legacy_preserve_qc_velocity` | `1` | PMove | Preserves QC velocity pushes such as grapples through legacy PMove. |
 | `sv_save_multiplayer` | `1` | Save/load | Allows multiplayer/co-op saves in controlled use. |
 | `sv_skyroom_pvs` | `1` | Rendering/server | Adds skyroom PVS for skyroom entity visibility. |
