@@ -199,14 +199,13 @@ void SV_Protocol_f (void)
 		break;
 	case 2:
 		i = atoi(Cmd_Argv(1));
-		if (i != PROTOCOL_NETQUAKE && i != PROTOCOL_FITZQUAKE && i != PROTOCOL_RMQ)
-			Con_Printf ("sv_protocol must be %i or %i or %i\n", PROTOCOL_NETQUAKE, PROTOCOL_FITZQUAKE, PROTOCOL_RMQ);
-		else
+		if (i != PROTOCOL_RMQ)
 		{
-			sv_protocol = i;
-			if (sv.active)
-				Con_Printf ("changes will not take effect until the next level load.\n");
+			Con_Printf ("sv_protocol is fixed at %i (RMQ) in this build.\n",
+				PROTOCOL_RMQ);
+			break;
 		}
+		sv_protocol = PROTOCOL_RMQ;
 		break;
 	default:
 		Con_SafePrintf ("usage: sv_protocol <protocol>\n");
@@ -385,22 +384,23 @@ void SV_Init (void)
 
 	i = COM_CheckParm ("-protocol");
 	if (i && i < com_argc - 1)
-		sv_protocol = atoi (com_argv[i + 1]);
+	{
+		if (atoi (com_argv[i + 1]) != PROTOCOL_RMQ)
+			Con_Printf ("Ignoring -protocol %s; this build requires %i (RMQ).\n",
+				com_argv[i + 1], PROTOCOL_RMQ);
+		sv_protocol = PROTOCOL_RMQ;
+	}
 	switch (sv_protocol)
 	{
-	case PROTOCOL_NETQUAKE:
-		p = "NetQuake";
-		break;
-	case PROTOCOL_FITZQUAKE:
-		p = "FitzQuake";
-		break;
 	case PROTOCOL_RMQ:
 		p = "RMQ";
 		break;
 	default:
-		Sys_Error ("Bad protocol version request %i. Accepted values: %i, %i, %i.",
-				sv_protocol, PROTOCOL_NETQUAKE, PROTOCOL_FITZQUAKE, PROTOCOL_RMQ);
-		return; /* silence compiler */
+		Con_Printf ("Bad protocol version request %i; forcing %i (RMQ).\n",
+			sv_protocol, PROTOCOL_RMQ);
+		sv_protocol = PROTOCOL_RMQ;
+		p = "RMQ";
+		break;
 	}
 	Sys_Printf ("Server using protocol %i (%s)\n", sv_protocol, p);
 }

@@ -573,13 +573,12 @@ void CL_ParseServerInfo (void)
 
 // parse protocol version number
 	i = MSG_ReadLong ();
-	//johnfitz -- support multiple protocols
-	if (i != PROTOCOL_NETQUAKE && i != PROTOCOL_FITZQUAKE && i != PROTOCOL_RMQ) {
+	if (i != PROTOCOL_RMQ) {
 		Con_Printf ("\n"); //because there's no newline after serverinfo print
-		Host_Error ("Server returned version %i, not %i or %i or %i", i, PROTOCOL_NETQUAKE, PROTOCOL_FITZQUAKE, PROTOCOL_RMQ);
+		Host_Error ("Server returned version %i, expected %i (RMQ)", i,
+			PROTOCOL_RMQ);
 	}
 	cl.protocol = i;
-	//johnfitz
 
 	if (cl.protocol == PROTOCOL_RMQ)
 	{
@@ -2003,11 +2002,10 @@ void CL_ParseServerMessage (void)
 
 		case svc_version:
 			i = MSG_ReadLong ();
-			//johnfitz -- support multiple protocols
-			if (i != PROTOCOL_NETQUAKE && i != PROTOCOL_FITZQUAKE && i != PROTOCOL_RMQ)
-				Host_Error ("Server returned version %i, not %i or %i or %i", i, PROTOCOL_NETQUAKE, PROTOCOL_FITZQUAKE, PROTOCOL_RMQ);
+			if (i != PROTOCOL_RMQ)
+				Host_Error ("Server returned version %i, expected %i (RMQ)", i,
+					PROTOCOL_RMQ);
 			cl.protocol = i;
-			//johnfitz
 			break;
 
 		case svc_disconnect:
