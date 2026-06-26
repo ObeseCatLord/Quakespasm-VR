@@ -333,7 +333,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #define svc_levelcompleted 54
 #define svc_backtolobby 55
 #define svc_localsound 56
-#define svc_moveack 57 // [short] last accepted sequenced move, prediction base
+#define svc_moveack 57 // [short] last accepted sequenced move
 #define svc_snapshot 58 // [short] frame [byte] part [byte] flags [short] firstent [short] totalents
 
 // QSS-M/FTE/DP service ids used by replacement deltas. Some numeric values

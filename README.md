@@ -60,7 +60,7 @@ extended protocol support.
 ### Networking
 
 - Clients and servers use an extended movement path with numbered movement
-  commands, redundant command sends, movement ACKs, and prediction state.
+  commands, movement ACKs, and player entity prediction state.
 - Co-op servers can use PMove-based movement and QSS-M-style prediction to
   reduce movement judder.
 - Replacement-delta entity updates reduce the need for unsafe split snapshots.
@@ -265,12 +265,12 @@ QuakeSpasm cvar.
 | `cl_portpingprobe_delay` | `0.20` | Networking | Delay before port-probe connect fallback. |
 | `cl_portpingprobe_enable` | `1` | Networking | Enables client UDP port probe selection. |
 | `cl_portpingprobe_probes` | `6` | Networking | Number of client port probes. |
-| `cl_predict_error_log` | `1` | Diagnostics | Logs prediction error corrections. |
+| `cl_predict_error_log` | `1` | Diagnostics | Logs prediction mismatches. |
 | `cl_predict_legacy` | `0` | Networking | Uses legacy prediction behavior for comparison/debug. |
-| `cl_predict_smooth` | `1` | Networking | Smooths small prediction corrections. |
-| `cl_predict_smooth_max` | `8` | Networking | Largest prediction error eligible for smoothing. |
-| `cl_predict_smooth_min` | `0.25` | Networking | Smallest prediction error eligible for smoothing. |
-| `cl_predict_smooth_time` | `0.04` | Networking | Prediction correction smoothing time. |
+| `cl_predict_smooth` | `1` | Networking | Legacy no-op retained for old configs; QSS-M-style prediction is unsmoothed. |
+| `cl_predict_smooth_max` | `8` | Networking | Legacy no-op retained for old configs. |
+| `cl_predict_smooth_min` | `0.25` | Networking | Legacy no-op retained for old configs. |
+| `cl_predict_smooth_time` | `0.04` | Networking | Legacy no-op retained for old configs. |
 | `cl_predictmove` | `1` | Networking | Enables client-side movement prediction for remote play. |
 | `cfg_unbindall` | `1` | Config | Allows configs to execute `unbindall`; set `0` to ignore it. |
 | `freelook` | `1` | Input | Default mouse look behavior. |
