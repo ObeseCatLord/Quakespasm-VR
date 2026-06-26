@@ -185,14 +185,17 @@ static qboolean Host_BeginNetworkFrame (double *accum, double interval,
 	if (interval <= 0)
 		return true;
 
-	*accum += host_frametime;
 	if (*accum < interval)
 		return false;
 
 	*saved_frametime = host_frametime;
-	network_frametime = CLAMP (0.001, *accum, 0.1);
+	network_frametime = q_max (*accum, interval);
 	host_frametime = network_frametime;
 	*accum -= network_frametime;
+	if (host_timescale.value > 0)
+		host_frametime *= host_timescale.value;
+	else if (host_framerate.value > 0)
+		host_frametime = host_framerate.value;
 	if (*accum < 0 || *accum > interval)
 		*accum = 0;
 	return true;
@@ -980,6 +983,18 @@ void _Host_Frame (float time)
 // keep the random time dependent
 	rand ();
 
+	net_interval = Host_EffectiveNetInterval ();
+	net_isolated = Host_ShouldIsolateNetworkFrame (net_interval);
+	if (!net_isolated)
+		net_interval = 0;
+	if (net_isolated != net_last_isolated || net_interval != net_last_interval)
+		net_accum = 0;
+	net_last_isolated = net_isolated;
+	net_last_interval = net_interval;
+	host_netinterval = (float)net_interval;
+	if (net_interval > 0)
+		net_accum += CLAMP (0, time, 0.2);
+
 // decide the simulation time
 	if (!Host_FilterTime (time))
 		return;			// don't run too fast, or packets will flood out
@@ -1043,15 +1058,6 @@ void _Host_Frame (float time)
 		vid.recalc_refdef = true;
 	}
 
-	net_interval = Host_EffectiveNetInterval ();
-	net_isolated = Host_ShouldIsolateNetworkFrame (net_interval);
-	if (!net_isolated)
-		net_interval = 0;
-	if (net_isolated != net_last_isolated || net_interval != net_last_interval)
-		net_accum = 0;
-	net_last_isolated = net_isolated;
-	net_last_interval = net_interval;
-	host_netinterval = (float)net_interval;
 	saved_host_frametime = host_frametime;
 	net_frame_due = Host_BeginNetworkFrame (&net_accum, net_interval,
 		&saved_host_frametime);
@@ -1086,8 +1092,7 @@ void _Host_Frame (float time)
 //
 //-------------------
 
-// if running the server remotely, send intentions now after
-// the incoming messages have been read. The same accumulator also paces
+// if running the server remotely, send intentions now. The same accumulator also paces
 // listen-server multiplayer above, matching QSS-M's renderer/network split.
 	if (!sv.active && net_frame_due)
 		CL_SendCmd ();
