@@ -99,7 +99,6 @@ void SV_ResetClientMoveState(client_t *client) {
   client->input_stale = false;
   client->moveext = false;
   client->lastmovemessage = -1;
-  client->lastreceivedmovemessage = -1;
   client->pendingmovemessage = -1;
   client->move_pending = false;
 
@@ -534,8 +533,7 @@ static int SV_ExpandClientSequence(int sequence16) {
   int base;
 
   sequence16 &= 0xffff;
-  base = host_client->lastreceivedmovemessage > host_client->lastmovemessage ?
-         host_client->lastreceivedmovemessage : host_client->lastmovemessage;
+  base = host_client->lastmovemessage;
   if (base < 0)
     return sequence16;
 
@@ -762,7 +760,7 @@ void SV_ReadClientMove(usercmd_t *move) {
 
   sequence16 = MSG_ReadShort() & 0xffff;
   sequence = SV_ExpandClientSequence(sequence16);
-  accepted_base = host_client->lastreceivedmovemessage;
+  accepted_base = host_client->lastmovemessage;
 
   host_client->net_move_cmds_received++;
 
@@ -794,7 +792,6 @@ void SV_ReadClientMove(usercmd_t *move) {
 
   host_client->moveext = true;
   host_client->net_move_cmds_accepted++;
-  host_client->lastreceivedmovemessage = sequence;
   *move = host_client->cmd;
 
   if (host_client->usingpmove && host_client->spawned && !sv.paused &&
