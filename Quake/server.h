@@ -138,7 +138,6 @@ typedef struct client_s
 	qboolean		input_stale;
 	qboolean		moveext;
 	int				lastmovemessage;
-	int				lastreceivedmovemessage;
 	int				pendingmovemessage;
 	qboolean		move_pending;
 	int				net_move_packets_received;
