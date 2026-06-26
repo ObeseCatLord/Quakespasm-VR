@@ -1143,12 +1143,25 @@ void SV_RunClients(void) {
 
     SV_UpdateClientPMoveMode(host_client);
 
+    if (!host_client->netconnection) {
+      eval_t *ev;
+
+      ev = GetEdictFieldValue(host_client->edict, qcvm->extfields.movement);
+      if (ev) {
+        host_client->cmd.forwardmove = ev->vector[0];
+        host_client->cmd.sidemove = ev->vector[1];
+        host_client->cmd.upmove = ev->vector[2];
+      }
+      host_client->cmd.viewangles[0] = host_client->edict->v.v_angle[0];
+      host_client->cmd.viewangles[1] = host_client->edict->v.v_angle[1];
+      host_client->cmd.viewangles[2] = host_client->edict->v.v_angle[2];
+    }
+
     // always pause in single player if in console or menus
     if (!sv.paused && (svs.maxclients > 1 || key_dest == key_game)) {
-      if (!host_client->usingpmove) {
+      if (!host_client->usingpmove)
         SV_ClearStaleClientInput(host_client);
-        SV_ClientThink();
-      }
+      SV_ClientThink();
     }
   }
 }
