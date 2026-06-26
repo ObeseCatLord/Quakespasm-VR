@@ -268,6 +268,7 @@ QuakeSpasm cvar.
 | `net_lagdebug_frame_threshold` | `0.05` | Diagnostics | Frame-gap threshold for lag logs. |
 | `net_lagdebug_threshold` | `0.25` | Diagnostics | Network-gap threshold for lag logs. |
 | `net_sameip_stale_timeout` | `3.0` | Networking | Stale timeout for same-IP virtual sockets. |
+| `sys_ticrate` | `0.0138889` | Networking | Dedicated server tick interval; default is 72 Hz to match latest-client command pacing. |
 | `pm_airstep` | `""` | PMove | PMove air-step compatibility setting. |
 | `pm_autobunny` | `""` | PMove | PMove auto-bunny compatibility setting. |
 | `pm_bunnyfriction` | `1` | PMove | PMove bunny friction behavior. |
