@@ -54,8 +54,6 @@ static int myDriverLevel;
 cvar_t net_lagdebug = {"net_lagdebug", "0", CVAR_NONE};
 cvar_t net_lagdebug_threshold = {"net_lagdebug_threshold", "0.25", CVAR_NONE};
 cvar_t net_lagdebug_frame_threshold = {"net_lagdebug_frame_threshold", "0.05", CVAR_NONE};
-static cvar_t net_reorder_window = {"net_reorder_window", "0", CVAR_NONE};
-static cvar_t net_reorder_timeout = {"net_reorder_timeout", "0", CVAR_NONE};
 static cvar_t net_sameip_stale_timeout = {"net_sameip_stale_timeout", "3.0", CVAR_NONE};
 static cvar_t net_singlesocket = {"net_singlesocket", "1", CVAR_NONE};
 static cvar_t cl_netport = {"cl_netport", "0", CVAR_ARCHIVE};
@@ -64,7 +62,6 @@ static cvar_t cl_portpingprobe_probes = {"cl_portpingprobe_probes", "6", CVAR_AR
 static cvar_t cl_portpingprobe_delay = {"cl_portpingprobe_delay", "0.20", CVAR_ARCHIVE};
 static int net_lagdebug_unmatched_suppressed;
 static double net_lagdebug_unmatched_time;
-static qboolean net_reorder_force_drop;
 static qboolean net_server_receive_path;
 
 #define MAX_PENDING_DATAGRAMS	64
@@ -107,8 +104,6 @@ extern qboolean m_return_onerror;
 extern char m_return_reason[32];
 
 static int Datagram_ProcessPacket (qsocket_t *sock, struct qsockaddr *readaddr, unsigned int wireLength);
-
-static void Datagram_ClearReorderedUnreliable (qsocket_t *sock);
 
 static char *StrAddr (struct qsockaddr *addr)
 {
@@ -212,8 +207,6 @@ static void Datagram_DropQueuedPackets (qsocket_t *sock)
 {
 	int i;
 
-	Datagram_ClearReorderedUnreliable (sock);
-
 	if (!sock->isvirtual)
 		return;
 
@@ -225,154 +218,6 @@ static void Datagram_DropQueuedPackets (qsocket_t *sock)
 			continue;
 		pendingDatagrams[i].valid = false;
 	}
-}
-
-static void Datagram_ClearReorderedUnreliable (qsocket_t *sock)
-{
-	memset (sock->unreliableReorder, 0, sizeof(sock->unreliableReorder));
-}
-
-static int Datagram_UnreliableSeqDiff (unsigned int sequence, unsigned int expected)
-{
-	return (int)(sequence - expected);
-}
-
-static int Datagram_ReorderWindow (void)
-{
-	return CLAMP (0, (int)net_reorder_window.value, NET_UNRELIABLE_REORDER);
-}
-
-static qboolean Datagram_QueueReorderedUnreliable (qsocket_t *sock,
-	struct qsockaddr *addr, unsigned int sequence, unsigned int wireLength)
-{
-	int i, slot, worst, diff, worstdiff, window;
-
-	window = Datagram_ReorderWindow ();
-	diff = Datagram_UnreliableSeqDiff (sequence, sock->unreliableReceiveSequence);
-	if (window <= 0 || diff <= 0 || diff > window)
-		return false;
-
-	slot = -1;
-	worst = -1;
-	worstdiff = -1;
-	for (i = 0; i < NET_UNRELIABLE_REORDER; i++)
-	{
-		qsocket_reorder_t *hold = &sock->unreliableReorder[i];
-		int holddiff;
-
-		if (!hold->valid)
-		{
-			if (slot < 0)
-				slot = i;
-			continue;
-		}
-
-		holddiff = Datagram_UnreliableSeqDiff (hold->sequence,
-			sock->unreliableReceiveSequence);
-		if (holddiff <= 0 || holddiff > window)
-		{
-			hold->valid = false;
-			if (slot < 0)
-				slot = i;
-			continue;
-		}
-		if (hold->sequence == sequence)
-			return true;
-		if (holddiff > worstdiff)
-		{
-			worst = i;
-			worstdiff = holddiff;
-		}
-	}
-
-	if (slot < 0)
-	{
-		if (worst < 0 || worstdiff <= diff)
-			return false;
-		slot = worst;
-	}
-
-	sock->unreliableReorder[slot].valid = true;
-	sock->unreliableReorder[slot].sequence = sequence;
-	sock->unreliableReorder[slot].wireLength = wireLength;
-	sock->unreliableReorder[slot].queuedTime = net_time;
-	sock->unreliableReorder[slot].addr = *addr;
-	Q_memcpy (&sock->unreliableReorder[slot].packet, &packetBuffer,
-		sizeof(packetBuffer));
-	return true;
-}
-
-static int Datagram_FindReadyReorderedUnreliable (qsocket_t *sock, qboolean *force)
-{
-	int i, best, bestdiff, diff, window;
-	double timeout, oldest;
-
-	window = Datagram_ReorderWindow ();
-	timeout = CLAMP (0.0, net_reorder_timeout.value, 0.100);
-	best = -1;
-	bestdiff = 0x7fffffff;
-	oldest = 0;
-	*force = false;
-
-	for (i = 0; i < NET_UNRELIABLE_REORDER; i++)
-	{
-		qsocket_reorder_t *hold = &sock->unreliableReorder[i];
-
-		if (!hold->valid)
-			continue;
-
-		diff = Datagram_UnreliableSeqDiff (hold->sequence,
-			sock->unreliableReceiveSequence);
-		if (diff < 0 || diff > window || window <= 0)
-		{
-			hold->valid = false;
-			continue;
-		}
-		if (diff == 0)
-			return i;
-		if (diff < bestdiff)
-		{
-			best = i;
-			bestdiff = diff;
-			oldest = hold->queuedTime;
-		}
-	}
-
-	if (best >= 0 && (timeout <= 0 || net_time - oldest >= timeout))
-	{
-		*force = true;
-		return best;
-	}
-
-	return -1;
-}
-
-static int Datagram_ProcessReadyReorderedUnreliable (qsocket_t *sock,
-	qboolean server_path)
-{
-	int ret, slot;
-	qboolean force, saved_force, saved_server_path;
-	struct qsockaddr readaddr;
-	unsigned int wireLength;
-
-	slot = Datagram_FindReadyReorderedUnreliable (sock, &force);
-	if (slot < 0)
-		return 0;
-
-	readaddr = sock->unreliableReorder[slot].addr;
-	wireLength = sock->unreliableReorder[slot].wireLength;
-	Q_memcpy (&packetBuffer, &sock->unreliableReorder[slot].packet,
-		sizeof(packetBuffer));
-	sock->unreliableReorder[slot].valid = false;
-
-	saved_force = net_reorder_force_drop;
-	saved_server_path = net_server_receive_path;
-	net_reorder_force_drop = force;
-	net_server_receive_path = server_path;
-	ret = Datagram_ProcessPacket (sock, &readaddr, wireLength);
-	net_reorder_force_drop = saved_force;
-	net_server_receive_path = saved_server_path;
-	return ret;
 }
 
 static int Datagram_ProcessServerPacket (qsocket_t *sock,
@@ -940,16 +785,6 @@ static int Datagram_ProcessPacket (qsocket_t *sock, struct qsockaddr *readaddr, 
 				sock->addr = *readaddr;
 			}
 
-			if (!net_reorder_force_drop &&
-				sequence > sock->unreliableReceiveSequence &&
-				Datagram_QueueReorderedUnreliable (sock, readaddr, sequence, wireLength))
-			{
-				if (net_lagdebug.value)
-					Con_DPrintf("net_lagdebug: queued out-of-order unreliable datagram from %s seq=%u expected=%u\n",
-						sock->address, sequence, sock->unreliableReceiveSequence);
-				return 0;
-			}
-
 			if (sequence != sock->unreliableReceiveSequence)
 			{
 				count = sequence - sock->unreliableReceiveSequence;
@@ -1101,10 +936,6 @@ int	Datagram_GetMessage (qsocket_t *sock)
 		if ((net_time - sock->lastSendTime) > 1.0)
 			ReSendMessage (sock);
 
-	ret = Datagram_ProcessReadyReorderedUnreliable (sock, false);
-	if (ret)
-		goto done;
-
 	while (Datagram_DequeuePacket(sock, &queuedLength, &readaddr))
 	{
 		ret = Datagram_ProcessPacket(sock, &readaddr, queuedLength);
@@ -1137,9 +968,6 @@ int	Datagram_GetMessage (qsocket_t *sock)
 			break;
 	}
 
-	if (!ret)
-		ret = Datagram_ProcessReadyReorderedUnreliable (sock, false);
-
 done:
 	if (sock->sendNext)
 		SendMessageNext (sock);
@@ -1165,20 +993,6 @@ static void Datagram_ServerMessageResult (qsocket_t *sock, int ret, void (*callb
 	else if (ret == 2)
 		unreliableMessagesReceived++;
 	callback(sock);
-}
-
-
-static void Datagram_ServerDrainReadyReordered (qsocket_t *sock, void (*callback)(qsocket_t *sock))
-{
-	int ret;
-
-	while (!sock->disconnected)
-	{
-		ret = Datagram_ProcessReadyReorderedUnreliable (sock, true);
-		if (!ret)
-			break;
-		Datagram_ServerMessageResult (sock, ret, callback);
-	}
 }
 
 
@@ -1318,16 +1132,12 @@ void Datagram_GetAnyMessages (void (*callback)(qsocket_t *sock))
 			if (sock->driver != net_driverlevel || sock->landriver != net_landriverlevel)
 				continue;
 
-			Datagram_ServerDrainReadyReordered(sock, callback);
-
 			while (Datagram_DequeuePacket(sock, &queuedLength, &readaddr))
 			{
 				ret = Datagram_ProcessServerPacket(sock, &readaddr, queuedLength);
 				Datagram_ServerMessageResult(sock, ret, callback);
 				if (sock->disconnected)
 					break;
-				if (ret)
-					Datagram_ServerDrainReadyReordered(sock, callback);
 			}
 		}
 
@@ -1373,18 +1183,6 @@ void Datagram_GetAnyMessages (void (*callback)(qsocket_t *sock))
 
 			ret = Datagram_ProcessServerPacket(sock, &readaddr, (unsigned int)readLength);
 			Datagram_ServerMessageResult(sock, ret, callback);
-			if (ret)
-				Datagram_ServerDrainReadyReordered(sock, callback);
-		}
-
-		for (sock = net_activeSockets; sock; sock = next)
-		{
-			next = sock->next;
-			if (sock->disconnected || !sock->isvirtual)
-				continue;
-			if (sock->driver != net_driverlevel || sock->landriver != net_landriverlevel)
-				continue;
-			Datagram_ServerDrainReadyReordered(sock, callback);
 		}
 
 		Datagram_PruneStaleSameIpSockets(acceptsock);
@@ -1766,8 +1564,6 @@ int Datagram_Init (void)
 	Cvar_RegisterVariable (&net_lagdebug);
 	Cvar_RegisterVariable (&net_lagdebug_threshold);
 	Cvar_RegisterVariable (&net_lagdebug_frame_threshold);
-	Cvar_RegisterVariable (&net_reorder_window);
-	Cvar_RegisterVariable (&net_reorder_timeout);
 	Cvar_RegisterVariable (&net_sameip_stale_timeout);
 	Cvar_RegisterVariable (&net_singlesocket);
 	Cvar_RegisterVariable (&cl_netport);
