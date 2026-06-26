@@ -1397,34 +1397,23 @@ static int CL_ExpandMoveAck16 (int ack16)
 {
 	int ack;
 
-	if (ack16 == 0xffff && cl.ackedmovemessages < 0)
-		return -1;
-	if (cl.ackedmovemessages < 0)
-		return ack16;
-
-	ack = (cl.ackedmovemessages & ~0xffff) | (ack16 & 0xffff);
-	if (ack <= cl.ackedmovemessages - 0x8000)
-		ack += 0x10000;
-	else if (ack > cl.ackedmovemessages + 0x8000)
+	ack = (cl.movemessages & ~0xffff) | (ack16 & 0xffff);
+	if (ack > cl.movemessages)
 		ack -= 0x10000;
 	return ack;
 }
 
 static qboolean CL_UpdateMoveAck (int ack)
 {
-	if (ack > cl.ackedmovemessages)
-	{
-		cl.ackedmovemessages = ack;
-		if (cl.qcvm.extglobals.servercommandframe)
-			*cl.qcvm.extglobals.servercommandframe = cl.ackedmovemessages;
+	if (ack < cl.ackedmovemessages)
+		cl.net_move_stale_acks++;
+	else if (ack > cl.ackedmovemessages)
 		cl.net_move_acks++;
-		return true;
-	}
-	if (ack == cl.ackedmovemessages)
-		return true;
 
-	cl.net_move_stale_acks++;
-	return false;
+	cl.ackedmovemessages = ack;
+	if (cl.qcvm.extglobals.servercommandframe)
+		*cl.qcvm.extglobals.servercommandframe = cl.ackedmovemessages;
+	return true;
 }
 
 static qboolean CL_ParseMoveAckPayload (void);

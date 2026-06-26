@@ -99,7 +99,7 @@ void SV_ResetClientMoveState(client_t *client) {
   client->lastmovetime = 0;
   client->input_stale = false;
   client->moveext = false;
-  client->lastmovemessage = -1;
+  client->lastmovemessage = 0;
   client->pendingmovemessage = -1;
   client->move_pending = false;
 
@@ -531,18 +531,11 @@ SV_ReadClientMove
 */
 static int SV_ExpandClientSequence(int sequence16) {
   int sequence;
-  int base;
 
   sequence16 &= 0xffff;
-  base = host_client->lastmovemessage;
-  if (base < 0)
-    return sequence16;
-
-  sequence = (base & ~0xffff) | sequence16;
-  if (sequence <= base - 0x8000)
+  sequence = (host_client->lastmovemessage & ~0xffff) | sequence16;
+  if (sequence + 0x100 < host_client->lastmovemessage)
     sequence += 0x10000;
-  else if (sequence > base + 0x8000)
-    sequence -= 0x10000;
 
   return sequence;
 }
@@ -671,10 +664,6 @@ static qboolean SV_AcceptPMoveUsercmd(client_t *client,
   usercmd_t pmovecmd;
   qboolean has_input;
 
-  client->ping_times[client->num_pings % NUM_PING_TIMES] =
-      qcvm->time - acceptedcmd->servertime;
-  client->num_pings++;
-
   pmovecmd = *acceptedcmd;
   SV_NormalizeAcceptedUsercmd(client, &pmovecmd);
   SV_ApplyAcceptedUsercmd(client, &pmovecmd);
@@ -709,10 +698,6 @@ static void SV_AcceptLatestUsercmd(client_t *client,
                                    const usercmd_t *acceptedcmd) {
   usercmd_t latestcmd;
   qboolean has_input;
-
-  client->ping_times[client->num_pings % NUM_PING_TIMES] =
-      qcvm->time - acceptedcmd->servertime;
-  client->num_pings++;
 
   latestcmd = *acceptedcmd;
   latestcmd.seconds = 0;
@@ -1081,7 +1066,7 @@ static void SV_UpdateClientPMoveMode(client_t *client) {
 
   local_singleplayer = sv.active && svs.maxclients <= 1;
 
-  usingpmove = !local_singleplayer && client->spawned &&
+  usingpmove = !local_singleplayer && client->spawned && client->knowntoqc &&
       (qcvm->extfuncs.SV_RunClientCommand ||
        (!sv_nqplayerphysics.value &&
         (*sv_nqplayerphysics.string || deathmatch.value)));

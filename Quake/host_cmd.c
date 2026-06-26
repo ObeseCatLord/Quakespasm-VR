@@ -1778,6 +1778,7 @@ static void Host_Spawn_f(void) {
     return;
   }
 
+  host_client->knowntoqc = true;
   host_client->lastmovetime = qcvm->time;
 
   clientnum = host_client - svs.clients;

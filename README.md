@@ -135,14 +135,16 @@ coop 1
 deathmatch 0
 sv_protocol 999
 sv_maxpacketsize 1400
-sv_coop_predictmove 1
+sv_coop_predictmove 0
+sv_nqplayerphysics 1
 sv_coop_noplayerclip 1
 sv_nofriendlyfire 1
 sv_coop_weapon_targetfix 1
 ```
 
-Use `-novr` for desktop clients and `-vr` for headset clients. PMove prediction
-is always used for spawned multiplayer clients in current builds.
+Use `-novr` for desktop clients and `-vr` for headset clients. Client-side
+prediction uses QSS-M-style move ACKs; server PMove/trusted movement is off by
+default unless a mod explicitly supplies `SV_RunClientCommand`.
 
 ## Building
 
@@ -268,7 +270,7 @@ QuakeSpasm cvar.
 | `net_lagdebug_frame_threshold` | `0.05` | Diagnostics | Frame-gap threshold for lag logs. |
 | `net_lagdebug_threshold` | `0.25` | Diagnostics | Network-gap threshold for lag logs. |
 | `net_sameip_stale_timeout` | `3.0` | Networking | Stale timeout for same-IP virtual sockets. |
-| `sys_ticrate` | `0.0138889` | Networking | Dedicated server tick interval; default is 72 Hz to match latest-client command pacing. |
+| `sys_ticrate` | `0.05` | Networking | Dedicated server tick interval; default matches QSS-M's 20 Hz dedicated cadence. |
 | `pm_airstep` | `""` | PMove | PMove air-step compatibility setting. |
 | `pm_autobunny` | `""` | PMove | PMove auto-bunny compatibility setting. |
 | `pm_bunnyfriction` | `1` | PMove | PMove bunny friction behavior. |
@@ -321,7 +323,7 @@ QuakeSpasm cvar.
 | `sv_coop_pickup_targetfix` | `0` | Co-op | Enables generic pickup target firing for configured classes. |
 | `sv_coop_pickup_targetfix_classes` | `""` | Co-op | Class list for generic pickup target fixes. |
 | `sv_coop_pickup_targetlog` | `0` | Diagnostics | Logs pickup target decisions. |
-| `sv_coop_predictmove` | `1` | Co-op | Enables co-op movement prediction support. |
+| `sv_coop_predictmove` | `0` | Co-op | Optional co-op PMove prediction support; disabled by default. |
 | `sv_coop_progression_item_respawn` | `1` | Co-op | Respawns configured progression items. |
 | `sv_coop_progression_item_respawn_classes` | `item_jboots item_jboots_timed` | Co-op | Classes treated as progression respawn items. |
 | `sv_coop_respawn_delay` | `10` | Co-op | Delay before co-op respawn; `0` disables the delay. |
@@ -336,8 +338,7 @@ QuakeSpasm cvar.
 | `sv_netdiag_interval` | `5` | Diagnostics | Periodic network diagnostic interval in seconds. |
 | `sv_netsort` | `1` | Networking | Sorts entity updates by priority before packet clipping. |
 | `sv_nofriendlyfire` | `1` | Co-op | Disables friendly fire in co-op. |
-| `sv_nqplayerphysics` | `0` | PMove | Retired no-op retained for old configs; latest multiplayer clients always use PMove. |
-| `sv_pmove` | `1` | PMove | Retired no-op retained for old configs; latest multiplayer clients always use PMove. |
+| `sv_nqplayerphysics` | `1` | PMove | Keeps server PMove/trusted movement disabled unless a mod explicitly supplies `SV_RunClientCommand`; set `0` only for testing PMove. |
 | `sv_pmove_legacy_preserve_qc_velocity` | `1` | PMove | Preserves QC velocity pushes such as grapples through legacy PMove. |
 | `sv_save_multiplayer` | `1` | Save/load | Allows multiplayer/co-op saves in controlled use. |
 | `sv_skyroom_pvs` | `1` | Rendering/server | Adds skyroom PVS for skyroom entity visibility. |
