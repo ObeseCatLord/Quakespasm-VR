@@ -2751,6 +2751,9 @@ static qboolean SVFTE_SendClientDatagram (client_t *client, int maxsize)
 	static double	last_update_log[MAX_SCOREBOARD];
 	static struct qsocket_s	*last_update_socket[MAX_SCOREBOARD];
 
+	if (!client->spawned)
+		return true;
+
 	if (!client->pendingentities_bits || !client->frames)
 		SVFTE_SetupFrames (client);
 
@@ -3009,7 +3012,7 @@ void SV_UpdateToReliableMessages (void)
 		{
 			for (j=0, client = svs.clients ; j<svs.maxclients ; j++, client++)
 			{
-				if (!client->active)
+				if (!client->knowntoqc)
 					continue;
 				MSG_WriteByte (&client->message, svc_updatefrags);
 				MSG_WriteByte (&client->message, i);
@@ -3102,12 +3105,9 @@ void SV_SendClientMessages (void)
 		if (!host_client->active)
 			continue;
 
-		if (host_client->spawned)
-		{
-			if (!SV_SendClientDatagram (host_client))
-				continue;
-		}
-		else
+		if (!SV_SendClientDatagram (host_client))
+			continue;
+		if (!host_client->spawned)
 		{
 		// the player isn't totally in the game yet
 		// send small keepalive messages if too much time has passed

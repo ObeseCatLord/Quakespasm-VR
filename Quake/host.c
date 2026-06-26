@@ -553,6 +553,8 @@ void SV_DropClient (qboolean crash)
 
 // free the client (the body stays around)
 	host_client->active = false;
+	host_client->spawned = false;
+	host_client->knowntoqc = false;
 	host_client->name[0] = 0;
 	host_client->old_frags = -999999;
 	net_activeconnections--;
@@ -560,7 +562,7 @@ void SV_DropClient (qboolean crash)
 // send notification to all clients
 	for (i = 0, client = svs.clients; i < svs.maxclients; i++, client++)
 	{
-		if (!client->active)
+		if (!client->knowntoqc)
 			continue;
 		MSG_WriteByte (&client->message, svc_updatename);
 		MSG_WriteByte (&client->message, host_client - svs.clients);
