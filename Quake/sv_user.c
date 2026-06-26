@@ -469,7 +469,6 @@ the angle fields specify an exact angular motion in degrees
 */
 void SV_ClientThink(void) {
   vec3_t v_angle;
-  float saved_host_frametime;
 
   cmd = host_client->cmd;
 
@@ -503,9 +502,6 @@ void SV_ClientThink(void) {
   //
   // angles
   // show 1/3 the pitch angle and all the roll angle
-  saved_host_frametime = host_frametime;
-  if (cmd.seconds > 0)
-    host_frametime = CLAMP(0.001f, cmd.seconds, 0.1f);
   angles = sv_player->v.angles;
 
   VectorAdd(sv_player->v.v_angle, sv_player->v.punchangle, v_angle);
@@ -517,7 +513,6 @@ void SV_ClientThink(void) {
 
   if ((int)sv_player->v.flags & FL_WATERJUMP) {
     SV_WaterJump();
-    host_frametime = saved_host_frametime;
     return;
   }
   //
@@ -532,7 +527,6 @@ void SV_ClientThink(void) {
   else
     SV_AirMove();
   // johnfitz
-  host_frametime = saved_host_frametime;
 }
 
 /*
