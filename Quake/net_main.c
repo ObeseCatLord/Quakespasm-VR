@@ -719,36 +719,6 @@ int NET_SendUnreliableMessage (qsocket_t *sock, sizebuf_t *data)
 	return r;
 }
 
-int NET_SendUnreliableMessageAgain (qsocket_t *sock, sizebuf_t *data)
-{
-	int		r;
-	unsigned int	nextsequence;
-
-	if (!sock)
-		return -1;
-
-	if (sock->disconnected)
-	{
-		Con_Printf("NET_SendMessage: disconnected socket\n");
-		return -1;
-	}
-
-	if (IS_LOOP_DRIVER(sock->driver) || sock->unreliableSendSequence == 0)
-		return 1;
-
-	// Resend the most recent unreliable sequence. Receivers drop the second
-	// copy as stale if both arrive, so this is only for loss redundancy.
-	nextsequence = sock->unreliableSendSequence;
-	SetNetTime();
-	sock->unreliableSendSequence = nextsequence - 1;
-	r = sfunc.SendUnreliableMessage(sock, data);
-	sock->unreliableSendSequence = nextsequence;
-	if (r == 1)
-		unreliableMessagesSent++;
-
-	return r;
-}
-
 
 /*
 ==================

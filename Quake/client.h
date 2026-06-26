@@ -171,7 +171,6 @@ typedef struct
 		int			net_prediction_error_last_sequence;
 		int			net_move_packets_sent;
 	int			net_move_cmds_sent;
-	int			net_move_dup_packets_sent;
 	int			net_move_last_packet_cmds;
 	int			net_move_acks;
 	int			net_move_stale_acks;
@@ -318,9 +317,6 @@ extern	cvar_t	cl_backspeed;
 extern	cvar_t	cl_sidespeed;
 extern	cvar_t	cl_desktop_vanilla_run;
 extern	cvar_t	cl_predictmove;
-extern	cvar_t	cl_move_redundancy;
-extern	cvar_t	cl_move_maxpacketbytes;
-extern	cvar_t	cl_move_packetdup;
 extern	cvar_t	cl_ack_redundancy;
 extern	cvar_t	cl_nopred;
 extern	cvar_t	cl_predict_error_log;

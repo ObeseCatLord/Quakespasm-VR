@@ -35,15 +35,12 @@ int		sv_protocol = PROTOCOL_RMQ; //johnfitz
 extern cvar_t nomonsters;
 cvar_t sv_maxpacketsize = {"sv_maxpacketsize", "1400", CVAR_NONE}; // below typical Ethernet MTU while reducing large-map packet splits
 cvar_t sv_replacement_maxpackets = {"sv_replacement_maxpackets", "0", CVAR_NONE};
-cvar_t sv_replacement_packetdup = {"sv_replacement_packetdup", "0", CVAR_NONE};
-cvar_t sv_replacement_packetdup_all = {"sv_replacement_packetdup_all", "0", CVAR_NONE};
 cvar_t sv_replacement_pacing = {"sv_replacement_pacing", "0", CVAR_NONE};
 cvar_t sv_replacement_softmaxbytes = {"sv_replacement_softmaxbytes", "0", CVAR_NONE};
 cvar_t sv_replacement_datagram_reserve = {"sv_replacement_datagram_reserve", "0", CVAR_NONE};
 cvar_t sv_replacement_priority_radius = {"sv_replacement_priority_radius", "0", CVAR_NONE};
 cvar_t sv_replacement_particle_maxbytes = {"sv_replacement_particle_maxbytes", "0", CVAR_NONE};
 cvar_t sv_moveack_independent = {"sv_moveack_independent", "0", CVAR_NONE};
-cvar_t sv_moveack_packetdup = {"sv_moveack_packetdup", "0", CVAR_NONE};
 cvar_t sv_netdiag_interval = {"sv_netdiag_interval", "5", CVAR_NONE};
 // When SV_WriteEntitiesToClient overflows the per-client datagram, the entity
 // that gets evicted is whichever the loop reached last. With sv_netsort=1
@@ -231,10 +228,10 @@ static void SV_NetDiag_f (void)
 {
 	int i;
 
-	Con_Printf ("client netdiag: moves packets=%d cmds=%d dup_packets=%d last_cmds=%d ack=%d moveacks=%d staleacks=%d\n",
+	Con_Printf ("client netdiag: moves packets=%d cmds=%d last_cmds=%d ack=%d moveacks=%d staleacks=%d\n",
 		cl.net_move_packets_sent, cl.net_move_cmds_sent,
-		cl.net_move_dup_packets_sent, cl.net_move_last_packet_cmds,
-		cl.ackedmovemessages, cl.net_move_acks, cl.net_move_stale_acks);
+		cl.net_move_last_packet_cmds, cl.ackedmovemessages,
+		cl.net_move_acks, cl.net_move_stale_acks);
 	Con_Printf ("client netdiag: snapshots seq=%d packets=%d drops=%d acks_sent=%d pred=%d movetype=%d flags=%d vel=(%.1f %.1f %.1f)\n",
 		cl.net_snapshot_sequence, cl.net_snapshot_packets,
 		cl.net_snapshot_drops, cl.net_snapshot_acks_sent,
@@ -308,7 +305,6 @@ void SV_Init (void)
 	extern	cvar_t	sv_maxspeed;
 	extern	cvar_t	sv_accelerate;
 	extern	cvar_t	sv_idealpitchscale;
-	extern	cvar_t	sv_pmove;
 	extern	cvar_t	sv_nqplayerphysics;
 	extern	cvar_t	sv_pmove_legacy_preserve_qc_velocity;
 	extern	cvar_t	sv_aim;
@@ -329,7 +325,6 @@ void SV_Init (void)
 	Cvar_SetCallback (&sv_maxspeed, Host_Callback_Notify);
 	Cvar_RegisterVariable (&sv_accelerate);
 	Cvar_RegisterVariable (&sv_idealpitchscale);
-	Cvar_RegisterVariable (&sv_pmove);
 	Cvar_RegisterVariable (&sv_nqplayerphysics);
 	Cvar_RegisterVariable (&sv_pmove_legacy_preserve_qc_velocity);
 	Cvar_RegisterVariable (&sv_aim);
@@ -343,15 +338,12 @@ void SV_Init (void)
 	Cvar_RegisterVariable (&sv_move_timeclamp);
 	Cvar_RegisterVariable (&sv_maxpacketsize);
 	Cvar_RegisterVariable (&sv_replacement_maxpackets);
-	Cvar_RegisterVariable (&sv_replacement_packetdup);
-	Cvar_RegisterVariable (&sv_replacement_packetdup_all);
 	Cvar_RegisterVariable (&sv_replacement_pacing);
 	Cvar_RegisterVariable (&sv_replacement_softmaxbytes);
 	Cvar_RegisterVariable (&sv_replacement_datagram_reserve);
 	Cvar_RegisterVariable (&sv_replacement_priority_radius);
 	Cvar_RegisterVariable (&sv_replacement_particle_maxbytes);
 	Cvar_RegisterVariable (&sv_moveack_independent);
-	Cvar_RegisterVariable (&sv_moveack_packetdup);
 	Cvar_RegisterVariable (&sv_netdiag_interval);
 	Cvar_RegisterVariable (&sv_coop_weapon_targetfix);
 	Cvar_RegisterVariable (&sv_coop_pickup_targetlog);
@@ -2683,8 +2675,6 @@ static qboolean SV_SendIndependentMoveAck (client_t *client)
 {
 	byte	buf[64];
 	sizebuf_t	msg;
-	int	dup;
-	int	i;
 
 	if (!sv_moveack_independent.value)
 		return true;
@@ -2708,17 +2698,7 @@ static qboolean SV_SendIndependentMoveAck (client_t *client)
 		return false;
 	}
 
-	dup = CLAMP (0, (int)sv_moveack_packetdup.value, 3);
-	for (i = 0; i < dup; i++)
-	{
-		if (NET_SendUnreliableMessageAgain (client->netconnection, &msg) == -1)
-		{
-			SV_DropClient (true);
-			return false;
-		}
-	}
-
-	client->net_snapshot_packets_sent += 1 + dup;
+	client->net_snapshot_packets_sent++;
 	return true;
 }
 
@@ -3071,8 +3051,6 @@ static qboolean SVFTE_SendClientDatagram (client_t *client, int maxsize)
 	int			prev_datagram_offset;
 	int			prev_private_datagram_size;
 	int			packet_budget;
-	int			packet_dup;
-	int			packet_dup_this;
 	int			private_datagram_initial;
 	int			private_datagram_written;
 	int			global_datagram_written;
@@ -3084,9 +3062,6 @@ static qboolean SVFTE_SendClientDatagram (client_t *client, int maxsize)
 	int			global_datagram_other_bytes;
 	int			datagram_reserve;
 	int			max_datagram_reserve;
-	int			dup_sent_total;
-	int			dup_bytes_total;
-	int			i;
 	double		update_gap;
 	size_t		prev_csqc_pending;
 	size_t		csqc_pending;
@@ -3162,9 +3137,6 @@ static qboolean SVFTE_SendClientDatagram (client_t *client, int maxsize)
 	client->net_replacement_diag_harddefer = 0;
 	packet_budget = (sv_replacement_maxpackets.value > 0) ?
 		CLAMP (1, (int)sv_replacement_maxpackets.value, 32) : 128;
-	packet_dup = CLAMP (0, (int)sv_replacement_packetdup.value, 3);
-	dup_sent_total = 0;
-	dup_bytes_total = 0;
 	deferred_by_budget = false;
 
 	do
@@ -3249,24 +3221,11 @@ static qboolean SVFTE_SendClientDatagram (client_t *client, int maxsize)
 			SV_DropClient (true);
 			return false;
 		}
-		packet_dup_this = packet_count == 0 || sv_replacement_packetdup_all.value ?
-			packet_dup : 0;
-		for (i = 0; i < packet_dup_this; i++)
-		{
-			if (NET_SendUnreliableMessageAgain (client->netconnection, &msg) == -1)
-			{
-				SV_DropClient (true);
-				return false;
-			}
-			dup_sent_total++;
-			dup_bytes_total += msg.cursize;
-		}
-
 		packet_count++;
 		total_bytes += msg.cursize;
 		if (msg.cursize > max_packet_bytes)
 			max_packet_bytes = msg.cursize;
-		client->net_snapshot_packets_sent += 1 + packet_dup_this;
+		client->net_snapshot_packets_sent++;
 
 		made_progress = client->snapshotresume != prev_resume ||
 			entity_pending != prev_entity_pending ||
@@ -3323,9 +3282,9 @@ static qboolean SVFTE_SendClientDatagram (client_t *client, int maxsize)
 		int sequence = SV_ReplacementLastSentSequence (client);
 		int ack = client->lastacksequence >= 0 ? client->lastacksequence : -1;
 		entity_pending_after = SVFTE_CountPendingEntityDeltas (client);
-		Con_Printf ("net_lagdebug: server replacement update to %s (%s): packets=%d dup=%d bytes=%d dupbytes=%d max=%d ents=%zu/%zu pending=%zu->%zu svdg=%d/%d priv=%d/%d reserve=%d dgtype=%d/%d/%d/%d/%d maxpacket=%d seq=%d ack=%d acklag=%d deferred=%d prio=%d/%d/%d limit=%d/%d\n",
+		Con_Printf ("net_lagdebug: server replacement update to %s (%s): packets=%d bytes=%d max=%d ents=%zu/%zu pending=%zu->%zu svdg=%d/%d priv=%d/%d reserve=%d dgtype=%d/%d/%d/%d/%d maxpacket=%d seq=%d ack=%d acklag=%d deferred=%d prio=%d/%d/%d limit=%d/%d\n",
 			client->name, NET_QSocketGetAddressString(client->netconnection),
-			packet_count, dup_sent_total, total_bytes, dup_bytes_total, max_packet_bytes,
+			packet_count, total_bytes, max_packet_bytes,
 			(size_t)client->snapshotresume, client->numpendingentities,
 			entity_pending_before, entity_pending_after,
 			global_datagram_written, sv.datagram.cursize,

@@ -340,8 +340,6 @@ extern cvar_t sv_triggerdebug;
 extern cvar_t sv_vr_jump_velocity;
 qboolean SV_IsVRClientSlot(int num);
 extern cvar_t sv_replacement_maxpackets;
-extern cvar_t sv_replacement_packetdup;
-extern cvar_t sv_replacement_packetdup_all;
 extern cvar_t sv_replacement_pacing;
 extern cvar_t sv_replacement_softmaxbytes;
 extern cvar_t sv_replacement_priority_radius;
