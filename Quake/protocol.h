@@ -64,6 +64,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #define PEXT2_SUPPORTED_SERVER                                                  \
   (PEXT2_PRYDONCURSOR | PEXT2_REPLACEMENTDELTAS | PEXT2_PREDINFO |             \
    PEXT2_NEWSIZEENCODING)
+#define PEXT2_REQUIRED_LATEST (PEXT2_SUPPORTED_SERVER)
 #define PEXT2_ACCEPTED_CLIENT (PEXT2_SUPPORTED_CLIENT)
 
 // if the high bit of the servercmd is set, the low bits are fast update flags:

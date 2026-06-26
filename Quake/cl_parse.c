@@ -613,7 +613,7 @@ void CL_ParseServerInfo (void)
 		}
 	}
 
-	required_pext2 = PEXT2_REPLACEMENTDELTAS | PEXT2_PREDINFO | PEXT2_NEWSIZEENCODING;
+	required_pext2 = PEXT2_REQUIRED_LATEST;
 	if ((cl.protocol_pext2 & required_pext2) != required_pext2)
 		Host_Error ("Server is missing required FTE2 protocol extensions %#x",
 			required_pext2 & ~cl.protocol_pext2);
@@ -621,8 +621,7 @@ void CL_ParseServerInfo (void)
 	cl.ackframes_count = 1;
 	cl.ackframes[0] = -1;
 
-	if (cl.protocol_pext2 & PEXT2_PREDINFO)
-		MSG_ReadString ();
+	MSG_ReadString ();
 
 // parse maxclients
 	cl.maxclients = MSG_ReadByte ();

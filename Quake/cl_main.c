@@ -849,8 +849,7 @@ static qboolean CL_PredictPlayer (entity_t *ent)
 		return false;
 	if (ent != &cl.entities[cl.viewentity])
 		return false;
-	if ((cl.protocol_pext2 & (PEXT2_REPLACEMENTDELTAS | PEXT2_PREDINFO)) !=
-		(PEXT2_REPLACEMENTDELTAS | PEXT2_PREDINFO))
+	if ((cl.protocol_pext2 & PEXT2_REQUIRED_LATEST) != PEXT2_REQUIRED_LATEST)
 		Host_Error ("Server does not support this build's movement protocol");
 	if (!ent->netstate.pmovetype)
 		return false;
