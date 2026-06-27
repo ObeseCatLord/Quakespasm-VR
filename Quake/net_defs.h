@@ -192,7 +192,7 @@ typedef struct
 	sys_socket_t	controlSock;
 	sys_socket_t	(*Init) (void);
 	void		(*Shutdown) (void);
-	void		(*Listen) (qboolean state);
+	sys_socket_t	(*Listen) (qboolean state);
 	sys_socket_t	(*Open_Socket) (int port);
 	int		(*Close_Socket) (sys_socket_t socketid);
 	int		(*Connect) (sys_socket_t socketid, struct qsockaddr *addr);
@@ -208,6 +208,7 @@ typedef struct
 	int		(*AddrCompare) (struct qsockaddr *addr1, struct qsockaddr *addr2);
 	int		(*GetSocketPort) (struct qsockaddr *addr);
 	int		(*SetSocketPort) (struct qsockaddr *addr, int port);
+	sys_socket_t	listeningSock;
 } net_landriver_t;
 
 #define	MAX_NET_DRIVERS		8

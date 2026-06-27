@@ -152,6 +152,12 @@ static void Host_MigrateNetworkDefaults_f (void)
 	if (!Host_CommandLineSetsCvar ("host_maxfps") &&
 		Host_ValueMatchesOldDefault (host_maxfps.value, 72.0f))
 		Cvar_SetQuick (&host_maxfps, "250");
+	if (isDedicated && !Host_CommandLineSetsCvar ("host_framerate") &&
+		host_framerate.value > 0)
+		Cvar_SetQuick (&host_framerate, "0");
+	if (isDedicated && !Host_CommandLineSetsCvar ("host_timescale") &&
+		host_timescale.value > 0)
+		Cvar_SetQuick (&host_timescale, "0");
 	if (!Host_CommandLineSetsCvar ("cl_portpingprobe_enable") &&
 		Host_ValueMatchesOldDefault (cl_portpingprobe_enable.value, 1.0f))
 		Cvar_SetQuick (&cl_portpingprobe_enable, "0");

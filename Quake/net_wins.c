@@ -194,24 +194,25 @@ void WINS_Shutdown (void)
 
 //=============================================================================
 
-void WINS_Listen (qboolean state)
+sys_socket_t WINS_Listen (qboolean state)
 {
 	// enable listening
 	if (state)
 	{
 		if (net_acceptsocket != INVALID_SOCKET)
-			return;
+			return net_acceptsocket;
 		WINS_GetLocalAddress();
 		if ((net_acceptsocket = WINS_OpenSocket (net_hostport)) == INVALID_SOCKET)
 			Sys_Error ("WINS_Listen: Unable to open accept socket");
-		return;
+		return net_acceptsocket;
 	}
 
 	// disable listening
 	if (net_acceptsocket == INVALID_SOCKET)
-		return;
+		return INVALID_SOCKET;
 	WINS_CloseSocket (net_acceptsocket);
 	net_acceptsocket = INVALID_SOCKET;
+	return INVALID_SOCKET;
 }
 
 //=============================================================================

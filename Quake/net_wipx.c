@@ -120,23 +120,24 @@ void WIPX_Shutdown (void)
 
 //=============================================================================
 
-void WIPX_Listen (qboolean state)
+sys_socket_t WIPX_Listen (qboolean state)
 {
 	// enable listening
 	if (state)
 	{
 		if (net_acceptsocket != INVALID_SOCKET)
-			return;
+			return net_acceptsocket;
 		if ((net_acceptsocket = WIPX_OpenSocket (net_hostport)) == INVALID_SOCKET)
 			Sys_Error ("WIPX_Listen: Unable to open accept socket");
-		return;
+		return net_acceptsocket;
 	}
 
 	// disable listening
 	if (net_acceptsocket == INVALID_SOCKET)
-		return;
+		return INVALID_SOCKET;
 	WIPX_CloseSocket (net_acceptsocket);
 	net_acceptsocket = INVALID_SOCKET;
+	return INVALID_SOCKET;
 }
 
 //=============================================================================
