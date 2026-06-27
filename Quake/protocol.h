@@ -349,6 +349,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #define svcdp_entities 57
 #define svcdp_csqcentities 58
 #define svcdp_spawnstaticsound2 59
+#define svcfte_spawnstatic2 21
 #define svcfte_spawnbaseline2 66
 #define svcfte_updatestatstring 78
 #define svcfte_updatestatfloat 79

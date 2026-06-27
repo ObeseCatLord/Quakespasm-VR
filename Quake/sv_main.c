@@ -769,18 +769,12 @@ void SV_SendServerinfo (client_t *client)
 	for (i = 1, s = sv.model_precache+1; *s && (unsigned int)i < client->limit_models; s++,i++)
 		MSG_WriteString (&client->message, *s);
 	MSG_WriteByte (&client->message, 0);
+	client->signon_models = i;
 
-	for (i = 1, s = sv.sound_precache+1; *s && (unsigned int)i < client->limit_sounds; s++, i++)
-		MSG_WriteString (&client->message, *s);
+	// Latest clients accept staged sound precaches. Keep these out of the
+	// initial serverinfo message so large mods do not bloat signon packet 1.
 	MSG_WriteByte (&client->message, 0);
-	//johnfitz
-
-	for (i = 1, s = sv.particle_precache+1; i < MAX_PARTICLETYPES && *s; s++, i++)
-	{
-		MSG_WriteByte (&client->message, svcdp_precache);
-		MSG_WriteShort (&client->message, 0x4000 | i);
-		MSG_WriteString (&client->message, *s);
-	}
+	client->signon_sounds = 1;
 
 // send music
 	MSG_WriteByte (&client->message, svc_cdtrack);
@@ -1279,10 +1273,25 @@ static void MSGFTE_WriteEntityUpdate (unsigned int bits, entity_state_t *state,
 }
 
 static void MSG_WriteStaticOrBaseLine (sizebuf_t *buf, int idx,
-	const entity_state_t *state, unsigned int protocolflags)
+	entity_state_t *state, unsigned int protocol_pext2,
+	unsigned int protocolflags)
 {
 	int i;
 	int bits = 0;
+
+	if (protocol_pext2 & PEXT2_REPLACEMENTDELTAS)
+	{
+		if (idx >= 0)
+		{
+			MSG_WriteByte (buf, svcfte_spawnbaseline2);
+			MSG_WriteEntity (buf, idx, protocol_pext2);
+		}
+		else
+			MSG_WriteByte (buf, svcfte_spawnstatic2);
+		MSGFTE_WriteEntityUpdate (MSGFTE_DeltaCalcBits (&nullentitystate,
+			state), state, buf, protocol_pext2, protocolflags);
+		return;
+	}
 
 	if (state->modelindex & 0xFF00)
 		bits |= B_LARGEMODEL;
@@ -3349,6 +3358,61 @@ static int SV_PrespawnWriteLimit (void)
 	return q_max (0, host_client->message.maxsize - 128);
 }
 
+static qboolean SV_SendPrespawnModelPrecaches (void)
+{
+	// Model names stay in svc_serverinfo for now; QSS-M keeps this stage but
+	// effectively disables it because the world model is needed during map load.
+	return false;
+}
+
+static qboolean SV_SendPrespawnSoundPrecaches (void)
+{
+	unsigned int idx;
+	int maxsize;
+
+	idx = host_client->signon_sounds;
+	maxsize = SV_PrespawnWriteLimit ();
+
+	for (; idx < host_client->limit_sounds; idx++)
+	{
+		const char *name = sv.sound_precache[idx];
+		if (!name)
+			break;
+		if (host_client->message.cursize + 4 + (int)strlen(name) > maxsize)
+			break;
+		MSG_WriteByte (&host_client->message, svcdp_precache);
+		MSG_WriteShort (&host_client->message, 0x8000 | idx);
+		MSG_WriteString (&host_client->message, name);
+	}
+
+	host_client->signon_sounds = idx;
+	return idx < host_client->limit_sounds && sv.sound_precache[idx] != NULL;
+}
+
+static int SV_SendPrespawnParticlePrecaches (int idx)
+{
+	int maxsize;
+
+	maxsize = SV_PrespawnWriteLimit ();
+
+	for (;; idx++)
+	{
+		const char *name;
+		if (idx >= MAX_PARTICLETYPES)
+			return -1;
+		name = sv.particle_precache[idx];
+		if (!name)
+			continue;
+		if (host_client->message.cursize + 4 + (int)strlen(name) > maxsize)
+			break;
+		MSG_WriteByte (&host_client->message, svcdp_precache);
+		MSG_WriteShort (&host_client->message, 0x4000 | idx);
+		MSG_WriteString (&host_client->message, name);
+	}
+
+	return idx;
+}
+
 static int SV_SendPrespawnBaselines (int idx)
 {
 	edict_t *svent;
@@ -3366,7 +3430,8 @@ static int SV_SendPrespawnBaselines (int idx)
 		svent = EDICT_NUM(idx);
 		if (memcmp (&nullentitystate, &svent->baseline, sizeof(nullentitystate)))
 			MSG_WriteStaticOrBaseLine (&host_client->message, idx,
-				&svent->baseline, sv.protocolflags);
+				&svent->baseline, host_client->protocol_pext2,
+				sv.protocolflags);
 		idx++;
 	}
 
@@ -3392,7 +3457,7 @@ static int SV_SendPrespawnStatics (int idx)
 			continue;
 		if (memcmp (&nullentitystate, svent, sizeof(nullentitystate)))
 			MSG_WriteStaticOrBaseLine (&host_client->message, -1, svent,
-				sv.protocolflags);
+				host_client->protocol_pext2, sv.protocolflags);
 	}
 
 	return idx;
@@ -3497,6 +3562,31 @@ void SV_SendClientMessages (void)
 				if (realtime - host_client->last_message > 5)
 					SV_SendNop (host_client);
 				continue;	// don't send out non-signon messages
+			}
+			if (host_client->sendsignon == PRESPAWN_MODELS)
+			{
+				if (!SV_SendPrespawnModelPrecaches ())
+				{
+					host_client->signonidx = 0;
+					host_client->sendsignon++;
+				}
+			}
+			if (host_client->sendsignon == PRESPAWN_SOUNDS)
+			{
+				if (!SV_SendPrespawnSoundPrecaches ())
+				{
+					host_client->signonidx = 0;
+					host_client->sendsignon++;
+				}
+			}
+			if (host_client->sendsignon == PRESPAWN_PARTICLES)
+			{
+				host_client->signonidx = SV_SendPrespawnParticlePrecaches (host_client->signonidx);
+				if (host_client->signonidx < 0)
+				{
+					host_client->signonidx = 0;
+					host_client->sendsignon++;
+				}
 			}
 			if (host_client->sendsignon == PRESPAWN_BASELINES)
 			{
