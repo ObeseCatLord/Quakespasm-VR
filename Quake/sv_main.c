@@ -34,9 +34,9 @@ static char	localmodels[MAX_MODELS][8];	// inline model names for precache
 int		sv_protocol = PROTOCOL_RMQ; //johnfitz
 
 extern cvar_t nomonsters;
-// Compatibility no-op for old configs. Remote unreliable traffic now uses
-// per-client QSS-M-style limits and is capped to DATAGRAM_MTU.
-cvar_t sv_maxpacketsize = {"sv_maxpacketsize", "1400", CVAR_NONE};
+// Live cap for remote unreliable packets. QSS-M's DATAGRAM_MTU remains the
+// protocol ceiling; this lower default leaves room for path/overlay overhead.
+cvar_t sv_maxpacketsize = {"sv_maxpacketsize", "1200", CVAR_NONE};
 cvar_t sv_netdiag_interval = {"sv_netdiag_interval", "5", CVAR_NONE};
 // When SV_WriteEntitiesToClient overflows the per-client datagram, the entity
 // that gets evicted is whichever the loop reached last. With sv_netsort=1
@@ -79,6 +79,16 @@ static qboolean SV_IsLocalClient (client_t *client)
 		Q_strcmp (NET_QSocketGetAddressString (client->netconnection), "LOCAL") == 0;
 }
 
+static int SV_RemoteUnreliableLimit (void)
+{
+	int maxsize;
+
+	maxsize = (int)sv_maxpacketsize.value;
+	if (maxsize <= 0)
+		maxsize = DATAGRAM_MTU;
+	return CLAMP (512, maxsize, DATAGRAM_MTU);
+}
+
 static void SV_SetClientLimits (client_t *client)
 {
 	unsigned int maxentities;
@@ -112,6 +122,8 @@ static int SV_ClientUnreliableLimit (client_t *client)
 
 	maxsize = client && client->limit_unreliable ?
 		(int)client->limit_unreliable : DATAGRAM_MTU;
+	if (!SV_IsLocalClient (client))
+		maxsize = q_min (maxsize, SV_RemoteUnreliableLimit ());
 	return CLAMP (512, maxsize, MAX_DATAGRAM);
 }
 
