@@ -2032,6 +2032,7 @@ void CL_ParseServerMessage (void)
 			CL_ParseMoveAck ();
 			break;
 
+		case svcdp_csqcentities:
 		case svcfte_csqcentities:
 			PR_SwitchQCVM(&cl.qcvm);
 			CLFTE_ParseCSQCEntitiesUpdate();

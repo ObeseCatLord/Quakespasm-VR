@@ -1911,7 +1911,7 @@ static void SVFTE_WriteCSQCEntitiesToClient (client_t *client, sizebuf_t *msg,
 	sendremove:
 			if (!wroteheader)
 			{
-				MSG_WriteByte (&entmsg, svcfte_csqcentities);
+				MSG_WriteByte (&entmsg, svcdp_csqcentities);
 				candidate_has_header = true;
 			}
 			if (entnum > 0x3fff)
@@ -1938,14 +1938,16 @@ static void SVFTE_WriteCSQCEntitiesToClient (client_t *client, sizebuf_t *msg,
 				SZ_Clear (&sv.multicast);
 				pr_global_struct->self = EDICT_TO_PROG(ed);
 				G_INT(OFS_PARM0) = EDICT_TO_PROG(client->edict);
-				G_FLOAT(OFS_PARM1) = bits & SENDFLAG_USABLE;
+				G_FLOAT(OFS_PARM1 + 0) = (bits >> 0) & 0xffffff;
+				G_FLOAT(OFS_PARM1 + 1) = (bits >> 24) & 0xffffff;
+				G_FLOAT(OFS_PARM1 + 2) = 0;
 				PR_ExecuteProgram(GetEdictFieldEval(ed, SendEntity)->function);
 
 					if (G_FLOAT(OFS_RETURN))
 					{
 						if (!wroteheader)
 						{
-							MSG_WriteByte (&entmsg, svcfte_csqcentities);
+							MSG_WriteByte (&entmsg, svcdp_csqcentities);
 							candidate_has_header = true;
 						}
 						if (entnum >= 0x4000)
