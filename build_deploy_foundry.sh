@@ -48,6 +48,14 @@ fi
 
 install -m 0755 Quake/quakespasm-openvr.bin \
 	"$straight_dir/quakespasm-openvr.bin"
+server_cfg_src="deploy/codex_coop_server.cfg"
+server_cfg_dst="$straight_dir/id1/codex_coop_server.cfg"
+mkdir -p "$(dirname "$server_cfg_dst")"
+if [ -f "$server_cfg_dst" ] && ! cmp -s "$server_cfg_src" "$server_cfg_dst"; then
+	cp "$server_cfg_dst" \
+		"$server_cfg_dst.bak-codex-deploy-$(date +%Y%m%d-%H%M%S)"
+fi
+install -m 0644 "$server_cfg_src" "$server_cfg_dst"
 file "$straight_dir/quakespasm-openvr.bin"
 sha256sum "$straight_dir/quakespasm-openvr.bin"
 REMOTE_SCRIPT
