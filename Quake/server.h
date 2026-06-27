@@ -306,6 +306,13 @@ void SVFTE_DestroyFrames (client_t *client);
 #define	SPAWNFLAG_NOT_HARD			1024
 #define	SPAWNFLAG_NOT_DEATHMATCH	2048
 
+#define PVSF_NORMALPVS		0x0
+#define PVSF_NOTRACECHECK	0x1
+#define PVSF_USEPHS			0x2
+#define PVSF_IGNOREPVS		0x3
+#define PVSF_MODE_MASK		0x3
+#define PVSF_NOREMOVE		0x80
+
 //============================================================================
 
 extern cvar_t teamplay;

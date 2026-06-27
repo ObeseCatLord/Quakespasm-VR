@@ -1463,6 +1463,10 @@ static void SVFTE_BuildEntityState (client_t *client, edict_t *ent, entity_state
 		state->traileffectnum = CLAMP (0, (int)val->_float, 0x3fff);
 	if ((val = GetEdictFieldValue (ent, qcvm->extfields.emiteffectnum)))
 		state->emiteffectnum = CLAMP (0, (int)val->_float, 0x3fff);
+	if ((val = GetEdictFieldValue (ent, qcvm->extfields.tag_entity)) && val->edict)
+		state->tagentity = NUM_FOR_EDICT(PROG_TO_EDICT(val->edict));
+	if ((val = GetEdictFieldValue (ent, qcvm->extfields.tag_index)))
+		state->tagindex = CLAMP(0, (int)val->_float, 255);
 	state->effects = (int)ent->v.effects & qcvm->effects_mask;
 	if (ent->v.movetype == MOVETYPE_STEP)
 		state->eflags |= EFLAGS_STEP;
@@ -1504,20 +1508,26 @@ static void SVFTE_BuildSnapshotForClient (client_t *client)
 	vec3_t org;
 	edict_t *clent;
 	edict_t *ent;
+	edict_t *parent;
 	entity_state_t state;
 	eval_t *val;
 	qboolean cancsqc, iscsqc;
+	unsigned char eflags;
 	int emiteffect;
 	int maxentities;
+	int parent_depth;
+	int pvs_flags;
+	int proged;
 
 	snapshot_numents = 0;
 	clent = client->edict;
+	proged = EDICT_TO_PROG (clent);
 	maxentities = (int)client->limit_entities;
 	if (maxentities <= 0 || maxentities > qcvm->num_edicts)
 		maxentities = qcvm->num_edicts;
 	VectorAdd (clent->v.origin, clent->v.view_ofs, org);
 	pvs = SV_FatPVS (org, sv.worldmodel);
-	cancsqc = GetEdictFieldValid(SendEntity) && GetEdictFieldValid(SendFlags) && client->csqcactive;
+	cancsqc = GetEdictFieldValid (SendEntity) && GetEdictFieldValid (SendFlags) && client->csqcactive;
 	if (cancsqc)
 		SVFTE_EnsurePendingCSQCEntityBits (client, maxentities + 1);
 	if (sv_skyroom_pvs.value && sv.skyroom_pos_known)
@@ -1530,33 +1540,83 @@ static void SVFTE_BuildSnapshotForClient (client_t *client)
 	ent = NEXT_EDICT(qcvm->edicts);
 	for (e = 1; e < maxentities; e++, ent = NEXT_EDICT(ent))
 	{
+		pvs_flags = 0;
+		if ((val = GetEdictFieldValue (ent, qcvm->extfields.pvsflags)))
+			pvs_flags = (int)val->_float;
 		if (ent->free)
 			goto invisible;
+		if ((val = GetEdictFieldValue (ent, qcvm->extfields.customizeentityforclient)) &&
+			val->function)
+		{
+			pr_global_struct->self = EDICT_TO_PROG (ent);
+			pr_global_struct->other = proged;
+			PR_ExecuteProgram(val->function);
+			if (!G_FLOAT(OFS_RETURN))
+				goto invisible;
+		}
+
+		eflags = 0;
 		iscsqc = false;
-		if (cancsqc && (val = GetEdictFieldEval(ent, SendEntity)) && val->function)
+		if (cancsqc && (val = GetEdictFieldEval (ent, SendEntity)) && val->function)
 			iscsqc = true;
 		emiteffect = 0;
-		if (GetEdictFieldValid(emiteffectnum) && (val = GetEdictFieldEval(ent, emiteffectnum)))
+		if (GetEdictFieldValid (emiteffectnum) && (val = GetEdictFieldEval (ent, emiteffectnum)))
 			emiteffect = (int)val->_float;
 		if (ent != clent)
 		{
 			if ((!ent->v.modelindex || !PR_GetString(ent->v.model)[0]) && !emiteffect && !iscsqc)
 				goto invisible;
-			if (coop.value && e >= 1 && e <= svs.maxclients)
-				goto visible;
-			for (i = 0; i < ent->num_leafs; i++)
-				if (pvs[ent->leafnums[i] >> 3] & (1 << (ent->leafnums[i] & 7)))
-					break;
-			if (i == ent->num_leafs && ent->num_leafs < MAX_ENT_LEAFS)
+
+			if ((val = GetEdictFieldValue (ent, qcvm->extfields.viewmodelforclient)) &&
+				val->edict == proged)
+				eflags |= EFLAGS_VIEWMODEL;
+			else if (val && val->edict)
 				goto invisible;
+			else if (!(coop.value && e >= 1 && e <= svs.maxclients))
+			{
+				switch (pvs_flags & PVSF_MODE_MASK)
+				{
+				case PVSF_NOTRACECHECK:
+				case PVSF_NORMALPVS:
+					parent = ent;
+					parent_depth = 0;
+					while ((val = GetEdictFieldValue (parent, qcvm->extfields.tag_entity)) &&
+						val->edict)
+					{
+						parent = PROG_TO_EDICT(val->edict);
+						if (++parent_depth > maxentities)
+							goto invisible;
+					}
+					if (parent->num_leafs < MAX_ENT_LEAFS)
+					{
+						for (i = 0; i < parent->num_leafs; i++)
+							if (pvs[parent->leafnums[i] >> 3] &
+								(1 << (parent->leafnums[i] & 7)))
+								break;
+						if (i == parent->num_leafs)
+							goto invisible;
+					}
+					break;
+				case PVSF_USEPHS:
+				case PVSF_IGNOREPVS:
+					break;
+				}
+			}
 		}
-	visible:
+
+		if ((val = GetEdictFieldValue (ent, qcvm->extfields.nodrawtoclient)) &&
+			val->edict == proged)
+			goto invisible;
+		if ((val = GetEdictFieldValue (ent, qcvm->extfields.drawonlytoclient)) &&
+			val->edict && val->edict != proged)
+			goto invisible;
+
 		if (iscsqc)
 		{
 			if (!(client->pendingcsqcentities_bits[e] & SENDFLAG_PRESENT))
 				client->pendingcsqcentities_bits[e] |= SENDFLAG_USABLE;
 			else
-				client->pendingcsqcentities_bits[e] |= (int)GetEdictFieldEval(ent, SendFlags)->_float & SENDFLAG_USABLE;
+				client->pendingcsqcentities_bits[e] |= (int)GetEdictFieldEval (ent, SendFlags)->_float & SENDFLAG_USABLE;
 			continue;
 		}
 		if (cancsqc && client->pendingcsqcentities_bits[e])
@@ -1564,14 +1624,20 @@ static void SVFTE_BuildSnapshotForClient (client_t *client)
 		SVFTE_BuildEntityState (client, ent, &state);
 		if ((unsigned int)state.modelindex >= client->limit_models)
 			state.modelindex = 0;
-		if (ent != clent && state.alpha == ENTALPHA_ZERO && !state.effects)
+		if (ent != clent && state.alpha == ENTALPHA_ZERO && !state.effects &&
+			!state.traileffectnum && !state.emiteffectnum)
 			continue;
+		if ((val = GetEdictFieldValue (ent, qcvm->extfields.exteriormodeltoclient)) &&
+			val->edict == proged)
+			eflags |= EFLAGS_EXTERIORMODEL;
+		state.eflags |= eflags;
 		SVFTE_AppendSnapshotEntity (e, &state);
 		continue;
 
 	invisible:
 		if (cancsqc && e < (int)client->numpendingcsqcentities &&
-			client->pendingcsqcentities_bits[e])
+			client->pendingcsqcentities_bits[e] &&
+			!(pvs_flags & PVSF_NOREMOVE))
 			client->pendingcsqcentities_bits[e] |= SENDFLAG_REMOVE;
 	}
 }
