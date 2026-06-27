@@ -1444,6 +1444,10 @@ static void CLFTE_QueueAckFrame (int sequence)
 
 	// Keep the queued acks contiguous. Replacing the tail with a newer frame
 	// makes the server infer artificial packet loss and resend a large range.
+	cl.net_snapshot_ack_queue_overflows++;
+	if (net_lagdebug.value && cl.net_snapshot_ack_queue_overflows <= 4)
+		Con_Printf ("net_lagdebug: replacement ack queue full; preserving %u queued contiguous acks, dropping ack %d\n",
+			cl.ackframes_count, sequence);
 }
 
 static void CLFTE_ParseEntitiesUpdate (void)
