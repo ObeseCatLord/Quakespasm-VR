@@ -1082,6 +1082,7 @@ void Host_GetConsoleCommands (void)
 		if (!cmd)
 			break;
 		Cbuf_AddText (cmd);
+		Cbuf_AddText ("\n");
 	}
 
 	if (!sv_cmdfile.string[0])
