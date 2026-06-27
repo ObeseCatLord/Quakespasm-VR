@@ -418,6 +418,14 @@ static void CL_ParseDPPrecache (void)
 
 	switch ((code >> 14) & 3)
 	{
+	case 0:
+		if (index < MAX_MODELS)
+		{
+			cl.model_precache[index] = Mod_ForName (name, index == 1);
+			if (index == 1)
+				cl.entities[0].model = cl.worldmodel = cl.model_precache[1];
+		}
+		break;
 	case 1:
 		if (index < MAX_PARTICLETYPES)
 		{
@@ -436,6 +444,10 @@ static void CL_ParseDPPrecache (void)
 			q_strlcpy (cl.particle_precache[index], name, sizeof(cl.particle_precache[index]));
 #endif
 		}
+		break;
+	case 2:
+		if (index < MAX_SOUNDS)
+			cl.sound_precache[index] = S_PrecacheSound (name);
 		break;
 	default:
 		Con_DPrintf ("CL_ParseDPPrecache: unsupported type %u for %s\n",
@@ -1146,10 +1158,20 @@ void CL_ParseUpdate (int bits)
 CL_ParseBaseline
 ==================
 */
+static unsigned int CLFTE_ReadDelta (unsigned int entnum, entity_state_t *news,
+	const entity_state_t *olds, const entity_state_t *baseline);
+
 void CL_ParseBaseline (entity_t *ent, int version) //johnfitz -- added argument
 {
 	int	i;
 	int bits; //johnfitz
+
+	if (version == 6)
+	{
+		CLFTE_ReadDelta (0, &ent->baseline, &nullentitystate, &nullentitystate);
+		ent->netstate = ent->baseline;
+		return;
+	}
 
 	//johnfitz -- PROTOCOL_FITZQUAKE
 	ent->baseline = nullentitystate;
@@ -2425,6 +2447,19 @@ void CL_ParseServerMessage (void)
 			CL_ParseStaticSound (2);
 			break;
 		//johnfitz
+
+		case svcfte_spawnstatic2:
+			if (!(cl.protocol_pext2 & PEXT2_REPLACEMENTDELTAS))
+				Host_Error ("Received svcfte_spawnstatic2 but replacement deltas are not active");
+			CL_ParseStatic (6);
+			break;
+
+		case svcfte_spawnbaseline2:
+			if (!(cl.protocol_pext2 & PEXT2_REPLACEMENTDELTAS))
+				Host_Error ("Received svcfte_spawnbaseline2 but replacement deltas are not active");
+			i = MSG_ReadEntity (cl.protocol_pext2);
+			CL_ParseBaseline (CL_EntityNum (i), 6);
+			break;
 
 		case svcdp_precache:
 			CL_ParseDPPrecache ();
