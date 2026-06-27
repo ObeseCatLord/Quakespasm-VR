@@ -1440,7 +1440,9 @@ static void CLFTE_EntitiesDeltaed (void)
 			InvalidateTraceLineCache ();
 			if (model)
 			{
-				if (model->synctype == ST_RAND)
+				if (model->synctype == ST_FRAMETIME)
+					ent->syncbase = -cl.time;
+				else if (model->synctype == ST_RAND)
 					ent->syncbase = (float)(rand() & 0x7fff) / 0x7fff;
 				else
 					ent->syncbase = 0.0;
@@ -1452,6 +1454,9 @@ static void CLFTE_EntitiesDeltaed (void)
 				"model change", -1.0f, previousmodel, model,
 				oldframe, ent->netstate.frame);
 		}
+		else if (model && model->synctype == ST_FRAMETIME &&
+			ent->frame != ent->netstate.frame)
+			ent->syncbase = -cl.time;
 		ent->frame = ent->netstate.frame;
 		if (newnum <= cl.maxclients && (oldmodel != ent->model ||
 			oldskin != ent->skinnum))
