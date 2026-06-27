@@ -269,6 +269,7 @@ QuakeSpasm cvar.
 | `cl_coop_nametags` | `1` | Co-op | Draws co-op player nametags. |
 | `cl_desktop_vanilla_run` | `1` | Input | Keeps faster vanilla-style movement behavior for desktop and VR defaults. |
 | `cl_extrapolate*` | `0` | Networking | Retired no-op compatibility cvars retained only so old configs do not warn. |
+| `cl_iDrive` | `1` | Input | QSS-M last-pressed-wins handling for opposing movement keys. |
 | `cl_lerpdebug` | `0` | Diagnostics | Logs model/entity interpolation reset causes. |
 | `cl_lerpdebug_models` | `""` | Diagnostics | Comma-separated model filter for `cl_lerpdebug`. |
 | `cl_mousemenu` | `1` | UI | Enables mouse menu interaction. |

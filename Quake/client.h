@@ -408,12 +408,15 @@ typedef struct
 {
 	int		down[2];		// key nums holding it down
 	int		state;			// low bit is down state
+	double	downtime;		// when KeyDown() last pressed this button
+	double	uptime;			// when KeyUp() last released this button
 } kbutton_t;
 
 extern	kbutton_t	in_mlook, in_klook;
 extern 	kbutton_t 	in_strafe;
 extern 	kbutton_t 	in_speed;
 extern 	kbutton_t 	in_attack, in_jump;
+extern	cvar_t		cl_iDrive;
 
 void CL_InitInput(void);
 void CL_SendCmd(void);
