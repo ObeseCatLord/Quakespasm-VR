@@ -56,7 +56,7 @@ cvar_t net_lagdebug_threshold = {"net_lagdebug_threshold", "0.25", CVAR_NONE};
 cvar_t net_lagdebug_frame_threshold = {"net_lagdebug_frame_threshold", "0.05", CVAR_NONE};
 static cvar_t net_sameip_stale_timeout = {"net_sameip_stale_timeout", "3.0", CVAR_NONE};
 static cvar_t cl_netport = {"cl_netport", "0", CVAR_ARCHIVE};
-static cvar_t cl_portpingprobe_enable = {"cl_portpingprobe_enable", "1", CVAR_ARCHIVE};
+cvar_t cl_portpingprobe_enable = {"cl_portpingprobe_enable", "0", CVAR_ARCHIVE};
 static cvar_t cl_portpingprobe_probes = {"cl_portpingprobe_probes", "6", CVAR_ARCHIVE};
 static cvar_t cl_portpingprobe_delay = {"cl_portpingprobe_delay", "0.20", CVAR_ARCHIVE};
 static int net_lagdebug_unmatched_suppressed;
@@ -71,6 +71,7 @@ typedef struct
 {
 	qboolean	valid;
 	qsocket_t	*owner;
+	unsigned int	order;
 	int		landriver;
 	sys_socket_t	socket;
 	struct qsockaddr addr;
@@ -85,6 +86,7 @@ typedef struct
 } pending_datagram_t;
 
 static pending_datagram_t pendingDatagrams[MAX_PENDING_DATAGRAMS];
+static unsigned int pendingDatagramOrder;
 
 typedef struct
 {
@@ -118,8 +120,10 @@ static char *StrAddr (struct qsockaddr *addr)
 static void Datagram_QueuePacket (qsocket_t *sock, struct qsockaddr *addr, unsigned int wireLength)
 {
 	int i, slot;
+	unsigned int oldestOrder;
 
 	slot = -1;
+	oldestOrder = 0;
 	for (i = 0; i < MAX_PENDING_DATAGRAMS; i++)
 	{
 		if (!pendingDatagrams[i].valid)
@@ -127,17 +131,24 @@ static void Datagram_QueuePacket (qsocket_t *sock, struct qsockaddr *addr, unsig
 			slot = i;
 			break;
 		}
+		if (slot < 0 || pendingDatagrams[i].order < oldestOrder)
+		{
+			slot = i;
+			oldestOrder = pendingDatagrams[i].order;
+		}
 	}
 
-	if (slot < 0)
+	if (pendingDatagrams[slot].valid && net_lagdebug.value)
 	{
-		slot = 0;
-		if (net_lagdebug.value)
-			Con_Printf("net_lagdebug: pending datagram queue full, dropping oldest packet\n");
+		Con_Printf("net_lagdebug: pending datagram queue full, dropping oldest packet for %s\n",
+			pendingDatagrams[slot].owner ? pendingDatagrams[slot].owner->address : "<unknown>");
 	}
 
 	pendingDatagrams[slot].valid = true;
 	pendingDatagrams[slot].owner = sock;
+	pendingDatagrams[slot].order = ++pendingDatagramOrder;
+	if (!pendingDatagramOrder)
+		pendingDatagramOrder = pendingDatagrams[slot].order = 1;
 	pendingDatagrams[slot].landriver = sock->landriver;
 	pendingDatagrams[slot].socket = sock->socket;
 	pendingDatagrams[slot].addr = *addr;
@@ -300,7 +311,36 @@ static qboolean Datagram_CloseClientSocket (qsocket_t *sock, const char *reason,
 	return true;
 }
 
-static qsocket_t *Datagram_FindVirtualSocketForPacket (sys_socket_t socket, struct qsockaddr *addr)
+static qboolean Datagram_PacketPlausibleForSocket (qsocket_t *sock, unsigned int wireLength)
+{
+	unsigned int length;
+	unsigned int flags;
+	unsigned int sequence;
+
+	if (wireLength < NET_HEADERSIZE)
+		return false;
+
+	length = BigLong(packetBuffer.length);
+	flags = length & (~NETFLAG_LENGTH_MASK);
+	length &= NETFLAG_LENGTH_MASK;
+
+	if ((flags & NETFLAG_CTL) || length < NET_HEADERSIZE || length > wireLength)
+		return false;
+
+	sequence = BigLong(packetBuffer.sequence);
+	if (flags & NETFLAG_UNRELIABLE)
+		return sequence >= sock->unreliableReceiveSequence;
+	if (flags & NETFLAG_ACK)
+		return sequence == sock->ackSequence &&
+			sequence == sock->sendSequence - 1;
+	if (flags & NETFLAG_DATA)
+		return sequence == sock->receiveSequence ||
+			sequence + 1 == sock->receiveSequence;
+
+	return false;
+}
+
+static qsocket_t *Datagram_FindVirtualSocketForPacket (sys_socket_t socket, struct qsockaddr *addr, unsigned int wireLength)
 {
 	qsocket_t *s;
 	qsocket_t *sameIp = NULL;
@@ -319,15 +359,16 @@ static qsocket_t *Datagram_FindVirtualSocketForPacket (sys_socket_t socket, stru
 		cmp = ld->AddrCompare(addr, &s->addr);
 		if (cmp == 0)
 			return s;
-		if (cmp > 0)
+		if (cmp > 0 && Datagram_PacketPlausibleForSocket(s, wireLength))
 		{
 			sameIp = s;
 			sameIpCount++;
 		}
 	}
 
-	// Let the normal per-client receive path decide whether this is a valid
-	// NAT remap, but only when same-IP routing is unambiguous.
+	// Let the normal per-client receive path validate and commit the NAT remap,
+	// but only when same-IP routing is unambiguous and the packet sequence is
+	// plausible for exactly one socket.
 	if (sameIpCount == 1)
 		return sameIp;
 
@@ -339,13 +380,14 @@ static qboolean Datagram_QueueAcceptedPacket (sys_socket_t socket, struct qsocka
 	qsocket_t *sock;
 	unsigned int copyLength;
 
-	sock = Datagram_FindVirtualSocketForPacket(socket, addr);
-	if (!sock)
-		return false;
-
 	copyLength = q_min(wireLength, (unsigned int)sizeof(packetBuffer));
 	memset(&packetBuffer, 0, sizeof(packetBuffer));
 	Q_memcpy(&packetBuffer, data, copyLength);
+
+	sock = Datagram_FindVirtualSocketForPacket(socket, addr, copyLength);
+	if (!sock)
+		return false;
+
 	Datagram_QueuePacket(sock, addr, copyLength);
 	return true;
 }
@@ -353,7 +395,9 @@ static qboolean Datagram_QueueAcceptedPacket (sys_socket_t socket, struct qsocka
 static qboolean Datagram_QueueIfForAnotherSocket (qsocket_t *sock, struct qsockaddr *addr, unsigned int wireLength)
 {
 	qsocket_t *s;
+	qsocket_t *sameIp = NULL;
 	net_landriver_t *ld;
+	int sameIpCount = 0;
 	int cmp;
 
 	if (!sock->isvirtual)
@@ -378,8 +422,27 @@ static qboolean Datagram_QueueIfForAnotherSocket (qsocket_t *sock, struct qsocka
 	}
 
 	// Same IP/different port is handled as a NAT remap for the current qsocket.
-	if (cmp > 0)
+	if (cmp > 0 && Datagram_PacketPlausibleForSocket(sock, wireLength))
 		return false;
+
+	for (s = net_activeSockets; s; s = s->next)
+	{
+		if (s == sock || s->disconnected || !s->isvirtual)
+			continue;
+		if (s->driver != sock->driver || s->landriver != sock->landriver || s->socket != sock->socket)
+			continue;
+		if (ld->AddrCompare(addr, &s->addr) > 0 &&
+			Datagram_PacketPlausibleForSocket(s, wireLength))
+		{
+			sameIp = s;
+			sameIpCount++;
+		}
+	}
+	if (sameIpCount == 1)
+	{
+		Datagram_QueuePacket(sameIp, addr, wireLength);
+		return true;
+	}
 
 	return false;
 }
@@ -427,32 +490,37 @@ static void Datagram_PruneStaleSameIpSockets (sys_socket_t socket)
 static qboolean Datagram_DequeuePacket (qsocket_t *sock, unsigned int *wireLength, struct qsockaddr *addr)
 {
 	int i;
+	int slot;
 
 	if (!sock->isvirtual)
 		return false;
 
+	slot = -1;
 	for (i = 0; i < MAX_PENDING_DATAGRAMS; i++)
 	{
 		if (!pendingDatagrams[i].valid)
 			continue;
 		if (pendingDatagrams[i].owner != sock)
 			continue;
-
-		*wireLength = pendingDatagrams[i].wireLength;
-		*addr = pendingDatagrams[i].addr;
-		Q_memcpy(&packetBuffer, &pendingDatagrams[i].packet, sizeof(packetBuffer));
-		if (net_lagdebug.value && pendingDatagrams[i].queuedTime > 0 &&
-			net_time - pendingDatagrams[i].queuedTime > net_lagdebug_frame_threshold.value)
-		{
-			Con_Printf("net_lagdebug: queued datagram delay %.3f sec for %s len=%u\n",
-				net_time - pendingDatagrams[i].queuedTime,
-				sock->address, pendingDatagrams[i].wireLength);
-		}
-		pendingDatagrams[i].valid = false;
-		return true;
+		if (slot < 0 || pendingDatagrams[i].order < pendingDatagrams[slot].order)
+			slot = i;
 	}
 
-	return false;
+	if (slot < 0)
+		return false;
+
+	*wireLength = pendingDatagrams[slot].wireLength;
+	*addr = pendingDatagrams[slot].addr;
+	Q_memcpy(&packetBuffer, &pendingDatagrams[slot].packet, sizeof(packetBuffer));
+	if (net_lagdebug.value && pendingDatagrams[slot].queuedTime > 0 &&
+		net_time - pendingDatagrams[slot].queuedTime > net_lagdebug_frame_threshold.value)
+	{
+		Con_Printf("net_lagdebug: queued datagram delay %.3f sec for %s len=%u\n",
+			net_time - pendingDatagrams[slot].queuedTime,
+			sock->address, pendingDatagrams[slot].wireLength);
+	}
+	pendingDatagrams[slot].valid = false;
+	return true;
 }
 
 
@@ -1169,7 +1237,7 @@ void Datagram_GetAnyMessages (void (*callback)(qsocket_t *sock))
 				continue;
 			}
 
-			sock = Datagram_FindVirtualSocketForPacket(acceptsock, &readaddr);
+			sock = Datagram_FindVirtualSocketForPacket(acceptsock, &readaddr, (unsigned int)readLength);
 			if (!sock)
 			{
 				if (net_lagdebug.value)
