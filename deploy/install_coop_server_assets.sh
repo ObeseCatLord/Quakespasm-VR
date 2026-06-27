@@ -163,6 +163,10 @@ rewrite_stale_network_defaults() {
 			rewritten(name, "800")
 			next
 		}
+		if (name == "max_edicts" && (value + 0) < 15000) {
+			rewritten(name, "15000")
+			next
+		}
 		print
 	}
 	END {
