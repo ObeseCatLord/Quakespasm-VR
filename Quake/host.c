@@ -91,7 +91,9 @@ cvar_t	developer = {"developer","0",CVAR_NONE};
 
 cvar_t	temp1 = {"temp1","0",CVAR_NONE};
 extern cvar_t cl_portpingprobe_enable;
+extern cvar_t net_lagdebug;
 extern cvar_t sv_inputtimeout;
+extern cvar_t sv_gravity;
 extern cvar_t sv_nqplayerphysics;
 extern cvar_t sv_trustedmovement;
 extern cvar_t sv_replacement_maxpackets;
@@ -137,8 +139,10 @@ static qboolean Host_CommandLineSetsCvar (const char *name)
 			continue;
 		if (!q_strcasecmp (arg + 1, name))
 			return true;
-		if (!q_strcasecmp (arg + 1, "set") && i + 1 < com_argc &&
-			com_argv[i + 1] && !q_strcasecmp (com_argv[i + 1], name))
+		if ((!q_strcasecmp (arg + 1, "set") ||
+			 !q_strcasecmp (arg + 1, "seta")) &&
+			i + 1 < com_argc && com_argv[i + 1] &&
+			!q_strcasecmp (com_argv[i + 1], name))
 			return true;
 	}
 
@@ -154,29 +158,38 @@ static void Host_MigrateNetworkDefaults_f (void)
 		Host_ValueMatchesOldDefault (host_maxfps.value, 72.0f))
 		Cvar_SetQuick (&host_maxfps, "250");
 	if (!Host_CommandLineSetsCvar ("host_framerate") &&
-		host_framerate.value > 0)
+		!Host_ValueMatchesOldDefault (host_framerate.value, 0.0f))
 		Cvar_SetQuick (&host_framerate, "0");
 	if (!Host_CommandLineSetsCvar ("host_timescale") &&
-		host_timescale.value > 0)
+		!Host_ValueMatchesOldDefault (host_timescale.value, 0.0f))
 		Cvar_SetQuick (&host_timescale, "0");
+	if (!Host_CommandLineSetsCvar ("sys_ticrate") &&
+		!Host_ValueMatchesOldDefault (sys_ticrate.value, 0.05f))
+		Cvar_SetQuick (&sys_ticrate, "0.05");
 	if (!Host_CommandLineSetsCvar ("cl_portpingprobe_enable") &&
-		Host_ValueMatchesOldDefault (cl_portpingprobe_enable.value, 1.0f))
+		!Host_ValueMatchesOldDefault (cl_portpingprobe_enable.value, 0.0f))
 		Cvar_SetQuick (&cl_portpingprobe_enable, "0");
 	if (!Host_CommandLineSetsCvar ("sv_nqplayerphysics") &&
-		Host_ValueMatchesOldDefault (sv_nqplayerphysics.value, 0.0f))
+		!Host_ValueMatchesOldDefault (sv_nqplayerphysics.value, 1.0f))
 		Cvar_SetQuick (&sv_nqplayerphysics, "1");
 	if (!Host_CommandLineSetsCvar ("sv_trustedmovement") &&
-		Host_ValueMatchesOldDefault (sv_trustedmovement.value, 1.0f))
+		!Host_ValueMatchesOldDefault (sv_trustedmovement.value, 0.0f))
 		Cvar_SetQuick (&sv_trustedmovement, "0");
 	if (!Host_CommandLineSetsCvar ("sv_inputtimeout") &&
-		Host_ValueMatchesOldDefault (sv_inputtimeout.value, 0.5f))
+		!Host_ValueMatchesOldDefault (sv_inputtimeout.value, 0.0f))
 		Cvar_SetQuick (&sv_inputtimeout, "0");
 	if (!Host_CommandLineSetsCvar ("sv_replacement_maxpackets") &&
-		Host_ValueMatchesOldDefault (sv_replacement_maxpackets.value, 8.0f))
+		!Host_ValueMatchesOldDefault (sv_replacement_maxpackets.value, 0.0f))
 		Cvar_SetQuick (&sv_replacement_maxpackets, "0");
 	if (!Host_CommandLineSetsCvar ("sv_maxpacketsize") &&
-		(sv_maxpacketsize.value <= 0 || sv_maxpacketsize.value > 1400.0f))
+		!Host_ValueMatchesOldDefault (sv_maxpacketsize.value, 1400.0f))
 		Cvar_SetQuick (&sv_maxpacketsize, "1400");
+	if (!Host_CommandLineSetsCvar ("net_lagdebug") &&
+		!Host_ValueMatchesOldDefault (net_lagdebug.value, 0.0f))
+		Cvar_SetQuick (&net_lagdebug, "0");
+	if (!Host_CommandLineSetsCvar ("sv_gravity") &&
+		!Host_ValueMatchesOldDefault (sv_gravity.value, 800.0f))
+		Cvar_SetQuick (&sv_gravity, "800");
 }
 
 #define NETFPS_PROBE_DEFAULT_SECONDS	5.0
