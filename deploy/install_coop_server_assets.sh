@@ -80,7 +80,84 @@ write_server_script() {
 	install_script_with_backup "$tmp" "$STRAIGHT_DIR/$script_name"
 }
 
+rewrite_stale_network_defaults() {
+	local cfg="$1"
+	local tmp
+	local rc
+
+	tmp="$(new_tmp)"
+	set +e
+	awk '
+	function unquote(value) {
+		gsub(/"/, "", value)
+		return value
+	}
+	function rewritten(name, value) {
+		printf "%s \"%s\"\n", name, value
+		changed = 1
+	}
+	{
+		name = $1
+		value = unquote($2)
+		if (name == "cl_portpingprobe_enable" && value == "1") {
+			rewritten(name, "0")
+			next
+		}
+		if (name == "cl_netfps" && value == "72") {
+			rewritten(name, "0")
+			next
+		}
+		if (name == "host_maxfps" && value == "72") {
+			rewritten(name, "250")
+			next
+		}
+		if (name == "sv_nqplayerphysics" && value == "0") {
+			rewritten(name, "1")
+			next
+		}
+		if (name == "sv_trustedmovement" && value == "1") {
+			rewritten(name, "0")
+			next
+		}
+		if (name == "sv_inputtimeout" && value == "0.5") {
+			rewritten(name, "0")
+			next
+		}
+		if (name == "sv_replacement_maxpackets" && value == "8") {
+			rewritten(name, "0")
+			next
+		}
+		print
+	}
+	END {
+		exit changed ? 2 : 0
+	}
+	' "$cfg" > "$tmp"
+	rc=$?
+	set -e
+
+	if [ "$rc" -eq 0 ]; then
+		return
+	fi
+	if [ "$rc" -ne 2 ]; then
+		exit "$rc"
+	fi
+	cp "$cfg" "$cfg.bak-codex-netdefaults-$TIMESTAMP"
+	install -m 0644 "$tmp" "$cfg"
+}
+
+scrub_stale_network_defaults() {
+	local cfg
+
+	while IFS= read -r cfg; do
+		rewrite_stale_network_defaults "$cfg"
+	done <<EOF
+$(find "$STRAIGHT_DIR" -maxdepth 2 -type f -name '*.cfg' | sort)
+EOF
+}
+
 install_with_backup "$SERVER_CFG_SRC" "$SERVER_CFG_DST"
+scrub_stale_network_defaults
 
 write_server_script "start_id1_server.sh" "" "start"
 write_server_script "start_ad_server.sh" "ad" "start"
