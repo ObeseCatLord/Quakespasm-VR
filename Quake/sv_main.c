@@ -3918,6 +3918,9 @@ void SV_SpawnServer (const char *server)
 	/* Host_ClearMemory() called above already cleared the whole sv structure */
 	qcvm->max_edicts = CLAMP (MIN_EDICTS,(int)max_edicts.value,MAX_EDICTS); //johnfitz -- max_edicts cvar
 	qcvm->edicts = (edict_t *) malloc (qcvm->max_edicts*qcvm->edict_size); // ericw -- sv.edicts switched to use malloc()
+	if (!qcvm->edicts)
+		Sys_Error ("SV_SpawnServer: out of memory (%d edicts x %d bytes)",
+			qcvm->max_edicts, qcvm->edict_size);
 	ClearLink (&qcvm->free_edicts);
 
 	sv.datagram.maxsize = sizeof(sv.datagram_buf);

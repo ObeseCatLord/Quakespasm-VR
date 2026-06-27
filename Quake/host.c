@@ -66,7 +66,7 @@ cvar_t	host_speeds = {"host_speeds","0",CVAR_NONE};			// set for running times
 cvar_t	host_maxfps = {"host_maxfps", "250", CVAR_ARCHIVE}; //johnfitz
 cvar_t	host_timescale = {"host_timescale", "0", CVAR_NONE}; //johnfitz
 cvar_t	cl_netfps = {"cl_netfps", "0", CVAR_NONE};	// retired alias; QSS-M-style pacing uses host_maxfps
-cvar_t	max_edicts = {"max_edicts", "8192", CVAR_NONE}; //johnfitz //ericw -- changed from 2048 to 8192, removed CVAR_ARCHIVE
+cvar_t	max_edicts = {"max_edicts", "15000", CVAR_NONE}; // QSS-M default; removed CVAR_ARCHIVE
 cvar_t	cl_nocsqc = {"cl_nocsqc", "0", CVAR_NONE};
 
 cvar_t	sys_ticrate = {"sys_ticrate","0.05",CVAR_NOTIFY|CVAR_SERVERINFO}; // dedicated server -- match QSS-M
@@ -184,6 +184,8 @@ static void Host_MigrateNetworkDefaults_f (void)
 	if (!Host_CommandLineSetsCvar ("sv_maxpacketsize") &&
 		!Host_ValueMatchesOldDefault (sv_maxpacketsize.value, 1400.0f))
 		Cvar_SetQuick (&sv_maxpacketsize, "1400");
+	if (!Host_CommandLineSetsCvar ("max_edicts") && max_edicts.value < 15000.0f)
+		Cvar_SetQuick (&max_edicts, "15000");
 	if (!Host_CommandLineSetsCvar ("net_lagdebug") &&
 		!Host_ValueMatchesOldDefault (net_lagdebug.value, 0.0f))
 		Cvar_SetQuick (&net_lagdebug, "0");

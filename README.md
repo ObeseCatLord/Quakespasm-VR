@@ -146,6 +146,7 @@ sv_nqplayerphysics 1
 sv_trustedmovement 0
 sv_inputtimeout 0
 net_lagdebug 0
+max_edicts 15000
 sv_gravity 800
 sv_maxspeed 320
 sv_accelerate 10
@@ -168,7 +169,8 @@ archived values such as `host_maxfps 72`, nonzero
 `host_framerate`/`host_timescale` overrides, non-default
 `sys_ticrate`/`sv_maxpacketsize`, stale PMove/trusted-movement settings,
 nonzero `sv_inputtimeout`, `net_lagdebug`, non-vanilla gravity, and capped
-replacement bursts.
+replacement bursts. Lower stale `max_edicts` values are raised to QSS-M's
+`15000` default, while higher mod-specific values are preserved.
 Deploy also scrubs retired client-side smoothing/extrapolation cvars from
 existing configs; explicit `+cvar value` launch arguments are preserved.
 
@@ -287,6 +289,7 @@ QuakeSpasm cvar.
 | `cl_predict_smooth*` | `0` | Networking | Retired no-op compatibility cvars retained only so old configs and launch scripts do not warn. |
 | `cfg_unbindall` | `1` | Config | Allows configs to execute `unbindall`; set `0` to ignore it. |
 | `freelook` | `1` | Input | Default mouse look behavior. |
+| `max_edicts` | `15000` | Networking | QSS-M default entity capacity for large maps; higher mod-specific values are preserved by deploy cleanup. |
 | `net_lagdebug` | `0` | Diagnostics | Logs datagram gaps, delayed packets, and lag events. |
 | `net_lagdebug_frame_threshold` | `0.05` | Diagnostics | Frame-gap threshold for lag logs. |
 | `net_lagdebug_threshold` | `0.25` | Diagnostics | Network-gap threshold for lag logs. |
