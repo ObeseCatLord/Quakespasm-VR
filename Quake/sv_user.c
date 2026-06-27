@@ -73,6 +73,15 @@ static float SV_WaterUpMove(void) {
   return upmove;
 }
 
+static qboolean SV_PlayerOnLadder(void) {
+  eval_t *val;
+
+  if (!sv_player)
+    return false;
+  val = GetEdictFieldValue(sv_player, qcvm->extfields.onladder);
+  return val && val->_float != 0;
+}
+
 static void SV_SetExtendedButtons(edict_t *ent, int buttons) {
   eval_t *val;
 
@@ -324,6 +333,7 @@ void SV_WaterMove(void) {
   vec3_t wishvel;
   float speed, newspeed, wishspeed, addspeed, accelspeed;
   float upmove;
+  qboolean onladder;
 
   //
   // user intentions
@@ -334,8 +344,15 @@ void SV_WaterMove(void) {
     wishvel[i] = forward[i] * cmd.forwardmove + right[i] * cmd.sidemove;
 
   upmove = SV_WaterUpMove();
+  onladder = SV_PlayerOnLadder();
 
-  if (!cmd.forwardmove && !cmd.sidemove && !upmove)
+  if (onladder) {
+    wishvel[2] *= 1 + fabs(wishvel[2] / 200) * 9;
+    if (sv_player->v.button2)
+      wishvel[2] += 400;
+  }
+
+  if (!cmd.forwardmove && !cmd.sidemove && !upmove && !onladder)
     wishvel[2] -= 60; // drift towards bottom
   else
     wishvel[2] += upmove;
@@ -527,7 +544,7 @@ void SV_ClientThink(void) {
   // johnfitz -- alternate noclip
   if (sv_player->v.movetype == MOVETYPE_NOCLIP && sv_altnoclip.value)
     SV_NoclipMove();
-  else if (sv_player->v.waterlevel >= 2 &&
+  else if ((sv_player->v.waterlevel >= 2 || SV_PlayerOnLadder()) &&
            sv_player->v.movetype != MOVETYPE_NOCLIP)
     SV_WaterMove();
   else

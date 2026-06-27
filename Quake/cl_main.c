@@ -1321,17 +1321,17 @@ void CL_SendCmd (void)
 	VR_Move (&cmd);
 	CL_FinishMove (&cmd, true);
 
+	if (cl.qcvm.extfuncs.CSQC_Input_Frame)
+	{
+		PR_SwitchQCVM (&cl.qcvm);
+		PR_GetSetInputs (&cmd, true);
+		PR_ExecuteProgram (cl.qcvm.extfuncs.CSQC_Input_Frame);
+		PR_GetSetInputs (&cmd, false);
+		PR_SwitchQCVM (NULL);
+	}
+
 	if (cls.signon == SIGNONS)
 	{
-		if (cl.qcvm.extfuncs.CSQC_Input_Frame)
-		{
-			PR_SwitchQCVM (&cl.qcvm);
-			PR_GetSetInputs (&cmd, true);
-			PR_ExecuteProgram (cl.qcvm.extfuncs.CSQC_Input_Frame);
-			PR_GetSetInputs (&cmd, false);
-			PR_SwitchQCVM (NULL);
-		}
-
 	// send the unreliable message
 		CL_SendMove (&cmd);
 		CL_ClearPendingCmd ();

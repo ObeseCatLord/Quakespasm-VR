@@ -61,8 +61,9 @@ extended protocol support.
 
 - Clients and servers use latest-client movement packets with numbered
   commands, QSS-M-style move ACKs, and replacement-delta snapshot ACKs.
-- Co-op servers default to QSS-M-style client movement and trusted/server PMove
-  disabled; server PMove remains available only for explicit testing.
+- Co-op servers default to QSS-M-style pacing with latest-input,
+  server-authoritative movement. Trusted/server PMove remains off unless
+  explicitly enabled for testing.
 - Replacement-delta entity updates reduce the need for unsafe split snapshots.
 - Snapshot resend, ACK recovery, entity prioritization, and pacing help busy
   co-op maps stay playable under packet loss.
