@@ -1344,17 +1344,25 @@ void _Host_Frame (float time)
 	if (lagdebug_frame)
 		lagdebug_start = Sys_DoubleTime ();
 
-// get new key events
-	Key_UpdateForDest ();
-	IN_UpdateInputMode ();
-	Sys_SendKeyEvents ();
-	if (lagdebug_frame)
-		lagdebug_after_events = Sys_DoubleTime ();
+	if (!isDedicated)
+	{
+	// get new key events
+		Key_UpdateForDest ();
+		IN_UpdateInputMode ();
+		Sys_SendKeyEvents ();
+		if (lagdebug_frame)
+			lagdebug_after_events = Sys_DoubleTime ();
 
-// allow mice or other external controllers to add commands
-	IN_Commands ();
-	if (lagdebug_frame)
-		lagdebug_after_commands = Sys_DoubleTime ();
+	// allow mice or other external controllers to add commands
+		IN_Commands ();
+		if (lagdebug_frame)
+			lagdebug_after_commands = Sys_DoubleTime ();
+	}
+	else if (lagdebug_frame)
+	{
+		lagdebug_after_events = Sys_DoubleTime ();
+		lagdebug_after_commands = lagdebug_after_events;
+	}
 
 // check for commands typed to the host
 	Host_GetConsoleCommands ();
