@@ -60,6 +60,7 @@ int		unreliableMessagesSent		= 0;
 int		unreliableMessagesReceived	= 0;
 
 static	cvar_t	net_messagetimeout = {"net_messagetimeout","300",CVAR_NONE};
+static	cvar_t	net_connecttimeout = {"net_connecttimeout","10",CVAR_NONE};
 cvar_t	hostname = {"hostname", "UNNAMED", CVAR_NONE};
 
 // these two macros are to make the code more readable
@@ -712,8 +713,6 @@ void NET_GetServerMessages (void (*callback)(qsocket_t *sock))
 	{
 		if (net_drivers[net_driverlevel].initialized == false)
 			continue;
-		if (!IS_LOOP_DRIVER(net_driverlevel) && listening == false)
-			continue;
 		dfunc.QGetAnyMessages (callback);
 	}
 }
@@ -733,7 +732,8 @@ qboolean NET_IsTimedOut (qsocket_t *sock)
 		return false;
 
 	SetNetTime();
-	return net_time - sock->lastMessageTime > net_messagetimeout.value;
+	return net_time - sock->lastMessageTime >
+		(!sock->ackSequence ? net_connecttimeout.value : net_messagetimeout.value);
 }
 
 
@@ -932,6 +932,7 @@ void NET_Init (void)
 	SZ_Alloc (&net_message, NET_MAXMESSAGE);
 
 	Cvar_RegisterVariable (&net_messagetimeout);
+	Cvar_RegisterVariable (&net_connecttimeout);
 	Cvar_RegisterVariable (&hostname);
 
 	Cmd_AddCommand ("slist", NET_Slist_f);

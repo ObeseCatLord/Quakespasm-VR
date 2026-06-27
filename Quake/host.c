@@ -90,6 +90,7 @@ cvar_t	pausable = {"pausable","1",CVAR_NONE};
 cvar_t	developer = {"developer","0",CVAR_NONE};
 
 cvar_t	temp1 = {"temp1","0",CVAR_NONE};
+extern cvar_t cl_portpingprobe_enable;
 
 cvar_t devstats = {"devstats","0",CVAR_NONE}; //johnfitz -- track developer statistics that vary every frame
 
@@ -125,6 +126,8 @@ static void Host_MigrateNetworkDefaults_f (void)
 		Cvar_SetQuick (&cl_netfps, "0");
 	if (Host_ValueMatchesOldDefault (host_maxfps.value, 72.0f))
 		Cvar_SetQuick (&host_maxfps, "250");
+	if (Host_ValueMatchesOldDefault (cl_portpingprobe_enable.value, 1.0f))
+		Cvar_SetQuick (&cl_portpingprobe_enable, "0");
 }
 
 /*
@@ -934,7 +937,6 @@ void _Host_Frame (float time)
 	double			lagdebug_after_screen, lagdebug_after_audio;
 	static double		last_client_frame_log;
 	static double		last_host_gap_log;
-	qboolean		net_frame_due;
 	double			saved_host_frametime;
 	double			host_gap_threshold;
 	const char		*host_gap_map;
@@ -985,6 +987,9 @@ void _Host_Frame (float time)
 	if (lagdebug_frame)
 		lagdebug_after_commands = Sys_DoubleTime ();
 
+// check for commands typed to the host
+	Host_GetConsoleCommands ();
+
 // process console commands
 	Cbuf_Execute ();
 	if (lagdebug_frame)
@@ -1010,11 +1015,9 @@ void _Host_Frame (float time)
 		vid.recalc_refdef = true;
 	}
 
-	net_frame_due = false;
 	saved_host_frametime = host_frametime;
 	if (accumtime >= host_netinterval)
 	{
-		net_frame_due = true;
 		if (host_netinterval)
 		{
 			host_frametime = q_max (accumtime, host_netinterval);
@@ -1027,9 +1030,9 @@ void _Host_Frame (float time)
 		else
 			accumtime -= host_netinterval;
 		CL_SendCmd ();
-	}
-	if (lagdebug_frame)
-		lagdebug_after_send = Sys_DoubleTime ();
+
+		if (lagdebug_frame)
+			lagdebug_after_send = Sys_DoubleTime ();
 
 //-------------------
 //
@@ -1037,17 +1040,14 @@ void _Host_Frame (float time)
 //
 //-------------------
 
-// check for commands typed to the host
-	Host_GetConsoleCommands ();
-
-	if (sv.active && net_frame_due)
-	{
-		PR_SwitchQCVM(&sv.qcvm);
-		Host_ServerFrame ();
-		PR_SwitchQCVM(NULL);
-	}
-	if (lagdebug_frame)
-		lagdebug_after_server = Sys_DoubleTime ();
+		if (sv.active)
+		{
+			PR_SwitchQCVM(&sv.qcvm);
+			Host_ServerFrame ();
+			PR_SwitchQCVM(NULL);
+		}
+		if (lagdebug_frame)
+			lagdebug_after_server = Sys_DoubleTime ();
 
 //-------------------
 //
@@ -1055,10 +1055,24 @@ void _Host_Frame (float time)
 //
 //-------------------
 
-	if (net_frame_due && host_netinterval)
 		host_frametime = saved_host_frametime;
+		Cbuf_Waited ();
+	}
+	else if (lagdebug_frame)
+	{
+		lagdebug_after_send = Sys_DoubleTime ();
+		lagdebug_after_server = lagdebug_after_send;
+	}
 	if (lagdebug_frame)
 		lagdebug_after_remote_send = Sys_DoubleTime ();
+
+	if (cl.qcvm.progs)
+	{
+		PR_SwitchQCVM(&cl.qcvm);
+		SV_Physics(cl.time - qcvm->time);
+		pr_global_struct->time = cl.time;
+		PR_SwitchQCVM(NULL);
+	}
 
 // fetch results from server
 	if (cls.state == ca_connected)
@@ -1126,9 +1140,6 @@ void _Host_Frame (float time)
 		Con_Printf ("%3i tot %3i server %3i gfx %3i snd\n",
 					pass1+pass2+pass3, pass1, pass2, pass3);
 	}
-
-	Cbuf_Waited ();
-
 	host_framecount++;
 
 }
