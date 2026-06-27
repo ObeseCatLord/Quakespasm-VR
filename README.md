@@ -135,6 +135,8 @@ deathmatch 0
 coop 1
 sv_cheats 1
 sv_nofriendlyfire 1
+host_framerate 0
+host_timescale 0
 sys_ticrate 0.05
 sv_netsort 1
 sv_maxpacketsize 1400
@@ -143,6 +145,13 @@ sv_nqplayerphysics 1
 sv_trustedmovement 0
 sv_inputtimeout 0.5
 net_lagdebug 0
+sv_gravity 800
+sv_maxspeed 320
+sv_accelerate 10
+sv_friction 4
+sv_stopspeed 100
+edgefriction 2
+sv_maxvelocity 2000
 ```
 
 The tracked deploy scripts install this baseline as
@@ -155,6 +164,7 @@ including mods that supply `SV_RunClientCommand`; set
 `sv_nqplayerphysics 0` only when intentionally testing server PMove.
 Startup runs `host_migrate_network_defaults` after configs to repair stale
 archived values such as `host_maxfps 72`, `cl_netfps 72`,
+dedicated-only `host_framerate`/`host_timescale` overrides,
 `sv_nqplayerphysics 0`, `sv_inputtimeout 0`, and uncapped replacement bursts;
 explicit `+cvar value` launch arguments are preserved.
 

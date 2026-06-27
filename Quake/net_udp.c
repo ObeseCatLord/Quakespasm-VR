@@ -134,23 +134,24 @@ void UDP_Shutdown (void)
 
 //=============================================================================
 
-void UDP_Listen (qboolean state)
+sys_socket_t UDP_Listen (qboolean state)
 {
 	// enable listening
 	if (state)
 	{
 		if (net_acceptsocket != INVALID_SOCKET)
-			return;
+			return net_acceptsocket;
 		if ((net_acceptsocket = UDP_OpenSocket (net_hostport)) == INVALID_SOCKET)
 			Sys_Error ("UDP_Listen: Unable to open accept socket");
-		return;
+		return net_acceptsocket;
 	}
 
 	// disable listening
 	if (net_acceptsocket == INVALID_SOCKET)
-		return;
+		return INVALID_SOCKET;
 	UDP_CloseSocket (net_acceptsocket);
 	net_acceptsocket = INVALID_SOCKET;
+	return INVALID_SOCKET;
 }
 
 //=============================================================================

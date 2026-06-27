@@ -1213,49 +1213,53 @@ void Datagram_GetAnyMessages (void (*callback)(qsocket_t *sock))
 			}
 		}
 
-		while ((acceptsock = dfunc.CheckNewConnections()) != INVALID_SOCKET)
+		acceptsock = dfunc.listeningSock;
+		if (acceptsock != INVALID_SOCKET)
 		{
 			prunesock = acceptsock;
-			readLength = dfunc.Read(acceptsock, (byte *)&packetBuffer, NET_DATAGRAMSIZE, &readaddr);
-			if (readLength == 0)
-				break;
-			if (readLength == -1)
+			while (1)
 			{
-				Con_Printf("Read error\n");
-				break;
-			}
-			if (readLength < (int)sizeof(int))
-				continue;
-
-			header = BigLong(packetBuffer.length);
-			if (header & NETFLAG_CTL)
-			{
-				if (Datagram_ProcessNonConnectControlPacket(acceptsock, &readaddr, (byte *)&packetBuffer, readLength))
-					continue;
-				if (!Datagram_QueueControlPacket(acceptsock, &readaddr, (byte *)&packetBuffer, readLength))
+				readLength = dfunc.Read(acceptsock, (byte *)&packetBuffer, NET_DATAGRAMSIZE, &readaddr);
+				if (readLength == 0)
 					break;
-				continue;
-			}
-
-			sock = Datagram_FindVirtualSocketForPacket(acceptsock, &readaddr, (unsigned int)readLength);
-			if (!sock)
-			{
-				if (net_lagdebug.value)
+				if (readLength == -1)
 				{
-					net_lagdebug_unmatched_suppressed++;
-					if (net_time - net_lagdebug_unmatched_time >= 1.0)
-					{
-						Con_Printf("net_lagdebug: ignored unmatched shared-socket datagrams suppressed=%d latest=%s\n",
-							net_lagdebug_unmatched_suppressed, dfunc.AddrToString(&readaddr));
-						net_lagdebug_unmatched_suppressed = 0;
-						net_lagdebug_unmatched_time = net_time;
-					}
+					Con_Printf("Read error\n");
+					break;
 				}
-				continue;
-			}
+				if (readLength < (int)sizeof(int))
+					continue;
 
-			ret = Datagram_ProcessServerPacket(sock, &readaddr, (unsigned int)readLength);
-			Datagram_ServerMessageResult(sock, ret, callback);
+				header = BigLong(packetBuffer.length);
+				if (header & NETFLAG_CTL)
+				{
+					if (Datagram_ProcessNonConnectControlPacket(acceptsock, &readaddr, (byte *)&packetBuffer, readLength))
+						continue;
+					if (!Datagram_QueueControlPacket(acceptsock, &readaddr, (byte *)&packetBuffer, readLength))
+						break;
+					continue;
+				}
+
+				sock = Datagram_FindVirtualSocketForPacket(acceptsock, &readaddr, (unsigned int)readLength);
+				if (!sock)
+				{
+					if (net_lagdebug.value)
+					{
+						net_lagdebug_unmatched_suppressed++;
+						if (net_time - net_lagdebug_unmatched_time >= 1.0)
+						{
+							Con_Printf("net_lagdebug: ignored unmatched shared-socket datagrams suppressed=%d latest=%s\n",
+								net_lagdebug_unmatched_suppressed, dfunc.AddrToString(&readaddr));
+							net_lagdebug_unmatched_suppressed = 0;
+							net_lagdebug_unmatched_time = net_time;
+						}
+					}
+					continue;
+				}
+
+				ret = Datagram_ProcessServerPacket(sock, &readaddr, (unsigned int)readLength);
+				Datagram_ServerMessageResult(sock, ret, callback);
+			}
 		}
 
 		if (prunesock != INVALID_SOCKET)
@@ -1673,6 +1677,7 @@ int Datagram_Init (void)
 			continue;
 		net_landrivers[i].initialized = true;
 		net_landrivers[i].controlSock = csock;
+		net_landrivers[i].listeningSock = INVALID_SOCKET;
 		num_inited++;
 	}
 
@@ -1702,6 +1707,7 @@ void Datagram_Shutdown (void)
 		{
 			net_landrivers[i].Shutdown ();
 			net_landrivers[i].initialized = false;
+			net_landrivers[i].listeningSock = INVALID_SOCKET;
 		}
 	}
 }
@@ -1722,7 +1728,7 @@ void Datagram_Listen (qboolean state)
 	for (i = 0; i < net_numlandrivers; i++)
 	{
 		if (net_landrivers[i].initialized)
-			net_landrivers[i].Listen (state);
+			net_landrivers[i].listeningSock = net_landrivers[i].Listen (state);
 	}
 }
 
