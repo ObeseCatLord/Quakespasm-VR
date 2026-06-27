@@ -131,17 +131,23 @@ For a final local config that should win after mod configs:
 For co-op servers, the intended baseline is:
 
 ```txt
-coop 1
 deathmatch 0
-sv_protocol 999
-sv_coop_predictmove 0
-sv_nqplayerphysics 1
-sv_inputtimeout 0.5
-sv_replacement_maxpackets 8
-sv_coop_noplayerclip 1
+coop 1
+sv_cheats 1
 sv_nofriendlyfire 1
-sv_coop_weapon_targetfix 1
+sys_ticrate 0.05
+sv_netsort 1
+sv_maxpacketsize 1400
+sv_replacement_maxpackets 8
+sv_nqplayerphysics 1
+sv_trustedmovement 0
+sv_inputtimeout 0.5
+net_lagdebug 0
 ```
+
+The tracked deploy scripts install this baseline as
+`id1/codex_coop_server.cfg` and generate per-mod `start_*_server.sh`
+wrappers that execute it before loading a map.
 
 Use `-novr` for desktop clients and `-vr` for headset clients. The protocol uses
 QSS-M-style move ACKs; server PMove/trusted movement is off by default,
