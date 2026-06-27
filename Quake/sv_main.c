@@ -2579,8 +2579,16 @@ void SV_WriteClientdataToMessage (edict_t *ent, sizebuf_t *msg)
 	int		bits;
 	int		i;
 	unsigned int	items;
+	unsigned int	weaponmodellimit;
+	unsigned int	weaponmodelindex;
 	eval_t	*val;
 	const qboolean send_punchangle = !sv_nopunchangle.value;
+
+	weaponmodellimit = host_client && host_client->limit_models ?
+		host_client->limit_models : MAX_MODELS;
+	weaponmodelindex = SV_ModelIndex(PR_GetString(ent->v.weaponmodel));
+	if (weaponmodelindex >= weaponmodellimit)
+		weaponmodelindex = 0;
 
 //
 // send a damage message
@@ -2640,7 +2648,7 @@ void SV_WriteClientdataToMessage (edict_t *ent, sizebuf_t *msg)
 	//johnfitz -- PROTOCOL_FITZQUAKE
 	if (sv.protocol != PROTOCOL_NETQUAKE)
 	{
-		if (bits & SU_WEAPON && SV_ModelIndex(PR_GetString(ent->v.weaponmodel)) & 0xFF00) bits |= SU_WEAPON2;
+		if (bits & SU_WEAPON && weaponmodelindex & 0xFF00) bits |= SU_WEAPON2;
 		if ((int)ent->v.armorvalue & 0xFF00) bits |= SU_ARMOR2;
 		if ((int)ent->v.currentammo & 0xFF00) bits |= SU_AMMO2;
 		if ((int)ent->v.ammo_shells & 0xFF00) bits |= SU_SHELLS2;
@@ -2686,7 +2694,7 @@ void SV_WriteClientdataToMessage (edict_t *ent, sizebuf_t *msg)
 	if (bits & SU_ARMOR)
 		MSG_WriteByte (msg, ent->v.armorvalue);
 	if (bits & SU_WEAPON)
-		MSG_WriteByte (msg, SV_ModelIndex(PR_GetString(ent->v.weaponmodel)));
+		MSG_WriteByte (msg, weaponmodelindex);
 
 	MSG_WriteShort (msg, ent->v.health);
 	MSG_WriteByte (msg, ent->v.currentammo);
@@ -2715,7 +2723,7 @@ void SV_WriteClientdataToMessage (edict_t *ent, sizebuf_t *msg)
 
 	//johnfitz -- PROTOCOL_FITZQUAKE
 	if (bits & SU_WEAPON2)
-		MSG_WriteByte (msg, SV_ModelIndex(PR_GetString(ent->v.weaponmodel)) >> 8);
+		MSG_WriteByte (msg, weaponmodelindex >> 8);
 	if (bits & SU_ARMOR2)
 		MSG_WriteByte (msg, (int)ent->v.armorvalue >> 8);
 	if (bits & SU_AMMO2)
