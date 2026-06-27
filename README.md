@@ -260,7 +260,7 @@ QuakeSpasm cvar.
 | `cl_nocsqc` | `0` | CSQC | Disables client-side QC loading when set. |
 | `cl_nopred` | `0` | Networking | Runtime prediction disable/debug switch. |
 | `cl_portpingprobe_delay` | `0.20` | Networking | Delay before port-probe connect fallback. |
-| `cl_portpingprobe_enable` | `1` | Networking | Enables client UDP port probe selection. |
+| `cl_portpingprobe_enable` | `0` | Networking | Optional client UDP port probe selection; disabled by default for normal OS-selected source ports. |
 | `cl_portpingprobe_probes` | `6` | Networking | Number of client port probes. |
 | `cl_predict_error_log` | `1` | Diagnostics | Logs prediction mismatches. |
 | `cl_predictmove` | `1` | Networking | Enables client-side movement prediction for remote play. |

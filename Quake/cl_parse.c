@@ -621,7 +621,10 @@ void CL_ParseServerInfo (void)
 	cl.ackframes_count = 1;
 	cl.ackframes[0] = -1;
 
-	MSG_ReadString ();
+	q_strlcpy (cl.server_gamedir, MSG_ReadString (), sizeof(cl.server_gamedir));
+	if (cl.server_gamedir[0] && !COM_GameDirMatches(cl.server_gamedir))
+		Con_DWarning("Server gamedir \"%s\" does not match local gamedir \"%s\".\n",
+			cl.server_gamedir, COM_GetGameNames(false));
 
 // parse maxclients
 	cl.maxclients = MSG_ReadByte ();
