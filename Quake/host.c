@@ -93,6 +93,7 @@ cvar_t	temp1 = {"temp1","0",CVAR_NONE};
 extern cvar_t cl_portpingprobe_enable;
 extern cvar_t sv_inputtimeout;
 extern cvar_t sv_nqplayerphysics;
+extern cvar_t sv_trustedmovement;
 extern cvar_t sv_replacement_maxpackets;
 
 cvar_t devstats = {"devstats","0",CVAR_NONE}; //johnfitz -- track developer statistics that vary every frame
@@ -157,6 +158,9 @@ static void Host_MigrateNetworkDefaults_f (void)
 	if (!Host_CommandLineSetsCvar ("sv_nqplayerphysics") &&
 		Host_ValueMatchesOldDefault (sv_nqplayerphysics.value, 0.0f))
 		Cvar_SetQuick (&sv_nqplayerphysics, "1");
+	if (!Host_CommandLineSetsCvar ("sv_trustedmovement") &&
+		Host_ValueMatchesOldDefault (sv_trustedmovement.value, 1.0f))
+		Cvar_SetQuick (&sv_trustedmovement, "0");
 	if (!Host_CommandLineSetsCvar ("sv_inputtimeout") &&
 		Host_ValueMatchesOldDefault (sv_inputtimeout.value, 0.0f))
 		Cvar_SetQuick (&sv_inputtimeout, "0.5");

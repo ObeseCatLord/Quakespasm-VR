@@ -51,6 +51,7 @@ static void SV_UpdateClientPMoveMode(client_t *client);
 cvar_t sv_idealpitchscale = {"sv_idealpitchscale", "0.8", CVAR_NONE};
 cvar_t sv_altnoclip = {"sv_altnoclip", "1", CVAR_ARCHIVE}; // johnfitz
 cvar_t sv_nqplayerphysics = {"sv_nqplayerphysics", "1", CVAR_ARCHIVE | CVAR_SERVERINFO};
+cvar_t sv_trustedmovement = {"sv_trustedmovement", "0", CVAR_SERVERINFO};
 cvar_t sv_inputtimeout = {"sv_inputtimeout", "0.5", CVAR_NONE};
 cvar_t sv_pmove_legacy_preserve_qc_velocity = {
     "sv_pmove_legacy_preserve_qc_velocity", "1", CVAR_NONE};
@@ -1065,14 +1066,15 @@ qboolean SV_ReadClientMessage(void) {
 static void SV_UpdateClientPMoveMode(client_t *client) {
   qboolean usingpmove;
   qboolean local_singleplayer;
+  static double last_pmove_gate_log;
 
   if (!client || !client->active)
     return;
 
   local_singleplayer = sv.active && svs.maxclients <= 1;
 
-  usingpmove = !local_singleplayer && client->spawned && client->knowntoqc &&
-      !sv_nqplayerphysics.value &&
+  usingpmove = sv_trustedmovement.value && !local_singleplayer &&
+      client->spawned && client->knowntoqc && !sv_nqplayerphysics.value &&
       (qcvm->extfuncs.SV_RunClientCommand ||
        *sv_nqplayerphysics.string || deathmatch.value);
 
@@ -1085,6 +1087,16 @@ static void SV_UpdateClientPMoveMode(client_t *client) {
                  client->name,
                  local_singleplayer ? "local-singleplayer" : "latest-client",
                  qcvm->extfuncs.SV_RunClientCommand ? 1 : 0);
+  }
+  else if (net_lagdebug.value && !sv_trustedmovement.value &&
+           !sv_nqplayerphysics.value && client->spawned && client->knowntoqc)
+  {
+    if (realtime - last_pmove_gate_log > 1.0)
+    {
+      Con_Printf("net_lagdebug: server PMove held off by sv_trustedmovement 0 for %s\n",
+                 client->name);
+      last_pmove_gate_log = realtime;
+    }
   }
   client->usingpmove = usingpmove;
 }
