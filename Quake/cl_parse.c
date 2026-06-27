@@ -1449,8 +1449,10 @@ static void CLFTE_QueueAckFrame (int sequence)
 static void CLFTE_ParseEntitiesUpdate (void)
 {
 	int newnum;
+	int i;
 	qboolean removeflag;
 	entity_t *ent;
+	entity_t *viewent;
 	float newtime;
 	int frame_sequence;
 
@@ -1526,6 +1528,14 @@ static void CLFTE_ParseEntitiesUpdate (void)
 	}
 
 	CLFTE_EntitiesDeltaed ();
+	if ((cl.protocol_pext2 & PEXT2_PREDINFO) && cl.viewentity > 0)
+	{
+		VectorCopy (cl.mvelocity[0], cl.mvelocity[1]);
+		viewent = CL_EntityNum (cl.viewentity);
+		for (i = 0; i < 3; i++)
+			cl.mvelocity[0][i] = viewent->netstate.velocity[i] * (1.0f / 8.0f);
+		cl.onground = (viewent->netstate.eflags & EFLAGS_ONGROUND) ? true : false;
+	}
 	if (!cl.requestresend && cls.signon == SIGNONS - 1)
 	{
 		cls.signon = SIGNONS;

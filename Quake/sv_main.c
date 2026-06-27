@@ -1030,13 +1030,11 @@ static unsigned int SVFTE_DeltaPredCalcBits (entity_state_t *from, entity_state_
 {
 	unsigned int bits = 0;
 
-	if (from ? from->pmovetype != to->pmovetype : to->pmovetype != 0)
+	if (from && from->pmovetype != to->pmovetype)
 		bits |= UFP_MOVETYPE;
-	if (from ? (from->velocity[0] != to->velocity[0] ||
-		from->velocity[1] != to->velocity[1]) :
-		(to->velocity[0] || to->velocity[1]))
+	if (to->velocity[0] || to->velocity[1])
 		bits |= UFP_VELOCITYXY;
-	if (from ? from->velocity[2] != to->velocity[2] : to->velocity[2])
+	if (to->velocity[2])
 		bits |= UFP_VELOCITYZ;
 	return bits;
 }
@@ -1467,13 +1465,18 @@ static void SVFTE_BuildEntityState (client_t *client, edict_t *ent, entity_state
 	state->effects = (int)ent->v.effects & qcvm->effects_mask;
 	if (ent->v.movetype == MOVETYPE_STEP)
 		state->eflags |= EFLAGS_STEP;
-	if (client && client->edict == ent && client->usingpmove)
+	if (client && client->edict == ent && ((int)ent->v.flags & FL_ONGROUND))
+		state->eflags |= EFLAGS_ONGROUND;
+	if (client && client->edict == ent)
 	{
-		state->pmovetype = (int)ent->v.movetype & 63;
-		if ((int)ent->v.flags & FL_ONGROUND)
-			state->pmovetype |= 0x80;
-		if (!((int)ent->v.flags & FL_JUMPRELEASED))
-			state->pmovetype |= 0x40;
+		if (client->usingpmove)
+		{
+			state->pmovetype = (int)ent->v.movetype & 63;
+			if ((int)ent->v.flags & FL_ONGROUND)
+				state->pmovetype |= 0x80;
+			if (!((int)ent->v.flags & FL_JUMPRELEASED))
+				state->pmovetype |= 0x40;
+		}
 		state->velocity[0] = CLAMP (-32768, Q_rint (ent->v.velocity[0] * 8.0f), 32767);
 		state->velocity[1] = CLAMP (-32768, Q_rint (ent->v.velocity[1] * 8.0f), 32767);
 		state->velocity[2] = CLAMP (-32768, Q_rint (ent->v.velocity[2] * 8.0f), 32767);
