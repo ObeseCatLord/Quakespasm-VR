@@ -794,7 +794,7 @@ void SV_SendServerinfo (client_t *client)
 	MSG_WriteByte (&client->message, svc_signonnum);
 	MSG_WriteByte (&client->message, 1);
 
-	client->sendsignon = true;
+	client->sendsignon = PRESPAWN_FLUSH;
 	client->spawned = false;		// need prespawn, spawn, etc
 }
 
@@ -1276,6 +1276,51 @@ static void MSGFTE_WriteEntityUpdate (unsigned int bits, entity_state_t *state,
 		MSG_WriteByte (msg, state->colormod[1]);
 		MSG_WriteByte (msg, state->colormod[2]);
 	}
+}
+
+static void MSG_WriteStaticOrBaseLine (sizebuf_t *buf, int idx,
+	const entity_state_t *state, unsigned int protocolflags)
+{
+	int i;
+	int bits = 0;
+
+	if (state->modelindex & 0xFF00)
+		bits |= B_LARGEMODEL;
+	if (state->frame & 0xFF00)
+		bits |= B_LARGEFRAME;
+	if (state->alpha != ENTALPHA_DEFAULT)
+		bits |= B_ALPHA;
+
+	if (idx >= 0)
+	{
+		MSG_WriteByte (buf, bits ? svc_spawnbaseline2 : svc_spawnbaseline);
+		MSG_WriteShort (buf, idx);
+	}
+	else
+		MSG_WriteByte (buf, bits ? svc_spawnstatic2 : svc_spawnstatic);
+
+	if (bits)
+		MSG_WriteByte (buf, bits);
+
+	if (bits & B_LARGEMODEL)
+		MSG_WriteShort (buf, state->modelindex);
+	else
+		MSG_WriteByte (buf, state->modelindex);
+
+	if (bits & B_LARGEFRAME)
+		MSG_WriteShort (buf, state->frame);
+	else
+		MSG_WriteByte (buf, state->frame);
+
+	MSG_WriteByte (buf, state->colormap);
+	MSG_WriteByte (buf, state->skin);
+	for (i = 0; i < 3; i++)
+	{
+		MSG_WriteCoord (buf, state->origin[i], protocolflags);
+		MSG_WriteAngle (buf, state->angles[i], protocolflags);
+	}
+	if (bits & B_ALPHA)
+		MSG_WriteByte (buf, state->alpha);
 }
 
 void SVFTE_DestroyFrames (client_t *client)
@@ -3299,6 +3344,98 @@ void SV_SendNop (client_t *client)
 	client->last_message = realtime;
 }
 
+static int SV_PrespawnWriteLimit (void)
+{
+	return q_max (0, host_client->message.maxsize - 128);
+}
+
+static int SV_SendPrespawnBaselines (int idx)
+{
+	edict_t *svent;
+	int maxsize;
+
+	maxsize = SV_PrespawnWriteLimit ();
+
+	while (1)
+	{
+		if (idx >= qcvm->num_edicts)
+			return -1;
+		if (host_client->message.cursize > maxsize)
+			break;
+
+		svent = EDICT_NUM(idx);
+		if (memcmp (&nullentitystate, &svent->baseline, sizeof(nullentitystate)))
+			MSG_WriteStaticOrBaseLine (&host_client->message, idx,
+				&svent->baseline, sv.protocolflags);
+		idx++;
+	}
+
+	return idx;
+}
+
+static int SV_SendPrespawnStatics (int idx)
+{
+	entity_state_t *svent;
+	int maxsize;
+
+	maxsize = SV_PrespawnWriteLimit ();
+
+	while (1)
+	{
+		if (idx >= sv.num_statics)
+			return -1;
+		if (host_client->message.cursize > maxsize)
+			break;
+
+		svent = &sv.static_entities[idx++];
+		if (svent->modelindex >= host_client->limit_models)
+			continue;
+		if (memcmp (&nullentitystate, svent, sizeof(nullentitystate)))
+			MSG_WriteStaticOrBaseLine (&host_client->message, -1, svent,
+				sv.protocolflags);
+	}
+
+	return idx;
+}
+
+static int SV_SendAmbientSounds (int idx)
+{
+	struct ambientsound_s *snd;
+	int maxsize;
+	qboolean large;
+	int i;
+
+	maxsize = SV_PrespawnWriteLimit ();
+
+	while (1)
+	{
+		if (idx >= sv.num_ambients)
+			return -1;
+		if (host_client->message.cursize > maxsize)
+			break;
+
+		snd = &sv.ambientsounds[idx++];
+		if (snd->soundindex >= host_client->limit_sounds)
+			continue;
+
+		large = snd->soundindex > 255;
+		MSG_WriteByte (&host_client->message,
+			large ? svc_spawnstaticsound2 : svc_spawnstaticsound);
+		for (i = 0; i < 3; i++)
+			MSG_WriteCoord (&host_client->message, snd->origin[i], sv.protocolflags);
+		if (large)
+			MSG_WriteShort (&host_client->message, snd->soundindex);
+		else
+			MSG_WriteByte (&host_client->message, snd->soundindex);
+		MSG_WriteByte (&host_client->message,
+			(int)CLAMP (0.f, snd->volume * 255.f, 255.f));
+		MSG_WriteByte (&host_client->message,
+			(int)CLAMP (0.f, snd->attenuation * 64.f, 255.f));
+	}
+
+	return idx;
+}
+
 /*
 =======================
 SV_PresendClientDatagram
@@ -3361,6 +3498,33 @@ void SV_SendClientMessages (void)
 					SV_SendNop (host_client);
 				continue;	// don't send out non-signon messages
 			}
+			if (host_client->sendsignon == PRESPAWN_BASELINES)
+			{
+				host_client->signonidx = SV_SendPrespawnBaselines (host_client->signonidx);
+				if (host_client->signonidx < 0)
+				{
+					host_client->signonidx = 0;
+					host_client->sendsignon++;
+				}
+			}
+			if (host_client->sendsignon == PRESPAWN_STATICS)
+			{
+				host_client->signonidx = SV_SendPrespawnStatics (host_client->signonidx);
+				if (host_client->signonidx < 0)
+				{
+					host_client->signonidx = 0;
+					host_client->sendsignon++;
+				}
+			}
+			if (host_client->sendsignon == PRESPAWN_AMBIENTS)
+			{
+				host_client->signonidx = SV_SendAmbientSounds (host_client->signonidx);
+				if (host_client->signonidx < 0)
+				{
+					host_client->signonidx = 0;
+					host_client->sendsignon++;
+				}
+			}
 			if (host_client->sendsignon == PRESPAWN_SIGNONBUFS)
 			{
 				qboolean local = SV_IsLocalClient (host_client);
@@ -3377,7 +3541,7 @@ void SV_SendClientMessages (void)
 					if (!local)
 						break;
 				}
-				if (host_client->signonidx == sv.num_signon_buffers)
+				if (host_client->signonidx >= sv.num_signon_buffers)
 					host_client->sendsignon = PRESPAWN_SIGNONMSG;
 			}
 			if (host_client->sendsignon == PRESPAWN_SIGNONMSG)
@@ -3396,8 +3560,8 @@ void SV_SendClientMessages (void)
 		// changes level
 		if (host_client->message.overflowed)
 		{
-			SV_DropClient (true);
-			host_client->message.overflowed = false;
+			SZ_Clear (&host_client->message);
+			SV_DropClient (false);
 			continue;
 		}
 
@@ -3415,7 +3579,7 @@ void SV_SendClientMessages (void)
 			{
 				if (NET_SendMessage (host_client->netconnection
 				, &host_client->message) == -1)
-					SV_DropClient (true);	// if the message couldn't send, kick off
+					SV_DropClient (false);	// if the message couldn't send, kick off
 				SZ_Clear (&host_client->message);
 				host_client->last_message = realtime;
 				if (host_client->sendsignon == PRESPAWN_FLUSH)
@@ -3506,10 +3670,8 @@ SV_CreateBaseline
 */
 void SV_CreateBaseline (void)
 {
-	int			i;
 	edict_t		*svent;
 	int			entnum;
-	int			bits; //johnfitz -- PROTOCOL_FITZQUAKE
 
 	for (entnum = 0; entnum < qcvm->num_edicts ; entnum++)
 	{
@@ -3540,70 +3702,6 @@ void SV_CreateBaseline (void)
 			svent->baseline.modelindex = SV_ModelIndex(PR_GetString(svent->v.model));
 			svent->baseline.alpha = svent->alpha; //johnfitz -- alpha support
 		}
-
-		//johnfitz -- PROTOCOL_FITZQUAKE
-		bits = 0;
-		if (sv.protocol == PROTOCOL_NETQUAKE) //still want to send baseline in PROTOCOL_NETQUAKE, so reset these values
-		{
-			if (svent->baseline.modelindex & 0xFF00)
-				svent->baseline.modelindex = 0;
-			if (svent->baseline.frame & 0xFF00)
-				svent->baseline.frame = 0;
-			svent->baseline.alpha = ENTALPHA_DEFAULT;
-		}
-		else //decide which extra data needs to be sent
-		{
-			if (svent->baseline.modelindex & 0xFF00)
-				bits |= B_LARGEMODEL;
-			if (svent->baseline.frame & 0xFF00)
-				bits |= B_LARGEFRAME;
-			if (svent->baseline.alpha != ENTALPHA_DEFAULT)
-				bits |= B_ALPHA;
-			// Baseline scale is not signon-encoded; dynamic U_SCALE still works.
-		}
-		//johnfitz
-
-	//
-	// add to the message
-	//
-		SV_ReserveSignonSpace (35);
-
-		//johnfitz -- PROTOCOL_FITZQUAKE
-		if (bits)
-			MSG_WriteByte (sv.signon, svc_spawnbaseline2);
-		else
-			MSG_WriteByte (sv.signon, svc_spawnbaseline);
-		//johnfitz
-
-		MSG_WriteShort (sv.signon,entnum);
-
-		//johnfitz -- PROTOCOL_FITZQUAKE
-		if (bits)
-			MSG_WriteByte (sv.signon, bits);
-
-		if (bits & B_LARGEMODEL)
-			MSG_WriteShort (sv.signon, svent->baseline.modelindex);
-		else
-			MSG_WriteByte (sv.signon, svent->baseline.modelindex);
-
-		if (bits & B_LARGEFRAME)
-			MSG_WriteShort (sv.signon, svent->baseline.frame);
-		else
-			MSG_WriteByte (sv.signon, svent->baseline.frame);
-		//johnfitz
-
-		MSG_WriteByte (sv.signon, svent->baseline.colormap);
-		MSG_WriteByte (sv.signon, svent->baseline.skin);
-		for (i=0 ; i<3 ; i++)
-		{
-			MSG_WriteCoord(sv.signon, svent->baseline.origin[i], sv.protocolflags);
-			MSG_WriteAngle(sv.signon, svent->baseline.angles[i], sv.protocolflags);
-		}
-
-		//johnfitz -- PROTOCOL_FITZQUAKE
-		if (bits & B_ALPHA)
-			MSG_WriteByte (sv.signon, svent->baseline.alpha);
-		//johnfitz
 	}
 }
 

@@ -32,7 +32,7 @@ struct qsockaddr
 #else
 	short qsa_family;
 #endif	/* BSD, sockaddr */
-	unsigned char qsa_data[14];
+	unsigned char qsa_data[62];
 };
 
 #define NET_HEADERSIZE		(2 * sizeof(unsigned int))
