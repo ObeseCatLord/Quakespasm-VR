@@ -172,6 +172,11 @@ typedef struct client_s
 	byte			msgbuf[MAX_MSGLEN];
 	sizebuf_t		datagram;			// private unreliable data for this client
 	byte			datagram_buf[MAX_DATAGRAM];
+	unsigned int	limit_entities;
+	unsigned int	limit_unreliable;
+	unsigned int	limit_reliable;
+	unsigned int	limit_models;
+	unsigned int	limit_sounds;
 	edict_t			*edict;				// EDICT_NUM(clientnum+1)
 	char			name[32];			// for printing to other people
 	int				colors;
@@ -374,7 +379,7 @@ void SV_AddClientToServer (struct qsocket_s	*ret);
 void SV_ClientPrintf (const char *fmt, ...) FUNC_PRINTF(1,2);
 void SV_BroadcastPrintf (const char *fmt, ...) FUNC_PRINTF(1,2);
 
-void SV_Physics (void);
+void SV_Physics (double frametime);
 void SV_CoopReviveBeginPostThink(edict_t *ent);
 void SV_CoopReviveEndPostThink(void);
 void SV_CoopReviveApplyPending(void);

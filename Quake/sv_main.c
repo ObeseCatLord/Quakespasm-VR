@@ -34,7 +34,9 @@ static char	localmodels[MAX_MODELS][8];	// inline model names for precache
 int		sv_protocol = PROTOCOL_RMQ; //johnfitz
 
 extern cvar_t nomonsters;
-cvar_t sv_maxpacketsize = {"sv_maxpacketsize", "1400", CVAR_NONE}; // below typical Ethernet MTU while reducing large-map packet splits
+// Compatibility no-op for old configs. Remote unreliable traffic now uses
+// per-client QSS-M-style limits and is capped to DATAGRAM_MTU.
+cvar_t sv_maxpacketsize = {"sv_maxpacketsize", "1400", CVAR_NONE};
 cvar_t sv_netdiag_interval = {"sv_netdiag_interval", "5", CVAR_NONE};
 // When SV_WriteEntitiesToClient overflows the per-client datagram, the entity
 // that gets evicted is whichever the loop reached last. With sv_netsort=1
@@ -71,15 +73,46 @@ static void SVFTE_SetupFrames (client_t *client);
 static qboolean SVFTE_SendClientDatagram (client_t *client, int maxsize);
 static void SV_WriteMoveAckPayloadToMessage (client_t *client, sizebuf_t *msg);
 
-static int SV_ClientMaxPacketSize (client_t *client)
+static qboolean SV_IsLocalClient (client_t *client)
+{
+	return client && client->netconnection &&
+		Q_strcmp (NET_QSocketGetAddressString (client->netconnection), "LOCAL") == 0;
+}
+
+static void SV_SetClientLimits (client_t *client)
+{
+	unsigned int maxentities;
+
+	if (!client)
+		return;
+
+	maxentities = qcvm && qcvm->max_edicts > 0 ?
+		(unsigned int)qcvm->max_edicts : MAX_EDICTS;
+	if (maxentities > MAX_EDICTS)
+		maxentities = MAX_EDICTS;
+
+	client->limit_reliable = NET_MAXMESSAGE;
+	client->limit_unreliable = SV_IsLocalClient (client) ?
+		NET_MAXMESSAGE : DATAGRAM_MTU;
+	client->limit_entities = maxentities;
+	client->limit_models = MAX_MODELS;
+	client->limit_sounds = MAX_SOUNDS;
+
+	if (client->message.data == client->msgbuf &&
+		client->message.maxsize > (int)client->limit_reliable)
+		client->message.maxsize = client->limit_reliable;
+	if (client->datagram.data == client->datagram_buf &&
+		client->datagram.maxsize > (int)client->limit_unreliable)
+		client->datagram.maxsize = client->limit_unreliable;
+}
+
+static int SV_ClientUnreliableLimit (client_t *client)
 {
 	int maxsize;
 
-	maxsize = MAX_DATAGRAM;
-	if (client && client->netconnection &&
-		Q_strcmp(NET_QSocketGetAddressString(client->netconnection), "LOCAL") != 0)
-		maxsize = (int)sv_maxpacketsize.value;
-	return CLAMP(512, maxsize, MAX_DATAGRAM);
+	maxsize = client && client->limit_unreliable ?
+		(int)client->limit_unreliable : DATAGRAM_MTU;
+	return CLAMP (512, maxsize, MAX_DATAGRAM);
 }
 
 static void SV_UpdateClientMSS (client_t *client)
@@ -89,7 +122,7 @@ static void SV_UpdateClientMSS (client_t *client)
 	if (!client || !client->netconnection)
 		return;
 
-	maxsize = SV_ClientMaxPacketSize(client);
+	maxsize = SV_ClientUnreliableLimit (client);
 	NET_QSocketSetMSS (client->netconnection, maxsize);
 	if (client->datagram.data == client->datagram_buf)
 		client->datagram.maxsize = q_min ((int)sizeof(client->datagram_buf), maxsize);
@@ -113,8 +146,8 @@ void SV_CalcStats(client_t *client, int *statsi, float *statsf, const char **sta
 	statsf[STAT_HEALTH] = ent->v.health;
 //	statsf[STAT_FRAGS] = ent->v.frags;	//obsolete
 	statsi[STAT_WEAPON] = SV_ModelIndex(PR_GetString(ent->v.weaponmodel));
-	//if ((unsigned int)statsi[STAT_WEAPON] >= client->limit_models)
-	//	statsi[STAT_WEAPON] = 0;
+	if ((unsigned int)statsi[STAT_WEAPON] >= client->limit_models)
+		statsi[STAT_WEAPON] = 0;
 	statsf[STAT_AMMO] = ent->v.currentammo;
 	statsf[STAT_ARMOR] = ent->v.armorvalue;
 	statsf[STAT_WEAPONFRAME] = ent->v.weaponframe;
@@ -580,6 +613,8 @@ void SV_StartSound (edict_t *entity, int channel, const char *sample, int volume
 		client = &svs.clients[ent - 1];
 		if (!client->active || !client->spawned)
 			return;
+		if ((unsigned int)sound_num >= client->limit_sounds)
+			return;
 		SV_WriteSoundToMessage (&client->datagram, entity, ent, channel,
 			sound_num, field_mask, volume, attenuation);
 		return;
@@ -588,6 +623,8 @@ void SV_StartSound (edict_t *entity, int channel, const char *sample, int volume
 	for (i = 0, client = svs.clients; i < svs.maxclients; i++, client++)
 	{
 		if (!client->active || !client->spawned)
+			continue;
+		if ((unsigned int)sound_num >= client->limit_sounds)
 			continue;
 		SV_WriteSoundToMessage (&client->datagram, entity, ent, channel,
 			sound_num, field_mask, volume, attenuation);
@@ -624,6 +661,8 @@ void SV_LocalSound (client_t *client, const char *sample)
 
 	if (client->message.cursize > client->message.maxsize-4)
 		return;
+	if ((unsigned int)sound_num >= client->limit_sounds)
+		return;
 
 	MSG_WriteByte (&client->message, svc_localsound);
 	MSG_WriteByte (&client->message, field_mask);
@@ -640,11 +679,6 @@ CLIENT SPAWNING
 
 ==============================================================================
 */
-
-static qboolean SV_IsLocalClient (client_t *client)
-{
-	return Q_strcmp (NET_QSocketGetAddressString (client->netconnection), "LOCAL") == 0;
-}
 
 /*
 ================
@@ -664,6 +698,7 @@ void SV_SendServerinfo (client_t *client)
 	client->protocol_pext1 = 0;
 	client->protocol_pext2 = PEXT2_REQUIRED_LATEST;
 	client->pextknown = true;
+	SV_SetClientLimits (client);
 	SVFTE_SetupFrames (client);
 	SV_UpdateClientMSS (client);
 
@@ -696,14 +731,12 @@ void SV_SendServerinfo (client_t *client)
 	MSG_WriteString (&client->message, PR_GetString(qcvm->edicts->v.message));
 
 	//johnfitz -- only send the first 256 model and sound precaches if protocol is 15
-	for (i = 1, s = sv.model_precache+1; *s; s++,i++)
-		if (sv.protocol != PROTOCOL_NETQUAKE || i < 256)
-			MSG_WriteString (&client->message, *s);
+	for (i = 1, s = sv.model_precache+1; *s && (unsigned int)i < client->limit_models; s++,i++)
+		MSG_WriteString (&client->message, *s);
 	MSG_WriteByte (&client->message, 0);
 
-	for (i = 1, s = sv.sound_precache+1; *s; s++, i++)
-		if (sv.protocol != PROTOCOL_NETQUAKE || i < 256)
-			MSG_WriteString (&client->message, *s);
+	for (i = 1, s = sv.sound_precache+1; *s && (unsigned int)i < client->limit_sounds; s++, i++)
+		MSG_WriteString (&client->message, *s);
 	MSG_WriteByte (&client->message, 0);
 	//johnfitz
 
@@ -791,7 +824,7 @@ void SV_ConnectClient (int clientnum)
 	client->message.allowoverflow = true;		// we can catch it
 	client->datagram.data = client->datagram_buf;
 	client->datagram.maxsize = q_min ((int)sizeof(client->datagram_buf),
-		SV_ClientMaxPacketSize(client));
+		SV_ClientUnreliableLimit (client));
 	client->datagram.cursize = 0;
 	client->datagram.allowoverflow = true;
 
@@ -1459,14 +1492,18 @@ static void SVFTE_BuildSnapshotForClient (client_t *client)
 	eval_t *val;
 	qboolean cancsqc, iscsqc;
 	int emiteffect;
+	int maxentities;
 
 	snapshot_numents = 0;
 	clent = client->edict;
+	maxentities = (int)client->limit_entities;
+	if (maxentities <= 0 || maxentities > qcvm->num_edicts)
+		maxentities = qcvm->num_edicts;
 	VectorAdd (clent->v.origin, clent->v.view_ofs, org);
 	pvs = SV_FatPVS (org, sv.worldmodel);
 	cancsqc = GetEdictFieldValid(SendEntity) && GetEdictFieldValid(SendFlags) && client->csqcactive;
 	if (cancsqc)
-		SVFTE_EnsurePendingCSQCEntityBits (client, qcvm->num_edicts + 1);
+		SVFTE_EnsurePendingCSQCEntityBits (client, maxentities + 1);
 	if (sv_skyroom_pvs.value && sv.skyroom_pos_known)
 	{
 		vec3_t skyorg;
@@ -1475,7 +1512,7 @@ static void SVFTE_BuildSnapshotForClient (client_t *client)
 	}
 
 	ent = NEXT_EDICT(qcvm->edicts);
-	for (e = 1; e < qcvm->num_edicts; e++, ent = NEXT_EDICT(ent))
+	for (e = 1; e < maxentities; e++, ent = NEXT_EDICT(ent))
 	{
 		if (ent->free)
 			goto invisible;
@@ -1509,6 +1546,8 @@ static void SVFTE_BuildSnapshotForClient (client_t *client)
 		if (cancsqc && client->pendingcsqcentities_bits[e])
 			client->pendingcsqcentities_bits[e] |= SENDFLAG_REMOVE;
 		SVFTE_BuildEntityState (client, ent, &state);
+		if ((unsigned int)state.modelindex >= client->limit_models)
+			state.modelindex = 0;
 		if (ent != clent && state.alpha == ENTALPHA_ZERO && !state.effects)
 			continue;
 		SVFTE_AppendSnapshotEntity (e, &state);
@@ -1524,8 +1563,12 @@ static void SVFTE_BuildSnapshotForClient (client_t *client)
 static void SVFTE_CalcEntityDeltas (client_t *client)
 {
 	struct entity_num_state_s *olds, *news, *oldstop, *newstop;
+	size_t maxentities;
 
-	SVFTE_EnsurePendingEntityBits (client, qcvm->num_edicts + 1);
+	maxentities = client->limit_entities ? client->limit_entities : qcvm->num_edicts;
+	if (maxentities > (size_t)qcvm->num_edicts)
+		maxentities = qcvm->num_edicts;
+	SVFTE_EnsurePendingEntityBits (client, maxentities + 1);
 	if (client->pendingentities_bits[0] & UF_REMOVE)
 	{
 		client->numpreviousentities = 0;
@@ -2922,7 +2965,7 @@ qboolean SV_SendClientDatagram (client_t *client)
 		return true;
 	}
 
-	maxsize = SV_ClientMaxPacketSize (client);
+	maxsize = SV_ClientUnreliableLimit (client);
 	SV_UpdateClientMSS (client);
 	return SVFTE_SendClientDatagram (client, maxsize);
 }
@@ -3575,8 +3618,8 @@ void SV_SpawnServer (const char *server)
 
 // run two frames to allow everything to settle
 	host_frametime = 0.1;
-	SV_Physics ();
-	SV_Physics ();
+	SV_Physics (host_frametime);
+	SV_Physics (host_frametime);
 
 // create a baseline for more efficient communications
 	SV_CreateBaseline ();
