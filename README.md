@@ -136,6 +136,8 @@ deathmatch 0
 sv_protocol 999
 sv_coop_predictmove 0
 sv_nqplayerphysics 1
+sv_inputtimeout 0.5
+sv_replacement_maxpackets 8
 sv_coop_noplayerclip 1
 sv_nofriendlyfire 1
 sv_coop_weapon_targetfix 1
@@ -332,7 +334,7 @@ QuakeSpasm cvar.
 | `sv_coop_weapon_targetfix` | `1` | Co-op | Allows weapon pickup trigger targets to fire in co-op. |
 | `sv_gameplayfix_elevators` | `2` | Gameplay | Elevator/pusher step recovery; `0` off, `1` clients, `2` all entities. |
 | `sv_gameplayfix_random` | `1` | QC | Avoids exact `0`/`1` returns from QuakeC `random()`. |
-| `sv_inputtimeout` | `0` | Networking | Optional stale movement-input timeout; disabled by default for QSS-M-style held input. |
+| `sv_inputtimeout` | `0.5` | Networking | Clears stale latest-client movement input after a half-second packet stall; `0` disables this recovery. |
 | `sv_maxpacketsize` | `1400` | Networking | Retired compatibility cvar; remote unreliable packets use per-client QSS-M-style limits capped to `DATAGRAM_MTU`. |
 | `sv_move_timeclamp` | `1` | Networking | Clamps excessive movement command time. |
 | `sv_netdiag_interval` | `5` | Diagnostics | Periodic network diagnostic interval in seconds. |

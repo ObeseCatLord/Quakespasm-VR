@@ -1828,12 +1828,13 @@ static int SV_ReplacementAckLag (const client_t *client, int sequence)
 }
 
 static void SVFTE_WriteEntitiesToClient (client_t *client, sizebuf_t *msg,
-	struct deltaframe_s *frame, int sequence)
+	struct deltaframe_s *frame, int sequence, qboolean drop_oversized)
 {
 	struct entity_num_state_s *state, *stateend;
 	unsigned int entbits, logbits, netbits;
 	size_t entnum;
 	int header_need;
+	int payload_start;
 	byte entbuf[MAX_DATAGRAM];
 	sizebuf_t entmsg;
 
@@ -1847,6 +1848,7 @@ static void SVFTE_WriteEntitiesToClient (client_t *client, sizebuf_t *msg,
 	MSG_WriteByte (msg, svcfte_updateentities);
 	SV_WriteMoveAckPayloadToMessage (client, msg);
 	MSG_WriteFloat (msg, qcvm->time);
+	payload_start = msg->cursize;
 
 	for (entnum = client->snapshotresume; entnum < client->numpendingentities; entnum++)
 	{
@@ -1912,7 +1914,21 @@ static void SVFTE_WriteEntitiesToClient (client_t *client, sizebuf_t *msg,
 			continue;
 		}
 
-		if (entmsg.overflowed || msg->cursize + entmsg.cursize + 2 > msg->maxsize)
+		if (entmsg.overflowed ||
+			(drop_oversized &&
+			 msg->cursize == payload_start &&
+			 msg->cursize + entmsg.cursize + 2 > msg->maxsize))
+		{
+			if (net_lagdebug.value)
+				Con_Printf ("net_lagdebug: dropping oversized replacement entity delta for %s ent=%zu bytes=%d packet=%d max=%d bits=0x%x\n",
+					client->name, entnum, entmsg.cursize, msg->cursize,
+					msg->maxsize, entbits);
+			client->pendingentities_bits[entnum] =
+				(entbits & UF_RESET) && !(entbits & UF_RESET2) ? UF_RESET2 : 0;
+			continue;
+		}
+
+		if (msg->cursize + entmsg.cursize + 2 > msg->maxsize)
 		{
 			client->pendingentities_bits[entnum] = entbits;
 			break;
@@ -1944,7 +1960,7 @@ static void SVFTE_WriteEntitiesToClient (client_t *client, sizebuf_t *msg,
 }
 
 static void SVFTE_WriteCSQCEntitiesToClient (client_t *client, sizebuf_t *msg,
-	struct deltaframe_s *frame)
+	struct deltaframe_s *frame, qboolean drop_oversized)
 {
 	edict_t *ed;
 	unsigned int bits, originalbits, logbits;
@@ -2045,7 +2061,21 @@ static void SVFTE_WriteCSQCEntitiesToClient (client_t *client, sizebuf_t *msg,
 		}
 
 		if (entmsg.overflowed || sv.multicast.overflowed ||
-			msg->cursize + entmsg.cursize + 2 > msg->maxsize)
+			(drop_oversized &&
+			 msg->cursize + entmsg.cursize + 2 > msg->maxsize))
+		{
+			if (net_lagdebug.value)
+				Con_Printf ("net_lagdebug: dropping oversized replacement CSQC delta for %s ent=%zu bytes=%d packet=%d max=%d bits=0x%x overflow=%d/%d\n",
+					client->name, entnum, entmsg.cursize, msg->cursize,
+					msg->maxsize, originalbits, entmsg.overflowed ? 1 : 0,
+					sv.multicast.overflowed ? 1 : 0);
+			sv.multicast.overflowed = false;
+			client->pendingcsqcentities_bits[entnum] =
+				(originalbits & SENDFLAG_REMOVE) ? 0 : SENDFLAG_PRESENT;
+			continue;
+		}
+
+		if (msg->cursize + entmsg.cursize + 2 > msg->maxsize)
 		{
 			sv.multicast.overflowed = false;
 			client->pendingcsqcentities_bits[entnum] = originalbits;
@@ -2887,6 +2917,7 @@ static qboolean SVFTE_SendClientDatagram (client_t *client, int maxsize)
 	int			replacement_sequence;
 	qboolean	made_progress;
 	qboolean	replacement_packet_cap_hit;
+	qboolean	no_progress_retry_used;
 	static double	last_gap_log[MAX_SCOREBOARD];
 	static double	last_update_sent[MAX_SCOREBOARD];
 	static double	last_update_log[MAX_SCOREBOARD];
@@ -2938,6 +2969,7 @@ static qboolean SVFTE_SendClientDatagram (client_t *client, int maxsize)
 	global_datagram_written = 0;
 	max_replacement_packets = SVFTE_ReplacementMaxPacketsPerFrame ();
 	replacement_packet_cap_hit = false;
+	no_progress_retry_used = false;
 
 	msg.data = buf;
 	msg.maxsize = maxsize;
@@ -2965,9 +2997,10 @@ static qboolean SVFTE_SendClientDatagram (client_t *client, int maxsize)
 		prev_entity_pending = entity_pending;
 
 		SVFTE_WriteEntitiesToClient (client, &msg,
-			replacement_frame, replacement_sequence);
+			replacement_frame, replacement_sequence,
+			no_progress_retry_used);
 		SVFTE_WriteCSQCEntitiesToClient (client, &msg,
-			replacement_frame);
+			replacement_frame, no_progress_retry_used);
 		entity_pending = SVFTE_CountPendingEntityDeltasFrom (client, client->snapshotresume);
 		csqc_pending = SVFTE_CountPendingCSQCEntities (client);
 
@@ -2989,8 +3022,14 @@ static qboolean SVFTE_SendClientDatagram (client_t *client, int maxsize)
 
 		if (!made_progress)
 		{
-			Con_Printf ("SVFTE_SendClientDatagram: replacement packet made no progress (%d byte packet)\n",
-				msg.maxsize);
+			if (!no_progress_retry_used &&
+				packet_count < max_replacement_packets)
+			{
+				no_progress_retry_used = true;
+				continue;
+			}
+			Con_Printf ("SVFTE_SendClientDatagram: replacement packet made no progress for %s (%d byte packet, pending_ents=%zu pending_csqc=%zu)\n",
+				client->name, msg.maxsize, entity_pending, csqc_pending);
 			break;
 		}
 		if (packet_count >= max_replacement_packets)
