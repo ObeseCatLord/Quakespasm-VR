@@ -1442,7 +1442,8 @@ static void CLFTE_QueueAckFrame (int sequence)
 		return;
 	}
 
-	cl.ackframes[cl.ackframes_count - 1] = sequence;
+	// Keep the queued acks contiguous. Replacing the tail with a newer frame
+	// makes the server infer artificial packet loss and resend a large range.
 }
 
 static void CLFTE_ParseEntitiesUpdate (void)
