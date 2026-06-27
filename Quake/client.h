@@ -182,6 +182,7 @@ typedef struct
 	// Replacement-delta maps can arrive as large split bursts. Keep the queue
 	// large enough for those bursts, and keep queued acks contiguous if full.
 #define	CL_ACKFRAME_HISTORY	128
+#define	CL_ACKFRAME_FLUSH_THRESHOLD	8
 	int			ackframes[CL_ACKFRAME_HISTORY];
 	unsigned int	ackframes_count;
 	qboolean	requestresend;
@@ -419,6 +420,7 @@ void CL_SendCmd(void);
 void CL_AccumulateCmd(void);
 void CL_ClearPendingCmd(void);
 void CL_SendMove(const usercmd_t *cmd);
+void CL_FlushAckFrames(void);
 int CL_ReadFromServer(void);
 void CL_AdjustAngles(void);
 void CL_BaseMove(usercmd_t *cmd, qboolean isfinal);

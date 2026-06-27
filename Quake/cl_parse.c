@@ -1439,6 +1439,8 @@ static void CLFTE_QueueAckFrame (int sequence)
 	if (cl.ackframes_count < sizeof(cl.ackframes) / sizeof(cl.ackframes[0]))
 	{
 		cl.ackframes[cl.ackframes_count++] = sequence;
+		if (cl.ackframes_count >= CL_ACKFRAME_FLUSH_THRESHOLD)
+			CL_FlushAckFrames ();
 		return;
 	}
 

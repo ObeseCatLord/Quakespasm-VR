@@ -501,6 +501,30 @@ static void CL_WriteAckFrames(sizebuf_t *buf)
   cl.ackframes_count = 0;
 }
 
+void CL_FlushAckFrames(void)
+{
+  sizebuf_t buf;
+  byte data[MAX_DATAGRAM];
+
+  if (!cl.ackframes_count || cls.demoplayback || !cls.netcon)
+    return;
+
+  buf.maxsize = sizeof(data);
+  buf.cursize = 0;
+  buf.data = data;
+  buf.allowoverflow = false;
+  buf.overflowed = false;
+
+  CL_WriteAckFrames(&buf);
+  if (!buf.cursize)
+    return;
+
+  if (NET_SendUnreliableMessage(cls.netcon, &buf) == -1) {
+    Con_Printf("CL_FlushAckFrames: lost server connection\n");
+    CL_Disconnect();
+  }
+}
+
 void CL_SendMove(const usercmd_t *cmd) {
   int seq;
   qboolean local_singleplayer;
@@ -521,13 +545,7 @@ void CL_SendMove(const usercmd_t *cmd) {
     return;
 
   if (!cmd) {
-    CL_WriteAckFrames(&buf);
-    if (!buf.cursize)
-      return;
-    if (NET_SendUnreliableMessage(cls.netcon, &buf) == -1) {
-      Con_Printf("CL_SendMove: lost server connection\n");
-      CL_Disconnect();
-    }
+    CL_FlushAckFrames();
     return;
   }
 
