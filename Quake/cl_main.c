@@ -131,6 +131,7 @@ extern cvar_t	r_lerpmodels, r_lerpmove; //johnfitz
 extern float	host_netinterval;	//Spike
 
 extern vec3_t	v_punchangles[2];
+extern double	v_punchangles_times[2];
 
 #ifdef PSET_SCRIPT
 void CL_ClearTrailStates(void)
@@ -210,6 +211,7 @@ void CL_ClearState (void)
 	//johnfitz
 
 	memset (v_punchangles, 0, sizeof (v_punchangles));
+	memset (v_punchangles_times, 0, sizeof (v_punchangles_times));
 	cl.ackedmovemessages = -1;
 }
 

@@ -128,6 +128,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #define STAT_ITEMS			15	//replaces clc_clientdata info
 #define STAT_VIEWHEIGHT		16
 #define STAT_VIEWZOOM		21
+#define STAT_IDEALPITCH		25
 #define STAT_PUNCHANGLE_X	26
 #define STAT_PUNCHANGLE_Y	27
 #define STAT_PUNCHANGLE_Z	28

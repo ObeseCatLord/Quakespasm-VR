@@ -225,8 +225,78 @@ static void CL_LerpDebugEntityEvent (const char *event, int entnum, entity_t *en
 qboolean warn_about_nehahra_protocol; //johnfitz
 
 extern vec3_t	v_punchangles[2]; //johnfitz
+extern double	v_punchangles_times[2];
+extern cvar_t	v_gunkick;
 
 //=============================================================================
+
+static void CL_UpdatePunchAnglesFromStats (double stattime)
+{
+	vec3_t punch;
+
+	if (v_gunkick.value == 1)
+	{
+		punch[0] = cl.stats[STAT_PUNCHANGLE_X];
+		punch[1] = cl.stats[STAT_PUNCHANGLE_Y];
+		punch[2] = cl.stats[STAT_PUNCHANGLE_Z];
+	}
+	else
+	{
+		punch[0] = cl.statsf[STAT_PUNCHANGLE_X];
+		punch[1] = cl.statsf[STAT_PUNCHANGLE_Y];
+		punch[2] = cl.statsf[STAT_PUNCHANGLE_Z];
+	}
+
+	if (cl.punchangle[0] != punch[0] ||
+		cl.punchangle[1] != punch[1] ||
+		cl.punchangle[2] != punch[2])
+	{
+		VectorCopy (v_punchangles[0], v_punchangles[1]);
+		v_punchangles_times[1] = v_punchangles_times[0];
+		v_punchangles_times[0] = stattime;
+		VectorCopy (punch, cl.punchangle);
+		VectorCopy (cl.punchangle, v_punchangles[0]);
+		cl.punchtime = cl.time;
+	}
+}
+
+static void CL_UpdateItemsFromStats (void)
+{
+	int i;
+	unsigned int items, olditems;
+
+	items = (unsigned int)cl.stats[STAT_ITEMS];
+	olditems = (unsigned int)cl.items;
+	if (olditems == items)
+		return;
+
+	Sbar_Changed ();
+	for (i = 0; i < 32; i++)
+	{
+		unsigned int mask = 1u << i;
+		if ((items & mask) && !(olditems & mask))
+			cl.item_gettime[i] = cl.time;
+	}
+	cl.items = cl.stats[STAT_ITEMS];
+}
+
+static void CL_ApplyStatSideEffects (int stat)
+{
+	switch (stat)
+	{
+	case STAT_VIEWHEIGHT:
+		cl.viewheight = cl.statsf[stat];
+		break;
+	case STAT_IDEALPITCH:
+		cl.idealpitch = cl.statsf[stat];
+		break;
+	case STAT_VIEWZOOM:
+		vid.recalc_refdef = true;
+		break;
+	default:
+		break;
+	}
+}
 
 /*
 ===============
@@ -1040,6 +1110,7 @@ void CL_ParseUpdate (int bits)
 		qmodel_t *previousmodel = ent->model;
 
 		ent->model = model;
+		InvalidateTraceLineCache ();
 	// automatic animation (torches, etc) can be either all together
 	// or randomized
 		if (model)
@@ -1366,6 +1437,7 @@ static void CLFTE_EntitiesDeltaed (void)
 			qmodel_t *previousmodel = ent->model;
 
 			ent->model = model;
+			InvalidateTraceLineCache ();
 			if (model)
 			{
 				if (model->synctype == ST_RAND)
@@ -1512,6 +1584,7 @@ static void CLFTE_ParseEntitiesUpdate (void)
 					cl.entities[newnum].netstate = nullentitystate;
 					cl.entities[newnum].model = NULL;
 				}
+				InvalidateTraceLineCache ();
 				cl.requestresend = false;
 				continue;
 			}
@@ -1520,6 +1593,7 @@ static void CLFTE_ParseEntitiesUpdate (void)
 			ent->netstate = nullentitystate;
 			ent->model = NULL;
 			ent->lerpflags |= LERP_RESETMOVE | LERP_RESETANIM;
+			InvalidateTraceLineCache ();
 			continue;
 		}
 		if (ent->update_type)
@@ -1541,6 +1615,7 @@ static void CLFTE_ParseEntitiesUpdate (void)
 		for (i = 0; i < 3; i++)
 			cl.mvelocity[0][i] = viewent->netstate.velocity[i] * (1.0f / 8.0f);
 		cl.onground = (viewent->netstate.eflags & EFLAGS_ONGROUND) ? true : false;
+		CL_UpdatePunchAnglesFromStats (newtime);
 	}
 	if (!cl.requestresend && cls.signon == SIGNONS - 1)
 	{
@@ -1562,6 +1637,7 @@ void CL_ParseClientdata (void)
 {
 	int		i, j;
 	int		bits; //johnfitz
+	int		statval;
 
 	bits = (unsigned short)MSG_ReadShort (); //johnfitz -- read bits here isntead of in CL_ParseServerMessage()
 
@@ -1573,14 +1649,20 @@ void CL_ParseClientdata (void)
 	//johnfitz
 
 	if (bits & SU_VIEWHEIGHT)
-		cl.viewheight = MSG_ReadChar ();
+		statval = MSG_ReadChar ();
 	else
-		cl.viewheight = DEFAULT_VIEWHEIGHT;
+		statval = DEFAULT_VIEWHEIGHT;
+	cl.viewheight = statval;
+	cl.stats[STAT_VIEWHEIGHT] = statval;
+	cl.statsf[STAT_VIEWHEIGHT] = statval;
 
 	if (bits & SU_IDEALPITCH)
-		cl.idealpitch = MSG_ReadChar ();
+		statval = MSG_ReadChar ();
 	else
-		cl.idealpitch = 0;
+		statval = 0;
+	cl.idealpitch = statval;
+	cl.stats[STAT_IDEALPITCH] = statval;
+	cl.statsf[STAT_IDEALPITCH] = statval;
 
 	VectorCopy (cl.mvelocity[0], cl.mvelocity[1]);
 	for (i = 0; i < 3; i++)
@@ -1600,23 +1682,18 @@ void CL_ParseClientdata (void)
 	if (v_punchangles[0][0] != cl.punchangle[0] || v_punchangles[0][1] != cl.punchangle[1] || v_punchangles[0][2] != cl.punchangle[2])
 	{
 		VectorCopy (v_punchangles[0], v_punchangles[1]);
+		v_punchangles_times[1] = v_punchangles_times[0];
+		v_punchangles_times[0] = cl.mtime[0];
 		VectorCopy (cl.punchangle, v_punchangles[0]);
 		cl.punchtime = cl.time;
 	}
 	//johnfitz
 
 // [always sent]	if (bits & SU_ITEMS)
-		i = MSG_ReadLong ();
-
-	if (cl.items != i)
-	{	// set flash times
-		Sbar_Changed ();
-		for (j = 0; j < 32; j++)
-			if ( (i & (1<<j)) && !(cl.items & (1<<j)))
-				cl.item_gettime[j] = cl.time;
-		cl.items = i;
-		cl.stats[STAT_ITEMS] = i;
-	}
+	i = MSG_ReadLong ();
+	cl.stats[STAT_ITEMS] = i;
+	cl.statsf[STAT_ITEMS] = i;
+	CL_UpdateItemsFromStats ();
 
 	cl.onground = (bits & SU_ONGROUND) != 0;
 	cl.inwater = (bits & SU_INWATER) != 0;
@@ -1806,6 +1883,7 @@ void CL_ParseStatic (int version) //johnfitz -- added a parameter
 	VectorCopy (ent->baseline.origin, ent->origin);
 	VectorCopy (ent->baseline.angles, ent->angles);
 	R_AddEfrags (ent);
+	InvalidateTraceLineCache ();
 }
 
 /*
@@ -1983,6 +2061,8 @@ void CL_ParseServerMessage (void)
 		if (cmd == -1)
 		{
 			SHOWNET("END OF MESSAGE");
+
+			CL_UpdateItemsFromStats ();
 
 			if (*cl.stuffcmdbuf && net_message.cursize < 512)
 				CL_ParseStuffText("\n");	//there's a few mods that forget to write \ns, that then fuck up other things too. So make sure it gets flushed to the cbuf. the cursize check is to reduce backbuffer overflows that would give a false positive.
@@ -2228,6 +2308,8 @@ void CL_ParseServerMessage (void)
 				Sys_Error ("svc_updatestat: %i is invalid", i);
 			cl.stats[i] = MSG_ReadLong ();
 			cl.statsf[i] = cl.stats[i];
+			CL_ApplyStatSideEffects (i);
+			Sbar_Changed ();
 			break;
 
 		case svcdp_updatestatbyte:
@@ -2236,6 +2318,7 @@ void CL_ParseServerMessage (void)
 				Sys_Error ("svcdp_updatestatbyte: %i is invalid", i);
 			cl.stats[i] = MSG_ReadByte ();
 			cl.statsf[i] = cl.stats[i];
+			CL_ApplyStatSideEffects (i);
 			Sbar_Changed ();
 			break;
 
@@ -2245,6 +2328,7 @@ void CL_ParseServerMessage (void)
 				Sys_Error ("svcfte_updatestatfloat: %i is invalid", i);
 			cl.statsf[i] = MSG_ReadFloat ();
 			cl.stats[i] = cl.statsf[i];
+			CL_ApplyStatSideEffects (i);
 			Sbar_Changed ();
 			break;
 

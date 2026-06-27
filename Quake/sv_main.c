@@ -39,6 +39,7 @@ extern cvar_t nomonsters;
 cvar_t sv_maxpacketsize = {"sv_maxpacketsize", "1400", CVAR_NONE};
 cvar_t sv_netdiag_interval = {"sv_netdiag_interval", "5", CVAR_NONE};
 cvar_t sv_replacement_maxpackets = {"sv_replacement_maxpackets", "0", CVAR_NONE};
+cvar_t sv_nopunchangle = {"sv_nopunchangle", "0", CVAR_NONE};
 // When SV_WriteEntitiesToClient overflows the per-client datagram, the entity
 // that gets evicted is whichever the loop reached last. With sv_netsort=1
 // (ironwail's heuristic) entities are sorted by distance-to-player and PVS
@@ -145,13 +146,14 @@ void SV_CalcStats(client_t *client, int *statsi, float *statsf, const char **sta
 {
 	size_t i;
 	edict_t *ent = client->edict;
+	const qboolean send_punchangle = !sv_nopunchangle.value;
 	//FIXME: string stats!
-	int items;
+	unsigned int items;
 	eval_t *val = GetEdictFieldValue(ent, qcvm->extfields.items2);
 	if (val)
-		items = (int)ent->v.items | ((int)val->_float << 23);
+		items = (unsigned int)ent->v.items | ((unsigned int)val->_float << 23);
 	else
-		items = (int)ent->v.items | ((int)pr_global_struct->serverflags << 28);
+		items = (unsigned int)ent->v.items | ((unsigned int)pr_global_struct->serverflags << 28);
 
 	memset(statsi, 0, sizeof(*statsi)*MAX_CL_STATS);
 	memset(statsf, 0, sizeof(*statsf)*MAX_CL_STATS);
@@ -169,7 +171,25 @@ void SV_CalcStats(client_t *client, int *statsi, float *statsf, const char **sta
 	statsf[STAT_ROCKETS] = ent->v.ammo_rockets;
 	statsf[STAT_CELLS] = ent->v.ammo_cells;
 	statsf[STAT_ACTIVEWEAPON] = ent->v.weapon;	//sent in a way that does NOT depend upon the current mod...
-	statsi[STAT_ITEMS] = items;
+	if ((val = GetEdictFieldValue(ent, qcvm->extfields.viewzoom)) && val->_float)
+	{
+		statsf[STAT_VIEWZOOM] = val->_float * 255;
+		if (statsf[STAT_VIEWZOOM] < 1)
+			statsf[STAT_VIEWZOOM] = 1;
+	}
+	if (client->protocol_pext2 & PEXT2_PREDINFO)
+	{
+		statsi[STAT_ITEMS] = (int)items;
+		statsf[STAT_VIEWHEIGHT] = ent->v.view_ofs[2];
+		statsf[STAT_IDEALPITCH] = ent->v.idealpitch;
+		if (send_punchangle)
+		{
+			statsf[STAT_PUNCHANGLE_X] = ent->v.punchangle[0];
+			statsf[STAT_PUNCHANGLE_Y] = ent->v.punchangle[1];
+			statsf[STAT_PUNCHANGLE_Z] = ent->v.punchangle[2];
+		}
+		PMSV_SetMoveStats(ent, statsf, statsi);
+	}
 	val = GetEdictFieldValueByName(ent, "weapons");
 	if (val)
 		statsi[STAT_VR_WEAPONS] = (int)val->_float;
@@ -185,9 +205,6 @@ void SV_CalcStats(client_t *client, int *statsi, float *statsf, const char **sta
 	val = GetEdictFieldValueByName(ent, "weapons2");
 	if (val)
 		statsi[STAT_VR_WEAPONS2] = (int)val->_float;
-	statsf[STAT_VIEWHEIGHT] = ent->v.view_ofs[2];
-	if (client->usingpmove)
-		PMSV_SetMoveStats(ent, statsf, statsi);
 
 	for (i = 0; i < sv.numcustomstats; i++)
 	{
@@ -379,6 +396,7 @@ void SV_Init (void)
 	Cvar_RegisterVariable (&sv_maxpacketsize);
 	Cvar_RegisterVariable (&sv_netdiag_interval);
 	Cvar_RegisterVariable (&sv_replacement_maxpackets);
+	Cvar_RegisterVariable (&sv_nopunchangle);
 	Cvar_RegisterVariable (&sv_coop_weapon_targetfix);
 	Cvar_RegisterVariable (&sv_coop_pickup_targetlog);
 	Cvar_RegisterVariable (&sv_coop_pickup_targetfix);
@@ -2554,8 +2572,9 @@ void SV_WriteClientdataToMessage (edict_t *ent, sizebuf_t *msg)
 {
 	int		bits;
 	int		i;
-	int		items;
+	unsigned int	items;
 	eval_t	*val;
+	const qboolean send_punchangle = !sv_nopunchangle.value;
 
 //
 // send a damage message
@@ -2583,9 +2602,9 @@ void SV_WriteClientdataToMessage (edict_t *ent, sizebuf_t *msg)
 	val = GetEdictFieldValueByName(ent, "items2");
 
 	if (val)
-		items = (int)ent->v.items | ((int)val->_float << 23);
+		items = (unsigned int)ent->v.items | ((unsigned int)val->_float << 23);
 	else
-		items = (int)ent->v.items | ((int)pr_global_struct->serverflags << 28);
+		items = (unsigned int)ent->v.items | ((unsigned int)pr_global_struct->serverflags << 28);
 
 	bits |= SU_ITEMS;
 
@@ -2597,7 +2616,7 @@ void SV_WriteClientdataToMessage (edict_t *ent, sizebuf_t *msg)
 
 	for (i=0 ; i<3 ; i++)
 	{
-		if (ent->v.punchangle[i])
+		if (send_punchangle && ent->v.punchangle[i])
 			bits |= (SU_PUNCH1<<i);
 		if (ent->v.velocity[i])
 			bits |= (SU_VELOCITY1<<i);
