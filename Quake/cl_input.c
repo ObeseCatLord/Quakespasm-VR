@@ -32,6 +32,8 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 extern cvar_t cl_maxpitch; // johnfitz -- variable pitch clamping
 extern cvar_t cl_minpitch; // johnfitz -- variable pitch clamping
 
+cvar_t cl_iDrive = {"cl_iDrive", "1", CVAR_ARCHIVE};
+
 /*
 ===============================================================================
 
@@ -65,6 +67,36 @@ int in_impulse;
 static double cl_lagdebug_last_sendmove;
 static double cl_lagdebug_last_sendmove_log;
 
+#define CL_MOVE_PACKET_LIMIT DATAGRAM_MTU
+
+static qboolean CL_InputContentsIsWater(int contents)
+{
+  switch (contents) {
+  case CONTENTS_WATER:
+  case CONTENTS_SLIME:
+  case CONTENTS_LAVA:
+    return true;
+  default:
+    return false;
+  }
+}
+
+static qboolean CL_InputInWater(void)
+{
+  mleaf_t *leaf;
+
+  if (cl.worldmodel) {
+    leaf = Mod_PointInLeaf(listener_origin, cl.worldmodel);
+    return leaf && CL_InputContentsIsWater(leaf->contents);
+  }
+  return cl.inwater;
+}
+
+static qboolean CL_ShouldTranslateJumpToMoveUp(void)
+{
+  return !vr_enabled.value && cl.stats[STAT_HEALTH] > 0 && CL_InputInWater();
+}
+
 void KeyDown(kbutton_t *b) {
   int k;
   const char *c;
@@ -74,6 +106,9 @@ void KeyDown(kbutton_t *b) {
     k = atoi(c);
   else
     k = -1; // typed manually at the console for continuous down
+
+  if (b == &in_jump && CL_ShouldTranslateJumpToMoveUp())
+    b = &in_up;
 
   if (k == b->down[0] || k == b->down[1])
     return; // repeating key
@@ -90,6 +125,7 @@ void KeyDown(kbutton_t *b) {
   if (b->state & 1)
     return;          // still down
   b->state |= 1 + 2; // down + impulse down
+  b->downtime = realtime;
 }
 
 void KeyUp(kbutton_t *b) {
@@ -102,7 +138,13 @@ void KeyUp(kbutton_t *b) {
   else { // typed manually at the console, assume for unsticking, so clear all
     b->down[0] = b->down[1] = 0;
     b->state = 4; // impulse up
+    b->uptime = realtime;
     return;
+  }
+
+  if (b == &in_jump && !vr_enabled.value) {
+    if (k == in_up.down[0] || k == in_up.down[1])
+      b = &in_up;
   }
 
   if (b->down[0] == k)
@@ -118,6 +160,7 @@ void KeyUp(kbutton_t *b) {
     return;       // still up (this should not happen)
   b->state &= ~1; // now up
   b->state |= 4;  // impulse up
+  b->uptime = realtime;
 }
 
 void IN_KLookDown(void) { KeyDown(&in_klook); }
@@ -340,8 +383,23 @@ CL_BaseMove
 Send the intended movement message to the server
 ================
 */
+static void CL_KeyStatePair(kbutton_t *positive, kbutton_t *negative,
+                            qboolean isfinal, float *pos, float *neg)
+{
+  *pos = CL_KeyState(positive, isfinal);
+  *neg = CL_KeyState(negative, isfinal);
+  if (!cl_iDrive.value || !*pos || !*neg)
+    return;
+
+  if (positive->downtime > negative->downtime)
+    *neg = 0;
+  else if (positive->downtime < negative->downtime)
+    *pos = 0;
+}
+
 void CL_BaseMove(usercmd_t *cmd, qboolean isfinal) {
   float forwardspeed, backspeed;
+  float s1, s2;
 
   Q_memset(cmd, 0, sizeof(*cmd));
 
@@ -358,19 +416,23 @@ void CL_BaseMove(usercmd_t *cmd, qboolean isfinal) {
   }
 
   if (in_strafe.state & 1) {
-    cmd->sidemove += cl_sidespeed.value * CL_KeyState(&in_right, isfinal);
-    cmd->sidemove -= cl_sidespeed.value * CL_KeyState(&in_left, isfinal);
+    CL_KeyStatePair(&in_right, &in_left, isfinal, &s1, &s2);
+    cmd->sidemove += cl_sidespeed.value * s1;
+    cmd->sidemove -= cl_sidespeed.value * s2;
   }
 
-  cmd->sidemove += cl_sidespeed.value * CL_KeyState(&in_moveright, isfinal);
-  cmd->sidemove -= cl_sidespeed.value * CL_KeyState(&in_moveleft, isfinal);
+  CL_KeyStatePair(&in_moveright, &in_moveleft, isfinal, &s1, &s2);
+  cmd->sidemove += cl_sidespeed.value * s1;
+  cmd->sidemove -= cl_sidespeed.value * s2;
 
-  cmd->upmove += cl_upspeed.value * CL_KeyState(&in_up, isfinal);
-  cmd->upmove -= cl_upspeed.value * CL_KeyState(&in_down, isfinal);
+  CL_KeyStatePair(&in_up, &in_down, isfinal, &s1, &s2);
+  cmd->upmove += cl_upspeed.value * s1;
+  cmd->upmove -= cl_upspeed.value * s2;
 
   if (!(in_klook.state & 1)) {
-    cmd->forwardmove += forwardspeed * CL_KeyState(&in_forward, isfinal);
-    cmd->forwardmove -= backspeed * CL_KeyState(&in_back, isfinal);
+    CL_KeyStatePair(&in_forward, &in_back, isfinal, &s1, &s2);
+    cmd->forwardmove += forwardspeed * s1;
+    cmd->forwardmove -= backspeed * s2;
   }
 
   //
@@ -504,7 +566,7 @@ static void CL_WriteAckFrames(sizebuf_t *buf)
 void CL_FlushAckFrames(void)
 {
   sizebuf_t buf;
-  byte data[MAX_DATAGRAM];
+  byte data[CL_MOVE_PACKET_LIMIT];
 
   if (!cl.ackframes_count || cls.demoplayback || !cls.netcon)
     return;
@@ -530,7 +592,7 @@ void CL_SendMove(const usercmd_t *cmd) {
   qboolean local_singleplayer;
   usercmd_t sendcmd;
   sizebuf_t buf;
-  byte data[MAX_DATAGRAM];
+  byte data[CL_MOVE_PACKET_LIMIT];
 
   buf.maxsize = sizeof(data);
   buf.cursize = 0;
