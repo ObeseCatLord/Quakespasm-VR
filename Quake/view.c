@@ -70,6 +70,7 @@ cvar_t	gl_cshiftpercent_powerup = {"gl_cshiftpercent_powerup", "100", CVAR_NONE}
 cvar_t	r_viewmodel_quake = {"r_viewmodel_quake", "0", CVAR_ARCHIVE};
 
 vec3_t	v_punchangles[2]; //johnfitz -- copied from cl.punchangle.  0 is current, 1 is previous value. never the same unless map just loaded
+double	v_punchangles_times[2];
 
 extern cvar_t vr_enabled;
 extern cvar_t vr_aimmode;
@@ -123,10 +124,10 @@ float V_CalcBob (void)
 	float	bob;
 	float	cycle;
 
-    // Don't bob if we're in VR
-    if (vr_enabled.value)
-        return 0.f;
-		
+	// Don't bob if we're in VR
+	if (vr_enabled.value)
+		return 0.f;
+
 	if (!cl_bobcycle.value) /* Avoid divide-by-zero, don't bob */
 		return 0.0f;
 
@@ -914,16 +915,22 @@ void V_CalcRefdef (void)
 	if (v_gunkick.value == 2 && !(vr_enabled.value && !vr_viewkick.value)) //lerped kick
 	{
 		for (i=0; i<3; i++)
+		{
 			if (punch[i] != v_punchangles[0][i])
 			{
+				double interval = v_punchangles_times[0] - v_punchangles_times[1];
+				if (interval <= 0 || interval > 0.1)
+					interval = 0.1;
+
 				//speed determined by how far we need to lerp in 1/10th of a second
-				delta = (v_punchangles[0][i]-v_punchangles[1][i]) * host_frametime * 10;
+				delta = (v_punchangles[0][i]-v_punchangles[1][i]) * host_frametime / interval;
 
 				if (delta > 0)
 					punch[i] = q_min(punch[i]+delta, v_punchangles[0][i]);
 				else if (delta < 0)
 					punch[i] = q_max(punch[i]+delta, v_punchangles[0][i]);
 			}
+		}
 
 		VectorAdd (r_refdef.viewangles, punch, r_refdef.viewangles);
 	}
