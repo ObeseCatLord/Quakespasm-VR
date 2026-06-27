@@ -2146,9 +2146,27 @@ static size_t SVFTE_CountPendingEntityDeltas (client_t *client)
 	return SVFTE_CountPendingEntityDeltasFrom (client, 0);
 }
 
-static int SVFTE_ReplacementMaxPacketsPerFrame (void)
+static qboolean SVFTE_FullSnapshotPending (const client_t *client)
+{
+	if (!client)
+		return false;
+	if (client->lastacksequence < 0)
+		return true;
+	return client->pendingentities_bits && client->numpendingentities > 0 &&
+		(client->pendingentities_bits[0] & UF_REMOVE);
+}
+
+static int SVFTE_ReplacementMaxPacketsPerFrame (const client_t *client)
 {
 	int maxpackets;
+
+	/*
+	 * QSS-M drains replacement-delta full snapshots in one server frame. Keep
+	 * that behavior for initial joins/resends so large maps don't spend many
+	 * frames catching up before normal interpolation can begin.
+	 */
+	if (SVFTE_FullSnapshotPending (client))
+		return 128;
 
 	maxpackets = (int)sv_replacement_maxpackets.value;
 	if (maxpackets <= 0)
@@ -2969,7 +2987,7 @@ static qboolean SVFTE_SendClientDatagram (client_t *client, int maxsize)
 	private_datagram_initial = client->datagram.cursize;
 	private_datagram_written = 0;
 	global_datagram_written = 0;
-	max_replacement_packets = SVFTE_ReplacementMaxPacketsPerFrame ();
+	max_replacement_packets = SVFTE_ReplacementMaxPacketsPerFrame (client);
 	replacement_packet_cap_hit = false;
 	no_progress_retry_used = false;
 
