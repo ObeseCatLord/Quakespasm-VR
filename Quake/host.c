@@ -91,6 +91,9 @@ cvar_t	developer = {"developer","0",CVAR_NONE};
 
 cvar_t	temp1 = {"temp1","0",CVAR_NONE};
 extern cvar_t cl_portpingprobe_enable;
+extern cvar_t sv_inputtimeout;
+extern cvar_t sv_nqplayerphysics;
+extern cvar_t sv_replacement_maxpackets;
 
 cvar_t devstats = {"devstats","0",CVAR_NONE}; //johnfitz -- track developer statistics that vary every frame
 
@@ -120,14 +123,46 @@ static qboolean Host_ValueMatchesOldDefault (float value, float old_default)
 	return value > old_default - epsilon && value < old_default + epsilon;
 }
 
+static qboolean Host_CommandLineSetsCvar (const char *name)
+{
+	int i;
+
+	for (i = 1; i < com_argc; i++)
+	{
+		const char *arg = com_argv[i];
+
+		if (!arg || arg[0] != '+')
+			continue;
+		if (!q_strcasecmp (arg + 1, name))
+			return true;
+		if (!q_strcasecmp (arg + 1, "set") && i + 1 < com_argc &&
+			com_argv[i + 1] && !q_strcasecmp (com_argv[i + 1], name))
+			return true;
+	}
+
+	return false;
+}
+
 static void Host_MigrateNetworkDefaults_f (void)
 {
-	if (Host_ValueMatchesOldDefault (cl_netfps.value, 72.0f))
+	if (!Host_CommandLineSetsCvar ("cl_netfps") &&
+		Host_ValueMatchesOldDefault (cl_netfps.value, 72.0f))
 		Cvar_SetQuick (&cl_netfps, "0");
-	if (Host_ValueMatchesOldDefault (host_maxfps.value, 72.0f))
+	if (!Host_CommandLineSetsCvar ("host_maxfps") &&
+		Host_ValueMatchesOldDefault (host_maxfps.value, 72.0f))
 		Cvar_SetQuick (&host_maxfps, "250");
-	if (Host_ValueMatchesOldDefault (cl_portpingprobe_enable.value, 1.0f))
+	if (!Host_CommandLineSetsCvar ("cl_portpingprobe_enable") &&
+		Host_ValueMatchesOldDefault (cl_portpingprobe_enable.value, 1.0f))
 		Cvar_SetQuick (&cl_portpingprobe_enable, "0");
+	if (!Host_CommandLineSetsCvar ("sv_nqplayerphysics") &&
+		Host_ValueMatchesOldDefault (sv_nqplayerphysics.value, 0.0f))
+		Cvar_SetQuick (&sv_nqplayerphysics, "1");
+	if (!Host_CommandLineSetsCvar ("sv_inputtimeout") &&
+		Host_ValueMatchesOldDefault (sv_inputtimeout.value, 0.0f))
+		Cvar_SetQuick (&sv_inputtimeout, "0.5");
+	if (!Host_CommandLineSetsCvar ("sv_replacement_maxpackets") &&
+		Host_ValueMatchesOldDefault (sv_replacement_maxpackets.value, 0.0f))
+		Cvar_SetQuick (&sv_replacement_maxpackets, "8");
 }
 
 #define NETFPS_PROBE_DEFAULT_SECONDS	5.0

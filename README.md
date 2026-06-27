@@ -147,6 +147,10 @@ Use `-novr` for desktop clients and `-vr` for headset clients. The protocol uses
 QSS-M-style move ACKs; server PMove/trusted movement is off by default,
 including mods that supply `SV_RunClientCommand`; set
 `sv_nqplayerphysics 0` only when intentionally testing server PMove.
+Startup runs `host_migrate_network_defaults` after configs to repair stale
+archived values such as `host_maxfps 72`, `cl_netfps 72`,
+`sv_nqplayerphysics 0`, `sv_inputtimeout 0`, and uncapped replacement bursts;
+explicit `+cvar value` launch arguments are preserved.
 
 ## Building
 
