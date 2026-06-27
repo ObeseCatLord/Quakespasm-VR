@@ -1012,8 +1012,8 @@ static void PF_ambientsound (void)
 	const char	*samp, **check;
 	float		*pos;
 	float		vol, attenuation;
-	int		i, soundnum;
-	int		large = false; //johnfitz -- PROTOCOL_FITZQUAKE
+	int		soundnum;
+	struct ambientsound_s *st;
 
 	pos = G_VECTOR (OFS_PARM0);
 	samp = G_STRING(OFS_PARM1);
@@ -1033,40 +1033,26 @@ static void PF_ambientsound (void)
 		return;
 	}
 
-	//johnfitz -- PROTOCOL_FITZQUAKE
-	if (soundnum > 255)
+	if (soundnum > 255 && sv.protocol == PROTOCOL_NETQUAKE)
+		return; //don't send any info protocol can't support
+
+	if (sv.num_ambients == sv.max_ambients)
 	{
-		if (sv.protocol == PROTOCOL_NETQUAKE)
-			return; //don't send any info protocol can't support
-		else
-			large = true;
+		int nm = sv.max_ambients + 128;
+		struct ambientsound_s *n = (nm * sizeof(*n) < sv.max_ambients * sizeof(*n)) ?
+			NULL : (struct ambientsound_s *)realloc (sv.ambientsounds, nm * sizeof(*n));
+		if (!n)
+			PR_RunError ("PF_ambientsound: out of memory");
+		sv.ambientsounds = n;
+		memset (sv.ambientsounds + sv.max_ambients, 0, (nm - sv.max_ambients) * sizeof(*n));
+		sv.max_ambients = nm;
 	}
-	//johnfitz
 
-	SV_ReserveSignonSpace (17);
-
-// add an svc_spawnambient command to the level signon packet
-
-	//johnfitz -- PROTOCOL_FITZQUAKE
-	if (large)
-		MSG_WriteByte (sv.signon,svc_spawnstaticsound2);
-	else
-		MSG_WriteByte (sv.signon,svc_spawnstaticsound);
-	//johnfitz
-
-	for (i = 0; i < 3; i++)
-		MSG_WriteCoord(sv.signon, pos[i], sv.protocolflags);
-
-	//johnfitz -- PROTOCOL_FITZQUAKE
-	if (large)
-		MSG_WriteShort(sv.signon, soundnum);
-	else
-		MSG_WriteByte (sv.signon, soundnum);
-	//johnfitz
-
-	MSG_WriteByte (sv.signon, vol*255);
-	MSG_WriteByte (sv.signon, attenuation*64);
-
+	st = &sv.ambientsounds[sv.num_ambients++];
+	VectorCopy (pos, st->origin);
+	st->soundindex = soundnum;
+	st->volume = vol;
+	st->attenuation = attenuation;
 }
 
 /*
@@ -2424,8 +2410,8 @@ static void PF_WriteEntity (void)
 static void PF_makestatic (void)
 {
 	edict_t	*ent;
-	int		i;
-	int	bits = 0; //johnfitz -- PROTOCOL_FITZQUAKE
+	entity_state_t *st;
+	int	modelindex;
 
 	ent = G_EDICT(OFS_PARM0);
 
@@ -2436,60 +2422,43 @@ static void PF_makestatic (void)
 	}
 	//johnfitz
 
+	modelindex = SV_ModelIndex(PR_GetString(ent->v.model));
+
 	//johnfitz -- PROTOCOL_FITZQUAKE
 	if (sv.protocol == PROTOCOL_NETQUAKE)
 	{
-		if (SV_ModelIndex(PR_GetString(ent->v.model)) & 0xFF00 || (int)(ent->v.frame) & 0xFF00)
+		if (modelindex & 0xFF00 || (int)(ent->v.frame) & 0xFF00)
 		{
 			ED_Free (ent);
 			return; //can't display the correct model & frame, so don't show it at all
 		}
 	}
-	else
-	{
-		if (SV_ModelIndex(PR_GetString(ent->v.model)) & 0xFF00)
-			bits |= B_LARGEMODEL;
-		if ((int)(ent->v.frame) & 0xFF00)
-			bits |= B_LARGEFRAME;
-		if (ent->alpha != ENTALPHA_DEFAULT)
-			bits |= B_ALPHA;
-	}
-
-	// Static entity scale is intentionally left out of signon data. QBJ3 has
-	// enemies that disappear when their spawnstatic scale is encoded here.
-	SV_ReserveSignonSpace (33);
-
-	if (bits)
-	{
-		MSG_WriteByte (sv.signon, svc_spawnstatic2);
-		MSG_WriteByte (sv.signon, bits);
-	}
-	else
-		MSG_WriteByte (sv.signon, svc_spawnstatic);
-
-	if (bits & B_LARGEMODEL)
-		MSG_WriteShort (sv.signon, SV_ModelIndex(PR_GetString(ent->v.model)));
-	else
-		MSG_WriteByte (sv.signon, SV_ModelIndex(PR_GetString(ent->v.model)));
-
-	if (bits & B_LARGEFRAME)
-		MSG_WriteShort (sv.signon, ent->v.frame);
-	else
-		MSG_WriteByte (sv.signon, ent->v.frame);
 	//johnfitz
 
-	MSG_WriteByte (sv.signon, ent->v.colormap);
-	MSG_WriteByte (sv.signon, ent->v.skin);
-	for (i = 0; i < 3; i++)
+	if (sv.num_statics == sv.max_statics)
 	{
-		MSG_WriteCoord(sv.signon, ent->v.origin[i], sv.protocolflags);
-		MSG_WriteAngle(sv.signon, ent->v.angles[i], sv.protocolflags);
+		int nm = sv.max_statics + 128;
+		entity_state_t *n = (nm * sizeof(*n) < sv.max_statics * sizeof(*n)) ?
+			NULL : (entity_state_t *)realloc (sv.static_entities, nm * sizeof(*n));
+		if (!n)
+			PR_RunError ("PF_makestatic: out of memory");
+		sv.static_entities = n;
+		memset (sv.static_entities + sv.max_statics, 0, (nm - sv.max_statics) * sizeof(*n));
+		sv.max_statics = nm;
 	}
 
-	//johnfitz -- PROTOCOL_FITZQUAKE
-	if (bits & B_ALPHA)
-		MSG_WriteByte (sv.signon, ent->alpha);
-	//johnfitz
+	st = &sv.static_entities[sv.num_statics++];
+	*st = nullentitystate;
+	VectorCopy (ent->v.origin, st->origin);
+	VectorCopy (ent->v.angles, st->angles);
+	st->modelindex = modelindex;
+	st->frame = ent->v.frame;
+	st->colormap = ent->v.colormap;
+	st->skin = ent->v.skin;
+	st->alpha = ent->alpha;
+	// Keep static entity scale out of signon data; QBJ3 has enemies that
+	// disappear when their spawnstatic scale is encoded here.
+	st->scale = ENTSCALE_DEFAULT;
 
 // throw the entity away now
 	ED_Free (ent);

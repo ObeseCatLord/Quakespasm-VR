@@ -1733,7 +1733,7 @@ static void Host_PreSpawn_f(void) {
     return;
   }
 
-  host_client->sendsignon = PRESPAWN_SIGNONBUFS;
+  host_client->sendsignon = PRESPAWN_BASELINES;
   host_client->signonidx = 0;
 }
 

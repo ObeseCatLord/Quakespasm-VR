@@ -93,6 +93,20 @@ typedef struct
 	int			num_signon_buffers;
 	sizebuf_t	*signon_buffers[MAX_SIGNON_BUFFERS];
 
+	entity_state_t	*static_entities;
+	int			num_statics;
+	int			max_statics;
+
+	struct ambientsound_s
+	{
+		vec3_t origin;
+		unsigned int soundindex;
+		float volume;
+		float attenuation;
+	}			*ambientsounds;
+	int			num_ambients;
+	int			max_ambients;
+
 	unsigned	protocol; //johnfitz
 	unsigned	protocolflags;
 
@@ -121,6 +135,9 @@ typedef struct client_s
 	{
 		PRESPAWN_DONE,
 		PRESPAWN_FLUSH=1,
+		PRESPAWN_BASELINES,
+		PRESPAWN_STATICS,
+		PRESPAWN_AMBIENTS,
 		PRESPAWN_SIGNONBUFS,
 		PRESPAWN_SIGNONMSG,
 	}				sendsignon;			// only valid before spawned

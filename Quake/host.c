@@ -1003,6 +1003,8 @@ void Host_ClearMemory (void)
 	PR_ClearProgs(&sv.qcvm);
 	CL_FreeState ();
 /* host_hunklevel MUST be set at this point */
+	free (sv.static_entities);
+	free (sv.ambientsounds);
 	Hunk_FreeToLowMark (host_hunklevel);
 	cls.signon = 0; // not CL_ClearSignons()
 	memset (&sv, 0, sizeof(sv));
