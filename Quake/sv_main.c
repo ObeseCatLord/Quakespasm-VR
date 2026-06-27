@@ -38,6 +38,7 @@ extern cvar_t nomonsters;
 // default; lower this only when a specific network path needs more headroom.
 cvar_t sv_maxpacketsize = {"sv_maxpacketsize", "1400", CVAR_NONE};
 cvar_t sv_netdiag_interval = {"sv_netdiag_interval", "5", CVAR_NONE};
+cvar_t sv_replacement_maxpackets = {"sv_replacement_maxpackets", "8", CVAR_NONE};
 // When SV_WriteEntitiesToClient overflows the per-client datagram, the entity
 // that gets evicted is whichever the loop reached last. With sv_netsort=1
 // (ironwail's heuristic) entities are sorted by distance-to-player and PVS
@@ -375,6 +376,7 @@ void SV_Init (void)
 	Cvar_RegisterVariable (&sv_inputtimeout);
 	Cvar_RegisterVariable (&sv_maxpacketsize);
 	Cvar_RegisterVariable (&sv_netdiag_interval);
+	Cvar_RegisterVariable (&sv_replacement_maxpackets);
 	Cvar_RegisterVariable (&sv_coop_weapon_targetfix);
 	Cvar_RegisterVariable (&sv_coop_pickup_targetlog);
 	Cvar_RegisterVariable (&sv_coop_pickup_targetfix);
@@ -2112,6 +2114,16 @@ static size_t SVFTE_CountPendingEntityDeltas (client_t *client)
 	return SVFTE_CountPendingEntityDeltasFrom (client, 0);
 }
 
+static int SVFTE_ReplacementMaxPacketsPerFrame (void)
+{
+	int maxpackets;
+
+	maxpackets = (int)sv_replacement_maxpackets.value;
+	if (maxpackets <= 0)
+		return 128;
+	return CLAMP (1, maxpackets, 128);
+}
+
 /*
 =============
 SV_VisibleToClient -- johnfitz
@@ -2870,12 +2882,15 @@ static qboolean SVFTE_SendClientDatagram (client_t *client, int maxsize)
 	size_t		entity_pending;
 	size_t		entity_pending_before;
 	size_t		entity_pending_after;
+	int			max_replacement_packets;
 	struct deltaframe_s	*replacement_frame;
 	int			replacement_sequence;
 	qboolean	made_progress;
+	qboolean	replacement_packet_cap_hit;
 	static double	last_gap_log[MAX_SCOREBOARD];
 	static double	last_update_sent[MAX_SCOREBOARD];
 	static double	last_update_log[MAX_SCOREBOARD];
+	static double	last_cap_log[MAX_SCOREBOARD];
 	static struct qsocket_s	*last_update_socket[MAX_SCOREBOARD];
 
 	if (!client->spawned)
@@ -2893,6 +2908,7 @@ static qboolean SVFTE_SendClientDatagram (client_t *client, int maxsize)
 		last_update_sent[client_index] = 0;
 		last_update_log[client_index] = 0;
 		last_gap_log[client_index] = 0;
+		last_cap_log[client_index] = 0;
 	}
 	if (net_lagdebug.value && client_index >= 0 && last_update_sent[client_index] > 0)
 	{
@@ -2920,6 +2936,8 @@ static qboolean SVFTE_SendClientDatagram (client_t *client, int maxsize)
 	private_datagram_initial = client->datagram.cursize;
 	private_datagram_written = 0;
 	global_datagram_written = 0;
+	max_replacement_packets = SVFTE_ReplacementMaxPacketsPerFrame ();
+	replacement_packet_cap_hit = false;
 
 	msg.data = buf;
 	msg.maxsize = maxsize;
@@ -2975,9 +2993,20 @@ static qboolean SVFTE_SendClientDatagram (client_t *client, int maxsize)
 				msg.maxsize);
 			break;
 		}
-		if (packet_count >= 128)
+		if (packet_count >= max_replacement_packets)
 		{
-			Con_Printf ("SVFTE_SendClientDatagram: too many replacement-delta packets\n");
+			replacement_packet_cap_hit = true;
+			if (net_lagdebug.value &&
+				(client_index < 0 ||
+				 realtime - last_cap_log[client_index] > 1.0))
+			{
+				Con_Printf ("net_lagdebug: replacement packet cap hit for %s (%s): packets=%d pending_ents=%zu pending_csqc=%zu maxpacket=%d\n",
+					client->name, NET_QSocketGetAddressString(client->netconnection),
+					packet_count, entity_pending, csqc_pending,
+					max_replacement_packets);
+				if (client_index >= 0)
+					last_cap_log[client_index] = realtime;
+			}
 			break;
 		}
 	}
@@ -3013,23 +3042,26 @@ static qboolean SVFTE_SendClientDatagram (client_t *client, int maxsize)
 		client->net_snapshot_max_packets = packet_count;
 	if (total_bytes > client->net_snapshot_max_bytes)
 		client->net_snapshot_max_bytes = total_bytes;
+	client->net_snapshot_unsent_entities = (int)(entity_pending + csqc_pending);
 	if (client_index >= 0)
 		last_update_sent[client_index] = realtime;
 
 	if (net_lagdebug.value &&
-		(packet_count > 1 || max_packet_bytes > (maxsize * 9) / 10) &&
+		(packet_count > 1 || max_packet_bytes > (maxsize * 9) / 10 ||
+		 replacement_packet_cap_hit) &&
 		(client_index < 0 || realtime - last_update_log[client_index] > 1.0))
 	{
 		int sequence = SV_ReplacementLastSentSequence (client);
 		int ack = client->lastacksequence >= 0 ? client->lastacksequence : -1;
 		entity_pending_after = SVFTE_CountPendingEntityDeltas (client);
-		Con_Printf ("net_lagdebug: server replacement update to %s (%s): packets=%d bytes=%d max=%d ents=%zu/%zu pending=%zu->%zu svdg=%d/%d priv=%d/%d maxpacket=%d seq=%d ack=%d acklag=%d\n",
+		Con_Printf ("net_lagdebug: server replacement update to %s (%s): packets=%d bytes=%d max=%d ents=%zu/%zu pending=%zu->%zu svdg=%d/%d priv=%d/%d maxpacket=%d cap=%d seq=%d ack=%d acklag=%d\n",
 			client->name, NET_QSocketGetAddressString(client->netconnection),
 			packet_count, total_bytes, max_packet_bytes,
 			(size_t)client->snapshotresume, client->numpendingentities,
 			entity_pending_before, entity_pending_after,
 			global_datagram_written, sv.datagram.cursize,
 			private_datagram_written, private_datagram_initial, maxsize,
+			max_replacement_packets,
 			sequence, ack, SV_ReplacementAckLag (client, sequence));
 		if (client_index >= 0)
 			last_update_log[client_index] = realtime;
