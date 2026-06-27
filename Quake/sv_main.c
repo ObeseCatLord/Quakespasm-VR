@@ -1501,7 +1501,13 @@ static void SVFTE_BuildEntityState (client_t *client, edict_t *ent, entity_state
 			state->pmovetype = (int)ent->v.movetype & 63;
 			if ((int)ent->v.flags & FL_ONGROUND)
 				state->pmovetype |= 0x80;
-			if (!((int)ent->v.flags & FL_JUMPRELEASED))
+			val = GetEdictFieldValue (ent, qcvm->extfields.pmove_flags);
+			if (val)
+			{
+				if ((int)val->_float & PMF_JUMP_HELD)
+					state->pmovetype |= 0x40;
+			}
+			else if (!((int)ent->v.flags & FL_JUMPRELEASED))
 				state->pmovetype |= 0x40;
 		}
 		state->velocity[0] = CLAMP (-32768, Q_rint (ent->v.velocity[0] * 8.0f), 32767);
