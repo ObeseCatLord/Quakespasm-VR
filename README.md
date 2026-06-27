@@ -140,7 +140,7 @@ host_timescale 0
 sys_ticrate 0.05
 sv_netsort 1
 sv_maxpacketsize 1400
-sv_replacement_maxpackets 8
+sv_replacement_maxpackets 0
 sv_nqplayerphysics 1
 sv_trustedmovement 0
 sv_inputtimeout 0.5
@@ -362,7 +362,7 @@ QuakeSpasm cvar.
 | `sv_nofriendlyfire` | `1` | Co-op | Disables friendly fire in co-op. |
 | `sv_nqplayerphysics` | `1` | PMove | Master default-off switch for server PMove/trusted movement, including mods with `SV_RunClientCommand`; set `0` only for testing PMove. |
 | `sv_pmove_legacy_preserve_qc_velocity` | `1` | PMove | Preserves QC velocity pushes such as grapples through legacy PMove. |
-| `sv_replacement_maxpackets` | `8` | Networking | Maximum steady-state replacement-delta split packets sent to one client per server frame; initial full snapshots and full resends use QSS-M-style catch-up, and `0` restores the previous burst cap for all other frames. |
+| `sv_replacement_maxpackets` | `0` | Networking | QSS-M-style replacement-delta drain by default; positive values manually cap split packets sent to one client per server frame. |
 | `sv_save_multiplayer` | `1` | Save/load | Allows multiplayer/co-op saves in controlled use. |
 | `sv_skyroom_pvs` | `1` | Rendering/server | Adds skyroom PVS for skyroom entity visibility. |
 | `sv_spectatormaxspeed` | `500` | PMove | Spectator max speed. |

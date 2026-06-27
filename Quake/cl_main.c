@@ -1264,21 +1264,11 @@ int CL_ReadFromServer (void)
 	return 0;
 }
 
-/*
-=================
-CL_SendCmd
-=================
-*/
-static usercmd_t cl_pendingcmd;
-static qboolean cl_pendingcmd_valid;
-
 void CL_ClearPendingCmd (void)
 {
-	Q_memset(&cl_pendingcmd, 0, sizeof(cl_pendingcmd));
 	Q_memset(&cl.pendingcmd, 0, sizeof(cl.pendingcmd));
 	VectorCopy(vec3_origin, cl.accummoves);
 	VectorCopy(vec3_origin, cl.vr_roomscalemove_accum);
-	cl_pendingcmd_valid = false;
 }
 
 static void CL_AccumulateVRRoomScaleMove (void)
@@ -1290,8 +1280,6 @@ static void CL_AccumulateVRRoomScaleMove (void)
 
 void CL_AccumulateCmd (void)
 {
-	usercmd_t cmd;
-
 	if (cls.state != ca_connected || cls.signon != SIGNONS)
 	{
 		CL_ClearPendingCmd ();
@@ -1300,18 +1288,19 @@ void CL_AccumulateCmd (void)
 	}
 
 	CL_AdjustAngles ();
-	CL_BaseMove (&cmd, false);
-	IN_Move (&cmd);
-	VR_Move (&cmd);
+	CL_BaseMove (&cl.pendingcmd, false);
+	IN_Move (&cl.pendingcmd);
+	VR_Move (&cl.pendingcmd);
 	CL_AccumulateVRRoomScaleMove ();
-	CL_FinishMove (&cmd, false);
-	VectorCopy (cl.aimangles, cmd.viewangles);
-
-	cl_pendingcmd = cmd;
-	cl_pendingcmd_valid = true;
-	cl.pendingcmd = cl_pendingcmd;
+	CL_FinishMove (&cl.pendingcmd, false);
+	VectorCopy (cl.aimangles, cl.pendingcmd.viewangles);
 }
 
+/*
+=================
+CL_SendCmd
+=================
+*/
 void CL_SendCmd (void)
 {
 	usercmd_t		cmd;
@@ -1326,9 +1315,6 @@ void CL_SendCmd (void)
 
 	if (cls.signon == SIGNONS)
 	{
-		if (!cl_pendingcmd_valid)
-			CL_AccumulateCmd ();
-
 		if (cl.qcvm.extfuncs.CSQC_Input_Frame)
 		{
 			PR_SwitchQCVM (&cl.qcvm);

@@ -171,8 +171,8 @@ static void Host_MigrateNetworkDefaults_f (void)
 		Host_ValueMatchesOldDefault (sv_inputtimeout.value, 0.0f))
 		Cvar_SetQuick (&sv_inputtimeout, "0.5");
 	if (!Host_CommandLineSetsCvar ("sv_replacement_maxpackets") &&
-		Host_ValueMatchesOldDefault (sv_replacement_maxpackets.value, 0.0f))
-		Cvar_SetQuick (&sv_replacement_maxpackets, "8");
+		Host_ValueMatchesOldDefault (sv_replacement_maxpackets.value, 8.0f))
+		Cvar_SetQuick (&sv_replacement_maxpackets, "0");
 }
 
 #define NETFPS_PROBE_DEFAULT_SECONDS	5.0

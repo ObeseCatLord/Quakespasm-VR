@@ -38,7 +38,7 @@ extern cvar_t nomonsters;
 // default; lower this only when a specific network path needs more headroom.
 cvar_t sv_maxpacketsize = {"sv_maxpacketsize", "1400", CVAR_NONE};
 cvar_t sv_netdiag_interval = {"sv_netdiag_interval", "5", CVAR_NONE};
-cvar_t sv_replacement_maxpackets = {"sv_replacement_maxpackets", "8", CVAR_NONE};
+cvar_t sv_replacement_maxpackets = {"sv_replacement_maxpackets", "0", CVAR_NONE};
 // When SV_WriteEntitiesToClient overflows the per-client datagram, the entity
 // that gets evicted is whichever the loop reached last. With sv_netsort=1
 // (ironwail's heuristic) entities are sorted by distance-to-player and PVS
@@ -2161,9 +2161,9 @@ static int SVFTE_ReplacementMaxPacketsPerFrame (const client_t *client)
 	int maxpackets;
 
 	/*
-	 * QSS-M drains replacement-delta full snapshots in one server frame. Keep
-	 * that behavior for initial joins/resends so large maps don't spend many
-	 * frames catching up before normal interpolation can begin.
+	 * QSS-M drains replacement-delta snapshots in one server frame. Keep that
+	 * as the default for large-map parity; positive cvar values are only a
+	 * manual bandwidth throttle.
 	 */
 	if (SVFTE_FullSnapshotPending (client))
 		return 128;
