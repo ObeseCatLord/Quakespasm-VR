@@ -1272,6 +1272,24 @@ void Datagram_GetAnyMessages (void (*callback)(qsocket_t *sock))
 				SendMessageNext(sock);
 			if (!sock->canSend && (net_time - sock->lastSendTime) > 1.0)
 				ReSendMessage(sock);
+			if (NET_IsTimedOut(sock))
+			{
+				client_t *saved_host_client;
+				int i;
+
+				saved_host_client = host_client;
+				for (i = 0; i < svs.maxclients; i++)
+				{
+					if (svs.clients[i].netconnection != sock)
+						continue;
+					host_client = &svs.clients[i];
+					SV_DropClient(false);
+					break;
+				}
+				host_client = saved_host_client;
+				if (i == svs.maxclients)
+					NET_Close(sock);
+			}
 		}
 	}
 }

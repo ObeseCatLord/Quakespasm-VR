@@ -268,6 +268,7 @@ typedef struct
 
 	char		mapname[128];
 	char		levelname[128];	// for display on solo scoreboard //johnfitz -- was 40.
+	char		server_gamedir[MAX_OSPATH];
 	int			viewentity;		// cl_entitites[cl.viewentity] = player
 	int			maxclients;
 	int			gametype;

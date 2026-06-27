@@ -719,7 +719,7 @@ void SV_SendServerinfo (client_t *client)
 	// Latest-code servers always use RMQ, so protocol flags are mandatory.
 	MSG_WriteLong (&client->message, sv.protocolflags);
 
-	MSG_WriteString (&client->message, COM_SkipPath (com_gamedir));
+	MSG_WriteString (&client->message, COM_GetGameNames(false));
 	
 	MSG_WriteByte (&client->message, svs.maxclients);
 

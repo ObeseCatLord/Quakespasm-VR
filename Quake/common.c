@@ -2272,6 +2272,84 @@ _add_path:
 //==============================================================================
 //johnfitz -- dynamic gamedir stuff -- modified by QuakeSpasm team.
 //==============================================================================
+
+const char *COM_GetGameNames(qboolean full)
+{
+	static char names[MAX_OSPATH];
+	const char *dirs[32];
+	unsigned int ids[32];
+	searchpath_t *search;
+	int count, i, j;
+
+	count = 0;
+	for (search = com_searchpaths; search && count < (int)countof(dirs);
+		search = search->next)
+	{
+		if (search->path_id <= 1 || search->pack || !search->filename[0])
+			continue;
+		for (i = 0; i < count; i++)
+			if (ids[i] == search->path_id)
+				break;
+		if (i < count)
+			continue;
+		ids[count] = search->path_id;
+		dirs[count] = COM_SkipPath(search->filename);
+		count++;
+	}
+
+	names[0] = 0;
+	if (full)
+		q_strlcpy(names, GAMENAME, sizeof(names));
+
+	for (j = count - 1; j >= 0; j--)
+	{
+		if (names[0])
+			q_strlcat(names, ";", sizeof(names));
+		q_strlcat(names, dirs[j], sizeof(names));
+	}
+
+	return names;
+}
+
+qboolean COM_GameDirMatches(const char *tdirs)
+{
+	const char *odirs;
+	int gnl;
+
+	if (!tdirs)
+		return false;
+
+	odirs = COM_GetGameNames(false);
+	gnl = strlen(GAMENAME);
+
+	if (!strncmp(tdirs, GAMENAME, gnl) && (tdirs[gnl] == ';' || !tdirs[gnl]))
+	{
+		tdirs += gnl;
+		if (*tdirs == ';')
+			tdirs++;
+	}
+	if (!strncmp(odirs, GAMENAME, gnl) && (odirs[gnl] == ';' || !odirs[gnl]))
+	{
+		odirs += gnl;
+		if (*odirs == ';')
+			odirs++;
+	}
+	if (!strncmp(tdirs, "qw;", 3) || !strcmp(tdirs, "qw"))
+	{
+		tdirs += 2;
+		if (*tdirs == ';')
+			tdirs++;
+	}
+	if (!strncmp(odirs, "qw;", 3) || !strcmp(odirs, "qw"))
+	{
+		odirs += 2;
+		if (*odirs == ';')
+			odirs++;
+	}
+
+	return !strcmp(odirs, tdirs);
+}
+
 static void COM_Game_f (void)
 {
 	if (Cmd_Argc() > 1)
@@ -2414,6 +2492,7 @@ static void COM_Game_f (void)
 		Cbuf_AddText ("exec quake.rc\n");
 		Cbuf_AddText ("vid_unlock\n");
 		Cmd_QueuePostConfigAfterGameChange ();
+		Cbuf_AddText ("host_migrate_network_defaults\n");
 		Cbuf_AddText ("cl_migrate_network_defaults\n");
 		Cbuf_AddText ("vr_migrate_movement_defaults\n");
 
