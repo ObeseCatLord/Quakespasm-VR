@@ -59,13 +59,13 @@ extended protocol support.
 
 ### Networking
 
-- Clients and servers use an extended movement path with numbered movement
-  commands, movement ACKs, and player entity prediction state.
-- Co-op servers can use PMove-based movement and QSS-M-style prediction to
-  reduce movement judder.
+- Clients and servers use latest-client movement packets with numbered
+  commands, QSS-M-style move ACKs, and replacement-delta snapshot ACKs.
+- Co-op servers default to QSS-M-style client movement and trusted/server PMove
+  disabled; server PMove remains available only for explicit testing.
 - Replacement-delta entity updates reduce the need for unsafe split snapshots.
-- Snapshot resend, packet duplication, entity prioritization, and pacing help
-  busy co-op maps stay playable under packet loss.
+- Snapshot resend, ACK recovery, entity prioritization, and pacing help busy
+  co-op maps stay playable under packet loss.
 - The datagram layer has shared-socket support, client port probing, NAT
   remap recovery, same-IP stale socket handling, and reorder recovery.
 - Network diagnostics can log gaps, reorder events, overflows, prediction
@@ -74,7 +74,7 @@ extended protocol support.
 ### Co-op
 
 - Co-op defaults are tuned for same-build play: no friendly fire, non-solid
-  players, PMove prediction, weapon-target fixes, optional ammo respawn,
+  players, QSS-M-style networking, weapon-target fixes, optional ammo respawn,
   autosaves, and death-location respawn helpers.
 - Co-op respawn can keep vanilla weapons/ammo plus known extra weapon, ammo,
   item, key, and string-key fields used by modern mods.
@@ -260,7 +260,6 @@ QuakeSpasm cvar.
 | `vr_world_scale` | `1.0` | VR | World-to-player scale. |
 | `vr_wofs_*` | generated | VR weapons | Per-weapon held offsets generated for VR weapon slots. |
 | `vr_wmuzzle_*` | generated | VR weapons | Per-weapon muzzle offsets generated for VR weapon slots. |
-| `cl_ack_redundancy` | `4` | Networking | Sends redundant movement ACK data. |
 | `cl_beams_polygons` | `0` | Rendering | Enables polygon beam rendering path for supported effects. |
 | `cl_confirmquit` | `0` | UI | Adds an optional quit confirmation. |
 | `cl_coop_nametags` | `1` | Co-op | Draws co-op player nametags. |
@@ -355,19 +354,18 @@ QuakeSpasm cvar.
 | `sv_gameplayfix_elevators` | `2` | Gameplay | Elevator/pusher step recovery; `0` off, `1` clients, `2` all entities. |
 | `sv_gameplayfix_random` | `1` | QC | Avoids exact `0`/`1` returns from QuakeC `random()`. |
 | `sv_inputtimeout` | `0` | Networking | Optional stale-input recovery timeout in seconds; default `0` matches QSS-M by preserving the last live movement command until the connection times out. |
-| `sv_maxpacketsize` | `1400` | Networking | Retired compatibility cvar; remote unreliable packets use per-client QSS-M-style limits capped to `DATAGRAM_MTU`. |
-| `sv_move_timeclamp` | `1` | Networking | Clamps excessive movement command time. |
+| `sv_maxpacketsize` | `1400` | Networking | Remote unreliable packet cap, clamped to QSS-M's `DATAGRAM_MTU`. |
 | `sv_netdiag_interval` | `5` | Diagnostics | Periodic network diagnostic interval in seconds. |
 | `sv_netsort` | `1` | Networking | Sorts entity updates by priority before packet clipping. |
 | `sv_nofriendlyfire` | `1` | Co-op | Disables friendly fire in co-op. |
 | `sv_nqplayerphysics` | `1` | PMove | Master default-off switch for server PMove/trusted movement, including mods with `SV_RunClientCommand`; set `0` only for testing PMove. |
 | `sv_pmove_legacy_preserve_qc_velocity` | `1` | PMove | Preserves QC velocity pushes such as grapples through legacy PMove. |
-| `sv_replacement_maxpackets` | `0` | Networking | QSS-M-style replacement-delta drain by default; positive values manually cap split packets sent to one client per server frame. |
+| `sv_replacement_maxpackets` | `0` | Networking | QSS-M-style uncapped replacement-delta drain by default; positive values manually cap split packets sent to one client per server frame. |
 | `sv_save_multiplayer` | `1` | Save/load | Allows multiplayer/co-op saves in controlled use. |
 | `sv_skyroom_pvs` | `1` | Rendering/server | Adds skyroom PVS for skyroom entity visibility. |
 | `sv_spectatormaxspeed` | `500` | PMove | Spectator max speed. |
 | `sv_triggerdebug` | `0` | Diagnostics | Logs trigger/touch decisions. |
-| `sv_vr_jump_velocity` | `270` | VR/co-op | Optional VR jump velocity override; `270` matches vanilla. |
+| `sv_vr_jump_velocity` | `297` | VR/co-op | Optional VR jump velocity override; default is 10% above vanilla's `270`. |
 | `sv_wateraccelerate` | `-1` | PMove | PMove water acceleration; negative means compatibility default. |
 | `sv_waterfriction` | `4` | PMove | PMove water friction. |
 
