@@ -99,14 +99,26 @@ rewrite_stale_network_defaults() {
 	{
 		name = $1
 		value = unquote($2)
-		if (name == "cl_portpingprobe_enable" && value == "1") {
-			rewritten(name, "0")
-			next
-		}
-		if (name == "cl_netfps" && value == "72") {
-			rewritten(name, "0")
-			next
-		}
+			if (name == "cl_portpingprobe_enable" && value == "1") {
+				rewritten(name, "0")
+				next
+			}
+			if (name == "cl_netfps" ||
+			    name == "cl_extrapolate" ||
+			    name == "cl_extrapolate_adaptive" ||
+			    name == "cl_extrapolate_adaptive_max" ||
+			    name == "cl_extrapolate_adaptive_time" ||
+			    name == "cl_net_lerpbuffer" ||
+			    name == "cl_net_lerpbuffer_adaptive" ||
+			    name == "cl_net_lerpbuffer_adaptive_max" ||
+			    name == "cl_net_lerpbuffer_adaptive_time" ||
+			    name == "cl_predict_smooth" ||
+			    name == "cl_predict_smooth_time" ||
+			    name == "cl_predict_smooth_min" ||
+			    name == "cl_predict_smooth_max") {
+				changed = 1
+				next
+			}
 		if (name == "host_maxfps" && value == "72") {
 			rewritten(name, "250")
 			next
