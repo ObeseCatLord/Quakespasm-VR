@@ -110,12 +110,12 @@ static void SV_SetClientLimits (client_t *client)
 	client->limit_models = MAX_MODELS;
 	client->limit_sounds = MAX_SOUNDS;
 
-	if (client->message.data == client->msgbuf &&
-		client->message.maxsize > (int)client->limit_reliable)
-		client->message.maxsize = client->limit_reliable;
-	if (client->datagram.data == client->datagram_buf &&
-		client->datagram.maxsize > (int)client->limit_unreliable)
-		client->datagram.maxsize = client->limit_unreliable;
+	if (client->message.data == client->msgbuf)
+		client->message.maxsize = q_min ((int)sizeof(client->msgbuf),
+			(int)client->limit_reliable);
+	if (client->datagram.data == client->datagram_buf)
+		client->datagram.maxsize = q_min ((int)sizeof(client->datagram_buf),
+			(int)client->limit_unreliable);
 }
 
 static int SV_ClientUnreliableLimit (client_t *client)
@@ -139,7 +139,8 @@ static void SV_UpdateClientMSS (client_t *client)
 	maxsize = SV_ClientUnreliableLimit (client);
 	NET_QSocketSetMSS (client->netconnection, maxsize);
 	if (client->datagram.data == client->datagram_buf)
-		client->datagram.maxsize = q_min ((int)sizeof(client->datagram_buf), maxsize);
+		client->datagram.maxsize = q_min ((int)sizeof(client->datagram_buf),
+			maxsize);
 }
 
 void SV_CalcStats(client_t *client, int *statsi, float *statsf, const char **statss)

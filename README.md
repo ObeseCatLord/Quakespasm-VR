@@ -164,11 +164,11 @@ QSS-M-style move ACKs; server PMove/trusted movement is off by default,
 including mods that supply `SV_RunClientCommand`; set
 `sv_nqplayerphysics 0` only when intentionally testing server PMove.
 Startup runs `host_migrate_network_defaults` after configs to repair stale
-archived values such as `host_maxfps 72`, dedicated-only
-`host_framerate`/`host_timescale` overrides, `sv_nqplayerphysics 0`,
-`sv_inputtimeout 0.5`, and capped replacement bursts. Deploy also scrubs
-retired client-side smoothing/extrapolation cvars from existing configs;
-explicit `+cvar value` launch arguments are preserved.
+archived values such as `host_maxfps 72`, nonzero
+`host_framerate`/`host_timescale` overrides, oversized `sv_maxpacketsize`,
+`sv_nqplayerphysics 0`, `sv_inputtimeout 0.5`, and capped replacement bursts.
+Deploy also scrubs retired client-side smoothing/extrapolation cvars from
+existing configs; explicit `+cvar value` launch arguments are preserved.
 
 ## Building
 

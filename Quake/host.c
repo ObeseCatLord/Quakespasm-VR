@@ -95,6 +95,7 @@ extern cvar_t sv_inputtimeout;
 extern cvar_t sv_nqplayerphysics;
 extern cvar_t sv_trustedmovement;
 extern cvar_t sv_replacement_maxpackets;
+extern cvar_t sv_maxpacketsize;
 
 cvar_t devstats = {"devstats","0",CVAR_NONE}; //johnfitz -- track developer statistics that vary every frame
 
@@ -152,10 +153,10 @@ static void Host_MigrateNetworkDefaults_f (void)
 	if (!Host_CommandLineSetsCvar ("host_maxfps") &&
 		Host_ValueMatchesOldDefault (host_maxfps.value, 72.0f))
 		Cvar_SetQuick (&host_maxfps, "250");
-	if (isDedicated && !Host_CommandLineSetsCvar ("host_framerate") &&
+	if (!Host_CommandLineSetsCvar ("host_framerate") &&
 		host_framerate.value > 0)
 		Cvar_SetQuick (&host_framerate, "0");
-	if (isDedicated && !Host_CommandLineSetsCvar ("host_timescale") &&
+	if (!Host_CommandLineSetsCvar ("host_timescale") &&
 		host_timescale.value > 0)
 		Cvar_SetQuick (&host_timescale, "0");
 	if (!Host_CommandLineSetsCvar ("cl_portpingprobe_enable") &&
@@ -173,6 +174,9 @@ static void Host_MigrateNetworkDefaults_f (void)
 	if (!Host_CommandLineSetsCvar ("sv_replacement_maxpackets") &&
 		Host_ValueMatchesOldDefault (sv_replacement_maxpackets.value, 8.0f))
 		Cvar_SetQuick (&sv_replacement_maxpackets, "0");
+	if (!Host_CommandLineSetsCvar ("sv_maxpacketsize") &&
+		(sv_maxpacketsize.value <= 0 || sv_maxpacketsize.value > 1400.0f))
+		Cvar_SetQuick (&sv_maxpacketsize, "1400");
 }
 
 #define NETFPS_PROBE_DEFAULT_SECONDS	5.0

@@ -123,6 +123,18 @@ rewrite_stale_network_defaults() {
 			rewritten(name, "250")
 			next
 		}
+		if (name == "host_framerate" && (value + 0) != 0) {
+			rewritten(name, "0")
+			next
+		}
+		if (name == "host_timescale" && (value + 0) != 0) {
+			rewritten(name, "0")
+			next
+		}
+		if (name == "sv_maxpacketsize" && ((value + 0) <= 0 || (value + 0) > 1400)) {
+			rewritten(name, "1400")
+			next
+		}
 		if (name == "sv_nqplayerphysics" && value == "0") {
 			rewritten(name, "1")
 			next
