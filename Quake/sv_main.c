@@ -2146,32 +2146,22 @@ static size_t SVFTE_CountPendingEntityDeltas (client_t *client)
 	return SVFTE_CountPendingEntityDeltasFrom (client, 0);
 }
 
-static qboolean SVFTE_FullSnapshotPending (const client_t *client)
-{
-	if (!client)
-		return false;
-	if (client->lastacksequence < 0)
-		return true;
-	return client->pendingentities_bits && client->numpendingentities > 0 &&
-		(client->pendingentities_bits[0] & UF_REMOVE);
-}
-
-static int SVFTE_ReplacementMaxPacketsPerFrame (const client_t *client)
+static int SVFTE_ReplacementMaxPacketsPerFrame (void)
 {
 	int maxpackets;
 
 	/*
-	 * QSS-M drains replacement-delta snapshots in one server frame. Keep that
-	 * as the default for large-map parity; positive cvar values are only a
-	 * manual bandwidth throttle.
+	 * QSS-M drains replacement-delta snapshots in one server frame without a
+	 * fixed packet cap. Keep that as the default for large-map parity; positive
+	 * cvar values are an explicit manual bandwidth throttle.
 	 */
-	if (SVFTE_FullSnapshotPending (client))
-		return 128;
+	if (sv_replacement_maxpackets.value <= 0)
+		return INT_MAX;
+	if (sv_replacement_maxpackets.value >= (float)INT_MAX)
+		return INT_MAX;
 
 	maxpackets = (int)sv_replacement_maxpackets.value;
-	if (maxpackets <= 0)
-		return 128;
-	return CLAMP (1, maxpackets, 128);
+	return CLAMP (1, maxpackets, INT_MAX);
 }
 
 /*
@@ -2987,7 +2977,7 @@ static qboolean SVFTE_SendClientDatagram (client_t *client, int maxsize)
 	private_datagram_initial = client->datagram.cursize;
 	private_datagram_written = 0;
 	global_datagram_written = 0;
-	max_replacement_packets = SVFTE_ReplacementMaxPacketsPerFrame (client);
+	max_replacement_packets = SVFTE_ReplacementMaxPacketsPerFrame ();
 	replacement_packet_cap_hit = false;
 	no_progress_retry_used = false;
 
