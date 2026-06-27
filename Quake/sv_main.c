@@ -34,9 +34,9 @@ static char	localmodels[MAX_MODELS][8];	// inline model names for precache
 int		sv_protocol = PROTOCOL_RMQ; //johnfitz
 
 extern cvar_t nomonsters;
-// Live cap for remote unreliable packets. QSS-M's DATAGRAM_MTU remains the
-// protocol ceiling; this lower default leaves room for path/overlay overhead.
-cvar_t sv_maxpacketsize = {"sv_maxpacketsize", "1200", CVAR_NONE};
+// Live cap for remote unreliable packets. Match QSS-M's DATAGRAM_MTU by
+// default; lower this only when a specific network path needs more headroom.
+cvar_t sv_maxpacketsize = {"sv_maxpacketsize", "1400", CVAR_NONE};
 cvar_t sv_netdiag_interval = {"sv_netdiag_interval", "5", CVAR_NONE};
 // When SV_WriteEntitiesToClient overflows the per-client datagram, the entity
 // that gets evicted is whichever the loop reached last. With sv_netsort=1
@@ -270,9 +270,10 @@ static void SV_NetDiag_f (void)
 		cl.net_move_packets_sent, cl.net_move_cmds_sent,
 		cl.net_move_last_packet_cmds, cl.ackedmovemessages,
 		cl.net_move_acks, cl.net_move_stale_acks);
-	Con_Printf ("client netdiag: snapshots seq=%d packets=%d drops=%d acks_sent=%d pred=%d movetype=%d flags=%d vel=(%.1f %.1f %.1f)\n",
+	Con_Printf ("client netdiag: snapshots seq=%d packets=%d drops=%d acks_sent=%d ack_overflows=%d pred=%d movetype=%d flags=%d vel=(%.1f %.1f %.1f)\n",
 		cl.net_snapshot_sequence, cl.net_snapshot_packets,
 		cl.net_snapshot_drops, cl.net_snapshot_acks_sent,
+		cl.net_snapshot_ack_queue_overflows,
 		cl.viewentity > 0 && cl.entities[cl.viewentity].netstate.pmovetype != 0,
 		cl.viewentity > 0 ? cl.entities[cl.viewentity].netstate.pmovetype : 0,
 		cl.viewentity > 0 ? cl.entities[cl.viewentity].netstate.pmovetype & 0xc0 : 0,

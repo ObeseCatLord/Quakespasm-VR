@@ -177,9 +177,10 @@ typedef struct
 	int			net_snapshot_packets;
 	int			net_snapshot_drops;
 	int			net_snapshot_acks_sent;
+	int			net_snapshot_ack_queue_overflows;
 	qboolean	net_snapshot_have;
 	// Replacement-delta maps can arrive as large split bursts. Keep the queue
-	// large enough for those bursts, and preserve the newest ack if full.
+	// large enough for those bursts, and keep queued acks contiguous if full.
 #define	CL_ACKFRAME_HISTORY	128
 	int			ackframes[CL_ACKFRAME_HISTORY];
 	unsigned int	ackframes_count;
