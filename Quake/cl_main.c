@@ -39,16 +39,20 @@ cvar_t	cl_nolerp = {"cl_nolerp","0",CVAR_NONE};
 cvar_t	cl_lerpdebug = {"cl_lerpdebug","0",CVAR_NONE};
 cvar_t	cl_lerpdebug_models = {"cl_lerpdebug_models","",CVAR_NONE};
 cvar_t	cl_beams_polygons = {"cl_beams_polygons","0",CVAR_ARCHIVE};
-// Retired compatibility cvars. QSS-M-style client interpolation does not add
-// synthetic snapshot delay or extrapolate past the latest server snapshot.
-cvar_t	cl_extrapolate = {"cl_extrapolate","0",CVAR_ARCHIVE};
-cvar_t	cl_extrapolate_adaptive = {"cl_extrapolate_adaptive","0",CVAR_ARCHIVE};
-cvar_t	cl_extrapolate_adaptive_max = {"cl_extrapolate_adaptive_max","0.12",CVAR_ARCHIVE};
+// Retired compatibility cvars. Keep them registered so old configs and launch
+// scripts do not warn, but do not archive them back out.
+cvar_t	cl_extrapolate = {"cl_extrapolate","0",CVAR_NONE};
+cvar_t	cl_extrapolate_adaptive = {"cl_extrapolate_adaptive","0",CVAR_NONE};
+cvar_t	cl_extrapolate_adaptive_max = {"cl_extrapolate_adaptive_max","0.12",CVAR_NONE};
 cvar_t	cl_extrapolate_adaptive_time = {"cl_extrapolate_adaptive_time","0.75",CVAR_NONE};
-cvar_t	cl_net_lerpbuffer = {"cl_net_lerpbuffer","0",CVAR_ARCHIVE};
-cvar_t	cl_net_lerpbuffer_adaptive = {"cl_net_lerpbuffer_adaptive","0",CVAR_ARCHIVE};
-cvar_t	cl_net_lerpbuffer_adaptive_max = {"cl_net_lerpbuffer_adaptive_max","0.30",CVAR_ARCHIVE};
+cvar_t	cl_net_lerpbuffer = {"cl_net_lerpbuffer","0",CVAR_NONE};
+cvar_t	cl_net_lerpbuffer_adaptive = {"cl_net_lerpbuffer_adaptive","0",CVAR_NONE};
+cvar_t	cl_net_lerpbuffer_adaptive_max = {"cl_net_lerpbuffer_adaptive_max","0.30",CVAR_NONE};
 cvar_t	cl_net_lerpbuffer_adaptive_time = {"cl_net_lerpbuffer_adaptive_time","0.75",CVAR_NONE};
+cvar_t	cl_predict_smooth = {"cl_predict_smooth","0",CVAR_NONE};
+cvar_t	cl_predict_smooth_time = {"cl_predict_smooth_time","0.04",CVAR_NONE};
+cvar_t	cl_predict_smooth_min = {"cl_predict_smooth_min","0.25",CVAR_NONE};
+cvar_t	cl_predict_smooth_max = {"cl_predict_smooth_max","8",CVAR_NONE};
 cvar_t	cl_predict_error_log = {"cl_predict_error_log","1",CVAR_NONE};
 
 extern cvar_t host_maxfps;
@@ -81,6 +85,8 @@ static void CL_MigrateNetworkDefaults_f (void)
 		Cvar_SetQuick (&cl_net_lerpbuffer, "0");
 	if (cl_net_lerpbuffer_adaptive.value != 0)
 		Cvar_SetQuick (&cl_net_lerpbuffer_adaptive, "0");
+	if (cl_predict_smooth.value != 0)
+		Cvar_SetQuick (&cl_predict_smooth, "0");
 	if (CL_ValueMatchesOldDefault (cl_netfps.value, 72.0f))
 		Cvar_SetQuick (&cl_netfps, "0");
 	if (CL_ValueMatchesOldDefault (host_maxfps.value, 72.0f))
@@ -1505,6 +1511,10 @@ void CL_Init (void)
 	Cvar_RegisterVariable (&cl_net_lerpbuffer_adaptive);
 	Cvar_RegisterVariable (&cl_net_lerpbuffer_adaptive_max);
 	Cvar_RegisterVariable (&cl_net_lerpbuffer_adaptive_time);
+	Cvar_RegisterVariable (&cl_predict_smooth);
+	Cvar_RegisterVariable (&cl_predict_smooth_time);
+	Cvar_RegisterVariable (&cl_predict_smooth_min);
+	Cvar_RegisterVariable (&cl_predict_smooth_max);
 	Cmd_AddCommand ("cl_migrate_network_defaults", CL_MigrateNetworkDefaults_f);
 	Cvar_RegisterVariable (&freelook);
 	Cvar_RegisterVariable (&lookspring);

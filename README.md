@@ -163,9 +163,10 @@ QSS-M-style move ACKs; server PMove/trusted movement is off by default,
 including mods that supply `SV_RunClientCommand`; set
 `sv_nqplayerphysics 0` only when intentionally testing server PMove.
 Startup runs `host_migrate_network_defaults` after configs to repair stale
-archived values such as `host_maxfps 72`, `cl_netfps 72`,
-dedicated-only `host_framerate`/`host_timescale` overrides,
-`sv_nqplayerphysics 0`, `sv_inputtimeout 0.5`, and capped replacement bursts;
+archived values such as `host_maxfps 72`, dedicated-only
+`host_framerate`/`host_timescale` overrides, `sv_nqplayerphysics 0`,
+`sv_inputtimeout 0.5`, and capped replacement bursts. Deploy also scrubs
+retired client-side smoothing/extrapolation cvars from existing configs;
 explicit `+cvar value` launch arguments are preserved.
 
 ## Building
@@ -264,18 +265,12 @@ QuakeSpasm cvar.
 | `cl_confirmquit` | `0` | UI | Adds an optional quit confirmation. |
 | `cl_coop_nametags` | `1` | Co-op | Draws co-op player nametags. |
 | `cl_desktop_vanilla_run` | `1` | Input | Keeps faster vanilla-style movement behavior for desktop and VR defaults. |
-| `cl_extrapolate` | `0` | Networking | Retired compatibility cvar; QSS-M-style client timing clamps at server snapshots. |
-| `cl_extrapolate_adaptive` | `0` | Networking | Retired compatibility cvar; adaptive extrapolation is not used. |
-| `cl_extrapolate_adaptive_max` | `0.12` | Networking | Retired compatibility cvar retained for old configs. |
-| `cl_extrapolate_adaptive_time` | `0.75` | Networking | Retired compatibility cvar retained for old configs. |
+| `cl_extrapolate*` | `0` | Networking | Retired no-op compatibility cvars retained only so old configs do not warn. |
 | `cl_lerpdebug` | `0` | Diagnostics | Logs model/entity interpolation reset causes. |
 | `cl_lerpdebug_models` | `""` | Diagnostics | Comma-separated model filter for `cl_lerpdebug`. |
 | `cl_mousemenu` | `1` | UI | Enables mouse menu interaction. |
 | `cl_mwheelpitch` | `5` | Input | Mouse-wheel pitch tuning. |
-| `cl_net_lerpbuffer` | `0` | Networking | Retired compatibility cvar; QSS-M-style client timing uses raw server snapshot times. |
-| `cl_net_lerpbuffer_adaptive` | `0` | Networking | Retired compatibility cvar; adaptive snapshot buffering is not used. |
-| `cl_net_lerpbuffer_adaptive_max` | `0.30` | Networking | Retired compatibility cvar retained for old configs. |
-| `cl_net_lerpbuffer_adaptive_time` | `0.75` | Networking | Retired compatibility cvar retained for old configs. |
+| `cl_net_lerpbuffer*` | `0` | Networking | Retired no-op compatibility cvars retained only so old configs do not warn. |
 | `cl_netfps` | `0` | Networking | Retired no-op retained for old configs; QSS-M-style pacing is controlled by `host_maxfps`. |
 | `cl_netport` | `0` | Networking | Requested local UDP client port; `0` lets the OS choose. |
 | `cl_nocsqc` | `0` | CSQC | Disables client-side QC loading when set. |
@@ -285,6 +280,7 @@ QuakeSpasm cvar.
 | `cl_portpingprobe_probes` | `6` | Networking | Number of client port probes. |
 | `cl_predict_error_log` | `1` | Diagnostics | Logs prediction mismatches. |
 | `cl_predictmove` | `1` | Networking | Enables client-side movement prediction for remote play. |
+| `cl_predict_smooth*` | `0` | Networking | Retired no-op compatibility cvars retained only so old configs and launch scripts do not warn. |
 | `cfg_unbindall` | `1` | Config | Allows configs to execute `unbindall`; set `0` to ignore it. |
 | `freelook` | `1` | Input | Default mouse look behavior. |
 | `net_lagdebug` | `0` | Diagnostics | Logs datagram gaps, delayed packets, and lag events. |
