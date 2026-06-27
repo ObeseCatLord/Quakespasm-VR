@@ -340,6 +340,7 @@ exec:
 		// Note: this will be executed *after* the config
 		Cbuf_InsertText ("__cfgmarker");
 	}
+	Cbuf_InsertText ("\n");	// just in case there was no trailing \n.
 	Cbuf_InsertText (f);
 	Hunk_FreeToLowMark (mark);
 }
