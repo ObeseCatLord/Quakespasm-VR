@@ -26,6 +26,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "bgmusic.h"
 #include <setjmp.h>
 #include "vr.h"
+#include "pmove.h"
 #include "debug_log.h"
 
 /*
@@ -45,7 +46,6 @@ qboolean	host_initialized;		// true if into command execution
 
 double		host_frametime;
 float		host_netinterval = 1.0/72;
-static float	host_requested_netinterval = 1.0/72;
 double		realtime;				// without any filtering or bounding
 double		oldrealtime;			// last frame run
 
@@ -136,77 +136,29 @@ static void Max_Fps_f (cvar_t *var)
 {
 	if (var->value < 0)
 	{
-		if (!host_requested_netinterval)
+		if (!host_netinterval)
 			Con_Printf ("Using renderer/network isolation.\n");
-		host_requested_netinterval = 1/-var->value;
-		if (host_requested_netinterval > 1/10.f)
-			host_requested_netinterval = 1/10.f;
-		if (host_requested_netinterval < 1/150.f)
-			host_requested_netinterval = 1/150.f;
+		host_netinterval = 1/-var->value;
+		if (host_netinterval > 1/10.f)
+			host_netinterval = 1/10.f;
+		if (host_netinterval < 1/150.f)
+			host_netinterval = 1/150.f;
 	}
 	else if (var->value > 72 || var->value <= 0)
 	{
-		if (!host_requested_netinterval)
+		if (!host_netinterval)
 			Con_Printf ("Using renderer/network isolation.\n");
-		host_requested_netinterval = 1.0/72;
+		host_netinterval = 1.0/72;
 	}
 	else
 	{
-		if (host_requested_netinterval)
+		if (host_netinterval)
 			Con_Printf ("Disabling renderer/network isolation.\n");
-		host_requested_netinterval = 0;
+		host_netinterval = 0;
 
 		if (var->value > 72)
 			Con_Warning ("host_maxfps above 72 breaks physics.\n");
 	}
-}
-
-static double Host_EffectiveNetInterval (void)
-{
-	if (host_requested_netinterval > 0)
-		return host_requested_netinterval;
-
-	// Keep command/server cadence isolated when stale configs explicitly set
-	// host_maxfps 72, which disabled the new default isolation in older builds.
-	if (Host_ValueMatchesOldDefault (host_maxfps.value, 72.0f))
-		return 1.0 / 72.0;
-
-	return 0;
-}
-
-static qboolean Host_ShouldIsolateNetworkFrame (double interval)
-{
-	if (isDedicated)
-		return false;
-	if (interval <= 0)
-		return false;
-	if (!sv.active)
-		return cls.state == ca_connected;
-	return true;
-}
-
-static qboolean Host_BeginNetworkFrame (double *accum, double interval,
-	double *saved_frametime)
-{
-	double network_frametime;
-
-	if (interval <= 0)
-		return true;
-
-	if (*accum < interval)
-		return false;
-
-	*saved_frametime = host_frametime;
-	network_frametime = q_max (*accum, interval);
-	host_frametime = network_frametime;
-	*accum -= network_frametime;
-	if (host_timescale.value > 0)
-		host_frametime *= host_timescale.value;
-	else if (host_framerate.value > 0)
-		host_frametime = host_framerate.value;
-	if (*accum < 0 || *accum > interval)
-		*accum = 0;
-	return true;
 }
 
 /*
@@ -840,6 +792,9 @@ void Host_ServerFrame (void)
 	if (lagdebug_timing)
 		after_clear = Sys_DoubleTime ();
 
+// respond to cvar changes
+	PMSV_UpdateMovevars ();
+
 // check for new clients
 	SV_CheckForNewClients ();
 	if (lagdebug_timing)
@@ -854,7 +809,7 @@ void Host_ServerFrame (void)
 // always pause in single player if in console or menus
 	if (!sv.paused && (svs.maxclients > 1 || key_dest == key_game) )
 	{
-		SV_Physics ();
+		SV_Physics (host_frametime);
 		Host_CoopAutosaveFrame ();
 	}
 	if (lagdebug_timing)
@@ -966,6 +921,7 @@ Runs all active servers
 */
 void _Host_Frame (float time)
 {
+	static double		accumtime = 0;
 	static double		time1 = 0;
 	static double		time2 = 0;
 	static double		time3 = 0;
@@ -978,12 +934,7 @@ void _Host_Frame (float time)
 	double			lagdebug_after_screen, lagdebug_after_audio;
 	static double		last_client_frame_log;
 	static double		last_host_gap_log;
-	static double		net_accum;
-	static double		net_last_interval;
-	static qboolean		net_last_isolated;
 	qboolean		net_frame_due;
-	qboolean		net_isolated;
-	double			net_interval;
 	double			saved_host_frametime;
 	double			host_gap_threshold;
 	const char		*host_gap_map;
@@ -994,17 +945,7 @@ void _Host_Frame (float time)
 // keep the random time dependent
 	rand ();
 
-	net_interval = Host_EffectiveNetInterval ();
-	net_isolated = Host_ShouldIsolateNetworkFrame (net_interval);
-	if (!net_isolated)
-		net_interval = 0;
-	if (net_isolated != net_last_isolated || net_interval != net_last_interval)
-		net_accum = 0;
-	net_last_isolated = net_isolated;
-	net_last_interval = net_interval;
-	host_netinterval = (float)net_interval;
-	if (net_interval > 0)
-		net_accum += CLAMP (0, time, 0.2);
+	accumtime += host_netinterval ? CLAMP (0, time, 0.2) : 0;
 
 // decide the simulation time
 	if (!Host_FilterTime (time))
@@ -1069,13 +1010,24 @@ void _Host_Frame (float time)
 		vid.recalc_refdef = true;
 	}
 
+	net_frame_due = false;
 	saved_host_frametime = host_frametime;
-	net_frame_due = Host_BeginNetworkFrame (&net_accum, net_interval,
-		&saved_host_frametime);
-
-// if running the server locally, make intentions now
-	if (sv.active && net_frame_due)
+	if (accumtime >= host_netinterval)
+	{
+		net_frame_due = true;
+		if (host_netinterval)
+		{
+			host_frametime = q_max (accumtime, host_netinterval);
+			accumtime -= host_frametime;
+			if (host_timescale.value > 0)
+				host_frametime *= host_timescale.value;
+			else if (host_framerate.value > 0)
+				host_frametime = host_framerate.value;
+		}
+		else
+			accumtime -= host_netinterval;
 		CL_SendCmd ();
+	}
 	if (lagdebug_frame)
 		lagdebug_after_send = Sys_DoubleTime ();
 
@@ -1103,11 +1055,7 @@ void _Host_Frame (float time)
 //
 //-------------------
 
-// if running the server remotely, send intentions now. The same accumulator also paces
-// listen-server multiplayer above, matching QSS-M's renderer/network split.
-	if (!sv.active && net_frame_due)
-		CL_SendCmd ();
-	if (net_frame_due && net_interval > 0)
+	if (net_frame_due && host_netinterval)
 		host_frametime = saved_host_frametime;
 	if (lagdebug_frame)
 		lagdebug_after_remote_send = Sys_DoubleTime ();

@@ -134,7 +134,6 @@ For co-op servers, the intended baseline is:
 coop 1
 deathmatch 0
 sv_protocol 999
-sv_maxpacketsize 1400
 sv_coop_predictmove 0
 sv_nqplayerphysics 1
 sv_coop_noplayerclip 1
@@ -334,7 +333,7 @@ QuakeSpasm cvar.
 | `sv_gameplayfix_elevators` | `2` | Gameplay | Elevator/pusher step recovery; `0` off, `1` clients, `2` all entities. |
 | `sv_gameplayfix_random` | `1` | QC | Avoids exact `0`/`1` returns from QuakeC `random()`. |
 | `sv_inputtimeout` | `0` | Networking | Optional stale movement-input timeout; disabled by default for QSS-M-style held input. |
-| `sv_maxpacketsize` | `1400` | Networking | Server datagram size cap. |
+| `sv_maxpacketsize` | `1400` | Networking | Retired compatibility cvar; remote unreliable packets use per-client QSS-M-style limits capped to `DATAGRAM_MTU`. |
 | `sv_move_timeclamp` | `1` | Networking | Clamps excessive movement command time. |
 | `sv_netdiag_interval` | `5` | Diagnostics | Periodic network diagnostic interval in seconds. |
 | `sv_netsort` | `1` | Networking | Sorts entity updates by priority before packet clipping. |

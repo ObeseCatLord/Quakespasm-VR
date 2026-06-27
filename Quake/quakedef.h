@@ -85,9 +85,8 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #define	MAX_DATAGRAM	64000		// max length of unreliable message //johnfitz -- was 1024
 
 #define DATAGRAM_MTU 1400
-		// Default UDP payload target. sv_maxpacketsize controls active
-		// nonlocal server packets and now also feeds the reliable-channel
-		// fragment MSS for each qsocket.
+		// Default remote UDP payload target. Server send limits are tracked
+		// per client; sv_maxpacketsize is retained only for old configs.
 
 //
 // per-level limits

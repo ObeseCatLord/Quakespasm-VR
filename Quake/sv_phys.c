@@ -3169,10 +3169,14 @@ SV_Physics
 
 ================
 */
-void SV_Physics(void) {
+void SV_Physics(double frametime) {
   int i;
   int entity_cap; // For sv_freezenonclients
   edict_t *ent;
+
+  if (frametime < 0)
+    frametime = 0;
+  pr_global_struct->frametime = frametime;
 
   // let the progs know that a new frame has started
   pr_global_struct->self = EDICT_TO_PROG(qcvm->edicts);
@@ -3240,5 +3244,5 @@ void SV_Physics(void) {
     pr_global_struct->force_retouch--;
 
   if (!sv_freezenonclients.value)
-    qcvm->time += host_frametime;
+    qcvm->time += frametime;
 }
