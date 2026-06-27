@@ -157,7 +157,7 @@ sv_maxvelocity 2000
 
 The tracked deploy scripts install this baseline as
 `id1/codex_coop_server.cfg` and generate per-mod `start_*_server.sh`
-wrappers that execute it before loading a map.
+wrappers that execute `quakespasm-openvr.bin` with it before loading a map.
 
 Use `-novr` for desktop clients and `-vr` for headset clients. The protocol uses
 QSS-M-style move ACKs; server PMove/trusted movement is off by default,
@@ -165,8 +165,10 @@ including mods that supply `SV_RunClientCommand`; set
 `sv_nqplayerphysics 0` only when intentionally testing server PMove.
 Startup runs `host_migrate_network_defaults` after configs to repair stale
 archived values such as `host_maxfps 72`, nonzero
-`host_framerate`/`host_timescale` overrides, oversized `sv_maxpacketsize`,
-`sv_nqplayerphysics 0`, `sv_inputtimeout 0.5`, and capped replacement bursts.
+`host_framerate`/`host_timescale` overrides, non-default
+`sys_ticrate`/`sv_maxpacketsize`, stale PMove/trusted-movement settings,
+nonzero `sv_inputtimeout`, `net_lagdebug`, non-vanilla gravity, and capped
+replacement bursts.
 Deploy also scrubs retired client-side smoothing/extrapolation cvars from
 existing configs; explicit `+cvar value` launch arguments are preserved.
 

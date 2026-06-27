@@ -63,9 +63,9 @@ write_server_script() {
 		printf '\n'
 		printf '%s\n' '# Shared co-op/net settings live in id1/codex_coop_server.cfg.'
 		if [ -n "$game" ]; then
-			printf 'exec ./quakespasm-openvr -dedicated 16 -condebug -game %s \\\n' "$game"
+			printf 'exec ./quakespasm-openvr.bin -dedicated 16 -condebug -game %s \\\n' "$game"
 		else
-			printf '%s\n' 'exec ./quakespasm-openvr -dedicated 16 -condebug \'
+			printf '%s\n' 'exec ./quakespasm-openvr.bin -dedicated 16 -condebug \'
 		fi
 		printf '%s\n' '    +exec codex_coop_server.cfg \'
 		if [ -n "$extra_exec" ]; then
@@ -99,7 +99,7 @@ rewrite_stale_network_defaults() {
 	{
 		name = $1
 		value = unquote($2)
-			if (name == "cl_portpingprobe_enable" && value == "1") {
+			if (name == "cl_portpingprobe_enable" && (value + 0) != 0) {
 				rewritten(name, "0")
 				next
 			}
@@ -131,24 +131,36 @@ rewrite_stale_network_defaults() {
 			rewritten(name, "0")
 			next
 		}
-		if (name == "sv_maxpacketsize" && ((value + 0) <= 0 || (value + 0) > 1400)) {
+		if (name == "sys_ticrate" && (value + 0) != 0.05) {
+			rewritten(name, "0.05")
+			next
+		}
+		if (name == "sv_maxpacketsize" && (value + 0) != 1400) {
 			rewritten(name, "1400")
 			next
 		}
-		if (name == "sv_nqplayerphysics" && value == "0") {
+		if (name == "sv_nqplayerphysics" && (value + 0) != 1) {
 			rewritten(name, "1")
 			next
 		}
-		if (name == "sv_trustedmovement" && value == "1") {
+		if (name == "sv_trustedmovement" && (value + 0) != 0) {
 			rewritten(name, "0")
 			next
 		}
-		if (name == "sv_inputtimeout" && value == "0.5") {
+		if (name == "sv_inputtimeout" && (value + 0) != 0) {
 			rewritten(name, "0")
 			next
 		}
-		if (name == "sv_replacement_maxpackets" && value == "8") {
+		if (name == "sv_replacement_maxpackets" && (value + 0) != 0) {
 			rewritten(name, "0")
+			next
+		}
+		if (name == "net_lagdebug" && (value + 0) != 0) {
+			rewritten(name, "0")
+			next
+		}
+		if (name == "sv_gravity" && (value + 0) != 800) {
+			rewritten(name, "800")
 			next
 		}
 		print
