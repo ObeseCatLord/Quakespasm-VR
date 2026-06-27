@@ -930,6 +930,15 @@ void CL_RelinkEntities (void)
 			continue;
 		}
 
+	// if the object wasn't included in the last packet, remove it
+		if (ent->msgtime != cl.mtime[0])
+		{
+			ent->model = NULL;
+			ent->lerpflags |= LERP_RESETMOVE | LERP_RESETANIM;
+			InvalidateTraceLineCache ();
+			continue;
+		}
+
 		if (ent->forcelink)
 		{	// the entity was not updated in the last message
 			// so move to the final spot
