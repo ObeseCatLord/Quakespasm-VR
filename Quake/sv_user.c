@@ -92,16 +92,21 @@ static void SV_SetExtendedButtons(edict_t *ent, int buttons) {
     val->_float = (buttons & (1 << 7)) >> 7;
 }
 
+static void SV_ClearClientPMoveState(client_t *client) {
+  client->cmd.seconds = 0;
+  client->lastmovetime = 0;
+  client->pendingmovemessage = -1;
+  client->move_pending = false;
+}
+
 void SV_ResetClientMoveState(client_t *client) {
   Q_memset(&client->cmd, 0, sizeof(client->cmd));
   VectorCopy(vec3_origin, client->wishdir);
   client->last_move_time = 0;
-  client->lastmovetime = 0;
   client->input_stale = false;
   client->moveext = false;
   client->lastmovemessage = 0;
-  client->pendingmovemessage = -1;
-  client->move_pending = false;
+  SV_ClearClientPMoveState(client);
 
   client->net_move_packets_received = 0;
   client->net_move_cmds_received = 0;
@@ -712,8 +717,7 @@ static void SV_AcceptLatestUsercmd(client_t *client,
   client->last_move_time = realtime;
   client->input_stale = false;
   client->lastmovemessage = latestcmd.sequence;
-  client->pendingmovemessage = -1;
-  client->move_pending = false;
+  SV_ClearClientPMoveState(client);
 
   has_input = latestcmd.forwardmove || latestcmd.sidemove || latestcmd.upmove ||
               latestcmd.buttons || latestcmd.impulse ||
@@ -737,9 +741,7 @@ void SV_FinishPMoveUsercmd(client_t *client) {
   client->net_move_cmds_simulated++;
   client->net_move_last_sim_seconds = client->cmd.seconds;
   client->lastmovemessage = client->cmd.sequence;
-  client->pendingmovemessage = -1;
-  client->move_pending = false;
-  client->cmd.seconds = 0;
+  SV_ClearClientPMoveState(client);
 }
 
 void SV_ReadClientMove(usercmd_t *move) {
@@ -830,10 +832,7 @@ static void SV_ClearStaleClientInput(client_t *client) {
   client->cmd.forwardmove = 0;
   client->cmd.sidemove = 0;
   client->cmd.upmove = 0;
-  client->cmd.seconds = 0;
-  client->lastmovetime = 0;
-  client->pendingmovemessage = -1;
-  client->move_pending = false;
+  SV_ClearClientPMoveState(client);
   client->edict->v.button0 = 0;
   client->edict->v.button2 = 0;
   SV_SetExtendedButtons(client->edict, 0);
@@ -1077,12 +1076,16 @@ static void SV_UpdateClientPMoveMode(client_t *client) {
       (qcvm->extfuncs.SV_RunClientCommand ||
        *sv_nqplayerphysics.string || deathmatch.value);
 
-  if (usingpmove != client->usingpmove && net_lagdebug.value)
-    Con_Printf("net_lagdebug: server PMove %s for %s mode=%s sv_runclientcommand=%d\n",
-               usingpmove ? "enabled" : "disabled",
-               client->name,
-               local_singleplayer ? "local-singleplayer" : "latest-client",
-               qcvm->extfuncs.SV_RunClientCommand ? 1 : 0);
+  if (usingpmove != client->usingpmove) {
+    if (!usingpmove)
+      SV_ClearClientPMoveState(client);
+    if (net_lagdebug.value)
+      Con_Printf("net_lagdebug: server PMove %s for %s mode=%s sv_runclientcommand=%d\n",
+                 usingpmove ? "enabled" : "disabled",
+                 client->name,
+                 local_singleplayer ? "local-singleplayer" : "latest-client",
+                 qcvm->extfuncs.SV_RunClientCommand ? 1 : 0);
+  }
   client->usingpmove = usingpmove;
 }
 
@@ -1129,9 +1132,7 @@ void SV_RunClients(void) {
       // clear client movement until a new packet is received
       memset(&host_client->cmd, 0, sizeof(host_client->cmd));
       host_client->input_stale = false;
-      host_client->lastmovetime = 0;
-      host_client->pendingmovemessage = -1;
-      host_client->move_pending = false;
+      SV_ClearClientPMoveState(host_client);
       continue;
     }
 

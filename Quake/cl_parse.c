@@ -1409,8 +1409,14 @@ static int CL_ExpandMoveAck16 (int ack16)
 static qboolean CL_UpdateMoveAck (int ack)
 {
 	if (ack < cl.ackedmovemessages)
+	{
 		cl.net_move_stale_acks++;
-	else if (ack > cl.ackedmovemessages)
+		return false;
+	}
+	if (ack == cl.ackedmovemessages)
+		return true;
+
+	if (ack > cl.ackedmovemessages)
 		cl.net_move_acks++;
 
 	cl.ackedmovemessages = ack;
