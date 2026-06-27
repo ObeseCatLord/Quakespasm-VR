@@ -148,13 +148,15 @@ struct pr_extfields_s
 	QCEXTFIELD(alpha,					".float")				/*float*/	\
 	QCEXTFIELD(scale,					".float")				/*float*/	\
 	QCEXTFIELD(colormod,				".vector")			/*vector*/	\
+	QCEXTFIELD(tag_entity,				".entity")			/*entity*/	\
+	QCEXTFIELD(tag_index,				".float")			/*float*/	\
 	/*end of list*/
-	#define QCEXTFIELDS_GAME	\
-		/*stuff used by csqc+ssqc, but not menu*/	\
-		QCEXTFIELD(entnum,					".float")				/*server entity number for CSQC entity networking*/	\
-		QCEXTFIELD(customphysics,			".void()")/*function*/	\
-		QCEXTFIELD(gravity,					".float")			/*float*/	\
-		QCEXTFIELD(pmove_flags,				".float")			/*float*/	\
+#define QCEXTFIELDS_GAME	\
+	/*stuff used by csqc+ssqc, but not menu*/	\
+	QCEXTFIELD(entnum,					".float")				/*server entity number for CSQC entity networking*/	\
+	QCEXTFIELD(customphysics,			".void()")/*function*/	\
+	QCEXTFIELD(gravity,					".float")			/*float*/	\
+	QCEXTFIELD(pmove_flags,				".float")			/*float*/	\
 	//end of list
 #define QCEXTFIELDS_SS	\
 	/*ssqc-only*/	\
@@ -162,6 +164,9 @@ struct pr_extfields_s
 	QCEXTFIELD(movement,				".vector")			/*vector*/	\
 	QCEXTFIELD(viewmodelforclient,		".entity")	/*entity*/	\
 	QCEXTFIELD(exteriormodeltoclient,	".entity")	/*entity*/	\
+	QCEXTFIELD(nodrawtoclient,			".entity")				\
+	QCEXTFIELD(drawonlytoclient,			".entity")				\
+	QCEXTFIELD(customizeentityforclient,	".float()")				\
 	QCEXTFIELD(traileffectnum,			".float")		/*float*/	\
 	QCEXTFIELD(emiteffectnum,			".float")		/*float*/	\
 	QCEXTFIELD(button3,					".float")			/*float*/	\
@@ -174,6 +179,7 @@ struct pr_extfields_s
 	QCEXTFIELD(viewzoom,				".float")			/*float*/	\
 	QCEXTFIELD(SendEntity,				".float(entity to, float changedflags)")			/*function*/	\
 	QCEXTFIELD(SendFlags,				".float")			/*float. :( */	\
+	QCEXTFIELD(pvsflags,				".float")			/*float*/	\
 	//end of list
 
 #define QCEXTFIELD(n,t) int n;

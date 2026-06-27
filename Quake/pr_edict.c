@@ -1359,6 +1359,7 @@ static void PR_MergeEngineFieldDefs (void)
 		{"alpha",			ev_float},	//just because we can (though its already handled in a weird hacky way)
 		{"scale",			ev_float},	//hurrah for being able to rescale entities.
 		{"emiteffectnum",	ev_float},	//constantly emitting particles, even without moving.
+		{"pvsflags",		ev_float},	//extra controls to enable/disable pvs checks on ents.
 		{"traileffectnum",	ev_float},	//custom effect for trails
 		//{"glow_size",		ev_float},	//deprecated particle trail rubbish
 		//{"glow_color",	ev_float},	//deprecated particle trail rubbish
