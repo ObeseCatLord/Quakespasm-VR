@@ -410,6 +410,17 @@ sv_triggerdebug 1
 `net_lagdebug` and related diagnostics should be treated as log tools, not as
 normal player-facing output.
 
+For a repeatable server-side stress check against the heavy `vr/codex_intense`
+save, run:
+
+```sh
+tools/net_stress_smoke
+```
+
+The smoke starts a local dedicated server on port `26010` by default, loads the
+save from the straight install, prints key networking defaults, and fails on
+startup errors or packet overflow diagnostics.
+
 ## Compatibility Caveats
 
 - Full DarkPlaces/FTE CSQC is not implemented. This fork implements the subset
