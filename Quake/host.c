@@ -973,9 +973,10 @@ void Host_ShutdownServer(qboolean crash)
 	do
 	{
 		count = 0;
+		NET_GetServerMessages(NULL);	// process ACKs on shared server sockets before checking canSend
 		for (i=0, host_client = svs.clients ; i<svs.maxclients ; i++, host_client++)
 		{
-			if (host_client->active && host_client->message.cursize)
+			if (host_client->active && host_client->message.cursize && host_client->netconnection)
 			{
 				if (NET_CanSendMessage (host_client->netconnection))
 				{
@@ -983,10 +984,7 @@ void Host_ShutdownServer(qboolean crash)
 					SZ_Clear (&host_client->message);
 				}
 				else
-				{
-					NET_GetMessage(host_client->netconnection);
 					count++;
-				}
 			}
 		}
 		if ((Sys_DoubleTime() - start) > 3.0)
