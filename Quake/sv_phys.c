@@ -52,12 +52,16 @@ cvar_t sv_gravity = {"sv_gravity", "800", CVAR_NOTIFY | CVAR_SERVERINFO};
 cvar_t sv_maxvelocity = {"sv_maxvelocity", "2000", CVAR_NONE};
 cvar_t sv_nostep = {"sv_nostep", "0", CVAR_NONE};
 cvar_t sv_freezenonclients = {"sv_freezenonclients", "0", CVAR_NONE};
+cvar_t sv_gameplayfix_spawnbeforethinks = {
+    "sv_gameplayfix_spawnbeforethinks", "0", CVAR_NONE};
 extern cvar_t sv_pmove_legacy_preserve_qc_velocity;
 
 #define MOVE_EPSILON 0.01
 #define SV_VANILLA_JUMP_VELOCITY 270.0f
 
 void SV_Physics_Toss(edict_t *ent);
+trace_t SV_ClipMoveToEntity(edict_t *ent, vec3_t start, vec3_t mins,
+                            vec3_t maxs, vec3_t end);
 
 /*
 ================
@@ -1478,7 +1482,7 @@ qboolean SV_RunThink(edict_t *ent) {
   float thinktime;
 
   thinktime = ent->v.nextthink;
-  if (thinktime <= 0 || thinktime > qcvm->time + host_frametime)
+  if (thinktime <= 0 || thinktime > qcvm->time + qcvm->frametime)
     return true;
 
   if (thinktime < qcvm->time)
@@ -1762,7 +1766,7 @@ void SV_AddGravity(edict_t *ent) {
   else
     ent_gravity = 1.0;
 
-  ent->v.velocity[2] -= ent_gravity * sv_gravity.value * host_frametime;
+  ent->v.velocity[2] -= ent_gravity * sv_gravity.value * qcvm->frametime;
 }
 
 /*
@@ -1823,6 +1827,7 @@ void SV_PushMove(edict_t *pusher, float movetime) {
   edict_t **moved_edict; // johnfitz -- dynamically allocate
   vec3_t *moved_from;    // johnfitz -- dynamically allocate
   int mark;              // johnfitz
+  float solid_backup;
 
   if (!pusher->v.velocity[0] && !pusher->v.velocity[1] &&
       !pusher->v.velocity[2]) {
@@ -1871,8 +1876,15 @@ void SV_PushMove(edict_t *pusher, float movetime) {
         continue;
 
       // see if the ent's bbox is inside the pusher's final position
-      if (!SV_TestEntityPosition(check))
-        continue;
+      if (pusher->v.skin < 0) {
+        if (!SV_ClipMoveToEntity(pusher, check->v.origin, check->v.mins,
+                                 check->v.maxs, check->v.origin)
+                 .startsolid)
+          continue;
+      } else {
+        if (!SV_TestEntityPosition(check))
+          continue;
+      }
 
       riding = false;
     } else
@@ -1880,20 +1892,33 @@ void SV_PushMove(edict_t *pusher, float movetime) {
 
     // remove the onground flag for non-players
     if (check->v.movetype != MOVETYPE_WALK)
-      check->v.flags = (int)check->v.flags & ~FL_ONGROUND;
+      if (!pr_checkextension.value ||
+          PROG_TO_EDICT(check->v.groundentity) != pusher)
+        check->v.flags = (int)check->v.flags & ~FL_ONGROUND;
 
     VectorCopy(check->v.origin, entorig);
     VectorCopy(check->v.origin, moved_from[num_moved]);
     moved_edict[num_moved] = check;
     num_moved++;
 
-    // try moving the contacted entity
-    pusher->v.solid = SOLID_NOT;
-    SV_PushEntity(check, move);
-    pusher->v.solid = SOLID_BSP;
+    solid_backup = pusher->v.solid;
+    if (solid_backup == SOLID_BSP || solid_backup == SOLID_BBOX ||
+        solid_backup == SOLID_SLIDEBOX) {
+      // try moving the contacted entity
+      pusher->v.solid = SOLID_NOT;
+      SV_PushEntity(check, move);
 
-    // if it is still inside the pusher, block
-    block = SV_TestEntityPosition(check);
+      // if it is still inside the pusher, block
+      if (pusher->v.skin < 0) {
+        block = SV_TestEntityPosition(check);
+        pusher->v.solid = solid_backup;
+      } else {
+        pusher->v.solid = solid_backup;
+        block = SV_TestEntityPosition(check);
+      }
+    } else
+      block = NULL;
+
     if (block) { // fail the move
       if (check->v.mins[0] == check->v.maxs[0])
         continue;
@@ -1910,8 +1935,10 @@ void SV_PushMove(edict_t *pusher, float movetime) {
           (sv_gameplayfix_elevators.value >= 2.f ||
            (sv_gameplayfix_elevators.value && e <= svs.maxclients))) {
         check->v.origin[2] += DIST_EPSILON;
-        if (!SV_TestEntityPosition(check))
+        if (!SV_TestEntityPosition(check)) {
+          SV_LinkEdict(check, false);
           continue;
+        }
       }
 
       VectorCopy(entorig, check->v.origin);
@@ -1956,12 +1983,12 @@ void SV_Physics_Pusher(edict_t *ent) {
   oldltime = ent->v.ltime;
 
   thinktime = ent->v.nextthink;
-  if (thinktime < ent->v.ltime + host_frametime) {
+  if (thinktime < ent->v.ltime + qcvm->frametime) {
     movetime = thinktime - ent->v.ltime;
     if (movetime < 0)
       movetime = 0;
   } else
-    movetime = host_frametime;
+    movetime = qcvm->frametime;
 
   if (movetime) {
     SV_PushMove(ent, movetime); // advances ent->v.ltime if not blocked
@@ -2060,6 +2087,15 @@ qboolean SV_CheckWater(edict_t *ent) {
   }
 
   return ent->v.waterlevel > 1;
+}
+
+static qboolean SV_EntityOnLadder(edict_t *ent) {
+  eval_t *val;
+
+  if (!ent)
+    return false;
+  val = GetEdictFieldValue(ent, qcvm->extfields.onladder);
+  return val && val->_float != 0;
 }
 
 /*
@@ -2195,7 +2231,7 @@ void SV_WalkMove(edict_t *ent) {
   VectorCopy(ent->v.origin, oldorg);
   VectorCopy(ent->v.velocity, oldvel);
 
-  clip = SV_FlyMove(ent, host_frametime, &steptrace);
+  clip = SV_FlyMove(ent, qcvm->frametime, &steptrace);
 
   if (!(clip & 2))
     return; // move didn't block on a step
@@ -2223,7 +2259,7 @@ void SV_WalkMove(edict_t *ent) {
   VectorCopy(vec3_origin, upmove);
   VectorCopy(vec3_origin, downmove);
   upmove[2] = STEPSIZE;
-  downmove[2] = -STEPSIZE + oldvel[2] * host_frametime;
+  downmove[2] = -STEPSIZE + oldvel[2] * qcvm->frametime;
 
   // move up
   SV_PushEntity(ent, upmove); // FIXME: don't link?
@@ -2232,7 +2268,7 @@ void SV_WalkMove(edict_t *ent) {
   ent->v.velocity[0] = oldvel[0];
   ent->v.velocity[1] = oldvel[1];
   ent->v.velocity[2] = 0;
-  clip = SV_FlyMove(ent, host_frametime, &steptrace);
+  clip = SV_FlyMove(ent, qcvm->frametime, &steptrace);
 
   // check for stuckness, possibly due to the limited precision of floats
   // in the clipping hulls
@@ -2353,7 +2389,7 @@ static void SV_RestorePusherGroundContact(edict_t *ent, edict_t *ground) {
 
   drop = 4.0f;
   if (ground && ground->v.velocity[2] < 0)
-    drop += -ground->v.velocity[2] * host_frametime;
+    drop += -ground->v.velocity[2] * qcvm->frametime;
 
   VectorCopy(ent->v.origin, end);
   end[2] -= drop;
@@ -2462,7 +2498,7 @@ static void SV_FilterLegacyPMoveQCVelocityDelta(
    */
   if (prethink_health >= 0 && prethink_movetype != MOVETYPE_NOCLIP &&
       prethink_waterlevel >= 2 && !(prethink_flags & FL_WATERJUMP)) {
-    VectorScale(qcbase, -0.8f * prethink_waterlevel * host_frametime,
+    VectorScale(qcbase, -0.8f * prethink_waterlevel * qcvm->frametime,
                 water_delta);
     VectorAdd(qcbase, water_delta, qcbase);
     VectorSubtract(out_delta, water_delta, out_delta);
@@ -2799,9 +2835,12 @@ void SV_Physics_Client(edict_t *ent, int num) {
   float prethink_velocity_z;
   coop_respawn_postthink_state_t coop_respawn_state;
   edict_t *prethink_groundentity;
+  eval_t *val;
 
   if (!svs.clients[num - 1].active)
     return; // unconnected slot
+  if (!svs.clients[num - 1].knowntoqc && sv_gameplayfix_spawnbeforethinks.value)
+    return;
 
   // Exclude the local player: on a listen server / singleplayer, the local
   // player's vr_handpos arrives one frame late through loopback.  Using
@@ -2850,111 +2889,123 @@ void SV_Physics_Client(edict_t *ent, int num) {
   //
   // decide which move function to call
   //
-  // SV_RunThink executes the entity's think function, which for players
-  // includes weapon animation frames (e.g. nailgun's player_nail1/nail2).
-  // These think functions can fire projectiles using self.origin, so we
-  // must set origin to the hand position during SV_RunThink — not just
-  // during PostThink.  We restore the body origin before movement physics
-  // (SV_WalkMove, etc.) which needs the real collision hull position.
-  //
-  {
-    vec3_t thinkRestoreOrigin;
-    SV_ApplyVRWeaponOffset(ent, num, is_remote_vr, thinkRestoreOrigin);
-
-    qboolean think_ok = true;
-    switch ((int)ent->v.movetype) {
-    case MOVETYPE_NONE:
-      think_ok = SV_RunThink(ent);
-      break;
-    case MOVETYPE_WALK:
-      think_ok = SV_RunThink(ent);
-      break;
-    case MOVETYPE_TOSS:
-    case MOVETYPE_BOUNCE:
-    case MOVETYPE_GIB:
-      break; // SV_Physics_Toss handles its own think
-    case MOVETYPE_FLY:
-      think_ok = SV_RunThink(ent);
-      break;
-    case MOVETYPE_NOCLIP:
-      think_ok = SV_RunThink(ent);
-      break;
-    default:
-      Sys_Error("SV_Physics_client: bad movetype %i", (int)ent->v.movetype);
-    }
-
-    SV_RestoreVRWeaponOffset(ent, num, is_remote_vr, thinkRestoreOrigin);
-
-    if (!think_ok) {
+  if ((val = GetEdictFieldValue(ent, qcvm->extfields.customphysics)) &&
+      val->function) {
+    pr_global_struct->time = qcvm->time;
+    pr_global_struct->self = EDICT_TO_PROG(ent);
+    PR_ExecuteProgram(val->function);
+    if (ent->free) {
       SV_CoopRespawnRestoreSuppressedInput(ent, num, &coop_respawn_state);
       return;
     }
   }
+  else {
+    // SV_RunThink executes the entity's think function, which for players
+    // includes weapon animation frames (e.g. nailgun's player_nail1/nail2).
+    // These think functions can fire projectiles using self.origin, so we
+    // must set origin to the hand position during SV_RunThink -- not just
+    // during PostThink.  We restore the body origin before movement physics
+    // (SV_WalkMove, etc.) which needs the real collision hull position.
+    {
+      vec3_t thinkRestoreOrigin;
+      SV_ApplyVRWeaponOffset(ent, num, is_remote_vr, thinkRestoreOrigin);
 
-  // Movement physics — uses body origin for collision detection
-  switch ((int)ent->v.movetype) {
-  case MOVETYPE_NONE:
-    break;
+      qboolean think_ok = true;
+      switch ((int)ent->v.movetype) {
+      case MOVETYPE_NONE:
+        think_ok = SV_RunThink(ent);
+        break;
+      case MOVETYPE_WALK:
+        think_ok = SV_RunThink(ent);
+        break;
+      case MOVETYPE_TOSS:
+      case MOVETYPE_BOUNCE:
+      case MOVETYPE_GIB:
+        break; // SV_Physics_Toss handles its own think
+      case MOVETYPE_FLY:
+        think_ok = SV_RunThink(ent);
+        break;
+      case MOVETYPE_NOCLIP:
+        think_ok = SV_RunThink(ent);
+        break;
+      default:
+        Sys_Error("SV_Physics_client: bad movetype %i", (int)ent->v.movetype);
+      }
 
-  case MOVETYPE_WALK:
-    if (!SV_CheckWater(ent) && !((int)ent->v.flags & FL_WATERJUMP))
-      SV_AddGravity(ent);
-    SV_CheckStuck(ent);
-    SV_WalkMove(ent);
-    break;
+      SV_RestoreVRWeaponOffset(ent, num, is_remote_vr, thinkRestoreOrigin);
 
-  case MOVETYPE_TOSS:
-  case MOVETYPE_BOUNCE:
-  case MOVETYPE_GIB:
-    SV_Physics_Toss(ent);
-    break;
+      if (!think_ok) {
+        SV_CoopRespawnRestoreSuppressedInput(ent, num, &coop_respawn_state);
+        return;
+      }
+    }
 
-  case MOVETYPE_FLY:
-    SV_FlyMove(ent, host_frametime, NULL);
-    break;
-
-  case MOVETYPE_NOCLIP:
-    VectorMA(ent->v.origin, host_frametime, ent->v.velocity, ent->v.origin);
-    break;
-
-  default:
-    break;
-  }
-
-  if (num == cl.viewentity && vr_enabled.value &&
-      VectorLength(vr_room_scale_move) > 0.0625f) {
-    vec3_t restoreVel;
-    _VectorCopy(ent->v.velocity, restoreVel);
-    VectorScale(vr_room_scale_move, 1.0f / host_frametime, ent->v.velocity);
-
+    // Movement physics -- uses body origin for collision detection
     switch ((int)ent->v.movetype) {
     case MOVETYPE_NONE:
       break;
 
     case MOVETYPE_WALK:
-      ent->v.velocity[2] = -1.0f;
+      if (!SV_CheckWater(ent) && !((int)ent->v.flags & FL_WATERJUMP) &&
+          !SV_EntityOnLadder(ent))
+        SV_AddGravity(ent);
       SV_CheckStuck(ent);
       SV_WalkMove(ent);
-
       break;
 
     case MOVETYPE_TOSS:
     case MOVETYPE_BOUNCE:
+    case MOVETYPE_GIB:
+      SV_Physics_Toss(ent);
       break;
 
     case MOVETYPE_FLY:
-      SV_FlyMove(ent, host_frametime, NULL);
+      SV_FlyMove(ent, qcvm->frametime, NULL);
       break;
 
     case MOVETYPE_NOCLIP:
-      VectorMA(ent->v.origin, host_frametime, ent->v.velocity, ent->v.origin);
+      VectorMA(ent->v.origin, qcvm->frametime, ent->v.velocity, ent->v.origin);
       break;
 
     default:
-      Sys_Error("SV_Physics_client: bad movetype %i", (int)ent->v.movetype);
+      break;
     }
 
-    _VectorCopy(restoreVel, ent->v.velocity);
+    if (num == cl.viewentity && vr_enabled.value && qcvm->frametime > 0 &&
+        VectorLength(vr_room_scale_move) > 0.0625f) {
+      vec3_t restoreVel;
+      _VectorCopy(ent->v.velocity, restoreVel);
+      VectorScale(vr_room_scale_move, 1.0f / qcvm->frametime, ent->v.velocity);
+
+      switch ((int)ent->v.movetype) {
+      case MOVETYPE_NONE:
+        break;
+
+      case MOVETYPE_WALK:
+        ent->v.velocity[2] = -1.0f;
+        SV_CheckStuck(ent);
+        SV_WalkMove(ent);
+
+        break;
+
+      case MOVETYPE_TOSS:
+      case MOVETYPE_BOUNCE:
+        break;
+
+      case MOVETYPE_FLY:
+        SV_FlyMove(ent, qcvm->frametime, NULL);
+        break;
+
+      case MOVETYPE_NOCLIP:
+        VectorMA(ent->v.origin, qcvm->frametime, ent->v.velocity, ent->v.origin);
+        break;
+
+      default:
+        Sys_Error("SV_Physics_client: bad movetype %i", (int)ent->v.movetype);
+      }
+
+      _VectorCopy(restoreVel, ent->v.velocity);
+    }
   }
 
   SV_RestorePusherGroundContact(ent, prethink_groundentity);
@@ -3010,8 +3061,8 @@ void SV_Physics_Noclip(edict_t *ent) {
   if (!SV_RunThink(ent))
     return;
 
-  VectorMA(ent->v.angles, host_frametime, ent->v.avelocity, ent->v.angles);
-  VectorMA(ent->v.origin, host_frametime, ent->v.velocity, ent->v.origin);
+  VectorMA(ent->v.angles, qcvm->frametime, ent->v.avelocity, ent->v.angles);
+  VectorMA(ent->v.origin, qcvm->frametime, ent->v.velocity, ent->v.origin);
 
   SV_LinkEdict(ent, false);
 }
@@ -3083,10 +3134,10 @@ void SV_Physics_Toss(edict_t *ent) {
     SV_AddGravity(ent);
 
   // move angles
-  VectorMA(ent->v.angles, host_frametime, ent->v.avelocity, ent->v.angles);
+  VectorMA(ent->v.angles, qcvm->frametime, ent->v.avelocity, ent->v.angles);
 
   // move origin
-  VectorScale(ent->v.velocity, host_frametime, move);
+  VectorScale(ent->v.velocity, qcvm->frametime, move);
   trace = SV_PushEntity(ent, move);
   if (trace.fraction == 1)
     return;
@@ -3145,7 +3196,7 @@ void SV_Physics_Step(edict_t *ent) {
 
     SV_AddGravity(ent);
     SV_CheckVelocity(ent);
-    SV_FlyMove(ent, host_frametime, NULL);
+    SV_FlyMove(ent, qcvm->frametime, NULL);
     SV_LinkEdict(ent, true);
 
     if ((int)ent->v.flags & FL_ONGROUND) // just hit ground
@@ -3172,17 +3223,42 @@ SV_Physics
 void SV_Physics(double frametime) {
   int i;
   int entity_cap; // For sv_freezenonclients
+  int physics_mode;
   edict_t *ent;
+  eval_t *val;
+
+  if (qcvm->extglobals.physics_mode)
+    physics_mode = *qcvm->extglobals.physics_mode;
+  else
+    physics_mode = (qcvm == &cl.qcvm) ? 0 : 2;
 
   if (frametime < 0)
     frametime = 0;
-  pr_global_struct->frametime = frametime;
+  pr_global_struct->time = qcvm->time;
+  pr_global_struct->frametime = qcvm->frametime = frametime;
+
+  if (!physics_mode) {
+    qcvm->time += frametime;
+    return;
+  }
+  else if (physics_mode == 1) {
+    for (i = 0, ent = qcvm->edicts; i < qcvm->num_edicts;
+         i++, ent = NEXT_EDICT(ent)) {
+      if (ent->free)
+        continue;
+      SV_RunThink(ent);
+    }
+    qcvm->time += frametime;
+    return;
+  }
 
   // let the progs know that a new frame has started
-  pr_global_struct->self = EDICT_TO_PROG(qcvm->edicts);
-  pr_global_struct->other = EDICT_TO_PROG(qcvm->edicts);
-  pr_global_struct->time = qcvm->time;
-  PR_ExecuteProgram(pr_global_struct->StartFrame);
+  if (pr_global_struct->StartFrame) {
+    pr_global_struct->self = EDICT_TO_PROG(qcvm->edicts);
+    pr_global_struct->other = EDICT_TO_PROG(qcvm->edicts);
+    pr_global_struct->time = qcvm->time;
+    PR_ExecuteProgram(pr_global_struct->StartFrame);
+  }
 
   // SV_CheckAllEnts ();
 
@@ -3206,8 +3282,14 @@ void SV_Physics(double frametime) {
       SV_LinkEdict(ent, true); // force retouch even for stationary
     }
 
-    if (i > 0 && i <= svs.maxclients)
+    if (i > 0 && i <= svs.maxclients && qcvm == &sv.qcvm)
       SV_Physics_Client(ent, i);
+    else if ((val = GetEdictFieldValue(ent, qcvm->extfields.customphysics)) &&
+             val->function) {
+      pr_global_struct->time = qcvm->time;
+      pr_global_struct->self = EDICT_TO_PROG(ent);
+      PR_ExecuteProgram(val->function);
+    }
     else if (ent->v.movetype == MOVETYPE_PUSH)
       SV_Physics_Pusher(ent);
     else if (ent->v.movetype == MOVETYPE_NONE)
@@ -3222,6 +3304,14 @@ void SV_Physics(double frametime) {
              ent->v.movetype == MOVETYPE_FLY ||
              ent->v.movetype == MOVETYPE_FLYMISSILE)
       SV_Physics_Toss(ent);
+    else if (ent->v.movetype == MOVETYPE_WALK) {
+      if (SV_RunThink(ent)) {
+        if (!SV_CheckWater(ent) && !((int)ent->v.flags & FL_WATERJUMP))
+          SV_AddGravity(ent);
+        SV_CheckStuck(ent);
+        SV_WalkMove(ent);
+      }
+    }
     else
       Sys_Error("SV_Physics: bad movetype %i", (int)ent->v.movetype);
 

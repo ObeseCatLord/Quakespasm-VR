@@ -99,31 +99,35 @@ rewrite_stale_network_defaults() {
 	{
 		name = $1
 		value = unquote($2)
-			if (name == "cl_portpingprobe_enable" && (value + 0) != 0) {
-				rewritten(name, "0")
-				next
-			}
-			if (name == "cl_netfps" ||
-			    name == "cl_extrapolate" ||
-			    name == "cl_extrapolate_adaptive" ||
-			    name == "cl_extrapolate_adaptive_max" ||
-			    name == "cl_extrapolate_adaptive_time" ||
-			    name == "cl_net_lerpbuffer" ||
-			    name == "cl_net_lerpbuffer_adaptive" ||
-			    name == "cl_net_lerpbuffer_adaptive_max" ||
-			    name == "cl_net_lerpbuffer_adaptive_time" ||
-			    name == "cl_predict_smooth" ||
-			    name == "cl_predict_smooth_time" ||
-			    name == "cl_predict_smooth_min" ||
-			    name == "cl_predict_smooth_max") {
-				changed = 1
-				next
-			}
+		if (name == "cl_portpingprobe_enable" && (value + 0) != 0) {
+			rewritten(name, "0")
+			next
+		}
+		if (name == "cl_netfps" ||
+		    name == "cl_extrapolate" ||
+		    name == "cl_extrapolate_adaptive" ||
+		    name == "cl_extrapolate_adaptive_max" ||
+		    name == "cl_extrapolate_adaptive_time" ||
+		    name == "cl_net_lerpbuffer" ||
+		    name == "cl_net_lerpbuffer_adaptive" ||
+		    name == "cl_net_lerpbuffer_adaptive_max" ||
+		    name == "cl_net_lerpbuffer_adaptive_time" ||
+		    name == "cl_predict_smooth" ||
+		    name == "cl_predict_smooth_time" ||
+		    name == "cl_predict_smooth_min" ||
+		    name == "cl_predict_smooth_max") {
+			changed = 1
+			next
+		}
 		if (name == "cl_predictmove" && (value + 0) != 1) {
 			rewritten(name, "1")
 			next
 		}
-		if (name == "host_maxfps" && value == "72") {
+		if (name == "cl_nopred" && (value + 0) != 0) {
+			rewritten(name, "0")
+			next
+		}
+		if (name == "host_maxfps" && (value + 0) == 72) {
 			rewritten(name, "250")
 			next
 		}
@@ -155,6 +159,18 @@ rewrite_stale_network_defaults() {
 			rewritten(name, "0")
 			next
 		}
+		if (name == "sv_predict_nqmovement" && (value + 0) != 0) {
+			rewritten(name, "0")
+			next
+		}
+		if (name == "sv_pmove_legacy_preserve_qc_velocity" && (value + 0) != 1) {
+			rewritten(name, "1")
+			next
+		}
+		if (name == "sv_gameplayfix_spawnbeforethinks" && (value + 0) != 0) {
+			rewritten(name, "0")
+			next
+		}
 		if (name == "sv_inputtimeout" && (value + 0) != 0) {
 			rewritten(name, "0")
 			next
@@ -165,6 +181,10 @@ rewrite_stale_network_defaults() {
 		}
 		if (name == "net_lagdebug" && (value + 0) != 0) {
 			rewritten(name, "0")
+			next
+		}
+		if (name == "net_sameip_stale_timeout" && (value + 0) != 3.0) {
+			rewritten(name, "3.0")
 			next
 		}
 		if (name == "sv_gravity" && (value + 0) != 800) {

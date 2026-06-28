@@ -109,13 +109,18 @@ static void CL_MigrateNetworkDefaults_f (void)
 		Cvar_SetQuick (&cl_net_lerpbuffer_adaptive, "0");
 	if (cl_predict_smooth.value != 0)
 		Cvar_SetQuick (&cl_predict_smooth, "0");
-	if (CL_ValueMatchesOldDefault (cl_netfps.value, 72.0f))
+	if (!CL_CommandLineSetsCvar ("cl_netfps") &&
+		!CL_ValueMatchesOldDefault (cl_netfps.value, 0.0f))
 		Cvar_SetQuick (&cl_netfps, "0");
-	if (CL_ValueMatchesOldDefault (host_maxfps.value, 72.0f))
+	if (!CL_CommandLineSetsCvar ("host_maxfps") &&
+		CL_ValueMatchesOldDefault (host_maxfps.value, 72.0f))
 		Cvar_SetQuick (&host_maxfps, "250");
 	if (!CL_CommandLineSetsCvar ("cl_predictmove") &&
 		!CL_ValueMatchesOldDefault (cl_predictmove.value, 1.0f))
 		Cvar_SetQuick (&cl_predictmove, "1");
+	if (!CL_CommandLineSetsCvar ("cl_nopred") &&
+		!CL_ValueMatchesOldDefault (cl_nopred.value, 0.0f))
+		Cvar_SetQuick (&cl_nopred, "0");
 }
 
 cvar_t	cfg_unbindall = {"cfg_unbindall", "1", CVAR_ARCHIVE};

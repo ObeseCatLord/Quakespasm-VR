@@ -865,6 +865,25 @@ SV_ParseClientMessage
 Returns false if the client should be killed
 ===================
 */
+static qboolean SV_ClientCommandIs(const char *s, const char *name) {
+  size_t len;
+
+  while (*s == ' ' || *s == '\t')
+    s++;
+
+  len = strlen(name);
+  return !q_strncasecmp(s, name, len) && (unsigned char)s[len] <= ' ';
+}
+
+static qboolean SV_IsEngineClientCommand(const char *s) {
+  return SV_ClientCommandIs(s, "download") ||
+         SV_ClientCommandIs(s, "sv_startdownload") ||
+         SV_ClientCommandIs(s, "nextdl") ||
+         SV_ClientCommandIs(s, "pings") ||
+         SV_ClientCommandIs(s, "enablecsqc") ||
+         SV_ClientCommandIs(s, "disablecsqc");
+}
+
 static void SV_ReadQCRequest(void) {
   char args[9];
   int i = 0;
@@ -934,8 +953,6 @@ static qboolean SV_ParseClientMessage(void) {
   MSG_BeginReading();
 
   while (1) {
-    int allowed;
-
     if (!host_client->active)
       return false; // a command caused an error
 
@@ -966,9 +983,11 @@ static qboolean SV_ParseClientMessage(void) {
 
     case clc_stringcmd:
       s = MSG_ReadString();
-      if (q_strncasecmp(s, "spawn", 5) && q_strncasecmp(s, "begin", 5) &&
-          q_strncasecmp(s, "prespawn", 8) && q_strncasecmp(s, "enablecsqc", 10) &&
-          q_strncasecmp(s, "disablecsqc", 11) &&
+      if (SV_IsEngineClientCommand(s))
+        Cmd_ExecuteString(s, src_client);
+      else if (!SV_ClientCommandIs(s, "spawn") &&
+          !SV_ClientCommandIs(s, "begin") &&
+          !SV_ClientCommandIs(s, "prespawn") &&
           qcvm->extfuncs.SV_ParseClientCommand) {
         client_t *ohc = host_client;
         G_INT(OFS_PARM0) = PR_SetEngineString(s);
@@ -976,60 +995,9 @@ static qboolean SV_ParseClientMessage(void) {
         pr_global_struct->self = EDICT_TO_PROG(host_client->edict);
         PR_ExecuteProgram(qcvm->extfuncs.SV_ParseClientCommand);
         host_client = ohc;
-        break;
       }
-      allowed = 0;
-      if (q_strncasecmp(s, "status", 6) == 0)
-        allowed = 1;
-      else if (q_strncasecmp(s, "god", 3) == 0)
-        allowed = 1;
-      else if (q_strncasecmp(s, "notarget", 8) == 0)
-        allowed = 1;
-      else if (q_strncasecmp(s, "fly", 3) == 0)
-        allowed = 1;
-      else if (q_strncasecmp(s, "name", 4) == 0)
-        allowed = 1;
-      else if (q_strncasecmp(s, "noclip", 6) == 0)
-        allowed = 1;
-      else if (q_strncasecmp(s, "setpos", 6) == 0)
-        allowed = 1;
-      else if (q_strncasecmp(s, "say", 3) == 0)
-        allowed = 1;
-      else if (q_strncasecmp(s, "say_team", 8) == 0)
-        allowed = 1;
-      else if (q_strncasecmp(s, "tell", 4) == 0)
-        allowed = 1;
-      else if (q_strncasecmp(s, "color", 5) == 0)
-        allowed = 1;
-      else if (q_strncasecmp(s, "kill", 4) == 0)
-        allowed = 1;
-      else if (q_strncasecmp(s, "pause", 5) == 0)
-        allowed = 1;
-      else if (q_strncasecmp(s, "spawn", 5) == 0)
-        allowed = 1;
-      else if (q_strncasecmp(s, "begin", 5) == 0)
-        allowed = 1;
-      else if (q_strncasecmp(s, "prespawn", 8) == 0)
-        allowed = 1;
-      else if (q_strncasecmp(s, "coop_teleport_player", 20) == 0)
-        allowed = 1;
-      else if (q_strncasecmp(s, "enablecsqc", 10) == 0)
-        allowed = 1;
-      else if (q_strncasecmp(s, "disablecsqc", 11) == 0)
-        allowed = 1;
-      else if (q_strncasecmp(s, "kick", 4) == 0)
-        allowed = 1;
-      else if (q_strncasecmp(s, "ping", 4) == 0)
-        allowed = 1;
-      else if (q_strncasecmp(s, "give", 4) == 0)
-        allowed = 1;
-      else if (q_strncasecmp(s, "ban", 3) == 0)
-        allowed = 1;
-
-      if (allowed == 1)
-        Cmd_ExecuteString(s, src_client);
       else
-        Con_DPrintf("%s tried to %s\n", host_client->name, s);
+        Cmd_ExecuteString(s, src_client);
       break;
 
     case clc_disconnect:

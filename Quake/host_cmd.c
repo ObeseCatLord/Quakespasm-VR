@@ -2039,6 +2039,12 @@ DEBUGGING TOOLS
 ===============================================================================
 */
 
+static qboolean Host_IsLocalClientCommand(void) {
+  return cmd_source == src_client && host_client && host_client->netconnection &&
+         Q_strcmp(NET_QSocketGetAddressString(host_client->netconnection),
+                  "LOCAL") == 0;
+}
+
 /*
 ==================
 Host_Give_f
@@ -2051,6 +2057,11 @@ static void Host_Give_f(void) {
 
   if (cmd_source == src_command) {
     Cmd_ForwardToServer();
+    return;
+  }
+
+  if (!Host_IsLocalClientCommand()) {
+    Con_DPrintf("%s tried to give\n", host_client ? host_client->name : "client");
     return;
   }
 
@@ -2755,7 +2766,7 @@ void Host_InitCommands(void) {
   Cmd_AddCommand_ClientCommand("coop_teleport_player", Host_CoopTeleportPlayer_f);
   Cmd_AddCommand_ClientCommand("enablecsqc", Host_EnableCSQC_f);
   Cmd_AddCommand_ClientCommand("disablecsqc", Host_DisableCSQC_f);
-  Cmd_AddCommand_ClientCommand("kick", Host_Kick_f);
+  Cmd_AddCommand("kick", Host_Kick_f);
   Cmd_AddCommand_ClientCommand("ping", Host_Ping_f);
   Cmd_AddCommand("load", Host_Loadgame_f);
   Cmd_AddCommand("save", Host_Savegame_f);

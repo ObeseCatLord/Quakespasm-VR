@@ -402,6 +402,7 @@ void CL_BaseMove(usercmd_t *cmd, qboolean isfinal) {
   float s1, s2;
 
   Q_memset(cmd, 0, sizeof(*cmd));
+  VectorCopy(cl.aimangles, cmd->viewangles);
 
   if (cls.signon != SIGNONS)
     return;
