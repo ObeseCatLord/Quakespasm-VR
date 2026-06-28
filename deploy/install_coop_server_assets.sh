@@ -119,6 +119,10 @@ rewrite_stale_network_defaults() {
 				changed = 1
 				next
 			}
+		if (name == "cl_predictmove" && (value + 0) != 1) {
+			rewritten(name, "1")
+			next
+		}
 		if (name == "host_maxfps" && value == "72") {
 			rewritten(name, "250")
 			next
@@ -137,6 +141,10 @@ rewrite_stale_network_defaults() {
 		}
 		if (name == "sv_maxpacketsize" && (value + 0) != 1400) {
 			rewritten(name, "1400")
+			next
+		}
+		if (name == "sv_netsort" && (value + 0) != 1) {
+			rewritten(name, "1")
 			next
 		}
 		if (name == "sv_nqplayerphysics" && (value + 0) != 1) {

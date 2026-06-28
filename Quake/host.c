@@ -98,6 +98,7 @@ extern cvar_t sv_nqplayerphysics;
 extern cvar_t sv_trustedmovement;
 extern cvar_t sv_replacement_maxpackets;
 extern cvar_t sv_maxpacketsize;
+extern cvar_t sv_netsort;
 
 cvar_t devstats = {"devstats","0",CVAR_NONE}; //johnfitz -- track developer statistics that vary every frame
 
@@ -184,6 +185,9 @@ static void Host_MigrateNetworkDefaults_f (void)
 	if (!Host_CommandLineSetsCvar ("sv_maxpacketsize") &&
 		!Host_ValueMatchesOldDefault (sv_maxpacketsize.value, 1400.0f))
 		Cvar_SetQuick (&sv_maxpacketsize, "1400");
+	if (!Host_CommandLineSetsCvar ("sv_netsort") &&
+		!Host_ValueMatchesOldDefault (sv_netsort.value, 1.0f))
+		Cvar_SetQuick (&sv_netsort, "1");
 	if (!Host_CommandLineSetsCvar ("max_edicts") && max_edicts.value < 15000.0f)
 		Cvar_SetQuick (&max_edicts, "15000");
 	if (!Host_CommandLineSetsCvar ("net_lagdebug") &&
