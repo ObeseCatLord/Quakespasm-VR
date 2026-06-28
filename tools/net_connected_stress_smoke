@@ -6,7 +6,7 @@ BIN="${BIN:-$STRAIGHT_DIR/quakespasm-openvr.bin}"
 GAME="${GAME:-vr}"
 SAVE="${SAVE:-codex_intense}"
 PORT="${PORT:-26011}"
-CLIENTS="${CLIENTS:-1}"
+CLIENTS="${CLIENTS:-2}"
 RUN_SECONDS="${RUN_SECONDS:-12}"
 LOG_DIR="${LOG_DIR:-/tmp/quakespasmvr-net-connected-stress-smoke}"
 CLIENT_WIDTH="${CLIENT_WIDTH:-320}"
@@ -153,6 +153,10 @@ if grep -Eiq 'Host_Error|Sys_Error|packet overflow|SVFTE_SendClientDatagram: pac
 fi
 if grep -Eq 'clipped=[1-9][0-9]*|clipped_ents=[1-9][0-9]*' "$SERVER_LOG"; then
 	fail "server clipped replacement entities during connected stress run"
+fi
+if [ "$CLIENTS" -ge 2 ]; then
+	grep -Eq 'allowing same-IP client on a different port' "$SERVER_LOG" ||
+		fail "server did not exercise same-IP multi-client socket path"
 fi
 
 for i in $(seq 1 "$CLIENTS"); do
