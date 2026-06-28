@@ -130,11 +130,15 @@ struct pr_extglobals_s
 	QCEXTGLOBAL_VECTOR(input_cursor_trace_endpos)\
 	QCEXTGLOBAL_INT(input_cursor_entitynumber)\
 	//end
+#define QCEXTGLOBALS_GAME \
+	QCEXTGLOBALS_INPUTS \
+	QCEXTGLOBAL_FLOAT(physics_mode)\
+	//end
 #define QCEXTGLOBAL_FLOAT(n) float *n;
 #define QCEXTGLOBAL_INT(n) int *n;
 #define QCEXTGLOBAL_VECTOR(n) float *n;
 	QCEXTGLOBALS_CSQC
-	QCEXTGLOBALS_INPUTS
+	QCEXTGLOBALS_GAME
 #undef QCEXTGLOBAL_FLOAT
 #undef QCEXTGLOBAL_INT
 #undef QCEXTGLOBAL_VECTOR
@@ -245,6 +249,7 @@ typedef struct qcvm_s
 	//originally part of the sv_state_t struct
 	//FIXME: put worldmodel in here too.
 	double		time;
+	double		frametime;
 	int			num_edicts;
 	int			reserved_edicts;
 	int			max_edicts;

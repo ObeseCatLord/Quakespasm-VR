@@ -39,6 +39,7 @@ extern cvar_t nomonsters;
 cvar_t sv_maxpacketsize = {"sv_maxpacketsize", "1400", CVAR_NONE};
 cvar_t sv_netdiag_interval = {"sv_netdiag_interval", "5", CVAR_NONE};
 cvar_t sv_replacement_maxpackets = {"sv_replacement_maxpackets", "0", CVAR_NONE};
+cvar_t sv_predict_nqmovement = {"sv_predict_nqmovement", "0", CVAR_NOTIFY | CVAR_SERVERINFO};
 cvar_t sv_nopunchangle = {"sv_nopunchangle", "0", CVAR_NONE};
 // When SV_WriteEntitiesToClient overflows the per-client datagram, the entity
 // that gets evicted is whichever the loop reached last. With sv_netsort=1
@@ -369,6 +370,7 @@ void SV_Init (void)
 	extern	cvar_t	sv_aim;
 	extern	cvar_t	sv_altnoclip; //johnfitz
 	extern	cvar_t	sv_gameplayfix_random;
+	extern	cvar_t	sv_gameplayfix_spawnbeforethinks;
 	extern	cvar_t	sv_gameplayfix_elevators;
 	extern	cvar_t	sv_inputtimeout;
 
@@ -391,12 +393,14 @@ void SV_Init (void)
 	Cvar_RegisterVariable (&sv_freezenonclients);
 	Cvar_RegisterVariable (&pr_checkextension);
 	Cvar_RegisterVariable (&sv_altnoclip); //johnfitz
+	Cvar_RegisterVariable (&sv_gameplayfix_spawnbeforethinks);
 	Cvar_RegisterVariable (&sv_gameplayfix_elevators);
 	Cvar_RegisterVariable (&sv_gameplayfix_random);
 	Cvar_RegisterVariable (&sv_inputtimeout);
 	Cvar_RegisterVariable (&sv_maxpacketsize);
 	Cvar_RegisterVariable (&sv_netdiag_interval);
 	Cvar_RegisterVariable (&sv_replacement_maxpackets);
+	Cvar_RegisterVariable (&sv_predict_nqmovement);
 	Cvar_RegisterVariable (&sv_nopunchangle);
 	Cvar_RegisterVariable (&sv_coop_weapon_targetfix);
 	Cvar_RegisterVariable (&sv_coop_pickup_targetlog);
@@ -1551,7 +1555,13 @@ static void SVFTE_BuildEntityState (client_t *client, edict_t *ent, entity_state
 		state->eflags |= EFLAGS_ONGROUND;
 	if (client && client->edict == ent)
 	{
-		if (client->usingpmove)
+		/*
+		 * Match QSS-M by advertising prediction only when the server is
+		 * actually running PMove/QC input movement. Predicting vanilla NQ
+		 * movement with PMove is an explicit test mode because the physics
+		 * models diverge enough to create visible correction.
+		 */
+		if (client->usingpmove || sv_predict_nqmovement.value)
 		{
 			state->pmovetype = (int)ent->v.movetype & 63;
 			if ((int)ent->v.flags & FL_ONGROUND)
@@ -1964,7 +1974,7 @@ static void SVFTE_WriteEntitiesToClient (client_t *client, sizebuf_t *msg,
 			{
 				if (entbits & UF_RESET2)
 				{
-					logbits = entbits & ~UF_RESET2;
+					logbits = entbits & ~(UF_RESET | UF_RESET2);
 					netbits = UF_RESET |
 						MSGFTE_DeltaCalcBits (&EDICT_NUM(entnum)->baseline, &state->state);
 				}

@@ -54,7 +54,7 @@ static int myDriverLevel;
 cvar_t net_lagdebug = {"net_lagdebug", "0", CVAR_NONE};
 cvar_t net_lagdebug_threshold = {"net_lagdebug_threshold", "0.25", CVAR_NONE};
 cvar_t net_lagdebug_frame_threshold = {"net_lagdebug_frame_threshold", "0.05", CVAR_NONE};
-static cvar_t net_sameip_stale_timeout = {"net_sameip_stale_timeout", "3.0", CVAR_NONE};
+cvar_t net_sameip_stale_timeout = {"net_sameip_stale_timeout", "3.0", CVAR_NONE};
 static cvar_t cl_netport = {"cl_netport", "0", CVAR_ARCHIVE};
 cvar_t cl_portpingprobe_enable = {"cl_portpingprobe_enable", "0", CVAR_ARCHIVE};
 static cvar_t cl_portpingprobe_probes = {"cl_portpingprobe_probes", "6", CVAR_ARCHIVE};
@@ -91,6 +91,7 @@ static unsigned int pendingDatagramOrder;
 typedef struct
 {
 	qboolean	valid;
+	unsigned int	order;
 	int		landriver;
 	sys_socket_t	socket;
 	struct qsockaddr addr;
@@ -100,6 +101,7 @@ typedef struct
 } pending_control_datagram_t;
 
 static pending_control_datagram_t pendingControlDatagrams[MAX_PENDING_CONTROL_DATAGRAMS];
+static unsigned int pendingControlDatagramOrder;
 
 extern qboolean m_return_onerror;
 extern char m_return_reason[32];
@@ -182,6 +184,9 @@ static qboolean Datagram_QueueControlPacket (sys_socket_t socket, struct qsockad
 	}
 
 	pendingControlDatagrams[slot].valid = true;
+	pendingControlDatagrams[slot].order = ++pendingControlDatagramOrder;
+	if (!pendingControlDatagramOrder)
+		pendingControlDatagramOrder = pendingControlDatagrams[slot].order = 1;
 	pendingControlDatagrams[slot].landriver = net_landriverlevel;
 	pendingControlDatagrams[slot].socket = socket;
 	pendingControlDatagrams[slot].addr = *addr;
@@ -194,23 +199,28 @@ static qboolean Datagram_QueueControlPacket (sys_socket_t socket, struct qsockad
 static qboolean Datagram_DequeueControlPacket (sys_socket_t *socket, struct qsockaddr *addr, int *length)
 {
 	int i;
+	int slot;
 
+	slot = -1;
 	for (i = 0; i < MAX_PENDING_CONTROL_DATAGRAMS; i++)
 	{
 		if (!pendingControlDatagrams[i].valid)
 			continue;
 		if (pendingControlDatagrams[i].landriver != net_landriverlevel)
 			continue;
-
-		*socket = pendingControlDatagrams[i].socket;
-		*addr = pendingControlDatagrams[i].addr;
-		*length = pendingControlDatagrams[i].length;
-		Q_memcpy(net_message.data, pendingControlDatagrams[i].data, pendingControlDatagrams[i].length);
-		pendingControlDatagrams[i].valid = false;
-		return true;
+		if (slot < 0 || pendingControlDatagrams[i].order < pendingControlDatagrams[slot].order)
+			slot = i;
 	}
 
-	return false;
+	if (slot < 0)
+		return false;
+
+	*socket = pendingControlDatagrams[slot].socket;
+	*addr = pendingControlDatagrams[slot].addr;
+	*length = pendingControlDatagrams[slot].length;
+	Q_memcpy(net_message.data, pendingControlDatagrams[slot].data, pendingControlDatagrams[slot].length);
+	pendingControlDatagrams[slot].valid = false;
+	return true;
 }
 
 static void Datagram_DropQueuedPackets (qsocket_t *sock)
@@ -1697,6 +1707,11 @@ int Datagram_Init (void)
 void Datagram_Shutdown (void)
 {
 	int i;
+
+	memset(pendingDatagrams, 0, sizeof(pendingDatagrams));
+	memset(pendingControlDatagrams, 0, sizeof(pendingControlDatagrams));
+	pendingDatagramOrder = 0;
+	pendingControlDatagramOrder = 0;
 
 //
 // shutdown the lan drivers

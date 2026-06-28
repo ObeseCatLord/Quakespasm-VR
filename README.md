@@ -62,8 +62,9 @@ extended protocol support.
 - Clients and servers use latest-client movement packets with numbered
   commands, QSS-M-style move ACKs, and replacement-delta snapshot ACKs.
 - Co-op servers default to QSS-M-style pacing with latest-input,
-  server-authoritative movement. Trusted/server PMove remains off unless
-  explicitly enabled for testing.
+  server-authoritative movement. Prediction metadata follows QSS-M and is only
+  advertised when server PMove/QC input movement is active unless explicitly
+  enabled for testing.
 - Replacement-delta entity updates reduce the need for unsafe split snapshots.
 - Snapshot resend, ACK recovery, entity prioritization, and pacing help busy
   co-op maps stay playable under packet loss.
@@ -144,8 +145,11 @@ sv_maxpacketsize 1400
 sv_replacement_maxpackets 0
 sv_nqplayerphysics 1
 sv_trustedmovement 0
+sv_predict_nqmovement 0
 sv_inputtimeout 0
+sv_gameplayfix_spawnbeforethinks 0
 net_lagdebug 0
+net_sameip_stale_timeout 3.0
 max_edicts 15000
 sv_gravity 800
 sv_maxspeed 320
@@ -161,18 +165,23 @@ The tracked deploy scripts install this baseline as
 wrappers that execute `quakespasm-openvr.bin` with it before loading a map.
 
 Use `-novr` for desktop clients and `-vr` for headset clients. The protocol uses
-QSS-M-style move ACKs; server PMove/trusted movement is off by default,
-including mods that supply `SV_RunClientCommand`; set
-`sv_nqplayerphysics 0` only when intentionally testing server PMove.
+QSS-M-style move ACKs and replacement-delta snapshots; vanilla/QSS-M server
+movement is the default. Trusted server PMove is off by default, including mods
+that supply `SV_RunClientCommand`. Set `sv_nqplayerphysics 0` only when
+intentionally testing server PMove, and pair that with `sv_trustedmovement 1`.
 Startup runs `host_migrate_network_defaults` after configs to repair stale
-archived values such as `host_maxfps 72`, nonzero
+archived values such as `host_maxfps 72`, nonzero `cl_netfps`, nonzero
 `host_framerate`/`host_timescale` overrides, non-default
-`sys_ticrate`/`sv_maxpacketsize`/`sv_netsort`, stale PMove/trusted-movement settings,
-nonzero `sv_inputtimeout`, `net_lagdebug`, non-vanilla gravity, and capped
+`sys_ticrate`/`sv_maxpacketsize`/`sv_netsort`, stale PMove/trusted-movement,
+prediction-test, or PMove QC-velocity preservation settings, nonzero
+`sv_inputtimeout`, non-default `sv_gameplayfix_spawnbeforethinks`,
+`net_lagdebug`, stale same-IP socket timeout overrides, non-vanilla gravity,
+and capped
 replacement bursts. Lower stale `max_edicts` values are raised to QSS-M's
 `15000` default, while higher mod-specific values are preserved.
 Deploy also scrubs retired client-side smoothing/extrapolation cvars from
-existing configs and restores stale `cl_predictmove 0` values; explicit
+existing configs and restores stale `cl_predictmove 0` or `cl_nopred 1` values;
+explicit
 `+cvar value` launch arguments are preserved.
 
 ## Building
@@ -286,7 +295,7 @@ QuakeSpasm cvar.
 | `cl_portpingprobe_enable` | `0` | Networking | Optional client UDP port probe selection; disabled by default for normal OS-selected source ports. |
 | `cl_portpingprobe_probes` | `6` | Networking | Number of client port probes. |
 | `cl_predict_error_log` | `1` | Diagnostics | Logs prediction mismatches. |
-| `cl_predictmove` | `1` | Networking | Enables client-side movement prediction for remote play. |
+| `cl_predictmove` | `1` | Networking | Enables local client-side movement prediction from server predinfo metadata. |
 | `cl_predict_smooth*` | `0` | Networking | Retired no-op compatibility cvars retained only so old configs and launch scripts do not warn. |
 | `cfg_unbindall` | `1` | Config | Allows configs to execute `unbindall`; set `0` to ignore it. |
 | `freelook` | `1` | Input | Default mouse look behavior. |
@@ -348,7 +357,7 @@ QuakeSpasm cvar.
 | `sv_coop_pickup_targetfix` | `0` | Co-op | Enables generic pickup target firing for configured classes. |
 | `sv_coop_pickup_targetfix_classes` | `""` | Co-op | Class list for generic pickup target fixes. |
 | `sv_coop_pickup_targetlog` | `0` | Diagnostics | Logs pickup target decisions. |
-| `sv_coop_predictmove` | `0` | Co-op | Optional co-op PMove prediction support; disabled by default. |
+| `sv_coop_predictmove` | `0` | Co-op | Retired compatibility cvar. |
 | `sv_coop_progression_item_respawn` | `1` | Co-op | Respawns configured progression items. |
 | `sv_coop_progression_item_respawn_classes` | `item_jboots item_jboots_timed` | Co-op | Classes treated as progression respawn items. |
 | `sv_coop_respawn_delay` | `10` | Co-op | Delay before co-op respawn; `0` disables the delay. |
@@ -357,13 +366,15 @@ QuakeSpasm cvar.
 | `sv_coop_weapon_targetfix` | `1` | Co-op | Allows weapon pickup trigger targets to fire in co-op. |
 | `sv_gameplayfix_elevators` | `2` | Gameplay | Elevator/pusher step recovery; `0` off, `1` clients, `2` all entities. |
 | `sv_gameplayfix_random` | `1` | QC | Avoids exact `0`/`1` returns from QuakeC `random()`. |
+| `sv_gameplayfix_spawnbeforethinks` | `0` | Gameplay | QSS-M compatibility guard for suppressing player thinks before `PutClientInServer`; default off. |
 | `sv_inputtimeout` | `0` | Networking | Optional stale-input recovery timeout in seconds; default `0` matches QSS-M by preserving the last live movement command until the connection times out. |
 | `sv_maxpacketsize` | `1400` | Networking | Remote unreliable packet cap, clamped to QSS-M's `DATAGRAM_MTU`. |
 | `sv_netdiag_interval` | `5` | Diagnostics | Periodic network diagnostic interval in seconds. |
 | `sv_netsort` | `1` | Networking | Sorts entity updates by priority before packet clipping. |
 | `sv_nofriendlyfire` | `1` | Co-op | Disables friendly fire in co-op. |
-| `sv_nqplayerphysics` | `1` | PMove | Master default-off switch for server PMove/trusted movement, including mods with `SV_RunClientCommand`; set `0` only for testing PMove. |
+| `sv_nqplayerphysics` | `1` | PMove | Keeps vanilla/QSS-M server movement by default. Set `0` only when intentionally testing server PMove. |
 | `sv_pmove_legacy_preserve_qc_velocity` | `1` | PMove | Preserves QC velocity pushes such as grapples through legacy PMove. |
+| `sv_predict_nqmovement` | `0` | PMove | Experimental opt-in for advertising PMove prediction metadata while the server still runs vanilla NQ movement; default `0` matches QSS-M. |
 | `sv_replacement_maxpackets` | `0` | Networking | QSS-M-style uncapped replacement-delta drain by default; positive values manually cap split packets sent to one client per server frame. |
 | `sv_save_multiplayer` | `1` | Save/load | Allows multiplayer/co-op saves in controlled use. |
 | `sv_skyroom_pvs` | `1` | Rendering/server | Adds skyroom PVS for skyroom entity visibility. |

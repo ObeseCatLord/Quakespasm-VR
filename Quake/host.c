@@ -92,10 +92,14 @@ cvar_t	developer = {"developer","0",CVAR_NONE};
 cvar_t	temp1 = {"temp1","0",CVAR_NONE};
 extern cvar_t cl_portpingprobe_enable;
 extern cvar_t net_lagdebug;
+extern cvar_t net_sameip_stale_timeout;
 extern cvar_t sv_inputtimeout;
 extern cvar_t sv_gravity;
 extern cvar_t sv_nqplayerphysics;
 extern cvar_t sv_trustedmovement;
+extern cvar_t sv_pmove_legacy_preserve_qc_velocity;
+extern cvar_t sv_predict_nqmovement;
+extern cvar_t sv_gameplayfix_spawnbeforethinks;
 extern cvar_t sv_replacement_maxpackets;
 extern cvar_t sv_maxpacketsize;
 extern cvar_t sv_netsort;
@@ -153,7 +157,7 @@ static qboolean Host_CommandLineSetsCvar (const char *name)
 static void Host_MigrateNetworkDefaults_f (void)
 {
 	if (!Host_CommandLineSetsCvar ("cl_netfps") &&
-		Host_ValueMatchesOldDefault (cl_netfps.value, 72.0f))
+		!Host_ValueMatchesOldDefault (cl_netfps.value, 0.0f))
 		Cvar_SetQuick (&cl_netfps, "0");
 	if (!Host_CommandLineSetsCvar ("host_maxfps") &&
 		Host_ValueMatchesOldDefault (host_maxfps.value, 72.0f))
@@ -176,6 +180,15 @@ static void Host_MigrateNetworkDefaults_f (void)
 	if (!Host_CommandLineSetsCvar ("sv_trustedmovement") &&
 		!Host_ValueMatchesOldDefault (sv_trustedmovement.value, 0.0f))
 		Cvar_SetQuick (&sv_trustedmovement, "0");
+	if (!Host_CommandLineSetsCvar ("sv_predict_nqmovement") &&
+		!Host_ValueMatchesOldDefault (sv_predict_nqmovement.value, 0.0f))
+		Cvar_SetQuick (&sv_predict_nqmovement, "0");
+	if (!Host_CommandLineSetsCvar ("sv_pmove_legacy_preserve_qc_velocity") &&
+		!Host_ValueMatchesOldDefault (sv_pmove_legacy_preserve_qc_velocity.value, 1.0f))
+		Cvar_SetQuick (&sv_pmove_legacy_preserve_qc_velocity, "1");
+	if (!Host_CommandLineSetsCvar ("sv_gameplayfix_spawnbeforethinks") &&
+		!Host_ValueMatchesOldDefault (sv_gameplayfix_spawnbeforethinks.value, 0.0f))
+		Cvar_SetQuick (&sv_gameplayfix_spawnbeforethinks, "0");
 	if (!Host_CommandLineSetsCvar ("sv_inputtimeout") &&
 		!Host_ValueMatchesOldDefault (sv_inputtimeout.value, 0.0f))
 		Cvar_SetQuick (&sv_inputtimeout, "0");
@@ -193,6 +206,9 @@ static void Host_MigrateNetworkDefaults_f (void)
 	if (!Host_CommandLineSetsCvar ("net_lagdebug") &&
 		!Host_ValueMatchesOldDefault (net_lagdebug.value, 0.0f))
 		Cvar_SetQuick (&net_lagdebug, "0");
+	if (!Host_CommandLineSetsCvar ("net_sameip_stale_timeout") &&
+		!Host_ValueMatchesOldDefault (net_sameip_stale_timeout.value, 3.0f))
+		Cvar_SetQuick (&net_sameip_stale_timeout, "3.0");
 	if (!Host_CommandLineSetsCvar ("sv_gravity") &&
 		!Host_ValueMatchesOldDefault (sv_gravity.value, 800.0f))
 		Cvar_SetQuick (&sv_gravity, "800");
@@ -1185,6 +1201,7 @@ void Host_ServerFrame (void)
 
 // run the world state
 	pr_global_struct->frametime = host_frametime;
+	qcvm->frametime = host_frametime;
 	lagdebug_timing = net_lagdebug.value ? true : false;
 	frame_start = after_clear = after_accept = after_clients = after_physics = after_send = 0;
 	if (lagdebug_timing)
@@ -1322,7 +1339,7 @@ Host_Frame
 Runs all active servers
 ==================
 */
-void _Host_Frame (float time)
+void _Host_Frame (double time)
 {
 	static double		accumtime = 0;
 	static double		time1 = 0;
@@ -1553,7 +1570,7 @@ void _Host_Frame (float time)
 
 }
 
-void Host_Frame (float time)
+void Host_Frame (double time)
 {
 	double	time1, time2;
 	static double	timetotal;

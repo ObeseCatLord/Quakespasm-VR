@@ -1332,11 +1332,12 @@ void PR_EnableExtensions (void)
 	{	//csqc
 		QCEXTFUNCS_CS
 		QCEXTGLOBALS_CSQC
+		QCEXTGLOBAL_FLOAT(physics_mode)
 	}
 	else
 	{	//ssqc
 		QCEXTFUNCS_SV
-		QCEXTGLOBALS_INPUTS
+		QCEXTGLOBALS_GAME
 	}
 
 #undef QCEXTGLOBAL_FLOAT
