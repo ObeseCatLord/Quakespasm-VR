@@ -421,17 +421,18 @@ The smoke starts a local dedicated server on port `26010` by default, loads the
 save from the straight install, prints key networking defaults, and fails on
 startup errors or packet overflow diagnostics.
 
-When a desktop display is available, this companion smoke also starts a small
-`-novr` client window and verifies live replacement-delta snapshots and ACKs on
-the same save:
+When a desktop display is available, this companion smoke also starts two small
+`-novr` client windows by default and verifies live replacement-delta snapshots,
+ACKs, and same-IP co-op socket handling on the same save:
 
 ```sh
 tools/net_connected_stress_smoke
 ```
 
-It uses port `26011` by default and fails if the connected client does not ACK
-replacement snapshots, if client movement is not received, or if replacement
-entity clipping/packet overflow diagnostics appear.
+It uses port `26011` by default and fails if connected clients do not ACK
+replacement snapshots, if client movement is not received, if the same-IP
+multi-client path is not exercised, or if replacement entity clipping/packet
+overflow diagnostics appear. Set `CLIENTS=1` for a lighter single-client run.
 
 ## Compatibility Caveats
 
