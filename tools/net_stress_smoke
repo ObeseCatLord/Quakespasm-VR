@@ -1,0 +1,120 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+STRAIGHT_DIR="${STRAIGHT_DIR:-/home/obesecatlord/Windows/Games/quakespasm_straight}"
+BIN="${BIN:-$STRAIGHT_DIR/quakespasm-openvr.bin}"
+GAME="${GAME:-vr}"
+SAVE="${SAVE:-codex_intense}"
+PORT="${PORT:-26010}"
+RUN_SECONDS="${RUN_SECONDS:-8}"
+LOG_DIR="${LOG_DIR:-/tmp/quakespasmvr-net-stress-smoke}"
+
+RUN_DIR="$LOG_DIR/run"
+STDOUT_LOG="$LOG_DIR/stdout.log"
+COMBINED_LOG="$LOG_DIR/combined.log"
+QCONSOLE_LOG="$RUN_DIR/qconsole.log"
+
+fail() {
+	printf 'net_stress_smoke: %s\n' "$*" >&2
+	printf 'net_stress_smoke: logs: %s\n' "$LOG_DIR" >&2
+	exit 1
+}
+
+if [ ! -x "$BIN" ]; then
+	fail "binary not executable: $BIN"
+fi
+if [ ! -d "$STRAIGHT_DIR/$GAME" ]; then
+	fail "game directory not found: $STRAIGHT_DIR/$GAME"
+fi
+if [ ! -f "$STRAIGHT_DIR/$GAME/$SAVE.sav" ]; then
+	fail "save not found: $STRAIGHT_DIR/$GAME/$SAVE.sav"
+fi
+
+rm -rf "$RUN_DIR"
+mkdir -p "$RUN_DIR"
+rm -f "$STDOUT_LOG" "$COMBINED_LOG"
+
+cd "$RUN_DIR"
+
+LD_LIBRARY_PATH="$(dirname "$BIN"):${LD_LIBRARY_PATH:-}" \
+	"$BIN" \
+	-basedir "$STRAIGHT_DIR" \
+	-dedicated 16 \
+	-port "$PORT" \
+	-condebug \
+	-game "$GAME" \
+	+exec codex_coop_server.cfg \
+	+sv_netdiag_interval 1 \
+	+net_lagdebug 1 \
+	+load "$SAVE" \
+	+netdiag \
+	+sys_ticrate \
+	+sv_netsort \
+	+sv_maxpacketsize \
+	+sv_replacement_maxpackets \
+	+sv_nqplayerphysics \
+	+sv_trustedmovement \
+	+sv_predict_nqmovement \
+	+net_lagdebug \
+	+sv_gravity \
+	>"$STDOUT_LOG" 2>&1 &
+
+pid=$!
+deadline=$((SECONDS + RUN_SECONDS))
+exited_early=0
+
+while [ "$SECONDS" -lt "$deadline" ]; do
+	if ! kill -0 "$pid" 2>/dev/null; then
+		exited_early=1
+		break
+	fi
+	sleep 0.25
+done
+
+if kill -0 "$pid" 2>/dev/null; then
+	kill "$pid" 2>/dev/null || true
+	wait "$pid" 2>/dev/null || true
+else
+	wait "$pid" 2>/dev/null || true
+fi
+
+{
+	if [ -f "$STDOUT_LOG" ]; then
+		cat "$STDOUT_LOG"
+	fi
+	if [ -f "$QCONSOLE_LOG" ]; then
+		cat "$QCONSOLE_LOG"
+	fi
+} > "$COMBINED_LOG"
+
+if [ "$exited_early" -eq 1 ]; then
+	fail "server exited before ${RUN_SECONDS}s elapsed"
+fi
+
+grep -Eq "Loaded game|loadgame|Loading game|SpawnServer" "$COMBINED_LOG" ||
+	fail "did not see evidence that the save/map loaded"
+
+grep -Eq 'sys_ticrate[[:space:]]+["]?0\.05|"sys_ticrate" is "0\.05"' "$COMBINED_LOG" ||
+	fail "sys_ticrate default was not confirmed"
+grep -Eq 'sv_netsort[[:space:]]+["]?1|"sv_netsort" is "1"' "$COMBINED_LOG" ||
+	fail "sv_netsort default was not confirmed"
+grep -Eq 'sv_maxpacketsize[[:space:]]+["]?1400|"sv_maxpacketsize" is "1400"' "$COMBINED_LOG" ||
+	fail "sv_maxpacketsize default was not confirmed"
+grep -Eq 'sv_replacement_maxpackets[[:space:]]+["]?0|"sv_replacement_maxpackets" is "0"' "$COMBINED_LOG" ||
+	fail "sv_replacement_maxpackets default was not confirmed"
+grep -Eq 'sv_nqplayerphysics[[:space:]]+["]?1|"sv_nqplayerphysics" is "1"' "$COMBINED_LOG" ||
+	fail "sv_nqplayerphysics default was not confirmed"
+grep -Eq 'sv_trustedmovement[[:space:]]+["]?0|"sv_trustedmovement" is "0"' "$COMBINED_LOG" ||
+	fail "sv_trustedmovement default was not confirmed"
+grep -Eq 'sv_predict_nqmovement[[:space:]]+["]?0|"sv_predict_nqmovement" is "0"' "$COMBINED_LOG" ||
+	fail "sv_predict_nqmovement default was not confirmed"
+grep -Eq 'sv_gravity[[:space:]]+["]?800|"sv_gravity" is "800"' "$COMBINED_LOG" ||
+	fail "sv_gravity default was not confirmed"
+
+if grep -Eiq 'Host_Error|Sys_Error|packet overflow|SVFTE_SendClientDatagram: packet overflow|Host_EndGame|Hunk_Alloc: failed' "$COMBINED_LOG"; then
+	fail "error pattern found in smoke log"
+fi
+
+printf 'net_stress_smoke: ok\n'
+printf 'net_stress_smoke: logs: %s\n' "$LOG_DIR"
