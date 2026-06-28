@@ -1,0 +1,171 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+STRAIGHT_DIR="${STRAIGHT_DIR:-/home/obesecatlord/Windows/Games/quakespasm_straight}"
+BIN="${BIN:-$STRAIGHT_DIR/quakespasm-openvr.bin}"
+GAME="${GAME:-vr}"
+SAVE="${SAVE:-codex_intense}"
+PORT="${PORT:-26011}"
+CLIENTS="${CLIENTS:-1}"
+RUN_SECONDS="${RUN_SECONDS:-12}"
+LOG_DIR="${LOG_DIR:-/tmp/quakespasmvr-net-connected-stress-smoke}"
+CLIENT_WIDTH="${CLIENT_WIDTH:-320}"
+CLIENT_HEIGHT="${CLIENT_HEIGHT:-240}"
+
+SERVER_DIR="$LOG_DIR/server"
+SERVER_STDOUT="$LOG_DIR/server_stdout.log"
+SERVER_LOG="$LOG_DIR/server_combined.log"
+
+server_pid=""
+client_pids=()
+
+fail() {
+	printf 'net_connected_stress_smoke: %s\n' "$*" >&2
+	printf 'net_connected_stress_smoke: logs: %s\n' "$LOG_DIR" >&2
+	exit 1
+}
+
+cleanup() {
+	local pid
+
+	for pid in "${client_pids[@]}"; do
+		if kill -0 "$pid" 2>/dev/null; then
+			kill "$pid" 2>/dev/null || true
+			wait "$pid" 2>/dev/null || true
+		fi
+	done
+	if [ -n "$server_pid" ] && kill -0 "$server_pid" 2>/dev/null; then
+		kill "$server_pid" 2>/dev/null || true
+		wait "$server_pid" 2>/dev/null || true
+	fi
+}
+trap cleanup EXIT
+
+wait_for_log() {
+	local pattern="$1"
+	local file1="$2"
+	local file2="$3"
+	local deadline
+
+	deadline=$((SECONDS + 20))
+	while [ "$SECONDS" -lt "$deadline" ]; do
+		if { [ -f "$file1" ] && grep -Eq "$pattern" "$file1"; } ||
+		   { [ -f "$file2" ] && grep -Eq "$pattern" "$file2"; }; then
+			return 0
+		fi
+		sleep 0.25
+	done
+	return 1
+}
+
+combine_log() {
+	local out="$1"
+	shift
+
+	: > "$out"
+	for f in "$@"; do
+		if [ -f "$f" ]; then
+			cat "$f" >> "$out"
+		fi
+	done
+}
+
+if [ -z "${DISPLAY:-}" ] && [ -z "${WAYLAND_DISPLAY:-}" ]; then
+	fail "no display is available; use tools/net_stress_smoke for the headless server-only check"
+fi
+if [ ! -x "$BIN" ]; then
+	fail "binary not executable: $BIN"
+fi
+if [ ! -d "$STRAIGHT_DIR/$GAME" ]; then
+	fail "game directory not found: $STRAIGHT_DIR/$GAME"
+fi
+if [ ! -f "$STRAIGHT_DIR/$GAME/$SAVE.sav" ]; then
+	fail "save not found: $STRAIGHT_DIR/$GAME/$SAVE.sav"
+fi
+if [ "$CLIENTS" -lt 1 ]; then
+	fail "CLIENTS must be at least 1"
+fi
+
+rm -rf "$LOG_DIR"
+mkdir -p "$SERVER_DIR"
+
+cd "$SERVER_DIR"
+LD_LIBRARY_PATH="$(dirname "$BIN"):${LD_LIBRARY_PATH:-}" \
+	"$BIN" \
+	-basedir "$STRAIGHT_DIR" \
+	-dedicated 16 \
+	-port "$PORT" \
+	-condebug \
+	-game "$GAME" \
+	+exec codex_coop_server.cfg \
+	+sv_netdiag_interval 1 \
+	+net_lagdebug 1 \
+	+load "$SAVE" \
+	>"$SERVER_STDOUT" 2>&1 &
+server_pid=$!
+
+wait_for_log 'Loading game from .*\.sav' "$SERVER_STDOUT" "$SERVER_DIR/qconsole.log" ||
+	fail "server did not load $SAVE.sav"
+
+for i in $(seq 1 "$CLIENTS"); do
+	name="codex_smoke$i"
+	client_dir="$LOG_DIR/client$i"
+	client_stdout="$LOG_DIR/client${i}_stdout.log"
+
+	mkdir -p "$client_dir"
+	cd "$client_dir"
+	LD_LIBRARY_PATH="$(dirname "$BIN"):${LD_LIBRARY_PATH:-}" \
+		"$BIN" \
+		-basedir "$STRAIGHT_DIR" \
+		-novr \
+		-nosound \
+		-window \
+		-width "$CLIENT_WIDTH" \
+		-height "$CLIENT_HEIGHT" \
+		-condebug \
+		-game "$GAME" \
+		+joy_enable 0 \
+		+cl_startdemos 0 \
+		+name "$name" \
+		+connect "127.0.0.1:$PORT" \
+		+forward \
+		>"$client_stdout" 2>&1 &
+	client_pids+=("$!")
+done
+
+sleep "$RUN_SECONDS"
+
+cleanup
+trap - EXIT
+
+combine_log "$SERVER_LOG" "$SERVER_STDOUT" "$SERVER_DIR/qconsole.log"
+for i in $(seq 1 "$CLIENTS"); do
+	client_dir="$LOG_DIR/client$i"
+	client_log="$LOG_DIR/client${i}_combined.log"
+	combine_log "$client_log" "$LOG_DIR/client${i}_stdout.log" "$client_dir/qconsole.log"
+done
+
+grep -Eq 'Loading game from .*\.sav' "$SERVER_LOG" ||
+	fail "server log does not show the heavy save loading"
+
+if grep -Eiq 'Host_Error|Sys_Error|packet overflow|SVFTE_SendClientDatagram: packet overflow|Host_EndGame|Hunk_Alloc: failed' "$SERVER_LOG"; then
+	fail "server error pattern found in smoke log"
+fi
+if grep -Eq 'clipped=[1-9][0-9]*|clipped_ents=[1-9][0-9]*' "$SERVER_LOG"; then
+	fail "server clipped replacement entities during connected stress run"
+fi
+
+for i in $(seq 1 "$CLIENTS"); do
+	name="codex_smoke$i"
+	client_log="$LOG_DIR/client${i}_combined.log"
+
+	grep -Eq 'Connection accepted|Connected' "$client_log" ||
+		fail "client $i did not connect"
+	grep -Eq "server summary to $name .*replacement=1 .*updates=[1-9][0-9]* .*ack=[0-9][0-9]*" "$SERVER_LOG" ||
+		fail "server did not record ACKed replacement snapshots for $name"
+	grep -Eq "accepted input from $name|accepted move gap from $name" "$SERVER_LOG" ||
+		fail "server did not record client move input for $name"
+done
+
+printf 'net_connected_stress_smoke: ok\n'
+printf 'net_connected_stress_smoke: logs: %s\n' "$LOG_DIR"
