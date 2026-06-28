@@ -431,8 +431,11 @@ tools/net_connected_stress_smoke
 
 It uses port `26011` by default and fails if connected clients do not ACK
 replacement snapshots, if client movement is not received, if the same-IP
-multi-client path is not exercised, or if replacement entity clipping/packet
-overflow diagnostics appear. Set `CLIENTS=1` for a lighter single-client run.
+multi-client path is not exercised, if no multi-packet replacement drain occurs
+under the configured test packet cap, or if replacement entity clipping/packet
+overflow diagnostics appear. It uses `TEST_MAXPACKETSIZE=1024` by default to
+force split coverage; set `TEST_MAXPACKETSIZE=1400` for a production-cap run.
+Set `CLIENTS=1` for a lighter single-client run.
 
 ## Compatibility Caveats
 
