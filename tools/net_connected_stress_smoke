@@ -11,6 +11,7 @@ RUN_SECONDS="${RUN_SECONDS:-12}"
 LOG_DIR="${LOG_DIR:-/tmp/quakespasmvr-net-connected-stress-smoke}"
 CLIENT_WIDTH="${CLIENT_WIDTH:-320}"
 CLIENT_HEIGHT="${CLIENT_HEIGHT:-240}"
+TEST_MAXPACKETSIZE="${TEST_MAXPACKETSIZE:-1024}"
 
 SERVER_DIR="$LOG_DIR/server"
 SERVER_STDOUT="$LOG_DIR/server_stdout.log"
@@ -85,6 +86,14 @@ fi
 if [ "$CLIENTS" -lt 1 ]; then
 	fail "CLIENTS must be at least 1"
 fi
+case "$TEST_MAXPACKETSIZE" in
+	""|*[!0-9]*)
+		fail "TEST_MAXPACKETSIZE must be an integer between 512 and 1400"
+		;;
+esac
+if [ "$TEST_MAXPACKETSIZE" -lt 512 ] || [ "$TEST_MAXPACKETSIZE" -gt 1400 ]; then
+	fail "TEST_MAXPACKETSIZE must be between 512 and 1400"
+fi
 
 rm -rf "$LOG_DIR"
 mkdir -p "$SERVER_DIR"
@@ -100,6 +109,7 @@ LD_LIBRARY_PATH="$(dirname "$BIN"):${LD_LIBRARY_PATH:-}" \
 	+exec codex_coop_server.cfg \
 	+sv_netdiag_interval 1 \
 	+net_lagdebug 1 \
+	+sv_maxpacketsize "$TEST_MAXPACKETSIZE" \
 	+load "$SAVE" \
 	>"$SERVER_STDOUT" 2>&1 &
 server_pid=$!
@@ -153,6 +163,48 @@ if grep -Eiq 'Host_Error|Sys_Error|packet overflow|SVFTE_SendClientDatagram: pac
 fi
 if grep -Eq 'clipped=[1-9][0-9]*|clipped_ents=[1-9][0-9]*' "$SERVER_LOG"; then
 	fail "server clipped replacement entities during connected stress run"
+fi
+if awk -v cap="$TEST_MAXPACKETSIZE" '
+/server replacement update to/ {
+	packets = -1
+	maxbytes = -1
+	maxpacket = -1
+	pending_before = -1
+	pending_after = -1
+	for (i = 1; i <= NF; i++) {
+		if ($i ~ /^packets=/)
+			packets = substr($i, 9) + 0
+		else if ($i ~ /^max=/)
+			maxbytes = substr($i, 5) + 0
+		else if ($i ~ /^maxpacket=/)
+			maxpacket = substr($i, 11) + 0
+		else if ($i ~ /^pending=/) {
+			pending = substr($i, 9)
+			split(pending, parts, "->")
+			pending_before = parts[1] + 0
+			pending_after = parts[2] + 0
+		}
+	}
+	if (maxbytes > cap)
+		badmax = maxbytes
+	if (packets > 1 && maxpacket == cap &&
+	    pending_before > 0 && pending_after == 0)
+		seen_split_drain = 1
+}
+END {
+	if (badmax)
+		exit 2
+	if (!seen_split_drain)
+		exit 1
+}
+' "$SERVER_LOG"; then
+	:
+else
+	status=$?
+	if [ "$status" -eq 2 ]; then
+		fail "server replacement packet exceeded ${TEST_MAXPACKETSIZE}-byte cap"
+	fi
+	fail "server did not exercise a multi-packet replacement drain"
 fi
 if [ "$CLIENTS" -ge 2 ]; then
 	grep -Eq 'allowing same-IP client on a different port' "$SERVER_LOG" ||
