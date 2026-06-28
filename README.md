@@ -167,12 +167,13 @@ including mods that supply `SV_RunClientCommand`; set
 Startup runs `host_migrate_network_defaults` after configs to repair stale
 archived values such as `host_maxfps 72`, nonzero
 `host_framerate`/`host_timescale` overrides, non-default
-`sys_ticrate`/`sv_maxpacketsize`, stale PMove/trusted-movement settings,
+`sys_ticrate`/`sv_maxpacketsize`/`sv_netsort`, stale PMove/trusted-movement settings,
 nonzero `sv_inputtimeout`, `net_lagdebug`, non-vanilla gravity, and capped
 replacement bursts. Lower stale `max_edicts` values are raised to QSS-M's
 `15000` default, while higher mod-specific values are preserved.
 Deploy also scrubs retired client-side smoothing/extrapolation cvars from
-existing configs; explicit `+cvar value` launch arguments are preserved.
+existing configs and restores stale `cl_predictmove 0` values; explicit
+`+cvar value` launch arguments are preserved.
 
 ## Building
 

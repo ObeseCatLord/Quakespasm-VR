@@ -75,6 +75,28 @@ static qboolean CL_ValueMatchesOldDefault (float value, float old_default)
 	return value > old_default - epsilon && value < old_default + epsilon;
 }
 
+static qboolean CL_CommandLineSetsCvar (const char *name)
+{
+	int i;
+
+	for (i = 1; i < com_argc; i++)
+	{
+		const char *arg = com_argv[i];
+
+		if (!arg || arg[0] != '+')
+			continue;
+		if (!q_strcasecmp (arg + 1, name))
+			return true;
+		if ((!q_strcasecmp (arg + 1, "set") ||
+			 !q_strcasecmp (arg + 1, "seta")) &&
+			i + 1 < com_argc && com_argv[i + 1] &&
+			!q_strcasecmp (com_argv[i + 1], name))
+			return true;
+	}
+
+	return false;
+}
+
 static void CL_MigrateNetworkDefaults_f (void)
 {
 	if (cl_extrapolate.value != 0 || CL_ValueMatchesOldDefault (cl_extrapolate.value, 0.02f))
@@ -91,6 +113,9 @@ static void CL_MigrateNetworkDefaults_f (void)
 		Cvar_SetQuick (&cl_netfps, "0");
 	if (CL_ValueMatchesOldDefault (host_maxfps.value, 72.0f))
 		Cvar_SetQuick (&host_maxfps, "250");
+	if (!CL_CommandLineSetsCvar ("cl_predictmove") &&
+		!CL_ValueMatchesOldDefault (cl_predictmove.value, 1.0f))
+		Cvar_SetQuick (&cl_predictmove, "1");
 }
 
 cvar_t	cfg_unbindall = {"cfg_unbindall", "1", CVAR_ARCHIVE};
