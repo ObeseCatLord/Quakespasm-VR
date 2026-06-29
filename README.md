@@ -186,15 +186,72 @@ explicit
 
 ## Building
 
-Linux:
+### Linux
+
+Install the compiler, SDL2, OpenGL, OpenVR, and codec development packages.
+On Debian/Ubuntu-style systems:
+
+```sh
+sudo apt install build-essential pkg-config libsdl2-dev libgl1-mesa-dev \
+  libopenvr-dev libflac-dev libopusfile-dev libvorbis-dev libmad0-dev \
+  libxmp-dev
+```
+
+Build from the repository root:
 
 ```sh
 make -C Quake -f Makefile.linux -j$(nproc)
 ```
 
-Windows cross-builds are produced through the repository's Windows build
-scripts and must not depend on MinGW/GCC DLLs at runtime. Do not commit built
-executables, object files, local logs, or generated Visual Studio output.
+The Linux build writes `Quake/quakespasm-openvr.bin` plus the
+`Quake/quakespasm-openvr` wrapper. The wrapper locates `libopenvr_api.so`
+beside the executable or in common system paths, then launches the binary.
+
+### Windows
+
+Native Windows builds use Visual Studio/MSBuild. Install Visual Studio 2022
+with the Desktop development with C++ workload, then run from a Developer
+Command Prompt or normal `cmd.exe`:
+
+```bat
+build-windows.bat
+```
+
+The default build is `Release|x64`. Optional arguments select debug and 32-bit
+builds:
+
+```bat
+build-windows.bat debug
+build-windows.bat release x86
+build-windows.bat debug x86
+```
+
+The output executable is written under:
+
+```txt
+Windows\VisualStudio\Build-quakespasm-sdl2\<Platform>\<Configuration>\quakespasm-openvr.exe
+```
+
+The Visual Studio project uses the checked-in Windows SDL2, OpenVR, and codec
+library directories and copies the needed DLLs into the output directory.
+
+### Windows Cross-Build From Linux
+
+Linux can also cross-compile the Windows x64 executable with MinGW-w64:
+
+```sh
+sudo apt install mingw-w64 clang
+cd Quake
+./build_cross_win64-openvr.sh
+```
+
+`clang` is optional but recommended for the C++ OpenVR files. The script falls
+back to MinGW g++ and the makefile disables C++ exceptions/RTTI for the VR C++
+translation units to avoid OpenVR/SEH unwinder crashes. The output is
+`Quake/quakespasm-openvr.exe`.
+
+Do not commit built executables, object files, local logs, or generated Visual
+Studio output.
 
 ## Controls
 

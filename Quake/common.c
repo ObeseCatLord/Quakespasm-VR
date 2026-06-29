@@ -1032,6 +1032,7 @@ void SZ_Free (sizebuf_t *buf)
 void SZ_Clear (sizebuf_t *buf)
 {
 	buf->cursize = 0;
+	buf->overflowed = false;
 }
 
 void *SZ_GetSpace (sizebuf_t *buf, int length)
@@ -1040,17 +1041,21 @@ void *SZ_GetSpace (sizebuf_t *buf, int length)
 
 	if (buf->cursize + length > buf->maxsize)
 	{
-		DebugLog("SZ_GetSpace: OVERFLOW cursize=%d + length=%d > maxsize=%d (allowoverflow=%d)\n",
-			 buf->cursize, length, buf->maxsize, buf->allowoverflow);
+		qboolean already_overflowed = buf->overflowed;
+
+		if (!already_overflowed)
+			DebugLog("SZ_GetSpace: OVERFLOW cursize=%d + length=%d > maxsize=%d (allowoverflow=%d)\n",
+				 buf->cursize, length, buf->maxsize, buf->allowoverflow);
 		if (!buf->allowoverflow)
 			Host_Error ("SZ_GetSpace: overflow without allowoverflow set"); // ericw -- made Host_Error to be less annoying
 
 		if (length > buf->maxsize)
 			Sys_Error ("SZ_GetSpace: %i is > full buffer size", length);
 
-		buf->overflowed = true;
-		Con_Printf ("SZ_GetSpace: overflow\n");
+		if (!already_overflowed)
+			Con_Printf ("SZ_GetSpace: overflow\n");
 		SZ_Clear (buf);
+		buf->overflowed = true;
 	}
 
 	data = buf->data + buf->cursize;
@@ -1061,6 +1066,19 @@ void *SZ_GetSpace (sizebuf_t *buf, int length)
 
 void SZ_Write (sizebuf_t *buf, const void *data, int length)
 {
+	if (length > buf->maxsize && buf->allowoverflow)
+	{
+		if (!buf->overflowed)
+		{
+			DebugLog("SZ_Write: DROPPED oversized write length=%d > maxsize=%d\n",
+				 length, buf->maxsize);
+			Con_Printf ("SZ_GetSpace: overflow\n");
+		}
+		SZ_Clear(buf);
+		buf->overflowed = true;
+		return;
+	}
+
 	Q_memcpy (SZ_GetSpace(buf,length),data,length);
 }
 

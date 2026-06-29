@@ -2317,14 +2317,16 @@ static qboolean SV_VRWeaponSpawnsAtSelfOrigin(edict_t *ent) {
 }
 
 static void SV_ApplyVRWeaponOffset(edict_t *ent, int num, qboolean is_remote_vr,
-                                   vec3_t restoreOrigin) {
+                                   vec3_t restoreOrigin, vec3_t restoreVAngle) {
   _VectorCopy(ent->v.origin, restoreOrigin);
+  _VectorCopy(ent->v.v_angle, restoreVAngle);
 
   if (is_remote_vr) {
     vec3_t adj;
     vec3_t source_offset;
 
     _VectorCopy(svs.clients[num - 1].vr_handpos, adj);
+    _VectorCopy(svs.clients[num - 1].vr_handrot, ent->v.v_angle);
     VR_GetWeaponProjectileSourceOffset(PR_GetString(ent->v.weaponmodel),
                                        (int)ent->v.weapon, ent->v.v_angle,
                                        ent->v.view_ofs[2], source_offset);
@@ -2336,7 +2338,8 @@ static void SV_ApplyVRWeaponOffset(edict_t *ent, int num, qboolean is_remote_vr,
     vec3_t fwd, right, up;
     qboolean spawns_at_self_origin = SV_VRWeaponSpawnsAtSelfOrigin(ent);
     VR_GetMuzzleAdjustedHandPos(adj);
-    AngleVectors(cl.handrot[1], fwd, right, up);
+    _VectorCopy(cl.handrot[1], ent->v.v_angle);
+    AngleVectors(ent->v.v_angle, fwd, right, up);
 
     _VectorCopy(adj, ent->v.origin);
     if (spawns_at_self_origin) {
@@ -2350,10 +2353,12 @@ static void SV_ApplyVRWeaponOffset(edict_t *ent, int num, qboolean is_remote_vr,
 
 static void SV_RestoreVRWeaponOffset(edict_t *ent, int num,
                                      qboolean is_remote_vr,
-                                     vec3_t restoreOrigin) {
+                                     vec3_t restoreOrigin,
+                                     vec3_t restoreVAngle) {
   if (is_remote_vr ||
       (vr_enabled.value && !isDedicated && num == cl.viewentity)) {
     _VectorCopy(restoreOrigin, ent->v.origin);
+    _VectorCopy(restoreVAngle, ent->v.v_angle);
   }
 }
 
@@ -2715,7 +2720,9 @@ qboolean SV_RunClientPMoveCommand(client_t *client) {
 
   do {
     vec3_t thinkRestoreOrigin;
+    vec3_t thinkRestoreVAngle;
     vec3_t restoreOrigin;
+    vec3_t restoreVAngle;
     vec3_t prethink_velocity;
     vec3_t postthink_velocity;
     vec3_t preserved_velocity_delta;
@@ -2773,9 +2780,11 @@ qboolean SV_RunClientPMoveCommand(client_t *client) {
     }
     SV_CheckVelocity(ent);
 
-    SV_ApplyVRWeaponOffset(ent, num, is_remote_vr, thinkRestoreOrigin);
+    SV_ApplyVRWeaponOffset(ent, num, is_remote_vr, thinkRestoreOrigin,
+                           thinkRestoreVAngle);
     think_ok = SV_RunThink(ent);
-    SV_RestoreVRWeaponOffset(ent, num, is_remote_vr, thinkRestoreOrigin);
+    SV_RestoreVRWeaponOffset(ent, num, is_remote_vr, thinkRestoreOrigin,
+                             thinkRestoreVAngle);
     if (!think_ok || ent->free) {
       SV_CoopRespawnRestoreSuppressedInput(ent, num, &coop_respawn_state);
       break;
@@ -2796,14 +2805,16 @@ qboolean SV_RunClientPMoveCommand(client_t *client) {
     SV_LinkEdict(ent, false);
 
     pr_global_struct->time = qcvm->time;
-    SV_ApplyVRWeaponOffset(ent, num, is_remote_vr, restoreOrigin);
+    SV_ApplyVRWeaponOffset(ent, num, is_remote_vr, restoreOrigin,
+                           restoreVAngle);
     pr_global_struct->self = EDICT_TO_PROG(ent);
     SV_CoopReviveBeginPostThink(ent);
     SV_FriendlyFireBegin(ent);
     PR_ExecuteProgram(pr_global_struct->PlayerPostThink);
     SV_FriendlyFireEnd();
     SV_CoopReviveEndPostThink();
-    SV_RestoreVRWeaponOffset(ent, num, is_remote_vr, restoreOrigin);
+    SV_RestoreVRWeaponOffset(ent, num, is_remote_vr, restoreOrigin,
+                             restoreVAngle);
     SV_CoopRespawnEndPostThink(ent, num, &coop_respawn_state);
     SV_CoopReviveApplyPending();
 
@@ -2908,7 +2919,9 @@ void SV_Physics_Client(edict_t *ent, int num) {
     // (SV_WalkMove, etc.) which needs the real collision hull position.
     {
       vec3_t thinkRestoreOrigin;
-      SV_ApplyVRWeaponOffset(ent, num, is_remote_vr, thinkRestoreOrigin);
+      vec3_t thinkRestoreVAngle;
+      SV_ApplyVRWeaponOffset(ent, num, is_remote_vr, thinkRestoreOrigin,
+                             thinkRestoreVAngle);
 
       qboolean think_ok = true;
       switch ((int)ent->v.movetype) {
@@ -2932,7 +2945,8 @@ void SV_Physics_Client(edict_t *ent, int num) {
         Sys_Error("SV_Physics_client: bad movetype %i", (int)ent->v.movetype);
       }
 
-      SV_RestoreVRWeaponOffset(ent, num, is_remote_vr, thinkRestoreOrigin);
+      SV_RestoreVRWeaponOffset(ent, num, is_remote_vr, thinkRestoreOrigin,
+                               thinkRestoreVAngle);
 
       if (!think_ok) {
         SV_CoopRespawnRestoreSuppressedInput(ent, num, &coop_respawn_state);
@@ -3020,7 +3034,9 @@ void SV_Physics_Client(edict_t *ent, int num) {
   // replace player origin with hand origin for duration of post think (where
   // weapons are done)
   vec3_t restoreOrigin;
-  SV_ApplyVRWeaponOffset(ent, num, is_remote_vr, restoreOrigin);
+  vec3_t restoreVAngle;
+  SV_ApplyVRWeaponOffset(ent, num, is_remote_vr, restoreOrigin,
+                         restoreVAngle);
 
   pr_global_struct->self = EDICT_TO_PROG(ent);
 
@@ -3030,7 +3046,8 @@ void SV_Physics_Client(edict_t *ent, int num) {
   SV_FriendlyFireEnd();
   SV_CoopReviveEndPostThink();
 
-  SV_RestoreVRWeaponOffset(ent, num, is_remote_vr, restoreOrigin);
+  SV_RestoreVRWeaponOffset(ent, num, is_remote_vr, restoreOrigin,
+                           restoreVAngle);
   SV_CoopRespawnEndPostThink(ent, num, &coop_respawn_state);
   SV_CoopReviveApplyPending();
 }

@@ -616,6 +616,7 @@ void CL_SendMove(const usercmd_t *cmd) {
 
   sendcmd = *cmd;
   VectorCopy(cl.aimangles, sendcmd.viewangles);
+  VR_UpdateCommandViewAngles(&sendcmd);
   if (sendcmd.servertime <= 0)
     sendcmd.servertime = cl.time;
 

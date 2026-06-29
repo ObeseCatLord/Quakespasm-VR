@@ -2068,6 +2068,11 @@ static void SVFTE_WriteCSQCEntitiesToClient (client_t *client, sizebuf_t *msg,
 
 	for (entnum = 1; entnum < client->numpendingcsqcentities; entnum++)
 	{
+		int old_multicast_maxsize;
+		int payload_maxsize;
+		qboolean old_multicast_allowoverflow;
+		qboolean multicast_overflowed;
+
 		bits = client->pendingcsqcentities_bits[entnum];
 		if (!(bits & ~SENDFLAG_PRESENT))
 			continue;
@@ -2075,8 +2080,11 @@ static void SVFTE_WriteCSQCEntitiesToClient (client_t *client, sizebuf_t *msg,
 		originalbits = bits;
 		logbits = 0;
 		candidate_has_header = false;
+		payload_maxsize = msg->maxsize - 2;
+		if (payload_maxsize < 16)
+			payload_maxsize = 16;
 		entmsg.data = entbuf;
-		entmsg.maxsize = sizeof(entbuf);
+		entmsg.maxsize = q_min((int)sizeof(entbuf), payload_maxsize);
 		entmsg.cursize = 0;
 		entmsg.allowoverflow = true;
 		entmsg.overflowed = false;
@@ -2111,14 +2119,26 @@ static void SVFTE_WriteCSQCEntitiesToClient (client_t *client, sizebuf_t *msg,
 			else
 			{
 				SZ_Clear (&sv.multicast);
+				old_multicast_maxsize = sv.multicast.maxsize;
+				old_multicast_allowoverflow = sv.multicast.allowoverflow;
+				sv.multicast.maxsize =
+					q_min(old_multicast_maxsize, payload_maxsize);
+				sv.multicast.allowoverflow = true;
 				pr_global_struct->self = EDICT_TO_PROG(ed);
 				G_INT(OFS_PARM0) = EDICT_TO_PROG(client->edict);
 				G_FLOAT(OFS_PARM1 + 0) = (bits >> 0) & 0xffffff;
 				G_FLOAT(OFS_PARM1 + 1) = (bits >> 24) & 0xffffff;
 				G_FLOAT(OFS_PARM1 + 2) = 0;
 				PR_ExecuteProgram(GetEdictFieldEval(ed, SendEntity)->function);
+				multicast_overflowed = sv.multicast.overflowed;
+				sv.multicast.maxsize = old_multicast_maxsize;
+				sv.multicast.allowoverflow = old_multicast_allowoverflow;
+				sv.multicast.overflowed = multicast_overflowed;
 
-					if (G_FLOAT(OFS_RETURN))
+				if (G_FLOAT(OFS_RETURN))
+				{
+					logbits = bits;
+					if (!sv.multicast.overflowed)
 					{
 						if (!wroteheader)
 						{
@@ -2133,10 +2153,11 @@ static void SVFTE_WriteCSQCEntitiesToClient (client_t *client, sizebuf_t *msg,
 						else
 							MSG_WriteShort (&entmsg, entnum);
 
-						SZ_Write (&entmsg, sv.multicast.data, sv.multicast.cursize);
-						logbits = bits;
+						SZ_Write (&entmsg, sv.multicast.data,
+							sv.multicast.cursize);
 						bits = SENDFLAG_PRESENT;
 					}
+				}
 				else if (bits & SENDFLAG_PRESENT)
 					goto sendremove;
 				else
@@ -3940,7 +3961,6 @@ void SV_SpawnServer (const char *server)
 	sv.multicast.maxsize = sizeof(sv.multicast_buf);
 	sv.multicast.cursize = 0;
 	sv.multicast.data = sv.multicast_buf;
-	sv.multicast.allowoverflow = true;
 
 	sv.reliable_datagram.maxsize = sizeof(sv.reliable_datagram_buf);
 	sv.reliable_datagram.cursize = 0;

@@ -3708,10 +3708,14 @@ qboolean VR_Enable() {
                              &DownTan);
 
     eyes[i].index = i;
+    eyes[i].position = {0.0f, 0.0f, 0.0f};
+    eyes[i].orientation = {1.0f, 0.0f, 0.0f, 0.0f};
     eyes[i].fbo = CreateFBO(vrwidth, vrheight);
     eyes[i].fov_x = (atan(-LeftTan) + atan(RightTan)) / M_PI_DIV_180;
     eyes[i].fov_y = (atan(-UpTan) + atan(DownTan)) / M_PI_DIV_180;
   }
+
+  current_eye = &eyes[1];
 
   vr::VRCompositor()->SetTrackingSpace(vr::TrackingUniverseStanding);
   VR_ResetOrientation(); // Recenter the HMD
@@ -4601,6 +4605,30 @@ float GetAxis(vr::VRControllerState_t *state, int controllerIndex, int axis,
   return sign * v;
 }
 
+static qboolean VR_ShouldUseMovementViewAngles(void) {
+  return vr_enabled.value && vr_initialized &&
+         (int)vr_aimmode.value == VR_AIMMODE_CONTROLLER &&
+         (int)vr_movement_mode.value != VR_MOVEMENT_MODE_RAW_INPUT;
+}
+
+static void VR_GetMovementViewAngles(vec3_t angles) {
+  if ((int)vr_movement_mode.value == VR_MOVEMENT_MODE_FOLLOW_HAND) {
+    VectorCopy(cl.handrot[0], angles);
+  } else {
+    QuatToYawPitchRoll((current_eye ? current_eye : &eyes[1])->orientation,
+                       angles);
+  }
+
+  angles[ROLL] = 0.0f;
+}
+
+void VR_UpdateCommandViewAngles(usercmd_t *cmd) {
+  if (!cmd || !VR_ShouldUseMovementViewAngles())
+    return;
+
+  VR_GetMovementViewAngles(cmd->viewangles);
+}
+
 void DoKey(vr_controller *controller, vr::EVRButtonId vrButton, int quakeKey) {
   uint64_t mask = vr::ButtonMaskFromId(vrButton);
   bool wasDown = (controller->emittedButtonPressed & mask) != 0;
@@ -4692,6 +4720,9 @@ void VR_Move(usercmd_t *cmd) {
     return;
   }
 
+  if (!vr_initialized)
+    return;
+
   emit_input_events = input_events_frame != host_framecount;
   if (emit_input_events)
     input_events_frame = host_framecount;
@@ -4761,10 +4792,13 @@ void VR_Move(usercmd_t *cmd) {
     // movement It is used exclusively for opening the weapon wheel.
 
     vec3_t lfwd, lright, lup;
+    float stick_forward = GetAxis(&controllers[0].state, 0, 1, 0.0f);
+    float stick_side = GetAxis(&controllers[0].state, 0, 0, 0.0f);
 
     // Get HMD orientation for head based movement
     vec3_t orientation;
-    QuatToYawPitchRoll(current_eye->orientation, orientation);
+    QuatToYawPitchRoll((current_eye ? current_eye : &eyes[1])->orientation,
+                       orientation);
 
     if (vr_movement_mode.value == VR_MOVEMENT_MODE_FOLLOW_HEAD) {
       AngleVectors(orientation, lfwd, lright, lup);
@@ -4773,17 +4807,17 @@ void VR_Move(usercmd_t *cmd) {
     }
 
     if (vr_movement_mode.value == VR_MOVEMENT_MODE_RAW_INPUT) {
-      cmd->forwardmove +=
-          vr_movementspeed * GetAxis(&controllers[0].state, 0, 1, 0.0f);
-      cmd->sidemove +=
-          vr_movementspeed * GetAxis(&controllers[0].state, 0, 0, 0.0f);
+      cmd->forwardmove += vr_movementspeed * stick_forward;
+      cmd->sidemove += vr_movementspeed * stick_side;
     } else {
       vec3_t vfwd;
 
       vec3_t vright;
 
       vec3_t vup;
-      vec3_t playerYawOnly = {0, cl.aimangles[YAW], 0};
+      vec3_t playerYawOnly = {0, orientation[YAW], 0};
+      if (vr_movement_mode.value == VR_MOVEMENT_MODE_FOLLOW_HAND)
+        playerYawOnly[YAW] = cl.handrot[0][YAW];
 
       AngleVectors(playerYawOnly, vfwd, vright, vup);
 
@@ -4810,9 +4844,8 @@ void VR_Move(usercmd_t *cmd) {
       }
 
       vec3_t move = {0, 0, 0};
-      VectorMA(move, GetAxis(&controllers[0].state, 0, 1, 0.0f), lfwd, move);
-      VectorMA(move, GetAxis(&controllers[0].state, 0, 0, 0.0f), lright,
-               move);
+      VectorMA(move, stick_forward, lfwd, move);
+      VectorMA(move, stick_side, lright, move);
 
       float fwd = DotProduct(move, vfwd);
       float right = DotProduct(move, vright);
@@ -4829,9 +4862,7 @@ void VR_Move(usercmd_t *cmd) {
       AngleVectors(cl.handrot[0], lfwd, lright, lup);
     }
 
-    cmd->upmove +=
-        cl_upspeed.value * GetAxis(&controllers[0].state, 0, 1, 0.0f) *
-        lfwd[2];
+    cmd->upmove += cl_upspeed.value * stick_forward * lfwd[2];
 
     if (vr_movement_speed.value != 1.0f) {
       cmd->forwardmove *= vr_movement_speed.value;

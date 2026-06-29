@@ -75,6 +75,7 @@ void VR_TriggerHaptic(int controller, float durationSeconds);
 void VR_Draw2D();
 void VR_Draw2D();
 void VR_Move(usercmd_t *cmd);
+void VR_UpdateCommandViewAngles(usercmd_t *cmd);
 void VR_LoadWeaponSchema();
 void VR_InitGame();
 void VR_PushYaw();
