@@ -320,6 +320,13 @@ $(DEFAULT_TARGET): $(BINARY_TARGET)
 	@echo '    break' >> $@
 	@echo '  fi' >> $@
 	@echo 'done' >> $@
+	@echo 'case " $$* " in' >> $@
+	@echo '  *" -vr "*)' >> $@
+	@echo '    export SDL_VIDEODRIVER="$${SDL_VIDEODRIVER:-x11}"' >> $@
+	@echo '    export RUST_LOG="$${RUST_LOG:-warn}"' >> $@
+	@echo '    unset WAYLAND_DISPLAY' >> $@
+	@echo '    ;;' >> $@
+	@echo 'esac' >> $@
 	@echo 'exec "$$SCRIPT_DIR/$(BINARY_TARGET)" "$$@"' >> $@
 	chmod +x $@
 

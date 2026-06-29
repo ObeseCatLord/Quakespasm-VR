@@ -28,22 +28,6 @@ extern cvar_t gl_fullbrights, r_drawflat, gl_overbright, r_oldwater, r_oldskylea
 
 byte *SV_FatPVS (vec3_t org, qmodel_t *worldmodel);
 
-static qboolean R_TextureChainNeedsLegacyWater (texture_t *t, texchain_t chain)
-{
-	return t && t->texturechains[chain] && (t->texturechains[chain]->flags & SURF_DRAWTURB) && !t->warpimage;
-}
-
-static qboolean R_ModelNeedsLegacyWater (qmodel_t *model, texchain_t chain)
-{
-	int i;
-
-	for (i = 0; i < model->numtextures; i++)
-		if (R_TextureChainNeedsLegacyWater (model->textures[i], chain))
-			return true;
-
-	return false;
-}
-
 //==============================================================================
 //
 // SETUP CHAINS
@@ -268,7 +252,7 @@ void R_DrawTextureChains_ShowTris (qmodel_t *model, texchain_t chain)
 		if (!t)
 			continue;
 
-		if (r_oldwater.value && R_TextureChainNeedsLegacyWater (t, chain))
+		if (r_oldwater.value && t->texturechains[chain] && (t->texturechains[chain]->flags & SURF_DRAWTURB))
 		{
 			for (s = t->texturechains[chain]; s; s = s->texturechain)
 				for (p = s->polys->next; p; p = p->next)
@@ -304,7 +288,7 @@ void R_DrawTextureChains_Drawflat (qmodel_t *model, texchain_t chain)
 		if (!t)
 			continue;
 
-		if (r_oldwater.value && R_TextureChainNeedsLegacyWater (t, chain))
+		if (r_oldwater.value && t->texturechains[chain] && (t->texturechains[chain]->flags & SURF_DRAWTURB))
 		{
 			for (s = t->texturechains[chain]; s; s = s->texturechain)
 				for (p = s->polys->next; p; p = p->next)
@@ -640,7 +624,7 @@ void R_DrawTextureChains_Water (qmodel_t *model, entity_t *ent, texchain_t chain
 	has_lit_water = false;
 	has_unlit_water = false;
 
-	if (r_oldwater.value && R_ModelNeedsLegacyWater (model, chain))
+	if (r_oldwater.value)
 	{
 		for (i=0 ; i<model->numtextures ; i++)
 		{

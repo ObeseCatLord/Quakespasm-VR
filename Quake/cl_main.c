@@ -889,6 +889,7 @@ static qboolean CL_PredictPlayer (entity_t *ent)
 
 	pending = cl.pendingcmd;
 	VectorCopy (cl.aimangles, pending.viewangles);
+	VR_UpdateCommandViewAngles (&pending);
 	pmove.cmd = pending;
 	if (pmove.cmd.seconds > 0.5f)
 		pmove.cmd.seconds = 0.5f;
@@ -1341,6 +1342,7 @@ void CL_AccumulateCmd (void)
 	CL_AccumulateVRRoomScaleMove ();
 	CL_FinishMove (&cl.pendingcmd, false);
 	VectorCopy (cl.aimangles, cl.pendingcmd.viewangles);
+	VR_UpdateCommandViewAngles (&cl.pendingcmd);
 }
 
 /*

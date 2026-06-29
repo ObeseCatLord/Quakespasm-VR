@@ -136,10 +136,10 @@ void SNDDMA_LockBuffer(void);
 /* unlocks the dma buffer / sends sound to the device */
 void SNDDMA_Submit(void);
 
-/* blocks sound output upon window focus loss */
+/* blocks sound output when explicitly requested */
 void SNDDMA_BlockSound(void);
 
-/* unblocks the output upon window focus gain */
+/* unblocks sound output */
 void SNDDMA_UnblockSound(void);
 
 /* ====================================================================
@@ -187,4 +187,3 @@ wavinfo_t GetWavinfo (const char *name, byte *wav, int wavlength);
 void SND_InitScaletable (void);
 
 #endif	/* __QUAKE_SOUND__ */
-

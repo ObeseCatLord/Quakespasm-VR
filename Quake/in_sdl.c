@@ -1041,7 +1041,6 @@ void IN_SendKeyEvents (void)
 			else if (event.window.event == SDL_WINDOWEVENT_FOCUS_LOST)
 			{
 				windowhasfocus = false;
-				S_BlockSound();
 			}
 			break;
 #else
@@ -1056,7 +1055,6 @@ void IN_SendKeyEvents (void)
 				else
 				{
 					windowhasfocus = false;
-					S_BlockSound();
 				}
 			}
 			break;

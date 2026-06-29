@@ -2436,6 +2436,98 @@ static void Host_SV_GiveAll_f(void) {
   }
 }
 
+static qboolean Host_ParseServerCheatValue(int arg, qboolean default_value) {
+  if (Cmd_Argc() <= arg)
+    return default_value;
+
+  return Q_atof(Cmd_Argv(arg)) != 0;
+}
+
+static void Host_SV_God_f(void) {
+  client_t *client;
+  int i;
+  int value_arg;
+  qboolean enable;
+  qboolean all;
+
+  if (!sv.active) {
+    Con_Printf("sv_god: no active server\n");
+    return;
+  }
+
+  all = Cmd_Argc() > 1 && q_strcasecmp(Cmd_Argv(1), "all") == 0;
+  value_arg =
+      (!all && Cmd_Argc() > 2 && Q_strcmp(Cmd_Argv(1), "#") == 0) ? 3 : 2;
+  enable = Host_ParseServerCheatValue(value_arg, true);
+
+  if (all) {
+    for (i = 0; i < svs.maxclients; i++) {
+      if (!svs.clients[i].active || !svs.clients[i].edict)
+        continue;
+      if (enable)
+        svs.clients[i].edict->v.flags =
+            (int)svs.clients[i].edict->v.flags | FL_GODMODE;
+      else
+        svs.clients[i].edict->v.flags =
+            (int)svs.clients[i].edict->v.flags & ~FL_GODMODE;
+      Con_Printf("sv_god: %s %s\n", svs.clients[i].name,
+                 enable ? "ON" : "OFF");
+    }
+    return;
+  }
+
+  client = Host_FindClientByCommandArgs(1);
+  if (!client || !client->edict) {
+    Con_Printf("sv_god: no matching active client\n");
+    return;
+  }
+
+  if (enable)
+    client->edict->v.flags = (int)client->edict->v.flags | FL_GODMODE;
+  else
+    client->edict->v.flags = (int)client->edict->v.flags & ~FL_GODMODE;
+  Con_Printf("sv_god: %s %s\n", client->name, enable ? "ON" : "OFF");
+}
+
+static void Host_SV_Noclip_f(void) {
+  client_t *client;
+  int i;
+  int value_arg;
+  qboolean enable;
+  qboolean all;
+
+  if (!sv.active) {
+    Con_Printf("sv_noclip: no active server\n");
+    return;
+  }
+
+  all = Cmd_Argc() > 1 && q_strcasecmp(Cmd_Argv(1), "all") == 0;
+  value_arg =
+      (!all && Cmd_Argc() > 2 && Q_strcmp(Cmd_Argv(1), "#") == 0) ? 3 : 2;
+  enable = Host_ParseServerCheatValue(value_arg, true);
+
+  if (all) {
+    for (i = 0; i < svs.maxclients; i++) {
+      if (!svs.clients[i].active || !svs.clients[i].edict)
+        continue;
+      svs.clients[i].edict->v.movetype =
+          enable ? MOVETYPE_NOCLIP : MOVETYPE_WALK;
+      Con_Printf("sv_noclip: %s %s\n", svs.clients[i].name,
+                 enable ? "ON" : "OFF");
+    }
+    return;
+  }
+
+  client = Host_FindClientByCommandArgs(1);
+  if (!client || !client->edict) {
+    Con_Printf("sv_noclip: no matching active client\n");
+    return;
+  }
+
+  client->edict->v.movetype = enable ? MOVETYPE_NOCLIP : MOVETYPE_WALK;
+  Con_Printf("sv_noclip: %s %s\n", client->name, enable ? "ON" : "OFF");
+}
+
 static edict_t *FindViewthing(void) {
   int i;
   edict_t *e = NULL;
@@ -2772,6 +2864,8 @@ void Host_InitCommands(void) {
   Cmd_AddCommand("save", Host_Savegame_f);
   Cmd_AddCommand_ClientCommand("give", Host_Give_f);
   Cmd_AddCommand("sv_giveall", Host_SV_GiveAll_f);
+  Cmd_AddCommand("sv_god", Host_SV_God_f);
+  Cmd_AddCommand("sv_noclip", Host_SV_Noclip_f);
 
   Cmd_AddCommand("startdemos", Host_Startdemos_f);
   Cmd_AddCommand("demos", Host_Demos_f);
