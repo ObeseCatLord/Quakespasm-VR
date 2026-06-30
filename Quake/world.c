@@ -61,6 +61,25 @@ static qboolean SV_IsActiveClientEdict (edict_t *ent)
 	return ((int)ent->v.flags & FL_CLIENT) != 0;
 }
 
+static qboolean SV_ShouldSkipRecentTeleportTrigger (edict_t *touch, edict_t *ent)
+{
+	const char	*classname;
+
+	if (!SV_IsActiveClientEdict(ent))
+		return false;
+	if (ent->v.teleport_time <= qcvm->time)
+		return false;
+	if (!touch->v.classname)
+		return false;
+
+	classname = PR_GetString(touch->v.classname);
+	if (!classname || !classname[0])
+		return false;
+
+	return !q_strcasecmp(classname, "trigger_teleport")
+		|| q_strcasestr(classname, "teleport");
+}
+
 static qboolean SV_IsPointMove (moveclip_t *clip)
 {
 	return clip->mins[0] == clip->maxs[0]
@@ -706,6 +725,8 @@ void SV_TouchLinks (edict_t *ent)
 		|| ent->v.absmax[0] < touch->v.absmin[0]
 		|| ent->v.absmax[1] < touch->v.absmin[1]
 		|| ent->v.absmax[2] < touch->v.absmin[2] )
+			continue;
+		if (SV_ShouldSkipRecentTeleportTrigger(touch, ent))
 			continue;
 		old_self = pr_global_struct->self;
 		old_other = pr_global_struct->other;

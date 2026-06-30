@@ -1010,6 +1010,48 @@ static qboolean SV_CoopRespawnPointContentsOK(vec3_t origin, edict_t *ent,
   return true;
 }
 
+static qboolean SV_CoopRespawnTriggerLooksHazard(edict_t *touch) {
+  const char *classname;
+
+  if (!touch || touch->free || touch->v.solid != SOLID_TRIGGER ||
+      !touch->v.touch)
+    return false;
+
+  classname = touch->v.classname ? PR_GetString(touch->v.classname) : "";
+  if (!classname || !classname[0])
+    return false;
+
+  return q_strcasestr(classname, "hurt") ||
+         q_strcasestr(classname, "kill") ||
+         q_strcasestr(classname, "void") ||
+         q_strcasestr(classname, "death") ||
+         q_strcasestr(classname, "lava") ||
+         q_strcasestr(classname, "slime");
+}
+
+static qboolean SV_CoopRespawnTouchesHazardTrigger(edict_t *ent,
+                                                   vec3_t origin) {
+  int i;
+  vec3_t mins, maxs;
+
+  VectorAdd(origin, ent->v.mins, mins);
+  VectorAdd(origin, ent->v.maxs, maxs);
+
+  for (i = svs.maxclients + 1; i < qcvm->num_edicts; i++) {
+    edict_t *touch = EDICT_NUM(i);
+
+    if (!SV_CoopRespawnTriggerLooksHazard(touch))
+      continue;
+    if (mins[0] > touch->v.absmax[0] || mins[1] > touch->v.absmax[1] ||
+        mins[2] > touch->v.absmax[2] || maxs[0] < touch->v.absmin[0] ||
+        maxs[1] < touch->v.absmin[1] || maxs[2] < touch->v.absmin[2])
+      continue;
+    return true;
+  }
+
+  return false;
+}
+
 static qboolean SV_CoopRespawnCanPlaceAt(edict_t *ent, vec3_t origin) {
   qboolean bottom;
   trace_t trace;
@@ -1020,6 +1062,8 @@ static qboolean SV_CoopRespawnCanPlaceAt(edict_t *ent, vec3_t origin) {
 
   trace = SV_Move(origin, ent->v.mins, ent->v.maxs, origin, MOVE_NORMAL, ent);
   if (trace.allsolid || trace.startsolid)
+    return false;
+  if (SV_CoopRespawnTouchesHazardTrigger(ent, origin))
     return false;
 
   VectorCopy(ent->v.origin, old_origin);
@@ -1040,6 +1084,8 @@ static qboolean SV_CoopRespawnCanPlaceAtDry(edict_t *ent, vec3_t origin) {
 
   trace = SV_Move(origin, ent->v.mins, ent->v.maxs, origin, MOVE_NORMAL, ent);
   if (trace.allsolid || trace.startsolid)
+    return false;
+  if (SV_CoopRespawnTouchesHazardTrigger(ent, origin))
     return false;
 
   VectorCopy(ent->v.origin, old_origin);

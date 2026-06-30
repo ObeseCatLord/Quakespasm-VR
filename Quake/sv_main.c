@@ -51,7 +51,7 @@ cvar_t sv_coop_weapon_targetfix = {"sv_coop_weapon_targetfix", "1", CVAR_NONE};
 cvar_t sv_coop_pickup_targetlog = {"sv_coop_pickup_targetlog", "0", CVAR_NONE};
 cvar_t sv_coop_pickup_targetfix = {"sv_coop_pickup_targetfix", "0", CVAR_NONE};
 cvar_t sv_coop_pickup_targetfix_classes = {"sv_coop_pickup_targetfix_classes", "", CVAR_NONE};
-cvar_t sv_coop_ammo_respawn = {"sv_coop_ammo_respawn", "0", CVAR_NOTIFY | CVAR_SERVERINFO};
+cvar_t sv_coop_ammo_respawn = {"sv_coop_ammo_respawn", "1", CVAR_NOTIFY | CVAR_SERVERINFO};
 cvar_t sv_coop_ammo_respawn_time = {"sv_coop_ammo_respawn_time", "30", CVAR_NOTIFY | CVAR_SERVERINFO};
 cvar_t sv_coop_progression_item_respawn = {"sv_coop_progression_item_respawn", "1", CVAR_NOTIFY | CVAR_SERVERINFO};
 cvar_t sv_coop_progression_item_respawn_classes = {"sv_coop_progression_item_respawn_classes", "item_jboots item_jboots_timed", CVAR_NOTIFY | CVAR_SERVERINFO};
@@ -201,6 +201,12 @@ void SV_CalcStats(client_t *client, int *statsi, float *statsf, const char **sta
 	val = GetEdictFieldValueByName(ent, "moditems");
 	if (val)
 		statsi[STAT_VR_MODITEMS] = (int)val->_float;
+	else
+	{
+		val = GetEdictFieldValueByName(ent, "items_dwell");
+		if (val)
+			statsi[STAT_VR_MODITEMS] = (int)val->_float;
+	}
 	val = GetEdictFieldValueByName(ent, "weapon2");
 	if (val)
 		statsi[STAT_VR_WEAPON2] = (int)val->_float;
