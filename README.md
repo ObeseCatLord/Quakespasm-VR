@@ -416,7 +416,7 @@ QuakeSpasm cvar.
 | `sv_coop_pickup_targetlog` | `0` | Diagnostics | Logs pickup target decisions. |
 | `sv_coop_predictmove` | `0` | Co-op | Retired compatibility cvar. |
 | `sv_coop_progression_item_respawn` | `1` | Co-op | Respawns configured progression items. |
-| `sv_coop_progression_item_respawn_classes` | `item_jboots item_jboots_timed` | Co-op | Classes treated as progression respawn items. |
+| `sv_coop_progression_item_respawn_classes` | `item_jboots item_jboots_timed item_artifact_envirosuit item_artifact_wetsuit` | Co-op | Classes treated as progression respawn items. Suit-like classnames also respawn automatically. |
 | `sv_coop_respawn_delay` | `10` | Co-op | Delay before co-op respawn; `0` disables the delay. |
 | `sv_coop_respawn_keep_weapons_ammo` | `1` | Co-op | Preserves weapons, ammo, keycards, and supported mod extra fields on respawn. |
 | `sv_coop_respawn_near_player` | `1` | Co-op | Respawns near the death spot or living teammates when safe. |

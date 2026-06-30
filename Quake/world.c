@@ -376,7 +376,8 @@ static qboolean SV_IsCoopProgressionItemRespawnCandidate (edict_t *item, edict_t
 		return false;
 
 	classname = PR_GetString(item->v.classname);
-	return SV_ClassnameMatchesList(classname, sv_coop_progression_item_respawn_classes.string);
+	return SV_ClassnameMatchesList(classname, sv_coop_progression_item_respawn_classes.string)
+		|| (q_strcasestr(classname, "suit") != NULL);
 }
 
 static void SV_ScheduleCoopPickupRespawn (edict_t *pickup, float respawn_time, const char *reason)
@@ -622,7 +623,6 @@ static qboolean SV_IsCoopSharedPickupCandidate (edict_t *pickup, edict_t *player
 
 	classname = PR_GetString(pickup->v.classname);
 	return !q_strncasecmp(classname, "weapon_", 7) ||
-		!q_strncasecmp(classname, "item_", 5) ||
 		!q_strncasecmp(classname, "key_", 4) ||
 		q_strcasestr(classname, "key") ||
 		q_strcasestr(classname, "rune") ||
