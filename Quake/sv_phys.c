@@ -491,7 +491,12 @@ typedef enum {
   COOP_RESPAWN_EXTRA_MODITEMS,
   COOP_RESPAWN_EXTRA_CUSTOMKEYS,
   COOP_RESPAWN_EXTRA_WEAPONS,
+  COOP_RESPAWN_EXTRA_WEAPON2,
+  COOP_RESPAWN_EXTRA_WEAPONS2,
+  COOP_RESPAWN_EXTRA_ITEMS_DWELL,
   COOP_RESPAWN_EXTRA_CURRENTWEAPON,
+  COOP_RESPAWN_EXTRA_KEY_COUNT_SILVER,
+  COOP_RESPAWN_EXTRA_KEY_COUNT_GOLD,
   COOP_RESPAWN_EXTRA_AMMO_SHELLS1,
   COOP_RESPAWN_EXTRA_AMMO_NAILS1,
   COOP_RESPAWN_EXTRA_AMMO_LAVA_NAILS,
@@ -572,7 +577,12 @@ static const coop_respawn_extra_field_t coop_respawn_extra_fields[] = {
     {"moditems", COOP_RESPAWN_EXTRA_BITMASK, COOP_RESPAWN_AD_KEEP_MODITEMS},
     {"customkeys", COOP_RESPAWN_EXTRA_BITMASK, COOP_RESPAWN_ALL_ITEM_BITS},
     {"weapons", COOP_RESPAWN_EXTRA_BITMASK, COOP_RESPAWN_ALL_ITEM_BITS},
+    {"weapon2", COOP_RESPAWN_EXTRA_BITMASK, COOP_RESPAWN_ALL_ITEM_BITS},
+    {"weapons2", COOP_RESPAWN_EXTRA_BITMASK, COOP_RESPAWN_ALL_ITEM_BITS},
+    {"items_dwell", COOP_RESPAWN_EXTRA_BITMASK, COOP_RESPAWN_ALL_ITEM_BITS},
     {"currentweapon", COOP_RESPAWN_EXTRA_RESTORE_FLOAT, 0},
+    {"key_count_silver", COOP_RESPAWN_EXTRA_MAXFLOAT, 0},
+    {"key_count_gold", COOP_RESPAWN_EXTRA_MAXFLOAT, 0},
     {"ammo_shells1", COOP_RESPAWN_EXTRA_MAXFLOAT, 0},
     {"ammo_nails1", COOP_RESPAWN_EXTRA_MAXFLOAT, 0},
     {"ammo_lava_nails", COOP_RESPAWN_EXTRA_MAXFLOAT, 0},
@@ -756,7 +766,8 @@ static int SV_CoopRespawnKeepItemMask(void) {
   mask = IT_SHOTGUN | IT_SUPER_SHOTGUN | IT_NAILGUN | IT_SUPER_NAILGUN |
          IT_GRENADE_LAUNCHER | IT_ROCKET_LAUNCHER | IT_LIGHTNING |
          IT_SUPER_LIGHTNING | IT_AXE | IT_SHELLS | IT_NAILS | IT_ROCKETS |
-         IT_CELLS | IT_KEY1 | IT_KEY2;
+         IT_CELLS | IT_KEY1 | IT_KEY2 | IT_SIGIL1 | IT_SIGIL2 |
+         IT_SIGIL3 | IT_SIGIL4;
 
   if (rogue)
     mask |= RIT_AXE | RIT_LAVA_NAILGUN | RIT_LAVA_SUPER_NAILGUN |
@@ -838,6 +849,51 @@ static void SV_CoopRespawnSaveInventory(edict_t *ent,
       } else {
         inventory->extra_value[i] = val->_float;
       }
+    }
+  }
+}
+
+static void SV_CoopRespawnMergeInventory(
+    coop_respawn_inventory_t *dst, const coop_respawn_inventory_t *src) {
+  int i;
+
+  dst->items |= src->items;
+  dst->ammo_shells =
+      SV_CoopRespawnMaxFloat(dst->ammo_shells, src->ammo_shells);
+  dst->ammo_nails = SV_CoopRespawnMaxFloat(dst->ammo_nails, src->ammo_nails);
+  dst->ammo_rockets =
+      SV_CoopRespawnMaxFloat(dst->ammo_rockets, src->ammo_rockets);
+  dst->ammo_cells = SV_CoopRespawnMaxFloat(dst->ammo_cells, src->ammo_cells);
+  dst->currentammo =
+      SV_CoopRespawnMaxFloat(dst->currentammo, src->currentammo);
+
+  if (dst->weapon <= 0 && src->weapon > 0)
+    dst->weapon = src->weapon;
+  if (!dst->weaponmodel && src->weaponmodel)
+    dst->weaponmodel = src->weaponmodel;
+
+  for (i = 0; i < COOP_RESPAWN_EXTRA_COUNT; i++) {
+    if (!src->extra_valid[i])
+      continue;
+
+    if (!dst->extra_valid[i]) {
+      dst->extra_valid[i] = true;
+      dst->extra_bits[i] = src->extra_bits[i];
+      dst->extra_value[i] = src->extra_value[i];
+      dst->extra_string[i] = src->extra_string[i];
+      continue;
+    }
+
+    if (coop_respawn_extra_fields[i].policy == COOP_RESPAWN_EXTRA_BITMASK) {
+      dst->extra_bits[i] |= src->extra_bits[i];
+    } else if (coop_respawn_extra_fields[i].policy ==
+               COOP_RESPAWN_EXTRA_STRING) {
+      if (!dst->extra_string[i] && src->extra_string[i])
+        dst->extra_string[i] = src->extra_string[i];
+    } else if (coop_respawn_extra_fields[i].policy !=
+               COOP_RESPAWN_EXTRA_RESTORE_FLOAT) {
+      dst->extra_value[i] =
+          SV_CoopRespawnMaxFloat(dst->extra_value[i], src->extra_value[i]);
     }
   }
 }
@@ -1451,7 +1507,11 @@ static void SV_CoopRespawnBeginPostThink(
   SV_CoopRespawnUseDeathAnchor(num, state);
 
   if (coop_respawn_last_inventory_valid[index]) {
+    coop_respawn_inventory_t current_inventory;
+
     state->inventory = coop_respawn_last_inventory[index];
+    SV_CoopRespawnSaveInventory(ent, &current_inventory);
+    SV_CoopRespawnMergeInventory(&state->inventory, &current_inventory);
     state->inventory_valid = true;
   } else {
     SV_CoopRespawnSaveInventory(ent, &state->inventory);
