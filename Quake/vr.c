@@ -5500,6 +5500,32 @@ static void VR_DrawText3D(vec3_t origin, vec3_t right, vec3_t up,
   VR_DrawText3DAligned(origin, right, up, str, scale, color, true);
 }
 
+static void VR_DrawText3DOutlined(vec3_t origin, vec3_t right, vec3_t up,
+                                  const char *str, float scale, vec3_t color,
+                                  qboolean centered) {
+  vec3_t outline_color = {0.0f, 0.0f, 0.0f};
+  vec3_t pos;
+  float offset = q_max(0.28f, scale * 1.15f);
+
+  VectorCopy(origin, pos);
+  VectorMA(pos, offset, right, pos);
+  VR_DrawText3DAligned(pos, right, up, str, scale, outline_color, centered);
+
+  VectorCopy(origin, pos);
+  VectorMA(pos, -offset, right, pos);
+  VR_DrawText3DAligned(pos, right, up, str, scale, outline_color, centered);
+
+  VectorCopy(origin, pos);
+  VectorMA(pos, offset, up, pos);
+  VR_DrawText3DAligned(pos, right, up, str, scale, outline_color, centered);
+
+  VectorCopy(origin, pos);
+  VectorMA(pos, -offset, up, pos);
+  VR_DrawText3DAligned(pos, right, up, str, scale, outline_color, centered);
+
+  VR_DrawText3DAligned(origin, right, up, str, scale, color, centered);
+}
+
 void VR_DrawWeaponMenu(void) {
   vr_dyn_weapon_t *visible[MAX_DYN_WEAPONS];
   int num_visible = VR_GetVisibleWeapons(visible, MAX_DYN_WEAPONS);
@@ -5775,8 +5801,8 @@ void VR_DrawWeaponMenu(void) {
       VectorCopy(origin, text_pos);
       VectorMA(text_pos, list_offset, right, text_pos);
       VectorMA(text_pos, start_y - i * line_spacing, up, text_pos);
-      VR_DrawText3DAligned(text_pos, right, up, label, text_scale, text_color,
-                           false);
+      VR_DrawText3DOutlined(text_pos, right, up, label, text_scale, text_color,
+                            false);
 
       VectorCopy(text_pos, text_center);
       VectorMA(text_center, (len * char_width) * 0.5f, right, text_center);
