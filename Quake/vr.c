@@ -328,6 +328,8 @@ static vr_dyn_weapon_t dyn_weapons[MAX_DYN_WEAPONS] = {
 static int num_dyn_weapons = 8;
 static qboolean rogue_weapons_added = false;
 static qboolean hipnotic_weapons_added = false;
+static qboolean dwell_weapons_added = false;
+static int dwell_weapon_indices[3] = {-1, -1, -1};
 static int last_tracked_activeweapon = -1;
 
 // Impulse sniffing/discovery state
@@ -447,6 +449,94 @@ static int VR_ClientItemBits(void) {
   return cl.stats[STAT_ITEMS];
 }
 
+static qboolean VR_IsDwellGame(void) {
+  const char *game = COM_SkipPath(com_gamedir);
+
+  return game && (!q_strcasecmp(game, "dwell") ||
+                  !q_strcasecmp(game, "dwellv2p2"));
+}
+
+static int VR_DwellOwnedMaskForActive(int active) {
+  switch (active) {
+  case 128: // W_QUAD_SHOTGUN / Rotary Shotgun
+    return 4;
+  case 256: // W_RAILGUN / Crystal Lance
+    return 8;
+  case 512: // W_RIFLE
+    return 32;
+  default:
+    return 0;
+  }
+}
+
+static int VR_DwellImpulseForActive(int active) {
+  switch (active) {
+  case 2:
+    return 23; // Double Shotgun
+  case 64:
+    return 28; // Lightning Gun
+  case 128:
+    return 33; // Rotary Shotgun
+  case 256:
+    return 38; // Crystal Lance
+  case 512:
+    return 2; // Rifle shares the shotgun selection key
+  default:
+    return 0;
+  }
+}
+
+static int VR_DwellAmmoForActive(int active, int *ammo_max) {
+  if (ammo_max)
+    *ammo_max = 100;
+
+  switch (active) {
+  case 1:
+  case 2:
+  case 128:
+  case 512:
+    return STAT_SHELLS;
+  case 4:
+  case 8:
+    if (ammo_max)
+      *ammo_max = 200;
+    return STAT_NAILS;
+  case 16:
+  case 32:
+    return STAT_ROCKETS;
+  case 64:
+  case 256:
+    return STAT_CELLS;
+  default:
+    return -1;
+  }
+}
+
+static void VR_ApplyDwellWeaponMetadata(vr_dyn_weapon_t *w, int active) {
+  int impulse;
+  int owned_mask;
+  int ammo_stat;
+  int ammo_max;
+
+  if (!w || !VR_IsDwellGame())
+    return;
+
+  impulse = VR_DwellImpulseForActive(active);
+  owned_mask = VR_DwellOwnedMaskForActive(active);
+  if (owned_mask > 0) {
+    w->owned_stat = STAT_VR_MODITEMS;
+    w->owned_mask = owned_mask;
+    if (impulse > 0)
+      w->impulse = impulse;
+  }
+
+  ammo_stat = VR_DwellAmmoForActive(active, &ammo_max);
+  if (ammo_stat >= 0) {
+    w->ammo_stat = ammo_stat;
+    w->ammo_max = ammo_max;
+  }
+}
+
 static qboolean VR_FindWeaponOwnedStatForActive(int active, int *owned_stat,
                                                 int *owned_mask) {
   static const int ownership_stats[] = {
@@ -457,6 +547,17 @@ static qboolean VR_FindWeaponOwnedStatForActive(int active, int *owned_stat,
 
   if (!active)
     return false;
+
+  if (VR_IsDwellGame()) {
+    int dwell_mask = VR_DwellOwnedMaskForActive(active);
+    if (dwell_mask && (cl.stats[STAT_VR_MODITEMS] & dwell_mask)) {
+      if (owned_stat)
+        *owned_stat = STAT_VR_MODITEMS;
+      if (owned_mask)
+        *owned_mask = dwell_mask;
+      return true;
+    }
+  }
 
   for (i = 0; i < sizeof(ownership_stats) / sizeof(ownership_stats[0]); i++) {
     int stat = ownership_stats[i];
@@ -515,6 +616,9 @@ static qboolean VR_ModelPathLooksWeapon(const char *path) {
   static const char *blocked[] = {
       "player", "rune", "sigil", "key", "armor", "health",
       "backpack", "gib", "head", "corpse", NULL};
+  static const char *projectile_blocked[] = {
+      "spike", "vore", "lavaball", "fireball", "proj", "zgrenade",
+      "trsh", NULL};
 
   if (!path || !path[0])
     return false;
@@ -522,6 +626,10 @@ static qboolean VR_ModelPathLooksWeapon(const char *path) {
   base = COM_SkipPath(path);
   for (int i = 0; blocked[i]; i++) {
     if (q_strcasestr(base, blocked[i]))
+      return false;
+  }
+  for (int i = 0; projectile_blocked[i]; i++) {
+    if (q_strcasestr(base, projectile_blocked[i]))
       return false;
   }
 
@@ -655,6 +763,53 @@ static vr_dyn_weapon_t *VR_AddOrUpdateDynWeapon(
     w->from_schema = true;
 
   return w;
+}
+
+static void VR_AddDwellWeaponDefaults(void) {
+  vr_dyn_weapon_t *w;
+
+  if (!VR_IsDwellGame() || dwell_weapons_added)
+    return;
+
+  /*
+   * Dwell stores extra weapon ownership in items_dwell, which the server
+   * exposes through STAT_VR_MODITEMS. Keep base weapons on STAT_ITEMS, and
+   * seed only the extra weapons so no Dwell-only state leaks into other mods.
+   */
+  w = VR_AddOrUpdateDynWeapon(128, 33, "progs/g_shot3.mdl", 0, false, 1.0f,
+                              vec3_origin, false, STAT_VR_MODITEMS, 4, -1, 0,
+                              STAT_SHELLS, 100, false);
+  if (w)
+    dwell_weapon_indices[0] = (int)(w - dyn_weapons);
+  w = VR_AddOrUpdateDynWeapon(256, 38, "progs/g_rail.mdl", 0, false, 1.0f,
+                              vec3_origin, false, STAT_VR_MODITEMS, 8, -1, 0,
+                              STAT_CELLS, 100, false);
+  if (w)
+    dwell_weapon_indices[1] = (int)(w - dyn_weapons);
+  w = VR_AddOrUpdateDynWeapon(512, 2, "progs/g_rifle.mdl", 0, false, 1.0f,
+                              vec3_origin, false, STAT_VR_MODITEMS, 32, -1, 0,
+                              STAT_SHELLS, 100, false);
+  if (w)
+    dwell_weapon_indices[2] = (int)(w - dyn_weapons);
+
+  dwell_weapons_added = true;
+}
+
+static qboolean VR_IsDwellDefaultWeaponEntry(const vr_dyn_weapon_t *w) {
+  int index;
+
+  if (!w)
+    return false;
+
+  index = (int)(w - dyn_weapons);
+  for (int i = 0; i < (int)(sizeof(dwell_weapon_indices) /
+                            sizeof(dwell_weapon_indices[0]));
+       i++) {
+    if (dwell_weapon_indices[i] == index)
+      return true;
+  }
+
+  return false;
 }
 
 static qboolean VR_WeaponIsActive(const vr_dyn_weapon_t *w) {
@@ -4211,7 +4366,7 @@ void VR_AddOrientationToViewAngles(vec3_t angles) {
 void VR_ShowCrosshair() {
   vec3_t forward, up, right;
   vec3_t start, end, impact;
-  float size, alpha;
+  float size, alpha, pixel_size;
 
   // leads to exception in multiplayer
   /*     if((int)(sv_player->v.weapon) == IT_AXE)
@@ -4221,6 +4376,9 @@ void VR_ShowCrosshair() {
 
   size = CLAMP(0.0f, vr_crosshair_size.value, 32.0f);
   alpha = CLAMP(0.0f, vr_crosshair_alpha.value, 1.0f);
+  pixel_size = size * glwidth / vid.width;
+  if (vr_enabled.value)
+    pixel_size = q_max(pixel_size, 4.0f);
 
   if (size <= 0 || alpha <= 0) {
     return;
@@ -4270,7 +4428,7 @@ void VR_ShowCrosshair() {
 
     glEnable(GL_POINT_SMOOTH);
     glColor4f(1, 0, 0, alpha);
-    glPointSize(size * glwidth / vid.width);
+    glPointSize(pixel_size);
 
     glBegin(GL_POINTS);
     glVertex3f(impact[0], impact[1], impact[2]);
@@ -4284,7 +4442,7 @@ void VR_ShowCrosshair() {
     TraceLine(start, end, impact);
 
     glColor4f(1, 0, 0, alpha);
-    glLineWidth(size * glwidth / vid.width);
+    glLineWidth(pixel_size);
     glBegin(GL_LINES);
     impact[2] += vr_crosshairy.value * 10.f;
     glVertex3f(start[0], start[1], start[2]);
@@ -5055,6 +5213,9 @@ void VR_TrackWeapons(void) {
                 active, model_idx, w->impulse, owned_stat);
   }
 
+  if (w)
+    VR_ApplyDwellWeaponMetadata(w, active);
+
   VR_ContinueWeaponSelection();
 }
 
@@ -5099,6 +5260,7 @@ void VR_ResetWeaponTracking(void) {
                             STAT_ROCKETS, 100, false);
     hipnotic_weapons_added = true;
   }
+  VR_AddDwellWeaponDefaults();
 
   // Note: We DO NOT reset num_dyn_weapons or discovery state here anymore
   // so that mod weapon knowledge persists across map loads.
@@ -5121,6 +5283,8 @@ static int VR_GetVisibleWeapons(vr_dyn_weapon_t **out, int max) {
     if (w->discovered && w->model_index > 0 &&
         !VR_ModelIndexLooksWeapon(w->model_index))
       continue;
+    if (VR_IsDwellDefaultWeaponEntry(w) && !VR_IsDwellGame())
+      continue;
 
     if (!w->from_schema && w->bitmask) {
       for (int j = 0; j < num_dyn_weapons; j++) {
@@ -5137,6 +5301,21 @@ static int VR_GetVisibleWeapons(vr_dyn_weapon_t **out, int max) {
       out[count++] = w;
   }
   return count;
+}
+
+static int VR_WeaponSelectionImpulse(const vr_dyn_weapon_t *w) {
+  int impulse;
+
+  if (!w)
+    return 0;
+
+  if (VR_IsDwellGame()) {
+    impulse = VR_DwellImpulseForActive(w->bitmask);
+    if (impulse > 0)
+      return impulse;
+  }
+
+  return w->impulse;
 }
 
 static int VR_GetWeaponMenuPlayers(int *out, int max) {
@@ -5162,7 +5341,7 @@ extern "C" int VR_GetSelectedWeaponImpulse(int selection) {
   vr_dyn_weapon_t *visible[MAX_DYN_WEAPONS];
   int num_visible = VR_GetVisibleWeapons(visible, MAX_DYN_WEAPONS);
   if (selection >= 0 && selection < num_visible) {
-    return visible[selection]->impulse;
+    return VR_WeaponSelectionImpulse(visible[selection]);
   }
   return 0;
 }
@@ -5171,6 +5350,7 @@ extern "C" void VR_SelectWeaponFromMenu(int selection) {
   vr_dyn_weapon_t *visible[MAX_DYN_WEAPONS];
   int num_visible = VR_GetVisibleWeapons(visible, MAX_DYN_WEAPONS);
   vr_dyn_weapon_t *w;
+  int impulse;
   int index;
 
   vr_weapon_cycle_target = -1;
@@ -5179,7 +5359,8 @@ extern "C" void VR_SelectWeaponFromMenu(int selection) {
     return;
 
   w = visible[selection];
-  if (w->impulse <= 0) {
+  impulse = VR_WeaponSelectionImpulse(w);
+  if (impulse <= 0) {
     DebugLog("VR: selected weapon has no impulse bitmask=%d model=%d\n",
              w->bitmask, w->model_index);
     return;
@@ -5192,9 +5373,9 @@ extern "C" void VR_SelectWeaponFromMenu(int selection) {
   if (index < 0 || index >= num_dyn_weapons)
     return;
 
-  VR_SendWeaponImpulse(w->impulse);
+  VR_SendWeaponImpulse(impulse);
   vr_weapon_cycle_target = index;
-  vr_weapon_cycle_impulse = w->impulse;
+  vr_weapon_cycle_impulse = impulse;
   vr_weapon_cycle_attempts = 1;
   vr_weapon_cycle_next_time = Sys_DoubleTime() + VR_WEAPON_CYCLE_INTERVAL;
 }
@@ -5569,7 +5750,7 @@ void VR_DrawWeaponMenu(void) {
   if (num_players > 0) {
     float outer_radius =
         base_radius + ((target_rings > 1) ? ((target_rings - 2) * 15.0f) : 0.0f);
-    float list_offset = outer_radius + 26.0f;
+    float list_offset = outer_radius + 16.0f;
     float text_scale = 0.30f;
     float char_width = 8.0f * text_scale;
     float line_spacing = 5.0f;

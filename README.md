@@ -404,7 +404,7 @@ QuakeSpasm cvar.
 | `scr_crosshair_desktop_fallback` | `1` | UI | Draws a fallback desktop crosshair when mod HUDs omit one. |
 | `sv_airaccelerate` | `-1` | PMove | PMove air acceleration; negative means compatibility default. |
 | `sv_cmdfile` | `""` | Server | Server command file hook. |
-| `sv_coop_ammo_respawn` | `0` | Co-op | Enables co-op ammo respawn. |
+| `sv_coop_ammo_respawn` | `1` | Co-op | Enables co-op ammo respawn. |
 | `sv_coop_ammo_respawn_time` | `30` | Co-op | Ammo respawn delay in seconds. |
 | `sv_coop_autosave` | `1` | Co-op | Enables co-op autosaves. |
 | `sv_coop_autosave_kill_interval` | `10` | Co-op | Kill-count interval for autosaves. |
