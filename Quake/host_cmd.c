@@ -892,7 +892,10 @@ LOAD / SAVE GAME
 */
 
 #define SAVEGAME_LEGACY_VERSION 5
-#define SAVEGAME_VERSION 6
+#define SAVEGAME_MULTICLIENT_VERSION 6
+#define SAVEGAME_VERSION 7
+
+static void Host_SaveClientSpawnParms(client_t *client);
 #define COOP_AUTOSAVE_MAPSTART_DELAY 3.0
 #define COOP_AUTOSAVE_MAX_SLOTS 20
 
@@ -957,6 +960,76 @@ static int Host_SavegameActiveClients(void) {
       active_clients++;
   }
   return active_clients;
+}
+
+static void Host_SavegameWriteClientName(FILE *f, const char *name) {
+  int i;
+
+  if (!name)
+    name = "";
+
+  for (i = 0; i < MAX_SCOREBOARDNAME - 1 && name[i]; i++)
+    fprintf(f, "%02x", (unsigned char)name[i]);
+  fprintf(f, "\n");
+}
+
+static void Host_LoadgameReadClientName(const char *encoded, char *name,
+                                        size_t name_size) {
+  size_t out;
+  const char *p;
+
+  if (!name || name_size == 0)
+    return;
+
+  name[0] = 0;
+  if (!encoded)
+    return;
+
+  out = 0;
+  p = encoded;
+  while (p[0] && p[1] && out + 1 < name_size) {
+    int hi, lo;
+
+    if (p[0] >= '0' && p[0] <= '9')
+      hi = p[0] - '0';
+    else if (p[0] >= 'a' && p[0] <= 'f')
+      hi = p[0] - 'a' + 10;
+    else if (p[0] >= 'A' && p[0] <= 'F')
+      hi = p[0] - 'A' + 10;
+    else
+      break;
+
+    if (p[1] >= '0' && p[1] <= '9')
+      lo = p[1] - '0';
+    else if (p[1] >= 'a' && p[1] <= 'f')
+      lo = p[1] - 'a' + 10;
+    else if (p[1] >= 'A' && p[1] <= 'F')
+      lo = p[1] - 'A' + 10;
+    else
+      break;
+
+    name[out++] = (char)((hi << 4) | lo);
+    p += 2;
+  }
+  name[out] = 0;
+}
+
+static void Host_SavegameRefreshClientSpawnParms(void) {
+  int i;
+  client_t *old_host_client;
+  edict_t *old_sv_player;
+
+  old_host_client = host_client;
+  old_sv_player = sv_player;
+  for (i = 0; i < svs.maxclients; i++) {
+    if (!svs.clients[i].active || !svs.clients[i].edict)
+      continue;
+    host_client = &svs.clients[i];
+    sv_player = host_client->edict;
+    Host_SaveClientSpawnParms(host_client);
+  }
+  host_client = old_host_client;
+  sv_player = old_sv_player;
 }
 
 static qboolean Host_SavegameCanSave(qboolean quiet) {
@@ -1040,6 +1113,8 @@ static qboolean Host_SavegameWrite(const char *savename, qboolean quiet) {
     switched_qcvm = true;
   }
 
+  Host_SavegameRefreshClientSpawnParms();
+
   fprintf(f, "%i\n", SAVEGAME_VERSION);
   Host_SavegameComment(comment);
   fprintf(f, "%s\n", comment);
@@ -1049,6 +1124,7 @@ static qboolean Host_SavegameWrite(const char *savename, qboolean quiet) {
     if (svs.clients[i].edict)
       frags = (int)svs.clients[i].edict->v.frags;
     fprintf(f, "%i\n", svs.clients[i].active ? 1 : 0);
+    Host_SavegameWriteClientName(f, svs.clients[i].name);
     fprintf(f, "%i\n", svs.clients[i].colors);
     fprintf(f, "%i\n", frags);
     for (j = 0; j < NUM_SPAWN_PARMS; j++)
@@ -1092,6 +1168,9 @@ static void Host_LoadgameMaybeClearLoadedFlag(void) {
   }
   sv.loadgame = false;
   sv.paused = false;
+  memset(sv.loadgame_client_name_required, 0,
+         sizeof(sv.loadgame_client_name_required));
+  memset(sv.loadgame_client_names, 0, sizeof(sv.loadgame_client_names));
 }
 
 static qboolean Host_LoadgameHasPendingClients(void) {
@@ -1112,6 +1191,9 @@ static void Host_LoadgameDiscardPendingClients(qboolean quiet) {
 
   for (i = 0; i < svs.maxclients && i < MAX_SCOREBOARD; i++)
     sv.loadgame_client_saved[i] = false;
+  memset(sv.loadgame_client_name_required, 0,
+         sizeof(sv.loadgame_client_name_required));
+  memset(sv.loadgame_client_names, 0, sizeof(sv.loadgame_client_names));
   sv.loadgame = false;
   if (!quiet)
     Con_Printf("Discarded pending saved co-op player states.\n");
@@ -1129,6 +1211,40 @@ static void Host_LoadgameRestoreClientEdict(int clientnum, edict_t *ent) {
   memcpy(ent, Host_LoadgameClientEdictSnapshot(clientnum), qcvm->edict_size);
   ent->free = false;
   ClearLink(&ent->area);
+}
+
+static qboolean Host_LoadgameSavedNameMatches(int clientnum,
+                                              const char *client_name) {
+  return client_name && client_name[0] &&
+         q_strcasecmp(client_name, "unconnected") &&
+         sv.loadgame_client_names[clientnum][0] &&
+         !q_strcasecmp(sv.loadgame_client_names[clientnum], client_name);
+}
+
+static int Host_LoadgameFindSavedClientForSpawn(int clientnum,
+                                                const char *client_name) {
+  int i;
+
+  if (clientnum >= 0 && clientnum < MAX_SCOREBOARD &&
+      sv.loadgame_client_saved[clientnum] &&
+      Host_LoadgameSavedNameMatches(clientnum, client_name))
+    return clientnum;
+
+  if (client_name && client_name[0] &&
+      q_strcasecmp(client_name, "unconnected")) {
+    for (i = 0; i < svs.maxclients && i < MAX_SCOREBOARD; i++) {
+      if (!sv.loadgame_client_saved[i] || !sv.loadgame_client_names[i][0])
+        continue;
+      if (!q_strcasecmp(sv.loadgame_client_names[i], client_name))
+        return i;
+    }
+  }
+
+  if (clientnum >= 0 && clientnum < MAX_SCOREBOARD &&
+      sv.loadgame_client_saved[clientnum])
+    return sv.loadgame_client_name_required[clientnum] ? -1 : clientnum;
+
+  return -1;
 }
 
 void Host_CoopAutosaveFrame(void) {
@@ -1251,6 +1367,7 @@ static void Host_Loadgame_f(void) {
   int saved_maxclients;
   int active;
   qboolean saved_active[MAX_SCOREBOARD];
+  char saved_names[MAX_SCOREBOARD][MAX_SCOREBOARDNAME];
   int saved_colors[MAX_SCOREBOARD];
   int saved_frags[MAX_SCOREBOARD];
   float spawn_parms[MAX_SCOREBOARD][NUM_SPAWN_PARMS];
@@ -1291,19 +1408,23 @@ static void Host_Loadgame_f(void) {
 
   data = start;
   data = COM_ParseIntNewline(data, &version);
-  if (version != SAVEGAME_VERSION && version != SAVEGAME_LEGACY_VERSION) {
+  if (version != SAVEGAME_VERSION && version != SAVEGAME_MULTICLIENT_VERSION &&
+      version != SAVEGAME_LEGACY_VERSION) {
     free(start);
     start = NULL;
-    Host_Error("Savegame is version %i, not %i or %i", version,
-               SAVEGAME_LEGACY_VERSION, SAVEGAME_VERSION);
+    Host_Error("Savegame is version %i, not %i, %i, or %i", version,
+               SAVEGAME_LEGACY_VERSION, SAVEGAME_MULTICLIENT_VERSION,
+               SAVEGAME_VERSION);
     return;
   }
   data = COM_ParseStringNewline(data);
   memset(saved_active, 0, sizeof(saved_active));
+  memset(saved_names, 0, sizeof(saved_names));
   memset(saved_colors, 0, sizeof(saved_colors));
   memset(saved_frags, 0, sizeof(saved_frags));
   memset(spawn_parms, 0, sizeof(spawn_parms));
-  if (version == SAVEGAME_VERSION) {
+  if (version == SAVEGAME_VERSION ||
+      version == SAVEGAME_MULTICLIENT_VERSION) {
     data = COM_ParseIntNewline(data, &saved_maxclients);
     if (saved_maxclients < 1 || saved_maxclients > MAX_SCOREBOARD) {
       free(start);
@@ -1321,6 +1442,11 @@ static void Host_Loadgame_f(void) {
     for (i = 0; i < saved_maxclients; i++) {
       data = COM_ParseIntNewline(data, &active);
       saved_active[i] = active ? true : false;
+      if (version == SAVEGAME_VERSION) {
+        data = COM_ParseStringNewline(data);
+        Host_LoadgameReadClientName(com_token, saved_names[i],
+                                    sizeof(saved_names[i]));
+      }
       data = COM_ParseIntNewline(data, &saved_colors[i]);
       data = COM_ParseIntNewline(data, &saved_frags[i]);
       for (j = 0; j < NUM_SPAWN_PARMS; j++)
@@ -1416,11 +1542,19 @@ static void Host_Loadgame_f(void) {
     has_saved_edict = saved_active[i] && !ent->free;
     if (has_saved_edict) {
       saved_frags[i] = (int)ent->v.frags;
+      if (!saved_names[i][0] && ent->v.netname)
+        q_strlcpy(saved_names[i], PR_GetString(ent->v.netname),
+                  sizeof(saved_names[i]));
       memcpy(Host_LoadgameClientEdictSnapshot(i), ent, qcvm->edict_size);
       ED_ClearEdict(ent);
     }
 
     sv.loadgame_client_saved[i] = has_saved_edict;
+    sv.loadgame_client_name_required[i] =
+        has_saved_edict && version == SAVEGAME_VERSION && saved_names[i][0] &&
+        q_strcasecmp(saved_names[i], "unconnected");
+    q_strlcpy(sv.loadgame_client_names[i], saved_names[i],
+              sizeof(sv.loadgame_client_names[i]));
     svs.clients[i].colors = saved_colors[i];
     svs.clients[i].old_frags = saved_frags[i];
     for (j = 0; j < NUM_SPAWN_PARMS; j++)
@@ -1763,6 +1897,7 @@ Host_Spawn_f
 static void Host_Spawn_f(void) {
   int i;
   int clientnum;
+  int saved_clientnum;
   client_t *client;
   edict_t *ent;
   qboolean loaded_client;
@@ -1782,25 +1917,37 @@ static void Host_Spawn_f(void) {
   host_client->lastmovetime = qcvm->time;
 
   clientnum = host_client - svs.clients;
-  loaded_client = sv.loadgame && !sv.loadgame_resumed &&
-      clientnum >= 0 && clientnum < MAX_SCOREBOARD &&
-      sv.loadgame_client_saved[clientnum] && sv.loadgame_client_edicts;
+  saved_clientnum = -1;
+  if (sv.loadgame && sv.loadgame_client_edicts)
+    saved_clientnum =
+        Host_LoadgameFindSavedClientForSpawn(clientnum, host_client->name);
+  loaded_client = saved_clientnum >= 0;
   initial_spawn_client = clientnum >= 0 && clientnum < MAX_SCOREBOARD &&
       svs.coop_initial_spawn_client[clientnum];
 
   // run the entrance script
   if (loaded_client) { // saved client edicts are fully inited already
     ent = host_client->edict;
-    Host_LoadgameRestoreClientEdict(clientnum, ent);
+    if (saved_clientnum != clientnum) {
+      for (i = 0; i < NUM_SPAWN_PARMS; i++)
+        host_client->spawn_parms[i] =
+            svs.clients[saved_clientnum].spawn_parms[i];
+      host_client->colors = svs.clients[saved_clientnum].colors;
+      host_client->old_frags = svs.clients[saved_clientnum].old_frags;
+    }
+    Host_LoadgameRestoreClientEdict(saved_clientnum, ent);
     ent->v.netname = PR_SetEngineString(host_client->name);
+    ent->v.colormap = NUM_FOR_EDICT(ent);
     ent->v.team = (host_client->colors & 15) + 1;
     host_client->old_frags = (int)ent->v.frags;
     SV_LinkEdict(ent, false);
-    sv.loadgame_client_saved[clientnum] = false;
+    sv.loadgame_client_saved[saved_clientnum] = false;
+    sv.loadgame_client_name_required[saved_clientnum] = false;
+    sv.loadgame_client_names[saved_clientnum][0] = 0;
     if (clientnum >= 0 && clientnum < MAX_SCOREBOARD)
       svs.coop_initial_spawn_client[clientnum] = false;
     sv.loadgame_resumed = true;
-    Host_LoadgameDiscardPendingClients(true);
+    Host_LoadgameMaybeClearLoadedFlag();
     sv.paused = false;
   } else {
     // set up the edict
@@ -1832,7 +1979,7 @@ static void Host_Spawn_f(void) {
       SV_CoopRespawnPlaceNearPlayer(ent);
     if (sv.loadgame) {
       sv.loadgame_resumed = true;
-      Host_LoadgameDiscardPendingClients(true);
+      Host_LoadgameMaybeClearLoadedFlag();
       sv.paused = false;
     }
   }

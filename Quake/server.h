@@ -52,6 +52,8 @@ typedef struct
 	qboolean	nomonsters;			// server started with 'nomonsters' cvar active
 
 	qboolean	loadgame_client_saved[MAX_SCOREBOARD];
+	qboolean	loadgame_client_name_required[MAX_SCOREBOARD];
+	char		loadgame_client_names[MAX_SCOREBOARD][MAX_SCOREBOARDNAME];
 	byte		*loadgame_client_edicts;
 
 	qboolean	coop_autosave_initialized;
