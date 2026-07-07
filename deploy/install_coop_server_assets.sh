@@ -5,6 +5,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 STRAIGHT_DIR="${1:?usage: install_coop_server_assets.sh STRAIGHT_DIR}"
 SERVER_CFG_SRC="$SCRIPT_DIR/codex_coop_server.cfg"
 SERVER_CFG_DST="$STRAIGHT_DIR/id1/codex_coop_server.cfg"
+DWELL_WEAPONS_SRC="$SCRIPT_DIR/dwellv2p2/vr_weapons.txt"
+DWELL_WEAPONS_DST="$STRAIGHT_DIR/dwellv2p2/vr_weapons.txt"
 TIMESTAMP="$(date +%Y%m%d-%H%M%S)"
 TMP_FILES=()
 
@@ -225,6 +227,7 @@ EOF
 }
 
 install_with_backup "$SERVER_CFG_SRC" "$SERVER_CFG_DST"
+install_with_backup "$DWELL_WEAPONS_SRC" "$DWELL_WEAPONS_DST"
 scrub_stale_network_defaults
 
 write_server_script "start_id1_server.sh" "" "start"

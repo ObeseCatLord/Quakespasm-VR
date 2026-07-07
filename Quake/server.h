@@ -352,6 +352,7 @@ extern cvar_t sv_coop_pickup_targetfix_classes;
 extern cvar_t sv_coop_ammo_respawn;
 extern cvar_t sv_coop_ammo_respawn_time;
 extern cvar_t sv_coop_progression_item_respawn;
+extern cvar_t sv_coop_progression_item_respawn_time;
 extern cvar_t sv_coop_progression_item_respawn_classes;
 extern cvar_t sv_coop_revive;
 extern cvar_t sv_coop_revive_health;
@@ -419,6 +420,11 @@ void SV_CoopReviveFromTrace(vec3_t start, vec3_t end, edict_t *ent,
                             float trace_fraction);
 qboolean SV_CoopRespawnPlaceNearPlayer(edict_t *ent);
 qboolean SV_CoopRespawnTeleportToPlayer(edict_t *ent, edict_t *target);
+void SV_CoopRespawnSyncSharedKeys(edict_t *source);
+qboolean SV_CoopSharedBeginClientTouch(edict_t *client);
+void SV_CoopSharedEndClientTouch(edict_t *client);
+qboolean SV_GetVRWeaponAimAngles(edict_t *ent, const vec3_t requested_angles,
+                                 vec3_t resolved_angles);
 
 qboolean SV_CheckBottom (edict_t *ent);
 qboolean SV_movestep (edict_t *ent, vec3_t move, qboolean relink);

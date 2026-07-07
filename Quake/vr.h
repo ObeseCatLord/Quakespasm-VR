@@ -118,7 +118,7 @@ extern cvar_t vr_movement_speed;
 extern cvar_t vr_weaponmenu_player_teleport;
 extern float vr_game_projectile_z_extra;
 
-#define MAX_WEAPONS 64 // schema-driven mod offsets can exceed the old presets
+#define MAX_WEAPONS 99 // cvar slot names are two digits: vr_wofs_*_01..99
 #define VARS_PER_WEAPON 5
 #define VARS_PER_WEAPON_MUZZLE 3
 

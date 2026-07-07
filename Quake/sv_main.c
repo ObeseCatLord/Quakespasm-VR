@@ -54,7 +54,8 @@ cvar_t sv_coop_pickup_targetfix_classes = {"sv_coop_pickup_targetfix_classes", "
 cvar_t sv_coop_ammo_respawn = {"sv_coop_ammo_respawn", "1", CVAR_NOTIFY | CVAR_SERVERINFO};
 cvar_t sv_coop_ammo_respawn_time = {"sv_coop_ammo_respawn_time", "30", CVAR_NOTIFY | CVAR_SERVERINFO};
 cvar_t sv_coop_progression_item_respawn = {"sv_coop_progression_item_respawn", "1", CVAR_NOTIFY | CVAR_SERVERINFO};
-cvar_t sv_coop_progression_item_respawn_classes = {"sv_coop_progression_item_respawn_classes", "item_jboots item_jboots_timed item_artifact_envirosuit item_artifact_wetsuit", CVAR_NOTIFY | CVAR_SERVERINFO};
+cvar_t sv_coop_progression_item_respawn_time = {"sv_coop_progression_item_respawn_time", "5", CVAR_NOTIFY | CVAR_SERVERINFO};
+cvar_t sv_coop_progression_item_respawn_classes = {"sv_coop_progression_item_respawn_classes", "item_jboots item_jboots_timed item_artifact_envirosuit item_artifact_wetsuit item_artifact_airtank item_artifact_divingsuit", CVAR_NOTIFY | CVAR_SERVERINFO};
 cvar_t sv_coop_revive = {"sv_coop_revive", "1", CVAR_NOTIFY | CVAR_SERVERINFO};
 cvar_t sv_coop_revive_health = {"sv_coop_revive_health", "25", CVAR_NOTIFY | CVAR_SERVERINFO};
 cvar_t sv_coop_revive_range = {"sv_coop_revive_range", "96", CVAR_NOTIFY | CVAR_SERVERINFO};
@@ -415,6 +416,7 @@ void SV_Init (void)
 	Cvar_RegisterVariable (&sv_coop_ammo_respawn);
 	Cvar_RegisterVariable (&sv_coop_ammo_respawn_time);
 	Cvar_RegisterVariable (&sv_coop_progression_item_respawn);
+	Cvar_RegisterVariable (&sv_coop_progression_item_respawn_time);
 	Cvar_RegisterVariable (&sv_coop_progression_item_respawn_classes);
 	Cvar_RegisterVariable (&sv_coop_revive);
 	Cvar_RegisterVariable (&sv_coop_revive_health);
@@ -434,6 +436,7 @@ void SV_Init (void)
 	Cvar_SetCallback (&sv_coop_ammo_respawn, Host_Callback_Notify);
 	Cvar_SetCallback (&sv_coop_ammo_respawn_time, Host_Callback_Notify);
 	Cvar_SetCallback (&sv_coop_progression_item_respawn, Host_Callback_Notify);
+	Cvar_SetCallback (&sv_coop_progression_item_respawn_time, Host_Callback_Notify);
 	Cvar_SetCallback (&sv_coop_progression_item_respawn_classes, Host_Callback_Notify);
 	Cvar_SetCallback (&sv_coop_revive, Host_Callback_Notify);
 	Cvar_SetCallback (&sv_coop_revive_health, Host_Callback_Notify);
