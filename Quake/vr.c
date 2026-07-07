@@ -306,7 +306,7 @@ typedef struct {
   qboolean use_item_ownership;
 } vr_dyn_weapon_t;
 
-#define MAX_DYN_WEAPONS 64
+#define MAX_DYN_WEAPONS 128
 static vr_dyn_weapon_t dyn_weapons[MAX_DYN_WEAPONS] = {
     {4096, 1, "progs/g_axe.mdl", 0, false, 1.0f, {0, 0, 0}, false,
      -1, 0, -1, 0, -1, 0, false, true}, // IT_AXE (pickup model)
@@ -443,10 +443,11 @@ static qboolean VR_DynWeaponCanUseItemOwnership(const vr_dyn_weapon_t *w) {
 
 static int VR_ClientItemBits(void) {
   /*
-   * svc_clientdata mirrors cl.items into STAT_ITEMS, while newer stat update
-   * paths may update STAT_ITEMS without refreshing the legacy cl.items cache.
+   * svc_clientdata and stat updates can arrive on different paths during
+   * signon/replacement-delta catch-up. Treat either cache as authoritative so
+   * late joins do not temporarily hide owned weapons from the wheel.
    */
-  return cl.stats[STAT_ITEMS];
+  return cl.stats[STAT_ITEMS] | cl.items;
 }
 
 static qboolean VR_IsDwellGame(void) {
@@ -454,6 +455,12 @@ static qboolean VR_IsDwellGame(void) {
 
   return game && (!q_strcasecmp(game, "dwell") ||
                   !q_strcasecmp(game, "dwellv2p2"));
+}
+
+static qboolean VR_GameDirIs(const char *name) {
+  const char *game = COM_SkipPath(com_gamedir);
+
+  return game && name && !q_strcasecmp(game, name);
 }
 
 static int VR_DwellOwnedMaskForActive(int active) {
@@ -772,10 +779,32 @@ static void VR_AddDwellWeaponDefaults(void) {
     return;
 
   /*
-   * Dwell stores extra weapon ownership in items_dwell, which the server
-   * exposes through STAT_VR_MODITEMS. Keep base weapons on STAT_ITEMS, and
-   * seed only the extra weapons so no Dwell-only state leaks into other mods.
+   * Dwell uses vanilla item bits for most weapons, but replaces several pickup
+   * models/impulses and stores the three extra weapons in items_dwell, exposed
+   * by the server as STAT_VR_MODITEMS.
    */
+  VR_AddOrUpdateDynWeapon(IT_SHOTGUN, 2, "progs/g_shotgn.mdl", 0, false, 1.0f,
+                          vec3_origin, false, -1, 0, -1, 0, STAT_SHELLS, 100,
+                          false);
+  VR_AddOrUpdateDynWeapon(IT_SUPER_SHOTGUN, 23, "progs/g_shot.mdl", 0, false,
+                          1.0f, vec3_origin, false, -1, 0, -1, 0, STAT_SHELLS,
+                          100, false);
+  VR_AddOrUpdateDynWeapon(IT_NAILGUN, 4, "progs/g_nail.mdl", 0, false, 1.0f,
+                          vec3_origin, false, -1, 0, -1, 0, STAT_NAILS, 200,
+                          false);
+  VR_AddOrUpdateDynWeapon(IT_SUPER_NAILGUN, 5, "progs/g_nail2.mdl", 0, false,
+                          1.0f, vec3_origin, false, -1, 0, -1, 0, STAT_NAILS,
+                          200, false);
+  VR_AddOrUpdateDynWeapon(IT_GRENADE_LAUNCHER, 6, "progs/g_rock.mdl", 0,
+                          false, 1.0f, vec3_origin, false, -1, 0, -1, 0,
+                          STAT_ROCKETS, 100, false);
+  VR_AddOrUpdateDynWeapon(IT_ROCKET_LAUNCHER, 7, "progs/g_rock2.mdl", 0, false,
+                          1.0f, vec3_origin, false, -1, 0, -1, 0,
+                          STAT_ROCKETS, 100, false);
+  VR_AddOrUpdateDynWeapon(IT_LIGHTNING, 28, "progs/g_light.mdl", 0, false,
+                          1.0f, vec3_origin, false, -1, 0, -1, 0, STAT_CELLS,
+                          100, false);
+
   w = VR_AddOrUpdateDynWeapon(128, 33, "progs/g_shot3.mdl", 0, false, 1.0f,
                               vec3_origin, false, STAT_VR_MODITEMS, 4, -1, 0,
                               STAT_SHELLS, 100, false);
@@ -793,6 +822,125 @@ static void VR_AddDwellWeaponDefaults(void) {
     dwell_weapon_indices[2] = (int)(w - dyn_weapons);
 
   dwell_weapons_added = true;
+}
+
+static void VR_AddBuiltinWeaponDefault(int bitmask, int impulse,
+                                       const char *model_path,
+                                       int owned_stat, int owned_mask,
+                                       int active_stat, int active_mask,
+                                       int ammo_stat, int ammo_max,
+                                       float scale) {
+  VR_AddOrUpdateDynWeapon(bitmask, impulse, model_path, 0, false, scale,
+                          vec3_origin, false, owned_stat, owned_mask,
+                          active_stat, active_mask, ammo_stat, ammo_max,
+                          true);
+}
+
+static void VR_AddAlkalineWeaponDefaults(void) {
+  if (!VR_GameDirIs("alk") && !VR_GameDirIs("limjam"))
+    return;
+
+  VR_AddBuiltinWeaponDefault(4096, 1, "progs/g_axe_alk.mdl", -1, 0, -1, 0,
+                             -1, 0, 1.0f);
+  VR_AddBuiltinWeaponDefault(1, 2, "progs/g_shotgn.mdl", -1, 0, -1, 0,
+                             STAT_SHELLS, 100, 1.0f);
+  VR_AddBuiltinWeaponDefault(2, 3, "progs/g_shot.mdl", -1, 0, -1, 0,
+                             STAT_SHELLS, 100, 1.0f);
+  VR_AddBuiltinWeaponDefault(4, 4, "progs/g_nail.mdl", -1, 0, -1, 0,
+                             STAT_NAILS, 200, 1.0f);
+  VR_AddBuiltinWeaponDefault(8, 5, "progs/g_nail2.mdl", -1, 0, -1, 0,
+                             STAT_NAILS, 200, 1.0f);
+  VR_AddBuiltinWeaponDefault(16, 6, "progs/g_rock.mdl", -1, 0, -1, 0,
+                             STAT_ROCKETS, 100, 1.0f);
+  VR_AddBuiltinWeaponDefault(32, 7, "progs/g_rock2.mdl", -1, 0, -1, 0,
+                             STAT_ROCKETS, 100, 1.0f);
+  VR_AddBuiltinWeaponDefault(64, 228, "progs/g_light.mdl", -1, 0, -1, 0,
+                             STAT_CELLS, 100, 1.0f);
+  VR_AddBuiltinWeaponDefault(256, 224, "progs/g_saw.mdl", -1, 0, -1, 0,
+                             -1, 0, 1.0f);
+  VR_AddBuiltinWeaponDefault(512, 227, "progs/g_plasma.mdl", -1, 0, -1, 0,
+                             STAT_CELLS, 100, 1.0f);
+  VR_AddBuiltinWeaponDefault(1024, 225, "progs/g_laserg.mdl", -1, 0, -1, 0,
+                             STAT_CELLS, 100, 1.0f);
+  VR_AddBuiltinWeaponDefault(8192, 226, "progs/g_mine.mdl", -1, 0, -1, 0,
+                             STAT_ROCKETS, 100, 1.0f);
+}
+
+static void VR_AddEnyoWeaponDefaults(void) {
+  if (!VR_GameDirIs("enyo"))
+    return;
+
+  VR_AddBuiltinWeaponDefault(4096, 1, "progs/ee_g_sword.mdl", -1, 0, -1, 0,
+                             -1, 0, 1.0f);
+  VR_AddBuiltinWeaponDefault(1, 2, "progs/ee_g_pistol.mdl", -1, 0, -1, 0,
+                             STAT_NAILS, 200, 1.0f);
+  VR_AddBuiltinWeaponDefault(2, 3, "progs/ee_g_sgun.mdl", -1, 0, -1, 0,
+                             STAT_SHELLS, 100, 1.0f);
+  VR_AddBuiltinWeaponDefault(4, 4, "progs/ee_g_smgs.mdl", -1, 0, -1, 0,
+                             STAT_NAILS, 200, 1.0f);
+  VR_AddBuiltinWeaponDefault(1024, 5, "progs/ee_g_av72.mdl", -1, 0, -1, 0,
+                             STAT_NAILS, 200, 1.0f);
+  VR_AddBuiltinWeaponDefault(8, 5, "progs/ee_g_plasma.mdl", -1, 0, -1, 0,
+                             STAT_CELLS, 100, 1.0f);
+  VR_AddBuiltinWeaponDefault(16, 6, "progs/ee_g_glaunch.mdl", -1, 0, -1, 0,
+                             STAT_ROCKETS, 100, 1.0f);
+  VR_AddBuiltinWeaponDefault(32, 7, "progs/ee_g_rlaunch.mdl", -1, 0, -1, 0,
+                             STAT_ROCKETS, 100, 1.0f);
+  VR_AddBuiltinWeaponDefault(64, 8, "progs/ee_g_railgun.mdl", -1, 0, -1, 0,
+                             STAT_CELLS, 100, 1.0f);
+}
+
+static void VR_AddQBJ3WeaponDefaults(void) {
+  if (!VR_GameDirIs("qbj3"))
+    return;
+
+  VR_AddBuiltinWeaponDefault(4096, 1, "progs/v_wrench.mdl", -1, 0, -1, 0,
+                             -1, 0, 0.2f);
+  VR_AddBuiltinWeaponDefault(1, 2, "progs/v_pistol.mdl", -1, 0, -1, 0,
+                             STAT_SHELLS, 100, 0.2f);
+  VR_AddBuiltinWeaponDefault(2, 3, "progs/v_flakshotgun.mdl", -1, 0, -1, 0,
+                             STAT_SHELLS, 100, 0.2f);
+  VR_AddBuiltinWeaponDefault(4, 4, "progs/v_tnailgun.mdl", -1, 0, -1, 0,
+                             STAT_NAILS, 200, 0.2f);
+  VR_AddBuiltinWeaponDefault(8, 5, "progs/v_rebar.mdl", -1, 0, -1, 0,
+                             STAT_NAILS, 200, 0.2f);
+  VR_AddBuiltinWeaponDefault(16, 6, "progs/v_grenlauncher.mdl", -1, 0, -1, 0,
+                             STAT_ROCKETS, 100, 0.2f);
+  VR_AddBuiltinWeaponDefault(32, 7, "progs/v_mmml.mdl", -1, 0, -1, 0,
+                             STAT_ROCKETS, 100, 0.2f);
+  VR_AddBuiltinWeaponDefault(64, 8, "progs/v_invoker.mdl", -1, 0, -1, 0,
+                             STAT_CELLS, 100, 0.2f);
+}
+
+static void VR_AddMjolnirWeaponDefaults(void) {
+  if (!VR_GameDirIs("mjolnir") && !VR_GameDirIs("mjolnir1.0"))
+    return;
+
+  VR_AddBuiltinWeaponDefault(128, 81, "progs/drake/g_light2.mdl", 42, 128,
+                             STAT_ACTIVEWEAPON, 128, STAT_CELLS, 100, 1.0f);
+  VR_AddBuiltinWeaponDefault(131072, 76, "progs/hipnotic/g_prox.mdl", 42,
+                             131072, STAT_ACTIVEWEAPON, 131072, STAT_ROCKETS,
+                             100, 1.0f);
+  VR_AddBuiltinWeaponDefault(262144, 77, "progs/violentrumble/g_hammer.mdl",
+                             42, 262144, STAT_ACTIVEWEAPON, 262144,
+                             STAT_CELLS, 100, 1.0f);
+  VR_AddBuiltinWeaponDefault(524288, 75, "progs/hipnotic/g_laserg.mdl", 42,
+                             524288, STAT_ACTIVEWEAPON, 524288, STAT_CELLS,
+                             100, 1.0f);
+  VR_AddBuiltinWeaponDefault(1048576, 80, "progs/drake/g_grpple.mdl", 42,
+                             1048576, STAT_ACTIVEWEAPON, 1048576, -1, 0,
+                             1.0f);
+  VR_AddBuiltinWeaponDefault(4194304, 79, "progs/drake/g_wand.mdl", 42,
+                             4194304, STAT_ACTIVEWEAPON, 4194304, -1, 0,
+                             1.0f);
+}
+
+static void VR_AddBuiltinWeaponDefaults(void) {
+  VR_AddDwellWeaponDefaults();
+  VR_AddAlkalineWeaponDefaults();
+  VR_AddEnyoWeaponDefaults();
+  VR_AddQBJ3WeaponDefaults();
+  VR_AddMjolnirWeaponDefaults();
 }
 
 static qboolean VR_IsDwellDefaultWeaponEntry(const vr_dyn_weapon_t *w) {
@@ -1463,6 +1611,48 @@ static int VR_FindWeaponOffsetSlot(const char *id, int *free_slot) {
   return slot;
 }
 
+static qboolean VR_WeaponOffsetSlotHasValidID(int slot) {
+  const char *id;
+
+  if (slot < 0 || slot >= MAX_WEAPONS)
+    return false;
+
+  id = vr_weapon_offset[slot * VARS_PER_WEAPON + 4].string;
+  return id && id[0] && Q_strcmp(id, "-1");
+}
+
+static int VR_CreateHeldWeaponOffsetSlot(const char *id, const char *reason) {
+  int slot;
+  int free_slot = -1;
+
+  if (!id || !id[0])
+    return -1;
+
+  slot = VR_FindWeaponOffsetSlot(id, &free_slot);
+  if (slot >= 0)
+    return slot;
+
+  if (free_slot < 0) {
+    Con_Printf("VR: No free held weapon offset slot for %s\n", id);
+    return -1;
+  }
+
+  /*
+   * Unknown mod viewmodels should become adjustable without changing their
+   * current pose first. The adjustment save path will persist the real offset.
+   */
+  InitWeaponCVars(free_slot, id, "0", "0", "0", "1");
+  weaponCVarEntry = free_slot;
+  lastWeaponHeader = NULL;
+
+  if (reason && reason[0])
+    Con_Printf("%s: created held weapon offset slot for %s\n", reason, id);
+  else
+    Con_Printf("VR: created held weapon offset slot for %s\n", id);
+
+  return free_slot;
+}
+
 static void VR_RegisterHeldWeaponOffset(const char *id, const vec3_t offset,
                                         float scale) {
   int slot = -1;
@@ -1492,6 +1682,56 @@ static void VR_RegisterHeldWeaponOffset(const char *id, const vec3_t offset,
   q_snprintf(offsetZ, sizeof(offsetZ), "%.7g", offset[2]);
   q_snprintf(scaleValue, sizeof(scaleValue), "%.7g", scale);
   InitWeaponCVars(slot, id, offsetX, offsetY, offsetZ, scaleValue);
+}
+
+static void VR_RegisterHeldWeaponOffsetIfMissing(const char *id,
+                                                 const vec3_t offset,
+                                                 float scale) {
+  if (!id || !id[0])
+    return;
+  if (VR_FindWeaponOffsetSlot(id, NULL) >= 0)
+    return;
+  VR_RegisterHeldWeaponOffset(id, offset, scale);
+}
+
+static void VR_RegisterHeldWeaponOffsetIfMissing3(const char *id, float x,
+                                                  float y, float z,
+                                                  float scale) {
+  vec3_t offset = {x, y, z};
+
+  VR_RegisterHeldWeaponOffsetIfMissing(id, offset, scale);
+}
+
+static void VR_RegisterDwellHeldWeaponDefaults(void) {
+  if (!VR_IsDwellGame())
+    return;
+
+  VR_RegisterHeldWeaponOffsetIfMissing3("progs/v_axe2.mdl", -3.5f, 34.0f,
+                                        41.5f, 0.4f);
+  VR_RegisterHeldWeaponOffsetIfMissing3("progs/v_axeb.mdl", -4.0f, 24.0f,
+                                        37.0f, 0.4f);
+  VR_RegisterHeldWeaponOffsetIfMissing3("progs/v_shot.mdl", 1.5f, 1.0f,
+                                        10.0f, 0.3333333f);
+  VR_RegisterHeldWeaponOffsetIfMissing3("progs/v_shot2.mdl", -3.5f, 1.0f,
+                                        8.5f, 0.5333333f);
+  VR_RegisterHeldWeaponOffsetIfMissing3("progs/v_shot3.mdl", -3.5f, 0.4f,
+                                        8.5f, 0.5333333f);
+  VR_RegisterHeldWeaponOffsetIfMissing3("progs/v_nail.mdl", -5.0f, 3.0f,
+                                        15.0f, 0.5f);
+  VR_RegisterHeldWeaponOffsetIfMissing3("progs/v_nail2.mdl", 0.0f, 3.0f,
+                                        19.0f, 0.5f);
+  VR_RegisterHeldWeaponOffsetIfMissing3("progs/v_nail3.mdl", -4.0f, 3.5f,
+                                        19.0f, 0.35f);
+  VR_RegisterHeldWeaponOffsetIfMissing3("progs/v_rock.mdl", 10.0f, 1.5f,
+                                        13.0f, 0.5f);
+  VR_RegisterHeldWeaponOffsetIfMissing3("progs/v_rock2.mdl", 10.0f, 7.0f,
+                                        19.0f, 0.5f);
+  VR_RegisterHeldWeaponOffsetIfMissing3("progs/v_light.mdl", 3.0f, 4.0f,
+                                        13.0f, 0.5f);
+  VR_RegisterHeldWeaponOffsetIfMissing3("progs/v_rail.mdl", 4.0f, 5.0f,
+                                        31.0f, 0.65f);
+  VR_RegisterHeldWeaponOffsetIfMissing3("progs/v_rifle.mdl", 1.5f, 1.0f,
+                                        10.0f, 0.5f);
 }
 
 static void VR_RegisterWeaponMuzzleOffset(const char *id,
@@ -2362,6 +2602,160 @@ static qboolean VR_SaveWeaponAdjustmentsToSchema(int slot) {
   return ok;
 }
 
+static qboolean VR_SchemaFileExistsInGameDir(void) {
+  char path[MAX_OSPATH];
+
+  q_snprintf(path, sizeof(path), "%s/vr_weapons.txt", com_gamedir);
+  return (Sys_FileType(path) & FS_ENT_FILE) != 0;
+}
+
+static qboolean VR_PreviousSlotHasSameID(int slot) {
+  const char *id;
+
+  if (!VR_WeaponOffsetSlotHasValidID(slot))
+    return false;
+
+  id = vr_weapon_offset[slot * VARS_PER_WEAPON + 4].string;
+  for (int i = 0; i < slot; i++) {
+    const char *other;
+
+    if (!VR_WeaponOffsetSlotHasValidID(i))
+      continue;
+    other = vr_weapon_offset[i * VARS_PER_WEAPON + 4].string;
+    if (!Q_strcmp(id, other))
+      return true;
+  }
+
+  return false;
+}
+
+static qboolean VR_AppendSchemaBlockForSlot(vr_textbuf_t *buf, int slot) {
+  char line[256];
+  const char *id;
+
+  if (!VR_WeaponOffsetSlotHasValidID(slot))
+    return true;
+
+  id = vr_weapon_offset[slot * VARS_PER_WEAPON + 4].string;
+  if (!VR_TextAppendLine(buf, "{"))
+    return false;
+  q_snprintf(line, sizeof(line), "viewmodel %s", id);
+  if (!VR_TextAppendLine(buf, line))
+    return false;
+  if (!VR_AppendAdjustmentLines(buf, slot))
+    return false;
+  if (!VR_TextAppendLine(buf, "}"))
+    return false;
+  return VR_TextAppendLine(buf, "");
+}
+
+static qboolean VR_CreateDefaultWeaponSchemaIfMissing(void) {
+  vr_textbuf_t out = {0};
+  int count = 0;
+  qboolean ok = true;
+
+  if (VR_SchemaFileExistsInGameDir())
+    return true;
+
+  for (int i = 0; i < MAX_WEAPONS; i++) {
+    if (!VR_WeaponOffsetSlotHasValidID(i) || VR_PreviousSlotHasSameID(i))
+      continue;
+    ok = VR_AppendSchemaBlockForSlot(&out, i);
+    if (!ok)
+      break;
+    count++;
+  }
+
+  if (ok && count > 0) {
+    COM_WriteFile("vr_weapons.txt", out.data ? out.data : "", out.len);
+    Con_Printf("VR: created %s/vr_weapons.txt with %d built-in weapon offsets\n",
+               com_gamedir, count);
+  } else if (!ok) {
+    Con_Printf("VR: failed to create default vr_weapons.txt for %s\n",
+               com_gamedir);
+  }
+
+  if (out.data)
+    free(out.data);
+
+  return ok;
+}
+
+static qboolean VR_SchemaHasViewmodelBlock(const char *data, const char *id) {
+  const char *p;
+  const char *end;
+
+  if (!data || !id || !id[0])
+    return false;
+
+  p = data;
+  end = data + strlen(data);
+  while (p < end) {
+    const char *open = (const char *)memchr(p, '{', end - p);
+    const char *close;
+
+    if (!open)
+      break;
+
+    close = (const char *)memchr(open, '}', end - open);
+    if (!close)
+      break;
+    close++;
+
+    if (VR_BlockMatchesViewmodel(open, close - open, id))
+      return true;
+
+    p = close;
+  }
+
+  return false;
+}
+
+static qboolean VR_FillMissingDefaultWeaponSchemaBlocks(void) {
+  char *data;
+  vr_textbuf_t out = {0};
+  int count = 0;
+  qboolean ok = true;
+
+  data = (char *)COM_LoadZoneFile("vr_weapons.txt", NULL);
+  if (!data)
+    return true;
+
+  ok = VR_TextAppend(&out, data);
+  for (int i = 0; ok && i < MAX_WEAPONS; i++) {
+    const char *id;
+
+    if (!VR_WeaponOffsetSlotHasValidID(i) || VR_PreviousSlotHasSameID(i))
+      continue;
+
+    id = vr_weapon_offset[i * VARS_PER_WEAPON + 4].string;
+    if (VR_SchemaHasViewmodelBlock(data, id))
+      continue;
+
+    if (out.len && out.data[out.len - 1] != '\n')
+      ok = VR_TextAppend(&out, "\n");
+    if (ok)
+      ok = VR_AppendSchemaBlockForSlot(&out, i);
+    if (ok)
+      count++;
+  }
+
+  if (ok && count > 0) {
+    COM_WriteFile("vr_weapons.txt", out.data ? out.data : "", out.len);
+    Con_Printf("VR: added %d built-in weapon offsets to %s/vr_weapons.txt\n",
+               count, com_gamedir);
+  } else if (!ok) {
+    Con_Printf("VR: failed to update default vr_weapons.txt for %s\n",
+               com_gamedir);
+  }
+
+  if (out.data)
+    free(out.data);
+  Z_Free(data);
+
+  return ok;
+}
+
 static void VR_CopyWeaponAdjustmentSlot(int dst, int src) {
   if (dst < 0 || dst >= MAX_WEAPONS || src < 0 || src >= MAX_WEAPONS)
     return;
@@ -2866,9 +3260,16 @@ static qboolean VR_AdjustCanStart(void) {
     return false;
   }
 
-  if (!cl.viewent.model || weaponCVarEntry < 0) {
-    Con_Printf("vradjust: no active held weapon offset for this viewmodel.\n");
+  if (!cl.viewent.model) {
+    Con_Printf("vradjust: no active held weapon viewmodel.\n");
     return false;
+  }
+
+  if (weaponCVarEntry < 0) {
+    weaponCVarEntry =
+        VR_CreateHeldWeaponOffsetSlot(cl.viewent.model->name, "vradjust");
+    if (weaponCVarEntry < 0)
+      return false;
   }
 
   return true;
@@ -3249,6 +3650,34 @@ void InitAllWeaponCVars() {
     InitWeaponCVars(i++, "progs/ee_v_legal.mdl", "0", "55", "29",
                     "0.2"); // Legal Notice
 
+  }
+  else if (VR_IsDwellGame()) {
+    InitWeaponCVars(i++, "progs/v_axe2.mdl", "-3.5", "34", "41.5",
+                    "0.4"); // axe
+    InitWeaponCVars(i++, "progs/v_axeb.mdl", "-4", "24", "37",
+                    "0.4"); // axe
+    InitWeaponCVars(i++, "progs/v_shot.mdl", "1.5", "1", "10",
+                    "0.3333333"); // shotgun
+    InitWeaponCVars(i++, "progs/v_shot2.mdl", "-3.5", "1", "8.5",
+                    "0.5333333"); // double-barrel shotgun
+    InitWeaponCVars(i++, "progs/v_shot3.mdl", "-3.5", "0.4", "8.5",
+                    "0.5333333"); // rotary shotgun
+    InitWeaponCVars(i++, "progs/v_nail.mdl", "-5", "3", "15",
+                    "0.5"); // nailgun
+    InitWeaponCVars(i++, "progs/v_nail2.mdl", "0", "3", "19",
+                    "0.5"); // super nailgun
+    InitWeaponCVars(i++, "progs/v_nail3.mdl", "-4", "3.5", "19",
+                    "0.35"); // perforator
+    InitWeaponCVars(i++, "progs/v_rock.mdl", "10", "1.5", "13",
+                    "0.5"); // grenade launcher
+    InitWeaponCVars(i++, "progs/v_rock2.mdl", "10", "7", "19",
+                    "0.5"); // rocket launcher
+    InitWeaponCVars(i++, "progs/v_light.mdl", "3", "4", "13",
+                    "0.5"); // lightning gun
+    InitWeaponCVars(i++, "progs/v_rail.mdl", "4", "5", "31",
+                    "0.65"); // railstaff
+    InitWeaponCVars(i++, "progs/v_rifle.mdl", "1.5", "1", "10",
+                    "0.5"); // rifle
   }
   else {
     // weapons for vanilla Quake, Scourge of Armagon, Dissolution of Eternity
@@ -3813,7 +4242,11 @@ float vr_game_projectile_z_extra = 0.0f;
 void VR_InitGame() {
   VR_ResetDynWeaponsToBase();
   InitAllWeaponCVars();
+  VR_CreateDefaultWeaponSchemaIfMissing();
+  VR_FillMissingDefaultWeaponSchemaBlocks();
   VR_LoadWeaponSchema();
+  VR_RegisterDwellHeldWeaponDefaults();
+  VR_AddBuiltinWeaponDefaults();
   lastWeaponHeader = NULL;
   weaponCVarEntry = -1;
 
@@ -4377,8 +4810,10 @@ void VR_ShowCrosshair() {
   size = CLAMP(0.0f, vr_crosshair_size.value, 32.0f);
   alpha = CLAMP(0.0f, vr_crosshair_alpha.value, 1.0f);
   pixel_size = size * glwidth / vid.width;
+  if (VR_IsDwellGame())
+    pixel_size *= 2.0f;
   if (vr_enabled.value)
-    pixel_size = q_max(pixel_size, 4.0f);
+    pixel_size = q_max(pixel_size, VR_IsDwellGame() ? 8.0f : 4.0f);
 
   if (size <= 0 || alpha <= 0) {
     return;
@@ -5260,7 +5695,7 @@ void VR_ResetWeaponTracking(void) {
                             STAT_ROCKETS, 100, false);
     hipnotic_weapons_added = true;
   }
-  VR_AddDwellWeaponDefaults();
+  VR_AddBuiltinWeaponDefaults();
 
   // Note: We DO NOT reset num_dyn_weapons or discovery state here anymore
   // so that mod weapon knowledge persists across map loads.

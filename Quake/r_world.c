@@ -24,7 +24,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 
 #include "quakedef.h"
 
-extern cvar_t gl_fullbrights, r_drawflat, gl_overbright, r_oldwater, r_oldskyleaf, r_showtris; //johnfitz
+extern cvar_t gl_fullbrights, r_drawflat, gl_overbright, r_oldwater, r_oldwater_max_drawpolys, r_oldskyleaf, r_showtris; //johnfitz
 
 byte *SV_FatPVS (vec3_t org, qmodel_t *worldmodel);
 
@@ -379,7 +379,7 @@ static void R_TriangleIndicesForSurf (msurface_t *s, unsigned int *dest)
 	}
 }
 
-#define MAX_BATCH_SIZE 4096
+#define MAX_BATCH_SIZE 65536
 
 static unsigned int vbo_indices[MAX_BATCH_SIZE];
 static unsigned int num_vbo_indices;
@@ -427,6 +427,9 @@ static void R_BatchSurface (msurface_t *s)
 	//	Con_DWarning ("bad numedges for surface\n");
 		return;
 	}
+
+	if (num_surf_indices > MAX_BATCH_SIZE)
+		return;
 
 	if (num_vbo_indices + num_surf_indices > MAX_BATCH_SIZE)
 		R_FlushBatch();
@@ -603,6 +606,62 @@ static GLint  alphaLoc;
 
 /*
 ================
+R_UseOldWaterForChain
+
+Large maps can turn oldwater into thousands of immediate-mode draw calls. Keep
+legacy oldwater available for small scenes, but fall back to the warp-texture
+path once the visible oldwater poly count is high enough to become pathological.
+================
+*/
+static qboolean R_UseOldWaterForChain (qmodel_t *model, texchain_t chain)
+{
+	static qboolean warned;
+	int			i;
+	int			drawpolys;
+	int			max_drawpolys;
+	msurface_t	*s;
+	texture_t	*t;
+	glpoly_t	*p;
+
+	if (!r_oldwater.value)
+		return false;
+
+	max_drawpolys = (int)r_oldwater_max_drawpolys.value;
+	if (max_drawpolys <= 0)
+		return true;
+
+	drawpolys = 0;
+	for (i = 0; i < model->numtextures; i++)
+	{
+		t = model->textures[i];
+		if (!t || !t->texturechains[chain] || !(t->texturechains[chain]->flags & SURF_DRAWTURB))
+			continue;
+
+		for (s = t->texturechains[chain]; s; s = s->texturechain)
+		{
+			if (!s->polys)
+				continue;
+			for (p = s->polys->next; p; p = p->next)
+			{
+				if (++drawpolys > max_drawpolys)
+				{
+					if (!warned)
+					{
+						Con_DPrintf ("r_oldwater: using fast warp textures for %s (%d visible oldwater draw polys > %d)\n",
+							model->name, drawpolys, max_drawpolys);
+						warned = true;
+					}
+					return false;
+				}
+			}
+		}
+	}
+
+	return true;
+}
+
+/*
+================
 R_DrawTextureChains_Water -- johnfitz
 ================
 */
@@ -624,7 +683,7 @@ void R_DrawTextureChains_Water (qmodel_t *model, entity_t *ent, texchain_t chain
 	has_lit_water = false;
 	has_unlit_water = false;
 
-	if (r_oldwater.value)
+	if (R_UseOldWaterForChain (model, chain))
 	{
 		for (i=0 ; i<model->numtextures ; i++)
 		{

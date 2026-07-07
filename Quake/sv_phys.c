@@ -482,6 +482,10 @@ mod's spawn point. Fresh late-join placement remains teammate-based.
 #define COOP_RESPAWN_TRACE_EPSILON 0.01f
 #define COOP_RESPAWN_ALL_ITEM_BITS (-1)
 #define COOP_RESPAWN_DRAKE_CUSTOM_KEYS (8192 | 16384 | 32768 | 65536)
+#define COOP_RESPAWN_DWELL_WEAPON_BITS (4 | 8 | 32)
+#define COOP_RESPAWN_STOCK_KEY_BITS (IT_KEY1 | IT_KEY2 | IT_SIGIL1 | IT_SIGIL2 | IT_SIGIL3 | IT_SIGIL4)
+#define COOP_RESPAWN_ITEMS2_KEY_BITS 65536
+#define COOP_RESPAWN_WORLDTYPE_KEY_MASK 255
 #define COOP_RESPAWN_AD_KEEP_MODITEMS                                           \
   (2 | 64 | 128 | 4096 | 131072 | 262144 | 524288 | 1048576 | 2097152 |        \
    4194304 | COOP_RESPAWN_DRAKE_CUSTOM_KEYS)
@@ -495,6 +499,7 @@ typedef enum {
   COOP_RESPAWN_EXTRA_WEAPONS2,
   COOP_RESPAWN_EXTRA_ITEMS_DWELL,
   COOP_RESPAWN_EXTRA_CURRENTWEAPON,
+  COOP_RESPAWN_EXTRA_WORLDTYPE,
   COOP_RESPAWN_EXTRA_KEY_COUNT_SILVER,
   COOP_RESPAWN_EXTRA_KEY_COUNT_GOLD,
   COOP_RESPAWN_EXTRA_AMMO_SHELLS1,
@@ -579,8 +584,9 @@ static const coop_respawn_extra_field_t coop_respawn_extra_fields[] = {
     {"weapons", COOP_RESPAWN_EXTRA_BITMASK, COOP_RESPAWN_ALL_ITEM_BITS},
     {"weapon2", COOP_RESPAWN_EXTRA_BITMASK, COOP_RESPAWN_ALL_ITEM_BITS},
     {"weapons2", COOP_RESPAWN_EXTRA_BITMASK, COOP_RESPAWN_ALL_ITEM_BITS},
-    {"items_dwell", COOP_RESPAWN_EXTRA_BITMASK, COOP_RESPAWN_ALL_ITEM_BITS},
+    {"items_dwell", COOP_RESPAWN_EXTRA_BITMASK, COOP_RESPAWN_DWELL_WEAPON_BITS},
     {"currentweapon", COOP_RESPAWN_EXTRA_RESTORE_FLOAT, 0},
+    {"worldtype", COOP_RESPAWN_EXTRA_RESTORE_FLOAT, 0},
     {"key_count_silver", COOP_RESPAWN_EXTRA_MAXFLOAT, 0},
     {"key_count_gold", COOP_RESPAWN_EXTRA_MAXFLOAT, 0},
     {"ammo_shells1", COOP_RESPAWN_EXTRA_MAXFLOAT, 0},
@@ -809,6 +815,81 @@ static eval_t *SV_CoopRespawnGetExtraField(edict_t *ent, int index,
   if (type_out)
     *type_out = type;
   return GetEdictFieldValue(ent, def->ofs);
+}
+
+static int SV_CoopRespawnExtraSharedKeyMask(const char *name) {
+  if (!name)
+    return 0;
+  if (!q_strcasecmp(name, "customkeys"))
+    return COOP_RESPAWN_ALL_ITEM_BITS;
+  if (!q_strcasecmp(name, "moditems"))
+    return COOP_RESPAWN_DRAKE_CUSTOM_KEYS;
+  if (!q_strcasecmp(name, "items2"))
+    return COOP_RESPAWN_ITEMS2_KEY_BITS;
+  return 0;
+}
+
+static qboolean SV_CoopRespawnExtraIsSharedKeyCount(const char *name) {
+  return name && (!q_strcasecmp(name, "key_count_silver") ||
+                  !q_strcasecmp(name, "key_count_gold"));
+}
+
+void SV_CoopRespawnSyncSharedKeys(edict_t *source) {
+  int i;
+  int j;
+  int source_items;
+
+  if (!coop.value || !source || source->free)
+    return;
+
+  source_items = (int)source->v.items & COOP_RESPAWN_STOCK_KEY_BITS;
+
+  for (i = 0; i < MAX_SCOREBOARD; i++) {
+    coop_respawn_inventory_t *inventory;
+
+    if (!coop_respawn_last_inventory_valid[i])
+      continue;
+
+    inventory = &coop_respawn_last_inventory[i];
+    inventory->items =
+        (inventory->items & ~COOP_RESPAWN_STOCK_KEY_BITS) | source_items;
+
+    for (j = 0; j < COOP_RESPAWN_EXTRA_COUNT; j++) {
+      const coop_respawn_extra_field_t *field = &coop_respawn_extra_fields[j];
+      eval_t *val;
+      int type;
+
+      val = SV_CoopRespawnGetExtraField(source, j, &type);
+      if (!val)
+        continue;
+
+      if (field->policy == COOP_RESPAWN_EXTRA_BITMASK) {
+        int key_mask = SV_CoopRespawnExtraSharedKeyMask(field->name);
+        int source_bits;
+
+        if (!key_mask)
+          continue;
+
+        source_bits = type == ev_ext_integer ? val->_int : (int)val->_float;
+        inventory->extra_valid[j] = true;
+        inventory->extra_bits[j] =
+            (inventory->extra_bits[j] & ~key_mask) | (source_bits & key_mask);
+      } else if (SV_CoopRespawnExtraIsSharedKeyCount(field->name)) {
+        inventory->extra_valid[j] = true;
+        inventory->extra_value[j] = val->_float;
+      } else if (!q_strcasecmp(field->name, "worldtype")) {
+        int source_bits =
+            type == ev_ext_integer ? val->_int : (int)val->_float;
+        int existing_bits =
+            inventory->extra_valid[j] ? (int)inventory->extra_value[j] : 0;
+
+        inventory->extra_valid[j] = true;
+        inventory->extra_value[j] =
+            (float)((existing_bits & ~COOP_RESPAWN_WORLDTYPE_KEY_MASK) |
+                    (source_bits & COOP_RESPAWN_WORLDTYPE_KEY_MASK));
+      }
+    }
+  }
 }
 
 static void SV_CoopRespawnSaveInventory(edict_t *ent,
@@ -1659,6 +1740,7 @@ static void SV_DebugLogTriggerImpact(edict_t *touch, edict_t *other) {
 
 void SV_Impact(edict_t *e1, edict_t *e2) {
   int old_self, old_other;
+  qboolean coop_touch_sync;
 
   if (!e1 || !e2 || e1->free || e2->free)
     return;
@@ -1671,19 +1753,25 @@ void SV_Impact(edict_t *e1, edict_t *e2) {
   SV_DebugLogTriggerImpact(e2, e1);
 
   if (e1->v.touch && e1->v.solid != SOLID_NOT) {
+    coop_touch_sync = SV_CoopSharedBeginClientTouch(e2);
     pr_global_struct->self = EDICT_TO_PROG(e1);
     pr_global_struct->other = EDICT_TO_PROG(e2);
     SV_FriendlyFireBegin(e1);
     PR_ExecuteProgram(e1->v.touch);
     SV_FriendlyFireEnd();
+    if (coop_touch_sync && !e2->free)
+      SV_CoopSharedEndClientTouch(e2);
   }
 
   if (!e1->free && !e2->free && e2->v.touch && e2->v.solid != SOLID_NOT) {
+    coop_touch_sync = SV_CoopSharedBeginClientTouch(e1);
     pr_global_struct->self = EDICT_TO_PROG(e2);
     pr_global_struct->other = EDICT_TO_PROG(e1);
     SV_FriendlyFireBegin(e2);
     PR_ExecuteProgram(e2->v.touch);
     SV_FriendlyFireEnd();
+    if (coop_touch_sync && !e1->free)
+      SV_CoopSharedEndClientTouch(e1);
   }
 
   pr_global_struct->self = old_self;
@@ -2422,10 +2510,16 @@ static qboolean SV_VRWeaponSpawnsAtSelfOrigin(edict_t *ent) {
                                      (int)ent->v.weapon);
 }
 
+static void SV_BeginVRWeaponAimOverride(edict_t *ent, int num,
+                                        qboolean is_remote_vr,
+                                        const vec3_t body_angles);
+static void SV_EndVRWeaponAimOverride(edict_t *ent);
+
 static void SV_ApplyVRWeaponOffset(edict_t *ent, int num, qboolean is_remote_vr,
                                    vec3_t restoreOrigin, vec3_t restoreVAngle) {
   _VectorCopy(ent->v.origin, restoreOrigin);
   _VectorCopy(ent->v.v_angle, restoreVAngle);
+  SV_BeginVRWeaponAimOverride(ent, num, is_remote_vr, restoreVAngle);
 
   if (is_remote_vr) {
     vec3_t adj;
@@ -2461,6 +2555,8 @@ static void SV_RestoreVRWeaponOffset(edict_t *ent, int num,
                                      qboolean is_remote_vr,
                                      vec3_t restoreOrigin,
                                      vec3_t restoreVAngle) {
+  SV_EndVRWeaponAimOverride(ent);
+
   if (is_remote_vr ||
       (vr_enabled.value && !isDedicated && num == cl.viewentity)) {
     _VectorCopy(restoreOrigin, ent->v.origin);
@@ -2476,6 +2572,97 @@ qboolean SV_IsVRClientSlot(int num) {
     return true;
 
   return vr_enabled.value && !isDedicated && num == cl.viewentity;
+}
+
+static edict_t *sv_vr_weapon_aim_entity;
+static int sv_vr_weapon_aim_depth;
+static vec3_t sv_vr_weapon_aim_body_angles;
+static vec3_t sv_vr_weapon_aim_weapon_angles;
+
+static float SV_VRWeaponAimAngleDelta(float a, float b) {
+  float delta = a - b;
+
+  while (delta > 180.0f)
+    delta -= 360.0f;
+  while (delta < -180.0f)
+    delta += 360.0f;
+
+  return delta;
+}
+
+static float SV_VRWeaponAimMaxAngleDelta(const vec3_t a, const vec3_t b) {
+  float max_delta = 0.0f;
+  int i;
+
+  for (i = 0; i < 3; i++) {
+    float delta = fabsf(SV_VRWeaponAimAngleDelta(a[i], b[i]));
+    if (delta > max_delta)
+      max_delta = delta;
+  }
+
+  return max_delta;
+}
+
+static void SV_BeginVRWeaponAimOverride(edict_t *ent, int num,
+                                        qboolean is_remote_vr,
+                                        const vec3_t body_angles) {
+  vec3_t weapon_angles;
+
+  if (!ent || ent->free || !SV_IsVRClientSlot(num))
+    return;
+
+  if (is_remote_vr) {
+    VectorCopy(svs.clients[num - 1].vr_handrot, weapon_angles);
+  } else if (vr_enabled.value && !isDedicated && num == cl.viewentity) {
+    VectorCopy(cl.handrot[1], weapon_angles);
+  } else {
+    return;
+  }
+
+  if (sv_vr_weapon_aim_depth && sv_vr_weapon_aim_entity != ent)
+    return;
+
+  if (sv_vr_weapon_aim_depth++ == 0) {
+    sv_vr_weapon_aim_entity = ent;
+    VectorCopy(body_angles, sv_vr_weapon_aim_body_angles);
+    VectorCopy(weapon_angles, sv_vr_weapon_aim_weapon_angles);
+  }
+}
+
+static void SV_EndVRWeaponAimOverride(edict_t *ent) {
+  if (!sv_vr_weapon_aim_depth || sv_vr_weapon_aim_entity != ent)
+    return;
+
+  sv_vr_weapon_aim_depth--;
+  if (!sv_vr_weapon_aim_depth)
+    sv_vr_weapon_aim_entity = NULL;
+}
+
+qboolean SV_GetVRWeaponAimAngles(edict_t *ent, const vec3_t requested_angles,
+                                 vec3_t resolved_angles) {
+  vec3_t delta;
+  float body_delta;
+  float weapon_delta;
+  int i;
+
+  if (qcvm != &sv.qcvm || !sv_vr_weapon_aim_depth ||
+      sv_vr_weapon_aim_entity != ent)
+    return false;
+
+  body_delta =
+      SV_VRWeaponAimMaxAngleDelta(requested_angles, sv_vr_weapon_aim_body_angles);
+  weapon_delta = SV_VRWeaponAimMaxAngleDelta(requested_angles,
+                                             sv_vr_weapon_aim_weapon_angles);
+  if (weapon_delta <= body_delta || body_delta > 45.0f)
+    return false;
+
+  for (i = 0; i < 3; i++) {
+    delta[i] = SV_VRWeaponAimAngleDelta(requested_angles[i],
+                                        sv_vr_weapon_aim_body_angles[i]);
+    resolved_angles[i] = sv_vr_weapon_aim_weapon_angles[i] + delta[i];
+  }
+
+  return true;
 }
 
 static edict_t *SV_CurrentGroundEntity(edict_t *ent) {
