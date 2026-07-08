@@ -2675,6 +2675,97 @@ static void Host_SV_Noclip_f(void) {
   Con_Printf("sv_noclip: %s %s\n", client->name, enable ? "ON" : "OFF");
 }
 
+static qboolean Host_SV_IsSafeGameName(const char *game) {
+  const unsigned char *p;
+
+  if (!game || !*game || !strcmp(game, ".") || strstr(game, ".."))
+    return false;
+
+  for (p = (const unsigned char *)game; *p; p++) {
+    if (!((*p >= 'a' && *p <= 'z') || (*p >= 'A' && *p <= 'Z') ||
+          (*p >= '0' && *p <= '9') || *p == '_' || *p == '-' || *p == '.'))
+      return false;
+  }
+
+  return true;
+}
+
+static qboolean Host_SV_IsSafeServerAddress(const char *server) {
+  const unsigned char *p;
+
+  if (!server || !*server)
+    return false;
+
+  for (p = (const unsigned char *)server; *p; p++) {
+    if (*p <= 32 || *p == '"' || *p == '\'' || *p == '\\' || *p == ';')
+      return false;
+  }
+
+  return true;
+}
+
+/*
+==================
+Host_SV_ReconnectGame_f
+
+Tell clients to switch mod locally and reconnect with retry timing. The server
+wrapper remains responsible for restarting the dedicated process.
+==================
+*/
+static void Host_SV_ReconnectGame_f(void) {
+  const char *game;
+  const char *server;
+  double delay;
+  double retry_interval;
+  double timeout;
+  char command[512];
+  byte data[1024];
+  sizebuf_t msg;
+  int failed;
+
+  if (!sv.active) {
+    Con_Printf("sv_reconnect_game: no active server\n");
+    return;
+  }
+
+  if (Cmd_Argc() < 3) {
+    Con_Printf("sv_reconnect_game <game> <server> [delay] [retry] [timeout]\n");
+    return;
+  }
+
+  game = Cmd_Argv(1);
+  server = Cmd_Argv(2);
+  if (!Host_SV_IsSafeGameName(game)) {
+    Con_Printf("sv_reconnect_game: invalid game directory \"%s\"\n", game);
+    return;
+  }
+  if (!Host_SV_IsSafeServerAddress(server)) {
+    Con_Printf("sv_reconnect_game: invalid server address \"%s\"\n", server);
+    return;
+  }
+
+  delay = Cmd_Argc() > 3 ? Q_atof(Cmd_Argv(3)) : 8.0;
+  retry_interval = Cmd_Argc() > 4 ? Q_atof(Cmd_Argv(4)) : 2.0;
+  timeout = Cmd_Argc() > 5 ? Q_atof(Cmd_Argv(5)) : 120.0;
+  delay = CLAMP(0.0, delay, 60.0);
+  retry_interval = CLAMP(0.5, retry_interval, 15.0);
+  timeout = CLAMP(delay + retry_interval, timeout, 300.0);
+
+  q_snprintf(command, sizeof(command), "qs_reconnect_game \"%s\" \"%s\" %.3g %.3g %.3g\n",
+             game, server, delay, retry_interval, timeout);
+
+  msg.data = data;
+  msg.cursize = 0;
+  msg.maxsize = sizeof(data);
+  MSG_WriteByte(&msg, svc_stufftext);
+  MSG_WriteString(&msg, command);
+  failed = NET_SendToAll(&msg, 5.0);
+
+  Con_Printf("sv_reconnect_game: sent %s", command);
+  if (failed)
+    Con_Printf("sv_reconnect_game: failed to notify %d client(s)\n", failed);
+}
+
 static edict_t *FindViewthing(void) {
   int i;
   edict_t *e = NULL;
@@ -3013,6 +3104,7 @@ void Host_InitCommands(void) {
   Cmd_AddCommand("sv_giveall", Host_SV_GiveAll_f);
   Cmd_AddCommand("sv_god", Host_SV_God_f);
   Cmd_AddCommand("sv_noclip", Host_SV_Noclip_f);
+  Cmd_AddCommand("sv_reconnect_game", Host_SV_ReconnectGame_f);
 
   Cmd_AddCommand("startdemos", Host_Startdemos_f);
   Cmd_AddCommand("demos", Host_Demos_f);

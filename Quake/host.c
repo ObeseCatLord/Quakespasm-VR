@@ -1419,6 +1419,8 @@ void _Host_Frame (double time)
 	if (lagdebug_frame)
 		lagdebug_after_cbuf = Sys_DoubleTime ();
 
+	CL_AutoReconnect_Frame ();
+
 	NET_Poll();
 	if (lagdebug_frame)
 		lagdebug_after_netpoll = Sys_DoubleTime ();

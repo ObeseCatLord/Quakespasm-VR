@@ -261,6 +261,12 @@ void Cmd_StuffCmds_f (void)
 	char	cmds[CMDLINE_LENGTH];
 	int		i, j, plus;
 
+	if (CL_AutoReconnect_IsActive())
+	{
+		Con_DPrintf("Skipping stuffcmds while automatic reconnect is active.\n");
+		return;
+	}
+
 	plus = false;	// On Unix, argv[0] is command name
 
 	for (i = 0, j = 0; cmdline.string[i]; i++)

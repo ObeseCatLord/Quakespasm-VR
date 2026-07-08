@@ -425,6 +425,8 @@ void CL_ClearPendingCmd(void);
 void CL_SendMove(const usercmd_t *cmd);
 void CL_FlushAckFrames(void);
 int CL_ReadFromServer(void);
+void CL_AutoReconnect_Frame(void);
+qboolean CL_AutoReconnect_IsActive(void);
 void CL_AdjustAngles(void);
 void CL_BaseMove(usercmd_t *cmd, qboolean isfinal);
 void CL_FinishMove(usercmd_t *cmd, qboolean isfinal);
