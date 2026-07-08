@@ -2514,7 +2514,7 @@ static void COM_Game_f (void)
 		Cbuf_AddText ("cl_migrate_network_defaults\n");
 		Cbuf_AddText ("vr_migrate_movement_defaults\n");
 
-		if (vr_enabled.value)
+		if (vr_enabled.value && !CL_AutoReconnect_IsActive())
 		{
 			Cbuf_AddText("map start\n");
 		}

@@ -58,6 +58,70 @@ cvar_t	cl_predict_error_log = {"cl_predict_error_log","1",CVAR_NONE};
 extern cvar_t host_maxfps;
 extern cvar_t cl_netfps;
 
+typedef struct cl_auto_reconnect_s
+{
+	qboolean	active;
+	char		game[MAX_QPATH];
+	char		server[NET_NAMELEN];
+	double		start_time;
+	double		next_attempt_time;
+	double		retry_interval;
+	double		timeout;
+	int		attempts;
+} cl_auto_reconnect_t;
+
+static cl_auto_reconnect_t cl_auto_reconnect;
+
+static qboolean CL_AutoReconnect_IsSafeGame(const char *game)
+{
+	const unsigned char *p;
+
+	if (!game || !*game || !strcmp(game, ".") || strstr(game, ".."))
+		return false;
+
+	for (p = (const unsigned char *)game; *p; p++)
+	{
+		if (!((*p >= 'a' && *p <= 'z') || (*p >= 'A' && *p <= 'Z') ||
+		      (*p >= '0' && *p <= '9') || *p == '_' || *p == '-' || *p == '.'))
+			return false;
+	}
+
+	return true;
+}
+
+static qboolean CL_AutoReconnect_IsSafeServer(const char *server)
+{
+	const unsigned char *p;
+
+	if (!server || !*server)
+		return false;
+
+	for (p = (const unsigned char *)server; *p; p++)
+	{
+		if (*p <= 32 || *p == '"' || *p == '\'' || *p == '\\' || *p == ';')
+			return false;
+	}
+
+	return true;
+}
+
+static qboolean CL_AutoReconnect_GameExists(const char *game)
+{
+	if (!q_strcasecmp(game, GAMENAME))
+		return Sys_FileType(va("%s/%s", com_basedir, GAMENAME)) == FS_ENT_DIRECTORY;
+
+	if (Sys_FileType(va("%s/%s", com_basedir, game)) == FS_ENT_DIRECTORY)
+		return true;
+
+	return host_parms->userdir != host_parms->basedir &&
+	       Sys_FileType(va("%s/%s", host_parms->userdir, game)) == FS_ENT_DIRECTORY;
+}
+
+qboolean CL_AutoReconnect_IsActive(void)
+{
+	return cl_auto_reconnect.active;
+}
+
 double CL_NetLagDebugFrameThreshold (void)
 {
 	double threshold;
@@ -309,6 +373,29 @@ void CL_Disconnect_f (void)
 }
 
 
+static qboolean CL_TryEstablishConnection (const char *host)
+{
+	if (cls.state == ca_dedicated)
+		return false;
+
+	if (cls.demoplayback)
+		return false;
+
+	CL_MigrateNetworkDefaults_f ();
+	CL_Disconnect ();
+
+	cls.netcon = NET_Connect (host);
+	if (!cls.netcon)
+		return false;
+	Con_DPrintf ("CL_EstablishConnection: connected to %s\n", host);
+
+	cls.demonum = -1;			// not in the demo loop now
+	cls.state = ca_connected;
+	CL_ClearSignons ();			// need all the signon messages before playing
+	MSG_WriteByte (&cls.message, clc_nop);	// NAT Fix from ProQuake
+	return true;
+}
+
 /*
 =====================
 CL_EstablishConnection
@@ -318,24 +405,120 @@ Host should be either "local" or a net address to be passed on
 */
 void CL_EstablishConnection (const char *host)
 {
+	if (!CL_TryEstablishConnection(host))
+		Host_Error ("CL_Connect: connect failed");
+}
+
+static void CL_AutoReconnectGame_f(void)
+{
+	const char *game;
+	const char *server;
+	double delay;
+	double retry_interval;
+	double timeout;
+
+	if (Cmd_Argc() < 3)
+	{
+		Con_Printf("qs_reconnect_game <game> <server> [delay] [retry] [timeout]\n");
+		return;
+	}
+
 	if (cls.state == ca_dedicated)
 		return;
 
-	if (cls.demoplayback)
+	game = Cmd_Argv(1);
+	server = Cmd_Argv(2);
+	if (!CL_AutoReconnect_IsSafeGame(game))
+	{
+		Con_Printf("qs_reconnect_game: invalid game directory \"%s\"\n", game);
+		return;
+	}
+	if (!CL_AutoReconnect_IsSafeServer(server))
+	{
+		Con_Printf("qs_reconnect_game: invalid server address \"%s\"\n", server);
+		return;
+	}
+	if (!CL_AutoReconnect_GameExists(game))
+	{
+		Con_Printf("qs_reconnect_game: missing game directory \"%s\"\n", game);
+		return;
+	}
+
+	delay = Cmd_Argc() > 3 ? Q_atof(Cmd_Argv(3)) : 8.0;
+	retry_interval = Cmd_Argc() > 4 ? Q_atof(Cmd_Argv(4)) : 2.0;
+	timeout = Cmd_Argc() > 5 ? Q_atof(Cmd_Argv(5)) : 120.0;
+	delay = CLAMP(0.0, delay, 60.0);
+	retry_interval = CLAMP(0.5, retry_interval, 15.0);
+	timeout = CLAMP(delay + retry_interval, timeout, 300.0);
+
+	memset(&cl_auto_reconnect, 0, sizeof(cl_auto_reconnect));
+	cl_auto_reconnect.active = true;
+	q_strlcpy(cl_auto_reconnect.game, game, sizeof(cl_auto_reconnect.game));
+	q_strlcpy(cl_auto_reconnect.server, server, sizeof(cl_auto_reconnect.server));
+	cl_auto_reconnect.start_time = realtime;
+	cl_auto_reconnect.next_attempt_time = realtime + delay;
+	cl_auto_reconnect.retry_interval = retry_interval;
+	cl_auto_reconnect.timeout = timeout;
+
+	Con_Printf("Server switching to game \"%s\". Reconnecting to %s in %.1f seconds.\n",
+	           cl_auto_reconnect.game, cl_auto_reconnect.server, delay);
+	SCR_CenterPrint(va("Server switching to %s\nReconnecting soon...", cl_auto_reconnect.game));
+	cls.demonum = -1;
+	CL_Disconnect();
+	CL_ClearState();
+
+	if (!COM_GameDirMatches(cl_auto_reconnect.game))
+		Cbuf_AddText(va("game %s\n", cl_auto_reconnect.game));
+}
+
+void CL_AutoReconnect_Frame(void)
+{
+	if (!cl_auto_reconnect.active)
 		return;
 
-	CL_MigrateNetworkDefaults_f ();
-	CL_Disconnect ();
+	if (realtime - cl_auto_reconnect.start_time > cl_auto_reconnect.timeout)
+	{
+		Con_Printf("Auto reconnect to %s timed out after %.1f seconds.\n",
+		           cl_auto_reconnect.server, cl_auto_reconnect.timeout);
+		cl_auto_reconnect.active = false;
+		if (cls.state == ca_connected && cls.signon < SIGNONS)
+			CL_Disconnect();
+		return;
+	}
 
-	cls.netcon = NET_Connect (host);
-	if (!cls.netcon)
-		Host_Error ("CL_Connect: connect failed");
-	Con_DPrintf ("CL_EstablishConnection: connected to %s\n", host);
+	if (cls.state == ca_connected)
+	{
+		if (cls.signon == SIGNONS)
+		{
+			Con_Printf("Auto reconnect complete: %s (%s).\n",
+			           cl_auto_reconnect.server, COM_GetGameNames(false));
+			cl_auto_reconnect.active = false;
+		}
+		return;
+	}
 
-	cls.demonum = -1;			// not in the demo loop now
-	cls.state = ca_connected;
-	CL_ClearSignons ();			// need all the signon messages before playing
-	MSG_WriteByte (&cls.message, clc_nop);	// NAT Fix from ProQuake
+	if (realtime < cl_auto_reconnect.next_attempt_time)
+		return;
+
+	if (!COM_GameDirMatches(cl_auto_reconnect.game))
+	{
+		Con_Printf("Auto reconnect waiting for game \"%s\" to load locally.\n",
+		           cl_auto_reconnect.game);
+		cl_auto_reconnect.next_attempt_time = realtime + 1.0;
+		return;
+	}
+
+	cl_auto_reconnect.attempts++;
+	Con_Printf("Auto reconnect attempt %d: connect %s\n",
+	           cl_auto_reconnect.attempts, cl_auto_reconnect.server);
+	if (CL_TryEstablishConnection(cl_auto_reconnect.server))
+	{
+		SCR_BeginLoadingPlaque();
+		CL_ClearSignons();
+		return;
+	}
+
+	cl_auto_reconnect.next_attempt_time = realtime + cl_auto_reconnect.retry_interval;
 }
 
 /*
@@ -1592,6 +1775,7 @@ void CL_Init (void)
 	Cmd_AddCommand ("tracepos", CL_Tracepos_f); //johnfitz
 	Cmd_AddCommand ("viewpos", CL_Viewpos_f); //johnfitz
 
+	Cmd_AddCommand ("qs_reconnect_game", CL_AutoReconnectGame_f);
 	Cmd_AddCommand_ServerCommand ("st", CL_SetStat_f);
 	Cmd_AddCommand_ServerCommand ("sts", CL_SetStatString_f);
 }

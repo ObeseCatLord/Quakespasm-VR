@@ -166,9 +166,12 @@ wrappers that execute `quakespasm-openvr.bin` with it before loading a map.
 
 Use `-novr` for desktop clients and `-vr` for headset clients. The protocol uses
 QSS-M-style move ACKs and replacement-delta snapshots; vanilla/QSS-M server
-movement is the default. Trusted server PMove is off by default, including mods
-that supply `SV_RunClientCommand`. Set `sv_nqplayerphysics 0` only when
-intentionally testing server PMove, and pair that with `sv_trustedmovement 1`.
+movement is the default. Prediction metadata follows QSS-M and is only
+advertised when server PMove/QC input movement is active unless explicitly
+testing prediction against vanilla movement. Trusted server PMove is off by
+default, including mods that supply `SV_RunClientCommand`. Set
+`sv_nqplayerphysics 0` only when intentionally testing server PMove, and pair
+that with `sv_trustedmovement 1`.
 Startup runs `host_migrate_network_defaults` after configs to repair stale
 archived values such as `host_maxfps 72`, nonzero `cl_netfps`, nonzero
 `host_framerate`/`host_timescale` overrides, non-default
@@ -432,7 +435,7 @@ QuakeSpasm cvar.
 | `sv_nofriendlyfire` | `1` | Co-op | Disables friendly fire in co-op. |
 | `sv_nqplayerphysics` | `1` | PMove | Keeps vanilla/QSS-M server movement by default. Set `0` only when intentionally testing server PMove. |
 | `sv_pmove_legacy_preserve_qc_velocity` | `1` | PMove | Preserves QC velocity pushes such as grapples through legacy PMove. |
-| `sv_predict_nqmovement` | `0` | PMove | Experimental opt-in for advertising PMove prediction metadata while the server still runs vanilla NQ movement; default `0` matches QSS-M. |
+| `sv_predict_nqmovement` | `0` | PMove | Experimental opt-in for advertising PMove prediction metadata while the server still runs vanilla NQ movement; default `0` matches QSS-M and avoids correction judder. |
 | `sv_replacement_maxpackets` | `0` | Networking | QSS-M-style uncapped replacement-delta drain by default; positive values manually cap split packets sent to one client per server frame. |
 | `sv_save_multiplayer` | `1` | Save/load | Allows multiplayer/co-op saves in controlled use. |
 | `sv_skyroom_pvs` | `1` | Rendering/server | Adds skyroom PVS for skyroom entity visibility. |
