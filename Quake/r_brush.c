@@ -34,7 +34,16 @@ int		lightmap_bytes;
 struct lightmap_s	*lightmaps;
 int		lightmap_count;
 
-static int	allocated[LMBLOCK_WIDTH];
+typedef struct lightmap_chart_s
+{
+	int		*allocated;
+	int		width;
+	int		height;
+	int		x;
+	qboolean	reverse;
+} lightmap_chart_t;
+
+static lightmap_chart_t	lightmap_chart;
 static int	last_lightmap_allocated;
 
 static unsigned	blocklights[LMBLOCK_WIDTH*LMBLOCK_HEIGHT*3]; //johnfitz -- was 18*18, added lit support (*3) and loosened surface extents maximum (LMBLOCK_WIDTH*LMBLOCK_HEIGHT)
@@ -334,14 +343,89 @@ dynamic:
 }
 
 /*
+==================
+Chart_Init
+==================
+*/
+static void Chart_Init (lightmap_chart_t *chart, int width, int height)
+{
+	int		*allocated;
+
+	if (chart->width != width)
+	{
+		allocated = (int *)realloc (chart->allocated, sizeof (*allocated) * width);
+		if (!allocated)
+			Sys_Error ("Chart_Init: could not allocate %u bytes", (unsigned)(sizeof (*allocated) * width));
+		chart->allocated = allocated;
+	}
+	memset (chart->allocated, 0, sizeof (*chart->allocated) * width);
+	chart->width = width;
+	chart->height = height;
+	chart->x = 0;
+	chart->reverse = false;
+}
+
+/*
+==================
+Chart_Add
+==================
+*/
+static qboolean Chart_Add (lightmap_chart_t *chart, int w, int h, int *outx, int *outy)
+{
+	int		i, x, y;
+
+	if (chart->width < w || chart->height < h)
+		Sys_Error ("Chart_Add: block too large %dx%d, max is %dx%d", w, h, chart->width, chart->height);
+
+	// Advance horizontally, reversing direction at the edges.  This avoids the
+	// width-by-height placement scan that dominates lightmap allocation on
+	// jumbo maps while retaining the existing per-lightmap texture layout.
+	if (chart->reverse)
+	{
+		if (chart->x < w)
+		{
+			chart->x = 0;
+			chart->reverse = false;
+			goto forward;
+		}
+reverse:
+		x = chart->x - w;
+		chart->x = x;
+	}
+	else
+	{
+		if (chart->x + w > chart->width)
+		{
+			chart->x = chart->width;
+			chart->reverse = true;
+			goto reverse;
+		}
+forward:
+		x = chart->x;
+		chart->x += w;
+	}
+
+	y = 0;
+	for (i = 0; i < w; i++)
+		y = q_max (y, chart->allocated[x + i]);
+	if (y + h > chart->height)
+		return false;
+
+	for (i = 0; i < w; i++)
+		chart->allocated[x + i] = y + h;
+
+	*outx = x;
+	*outy = y;
+	return true;
+}
+
+/*
 ========================
 AllocBlock -- returns a texture number and the position inside it
 ========================
 */
 int AllocBlock (int w, int h, int *x, int *y)
 {
-	int		i, j;
-	int		best, best2;
 	int		texnum;
 
 	// ericw -- rather than searching starting at lightmap 0 every time,
@@ -353,38 +437,22 @@ int AllocBlock (int w, int h, int *x, int *y)
 	{
 		if (texnum == lightmap_count)
 		{
+			struct lightmap_s	*newlightmaps;
+
 			lightmap_count++;
-			lightmaps = (struct lightmap_s *) realloc(lightmaps, sizeof(*lightmaps)*lightmap_count);
+			newlightmaps = (struct lightmap_s *)realloc (lightmaps, sizeof (*lightmaps) * lightmap_count);
+			if (!newlightmaps)
+				Sys_Error ("AllocBlock: could not allocate lightmap metadata");
+			lightmaps = newlightmaps;
 			memset(&lightmaps[texnum], 0, sizeof(lightmaps[texnum]));
 			lightmaps[texnum].data = (byte *) calloc(1, 4*LMBLOCK_WIDTH*LMBLOCK_HEIGHT);
-			//as we're only tracking one texture, we don't need multiple copies of allocated any more.
-			memset(allocated, 0, sizeof(allocated));
-		}
-		best = LMBLOCK_HEIGHT;
-
-		for (i=0 ; i<LMBLOCK_WIDTH-w ; i++)
-		{
-			best2 = 0;
-
-			for (j=0 ; j<w ; j++)
-			{
-				if (allocated[i+j] >= best)
-					break;
-				if (allocated[i+j] > best2)
-					best2 = allocated[i+j];
-			}
-			if (j == w)
-			{	// this is a valid spot
-				*x = i;
-				*y = best = best2;
-			}
+			if (!lightmaps[texnum].data)
+				Sys_Error ("AllocBlock: could not allocate lightmap data");
+			Chart_Init (&lightmap_chart, LMBLOCK_WIDTH, LMBLOCK_HEIGHT);
 		}
 
-		if (best + h > LMBLOCK_HEIGHT)
+		if (!Chart_Add (&lightmap_chart, w, h, x, y))
 			continue;
-
-		for (i=0 ; i<w ; i++)
-			allocated[*x + i] = best + h;
 
 		last_lightmap_allocated = texnum;
 		return texnum;

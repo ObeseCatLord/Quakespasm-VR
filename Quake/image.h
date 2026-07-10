@@ -29,10 +29,11 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 byte *Image_LoadTGA (FILE *f, int *width, int *height);
 byte *Image_LoadPCX (FILE *f, int *width, int *height);
 byte *Image_LoadImage (const char *name, int *width, int *height);
+byte *Image_LoadImageWithPath (const char *name, int *width, int *height,
+	unsigned int min_path_id);
 
 qboolean Image_WriteTGA (const char *name, byte *data, int width, int height, int bpp, qboolean upsidedown);
 qboolean Image_WritePNG (const char *name, byte *data, int width, int height, int bpp, qboolean upsidedown);
 qboolean Image_WriteJPG (const char *name, byte *data, int width, int height, int bpp, int quality, qboolean upsidedown);
 
 #endif	/* GL_IMAGE_H */
-

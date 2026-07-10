@@ -143,6 +143,8 @@ extern "C" {
 typedef struct {
   GLuint framebuffer, depth_texture, texture;
   GLuint msaa_framebuffer, msaa_texture, msaa_depth_texture;
+  GLenum color_format, depth_format;
+  qboolean highprecision_request;
   int msaa;
   struct {
     float width, height;
@@ -1137,6 +1139,7 @@ DEFINE_CVAR(vr_180_snap_turn, 1, CVAR_ARCHIVE);
 DEFINE_CVAR(vr_turn_speed, 2, CVAR_ARCHIVE);
 DEFINE_CVAR(vr_haptic, 1, CVAR_ARCHIVE);
 DEFINE_CVAR(vr_msaa, 4, CVAR_ARCHIVE);
+DEFINE_CVAR(vr_highprecision_targets, 1, CVAR_ARCHIVE);
 DEFINE_CVAR(vr_movement_mode, 0, CVAR_ARCHIVE);
 DEFINE_CVAR(vr_joystick_yaw_multi, 1.0, CVAR_ARCHIVE);
 DEFINE_CVAR(vr_joystick_axis_deadzone, 0.25, CVAR_ARCHIVE);
@@ -1201,24 +1204,17 @@ static qboolean InitOpenGLExtensions() {
   return extensions_initialized;
 }
 
-void RecreateTextures(fbo_t *fbo, int width, int height) {
-  GLuint oldDepth = fbo->depth_texture;
-  GLuint oldTexture = fbo->texture;
-
+static qboolean VR_CreateFBOTextures(fbo_t *fbo, int width, int height,
+                                     GLenum color_format, GLenum depth_format) {
   glGenTextures(1, &fbo->depth_texture);
   glGenTextures(1, &fbo->texture);
-
-  if (oldDepth) {
-    glDeleteTextures(1, &oldDepth);
-    glDeleteTextures(1, &oldTexture);
-  }
 
   glBindTexture(GL_TEXTURE_2D, fbo->depth_texture);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-  glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT24, width, height, 0,
+  glTexImage2D(GL_TEXTURE_2D, 0, depth_format, width, height, 0,
                GL_DEPTH_COMPONENT, GL_UNSIGNED_INT, NULL);
 
   glBindTexture(GL_TEXTURE_2D, fbo->texture);
@@ -1226,56 +1222,95 @@ void RecreateTextures(fbo_t *fbo, int width, int height) {
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-  glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, width, height, 0, GL_RGBA,
+  glTexImage2D(GL_TEXTURE_2D, 0, color_format, width, height, 0, GL_RGBA,
                GL_UNSIGNED_BYTE, NULL);
-
-  fbo->size.width = width;
-  fbo->size.height = height;
 
   glBindFramebufferEXT(GL_FRAMEBUFFER_EXT, fbo->framebuffer);
   glFramebufferTexture2DEXT(GL_FRAMEBUFFER_EXT, GL_COLOR_ATTACHMENT0_EXT,
                             GL_TEXTURE_2D, fbo->texture, 0);
   glFramebufferTexture2DEXT(GL_FRAMEBUFFER_EXT, GL_DEPTH_ATTACHMENT_EXT,
                             GL_TEXTURE_2D, fbo->depth_texture, 0);
+
+  return glCheckFramebufferStatusEXT(GL_FRAMEBUFFER_EXT) ==
+         GL_FRAMEBUFFER_COMPLETE;
+}
+
+void RecreateTextures(fbo_t *fbo, int width, int height) {
+  GLuint oldDepth = fbo->depth_texture;
+  GLuint oldTexture = fbo->texture;
+  GLenum color_format = vr_highprecision_targets.value ? GL_RGB10_A2 : GL_RGBA8;
+  GLenum depth_format = vr_highprecision_targets.value ? GL_DEPTH_COMPONENT32
+                                                        : GL_DEPTH_COMPONENT24;
+
+  fbo->depth_texture = 0;
+  fbo->texture = 0;
+
+  if (oldDepth) {
+    glDeleteTextures(1, &oldDepth);
+    glDeleteTextures(1, &oldTexture);
+  }
+
+  if (!VR_CreateFBOTextures(fbo, width, height, color_format, depth_format)) {
+    if (color_format != GL_RGBA8 || depth_format != GL_DEPTH_COMPONENT24) {
+      Con_Warning("VR high-precision framebuffer unsupported; using RGBA8/depth24\n");
+      glDeleteTextures(1, &fbo->depth_texture);
+      glDeleteTextures(1, &fbo->texture);
+      fbo->depth_texture = 0;
+      fbo->texture = 0;
+      color_format = GL_RGBA8;
+      depth_format = GL_DEPTH_COMPONENT24;
+      if (!VR_CreateFBOTextures(fbo, width, height, color_format,
+                                depth_format))
+        Sys_Error("Unable to create VR framebuffer");
+    } else {
+      Sys_Error("Unable to create VR framebuffer");
+    }
+  }
+
+  fbo->size.width = width;
+  fbo->size.height = height;
+  fbo->color_format = color_format;
+  fbo->depth_format = depth_format;
+  fbo->highprecision_request = !!vr_highprecision_targets.value;
 }
 
 fbo_t CreateFBO(int width, int height) {
   fbo_t fbo;
-  int swap_chain_length = 0;
+
+  memset(&fbo, 0, sizeof(fbo));
 
   glGenFramebuffersEXT(1, &fbo.framebuffer);
 
-  fbo.depth_texture = 0;
-
   RecreateTextures(&fbo, width, height);
-
-  fbo.msaa = 0;
-  fbo.msaa_framebuffer = 0;
-  fbo.msaa_texture = 0;
 
   return fbo;
 }
 
 void CreateMSAA(fbo_t *fbo, int width, int height, int msaa) {
-  fbo->msaa = msaa;
-
   if (fbo->msaa_framebuffer) {
     glDeleteFramebuffersEXT(1, &fbo->msaa_framebuffer);
     glDeleteTextures(1, &fbo->msaa_texture);
     glDeleteTextures(1, &fbo->msaa_depth_texture);
+    fbo->msaa_framebuffer = 0;
+    fbo->msaa_texture = 0;
+    fbo->msaa_depth_texture = 0;
   }
+
+  fbo->msaa = msaa;
+  if (msaa <= 0)
+    return;
 
   glGenFramebuffersEXT(1, &fbo->msaa_framebuffer);
   glGenTextures(1, &fbo->msaa_texture);
   glGenTextures(1, &fbo->msaa_depth_texture);
 
   glBindTexture(GL_TEXTURE_2D_MULTISAMPLE, fbo->msaa_texture);
-  glTexImage2DMultisampleEXT(GL_TEXTURE_2D_MULTISAMPLE, msaa, GL_RGBA8, width,
-                             height, false);
+  glTexImage2DMultisampleEXT(GL_TEXTURE_2D_MULTISAMPLE, msaa,
+                             fbo->color_format, width, height, false);
 
   glBindTexture(GL_TEXTURE_2D_MULTISAMPLE, fbo->msaa_depth_texture);
   glTexImage2DMultisampleEXT(GL_TEXTURE_2D_MULTISAMPLE, msaa,
-                             GL_DEPTH_COMPONENT24, width, height, false);
+                             fbo->depth_format, width, height, false);
 
   glBindFramebufferEXT(GL_FRAMEBUFFER_EXT, fbo->msaa_framebuffer);
   glFramebufferTexture2DEXT(GL_FRAMEBUFFER_EXT, GL_COLOR_ATTACHMENT0_EXT,
@@ -1286,7 +1321,14 @@ void CreateMSAA(fbo_t *fbo, int width, int height, int msaa) {
 
   GLenum status = glCheckFramebufferStatusEXT(GL_FRAMEBUFFER_EXT);
   if (status != GL_FRAMEBUFFER_COMPLETE) {
-    Con_Printf("Framebuffer incomplete %x", status);
+    Con_Warning("VR MSAA framebuffer incomplete %x; disabling MSAA\n", status);
+    glDeleteFramebuffersEXT(1, &fbo->msaa_framebuffer);
+    glDeleteTextures(1, &fbo->msaa_texture);
+    glDeleteTextures(1, &fbo->msaa_depth_texture);
+    fbo->msaa_framebuffer = 0;
+    fbo->msaa_texture = 0;
+    fbo->msaa_depth_texture = 0;
+    fbo->msaa = 0;
   }
 }
 
@@ -1496,6 +1538,15 @@ void Mod_Weapon(const char *name, aliashdr_t *hdr) {
   }
 }
 
+static aliashdr_t *VR_ActiveAliasHeader(qmodel_t *model, int skinnum) {
+  if (Mod_UseMD3Model(model, skinnum)) {
+    aliashdr_t *md3 = Mod_GetMD3Extradata(model);
+    if (md3)
+      return md3;
+  }
+  return (aliashdr_t *)Mod_Extradata(model);
+}
+
 void VR_ApplyCurrentViewWeaponTransform(void) {
   aliashdr_t *hdr;
 
@@ -1503,7 +1554,7 @@ void VR_ApplyCurrentViewWeaponTransform(void) {
       cl.viewent.model->type != mod_alias)
     return;
 
-  hdr = (aliashdr_t *)Mod_Extradata(cl.viewent.model);
+  hdr = VR_ActiveAliasHeader(cl.viewent.model, cl.viewent.skinnum);
   Mod_Weapon(cl.viewent.model->name, hdr);
 }
 
@@ -3303,7 +3354,7 @@ static void VR_AdjustBegin(vr_adjust_mode_t mode) {
   VectorCopy(cl.handrot[1], vr_adjust_frozen_handrot);
   VectorCopy(cl.handpos[1], vr_adjust_current_handpos);
   VectorCopy(cl.handrot[1], vr_adjust_current_handrot);
-  hdr = (aliashdr_t *)Mod_Extradata(cl.viewent.model);
+  hdr = VR_ActiveAliasHeader(cl.viewent.model, cl.viewent.skinnum);
   VectorCopy(hdr->original_scale_origin, vr_adjust_original_scale_origin);
 
   if (mode == VR_ADJUST_WEAPON) {
@@ -3909,6 +3960,7 @@ void VID_VR_Init() {
   Cvar_RegisterVariable(&vr_movement_mode);
   Cvar_RegisterVariable(&vr_movement_speed);
   Cvar_RegisterVariable(&vr_msaa);
+  Cvar_RegisterVariable(&vr_highprecision_targets);
   Cvar_RegisterVariable(&vr_snap_turn);
   Cvar_RegisterVariable(&vr_180_snap_turn);
   Cvar_RegisterVariable(&vr_turn_speed);
@@ -4353,7 +4405,9 @@ static void RenderScreenForCurrentEye_OVR() {
   glheight = cglheight;
 
   bool newTextures = glwidth != current_eye->fbo.size.width ||
-                     glheight != current_eye->fbo.size.height;
+                     glheight != current_eye->fbo.size.height ||
+                     (!!vr_highprecision_targets.value) !=
+                         current_eye->fbo.highprecision_request;
   if (newTextures) {
     RecreateTextures(&current_eye->fbo, glwidth, glheight);
   }

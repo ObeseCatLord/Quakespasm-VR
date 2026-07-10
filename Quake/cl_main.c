@@ -882,6 +882,23 @@ static void CL_RocketTrail (entity_t *ent, int type)
 	CL_ResetTrail (ent);
 }
 
+/*
+===============
+CL_ModelTrail
+
+Use an effectinfo/FTE model trail when one is defined, otherwise retain the
+classic trail. Scripted trails are not rate limited by the classic renderer,
+so advance their origin every frame.
+===============
+*/
+static void CL_ModelTrail (entity_t *ent, const char *effectname, int type)
+{
+	if (PScript_EntParticleTrail (ent->trailorg, ent, effectname))
+		CL_RocketTrail (ent, type);
+	else
+		CL_ResetTrail (ent);
+}
+
 static qboolean CL_LocalSingleplayerActive (void)
 {
 	return sv.active && svs.maxclients <= 1;
@@ -1293,25 +1310,25 @@ void CL_RelinkEntities (void)
 		if (ent->netstate.traileffectnum)
 			CL_NamedParticleTrail (ent, ent->netstate.traileffectnum);
 		else if (ent->model->flags & EF_GIB)
-			CL_RocketTrail (ent, 2);
+			CL_ModelTrail (ent, "TR_BLOOD", 2);
 		else if (ent->model->flags & EF_ZOMGIB)
-			CL_RocketTrail (ent, 4);
+			CL_ModelTrail (ent, "TR_SLIGHTBLOOD", 4);
 		else if (ent->model->flags & EF_TRACER)
-			CL_RocketTrail (ent, 3);
+			CL_ModelTrail (ent, "TR_WIZSPIKE", 3);
 		else if (ent->model->flags & EF_TRACER2)
-			CL_RocketTrail (ent, 5);
+			CL_ModelTrail (ent, "TR_KNIGHTSPIKE", 5);
 		else if (ent->model->flags & EF_ROCKET)
 		{
-			CL_RocketTrail (ent, 0);
+			CL_ModelTrail (ent, "TR_ROCKET", 0);
 			dl = CL_AllocDlight (i);
 			VectorCopy (ent->origin, dl->origin);
 			dl->radius = 200;
 			dl->die = cl.time + 0.01;
 		}
 		else if (ent->model->flags & EF_GRENADE)
-			CL_RocketTrail (ent, 1);
+			CL_ModelTrail (ent, "TR_GRENADE", 1);
 		else if (ent->model->flags & EF_TRACER3)
-			CL_RocketTrail (ent, 6);
+			CL_ModelTrail (ent, "TR_VORESPIKE", 6);
 		else
 			CL_ResetTrail (ent);
 

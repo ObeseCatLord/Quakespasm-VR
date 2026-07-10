@@ -98,6 +98,7 @@ cvar_t r_stereodepth = {"r_stereodepth", "128", CVAR_NONE};
 cvar_t r_clearcolor = {"r_clearcolor", "2", CVAR_ARCHIVE};
 cvar_t r_drawflat = {"r_drawflat", "0", CVAR_NONE};
 cvar_t r_flatlightstyles = {"r_flatlightstyles", "0", CVAR_NONE};
+cvar_t r_lerplightstyles = {"r_lerplightstyles", "1", CVAR_ARCHIVE}; // 0=off; 1=skip abrupt transitions; 2=always lerp
 cvar_t gl_fullbrights = {"gl_fullbrights", "1", CVAR_ARCHIVE};
 cvar_t gl_farclip = {"gl_farclip", "65536", CVAR_ARCHIVE};
 cvar_t gl_overbright = {"gl_overbright", "1", CVAR_ARCHIVE};

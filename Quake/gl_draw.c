@@ -370,8 +370,13 @@ qpic_t *Draw_TryCachePic (const char *path, unsigned int texflags)
 {
 	cachepic_t	*pic;
 	int			i;
+	int			mark;
 	qpic_t		*dat;
 	glpic_t		gl;
+	byte		*rgba;
+	char		imagepath[MAX_QPATH];
+	char		lmppath[MAX_QPATH];
+	int			width, height;
 
 	for (pic=menu_cachepics, i=0 ; i<menu_numcachepics ; pic++, i++)
 	{
@@ -381,20 +386,55 @@ qpic_t *Draw_TryCachePic (const char *path, unsigned int texflags)
 	if (menu_numcachepics == MAX_CACHED_PICS)
 		Sys_Error ("menu_numcachepics == MAX_CACHED_PICS");
 
-	dat = (qpic_t *)COM_LoadTempFile (path, NULL);
+	if (!texflags)
+		texflags = TEXPREF_ALPHA | TEXPREF_PAD | TEXPREF_NOPICMIP;
+
+	/* External replacements and extension-qualified CSQC pictures use the
+	 * regular image search order. Keep the extensionless source name so the
+	 * texture manager can find the same image again after a video restart. */
+	COM_StripExtension (path, imagepath, sizeof(imagepath));
+	mark = Hunk_LowMark ();
+	rgba = Image_LoadImage (imagepath, &width, &height);
+	if (rgba)
+	{
+		pic = &menu_cachepics[menu_numcachepics++];
+		q_strlcpy (pic->name, path, sizeof(pic->name));
+		pic->pic.width = width;
+		pic->pic.height = height;
+
+		gl.gltexture = TexMgr_LoadImage (NULL, path, width, height, SRC_RGBA,
+			rgba, imagepath, 0, texflags);
+		gl.sl = 0;
+		gl.sh = (texflags & TEXPREF_PAD) ? (float)width/(float)TexMgr_PadConditional(width) : 1;
+		gl.tl = 0;
+		gl.th = (texflags & TEXPREF_PAD) ? (float)height/(float)TexMgr_PadConditional(height) : 1;
+		memcpy (pic->pic.data, &gl, sizeof(glpic_t));
+		Hunk_FreeToLowMark (mark);
+		return &pic->pic;
+	}
+	Hunk_FreeToLowMark (mark);
+
+	/* Fall back to the original paletted qpic. An extensionless CSQC name may
+	 * refer to a loose .lmp; other explicit image extensions must not be parsed
+	 * as qpic data when their decoder rejected them. */
+	q_strlcpy (lmppath, path, sizeof(lmppath));
+	if (!COM_FileGetExtension (lmppath)[0])
+		COM_AddExtension (lmppath, ".lmp", sizeof(lmppath));
+	else if (q_strcasecmp (COM_FileGetExtension (lmppath), "lmp"))
+		return NULL;
+
+	dat = (qpic_t *)COM_LoadTempFile (lmppath, NULL);
 	if (!dat)
 		return NULL;
 	SwapPic (dat);
 
 	pic = &menu_cachepics[menu_numcachepics++];
-	strcpy (pic->name, path);
+	q_strlcpy (pic->name, path, sizeof(pic->name));
 
 	pic->pic.width = dat->width;
 	pic->pic.height = dat->height;
 
-	if (!texflags)
-		texflags = TEXPREF_ALPHA | TEXPREF_PAD | TEXPREF_NOPICMIP;
-	gl.gltexture = TexMgr_LoadImage (NULL, path, dat->width, dat->height, SRC_INDEXED, dat->data, path,
+	gl.gltexture = TexMgr_LoadImage (NULL, path, dat->width, dat->height, SRC_INDEXED, dat->data, lmppath,
 									  sizeof(int)*2, texflags);
 	gl.sl = 0;
 	gl.sh = (texflags & TEXPREF_PAD) ? (float)dat->width/(float)TexMgr_PadConditional(dat->width) : 1;

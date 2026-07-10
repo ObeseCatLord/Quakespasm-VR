@@ -52,6 +52,8 @@ void M_Menu_Keys_f(void);
 void M_Menu_Video_f(void);
 void M_Menu_VR_f(void);
 void M_Menu_Help_f(void);
+static void M_Menu_Mods_f(void);
+static void M_Menu_Models_f(void);
 void M_Menu_Quit_f(void);
 
 void M_Main_Draw(void);
@@ -70,6 +72,8 @@ void M_Keys_Draw(void);
 void M_Video_Draw(void);
 void M_VR_Draw(void);
 void M_Help_Draw(void);
+static void M_Mods_Draw(void);
+static void M_Models_Draw(void);
 void M_Quit_Draw(void);
 
 void M_Main_Key(int key);
@@ -88,6 +92,8 @@ void M_Keys_Key(int key);
 void M_Video_Key(int key);
 void M_VR_Key(int key);
 void M_Help_Key(int key);
+static void M_Mods_Key(int key);
+static void M_Models_Key(int key);
 void M_Quit_Key(int key);
 
 qboolean m_entersound; // play after drawing a frame, so caching
@@ -236,7 +242,7 @@ void M_ToggleMenu_f(void) {
 /* MAIN MENU */
 
 int m_main_cursor;
-#define MAIN_ITEMS 5
+#define MAIN_ITEMS 6
 
 void M_Menu_Main_f(void) {
   if (key_dest != key_menu) {
@@ -257,6 +263,7 @@ void M_Main_Draw(void) {
   p = Draw_CachePic("gfx/ttl_main.lmp");
   M_DrawPic((320 - p->width) / 2, 4, p);
   M_DrawTransPic(72, 32, Draw_CachePic("gfx/mainmenu.lmp"));
+  M_Print(72, 132, "mods");
 
   f = (int)(realtime * 10) % 6;
 
@@ -314,6 +321,10 @@ void M_Main_Key(int key) {
 
     case 4:
       M_Menu_Quit_f();
+      break;
+
+    case 5:
+      M_Menu_Mods_f();
       break;
     }
   }
@@ -932,6 +943,7 @@ enum {
   // #endif
   OPT_VIDEO, // This is the last before OPTIONS_ITEMS
   OPT_VR,
+  OPT_MODELS,
   OPTIONS_ITEMS
 };
 
@@ -1203,6 +1215,9 @@ void M_Options_Draw(void) {
   if (vid_menudrawfn)
     M_Print(16, 32 + 8 * OPT_VR, "         VR Options");
 
+  // OPT_MODELS:
+  M_Print(16, 32 + 8 * OPT_MODELS, "        Models Options");
+
   // cursor
   M_DrawCharacter(200, 32 + options_cursor * 8, 12 + ((int)(realtime * 4) & 1));
 }
@@ -1240,6 +1255,9 @@ void M_Options_Key(int k) {
     case OPT_VR:
       M_Menu_VR_f();
       break;
+    case OPT_MODELS:
+      M_Menu_Models_f();
+      break;
     default:
       M_AdjustSliders(1);
       break;
@@ -1269,11 +1287,16 @@ void M_Options_Key(int k) {
     break;
   }
 
-  if (options_cursor == OPTIONS_ITEMS - 1 && vid_menudrawfn == NULL) {
-    if (k == K_UPARROW)
-      options_cursor = OPTIONS_ITEMS - 2;
-    else
-      options_cursor = 0;
+  if (!vid_menudrawfn && (k == K_UPARROW || k == K_DOWNARROW)) {
+    int dir = k == K_UPARROW ? -1 : 1;
+
+    while (options_cursor == OPT_VIDEO || options_cursor == OPT_VR) {
+      options_cursor += dir;
+      if (options_cursor < 0)
+        options_cursor = OPTIONS_ITEMS - 1;
+      else if (options_cursor >= OPTIONS_ITEMS)
+        options_cursor = 0;
+    }
   }
 }
 
@@ -2413,6 +2436,163 @@ void M_ServerList_Key(int k) {
 void M_Menu_Credits_f(void) {}
 
 //=============================================================================
+/* MODS MENU */
+
+#define MAX_MODS_ON_SCREEN 16
+
+static int m_mods_cursor;
+static int m_mods_first;
+static int m_mods_count;
+
+static void M_Menu_Mods_f(void) {
+  filelist_item_t *item;
+
+  IN_Deactivate(modestate == MS_WINDOWED);
+  key_dest = key_menu;
+  m_state = m_mods;
+  m_entersound = true;
+
+  for (item = modlist, m_mods_count = 0; item; item = item->next)
+    m_mods_count++;
+
+  if (m_mods_count == 0) {
+    m_mods_cursor = 0;
+    m_mods_first = 0;
+  } else {
+    m_mods_cursor = CLAMP(0, m_mods_cursor, m_mods_count - 1);
+    m_mods_first = CLAMP(0, m_mods_first,
+                         q_max(0, m_mods_count - MAX_MODS_ON_SCREEN));
+  }
+}
+
+static filelist_item_t *M_Mods_Item(int index) {
+  filelist_item_t *item;
+
+  for (item = modlist; item && index > 0; item = item->next)
+    index--;
+  return item;
+}
+
+static void M_Mods_Draw(void) {
+  filelist_item_t *item;
+  int f, i;
+
+  M_DrawTransPic(16, 4, Draw_CachePic("gfx/qplaque.lmp"));
+  M_PrintWhite(144, 8, "MODS");
+
+  if (!m_mods_count) {
+    M_Print(40, 72, "No installed mods found");
+    return;
+  }
+
+  item = M_Mods_Item(m_mods_first);
+  for (i = 0; item && i < MAX_MODS_ON_SCREEN; i++, item = item->next) {
+    char name[25];
+
+    q_strlcpy(name, item->name, sizeof(name));
+    M_Print(72, 32 + i * 8, name);
+  }
+
+  f = (int)(realtime * 10) % 6;
+  M_DrawTransPic(54, 32 + (m_mods_cursor - m_mods_first) * 8,
+                 Draw_CachePic(va("gfx/menudot%i.lmp", f + 1)));
+}
+
+static void M_Mods_Key(int key) {
+  filelist_item_t *item;
+
+  switch (key) {
+  case K_ESCAPE:
+  case K_BBUTTON:
+    M_Menu_Main_f();
+    break;
+
+  case K_DOWNARROW:
+  case K_RIGHTARROW:
+    if (m_mods_count) {
+      S_LocalSound("misc/menu1.wav");
+      if (++m_mods_cursor >= m_mods_count)
+        m_mods_cursor = 0;
+      if (m_mods_cursor < m_mods_first)
+        m_mods_first = m_mods_cursor;
+      if (m_mods_cursor >= m_mods_first + MAX_MODS_ON_SCREEN)
+        m_mods_first = m_mods_cursor - MAX_MODS_ON_SCREEN + 1;
+    }
+    break;
+
+  case K_UPARROW:
+  case K_LEFTARROW:
+    if (m_mods_count) {
+      S_LocalSound("misc/menu1.wav");
+      if (--m_mods_cursor < 0)
+        m_mods_cursor = m_mods_count - 1;
+      if (m_mods_cursor < m_mods_first)
+        m_mods_first = m_mods_cursor;
+      if (m_mods_cursor >= m_mods_first + MAX_MODS_ON_SCREEN)
+        m_mods_first = m_mods_cursor - MAX_MODS_ON_SCREEN + 1;
+    }
+    break;
+
+  case K_ENTER:
+  case K_KP_ENTER:
+  case K_ABUTTON:
+    item = M_Mods_Item(m_mods_cursor);
+    if (item) {
+      S_LocalSound("misc/menu2.wav");
+      IN_Activate();
+      key_dest = key_game;
+      m_state = m_none;
+      Cbuf_AddText(va("game \"%s\"\n", item->name));
+    }
+    break;
+  }
+}
+
+//=============================================================================
+/* MODELS MENU */
+
+static void M_Menu_Models_f(void) {
+  IN_Deactivate(modestate == MS_WINDOWED);
+  key_dest = key_menu;
+  m_state = m_models;
+  m_entersound = true;
+}
+
+static void M_Models_Draw(void) {
+  qboolean enhanced = Cvar_VariableValue("r_enhancedmodels") != 0;
+
+  M_DrawTransPic(16, 4, Draw_CachePic("gfx/qplaque.lmp"));
+  M_PrintWhite(136, 8, "MODELS");
+  M_Print(24, 48, "Enhanced model replacements");
+  M_Print(24, 64, "Model set");
+  M_Print(176, 64, enhanced ? "enhanced" : "classic");
+  M_Print(24, 96, "Enhanced models use MD3 files");
+  M_Print(24, 104, "when a mod supplies them.");
+  M_Print(24, 120, "Missing models or skins fall back");
+  M_Print(24, 128, "to the original Quake model.");
+  M_DrawCharacter(160, 64, 12 + ((int)(realtime * 4) & 1));
+}
+
+static void M_Models_Key(int key) {
+  switch (key) {
+  case K_ESCAPE:
+  case K_BBUTTON:
+    M_Menu_Options_f();
+    break;
+
+  case K_LEFTARROW:
+  case K_RIGHTARROW:
+  case K_ENTER:
+  case K_KP_ENTER:
+  case K_ABUTTON:
+    S_LocalSound("misc/menu3.wav");
+    Cvar_SetValue("r_enhancedmodels",
+                  Cvar_VariableValue("r_enhancedmodels") ? 0 : 1);
+    break;
+  }
+}
+
+//=============================================================================
 /* Menu Subsystem */
 
 void M_Init(void) {
@@ -2428,6 +2608,8 @@ void M_Init(void) {
   Cmd_AddCommand("menu_keys", M_Menu_Keys_f);
   Cmd_AddCommand("menu_video", M_Menu_Video_f);
   Cmd_AddCommand("menu_vr", M_Menu_VR_f);
+  Cmd_AddCommand("menu_mods", M_Menu_Mods_f);
+  Cmd_AddCommand("menu_models", M_Menu_Models_f);
   Cmd_AddCommand("help", M_Menu_Help_f);
   Cmd_AddCommand("menu_quit", M_Menu_Quit_f);
   Cmd_AddCommand("menu_credits",
@@ -2501,6 +2683,14 @@ void M_Draw(void) {
 
   case m_help:
     M_Help_Draw();
+    break;
+
+  case m_mods:
+    M_Mods_Draw();
+    break;
+
+  case m_models:
+    M_Models_Draw();
     break;
 
   case m_quit:
@@ -2588,6 +2778,14 @@ void M_Keydown(int key) {
 
   case m_help:
     M_Help_Key(key);
+    return;
+
+  case m_mods:
+    M_Mods_Key(key);
+    return;
+
+  case m_models:
+    M_Models_Key(key);
     return;
 
   case m_quit:
