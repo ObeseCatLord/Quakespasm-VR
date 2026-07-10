@@ -85,6 +85,7 @@ typedef struct
 	float	endtime;
 	vec3_t	start, end;
 #ifdef PSET_SCRIPT
+	const char	*trailname;
 	struct trailstate_s *trailstate;
 #endif
 } beam_t;

@@ -202,6 +202,103 @@ filelist_item_t *modlist;
 
 static void Modlist_Add(const char *name) { FileList_Add(name, &modlist); }
 
+static qboolean Modlist_ValidName(const char *name) {
+  const unsigned char *c;
+
+  if (!*name || !strcmp(name, ".") || !strcmp(name, ".."))
+    return false;
+
+  for (c = (const unsigned char *)name; *c; c++) {
+    if (*c < ' ' || *c == '"' || *c == ';' || *c == '/' || *c == '\\' ||
+        *c == ':')
+      return false;
+  }
+
+  return true;
+}
+
+/*
+==================
+Modlist_HasContents
+
+Empty directories and unrelated build/install folders should not appear in the
+Mods menu.  A Quake game directory normally carries either a pak/progs file or
+at least one of the usual asset directories with content.
+==================
+*/
+static qboolean Modlist_HasContents(const char *path) {
+#ifdef _WIN32
+  WIN32_FIND_DATA fdat;
+  HANDLE fhnd;
+  char findpath[MAX_OSPATH];
+
+  q_snprintf(findpath, sizeof(findpath), "%s/*", path);
+  fhnd = FindFirstFile(findpath, &fdat);
+  if (fhnd == INVALID_HANDLE_VALUE)
+    return false;
+
+  do {
+    if (strcmp(fdat.cFileName, ".") && strcmp(fdat.cFileName, "..")) {
+      FindClose(fhnd);
+      return true;
+    }
+  } while (FindNextFile(fhnd, &fdat));
+
+  FindClose(fhnd);
+  return false;
+#else
+  DIR *dir_p;
+  struct dirent *dir_t;
+
+  dir_p = opendir(path);
+  if (dir_p == NULL)
+    return false;
+
+  while ((dir_t = readdir(dir_p)) != NULL) {
+    if (strcmp(dir_t->d_name, ".") && strcmp(dir_t->d_name, "..")) {
+      closedir(dir_p);
+      return true;
+    }
+  }
+
+  closedir(dir_p);
+  return false;
+#endif
+}
+
+static qboolean Modlist_Check(const char *base, const char *name) {
+  static const char *const assetdirs[] = {"maps", "progs", "gfx", "sound"};
+  char modpath[MAX_OSPATH];
+  char itempath[MAX_OSPATH];
+  size_t i;
+
+  if (!Modlist_ValidName(name))
+    return false;
+
+  q_snprintf(modpath, sizeof(modpath), "%s/%s", base, name);
+
+  q_snprintf(itempath, sizeof(itempath), "%s/pak0.pak", modpath);
+  if (Sys_FileType(itempath) & FS_ENT_FILE)
+    return true;
+
+  q_snprintf(itempath, sizeof(itempath), "%s/progs.dat", modpath);
+  if (Sys_FileType(itempath) & FS_ENT_FILE)
+    return true;
+
+  q_snprintf(itempath, sizeof(itempath), "%s/csprogs.dat", modpath);
+  if (Sys_FileType(itempath) & FS_ENT_FILE)
+    return true;
+
+  for (i = 0; i < countof(assetdirs); i++) {
+    q_snprintf(itempath, sizeof(itempath), "%s/%s", modpath, assetdirs[i]);
+    if ((Sys_FileType(itempath) & FS_ENT_DIRECTORY) &&
+        Modlist_HasContents(itempath))
+      return true;
+  }
+
+  return false;
+}
+
 #ifdef _WIN32
 void Modlist_Init(void) {
   WIN32_FIND_DATA fdat;
@@ -221,8 +318,8 @@ void Modlist_Init(void) {
                fdat.cFileName);
     attribs = GetFileAttributes(mod_string);
     if (attribs != INVALID_FILE_ATTRIBUTES &&
-        (attribs & FILE_ATTRIBUTE_DIRECTORY)) {
-      /* don't bother testing for pak files / progs.dat */
+        (attribs & FILE_ATTRIBUTE_DIRECTORY) &&
+        Modlist_Check(com_basedir, fdat.cFileName)) {
       Modlist_Add(fdat.cFileName);
     }
   } while (FindNextFile(fhnd, &fdat));
@@ -251,9 +348,9 @@ void Modlist_Init(void) {
     mod_dir_p = opendir(mod_string);
     if (mod_dir_p == NULL)
       continue;
-    /* don't bother testing for pak files / progs.dat */
-    Modlist_Add(dir_t->d_name);
     closedir(mod_dir_p);
+    if (Modlist_Check(com_basedir, dir_t->d_name))
+      Modlist_Add(dir_t->d_name);
   }
 
   closedir(dir_p);

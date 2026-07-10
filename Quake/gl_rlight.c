@@ -26,6 +26,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 static int	r_dlightframecount;
 
 extern cvar_t r_flatlightstyles; //johnfitz
+extern cvar_t r_lerplightstyles;
 
 /*
 ==================
@@ -34,12 +35,19 @@ R_AnimateLight
 */
 void R_AnimateLight (void)
 {
-	int			i,j,k;
+	int			i,j,k,n;
+	double		f,base;
 
 //
 // light animations
 // 'm' is normal light, 'a' is no light, 'z' is double bright
-	i = (int)(cl.time*10);
+	f = cl.time * 10.0;
+	base = floor(f);
+	i = (int)base;
+	f -= base;
+	if (!r_lerplightstyles.value)
+		f = 0.0;
+
 	for (j=0 ; j<MAX_LIGHTSTYLES ; j++)
 	{
 		if (!cl_lightstyle[j].length)
@@ -49,15 +57,22 @@ void R_AnimateLight (void)
 		}
 		//johnfitz -- r_flatlightstyles
 		if (r_flatlightstyles.value == 2)
-			k = cl_lightstyle[j].peak - 'a';
+			k = n = cl_lightstyle[j].peak - 'a';
 		else if (r_flatlightstyles.value == 1)
-			k = cl_lightstyle[j].average - 'a';
+			k = n = cl_lightstyle[j].average - 'a';
 		else
 		{
 			k = i % cl_lightstyle[j].length;
+			n = k + 1;
+			if (n == cl_lightstyle[j].length)
+				n = 0;
 			k = cl_lightstyle[j].map[k] - 'a';
+			n = cl_lightstyle[j].map[n] - 'a';
 		}
-		d_lightstylevalue[j] = k*22;
+		// only interpolate abrupt changes (e.g. flickering light in e1m1) if r_lerplightstyles >= 2
+		if (r_lerplightstyles.value < 2.f && abs(n - k) >= ('m' - 'a') / 2)
+			n = k;
+		d_lightstylevalue[j] = (int)(k*22 + (n-k)*22*f);
 		//johnfitz
 	}
 }

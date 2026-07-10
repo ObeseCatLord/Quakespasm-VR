@@ -37,6 +37,8 @@ enum m_state_e {
 	m_vr,
 	m_keys,
 	m_help,
+	m_mods,
+	m_models,
 	m_quit,
 	m_lanconfig,
 	m_gameoptions,
@@ -73,4 +75,3 @@ void M_DrawTransPic (int x, int y, qpic_t *pic);
 void M_DrawCheckbox (int x, int y, int on);
 
 #endif	/* _QUAKE_MENU_H */
-

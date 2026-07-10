@@ -33,12 +33,47 @@ static char	loadname[32];	// for hunk tags
 static void Mod_LoadSpriteModel (qmodel_t *mod, void *buffer);
 static void Mod_LoadBrushModel (qmodel_t *mod, void *buffer);
 static void Mod_LoadAliasModel (qmodel_t *mod, void *buffer);
+static qboolean Mod_LoadMD3Model (qmodel_t *mod, const byte *buffer, size_t filesize);
 static qmodel_t *Mod_LoadModel (qmodel_t *mod, qboolean crash);
+static void Mod_EnhancedModels_f (cvar_t *var);
 
 static void Mod_Print (void);
 
 static cvar_t	external_ents = {"external_ents", "1", CVAR_ARCHIVE};
 static cvar_t	external_vis = {"external_vis", "1", CVAR_ARCHIVE};
+static cvar_t	mdl_external_textures = {"mdl_external_textures", "1", CVAR_NONE};
+static cvar_t	r_allow_replacement_md3models = {"r_allow_replacement_md3models", "1", CVAR_NONE};
+cvar_t		r_enhancedmodels = {"r_enhancedmodels", "1", CVAR_ARCHIVE};
+
+/*
+ * Alias cache blocks contain a small directory followed by one or two
+ * relocatable payloads.  Keeping both variants in the existing final
+ * cache_user_t is important: Cache_Free intentionally derives qmodel_t from
+ * that final member when releasing model-owned GL textures.
+ */
+#define MOD_ALIAS_CACHE_MAGIC	0x4d414331U /* "MAC1" */
+typedef struct mod_alias_cache_s
+{
+	unsigned int	magic;
+	int		mdl_offset;
+	int		md3_offset;
+} mod_alias_cache_t;
+
+#define MOD_ALIAS_CACHE_DATA_OFFSET \
+	((sizeof(mod_alias_cache_t) + sizeof(intptr_t) - 1) & ~(sizeof(intptr_t) - 1))
+
+typedef struct mod_alias_build_s
+{
+	qboolean	active;
+	int		startmark;
+	byte		*base;
+	int		mdl_offset;
+	int		md3_offset;
+	vec3_t		md3mins;
+	vec3_t		md3maxs;
+} mod_alias_build_t;
+
+static mod_alias_build_t mod_alias_build;
 
 static byte	*mod_novis;
 static int	mod_novis_capacity;
@@ -54,6 +89,22 @@ texture_t	*r_notexture_mip; //johnfitz -- moved here from r_main.c
 texture_t	*r_notexture_mip2; //johnfitz -- used for non-lightmapped surfs with a missing texture
 
 /*
+ * Classic and replacement MD3 models can have different pose layouts.  Reset
+ * animation interpolation when the selection changes so no entity carries an
+ * MDL pose index into the MD3 (or vice versa) for a frame.
+ */
+static void Mod_EnhancedModels_f (cvar_t *var)
+{
+	int i;
+
+	(void)var;
+	if (cl.entities)
+		for (i = 0; i < cl.num_entities; i++)
+			cl.entities[i].lerpflags |= LERP_RESETANIM;
+	cl.viewent.lerpflags |= LERP_RESETANIM;
+}
+
+/*
 ===============
 Mod_Init
 ===============
@@ -63,6 +114,10 @@ void Mod_Init (void)
 	Cvar_RegisterVariable (&gl_subdivide_size);
 	Cvar_RegisterVariable (&external_vis);
 	Cvar_RegisterVariable (&external_ents);
+	Cvar_RegisterVariable (&mdl_external_textures);
+	Cvar_RegisterVariable (&r_allow_replacement_md3models);
+	Cvar_RegisterVariable (&r_enhancedmodels);
+	Cvar_SetCallback (&r_enhancedmodels, Mod_EnhancedModels_f);
 
 	Cmd_AddCommand ("mcache", Mod_Print);
 
@@ -79,6 +134,125 @@ void Mod_Init (void)
 
 /*
 ===============
+Mod_BeginAliasBuild
+
+Build MDL and optional MD3 payloads on the hunk, then pack them into one
+cache allocation. The two one-byte anchors make the byte range copyable
+without reaching into zone.c's private hunk header layout.
+===============
+*/
+static void Mod_BeginAliasBuild (void)
+{
+	memset (&mod_alias_build, 0, sizeof(mod_alias_build));
+	mod_alias_build.active = true;
+	mod_alias_build.startmark = Hunk_LowMark ();
+	mod_alias_build.base = (byte *)Hunk_Alloc (1);
+}
+
+static void Mod_RegisterAliasBuild (aliashdr_t *hdr, qboolean md3,
+	const vec3_t mins, const vec3_t maxs)
+{
+	if (!mod_alias_build.active)
+		Sys_Error ("Mod_RegisterAliasBuild: no active build");
+
+	if (md3)
+	{
+		mod_alias_build.md3_offset = (int)((byte *)hdr - mod_alias_build.base);
+		VectorCopy (mins, mod_alias_build.md3mins);
+		VectorCopy (maxs, mod_alias_build.md3maxs);
+	}
+	else
+		mod_alias_build.mdl_offset = (int)((byte *)hdr - mod_alias_build.base);
+}
+
+static void Mod_ExpandAliasBoundsForMD3 (qmodel_t *mod)
+{
+	float yawradius = 0.0f, radius = 0.0f;
+	vec3_t v;
+	int i, j, k;
+
+	if (!mod_alias_build.md3_offset)
+		return;
+
+	for (i = 0; i < 3; i++)
+	{
+		mod->mins[i] = q_min (mod->mins[i], mod_alias_build.md3mins[i]);
+		mod->maxs[i] = q_max (mod->maxs[i], mod_alias_build.md3maxs[i]);
+	}
+
+	/* Conservatively derive yaw/pitch bounds from the eight expanded corners. */
+	for (i = 0; i < 2; i++)
+		for (j = 0; j < 2; j++)
+			for (k = 0; k < 2; k++)
+			{
+				v[0] = i ? mod->maxs[0] : mod->mins[0];
+				v[1] = j ? mod->maxs[1] : mod->mins[1];
+				v[2] = k ? mod->maxs[2] : mod->mins[2];
+				yawradius = q_max (yawradius, v[0] * v[0] + v[1] * v[1]);
+				radius = q_max (radius, yawradius + v[2] * v[2]);
+			}
+
+	yawradius = sqrtf (yawradius);
+	radius = sqrtf (radius);
+	mod->ymins[0] = mod->ymins[1] = -yawradius;
+	mod->ymaxs[0] = mod->ymaxs[1] = yawradius;
+	mod->ymins[2] = mod->mins[2];
+	mod->ymaxs[2] = mod->maxs[2];
+	mod->rmins[0] = mod->rmins[1] = mod->rmins[2] = -radius;
+	mod->rmaxs[0] = mod->rmaxs[1] = mod->rmaxs[2] = radius;
+}
+
+static void Mod_FinishAliasBuild (qmodel_t *mod)
+{
+	mod_alias_cache_t *cache;
+	byte *end;
+	int rawsize;
+	int endmark;
+
+	if (!mod_alias_build.active)
+		Sys_Error ("Mod_FinishAliasBuild: no active build");
+
+	end = (byte *)Hunk_Alloc (1);
+	endmark = Hunk_LowMark ();
+	if (!Hunk_IsContiguous (mod_alias_build.startmark, endmark))
+		Sys_Error ("Mod_LoadModel: %s spans multiple hunk segments (try a larger -heapsize)", mod->name);
+
+	rawsize = (int)(end - mod_alias_build.base);
+	if (rawsize <= 0 || rawsize > INT_MAX - (int)MOD_ALIAS_CACHE_DATA_OFFSET)
+		Sys_Error ("Mod_LoadModel: invalid cache size for %s", mod->name);
+
+	cache = (mod_alias_cache_t *)Cache_Alloc (&mod->cache,
+		MOD_ALIAS_CACHE_DATA_OFFSET + rawsize, loadname);
+	cache->magic = MOD_ALIAS_CACHE_MAGIC;
+	cache->mdl_offset = mod_alias_build.mdl_offset ?
+		(int)MOD_ALIAS_CACHE_DATA_OFFSET + mod_alias_build.mdl_offset : 0;
+	cache->md3_offset = mod_alias_build.md3_offset ?
+		(int)MOD_ALIAS_CACHE_DATA_OFFSET + mod_alias_build.md3_offset : 0;
+	memcpy ((byte *)cache + MOD_ALIAS_CACHE_DATA_OFFSET, mod_alias_build.base, rawsize);
+
+	Hunk_FreeToLowMark (mod_alias_build.startmark);
+	memset (&mod_alias_build, 0, sizeof(mod_alias_build));
+}
+
+static mod_alias_cache_t *Mod_GetAliasCache (qmodel_t *mod)
+{
+	mod_alias_cache_t *cache;
+
+	cache = (mod_alias_cache_t *)Cache_Check (&mod->cache);
+	if (!cache)
+	{
+		Mod_LoadModel (mod, true);
+		cache = (mod_alias_cache_t *)Cache_Check (&mod->cache);
+	}
+
+	if (!cache || cache->magic != MOD_ALIAS_CACHE_MAGIC)
+		Sys_Error ("Mod_Extradata: invalid alias cache for %s", mod->name);
+
+	return cache;
+}
+
+/*
+===============
 Mod_Extradata
 
 Caches the data if needed
@@ -86,17 +260,53 @@ Caches the data if needed
 */
 void *Mod_Extradata (qmodel_t *mod)
 {
-	void	*r;
+	mod_alias_cache_t *cache = Mod_GetAliasCache (mod);
 
-	r = Cache_Check (&mod->cache);
-	if (r)
-		return r;
+	if (cache->mdl_offset)
+		return (byte *)cache + cache->mdl_offset;
+	if (cache->md3_offset)
+		return (byte *)cache + cache->md3_offset;
 
-	Mod_LoadModel (mod, true);
+	Sys_Error ("Mod_Extradata: no alias data for %s", mod->name);
+	return NULL;
+}
 
-	if (!mod->cache.data)
-		Sys_Error ("Mod_Extradata: caching failed");
-	return mod->cache.data;
+aliashdr_t *Mod_GetMD3Extradata (qmodel_t *mod)
+{
+	mod_alias_cache_t *cache = Mod_GetAliasCache (mod);
+
+	if (!cache->md3_offset)
+		return NULL;
+	return (aliashdr_t *)((byte *)cache + cache->md3_offset);
+}
+
+qboolean Mod_UseMD3Model (qmodel_t *mod, int skinnum)
+{
+	mod_alias_cache_t *cache;
+	aliashdr_t *surface;
+
+	if (!mod || mod->type != mod_alias)
+		return false;
+
+	cache = Mod_GetAliasCache (mod);
+	if (!cache->md3_offset)
+		return false;
+
+	/* A native .md3 has no classic variant to fall back to. */
+	if (cache->mdl_offset && !r_enhancedmodels.value)
+		return false;
+
+	surface = (aliashdr_t *)((byte *)cache + cache->md3_offset);
+	while (surface)
+	{
+		if (skinnum < 0 || skinnum >= surface->numskins ||
+			!surface->gltextures[skinnum][0])
+			return cache->mdl_offset ? false : true;
+		surface = surface->nextsurface ?
+			(aliashdr_t *)((byte *)surface + surface->nextsurface) : NULL;
+	}
+
+	return true;
 }
 
 /*
@@ -337,6 +547,7 @@ static qmodel_t *Mod_LoadModel (qmodel_t *mod, qboolean crash)
 	byte	*buf;
 	byte	stackbuf[1024];		// avoid dirtying the cache heap
 	int	mod_type;
+	int	model_filesize;
 
 	if (!mod->needload)
 	{
@@ -367,6 +578,7 @@ static qmodel_t *Mod_LoadModel (qmodel_t *mod, qboolean crash)
 			Host_Error ("Mod_LoadModel: %s not found", mod->name); //johnfitz -- was "Mod_NumForName"
 		return NULL;
 	}
+	model_filesize = com_filesize;
 
 //
 // allocate a new model
@@ -379,18 +591,71 @@ static qmodel_t *Mod_LoadModel (qmodel_t *mod, qboolean crash)
 // fill it in
 //
 
-// call the apropriate loader
+	// call the appropriate loader
 	mod->needload = false;
 
 	mod_type = (buf[0] | (buf[1] << 8) | (buf[2] << 16) | (buf[3] << 24));
 	switch (mod_type)
 	{
 	case IDPOLYHEADER:
+	{
+		char md3_name[MAX_QPATH];
+		byte *md3buf = NULL;
+		unsigned int md3_path_id = 0;
+
+		Mod_BeginAliasBuild ();
+
+		/*
+		 * Keep a same-name MD3 alongside the source MDL when it comes from
+		 * the same or a higher-priority game directory.  It is optional: bad
+		 * files and missing/invalid skins simply leave the classic model active.
+		 */
+		if (r_allow_replacement_md3models.value &&
+			!q_strcasecmp (COM_FileGetExtension (mod->name), "mdl"))
+		{
+			COM_StripExtension (mod->name, md3_name, sizeof(md3_name));
+			COM_AddExtension (md3_name, ".md3", sizeof(md3_name));
+			if (COM_FileExists (md3_name, &md3_path_id) && md3_path_id >= mod->path_id)
+			{
+				int md3_filesize;
+				unsigned int original_path_id = mod->path_id;
+
+				md3buf = COM_LoadMallocFile (md3_name, &md3_path_id);
+				md3_filesize = com_filesize;
+				if (md3buf)
+				{
+					/* Load companion skins against the replacement's search path. */
+					mod->path_id = md3_path_id;
+					Mod_LoadMD3Model (mod, md3buf, (size_t)md3_filesize);
+					mod->path_id = original_path_id;
+					free (md3buf);
+				}
+			}
+		}
+
 		Mod_LoadAliasModel (mod, buf);
+		Mod_ExpandAliasBoundsForMD3 (mod);
+		Mod_FinishAliasBuild (mod);
 		break;
+	}
 
 	case IDSPRITEHEADER:
 		Mod_LoadSpriteModel (mod, buf);
+		break;
+
+	case (('I' << 0) | ('D' << 8) | ('P' << 16) | ('3' << 24)):
+		Mod_BeginAliasBuild ();
+		if (!Mod_LoadMD3Model (mod, buf, (size_t)model_filesize))
+		{
+			Hunk_FreeToLowMark (mod_alias_build.startmark);
+			memset (&mod_alias_build, 0, sizeof(mod_alias_build));
+			/* Keep a non-crashing failed load retryable. */
+			mod->needload = true;
+			if (crash)
+				Host_Error ("Mod_LoadModel: invalid MD3 %s", mod->name);
+			return NULL;
+		}
+		Mod_FinishAliasBuild (mod);
 		break;
 
 	default:
@@ -2644,6 +2909,65 @@ static void Mod_FloodFillSkin( byte *skin, int skinwidth, int skinheight )
 
 /*
 ===============
+Mod_LoadExternalAliasSkin
+
+Loads a replacement MDL skin using the DarkPlaces/QSS/vkQuake naming scheme,
+for example progs/ogre.mdl_0.png and progs/ogre.mdl_0_glow.png.
+===============
+*/
+static byte *Mod_LoadExternalAliasSkin (qmodel_t *mod, int skinnum,
+	const char *suffix, const char *fallbacksuffix,
+	char *filename, size_t filenamesize,
+	int *width, int *height)
+{
+	static const char *const prefixes[] = {"", "progs/", "textures/"};
+	byte *data;
+	int i;
+
+	for (i = 0; i < (int)Q_COUNTOF(prefixes); i++)
+	{
+		q_snprintf (filename, filenamesize, "%s%s_%i%s",
+			prefixes[i], mod->name, skinnum, suffix);
+		data = Image_LoadImageWithPath (filename, width, height, mod->path_id);
+		if (data)
+			return data;
+
+		if (fallbacksuffix)
+		{
+			q_snprintf (filename, filenamesize, "%s%s_%i%s",
+				prefixes[i], mod->name, skinnum, fallbacksuffix);
+			data = Image_LoadImageWithPath (filename, width, height, mod->path_id);
+			if (data)
+				return data;
+		}
+	}
+
+	filename[0] = '\0';
+	return NULL;
+}
+
+/*
+===============
+Mod_NormalizeExternalFullbright
+
+The alias shader adds the fullbright RGB directly. Make transparent mask
+pixels black and keep the uploaded texture opaque, matching indexed masks.
+===============
+*/
+static void Mod_NormalizeExternalFullbright (byte *data, int width, int height)
+{
+	size_t i, pixels = (size_t)width * (size_t)height;
+
+	for (i = 0; i < pixels; i++, data += 4)
+	{
+		if (data[3] == 0)
+			data[0] = data[1] = data[2] = 0;
+		data[3] = 255;
+	}
+}
+
+/*
+===============
 Mod_LoadAllSkins
 ===============
 */
@@ -2679,22 +3003,56 @@ static void *Mod_LoadAllSkins (int numskins, daliasskintype_t *pskintype)
 			pheader->texels[i] = texels - (byte *)pheader;
 			memcpy (texels, (byte *)(pskintype + 1), size);
 
-			//johnfitz -- rewritten
-			q_snprintf (name, sizeof(name), "%s:frame%i", loadmodel->name, i);
-			offset = (src_offset_t)(pskintype+1) - (src_offset_t)mod_base;
-			if (Mod_CheckFullbrights ((byte *)(pskintype+1), size))
+			pheader->gltextures[i][0] = NULL;
+			pheader->fbtextures[i][0] = NULL;
+
+			if (!isDedicated && mdl_external_textures.value)
 			{
-				pheader->gltextures[i][0] = TexMgr_LoadImage (loadmodel, name, pheader->skinwidth, pheader->skinheight,
-					SRC_INDEXED, (byte *)(pskintype+1), loadmodel->name, offset, texflags | TEXPREF_NOBRIGHT);
-				q_snprintf (fbr_mask_name, sizeof(fbr_mask_name), "%s:frame%i_glow", loadmodel->name, i);
-				pheader->fbtextures[i][0] = TexMgr_LoadImage (loadmodel, fbr_mask_name, pheader->skinwidth, pheader->skinheight,
-					SRC_INDEXED, (byte *)(pskintype+1), loadmodel->name, offset, texflags | TEXPREF_FULLBRIGHT);
+				char filename[MAX_QPATH], fbfilename[MAX_QPATH];
+				byte *data, *fbdata;
+				int fwidth = 0, fheight = 0;
+				int mark = Hunk_LowMark ();
+
+				data = Mod_LoadExternalAliasSkin (loadmodel, i, "", NULL,
+					filename, sizeof(filename), &fwidth, &fheight);
+				if (data)
+				{
+					pheader->gltextures[i][0] = TexMgr_LoadImage (loadmodel, filename,
+						fwidth, fheight, SRC_RGBA, data, filename, 0,
+						TEXPREF_ALPHA | TEXPREF_MIPMAP);
+
+					fbdata = Mod_LoadExternalAliasSkin (loadmodel, i, "_glow", "_luma",
+						fbfilename, sizeof(fbfilename), &fwidth, &fheight);
+					if (fbdata)
+					{
+						Mod_NormalizeExternalFullbright (fbdata, fwidth, fheight);
+						pheader->fbtextures[i][0] = TexMgr_LoadImage (loadmodel,
+							fbfilename, fwidth, fheight, SRC_RGBA, fbdata,
+							fbfilename, 0, TEXPREF_ALPHA | TEXPREF_MIPMAP);
+					}
+				}
+
+				Hunk_FreeToLowMark (mark);
 			}
-			else
+
+			if (!pheader->gltextures[i][0])
 			{
-				pheader->gltextures[i][0] = TexMgr_LoadImage (loadmodel, name, pheader->skinwidth, pheader->skinheight,
-					SRC_INDEXED, (byte *)(pskintype+1), loadmodel->name, offset, texflags);
-				pheader->fbtextures[i][0] = NULL;
+				//johnfitz -- rewritten
+				q_snprintf (name, sizeof(name), "%s:frame%i", loadmodel->name, i);
+				offset = (src_offset_t)(pskintype+1) - (src_offset_t)mod_base;
+				if (Mod_CheckFullbrights ((byte *)(pskintype+1), size))
+				{
+					pheader->gltextures[i][0] = TexMgr_LoadImage (loadmodel, name, pheader->skinwidth, pheader->skinheight,
+						SRC_INDEXED, (byte *)(pskintype+1), loadmodel->name, offset, texflags | TEXPREF_NOBRIGHT);
+					q_snprintf (fbr_mask_name, sizeof(fbr_mask_name), "%s:frame%i_glow", loadmodel->name, i);
+					pheader->fbtextures[i][0] = TexMgr_LoadImage (loadmodel, fbr_mask_name, pheader->skinwidth, pheader->skinheight,
+						SRC_INDEXED, (byte *)(pskintype+1), loadmodel->name, offset, texflags | TEXPREF_FULLBRIGHT);
+				}
+				else
+				{
+					pheader->gltextures[i][0] = TexMgr_LoadImage (loadmodel, name, pheader->skinwidth, pheader->skinheight,
+						SRC_INDEXED, (byte *)(pskintype+1), loadmodel->name, offset, texflags);
+				}
 			}
 
 			pheader->gltextures[i][3] = pheader->gltextures[i][2] = pheader->gltextures[i][1] = pheader->gltextures[i][0];
@@ -2884,9 +3242,6 @@ static void Mod_LoadAliasModel (qmodel_t *mod, void *buffer)
 	int					size;
 	daliasframetype_t	*pframetype;
 	daliasskintype_t	*pskintype;
-	int					start, end, total;
-
-	start = Hunk_LowMark ();
 
 	pinmodel = (mdl_t *)buffer;
 	mod_base = (byte *)buffer; //johnfitz
@@ -3004,6 +3359,7 @@ static void Mod_LoadAliasModel (qmodel_t *mod, void *buffer)
 	}
 
 	pheader->numposes = posenum;
+	pheader->poseverttype = ALIAS_POSE_MDL;
 
 	mod->type = mod_alias;
 
@@ -3016,29 +3372,562 @@ static void Mod_LoadAliasModel (qmodel_t *mod, void *buffer)
 	//
 	GL_MakeAliasModelDisplayLists (mod, pheader);
 
-//
-// move the complete, relocatable alias model to the cache
-//
-	end = Hunk_LowMark ();
-	total = end - start;
-
-	// Hunk segments may not be contiguous in memory. Alias models rely on
-	// pheader + offset addressing, so refuse the load before anything walks
-	// those offsets.
-	if (!Hunk_IsContiguous (start, end))
-		Sys_Error ("Mod_LoadAliasModel: %s spans multiple hunk segments (try a larger -heapsize)", mod->name);
-
 	GLMesh_LoadVertexBuffer (mod, pheader);
+	Mod_RegisterAliasBuild (pheader, false, vec3_origin, vec3_origin);
+}
 
-	Cache_Alloc (&mod->cache, total, loadname);
-	if (!mod->cache.data)
+/*
+==============================================================================
+
+					MD3 MODEL LOADING
+
+==============================================================================
+*/
+
+#define IDMD3HEADER	(('I' << 0) | ('D' << 8) | ('P' << 16) | ('3' << 24))
+#define MAX_MD3_TRIANGLES	1048576
+#define MAX_MD3_DECODED_BYTES	(64u * 1024u * 1024u)
+
+typedef struct md3header_s
+{
+	int	ident;
+	int	version;
+	char	name[64];
+	int	flags;
+	int	numframes;
+	int	numtags;
+	int	numsurfaces;
+	int	numskins;
+	int	ofsframes;
+	int	ofstags;
+	int	ofssurfaces;
+	int	ofsend;
+} md3header_t;
+
+typedef struct md3frame_s
+{
+	vec3_t	bounds[2];
+	vec3_t	localorigin;
+	float	radius;
+	char	name[16];
+} md3frame_t;
+
+typedef struct md3surface_s
+{
+	int	ident;
+	char	name[64];
+	int	flags;
+	int	numframes;
+	int	numshaders;
+	int	numverts;
+	int	numtriangles;
+	int	ofstriangles;
+	int	ofsshaders;
+	int	ofsst;
+	int	ofsxyznormals;
+	int	ofsend;
+} md3surface_t;
+
+typedef struct md3triangle_s
+{
+	int	indexes[3];
+} md3triangle_t;
+
+typedef struct md3st_s
+{
+	float	s;
+	float	t;
+} md3st_t;
+
+typedef struct md3shader_s
+{
+	char	name[64];
+	int	shaderindex;
+} md3shader_t;
+
+static qboolean Mod_MD3Range (size_t filesize, size_t offset, size_t size)
+{
+	return offset <= filesize && size <= filesize - offset;
+}
+
+static qboolean Mod_MD3Multiply (size_t a, size_t b, size_t *result)
+{
+	if (a && b > SIZE_MAX / a)
+		return false;
+	*result = a * b;
+	return true;
+}
+
+static qboolean Mod_MD3AddDecodedBytes (size_t *total, size_t bytes)
+{
+	if (bytes > MAX_MD3_DECODED_BYTES || *total > MAX_MD3_DECODED_BYTES - bytes)
+		return false;
+	*total += bytes;
+	return true;
+}
+
+static qboolean Mod_MD3SurfaceRange (int surface_size, int offset, size_t size)
+{
+	return offset >= 0 && (size_t)offset <= (size_t)surface_size &&
+		size <= (size_t)surface_size - (size_t)offset;
+}
+
+static qboolean Mod_MD3Warning (const qmodel_t *mod, const char *reason)
+{
+	Con_Warning ("MD3: %s: %s\n", mod->name, reason);
+	return false;
+}
+
+static void Mod_MD3CopyName (char *out, size_t outsize, const char *in, size_t insize)
+{
+	size_t len = 0;
+
+	while (len < insize && in[len])
+		len++;
+	if (len >= outsize)
+		len = outsize - 1;
+	memcpy (out, in, len);
+	out[len] = '\0';
+}
+
+static char *Mod_LoadMD3SkinFile (qmodel_t *mod, const char *name)
+{
+	unsigned int path_id;
+	char *contents;
+
+	if (!COM_FileExists (name, &path_id) || path_id < mod->path_id)
+		return NULL;
+
+	contents = (char *)COM_LoadMallocFile (name, &path_id);
+	if (!contents || path_id < mod->path_id)
 	{
-		Hunk_FreeToLowMark (start);
+		free (contents);
+		return NULL;
+	}
+
+	return contents;
+}
+
+static int Mod_LoadMD3SkinFiles (qmodel_t *mod, char *skinfiles[MAX_SKINS])
+{
+	char base[MAX_QPATH], filename[MAX_QPATH];
+	int i, count = 0;
+
+	COM_StripExtension (mod->name, base, sizeof(base));
+	for (i = 0; i < MAX_SKINS; i++)
+	{
+		q_snprintf (filename, sizeof(filename), "%s.md3_%d.skin", base, i);
+		skinfiles[i] = Mod_LoadMD3SkinFile (mod, filename);
+		if (!skinfiles[i])
+		{
+			q_snprintf (filename, sizeof(filename), "%s_%d.skin", base, i);
+			skinfiles[i] = Mod_LoadMD3SkinFile (mod, filename);
+		}
+		if (!skinfiles[i] && i == 0)
+		{
+			q_snprintf (filename, sizeof(filename), "%s.md3.skin", base);
+			skinfiles[i] = Mod_LoadMD3SkinFile (mod, filename);
+			if (!skinfiles[i])
+			{
+				q_snprintf (filename, sizeof(filename), "%s.skin", base);
+				skinfiles[i] = Mod_LoadMD3SkinFile (mod, filename);
+			}
+		}
+		if (skinfiles[i])
+			count = i + 1;
+	}
+
+	return count;
+}
+
+static qboolean Mod_MD3SkinShaderForSurface (const char *skinfile,
+	const char *surfacename, char *out, size_t outsize)
+{
+	const char *line = skinfile;
+
+	while (*line)
+	{
+		const char *end = line;
+		const char *comma;
+		const char *left, *right;
+		size_t leftlen, rightlen;
+
+		while (*end && *end != '\n')
+			end++;
+		comma = (const char *)memchr (line, ',', (size_t)(end - line));
+		if (comma)
+		{
+			left = line;
+			while (left < comma && (*left == ' ' || *left == '\t'))
+				left++;
+			leftlen = (size_t)(comma - left);
+			while (leftlen && (left[leftlen - 1] == ' ' || left[leftlen - 1] == '\t'))
+				leftlen--;
+			if (strlen(surfacename) == leftlen && !q_strncasecmp (left, surfacename, leftlen))
+			{
+				right = comma + 1;
+				while (right < end && (*right == ' ' || *right == '\t'))
+					right++;
+				rightlen = (size_t)(end - right);
+				while (rightlen && (right[rightlen - 1] == '\r' || right[rightlen - 1] == ' ' || right[rightlen - 1] == '\t'))
+					rightlen--;
+				if (rightlen && rightlen < outsize)
+				{
+					memcpy (out, right, rightlen);
+					out[rightlen] = '\0';
+					return true;
+				}
+			}
+		}
+		line = *end ? end + 1 : end;
+	}
+
+	return false;
+}
+
+static byte *Mod_LoadMD3ImageCandidate (qmodel_t *mod, const char *name,
+	int *width, int *height)
+{
+	return Image_LoadImageWithPath (name, width, height, mod->path_id);
+}
+
+static byte *Mod_LoadMD3Image (qmodel_t *mod, const char *input,
+	char *usedname, size_t usednamesize, int *width, int *height)
+{
+	char stripped[MAX_QPATH], directory[MAX_QPATH], candidates[4][MAX_QPATH];
+	char *slash;
+	byte *data;
+	int i, count = 0;
+
+	COM_StripExtension (input, stripped, sizeof(stripped));
+	for (i = 0; stripped[i]; i++)
+		if (stripped[i] == '\\')
+			stripped[i] = '/';
+
+	if (strchr(stripped, '/'))
+		q_strlcpy (candidates[count++], stripped, sizeof(candidates[0]));
+	else
+	{
+		COM_StripExtension (mod->name, directory, sizeof(directory));
+		slash = strrchr (directory, '/');
+		if (slash)
+		{
+			slash[1] = '\0';
+			q_snprintf (candidates[count++], sizeof(candidates[0]), "%s%s", directory, stripped);
+		}
+		q_snprintf (candidates[count++], sizeof(candidates[0]), "progs/%s", stripped);
+		q_snprintf (candidates[count++], sizeof(candidates[0]), "textures/%s", stripped);
+		q_strlcpy (candidates[count++], stripped, sizeof(candidates[0]));
+	}
+
+	for (i = 0; i < count; i++)
+	{
+		data = Mod_LoadMD3ImageCandidate (mod, candidates[i], width, height);
+		if (data)
+		{
+			q_strlcpy (usedname, candidates[i], usednamesize);
+			return data;
+		}
+	}
+
+	usedname[0] = '\0';
+	return NULL;
+}
+
+static void Mod_LoadMD3SurfaceTexture (qmodel_t *mod, aliashdr_t *surface,
+	int skin, const char *name)
+{
+	char basename[MAX_QPATH], glowname[MAX_QPATH];
+	byte *data;
+	int width, height;
+	int mark;
+
+	mark = Hunk_LowMark ();
+	data = Mod_LoadMD3Image (mod, name, basename, sizeof(basename), &width, &height);
+	if (!data)
+	{
+		Hunk_FreeToLowMark (mark);
 		return;
 	}
-	memcpy (mod->cache.data, pheader, total);
 
-	Hunk_FreeToLowMark (start);
+	surface->gltextures[skin][0] = TexMgr_LoadImage (mod, basename, width, height,
+		SRC_RGBA, data, basename, 0, TEXPREF_ALPHA | TEXPREF_MIPMAP);
+	if (surface->gltextures[skin][0])
+	{
+		surface->skinwidth = width;
+		surface->skinheight = height;
+	}
+	Hunk_FreeToLowMark (mark);
+
+	mark = Hunk_LowMark ();
+	q_snprintf (glowname, sizeof(glowname), "%s_glow", basename);
+	data = Mod_LoadMD3ImageCandidate (mod, glowname, &width, &height);
+	if (!data)
+	{
+		q_snprintf (glowname, sizeof(glowname), "%s_luma", basename);
+		data = Mod_LoadMD3ImageCandidate (mod, glowname, &width, &height);
+	}
+	if (data)
+	{
+		Mod_NormalizeExternalFullbright (data, width, height);
+		surface->fbtextures[skin][0] = TexMgr_LoadImage (mod, glowname, width, height,
+			SRC_RGBA, data, glowname, 0, TEXPREF_ALPHA | TEXPREF_MIPMAP);
+	}
+	Hunk_FreeToLowMark (mark);
+
+	surface->gltextures[skin][1] = surface->gltextures[skin][2] = surface->gltextures[skin][3] = surface->gltextures[skin][0];
+	surface->fbtextures[skin][1] = surface->fbtextures[skin][2] = surface->fbtextures[skin][3] = surface->fbtextures[skin][0];
+}
+
+static void Mod_SetMD3Bounds (qmodel_t *mod, const vec3_t mins, const vec3_t maxs)
+{
+	float yawradius = 0.0f, radius = 0.0f;
+	vec3_t v;
+	int i, j, k;
+
+	VectorCopy (mins, mod->mins);
+	VectorCopy (maxs, mod->maxs);
+	for (i = 0; i < 2; i++)
+		for (j = 0; j < 2; j++)
+			for (k = 0; k < 2; k++)
+			{
+				v[0] = i ? maxs[0] : mins[0];
+				v[1] = j ? maxs[1] : mins[1];
+				v[2] = k ? maxs[2] : mins[2];
+				yawradius = q_max (yawradius, v[0] * v[0] + v[1] * v[1]);
+				radius = q_max (radius, yawradius + v[2] * v[2]);
+			}
+	yawradius = sqrtf (yawradius);
+	radius = sqrtf (radius);
+	mod->ymins[0] = mod->ymins[1] = -yawradius;
+	mod->ymaxs[0] = mod->ymaxs[1] = yawradius;
+	mod->ymins[2] = mins[2];
+	mod->ymaxs[2] = maxs[2];
+	mod->rmins[0] = mod->rmins[1] = mod->rmins[2] = -radius;
+	mod->rmaxs[0] = mod->rmaxs[1] = mod->rmaxs[2] = radius;
+}
+
+/*
+===============
+Mod_LoadMD3Model
+
+The file is fully bounds-checked before allocating hunk data. A malformed
+optional replacement therefore cleanly leaves its source MDL intact.
+===============
+*/
+static qboolean Mod_LoadMD3Model (qmodel_t *mod, const byte *buffer, size_t filesize)
+{
+	const md3header_t *inheader;
+	const md3frame_t *inframes;
+	const md3surface_t *insurface;
+	aliashdr_t *surfaces[MAX_MD3_SURFACES];
+	char *skinfiles[MAX_SKINS] = {NULL};
+	char modelbase[MAX_QPATH];
+	vec3_t mins, maxs;
+	int numframes, numsurfaces, numskins;
+	int surfaceofs, surf, frame, vert, tri, skin, k;
+	size_t bytes, decodedbytes = 0;
+
+	if (filesize < sizeof(*inheader))
+		return Mod_MD3Warning (mod, "file is shorter than its header");
+
+	inheader = (const md3header_t *)buffer;
+	if (LittleLong (inheader->ident) != IDMD3HEADER)
+		return Mod_MD3Warning (mod, "bad header ident");
+	if (LittleLong (inheader->version) != MD3_VERSION)
+		return Mod_MD3Warning (mod, "unsupported version");
+
+	numframes = LittleLong (inheader->numframes);
+	numsurfaces = LittleLong (inheader->numsurfaces);
+	if (numframes < 1 || numframes > MAXALIASFRAMES)
+		return Mod_MD3Warning (mod, "invalid frame count");
+	if (numsurfaces < 1 || numsurfaces > MAX_MD3_SURFACES)
+		return Mod_MD3Warning (mod, "invalid surface count");
+	if (!Mod_MD3Multiply ((size_t)numframes, sizeof(*inframes), &bytes) ||
+		LittleLong (inheader->ofsframes) < 0 ||
+		!Mod_MD3Range (filesize, (size_t)LittleLong (inheader->ofsframes), bytes))
+		return Mod_MD3Warning (mod, "invalid frame range");
+
+	surfaceofs = LittleLong (inheader->ofssurfaces);
+	if (surfaceofs < 0 || !Mod_MD3Range (filesize, (size_t)surfaceofs, sizeof(*insurface)))
+		return Mod_MD3Warning (mod, "invalid surface range");
+
+	/* Validate every variable-length source span and every triangle first. */
+	for (surf = 0; surf < numsurfaces; surf++)
+	{
+		int surfaceend, surfaceframes, surfaceverts, surfacetriangles, surfaceshaders;
+		const md3triangle_t *triangles_in;
+		size_t surfacebytes = 0;
+
+		if (!Mod_MD3Range (filesize, (size_t)surfaceofs, sizeof(*insurface)))
+			return Mod_MD3Warning (mod, "truncated surface header");
+		insurface = (const md3surface_t *)(buffer + surfaceofs);
+		if (LittleLong (insurface->ident) != IDMD3HEADER)
+			return Mod_MD3Warning (mod, "bad surface ident");
+		surfaceend = LittleLong (insurface->ofsend);
+		if (surfaceend < (int)sizeof(*insurface) || !Mod_MD3Range (filesize, (size_t)surfaceofs, (size_t)surfaceend))
+			return Mod_MD3Warning (mod, "invalid surface size");
+		surfaceframes = LittleLong (insurface->numframes);
+		surfaceverts = LittleLong (insurface->numverts);
+		surfacetriangles = LittleLong (insurface->numtriangles);
+		surfaceshaders = LittleLong (insurface->numshaders);
+		if (surfaceframes != numframes || surfaceverts < 1 || surfaceverts > MAX_MD3_VERTICES ||
+			surfacetriangles < 1 || surfacetriangles > MAX_MD3_TRIANGLES || surfaceshaders < 0)
+			return Mod_MD3Warning (mod, "invalid surface counts");
+		if (!Mod_MD3Multiply ((size_t)surfacetriangles, sizeof(*triangles_in), &bytes) ||
+			!Mod_MD3SurfaceRange (surfaceend, LittleLong(insurface->ofstriangles), bytes) ||
+			!Mod_MD3Multiply ((size_t)surfaceshaders, sizeof(md3shader_t), &bytes) ||
+			!Mod_MD3SurfaceRange (surfaceend, LittleLong(insurface->ofsshaders), bytes) ||
+			!Mod_MD3Multiply ((size_t)surfaceverts, sizeof(md3st_t), &bytes) ||
+			!Mod_MD3SurfaceRange (surfaceend, LittleLong(insurface->ofsst), bytes) ||
+			!Mod_MD3Multiply ((size_t)numframes * (size_t)surfaceverts, sizeof(md3vertex_t), &bytes) ||
+			!Mod_MD3SurfaceRange (surfaceend, LittleLong(insurface->ofsxyznormals), bytes))
+			return Mod_MD3Warning (mod, "invalid surface data range");
+
+		/* Bound the persistent decoded payload before any Hunk allocation. */
+		if (!Mod_MD3Multiply ((size_t)(numframes - 1), sizeof(maliasframedesc_t), &bytes) ||
+			!Mod_MD3AddDecodedBytes (&surfacebytes, sizeof(aliashdr_t)) ||
+			!Mod_MD3AddDecodedBytes (&surfacebytes, bytes) ||
+			!Mod_MD3Multiply ((size_t)numframes * (size_t)surfaceverts, sizeof(md3vertex_t), &bytes) ||
+			!Mod_MD3AddDecodedBytes (&surfacebytes, bytes) ||
+			!Mod_MD3Multiply ((size_t)surfacetriangles * 3, sizeof(unsigned short), &bytes) ||
+			!Mod_MD3AddDecodedBytes (&surfacebytes, bytes) ||
+			!Mod_MD3Multiply ((size_t)surfaceverts, sizeof(meshst_t), &bytes) ||
+			!Mod_MD3AddDecodedBytes (&surfacebytes, bytes) ||
+			!Mod_MD3AddDecodedBytes (&decodedbytes, surfacebytes))
+			return Mod_MD3Warning (mod, "decoded data exceeds 64 MiB limit");
+
+		triangles_in = (const md3triangle_t *)((const byte *)insurface + LittleLong(insurface->ofstriangles));
+		for (tri = 0; tri < surfacetriangles; tri++)
+			for (k = 0; k < 3; k++)
+				if (LittleLong(triangles_in[tri].indexes[k]) < 0 ||
+					LittleLong(triangles_in[tri].indexes[k]) >= surfaceverts)
+					return Mod_MD3Warning (mod, "triangle index outside surface");
+
+		if (surfaceofs > INT_MAX - surfaceend)
+			return Mod_MD3Warning (mod, "surface offset overflow");
+		surfaceofs += surfaceend;
+	}
+
+	inframes = (const md3frame_t *)(buffer + LittleLong(inheader->ofsframes));
+	COM_StripExtension (mod->name, modelbase, sizeof(modelbase));
+	numskins = Mod_LoadMD3SkinFiles (mod, skinfiles);
+	if (!numskins)
+		numskins = 1;
+
+	for (k = 0; k < 3; k++)
+		mins[k] = FLT_MAX, maxs[k] = -FLT_MAX;
+	surfaceofs = LittleLong (inheader->ofssurfaces);
+	for (surf = 0; surf < numsurfaces; surf++)
+	{
+		const md3vertex_t *vertices_in;
+		const md3triangle_t *triangles_in;
+		const md3st_t *st_in;
+		const md3shader_t *shaders_in;
+		aliashdr_t *out;
+		md3vertex_t *vertices_out;
+		meshst_t *st_out;
+		unsigned short *indexes_out;
+		char surfacename[65], texturename[MAX_QPATH], shadername[65];
+		int surfaceverts, surfacetriangles, surfaceshaders, surfaceend;
+		size_t headersize;
+
+		insurface = (const md3surface_t *)(buffer + surfaceofs);
+		surfaceverts = LittleLong (insurface->numverts);
+		surfacetriangles = LittleLong (insurface->numtriangles);
+		surfaceshaders = LittleLong (insurface->numshaders);
+		surfaceend = LittleLong (insurface->ofsend);
+		headersize = sizeof(*out) + (size_t)(numframes - 1) * sizeof(out->frames[0]);
+		out = (aliashdr_t *)Hunk_AllocName ((int)headersize, loadname);
+		surfaces[surf] = out;
+		out->poseverttype = ALIAS_POSE_MD3;
+		out->numframes = out->numposes = numframes;
+		out->numverts = out->numverts_vbo = surfaceverts;
+		out->numtris = surfacetriangles;
+		out->numindexes = surfacetriangles * 3;
+		out->numskins = numskins;
+		out->skinwidth = out->skinheight = 1;
+		out->scale[0] = out->scale[1] = out->scale[2] = MD3_XYZ_SCALE;
+		VectorCopy (out->scale, out->original_scale);
+		VectorCopy (out->scale_origin, out->original_scale_origin);
+
+		for (frame = 0; frame < numframes; frame++)
+		{
+			out->frames[frame].firstpose = frame;
+			out->frames[frame].numposes = 1;
+			out->frames[frame].interval = 0.1f;
+			Mod_MD3CopyName (out->frames[frame].name, sizeof(out->frames[frame].name),
+				inframes[frame].name, sizeof(inframes[frame].name));
+		}
+
+		vertices_in = (const md3vertex_t *)((const byte *)insurface + LittleLong(insurface->ofsxyznormals));
+		vertices_out = (md3vertex_t *)Hunk_Alloc ((int)((size_t)numframes * (size_t)surfaceverts * sizeof(*vertices_out)));
+		out->vertexes = (intptr_t)((byte *)vertices_out - (byte *)out);
+		for (frame = 0; frame < numframes; frame++)
+			for (vert = 0; vert < surfaceverts; vert++)
+			{
+				md3vertex_t *dst = &vertices_out[frame * surfaceverts + vert];
+				const md3vertex_t *src = &vertices_in[frame * surfaceverts + vert];
+				for (k = 0; k < 3; k++)
+				{
+					dst->xyz[k] = LittleShort (src->xyz[k]);
+					mins[k] = q_min (mins[k], dst->xyz[k] * MD3_XYZ_SCALE);
+					maxs[k] = q_max (maxs[k], dst->xyz[k] * MD3_XYZ_SCALE);
+				}
+				dst->latlong[0] = src->latlong[0];
+				dst->latlong[1] = src->latlong[1];
+			}
+
+		triangles_in = (const md3triangle_t *)((const byte *)insurface + LittleLong(insurface->ofstriangles));
+		indexes_out = (unsigned short *)Hunk_Alloc ((int)((size_t)out->numindexes * sizeof(*indexes_out)));
+		out->indexes = (intptr_t)((byte *)indexes_out - (byte *)out);
+		for (tri = 0; tri < surfacetriangles; tri++)
+			for (k = 0; k < 3; k++)
+				indexes_out[tri * 3 + k] = (unsigned short)LittleLong(triangles_in[tri].indexes[k]);
+
+		st_in = (const md3st_t *)((const byte *)insurface + LittleLong(insurface->ofsst));
+		st_out = (meshst_t *)Hunk_Alloc ((int)((size_t)surfaceverts * sizeof(*st_out)));
+		out->meshdesc = (intptr_t)((byte *)st_out - (byte *)out);
+		for (vert = 0; vert < surfaceverts; vert++)
+		{
+			st_out[vert].st[0] = LittleFloat (st_in[vert].s);
+			st_out[vert].st[1] = LittleFloat (st_in[vert].t);
+		}
+
+		Mod_MD3CopyName (surfacename, sizeof(surfacename), insurface->name, sizeof(insurface->name));
+		shaders_in = (const md3shader_t *)((const byte *)insurface + LittleLong(insurface->ofsshaders));
+		for (skin = 0; skin < numskins; skin++)
+		{
+			texturename[0] = '\0';
+			if (skinfiles[skin])
+				Mod_MD3SkinShaderForSurface (skinfiles[skin], surfacename, texturename, sizeof(texturename));
+			if (!texturename[0] && skin < surfaceshaders)
+			{
+				Mod_MD3CopyName (shadername, sizeof(shadername), shaders_in[skin].name, sizeof(shaders_in[skin].name));
+				q_strlcpy (texturename, shadername, sizeof(texturename));
+			}
+			if (!texturename[0])
+				q_snprintf (texturename, sizeof(texturename), "%s_%d", modelbase, skin);
+			if (q_strcasecmp (texturename, "*off"))
+				Mod_LoadMD3SurfaceTexture (mod, out, skin, texturename);
+		}
+
+		surfaceofs += surfaceend;
+	}
+
+	for (surf = 0; surf < numsurfaces - 1; surf++)
+		surfaces[surf]->nextsurface = (intptr_t)((byte *)surfaces[surf + 1] - (byte *)surfaces[surf]);
+
+	for (skin = 0; skin < MAX_SKINS; skin++)
+		free (skinfiles[skin]);
+
+	mod->type = mod_alias;
+	mod->numframes = numframes;
+	mod->flags = LittleLong (inheader->flags);
+	Mod_SetExtraFlags (mod);
+	Mod_SetMD3Bounds (mod, mins, maxs);
+	Mod_RegisterAliasBuild (surfaces[0], true, mins, maxs);
+	return true;
 }
 
 //=============================================================================
@@ -3235,7 +4124,21 @@ static void Mod_Print (void)
 	Con_SafePrintf ("Cached models:\n"); //johnfitz -- safeprint instead of print
 	for (i=0, mod=mod_known ; i < mod_numknown ; i++, mod++)
 	{
-		Con_SafePrintf ("%8p : %s\n", mod->cache.data, mod->name); //johnfitz -- safeprint instead of print
+		const char *variant = "";
+		if (mod->type == mod_alias && mod->cache.data)
+		{
+			const mod_alias_cache_t *cache = (const mod_alias_cache_t *)mod->cache.data;
+			if (cache->magic == MOD_ALIAS_CACHE_MAGIC)
+			{
+				if (cache->mdl_offset && cache->md3_offset)
+					variant = " [MDL+MD3]";
+				else if (cache->md3_offset)
+					variant = " [MD3]";
+				else if (cache->mdl_offset)
+					variant = " [MDL]";
+			}
+		}
+		Con_SafePrintf ("%8p : %s%s\n", mod->cache.data, mod->name, variant); //johnfitz -- safeprint instead of print
 	}
 	Con_Printf ("%i models\n",mod_numknown); //johnfitz -- print the total too
 }

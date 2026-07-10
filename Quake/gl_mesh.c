@@ -452,6 +452,9 @@ void GLMesh_LoadVertexBuffer (qmodel_t *m, const aliashdr_t *hdr)
 
 	if (!gl_glsl_alias_able)
 		return;
+	/* MD3s are rendered through the fixed-function alias path. */
+	if (hdr->poseverttype != ALIAS_POSE_MDL)
+		return;
 
 // count the sizes we need
 	
@@ -565,6 +568,8 @@ void GLMesh_LoadVertexBuffers (void)
 		if (m->type != mod_alias) continue;
 
 		hdr = (const aliashdr_t *) Mod_Extradata (m);
+		if (hdr->poseverttype != ALIAS_POSE_MDL)
+			continue;
 		
 		GLMesh_LoadVertexBuffer (m, hdr);
 	}

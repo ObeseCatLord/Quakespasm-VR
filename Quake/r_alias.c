@@ -533,6 +533,15 @@ void R_SetupAliasFrame (aliashdr_t *paliashdr, int frame, lerpdata_t *lerpdata)
 	else
 		e->lerptime = 0.1;
 
+	/*
+	 * r_enhancedmodels can switch a paired MDL/MD3 at runtime.  The
+	 * selection callback resets active entities, but retain this local guard
+	 * for native models and any state restored between frames.
+	 */
+	if (e->currentpose < 0 || e->currentpose >= paliashdr->numposes ||
+		e->previouspose < 0 || e->previouspose >= paliashdr->numposes)
+		e->lerpflags |= LERP_RESETANIM;
+
 	if (e->lerpflags & LERP_RESETANIM) //kill any lerp in progress
 	{
 		e->lerpstart = 0;
@@ -732,6 +741,266 @@ void R_SetupAliasLighting (entity_t	*e)
 }
 
 /*
+==============================================================================
+
+					MD3 DRAWING
+
+MD3s deliberately use the existing fixed-function alias path. They retain
+the engine's entity/frame lerp state, fog, alpha, fullbright, and projected
+shadow behavior without requiring a second renderer or a different GL context.
+==============================================================================
+*/
+
+static aliashdr_t *R_NextMD3Surface (aliashdr_t *surface)
+{
+	return surface->nextsurface ?
+		(aliashdr_t *)((byte *)surface + surface->nextsurface) : NULL;
+}
+
+static int R_MD3SurfaceSkin (const aliashdr_t *surface, int skinnum)
+{
+	if (skinnum < 0 || skinnum >= surface->numskins || !surface->gltextures[skinnum][0])
+		return 0;
+	return skinnum;
+}
+
+static void R_MD3Normal (const md3vertex_t *vert, vec3_t normal)
+{
+	float lat = (float)vert->latlong[0] * (2.0f * (float)M_PI / 255.0f);
+	float lng = (float)vert->latlong[1] * (2.0f * (float)M_PI / 255.0f);
+
+	normal[0] = cosf (lng) * sinf (lat);
+	normal[1] = sinf (lng) * sinf (lat);
+	normal[2] = cosf (lat);
+}
+
+static void GL_DrawMD3Frame (aliashdr_t *surface, lerpdata_t lerpdata)
+{
+	const md3vertex_t *verts1, *verts2;
+	const meshst_t *st;
+	const unsigned short *indexes;
+	float blend, iblend;
+	int index, i;
+	qboolean lerping;
+
+	verts1 = (const md3vertex_t *)((const byte *)surface + surface->vertexes) +
+		lerpdata.pose1 * surface->numverts;
+	verts2 = (const md3vertex_t *)((const byte *)surface + surface->vertexes) +
+		lerpdata.pose2 * surface->numverts;
+	st = (const meshst_t *)((const byte *)surface + surface->meshdesc);
+	indexes = (const unsigned short *)((const byte *)surface + surface->indexes);
+	lerping = lerpdata.pose1 != lerpdata.pose2;
+	blend = lerping ? lerpdata.blend : 0.0f;
+	iblend = 1.0f - blend;
+
+	glBegin (GL_TRIANGLES);
+	for (i = 0; i < surface->numindexes; i++)
+	{
+		const md3vertex_t *v1, *v2;
+
+		index = indexes[i];
+		v1 = verts1 + index;
+		v2 = verts2 + index;
+		glTexCoord2fv (st[index].st);
+		if (shading)
+		{
+			vec3_t normal;
+			float dot;
+
+			R_MD3Normal (v2, normal);
+			if (lerping)
+			{
+				vec3_t previous;
+				R_MD3Normal (v1, previous);
+				normal[0] = previous[0] * iblend + normal[0] * blend;
+				normal[1] = previous[1] * iblend + normal[1] * blend;
+				normal[2] = previous[2] * iblend + normal[2] * blend;
+				VectorNormalize (normal);
+			}
+			dot = DotProduct (normal, shadevector);
+			if (dot < 0.0f)
+				dot = 1.0f + dot * (13.0f / 44.0f);
+			else
+				dot = 1.0f + dot;
+			glColor4f (dot * lightcolor[0], dot * lightcolor[1],
+				dot * lightcolor[2], entalpha);
+		}
+		if (lerping)
+			glVertex3f (v1->xyz[0] * iblend + v2->xyz[0] * blend,
+				v1->xyz[1] * iblend + v2->xyz[1] * blend,
+				v1->xyz[2] * iblend + v2->xyz[2] * blend);
+		else
+			glVertex3f (v2->xyz[0], v2->xyz[1], v2->xyz[2]);
+	}
+	glEnd ();
+
+	rs_aliaspasses += surface->numtris;
+}
+
+static int R_MD3TriangleCount (aliashdr_t *surface)
+{
+	int tris = 0;
+
+	while (surface)
+	{
+		tris += surface->numtris;
+		surface = R_NextMD3Surface (surface);
+	}
+	return tris;
+}
+
+static void R_DrawMD3Pass (aliashdr_t *surface, lerpdata_t lerpdata,
+	int skinnum, qboolean fullbright)
+{
+	while (surface)
+	{
+		int skin = R_MD3SurfaceSkin (surface, skinnum);
+		gltexture_t *texture = fullbright ? surface->fbtextures[skin][0] :
+			surface->gltextures[skin][0];
+
+		if (texture || !fullbright)
+		{
+			GL_Bind (texture);
+			GL_DrawMD3Frame (surface, lerpdata);
+		}
+		surface = R_NextMD3Surface (surface);
+	}
+}
+
+static void R_DrawMD3UntexturedPass (aliashdr_t *surface, lerpdata_t lerpdata)
+{
+	while (surface)
+	{
+		GL_DrawMD3Frame (surface, lerpdata);
+		surface = R_NextMD3Surface (surface);
+	}
+}
+
+static void R_DrawMD3Model (entity_t *e, qboolean cull)
+{
+	aliashdr_t *md3;
+	lerpdata_t lerpdata;
+	int skinnum;
+	qboolean alphatest = false;
+	float fovscale = 1.0f;
+
+	md3 = Mod_GetMD3Extradata (e->model);
+	if (!md3)
+		return;
+
+	if (r_perfdebug.value)
+		r_perf_alias_draws++;
+
+	R_SetupAliasFrame (md3, e->frame, &lerpdata);
+	R_SetupEntityTransform (e, &lerpdata);
+	if (cull && R_CullModelForEntity(e))
+	{
+		if (r_perfdebug.value)
+			r_perf_alias_culled++;
+		return;
+	}
+
+	GL_AliasBatch_End ();
+	if (!vr_enabled.value && e == &cl.viewent && scr_fov.value > 90.f && cl_gun_fovscale.value)
+		fovscale = tan(scr_fov.value * (0.5f * M_PI / 180.f));
+
+	glPushMatrix ();
+	R_RotateForEntity (lerpdata.origin, lerpdata.angles, e->scale);
+	glTranslatef (md3->scale_origin[0], md3->scale_origin[1] * fovscale,
+		md3->scale_origin[2] * fovscale);
+	glScalef (md3->scale[0], md3->scale[1] * fovscale, md3->scale[2] * fovscale);
+
+	if (gl_smoothmodels.value && !r_drawflat_cheatsafe)
+		glShadeModel (GL_SMOOTH);
+	if (gl_affinemodels.value)
+		glHint (GL_PERSPECTIVE_CORRECTION_HINT, GL_FASTEST);
+	overbright = !!gl_overbright_models.value;
+	shading = true;
+
+	entalpha = (r_drawflat_cheatsafe || r_lightmap_cheatsafe) ? 1.0f : ENTALPHA_DECODE(e->alpha);
+	if (entalpha == 0.0f)
+		goto cleanup;
+	if (entalpha < 1.0f)
+	{
+		overbright = false;
+		glDepthMask (GL_FALSE);
+		glEnable (GL_BLEND);
+	}
+
+	skinnum = e->skinnum;
+	if (skinnum < 0 || skinnum >= md3->numskins)
+		skinnum = 0;
+	alphatest = !!md3->gltextures[R_MD3SurfaceSkin(md3, skinnum)][0];
+	if (alphatest)
+		glEnable (GL_ALPHA_TEST);
+
+	rs_aliaspolys += R_MD3TriangleCount (md3);
+	R_SetupAliasLighting (e);
+	GL_DisableMultitexture ();
+
+	if (r_drawflat_cheatsafe || r_lightmap_cheatsafe)
+	{
+		glDisable (GL_TEXTURE_2D);
+		shading = false;
+		glColor4f (1, 1, 1, entalpha);
+		R_DrawMD3UntexturedPass (md3, lerpdata);
+		glEnable (GL_TEXTURE_2D);
+	}
+	else
+	{
+		glTexEnvf (GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
+		if (r_fullbright_cheatsafe)
+		{
+			shading = false;
+			glColor4f (1, 1, 1, entalpha);
+			R_DrawMD3Pass (md3, lerpdata, skinnum, false);
+		}
+		else
+		{
+			R_DrawMD3Pass (md3, lerpdata, skinnum, false);
+			if (overbright)
+			{
+				glEnable (GL_BLEND);
+				glBlendFunc (GL_ONE, GL_ONE);
+				glDepthMask (GL_FALSE);
+				Fog_StartAdditive ();
+				R_DrawMD3Pass (md3, lerpdata, skinnum, false);
+				Fog_StopAdditive ();
+				glDepthMask (GL_TRUE);
+				glBlendFunc (GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+				glDisable (GL_BLEND);
+			}
+		}
+
+		if (gl_fullbrights.value)
+		{
+			glEnable (GL_BLEND);
+			glBlendFunc (GL_ONE, GL_ONE);
+			glDepthMask (GL_FALSE);
+			shading = false;
+			glColor4f (entalpha, entalpha, entalpha, entalpha);
+			Fog_StartAdditive ();
+			R_DrawMD3Pass (md3, lerpdata, skinnum, true);
+			Fog_StopAdditive ();
+			glDepthMask (GL_TRUE);
+			glBlendFunc (GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+			glDisable (GL_BLEND);
+		}
+	}
+
+cleanup:
+	glTexEnvf (GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_REPLACE);
+	glHint (GL_PERSPECTIVE_CORRECTION_HINT, GL_NICEST);
+	glShadeModel (GL_FLAT);
+	glDepthMask (GL_TRUE);
+	glDisable (GL_BLEND);
+	if (alphatest)
+		glDisable (GL_ALPHA_TEST);
+	glColor3f (1, 1, 1);
+	glPopMatrix ();
+}
+
+/*
 =================
 R_DrawAliasModel -- johnfitz -- almost completely rewritten
 =================
@@ -744,6 +1013,12 @@ void R_DrawAliasModel (entity_t *e)
 	lerpdata_t	lerpdata;
 	qboolean	alphatest = !!(e->model->flags & MF_HOLEY);
 	float		fovscale = 1.0f;
+
+	if (Mod_UseMD3Model (e->model, e->skinnum))
+	{
+		R_DrawMD3Model (e, true);
+		return;
+	}
 
 	if (r_perfdebug.value)
 		r_perf_alias_draws++;
@@ -1018,6 +1293,35 @@ cleanup:
 	glPopMatrix ();
 }
 
+static void R_DrawMD3ModelOutline (entity_t *e, float r, float g, float b,
+	float a, float inflate)
+{
+	aliashdr_t *md3;
+	lerpdata_t lerpdata;
+
+	md3 = Mod_GetMD3Extradata (e->model);
+	if (!md3)
+		return;
+	R_SetupAliasFrame (md3, e->frame, &lerpdata);
+	R_SetupEntityTransform (e, &lerpdata);
+
+	glPushMatrix ();
+	R_RotateForEntity (lerpdata.origin, lerpdata.angles, e->scale);
+	glTranslatef (md3->scale_origin[0], md3->scale_origin[1], md3->scale_origin[2]);
+	glScalef (md3->scale[0], md3->scale[1], md3->scale[2]);
+	if (inflate != 1.0f)
+		glScalef (inflate, inflate, inflate);
+	GL_AliasBatch_End ();
+	GL_DisableMultitexture ();
+	glDisable (GL_TEXTURE_2D);
+	shading = false;
+	entalpha = a;
+	glColor4f (r, g, b, a);
+	R_DrawMD3UntexturedPass (md3, lerpdata);
+	glEnable (GL_TEXTURE_2D);
+	glPopMatrix ();
+}
+
 /*
 =================
 R_DrawAliasModelOutline -- Draw a flat-colored alias model mesh.
@@ -1029,6 +1333,12 @@ void R_DrawAliasModelOutline (entity_t *e, float r, float g, float b, float a, f
 {
 	aliashdr_t	*paliashdr;
 	lerpdata_t	lerpdata;
+
+	if (Mod_UseMD3Model (e->model, e->skinnum))
+	{
+		R_DrawMD3ModelOutline (e, r, g, b, a, inflate);
+		return;
+	}
 
 	paliashdr = (aliashdr_t *)Mod_Extradata (e->model);
 	R_SetupAliasFrame (paliashdr, e->frame, &lerpdata);
@@ -1073,6 +1383,11 @@ void R_DrawAliasModel_NoCull (entity_t *e)
 
 	if (!e || !e->model)
 		return;
+	if (Mod_UseMD3Model (e->model, e->skinnum))
+	{
+		R_DrawMD3Model (e, false);
+		return;
+	}
 
 	paliashdr = (aliashdr_t *)Mod_Extradata (e->model);
 	if (!paliashdr)
@@ -1144,6 +1459,48 @@ cleanup_nocull:
 #define SHADOW_HEIGHT 0.1 //how far above the floor to render the shadow
 //johnfitz
 
+static void GL_DrawMD3Shadow (entity_t *e)
+{
+	float shadowmatrix[16] = {1, 0, 0, 0,
+		0, 1, 0, 0,
+		SHADOW_SKEW_X, SHADOW_SKEW_Y, SHADOW_VSCALE, 0,
+		0, 0, SHADOW_HEIGHT, 1};
+	float lheight;
+	aliashdr_t *md3;
+	lerpdata_t lerpdata;
+
+	md3 = Mod_GetMD3Extradata (e->model);
+	if (!md3)
+		return;
+	R_SetupAliasFrame (md3, e->frame, &lerpdata);
+	R_SetupEntityTransform (e, &lerpdata);
+	R_LightPoint (e->origin);
+	lheight = currententity->origin[2] - lightspot[2];
+
+	glPushMatrix ();
+	glTranslatef (lerpdata.origin[0], lerpdata.origin[1], lerpdata.origin[2]);
+	glTranslatef (0, 0, -lheight);
+	glMultMatrixf (shadowmatrix);
+	glTranslatef (0, 0, lheight);
+	glRotatef (lerpdata.angles[1], 0, 0, 1);
+	glRotatef (-lerpdata.angles[0], 0, 1, 0);
+	glRotatef (lerpdata.angles[2], 1, 0, 0);
+	glTranslatef (md3->scale_origin[0], md3->scale_origin[1], md3->scale_origin[2]);
+	glScalef (md3->scale[0], md3->scale[1], md3->scale[2]);
+	GL_AliasBatch_End ();
+	glDepthMask (GL_FALSE);
+	glEnable (GL_BLEND);
+	GL_DisableMultitexture ();
+	glDisable (GL_TEXTURE_2D);
+	shading = false;
+	glColor4f (0, 0, 0, entalpha * 0.5f);
+	R_DrawMD3UntexturedPass (md3, lerpdata);
+	glEnable (GL_TEXTURE_2D);
+	glDisable (GL_BLEND);
+	glDepthMask (GL_TRUE);
+	glPopMatrix ();
+}
+
 /*
 =============
 GL_DrawAliasShadow -- johnfitz -- rewritten
@@ -1169,6 +1526,11 @@ void GL_DrawAliasShadow (entity_t *e)
 
 	entalpha = ENTALPHA_DECODE(e->alpha);
 	if (entalpha == 0) return;
+	if (Mod_UseMD3Model (e->model, e->skinnum))
+	{
+		GL_DrawMD3Shadow (e);
+		return;
+	}
 
 	paliashdr = (aliashdr_t *)Mod_Extradata (e->model);
 	R_SetupAliasFrame (paliashdr, e->frame, &lerpdata);
@@ -1204,6 +1566,34 @@ void GL_DrawAliasShadow (entity_t *e)
 	glPopMatrix ();
 }
 
+static void R_DrawMD3Model_ShowTris (entity_t *e)
+{
+	aliashdr_t *md3;
+	lerpdata_t lerpdata;
+	float fovscale = 1.0f;
+
+	if (R_CullModelForEntity(e))
+		return;
+	md3 = Mod_GetMD3Extradata (e->model);
+	if (!md3)
+		return;
+	R_SetupAliasFrame (md3, e->frame, &lerpdata);
+	R_SetupEntityTransform (e, &lerpdata);
+	if (!vr_enabled.value && e == &cl.viewent && scr_fov.value > 90.f && cl_gun_fovscale.value)
+		fovscale = tan(scr_fov.value * (0.5f * M_PI / 180.f));
+
+	glPushMatrix ();
+	R_RotateForEntity (lerpdata.origin, lerpdata.angles, e->scale);
+	glTranslatef (md3->scale_origin[0], md3->scale_origin[1] * fovscale,
+		md3->scale_origin[2] * fovscale);
+	glScalef (md3->scale[0], md3->scale[1] * fovscale, md3->scale[2] * fovscale);
+	GL_AliasBatch_End ();
+	shading = false;
+	glColor3f (1, 1, 1);
+	R_DrawMD3UntexturedPass (md3, lerpdata);
+	glPopMatrix ();
+}
+
 /*
 =================
 R_DrawAliasModel_ShowTris -- johnfitz
@@ -1214,6 +1604,12 @@ void R_DrawAliasModel_ShowTris (entity_t *e)
 	aliashdr_t	*paliashdr;
 	lerpdata_t	lerpdata;
 	float	fovscale = 1.0f;
+
+	if (Mod_UseMD3Model (e->model, e->skinnum))
+	{
+		R_DrawMD3Model_ShowTris (e);
+		return;
+	}
 
 	if (R_CullModelForEntity(e))
 		return;

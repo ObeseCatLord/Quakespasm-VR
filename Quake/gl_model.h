@@ -305,6 +305,28 @@ typedef struct meshst_s
 {
 	float st[2];
 } meshst_t;
+
+/*
+ * MD3 vertexes are stored as signed 1/64th-unit positions plus a Quake 3
+ * latitude/longitude normal. Keep the decoded, endian-corrected form in the
+ * alias cache so MD3s can use the normal alias-frame interpolation state.
+ */
+typedef struct md3vertex_s
+{
+	short	xyz[3];
+	byte	latlong[2];
+} md3vertex_t;
+
+#define MD3_VERSION		15
+#define MD3_XYZ_SCALE		(1.0f / 64.0f)
+#define MAX_MD3_SURFACES	32
+#define MAX_MD3_VERTICES	65535
+
+typedef enum
+{
+	ALIAS_POSE_MDL = 0,
+	ALIAS_POSE_MD3
+} aliasposeverttype_t;
 //--
 
 typedef struct
@@ -373,6 +395,8 @@ typedef struct {
 	int					poseverts;
 	int					posedata;	// numposes*poseverts trivert_t
 	int					commands;	// gl command list with embedded s/t
+	aliasposeverttype_t	poseverttype;
+	intptr_t		nextsurface;	// MD3: offset to next aliashdr_t, 0 at end
 	struct gltexture_s	*gltextures[MAX_SKINS][4]; //johnfitz
 	struct gltexture_s	*fbtextures[MAX_SKINS][4]; //johnfitz
 	int					texels[MAX_SKINS];	// only for player skins
@@ -523,8 +547,12 @@ void	Mod_ClearAll (void);
 void	Mod_ResetAll (void); // for gamedir changes (Host_Game_f)
 qmodel_t *Mod_ForName (const char *name, qboolean crash);
 void	*Mod_Extradata (qmodel_t *mod);	// handles caching
+aliashdr_t *Mod_GetMD3Extradata (qmodel_t *mod);
+qboolean Mod_UseMD3Model (qmodel_t *mod, int skinnum);
 void	Mod_TouchModel (const char *name);
 void	Mod_ForEachModel (void (*callback)(qmodel_t *mod));
+
+extern cvar_t r_enhancedmodels;
 
 mleaf_t *Mod_PointInLeaf (vec3_t p, qmodel_t *model);
 byte	*Mod_LeafPVS (mleaf_t *leaf, qmodel_t *model);

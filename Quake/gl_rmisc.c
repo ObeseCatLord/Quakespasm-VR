@@ -31,6 +31,7 @@ extern cvar_t r_stereodepth;
 extern cvar_t r_clearcolor;
 extern cvar_t r_drawflat;
 extern cvar_t r_flatlightstyles;
+extern cvar_t r_lerplightstyles;
 extern cvar_t gl_fullbrights;
 extern cvar_t gl_farclip;
 extern cvar_t gl_overbright;
@@ -233,6 +234,7 @@ void R_Init (void)
 	Cvar_RegisterVariable (&r_waterwarp);
 	Cvar_RegisterVariable (&r_drawflat);
 	Cvar_RegisterVariable (&r_flatlightstyles);
+	Cvar_RegisterVariable (&r_lerplightstyles);
 	Cvar_RegisterVariable (&r_oldskyleaf);
 	Cvar_RegisterVariable (&r_drawworld);
 	Cvar_RegisterVariable (&r_showtris);
@@ -317,6 +319,18 @@ void R_TranslateNewPlayerSkin (int playernum)
 		return;
 
 	paliashdr = (aliashdr_t *)Mod_Extradata (currententity->model);
+
+	/*
+	 * MD3 skins are already true-color textures, not the indexed texel block
+	 * stored in an MDL alias header.  In particular, a native MD3 player
+	 * model has no valid texels[] offsets to translate.  Leave its authored
+	 * skin alone rather than treating the header as pixel data.
+	 */
+	if (paliashdr->poseverttype == ALIAS_POSE_MD3)
+	{
+		playertextures[playernum] = NULL;
+		return;
+	}
 
 	skinnum = currententity->skinnum;
 

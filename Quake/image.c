@@ -155,28 +155,47 @@ static byte *Image_LoadByExtensionOrMagic (FILE *f, const char *extension, int *
 
 /*
 ============
-Image_LoadImage
+Image_LoadImageWithPath
 
 returns a pointer to hunk allocated RGBA data
 
 TODO: search order: tga png jpg pcx lmp
 ============
 */
-byte *Image_LoadImage (const char *name, int *width, int *height)
+byte *Image_LoadImageWithPath (const char *name, int *width, int *height,
+	unsigned int min_path_id)
 {
 	static const char *const extensions[] = {"tga", "png", "jpg", "jpeg", "pcx", NULL};
 	FILE	*f;
+	unsigned int path_id;
 	int		i;
 
 	for (i = 0; extensions[i]; i++)
 	{
 		q_snprintf (loadfilename, sizeof(loadfilename), "%s.%s", name, extensions[i]);
-		COM_FOpenFile (loadfilename, &f, NULL);
-		if (f)
+		f = NULL;
+		COM_FOpenFile (loadfilename, &f, &path_id);
+		if (!f)
+			continue;
+		if (path_id >= min_path_id)
 			return Image_LoadByExtensionOrMagic (f, extensions[i], width, height);
+		fclose (f);
 	}
 
 	return NULL;
+}
+
+/*
+============
+Image_LoadImage
+
+Compatibility wrapper for callers whose asset priority is not tied to a
+model/search-path source.
+============
+*/
+byte *Image_LoadImage (const char *name, int *width, int *height)
+{
+	return Image_LoadImageWithPath (name, width, height, 0);
 }
 
 //==============================================================================
