@@ -37,8 +37,11 @@ cd "$build_dir"
 git fetch origin
 git checkout -f "$commit"
 
+# The dedicated server never exposes the desktop add-on browser. Foundry has
+# the runtime curl library but not its development headers, so keep that
+# optional client-only transport disabled in the server binary.
 PKG_CONFIG_PATH="$openvr_pkg_config" \
-	make -C Quake -f Makefile.linux FLAC_DYNAMIC=1 -j"$(nproc)"
+	make -C Quake -f Makefile.linux FLAC_DYNAMIC=1 USE_CURL=0 -j"$(nproc)"
 
 mkdir -p "$straight_dir/codex_binary_backups"
 if [ -f "$straight_dir/quakespasm-openvr.bin" ]; then
