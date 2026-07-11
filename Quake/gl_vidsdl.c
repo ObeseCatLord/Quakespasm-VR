@@ -730,9 +730,12 @@ static qboolean VID_SetMode (int width, int height, int refreshrate, int bpp, qb
 	if (SDL_GL_GetAttribute(SDL_GL_DEPTH_SIZE, &depthbits) == -1)
 		depthbits = 0;
 
-// read obtained fsaa samples
+	// read obtained fsaa samples
 	if (SDL_GL_GetAttribute(SDL_GL_MULTISAMPLESAMPLES, &fsaa_obtained) == -1)
 		fsaa_obtained = 0;
+	/* Keep the archived setting honest when SDL had to reduce or disable MSAA. */
+	if (fsaa_obtained != fsaa)
+		Cvar_SetValueQuick (&vid_fsaa, (float)fsaa_obtained);
 
 // read stencil bits
 	if (SDL_GL_GetAttribute(SDL_GL_STENCIL_SIZE, &gl_stencilbits) == -1)
@@ -1531,9 +1534,18 @@ VID_FSAA_f -- ericw -- warn that vid_fsaa requires engine restart
 */
 static void VID_FSAA_f (cvar_t *var)
 {
-	// don't print the warning if vid_fsaa is set during startup
-	if (vid_initialized)
-		Con_Printf("%s %d requires engine restart to take effect\n", var->name, (int)var->value);
+	if (!vid_initialized)
+		return;
+
+	/* VID_Restart tears down OpenVR, so desktop MSAA must not restart it. */
+	if (vr_enabled.value)
+	{
+		Con_Printf("%s is stored for desktop mode; use VR Options for vr_msaa\n", var->name);
+		return;
+	}
+
+	vid_changed = true;
+	Con_Printf("%s %d requires Apply changes to take effect\n", var->name, (int)var->value);
 }
 
 //==========================================================================
@@ -1923,6 +1935,7 @@ enum {
 	VID_OPT_REFRESHRATE,
 	VID_OPT_FULLSCREEN,
 	VID_OPT_VSYNC,
+	VID_OPT_MSAA,
 	VID_OPT_TEST,
 	VID_OPT_APPLY,
 	VIDEO_OPTIONS_ITEMS
@@ -2192,6 +2205,45 @@ static void VID_Menu_ChooseNextRate (int dir)
 
 /*
 ================
+VID_Menu_ChooseNextMSAA
+
+Keep the desktop choices deliberately conservative. SDL negotiates the actual
+context sample count during vid_restart and reports the obtained value, so an
+unsupported selection falls back safely instead of touching the VR eye FBO.
+================
+*/
+static void VID_Menu_ChooseNextMSAA (int dir)
+{
+	int samples = (int)vid_fsaa.value;
+
+	if (vr_enabled.value)
+	{
+		Con_Printf ("Use VR Options to change vr_msaa while VR is active\n");
+		return;
+	}
+
+	if (dir > 0)
+	{
+		if (samples < 2)
+			samples = 2;
+		else if (samples < 8)
+			samples <<= 1;
+		else
+			samples = 0;
+	}
+	else
+	{
+		if (samples <= 2)
+			samples = 0;
+		else
+			samples >>= 1;
+	}
+
+	Cvar_SetValueQuick (&vid_fsaa, (float)samples);
+}
+
+/*
+================
 VID_MenuKey
 ================
 */
@@ -2239,6 +2291,9 @@ static void VID_MenuKey (int key)
 		case VID_OPT_VSYNC:
 			Cbuf_AddText ("toggle vid_vsync\n"); // kristian
 			break;
+		case VID_OPT_MSAA:
+			VID_Menu_ChooseNextMSAA (1);
+			break;
 		default:
 			break;
 		}
@@ -2262,6 +2317,9 @@ static void VID_MenuKey (int key)
 			break;
 		case VID_OPT_VSYNC:
 			Cbuf_AddText ("toggle vid_vsync\n");
+			break;
+		case VID_OPT_MSAA:
+			VID_Menu_ChooseNextMSAA (-1);
 			break;
 		default:
 			break;
@@ -2289,6 +2347,9 @@ static void VID_MenuKey (int key)
 		case VID_OPT_VSYNC:
 			Cbuf_AddText ("toggle vid_vsync\n");
 			break;
+		case VID_OPT_MSAA:
+			VID_Menu_ChooseNextMSAA (1);
+			break;
 		case VID_OPT_TEST:
 			Cbuf_AddText ("vid_test\n");
 			break;
@@ -2314,16 +2375,18 @@ static qboolean VID_MenuPointerMove (float x, float y)
 	if (x < 8.0f || x >= 320.0f)
 		return false;
 
-	if (y >= 48.0f && y < 88.0f)
+	if (y >= 48.0f && y < 48.0f + VID_OPT_TEST * 8.0f)
 	{
 		video_options_cursor = (int)((y - 48.0f) / 8.0f);
 		return true;
 	}
 
 	/* VID_MenuDraw inserts an 8-pixel separator before Test/Apply. */
-	if (y >= 96.0f && y < 112.0f)
+	if (y >= 48.0f + (VID_OPT_TEST + 1) * 8.0f &&
+		y < 48.0f + (VID_OPT_TEST + 3) * 8.0f)
 	{
-		video_options_cursor = VID_OPT_TEST + (int)((y - 96.0f) / 8.0f);
+		video_options_cursor = VID_OPT_TEST +
+			(int)((y - (48.0f + (VID_OPT_TEST + 1) * 8.0f)) / 8.0f);
 		return true;
 	}
 
@@ -2386,6 +2449,15 @@ static void VID_MenuDraw (void)
 				M_DrawCheckbox (184, y, (int)vid_vsync.value);
 			else
 				M_Print (184, y, "N/A");
+			break;
+		case VID_OPT_MSAA:
+			M_Print (16, y, "       Antialiasing");
+			if (vr_enabled.value)
+				M_Print (184, y, "VR menu");
+			else if (vid_fsaa.value >= 2)
+				M_Print (184, y, va("%ix", (int)vid_fsaa.value));
+			else
+				M_Print (184, y, "Off");
 			break;
 		case VID_OPT_TEST:
 			y += 8; //separate the test and apply items

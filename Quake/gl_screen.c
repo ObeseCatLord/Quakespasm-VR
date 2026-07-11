@@ -81,6 +81,7 @@ float scr_conlines; // lines of console to display
 cvar_t scr_menuscale = {"scr_menuscale", "1", CVAR_ARCHIVE};
 cvar_t scr_sbarscale = {"scr_sbarscale", "1", CVAR_ARCHIVE};
 cvar_t scr_sbaralpha = {"scr_sbaralpha", "0.75", CVAR_ARCHIVE};
+cvar_t scr_hudstyle = {"scr_hudstyle", "0", CVAR_ARCHIVE};
 cvar_t scr_conwidth = {"scr_conwidth", "0", CVAR_ARCHIVE};
 cvar_t scr_conscale = {"scr_conscale", "1", CVAR_ARCHIVE};
 cvar_t scr_crosshairscale = {"scr_crosshairscale", "1", CVAR_ARCHIVE};
@@ -120,6 +121,15 @@ qboolean scr_drawloading;
 float scr_disabled_time;
 
 int scr_tileclear_updates = 0; // johnfitz
+
+static void SCR_HUDStyle_f(cvar_t *var) {
+  int style = CLAMP(HUD_CLASSIC, (int)var->value, HUD_COUNT - 1);
+
+  if ((int)var->value != style)
+    Cvar_SetValueQuick(var, (float)style);
+  vid.recalc_refdef = 1;
+  Sbar_Changed();
+}
 
 void SCR_ScreenShot_f(void);
 
@@ -304,6 +314,7 @@ static void SCR_CalcRefdef(void) {
   scale = CLAMP(1.0f, scr_sbarscale.value, (float)glwidth / 320.0f);
 
   if (size >= 120 || cl.intermission || cl.qcvm.extfuncs.CSQC_DrawHud ||
+      (!vr_enabled.value && (int)scr_hudstyle.value != HUD_CLASSIC) ||
       scr_sbaralpha.value < 1) // johnfitz -- scr_sbaralpha.value
     sb_lines = 0;
   else if (size >= 110)
@@ -391,8 +402,10 @@ void SCR_Init(void) {
   // johnfitz -- new cvars
   Cvar_RegisterVariable(&scr_menuscale);
   Cvar_RegisterVariable(&scr_sbarscale);
-  Cvar_SetCallback(&scr_sbaralpha, SCR_Callback_refdef);
+	Cvar_SetCallback(&scr_sbaralpha, SCR_Callback_refdef);
   Cvar_RegisterVariable(&scr_sbaralpha);
+  Cvar_SetCallback(&scr_hudstyle, SCR_HUDStyle_f);
+  Cvar_RegisterVariable(&scr_hudstyle);
   Cvar_SetCallback(&scr_conwidth, &SCR_Conwidth_f);
   Cvar_SetCallback(&scr_conscale, &SCR_Conwidth_f);
   Cvar_RegisterVariable(&scr_conwidth);

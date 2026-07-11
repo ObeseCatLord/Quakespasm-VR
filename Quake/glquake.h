@@ -485,6 +485,7 @@ extern qboolean skyroom_drawing;
 extern qboolean skyroom_drawn;
 void Sky_NewMap (void);
 void Sky_LoadTexture (qmodel_t *m, texture_t *mt);
+void Sky_LoadTextureRGBA (qmodel_t *m, texture_t *mt);
 void Sky_LoadTextureQ64 (qmodel_t *m, texture_t *mt);
 void Sky_LoadSkyBox (const char *name);
 

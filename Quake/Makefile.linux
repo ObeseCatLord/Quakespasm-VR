@@ -22,6 +22,9 @@ USE_CODEC_XMP=1
 USE_CODEC_MODPLUG=0
 USE_CODEC_UMX=1
 
+# Optional Ironwail-style add-on catalogue/download support.
+USE_CURL ?= 1
+
 # which library to use for mp3 decoding: mad or mpg123
 MP3LIB=mad
 # which library to use for ogg decoding: vorbis or tremor
@@ -94,6 +97,11 @@ SDL_LIBS   = $(shell $(SDL_CONFIG) --libs)
 NET_LIBS   =
 ifeq ($(HOST_OS),sunos)
 NET_LIBS   =-lsocket -lnsl -lresolv
+endif
+
+ifeq ($(USE_CURL),1)
+CFLAGS += -DUSE_CURL $(shell $(PKG_CONFIG) --cflags libcurl)
+NET_LIBS += $(shell $(PKG_CONFIG) --libs libcurl)
 endif
 ifeq ($(HOST_OS),haiku)
 NET_LIBS   =-lnetwork
@@ -266,6 +274,8 @@ OBJS = strlcat.o \
 	cfgfile.o \
 	host.o \
 	host_cmd.o \
+	json.o \
+	addon_catalog.o \
 	mathlib.o \
 	pr_cmds.o \
 	pr_edict.o \

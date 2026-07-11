@@ -28,6 +28,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "vr.h"
 #include "pmove.h"
 #include "debug_log.h"
+#include "addon_catalog.h"
 
 /*
 
@@ -1577,6 +1578,9 @@ void Host_Frame (double time)
 	static int		timecount;
 	int		i, c, m;
 
+	if (cls.state != ca_dedicated)
+		AddonCatalog_Poll ();
+
 	if (!serverprofile.value)
 	{
 		_Host_Frame (time);
@@ -1659,6 +1663,7 @@ void Host_Init (void)
 		M_Init ();
 		ExtraMaps_Init (); //johnfitz
 		Modlist_Init (); //johnfitz
+		AddonCatalog_Init ();
 		DemoList_Init (); //ericw
 		VID_Init ();
 		IN_Init ();
@@ -1739,6 +1744,7 @@ void Host_Shutdown(void)
 
 	if (cls.state != ca_dedicated)
 	{
+		AddonCatalog_Shutdown ();
 		if (con_initialized)
 			History_Shutdown ();
 		BGM_Shutdown();
