@@ -424,6 +424,17 @@ void Sbar_DrawNum (int x, int y, int num, int digits, int color)
 	}
 }
 
+static void Sbar_DrawSmallNum (int x, int y, int num)
+{
+	char str[12];
+	int i;
+
+	sprintf (str, "%3i", CLAMP (0, num, 999));
+	for (i = 0; i < 3; i++)
+		if (str[i] != ' ')
+			Sbar_DrawCharacter (x + i * 8, y, 18 + str[i] - '0');
+}
+
 //=============================================================================
 
 int	fragsort[MAX_SCOREBOARD];
@@ -809,9 +820,80 @@ void Sbar_DrawFrags (void)
 Sbar_DrawFace
 ===============
 */
+static qpic_t *Sbar_FacePic (void)
+{
+	int f, anim;
+
+	if ((cl.items & (IT_INVISIBILITY | IT_INVULNERABILITY)) ==
+		(IT_INVISIBILITY | IT_INVULNERABILITY))
+		return sb_face_invis_invuln;
+	if (cl.items & IT_QUAD)
+		return sb_face_quad;
+	if (cl.items & IT_INVISIBILITY)
+		return sb_face_invis;
+	if (cl.items & IT_INVULNERABILITY)
+		return sb_face_invuln;
+
+	f = cl.stats[STAT_HEALTH] >= 100 ? 4 : cl.stats[STAT_HEALTH] / 20;
+	if (f < 0)
+		f = 0;
+	anim = cl.time <= cl.faceanimtime;
+	if (anim)
+		sb_updates = 0;
+	return sb_faces[f][anim];
+}
+
+static qpic_t *Sbar_AmmoPic (void)
+{
+	if (rogue)
+	{
+		if (cl.items & RIT_SHELLS) return sb_ammo[0];
+		if (cl.items & RIT_NAILS) return sb_ammo[1];
+		if (cl.items & RIT_ROCKETS) return sb_ammo[2];
+		if (cl.items & RIT_CELLS) return sb_ammo[3];
+		if (cl.items & RIT_LAVA_NAILS) return rsb_ammo[0];
+		if (cl.items & RIT_PLASMA_AMMO) return rsb_ammo[1];
+		if (cl.items & RIT_MULTI_ROCKETS) return rsb_ammo[2];
+	}
+	else
+	{
+		if (cl.items & IT_SHELLS) return sb_ammo[0];
+		if (cl.items & IT_NAILS) return sb_ammo[1];
+		if (cl.items & IT_ROCKETS) return sb_ammo[2];
+		if (cl.items & IT_CELLS) return sb_ammo[3];
+	}
+	return NULL;
+}
+
+static qpic_t *Sbar_ArmorPic (void)
+{
+	if (cl.items & IT_INVULNERABILITY)
+		return draw_disc;
+	if (rogue)
+	{
+		if (cl.items & RIT_ARMOR3) return sb_armor[2];
+		if (cl.items & RIT_ARMOR2) return sb_armor[1];
+		if (cl.items & RIT_ARMOR1) return sb_armor[0];
+	}
+	else
+	{
+		if (cl.items & IT_ARMOR3) return sb_armor[2];
+		if (cl.items & IT_ARMOR2) return sb_armor[1];
+		if (cl.items & IT_ARMOR1) return sb_armor[0];
+	}
+	return NULL;
+}
+
+static qpic_t *Sbar_InventoryBarPic (void)
+{
+	if (rogue)
+		return cl.stats[STAT_ACTIVEWEAPON] >= RIT_LAVA_NAILGUN ? rsb_invbar[0] : rsb_invbar[1];
+	return sb_ibar;
+}
+
 void Sbar_DrawFace (void)
 {
-	int	f, anim;
+	int	f;
 
 // PGM 01/19/97 - team color drawing
 // PGM 03/02/97 - fixed so color swatch only appears in CTF modes
@@ -860,45 +942,280 @@ void Sbar_DrawFace (void)
 
 		return;
 	}
-// PGM 01/19/97 - team color drawing
+	/* The regular face selection is shared by the classic and modern layouts. */
+	Sbar_DrawPic (112, 0, Sbar_FacePic ());
+}
 
-	if ((cl.items & (IT_INVISIBILITY | IT_INVULNERABILITY))
-			== (IT_INVISIBILITY | IT_INVULNERABILITY))
+/*
+ * Ironwail's modern HUD layouts use a full-screen status-bar canvas. Keep
+ * these desktop-only; the existing CANVAS_SBAR path remains the VR layout.
+ */
+#define SBAR2_MARGIN_X	12
+#define SBAR2_MARGIN_Y	8
+
+static float Sbar_ModernScale (void)
+{
+	float scale = q_min ((float)glwidth / 400.0f, (float)glheight / 225.0f);
+	return CLAMP (1.0f, scr_sbarscale.value, scale);
+}
+
+static void Sbar_DrawModernInventory (hudstyle_t style, float width, float height)
+{
+	int i, flashon;
+	float x, y, time;
+	qpic_t *pic;
+
+	if (scr_viewsize.value < 110)
 	{
-		Sbar_DrawPic (112, 0, sb_face_invis_invuln);
-		return;
-	}
-	if (cl.items & IT_QUAD)
-	{
-		Sbar_DrawPic (112, 0, sb_face_quad );
-		return;
-	}
-	if (cl.items & IT_INVISIBILITY)
-	{
-		Sbar_DrawPic (112, 0, sb_face_invis );
-		return;
-	}
-	if (cl.items & IT_INVULNERABILITY)
-	{
-		Sbar_DrawPic (112, 0, sb_face_invuln);
-		return;
+		const int row_height = 16;
+		x = width + 1.5f;
+		y = (height - 148.0f) * 0.5f + row_height * 3.5f + 0.5f;
+		if (hipnotic)
+			y += 12;
+
+		for (i = 0; i < 7; i++)
+		{
+			qboolean active;
+			if (hipnotic && i == IT_GRENADE_LAUNCHER)
+				continue;
+			if (!(cl.items & (IT_SHOTGUN << i)))
+				continue;
+
+			active = cl.stats[STAT_ACTIVEWEAPON] == (IT_SHOTGUN << i);
+			time = cl.item_gettime[i];
+			flashon = (int)((cl.time - time) * 10);
+			if (flashon >= 10)
+				flashon = active;
+			else
+				flashon = (flashon % 5) + 2;
+			if (rogue && i >= 2 && cl.stats[STAT_ACTIVEWEAPON] ==
+				(RIT_LAVA_NAILGUN << (i - 2)))
+			{
+				pic = rsb_weapons[i - 2];
+				active = true;
+			}
+			else
+				pic = sb_weapons[flashon][i];
+			Sbar_DrawPic ((int)x - (active ? 24 : 18), (int)y - row_height * i, pic);
+			if (flashon > 1)
+				sb_updates = 0;
+		}
+
+		if (hipnotic)
+		{
+			int grenadeflashing = 0;
+			for (i = 0; i < 4; i++)
+			{
+				qboolean active;
+				if (!(cl.items & (1 << hipweapons[i])))
+					continue;
+				active = cl.stats[STAT_ACTIVEWEAPON] == (1 << hipweapons[i]);
+				time = cl.item_gettime[hipweapons[i]];
+				flashon = (int)((cl.time - time) * 10);
+				if (flashon >= 10)
+					flashon = active;
+				else
+					flashon = (flashon % 5) + 2;
+				if (i == 2 && (cl.items & HIT_PROXIMITY_GUN) && flashon)
+				{
+					grenadeflashing = 1;
+					Sbar_DrawPic ((int)x - (active ? 24 : 18), (int)y - row_height * 4,
+						hsb_weapons[flashon][2]);
+				}
+				else if (i == 3)
+				{
+					if (cl.items & (IT_SHOTGUN << 4))
+					{
+						if (flashon && !grenadeflashing)
+							Sbar_DrawPic ((int)x - (active ? 24 : 18), (int)y - row_height * 4,
+								hsb_weapons[flashon][3]);
+						else if (!grenadeflashing)
+							Sbar_DrawPic ((int)x - (active ? 24 : 18), (int)y - row_height * 4,
+								hsb_weapons[0][3]);
+					}
+					else
+						Sbar_DrawPic ((int)x - (active ? 24 : 18), (int)y - row_height * 4,
+							hsb_weapons[flashon][4]);
+				}
+				else
+					Sbar_DrawPic ((int)x - (active ? 24 : 18),
+						(int)y - row_height * (i + 7), hsb_weapons[flashon][i]);
+				if (flashon > 1)
+					sb_updates = 0;
+			}
+		}
 	}
 
-	if (cl.stats[STAT_HEALTH] >= 100)
-		f = 4;
+	if (scr_viewsize.value < 110)
+	{
+		pic = Sbar_InventoryBarPic ();
+		if (style == HUD_MODERN_SIDEAMMO)
+		{
+			const int item_width = 52;
+			x = width - SBAR2_MARGIN_X - item_width * 2 + 0.5f;
+			y = height - SBAR2_MARGIN_Y - 60 + 0.5f;
+			for (i = 0; i < 2; i++)
+				Draw_SubPic (x, y + 24 - 10 * i, item_width * 2, 10, pic,
+					i * (2 * 48 / 320.0f), 0, 2 * 48 / 320.0f, 10 / 24.0f,
+					NULL, scr_sbaralpha.value);
+			for (i = 0; i < 4; i++)
+				Sbar_DrawSmallNum ((int)x + 11 + item_width * (i & 1),
+					(int)y - 10 * (i >> 1), cl.stats[STAT_SHELLS + i]);
+		}
+		else
+		{
+			x = width * 0.5f + 0.5f - 96;
+			y = height - 9 + 0.5f;
+			Draw_SubPic (x, y, 192, 10, pic, 0, 0, 192 / 320.0f,
+				10 / 24.0f, NULL, scr_sbaralpha.value);
+			for (i = 0; i < 4; i++)
+				Sbar_DrawSmallNum ((int)x + 10 + 48 * i, (int)y - 24,
+					cl.stats[STAT_SHELLS + i]);
+		}
+	}
+
+	if (scr_viewsize.value < 110 && style == HUD_MODERN_SIDEAMMO)
+	{
+		x = width - SBAR2_MARGIN_X - 16 + 0.5f;
+		y = height - SBAR2_MARGIN_Y - 88 + 0.5f;
+	}
 	else
-		f = cl.stats[STAT_HEALTH] / 20;
-	if (f < 0)	// in case we ever decide to draw when health <= 0
-		f = 0;
-
-	if (cl.time <= cl.faceanimtime)
 	{
-		anim = 1;
-		sb_updates = 0;		// make sure the anim gets drawn over
+		x = width - SBAR2_MARGIN_X - 20 + 0.5f;
+		y = height - SBAR2_MARGIN_Y - 68 + 0.5f;
 	}
-	else
-		anim = 0;
-	Sbar_DrawPic (112, 0, sb_faces[f][anim]);
+
+	if (hipnotic)
+	{
+		for (i = 0; i < 2; i++)
+			if (cl.items & (IT_KEY1 << i))
+			{
+				Sbar_DrawPic ((int)x, (int)y + 6, sb_items[i]);
+				y -= sb_items[i]->height;
+			}
+	}
+
+	for (i = 0; i < 6; i++)
+	{
+		if (i == 2)
+		{
+			if (scr_viewsize.value >= 110)
+				break;
+			x = SBAR2_MARGIN_X + 4.5f;
+			y = height - SBAR2_MARGIN_Y - 66 + 0.5f;
+			if ((cl.items & IT_INVULNERABILITY) || cl.stats[STAT_ARMOR] > 0)
+				y -= 24;
+		}
+		if (cl.items & (1 << (17 + i)))
+		{
+			time = cl.item_gettime[17 + i];
+			if (!hipnotic || i > 1)
+			{
+				Sbar_DrawPic ((int)x, (int)y, sb_items[i]);
+				y -= 16;
+			}
+			if (time && time > cl.time - 2)
+				sb_updates = 0;
+		}
+	}
+
+	if (scr_viewsize.value < 110)
+	{
+		for (i = 0; hipnotic && i < 2; i++)
+			if (cl.items & (1 << (24 + i)))
+			{
+				time = cl.item_gettime[24 + i];
+				Sbar_DrawPic ((int)x, (int)y, hsb_items[i]);
+				y -= 16;
+				if (time && time > cl.time - 2) sb_updates = 0;
+			}
+		for (i = 0; rogue && i < 2; i++)
+			if (cl.items & (1 << (29 + i)))
+			{
+				time = cl.item_gettime[29 + i];
+				Sbar_DrawPic ((int)x, (int)y, rsb_items[i]);
+				y -= 16;
+				if (time && time > cl.time - 2) sb_updates = 0;
+			}
+	}
+}
+
+static void Sbar_DrawModernFrags (float height)
+{
+	int i, x, y, color;
+	char num[12];
+
+	Sbar_SortFrags ();
+	x = 0;
+	y = q_max (40, (int)(height * 0.25f) - ((scoreboardlines >> 2) << 3));
+	for (i = 0; i < scoreboardlines; i++, y += 8)
+	{
+		scoreboard_t *s = &cl.scores[fragsort[i]];
+		if (!s->name[0])
+			continue;
+		color = Sbar_ColorForMap (s->colors & 0xf0);
+		Draw_Fill (x + 6, y + 1, 28, 4, color, 1);
+		color = Sbar_ColorForMap ((s->colors & 15) << 4);
+		Draw_Fill (x + 6, y + 5, 28, 3, color, 1);
+		sprintf (num, "%3i", s->frags);
+		Sbar_DrawCharacter (x + 8, y - 24, num[0]);
+		Sbar_DrawCharacter (x + 16, y - 24, num[1]);
+		Sbar_DrawCharacter (x + 24, y - 24, num[2]);
+		if (fragsort[i] == cl.viewentity - 1)
+		{
+			Sbar_DrawCharacter (x + 2, y - 24, 16);
+			Sbar_DrawCharacter (x + 28, y - 24, 17);
+		}
+		if (scr_viewsize.value < 110)
+			Sbar_DrawString (x + 40, y - 24, s->name);
+	}
+}
+
+static void Sbar_DrawModern (hudstyle_t style)
+{
+	float scale = Sbar_ModernScale ();
+	float width = glwidth / scale;
+	float height = glheight / scale;
+	int x, y, armor;
+	qpic_t *pic;
+
+	GL_SetCanvas (CANVAS_SBAR2);
+	if (sb_showscores || cl.stats[STAT_HEALTH] <= 0)
+	{
+		GL_SetCanvas (CANVAS_SBAR);
+		Sbar_DrawPicAlpha (0, 0, sb_scorebar, scr_sbaralpha.value);
+		Sbar_DrawScoreboard ();
+		sb_updates = 0;
+		return;
+	}
+	if (scr_viewsize.value >= 120)
+		return;
+
+	x = SBAR2_MARGIN_X;
+	y = (int)height - SBAR2_MARGIN_Y - 48;
+	Sbar_DrawPic (x, y, Sbar_FacePic ());
+	Sbar_DrawNum (x + 32, y, cl.stats[STAT_HEALTH], 3, cl.stats[STAT_HEALTH] <= 25);
+	armor = (cl.items & IT_INVULNERABILITY) ? 666 : cl.stats[STAT_ARMOR];
+	if (armor > 0)
+	{
+		Sbar_DrawNum (x + 32, y - 24, armor, 3,
+			(cl.items & IT_INVULNERABILITY) || armor <= 25);
+		pic = Sbar_ArmorPic ();
+		if (pic)
+			Sbar_DrawPic (x, y - 24, pic);
+	}
+
+	x = (int)width - SBAR2_MARGIN_X - 24;
+	pic = Sbar_AmmoPic ();
+	if (pic)
+	{
+		Sbar_DrawPic (x, y, pic);
+		x -= 32;
+	}
+	Sbar_DrawNum (x - 48, y, cl.stats[STAT_AMMO], 3, cl.stats[STAT_AMMO] <= 10);
+	Sbar_DrawModernInventory (style, width, height);
+	if (cl.maxclients != 1)
+		Sbar_DrawModernFrags (height);
 }
 
 /*
@@ -914,6 +1231,9 @@ static float Sbar_CSQCScale (void)
 void Sbar_Draw (void)
 {
 	float w; //johnfitz
+	hudstyle_t hudstyle = (hudstyle_t)CLAMP (HUD_CLASSIC,
+		(int)scr_hudstyle.value, HUD_COUNT - 1);
+	qboolean modern_hud = !vr_enabled.value && hudstyle != HUD_CLASSIC;
 
 	if (scr_con_current == vid.height)
 		return;		// console is full screen
@@ -988,6 +1308,13 @@ void Sbar_Draw (void)
 		}
 	}
 	//johnfitz
+
+	/* CSQC and score overlays keep their existing paths below. */
+	if (modern_hud && !sb_showscores && cl.stats[STAT_HEALTH] > 0)
+	{
+		Sbar_DrawModern (hudstyle);
+		return;
+	}
 
 	GL_SetCanvas (CANVAS_SBAR); //johnfitz
 

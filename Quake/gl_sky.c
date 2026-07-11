@@ -167,6 +167,73 @@ void Sky_LoadTexture (qmodel_t *mod, texture_t *mt)
 
 /*
 =============
+Sky_LoadTextureRGBA
+
+WAD3 miptexes carry an independent RGB palette, so gl_model expands them to
+RGBA before they reach the renderer. Keep Quake's two-layer sky split while
+preserving those exact colours instead of converting back through d_8to24table.
+=============
+*/
+void Sky_LoadTextureRGBA (qmodel_t *mod, texture_t *mt)
+{
+	char		texturename[64];
+	unsigned	x, y, r, g, b, count, halfwidth;
+	byte		*src, *front_data, *back_data;
+
+	if (mt->width != 256 || mt->height != 128)
+	{
+		Con_Warning ("Sky texture %s is %d x %d, expected 256 x 128\n", mt->name, mt->width, mt->height);
+		if (mt->width < 2 || mt->height < 1)
+			return;
+	}
+
+	halfwidth = mt->width / 2;
+	back_data = (byte *) Hunk_AllocName (halfwidth * mt->height * 8, "skytex");
+	front_data = back_data + halfwidth * mt->height * 4;
+	src = (byte *)(mt + 1);
+
+	for (y = 0; y < mt->height; y++)
+		memcpy (back_data + y * halfwidth * 4,
+			src + (y * mt->width + halfwidth) * 4, halfwidth * 4);
+
+	q_snprintf (texturename, sizeof(texturename), "%s:%s_back", mod->name, mt->name);
+	solidskytexture = TexMgr_LoadImage (mod, texturename, halfwidth, mt->height,
+		SRC_RGBA, back_data, "", (src_offset_t)back_data, TEXPREF_NONE);
+
+	r = g = b = count = 0;
+	for (y = 0; y < mt->height; y++)
+	{
+		for (x = 0; x < halfwidth; x++)
+		{
+			byte *pixel = src + (y * mt->width + x) * 4;
+			byte *dst = front_data + (y * halfwidth + x) * 4;
+			memcpy (dst, pixel, 4);
+			if (pixel[3])
+			{
+				r += pixel[0];
+				g += pixel[1];
+				b += pixel[2];
+				count++;
+			}
+		}
+	}
+
+	q_snprintf (texturename, sizeof(texturename), "%s:%s_front", mod->name, mt->name);
+	alphaskytexture = TexMgr_LoadImage (mod, texturename, halfwidth, mt->height,
+		SRC_RGBA, front_data, "", (src_offset_t)front_data, TEXPREF_ALPHA);
+
+	if (count)
+	{
+		skyflatcolor[0] = (float)r/(count*255);
+		skyflatcolor[1] = (float)g/(count*255);
+		skyflatcolor[2] = (float)b/(count*255);
+	}
+	else
+		skyflatcolor[0] = skyflatcolor[1] = skyflatcolor[2] = 0;
+}
+
+/*
+=============
 Sky_LoadTextureQ64
 
 Quake64 sky textures are 32*64

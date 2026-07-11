@@ -67,7 +67,9 @@ void VR_ApplyCurrentViewWeaponTransform();
 enum {
   VR_WEAPONMENU_SELECTION_NONE = 0,
   VR_WEAPONMENU_SELECTION_WEAPON = 1,
-  VR_WEAPONMENU_SELECTION_PLAYER = 2
+  VR_WEAPONMENU_SELECTION_PLAYER = 2,
+  VR_WEAPONMENU_SELECTION_QUICKSAVE = 3,
+  VR_WEAPONMENU_SELECTION_QUICKLOAD = 4
 };
 extern int vr_weaponmenu_selection;
 extern int vr_weaponmenu_selection_type;
@@ -84,6 +86,8 @@ void VR_ResetWeaponTracking();
 int VR_GetSelectedWeaponImpulse(int selection);
 void VR_SelectWeaponFromMenu(int selection);
 void VR_SelectPlayerFromMenu(int selection);
+void VR_SelectQuickSaveFromMenu(void);
+void VR_SelectQuickLoadFromMenu(void);
 void VR_DrawSbar();
 void VR_AddOrientationToViewAngles(vec3_t angles);
 void VR_SetAngles(vec3_t angles);

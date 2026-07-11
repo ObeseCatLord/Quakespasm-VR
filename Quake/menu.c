@@ -22,6 +22,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 
 // clang-format off
 #include "quakedef.h"
+#include "addon_catalog.h"
 #include "bgmusic.h"
 #include "vr_menu.h"
 // clang-format on
@@ -50,6 +51,7 @@ void M_Menu_Search_f(void);
 void M_Menu_ServerList_f(void);
 void M_Menu_Options_f(void);
 void M_Menu_Keys_f(void);
+static void M_Menu_Weapons_f(void);
 void M_Menu_Video_f(void);
 void M_Menu_VR_f(void);
 void M_Menu_Help_f(void);
@@ -70,6 +72,7 @@ void M_Search_Draw(void);
 void M_ServerList_Draw(void);
 void M_Options_Draw(void);
 void M_Keys_Draw(void);
+static void M_Weapons_Draw(void);
 void M_Video_Draw(void);
 void M_VR_Draw(void);
 void M_Help_Draw(void);
@@ -90,6 +93,7 @@ void M_Search_Key(int key);
 void M_ServerList_Key(int key);
 void M_Options_Key(int key);
 void M_Keys_Key(int key);
+static void M_Weapons_Key(int key);
 void M_Video_Key(int key);
 void M_VR_Key(int key);
 void M_Help_Key(int key);
@@ -951,8 +955,9 @@ again:
 
 enum {
   OPT_CUSTOMIZE = 0,
-  OPT_CONSOLE,  // 1
-  OPT_DEFAULTS, // 2
+  OPT_WEAPONS,
+  OPT_CONSOLE,  // 2
+  OPT_DEFAULTS, // 3
   OPT_SCALE,
   OPT_SCRSIZE,
   OPT_GAMMA,
@@ -1161,6 +1166,8 @@ void M_Options_Draw(void) {
   // Draw the items in the order of the enum defined above:
   // OPT_CUSTOMIZE:
   M_Print(16, 32, "              Controls");
+  // OPT_WEAPONS:
+  M_Print(16, 32 + 8 * OPT_WEAPONS, "        Weapon bindings");
   // OPT_CONSOLE:
   M_Print(16, 32 + 8 * OPT_CONSOLE, "          Goto console");
   // OPT_DEFAULTS:
@@ -1266,6 +1273,9 @@ void M_Options_Key(int k) {
     case OPT_CUSTOMIZE:
       M_Menu_Keys_f();
       break;
+    case OPT_WEAPONS:
+      M_Menu_Weapons_f();
+      break;
     case OPT_CONSOLE:
       m_state = m_none;
       Con_ToggleConsole_f();
@@ -1370,18 +1380,16 @@ void M_Menu_Keys_f(void) {
 void M_FindKeysForCommand(const char *command, int *threekeys) {
   int count;
   int j;
-  int l;
   char *b;
 
   threekeys[0] = threekeys[1] = threekeys[2] = -1;
-  l = strlen(command);
   count = 0;
 
   for (j = 0; j < MAX_KEYS; j++) {
     b = keybindings[j];
     if (!b)
       continue;
-    if (!strncmp(b, command, l)) {
+    if (!strcmp(b, command)) {
       threekeys[count] = j;
       count++;
       if (count == 3)
@@ -1392,16 +1400,13 @@ void M_FindKeysForCommand(const char *command, int *threekeys) {
 
 void M_UnbindCommand(const char *command) {
   int j;
-  int l;
   char *b;
-
-  l = strlen(command);
 
   for (j = 0; j < MAX_KEYS; j++) {
     b = keybindings[j];
     if (!b)
       continue;
-    if (!strncmp(b, command, l))
+    if (!strcmp(b, command))
       Key_SetBinding(j, NULL);
   }
 }
@@ -1511,6 +1516,121 @@ void M_Keys_Key(int k) {
   case K_DEL:
     S_LocalSound("misc/menu2.wav");
     M_UnbindCommand(bindnames[keys_cursor][0]);
+    break;
+  }
+}
+
+//=============================================================================
+/* WEAPON BINDINGS MENU -- compact Ironwail-style direct weapon access. */
+
+static const char *weapon_bindnames[][2] = {
+    {"+attack", "attack"},
+    {"impulse 10", "next weapon"},
+    {"impulse 12", "previous weapon"},
+    {"impulse 1", "axe"},
+    {"impulse 2", "shotgun"},
+    {"impulse 3", "super shotgun"},
+    {"impulse 4", "nailgun"},
+    {"impulse 5", "super nailgun"},
+    {"impulse 6", "grenade launcher"},
+    {"impulse 7", "rocket launcher"},
+    {"impulse 8", "thunderbolt"},
+    {"impulse 225", "hipnotic laser"},
+    {"impulse 226", "hipnotic mjolnir"},
+};
+
+#define NUM_WEAPON_COMMANDS Q_COUNTOF(weapon_bindnames)
+
+static int weapons_cursor;
+
+static void M_Menu_Weapons_f(void) {
+  IN_Deactivate(modestate == MS_WINDOWED);
+  key_dest = key_menu;
+  m_state = m_weapons;
+  m_entersound = true;
+}
+
+static void M_Weapons_Draw(void) {
+  int i, x, y, keys[3];
+  const char *name;
+
+  M_DrawTransPic(16, 4, Draw_CachePic("gfx/qplaque.lmp"));
+  M_PrintWhite(112, 8, "WEAPON BINDS");
+  if (bind_grab)
+    M_Print(12, 32, "Press a key or button for this action");
+  else
+    M_Print(18, 32, "Enter to change, backspace to clear");
+
+  for (i = 0; i < (int)NUM_WEAPON_COMMANDS; i++) {
+    y = 48 + 8 * i;
+    M_Print(16, y, weapon_bindnames[i][1]);
+    M_FindKeysForCommand(weapon_bindnames[i][0], keys);
+    if (keys[0] == -1) {
+      M_Print(184, y, "???");
+      continue;
+    }
+
+    name = Key_KeynumToString(keys[0]);
+    M_Print(184, y, name);
+    x = strlen(name) * 8;
+    if (keys[1] != -1) {
+      name = Key_KeynumToString(keys[1]);
+      M_Print(184 + x + 8, y, "or");
+      M_Print(184 + x + 32, y, name);
+    }
+  }
+
+  M_DrawCharacter(176, 48 + weapons_cursor * 8,
+                  bind_grab ? '=' : 12 + ((int)(realtime * 4) & 1));
+}
+
+static void M_Weapons_Key(int k) {
+  char cmd[80];
+  int keys[3];
+
+  if (bind_grab) {
+    S_LocalSound("misc/menu1.wav");
+    if (k != K_ESCAPE && k != '`') {
+      q_snprintf(cmd, sizeof(cmd), "bind \"%s\" \"%s\"\n",
+                 Key_KeynumToString(k), weapon_bindnames[weapons_cursor][0]);
+      Cbuf_InsertText(cmd);
+    }
+    bind_grab = false;
+    IN_Deactivate(modestate == MS_WINDOWED);
+    return;
+  }
+
+  switch (k) {
+  case K_ESCAPE:
+  case K_BBUTTON:
+    M_Menu_Options_f();
+    break;
+  case K_LEFTARROW:
+  case K_UPARROW:
+    S_LocalSound("misc/menu1.wav");
+    if (--weapons_cursor < 0)
+      weapons_cursor = NUM_WEAPON_COMMANDS - 1;
+    break;
+  case K_DOWNARROW:
+  case K_RIGHTARROW:
+    S_LocalSound("misc/menu1.wav");
+    if (++weapons_cursor >= (int)NUM_WEAPON_COMMANDS)
+      weapons_cursor = 0;
+    break;
+  case K_ENTER:
+  case K_KP_ENTER:
+  case K_ABUTTON:
+    M_FindKeysForCommand(weapon_bindnames[weapons_cursor][0], keys);
+    S_LocalSound("misc/menu2.wav");
+    if (keys[2] != -1)
+      M_UnbindCommand(weapon_bindnames[weapons_cursor][0]);
+    bind_grab = true;
+    IN_Activate();
+    break;
+  case K_BACKSPACE:
+  case K_DEL:
+    S_LocalSound("misc/menu2.wav");
+    M_UnbindCommand(weapon_bindnames[weapons_cursor][0]);
     break;
   }
 }
@@ -2471,17 +2591,17 @@ void M_Menu_Credits_f(void) {}
 #define MODS_FILTER_MAX 22
 
 /*
- * This is deliberately a local add-on browser.  Ironwail's polished layout
- * is backed by its downloadable add-on catalogue; OpenVR's mod list only
- * knows the game-directory name, so never present invented titles/authors or
- * an install button that cannot work.  We do retain the useful local parts:
- * installed grouping, the active marker, filtering, paging, and a scrollbar.
+ * The installed browser and optional Ironwail-style catalogue share filtering,
+ * paging, and pointer navigation. Catalogue network access remains explicit:
+ * opening this menu never starts a download or changes the active game.
  */
 static int m_mods_cursor; /* index among the currently matching add-ons */
 static int m_mods_first;
 static int m_mods_count;
 static int m_mods_matches;
 static char m_mods_filter[MODS_FILTER_MAX + 1];
+static qboolean m_mods_catalogue;
+static int m_mods_confirm = -1;
 
 static qboolean M_Mods_IsActive(const filelist_item_t *item) {
   return !q_strcasecmp(item->name, COM_SkipPath(com_gamedir));
@@ -2491,9 +2611,26 @@ static qboolean M_Mods_Matches(const filelist_item_t *item) {
   return !m_mods_filter[0] || q_strcasestr(item->name, m_mods_filter) != NULL;
 }
 
+static qboolean M_Mods_CatalogueMatches(const addon_catalog_entry_t *item) {
+  return !m_mods_filter[0] ||
+         q_strcasestr(item->name, m_mods_filter) != NULL ||
+         q_strcasestr(item->gamedir, m_mods_filter) != NULL ||
+         q_strcasestr(item->author, m_mods_filter) != NULL;
+}
+
 static int M_Mods_CountMatches(void) {
   filelist_item_t *item;
-  int count;
+  const addon_catalog_entry_t *catalogue;
+  int count, index;
+
+  if (m_mods_catalogue) {
+    for (count = 0, index = 0; index < AddonCatalog_Count(); index++) {
+      catalogue = AddonCatalog_Entry(index);
+      if (catalogue && M_Mods_CatalogueMatches(catalogue))
+        count++;
+    }
+    return count;
+  }
 
   for (item = modlist, count = 0; item; item = item->next) {
     if (M_Mods_Matches(item))
@@ -2501,6 +2638,19 @@ static int M_Mods_CountMatches(void) {
   }
 
   return count;
+}
+
+static const addon_catalog_entry_t *M_Mods_CatalogueItem(int index) {
+  int current;
+
+  for (current = 0; current < AddonCatalog_Count(); current++) {
+    const addon_catalog_entry_t *item = AddonCatalog_Entry(current);
+    if (!item || !M_Mods_CatalogueMatches(item))
+      continue;
+    if (index-- == 0)
+      return item;
+  }
+  return NULL;
 }
 
 static filelist_item_t *M_Mods_Item(int index) {
@@ -2535,6 +2685,14 @@ static void M_Mods_KeepCursorVisible(void) {
 static void M_Mods_Refresh(void) {
   filelist_item_t *item;
 
+  AddonCatalog_Poll();
+  if (m_mods_catalogue) {
+    m_mods_count = AddonCatalog_Count();
+    m_mods_matches = M_Mods_CountMatches();
+    M_Mods_KeepCursorVisible();
+    return;
+  }
+
   for (item = modlist, m_mods_count = 0; item; item = item->next)
     m_mods_count++;
 
@@ -2567,6 +2725,8 @@ static void M_Menu_Mods_f(void) {
   /* Pick up add-ons copied into the game directory since engine startup. */
   Modlist_Rebuild();
   m_mods_filter[0] = 0;
+  m_mods_catalogue = false;
+  m_mods_confirm = -1;
   m_mods_cursor = 0;
   m_mods_first = 0;
   M_Mods_Refresh();
@@ -2610,8 +2770,10 @@ static void M_Mods_DrawScrollbar(int x, int y) {
 
 static void M_Mods_Draw(void) {
   filelist_item_t *item;
+  const addon_catalog_entry_t *catalogue;
   int i, last, visible;
   char count[32];
+  const char *status;
 
   M_Mods_Refresh();
 
@@ -2619,29 +2781,56 @@ static void M_Mods_Draw(void) {
   M_PrintWhite(144, 8, "MODS");
   M_DrawTextBox(16, 24, 34, 19);
 
-  M_PrintWhite(32, 32, "INSTALLED ADD-ONS");
-  q_snprintf(count, sizeof(count), "%d installed", m_mods_count);
+  M_PrintWhite(32, 32, m_mods_catalogue ? "ADD-ON CATALOGUE" : "INSTALLED ADD-ONS");
+  q_snprintf(count, sizeof(count), "%d %s", m_mods_count,
+             m_mods_catalogue ? "available" : "installed");
   M_Print(288 - (int)strlen(count) * 8, 32, count);
   M_Print(32, 48, "NAME");
   M_Print(208, 48, "STATUS");
   M_Print(32, 56, "---------------------------------");
 
   if (!m_mods_count) {
-    M_PrintWhite(48, 88, "No installed add-ons found.");
-    M_Print(40, 104, "Add a Quake game directory beside id1.");
+    if (m_mods_catalogue) {
+      if (AddonCatalog_State() == ADDON_CATALOG_REFRESHING)
+        M_PrintWhite(80, 88, "Refreshing catalogue...");
+      else
+        M_PrintWhite(52, 88, "Press F1 to refresh catalogue.");
+    } else {
+      M_PrintWhite(48, 88, "No installed add-ons found.");
+      M_Print(40, 104, "Add a Quake game directory beside id1.");
+    }
   } else if (!m_mods_matches) {
     M_PrintWhite(72, 88, "No add-ons match this search.");
   } else {
-    item = M_Mods_Item(m_mods_first);
     visible = q_min(MAX_MODS_ON_SCREEN, m_mods_matches - m_mods_first);
-    for (i = 0; item && i < visible; i++, item = M_Mods_Item(m_mods_first + i)) {
-      qboolean active = M_Mods_IsActive(item);
-
-      M_Mods_PrintName(48, 64 + i * 8, item->name, active);
-      if (active)
-        M_PrintWhite(208, 64 + i * 8, "ACTIVE");
-      else
-        M_Print(208, 64 + i * 8, "ready");
+    for (i = 0; i < visible; i++) {
+      int index = m_mods_first + i;
+      if (m_mods_catalogue) {
+        catalogue = M_Mods_CatalogueItem(index);
+        if (!catalogue)
+          continue;
+        M_Mods_PrintName(48, 64 + i * 8, catalogue->name, false);
+        if (catalogue->installed)
+          status = "INSTALLED";
+        else if (AddonCatalog_State() == ADDON_CATALOG_INSTALLING && index == m_mods_cursor)
+          status = "DOWNLOADING";
+        else if (m_mods_confirm == index)
+          status = "CONFIRM";
+        else
+          status = "UNVERIFIED";
+        M_Print(208, 64 + i * 8, status);
+      } else {
+        qboolean active;
+        item = M_Mods_Item(index);
+        if (!item)
+          continue;
+        active = M_Mods_IsActive(item);
+        M_Mods_PrintName(48, 64 + i * 8, item->name, active);
+        if (active)
+          M_PrintWhite(208, 64 + i * 8, "ACTIVE");
+        else
+          M_Print(208, 64 + i * 8, "ready");
+      }
     }
 
     M_DrawCharacter(40, 64 + (m_mods_cursor - m_mods_first) * 8,
@@ -2660,8 +2849,14 @@ static void M_Mods_Draw(void) {
   if ((int)(realtime * 4) & 1)
     M_DrawCharacter(96 + 8 * (int)strlen(m_mods_filter), 152, 10);
 
-  M_Print(32, 168, "Enter: play     Type: search");
-  M_Print(32, 176, "PgUp/PgDn: page Tab: clear");
+  if (m_mods_catalogue)
+    M_Print(32, 168, AddonCatalog_Message());
+  else
+    M_Print(32, 168, "Enter: play     Type: search");
+  M_Print(32, 176, "Tab: installed/catalogue");
+  M_Print(32, 184, "PgUp/PgDn: page Del: clear");
+  if (m_mods_catalogue)
+    M_Print(216, 176, "F1: refresh");
 }
 
 static void M_Mods_MoveCursor(int amount) {
@@ -2673,6 +2868,7 @@ static void M_Mods_MoveCursor(int amount) {
     m_mods_cursor += m_mods_matches;
   while (m_mods_cursor >= m_mods_matches)
     m_mods_cursor -= m_mods_matches;
+  m_mods_confirm = -1;
   M_Mods_KeepCursorVisible();
 }
 
@@ -2738,32 +2934,69 @@ static void M_Mods_Key(int key) {
       m_mods_filter[strlen(m_mods_filter) - 1] = 0;
       m_mods_cursor = 0;
       m_mods_first = 0;
+      m_mods_confirm = -1;
       M_Mods_Refresh();
       S_LocalSound("misc/menu1.wav");
     }
     break;
 
   case K_TAB:
+    m_mods_catalogue = !m_mods_catalogue;
+    m_mods_cursor = 0;
+    m_mods_first = 0;
+    m_mods_confirm = -1;
+    M_Mods_Refresh();
+    S_LocalSound("misc/menu1.wav");
+    break;
+
   case K_DEL:
     if (m_mods_filter[0]) {
       m_mods_filter[0] = 0;
       m_mods_cursor = 0;
       m_mods_first = 0;
+      m_mods_confirm = -1;
       M_Mods_Refresh();
       S_LocalSound("misc/menu1.wav");
+    }
+    break;
+
+  case K_F1:
+    if (m_mods_catalogue) {
+      AddonCatalog_Refresh();
+      m_mods_confirm = -1;
+      S_LocalSound("misc/menu2.wav");
     }
     break;
 
   case K_ENTER:
   case K_KP_ENTER:
   case K_ABUTTON:
-    item = M_Mods_Item(m_mods_cursor);
-    if (item) {
+    if (m_mods_catalogue) {
+      const addon_catalog_entry_t *catalogue = M_Mods_CatalogueItem(m_mods_cursor);
+      if (!catalogue)
+        break;
       S_LocalSound("misc/menu2.wav");
-      IN_Activate();
-      key_dest = key_game;
-      m_state = m_none;
-      Cbuf_AddText(va("game \"%s\"\n", item->name));
+      if (catalogue->installed) {
+        IN_Activate();
+        key_dest = key_game;
+        m_state = m_none;
+        Cbuf_AddText(va("game \"%s\"\n", catalogue->gamedir));
+      } else if (m_mods_confirm == m_mods_cursor) {
+        if (AddonCatalog_StartInstall(m_mods_cursor, true))
+          m_mods_confirm = -1;
+      } else {
+        AddonCatalog_StartInstall(m_mods_cursor, false);
+        m_mods_confirm = m_mods_cursor;
+      }
+    } else {
+      item = M_Mods_Item(m_mods_cursor);
+      if (item) {
+        S_LocalSound("misc/menu2.wav");
+        IN_Activate();
+        key_dest = key_game;
+        m_state = m_none;
+        Cbuf_AddText(va("game \"%s\"\n", item->name));
+      }
     }
     break;
   }
@@ -2783,6 +3016,7 @@ static void M_Mods_Char(int key) {
   m_mods_filter[length + 1] = 0;
   m_mods_cursor = 0;
   m_mods_first = 0;
+  m_mods_confirm = -1;
   M_Mods_Refresh();
 }
 
@@ -2796,19 +3030,50 @@ static void M_Menu_Models_f(void) {
   m_entersound = true;
 }
 
+static int m_models_cursor;
+
+static const char *M_HUDStyleName(void) {
+  switch (CLAMP(HUD_CLASSIC, (int)scr_hudstyle.value, HUD_COUNT - 1)) {
+  case HUD_MODERN_CENTERAMMO:
+    return "modern (center ammo)";
+  case HUD_MODERN_SIDEAMMO:
+    return "modern (side ammo)";
+  default:
+    return "classic";
+  }
+}
+
+static void M_Models_Adjust(int direction) {
+  if (m_models_cursor == 0) {
+    Cvar_SetValue("r_enhancedmodels",
+                  Cvar_VariableValue("r_enhancedmodels") ? 0 : 1);
+    return;
+  }
+
+  Cvar_SetValue("scr_hudstyle",
+                (float)((CLAMP(HUD_CLASSIC, (int)scr_hudstyle.value,
+                               HUD_COUNT - 1) + HUD_COUNT + direction) %
+                        HUD_COUNT));
+}
+
 static void M_Models_Draw(void) {
   qboolean enhanced = Cvar_VariableValue("r_enhancedmodels") != 0;
 
   M_DrawTransPic(16, 4, Draw_CachePic("gfx/qplaque.lmp"));
-  M_PrintWhite(136, 8, "MODELS");
+  M_PrintWhite(120, 8, "MODELS & HUD");
   M_Print(24, 48, "Enhanced model replacements");
   M_Print(24, 64, "Model set");
   M_Print(176, 64, enhanced ? "enhanced" : "classic");
-  M_Print(24, 96, "Enhanced models use MD3 or MD5");
-  M_Print(24, 104, "files when a mod supplies them.");
-  M_Print(24, 120, "Missing models or skins fall back");
-  M_Print(24, 128, "to the original Quake model.");
-  M_DrawCharacter(160, 64, 12 + ((int)(realtime * 4) & 1));
+  M_Print(24, 80, "HUD layout");
+  M_Print(152, 80, M_HUDStyleName());
+  M_Print(24, 104, "Enhanced models use MD3 or MD5");
+  M_Print(24, 112, "files when a mod supplies them.");
+  M_Print(24, 128, "Modern HUD layouts are desktop only;");
+  M_Print(24, 136, "VR and custom mod HUDs stay unchanged.");
+  M_Print(24, 152, "Missing models or skins fall back");
+  M_Print(24, 160, "to the original Quake model.");
+  M_DrawCharacter(160, 64 + m_models_cursor * 16,
+                  12 + ((int)(realtime * 4) & 1));
 }
 
 static void M_Models_Key(int key) {
@@ -2819,13 +3084,24 @@ static void M_Models_Key(int key) {
     break;
 
   case K_LEFTARROW:
+    S_LocalSound("misc/menu3.wav");
+    M_Models_Adjust(-1);
+    break;
   case K_RIGHTARROW:
   case K_ENTER:
   case K_KP_ENTER:
   case K_ABUTTON:
     S_LocalSound("misc/menu3.wav");
-    Cvar_SetValue("r_enhancedmodels",
-                  Cvar_VariableValue("r_enhancedmodels") ? 0 : 1);
+    M_Models_Adjust(1);
+    break;
+
+  case K_UPARROW:
+    S_LocalSound("misc/menu1.wav");
+    m_models_cursor = (m_models_cursor + 1) % 2;
+    break;
+  case K_DOWNARROW:
+    S_LocalSound("misc/menu1.wav");
+    m_models_cursor = (m_models_cursor + 1) % 2;
     break;
   }
 }
@@ -2844,6 +3120,7 @@ void M_Init(void) {
   Cmd_AddCommand("menu_setup", M_Menu_Setup_f);
   Cmd_AddCommand("menu_options", M_Menu_Options_f);
   Cmd_AddCommand("menu_keys", M_Menu_Keys_f);
+  Cmd_AddCommand("menu_weapons", M_Menu_Weapons_f);
   Cmd_AddCommand("menu_video", M_Menu_Video_f);
   Cmd_AddCommand("menu_vr", M_Menu_VR_f);
   Cmd_AddCommand("menu_mods", M_Menu_Mods_f);
@@ -2909,6 +3186,10 @@ void M_Draw(void) {
 
   case m_keys:
     M_Keys_Draw();
+    break;
+
+  case m_weapons:
+    M_Weapons_Draw();
     break;
 
   case m_video:
@@ -3010,6 +3291,10 @@ void M_Keydown(int key) {
 
   case m_keys:
     M_Keys_Key(key);
+    return;
+
+  case m_weapons:
+    M_Weapons_Key(key);
     return;
 
   case m_video:
@@ -3202,6 +3487,21 @@ static qboolean M_PointerHit(float x, float y) {
     }
     break;
 
+  case m_weapons:
+    if (M_PointerRows(x, y, 8, 312, 48, 8, NUM_WEAPON_COMMANDS,
+                      &selection)) {
+      weapons_cursor = selection;
+      return true;
+    }
+    break;
+
+  case m_models:
+    if (M_PointerRows(x, y, 8, 312, 56, 16, 2, &selection)) {
+      m_models_cursor = selection;
+      return true;
+    }
+    break;
+
   case m_lanconfig:
     if (M_PointerTable(x, y, 64, 312, lanConfig_cursor_table,
                        StartingGame ? 2 : NUM_LANCONFIG_CMDS, &selection)) {
@@ -3236,13 +3536,16 @@ static qboolean M_PointerHit(float x, float y) {
       M_Mods_KeepCursorVisible();
       return true;
     }
+    if (x >= 32 && x < 200 && y >= 168 && y < 184) {
+      m_pointer_activate_key = K_TAB;
+      return true;
+    }
+    if (m_mods_catalogue && x >= 200 && x < 312 && y >= 168 && y < 184) {
+      m_pointer_activate_key = K_F1;
+      return true;
+    }
     break;
   }
-
-  case m_models:
-    if (M_PointerRows(x, y, 16, 312, 64, 8, 1, &selection))
-      return true;
-    break;
 
   case m_help:
     if (x >= 0 && x < 320 && y >= 0 && y < 200) {
@@ -3307,6 +3610,8 @@ qboolean M_PointerConsumesMouse(void) {
   return !vr_enabled.value && key_dest == key_menu && m_state != m_none && !bind_grab &&
          Cvar_VariableValue("cl_mousemenu") != 0;
 }
+
+qboolean M_BindGrabActive(void) { return bind_grab; }
 
 void M_ConfigureNetSubsystem(void) {
   // enable/disable net systems to match desired config

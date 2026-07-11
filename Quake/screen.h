@@ -63,6 +63,7 @@ typedef enum {
 	CANVAS_CONSOLE,
 	CANVAS_MENU,
 	CANVAS_SBAR,
+	CANVAS_SBAR2,
 	CANVAS_WARPIMAGE,
 	CANVAS_CROSSHAIR,
 	CANVAS_BOTTOMLEFT,
@@ -77,9 +78,18 @@ extern	cvar_t		scr_conwidth;
 extern	cvar_t		scr_conscale;
 extern	cvar_t		scr_scale;
 extern	cvar_t		scr_crosshairscale;
+
+typedef enum hudstyle_t
+{
+	HUD_CLASSIC,
+	HUD_MODERN_CENTERAMMO,
+	HUD_MODERN_SIDEAMMO,
+	HUD_COUNT
+} hudstyle_t;
+
+extern	cvar_t		scr_hudstyle;
 //johnfitz
 
 extern int scr_tileclear_updates; //johnfitz
 
 #endif	/* _QUAKE_SCREEN_H */
-

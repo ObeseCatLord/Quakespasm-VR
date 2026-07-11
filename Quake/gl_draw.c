@@ -968,6 +968,13 @@ void GL_SetCanvas (canvastype newcanvas)
 			glViewport (glx + (glwidth - 320*s) / 2, gly, 320*s, 48*s);
 		}
 		break;
+	case CANVAS_SBAR2:
+		/* Ironwail-style HUD: full-screen canvas with a conservative 16:9 scale. */
+		s = q_min ((float)glwidth / 400.0f, (float)glheight / 225.0f);
+		s = CLAMP (1.0f, scr_sbarscale.value, s);
+		glOrtho (0, glwidth / s, glheight / s, 0, -99999, 99999);
+		glViewport (glx, gly, glwidth, glheight);
+		break;
 	case CANVAS_WARPIMAGE:
 		glOrtho (0, 128, 0, 128, -99999, 99999);
 		glViewport (glx, gly+glheight-gl_warpimagesize, gl_warpimagesize, gl_warpimagesize);

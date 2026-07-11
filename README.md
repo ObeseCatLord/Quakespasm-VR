@@ -58,6 +58,9 @@ extended protocol support.
   for VR stereo correctness and desktop compatibility. The same menu cursor can
   be selected with the desktop pointer or the primary VR controller ray;
   controller trigger activation is menu-only and single-frame gated.
+- The Options menu includes a compact direct-weapon bindings screen (classic
+  weapons plus Hipnotic's laser cannon and Mjolnir); it supports desktop and
+  VR controller binding capture.
 
 ### Networking
 
@@ -109,8 +112,13 @@ extended protocol support.
   `-autodetectrerelease`, never automatic; use `-norerelease` to suppress a
   shared launch script's opt-in probe.
 - Maps that reference external WAD2/WAD3 texture archives can use a strictly
-  validated, client-only fallback (`wad_external_textures 1`). Embedded BSP
-  pixels and normal loose replacement textures retain precedence.
+  validated, client-only fallback (`wad_external_textures 1`). WAD3 textures
+  retain their individual palette colours through RGBA upload, including index
+  255 transparency; embedded BSP pixels and normal loose replacements retain
+  precedence.
+- The Mods menu has installed and Catalogue tabs. Catalogue refresh is explicit
+  (Tab, then F1) and runs in the background; installs use a temporary file and
+  require a second confirmation for Ironwail's current hashless manifest.
 
 ### Rendering And Performance
 
@@ -122,6 +130,10 @@ extended protocol support.
   have cvars so expensive paths can be isolated during testing.
 - Model interpolation and shadow exclusion lists include additional modern mod
   models that should not lerp or cast shadows.
+- Desktop Video Options exposes 2x/4x/8x SDL MSAA. VR continues to use its
+  existing `vr_msaa` eye-buffer path and is never restarted by this setting.
+- Models & HUD offers Classic plus Ironwail-style center- and side-ammo layouts.
+  Alternate layouts are desktop-only; VR and CSQC HUDs keep their existing path.
 
 ## Running
 
@@ -209,6 +221,7 @@ On Debian/Ubuntu-style systems:
 
 ```sh
 sudo apt install build-essential pkg-config libsdl2-dev libgl1-mesa-dev \
+  libcurl4-openssl-dev \
   libopenvr-dev libflac-dev libopusfile-dev libvorbis-dev libmad0-dev \
   libxmp-dev
 ```
@@ -417,7 +430,10 @@ QuakeSpasm cvar.
 | `r_skyroom` | `0` | Rendering | Enables optional QSS-style skyroom rendering. |
 | `r_skywind` | `0` | Rendering | Sky wind amount parsed from worldspawn or set manually. |
 | `r_useportalculling` | `0` | Performance | Enables portal/PVS culling experiment. |
+| `cl_addon_catalog_url` | Ironwail catalogue URL | Mods | HTTPS base URL used only after an explicit catalogue refresh. |
 | `scr_crosshair_desktop_fallback` | `1` | UI | Draws a fallback desktop crosshair when mod HUDs omit one. |
+| `scr_hudstyle` | `0` | UI | `0` Classic, `1` modern center-ammo, `2` modern side-ammo; desktop only. |
+| `vid_fsaa` | `0` | Rendering | Desktop SDL MSAA samples; change in Video Options and Apply. |
 | `wad_external_textures` | `1` | Compatibility | Allows validated external WAD2/WAD3 pixels for BSP miptextures that intentionally have no embedded data. |
 | `sv_airaccelerate` | `-1` | PMove | PMove air acceleration; negative means compatibility default. |
 | `sv_cmdfile` | `""` | Server | Server command file hook. |

@@ -928,60 +928,33 @@ static mapwad_t *Mod_LoadMapWadFiles (qmodel_t *mod)
 	return NULL;
 }
 
-/* WAD3 palettes are converted once to the classic Quake palette. */
-static byte Mod_ClosestQuakePaletteIndex (const byte *palette, int color)
-{
-	const byte	*quakepalette;
-	int		i, best, bestdist, dist;
-	int		r, g, b, dr, dg, db;
-
-	quakepalette = (const byte *)d_8to24table;
-	r = palette[color * 3 + 0];
-	g = palette[color * 3 + 1];
-	b = palette[color * 3 + 2];
-	best = 0;
-	bestdist = 0x7fffffff;
-	/* WAD3 colours have no Quake fullbright semantics; avoid inventing them. */
-	for (i = 0; i < 224; i++)
-	{
-		dr = r - quakepalette[i * 4 + 0];
-		dg = g - quakepalette[i * 4 + 1];
-		db = b - quakepalette[i * 4 + 2];
-		dist = dr * dr + dg * dg + db * db;
-		if (dist < bestdist)
-		{
-			best = i;
-			bestdist = dist;
-		}
-	}
-
-	return (byte)best;
-}
-
 /*
 =================
 Mod_LoadMapWadTexture
 
 Copy a strictly validated missing miptex into the map hunk. WAD3's private
-palette is remapped here because the classic renderer stores world textures
-as Quake-indexed pixels; this keeps the rest of the GL and VR paths unchanged.
+palette is expanded to RGBA here so every texture retains its own colours
+instead of being lossy-remapped through Quake's global palette.
 =================
 */
-static texture_t *Mod_LoadMapWadTexture (mapwad_t *wads, const char *name)
+static texture_t *Mod_LoadMapWadTexture (mapwad_t *wads, const char *name,
+	qboolean *is_rgba, qboolean *has_alpha)
 {
 	mapwad_t	*wad;
 	lumpinfo_t	*info;
 	miptex_t	mt;
 	texture_t	*tx;
-	byte		*data;
+	byte		*data, *dst;
 	byte		palette[256 * 3];
-	byte		remap[256];
 	char		cleanname[16];
 	char		sourcename[17];
 	unsigned short	colors;
 	int		i, width, height, mipofs[MIPLEVELS], mipsizes[MIPLEVELS];
-	int		mipwidth, mipheight, paletteofs, pixels;
+	int		mipwidth, mipheight, paletteofs, pixels, datasize;
 	qboolean	wad3palette;
+
+	*is_rgba = false;
+	*has_alpha = false;
 
 	/* texture_t stores a 15-character C string, so reject unsafe source names. */
 	memcpy (sourcename, name, sizeof(cleanname));
@@ -1066,8 +1039,6 @@ static texture_t *Mod_LoadMapWadTexture (mapwad_t *wads, const char *name)
 			return NULL;
 		}
 
-		for (i = 0; i < colors; i++)
-			remap[i] = Mod_ClosestQuakePaletteIndex (palette, i);
 	}
 
 	data = (byte *)malloc (pixels);
@@ -1084,22 +1055,29 @@ static texture_t *Mod_LoadMapWadTexture (mapwad_t *wads, const char *name)
 		return NULL;
 	}
 
+	datasize = pixels;
 	if (wad3palette)
 	{
 		for (i = 0; i < pixels; i++)
-		{
 			if (data[i] >= colors)
 			{
 				Con_Warning ("External WAD3 texture %s has invalid palette indices\n", name);
 				free (data);
 				return NULL;
 			}
-			/* Preserve GoldSrc's conventional transparent palette entry. */
-			data[i] = data[i] == 255 ? 255 : remap[data[i]];
+			else if (data[i] == 255)
+				*has_alpha = true;
+
+		if (pixels > INT_MAX / 4)
+		{
+			Con_Warning ("External WAD3 texture %s is too large\n", name);
+			free (data);
+			return NULL;
 		}
+		datasize = pixels * 4;
 	}
 
-	tx = (texture_t *) Hunk_AllocName (sizeof(*tx) + pixels, loadname);
+	tx = (texture_t *) Hunk_AllocName (sizeof(*tx) + datasize, loadname);
 	/* Keep the BSP spelling so loose replacement lookup keeps its precedence. */
 	q_strlcpy (tx->name, sourcename, sizeof(tx->name));
 	tx->width = width;
@@ -1108,7 +1086,24 @@ static texture_t *Mod_LoadMapWadTexture (mapwad_t *wads, const char *name)
 	tx->warpimage = NULL;
 	tx->fullbright = NULL;
 	tx->shift = 0;
-	memcpy (tx + 1, data, pixels);
+	dst = (byte *)(tx + 1);
+	if (wad3palette)
+	{
+		for (i = 0; i < pixels; i++)
+		{
+			int index = data[i];
+			dst[i * 4 + 0] = palette[index * 3 + 0];
+			dst[i * 4 + 1] = palette[index * 3 + 1];
+			dst[i * 4 + 2] = palette[index * 3 + 2];
+			/* GoldSrc WAD3's conventional transparent palette entry. */
+			dst[i * 4 + 3] = index == 255 ? 0 : 255;
+		}
+		*is_rgba = true;
+	}
+	else
+	{
+		memcpy (dst, data, pixels);
+	}
 	free (data);
 
 	return tx;
@@ -1156,7 +1151,7 @@ static void Mod_LoadTextures (lump_t *l)
 	byte		*data, *dummy;
 	mapwad_t		*wads;
 	const char		*sourcefile;
-	qboolean		wadtexture;
+	qboolean		wadtexture, wad3texture, wad3alpha;
 //johnfitz
 	unsigned int	flags;
 
@@ -1182,6 +1177,8 @@ static void Mod_LoadTextures (lump_t *l)
 	for (i=0 ; i<nummiptex ; i++)
 	{
 		wadtexture = false;
+		wad3texture = false;
+		wad3alpha = false;
 		sourcefile = loadmodel->name;
 		m->dataofs[i] = LittleLong(m->dataofs[i]);
 		if (m->dataofs[i] == -1)
@@ -1207,7 +1204,7 @@ static void Mod_LoadTextures (lump_t *l)
 		/* A zero first mip offset means the BSP expects an external WAD. */
 		if (mt->offsets[0] == 0 && wads)
 		{
-			tx = Mod_LoadMapWadTexture (wads, mt->name);
+			tx = Mod_LoadMapWadTexture (wads, mt->name, &wad3texture, &wad3alpha);
 			if (tx)
 			{
 				loadmodel->textures[i] = tx;
@@ -1262,7 +1259,9 @@ static void Mod_LoadTextures (lump_t *l)
 		{
 			if (!q_strncasecmp(tx->name,"sky",3)) //sky texture //also note -- was Q_strncmp, changed to match qbsp
 			{
-				if (loadmodel->bspversion == BSPVERSION_QUAKE64)
+				if (wad3texture)
+					Sky_LoadTextureRGBA (loadmodel, tx);
+				else if (loadmodel->bspversion == BSPVERSION_QUAKE64)
 					Sky_LoadTextureQ64 (loadmodel, tx);
 				else
 					Sky_LoadTexture (loadmodel, tx);
@@ -1291,7 +1290,8 @@ static void Mod_LoadTextures (lump_t *l)
 				{
 					q_snprintf (texturename, sizeof(texturename), "%s:%s", loadmodel->name, tx->name);
 					tx->gltexture = TexMgr_LoadImage (loadmodel, texturename, tx->width, tx->height,
-						SRC_INDEXED, (byte *)(tx+1), sourcefile, offset, TEXPREF_NONE);
+						wad3texture ? SRC_RGBA : SRC_INDEXED, (byte *)(tx+1), sourcefile, offset,
+						wad3alpha ? TEXPREF_ALPHA : TEXPREF_NONE);
 				}
 
 				//now create the warpimage with deterministic dummy data; it will be updated before drawing
@@ -1315,6 +1315,8 @@ static void Mod_LoadTextures (lump_t *l)
 
 				extraflags = 0;
 				if (tx->name[0] == '{')
+					extraflags |= TEXPREF_ALPHA;
+				if (wad3alpha)
 					extraflags |= TEXPREF_ALPHA;
 				// ericw
 
@@ -1353,7 +1355,7 @@ static void Mod_LoadTextures (lump_t *l)
 				else //use the texture from the bsp file
 				{
 					q_snprintf (texturename, sizeof(texturename), "%s:%s", loadmodel->name, tx->name);
-					if (Mod_CheckFullbrights ((byte *)(tx+1), pixels))
+					if (!wad3texture && Mod_CheckFullbrights ((byte *)(tx+1), pixels))
 					{
 						tx->gltexture = TexMgr_LoadImage (loadmodel, texturename, tx->width, tx->height,
 							SRC_INDEXED, (byte *)(tx+1), sourcefile, offset, TEXPREF_MIPMAP | TEXPREF_NOBRIGHT | extraflags);
@@ -1364,7 +1366,7 @@ static void Mod_LoadTextures (lump_t *l)
 					else
 					{
 						tx->gltexture = TexMgr_LoadImage (loadmodel, texturename, tx->width, tx->height,
-							SRC_INDEXED, (byte *)(tx+1), sourcefile, offset, TEXPREF_MIPMAP | extraflags);
+							wad3texture ? SRC_RGBA : SRC_INDEXED, (byte *)(tx+1), sourcefile, offset, TEXPREF_MIPMAP | extraflags);
 					}
 				}
 				Hunk_FreeToLowMark (mark);

@@ -19,6 +19,9 @@ USE_CODEC_XMP=1
 USE_CODEC_MODPLUG=0
 USE_CODEC_UMX=1
 
+# Define USE_CURL=1 and provide a MinGW libcurl to enable catalogue downloads.
+USE_CURL ?= 0
+
 # which library to use for mp3 decoding: mad or mpg123
 MP3LIB=mad
 # which library to use for ogg decoding: vorbis or tremor
@@ -92,6 +95,11 @@ LIBWINSOCK = -lws2_32
 
 CFLAGS    += $(DEFWINSOCK)
 NET_LIBS   = $(LIBWINSOCK)
+
+ifeq ($(USE_CURL),1)
+CFLAGS += -DUSE_CURL
+NET_LIBS += -lcurl
+endif
 
 ifneq ($(VORBISLIB),vorbis)
 ifneq ($(VORBISLIB),tremor)
@@ -255,6 +263,8 @@ OBJS = strlcat.o \
 	cfgfile.o \
 	host.o \
 	host_cmd.o \
+	json.o \
+	addon_catalog.o \
 	mathlib.o \
 	pr_cmds.o \
 	pr_edict.o \

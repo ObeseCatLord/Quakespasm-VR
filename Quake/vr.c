@@ -5421,6 +5421,28 @@ static void VR_DoMenuTrigger(vr_controller *controller) {
   int controllerIndex = VR_ControllerIndex(controller);
   float triggerValue;
 
+  /* A binding screen must receive the physical controller trigger, not Enter. */
+  if (M_BindGrabActive()) {
+    if (!controller->seenThisFrame) {
+      if (controller->triggerDown && controller->triggerKey)
+        VR_SetTrigger(controller, controller->triggerKey, false);
+      controller->triggerDown = false;
+      controller->triggerKey = 0;
+      return;
+    }
+
+    triggerValue = VR_ReadTrigger(controller, controllerIndex);
+    if (!controller->triggerDown && triggerValue > triggerDownThreshold)
+      VR_SetTrigger(controller, K_RTRIGGER, true);
+    else if (controller->triggerDown && triggerValue < triggerUpThreshold) {
+      if (controller->triggerKey)
+        VR_SetTrigger(controller, controller->triggerKey, false);
+      else
+        controller->triggerDown = false;
+    }
+    return;
+  }
+
   if (!controller->seenThisFrame) {
     if (controller->triggerDown && controller->triggerKey)
       VR_SetTrigger(controller, controller->triggerKey, false);
@@ -5990,6 +6012,16 @@ static int VR_GetWeaponMenuPlayers(int *out, int max) {
   return count;
 }
 
+/*
+ * The wheel is also available in co-op, where a save can be a server-wide
+ * operation. Keep these actions strictly single-player: the local server has
+ * one client, so no connected peer can be interrupted by a save/load.
+ */
+static qboolean VR_CanUseQuickSaveMenu(void) {
+  return sv.active && svs.maxclients == 1 && !cls.demoplayback &&
+         !cl.intermission;
+}
+
 // Get impulse for the selected weapon in the visible list
 extern "C" int VR_GetSelectedWeaponImpulse(int selection) {
   vr_dyn_weapon_t *visible[MAX_DYN_WEAPONS];
@@ -6047,6 +6079,21 @@ extern "C" void VR_SelectPlayerFromMenu(int selection) {
 
   q_snprintf(cmd, sizeof(cmd), "coop_teleport_player %d\n", selection + 1);
   Cbuf_AddText(cmd);
+}
+
+extern "C" void VR_SelectQuickSaveFromMenu(void) {
+  if (!VR_CanUseQuickSaveMenu())
+    return;
+
+  Cbuf_AddText("echo Quicksaving...; wait; save quick\n");
+}
+
+extern "C" void VR_SelectQuickLoadFromMenu(void) {
+  if (!VR_CanUseQuickSaveMenu())
+    return;
+
+  /* Match the standard F9 path: queue the load after input release. */
+  Cbuf_AddText("echo Quickloading...; wait; load quick\n");
 }
 
 extern gltexture_t *char_texture;
@@ -6185,8 +6232,9 @@ void VR_DrawWeaponMenu(void) {
   int num_visible = VR_GetVisibleWeapons(visible, MAX_DYN_WEAPONS);
   int player_indices[MAX_SCOREBOARD];
   int num_players = VR_GetWeaponMenuPlayers(player_indices, MAX_SCOREBOARD);
+  qboolean quick_actions = VR_CanUseQuickSaveMenu();
 
-  if (num_visible == 0 && num_players == 0) {
+  if (num_visible == 0 && num_players == 0 && !quick_actions) {
     vr_weaponmenu_selection = -1;
     vr_weaponmenu_selection_type = VR_WEAPONMENU_SELECTION_NONE;
     return;
@@ -6252,10 +6300,14 @@ void VR_DrawWeaponMenu(void) {
   qboolean weapon_position_valid[MAX_DYN_WEAPONS];
   vec3_t player_positions[MAX_SCOREBOARD];
   qboolean player_position_valid[MAX_SCOREBOARD];
+  vec3_t quick_action_positions[2];
+  qboolean quick_action_position_valid[2];
   memset(weapon_positions, 0, sizeof(weapon_positions));
   memset(weapon_position_valid, 0, sizeof(weapon_position_valid));
   memset(player_positions, 0, sizeof(player_positions));
   memset(player_position_valid, 0, sizeof(player_position_valid));
+  memset(quick_action_positions, 0, sizeof(quick_action_positions));
+  memset(quick_action_position_valid, 0, sizeof(quick_action_position_valid));
 
   int current_assigned_index = 0;
 
@@ -6462,6 +6514,45 @@ void VR_DrawWeaponMenu(void) {
     }
   }
 
+  if (quick_actions) {
+    float outer_radius =
+        base_radius + ((target_rings > 1) ? ((target_rings - 2) * 15.0f) : 0.0f);
+    float list_offset = outer_radius + 16.0f;
+    const char *labels[2] = {"QUICK SAVE", "QUICK LOAD"};
+    const int selection_types[2] = {
+        VR_WEAPONMENU_SELECTION_QUICKSAVE,
+        VR_WEAPONMENU_SELECTION_QUICKLOAD};
+    float text_scale = 0.30f;
+    float char_width = 8.0f * text_scale;
+    float line_spacing = 5.0f;
+
+    for (int i = 0; i < 2; i++) {
+      vec3_t text_pos, text_center, text_color;
+      char label[24];
+      qboolean is_selected =
+          vr_weaponmenu_selection_type == selection_types[i];
+      int len;
+
+      q_snprintf(label, sizeof(label), "%s%s", is_selected ? "> " : "  ",
+                 labels[i]);
+      len = strlen(label);
+      text_color[0] = is_selected ? 0.45f : 0.82f;
+      text_color[1] = is_selected ? 1.85f : 0.82f;
+      text_color[2] = is_selected ? 0.45f : 0.82f;
+
+      VectorCopy(origin, text_pos);
+      VectorMA(text_pos, -list_offset, right, text_pos);
+      VectorMA(text_pos, (0.5f - i) * line_spacing, up, text_pos);
+      VR_DrawText3DOutlined(text_pos, right, up, label, text_scale, text_color,
+                            false);
+
+      VectorCopy(text_pos, text_center);
+      VectorMA(text_center, (len * char_width) * 0.5f, right, text_center);
+      VectorCopy(text_center, quick_action_positions[i]);
+      quick_action_position_valid[i] = true;
+    }
+  }
+
   // --- Pointer-based selection: determine which weapon or player the right
   // controller is aiming at. Desktop falls back to view direction.
   vec3_t aim_origin, aim_fwd, aim_right_dummy, aim_up_dummy;
@@ -6513,6 +6604,24 @@ void VR_DrawWeaponMenu(void) {
       best_score = score;
       best_index = playernum;
       best_type = VR_WEAPONMENU_SELECTION_PLAYER;
+    }
+  }
+
+  for (int i = 0; i < 2; i++) {
+    vec3_t dir;
+    float score;
+
+    if (!quick_action_position_valid[i])
+      continue;
+    VectorSubtract(quick_action_positions[i], aim_origin, dir);
+    VectorNormalize(dir);
+
+    score = DotProduct(aim_fwd, dir);
+    if (score > best_score) {
+      best_score = score;
+      best_index = 0;
+      best_type = i == 0 ? VR_WEAPONMENU_SELECTION_QUICKSAVE
+                         : VR_WEAPONMENU_SELECTION_QUICKLOAD;
     }
   }
 

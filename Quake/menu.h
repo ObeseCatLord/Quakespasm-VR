@@ -36,6 +36,7 @@ enum m_state_e {
 	m_video,
 	m_vr,
 	m_keys,
+	m_weapons,
 	m_help,
 	m_mods,
 	m_models,
@@ -75,6 +76,7 @@ void M_PointerLeave (m_pointer_source_t source);
 qboolean M_PointerCanActivate (m_pointer_source_t source);
 void M_PointerActivate (m_pointer_source_t source);
 qboolean M_PointerConsumesMouse (void);
+qboolean M_BindGrabActive (void);
 
 extern qboolean (*vid_menupointerfn)(float x, float y);
 
