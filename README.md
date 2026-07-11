@@ -55,7 +55,9 @@ extended protocol support.
 - Default bindings expose secondary fire through `+button3`: right mouse in
   `-novr`, Index right touchpad in VR, and right grip on other controllers.
 - Text, menus, controller input, and desktop fallback crosshairs were adjusted
-  for VR stereo correctness and desktop compatibility.
+  for VR stereo correctness and desktop compatibility. The same menu cursor can
+  be selected with the desktop pointer or the primary VR controller ray;
+  controller trigger activation is menu-only and single-frame gated.
 
 ### Networking
 
@@ -102,6 +104,13 @@ extended protocol support.
   default server protocol, while older protocols remain selectable.
 - Menu/config startup supports `-postcfg` for a final local config that runs
   after mod startup files.
+- Enhanced rerelease MD5 replacement assets can be mounted explicitly with
+  `-rerelease <rerelease-root>`. Steam-location discovery is opt-in with
+  `-autodetectrerelease`, never automatic; use `-norerelease` to suppress a
+  shared launch script's opt-in probe.
+- Maps that reference external WAD2/WAD3 texture archives can use a strictly
+  validated, client-only fallback (`wad_external_textures 1`). Embedded BSP
+  pixels and normal loose replacement textures retain precedence.
 
 ### Rendering And Performance
 
@@ -122,6 +131,10 @@ Place the executable beside your `id1` folder or Quake rerelease game data.
 ./quakespasm-openvr.bin -vr -game ad
 ./quakespasm-openvr.bin -novr -game ad
 ./quakespasm-openvr.bin -dedicated 16 -game vr +coop 1 +map start
+# Explicit enhanced-model pack, without making rerelease game data active:
+./quakespasm-openvr.bin -rerelease "$HOME/Windows/Steam/steamapps/common/Quake/rerelease"
+# Optional conventional-Steam-location scan (disabled unless requested):
+./quakespasm-openvr.bin -autodetectrerelease
 ```
 
 For a final local config that should win after mod configs:
@@ -344,7 +357,7 @@ QuakeSpasm cvar.
 | `cl_iDrive` | `1` | Input | QSS-M last-pressed-wins handling for opposing movement keys. |
 | `cl_lerpdebug` | `0` | Diagnostics | Logs model/entity interpolation reset causes. |
 | `cl_lerpdebug_models` | `""` | Diagnostics | Comma-separated model filter for `cl_lerpdebug`. |
-| `cl_mousemenu` | `1` | UI | Enables mouse menu interaction. |
+| `cl_mousemenu` | `1` | UI | Enables desktop pointer-menu interaction; the VR controller pointer remains available in menus. |
 | `cl_mwheelpitch` | `5` | Input | Mouse-wheel pitch tuning. |
 | `cl_net_lerpbuffer*` | `0` | Networking | Retired no-op compatibility cvars retained only so old configs do not warn. |
 | `cl_netfps` | `0` | Networking | Retired no-op retained for old configs; QSS-M-style pacing is controlled by `host_maxfps`. |
@@ -405,6 +418,7 @@ QuakeSpasm cvar.
 | `r_skywind` | `0` | Rendering | Sky wind amount parsed from worldspawn or set manually. |
 | `r_useportalculling` | `0` | Performance | Enables portal/PVS culling experiment. |
 | `scr_crosshair_desktop_fallback` | `1` | UI | Draws a fallback desktop crosshair when mod HUDs omit one. |
+| `wad_external_textures` | `1` | Compatibility | Allows validated external WAD2/WAD3 pixels for BSP miptextures that intentionally have no embedded data. |
 | `sv_airaccelerate` | `-1` | PMove | PMove air acceleration; negative means compatibility default. |
 | `sv_cmdfile` | `""` | Server | Server command file hook. |
 | `sv_coop_ammo_respawn` | `1` | Co-op | Enables co-op ammo respawn. |

@@ -29,6 +29,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 void (*vid_menucmdfn)(void); // johnfitz
 void (*vid_menudrawfn)(void);
 void (*vid_menukeyfn)(int key);
+qboolean (*vid_menupointerfn)(float x, float y);
 
 void (*vr_menucmdfn)(void);
 void (*vr_menudrawfn)(void);
@@ -100,6 +101,12 @@ void M_Quit_Key(int key);
 qboolean m_entersound; // play after drawing a frame, so caching
                        // won't disrupt the sound
 qboolean m_recursiveDraw;
+
+/* Shared hover state for desktop and VR pointer adapters. */
+static qboolean m_pointer_hover;
+static m_pointer_source_t m_pointer_source;
+static enum m_state_e m_pointer_state;
+static int m_pointer_activate_key = K_ENTER;
 
 enum m_state_e m_return_state;
 qboolean m_return_onerror;
@@ -2959,6 +2966,12 @@ void M_Draw(void) {
 }
 
 void M_Keydown(int key) {
+  /* Keyboard/gamepad navigation owns the shared cursor after any key press. */
+  if (key != K_MOUSE1) {
+    m_pointer_hover = false;
+    m_pointer_state = m_none;
+  }
+
   switch (m_state) {
   case m_none:
     return;
@@ -3073,6 +3086,226 @@ qboolean M_TextEntry(void) {
   default:
     return false;
   }
+}
+
+//=============================================================================
+/* POINTER INPUT */
+
+/*
+ * These helpers deliberately select the existing menu cursors rather than
+ * retaining a second UI tree.  The rectangles mirror what is visibly drawn in
+ * the classic 320x200 menu canvas, so a pointer outside an actionable row
+ * cannot activate whichever row happened to be selected previously.
+ */
+static qboolean M_PointerRows(float x, float y, float left, float right,
+                              float top, float rowheight, int count,
+                              int *selection) {
+  int row;
+
+  if (x < left || x >= right || y < top || y >= top + rowheight * count)
+    return false;
+
+  row = (int)((y - top) / rowheight);
+  if (row < 0 || row >= count)
+    return false;
+
+  *selection = row;
+  return true;
+}
+
+static qboolean M_PointerTable(float x, float y, float left, float right,
+                               const int *table, int count, int *selection) {
+  int i;
+
+  if (x < left || x >= right)
+    return false;
+
+  for (i = 0; i < count; i++) {
+    if (y >= table[i] && y < table[i] + 8) {
+      *selection = i;
+      return true;
+    }
+  }
+
+  return false;
+}
+
+static qboolean M_PointerHit(float x, float y) {
+  int selection;
+
+  switch (m_state) {
+  case m_main:
+    if (M_PointerRows(x, y, 64, 264, 32, 20, MAIN_ITEMS, &selection)) {
+      m_main_cursor = selection;
+      return true;
+    }
+    break;
+
+  case m_singleplayer:
+    if (M_PointerRows(x, y, 64, 264, 32, 20, SINGLEPLAYER_ITEMS,
+                      &selection)) {
+      m_singleplayer_cursor = selection;
+      return true;
+    }
+    break;
+
+  case m_load:
+  case m_save:
+    if (M_PointerRows(x, y, 8, 312, 32, 8, MAX_SAVEGAMES, &selection)) {
+      load_cursor = selection;
+      return true;
+    }
+    break;
+
+  case m_multiplayer:
+    if (M_PointerRows(x, y, 64, 264, 32, 20, MULTIPLAYER_ITEMS,
+                      &selection)) {
+      m_multiplayer_cursor = selection;
+      return true;
+    }
+    break;
+
+  case m_setup:
+    if (M_PointerTable(x, y, 48, 312, setup_cursor_table, NUM_SETUP_CMDS,
+                       &selection)) {
+      setup_cursor = selection;
+      return true;
+    }
+    break;
+
+  case m_net:
+    if (M_PointerRows(x, y, 64, 264, 32, 20, m_net_items, &selection)) {
+      m_net_cursor = selection;
+      return true;
+    }
+    break;
+
+  case m_options:
+    if (M_PointerRows(x, y, 8, 320, 32, 8, OPTIONS_ITEMS, &selection)) {
+      if (!vid_menudrawfn && (selection == OPT_VIDEO || selection == OPT_VR))
+        break;
+      options_cursor = selection;
+      return true;
+    }
+    break;
+
+  case m_video:
+    return vid_menupointerfn && (*vid_menupointerfn)(x, y);
+
+  case m_vr:
+    return VR_MenuPointerMove(x, y);
+
+  case m_keys:
+    if (M_PointerRows(x, y, 8, 312, 48, 8, NUMCOMMANDS, &selection)) {
+      keys_cursor = selection;
+      return true;
+    }
+    break;
+
+  case m_lanconfig:
+    if (M_PointerTable(x, y, 64, 312, lanConfig_cursor_table,
+                       StartingGame ? 2 : NUM_LANCONFIG_CMDS, &selection)) {
+      lanConfig_cursor = selection;
+      return true;
+    }
+    break;
+
+  case m_gameoptions:
+    if (M_PointerTable(x, y, 0, 312, gameoptions_cursor_table,
+                       NUM_GAMEOPTIONS, &selection)) {
+      gameoptions_cursor = selection;
+      return true;
+    }
+    break;
+
+  case m_slist:
+    if (M_PointerRows(x, y, 0, 312, 32, 8, hostCacheCount, &selection)) {
+      slist_cursor = selection;
+      return true;
+    }
+    break;
+
+  case m_mods: {
+    int visible;
+
+    M_Mods_Refresh();
+    visible = q_min(MAX_MODS_ON_SCREEN, m_mods_matches - m_mods_first);
+    if (visible > 0 &&
+        M_PointerRows(x, y, 32, 280, 64, 8, visible, &selection)) {
+      m_mods_cursor = m_mods_first + selection;
+      M_Mods_KeepCursorVisible();
+      return true;
+    }
+    break;
+  }
+
+  case m_models:
+    if (M_PointerRows(x, y, 16, 312, 64, 8, 1, &selection))
+      return true;
+    break;
+
+  case m_help:
+    if (x >= 0 && x < 320 && y >= 0 && y < 200) {
+      m_pointer_activate_key = x < 160 ? K_LEFTARROW : K_RIGHTARROW;
+      return true;
+    }
+    break;
+
+  default:
+    break;
+  }
+
+  return false;
+}
+
+void M_PointerMove(float x, float y, m_pointer_source_t source) {
+  m_pointer_hover = false;
+  m_pointer_state = m_none;
+  m_pointer_activate_key = K_ENTER;
+
+  if (key_dest != key_menu || m_state == m_none || bind_grab ||
+      x < 0 || x >= 320 || y < 0 || y >= 200)
+    return;
+
+  /* cl_mousemenu controls desktop input only; VR remains usable in menus. */
+  if (source == M_POINTER_DESKTOP &&
+      (!Cvar_VariableValue("cl_mousemenu") || vr_enabled.value))
+    return;
+
+  m_pointer_source = source;
+  m_pointer_state = m_state;
+  m_pointer_hover = M_PointerHit(x, y);
+  if (!m_pointer_hover)
+    m_pointer_state = m_none;
+}
+
+void M_PointerLeave(m_pointer_source_t source) {
+  if (m_pointer_hover && m_pointer_source == source) {
+    m_pointer_hover = false;
+    m_pointer_state = m_none;
+    m_pointer_activate_key = K_ENTER;
+  }
+}
+
+qboolean M_PointerCanActivate(m_pointer_source_t source) {
+  return m_pointer_hover && m_pointer_source == source &&
+         m_pointer_state == m_state && key_dest == key_menu && !bind_grab;
+}
+
+void M_PointerActivate(m_pointer_source_t source) {
+  if (!M_PointerCanActivate(source))
+    return;
+
+  /* Clear before dispatch because activation commonly changes m_state. */
+  m_pointer_hover = false;
+  m_pointer_state = m_none;
+  M_Keydown(m_pointer_activate_key);
+  m_pointer_activate_key = K_ENTER;
+}
+
+qboolean M_PointerConsumesMouse(void) {
+  return !vr_enabled.value && key_dest == key_menu && m_state != m_none && !bind_grab &&
+         Cvar_VariableValue("cl_mousemenu") != 0;
 }
 
 void M_ConfigureNetSubsystem(void) {

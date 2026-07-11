@@ -463,6 +463,22 @@ void VR_MenuKey(int key) {
   }
 }
 
+qboolean VR_MenuPointerMove(float x, float y) {
+  int option;
+
+  /* VR options begin at the same baseline used by VR_MenuDraw(). */
+  if (x < 8.0f || x >= 320.0f || y < 48.0f ||
+      y >= 48.0f + (float)VR_OPTION_MAX * 8.0f)
+    return false;
+
+  option = (int)((y - 48.0f) / 8.0f);
+  if (option < 0 || option >= VR_OPTION_MAX)
+    return false;
+
+  vr_options_cursor = option;
+  return true;
+}
+
 void VR_MenuDraw(void) {
   int y = 4;
 

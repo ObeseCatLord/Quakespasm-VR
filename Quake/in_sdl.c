@@ -86,6 +86,7 @@ static int buttonremap[] =
 
 /* total accumulated mouse movement since last frame */
 static int	total_dx, total_dy = 0;
+static qboolean menu_mouse_cursor = false;
 
 static int SDLCALL IN_FilterMouseEvents (const SDL_Event *event)
 {
@@ -133,6 +134,62 @@ static void IN_EndIgnoringMouseEvents(void)
 	if (SDL_GetEventFilter() != NULL)
 		SDL_SetEventFilter(NULL);
 #endif
+}
+
+/*
+ * The menu renderer uses a 320x200 logical canvas.  Keep SDL's absolute
+ * coordinates at the backend boundary so menu code and the VR ray adapter use
+ * identical logical coordinates without either touching gameplay input.
+ */
+static void IN_MenuPointerMove(int screenx, int screeny)
+{
+	float scale, left, top;
+	int width = vid.width, height = vid.height;
+
+#if defined(USE_SDL2)
+	if (VID_GetWindow())
+		SDL_GetWindowSize((SDL_Window *) VID_GetWindow(), &width, &height);
+#endif
+
+	if (width <= 0 || height <= 0)
+		return;
+
+	scale = q_min((float) width / 320.0f, (float) height / 200.0f);
+	scale = CLAMP(1.0f, scr_menuscale.value, scale);
+	left = ((float) width - 320.0f * scale) * 0.5f;
+	top = ((float) height - 200.0f * scale) * 0.5f;
+	M_PointerMove(((float) screenx - left) / scale,
+	              ((float) screeny - top) / scale, M_POINTER_DESKTOP);
+}
+
+static void IN_UpdateMenuMouseMode(void)
+{
+	qboolean want_pointer = key_dest == key_menu && m_state != m_none &&
+		!vr_enabled.value && Cvar_VariableValue("cl_mousemenu") != 0;
+
+	if (!want_pointer)
+	{
+		if (menu_mouse_cursor)
+			M_PointerLeave(M_POINTER_DESKTOP);
+		menu_mouse_cursor = false;
+		return;
+	}
+
+#if defined(USE_SDL2)
+	if (!menu_mouse_cursor && SDL_SetRelativeMouseMode(SDL_FALSE) != 0)
+		Con_Printf("WARNING: SDL_SetRelativeMouseMode(SDL_FALSE) failed.\n");
+#else
+	if (!menu_mouse_cursor)
+	{
+		if (SDL_WM_GrabInput(SDL_GRAB_QUERY) != SDL_GRAB_OFF)
+			SDL_WM_GrabInput(SDL_GRAB_OFF);
+		if (SDL_ShowCursor(SDL_QUERY) != SDL_ENABLE)
+			SDL_ShowCursor(SDL_ENABLE);
+	}
+#endif
+	/* Menu entry normally filtered mouse events while releasing game input. */
+	IN_EndIgnoringMouseEvents();
+	menu_mouse_cursor = true;
 }
 
 #ifdef MACOS_X_ACCELERATION_HACK
@@ -209,6 +266,8 @@ void IN_Activate (void)
 {
 	if (no_mouse)
 		return;
+
+	menu_mouse_cursor = false;
 
 #ifdef MACOS_X_ACCELERATION_HACK
 	/* Save the status of mouse acceleration */
@@ -1027,6 +1086,8 @@ void IN_SendKeyEvents (void)
 	int key;
 	qboolean down;
 
+	IN_UpdateMenuMouseMode();
+
 	while (SDL_PollEvent(&event))
 	{
 		switch (event.type)
@@ -1108,6 +1169,13 @@ void IN_SendKeyEvents (void)
 							event.button.button);
 				break;
 			}
+			if (event.button.button == 1 && M_PointerConsumesMouse())
+			{
+				IN_MenuPointerMove(event.button.x, event.button.y);
+				if (event.button.state == SDL_PRESSED)
+					M_PointerActivate(M_POINTER_DESKTOP);
+				break;
+			}
 			Key_Event(buttonremap[event.button.button - 1], event.button.state == SDL_PRESSED);
 			break;
 
@@ -1127,7 +1195,10 @@ void IN_SendKeyEvents (void)
 #endif
 
 		case SDL_MOUSEMOTION:
-			IN_MouseMotion(event.motion.xrel, event.motion.yrel);
+			if (M_PointerConsumesMouse())
+				IN_MenuPointerMove(event.motion.x, event.motion.y);
+			else
+				IN_MouseMotion(event.motion.xrel, event.motion.yrel);
 			break;
 
 #if defined(USE_SDL2)

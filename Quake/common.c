@@ -1651,6 +1651,25 @@ static qboolean COM_IsRereleaseModelAsset (const char *filename)
 }
 
 /*
+=================
+COM_HasRereleaseModelPack
+
+Return true only for a complete rerelease root.  Keeping this check outside
+the normal filesystem lets automatic discovery stay silent when Steam is not
+installed, while COM_AddRereleaseModelPack retains useful diagnostics for an
+explicit -rerelease path.
+=================
+*/
+static qboolean COM_HasRereleaseModelPack (const char *root)
+{
+	char	pakfile[MAX_OSPATH];
+
+	return root && *root &&
+		q_snprintf (pakfile, sizeof(pakfile), "%s/id1/pak0.pak", root) < (int)sizeof(pakfile) &&
+		(Sys_FileType (pakfile) & FS_ENT_FILE);
+}
+
+/*
 ============
 COM_Path_f
 ============
@@ -2370,6 +2389,71 @@ static void COM_AddRereleaseModelPack (const char *root)
 	Con_Printf ("Rerelease MD5 model assets enabled from %s\n", pakfile);
 }
 
+/*
+=================
+COM_TryAutoRereleaseModelPack
+
+Look only in conventional Steam locations plus a sibling rerelease directory.
+This is called only by the explicit -autodetectrerelease opt-in.  The first
+verified id1/pak0.pak is mounted through the same MD5/LMP-only path as
+-rerelease.  This is deliberately not a game-directory search: maps, sounds,
+progs.dat, configs, and normal textures from the rerelease never enter the
+active filesystem.
+=================
+*/
+static void COM_TryAutoRereleaseModelPack (void)
+{
+	static const char *const steam_rerelease_paths[] =
+	{
+		/* Also covers the user's Steam installation under a Windows prefix. */
+		"Windows/Steam/steamapps/common/Quake/rerelease",
+		".steam/steam/steamapps/common/Quake/rerelease",
+		".steam/debian-installation/steamapps/common/Quake/rerelease",
+		".local/share/Steam/steamapps/common/Quake/rerelease",
+		".var/app/com.valvesoftware.Steam/data/Steam/steamapps/common/Quake/rerelease"
+	};
+	char		root[MAX_OSPATH];
+	const char	*home;
+	const char	*programfiles;
+	size_t		i;
+
+	/* A colocated rerelease is useful for portable installs. */
+	if (q_snprintf (root, sizeof(root), "%s/rerelease", com_basedir) < (int)sizeof(root) &&
+		COM_HasRereleaseModelPack (root))
+	{
+		COM_AddRereleaseModelPack (root);
+		return;
+	}
+
+	/* HOME is available on Unix and Wine; USERPROFILE covers native Windows. */
+	home = getenv ("HOME");
+	if (!home || !*home)
+		home = getenv ("USERPROFILE");
+	if (home && *home)
+	{
+		for (i = 0; i < countof(steam_rerelease_paths); i++)
+		{
+			if (q_snprintf (root, sizeof(root), "%s/%s", home, steam_rerelease_paths[i]) < (int)sizeof(root) &&
+				COM_HasRereleaseModelPack (root))
+			{
+				COM_AddRereleaseModelPack (root);
+				return;
+			}
+		}
+	}
+
+	/* Native Steam's usual Windows installation, if its environment exists. */
+	programfiles = getenv ("ProgramFiles(x86)");
+	if (!programfiles || !*programfiles)
+		programfiles = getenv ("PROGRAMFILES(X86)");
+	if (programfiles && *programfiles &&
+		q_snprintf (root, sizeof(root), "%s/Steam/steamapps/common/Quake/rerelease", programfiles) < (int)sizeof(root) &&
+		COM_HasRereleaseModelPack (root))
+	{
+		COM_AddRereleaseModelPack (root);
+	}
+}
+
 //==============================================================================
 //johnfitz -- dynamic gamedir stuff -- modified by QuakeSpasm team.
 //==============================================================================
@@ -2643,12 +2727,22 @@ void COM_InitFilesystem (void) //johnfitz -- modified based on topaz's tutorial
 	COM_AddGameDirectory (com_basedir, GAMENAME);
 
 	/*
-	 * Opt-in only: the directory is normally the Steam
+	 * An explicit path always wins.  Automatic Steam probing is deliberately
+	 * disabled by default: opt in with -autodetectrerelease.  -norerelease can
+	 * suppress that probe in shared launch scripts.  The directory is the
 	 * .../common/Quake/rerelease root, not its id1 child.
 	 */
 	i = COM_CheckParm ("-rerelease");
-	if (i && i < com_argc - 1)
-		COM_AddRereleaseModelPack (com_argv[i + 1]);
+	if (i)
+	{
+		if (i < com_argc - 1)
+			COM_AddRereleaseModelPack (com_argv[i + 1]);
+		else
+			Con_Warning ("-rerelease requires a rerelease root path\n");
+	}
+	else if (COM_CheckParm ("-autodetectrerelease") &&
+		!COM_CheckParm ("-norerelease"))
+		COM_TryAutoRereleaseModelPack ();
 
 	/* this is the end of our base searchpath:
 	 * any set gamedirs, such as those from -game command line

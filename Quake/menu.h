@@ -51,6 +51,17 @@ extern enum m_state_e m_return_state;
 
 extern qboolean m_entersound;
 
+/*
+ * Pointer adapters feed canonical 320x200 menu coordinates into the same
+ * cursor state used by keyboard/controller navigation.  Menu logic stays
+ * input-source agnostic; SDL mouse and the OpenVR controller ray are only
+ * adapters around this small contract.
+ */
+typedef enum {
+	M_POINTER_DESKTOP,
+	M_POINTER_VR
+} m_pointer_source_t;
+
 //
 // menus
 //
@@ -59,6 +70,13 @@ void M_Keydown (int key);
 void M_Charinput (int key);
 qboolean M_TextEntry (void);
 void M_ToggleMenu_f (void);
+void M_PointerMove (float x, float y, m_pointer_source_t source);
+void M_PointerLeave (m_pointer_source_t source);
+qboolean M_PointerCanActivate (m_pointer_source_t source);
+void M_PointerActivate (m_pointer_source_t source);
+qboolean M_PointerConsumesMouse (void);
+
+extern qboolean (*vid_menupointerfn)(float x, float y);
 
 void M_Menu_Main_f (void);
 void M_Menu_Options_f (void);

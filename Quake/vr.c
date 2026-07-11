@@ -225,6 +225,22 @@ vec3_t vr_viewOffset;
 static vec3_t lastHudPosition{0.0, 0.0, 0.0};
 static vec3_t lastMenuPosition{0.0, 0.0, 0.0};
 
+/*
+ * The menu is drawn as a 320x200 plane in world space.  Cache the exact
+ * surface produced by VR_Draw2D so controller hit-testing in VR_Move uses the
+ * rendered transform rather than a separately reconstructed approximation.
+ */
+typedef struct {
+  vec3_t center;
+  vec3_t right;
+  vec3_t down;
+  vec3_t normal;
+  float scale;
+  qboolean valid;
+} vr_menu_surface_t;
+
+static vr_menu_surface_t vr_menu_surface;
+
 vr_weapon_cmd_t vr_weapons[MAX_VR_WEAPONS];
 int num_vr_weapons = 0;
 
@@ -1498,22 +1514,55 @@ int weaponCVarEntry = -1;
 
 static qboolean VR_IsMultiplayerClient(void) { return cl.maxclients > 1; }
 
+/*
+ * The rerelease replacement meshes retain the classic model path (for
+ * example, progs/v_shot.mdl) but expose a distinct MD5 alias header.  The
+ * named VR offset profiles were calibrated for the classic/OSJC MDL geometry,
+ * so applying them to that MD5 header can move or shrink a held weapon out of
+ * the VR view.  Use the alias data rather than the filename to select the
+ * profile, because the pathname intentionally remains the classic one.
+ */
+static qboolean VR_ViewmodelUsesNeutralProfile(const aliashdr_t *hdr) {
+  return hdr && hdr->poseverttype == ALIAS_POSE_MD5;
+}
+
+static void VR_ApplyNeutralViewmodelTransform(aliashdr_t *hdr) {
+  float scaleCorrect =
+      (vr_world_scale.value / 0.75f) * vr_gunmodelscale.value;
+
+  /* Preserve global user tuning, but do not apply an MDL-pack-specific slot. */
+  VectorScale(hdr->original_scale, scaleCorrect, hdr->scale);
+  VectorCopy(hdr->original_scale_origin, hdr->scale_origin);
+  hdr->scale_origin[2] += vr_gunmodely.value;
+  VectorScale(hdr->scale_origin, scaleCorrect, hdr->scale_origin);
+}
+
 void Mod_Weapon(qmodel_t *model, aliashdr_t *hdr) {
   const char *name = model ? model->name : "";
+
+  if (!model || !hdr)
+    return;
 
   if (lastWeaponHeader != hdr || lastWeaponModel != model) {
     lastWeaponHeader = hdr;
     lastWeaponModel = model;
     weaponCVarEntry = -1;
-    for (int i = 0; i < MAX_WEAPONS; i++) {
-      if (!strcmp(vr_weapon_offset[i * VARS_PER_WEAPON + 4].string, name)) {
-        weaponCVarEntry = i;
-        break;
+    if (!VR_ViewmodelUsesNeutralProfile(hdr)) {
+      for (int i = 0; i < MAX_WEAPONS; i++) {
+        if (!strcmp(vr_weapon_offset[i * VARS_PER_WEAPON + 4].string, name)) {
+          weaponCVarEntry = i;
+          break;
+        }
+      }
+      if (weaponCVarEntry == -1) {
+        DebugLog("VR: no weapon offset for %s\n", name);
       }
     }
-    if (weaponCVarEntry == -1) {
-      DebugLog("VR: no weapon offset for %s\n", name);
-    }
+  }
+
+  if (VR_ViewmodelUsesNeutralProfile(hdr)) {
+    VR_ApplyNeutralViewmodelTransform(hdr);
+    return;
   }
 
   if (weaponCVarEntry != -1) {
@@ -5005,6 +5054,14 @@ void VR_Draw2D() {
   VectorMA(r_refdef.vieworg, 48, forward, target);
   vec3lerp(smoothedTarget, lastMenuPosition, target, 0.2);
   VectorCopy(smoothedTarget, lastMenuPosition);
+
+  /* Local +X is screen right, local +Y is screen down, local +Z faces out. */
+  VectorCopy(smoothedTarget, vr_menu_surface.center);
+  VectorCopy(right, vr_menu_surface.right);
+  VectorScale(up, -1.0f, vr_menu_surface.down);
+  VectorCopy(forward, vr_menu_surface.normal);
+  vr_menu_surface.scale = scale_hud;
+  vr_menu_surface.valid = scale_hud > 0.0001f;
   glTranslatef(smoothedTarget[0], smoothedTarget[1], smoothedTarget[2]);
 
   glRotatef(menu_angles[YAW] - 90, 0, 0, 1); // rotate around z
@@ -5352,6 +5409,94 @@ void DoTrigger(vr_controller *controller, int quakeKey) {
   }
 }
 
+/*
+ * Keep menu trigger edges separate from Key_Event.  A held attack that opens a
+ * menu is released safely. A new trigger press prefers the current VR pointer
+ * hit; when the ray is off the panel it retains the established selected-item
+ * behavior. Neither path can leak into a gameplay attack.
+ */
+static void VR_DoMenuTrigger(vr_controller *controller) {
+  const float triggerDownThreshold = 0.55f;
+  const float triggerUpThreshold = 0.45f;
+  int controllerIndex = VR_ControllerIndex(controller);
+  float triggerValue;
+
+  if (!controller->seenThisFrame) {
+    if (controller->triggerDown && controller->triggerKey)
+      VR_SetTrigger(controller, controller->triggerKey, false);
+    controller->triggerDown = false;
+    controller->triggerKey = 0;
+    return;
+  }
+
+  triggerValue = VR_ReadTrigger(controller, controllerIndex);
+
+  /* Release an attack/old key before treating the held trigger as menu input. */
+  if (controller->triggerDown && controller->triggerKey == K_RTRIGGER) {
+    VR_SetTrigger(controller, controller->triggerKey, false);
+    if (triggerValue >= triggerUpThreshold) {
+      controller->triggerDown = true;
+      controller->triggerKey = 0;
+      return;
+    }
+  }
+
+  if (!controller->triggerDown && triggerValue > triggerDownThreshold) {
+    controller->triggerDown = true;
+    controller->triggerKey = 0;
+    if (M_PointerCanActivate(M_POINTER_VR))
+      M_PointerActivate(M_POINTER_VR);
+    else {
+      /* Preserve the old stick/arrow-navigation trigger behavior off-panel. */
+      controller->triggerDown = false;
+      VR_SetTrigger(controller, K_ENTER, true);
+    }
+  } else if (controller->triggerDown && triggerValue < triggerUpThreshold) {
+    if (controller->triggerKey)
+      VR_SetTrigger(controller, controller->triggerKey, false);
+    else {
+      controller->triggerDown = false;
+      controller->triggerKey = 0;
+    }
+  }
+}
+
+static void VR_UpdateMenuPointer(void) {
+  vec3_t ray_origin, ray_forward, ray_right, ray_up;
+  vec3_t center_to_origin, hit, relative;
+  float denominator, distance, x, y;
+
+  if (key_dest != key_menu || !controllers[1].seenThisFrame ||
+      !vr_menu_surface.valid) {
+    M_PointerLeave(M_POINTER_VR);
+    return;
+  }
+
+  VectorCopy(cl.handpos[1], ray_origin);
+  /* Raw controller orientation is valid in every VR aim mode; cl.handrot is not. */
+  AngleVectors(controllers[1].orientation, ray_forward, ray_right, ray_up);
+  VectorSubtract(vr_menu_surface.center, ray_origin, center_to_origin);
+  denominator = DotProduct(ray_forward, vr_menu_surface.normal);
+  if (denominator > -0.0001f && denominator < 0.0001f) {
+    M_PointerLeave(M_POINTER_VR);
+    return;
+  }
+
+  distance = DotProduct(center_to_origin, vr_menu_surface.normal) / denominator;
+  if (distance <= 0.0f) {
+    M_PointerLeave(M_POINTER_VR);
+    return;
+  }
+
+  VectorMA(ray_origin, distance, ray_forward, hit);
+  VectorSubtract(hit, vr_menu_surface.center, relative);
+  x = DotProduct(relative, vr_menu_surface.right) / vr_menu_surface.scale +
+      160.0f;
+  y = DotProduct(relative, vr_menu_surface.down) / vr_menu_surface.scale +
+      100.0f;
+  M_PointerMove(x, y, M_POINTER_VR);
+}
+
 void DoAxis(vr_controller *controller, int axis, int quakeKeyNeg,
             int quakeKeyPos, double deadzoneExtra) {
   int controllerIndex = VR_ControllerIndex(controller);
@@ -5391,7 +5536,13 @@ void VR_Move(usercmd_t *cmd) {
   if (emit_input_events) {
     // k_EButton_Axis1 === k_EButton_SteamVR_Trigger
     DoTrigger(&controllers[0], K_LTRIGGER);
-    DoTrigger(&controllers[1], key_dest == key_menu ? K_ENTER : K_RTRIGGER);
+    if (key_dest == key_menu) {
+      VR_UpdateMenuPointer();
+      VR_DoMenuTrigger(&controllers[1]);
+    } else {
+      M_PointerLeave(M_POINTER_VR);
+      DoTrigger(&controllers[1], K_RTRIGGER);
+    }
 
     // k_EButton_Grip (uses DoGrip for squeeze-only behavior on Index)
     DoGrip(&controllers[0], K_LSHOULDER);
