@@ -111,6 +111,7 @@ void	Cvar_SetValueROM (const char *var_name, const float value);
 
 void Cvar_SetQuick (cvar_t *var, const char *value);
 void Cvar_SetValueQuick (cvar_t *var, const float value);
+void Cvar_Reset (const char *name);
 // these two accept a cvar pointer instead of a var name,
 // but are otherwise identical to the "non-Quick" versions.
 // the cvar MUST be registered.

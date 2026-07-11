@@ -317,6 +317,19 @@ typedef struct md3vertex_s
 	byte	latlong[2];
 } md3vertex_t;
 
+/*
+ * The rerelease uses skeletal MD5 meshes.  OpenVR's initial compatible path
+ * stores their skinned animation poses as ordinary float vertices for the
+ * fixed-function renderer.  The layout deliberately carries UVs per vertex
+ * because, unlike MDL, MD5 has no separate seam table.
+ */
+typedef struct md5vertex_s
+{
+	float	xyz[3];
+	float	normal[3];
+	float	st[2];
+} md5vertex_t;
+
 #define MD3_VERSION		15
 #define MD3_XYZ_SCALE		(1.0f / 64.0f)
 #define MAX_MD3_SURFACES	32
@@ -325,7 +338,8 @@ typedef struct md3vertex_s
 typedef enum
 {
 	ALIAS_POSE_MDL = 0,
-	ALIAS_POSE_MD3
+	ALIAS_POSE_MD3,
+	ALIAS_POSE_MD5
 } aliasposeverttype_t;
 //--
 
@@ -549,6 +563,10 @@ qmodel_t *Mod_ForName (const char *name, qboolean crash);
 void	*Mod_Extradata (qmodel_t *mod);	// handles caching
 aliashdr_t *Mod_GetMD3Extradata (qmodel_t *mod);
 qboolean Mod_UseMD3Model (qmodel_t *mod, int skinnum);
+aliashdr_t *Mod_GetMD5Extradata (qmodel_t *mod);
+qboolean Mod_UseMD5Model (qmodel_t *mod, int skinnum);
+qboolean Mod_UseMD3ModelForFrame (qmodel_t *mod, int skinnum, int frame);
+qboolean Mod_UseMD5ModelForFrame (qmodel_t *mod, int skinnum, int frame);
 void	Mod_TouchModel (const char *name);
 void	Mod_ForEachModel (void (*callback)(qmodel_t *mod));
 

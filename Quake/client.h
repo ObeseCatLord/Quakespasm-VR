@@ -428,6 +428,8 @@ void CL_FlushAckFrames(void);
 int CL_ReadFromServer(void);
 void CL_AutoReconnect_Frame(void);
 qboolean CL_AutoReconnect_IsActive(void);
+void CL_AutoReconnect_Cancel(void);
+qboolean CL_MaybeSwitchServerGame(const char *serverdirs);
 void CL_AdjustAngles(void);
 void CL_BaseMove(usercmd_t *cmd, qboolean isfinal);
 void CL_FinishMove(usercmd_t *cmd, qboolean isfinal);

@@ -26,6 +26,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 
 extern cvar_t r_drawflat, gl_overbright_models, gl_fullbrights, r_lerpmodels, r_lerpmove; //johnfitz
 extern cvar_t scr_fov, cl_gun_fovscale, vr_enabled;
+extern vec3_t vr_weaponcolor;
 
 cvar_t r_alias_batching = {"r_alias_batching", "1", CVAR_ARCHIVE};
 
@@ -764,6 +765,27 @@ static int R_MD3SurfaceSkin (const aliashdr_t *surface, int skinnum)
 	return skinnum;
 }
 
+static qboolean R_MD3UsesAlpha (aliashdr_t *surface, int skinnum)
+{
+	while (surface)
+	{
+		gltexture_t *texture = surface->gltextures[R_MD3SurfaceSkin (surface, skinnum)][0];
+		if (texture && (texture->flags & TEXPREF_ALPHA))
+			return true;
+		surface = R_NextMD3Surface (surface);
+	}
+	return false;
+}
+
+static void R_SetViewModelColor (float alpha)
+{
+	if (vr_weaponcolor[0] != 1.0f || vr_weaponcolor[1] != 1.0f ||
+		vr_weaponcolor[2] != 1.0f)
+		glColor4f (vr_weaponcolor[0], vr_weaponcolor[1], vr_weaponcolor[2], alpha);
+	else
+		glColor4f (1.0f, 1.0f, 1.0f, alpha);
+}
+
 static void R_MD3Normal (const md3vertex_t *vert, vec3_t normal)
 {
 	float lat = (float)vert->latlong[0] * (2.0f * (float)M_PI / 255.0f);
@@ -876,7 +898,7 @@ static void R_DrawMD3UntexturedPass (aliashdr_t *surface, lerpdata_t lerpdata)
 	}
 }
 
-static void R_DrawMD3Model (entity_t *e, qboolean cull)
+static void R_DrawMD3Model (entity_t *e, qboolean cull, qboolean viewmodel)
 {
 	aliashdr_t *md3;
 	lerpdata_t lerpdata;
@@ -930,15 +952,35 @@ static void R_DrawMD3Model (entity_t *e, qboolean cull)
 	skinnum = e->skinnum;
 	if (skinnum < 0 || skinnum >= md3->numskins)
 		skinnum = 0;
-	alphatest = !!md3->gltextures[R_MD3SurfaceSkin(md3, skinnum)][0];
+	alphatest = R_MD3UsesAlpha (md3, skinnum);
 	if (alphatest)
 		glEnable (GL_ALPHA_TEST);
 
 	rs_aliaspolys += R_MD3TriangleCount (md3);
-	R_SetupAliasLighting (e);
+	if (!viewmodel)
+		R_SetupAliasLighting (e);
 	GL_DisableMultitexture ();
 
-	if (r_drawflat_cheatsafe || r_lightmap_cheatsafe)
+	if (viewmodel)
+	{
+		overbright = false;
+		shading = false;
+		glTexEnvf (GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
+		R_SetViewModelColor (entalpha);
+		R_DrawMD3Pass (md3, lerpdata, skinnum, false);
+		if (gl_fullbrights.value)
+		{
+			glEnable (GL_BLEND);
+			glBlendFunc (GL_ONE, GL_ONE);
+			glDepthMask (GL_FALSE);
+			glColor4f (entalpha, entalpha, entalpha, entalpha);
+			R_DrawMD3Pass (md3, lerpdata, skinnum, true);
+			glDepthMask (GL_TRUE);
+			glBlendFunc (GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+			glDisable (GL_BLEND);
+		}
+	}
+	else if (r_drawflat_cheatsafe || r_lightmap_cheatsafe)
 	{
 		glDisable (GL_TEXTURE_2D);
 		shading = false;
@@ -1001,6 +1043,285 @@ cleanup:
 }
 
 /*
+==============================================================================
+
+					MD5 DRAWING
+
+Rerelease MD5 poses are baked to float vertices while loading, so this mirrors
+the MD3 fixed-function path and deliberately avoids a second renderer or a
+skeletal VBO dependency in the OpenVR build.
+==============================================================================
+*/
+
+static aliashdr_t *R_NextMD5Surface (aliashdr_t *surface)
+{
+	return surface->nextsurface ?
+		(aliashdr_t *)((byte *)surface + surface->nextsurface) : NULL;
+}
+
+static int R_MD5SurfaceSkin (const aliashdr_t *surface, int skinnum)
+{
+	if (skinnum < 0 || skinnum >= surface->numskins || !surface->gltextures[skinnum][0])
+		return 0;
+	return skinnum;
+}
+
+static qboolean R_MD5UsesAlpha (aliashdr_t *surface, int skinnum, int anim)
+{
+	while (surface)
+	{
+		gltexture_t *texture = surface->gltextures[R_MD5SurfaceSkin (surface, skinnum)][anim];
+		if (texture && (texture->flags & TEXPREF_ALPHA))
+			return true;
+		surface = R_NextMD5Surface (surface);
+	}
+	return false;
+}
+
+static void GL_DrawMD5Frame (aliashdr_t *surface, lerpdata_t lerpdata)
+{
+	const md5vertex_t *verts1, *verts2;
+	const unsigned short *indexes;
+	float blend, iblend, sscale, tscale;
+	int index, i;
+	qboolean lerping;
+
+	verts1 = (const md5vertex_t *)((const byte *)surface + surface->vertexes) +
+		lerpdata.pose1 * surface->numverts;
+	verts2 = (const md5vertex_t *)((const byte *)surface + surface->vertexes) +
+		lerpdata.pose2 * surface->numverts;
+	indexes = (const unsigned short *)((const byte *)surface + surface->indexes);
+	lerping = lerpdata.pose1 != lerpdata.pose2;
+	blend = lerping ? lerpdata.blend : 0.0f;
+	iblend = 1.0f - blend;
+	sscale = (float)surface->skinwidth / (float)TexMgr_PadConditional(surface->skinwidth);
+	tscale = (float)surface->skinheight / (float)TexMgr_PadConditional(surface->skinheight);
+
+	glBegin (GL_TRIANGLES);
+	for (i = 0; i < surface->numindexes; i++)
+	{
+		const md5vertex_t *v1, *v2;
+
+		index = indexes[i];
+		v1 = verts1 + index;
+		v2 = verts2 + index;
+		glTexCoord2f (v2->st[0] * sscale, v2->st[1] * tscale);
+		if (shading)
+		{
+			vec3_t normal;
+			float dot;
+
+			if (lerping)
+			{
+				normal[0] = v1->normal[0] * iblend + v2->normal[0] * blend;
+				normal[1] = v1->normal[1] * iblend + v2->normal[1] * blend;
+				normal[2] = v1->normal[2] * iblend + v2->normal[2] * blend;
+				VectorNormalize (normal);
+			}
+			else
+				VectorCopy (v2->normal, normal);
+			dot = DotProduct (normal, shadevector);
+			if (dot < 0.0f)
+				dot = 1.0f + dot * (13.0f / 44.0f);
+			else
+				dot = 1.0f + dot;
+			glColor4f (dot * lightcolor[0], dot * lightcolor[1],
+				dot * lightcolor[2], entalpha);
+		}
+		if (lerping)
+			glVertex3f (v1->xyz[0] * iblend + v2->xyz[0] * blend,
+				v1->xyz[1] * iblend + v2->xyz[1] * blend,
+				v1->xyz[2] * iblend + v2->xyz[2] * blend);
+		else
+			glVertex3fv (v2->xyz);
+	}
+	glEnd ();
+
+	rs_aliaspasses += surface->numtris;
+}
+
+static int R_MD5TriangleCount (aliashdr_t *surface)
+{
+	int tris = 0;
+
+	while (surface)
+	{
+		tris += surface->numtris;
+		surface = R_NextMD5Surface (surface);
+	}
+	return tris;
+}
+
+static void R_DrawMD5Pass (aliashdr_t *surface, lerpdata_t lerpdata,
+	int skinnum, qboolean fullbright)
+{
+	int anim = (int)(cl.time * 10) & 3;
+
+	while (surface)
+	{
+		int skin = R_MD5SurfaceSkin (surface, skinnum);
+		gltexture_t *texture = fullbright ? surface->fbtextures[skin][anim] :
+			surface->gltextures[skin][anim];
+
+		if (texture || !fullbright)
+		{
+			GL_Bind (texture);
+			GL_DrawMD5Frame (surface, lerpdata);
+		}
+		surface = R_NextMD5Surface (surface);
+	}
+}
+
+static void R_DrawMD5UntexturedPass (aliashdr_t *surface, lerpdata_t lerpdata)
+{
+	while (surface)
+	{
+		GL_DrawMD5Frame (surface, lerpdata);
+		surface = R_NextMD5Surface (surface);
+	}
+}
+
+static void R_DrawMD5Model (entity_t *e, qboolean cull, qboolean viewmodel)
+{
+	aliashdr_t *md5;
+	lerpdata_t lerpdata;
+	int skinnum, anim;
+	qboolean alphatest = false;
+	float fovscale = 1.0f;
+
+	md5 = Mod_GetMD5Extradata (e->model);
+	if (!md5)
+		return;
+
+	if (r_perfdebug.value)
+		r_perf_alias_draws++;
+	R_SetupAliasFrame (md5, e->frame, &lerpdata);
+	R_SetupEntityTransform (e, &lerpdata);
+	if (cull && R_CullModelForEntity(e))
+	{
+		if (r_perfdebug.value)
+			r_perf_alias_culled++;
+		return;
+	}
+
+	GL_AliasBatch_End ();
+	if (!vr_enabled.value && e == &cl.viewent && scr_fov.value > 90.f && cl_gun_fovscale.value)
+		fovscale = tan(scr_fov.value * (0.5f * M_PI / 180.f));
+	glPushMatrix ();
+	R_RotateForEntity (lerpdata.origin, lerpdata.angles, e->scale);
+	glTranslatef (md5->scale_origin[0], md5->scale_origin[1] * fovscale,
+		md5->scale_origin[2] * fovscale);
+	glScalef (md5->scale[0], md5->scale[1] * fovscale, md5->scale[2] * fovscale);
+
+	if (gl_smoothmodels.value && !r_drawflat_cheatsafe)
+		glShadeModel (GL_SMOOTH);
+	if (gl_affinemodels.value)
+		glHint (GL_PERSPECTIVE_CORRECTION_HINT, GL_FASTEST);
+	overbright = !!gl_overbright_models.value;
+	shading = true;
+	entalpha = (r_drawflat_cheatsafe || r_lightmap_cheatsafe) ? 1.0f : ENTALPHA_DECODE(e->alpha);
+	if (entalpha == 0.0f)
+		goto cleanup;
+	if (entalpha < 1.0f)
+	{
+		overbright = false;
+		glDepthMask (GL_FALSE);
+		glEnable (GL_BLEND);
+	}
+
+	skinnum = e->skinnum;
+	if (skinnum < 0 || skinnum >= md5->numskins)
+		skinnum = 0;
+	anim = (int)(cl.time * 10) & 3;
+	alphatest = R_MD5UsesAlpha (md5, skinnum, anim);
+	if (alphatest)
+		glEnable (GL_ALPHA_TEST);
+	rs_aliaspolys += R_MD5TriangleCount (md5);
+	if (!viewmodel)
+		R_SetupAliasLighting (e);
+	GL_DisableMultitexture ();
+
+	if (viewmodel)
+	{
+		overbright = false;
+		shading = false;
+		glTexEnvf (GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
+		R_SetViewModelColor (entalpha);
+		R_DrawMD5Pass (md5, lerpdata, skinnum, false);
+		if (gl_fullbrights.value)
+		{
+			glEnable (GL_BLEND);
+			glBlendFunc (GL_ONE, GL_ONE);
+			glDepthMask (GL_FALSE);
+			glColor4f (entalpha, entalpha, entalpha, entalpha);
+			R_DrawMD5Pass (md5, lerpdata, skinnum, true);
+			glDepthMask (GL_TRUE);
+			glBlendFunc (GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+			glDisable (GL_BLEND);
+		}
+	}
+	else if (r_drawflat_cheatsafe || r_lightmap_cheatsafe)
+	{
+		glDisable (GL_TEXTURE_2D);
+		shading = false;
+		glColor4f (1, 1, 1, entalpha);
+		R_DrawMD5UntexturedPass (md5, lerpdata);
+		glEnable (GL_TEXTURE_2D);
+	}
+	else
+	{
+		glTexEnvf (GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
+		if (r_fullbright_cheatsafe)
+		{
+			shading = false;
+			glColor4f (1, 1, 1, entalpha);
+			R_DrawMD5Pass (md5, lerpdata, skinnum, false);
+		}
+		else
+		{
+			R_DrawMD5Pass (md5, lerpdata, skinnum, false);
+			if (overbright)
+			{
+				glEnable (GL_BLEND);
+				glBlendFunc (GL_ONE, GL_ONE);
+				glDepthMask (GL_FALSE);
+				Fog_StartAdditive ();
+				R_DrawMD5Pass (md5, lerpdata, skinnum, false);
+				Fog_StopAdditive ();
+				glDepthMask (GL_TRUE);
+				glBlendFunc (GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+				glDisable (GL_BLEND);
+			}
+		}
+		if (gl_fullbrights.value)
+		{
+			glEnable (GL_BLEND);
+			glBlendFunc (GL_ONE, GL_ONE);
+			glDepthMask (GL_FALSE);
+			shading = false;
+			glColor4f (entalpha, entalpha, entalpha, entalpha);
+			Fog_StartAdditive ();
+			R_DrawMD5Pass (md5, lerpdata, skinnum, true);
+			Fog_StopAdditive ();
+			glDepthMask (GL_TRUE);
+			glBlendFunc (GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+			glDisable (GL_BLEND);
+		}
+	}
+
+cleanup:
+	glTexEnvf (GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_REPLACE);
+	glHint (GL_PERSPECTIVE_CORRECTION_HINT, GL_NICEST);
+	glShadeModel (GL_FLAT);
+	glDepthMask (GL_TRUE);
+	glDisable (GL_BLEND);
+	if (alphatest)
+		glDisable (GL_ALPHA_TEST);
+	glColor3f (1, 1, 1);
+	glPopMatrix ();
+}
+
+/*
 =================
 R_DrawAliasModel -- johnfitz -- almost completely rewritten
 =================
@@ -1014,9 +1335,14 @@ void R_DrawAliasModel (entity_t *e)
 	qboolean	alphatest = !!(e->model->flags & MF_HOLEY);
 	float		fovscale = 1.0f;
 
-	if (Mod_UseMD3Model (e->model, e->skinnum))
+	if (Mod_UseMD3ModelForFrame (e->model, e->skinnum, e->frame))
 	{
-		R_DrawMD3Model (e, true);
+		R_DrawMD3Model (e, true, false);
+		return;
+	}
+	if (Mod_UseMD5ModelForFrame (e->model, e->skinnum, e->frame))
+	{
+		R_DrawMD5Model (e, true, false);
 		return;
 	}
 
@@ -1322,6 +1648,34 @@ static void R_DrawMD3ModelOutline (entity_t *e, float r, float g, float b,
 	glPopMatrix ();
 }
 
+static void R_DrawMD5ModelOutline (entity_t *e, float r, float g, float b,
+	float a, float inflate)
+{
+	aliashdr_t *md5;
+	lerpdata_t lerpdata;
+
+	md5 = Mod_GetMD5Extradata (e->model);
+	if (!md5)
+		return;
+	R_SetupAliasFrame (md5, e->frame, &lerpdata);
+	R_SetupEntityTransform (e, &lerpdata);
+	glPushMatrix ();
+	R_RotateForEntity (lerpdata.origin, lerpdata.angles, e->scale);
+	glTranslatef (md5->scale_origin[0], md5->scale_origin[1], md5->scale_origin[2]);
+	glScalef (md5->scale[0], md5->scale[1], md5->scale[2]);
+	if (inflate != 1.0f)
+		glScalef (inflate, inflate, inflate);
+	GL_AliasBatch_End ();
+	GL_DisableMultitexture ();
+	glDisable (GL_TEXTURE_2D);
+	shading = false;
+	entalpha = a;
+	glColor4f (r, g, b, a);
+	R_DrawMD5UntexturedPass (md5, lerpdata);
+	glEnable (GL_TEXTURE_2D);
+	glPopMatrix ();
+}
+
 /*
 =================
 R_DrawAliasModelOutline -- Draw a flat-colored alias model mesh.
@@ -1334,9 +1688,14 @@ void R_DrawAliasModelOutline (entity_t *e, float r, float g, float b, float a, f
 	aliashdr_t	*paliashdr;
 	lerpdata_t	lerpdata;
 
-	if (Mod_UseMD3Model (e->model, e->skinnum))
+	if (Mod_UseMD3ModelForFrame (e->model, e->skinnum, e->frame))
 	{
 		R_DrawMD3ModelOutline (e, r, g, b, a, inflate);
+		return;
+	}
+	if (Mod_UseMD5ModelForFrame (e->model, e->skinnum, e->frame))
+	{
+		R_DrawMD5ModelOutline (e, r, g, b, a, inflate);
 		return;
 	}
 
@@ -1383,9 +1742,14 @@ void R_DrawAliasModel_NoCull (entity_t *e)
 
 	if (!e || !e->model)
 		return;
-	if (Mod_UseMD3Model (e->model, e->skinnum))
+	if (Mod_UseMD3ModelForFrame (e->model, e->skinnum, e->frame))
 	{
-		R_DrawMD3Model (e, false);
+		R_DrawMD3Model (e, false, true);
+		return;
+	}
+	if (Mod_UseMD5ModelForFrame (e->model, e->skinnum, e->frame))
+	{
+		R_DrawMD5Model (e, false, true);
 		return;
 	}
 
@@ -1501,6 +1865,47 @@ static void GL_DrawMD3Shadow (entity_t *e)
 	glPopMatrix ();
 }
 
+static void GL_DrawMD5Shadow (entity_t *e)
+{
+	float shadowmatrix[16] = {1, 0, 0, 0,
+		0, 1, 0, 0,
+		SHADOW_SKEW_X, SHADOW_SKEW_Y, SHADOW_VSCALE, 0,
+		0, 0, SHADOW_HEIGHT, 1};
+	float lheight;
+	aliashdr_t *md5;
+	lerpdata_t lerpdata;
+
+	md5 = Mod_GetMD5Extradata (e->model);
+	if (!md5)
+		return;
+	R_SetupAliasFrame (md5, e->frame, &lerpdata);
+	R_SetupEntityTransform (e, &lerpdata);
+	R_LightPoint (e->origin);
+	lheight = currententity->origin[2] - lightspot[2];
+	glPushMatrix ();
+	glTranslatef (lerpdata.origin[0], lerpdata.origin[1], lerpdata.origin[2]);
+	glTranslatef (0, 0, -lheight);
+	glMultMatrixf (shadowmatrix);
+	glTranslatef (0, 0, lheight);
+	glRotatef (lerpdata.angles[1], 0, 0, 1);
+	glRotatef (-lerpdata.angles[0], 0, 1, 0);
+	glRotatef (lerpdata.angles[2], 1, 0, 0);
+	glTranslatef (md5->scale_origin[0], md5->scale_origin[1], md5->scale_origin[2]);
+	glScalef (md5->scale[0], md5->scale[1], md5->scale[2]);
+	GL_AliasBatch_End ();
+	glDepthMask (GL_FALSE);
+	glEnable (GL_BLEND);
+	GL_DisableMultitexture ();
+	glDisable (GL_TEXTURE_2D);
+	shading = false;
+	glColor4f (0, 0, 0, entalpha * 0.5f);
+	R_DrawMD5UntexturedPass (md5, lerpdata);
+	glEnable (GL_TEXTURE_2D);
+	glDisable (GL_BLEND);
+	glDepthMask (GL_TRUE);
+	glPopMatrix ();
+}
+
 /*
 =============
 GL_DrawAliasShadow -- johnfitz -- rewritten
@@ -1526,9 +1931,14 @@ void GL_DrawAliasShadow (entity_t *e)
 
 	entalpha = ENTALPHA_DECODE(e->alpha);
 	if (entalpha == 0) return;
-	if (Mod_UseMD3Model (e->model, e->skinnum))
+	if (Mod_UseMD3ModelForFrame (e->model, e->skinnum, e->frame))
 	{
 		GL_DrawMD3Shadow (e);
+		return;
+	}
+	if (Mod_UseMD5ModelForFrame (e->model, e->skinnum, e->frame))
+	{
+		GL_DrawMD5Shadow (e);
 		return;
 	}
 
@@ -1594,6 +2004,33 @@ static void R_DrawMD3Model_ShowTris (entity_t *e)
 	glPopMatrix ();
 }
 
+static void R_DrawMD5Model_ShowTris (entity_t *e)
+{
+	aliashdr_t *md5;
+	lerpdata_t lerpdata;
+	float fovscale = 1.0f;
+
+	if (R_CullModelForEntity(e))
+		return;
+	md5 = Mod_GetMD5Extradata (e->model);
+	if (!md5)
+		return;
+	R_SetupAliasFrame (md5, e->frame, &lerpdata);
+	R_SetupEntityTransform (e, &lerpdata);
+	if (!vr_enabled.value && e == &cl.viewent && scr_fov.value > 90.f && cl_gun_fovscale.value)
+		fovscale = tan(scr_fov.value * (0.5f * M_PI / 180.f));
+	glPushMatrix ();
+	R_RotateForEntity (lerpdata.origin, lerpdata.angles, e->scale);
+	glTranslatef (md5->scale_origin[0], md5->scale_origin[1] * fovscale,
+		md5->scale_origin[2] * fovscale);
+	glScalef (md5->scale[0], md5->scale[1] * fovscale, md5->scale[2] * fovscale);
+	GL_AliasBatch_End ();
+	shading = false;
+	glColor3f (1, 1, 1);
+	R_DrawMD5UntexturedPass (md5, lerpdata);
+	glPopMatrix ();
+}
+
 /*
 =================
 R_DrawAliasModel_ShowTris -- johnfitz
@@ -1605,9 +2042,14 @@ void R_DrawAliasModel_ShowTris (entity_t *e)
 	lerpdata_t	lerpdata;
 	float	fovscale = 1.0f;
 
-	if (Mod_UseMD3Model (e->model, e->skinnum))
+	if (Mod_UseMD3ModelForFrame (e->model, e->skinnum, e->frame))
 	{
 		R_DrawMD3Model_ShowTris (e);
+		return;
+	}
+	if (Mod_UseMD5ModelForFrame (e->model, e->skinnum, e->frame))
+	{
+		R_DrawMD5Model_ShowTris (e);
 		return;
 	}
 

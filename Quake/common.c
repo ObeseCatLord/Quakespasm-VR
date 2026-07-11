@@ -1632,6 +1632,25 @@ searchpath_t	*com_searchpaths;
 searchpath_t	*com_base_searchpaths;
 
 /*
+ * The official 2021 rerelease packs contain complete game data.  OpenVR only
+ * mounts one when explicitly requested and exposes just the model companions
+ * needed by the MD5 replacement loader below.  In particular, never let it
+ * replace maps, progs.dat, sounds, or ordinary textures in another install.
+ */
+static qboolean COM_IsRereleaseModelAsset (const char *filename)
+{
+	const char *extension;
+
+	if (q_strncasecmp (filename, "progs/", 6))
+		return false;
+
+	extension = COM_FileGetExtension (filename);
+	return !q_strcasecmp (extension, "md5mesh") ||
+		!q_strcasecmp (extension, "md5anim") ||
+		!q_strcasecmp (extension, "lmp");
+}
+
+/*
 ============
 COM_Path_f
 ============
@@ -1745,6 +1764,9 @@ static int COM_FindFile (const char *filename, int *handle, FILE **file,
 //
 	for (search = com_searchpaths; search; search = search->next)
 	{
+		if (search->rerelease_models && !COM_IsRereleaseModelAsset (filename))
+			continue;
+
 		if (search->pack)	/* look through all the pak file elements */
 		{
 			pak = search->pack;
@@ -2287,6 +2309,67 @@ _add_path:
 	}
 }
 
+/*
+=================
+COM_AddRereleaseModelPack
+
+Mount only the official rerelease id1 pack's MD5 model companions.  This is
+kept separate from COM_AddGameDirectory because that function would make the
+entire rerelease data set override the current game tree.
+=================
+*/
+static void COM_AddRereleaseModelPack (const char *root)
+{
+	char		pakfile[MAX_OSPATH];
+	pack_t		*pak;
+	searchpath_t	*search, *tail;
+	qboolean	old_modified;
+
+	if (!root || !*root ||
+		q_snprintf (pakfile, sizeof(pakfile), "%s/id1/pak0.pak", root) >= (int)sizeof(pakfile))
+	{
+		Con_Warning ("-rerelease path is invalid; MD5 replacement models disabled\n");
+		return;
+	}
+
+	if (!(Sys_FileType (pakfile) & FS_ENT_FILE))
+	{
+		Con_Warning ("-rerelease: no id1/pak0.pak under %s\n", root);
+		return;
+	}
+
+	/* A foreign, read-only asset pack must not mark the active game modified. */
+	old_modified = com_modified;
+	pak = COM_LoadPackFile (pakfile);
+	com_modified = old_modified;
+	if (!pak)
+	{
+		Con_Warning ("-rerelease: couldn't open %s\n", pakfile);
+		return;
+	}
+
+	search = (searchpath_t *) Z_Malloc (sizeof(*search));
+	/*
+	 * Keep ordinary id1 loose files/paks ahead of the official pack.  This
+	 * makes -rerelease a fallback for users' own id1 MD5/LMP replacements,
+	 * while an active mod still wins through its higher path id.
+	 */
+	search->path_id = 1;
+	search->pack = pak;
+	search->rerelease_models = true;
+	search->next = NULL;
+	if (!com_searchpaths)
+		com_searchpaths = search;
+	else
+	{
+		for (tail = com_searchpaths; tail->next; tail = tail->next)
+			;
+		tail->next = search;
+	}
+
+	Con_Printf ("Rerelease MD5 model assets enabled from %s\n", pakfile);
+}
+
 //==============================================================================
 //johnfitz -- dynamic gamedir stuff -- modified by QuakeSpasm team.
 //==============================================================================
@@ -2365,7 +2448,7 @@ qboolean COM_GameDirMatches(const char *tdirs)
 			odirs++;
 	}
 
-	return !strcmp(odirs, tdirs);
+	return !q_strcasecmp(odirs, tdirs);
 }
 
 static void COM_Game_f (void)
@@ -2506,6 +2589,14 @@ static void COM_Game_f (void)
 
 		Con_Printf("\"game\" changed to \"%s\"\n", COM_SkipPath(com_gamedir));
 
+		/*
+		 * r_drawviewmodel is intentionally not archived, but a mod can still
+		 * leave it disabled for the next game in this process.  Restore the
+		 * engine default before the new quake.rc gets a chance to override it.
+		 */
+		if (!isDedicated)
+			Cvar_Reset ("r_drawviewmodel");
+
 		VID_Lock ();
 		Cbuf_AddText ("exec quake.rc\n");
 		Cbuf_AddText ("vid_unlock\n");
@@ -2550,6 +2641,14 @@ void COM_InitFilesystem (void) //johnfitz -- modified based on topaz's tutorial
 
 	// start up with GAMENAME by default (id1)
 	COM_AddGameDirectory (com_basedir, GAMENAME);
+
+	/*
+	 * Opt-in only: the directory is normally the Steam
+	 * .../common/Quake/rerelease root, not its id1 child.
+	 */
+	i = COM_CheckParm ("-rerelease");
+	if (i && i < com_argc - 1)
+		COM_AddRereleaseModelPack (com_argv[i + 1]);
 
 	/* this is the end of our base searchpath:
 	 * any set gamedirs, such as those from -game command line
