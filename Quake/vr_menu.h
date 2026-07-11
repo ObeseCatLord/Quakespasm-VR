@@ -44,6 +44,7 @@ void VR_Menu_Init();
 void VR_Menu_f(void);
 void VR_MenuDraw(void);
 void VR_MenuKey(int key);
+qboolean VR_MenuPointerMove(float x, float y);
 
 extern void (*vr_menucmdfn)(void);
 extern void (*vr_menudrawfn)(void);

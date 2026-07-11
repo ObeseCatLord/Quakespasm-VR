@@ -88,6 +88,7 @@ static void VID_Menu_Init (void); //johnfitz
 static void VID_Menu_f (void); //johnfitz
 static void VID_MenuDraw (void);
 static void VID_MenuKey (int key);
+static qboolean VID_MenuPointerMove (float x, float y);
 
 static void ClearAllStates (void);
 static void GL_Init (void);
@@ -1807,6 +1808,7 @@ void	VID_Init (void)
 	vid_menucmdfn = VID_Menu_f; //johnfitz
 	vid_menudrawfn = VID_MenuDraw;
 	vid_menukeyfn = VID_MenuKey;
+	vid_menupointerfn = VID_MenuPointerMove;
 
 	VID_Gamma_Init(); //johnfitz
 	VID_Menu_Init(); //johnfitz
@@ -2304,6 +2306,28 @@ static void VID_MenuKey (int key)
 	default:
 		break;
 	}
+}
+
+/* Keep pointer rows aligned with the actual draw baselines below. */
+static qboolean VID_MenuPointerMove (float x, float y)
+{
+	if (x < 8.0f || x >= 320.0f)
+		return false;
+
+	if (y >= 48.0f && y < 88.0f)
+	{
+		video_options_cursor = (int)((y - 48.0f) / 8.0f);
+		return true;
+	}
+
+	/* VID_MenuDraw inserts an 8-pixel separator before Test/Apply. */
+	if (y >= 96.0f && y < 112.0f)
+	{
+		video_options_cursor = VID_OPT_TEST + (int)((y - 96.0f) / 8.0f);
+		return true;
+	}
+
+	return false;
 }
 
 /*

@@ -40,6 +40,12 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #define	TYP_SOUND		67
 #define	TYP_MIPTEX		68
 
+/* GoldSrc WAD3 files use this type for paletted mip textures. */
+#define	TYP_MIPTEX_PALETTE	67
+
+#define	WADID			('W' | ('A' << 8) | ('D' << 16) | ('2' << 24))
+#define	WADID_VALVE		('W' | ('A' << 8) | ('D' << 16) | ('3' << 24))
+
 #define	WADFILENAME "gfx.wad" //johnfitz -- filename is now hard-coded for honesty
 
 typedef struct
@@ -66,6 +72,22 @@ typedef struct
 	char		name[16];				// must be null terminated
 } lumpinfo_t;
 
+/*
+ * A map WAD is intentionally a temporary view of an already-open game
+ * filesystem file. It is never added to com_searchpaths: a map may name WADs
+ * for missing texture data, but cannot change the active game filesystem or
+ * supply other game assets through this feature.
+ */
+typedef struct mapwad_s
+{
+	char			name[MAX_QPATH];
+	int			id;
+	fshandle_t		fh;
+	int			numlumps;
+	lumpinfo_t		*lumps;
+	struct mapwad_s	*next;
+} mapwad_t;
+
 extern	int			wad_numlumps;
 extern	lumpinfo_t	*wad_lumps;
 extern	byte		*wad_base;
@@ -76,7 +98,11 @@ lumpinfo_t	*W_GetLumpinfo (const char *name);
 void	*W_GetLumpName (const char *name, lumpinfo_t **out_info);
 void	*W_GetLumpNum (int num);
 
+mapwad_t	*W_LoadMapWadList (const char *names);
+void		W_FreeMapWadList (mapwad_t *wads);
+lumpinfo_t	*W_GetMapWadLumpInfo (mapwad_t *wads, const char *name,
+							 mapwad_t **out_wad);
+
 void SwapPic (qpic_t *pic);
 
 #endif	/* _QUAKE_WAD_H */
-

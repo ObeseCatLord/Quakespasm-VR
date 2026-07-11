@@ -42,6 +42,8 @@ static void Mod_Print (void);
 
 static cvar_t	external_ents = {"external_ents", "1", CVAR_ARCHIVE};
 static cvar_t	external_vis = {"external_vis", "1", CVAR_ARCHIVE};
+/* Allow map worldspawns to supply texture pixels from sanitized WAD2/WAD3 names. */
+static cvar_t	wad_external_textures = {"wad_external_textures", "1", CVAR_NONE};
 static cvar_t	mdl_external_textures = {"mdl_external_textures", "1", CVAR_NONE};
 static cvar_t	r_allow_replacement_md3models = {"r_allow_replacement_md3models", "1", CVAR_NONE};
 static cvar_t	r_allow_replacement_md5models = {"r_allow_replacement_md5models", "1", CVAR_NONE};
@@ -120,6 +122,7 @@ void Mod_Init (void)
 	Cvar_RegisterVariable (&gl_subdivide_size);
 	Cvar_RegisterVariable (&external_vis);
 	Cvar_RegisterVariable (&external_ents);
+	Cvar_RegisterVariable (&wad_external_textures);
 	Cvar_RegisterVariable (&mdl_external_textures);
 	Cvar_RegisterVariable (&r_allow_replacement_md3models);
 	Cvar_RegisterVariable (&r_allow_replacement_md5models);
@@ -860,6 +863,8 @@ qmodel_t *Mod_ForName (const char *name, qboolean crash)
 
 static byte	*mod_base;
 
+#define MAPWAD_MAX_TEXTURE_DIMENSION 4096
+
 /*
 =================
 Mod_CheckFullbrights -- johnfitz
@@ -874,6 +879,239 @@ static qboolean Mod_CheckFullbrights (byte *pixels, int count)
 			return true;
 	}
 	return false;
+}
+
+/*
+=================
+Mod_LoadMapWadFiles
+
+Only map BSPs have a worldspawn WAD key. The helper in wad.c accepts only
+sanitized basenames and opens them through the current game filesystem; it
+never changes search paths or has any effect on server simulation/networking.
+=================
+*/
+static mapwad_t *Mod_LoadMapWadFiles (qmodel_t *mod)
+{
+	char		key[128], value[4096];
+	const char	*data;
+
+	if (isDedicated || !wad_external_textures.value || !mod->entities ||
+		q_strncasecmp (mod->name, "maps/", 5))
+		return NULL;
+
+	data = COM_Parse (mod->entities);
+	if (!data || com_token[0] != '{')
+		return NULL;
+
+	while (1)
+	{
+		data = COM_Parse (data);
+		if (!data || com_token[0] == '}')
+			break;
+
+		if (com_token[0] == '_')
+			q_strlcpy (key, com_token + 1, sizeof(key));
+		else
+			q_strlcpy (key, com_token, sizeof(key));
+		while (key[0] && key[strlen(key) - 1] == ' ')
+			key[strlen(key) - 1] = 0;
+
+		data = COM_ParseEx (data, CPE_ALLOWTRUNC);
+		if (!data)
+			break;
+		q_strlcpy (value, com_token, sizeof(value));
+
+		if (!q_strcasecmp (key, "wad"))
+			return W_LoadMapWadList (value);
+	}
+
+	return NULL;
+}
+
+/* WAD3 palettes are converted once to the classic Quake palette. */
+static byte Mod_ClosestQuakePaletteIndex (const byte *palette, int color)
+{
+	const byte	*quakepalette;
+	int		i, best, bestdist, dist;
+	int		r, g, b, dr, dg, db;
+
+	quakepalette = (const byte *)d_8to24table;
+	r = palette[color * 3 + 0];
+	g = palette[color * 3 + 1];
+	b = palette[color * 3 + 2];
+	best = 0;
+	bestdist = 0x7fffffff;
+	/* WAD3 colours have no Quake fullbright semantics; avoid inventing them. */
+	for (i = 0; i < 224; i++)
+	{
+		dr = r - quakepalette[i * 4 + 0];
+		dg = g - quakepalette[i * 4 + 1];
+		db = b - quakepalette[i * 4 + 2];
+		dist = dr * dr + dg * dg + db * db;
+		if (dist < bestdist)
+		{
+			best = i;
+			bestdist = dist;
+		}
+	}
+
+	return (byte)best;
+}
+
+/*
+=================
+Mod_LoadMapWadTexture
+
+Copy a strictly validated missing miptex into the map hunk. WAD3's private
+palette is remapped here because the classic renderer stores world textures
+as Quake-indexed pixels; this keeps the rest of the GL and VR paths unchanged.
+=================
+*/
+static texture_t *Mod_LoadMapWadTexture (mapwad_t *wads, const char *name)
+{
+	mapwad_t	*wad;
+	lumpinfo_t	*info;
+	miptex_t	mt;
+	texture_t	*tx;
+	byte		*data;
+	byte		palette[256 * 3];
+	byte		remap[256];
+	char		cleanname[16];
+	char		sourcename[17];
+	unsigned short	colors;
+	int		i, width, height, mipofs[MIPLEVELS], mipsizes[MIPLEVELS];
+	int		mipwidth, mipheight, paletteofs, pixels;
+	qboolean	wad3palette;
+
+	/* texture_t stores a 15-character C string, so reject unsafe source names. */
+	memcpy (sourcename, name, sizeof(cleanname));
+	sourcename[sizeof(cleanname)] = 0;
+	if (!memchr (name, 0, sizeof(cleanname)))
+	{
+		Con_Warning ("External WAD texture %.16s has an unsupported 16-byte name\n",
+			name);
+		return NULL;
+	}
+
+	info = W_GetMapWadLumpInfo (wads, sourcename, &wad);
+	if (!info)
+		return NULL;
+
+	if (info->compression != CMP_NONE || info->size != info->disksize ||
+		(info->type != TYP_MIPTEX &&
+			(wad->id != WADID_VALVE || info->type != TYP_MIPTEX_PALETTE)) ||
+		info->size < (int)sizeof(mt))
+	{
+		Con_Warning ("External WAD texture %s is not an uncompressed miptex\n", name);
+		return NULL;
+	}
+
+	if (FS_fseek (&wad->fh, info->filepos, SEEK_SET) < 0 ||
+		FS_fread (&mt, 1, sizeof(mt), &wad->fh) != sizeof(mt))
+	{
+		Con_Warning ("External WAD texture %s could not be read\n", name);
+		return NULL;
+	}
+
+	W_CleanupName (mt.name, cleanname);
+	/* WAD names are fixed 16-byte fields and may fill the whole field. */
+	if (memcmp(cleanname, info->name, sizeof(cleanname)))
+	{
+		Con_Warning ("External WAD texture %s has a mismatched name\n", name);
+		return NULL;
+	}
+
+	width = LittleLong ((int)mt.width);
+	height = LittleLong ((int)mt.height);
+	if (width < 16 || height < 16 || width > MAPWAD_MAX_TEXTURE_DIMENSION ||
+		height > MAPWAD_MAX_TEXTURE_DIMENSION || (width & 15) || (height & 15))
+	{
+		Con_Warning ("External WAD texture %s has invalid dimensions\n", name);
+		return NULL;
+	}
+
+	for (i = 0; i < MIPLEVELS; i++)
+	{
+		mipwidth = width >> i;
+		mipheight = height >> i;
+		mipsizes[i] = mipwidth * mipheight;
+		mipofs[i] = LittleLong ((int)mt.offsets[i]);
+		if (mipofs[i] < (int)sizeof(mt) || mipofs[i] > info->size ||
+			mipsizes[i] > info->size - mipofs[i] ||
+			(i && mipofs[i] < mipofs[i - 1] + mipsizes[i - 1]))
+		{
+			Con_Warning ("External WAD texture %s has invalid mip data\n", name);
+			return NULL;
+		}
+	}
+
+	pixels = mipsizes[0];
+	wad3palette = wad->id == WADID_VALVE;
+	if (wad3palette)
+	{
+		paletteofs = mipofs[MIPLEVELS - 1] + mipsizes[MIPLEVELS - 1];
+		if (paletteofs > info->size - (int)sizeof(colors) ||
+			FS_fseek (&wad->fh, info->filepos + paletteofs, SEEK_SET) < 0 ||
+			FS_fread (&colors, 1, sizeof(colors), &wad->fh) != sizeof(colors))
+		{
+			Con_Warning ("External WAD3 texture %s has no valid palette\n", name);
+			return NULL;
+		}
+		colors = LittleShort (colors);
+		if (!colors || colors > 256 ||
+			(int)colors * 3 > info->size - paletteofs - (int)sizeof(colors) ||
+			FS_fread (palette, 1, (size_t)colors * 3, &wad->fh) != (size_t)colors * 3)
+		{
+			Con_Warning ("External WAD3 texture %s has an invalid palette\n", name);
+			return NULL;
+		}
+
+		for (i = 0; i < colors; i++)
+			remap[i] = Mod_ClosestQuakePaletteIndex (palette, i);
+	}
+
+	data = (byte *)malloc (pixels);
+	if (!data)
+	{
+		Con_Warning ("External WAD texture %s could not allocate pixels\n", name);
+		return NULL;
+	}
+	if (FS_fseek (&wad->fh, info->filepos + mipofs[0], SEEK_SET) < 0 ||
+		FS_fread (data, 1, pixels, &wad->fh) != (size_t)pixels)
+	{
+		Con_Warning ("External WAD texture %s could not read pixels\n", name);
+		free (data);
+		return NULL;
+	}
+
+	if (wad3palette)
+	{
+		for (i = 0; i < pixels; i++)
+		{
+			if (data[i] >= colors)
+			{
+				Con_Warning ("External WAD3 texture %s has invalid palette indices\n", name);
+				free (data);
+				return NULL;
+			}
+			/* Preserve GoldSrc's conventional transparent palette entry. */
+			data[i] = data[i] == 255 ? 255 : remap[data[i]];
+		}
+	}
+
+	tx = (texture_t *) Hunk_AllocName (sizeof(*tx) + pixels, loadname);
+	/* Keep the BSP spelling so loose replacement lookup keeps its precedence. */
+	q_strlcpy (tx->name, sourcename, sizeof(tx->name));
+	tx->width = width;
+	tx->height = height;
+	tx->update_warp = false;
+	tx->warpimage = NULL;
+	tx->fullbright = NULL;
+	tx->shift = 0;
+	memcpy (tx + 1, data, pixels);
+	free (data);
+
+	return tx;
 }
 
 /*
@@ -916,6 +1154,9 @@ static void Mod_LoadTextures (lump_t *l)
 	int			mark, fwidth, fheight;
 	char		filename[MAX_OSPATH], mapname[MAX_OSPATH];
 	byte		*data, *dummy;
+	mapwad_t		*wads;
+	const char		*sourcefile;
+	qboolean		wadtexture;
 //johnfitz
 	unsigned int	flags;
 
@@ -936,9 +1177,12 @@ static void Mod_LoadTextures (lump_t *l)
 
 	loadmodel->numtextures = nummiptex + 2; //johnfitz -- need 2 dummy texture chains for missing textures
 	loadmodel->textures = (texture_t **) Hunk_AllocName (loadmodel->numtextures * sizeof(*loadmodel->textures) , loadname);
+	wads = Mod_LoadMapWadFiles (loadmodel);
 
 	for (i=0 ; i<nummiptex ; i++)
 	{
+		wadtexture = false;
+		sourcefile = loadmodel->name;
 		m->dataofs[i] = LittleLong(m->dataofs[i]);
 		if (m->dataofs[i] == -1)
 			continue;
@@ -960,39 +1204,57 @@ static void Mod_LoadTextures (lump_t *l)
 				Con_Warning ("Texture %s (%d x %d) is not 16 aligned\n", mt->name, mt->width, mt->height);
 		}
 
-		pixels = mt->width*mt->height; // only copy the first mip, the rest are auto-generated
-		tx = (texture_t *) Hunk_AllocName (sizeof(texture_t) +pixels, loadname );
-		loadmodel->textures[i] = tx;
-
-		memcpy (tx->name, mt->name, sizeof(tx->name));
-		tx->width = mt->width;
-		tx->height = mt->height;
-		// the pixels immediately follow the structures
-
-		// ericw -- check for pixels extending past the end of the lump.
-		// appears in the wild; e.g. jam2_tronyn.bsp (func_mapjam2),
-		// kellbase1.bsp (quoth), and can lead to a segfault if we read past
-		// the end of the .bsp file buffer
-		if (((byte*)(mt+1) + pixels) > (mod_base + l->fileofs + l->filelen))
+		/* A zero first mip offset means the BSP expects an external WAD. */
+		if (mt->offsets[0] == 0 && wads)
 		{
-			Con_DPrintf("Texture %s extends past end of lump\n", mt->name);
-			pixels = q_max(0L, (long)((mod_base + l->fileofs + l->filelen) - (byte*)(mt+1)));
+			tx = Mod_LoadMapWadTexture (wads, mt->name);
+			if (tx)
+			{
+				loadmodel->textures[i] = tx;
+				pixels = tx->width * tx->height;
+				offset = (src_offset_t)(tx + 1);
+				sourcefile = "";
+				wadtexture = true;
+			}
 		}
 
-		tx->update_warp = false; //johnfitz
-		tx->warpimage = NULL; //johnfitz
-		tx->fullbright = NULL; //johnfitz
-		tx->shift = 0;	// Q64 only
-
-		if (loadmodel->bspversion != BSPVERSION_QUAKE64)
+		if (!wadtexture)
 		{
-			memcpy ( tx+1, mt+1, pixels);
-		}
-		else
-		{ // Q64 bsp
-			miptex64_t *mt64 = (miptex64_t *)mt;
-			tx->shift = LittleLong (mt64->shift);
-			memcpy ( tx+1, mt64+1, pixels);
+			pixels = mt->width*mt->height; // only copy the first mip, the rest are auto-generated
+			tx = (texture_t *) Hunk_AllocName (sizeof(texture_t) +pixels, loadname );
+			loadmodel->textures[i] = tx;
+
+			memcpy (tx->name, mt->name, sizeof(tx->name));
+			tx->width = mt->width;
+			tx->height = mt->height;
+			// the pixels immediately follow the structures
+
+			// ericw -- check for pixels extending past the end of the lump.
+			// appears in the wild; e.g. jam2_tronyn.bsp (func_mapjam2),
+			// kellbase1.bsp (quoth), and can lead to a segfault if we read past
+			// the end of the .bsp file buffer
+			if (((byte*)(mt+1) + pixels) > (mod_base + l->fileofs + l->filelen))
+			{
+				Con_DPrintf("Texture %s extends past end of lump\n", mt->name);
+				pixels = q_max(0L, (long)((mod_base + l->fileofs + l->filelen) - (byte*)(mt+1)));
+			}
+
+			tx->update_warp = false; //johnfitz
+			tx->warpimage = NULL; //johnfitz
+			tx->fullbright = NULL; //johnfitz
+			tx->shift = 0;	// Q64 only
+			offset = (src_offset_t)(mt+1) - (src_offset_t)mod_base;
+
+			if (loadmodel->bspversion != BSPVERSION_QUAKE64)
+			{
+				memcpy ( tx+1, mt+1, pixels);
+			}
+			else
+			{ // Q64 bsp
+				miptex64_t *mt64 = (miptex64_t *)mt;
+				tx->shift = LittleLong (mt64->shift);
+				memcpy ( tx+1, mt64+1, pixels);
+			}
 		}
 
 		//johnfitz -- lots of changes
@@ -1028,9 +1290,8 @@ static void Mod_LoadTextures (lump_t *l)
 				else //use the texture from the bsp file
 				{
 					q_snprintf (texturename, sizeof(texturename), "%s:%s", loadmodel->name, tx->name);
-					offset = (src_offset_t)(mt+1) - (src_offset_t)mod_base;
 					tx->gltexture = TexMgr_LoadImage (loadmodel, texturename, tx->width, tx->height,
-						SRC_INDEXED, (byte *)(tx+1), loadmodel->name, offset, TEXPREF_NONE);
+						SRC_INDEXED, (byte *)(tx+1), sourcefile, offset, TEXPREF_NONE);
 				}
 
 				//now create the warpimage with deterministic dummy data; it will be updated before drawing
@@ -1092,19 +1353,18 @@ static void Mod_LoadTextures (lump_t *l)
 				else //use the texture from the bsp file
 				{
 					q_snprintf (texturename, sizeof(texturename), "%s:%s", loadmodel->name, tx->name);
-					offset = (src_offset_t)(mt+1) - (src_offset_t)mod_base;
 					if (Mod_CheckFullbrights ((byte *)(tx+1), pixels))
 					{
 						tx->gltexture = TexMgr_LoadImage (loadmodel, texturename, tx->width, tx->height,
-							SRC_INDEXED, (byte *)(tx+1), loadmodel->name, offset, TEXPREF_MIPMAP | TEXPREF_NOBRIGHT | extraflags);
+							SRC_INDEXED, (byte *)(tx+1), sourcefile, offset, TEXPREF_MIPMAP | TEXPREF_NOBRIGHT | extraflags);
 						q_snprintf (texturename, sizeof(texturename), "%s:%s_glow", loadmodel->name, tx->name);
 						tx->fullbright = TexMgr_LoadImage (loadmodel, texturename, tx->width, tx->height,
-							SRC_INDEXED, (byte *)(tx+1), loadmodel->name, offset, TEXPREF_MIPMAP | TEXPREF_FULLBRIGHT | extraflags);
+							SRC_INDEXED, (byte *)(tx+1), sourcefile, offset, TEXPREF_MIPMAP | TEXPREF_FULLBRIGHT | extraflags);
 					}
 					else
 					{
 						tx->gltexture = TexMgr_LoadImage (loadmodel, texturename, tx->width, tx->height,
-							SRC_INDEXED, (byte *)(tx+1), loadmodel->name, offset, TEXPREF_MIPMAP | extraflags);
+							SRC_INDEXED, (byte *)(tx+1), sourcefile, offset, TEXPREF_MIPMAP | extraflags);
 					}
 				}
 				Hunk_FreeToLowMark (mark);
@@ -1112,6 +1372,7 @@ static void Mod_LoadTextures (lump_t *l)
 		}
 		//johnfitz
 	}
+	W_FreeMapWadList (wads);
 
 	//johnfitz -- last 2 slots in array should be filled with dummy textures
 	loadmodel->textures[loadmodel->numtextures-2] = r_notexture_mip; //for lightmapped surfs
@@ -2781,6 +3042,7 @@ static void Mod_LoadBrushModel (qmodel_t *mod, void *buffer)
 	Mod_LoadVertexes (&header->lumps[LUMP_VERTEXES]);
 	Mod_LoadEdges (&header->lumps[LUMP_EDGES], bsp2);
 	Mod_LoadSurfedges (&header->lumps[LUMP_SURFEDGES]);
+	Mod_LoadEntities (&header->lumps[LUMP_ENTITIES]);
 	Mod_LoadTextures (&header->lumps[LUMP_TEXTURES]);
 	Mod_LoadLighting (&header->lumps[LUMP_LIGHTING]);
 	Mod_LoadPlanes (&header->lumps[LUMP_PLANES]);
@@ -2820,7 +3082,6 @@ static void Mod_LoadBrushModel (qmodel_t *mod, void *buffer)
 	visdone:
 		Mod_LoadNodes (&header->lumps[LUMP_NODES], bsp2);
 	Mod_LoadClipnodes (&header->lumps[LUMP_CLIPNODES], bsp2);
-	Mod_LoadEntities (&header->lumps[LUMP_ENTITIES]);
 	Mod_LoadSubmodels (&header->lumps[LUMP_MODELS]);
 	Mod_CheckWaterVis ();
 

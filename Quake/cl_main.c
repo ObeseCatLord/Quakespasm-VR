@@ -1219,6 +1219,194 @@ static qboolean CL_PredictPlayer (entity_t *ent)
 
 /*
 ===============
+CL_LerpAttachmentParentPose
+
+Return the interpolated pose used for an attachment parent without changing
+the parent entity. An attachment can refer to an entity later in the entity
+array, so relying on parent->origin here would make the result depend on
+entity ordering. Keep this in lock-step with the presentation interpolation
+in CL_RelinkEntities instead.
+===============
+*/
+static void CL_LerpAttachmentParentPose (const entity_t *ent, float frac,
+	vec3_t origin, vec3_t angles)
+{
+	float	f, d;
+	vec3_t	delta;
+	int		j;
+
+	if (ent->forcelink)
+	{
+		VectorCopy (ent->msg_origins[0], origin);
+		VectorCopy (ent->msg_angles[0], angles);
+		return;
+	}
+
+	f = frac;
+	for (j = 0; j < 3; j++)
+	{
+		delta[j] = ent->msg_origins[0][j] - ent->msg_origins[1][j];
+		if (delta[j] > 100 || delta[j] < -100)
+			f = 1; // teleport: use the newest transform
+	}
+
+	// Keep the attachment parent in the same presentation pose as normal
+	// MOVESTEP entities. This is render-only and deliberately does not set
+	// the parent's lerp flags or otherwise alter received state.
+	if (r_lerpmove.value && (ent->lerpflags & LERP_MOVESTEP))
+		f = 1;
+
+	for (j = 0; j < 3; j++)
+	{
+		origin[j] = ent->msg_origins[1][j] + f * delta[j];
+
+		d = ent->msg_angles[0][j] - ent->msg_angles[1][j];
+		if (d > 180)
+			d -= 360;
+		else if (d < -180)
+			d += 360;
+		angles[j] = ent->msg_angles[1][j] + f * d;
+	}
+}
+
+/*
+===============
+CL_TransformAttachmentVector
+
+RotMatFromAngleVector stores the entity axes in the convention used by
+R_RotateForEntity. Applying a local vector through those axes gives the
+same transform as the renderer, including Quake's flipped right axis.
+===============
+*/
+static void CL_TransformAttachmentVector (vec3_t basis[3], vec3_t local,
+	vec3_t world)
+{
+	VectorScale (basis[0], local[0], world);
+	VectorMA (world, local[1], basis[1], world);
+	VectorMA (world, local[2], basis[2], world);
+}
+
+/*
+===============
+CL_AttachEntity
+
+Apply FTE/QSS-M UF_TAGINFO as a presentation-only parent transform. We do
+not expose MD3/MD5 per-frame tags here yet, so every tagindex uses the
+well-defined model-origin fallback. That preserves useful simple entity
+attachments while avoiding invented tag transforms. The traversal validates
+the complete parent chain before touching ent, so stale, cyclic, and invalid
+attachments retain the normal unparented presentation pose.
+
+cl.viewent is intentionally never involved: it is the sole entity that gets
+the VR held-weapon transform. Attached entities stay in cl.entities, and a
+child of cl.viewentity is therefore rendered as a normal exterior model.
+===============
+*/
+enum { CL_MAX_ATTACHMENT_DEPTH = 10 };
+static qboolean CL_AttachEntity (entity_t *ent, float frac)
+{
+	unsigned int	chain[CL_MAX_ATTACHMENT_DEPTH];
+	unsigned int	tagent;
+	int			childnum;
+	int			depth, i, j;
+	entity_t		*parent;
+	vec3_t		parentorigin, parentangles;
+	vec3_t		parentaxis[3], childaxis[3], worldaxis[3];
+	vec3_t		localorigin, localangles;
+
+	if (!cl.entities || !ent)
+		return false;
+
+	childnum = (int)(ent - cl.entities);
+	tagent = ent->netstate.tagentity;
+	depth = 0;
+
+	/*
+	 * Gather and validate first. A failed attachment must not partially move
+	 * the child, otherwise a malformed server update would create visual
+	 * flicker and could contaminate trail presentation.
+	 */
+	while (tagent)
+	{
+		if (depth == CL_MAX_ATTACHMENT_DEPTH ||
+			tagent >= (unsigned int)cl.num_entities ||
+			tagent == (unsigned int)childnum)
+			return false;
+		for (i = 0; i < depth; i++)
+			if (chain[i] == tagent)
+				return false;
+
+		parent = &cl.entities[tagent];
+		if (!parent->model || parent->msgtime != cl.mtime[0])
+			return false;
+
+		chain[depth++] = tagent;
+		tagent = parent->netstate.tagentity;
+	}
+
+	/*
+	 * A non-zero tagindex requires a model-tag lookup that this renderer does
+	 * not expose. Deliberately fall back to the parent model origin rather
+	 * than guessing an MD3/MD5 tag pose. This value is presentation data only
+	 * and is never written back to netstate.
+	 */
+	(void)ent->netstate.tagindex;
+
+	/*
+	 * The first entry is the direct parent. Transform outward through the
+	 * chain so a child of an attached parent is correctly composed even when
+	 * the parent appears later in the entity array.
+	 */
+	for (i = 0; i < depth; i++)
+	{
+		parent = &cl.entities[chain[i]];
+		/*
+		 * Earlier entities have already received their full presentation
+		 * transform (including a valid parent chain and local prediction). Use
+		 * that pose directly, then stop: it is already in world space. Later
+		 * entities have not been relinked yet, so reconstruct their matching
+		 * interpolated pose from immutable message state.
+		 */
+		if (chain[i] < (unsigned int)childnum)
+		{
+			VectorCopy (parent->origin, parentorigin);
+			VectorCopy (parent->angles, parentangles);
+		}
+		else
+			CL_LerpAttachmentParentPose (parent, frac, parentorigin, parentangles);
+
+		/*
+		 * Alias-family entities (including the current MD3/MD5 replacement
+		 * path) use the historical Quake pitch convention. Match the existing
+		 * vkQuake/QSS-M attachment convention before composing axes.
+		 */
+		if (parent->model->type == mod_alias)
+			parentangles[PITCH] *= -1;
+		VectorCopy (ent->angles, localangles);
+		if (ent->model && ent->model->type == mod_alias)
+			localangles[PITCH] *= -1;
+
+		RotMatFromAngleVector (parentangles, parentaxis);
+		RotMatFromAngleVector (localangles, childaxis);
+
+		CL_TransformAttachmentVector (parentaxis, ent->origin, localorigin);
+		VectorAdd (parentorigin, localorigin, ent->origin);
+
+		for (j = 0; j < 3; j++)
+			CL_TransformAttachmentVector (parentaxis, childaxis[j], worldaxis[j]);
+		AngleVectorFromRotMat (worldaxis, ent->angles);
+		if (ent->model && ent->model->type == mod_alias)
+			ent->angles[PITCH] *= -1;
+
+		if (chain[i] < (unsigned int)childnum)
+			break;
+	}
+
+	return true;
+}
+
+/*
+===============
 CL_RelinkEntities
 ===============
 */
@@ -1323,6 +1511,18 @@ void CL_RelinkEntities (void)
 		{
 			VectorCopy (cl.aimangles, ent->angles);
 			ent->angles[PITCH] *= -1.0f / 3.0f;
+		}
+
+		// UF_TAGINFO is a presentation transform only. Invalid parent input
+		// is not rendered, matching vkQuake/QSS-M rather than exposing a raw
+		// local-space child in the world. It never changes network/prediction
+		// state. Reset renderer-side movement smoothing so the composed pose is
+		// not smoothed a second time after its parent transform.
+		if (ent->netstate.tagentity)
+		{
+			if (!CL_AttachEntity (ent, frac))
+				continue;
+			ent->lerpflags |= LERP_RESETMOVE;
 		}
 
 		if (ent->forcelink || ent->lerpflags & LERP_RESETMOVE)
