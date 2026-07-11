@@ -434,6 +434,7 @@ const vec_t *R_VRStereoSortOrigin (void);
 
 void R_DrawWorld (void);
 void R_DrawAliasModel (entity_t *e);
+void R_DrawAliasModel_NoCull (entity_t *e);
 void R_BeginAliasBatchScope (void);
 void R_EndAliasBatchScope (void);
 void R_DrawAliasModelOutline (entity_t *e, float r, float g, float b, float a, float inflate);
@@ -468,6 +469,7 @@ GLuint GL_CreateProgram (const GLchar *vertSource, const GLchar *fragSource, int
 void R_DeleteShaders (void);
 
 void GLWorld_CreateShaders (void);
+void GLSky_CreateShaders (void);
 void GLAlias_CreateShaders (void);
 void GL_DrawAliasShadow (entity_t *e);
 void DrawGLTriangleFan (glpoly_t *p);

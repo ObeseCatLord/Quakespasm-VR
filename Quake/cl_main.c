@@ -39,6 +39,7 @@ cvar_t	cl_nolerp = {"cl_nolerp","0",CVAR_NONE};
 cvar_t	cl_lerpdebug = {"cl_lerpdebug","0",CVAR_NONE};
 cvar_t	cl_lerpdebug_models = {"cl_lerpdebug_models","",CVAR_NONE};
 cvar_t	cl_beams_polygons = {"cl_beams_polygons","0",CVAR_ARCHIVE};
+cvar_t	cl_autoswitchgame = {"cl_autoswitchgame","1",CVAR_ARCHIVE};
 // Retired compatibility cvars. Keep them registered so old configs and launch
 // scripts do not warn, but do not archive them back out.
 cvar_t	cl_extrapolate = {"cl_extrapolate","0",CVAR_NONE};
@@ -68,15 +69,18 @@ typedef struct cl_auto_reconnect_s
 	double		retry_interval;
 	double		timeout;
 	int		attempts;
+	qboolean	switch_pending;
 } cl_auto_reconnect_t;
 
 static cl_auto_reconnect_t cl_auto_reconnect;
+static char cl_connect_target[NET_NAMELEN];
 
 static qboolean CL_AutoReconnect_IsSafeGame(const char *game)
 {
 	const unsigned char *p;
 
-	if (!game || !*game || !strcmp(game, ".") || strstr(game, ".."))
+	if (!game || !*game || strlen(game) >= MAX_QPATH ||
+		!strcmp(game, ".") || strstr(game, ".."))
 		return false;
 
 	for (p = (const unsigned char *)game; *p; p++)
@@ -93,7 +97,7 @@ static qboolean CL_AutoReconnect_IsSafeServer(const char *server)
 {
 	const unsigned char *p;
 
-	if (!server || !*server)
+	if (!server || !*server || strlen(server) >= NET_NAMELEN)
 		return false;
 
 	for (p = (const unsigned char *)server; *p; p++)
@@ -117,9 +121,41 @@ static qboolean CL_AutoReconnect_GameExists(const char *game)
 	       Sys_FileType(va("%s/%s", host_parms->userdir, game)) == FS_ENT_DIRECTORY;
 }
 
+static qboolean CL_AutoReconnect_ResolveInstalledGame(const char *game,
+	char *resolved, size_t resolvedsize)
+{
+	filelist_item_t *mod;
+
+	if (!q_strcasecmp(game, GAMENAME))
+	{
+		if (!CL_AutoReconnect_GameExists(GAMENAME))
+			return false;
+		q_strlcpy(resolved, GAMENAME, resolvedsize);
+		return true;
+	}
+
+	/* Only auto-select directories recognized by the installed Mods list. */
+	Modlist_Rebuild();
+	for (mod = modlist; mod; mod = mod->next)
+	{
+		if (!q_strcasecmp(mod->name, game))
+		{
+			q_strlcpy(resolved, mod->name, resolvedsize);
+			return true;
+		}
+	}
+
+	return false;
+}
+
 qboolean CL_AutoReconnect_IsActive(void)
 {
 	return cl_auto_reconnect.active;
+}
+
+void CL_AutoReconnect_Cancel(void)
+{
+	cl_auto_reconnect.active = false;
 }
 
 double CL_NetLagDebugFrameThreshold (void)
@@ -367,6 +403,7 @@ void CL_Disconnect (void)
 
 void CL_Disconnect_f (void)
 {
+	CL_AutoReconnect_Cancel();
 	CL_Disconnect ();
 	if (sv.active)
 		Host_ShutdownServer (false);
@@ -380,6 +417,10 @@ static qboolean CL_TryEstablishConnection (const char *host)
 
 	if (cls.demoplayback)
 		return false;
+
+	if (!host || !*host ||
+		q_strlcpy(cl_connect_target, host, sizeof(cl_connect_target)) >= sizeof(cl_connect_target))
+		cl_connect_target[0] = 0;
 
 	CL_MigrateNetworkDefaults_f ();
 	CL_Disconnect ();
@@ -409,6 +450,104 @@ void CL_EstablishConnection (const char *host)
 		Host_Error ("CL_Connect: connect failed");
 }
 
+static qboolean CL_AutoReconnect_Start(const char *game, const char *server,
+	double delay, double retry_interval, double timeout)
+{
+	if (!CL_AutoReconnect_IsSafeGame(game))
+	{
+		Con_Printf("Auto reconnect: invalid game directory \"%s\"\n", game);
+		return false;
+	}
+	if (!CL_AutoReconnect_IsSafeServer(server))
+	{
+		Con_Printf("Auto reconnect: invalid server address \"%s\"\n", server);
+		return false;
+	}
+	if (!CL_AutoReconnect_GameExists(game))
+	{
+		Con_Printf("Auto reconnect: missing game directory \"%s\"\n", game);
+		return false;
+	}
+
+	delay = CLAMP(0.0, delay, 60.0);
+	retry_interval = CLAMP(0.5, retry_interval, 15.0);
+	timeout = CLAMP(delay + retry_interval, timeout, 300.0);
+
+	memset(&cl_auto_reconnect, 0, sizeof(cl_auto_reconnect));
+	cl_auto_reconnect.active = true;
+	q_strlcpy(cl_auto_reconnect.game, game, sizeof(cl_auto_reconnect.game));
+	q_strlcpy(cl_auto_reconnect.server, server, sizeof(cl_auto_reconnect.server));
+	cl_auto_reconnect.start_time = realtime;
+	cl_auto_reconnect.next_attempt_time = realtime + delay;
+	cl_auto_reconnect.retry_interval = retry_interval;
+	cl_auto_reconnect.timeout = timeout;
+	cl_auto_reconnect.switch_pending = !COM_GameDirMatches(cl_auto_reconnect.game);
+
+	Con_Printf("Switching to game \"%s\". Reconnecting to %s in %.1f seconds.\n",
+	           cl_auto_reconnect.game, cl_auto_reconnect.server, delay);
+	SCR_CenterPrint(va("Switching to %s\nReconnecting soon...", cl_auto_reconnect.game));
+	cls.demonum = -1;
+	CL_Disconnect();
+	CL_ClearState();
+
+	return true;
+}
+
+qboolean CL_MaybeSwitchServerGame(const char *serverdirs)
+{
+	char requested[MAX_QPATH];
+	char resolved[MAX_QPATH];
+
+	if (!serverdirs || COM_GameDirMatches(serverdirs))
+		return false;
+
+	Con_Warning("Server game \"%s\" does not match local game \"%s\".\n",
+		serverdirs[0] ? serverdirs : GAMENAME, COM_GetGameNames(false));
+
+	if (!cl_autoswitchgame.value || cls.demoplayback ||
+		cls.state != ca_connected || !cls.netcon)
+		return false;
+
+	/* A second mismatch after switching is a server change or bad advert. */
+	if (cl_auto_reconnect.active)
+	{
+		Con_Warning("Automatic game switch did not resolve the server mismatch; disconnecting.\n");
+		cl_auto_reconnect.active = false;
+		CL_Disconnect();
+		CL_ClearState();
+		return true;
+	}
+
+	if (!serverdirs[0])
+		q_strlcpy(requested, GAMENAME, sizeof(requested));
+	else
+	{
+		if (strlen(serverdirs) >= sizeof(requested) ||
+			!CL_AutoReconnect_IsSafeGame(serverdirs))
+		{
+			Con_Warning("Cannot automatically switch compound or invalid server game \"%s\".\n",
+				serverdirs);
+			return false;
+		}
+		q_strlcpy(requested, serverdirs, sizeof(requested));
+	}
+
+	if (!CL_AutoReconnect_ResolveInstalledGame(requested, resolved, sizeof(resolved)))
+	{
+		Con_Warning("Server game \"%s\" is not available in the local Mods list.\n",
+			requested);
+		return false;
+	}
+
+	if (!cl_connect_target[0] || !CL_AutoReconnect_IsSafeServer(cl_connect_target))
+	{
+		Con_Warning("Cannot preserve the original server address for an automatic game switch.\n");
+		return false;
+	}
+
+	return CL_AutoReconnect_Start(resolved, cl_connect_target, 0.0, 1.0, 30.0);
+}
+
 static void CL_AutoReconnectGame_f(void)
 {
 	const char *game;
@@ -428,47 +567,11 @@ static void CL_AutoReconnectGame_f(void)
 
 	game = Cmd_Argv(1);
 	server = Cmd_Argv(2);
-	if (!CL_AutoReconnect_IsSafeGame(game))
-	{
-		Con_Printf("qs_reconnect_game: invalid game directory \"%s\"\n", game);
-		return;
-	}
-	if (!CL_AutoReconnect_IsSafeServer(server))
-	{
-		Con_Printf("qs_reconnect_game: invalid server address \"%s\"\n", server);
-		return;
-	}
-	if (!CL_AutoReconnect_GameExists(game))
-	{
-		Con_Printf("qs_reconnect_game: missing game directory \"%s\"\n", game);
-		return;
-	}
-
 	delay = Cmd_Argc() > 3 ? Q_atof(Cmd_Argv(3)) : 8.0;
 	retry_interval = Cmd_Argc() > 4 ? Q_atof(Cmd_Argv(4)) : 2.0;
 	timeout = Cmd_Argc() > 5 ? Q_atof(Cmd_Argv(5)) : 120.0;
-	delay = CLAMP(0.0, delay, 60.0);
-	retry_interval = CLAMP(0.5, retry_interval, 15.0);
-	timeout = CLAMP(delay + retry_interval, timeout, 300.0);
 
-	memset(&cl_auto_reconnect, 0, sizeof(cl_auto_reconnect));
-	cl_auto_reconnect.active = true;
-	q_strlcpy(cl_auto_reconnect.game, game, sizeof(cl_auto_reconnect.game));
-	q_strlcpy(cl_auto_reconnect.server, server, sizeof(cl_auto_reconnect.server));
-	cl_auto_reconnect.start_time = realtime;
-	cl_auto_reconnect.next_attempt_time = realtime + delay;
-	cl_auto_reconnect.retry_interval = retry_interval;
-	cl_auto_reconnect.timeout = timeout;
-
-	Con_Printf("Server switching to game \"%s\". Reconnecting to %s in %.1f seconds.\n",
-	           cl_auto_reconnect.game, cl_auto_reconnect.server, delay);
-	SCR_CenterPrint(va("Server switching to %s\nReconnecting soon...", cl_auto_reconnect.game));
-	cls.demonum = -1;
-	CL_Disconnect();
-	CL_ClearState();
-
-	if (!COM_GameDirMatches(cl_auto_reconnect.game))
-		Cbuf_AddText(va("game %s\n", cl_auto_reconnect.game));
+	CL_AutoReconnect_Start(game, server, delay, retry_interval, timeout);
 }
 
 void CL_AutoReconnect_Frame(void)
@@ -483,6 +586,14 @@ void CL_AutoReconnect_Frame(void)
 		cl_auto_reconnect.active = false;
 		if (cls.state == ca_connected && cls.signon < SIGNONS)
 			CL_Disconnect();
+		return;
+	}
+
+	/* Run the filesystem switch at a frame boundary, and only while active. */
+	if (cl_auto_reconnect.switch_pending)
+	{
+		cl_auto_reconnect.switch_pending = false;
+		Cmd_ExecuteString(va("game %s\n", cl_auto_reconnect.game), src_command);
 		return;
 	}
 
@@ -1745,6 +1856,7 @@ void CL_Init (void)
 	Cvar_RegisterVariable (&cl_lerpdebug);
 	Cvar_RegisterVariable (&cl_lerpdebug_models);
 	Cvar_RegisterVariable (&cl_beams_polygons);
+	Cvar_RegisterVariable (&cl_autoswitchgame);
 	Cvar_RegisterVariable (&cl_extrapolate);
 	Cvar_RegisterVariable (&cl_extrapolate_adaptive);
 	Cvar_RegisterVariable (&cl_extrapolate_adaptive_max);

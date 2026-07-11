@@ -316,6 +316,12 @@ typedef struct searchpath_s
 					// <userdir>/game1 have the same id.
 	char	filename[MAX_OSPATH];
 	pack_t	*pack;			// only one of filename / pack will be used
+	/*
+	 * An opt-in rerelease pack is deliberately filtered to MD5 replacement
+	 * assets.  This keeps its maps, progs, and normal game data out of the
+	 * active search path while making the official model companions available.
+	 */
+	qboolean rerelease_models;
 	struct searchpath_s	*next;
 } searchpath_t;
 

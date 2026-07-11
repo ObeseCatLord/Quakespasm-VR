@@ -1,4 +1,5 @@
 INPUT := gfx/conback.lmp \
+	gfx/menumods.lmp \
 	maps/e1m1@c49d.ent \
 	maps/e1m2@0caa.ent \
 	maps/e1m4@958e.ent \
@@ -15,4 +16,3 @@ $(OUTPUT): $(INPUT)
 .PHONY: clean
 clean:
 	rm -f $(OUTPUT)
-

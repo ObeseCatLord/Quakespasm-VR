@@ -1015,7 +1015,10 @@ void R_DrawViewModel(void) {
 
   VR_ApplyCurrentViewWeaponTransform();
 
-  R_DrawAliasModel(currententity);
+  if (vr_enabled.value)
+    R_DrawAliasModel_NoCull(currententity);
+  else
+    R_DrawAliasModel(currententity);
 
   if (vr_enabled.value)
     VR_DrawAdjustmentControllers();

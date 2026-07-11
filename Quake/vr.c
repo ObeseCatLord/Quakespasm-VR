@@ -1493,13 +1493,17 @@ static qboolean vr_weapon_spawn_at_self_origin[MAX_WEAPONS];
 static qboolean vr_weapon_has_spawn_at_self_origin[MAX_WEAPONS];
 
 aliashdr_t *lastWeaponHeader = NULL;
+static qmodel_t *lastWeaponModel = NULL;
 int weaponCVarEntry = -1;
 
 static qboolean VR_IsMultiplayerClient(void) { return cl.maxclients > 1; }
 
-void Mod_Weapon(const char *name, aliashdr_t *hdr) {
-  if (lastWeaponHeader != hdr) {
+void Mod_Weapon(qmodel_t *model, aliashdr_t *hdr) {
+  const char *name = model ? model->name : "";
+
+  if (lastWeaponHeader != hdr || lastWeaponModel != model) {
     lastWeaponHeader = hdr;
+    lastWeaponModel = model;
     weaponCVarEntry = -1;
     for (int i = 0; i < MAX_WEAPONS; i++) {
       if (!strcmp(vr_weapon_offset[i * VARS_PER_WEAPON + 4].string, name)) {
@@ -1538,11 +1542,17 @@ void Mod_Weapon(const char *name, aliashdr_t *hdr) {
   }
 }
 
-static aliashdr_t *VR_ActiveAliasHeader(qmodel_t *model, int skinnum) {
-  if (Mod_UseMD3Model(model, skinnum)) {
+static aliashdr_t *VR_ActiveAliasHeader(qmodel_t *model, int skinnum,
+                                        int frame) {
+  if (Mod_UseMD3ModelForFrame(model, skinnum, frame)) {
     aliashdr_t *md3 = Mod_GetMD3Extradata(model);
     if (md3)
       return md3;
+  }
+  if (Mod_UseMD5ModelForFrame(model, skinnum, frame)) {
+    aliashdr_t *md5 = Mod_GetMD5Extradata(model);
+    if (md5)
+      return md5;
   }
   return (aliashdr_t *)Mod_Extradata(model);
 }
@@ -1554,8 +1564,9 @@ void VR_ApplyCurrentViewWeaponTransform(void) {
       cl.viewent.model->type != mod_alias)
     return;
 
-  hdr = VR_ActiveAliasHeader(cl.viewent.model, cl.viewent.skinnum);
-  Mod_Weapon(cl.viewent.model->name, hdr);
+  hdr = VR_ActiveAliasHeader(cl.viewent.model, cl.viewent.skinnum,
+                             cl.viewent.frame);
+  Mod_Weapon(cl.viewent.model, hdr);
 }
 
 char *CopyWithNumeral(const char *str, int i) {
@@ -3354,7 +3365,8 @@ static void VR_AdjustBegin(vr_adjust_mode_t mode) {
   VectorCopy(cl.handrot[1], vr_adjust_frozen_handrot);
   VectorCopy(cl.handpos[1], vr_adjust_current_handpos);
   VectorCopy(cl.handrot[1], vr_adjust_current_handrot);
-  hdr = VR_ActiveAliasHeader(cl.viewent.model, cl.viewent.skinnum);
+  hdr = VR_ActiveAliasHeader(cl.viewent.model, cl.viewent.skinnum,
+                             cl.viewent.frame);
   VectorCopy(hdr->original_scale_origin, vr_adjust_original_scale_origin);
 
   if (mode == VR_ADJUST_WEAPON) {
@@ -4950,12 +4962,14 @@ void VR_ShowCrosshair() {
   glEnable(GL_DEPTH_TEST);
 }
 
-double lerp(double a, double b, double f) { return (a * (1.0 - f)) + (b * f); }
+static double VR_Lerp(double a, double b, double f) {
+  return (a * (1.0 - f)) + (b * f);
+}
 
 void vec3lerp(vec3_t out, vec3_t start, vec3_t end, double f) {
-  out[0] = lerp(start[0], end[0], f);
-  out[1] = lerp(start[1], end[1], f);
-  out[2] = lerp(start[2], end[2], f);
+  out[0] = VR_Lerp(start[0], end[0], f);
+  out[1] = VR_Lerp(start[1], end[1], f);
+  out[2] = VR_Lerp(start[2], end[2], f);
 }
 
 void VR_Draw2D() {
@@ -6080,9 +6094,6 @@ void VR_DrawWeaponMenu(void) {
   glDisable(GL_DEPTH_TEST);
   glClear(GL_DEPTH_BUFFER_BIT);
   glEnable(GL_DEPTH_TEST);
-
-  // Use R_DrawAliasModel_NoCull to bypass frustum culling for UI models
-  extern void R_DrawAliasModel_NoCull(entity_t * e);
 
   // Store weapon positions for raycast selection (zero-init to avoid
   // garbage positions for weapons whose models fail to load)

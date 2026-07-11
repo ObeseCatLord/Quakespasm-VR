@@ -94,6 +94,7 @@ void M_VR_Key(int key);
 void M_Help_Key(int key);
 static void M_Mods_Key(int key);
 static void M_Models_Key(int key);
+static void M_Mods_Char(int key);
 void M_Quit_Key(int key);
 
 qboolean m_entersound; // play after drawing a frame, so caching
@@ -148,6 +149,14 @@ void M_DrawPic(int x, int y, qpic_t *pic) {
   Draw_Pic(
       x, y,
       pic); // johnfitz -- simplified becuase centering is handled elsewhere
+}
+
+static void M_DrawSubpic(int x, int y, qpic_t *pic, int left, int top,
+                         int width, int height) {
+  Draw_SubPic((float)x, (float)y, (float)width, (float)height, pic,
+              (float)left / pic->width, (float)top / pic->height,
+              (float)(left + width) / pic->width,
+              (float)(top + height) / pic->height, NULL, 1.0f);
 }
 
 void M_DrawTransPicTranslate(int x, int y, qpic_t *pic, int top,
@@ -242,7 +251,16 @@ void M_ToggleMenu_f(void) {
 /* MAIN MENU */
 
 int m_main_cursor;
-#define MAIN_ITEMS 6
+enum {
+  MAIN_SINGLEPLAYER,
+  MAIN_MULTIPLAYER,
+  MAIN_OPTIONS,
+  MAIN_MODS,
+  MAIN_HELP,
+  MAIN_QUIT,
+
+  MAIN_ITEMS
+};
 
 void M_Menu_Main_f(void) {
   if (key_dest != key_menu) {
@@ -262,8 +280,12 @@ void M_Main_Draw(void) {
   M_DrawTransPic(16, 4, Draw_CachePic("gfx/qplaque.lmp"));
   p = Draw_CachePic("gfx/ttl_main.lmp");
   M_DrawPic((320 - p->width) / 2, 4, p);
-  M_DrawTransPic(72, 32, Draw_CachePic("gfx/mainmenu.lmp"));
-  M_Print(72, 132, "mods");
+  p = Draw_CachePic("gfx/mainmenu.lmp");
+
+  /* Match Ironwail: insert Mods before the baked Help/Quit artwork. */
+  M_DrawSubpic(72, 32, p, 0, 0, p->width, 60);
+  M_DrawTransPic(72, 92, Draw_CachePic("gfx/menumods.lmp"));
+  M_DrawSubpic(72, 112, p, 0, 60, p->width, p->height - 60);
 
   f = (int)(realtime * 10) % 6;
 
@@ -303,28 +325,28 @@ void M_Main_Key(int key) {
     m_entersound = true;
 
     switch (m_main_cursor) {
-    case 0:
+    case MAIN_SINGLEPLAYER:
       M_Menu_SinglePlayer_f();
       break;
 
-    case 1:
+    case MAIN_MULTIPLAYER:
       M_Menu_MultiPlayer_f();
       break;
 
-    case 2:
+    case MAIN_OPTIONS:
       M_Menu_Options_f();
       break;
 
-    case 3:
+    case MAIN_MODS:
+      M_Menu_Mods_f();
+      break;
+
+    case MAIN_HELP:
       M_Menu_Help_f();
       break;
 
-    case 4:
+    case MAIN_QUIT:
       M_Menu_Quit_f();
-      break;
-
-    case 5:
-      M_Menu_Mods_f();
       break;
     }
   }
@@ -2438,64 +2460,213 @@ void M_Menu_Credits_f(void) {}
 //=============================================================================
 /* MODS MENU */
 
-#define MAX_MODS_ON_SCREEN 16
+#define MAX_MODS_ON_SCREEN 9
+#define MODS_FILTER_MAX 22
 
-static int m_mods_cursor;
+/*
+ * This is deliberately a local add-on browser.  Ironwail's polished layout
+ * is backed by its downloadable add-on catalogue; OpenVR's mod list only
+ * knows the game-directory name, so never present invented titles/authors or
+ * an install button that cannot work.  We do retain the useful local parts:
+ * installed grouping, the active marker, filtering, paging, and a scrollbar.
+ */
+static int m_mods_cursor; /* index among the currently matching add-ons */
 static int m_mods_first;
 static int m_mods_count;
+static int m_mods_matches;
+static char m_mods_filter[MODS_FILTER_MAX + 1];
 
-static void M_Menu_Mods_f(void) {
+static qboolean M_Mods_IsActive(const filelist_item_t *item) {
+  return !q_strcasecmp(item->name, COM_SkipPath(com_gamedir));
+}
+
+static qboolean M_Mods_Matches(const filelist_item_t *item) {
+  return !m_mods_filter[0] || q_strcasestr(item->name, m_mods_filter) != NULL;
+}
+
+static int M_Mods_CountMatches(void) {
   filelist_item_t *item;
+  int count;
 
-  IN_Deactivate(modestate == MS_WINDOWED);
-  key_dest = key_menu;
-  m_state = m_mods;
-  m_entersound = true;
-
-  for (item = modlist, m_mods_count = 0; item; item = item->next)
-    m_mods_count++;
-
-  if (m_mods_count == 0) {
-    m_mods_cursor = 0;
-    m_mods_first = 0;
-  } else {
-    m_mods_cursor = CLAMP(0, m_mods_cursor, m_mods_count - 1);
-    m_mods_first = CLAMP(0, m_mods_first,
-                         q_max(0, m_mods_count - MAX_MODS_ON_SCREEN));
+  for (item = modlist, count = 0; item; item = item->next) {
+    if (M_Mods_Matches(item))
+      count++;
   }
+
+  return count;
 }
 
 static filelist_item_t *M_Mods_Item(int index) {
   filelist_item_t *item;
 
-  for (item = modlist; item && index > 0; item = item->next)
-    index--;
-  return item;
+  for (item = modlist; item; item = item->next) {
+    if (!M_Mods_Matches(item))
+      continue;
+    if (index-- == 0)
+      return item;
+  }
+
+  return NULL;
+}
+
+static void M_Mods_KeepCursorVisible(void) {
+  if (!m_mods_matches) {
+    m_mods_cursor = 0;
+    m_mods_first = 0;
+    return;
+  }
+
+  m_mods_cursor = CLAMP(0, m_mods_cursor, m_mods_matches - 1);
+  m_mods_first = CLAMP(0, m_mods_first,
+                       q_max(0, m_mods_matches - MAX_MODS_ON_SCREEN));
+  if (m_mods_cursor < m_mods_first)
+    m_mods_first = m_mods_cursor;
+  if (m_mods_cursor >= m_mods_first + MAX_MODS_ON_SCREEN)
+    m_mods_first = m_mods_cursor - MAX_MODS_ON_SCREEN + 1;
+}
+
+static void M_Mods_Refresh(void) {
+  filelist_item_t *item;
+
+  for (item = modlist, m_mods_count = 0; item; item = item->next)
+    m_mods_count++;
+
+  m_mods_matches = M_Mods_CountMatches();
+  M_Mods_KeepCursorVisible();
+}
+
+static void M_Mods_SelectActive(void) {
+  filelist_item_t *item;
+  int index;
+
+  for (item = modlist, index = 0; item; item = item->next) {
+    if (!M_Mods_Matches(item))
+      continue;
+    if (M_Mods_IsActive(item)) {
+      m_mods_cursor = index;
+      M_Mods_KeepCursorVisible();
+      return;
+    }
+    index++;
+  }
+}
+
+static void M_Menu_Mods_f(void) {
+  IN_Deactivate(modestate == MS_WINDOWED);
+  key_dest = key_menu;
+  m_state = m_mods;
+  m_entersound = true;
+
+  /* Pick up add-ons copied into the game directory since engine startup. */
+  Modlist_Rebuild();
+  m_mods_filter[0] = 0;
+  m_mods_cursor = 0;
+  m_mods_first = 0;
+  M_Mods_Refresh();
+  M_Mods_SelectActive();
+}
+
+static void M_Mods_PrintName(int x, int y, const char *name, qboolean active) {
+  char display[20];
+  size_t len;
+
+  q_strlcpy(display, name, sizeof(display));
+  len = strlen(display);
+  if (strlen(name) >= sizeof(display) && len >= 3) {
+    display[len - 3] = '.';
+    display[len - 2] = '.';
+    display[len - 1] = '.';
+  }
+
+  if (active)
+    M_PrintWhite(x, y, display);
+  else
+    M_Print(x, y, display);
+}
+
+static void M_Mods_DrawScrollbar(int x, int y) {
+  int i, thumbfirst, thumblines;
+
+  if (m_mods_matches <= MAX_MODS_ON_SCREEN)
+    return;
+
+  for (i = 0; i < MAX_MODS_ON_SCREEN; i++)
+    M_Print(x, y + i * 8, ":");
+
+  thumblines = q_max(1, MAX_MODS_ON_SCREEN * MAX_MODS_ON_SCREEN /
+                            m_mods_matches);
+  thumbfirst = m_mods_first * (MAX_MODS_ON_SCREEN - thumblines) /
+               q_max(1, m_mods_matches - MAX_MODS_ON_SCREEN);
+  for (i = 0; i < thumblines; i++)
+    M_PrintWhite(x, y + (thumbfirst + i) * 8, "#");
 }
 
 static void M_Mods_Draw(void) {
   filelist_item_t *item;
-  int f, i;
+  int i, last, visible;
+  char count[32];
+
+  M_Mods_Refresh();
 
   M_DrawTransPic(16, 4, Draw_CachePic("gfx/qplaque.lmp"));
   M_PrintWhite(144, 8, "MODS");
+  M_DrawTextBox(16, 24, 34, 19);
+
+  M_PrintWhite(32, 32, "INSTALLED ADD-ONS");
+  q_snprintf(count, sizeof(count), "%d installed", m_mods_count);
+  M_Print(288 - (int)strlen(count) * 8, 32, count);
+  M_Print(32, 48, "NAME");
+  M_Print(208, 48, "STATUS");
+  M_Print(32, 56, "---------------------------------");
 
   if (!m_mods_count) {
-    M_Print(40, 72, "No installed mods found");
+    M_PrintWhite(48, 88, "No installed add-ons found.");
+    M_Print(40, 104, "Add a Quake game directory beside id1.");
+  } else if (!m_mods_matches) {
+    M_PrintWhite(72, 88, "No add-ons match this search.");
+  } else {
+    item = M_Mods_Item(m_mods_first);
+    visible = q_min(MAX_MODS_ON_SCREEN, m_mods_matches - m_mods_first);
+    for (i = 0; item && i < visible; i++, item = M_Mods_Item(m_mods_first + i)) {
+      qboolean active = M_Mods_IsActive(item);
+
+      M_Mods_PrintName(48, 64 + i * 8, item->name, active);
+      if (active)
+        M_PrintWhite(208, 64 + i * 8, "ACTIVE");
+      else
+        M_Print(208, 64 + i * 8, "ready");
+    }
+
+    M_DrawCharacter(40, 64 + (m_mods_cursor - m_mods_first) * 8,
+                    12 + ((int)(realtime * 4) & 1));
+    M_Mods_DrawScrollbar(288, 64);
+
+    last = m_mods_first + visible;
+    q_snprintf(count, sizeof(count), "%d-%d of %d", m_mods_first + 1, last,
+               m_mods_matches);
+    M_Print(288 - (int)strlen(count) * 8, 136, count);
+  }
+
+  M_Print(32, 152, "SEARCH");
+  M_DrawTextBox(88, 144, 24, 1);
+  M_Print(96, 152, m_mods_filter[0] ? m_mods_filter : "all installed add-ons");
+  if ((int)(realtime * 4) & 1)
+    M_DrawCharacter(96 + 8 * (int)strlen(m_mods_filter), 152, 10);
+
+  M_Print(32, 168, "Enter: play     Type: search");
+  M_Print(32, 176, "PgUp/PgDn: page Tab: clear");
+}
+
+static void M_Mods_MoveCursor(int amount) {
+  if (!m_mods_matches)
     return;
-  }
 
-  item = M_Mods_Item(m_mods_first);
-  for (i = 0; item && i < MAX_MODS_ON_SCREEN; i++, item = item->next) {
-    char name[25];
-
-    q_strlcpy(name, item->name, sizeof(name));
-    M_Print(72, 32 + i * 8, name);
-  }
-
-  f = (int)(realtime * 10) % 6;
-  M_DrawTransPic(54, 32 + (m_mods_cursor - m_mods_first) * 8,
-                 Draw_CachePic(va("gfx/menudot%i.lmp", f + 1)));
+  m_mods_cursor += amount;
+  while (m_mods_cursor < 0)
+    m_mods_cursor += m_mods_matches;
+  while (m_mods_cursor >= m_mods_matches)
+    m_mods_cursor -= m_mods_matches;
+  M_Mods_KeepCursorVisible();
 }
 
 static void M_Mods_Key(int key) {
@@ -2509,27 +2680,70 @@ static void M_Mods_Key(int key) {
 
   case K_DOWNARROW:
   case K_RIGHTARROW:
-    if (m_mods_count) {
+  case K_MWHEELDOWN:
+    if (m_mods_matches) {
       S_LocalSound("misc/menu1.wav");
-      if (++m_mods_cursor >= m_mods_count)
-        m_mods_cursor = 0;
-      if (m_mods_cursor < m_mods_first)
-        m_mods_first = m_mods_cursor;
-      if (m_mods_cursor >= m_mods_first + MAX_MODS_ON_SCREEN)
-        m_mods_first = m_mods_cursor - MAX_MODS_ON_SCREEN + 1;
+      M_Mods_MoveCursor(1);
     }
     break;
 
   case K_UPARROW:
   case K_LEFTARROW:
-    if (m_mods_count) {
+  case K_MWHEELUP:
+    if (m_mods_matches) {
       S_LocalSound("misc/menu1.wav");
-      if (--m_mods_cursor < 0)
-        m_mods_cursor = m_mods_count - 1;
-      if (m_mods_cursor < m_mods_first)
-        m_mods_first = m_mods_cursor;
-      if (m_mods_cursor >= m_mods_first + MAX_MODS_ON_SCREEN)
-        m_mods_first = m_mods_cursor - MAX_MODS_ON_SCREEN + 1;
+      M_Mods_MoveCursor(-1);
+    }
+    break;
+
+  case K_PGDN:
+    if (m_mods_matches) {
+      S_LocalSound("misc/menu1.wav");
+      M_Mods_MoveCursor(MAX_MODS_ON_SCREEN);
+    }
+    break;
+
+  case K_PGUP:
+    if (m_mods_matches) {
+      S_LocalSound("misc/menu1.wav");
+      M_Mods_MoveCursor(-MAX_MODS_ON_SCREEN);
+    }
+    break;
+
+  case K_HOME:
+    if (m_mods_matches) {
+      S_LocalSound("misc/menu1.wav");
+      m_mods_cursor = 0;
+      M_Mods_KeepCursorVisible();
+    }
+    break;
+
+  case K_END:
+    if (m_mods_matches) {
+      S_LocalSound("misc/menu1.wav");
+      m_mods_cursor = m_mods_matches - 1;
+      M_Mods_KeepCursorVisible();
+    }
+    break;
+
+  case K_BACKSPACE:
+    if (m_mods_filter[0]) {
+      m_mods_filter[strlen(m_mods_filter) - 1] = 0;
+      m_mods_cursor = 0;
+      m_mods_first = 0;
+      M_Mods_Refresh();
+      S_LocalSound("misc/menu1.wav");
+    }
+    break;
+
+  case K_TAB:
+  case K_DEL:
+    if (m_mods_filter[0]) {
+      m_mods_filter[0] = 0;
+      m_mods_cursor = 0;
+      m_mods_first = 0;
+      M_Mods_Refresh();
+      S_LocalSound("misc/menu1.wav");
     }
     break;
 
@@ -2546,6 +2760,23 @@ static void M_Mods_Key(int key) {
     }
     break;
   }
+}
+
+static void M_Mods_Char(int key) {
+  size_t length;
+
+  if (key < ' ' || key > '~')
+    return;
+
+  length = strlen(m_mods_filter);
+  if (length >= MODS_FILTER_MAX)
+    return;
+
+  m_mods_filter[length] = key;
+  m_mods_filter[length + 1] = 0;
+  m_mods_cursor = 0;
+  m_mods_first = 0;
+  M_Mods_Refresh();
 }
 
 //=============================================================================
@@ -2566,8 +2797,8 @@ static void M_Models_Draw(void) {
   M_Print(24, 48, "Enhanced model replacements");
   M_Print(24, 64, "Model set");
   M_Print(176, 64, enhanced ? "enhanced" : "classic");
-  M_Print(24, 96, "Enhanced models use MD3 files");
-  M_Print(24, 104, "when a mod supplies them.");
+  M_Print(24, 96, "Enhanced models use MD3 or MD5");
+  M_Print(24, 104, "files when a mod supplies them.");
   M_Print(24, 120, "Missing models or skins fall back");
   M_Print(24, 128, "to the original Quake model.");
   M_DrawCharacter(160, 64, 12 + ((int)(realtime * 4) & 1));
@@ -2821,6 +3052,9 @@ void M_Charinput(int key) {
   case m_lanconfig:
     M_LanConfig_Char(key);
     return;
+  case m_mods:
+    M_Mods_Char(key);
+    return;
   default:
     return;
   }
@@ -2834,6 +3068,8 @@ qboolean M_TextEntry(void) {
     return M_Quit_TextEntry();
   case m_lanconfig:
     return M_LanConfig_TextEntry();
+  case m_mods:
+    return true;
   default:
     return false;
   }

@@ -357,6 +357,11 @@ void Modlist_Init(void) {
 }
 #endif
 
+void Modlist_Rebuild(void) {
+  FileList_Clear(&modlist);
+  Modlist_Init();
+}
+
 //==============================================================================
 // ericw -- demo list management
 //==============================================================================
@@ -970,6 +975,7 @@ User command to connect to server
 static void Host_Connect_f(void) {
   char name[MAX_QPATH];
 
+  CL_AutoReconnect_Cancel();
   cls.demonum = -1; // stop demo loop in case this fails
   if (cls.demoplayback) {
     CL_StopPlayback();

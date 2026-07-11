@@ -40,6 +40,15 @@ static char	skybox_name[1024]; //name of current skybox, or "" if no skybox
 static gltexture_t	*skybox_textures[6];
 static gltexture_t	*solidskytexture, *alphaskytexture;
 
+static GLuint	sky_layer_program;
+static GLint	sky_layer_solid_loc;
+static GLint	sky_layer_alpha_loc;
+static GLint	sky_layer_eye_loc;
+static GLint	sky_layer_time_loc;
+static GLint	sky_layer_blend_loc;
+static GLint	sky_layer_fog_loc;
+static qboolean	sky_direct_layers;
+
 extern cvar_t gl_farclip;
 static cvar_t r_fastsky = {"r_fastsky", "0", CVAR_NONE};
 static cvar_t r_sky_quality = {"r_sky_quality", "12", CVAR_NONE};
@@ -539,6 +548,67 @@ static void Skywind_Save_f (void)
 }
 
 /*
+=====================
+GLSky_CreateShaders
+
+Classic QuakeSpasm shades the visible sky mask and then projects the scrolling
+layers onto a view-relative cube.  On very large maps that cube can be nearer
+than the authored sky surface, so its GL_GEQUAL pass fails and exposes the flat
+mask.  vkQuake and Ironwail instead shade the actual sky geometry.  Do the same
+here, and pin its projected depth to the far plane so remote sky brushes are
+not clipped by a map's chosen far distance.
+=====================
+*/
+void GLSky_CreateShaders (void)
+{
+	const GLchar *vertSource =
+		"#version 110\n"
+		"uniform vec3 EyePosition;\n"
+		"varying vec3 Direction;\n"
+		"void main()\n"
+		"{\n"
+		"\tvec4 position = gl_ModelViewProjectionMatrix * gl_Vertex;\n"
+		"\tposition.z = position.w;\n"
+		"\tgl_Position = position;\n"
+		"\tDirection = gl_Vertex.xyz - EyePosition;\n"
+		"\tDirection.z *= 3.0;\n"
+		"}\n";
+	const GLchar *fragSource =
+		"#version 110\n"
+		"uniform sampler2D SolidLayer;\n"
+		"uniform sampler2D AlphaLayer;\n"
+		"uniform float Time;\n"
+		"uniform float SkyAlpha;\n"
+		"uniform vec4 SkyFog;\n"
+		"varying vec3 Direction;\n"
+		"void main()\n"
+		"{\n"
+		"\tvec2 uv = normalize(Direction).xy * (189.0 / 64.0);\n"
+		"\tvec4 solidLayer = texture2D(SolidLayer, uv + Time / 16.0);\n"
+		"\tvec4 alphaLayer = texture2D(AlphaLayer, uv + Time / 8.0);\n"
+		"\tfloat alpha = alphaLayer.a * SkyAlpha;\n"
+		"\tvec3 color = mix(solidLayer.rgb, alphaLayer.rgb, alpha);\n"
+		"\tcolor = mix(color, SkyFog.rgb, SkyFog.a);\n"
+		"\tgl_FragColor = vec4(color, 1.0);\n"
+		"}\n";
+
+	sky_layer_program = 0;
+	if (!gl_glsl_able || !gl_mtexable)
+		return;
+
+	sky_layer_program = GL_CreateProgram (vertSource, fragSource, 0, NULL);
+	if (!sky_layer_program)
+		return;
+
+	sky_layer_solid_loc = GL_GetUniformLocation (&sky_layer_program, "SolidLayer");
+	sky_layer_alpha_loc = GL_GetUniformLocation (&sky_layer_program, "AlphaLayer");
+	sky_layer_eye_loc = GL_GetUniformLocation (&sky_layer_program, "EyePosition");
+	sky_layer_time_loc = GL_GetUniformLocation (&sky_layer_program, "Time");
+	sky_layer_blend_loc = GL_GetUniformLocation (&sky_layer_program, "SkyAlpha");
+	sky_layer_fog_loc = GL_GetUniformLocation (&sky_layer_program, "SkyFog");
+}
+
+/*
 =============
 Sky_Init
 =============
@@ -563,6 +633,39 @@ void Sky_Init (void)
 	skybox_name[0] = 0;
 	for (i=0; i<6; i++)
 		skybox_textures[i] = NULL;
+}
+
+static void Sky_BeginDirectLayers (void)
+{
+	float	*fogcolor;
+	float	fogalpha;
+	float	time;
+
+	time = cl.time - (int)(cl.time / 16.0) * 16.0;
+	fogcolor = Fog_GetColor ();
+	fogalpha = Fog_GetDensity () > 0 ? CLAMP (0.0f, skyfog, 1.0f) : 0.0f;
+
+	GL_UseProgram (sky_layer_program);
+	GL_Uniform1iFunc (sky_layer_solid_loc, 0);
+	GL_Uniform1iFunc (sky_layer_alpha_loc, 1);
+	GL_Uniform3fFunc (sky_layer_eye_loc, r_origin[0], r_origin[1], r_origin[2]);
+	GL_Uniform1fFunc (sky_layer_time_loc, time);
+	GL_Uniform1fFunc (sky_layer_blend_loc, CLAMP (0.0f, r_skyalpha.value, 1.0f));
+	GL_Uniform4fFunc (sky_layer_fog_loc, fogcolor[0], fogcolor[1], fogcolor[2], fogalpha);
+
+	GL_SelectTexture (GL_TEXTURE0_ARB);
+	GL_Bind (solidskytexture);
+	GL_SelectTexture (GL_TEXTURE1_ARB);
+	GL_Bind (alphaskytexture);
+	GL_SelectTexture (GL_TEXTURE0_ARB);
+	sky_direct_layers = true;
+}
+
+static void Sky_EndDirectLayers (void)
+{
+	sky_direct_layers = false;
+	GL_UseProgram (0);
+	GL_SelectTexture (GL_TEXTURE0_ARB);
 }
 
 //==============================================================================
@@ -776,6 +879,12 @@ void Sky_ProcessPoly (glpoly_t	*p)
 	//draw it
 	DrawGLPoly(p);
 	rs_brushpasses++;
+	if (sky_direct_layers)
+	{
+		rs_skypolys++;
+		rs_skypasses++;
+		return;
+	}
 
 	//update sky bounds
 	if (!r_fastsky.value)
@@ -1255,6 +1364,10 @@ called once per frame before drawing anything else
 void Sky_DrawSky (void)
 {
 	int i;
+	qboolean slow_sky;
+	qboolean direct_layers;
+
+	sky_direct_layers = false;
 
 	if (!skyroom_drawing)
 		skyroom_visible = false;
@@ -1287,20 +1400,33 @@ void Sky_DrawSky (void)
 	// process world and bmodels: draw flat-shaded sky surfs, and update skybounds
 	//
 	Fog_DisableGFog ();
-	glDisable (GL_TEXTURE_2D);
-	if (Fog_GetDensity() > 0)
-		glColor3fv (Fog_GetColor());
+	slow_sky = !r_fastsky.value && !(Fog_GetDensity() > 0 && skyfog >= 1);
+	direct_layers = slow_sky && !skybox_name[0] && sky_layer_program &&
+		solidskytexture && alphaskytexture;
+	if (direct_layers)
+	{
+		Sky_BeginDirectLayers ();
+		Sky_ProcessTextureChains ();
+		Sky_ProcessEntities ();
+		Sky_EndDirectLayers ();
+	}
 	else
-		glColor3fv (skyflatcolor);
-	Sky_ProcessTextureChains ();
-	Sky_ProcessEntities ();
-	glColor3f (1, 1, 1);
-	glEnable (GL_TEXTURE_2D);
+	{
+		glDisable (GL_TEXTURE_2D);
+		if (Fog_GetDensity() > 0)
+			glColor3fv (Fog_GetColor());
+		else
+			glColor3fv (skyflatcolor);
+		Sky_ProcessTextureChains ();
+		Sky_ProcessEntities ();
+		glColor3f (1, 1, 1);
+		glEnable (GL_TEXTURE_2D);
+	}
 
 	//
 	// render slow sky: cloud layers or skybox
 	//
-	if (!r_fastsky.value && !(Fog_GetDensity() > 0 && skyfog >= 1))
+	if (slow_sky && !direct_layers)
 	{
 		glDepthFunc(GL_GEQUAL);
 		glDepthMask(0);

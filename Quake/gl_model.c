@@ -34,6 +34,7 @@ static void Mod_LoadSpriteModel (qmodel_t *mod, void *buffer);
 static void Mod_LoadBrushModel (qmodel_t *mod, void *buffer);
 static void Mod_LoadAliasModel (qmodel_t *mod, void *buffer);
 static qboolean Mod_LoadMD3Model (qmodel_t *mod, const byte *buffer, size_t filesize);
+static qboolean Mod_LoadMD5MeshModel (qmodel_t *mod, const byte *buffer, size_t filesize);
 static qmodel_t *Mod_LoadModel (qmodel_t *mod, qboolean crash);
 static void Mod_EnhancedModels_f (cvar_t *var);
 
@@ -43,10 +44,11 @@ static cvar_t	external_ents = {"external_ents", "1", CVAR_ARCHIVE};
 static cvar_t	external_vis = {"external_vis", "1", CVAR_ARCHIVE};
 static cvar_t	mdl_external_textures = {"mdl_external_textures", "1", CVAR_NONE};
 static cvar_t	r_allow_replacement_md3models = {"r_allow_replacement_md3models", "1", CVAR_NONE};
+static cvar_t	r_allow_replacement_md5models = {"r_allow_replacement_md5models", "1", CVAR_NONE};
 cvar_t		r_enhancedmodels = {"r_enhancedmodels", "1", CVAR_ARCHIVE};
 
 /*
- * Alias cache blocks contain a small directory followed by one or two
+ * Alias cache blocks contain a small directory followed by one or more
  * relocatable payloads.  Keeping both variants in the existing final
  * cache_user_t is important: Cache_Free intentionally derives qmodel_t from
  * that final member when releasing model-owned GL textures.
@@ -57,6 +59,7 @@ typedef struct mod_alias_cache_s
 	unsigned int	magic;
 	int		mdl_offset;
 	int		md3_offset;
+	int		md5_offset;
 } mod_alias_cache_t;
 
 #define MOD_ALIAS_CACHE_DATA_OFFSET \
@@ -69,8 +72,11 @@ typedef struct mod_alias_build_s
 	byte		*base;
 	int		mdl_offset;
 	int		md3_offset;
+	int		md5_offset;
 	vec3_t		md3mins;
 	vec3_t		md3maxs;
+	vec3_t		md5mins;
+	vec3_t		md5maxs;
 } mod_alias_build_t;
 
 static mod_alias_build_t mod_alias_build;
@@ -116,6 +122,7 @@ void Mod_Init (void)
 	Cvar_RegisterVariable (&external_ents);
 	Cvar_RegisterVariable (&mdl_external_textures);
 	Cvar_RegisterVariable (&r_allow_replacement_md3models);
+	Cvar_RegisterVariable (&r_allow_replacement_md5models);
 	Cvar_RegisterVariable (&r_enhancedmodels);
 	Cvar_SetCallback (&r_enhancedmodels, Mod_EnhancedModels_f);
 
@@ -136,7 +143,7 @@ void Mod_Init (void)
 ===============
 Mod_BeginAliasBuild
 
-Build MDL and optional MD3 payloads on the hunk, then pack them into one
+Build MDL plus optional MD3/MD5 payloads on the hunk, then pack them into one
 cache allocation. The two one-byte anchors make the byte range copyable
 without reaching into zone.c's private hunk header layout.
 ===============
@@ -165,19 +172,38 @@ static void Mod_RegisterAliasBuild (aliashdr_t *hdr, qboolean md3,
 		mod_alias_build.mdl_offset = (int)((byte *)hdr - mod_alias_build.base);
 }
 
-static void Mod_ExpandAliasBoundsForMD3 (qmodel_t *mod)
+static void Mod_RegisterMD5AliasBuild (aliashdr_t *hdr,
+	const vec3_t mins, const vec3_t maxs)
+{
+	if (!mod_alias_build.active)
+		Sys_Error ("Mod_RegisterMD5AliasBuild: no active build");
+
+	mod_alias_build.md5_offset = (int)((byte *)hdr - mod_alias_build.base);
+	VectorCopy (mins, mod_alias_build.md5mins);
+	VectorCopy (maxs, mod_alias_build.md5maxs);
+}
+
+static void Mod_ExpandAliasBoundsForEnhanced (qmodel_t *mod)
 {
 	float yawradius = 0.0f, radius = 0.0f;
 	vec3_t v;
 	int i, j, k;
 
-	if (!mod_alias_build.md3_offset)
+	if (!mod_alias_build.md3_offset && !mod_alias_build.md5_offset)
 		return;
 
 	for (i = 0; i < 3; i++)
 	{
-		mod->mins[i] = q_min (mod->mins[i], mod_alias_build.md3mins[i]);
-		mod->maxs[i] = q_max (mod->maxs[i], mod_alias_build.md3maxs[i]);
+		if (mod_alias_build.md3_offset)
+		{
+			mod->mins[i] = q_min (mod->mins[i], mod_alias_build.md3mins[i]);
+			mod->maxs[i] = q_max (mod->maxs[i], mod_alias_build.md3maxs[i]);
+		}
+		if (mod_alias_build.md5_offset)
+		{
+			mod->mins[i] = q_min (mod->mins[i], mod_alias_build.md5mins[i]);
+			mod->maxs[i] = q_max (mod->maxs[i], mod_alias_build.md5maxs[i]);
+		}
 	}
 
 	/* Conservatively derive yaw/pitch bounds from the eight expanded corners. */
@@ -228,6 +254,8 @@ static void Mod_FinishAliasBuild (qmodel_t *mod)
 		(int)MOD_ALIAS_CACHE_DATA_OFFSET + mod_alias_build.mdl_offset : 0;
 	cache->md3_offset = mod_alias_build.md3_offset ?
 		(int)MOD_ALIAS_CACHE_DATA_OFFSET + mod_alias_build.md3_offset : 0;
+	cache->md5_offset = mod_alias_build.md5_offset ?
+		(int)MOD_ALIAS_CACHE_DATA_OFFSET + mod_alias_build.md5_offset : 0;
 	memcpy ((byte *)cache + MOD_ALIAS_CACHE_DATA_OFFSET, mod_alias_build.base, rawsize);
 
 	Hunk_FreeToLowMark (mod_alias_build.startmark);
@@ -266,6 +294,8 @@ void *Mod_Extradata (qmodel_t *mod)
 		return (byte *)cache + cache->mdl_offset;
 	if (cache->md3_offset)
 		return (byte *)cache + cache->md3_offset;
+	if (cache->md5_offset)
+		return (byte *)cache + cache->md5_offset;
 
 	Sys_Error ("Mod_Extradata: no alias data for %s", mod->name);
 	return NULL;
@@ -278,6 +308,15 @@ aliashdr_t *Mod_GetMD3Extradata (qmodel_t *mod)
 	if (!cache->md3_offset)
 		return NULL;
 	return (aliashdr_t *)((byte *)cache + cache->md3_offset);
+}
+
+aliashdr_t *Mod_GetMD5Extradata (qmodel_t *mod)
+{
+	mod_alias_cache_t *cache = Mod_GetAliasCache (mod);
+
+	if (!cache->md5_offset)
+		return NULL;
+	return (aliashdr_t *)((byte *)cache + cache->md5_offset);
 }
 
 qboolean Mod_UseMD3Model (qmodel_t *mod, int skinnum)
@@ -307,6 +346,77 @@ qboolean Mod_UseMD3Model (qmodel_t *mod, int skinnum)
 	}
 
 	return true;
+}
+
+qboolean Mod_UseMD5Model (qmodel_t *mod, int skinnum)
+{
+	mod_alias_cache_t *cache;
+	aliashdr_t *surface;
+
+	if (!mod || mod->type != mod_alias)
+		return false;
+
+	cache = Mod_GetAliasCache (mod);
+	if (!cache->md5_offset)
+		return false;
+
+	/* A native .md5mesh has no classic variant to fall back to. */
+	if (cache->mdl_offset && !r_enhancedmodels.value)
+		return false;
+
+	surface = (aliashdr_t *)((byte *)cache + cache->md5_offset);
+	while (surface)
+	{
+		if (skinnum < 0 || skinnum >= surface->numskins ||
+			!surface->gltextures[skinnum][0])
+			return cache->mdl_offset ? false : true;
+		surface = surface->nextsurface ?
+			(aliashdr_t *)((byte *)surface + surface->nextsurface) : NULL;
+	}
+
+	return true;
+}
+
+/*
+=================
+Mod_UseMD3ModelForFrame / Mod_UseMD5ModelForFrame
+
+Replacement models must not reinterpret a valid classic-only frame. This is
+important for map decorations such as crucified zombies: their frame numbers
+are part of the QuakeC contract, not merely animation detail. Native enhanced
+models retain the regular frame-0 fallback because they have no MDL variant.
+=================
+*/
+qboolean Mod_UseMD3ModelForFrame (qmodel_t *mod, int skinnum, int frame)
+{
+	mod_alias_cache_t *cache;
+	aliashdr_t *surface;
+
+	if (!Mod_UseMD3Model (mod, skinnum))
+		return false;
+
+	cache = Mod_GetAliasCache (mod);
+	if (!cache->mdl_offset)
+		return true;
+
+	surface = (aliashdr_t *)((byte *)cache + cache->md3_offset);
+	return frame >= 0 && frame < surface->numframes;
+}
+
+qboolean Mod_UseMD5ModelForFrame (qmodel_t *mod, int skinnum, int frame)
+{
+	mod_alias_cache_t *cache;
+	aliashdr_t *surface;
+
+	if (!Mod_UseMD5Model (mod, skinnum))
+		return false;
+
+	cache = Mod_GetAliasCache (mod);
+	if (!cache->mdl_offset)
+		return true;
+
+	surface = (aliashdr_t *)((byte *)cache + cache->md5_offset);
+	return frame >= 0 && frame < surface->numframes;
 }
 
 /*
@@ -599,9 +709,11 @@ static qmodel_t *Mod_LoadModel (qmodel_t *mod, qboolean crash)
 	{
 	case IDPOLYHEADER:
 	{
-		char md3_name[MAX_QPATH];
+		char md3_name[MAX_QPATH], md5_name[MAX_QPATH];
 		byte *md3buf = NULL;
+		byte *md5buf = NULL;
 		unsigned int md3_path_id = 0;
+		unsigned int md5_path_id = 0;
 
 		Mod_BeginAliasBuild ();
 
@@ -615,26 +727,63 @@ static qmodel_t *Mod_LoadModel (qmodel_t *mod, qboolean crash)
 		{
 			COM_StripExtension (mod->name, md3_name, sizeof(md3_name));
 			COM_AddExtension (md3_name, ".md3", sizeof(md3_name));
-			if (COM_FileExists (md3_name, &md3_path_id) && md3_path_id >= mod->path_id)
-			{
-				int md3_filesize;
-				unsigned int original_path_id = mod->path_id;
+			if (!COM_FileExists (md3_name, &md3_path_id) || md3_path_id < mod->path_id)
+				md3_path_id = 0;
+		}
 
-				md3buf = COM_LoadMallocFile (md3_name, &md3_path_id);
-				md3_filesize = com_filesize;
-				if (md3buf)
-				{
-					/* Load companion skins against the replacement's search path. */
-					mod->path_id = md3_path_id;
-					Mod_LoadMD3Model (mod, md3buf, (size_t)md3_filesize);
-					mod->path_id = original_path_id;
-					free (md3buf);
-				}
+		if (r_allow_replacement_md5models.value &&
+			!q_strcasecmp (COM_FileGetExtension (mod->name), "mdl"))
+		{
+			COM_StripExtension (mod->name, md5_name, sizeof(md5_name));
+			COM_AddExtension (md5_name, ".md5mesh", sizeof(md5_name));
+			if (!COM_FileExists (md5_name, &md5_path_id) || md5_path_id < mod->path_id)
+				md5_path_id = 0;
+		}
+
+		/* Match vkQuake's deterministic policy: highest path wins, MD3 wins ties. */
+		if (md3_path_id && md5_path_id)
+		{
+			if (md5_path_id > md3_path_id)
+				md3_path_id = 0;
+			else
+				md5_path_id = 0;
+		}
+
+		/* The old MD3 load block must only run after the MD5 priority decision. */
+		if (md3_path_id)
+		{
+			int md3_filesize;
+			unsigned int original_path_id = mod->path_id;
+
+			md3buf = COM_LoadMallocFile (md3_name, &md3_path_id);
+			md3_filesize = com_filesize;
+			if (md3buf)
+			{
+				/* Load companion skins against the replacement's search path. */
+				mod->path_id = md3_path_id;
+				Mod_LoadMD3Model (mod, md3buf, (size_t)md3_filesize);
+				mod->path_id = original_path_id;
+				free (md3buf);
+			}
+		}
+		else if (md5_path_id)
+		{
+			int md5_filesize;
+			unsigned int original_path_id = mod->path_id;
+
+			md5buf = COM_LoadMallocFile (md5_name, &md5_path_id);
+			md5_filesize = com_filesize;
+			if (md5buf)
+			{
+				mod->path_id = md5_path_id;
+				Mod_LoadMD5MeshModel (mod, md5buf, (size_t)md5_filesize);
+				mod->path_id = original_path_id;
+				free (md5buf);
 			}
 		}
 
 		Mod_LoadAliasModel (mod, buf);
-		Mod_ExpandAliasBoundsForMD3 (mod);
+		Mod_ExpandAliasBoundsForEnhanced (mod);
 		Mod_FinishAliasBuild (mod);
 		break;
 	}
@@ -653,6 +802,20 @@ static qmodel_t *Mod_LoadModel (qmodel_t *mod, qboolean crash)
 			mod->needload = true;
 			if (crash)
 				Host_Error ("Mod_LoadModel: invalid MD3 %s", mod->name);
+			return NULL;
+		}
+		Mod_FinishAliasBuild (mod);
+		break;
+
+	case (('M' << 0) | ('D' << 8) | ('5' << 16) | ('V' << 24)):
+		Mod_BeginAliasBuild ();
+		if (!Mod_LoadMD5MeshModel (mod, buf, (size_t)model_filesize))
+		{
+			Hunk_FreeToLowMark (mod_alias_build.startmark);
+			memset (&mod_alias_build, 0, sizeof(mod_alias_build));
+			mod->needload = true;
+			if (crash)
+				Host_Error ("Mod_LoadModel: invalid MD5 %s", mod->name);
 			return NULL;
 		}
 		Mod_FinishAliasBuild (mod);
@@ -3634,6 +3797,24 @@ static byte *Mod_LoadMD3Image (qmodel_t *mod, const char *input,
 	return NULL;
 }
 
+/* Image_LoadImage* returns RGBA data. Do not retain alpha-test state for an
+ * opaque true-colour replacement skin. */
+static unsigned Mod_TrueColorTextureFlags (const byte *data, int width, int height,
+	unsigned flags)
+{
+	size_t i, pixels;
+
+	if (!(flags & TEXPREF_ALPHA) || !data || width <= 0 || height <= 0)
+		return flags;
+	if ((size_t)width > SIZE_MAX / (size_t)height)
+		return flags;
+	pixels = (size_t)width * (size_t)height;
+	for (i = 0; i < pixels; i++)
+		if (data[i * 4 + 3] != 255)
+			return flags;
+	return flags & ~TEXPREF_ALPHA;
+}
+
 static void Mod_LoadMD3SurfaceTexture (qmodel_t *mod, aliashdr_t *surface,
 	int skin, const char *name)
 {
@@ -3651,7 +3832,8 @@ static void Mod_LoadMD3SurfaceTexture (qmodel_t *mod, aliashdr_t *surface,
 	}
 
 	surface->gltextures[skin][0] = TexMgr_LoadImage (mod, basename, width, height,
-		SRC_RGBA, data, basename, 0, TEXPREF_ALPHA | TEXPREF_MIPMAP);
+		SRC_RGBA, data, basename, 0,
+		Mod_TrueColorTextureFlags (data, width, height, TEXPREF_ALPHA | TEXPREF_MIPMAP));
 	if (surface->gltextures[skin][0])
 	{
 		surface->skinwidth = width;
@@ -3671,7 +3853,8 @@ static void Mod_LoadMD3SurfaceTexture (qmodel_t *mod, aliashdr_t *surface,
 	{
 		Mod_NormalizeExternalFullbright (data, width, height);
 		surface->fbtextures[skin][0] = TexMgr_LoadImage (mod, glowname, width, height,
-			SRC_RGBA, data, glowname, 0, TEXPREF_ALPHA | TEXPREF_MIPMAP);
+			SRC_RGBA, data, glowname, 0,
+			Mod_TrueColorTextureFlags (data, width, height, TEXPREF_ALPHA | TEXPREF_MIPMAP));
 	}
 	Hunk_FreeToLowMark (mark);
 
@@ -3930,6 +4113,1098 @@ static qboolean Mod_LoadMD3Model (qmodel_t *mod, const byte *buffer, size_t file
 	return true;
 }
 
+/*
+==============================================================================
+
+					MD5 MODEL LOADING
+
+The official 2021 rerelease uses a constrained MD5 v10 dialect for its
+enhanced id1 models.  The renderer below stores a CPU-baked pose stream rather
+than importing a second skeletal GPU path: it keeps the loader compatible with
+OpenVR's fixed-function renderer while still providing genuine animated MD5
+models and ordinary alias-frame interpolation at draw time.
+==============================================================================
+*/
+
+#define MAX_MD5_JOINTS			256
+#define MAX_MD5_SURFACES		32
+#define MAX_MD5_VERTICES		65535
+#define MAX_MD5_TRIANGLES		1048576
+#define MAX_MD5_WEIGHTS		1048576
+#define MAX_MD5_ANIM_COMPONENTS	65536
+#define MAX_MD5_DECODED_BYTES		(64u * 1024u * 1024u)
+
+typedef struct md5joint_s
+{
+	char	name[32];
+	int	parent;
+	float	bind[12];
+} md5joint_t;
+
+typedef struct md5vertinfo_s
+{
+	size_t	firstweight;
+	size_t	count;
+	float	st[2];
+} md5vertinfo_t;
+
+typedef struct md5weight_s
+{
+	int	joint;
+	vec4_t	position;
+} md5weight_t;
+
+typedef struct md5parser_s
+{
+	const char	*cursor;
+	const char	*error;
+} md5parser_t;
+
+typedef struct md5animbase_s
+{
+	unsigned int	flags;
+	size_t		offset;
+} md5animbase_t;
+
+static qboolean Mod_MD5Warning (const qmodel_t *mod, const char *reason)
+{
+	Con_Warning ("MD5: %s: %s\n", mod->name, reason);
+	return false;
+}
+
+static qboolean Mod_MD5Fail (md5parser_t *parser, const char *error)
+{
+	parser->error = error;
+	return false;
+}
+
+static qboolean Mod_MD5Token (md5parser_t *parser)
+{
+	parser->cursor = COM_Parse (parser->cursor);
+	if (!parser->cursor)
+		return Mod_MD5Fail (parser, "truncated text data");
+	return true;
+}
+
+static qboolean Mod_MD5Expect (md5parser_t *parser, const char *expected)
+{
+	if (!Mod_MD5Token (parser))
+		return false;
+	if (strcmp (com_token, expected))
+		return Mod_MD5Fail (parser, "unexpected token");
+	return true;
+}
+
+static qboolean Mod_MD5Size (md5parser_t *parser, size_t *value)
+{
+	char *end;
+	unsigned long long parsed;
+
+	if (!Mod_MD5Token (parser))
+		return false;
+	parsed = strtoull (com_token, &end, 10);
+	if (end == com_token || *end || parsed > SIZE_MAX)
+		return Mod_MD5Fail (parser, "invalid unsigned number");
+	*value = (size_t)parsed;
+	return true;
+}
+
+static qboolean Mod_MD5Int (md5parser_t *parser, int *value)
+{
+	char *end;
+	long parsed;
+
+	if (!Mod_MD5Token (parser))
+		return false;
+	parsed = strtol (com_token, &end, 10);
+	if (end == com_token || *end || parsed < INT_MIN || parsed > INT_MAX)
+		return Mod_MD5Fail (parser, "invalid signed number");
+	*value = (int)parsed;
+	return true;
+}
+
+static qboolean Mod_MD5Float (md5parser_t *parser, float *value)
+{
+	char *end;
+	double parsed;
+
+	if (!Mod_MD5Token (parser))
+		return false;
+	parsed = strtod (com_token, &end);
+	if (end == com_token || *end || !isfinite(parsed) ||
+		parsed < -FLT_MAX || parsed > FLT_MAX)
+		return Mod_MD5Fail (parser, "invalid float");
+	*value = (float)parsed;
+	return true;
+}
+
+static qboolean Mod_MD5Vec3 (md5parser_t *parser, vec3_t value)
+{
+	return Mod_MD5Expect (parser, "(") &&
+		Mod_MD5Float (parser, &value[0]) &&
+		Mod_MD5Float (parser, &value[1]) &&
+		Mod_MD5Float (parser, &value[2]) &&
+		Mod_MD5Expect (parser, ")");
+}
+
+static void Mod_MD5QuaternionW (vec4_t quaternion)
+{
+	float w2 = 1.0f - DotProduct (quaternion, quaternion);
+	quaternion[3] = -sqrtf (q_max (0.0f, w2));
+}
+
+static void Mod_MD5Matrix (const vec3_t pos, const vec4_t quat, float out[12])
+{
+	const float x2 = quat[0] + quat[0];
+	const float y2 = quat[1] + quat[1];
+	const float z2 = quat[2] + quat[2];
+	const float xx = quat[0] * x2;
+	const float xy = quat[0] * y2;
+	const float xz = quat[0] * z2;
+	const float yy = quat[1] * y2;
+	const float yz = quat[1] * z2;
+	const float zz = quat[2] * z2;
+	const float xw = quat[3] * x2;
+	const float yw = quat[3] * y2;
+	const float zw = quat[3] * z2;
+
+	/*
+	 * MD5 matrices are row-major 3x4 transforms.  Keep this layout aligned
+	 * with R_ConcatTransforms and the vkQuake/Ironwail MD5 loaders: the
+	 * opposite cross-term arrangement is the transpose/inverse rotation and
+	 * puts rerelease bind and animation joints in the wrong coordinate frame.
+	 */
+	out[0] = 1.0f - (yy + zz);
+	out[1] = xy - zw;
+	out[2] = xz + yw;
+	out[3] = pos[0];
+	out[4] = xy + zw;
+	out[5] = 1.0f - (xx + zz);
+	out[6] = yz - xw;
+	out[7] = pos[1];
+	out[8] = xz - yw;
+	out[9] = yz + xw;
+	out[10] = 1.0f - (xx + yy);
+	out[11] = pos[2];
+}
+
+static void Mod_MD5Transform4 (const float matrix[12], const vec4_t input, vec3_t output)
+{
+	output[0] = matrix[0] * input[0] + matrix[1] * input[1] + matrix[2] * input[2] + matrix[3] * input[3];
+	output[1] = matrix[4] * input[0] + matrix[5] * input[1] + matrix[6] * input[2] + matrix[7] * input[3];
+	output[2] = matrix[8] * input[0] + matrix[9] * input[1] + matrix[10] * input[2] + matrix[11] * input[3];
+}
+
+static qboolean Mod_MD5AddBytes (size_t *total, size_t count, size_t element)
+{
+	if (count && element > SIZE_MAX / count)
+		return false;
+	count *= element;
+	if (count > MAX_MD5_DECODED_BYTES || *total > MAX_MD5_DECODED_BYTES - count)
+		return false;
+	*total += count;
+	return true;
+}
+
+/*
+ * MD5 does not carry normals.  Match the rerelease loaders by welding UV
+ * split vertices that occupy the same position before accumulating them.
+ * This keeps lighting continuous across texture seams without changing the
+ * mesh's UV/index layout used by the renderer.
+ */
+static unsigned int Mod_MD5HashVertex (const vec3_t vertex)
+{
+	unsigned int hash = 2166136261u;
+	int i;
+
+	for (i = 0; i < 3; i++)
+	{
+		const float value = vertex[i] == 0.0f ? 0.0f : vertex[i];
+		const byte *bytes = (const byte *)&value;
+		int byteindex;
+
+		for (byteindex = 0; byteindex < (int)sizeof(value); byteindex++)
+		{
+			hash ^= bytes[byteindex];
+			hash *= 16777619u;
+		}
+	}
+
+	return hash;
+}
+
+static qboolean Mod_MD5VertexEqual (const vec3_t first, const vec3_t second)
+{
+	return first[0] == second[0] && first[1] == second[1] && first[2] == second[2];
+}
+
+static unsigned short *Mod_MD5BuildWeldTable (const md5vertex_t *vertices,
+	int numverts)
+{
+	size_t hashsize;
+	int *hashmap;
+	unsigned short *weld;
+	int vert;
+
+	if (numverts < 1)
+		return NULL;
+
+	hashsize = (size_t)numverts * 2;
+	hashmap = (int *)calloc (hashsize, sizeof(*hashmap));
+	weld = (unsigned short *)malloc ((size_t)numverts * sizeof(*weld));
+	if (!hashmap || !weld)
+	{
+		free (weld);
+		free (hashmap);
+		return NULL;
+	}
+
+	for (vert = 0; vert < numverts; vert++)
+	{
+		size_t slot = Mod_MD5HashVertex (vertices[vert].xyz) % hashsize;
+		const size_t firstslot = slot;
+
+		weld[vert] = (unsigned short)vert;
+		do
+		{
+			if (!hashmap[slot])
+			{
+				hashmap[slot] = vert + 1;
+				break;
+			}
+
+			if (Mod_MD5VertexEqual (vertices[hashmap[slot] - 1].xyz,
+				vertices[vert].xyz))
+			{
+				weld[vert] = weld[hashmap[slot] - 1];
+				break;
+			}
+
+			slot++;
+			if (slot == hashsize)
+				slot = 0;
+		} while (slot != firstslot);
+	}
+
+	free (hashmap);
+	return weld;
+}
+
+static void Mod_MD5ComputeNormals (md5vertex_t *vertices, int numverts,
+	const unsigned short *indexes, int numindexes)
+{
+	unsigned short *weld;
+	int i;
+
+	for (i = 0; i < numverts; i++)
+		vertices[i].normal[0] = vertices[i].normal[1] = vertices[i].normal[2] = 0.0f;
+	weld = Mod_MD5BuildWeldTable (vertices, numverts);
+
+	for (i = 0; i < numindexes; i += 3)
+	{
+		const int i0 = weld ? weld[indexes[i + 0]] : indexes[i + 0];
+		const int i1 = weld ? weld[indexes[i + 1]] : indexes[i + 1];
+		const int i2 = weld ? weld[indexes[i + 2]] : indexes[i + 2];
+		md5vertex_t *v0 = &vertices[i0];
+		md5vertex_t *v1 = &vertices[i1];
+		md5vertex_t *v2 = &vertices[i2];
+		vec3_t d1, d2, normal;
+
+		VectorSubtract (v1->xyz, v0->xyz, d1);
+		VectorSubtract (v2->xyz, v0->xyz, d2);
+		/* MD5 uses the same triangle winding as the QSS rerelease loader. */
+		CrossProduct (d1, d2, normal);
+		VectorAdd (v0->normal, normal, v0->normal);
+		VectorAdd (v1->normal, normal, v1->normal);
+		VectorAdd (v2->normal, normal, v2->normal);
+	}
+
+	for (i = 0; i < numverts; i++)
+	{
+		if (!weld || weld[i] == i)
+		{
+			if (VectorNormalize (vertices[i].normal) == 0.0f)
+			{
+				vertices[i].normal[0] = 0.0f;
+				vertices[i].normal[1] = 0.0f;
+				vertices[i].normal[2] = 1.0f;
+			}
+		}
+		else
+			VectorCopy (vertices[weld[i]].normal, vertices[i].normal);
+	}
+
+	free (weld);
+}
+
+static void Mod_MD5BuildSkinnedPose (md5vertex_t *output, int numverts,
+	const md5vertinfo_t *vertinfo, const md5weight_t *weights,
+	const float *matrices)
+{
+	int vert;
+
+	for (vert = 0; vert < numverts; vert++)
+	{
+		const md5vertinfo_t *info = &vertinfo[vert];
+		int weight;
+
+		output[vert].xyz[0] = output[vert].xyz[1] = output[vert].xyz[2] = 0.0f;
+		output[vert].st[0] = info->st[0];
+		output[vert].st[1] = info->st[1];
+		for (weight = 0; weight < (int)info->count; weight++)
+		{
+			const md5weight_t *source = &weights[info->firstweight + weight];
+			vec3_t transformed;
+
+			Mod_MD5Transform4 (matrices + (size_t)source->joint * 12,
+				source->position, transformed);
+			VectorAdd (output[vert].xyz, transformed, output[vert].xyz);
+		}
+	}
+}
+
+static byte *Mod_MD5LoadImage (qmodel_t *mod, const char *shader,
+	const char *suffix, char *usedname, size_t usednamesize,
+	int *width, int *height)
+{
+	static const char *const prefixes[] = {"", "progs/", "textures/"};
+	byte *data;
+	int i;
+
+	for (i = 0; i < (int)Q_COUNTOF(prefixes); i++)
+	{
+		q_snprintf (usedname, usednamesize, "%s%s%s", prefixes[i], shader, suffix);
+		data = Image_LoadImageWithPath (usedname, width, height, mod->path_id);
+		if (data)
+			return data;
+	}
+
+	usedname[0] = '\0';
+	return NULL;
+}
+
+static byte *Mod_MD5LoadSkinImage (qmodel_t *mod, const char *shader,
+	int skin, int frame, const char *suffix, char *usedname,
+	size_t usednamesize, int *width, int *height)
+{
+	char framesuffix[16];
+
+	q_snprintf (framesuffix, sizeof(framesuffix), "_%02d_%02d%s", skin, frame, suffix);
+	return Mod_MD5LoadImage (mod, shader, framesuffix, usedname, usednamesize,
+		width, height);
+}
+
+static byte *Mod_MD5LoadLMP (qmodel_t *mod, const char *shader,
+	const char *suffix, char *filename, size_t filenamesize,
+	unsigned int *path_id)
+{
+	static const char *const prefixes[] = {"", "progs/", "textures/"};
+	byte *data;
+	int i;
+
+	for (i = 0; i < (int)Q_COUNTOF(prefixes); i++)
+	{
+		q_snprintf (filename, filenamesize, "%s%s%s.lmp", prefixes[i], shader, suffix);
+		data = COM_LoadMallocFile (filename, path_id);
+		if (data && *path_id >= mod->path_id)
+			return data;
+		free (data);
+	}
+
+	filename[0] = '\0';
+	return NULL;
+}
+
+static byte *Mod_MD5LoadSkinLMP (qmodel_t *mod, const char *shader,
+	int skin, int frame, char *filename, size_t filenamesize,
+	unsigned int *path_id)
+{
+	char framesuffix[16];
+
+	q_snprintf (framesuffix, sizeof(framesuffix), "_%02d_%02d", skin, frame);
+	return Mod_MD5LoadLMP (mod, shader, framesuffix, filename, filenamesize, path_id);
+}
+
+static qboolean Mod_MD5LoadSkinFrame (qmodel_t *mod, aliashdr_t *surface,
+	int skin, int frame, const char *shader)
+{
+	char shaderbase[MAX_QPATH], basename[MAX_QPATH], lmpname[MAX_QPATH], glowname[MAX_QPATH];
+	byte *data;
+	unsigned int path_id;
+	int width, height, headerwidth, headerheight, i;
+	int mark;
+	int lmplength;
+	qboolean bare_shader = false;
+
+	COM_StripExtension (shader, shaderbase, sizeof(shaderbase));
+	for (i = 0; shaderbase[i]; i++)
+		if (shaderbase[i] == '\\')
+			shaderbase[i] = '/';
+
+	mark = Hunk_LowMark ();
+	data = Mod_MD5LoadSkinImage (mod, shaderbase, skin, frame, "", basename,
+		sizeof(basename), &width, &height);
+	if (!data && skin == 0 && frame == 0)
+	{
+		/* Standard MD5 shaders name one texture directly; rerelease names win. */
+		data = Mod_MD5LoadImage (mod, shaderbase, "", basename, sizeof(basename),
+			&width, &height);
+		bare_shader = data != NULL;
+	}
+	if (data)
+	{
+		surface->gltextures[skin][frame] = TexMgr_LoadImage (mod, basename, width, height,
+			SRC_RGBA, data, basename, 0,
+			Mod_TrueColorTextureFlags (data, width, height,
+				TEXPREF_ALPHA | TEXPREF_MIPMAP | TEXPREF_PAD));
+		if (skin == 0 && frame == 0)
+		{
+			surface->skinwidth = width;
+			surface->skinheight = height;
+		}
+		Hunk_FreeToLowMark (mark);
+
+		mark = Hunk_LowMark ();
+		if (bare_shader)
+			data = Mod_MD5LoadImage (mod, shaderbase, "_glow", glowname,
+				sizeof(glowname), &width, &height);
+		else
+			data = Mod_MD5LoadSkinImage (mod, shaderbase, skin, frame, "_glow", glowname,
+				sizeof(glowname), &width, &height);
+		if (!data)
+		{
+			if (bare_shader)
+				data = Mod_MD5LoadImage (mod, shaderbase, "_luma", glowname,
+					sizeof(glowname), &width, &height);
+			else
+				data = Mod_MD5LoadSkinImage (mod, shaderbase, skin, frame, "_luma", glowname,
+					sizeof(glowname), &width, &height);
+		}
+		if (data)
+		{
+			Mod_NormalizeExternalFullbright (data, width, height);
+			surface->fbtextures[skin][frame] = TexMgr_LoadImage (mod, glowname, width, height,
+				SRC_RGBA, data, glowname, 0,
+				Mod_TrueColorTextureFlags (data, width, height,
+					TEXPREF_ALPHA | TEXPREF_MIPMAP | TEXPREF_PAD));
+		}
+		Hunk_FreeToLowMark (mark);
+	}
+	else
+	{
+		Hunk_FreeToLowMark (mark);
+		data = Mod_MD5LoadSkinLMP (mod, shaderbase, skin, frame, lmpname,
+			sizeof(lmpname), &path_id);
+		if (!data && skin == 0 && frame == 0)
+			data = Mod_MD5LoadLMP (mod, shaderbase, "", lmpname,
+				sizeof(lmpname), &path_id);
+		lmplength = com_filesize;
+		if (data && lmplength >= 8)
+		{
+			memcpy (&headerwidth, data, sizeof(headerwidth));
+			memcpy (&headerheight, data + 4, sizeof(headerheight));
+			width = LittleLong (headerwidth);
+			height = LittleLong (headerheight);
+			if (width > 0 && height > 0 && width <= 8192 && height <= 8192 &&
+				width <= INT_MAX / height && lmplength >= 8 + width * height)
+			{
+				surface->gltextures[skin][frame] = TexMgr_LoadImage (mod, lmpname, width, height,
+					SRC_INDEXED, data + 8, lmpname, 8,
+					TEXPREF_ALPHA | TEXPREF_MIPMAP | TEXPREF_PAD | TEXPREF_NOBRIGHT);
+				if (Mod_CheckFullbrights (data + 8, width * height))
+					surface->fbtextures[skin][frame] = TexMgr_LoadImage (mod,
+						va("%s_luma", lmpname), width, height, SRC_INDEXED, data + 8,
+						lmpname, 8, TEXPREF_ALPHA | TEXPREF_MIPMAP | TEXPREF_PAD | TEXPREF_FULLBRIGHT);
+				if (skin == 0 && frame == 0)
+				{
+					surface->skinwidth = width;
+					surface->skinheight = height;
+				}
+			}
+		}
+		free (data);
+	}
+
+	return surface->gltextures[skin][frame] != NULL;
+}
+
+static qboolean Mod_MD5LoadSkin (qmodel_t *mod, aliashdr_t *surface,
+	const char *shader)
+{
+	int skin, frame, numframes;
+
+	/* The rerelease encodes skin and animation frame as _SS_FF. */
+	for (skin = 0; skin < MAX_SKINS; skin++)
+	{
+		for (frame = 0; frame < 4; frame++)
+			if (!Mod_MD5LoadSkinFrame (mod, surface, skin, frame, shader))
+				break;
+		if (!frame)
+			break;
+		numframes = frame;
+
+		/* A single still or a short group repeats through the alias animator. */
+		for (; frame < 4; frame++)
+		{
+			surface->gltextures[skin][frame] = surface->gltextures[skin][frame % numframes];
+			surface->fbtextures[skin][frame] = surface->fbtextures[skin][frame % numframes];
+		}
+	}
+
+	surface->numskins = skin;
+	return surface->numskins > 0;
+}
+
+static qboolean Mod_MD5LoadAnimation (qmodel_t *mod, const md5joint_t *joints,
+	int numjoints, float **outposes, int *outnumposes, float *outinterval)
+{
+	char filename[MAX_QPATH];
+	byte *filedata = NULL;
+	unsigned int path_id;
+	md5parser_t parser;
+	md5animbase_t *animbase = NULL;
+	vec3_t *basepos = NULL;
+	vec4_t *basequat = NULL;
+	float *raw = NULL, *poses = NULL, *local = NULL;
+	byte *seen = NULL;
+	size_t numframes, animationjoints, rawcount;
+	int frame, joint;
+	float framerate;
+	qboolean valid = false;
+
+	*outposes = NULL;
+	*outnumposes = 1;
+	*outinterval = 0.1f;
+	COM_StripExtension (mod->name, filename, sizeof(filename));
+	COM_AddExtension (filename, ".md5anim", sizeof(filename));
+	filedata = COM_LoadMallocFile (filename, &path_id);
+	if (!filedata || path_id < mod->path_id)
+	{
+		free (filedata);
+		return true; /* static companion: bind pose is a valid fallback */
+	}
+
+	parser.cursor = (const char *)filedata;
+	parser.error = NULL;
+	if (!Mod_MD5Expect (&parser, "MD5Version") || !Mod_MD5Expect (&parser, "10") ||
+		!Mod_MD5Token (&parser))
+		goto done;
+	if (!strcmp (com_token, "commandline") &&
+		(!Mod_MD5Token (&parser) || !Mod_MD5Token (&parser)))
+		goto done;
+	if (strcmp (com_token, "numFrames") || !Mod_MD5Size (&parser, &numframes) ||
+		numframes < 1 || numframes > MAXALIASFRAMES ||
+		!Mod_MD5Expect (&parser, "numJoints") || !Mod_MD5Size (&parser, &animationjoints) ||
+		animationjoints != (size_t)numjoints || !Mod_MD5Expect (&parser, "frameRate") ||
+		!Mod_MD5Float (&parser, &framerate) || framerate <= 0.0f ||
+		!Mod_MD5Expect (&parser, "numAnimatedComponents") || !Mod_MD5Size (&parser, &rawcount) ||
+		rawcount > MAX_MD5_ANIM_COMPONENTS)
+	{
+		Mod_MD5Fail (&parser, "invalid animation header");
+		goto done;
+	}
+
+	if (numframes > SIZE_MAX / (size_t)numjoints / 12 ||
+		numframes * (size_t)numjoints * 12 * sizeof(float) > MAX_MD5_DECODED_BYTES)
+	{
+		Mod_MD5Fail (&parser, "animation data exceeds 64 MiB limit");
+		goto done;
+	}
+	animbase = (md5animbase_t *)calloc ((size_t)numjoints, sizeof(*animbase));
+	basepos = (vec3_t *)calloc ((size_t)numjoints, sizeof(*basepos));
+	basequat = (vec4_t *)calloc ((size_t)numjoints, sizeof(*basequat));
+	raw = (float *)calloc (rawcount ? rawcount : 1, sizeof(*raw));
+	local = (float *)calloc ((size_t)numjoints * 12, sizeof(*local));
+	seen = (byte *)calloc (numframes, sizeof(*seen));
+	poses = (float *)malloc (numframes * (size_t)numjoints * 12 * sizeof(*poses));
+	if (!animbase || !basepos || !basequat || !raw || !local || !seen || !poses)
+	{
+		Mod_MD5Fail (&parser, "out of memory");
+		goto done;
+	}
+
+	if (!Mod_MD5Expect (&parser, "hierarchy") || !Mod_MD5Expect (&parser, "{"))
+		goto done;
+	for (joint = 0; joint < numjoints; joint++)
+	{
+		size_t offset;
+		int parent;
+
+		if (!Mod_MD5Token (&parser) || strcmp(com_token, joints[joint].name) ||
+			!Mod_MD5Int (&parser, &parent) || parent != joints[joint].parent ||
+			!Mod_MD5Size (&parser, &offset) || !Mod_MD5Size (&parser, &animbase[joint].offset))
+		{
+			Mod_MD5Fail (&parser, "invalid animation hierarchy");
+			goto done;
+		}
+		animbase[joint].flags = (unsigned int)offset;
+		if (animbase[joint].flags & ~63u || animbase[joint].offset > rawcount)
+		{
+			Mod_MD5Fail (&parser, "invalid animated component range");
+			goto done;
+		}
+	}
+	if (!Mod_MD5Expect (&parser, "}"))
+		goto done;
+
+	if (!Mod_MD5Expect (&parser, "bounds") || !Mod_MD5Expect (&parser, "{"))
+		goto done;
+	for (frame = 0; frame < (int)numframes; frame++)
+	{
+		vec3_t ignored;
+		if (!Mod_MD5Vec3 (&parser, ignored) || !Mod_MD5Vec3 (&parser, ignored))
+			goto done;
+	}
+	if (!Mod_MD5Expect (&parser, "}"))
+		goto done;
+
+	if (!Mod_MD5Expect (&parser, "baseframe") || !Mod_MD5Expect (&parser, "{"))
+		goto done;
+	for (joint = 0; joint < numjoints; joint++)
+	{
+		if (!Mod_MD5Vec3 (&parser, basepos[joint]) || !Mod_MD5Vec3 (&parser, basequat[joint]))
+			goto done;
+	}
+	if (!Mod_MD5Expect (&parser, "}"))
+		goto done;
+
+	for (;;)
+	{
+		const char *next = COM_Parse (parser.cursor);
+		size_t index, value;
+
+		if (!next)
+			break;
+		parser.cursor = next;
+		if (strcmp (com_token, "frame") || !Mod_MD5Size (&parser, &index) || index >= numframes || seen[index] ||
+			!Mod_MD5Expect (&parser, "{"))
+		{
+			Mod_MD5Fail (&parser, "invalid animation frame");
+			goto done;
+		}
+		seen[index] = true;
+		for (value = 0; value < rawcount; value++)
+			if (!Mod_MD5Float (&parser, &raw[value]))
+				goto done;
+		if (!Mod_MD5Expect (&parser, "}"))
+			goto done;
+
+		for (joint = 0; joint < numjoints; joint++)
+		{
+			vec3_t pos;
+			vec4_t quat;
+			float *source = raw + animbase[joint].offset;
+			unsigned int flags = animbase[joint].flags;
+			unsigned int components = 0, testflags = flags;
+			float matrix[12];
+
+			while (testflags) { components += testflags & 1u; testflags >>= 1; }
+			if (components > rawcount - animbase[joint].offset)
+			{
+				Mod_MD5Fail (&parser, "invalid animation component range");
+				goto done;
+			}
+			VectorCopy (basepos[joint], pos);
+			VectorCopy (basequat[joint], quat);
+			if (flags & 1) pos[0] = *source++;
+			if (flags & 2) pos[1] = *source++;
+			if (flags & 4) pos[2] = *source++;
+			if (flags & 8) quat[0] = *source++;
+			if (flags & 16) quat[1] = *source++;
+			if (flags & 32) quat[2] = *source++;
+			Mod_MD5QuaternionW (quat);
+			Mod_MD5Matrix (pos, quat, matrix);
+			if (joints[joint].parent < 0)
+				memcpy (local + (size_t)joint * 12, matrix, sizeof(matrix));
+			else
+				R_ConcatTransforms ((float (*)[4])(local + (size_t)joints[joint].parent * 12),
+					(float (*)[4])matrix, (float (*)[4])(local + (size_t)joint * 12));
+		}
+		memcpy (poses + index * (size_t)numjoints * 12, local,
+			(size_t)numjoints * 12 * sizeof(*poses));
+	}
+
+	for (frame = 0; frame < (int)numframes; frame++)
+		if (!seen[frame])
+		{
+			Mod_MD5Fail (&parser, "missing animation frame");
+			goto done;
+		}
+
+	*outposes = poses;
+	*outnumposes = (int)numframes;
+	*outinterval = 1.0f / framerate;
+	poses = NULL;
+	valid = true;
+
+done:
+	if (!valid && parser.error)
+		Con_Warning ("MD5 animation: %s: %s; using bind pose\n", filename, parser.error);
+	free (poses);
+	free (seen);
+	free (local);
+	free (raw);
+	free (basequat);
+	free (basepos);
+	free (animbase);
+	free (filedata);
+	return true;
+}
+
+static qboolean Mod_LoadMD5MeshModel (qmodel_t *mod, const byte *buffer, size_t filesize)
+{
+	md5parser_t parser;
+	md5joint_t *joints = NULL;
+	aliashdr_t *surfaces[MAX_MD5_SURFACES];
+	float *animation = NULL, *bindposes = NULL;
+	vec3_t mins, maxs;
+	size_t numjoints, numsurfaces, decodedbytes = 0;
+	int numposes = 1;
+	float frameinterval = 0.1f;
+	int hunkmark, joint, surface, frame, vert, k;
+	qboolean valid = false;
+
+	if (filesize < 12)
+		return Mod_MD5Warning (mod, "file is shorter than an MD5 header");
+
+	memset (surfaces, 0, sizeof(surfaces));
+	parser.cursor = (const char *)buffer;
+	parser.error = NULL;
+	hunkmark = Hunk_LowMark ();
+
+	if (!Mod_MD5Expect (&parser, "MD5Version") || !Mod_MD5Expect (&parser, "10") ||
+		!Mod_MD5Token (&parser))
+		goto done;
+	if (!strcmp (com_token, "commandline") &&
+		(!Mod_MD5Token (&parser) || !Mod_MD5Token (&parser)))
+		goto done;
+	if (strcmp (com_token, "numJoints") || !Mod_MD5Size (&parser, &numjoints) ||
+		numjoints < 1 || numjoints > MAX_MD5_JOINTS ||
+		!Mod_MD5Expect (&parser, "numMeshes") || !Mod_MD5Size (&parser, &numsurfaces) ||
+		numsurfaces < 1 || numsurfaces > MAX_MD5_SURFACES ||
+		!Mod_MD5Expect (&parser, "joints") || !Mod_MD5Expect (&parser, "{"))
+	{
+		Mod_MD5Fail (&parser, "invalid mesh header");
+		goto done;
+	}
+
+	joints = (md5joint_t *)calloc (numjoints, sizeof(*joints));
+	if (!joints)
+	{
+		Mod_MD5Fail (&parser, "out of memory");
+		goto done;
+	}
+
+	for (joint = 0; joint < (int)numjoints; joint++)
+	{
+		vec3_t pos;
+		vec4_t quat;
+		int parent;
+
+		if (!Mod_MD5Token (&parser))
+			goto done;
+		q_strlcpy (joints[joint].name, com_token, sizeof(joints[joint].name));
+		if (!joints[joint].name[0] || !Mod_MD5Int (&parser, &parent) ||
+			parent < -1 || parent >= joint || !Mod_MD5Vec3 (&parser, pos) ||
+			!Mod_MD5Expect (&parser, "(") || !Mod_MD5Float (&parser, &quat[0]) ||
+			!Mod_MD5Float (&parser, &quat[1]) || !Mod_MD5Float (&parser, &quat[2]) ||
+			!Mod_MD5Expect (&parser, ")"))
+		{
+			Mod_MD5Fail (&parser, "invalid joint");
+			goto done;
+		}
+		joints[joint].parent = parent;
+		Mod_MD5QuaternionW (quat);
+		/* MD5 mesh joints are model-space bind transforms. Companion .md5anim
+		 * frames are local and are concatenated in Mod_MD5LoadAnimation; doing
+		 * that here as well double-transforms hierarchy children. */
+		Mod_MD5Matrix (pos, quat, joints[joint].bind);
+	}
+	if (!Mod_MD5Expect (&parser, "}"))
+		goto done;
+	bindposes = (float *)malloc (numjoints * 12 * sizeof(*bindposes));
+	if (!bindposes)
+	{
+		Mod_MD5Fail (&parser, "out of memory");
+		goto done;
+	}
+	for (joint = 0; joint < (int)numjoints; joint++)
+		memcpy (bindposes + (size_t)joint * 12, joints[joint].bind,
+			sizeof(joints[joint].bind));
+
+	/* A missing or invalid companion animation is safely rendered as bind pose. */
+	Mod_MD5LoadAnimation (mod, joints, (int)numjoints, &animation, &numposes, &frameinterval);
+	if (numposes < 1 || numposes > MAXALIASFRAMES)
+	{
+		Mod_MD5Fail (&parser, "invalid animation pose count");
+		goto done;
+	}
+
+	for (k = 0; k < 3; k++)
+		mins[k] = FLT_MAX, maxs[k] = -FLT_MAX;
+
+	for (surface = 0; surface < (int)numsurfaces; surface++)
+	{
+		char shader[MAX_QPATH];
+		md5vertinfo_t *vertinfo = NULL;
+		md5weight_t *weights = NULL;
+		unsigned short *indexes = NULL;
+		byte *vertseen = NULL, *triseen = NULL, *weightseen = NULL;
+			aliashdr_t *out;
+			md5vertex_t *vertices;
+			size_t numverts, numtris, numweights, numindexes;
+			size_t surfacebytes = 0, headersize;
+		if (!Mod_MD5Expect (&parser, "mesh") || !Mod_MD5Expect (&parser, "{") ||
+			!Mod_MD5Expect (&parser, "shader") || !Mod_MD5Token (&parser))
+			goto surface_done;
+		q_strlcpy (shader, com_token, sizeof(shader));
+		if (!shader[0] || !Mod_MD5Expect (&parser, "numverts") || !Mod_MD5Size (&parser, &numverts) ||
+			numverts < 1 || numverts > MAX_MD5_VERTICES)
+		{
+			Mod_MD5Fail (&parser, "invalid mesh vertex count");
+			goto surface_done;
+		}
+
+		vertinfo = (md5vertinfo_t *)calloc (numverts, sizeof(*vertinfo));
+		vertseen = (byte *)calloc (numverts, sizeof(*vertseen));
+		if (!vertinfo || !vertseen)
+		{
+			Mod_MD5Fail (&parser, "out of memory");
+			goto surface_done;
+		}
+		if (!Mod_MD5Token (&parser))
+			goto surface_done;
+		while (!strcmp (com_token, "vert"))
+		{
+			size_t index;
+
+			if (!Mod_MD5Size (&parser, &index) || index >= numverts || vertseen[index] ||
+				!Mod_MD5Expect (&parser, "(") || !Mod_MD5Float (&parser, &vertinfo[index].st[0]) ||
+				!Mod_MD5Float (&parser, &vertinfo[index].st[1]) || !Mod_MD5Expect (&parser, ")") ||
+				!Mod_MD5Size (&parser, &vertinfo[index].firstweight) ||
+				!Mod_MD5Size (&parser, &vertinfo[index].count) || !vertinfo[index].count)
+			{
+				Mod_MD5Fail (&parser, "invalid mesh vertex");
+				goto surface_done;
+			}
+			vertseen[index] = true;
+			if (!Mod_MD5Token (&parser))
+				goto surface_done;
+		}
+		if (strcmp (com_token, "numtris") || !Mod_MD5Size (&parser, &numtris) ||
+			numtris < 1 || numtris > MAX_MD5_TRIANGLES || numtris > SIZE_MAX / 3)
+		{
+			Mod_MD5Fail (&parser, "invalid mesh triangle count");
+			goto surface_done;
+		}
+		numindexes = numtris * 3;
+		indexes = (unsigned short *)malloc (numindexes * sizeof(*indexes));
+		triseen = (byte *)calloc (numtris, sizeof(*triseen));
+		if (!indexes || !triseen)
+		{
+			Mod_MD5Fail (&parser, "out of memory");
+			goto surface_done;
+		}
+		if (!Mod_MD5Token (&parser))
+			goto surface_done;
+		while (!strcmp (com_token, "tri"))
+		{
+			size_t index;
+			int corner;
+
+			if (!Mod_MD5Size (&parser, &index) || index >= numtris || triseen[index])
+			{
+				Mod_MD5Fail (&parser, "invalid mesh triangle");
+				goto surface_done;
+			}
+			triseen[index] = true;
+			for (corner = 0; corner < 3; corner++)
+			{
+				size_t vertex;
+				if (!Mod_MD5Size (&parser, &vertex) || vertex >= numverts)
+				{
+					Mod_MD5Fail (&parser, "triangle index outside mesh");
+					goto surface_done;
+				}
+				indexes[index * 3 + corner] = (unsigned short)vertex;
+			}
+			if (!Mod_MD5Token (&parser))
+				goto surface_done;
+		}
+		if (strcmp (com_token, "numweights") || !Mod_MD5Size (&parser, &numweights) ||
+			numweights < 1 || numweights > MAX_MD5_WEIGHTS)
+		{
+			Mod_MD5Fail (&parser, "invalid mesh weight count");
+			goto surface_done;
+		}
+		weights = (md5weight_t *)calloc (numweights, sizeof(*weights));
+		weightseen = (byte *)calloc (numweights, sizeof(*weightseen));
+		if (!weights || !weightseen)
+		{
+			Mod_MD5Fail (&parser, "out of memory");
+			goto surface_done;
+		}
+		if (!Mod_MD5Token (&parser))
+			goto surface_done;
+		while (!strcmp (com_token, "weight"))
+		{
+			size_t index, bone;
+			float bias;
+
+			if (!Mod_MD5Size (&parser, &index) || index >= numweights || weightseen[index] ||
+				!Mod_MD5Size (&parser, &bone) || bone >= numjoints ||
+				!Mod_MD5Float (&parser, &bias) || bias < 0.0f || bias > 1.0f ||
+				!Mod_MD5Expect (&parser, "(") || !Mod_MD5Float (&parser, &weights[index].position[0]) ||
+				!Mod_MD5Float (&parser, &weights[index].position[1]) || !Mod_MD5Float (&parser, &weights[index].position[2]) ||
+				!Mod_MD5Expect (&parser, ")"))
+			{
+				Mod_MD5Fail (&parser, "invalid mesh weight");
+				goto surface_done;
+			}
+			weightseen[index] = true;
+			weights[index].joint = (int)bone;
+			weights[index].position[0] *= bias;
+			weights[index].position[1] *= bias;
+			weights[index].position[2] *= bias;
+			weights[index].position[3] = bias;
+			if (!Mod_MD5Token (&parser))
+				goto surface_done;
+		}
+		if (strcmp (com_token, "}"))
+		{
+			Mod_MD5Fail (&parser, "unterminated mesh");
+			goto surface_done;
+		}
+		for (vert = 0; vert < (int)numverts; vert++)
+			if (!vertseen[vert] || vertinfo[vert].firstweight > numweights ||
+				vertinfo[vert].count > numweights - vertinfo[vert].firstweight)
+			{
+				Mod_MD5Fail (&parser, "invalid vertex weight range");
+				goto surface_done;
+			}
+		for (vert = 0; vert < (int)numtris; vert++)
+			if (!triseen[vert])
+			{
+				Mod_MD5Fail (&parser, "missing mesh triangle");
+				goto surface_done;
+			}
+		for (vert = 0; vert < (int)numweights; vert++)
+			if (!weightseen[vert])
+			{
+				Mod_MD5Fail (&parser, "missing mesh weight");
+				goto surface_done;
+			}
+
+		if ((size_t)numposes > SIZE_MAX / numverts ||
+			!Mod_MD5AddBytes (&surfacebytes, 1, sizeof(*out)) ||
+			!Mod_MD5AddBytes (&surfacebytes, (size_t)(numposes - 1), sizeof(out->frames[0])) ||
+			!Mod_MD5AddBytes (&surfacebytes, (size_t)numposes * numverts, sizeof(*vertices)) ||
+			!Mod_MD5AddBytes (&surfacebytes, numindexes, sizeof(*indexes)) ||
+			decodedbytes > MAX_MD5_DECODED_BYTES - surfacebytes)
+		{
+			Mod_MD5Fail (&parser, "decoded data exceeds 64 MiB limit");
+			goto surface_done;
+		}
+		decodedbytes += surfacebytes;
+
+		headersize = sizeof(*out) + (size_t)(numposes - 1) * sizeof(out->frames[0]);
+		if (headersize > INT_MAX)
+		{
+			Mod_MD5Fail (&parser, "frame header exceeds hunk allocation limit");
+			goto surface_done;
+		}
+		out = (aliashdr_t *)Hunk_AllocName ((int)headersize, loadname);
+		out->poseverttype = ALIAS_POSE_MD5;
+		out->numframes = out->numposes = numposes;
+		out->numverts = out->numverts_vbo = (int)numverts;
+		out->numtris = (int)numtris;
+		out->numindexes = (int)numindexes;
+			out->numskins = isDedicated ? 1 : 0;
+		out->skinwidth = out->skinheight = 1;
+		out->scale[0] = out->scale[1] = out->scale[2] = 1.0f;
+		VectorCopy (out->scale, out->original_scale);
+		out->scale_origin[0] = out->scale_origin[1] = out->scale_origin[2] = 0.0f;
+		out->original_scale_origin[0] = out->original_scale_origin[1] = out->original_scale_origin[2] = 0.0f;
+		for (frame = 0; frame < numposes; frame++)
+		{
+			out->frames[frame].firstpose = frame;
+			out->frames[frame].numposes = 1;
+			out->frames[frame].interval = frameinterval;
+		}
+
+		vertices = (md5vertex_t *)Hunk_Alloc ((int)((size_t)numposes * numverts * sizeof(*vertices)));
+		out->vertexes = (intptr_t)((byte *)vertices - (byte *)out);
+		for (frame = 0; frame < numposes; frame++)
+		{
+			const float *matrices = animation ? animation + (size_t)frame * numjoints * 12 : bindposes;
+			md5vertex_t *pose = vertices + (size_t)frame * numverts;
+
+			Mod_MD5BuildSkinnedPose (pose, (int)numverts, vertinfo, weights, matrices);
+			Mod_MD5ComputeNormals (pose, (int)numverts, indexes, (int)numindexes);
+			for (vert = 0; vert < (int)numverts; vert++)
+				for (k = 0; k < 3; k++)
+				{
+					mins[k] = q_min (mins[k], pose[vert].xyz[k]);
+					maxs[k] = q_max (maxs[k], pose[vert].xyz[k]);
+				}
+		}
+		{
+			unsigned short *persistent = (unsigned short *)Hunk_Alloc ((int)(numindexes * sizeof(*persistent)));
+			memcpy (persistent, indexes, numindexes * sizeof(*persistent));
+			out->indexes = (intptr_t)((byte *)persistent - (byte *)out);
+		}
+		if (!isDedicated)
+			Mod_MD5LoadSkin (mod, out, shader);
+		surfaces[surface] = out;
+
+		free (weightseen); weightseen = NULL;
+		free (weights); weights = NULL;
+		free (triseen); triseen = NULL;
+		free (indexes); indexes = NULL;
+		free (vertseen); vertseen = NULL;
+		free (vertinfo); vertinfo = NULL;
+		continue;
+
+	surface_done:
+		free (weightseen);
+		free (weights);
+		free (triseen);
+		free (indexes);
+		free (vertseen);
+		free (vertinfo);
+		if (parser.error)
+			goto done;
+		Mod_MD5Fail (&parser, "invalid mesh data");
+		goto done;
+	}
+
+	for (surface = 0; surface < (int)numsurfaces - 1; surface++)
+		surfaces[surface]->nextsurface = (intptr_t)((byte *)surfaces[surface + 1] - (byte *)surfaces[surface]);
+
+	mod->type = mod_alias;
+	mod->numframes = numposes;
+	mod->synctype = ST_FRAMETIME;
+	mod->flags = 0;
+	Mod_SetExtraFlags (mod);
+	Mod_SetMD3Bounds (mod, mins, maxs);
+	Mod_RegisterMD5AliasBuild (surfaces[0], mins, maxs);
+	valid = true;
+
+done:
+	if (!valid)
+	{
+		if (parser.error)
+			Mod_MD5Warning (mod, parser.error);
+		Hunk_FreeToLowMark (hunkmark);
+		if (!isDedicated)
+			TexMgr_FreeTexturesForOwner (mod);
+	}
+	free (bindposes);
+	free (animation);
+	free (joints);
+	return valid;
+}
+
 //=============================================================================
 
 /*
@@ -4132,8 +5407,12 @@ static void Mod_Print (void)
 			{
 				if (cache->mdl_offset && cache->md3_offset)
 					variant = " [MDL+MD3]";
+				else if (cache->mdl_offset && cache->md5_offset)
+					variant = " [MDL+MD5]";
 				else if (cache->md3_offset)
 					variant = " [MD3]";
+				else if (cache->md5_offset)
+					variant = " [MD5]";
 				else if (cache->mdl_offset)
 					variant = " [MDL]";
 			}

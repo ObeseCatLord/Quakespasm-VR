@@ -359,6 +359,7 @@ void Host_Resetdemos (void);
 
 void ExtraMaps_Init (void);
 void Modlist_Init (void);
+void Modlist_Rebuild (void);
 void DemoList_Init (void);
 
 void ExtraMaps_NewGame (void);

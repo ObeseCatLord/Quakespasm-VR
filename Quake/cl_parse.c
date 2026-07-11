@@ -633,7 +633,7 @@ void CL_KeepaliveMessage (void)
 CL_ParseServerInfo
 ==================
 */
-void CL_ParseServerInfo (void)
+qboolean CL_ParseServerInfo (void)
 {
 	const char	*str;
 	int		i;
@@ -704,9 +704,8 @@ void CL_ParseServerInfo (void)
 	cl.ackframes[0] = -1;
 
 	q_strlcpy (cl.server_gamedir, MSG_ReadString (), sizeof(cl.server_gamedir));
-	if (cl.server_gamedir[0] && !COM_GameDirMatches(cl.server_gamedir))
-		Con_DWarning("Server gamedir \"%s\" does not match local gamedir \"%s\".\n",
-			cl.server_gamedir, COM_GetGameNames(false));
+	if (CL_MaybeSwitchServerGame(cl.server_gamedir))
+		return false;
 
 // parse maxclients
 	cl.maxclients = MSG_ReadByte ();
@@ -819,6 +818,8 @@ void CL_ParseServerInfo (void)
 	memset(&dev_stats, 0, sizeof(dev_stats));
 	memset(&dev_peakstats, 0, sizeof(dev_peakstats));
 	memset(&dev_overflows, 0, sizeof(dev_overflows));
+
+	return true;
 }
 
 static void CSQC_ClearCsEdictForSSQC (size_t entnum)
@@ -2184,7 +2185,8 @@ void CL_ParseServerMessage (void)
 			break;
 
 		case svc_serverinfo:
-			CL_ParseServerInfo ();
+			if (!CL_ParseServerInfo ())
+				return;
 			vid.recalc_refdef = true;	// leave intermission full screen
 			break;
 
