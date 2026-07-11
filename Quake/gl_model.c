@@ -47,7 +47,7 @@ static cvar_t	wad_external_textures = {"wad_external_textures", "1", CVAR_NONE};
 static cvar_t	mdl_external_textures = {"mdl_external_textures", "1", CVAR_NONE};
 static cvar_t	r_allow_replacement_md3models = {"r_allow_replacement_md3models", "1", CVAR_NONE};
 static cvar_t	r_allow_replacement_md5models = {"r_allow_replacement_md5models", "1", CVAR_NONE};
-cvar_t		r_enhancedmodels = {"r_enhancedmodels", "1", CVAR_ARCHIVE};
+cvar_t		r_enhancedmodels = {"r_enhancedmodels", "0", CVAR_ARCHIVE};
 
 /*
  * Alias cache blocks contain a small directory followed by one or more

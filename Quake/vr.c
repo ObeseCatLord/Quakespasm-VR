@@ -1254,7 +1254,14 @@ static qboolean VR_CreateFBOTextures(fbo_t *fbo, int width, int height,
 void RecreateTextures(fbo_t *fbo, int width, int height) {
   GLuint oldDepth = fbo->depth_texture;
   GLuint oldTexture = fbo->texture;
-  GLenum color_format = vr_highprecision_targets.value ? GL_RGB10_A2 : GL_RGBA8;
+  /*
+   * SteamVR's OpenGL compositor path does not present RGB10_A2 gamma targets
+   * consistently on all HMDs: the mirror blit is correct while the headset
+   * receives an over-bright image. Keep the submitted eye colour format at
+   * the established RGBA8 format; the optional depth32 attachment still
+   * improves depth precision without changing colour-space semantics.
+   */
+  GLenum color_format = GL_RGBA8;
   GLenum depth_format = vr_highprecision_targets.value ? GL_DEPTH_COMPONENT32
                                                         : GL_DEPTH_COMPONENT24;
 
@@ -2399,24 +2406,6 @@ static qboolean VR_LineIsGlobalAdjustmentKey(const char *line, size_t len) {
          VR_LineStartsWithKey(line, len, "global_muzzle_offset");
 }
 
-static qboolean VR_LineIsMPMuzzleAdjustmentKey(const char *line, size_t len) {
-  return VR_LineStartsWithKey(line, len, "mp_muzzle_offset");
-}
-
-static qboolean VR_LineIsGlobalMPMuzzleAdjustmentKey(const char *line,
-                                                     size_t len) {
-  return VR_LineStartsWithKey(line, len, "global_mp_muzzle_offset");
-}
-
-static qboolean VR_LineIsMPHeldAdjustmentKey(const char *line, size_t len) {
-  return VR_LineStartsWithKey(line, len, "mp_held_offset");
-}
-
-static qboolean VR_LineIsGlobalMPHeldAdjustmentKey(const char *line,
-                                                   size_t len) {
-  return VR_LineStartsWithKey(line, len, "global_mp_held_offset");
-}
-
 static qboolean VR_TextAppendFilteredLines(vr_textbuf_t *buf, const char *text,
                                            size_t len,
                                            qboolean strip_adjustments,
@@ -2439,71 +2428,6 @@ static qboolean VR_TextAppendFilteredLines(vr_textbuf_t *buf, const char *text,
     if (strip_adjustments && VR_LineIsAdjustmentKey(p, line_len))
       strip = true;
     if (strip_globals && VR_LineIsGlobalAdjustmentKey(p, line_len))
-      strip = true;
-
-    if (!strip && !VR_TextAppendN(buf, p, full_len))
-      return false;
-
-    p += full_len;
-  }
-
-  return true;
-}
-
-static qboolean VR_TextAppendFilteredMPMuzzleLines(
-    vr_textbuf_t *buf, const char *text, size_t len,
-    qboolean strip_mp_muzzle, qboolean strip_global_mp_muzzle) {
-  const char *p = text;
-  const char *end = text + len;
-
-  while (p < end) {
-    const char *line_end = p;
-    size_t line_len;
-    size_t full_len;
-    qboolean strip = false;
-
-    while (line_end < end && *line_end != '\n')
-      line_end++;
-
-    line_len = line_end - p;
-    full_len = line_len + (line_end < end ? 1 : 0);
-
-    if (strip_mp_muzzle && VR_LineIsMPMuzzleAdjustmentKey(p, line_len))
-      strip = true;
-    if (strip_global_mp_muzzle &&
-        VR_LineIsGlobalMPMuzzleAdjustmentKey(p, line_len))
-      strip = true;
-
-    if (!strip && !VR_TextAppendN(buf, p, full_len))
-      return false;
-
-    p += full_len;
-  }
-
-  return true;
-}
-
-static qboolean VR_TextAppendFilteredMPHeldLines(
-    vr_textbuf_t *buf, const char *text, size_t len,
-    qboolean strip_mp_held, qboolean strip_global_mp_held) {
-  const char *p = text;
-  const char *end = text + len;
-
-  while (p < end) {
-    const char *line_end = p;
-    size_t line_len;
-    size_t full_len;
-    qboolean strip = false;
-
-    while (line_end < end && *line_end != '\n')
-      line_end++;
-
-    line_len = line_end - p;
-    full_len = line_len + (line_end < end ? 1 : 0);
-
-    if (strip_mp_held && VR_LineIsMPHeldAdjustmentKey(p, line_len))
-      strip = true;
-    if (strip_global_mp_held && VR_LineIsGlobalMPHeldAdjustmentKey(p, line_len))
       strip = true;
 
     if (!strip && !VR_TextAppendN(buf, p, full_len))
@@ -3002,192 +2926,30 @@ static qboolean VR_SaveGlobalWeaponAdjustmentsToSchema(int slot) {
   return ok;
 }
 
-static void VR_ApplyGlobalMPMuzzleOffsetToSchemaSlots(const vec3_t offset) {
-  for (int i = 0; i < num_vr_weapons; i++) {
-    const char *id = vr_weapons[i].viewmodel_path[0]
-                         ? vr_weapons[i].viewmodel_path
-                         : vr_weapons[i].model_path;
-    int slot;
+/*
+ * Multiplayer calibration must stay with the active viewmodel. A shared
+ * offset moved every weapon (and its projectile source) together, which is
+ * particularly wrong for mods such as QBJ3 where each weapon mesh has a
+ * different origin. The schema already supports per-viewmodel mp_* fields.
+ */
+static void VR_SetMPMuzzleOffsetForSlot(int slot, const vec3_t offset) {
+  if (slot < 0 || slot >= MAX_WEAPONS)
+    return;
 
-    if (!id || !id[0])
-      continue;
-
-    slot = VR_FindWeaponOffsetSlot(id, NULL);
-    if (slot < 0)
-      continue;
-
-    VectorCopy(offset, vr_weapon_mp_muzzle_offset[slot]);
-    vr_weapon_has_mp_muzzle_offset[slot] = true;
-    vr_weapon_schema_mp_muzzle_offset[slot][0] = 0.0f;
-    vr_weapon_schema_mp_muzzle_offset[slot][1] = 0.0f;
-    vr_weapon_schema_mp_muzzle_offset[slot][2] = 0.0f;
-    vr_weapon_has_schema_mp_muzzle_offset[slot] = false;
-  }
-
-  lastWeaponHeader = NULL;
+  VectorCopy(offset, vr_weapon_mp_muzzle_offset[slot]);
+  vr_weapon_has_mp_muzzle_offset[slot] = true;
+  VectorCopy(offset, vr_weapon_schema_mp_muzzle_offset[slot]);
+  vr_weapon_has_schema_mp_muzzle_offset[slot] = true;
 }
 
-static void VR_ApplyGlobalMPHeldOffsetToSchemaSlots(const vec3_t offset) {
-  for (int i = 0; i < num_vr_weapons; i++) {
-    const char *id = vr_weapons[i].viewmodel_path[0]
-                         ? vr_weapons[i].viewmodel_path
-                         : vr_weapons[i].model_path;
-    int slot;
+static void VR_SetMPHeldOffsetForSlot(int slot, const vec3_t offset) {
+  if (slot < 0 || slot >= MAX_WEAPONS)
+    return;
 
-    if (!id || !id[0])
-      continue;
-
-    slot = VR_FindWeaponOffsetSlot(id, NULL);
-    if (slot < 0)
-      continue;
-
-    VectorCopy(offset, vr_weapon_mp_held_offset[slot]);
-    vr_weapon_has_mp_held_offset[slot] = true;
-    vr_weapon_schema_mp_held_offset[slot][0] = 0.0f;
-    vr_weapon_schema_mp_held_offset[slot][1] = 0.0f;
-    vr_weapon_schema_mp_held_offset[slot][2] = 0.0f;
-    vr_weapon_has_schema_mp_held_offset[slot] = false;
-  }
-
-  lastWeaponHeader = NULL;
-}
-
-static qboolean VR_AppendGlobalMPMuzzleAdjustmentLine(vr_textbuf_t *buf,
-                                                      const vec3_t offset) {
-  char line[256];
-
-  q_snprintf(line, sizeof(line), "global_mp_muzzle_offset %.7g %.7g %.7g",
-             offset[0], offset[1], offset[2]);
-  return VR_TextAppendLine(buf, line);
-}
-
-static qboolean VR_AppendGlobalMPHeldAdjustmentLine(vr_textbuf_t *buf,
-                                                    const vec3_t offset) {
-  char line[256];
-
-  q_snprintf(line, sizeof(line), "global_mp_held_offset %.7g %.7g %.7g",
-             offset[0], offset[1], offset[2]);
-  return VR_TextAppendLine(buf, line);
-}
-
-static qboolean VR_SaveGlobalMPMuzzleOffsetToSchema(const vec3_t offset) {
-  char *data;
-  const char *src;
-  const char *p;
-  const char *end;
-  vr_textbuf_t out = {0};
-  qboolean ok = true;
-
-  data = (char *)COM_LoadZoneFile("vr_weapons.txt", NULL);
-  src = data ? data : "";
-  p = src;
-  end = src + strlen(src);
-
-  ok = VR_AppendGlobalMPMuzzleAdjustmentLine(&out, offset) &&
-       VR_TextAppend(&out, "\n");
-
-  while (ok && p < end) {
-    const char *open = (const char *)memchr(p, '{', end - p);
-    const char *close;
-
-    if (!open) {
-      ok = VR_TextAppendFilteredMPMuzzleLines(&out, p, end - p, false, true);
-      break;
-    }
-
-    ok = VR_TextAppendFilteredMPMuzzleLines(&out, p, open - p, false, true);
-    if (!ok)
-      break;
-
-    close = (const char *)memchr(open, '}', end - open);
-    if (!close) {
-      ok = VR_TextAppendFilteredMPMuzzleLines(&out, open, end - open, true,
-                                              true);
-      break;
-    }
-    close++;
-
-    ok = VR_TextAppendFilteredMPMuzzleLines(&out, open, close - open, true,
-                                            true);
-    p = close;
-  }
-
-  if (ok) {
-    COM_WriteFile("vr_weapons.txt", out.data ? out.data : "", out.len);
-    VR_ApplyGlobalMPMuzzleOffsetToSchemaSlots(offset);
-    Con_Printf("VR: saved global multiplayer muzzle offset %.7g %.7g %.7g to "
-               "%s/vr_weapons.txt\n",
-               offset[0], offset[1], offset[2], com_gamedir);
-  } else {
-    Con_Printf("VR: failed to save global multiplayer muzzle offset\n");
-  }
-
-  if (out.data)
-    free(out.data);
-  if (data)
-    Z_Free(data);
-
-  return ok;
-}
-
-static qboolean VR_SaveGlobalMPHeldOffsetToSchema(const vec3_t offset) {
-  char *data;
-  const char *src;
-  const char *p;
-  const char *end;
-  vr_textbuf_t out = {0};
-  qboolean ok = true;
-
-  data = (char *)COM_LoadZoneFile("vr_weapons.txt", NULL);
-  src = data ? data : "";
-  p = src;
-  end = src + strlen(src);
-
-  ok = VR_AppendGlobalMPHeldAdjustmentLine(&out, offset) &&
-       VR_TextAppend(&out, "\n");
-
-  while (ok && p < end) {
-    const char *open = (const char *)memchr(p, '{', end - p);
-    const char *close;
-
-    if (!open) {
-      ok = VR_TextAppendFilteredMPHeldLines(&out, p, end - p, false, true);
-      break;
-    }
-
-    ok = VR_TextAppendFilteredMPHeldLines(&out, p, open - p, false, true);
-    if (!ok)
-      break;
-
-    close = (const char *)memchr(open, '}', end - open);
-    if (!close) {
-      ok = VR_TextAppendFilteredMPHeldLines(&out, open, end - open, true,
-                                            true);
-      break;
-    }
-    close++;
-
-    ok = VR_TextAppendFilteredMPHeldLines(&out, open, close - open, true,
-                                          true);
-    p = close;
-  }
-
-  if (ok) {
-    COM_WriteFile("vr_weapons.txt", out.data ? out.data : "", out.len);
-    VR_ApplyGlobalMPHeldOffsetToSchemaSlots(offset);
-    Con_Printf("VR: saved global multiplayer held offset %.7g %.7g %.7g to "
-               "%s/vr_weapons.txt\n",
-               offset[0], offset[1], offset[2], com_gamedir);
-  } else {
-    Con_Printf("VR: failed to save global multiplayer held offset\n");
-  }
-
-  if (out.data)
-    free(out.data);
-  if (data)
-    Z_Free(data);
-
-  return ok;
+  VectorCopy(offset, vr_weapon_mp_held_offset[slot]);
+  vr_weapon_has_mp_held_offset[slot] = true;
+  VectorCopy(offset, vr_weapon_schema_mp_held_offset[slot]);
+  vr_weapon_has_schema_mp_held_offset[slot] = true;
 }
 
 static void VR_AimOffsetToWorld(const vec3_t local, const vec3_t angles,
@@ -3488,10 +3250,6 @@ static void VR_AdjustWeaponUpdatePose(void) {
 static qboolean VR_AdjustWeaponCommit(void) {
   int slot = vr_adjust_slot;
   char value[32];
-  vec3_t global_mp_held_offset = {0, 0, 0};
-  vec3_t global_mp_muzzle_offset = {0, 0, 0};
-  qboolean save_global_mp_held = false;
-  qboolean save_global_mp_muzzle = false;
 
   if (vr_adjust_mode == VR_ADJUST_NONE)
     return false;
@@ -3540,14 +3298,11 @@ static qboolean VR_AdjustWeaponCommit(void) {
                    new_effective_offset);
 
     if (vr_adjust_mode == VR_ADJUST_MP_WEAPON) {
-      VectorSubtract(new_effective_offset, base_offset,
-                     global_mp_held_offset);
-      VR_ApplyGlobalMPHeldOffsetToSchemaSlots(global_mp_held_offset);
-      save_global_mp_held = true;
+      VectorSubtract(new_effective_offset, base_offset, mp_held_offset);
+      VR_SetMPHeldOffsetForSlot(slot, mp_held_offset);
 
-      Con_Printf("vradjustmpweapon: global_mp_held_offset %.7g %.7g %.7g\n",
-                 global_mp_held_offset[0], global_mp_held_offset[1],
-                 global_mp_held_offset[2]);
+      Con_Printf("vradjustmpweapon: mp_held_offset %.7g %.7g %.7g\n",
+                 mp_held_offset[0], mp_held_offset[1], mp_held_offset[2]);
     } else {
       VectorSubtract(new_effective_offset, mp_held_offset, new_base_offset);
 
@@ -3574,7 +3329,7 @@ static qboolean VR_AdjustWeaponCommit(void) {
                         vr_gunmodelscale.value, local);
 
     if (vr_adjust_mode == VR_ADJUST_MP_MUZZLE) {
-      vec3_t base;
+      vec3_t base, mp_muzzle_offset;
 
       base[0] =
           vr_weapon_muzzle_offset[slot * VARS_PER_WEAPON_MUZZLE].value;
@@ -3582,13 +3337,12 @@ static qboolean VR_AdjustWeaponCommit(void) {
           vr_weapon_muzzle_offset[slot * VARS_PER_WEAPON_MUZZLE + 1].value;
       base[2] =
           vr_weapon_muzzle_offset[slot * VARS_PER_WEAPON_MUZZLE + 2].value;
-      VectorSubtract(local, base, global_mp_muzzle_offset);
-      VR_ApplyGlobalMPMuzzleOffsetToSchemaSlots(global_mp_muzzle_offset);
-      save_global_mp_muzzle = true;
+      VectorSubtract(local, base, mp_muzzle_offset);
+      VR_SetMPMuzzleOffsetForSlot(slot, mp_muzzle_offset);
 
-      Con_Printf("vradjustmpmuzzle: global_mp_muzzle_offset %.7g %.7g %.7g\n",
-                 global_mp_muzzle_offset[0], global_mp_muzzle_offset[1],
-                 global_mp_muzzle_offset[2]);
+      Con_Printf("vradjustmpmuzzle: mp_muzzle_offset %.7g %.7g %.7g\n",
+                 mp_muzzle_offset[0], mp_muzzle_offset[1],
+                 mp_muzzle_offset[2]);
       Con_Printf("vradjustmpmuzzle: saved; return the controller to the grip "
                  "to resume live muzzle tracking.\n");
     } else {
@@ -3611,12 +3365,7 @@ static qboolean VR_AdjustWeaponCommit(void) {
     vr_adjust_muzzle_return_to_grip = true;
   }
 
-  if (save_global_mp_held)
-    VR_SaveGlobalMPHeldOffsetToSchema(global_mp_held_offset);
-  else if (save_global_mp_muzzle)
-    VR_SaveGlobalMPMuzzleOffsetToSchema(global_mp_muzzle_offset);
-  else
-    VR_SaveWeaponAdjustmentsToSchema(slot);
+  VR_SaveWeaponAdjustmentsToSchema(slot);
   lastWeaponHeader = NULL;
   vr_adjust_mode = VR_ADJUST_NONE;
   return true;
