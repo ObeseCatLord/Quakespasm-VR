@@ -2684,6 +2684,7 @@ static void COM_Game_f (void)
 		VID_Lock ();
 		Cbuf_AddText ("exec quake.rc\n");
 		Cbuf_AddText ("vid_unlock\n");
+		Cbuf_AddText ("mod_migrate_enhancedmodels\n");
 		Cmd_QueuePostConfigAfterGameChange ();
 		Cbuf_AddText ("host_migrate_network_defaults\n");
 		Cbuf_AddText ("cl_migrate_network_defaults\n");

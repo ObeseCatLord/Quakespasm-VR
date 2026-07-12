@@ -1690,9 +1690,10 @@ void Host_Init (void)
 	if (cls.state != ca_dedicated)
 	{
 		Cbuf_InsertText ("exec quake.rc\n");
-	// johnfitz -- in case the vid mode was locked during vid_init, we can unlock it now.
+		// johnfitz -- in case the vid mode was locked during vid_init, we can unlock it now.
 		// note: two leading newlines because the command buffer swallows one of them.
 		Cbuf_AddText ("\n\nvid_unlock\n");
+		Cbuf_AddText ("mod_migrate_enhancedmodels\n");
 		Cmd_QueuePostConfig ();
 		Cbuf_AddText ("host_migrate_network_defaults\n");
 		Cbuf_AddText ("cl_migrate_network_defaults\n");

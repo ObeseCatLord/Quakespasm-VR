@@ -37,6 +37,7 @@ static qboolean Mod_LoadMD3Model (qmodel_t *mod, const byte *buffer, size_t file
 static qboolean Mod_LoadMD5MeshModel (qmodel_t *mod, const byte *buffer, size_t filesize);
 static qmodel_t *Mod_LoadModel (qmodel_t *mod, qboolean crash);
 static void Mod_EnhancedModels_f (cvar_t *var);
+static void Mod_MigrateEnhancedModels_f (void);
 
 static void Mod_Print (void);
 
@@ -48,6 +49,10 @@ static cvar_t	mdl_external_textures = {"mdl_external_textures", "1", CVAR_NONE};
 static cvar_t	r_allow_replacement_md3models = {"r_allow_replacement_md3models", "1", CVAR_NONE};
 static cvar_t	r_allow_replacement_md5models = {"r_allow_replacement_md5models", "1", CVAR_NONE};
 cvar_t		r_enhancedmodels = {"r_enhancedmodels", "0", CVAR_ARCHIVE};
+static cvar_t r_enhancedmodels_migration_version = {
+    "r_enhancedmodels_migration_version", "0", CVAR_ARCHIVE};
+
+#define R_ENHANCEDMODELS_MIGRATION_VERSION 1
 
 /*
  * Alias cache blocks contain a small directory followed by one or more
@@ -112,6 +117,53 @@ static void Mod_EnhancedModels_f (cvar_t *var)
 	cl.viewent.lerpflags |= LERP_RESETANIM;
 }
 
+static qboolean Mod_CommandLineSetsCvar (const char *name)
+{
+	int i;
+
+	for (i = 1; i < com_argc; i++)
+	{
+		const char *arg = com_argv[i];
+
+		if (!arg || arg[0] != '+')
+			continue;
+		if (!q_strcasecmp (arg + 1, name))
+			return true;
+		if ((!q_strcasecmp (arg + 1, "set") ||
+			 !q_strcasecmp (arg + 1, "seta")) &&
+			i + 1 < com_argc && com_argv[i + 1] &&
+			!q_strcasecmp (com_argv[i + 1], name))
+			return true;
+	}
+
+	return false;
+}
+
+/*
+ * The MD3/MD5 replacement renderer was introduced with its initial default
+ * enabled.  On dense mods such as QBJ3, the fixed-function replacement path
+ * can be substantially slower than the native MDL batcher.  Reset that old
+ * default once after config.cfg has loaded, but leave explicit launch and
+ * postcfg choices intact.
+ */
+static void Mod_MigrateEnhancedModels_f (void)
+{
+	if ((int)r_enhancedmodels_migration_version.value >=
+		R_ENHANCEDMODELS_MIGRATION_VERSION)
+		return;
+
+	if (!Mod_CommandLineSetsCvar ("r_enhancedmodels") &&
+		r_enhancedmodels.value != 0)
+	{
+		Cvar_SetQuick (&r_enhancedmodels, "0");
+		Con_Printf ("Enhanced model replacements were disabled after upgrade "
+			"to preserve performance.\n");
+	}
+
+	Cvar_SetQuick (&r_enhancedmodels_migration_version,
+		va("%d", R_ENHANCEDMODELS_MIGRATION_VERSION));
+}
+
 /*
 ===============
 Mod_Init
@@ -127,9 +179,11 @@ void Mod_Init (void)
 	Cvar_RegisterVariable (&r_allow_replacement_md3models);
 	Cvar_RegisterVariable (&r_allow_replacement_md5models);
 	Cvar_RegisterVariable (&r_enhancedmodels);
+	Cvar_RegisterVariable (&r_enhancedmodels_migration_version);
 	Cvar_SetCallback (&r_enhancedmodels, Mod_EnhancedModels_f);
 
 	Cmd_AddCommand ("mcache", Mod_Print);
+	Cmd_AddCommand ("mod_migrate_enhancedmodels", Mod_MigrateEnhancedModels_f);
 
 	//johnfitz -- create notexture miptex
 	r_notexture_mip = (texture_t *) Hunk_AllocName (sizeof(texture_t), "r_notexture_mip");
