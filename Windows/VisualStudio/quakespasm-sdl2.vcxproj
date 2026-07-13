@@ -219,7 +219,7 @@ copy "$(SolutionDir)\..\static-release-files\*.*" "$(TargetDir)"</Command>
       <PreprocessorDefinitions>USE_CURL;CURL_STATICLIB;%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
     <Link>
-      <AdditionalDependencies>libcurl.lib;zlib.lib;bcrypt.lib;advapi32.lib;crypt32.lib;secur32.lib;iphlpapi.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>libcurl.lib;zs.lib;bcrypt.lib;advapi32.lib;crypt32.lib;secur32.lib;iphlpapi.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <AdditionalLibraryDirectories>$(CurlRoot)\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
     </Link>
   </ItemDefinitionGroup>
