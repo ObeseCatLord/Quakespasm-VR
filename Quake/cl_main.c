@@ -446,6 +446,9 @@ Host should be either "local" or a net address to be passed on
 */
 void CL_EstablishConnection (const char *host)
 {
+	/* Console connect commands historically do nothing in these states. */
+	if (cls.state == ca_dedicated || cls.demoplayback)
+		return;
 	if (!CL_TryEstablishConnection(host))
 		Host_Error ("CL_Connect: connect failed");
 }

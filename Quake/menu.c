@@ -2640,7 +2640,7 @@ static int M_Mods_CountMatches(void) {
   return count;
 }
 
-static const addon_catalog_entry_t *M_Mods_CatalogueItem(int index) {
+static int M_Mods_CatalogueIndex(int index) {
   int current;
 
   for (current = 0; current < AddonCatalog_Count(); current++) {
@@ -2648,9 +2648,13 @@ static const addon_catalog_entry_t *M_Mods_CatalogueItem(int index) {
     if (!item || !M_Mods_CatalogueMatches(item))
       continue;
     if (index-- == 0)
-      return item;
+      return current;
   }
-  return NULL;
+  return -1;
+}
+
+static const addon_catalog_entry_t *M_Mods_CatalogueItem(int index) {
+  return AddonCatalog_Entry(M_Mods_CatalogueIndex(index));
 }
 
 static filelist_item_t *M_Mods_Item(int index) {
@@ -2942,6 +2946,8 @@ static void M_Mods_Key(int key) {
 
   case K_TAB:
     m_mods_catalogue = !m_mods_catalogue;
+    if (!m_mods_catalogue)
+      Modlist_Rebuild();
     m_mods_cursor = 0;
     m_mods_first = 0;
     m_mods_confirm = -1;
@@ -2972,7 +2978,9 @@ static void M_Mods_Key(int key) {
   case K_KP_ENTER:
   case K_ABUTTON:
     if (m_mods_catalogue) {
-      const addon_catalog_entry_t *catalogue = M_Mods_CatalogueItem(m_mods_cursor);
+      int catalogue_index = M_Mods_CatalogueIndex(m_mods_cursor);
+      const addon_catalog_entry_t *catalogue =
+          AddonCatalog_Entry(catalogue_index);
       if (!catalogue)
         break;
       S_LocalSound("misc/menu2.wav");
@@ -2982,10 +2990,10 @@ static void M_Mods_Key(int key) {
         m_state = m_none;
         Cbuf_AddText(va("game \"%s\"\n", catalogue->gamedir));
       } else if (m_mods_confirm == m_mods_cursor) {
-        if (AddonCatalog_StartInstall(m_mods_cursor, true))
+        if (AddonCatalog_StartInstall(catalogue_index, true))
           m_mods_confirm = -1;
       } else {
-        AddonCatalog_StartInstall(m_mods_cursor, false);
+        AddonCatalog_StartInstall(catalogue_index, false);
         m_mods_confirm = m_mods_cursor;
       }
     } else {

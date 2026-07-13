@@ -88,8 +88,22 @@ static qboolean AddonCatalog_IsSafeBaseURL (const char *url, char *out, size_t o
 static qboolean AddonCatalog_IsInstalled (const char *gamedir)
 {
 	char path[MAX_OSPATH];
+	if (host_parms->userdir != host_parms->basedir)
+	{
+		q_snprintf (path, sizeof(path), "%s/%s/pak0.pak",
+			host_parms->userdir, gamedir);
+		if (Sys_FileType(path) & FS_ENT_FILE)
+			return true;
+	}
 	q_snprintf (path, sizeof(path), "%s/%s/pak0.pak", com_basedir, gamedir);
 	return Sys_FileType(path) & FS_ENT_FILE;
+}
+
+static const char *AddonCatalog_InstallRoot (void)
+{
+	if (host_parms->userdir != host_parms->basedir)
+		return host_parms->userdir;
+	return com_basedir;
 }
 
 static qboolean AddonCatalog_AppendJSON (json_t *json)
@@ -263,6 +277,7 @@ typedef struct addon_install_s
 {
 	addon_catalog_entry_t entry;
 	char base_url[MAX_OSPATH];
+	char install_root[MAX_OSPATH];
 } addon_install_t;
 
 static size_t AddonCatalog_WriteFile (void *data, size_t size, size_t count, void *userdata)
@@ -291,7 +306,7 @@ static int AddonCatalog_InstallThread (void *userdata)
 
 	q_strlcpy(base, job->base_url, sizeof(base));
 	if (!base[0] || q_snprintf(url, sizeof(url), "%s/%s", base, job->entry.download) >= sizeof(url) ||
-		q_snprintf(dir, sizeof(dir), "%s/%s", com_basedir, job->entry.gamedir) >= sizeof(dir) ||
+		q_snprintf(dir, sizeof(dir), "%s/%s", job->install_root, job->entry.gamedir) >= sizeof(dir) ||
 		q_snprintf(tmp, sizeof(tmp), "%s/pak0.catalog.tmp", dir) >= sizeof(tmp) ||
 		q_snprintf(final, sizeof(final), "%s/pak0.pak", dir) >= sizeof(final))
 	{
@@ -491,6 +506,8 @@ qboolean AddonCatalog_StartInstall (int index, qboolean allow_unverified)
 		return false;
 	job->entry = *entry;
 	q_strlcpy(job->base_url, addon_base_url, sizeof(job->base_url));
+	q_strlcpy(job->install_root, AddonCatalog_InstallRoot(),
+		sizeof(job->install_root));
 	SDL_AtomicSet(&addon_cancel, 0);
 	SDL_AtomicSet(&addon_progress, 0);
 	SDL_AtomicSet(&addon_state, ADDON_CATALOG_INSTALLING);

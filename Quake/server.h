@@ -25,6 +25,8 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 
 // server.h
 
+#define	NUM_SPAWN_PARMS		16
+
 typedef struct
 {
 	int			maxclients;
@@ -54,6 +56,9 @@ typedef struct
 	qboolean	loadgame_client_saved[MAX_SCOREBOARD];
 	qboolean	loadgame_client_name_required[MAX_SCOREBOARD];
 	char		loadgame_client_names[MAX_SCOREBOARD][MAX_SCOREBOARDNAME];
+	float		loadgame_client_spawn_parms[MAX_SCOREBOARD][NUM_SPAWN_PARMS];
+	int			loadgame_client_colors[MAX_SCOREBOARD];
+	int			loadgame_client_old_frags[MAX_SCOREBOARD];
 	byte		*loadgame_client_edicts;
 
 	qboolean	coop_autosave_initialized;
@@ -126,7 +131,6 @@ void SV_SetupSkyRoom (const char *value);
 
 
 #define	NUM_PING_TIMES		16
-#define	NUM_SPAWN_PARMS		16
 
 typedef struct client_s
 {

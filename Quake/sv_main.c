@@ -821,10 +821,6 @@ void SV_ConnectClient (int clientnum)
 	int				edictnum;
 	struct qsocket_s *netconnection;
 	int				i;
-	float			spawn_parms[NUM_SPAWN_PARMS];
-	qboolean		loaded_client;
-	int				old_frags;
-	int				colors;
 
 	client = svs.clients + clientnum;
 	if (clientnum >= 0 && clientnum < MAX_SCOREBOARD)
@@ -839,20 +835,6 @@ void SV_ConnectClient (int clientnum)
 // set up the client_t
 	netconnection = client->netconnection;
 
-	loaded_client = sv.loadgame &&
-	    clientnum >= 0 && clientnum < MAX_SCOREBOARD &&
-	    sv.loadgame_client_saved[clientnum] && sv.loadgame_client_edicts;
-	if (loaded_client)
-	{
-		memcpy (spawn_parms, client->spawn_parms, sizeof(spawn_parms));
-		old_frags = client->old_frags;
-		colors = client->colors;
-	}
-	else
-	{
-		old_frags = 0;
-		colors = 0;
-	}
 	SVFTE_DestroyFrames (client);
 	memset (client, 0, sizeof(*client));
 	client->netconnection = netconnection;
@@ -871,19 +853,12 @@ void SV_ConnectClient (int clientnum)
 	client->datagram.cursize = 0;
 	client->datagram.allowoverflow = true;
 
-	if (loaded_client)
-	{
-		memcpy (client->spawn_parms, spawn_parms, sizeof(spawn_parms));
-		client->old_frags = old_frags;
-		client->colors = colors;
-	}
-	else
-	{
-	// call the progs to get default spawn parms for the new client
-		PR_ExecuteProgram (pr_global_struct->SetNewParms);
-		for (i=0 ; i<NUM_SPAWN_PARMS ; i++)
-			client->spawn_parms[i] = (&pr_global_struct->parm1)[i];
-	}
+	/* A connection has no trustworthy player name yet.  Always initialize
+	   defaults here; Host_Spawn_f applies a saved snapshot only after resolving
+	   the signon name (or the unambiguous single-player slot). */
+	PR_ExecuteProgram (pr_global_struct->SetNewParms);
+	for (i=0 ; i<NUM_SPAWN_PARMS ; i++)
+		client->spawn_parms[i] = (&pr_global_struct->parm1)[i];
 
 	SV_SendServerinfo (client);
 }

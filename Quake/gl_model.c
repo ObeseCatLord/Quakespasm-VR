@@ -1119,7 +1119,7 @@ static texture_t *Mod_LoadMapWadTexture (mapwad_t *wads, const char *name,
 				free (data);
 				return NULL;
 			}
-			else if (data[i] == 255)
+			else if (sourcename[0] == '{' && data[i] == 255)
 				*has_alpha = true;
 
 		if (pixels > INT_MAX / 4)
@@ -1149,8 +1149,8 @@ static texture_t *Mod_LoadMapWadTexture (mapwad_t *wads, const char *name,
 			dst[i * 4 + 0] = palette[index * 3 + 0];
 			dst[i * 4 + 1] = palette[index * 3 + 1];
 			dst[i * 4 + 2] = palette[index * 3 + 2];
-			/* GoldSrc WAD3's conventional transparent palette entry. */
-			dst[i * 4 + 3] = index == 255 ? 0 : 255;
+			/* Index 255 is transparent only for GoldSrc masked textures. */
+			dst[i * 4 + 3] = sourcename[0] == '{' && index == 255 ? 0 : 255;
 		}
 		*is_rgba = true;
 	}
