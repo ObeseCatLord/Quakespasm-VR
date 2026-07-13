@@ -3369,11 +3369,12 @@ static void VR_AdjustBegin(vr_adjust_mode_t mode) {
                "to save.\n");
   } else if (mode == VR_ADJUST_MP_MUZZLE) {
     Con_Printf("vradjustmpmuzzle: weapon frozen. Move the controller to the "
-               "desired multiplayer bullet origin and press the right "
-               "trigger to save.\n");
+               "frozen multiplayer bullet origin and press the right "
+               "trigger to recenter it.\n");
   } else {
     Con_Printf("vradjustmuzzle: weapon frozen. Move the controller to the "
-               "desired bullet origin and press the right trigger to save.\n");
+               "frozen bullet origin and press the right trigger to "
+               "recenter it.\n");
   }
 }
 
@@ -3499,26 +3500,41 @@ static qboolean VR_AdjustWeaponCommit(void) {
                  vr_weapon_offset[slot * VARS_PER_WEAPON + 2].value);
     }
   } else {
-    vec3_t delta, local, source_comp, target_preorigin;
+    vec3_t base, mp_muzzle_offset = {0, 0, 0};
+    vec3_t effective, old_offset_world, old_preorigin_world;
+    vec3_t target_preorigin, local;
 
-    VectorCopy(vr_adjust_current_handpos, target_preorigin);
-    if (VR_GetMuzzleSourceCompensation(slot, vr_adjust_frozen_handrot,
-                                       source_comp))
-      VectorSubtract(target_preorigin, source_comp, target_preorigin);
+    base[0] =
+        vr_weapon_muzzle_offset[slot * VARS_PER_WEAPON_MUZZLE].value;
+    base[1] =
+        vr_weapon_muzzle_offset[slot * VARS_PER_WEAPON_MUZZLE + 1].value;
+    base[2] =
+        vr_weapon_muzzle_offset[slot * VARS_PER_WEAPON_MUZZLE + 2].value;
+    VectorCopy(base, effective);
+    if (VR_IsMultiplayerClient() &&
+        vr_weapon_has_mp_muzzle_offset[slot]) {
+      VectorCopy(vr_weapon_mp_muzzle_offset[slot], mp_muzzle_offset);
+      VectorAdd(effective, mp_muzzle_offset, effective);
+    }
 
-    VectorSubtract(target_preorigin, vr_adjust_frozen_handpos, delta);
-    VR_WorldToAimOffset(delta, vr_adjust_frozen_handrot,
+    /*
+     * Match vradjustweapon's recentering convention: the controller is moved
+     * onto the frozen output, then the saved source is shifted by the inverse
+     * of that movement. This lets a projectile that is forward/left of the
+     * grip be corrected by moving the controller forward/left onto it.
+     */
+    VR_AimOffsetToWorld(effective, vr_adjust_frozen_handrot,
+                        vr_gunmodelscale.value, old_offset_world);
+    VectorAdd(vr_adjust_frozen_handpos, old_offset_world,
+              old_preorigin_world);
+
+    /* Fixed QuakeC source compensation remains in the normal spawn path. */
+    VectorSubtract(old_preorigin_world, vr_adjust_current_handpos,
+                   target_preorigin);
+    VR_WorldToAimOffset(target_preorigin, vr_adjust_frozen_handrot,
                         vr_gunmodelscale.value, local);
 
     if (vr_adjust_mode == VR_ADJUST_MP_MUZZLE) {
-      vec3_t base, mp_muzzle_offset;
-
-      base[0] =
-          vr_weapon_muzzle_offset[slot * VARS_PER_WEAPON_MUZZLE].value;
-      base[1] =
-          vr_weapon_muzzle_offset[slot * VARS_PER_WEAPON_MUZZLE + 1].value;
-      base[2] =
-          vr_weapon_muzzle_offset[slot * VARS_PER_WEAPON_MUZZLE + 2].value;
       VectorSubtract(local, base, mp_muzzle_offset);
       VR_SetMPMuzzleOffsetForSlot(slot, mp_muzzle_offset);
 
@@ -3528,8 +3544,12 @@ static qboolean VR_AdjustWeaponCommit(void) {
       Con_Printf("vradjustmpmuzzle: saved; return the controller to the grip "
                  "to resume live muzzle tracking.\n");
     } else {
+      vec3_t new_base;
+
+      /* Preserve a multiplayer correction when editing the shared base. */
+      VectorSubtract(local, mp_muzzle_offset, new_base);
       for (int i = 0; i < 3; i++) {
-        q_snprintf(value, sizeof(value), "%.7g", local[i]);
+        q_snprintf(value, sizeof(value), "%.7g", new_base[i]);
         Cvar_SetQuick(
             &vr_weapon_muzzle_offset[slot * VARS_PER_WEAPON_MUZZLE + i],
             value);

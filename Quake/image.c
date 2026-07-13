@@ -166,9 +166,13 @@ byte *Image_LoadImageWithPath (const char *name, int *width, int *height,
 	unsigned int min_path_id)
 {
 	static const char *const extensions[] = {"tga", "png", "jpg", "jpeg", "pcx", NULL};
-	FILE	*f;
-	unsigned int path_id;
-	int		i;
+	FILE	*f, *best_file;
+	unsigned int path_id, best_path_id;
+	int		i, best_extension;
+
+	best_file = NULL;
+	best_path_id = 0;
+	best_extension = -1;
 
 	for (i = 0; extensions[i]; i++)
 	{
@@ -177,9 +181,25 @@ byte *Image_LoadImageWithPath (const char *name, int *width, int *height,
 		COM_FOpenFile (loadfilename, &f, &path_id);
 		if (!f)
 			continue;
-		if (path_id >= min_path_id)
-			return Image_LoadByExtensionOrMagic (f, extensions[i], width, height);
-		fclose (f);
+		if (path_id < min_path_id ||
+			(best_extension >= 0 && path_id <= best_path_id))
+		{
+			fclose (f);
+			continue;
+		}
+		if (best_file)
+			fclose (best_file);
+		best_file = f;
+		best_path_id = path_id;
+		best_extension = i;
+	}
+
+	if (best_file)
+	{
+		q_snprintf (loadfilename, sizeof(loadfilename), "%s.%s", name,
+			extensions[best_extension]);
+		return Image_LoadByExtensionOrMagic (best_file,
+			extensions[best_extension], width, height);
 	}
 
 	return NULL;

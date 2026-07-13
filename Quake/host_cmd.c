@@ -22,6 +22,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 */
 
 #include "quakedef.h"
+#include <errno.h>
 #ifndef _WIN32
 #include <dirent.h>
 #endif
@@ -300,13 +301,13 @@ static qboolean Modlist_Check(const char *base, const char *name) {
 }
 
 #ifdef _WIN32
-void Modlist_Init(void) {
+static void Modlist_ScanRoot(const char *root) {
   WIN32_FIND_DATA fdat;
   HANDLE fhnd;
   DWORD attribs;
   char dir_string[MAX_OSPATH], mod_string[MAX_OSPATH];
 
-  q_snprintf(dir_string, sizeof(dir_string), "%s/*", com_basedir);
+  q_snprintf(dir_string, sizeof(dir_string), "%s/*", root);
   fhnd = FindFirstFile(dir_string, &fdat);
   if (fhnd == INVALID_HANDLE_VALUE)
     return;
@@ -314,12 +315,12 @@ void Modlist_Init(void) {
   do {
     if (!strcmp(fdat.cFileName, ".") || !strcmp(fdat.cFileName, ".."))
       continue;
-    q_snprintf(mod_string, sizeof(mod_string), "%s/%s", com_basedir,
+    q_snprintf(mod_string, sizeof(mod_string), "%s/%s", root,
                fdat.cFileName);
     attribs = GetFileAttributes(mod_string);
     if (attribs != INVALID_FILE_ATTRIBUTES &&
         (attribs & FILE_ATTRIBUTE_DIRECTORY) &&
-        Modlist_Check(com_basedir, fdat.cFileName)) {
+        Modlist_Check(root, fdat.cFileName)) {
       Modlist_Add(fdat.cFileName);
     }
   } while (FindNextFile(fhnd, &fdat));
@@ -327,12 +328,12 @@ void Modlist_Init(void) {
   FindClose(fhnd);
 }
 #else
-void Modlist_Init(void) {
+static void Modlist_ScanRoot(const char *root) {
   DIR *dir_p, *mod_dir_p;
   struct dirent *dir_t;
   char dir_string[MAX_OSPATH], mod_string[MAX_OSPATH];
 
-  q_snprintf(dir_string, sizeof(dir_string), "%s/", com_basedir);
+  q_snprintf(dir_string, sizeof(dir_string), "%s/", root);
   dir_p = opendir(dir_string);
   if (dir_p == NULL)
     return;
@@ -349,13 +350,19 @@ void Modlist_Init(void) {
     if (mod_dir_p == NULL)
       continue;
     closedir(mod_dir_p);
-    if (Modlist_Check(com_basedir, dir_t->d_name))
+    if (Modlist_Check(root, dir_t->d_name))
       Modlist_Add(dir_t->d_name);
   }
 
   closedir(dir_p);
 }
 #endif
+
+void Modlist_Init(void) {
+  Modlist_ScanRoot(com_basedir);
+  if (host_parms->userdir != host_parms->basedir)
+    Modlist_ScanRoot(host_parms->userdir);
+}
 
 void Modlist_Rebuild(void) {
   FileList_Clear(&modlist);
@@ -1117,6 +1124,83 @@ static void Host_LoadgameReadClientName(const char *encoded, char *name,
   name[out] = 0;
 }
 
+static const char *Host_LoadgameReadLine(const char *data, char *line,
+                                         size_t line_size) {
+  const char *newline;
+  size_t length;
+
+  if (!data || !line || line_size == 0)
+    return NULL;
+  newline = strchr(data, '\n');
+  if (!newline)
+    return NULL;
+  length = (size_t)(newline - data);
+  if (length && data[length - 1] == '\r')
+    length--;
+  if (length >= line_size)
+    return NULL;
+  memcpy(line, data, length);
+  line[length] = 0;
+  return newline + 1;
+}
+
+static qboolean Host_LoadgameParseInt(const char **data, int *value) {
+  char line[128];
+  char *end;
+  const char *next;
+  long parsed;
+
+  if (!data || !*data)
+    return false;
+  next = Host_LoadgameReadLine(*data, line, sizeof(line));
+  if (!next)
+    return false;
+  errno = 0;
+  parsed = strtol(line, &end, 10);
+  while (*end == ' ' || *end == '\t')
+    end++;
+  if (errno == ERANGE || end == line || *end || parsed < INT_MIN ||
+      parsed > INT_MAX)
+    return false;
+  *value = (int)parsed;
+  *data = next;
+  return true;
+}
+
+static qboolean Host_LoadgameParseFloat(const char **data, float *value) {
+  char line[128];
+  char *end;
+  const char *next;
+  float parsed;
+
+  if (!data || !*data)
+    return false;
+  next = Host_LoadgameReadLine(*data, line, sizeof(line));
+  if (!next)
+    return false;
+  errno = 0;
+  parsed = strtof(line, &end);
+  while (*end == ' ' || *end == '\t')
+    end++;
+  if (errno == ERANGE || end == line || *end || !isfinite(parsed))
+    return false;
+  *value = parsed;
+  *data = next;
+  return true;
+}
+
+static qboolean Host_LoadgameParseString(const char **data) {
+  const char *next;
+
+  if (!data || !*data)
+    return false;
+  next = Host_LoadgameReadLine(*data, com_token, sizeof(com_token));
+  if (!next || !com_token[0])
+    return false;
+  *data = next;
+  return true;
+}
+
 static void Host_SavegameRefreshClientSpawnParms(void) {
   int i;
   client_t *old_host_client;
@@ -1177,15 +1261,30 @@ static qboolean Host_SavegameCanSave(qboolean quiet) {
 static qboolean Host_LoadgameHasPendingClients(void);
 static void Host_LoadgameDiscardPendingClients(qboolean quiet);
 
+static qboolean Host_SavegameReplaceFile(const char *tempname,
+                                         const char *name) {
+#ifdef _WIN32
+  return MoveFileExA(tempname, name,
+                     MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != 0;
+#else
+  return rename(tempname, name) == 0;
+#endif
+}
+
 static qboolean Host_SavegameWrite(const char *savename, qboolean quiet) {
-  char name[MAX_OSPATH];
+  char name[MAX_OSPATH], tempname[MAX_OSPATH];
   FILE *f;
   int i, j;
   int frags;
   char comment[SAVEGAME_COMMENT_LENGTH + 1];
-  qboolean switched_qcvm;
+  qboolean switched_qcvm, write_failed;
 
   if (!Host_SavegameCanSave(quiet))
+    return false;
+
+  /* Automatic saves must never invalidate players still pending from a
+     multiplayer load.  Explicit saves retain the existing discard policy. */
+  if (quiet && Host_LoadgameHasPendingClients())
     return false;
 
   if (strstr(savename, "..")) {
@@ -1196,10 +1295,17 @@ static qboolean Host_SavegameWrite(const char *savename, qboolean quiet) {
 
   q_snprintf(name, sizeof(name), "%s/%s", com_gamedir, savename);
   COM_AddExtension(name, ".sav", sizeof(name));
+  if (q_snprintf(tempname, sizeof(tempname), "%s.tmp", name) >=
+      (int)sizeof(tempname)) {
+    if (!quiet)
+      Con_Printf("ERROR: savegame path is too long.\n");
+    return false;
+  }
 
   if (!quiet)
     Con_Printf("Saving game to %s...\n", name);
-  f = fopen(name, "w");
+  remove(tempname);
+  f = fopen(tempname, "w");
   if (!f) {
     if (!quiet)
       Con_Printf("ERROR: couldn't open.\n");
@@ -1207,8 +1313,6 @@ static qboolean Host_SavegameWrite(const char *savename, qboolean quiet) {
       Con_DPrintf("Coop autosave: couldn't open %s\n", name);
     return false;
   }
-
-  Host_LoadgameDiscardPendingClients(quiet);
 
   switched_qcvm = false;
   if (qcvm != &sv.qcvm) {
@@ -1253,12 +1357,25 @@ static qboolean Host_SavegameWrite(const char *savename, qboolean quiet) {
       ED_Write(f, EDICT_NUM(i));
     fflush(f);
   }
-  fclose(f);
-  if (!quiet)
-    Con_Printf("done.\n");
+  write_failed = ferror(f) != 0 || fflush(f) != 0;
+  if (fclose(f) != 0)
+    write_failed = true;
 
   if (switched_qcvm)
     PR_SwitchQCVM(NULL);
+
+  if (write_failed || !Host_SavegameReplaceFile(tempname, name)) {
+    remove(tempname);
+    if (!quiet)
+      Con_Printf("ERROR: couldn't finalize savegame.\n");
+    else
+      Con_DPrintf("Coop autosave: couldn't finalize %s\n", name);
+    return false;
+  }
+
+  Host_LoadgameDiscardPendingClients(quiet);
+  if (!quiet)
+    Con_Printf("done.\n");
   return true;
 }
 
@@ -1274,6 +1391,11 @@ static void Host_LoadgameMaybeClearLoadedFlag(void) {
   memset(sv.loadgame_client_name_required, 0,
          sizeof(sv.loadgame_client_name_required));
   memset(sv.loadgame_client_names, 0, sizeof(sv.loadgame_client_names));
+  memset(sv.loadgame_client_spawn_parms, 0,
+         sizeof(sv.loadgame_client_spawn_parms));
+  memset(sv.loadgame_client_colors, 0, sizeof(sv.loadgame_client_colors));
+  memset(sv.loadgame_client_old_frags, 0,
+         sizeof(sv.loadgame_client_old_frags));
 }
 
 static qboolean Host_LoadgameHasPendingClients(void) {
@@ -1297,7 +1419,13 @@ static void Host_LoadgameDiscardPendingClients(qboolean quiet) {
   memset(sv.loadgame_client_name_required, 0,
          sizeof(sv.loadgame_client_name_required));
   memset(sv.loadgame_client_names, 0, sizeof(sv.loadgame_client_names));
+  memset(sv.loadgame_client_spawn_parms, 0,
+         sizeof(sv.loadgame_client_spawn_parms));
+  memset(sv.loadgame_client_colors, 0, sizeof(sv.loadgame_client_colors));
+  memset(sv.loadgame_client_old_frags, 0,
+         sizeof(sv.loadgame_client_old_frags));
   sv.loadgame = false;
+  sv.paused = false;
   if (!quiet)
     Con_Printf("Discarded pending saved co-op player states.\n");
 }
@@ -1327,6 +1455,11 @@ static qboolean Host_LoadgameSavedNameMatches(int clientnum,
 static int Host_LoadgameFindSavedClientForSpawn(int clientnum,
                                                 const char *client_name) {
   int i;
+
+  /* A single-player save has no identity ambiguity.  Changing _cl_name must
+     not turn a quickload into a fresh mid-map ClientConnect spawn. */
+  if (svs.maxclients == 1 && sv.loadgame_client_saved[0])
+    return 0;
 
   if (clientnum >= 0 && clientnum < MAX_SCOREBOARD &&
       sv.loadgame_client_saved[clientnum] &&
@@ -1363,7 +1496,8 @@ void Host_CoopAutosaveFrame(void) {
 
   if (!sv.active || sv.state != ss_active || sv.paused ||
       svs.maxclients <= 1 || !coop.value || deathmatch.value ||
-      !sv_save_multiplayer.value || !sv_coop_autosave.value) {
+      !sv_save_multiplayer.value || !sv_coop_autosave.value ||
+      Host_LoadgameHasPendingClients()) {
     sv.coop_autosave_initialized = false;
     return;
   }
@@ -1461,7 +1595,7 @@ static void Host_Loadgame_f(void) {
   char name[MAX_OSPATH];
   char mapname[MAX_QPATH];
   float time, tfloat;
-  const char *data;
+  const char *data, *validated_data;
   int i;
   int j;
   edict_t *ent;
@@ -1474,6 +1608,7 @@ static void Host_Loadgame_f(void) {
   int saved_colors[MAX_SCOREBOARD];
   int saved_frags[MAX_SCOREBOARD];
   float spawn_parms[MAX_SCOREBOARD][NUM_SPAWN_PARMS];
+  char encoded_name[MAX_SCOREBOARDNAME * 2];
 
   if (cmd_source != src_command)
     return;
@@ -1510,17 +1645,20 @@ static void Host_Loadgame_f(void) {
   }
 
   data = start;
-  data = COM_ParseIntNewline(data, &version);
+  if (!Host_LoadgameParseInt(&data, &version))
+    goto malformed_header;
   if (version != SAVEGAME_VERSION && version != SAVEGAME_MULTICLIENT_VERSION &&
       version != SAVEGAME_LEGACY_VERSION) {
     free(start);
     start = NULL;
-    Host_Error("Savegame is version %i, not %i, %i, or %i", version,
+    SCR_EndLoadingPlaque();
+    Con_Printf("ERROR: savegame is version %i, not %i, %i, or %i.\n", version,
                SAVEGAME_LEGACY_VERSION, SAVEGAME_MULTICLIENT_VERSION,
                SAVEGAME_VERSION);
     return;
   }
-  data = COM_ParseStringNewline(data);
+  if (!Host_LoadgameParseString(&data))
+    goto malformed_header;
   memset(saved_active, 0, sizeof(saved_active));
   memset(saved_names, 0, sizeof(saved_names));
   memset(saved_colors, 0, sizeof(saved_colors));
@@ -1528,48 +1666,76 @@ static void Host_Loadgame_f(void) {
   memset(spawn_parms, 0, sizeof(spawn_parms));
   if (version == SAVEGAME_VERSION ||
       version == SAVEGAME_MULTICLIENT_VERSION) {
-    data = COM_ParseIntNewline(data, &saved_maxclients);
+    if (!Host_LoadgameParseInt(&data, &saved_maxclients))
+      goto malformed_header;
     if (saved_maxclients < 1 || saved_maxclients > MAX_SCOREBOARD) {
       free(start);
       start = NULL;
-      Host_Error("Savegame has invalid maxplayers %i", saved_maxclients);
+      SCR_EndLoadingPlaque();
+      Con_Printf("ERROR: savegame has invalid maxplayers %i.\n",
+                 saved_maxclients);
       return;
     }
     if (saved_maxclients != svs.maxclients) {
       free(start);
       start = NULL;
-      Host_Error("Savegame was made with maxplayers %i, current maxplayers is %i. Set maxplayers %i before loading.",
+      SCR_EndLoadingPlaque();
+      Con_Printf("ERROR: savegame was made with maxplayers %i; current "
+                 "maxplayers is %i. Set maxplayers %i before loading.\n",
                  saved_maxclients, svs.maxclients, saved_maxclients);
       return;
     }
     for (i = 0; i < saved_maxclients; i++) {
-      data = COM_ParseIntNewline(data, &active);
+      if (!Host_LoadgameParseInt(&data, &active))
+        goto malformed_header;
       saved_active[i] = active ? true : false;
       if (version == SAVEGAME_VERSION) {
-        data = COM_ParseStringNewline(data);
-        Host_LoadgameReadClientName(com_token, saved_names[i],
+        data = Host_LoadgameReadLine(data, encoded_name,
+                                     sizeof(encoded_name));
+        if (!data)
+          goto malformed_header;
+        Host_LoadgameReadClientName(encoded_name, saved_names[i],
                                     sizeof(saved_names[i]));
       }
-      data = COM_ParseIntNewline(data, &saved_colors[i]);
-      data = COM_ParseIntNewline(data, &saved_frags[i]);
-      for (j = 0; j < NUM_SPAWN_PARMS; j++)
-        data = COM_ParseFloatNewline(data, &spawn_parms[i][j]);
+      if (!Host_LoadgameParseInt(&data, &saved_colors[i]) ||
+          !Host_LoadgameParseInt(&data, &saved_frags[i]))
+        goto malformed_header;
+      for (j = 0; j < NUM_SPAWN_PARMS; j++) {
+        if (!Host_LoadgameParseFloat(&data, &spawn_parms[i][j]))
+          goto malformed_header;
+      }
     }
   } else {
     saved_maxclients = 1;
     saved_active[0] = true;
-    for (i = 0; i < NUM_SPAWN_PARMS; i++)
-      data = COM_ParseFloatNewline(data, &spawn_parms[0][i]);
+    for (i = 0; i < NUM_SPAWN_PARMS; i++) {
+      if (!Host_LoadgameParseFloat(&data, &spawn_parms[0][i]))
+        goto malformed_header;
+    }
   }
   // this silliness is so we can load 1.06 save files, which have float skill
   // values
-  data = COM_ParseFloatNewline(data, &tfloat);
+  if (!Host_LoadgameParseFloat(&data, &tfloat))
+    goto malformed_header;
+
+  if (!Host_LoadgameParseString(&data))
+    goto malformed_header;
+  q_strlcpy(mapname, com_token, sizeof(mapname));
+  if (!Host_LoadgameParseFloat(&data, &time))
+    goto malformed_header;
+
+  /* Validate the fixed-size remainder before destroying the current game. */
+  validated_data = data;
+  for (i = 0; i < MAX_LIGHTSTYLES; i++) {
+    if (!Host_LoadgameParseString(&validated_data))
+      goto malformed_header;
+  }
+  validated_data = COM_Parse(validated_data);
+  if (!validated_data || strcmp(com_token, "{"))
+    goto malformed_header;
+
   current_skill = (int)(tfloat + 0.1);
   Cvar_SetValue("skill", (float)current_skill);
-
-  data = COM_ParseStringNewline(data);
-  q_strlcpy(mapname, com_token, sizeof(mapname));
-  data = COM_ParseFloatNewline(data, &time);
 
   CL_Disconnect_f();
 
@@ -1658,6 +1824,10 @@ static void Host_Loadgame_f(void) {
         q_strcasecmp(saved_names[i], "unconnected");
     q_strlcpy(sv.loadgame_client_names[i], saved_names[i],
               sizeof(sv.loadgame_client_names[i]));
+    memcpy(sv.loadgame_client_spawn_parms[i], spawn_parms[i],
+           sizeof(sv.loadgame_client_spawn_parms[i]));
+    sv.loadgame_client_colors[i] = saved_colors[i];
+    sv.loadgame_client_old_frags[i] = saved_frags[i];
     svs.clients[i].colors = saved_colors[i];
     svs.clients[i].old_frags = saved_frags[i];
     for (j = 0; j < NUM_SPAWN_PARMS; j++)
@@ -1674,6 +1844,13 @@ static void Host_Loadgame_f(void) {
 
   if (cls.state != ca_dedicated)
     IN_Activate(); // moved to here from M_Load_Key()
+  return;
+
+malformed_header:
+  free(start);
+  start = NULL;
+  SCR_EndLoadingPlaque();
+  Con_Printf("ERROR: savegame header is malformed or truncated.\n");
 }
 
 //============================================================================
@@ -2031,13 +2208,11 @@ static void Host_Spawn_f(void) {
   // run the entrance script
   if (loaded_client) { // saved client edicts are fully inited already
     ent = host_client->edict;
-    if (saved_clientnum != clientnum) {
-      for (i = 0; i < NUM_SPAWN_PARMS; i++)
-        host_client->spawn_parms[i] =
-            svs.clients[saved_clientnum].spawn_parms[i];
-      host_client->colors = svs.clients[saved_clientnum].colors;
-      host_client->old_frags = svs.clients[saved_clientnum].old_frags;
-    }
+    memcpy(host_client->spawn_parms,
+           sv.loadgame_client_spawn_parms[saved_clientnum],
+           sizeof(host_client->spawn_parms));
+    host_client->colors = sv.loadgame_client_colors[saved_clientnum];
+    host_client->old_frags = sv.loadgame_client_old_frags[saved_clientnum];
     Host_LoadgameRestoreClientEdict(saved_clientnum, ent);
     ent->v.netname = PR_SetEngineString(host_client->name);
     ent->v.colormap = NUM_FOR_EDICT(ent);
@@ -2047,6 +2222,10 @@ static void Host_Spawn_f(void) {
     sv.loadgame_client_saved[saved_clientnum] = false;
     sv.loadgame_client_name_required[saved_clientnum] = false;
     sv.loadgame_client_names[saved_clientnum][0] = 0;
+    memset(sv.loadgame_client_spawn_parms[saved_clientnum], 0,
+           sizeof(sv.loadgame_client_spawn_parms[saved_clientnum]));
+    sv.loadgame_client_colors[saved_clientnum] = 0;
+    sv.loadgame_client_old_frags[saved_clientnum] = 0;
     if (clientnum >= 0 && clientnum < MAX_SCOREBOARD)
       svs.coop_initial_spawn_client[clientnum] = false;
     sv.loadgame_resumed = true;
