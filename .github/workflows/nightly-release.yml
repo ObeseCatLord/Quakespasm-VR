@@ -55,8 +55,10 @@ jobs:
         run: |
           .\.vcpkg\bootstrap-vcpkg.bat -disableMetrics
           if ($LASTEXITCODE -ne 0) { throw "vcpkg bootstrap failed with exit code $LASTEXITCODE" }
-          .\.vcpkg\vcpkg.exe integrate install
-          if ($LASTEXITCODE -ne 0) { throw "vcpkg integration failed with exit code $LASTEXITCODE" }
+          .\.vcpkg\vcpkg.exe install --triplet x64-windows-static-md `
+            "--x-manifest-root=$env:GITHUB_WORKSPACE" `
+            "--x-install-root=$env:GITHUB_WORKSPACE\vcpkg_installed"
+          if ($LASTEXITCODE -ne 0) { throw "vcpkg install failed with exit code $LASTEXITCODE" }
 
       - name: Build
         shell: pwsh
@@ -64,10 +66,7 @@ jobs:
           $options = @(
             '-property:Configuration=Release',
             '-property:Platform=x64',
-            "-property:VcpkgRoot=$env:GITHUB_WORKSPACE\.vcpkg\",
-            '-property:VcpkgEnableManifest=true',
-            "-property:VcpkgManifestRoot=$env:GITHUB_WORKSPACE\",
-            '-property:VcpkgTriplet=x64-windows-static-md',
+            "-property:CurlRoot=$env:GITHUB_WORKSPACE\vcpkg_installed\x64-windows-static-md",
             '-property:UseCurl=true',
             '-maxcpucount',
             '-verbosity:minimal'
