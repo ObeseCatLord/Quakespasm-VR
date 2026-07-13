@@ -2684,9 +2684,9 @@ static qboolean VR_AppendSchemaBlockForSlot(vr_textbuf_t *buf, int slot) {
   return VR_TextAppendLine(buf, "");
 }
 
-static qboolean VR_AppendQBJ3MPHeldDefaultBlocks(vr_textbuf_t *buf,
-                                                  const char *existing,
-                                                  int *count);
+static qboolean VR_AppendQBJ3DefaultSchema(vr_textbuf_t *buf,
+                                           const char *existing,
+                                           int *count);
 
 static qboolean VR_CreateDefaultWeaponSchemaIfMissing(void) {
   vr_textbuf_t out = {0};
@@ -2696,17 +2696,18 @@ static qboolean VR_CreateDefaultWeaponSchemaIfMissing(void) {
   if (VR_SchemaFileExistsInGameDir())
     return true;
 
-  for (int i = 0; i < MAX_WEAPONS; i++) {
-    if (!VR_WeaponOffsetSlotHasValidID(i) || VR_PreviousSlotHasSameID(i))
-      continue;
-    ok = VR_AppendSchemaBlockForSlot(&out, i);
-    if (!ok)
-      break;
-    count++;
+  if (VR_GameDirIs("qbj3")) {
+    ok = VR_AppendQBJ3DefaultSchema(&out, NULL, &count);
+  } else {
+    for (int i = 0; i < MAX_WEAPONS; i++) {
+      if (!VR_WeaponOffsetSlotHasValidID(i) || VR_PreviousSlotHasSameID(i))
+        continue;
+      ok = VR_AppendSchemaBlockForSlot(&out, i);
+      if (!ok)
+        break;
+      count++;
+    }
   }
-
-  if (ok)
-    ok = VR_AppendQBJ3MPHeldDefaultBlocks(&out, NULL, &count);
 
   if (ok && count > 0) {
     COM_WriteFile("vr_weapons.txt", out.data ? out.data : "", out.len);
@@ -2755,17 +2756,105 @@ static qboolean VR_SchemaHasViewmodelBlock(const char *data, const char *id) {
 
 typedef struct {
   const char *viewmodel;
-  const char *mp_held_offset;
-} vr_qbj3_mp_held_default_t;
+  const char *defaults;
+} vr_qbj3_weapon_default_t;
 
-static const vr_qbj3_mp_held_default_t vr_qbj3_mp_held_defaults[] = {
-    {"progs/v_pistol.mdl", "-9.579239 -35.50967 -54.6803"},
-    {"progs/v_flakshotgun.mdl", "-15.43059 -15.03707 -35.51292"},
-    {"progs/v_tnailgun.mdl", "-2.69389 -19.42333 -44.80553"},
-    {"progs/v_rebar.mdl", "-6.640932 -33.81133 -47.54584"},
-    {"progs/v_grenlauncher.mdl", "-5.99358 -17.36011 -42.50352"},
-    {"progs/v_mmml.mdl", "-13.54351 -16.965 -46.47981"},
-    {"progs/v_invoker.mdl", "-6.052697 -22.50944 -21.69667"},
+/*
+ * Canonical QBJ3 calibration.  These are defaults, not forced values:
+ * existing keys in a user's vr_weapons.txt always win, so the in-game adjust
+ * commands remain persistent.  Keep this table in sync with the QBJ3 file
+ * distributed by the updater.
+ */
+static const vr_qbj3_weapon_default_t vr_qbj3_weapon_defaults[] = {
+    {"progs/v_wrench.mdl",
+     "bitmask 4096\nmodel progs/v_wrench.mdl\nimpulse 1\nscale 0.2\n"
+     "offset 0 0 0\nheld_scale 0.2\n"
+     "held_offset -5.090864 45.71518 64.70464\n"
+     "muzzle_offset 0 0 0\n"},
+    {"progs/v_pistol.mdl",
+     "bitmask 1\nmodel progs/v_pistol.mdl\nimpulse 2\nscale 0.2\n"
+     "offset 0 0 0\nmuzzle_source_viewofs 1\n"
+     "muzzle_source_offset 8 -8 16\nheld_scale 0.2\n"
+     "held_offset 3.388845 37.75988 56.43581\n"
+     "muzzle_offset -9.11632 9.013277 -45.533\n"
+     "mp_held_offset 0 0 0\n"
+     "mp_muzzle_offset 8.531928 5.180611 -8.759525\n"},
+    {"progs/v_flakshotgun.mdl",
+     "bitmask 2\nmodel progs/v_flakshotgun.mdl\nimpulse 3\nscale 0.2\n"
+     "offset 0 0 0\nheld_scale 0.2\n"
+     "held_offset 11.55282 16.95288 38.90591\n"
+     "muzzle_offset 0.1453177 2.258818 -31.45429\n"
+     "mp_held_offset 0 0 0\n"
+     "mp_muzzle_offset -1.482679 -11.57735 -45.51331\n"},
+    {"progs/v_tnailgun.mdl",
+     "bitmask 4\nmodel progs/v_tnailgun.mdl\nimpulse 4\nscale 0.2\n"
+     "offset 0 0 0\nheld_scale 0.2\n"
+     "held_offset -3.596274 22.3977 49.35181\n"
+     "muzzle_offset -4.46999 4.069127 -25.89618\n"
+     "mp_held_offset 0 0 0\n"
+     "mp_muzzle_offset 0.2494569 -5.47333 -53.83134\n"},
+    {"progs/v_rebar.mdl",
+     "bitmask 8\nmodel progs/v_rebar.mdl\nimpulse 5\nscale 0.2\n"
+     "offset 0 0 0\nheld_scale 0.2\n"
+     "held_offset 7.11163 33.89061 52.88078\n"
+     "muzzle_offset 0.4432641 12.53425 4.832447\n"
+     "mp_held_offset 0 0 0\n"
+     "mp_muzzle_offset 0.8458476 -13.62684 -0.612349\n"},
+    {"progs/v_grenlauncher.mdl",
+     "bitmask 16\nmodel progs/v_grenlauncher.mdl\nimpulse 6\nscale 0.2\n"
+     "offset 0 0 0\nheld_scale 0.2\n"
+     "held_offset 3.906817 19.53125 46.88503\n"
+     "muzzle_offset -0.9725167 6.330487 6.072494\n"
+     "mp_held_offset 0 0 0\n"
+     "mp_muzzle_offset -1.372849 -11.28279 1.222856\n"},
+    {"progs/v_mmml.mdl",
+     "bitmask 32\nmodel progs/v_mmml.mdl\nimpulse 7\nscale 0.2\n"
+     "offset 0 0 0\nheld_scale 0.2\n"
+     "held_offset 8.254588 17.25331 53.56533\n"
+     "muzzle_offset -0.387794 15.84945 -4.354416\n"
+     "mp_held_offset 0 0 0\n"
+     "mp_muzzle_offset -0.2388192 -8.662317 -24.89419\n"},
+    {"progs/v_invoker.mdl",
+     "bitmask 64\nmodel progs/v_invoker.mdl\nimpulse 8\nscale 0.2\n"
+     "offset 0 0 0\nheld_scale 0.2\n"
+     "held_offset -0.4811821 24.50682 24.40611\n"
+     "muzzle_offset 0 0 0\nmp_held_offset 0 0 0\n"},
+    {"progs/v_berserk.mdl",
+     "model progs/v_berserk.mdl\nscale 0.2\nheld_scale 0.2\n"},
+    {"progs/v_axe.mdl",
+     "held_scale 0.33\nheld_offset 0 0 0\nmuzzle_offset 0 0 0\n"},
+    {"progs/v_shot.mdl",
+     "held_scale 0.5\nheld_offset 0 0 0\nmuzzle_offset 0 0 0\n"},
+    {"progs/v_shot2.mdl",
+     "held_scale 0.8\nheld_offset 0 0 0\nmuzzle_offset 0 0 0\n"},
+    {"progs/v_nail.mdl",
+     "held_scale 0.5\nheld_offset 0 0 0\nmuzzle_offset 0 0 0\n"},
+    {"progs/v_nail2.mdl",
+     "held_scale 0.5\nheld_offset 0 0 0\nmuzzle_offset 0 0 0\n"},
+    {"progs/v_rock.mdl",
+     "held_scale 0.5\nheld_offset 0 0 0\nmuzzle_offset 0 0 0\n"},
+    {"progs/v_rock2.mdl",
+     "held_scale 0.5\nheld_offset 0 0 0\nmuzzle_offset 0 0 0\n"},
+    {"progs/v_light.mdl",
+     "held_scale 0.5\nheld_offset 0 0 0\nmuzzle_offset 0 0 0\n"},
+    {"progs/v_hammer.mdl",
+     "held_scale 0.33\nheld_offset 0 0 0\nmuzzle_offset 0 0 0\n"},
+    {"progs/v_laserg.mdl",
+     "held_scale 0.33\nheld_offset 0 0 0\nmuzzle_offset 0 0 0\n"},
+    {"progs/v_prox.mdl",
+     "held_scale 0.5\nheld_offset 0 0 0\nmuzzle_offset 0 0 0\n"},
+    {"progs/v_lava.mdl",
+     "held_scale 0.5\nheld_offset 0 0 0\nmuzzle_offset 0 0 0\n"},
+    {"progs/v_lava2.mdl",
+     "held_scale 0.5\nheld_offset 0 0 0\nmuzzle_offset 0 0 0\n"},
+    {"progs/v_multi.mdl",
+     "held_scale 0.5\nheld_offset 0 0 0\nmuzzle_offset 0 0 0\n"},
+    {"progs/v_multi2.mdl",
+     "held_scale 0.5\nheld_offset 0 0 0\nmuzzle_offset 0 0 0\n"},
+    {"progs/v_plasma.mdl",
+     "held_scale 0.5\nheld_offset 0 0 0\nmuzzle_offset 0 0 0\n"},
+    {"progs/v_axe2.mdl",
+     "held_scale 0.33\nheld_offset 0 0 0\nmuzzle_offset 0 0 0\n"},
 };
 
 static qboolean VR_BlockHasKey(const char *block, size_t len,
@@ -2788,24 +2877,34 @@ static qboolean VR_BlockHasKey(const char *block, size_t len,
   return false;
 }
 
-static int VR_FindQBJ3MPHeldDefault(const char *block, size_t len) {
+static int VR_FindQBJ3WeaponDefault(const char *block, size_t len) {
   for (size_t i = 0;
-       i < sizeof(vr_qbj3_mp_held_defaults) /
-               sizeof(vr_qbj3_mp_held_defaults[0]);
+       i < sizeof(vr_qbj3_weapon_defaults) /
+               sizeof(vr_qbj3_weapon_defaults[0]);
        i++) {
     if (VR_BlockMatchesViewmodel(block, len,
-                                 vr_qbj3_mp_held_defaults[i].viewmodel))
+                                 vr_qbj3_weapon_defaults[i].viewmodel))
       return (int)i;
   }
 
   return -1;
 }
 
-static qboolean VR_AppendQBJ3MPHeldOffsetToBlock(
-    vr_textbuf_t *buf, const char *block, size_t len, const char *offset) {
+static qboolean VR_QBJ3DefaultUsesExistingGlobal(
+    const char *key, qboolean has_global_held_scale,
+    qboolean has_global_held_offset, qboolean has_global_muzzle_offset) {
+  return (has_global_held_scale && !Q_strcmp(key, "held_scale")) ||
+         (has_global_held_offset && !Q_strcmp(key, "held_offset")) ||
+         (has_global_muzzle_offset && !Q_strcmp(key, "muzzle_offset"));
+}
+
+static qboolean VR_AppendQBJ3MissingDefaultLines(
+    vr_textbuf_t *buf, const char *block, size_t len,
+    const vr_qbj3_weapon_default_t *entry, qboolean has_global_held_scale,
+    qboolean has_global_held_offset, qboolean has_global_muzzle_offset,
+    qboolean *changed) {
   const char *p = block;
   const char *end = block + len;
-  char line[128];
   qboolean inserted = false;
 
   while (p < end) {
@@ -2819,9 +2918,46 @@ static qboolean VR_AppendQBJ3MPHeldOffsetToBlock(
     full_len = line_len + (line_end < end ? 1 : 0);
 
     if (!inserted && VR_LineStartsWithKey(p, line_len, "}")) {
-      q_snprintf(line, sizeof(line), "mp_held_offset %s", offset);
-      if (!VR_TextAppendLine(buf, line))
-        return false;
+      char line[256];
+      const char *defaults = entry->defaults;
+
+      if (!VR_BlockHasKey(block, len, "viewmodel")) {
+        q_snprintf(line, sizeof(line), "viewmodel %s", entry->viewmodel);
+        if (!VR_TextAppendLine(buf, line))
+          return false;
+        *changed = true;
+      }
+
+      while (*defaults) {
+        const char *default_end = strchr(defaults, '\n');
+        const char *key_end;
+        size_t default_len;
+        size_t key_len;
+
+        if (!default_end)
+          default_end = defaults + strlen(defaults);
+        default_len = default_end - defaults;
+        key_end = defaults;
+        while (key_end < default_end && !VR_IsTokenBreak(*key_end))
+          key_end++;
+        key_len = key_end - defaults;
+
+        if (key_len && key_len < sizeof(line)) {
+          memcpy(line, defaults, key_len);
+          line[key_len] = 0;
+          if (!VR_BlockHasKey(block, len, line) &&
+              !VR_QBJ3DefaultUsesExistingGlobal(
+                  line, has_global_held_scale, has_global_held_offset,
+                  has_global_muzzle_offset)) {
+            if (!VR_TextAppendN(buf, defaults, default_len) ||
+                !VR_TextAppend(buf, "\n"))
+              return false;
+            *changed = true;
+          }
+        }
+
+        defaults = *default_end ? default_end + 1 : default_end;
+      }
       inserted = true;
     }
 
@@ -2830,26 +2966,99 @@ static qboolean VR_AppendQBJ3MPHeldOffsetToBlock(
     p += full_len;
   }
 
-  if (!inserted) {
-    q_snprintf(line, sizeof(line), "mp_held_offset %s", offset);
-    if (!VR_TextAppendLine(buf, line))
-      return false;
+  return inserted;
+}
+
+static qboolean VR_AppendQBJ3DefaultBlock(
+    vr_textbuf_t *buf, const vr_qbj3_weapon_default_t *entry,
+    qboolean has_global_held_scale, qboolean has_global_held_offset,
+    qboolean has_global_muzzle_offset) {
+  char line[256];
+  const char *defaults = entry->defaults;
+
+  if (!VR_TextAppendLine(buf, "{"))
+    return false;
+  q_snprintf(line, sizeof(line), "viewmodel %s", entry->viewmodel);
+  if (!VR_TextAppendLine(buf, line))
+    return false;
+
+  while (*defaults) {
+    const char *default_end = strchr(defaults, '\n');
+    const char *key_end;
+    size_t default_len;
+    size_t key_len;
+
+    if (!default_end)
+      default_end = defaults + strlen(defaults);
+    default_len = default_end - defaults;
+    key_end = defaults;
+    while (key_end < default_end && !VR_IsTokenBreak(*key_end))
+      key_end++;
+    key_len = key_end - defaults;
+
+    if (key_len && key_len < sizeof(line)) {
+      memcpy(line, defaults, key_len);
+      line[key_len] = 0;
+      if (!VR_QBJ3DefaultUsesExistingGlobal(
+              line, has_global_held_scale, has_global_held_offset,
+              has_global_muzzle_offset) &&
+          (!VR_TextAppendN(buf, defaults, default_len) ||
+           !VR_TextAppend(buf, "\n")))
+        return false;
+    }
+
+    defaults = *default_end ? default_end + 1 : default_end;
   }
 
+  if (!VR_TextAppendLine(buf, "}") || !VR_TextAppendLine(buf, ""))
+    return false;
   return true;
 }
 
-static qboolean VR_AppendQBJ3MPHeldDefaultBlocks(vr_textbuf_t *buf,
-                                                  const char *existing,
-                                                  int *count) {
-  char line[128];
-  qboolean found[sizeof(vr_qbj3_mp_held_defaults) /
-                 sizeof(vr_qbj3_mp_held_defaults[0])] = {false};
+static qboolean VR_AppendQBJ3DefaultSchema(vr_textbuf_t *buf,
+                                           const char *existing,
+                                           int *count) {
+  qboolean found[sizeof(vr_qbj3_weapon_defaults) /
+                 sizeof(vr_qbj3_weapon_defaults[0])] = {false};
+  qboolean has_global_held_scale;
+  qboolean has_global_held_offset;
+  qboolean has_global_muzzle_offset;
   const char *p;
   const char *end;
 
   if (!VR_GameDirIs("qbj3"))
     return existing ? VR_TextAppend(buf, existing) : true;
+
+  has_global_held_scale =
+      existing && VR_BlockHasKey(existing, strlen(existing),
+                                 "global_held_scale");
+  has_global_held_offset =
+      existing && VR_BlockHasKey(existing, strlen(existing),
+                                 "global_held_offset");
+  has_global_muzzle_offset =
+      existing && VR_BlockHasKey(existing, strlen(existing),
+                                 "global_muzzle_offset");
+
+  if (!has_global_held_scale) {
+    if (!VR_TextAppendLine(buf, "global_held_scale 0.2"))
+      return false;
+    if (existing && count)
+      (*count)++;
+  }
+  if (!has_global_held_offset) {
+    if (!VR_TextAppendLine(buf, "global_held_offset 0 0 0"))
+      return false;
+    if (existing && count)
+      (*count)++;
+  }
+  if (!has_global_muzzle_offset) {
+    if (!VR_TextAppendLine(buf, "global_muzzle_offset 0 0 0"))
+      return false;
+    if (existing && count)
+      (*count)++;
+  }
+  if (!existing && !VR_TextAppendLine(buf, ""))
+    return false;
 
   p = existing ? existing : "";
   end = p + strlen(p);
@@ -2871,20 +3080,19 @@ static qboolean VR_AppendQBJ3MPHeldDefaultBlocks(vr_textbuf_t *buf,
     close++;
 
     {
-      int default_index = VR_FindQBJ3MPHeldDefault(open, close - open);
+      int default_index = VR_FindQBJ3WeaponDefault(open, close - open);
 
       if (default_index >= 0) {
+        qboolean changed = false;
         found[default_index] = true;
-        if (!VR_BlockHasKey(open, close - open, "mp_held_offset")) {
-          if (!VR_AppendQBJ3MPHeldOffsetToBlock(
-                  buf, open, close - open,
-                  vr_qbj3_mp_held_defaults[default_index].mp_held_offset))
-            return false;
-          if (count)
-            (*count)++;
-        } else if (!VR_TextAppendN(buf, open, close - open)) {
+        if (!VR_AppendQBJ3MissingDefaultLines(
+                buf, open, close - open,
+                &vr_qbj3_weapon_defaults[default_index],
+                has_global_held_scale, has_global_held_offset,
+                has_global_muzzle_offset, &changed))
           return false;
-        }
+        if (changed && count)
+          (*count)++;
       } else if (!VR_TextAppendN(buf, open, close - open)) {
         return false;
       }
@@ -2894,10 +3102,10 @@ static qboolean VR_AppendQBJ3MPHeldDefaultBlocks(vr_textbuf_t *buf,
   }
 
   for (size_t i = 0;
-       i < sizeof(vr_qbj3_mp_held_defaults) /
-               sizeof(vr_qbj3_mp_held_defaults[0]);
+       i < sizeof(vr_qbj3_weapon_defaults) /
+               sizeof(vr_qbj3_weapon_defaults[0]);
        i++) {
-    const vr_qbj3_mp_held_default_t *entry = &vr_qbj3_mp_held_defaults[i];
+    const vr_qbj3_weapon_default_t *entry = &vr_qbj3_weapon_defaults[i];
 
     if (found[i])
       continue;
@@ -2905,18 +3113,9 @@ static qboolean VR_AppendQBJ3MPHeldDefaultBlocks(vr_textbuf_t *buf,
     if (buf->len && buf->data[buf->len - 1] != '\n' &&
         !VR_TextAppendLine(buf, ""))
       return false;
-    if (!VR_TextAppendLine(buf, "{"))
-      return false;
-    q_snprintf(line, sizeof(line), "viewmodel %s", entry->viewmodel);
-    if (!VR_TextAppendLine(buf, line))
-      return false;
-    q_snprintf(line, sizeof(line), "mp_held_offset %s",
-               entry->mp_held_offset);
-    if (!VR_TextAppendLine(buf, line))
-      return false;
-    if (!VR_TextAppendLine(buf, "}"))
-      return false;
-    if (!VR_TextAppendLine(buf, ""))
+    if (!VR_AppendQBJ3DefaultBlock(
+            buf, entry, has_global_held_scale, has_global_held_offset,
+            has_global_muzzle_offset))
       return false;
 
     if (count)
@@ -2936,8 +3135,12 @@ static qboolean VR_FillMissingDefaultWeaponSchemaBlocks(void) {
   if (!data)
     return true;
 
-  ok = VR_AppendQBJ3MPHeldDefaultBlocks(&out, data, &count);
-  for (int i = 0; ok && i < MAX_WEAPONS; i++) {
+  if (VR_GameDirIs("qbj3"))
+    ok = VR_AppendQBJ3DefaultSchema(&out, data, &count);
+  else
+    ok = VR_TextAppend(&out, data);
+
+  for (int i = 0; ok && !VR_GameDirIs("qbj3") && i < MAX_WEAPONS; i++) {
     const char *id;
 
     if (!VR_WeaponOffsetSlotHasValidID(i) || VR_PreviousSlotHasSameID(i))
@@ -3577,11 +3780,124 @@ static qboolean VR_AdjustWeaponConsumeTrigger(void) {
   return VR_AdjustWeaponCommit();
 }
 
+static void VR_InitQBJ3WeaponCVars(void) {
+  int i = 0;
+  vec3_t offset;
+
+#define QBJ3_WEAPON(id, hx, hy, hz, scale, mx, my, mz)                       \
+  do {                                                                       \
+    InitWeaponCVars(i, id, hx, hy, hz, scale);                               \
+    InitWeaponMuzzleCVars(i, mx, my, mz);                                    \
+    i++;                                                                     \
+  } while (0)
+
+  QBJ3_WEAPON("progs/v_wrench.mdl", "-5.090864", "45.71518", "64.70464",
+              "0.2", "0", "0", "0");
+  QBJ3_WEAPON("progs/v_pistol.mdl", "3.388845", "37.75988", "56.43581",
+              "0.2", "-9.11632", "9.013277", "-45.533");
+  QBJ3_WEAPON("progs/v_flakshotgun.mdl", "11.55282", "16.95288",
+              "38.90591", "0.2", "0.1453177", "2.258818", "-31.45429");
+  QBJ3_WEAPON("progs/v_tnailgun.mdl", "-3.596274", "22.3977", "49.35181",
+              "0.2", "-4.46999", "4.069127", "-25.89618");
+  QBJ3_WEAPON("progs/v_rebar.mdl", "7.11163", "33.89061", "52.88078",
+              "0.2", "0.4432641", "12.53425", "4.832447");
+  QBJ3_WEAPON("progs/v_grenlauncher.mdl", "3.906817", "19.53125",
+              "46.88503", "0.2", "-0.9725167", "6.330487", "6.072494");
+  QBJ3_WEAPON("progs/v_mmml.mdl", "8.254588", "17.25331", "53.56533",
+              "0.2", "-0.387794", "15.84945", "-4.354416");
+  QBJ3_WEAPON("progs/v_invoker.mdl", "-0.4811821", "24.50682", "24.40611",
+              "0.2", "0", "0", "0");
+  QBJ3_WEAPON("progs/v_berserk.mdl", "0", "0", "0", "0.2", "0", "0",
+              "0");
+  QBJ3_WEAPON("progs/v_axe.mdl", "0", "0", "0", "0.33", "0", "0",
+              "0");
+  QBJ3_WEAPON("progs/v_shot.mdl", "0", "0", "0", "0.5", "0", "0",
+              "0");
+  QBJ3_WEAPON("progs/v_shot2.mdl", "0", "0", "0", "0.8", "0", "0",
+              "0");
+  QBJ3_WEAPON("progs/v_nail.mdl", "0", "0", "0", "0.5", "0", "0",
+              "0");
+  QBJ3_WEAPON("progs/v_nail2.mdl", "0", "0", "0", "0.5", "0", "0",
+              "0");
+  QBJ3_WEAPON("progs/v_rock.mdl", "0", "0", "0", "0.5", "0", "0",
+              "0");
+  QBJ3_WEAPON("progs/v_rock2.mdl", "0", "0", "0", "0.5", "0", "0",
+              "0");
+  QBJ3_WEAPON("progs/v_light.mdl", "0", "0", "0", "0.5", "0", "0",
+              "0");
+  QBJ3_WEAPON("progs/v_hammer.mdl", "0", "0", "0", "0.33", "0", "0",
+              "0");
+  QBJ3_WEAPON("progs/v_laserg.mdl", "0", "0", "0", "0.33", "0", "0",
+              "0");
+  QBJ3_WEAPON("progs/v_prox.mdl", "0", "0", "0", "0.5", "0", "0",
+              "0");
+  QBJ3_WEAPON("progs/v_lava.mdl", "0", "0", "0", "0.5", "0", "0",
+              "0");
+  QBJ3_WEAPON("progs/v_lava2.mdl", "0", "0", "0", "0.5", "0", "0",
+              "0");
+  QBJ3_WEAPON("progs/v_multi.mdl", "0", "0", "0", "0.5", "0", "0",
+              "0");
+  QBJ3_WEAPON("progs/v_multi2.mdl", "0", "0", "0", "0.5", "0", "0",
+              "0");
+  QBJ3_WEAPON("progs/v_plasma.mdl", "0", "0", "0", "0.5", "0", "0",
+              "0");
+  QBJ3_WEAPON("progs/v_axe2.mdl", "0", "0", "0", "0.33", "0", "0",
+              "0");
+
+#undef QBJ3_WEAPON
+
+  /* These explicit zero deltas are part of the calibrated MP baseline. */
+  VR_RegisterWeaponMPHeldOffset("progs/v_pistol.mdl", vec3_origin, true,
+                                vec3_origin);
+  VR_RegisterWeaponMPHeldOffset("progs/v_flakshotgun.mdl", vec3_origin, true,
+                                vec3_origin);
+  VR_RegisterWeaponMPHeldOffset("progs/v_tnailgun.mdl", vec3_origin, true,
+                                vec3_origin);
+  VR_RegisterWeaponMPHeldOffset("progs/v_rebar.mdl", vec3_origin, true,
+                                vec3_origin);
+  VR_RegisterWeaponMPHeldOffset("progs/v_grenlauncher.mdl", vec3_origin, true,
+                                vec3_origin);
+  VR_RegisterWeaponMPHeldOffset("progs/v_mmml.mdl", vec3_origin, true,
+                                vec3_origin);
+  VR_RegisterWeaponMPHeldOffset("progs/v_invoker.mdl", vec3_origin, true,
+                                vec3_origin);
+
+#define QBJ3_MP_MUZZLE(id, x, y, z)                                          \
+  do {                                                                       \
+    offset[0] = x;                                                           \
+    offset[1] = y;                                                           \
+    offset[2] = z;                                                           \
+    VR_RegisterWeaponMPMuzzleOffset(id, offset, true, offset);               \
+  } while (0)
+
+  QBJ3_MP_MUZZLE("progs/v_pistol.mdl", 8.531928f, 5.180611f, -8.759525f);
+  QBJ3_MP_MUZZLE("progs/v_flakshotgun.mdl", -1.482679f, -11.57735f,
+                  -45.51331f);
+  QBJ3_MP_MUZZLE("progs/v_tnailgun.mdl", 0.2494569f, -5.47333f,
+                  -53.83134f);
+  QBJ3_MP_MUZZLE("progs/v_rebar.mdl", 0.8458476f, -13.62684f, -0.612349f);
+  QBJ3_MP_MUZZLE("progs/v_grenlauncher.mdl", -1.372849f, -11.28279f,
+                  1.222856f);
+  QBJ3_MP_MUZZLE("progs/v_mmml.mdl", -0.2388192f, -8.662317f, -24.89419f);
+
+#undef QBJ3_MP_MUZZLE
+
+  offset[0] = 8.0f;
+  offset[1] = -8.0f;
+  offset[2] = 16.0f;
+  VR_RegisterWeaponMuzzleSource("progs/v_pistol.mdl", offset, true, true,
+                                true);
+}
+
 void InitAllWeaponCVars() {
   int i = 0;
 
+  if (!strcmp(COM_SkipPath(com_gamedir), "qbj3")) {
+    VR_InitQBJ3WeaponCVars();
+    i = 26;
+  }
   // weapons for Arcane Dimensions mod; initially made for v1.70 + patch1
-  if (!strcmp(COM_SkipPath(com_gamedir), "ad")) {
+  else if (!strcmp(COM_SkipPath(com_gamedir), "ad")) {
     // ad specific models
     InitWeaponCVars(i++, "progs/v_shadaxe0.mdl", "-1.5", "43.1", "41",
                     "0.25"); // shadow axe
@@ -3918,9 +4234,11 @@ void InitAllWeaponCVars() {
     }
 
     // axe from copper mod (used by many mods, including Underdark Overbright,
-    // Spiritworld, Tainted, Tomb of Thunder, etc.)
-    InitWeaponCVars(i++, "progs/v_axe2.mdl", "-3.5", "34", "41.5",
-                    "0.33"); // axe
+    // Spiritworld, Tainted, Tomb of Thunder, etc.). QBJ3 already installed
+    // its calibrated v_axe2 slot above.
+    if (strcmp(COM_SkipPath(com_gamedir), "qbj3"))
+      InitWeaponCVars(i++, "progs/v_axe2.mdl", "-3.5", "34", "41.5",
+                      "0.33"); // axe
 
     // Tomb of Thunder
     if (!strcmp(COM_SkipPath(com_gamedir), "tombofthunder")) {
