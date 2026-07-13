@@ -106,7 +106,10 @@ jobs:
           New-Item -ItemType Directory -Force $stage | Out-Null
           $extensions = @('.exe', '.dll', '.bat', '.json', '.ps1', '.txt', '.html', '.pak')
           Get-ChildItem $out -File |
-            Where-Object { $extensions -contains $_.Extension.ToLowerInvariant() } |
+            Where-Object {
+              $extensions -contains $_.Extension.ToLowerInvariant() -and
+              $_.Name -notlike '*.vcxproj.*'
+            } |
             Copy-Item -Destination $stage
           if (!(Test-Path (Join-Path $stage 'quakespasm-openvr.exe'))) { throw 'Staging omitted the executable' }
           if ('${{ matrix.platform }}' -eq 'x64') {
