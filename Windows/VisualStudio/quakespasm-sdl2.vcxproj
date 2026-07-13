@@ -67,6 +67,7 @@
   <PropertyGroup Label="UserMacros" />
   <PropertyGroup>
     <_ProjectFileVersion>17.0.33516.290</_ProjectFileVersion>
+    <UseCurl Condition="'$(UseCurl)'==''">false</UseCurl>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
     <OutDir>$(SolutionDir)Build-$(ProjectName)\x86\$(Configuration)\</OutDir>
@@ -211,6 +212,14 @@ copy "$(SolutionDir)\..\SDL2\lib64\*.dll" "$(TargetDir)"
 copy "$(SolutionDir)\..\OpenVR\bin\win64\openvr_api.dll" "$(TargetDir)"
 copy "$(SolutionDir)\..\static-release-files\*.*" "$(TargetDir)"</Command>
     </PostBuildEvent>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64' and '$(UseCurl)'=='true'">
+    <ClCompile>
+      <PreprocessorDefinitions>USE_CURL;CURL_STATICLIB;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <Link>
+      <AdditionalDependencies>libcurl.lib;bcrypt.lib;advapi32.lib;crypt32.lib;secur32.lib;iphlpapi.lib;%(AdditionalDependencies)</AdditionalDependencies>
+    </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="..\..\Quake\addon_catalog.c" />

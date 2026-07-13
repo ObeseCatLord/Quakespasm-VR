@@ -11,6 +11,8 @@ Quake/quakespasm.exe
 Quake/vrclient.so
 Misc/qs_pak/quakespasm.pak
 Windows/VisualStudio/Build-*/
+.vcpkg/
+vcpkg_installed/
 Quake/id1/
 Quake/libvrclient.so
 game/test_*.bat

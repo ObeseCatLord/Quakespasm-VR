@@ -28,8 +28,25 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
 
+      - name: Check out pinned vcpkg
+        if: matrix.platform == 'x64'
+        uses: actions/checkout@v4
+        with:
+          repository: microsoft/vcpkg
+          ref: cd61e1e26a038e82d6550a3ebbe0fbbfe7da78e3
+          path: .vcpkg
+
       - name: Set up MSBuild
         uses: microsoft/setup-msbuild@v2
+
+      - name: Set up libcurl with Windows Schannel
+        if: matrix.platform == 'x64'
+        shell: pwsh
+        run: |
+          .\.vcpkg\bootstrap-vcpkg.bat -disableMetrics
+          if ($LASTEXITCODE -ne 0) { throw "vcpkg bootstrap failed with exit code $LASTEXITCODE" }
+          .\.vcpkg\vcpkg.exe integrate install
+          if ($LASTEXITCODE -ne 0) { throw "vcpkg integration failed with exit code $LASTEXITCODE" }
 
       - name: Build
         shell: pwsh
@@ -40,6 +57,15 @@ jobs:
             '-maxcpucount',
             '-verbosity:minimal'
           )
+          if ('${{ matrix.platform }}' -eq 'x64') {
+            $options += @(
+              "-property:VcpkgRoot=$env:GITHUB_WORKSPACE\.vcpkg\",
+              '-property:VcpkgEnableManifest=true',
+              "-property:VcpkgManifestRoot=$env:GITHUB_WORKSPACE\",
+              '-property:VcpkgTriplet=x64-windows-static-md',
+              '-property:UseCurl=true'
+            )
+          }
           msbuild Windows\VisualStudio\quakespasm.sln $options
           if ($LASTEXITCODE -ne 0) { throw "MSBuild failed with exit code $LASTEXITCODE" }
 
@@ -53,10 +79,50 @@ jobs:
             $path = Join-Path $out $dll
             if (!(Test-Path $path)) { throw "Missing $path" }
           }
+          if ('${{ matrix.platform }}' -eq 'x64') {
+            $text = [Text.Encoding]::ASCII.GetString([IO.File]::ReadAllBytes($exe))
+            if (!$text.Contains('Press F1 to refresh add-on catalogue')) {
+              throw 'The x64 executable was built without add-on catalogue support'
+            }
+            if ($text.Contains('Catalogue downloads disabled in this build')) {
+              throw 'The x64 executable contains the disabled catalogue path'
+            }
+            $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
+            $vs = & $vswhere -latest -property installationPath
+            $dumpbin = Get-ChildItem "$vs\VC\Tools\MSVC\*\bin\Hostx64\x64\dumpbin.exe" |
+              Sort-Object FullName | Select-Object -Last 1
+            if (!$dumpbin) { throw 'Could not find dumpbin.exe' }
+            $imports = & $dumpbin.FullName /imports $exe | Out-String
+            if ($imports -notmatch '(?i)openvr_api\.dll' -or $imports -notmatch 'VR_InitInternal2') {
+              throw 'The x64 executable does not import the OpenVR runtime entry point'
+            }
+          }
           Get-ChildItem $out | Sort-Object Name | Select-Object Name, Length
+
+      - name: Stage runtime files
+        shell: pwsh
+        run: |
+          $out = '${{ matrix.output-dir }}'
+          $stage = Join-Path $env:RUNNER_TEMP 'quakespasm-openvr-windows-${{ matrix.artifact-platform }}'
+          New-Item -ItemType Directory -Force $stage | Out-Null
+          $extensions = @('.exe', '.dll', '.bat', '.json', '.ps1', '.txt', '.html', '.pak')
+          Get-ChildItem $out -File |
+            Where-Object { $extensions -contains $_.Extension.ToLowerInvariant() } |
+            Copy-Item -Destination $stage
+          if (!(Test-Path (Join-Path $stage 'quakespasm-openvr.exe'))) { throw 'Staging omitted the executable' }
+          if ('${{ matrix.platform }}' -eq 'x64') {
+            $licenses = Join-Path $stage 'third-party-licenses'
+            New-Item -ItemType Directory -Force $licenses | Out-Null
+            foreach ($package in @('curl', 'zlib')) {
+              $copyright = Join-Path $env:GITHUB_WORKSPACE "vcpkg_installed\x64-windows-static-md\share\$package\copyright"
+              if (!(Test-Path $copyright)) { throw "Missing vcpkg copyright file: $copyright" }
+              Copy-Item $copyright (Join-Path $licenses "$package.txt")
+            }
+          }
+          Get-ChildItem $stage | Sort-Object Name | Select-Object Name, Length
 
       - name: Upload Windows build
         uses: actions/upload-artifact@v4
         with:
           name: quakespasm-openvr-windows-${{ matrix.artifact-platform }}
-          path: ${{ matrix.output-dir }}/**
+          path: ${{ runner.temp }}/quakespasm-openvr-windows-${{ matrix.artifact-platform }}/**

@@ -1,0 +1,261 @@
+name: Nightly Release
+
+on:
+  schedule:
+    - cron: '37 9 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: nightly-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  metadata:
+    name: Prepare release metadata
+    runs-on: ubuntu-22.04
+    outputs:
+      package_stem: ${{ steps.metadata.outputs.package_stem }}
+      release_tag: ${{ steps.metadata.outputs.release_tag }}
+      release_title: ${{ steps.metadata.outputs.release_title }}
+    steps:
+      - name: Generate immutable nightly identity
+        id: metadata
+        shell: bash
+        run: |
+          date_utc="$(date -u +%Y%m%d)"
+          short_sha="${GITHUB_SHA:0:8}"
+          release_tag="nightly-${date_utc}-g${short_sha}"
+          echo "release_tag=${release_tag}" >> "$GITHUB_OUTPUT"
+          echo "release_title=Nightly ${date_utc:0:4}-${date_utc:4:2}-${date_utc:6:2} (g${short_sha})" >> "$GITHUB_OUTPUT"
+          echo "package_stem=quakespasm-openvr-${release_tag}" >> "$GITHUB_OUTPUT"
+
+  build-windows:
+    name: Build native Windows x64
+    needs: metadata
+    runs-on: windows-2022
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Check out pinned vcpkg
+        uses: actions/checkout@v4
+        with:
+          repository: microsoft/vcpkg
+          ref: cd61e1e26a038e82d6550a3ebbe0fbbfe7da78e3
+          path: .vcpkg
+
+      - name: Set up MSBuild
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Set up static libcurl with Windows Schannel
+        shell: pwsh
+        run: |
+          .\.vcpkg\bootstrap-vcpkg.bat -disableMetrics
+          if ($LASTEXITCODE -ne 0) { throw "vcpkg bootstrap failed with exit code $LASTEXITCODE" }
+          .\.vcpkg\vcpkg.exe integrate install
+          if ($LASTEXITCODE -ne 0) { throw "vcpkg integration failed with exit code $LASTEXITCODE" }
+
+      - name: Build
+        shell: pwsh
+        run: |
+          $options = @(
+            '-property:Configuration=Release',
+            '-property:Platform=x64',
+            "-property:VcpkgRoot=$env:GITHUB_WORKSPACE\.vcpkg\",
+            '-property:VcpkgEnableManifest=true',
+            "-property:VcpkgManifestRoot=$env:GITHUB_WORKSPACE\",
+            '-property:VcpkgTriplet=x64-windows-static-md',
+            '-property:UseCurl=true',
+            '-maxcpucount',
+            '-verbosity:minimal'
+          )
+          msbuild Windows\VisualStudio\quakespasm.sln $options
+          if ($LASTEXITCODE -ne 0) { throw "MSBuild failed with exit code $LASTEXITCODE" }
+
+      - name: Verify and package Windows runtime
+        shell: pwsh
+        run: |
+          $out = 'Windows/VisualStudio/Build-quakespasm-sdl2/x64/Release'
+          $exe = Join-Path $out 'quakespasm-openvr.exe'
+          foreach ($file in @($exe, (Join-Path $out 'SDL2.dll'), (Join-Path $out 'openvr_api.dll'))) {
+            if (!(Test-Path $file)) { throw "Missing required runtime file: $file" }
+          }
+          $text = [Text.Encoding]::ASCII.GetString([IO.File]::ReadAllBytes($exe))
+          if (!$text.Contains('Press F1 to refresh add-on catalogue')) { throw 'Add-on catalogue support is absent' }
+          if ($text.Contains('Catalogue downloads disabled in this build')) { throw 'Disabled add-on catalogue path is present' }
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
+          $vs = & $vswhere -latest -property installationPath
+          $dumpbin = Get-ChildItem "$vs\VC\Tools\MSVC\*\bin\Hostx64\x64\dumpbin.exe" |
+            Sort-Object FullName | Select-Object -Last 1
+          if (!$dumpbin) { throw 'Could not find dumpbin.exe' }
+          $imports = & $dumpbin.FullName /imports $exe | Out-String
+          if ($imports -notmatch '(?i)openvr_api\.dll' -or $imports -notmatch 'VR_InitInternal2') {
+            throw 'The executable does not import the OpenVR runtime entry point'
+          }
+
+          $folder = Join-Path $env:RUNNER_TEMP '${{ needs.metadata.outputs.package_stem }}'
+          New-Item -ItemType Directory -Force $folder | Out-Null
+          $extensions = @('.exe', '.dll', '.bat', '.json', '.ps1', '.txt', '.html', '.pak')
+          Get-ChildItem $out -File |
+            Where-Object { $extensions -contains $_.Extension.ToLowerInvariant() } |
+            Copy-Item -Destination $folder
+
+          $licenses = Join-Path $folder 'third-party-licenses'
+          New-Item -ItemType Directory -Force $licenses | Out-Null
+          foreach ($package in @('curl', 'zlib')) {
+            $copyright = Join-Path $env:GITHUB_WORKSPACE "vcpkg_installed\x64-windows-static-md\share\$package\copyright"
+            if (!(Test-Path $copyright)) { throw "Missing vcpkg copyright file: $copyright" }
+            Copy-Item $copyright (Join-Path $licenses "$package.txt")
+          }
+
+          $forbidden = Get-ChildItem $folder -File | Where-Object { $_.Extension -in @('.obj', '.pdb', '.iobj', '.ipdb') }
+          if ($forbidden) { throw "Build intermediates entered the release package: $($forbidden.Name -join ', ')" }
+          $log = Join-Path $folder 'qconsole.log'
+          $process = Start-Process -FilePath (Join-Path $folder 'quakespasm-openvr.exe') `
+            -ArgumentList '-basedir', $folder, '-dedicated', '1', '-condebug', '+quit' `
+            -WorkingDirectory $folder -PassThru -Wait
+          if (!(Test-Path $log) -or !(Select-String -Quiet -SimpleMatch 'Playing shareware version.' $log)) {
+            throw "Packaged executable failed its dependency/startup smoke test (exit $($process.ExitCode))"
+          }
+          Remove-Item $log
+          $zip = Join-Path $env:GITHUB_WORKSPACE '${{ needs.metadata.outputs.package_stem }}_win64.zip'
+          Compress-Archive -Path $folder -DestinationPath $zip -CompressionLevel Optimal
+
+      - name: Upload Windows release ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-windows-x64
+          path: ${{ needs.metadata.outputs.package_stem }}_win64.zip
+          if-no-files-found: error
+
+  build-linux:
+    name: Build Linux x86_64
+    needs: metadata
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            libcurl4-openssl-dev \
+            libflac-dev \
+            libgl1-mesa-dev \
+            libmad0-dev \
+            libogg-dev \
+            libopenvr-dev \
+            libopusfile-dev \
+            libsdl2-dev \
+            libvorbis-dev \
+            libxmp-dev \
+            pkg-config \
+            zip
+
+      - name: Build
+        run: |
+          make -C Quake -f Makefile.linux clean
+          make -C Quake -f Makefile.linux -j"$(nproc)"
+
+      - name: Verify and package Linux runtime
+        shell: bash
+        run: |
+          test -x Quake/quakespasm-openvr
+          test -x Quake/quakespasm-openvr.bin
+          ldd Quake/quakespasm-openvr.bin
+
+          folder="$RUNNER_TEMP/${{ needs.metadata.outputs.package_stem }}"
+          install -d "$folder/third-party-licenses"
+          install -m 0755 Quake/quakespasm-openvr Quake/quakespasm-openvr.bin "$folder/"
+          install -m 0644 Windows/static-release-files/quakespasm.pak LICENSE.txt README.md "$folder/"
+          openvr_lib="$(dpkg -L libopenvr-dev | grep '/libopenvr_api\.so$' | head -n 1)"
+          test -n "$openvr_lib"
+          install -m 0644 "$openvr_lib" "$folder/libopenvr_api.so"
+          install -m 0644 /usr/share/doc/libopenvr-dev/copyright "$folder/third-party-licenses/OpenVR.txt"
+
+          strings Quake/quakespasm-openvr.bin | grep -F 'Press F1 to refresh add-on catalogue'
+          if strings Quake/quakespasm-openvr.bin | grep -Fq 'Catalogue downloads disabled in this build'; then
+            echo 'Linux executable contains the disabled catalogue path' >&2
+            exit 1
+          fi
+          test "$(find "$folder" -maxdepth 1 -type f \( -name '*.o' -o -name '*.pdb' \) | wc -l)" -eq 0
+
+          cd "$RUNNER_TEMP"
+          zip -qr "$GITHUB_WORKSPACE/${{ needs.metadata.outputs.package_stem }}_linux-x86_64.zip" '${{ needs.metadata.outputs.package_stem }}'
+
+      - name: Upload Linux release ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-linux-x86_64
+          path: ${{ needs.metadata.outputs.package_stem }}_linux-x86_64.zip
+          if-no-files-found: error
+
+  publish:
+    name: Publish GitHub prerelease
+    needs:
+      - metadata
+      - build-windows
+      - build-linux
+    runs-on: ubuntu-22.04
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_NOTES: |
+        Automated nightly build of QuakeSpasm OpenVR from commit ${{ github.sha }}.
+
+        Assets:
+        - Windows x64: native Visual Studio/MSVC build with OpenVR, SDL2, codec DLLs, SteamVR bindings, and add-on catalogue downloading via Windows Schannel.
+        - Linux x86_64: OpenVR launcher and engine binary, with libopenvr_api.so included. System SDL2, OpenGL, curl, and codec libraries are still required.
+
+        Extract the ZIP for your platform into a Quake installation containing your legally obtained id1 game data. This package does not include Quake game data.
+
+        Nightly builds are prereleases identified by UTC date and source commit. Existing tags are never moved to a different commit.
+    steps:
+      - name: Download release packages
+        uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          path: release-assets
+          merge-multiple: true
+
+      - name: Verify complete release set
+        shell: bash
+        run: |
+          windows="release-assets/${{ needs.metadata.outputs.package_stem }}_win64.zip"
+          linux="release-assets/${{ needs.metadata.outputs.package_stem }}_linux-x86_64.zip"
+          test -s "$windows"
+          test -s "$linux"
+          zip_count="$(find release-assets -maxdepth 1 -type f -name '*.zip' | wc -l)"
+          test "$zip_count" -eq 2
+          (cd release-assets && sha256sum *.zip > SHA256SUMS.txt)
+
+      - name: Create or update nightly prerelease
+        shell: bash
+        run: |
+          tag='${{ needs.metadata.outputs.release_tag }}'
+          title='${{ needs.metadata.outputs.release_title }}'
+          windows='release-assets/${{ needs.metadata.outputs.package_stem }}_win64.zip'
+          linux='release-assets/${{ needs.metadata.outputs.package_stem }}_linux-x86_64.zip'
+          checksums='release-assets/SHA256SUMS.txt'
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            target="$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json targetCommitish --jq .targetCommitish)"
+            test "$target" = "$GITHUB_SHA"
+            draft="$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft)"
+            if test "$draft" != true; then
+              mapfile -t published_assets < <(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' | sort)
+              mapfile -t expected_assets < <(printf '%s\n' "$(basename "$windows")" "$(basename "$linux")" "$(basename "$checksums")" | sort)
+              test "${published_assets[*]}" = "${expected_assets[*]}"
+              exit 0
+            fi
+          else
+            gh release create "$tag" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "$title" --notes "$RELEASE_NOTES" --prerelease --draft
+          fi
+          gh release upload "$tag" --repo "$GITHUB_REPOSITORY" --clobber "$windows" "$linux" "$checksums"
+          mapfile -t uploaded_assets < <(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' | sort)
+          mapfile -t expected_assets < <(printf '%s\n' "$(basename "$windows")" "$(basename "$linux")" "$(basename "$checksums")" | sort)
+          test "${uploaded_assets[*]}" = "${expected_assets[*]}"
+          gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --title "$title" --notes "$RELEASE_NOTES" --prerelease --draft=false
