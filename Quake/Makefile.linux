@@ -322,6 +322,7 @@ $(DEFAULT_TARGET): $(BINARY_TARGET)
 	@echo '# Auto-generated launcher — detects SteamVR or system OpenVR runtime' >> $@
 	@echo 'SCRIPT_DIR="$$(cd "$$(dirname "$$0")" && pwd)"' >> $@
 	@echo 'for p in \' >> $@
+	@echo '  "$$SCRIPT_DIR" \' >> $@
 	@echo '  "$$HOME/.steam/steam/steamapps/common/SteamVR/bin/linux64" \' >> $@
 	@echo '  "$$HOME/.local/share/Steam/steamapps/common/SteamVR/bin/linux64" \' >> $@
 	@echo '  "$$HOME/.steam/debian-installation/steamapps/common/SteamVR/bin/linux64"; do' >> $@

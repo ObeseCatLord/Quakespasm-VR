@@ -282,6 +282,22 @@ translation units to avoid OpenVR/SEH unwinder crashes. The output is
 Do not commit built executables, object files, local logs, or generated Visual
 Studio output.
 
+## Nightly releases
+
+GitHub Actions publishes prereleases with immutable UTC date and source-commit
+tags such as `nightly-20260713-g15c9adf2`. Every completed nightly contains
+both of these CI-built packages:
+
+- `quakespasm-openvr-nightly-YYYYMMDD-gCOMMIT_win64.zip`
+- `quakespasm-openvr-nightly-YYYYMMDD-gCOMMIT_linux-x86_64.zip`
+
+The Windows package is built natively with Visual Studio and includes the
+OpenVR, SDL2, and codec runtime DLLs. The Linux package includes the launcher,
+engine binary, and `libopenvr_api.so`; SDL2, OpenGL, curl, and codec libraries
+remain system dependencies. Both packages include `quakespasm.pak` but no
+commercial Quake game data. Extract the appropriate ZIP into a Quake install
+that contains your legally obtained `id1` data.
+
 ## Controls
 
 The engine supports head-based movement and controller-based movement. VR
