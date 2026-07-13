@@ -2684,6 +2684,10 @@ static qboolean VR_AppendSchemaBlockForSlot(vr_textbuf_t *buf, int slot) {
   return VR_TextAppendLine(buf, "");
 }
 
+static qboolean VR_AppendQBJ3MPHeldDefaultBlocks(vr_textbuf_t *buf,
+                                                  const char *existing,
+                                                  int *count);
+
 static qboolean VR_CreateDefaultWeaponSchemaIfMissing(void) {
   vr_textbuf_t out = {0};
   int count = 0;
@@ -2700,6 +2704,9 @@ static qboolean VR_CreateDefaultWeaponSchemaIfMissing(void) {
       break;
     count++;
   }
+
+  if (ok)
+    ok = VR_AppendQBJ3MPHeldDefaultBlocks(&out, NULL, &count);
 
   if (ok && count > 0) {
     COM_WriteFile("vr_weapons.txt", out.data ? out.data : "", out.len);
@@ -2746,6 +2753,179 @@ static qboolean VR_SchemaHasViewmodelBlock(const char *data, const char *id) {
   return false;
 }
 
+typedef struct {
+  const char *viewmodel;
+  const char *mp_held_offset;
+} vr_qbj3_mp_held_default_t;
+
+static const vr_qbj3_mp_held_default_t vr_qbj3_mp_held_defaults[] = {
+    {"progs/v_pistol.mdl", "-9.579239 -35.50967 -54.6803"},
+    {"progs/v_flakshotgun.mdl", "-15.43059 -15.03707 -35.51292"},
+    {"progs/v_tnailgun.mdl", "-2.69389 -19.42333 -44.80553"},
+    {"progs/v_rebar.mdl", "-6.640932 -33.81133 -47.54584"},
+    {"progs/v_grenlauncher.mdl", "-5.99358 -17.36011 -42.50352"},
+    {"progs/v_mmml.mdl", "-13.54351 -16.965 -46.47981"},
+    {"progs/v_invoker.mdl", "-6.052697 -22.50944 -21.69667"},
+};
+
+static qboolean VR_BlockHasKey(const char *block, size_t len,
+                               const char *key) {
+  const char *p = block;
+  const char *end = block + len;
+
+  while (p < end) {
+    const char *line_end = p;
+    size_t line_len;
+
+    while (line_end < end && *line_end != '\n')
+      line_end++;
+    line_len = line_end - p;
+    if (VR_LineStartsWithKey(p, line_len, key))
+      return true;
+    p = line_end < end ? line_end + 1 : end;
+  }
+
+  return false;
+}
+
+static int VR_FindQBJ3MPHeldDefault(const char *block, size_t len) {
+  for (size_t i = 0;
+       i < sizeof(vr_qbj3_mp_held_defaults) /
+               sizeof(vr_qbj3_mp_held_defaults[0]);
+       i++) {
+    if (VR_BlockMatchesViewmodel(block, len,
+                                 vr_qbj3_mp_held_defaults[i].viewmodel))
+      return (int)i;
+  }
+
+  return -1;
+}
+
+static qboolean VR_AppendQBJ3MPHeldOffsetToBlock(
+    vr_textbuf_t *buf, const char *block, size_t len, const char *offset) {
+  const char *p = block;
+  const char *end = block + len;
+  char line[128];
+  qboolean inserted = false;
+
+  while (p < end) {
+    const char *line_end = p;
+    size_t line_len;
+    size_t full_len;
+
+    while (line_end < end && *line_end != '\n')
+      line_end++;
+    line_len = line_end - p;
+    full_len = line_len + (line_end < end ? 1 : 0);
+
+    if (!inserted && VR_LineStartsWithKey(p, line_len, "}")) {
+      q_snprintf(line, sizeof(line), "mp_held_offset %s", offset);
+      if (!VR_TextAppendLine(buf, line))
+        return false;
+      inserted = true;
+    }
+
+    if (!VR_TextAppendN(buf, p, full_len))
+      return false;
+    p += full_len;
+  }
+
+  if (!inserted) {
+    q_snprintf(line, sizeof(line), "mp_held_offset %s", offset);
+    if (!VR_TextAppendLine(buf, line))
+      return false;
+  }
+
+  return true;
+}
+
+static qboolean VR_AppendQBJ3MPHeldDefaultBlocks(vr_textbuf_t *buf,
+                                                  const char *existing,
+                                                  int *count) {
+  char line[128];
+  qboolean found[sizeof(vr_qbj3_mp_held_defaults) /
+                 sizeof(vr_qbj3_mp_held_defaults[0])] = {false};
+  const char *p;
+  const char *end;
+
+  if (!VR_GameDirIs("qbj3"))
+    return existing ? VR_TextAppend(buf, existing) : true;
+
+  p = existing ? existing : "";
+  end = p + strlen(p);
+  while (p < end) {
+    const char *open = (const char *)memchr(p, '{', end - p);
+    const char *close;
+
+    if (!open) {
+      if (!VR_TextAppendN(buf, p, end - p))
+        return false;
+      break;
+    }
+    if (!VR_TextAppendN(buf, p, open - p))
+      return false;
+
+    close = (const char *)memchr(open, '}', end - open);
+    if (!close)
+      return VR_TextAppendN(buf, open, end - open);
+    close++;
+
+    {
+      int default_index = VR_FindQBJ3MPHeldDefault(open, close - open);
+
+      if (default_index >= 0) {
+        found[default_index] = true;
+        if (!VR_BlockHasKey(open, close - open, "mp_held_offset")) {
+          if (!VR_AppendQBJ3MPHeldOffsetToBlock(
+                  buf, open, close - open,
+                  vr_qbj3_mp_held_defaults[default_index].mp_held_offset))
+            return false;
+          if (count)
+            (*count)++;
+        } else if (!VR_TextAppendN(buf, open, close - open)) {
+          return false;
+        }
+      } else if (!VR_TextAppendN(buf, open, close - open)) {
+        return false;
+      }
+    }
+
+    p = close;
+  }
+
+  for (size_t i = 0;
+       i < sizeof(vr_qbj3_mp_held_defaults) /
+               sizeof(vr_qbj3_mp_held_defaults[0]);
+       i++) {
+    const vr_qbj3_mp_held_default_t *entry = &vr_qbj3_mp_held_defaults[i];
+
+    if (found[i])
+      continue;
+
+    if (buf->len && buf->data[buf->len - 1] != '\n' &&
+        !VR_TextAppendLine(buf, ""))
+      return false;
+    if (!VR_TextAppendLine(buf, "{"))
+      return false;
+    q_snprintf(line, sizeof(line), "viewmodel %s", entry->viewmodel);
+    if (!VR_TextAppendLine(buf, line))
+      return false;
+    q_snprintf(line, sizeof(line), "mp_held_offset %s",
+               entry->mp_held_offset);
+    if (!VR_TextAppendLine(buf, line))
+      return false;
+    if (!VR_TextAppendLine(buf, "}"))
+      return false;
+    if (!VR_TextAppendLine(buf, ""))
+      return false;
+
+    if (count)
+      (*count)++;
+  }
+
+  return true;
+}
+
 static qboolean VR_FillMissingDefaultWeaponSchemaBlocks(void) {
   char *data;
   vr_textbuf_t out = {0};
@@ -2756,7 +2936,7 @@ static qboolean VR_FillMissingDefaultWeaponSchemaBlocks(void) {
   if (!data)
     return true;
 
-  ok = VR_TextAppend(&out, data);
+  ok = VR_AppendQBJ3MPHeldDefaultBlocks(&out, data, &count);
   for (int i = 0; ok && i < MAX_WEAPONS; i++) {
     const char *id;
 
@@ -3182,16 +3362,18 @@ static void VR_AdjustBegin(vr_adjust_mode_t mode) {
 
   if (mode == VR_ADJUST_WEAPON) {
     Con_Printf("vradjustweapon: weapon frozen. Move the controller to the "
-               "desired grip point and press fire to save.\n");
+               "desired grip point and press the right trigger to save.\n");
   } else if (mode == VR_ADJUST_MP_WEAPON) {
     Con_Printf("vradjustmpweapon: weapon frozen. Move the controller to the "
-               "desired multiplayer grip point and press fire to save.\n");
+               "desired multiplayer grip point and press the right trigger "
+               "to save.\n");
   } else if (mode == VR_ADJUST_MP_MUZZLE) {
     Con_Printf("vradjustmpmuzzle: weapon frozen. Move the controller to the "
-               "desired multiplayer bullet origin and press fire to save.\n");
+               "desired multiplayer bullet origin and press the right "
+               "trigger to save.\n");
   } else {
     Con_Printf("vradjustmuzzle: weapon frozen. Move the controller to the "
-               "desired bullet origin and press fire to save.\n");
+               "desired bullet origin and press the right trigger to save.\n");
   }
 }
 
@@ -4741,7 +4923,7 @@ void VR_ShowCrosshair() {
     TraceLine(start, end, impact);
 
     glColor4f(1, 0, 0, alpha);
-    glLineWidth(pixel_size);
+    glLineWidth(pixel_size * 2.0f);
     glBegin(GL_LINES);
     impact[2] += vr_crosshairy.value * 10.f;
     glVertex3f(start[0], start[1], start[2]);
@@ -6031,7 +6213,8 @@ void VR_DrawWeaponMenu(void) {
   }
 
   // Push the UI slightly further away for every ring added
-  float base_radius = 15.0f;                              // Tighter cluster
+  const float weapon_mesh_scale = 2.0f;
+  float base_radius = 15.0f * weapon_mesh_scale;
   float wheel_dist = 75.0f + ((target_rings - 1) * 8.0f); // Further away
 
   // Move the menu forward and slightly down from the camera
@@ -6070,7 +6253,8 @@ void VR_DrawWeaponMenu(void) {
     if (items_on_this_ring <= 0)
       break;
 
-    float current_radius = (r == 0) ? 0.0f : base_radius + ((r - 1) * 15.0f);
+    float current_radius =
+        (r == 0) ? 0.0f : base_radius + ((r - 1) * base_radius);
     float angle_step = (r == 0) ? 0.0f : (2.0f * M_PI) / items_on_this_ring;
 
     for (int i = 0; i < items_on_this_ring; i++) {
@@ -6144,7 +6328,8 @@ void VR_DrawWeaponMenu(void) {
       qboolean is_equipped = VR_WeaponIsActive(w);
 
       float schema_scale = w->scale > 0.0f ? w->scale : 1.0f;
-      float scale = (is_selected ? 0.40f : 0.25f) * schema_scale;
+      float scale =
+          weapon_mesh_scale * (is_selected ? 0.40f : 0.25f) * schema_scale;
       if (scale > 0.0f && scale < (1.0f / ENTSCALE_DEFAULT))
         scale = 1.0f / ENTSCALE_DEFAULT;
 
@@ -6227,8 +6412,8 @@ void VR_DrawWeaponMenu(void) {
 
   if (num_players > 0) {
     float outer_radius =
-        base_radius + ((target_rings > 1) ? ((target_rings - 2) * 15.0f) : 0.0f);
-    float list_offset = outer_radius + 16.0f;
+        base_radius + ((target_rings > 1) ? ((target_rings - 2) * base_radius) : 0.0f);
+    float list_offset = outer_radius + 16.0f * weapon_mesh_scale;
     float text_scale = 0.30f;
     float char_width = 8.0f * text_scale;
     float line_spacing = 5.0f;
@@ -6265,8 +6450,8 @@ void VR_DrawWeaponMenu(void) {
 
   if (quick_actions) {
     float outer_radius =
-        base_radius + ((target_rings > 1) ? ((target_rings - 2) * 15.0f) : 0.0f);
-    float list_offset = outer_radius + 16.0f;
+        base_radius + ((target_rings > 1) ? ((target_rings - 2) * base_radius) : 0.0f);
+    float list_offset = outer_radius + 16.0f * weapon_mesh_scale;
     const char *labels[2] = {"QUICK SAVE", "QUICK LOAD"};
     const int selection_types[2] = {
         VR_WEAPONMENU_SELECTION_QUICKSAVE,
