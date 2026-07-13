@@ -99,7 +99,10 @@ jobs:
           New-Item -ItemType Directory -Force $folder | Out-Null
           $extensions = @('.exe', '.dll', '.bat', '.json', '.ps1', '.txt', '.html', '.pak')
           Get-ChildItem $out -File |
-            Where-Object { $extensions -contains $_.Extension.ToLowerInvariant() } |
+            Where-Object {
+              $extensions -contains $_.Extension.ToLowerInvariant() -and
+              $_.Name -notlike '*.vcxproj.*'
+            } |
             Copy-Item -Destination $folder
 
           $licenses = Join-Path $folder 'third-party-licenses'
