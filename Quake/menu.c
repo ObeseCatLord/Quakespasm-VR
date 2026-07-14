@@ -3144,7 +3144,10 @@ void M_Draw(void) {
     return;
 
   if (!m_recursiveDraw) {
-    if (scr_con_current) {
+    /* A disconnected VR menu is already drawn on its own compact backdrop.
+     * The forced console background is opaque and would cover that entire
+     * world-space panel once per eye. */
+    if (scr_con_current && !(vr_enabled.value && R_IsVRStereoFrame())) {
       Draw_ConsoleBackground();
       S_ExtraUpdate();
     }

@@ -94,6 +94,7 @@ typedef struct texture_s
 	struct gltexture_s	*fullbright; //johnfitz -- fullbright mask texture
 	struct gltexture_s	*warpimage; //johnfitz -- for water animation
 	qboolean			update_warp; //johnfitz -- update warp this frame
+	unsigned			warp_render_frame; // render a shared warp texture once per host frame
 	struct msurface_s	*texturechains[2];	// for texture chains
 	int					anim_total;				// total tenths in sequence ( 0 = no)
 	int					anim_min, anim_max;		// time for this frame min <=time< max

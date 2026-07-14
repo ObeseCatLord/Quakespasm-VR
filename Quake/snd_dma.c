@@ -70,8 +70,8 @@ static sfx_t	*ambient_sfx[NUM_AMBIENTS];
 
 static qboolean	sound_started = false;
 
-cvar_t		bgmvolume = {"bgmvolume", "1", CVAR_ARCHIVE};
-cvar_t		sfxvolume = {"volume", "0.7", CVAR_ARCHIVE};
+cvar_t		bgmvolume = {"bgmvolume", "0.2", CVAR_ARCHIVE};
+cvar_t		sfxvolume = {"volume", "0.2", CVAR_ARCHIVE};
 
 cvar_t		precache = {"precache", "1", CVAR_NONE};
 cvar_t		loadas8bit = {"loadas8bit", "0", CVAR_NONE};

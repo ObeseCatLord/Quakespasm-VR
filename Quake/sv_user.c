@@ -146,6 +146,10 @@ void SV_ResetClientMoveState(client_t *client) {
   client->net_snapshot_last_summary_time = 0;
 
   client->is_vr_client = false;
+  client->vr_handpos_relative = false;
+  client->net_latched_buttons = 0;
+  client->net_latched_impulse = 0;
+  client->net_latest_buttons = 0;
   VectorCopy(vec3_origin, client->vr_handpos);
   VectorCopy(vec3_origin, client->vr_handrot);
   VectorCopy(vec3_origin, client->vr_roomscalemove);
@@ -558,11 +562,21 @@ SV_ReadClientMove
 ===================
 */
 static int SV_ExpandClientSequence(int sequence16) {
+  int last;
   int sequence;
 
   sequence16 &= 0xffff;
-  sequence = (host_client->lastmovemessage & ~0xffff) | sequence16;
-  if (sequence + 0x100 < host_client->lastmovemessage)
+  last = host_client->lastmovemessage;
+  if (last < 0)
+    return sequence16;
+
+  sequence = (last & ~0xffff) | sequence16;
+  /* Choose the representation nearest the last accepted sequence.  This
+   * maps redundant records immediately before a 16-bit wrap back into the
+   * previous epoch instead of misreading 65535 as 131071. */
+  if (sequence - last > 0x8000)
+    sequence -= 0x10000;
+  else if (last - sequence > 0x8000)
     sequence += 0x10000;
 
   return sequence;
@@ -586,7 +600,12 @@ static qboolean SV_ReadUsercmd(usercmd_t *readcmd, int sequence) {
   readcmd->impulse = MSG_ReadByte();
 
   extbits = MSG_ReadByte();
-  if (extbits & ~(MOVEEXT_VR | MOVEEXT_QCINPUT)) {
+  if (extbits & ~(MOVEEXT_VR | MOVEEXT_VR_RELATIVE | MOVEEXT_QCINPUT)) {
+    msg_badread = true;
+    return false;
+  }
+
+  if ((extbits & MOVEEXT_VR_RELATIVE) && !(extbits & MOVEEXT_VR)) {
     msg_badread = true;
     return false;
   }
@@ -598,6 +617,7 @@ static qboolean SV_ReadUsercmd(usercmd_t *readcmd, int sequence) {
     }
 
     readcmd->vr_active = true;
+    readcmd->vr_handpos_relative = (extbits & MOVEEXT_VR_RELATIVE) != 0;
     readcmd->vr_handpos[0] = MSG_ReadFloat();
     readcmd->vr_handpos[1] = MSG_ReadFloat();
     readcmd->vr_handpos[2] = MSG_ReadFloat();
@@ -676,6 +696,7 @@ static void SV_ApplyAcceptedUsercmd(client_t *client, const usercmd_t *acceptedc
 
   if (acceptedcmd->vr_active) {
     client->is_vr_client = true;
+    client->vr_handpos_relative = acceptedcmd->vr_handpos_relative;
     VectorCopy(acceptedcmd->vr_handpos, client->vr_handpos);
     VectorCopy(acceptedcmd->vr_handrot, client->vr_handrot);
     VectorCopy(acceptedcmd->vr_roomscalemove, client->vr_roomscalemove);
@@ -683,6 +704,7 @@ static void SV_ApplyAcceptedUsercmd(client_t *client, const usercmd_t *acceptedc
               client->vr_roomscale_accum);
   } else {
     client->is_vr_client = false;
+    client->vr_handpos_relative = false;
     VectorCopy(vec3_origin, client->vr_roomscalemove);
   }
 }
@@ -730,6 +752,14 @@ static void SV_AcceptLatestUsercmd(client_t *client,
   latestcmd = *acceptedcmd;
   latestcmd.seconds = 0;
 
+  client->net_latest_buttons = latestcmd.buttons;
+  client->net_latched_buttons |= latestcmd.buttons & 1;
+  if (latestcmd.impulse)
+    client->net_latched_impulse = latestcmd.impulse;
+  latestcmd.buttons |= client->net_latched_buttons;
+  if (!latestcmd.impulse)
+    latestcmd.impulse = client->net_latched_impulse;
+
   SV_ApplyAcceptedUsercmd(client, &latestcmd);
 
   client->last_move_time = realtime;
@@ -753,6 +783,17 @@ static void SV_AcceptLatestUsercmd(client_t *client,
                latestcmd.vr_roomscalemove[2]);
     client->net_move_input_log_time = realtime;
   }
+}
+
+static void SV_FinishLatestUsercmd(client_t *client) {
+  client->net_latched_buttons = 0;
+  client->net_latched_impulse = 0;
+  client->cmd.buttons = client->net_latest_buttons;
+  client->cmd.impulse = 0;
+  client->edict->v.button0 = client->cmd.buttons & 1;
+  client->edict->v.button2 = (client->cmd.buttons & 2) >> 1;
+  SV_SetExtendedButtons(client->edict, client->cmd.buttons);
+  client->edict->v.impulse = 0;
 }
 
 void SV_FinishPMoveUsercmd(client_t *client) {
@@ -1128,6 +1169,9 @@ void SV_RunClients(void) {
     if (!host_client->spawned) {
       // clear client movement until a new packet is received
       memset(&host_client->cmd, 0, sizeof(host_client->cmd));
+      host_client->net_latched_buttons = 0;
+      host_client->net_latched_impulse = 0;
+      host_client->net_latest_buttons = 0;
       host_client->input_stale = false;
       SV_ClearClientPMoveState(host_client);
       continue;
@@ -1154,6 +1198,14 @@ void SV_RunClients(void) {
       if (!host_client->usingpmove)
         SV_ClearStaleClientInput(host_client);
       SV_ClientThink();
+      if (!host_client->usingpmove)
+        SV_FinishLatestUsercmd(host_client);
+    } else if (!host_client->usingpmove) {
+      /* A tap received entirely while paused must not fire on unpause. */
+      host_client->net_latched_buttons = 0;
+      host_client->net_latched_impulse = 0;
+      host_client->cmd.impulse = 0;
+      host_client->edict->v.impulse = 0;
     }
   }
 }

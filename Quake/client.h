@@ -296,6 +296,7 @@ typedef struct
 	unsigned	protocolflags;
 	unsigned	protocol_pext1;
 	unsigned	protocol_pext2;
+	qboolean	vr_relative_muzzle_supported;
 
 	qboolean	sendprespawn;
 

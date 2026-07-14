@@ -23,6 +23,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "quakedef.h"
 
 extern cvar_t r_drawflat;
+extern cvar_t vr_enabled;
 
 cvar_t r_oldwater = {"r_oldwater", "0", CVAR_ARCHIVE};
 cvar_t r_oldwater_max_drawpolys = {"r_oldwater_max_drawpolys", "2048", CVAR_ARCHIVE};
@@ -214,6 +215,172 @@ void DrawWaterPoly (glpoly_t *p)
 //==============================================================================
 
 /*
+ * The classic warp path draws into a corner of the current framebuffer and
+ * copies those pixels into the warp texture.  That is invalid when the current
+ * framebuffer is multisampled, relies on the framebuffer being window-sized,
+ * and cannot work while GL_SetCanvas intentionally leaves a VR eye projection
+ * alone.  Render directly into each single-sample warp texture whenever FBOs
+ * are available.  Keep the copy path only for non-VR, single-sample contexts
+ * which predate framebuffer objects.
+ */
+static PFNGLBINDFRAMEBUFFEREXTPROC warp_BindFramebuffer;
+static PFNGLCHECKFRAMEBUFFERSTATUSEXTPROC warp_CheckFramebufferStatus;
+static PFNGLGENFRAMEBUFFERSEXTPROC warp_GenFramebuffers;
+static PFNGLFRAMEBUFFERTEXTURE2DEXTPROC warp_FramebufferTexture2D;
+static PFNGLISFRAMEBUFFEREXTPROC warp_IsFramebuffer;
+static GLuint warp_framebuffer;
+static qboolean warp_fbo_functions_checked;
+static qboolean warp_fbo_warning_printed;
+#if defined(USE_SDL2)
+static SDL_GLContext warp_gl_context;
+#endif
+
+static void *Warp_GetFramebufferProc (const char *core_name, const char *ext_name)
+{
+	void *proc = SDL_GL_GetProcAddress (core_name);
+	if (!proc)
+		proc = SDL_GL_GetProcAddress (ext_name);
+	return proc;
+}
+
+static qboolean Warp_InitFramebuffer (void)
+{
+#if defined(USE_SDL2)
+	SDL_GLContext current_context = SDL_GL_GetCurrentContext ();
+
+	/* Function pointers and object names belong to the current GL context. */
+	if (current_context != warp_gl_context)
+	{
+		warp_gl_context = current_context;
+		warp_framebuffer = 0;
+		warp_fbo_functions_checked = false;
+	}
+#endif
+
+	if (!warp_fbo_functions_checked)
+	{
+		warp_fbo_functions_checked = true;
+		warp_BindFramebuffer = (PFNGLBINDFRAMEBUFFEREXTPROC)
+			Warp_GetFramebufferProc ("glBindFramebuffer", "glBindFramebufferEXT");
+		warp_CheckFramebufferStatus = (PFNGLCHECKFRAMEBUFFERSTATUSEXTPROC)
+			Warp_GetFramebufferProc ("glCheckFramebufferStatus", "glCheckFramebufferStatusEXT");
+		warp_GenFramebuffers = (PFNGLGENFRAMEBUFFERSEXTPROC)
+			Warp_GetFramebufferProc ("glGenFramebuffers", "glGenFramebuffersEXT");
+		warp_FramebufferTexture2D = (PFNGLFRAMEBUFFERTEXTURE2DEXTPROC)
+			Warp_GetFramebufferProc ("glFramebufferTexture2D", "glFramebufferTexture2DEXT");
+		warp_IsFramebuffer = (PFNGLISFRAMEBUFFEREXTPROC)
+			Warp_GetFramebufferProc ("glIsFramebuffer", "glIsFramebufferEXT");
+	}
+
+	if (!warp_BindFramebuffer || !warp_CheckFramebufferStatus ||
+		!warp_GenFramebuffers || !warp_FramebufferTexture2D ||
+		!warp_IsFramebuffer)
+		return false;
+
+	/* A recreated GL context invalidates the old object name. */
+	if (warp_framebuffer && !warp_IsFramebuffer (warp_framebuffer))
+		warp_framebuffer = 0;
+	if (!warp_framebuffer)
+		warp_GenFramebuffers (1, &warp_framebuffer);
+
+	return warp_framebuffer != 0;
+}
+
+typedef struct warp_render_state_s
+{
+	GLint framebuffer;
+	GLint draw_buffer;
+	GLint viewport[4];
+	GLint scissor_box[4];
+	GLint matrix_mode;
+	GLboolean scissor_enabled;
+	GLboolean cull_enabled;
+	GLboolean color_mask[4];
+} warp_render_state_t;
+
+static void Warp_BeginTextureRendering (warp_render_state_t *state)
+{
+	glGetIntegerv (GL_FRAMEBUFFER_BINDING_EXT, &state->framebuffer);
+	glGetIntegerv (GL_DRAW_BUFFER, &state->draw_buffer);
+	glGetIntegerv (GL_VIEWPORT, state->viewport);
+	glGetIntegerv (GL_SCISSOR_BOX, state->scissor_box);
+	glGetIntegerv (GL_MATRIX_MODE, &state->matrix_mode);
+	state->scissor_enabled = glIsEnabled (GL_SCISSOR_TEST);
+	state->cull_enabled = glIsEnabled (GL_CULL_FACE);
+	glGetBooleanv (GL_COLOR_WRITEMASK, state->color_mask);
+
+	warp_BindFramebuffer (GL_FRAMEBUFFER_EXT, warp_framebuffer);
+	glDrawBuffer (GL_COLOR_ATTACHMENT0_EXT);
+	glViewport (0, 0, gl_warpimagesize, gl_warpimagesize);
+	glDisable (GL_SCISSOR_TEST);
+	glDisable (GL_CULL_FACE);
+	glColorMask (GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+
+	glMatrixMode (GL_PROJECTION);
+	glPushMatrix ();
+	glLoadIdentity ();
+	glOrtho (0, 128, 0, 128, -99999, 99999);
+	glMatrixMode (GL_MODELVIEW);
+	glPushMatrix ();
+	glLoadIdentity ();
+}
+
+static void Warp_EndTextureRendering (const warp_render_state_t *state)
+{
+	glMatrixMode (GL_MODELVIEW);
+	glPopMatrix ();
+	glMatrixMode (GL_PROJECTION);
+	glPopMatrix ();
+	glMatrixMode (state->matrix_mode);
+
+	warp_BindFramebuffer (GL_FRAMEBUFFER_EXT, (GLuint)state->framebuffer);
+	glDrawBuffer ((GLenum)state->draw_buffer);
+	glViewport (state->viewport[0], state->viewport[1],
+		state->viewport[2], state->viewport[3]);
+	glScissor (state->scissor_box[0], state->scissor_box[1],
+		state->scissor_box[2], state->scissor_box[3]);
+	if (state->scissor_enabled)
+		glEnable (GL_SCISSOR_TEST);
+	else
+		glDisable (GL_SCISSOR_TEST);
+	if (state->cull_enabled)
+		glEnable (GL_CULL_FACE);
+	else
+		glDisable (GL_CULL_FACE);
+	glColorMask (state->color_mask[0], state->color_mask[1],
+		state->color_mask[2], state->color_mask[3]);
+}
+
+static qboolean Warp_LegacyCopyIsSafe (void)
+{
+	GLint samples = 0;
+
+	if (vr_enabled.value || R_IsVRStereoFrame ())
+		return false;
+
+	glGetIntegerv (GL_SAMPLES, &samples);
+	return samples == 0;
+}
+
+static qboolean Warp_AttachTexture (const texture_t *tx)
+{
+	warp_FramebufferTexture2D (GL_FRAMEBUFFER_EXT, GL_COLOR_ATTACHMENT0_EXT,
+		GL_TEXTURE_2D, tx->warpimage->texnum, 0);
+	if (warp_CheckFramebufferStatus (GL_FRAMEBUFFER_EXT) == GL_FRAMEBUFFER_COMPLETE_EXT)
+		return true;
+
+	/* Never fall back to copying from a potentially multisampled eye target. */
+	warp_FramebufferTexture2D (GL_FRAMEBUFFER_EXT, GL_COLOR_ATTACHMENT0_EXT,
+		GL_TEXTURE_2D, 0, 0);
+	if (!warp_fbo_warning_printed)
+	{
+		Con_Warning ("Warp texture framebuffer is incomplete; retaining the previous liquid texture\n");
+		warp_fbo_warning_printed = true;
+	}
+	return false;
+}
+
+/*
 =============
 R_UpdateWarpTextures -- johnfitz -- each frame, update warping textures
 =============
@@ -223,9 +390,14 @@ R_UpdateWarpTextures -- johnfitz -- each frame, update warping textures
 #endif
 void R_UpdateWarpTextures (void)
 {
+	const unsigned frame_marker = (unsigned)host_framecount + 1u;
+	qmodel_t *model;
 	texture_t *tx;
-	int i;
+	int i, j;
 	float x, y, x2, warptess;
+	qboolean render_to_texture;
+	qboolean legacy_copy;
+	warp_render_state_t warp_state;
 
 	if (cl.paused || r_drawflat_cheatsafe || r_lightmap_cheatsafe)
 		return;
@@ -240,41 +412,90 @@ void R_UpdateWarpTextures (void)
 	glTexEnvf (GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_REPLACE);
 	glColor4f (1, 1, 1, 1);
 
-	for (i=0; i<cl.worldmodel->numtextures; i++)
+	/* Direct rendering is valid for desktop, desktop MSAA, and either VR FBO. */
+	render_to_texture = Warp_InitFramebuffer ();
+	legacy_copy = !render_to_texture && Warp_LegacyCopyIsSafe ();
+	if (!render_to_texture && !legacy_copy)
 	{
-		if (!(tx = cl.worldmodel->textures[i]))
-			continue;
-
-		if (!tx->update_warp)
-			continue;
-
-		//render warp
-		GL_SetCanvas (CANVAS_WARPIMAGE);
-		GL_Bind (tx->gltexture);
-		for (x=0.0; x<128.0; x=x2)
+		if (!warp_fbo_warning_printed)
 		{
-			x2 = x + warptess;
-			glBegin (GL_TRIANGLE_STRIP);
-			for (y=0.0; y<128.01; y+=warptess) // .01 for rounding errors
-			{
-				glTexCoord2f (WARPCALC(x,y), WARPCALC(y,x));
-				glVertex2f (x,y);
-				glTexCoord2f (WARPCALC(x2,y), WARPCALC(y,x2));
-				glVertex2f (x2,y);
-			}
-			glEnd();
+			Con_Warning ("Framebuffer objects are required for liquid warping with MSAA or VR\n");
+			warp_fbo_warning_printed = true;
 		}
+		goto cleanup;
+	}
+	if (render_to_texture)
+		Warp_BeginTextureRendering (&warp_state);
 
-		//copy to texture
-		GL_Bind (tx->warpimage);
-		glCopyTexSubImage2D (GL_TEXTURE_2D, 0, 0, 0, glx, gly+glheight-gl_warpimagesize, gl_warpimagesize, gl_warpimagesize);
-		if (GL_GenerateMipmap)
-			GL_GenerateMipmap (GL_TEXTURE_2D);
+	/*
+	 * External brush models can own independent liquid textures.  Inline BSP
+	 * models share the world's texture array, so skip them to avoid rendering
+	 * the same texture repeatedly (especially once per submodel in VR).
+	 */
+	for (j = 1; j < MAX_MODELS; j++)
+	{
+		model = cl.model_precache[j];
+		if (!model)
+			continue;
+		if (model->type != mod_brush || model->name[0] == '*')
+			continue;
 
-		if (!R_IsVRStereoFrame() || R_IsVRLastEye())
+		for (i = 0; i < model->numtextures; i++)
+		{
+			if (!(tx = model->textures[i]) || !tx->update_warp || !tx->warpimage)
+				continue;
+			if (tx->warp_render_frame == frame_marker)
+			{
+				/* Shared/duplicate models and the second VR eye reuse this result. */
+				tx->update_warp = false;
+				continue;
+			}
+
+			//render warp
+			if (render_to_texture && !Warp_AttachTexture (tx))
+				continue;
+			if (legacy_copy)
+				GL_SetCanvas (CANVAS_WARPIMAGE);
+			GL_Bind (tx->gltexture);
+			for (x=0.0; x<128.0; x=x2)
+			{
+				x2 = x + warptess;
+				glBegin (GL_TRIANGLE_STRIP);
+				for (y=0.0; y<128.01; y+=warptess) // .01 for rounding errors
+				{
+					glTexCoord2f (WARPCALC(x,y), WARPCALC(y,x));
+					glVertex2f (x,y);
+					glTexCoord2f (WARPCALC(x2,y), WARPCALC(y,x2));
+					glVertex2f (x2,y);
+				}
+				glEnd();
+			}
+
+			if (legacy_copy)
+			{
+				//copy to texture
+				GL_Bind (tx->warpimage);
+				glCopyTexSubImage2D (GL_TEXTURE_2D, 0, 0, 0, glx, gly+glheight-gl_warpimagesize, gl_warpimagesize, gl_warpimagesize);
+			}
+			else
+			{
+				/* Detach before generating mipmaps for the rendered texture. */
+				warp_FramebufferTexture2D (GL_FRAMEBUFFER_EXT, GL_COLOR_ATTACHMENT0_EXT,
+					GL_TEXTURE_2D, 0, 0);
+				GL_Bind (tx->warpimage);
+			}
+			if (GL_GenerateMipmap)
+				GL_GenerateMipmap (GL_TEXTURE_2D);
+
+			tx->warp_render_frame = frame_marker;
 			tx->update_warp = false;
+		}
 	}
 
+	if (render_to_texture)
+		Warp_EndTextureRendering (&warp_state);
+
+cleanup:
 	glDepthMask (GL_TRUE);
 	glEnable (GL_DEPTH_TEST);
 	glColor4f (1, 1, 1, 1);

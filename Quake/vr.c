@@ -224,6 +224,9 @@ static bool readbackYaw;
 vec3_t vr_viewOffset;
 static vec3_t lastHudPosition{0.0, 0.0, 0.0};
 static vec3_t lastMenuPosition{0.0, 0.0, 0.0};
+static vec3_t vr_menu_view_origin{0.0, 0.0, 0.0};
+static qboolean vr_menu_was_open = false;
+static qboolean vr_menu_view_origin_valid = false;
 
 /*
  * The menu is drawn as a 320x200 plane in world space.  Cache the exact
@@ -397,6 +400,8 @@ static int VR_ParseStatName(const char *value, int *default_max) {
   }
   if (!q_strcasecmp(value, "activeweapon"))
     return STAT_ACTIVEWEAPON;
+  if (!q_strcasecmp(value, "items"))
+    return STAT_ITEMS;
   if (!q_strcasecmp(value, "weapon"))
     return STAT_WEAPON;
   if (!q_strcasecmp(value, "weapons"))
@@ -1974,7 +1979,14 @@ static void VR_RegisterWeaponMuzzleSource(const char *id,
   }
 
   if (has_offset) {
-    VectorCopy(offset, vr_weapon_muzzle_source_offset[slot]);
+    /* Migrate the old QBJ3 pistol schema, which described its cosmetic
+     * tracer origin instead of the actual damage trace (self + view_ofs). */
+    if (VR_GameDirIs("qbj3") && !Q_strcmp(id, "progs/v_pistol.mdl") &&
+        offset[0] == 8.0f && offset[1] == -8.0f && offset[2] == 16.0f) {
+      VectorCopy(vec3_origin, vr_weapon_muzzle_source_offset[slot]);
+    } else {
+      VectorCopy(offset, vr_weapon_muzzle_source_offset[slot]);
+    }
     vr_weapon_has_muzzle_source_offset[slot] = true;
   }
 
@@ -2768,55 +2780,68 @@ typedef struct {
 static const vr_qbj3_weapon_default_t vr_qbj3_weapon_defaults[] = {
     {"progs/v_wrench.mdl",
      "bitmask 4096\nmodel progs/v_wrench.mdl\nimpulse 1\nscale 0.2\n"
-     "offset 0 0 0\nheld_scale 0.2\n"
+     "offset 0 0 0\nowned_stat items\nowned_mask 4096\nheld_scale 0.2\n"
      "held_offset -5.090864 45.71518 64.70464\n"
      "muzzle_offset 0 0 0\n"},
     {"progs/v_pistol.mdl",
      "bitmask 1\nmodel progs/v_pistol.mdl\nimpulse 2\nscale 0.2\n"
-     "offset 0 0 0\nmuzzle_source_viewofs 1\n"
-     "muzzle_source_offset 8 -8 16\nheld_scale 0.2\n"
+     "offset 0 0 0\nowned_stat items\nowned_mask 1\n"
+     "projectile_spawn_at_self_origin 1\nmuzzle_source_viewofs 1\n"
+     "muzzle_source_offset 0 0 0\nheld_scale 0.2\n"
      "held_offset 3.388845 37.75988 56.43581\n"
      "muzzle_offset -9.11632 9.013277 -45.533\n"
      "mp_held_offset 0 0 0\n"
      "mp_muzzle_offset 8.531928 5.180611 -8.759525\n"},
     {"progs/v_flakshotgun.mdl",
      "bitmask 2\nmodel progs/v_flakshotgun.mdl\nimpulse 3\nscale 0.2\n"
-     "offset 0 0 0\nheld_scale 0.2\n"
+     "offset 0 0 0\nowned_stat items\nowned_mask 2\n"
+     "projectile_spawn_at_self_origin 1\nmuzzle_source_viewofs 1\n"
+     "muzzle_source_offset 0 -4 12\nheld_scale 0.2\n"
      "held_offset 11.55282 16.95288 38.90591\n"
      "muzzle_offset 0.1453177 2.258818 -31.45429\n"
      "mp_held_offset 0 0 0\n"
      "mp_muzzle_offset -1.482679 -11.57735 -45.51331\n"},
     {"progs/v_tnailgun.mdl",
      "bitmask 4\nmodel progs/v_tnailgun.mdl\nimpulse 4\nscale 0.2\n"
-     "offset 0 0 0\nheld_scale 0.2\n"
+     "offset 0 0 0\nowned_stat items\nowned_mask 4\n"
+     "projectile_spawn_at_self_origin 1\nmuzzle_source_viewofs 1\n"
+     "muzzle_source_offset 0 -6 11\nheld_scale 0.2\n"
      "held_offset -3.596274 22.3977 49.35181\n"
      "muzzle_offset -4.46999 4.069127 -25.89618\n"
      "mp_held_offset 0 0 0\n"
      "mp_muzzle_offset 0.2494569 -5.47333 -53.83134\n"},
     {"progs/v_rebar.mdl",
      "bitmask 8\nmodel progs/v_rebar.mdl\nimpulse 5\nscale 0.2\n"
-     "offset 0 0 0\nheld_scale 0.2\n"
+     "offset 0 0 0\nowned_stat items\nowned_mask 8\n"
+     "projectile_spawn_at_self_origin 1\nmuzzle_source_viewofs 1\n"
+     "muzzle_source_offset 0 -8 15\nheld_scale 0.2\n"
      "held_offset 7.11163 33.89061 52.88078\n"
      "muzzle_offset 0.4432641 12.53425 4.832447\n"
      "mp_held_offset 0 0 0\n"
      "mp_muzzle_offset 0.8458476 -13.62684 -0.612349\n"},
     {"progs/v_grenlauncher.mdl",
      "bitmask 16\nmodel progs/v_grenlauncher.mdl\nimpulse 6\nscale 0.2\n"
-     "offset 0 0 0\nheld_scale 0.2\n"
+     "offset 0 0 0\nowned_stat items\nowned_mask 16\n"
+     "projectile_spawn_at_self_origin 1\nmuzzle_source_viewofs 0\n"
+     "muzzle_source_offset 0 0 0\nheld_scale 0.2\n"
      "held_offset 3.906817 19.53125 46.88503\n"
      "muzzle_offset -0.9725167 6.330487 6.072494\n"
      "mp_held_offset 0 0 0\n"
      "mp_muzzle_offset -1.372849 -11.28279 1.222856\n"},
     {"progs/v_mmml.mdl",
      "bitmask 32\nmodel progs/v_mmml.mdl\nimpulse 7\nscale 0.2\n"
-     "offset 0 0 0\nheld_scale 0.2\n"
+     "offset 0 0 0\nowned_stat items\nowned_mask 32\n"
+     "projectile_spawn_at_self_origin 1\nmuzzle_source_viewofs 1\n"
+     "muzzle_source_offset 0 -10 15\nheld_scale 0.2\n"
      "held_offset 8.254588 17.25331 53.56533\n"
      "muzzle_offset -0.387794 15.84945 -4.354416\n"
      "mp_held_offset 0 0 0\n"
      "mp_muzzle_offset -0.2388192 -8.662317 -24.89419\n"},
     {"progs/v_invoker.mdl",
      "bitmask 64\nmodel progs/v_invoker.mdl\nimpulse 8\nscale 0.2\n"
-     "offset 0 0 0\nheld_scale 0.2\n"
+     "offset 0 0 0\nowned_stat items\nowned_mask 64\n"
+     "projectile_spawn_at_self_origin 1\nmuzzle_source_viewofs 1\n"
+     "muzzle_source_offset 0 0 4\nheld_scale 0.2\n"
      "held_offset -0.4811821 24.50682 24.40611\n"
      "muzzle_offset 0 0 0\nmp_held_offset 0 0 0\n"},
     {"progs/v_berserk.mdl",
@@ -4885,15 +4910,17 @@ void VR_PollPoses() {
 }
 
 void VR_UpdateScreenContent() {
-  int i;
   vec3_t orientation;
+  vec3_t eye_view_offsets[2];
   GLint w, h;
+  entity_t menu_player;
 
   if (!vr_enabled.value) {
     return;
   }
 
-  VR_TrackWeapons();
+  if (cls.state == ca_connected && cls.signon == SIGNONS)
+    VR_TrackWeapons();
 
   // Last chance to enable VR Mode - we get here when the game already start up
   // with vr_enabled 1 If enabling fails, unset the cvar and return.
@@ -4905,7 +4932,10 @@ void VR_UpdateScreenContent() {
   w = glwidth;
   h = glheight;
 
-  entity_t *player = &cl.entities[cl.viewentity];
+  memset(&menu_player, 0, sizeof(menu_player));
+  entity_t *player = &menu_player;
+  if (cl.entities && cl.viewentity >= 0 && cl.viewentity < cl.max_edicts)
+    player = &cl.entities[cl.viewentity];
 
   // Update poses
   vr::VRCompositor()->WaitGetPoses(ovr_DevicePose,
@@ -5118,7 +5148,16 @@ void VR_UpdateScreenContent() {
 
   SetHandPos(0, player);
   SetHandPos(1, player);
-  VR_AdjustWeaponUpdatePose();
+  if (cls.state == ca_connected && cls.signon == SIGNONS)
+    VR_AdjustWeaponUpdatePose();
+
+  /* CL_SendCmd does not run while disconnected, but a standalone menu still
+   * needs controller hover, trigger activation and stick/key navigation. */
+  if (key_dest == key_menu && cls.state != ca_connected) {
+    usercmd_t menu_cmd;
+    memset(&menu_cmd, 0, sizeof(menu_cmd));
+    VR_Move(&menu_cmd);
+  }
 
   cl.viewangles[ROLL] = orientation[ROLL];
 
@@ -5128,24 +5167,38 @@ void VR_UpdateScreenContent() {
   VectorCopy(cl.viewangles, r_refdef.viewangles);
   VectorCopy(cl.aimangles, r_refdef.aimangles);
 
+  /* Build both eye offsets before rendering so the 2D panel can use one
+   * center-eye anchor for the stereo pair. */
+  for (int i = 0; i < 2; i++) {
+    vec3_t temp, eye_orientation;
+
+    QuatToYawPitchRoll(eyes[i].orientation, eye_orientation);
+    temp[0] = -eyes[i].position.v[2] * meters_to_units;
+    temp[1] = -eyes[i].position.v[0] * meters_to_units;
+    temp[2] = eyes[i].position.v[1] * meters_to_units;
+    Vec3RotateZ(temp,
+                (r_refdef.viewangles[YAW] - eye_orientation[YAW]) *
+                    M_PI_DIV_180,
+                eye_view_offsets[i]);
+    eye_view_offsets[i][2] += vr_floor_offset.value;
+  }
+  VectorAdd(eye_view_offsets[0], eye_view_offsets[1], vr_menu_view_origin);
+  VectorScale(vr_menu_view_origin, 0.5f, vr_menu_view_origin);
+  VectorAdd(player->origin, vr_menu_view_origin, vr_menu_view_origin);
+  vr_menu_view_origin_valid = true;
+
   // Render the scene for each eye into their FBOs
   R_BeginVRFrame();
   for (int i = 0; i < 2; i++) {
     R_SetVREye(i, 2);
     current_eye = &eyes[i];
+    VectorCopy(eye_view_offsets[i], vr_viewOffset);
 
-    vec3_t temp, orientation;
-
-    // We need to scale the view offset position to quake units and rotate it by
-    // the current input angles (viewangle - eye orientation)
-    QuatToYawPitchRoll(current_eye->orientation, orientation);
-    temp[0] = -current_eye->position.v[2] * meters_to_units; // X
-    temp[1] = -current_eye->position.v[0] * meters_to_units; // Y
-    temp[2] = current_eye->position.v[1] * meters_to_units;  // Z
-    Vec3RotateZ(temp,
-                (r_refdef.viewangles[YAW] - orientation[YAW]) * M_PI_DIV_180,
-                vr_viewOffset);
-    vr_viewOffset[2] += vr_floor_offset.value;
+    /* V_RenderView intentionally returns while the console is forced up, so
+     * provide a valid per-eye camera for the world-space menu panel. */
+    if (con_forcedup) {
+      VectorAdd(player->origin, vr_viewOffset, r_refdef.vieworg);
+    }
 
     RenderScreenForCurrentEye_OVR();
   }
@@ -5194,10 +5247,13 @@ void VR_ShowCrosshair() {
   size = CLAMP(0.0f, vr_crosshair_size.value, 32.0f);
   alpha = CLAMP(0.0f, vr_crosshair_alpha.value, 1.0f);
   pixel_size = size * glwidth / vid.width;
-  if (VR_IsDwellGame())
-    pixel_size *= 2.0f;
+  /*
+   * Keep the controller pointer at a consistent physical size.  A previous
+   * Dwell-specific multiplier made the same archived crosshair setting render
+   * at half size in every other mod (most noticeably QBJ3).
+   */
   if (vr_enabled.value)
-    pixel_size = q_max(pixel_size, VR_IsDwellGame() ? 8.0f : 4.0f);
+    pixel_size = q_max(pixel_size, 8.0f);
 
   if (size <= 0 || alpha <= 0) {
     return;
@@ -5292,7 +5348,7 @@ void vec3lerp(vec3_t out, vec3_t start, vec3_t end, double f) {
 
 void VR_Draw2D() {
   qboolean draw_sbar = false;
-  vec3_t menu_angles, forward, right, up, target, smoothedTarget;
+  vec3_t menu_angles, menu_origin, forward, right, up, target, smoothedTarget;
   float scale_hud = vr_menu_scale.value;
 
   int oldglwidth = glwidth, oldglheight = glheight, oldconwidth = vid.conwidth,
@@ -5304,8 +5360,28 @@ void VR_Draw2D() {
   vid.conwidth = 320;
   vid.conheight = 200;
 
-  // draw 2d elements 1m from the users face, centered
+  /*
+   * Establish a complete stereo camera for the panel.  Normally these
+   * matrices happen to be left behind by R_RenderView, but there is no world
+   * render while con_forcedup is true.  Owning both stacks here makes menus
+   * work during startup, disconnects and server-directed mod switches too.
+   */
+  glMatrixMode(GL_PROJECTION);
   glPushMatrix();
+  VR_SetMatrices();
+
+  glMatrixMode(GL_MODELVIEW);
+  glPushMatrix();
+  glLoadIdentity();
+  glRotatef(-90, 1, 0, 0);
+  glRotatef(90, 0, 0, 1);
+  glRotatef(-r_refdef.viewangles[ROLL], 1, 0, 0);
+  glRotatef(-r_refdef.viewangles[PITCH], 0, 1, 0);
+  glRotatef(-r_refdef.viewangles[YAW], 0, 0, 1);
+  glTranslatef(-r_refdef.vieworg[0], -r_refdef.vieworg[1],
+               -r_refdef.vieworg[2]);
+
+  // draw 2d elements in front of the user, centered
   glDisable(GL_DEPTH_TEST); // prevents drawing sprites on sprites from
                             // interferring with one another
   glEnable(GL_BLEND);
@@ -5320,9 +5396,26 @@ void VR_Draw2D() {
 
   AngleVectors(menu_angles, forward, right, up);
 
-  VectorMA(r_refdef.vieworg, 48, forward, target);
-  vec3lerp(smoothedTarget, lastMenuPosition, target, 0.2);
-  VectorCopy(smoothedTarget, lastMenuPosition);
+  if (vr_menu_view_origin_valid) {
+    VectorCopy(vr_menu_view_origin, menu_origin);
+  } else {
+    VectorCopy(r_refdef.vieworg, menu_origin);
+  }
+
+  /* Only the first eye advances the shared anchor.  Both eyes then render the
+   * exact same physical panel, avoiding stereo disparity and keeping pointer
+   * hit-testing aligned with what was drawn. */
+  if (R_IsVRFirstEye()) {
+    VectorMA(menu_origin, 48, forward, target);
+    if (key_dest == key_menu && !vr_menu_was_open) {
+      VectorCopy(target, lastMenuPosition);
+    } else {
+      vec3lerp(smoothedTarget, lastMenuPosition, target, 0.2);
+      VectorCopy(smoothedTarget, lastMenuPosition);
+    }
+    vr_menu_was_open = key_dest == key_menu;
+  }
+  VectorCopy(lastMenuPosition, smoothedTarget);
 
   /* Local +X is screen right, local +Y is screen down, local +Z faces out. */
   VectorCopy(smoothedTarget, vr_menu_surface.center);
@@ -5340,6 +5433,24 @@ void VR_Draw2D() {
                0); // center the status bar
   glScalef(scale_hud, scale_hud, scale_hud);
 
+  /* A compact local backdrop keeps the classic menu readable without
+   * blacking out the entire eye image or obscuring the stereo world. */
+  if (key_dest == key_menu) {
+    glDisable(GL_ALPHA_TEST);
+    glDisable(GL_TEXTURE_2D);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glColor4f(0, 0, 0, 0.72f);
+    glBegin(GL_QUADS);
+    glVertex3f(0, 0, -0.01f);
+    glVertex3f(320, 0, -0.01f);
+    glVertex3f(320, 200, -0.01f);
+    glVertex3f(0, 200, -0.01f);
+    glEnd();
+    glColor4f(1, 1, 1, 1);
+    glEnable(GL_TEXTURE_2D);
+    glEnable(GL_ALPHA_TEST);
+  }
+
   if (scr_drawdialog) // new game confirm
   {
     if (con_forcedup) {
@@ -5352,7 +5463,7 @@ void VR_Draw2D() {
   } else if (scr_drawloading) // loading
   {
     SCR_DrawLoading();
-    draw_sbar = true;                                      // Sbar_Draw ();
+    draw_sbar = !con_forcedup;                             // Sbar_Draw ();
   } else if (cl.intermission == 1 && key_dest == key_game) // end of level
   {
     Sbar_IntermissionOverlay();
@@ -5366,17 +5477,26 @@ void VR_Draw2D() {
     SCR_DrawTurtle();
     SCR_DrawPause();
     SCR_CheckDrawCenterString();
-    draw_sbar = true;   // Sbar_Draw ();
+    draw_sbar = !con_forcedup; // Sbar_Draw ();
     SCR_DrawDevStats(); // johnfitz
     SCR_DrawFPS();      // johnfitz
     SCR_DrawClock();    // johnfitz
-    SCR_DrawConsole();
+    /* A forced console can retain desktop-sized scr_con_current while the VR
+     * panel is 320x200.  Let M_Draw paint its normal console background, but
+     * do not spill hundreds of console rows around a standalone menu. */
+    if (key_dest != key_menu)
+      SCR_DrawConsole();
     M_Draw();
   }
 
   glDisable(GL_BLEND);
   glEnable(GL_DEPTH_TEST);
+  glMatrixMode(GL_MODELVIEW);
   glPopMatrix();
+
+  glMatrixMode(GL_PROJECTION);
+  glPopMatrix();
+  glMatrixMode(GL_MODELVIEW);
 
   if (draw_sbar) {
     VR_DrawSbar();
@@ -6551,7 +6671,8 @@ void VR_DrawWeaponMenu(void) {
   }
 
   // Push the UI slightly further away for every ring added
-  const float weapon_mesh_scale = 2.0f;
+  /* Restore the compact pre-July-12 wheel geometry. */
+  const float weapon_mesh_scale = 1.0f;
   float base_radius = 15.0f * weapon_mesh_scale;
   float wheel_dist = 75.0f + ((target_rings - 1) * 8.0f); // Further away
 

@@ -80,9 +80,10 @@ extended protocol support.
 
 ### Co-op
 
-- Co-op defaults are tuned for same-build play: no friendly fire, non-solid
+- Co-op defaults are tuned for same-build play: normal friendly fire, non-solid
   players, QSS-M-style networking, weapon-target fixes, optional ammo respawn,
-  autosaves, and death-location respawn helpers.
+  autosaves, and death-location respawn helpers. Servers that explicitly want
+  protection can opt in with `sv_nofriendlyfire 1`.
 - Co-op respawn can keep vanilla weapons/ammo plus known extra weapon, ammo,
   item, key, and string-key fields used by modern mods.
 - Optional respawn delay gives the team time to recover; if all players are
@@ -161,7 +162,7 @@ For co-op servers, the intended baseline is:
 deathmatch 0
 coop 1
 sv_cheats 1
-sv_nofriendlyfire 1
+sv_nofriendlyfire 0
 host_framerate 0
 host_timescale 0
 sys_ticrate 0.05
@@ -478,7 +479,7 @@ QuakeSpasm cvar.
 | `sv_maxpacketsize` | `1400` | Networking | Remote unreliable packet cap, clamped to QSS-M's `DATAGRAM_MTU`. |
 | `sv_netdiag_interval` | `5` | Diagnostics | Periodic network diagnostic interval in seconds. |
 | `sv_netsort` | `1` | Networking | Sorts entity updates by priority before packet clipping. |
-| `sv_nofriendlyfire` | `1` | Co-op | Disables friendly fire in co-op. |
+| `sv_nofriendlyfire` | `0` | Co-op | Opt-in friendly-fire protection for co-op; `1` disables player-on-player damage while retaining self-damage. |
 | `sv_nqplayerphysics` | `1` | PMove | Keeps vanilla/QSS-M server movement by default. Set `0` only when intentionally testing server PMove. |
 | `sv_pmove_legacy_preserve_qc_velocity` | `1` | PMove | Preserves QC velocity pushes such as grapples through legacy PMove. |
 | `sv_predict_nqmovement` | `0` | PMove | Experimental opt-in for advertising PMove prediction metadata while the server still runs vanilla NQ movement; default `0` matches QSS-M and avoids correction judder. |

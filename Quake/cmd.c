@@ -174,6 +174,11 @@ void Cbuf_Waited(void)
 	cmd_wait = false;
 }
 
+qboolean Cbuf_IsEmpty(void)
+{
+	return cmd_text.cursize == 0 && !cmd_wait;
+}
+
 /*
 ============
 Cbuf_Execute
