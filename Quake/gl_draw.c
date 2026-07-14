@@ -698,6 +698,10 @@ void Draw_SubPic (float x, float y, float w, float h, qpic_t *pic,
 	if (scrap_dirty)
 		Scrap_Upload ();
 
+	/* drawsubpic specifies a source position plus size, not two corners. */
+	s2 += s1;
+	t2 += t1;
+
 	gl = (glpic_t *)pic->data;
 	sl = gl->sl + (gl->sh - gl->sl) * s1;
 	sh = gl->sl + (gl->sh - gl->sl) * s2;

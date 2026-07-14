@@ -166,8 +166,8 @@ static void M_DrawSubpic(int x, int y, qpic_t *pic, int left, int top,
                          int width, int height) {
   Draw_SubPic((float)x, (float)y, (float)width, (float)height, pic,
               (float)left / pic->width, (float)top / pic->height,
-              (float)(left + width) / pic->width,
-              (float)(top + height) / pic->height, NULL, 1.0f);
+              (float)width / pic->width, (float)height / pic->height, NULL,
+              1.0f);
 }
 
 void M_DrawTransPicTranslate(int x, int y, qpic_t *pic, int top,
