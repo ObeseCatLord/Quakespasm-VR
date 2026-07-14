@@ -63,7 +63,9 @@
  //
 -viewsize 		100
  gamma 			1.0
- volume 			0.7
+-volume 			0.7
++volume 			0.2
++bgmvolume		0.2
  sensitivity 	3
  
 +//viewsize 		100
