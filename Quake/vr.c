@@ -111,6 +111,7 @@ void VR_ApplyDefaultBindings(qboolean overwrite) {
 }
 
 static void VR_DefaultBindings_f(void) { VR_ApplyDefaultBindings(false); }
+static void VR_WeaponList_f(void);
 
 // rendering
 extern void R_SetupView(void);
@@ -997,9 +998,16 @@ static qboolean VR_WeaponIsOwned(const vr_dyn_weapon_t *w) {
 
   if (w->owned_stat >= 0) {
     int value = cl.stats[w->owned_stat];
-    if (w->owned_mask)
-      return (value & w->owned_mask) != 0;
-    return value != 0;
+    qboolean owned = w->owned_mask ? ((value & w->owned_mask) != 0)
+                                     : (value != 0);
+
+    /*
+     * An explicit ownership stat is normally authoritative, but the engine
+     * must never hide the weapon that QuakeC says is currently equipped.
+     * This also bridges the short interval where active-weapon and inventory
+     * stat updates arrive in different network messages.
+     */
+    return owned || VR_WeaponIsActive(w);
   }
 
   if (w->bitmask && (cl.stats[STAT_VR_WEAPONS] & w->bitmask))
@@ -1077,6 +1085,11 @@ static void VR_ResetDynWeaponsToBase(void) {
   num_dyn_weapons = 0;
   rogue_weapons_added = false;
   hipnotic_weapons_added = false;
+  dwell_weapons_added = false;
+  for (int i = 0; i < (int)(sizeof(dwell_weapon_indices) /
+                            sizeof(dwell_weapon_indices[0]));
+       i++)
+    dwell_weapon_indices[i] = -1;
 
   VR_AddOrUpdateDynWeapon(4096, 1, "progs/g_axe.mdl", 0, false, 1.0f,
                           vec3_origin, false, -1, 0, -1, 0, -1, 0, false);
@@ -4275,6 +4288,7 @@ void VID_VR_Init() {
   Cvar_RegisterVariable(&vr_enabled);
   Cvar_SetCallback(&vr_enabled, VR_Enabled_f);
   Cvar_RegisterVariable(&vr_weaponmenu_player_teleport);
+  Cmd_AddCommand("vr_weaponlist", VR_WeaponList_f);
   if (COM_CheckParm("-novr")) {
     return;
   }
@@ -6315,34 +6329,127 @@ void VR_ResetWeaponTracking(void) {
   // is passive: observe real weapon changes instead of sending probe impulses.
 }
 
-// Build visible weapon list filtered by cl.items, returns count
+typedef enum {
+  VR_WEAPON_VISIBLE,
+  VR_WEAPON_HIDDEN_INVALID_MODEL,
+  VR_WEAPON_HIDDEN_DWELL_ONLY,
+  VR_WEAPON_HIDDEN_SCHEMA_FALLBACK,
+  VR_WEAPON_HIDDEN_UNOWNED
+} vr_weapon_visibility_t;
+
+static vr_weapon_visibility_t
+VR_WeaponVisibility(const vr_dyn_weapon_t *w) {
+  if (w->discovered && w->model_index > 0 &&
+      !VR_ModelIndexLooksWeapon(w->model_index))
+    return VR_WEAPON_HIDDEN_INVALID_MODEL;
+
+  if (VR_IsDwellDefaultWeaponEntry(w) && !VR_IsDwellGame())
+    return VR_WEAPON_HIDDEN_DWELL_ONLY;
+
+  /*
+   * An explicit schema owns its bit namespace even before the weapon is
+   * acquired.  Do not let the stock fallback for the same bit leak into the
+   * wheel based on unrelated STAT_ITEMS meanings used by a mod.
+   */
+  if (!w->from_schema && w->bitmask) {
+    for (int i = 0; i < num_dyn_weapons; i++) {
+      if (dyn_weapons[i].from_schema &&
+          dyn_weapons[i].bitmask == w->bitmask)
+        return VR_WEAPON_HIDDEN_SCHEMA_FALLBACK;
+    }
+  }
+
+  if (!VR_WeaponIsOwned(w))
+    return VR_WEAPON_HIDDEN_UNOWNED;
+
+  return VR_WEAPON_VISIBLE;
+}
+
+static const char *
+VR_WeaponVisibilityName(vr_weapon_visibility_t visibility) {
+  switch (visibility) {
+  case VR_WEAPON_VISIBLE:
+    return "visible";
+  case VR_WEAPON_HIDDEN_INVALID_MODEL:
+    return "invalid-model";
+  case VR_WEAPON_HIDDEN_DWELL_ONLY:
+    return "dwell-only-index";
+  case VR_WEAPON_HIDDEN_SCHEMA_FALLBACK:
+    return "schema-fallback";
+  case VR_WEAPON_HIDDEN_UNOWNED:
+    return "unowned";
+  default:
+    return "unknown";
+  }
+}
+
+// Build visible weapon list filtered by current ownership, returns count.
 static int VR_GetVisibleWeapons(vr_dyn_weapon_t **out, int max) {
   int count = 0;
   for (int i = 0; i < num_dyn_weapons && count < max; i++) {
     vr_dyn_weapon_t *w = &dyn_weapons[i];
-    qboolean hidden_by_schema = false;
 
-    if (w->discovered && w->model_index > 0 &&
-        !VR_ModelIndexLooksWeapon(w->model_index))
-      continue;
-    if (VR_IsDwellDefaultWeaponEntry(w) && !VR_IsDwellGame())
-      continue;
-
-    if (!w->from_schema && w->bitmask) {
-      for (int j = 0; j < num_dyn_weapons; j++) {
-        if (dyn_weapons[j].from_schema &&
-            dyn_weapons[j].bitmask == w->bitmask &&
-            VR_WeaponIsOwned(&dyn_weapons[j])) {
-          hidden_by_schema = true;
-          break;
-        }
-      }
-    }
-
-    if (!hidden_by_schema && VR_WeaponIsOwned(w))
+    if (VR_WeaponVisibility(w) == VR_WEAPON_VISIBLE)
       out[count++] = w;
   }
   return count;
+}
+
+static int VR_WeaponStatValue(int stat) {
+  return (stat >= 0 && stat < MAX_CL_STATS) ? cl.stats[stat] : 0;
+}
+
+static void VR_WeaponList_f(void) {
+  const char *game = COM_SkipPath(com_gamedir);
+  const char *active_model = VR_ModelPathForIndex(cl.stats[STAT_WEAPON]);
+  int visible_count = 0;
+
+  Con_Printf("VR weapon list: game=%s entries=%d\n",
+             (game && game[0]) ? game : "(none)", num_dyn_weapons);
+  Con_Printf("stats: items=%d/0x%x cl.items=%d/0x%x active=%d/0x%x "
+             "model=%d (%s)\n",
+             cl.stats[STAT_ITEMS], cl.stats[STAT_ITEMS], cl.items, cl.items,
+             cl.stats[STAT_ACTIVEWEAPON], cl.stats[STAT_ACTIVEWEAPON],
+             cl.stats[STAT_WEAPON],
+             (active_model && active_model[0]) ? active_model : "none");
+  Con_Printf("custom: weapons=%d/0x%x items2=%d/0x%x moditems=%d/0x%x "
+             "weapon2=%d/0x%x weapons2=%d/0x%x\n",
+             cl.stats[STAT_VR_WEAPONS], cl.stats[STAT_VR_WEAPONS],
+             cl.stats[STAT_VR_ITEMS2], cl.stats[STAT_VR_ITEMS2],
+             cl.stats[STAT_VR_MODITEMS], cl.stats[STAT_VR_MODITEMS],
+             cl.stats[STAT_VR_WEAPON2], cl.stats[STAT_VR_WEAPON2],
+             cl.stats[STAT_VR_WEAPONS2], cl.stats[STAT_VR_WEAPONS2]);
+
+  for (int i = 0; i < num_dyn_weapons; i++) {
+    const vr_dyn_weapon_t *w = &dyn_weapons[i];
+    vr_weapon_visibility_t visibility = VR_WeaponVisibility(w);
+    const char *source =
+        w->from_schema ? "schema" : (w->discovered ? "discovered" : "builtin");
+    const char *model = w->model_path;
+
+    if (visibility == VR_WEAPON_VISIBLE)
+      visible_count++;
+    if ((!model || !model[0]) && w->model_index > 0)
+      model = VR_ModelPathForIndex(w->model_index);
+
+    Con_Printf(
+        "[%03d] %s source=%s schema=%d discovered=%d itemown=%d "
+        "dwellidx=%d bit=%d/0x%x impulse=%d owned=%d active=%d "
+        "owned_stat=%d value=%d/0x%x mask=%d/0x%x "
+        "active_stat=%d value=%d/0x%x mask=%d/0x%x model=%d:%s\n",
+        i, VR_WeaponVisibilityName(visibility), source, w->from_schema,
+        w->discovered, w->use_item_ownership,
+        VR_IsDwellDefaultWeaponEntry(w), w->bitmask, w->bitmask, w->impulse,
+        VR_WeaponIsOwned(w), VR_WeaponIsActive(w), w->owned_stat,
+        VR_WeaponStatValue(w->owned_stat), VR_WeaponStatValue(w->owned_stat),
+        w->owned_mask, w->owned_mask, w->active_stat,
+        VR_WeaponStatValue(w->active_stat), VR_WeaponStatValue(w->active_stat),
+        w->active_mask, w->active_mask, w->model_index,
+        (model && model[0]) ? model : "none");
+  }
+
+  Con_Printf("VR weapon list: %d visible, %d hidden\n", visible_count,
+             num_dyn_weapons - visible_count);
 }
 
 static int VR_WeaponSelectionImpulse(const vr_dyn_weapon_t *w) {
