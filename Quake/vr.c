@@ -230,8 +230,8 @@ static qboolean vr_menu_view_origin_valid = false;
 
 /*
  * The menu is drawn as a 320x200 plane in world space.  Cache the exact
- * surface produced by VR_Draw2D so controller hit-testing in VR_Move uses the
- * rendered transform rather than a separately reconstructed approximation.
+ * surface produced by VR_Draw2D so controller hit-testing uses the rendered
+ * transform rather than a separately reconstructed approximation.
  */
 typedef struct {
   vec3_t center;
@@ -243,6 +243,11 @@ typedef struct {
 } vr_menu_surface_t;
 
 static vr_menu_surface_t vr_menu_surface;
+static qboolean vr_menu_pointer_valid = false;
+static float vr_menu_pointer_x;
+static float vr_menu_pointer_y;
+static void VR_UpdateMenuPointer(void);
+static void VR_DoMenuTrigger(vr_controller *controller);
 
 vr_weapon_cmd_t vr_weapons[MAX_VR_WEAPONS];
 int num_vr_weapons = 0;
@@ -351,16 +356,6 @@ static qboolean rogue_weapons_added = false;
 static qboolean hipnotic_weapons_added = false;
 static qboolean dwell_weapons_added = false;
 static int dwell_weapon_indices[3] = {-1, -1, -1};
-static int last_tracked_activeweapon = -1;
-
-// Impulse sniffing/discovery state
-extern "C" {
-int vr_last_sent_impulse = 0;
-double vr_last_sent_impulse_time = 0;
-}
-static int vr_autoscan_impulse = 0;
-static double vr_autoscan_next_time = 0;
-static bool vr_autoscan_active = false;
 double vr_next_weapon_switch_time = 0; // Debounce for switching
 static int vr_weapon_cycle_target = -1;
 static int vr_weapon_cycle_impulse = 0;
@@ -728,14 +723,6 @@ static int VR_FindDynWeaponForActive(int active, int model_index) {
   }
 
   return unlearned;
-}
-
-static int VR_FindImpulseForActiveBit(int active) {
-  for (int i = 0; i < num_dyn_weapons; i++) {
-    if (dyn_weapons[i].bitmask == active && dyn_weapons[i].impulse > 0)
-      return dyn_weapons[i].impulse;
-  }
-  return 0;
 }
 
 static vr_dyn_weapon_t *VR_AddOrUpdateDynWeapon(
@@ -5424,6 +5411,14 @@ void VR_Draw2D() {
   VectorCopy(forward, vr_menu_surface.normal);
   vr_menu_surface.scale = scale_hud;
   vr_menu_surface.valid = scale_hud > 0.0001f;
+  /* Resolve hover, marker and trigger activation from the same newly
+   * positioned surface.  Doing this once on the first eye makes the visible
+   * cursor authoritative even while the head-fixed panel is smoothing. */
+  if (R_IsVRFirstEye()) {
+    VR_UpdateMenuPointer();
+    if (key_dest == key_menu)
+      VR_DoMenuTrigger(&controllers[1]);
+  }
   glTranslatef(smoothedTarget[0], smoothedTarget[1], smoothedTarget[2]);
 
   glRotatef(menu_angles[YAW] - 90, 0, 0, 1); // rotate around z
@@ -5487,6 +5482,15 @@ void VR_Draw2D() {
     if (key_dest != key_menu)
       SCR_DrawConsole();
     M_Draw();
+  }
+
+  /* Draw the right-controller ray hit after all menu content so the visible
+   * marker and the pointer hit-test use the exact same 320x200 coordinates.
+   * Depth is disabled here and the shared panel transform is reused for both
+   * eyes, keeping the marker stable in stereo. */
+  if (key_dest == key_menu && vr_menu_pointer_valid && pic_crosshair) {
+    Draw_Pic((int)(vr_menu_pointer_x - 4.0f),
+             (int)(vr_menu_pointer_y - 4.0f), pic_crosshair);
   }
 
   glDisable(GL_BLEND);
@@ -5877,6 +5881,8 @@ static void VR_UpdateMenuPointer(void) {
   vec3_t center_to_origin, hit, relative;
   float denominator, distance, x, y;
 
+  vr_menu_pointer_valid = false;
+
   if (key_dest != key_menu || !controllers[1].seenThisFrame ||
       !vr_menu_surface.valid) {
     M_PointerLeave(M_POINTER_VR);
@@ -5905,6 +5911,11 @@ static void VR_UpdateMenuPointer(void) {
       160.0f;
   y = DotProduct(relative, vr_menu_surface.down) / vr_menu_surface.scale +
       100.0f;
+  if (x >= 0.0f && x < 320.0f && y >= 0.0f && y < 200.0f) {
+    vr_menu_pointer_x = x;
+    vr_menu_pointer_y = y;
+    vr_menu_pointer_valid = true;
+  }
   M_PointerMove(x, y, M_POINTER_VR);
 }
 
@@ -5947,10 +5958,10 @@ void VR_Move(usercmd_t *cmd) {
   if (emit_input_events) {
     // k_EButton_Axis1 === k_EButton_SteamVR_Trigger
     DoTrigger(&controllers[0], K_LTRIGGER);
-    if (key_dest == key_menu) {
-      VR_UpdateMenuPointer();
-      VR_DoMenuTrigger(&controllers[1]);
-    } else {
+    /* Menu hover and activation are resolved together against this frame's
+     * first-eye panel surface in VR_Draw2D. */
+    if (key_dest != key_menu) {
+      vr_menu_pointer_valid = false;
       M_PointerLeave(M_POINTER_VR);
       DoTrigger(&controllers[1], K_RTRIGGER);
     }
@@ -6213,19 +6224,6 @@ void VR_TrackWeapons(void) {
     return;
   }
 
-  // Pulse auto-scanner if active
-  if (vr_autoscan_active && Sys_DoubleTime() > vr_autoscan_next_time) {
-    if (vr_autoscan_impulse < 12) {
-      vr_autoscan_impulse++;
-      VR_SendWeaponImpulse(vr_autoscan_impulse);
-      vr_autoscan_next_time =
-          Sys_DoubleTime() + 2.0; // 2.0s between probes (passive)
-    } else {
-      vr_autoscan_active = false;
-      Con_DPrintf("VR: Weapon auto-scan complete.\n");
-    }
-  }
-
   int found = VR_FindDynWeaponForActive(active, model_idx);
   vr_dyn_weapon_t *w = (found >= 0) ? &dyn_weapons[found] : NULL;
 
@@ -6244,31 +6242,18 @@ void VR_TrackWeapons(void) {
         w->owned_mask = owned_mask;
       }
     }
-
-    // Sniff impulse association if it was sent recently (last 0.5s)
-    if (w->impulse == 0 && vr_last_sent_impulse > 0 &&
-        (Sys_DoubleTime() - vr_last_sent_impulse_time) < 0.5) {
-      w->impulse = vr_last_sent_impulse;
-      Con_DPrintf("VR: Learned impulse %d for weapon bitmask %d\n", w->impulse,
-                  active);
-    }
   }
   // Fully new weapon from a mod (not in base table)
   else if (num_dyn_weapons < MAX_DYN_WEAPONS) {
-    int impulse;
     int owned_stat = -1;
     int owned_mask = 0;
 
-    if (vr_last_sent_impulse > 0 &&
-        (Sys_DoubleTime() - vr_last_sent_impulse_time) < 0.5) {
-      impulse = vr_last_sent_impulse;
-    } else {
-      impulse = VR_FindImpulseForActiveBit(active);
-    }
-
     VR_FindWeaponOwnedStatForActive(active, &owned_stat, &owned_mask);
 
-    w = VR_AddOrUpdateDynWeapon(active, impulse, NULL, model_idx, true, 1.0f,
+    // Discovery may identify an unknown weapon, but its selection command is
+    // intentionally left unset. QuakeC impulse namespaces are arbitrary, so
+    // only a schema or built-in mod definition can safely supply that command.
+    w = VR_AddOrUpdateDynWeapon(active, 0, NULL, model_idx, true, 1.0f,
                                 vec3_origin, false, owned_stat, owned_mask, -1,
                                 0, -1, 0, false);
     if (!w)
@@ -6286,7 +6271,6 @@ void VR_TrackWeapons(void) {
 
 // Start/Reset weapon tracking (call on map change / disconnect)
 void VR_ResetWeaponTracking(void) {
-  last_tracked_activeweapon = -1;
   vr_weapon_cycle_target = -1;
 
   // Rogue expansion uses different bitmasks: RIT_AXE=2048, and reuses
@@ -6327,15 +6311,8 @@ void VR_ResetWeaponTracking(void) {
   }
   VR_AddBuiltinWeaponDefaults();
 
-  // Note: We DO NOT reset num_dyn_weapons or discovery state here anymore
-  // so that mod weapon knowledge persists across map loads.
-  // We just reset the scanning flag if needed.
-  if (cls.state != ca_connected) {
-    vr_autoscan_active = true;
-    vr_autoscan_impulse = 0;
-    vr_autoscan_next_time =
-        Sys_DoubleTime() + 2.0; // Wait 2s after load to start scan
-  }
+  // Keep learned/schema weapon knowledge across map loads.  Further discovery
+  // is passive: observe real weapon changes instead of sending probe impulses.
 }
 
 // Build visible weapon list filtered by cl.items, returns count

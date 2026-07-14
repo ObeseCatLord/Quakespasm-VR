@@ -176,9 +176,6 @@ qboolean VR_WeaponSpawnsAtSelfOrigin(const char *viewmodel, int weapon_bit);
 void VR_GetWeaponProjectileSourceOffset(const char *viewmodel, int weapon_bit,
                                         const vec3_t angles,
                                         float viewheight, vec3_t out);
-extern int vr_last_sent_impulse;
-extern double vr_last_sent_impulse_time;
-
 #ifdef __cplusplus
 }
 #endif
