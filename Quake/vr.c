@@ -6960,6 +6960,9 @@ void VR_DrawWeaponMenu(void) {
 
       VectorCopy(origin, text_pos);
       VectorMA(text_pos, -list_offset, right, text_pos);
+      /* Mirror the right-side player list: its text grows away from the
+       * wheel, so right-align the left-side label at the same radius. */
+      VectorMA(text_pos, -(len * char_width), right, text_pos);
       VectorMA(text_pos, (0.5f - i) * line_spacing, up, text_pos);
       VR_DrawText3DOutlined(text_pos, right, up, label, text_scale, text_color,
                             false);
