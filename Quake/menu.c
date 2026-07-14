@@ -56,6 +56,7 @@ void M_Menu_Video_f(void);
 void M_Menu_VR_f(void);
 void M_Menu_Help_f(void);
 static void M_Menu_Mods_f(void);
+void M_Menu_ServerModDownload_f(void);
 static void M_Menu_Models_f(void);
 void M_Menu_Quit_f(void);
 
@@ -77,6 +78,7 @@ void M_Video_Draw(void);
 void M_VR_Draw(void);
 void M_Help_Draw(void);
 static void M_Mods_Draw(void);
+static void M_ServerModDownload_Draw(void);
 static void M_Models_Draw(void);
 void M_Quit_Draw(void);
 
@@ -98,6 +100,7 @@ void M_Video_Key(int key);
 void M_VR_Key(int key);
 void M_Help_Key(int key);
 static void M_Mods_Key(int key);
+static void M_ServerModDownload_Key(int key);
 static void M_Models_Key(int key);
 static void M_Mods_Char(int key);
 void M_Quit_Key(int key);
@@ -274,6 +277,9 @@ enum {
 };
 
 void M_Menu_Main_f(void) {
+  /* Leaving the server add-on modal is also an explicit rejection/cancel. */
+  if (m_state == m_servermod)
+    CL_ServerModDownload_Cancel();
   if (key_dest != key_menu) {
     m_save_demonum = cls.demonum;
     cls.demonum = -1;
@@ -3043,6 +3049,176 @@ static void M_Mods_Char(int key) {
 }
 
 //=============================================================================
+/* SERVER-REQUESTED ADD-ON DOWNLOAD */
+
+static int m_servermod_cursor;
+
+void M_Menu_ServerModDownload_f(void) {
+  IN_Deactivate(modestate == MS_WINDOWED);
+  key_dest = key_menu;
+  m_state = m_servermod;
+  m_servermod_cursor = 0;
+  m_entersound = true;
+}
+
+void M_ServerModDownload_Close(void) {
+  if (m_state != m_servermod)
+    return;
+  IN_Activate();
+  key_dest = key_game;
+  m_state = m_none;
+}
+
+static int M_ServerMod_PrintWrapped(int x, int y, const char *text,
+                                   int columns, int maxlines) {
+  char line[40];
+  const char *start, *end, *space;
+  int length, lines = 0;
+
+  if (!text)
+    return y;
+  start = text;
+  while (*start && lines < maxlines) {
+    while (*start == ' ')
+      start++;
+    end = start;
+    space = NULL;
+    while (*end && end - start < columns) {
+      if (*end == ' ')
+        space = end;
+      end++;
+    }
+    if (*end && space)
+      end = space;
+    length = q_min((int)sizeof(line) - 1, (int)(end - start));
+    memcpy(line, start, length);
+    line[length] = 0;
+    M_Print(x, y, line);
+    y += 8;
+    lines++;
+    start = end;
+  }
+  return y;
+}
+
+static void M_ServerModDownload_Draw(void) {
+  cl_servermod_info_t info;
+  char detail[40];
+  int action_y;
+
+  if (!CL_ServerModDownload_GetInfo(&info)) {
+    M_Menu_Main_f();
+    return;
+  }
+
+  M_DrawTransPic(16, 4, Draw_CachePic("gfx/qplaque.lmp"));
+  M_PrintWhite(112, 8, "SERVER ADD-ON");
+  M_DrawTextBox(24, 24, 34, 19);
+  M_PrintWhite(40, 36, "The server requires an add-on:");
+  if (info.name[0])
+    q_snprintf(detail, 31, "%s  (%s)", info.name, info.game);
+  else
+    q_snprintf(detail, 31, "%s", info.game);
+  M_PrintWhite(40, 52, detail);
+
+  if (info.phase == CL_SERVERMOD_PROMPT) {
+    if (info.author[0]) {
+      q_snprintf(detail, 31, "By %s", info.author);
+      M_Print(40, 64, detail);
+    }
+    q_snprintf(detail, sizeof(detail), "Download size: %.1f MB",
+               info.size / (1024.0 * 1024.0));
+    M_Print(40, 76, detail);
+    M_Print(40, 92, "Source: Ironwail catalogue");
+    if (!info.verified)
+      M_PrintWhite(40, 108, "Catalogue package has no checksum.");
+
+    action_y = 132;
+    M_Print(64, action_y, "Download and Connect");
+    M_Print(64, action_y + 16, "Return to Main Menu");
+    M_DrawCharacter(48, action_y + m_servermod_cursor * 16,
+                    12 + ((int)(realtime * 4) & 1));
+  } else {
+    action_y = 148;
+    if (info.phase == CL_SERVERMOD_INSTALLING) {
+      q_snprintf(detail, sizeof(detail), "Downloaded: %.1f MB",
+                 AddonCatalog_Progress() / (1024.0 * 1024.0));
+      M_PrintWhite(40, 92, "Downloading and installing...");
+      M_Print(40, 108, detail);
+      M_ServerMod_PrintWrapped(40, 120, info.message, 30, 2);
+    } else if (info.phase == CL_SERVERMOD_CHECKING) {
+      M_PrintWhite(40, 92, "Checking the add-on catalogue...");
+      M_ServerMod_PrintWrapped(40, 108, info.message, 30, 3);
+    } else {
+      M_PrintWhite(40, 84, "Unable to get the server add-on:");
+      M_ServerMod_PrintWrapped(40, 100, info.message, 30, 4);
+    }
+    M_Print(64, action_y, info.phase == CL_SERVERMOD_INSTALLING
+                              ? "Cancel and Return to Menu"
+                              : "Return to Main Menu");
+    M_DrawCharacter(48, action_y, 12 + ((int)(realtime * 4) & 1));
+  }
+
+  if (vr_enabled.value)
+    M_Print(40, 180, "Trigger/L-A: select  R-B: return");
+  else
+    M_Print(56, 180, "Enter: select  Esc: return");
+}
+
+static void M_ServerModDownload_ReturnToMain(void) {
+  CL_ServerModDownload_Cancel();
+  M_Menu_Main_f();
+}
+
+static void M_ServerModDownload_Key(int key) {
+  cl_servermod_info_t info;
+
+  if (!CL_ServerModDownload_GetInfo(&info)) {
+    M_Menu_Main_f();
+    return;
+  }
+
+  switch (key) {
+  case K_ESCAPE:
+  case K_BBUTTON:
+    M_ServerModDownload_ReturnToMain();
+    return;
+
+  case K_UPARROW:
+  case K_DOWNARROW:
+  case K_LEFTARROW:
+  case K_RIGHTARROW:
+  case K_MWHEELUP:
+  case K_MWHEELDOWN:
+    if (info.phase == CL_SERVERMOD_PROMPT) {
+      m_servermod_cursor ^= 1;
+      S_LocalSound("misc/menu1.wav");
+    }
+    return;
+
+  case K_ENTER:
+  case K_KP_ENTER:
+  case K_ABUTTON:
+    if (info.phase == CL_SERVERMOD_PROMPT) {
+      S_LocalSound("misc/menu2.wav");
+      if (m_servermod_cursor == 0)
+        CL_ServerModDownload_Accept();
+      else
+        M_ServerModDownload_ReturnToMain();
+    } else if (info.phase == CL_SERVERMOD_ERROR) {
+      S_LocalSound("misc/menu2.wav");
+      M_ServerModDownload_ReturnToMain();
+    }
+    /* Ignore activation repeats while refresh/download work is in flight. */
+    return;
+
+  case K_DEL: /* pointer activation of the visible cancel/return action */
+    M_ServerModDownload_ReturnToMain();
+    return;
+  }
+}
+
+//=============================================================================
 /* MODELS MENU */
 
 static void M_Menu_Models_f(void) {
@@ -3233,6 +3409,10 @@ void M_Draw(void) {
     M_Mods_Draw();
     break;
 
+  case m_servermod:
+    M_ServerModDownload_Draw();
+    break;
+
   case m_models:
     M_Models_Draw();
     break;
@@ -3272,6 +3452,9 @@ void M_Draw(void) {
 }
 
 qboolean M_ConsumesBoundKey(int key) {
+  if (m_state == m_servermod)
+    return key == K_ABUTTON || key == K_BBUTTON;
+
   if (m_state != m_mods)
     return false;
 
@@ -3348,6 +3531,10 @@ void M_Keydown(int key) {
 
   case m_mods:
     M_Mods_Key(key);
+    return;
+
+  case m_servermod:
+    M_ServerModDownload_Key(key);
     return;
 
   case m_models:
@@ -3591,6 +3778,23 @@ static qboolean M_PointerHit(float x, float y) {
         m_pointer_activate_key = K_F1;
         return true;
       }
+    }
+    break;
+  }
+
+  case m_servermod: {
+    cl_servermod_info_t info;
+    if (!CL_ServerModDownload_GetInfo(&info))
+      break;
+    if (info.phase == CL_SERVERMOD_PROMPT) {
+      if (M_PointerRows(x, y, 40, 280, 132, 16, 2, &selection)) {
+        m_servermod_cursor = selection;
+        return true;
+      }
+    } else if (x >= 40 && x < 280 && y >= 148 && y < 164) {
+      m_servermod_cursor = 0;
+      m_pointer_activate_key = K_DEL;
+      return true;
     }
     break;
   }

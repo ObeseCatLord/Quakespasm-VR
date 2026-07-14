@@ -484,6 +484,27 @@ const addon_catalog_entry_t *AddonCatalog_Entry (int index)
 	return &addon_entry_snapshot;
 }
 
+int AddonCatalog_FindGameDir (const char *gamedir,
+	addon_catalog_entry_t *entry)
+{
+	int i, found = -1;
+
+	if (!addon_mutex || !gamedir || !*gamedir)
+		return -1;
+	SDL_LockMutex (addon_mutex);
+	for (i = 0; i < addon_count; i++)
+	{
+		if (q_strcasecmp(addon_entries[i].gamedir, gamedir))
+			continue;
+		if (entry)
+			*entry = addon_entries[i];
+		found = i;
+		break;
+	}
+	SDL_UnlockMutex (addon_mutex);
+	return found;
+}
+
 qboolean AddonCatalog_StartInstall (int index, qboolean allow_unverified)
 {
 #ifdef USE_CURL
