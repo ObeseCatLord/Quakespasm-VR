@@ -524,6 +524,8 @@ typedef enum {
   COOP_RESPAWN_EXTRA_WEAPON2,
   COOP_RESPAWN_EXTRA_WEAPONS2,
   COOP_RESPAWN_EXTRA_ITEMS_DWELL,
+  COOP_RESPAWN_EXTRA_ITEMS_MOVEMOD,
+  COOP_RESPAWN_EXTRA_RUNESHARD_COU,
   COOP_RESPAWN_EXTRA_CURRENTWEAPON,
   COOP_RESPAWN_EXTRA_WORLDTYPE,
   COOP_RESPAWN_EXTRA_KEY_COUNT_SILVER,
@@ -556,6 +558,10 @@ typedef enum {
   COOP_RESPAWN_EXTRA_CKEYNAME2,
   COOP_RESPAWN_EXTRA_CKEYNAME3,
   COOP_RESPAWN_EXTRA_CKEYNAME4,
+  COOP_RESPAWN_EXTRA_CKEYSKIN1,
+  COOP_RESPAWN_EXTRA_CKEYSKIN2,
+  COOP_RESPAWN_EXTRA_CKEYSKIN3,
+  COOP_RESPAWN_EXTRA_CKEYSKIN4,
   COOP_RESPAWN_EXTRA_COUNT
 } coop_respawn_extra_field_id_t;
 
@@ -615,6 +621,8 @@ static const coop_respawn_extra_field_t coop_respawn_extra_fields[] = {
     {"weapon2", COOP_RESPAWN_EXTRA_BITMASK, COOP_RESPAWN_ALL_ITEM_BITS},
     {"weapons2", COOP_RESPAWN_EXTRA_BITMASK, COOP_RESPAWN_ALL_ITEM_BITS},
     {"items_dwell", COOP_RESPAWN_EXTRA_BITMASK, COOP_RESPAWN_DWELL_WEAPON_BITS},
+    {"items_movemod", COOP_RESPAWN_EXTRA_BITMASK, COOP_RESPAWN_ALL_ITEM_BITS},
+    {"runeshard_cou", COOP_RESPAWN_EXTRA_MAXFLOAT, 0},
     {"currentweapon", COOP_RESPAWN_EXTRA_RESTORE_FLOAT, 0},
     {"worldtype", COOP_RESPAWN_EXTRA_RESTORE_FLOAT, 0},
     {"key_count_silver", COOP_RESPAWN_EXTRA_MAXFLOAT, 0},
@@ -647,6 +655,10 @@ static const coop_respawn_extra_field_t coop_respawn_extra_fields[] = {
     {"ckeyname2", COOP_RESPAWN_EXTRA_STRING, 0},
     {"ckeyname3", COOP_RESPAWN_EXTRA_STRING, 0},
     {"ckeyname4", COOP_RESPAWN_EXTRA_STRING, 0},
+    {"ckeyskin1", COOP_RESPAWN_EXTRA_RESTORE_FLOAT, 0},
+    {"ckeyskin2", COOP_RESPAWN_EXTRA_RESTORE_FLOAT, 0},
+    {"ckeyskin3", COOP_RESPAWN_EXTRA_RESTORE_FLOAT, 0},
+    {"ckeyskin4", COOP_RESPAWN_EXTRA_RESTORE_FLOAT, 0},
 };
 
 static coop_respawn_inventory_t
@@ -906,15 +918,22 @@ static qboolean SV_CoopRespawnExtraIsSharedKeyCount(const char *name) {
                   !q_strcasecmp(name, "key_count_gold"));
 }
 
+static qboolean SV_CoopRespawnExtraIsKeyMetadata(const char *name) {
+  return name && (!q_strncasecmp(name, "ckeyname", 8) ||
+                  !q_strncasecmp(name, "ckeyskin", 8));
+}
+
 void SV_CoopRespawnSyncSharedKeys(edict_t *source) {
   int i;
   int j;
   int source_items;
+  qboolean counted_keys;
 
   if (!coop.value || !source || source->free)
     return;
 
   source_items = (int)source->v.items & COOP_RESPAWN_STOCK_KEY_BITS;
+  counted_keys = SV_CoopUsesCountedKeys();
 
   for (i = 0; i < MAX_SCOREBOARD; i++) {
     coop_respawn_inventory_t *inventory;
@@ -935,7 +954,13 @@ void SV_CoopRespawnSyncSharedKeys(edict_t *source) {
       if (!val)
         continue;
 
-      if (field->policy == COOP_RESPAWN_EXTRA_BITMASK) {
+      if (SV_CoopRespawnExtraIsKeyMetadata(field->name)) {
+        inventory->extra_valid[j] = true;
+        if (field->policy == COOP_RESPAWN_EXTRA_STRING)
+          inventory->extra_string[j] = val->string;
+        else
+          inventory->extra_value[j] = val->_float;
+      } else if (field->policy == COOP_RESPAWN_EXTRA_BITMASK) {
         int key_mask = SV_CoopRespawnExtraSharedKeyMask(field->name);
         int source_bits;
 
@@ -946,10 +971,11 @@ void SV_CoopRespawnSyncSharedKeys(edict_t *source) {
         inventory->extra_valid[j] = true;
         inventory->extra_bits[j] =
             (inventory->extra_bits[j] & ~key_mask) | (source_bits & key_mask);
-      } else if (SV_CoopRespawnExtraIsSharedKeyCount(field->name)) {
+      } else if (counted_keys &&
+                 SV_CoopRespawnExtraIsSharedKeyCount(field->name)) {
         inventory->extra_valid[j] = true;
         inventory->extra_value[j] = val->_float;
-      } else if (!q_strcasecmp(field->name, "worldtype")) {
+      } else if (counted_keys && !q_strcasecmp(field->name, "worldtype")) {
         int source_bits =
             type == ev_ext_integer ? val->_int : (int)val->_float;
         int existing_bits =
@@ -1118,6 +1144,19 @@ static void SV_CoopRespawnRememberAliveInventory(edict_t *ent, int num) {
 
   SV_CoopRespawnSaveInventory(ent, &coop_respawn_last_inventory[index]);
   coop_respawn_last_inventory_valid[index] = true;
+}
+
+void SV_CoopRespawnRefreshClientInventory(edict_t *ent) {
+  int num;
+
+  if (!ent || ent->free)
+    return;
+
+  num = NUM_FOR_EDICT(ent);
+  if (num < 1 || num > svs.maxclients)
+    return;
+
+  SV_CoopRespawnRememberAliveInventory(ent, num);
 }
 
 static void SV_CoopRespawnRememberSafeOrigin(edict_t *ent, int num) {
@@ -1624,6 +1663,34 @@ qboolean SV_CoopRespawnTeleportToPlayer(edict_t *ent, edict_t *target) {
   VectorCopy(ent->v.v_angle, state.death_v_angle);
 
   SV_CoopRespawnRelocate(ent, anchor, spot, &state);
+  return true;
+}
+
+qboolean SV_CoopRespawnTeleportToSpawn(edict_t *ent, edict_t *spawn) {
+  vec3_t base, spot;
+  coop_respawn_postthink_state_t state;
+  static const float spawn_radii[] = {0.0f, 32.0f, 48.0f, 64.0f,
+                                      80.0f, 96.0f, 128.0f};
+
+  if (!coop.value || deathmatch.value || !ent || ent->free || !spawn ||
+      spawn->free || !SV_CoopRespawnIsAliveClient(ent))
+    return false;
+
+  VectorCopy(spawn->v.origin, base);
+  base[2] += 1.0f;
+  if (!SV_CoopRespawnFindNearbySpot(
+          ent, base, spawn, spawn_radii,
+          (int)(sizeof(spawn_radii) / sizeof(spawn_radii[0])), 128.0f, true,
+          spot))
+    return false;
+
+  memset(&state, 0, sizeof(state));
+  state.old_force_retouch = pr_global_struct->force_retouch;
+  VectorCopy(ent->v.origin, state.death_origin);
+  VectorCopy(ent->v.angles, state.death_angles);
+  VectorCopy(ent->v.v_angle, state.death_v_angle);
+
+  SV_CoopRespawnRelocate(ent, spawn, spot, &state);
   return true;
 }
 

@@ -2214,6 +2214,7 @@ static void Host_Spawn_f(void) {
     host_client->colors = sv.loadgame_client_colors[saved_clientnum];
     host_client->old_frags = sv.loadgame_client_old_frags[saved_clientnum];
     Host_LoadgameRestoreClientEdict(saved_clientnum, ent);
+    SV_CoopSharedMergeRestoredClient(ent);
     ent->v.netname = PR_SetEngineString(host_client->name);
     ent->v.colormap = NUM_FOR_EDICT(ent);
     ent->v.team = (host_client->colors & 15) + 1;
@@ -2342,6 +2343,7 @@ static void Host_Begin_f(void) {
   }
 
   host_client->spawned = true;
+  SV_CoopSharedApplyToJoiningClient(sv_player);
 }
 
 /*
@@ -2380,6 +2382,94 @@ static void Host_CoopTeleportPlayer_f(void) {
 
   if (!SV_CoopRespawnTeleportToPlayer(sv_player, target_client->edict))
     SV_ClientPrintf("No safe teleport spot near %s\n", target_client->name);
+}
+
+static edict_t *Host_CoopFindSpawnClass(const char *classname) {
+  int i;
+
+  for (i = svs.maxclients + 1; i < qcvm->num_edicts; i++) {
+    edict_t *ent = EDICT_NUM(i);
+    if (!ent->free && ent->v.classname &&
+        !q_strcasecmp(PR_GetString(ent->v.classname), classname))
+      return ent;
+  }
+
+  return NULL;
+}
+
+static edict_t *Host_CoopSelectSpawnPoint(void) {
+  dfunction_t *func;
+  edict_t *spawn = NULL;
+  int old_self, old_other, spawnprog;
+  int old_return[3];
+  float old_time;
+
+  func = ED_FindFunction("SelectSpawnPoint");
+  if (func && func->numparms == 0) {
+    old_self = pr_global_struct->self;
+    old_other = pr_global_struct->other;
+    old_time = pr_global_struct->time;
+    memcpy(old_return, &qcvm->globals[OFS_RETURN], sizeof(old_return));
+
+    pr_global_struct->self = EDICT_TO_PROG(sv_player);
+    pr_global_struct->other = EDICT_TO_PROG(qcvm->edicts);
+    pr_global_struct->time = qcvm->time;
+    G_INT(OFS_RETURN) = 0;
+    PR_ExecuteProgram(func - qcvm->functions);
+    spawnprog = G_INT(OFS_RETURN);
+
+    pr_global_struct->self = old_self;
+    pr_global_struct->other = old_other;
+    pr_global_struct->time = old_time;
+    memcpy(&qcvm->globals[OFS_RETURN], old_return, sizeof(old_return));
+
+    if (spawnprog > svs.maxclients * qcvm->edict_size &&
+        spawnprog < qcvm->num_edicts * qcvm->edict_size &&
+        spawnprog % qcvm->edict_size == 0) {
+      spawn = PROG_TO_EDICT(spawnprog);
+      if (spawn->free)
+        spawn = NULL;
+    }
+  }
+
+  if (!spawn)
+    spawn = Host_CoopFindSpawnClass("info_player_coop");
+  if (!spawn)
+    spawn = Host_CoopFindSpawnClass("info_player_start");
+  return spawn;
+}
+
+/*
+==================
+Host_CoopTeleportSpawn_f
+
+Co-op weapon-wheel helper that asks QuakeC for the active map's proper spawn
+point, then safely relocates the requesting player without killing them.
+==================
+*/
+static void Host_CoopTeleportSpawn_f(void) {
+  edict_t *spawn;
+
+  if (cmd_source == src_command) {
+    Cmd_ForwardToServer();
+    return;
+  }
+
+  if (!coop.value || pr_global_struct->deathmatch || !host_client ||
+      !host_client->active || !host_client->spawned || !sv_player)
+    return;
+  if (sv_player->v.health <= 0 || sv_player->v.deadflag != DEAD_NO ||
+      sv_player->v.solid == SOLID_NOT)
+    return;
+
+  spawn = Host_CoopSelectSpawnPoint();
+  if (!spawn) {
+    SV_ClientPrintf("No player spawn point is available\n");
+    return;
+  }
+
+  if (!SV_CoopRespawnTeleportToSpawn(sv_player, spawn))
+    SV_ClientPrintf("No safe player spawn position is available\n");
 }
 
 //===========================================================================
@@ -2857,6 +2947,128 @@ static void Host_SV_GiveAll_f(void) {
 
   if (!count)
     Con_Printf("sv_giveall: no matching active client\n");
+
+  if (qcvm != old_qcvm) {
+    PR_SwitchQCVM(NULL);
+    if (old_qcvm)
+      PR_SwitchQCVM(old_qcvm);
+  }
+}
+
+static qboolean Host_ParseGiveKeysKind(const char *arg, int *key_flags) {
+  if (!arg || !arg[0])
+    return false;
+
+  if (!q_strcasecmp(arg, "silver") || !q_strcasecmp(arg, "key1"))
+    *key_flags = SV_COOP_GIVEKEYS_SILVER;
+  else if (!q_strcasecmp(arg, "gold") || !q_strcasecmp(arg, "key2"))
+    *key_flags = SV_COOP_GIVEKEYS_GOLD;
+  else if (!q_strcasecmp(arg, "all") || !q_strcasecmp(arg, "both") ||
+           !q_strcasecmp(arg, "keys"))
+    *key_flags = SV_COOP_GIVEKEYS_ALL;
+  else
+    return false;
+
+  return true;
+}
+
+static const char *Host_GiveKeysKindName(int key_flags) {
+  if (key_flags == SV_COOP_GIVEKEYS_SILVER)
+    return "silver key(s)";
+  if (key_flags == SV_COOP_GIVEKEYS_GOLD)
+    return "gold key(s)";
+  return "all door keys";
+}
+
+static qboolean Host_GiveKeysClient(client_t *client, int key_flags) {
+  client_t *old_host_client;
+  edict_t *old_sv_player;
+  qboolean given;
+
+  if (!client || !client->active || !client->spawned || !client->edict ||
+      client->edict->v.health <= 0)
+    return false;
+
+  old_host_client = host_client;
+  old_sv_player = sv_player;
+  host_client = client;
+  sv_player = client->edict;
+
+  given = SV_CoopGiveKeys(sv_player, key_flags);
+  if (given)
+    SV_CoopRespawnRefreshClientInventory(sv_player);
+
+  host_client = old_host_client;
+  sv_player = old_sv_player;
+  return given;
+}
+
+/*
+==================
+Host_SV_GiveKeys_f
+
+Server/admin key grant command. With no target, the requesting/first active
+player is used, matching sv_giveall.
+Usage: sv_givekeys [playername | # slot | all] [silver | gold | all]
+==================
+*/
+static void Host_SV_GiveKeys_f(void) {
+  client_t *client;
+  qcvm_t *old_qcvm;
+  int i, count;
+  int key_flags = SV_COOP_GIVEKEYS_ALL;
+  int kind_arg = 0;
+  qboolean all_players = false;
+
+  if (!sv.active) {
+    if (cmd_source == src_command) {
+      Cmd_ForwardToServer();
+      return;
+    }
+    Con_Printf("sv_givekeys: no active server\n");
+    return;
+  }
+
+  if (Cmd_Argc() > 1 && !q_strcasecmp(Cmd_Argv(1), "all")) {
+    all_players = true;
+    kind_arg = 2;
+  } else {
+    kind_arg = Cmd_Argc() > 1 && !Q_strcmp(Cmd_Argv(1), "#") ? 3 : 2;
+  }
+  if (Cmd_Argc() > kind_arg &&
+      !Host_ParseGiveKeysKind(Cmd_Argv(kind_arg), &key_flags)) {
+    Con_Printf("usage: sv_givekeys [playername | # slot | all] "
+               "[silver | gold | all]\n");
+    return;
+  }
+
+  old_qcvm = qcvm;
+  if (qcvm != &sv.qcvm) {
+    if (qcvm)
+      PR_SwitchQCVM(NULL);
+    PR_SwitchQCVM(&sv.qcvm);
+  }
+
+  count = 0;
+  if (all_players) {
+    for (i = 0; i < svs.maxclients; ++i) {
+      if (!Host_GiveKeysClient(&svs.clients[i], key_flags))
+        continue;
+      Con_Printf("sv_givekeys: gave %s to %s\n",
+                 Host_GiveKeysKindName(key_flags), svs.clients[i].name);
+      count++;
+    }
+  } else {
+    client = Host_FindClientByCommandArgs(1);
+    if (Host_GiveKeysClient(client, key_flags)) {
+      Con_Printf("sv_givekeys: gave %s to %s\n",
+                 Host_GiveKeysKindName(key_flags), client->name);
+      count++;
+    }
+  }
+
+  if (!count)
+    Con_Printf("sv_givekeys: no matching active client\n");
 
   if (qcvm != old_qcvm) {
     PR_SwitchQCVM(NULL);
@@ -3376,6 +3588,7 @@ void Host_InitCommands(void) {
   Cmd_AddCommand_ClientCommand("begin", Host_Begin_f);
   Cmd_AddCommand_ClientCommand("prespawn", Host_PreSpawn_f);
   Cmd_AddCommand_ClientCommand("coop_teleport_player", Host_CoopTeleportPlayer_f);
+  Cmd_AddCommand_ClientCommand("coop_teleport_spawn", Host_CoopTeleportSpawn_f);
   Cmd_AddCommand_ClientCommand("enablecsqc", Host_EnableCSQC_f);
   Cmd_AddCommand_ClientCommand("disablecsqc", Host_DisableCSQC_f);
   Cmd_AddCommand("kick", Host_Kick_f);
@@ -3384,6 +3597,7 @@ void Host_InitCommands(void) {
   Cmd_AddCommand("save", Host_Savegame_f);
   Cmd_AddCommand_ClientCommand("give", Host_Give_f);
   Cmd_AddCommand("sv_giveall", Host_SV_GiveAll_f);
+  Cmd_AddCommand("sv_givekeys", Host_SV_GiveKeys_f);
   Cmd_AddCommand("sv_god", Host_SV_God_f);
   Cmd_AddCommand("sv_noclip", Host_SV_Noclip_f);
   Cmd_AddCommand("sv_reconnect_game", Host_SV_ReconnectGame_f);
