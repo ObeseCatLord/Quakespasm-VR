@@ -432,6 +432,30 @@ qboolean CL_AutoReconnect_IsActive(void);
 qboolean CL_AutoReconnect_IsSwitchCommand(void);
 void CL_AutoReconnect_Cancel(void);
 qboolean CL_MaybeSwitchServerGame(const char *serverdirs);
+
+typedef enum cl_servermod_phase_e
+{
+	CL_SERVERMOD_CHECKING,
+	CL_SERVERMOD_PROMPT,
+	CL_SERVERMOD_INSTALLING,
+	CL_SERVERMOD_ERROR
+} cl_servermod_phase_t;
+
+typedef struct cl_servermod_info_s
+{
+	cl_servermod_phase_t phase;
+	char game[MAX_QPATH];
+	char name[64];
+	char author[64];
+	char description[160];
+	char message[160];
+	int size;
+	qboolean verified;
+} cl_servermod_info_t;
+
+qboolean CL_ServerModDownload_GetInfo(cl_servermod_info_t *info);
+void CL_ServerModDownload_Accept(void);
+void CL_ServerModDownload_Cancel(void);
 void CL_AdjustAngles(void);
 void CL_BaseMove(usercmd_t *cmd, qboolean isfinal);
 void CL_FinishMove(usercmd_t *cmd, qboolean isfinal);

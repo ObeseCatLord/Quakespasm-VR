@@ -1,6 +1,7 @@
 /*
- * Explicit, asynchronous add-on catalogue. The UI owns refresh/install
- * actions; this module never changes gamedirs or starts network work itself.
+ * Explicit, asynchronous add-on catalogue. Main-thread callers own user
+ * consent and connection flow; this module never changes gamedirs or starts
+ * game-network connections itself.
  */
 #ifndef _ADDON_CATALOG_H_
 #define _ADDON_CATALOG_H_
@@ -39,6 +40,9 @@ addon_catalog_state_t AddonCatalog_State (void);
 const char *AddonCatalog_Message (void);
 int AddonCatalog_Count (void);
 const addon_catalog_entry_t *AddonCatalog_Entry (int index);
+/* Returns the raw catalogue index and copies the matching entry atomically. */
+int AddonCatalog_FindGameDir (const char *gamedir,
+	addon_catalog_entry_t *entry);
 qboolean AddonCatalog_StartInstall (int index, qboolean allow_unverified);
 float AddonCatalog_Progress (void);
 

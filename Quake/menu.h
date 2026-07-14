@@ -39,6 +39,7 @@ enum m_state_e {
 	m_weapons,
 	m_help,
 	m_mods,
+	m_servermod,
 	m_models,
 	m_quit,
 	m_lanconfig,
@@ -84,6 +85,8 @@ extern qboolean (*vid_menupointerfn)(float x, float y);
 void M_Menu_Main_f (void);
 void M_Menu_Options_f (void);
 void M_Menu_Quit_f (void);
+void M_Menu_ServerModDownload_f (void);
+void M_ServerModDownload_Close (void);
 
 void M_Print (int cx, int cy, const char *str);
 void M_PrintWhite (int cx, int cy, const char *str);
