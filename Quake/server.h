@@ -428,7 +428,20 @@ void SV_CoopReviveFromTrace(vec3_t start, vec3_t end, edict_t *ent,
                             float trace_fraction);
 qboolean SV_CoopRespawnPlaceNearPlayer(edict_t *ent);
 qboolean SV_CoopRespawnTeleportToPlayer(edict_t *ent, edict_t *target);
+qboolean SV_CoopRespawnTeleportToSpawn(edict_t *ent, edict_t *spawn);
 void SV_CoopRespawnSyncSharedKeys(edict_t *source);
+void SV_CoopRespawnRefreshClientInventory(edict_t *ent);
+
+#define SV_COOP_GIVEKEYS_SILVER 1
+#define SV_COOP_GIVEKEYS_GOLD 2
+#define SV_COOP_GIVEKEYS_CUSTOM 4
+#define SV_COOP_GIVEKEYS_ALL                                                   \
+  (SV_COOP_GIVEKEYS_SILVER | SV_COOP_GIVEKEYS_GOLD |                         \
+   SV_COOP_GIVEKEYS_CUSTOM)
+qboolean SV_CoopGiveKeys(edict_t *player, int key_flags);
+qboolean SV_CoopUsesCountedKeys(void);
+void SV_CoopSharedApplyToJoiningClient(edict_t *player);
+void SV_CoopSharedMergeRestoredClient(edict_t *source);
 qboolean SV_CoopSharedBeginClientTouch(edict_t *client);
 void SV_CoopSharedEndClientTouch(edict_t *client);
 void SV_CoopSharedResetState(void);

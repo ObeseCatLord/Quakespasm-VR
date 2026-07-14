@@ -6378,6 +6378,13 @@ static int VR_GetWeaponMenuPlayers(int *out, int max) {
   return count;
 }
 
+static qboolean VR_CanUseRespawnMenu(void) {
+  return vr_weaponmenu_player_teleport.value && cls.state == ca_connected &&
+         cls.signon == SIGNONS && cl.maxclients > 1 &&
+         cl.gametype == GAME_COOP && !cl.intermission &&
+         cl.stats[STAT_HEALTH] > 0;
+}
+
 /*
  * The wheel is also available in co-op, where a save can be a server-wide
  * operation. Keep these actions strictly single-player: the local server has
@@ -6445,6 +6452,13 @@ extern "C" void VR_SelectPlayerFromMenu(int selection) {
 
   q_snprintf(cmd, sizeof(cmd), "coop_teleport_player %d\n", selection + 1);
   Cbuf_AddText(cmd);
+}
+
+extern "C" void VR_SelectRespawnFromMenu(void) {
+  if (!VR_CanUseRespawnMenu())
+    return;
+
+  Cbuf_AddText("coop_teleport_spawn\n");
 }
 
 extern "C" void VR_SelectQuickSaveFromMenu(void) {
@@ -6598,9 +6612,11 @@ void VR_DrawWeaponMenu(void) {
   int num_visible = VR_GetVisibleWeapons(visible, MAX_DYN_WEAPONS);
   int player_indices[MAX_SCOREBOARD];
   int num_players = VR_GetWeaponMenuPlayers(player_indices, MAX_SCOREBOARD);
+  qboolean respawn_action = VR_CanUseRespawnMenu();
   qboolean quick_actions = VR_CanUseQuickSaveMenu();
 
-  if (num_visible == 0 && num_players == 0 && !quick_actions) {
+  if (num_visible == 0 && num_players == 0 && !respawn_action &&
+      !quick_actions) {
     vr_weaponmenu_selection = -1;
     vr_weaponmenu_selection_type = VR_WEAPONMENU_SELECTION_NONE;
     return;
@@ -6668,12 +6684,15 @@ void VR_DrawWeaponMenu(void) {
   qboolean weapon_position_valid[MAX_DYN_WEAPONS];
   vec3_t player_positions[MAX_SCOREBOARD];
   qboolean player_position_valid[MAX_SCOREBOARD];
+  vec3_t respawn_position;
+  qboolean respawn_position_valid = false;
   vec3_t quick_action_positions[2];
   qboolean quick_action_position_valid[2];
   memset(weapon_positions, 0, sizeof(weapon_positions));
   memset(weapon_position_valid, 0, sizeof(weapon_position_valid));
   memset(player_positions, 0, sizeof(player_positions));
   memset(player_position_valid, 0, sizeof(player_position_valid));
+  VectorCopy(vec3_origin, respawn_position);
   memset(quick_action_positions, 0, sizeof(quick_action_positions));
   memset(quick_action_position_valid, 0, sizeof(quick_action_position_valid));
 
@@ -6846,14 +6865,43 @@ void VR_DrawWeaponMenu(void) {
     current_assigned_index += items_on_this_ring;
   }
 
-  if (num_players > 0) {
+  if (num_players > 0 || respawn_action) {
     float outer_radius =
         base_radius + ((target_rings > 1) ? ((target_rings - 2) * base_radius) : 0.0f);
     float list_offset = outer_radius + 16.0f * weapon_mesh_scale;
     float text_scale = 0.30f;
     float char_width = 8.0f * text_scale;
     float line_spacing = 5.0f;
-    float start_y = ((num_players - 1) * line_spacing) * 0.5f;
+    float start_y = num_players > 0
+                        ? ((num_players - 1) * line_spacing) * 0.5f
+                        : 0.0f;
+
+    if (respawn_action) {
+      vec3_t text_pos, text_center, text_color;
+      char label[24];
+      qboolean is_selected =
+          vr_weaponmenu_selection_type == VR_WEAPONMENU_SELECTION_RESPAWN;
+      int len;
+
+      q_snprintf(label, sizeof(label), "%sRESPAWN", is_selected ? "> " : "  ");
+      len = strlen(label);
+      text_color[0] = is_selected ? 0.45f : 0.82f;
+      text_color[1] = is_selected ? 1.85f : 0.82f;
+      text_color[2] = is_selected ? 0.45f : 0.82f;
+
+      VectorCopy(origin, text_pos);
+      VectorMA(text_pos, list_offset, right, text_pos);
+      VectorMA(text_pos,
+               num_players > 0 ? start_y + line_spacing : start_y,
+               up, text_pos);
+      VR_DrawText3DOutlined(text_pos, right, up, label, text_scale, text_color,
+                            false);
+
+      VectorCopy(text_pos, text_center);
+      VectorMA(text_center, (len * char_width) * 0.5f, right, text_center);
+      VectorCopy(text_center, respawn_position);
+      respawn_position_valid = true;
+    }
 
     for (int i = 0; i < num_players; i++) {
       int playernum = player_indices[i];
@@ -6974,6 +7022,20 @@ void VR_DrawWeaponMenu(void) {
       best_score = score;
       best_index = playernum;
       best_type = VR_WEAPONMENU_SELECTION_PLAYER;
+    }
+  }
+
+  if (respawn_position_valid) {
+    vec3_t dir;
+    float score;
+
+    VectorSubtract(respawn_position, aim_origin, dir);
+    VectorNormalize(dir);
+    score = DotProduct(aim_fwd, dir);
+    if (score > best_score) {
+      best_score = score;
+      best_index = 0;
+      best_type = VR_WEAPONMENU_SELECTION_RESPAWN;
     }
   }
 

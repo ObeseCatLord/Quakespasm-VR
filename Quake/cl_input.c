@@ -241,6 +241,8 @@ void IN_VRWeaponMenuUp(void) {
 
   if (sel_type == VR_WEAPONMENU_SELECTION_PLAYER)
     VR_SelectPlayerFromMenu(sel);
+  else if (sel_type == VR_WEAPONMENU_SELECTION_RESPAWN)
+    VR_SelectRespawnFromMenu();
   else if (sel_type == VR_WEAPONMENU_SELECTION_QUICKSAVE)
     VR_SelectQuickSaveFromMenu();
   else if (sel_type == VR_WEAPONMENU_SELECTION_QUICKLOAD)
