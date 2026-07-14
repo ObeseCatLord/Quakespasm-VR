@@ -265,10 +265,14 @@ typedef struct client_s
 
 	// VR Data
 	qboolean		is_vr_client;
+	qboolean		vr_handpos_relative;
 	vec3_t			vr_handpos;
 	vec3_t			vr_handrot;
 	vec3_t			vr_roomscalemove;
 	vec3_t			vr_roomscale_accum;
+	int			net_latched_buttons;
+	int			net_latched_impulse;
+	int			net_latest_buttons;
 } client_t;
 
 void SVFTE_Ack (client_t *client, int sequence);
@@ -427,8 +431,10 @@ qboolean SV_CoopRespawnTeleportToPlayer(edict_t *ent, edict_t *target);
 void SV_CoopRespawnSyncSharedKeys(edict_t *source);
 qboolean SV_CoopSharedBeginClientTouch(edict_t *client);
 void SV_CoopSharedEndClientTouch(edict_t *client);
-qboolean SV_GetVRWeaponAimAngles(edict_t *ent, const vec3_t requested_angles,
-                                 vec3_t resolved_angles);
+void SV_CoopSharedResetState(void);
+void SV_CoopSharedResetClientSlot(int slot);
+void SV_ResetTransientClientState(void);
+void SV_ResetTransientClientSlot(int slot);
 
 qboolean SV_CheckBottom (edict_t *ent);
 qboolean SV_movestep (edict_t *ent, vec3_t move, qboolean relink);

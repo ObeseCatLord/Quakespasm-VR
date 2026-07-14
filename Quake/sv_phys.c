@@ -127,12 +127,14 @@ This allows self-damage (rocket jumping) while blocking inter-player damage.
 static float  ff_saved_takedamage[MAX_SCOREBOARD];
 static int    ff_saved_teamplay;
 static qboolean ff_active = false;
+static edict_t *ff_saved_edicts;
+static int ff_saved_maxclients;
 
-static void SV_FriendlyFireBegin(edict_t *ent) {
+static qboolean SV_FriendlyFireBegin(edict_t *ent) {
   int owner_num;
 
   if (!sv_nofriendlyfire.value || !coop.value || ff_active)
-    return;
+    return false;
 
   // Determine who the "owner" is — either the entity itself (if it's a
   // player, e.g. during PostThink for hitscan) or the entity's .owner field
@@ -144,10 +146,12 @@ static void SV_FriendlyFireBegin(edict_t *ent) {
     edict_t *owner = PROG_TO_EDICT(ent->v.owner);
     owner_num = NUM_FOR_EDICT(owner);
     if (owner_num < 1 || owner_num > svs.maxclients)
-      return; // not player-owned, nothing to protect
+      return false; // not player-owned, nothing to protect
   }
 
   ff_active = true;
+  ff_saved_edicts = qcvm->edicts;
+  ff_saved_maxclients = svs.maxclients;
   ff_saved_teamplay = pr_global_struct->teamplay;
   pr_global_struct->teamplay = 0;
 
@@ -157,17 +161,36 @@ static void SV_FriendlyFireBegin(edict_t *ent) {
     if (i != owner_num && !cl->free && svs.clients[i - 1].active)
       cl->v.takedamage = DAMAGE_NO;
   }
+
+  return true;
 }
 
 static void SV_FriendlyFireEnd(void) {
   if (!ff_active)
     return;
+
+  /* A level change invalidates the saved edict pointers. */
+  if (!qcvm || qcvm->edicts != ff_saved_edicts ||
+      svs.maxclients != ff_saved_maxclients) {
+    ff_active = false;
+    ff_saved_edicts = NULL;
+    return;
+  }
+
   pr_global_struct->teamplay = ff_saved_teamplay;
   for (int i = 1; i <= svs.maxclients; i++) {
     edict_t *cl = EDICT_NUM(i);
     cl->v.takedamage = ff_saved_takedamage[i - 1];
   }
   ff_active = false;
+  ff_saved_edicts = NULL;
+}
+
+static void SV_FriendlyFireReset(void) {
+  SV_FriendlyFireEnd();
+  ff_active = false;
+  ff_saved_edicts = NULL;
+  ff_saved_maxclients = 0;
 }
 
 /*
@@ -492,7 +515,10 @@ mod's spawn point. Fresh late-join placement remains teammate-based.
 
 typedef enum {
   COOP_RESPAWN_EXTRA_ITEMS2,
+  COOP_RESPAWN_EXTRA_ITEMS3,
   COOP_RESPAWN_EXTRA_MODITEMS,
+  COOP_RESPAWN_EXTRA_PERMITEMS,
+  COOP_RESPAWN_EXTRA_PERMS,
   COOP_RESPAWN_EXTRA_CUSTOMKEYS,
   COOP_RESPAWN_EXTRA_WEAPONS,
   COOP_RESPAWN_EXTRA_WEAPON2,
@@ -562,6 +588,7 @@ typedef struct {
 } coop_respawn_inventory_t;
 
 typedef struct {
+  qboolean mod_owns_respawn;
   qboolean was_dead;
   qboolean inventory_valid;
   qboolean force_standard_spawn;
@@ -579,7 +606,10 @@ typedef struct {
 
 static const coop_respawn_extra_field_t coop_respawn_extra_fields[] = {
     {"items2", COOP_RESPAWN_EXTRA_BITMASK, COOP_RESPAWN_ALL_ITEM_BITS},
+    {"items3", COOP_RESPAWN_EXTRA_BITMASK, COOP_RESPAWN_ALL_ITEM_BITS},
     {"moditems", COOP_RESPAWN_EXTRA_BITMASK, COOP_RESPAWN_AD_KEEP_MODITEMS},
+    {"permitems", COOP_RESPAWN_EXTRA_BITMASK, COOP_RESPAWN_ALL_ITEM_BITS},
+    {"perms", COOP_RESPAWN_EXTRA_BITMASK, COOP_RESPAWN_ALL_ITEM_BITS},
     {"customkeys", COOP_RESPAWN_EXTRA_BITMASK, COOP_RESPAWN_ALL_ITEM_BITS},
     {"weapons", COOP_RESPAWN_EXTRA_BITMASK, COOP_RESPAWN_ALL_ITEM_BITS},
     {"weapon2", COOP_RESPAWN_EXTRA_BITMASK, COOP_RESPAWN_ALL_ITEM_BITS},
@@ -633,6 +663,34 @@ static qboolean coop_respawn_death_anchor_valid[MAX_SCOREBOARD];
 static double coop_respawn_dead_since[MAX_SCOREBOARD];
 static qboolean coop_respawn_force_standard_spawn[MAX_SCOREBOARD];
 
+void SV_ResetTransientClientSlot(int slot) {
+  if (slot < 0 || slot >= MAX_SCOREBOARD)
+    return;
+
+  memset(&coop_respawn_last_inventory[slot], 0,
+         sizeof(coop_respawn_last_inventory[slot]));
+  coop_respawn_last_inventory_valid[slot] = false;
+  VectorClear(coop_respawn_last_safe_origin[slot]);
+  VectorClear(coop_respawn_last_safe_angles[slot]);
+  VectorClear(coop_respawn_last_safe_v_angle[slot]);
+  coop_respawn_last_safe_valid[slot] = false;
+  VectorClear(coop_respawn_death_anchor[slot]);
+  VectorClear(coop_respawn_death_angles[slot]);
+  VectorClear(coop_respawn_death_v_angle[slot]);
+  coop_respawn_death_anchor_valid[slot] = false;
+  coop_respawn_dead_since[slot] = 0.0;
+  coop_respawn_force_standard_spawn[slot] = false;
+}
+
+void SV_ResetTransientClientState(void) {
+  int i;
+
+  /* Restore any temporarily protected players before old edicts are freed. */
+  SV_FriendlyFireReset();
+  for (i = 0; i < MAX_SCOREBOARD; ++i)
+    SV_ResetTransientClientSlot(i);
+}
+
 static qboolean SV_CoopRespawnCanPlaceAt(edict_t *ent, vec3_t origin);
 static qboolean SV_CoopRespawnCanPlaceAtDry(edict_t *ent, vec3_t origin);
 
@@ -644,6 +702,20 @@ static qboolean SV_CoopRespawnIsAliveClient(edict_t *ent) {
 static qboolean SV_CoopRespawnDelayApplies(void) {
   return coop.value && sv_coop_respawn_near_player.value &&
          sv_coop_respawn_delay.value > 0.0f;
+}
+
+static qboolean SV_CoopRespawnModOwnsLifecycle(edict_t *ent) {
+  eval_t *customflags;
+
+  /* QBJ3-style void systems maintain their own fade, ghost and unplunge
+   * state.  Relocating the player behind that QC leaves its screen fade
+   * permanently black.  Defer only while this player is actually in the
+   * mod's CFL_PLUNGE state (bit 64), preserving ordinary coop respawns. */
+  if (!ent || ent->free || ED_FindFunction("player_spawn_void_monitor") == NULL ||
+      ED_FindFunction("void_unplunge") == NULL)
+    return false;
+  customflags = GetEdictFieldValueByName(ent, "customflags");
+  return customflags && (((int)customflags->_float & 64) != 0);
 }
 
 static void SV_CoopRespawnSetExtendedButtons(edict_t *ent, int buttons) {
@@ -1561,6 +1633,9 @@ static void SV_CoopRespawnBeginPostThink(
   double dead_time;
 
   memset(state, 0, sizeof(*state));
+  state->mod_owns_respawn = SV_CoopRespawnModOwnsLifecycle(ent);
+  if (state->mod_owns_respawn)
+    return;
   state->was_dead = SV_CoopIsDeadClient(ent);
   state->old_force_retouch = pr_global_struct->force_retouch;
   VectorCopy(ent->v.origin, state->death_origin);
@@ -1618,6 +1693,9 @@ static void SV_CoopRespawnEndPostThink(
   edict_t *anchor = NULL;
   vec3_t spot;
 
+  if (state->mod_owns_respawn)
+    return;
+
   if (!coop.value) {
     SV_CoopRespawnRestoreSuppressedInput(ent, num, state);
     return;
@@ -1667,6 +1745,7 @@ Returns false if the entity removed itself.
 */
 qboolean SV_RunThink(edict_t *ent) {
   float thinktime;
+  qboolean ff_scope;
 
   thinktime = ent->v.nextthink;
   if (thinktime <= 0 || thinktime > qcvm->time + qcvm->frametime)
@@ -1685,9 +1764,10 @@ qboolean SV_RunThink(edict_t *ent) {
   pr_global_struct->self = EDICT_TO_PROG(ent);
   pr_global_struct->other = EDICT_TO_PROG(qcvm->edicts);
 
-  SV_FriendlyFireBegin(ent);
+  ff_scope = SV_FriendlyFireBegin(ent);
   PR_ExecuteProgram(ent->v.think);
-  SV_FriendlyFireEnd();
+  if (ff_scope)
+    SV_FriendlyFireEnd();
 
   return !ent->free;
 }
@@ -1741,6 +1821,7 @@ static void SV_DebugLogTriggerImpact(edict_t *touch, edict_t *other) {
 void SV_Impact(edict_t *e1, edict_t *e2) {
   int old_self, old_other;
   qboolean coop_touch_sync;
+  qboolean ff_scope;
 
   if (!e1 || !e2 || e1->free || e2->free)
     return;
@@ -1756,9 +1837,10 @@ void SV_Impact(edict_t *e1, edict_t *e2) {
     coop_touch_sync = SV_CoopSharedBeginClientTouch(e2);
     pr_global_struct->self = EDICT_TO_PROG(e1);
     pr_global_struct->other = EDICT_TO_PROG(e2);
-    SV_FriendlyFireBegin(e1);
+    ff_scope = SV_FriendlyFireBegin(e1);
     PR_ExecuteProgram(e1->v.touch);
-    SV_FriendlyFireEnd();
+    if (ff_scope)
+      SV_FriendlyFireEnd();
     if (coop_touch_sync && !e2->free)
       SV_CoopSharedEndClientTouch(e2);
   }
@@ -1767,9 +1849,10 @@ void SV_Impact(edict_t *e1, edict_t *e2) {
     coop_touch_sync = SV_CoopSharedBeginClientTouch(e1);
     pr_global_struct->self = EDICT_TO_PROG(e2);
     pr_global_struct->other = EDICT_TO_PROG(e1);
-    SV_FriendlyFireBegin(e2);
+    ff_scope = SV_FriendlyFireBegin(e2);
     PR_ExecuteProgram(e2->v.touch);
-    SV_FriendlyFireEnd();
+    if (ff_scope)
+      SV_FriendlyFireEnd();
     if (coop_touch_sync && !e1->free)
       SV_CoopSharedEndClientTouch(e1);
   }
@@ -2498,56 +2581,65 @@ void SV_WalkMove(edict_t *ent) {
 // Replace player origin with hand muzzle position for the duration of
 // PlayerPostThink (where QuakeC fires weapons).
 //
-// For remote VR clients: the client sends its calibrated final muzzle position.
-// The server subtracts the QuakeC projectile source offset described by
-// vr_weapons.txt so mods with custom weapon source rules do not need separate
-// hardcoded multiplayer muzzle corrections.
-//
-// For the local player (singleplayer / listen-server): uses the same
-// calibrated muzzle/controller position directly.
-static qboolean SV_VRWeaponSpawnsAtSelfOrigin(edict_t *ent) {
-  return VR_WeaponSpawnsAtSelfOrigin(PR_GetString(ent->v.weaponmodel),
-                                     (int)ent->v.weapon);
-}
+// Network clients send the muzzle relative to their presented player origin.
+// Reconstructing it from the authoritative server origin prevents prediction
+// error from moving shots behind the player.  The trace also keeps a hand near
+// a wall from placing a projectile on the far side of solid geometry.
+static void SV_ClampVRMuzzleToWorld(edict_t *ent, vec3_t muzzle) {
+  vec3_t start, delta;
+  trace_t trace;
+  int i;
 
-static void SV_BeginVRWeaponAimOverride(edict_t *ent, int num,
-                                        qboolean is_remote_vr,
-                                        const vec3_t body_angles);
-static void SV_EndVRWeaponAimOverride(edict_t *ent);
+  VectorAdd(ent->v.origin, ent->v.view_ofs, start);
+  VectorSubtract(muzzle, start, delta);
+  for (i = 0; i < 3; ++i) {
+    if (!isfinite(muzzle[i])) {
+      VectorCopy(start, muzzle);
+      return;
+    }
+  }
+  if (VectorLength(delta) > 512.0f) {
+    VectorCopy(start, muzzle);
+    return;
+  }
+
+  trace = SV_Move(start, vec3_origin, vec3_origin, muzzle, MOVE_NOMONSTERS,
+                  ent);
+  if (trace.startsolid || trace.allsolid) {
+    VectorCopy(start, muzzle);
+  } else if (trace.fraction < 1.0f) {
+    VectorCopy(trace.endpos, muzzle);
+    if (VectorNormalize(delta) > 0.0f)
+      VectorMA(muzzle, -1.0f, delta, muzzle);
+  }
+}
 
 static void SV_ApplyVRWeaponOffset(edict_t *ent, int num, qboolean is_remote_vr,
                                    vec3_t restoreOrigin, vec3_t restoreVAngle) {
   _VectorCopy(ent->v.origin, restoreOrigin);
   _VectorCopy(ent->v.v_angle, restoreVAngle);
-  SV_BeginVRWeaponAimOverride(ent, num, is_remote_vr, restoreVAngle);
 
-  if (is_remote_vr) {
-    vec3_t adj;
-    vec3_t source_offset;
+  if (is_remote_vr ||
+      (vr_enabled.value && !isDedicated && num == cl.viewentity)) {
+    vec3_t muzzle, source_offset;
 
-    _VectorCopy(svs.clients[num - 1].vr_handpos, adj);
-    _VectorCopy(svs.clients[num - 1].vr_handrot, ent->v.v_angle);
+    if (is_remote_vr) {
+      if (svs.clients[num - 1].vr_handpos_relative) {
+        VectorAdd(restoreOrigin, svs.clients[num - 1].vr_handpos, muzzle);
+      } else {
+        VectorCopy(svs.clients[num - 1].vr_handpos, muzzle); /* old clients */
+      }
+      VectorCopy(svs.clients[num - 1].vr_handrot, ent->v.v_angle);
+    } else {
+      VR_GetMuzzleAdjustedHandPos(muzzle);
+      VectorCopy(cl.handrot[1], ent->v.v_angle);
+    }
+
+    SV_ClampVRMuzzleToWorld(ent, muzzle);
     VR_GetWeaponProjectileSourceOffset(PR_GetString(ent->v.weaponmodel),
                                        (int)ent->v.weapon, ent->v.v_angle,
                                        ent->v.view_ofs[2], source_offset);
-    VectorSubtract(adj, source_offset, adj);
-
-    _VectorCopy(adj, ent->v.origin);
-  } else if (vr_enabled.value && !isDedicated && num == cl.viewentity) {
-    vec3_t adj;
-    vec3_t fwd, right, up;
-    qboolean spawns_at_self_origin = SV_VRWeaponSpawnsAtSelfOrigin(ent);
-    VR_GetMuzzleAdjustedHandPos(adj);
-    _VectorCopy(cl.handrot[1], ent->v.v_angle);
-    AngleVectors(ent->v.v_angle, fwd, right, up);
-
-    _VectorCopy(adj, ent->v.origin);
-    if (spawns_at_self_origin) {
-      VectorMA(ent->v.origin, 8.0f, fwd, ent->v.origin);
-      ent->v.origin[2] += 16.0f - vr_projectilespawn_z_offset.value;
-    } else {
-      ent->v.origin[2] -= vr_projectilespawn_z_offset.value;
-    }
+    VectorSubtract(muzzle, source_offset, ent->v.origin);
   }
 }
 
@@ -2555,8 +2647,6 @@ static void SV_RestoreVRWeaponOffset(edict_t *ent, int num,
                                      qboolean is_remote_vr,
                                      vec3_t restoreOrigin,
                                      vec3_t restoreVAngle) {
-  SV_EndVRWeaponAimOverride(ent);
-
   if (is_remote_vr ||
       (vr_enabled.value && !isDedicated && num == cl.viewentity)) {
     _VectorCopy(restoreOrigin, ent->v.origin);
@@ -2572,97 +2662,6 @@ qboolean SV_IsVRClientSlot(int num) {
     return true;
 
   return vr_enabled.value && !isDedicated && num == cl.viewentity;
-}
-
-static edict_t *sv_vr_weapon_aim_entity;
-static int sv_vr_weapon_aim_depth;
-static vec3_t sv_vr_weapon_aim_body_angles;
-static vec3_t sv_vr_weapon_aim_weapon_angles;
-
-static float SV_VRWeaponAimAngleDelta(float a, float b) {
-  float delta = a - b;
-
-  while (delta > 180.0f)
-    delta -= 360.0f;
-  while (delta < -180.0f)
-    delta += 360.0f;
-
-  return delta;
-}
-
-static float SV_VRWeaponAimMaxAngleDelta(const vec3_t a, const vec3_t b) {
-  float max_delta = 0.0f;
-  int i;
-
-  for (i = 0; i < 3; i++) {
-    float delta = fabsf(SV_VRWeaponAimAngleDelta(a[i], b[i]));
-    if (delta > max_delta)
-      max_delta = delta;
-  }
-
-  return max_delta;
-}
-
-static void SV_BeginVRWeaponAimOverride(edict_t *ent, int num,
-                                        qboolean is_remote_vr,
-                                        const vec3_t body_angles) {
-  vec3_t weapon_angles;
-
-  if (!ent || ent->free || !SV_IsVRClientSlot(num))
-    return;
-
-  if (is_remote_vr) {
-    VectorCopy(svs.clients[num - 1].vr_handrot, weapon_angles);
-  } else if (vr_enabled.value && !isDedicated && num == cl.viewentity) {
-    VectorCopy(cl.handrot[1], weapon_angles);
-  } else {
-    return;
-  }
-
-  if (sv_vr_weapon_aim_depth && sv_vr_weapon_aim_entity != ent)
-    return;
-
-  if (sv_vr_weapon_aim_depth++ == 0) {
-    sv_vr_weapon_aim_entity = ent;
-    VectorCopy(body_angles, sv_vr_weapon_aim_body_angles);
-    VectorCopy(weapon_angles, sv_vr_weapon_aim_weapon_angles);
-  }
-}
-
-static void SV_EndVRWeaponAimOverride(edict_t *ent) {
-  if (!sv_vr_weapon_aim_depth || sv_vr_weapon_aim_entity != ent)
-    return;
-
-  sv_vr_weapon_aim_depth--;
-  if (!sv_vr_weapon_aim_depth)
-    sv_vr_weapon_aim_entity = NULL;
-}
-
-qboolean SV_GetVRWeaponAimAngles(edict_t *ent, const vec3_t requested_angles,
-                                 vec3_t resolved_angles) {
-  vec3_t delta;
-  float body_delta;
-  float weapon_delta;
-  int i;
-
-  if (qcvm != &sv.qcvm || !sv_vr_weapon_aim_depth ||
-      sv_vr_weapon_aim_entity != ent)
-    return false;
-
-  body_delta =
-      SV_VRWeaponAimMaxAngleDelta(requested_angles, sv_vr_weapon_aim_body_angles);
-  weapon_delta = SV_VRWeaponAimMaxAngleDelta(requested_angles,
-                                             sv_vr_weapon_aim_weapon_angles);
-  if (weapon_delta <= body_delta || body_delta > 45.0f)
-    return false;
-
-  for (i = 0; i < 3; i++) {
-    delta[i] = SV_VRWeaponAimAngleDelta(requested_angles[i],
-                                        sv_vr_weapon_aim_body_angles[i]);
-    resolved_angles[i] = sv_vr_weapon_aim_weapon_angles[i] + delta[i];
-  }
-
-  return true;
 }
 
 static edict_t *SV_CurrentGroundEntity(edict_t *ent) {
@@ -3102,9 +3101,12 @@ qboolean SV_RunClientPMoveCommand(client_t *client) {
                            restoreVAngle);
     pr_global_struct->self = EDICT_TO_PROG(ent);
     SV_CoopReviveBeginPostThink(ent);
-    SV_FriendlyFireBegin(ent);
-    PR_ExecuteProgram(pr_global_struct->PlayerPostThink);
-    SV_FriendlyFireEnd();
+    {
+      qboolean ff_scope = SV_FriendlyFireBegin(ent);
+      PR_ExecuteProgram(pr_global_struct->PlayerPostThink);
+      if (ff_scope)
+        SV_FriendlyFireEnd();
+    }
     SV_CoopReviveEndPostThink();
     SV_RestoreVRWeaponOffset(ent, num, is_remote_vr, restoreOrigin,
                              restoreVAngle);
@@ -3334,9 +3336,12 @@ void SV_Physics_Client(edict_t *ent, int num) {
   pr_global_struct->self = EDICT_TO_PROG(ent);
 
   SV_CoopReviveBeginPostThink(ent);
-  SV_FriendlyFireBegin(ent);
-  PR_ExecuteProgram(pr_global_struct->PlayerPostThink);
-  SV_FriendlyFireEnd();
+  {
+    qboolean ff_scope = SV_FriendlyFireBegin(ent);
+    PR_ExecuteProgram(pr_global_struct->PlayerPostThink);
+    if (ff_scope)
+      SV_FriendlyFireEnd();
+  }
   SV_CoopReviveEndPostThink();
 
   SV_RestoreVRWeaponOffset(ent, num, is_remote_vr, restoreOrigin,
@@ -3537,6 +3542,12 @@ void SV_Physics(double frametime) {
   edict_t *ent;
   eval_t *val;
 
+  /* PR_ExecuteProgram may abort the host frame through Host_Error.  Repair a
+   * no-friendly-fire scope left by such an abort before any enemy think/touch
+   * code can observe a player with temporary DAMAGE_NO. */
+  if (qcvm == &sv.qcvm && ff_active)
+    SV_FriendlyFireReset();
+
   if (qcvm->extglobals.physics_mode)
     physics_mode = *qcvm->extglobals.physics_mode;
   else
@@ -3645,4 +3656,8 @@ void SV_Physics(double frametime) {
 
   if (!sv_freezenonclients.value)
     qcvm->time += frametime;
+
+  /* A normal frame must never retain temporary player damage state. */
+  if (qcvm == &sv.qcvm && ff_active)
+    SV_FriendlyFireReset();
 }

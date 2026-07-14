@@ -799,6 +799,12 @@ void SV_SendServerinfo (client_t *client)
 	MSG_WriteByte (&client->message, svc_setview);
 	MSG_WriteShort (&client->message, NUM_FOR_EDICT(client->edict));
 
+	/* Comment-prefixed stufftext is a safe capability handshake: older clients
+	 * ignore the unknown command, while new clients may send body-relative VR
+	 * muzzle coordinates without breaking older servers. */
+	MSG_WriteByte (&client->message, svc_stufftext);
+	MSG_WriteString (&client->message, "//vr_relative_muzzle 1\n");
+
 	MSG_WriteByte (&client->message, svc_signonnum);
 	MSG_WriteByte (&client->message, 1);
 
@@ -3897,6 +3903,10 @@ void SV_SpawnServer (const char *server)
 	{
 		SV_SendReconnect ();
 	}
+
+	/* File-static coop/VR state must never outlive the edicts for this map. */
+	SV_ResetTransientClientState();
+	SV_CoopSharedResetState();
 
 //
 // make cvars consistant

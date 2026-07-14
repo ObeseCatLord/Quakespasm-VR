@@ -68,6 +68,7 @@ typedef struct cl_auto_reconnect_s
 	double		next_attempt_time;
 	double		retry_interval;
 	double		timeout;
+	double		settle_until;
 	int		attempts;
 	qboolean	switch_pending;
 } cl_auto_reconnect_t;
@@ -124,28 +125,20 @@ static qboolean CL_AutoReconnect_GameExists(const char *game)
 static qboolean CL_AutoReconnect_ResolveInstalledGame(const char *game,
 	char *resolved, size_t resolvedsize)
 {
-	filelist_item_t *mod;
+	/*
+	 * Serverinfo parsing is on the connection hot path.  Rebuilding the full
+	 * Mods list here can synchronously walk every installed add-on (and its
+	 * metadata) just as the old connection is being torn down.  The game
+	 * command needs only a validated, installed directory, so use the same
+	 * direct check as CL_AutoReconnect_Start instead.
+	 */
+	if (!CL_AutoReconnect_IsSafeGame(game) ||
+		!CL_AutoReconnect_GameExists(game))
+		return false;
 
-	if (!q_strcasecmp(game, GAMENAME))
-	{
-		if (!CL_AutoReconnect_GameExists(GAMENAME))
-			return false;
-		q_strlcpy(resolved, GAMENAME, resolvedsize);
-		return true;
-	}
-
-	/* Only auto-select directories recognized by the installed Mods list. */
-	Modlist_Rebuild();
-	for (mod = modlist; mod; mod = mod->next)
-	{
-		if (!q_strcasecmp(mod->name, game))
-		{
-			q_strlcpy(resolved, mod->name, resolvedsize);
-			return true;
-		}
-	}
-
-	return false;
+	q_strlcpy(resolved, !q_strcasecmp(game, GAMENAME) ? GAMENAME : game,
+		resolvedsize);
+	return true;
 }
 
 qboolean CL_AutoReconnect_IsActive(void)
@@ -491,7 +484,6 @@ static qboolean CL_AutoReconnect_Start(const char *game, const char *server,
 	SCR_CenterPrint(va("Switching to %s\nReconnecting soon...", cl_auto_reconnect.game));
 	cls.demonum = -1;
 	CL_Disconnect();
-	CL_ClearState();
 
 	return true;
 }
@@ -517,7 +509,6 @@ qboolean CL_MaybeSwitchServerGame(const char *serverdirs)
 		Con_Warning("Automatic game switch did not resolve the server mismatch; disconnecting.\n");
 		cl_auto_reconnect.active = false;
 		CL_Disconnect();
-		CL_ClearState();
 		return true;
 	}
 
@@ -537,7 +528,7 @@ qboolean CL_MaybeSwitchServerGame(const char *serverdirs)
 
 	if (!CL_AutoReconnect_ResolveInstalledGame(requested, resolved, sizeof(resolved)))
 	{
-		Con_Warning("Server game \"%s\" is not available in the local Mods list.\n",
+		Con_Warning("Server game \"%s\" is not installed locally.\n",
 			requested);
 		return false;
 	}
@@ -597,6 +588,16 @@ void CL_AutoReconnect_Frame(void)
 	{
 		cl_auto_reconnect.switch_pending = false;
 		Cmd_ExecuteString(va("game %s\n", cl_auto_reconnect.game), src_command);
+		/*
+		 * COM_Game_f switches filesystems synchronously, then queues quake.rc,
+		 * postcfg, and migration commands.  CL_AutoReconnect_Frame runs after
+		 * Cbuf_Execute, so defer the network attempt long enough for at least
+		 * the following command-buffer frame(s) to finish and for the renderer
+		 * reset to settle.  Preserve a longer user-specified delay.
+		 */
+		cl_auto_reconnect.settle_until = realtime + 0.25;
+		if (cl_auto_reconnect.next_attempt_time < cl_auto_reconnect.settle_until)
+			cl_auto_reconnect.next_attempt_time = cl_auto_reconnect.settle_until;
 		return;
 	}
 
@@ -613,6 +614,13 @@ void CL_AutoReconnect_Frame(void)
 
 	if (realtime < cl_auto_reconnect.next_attempt_time)
 		return;
+
+	/* Do not race quake.rc/config.cfg/postcfg chains which use `wait`. */
+	if (!Cbuf_IsEmpty())
+	{
+		cl_auto_reconnect.next_attempt_time = realtime + 0.05;
+		return;
+	}
 
 	if (!COM_GameDirMatches(cl_auto_reconnect.game))
 	{

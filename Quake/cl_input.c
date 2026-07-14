@@ -509,8 +509,11 @@ static void CL_WriteUsercmd(sizebuf_t *buf, const usercmd_t *histcmd) {
   int i;
   int extbits = 0;
 
-  if (histcmd->vr_active)
+  if (histcmd->vr_active) {
     extbits |= MOVEEXT_VR;
+    if (histcmd->vr_handpos_relative)
+      extbits |= MOVEEXT_VR_RELATIVE;
+  }
   if (histcmd->weapon || histcmd->cursor_screen[0] || histcmd->cursor_screen[1] ||
       histcmd->cursor_start[0] || histcmd->cursor_start[1] || histcmd->cursor_start[2] ||
       histcmd->cursor_impact[0] || histcmd->cursor_impact[1] || histcmd->cursor_impact[2] ||
@@ -594,6 +597,8 @@ void CL_FlushAckFrames(void)
 
 void CL_SendMove(const usercmd_t *cmd) {
   int seq;
+  int first_seq;
+  int packet_cmds;
   qboolean local_singleplayer;
   usercmd_t sendcmd;
   sizebuf_t buf;
@@ -627,10 +632,20 @@ void CL_SendMove(const usercmd_t *cmd) {
   Q_memset(sendcmd.vr_handpos, 0, sizeof(sendcmd.vr_handpos));
   Q_memset(sendcmd.vr_handrot, 0, sizeof(sendcmd.vr_handrot));
   sendcmd.vr_active = false;
+  sendcmd.vr_handpos_relative = false;
 
   if (vr_enabled.value && (int)vr_aimmode.value == VR_AIMMODE_CONTROLLER) {
+    vec3_t world_muzzle;
+
     sendcmd.vr_active = true;
-    VR_GetMuzzleAdjustedHandPos(sendcmd.vr_handpos);
+    VR_GetMuzzleAdjustedHandPos(world_muzzle);
+    if (cl.vr_relative_muzzle_supported) {
+      sendcmd.vr_handpos_relative = true;
+      VectorSubtract(world_muzzle, cl.entities[cl.viewentity].origin,
+                     sendcmd.vr_handpos);
+    } else {
+      VectorCopy(world_muzzle, sendcmd.vr_handpos);
+    }
     VectorCopy(cl.handrot[1], sendcmd.vr_handrot);
   } else {
     VectorCopy(vec3_origin, sendcmd.vr_roomscalemove);
@@ -679,9 +694,20 @@ void CL_SendMove(const usercmd_t *cmd) {
 
   CL_WriteAckFrames(&buf);
 
-  MSG_WriteByte(&buf, clc_move);
-  MSG_WriteShort(&buf, sendcmd.sequence & 0xffff);
-  CL_WriteUsercmd(&buf, &sendcmd);
+  /* Repeat the last two sequenced commands.  The server discards sequences it
+   * already accepted, while a dropped packet no longer loses a one-frame fire
+   * press or weapon impulse. */
+  first_seq = q_max(2, sendcmd.sequence - 2);
+  packet_cmds = 0;
+  for (seq = first_seq; seq <= sendcmd.sequence; ++seq) {
+    const usercmd_t *packetcmd = &cl.movecmds[seq & (CL_MOVE_HISTORY - 1)];
+    if (packetcmd->sequence != seq)
+      continue;
+    MSG_WriteByte(&buf, clc_move);
+    MSG_WriteShort(&buf, packetcmd->sequence & 0xffff);
+    CL_WriteUsercmd(&buf, packetcmd);
+    packet_cmds++;
+  }
   if (buf.overflowed) {
     Con_Printf("CL_SendMove: move packet overflowed\n");
     return;
@@ -694,8 +720,15 @@ void CL_SendMove(const usercmd_t *cmd) {
   }
 
   cl.net_move_packets_sent++;
-  cl.net_move_cmds_sent++;
-  cl.net_move_last_packet_cmds = 1;
+  cl.net_move_cmds_sent += packet_cmds;
+  cl.net_move_last_packet_cmds = packet_cmds;
+}
+
+static void CL_VRRelativeMuzzle_f(void) {
+  if (cmd_source != src_server)
+    return;
+  cl.vr_relative_muzzle_supported =
+      Cmd_Argc() < 2 || Q_atoi(Cmd_Argv(1)) != 0;
 }
 
 /*
@@ -704,6 +737,7 @@ CL_InitInput
 ============
 */
 void CL_InitInput(void) {
+  Cmd_AddCommand_ServerCommand("vr_relative_muzzle", CL_VRRelativeMuzzle_f);
   Cmd_AddCommand("+moveup", IN_UpDown);
   Cmd_AddCommand("-moveup", IN_UpUp);
   Cmd_AddCommand("+movedown", IN_DownDown);

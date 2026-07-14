@@ -926,7 +926,10 @@ void GL_SetCanvas (canvastype newcanvas)
 
 	currentcanvas = newcanvas;
 
-	if (vr_enabled.value && !con_forcedup)
+	/* VR_Draw2D supplies a perspective projection and a world-space transform
+	 * for the classic 2D canvases.  Preserve those matrices for both eyes even
+	 * when a disconnected/loading client has forced the console up. */
+	if (vr_enabled.value && (!con_forcedup || R_IsVRStereoFrame ()))
 		return;
 
 	glMatrixMode(GL_PROJECTION);

@@ -81,7 +81,7 @@ cvar_t	noexit = {"noexit","0",CVAR_NOTIFY|CVAR_SERVERINFO};
 cvar_t	skill = {"skill","1",CVAR_NONE};			// 0 - 3
 cvar_t	deathmatch = {"deathmatch","0",CVAR_NONE};	// 0, 1, or 2
 cvar_t	coop = {"coop","0",CVAR_NONE};			// 0 or 1
-cvar_t	sv_nofriendlyfire = {"sv_nofriendlyfire","1",CVAR_NOTIFY|CVAR_SERVERINFO};
+cvar_t	sv_nofriendlyfire = {"sv_nofriendlyfire","0",CVAR_NOTIFY|CVAR_SERVERINFO};
 cvar_t	sv_coop_noplayerclip = {"sv_coop_noplayerclip","1",CVAR_NOTIFY|CVAR_SERVERINFO};
 cvar_t	sv_save_multiplayer = {"sv_save_multiplayer","1",CVAR_NONE};
 cvar_t	sv_cmdfile = {"sv_cmdfile","",CVAR_NONE};
@@ -891,7 +891,10 @@ void SV_DropClient (qboolean crash)
 {
 	int		saveSelf;
 	int		i;
+	int		dropped_slot;
 	client_t *client;
+
+	dropped_slot = host_client - svs.clients;
 
 	if (!crash)
 	{
@@ -927,6 +930,8 @@ void SV_DropClient (qboolean crash)
 	host_client->name[0] = 0;
 	host_client->old_frags = -999999;
 	net_activeconnections--;
+	SV_ResetTransientClientSlot(dropped_slot);
+	SV_CoopSharedResetClientSlot(dropped_slot);
 
 // send notification to all clients
 	for (i = 0, client = svs.clients; i < svs.maxclients; i++, client++)

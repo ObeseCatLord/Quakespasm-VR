@@ -998,7 +998,7 @@ void SCR_TileClear(void) {
 void SCR_UpdateScreenContent(void) {
   V_RenderView();
 
-  if (vr_enabled.value && !con_forcedup) {
+  if (vr_enabled.value) {
     VR_Draw2D();
   } else {
     GL_Set2D();
@@ -1084,7 +1084,13 @@ void SCR_UpdateScreen(void) {
   //
   SCR_SetUpToDrawConsole();
 
-  if (vr_enabled.value && !con_forcedup) {
+  /*
+   * Keep submitting eye textures while the client has no signed-on world.
+   * Standalone menus and server-directed disconnect/mod-switch menus use
+   * con_forcedup; falling back to the desktop path there leaves the headset
+   * displaying a stale (and often black) compositor image.
+   */
+  if (vr_enabled.value) {
     VR_UpdateScreenContent(); // phoboslab
   } else {
     // Flat mode: viewangles is the camera (mouse + demo recordings write here);
