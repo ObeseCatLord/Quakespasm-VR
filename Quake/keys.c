@@ -48,6 +48,7 @@ char *keybindings[MAX_KEYS];
 qboolean consolekeys[MAX_KEYS]; // if true, can't be rebound while in console
 qboolean menubound[MAX_KEYS];   // if true, can't be rebound while in menu
 qboolean keydown[MAX_KEYS];
+static qboolean key_menu_consumed[MAX_KEYS];
 
 typedef struct {
   const char *name;
@@ -988,9 +989,12 @@ applicable.
 void Key_EventWithKeycode(int key, qboolean down, int keycode) {
   char *kb;
   char cmd[1024];
+  qboolean was_down;
 
   if (key < 0 || key >= MAX_KEYS)
     return;
+
+  was_down = keydown[key];
 
   // handle fullscreen toggle
   if (down && (key == K_ENTER || key == K_KP_ENTER) && keydown[K_ALT]) {
@@ -1012,6 +1016,14 @@ void Key_EventWithKeycode(int key, qboolean down, int keycode) {
     return; // ignore stray key up events
 
   keydown[key] = down;
+
+  /* A menu-local key press must also own its matching release. Otherwise a
+   * consumed F1 bound to a button command (for example +zoom) emits only the
+   * release command after refreshing the add-on catalogue. */
+  if (!down && key_menu_consumed[key]) {
+    key_menu_consumed[key] = false;
+    return;
+  }
 
   if (key_inputgrab.active) {
     if (down) {
@@ -1074,6 +1086,19 @@ void Key_EventWithKeycode(int key, qboolean down, int keycode) {
   if (cls.demoplayback && down && consolekeys[key] && key_dest == key_game &&
       key != K_TAB) {
     M_ToggleMenu_f();
+    return;
+  }
+
+  /* Some menus assign actions to keys that are normally allowed to execute
+   * their global bindings while a menu is open. Give those local actions the
+   * first chance to consume the key. */
+  if (down && key_dest == key_menu && M_ConsumesBoundKey(key)) {
+    /* Do not claim an autorepeat whose original down edge occurred outside
+     * this menu. Its eventual release still belongs to that original press. */
+    if (was_down)
+      return;
+    key_menu_consumed[key] = true;
+    M_Keydown(key);
     return;
   }
 

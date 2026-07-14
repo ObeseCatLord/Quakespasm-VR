@@ -2535,8 +2535,28 @@ qboolean COM_GameDirMatches(const char *tdirs)
 	return !q_strcasecmp(odirs, tdirs);
 }
 
+/*
+=================
+COM_CurrentGameHasStartMap
+
+Do not treat id1's maps/start.bsp as a start map supplied by an active mod.
+All search paths mounted for the current game directory share the highest
+path id, while inherited base-game files retain a lower id.
+=================
+*/
+static qboolean COM_CurrentGameHasStartMap (void)
+{
+	unsigned int path_id;
+
+	return com_searchpaths &&
+		COM_FileExists ("maps/start.bsp", &path_id) &&
+		path_id == com_searchpaths->path_id;
+}
+
 static void COM_Game_f (void)
 {
+	qboolean play_after_change = !q_strcasecmp(Cmd_Argv(0), "playgame");
+
 	if (Cmd_Argc() > 1)
 	{
 		const char *p = Cmd_Argv(1);
@@ -2576,6 +2596,12 @@ static void COM_Game_f (void)
 			}
 		}
 
+		/* A user-selected game change supersedes any pending server-directed
+		 * reconnect. The reconnect worker marks its own synchronous command so
+		 * that switch can retain the delayed connection state. */
+		if (!CL_AutoReconnect_IsSwitchCommand())
+			CL_AutoReconnect_Cancel();
+
 		if (!q_strcasecmp(p, COM_SkipPath(com_gamedir))) //no change
 		{
 			if (com_searchpaths->path_id > 1) { //current game not id1
@@ -2592,6 +2618,8 @@ static void COM_Game_f (void)
 			}
 			else { _same:
 				Con_Printf("\"game\" is already \"%s\"\n", COM_SkipPath(com_gamedir));
+				if (play_after_change && COM_CurrentGameHasStartMap ())
+					Cbuf_AddText("map start\n");
 				return;
 			}
 		}
@@ -2690,7 +2718,8 @@ static void COM_Game_f (void)
 		Cbuf_AddText ("cl_migrate_network_defaults\n");
 		Cbuf_AddText ("vr_migrate_movement_defaults\n");
 
-		if (vr_enabled.value && !CL_AutoReconnect_IsActive())
+		if ((play_after_change || vr_enabled.value) &&
+			!CL_AutoReconnect_IsActive() && COM_CurrentGameHasStartMap ())
 		{
 			Cbuf_AddText("map start\n");
 		}
@@ -2712,6 +2741,7 @@ void COM_InitFilesystem (void) //johnfitz -- modified based on topaz's tutorial
 	Cvar_RegisterVariable (&cmdline);
 	Cmd_AddCommand ("path", COM_Path_f);
 	Cmd_AddCommand ("game", COM_Game_f); //johnfitz
+	Cmd_AddCommand ("playgame", COM_Game_f);
 
 	i = COM_CheckParm ("-basedir");
 	if (i && i < com_argc-1)

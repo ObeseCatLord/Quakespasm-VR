@@ -796,6 +796,24 @@ static void SV_FinishLatestUsercmd(client_t *client) {
   client->edict->v.impulse = 0;
 }
 
+/*
+ * Latest-command clients use the engine's normal movement path, but QuakeC
+ * does not consume attack buttons and impulses until PlayerPreThink/
+ * PlayerPostThink in SV_Physics.  Finish the one-frame latch only after that
+ * physics pass; clearing it in SV_RunClients drops taps and weapon impulses
+ * before mods can observe them.
+ */
+void SV_FinishLatestUsercmds(void) {
+  int i;
+  client_t *client;
+
+  for (i = 0, client = svs.clients; i < svs.maxclients; i++, client++) {
+    if (!client->active || !client->spawned || client->usingpmove)
+      continue;
+    SV_FinishLatestUsercmd(client);
+  }
+}
+
 void SV_FinishPMoveUsercmd(client_t *client) {
   client->net_move_cmds_simulated++;
   client->net_move_last_sim_seconds = client->cmd.seconds;
@@ -1198,8 +1216,6 @@ void SV_RunClients(void) {
       if (!host_client->usingpmove)
         SV_ClearStaleClientInput(host_client);
       SV_ClientThink();
-      if (!host_client->usingpmove)
-        SV_FinishLatestUsercmd(host_client);
     } else if (!host_client->usingpmove) {
       /* A tap received entirely while paused must not fire on unpause. */
       host_client->net_latched_buttons = 0;

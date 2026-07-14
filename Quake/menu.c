@@ -2797,6 +2797,8 @@ static void M_Mods_Draw(void) {
     if (m_mods_catalogue) {
       if (AddonCatalog_State() == ADDON_CATALOG_REFRESHING)
         M_PrintWhite(80, 88, "Refreshing catalogue...");
+      else if (vr_enabled.value)
+        M_PrintWhite(48, 88, "Right A or point to refresh.");
       else
         M_PrintWhite(52, 88, "Press F1 to refresh catalogue.");
     } else {
@@ -2857,10 +2859,21 @@ static void M_Mods_Draw(void) {
     M_Print(32, 168, AddonCatalog_Message());
   else
     M_Print(32, 168, "Enter: play     Type: search");
-  M_Print(32, 176, "Tab: installed/catalogue");
-  M_Print(32, 184, "PgUp/PgDn: page Del: clear");
-  if (m_mods_catalogue)
-    M_Print(216, 176, "F1: refresh");
+  if (vr_enabled.value) {
+    if (m_mods_catalogue)
+      M_Print(24, 176, "Trigger/L-A: select  R-A: refresh");
+    else
+      M_Print(32, 176, "Trigger/L-A: play  Stick: move");
+    M_Print(32, 184, "[installed/catalogue]");
+    if (m_mods_catalogue)
+      M_Print(208, 184, "[refresh]");
+  } else {
+    M_Print(32, 176, "Tab: installed/catalogue");
+    if (m_mods_catalogue)
+      M_Print(32, 184, "F1: refresh  PgUp/PgDn: page");
+    else
+      M_Print(32, 184, "PgUp/PgDn: page Del: clear");
+  }
 }
 
 static void M_Mods_MoveCursor(int amount) {
@@ -2967,6 +2980,7 @@ static void M_Mods_Key(int key) {
     break;
 
   case K_F1:
+  case K_XBUTTON: /* right-controller A */
     if (m_mods_catalogue) {
       AddonCatalog_Refresh();
       m_mods_confirm = -1;
@@ -2988,7 +3002,7 @@ static void M_Mods_Key(int key) {
         IN_Activate();
         key_dest = key_game;
         m_state = m_none;
-        Cbuf_AddText(va("game \"%s\"\n", catalogue->gamedir));
+        Cbuf_AddText(va("playgame \"%s\"\n", catalogue->gamedir));
       } else if (m_mods_confirm == m_mods_cursor) {
         if (AddonCatalog_StartInstall(catalogue_index, true))
           m_mods_confirm = -1;
@@ -3003,7 +3017,7 @@ static void M_Mods_Key(int key) {
         IN_Activate();
         key_dest = key_game;
         m_state = m_none;
-        Cbuf_AddText(va("game \"%s\"\n", item->name));
+        Cbuf_AddText(va("playgame \"%s\"\n", item->name));
       }
     }
     break;
@@ -3255,6 +3269,18 @@ void M_Draw(void) {
   }
 
   S_ExtraUpdate();
+}
+
+qboolean M_ConsumesBoundKey(int key) {
+  if (m_state != m_mods)
+    return false;
+
+  /* These buttons are menu actions here, so own both their press and release
+   * even when the user has also bound them to a gameplay +command. */
+  if (key == K_ABUTTON)
+    return true;
+
+  return m_mods_catalogue && (key == K_F1 || key == K_XBUTTON);
 }
 
 void M_Keydown(int key) {
@@ -3547,13 +3573,24 @@ static qboolean M_PointerHit(float x, float y) {
       M_Mods_KeepCursorVisible();
       return true;
     }
-    if (x >= 32 && x < 200 && y >= 168 && y < 184) {
-      m_pointer_activate_key = K_TAB;
-      return true;
-    }
-    if (m_mods_catalogue && x >= 200 && x < 312 && y >= 168 && y < 184) {
-      m_pointer_activate_key = K_F1;
-      return true;
+    if (vr_enabled.value) {
+      if (x >= 32 && x < 200 && y >= 184 && y < 192) {
+        m_pointer_activate_key = K_TAB;
+        return true;
+      }
+      if (m_mods_catalogue && x >= 208 && x < 280 && y >= 184 && y < 192) {
+        m_pointer_activate_key = K_F1;
+        return true;
+      }
+    } else {
+      if (x >= 32 && x < 224 && y >= 176 && y < 184) {
+        m_pointer_activate_key = K_TAB;
+        return true;
+      }
+      if (m_mods_catalogue && x >= 32 && x < 120 && y >= 184 && y < 192) {
+        m_pointer_activate_key = K_F1;
+        return true;
+      }
     }
     break;
   }

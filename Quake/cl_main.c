@@ -74,6 +74,7 @@ typedef struct cl_auto_reconnect_s
 } cl_auto_reconnect_t;
 
 static cl_auto_reconnect_t cl_auto_reconnect;
+static qboolean cl_auto_reconnect_switch_command;
 static char cl_connect_target[NET_NAMELEN];
 
 static qboolean CL_AutoReconnect_IsSafeGame(const char *game)
@@ -144,6 +145,11 @@ static qboolean CL_AutoReconnect_ResolveInstalledGame(const char *game,
 qboolean CL_AutoReconnect_IsActive(void)
 {
 	return cl_auto_reconnect.active;
+}
+
+qboolean CL_AutoReconnect_IsSwitchCommand(void)
+{
+	return cl_auto_reconnect_switch_command;
 }
 
 void CL_AutoReconnect_Cancel(void)
@@ -587,7 +593,9 @@ void CL_AutoReconnect_Frame(void)
 	if (cl_auto_reconnect.switch_pending)
 	{
 		cl_auto_reconnect.switch_pending = false;
+		cl_auto_reconnect_switch_command = true;
 		Cmd_ExecuteString(va("game %s\n", cl_auto_reconnect.game), src_command);
+		cl_auto_reconnect_switch_command = false;
 		/*
 		 * COM_Game_f switches filesystems synchronously, then queues quake.rc,
 		 * postcfg, and migration commands.  CL_AutoReconnect_Frame runs after

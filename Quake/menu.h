@@ -68,6 +68,7 @@ typedef enum {
 //
 void M_Init (void);
 void M_Keydown (int key);
+qboolean M_ConsumesBoundKey (int key);
 void M_Charinput (int key);
 qboolean M_TextEntry (void);
 void M_ToggleMenu_f (void);
