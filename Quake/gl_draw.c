@@ -36,6 +36,7 @@ qpic_t		*draw_backtile;
 gltexture_t *char_texture; //johnfitz
 qpic_t		*pic_ovr, *pic_ins; //johnfitz -- new cursor handling
 qpic_t		*pic_nul; //johnfitz -- for missing gfx, don't crash
+qpic_t		*pic_crosshair;
 
 //johnfitz -- new pics
 byte pic_ovr_data[8][8] =
@@ -544,6 +545,7 @@ void Draw_Init (void)
 	pic_ins = Draw_MakePic ("ins", 8, 9, &pic_ins_data[0][0]);
 	pic_ovr = Draw_MakePic ("ovr", 8, 8, &pic_ovr_data[0][0]);
 	pic_nul = Draw_MakePic ("nul", 8, 8, &pic_nul_data[0][0]);
+	pic_crosshair = Draw_MakePic ("crosshair", 8, 8, &pic_crosshair_data[0][0]);
 
 	// load game pics
 	Draw_LoadPics ();
