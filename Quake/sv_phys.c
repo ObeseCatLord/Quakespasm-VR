@@ -3496,6 +3496,26 @@ SV_Physics_Toss
 Toss, bounce, and fly movement.  When onground, do nothing.
 =============
 */
+static qboolean SV_TossGroundIsValid(edict_t *ent) {
+  int groundref;
+  edict_t *ground;
+
+  groundref = ent->v.groundentity;
+
+  // A zero ground reference is the world entity, which remains solid for the
+  // lifetime of the server.  Non-zero references can become stale when QC
+  // hides or frees a moving platform underneath a pickup or projectile.
+  if (!groundref)
+    return true;
+
+  if (groundref < 0 || groundref % qcvm->edict_size != 0 ||
+      groundref > (qcvm->num_edicts - 1) * qcvm->edict_size)
+    return false;
+
+  ground = PROG_TO_EDICT(groundref);
+  return !ground->free && ground->v.solid >= SOLID_BBOX;
+}
+
 void SV_Physics_Toss(edict_t *ent) {
   trace_t trace;
   vec3_t move;
@@ -3505,9 +3525,16 @@ void SV_Physics_Toss(edict_t *ent) {
   if (!SV_RunThink(ent))
     return;
 
-  // if onground, return without moving
-  if (((int)ent->v.flags & FL_ONGROUND))
-    return;
+  // If the supporting entity was hidden or freed by QC, release the toss
+  // entity instead of leaving it suspended forever with stale ground state.
+  // This preserves stable contact on live pushers while allowing items and
+  // projectiles to fall from disappearing platforms.
+  if ((int)ent->v.flags & FL_ONGROUND) {
+    if (SV_TossGroundIsValid(ent))
+      return;
+    ent->v.flags = (int)ent->v.flags & ~FL_ONGROUND;
+    ent->v.groundentity = 0;
+  }
 
   SV_CheckVelocity(ent);
 
