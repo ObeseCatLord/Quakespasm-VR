@@ -455,14 +455,10 @@ static int VR_DynWeaponTrustedItemBits(void) {
 }
 
 static qboolean VR_DynWeaponCanUseItemOwnership(const vr_dyn_weapon_t *w) {
-  if (!w->use_item_ownership && !w->from_schema && !w->game_profile)
+  if (!w->use_item_ownership && !w->from_schema)
     return false;
   if (!w->bitmask)
     return false;
-
-  if (w->from_schema || w->game_profile)
-    return true;
-
   return (w->bitmask & VR_DynWeaponTrustedItemBits()) == w->bitmask;
 }
 
