@@ -141,8 +141,8 @@ rewrite_stale_network_defaults() {
 			rewritten(name, "0")
 			next
 		}
-		if (name == "sys_ticrate" && (value + 0) != 0.05) {
-			rewritten(name, "0.05")
+		if (name == "sys_ticrate" && (value + 0) != 0.025) {
+			rewritten(name, "0.025")
 			next
 		}
 		if (name == "sv_maxpacketsize" && (value + 0) != 1400) {
