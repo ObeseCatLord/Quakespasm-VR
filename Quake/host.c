@@ -169,9 +169,6 @@ static void Host_MigrateNetworkDefaults_f (void)
 	if (!Host_CommandLineSetsCvar ("host_timescale") &&
 		!Host_ValueMatchesOldDefault (host_timescale.value, 0.0f))
 		Cvar_SetQuick (&host_timescale, "0");
-	if (!Host_CommandLineSetsCvar ("sys_ticrate") &&
-		!Host_ValueMatchesOldDefault (sys_ticrate.value, 0.05f))
-		Cvar_SetQuick (&sys_ticrate, "0.05");
 	if (!Host_CommandLineSetsCvar ("cl_portpingprobe_enable") &&
 		!Host_ValueMatchesOldDefault (cl_portpingprobe_enable.value, 0.0f))
 		Cvar_SetQuick (&cl_portpingprobe_enable, "0");
