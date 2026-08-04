@@ -673,6 +673,7 @@ static vec3_t coop_respawn_death_v_angle[MAX_SCOREBOARD];
 static qboolean coop_respawn_death_anchor_valid[MAX_SCOREBOARD];
 static double coop_respawn_dead_since[MAX_SCOREBOARD];
 static qboolean coop_respawn_force_standard_spawn[MAX_SCOREBOARD];
+static qboolean coop_respawn_mod_cleanup_pending[MAX_SCOREBOARD];
 
 void SV_ResetTransientClientSlot(int slot) {
   if (slot < 0 || slot >= MAX_SCOREBOARD)
@@ -691,6 +692,7 @@ void SV_ResetTransientClientSlot(int slot) {
   coop_respawn_death_anchor_valid[slot] = false;
   coop_respawn_dead_since[slot] = 0.0;
   coop_respawn_force_standard_spawn[slot] = false;
+  coop_respawn_mod_cleanup_pending[slot] = false;
 }
 
 void SV_ResetTransientClientState(void) {
@@ -715,49 +717,172 @@ static qboolean SV_CoopRespawnDelayApplies(void) {
          sv_coop_respawn_delay.value > 0.0f;
 }
 
-static qboolean SV_CoopRespawnModOwnsLifecycle(edict_t *ent) {
-  eval_t *customflags;
+#define QBJ3_CFL_PLUNGE 64
+#define QBJ3_CFL_LIMBO 2048
+#define QBJ3_VOID_CSHIFT_PRIORITY 70.0f
+#define QBJ3_VOID_CSHIFT_DENSITY 255.0f
 
-  /* QBJ3-style void systems maintain their own fade, ghost and unplunge
-   * state.  Relocating the player behind that QC leaves its screen fade
-   * permanently black.  Defer only while this player is actually in the
-   * mod's CFL_PLUNGE state (bit 64), preserving ordinary coop respawns. */
-  if (!ent || ent->free || ED_FindFunction("player_spawn_void_monitor") == NULL ||
-      ED_FindFunction("void_unplunge") == NULL)
-    return false;
-  customflags = GetEdictFieldValueByName(ent, "customflags");
-  return customflags && (((int)customflags->_float & 64) != 0);
+static qboolean SV_CoopRespawnFieldHasType(const char *name,
+                                           int expected_type) {
+  ddef_t *def = ED_FindField(name);
+
+  return def && (def->type & ~DEF_SAVEGLOBAL) == expected_type;
 }
 
-static void SV_CoopRespawnFinishModLifecycle(edict_t *ent) {
-  dfunction_t *unplunge;
-  eval_t *customflags;
-  int old_self, old_other;
+static eval_t *SV_CoopRespawnGetTypedField(edict_t *ent, const char *name,
+                                           int expected_type) {
+  ddef_t *def;
 
-  if (!ent || ent->free || !SV_CoopRespawnIsAliveClient(ent))
-    return;
+  if (!ent || ent->free)
+    return NULL;
+  def = ED_FindField(name);
+  if (!def || (def->type & ~DEF_SAVEGLOBAL) != expected_type)
+    return NULL;
+  return GetEdictFieldValue(ent, def->ofs);
+}
 
-  /* QBJ3 clears CFL_PLUNGE in PutClientInServer, but its void-fall helper
-   * may still be alive and keep its priority-110 black cshift applied.  Call
-   * its documented cleanup after a successful QC respawn.  Do not interrupt
-   * QBJ3's intentional teleport-limbo transition (bit 2048). */
-  customflags = GetEdictFieldValueByName(ent, "customflags");
-  if (customflags && ((int)customflags->_float & 2048))
-    return;
+static dfunction_t *SV_CoopRespawnFindFunction(const char *name,
+                                               int numparms) {
+  dfunction_t *func = ED_FindFunction(name);
 
-  unplunge = ED_FindFunction("void_unplunge");
-  if (!unplunge)
-    return;
+  if (!func || func->numparms != numparms)
+    return NULL;
+  if (numparms == 1 && func->parm_size[0] != 1)
+    return NULL;
+  return func;
+}
+
+static qboolean SV_CoopRespawnCshiftMatchesVoidLayer(edict_t *ent,
+                                                     const char *suffix) {
+  char name[32];
+  eval_t *priority, *density, *color;
+
+  q_snprintf(name, sizeof(name), "csf_priority%s", suffix);
+  priority = SV_CoopRespawnGetTypedField(ent, name, ev_float);
+  q_snprintf(name, sizeof(name), "csf_density%s", suffix);
+  density = SV_CoopRespawnGetTypedField(ent, name, ev_float);
+  q_snprintf(name, sizeof(name), "csf_color%s", suffix);
+  color = SV_CoopRespawnGetTypedField(ent, name, ev_vector);
+  if (!priority || !density || !color)
+    return false;
+
+  return fabs(priority->_float - QBJ3_VOID_CSHIFT_PRIORITY) < 0.01f &&
+         fabs(density->_float - QBJ3_VOID_CSHIFT_DENSITY) < 0.01f &&
+         fabs(color->vector[0] - 32.0f) < 0.01f &&
+         fabs(color->vector[1]) < 0.01f && fabs(color->vector[2]) < 0.01f;
+}
+
+static qboolean SV_CoopRespawnHasVoidCshift(edict_t *ent) {
+  return SV_CoopRespawnCshiftMatchesVoidLayer(ent, "") ||
+         SV_CoopRespawnCshiftMatchesVoidLayer(ent, "_prev");
+}
+
+static int SV_CoopRespawnCustomFlags(edict_t *ent, qboolean *valid) {
+  eval_t *customflags =
+      SV_CoopRespawnGetTypedField(ent, "customflags", ev_float);
+
+  if (valid)
+    *valid = customflags != NULL;
+  return customflags ? (int)customflags->_float : 0;
+}
+
+static qboolean SV_CoopRespawnHasQBJ3VoidAPI(void) {
+  return SV_CoopRespawnFindFunction("player_spawn_void_monitor", 0) != NULL &&
+         SV_CoopRespawnFindFunction("void_unplunge", 1) != NULL &&
+         SV_CoopRespawnFindFunction("csf_clear_all", 1) != NULL &&
+         SV_CoopRespawnFieldHasType("customflags", ev_float) &&
+         SV_CoopRespawnFieldHasType("csfcontroller", ev_entity) &&
+         SV_CoopRespawnFieldHasType("csf_priority", ev_float) &&
+         SV_CoopRespawnFieldHasType("csf_density", ev_float) &&
+         SV_CoopRespawnFieldHasType("csf_color", ev_vector) &&
+         SV_CoopRespawnFieldHasType("csf_priority_prev", ev_float) &&
+         SV_CoopRespawnFieldHasType("csf_density_prev", ev_float) &&
+         SV_CoopRespawnFieldHasType("csf_color_prev", ev_vector);
+}
+
+static qboolean SV_CoopRespawnModOwnsLifecycle(edict_t *ent) {
+  qboolean flags_valid;
+  int customflags;
+
+  /* QBJ3's void system owns the physical plunge/respawn transition.  The
+   * exact API, typed fields and cshift signature keep this compatibility path
+   * from changing unrelated mods that happen to use a customflags bit. */
+  if (!coop.value || deathmatch.value || !ent || ent->free ||
+      !SV_CoopRespawnHasQBJ3VoidAPI() || !SV_CoopRespawnHasVoidCshift(ent))
+    return false;
+  customflags = SV_CoopRespawnCustomFlags(ent, &flags_valid);
+  return flags_valid && (customflags & QBJ3_CFL_PLUNGE) != 0;
+}
+
+static qboolean SV_CoopRespawnCallEntityFunction(edict_t *ent,
+                                                 const char *name) {
+  dfunction_t *func;
+  float old_parms[MAX_PARMS * 3], old_return[3], old_time;
+  int old_self, old_other, old_argc;
+
+  if (!ent || ent->free || !(func = SV_CoopRespawnFindFunction(name, 1)))
+    return false;
 
   old_self = pr_global_struct->self;
   old_other = pr_global_struct->other;
-  pr_global_struct->time = qcvm->time;
+  old_time = pr_global_struct->time;
+  old_argc = qcvm->argc;
+  memcpy(old_parms, &qcvm->globals[OFS_PARM0], sizeof(old_parms));
+  memcpy(old_return, &qcvm->globals[OFS_RETURN], sizeof(old_return));
+
   pr_global_struct->self = EDICT_TO_PROG(ent);
   pr_global_struct->other = EDICT_TO_PROG(qcvm->edicts);
+  pr_global_struct->time = qcvm->time;
+  qcvm->argc = 1;
   G_INT(OFS_PARM0) = EDICT_TO_PROG(ent);
-  PR_ExecuteProgram(unplunge - qcvm->functions);
+  PR_ExecuteProgram(func - qcvm->functions);
+
   pr_global_struct->self = old_self;
   pr_global_struct->other = old_other;
+  pr_global_struct->time = old_time;
+  qcvm->argc = old_argc;
+  memcpy(&qcvm->globals[OFS_PARM0], old_parms, sizeof(old_parms));
+  memcpy(&qcvm->globals[OFS_RETURN], old_return, sizeof(old_return));
+  return !ent->free && SV_CoopIsActiveClient(ent);
+}
+
+static void SV_CoopRespawnFinishModLifecycle(edict_t *ent, int num) {
+  qboolean flags_valid;
+  int customflags;
+  int index = num - 1;
+
+  if (index < 0 || index >= MAX_SCOREBOARD ||
+      !coop_respawn_mod_cleanup_pending[index])
+    return;
+  if (!coop.value || deathmatch.value || !ent || ent->free) {
+    coop_respawn_mod_cleanup_pending[index] = false;
+    return;
+  }
+
+  customflags = SV_CoopRespawnCustomFlags(ent, &flags_valid);
+  if (!flags_valid) {
+    coop_respawn_mod_cleanup_pending[index] = false;
+    return;
+  }
+  if (!SV_CoopRespawnIsAliveClient(ent) ||
+      (customflags & (QBJ3_CFL_PLUNGE | QBJ3_CFL_LIMBO)) != 0)
+    return;
+
+  /* A blocked coop spawn intentionally uses an opaque priority-110 limbo
+   * layer.  Once QC exits limbo, clear only the orphaned priority-70 void-gib
+   * layer.  If the mod already repaired it, simply retire the pending state. */
+  if (!SV_CoopRespawnHasVoidCshift(ent)) {
+    coop_respawn_mod_cleanup_pending[index] = false;
+    return;
+  }
+  if (!SV_CoopRespawnCallEntityFunction(ent, "csf_clear_all"))
+    return;
+  if (!SV_CoopRespawnHasVoidCshift(ent)) {
+    coop_respawn_mod_cleanup_pending[index] = false;
+    if (net_lagdebug.value)
+      Con_Printf("net_lagdebug: cleared QBJ3 void respawn cshift for client %d\n",
+                 num);
+  }
 }
 
 static void SV_CoopRespawnSetExtendedButtons(edict_t *ent, int buttons) {
@@ -1712,8 +1837,12 @@ static void SV_CoopRespawnBeginPostThink(
   memset(state, 0, sizeof(*state));
   state->was_dead = SV_CoopIsDeadClient(ent);
   state->mod_owns_respawn = SV_CoopRespawnModOwnsLifecycle(ent);
-  if (state->mod_owns_respawn)
+  if (state->mod_owns_respawn) {
+    index = num - 1;
+    if (state->was_dead && index >= 0 && index < MAX_SCOREBOARD)
+      coop_respawn_mod_cleanup_pending[index] = true;
     return;
+  }
   state->old_force_retouch = pr_global_struct->force_retouch;
   VectorCopy(ent->v.origin, state->death_origin);
   VectorCopy(ent->v.angles, state->death_angles);
@@ -1770,11 +1899,9 @@ static void SV_CoopRespawnEndPostThink(
   edict_t *anchor = NULL;
   vec3_t spot;
 
-  if (state->mod_owns_respawn) {
-    if (state->was_dead && SV_CoopRespawnIsAliveClient(ent))
-      SV_CoopRespawnFinishModLifecycle(ent);
+  SV_CoopRespawnFinishModLifecycle(ent, num);
+  if (state->mod_owns_respawn)
     return;
-  }
 
   if (!coop.value) {
     SV_CoopRespawnRestoreSuppressedInput(ent, num, state);
