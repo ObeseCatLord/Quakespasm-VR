@@ -730,6 +730,37 @@ static qboolean SV_CoopRespawnModOwnsLifecycle(edict_t *ent) {
   return customflags && (((int)customflags->_float & 64) != 0);
 }
 
+static void SV_CoopRespawnFinishModLifecycle(edict_t *ent) {
+  dfunction_t *unplunge;
+  eval_t *customflags;
+  int old_self, old_other;
+
+  if (!ent || ent->free || !SV_CoopRespawnIsAliveClient(ent))
+    return;
+
+  /* QBJ3 clears CFL_PLUNGE in PutClientInServer, but its void-fall helper
+   * may still be alive and keep its priority-110 black cshift applied.  Call
+   * its documented cleanup after a successful QC respawn.  Do not interrupt
+   * QBJ3's intentional teleport-limbo transition (bit 2048). */
+  customflags = GetEdictFieldValueByName(ent, "customflags");
+  if (customflags && ((int)customflags->_float & 2048))
+    return;
+
+  unplunge = ED_FindFunction("void_unplunge");
+  if (!unplunge)
+    return;
+
+  old_self = pr_global_struct->self;
+  old_other = pr_global_struct->other;
+  pr_global_struct->time = qcvm->time;
+  pr_global_struct->self = EDICT_TO_PROG(ent);
+  pr_global_struct->other = EDICT_TO_PROG(qcvm->edicts);
+  G_INT(OFS_PARM0) = EDICT_TO_PROG(ent);
+  PR_ExecuteProgram(unplunge - qcvm->functions);
+  pr_global_struct->self = old_self;
+  pr_global_struct->other = old_other;
+}
+
 static void SV_CoopRespawnSetExtendedButtons(edict_t *ent, int buttons) {
   eval_t *val;
 
@@ -1700,10 +1731,10 @@ static void SV_CoopRespawnBeginPostThink(
   double dead_time;
 
   memset(state, 0, sizeof(*state));
+  state->was_dead = SV_CoopIsDeadClient(ent);
   state->mod_owns_respawn = SV_CoopRespawnModOwnsLifecycle(ent);
   if (state->mod_owns_respawn)
     return;
-  state->was_dead = SV_CoopIsDeadClient(ent);
   state->old_force_retouch = pr_global_struct->force_retouch;
   VectorCopy(ent->v.origin, state->death_origin);
   VectorCopy(ent->v.angles, state->death_angles);
@@ -1760,8 +1791,11 @@ static void SV_CoopRespawnEndPostThink(
   edict_t *anchor = NULL;
   vec3_t spot;
 
-  if (state->mod_owns_respawn)
+  if (state->mod_owns_respawn) {
+    if (state->was_dead && SV_CoopRespawnIsAliveClient(ent))
+      SV_CoopRespawnFinishModLifecycle(ent);
     return;
+  }
 
   if (!coop.value) {
     SV_CoopRespawnRestoreSuppressedInput(ent, num, state);
