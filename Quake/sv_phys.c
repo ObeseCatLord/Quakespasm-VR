@@ -502,7 +502,6 @@ that fails, try a safe spot near a living teammate before falling back to the
 mod's spawn point. Fresh late-join placement remains teammate-based.
 =============
 */
-#define COOP_RESPAWN_TRACE_EPSILON 0.01f
 #define COOP_RESPAWN_ALL_ITEM_BITS (-1)
 #define COOP_RESPAWN_DRAKE_CUSTOM_KEYS (8192 | 16384 | 32768 | 65536)
 #define COOP_RESPAWN_DWELL_WEAPON_BITS (4 | 8 | 32)
@@ -1375,16 +1374,6 @@ static qboolean SV_CoopRespawnCanPlaceAtDry(edict_t *ent, vec3_t origin) {
   return bottom;
 }
 
-static qboolean SV_CoopRespawnTraceClear(vec3_t start, vec3_t end,
-                                         edict_t *ignore) {
-  trace_t trace;
-
-  trace = SV_Move(start, vec3_origin, vec3_origin, end, MOVE_NOMONSTERS,
-                  ignore);
-  return !trace.allsolid && !trace.startsolid &&
-         trace.fraction >= 1.0f - COOP_RESPAWN_TRACE_EPSILON;
-}
-
 static qboolean SV_CoopRespawnDropToFloor(edict_t *ent, vec3_t origin,
                                           float max_drop,
                                           qboolean allow_water,
@@ -1450,7 +1439,6 @@ static qboolean SV_CoopRespawnFindNearbySpot(edict_t *ent, const vec3_t base,
                                              vec3_t spot) {
   int i, j;
   vec3_t candidate, dropped, forward, right;
-  vec3_t trace_start, trace_end;
   static const float dirs[][2] = {
       {0.0f, 0.0f},        {1.0f, 0.0f},        {0.9239f, 0.3827f},
       {0.7071f, 0.7071f},  {0.3827f, 0.9239f},  {0.0f, 1.0f},
@@ -1478,15 +1466,6 @@ static qboolean SV_CoopRespawnFindNearbySpot(edict_t *ent, const vec3_t base,
       if (!SV_CoopRespawnDropToFloor(ent, candidate, max_drop, allow_water,
                                      dropped))
         continue;
-
-      if (anchor) {
-        VectorCopy(anchor->v.origin, trace_start);
-        trace_start[2] += 16.0f;
-        VectorCopy(dropped, trace_end);
-        trace_end[2] += 16.0f;
-        if (!SV_CoopRespawnTraceClear(trace_start, trace_end, anchor))
-          continue;
-      }
 
       VectorCopy(dropped, spot);
       return true;

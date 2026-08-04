@@ -329,6 +329,8 @@ typedef struct {
   int active_mask;
   int ammo_stat;
   int ammo_max;
+  /* Game-specific profiles fill stock defaults; file schemas override them. */
+  qboolean game_profile;
   qboolean from_schema;
   qboolean use_item_ownership;
 } vr_dyn_weapon_t;
@@ -336,21 +338,21 @@ typedef struct {
 #define MAX_DYN_WEAPONS 128
 static vr_dyn_weapon_t dyn_weapons[MAX_DYN_WEAPONS] = {
     {4096, 1, "progs/g_axe.mdl", 0, false, 1.0f, {0, 0, 0}, false,
-     -1, 0, -1, 0, -1, 0, false, true}, // IT_AXE (pickup model)
+     -1, 0, -1, 0, -1, 0, false, false, true}, // IT_AXE (pickup model)
     {1, 2, "progs/g_shot.mdl", 0, false, 1.0f, {0, 0, 0}, false,
-     -1, 0, -1, 0, STAT_SHELLS, 100, false, true}, // IT_SHOTGUN
+     -1, 0, -1, 0, STAT_SHELLS, 100, false, false, true}, // IT_SHOTGUN
     {2, 3, "progs/g_shot2.mdl", 0, false, 1.0f, {0, 0, 0}, false,
-     -1, 0, -1, 0, STAT_SHELLS, 100, false, true}, // IT_SUPER_SHOTGUN
+     -1, 0, -1, 0, STAT_SHELLS, 100, false, false, true}, // IT_SUPER_SHOTGUN
     {4, 4, "progs/g_nail.mdl", 0, false, 1.0f, {0, 0, 0}, false,
-     -1, 0, -1, 0, STAT_NAILS, 200, false, true}, // IT_NAILGUN
+     -1, 0, -1, 0, STAT_NAILS, 200, false, false, true}, // IT_NAILGUN
     {8, 5, "progs/g_nail2.mdl", 0, false, 1.0f, {0, 0, 0}, false,
-     -1, 0, -1, 0, STAT_NAILS, 200, false, true}, // IT_SUPER_NAILGUN
+     -1, 0, -1, 0, STAT_NAILS, 200, false, false, true}, // IT_SUPER_NAILGUN
     {16, 6, "progs/g_rock.mdl", 0, false, 1.0f, {0, 0, 0}, false,
-     -1, 0, -1, 0, STAT_ROCKETS, 100, false, true}, // IT_GRENADE_LAUNCHER
+     -1, 0, -1, 0, STAT_ROCKETS, 100, false, false, true}, // IT_GRENADE_LAUNCHER
     {32, 7, "progs/g_rock2.mdl", 0, false, 1.0f, {0, 0, 0}, false,
-     -1, 0, -1, 0, STAT_ROCKETS, 100, false, true}, // IT_ROCKET_LAUNCHER
+     -1, 0, -1, 0, STAT_ROCKETS, 100, false, false, true}, // IT_ROCKET_LAUNCHER
     {64, 8, "progs/g_light.mdl", 0, false, 1.0f, {0, 0, 0}, false,
-     -1, 0, -1, 0, STAT_CELLS, 100, false, true}, // IT_LIGHTNING
+     -1, 0, -1, 0, STAT_CELLS, 100, false, false, true}, // IT_LIGHTNING
 };
 static int num_dyn_weapons = 8;
 static qboolean rogue_weapons_added = false;
@@ -698,8 +700,6 @@ static int VR_FindDynWeapon(int bitmask, int owned_stat, int owned_mask,
 }
 
 static int VR_FindDynWeaponForActive(int active, int model_index) {
-  int unlearned = -1;
-
   for (int i = 0; i < num_dyn_weapons; i++) {
     vr_dyn_weapon_t *w = &dyn_weapons[i];
     qboolean active_match = false;
@@ -719,11 +719,15 @@ static int VR_FindDynWeaponForActive(int active, int model_index) {
     if (w->model_index == 0 && VR_ModelIndexMatchesPath(model_index,
                                                         w->model_path))
       return i;
-    if (w->model_index == 0 && unlearned < 0)
-      unlearned = i;
   }
 
-  return unlearned;
+  /*
+   * A matching active bit alone is not an identity.  Mods freely reuse those
+   * bits, so accepting a model mismatch here could make an observed weapon
+   * inherit a stock/profile impulse.  Leave it as an unselectable observation
+   * until a profile or vr_weapons.txt identifies it explicitly.
+   */
+  return -1;
 }
 
 static vr_dyn_weapon_t *VR_AddOrUpdateDynWeapon(
@@ -734,6 +738,7 @@ static vr_dyn_weapon_t *VR_AddOrUpdateDynWeapon(
   int index = VR_FindDynWeapon(bitmask, owned_stat, owned_mask, active_stat,
                                active_mask, model_path, model_index);
   vr_dyn_weapon_t *w;
+  qboolean preserve_schema;
 
   if (index >= 0) {
     w = &dyn_weapons[index];
@@ -747,35 +752,41 @@ static vr_dyn_weapon_t *VR_AddOrUpdateDynWeapon(
     VR_InitDynWeapon(w);
   }
 
-  if (bitmask)
-    w->bitmask = bitmask;
-  if (impulse > 0)
-    w->impulse = impulse;
-  if (model_path && model_path[0])
-    w->model_path = model_path;
-  if (model_index > 0)
-    w->model_index = model_index;
+  /* A later map reset must not let a compiled-in profile overwrite a user's
+   * matching file schema. Runtime discovery still records its model index. */
+  preserve_schema = index >= 0 && w->from_schema && !from_schema && !discovered;
+
+  if (!preserve_schema) {
+    if (bitmask)
+      w->bitmask = bitmask;
+    if (impulse > 0)
+      w->impulse = impulse;
+    if (model_path && model_path[0])
+      w->model_path = model_path;
+    if (model_index > 0)
+      w->model_index = model_index;
+    if (scale > 0.0f)
+      w->scale = scale;
+    if (has_offset) {
+      VectorCopy(offset, w->offset);
+      w->has_offset = true;
+    }
+    if (owned_stat >= 0) {
+      w->owned_stat = owned_stat;
+      w->owned_mask = owned_mask;
+    }
+    if (active_stat >= 0) {
+      w->active_stat = active_stat;
+      w->active_mask = active_mask;
+    }
+    if (ammo_stat >= 0) {
+      w->ammo_stat = ammo_stat;
+      w->ammo_max = ammo_max;
+    }
+  }
   if (discovered)
     w->discovered = true;
-  if (scale > 0.0f)
-    w->scale = scale;
-  if (has_offset) {
-    VectorCopy(offset, w->offset);
-    w->has_offset = true;
-  }
-  if (owned_stat >= 0) {
-    w->owned_stat = owned_stat;
-    w->owned_mask = owned_mask;
-  }
-  if (active_stat >= 0) {
-    w->active_stat = active_stat;
-    w->active_mask = active_mask;
-  }
-  if (ammo_stat >= 0) {
-    w->ammo_stat = ammo_stat;
-    w->ammo_max = ammo_max;
-  }
-  if (!from_schema && !discovered && bitmask)
+  if (!preserve_schema && !from_schema && !discovered && bitmask)
     w->use_item_ownership = true;
   if (from_schema)
     w->from_schema = true;
@@ -832,6 +843,33 @@ static void VR_AddDwellWeaponDefaults(void) {
   if (w)
     dwell_weapon_indices[2] = (int)(w - dyn_weapons);
 
+  /*
+   * These entries are a Dwell profile, not observations.  Mark the exact
+   * model variants so the generic stock models with the same item bits do
+   * not appear as duplicate wheel slots.
+   */
+  for (int i = 0; i < num_dyn_weapons; i++) {
+    w = &dyn_weapons[i];
+    if (!w->model_path || !w->model_path[0])
+      continue;
+    if ((w->bitmask == IT_SHOTGUN &&
+         !q_strcasecmp(w->model_path, "progs/g_shotgn.mdl")) ||
+        (w->bitmask == IT_SUPER_SHOTGUN &&
+         !q_strcasecmp(w->model_path, "progs/g_shot.mdl")) ||
+        (w->bitmask == IT_NAILGUN &&
+         !q_strcasecmp(w->model_path, "progs/g_nail.mdl")) ||
+        (w->bitmask == IT_SUPER_NAILGUN &&
+         !q_strcasecmp(w->model_path, "progs/g_nail2.mdl")) ||
+        (w->bitmask == IT_GRENADE_LAUNCHER &&
+         !q_strcasecmp(w->model_path, "progs/g_rock.mdl")) ||
+        (w->bitmask == IT_ROCKET_LAUNCHER &&
+         !q_strcasecmp(w->model_path, "progs/g_rock2.mdl")) ||
+        (w->bitmask == IT_LIGHTNING &&
+         !q_strcasecmp(w->model_path, "progs/g_light.mdl")) ||
+        w->bitmask == 128 || w->bitmask == 256 || w->bitmask == 512)
+      w->game_profile = true;
+  }
+
   dwell_weapons_added = true;
 }
 
@@ -841,10 +879,13 @@ static void VR_AddBuiltinWeaponDefault(int bitmask, int impulse,
                                        int active_stat, int active_mask,
                                        int ammo_stat, int ammo_max,
                                        float scale) {
-  VR_AddOrUpdateDynWeapon(bitmask, impulse, model_path, 0, false, scale,
-                          vec3_origin, false, owned_stat, owned_mask,
-                          active_stat, active_mask, ammo_stat, ammo_max,
-                          true);
+  vr_dyn_weapon_t *w = VR_AddOrUpdateDynWeapon(
+      bitmask, impulse, model_path, 0, false, scale, vec3_origin, false,
+      owned_stat, owned_mask, active_stat, active_mask, ammo_stat, ammo_max,
+      false);
+
+  if (w)
+    w->game_profile = true;
 }
 
 static void VR_AddAlkalineWeaponDefaults(void) {
@@ -993,11 +1034,9 @@ static qboolean VR_WeaponIsActive(const vr_dyn_weapon_t *w) {
 }
 
 static qboolean VR_WeaponIsOwned(const vr_dyn_weapon_t *w) {
-  qboolean schema_has_weapon_stat =
-      w->from_schema && w->bitmask && cl.stats[STAT_VR_WEAPONS] != 0;
-
   if (w->owned_stat >= 0) {
-    int value = cl.stats[w->owned_stat];
+    int value = w->owned_stat == STAT_ITEMS ? VR_ClientItemBits()
+                                             : cl.stats[w->owned_stat];
     qboolean owned = w->owned_mask ? ((value & w->owned_mask) != 0)
                                      : (value != 0);
 
@@ -1012,9 +1051,6 @@ static qboolean VR_WeaponIsOwned(const vr_dyn_weapon_t *w) {
 
   if (w->bitmask && (cl.stats[STAT_VR_WEAPONS] & w->bitmask))
     return true;
-
-  if (schema_has_weapon_stat)
-    return VR_WeaponIsActive(w);
 
   /*
    * Only stock/expansion weapon bits may use STAT_ITEMS ownership. Several
@@ -2711,7 +2747,7 @@ static qboolean VR_CreateDefaultWeaponSchemaIfMissing(void) {
   if (VR_GameDirIs("qbj3")) {
     ok = VR_AppendQBJ3DefaultSchema(&out, NULL, &count);
   } else {
-    for (int i = 0; i < MAX_WEAPONS; i++) {
+    for (int i = 0; i < MAX_WEAPONS && count < MAX_VR_WEAPONS; i++) {
       if (!VR_WeaponOffsetSlotHasValidID(i) || VR_PreviousSlotHasSameID(i))
         continue;
       ok = VR_AppendSchemaBlockForSlot(&out, i);
@@ -2719,6 +2755,9 @@ static qboolean VR_CreateDefaultWeaponSchemaIfMissing(void) {
         break;
       count++;
     }
+    if (ok && count == MAX_VR_WEAPONS)
+      Con_Printf("VR: default vr_weapons.txt limited to %d entries\n",
+                 MAX_VR_WEAPONS);
   }
 
   if (ok && count > 0) {
@@ -4649,12 +4688,13 @@ float vr_game_projectile_z_extra = 0.0f;
 
 void VR_InitGame() {
   VR_ResetDynWeaponsToBase();
+  /* Profile metadata is the fallback.  A matching file schema wins below. */
+  VR_AddBuiltinWeaponDefaults();
   InitAllWeaponCVars();
   VR_CreateDefaultWeaponSchemaIfMissing();
   VR_FillMissingDefaultWeaponSchemaBlocks();
   VR_LoadWeaponSchema();
   VR_RegisterDwellHeldWeaponDefaults();
-  VR_AddBuiltinWeaponDefaults();
   lastWeaponHeader = NULL;
   weaponCVarEntry = -1;
 
@@ -6333,6 +6373,7 @@ typedef enum {
   VR_WEAPON_VISIBLE,
   VR_WEAPON_HIDDEN_INVALID_MODEL,
   VR_WEAPON_HIDDEN_DWELL_ONLY,
+  VR_WEAPON_HIDDEN_PROFILE_FALLBACK,
   VR_WEAPON_HIDDEN_SCHEMA_FALLBACK,
   VR_WEAPON_HIDDEN_UNOWNED
 } vr_weapon_visibility_t;
@@ -6347,15 +6388,20 @@ VR_WeaponVisibility(const vr_dyn_weapon_t *w) {
     return VR_WEAPON_HIDDEN_DWELL_ONLY;
 
   /*
-   * An explicit schema owns its bit namespace even before the weapon is
-   * acquired.  Do not let the stock fallback for the same bit leak into the
-   * wheel based on unrelated STAT_ITEMS meanings used by a mod.
+   * The precedence is file schema > selected game profile > generic stock.
+   * This leaves only one canonical entry for a reused item bit, while model
+   * mismatches discovered at runtime remain separate and unselectable.
    */
-  if (!w->from_schema && w->bitmask) {
+  if (w->bitmask) {
     for (int i = 0; i < num_dyn_weapons; i++) {
-      if (dyn_weapons[i].from_schema &&
-          dyn_weapons[i].bitmask == w->bitmask)
+      const vr_dyn_weapon_t *other = &dyn_weapons[i];
+
+      if (other == w || other->bitmask != w->bitmask)
+        continue;
+      if (!w->from_schema && other->from_schema)
         return VR_WEAPON_HIDDEN_SCHEMA_FALLBACK;
+      if (!w->from_schema && !w->game_profile && other->game_profile)
+        return VR_WEAPON_HIDDEN_PROFILE_FALLBACK;
     }
   }
 
@@ -6374,6 +6420,8 @@ VR_WeaponVisibilityName(vr_weapon_visibility_t visibility) {
     return "invalid-model";
   case VR_WEAPON_HIDDEN_DWELL_ONLY:
     return "dwell-only-index";
+  case VR_WEAPON_HIDDEN_PROFILE_FALLBACK:
+    return "profile-fallback";
   case VR_WEAPON_HIDDEN_SCHEMA_FALLBACK:
     return "schema-fallback";
   case VR_WEAPON_HIDDEN_UNOWNED:
@@ -6396,6 +6444,8 @@ static int VR_GetVisibleWeapons(vr_dyn_weapon_t **out, int max) {
 }
 
 static int VR_WeaponStatValue(int stat) {
+  if (stat == STAT_ITEMS)
+    return VR_ClientItemBits();
   return (stat >= 0 && stat < MAX_CL_STATS) ? cl.stats[stat] : 0;
 }
 
@@ -6423,8 +6473,11 @@ static void VR_WeaponList_f(void) {
   for (int i = 0; i < num_dyn_weapons; i++) {
     const vr_dyn_weapon_t *w = &dyn_weapons[i];
     vr_weapon_visibility_t visibility = VR_WeaponVisibility(w);
-    const char *source =
-        w->from_schema ? "schema" : (w->discovered ? "discovered" : "builtin");
+    const char *source = w->from_schema
+                             ? "schema"
+                             : (w->discovered ? "observed"
+                                              : (w->game_profile ? "profile"
+                                                                 : "stock"));
     const char *model = w->model_path;
 
     if (visibility == VR_WEAPON_VISIBLE)
@@ -6433,12 +6486,12 @@ static void VR_WeaponList_f(void) {
       model = VR_ModelPathForIndex(w->model_index);
 
     Con_Printf(
-        "[%03d] %s source=%s schema=%d discovered=%d itemown=%d "
+        "[%03d] %s source=%s schema=%d profile=%d discovered=%d itemown=%d "
         "dwellidx=%d bit=%d/0x%x impulse=%d owned=%d active=%d "
         "owned_stat=%d value=%d/0x%x mask=%d/0x%x "
         "active_stat=%d value=%d/0x%x mask=%d/0x%x model=%d:%s\n",
         i, VR_WeaponVisibilityName(visibility), source, w->from_schema,
-        w->discovered, w->use_item_ownership,
+        w->game_profile, w->discovered, w->use_item_ownership,
         VR_IsDwellDefaultWeaponEntry(w), w->bitmask, w->bitmask, w->impulse,
         VR_WeaponIsOwned(w), VR_WeaponIsActive(w), w->owned_stat,
         VR_WeaponStatValue(w->owned_stat), VR_WeaponStatValue(w->owned_stat),
@@ -6456,6 +6509,12 @@ static int VR_WeaponSelectionImpulse(const vr_dyn_weapon_t *w) {
   int impulse;
 
   if (!w)
+    return 0;
+
+  /* Observations are useful for diagnostics, but never authorize a guessed
+   * QuakeC impulse. Only stock-compatible, profiled, or explicit-schema
+   * records are selectable. */
+  if (!w->from_schema && !w->game_profile && !w->use_item_ownership)
     return 0;
 
   if (VR_IsDwellGame()) {

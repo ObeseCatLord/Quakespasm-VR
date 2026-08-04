@@ -685,9 +685,32 @@ static void SV_NormalizeAcceptedUsercmd(client_t *client, usercmd_t *acceptedcmd
   client->lastmovetime = timestamp;
 }
 
+static void SV_SyncPMovePresentationAngles(client_t *client) {
+  vec3_t v_angle;
+  edict_t *ent;
+
+  if (!client || !client->usingpmove)
+    return;
+  ent = client->edict;
+  if (!ent || ent->v.fixangle)
+    return;
+
+  VectorAdd(ent->v.v_angle, ent->v.punchangle, v_angle);
+  ent->v.angles[ROLL] = V_CalcRoll(ent->v.angles, ent->v.velocity) * 4;
+  ent->v.angles[PITCH] = -v_angle[PITCH] / 3;
+  ent->v.angles[YAW] = v_angle[YAW];
+}
+
 static void SV_ApplyAcceptedUsercmd(client_t *client, const usercmd_t *acceptedcmd) {
   client->cmd = *acceptedcmd;
   VectorCopy(client->cmd.viewangles, client->edict->v.v_angle);
+  /*
+   * Direct PMove executes during packet parsing.  Publish the same body
+   * orientation as the conventional client-think path before that command can
+   * produce an entity update, preventing one-or-more snapshots of sideways
+   * remote player models.
+   */
+  SV_SyncPMovePresentationAngles(client);
   client->edict->v.button0 = client->cmd.buttons & 1;
   client->edict->v.button2 = (client->cmd.buttons & 2) >> 1;
   SV_SetExtendedButtons(client->edict, client->cmd.buttons);

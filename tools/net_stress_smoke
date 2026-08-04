@@ -95,7 +95,7 @@ fi
 grep -Eq "Loaded game|loadgame|Loading game|SpawnServer" "$COMBINED_LOG" ||
 	fail "did not see evidence that the save/map loaded"
 
-grep -Eq 'sys_ticrate[[:space:]]+["]?0\.05|"sys_ticrate" is "0\.05"' "$COMBINED_LOG" ||
+grep -Eq 'sys_ticrate[[:space:]]+["]?0\.025|"sys_ticrate" is "0\.025"' "$COMBINED_LOG" ||
 	fail "sys_ticrate default was not confirmed"
 grep -Eq 'sv_netsort[[:space:]]+["]?1|"sv_netsort" is "1"' "$COMBINED_LOG" ||
 	fail "sv_netsort default was not confirmed"

@@ -335,6 +335,18 @@ entity_t	*CL_EntityNum (int num)
 CL_ParseStartSoundPacket
 ==================
 */
+static qboolean CL_IsLocalPlayerHapticSound (int ent)
+{
+	/*
+	 * Weapon sound channels are not a stable mod interface.  QBJ3, for example,
+	 * uses CHAN_AUTO for primary fire, reloads, and mechanical weapon sounds.
+	 * The packet entity is stable, though: only pulse for the local player.
+	 * This intentionally includes reload/draw feedback while excluding every
+	 * world and monster sound.
+	 */
+	return ent == cl.viewentity;
+}
+
 void CL_ParseStartSoundPacket(void)
 {
 	vec3_t	pos;
@@ -387,8 +399,9 @@ void CL_ParseStartSoundPacket(void)
 	for (i = 0; i < 3; i++)
 		pos[i] = MSG_ReadCoord (cl.protocolflags);
 
-	if (vr_enabled.value && vr_haptic.value && ent == cl.viewentity && channel == 1)
-		VR_TriggerHaptic (1, 0.0015f);
+	if (vr_enabled.value && vr_haptic.value &&
+		CL_IsLocalPlayerHapticSound (ent))
+		VR_TriggerHaptic (1, 0.005f);
 
 	S_StartSound (ent, channel, cl.sound_precache[sound_num], pos, volume/255.0, attenuation);
 }
