@@ -4577,6 +4577,19 @@ void VR_LoadWeaponSchema(void) {
         w->owned_mask = w->active_mask;
       }
 
+      /*
+       * If a schema provides a bitmask but omits an explicit ownership stat,
+       * default to STAT_ITEMS for that bit. This preserves older schema
+       * files (notably Alkaline/ENYO) where item bits are still the ground
+       * truth for availability, while keeping existing explicit ownership
+       * and active-stat-driven entries untouched.
+       */
+      if (w->bitmask && w->owned_stat < 0 && w->owned_mask == 0 &&
+          w->active_stat < 0) {
+        w->owned_stat = STAT_ITEMS;
+        w->owned_mask = w->bitmask;
+      }
+
       if (!w->bitmask && w->owned_stat < 0 && w->active_stat < 0 &&
           !(w->viewmodel_path[0] &&
             (w->has_held_scale || w->has_held_offset ||
