@@ -837,6 +837,7 @@ static void Host_Map_f(void) {
 
   svs.serverflags = 0; // haven't completed an episode yet
   svs.coop_loadgame_late_join_spawns_near = false;
+  SV_MG3UpgradeResetCampaign();
   q_strlcpy(name, Cmd_Argv(1), sizeof(name));
   // remove (any) trailing ".bsp" from mapname -- S.A.
   p = strstr(name, ".bsp");
@@ -1740,6 +1741,7 @@ static void Host_Loadgame_f(void) {
   CL_Disconnect_f();
 
   PR_SwitchQCVM(&sv.qcvm);
+  SV_MG3UpgradeResetCampaign();
   SV_SpawnServer(mapname);
 
   if (!sv.active) {
@@ -1803,6 +1805,18 @@ static void Host_Loadgame_f(void) {
 
   free(start);
   start = NULL;
+
+  /* Rebuild MG3's campaign-wide upgrade union before any saved or late
+     client is spawned.  Two passes ensure every snapshot receives the full
+     union even if an old save contains divergent per-player flags. */
+  for (i = 0; i < svs.maxclients && i < MAX_SCOREBOARD; i++) {
+    if (saved_active[i])
+      SV_MG3UpgradeCollectSpawnParms(spawn_parms[i]);
+  }
+  for (i = 0; i < svs.maxclients && i < MAX_SCOREBOARD; i++) {
+    if (saved_active[i])
+      SV_MG3UpgradeApplySpawnParms(spawn_parms[i]);
+  }
 
   for (i = 0; i < svs.maxclients && i < MAX_SCOREBOARD; i++) {
     qboolean has_saved_edict;
@@ -2211,6 +2225,7 @@ static void Host_Spawn_f(void) {
     memcpy(host_client->spawn_parms,
            sv.loadgame_client_spawn_parms[saved_clientnum],
            sizeof(host_client->spawn_parms));
+    SV_MG3UpgradeApplySpawnParms(host_client->spawn_parms);
     host_client->colors = sv.loadgame_client_colors[saved_clientnum];
     host_client->old_frags = sv.loadgame_client_old_frags[saved_clientnum];
     Host_LoadgameRestoreClientEdict(saved_clientnum, ent);
@@ -2243,6 +2258,7 @@ static void Host_Spawn_f(void) {
     ent->v.netname = PR_SetEngineString(host_client->name);
 
     // copy spawn parms out of the client_t
+    SV_MG3UpgradeApplySpawnParms(host_client->spawn_parms);
     for (i = 0; i < NUM_SPAWN_PARMS; i++)
       (&pr_global_struct->parm1)[i] = host_client->spawn_parms[i];
     // call the spawn function
@@ -2862,6 +2878,7 @@ static void Host_SaveClientSpawnParms(client_t *client) {
   PR_ExecuteProgram(pr_global_struct->SetChangeParms);
   for (i = 0; i < NUM_SPAWN_PARMS; i++)
     client->spawn_parms[i] = (&pr_global_struct->parm1)[i];
+  SV_MG3UpgradeSyncSpawnParms(client->spawn_parms);
 }
 
 static qboolean Host_GiveAllClient(client_t *client) {

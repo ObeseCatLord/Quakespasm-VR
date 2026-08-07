@@ -4682,6 +4682,152 @@ void VR_LoadWeaponSchema(void) {
   }
 }
 
+static qboolean VR_WWheelAmmoFromEntVar(int entvaroffs, int *ammo_stat,
+                                       int *ammo_max) {
+  if (!ammo_stat || !ammo_max)
+    return false;
+
+  switch (entvaroffs) {
+  case 216:
+    *ammo_stat = STAT_SHELLS;
+    *ammo_max = 100;
+    return true;
+  case 220:
+    *ammo_stat = STAT_NAILS;
+    *ammo_max = 200;
+    return true;
+  case 224:
+    *ammo_stat = STAT_ROCKETS;
+    *ammo_max = 100;
+    return true;
+  case 228:
+    *ammo_stat = STAT_CELLS;
+    *ammo_max = 100;
+    return true;
+  default:
+    return false;
+  }
+}
+
+static void VR_LoadWWheelSchema(void) {
+  char *data;
+  char *start;
+  int weaponnum = 0;
+  int impulse = 0;
+  int entvaroffs = 0;
+  int ammo_stat = -1;
+  int ammo_max = 0;
+  int loaded = 0;
+  qboolean in_slot = false;
+  qboolean have_weaponnum = false;
+  qboolean have_impulse = false;
+  qboolean have_entvaroffs = false;
+
+  data = (char *)COM_LoadZoneFile("wwheel.txt", NULL);
+  if (!data) {
+    DebugLog("VR: no wwheel.txt found for %s\n", com_gamedir);
+    return;
+  }
+
+#define VR_COMMIT_WWHEEL_SLOT()                                              \
+  do {                                                                     \
+    if (in_slot && have_weaponnum && have_impulse) {                        \
+      if (!have_entvaroffs ||                                              \
+          !VR_WWheelAmmoFromEntVar(entvaroffs, &ammo_stat, &ammo_max)) {    \
+        ammo_stat = -1;                                                    \
+        ammo_max = 0;                                                      \
+      }                                                                    \
+      if (VR_AddOrUpdateDynWeapon(weaponnum, impulse, NULL, 0, false, 1.0f, \
+                                  vec3_origin, false, STAT_ITEMS, weaponnum, \
+                                  STAT_ACTIVEWEAPON, weaponnum, ammo_stat,   \
+                                  ammo_max, true))                            \
+        ++loaded;                                                            \
+    }                                                                      \
+    weaponnum = 0;                                                         \
+    impulse = 0;                                                           \
+    entvaroffs = 0;                                                        \
+    ammo_stat = -1;                                                        \
+    ammo_max = 0;                                                          \
+    have_weaponnum = false;                                                \
+    have_impulse = false;                                                  \
+    have_entvaroffs = false;                                               \
+  } while (0)
+
+  start = data;
+  while (1) {
+    start = (char *)COM_Parse(start);
+    if (!start || !com_token[0])
+      break;
+
+    if (!Q_strcmp(com_token, "slot")) {
+      VR_COMMIT_WWHEEL_SLOT();
+      start = (char *)COM_Parse(start);
+      if (!start || !com_token[0])
+        break;
+      if (!Q_strcmp(com_token, "{") || !Q_strcmp(com_token, "}")) {
+        in_slot = false;
+        continue;
+      }
+      in_slot = true;
+      continue;
+    }
+
+    if (!in_slot)
+      continue;
+
+    if (!Q_strcmp(com_token, "{"))
+      continue;
+    if (!Q_strcmp(com_token, "}")) {
+      VR_COMMIT_WWHEEL_SLOT();
+      in_slot = false;
+      continue;
+    }
+
+    if (!Q_strcmp(com_token, "weaponnum") || !Q_strcmp(com_token, "weapon_num")) {
+      start = (char *)COM_Parse(start);
+      if (!start || !com_token[0])
+        break;
+      if (Q_atoi(com_token) > 0) {
+        weaponnum = Q_atoi(com_token);
+        have_weaponnum = true;
+      } else if (Q_atoi(com_token) < 0) {
+        weaponnum = 0;
+        have_weaponnum = false;
+      }
+      continue;
+    }
+
+    if (!Q_strcmp(com_token, "impulse")) {
+      start = (char *)COM_Parse(start);
+      if (!start || !com_token[0])
+        break;
+      impulse = Q_atoi(com_token);
+      have_impulse = true;
+      continue;
+    }
+
+    if (!Q_strcmp(com_token, "entvaroffs")) {
+      start = (char *)COM_Parse(start);
+      if (!start || !com_token[0])
+        break;
+      entvaroffs = Q_atoi(com_token);
+      have_entvaroffs = true;
+      continue;
+    }
+
+    // Skip unrecognized fields while preserving robust parsing.
+    if (start) {
+      start = (char *)COM_Parse(start);
+      if (!start || !com_token[0])
+        break;
+    }
+  }
+  VR_COMMIT_WWHEEL_SLOT();
+  Z_Free(data);
+  Con_Printf("VR: Loaded %d weapon slots from wwheel.txt\n", loaded);
+#undef VR_COMMIT_WWHEEL_SLOT
+}
+
 // Per-game extra Z compensation applied on top of vr_projectilespawn_z_offset.
 // Stored as a plain C float so config.cfg can never override it.
 float vr_game_projectile_z_extra = 0.0f;
@@ -4693,6 +4839,7 @@ void VR_InitGame() {
   InitAllWeaponCVars();
   VR_CreateDefaultWeaponSchemaIfMissing();
   VR_FillMissingDefaultWeaponSchemaBlocks();
+  VR_LoadWWheelSchema();
   VR_LoadWeaponSchema();
   VR_RegisterDwellHeldWeaponDefaults();
   lastWeaponHeader = NULL;
