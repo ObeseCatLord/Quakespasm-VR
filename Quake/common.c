@@ -2683,6 +2683,10 @@ static void COM_Game_f (void)
 					GAMENAME);
 		}
 
+		/* Localization is search-path dependent.  Mods such as MG3 provide
+		 * their runtime strings in fgd/messages.fgd, so reload after mounting
+		 * the new game instead of retaining the previous game's table. */
+		LOC_Init();
 		VR_InitGame();
 
 		//clear out and reload appropriate data
@@ -3006,6 +3010,7 @@ typedef struct
 	unsigned	*indices;
 	locentry_t	*entries;
 	char		*text;
+	qboolean	mg3_fallback;
 } localization_t;
 
 static localization_t localization;
@@ -3056,203 +3061,380 @@ static Sint32 SDLCALL SDL_RWsize(SDL_RWops *rw) {
 LOC_LoadFile
 ================
 */
-void LOC_LoadFile (const char *file)
+static qboolean LOC_LoadLocalizationSource (const char *file, qboolean allow_kpf_fallback, char **out_text, size_t *out_len)
 {
 	char path[1024];
-	int i,lineno;
-	char *cursor;
-
 	SDL_RWops *rw = NULL;
 	Sint64 sz;
 	mz_zip_archive archive;
 	size_t size = 0;
-
-	// clear existing data
-	if (localization.text)
-	{
-		free(localization.text);
-		localization.text = NULL;
-	}
-	localization.numentries = 0;
-	localization.numindices = 0;
+	unsigned int path_id;
 
 	if (!file || !*file)
-		return;
+		return false;
 
-	Con_Printf("\nLanguage initialization\n");
-
-	unsigned int path_id;
-	
-	// Try loading from standard virtual file system (PAK files, folders)
-	localization.text = (char *)COM_LoadMallocFile(file, &path_id);
-	
-	if (localization.text)
+	*out_text = (char *)COM_LoadMallocFile(file, &path_id);
+	if (*out_text)
 	{
-		// COM_LoadMallocFile null-terminates the buffer
+		*out_len = Q_strlen(*out_text);
+		return true;
 	}
-	else
+
+	if (!allow_kpf_fallback)
 	{
-		// Fallback to QuakeEX.kpf for Nightdive rerelease specifically
-		memset(&archive, 0, sizeof(archive));
-		q_snprintf(path, sizeof(path), "%s/QuakeEX.kpf", com_basedir);
+		Con_DPrintf("LOC_LoadFile: couldn't load '%s'\nfrom '%s'\n", file, com_basedir);
+		return false;
+	}
+
+	// Fallback to QuakeEX.kpf for Nightdive rerelease specifically
+	memset(&archive, 0, sizeof(archive));
+	q_snprintf(path, sizeof(path), "%s/QuakeEX.kpf", com_basedir);
+	rw = SDL_RWFromFile(path, "rb");
+	#if defined(DO_USERDIRS)
+	if (!rw)
+	{
+		q_snprintf(path, sizeof(path), "%s/QuakeEX.kpf", host_parms->userdir);
 		rw = SDL_RWFromFile(path, "rb");
-		#if defined(DO_USERDIRS)
-		if (!rw) {
-			q_snprintf(path, sizeof(path), "%s/QuakeEX.kpf", host_parms->userdir);
-			rw = SDL_RWFromFile(path, "rb");
-		}
-		#endif
-		if (!rw) goto fail;
-		sz = SDL_RWsize(rw);
-		if (sz <= 0) goto fail;
-		archive.m_pRead = mz_zip_file_read_func;
-		archive.m_pIO_opaque = rw;
-		if (!mz_zip_reader_init(&archive, sz, 0)) goto fail;
-		localization.text = (char *) mz_zip_reader_extract_file_to_heap(&archive, file, &size, 0);
-		if (!localization.text) goto fail;
-		mz_zip_reader_end(&archive);
-		SDL_RWclose(rw);
-		localization.text = (char *) realloc(localization.text, size+1);
-		localization.text[size] = 0;
 	}
-
-	if (!localization.text)
+	#endif
+	if (!rw)
 	{
-fail:	mz_zip_reader_end(&archive);
-		if (rw) SDL_RWclose(rw);
-		Con_Printf("Couldn't load '%s'\nfrom '%s'\n", file, com_basedir);
-		return;
+		Con_DPrintf("LOC_LoadFile: couldn't load '%s'\nfrom '%s'\n", file, com_basedir);
+		return false;
 	}
 
-	cursor = localization.text;
+	sz = SDL_RWsize(rw);
+	if (sz <= 0)
+	{
+		SDL_RWclose(rw);
+		Con_DPrintf("LOC_LoadFile: couldn't load '%s'\nfrom '%s'\n", file, com_basedir);
+		return false;
+	}
 
-	// skip BOM
-	if ((unsigned char)(cursor[0]) == 0xEF && (unsigned char)(cursor[1]) == 0xBB && (unsigned char)(cursor[2]) == 0xBF)
-		cursor += 3;
+	archive.m_pRead = mz_zip_file_read_func;
+	archive.m_pIO_opaque = rw;
+	if (!mz_zip_reader_init(&archive, sz, 0))
+	{
+		SDL_RWclose(rw);
+		Con_DPrintf("LOC_LoadFile: couldn't load '%s'\nfrom '%s'\n", file, com_basedir);
+		return false;
+	}
 
-	lineno = 0;
+	*out_text = (char *) mz_zip_reader_extract_file_to_heap(&archive, file, &size, 0);
+	mz_zip_reader_end(&archive);
+	SDL_RWclose(rw);
+	if (!*out_text)
+	{
+		Con_DPrintf("LOC_LoadFile: couldn't load '%s'\nfrom '%s'\n", file, com_basedir);
+		return false;
+	}
+
+	*out_text = (char *) realloc(*out_text, size+1);
+	(*out_text)[size] = 0;
+	*out_len = size;
+	return true;
+}
+
+static void LOC_ClearData (void)
+{
+	free(localization.indices);
+	free(localization.entries);
+	free(localization.text);
+	memset(&localization, 0, sizeof(localization));
+}
+
+static void LOC_AddOrReplaceEntry (char *key, char *value)
+{
+	int i;
+	for (i = 0; i < localization.numentries; i++)
+	{
+		if (!Q_strcmp(localization.entries[i].key, key))
+		{
+			localization.entries[i].value = value;
+			return;
+		}
+	}
+
+	if (localization.numentries == localization.maxnumentries)
+	{
+		localization.maxnumentries += localization.maxnumentries >> 1;
+		localization.maxnumentries = q_max(localization.maxnumentries, 32);
+		localization.entries = (locentry_t*) realloc(localization.entries, sizeof(*localization.entries) * localization.maxnumentries);
+	}
+
+	localization.entries[localization.numentries].key = key;
+	localization.entries[localization.numentries].value = value;
+	localization.numentries++;
+}
+
+static void LOC_DecodeEscapes (char *string, char *end, int lineno, const char *file)
+{
+	char *src = string;
+	char *dst = string;
+
+	while (src != end)
+	{
+		if (*src == '\\' && src + 1 < end)
+		{
+			char c = src[1];
+			src += 2;
+			switch (c)
+			{
+				case 'n': *dst++ = '\n'; break;
+				case 'r': *dst++ = '\r'; break;
+				case 't': *dst++ = '\t'; break;
+				case 'v': *dst++ = '\v'; break;
+				case 'b': *dst++ = '\b'; break;
+				case 'f': *dst++ = '\f'; break;
+				case '\"':
+				case '\'':
+				case '\\':
+					*dst++ = c;
+					break;
+				default:
+					Con_Printf("LOC_LoadFile: unrecognized escape sequence \\%c on line %d in '%s'\n", c, lineno, file);
+					*dst++ = c;
+					break;
+			}
+			continue;
+		}
+
+		*dst++ = *src++;
+	}
+	*dst = 0;
+}
+
+static void LOC_ParseLocalizationKV (char *text, const char *file)
+{
+	int lineno = 0;
+	char *cursor = text;
+
 	while (*cursor)
 	{
-		char *line, *equals;
+		char *line, *line_end, *equals, *key_end;
+		char *value_src;
+		char *value_dst;
+		char *value;
+		qboolean leading_quote;
+		qboolean trailing_quote;
 
 		lineno++;
+		line = cursor;
+		line_end = cursor;
+		while (*line_end && *line_end != '\n')
+			++line_end;
+
+		if (*line_end)
+			*line_end++ = 0;
 
 		// skip leading whitespace
-		while (q_isblank(*cursor))
-			++cursor;
+		while (q_isblank(*line))
+			++line;
+
+		// skip comments and blank lines
+		if (*line == 0 || *line == '/')
+			goto next;
+
+		equals = NULL;
+		for ( ; line < line_end; ++line)
+		{
+			if (*line == '=')
+			{
+				equals = line;
+				break;
+			}
+		}
+
+		if (!equals)
+			goto next;
 
 		line = cursor;
-		equals = NULL;
-		// find line end and first equals sign, if any
-		while (*cursor && *cursor != '\n')
+		while (q_isblank(*line))
+			++line;
+
+		key_end = equals;
+		// trim whitespace before equals sign
+		while (key_end != line && q_isspace(key_end[-1]))
+			key_end--;
+		*key_end = 0;
+
+		value = equals + 1;
+		// skip whitespace after equals sign
+		while (value != line_end && q_isspace(*value))
+			++value;
+
+		leading_quote = (*value == '\"');
+		trailing_quote = false;
+		value += leading_quote;
+
+		value_src = value;
+		value_dst = value;
+		while (value_src < line_end)
 		{
-			if (*cursor == '=' && !equals)
-				equals = cursor;
-			cursor++;
-		}
-
-		if (line[0] == '/')
-		{
-			if (line[1] != '/')
-				Con_DPrintf("LOC_LoadFile: malformed comment on line %d\n", lineno);
-		}
-		else if (equals)
-		{
-			char *key_end = equals;
-			qboolean leading_quote;
-			qboolean trailing_quote;
-			locentry_t *entry;
-			char *value_src;
-			char *value_dst;
-			char *value;
-
-			// trim whitespace before equals sign
-			while (key_end != line && q_isspace(key_end[-1]))
-				key_end--;
-			*key_end = 0;
-
-			value = equals + 1;
-			// skip whitespace after equals sign
-			while (value != cursor && q_isspace(*value))
-				value++;
-
-			leading_quote = (*value == '\"');
-			trailing_quote = false;
-			value += leading_quote;
-
-			// transform escape sequences in-place
-			value_src = value;
-			value_dst = value;
-			while (value_src != cursor)
+			if (*value_src == '\\' && value_src + 1 < line_end)
 			{
-				if (*value_src == '\\' && value_src + 1 != cursor)
+				char c = value_src[1];
+				value_src += 2;
+				switch (c)
 				{
-					char c = value_src[1];
-					value_src += 2;
-					switch (c)
-					{
-						case 'n': *value_dst++ = '\n'; break;
-						case 't': *value_dst++ = '\t'; break;
-						case 'v': *value_dst++ = '\v'; break;
-						case 'b': *value_dst++ = '\b'; break;
-						case 'f': *value_dst++ = '\f'; break;
-
-						case '"':
-						case '\'':
-							*value_dst++ = c;
-							break;
-
-						default:
-							Con_Printf("LOC_LoadFile: unrecognized escape sequence \\%c on line %d\n", c, lineno);
-							*value_dst++ = c;
-							break;
-					}
-					continue;
+					case 'n': *value_dst++ = '\n'; break;
+					case 'r': *value_dst++ = '\r'; break;
+					case 't': *value_dst++ = '\t'; break;
+					case 'v': *value_dst++ = '\v'; break;
+					case 'b': *value_dst++ = '\b'; break;
+					case 'f': *value_dst++ = '\f'; break;
+					case '\"':
+					case '\'':
+						*value_dst++ = c;
+						break;
+					default:
+						Con_Printf("LOC_LoadFile: unrecognized escape sequence \\%c on line %d in '%s'\n", c, lineno, file);
+						*value_dst++ = c;
+						break;
 				}
-
-				if (*value_src == '\"')
-				{
-					trailing_quote = true;
-					*value_dst = 0;
-					break;
-				}
-
-				*value_dst++ = *value_src++;
+				continue;
 			}
 
-			// if not a quoted string, trim trailing whitespace
-			if (!trailing_quote)
+			if (*value_src == '\"')
 			{
-				while (value_dst != value && q_isblank(value_dst[-1]))
-				{
-					*value_dst = 0;
-					value_dst--;
-				}
+				trailing_quote = true;
+				*value_dst = 0;
+				break;
 			}
 
-			if (localization.numentries == localization.maxnumentries)
-			{
-				// grow by 50%
-				localization.maxnumentries += localization.maxnumentries >> 1;
-				localization.maxnumentries = q_max(localization.maxnumentries, 32);
-				localization.entries = (locentry_t*) realloc(localization.entries, sizeof(*localization.entries) * localization.maxnumentries);
-			}
-
-			entry = &localization.entries[localization.numentries++];
-			entry->key = line;
-			entry->value = value;
+			*value_dst++ = *value_src++;
 		}
 
-		if (*cursor)
-			*cursor++ = 0; // terminate line and advance to next
+		// if not a quoted string, trim trailing whitespace
+		if (!trailing_quote)
+		{
+			while (value_dst != value && q_isblank(value_dst[-1]))
+			{
+				*value_dst = 0;
+				value_dst--;
+			}
+		}
+
+		LOC_AddOrReplaceEntry(line, value);
+
+next:
+		cursor = line_end;
 	}
+}
 
-	// hash all entries
+static void LOC_ParseLocalizationFGD (char *text, const char *file)
+{
+	int lineno = 0;
+	char *cursor = text;
 
+	while (*cursor)
+	{
+		char *line = cursor;
+		char *line_end = cursor;
+		char *scan;
+		char *key;
+		char *key_end;
+		char *value;
+		char *value_end;
+
+		lineno++;
+		while (*line_end && *line_end != '\n')
+			++line_end;
+
+		if (*line_end)
+			*line_end++ = 0;
+
+		while (q_isblank(*line))
+			++line;
+
+		if (*line == 0 || *line == '/')
+		{
+			cursor = line_end;
+			continue;
+		}
+		if (*line != '\"')
+		{
+			cursor = line_end;
+			continue;
+		}
+
+		key = line + 1;
+		key_end = key;
+		while (key_end < line_end)
+		{
+			if (*key_end == '\\' && key_end + 1 < line_end)
+			{
+				key_end += 2;
+				continue;
+			}
+			if (*key_end == '\"')
+				break;
+			++key_end;
+		}
+		if (key_end >= line_end)
+		{
+			cursor = line_end;
+			continue;
+		}
+
+		*key_end = 0;
+		LOC_DecodeEscapes(key, key_end, lineno, file);
+		/* QC passes localization references with a leading '$', while the
+		 * ordinary loc_english format stores lookup keys without it. */
+		if (*key == '$')
+			++key;
+
+		scan = key_end + 1;
+		while (scan < line_end && q_isblank(*scan))
+			++scan;
+		if (scan >= line_end || *scan != ':')
+		{
+			cursor = line_end;
+			continue;
+		}
+		++scan;
+		while (scan < line_end && q_isblank(*scan))
+			++scan;
+		if (scan >= line_end || *scan != '\"')
+		{
+			cursor = line_end;
+			continue;
+		}
+
+		value = scan + 1;
+		value_end = value;
+		while (value_end < line_end)
+		{
+			if (*value_end == '\\' && value_end + 1 < line_end)
+			{
+				value_end += 2;
+				continue;
+			}
+			if (*value_end == '\"')
+				break;
+			++value_end;
+		}
+		if (value_end >= line_end)
+		{
+			cursor = line_end;
+			continue;
+		}
+
+		*value_end = 0;
+		LOC_DecodeEscapes(value, value_end, lineno, file);
+		LOC_AddOrReplaceEntry(key, value);
+
+		cursor = line_end;
+	}
+}
+
+static void LOC_BuildLookup (void)
+{
+	int i;
 	localization.numindices = localization.numentries * 2; // 50% load factor
 	if (localization.numindices == 0)
 	{
-		Con_Printf("No localized strings in file '%s'\n", file);
+		Con_Printf("No localized strings loaded\n");
 		return;
 	}
 
@@ -3277,11 +3459,87 @@ fail:	mz_zip_reader_end(&archive);
 				pos = 0;
 
 			if (pos == end)
-				Sys_Error("LOC_LoadFile failed");
+				Sys_Error("LOC_BuildLookup failed");
 		}
 	}
+}
 
-	Con_Printf("Loaded %d strings from '%s'\n", localization.numentries, file);
+static void LOC_LoadFile (const char *file)
+{
+	(void)file;
+	char *english = NULL;
+	char *fgd = NULL;
+	size_t english_len = 0;
+	size_t fgd_len = 0;
+	size_t total_len;
+	char *english_text;
+	char *fgd_text;
+
+	LOC_ClearData();
+	/* This asset is specific to MG3 and survives directory renames.  Do not
+	 * humanize unrelated mods' localization keys merely because they happen
+	 * to use the same prefix. */
+	localization.mg3_fallback = COM_FileExists("fgd/quake_mg3.fgd", NULL);
+
+	if (!LOC_LoadLocalizationSource("localization/loc_english.txt", true, &english, &english_len))
+	{
+		english = NULL;
+		english_len = 0;
+	}
+
+	if (!LOC_LoadLocalizationSource("fgd/messages.fgd", false, &fgd, &fgd_len))
+	{
+		fgd = NULL;
+		fgd_len = 0;
+	}
+
+	if (!english_len && !fgd_len)
+		return;
+
+	/* Keep each parser's backing text in a distinct NUL-terminated region.
+	 * Both parsers split their input in place, so parsing one concatenated
+	 * stream would otherwise hide the second source at the first inserted NUL. */
+	total_len = english_len + 1 + fgd_len + 1;
+	localization.text = (char *) malloc(total_len);
+	if (!localization.text)
+	{
+		free(english);
+		free(fgd);
+		Sys_Error("LOC_LoadFile: failed to allocate combined localization buffer\n");
+		return;
+	}
+
+	english_text = localization.text;
+	fgd_text = localization.text + english_len + 1;
+	if (english_len)
+		memcpy(english_text, english, english_len);
+	english_text[english_len] = 0;
+	if (fgd_len)
+		memcpy(fgd_text, fgd, fgd_len);
+	fgd_text[fgd_len] = 0;
+	free(english);
+	free(fgd);
+
+	Con_Printf("\nLanguage initialization\n");
+	if (english_len)
+	{
+		if (english_len >= 3 && (unsigned char)(english_text[0]) == 0xEF &&
+		    (unsigned char)(english_text[1]) == 0xBB &&
+		    (unsigned char)(english_text[2]) == 0xBF)
+			english_text += 3;
+		LOC_ParseLocalizationKV(english_text, "localization/loc_english.txt");
+	}
+	if (fgd_len)
+	{
+		if (fgd_len >= 3 && (unsigned char)(fgd_text[0]) == 0xEF &&
+		    (unsigned char)(fgd_text[1]) == 0xBB &&
+		    (unsigned char)(fgd_text[2]) == 0xBF)
+			fgd_text += 3;
+		LOC_ParseLocalizationFGD(fgd_text, "fgd/messages.fgd");
+	}
+	LOC_BuildLookup();
+
+	Con_Printf("Loaded %d localized strings\n", localization.numentries);
 }
 
 /*
@@ -3343,6 +3601,85 @@ const char* LOC_GetRawString (const char *key)
 	return NULL;
 }
 
+typedef struct
+{
+	const char *key;
+	const char *value;
+} loc_fallback_t;
+
+/* MG3 is distributed with editor-facing FGD localization for its maps, but
+ * several QuakeC-only strings live in the rerelease's external string table
+ * and are absent from the add-on PAK.  Keep these English fallbacks behind
+ * the normal lookup so a future loc_english file always takes precedence. */
+static const char *LOC_GetMG3Fallback (const char *key)
+{
+	static const loc_fallback_t fallbacks[] = {
+		{"$mg3_qc_upgrade_success", "Upgrade successful: "},
+		{"$mg3_qc_upgrade_fail", "You cannot use this upgrade.\n"},
+		{"$mg3_qc_upgrade_health", "maximum health "},
+		{"$mg3_qc_upgrade_shell", "maximum shells "},
+		{"$mg3_qc_upgrade_nail", "maximum nails "},
+		{"$mg3_qc_upgrade_rocket", "maximum rockets "},
+		{"$mg3_qc_upgrade_cell", "maximum cells "},
+		{"$mg3_qc_armor_shard_touch", "Armor shard acquired.\n"},
+		{"$mg3_qc_axe_button", "Only the axe can activate this.\n"},
+		{"$mg3_qc_hammer", "Hammer acquired.\n"},
+		{"$mg3_qc_lavasuit", "Lava suit acquired.\n"},
+		{"$mg3_qc_lavasuit_wearing_out", "Lava suit is wearing out!\n"},
+		{"$mg3_qc_newgameplus_item", "New Game Plus item acquired.\n"},
+		{"$mg3_qc_ring_of_insight", "Ring of Insight acquired.\n"},
+		{"$mg3_qc_ring_of_oblivion", "Ring of Oblivion acquired.\n"},
+		{"$mg3_qc_rune1", "Rune of Madness acquired.\n"},
+		{"$mg3_qc_rune2", "Rune of Chaos acquired.\n"},
+		{"$mg3_qc_rune3", "Rune of Sorrow acquired.\n"},
+		{"$mg3_qc_rune4", "Rune of Sacrifice acquired.\n"},
+		{"$mg3_qc_sacricie_count_1_more", "One more sacrifice remains.\n"},
+		{"$mg3_qc_sacricie_count_2_more", "Two more sacrifices remain.\n"},
+		{"$mg3_qc_sacricie_count_3_more", "Three more sacrifices remain.\n"},
+		{"$mg3_qc_sacricie_count_4_more", "Four more sacrifices remain.\n"},
+		{"$mg3_qc_sacricie_count_5_more", "Five more sacrifices remain.\n"},
+		{"$mg3_qc_sacricie_count_6_more", "Six more sacrifices remain.\n"},
+		{"$mg3_qc_sacricie_count_7_more", "Seven more sacrifices remain.\n"},
+		{"$mg3_qc_sacricie_count_8_more", "Eight more sacrifices remain.\n"},
+		{"$mg3_qc_sacricie_count_more", "More sacrifices are required.\n"},
+		{"$mg3_qc_sacricie_count_complete", "The sacrifice is complete.\n"},
+		{"$mg3_hub_selected_easy", "Easy difficulty selected.\n"},
+		{"$mg3_hub_selected_normal", "Normal difficulty selected.\n"},
+		{"$mg3_hub_selected_hard", "Hard difficulty selected.\n"},
+		{"$mg3_hub_selected_nightmare", "Nightmare difficulty selected.\n"},
+		{"$mg3_selected_bloody_nightmare", "Bloody Nightmare selected.\n"},
+		{"$mg3_hub_rune1_hint_complete", "The Rune of Madness has been claimed.\n"},
+		{"$mg3_hub_rune2_hint_complete", "The Rune of Chaos has been claimed.\n"},
+		{"$mg3_hub_rune3_hint_complete", "The Rune of Sorrow has been claimed.\n"}
+	};
+	static char buffers[8][128];
+	static int buffer_index;
+	const char *source;
+	char *out;
+	int i, j;
+
+	if (!localization.mg3_fallback || !key || q_strncasecmp(key, "$mg3_", 5))
+		return NULL;
+	for (i = 0; i < (int)(sizeof(fallbacks) / sizeof(fallbacks[0])); ++i)
+		if (!q_strcasecmp(key, fallbacks[i].key))
+			return fallbacks[i].value;
+
+	/* Unknown MG3 keys must still be readable rather than leaking a raw
+	 * localization token.  This also makes newly added map strings degrade
+	 * gracefully until the add-on supplies an updated messages.fgd. */
+	source = key + 5;
+	if (!q_strncasecmp(source, "qc_", 3))
+		source += 3;
+	buffer_index = (buffer_index + 1) % (int)(sizeof(buffers) / sizeof(buffers[0]));
+	out = buffers[buffer_index];
+	for (i = 0, j = 0; source[i] && j < (int)sizeof(buffers[0]) - 1; ++i, ++j)
+		out[j] = source[i] == '_' ? ' ' : source[i];
+	out[j] = 0;
+	if (out[0] >= 'a' && out[0] <= 'z')
+		out[0] -= 'a' - 'A';
+	return out;
+}
+
 /*
 ================
 LOC_GetString
@@ -3353,6 +3690,9 @@ Returns localized string if available, or input string otherwise
 const char* LOC_GetString (const char *key)
 {
 	const char* value = LOC_GetRawString(key);
+	if (value)
+		return value;
+	value = LOC_GetMG3Fallback(key);
 	if (value)
 		return value;
 

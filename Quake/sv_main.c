@@ -865,6 +865,10 @@ void SV_ConnectClient (int clientnum)
 	PR_ExecuteProgram (pr_global_struct->SetNewParms);
 	for (i=0 ; i<NUM_SPAWN_PARMS ; i++)
 		client->spawn_parms[i] = (&pr_global_struct->parm1)[i];
+	/* MG3 campaign upgrades are shared co-op progression.  Merge the durable
+	 * union before signon so reconnecting and late-joining clients decode the
+	 * same health/ammo caps in PutClientInServer. */
+	SV_MG3UpgradeApplySpawnParms(client->spawn_parms);
 
 	SV_SendServerinfo (client);
 }
@@ -3867,6 +3871,7 @@ void SV_SaveSpawnparms (void)
 		PR_ExecuteProgram (pr_global_struct->SetChangeParms);
 		for (j=0 ; j<NUM_SPAWN_PARMS ; j++)
 			host_client->spawn_parms[j] = (&pr_global_struct->parm1)[j];
+		SV_MG3UpgradeSyncSpawnParms(host_client->spawn_parms);
 	}
 }
 

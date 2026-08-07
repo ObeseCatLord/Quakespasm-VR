@@ -1318,6 +1318,299 @@ static qboolean SV_IsCoopSharedPickupCandidate (edict_t *pickup, edict_t *player
 	return true;
 }
 
+/*
+====================
+SV_MG3UpgradeTouchBegin
+
+MG3 keeps its five persistent upgrade bitsets in spawn parms 10 through 14.
+Its UpgradeTouch writes the QC parm globals directly, while SetChangeParms
+starts by restoring those globals from the engine's per-client spawn_parms.
+Without synchronizing at the pickup boundary, a save, respawn, or changelevel
+therefore restores the old values and loses the upgrade.
+
+Identify the exact QC API instead of keying this compatibility path to a game
+directory.  This also makes future mods using the same API work automatically.
+====================
+*/
+#define SV_MG3_UPGRADE_PARM_FIRST 9
+#define SV_MG3_UPGRADE_PARM_COUNT 5
+
+static float sv_mg3_campaign_upgrades[SV_MG3_UPGRADE_PARM_COUNT];
+static qboolean sv_mg3_campaign_upgrades_valid;
+
+typedef struct
+{
+	qboolean	valid;
+	int		client_index;
+	int		type;
+	float		before[SV_MG3_UPGRADE_PARM_COUNT];
+} sv_mg3_upgrade_touch_t;
+
+static qboolean SV_MG3UpgradeAPIAvailable (void)
+{
+	dfunction_t	*touch;
+	dfunction_t	*get_value;
+	dfunction_t	*set_value;
+	dfunction_t	*start_item;
+	dfunction_t	*apply;
+	dfunction_t	*set_ammo;
+	ddef_t		*upgrade_flag;
+	ddef_t		*ammo_max;
+	static const char *ammo_max_names[] = {
+		"ammo_shells_max", "ammo_nails_max", "ammo_rockets_max",
+		"ammo_cells_max"};
+	int		i;
+
+	touch = ED_FindFunction("UpgradeTouch");
+	get_value = ED_FindFunction("GetUpgradeFlagValue");
+	set_value = ED_FindFunction("SetUpgradeFlagValue");
+	start_item = ED_FindFunction("StartUpgradeItem");
+	apply = ED_FindFunction("ApplyUpgrade");
+	set_ammo = ED_FindFunction("W_SetCurrentAmmo");
+	upgrade_flag = ED_FindField("upgrade_flag");
+
+	if (!(touch && get_value && set_value && start_item && apply && set_ammo &&
+		touch->numparms == 0 && get_value->numparms == 1 &&
+		set_value->numparms == 2 && start_item->numparms == 0 &&
+		apply->numparms == 2 && set_ammo->numparms == 0 && upgrade_flag &&
+		((upgrade_flag->type & ~DEF_SAVEGLOBAL) == ev_float)))
+		return false;
+
+	for (i = 0; i < (int)(sizeof(ammo_max_names) /
+	                         sizeof(ammo_max_names[0])); ++i)
+	{
+		ammo_max = ED_FindGlobal(ammo_max_names[i]);
+		if (!ammo_max ||
+		    ((ammo_max->type & ~DEF_SAVEGLOBAL) != ev_float) ||
+		    !(ammo_max->type & DEF_SAVEGLOBAL))
+			return false;
+	}
+	return true;
+}
+
+void SV_MG3UpgradeResetCampaign (void)
+{
+	memset(sv_mg3_campaign_upgrades, 0,
+	       sizeof(sv_mg3_campaign_upgrades));
+	sv_mg3_campaign_upgrades_valid = false;
+}
+
+void SV_MG3UpgradeCollectSpawnParms (const float *spawn_parms)
+{
+	int i;
+
+	if (!spawn_parms || !SV_MG3UpgradeAPIAvailable())
+		return;
+	for (i = 0; i < SV_MG3_UPGRADE_PARM_COUNT; ++i)
+		sv_mg3_campaign_upgrades[i] = (float)(
+			(int)sv_mg3_campaign_upgrades[i] |
+			(int)spawn_parms[SV_MG3_UPGRADE_PARM_FIRST + i]);
+	sv_mg3_campaign_upgrades_valid = true;
+}
+
+void SV_MG3UpgradeApplySpawnParms (float *spawn_parms)
+{
+	int i;
+
+	if (!spawn_parms || !sv_mg3_campaign_upgrades_valid ||
+	    !SV_MG3UpgradeAPIAvailable())
+		return;
+	for (i = 0; i < SV_MG3_UPGRADE_PARM_COUNT; ++i)
+		spawn_parms[SV_MG3_UPGRADE_PARM_FIRST + i] = (float)(
+			(int)spawn_parms[SV_MG3_UPGRADE_PARM_FIRST + i] |
+			(int)sv_mg3_campaign_upgrades[i]);
+}
+
+void SV_MG3UpgradeSyncSpawnParms (float *spawn_parms)
+{
+	SV_MG3UpgradeCollectSpawnParms(spawn_parms);
+	SV_MG3UpgradeApplySpawnParms(spawn_parms);
+}
+
+static qboolean SV_MG3UpgradeTouchBegin (edict_t *pickup, edict_t *player,
+					 sv_mg3_upgrade_touch_t *state)
+{
+	dfunction_t	*touch;
+	const char	*classname;
+	int		i;
+	int		num;
+
+	memset(state, 0, sizeof(*state));
+	if (!pickup || pickup->free || !player || player->free ||
+	    !SV_IsActiveClientEdict(player) || !pickup->v.classname ||
+	    !SV_MG3UpgradeAPIAvailable())
+		return false;
+
+	touch = ED_FindFunction("UpgradeTouch");
+	if (!touch || pickup->v.touch != (func_t)(touch - qcvm->functions))
+		return false;
+
+	classname = PR_GetString(pickup->v.classname);
+	if (q_strncasecmp(classname, "item_upgrade_", 13))
+		return false;
+
+	state->type = (int)pickup->v.armortype;
+	if (state->type < 0 || state->type >= SV_MG3_UPGRADE_PARM_COUNT)
+		return false;
+
+	num = NUM_FOR_EDICT(player);
+	if (num < 1 || num > svs.maxclients)
+		return false;
+	state->client_index = num - 1;
+
+	/* UpgradeTouch expects these globals to describe the touching player. */
+	SV_MG3UpgradeSyncSpawnParms(
+		svs.clients[state->client_index].spawn_parms);
+	for (i = 0; i < SV_MG3_UPGRADE_PARM_COUNT; ++i)
+	{
+		state->before[i] =
+			svs.clients[state->client_index]
+				.spawn_parms[SV_MG3_UPGRADE_PARM_FIRST + i];
+		(&pr_global_struct->parm1)[SV_MG3_UPGRADE_PARM_FIRST + i] =
+			state->before[i];
+	}
+
+	state->valid = true;
+	return true;
+}
+
+static void SV_MG3RefreshCurrentAmmo (edict_t *player)
+{
+	dfunction_t	*set_ammo;
+	int		old_self;
+	int		old_other;
+	int		old_argc;
+	float		old_time;
+	float		old_parms[MAX_PARMS * 3];
+	float		old_return[3];
+
+	set_ammo = ED_FindFunction("W_SetCurrentAmmo");
+	if (!set_ammo || set_ammo->numparms != 0 || !player || player->free)
+		return;
+
+	old_self = pr_global_struct->self;
+	old_other = pr_global_struct->other;
+	old_time = pr_global_struct->time;
+	old_argc = qcvm->argc;
+	memcpy(old_parms, &qcvm->globals[OFS_PARM0], sizeof(old_parms));
+	memcpy(old_return, &qcvm->globals[OFS_RETURN], sizeof(old_return));
+
+	pr_global_struct->self = EDICT_TO_PROG(player);
+	pr_global_struct->other = EDICT_TO_PROG(qcvm->edicts);
+	pr_global_struct->time = qcvm->time;
+	qcvm->argc = 0;
+	PR_ExecuteProgram((func_t)(set_ammo - qcvm->functions));
+
+	pr_global_struct->self = old_self;
+	pr_global_struct->other = old_other;
+	pr_global_struct->time = old_time;
+	qcvm->argc = old_argc;
+	memcpy(&qcvm->globals[OFS_PARM0], old_parms, sizeof(old_parms));
+	memcpy(&qcvm->globals[OFS_RETURN], old_return, sizeof(old_return));
+}
+
+static float SV_MG3UpgradeAmmoMaximum (int type, edict_t *source)
+{
+	static const char *max_names[SV_MG3_UPGRADE_PARM_COUNT] = {
+		NULL, "ammo_shells_max", "ammo_nails_max", "ammo_rockets_max",
+		"ammo_cells_max"};
+	ddef_t	*def;
+
+	if (type <= 0 || type >= SV_MG3_UPGRADE_PARM_COUNT)
+		return 0;
+
+	def = ED_FindGlobal(max_names[type]);
+	if (def && ((def->type & ~DEF_SAVEGLOBAL) == ev_float))
+		return G_FLOAT(def->ofs);
+
+	/* The accepted pickup fills the source ammo to the new maximum. */
+	switch (type)
+	{
+	case 1: return source->v.ammo_shells;
+	case 2: return source->v.ammo_nails;
+	case 3: return source->v.ammo_rockets;
+	case 4: return source->v.ammo_cells;
+	default: return 0;
+	}
+}
+
+static void SV_MG3UpgradeTouchEnd (edict_t *source,
+				   const sv_mg3_upgrade_touch_t *state)
+{
+	float	after[SV_MG3_UPGRADE_PARM_COUNT];
+	float	ammo_max;
+	float	health_max;
+	int	new_bits;
+	int	i;
+
+	if (!state->valid || !source || source->free)
+		return;
+
+	new_bits = 0;
+	for (i = 0; i < SV_MG3_UPGRADE_PARM_COUNT; ++i)
+	{
+		after[i] =
+			(&pr_global_struct->parm1)[SV_MG3_UPGRADE_PARM_FIRST + i];
+		new_bits |= (int)after[i] & ~(int)state->before[i];
+	}
+	SV_MG3UpgradeCollectSpawnParms(
+		svs.clients[state->client_index].spawn_parms);
+	SV_MG3UpgradeCollectSpawnParms(
+		&pr_global_struct->parm1);
+	SV_MG3UpgradeApplySpawnParms(
+		svs.clients[state->client_index].spawn_parms);
+	SV_MG3UpgradeApplySpawnParms(
+		&pr_global_struct->parm1);
+	for (i = 0; i < SV_MG3_UPGRADE_PARM_COUNT; ++i)
+		after[i] =
+			(&pr_global_struct->parm1)[SV_MG3_UPGRADE_PARM_FIRST + i];
+
+	if (!new_bits)
+		return;
+
+	/* MG3 upgrade pickups are one-shot map entities.  Match the engine's
+	 * shared co-op pickup policy so every player, including a later level
+	 * transition or save restore, receives the durable campaign upgrade. */
+	if (!coop.value)
+		return;
+
+	health_max = source->v.max_health;
+	ammo_max = SV_MG3UpgradeAmmoMaximum(state->type, source);
+	for (i = 0; i < svs.maxclients; ++i)
+	{
+		edict_t *player;
+
+		if (!svs.clients[i].active)
+			continue;
+		SV_MG3UpgradeApplySpawnParms(svs.clients[i].spawn_parms);
+
+		if (i == state->client_index || !svs.clients[i].spawned)
+			continue;
+		player = svs.clients[i].edict;
+		if (!player || player->free)
+			continue;
+
+		if (state->type == 0)
+		{
+			player->v.max_health = q_max(player->v.max_health, health_max);
+			player->v.health = q_max(player->v.health, player->v.max_health);
+		}
+		else if (state->type == 1)
+			player->v.ammo_shells = q_max(player->v.ammo_shells, ammo_max);
+		else if (state->type == 2)
+			player->v.ammo_nails = q_max(player->v.ammo_nails, ammo_max);
+		else if (state->type == 3)
+			player->v.ammo_rockets = q_max(player->v.ammo_rockets, ammo_max);
+		else if (state->type == 4)
+			player->v.ammo_cells = q_max(player->v.ammo_cells, ammo_max);
+
+		SV_MG3RefreshCurrentAmmo(player);
+		SV_CoopRespawnRefreshClientInventory(player);
+	}
+
+	Con_DPrintf("coop pickup share: MG3 upgrade type %d\n", state->type);
+}
+
 static qboolean SV_CoopSharedInventoryHasAmmoGain (
 	const sv_coop_shared_inventory_t *before,
 	const sv_coop_shared_inventory_t *after)
@@ -2081,6 +2374,7 @@ void SV_TouchLinks (edict_t *ent)
 	sv_coop_shared_inventory_t	coop_shared_before;
 	sv_coop_shared_inventory_t	coop_shared_after;
 	sv_coop_shared_inventory_t	coop_shared_declared;
+	sv_mg3_upgrade_touch_t	mg3_upgrade;
 
 	mark = Hunk_LowMark ();
 	list = (edict_t **) Hunk_Alloc (qcvm->num_edicts*sizeof(edict_t *));
@@ -2132,11 +2426,13 @@ void SV_TouchLinks (edict_t *ent)
 				(SV_CoopSharedItemMask() & ~SV_CoopSharedStockKeyMask());
 		}
 		coop_shared_touch_sync = SV_CoopSharedBeginClientTouch(ent);
+		SV_MG3UpgradeTouchBegin(touch, ent, &mg3_upgrade);
 
 		pr_global_struct->self = EDICT_TO_PROG(touch);
 		pr_global_struct->other = EDICT_TO_PROG(ent);
 		pr_global_struct->time = qcvm->time;
 		PR_ExecuteProgram (touch->v.touch);
+		SV_MG3UpgradeTouchEnd(ent, &mg3_upgrade);
 
 		if (coop_shared_pickup)
 		{
