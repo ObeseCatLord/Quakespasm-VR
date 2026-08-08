@@ -148,6 +148,94 @@ int scr_center_lines;
 int scr_erase_lines;
 int scr_erase_center;
 
+static int SCR_CenterPrintWordLength(const char *text)
+{
+  const char *start = text;
+
+  while (*text && !isspace((unsigned char)*text))
+    text++;
+  return (int)(text - start);
+}
+
+static int SCR_CenterPrintAdvanceLine(const char **text, int maxchars)
+{
+  const char *str = *text;
+  int i;
+
+  for (i = 0; i < maxchars && str[i]; ) {
+    if (str[i] == '\n') {
+      *text += i + 1;
+      return i;
+    }
+
+    if (!isspace((unsigned char)str[i]) &&
+        (i == 0 || isspace((unsigned char)str[i - 1]))) {
+      int len = SCR_CenterPrintWordLength(str + i);
+
+      if (len > maxchars) {
+        *text += maxchars;
+        return maxchars;
+      }
+      if (i + len > maxchars) {
+        *text += i;
+        return i;
+      }
+      i += len;
+    }
+    else {
+      i++;
+    }
+  }
+
+  *text += i + (isspace((unsigned char)str[i]) ? 1 : 0);
+  return i;
+}
+
+static void SCR_CenterPrintWrapString(const char *src, char *dst, size_t dstsize)
+{
+  size_t used = 0;
+
+  if (!dstsize)
+    return;
+  if (!src)
+    src = "";
+
+  /* The original renderer's menu canvas is 320 units wide.  Unlike
+   * Ironwail's flexible GUI canvas, allowing more than 40 eight-pixel glyphs
+   * here would move text outside the VR panel as well as the desktop view.
+   * Wrap every centerprint because localization is resolved by the server
+   * before transmission, so the client cannot reliably distinguish a
+   * localized string from ordinary text.  Previously any characters beyond
+   * column 40 were silently skipped by SCR_DrawCenterString. */
+
+  while (*src && used + 1 < dstsize) {
+    const char *start = src;
+    size_t line_len = (size_t)SCR_CenterPrintAdvanceLine(&src, 40);
+    qboolean explicit_newline = start[line_len] == '\n';
+    size_t len = line_len;
+    size_t available = dstsize - used - 1;
+
+    len = q_min(len, available);
+    memcpy(dst + used, start, len);
+    used += len;
+    if ((*src || explicit_newline) && used + 1 < dstsize)
+      dst[used++] = '\n';
+  }
+  dst[used] = 0;
+}
+
+static int SCR_CenterPrintLineCount(const char *str)
+{
+  int lines = 1;
+  if (!str || !*str)
+    return 0;
+  for (; *str; str++) {
+    if (*str == '\n')
+      lines++;
+  }
+  return lines;
+}
+
 /*
 ==============
 SCR_CenterPrint
@@ -158,18 +246,10 @@ for a few moments
 */
 void SCR_CenterPrint(const char *str) // update centerprint data
 {
-  strncpy(scr_centerstring, str, sizeof(scr_centerstring) - 1);
+  SCR_CenterPrintWrapString(str, scr_centerstring, sizeof(scr_centerstring));
   scr_centertime_off = scr_centertime.value;
   scr_centertime_start = cl.time;
-
-  // count the number of lines for centering
-  scr_center_lines = 1;
-  str = scr_centerstring;
-  while (*str) {
-    if (*str == '\n')
-      scr_center_lines++;
-    str++;
-  }
+  scr_center_lines = SCR_CenterPrintLineCount(scr_centerstring);
 }
 
 void SCR_DrawCenterString(void) // actually do the drawing
