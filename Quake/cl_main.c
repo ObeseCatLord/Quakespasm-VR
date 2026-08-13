@@ -51,11 +51,21 @@ cvar_t	cl_net_lerpbuffer = {"cl_net_lerpbuffer","0",CVAR_NONE};
 cvar_t	cl_net_lerpbuffer_adaptive = {"cl_net_lerpbuffer_adaptive","0",CVAR_NONE};
 cvar_t	cl_net_lerpbuffer_adaptive_max = {"cl_net_lerpbuffer_adaptive_max","0.30",CVAR_NONE};
 cvar_t	cl_net_lerpbuffer_adaptive_time = {"cl_net_lerpbuffer_adaptive_time","0.75",CVAR_NONE};
-cvar_t	cl_predict_smooth = {"cl_predict_smooth","0",CVAR_NONE};
-cvar_t	cl_predict_smooth_time = {"cl_predict_smooth_time","0.04",CVAR_NONE};
-cvar_t	cl_predict_smooth_min = {"cl_predict_smooth_min","0.25",CVAR_NONE};
-cvar_t	cl_predict_smooth_max = {"cl_predict_smooth_max","8",CVAR_NONE};
+cvar_t	cl_predict_smooth = {"cl_predict_smooth","1",CVAR_NONE};
+cvar_t	cl_predict_smooth_time = {"cl_predict_smooth_time","0.10",CVAR_NONE};
+cvar_t	cl_predict_smooth_min = {"cl_predict_smooth_min","0.125",CVAR_NONE};
+cvar_t	cl_predict_smooth_max = {"cl_predict_smooth_max","4",CVAR_NONE};
+cvar_t	cl_predict_autofallback = {"cl_predict_autofallback","1",CVAR_NONE};
 cvar_t	cl_predict_error_log = {"cl_predict_error_log","1",CVAR_NONE};
+
+/* Client-only safety state.  Never let a bad server sample affect authority. */
+static qboolean cl_prediction_quarantined;
+static int cl_prediction_error_streak;
+static unsigned int cl_prediction_large_errors;
+static int cl_prediction_large_error_samples;
+static qboolean cl_prediction_metadata_valid;
+static unsigned short cl_prediction_mode_epoch;
+static unsigned short cl_prediction_discontinuity_epoch;
 
 extern cvar_t host_maxfps;
 extern cvar_t cl_netfps;
@@ -219,8 +229,6 @@ static void CL_MigrateNetworkDefaults_f (void)
 		Cvar_SetQuick (&cl_net_lerpbuffer, "0");
 	if (cl_net_lerpbuffer_adaptive.value != 0)
 		Cvar_SetQuick (&cl_net_lerpbuffer_adaptive, "0");
-	if (cl_predict_smooth.value != 0)
-		Cvar_SetQuick (&cl_predict_smooth, "0");
 	if (!CL_CommandLineSetsCvar ("cl_netfps") &&
 		!CL_ValueMatchesOldDefault (cl_netfps.value, 0.0f))
 		Cvar_SetQuick (&cl_netfps, "0");
@@ -361,6 +369,17 @@ void CL_ClearState (void)
 	memset (v_punchangles, 0, sizeof (v_punchangles));
 	memset (v_punchangles_times, 0, sizeof (v_punchangles_times));
 	cl.ackedmovemessages = -1;
+	memset (cl.predicted_move_sequence, 0xff,
+		sizeof (cl.predicted_move_sequence));
+	cl.prediction_error_sequence = -1;
+	cl.net_prediction_error_last_sequence = -1;
+	cl_prediction_quarantined = false;
+	cl_prediction_error_streak = 0;
+	cl_prediction_large_errors = 0;
+	cl_prediction_large_error_samples = 0;
+	cl_prediction_metadata_valid = false;
+	cl_prediction_mode_epoch = 0;
+	cl_prediction_discontinuity_epoch = 0;
 }
 
 /*
@@ -1295,9 +1314,32 @@ static int CL_PredictPMoveType (int movetype)
 	}
 }
 
-static void CL_RecordPredictedMove (int seq, const vec3_t origin, const vec3_t velocity)
+#define CL_PREDICTED_ONGROUND 0x01
+#define CL_PREDICTED_INWATER 0x02
+#define CL_PREDICTED_JUMP_HELD 0x04
+#define CL_PREDICTED_DYNAMIC_CONTACT 0x08
+
+static qboolean CL_PredictionTouchedDynamicEntity (void)
+{
+	int i;
+
+	if (pmove.onground && pmove.groundent > 0 &&
+		pmove.groundent < pmove.numphysent &&
+		pmove.physents[pmove.groundent].info != 0)
+		return true;
+	for (i = 0; i < pmove.numtouch; i++)
+		if (pmove.touchindex[i] >= 0 &&
+			pmove.touchindex[i] < pmove.numphysent &&
+			pmove.physents[pmove.touchindex[i]].info != 0)
+			return true;
+	return false;
+}
+
+static void CL_RecordPredictedMove (int seq, const usercmd_t *cmd,
+	const vec3_t origin, const vec3_t velocity)
 {
 	int index;
+	int flags = 0;
 
 	if (seq < 0)
 		return;
@@ -1305,6 +1347,105 @@ static void CL_RecordPredictedMove (int seq, const vec3_t origin, const vec3_t v
 	cl.predicted_move_sequence[index] = seq;
 	VectorCopy (origin, cl.predicted_move_origin[index]);
 	VectorCopy (velocity, cl.predicted_move_velocity[index]);
+	if (pmove.onground)
+		flags |= CL_PREDICTED_ONGROUND;
+	if (pmove.waterlevel >= 2)
+		flags |= CL_PREDICTED_INWATER;
+	if (pmove.jump_held)
+		flags |= CL_PREDICTED_JUMP_HELD;
+	if (CL_PredictionTouchedDynamicEntity ())
+		flags |= CL_PREDICTED_DYNAMIC_CONTACT;
+	cl.predicted_move_mode_epoch[index] = cl.move_ack_mode_epoch;
+	cl.predicted_move_discontinuity_epoch[index] =
+		cl.move_ack_discontinuity_epoch;
+	cl.predicted_move_flags[index] = flags;
+	cl.predicted_move_msec[index] = cmd ? cmd->msec : 0;
+}
+
+static qboolean CL_PredictionVectorIsFinite (const vec3_t v)
+{
+	return isfinite (v[0]) && isfinite (v[1]) && isfinite (v[2]);
+}
+
+static void CL_ResetPredictionSmoothing (void)
+{
+	VectorClear (cl.prediction_error);
+	cl.prediction_error_time = 0;
+	cl.prediction_error_sequence = -1;
+}
+
+static void CL_ResetPredictionErrorSamples (void)
+{
+	cl_prediction_error_streak = 0;
+	cl_prediction_large_errors = 0;
+	cl_prediction_large_error_samples = 0;
+}
+
+static qboolean CL_PredictionSampleIsExpectedDiscontinuity (void)
+{
+	if (!(cl.protocol_pext2 & PEXT2_EXPLICITCMDMSEC))
+		return false;
+
+	if (!cl_prediction_metadata_valid)
+	{
+		cl_prediction_metadata_valid = true;
+		cl_prediction_mode_epoch = cl.move_ack_mode_epoch;
+		cl_prediction_discontinuity_epoch = cl.move_ack_discontinuity_epoch;
+		return false;
+	}
+
+	if (cl_prediction_mode_epoch != cl.move_ack_mode_epoch ||
+		cl_prediction_discontinuity_epoch != cl.move_ack_discontinuity_epoch)
+	{
+		cl_prediction_mode_epoch = cl.move_ack_mode_epoch;
+		cl_prediction_discontinuity_epoch = cl.move_ack_discontinuity_epoch;
+		return true;
+	}
+
+	return false;
+}
+
+static qboolean CL_PredictionSampleIsEligible (int index)
+{
+	/* Older peers have no classification metadata: retain their old behavior. */
+	if (!(cl.protocol_pext2 & PEXT2_EXPLICITCMDMSEC))
+		return true;
+
+	return cl.move_ack_prediction_allowed &&
+		(cl.move_ack_authority == MOVE_AUTHORITY_PMOVE_ENGINE_COMPAT ||
+		 cl.move_ack_authority == MOVE_AUTHORITY_PMOVE_QC_COMMAND) &&
+		cl.predicted_move_mode_epoch[index] == cl.move_ack_mode_epoch &&
+		cl.predicted_move_discontinuity_epoch[index] ==
+			cl.move_ack_discontinuity_epoch &&
+		!(cl.predicted_move_flags[index] & CL_PREDICTED_DYNAMIC_CONTACT);
+}
+
+static int CL_CountPredictionLargeErrors (unsigned int samples)
+{
+	int count = 0;
+
+	while (samples)
+	{
+		count += samples & 1u;
+		samples >>= 1;
+	}
+	return count;
+}
+
+static void CL_QuarantinePrediction (const char *reason, int ack, float err)
+{
+	if (cl_prediction_quarantined)
+		return;
+
+	cl_prediction_quarantined = true;
+	CL_ResetPredictionSmoothing ();
+	if (cls.state == ca_connected && !cls.demoplayback)
+	{
+		MSG_WriteByte (&cls.message, clc_stringcmd);
+		SZ_Print (&cls.message, "predstatus 0\n");
+	}
+	Con_Printf ("Client prediction disabled: %s (ack=%d err=%.2f). Use cl_predict_retry to retry.\n",
+		reason, ack, err);
 }
 
 static void CL_ClearPredictionHistory (void)
@@ -1314,6 +1455,53 @@ static void CL_ClearPredictionHistory (void)
 	for (i = 0; i < CL_MOVE_HISTORY; i++)
 		cl.predicted_move_sequence[i] = -1;
 	cl.net_prediction_error_last_sequence = -1;
+	CL_ResetPredictionSmoothing ();
+	CL_ResetPredictionErrorSamples ();
+}
+
+static void CL_RecordPredictionErrorSample (int ack, float err)
+{
+	if (!cl_predict_autofallback.value || cl_prediction_quarantined)
+		return;
+
+	if (err > 1.0f)
+		cl_prediction_error_streak++;
+	else
+		cl_prediction_error_streak = 0;
+
+	cl_prediction_large_errors =
+		((cl_prediction_large_errors << 1) | (err > 4.0f ? 1u : 0u)) & 0xffu;
+	if (cl_prediction_large_error_samples < 8)
+		cl_prediction_large_error_samples++;
+
+	if (cl_prediction_error_streak >= 3)
+		CL_QuarantinePrediction ("three consecutive reconciliation errors over 1 unit", ack, err);
+	else if (cl_prediction_large_error_samples >= 2 &&
+		CL_CountPredictionLargeErrors (cl_prediction_large_errors) >= 2)
+		CL_QuarantinePrediction ("two reconciliation errors over 4 units in eight samples", ack, err);
+}
+
+static void CL_SetPredictionSmoothingError (int ack, const vec3_t delta, float err)
+{
+	float min_error = cl_predict_smooth_min.value;
+	float max_error = cl_predict_smooth_max.value;
+
+	if (min_error < 0)
+		min_error = 0;
+	if (max_error < min_error)
+		max_error = min_error;
+	if (vr_enabled.value && max_error > 1.0f)
+		max_error = 1.0f;
+
+	if (!cl_predict_smooth.value || err < min_error || err > max_error)
+	{
+		CL_ResetPredictionSmoothing ();
+		return;
+	}
+
+	VectorCopy (delta, cl.prediction_error);
+	cl.prediction_error_time = realtime;
+	cl.prediction_error_sequence = ack;
 }
 
 static void CL_CheckPredictionError (entity_t *ent)
@@ -1332,13 +1520,29 @@ static void CL_CheckPredictionError (entity_t *ent)
 		return;
 	if (cl.net_prediction_error_last_sequence == ack)
 		return;
+	if (!CL_PredictionVectorIsFinite (cl.predicted_move_origin[index]) ||
+		!CL_PredictionVectorIsFinite (ent->msg_origins[0]))
+	{
+		CL_QuarantinePrediction ("non-finite reconciliation sample", ack, 0);
+		CL_ClearPredictionHistory ();
+		return;
+	}
 
 	VectorSubtract (cl.predicted_move_origin[index], ent->msg_origins[0], delta);
 	err = VectorLength (delta);
 	cl.net_prediction_error_last_sequence = ack;
+	if (!isfinite (err))
+	{
+		CL_QuarantinePrediction ("non-finite reconciliation error", ack, err);
+		CL_ClearPredictionHistory ();
+		return;
+	}
 	cl.net_prediction_error_last = err;
 	if (err > cl.net_prediction_error_max)
 		cl.net_prediction_error_max = err;
+	if (CL_PredictionSampleIsEligible (index))
+		CL_RecordPredictionErrorSample (ack, err);
+	CL_SetPredictionSmoothingError (ack, delta, err);
 
 	if (err < 0.25f)
 		return;
@@ -1355,6 +1559,52 @@ static void CL_CheckPredictionError (entity_t *ent)
 			cl.predicted_move_velocity[index][0],
 			cl.predicted_move_velocity[index][1],
 			cl.predicted_move_velocity[index][2]);
+}
+
+/* This changes only the supplied render view origin, after PMove has finished. */
+void CL_ApplyPredictionViewSmoothing (vec3_t vieworg)
+{
+	double elapsed;
+	float smooth_time;
+	float scale;
+
+	if (!cl_predict_smooth.value || cl.prediction_error_sequence < 0 ||
+		!CL_PredictionVectorIsFinite (cl.prediction_error))
+	{
+		CL_ResetPredictionSmoothing ();
+		return;
+	}
+
+	smooth_time = cl_predict_smooth_time.value;
+	if (vr_enabled.value && smooth_time > 0.060f)
+		smooth_time = 0.060f;
+	if (smooth_time <= 0)
+	{
+		CL_ResetPredictionSmoothing ();
+		return;
+	}
+
+	elapsed = realtime - cl.prediction_error_time;
+	if (elapsed < 0 || elapsed >= smooth_time)
+	{
+		CL_ResetPredictionSmoothing ();
+		return;
+	}
+
+	scale = 1.0f - (float)(elapsed / smooth_time);
+	VectorMA (vieworg, scale, cl.prediction_error, vieworg);
+}
+
+static void CL_PredictRetry_f (void)
+{
+	cl_prediction_quarantined = false;
+	CL_ClearPredictionHistory ();
+	if (cls.state == ca_connected && !cls.demoplayback)
+	{
+		MSG_WriteByte (&cls.message, clc_stringcmd);
+		SZ_Print (&cls.message, "predstatus 1\n");
+	}
+	Con_Printf ("Client prediction retry enabled.\n");
 }
 
 static qboolean CL_PredictPlayer (entity_t *ent)
@@ -1376,7 +1626,7 @@ static qboolean CL_PredictPlayer (entity_t *ent)
 	if (CL_LocalSingleplayerActive ())
 		return false;
 
-	if (!cl_predictmove.value || cl_nopred.value || cls.demoplayback ||
+	if (cl_prediction_quarantined || !cl_predictmove.value || cl_nopred.value || cls.demoplayback ||
 		cls.state != ca_connected || cls.signon != SIGNONS ||
 		!cl.worldmodel || cl.viewentity <= 0)
 		return false;
@@ -1388,6 +1638,21 @@ static qboolean CL_PredictPlayer (entity_t *ent)
 		Host_Error ("Server does not support this build's movement protocol");
 	if (!ent->netstate.pmovetype)
 		return false;
+	if ((cl.protocol_pext2 & PEXT2_EXPLICITCMDMSEC) &&
+		!cl.move_ack_prediction_allowed)
+		return false;
+	if (!CL_PredictionVectorIsFinite (ent->msg_origins[0]))
+	{
+		CL_QuarantinePrediction ("non-finite authoritative movement state",
+			cl.ackedmovemessages, 0);
+		CL_ClearPredictionHistory ();
+		return false;
+	}
+	if (CL_PredictionSampleIsExpectedDiscontinuity ())
+	{
+		CL_ClearPredictionHistory ();
+		return false;
+	}
 
 	PMCL_SetMoveVars ();
 	memset (&pmove, 0, sizeof(pmove));
@@ -1440,7 +1705,7 @@ static qboolean CL_PredictPlayer (entity_t *ent)
 		if (pmove.cmd.seconds > 0.5f)
 			pmove.cmd.seconds = 0.5f;
 		PM_PlayerMove (1);
-		CL_RecordPredictedMove (seq, pmove.origin, pmove.velocity);
+		CL_RecordPredictedMove (seq, histcmd, pmove.origin, pmove.velocity);
 		propagate[(seq + 1) & (CL_MOVE_HISTORY - 1)].seq = seq + 1;
 		propagate[(seq + 1) & (CL_MOVE_HISTORY - 1)].waterjumptime =
 			pmove.waterjumptime;
@@ -1448,6 +1713,13 @@ static qboolean CL_PredictPlayer (entity_t *ent)
 	}
 
 	pending = cl.pendingcmd;
+	if ((cl.protocol_pext2 & PEXT2_EXPLICITCMDMSEC) &&
+		cl.move_msec_sample_valid)
+	{
+		pending.seconds = CLAMP (0.0, realtime - cl.move_msec_sample_time, 0.125);
+		pending.msec = pending.seconds > 0 ?
+			(unsigned char)CLAMP (1, (int)(pending.seconds * 1000.0 + 0.5), 125) : 0;
+	}
 	VectorCopy (cl.aimangles, pending.viewangles);
 	VR_UpdateCommandViewAngles (&pending);
 	pmove.cmd = pending;
@@ -2318,7 +2590,9 @@ void CL_Init (void)
 	Cvar_RegisterVariable (&cl_predict_smooth_time);
 	Cvar_RegisterVariable (&cl_predict_smooth_min);
 	Cvar_RegisterVariable (&cl_predict_smooth_max);
+	Cvar_RegisterVariable (&cl_predict_autofallback);
 	Cmd_AddCommand ("cl_migrate_network_defaults", CL_MigrateNetworkDefaults_f);
+	Cmd_AddCommand ("cl_predict_retry", CL_PredictRetry_f);
 	Cvar_RegisterVariable (&freelook);
 	Cvar_RegisterVariable (&lookspring);
 	Cvar_RegisterVariable (&lookstrafe);

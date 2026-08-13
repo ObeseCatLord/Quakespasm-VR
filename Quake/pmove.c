@@ -48,6 +48,8 @@ static qboolean	clmovevars_valid;
 #define PM_VANILLA_JUMP_VELOCITY 270.0f
 #define PM_VANILLA_WATERJUMP_VELOCITY 310.0f
 #define PM_VR_SWIM_JUMP_UPMOVE 200.0f
+#define PM_MAX_SUBSTEP_SECONDS 0.025f
+#define PM_VR_ROOMSCALE_MAX_DELTA 16.0f
 
 static cvar_t pm_bunnyspeedcap = {"pm_bunnyspeedcap", "", CVAR_SERVERINFO};
 static cvar_t pm_bunnyfriction = {"pm_bunnyfriction", "1", CVAR_SERVERINFO};
@@ -539,12 +541,16 @@ trace_t PM_TraceLine (vec3_t start, vec3_t end)
 */
 static void PM_AddTouchedEnt (int num)
 {
+	int		i;
+
 	if (pmove.numtouch == MAX_PHYSENTS)
 		return;
 
-	if (pmove.numtouch)
-		if (pmove.touchindex[pmove.numtouch - 1] == num)
-			return; // already added
+	/* A move can now contain several deterministic substeps plus a room-scale
+	 * sweep.  Do not report the same impact once per substep. */
+	for (i = 0; i < pmove.numtouch; i++)
+		if (pmove.touchindex[i] == num)
+			return;
 
 	pmove.touchindex[pmove.numtouch] = num;
 	VectorCopy(pmove.velocity, pmove.touchvel[pmove.numtouch]);
@@ -1784,14 +1790,59 @@ Numtouch and touchindex[] will be set if any of the physents
 were contacted during the move.
 =============
 */
-void PM_PlayerMove (float gamespeed)
+/*
+====================
+PM_ApplyVRRoomScaleMove
+
+Room-scale tracking is an external horizontal displacement, not locomotion.
+Move it through the same hull and step-slide code as walking while restoring
+the locomotion velocity afterwards.  A large tracker jump is ignored in its
+entirety rather than clipped to the maximum, which avoids turning a bad sample
+into an apparent player movement.
+====================
+*/
+static void PM_ApplyVRRoomScaleMove (void)
+{
+	vec3_t	move;
+	vec3_t	velocity;
+	float	saved_frametime;
+	float	horizontal_length;
+
+	if (!pmove.cmd.vr_active || pmove.pm_type == PM_DEAD ||
+		pmove.pm_type == PM_NONE || pmove.pm_type == PM_FREEZE)
+		return;
+
+	VectorCopy (pmove.cmd.vr_roomscalemove, move);
+	horizontal_length = sqrtf(move[0]*move[0] + move[1]*move[1]);
+
+	/* Tracking data is expected to be horizontal; reject malformed/outlier
+	 * samples instead of accepting a partial vertical teleport. */
+	if (fabsf(move[2]) > PM_VR_ROOMSCALE_MAX_DELTA ||
+		horizontal_length > PM_VR_ROOMSCALE_MAX_DELTA)
+	{
+		Con_DPrintf ("PMove: ignored VR room-scale tracking outlier (%g %g %g)\n",
+			move[0], move[1], move[2]);
+		return;
+	}
+	if (horizontal_length == 0)
+		return;
+	move[2] = 0;
+
+	VectorCopy (pmove.velocity, velocity);
+	saved_frametime = frametime;
+	frametime = 1.0f;
+	VectorCopy (move, pmove.velocity);
+	PM_StepSlideMove (false);
+	VectorCopy (velocity, pmove.velocity);
+	frametime = saved_frametime;
+}
+
+static void PM_PlayerMoveStep (float gamespeed, qboolean apply_roomscale)
 {
 //	int i;
 //	int tmp;	//for rounding
 
-	PM_EnsureInitialized ();
 	frametime = pmove.cmd.seconds * gamespeed;
-	pmove.numtouch = 0;
 
 	if (pmove.pm_type == PM_NONE || pmove.pm_type == PM_FREEZE)
 	{
@@ -1805,6 +1856,11 @@ void PM_PlayerMove (float gamespeed)
 
 	if (pmove.pm_type == PM_SPECTATOR || pmove.pm_type == PM_OLD_SPECTATOR)
 	{
+		if (apply_roomscale && pmove.cmd.vr_active)
+		{
+			PM_CategorizePosition ();
+			PM_ApplyVRRoomScaleMove ();
+		}
 		PM_SpectatorMove ();
 		pmove.onground = false;
 		return;
@@ -1814,6 +1870,11 @@ void PM_PlayerMove (float gamespeed)
 
 	// set onground, watertype, and waterlevel
 	PM_CategorizePosition ();
+	if (apply_roomscale)
+	{
+		PM_ApplyVRRoomScaleMove ();
+		PM_CategorizePosition ();
+	}
 
 	if (movevars.autobunny && !pmove.onground)
 		pmove.jump_held = false;
@@ -1875,6 +1936,51 @@ void PM_PlayerMove (float gamespeed)
 	{
 		PM_ClipVelocity (pmove.velocity, groundplane.normal, pmove.velocity, 1);
 	}
+}
+
+void PM_PlayerMove (float gamespeed)
+{
+	usercmd_t	cmd;
+	float		seconds;
+	float		step_seconds;
+	int			steps;
+	int			i;
+
+	PM_EnsureInitialized ();
+	pmove.numtouch = 0;
+	cmd = pmove.cmd;
+	seconds = cmd.seconds;
+
+	/* Offline/legacy callers do not carry the negotiated duration byte. Keep
+	 * their original single-step semantics completely unchanged. */
+	if (!cmd.msec)
+	{
+		PM_PlayerMoveStep (gamespeed, false);
+		pmove.cmd = cmd;
+		return;
+	}
+
+	/* Keep a zero-length command's legacy categorization behavior. */
+	if (seconds <= 0)
+	{
+		PM_PlayerMoveStep (gamespeed, true);
+		pmove.cmd = cmd;
+		return;
+	}
+
+	steps = (int)ceilf(seconds / PM_MAX_SUBSTEP_SECONDS);
+	if (steps < 1)
+		steps = 1;
+	step_seconds = seconds / steps;
+	for (i = 0; i < steps; i++)
+	{
+		pmove.cmd = cmd;
+		pmove.cmd.seconds = step_seconds;
+		PM_PlayerMoveStep (gamespeed, i == 0);
+	}
+
+	/* PM_PlayerMove historically leaves the caller's command untouched. */
+	pmove.cmd = cmd;
 }
 
 static void PM_DecodeSolidSize (unsigned int solidsize, vec3_t mins, vec3_t maxs)

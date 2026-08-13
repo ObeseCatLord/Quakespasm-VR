@@ -64,12 +64,21 @@ extended protocol support.
 
 ### Networking
 
-- Clients and servers use latest-client movement packets with numbered
-  commands, QSS-M-style move ACKs, and replacement-delta snapshot ACKs.
-- Co-op servers default to QSS-M-style pacing with latest-input,
-  server-authoritative movement. Prediction metadata follows QSS-M and is only
-  advertised when server PMove/QC input movement is active unless explicitly
-  enabled for testing.
+- Clients and servers use numbered, redundant latest-client movement commands,
+  QSS-M-style move ACKs, and replacement-delta snapshot ACKs. Each negotiated
+  command carries its own monotonic duration, so packet loss cannot donate a
+  long timing interval to the next surviving input.
+- Network multiplayer defaults to server-authoritative PMove with client replay
+  prediction. No per-mod allowlist is required: automatic mode uses a mod's
+  explicit `SV_RunClientCommand` hook when present and otherwise uses the
+  engine-compatible PMove backend. Unsupported/custom physics states fall back
+  to legacy authority at a command boundary.
+- Local single-player is deliberately excluded from the new authority path and
+  keeps the existing offline Quake physics and timing behavior.
+- PMove uses matching command durations and bounded substeps on the client and
+  server. VR room-scale deltas are swept through the PMove collision world once
+  per command, preventing raw body displacement into walls while retaining the
+  associated hand pose.
 - Replacement-delta entity updates reduce the need for unsafe split snapshots.
 - Snapshot resend, ACK recovery, entity prioritization, and pacing help busy
   co-op maps stay playable under packet loss.
@@ -169,8 +178,9 @@ sys_ticrate 0.05
 sv_netsort 1
 sv_maxpacketsize 1400
 sv_replacement_maxpackets 0
-sv_nqplayerphysics 1
-sv_trustedmovement 0
+sv_pmove_mode 1
+sv_nqplayerphysics 0
+sv_trustedmovement 1
 sv_predict_nqmovement 0
 sv_inputtimeout 0
 sv_gameplayfix_spawnbeforethinks 0
@@ -190,14 +200,14 @@ The tracked deploy scripts install this baseline as
 `id1/codex_coop_server.cfg` and generate per-mod `start_*_server.sh`
 wrappers that execute `quakespasm-openvr.bin` with it before loading a map.
 
-Use `-novr` for desktop clients and `-vr` for headset clients. The protocol uses
-QSS-M-style move ACKs and replacement-delta snapshots; vanilla/QSS-M server
-movement is the default. Prediction metadata follows QSS-M and is only
-advertised when server PMove/QC input movement is active unless explicitly
-testing prediction against vanilla movement. Trusted server PMove is off by
-default, including mods that supply `SV_RunClientCommand`. Set
-`sv_nqplayerphysics 0` only when intentionally testing server PMove, and pair
-that with `sv_trustedmovement 1`.
+Use `-novr` for desktop clients and `-vr` for headset clients. Matching builds
+negotiate explicit command durations and movement-authority metadata in the
+move-ACK stream. Predictive PMove is the normal multiplayer architecture and
+does not require manual mod validation. `sv_pmove_mode 1` automatically chooses
+the explicit QC command backend when the mod supplies it and the engine-compatible
+backend otherwise; modes `0`, `2`, and `3` force legacy, engine-compatible, or
+explicit-QC behavior for diagnosis. Local single-player always remains on the
+original offline physics path regardless of these multiplayer defaults.
 Startup runs `host_migrate_network_defaults` after configs to repair stale
 archived values such as `host_maxfps 72`, nonzero `cl_netfps`, nonzero
 `host_framerate`/`host_timescale` overrides, non-default
@@ -208,8 +218,8 @@ prediction-test, or PMove QC-velocity preservation settings, nonzero
 and capped
 replacement bursts. Lower stale `max_edicts` values are raised to QSS-M's
 `15000` default, while higher mod-specific values are preserved.
-Deploy also scrubs retired client-side smoothing/extrapolation cvars from
-existing configs and restores stale `cl_predictmove 0` or `cl_nopred 1` values;
+Deploy also scrubs retired extrapolation/lerp-buffer cvars from existing configs
+and restores stale `cl_predictmove 0` or `cl_nopred 1` values;
 explicit
 `+cvar value` launch arguments are preserved.
 
@@ -399,7 +409,11 @@ QuakeSpasm cvar.
 | `cl_portpingprobe_probes` | `6` | Networking | Number of client port probes. |
 | `cl_predict_error_log` | `1` | Diagnostics | Logs prediction mismatches. |
 | `cl_predictmove` | `1` | Networking | Enables local client-side movement prediction from server predinfo metadata. |
-| `cl_predict_smooth*` | `0` | Networking | Retired no-op compatibility cvars retained only so old configs and launch scripts do not warn. |
+| `cl_predict_autofallback` | `1` | Networking | Quarantines client presentation prediction after sustained eligible divergence; use `cl_predict_retry` to retry without changing server authority. |
+| `cl_predict_smooth` | `1` | Networking | Enables render-view-only reconciliation smoothing; it never feeds back into PMove or VR command poses. |
+| `cl_predict_smooth_time` | `0.10` | Networking | Desktop correction decay time; VR clamps this to 0.06 seconds. |
+| `cl_predict_smooth_min` | `0.125` | Networking | Minimum correction magnitude eligible for smoothing. |
+| `cl_predict_smooth_max` | `4` | Networking | Desktop smoothing cap; VR clamps this to 1 unit. |
 | `cfg_unbindall` | `1` | Config | Allows configs to execute `unbindall`; set `0` to ignore it. |
 | `freelook` | `1` | Input | Default mouse look behavior. |
 | `max_edicts` | `15000` | Networking | QSS-M default entity capacity for large maps; higher mod-specific values are preserved by deploy cleanup. |
@@ -480,9 +494,11 @@ QuakeSpasm cvar.
 | `sv_netdiag_interval` | `5` | Diagnostics | Periodic network diagnostic interval in seconds. |
 | `sv_netsort` | `1` | Networking | Sorts entity updates by priority before packet clipping. |
 | `sv_nofriendlyfire` | `0` | Co-op | Opt-in friendly-fire protection for co-op; `1` disables player-on-player damage while retaining self-damage. |
-| `sv_nqplayerphysics` | `1` | PMove | Keeps vanilla/QSS-M server movement by default. Set `0` only when intentionally testing server PMove. |
+| `sv_nqplayerphysics` | `0` | PMove | Enables the predictive PMove multiplayer architecture; local single-player is separately kept on legacy offline physics. |
+| `sv_pmove_mode` | `1` | PMove | Movement authority policy: `0` legacy, `1` automatic/default, `2` engine-compatible PMove, `3` explicit `SV_RunClientCommand`. |
 | `sv_pmove_legacy_preserve_qc_velocity` | `1` | PMove | Preserves QC velocity pushes such as grapples through legacy PMove. |
 | `sv_predict_nqmovement` | `0` | PMove | Experimental opt-in for advertising PMove prediction metadata while the server still runs vanilla NQ movement; default `0` matches QSS-M and avoids correction judder. |
+| `sv_trustedmovement` | `1` | PMove | Allows negotiated predictive PMove for network clients; retained as an administrative emergency gate. |
 | `sv_replacement_maxpackets` | `0` | Networking | QSS-M-style uncapped replacement-delta drain by default; positive values manually cap split packets sent to one client per server frame. |
 | `sv_save_multiplayer` | `1` | Save/load | Allows multiplayer/co-op saves in controlled use. |
 | `sv_skyroom_pvs` | `1` | Rendering/server | Adds skyroom PVS for skyroom entity visibility. |
@@ -538,12 +554,20 @@ tools/net_connected_stress_smoke
 ```
 
 It uses port `26011` by default and fails if connected clients do not ACK
-replacement snapshots, if client movement is not received, if the same-IP
-multi-client path is not exercised, if no multi-packet replacement drain occurs
-under the configured test packet cap, or if replacement entity clipping/packet
-overflow diagnostics appear. It uses `TEST_MAXPACKETSIZE=1024` by default to
-force split coverage; set `TEST_MAXPACKETSIZE=1400` for a production-cap run.
-Set `CLIENTS=1` for a lighter single-client run.
+replacement snapshots, if predictive movement authority or explicit command
+time is absent, if client movement is not received, if the same-IP multi-client
+path is not exercised, if no multi-packet replacement drain occurs under the
+configured test packet cap, or if replacement entity clipping/packet overflow
+diagnostics appear. It uses `TEST_MAXPACKETSIZE=1024` by default to force split
+coverage; set `TEST_MAXPACKETSIZE=1400` for a production-cap run. Set
+`CLIENTS=1` for a lighter single-client run.
+
+Set `NET_PROXY_PROFILE` to `delay`, `jitter`, `loss`, `reorder`, `gap1`,
+`gap2`, `gap3`, `stall200`, or `all` to route traffic through the deterministic
+user-space UDP impairment proxy. The connected smoke defaults to a repeating
+wall/jump input pattern; `SYNTHETIC_VR=1` also injects headless room-scale and
+hand-pose command data without requiring a headset. These test-only cvars are
+off during normal and offline play.
 
 ## Compatibility Caveats
 

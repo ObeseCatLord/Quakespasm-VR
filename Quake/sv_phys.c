@@ -3106,6 +3106,24 @@ void SV_RunPMoveForEntity(edict_t *ent, const usercmd_t *cmd) {
 
   PM_PlayerMove(1);
 
+  if (host_client && host_client->edict == ent) {
+    qboolean dynamic_contact = false;
+
+    host_client->net_move_touches += pmove.numtouch;
+    if (pmove.onground && pmove.groundent >= 0 &&
+        pmove.groundent < pmove.numphysent &&
+        pmove.physents[pmove.groundent].info > 0)
+      dynamic_contact = true;
+    for (i = 0; i < pmove.numtouch && !dynamic_contact; i++) {
+      int touch = pmove.touchindex[i];
+      if (touch >= 0 && touch < pmove.numphysent &&
+          pmove.physents[touch].info > 0)
+        dynamic_contact = true;
+    }
+    if (dynamic_contact)
+      host_client->net_move_dynamic_contacts++;
+  }
+
   VectorCopy(pmove.safeorigin, ent->v.oldorigin);
   VectorCopy(pmove.origin, ent->v.origin);
   VectorCopy(pmove.velocity, ent->v.velocity);
@@ -3195,6 +3213,15 @@ qboolean SV_RunClientPMoveCommand(client_t *client) {
   int num;
   int processed = 0;
   qboolean is_remote_vr;
+  qboolean command_hook;
+  qboolean think_ok;
+  qboolean coop_started = false;
+  usercmd_t lastcmd;
+  usercmd_t gameplaycmd;
+  qboolean have_gameplaycmd = false;
+  int latched_buttons = 0;
+  int latched_impulse = 0;
+  coop_respawn_postthink_state_t coop_respawn_state;
 
   if (!client || !client->active || !client->edict || client->edict->free)
     return false;
@@ -3204,7 +3231,8 @@ qboolean SV_RunClientPMoveCommand(client_t *client) {
     return false;
 
   ent = client->edict;
-  is_remote_vr = client->is_vr_client && (isDedicated || num != cl.viewentity);
+  is_remote_vr = client->cmd.vr_active &&
+      (isDedicated || num != cl.viewentity);
   saved_host_client = host_client;
   saved_sv_player = sv_player;
   host_client = client;
@@ -3217,11 +3245,15 @@ qboolean SV_RunClientPMoveCommand(client_t *client) {
     return false;
   }
 
-  do {
+  command_hook = client->move_authority == MOVE_AUTHORITY_PMOVE_QC_COMMAND;
+  SV_CoopRespawnBeginPostThink(ent, num, &coop_respawn_state);
+  coop_started = true;
+
+  /* Legacy QuakeC expects its lifecycle hooks once per server physics frame,
+   * while PMove itself consumes each accepted command in sequence. */
+  if (!command_hook) {
     vec3_t thinkRestoreOrigin;
     vec3_t thinkRestoreVAngle;
-    vec3_t restoreOrigin;
-    vec3_t restoreVAngle;
     vec3_t prethink_velocity;
     vec3_t postthink_velocity;
     vec3_t preserved_velocity_delta;
@@ -3234,18 +3266,8 @@ qboolean SV_RunClientPMoveCommand(client_t *client) {
     float prethink_deadflag;
     float prethink_teleport_time;
     float postthink_teleport_time;
-    qboolean think_ok;
-    coop_respawn_postthink_state_t coop_respawn_state;
 
-    SV_CoopRespawnBeginPostThink(ent, num, &coop_respawn_state);
     SV_SetQCInputGlobals(&client->cmd);
-
-    if (client->is_vr_client && VectorLength(client->vr_roomscalemove) > 0) {
-      VectorAdd(ent->v.origin, client->vr_roomscalemove, ent->v.origin);
-      VectorCopy(vec3_origin, client->vr_roomscalemove);
-      VectorCopy(vec3_origin, client->vr_roomscale_accum);
-      SV_LinkEdict(ent, false);
-    }
 
     VectorCopy(ent->v.velocity, prethink_velocity);
     prethink_flags = (int)ent->v.flags;
@@ -3259,24 +3281,22 @@ qboolean SV_RunClientPMoveCommand(client_t *client) {
     pr_global_struct->time = qcvm->time;
     pr_global_struct->self = EDICT_TO_PROG(ent);
     PR_ExecuteProgram(pr_global_struct->PlayerPreThink);
+    client->net_move_qc_prethinks++;
     if (ent->free) {
-      SV_CoopRespawnRestoreSuppressedInput(ent, num, &coop_respawn_state);
-      break;
+      goto done;
     }
-    if (!qcvm->extfuncs.SV_RunClientCommand) {
-      VectorCopy(ent->v.velocity, postthink_velocity);
-      postthink_flags = (int)ent->v.flags;
-      postthink_teleport_time = ent->v.teleport_time;
-      SV_FilterLegacyPMoveQCVelocityDelta(
-          &client->cmd, prethink_velocity, postthink_velocity, prethink_flags,
-          postthink_flags, prethink_waterlevel, prethink_watertype,
-          prethink_movetype, prethink_health, prethink_deadflag,
-          preserved_velocity_delta);
-      VectorAdd(prethink_velocity, preserved_velocity_delta, ent->v.velocity);
-      SV_RestoreLegacyPMoveOwnedState(ent, prethink_flags, postthink_flags,
-                                      prethink_teleport_time,
-                                      postthink_teleport_time);
-    }
+    VectorCopy(ent->v.velocity, postthink_velocity);
+    postthink_flags = (int)ent->v.flags;
+    postthink_teleport_time = ent->v.teleport_time;
+    SV_FilterLegacyPMoveQCVelocityDelta(
+        &client->cmd, prethink_velocity, postthink_velocity, prethink_flags,
+        postthink_flags, prethink_waterlevel, prethink_watertype,
+        prethink_movetype, prethink_health, prethink_deadflag,
+        preserved_velocity_delta);
+    VectorAdd(prethink_velocity, preserved_velocity_delta, ent->v.velocity);
+    SV_RestoreLegacyPMoveOwnedState(ent, prethink_flags, postthink_flags,
+                                    prethink_teleport_time,
+                                    postthink_teleport_time);
     SV_CheckVelocity(ent);
 
     SV_ApplyVRWeaponOffset(ent, num, is_remote_vr, thinkRestoreOrigin,
@@ -3285,25 +3305,91 @@ qboolean SV_RunClientPMoveCommand(client_t *client) {
     SV_RestoreVRWeaponOffset(ent, num, is_remote_vr, thinkRestoreOrigin,
                              thinkRestoreVAngle);
     if (!think_ok || ent->free) {
-      SV_CoopRespawnRestoreSuppressedInput(ent, num, &coop_respawn_state);
-      break;
+      goto done;
+    }
+  }
+
+  while (client->move_pending && !ent->free) {
+    usercmd_t cmd = client->cmd;
+
+    latched_buttons |= cmd.buttons;
+    if (!latched_impulse && cmd.impulse)
+      latched_impulse = cmd.impulse;
+    if (!have_gameplaycmd && ((cmd.buttons & BUTTON_ATTACK) || cmd.impulse)) {
+      gameplaycmd = cmd;
+      have_gameplaycmd = true;
     }
 
-    if (qcvm->extfuncs.SV_RunClientCommand) {
+    if (command_hook) {
+      vec3_t thinkRestoreOrigin;
+      vec3_t thinkRestoreVAngle;
+
+      /* Explicit command physics owns its per-command QuakeC callback. */
+      is_remote_vr = cmd.vr_active &&
+          (isDedicated || num != cl.viewentity);
+      SV_SetQCInputGlobals(&cmd);
+      pr_global_struct->time = qcvm->time;
+      pr_global_struct->self = EDICT_TO_PROG(ent);
+      PR_ExecuteProgram(pr_global_struct->PlayerPreThink);
+      client->net_move_qc_prethinks++;
+      if (ent->free)
+        break;
+      SV_CheckVelocity(ent);
+
+      SV_ApplyVRWeaponOffset(ent, num, is_remote_vr, thinkRestoreOrigin,
+                             thinkRestoreVAngle);
+      think_ok = SV_RunThink(ent);
+      SV_RestoreVRWeaponOffset(ent, num, is_remote_vr, thinkRestoreOrigin,
+                               thinkRestoreVAngle);
+      if (!think_ok || ent->free)
+        break;
+
       pr_global_struct->self = EDICT_TO_PROG(ent);
       PR_ExecuteProgram(qcvm->extfuncs.SV_RunClientCommand);
+      client->net_move_qc_commands++;
       SV_LinkEdict(ent, true);
     } else {
-      SV_RunPMoveForEntity(ent, &client->cmd);
+      SV_RunPMoveForEntity(ent, &cmd);
     }
     if (ent->free) {
-      SV_CoopRespawnRestoreSuppressedInput(ent, num, &coop_respawn_state);
       break;
     }
 
-    SV_LinkEdict(ent, false);
+    /* The accepted command carries exactly one room-scale sample.  PMove
+     * consumes it during its first substep; clear the server-side latches so
+     * a later frame cannot replay it (including rejected tracking outliers). */
+    VectorCopy(vec3_origin, client->vr_roomscalemove);
+    VectorCopy(vec3_origin, client->vr_roomscale_accum);
+    VectorCopy(vec3_origin, client->cmd.vr_roomscalemove);
 
+    lastcmd = cmd;
+    SV_FinishPMoveUsercmd(client);
+    processed++;
+  }
+
+  if (!ent->free && processed) {
+    vec3_t restoreOrigin;
+    vec3_t restoreVAngle;
+
+    SV_LinkEdict(ent, false);
     pr_global_struct->time = qcvm->time;
+    if (!have_gameplaycmd)
+      gameplaycmd = lastcmd;
+    gameplaycmd.buttons |= latched_buttons;
+    if (latched_impulse)
+      gameplaycmd.impulse = latched_impulse;
+    client->cmd = gameplaycmd;
+    ent->v.button0 = gameplaycmd.buttons & 1;
+    ent->v.button2 = (gameplaycmd.buttons & 2) >> 1;
+    SV_SetExtendedButtons(ent, gameplaycmd.buttons);
+    ent->v.impulse = gameplaycmd.impulse;
+    client->is_vr_client = gameplaycmd.vr_active;
+    client->vr_handpos_relative = gameplaycmd.vr_handpos_relative;
+    VectorCopy(gameplaycmd.vr_handpos, client->vr_handpos);
+    VectorCopy(gameplaycmd.vr_handrot, client->vr_handrot);
+    SV_SetQCInputGlobals(&gameplaycmd);
+    is_remote_vr = gameplaycmd.vr_active &&
+        (isDedicated || num != cl.viewentity);
     SV_ApplyVRWeaponOffset(ent, num, is_remote_vr, restoreOrigin,
                            restoreVAngle);
     pr_global_struct->self = EDICT_TO_PROG(ent);
@@ -3311,6 +3397,7 @@ qboolean SV_RunClientPMoveCommand(client_t *client) {
     {
       qboolean ff_scope = SV_FriendlyFireBegin(ent);
       PR_ExecuteProgram(pr_global_struct->PlayerPostThink);
+      client->net_move_qc_postthinks++;
       if (ff_scope)
         SV_FriendlyFireEnd();
     }
@@ -3320,17 +3407,36 @@ qboolean SV_RunClientPMoveCommand(client_t *client) {
     SV_CoopRespawnEndPostThink(ent, num, &coop_respawn_state);
     SV_CoopReviveApplyPending();
 
-    SV_FinishPMoveUsercmd(client);
-    processed++;
-  } while (0);
+    /* Restore the newest held state after delivering latched one-frame
+     * gameplay events with the pose of the command that originated them. */
+    client->cmd = lastcmd;
+    client->cmd.impulse = 0;
+    ent->v.button0 = lastcmd.buttons & 1;
+    ent->v.button2 = (lastcmd.buttons & 2) >> 1;
+    SV_SetExtendedButtons(ent, lastcmd.buttons);
+    ent->v.impulse = 0;
+    client->is_vr_client = lastcmd.vr_active;
+    client->vr_handpos_relative = lastcmd.vr_handpos_relative;
+    VectorCopy(lastcmd.vr_handpos, client->vr_handpos);
+    VectorCopy(lastcmd.vr_handrot, client->vr_handrot);
+  }
+
+done:
+  if (coop_started && (ent->free || !processed))
+    SV_CoopRespawnRestoreSuppressedInput(ent, num, &coop_respawn_state);
 
   host_client = saved_host_client;
   sv_player = saved_sv_player;
 
-  if (!processed) {
+  if (ent->free || !processed) {
     client->pendingmovemessage = -1;
     client->move_pending = false;
+    client->move_queue_head = 0;
+    client->move_queue_count = 0;
     client->cmd.seconds = 0;
+    VectorCopy(vec3_origin, client->cmd.vr_roomscalemove);
+    VectorCopy(vec3_origin, client->vr_roomscalemove);
+    VectorCopy(vec3_origin, client->vr_roomscale_accum);
   }
 
   return processed > 0;

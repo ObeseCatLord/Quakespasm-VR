@@ -166,6 +166,18 @@ typedef struct client_s
 	qboolean		input_stale;
 	qboolean		moveext;
 	int				lastmovemessage;
+	int				lastacceptedmovemessage;
+	usercmd_t		move_queue[MOVE_BUNDLE_MAX];
+	unsigned int	move_queue_head;
+	unsigned int	move_queue_count;
+	move_authority_t	move_authority;
+	qboolean		move_prediction_allowed;
+	qboolean		move_client_quarantined;
+	unsigned short	move_mode_epoch;
+	unsigned short	move_discontinuity_epoch;
+	unsigned char	move_discontinuity_reason;
+	float			net_move_last_servertime;
+	unsigned char	net_move_last_msec;
 	int				pendingmovemessage;
 	qboolean		move_pending;
 	int				net_move_packets_received;
@@ -173,6 +185,15 @@ typedef struct client_s
 	int				net_move_cmds_accepted;
 	int				net_move_cmds_stale;
 	int				net_move_cmds_simulated;
+	unsigned long long net_move_msec_accepted;
+	unsigned long long net_move_msec_simulated;
+	int				net_move_queue_overflows;
+	int				net_move_roomscale_outliers;
+	int				net_move_qc_prethinks;
+	int				net_move_qc_postthinks;
+	int				net_move_qc_commands;
+	int				net_move_touches;
+	int				net_move_dynamic_contacts;
 	int				net_move_stale_log_suppressed;
 	int				net_move_bundle_max;
 	int				net_move_last_bundle;
@@ -375,6 +396,7 @@ extern cvar_t sv_coop_autosave_kill_interval;
 extern cvar_t sv_coop_predictmove;
 extern cvar_t sv_nqplayerphysics;
 extern cvar_t sv_trustedmovement;
+extern cvar_t sv_pmove_mode;
 extern cvar_t sv_triggerdebug;
 extern cvar_t sv_vr_jump_velocity;
 qboolean SV_IsVRClientSlot(int num);
@@ -409,6 +431,7 @@ void SV_ReserveSignonSpace (int numbytes);
 int SV_ModelIndex (const char *name);
 
 void SV_SetIdealPitch (void);
+void SV_SetExtendedButtons (edict_t *ent, int buttons);
 
 void SV_AddUpdates (void);
 
