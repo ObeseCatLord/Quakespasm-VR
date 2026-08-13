@@ -236,6 +236,14 @@ static void R_PerfResetFrame(void) {
   r_perf_viewmodel_ms = r_perf_debugdraw_ms = r_perf_scale_ms = 0.0;
 }
 
+static int R_PerfDebugEye(void) {
+  return R_IsVRStereoFrame() ? r_vr_eye_index : -1;
+}
+
+static int R_PerfDebugEyeCount(void) {
+  return R_IsVRStereoFrame() ? r_vr_eye_count : 1;
+}
+
 static void R_PerfCountEntity(entity_t *ent, qboolean alphapass) {
   if (!R_PerfActive() || !ent || !ent->model)
     return;
@@ -266,7 +274,8 @@ static void R_PerfLogFrame(double total_ms) {
       total_ms < q_max(0.0f, r_perfdebug_min_ms.value))
     return;
 
-  DebugLog("r_perfdebug: map=%s vr=%d total=%.3f skyroom=%.3f setup=%.3f "
+  DebugLog("r_perfdebug: map=%s vr=%d eye=%d/%d total=%.3f "
+           "skyroom=%.3f setup=%.3f "
            "mark=%.3f warp=%.3f scene=%.3f scale=%.3f calls(setup=%d "
            "scene=%d) pvs(leaf=%d fat=%d novis=%d) leaves(scan=%d vis=%d "
            "cull=%d) marks=%d surf(unique=%d cull=%d chain=%d) efragleaf=%d "
@@ -276,7 +285,8 @@ static void R_PerfLogFrame(double total_ms) {
            "dlights=%.3f particles=%.3f outlines=%.3f viewmodel=%.3f "
            "debugdraw=%.3f)\n",
            cl.worldmodel ? cl.worldmodel->name : "<none>",
-           (int)vr_enabled.value, total_ms, r_perf_skyroom_ms, r_perf_setup_ms,
+           (int)vr_enabled.value, R_PerfDebugEye(), R_PerfDebugEyeCount(),
+           total_ms, r_perf_skyroom_ms, r_perf_setup_ms,
            r_perf_mark_ms, r_perf_warp_ms, r_perf_scene_ms, r_perf_scale_ms,
            r_perf_setup_calls, r_perf_scene_calls, r_perf_pvs_leaf,
            r_perf_pvs_fat, r_perf_pvs_novis, r_perf_leaves_scanned,
