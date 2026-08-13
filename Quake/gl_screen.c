@@ -84,6 +84,7 @@ cvar_t scr_sbaralpha = {"scr_sbaralpha", "0.75", CVAR_ARCHIVE};
 cvar_t scr_hudstyle = {"scr_hudstyle", "0", CVAR_ARCHIVE};
 cvar_t scr_conwidth = {"scr_conwidth", "0", CVAR_ARCHIVE};
 cvar_t scr_conscale = {"scr_conscale", "1", CVAR_ARCHIVE};
+cvar_t scr_autoscale = {"scr_autoscale", "1", CVAR_ARCHIVE};
 cvar_t scr_crosshairscale = {"scr_crosshairscale", "1", CVAR_ARCHIVE};
 cvar_t scr_crosshair_desktop_fallback = {"scr_crosshair_desktop_fallback", "1", CVAR_ARCHIVE};
 cvar_t scr_showfps = {"scr_showfps", "0", CVAR_NONE};
@@ -443,6 +444,41 @@ void SCR_SizeDown_f(void) {
   Cvar_SetValueQuick(&scr_viewsize, scr_viewsize.value - 10);
 }
 
+/* Last desktop dimensions to which automatic UI scaling was applied. */
+static int scr_autoscale_width = -1;
+static int scr_autoscale_height = -1;
+
+/*
+=================
+SCR_ApplyAutoScale
+
+Keep the desktop console, menus and HUD at Ironwail's 640x480 reference size.
+This runs after configuration and only from the flat renderer, so enabling VR
+never changes the scale cvars used by the VR presentation path.
+=================
+*/
+static void SCR_ApplyAutoScale(void) {
+  float scale;
+
+  if (vr_enabled.value || !scr_autoscale.value) {
+    /* Reapply if automatic desktop scaling is subsequently enabled/entered. */
+    scr_autoscale_width = scr_autoscale_height = -1;
+    return;
+  }
+
+  if (glwidth <= 0 || glheight <= 0 ||
+      (glwidth == scr_autoscale_width && glheight == scr_autoscale_height))
+    return;
+
+  scr_autoscale_width = glwidth;
+  scr_autoscale_height = glheight;
+  scale = q_max(1.0f, q_min((float)glwidth / 640.0f,
+                           (float)glheight / 480.0f));
+  Cvar_SetValueQuick(&scr_conscale, scale);
+  Cvar_SetValueQuick(&scr_menuscale, scale);
+  Cvar_SetValueQuick(&scr_sbarscale, scale);
+}
+
 static void SCR_Callback_refdef(cvar_t *var) { vid.recalc_refdef = 1; }
 
 /*
@@ -490,6 +526,7 @@ void SCR_Init(void) {
   Cvar_SetCallback(&scr_conscale, &SCR_Conwidth_f);
   Cvar_RegisterVariable(&scr_conwidth);
   Cvar_RegisterVariable(&scr_conscale);
+  Cvar_RegisterVariable(&scr_autoscale);
   Cvar_RegisterVariable(&scr_crosshairscale);
   Cvar_RegisterVariable(&scr_crosshair_desktop_fallback);
   Cvar_RegisterVariable(&scr_showfps);
@@ -1152,6 +1189,8 @@ void SCR_UpdateScreen(void) {
     return; // not initialized yet
 
   GL_BeginRendering(&glx, &gly, &glwidth, &glheight);
+
+  SCR_ApplyAutoScale();
 
   //
   // determine size of refresh window

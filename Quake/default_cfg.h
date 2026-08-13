@@ -101,5 +101,6 @@ static const char default_cfg[] =
     "scr_conscale 1.6\n"
     "scr_menuscale 1.6\n"
     "scr_sbarscale 1.6\n"
+    "scr_autoscale 1\n"
 
     "+mlook\n";

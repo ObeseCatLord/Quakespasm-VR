@@ -1019,6 +1019,7 @@ void M_AdjustSliders(int dir) {
       f = 1;
     else if (f > l)
       f = l;
+    Cvar_SetValue("scr_autoscale", 0);
     Cvar_SetValue("scr_conscale", f);
     Cvar_SetValue("scr_menuscale", f);
     Cvar_SetValue("scr_sbarscale", f);
