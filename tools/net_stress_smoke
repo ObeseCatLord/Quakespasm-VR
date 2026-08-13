@@ -2,6 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 STRAIGHT_DIR="${STRAIGHT_DIR:-/home/obesecatlord/Windows/Games/quakespasm_straight}"
 BIN="${BIN:-$STRAIGHT_DIR/quakespasm-openvr.bin}"
 GAME="${GAME:-vr}"
@@ -15,21 +16,159 @@ STDOUT_LOG="$LOG_DIR/stdout.log"
 COMBINED_LOG="$LOG_DIR/combined.log"
 QCONSOLE_LOG="$RUN_DIR/qconsole.log"
 
+NET_PROXY_PROFILE="${NET_PROXY_PROFILE:-control}"
+NET_PROXY_SCRIPT="${NET_PROXY_SCRIPT:-$SCRIPT_DIR/udp_net_proxy.py}"
+NET_PROXY_SEED="${NET_PROXY_SEED:-1337}"
+NET_PROXY_BASE_DELAY_MS="${NET_PROXY_BASE_DELAY_MS:-0}"
+NET_PROXY_JITTER_MS="${NET_PROXY_JITTER_MS:-0}"
+NET_PROXY_LOSS_PERCENT="${NET_PROXY_LOSS_PERCENT:-0}"
+NET_PROXY_REORDER_EVERY="${NET_PROXY_REORDER_EVERY:-0}"
+NET_PROXY_REORDER_DELAY_MS="${NET_PROXY_REORDER_DELAY_MS:-25}"
+NET_PROXY_GAP_SIZE="${NET_PROXY_GAP_SIZE:-0}"
+NET_PROXY_GAP_INTERVAL="${NET_PROXY_GAP_INTERVAL:-0}"
+NET_PROXY_STALL_MS="${NET_PROXY_STALL_MS:-200}"
+NET_PROXY_STALL_INTERVAL="${NET_PROXY_STALL_INTERVAL:-0}"
+NET_PROXY_BACKEND_PORT="${NET_PROXY_BACKEND_PORT:-$((PORT + 1200))}"
+NET_PROXY_FRONTEND_PORT="${PORT}"
+NET_PROXY_SERVER_PORT="${PORT}"
+NET_PROXY_STDOUT="$LOG_DIR/net_udp_proxy.log"
+NET_PROXY_PID=""
+NET_PROXY_USE=0
+
 fail() {
 	printf 'net_stress_smoke: %s\n' "$*" >&2
 	printf 'net_stress_smoke: logs: %s\n' "$LOG_DIR" >&2
 	exit 1
 }
+skip() {
+	printf 'net_stress_smoke: skipped: %s\n' "$*" >&2
+	printf 'net_stress_smoke: logs: %s\n' "$LOG_DIR" >&2
+	exit 0
+}
+
+configure_proxy_profile() {
+	case "$NET_PROXY_PROFILE" in
+		control)
+			NET_PROXY_USE=0
+			;;
+		delay)
+			NET_PROXY_USE=1
+			[ "$NET_PROXY_BASE_DELAY_MS" -eq 0 ] && NET_PROXY_BASE_DELAY_MS=30
+			;;
+		jitter)
+			NET_PROXY_USE=1
+			[ "$NET_PROXY_BASE_DELAY_MS" -eq 0 ] && NET_PROXY_BASE_DELAY_MS=12
+			[ "$NET_PROXY_JITTER_MS" -eq 0 ] && NET_PROXY_JITTER_MS=20
+			;;
+		loss)
+			NET_PROXY_USE=1
+			[ "$NET_PROXY_LOSS_PERCENT" -eq 0 ] && NET_PROXY_LOSS_PERCENT=12
+			;;
+		reorder)
+			NET_PROXY_USE=1
+			[ "$NET_PROXY_REORDER_EVERY" -eq 0 ] && NET_PROXY_REORDER_EVERY=6
+			[ "$NET_PROXY_REORDER_DELAY_MS" -eq 0 ] && NET_PROXY_REORDER_DELAY_MS=50
+			;;
+		gap1)
+			NET_PROXY_USE=1
+			[ "$NET_PROXY_GAP_SIZE" -eq 0 ] && NET_PROXY_GAP_SIZE=1
+			[ "$NET_PROXY_GAP_INTERVAL" -eq 0 ] && NET_PROXY_GAP_INTERVAL=64
+			;;
+		gap2)
+			NET_PROXY_USE=1
+			[ "$NET_PROXY_GAP_SIZE" -eq 0 ] && NET_PROXY_GAP_SIZE=2
+			[ "$NET_PROXY_GAP_INTERVAL" -eq 0 ] && NET_PROXY_GAP_INTERVAL=64
+			;;
+		gap3)
+			NET_PROXY_USE=1
+			[ "$NET_PROXY_GAP_SIZE" -eq 0 ] && NET_PROXY_GAP_SIZE=3
+			[ "$NET_PROXY_GAP_INTERVAL" -eq 0 ] && NET_PROXY_GAP_INTERVAL=64
+			;;
+		stall200)
+			NET_PROXY_USE=1
+			[ "$NET_PROXY_STALL_MS" -eq 0 ] && NET_PROXY_STALL_MS=200
+			[ "$NET_PROXY_STALL_INTERVAL" -eq 0 ] && NET_PROXY_STALL_INTERVAL=96
+			;;
+		all)
+			NET_PROXY_USE=1
+			[ "$NET_PROXY_BASE_DELAY_MS" -eq 0 ] && NET_PROXY_BASE_DELAY_MS=20
+			[ "$NET_PROXY_JITTER_MS" -eq 0 ] && NET_PROXY_JITTER_MS=12
+			[ "$NET_PROXY_LOSS_PERCENT" -eq 0 ] && NET_PROXY_LOSS_PERCENT=6
+			[ "$NET_PROXY_REORDER_EVERY" -eq 0 ] && NET_PROXY_REORDER_EVERY=7
+			[ "$NET_PROXY_REORDER_DELAY_MS" -eq 0 ] && NET_PROXY_REORDER_DELAY_MS=45
+			[ "$NET_PROXY_GAP_SIZE" -eq 0 ] && NET_PROXY_GAP_SIZE=1
+			[ "$NET_PROXY_GAP_INTERVAL" -eq 0 ] && NET_PROXY_GAP_INTERVAL=128
+			[ "$NET_PROXY_STALL_MS" -eq 0 ] && NET_PROXY_STALL_MS=200
+			[ "$NET_PROXY_STALL_INTERVAL" -eq 0 ] && NET_PROXY_STALL_INTERVAL=96
+			;;
+		*)
+			fail "unknown NET_PROXY_PROFILE '$NET_PROXY_PROFILE'"
+			;;
+	esac
+}
+
+start_proxy() {
+	if [ "$NET_PROXY_USE" -eq 0 ]; then
+		return
+	fi
+
+	if ! command -v python3 >/dev/null; then
+		skip "python3 unavailable but proxy profile requires userspace impairments"
+	fi
+	if [ ! -f "$NET_PROXY_SCRIPT" ]; then
+		fail "proxy script not found: $NET_PROXY_SCRIPT"
+	fi
+
+	if [ "$NET_PROXY_BACKEND_PORT" = "$PORT" ]; then
+		NET_PROXY_BACKEND_PORT=$((PORT + 1200))
+	fi
+	NET_PROXY_SERVER_PORT="$NET_PROXY_BACKEND_PORT"
+
+	PYTHON_BIN="${PYTHON_BIN:-python3}"
+	"$PYTHON_BIN" "$NET_PROXY_SCRIPT" \
+		--listen "$NET_PROXY_FRONTEND_PORT" \
+		--target "127.0.0.1:$NET_PROXY_SERVER_PORT" \
+		--seed "$NET_PROXY_SEED" \
+		--base-delay "$NET_PROXY_BASE_DELAY_MS" \
+		--jitter "$NET_PROXY_JITTER_MS" \
+		--loss "$NET_PROXY_LOSS_PERCENT" \
+		--reorder-every "$NET_PROXY_REORDER_EVERY" \
+		--reorder-delay "$NET_PROXY_REORDER_DELAY_MS" \
+		--gap-size "$NET_PROXY_GAP_SIZE" \
+		--gap-interval "$NET_PROXY_GAP_INTERVAL" \
+		--stall-ms "$NET_PROXY_STALL_MS" \
+		--stall-interval "$NET_PROXY_STALL_INTERVAL" \
+		>"$NET_PROXY_STDOUT" 2>&1 &
+	NET_PROXY_PID=$!
+	sleep 0.4
+	if ! kill -0 "$NET_PROXY_PID" 2>/dev/null; then
+		fail "failed to start userspace proxy"
+	fi
+}
+
+cleanup() {
+	if [ -n "${NET_PROXY_PID:-}" ]; then
+		if kill -0 "$NET_PROXY_PID" 2>/dev/null; then
+			kill "$NET_PROXY_PID" 2>/dev/null || true
+			wait "$NET_PROXY_PID" 2>/dev/null || true
+		fi
+	fi
+}
+trap cleanup EXIT
 
 if [ ! -x "$BIN" ]; then
-	fail "binary not executable: $BIN"
+	skip "binary not executable: $BIN"
 fi
 if [ ! -d "$STRAIGHT_DIR/$GAME" ]; then
-	fail "game directory not found: $STRAIGHT_DIR/$GAME"
+	skip "game directory not found: $STRAIGHT_DIR/$GAME"
 fi
 if [ ! -f "$STRAIGHT_DIR/$GAME/$SAVE.sav" ]; then
-	fail "save not found: $STRAIGHT_DIR/$GAME/$SAVE.sav"
+	skip "save not found: $STRAIGHT_DIR/$GAME/$SAVE.sav"
 fi
+
+configure_proxy_profile
+mkdir -p "$LOG_DIR"
+start_proxy
 
 rm -rf "$RUN_DIR"
 mkdir -p "$RUN_DIR"
@@ -41,10 +180,13 @@ LD_LIBRARY_PATH="$(dirname "$BIN"):${LD_LIBRARY_PATH:-}" \
 	"$BIN" \
 	-basedir "$STRAIGHT_DIR" \
 	-dedicated 16 \
-	-port "$PORT" \
+	-port "$NET_PROXY_SERVER_PORT" \
 	-condebug \
 	-game "$GAME" \
 	+exec codex_coop_server.cfg \
+	+sv_pmove_mode 1 \
+	+sv_nqplayerphysics 0 \
+	+sv_trustedmovement 1 \
 	+sv_netdiag_interval 1 \
 	+net_lagdebug 1 \
 	+load "$SAVE" \
@@ -55,11 +197,11 @@ LD_LIBRARY_PATH="$(dirname "$BIN"):${LD_LIBRARY_PATH:-}" \
 	+sv_replacement_maxpackets \
 	+sv_nqplayerphysics \
 	+sv_trustedmovement \
+	+sv_pmove_mode \
 	+sv_predict_nqmovement \
 	+net_lagdebug \
 	+sv_gravity \
 	>"$STDOUT_LOG" 2>&1 &
-
 pid=$!
 deadline=$((SECONDS + RUN_SECONDS))
 exited_early=0
@@ -95,22 +237,29 @@ fi
 grep -Eq "Loaded game|loadgame|Loading game|SpawnServer" "$COMBINED_LOG" ||
 	fail "did not see evidence that the save/map loaded"
 
-grep -Eq 'sys_ticrate[[:space:]]+["]?0\.025|"sys_ticrate" is "0\.025"' "$COMBINED_LOG" ||
+grep -Eq 'sys_ticrate[[:space:]]+[" ]?0\.025|"sys_ticrate" is "0\.025"' "$COMBINED_LOG" ||
 	fail "sys_ticrate default was not confirmed"
-grep -Eq 'sv_netsort[[:space:]]+["]?1|"sv_netsort" is "1"' "$COMBINED_LOG" ||
+grep -Eq 'sv_netsort[[:space:]]+[" ]?1|"sv_netsort" is "1"' "$COMBINED_LOG" ||
 	fail "sv_netsort default was not confirmed"
-grep -Eq 'sv_maxpacketsize[[:space:]]+["]?1400|"sv_maxpacketsize" is "1400"' "$COMBINED_LOG" ||
+grep -Eq 'sv_maxpacketsize[[:space:]]+[" ]?1400|"sv_maxpacketsize" is "1400"' "$COMBINED_LOG" ||
 	fail "sv_maxpacketsize default was not confirmed"
-grep -Eq 'sv_replacement_maxpackets[[:space:]]+["]?0|"sv_replacement_maxpackets" is "0"' "$COMBINED_LOG" ||
+grep -Eq 'sv_replacement_maxpackets[[:space:]]+[" ]?0|"sv_replacement_maxpackets" is "0"' "$COMBINED_LOG" ||
 	fail "sv_replacement_maxpackets default was not confirmed"
-grep -Eq 'sv_nqplayerphysics[[:space:]]+["]?1|"sv_nqplayerphysics" is "1"' "$COMBINED_LOG" ||
+grep -Eq 'sv_nqplayerphysics[[:space:]]+[" ]?0|"sv_nqplayerphysics" is "0"' "$COMBINED_LOG" ||
 	fail "sv_nqplayerphysics default was not confirmed"
-grep -Eq 'sv_trustedmovement[[:space:]]+["]?0|"sv_trustedmovement" is "0"' "$COMBINED_LOG" ||
+grep -Eq 'sv_trustedmovement[[:space:]]+[" ]?1|"sv_trustedmovement" is "1"' "$COMBINED_LOG" ||
 	fail "sv_trustedmovement default was not confirmed"
-grep -Eq 'sv_predict_nqmovement[[:space:]]+["]?0|"sv_predict_nqmovement" is "0"' "$COMBINED_LOG" ||
+grep -Eq 'sv_pmove_mode[[:space:]]+[" ]?1|"sv_pmove_mode" is "1"' "$COMBINED_LOG" ||
+	fail "sv_pmove_mode default was not confirmed"
+grep -Eq 'sv_predict_nqmovement[[:space:]]+[" ]?0|"sv_predict_nqmovement" is "0"' "$COMBINED_LOG" ||
 	fail "sv_predict_nqmovement default was not confirmed"
-grep -Eq 'sv_gravity[[:space:]]+["]?800|"sv_gravity" is "800"' "$COMBINED_LOG" ||
+grep -Eq 'sv_gravity[[:space:]]+[" ]?800|"sv_gravity" is "800"' "$COMBINED_LOG" ||
 	fail "sv_gravity default was not confirmed"
+
+if [ "$NET_PROXY_USE" -eq 1 ]; then
+	grep -qi "proxy" "$COMBINED_LOG" "$NET_PROXY_STDOUT" ||
+		fail "proxy profile was enabled but produced no log output"
+fi
 
 if grep -Eiq 'Host_Error|Sys_Error|packet overflow|SVFTE_SendClientDatagram: packet overflow|Host_EndGame|Hunk_Alloc: failed' "$COMBINED_LOG"; then
 	fail "error pattern found in smoke log"

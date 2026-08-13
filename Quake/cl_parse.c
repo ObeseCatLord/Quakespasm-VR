@@ -2045,6 +2045,11 @@ static void CL_ApplyMoveAck (int ack16)
 static qboolean CL_ParseMoveAckPayload (void)
 {
 	int ack16;
+	int flags;
+	int authority;
+	int mode_epoch;
+	int discontinuity_epoch;
+	int reason;
 
 	if (net_message.cursize - msg_readcount < 2)
 	{
@@ -2054,6 +2059,35 @@ static qboolean CL_ParseMoveAckPayload (void)
 
 	ack16 = MSG_ReadShort () & 0xffff;
 	CL_ApplyMoveAck (ack16);
+	if (!(cl.protocol_pext2 & PEXT2_EXPLICITCMDMSEC))
+		return !msg_badread;
+
+	if (net_message.cursize - msg_readcount < 7)
+	{
+		msg_badread = true;
+		return false;
+	}
+
+	flags = MSG_ReadByte ();
+	authority = MSG_ReadByte ();
+	mode_epoch = MSG_ReadShort () & 0xffff;
+	discontinuity_epoch = MSG_ReadShort () & 0xffff;
+	reason = MSG_ReadByte ();
+	if (flags & ~(MOVEACK_FLAG_AUTHORITATIVE | MOVEACK_FLAG_PREDICTION_ALLOWED |
+		MOVEACK_FLAG_DISCONTINUITY) ||
+		authority < MOVE_AUTHORITY_UNKNOWN ||
+		authority > MOVE_AUTHORITY_PMOVE_QC_COMMAND)
+	{
+		msg_badread = true;
+		return false;
+	}
+
+	cl.move_ack_authority = (move_authority_t)authority;
+	cl.move_ack_prediction_allowed =
+		(flags & MOVEACK_FLAG_PREDICTION_ALLOWED) != 0;
+	cl.move_ack_mode_epoch = (unsigned short)mode_epoch;
+	cl.move_ack_discontinuity_epoch = (unsigned short)discontinuity_epoch;
+	cl.move_ack_discontinuity_reason = (unsigned char)reason;
 	return !msg_badread;
 }
 

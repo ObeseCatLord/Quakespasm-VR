@@ -833,6 +833,7 @@ void V_CalcRefdef (void)
 		VectorCopy (ent->origin, r_refdef.vieworg);
 		r_refdef.vieworg[2] += cl.viewheight + bob;
 	}
+	CL_ApplyPredictionViewSmoothing (r_refdef.vieworg);
 
 // never let it sit exactly on a node line, because a water plane can
 // dissapear when viewed with the eye exactly on it.

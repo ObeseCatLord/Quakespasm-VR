@@ -58,12 +58,14 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #define PEXT2_MAXPLAYERS 0x00000010
 #define PEXT2_PREDINFO 0x00000020
 #define PEXT2_NEWSIZEENCODING 0x00000040
+#define PEXT2_EXPLICITCMDMSEC 0x00000080
 #define PEXT2_SUPPORTED_CLIENT                                                  \
   (PEXT2_PRYDONCURSOR | PEXT2_SETANGLEDELTA | PEXT2_REPLACEMENTDELTAS |        \
-   PEXT2_MAXPLAYERS | PEXT2_PREDINFO | PEXT2_NEWSIZEENCODING)
+   PEXT2_MAXPLAYERS | PEXT2_PREDINFO | PEXT2_NEWSIZEENCODING |                 \
+   PEXT2_EXPLICITCMDMSEC)
 #define PEXT2_SUPPORTED_SERVER                                                  \
   (PEXT2_PRYDONCURSOR | PEXT2_REPLACEMENTDELTAS | PEXT2_PREDINFO |             \
-   PEXT2_NEWSIZEENCODING)
+   PEXT2_NEWSIZEENCODING | PEXT2_EXPLICITCMDMSEC)
 #define PEXT2_REQUIRED_LATEST (PEXT2_SUPPORTED_SERVER)
 #define PEXT2_ACCEPTED_CLIENT (PEXT2_SUPPORTED_CLIENT)
 
@@ -335,6 +337,31 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #define svc_backtolobby 55
 #define svc_localsound 56
 #define svc_moveack 57 // [short] last accepted sequenced move
+// PEXT2_EXPLICITCMDMSEC adds [byte flags][byte authority][short mode_epoch]
+// [short discontinuity_epoch][byte reason].
+#define MOVEACK_FLAG_AUTHORITATIVE 0x01
+#define MOVEACK_FLAG_PREDICTION_ALLOWED 0x02
+#define MOVEACK_FLAG_DISCONTINUITY 0x04
+
+typedef enum {
+  MOVE_AUTHORITY_UNKNOWN = 0,
+  MOVE_AUTHORITY_LEGACY_FRAME,
+  MOVE_AUTHORITY_PMOVE_ENGINE_COMPAT,
+  MOVE_AUTHORITY_PMOVE_QC_COMMAND,
+} move_authority_t;
+
+typedef enum {
+  MOVEACK_DISCONTINUITY_NONE = 0,
+  MOVEACK_DISCONTINUITY_GAP,
+  MOVEACK_DISCONTINUITY_RESET_TELEPORT,
+  MOVEACK_DISCONTINUITY_TRACKING_OUTLIER,
+  MOVEACK_DISCONTINUITY_DYNAMIC_CONTACT,
+  MOVEACK_DISCONTINUITY_CUSTOMPHYSICS,
+  MOVEACK_DISCONTINUITY_UNSUPPORTED_STATE,
+  MOVEACK_DISCONTINUITY_INVALID_STATE,
+  MOVEACK_DISCONTINUITY_CLIENT_QUARANTINE,
+  MOVEACK_DISCONTINUITY_ADMIN,
+} moveack_discontinuity_t;
 
 // QSS-M/FTE/DP service ids used by replacement deltas. Some numeric values
 // intentionally overlap the 2021 rerelease/private ids above; only dispatch
@@ -367,7 +394,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #define clc_bad 0
 #define clc_nop 1
 #define clc_disconnect 2
-#define clc_move 3      // [short sequence][float servertime][angles][move][buttons][impulse][extbits]
+#define clc_move 3      // [short sequence][float servertime][byte msec if PEXT2_EXPLICITCMDMSEC][angles][move][buttons][impulse][extbits]
 #define clc_stringcmd 4 // [string] message
 #define clcdp_ackframe 50
 #define clcfte_qcrequest 81
@@ -462,6 +489,7 @@ typedef struct {
   int sequence;
   float servertime;
   float seconds;
+  unsigned char msec; // PEXT2_EXPLICITCMDMSEC, valid range is 1..125
   vec3_t viewangles;
 
   // intended velocities

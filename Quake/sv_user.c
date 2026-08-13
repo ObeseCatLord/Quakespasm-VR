@@ -50,8 +50,9 @@ static void SV_UpdateClientPMoveMode(client_t *client);
 
 cvar_t sv_idealpitchscale = {"sv_idealpitchscale", "0.8", CVAR_NONE};
 cvar_t sv_altnoclip = {"sv_altnoclip", "1", CVAR_ARCHIVE}; // johnfitz
-cvar_t sv_nqplayerphysics = {"sv_nqplayerphysics", "1", CVAR_ARCHIVE | CVAR_SERVERINFO};
-cvar_t sv_trustedmovement = {"sv_trustedmovement", "0", CVAR_SERVERINFO};
+cvar_t sv_nqplayerphysics = {"sv_nqplayerphysics", "0", CVAR_ARCHIVE | CVAR_SERVERINFO};
+cvar_t sv_trustedmovement = {"sv_trustedmovement", "1", CVAR_SERVERINFO};
+cvar_t sv_pmove_mode = {"sv_pmove_mode", "1", CVAR_ARCHIVE | CVAR_SERVERINFO};
 cvar_t sv_inputtimeout = {"sv_inputtimeout", "0", CVAR_NONE};
 cvar_t sv_pmove_legacy_preserve_qc_velocity = {
     "sv_pmove_legacy_preserve_qc_velocity", "1", CVAR_NONE};
@@ -82,7 +83,7 @@ static qboolean SV_PlayerOnLadder(void) {
   return val && val->_float != 0;
 }
 
-static void SV_SetExtendedButtons(edict_t *ent, int buttons) {
+void SV_SetExtendedButtons(edict_t *ent, int buttons) {
   eval_t *val;
 
   if (!ent || ent->free)
@@ -107,6 +108,8 @@ static void SV_ClearClientPMoveState(client_t *client) {
   client->lastmovetime = 0;
   client->pendingmovemessage = -1;
   client->move_pending = false;
+  client->move_queue_head = 0;
+  client->move_queue_count = 0;
 }
 
 void SV_ResetClientMoveState(client_t *client) {
@@ -116,6 +119,16 @@ void SV_ResetClientMoveState(client_t *client) {
   client->input_stale = false;
   client->moveext = false;
   client->lastmovemessage = 0;
+  /* Latest-client deliberately retains but never transmits sequences 0 and 1. */
+  client->lastacceptedmovemessage = 1;
+  client->move_authority = MOVE_AUTHORITY_UNKNOWN;
+  client->move_prediction_allowed = false;
+  client->move_client_quarantined = false;
+  client->move_mode_epoch = 0;
+  client->move_discontinuity_epoch = 0;
+  client->move_discontinuity_reason = MOVEACK_DISCONTINUITY_NONE;
+  client->net_move_last_servertime = 0;
+  client->net_move_last_msec = 0;
   SV_ClearClientPMoveState(client);
 
   client->net_move_packets_received = 0;
@@ -123,6 +136,15 @@ void SV_ResetClientMoveState(client_t *client) {
   client->net_move_cmds_accepted = 0;
   client->net_move_cmds_stale = 0;
   client->net_move_cmds_simulated = 0;
+  client->net_move_msec_accepted = 0;
+  client->net_move_msec_simulated = 0;
+  client->net_move_queue_overflows = 0;
+  client->net_move_roomscale_outliers = 0;
+  client->net_move_qc_prethinks = 0;
+  client->net_move_qc_postthinks = 0;
+  client->net_move_qc_commands = 0;
+  client->net_move_touches = 0;
+  client->net_move_dynamic_contacts = 0;
   client->net_move_stale_log_suppressed = 0;
   client->net_move_bundle_max = 0;
   client->net_move_last_bundle = 0;
@@ -566,7 +588,7 @@ static int SV_ExpandClientSequence(int sequence16) {
   int sequence;
 
   sequence16 &= 0xffff;
-  last = host_client->lastmovemessage;
+  last = host_client->lastacceptedmovemessage;
   if (last < 0)
     return sequence16;
 
@@ -589,6 +611,13 @@ static qboolean SV_ReadUsercmd(usercmd_t *readcmd, int sequence) {
   Q_memset(readcmd, 0, sizeof(*readcmd));
   readcmd->sequence = sequence;
   readcmd->servertime = MSG_ReadFloat();
+  if (host_client->protocol_pext2 & PEXT2_EXPLICITCMDMSEC) {
+    readcmd->msec = MSG_ReadByte();
+    if (readcmd->msec < 1 || readcmd->msec > 125) {
+      msg_badread = true;
+      return false;
+    }
+  }
 
   for (i = 0; i < 3; i++)
     readcmd->viewangles[i] = MSG_ReadAngle16(sv.protocolflags);
@@ -627,6 +656,14 @@ static qboolean SV_ReadUsercmd(usercmd_t *readcmd, int sequence) {
     readcmd->vr_roomscalemove[0] = MSG_ReadFloat();
     readcmd->vr_roomscalemove[1] = MSG_ReadFloat();
     readcmd->vr_roomscalemove[2] = MSG_ReadFloat();
+    for (i = 0; i < 3; i++) {
+      if (!isfinite(readcmd->vr_handpos[i]) ||
+          !isfinite(readcmd->vr_handrot[i]) ||
+          !isfinite(readcmd->vr_roomscalemove[i])) {
+        msg_badread = true;
+        return false;
+      }
+    }
   }
 
   if (extbits & MOVEEXT_QCINPUT) {
@@ -655,6 +692,14 @@ static void SV_NormalizeAcceptedUsercmd(client_t *client, usercmd_t *acceptedcmd
   float fallback_seconds;
   double timestamp;
   double seconds;
+
+  client->net_move_last_servertime = acceptedcmd->servertime;
+  client->net_move_last_msec = acceptedcmd->msec;
+  if (client->protocol_pext2 & PEXT2_EXPLICITCMDMSEC) {
+    /* Do not reconstruct lost sequence time from the diagnostic timestamp. */
+    acceptedcmd->seconds = acceptedcmd->msec * 0.001f;
+    return;
+  }
 
   fallback_seconds = CLAMP(0.001f, host_frametime, 0.1f);
   if (acceptedcmd->servertime <= 0)
@@ -704,12 +749,8 @@ static void SV_SyncPMovePresentationAngles(client_t *client) {
 static void SV_ApplyAcceptedUsercmd(client_t *client, const usercmd_t *acceptedcmd) {
   client->cmd = *acceptedcmd;
   VectorCopy(client->cmd.viewangles, client->edict->v.v_angle);
-  /*
-   * Direct PMove executes during packet parsing.  Publish the same body
-   * orientation as the conventional client-think path before that command can
-   * produce an entity update, preventing one-or-more snapshots of sideways
-   * remote player models.
-   */
+  /* Publish the body orientation with the queued command before its next
+   * physics-frame PMove execution can produce an entity update. */
   SV_SyncPMovePresentationAngles(client);
   client->edict->v.button0 = client->cmd.buttons & 1;
   client->edict->v.button2 = (client->cmd.buttons & 2) >> 1;
@@ -728,24 +769,77 @@ static void SV_ApplyAcceptedUsercmd(client_t *client, const usercmd_t *acceptedc
   } else {
     client->is_vr_client = false;
     client->vr_handpos_relative = false;
+    VectorCopy(vec3_origin, client->vr_handpos);
+    VectorCopy(vec3_origin, client->vr_handrot);
     VectorCopy(vec3_origin, client->vr_roomscalemove);
   }
+}
+
+static void SV_LoadQueuedPMoveUsercmd(client_t *client) {
+  usercmd_t *queuedcmd;
+
+  if (!client->move_queue_count) {
+    client->pendingmovemessage = -1;
+    client->move_pending = false;
+    client->cmd.seconds = 0;
+    return;
+  }
+
+  queuedcmd = &client->move_queue[client->move_queue_head];
+  SV_ApplyAcceptedUsercmd(client, queuedcmd);
+  client->pendingmovemessage = queuedcmd->sequence;
+  client->move_pending = true;
+}
+
+static qboolean SV_QueuePMoveUsercmd(client_t *client,
+                                     const usercmd_t *acceptedcmd) {
+  unsigned int tail;
+
+  if (client->move_queue_count >= MOVE_BUNDLE_MAX) {
+    /* Never overwrite an unsimulated pose/input record.  Drop the queue as a
+     * discontinuity and retain the newest command as the restart point. */
+    SV_ClearClientPMoveState(client);
+    VectorCopy(vec3_origin, client->cmd.vr_roomscalemove);
+    VectorCopy(vec3_origin, client->vr_roomscalemove);
+    VectorCopy(vec3_origin, client->vr_roomscale_accum);
+    client->move_discontinuity_epoch++;
+    client->move_discontinuity_reason = MOVEACK_DISCONTINUITY_GAP;
+    client->net_move_queue_overflows++;
+  }
+
+  tail = (client->move_queue_head + client->move_queue_count) % MOVE_BUNDLE_MAX;
+  client->move_queue[tail] = *acceptedcmd;
+  client->move_queue_count++;
+  if (client->move_queue_count == 1)
+    SV_LoadQueuedPMoveUsercmd(client);
+  return true;
 }
 
 static qboolean SV_AcceptPMoveUsercmd(client_t *client,
                                       const usercmd_t *acceptedcmd) {
   usercmd_t pmovecmd;
   qboolean has_input;
+  float roomscale_horizontal;
 
   pmovecmd = *acceptedcmd;
   SV_NormalizeAcceptedUsercmd(client, &pmovecmd);
-  SV_ApplyAcceptedUsercmd(client, &pmovecmd);
+  roomscale_horizontal = sqrtf(pmovecmd.vr_roomscalemove[0] *
+                               pmovecmd.vr_roomscalemove[0] +
+                               pmovecmd.vr_roomscalemove[1] *
+                               pmovecmd.vr_roomscalemove[1]);
+  if (fabsf(pmovecmd.vr_roomscalemove[2]) > 16.0f ||
+      roomscale_horizontal > 16.0f) {
+    client->move_discontinuity_epoch++;
+    client->move_discontinuity_reason =
+        MOVEACK_DISCONTINUITY_TRACKING_OUTLIER;
+    client->net_move_roomscale_outliers++;
+  }
+  if (!SV_QueuePMoveUsercmd(client, &pmovecmd))
+    return false;
 
   client->last_move_time = realtime;
   client->input_stale = false;
-  client->lastmovemessage = pmovecmd.sequence;
-  client->pendingmovemessage = pmovecmd.sequence;
-  client->move_pending = true;
+  client->lastacceptedmovemessage = pmovecmd.sequence;
 
   has_input = pmovecmd.forwardmove || pmovecmd.sidemove || pmovecmd.upmove ||
               pmovecmd.buttons || pmovecmd.impulse ||
@@ -788,6 +882,7 @@ static void SV_AcceptLatestUsercmd(client_t *client,
   client->last_move_time = realtime;
   client->input_stale = false;
   client->lastmovemessage = latestcmd.sequence;
+  client->lastacceptedmovemessage = latestcmd.sequence;
   SV_ClearClientPMoveState(client);
 
   has_input = latestcmd.forwardmove || latestcmd.sidemove || latestcmd.upmove ||
@@ -839,9 +934,14 @@ void SV_FinishLatestUsercmds(void) {
 
 void SV_FinishPMoveUsercmd(client_t *client) {
   client->net_move_cmds_simulated++;
+  client->net_move_msec_simulated += client->cmd.msec;
   client->net_move_last_sim_seconds = client->cmd.seconds;
   client->lastmovemessage = client->cmd.sequence;
-  SV_ClearClientPMoveState(client);
+  if (client->move_queue_count) {
+    client->move_queue_head = (client->move_queue_head + 1) % MOVE_BUNDLE_MAX;
+    client->move_queue_count--;
+  }
+  SV_LoadQueuedPMoveUsercmd(client);
 }
 
 void SV_ReadClientMove(usercmd_t *move) {
@@ -853,7 +953,7 @@ void SV_ReadClientMove(usercmd_t *move) {
 
   sequence16 = MSG_ReadShort() & 0xffff;
   sequence = SV_ExpandClientSequence(sequence16);
-  accepted_base = host_client->lastmovemessage;
+  accepted_base = host_client->lastacceptedmovemessage;
 
   host_client->net_move_cmds_received++;
 
@@ -870,6 +970,8 @@ void SV_ReadClientMove(usercmd_t *move) {
   gap = accepted_base >= 0 ? sequence - accepted_base - 1 : 0;
   if (gap > 0) {
     host_client->net_move_last_gap = gap;
+    host_client->move_discontinuity_epoch++;
+    host_client->move_discontinuity_reason = MOVEACK_DISCONTINUITY_GAP;
     if (net_lagdebug.value)
       Con_Printf("net_lagdebug: accepted move gap from %s gap=%d seq=%d last=%d\n",
                   host_client->name, gap, sequence, accepted_base);
@@ -885,11 +987,8 @@ void SV_ReadClientMove(usercmd_t *move) {
 
   host_client->moveext = true;
   host_client->net_move_cmds_accepted++;
+  host_client->net_move_msec_accepted += readcmd.msec;
   *move = host_client->cmd;
-
-  if (host_client->usingpmove && host_client->spawned && !sv.paused &&
-      (svs.maxclients > 1 || key_dest == key_game))
-    SV_RunClientPMoveCommand(host_client);
 }
 
 static qboolean SV_ClientHasInput(const client_t *client) {
@@ -955,6 +1054,21 @@ static qboolean SV_ClientCommandIs(const char *s, const char *name) {
 
   len = strlen(name);
   return !q_strncasecmp(s, name, len) && (unsigned char)s[len] <= ' ';
+}
+
+static void SV_SetClientPredictionStatus(const char *s) {
+  const char *value = s;
+
+  while (*value && *value != ' ' && *value != '\t')
+    value++;
+  while (*value == ' ' || *value == '\t')
+    value++;
+  host_client->move_client_quarantined = !atoi(value);
+  if (host_client->move_client_quarantined) {
+    host_client->move_discontinuity_epoch++;
+    host_client->move_discontinuity_reason =
+        MOVEACK_DISCONTINUITY_CLIENT_QUARANTINE;
+  }
 }
 
 static qboolean SV_IsEngineClientCommand(const char *s) {
@@ -1065,7 +1179,9 @@ static qboolean SV_ParseClientMessage(void) {
 
     case clc_stringcmd:
       s = MSG_ReadString();
-      if (SV_IsEngineClientCommand(s))
+      if (SV_ClientCommandIs(s, "predstatus"))
+        SV_SetClientPredictionStatus(s);
+      else if (SV_IsEngineClientCommand(s))
         Cmd_ExecuteString(s, src_client);
       else if (!SV_ClientCommandIs(s, "spawn") &&
           !SV_ClientCommandIs(s, "begin") &&
@@ -1133,6 +1249,12 @@ qboolean SV_ReadClientMessage(void) {
 static void SV_UpdateClientPMoveMode(client_t *client) {
   qboolean usingpmove;
   qboolean local_singleplayer;
+  move_authority_t authority;
+  moveack_discontinuity_t fallback_reason;
+  int requested_mode;
+  eval_t *customphysics;
+  int movetype;
+  qboolean valid_state;
   static double last_pmove_gate_log;
 
   if (!client || !client->active)
@@ -1140,14 +1262,63 @@ static void SV_UpdateClientPMoveMode(client_t *client) {
 
   local_singleplayer = sv.active && svs.maxclients <= 1;
 
-  usingpmove = sv_trustedmovement.value && !local_singleplayer &&
-      client->spawned && client->knowntoqc && !sv_nqplayerphysics.value &&
-      (qcvm->extfuncs.SV_RunClientCommand ||
-       *sv_nqplayerphysics.string || deathmatch.value);
+  requested_mode = CLAMP(0, (int)sv_pmove_mode.value, 3);
+  authority = MOVE_AUTHORITY_LEGACY_FRAME;
+  fallback_reason = MOVEACK_DISCONTINUITY_ADMIN;
+  customphysics = client->edict ?
+      GetEdictFieldValue(client->edict, qcvm->extfields.customphysics) : NULL;
+  movetype = client->edict ? (int)client->edict->v.movetype : MOVETYPE_NONE;
+  valid_state = client->edict && !client->edict->free &&
+      isfinite(client->edict->v.origin[0]) &&
+      isfinite(client->edict->v.origin[1]) &&
+      isfinite(client->edict->v.origin[2]) &&
+      isfinite(client->edict->v.velocity[0]) &&
+      isfinite(client->edict->v.velocity[1]) &&
+      isfinite(client->edict->v.velocity[2]) &&
+      (movetype == MOVETYPE_WALK || movetype == MOVETYPE_TOSS ||
+       movetype == MOVETYPE_BOUNCE || movetype == MOVETYPE_GIB ||
+       movetype == MOVETYPE_FLY || movetype == MOVETYPE_NOCLIP);
+  usingpmove = requested_mode != 0 && sv_trustedmovement.value &&
+      !local_singleplayer && client->spawned && client->knowntoqc &&
+      !sv_nqplayerphysics.value &&
+      (client->protocol_pext2 & PEXT2_EXPLICITCMDMSEC) &&
+      (!customphysics || !customphysics->function) && valid_state;
 
-  if (usingpmove != client->usingpmove) {
-    if (!usingpmove)
+  if (usingpmove) {
+    if (requested_mode == 3) {
+      if (qcvm->extfuncs.SV_RunClientCommand)
+        authority = MOVE_AUTHORITY_PMOVE_QC_COMMAND;
+      else {
+        usingpmove = false;
+        fallback_reason = MOVEACK_DISCONTINUITY_UNSUPPORTED_STATE;
+      }
+    } else if (requested_mode == 2) {
+      authority = MOVE_AUTHORITY_PMOVE_ENGINE_COMPAT;
+    } else {
+      authority = qcvm->extfuncs.SV_RunClientCommand ?
+          MOVE_AUTHORITY_PMOVE_QC_COMMAND :
+          MOVE_AUTHORITY_PMOVE_ENGINE_COMPAT;
+    }
+  } else if (customphysics && customphysics->function) {
+    fallback_reason = MOVEACK_DISCONTINUITY_CUSTOMPHYSICS;
+  } else if (client->spawned && client->knowntoqc && !valid_state) {
+    fallback_reason = MOVEACK_DISCONTINUITY_INVALID_STATE;
+  } else if (requested_mode != 0 && sv_trustedmovement.value &&
+             !sv_nqplayerphysics.value) {
+    fallback_reason = MOVEACK_DISCONTINUITY_UNSUPPORTED_STATE;
+  }
+
+  if (usingpmove != client->usingpmove || authority != client->move_authority) {
+    if (!usingpmove) {
       SV_ClearClientPMoveState(client);
+      VectorCopy(vec3_origin, client->cmd.vr_roomscalemove);
+      VectorCopy(vec3_origin, client->vr_roomscalemove);
+      VectorCopy(vec3_origin, client->vr_roomscale_accum);
+    }
+    client->move_mode_epoch++;
+    client->move_discontinuity_epoch++;
+    client->move_discontinuity_reason = usingpmove ?
+        MOVEACK_DISCONTINUITY_RESET_TELEPORT : fallback_reason;
     if (net_lagdebug.value)
       Con_Printf("net_lagdebug: server PMove %s for %s mode=%s sv_runclientcommand=%d\n",
                  usingpmove ? "enabled" : "disabled",
@@ -1166,6 +1337,10 @@ static void SV_UpdateClientPMoveMode(client_t *client) {
     }
   }
   client->usingpmove = usingpmove;
+  client->move_authority = authority;
+  client->move_prediction_allowed = usingpmove &&
+      !client->move_client_quarantined &&
+      ((client->protocol_pext2 & PEXT2_PREDINFO) != 0);
 }
 
 static void SV_GotServerMessage(struct qsocket_s *sock) {

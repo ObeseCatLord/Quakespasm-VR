@@ -33,6 +33,13 @@ extern cvar_t cl_maxpitch; // johnfitz -- variable pitch clamping
 extern cvar_t cl_minpitch; // johnfitz -- variable pitch clamping
 
 cvar_t cl_iDrive = {"cl_iDrive", "1", CVAR_ARCHIVE};
+cvar_t cl_nettest_vr = {"cl_nettest_vr", "0", CVAR_NONE};
+cvar_t cl_nettest_roomscale_x = {"cl_nettest_roomscale_x", "0", CVAR_NONE};
+cvar_t cl_nettest_roomscale_y = {"cl_nettest_roomscale_y", "0", CVAR_NONE};
+cvar_t cl_nettest_roomscale_z = {"cl_nettest_roomscale_z", "0", CVAR_NONE};
+cvar_t cl_nettest_hand_x = {"cl_nettest_hand_x", "16", CVAR_NONE};
+cvar_t cl_nettest_hand_y = {"cl_nettest_hand_y", "0", CVAR_NONE};
+cvar_t cl_nettest_hand_z = {"cl_nettest_hand_z", "16", CVAR_NONE};
 
 /*
 ===============================================================================
@@ -521,6 +528,8 @@ static void CL_WriteUsercmd(sizebuf_t *buf, const usercmd_t *histcmd) {
     extbits |= MOVEEXT_QCINPUT;
 
   MSG_WriteFloat(buf, histcmd->servertime);
+  if (cl.protocol_pext2 & PEXT2_EXPLICITCMDMSEC)
+    MSG_WriteByte(buf, histcmd->msec);
 
   for (i = 0; i < 3; i++)
     MSG_WriteAngle16(buf, histcmd->viewangles[i], cl.protocolflags);
@@ -595,6 +604,66 @@ void CL_FlushAckFrames(void)
   }
 }
 
+/*
+ * The server advances negotiated commands by this duration rather than by a
+ * servertime gap.  realtime is monotonic, unlike the server-clock diagnostic
+ * carried in usercmd_t::servertime.  Keep the fractional remainder so normal
+ * frame pacing does not accumulate a millisecond of drift every command.
+ */
+static unsigned char CL_SampleMoveMsec(void)
+{
+  double elapsed;
+  double milliseconds;
+  int msec;
+
+  if (!(cl.protocol_pext2 & PEXT2_EXPLICITCMDMSEC))
+    return 0;
+
+  if (!cl.move_msec_sample_valid) {
+    cl.move_msec_sample_valid = true;
+    cl.move_msec_sample_time = realtime;
+    cl.move_msec_fractional_carry = 0;
+    elapsed = host_frametime;
+  } else {
+    elapsed = realtime - cl.move_msec_sample_time;
+    cl.move_msec_sample_time = realtime;
+  }
+
+  if (elapsed < 0) {
+    elapsed = 0;
+    cl.move_msec_fractional_carry = 0;
+  }
+
+  milliseconds = elapsed * 1000.0 + cl.move_msec_fractional_carry;
+  msec = (int)milliseconds;
+  if (msec < 1)
+    msec = 1;
+  if (msec > 125) {
+    /* A suspend/hitch must not donate its elapsed gap to game movement. */
+    msec = 125;
+    cl.move_msec_fractional_carry = 0;
+  } else {
+    cl.move_msec_fractional_carry = milliseconds - msec;
+  }
+
+  return (unsigned char)msec;
+}
+
+static qboolean CL_VRVectorIsFinite(const vec3_t value)
+{
+  return isfinite(value[0]) && isfinite(value[1]) && isfinite(value[2]);
+}
+
+static qboolean CL_VRRoomScaleSampleAccepted(const vec3_t move)
+{
+  float horizontal_length;
+
+  if (!CL_VRVectorIsFinite(move))
+    return false;
+  horizontal_length = sqrtf(move[0] * move[0] + move[1] * move[1]);
+  return horizontal_length <= 16.0f && fabsf(move[2]) <= 16.0f;
+}
+
 void CL_SendMove(const usercmd_t *cmd) {
   int seq;
   int first_seq;
@@ -628,21 +697,40 @@ void CL_SendMove(const usercmd_t *cmd) {
   VR_UpdateCommandViewAngles(&sendcmd);
   if (sendcmd.servertime <= 0)
     sendcmd.servertime = cl.time;
+  sendcmd.msec = CL_SampleMoveMsec();
+  if (sendcmd.msec)
+    sendcmd.seconds = sendcmd.msec * 0.001f;
 
   Q_memset(sendcmd.vr_handpos, 0, sizeof(sendcmd.vr_handpos));
   Q_memset(sendcmd.vr_handrot, 0, sizeof(sendcmd.vr_handrot));
   sendcmd.vr_active = false;
   sendcmd.vr_handpos_relative = false;
 
-  if (vr_enabled.value && (int)vr_aimmode.value == VR_AIMMODE_CONTROLLER) {
+  if (cl_nettest_vr.value) {
+    sendcmd.vr_active = true;
+    sendcmd.vr_handpos_relative = true;
+    sendcmd.vr_handpos[0] = cl_nettest_hand_x.value;
+    sendcmd.vr_handpos[1] = cl_nettest_hand_y.value;
+    sendcmd.vr_handpos[2] = cl_nettest_hand_z.value;
+    VectorCopy(vec3_origin, sendcmd.vr_handrot);
+    sendcmd.vr_roomscalemove[0] = cl_nettest_roomscale_x.value;
+    sendcmd.vr_roomscalemove[1] = cl_nettest_roomscale_y.value;
+    sendcmd.vr_roomscalemove[2] = cl_nettest_roomscale_z.value;
+  } else if (vr_enabled.value &&
+             (int)vr_aimmode.value == VR_AIMMODE_CONTROLLER) {
     vec3_t world_muzzle;
 
     sendcmd.vr_active = true;
     VR_GetMuzzleAdjustedHandPos(world_muzzle);
     if (cl.vr_relative_muzzle_supported) {
+	  vec3_t pose_origin;
+	  VectorCopy(cl.entities[cl.viewentity].origin, pose_origin);
+	  if (CL_VRRoomScaleSampleAccepted(sendcmd.vr_roomscalemove)) {
+	    pose_origin[0] += sendcmd.vr_roomscalemove[0];
+	    pose_origin[1] += sendcmd.vr_roomscalemove[1];
+	  }
       sendcmd.vr_handpos_relative = true;
-      VectorSubtract(world_muzzle, cl.entities[cl.viewentity].origin,
-                     sendcmd.vr_handpos);
+      VectorSubtract(world_muzzle, pose_origin, sendcmd.vr_handpos);
     } else {
       VectorCopy(world_muzzle, sendcmd.vr_handpos);
     }
@@ -651,8 +739,21 @@ void CL_SendMove(const usercmd_t *cmd) {
     VectorCopy(vec3_origin, sendcmd.vr_roomscalemove);
   }
 
+  if (sendcmd.vr_active &&
+      (!CL_VRVectorIsFinite(sendcmd.vr_handpos) ||
+       !CL_VRVectorIsFinite(sendcmd.vr_handrot) ||
+       !CL_VRVectorIsFinite(sendcmd.vr_roomscalemove))) {
+    Con_DPrintf("CL_SendMove: discarded non-finite VR tracking sample\n");
+    sendcmd.vr_active = false;
+    sendcmd.vr_handpos_relative = false;
+    VectorCopy(vec3_origin, sendcmd.vr_handpos);
+    VectorCopy(vec3_origin, sendcmd.vr_handrot);
+    VectorCopy(vec3_origin, sendcmd.vr_roomscalemove);
+  }
+
   seq = cl.movemessages++;
   sendcmd.sequence = seq;
+	cl.net_move_msec_generated += sendcmd.msec;
   cl.movecmds[seq & (CL_MOVE_HISTORY - 1)] = sendcmd;
   cl.cmd = sendcmd;
 
@@ -737,6 +838,13 @@ CL_InitInput
 ============
 */
 void CL_InitInput(void) {
+  Cvar_RegisterVariable(&cl_nettest_vr);
+  Cvar_RegisterVariable(&cl_nettest_roomscale_x);
+  Cvar_RegisterVariable(&cl_nettest_roomscale_y);
+  Cvar_RegisterVariable(&cl_nettest_roomscale_z);
+  Cvar_RegisterVariable(&cl_nettest_hand_x);
+  Cvar_RegisterVariable(&cl_nettest_hand_y);
+  Cvar_RegisterVariable(&cl_nettest_hand_z);
   Cmd_AddCommand_ServerCommand("vr_relative_muzzle", CL_VRRelativeMuzzle_f);
   Cmd_AddCommand("+moveup", IN_UpDown);
   Cmd_AddCommand("-moveup", IN_UpUp);

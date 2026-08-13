@@ -173,11 +173,11 @@ static void Host_MigrateNetworkDefaults_f (void)
 		!Host_ValueMatchesOldDefault (cl_portpingprobe_enable.value, 0.0f))
 		Cvar_SetQuick (&cl_portpingprobe_enable, "0");
 	if (!Host_CommandLineSetsCvar ("sv_nqplayerphysics") &&
-		!Host_ValueMatchesOldDefault (sv_nqplayerphysics.value, 1.0f))
-		Cvar_SetQuick (&sv_nqplayerphysics, "1");
+		Host_ValueMatchesOldDefault (sv_nqplayerphysics.value, 1.0f))
+		Cvar_SetQuick (&sv_nqplayerphysics, "0");
 	if (!Host_CommandLineSetsCvar ("sv_trustedmovement") &&
-		!Host_ValueMatchesOldDefault (sv_trustedmovement.value, 0.0f))
-		Cvar_SetQuick (&sv_trustedmovement, "0");
+		Host_ValueMatchesOldDefault (sv_trustedmovement.value, 0.0f))
+		Cvar_SetQuick (&sv_trustedmovement, "1");
 	if (!Host_CommandLineSetsCvar ("sv_predict_nqmovement") &&
 		!Host_ValueMatchesOldDefault (sv_predict_nqmovement.value, 0.0f))
 		Cvar_SetQuick (&sv_predict_nqmovement, "0");

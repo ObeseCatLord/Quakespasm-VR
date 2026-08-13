@@ -293,9 +293,9 @@ static void SV_NetDiag_f (void)
 {
 	int i;
 
-	Con_Printf ("client netdiag: moves packets=%d cmds=%d last_cmds=%d ack=%d moveacks=%d staleacks=%d\n",
+	Con_Printf ("client netdiag: moves packets=%d cmds=%d generated_msec=%llu last_cmds=%d ack=%d moveacks=%d staleacks=%d\n",
 		cl.net_move_packets_sent, cl.net_move_cmds_sent,
-		cl.net_move_last_packet_cmds, cl.ackedmovemessages,
+		cl.net_move_msec_generated, cl.net_move_last_packet_cmds, cl.ackedmovemessages,
 		cl.net_move_acks, cl.net_move_stale_acks);
 	Con_Printf ("client netdiag: snapshots seq=%d packets=%d drops=%d acks_sent=%d ack_overflows=%d pred=%d movetype=%d flags=%d vel=(%.1f %.1f %.1f)\n",
 		cl.net_snapshot_sequence, cl.net_snapshot_packets,
@@ -310,6 +310,10 @@ static void SV_NetDiag_f (void)
 	Con_Printf ("client netdiag: prediction errors=%d last=%.2f max=%.2f\n",
 		cl.net_prediction_errors, cl.net_prediction_error_last,
 		cl.net_prediction_error_max);
+	Con_Printf ("client netdiag: movement authority=%d prediction_allowed=%d mode_epoch=%u discontinuity_epoch=%u reason=%u\n",
+		cl.move_ack_authority, cl.move_ack_prediction_allowed ? 1 : 0,
+		cl.move_ack_mode_epoch, cl.move_ack_discontinuity_epoch,
+		cl.move_ack_discontinuity_reason);
 
 	if (!sv.active)
 		return;
@@ -339,6 +343,21 @@ static void SV_NetDiag_f (void)
 			client->net_move_last_bundle,
 			client->net_move_bundle_max, client->net_move_last_gap,
 			client->net_move_last_sim_seconds);
+		Con_Printf ("server netdiag: #%d movement authority=%d prediction_allowed=%d quarantined=%d mode_epoch=%u discontinuity_epoch=%u reason=%u queue=%u accepted_seq=%d encoded_msec=%u servertime=%.3f\n",
+			i + 1, client->move_authority,
+			client->move_prediction_allowed ? 1 : 0,
+			client->move_client_quarantined ? 1 : 0,
+			client->move_mode_epoch, client->move_discontinuity_epoch,
+			client->move_discontinuity_reason, client->move_queue_count,
+			client->lastacceptedmovemessage, client->net_move_last_msec,
+			client->net_move_last_servertime);
+		Con_Printf ("server netdiag: #%d movement accepted_msec=%llu simulated_msec=%llu queue_overflows=%d roomscale_outliers=%d qc_pre=%d qc_post=%d qc_cmd=%d touches=%d dynamic_contacts=%d\n",
+			i + 1, client->net_move_msec_accepted,
+			client->net_move_msec_simulated, client->net_move_queue_overflows,
+			client->net_move_roomscale_outliers,
+			client->net_move_qc_prethinks, client->net_move_qc_postthinks,
+			client->net_move_qc_commands, client->net_move_touches,
+			client->net_move_dynamic_contacts);
 		Con_Printf ("server netdiag: #%d snapshots replacement=%d seq=%d ack=%d packets=%d split_packets=%d last_packets=%d max_packets=%d last_bytes=%d max_bytes=%d acklag=%d loss=%d clipped_ents=%d\n",
 			i + 1, replacement ? 1 : 0, sequence, ack,
 			client->net_snapshot_packets_sent,
@@ -395,6 +414,7 @@ void SV_Init (void)
 	Cvar_RegisterVariable (&sv_pmove_legacy_preserve_qc_velocity);
 	Cvar_RegisterVariable (&sv_nqplayerphysics);
 	Cvar_RegisterVariable (&sv_trustedmovement);
+	Cvar_RegisterVariable (&sv_pmove_mode);
 	Cvar_RegisterVariable (&sv_aim);
 	Cvar_RegisterVariable (&sv_nostep);
 	Cvar_RegisterVariable (&sv_freezenonclients);
@@ -1555,7 +1575,7 @@ static void SVFTE_BuildEntityState (client_t *client, edict_t *ent, entity_state
 		 * movement with PMove is an explicit test mode because the physics
 		 * models diverge enough to create visible correction.
 		 */
-		if (client->usingpmove || sv_predict_nqmovement.value)
+		if (client->move_prediction_allowed || sv_predict_nqmovement.value)
 		{
 			state->pmovetype = (int)ent->v.movetype & 63;
 			if ((int)ent->v.flags & FL_ONGROUND)
@@ -1927,6 +1947,8 @@ static void SVFTE_WriteEntitiesToClient (client_t *client, sizebuf_t *msg,
 	stateend = state + client->numpreviousentities;
 
 	header_need = 1 + 2 + 4 + 2;
+	if (client->protocol_pext2 & PEXT2_EXPLICITCMDMSEC)
+		header_need += 7;
 	if (msg->cursize + header_need > msg->maxsize)
 		return;
 
@@ -2830,7 +2852,22 @@ SV_SendClientDatagram
 */
 static void SV_WriteMoveAckPayloadToMessage(client_t *client, sizebuf_t *msg)
 {
+	int flags = 0;
+
 	MSG_WriteShort (msg, client->lastmovemessage & 0xffff);
+	if (!(client->protocol_pext2 & PEXT2_EXPLICITCMDMSEC))
+		return;
+	if (client->move_authority != MOVE_AUTHORITY_UNKNOWN)
+		flags |= MOVEACK_FLAG_AUTHORITATIVE;
+	if (client->move_prediction_allowed)
+		flags |= MOVEACK_FLAG_PREDICTION_ALLOWED;
+	if (client->move_discontinuity_reason != MOVEACK_DISCONTINUITY_NONE)
+		flags |= MOVEACK_FLAG_DISCONTINUITY;
+	MSG_WriteByte (msg, flags);
+	MSG_WriteByte (msg, client->move_authority);
+	MSG_WriteShort (msg, client->move_mode_epoch);
+	MSG_WriteShort (msg, client->move_discontinuity_epoch);
+	MSG_WriteByte (msg, client->move_discontinuity_reason);
 }
 
 static void SV_MaybePrintSnapshotSummary (client_t *client, int client_index)
@@ -2863,14 +2900,18 @@ static void SV_MaybePrintSnapshotSummary (client_t *client, int client_index)
 	avg_packets = client->net_snapshot_updates_sent ?
 		(client->net_snapshot_split_packets + client->net_snapshot_updates_sent) /
 			client->net_snapshot_updates_sent : 0;
-	Con_Printf ("net_lagdebug: server summary to %s (%s): replacement=%d updates=%d last_packets=%d avg_packets=%d max_packets=%d last_bytes=%d max_bytes=%d seq=%d ack=%d acklag=%d ackage=%.3f max_ackage=%.3f clipped=%d\n",
+	Con_Printf ("net_lagdebug: server summary to %s (%s): replacement=%d updates=%d last_packets=%d avg_packets=%d max_packets=%d last_bytes=%d max_bytes=%d seq=%d ack=%d acklag=%d ackage=%.3f max_ackage=%.3f clipped=%d authority=%d prediction_allowed=%d mode_epoch=%u discontinuity_epoch=%u queue=%u accepted_msec=%llu simulated_msec=%llu overflows=%d outliers=%d\n",
 		client->name, NET_QSocketGetAddressString(client->netconnection),
 		replacement ? 1 : 0,
 		client->net_snapshot_updates_sent, client->net_snapshot_last_packets,
 		avg_packets, client->net_snapshot_max_packets,
 		client->net_snapshot_last_bytes, client->net_snapshot_max_bytes,
 		sequence, ack, acklag, ackage, client->net_snapshot_ack_age_max,
-		client->net_snapshot_unsent_entities);
+		client->net_snapshot_unsent_entities, client->move_authority,
+		client->move_prediction_allowed ? 1 : 0, client->move_mode_epoch,
+		client->move_discontinuity_epoch, client->move_queue_count,
+		client->net_move_msec_accepted, client->net_move_msec_simulated,
+		client->net_move_queue_overflows, client->net_move_roomscale_outliers);
 	client->net_snapshot_last_summary_time = realtime;
 }
 

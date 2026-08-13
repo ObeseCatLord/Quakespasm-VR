@@ -142,6 +142,8 @@ typedef struct
 
 extern client_static_t	cls;
 
+void CL_ApplyPredictionViewSmoothing (vec3_t vieworg);
+
 //
 // the client_state_t structure is wiped completely at every
 // server signon
@@ -157,11 +159,24 @@ typedef struct
 	vec3_t		accummoves;		// accumulated mouse movement for paced sends
 	vec3_t		vr_roomscalemove_accum; // accumulated room-scale movement for paced sends
 	float		lastcmdtime;	// server time of last sent move command
+	// Monotonic command-duration sampling for PEXT2_EXPLICITCMDMSEC.
+	double		move_msec_sample_time;
+	double		move_msec_fractional_carry;
+	qboolean	move_msec_sample_valid;
 		int			ackedmovemessages;	// last sequenced move accepted by server
+	move_authority_t move_ack_authority;
+	qboolean	move_ack_prediction_allowed;
+	unsigned short	move_ack_mode_epoch;
+	unsigned short	move_ack_discontinuity_epoch;
+	unsigned char	move_ack_discontinuity_reason;
 		usercmd_t	movecmds[CL_MOVE_HISTORY];
 		int			predicted_move_sequence[CL_MOVE_HISTORY];
 		vec3_t		predicted_move_origin[CL_MOVE_HISTORY];
 		vec3_t		predicted_move_velocity[CL_MOVE_HISTORY];
+		unsigned short	predicted_move_mode_epoch[CL_MOVE_HISTORY];
+		unsigned short	predicted_move_discontinuity_epoch[CL_MOVE_HISTORY];
+		unsigned char	predicted_move_flags[CL_MOVE_HISTORY];
+		unsigned char	predicted_move_msec[CL_MOVE_HISTORY];
 		vec3_t		prediction_error;
 		double		prediction_error_time;
 		int			prediction_error_sequence;
@@ -171,6 +186,7 @@ typedef struct
 		int			net_prediction_error_last_sequence;
 		int			net_move_packets_sent;
 	int			net_move_cmds_sent;
+	unsigned long long net_move_msec_generated;
 	int			net_move_last_packet_cmds;
 	int			net_move_acks;
 	int			net_move_stale_acks;

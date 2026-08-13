@@ -12,35 +12,151 @@ LOG_DIR="${LOG_DIR:-/tmp/quakespasmvr-net-connected-stress-smoke}"
 CLIENT_WIDTH="${CLIENT_WIDTH:-320}"
 CLIENT_HEIGHT="${CLIENT_HEIGHT:-240}"
 TEST_MAXPACKETSIZE="${TEST_MAXPACKETSIZE:-1024}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+NET_PROXY_PROFILE="${NET_PROXY_PROFILE:-control}"
+NET_PROXY_SCRIPT="${NET_PROXY_SCRIPT:-$SCRIPT_DIR/udp_net_proxy.py}"
+NET_PROXY_SEED="${NET_PROXY_SEED:-1337}"
+NET_PROXY_BASE_DELAY_MS="${NET_PROXY_BASE_DELAY_MS:-0}"
+NET_PROXY_JITTER_MS="${NET_PROXY_JITTER_MS:-0}"
+NET_PROXY_LOSS_PERCENT="${NET_PROXY_LOSS_PERCENT:-0}"
+NET_PROXY_REORDER_EVERY="${NET_PROXY_REORDER_EVERY:-0}"
+NET_PROXY_REORDER_DELAY_MS="${NET_PROXY_REORDER_DELAY_MS:-25}"
+NET_PROXY_GAP_SIZE="${NET_PROXY_GAP_SIZE:-0}"
+NET_PROXY_GAP_INTERVAL="${NET_PROXY_GAP_INTERVAL:-0}"
+NET_PROXY_STALL_MS="${NET_PROXY_STALL_MS:-200}"
+NET_PROXY_STALL_INTERVAL="${NET_PROXY_STALL_INTERVAL:-0}"
+NET_PROXY_BACKEND_PORT="${NET_PROXY_BACKEND_PORT:-$((PORT + 1200))}"
+CLIENT_INPUT_PROFILE="${CLIENT_INPUT_PROFILE:-wall_forward_jump}"
+ROOMSCALE_HOOKS="${ROOMSCALE_HOOKS:-}"
+SYNTHETIC_VR="${SYNTHETIC_VR:-0}"
+
+NET_PROXY_FRONTEND_PORT="${PORT}"
+NET_PROXY_SERVER_PORT="${PORT}"
+NET_PROXY_STDOUT="$LOG_DIR/net_udp_proxy.log"
+NET_PROXY_PID=""
+NET_PROXY_USE=0
 
 SERVER_DIR="$LOG_DIR/server"
-SERVER_STDOUT="$LOG_DIR/server_stdout.log"
-SERVER_LOG="$LOG_DIR/server_combined.log"
+SERVER_LOG="$SERVER_DIR/server_stdout.log"
+
+SERVER_STDOUT_LOG="$LOG_DIR/server_stdout.log"
+SERVER_COMBINED_LOG="$LOG_DIR/server_combined.log"
 
 server_pid=""
-client_pids=()
+declare -a client_pids=()
 
 fail() {
 	printf 'net_connected_stress_smoke: %s\n' "$*" >&2
 	printf 'net_connected_stress_smoke: logs: %s\n' "$LOG_DIR" >&2
 	exit 1
 }
+skip() {
+	printf 'net_connected_stress_smoke: skipped: %s\n' "$*" >&2
+	printf 'net_connected_stress_smoke: logs: %s\n' "$LOG_DIR" >&2
+	exit 0
+}
 
-cleanup() {
-	local pid
+configure_proxy_profile() {
+	case "$NET_PROXY_PROFILE" in
+		control)
+			NET_PROXY_USE=0
+			;;
+		delay)
+			NET_PROXY_USE=1
+			[ "$NET_PROXY_BASE_DELAY_MS" -eq 0 ] && NET_PROXY_BASE_DELAY_MS=30
+			;;
+		jitter)
+			NET_PROXY_USE=1
+			[ "$NET_PROXY_BASE_DELAY_MS" -eq 0 ] && NET_PROXY_BASE_DELAY_MS=12
+			[ "$NET_PROXY_JITTER_MS" -eq 0 ] && NET_PROXY_JITTER_MS=20
+			;;
+		loss)
+			NET_PROXY_USE=1
+			[ "$NET_PROXY_LOSS_PERCENT" -eq 0 ] && NET_PROXY_LOSS_PERCENT=12
+			;;
+		reorder)
+			NET_PROXY_USE=1
+			[ "$NET_PROXY_REORDER_EVERY" -eq 0 ] && NET_PROXY_REORDER_EVERY=6
+			[ "$NET_PROXY_REORDER_DELAY_MS" -eq 0 ] && NET_PROXY_REORDER_DELAY_MS=50
+			;;
+		gap1)
+			NET_PROXY_USE=1
+			[ "$NET_PROXY_GAP_SIZE" -eq 0 ] && NET_PROXY_GAP_SIZE=1
+			[ "$NET_PROXY_GAP_INTERVAL" -eq 0 ] && NET_PROXY_GAP_INTERVAL=64
+			;;
+		gap2)
+			NET_PROXY_USE=1
+			[ "$NET_PROXY_GAP_SIZE" -eq 0 ] && NET_PROXY_GAP_SIZE=2
+			[ "$NET_PROXY_GAP_INTERVAL" -eq 0 ] && NET_PROXY_GAP_INTERVAL=64
+			;;
+		gap3)
+			NET_PROXY_USE=1
+			[ "$NET_PROXY_GAP_SIZE" -eq 0 ] && NET_PROXY_GAP_SIZE=3
+			[ "$NET_PROXY_GAP_INTERVAL" -eq 0 ] && NET_PROXY_GAP_INTERVAL=64
+			;;
+		stall200)
+			NET_PROXY_USE=1
+			[ "$NET_PROXY_STALL_MS" -eq 0 ] && NET_PROXY_STALL_MS=200
+			[ "$NET_PROXY_STALL_INTERVAL" -eq 0 ] && NET_PROXY_STALL_INTERVAL=96
+			;;
+		all)
+			NET_PROXY_USE=1
+			[ "$NET_PROXY_BASE_DELAY_MS" -eq 0 ] && NET_PROXY_BASE_DELAY_MS=20
+			[ "$NET_PROXY_JITTER_MS" -eq 0 ] && NET_PROXY_JITTER_MS=12
+			[ "$NET_PROXY_LOSS_PERCENT" -eq 0 ] && NET_PROXY_LOSS_PERCENT=6
+			[ "$NET_PROXY_REORDER_EVERY" -eq 0 ] && NET_PROXY_REORDER_EVERY=7
+			[ "$NET_PROXY_REORDER_DELAY_MS" -eq 0 ] && NET_PROXY_REORDER_DELAY_MS=45
+			[ "$NET_PROXY_GAP_SIZE" -eq 0 ] && NET_PROXY_GAP_SIZE=1
+			[ "$NET_PROXY_GAP_INTERVAL" -eq 0 ] && NET_PROXY_GAP_INTERVAL=128
+			[ "$NET_PROXY_STALL_MS" -eq 0 ] && NET_PROXY_STALL_MS=200
+			[ "$NET_PROXY_STALL_INTERVAL" -eq 0 ] && NET_PROXY_STALL_INTERVAL=96
+			;;
+		*)
+			fail "unknown NET_PROXY_PROFILE '$NET_PROXY_PROFILE'"
+			;;
+	esac
+}
 
-	for pid in "${client_pids[@]}"; do
-		if kill -0 "$pid" 2>/dev/null; then
-			kill "$pid" 2>/dev/null || true
-			wait "$pid" 2>/dev/null || true
-		fi
-	done
-	if [ -n "$server_pid" ] && kill -0 "$server_pid" 2>/dev/null; then
-		kill "$server_pid" 2>/dev/null || true
-		wait "$server_pid" 2>/dev/null || true
+start_proxy() {
+	if [ "$NET_PROXY_USE" -eq 0 ]; then
+		return
+	fi
+
+	if ! command -v python3 >/dev/null; then
+		skip "python3 unavailable but proxy profile requires userspace impairments"
+	fi
+	if [ ! -f "$NET_PROXY_SCRIPT" ]; then
+		fail "proxy script not found: $NET_PROXY_SCRIPT"
+	fi
+
+	if [ "$NET_PROXY_BACKEND_PORT" = "$PORT" ]; then
+		NET_PROXY_BACKEND_PORT=$((PORT + 1200))
+	fi
+	NET_PROXY_SERVER_PORT="$NET_PROXY_BACKEND_PORT"
+
+	PYTHON_BIN="${PYTHON_BIN:-python3}"
+	"$PYTHON_BIN" "$NET_PROXY_SCRIPT" \
+		--listen "$NET_PROXY_FRONTEND_PORT" \
+		--target "127.0.0.1:$NET_PROXY_SERVER_PORT" \
+		--seed "$NET_PROXY_SEED" \
+		--base-delay "$NET_PROXY_BASE_DELAY_MS" \
+		--jitter "$NET_PROXY_JITTER_MS" \
+		--loss "$NET_PROXY_LOSS_PERCENT" \
+		--reorder-every "$NET_PROXY_REORDER_EVERY" \
+		--reorder-delay "$NET_PROXY_REORDER_DELAY_MS" \
+		--gap-size "$NET_PROXY_GAP_SIZE" \
+		--gap-interval "$NET_PROXY_GAP_INTERVAL" \
+		--stall-ms "$NET_PROXY_STALL_MS" \
+		--stall-interval "$NET_PROXY_STALL_INTERVAL" \
+		>"$NET_PROXY_STDOUT" 2>&1 &
+	NET_PROXY_PID=$!
+	sleep 0.4
+	if ! kill -0 "$NET_PROXY_PID" 2>/dev/null; then
+		fail "failed to start userspace proxy"
 	fi
 }
-trap cleanup EXIT
 
 wait_for_log() {
 	local pattern="$1"
@@ -59,29 +175,103 @@ wait_for_log() {
 	return 1
 }
 
-combine_log() {
-	local out="$1"
-	shift
-
-	: > "$out"
-	for f in "$@"; do
-		if [ -f "$f" ]; then
-			cat "$f" >> "$out"
+cleanup() {
+	trap - EXIT
+	if [ -n "${server_pid:-}" ] && kill -0 "$server_pid" 2>/dev/null; then
+		kill "$server_pid" 2>/dev/null || true
+		wait "$server_pid" 2>/dev/null || true
+	fi
+	for pid in "${client_pids[@]-}"; do
+		if kill -0 "$pid" 2>/dev/null; then
+			kill "$pid" 2>/dev/null || true
+			wait "$pid" 2>/dev/null || true
 		fi
 	done
+	if [ -n "${NET_PROXY_PID:-}" ]; then
+		if kill -0 "$NET_PROXY_PID" 2>/dev/null; then
+			kill "$NET_PROXY_PID" 2>/dev/null || true
+			wait "$NET_PROXY_PID" 2>/dev/null || true
+		fi
+	fi
+}
+trap cleanup EXIT
+
+supports_command() {
+	local command_name
+	command_name="$1"
+	command_name="${command_name#"+"}"
+	command_name="${command_name#"-"}"
+	rg -qF "Cmd_AddCommand(\"$command_name\"" "$ROOT_DIR/Quake"/*.c 2>/dev/null
+}
+
+build_input_profile() {
+	local output_file="$1"
+	local start_motion=0
+	: > "$output_file"
+	case "$CLIENT_INPUT_PROFILE" in
+		none)
+			;;
+		wall_forward_jump|wall-forward|walljump)
+			cat <<'EOF_HOOK' > "$output_file"
+alias net_test_motion "+forward; +jump; wait; -jump; wait; net_test_motion"
+EOF_HOOK
+			start_motion=1
+			;;
+		forward)
+			echo "+forward" > "$output_file"
+			;;
+		*)
+			echo "$CLIENT_INPUT_PROFILE" > "$output_file"
+			;;
+	esac
+
+	if [ -n "$ROOMSCALE_HOOKS" ]; then
+		local hook
+		local hook_command
+		local hook_trimmed
+		OLD_IFS="$IFS"
+		IFS=';'
+		for hook in $ROOMSCALE_HOOKS; do
+			hook_trimmed="$hook"
+			if [ -z "$hook_trimmed" ]; then
+				continue
+			fi
+			hook_command="${hook_trimmed%% *}"
+			hook_command="${hook_command#"+"}"
+			hook_command="${hook_command#"-"}"
+			if supports_command "$hook_command"; then
+				echo "$hook_trimmed" >> "$output_file"
+			else
+				printf 'net_connected_stress_smoke: skipping unsupported roomscale hook: %s\n' "$hook_trimmed" >&2
+			fi
+			done
+		IFS="$OLD_IFS"
+	fi
+	if [ "$SYNTHETIC_VR" -ne 0 ]; then
+		cat <<'EOF_VR' >> "$output_file"
+cl_nettest_vr 1
+cl_nettest_roomscale_x 0.25
+cl_nettest_roomscale_y 0
+cl_nettest_roomscale_z 0
+cl_nettest_vr
+EOF_VR
+	fi
+	if [ "$start_motion" -ne 0 ]; then
+		echo "net_test_motion" >> "$output_file"
+	fi
 }
 
 if [ -z "${DISPLAY:-}" ] && [ -z "${WAYLAND_DISPLAY:-}" ]; then
-	fail "no display is available; use tools/net_stress_smoke for the headless server-only check"
+	skip "no display is available; use tools/net_stress_smoke for the headless server-only check"
 fi
 if [ ! -x "$BIN" ]; then
-	fail "binary not executable: $BIN"
+	skip "binary not executable: $BIN"
 fi
 if [ ! -d "$STRAIGHT_DIR/$GAME" ]; then
-	fail "game directory not found: $STRAIGHT_DIR/$GAME"
+	skip "game directory not found: $STRAIGHT_DIR/$GAME"
 fi
 if [ ! -f "$STRAIGHT_DIR/$GAME/$SAVE.sav" ]; then
-	fail "save not found: $STRAIGHT_DIR/$GAME/$SAVE.sav"
+	skip "save not found: $STRAIGHT_DIR/$GAME/$SAVE.sav"
 fi
 if [ "$CLIENTS" -lt 1 ]; then
 	fail "CLIENTS must be at least 1"
@@ -97,24 +287,32 @@ fi
 
 rm -rf "$LOG_DIR"
 mkdir -p "$SERVER_DIR"
+configure_proxy_profile
+start_proxy
+
+INPUT_PROFILE_FILE="$LOG_DIR/client_input_profile.cfg"
+build_input_profile "$INPUT_PROFILE_FILE"
 
 cd "$SERVER_DIR"
 LD_LIBRARY_PATH="$(dirname "$BIN"):${LD_LIBRARY_PATH:-}" \
 	"$BIN" \
 	-basedir "$STRAIGHT_DIR" \
 	-dedicated 16 \
-	-port "$PORT" \
+	-port "$NET_PROXY_SERVER_PORT" \
 	-condebug \
 	-game "$GAME" \
 	+exec codex_coop_server.cfg \
+	+sv_pmove_mode 1 \
+	+sv_nqplayerphysics 0 \
+	+sv_trustedmovement 1 \
 	+sv_netdiag_interval 1 \
 	+net_lagdebug 1 \
 	+sv_maxpacketsize "$TEST_MAXPACKETSIZE" \
 	+load "$SAVE" \
-	>"$SERVER_STDOUT" 2>&1 &
+	>"$SERVER_STDOUT_LOG" 2>&1 &
 server_pid=$!
 
-wait_for_log 'Loading game from .*\.sav' "$SERVER_STDOUT" "$SERVER_DIR/qconsole.log" ||
+wait_for_log 'Loading game from .*\.sav' "$SERVER_STDOUT_LOG" "$SERVER_DIR/qconsole.log" ||
 	fail "server did not load $SAVE.sav"
 
 for i in $(seq 1 "$CLIENTS"); do
@@ -134,11 +332,11 @@ for i in $(seq 1 "$CLIENTS"); do
 		-height "$CLIENT_HEIGHT" \
 		-condebug \
 		-game "$GAME" \
+		-postcfg "$INPUT_PROFILE_FILE" \
 		+joy_enable 0 \
 		+cl_startdemos 0 \
 		+name "$name" \
-		+connect "127.0.0.1:$PORT" \
-		+forward \
+		+connect "127.0.0.1:$NET_PROXY_FRONTEND_PORT" \
 		>"$client_stdout" 2>&1 &
 	client_pids+=("$!")
 done
@@ -148,20 +346,32 @@ sleep "$RUN_SECONDS"
 cleanup
 trap - EXIT
 
-combine_log "$SERVER_LOG" "$SERVER_STDOUT" "$SERVER_DIR/qconsole.log"
+combine_log() {
+	local out="$1"
+	shift
+
+	: > "$out"
+	for f in "$@"; do
+		if [ -f "$f" ]; then
+			cat "$f" >> "$out"
+		fi
+	done
+}
+
+combine_log "$SERVER_COMBINED_LOG" "$SERVER_STDOUT_LOG" "$SERVER_DIR/qconsole.log"
 for i in $(seq 1 "$CLIENTS"); do
 	client_dir="$LOG_DIR/client$i"
 	client_log="$LOG_DIR/client${i}_combined.log"
 	combine_log "$client_log" "$LOG_DIR/client${i}_stdout.log" "$client_dir/qconsole.log"
 done
 
-grep -Eq 'Loading game from .*\.sav' "$SERVER_LOG" ||
+grep -Eq 'Loading game from .*\.sav' "$SERVER_COMBINED_LOG" ||
 	fail "server log does not show the heavy save loading"
 
-if grep -Eiq 'Host_Error|Sys_Error|packet overflow|SVFTE_SendClientDatagram: packet overflow|Host_EndGame|Hunk_Alloc: failed' "$SERVER_LOG"; then
+if grep -Eiq 'Host_Error|Sys_Error|packet overflow|SVFTE_SendClientDatagram: packet overflow|Host_EndGame|Hunk_Alloc: failed' "$SERVER_COMBINED_LOG"; then
 	fail "server error pattern found in smoke log"
 fi
-if grep -Eq 'clipped=[1-9][0-9]*|clipped_ents=[1-9][0-9]*' "$SERVER_LOG"; then
+if grep -Eq 'clipped=[1-9][0-9]*|clipped_ents=[1-9][0-9]*' "$SERVER_COMBINED_LOG"; then
 	fail "server clipped replacement entities during connected stress run"
 fi
 if awk -v cap="$TEST_MAXPACKETSIZE" '
@@ -197,7 +407,7 @@ END {
 	if (!seen_split_drain)
 		exit 1
 }
-' "$SERVER_LOG"; then
+' "$SERVER_COMBINED_LOG"; then
 	:
 else
 	status=$?
@@ -206,8 +416,9 @@ else
 	fi
 	fail "server did not exercise a multi-packet replacement drain"
 fi
+
 if [ "$CLIENTS" -ge 2 ]; then
-	grep -Eq 'allowing same-IP client on a different port' "$SERVER_LOG" ||
+	grep -Eq 'allowing same-IP client on a different port' "$SERVER_COMBINED_LOG" ||
 		fail "server did not exercise same-IP multi-client socket path"
 fi
 
@@ -217,11 +428,25 @@ for i in $(seq 1 "$CLIENTS"); do
 
 	grep -Eq 'Connection accepted|Connected' "$client_log" ||
 		fail "client $i did not connect"
-	grep -Eq "server summary to $name .*replacement=1 .*updates=[1-9][0-9]* .*ack=[0-9][0-9]*" "$SERVER_LOG" ||
+	if grep -Eiq 'Client prediction disabled|badread|Host_Error|Sys_Error' "$client_log"; then
+		fail "client $i hit a prediction quarantine or protocol/runtime error"
+	fi
+	grep -Eq "server summary to $name .*replacement=1 .*updates=[1-9][0-9]* .*ack=[0-9][0-9]*" "$SERVER_COMBINED_LOG" ||
 		fail "server did not record ACKed replacement snapshots for $name"
-	grep -Eq "accepted input from $name|accepted move gap from $name" "$SERVER_LOG" ||
+	grep -Eq "server summary to $name .*authority=(2|3) prediction_allowed=1 .*accepted_msec=[1-9][0-9]* simulated_msec=[1-9][0-9]*" "$SERVER_COMBINED_LOG" ||
+		fail "server did not keep predictive PMove authority active for $name"
+	grep -Eq "accepted input from $name|accepted move gap from $name" "$SERVER_COMBINED_LOG" ||
 		fail "server did not record client move input for $name"
 done
+
+if [ "$NET_PROXY_USE" -eq 1 ]; then
+	grep -qi "proxy" "$SERVER_COMBINED_LOG" "$NET_PROXY_STDOUT" ||
+		fail "proxy profile was enabled but produced no log output"
+fi
+if [ "$SYNTHETIC_VR" -ne 0 ]; then
+	grep -Fq 'vr=1 vrmove=(0.250,0.000,0.000)' "$SERVER_COMBINED_LOG" ||
+		fail "synthetic VR room-scale commands did not reach server PMove"
+fi
 
 printf 'net_connected_stress_smoke: ok\n'
 printf 'net_connected_stress_smoke: logs: %s\n' "$LOG_DIR"
