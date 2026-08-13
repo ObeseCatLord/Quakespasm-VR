@@ -113,11 +113,7 @@ rewrite_stale_network_defaults() {
 		    name == "cl_net_lerpbuffer" ||
 		    name == "cl_net_lerpbuffer_adaptive" ||
 		    name == "cl_net_lerpbuffer_adaptive_max" ||
-		    name == "cl_net_lerpbuffer_adaptive_time" ||
-		    name == "cl_predict_smooth" ||
-		    name == "cl_predict_smooth_time" ||
-		    name == "cl_predict_smooth_min" ||
-		    name == "cl_predict_smooth_max") {
+		    name == "cl_net_lerpbuffer_adaptive_time") {
 			changed = 1
 			next
 		}
@@ -153,12 +149,12 @@ rewrite_stale_network_defaults() {
 			rewritten(name, "1")
 			next
 		}
-		if (name == "sv_nqplayerphysics" && (value + 0) != 1) {
-			rewritten(name, "1")
+		if (name == "sv_nqplayerphysics" && (value + 0) != 0) {
+			rewritten(name, "0")
 			next
 		}
-		if (name == "sv_trustedmovement" && (value + 0) != 0) {
-			rewritten(name, "0")
+		if (name == "sv_trustedmovement" && (value + 0) != 1) {
+			rewritten(name, "1")
 			next
 		}
 		if (name == "sv_predict_nqmovement" && (value + 0) != 0) {
