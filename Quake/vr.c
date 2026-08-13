@@ -121,7 +121,8 @@ extern refdef_t r_refdef;
 extern vec3_t vright;
 
 extern cvar_t gl_farclip;
-extern int glwidth, glheight;
+extern cvar_t r_perfdebug;
+extern cvar_t r_perfdebug_min_ms;
 
 #ifdef __cplusplus
 }
@@ -228,6 +229,8 @@ static vec3_t lastMenuPosition{0.0, 0.0, 0.0};
 static vec3_t vr_menu_view_origin{0.0, 0.0, 0.0};
 static qboolean vr_menu_was_open = false;
 static qboolean vr_menu_view_origin_valid = false;
+
+static qboolean VR_PerfActive(void) { return r_perfdebug.value != 0; }
 
 /*
  * The menu is drawn as a 320x200 plane in world space.  Cache the exact
@@ -4940,6 +4943,15 @@ static void RenderScreenForCurrentEye_OVR() {
   // Remember the current glwidht/height; we have to modify it here for each eye
   int oldglheight = glheight;
   int oldglwidth = glwidth;
+  double perf_frame_start = 0.0;
+  double perf_setup_ms = 0.0;
+  double perf_scene_ms = 0.0;
+  double perf_resolve_ms = 0.0;
+  double perf_submit_ms = 0.0;
+  double perf_gamma_ms = 0.0;
+
+  if (VR_PerfActive())
+    perf_frame_start = Sys_DoubleTime();
 
   uint32_t cglwidth = glwidth;
   uint32_t cglheight = glheight;
@@ -4947,6 +4959,7 @@ static void RenderScreenForCurrentEye_OVR() {
   glwidth = cglwidth;
   glheight = cglheight;
 
+  double perf_setup_start = Sys_DoubleTime();
   bool newTextures = glwidth != current_eye->fbo.size.width ||
                      glheight != current_eye->fbo.size.height ||
                      (!!vr_highprecision_targets.value) !=
@@ -4976,7 +4989,13 @@ static void RenderScreenForCurrentEye_OVR() {
   r_refdef.fov_x = current_eye->fov_x;
   r_refdef.fov_y = current_eye->fov_y;
 
+  double perf_scene_start = Sys_DoubleTime();
+  if (VR_PerfActive())
+    perf_setup_ms = (perf_scene_start - perf_setup_start) * 1000.0;
+
   SCR_UpdateScreenContent();
+  if (VR_PerfActive())
+    perf_scene_ms = (Sys_DoubleTime() - perf_scene_start) * 1000.0;
 
   // Generate the eye texture and send it to the HMD
 
@@ -4986,18 +5005,42 @@ static void RenderScreenForCurrentEye_OVR() {
     glBindFramebufferEXT(GL_READ_FRAMEBUFFER,
                          current_eye->fbo.msaa_framebuffer);
     glDrawBuffer(GL_BACK);
+    double perf_blit_start = Sys_DoubleTime();
     glBlitFramebufferEXT(0, 0, glwidth, glheight, 0, 0, glwidth, glheight,
                          GL_COLOR_BUFFER_BIT, GL_NEAREST);
+    perf_resolve_ms = (Sys_DoubleTime() - perf_blit_start) * 1000.0;
+    double perf_gamma_start = Sys_DoubleTime();
     GLSLGamma_GammaCorrect();
+    perf_gamma_ms = (Sys_DoubleTime() - perf_gamma_start) * 1000.0;
   } else {
+    double perf_gamma_start = Sys_DoubleTime();
     GLSLGamma_GammaCorrect();
+    perf_gamma_ms = (Sys_DoubleTime() - perf_gamma_start) * 1000.0;
   }
 
   vr::Texture_t eyeTexture = {
       reinterpret_cast<void *>(uintptr_t(current_eye->fbo.texture)),
       vr::TextureType_OpenGL, vr::ColorSpace_Gamma};
+  double perf_submit_start = Sys_DoubleTime();
   vr::VRCompositor()->Submit(current_eye->eye, &eyeTexture);
+  if (VR_PerfActive())
+    perf_submit_ms = (Sys_DoubleTime() - perf_submit_start) * 1000.0;
 
+  if (VR_PerfActive()) {
+    double total_ms = (Sys_DoubleTime() - perf_frame_start) * 1000.0;
+    if (total_ms >= q_max(0.0f, r_perfdebug_min_ms.value)) {
+      DebugLog("r_vr_eyedebug: map=%s eye=%d target=%ux%u msaa=%d "
+               "setup=%.3f scene=%.3f resolve=%.3f gamma=%.3f submit=%.3f "
+               "total=%.3f\n",
+               cl.worldmodel ? cl.worldmodel->name : "<none>",
+               current_eye->index,
+               current_eye->fbo.size.width,
+               current_eye->fbo.size.height,
+               current_eye->fbo.msaa,
+               perf_setup_ms, perf_scene_ms, perf_resolve_ms, perf_gamma_ms,
+               perf_submit_ms, total_ms);
+    }
+  }
   // Reset
   glwidth = oldglwidth;
   glheight = oldglheight;
@@ -5393,11 +5436,25 @@ void VR_UpdateScreenContent() {
   R_EndVRFrame();
 
   // Blit mirror texture to backbuffer
+  double vr_mirror_ms = 0.0;
+  double vr_mirror_start = VR_PerfActive() ? Sys_DoubleTime() : 0.0;
+
   glBindFramebufferEXT(GL_READ_FRAMEBUFFER_EXT, eyes[0].fbo.framebuffer);
   glBindFramebufferEXT(GL_DRAW_FRAMEBUFFER_EXT, 0);
   glBlitFramebufferEXT(0, eyes[0].fbo.size.width, eyes[0].fbo.size.height, 0, 0,
                        h, w, 0, GL_COLOR_BUFFER_BIT, GL_LINEAR);
   glBindFramebufferEXT(GL_READ_FRAMEBUFFER_EXT, 0);
+
+  if (VR_PerfActive()) {
+    vr_mirror_ms = (Sys_DoubleTime() - vr_mirror_start) * 1000.0;
+    if (vr_mirror_ms >= q_max(0.0f, r_perfdebug_min_ms.value)) {
+      DebugLog("r_vr_mirrordebug: map=%s mirror=%.3f eyesize=%ux%u target=%dx%d "
+               "msaa=%d\n",
+               cl.worldmodel ? cl.worldmodel->name : "<none>",
+               vr_mirror_ms, eyes[0].fbo.size.width, eyes[0].fbo.size.height,
+               w, h, (int)vr_msaa.value);
+    }
+  }
 }
 
 void VR_SetMatrices() {
