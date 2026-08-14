@@ -335,6 +335,7 @@ typedef struct md5vertex_s
 #define MD3_XYZ_SCALE		(1.0f / 64.0f)
 #define MAX_MD3_SURFACES	32
 #define MAX_MD3_VERTICES	65535
+#define MAX_MD5_SURFACES	32
 
 typedef enum
 {
@@ -554,6 +555,13 @@ typedef struct qmodel_s
 	int			md3vboindexofs[MAX_MD3_SURFACES];
 	int			md3vboxyzofs[MAX_MD3_SURFACES];
 	int			md3vbostofs[MAX_MD3_SURFACES];
+
+	/* MD5 surfaces use their own float pose stream, packed like MD3. */
+	GLuint		md5meshvbo;
+	GLuint		md5meshindexesvbo;
+	int			md5vboindexofs[MAX_MD5_SURFACES];
+	int			md5vboxyzofs[MAX_MD5_SURFACES];
+	int			md5vbostofs[MAX_MD5_SURFACES];
 
 //
 // additional model data

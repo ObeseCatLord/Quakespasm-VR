@@ -4445,7 +4445,6 @@ models and ordinary alias-frame interpolation at draw time.
 */
 
 #define MAX_MD5_JOINTS			256
-#define MAX_MD5_SURFACES		32
 #define MAX_MD5_VERTICES		65535
 #define MAX_MD5_TRIANGLES		1048576
 #define MAX_MD5_WEIGHTS		1048576
@@ -5506,6 +5505,7 @@ static qboolean Mod_LoadMD5MeshModel (qmodel_t *mod, const byte *buffer, size_t 
 	Mod_SetExtraFlags (mod);
 	Mod_SetMD3Bounds (mod, mins, maxs);
 	Mod_RegisterMD5AliasBuild (surfaces[0], mins, maxs);
+	GLMesh_LoadVertexBuffer (mod, surfaces[0]);
 	valid = true;
 
 done:
