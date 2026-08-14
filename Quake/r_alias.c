@@ -128,6 +128,8 @@ static GLint  md5BlendLoc;
 static GLint  md5ShadevectorLoc;
 static GLint  md5LightColorLoc;
 static GLint  md5TexLoc;
+static GLint  md5TexSScaleLoc;
+static GLint  md5TexTScaleLoc;
 static GLint  md5UseAlphaTestLoc;
 static GLint  md5UseShadingLoc;
 
@@ -738,6 +740,8 @@ void GLAlias_CreateShaders (void)
 			"uniform vec3 ShadeVector;\n"
 			"uniform vec4 LightColor;\n"
 			"uniform bool UseShading;\n"
+			"uniform float TexSScale;\n"
+			"uniform float TexTScale;\n"
 			"attribute vec4 TexCoords;\n"
 			"attribute vec3 Pose1Vert;\n"
 			"attribute vec3 Pose1Normal;\n"
@@ -751,7 +755,7 @@ void GLAlias_CreateShaders (void)
 			"}\n"
 			"void main()\n"
 			"{\n"
-			"  gl_TexCoord[0] = TexCoords;\n"
+			"  gl_TexCoord[0] = vec4(TexCoords.xy * vec2(TexSScale, TexTScale), TexCoords.zw);\n"
 			"  vec4 vertex = vec4(mix(Pose1Vert, Pose2Vert, Blend), 1.0);\n"
 			"  gl_Position = gl_ModelViewProjectionMatrix * vertex;\n"
 			"  FogFragCoord = gl_Position.w;\n"
@@ -784,6 +788,8 @@ void GLAlias_CreateShaders (void)
 			md5ShadevectorLoc = GL_GetUniformLocation (&r_md5_program, "ShadeVector");
 			md5LightColorLoc = GL_GetUniformLocation (&r_md5_program, "LightColor");
 			md5TexLoc = GL_GetUniformLocation (&r_md5_program, "Tex");
+			md5TexSScaleLoc = GL_GetUniformLocation (&r_md5_program, "TexSScale");
+			md5TexTScaleLoc = GL_GetUniformLocation (&r_md5_program, "TexTScale");
 			md5UseAlphaTestLoc = GL_GetUniformLocation (&r_md5_program, "UseAlphaTest");
 			md5UseShadingLoc = GL_GetUniformLocation (&r_md5_program, "UseShading");
 		}
@@ -1718,6 +1724,8 @@ static void GL_DrawMD5Frame_GLSL (const aliashdr_t *surface, int surfaceindex,
 	lerpdata_t lerpdata, gltexture_t *texture)
 {
 	float blend = lerpdata.pose1 != lerpdata.pose2 ? lerpdata.blend : 0.0f;
+	float sscale;
+	float tscale;
 
 	GL_UseProgram (r_md5_program);
 	GL_BindBuffer (GL_ARRAY_BUFFER, currententity->model->md5meshvbo);
@@ -1746,6 +1754,10 @@ static void GL_DrawMD5Frame_GLSL (const aliashdr_t *surface, int surfaceindex,
 	GL_Uniform1iFunc (md5TexLoc, 0);
 	GL_Uniform1iFunc (md5UseAlphaTestLoc, texture && (texture->flags & TEXPREF_ALPHA) ? 1 : 0);
 	GL_Uniform1iFunc (md5UseShadingLoc, shading ? 1 : 0);
+	sscale = (float)surface->skinwidth / (float)TexMgr_PadConditional (surface->skinwidth);
+	tscale = (float)surface->skinheight / (float)TexMgr_PadConditional (surface->skinheight);
+	GL_Uniform1fFunc (md5TexSScaleLoc, sscale);
+	GL_Uniform1fFunc (md5TexTScaleLoc, tscale);
 
 	GL_SelectTexture (GL_TEXTURE0);
 	GL_Bind (texture);
