@@ -24,6 +24,11 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #ifndef GLQUAKE_H
 #define GLQUAKE_H
 
+/* Not present in the old OpenGL headers supported by this renderer. */
+#ifndef GL_COMPUTE_SHADER
+#define GL_COMPUTE_SHADER 0x91B9
+#endif
+
 void GL_BeginRendering (int *x, int *y, int *width, int *height);
 void GL_EndRendering (void);
 void GL_Set2D (void);
@@ -555,6 +560,7 @@ void R_DrawParticles_ShowTris (void);
 
 GLint GL_GetUniformLocation (GLuint *programPtr, const char *name);
 GLuint GL_CreateProgram (const GLchar *vertSource, const GLchar *fragSource, int numbindings, const glsl_attrib_binding_t *bindings);
+GLuint GL_CreateComputeProgram (const GLchar *source, const char *name);
 void R_DeleteShaders (void);
 
 void GLWorld_CreateShaders (void);

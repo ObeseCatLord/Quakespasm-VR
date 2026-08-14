@@ -542,6 +542,44 @@ static qboolean GL_CheckProgram (GLuint program)
 	return true;
 }
 
+static qboolean GL_CheckComputeShader (GLuint shader, const char *name)
+{
+	GLint status;
+	GL_GetShaderivFunc (shader, GL_COMPILE_STATUS, &status);
+
+	if (status != GL_TRUE)
+	{
+		char infolog[1024];
+
+		memset(infolog, 0, sizeof(infolog));
+		GL_GetShaderInfoLogFunc (shader, sizeof(infolog), NULL, infolog);
+
+		Con_Warning ("GLSL compute shader '%s' failed to compile: %s", name, infolog);
+
+		return false;
+	}
+	return true;
+}
+
+static qboolean GL_CheckComputeProgram (GLuint program, const char *name)
+{
+	GLint status;
+	GL_GetProgramivFunc (program, GL_LINK_STATUS, &status);
+
+	if (status != GL_TRUE)
+	{
+		char infolog[1024];
+
+		memset(infolog, 0, sizeof(infolog));
+		GL_GetProgramInfoLogFunc (program, sizeof(infolog), NULL, infolog);
+
+		Con_Warning ("GLSL compute program '%s' failed to link: %s", name, infolog);
+
+		return false;
+	}
+	return true;
+}
+
 /*
 =============
 GL_GetUniformLocation
@@ -625,6 +663,61 @@ GLuint GL_CreateProgram (const GLchar *vertSource, const GLchar *fragSource, int
 
 		return program;
 	}
+}
+
+/*
+====================
+GL_CreateComputeProgram
+
+Compiles and returns a GLSL compute program.
+====================
+*/
+GLuint GL_CreateComputeProgram (const GLchar *source, const char *name)
+{
+	const char *label = name ? name : "unnamed";
+	GLuint program, shader;
+
+	if (!source || !gl_glsl_able ||
+		gl_caps.compute_shader == gl_capability_unavailable ||
+		!GL_DispatchComputeFunc)
+		return 0;
+
+	shader = GL_CreateShaderFunc (GL_COMPUTE_SHADER);
+	if (!shader)
+		return 0;
+
+	GL_ShaderSourceFunc (shader, 1, &source, NULL);
+	GL_CompileShaderFunc (shader);
+	if (!GL_CheckComputeShader (shader, label))
+	{
+		GL_DeleteShaderFunc (shader);
+		return 0;
+	}
+
+	program = GL_CreateProgramFunc ();
+	if (!program)
+	{
+		GL_DeleteShaderFunc (shader);
+		return 0;
+	}
+
+	GL_AttachShaderFunc (program, shader);
+	GL_DeleteShaderFunc (shader);
+	GL_LinkProgramFunc (program);
+
+	if (!GL_CheckComputeProgram (program, label))
+	{
+		GL_DeleteProgramFunc (program);
+		return 0;
+	}
+
+	if (gl_num_programs == Q_COUNTOF(gl_programs))
+		Host_Error ("gl_programs overflow");
+
+	gl_programs[gl_num_programs] = program;
+	gl_num_programs++;
+
+	return program;
 }
 
 /*
