@@ -223,6 +223,12 @@ and restores stale `cl_predictmove 0` or `cl_nopred 1` values;
 explicit
 `+cvar value` launch arguments are preserved.
 
+On SDL2 Windows/Linux builds, the engine now requests an OpenGL 4.3 compatibility
+context by default for desktop and VR rendering. `-gl43` and `-gl43compat` remain
+accepted as explicit aliases for the default mode. If your system fails to create a
+4.3 compatibility context, start with `-legacygl` to force SDL2's default context
+selection.
+
 ## Building
 
 ### Linux
