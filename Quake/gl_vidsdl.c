@@ -23,6 +23,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 // gl_vidsdl.c -- SDL GL vid component
 
 #include "quakedef.h"
+#include "r_gputimer.h"
 #include "cfgfile.h"
 #include "bgmusic.h"
 #include "resource.h"
@@ -50,6 +51,17 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #define MAXWIDTH		10000
 #define MAXHEIGHT		10000
 
+/* These tokens are absent from some older SDL/OpenGL development headers. */
+#ifndef GL_CONTEXT_PROFILE_MASK
+#define GL_CONTEXT_PROFILE_MASK		0x9126
+#endif
+#ifndef GL_CONTEXT_COMPATIBILITY_PROFILE_BIT
+#define GL_CONTEXT_COMPATIBILITY_PROFILE_BIT	0x00000002
+#endif
+#ifndef GL_CONTEXT_CORE_PROFILE_BIT
+#define GL_CONTEXT_CORE_PROFILE_BIT		0x00000001
+#endif
+
 #define DEFAULT_SDL_FLAGS	SDL_OPENGL
 
 #define DEFAULT_REFRESHRATE	60
@@ -68,6 +80,8 @@ static int gl_version_major;
 static int gl_version_minor;
 static const char *gl_extensions;
 static char * gl_extensions_nice;
+
+gl_capabilities_t gl_caps;
 
 static vmode_t	modelist[MAX_MODE_LIST];
 static int		nummodes;
@@ -93,6 +107,41 @@ static qboolean VID_MenuPointerMove (float x, float y);
 static void ClearAllStates (void);
 static void GL_Init (void);
 static void GL_SetupState (void); //johnfitz
+
+static void *GL_ResolveTimerProc (const char *name)
+{
+#if defined(USE_SDL2)
+	return SDL_GL_GetProcAddress (name);
+#else
+	return SDL_GL_GetProcAddress (name);
+#endif
+}
+
+static qboolean VID_RequestGL43CompatibilityContext (void)
+{
+#if defined(USE_SDL2) && !defined(__APPLE__)
+	return COM_CheckParm("-gl43compat") != 0 || COM_CheckParm("-gl43") != 0;
+#else
+	return false;
+#endif
+}
+
+#if defined(USE_SDL2) && !defined(__APPLE__)
+static void VID_SetGLAttributes (int depthbits, int stencilbits, int fsaa_samples, qboolean request_gl43_compatibility)
+{
+	SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, depthbits);
+	SDL_GL_SetAttribute(SDL_GL_STENCIL_SIZE, stencilbits);
+	SDL_GL_SetAttribute(SDL_GL_MULTISAMPLEBUFFERS, fsaa_samples > 0 ? 1 : 0);
+	SDL_GL_SetAttribute(SDL_GL_MULTISAMPLESAMPLES, fsaa_samples);
+
+	if (request_gl43_compatibility)
+	{
+		SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 4);
+		SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
+		SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_COMPATIBILITY);
+	}
+}
+#endif
 
 viddef_t	vid;				// global video state
 modestate_t	modestate = MS_UNINIT;
@@ -585,6 +634,9 @@ static qboolean VID_SetMode (int width, int height, int refreshrate, int bpp, qb
 	int		fsaa_obtained;
 #if defined(USE_SDL2)
 	int		previous_display;
+#if !defined(__APPLE__)
+	qboolean	request_gl43_compatibility;
+#endif
 #endif
 
 	// so Con_Printfs don't mess us up by forcing vid and snd updates
@@ -605,12 +657,19 @@ static qboolean VID_SetMode (int width, int height, int refreshrate, int bpp, qb
 		depthbits = 24;
 		stencilbits = 8;
 	}
+#if defined(USE_SDL2) && !defined(__APPLE__)
+	request_gl43_compatibility = VID_RequestGL43CompatibilityContext ();
+	VID_SetGLAttributes (depthbits, stencilbits, fsaa, request_gl43_compatibility);
+	if (request_gl43_compatibility)
+		Con_Printf ("Requesting OpenGL 4.3 compatibility context (-gl43compat)\n");
+#else
 	SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, depthbits);
 	SDL_GL_SetAttribute(SDL_GL_STENCIL_SIZE, stencilbits);
 
 	/* fsaa */
 	SDL_GL_SetAttribute(SDL_GL_MULTISAMPLEBUFFERS, fsaa > 0 ? 1 : 0);
 	SDL_GL_SetAttribute(SDL_GL_MULTISAMPLESAMPLES, fsaa);
+#endif
 
 	q_snprintf(caption, sizeof(caption), "QuakeSpasm " QUAKESPASM_VER_STRING);
 
@@ -678,6 +737,16 @@ static qboolean VID_SetMode (int width, int height, int refreshrate, int bpp, qb
 	/* Create GL context if needed */
 	if (!gl_context) {
 		gl_context = SDL_GL_CreateContext(draw_context);
+		#if !defined(__APPLE__)
+		if (!gl_context && request_gl43_compatibility)
+		{
+			Con_Warning ("OpenGL 4.3 compatibility context request failed: %s\n", SDL_GetError());
+			Con_Warning ("Falling back to SDL's default OpenGL context request\n");
+			SDL_GL_ResetAttributes ();
+			VID_SetGLAttributes (depthbits, stencilbits, fsaa, false);
+			gl_context = SDL_GL_CreateContext(draw_context);
+		}
+		#endif
 		if (!gl_context)
 			Sys_Error("Couldn't create GL context");
 	}
@@ -818,6 +887,7 @@ static void VID_Restart (void)
 	TexMgr_DeleteTextureObjects ();
 	GLSLGamma_DeleteTexture ();
 	R_ScaleView_DeleteTexture ();
+	R_GPUTimer_Shutdown ();
 	R_DeleteShaders ();
 	GL_DeleteBModelVertexBuffer ();
 	GLMesh_DeleteVertexBuffers ();
@@ -929,6 +999,8 @@ void VID_Lock (void)
 //
 //==============================================================================
 
+static void GL_PrintCapabilityReport (void);
+
 /*
 ===============
 GL_MakeNiceExtensionsList -- johnfitz
@@ -972,6 +1044,7 @@ static void GL_Info_f (void)
 	Con_SafePrintf ("GL_VENDOR: %s\n", gl_vendor);
 	Con_SafePrintf ("GL_RENDERER: %s\n", gl_renderer);
 	Con_SafePrintf ("GL_VERSION: %s\n", gl_version);
+	GL_PrintCapabilityReport ();
 	Con_Printf ("GL_EXTENSIONS: %s\n", gl_extensions_nice);
 }
 
@@ -1002,6 +1075,96 @@ static qboolean GL_ParseExtensionList (const char *list, const char *name)
 		start = terminator;
 	}
 	return false;
+}
+
+static qboolean GL_HasVersion (int major, int minor)
+{
+	return gl_version_major > major ||
+		(gl_version_major == major && gl_version_minor >= minor);
+}
+
+static gl_capability_source_t GL_CapabilityFromCoreOrExtension (int core_major, int core_minor, const char *extension)
+{
+	if (GL_HasVersion (core_major, core_minor))
+		return gl_capability_core;
+	if (GL_ParseExtensionList (gl_extensions, extension))
+		return gl_capability_extension;
+	return gl_capability_unavailable;
+}
+
+static const char *GL_CapabilitySourceName (gl_capability_source_t source)
+{
+	switch (source)
+	{
+	case gl_capability_core:
+		return "core";
+	case gl_capability_extension:
+		return "extension";
+	default:
+		return "unavailable";
+	}
+}
+
+static void GL_DetectCapabilities (void)
+{
+	memset (&gl_caps, 0, sizeof(gl_caps));
+	gl_caps.version_major = gl_version_major;
+	gl_caps.version_minor = gl_version_minor;
+	gl_caps.requested_gl43_compatibility = VID_RequestGL43CompatibilityContext ();
+
+	/* Profile masks were introduced with OpenGL 3.2. */
+	if (GL_HasVersion (3, 2))
+	{
+		glGetIntegerv (GL_CONTEXT_PROFILE_MASK, &gl_caps.profile_mask);
+		gl_caps.compatibility_profile =
+			(gl_caps.profile_mask & GL_CONTEXT_COMPATIBILITY_PROFILE_BIT) != 0;
+		gl_caps.core_profile =
+			(gl_caps.profile_mask & GL_CONTEXT_CORE_PROFILE_BIT) != 0;
+	}
+	else
+	{
+		/* Pre-3.2 contexts have compatibility behavior by definition. */
+		gl_caps.compatibility_profile = true;
+	}
+
+	gl_caps.vertex_array_object = GL_CapabilityFromCoreOrExtension (3, 0, "GL_ARB_vertex_array_object");
+	if (GL_HasVersion (3, 3))
+		gl_caps.instancing = gl_capability_core;
+	else if (GL_ParseExtensionList (gl_extensions, "GL_ARB_draw_instanced") &&
+		 GL_ParseExtensionList (gl_extensions, "GL_ARB_instanced_arrays"))
+		gl_caps.instancing = gl_capability_extension;
+	gl_caps.timer_query = GL_CapabilityFromCoreOrExtension (3, 3, "GL_ARB_timer_query");
+	gl_caps.shader_storage_buffer_object = GL_CapabilityFromCoreOrExtension (4, 3, "GL_ARB_shader_storage_buffer_object");
+	gl_caps.compute_shader = GL_CapabilityFromCoreOrExtension (4, 3, "GL_ARB_compute_shader");
+	gl_caps.draw_indirect = GL_CapabilityFromCoreOrExtension (4, 0, "GL_ARB_draw_indirect");
+	gl_caps.multi_draw_indirect = GL_CapabilityFromCoreOrExtension (4, 3, "GL_ARB_multi_draw_indirect");
+	gl_caps.buffer_storage = GL_CapabilityFromCoreOrExtension (4, 4, "GL_ARB_buffer_storage");
+	gl_caps.multi_bind = GL_CapabilityFromCoreOrExtension (4, 4, "GL_ARB_multi_bind");
+	gl_caps.texture_storage = GL_CapabilityFromCoreOrExtension (4, 2, "GL_ARB_texture_storage");
+	gl_caps.texture_array = GL_CapabilityFromCoreOrExtension (3, 0, "GL_EXT_texture_array");
+}
+
+static void GL_PrintCapabilityReport (void)
+{
+	Con_SafePrintf ("GL_CONTEXT: %d.%d %s%s\n",
+		gl_caps.version_major, gl_caps.version_minor,
+		gl_caps.compatibility_profile ? "compatibility" :
+			(gl_caps.core_profile ? "core" : "unknown-profile"),
+		gl_caps.requested_gl43_compatibility ? " (GL 4.3 compatibility requested)" : "");
+	Con_SafePrintf ("GL_CAPABILITIES: VAO=%s instancing/divisor=%s timer-query=%s\n",
+		GL_CapabilitySourceName (gl_caps.vertex_array_object),
+		GL_CapabilitySourceName (gl_caps.instancing),
+		GL_CapabilitySourceName (gl_caps.timer_query));
+	Con_SafePrintf ("GL_CAPABILITIES: SSBO=%s compute=%s indirect=%s multi-draw-indirect=%s\n",
+		GL_CapabilitySourceName (gl_caps.shader_storage_buffer_object),
+		GL_CapabilitySourceName (gl_caps.compute_shader),
+		GL_CapabilitySourceName (gl_caps.draw_indirect),
+		GL_CapabilitySourceName (gl_caps.multi_draw_indirect));
+	Con_SafePrintf ("GL_CAPABILITIES: buffer-storage/persistent-map=%s multi-bind=%s texture-storage=%s texture-arrays=%s\n",
+		GL_CapabilitySourceName (gl_caps.buffer_storage),
+		GL_CapabilitySourceName (gl_caps.multi_bind),
+		GL_CapabilitySourceName (gl_caps.texture_storage),
+		GL_CapabilitySourceName (gl_caps.texture_array));
 }
 
 static void GL_CheckExtensions (void)
@@ -1366,6 +1529,8 @@ GL_Init
 */
 static void GL_Init (void)
 {
+	r_gputimer_config_t gpu_timer_config;
+
 	gl_vendor = (const char *) glGetString (GL_VENDOR);
 	gl_renderer = (const char *) glGetString (GL_RENDERER);
 	gl_version = (const char *) glGetString (GL_VERSION);
@@ -1384,8 +1549,28 @@ static void GL_Init (void)
 	if (gl_extensions_nice != NULL)
 		Z_Free (gl_extensions_nice);
 	gl_extensions_nice = GL_MakeNiceExtensionsList (gl_extensions);
+	GL_DetectCapabilities ();
+	GL_PrintCapabilityReport ();
+	if (gl_caps.requested_gl43_compatibility &&
+	    (!GL_HasVersion (4, 3) || !gl_caps.compatibility_profile))
+	{
+		Con_Warning ("Requested OpenGL 4.3 compatibility context was not obtained; using %d.%d %s context\n",
+			gl_caps.version_major, gl_caps.version_minor,
+			gl_caps.compatibility_profile ? "compatibility" :
+				(gl_caps.core_profile ? "core" : "unknown-profile"));
+	}
 
 	GL_CheckExtensions (); //johnfitz
+
+	memset (&gpu_timer_config, 0, sizeof(gpu_timer_config));
+	gpu_timer_config.enabled = 1;
+	gpu_timer_config.gl_version_major = gl_version_major;
+	gpu_timer_config.gl_version_minor = gl_version_minor;
+	gpu_timer_config.extensions = gl_extensions;
+	gpu_timer_config.get_proc_address = GL_ResolveTimerProc;
+	R_GPUTimer_Init (&gpu_timer_config);
+	Con_SafePrintf ("GPU timer queries: %s\n",
+		R_GPUTimer_IsAvailable () ? "available" : "unavailable");
 
 #ifdef __APPLE__
 	// ericw -- enable multi-threaded OpenGL, gives a decent FPS boost.
@@ -1446,6 +1631,7 @@ void	VID_Shutdown (void)
 	if (vid_initialized)
 	{
 		VID_Gamma_Shutdown (); //johnfitz
+		R_GPUTimer_Shutdown ();
 #if defined(USE_SDL2)
 		SDL_GL_DeleteContext(gl_context);
 		gl_context = NULL;

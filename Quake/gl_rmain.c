@@ -22,6 +22,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 // r_main.c
 
 #include "quakedef.h"
+#include "r_gputimer.h"
 #include "debug_log.h"
 #include "vr.h"
 
@@ -135,12 +136,16 @@ cvar_t r_part_density = {"r_part_density", "1", CVAR_ARCHIVE};
 int r_perf_pvs_leaf;
 int r_perf_pvs_fat;
 int r_perf_pvs_novis;
+static int r_perf_stereo_frame_id = -1;
+static int r_perf_stereo_frame_next_id = 0;
 
 void R_BeginVRFrame(void) {
   r_vr_stereo_frame = true;
   r_vr_sort_origin_valid = false;
   r_vr_eye_index = 0;
   r_vr_eye_count = 2;
+  if (r_perfdebug.value != 0.0f)
+    r_perf_stereo_frame_id = r_perf_stereo_frame_next_id++;
 }
 
 void R_SetVREye(int eye_index, int eye_count) {
@@ -153,6 +158,8 @@ void R_EndVRFrame(void) {
   r_vr_sort_origin_valid = false;
   r_vr_eye_index = 0;
   r_vr_eye_count = 1;
+  if (r_perfdebug.value != 0.0f)
+    r_perf_stereo_frame_id = -1;
 }
 
 qboolean R_IsVRStereoFrame(void) { return r_vr_stereo_frame; }
@@ -244,6 +251,10 @@ static int R_PerfDebugEyeCount(void) {
   return R_IsVRStereoFrame() ? r_vr_eye_count : 1;
 }
 
+static int R_PerfDebugStereoFrame(void) {
+  return r_perf_stereo_frame_id;
+}
+
 static void R_PerfCountEntity(entity_t *ent, qboolean alphapass) {
   if (!R_PerfActive() || !ent || !ent->model)
     return;
@@ -274,7 +285,9 @@ static void R_PerfLogFrame(double total_ms) {
       total_ms < q_max(0.0f, r_perfdebug_min_ms.value))
     return;
 
-  DebugLog("r_perfdebug: map=%s vr=%d eye=%d/%d total=%.3f "
+  DebugLog("r_perfdebug: map=%s host=%d vr=%d eye=%d/%d "
+           "eye_index=%d eye_count=%d stereo_seq=%d dim=%dx%d "
+           "total=%.3f "
            "skyroom=%.3f setup=%.3f "
            "mark=%.3f warp=%.3f scene=%.3f scale=%.3f calls(setup=%d "
            "scene=%d) pvs(leaf=%d fat=%d novis=%d) leaves(scan=%d vis=%d "
@@ -285,8 +298,11 @@ static void R_PerfLogFrame(double total_ms) {
            "dlights=%.3f particles=%.3f outlines=%.3f viewmodel=%.3f "
            "debugdraw=%.3f)\n",
            cl.worldmodel ? cl.worldmodel->name : "<none>",
-           (int)vr_enabled.value, R_PerfDebugEye(), R_PerfDebugEyeCount(),
-           total_ms, r_perf_skyroom_ms, r_perf_setup_ms,
+           (int)host_framecount, (int)vr_enabled.value, R_PerfDebugEye(),
+           R_PerfDebugEyeCount(), R_IsVRStereoFrame() ? r_vr_eye_index : 0,
+           R_PerfDebugEyeCount(), R_PerfDebugStereoFrame(),
+           r_refdef.vrect.width, r_refdef.vrect.height, total_ms,
+           r_perf_skyroom_ms, r_perf_setup_ms,
            r_perf_mark_ms, r_perf_warp_ms, r_perf_scene_ms, r_perf_scale_ms,
            r_perf_setup_calls, r_perf_scene_calls, r_perf_pvs_leaf,
            r_perf_pvs_fat, r_perf_pvs_novis, r_perf_leaves_scanned,
@@ -300,6 +316,16 @@ static void R_PerfLogFrame(double total_ms) {
            r_perf_alias_glsl_draws, r_perf_alias_batch_flushes, r_perf_sky_ms,
            r_perf_shadows_ms, r_perf_dlights_ms, r_perf_particles_ms,
            r_perf_outlines_ms, r_perf_viewmodel_ms, r_perf_debugdraw_ms);
+}
+
+static void R_PerfPollGPUTimers(void) {
+  r_gputimer_result_t result;
+
+  while (R_GPUTimer_Poll(&result))
+    if (R_PerfActive())
+      DebugLog("r_gpudebug: submit_host=%u poll_host=%d sample=%s gpu_ms=%.3f\n",
+               result.sample_id, (int)host_framecount, result.name,
+               result.milliseconds);
 }
 
 float map_wateralpha, map_lavaalpha, map_telealpha, map_slimealpha, map_fallbackalpha;
@@ -1728,12 +1754,21 @@ R_RenderView
 */
 void R_RenderView(void) {
   double time1, time2, perf_frame_start, perf_start;
+  const char *gpu_timer_name;
 
   if (r_norefresh.value)
     return;
 
   if (!cl.worldmodel)
     Sys_Error("R_RenderView: NULL worldmodel");
+
+  R_GPUTimer_SetEnabled(R_PerfActive());
+  R_PerfPollGPUTimers();
+  if (R_IsVRStereoFrame())
+    gpu_timer_name = r_vr_eye_index == 0 ? "view_eye_0" : "view_eye_1";
+  else
+    gpu_timer_name = "view_desktop";
+  R_GPUTimer_Begin(gpu_timer_name, (unsigned int)host_framecount);
 
   perf_frame_start = R_PerfStart();
   if (R_PerfActive())
@@ -1801,6 +1836,8 @@ void R_RenderView(void) {
   perf_start = R_PerfStart();
   R_ScaleView();
   R_PerfAdd(&r_perf_scale_ms, perf_start);
+
+  R_GPUTimer_End(gpu_timer_name);
 
   // johnfitz -- modified r_speeds output
   time2 = Sys_DoubleTime();
