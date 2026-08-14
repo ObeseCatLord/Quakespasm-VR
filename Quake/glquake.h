@@ -50,6 +50,7 @@ typedef struct {
 	gl_capability_source_t	vertex_array_object;
 	gl_capability_source_t	instancing;
 	gl_capability_source_t	timer_query;
+	gl_capability_source_t	memory_barrier;
 	gl_capability_source_t	shader_storage_buffer_object;
 	gl_capability_source_t	compute_shader;
 	gl_capability_source_t	draw_indirect;
@@ -228,7 +229,36 @@ extern PFNGLUNMAPBUFFERPROC GL_UnmapBufferFunc;
 extern PFNGLFENCESYNCPROC GL_FenceSyncFunc;
 extern PFNGLCLIENTWAITSYNCPROC GL_ClientWaitSyncFunc;
 extern PFNGLDELETESYNCPROC GL_DeleteSyncFunc;
-extern PFNGLMEMORYBARRIERPROC GL_MemoryBarrierFunc;
+
+/* GL 4.x entry points use local typedefs so old platform OpenGL headers do
+ * not determine whether the optional renderer paths can build. */
+typedef void (APIENTRYP QS_PFNGLGENVERTEXARRAYSPROC) (GLsizei n, GLuint *arrays);
+typedef void (APIENTRYP QS_PFNGLBINDVERTEXARRAYPROC) (GLuint array);
+typedef void (APIENTRYP QS_PFNGLDELETEVERTEXARRAYSPROC) (GLsizei n, const GLuint *arrays);
+typedef void (APIENTRYP QS_PFNGLDRAWELEMENTSINDIRECTPROC) (GLenum mode,
+	GLenum type, const void *indirect);
+typedef void (APIENTRYP QS_PFNGLMULTIDRAWELEMENTSINDIRECTPROC) (GLenum mode,
+	GLenum type, const void *indirect, GLsizei drawcount, GLsizei stride);
+typedef void (APIENTRYP QS_PFNGLDISPATCHCOMPUTEPROC) (GLuint num_groups_x,
+	GLuint num_groups_y, GLuint num_groups_z);
+typedef void (APIENTRYP QS_PFNGLMEMORYBARRIERPROC) (GLbitfield barriers);
+typedef void (APIENTRYP QS_PFNGLBINDBUFFERBASEPROC) (GLenum target,
+	GLuint index, GLuint buffer);
+typedef void (APIENTRYP QS_PFNGLBINDBUFFERRANGEPROC) (GLenum target,
+	GLuint index, GLuint buffer, GLintptr offset, GLsizeiptr size);
+typedef void (APIENTRYP QS_PFNGLSHADERSTORAGEBLOCKBINDINGPROC) (GLuint program,
+	GLuint storageBlockIndex, GLuint storageBlockBinding);
+
+extern QS_PFNGLGENVERTEXARRAYSPROC GL_GenVertexArraysFunc;
+extern QS_PFNGLBINDVERTEXARRAYPROC GL_BindVertexArrayFunc;
+extern QS_PFNGLDELETEVERTEXARRAYSPROC GL_DeleteVertexArraysFunc;
+extern QS_PFNGLDRAWELEMENTSINDIRECTPROC GL_DrawElementsIndirectFunc;
+extern QS_PFNGLMULTIDRAWELEMENTSINDIRECTPROC GL_MultiDrawElementsIndirectFunc;
+extern QS_PFNGLDISPATCHCOMPUTEPROC GL_DispatchComputeFunc;
+extern QS_PFNGLMEMORYBARRIERPROC GL_MemoryBarrierFunc;
+extern QS_PFNGLBINDBUFFERBASEPROC GL_BindBufferBaseFunc;
+extern QS_PFNGLBINDBUFFERRANGEPROC GL_BindBufferRangeFunc;
+extern QS_PFNGLSHADERSTORAGEBLOCKBINDINGPROC GL_ShaderStorageBlockBindingFunc;
 
 typedef void (APIENTRYP QS_PFNGLMULTIDRAWELEMENTSPROC) (GLenum mode,
 	const GLsizei *count, GLenum type, const GLvoid *const *indices,

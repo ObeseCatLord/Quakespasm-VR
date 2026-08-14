@@ -187,7 +187,16 @@ PFNGLUNMAPBUFFERPROC GL_UnmapBufferFunc = NULL;
 PFNGLFENCESYNCPROC GL_FenceSyncFunc = NULL;
 PFNGLCLIENTWAITSYNCPROC GL_ClientWaitSyncFunc = NULL;
 PFNGLDELETESYNCPROC GL_DeleteSyncFunc = NULL;
-PFNGLMEMORYBARRIERPROC GL_MemoryBarrierFunc = NULL;
+QS_PFNGLGENVERTEXARRAYSPROC GL_GenVertexArraysFunc = NULL;
+QS_PFNGLBINDVERTEXARRAYPROC GL_BindVertexArrayFunc = NULL;
+QS_PFNGLDELETEVERTEXARRAYSPROC GL_DeleteVertexArraysFunc = NULL;
+QS_PFNGLDRAWELEMENTSINDIRECTPROC GL_DrawElementsIndirectFunc = NULL;
+QS_PFNGLMULTIDRAWELEMENTSINDIRECTPROC GL_MultiDrawElementsIndirectFunc = NULL;
+QS_PFNGLDISPATCHCOMPUTEPROC GL_DispatchComputeFunc = NULL;
+QS_PFNGLMEMORYBARRIERPROC GL_MemoryBarrierFunc = NULL;
+QS_PFNGLBINDBUFFERBASEPROC GL_BindBufferBaseFunc = NULL;
+QS_PFNGLBINDBUFFERRANGEPROC GL_BindBufferRangeFunc = NULL;
+QS_PFNGLSHADERSTORAGEBLOCKBINDINGPROC GL_ShaderStorageBlockBindingFunc = NULL;
 QS_PFNGLMULTIDRAWELEMENTSPROC GL_MultiDrawElementsFunc = NULL;
 
 QS_PFNGLCREATESHADERPROC GL_CreateShaderFunc = NULL; //ericw
@@ -1131,6 +1140,20 @@ static const char *GL_CapabilitySourceName (gl_capability_source_t source)
 	}
 }
 
+static void GL_ResetGL43Procedures (void)
+{
+	GL_GenVertexArraysFunc = NULL;
+	GL_BindVertexArrayFunc = NULL;
+	GL_DeleteVertexArraysFunc = NULL;
+	GL_DrawElementsIndirectFunc = NULL;
+	GL_MultiDrawElementsIndirectFunc = NULL;
+	GL_DispatchComputeFunc = NULL;
+	GL_MemoryBarrierFunc = NULL;
+	GL_BindBufferBaseFunc = NULL;
+	GL_BindBufferRangeFunc = NULL;
+	GL_ShaderStorageBlockBindingFunc = NULL;
+}
+
 static void GL_DetectCapabilities (void)
 {
 	memset (&gl_caps, 0, sizeof(gl_caps));
@@ -1160,6 +1183,7 @@ static void GL_DetectCapabilities (void)
 		 GL_ParseExtensionList (gl_extensions, "GL_ARB_instanced_arrays"))
 		gl_caps.instancing = gl_capability_extension;
 	gl_caps.timer_query = GL_CapabilityFromCoreOrExtension (3, 3, "GL_ARB_timer_query");
+	gl_caps.memory_barrier = GL_CapabilityFromCoreOrExtension (4, 2, "GL_ARB_shader_image_load_store");
 	gl_caps.shader_storage_buffer_object = GL_CapabilityFromCoreOrExtension (4, 3, "GL_ARB_shader_storage_buffer_object");
 	gl_caps.compute_shader = GL_CapabilityFromCoreOrExtension (4, 3, "GL_ARB_compute_shader");
 	gl_caps.draw_indirect = GL_CapabilityFromCoreOrExtension (4, 0, "GL_ARB_draw_indirect");
@@ -1184,9 +1208,10 @@ static void GL_PrintCapabilityReport (void)
 		GL_CapabilitySourceName (gl_caps.vertex_array_object),
 		GL_CapabilitySourceName (gl_caps.instancing),
 		GL_CapabilitySourceName (gl_caps.timer_query));
-	Con_SafePrintf ("GL_CAPABILITIES: SSBO=%s compute=%s indirect=%s multi-draw-indirect=%s\n",
+	Con_SafePrintf ("GL_CAPABILITIES: SSBO=%s compute=%s memory-barrier=%s indirect=%s multi-draw-indirect=%s\n",
 		GL_CapabilitySourceName (gl_caps.shader_storage_buffer_object),
 		GL_CapabilitySourceName (gl_caps.compute_shader),
+		GL_CapabilitySourceName (gl_caps.memory_barrier),
 		GL_CapabilitySourceName (gl_caps.draw_indirect),
 		GL_CapabilitySourceName (gl_caps.multi_draw_indirect));
 	Con_SafePrintf ("GL_CAPABILITIES: buffer-storage/persistent-map=%s multi-bind=%s texture-storage=%s texture-arrays=%s\n",
@@ -1208,7 +1233,18 @@ static void GL_CheckExtensions (void)
 	GL_FenceSyncFunc = NULL;
 	GL_ClientWaitSyncFunc = NULL;
 	GL_DeleteSyncFunc = NULL;
-	GL_MemoryBarrierFunc = NULL;
+	GL_ResetGL43Procedures ();
+	if (gl_caps.memory_barrier != gl_capability_unavailable)
+	{
+		GL_MemoryBarrierFunc = (QS_PFNGLMEMORYBARRIERPROC)
+			SDL_GL_GetProcAddress ("glMemoryBarrier");
+		if (!GL_MemoryBarrierFunc)
+		{
+			gl_caps.memory_barrier = gl_capability_unavailable;
+			Con_Warning ("Memory barriers unavailable: missing glMemoryBarrier\n");
+		}
+	}
+
 	if (gl_caps.buffer_storage != gl_capability_unavailable)
 	{
 		GL_BufferStorageFunc = (PFNGLBUFFERSTORAGEPROC) SDL_GL_GetProcAddress ("glBufferStorage");
@@ -1217,11 +1253,89 @@ static void GL_CheckExtensions (void)
 		GL_FenceSyncFunc = (PFNGLFENCESYNCPROC) SDL_GL_GetProcAddress ("glFenceSync");
 		GL_ClientWaitSyncFunc = (PFNGLCLIENTWAITSYNCPROC) SDL_GL_GetProcAddress ("glClientWaitSync");
 		GL_DeleteSyncFunc = (PFNGLDELETESYNCPROC) SDL_GL_GetProcAddress ("glDeleteSync");
-		GL_MemoryBarrierFunc = (PFNGLMEMORYBARRIERPROC) SDL_GL_GetProcAddress ("glMemoryBarrier");
 		if (!GL_BufferStorageFunc || !GL_MapBufferRangeFunc || !GL_UnmapBufferFunc ||
 			!GL_FenceSyncFunc || !GL_ClientWaitSyncFunc || !GL_DeleteSyncFunc ||
 			!GL_MemoryBarrierFunc)
+		{
+			GL_BufferStorageFunc = NULL;
+			GL_MapBufferRangeFunc = NULL;
+			GL_UnmapBufferFunc = NULL;
+			GL_FenceSyncFunc = NULL;
+			GL_ClientWaitSyncFunc = NULL;
+			GL_DeleteSyncFunc = NULL;
+			gl_caps.buffer_storage = gl_capability_unavailable;
 			Con_Warning ("Persistent frame resources unavailable: missing OpenGL entry points\n");
+		}
+	}
+
+	if (gl_caps.vertex_array_object != gl_capability_unavailable)
+	{
+		GL_GenVertexArraysFunc = (QS_PFNGLGENVERTEXARRAYSPROC)
+			SDL_GL_GetProcAddress ("glGenVertexArrays");
+		GL_BindVertexArrayFunc = (QS_PFNGLBINDVERTEXARRAYPROC)
+			SDL_GL_GetProcAddress ("glBindVertexArray");
+		GL_DeleteVertexArraysFunc = (QS_PFNGLDELETEVERTEXARRAYSPROC)
+			SDL_GL_GetProcAddress ("glDeleteVertexArrays");
+		if (!GL_GenVertexArraysFunc || !GL_BindVertexArrayFunc || !GL_DeleteVertexArraysFunc)
+		{
+			GL_GenVertexArraysFunc = NULL;
+			GL_BindVertexArrayFunc = NULL;
+			GL_DeleteVertexArraysFunc = NULL;
+			gl_caps.vertex_array_object = gl_capability_unavailable;
+			Con_Warning ("Vertex array objects unavailable: missing OpenGL entry points\n");
+		}
+	}
+
+	if (gl_caps.draw_indirect != gl_capability_unavailable)
+	{
+		GL_DrawElementsIndirectFunc = (QS_PFNGLDRAWELEMENTSINDIRECTPROC)
+			SDL_GL_GetProcAddress ("glDrawElementsIndirect");
+		if (!GL_DrawElementsIndirectFunc)
+		{
+			gl_caps.draw_indirect = gl_capability_unavailable;
+			Con_Warning ("Indirect drawing unavailable: missing glDrawElementsIndirect\n");
+		}
+	}
+
+	if (gl_caps.multi_draw_indirect != gl_capability_unavailable)
+	{
+		GL_MultiDrawElementsIndirectFunc = (QS_PFNGLMULTIDRAWELEMENTSINDIRECTPROC)
+			SDL_GL_GetProcAddress ("glMultiDrawElementsIndirect");
+		if (!GL_MultiDrawElementsIndirectFunc)
+		{
+			gl_caps.multi_draw_indirect = gl_capability_unavailable;
+			Con_Warning ("Multi-draw indirect unavailable: missing glMultiDrawElementsIndirect\n");
+		}
+	}
+
+	if (gl_caps.compute_shader != gl_capability_unavailable)
+	{
+		GL_DispatchComputeFunc = (QS_PFNGLDISPATCHCOMPUTEPROC)
+			SDL_GL_GetProcAddress ("glDispatchCompute");
+		if (!GL_DispatchComputeFunc)
+		{
+			gl_caps.compute_shader = gl_capability_unavailable;
+			Con_Warning ("Compute shaders unavailable: missing glDispatchCompute\n");
+		}
+	}
+
+	if (gl_caps.shader_storage_buffer_object != gl_capability_unavailable)
+	{
+		GL_BindBufferBaseFunc = (QS_PFNGLBINDBUFFERBASEPROC)
+			SDL_GL_GetProcAddress ("glBindBufferBase");
+		GL_BindBufferRangeFunc = (QS_PFNGLBINDBUFFERRANGEPROC)
+			SDL_GL_GetProcAddress ("glBindBufferRange");
+		GL_ShaderStorageBlockBindingFunc = (QS_PFNGLSHADERSTORAGEBLOCKBINDINGPROC)
+			SDL_GL_GetProcAddress ("glShaderStorageBlockBinding");
+		if (!GL_BindBufferBaseFunc || !GL_BindBufferRangeFunc ||
+			!GL_ShaderStorageBlockBindingFunc)
+		{
+			GL_BindBufferBaseFunc = NULL;
+			GL_BindBufferRangeFunc = NULL;
+			GL_ShaderStorageBlockBindingFunc = NULL;
+			gl_caps.shader_storage_buffer_object = gl_capability_unavailable;
+			Con_Warning ("Shader storage buffers unavailable: missing OpenGL entry points\n");
+		}
 	}
 
 	/* This must be resolved for every context; world EBO batching falls back safely. */
@@ -1634,7 +1748,6 @@ static void GL_Init (void)
 		Z_Free (gl_extensions_nice);
 	gl_extensions_nice = GL_MakeNiceExtensionsList (gl_extensions);
 	GL_DetectCapabilities ();
-	GL_PrintCapabilityReport ();
 	if (gl_caps.requested_gl43_compatibility &&
 	    (!GL_HasVersion (4, 3) || !gl_caps.compatibility_profile))
 	{
@@ -1646,6 +1759,7 @@ static void GL_Init (void)
 	}
 
 	GL_CheckExtensions (); //johnfitz
+	GL_PrintCapabilityReport ();
 
 	memset (&gpu_timer_config, 0, sizeof(gpu_timer_config));
 	gpu_timer_config.enabled = 1;
@@ -1721,6 +1835,7 @@ void	VID_Shutdown (void)
 		R_GPUTimer_Shutdown ();
 		GL_FrameResources_Shutdown ();
 		GLAlias_DeleteInstanceBuffer ();
+		GL_ResetGL43Procedures ();
 #if defined(USE_SDL2)
 		SDL_GL_DeleteContext(gl_context);
 		gl_context = NULL;
