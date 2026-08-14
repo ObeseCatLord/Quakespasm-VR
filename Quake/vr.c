@@ -5653,6 +5653,9 @@ void VR_UpdateScreenContent() {
     RenderScreenForCurrentEye_OVR();
   }
   R_EndVRFrame();
+  /* There is no window swap in the eye path, so submit timer-query work
+   * explicitly.  Poll remains asynchronous and therefore never stalls VR. */
+  R_FlushGPUTimers();
 
   // Blit mirror texture to backbuffer
   int mirror_mode = (int)vr_mirror.value;

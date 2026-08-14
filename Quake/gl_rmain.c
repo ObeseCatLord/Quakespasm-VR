@@ -239,6 +239,11 @@ int r_perf_world_batch_surfaces;
 int r_perf_world_batch_mdraw_calls;
 int r_perf_world_batch_draw_calls;
 int r_perf_world_batch_max_surfaces;
+int r_perf_gpuworld_dispatches;
+int r_perf_gpuworld_mdi_calls;
+int r_perf_gpuworld_command_slots;
+int r_perf_gpuworld_fallbacks;
+int r_perf_gpuworld_validation_failures;
 
 static int r_perf_setup_calls;
 static int r_perf_scene_calls;
@@ -290,6 +295,11 @@ static void R_PerfResetFrame(void) {
   r_perf_world_batch_mdraw_calls = 0;
   r_perf_world_batch_draw_calls = 0;
   r_perf_world_batch_max_surfaces = 0;
+  r_perf_gpuworld_dispatches = 0;
+  r_perf_gpuworld_mdi_calls = 0;
+  r_perf_gpuworld_command_slots = 0;
+  r_perf_gpuworld_fallbacks = 0;
+  r_perf_gpuworld_validation_failures = 0;
   r_perf_entity_snapshot_builds = 0;
   r_perf_entity_snapshot_reuses = 0;
   r_perf_entity_snapshot_fallbacks = 0;
@@ -365,6 +375,7 @@ static void R_PerfLogFrame(double total_ms) {
            "dlights=%.3f particles=%.3f outlines=%.3f viewmodel=%.3f "
            "debugdraw=%.3f) sharedvis(hit=%d miss=%d fallback=%d validate=%d) "
            "worldbatch(flushes=%d surfaces=%d mdraw=%d draw=%d maxsurf=%d) "
+           "gpuworld(dispatch=%d ranges=%d slots=%d fallback=%d validate=%d) "
            "sharedents(build=%d reuse=%d fallback=%d) "
            "frameres(upload_bytes=%zu high_water_bytes=%zu waits=%u "
            "capacity_exhausted_uploads=%u fallback_uploads=%u)\n",
@@ -392,7 +403,11 @@ static void R_PerfLogFrame(double total_ms) {
            sharedvis_fallbacks, sharedvis_validation,
            r_perf_world_batch_flushes, r_perf_world_batch_surfaces,
            r_perf_world_batch_mdraw_calls, r_perf_world_batch_draw_calls,
-           r_perf_world_batch_max_surfaces, r_perf_entity_snapshot_builds,
+           r_perf_world_batch_max_surfaces,
+           r_perf_gpuworld_dispatches, r_perf_gpuworld_mdi_calls,
+           r_perf_gpuworld_command_slots, r_perf_gpuworld_fallbacks,
+           r_perf_gpuworld_validation_failures,
+           r_perf_entity_snapshot_builds,
            r_perf_entity_snapshot_reuses, r_perf_entity_snapshot_fallbacks,
            gl_frame_resource_stats.upload_bytes,
            gl_frame_resource_stats.high_water_bytes,
@@ -401,14 +416,24 @@ static void R_PerfLogFrame(double total_ms) {
            gl_frame_resource_stats.fallback_uploads);
 }
 
-static void R_PerfPollGPUTimers(void) {
+static void R_PerfLogGPUTimer(const r_gputimer_result_t *result) {
+  if (!result || !R_PerfActive())
+    return;
+  DebugLog("r_gpudebug: submit_host=%u poll_host=%d sample=%s gpu_ms=%.3f\n",
+           result->sample_id, (int)host_framecount, result->name,
+           result->milliseconds);
+}
+
+void R_PollGPUTimers(void) {
   r_gputimer_result_t result;
 
   while (R_GPUTimer_Poll(&result))
-    if (R_PerfActive())
-      DebugLog("r_gpudebug: submit_host=%u poll_host=%d sample=%s gpu_ms=%.3f\n",
-               result.sample_id, (int)host_framecount, result.name,
-               result.milliseconds);
+    R_PerfLogGPUTimer(&result);
+}
+
+void R_FlushGPUTimers(void) {
+  R_GPUTimer_Flush();
+  R_PollGPUTimers();
 }
 
 float map_wateralpha, map_lavaalpha, map_telealpha, map_slimealpha, map_fallbackalpha;
@@ -2007,7 +2032,8 @@ void R_RenderView(void) {
     Sys_Error("R_RenderView: NULL worldmodel");
 
   R_GPUTimer_SetEnabled(R_PerfActive());
-  R_PerfPollGPUTimers();
+  R_GPUTimer_SetResultCallback(R_PerfLogGPUTimer);
+  R_PollGPUTimers();
   if (R_IsVRStereoFrame())
     gpu_timer_name = r_vr_eye_index == 0 ? "view_eye_0" : "view_eye_1";
   else

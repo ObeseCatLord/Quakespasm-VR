@@ -207,6 +207,8 @@ void R_Init (void)
 	Cvar_RegisterVariable (&r_litwater);
 	Cvar_RegisterVariable (&r_dynamic);
 	Cvar_RegisterVariable (&r_novis);
+	Cvar_RegisterVariable (&r_gpuworldmark);
+	Cvar_RegisterVariable (&r_gpuworldmark_validate);
 	Cvar_RegisterVariable (&r_speeds);
 	Cvar_RegisterVariable (&r_perfdebug);
 	Cvar_RegisterVariable (&r_perfdebug_min_ms);
@@ -731,6 +733,7 @@ void R_DeleteShaders (void)
 {
 	int i;
 
+	R_GPUWorldMarkContextLost();
 	if (!gl_glsl_able)
 		return;
 

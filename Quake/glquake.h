@@ -28,6 +28,21 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #ifndef GL_COMPUTE_SHADER
 #define GL_COMPUTE_SHADER 0x91B9
 #endif
+#ifndef GL_SHADER_STORAGE_BUFFER
+#define GL_SHADER_STORAGE_BUFFER 0x90D2
+#endif
+#ifndef GL_DRAW_INDIRECT_BUFFER
+#define GL_DRAW_INDIRECT_BUFFER 0x8F3F
+#endif
+#ifndef GL_COMMAND_BARRIER_BIT
+#define GL_COMMAND_BARRIER_BIT 0x00000040
+#endif
+#ifndef GL_SHADER_STORAGE_BARRIER_BIT
+#define GL_SHADER_STORAGE_BARRIER_BIT 0x00002000
+#endif
+#ifndef GL_BUFFER_UPDATE_BARRIER_BIT
+#define GL_BUFFER_UPDATE_BARRIER_BIT 0x00000200
+#endif
 
 void GL_BeginRendering (int *x, int *y, int *width, int *height);
 void GL_EndRendering (void);
@@ -183,6 +198,8 @@ extern	cvar_t	r_slimealpha;
 extern	cvar_t	r_litwater;
 extern	cvar_t	r_dynamic;
 extern	cvar_t	r_novis;
+extern	cvar_t	r_gpuworldmark;
+extern	cvar_t	r_gpuworldmark_validate;
 extern	cvar_t	r_alphasort;
 extern	cvar_t	r_scale;
 
@@ -445,6 +462,7 @@ void Fog_SetupState (void);
 
 void R_NewGame (void);
 void R_InvalidateNoVisSurfaceCache (void);
+void R_GPUWorldMarkContextLost (void);
 
 void R_AnimateLight (void);
 void R_MarkSurfaces (void);
@@ -593,6 +611,8 @@ void R_DrawTextureChains (qmodel_t *model, entity_t *ent, texchain_t chain);
 void R_DrawWorld_Water (void);
 void R_SetupView (void);
 void R_RenderScene (void);
+void R_FlushGPUTimers (void);
+void R_PollGPUTimers (void);
 
 void GL_UseProgram (GLuint program);
 void GL_BindBuffer (GLenum target, GLuint buffer);
