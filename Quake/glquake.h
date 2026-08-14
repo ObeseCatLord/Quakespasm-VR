@@ -32,6 +32,35 @@ extern	int glx, gly, glwidth, glheight;
 
 #define	GL_UNUSED_TEXTURE	(~(GLuint)0)
 
+/* Renderer-modernization capability inventory. */
+typedef enum {
+	gl_capability_unavailable,
+	gl_capability_core,
+	gl_capability_extension
+} gl_capability_source_t;
+
+typedef struct {
+	int			version_major;
+	int			version_minor;
+	int			profile_mask;
+	qboolean		compatibility_profile;
+	qboolean		core_profile;
+	qboolean		requested_gl43_compatibility;
+	gl_capability_source_t	vertex_array_object;
+	gl_capability_source_t	instancing;
+	gl_capability_source_t	timer_query;
+	gl_capability_source_t	shader_storage_buffer_object;
+	gl_capability_source_t	compute_shader;
+	gl_capability_source_t	draw_indirect;
+	gl_capability_source_t	multi_draw_indirect;
+	gl_capability_source_t	buffer_storage;
+	gl_capability_source_t	multi_bind;
+	gl_capability_source_t	texture_storage;
+	gl_capability_source_t	texture_array;
+} gl_capabilities_t;
+
+extern gl_capabilities_t gl_caps;
+
 // r_local.h -- private refresh defs
 
 #define ALIAS_BASE_SIZE_RATIO		(1.0 / 11.0)
