@@ -685,14 +685,17 @@ void GL_BuildLightmaps (void)
 */
 
 GLuint gl_bmodel_vbo = 0;
+GLuint gl_bmodel_ebo = 0;
 
 void GL_DeleteBModelVertexBuffer (void)
 {
-	if (!(gl_vbo_able && gl_mtexable && gl_max_texture_units >= 3))
+	if (!gl_bmodel_vbo && !gl_bmodel_ebo)
 		return;
 
 	GL_DeleteBuffersFunc (1, &gl_bmodel_vbo);
+	GL_DeleteBuffersFunc (1, &gl_bmodel_ebo);
 	gl_bmodel_vbo = 0;
+	gl_bmodel_ebo = 0;
 
 	GL_ClearBufferBindings ();
 }
@@ -701,26 +704,35 @@ void GL_DeleteBModelVertexBuffer (void)
 ==================
 GL_BuildBModelVertexBuffer
 
-Deletes gl_bmodel_vbo if it already exists, then rebuilds it with all
-surfaces from world + all brush models
+Deletes the brush-model VBO/EBO pair if it already exists, then rebuilds it
+with all surfaces from world + all brush models.
 ==================
 */
 void GL_BuildBModelVertexBuffer (void)
 {
-	unsigned int	numverts, varray_bytes, varray_index;
+	size_t		numverts, numindices, varray_bytes, iarray_bytes;
+	size_t		varray_index, iarray_index;
 	int		i, j;
 	qmodel_t	*m;
 	float		*varray;
+	unsigned int	*iarray;
 
 	if (!(gl_vbo_able && gl_mtexable && gl_max_texture_units >= 3))
 		return;
 
-// ask GL for a name for our VBO
-	GL_DeleteBuffersFunc (1, &gl_bmodel_vbo);
+	// ask GL for names for our VBO and EBO
+	GL_DeleteBModelVertexBuffer ();
 	GL_GenBuffersFunc (1, &gl_bmodel_vbo);
+	GL_GenBuffersFunc (1, &gl_bmodel_ebo);
+	if (!gl_bmodel_vbo || !gl_bmodel_ebo)
+	{
+		GL_DeleteBModelVertexBuffer ();
+		Host_Error ("GL_BuildBModelVertexBuffer: couldn't create VBO/EBO");
+	}
 	
-// count all verts in all models
+// count all verts and triangle indices in all models
 	numverts = 0;
+	numindices = 0;
 	for (j=1 ; j<MAX_MODELS ; j++)
 	{
 		m = cl.model_precache[j];
@@ -729,14 +741,40 @@ void GL_BuildBModelVertexBuffer (void)
 
 		for (i=0 ; i<m->numsurfaces ; i++)
 		{
-			numverts += m->surfaces[i].numedges;
+			msurface_t *s = &m->surfaces[i];
+			size_t surfindices;
+
+			if (s->numedges < 0 || (size_t)s->numedges > (size_t)INT_MAX - numverts)
+				Host_Error ("GL_BuildBModelVertexBuffer: vertex count overflow");
+			numverts += s->numedges;
+
+			if (s->numedges < 3)
+				continue;
+			if ((size_t)s->numedges - 2 > SIZE_MAX / 3)
+				Host_Error ("GL_BuildBModelVertexBuffer: surface index count overflow");
+			surfindices = 3 * ((size_t)s->numedges - 2);
+			if (surfindices > (size_t)INT_MAX - numindices)
+				Host_Error ("GL_BuildBModelVertexBuffer: index count overflow");
+			numindices += surfindices;
 		}
 	}
 	
 // build vertex array
-	varray_bytes = VERTEXSIZE * sizeof(float) * numverts;
-	varray = (float *) malloc (varray_bytes);
+	if (numverts > SIZE_MAX / (VERTEXSIZE * sizeof(*varray)) ||
+		numindices > SIZE_MAX / sizeof(*iarray))
+		Host_Error ("GL_BuildBModelVertexBuffer: buffer size overflow");
+	varray_bytes = VERTEXSIZE * sizeof(*varray) * numverts;
+	iarray_bytes = sizeof(*iarray) * numindices;
+	varray = varray_bytes ? (float *)malloc (varray_bytes) : NULL;
+	iarray = iarray_bytes ? (unsigned int *)malloc (iarray_bytes) : NULL;
+	if ((varray_bytes && !varray) || (iarray_bytes && !iarray))
+	{
+		free (varray);
+		free (iarray);
+		Host_Error ("GL_BuildBModelVertexBuffer: out of memory");
+	}
 	varray_index = 0;
+	iarray_index = 0;
 	
 	for (j=1 ; j<MAX_MODELS ; j++)
 	{
@@ -747,16 +785,29 @@ void GL_BuildBModelVertexBuffer (void)
 		for (i=0 ; i<m->numsurfaces ; i++)
 		{
 			msurface_t *s = &m->surfaces[i];
+			int k;
+
 			s->vbo_firstvert = varray_index;
+			s->vbo_firstindex = iarray_index;
 			memcpy (&varray[VERTEXSIZE * varray_index], s->polys->verts, VERTEXSIZE * sizeof(float) * s->numedges);
 			varray_index += s->numedges;
+
+			for (k=2; k<s->numedges; k++)
+			{
+				iarray[iarray_index++] = s->vbo_firstvert;
+				iarray[iarray_index++] = s->vbo_firstvert + k - 1;
+				iarray[iarray_index++] = s->vbo_firstvert + k;
+			}
 		}
 	}
 
 // upload to GPU
 	GL_BindBufferFunc (GL_ARRAY_BUFFER, gl_bmodel_vbo);
 	GL_BufferDataFunc (GL_ARRAY_BUFFER, varray_bytes, varray, GL_STATIC_DRAW);
+	GL_BindBufferFunc (GL_ELEMENT_ARRAY_BUFFER, gl_bmodel_ebo);
+	GL_BufferDataFunc (GL_ELEMENT_ARRAY_BUFFER, iarray_bytes, iarray, GL_STATIC_DRAW);
 	free (varray);
+	free (iarray);
 	
 // invalidate the cached bindings
 	GL_ClearBufferBindings ();

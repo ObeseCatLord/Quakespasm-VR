@@ -218,6 +218,11 @@ extern PFNGLGENBUFFERSARBPROC  GL_GenBuffersFunc;
 extern	qboolean	gl_vbo_able;
 //ericw
 
+typedef void (APIENTRYP QS_PFNGLMULTIDRAWELEMENTSPROC) (GLenum mode,
+	const GLsizei *count, GLenum type, const GLvoid *const *indices,
+	GLsizei drawcount);
+extern QS_PFNGLMULTIDRAWELEMENTSPROC GL_MultiDrawElementsFunc;
+
 //ericw -- GLSL
 
 // SDL 1.2 has a bug where it doesn't provide these typedefs on OS X!
