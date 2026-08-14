@@ -436,6 +436,11 @@ extern int r_perf_alias_glsl_draws;
 extern int r_perf_alias_batch_flushes;
 extern int r_perf_alias_instanced_submits;
 extern int r_perf_alias_instanced_draws;
+extern int r_perf_world_batch_flushes;
+extern int r_perf_world_batch_surfaces;
+extern int r_perf_world_batch_mdraw_calls;
+extern int r_perf_world_batch_draw_calls;
+extern int r_perf_world_batch_max_surfaces;
 
 void R_InitParticles (void);
 void R_DrawParticles (void);

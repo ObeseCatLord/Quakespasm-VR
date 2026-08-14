@@ -39,6 +39,11 @@ def main() -> int:
     assert_within("desktop total p50", desktop["median"], 18.0)
     assert_within("desktop total p95", desktop["p95"], 23.4)
     assert_within("desktop total max", desktop["max"], 24.0)
+    desktop_worldbatch_flushes = groups["desktop"]["by_tag"]["r_perfdebug"]["metrics"][
+        "worldbatch.flushes"
+    ]
+    assert desktop_worldbatch_flushes["count"] == 2
+    assert_within("desktop worldbatch flushes", desktop_worldbatch_flushes["median"], 1.0)
 
     vr0 = groups["vr/eye_0"]["by_tag"]["r_perfdebug"]["metrics"]["total"]
     assert vr0["count"] == 2
@@ -52,9 +57,15 @@ def main() -> int:
     vr0_snapshot_build = groups["vr/eye_0"]["by_tag"]["r_perfdebug"]["metrics"]["sharedents.build"]
     assert vr0_snapshot_build["count"] == 1
     assert_within("vr eye0 snapshot builds p50", vr0_snapshot_build["median"], 1.0)
+    vr0_worldbatch_mdraw = groups["vr/eye_0"]["by_tag"]["r_perfdebug"]["metrics"]["worldbatch.mdraw"]
+    assert vr0_worldbatch_mdraw["count"] == 1
+    assert_within("vr eye0 worldbatch mdraw p50", vr0_worldbatch_mdraw["median"], 2.0)
     vr1_snapshot_reuse = groups["vr/eye_1"]["by_tag"]["r_perfdebug"]["metrics"]["sharedents.reuse"]
     assert vr1_snapshot_reuse["count"] == 1
     assert_within("vr eye1 snapshot reuse", vr1_snapshot_reuse["median"], 1.0)
+    vr1_worldbatch_draw = groups["vr/eye_1"]["by_tag"]["r_perfdebug"]["metrics"]["worldbatch.draw"]
+    assert vr1_worldbatch_draw["count"] == 1
+    assert_within("vr eye1 worldbatch draw p50", vr1_worldbatch_draw["median"], 1.0)
     vr1_frame_upload = groups["vr/eye_1"]["by_tag"]["r_perfdebug"]["metrics"]["frameres.upload_bytes"]
     assert vr1_frame_upload["count"] == 1
     assert_within("vr eye1 frame upload bytes", vr1_frame_upload["median"], 1728.0)

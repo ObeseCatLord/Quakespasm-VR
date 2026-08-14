@@ -234,6 +234,11 @@ int r_perf_alias_glsl_draws;
 int r_perf_alias_batch_flushes;
 int r_perf_alias_instanced_submits;
 int r_perf_alias_instanced_draws;
+int r_perf_world_batch_flushes;
+int r_perf_world_batch_surfaces;
+int r_perf_world_batch_mdraw_calls;
+int r_perf_world_batch_draw_calls;
+int r_perf_world_batch_max_surfaces;
 
 static int r_perf_setup_calls;
 static int r_perf_scene_calls;
@@ -280,6 +285,11 @@ static void R_PerfResetFrame(void) {
   r_perf_alias_batch_flushes = 0;
   r_perf_alias_instanced_submits = 0;
   r_perf_alias_instanced_draws = 0;
+  r_perf_world_batch_flushes = 0;
+  r_perf_world_batch_surfaces = 0;
+  r_perf_world_batch_mdraw_calls = 0;
+  r_perf_world_batch_draw_calls = 0;
+  r_perf_world_batch_max_surfaces = 0;
   r_perf_entity_snapshot_builds = 0;
   r_perf_entity_snapshot_reuses = 0;
   r_perf_entity_snapshot_fallbacks = 0;
@@ -354,6 +364,7 @@ static void R_PerfLogFrame(double total_ms) {
            "aliasinstdraw=%d sky=%.3f shadows=%.3f "
            "dlights=%.3f particles=%.3f outlines=%.3f viewmodel=%.3f "
            "debugdraw=%.3f) sharedvis(hit=%d miss=%d fallback=%d validate=%d) "
+           "worldbatch(flushes=%d surfaces=%d mdraw=%d draw=%d maxsurf=%d) "
            "sharedents(build=%d reuse=%d fallback=%d) "
            "frameres(upload_bytes=%zu high_water_bytes=%zu waits=%u "
            "capacity_exhausted_uploads=%u fallback_uploads=%u)\n",
@@ -374,11 +385,14 @@ static void R_PerfLogFrame(double total_ms) {
            r_perf_world_ms, r_perf_water_ms, r_perf_entities_opaque_ms,
            r_perf_entities_alpha_ms, r_perf_alias_draws, r_perf_alias_culled,
            r_perf_alias_glsl_draws, r_perf_alias_batch_flushes,
-           r_perf_alias_instanced_submits, r_perf_alias_instanced_draws, r_perf_sky_ms,
-           r_perf_shadows_ms, r_perf_dlights_ms, r_perf_particles_ms,
-           r_perf_outlines_ms, r_perf_viewmodel_ms, r_perf_debugdraw_ms,
-           sharedvis_hits, sharedvis_misses, sharedvis_fallbacks,
-           sharedvis_validation, r_perf_entity_snapshot_builds,
+           r_perf_alias_instanced_submits, r_perf_alias_instanced_draws,
+           r_perf_sky_ms, r_perf_shadows_ms, r_perf_dlights_ms,
+           r_perf_particles_ms, r_perf_outlines_ms, r_perf_viewmodel_ms,
+           r_perf_debugdraw_ms, sharedvis_hits, sharedvis_misses,
+           sharedvis_fallbacks, sharedvis_validation,
+           r_perf_world_batch_flushes, r_perf_world_batch_surfaces,
+           r_perf_world_batch_mdraw_calls, r_perf_world_batch_draw_calls,
+           r_perf_world_batch_max_surfaces, r_perf_entity_snapshot_builds,
            r_perf_entity_snapshot_reuses, r_perf_entity_snapshot_fallbacks,
            gl_frame_resource_stats.upload_bytes,
            gl_frame_resource_stats.high_water_bytes,
