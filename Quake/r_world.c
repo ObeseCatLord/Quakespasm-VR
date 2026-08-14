@@ -916,16 +916,34 @@ static void R_FlushBatch (void)
 {
 	if (num_vbo_indices > 0)
 	{
+		if (r_perfdebug.value != 0.0f)
+		{
+			const int batch_surfaces = (int)num_vbo_batch_surfaces;
+
+			r_perf_world_batch_flushes++;
+			r_perf_world_batch_surfaces += batch_surfaces;
+			if (batch_surfaces > r_perf_world_batch_max_surfaces)
+				r_perf_world_batch_max_surfaces = batch_surfaces;
+		}
+
 		if (GL_MultiDrawElementsFunc)
+		{
+			if (r_perfdebug.value != 0.0f)
+				r_perf_world_batch_mdraw_calls++;
 			GL_MultiDrawElementsFunc (GL_TRIANGLES, vbo_batch_counts,
 				GL_UNSIGNED_INT, vbo_batch_offsets, num_vbo_batch_surfaces);
+		}
 		else
 		{
 			unsigned int i;
 
 			for (i = 0; i < num_vbo_batch_surfaces; i++)
+			{
+				if (r_perfdebug.value != 0.0f)
+					r_perf_world_batch_draw_calls++;
 				glDrawElements (GL_TRIANGLES, vbo_batch_counts[i], GL_UNSIGNED_INT,
 					vbo_batch_offsets[i]);
+			}
 		}
 		num_vbo_indices = 0;
 		num_vbo_batch_surfaces = 0;
@@ -955,6 +973,8 @@ static void R_BatchSurface (msurface_t *s)
 	if (num_surf_indices > MAX_BATCH_SIZE)
 	{
 		R_FlushBatch ();
+		if (r_perfdebug.value != 0.0f)
+			r_perf_world_batch_draw_calls++;
 		glDrawElements (GL_TRIANGLES, num_surf_indices, GL_UNSIGNED_INT,
 			(const GLvoid *)(uintptr_t)((size_t)s->vbo_firstindex * sizeof(unsigned int)));
 		return;
