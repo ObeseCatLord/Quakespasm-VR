@@ -123,6 +123,7 @@ extern vec3_t vright;
 extern cvar_t gl_farclip;
 extern cvar_t r_perfdebug;
 extern cvar_t r_perfdebug_min_ms;
+extern void R_PrepareVRStereoVisibility(const vec_t *eye0, const vec_t *eye1);
 
 #ifdef __cplusplus
 }
@@ -5158,6 +5159,7 @@ void VR_PollPoses() {
 void VR_UpdateScreenContent() {
   vec3_t orientation;
   vec3_t eye_view_offsets[2];
+  vec3_t stereo_visibility_origins[2];
   GLint w, h;
   entity_t menu_player;
 
@@ -5427,7 +5429,11 @@ void VR_UpdateScreenContent() {
                     M_PI_DIV_180,
                 eye_view_offsets[i]);
     eye_view_offsets[i][2] += vr_floor_offset.value;
+    VectorAdd(player->origin, eye_view_offsets[i], stereo_visibility_origins[i]);
   }
+  /* R_MarkSurfaces validates these prepared leaves against each final eye. */
+  R_PrepareVRStereoVisibility(stereo_visibility_origins[0],
+                              stereo_visibility_origins[1]);
   VectorAdd(eye_view_offsets[0], eye_view_offsets[1], vr_menu_view_origin);
   VectorScale(vr_menu_view_origin, 0.5f, vr_menu_view_origin);
   VectorAdd(player->origin, vr_menu_view_origin, vr_menu_view_origin);

@@ -139,11 +139,18 @@ int r_perf_pvs_novis;
 static int r_perf_stereo_frame_id = -1;
 static int r_perf_stereo_frame_next_id = 0;
 
+/* Kept private to the renderer: r_world.c owns the candidate cache itself. */
+extern void R_BeginVRStereoVisibility(void);
+extern void R_EndVRStereoVisibility(void);
+extern void R_GetVRStereoVisibilityStats(int *hits, int *misses,
+                                         int *fallbacks, int *validation);
+
 void R_BeginVRFrame(void) {
   r_vr_stereo_frame = true;
   r_vr_sort_origin_valid = false;
   r_vr_eye_index = 0;
   r_vr_eye_count = 2;
+  R_BeginVRStereoVisibility();
   if (r_perfdebug.value != 0.0f)
     r_perf_stereo_frame_id = r_perf_stereo_frame_next_id++;
 }
@@ -158,6 +165,7 @@ void R_EndVRFrame(void) {
   r_vr_sort_origin_valid = false;
   r_vr_eye_index = 0;
   r_vr_eye_count = 1;
+  R_EndVRStereoVisibility();
   if (r_perfdebug.value != 0.0f)
     r_perf_stereo_frame_id = -1;
 }
@@ -170,6 +178,10 @@ qboolean R_IsVRFirstEye(void) {
 
 qboolean R_IsVRLastEye(void) {
   return !r_vr_stereo_frame || r_vr_eye_index >= r_vr_eye_count - 1;
+}
+
+qboolean R_IsVRTwoEyeFrame(void) {
+  return r_vr_stereo_frame && r_vr_eye_count == 2;
 }
 
 const vec_t *R_VRStereoSortOrigin(void) {
@@ -278,12 +290,18 @@ static void R_PerfCountEntity(entity_t *ent, qboolean alphapass) {
 }
 
 static void R_PerfLogFrame(double total_ms) {
+  int sharedvis_hits, sharedvis_misses, sharedvis_fallbacks;
+  int sharedvis_validation;
+
   if (!R_PerfActive())
     return;
 
   if (r_perfdebug.value < 2 &&
       total_ms < q_max(0.0f, r_perfdebug_min_ms.value))
     return;
+
+  R_GetVRStereoVisibilityStats(&sharedvis_hits, &sharedvis_misses,
+                               &sharedvis_fallbacks, &sharedvis_validation);
 
   DebugLog("r_perfdebug: map=%s host=%d vr=%d eye=%d/%d "
            "eye_index=%d eye_count=%d stereo_seq=%d dim=%dx%d "
@@ -296,7 +314,7 @@ static void R_PerfLogFrame(double total_ms) {
            "draw(world=%.3f water=%.3f entopq=%.3f entalpha=%.3f aliasdraw=%d "
            "aliascull=%d aliasglsl=%d aliasflush=%d sky=%.3f shadows=%.3f "
            "dlights=%.3f particles=%.3f outlines=%.3f viewmodel=%.3f "
-           "debugdraw=%.3f)\n",
+           "debugdraw=%.3f) sharedvis(hit=%d miss=%d fallback=%d validate=%d)\n",
            cl.worldmodel ? cl.worldmodel->name : "<none>",
            (int)host_framecount, (int)vr_enabled.value, R_PerfDebugEye(),
            R_PerfDebugEyeCount(), R_IsVRStereoFrame() ? r_vr_eye_index : 0,
@@ -315,7 +333,9 @@ static void R_PerfLogFrame(double total_ms) {
            r_perf_entities_alpha_ms, r_perf_alias_draws, r_perf_alias_culled,
            r_perf_alias_glsl_draws, r_perf_alias_batch_flushes, r_perf_sky_ms,
            r_perf_shadows_ms, r_perf_dlights_ms, r_perf_particles_ms,
-           r_perf_outlines_ms, r_perf_viewmodel_ms, r_perf_debugdraw_ms);
+           r_perf_outlines_ms, r_perf_viewmodel_ms, r_perf_debugdraw_ms,
+           sharedvis_hits, sharedvis_misses, sharedvis_fallbacks,
+           sharedvis_validation);
 }
 
 static void R_PerfPollGPUTimers(void) {

@@ -27,6 +27,279 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 extern cvar_t gl_fullbrights, r_drawflat, gl_overbright, r_oldwater, r_oldwater_max_drawpolys, r_oldskyleaf, r_showtris; //johnfitz
 
 byte *SV_FatPVS (vec3_t org, qmodel_t *worldmodel);
+qboolean R_BackFaceCull(msurface_t *surf);
+
+/*
+ * The VR compositor supplies both eye positions before it begins rendering.
+ * We only share a candidate set after each rendered eye has proved that it is
+ * still in the prepared leaf.  This makes the shared PVS an inclusive union,
+ * not a first-eye cache.
+ */
+extern qboolean R_IsVRTwoEyeFrame(void);
+
+static mleaf_t *r_vr_sharedvis_leaf[2];
+static qboolean r_vr_sharedvis_prepared;
+static qboolean r_vr_sharedvis_built;
+static msurface_t **r_vr_sharedvis_surfaces;
+static int r_vr_sharedvis_surface_capacity;
+static int r_vr_sharedvis_num_surfaces;
+static entity_t **r_vr_sharedvis_entities;
+static byte *r_vr_sharedvis_pvs;
+static int r_vr_sharedvis_pvs_capacity;
+static int r_vr_sharedvis_hits;
+static int r_vr_sharedvis_misses;
+static int r_vr_sharedvis_fallbacks;
+static int r_vr_sharedvis_validation;
+
+static void R_VRSharedVisibilityInvalidate(qboolean validation)
+{
+	r_vr_sharedvis_built = false;
+	r_vr_sharedvis_prepared = false;
+	r_vr_sharedvis_fallbacks++;
+	if (validation)
+		r_vr_sharedvis_validation++;
+}
+
+void R_PrepareVRStereoVisibility(const vec_t *eye0, const vec_t *eye1)
+{
+	r_vr_sharedvis_prepared = false;
+	r_vr_sharedvis_built = false;
+
+	if (!cl.worldmodel || !eye0 || !eye1)
+		return;
+
+	r_vr_sharedvis_leaf[0] = Mod_PointInLeaf((vec_t *)eye0, cl.worldmodel);
+	r_vr_sharedvis_leaf[1] = Mod_PointInLeaf((vec_t *)eye1, cl.worldmodel);
+	r_vr_sharedvis_prepared = true;
+}
+
+void R_BeginVRStereoVisibility(void)
+{
+	r_vr_sharedvis_built = false;
+	r_vr_sharedvis_num_surfaces = 0;
+	r_vr_sharedvis_hits = r_vr_sharedvis_misses = 0;
+	r_vr_sharedvis_fallbacks = r_vr_sharedvis_validation = 0;
+}
+
+void R_EndVRStereoVisibility(void)
+{
+	r_vr_sharedvis_prepared = false;
+	r_vr_sharedvis_built = false;
+	r_vr_sharedvis_num_surfaces = 0;
+	r_vr_sharedvis_hits = r_vr_sharedvis_misses = 0;
+	r_vr_sharedvis_fallbacks = r_vr_sharedvis_validation = 0;
+}
+
+void R_GetVRStereoVisibilityStats(int *hits, int *misses, int *fallbacks,
+								 int *validation)
+{
+	if (hits)
+		*hits = r_vr_sharedvis_hits;
+	if (misses)
+		*misses = r_vr_sharedvis_misses;
+	if (fallbacks)
+		*fallbacks = r_vr_sharedvis_fallbacks;
+	if (validation)
+		*validation = r_vr_sharedvis_validation;
+}
+
+static qboolean R_VRSharedVisibilityLeafHasWaterPortal(mleaf_t *viewleaf)
+{
+	msurface_t **mark;
+	int i;
+
+	for (i = 0, mark = viewleaf->firstmarksurface;
+		 i < viewleaf->nummarksurfaces; i++, mark++)
+		if ((*mark)->flags & SURF_DRAWTURB)
+			return true;
+
+	return false;
+}
+
+static qboolean R_VRSharedVisibilityEnsureStorage(int pvsbytes)
+{
+	msurface_t **surfaces;
+	entity_t **entities;
+	byte *pvs;
+
+	if (r_vr_sharedvis_surface_capacity < (int)cl.worldmodel->numsurfaces)
+	{
+		surfaces = (msurface_t **)realloc(
+			r_vr_sharedvis_surfaces,
+			cl.worldmodel->numsurfaces * sizeof(*r_vr_sharedvis_surfaces));
+		if (!surfaces)
+			return false;
+		r_vr_sharedvis_surfaces = surfaces;
+		r_vr_sharedvis_surface_capacity = cl.worldmodel->numsurfaces;
+	}
+
+	if (!r_vr_sharedvis_entities)
+	{
+		entities = (entity_t **)malloc(MAX_VISEDICTS * sizeof(*entities));
+		if (!entities)
+			return false;
+		r_vr_sharedvis_entities = entities;
+	}
+
+	if (r_vr_sharedvis_pvs_capacity < pvsbytes)
+	{
+		pvs = (byte *)realloc(r_vr_sharedvis_pvs, pvsbytes);
+		if (!pvs)
+			return false;
+		r_vr_sharedvis_pvs = pvs;
+		r_vr_sharedvis_pvs_capacity = pvsbytes;
+	}
+
+	return true;
+}
+
+static qboolean R_VRSharedVisibilityAddEntity(entity_t *ent, int *count)
+{
+	int i;
+
+	if (ent->visframe == r_framecount)
+		return true;
+
+	for (i = 0; i < *count; i++)
+		if (r_vr_sharedvis_entities[i] == ent)
+			return true;
+
+	if (cl_numvisedicts + *count >= MAX_VISEDICTS)
+		return false;
+
+	r_vr_sharedvis_entities[(*count)++] = ent;
+	return true;
+}
+
+static qboolean R_VRSharedVisibilityCollectEfrags(efrag_t *efrag,
+													 int *count)
+{
+	for (; efrag; efrag = efrag->leafnext)
+		if (!R_VRSharedVisibilityAddEntity(efrag->entity, count))
+			return false;
+
+	return true;
+}
+
+static void R_VRSharedVisibilityChainSurfaces(qboolean perf)
+{
+	msurface_t *surf;
+	int i;
+
+	for (i = 0; i < lightmap_count; i++)
+		lightmaps[i].polys = NULL;
+	for (i = 0; i < cl.worldmodel->numtextures; i++)
+		if (cl.worldmodel->textures[i])
+			cl.worldmodel->textures[i]->texturechains[chain_world] = NULL;
+
+	for (i = 0; i < r_vr_sharedvis_num_surfaces; i++)
+	{
+		surf = r_vr_sharedvis_surfaces[i];
+		if (!R_CullBox(surf->mins, surf->maxs) && !R_BackFaceCull(surf))
+		{
+			rs_brushpolys++;
+			R_ChainSurface(surf, chain_world);
+			R_RenderDynamicLightmaps(surf);
+			if (perf)
+				r_perf_surfaces_chained++;
+			if (surf->texinfo->texture->warpimage)
+				surf->texinfo->texture->update_warp = true;
+		}
+		else if (perf)
+			r_perf_surfaces_culled++;
+	}
+}
+
+static qboolean R_BuildVRStereoVisibility(qboolean perf)
+{
+	byte *vis0, *vis1;
+	mleaf_t *leaf;
+	msurface_t *surf, **mark;
+	int entity_count, i, j, pvsbytes;
+	qboolean novis;
+
+	if (R_VRSharedVisibilityLeafHasWaterPortal(r_vr_sharedvis_leaf[0]) ||
+		R_VRSharedVisibilityLeafHasWaterPortal(r_vr_sharedvis_leaf[1]))
+		return false;
+
+	pvsbytes = (cl.worldmodel->numleafs + 7) >> 3;
+	if (!R_VRSharedVisibilityEnsureStorage(pvsbytes))
+		return false;
+
+	novis = r_novis.value ||
+		r_vr_sharedvis_leaf[0]->contents == CONTENTS_SOLID ||
+		r_vr_sharedvis_leaf[0]->contents == CONTENTS_SKY ||
+		r_vr_sharedvis_leaf[1]->contents == CONTENTS_SOLID ||
+		r_vr_sharedvis_leaf[1]->contents == CONTENTS_SKY;
+	if (novis)
+	{
+		vis0 = Mod_NoVisPVS(cl.worldmodel);
+		vis1 = vis0;
+		if (perf)
+			r_perf_pvs_novis += 2;
+	}
+	else
+	{
+		vis0 = Mod_LeafPVS(r_vr_sharedvis_leaf[0], cl.worldmodel);
+		memcpy(r_vr_sharedvis_pvs, vis0, pvsbytes);
+		vis1 = Mod_LeafPVS(r_vr_sharedvis_leaf[1], cl.worldmodel);
+		if (perf)
+			r_perf_pvs_leaf += 2;
+	}
+
+	if (novis)
+		memcpy(r_vr_sharedvis_pvs, vis0, pvsbytes);
+	else
+		for (i = 0; i < pvsbytes; i++)
+			r_vr_sharedvis_pvs[i] |= vis1[i];
+
+	r_visframecount++;
+	r_vr_sharedvis_num_surfaces = 0;
+	entity_count = 0;
+	leaf = &cl.worldmodel->leafs[1];
+	for (i = 0; i < cl.worldmodel->numleafs; i++, leaf++)
+	{
+		if (perf)
+			r_perf_leaves_scanned++;
+		if (!(r_vr_sharedvis_pvs[i >> 3] & (1 << (i & 7))))
+			continue;
+
+		if (perf)
+			r_perf_leaves_visible++;
+		if (r_oldskyleaf.value || leaf->contents != CONTENTS_SKY)
+		{
+			if (perf)
+				r_perf_marksurfaces_scanned += leaf->nummarksurfaces;
+			for (j = 0, mark = leaf->firstmarksurface; j < leaf->nummarksurfaces;
+				 j++, mark++)
+			{
+				surf = *mark;
+				if (surf->visframe != r_visframecount)
+				{
+					surf->visframe = r_visframecount;
+					r_vr_sharedvis_surfaces[r_vr_sharedvis_num_surfaces++] = surf;
+					if (perf)
+						r_perf_surfaces_unique++;
+				}
+			}
+		}
+
+		if (leaf->efrags &&
+			!R_VRSharedVisibilityCollectEfrags(leaf->efrags, &entity_count))
+			return false;
+		if (perf && leaf->efrags)
+			r_perf_efrag_leaves++;
+	}
+
+	for (i = 0; i < entity_count; i++)
+	{
+		cl_visedicts[cl_numvisedicts++] = r_vr_sharedvis_entities[i];
+		r_vr_sharedvis_entities[i]->visframe = r_framecount;
+	}
+
+	r_vr_sharedvis_built = true;
+	return true;
+}
 
 //==============================================================================
 //
@@ -102,6 +375,50 @@ void R_MarkSurfaces (void)
 	qboolean	perf;
 
 	perf = r_perfdebug.value != 0;
+
+	/*
+	 * A shared set is only valid for the normal two-eye world pass.  The
+	 * prepared leaves are checked against the actual, fully calculated view
+	 * origin before use; any mismatch takes the original code path below.
+	 */
+	if (R_IsVRTwoEyeFrame() && r_vr_sharedvis_prepared && !skyroom_drawing)
+	{
+		if (R_IsVRFirstEye())
+		{
+			if (r_viewleaf != r_vr_sharedvis_leaf[0])
+			{
+				R_VRSharedVisibilityInvalidate(true);
+			}
+			else if (r_vr_sharedvis_built)
+			{
+				R_VRSharedVisibilityChainSurfaces(perf);
+				r_vr_sharedvis_hits++;
+				return;
+			}
+			else
+			{
+				r_vr_sharedvis_misses++;
+				if (R_BuildVRStereoVisibility(perf))
+				{
+					R_VRSharedVisibilityChainSurfaces(perf);
+					return;
+				}
+				R_VRSharedVisibilityInvalidate(false);
+			}
+		}
+		else if (r_vr_sharedvis_built &&
+			 r_viewleaf == r_vr_sharedvis_leaf[1])
+		{
+			R_VRSharedVisibilityChainSurfaces(perf);
+			r_vr_sharedvis_hits++;
+			return;
+		}
+		else
+		{
+			R_VRSharedVisibilityInvalidate(true);
+		}
+	}
+
 	// clear lightmap chains
 	for (i=0 ; i<lightmap_count ; i++)
 		lightmaps[i].polys = NULL;
