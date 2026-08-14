@@ -124,6 +124,8 @@ static GLint  md3TexLoc;
 static GLint  md3UseOverbrightLoc;
 static GLint  md3UseAlphaTestLoc;
 static GLint  md3UseShadingLoc;
+static GLint  md3UseTextureLoc;
+static GLint  md3UseFogLoc;
 
 static GLint  md5BlendLoc;
 static GLint  md5ShadevectorLoc;
@@ -133,6 +135,8 @@ static GLint  md5TexSScaleLoc;
 static GLint  md5TexTScaleLoc;
 static GLint  md5UseAlphaTestLoc;
 static GLint  md5UseShadingLoc;
+static GLint  md5UseTextureLoc;
+static GLint  md5UseFogLoc;
 
 #define pose1VertexAttrIndex 0
 #define pose1NormalAttrIndex 1
@@ -718,18 +722,29 @@ void GLAlias_CreateShaders (void)
 		const GLchar *md3FragSource = \
 			"#version 110\n"
 			"uniform sampler2D Tex;\n"
+			"uniform bool UseTexture;\n"
 			"uniform bool UseOverbright;\n"
 			"uniform bool UseAlphaTest;\n"
+			"uniform bool UseFog;\n"
 			"varying float FogFragCoord;\n"
 			"void main()\n"
 			"{\n"
-			"  vec4 result = texture2D(Tex, gl_TexCoord[0].xy);\n"
+			"  vec4 result;\n"
+			"  if (UseTexture)\n"
+			"  {\n"
+			"    result = texture2D(Tex, gl_TexCoord[0].xy);\n"
+			"    if (UseAlphaTest && result.a * gl_Color.a < 0.666) discard;\n"
+			"  }\n"
+			"  else\n"
+			"    result = vec4(1.0);\n"
 			"  result *= gl_Color;\n"
-			"  if (UseAlphaTest && result.a < 0.666) discard;\n"
 			"  if (UseOverbright) result.rgb *= 2.0;\n"
 			"  result = clamp(result, 0.0, 1.0);\n"
-			"  float fog = exp(-gl_Fog.density * gl_Fog.density * FogFragCoord * FogFragCoord);\n"
-			"  result.rgb = mix(gl_Fog.color.rgb, result.rgb, clamp(fog, 0.0, 1.0));\n"
+			"  if (UseFog)\n"
+			"  {\n"
+			"    float fog = exp(-gl_Fog.density * gl_Fog.density * FogFragCoord * FogFragCoord);\n"
+			"    result.rgb = mix(gl_Fog.color.rgb, result.rgb, clamp(fog, 0.0, 1.0));\n"
+			"  }\n"
 			"  gl_FragColor = result;\n"
 			"}\n";
 
@@ -744,6 +759,8 @@ void GLAlias_CreateShaders (void)
 			md3UseOverbrightLoc = GL_GetUniformLocation (&r_md3_program, "UseOverbright");
 			md3UseAlphaTestLoc = GL_GetUniformLocation (&r_md3_program, "UseAlphaTest");
 			md3UseShadingLoc = GL_GetUniformLocation (&r_md3_program, "UseShading");
+			md3UseTextureLoc = GL_GetUniformLocation (&r_md3_program, "UseTexture");
+			md3UseFogLoc = GL_GetUniformLocation (&r_md3_program, "UseFog");
 		}
 	}
 
@@ -782,16 +799,27 @@ void GLAlias_CreateShaders (void)
 		const GLchar *md5FragSource = \
 			"#version 110\n"
 			"uniform sampler2D Tex;\n"
+			"uniform bool UseTexture;\n"
 			"uniform bool UseAlphaTest;\n"
+			"uniform bool UseFog;\n"
 			"varying float FogFragCoord;\n"
 			"void main()\n"
 			"{\n"
-			"  vec4 result = texture2D(Tex, gl_TexCoord[0].xy);\n"
+			"  vec4 result;\n"
+			"  if (UseTexture)\n"
+			"  {\n"
+			"    result = texture2D(Tex, gl_TexCoord[0].xy);\n"
+			"    if (UseAlphaTest && result.a * gl_Color.a < 0.666) discard;\n"
+			"  }\n"
+			"  else\n"
+			"    result = vec4(1.0);\n"
 			"  result *= gl_Color;\n"
-			"  if (UseAlphaTest && result.a < 0.666) discard;\n"
 			"  result = clamp(result, 0.0, 1.0);\n"
-			"  float fog = exp(-gl_Fog.density * gl_Fog.density * FogFragCoord * FogFragCoord);\n"
-			"  result.rgb = mix(gl_Fog.color.rgb, result.rgb, clamp(fog, 0.0, 1.0));\n"
+			"  if (UseFog)\n"
+			"  {\n"
+			"    float fog = exp(-gl_Fog.density * gl_Fog.density * FogFragCoord * FogFragCoord);\n"
+			"    result.rgb = mix(gl_Fog.color.rgb, result.rgb, clamp(fog, 0.0, 1.0));\n"
+			"  }\n"
 			"  gl_FragColor = result;\n"
 			"}\n";
 
@@ -807,6 +835,8 @@ void GLAlias_CreateShaders (void)
 			md5TexTScaleLoc = GL_GetUniformLocation (&r_md5_program, "TexTScale");
 			md5UseAlphaTestLoc = GL_GetUniformLocation (&r_md5_program, "UseAlphaTest");
 			md5UseShadingLoc = GL_GetUniformLocation (&r_md5_program, "UseShading");
+			md5UseTextureLoc = GL_GetUniformLocation (&r_md5_program, "UseTexture");
+			md5UseFogLoc = GL_GetUniformLocation (&r_md5_program, "UseFog");
 		}
 	}
 }
@@ -1345,7 +1375,7 @@ static void *GLMD3_GetNormalOffset (const aliashdr_t *surface, int surfaceindex,
 
 static void GL_DrawMD3Frame_GLSL (const aliashdr_t *surface, int surfaceindex,
 	lerpdata_t lerpdata, gltexture_t *texture, const vec3_t drawcolor,
-	float drawalpha, qboolean drawshading)
+	float drawalpha, qboolean drawshading, qboolean usetexture, qboolean usefog)
 {
 	float blend = lerpdata.pose1 != lerpdata.pose2 ? lerpdata.blend : 0.0f;
 
@@ -1374,13 +1404,19 @@ static void GL_DrawMD3Frame_GLSL (const aliashdr_t *surface, int surfaceindex,
 	GL_Uniform3fFunc (md3ShadevectorLoc, shadevector[0], shadevector[1], shadevector[2]);
 	GL_Uniform4fFunc (md3LightColorLoc, drawcolor[0], drawcolor[1], drawcolor[2], drawalpha);
 	GL_Uniform1iFunc (md3TexLoc, 0);
+	GL_Uniform1iFunc (md3UseTextureLoc, usetexture ? 1 : 0);
 	/* Overbright is a second additive draw so Fog_StartAdditive can blacken fog. */
 	GL_Uniform1iFunc (md3UseOverbrightLoc, 0);
-	GL_Uniform1iFunc (md3UseAlphaTestLoc, r_md3_glsl_alphatest ? 1 : 0);
+	GL_Uniform1iFunc (md3UseAlphaTestLoc,
+		(usetexture && r_md3_glsl_alphatest) ? 1 : 0);
 	GL_Uniform1iFunc (md3UseShadingLoc, drawshading ? 1 : 0);
+	GL_Uniform1iFunc (md3UseFogLoc, usefog ? 1 : 0);
 
-	GL_SelectTexture (GL_TEXTURE0);
-	GL_Bind (texture);
+	if (usetexture)
+	{
+		GL_SelectTexture (GL_TEXTURE0);
+		GL_Bind (texture);
+	}
 	if (r_perfdebug.value)
 		r_perf_alias_glsl_draws++;
 	glDrawElements (GL_TRIANGLES, surface->numindexes, GL_UNSIGNED_SHORT,
@@ -1473,7 +1509,7 @@ static int R_MD3TriangleCount (aliashdr_t *surface)
 
 static void R_DrawMD3Pass (aliashdr_t *surface, lerpdata_t lerpdata,
 	int skinnum, qboolean fullbright, const vec3_t drawcolor, float drawalpha,
-	qboolean drawshading)
+	qboolean drawshading, qboolean drawfog)
 {
 	int surfaceindex = 0;
 
@@ -1487,7 +1523,7 @@ static void R_DrawMD3Pass (aliashdr_t *surface, lerpdata_t lerpdata,
 		{
 			if (r_md3_glsl_active)
 				GL_DrawMD3Frame_GLSL (surface, surfaceindex, lerpdata, texture,
-					drawcolor, drawalpha, drawshading);
+					drawcolor, drawalpha, drawshading, true, drawfog);
 			else
 			{
 				GL_Bind (texture);
@@ -1499,12 +1535,24 @@ static void R_DrawMD3Pass (aliashdr_t *surface, lerpdata_t lerpdata,
 	}
 }
 
-static void R_DrawMD3UntexturedPass (aliashdr_t *surface, lerpdata_t lerpdata)
+static void R_DrawMD3UntexturedPass (aliashdr_t *surface, lerpdata_t lerpdata,
+	const vec3_t drawcolor, float drawalpha, qboolean drawfog)
 {
+	int surfaceindex = 0;
+	qboolean useglsl = r_md3_program != 0 && currententity->model->md3meshvbo != 0 &&
+		currententity->model->md3meshindexesvbo != 0;
+
 	while (surface)
 	{
-		GL_DrawMD3Frame (surface, lerpdata);
+		if (useglsl)
+			/* UseTexture=false deliberately avoids sampling while the caller has
+			 * GL_TEXTURE_2D disabled for a flat/debug/shadow pass. */
+			GL_DrawMD3Frame_GLSL (surface, surfaceindex, lerpdata, NULL,
+				drawcolor, drawalpha, false, false, drawfog);
+		else
+			GL_DrawMD3Frame (surface, lerpdata);
 		surface = R_NextMD3Surface (surface);
+		surfaceindex++;
 	}
 }
 
@@ -1513,8 +1561,10 @@ static void R_DrawMD3Model (entity_t *e, qboolean cull, qboolean viewmodel)
 	aliashdr_t *md3;
 	lerpdata_t lerpdata;
 	vec3_t fullbrightcolor;
+	vec3_t drawflatcolor = {1, 1, 1};
 	int skinnum;
 	qboolean alphatest = false;
+	qboolean drawfog;
 	float fovscale = 1.0f;
 
 	md3 = Mod_GetMD3Extradata (e->model);
@@ -1571,11 +1621,11 @@ static void R_DrawMD3Model (entity_t *e, qboolean cull, qboolean viewmodel)
 	rs_aliaspolys += R_MD3TriangleCount (md3);
 	if (!viewmodel)
 		R_SetupAliasLighting (e);
+	drawfog = !viewmodel && Fog_GetDensity() > 0.0f;
 	GL_DisableMultitexture ();
 	/* Each legacy textured pass remains a separate GLSL draw: this retains
 	 * additive black-fog composition for overbright and fullbright overlays. */
 	r_md3_glsl_active = !r_drawflat_cheatsafe && !r_lightmap_cheatsafe &&
-		!r_fullbright_cheatsafe &&
 		r_md3_program != 0 && e->model->md3meshvbo != 0 &&
 		e->model->md3meshindexesvbo != 0;
 	r_md3_glsl_alphatest = r_md3_glsl_active && alphatest;
@@ -1589,7 +1639,7 @@ static void R_DrawMD3Model (entity_t *e, qboolean cull, qboolean viewmodel)
 		glTexEnvf (GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
 		R_SetViewModelColor (entalpha);
 		R_DrawMD3Pass (md3, lerpdata, skinnum, false, vr_weaponcolor,
-			entalpha, false);
+			entalpha, false, false);
 		if (gl_fullbrights.value)
 		{
 			glEnable (GL_BLEND);
@@ -1597,7 +1647,7 @@ static void R_DrawMD3Model (entity_t *e, qboolean cull, qboolean viewmodel)
 			glDepthMask (GL_FALSE);
 			glColor4f (entalpha, entalpha, entalpha, entalpha);
 			R_DrawMD3Pass (md3, lerpdata, skinnum, true,
-				fullbrightcolor, entalpha, false);
+				fullbrightcolor, entalpha, false, false);
 			glDepthMask (GL_TRUE);
 			glBlendFunc (GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 			glDisable (GL_BLEND);
@@ -1608,7 +1658,7 @@ static void R_DrawMD3Model (entity_t *e, qboolean cull, qboolean viewmodel)
 		glDisable (GL_TEXTURE_2D);
 		shading = false;
 		glColor4f (1, 1, 1, entalpha);
-		R_DrawMD3UntexturedPass (md3, lerpdata);
+		R_DrawMD3UntexturedPass (md3, lerpdata, drawflatcolor, entalpha, drawfog);
 		glEnable (GL_TEXTURE_2D);
 	}
 	else
@@ -1619,12 +1669,12 @@ static void R_DrawMD3Model (entity_t *e, qboolean cull, qboolean viewmodel)
 			shading = false;
 			glColor4f (1, 1, 1, entalpha);
 			R_DrawMD3Pass (md3, lerpdata, skinnum, false,
-				fullbrightcolor, entalpha, false);
+				drawflatcolor, entalpha, false, drawfog);
 		}
 		else
 		{
 			R_DrawMD3Pass (md3, lerpdata, skinnum, false, lightcolor,
-				entalpha, true);
+				entalpha, true, drawfog);
 			if (overbright)
 			{
 				glEnable (GL_BLEND);
@@ -1632,7 +1682,7 @@ static void R_DrawMD3Model (entity_t *e, qboolean cull, qboolean viewmodel)
 				glDepthMask (GL_FALSE);
 				Fog_StartAdditive ();
 				R_DrawMD3Pass (md3, lerpdata, skinnum, false, lightcolor,
-					entalpha, true);
+					entalpha, true, drawfog);
 				Fog_StopAdditive ();
 				glDepthMask (GL_TRUE);
 				glBlendFunc (GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
@@ -1649,7 +1699,7 @@ static void R_DrawMD3Model (entity_t *e, qboolean cull, qboolean viewmodel)
 			glColor4f (entalpha, entalpha, entalpha, entalpha);
 			Fog_StartAdditive ();
 			R_DrawMD3Pass (md3, lerpdata, skinnum, true,
-				fullbrightcolor, entalpha, false);
+				fullbrightcolor, entalpha, false, drawfog);
 			Fog_StopAdditive ();
 			glDepthMask (GL_TRUE);
 			glBlendFunc (GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
@@ -1721,7 +1771,7 @@ static void *GLMD5_GetNormalOffset (const aliashdr_t *surface, int surfaceindex,
 
 static void GL_DrawMD5Frame_GLSL (const aliashdr_t *surface, int surfaceindex,
 	lerpdata_t lerpdata, gltexture_t *texture, const vec3_t drawcolor,
-	float drawalpha, qboolean drawshading)
+	float drawalpha, qboolean drawshading, qboolean usetexture, qboolean usefog)
 {
 	float blend = lerpdata.pose1 != lerpdata.pose2 ? lerpdata.blend : 0.0f;
 	float sscale;
@@ -1752,15 +1802,21 @@ static void GL_DrawMD5Frame_GLSL (const aliashdr_t *surface, int surfaceindex,
 	GL_Uniform3fFunc (md5ShadevectorLoc, shadevector[0], shadevector[1], shadevector[2]);
 	GL_Uniform4fFunc (md5LightColorLoc, drawcolor[0], drawcolor[1], drawcolor[2], drawalpha);
 	GL_Uniform1iFunc (md5TexLoc, 0);
-	GL_Uniform1iFunc (md5UseAlphaTestLoc, r_md5_glsl_alphatest ? 1 : 0);
+	GL_Uniform1iFunc (md5UseTextureLoc, usetexture ? 1 : 0);
+	GL_Uniform1iFunc (md5UseAlphaTestLoc,
+		(usetexture && r_md5_glsl_alphatest) ? 1 : 0);
 	GL_Uniform1iFunc (md5UseShadingLoc, drawshading ? 1 : 0);
+	GL_Uniform1iFunc (md5UseFogLoc, usefog ? 1 : 0);
 	sscale = (float)surface->skinwidth / (float)TexMgr_PadConditional (surface->skinwidth);
 	tscale = (float)surface->skinheight / (float)TexMgr_PadConditional (surface->skinheight);
 	GL_Uniform1fFunc (md5TexSScaleLoc, sscale);
 	GL_Uniform1fFunc (md5TexTScaleLoc, tscale);
 
-	GL_SelectTexture (GL_TEXTURE0);
-	GL_Bind (texture);
+	if (usetexture)
+	{
+		GL_SelectTexture (GL_TEXTURE0);
+		GL_Bind (texture);
+	}
 	if (r_perfdebug.value)
 		r_perf_alias_glsl_draws++;
 	glDrawElements (GL_TRIANGLES, surface->numindexes, GL_UNSIGNED_SHORT,
@@ -1852,7 +1908,7 @@ static int R_MD5TriangleCount (aliashdr_t *surface)
 
 static void R_DrawMD5Pass (aliashdr_t *surface, lerpdata_t lerpdata,
 	int skinnum, qboolean fullbright, const vec3_t drawcolor, float drawalpha,
-	qboolean drawshading)
+	qboolean drawshading, qboolean drawfog)
 {
 	int anim = (int)(cl.time * 10) & 3;
 	int surfaceindex = 0;
@@ -1867,7 +1923,7 @@ static void R_DrawMD5Pass (aliashdr_t *surface, lerpdata_t lerpdata,
 		{
 			if (r_md5_glsl_active)
 				GL_DrawMD5Frame_GLSL (surface, surfaceindex, lerpdata, texture,
-					drawcolor, drawalpha, drawshading);
+					drawcolor, drawalpha, drawshading, true, drawfog);
 			else
 			{
 				GL_Bind (texture);
@@ -1879,12 +1935,23 @@ static void R_DrawMD5Pass (aliashdr_t *surface, lerpdata_t lerpdata,
 	}
 }
 
-static void R_DrawMD5UntexturedPass (aliashdr_t *surface, lerpdata_t lerpdata)
+static void R_DrawMD5UntexturedPass (aliashdr_t *surface, lerpdata_t lerpdata,
+	const vec3_t drawcolor, float drawalpha, qboolean drawfog)
 {
+	int surfaceindex = 0;
+	qboolean useglsl = r_md5_program != 0 && currententity->model->md5meshvbo != 0 &&
+		currententity->model->md5meshindexesvbo != 0;
+
 	while (surface)
 	{
-		GL_DrawMD5Frame (surface, lerpdata);
+		if (useglsl)
+			/* See the MD3 path: the shader emits a solid color without a texture. */
+			GL_DrawMD5Frame_GLSL (surface, surfaceindex, lerpdata, NULL,
+				drawcolor, drawalpha, false, false, drawfog);
+		else
+			GL_DrawMD5Frame (surface, lerpdata);
 		surface = R_NextMD5Surface (surface);
+		surfaceindex++;
 	}
 }
 
@@ -1893,8 +1960,10 @@ static void R_DrawMD5Model (entity_t *e, qboolean cull, qboolean viewmodel)
 	aliashdr_t *md5;
 	lerpdata_t lerpdata;
 	vec3_t fullbrightcolor;
+	vec3_t drawflatcolor = {1, 1, 1};
 	int skinnum, anim;
 	qboolean alphatest = false;
+	qboolean drawfog;
 	float fovscale = 1.0f;
 
 	md5 = Mod_GetMD5Extradata (e->model);
@@ -1948,11 +2017,11 @@ static void R_DrawMD5Model (entity_t *e, qboolean cull, qboolean viewmodel)
 	rs_aliaspolys += R_MD5TriangleCount (md5);
 	if (!viewmodel)
 		R_SetupAliasLighting (e);
+	drawfog = !viewmodel && Fog_GetDensity() > 0.0f;
 	GL_DisableMultitexture ();
 	/* Keep legacy composition as separate GLSL draws so overbright and
 	 * fullbright overlays retain their additive fog behavior. */
 	r_md5_glsl_active = !r_drawflat_cheatsafe && !r_lightmap_cheatsafe &&
-		!r_fullbright_cheatsafe &&
 		r_md5_program != 0 && e->model->md5meshvbo != 0 &&
 		e->model->md5meshindexesvbo != 0;
 	r_md5_glsl_alphatest = r_md5_glsl_active && alphatest;
@@ -1966,7 +2035,7 @@ static void R_DrawMD5Model (entity_t *e, qboolean cull, qboolean viewmodel)
 		glTexEnvf (GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
 		R_SetViewModelColor (entalpha);
 		R_DrawMD5Pass (md5, lerpdata, skinnum, false, vr_weaponcolor,
-			entalpha, false);
+			entalpha, false, false);
 		if (gl_fullbrights.value)
 		{
 			glEnable (GL_BLEND);
@@ -1974,7 +2043,7 @@ static void R_DrawMD5Model (entity_t *e, qboolean cull, qboolean viewmodel)
 			glDepthMask (GL_FALSE);
 			glColor4f (entalpha, entalpha, entalpha, entalpha);
 			R_DrawMD5Pass (md5, lerpdata, skinnum, true,
-				fullbrightcolor, entalpha, false);
+				fullbrightcolor, entalpha, false, false);
 			glDepthMask (GL_TRUE);
 			glBlendFunc (GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 			glDisable (GL_BLEND);
@@ -1985,7 +2054,7 @@ static void R_DrawMD5Model (entity_t *e, qboolean cull, qboolean viewmodel)
 		glDisable (GL_TEXTURE_2D);
 		shading = false;
 		glColor4f (1, 1, 1, entalpha);
-		R_DrawMD5UntexturedPass (md5, lerpdata);
+		R_DrawMD5UntexturedPass (md5, lerpdata, drawflatcolor, entalpha, drawfog);
 		glEnable (GL_TEXTURE_2D);
 	}
 	else
@@ -1996,12 +2065,12 @@ static void R_DrawMD5Model (entity_t *e, qboolean cull, qboolean viewmodel)
 			shading = false;
 			glColor4f (1, 1, 1, entalpha);
 			R_DrawMD5Pass (md5, lerpdata, skinnum, false,
-				fullbrightcolor, entalpha, false);
+				drawflatcolor, entalpha, false, drawfog);
 		}
 		else
 		{
 			R_DrawMD5Pass (md5, lerpdata, skinnum, false, lightcolor,
-				entalpha, true);
+				entalpha, true, drawfog);
 			/* Draw the normal pass again against additive black fog, matching the
 			 * fixed-function overbright composition after fog is applied. */
 			if (overbright)
@@ -2011,7 +2080,7 @@ static void R_DrawMD5Model (entity_t *e, qboolean cull, qboolean viewmodel)
 				glDepthMask (GL_FALSE);
 				Fog_StartAdditive ();
 				R_DrawMD5Pass (md5, lerpdata, skinnum, false, lightcolor,
-					entalpha, true);
+					entalpha, true, drawfog);
 				Fog_StopAdditive ();
 				glDepthMask (GL_TRUE);
 				glBlendFunc (GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
@@ -2027,7 +2096,7 @@ static void R_DrawMD5Model (entity_t *e, qboolean cull, qboolean viewmodel)
 			glColor4f (entalpha, entalpha, entalpha, entalpha);
 			Fog_StartAdditive ();
 			R_DrawMD5Pass (md5, lerpdata, skinnum, true,
-				fullbrightcolor, entalpha, false);
+				fullbrightcolor, entalpha, false, drawfog);
 			Fog_StopAdditive ();
 			glDepthMask (GL_TRUE);
 			glBlendFunc (GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
@@ -2379,6 +2448,7 @@ static void R_DrawMD3ModelOutline (entity_t *e, float r, float g, float b,
 {
 	aliashdr_t *md3;
 	lerpdata_t lerpdata;
+	vec3_t color = {r, g, b};
 
 	md3 = Mod_GetMD3Extradata (e->model);
 	if (!md3)
@@ -2398,7 +2468,7 @@ static void R_DrawMD3ModelOutline (entity_t *e, float r, float g, float b,
 	shading = false;
 	entalpha = a;
 	glColor4f (r, g, b, a);
-	R_DrawMD3UntexturedPass (md3, lerpdata);
+	R_DrawMD3UntexturedPass (md3, lerpdata, color, a, false);
 	glEnable (GL_TEXTURE_2D);
 	glPopMatrix ();
 }
@@ -2408,6 +2478,7 @@ static void R_DrawMD5ModelOutline (entity_t *e, float r, float g, float b,
 {
 	aliashdr_t *md5;
 	lerpdata_t lerpdata;
+	vec3_t color = {r, g, b};
 
 	md5 = Mod_GetMD5Extradata (e->model);
 	if (!md5)
@@ -2426,7 +2497,7 @@ static void R_DrawMD5ModelOutline (entity_t *e, float r, float g, float b,
 	shading = false;
 	entalpha = a;
 	glColor4f (r, g, b, a);
-	R_DrawMD5UntexturedPass (md5, lerpdata);
+	R_DrawMD5UntexturedPass (md5, lerpdata, color, a, false);
 	glEnable (GL_TEXTURE_2D);
 	glPopMatrix ();
 }
@@ -2587,6 +2658,7 @@ static void GL_DrawMD3Shadow (entity_t *e)
 	float lheight;
 	aliashdr_t *md3;
 	lerpdata_t lerpdata;
+	vec3_t color = {0, 0, 0};
 
 	md3 = Mod_GetMD3Extradata (e->model);
 	if (!md3)
@@ -2613,7 +2685,8 @@ static void GL_DrawMD3Shadow (entity_t *e)
 	glDisable (GL_TEXTURE_2D);
 	shading = false;
 	glColor4f (0, 0, 0, entalpha * 0.5f);
-	R_DrawMD3UntexturedPass (md3, lerpdata);
+	R_DrawMD3UntexturedPass (md3, lerpdata, color, entalpha * 0.5f,
+		Fog_GetDensity() > 0.0f);
 	glEnable (GL_TEXTURE_2D);
 	glDisable (GL_BLEND);
 	glDepthMask (GL_TRUE);
@@ -2629,6 +2702,7 @@ static void GL_DrawMD5Shadow (entity_t *e)
 	float lheight;
 	aliashdr_t *md5;
 	lerpdata_t lerpdata;
+	vec3_t color = {0, 0, 0};
 
 	md5 = Mod_GetMD5Extradata (e->model);
 	if (!md5)
@@ -2654,7 +2728,8 @@ static void GL_DrawMD5Shadow (entity_t *e)
 	glDisable (GL_TEXTURE_2D);
 	shading = false;
 	glColor4f (0, 0, 0, entalpha * 0.5f);
-	R_DrawMD5UntexturedPass (md5, lerpdata);
+	R_DrawMD5UntexturedPass (md5, lerpdata, color, entalpha * 0.5f,
+		Fog_GetDensity() > 0.0f);
 	glEnable (GL_TEXTURE_2D);
 	glDisable (GL_BLEND);
 	glDepthMask (GL_TRUE);
@@ -2736,6 +2811,7 @@ static void R_DrawMD3Model_ShowTris (entity_t *e)
 	aliashdr_t *md3;
 	lerpdata_t lerpdata;
 	float fovscale = 1.0f;
+	vec3_t color = {1, 1, 1};
 
 	if (R_CullModelForEntity(e))
 		return;
@@ -2755,7 +2831,7 @@ static void R_DrawMD3Model_ShowTris (entity_t *e)
 	GL_AliasBatch_End ();
 	shading = false;
 	glColor3f (1, 1, 1);
-	R_DrawMD3UntexturedPass (md3, lerpdata);
+	R_DrawMD3UntexturedPass (md3, lerpdata, color, 1.0f, false);
 	glPopMatrix ();
 }
 
@@ -2764,6 +2840,7 @@ static void R_DrawMD5Model_ShowTris (entity_t *e)
 	aliashdr_t *md5;
 	lerpdata_t lerpdata;
 	float fovscale = 1.0f;
+	vec3_t color = {1, 1, 1};
 
 	if (R_CullModelForEntity(e))
 		return;
@@ -2782,7 +2859,7 @@ static void R_DrawMD5Model_ShowTris (entity_t *e)
 	GL_AliasBatch_End ();
 	shading = false;
 	glColor3f (1, 1, 1);
-	R_DrawMD5UntexturedPass (md5, lerpdata);
+	R_DrawMD5UntexturedPass (md5, lerpdata, color, 1.0f, false);
 	glPopMatrix ();
 }
 
