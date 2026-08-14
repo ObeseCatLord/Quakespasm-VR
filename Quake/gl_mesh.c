@@ -441,6 +441,130 @@ Upload the given alias model's mesh to a VBO
 Original code by MH from RMQEngine
 ================
 */
+static void GLMesh_LoadMD3VertexBuffer (qmodel_t *m, const aliashdr_t *hdr)
+{
+	const aliashdr_t *surface;
+	const aliashdr_t *surfaces[MAX_MD3_SURFACES];
+	byte *vbodata;
+	unsigned short *indexdata;
+	GLuint meshvbo = 0, indexesvbo = 0;
+	int vboindexofs[MAX_MD3_SURFACES] = {0};
+	int vboxyzofs[MAX_MD3_SURFACES] = {0};
+	int vbostofs[MAX_MD3_SURFACES] = {0};
+	int numsurfaces = 0;
+	size_t totalvbosize = 0, totalindexsize = 0;
+	int i;
+
+	/*
+	 * MD3s have a separate vertex stream for each surface. Pack those streams
+	 * into one VBO/EBO pair, retaining per-surface offsets on qmodel rather
+	 * than modifying cache-backed alias headers.
+	 */
+	for (surface = hdr; surface && numsurfaces < MAX_MD3_SURFACES;
+		surface = surface->nextsurface ?
+		(const aliashdr_t *)((const byte *)surface + surface->nextsurface) : NULL)
+	{
+		if (surface->poseverttype != ALIAS_POSE_MD3 || !surface->numindexes ||
+			!surface->numverts || !surface->numposes)
+			return;
+		surfaces[numsurfaces++] = surface;
+	}
+	if (surface || !numsurfaces)
+		return;
+
+	for (i = 0; i < numsurfaces; i++)
+	{
+		size_t posebytes = (size_t)surfaces[i]->numposes * surfaces[i]->numverts * sizeof(md3vertex_t);
+		size_t stbytes = (size_t)surfaces[i]->numverts * sizeof(meshst_t);
+		size_t indexbytes = (size_t)surfaces[i]->numindexes * sizeof(unsigned short);
+
+		/* qmodel keeps byte offsets as int, so reject unaddressable buffers. */
+		if (posebytes > (size_t)INT_MAX || stbytes > (size_t)INT_MAX ||
+			indexbytes > (size_t)INT_MAX ||
+			totalvbosize > (size_t)INT_MAX - posebytes ||
+			totalvbosize + posebytes > (size_t)INT_MAX - stbytes ||
+			totalindexsize > (size_t)INT_MAX - indexbytes)
+			return;
+		totalvbosize += posebytes + stbytes;
+		totalindexsize += indexbytes;
+	}
+	if (!totalvbosize || !totalindexsize)
+		return;
+
+	vbodata = (byte *)malloc (totalvbosize);
+	if (!vbodata)
+		Sys_Error ("GLMesh_LoadMD3VertexBuffer: VBO allocation failed");
+
+	/* Pose data comes first so every pose stream has a simple byte offset. */
+	{
+		size_t offset = 0;
+		for (i = 0; i < numsurfaces; i++)
+		{
+			const md3vertex_t *verts = (const md3vertex_t *)((const byte *)surfaces[i] + surfaces[i]->vertexes);
+			size_t bytes = (size_t)surfaces[i]->numposes * surfaces[i]->numverts * sizeof(*verts);
+			vboxyzofs[i] = (int)offset;
+			memcpy (vbodata + offset, verts, bytes);
+			offset += bytes;
+		}
+		for (i = 0; i < numsurfaces; i++)
+		{
+			const meshst_t *st = (const meshst_t *)((const byte *)surfaces[i] + surfaces[i]->meshdesc);
+			size_t bytes = (size_t)surfaces[i]->numverts * sizeof(*st);
+			vbostofs[i] = (int)offset;
+			memcpy (vbodata + offset, st, bytes);
+			offset += bytes;
+		}
+	}
+
+	indexdata = (unsigned short *)malloc (totalindexsize);
+	if (!indexdata)
+	{
+		free (vbodata);
+		Sys_Error ("GLMesh_LoadMD3VertexBuffer: index allocation failed");
+	}
+	{
+		size_t offset = 0;
+		for (i = 0; i < numsurfaces; i++)
+		{
+			const unsigned short *indexes = (const unsigned short *)((const byte *)surfaces[i] + surfaces[i]->indexes);
+			size_t bytes = (size_t)surfaces[i]->numindexes * sizeof(*indexes);
+			vboindexofs[i] = (int)offset;
+			memcpy ((byte *)indexdata + offset, indexes, bytes);
+			offset += bytes;
+		}
+	}
+
+	GL_GenBuffersFunc (1, &indexesvbo);
+	GL_GenBuffersFunc (1, &meshvbo);
+	if (!indexesvbo || !meshvbo)
+	{
+		if (indexesvbo)
+			GL_DeleteBuffersFunc (1, &indexesvbo);
+		if (meshvbo)
+			GL_DeleteBuffersFunc (1, &meshvbo);
+		free (indexdata);
+		free (vbodata);
+		GL_ClearBufferBindings ();
+		return;
+	}
+
+	GL_BindBufferFunc (GL_ELEMENT_ARRAY_BUFFER, indexesvbo);
+	GL_BufferDataFunc (GL_ELEMENT_ARRAY_BUFFER, totalindexsize, indexdata, GL_STATIC_DRAW);
+	GL_BindBufferFunc (GL_ARRAY_BUFFER, meshvbo);
+	GL_BufferDataFunc (GL_ARRAY_BUFFER, totalvbosize, vbodata, GL_STATIC_DRAW);
+	free (indexdata);
+	free (vbodata);
+
+	GL_DeleteBuffersFunc (1, &m->md3meshindexesvbo);
+	GL_DeleteBuffersFunc (1, &m->md3meshvbo);
+	m->md3meshindexesvbo = indexesvbo;
+	m->md3meshvbo = meshvbo;
+	memcpy (m->md3vboindexofs, vboindexofs, sizeof(vboindexofs));
+	memcpy (m->md3vboxyzofs, vboxyzofs, sizeof(vboxyzofs));
+	memcpy (m->md3vbostofs, vbostofs, sizeof(vbostofs));
+	GL_ClearBufferBindings ();
+}
+
 void GLMesh_LoadVertexBuffer (qmodel_t *m, const aliashdr_t *hdr)
 {
 	int totalvbosize = 0;
@@ -452,7 +576,11 @@ void GLMesh_LoadVertexBuffer (qmodel_t *m, const aliashdr_t *hdr)
 
 	if (!gl_glsl_alias_able)
 		return;
-	/* MD3s are rendered through the fixed-function alias path. */
+	if (hdr->poseverttype == ALIAS_POSE_MD3)
+	{
+		GLMesh_LoadMD3VertexBuffer (m, hdr);
+		return;
+	}
 	if (hdr->poseverttype != ALIAS_POSE_MDL)
 		return;
 
@@ -568,10 +696,12 @@ void GLMesh_LoadVertexBuffers (void)
 		if (m->type != mod_alias) continue;
 
 		hdr = (const aliashdr_t *) Mod_Extradata (m);
-		if (hdr->poseverttype != ALIAS_POSE_MDL)
-			continue;
-		
-		GLMesh_LoadVertexBuffer (m, hdr);
+		if (hdr->poseverttype == ALIAS_POSE_MDL)
+			GLMesh_LoadVertexBuffer (m, hdr);
+
+		hdr = Mod_GetMD3Extradata (m);
+		if (hdr)
+			GLMesh_LoadVertexBuffer (m, hdr);
 	}
 }
 
@@ -600,6 +730,15 @@ void GLMesh_DeleteVertexBuffers (void)
 
 		GL_DeleteBuffersFunc (1, &m->meshindexesvbo);
 		m->meshindexesvbo = 0;
+
+		GL_DeleteBuffersFunc (1, &m->md3meshvbo);
+		m->md3meshvbo = 0;
+
+		GL_DeleteBuffersFunc (1, &m->md3meshindexesvbo);
+		m->md3meshindexesvbo = 0;
+		memset (m->md3vboindexofs, 0, sizeof(m->md3vboindexofs));
+		memset (m->md3vboxyzofs, 0, sizeof(m->md3vboxyzofs));
+		memset (m->md3vbostofs, 0, sizeof(m->md3vbostofs));
 	}
 
 	GL_ClearBufferBindings ();
