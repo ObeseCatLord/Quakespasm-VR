@@ -70,6 +70,192 @@ static msurface_t **r_novis_surface_cache_surfaces;
 static int r_novis_surface_cache_capacity;
 static int r_novis_surface_cache_num_surfaces;
 
+/*
+ * Legacy texture chains remain the compatibility path for water, sky,
+ * fences, debug modes, and brush models.  The normal GLSL world pass uses
+ * these map-stable texture buckets instead, so visibility only appends the
+ * surviving surfaces and never has to sort them per frame.
+ */
+static qmodel_t *r_world_material_model;
+static msurface_t *r_world_material_surfaces;
+static texture_t **r_world_material_textures;
+static unsigned int r_world_material_numsurfaces;
+static int r_world_material_numtextures;
+static int *r_world_material_heads;
+static int *r_world_material_next;
+static int *r_world_material_surface_ids;
+static qboolean r_world_material_lists_ready;
+static qboolean r_world_material_lists_warned;
+
+static int R_WorldMaterialTextureIndex(texture_t **keys, int *values,
+	unsigned int mask, texture_t *texture)
+{
+	unsigned int slot = ((uintptr_t)texture >> 4) * 2654435761U & mask;
+
+	while (keys[slot])
+	{
+		if (keys[slot] == texture)
+			return values[slot];
+		slot = (slot + 1) & mask;
+	}
+	return -1;
+}
+
+static qboolean R_EnsureWorldMaterialLists(qmodel_t *model)
+{
+	texture_t **keys;
+	int *values, *heads, *next, *surface_ids;
+	size_t lookup_capacity;
+	unsigned int i, slot;
+
+	if (!model || !model->surfaces || !model->textures ||
+		model->numsurfaces == 0 || model->numsurfaces > Q_MAXINT ||
+		model->numtextures <= 0 ||
+		(size_t)model->numsurfaces > SIZE_MAX / sizeof(*next) ||
+		(size_t)model->numtextures > SIZE_MAX / sizeof(*heads))
+		goto failed;
+
+	if (r_world_material_model == model &&
+		r_world_material_surfaces == model->surfaces &&
+		r_world_material_textures == model->textures &&
+		r_world_material_numsurfaces == model->numsurfaces &&
+		r_world_material_numtextures == model->numtextures &&
+		r_world_material_heads && r_world_material_next &&
+		r_world_material_surface_ids)
+		return true;
+
+	if ((size_t)model->numtextures > SIZE_MAX / 2)
+		goto failed;
+	lookup_capacity = 1;
+	while (lookup_capacity < (size_t)model->numtextures * 2)
+	{
+		if (lookup_capacity > SIZE_MAX / 2)
+			goto failed;
+		lookup_capacity <<= 1;
+	}
+	if (lookup_capacity > SIZE_MAX / sizeof(*keys) ||
+		lookup_capacity > SIZE_MAX / sizeof(*values))
+		goto failed;
+
+	keys = (texture_t **)calloc(lookup_capacity, sizeof(*keys));
+	values = (int *)malloc(lookup_capacity * sizeof(*values));
+	heads = (int *)malloc(model->numtextures * sizeof(*heads));
+	next = (int *)malloc(model->numsurfaces * sizeof(*next));
+	surface_ids = (int *)malloc(model->numsurfaces * sizeof(*surface_ids));
+	if (!keys || !values || !heads || !next || !surface_ids)
+	{
+		free(keys);
+		free(values);
+		free(heads);
+		free(next);
+		free(surface_ids);
+		goto failed;
+	}
+
+	for (i = 0; i < (unsigned int)model->numtextures; i++)
+	{
+		texture_t *texture = model->textures[i];
+
+		if (!texture)
+			continue;
+		slot = ((uintptr_t)texture >> 4) * 2654435761U &
+			(unsigned int)(lookup_capacity - 1);
+		while (keys[slot] && keys[slot] != texture)
+			slot = (slot + 1) & (unsigned int)(lookup_capacity - 1);
+		keys[slot] = texture;
+		values[slot] = (int)i;
+	}
+	for (i = 0; i < model->numsurfaces; i++)
+	{
+		texture_t *texture = model->surfaces[i].texinfo ?
+			model->surfaces[i].texinfo->texture : NULL;
+
+		surface_ids[i] = texture ? R_WorldMaterialTextureIndex(keys, values,
+			(unsigned int)(lookup_capacity - 1), texture) : -1;
+	}
+	free(keys);
+	free(values);
+
+	free(r_world_material_heads);
+	free(r_world_material_next);
+	free(r_world_material_surface_ids);
+	r_world_material_heads = heads;
+	r_world_material_next = next;
+	r_world_material_surface_ids = surface_ids;
+	r_world_material_model = model;
+	r_world_material_surfaces = model->surfaces;
+	r_world_material_textures = model->textures;
+	r_world_material_numsurfaces = model->numsurfaces;
+	r_world_material_numtextures = model->numtextures;
+	return true;
+
+failed:
+	r_world_material_lists_ready = false;
+	if (!r_world_material_lists_warned)
+	{
+		Con_Warning("world material lists disabled; using texture chains\n");
+		r_world_material_lists_warned = true;
+	}
+	return false;
+}
+
+static void R_ResetWorldMaterialLists(qmodel_t *model)
+{
+	int i;
+
+	r_world_material_lists_ready = false;
+	if (!R_EnsureWorldMaterialLists(model))
+		return;
+
+	for (i = 0; i < r_world_material_numtextures; i++)
+		r_world_material_heads[i] = -1;
+	r_world_material_lists_ready = true;
+}
+
+static int R_WorldMaterialSurfaceIndex(msurface_t *surf)
+{
+	uintptr_t base, offset;
+	size_t bytes;
+
+	if (!r_world_material_lists_ready || !surf ||
+		(size_t)r_world_material_numsurfaces >
+		SIZE_MAX / sizeof(*r_world_material_surfaces))
+		return -1;
+
+	base = (uintptr_t)r_world_material_surfaces;
+	bytes = r_world_material_numsurfaces * sizeof(*r_world_material_surfaces);
+	if ((uintptr_t)surf < base)
+		return -1;
+	offset = (uintptr_t)surf - base;
+	if (offset >= bytes || offset % sizeof(*r_world_material_surfaces) != 0)
+		return -1;
+	return (int)(offset / sizeof(*r_world_material_surfaces));
+}
+
+static qboolean R_WorldMaterialSurfaceEligible(msurface_t *surf)
+{
+	int index;
+
+	if (!surf || surf->flags & (SURF_DRAWTURB | SURF_DRAWTILED | SURF_NOTEXTURE |
+		SURF_DRAWFENCE))
+		return false;
+	index = R_WorldMaterialSurfaceIndex(surf);
+	return index >= 0 && r_world_material_surface_ids[index] >= 0 &&
+		r_world_material_surface_ids[index] < r_world_material_numtextures;
+}
+
+static void R_AppendWorldMaterialSurface(msurface_t *surf)
+{
+	int index, material;
+
+	if (!R_WorldMaterialSurfaceEligible(surf))
+		return;
+	index = R_WorldMaterialSurfaceIndex(surf);
+	material = r_world_material_surface_ids[index];
+	r_world_material_next[index] = r_world_material_heads[material];
+	r_world_material_heads[material] = index;
+}
+
 void R_InvalidateNoVisSurfaceCache(void)
 {
 	r_novis_surface_cache_model = NULL;
@@ -227,6 +413,7 @@ static void R_ChainNoVisSurfaceCache(qboolean perf)
 			rs_brushpolys++;
 			R_ChainSurface(surf, chain_world);
 			R_RenderDynamicLightmaps(surf);
+			R_AppendWorldMaterialSurface(surf);
 			if (perf)
 				r_perf_surfaces_chained++;
 			if (surf->texinfo->texture->warpimage)
@@ -380,6 +567,7 @@ static void R_VRSharedVisibilityChainSurfaces(qboolean perf)
 	for (i = 0; i < cl.worldmodel->numtextures; i++)
 		if (cl.worldmodel->textures[i])
 			cl.worldmodel->textures[i]->texturechains[chain_world] = NULL;
+	R_ResetWorldMaterialLists(cl.worldmodel);
 
 	for (i = 0; i < r_vr_sharedvis_num_surfaces; i++)
 	{
@@ -389,6 +577,7 @@ static void R_VRSharedVisibilityChainSurfaces(qboolean perf)
 			rs_brushpolys++;
 			R_ChainSurface(surf, chain_world);
 			R_RenderDynamicLightmaps(surf);
+			R_AppendWorldMaterialSurface(surf);
 			if (perf)
 				r_perf_surfaces_chained++;
 			if (surf->texinfo->texture->warpimage)
@@ -662,6 +851,7 @@ void R_MarkSurfaces (void)
 	for (i=0 ; i<cl.worldmodel->numtextures ; i++)
 		if (cl.worldmodel->textures[i])
 			cl.worldmodel->textures[i]->texturechains[chain_world] = NULL;
+	R_ResetWorldMaterialLists(cl.worldmodel);
 
 	// iterate through leaves, marking surfaces
 	leaf = &cl.worldmodel->leafs[1];
@@ -697,6 +887,7 @@ void R_MarkSurfaces (void)
 							rs_brushpolys++; //count wpolys here
 							R_ChainSurface(surf, chain_world);
 							R_RenderDynamicLightmaps(surf);
+							R_AppendWorldMaterialSurface(surf);
 							if (perf)
 								r_perf_surfaces_chained++;
 							if (surf->texinfo->texture->warpimage)
@@ -1553,13 +1744,98 @@ void GLWorld_CreateShaders (void)
 
 /*
 ================
+R_DrawWorldMaterialLists_GLSL
+
+Draw the normal opaque world surfaces from the per-view material buckets.
+Texture chains deliberately remain untouched here: they are still consumed
+by the legacy pass for fences and by the separate sky/water/debug paths.
+================
+*/
+static void R_DrawWorldMaterialLists_GLSL(qmodel_t *model)
+{
+	const int overbright = !!gl_overbright.value;
+	const int wide10bits = !!r_lightmapwide.value;
+	int i, index, lastlightmap;
+	msurface_t *s;
+	texture_t *t;
+	gltexture_t *fullbright;
+
+	GL_UseProgram(r_world_program);
+	GL_BindBuffer(GL_ARRAY_BUFFER, gl_bmodel_vbo);
+	GL_BindBuffer(GL_ELEMENT_ARRAY_BUFFER, gl_bmodel_ebo);
+
+	GL_EnableVertexAttribArrayFunc(vertAttrIndex);
+	GL_EnableVertexAttribArrayFunc(texCoordsAttrIndex);
+	GL_EnableVertexAttribArrayFunc(LMCoordsAttrIndex);
+	GL_VertexAttribPointerFunc(vertAttrIndex, 3, GL_FLOAT, GL_FALSE,
+		VERTEXSIZE * sizeof(float), ((float *)0));
+	GL_VertexAttribPointerFunc(texCoordsAttrIndex, 2, GL_FLOAT, GL_FALSE,
+		VERTEXSIZE * sizeof(float), ((float *)0) + 3);
+	GL_VertexAttribPointerFunc(LMCoordsAttrIndex, 2, GL_FLOAT, GL_FALSE,
+		VERTEXSIZE * sizeof(float), ((float *)0) + 5);
+
+	GL_Uniform1iFunc(texLoc, 0);
+	GL_Uniform1iFunc(LMTexLoc, 1);
+	GL_Uniform1iFunc(fullbrightTexLoc, 2);
+	GL_Uniform1iFunc(useOverbrightLoc, overbright);
+	GL_Uniform1iFunc(useAlphaTestLoc, 0);
+	GL_Uniform1iFunc(useLightmapWideLoc, wide10bits);
+	GL_Uniform1iFunc(useLightmapOnlyLoc, 0);
+	GL_Uniform1fFunc(alphaLoc, 1.0f);
+
+	for (i = 0; i < r_world_material_numtextures; i++)
+	{
+		if (r_world_material_heads[i] < 0 || !(t = model->textures[i]))
+			continue;
+
+		if (gl_fullbrights.value &&
+			(fullbright = R_TextureAnimation(t, 0)->fullbright))
+		{
+			GL_SelectTexture(GL_TEXTURE2);
+			GL_Bind(fullbright);
+			GL_Uniform1iFunc(useFullbrightTexLoc, 1);
+		}
+		else
+			GL_Uniform1iFunc(useFullbrightTexLoc, 0);
+
+		GL_SelectTexture(GL_TEXTURE0);
+		GL_Bind(R_TextureAnimation(t, 0)->gltexture);
+		R_ClearBatch();
+		lastlightmap = -1;
+		for (index = r_world_material_heads[i]; index >= 0;
+			index = r_world_material_next[index])
+		{
+			s = &model->surfaces[index];
+			if (s->lightmaptexturenum != lastlightmap)
+			{
+				R_FlushBatch();
+				GL_SelectTexture(GL_TEXTURE1);
+				GL_Bind(lightmaps[s->lightmaptexturenum].texture);
+				lastlightmap = s->lightmaptexturenum;
+			}
+			R_BatchSurface(s);
+			rs_brushpasses++;
+		}
+		R_FlushBatch();
+	}
+
+	GL_DisableVertexAttribArrayFunc(vertAttrIndex);
+	GL_DisableVertexAttribArrayFunc(texCoordsAttrIndex);
+	GL_DisableVertexAttribArrayFunc(LMCoordsAttrIndex);
+	GL_UseProgram(0);
+	GL_SelectTexture(GL_TEXTURE0);
+}
+
+/*
+================
 R_DrawTextureChains_GLSL -- ericw
 
 Draw lightmapped surfaces with fulbrights in one pass, using VBO.
 Requires 3 TMUs, OpenGL 2.0
 ================
 */
-void R_DrawTextureChains_GLSL (qmodel_t *model, entity_t *ent, texchain_t chain)
+static void R_DrawTextureChains_GLSL_Legacy(qmodel_t *model, entity_t *ent,
+	texchain_t chain, qboolean special_only)
 {
 	const float	entalpha = (ent != NULL) ?
 			 ENTALPHA_DECODE(ent->alpha) : 1.0f;
@@ -1629,6 +1905,8 @@ void R_DrawTextureChains_GLSL (qmodel_t *model, entity_t *ent, texchain_t chain)
 		lastlightmap = 0; // avoid compiler warning
 		for (s = t->texturechains[chain]; s; s = s->texturechain)
 		{
+			if (special_only && R_WorldMaterialSurfaceEligible(s))
+				continue;
 			if (!bound) //only bind once we are sure we need this texture
 			{
 				GL_SelectTexture (GL_TEXTURE0);
@@ -1670,6 +1948,23 @@ void R_DrawTextureChains_GLSL (qmodel_t *model, entity_t *ent, texchain_t chain)
 		glDepthMask (GL_TRUE);
 		glDisable (GL_BLEND);
 	}
+}
+
+static void R_DrawTextureChains_GLSL(qmodel_t *model, entity_t *ent,
+	texchain_t chain)
+{
+	if (model == cl.worldmodel && ent == NULL && chain == chain_world &&
+		r_world_material_lists_ready && r_world_material_model == model &&
+		r_world_material_surfaces == model->surfaces &&
+		r_world_material_textures == model->textures &&
+		r_world_material_numsurfaces == model->numsurfaces &&
+		r_world_material_numtextures == model->numtextures)
+	{
+		R_DrawWorldMaterialLists_GLSL(model);
+		R_DrawTextureChains_GLSL_Legacy(model, ent, chain, true);
+	}
+	else
+		R_DrawTextureChains_GLSL_Legacy(model, ent, chain, false);
 }
 
 /*
