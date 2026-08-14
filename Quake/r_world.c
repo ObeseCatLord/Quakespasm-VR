@@ -51,6 +51,195 @@ static int r_vr_sharedvis_misses;
 static int r_vr_sharedvis_fallbacks;
 static int r_vr_sharedvis_validation;
 
+/*
+ * BSP2 maps without a VIS lump make every leaf visible.  Their marksurface
+ * arrays can be much larger than the unique world surface set, so build the
+ * latter once per map and retain it as a conservative candidate list.  The
+ * per-view surface bounds and backface tests still happen every frame.
+ */
+static qmodel_t *r_novis_surface_cache_model;
+static mleaf_t *r_novis_surface_cache_leafs;
+static msurface_t *r_novis_surface_cache_model_surfaces;
+static msurface_t **r_novis_surface_cache_marksurfaces;
+static int r_novis_surface_cache_numleafs;
+static int r_novis_surface_cache_numsurfaces;
+static int r_novis_surface_cache_nummarksurfaces;
+static qboolean r_novis_surface_cache_oldskyleaf;
+static qboolean r_novis_surface_cache_ready;
+static msurface_t **r_novis_surface_cache_surfaces;
+static int r_novis_surface_cache_capacity;
+static int r_novis_surface_cache_num_surfaces;
+
+void R_InvalidateNoVisSurfaceCache(void)
+{
+	r_novis_surface_cache_model = NULL;
+	r_novis_surface_cache_leafs = NULL;
+	r_novis_surface_cache_model_surfaces = NULL;
+	r_novis_surface_cache_marksurfaces = NULL;
+	r_novis_surface_cache_numleafs = 0;
+	r_novis_surface_cache_numsurfaces = 0;
+	r_novis_surface_cache_nummarksurfaces = 0;
+	r_novis_surface_cache_oldskyleaf = false;
+	r_novis_surface_cache_ready = false;
+	r_novis_surface_cache_num_surfaces = 0;
+}
+
+static qboolean R_NoVisSurfaceCacheMatches(qmodel_t *worldmodel,
+	qboolean oldskyleaf)
+{
+	return r_novis_surface_cache_model == worldmodel &&
+		r_novis_surface_cache_leafs == worldmodel->leafs &&
+		r_novis_surface_cache_model_surfaces == worldmodel->surfaces &&
+		r_novis_surface_cache_marksurfaces == worldmodel->marksurfaces &&
+		r_novis_surface_cache_numleafs == worldmodel->numleafs &&
+		r_novis_surface_cache_numsurfaces == (int)worldmodel->numsurfaces &&
+		r_novis_surface_cache_nummarksurfaces == worldmodel->nummarksurfaces &&
+		r_novis_surface_cache_oldskyleaf == oldskyleaf;
+}
+
+static void R_NoVisSurfaceCacheSetMap(qmodel_t *worldmodel,
+	qboolean oldskyleaf)
+{
+	r_novis_surface_cache_model = worldmodel;
+	r_novis_surface_cache_leafs = worldmodel->leafs;
+	r_novis_surface_cache_model_surfaces = worldmodel->surfaces;
+	r_novis_surface_cache_marksurfaces = worldmodel->marksurfaces;
+	r_novis_surface_cache_numleafs = worldmodel->numleafs;
+	r_novis_surface_cache_numsurfaces = (int)worldmodel->numsurfaces;
+	r_novis_surface_cache_nummarksurfaces = worldmodel->nummarksurfaces;
+	r_novis_surface_cache_oldskyleaf = oldskyleaf;
+	r_novis_surface_cache_ready = false;
+	r_novis_surface_cache_num_surfaces = 0;
+}
+
+static qboolean R_EnsureNoVisSurfaceCache(void)
+{
+	qmodel_t *worldmodel;
+	msurface_t **surfaces;
+	msurface_t *surf, **mark;
+	mleaf_t *leaf;
+	byte *seen;
+	size_t surfacebytes;
+	uintptr_t surfaceoffset;
+	int i, j, surfaceindex;
+	qboolean oldskyleaf;
+
+	worldmodel = cl.worldmodel;
+	oldskyleaf = r_oldskyleaf.value != 0;
+	if (worldmodel->numsurfaces > Q_MAXINT)
+	{
+		Con_Warning("no-VIS surface cache disabled: %u surfaces exceeds cache limit\n",
+			worldmodel->numsurfaces);
+		return false;
+	}
+
+	if (R_NoVisSurfaceCacheMatches(worldmodel, oldskyleaf))
+	{
+		if (r_novis_surface_cache_ready)
+			return true;
+		/* Retry a failed build; it may have been due to transient allocation. */
+		r_novis_surface_cache_num_surfaces = 0;
+	}
+	else
+	{
+		R_NoVisSurfaceCacheSetMap(worldmodel, oldskyleaf);
+	}
+	if (worldmodel->numsurfaces == 0)
+	{
+		r_novis_surface_cache_ready = true;
+		return true;
+	}
+
+	if ((size_t)worldmodel->numsurfaces >
+		SIZE_MAX / sizeof(*r_novis_surface_cache_surfaces) ||
+		(size_t)worldmodel->numsurfaces >
+		SIZE_MAX / sizeof(*worldmodel->surfaces))
+		goto overflow;
+	surfacebytes = worldmodel->numsurfaces * sizeof(*worldmodel->surfaces);
+
+	if (r_novis_surface_cache_capacity < (int)worldmodel->numsurfaces)
+	{
+		surfaces = (msurface_t **)realloc(r_novis_surface_cache_surfaces,
+			worldmodel->numsurfaces * sizeof(*r_novis_surface_cache_surfaces));
+		if (!surfaces)
+			goto allocation_failed;
+		r_novis_surface_cache_surfaces = surfaces;
+		r_novis_surface_cache_capacity = worldmodel->numsurfaces;
+	}
+
+	seen = (byte *)calloc(worldmodel->numsurfaces, sizeof(*seen));
+	if (!seen)
+		goto allocation_failed;
+
+	leaf = &worldmodel->leafs[1];
+	for (i = 0; i < worldmodel->numleafs; i++, leaf++)
+	{
+		if (!oldskyleaf && leaf->contents == CONTENTS_SKY)
+			continue;
+		for (j = 0, mark = leaf->firstmarksurface;
+			j < leaf->nummarksurfaces; j++, mark++)
+		{
+			surf = *mark;
+			surfaceoffset = (uintptr_t)surf - (uintptr_t)worldmodel->surfaces;
+			if ((uintptr_t)surf < (uintptr_t)worldmodel->surfaces ||
+			surfaceoffset >= surfacebytes ||
+			surfaceoffset % sizeof(*worldmodel->surfaces) != 0)
+			{
+				free(seen);
+				Con_Warning("no-VIS surface cache disabled: invalid marksurface\n");
+				goto failed;
+			}
+			surfaceindex = surfaceoffset / sizeof(*worldmodel->surfaces);
+			if (!seen[surfaceindex])
+			{
+				seen[surfaceindex] = true;
+				r_novis_surface_cache_surfaces[
+					r_novis_surface_cache_num_surfaces++] = surf;
+			}
+		}
+	}
+
+	free(seen);
+	r_novis_surface_cache_ready = true;
+	return true;
+
+overflow:
+	Con_Warning("no-VIS surface cache disabled: allocation size overflow\n");
+	goto failed;
+
+allocation_failed:
+	Con_Warning("no-VIS surface cache disabled: allocation failed\n");
+failed:
+	return false;
+}
+
+static void R_ChainNoVisSurfaceCache(qboolean perf)
+{
+	msurface_t *surf;
+	int i;
+
+	for (i = 0; i < r_novis_surface_cache_num_surfaces; i++)
+	{
+		surf = r_novis_surface_cache_surfaces[i];
+		surf->visframe = r_visframecount;
+		if (!R_CullBox(surf->mins, surf->maxs) && !R_BackFaceCull(surf))
+		{
+			rs_brushpolys++;
+			R_ChainSurface(surf, chain_world);
+			R_RenderDynamicLightmaps(surf);
+			if (perf)
+				r_perf_surfaces_chained++;
+			if (surf->texinfo->texture->warpimage)
+				surf->texinfo->texture->update_warp = true;
+		}
+		else if (perf)
+			r_perf_surfaces_culled++;
+	}
+
+	if (perf)
+		r_perf_surfaces_unique += r_novis_surface_cache_num_surfaces;
+}
+
 static void R_VRSharedVisibilityInvalidate(qboolean validation)
 {
 	r_vr_sharedvis_built = false;
@@ -216,7 +405,7 @@ static qboolean R_BuildVRStereoVisibility(qboolean perf)
 	mleaf_t *leaf;
 	msurface_t *surf, **mark;
 	int entity_count, i, j, pvsbytes;
-	qboolean novis;
+	qboolean cache, novis;
 
 	if (R_VRSharedVisibilityLeafHasWaterPortal(r_vr_sharedvis_leaf[0]) ||
 		R_VRSharedVisibilityLeafHasWaterPortal(r_vr_sharedvis_leaf[1]))
@@ -225,6 +414,7 @@ static qboolean R_BuildVRStereoVisibility(qboolean perf)
 	pvsbytes = (cl.worldmodel->numleafs + 7) >> 3;
 	if (!R_VRSharedVisibilityEnsureStorage(pvsbytes))
 		return false;
+	cache = cl.worldmodel->visdata == NULL && R_EnsureNoVisSurfaceCache();
 
 	novis = r_novis.value ||
 		r_vr_sharedvis_leaf[0]->contents == CONTENTS_SOLID ||
@@ -266,7 +456,7 @@ static qboolean R_BuildVRStereoVisibility(qboolean perf)
 
 		if (perf)
 			r_perf_leaves_visible++;
-		if (r_oldskyleaf.value || leaf->contents != CONTENTS_SKY)
+		if (!cache && (r_oldskyleaf.value || leaf->contents != CONTENTS_SKY))
 		{
 			if (perf)
 				r_perf_marksurfaces_scanned += leaf->nummarksurfaces;
@@ -289,6 +479,19 @@ static qboolean R_BuildVRStereoVisibility(qboolean perf)
 			return false;
 		if (perf && leaf->efrags)
 			r_perf_efrag_leaves++;
+	}
+
+	if (cache)
+	{
+		r_vr_sharedvis_num_surfaces = r_novis_surface_cache_num_surfaces;
+		for (i = 0; i < r_vr_sharedvis_num_surfaces; i++)
+		{
+			surf = r_novis_surface_cache_surfaces[i];
+			surf->visframe = r_visframecount;
+			r_vr_sharedvis_surfaces[i] = surf;
+		}
+		if (perf)
+			r_perf_surfaces_unique += r_vr_sharedvis_num_surfaces;
 	}
 
 	for (i = 0; i < entity_count; i++)
@@ -371,7 +574,7 @@ void R_MarkSurfaces (void)
 	mleaf_t		*leaf;
 	msurface_t	*surf, **mark;
 	int			i, j;
-	qboolean	nearwaterportal;
+	qboolean	cache, nearwaterportal;
 	qboolean	perf;
 
 	perf = r_perfdebug.value != 0;
@@ -449,6 +652,9 @@ void R_MarkSurfaces (void)
 		if (perf)
 			r_perf_pvs_leaf++;
 	}
+	cache = cl.worldmodel->visdata == NULL && !nearwaterportal &&
+		!skyroom_drawing &&
+		R_EnsureNoVisSurfaceCache();
 
 	r_visframecount++;
 
@@ -474,7 +680,7 @@ void R_MarkSurfaces (void)
 				continue;
 			}
 
-			if (r_oldskyleaf.value || leaf->contents != CONTENTS_SKY)
+			if (!cache && (r_oldskyleaf.value || leaf->contents != CONTENTS_SKY))
 			{
 				if (perf)
 					r_perf_marksurfaces_scanned += leaf->nummarksurfaces;
@@ -511,6 +717,9 @@ void R_MarkSurfaces (void)
 			}
 		}
 	}
+
+	if (cache)
+		R_ChainNoVisSurfaceCache(perf);
 }
 
 //==============================================================================

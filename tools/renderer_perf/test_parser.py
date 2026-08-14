@@ -43,12 +43,18 @@ def main() -> int:
     vr0 = groups["vr/eye_0"]["by_tag"]["r_perfdebug"]["metrics"]["total"]
     assert vr0["count"] == 2
     assert_within("vr eye0 total p50", vr0["median"], 17.0)
-    vr0_inst_submit = groups["vr/eye_0"]["by_tag"]["r_perfdebug"]["metrics"]["aliasinstsub"]
+    vr0_inst_submit = groups["vr/eye_0"]["by_tag"]["r_perfdebug"]["metrics"]["draw.aliasinstsub"]
     assert vr0_inst_submit["count"] == 1
     assert_within("vr eye0 instanced submits p50", vr0_inst_submit["median"], 8.0)
-    vr0_inst_draw = groups["vr/eye_0"]["by_tag"]["r_perfdebug"]["metrics"]["aliasinstdraw"]
+    vr0_inst_draw = groups["vr/eye_0"]["by_tag"]["r_perfdebug"]["metrics"]["draw.aliasinstdraw"]
     assert vr0_inst_draw["count"] == 1
     assert_within("vr eye0 instanced draws p50", vr0_inst_draw["median"], 2.0)
+    vr0_snapshot_build = groups["vr/eye_0"]["by_tag"]["r_perfdebug"]["metrics"]["sharedents.build"]
+    assert vr0_snapshot_build["count"] == 1
+    assert_within("vr eye0 snapshot builds p50", vr0_snapshot_build["median"], 1.0)
+    vr1_snapshot_reuse = groups["vr/eye_1"]["by_tag"]["r_perfdebug"]["metrics"]["sharedents.reuse"]
+    assert vr1_snapshot_reuse["count"] == 1
+    assert_within("vr eye1 snapshot reuse", vr1_snapshot_reuse["median"], 1.0)
 
     eye0_total_cpu = groups["vr/eye_0"]["by_tag"]["r_vr_eyedebug"]["metrics"]["total_cpu"]
     assert eye0_total_cpu["count"] == 1
