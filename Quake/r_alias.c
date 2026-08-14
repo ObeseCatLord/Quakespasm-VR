@@ -70,7 +70,32 @@ typedef struct {
 } lerpdata_t;
 //johnfitz
 
+/*
+ * This deliberately only batches equal poses.  The compatibility alias VBO
+ * stores every pose as a separate vertex stream, so selecting different pose
+ * streams per instance needs buffer textures or shader storage that the
+ * baseline #version 110 renderer cannot rely on.  Transform and lighting do
+ * remain genuinely per-instance.
+ */
+#define MAX_ALIAS_INSTANCES 128
+typedef struct {
+	float matrix[16];
+	float shadeblend[4];
+	float lightalpha[4];
+} alias_instance_t;
+
+static alias_instance_t r_alias_instances[MAX_ALIAS_INSTANCES];
+static int r_alias_instance_count;
+static GLuint r_alias_instance_vbo;
+static qmodel_t *r_alias_instance_model;
+static aliashdr_t *r_alias_instance_hdr;
+static gltexture_t *r_alias_instance_texture;
+static short r_alias_instance_pose1;
+static short r_alias_instance_pose2;
+static qboolean r_alias_instance_overbright;
+
 static GLuint r_alias_program;
+static GLuint r_alias_instanced_program;
 static GLuint r_md3_program;
 static GLuint r_md5_program;
 static qboolean r_md3_glsl_active;
@@ -88,6 +113,8 @@ static GLint  fullbrightTexLoc;
 static GLint  useFullbrightTexLoc;
 static GLint  useOverbrightLoc;
 static GLint  useAlphaTestLoc;
+static GLint  instancedTexLoc;
+static GLint  instancedUseOverbrightLoc;
 
 static GLint  md3BlendLoc;
 static GLint  md3ShadevectorLoc;
@@ -109,6 +136,12 @@ static GLint  md5UseShadingLoc;
 #define pose2VertexAttrIndex 2
 #define pose2NormalAttrIndex 3
 #define texCoordsAttrIndex 4
+#define instanceMatrix0AttrIndex 5
+#define instanceMatrix1AttrIndex 6
+#define instanceMatrix2AttrIndex 7
+#define instanceMatrix3AttrIndex 8
+#define instanceShadeBlendAttrIndex 9
+#define instanceLightAlphaAttrIndex 10
 
 /*
 =============
@@ -118,10 +151,15 @@ Returns the offset of the first vertex's meshxyz_t.xyz in the vbo for the given
 model and pose.
 =============
 */
-static void *GLARB_GetXYZOffset (aliashdr_t *hdr, int pose)
+static void *GLARB_GetXYZOffsetForModel (qmodel_t *model, aliashdr_t *hdr, int pose)
 {
 	const int xyzoffs = offsetof (meshxyz_t, xyz);
-	return (void *) (currententity->model->vboxyzofs + (hdr->numverts_vbo * pose * sizeof (meshxyz_t)) + xyzoffs);
+	return (void *) (model->vboxyzofs + (hdr->numverts_vbo * pose * sizeof (meshxyz_t)) + xyzoffs);
+}
+
+static void *GLARB_GetXYZOffset (aliashdr_t *hdr, int pose)
+{
+	return GLARB_GetXYZOffsetForModel (currententity->model, hdr, pose);
 }
 
 /*
@@ -132,14 +170,23 @@ Returns the offset of the first vertex's meshxyz_t.normal in the vbo for the
 given model and pose.
 =============
 */
-static void *GLARB_GetNormalOffset (aliashdr_t *hdr, int pose)
+static void *GLARB_GetNormalOffsetForModel (qmodel_t *model, aliashdr_t *hdr, int pose)
 {
 	const int normaloffs = offsetof (meshxyz_t, normal);
-	return (void *)(currententity->model->vboxyzofs + (hdr->numverts_vbo * pose * sizeof (meshxyz_t)) + normaloffs);
+	return (void *)(model->vboxyzofs + (hdr->numverts_vbo * pose * sizeof (meshxyz_t)) + normaloffs);
 }
+
+static void *GLARB_GetNormalOffset (aliashdr_t *hdr, int pose)
+{
+	return GLARB_GetNormalOffsetForModel (currententity->model, hdr, pose);
+}
+
+static void GL_AliasInstanced_Flush (void);
 
 static void GL_AliasBatch_End (void)
 {
+	GL_AliasInstanced_Flush ();
+
 	if (!r_alias_glsl_batch_active)
 		return;
 
@@ -157,6 +204,254 @@ static void GL_AliasBatch_End (void)
 
 	r_alias_glsl_batch_active = false;
 	r_alias_glsl_batch_model = NULL;
+}
+
+static void AliasMatrixIdentity (float *m)
+{
+	memset (m, 0, 16 * sizeof (*m));
+	m[0] = m[5] = m[10] = m[15] = 1.0f;
+}
+
+static void AliasMatrixPostMultiply (float *m, const float *rhs)
+{
+	float result[16];
+	int column, row, k;
+
+	for (column = 0; column < 4; column++)
+		for (row = 0; row < 4; row++)
+		{
+			result[column * 4 + row] = 0.0f;
+			for (k = 0; k < 4; k++)
+				result[column * 4 + row] += m[k * 4 + row] * rhs[column * 4 + k];
+		}
+	memcpy (m, result, sizeof (result));
+}
+
+static void AliasMatrixPostTranslate (float *m, float x, float y, float z)
+{
+	float translate[16];
+	AliasMatrixIdentity (translate);
+	translate[12] = x;
+	translate[13] = y;
+	translate[14] = z;
+	AliasMatrixPostMultiply (m, translate);
+}
+
+static void AliasMatrixPostScale (float *m, float x, float y, float z)
+{
+	float scale[16];
+	AliasMatrixIdentity (scale);
+	scale[0] = x;
+	scale[5] = y;
+	scale[10] = z;
+	AliasMatrixPostMultiply (m, scale);
+}
+
+static void AliasMatrixPostRotate (float *m, float degrees, float x, float y, float z)
+{
+	float rotate[16];
+	float radians = degrees * (float)(M_PI / 180.0);
+	float c = cosf (radians);
+	float s = sinf (radians);
+
+	AliasMatrixIdentity (rotate);
+	if (z != 0.0f)
+	{
+		rotate[0] = c;
+		rotate[1] = s;
+		rotate[4] = -s;
+		rotate[5] = c;
+	}
+	else if (y != 0.0f)
+	{
+		rotate[0] = c;
+		rotate[2] = -s;
+		rotate[8] = s;
+		rotate[10] = c;
+	}
+	else
+	{
+		rotate[5] = c;
+		rotate[6] = s;
+		rotate[9] = -s;
+		rotate[10] = c;
+	}
+	AliasMatrixPostMultiply (m, rotate);
+}
+
+static void AliasInstanceBuildMatrix (float *matrix, const aliashdr_t *hdr,
+	const lerpdata_t *lerpdata, unsigned char scale)
+{
+	float entityscale = ENTSCALE_DECODE (scale);
+
+	AliasMatrixIdentity (matrix);
+	AliasMatrixPostTranslate (matrix, lerpdata->origin[0], lerpdata->origin[1], lerpdata->origin[2]);
+	AliasMatrixPostRotate (matrix, lerpdata->angles[1], 0.0f, 0.0f, 1.0f);
+	AliasMatrixPostRotate (matrix, -lerpdata->angles[0], 0.0f, 1.0f, 0.0f);
+	AliasMatrixPostRotate (matrix, lerpdata->angles[2], 1.0f, 0.0f, 0.0f);
+	AliasMatrixPostScale (matrix, entityscale, entityscale, entityscale);
+	AliasMatrixPostTranslate (matrix, hdr->scale_origin[0], hdr->scale_origin[1], hdr->scale_origin[2]);
+	AliasMatrixPostScale (matrix, hdr->scale[0], hdr->scale[1], hdr->scale[2]);
+}
+
+static qboolean GL_AliasInstanced_EnsureBuffer (void)
+{
+	if (r_alias_instance_vbo != 0)
+		return true;
+	if (!GL_GenBuffersFunc)
+		return false;
+	GL_GenBuffersFunc (1, &r_alias_instance_vbo);
+	return r_alias_instance_vbo != 0;
+}
+
+static qboolean GL_AliasInstanced_Available (void)
+{
+	return r_alias_batch_scope && r_alias_batching.value && r_alias_instanced_program != 0 &&
+		gl_caps.instancing != gl_capability_unavailable && gl_vbo_able &&
+		GL_DrawElementsInstancedFunc && GL_VertexAttribDivisorFunc &&
+		GL_BindBufferFunc && GL_BufferDataFunc && GL_BufferSubDataFunc &&
+		GL_GenBuffersFunc && GL_DeleteBuffersFunc;
+}
+
+static qboolean GL_AliasInstanced_KeyMatches (qmodel_t *model, aliashdr_t *hdr,
+	gltexture_t *texture, const lerpdata_t *lerpdata)
+{
+	return r_alias_instance_model == model && r_alias_instance_hdr == hdr &&
+		r_alias_instance_texture == texture &&
+		r_alias_instance_pose1 == lerpdata->pose1 &&
+		r_alias_instance_pose2 == lerpdata->pose2 &&
+		r_alias_instance_overbright == overbright;
+}
+
+static void GL_AliasInstanced_Flush (void)
+{
+	int i;
+	const size_t stride = sizeof (r_alias_instances[0]);
+
+	if (r_alias_instance_count == 0)
+		return;
+
+	GL_UseProgram (r_alias_instanced_program);
+	GL_BindBuffer (GL_ARRAY_BUFFER, r_alias_instance_model->meshvbo);
+	GL_BindBuffer (GL_ELEMENT_ARRAY_BUFFER, r_alias_instance_model->meshindexesvbo);
+
+	GL_EnableVertexAttribArrayFunc (texCoordsAttrIndex);
+	GL_EnableVertexAttribArrayFunc (pose1VertexAttrIndex);
+	GL_EnableVertexAttribArrayFunc (pose2VertexAttrIndex);
+	GL_EnableVertexAttribArrayFunc (pose1NormalAttrIndex);
+	GL_EnableVertexAttribArrayFunc (pose2NormalAttrIndex);
+	GL_VertexAttribPointerFunc (texCoordsAttrIndex, 2, GL_FLOAT, GL_FALSE, 0,
+		(void *)(intptr_t)r_alias_instance_model->vbostofs);
+	GL_VertexAttribPointerFunc (pose1VertexAttrIndex, 4, GL_UNSIGNED_BYTE, GL_FALSE,
+		sizeof (meshxyz_t), GLARB_GetXYZOffsetForModel (r_alias_instance_model, r_alias_instance_hdr, r_alias_instance_pose1));
+	GL_VertexAttribPointerFunc (pose2VertexAttrIndex, 4, GL_UNSIGNED_BYTE, GL_FALSE,
+		sizeof (meshxyz_t), GLARB_GetXYZOffsetForModel (r_alias_instance_model, r_alias_instance_hdr, r_alias_instance_pose2));
+	GL_VertexAttribPointerFunc (pose1NormalAttrIndex, 4, GL_BYTE, GL_TRUE,
+		sizeof (meshxyz_t), GLARB_GetNormalOffsetForModel (r_alias_instance_model, r_alias_instance_hdr, r_alias_instance_pose1));
+	GL_VertexAttribPointerFunc (pose2NormalAttrIndex, 4, GL_BYTE, GL_TRUE,
+		sizeof (meshxyz_t), GLARB_GetNormalOffsetForModel (r_alias_instance_model, r_alias_instance_hdr, r_alias_instance_pose2));
+
+	GL_BindBuffer (GL_ARRAY_BUFFER, r_alias_instance_vbo);
+	GL_BufferDataFunc (GL_ARRAY_BUFFER, r_alias_instance_count * stride, NULL, GL_STREAM_DRAW);
+	GL_BufferSubDataFunc (GL_ARRAY_BUFFER, 0, r_alias_instance_count * stride, r_alias_instances);
+	for (i = 0; i < 4; i++)
+	{
+		GLuint attrib = instanceMatrix0AttrIndex + i;
+		GL_EnableVertexAttribArrayFunc (attrib);
+		GL_VertexAttribPointerFunc (attrib, 4, GL_FLOAT, GL_FALSE, stride,
+			(void *)(intptr_t)(offsetof (alias_instance_t, matrix) + i * 4 * sizeof (float)));
+		GL_VertexAttribDivisorFunc (attrib, 1);
+	}
+	GL_EnableVertexAttribArrayFunc (instanceShadeBlendAttrIndex);
+	GL_VertexAttribPointerFunc (instanceShadeBlendAttrIndex, 4, GL_FLOAT, GL_FALSE,
+		stride, (void *)(intptr_t)offsetof (alias_instance_t, shadeblend));
+	GL_VertexAttribDivisorFunc (instanceShadeBlendAttrIndex, 1);
+	GL_EnableVertexAttribArrayFunc (instanceLightAlphaAttrIndex);
+	GL_VertexAttribPointerFunc (instanceLightAlphaAttrIndex, 4, GL_FLOAT, GL_FALSE,
+		stride, (void *)(intptr_t)offsetof (alias_instance_t, lightalpha));
+	GL_VertexAttribDivisorFunc (instanceLightAlphaAttrIndex, 1);
+
+	GL_Uniform1iFunc (instancedTexLoc, 0);
+	GL_Uniform1iFunc (instancedUseOverbrightLoc, r_alias_instance_overbright);
+	GL_SelectTexture (GL_TEXTURE0);
+	GL_Bind (r_alias_instance_texture);
+
+	if (r_perfdebug.value)
+	{
+		r_perf_alias_glsl_draws++;
+		r_perf_alias_batch_flushes++;
+	}
+	GL_DrawElementsInstancedFunc (GL_TRIANGLES, r_alias_instance_hdr->numindexes,
+		GL_UNSIGNED_SHORT, (void *)(intptr_t)r_alias_instance_model->vboindexofs,
+		r_alias_instance_count);
+	rs_aliaspasses += r_alias_instance_hdr->numtris * r_alias_instance_count;
+
+	for (i = 0; i < 4; i++)
+	{
+		GLuint attrib = instanceMatrix0AttrIndex + i;
+		GL_VertexAttribDivisorFunc (attrib, 0);
+		GL_DisableVertexAttribArrayFunc (attrib);
+	}
+	GL_VertexAttribDivisorFunc (instanceShadeBlendAttrIndex, 0);
+	GL_VertexAttribDivisorFunc (instanceLightAlphaAttrIndex, 0);
+	GL_DisableVertexAttribArrayFunc (instanceShadeBlendAttrIndex);
+	GL_DisableVertexAttribArrayFunc (instanceLightAlphaAttrIndex);
+	GL_DisableVertexAttribArrayFunc (texCoordsAttrIndex);
+	GL_DisableVertexAttribArrayFunc (pose1VertexAttrIndex);
+	GL_DisableVertexAttribArrayFunc (pose2VertexAttrIndex);
+	GL_DisableVertexAttribArrayFunc (pose1NormalAttrIndex);
+	GL_DisableVertexAttribArrayFunc (pose2NormalAttrIndex);
+	GL_UseProgram (0);
+	GL_SelectTexture (GL_TEXTURE0);
+
+	r_alias_instance_count = 0;
+	r_alias_instance_model = NULL;
+	r_alias_instance_hdr = NULL;
+	r_alias_instance_texture = NULL;
+}
+
+static void GL_AliasInstanced_Queue (entity_t *e, aliashdr_t *hdr,
+	const lerpdata_t *lerpdata, gltexture_t *texture)
+{
+	alias_instance_t *instance;
+
+	if (r_alias_glsl_batch_active)
+		GL_AliasBatch_End ();
+	if (r_alias_instance_count && !GL_AliasInstanced_KeyMatches (e->model, hdr, texture, lerpdata))
+		GL_AliasInstanced_Flush ();
+	if (r_alias_instance_count == MAX_ALIAS_INSTANCES)
+		GL_AliasInstanced_Flush ();
+	if (r_alias_instance_count == 0)
+	{
+		r_alias_instance_model = e->model;
+		r_alias_instance_hdr = hdr;
+		r_alias_instance_texture = texture;
+		r_alias_instance_pose1 = lerpdata->pose1;
+		r_alias_instance_pose2 = lerpdata->pose2;
+		r_alias_instance_overbright = overbright;
+	}
+
+	instance = &r_alias_instances[r_alias_instance_count++];
+	AliasInstanceBuildMatrix (instance->matrix, hdr, lerpdata, e->scale);
+	instance->shadeblend[0] = shadevector[0];
+	instance->shadeblend[1] = shadevector[1];
+	instance->shadeblend[2] = shadevector[2];
+	instance->shadeblend[3] = lerpdata->blend;
+	instance->lightalpha[0] = lightcolor[0];
+	instance->lightalpha[1] = lightcolor[1];
+	instance->lightalpha[2] = lightcolor[2];
+	instance->lightalpha[3] = entalpha;
+}
+
+void GLAlias_DeleteInstanceBuffer (void)
+{
+	if (r_alias_instance_vbo != 0 && GL_DeleteBuffersFunc)
+		GL_DeleteBuffersFunc (1, &r_alias_instance_vbo);
+	r_alias_instance_vbo = 0;
+	r_alias_instance_count = 0;
+	r_alias_instance_model = NULL;
+	r_alias_instance_hdr = NULL;
+	r_alias_instance_texture = NULL;
 }
 
 void R_BeginAliasBatchScope (void)
@@ -277,6 +572,7 @@ void GLAlias_CreateShaders (void)
 		"	gl_FragColor = result;\n"
 		"}\n";
 
+	r_alias_instanced_program = 0;
 	if (!gl_glsl_alias_able)
 		return;
 
@@ -293,6 +589,71 @@ void GLAlias_CreateShaders (void)
 		useFullbrightTexLoc = GL_GetUniformLocation (&r_alias_program, "UseFullbrightTex");
 		useOverbrightLoc = GL_GetUniformLocation (&r_alias_program, "UseOverbright");
 		useAlphaTestLoc = GL_GetUniformLocation (&r_alias_program, "UseAlphaTest");
+	}
+
+	{
+		const glsl_attrib_binding_t instancedBindings[] = {
+			{ "TexCoords", texCoordsAttrIndex },
+			{ "Pose1Vert", pose1VertexAttrIndex },
+			{ "Pose1Normal", pose1NormalAttrIndex },
+			{ "Pose2Vert", pose2VertexAttrIndex },
+			{ "Pose2Normal", pose2NormalAttrIndex },
+			{ "InstanceMatrix0", instanceMatrix0AttrIndex },
+			{ "InstanceMatrix1", instanceMatrix1AttrIndex },
+			{ "InstanceMatrix2", instanceMatrix2AttrIndex },
+			{ "InstanceMatrix3", instanceMatrix3AttrIndex },
+			{ "InstanceShadeBlend", instanceShadeBlendAttrIndex },
+			{ "InstanceLightAlpha", instanceLightAlphaAttrIndex }
+		};
+		const GLchar *instancedVertSource = \
+			"#version 110\n"
+			"attribute vec4 TexCoords;\n"
+			"attribute vec4 Pose1Vert;\n"
+			"attribute vec3 Pose1Normal;\n"
+			"attribute vec4 Pose2Vert;\n"
+			"attribute vec3 Pose2Normal;\n"
+			"attribute vec4 InstanceMatrix0;\n"
+			"attribute vec4 InstanceMatrix1;\n"
+			"attribute vec4 InstanceMatrix2;\n"
+			"attribute vec4 InstanceMatrix3;\n"
+			"attribute vec4 InstanceShadeBlend;\n"
+			"attribute vec4 InstanceLightAlpha;\n"
+			"varying float FogFragCoord;\n"
+			"float shadedot(vec3 normal, vec3 shadevector)\n"
+			"{\n"
+			"  float d = dot(normal, shadevector);\n"
+			"  return d < 0.0 ? 1.0 + d * (13.0 / 44.0) : 1.0 + d;\n"
+			"}\n"
+			"void main()\n"
+			"{\n"
+			"  vec4 vertex = mix(vec4(Pose1Vert.xyz, 1.0), vec4(Pose2Vert.xyz, 1.0), InstanceShadeBlend.w);\n"
+			"  gl_TexCoord[0] = TexCoords;\n"
+			"  gl_Position = gl_ModelViewProjectionMatrix * mat4(InstanceMatrix0, InstanceMatrix1, InstanceMatrix2, InstanceMatrix3) * vertex;\n"
+			"  FogFragCoord = gl_Position.w;\n"
+			"  gl_FrontColor = InstanceLightAlpha * vec4(vec3(mix(shadedot(Pose1Normal, InstanceShadeBlend.xyz), shadedot(Pose2Normal, InstanceShadeBlend.xyz), InstanceShadeBlend.w)), 1.0);\n"
+			"}\n";
+		const GLchar *instancedFragSource = \
+			"#version 110\n"
+			"uniform sampler2D Tex;\n"
+			"uniform bool UseOverbright;\n"
+			"varying float FogFragCoord;\n"
+			"void main()\n"
+			"{\n"
+			"  vec4 result = texture2D(Tex, gl_TexCoord[0].xy) * gl_Color;\n"
+			"  if (UseOverbright) result.rgb *= 2.0;\n"
+			"  result = clamp(result, 0.0, 1.0);\n"
+			"  float fog = exp(-gl_Fog.density * gl_Fog.density * FogFragCoord * FogFragCoord);\n"
+			"  result.rgb = mix(gl_Fog.color.rgb, result.rgb, clamp(fog, 0.0, 1.0));\n"
+			"  gl_FragColor = result;\n"
+			"}\n";
+
+		r_alias_instanced_program = GL_CreateProgram (instancedVertSource,
+			instancedFragSource, Q_COUNTOF(instancedBindings), instancedBindings);
+		if (r_alias_instanced_program != 0)
+		{
+			instancedTexLoc = GL_GetUniformLocation (&r_alias_instanced_program, "Tex");
+			instancedUseOverbrightLoc = GL_GetUniformLocation (&r_alias_instanced_program, "UseOverbright");
+		}
 	}
 
 	/*
@@ -1773,6 +2134,33 @@ void R_DrawAliasModel (entity_t *e)
 	}
 	if (!gl_fullbrights.value)
 		fb = NULL;
+
+	/*
+	 * The opaque sorted alias scope gives repeated, state-identical models a
+	 * safe ordering.  Keep every multipass, remapped, alpha-tested, viewmodel,
+	 * and cheat/debug path on the established renderer.
+	 */
+	if (GL_AliasInstanced_Available () &&
+		e != &cl.viewent && entalpha == 1.0f && !alphatest &&
+		!r_drawflat_cheatsafe && !r_fullbright_cheatsafe && !r_lightmap_cheatsafe &&
+		fb == NULL && tx != NULL && e->colormap == vid.colormap &&
+		e->model->meshvbo != 0 && e->model->meshindexesvbo != 0 &&
+		GL_AliasInstanced_EnsureBuffer ())
+	{
+		glPopMatrix ();
+		GL_AliasInstanced_Queue (e, paliashdr, &lerpdata, tx);
+		return;
+	}
+
+	/* A legacy draw must appear after any queued instance group.  It reached
+	 * this point with its own fixed-function model transform on the stack, so
+	 * briefly restore the view matrix before flushing the prior group. */
+	glPopMatrix ();
+	GL_AliasInstanced_Flush ();
+	glPushMatrix ();
+	R_RotateForEntity (lerpdata.origin, lerpdata.angles, e->scale);
+	glTranslatef (paliashdr->scale_origin[0], paliashdr->scale_origin[1] * fovscale, paliashdr->scale_origin[2] * fovscale);
+	glScalef (paliashdr->scale[0], paliashdr->scale[1] * fovscale, paliashdr->scale[2] * fovscale);
 
 	//
 	// draw it
