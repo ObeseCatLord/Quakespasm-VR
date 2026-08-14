@@ -170,6 +170,7 @@ PFNGLBUFFERDATAARBPROC GL_BufferDataFunc = NULL; //ericw
 PFNGLBUFFERSUBDATAARBPROC GL_BufferSubDataFunc = NULL; //ericw
 PFNGLDELETEBUFFERSARBPROC GL_DeleteBuffersFunc = NULL; //ericw
 PFNGLGENBUFFERSARBPROC GL_GenBuffersFunc = NULL; //ericw
+QS_PFNGLMULTIDRAWELEMENTSPROC GL_MultiDrawElementsFunc = NULL;
 
 QS_PFNGLCREATESHADERPROC GL_CreateShaderFunc = NULL; //ericw
 QS_PFNGLDELETESHADERPROC GL_DeleteShaderFunc = NULL; //ericw
@@ -1170,6 +1171,15 @@ static void GL_PrintCapabilityReport (void)
 static void GL_CheckExtensions (void)
 {
 	int swap_control;
+
+	/* This must be resolved for every context; world EBO batching falls back safely. */
+	GL_MultiDrawElementsFunc = NULL;
+	if (GL_HasVersion (1, 4))
+		GL_MultiDrawElementsFunc = (QS_PFNGLMULTIDRAWELEMENTSPROC)
+			SDL_GL_GetProcAddress ("glMultiDrawElements");
+	else if (GL_ParseExtensionList (gl_extensions, "GL_EXT_multi_draw_arrays"))
+		GL_MultiDrawElementsFunc = (QS_PFNGLMULTIDRAWELEMENTSPROC)
+			SDL_GL_GetProcAddress ("glMultiDrawElementsEXT");
 
 	// ARB_vertex_buffer_object
 	//

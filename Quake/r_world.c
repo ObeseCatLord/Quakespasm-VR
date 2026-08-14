@@ -677,29 +677,13 @@ static int R_NumTriangleIndicesForSurf (msurface_t *s)
 	return 3 * (s->numedges - 2);
 }
 
-/*
-================
-R_TriangleIndicesForSurf
-
-Writes out the triangle indices needed to draw s as a triangle list.
-The number of indices it will write is given by R_NumTriangleIndicesForSurf.
-================
-*/
-static void R_TriangleIndicesForSurf (msurface_t *s, unsigned int *dest)
-{
-	int i;
-	for (i=2; i<s->numedges; i++)
-	{
-		*dest++ = s->vbo_firstvert;
-		*dest++ = s->vbo_firstvert + i - 1;
-		*dest++ = s->vbo_firstvert + i;
-	}
-}
-
 #define MAX_BATCH_SIZE 65536
+#define MAX_BATCH_SURFACES (MAX_BATCH_SIZE / 3)
 
-static unsigned int vbo_indices[MAX_BATCH_SIZE];
 static unsigned int num_vbo_indices;
+static GLsizei vbo_batch_counts[MAX_BATCH_SURFACES];
+static const GLvoid *vbo_batch_offsets[MAX_BATCH_SURFACES];
+static unsigned int num_vbo_batch_surfaces;
 
 /*
 ================
@@ -709,21 +693,33 @@ R_ClearBatch
 static void R_ClearBatch (void)
 {
 	num_vbo_indices = 0;
+	num_vbo_batch_surfaces = 0;
 }
 
 /*
 ================
 R_FlushBatch
 
-Draw the current batch if non-empty and clears it, ready for more R_BatchSurface calls.
+Draw the current texture/lightmap batch from persistent EBO ranges.
 ================
 */
 static void R_FlushBatch (void)
 {
 	if (num_vbo_indices > 0)
 	{
-		glDrawElements (GL_TRIANGLES, num_vbo_indices, GL_UNSIGNED_INT, vbo_indices);
+		if (GL_MultiDrawElementsFunc)
+			GL_MultiDrawElementsFunc (GL_TRIANGLES, vbo_batch_counts,
+				GL_UNSIGNED_INT, vbo_batch_offsets, num_vbo_batch_surfaces);
+		else
+		{
+			unsigned int i;
+
+			for (i = 0; i < num_vbo_batch_surfaces; i++)
+				glDrawElements (GL_TRIANGLES, vbo_batch_counts[i], GL_UNSIGNED_INT,
+					vbo_batch_offsets[i]);
+		}
 		num_vbo_indices = 0;
+		num_vbo_batch_surfaces = 0;
 	}
 }
 
@@ -731,8 +727,7 @@ static void R_FlushBatch (void)
 ================
 R_BatchSurface
 
-Add the surface to the current batch, or just draw it immediately if we're not
-using VBOs.
+Add a surface to the current EBO batch.
 ================
 */
 static void R_BatchSurface (msurface_t *s)
@@ -745,13 +740,25 @@ static void R_BatchSurface (msurface_t *s)
 		return;
 	}
 
+	if (s->vbo_firstindex < 0)
+		Host_Error ("R_BatchSurface: invalid EBO offset");
+
 	if (num_surf_indices > MAX_BATCH_SIZE)
+	{
+		R_FlushBatch ();
+		glDrawElements (GL_TRIANGLES, num_surf_indices, GL_UNSIGNED_INT,
+			(const GLvoid *)(uintptr_t)((size_t)s->vbo_firstindex * sizeof(unsigned int)));
 		return;
+	}
 
-	if (num_vbo_indices + num_surf_indices > MAX_BATCH_SIZE)
-		R_FlushBatch();
+	if (num_vbo_indices + num_surf_indices > MAX_BATCH_SIZE ||
+		num_vbo_batch_surfaces == MAX_BATCH_SURFACES)
+		R_FlushBatch ();
 
-	R_TriangleIndicesForSurf (s, &vbo_indices[num_vbo_indices]);
+	vbo_batch_counts[num_vbo_batch_surfaces] = num_surf_indices;
+	vbo_batch_offsets[num_vbo_batch_surfaces] =
+		(const GLvoid *)(uintptr_t)((size_t)s->vbo_firstindex * sizeof(unsigned int));
+	num_vbo_batch_surfaces++;
 	num_vbo_indices += num_surf_indices;
 }
 
@@ -903,6 +910,7 @@ float GL_WaterAlphaForEntitySurface (entity_t *ent, msurface_t *s)
 
 static GLuint r_world_program;
 extern GLuint gl_bmodel_vbo;
+extern GLuint gl_bmodel_ebo;
 
 // uniforms used in vert shader
 
@@ -1038,7 +1046,7 @@ void R_DrawTextureChains_Water (qmodel_t *model, entity_t *ent, texchain_t chain
 
 		// Bind the buffers
 		GL_BindBuffer (GL_ARRAY_BUFFER, gl_bmodel_vbo);
-		GL_BindBuffer (GL_ELEMENT_ARRAY_BUFFER, 0);
+		GL_BindBuffer (GL_ELEMENT_ARRAY_BUFFER, gl_bmodel_ebo);
 
 		GL_EnableVertexAttribArrayFunc (vertAttrIndex);
 		GL_EnableVertexAttribArrayFunc (texCoordsAttrIndex);
@@ -1347,7 +1355,7 @@ void R_DrawTextureChains_GLSL (qmodel_t *model, entity_t *ent, texchain_t chain)
 
 // Bind the buffers
 	GL_BindBuffer (GL_ARRAY_BUFFER, gl_bmodel_vbo);
-	GL_BindBuffer (GL_ELEMENT_ARRAY_BUFFER, 0); // indices come from client memory!
+	GL_BindBuffer (GL_ELEMENT_ARRAY_BUFFER, gl_bmodel_ebo);
 
 	GL_EnableVertexAttribArrayFunc (vertAttrIndex);
 	GL_EnableVertexAttribArrayFunc (texCoordsAttrIndex);
@@ -1454,7 +1462,7 @@ void R_DrawLightmapChains_GLSL(qmodel_t* model, entity_t* ent, texchain_t chain)
 
 	// Bind the buffers
 	GL_BindBuffer(GL_ARRAY_BUFFER, gl_bmodel_vbo);
-	GL_BindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0); // indices come from client memory!
+	GL_BindBuffer(GL_ELEMENT_ARRAY_BUFFER, gl_bmodel_ebo);
 
 	GL_EnableVertexAttribArrayFunc(vertAttrIndex);
 	GL_EnableVertexAttribArrayFunc(texCoordsAttrIndex);
