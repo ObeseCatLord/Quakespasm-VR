@@ -71,6 +71,8 @@ typedef struct {
 //johnfitz
 
 static GLuint r_alias_program;
+static GLuint r_md3_program;
+static qboolean r_md3_glsl_active;
 
 // uniforms used in vert shader
 static GLint  blendLoc;
@@ -83,6 +85,14 @@ static GLint  fullbrightTexLoc;
 static GLint  useFullbrightTexLoc;
 static GLint  useOverbrightLoc;
 static GLint  useAlphaTestLoc;
+
+static GLint  md3BlendLoc;
+static GLint  md3ShadevectorLoc;
+static GLint  md3LightColorLoc;
+static GLint  md3TexLoc;
+static GLint  md3UseOverbrightLoc;
+static GLint  md3UseAlphaTestLoc;
+static GLint  md3UseShadingLoc;
 
 #define pose1VertexAttrIndex 0
 #define pose1NormalAttrIndex 1
@@ -273,6 +283,78 @@ void GLAlias_CreateShaders (void)
 		useFullbrightTexLoc = GL_GetUniformLocation (&r_alias_program, "UseFullbrightTex");
 		useOverbrightLoc = GL_GetUniformLocation (&r_alias_program, "UseOverbright");
 		useAlphaTestLoc = GL_GetUniformLocation (&r_alias_program, "UseAlphaTest");
+	}
+
+	/*
+	 * MD3 pose data is signed 1/64th-unit XYZ plus two packed normal angles,
+	 * so it cannot use the MDL alias program's byte-normal vertex format.
+	 */
+	{
+		const GLchar *md3VertSource = \
+			"#version 110\n"
+			"uniform float Blend;\n"
+			"uniform vec3 ShadeVector;\n"
+			"uniform vec4 LightColor;\n"
+			"uniform bool UseShading;\n"
+			"attribute vec4 TexCoords;\n"
+			"attribute vec3 Pose1Vert;\n"
+			"attribute vec2 Pose1Normal;\n"
+			"attribute vec3 Pose2Vert;\n"
+			"attribute vec2 Pose2Normal;\n"
+			"varying float FogFragCoord;\n"
+			"vec3 md3normal(vec2 latlong)\n"
+			"{\n"
+			"  float lat = latlong.x * (6.28318530718 / 255.0);\n"
+			"  float lng = latlong.y * (6.28318530718 / 255.0);\n"
+			"  return vec3(cos(lng) * sin(lat), sin(lng) * sin(lat), cos(lat));\n"
+			"}\n"
+			"float shadedot(vec3 normal)\n"
+			"{\n"
+			"  float d = dot(normal, ShadeVector);\n"
+			"  return d < 0.0 ? 1.0 + d * (13.0 / 44.0) : 1.0 + d;\n"
+			"}\n"
+			"void main()\n"
+			"{\n"
+			"  gl_TexCoord[0] = TexCoords;\n"
+			"  vec4 vertex = vec4(mix(Pose1Vert, Pose2Vert, Blend), 1.0);\n"
+			"  gl_Position = gl_ModelViewProjectionMatrix * vertex;\n"
+			"  FogFragCoord = gl_Position.w;\n"
+			"  if (UseShading)\n"
+			"    gl_FrontColor = LightColor * vec4(vec3(shadedot(normalize(mix(md3normal(Pose1Normal), md3normal(Pose2Normal), Blend)))), 1.0);\n"
+			"  else\n"
+			"    gl_FrontColor = LightColor;\n"
+			"}\n";
+		const GLchar *md3FragSource = \
+			"#version 110\n"
+			"uniform sampler2D Tex;\n"
+			"uniform bool UseOverbright;\n"
+			"uniform bool UseAlphaTest;\n"
+			"varying float FogFragCoord;\n"
+			"void main()\n"
+			"{\n"
+			"  vec4 result = texture2D(Tex, gl_TexCoord[0].xy);\n"
+			"  if (UseAlphaTest && result.a < 0.666) discard;\n"
+			"  result *= gl_Color;\n"
+			"  if (UseOverbright) result.rgb *= 2.0;\n"
+			"  result = clamp(result, 0.0, 1.0);\n"
+			"  float fog = exp(-gl_Fog.density * gl_Fog.density * FogFragCoord * FogFragCoord);\n"
+			"  result = mix(gl_Fog.color, result, clamp(fog, 0.0, 1.0));\n"
+			"  result.a = gl_Color.a;\n"
+			"  gl_FragColor = result;\n"
+			"}\n";
+
+		r_md3_program = GL_CreateProgram (md3VertSource, md3FragSource,
+			Q_COUNTOF(bindings), bindings);
+		if (r_md3_program != 0)
+		{
+			md3BlendLoc = GL_GetUniformLocation (&r_md3_program, "Blend");
+			md3ShadevectorLoc = GL_GetUniformLocation (&r_md3_program, "ShadeVector");
+			md3LightColorLoc = GL_GetUniformLocation (&r_md3_program, "LightColor");
+			md3TexLoc = GL_GetUniformLocation (&r_md3_program, "Tex");
+			md3UseOverbrightLoc = GL_GetUniformLocation (&r_md3_program, "UseOverbright");
+			md3UseAlphaTestLoc = GL_GetUniformLocation (&r_md3_program, "UseAlphaTest");
+			md3UseShadingLoc = GL_GetUniformLocation (&r_md3_program, "UseShading");
+		}
 	}
 }
 
@@ -777,6 +859,17 @@ static qboolean R_MD3UsesAlpha (aliashdr_t *surface, int skinnum)
 	return false;
 }
 
+static qboolean R_MD3HasFullbrights (aliashdr_t *surface, int skinnum)
+{
+	while (surface)
+	{
+		if (surface->fbtextures[R_MD3SurfaceSkin(surface, skinnum)][0])
+			return true;
+		surface = R_NextMD3Surface (surface);
+	}
+	return false;
+}
+
 static void R_SetViewModelColor (float alpha)
 {
 	if (vr_weaponcolor[0] != 1.0f || vr_weaponcolor[1] != 1.0f ||
@@ -794,6 +887,69 @@ static void R_MD3Normal (const md3vertex_t *vert, vec3_t normal)
 	normal[0] = cosf (lng) * sinf (lat);
 	normal[1] = sinf (lng) * sinf (lat);
 	normal[2] = cosf (lat);
+}
+
+static void *GLMD3_GetXYZOffset (const aliashdr_t *surface, int surfaceindex, int pose)
+{
+	return (void *)(intptr_t)((size_t)currententity->model->md3vboxyzofs[surfaceindex] +
+		(size_t)pose * surface->numverts * sizeof(md3vertex_t) + offsetof(md3vertex_t, xyz));
+}
+
+static void *GLMD3_GetNormalOffset (const aliashdr_t *surface, int surfaceindex, int pose)
+{
+	return (void *)(intptr_t)((size_t)currententity->model->md3vboxyzofs[surfaceindex] +
+		(size_t)pose * surface->numverts * sizeof(md3vertex_t) + offsetof(md3vertex_t, latlong));
+}
+
+static void GL_DrawMD3Frame_GLSL (const aliashdr_t *surface, int surfaceindex,
+	lerpdata_t lerpdata, gltexture_t *texture)
+{
+	float blend = lerpdata.pose1 != lerpdata.pose2 ? lerpdata.blend : 0.0f;
+
+	GL_UseProgram (r_md3_program);
+	GL_BindBuffer (GL_ARRAY_BUFFER, currententity->model->md3meshvbo);
+	GL_BindBuffer (GL_ELEMENT_ARRAY_BUFFER, currententity->model->md3meshindexesvbo);
+
+	GL_EnableVertexAttribArrayFunc (texCoordsAttrIndex);
+	GL_EnableVertexAttribArrayFunc (pose1VertexAttrIndex);
+	GL_EnableVertexAttribArrayFunc (pose2VertexAttrIndex);
+	GL_EnableVertexAttribArrayFunc (pose1NormalAttrIndex);
+	GL_EnableVertexAttribArrayFunc (pose2NormalAttrIndex);
+
+	GL_VertexAttribPointerFunc (texCoordsAttrIndex, 2, GL_FLOAT, GL_FALSE,
+		sizeof(meshst_t), (void *)(intptr_t)currententity->model->md3vbostofs[surfaceindex]);
+	GL_VertexAttribPointerFunc (pose1VertexAttrIndex, 3, GL_SHORT, GL_FALSE,
+		sizeof(md3vertex_t), GLMD3_GetXYZOffset(surface, surfaceindex, lerpdata.pose1));
+	GL_VertexAttribPointerFunc (pose2VertexAttrIndex, 3, GL_SHORT, GL_FALSE,
+		sizeof(md3vertex_t), GLMD3_GetXYZOffset(surface, surfaceindex, lerpdata.pose2));
+	GL_VertexAttribPointerFunc (pose1NormalAttrIndex, 2, GL_UNSIGNED_BYTE, GL_FALSE,
+		sizeof(md3vertex_t), GLMD3_GetNormalOffset(surface, surfaceindex, lerpdata.pose1));
+	GL_VertexAttribPointerFunc (pose2NormalAttrIndex, 2, GL_UNSIGNED_BYTE, GL_FALSE,
+		sizeof(md3vertex_t), GLMD3_GetNormalOffset(surface, surfaceindex, lerpdata.pose2));
+
+	GL_Uniform1fFunc (md3BlendLoc, blend);
+	GL_Uniform3fFunc (md3ShadevectorLoc, shadevector[0], shadevector[1], shadevector[2]);
+	GL_Uniform4fFunc (md3LightColorLoc, lightcolor[0], lightcolor[1], lightcolor[2], entalpha);
+	GL_Uniform1iFunc (md3TexLoc, 0);
+	GL_Uniform1iFunc (md3UseOverbrightLoc, overbright ? 1 : 0);
+	GL_Uniform1iFunc (md3UseAlphaTestLoc, R_MD3UsesAlpha((aliashdr_t *)surface, currententity->skinnum) ? 1 : 0);
+	GL_Uniform1iFunc (md3UseShadingLoc, shading ? 1 : 0);
+
+	GL_SelectTexture (GL_TEXTURE0);
+	GL_Bind (texture);
+	if (r_perfdebug.value)
+		r_perf_alias_glsl_draws++;
+	glDrawElements (GL_TRIANGLES, surface->numindexes, GL_UNSIGNED_SHORT,
+		(void *)(intptr_t)currententity->model->md3vboindexofs[surfaceindex]);
+
+	GL_DisableVertexAttribArrayFunc (texCoordsAttrIndex);
+	GL_DisableVertexAttribArrayFunc (pose1VertexAttrIndex);
+	GL_DisableVertexAttribArrayFunc (pose2VertexAttrIndex);
+	GL_DisableVertexAttribArrayFunc (pose1NormalAttrIndex);
+	GL_DisableVertexAttribArrayFunc (pose2NormalAttrIndex);
+	GL_UseProgram (0);
+	GL_SelectTexture (GL_TEXTURE0);
+	rs_aliaspasses += surface->numtris;
 }
 
 static void GL_DrawMD3Frame (aliashdr_t *surface, lerpdata_t lerpdata)
@@ -874,6 +1030,8 @@ static int R_MD3TriangleCount (aliashdr_t *surface)
 static void R_DrawMD3Pass (aliashdr_t *surface, lerpdata_t lerpdata,
 	int skinnum, qboolean fullbright)
 {
+	int surfaceindex = 0;
+
 	while (surface)
 	{
 		int skin = R_MD3SurfaceSkin (surface, skinnum);
@@ -882,10 +1040,16 @@ static void R_DrawMD3Pass (aliashdr_t *surface, lerpdata_t lerpdata,
 
 		if (texture || !fullbright)
 		{
-			GL_Bind (texture);
-			GL_DrawMD3Frame (surface, lerpdata);
+			if (r_md3_glsl_active && !fullbright)
+				GL_DrawMD3Frame_GLSL (surface, surfaceindex, lerpdata, texture);
+			else
+			{
+				GL_Bind (texture);
+				GL_DrawMD3Frame (surface, lerpdata);
+			}
 		}
 		surface = R_NextMD3Surface (surface);
+		surfaceindex++;
 	}
 }
 
@@ -960,6 +1124,17 @@ static void R_DrawMD3Model (entity_t *e, qboolean cull, qboolean viewmodel)
 	if (!viewmodel)
 		R_SetupAliasLighting (e);
 	GL_DisableMultitexture ();
+	/*
+	 * Keep the legacy path for all multi-pass and untextured special modes.
+	 * The GLSL slice is deliberately limited to the regular textured pass,
+	 * where it preserves the same pose lerp, lighting, alpha, overbright, and
+	 * fixed-function fog inputs without changing diagnostic render modes.
+	 */
+	r_md3_glsl_active = !viewmodel && !r_drawflat_cheatsafe &&
+		!r_lightmap_cheatsafe && !r_fullbright_cheatsafe &&
+		!(gl_fullbrights.value && R_MD3HasFullbrights(md3, skinnum)) &&
+		r_md3_program != 0 && e->model->md3meshvbo != 0 &&
+		e->model->md3meshindexesvbo != 0;
 
 	if (viewmodel)
 	{
@@ -1000,7 +1175,8 @@ static void R_DrawMD3Model (entity_t *e, qboolean cull, qboolean viewmodel)
 		else
 		{
 			R_DrawMD3Pass (md3, lerpdata, skinnum, false);
-			if (overbright)
+			/* The GLSL pass applies overbright in its fragment shader. */
+			if (overbright && !r_md3_glsl_active)
 			{
 				glEnable (GL_BLEND);
 				glBlendFunc (GL_ONE, GL_ONE);
@@ -1031,6 +1207,7 @@ static void R_DrawMD3Model (entity_t *e, qboolean cull, qboolean viewmodel)
 	}
 
 cleanup:
+	r_md3_glsl_active = false;
 	glTexEnvf (GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_REPLACE);
 	glHint (GL_PERSPECTIVE_CORRECTION_HINT, GL_NICEST);
 	glShadeModel (GL_FLAT);

@@ -548,6 +548,13 @@ typedef struct qmodel_s
 	int			vboxyzofs;      // offset in vbo of hdr->numposes*hdr->numverts_vbo meshxyz_t
 	int			vbostofs;       // offset in vbo of hdr->numverts_vbo meshst_t
 
+	/* MD3 surfaces share one pair of buffers but have independent pose streams. */
+	GLuint		md3meshvbo;
+	GLuint		md3meshindexesvbo;
+	int			md3vboindexofs[MAX_MD3_SURFACES];
+	int			md3vboxyzofs[MAX_MD3_SURFACES];
+	int			md3vbostofs[MAX_MD3_SURFACES];
+
 //
 // additional model data
 //

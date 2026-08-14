@@ -4427,6 +4427,7 @@ static qboolean Mod_LoadMD3Model (qmodel_t *mod, const byte *buffer, size_t file
 	Mod_SetExtraFlags (mod);
 	Mod_SetMD3Bounds (mod, mins, maxs);
 	Mod_RegisterAliasBuild (surfaces[0], true, mins, maxs);
+	GLMesh_LoadVertexBuffer (mod, surfaces[0]);
 	return true;
 }
 
