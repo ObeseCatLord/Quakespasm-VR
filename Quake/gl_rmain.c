@@ -54,6 +54,27 @@ static int r_vr_eye_index = 0;
 static int r_vr_eye_count = 1;
 static vec3_t r_vr_sort_origin;
 
+/*
+ * Kept private and non-owning: these pointers only describe cl_visedicts for
+ * one R_BeginVRFrame/R_EndVRFrame interval.  The second eye still performs
+ * every draw (and therefore culling, transforms and lighting) itself.
+ */
+typedef struct r_vr_entity_snapshot_s {
+  qboolean valid;
+  int stereo_sequence;
+  int candidate_count;
+  unsigned int candidate_hash;
+  entity_t *candidates[MAX_VISEDICTS];
+  entity_t *opaque_nonalias[MAX_VISEDICTS];
+  int opaque_nonalias_count;
+  entity_t *opaque_alias[MAX_VISEDICTS];
+  int opaque_alias_count;
+} r_vr_entity_snapshot_t;
+
+static r_vr_entity_snapshot_t r_vr_entity_snapshot;
+static int r_vr_entity_snapshot_sequence;
+static qboolean r_vr_entity_snapshot_second_eye_checked;
+
 float r_fovx, r_fovy; // johnfitz -- rendering fov may be different becuase of
                       // r_waterwarp and r_stereo
 
@@ -138,6 +159,11 @@ int r_perf_pvs_fat;
 int r_perf_pvs_novis;
 static int r_perf_stereo_frame_id = -1;
 static int r_perf_stereo_frame_next_id = 0;
+static int r_perf_entity_snapshot_builds;
+static int r_perf_entity_snapshot_reuses;
+static int r_perf_entity_snapshot_fallbacks;
+
+static void R_PrepareVREntitySnapshot(void);
 
 /* Kept private to the renderer: r_world.c owns the candidate cache itself. */
 extern void R_BeginVRStereoVisibility(void);
@@ -150,6 +176,9 @@ void R_BeginVRFrame(void) {
   r_vr_sort_origin_valid = false;
   r_vr_eye_index = 0;
   r_vr_eye_count = 2;
+  r_vr_entity_snapshot.valid = false;
+  r_vr_entity_snapshot_sequence++;
+  r_vr_entity_snapshot_second_eye_checked = false;
   R_BeginVRStereoVisibility();
   if (r_perfdebug.value != 0.0f)
     r_perf_stereo_frame_id = r_perf_stereo_frame_next_id++;
@@ -165,6 +194,8 @@ void R_EndVRFrame(void) {
   r_vr_sort_origin_valid = false;
   r_vr_eye_index = 0;
   r_vr_eye_count = 1;
+  r_vr_entity_snapshot.valid = false;
+  r_vr_entity_snapshot_second_eye_checked = false;
   R_EndVRStereoVisibility();
   if (r_perfdebug.value != 0.0f)
     r_perf_stereo_frame_id = -1;
@@ -249,6 +280,9 @@ static void R_PerfResetFrame(void) {
   r_perf_alias_batch_flushes = 0;
   r_perf_alias_instanced_submits = 0;
   r_perf_alias_instanced_draws = 0;
+  r_perf_entity_snapshot_builds = 0;
+  r_perf_entity_snapshot_reuses = 0;
+  r_perf_entity_snapshot_fallbacks = 0;
   r_perf_setup_calls = r_perf_scene_calls = 0;
   r_perf_entities_opaque = r_perf_entities_alpha = 0;
   r_perf_entities_alias = r_perf_entities_brush = r_perf_entities_sprite = 0;
@@ -319,7 +353,8 @@ static void R_PerfLogFrame(double total_ms) {
            "aliascull=%d aliasglsl=%d aliasflush=%d aliasinstsub=%d "
            "aliasinstdraw=%d sky=%.3f shadows=%.3f "
            "dlights=%.3f particles=%.3f outlines=%.3f viewmodel=%.3f "
-           "debugdraw=%.3f) sharedvis(hit=%d miss=%d fallback=%d validate=%d)\n",
+           "debugdraw=%.3f) sharedvis(hit=%d miss=%d fallback=%d validate=%d) "
+           "sharedents(build=%d reuse=%d fallback=%d)\n",
            cl.worldmodel ? cl.worldmodel->name : "<none>",
            (int)host_framecount, (int)vr_enabled.value, R_PerfDebugEye(),
            R_PerfDebugEyeCount(), R_IsVRStereoFrame() ? r_vr_eye_index : 0,
@@ -341,7 +376,8 @@ static void R_PerfLogFrame(double total_ms) {
            r_perf_shadows_ms, r_perf_dlights_ms, r_perf_particles_ms,
            r_perf_outlines_ms, r_perf_viewmodel_ms, r_perf_debugdraw_ms,
            sharedvis_hits, sharedvis_misses, sharedvis_fallbacks,
-           sharedvis_validation);
+           sharedvis_validation, r_perf_entity_snapshot_builds,
+           r_perf_entity_snapshot_reuses, r_perf_entity_snapshot_fallbacks);
 }
 
 static void R_PerfPollGPUTimers(void) {
@@ -859,6 +895,12 @@ void R_SetupView(void) {
   R_MarkSurfaces(); // johnfitz -- create texture chains from PVS
   R_PerfAdd(&r_perf_mark_ms, perf_mark_start);
 
+  /*
+   * Snapshot only the first normal eye after its candidate list has been
+   * rebuilt.  Skyrooms and every other view keep their independent list.
+   */
+  R_PrepareVREntitySnapshot();
+
   if (!skyroom_drawn) {
     perf_warp_start = R_PerfStart();
     R_UpdateWarpTextures(); // johnfitz -- do this before R_Clear
@@ -882,6 +924,8 @@ void R_SetupView(void) {
 R_DrawEntitiesOnList
 =============
 */
+static void R_DrawCurrentEntityOnList(void);
+
 static int R_AliasEntitySortCompare(const void *pa, const void *pb) {
   const entity_t *a = *(const entity_t *const *)pa;
   const entity_t *b = *(const entity_t *const *)pb;
@@ -905,6 +949,152 @@ static int R_AliasEntitySortCompare(const void *pa, const void *pb) {
   ak = (uintptr_t)a;
   bk = (uintptr_t)b;
   return (ak > bk) - (ak < bk);
+}
+
+static qboolean R_VREntitySnapshotHash(
+    const r_vr_entity_snapshot_t *expected, unsigned int *hash_out) {
+  unsigned int hash = 2166136261u;
+  entity_t *ent;
+  uintptr_t value;
+  int i;
+
+  hash ^= (unsigned int)cl_numvisedicts;
+  hash *= 16777619u;
+  for (i = 0; i < cl_numvisedicts; i++) {
+    ent = cl_visedicts[i];
+    if (expected && ent != expected->candidates[i])
+      return false;
+    value = (uintptr_t)ent;
+    hash ^= (unsigned int)value ^
+            (unsigned int)(value >> (sizeof(value) * 4));
+    hash *= 16777619u;
+    if (!ent)
+      continue;
+    value = (uintptr_t)ent->model;
+    hash ^= (unsigned int)value ^
+            (unsigned int)(value >> (sizeof(value) * 4));
+    hash *= 16777619u;
+    value = (uintptr_t)ent->colormap;
+    hash ^= (unsigned int)value ^
+            (unsigned int)(value >> (sizeof(value) * 4));
+    hash *= 16777619u;
+    hash ^= (unsigned int)ent->skinnum;
+    hash *= 16777619u;
+    hash ^= ent->alpha;
+    hash *= 16777619u;
+    if (ent->model) {
+      hash ^= (unsigned int)ent->model->type;
+      hash *= 16777619u;
+    }
+  }
+  *hash_out = hash;
+  return true;
+}
+
+static void R_PrepareVREntitySnapshot(void) {
+  r_vr_entity_snapshot_t *snapshot = &r_vr_entity_snapshot;
+  entity_t *ent;
+  int i;
+
+  if (!R_IsVRTwoEyeFrame() || !R_IsVRFirstEye() || skyroom_drawing ||
+      !r_drawentities.value || !r_alias_batching.value)
+    return;
+
+  if (snapshot->valid &&
+      snapshot->stereo_sequence == r_vr_entity_snapshot_sequence)
+    return;
+
+  snapshot->valid = false;
+  snapshot->opaque_nonalias_count = 0;
+  snapshot->opaque_alias_count = 0;
+  if (cl_numvisedicts < 0 || cl_numvisedicts > MAX_VISEDICTS)
+    return;
+
+  snapshot->candidate_count = cl_numvisedicts;
+  for (i = 0; i < snapshot->candidate_count; i++) {
+    ent = cl_visedicts[i];
+    if (!ent || !ent->model)
+      return;
+
+    snapshot->candidates[i] = ent;
+    if (ENTALPHA_DECODE(ent->alpha) < 1)
+      continue;
+    if (ent->model->type == mod_alias)
+      snapshot->opaque_alias[snapshot->opaque_alias_count++] = ent;
+    else
+      snapshot->opaque_nonalias[snapshot->opaque_nonalias_count++] = ent;
+  }
+
+  if (snapshot->opaque_alias_count > 1)
+    qsort(snapshot->opaque_alias, snapshot->opaque_alias_count,
+          sizeof(snapshot->opaque_alias[0]), R_AliasEntitySortCompare);
+
+  if (!R_VREntitySnapshotHash(NULL, &snapshot->candidate_hash))
+    return;
+  snapshot->stereo_sequence = r_vr_entity_snapshot_sequence;
+  snapshot->valid = true;
+  if (R_PerfActive())
+    r_perf_entity_snapshot_builds++;
+}
+
+static qboolean R_VREntitySnapshotMatches(void) {
+  const r_vr_entity_snapshot_t *snapshot = &r_vr_entity_snapshot;
+  unsigned int candidate_hash;
+
+  if (!snapshot->valid ||
+      snapshot->stereo_sequence != r_vr_entity_snapshot_sequence ||
+      r_vr_eye_count != 2 ||
+      cl_numvisedicts != snapshot->candidate_count ||
+      cl_numvisedicts < 0 || cl_numvisedicts > MAX_VISEDICTS)
+    return false;
+  return R_VREntitySnapshotHash(snapshot, &candidate_hash) &&
+         candidate_hash == snapshot->candidate_hash;
+}
+
+static qboolean R_CanUseVREntitySnapshot(void) {
+  if (!R_IsVRTwoEyeFrame() || skyroom_drawing || !r_alias_batching.value ||
+      (r_vr_eye_index != 0 && r_vr_eye_index != 1) ||
+      (r_vr_eye_index == 1 && r_vr_entity_snapshot_second_eye_checked))
+    return false;
+
+  if (r_vr_eye_index == 0 && r_vr_entity_snapshot.valid &&
+      r_vr_entity_snapshot.stereo_sequence == r_vr_entity_snapshot_sequence)
+    return true;
+
+  if (r_vr_eye_index == 0 || !R_VREntitySnapshotMatches()) {
+    r_vr_entity_snapshot.valid = false;
+    if (R_PerfActive())
+      r_perf_entity_snapshot_fallbacks++;
+    return false;
+  }
+
+  if (r_vr_eye_index == 1) {
+    r_vr_entity_snapshot_second_eye_checked = true;
+    if (R_PerfActive())
+      r_perf_entity_snapshot_reuses++;
+  }
+  return true;
+}
+
+static void R_DrawVREntitySnapshotOpaque(void) {
+  const r_vr_entity_snapshot_t *snapshot = &r_vr_entity_snapshot;
+  int i;
+
+  for (i = 0; i < snapshot->opaque_nonalias_count; i++) {
+    currententity = snapshot->opaque_nonalias[i];
+    if (currententity == &cl.entities[cl.viewentity])
+      currententity->angles[0] *= 0.3;
+    R_DrawCurrentEntityOnList();
+  }
+
+  R_BeginAliasBatchScope();
+  for (i = 0; i < snapshot->opaque_alias_count; i++) {
+    currententity = snapshot->opaque_alias[i];
+    if (currententity == &cl.entities[cl.viewentity])
+      currententity->angles[0] *= 0.3;
+    R_DrawAliasModel(currententity);
+  }
+  R_EndAliasBatchScope();
 }
 
 typedef struct sorted_alpha_entity_s {
@@ -980,6 +1170,12 @@ void R_DrawEntitiesOnList(qboolean alphapass) // johnfitz -- added parameter
       currententity = alpha_ents[i].ent;
       R_DrawCurrentEntityOnList();
     }
+    return;
+  }
+
+  /* Alpha sorting remains per-eye; this applies only opaque preclassification. */
+  if (!alphapass && R_CanUseVREntitySnapshot()) {
+    R_DrawVREntitySnapshotOpaque();
     return;
   }
 

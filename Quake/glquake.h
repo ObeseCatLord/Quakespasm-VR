@@ -398,6 +398,7 @@ void Fog_Init (void);
 void Fog_SetupState (void);
 
 void R_NewGame (void);
+void R_InvalidateNoVisSurfaceCache (void);
 
 void R_AnimateLight (void);
 void R_MarkSurfaces (void);
@@ -471,6 +472,7 @@ void R_EndVRFrame (void);
 qboolean R_IsVRStereoFrame (void);
 qboolean R_IsVRFirstEye (void);
 qboolean R_IsVRLastEye (void);
+qboolean R_IsVRTwoEyeFrame (void);
 const vec_t *R_VRStereoSortOrigin (void);
 
 void R_DrawWorld (void);

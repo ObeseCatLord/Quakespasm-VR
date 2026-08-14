@@ -361,6 +361,8 @@ void R_NewGame (void)
 {
 	int i;
 
+	R_InvalidateNoVisSurfaceCache ();
+
 	//clear playertexture pointers (the textures themselves were freed by texmgr_newgame)
 	for (i=0; i<MAX_SCOREBOARD; i++)
 		playertextures[i] = NULL;
@@ -431,6 +433,8 @@ R_NewMap
 void R_NewMap (void)
 {
 	int		i;
+
+	R_InvalidateNoVisSurfaceCache ();
 
 	for (i=0 ; i<256 ; i++)
 		d_lightstylevalue[i] = 264;		// normal light value
