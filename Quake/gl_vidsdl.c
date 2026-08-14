@@ -190,6 +190,8 @@ QS_PFNGLGETATTRIBLOCATIONPROC GL_GetAttribLocationFunc = NULL; //ericw
 QS_PFNGLVERTEXATTRIBPOINTERPROC GL_VertexAttribPointerFunc = NULL; //ericw
 QS_PFNGLENABLEVERTEXATTRIBARRAYPROC GL_EnableVertexAttribArrayFunc = NULL; //ericw
 QS_PFNGLDISABLEVERTEXATTRIBARRAYPROC GL_DisableVertexAttribArrayFunc = NULL; //ericw
+QS_PFNGLVERTEXATTRIBDIVISORPROC GL_VertexAttribDivisorFunc = NULL;
+QS_PFNGLDRAWELEMENTSINSTANCEDPROC GL_DrawElementsInstancedFunc = NULL;
 QS_PFNGLGETUNIFORMLOCATIONPROC GL_GetUniformLocationFunc = NULL; //ericw
 QS_PFNGLUNIFORM1IPROC GL_Uniform1iFunc = NULL; //ericw
 QS_PFNGLUNIFORM1FPROC GL_Uniform1fFunc = NULL; //ericw
@@ -890,6 +892,7 @@ static void VID_Restart (void)
 	R_ScaleView_DeleteTexture ();
 	R_GPUTimer_Shutdown ();
 	R_DeleteShaders ();
+	GLAlias_DeleteInstanceBuffer ();
 	GL_DeleteBModelVertexBuffer ();
 	GLMesh_DeleteVertexBuffers ();
 
@@ -1180,6 +1183,28 @@ static void GL_CheckExtensions (void)
 	else if (GL_ParseExtensionList (gl_extensions, "GL_EXT_multi_draw_arrays"))
 		GL_MultiDrawElementsFunc = (QS_PFNGLMULTIDRAWELEMENTSPROC)
 			SDL_GL_GetProcAddress ("glMultiDrawElementsEXT");
+
+	/* Resolve these for every context.  The alias renderer also checks the
+	 * capability inventory and leaves the legacy path active when either is
+	 * missing. */
+	GL_VertexAttribDivisorFunc = NULL;
+	GL_DrawElementsInstancedFunc = NULL;
+	if (gl_caps.instancing != gl_capability_unavailable)
+	{
+		GL_VertexAttribDivisorFunc = (QS_PFNGLVERTEXATTRIBDIVISORPROC)
+			SDL_GL_GetProcAddress ("glVertexAttribDivisor");
+		GL_DrawElementsInstancedFunc = (QS_PFNGLDRAWELEMENTSINSTANCEDPROC)
+			SDL_GL_GetProcAddress ("glDrawElementsInstanced");
+		if (!GL_VertexAttribDivisorFunc || !GL_DrawElementsInstancedFunc)
+		{
+			GL_VertexAttribDivisorFunc = (QS_PFNGLVERTEXATTRIBDIVISORPROC)
+				SDL_GL_GetProcAddress ("glVertexAttribDivisorARB");
+			GL_DrawElementsInstancedFunc = (QS_PFNGLDRAWELEMENTSINSTANCEDPROC)
+				SDL_GL_GetProcAddress ("glDrawElementsInstancedARB");
+		}
+		if (!GL_VertexAttribDivisorFunc || !GL_DrawElementsInstancedFunc)
+			Con_Warning ("Instanced alias rendering unavailable: missing OpenGL entry points\n");
+	}
 
 	// ARB_vertex_buffer_object
 	//
@@ -1642,6 +1667,7 @@ void	VID_Shutdown (void)
 	{
 		VID_Gamma_Shutdown (); //johnfitz
 		R_GPUTimer_Shutdown ();
+		GLAlias_DeleteInstanceBuffer ();
 #if defined(USE_SDL2)
 		SDL_GL_DeleteContext(gl_context);
 		gl_context = NULL;
