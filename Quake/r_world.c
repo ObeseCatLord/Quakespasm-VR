@@ -135,6 +135,9 @@ typedef struct
 	int command_count;
 } r_gpuworldmark_range_t;
 
+/* GL 4.3 guarantees at least this many work groups in X. */
+#define R_GPUWORLDMARK_MAX_WORKGROUPS_X 65535U
+
 typedef void (APIENTRYP r_gpuworldmark_get_buffer_sub_data_t) (GLenum target,
 	GLintptr offset, GLsizeiptr size, void *data);
 
@@ -475,6 +478,7 @@ void R_GPUWorldMarkContextLost(void)
 	R_GPUWorldMarkFreeResources();
 	r_gpuworldmark_program = 0; /* R_DeleteShaders owns the GL deletion. */
 	r_gpuworldmark_get_buffer_sub_data = NULL;
+	r_gpuworldmark_runtime_disabled = false;
 }
 
 static qboolean R_GPUWorldMarkResourcesMatch(qmodel_t *model)
@@ -883,10 +887,38 @@ static void R_GPUWorldMarkRefreshDynamicLightmaps(void)
 	r_gpuworldmark_lightmap_refresh_pending = false;
 }
 
-static void R_GPUWorldMarkDispatch(void)
+static void R_GPUWorldMarkDispatchFailed(const char *reason, GLenum error)
+{
+	if (!r_gpuworldmark_runtime_disabled)
+	{
+		if (error != GL_NO_ERROR)
+			Con_Warning("r_gpuworldmark: %s (GL error 0x%x); disabling GPU path\n",
+				reason, (unsigned int)error);
+		else
+			Con_Warning("r_gpuworldmark: %s; disabling GPU path\n", reason);
+	}
+	r_gpuworldmark_runtime_disabled = true;
+}
+
+static qboolean R_GPUWorldMarkDispatch(void)
 {
 	int i;
+	unsigned int workgroups;
+	GLenum error;
 
+	workgroups = r_gpuworldmark_num_commands / 64U +
+		(r_gpuworldmark_num_commands % 64U != 0);
+	if (workgroups > R_GPUWORLDMARK_MAX_WORKGROUPS_X)
+	{
+		R_GPUWorldMarkDispatchFailed("compute workgroup count exceeds GL4.3 limit",
+			GL_NO_ERROR);
+		return false;
+	}
+
+	/* Attribute errors to this compute setup/dispatch batch only. */
+	while ((error = glGetError()) != GL_NO_ERROR)
+		Con_DWarning("r_gpuworldmark: clearing pre-existing compute GL error 0x%x\n",
+			(unsigned int)error);
 	GL_UseProgram(r_gpuworldmark_program);
 	GL_Uniform1iFunc(r_gpuworldmark_surface_count_loc,
 		(GLint)r_gpuworldmark_num_commands);
@@ -899,11 +931,20 @@ static void R_GPUWorldMarkDispatch(void)
 		r_gpuworldmark_surface_buffer);
 	GL_BindBufferBaseFunc(GL_SHADER_STORAGE_BUFFER, 1,
 		r_gpuworldmark_command_buffer);
-	GL_DispatchComputeFunc((r_gpuworldmark_num_commands + 63U) / 64U, 1, 1);
+	GL_DispatchComputeFunc(workgroups, 1, 1);
 	GL_MemoryBarrierFunc(GL_COMMAND_BARRIER_BIT | GL_SHADER_STORAGE_BARRIER_BIT);
+	if ((error = glGetError()) != GL_NO_ERROR)
+	{
+		while (glGetError() != GL_NO_ERROR)
+			;
+		GL_UseProgram(0);
+		R_GPUWorldMarkDispatchFailed("compute dispatch failed", error);
+		return false;
+	}
 	if (r_perfdebug.value != 0.0f)
 		r_perf_gpuworld_dispatches++;
 	GL_UseProgram(0);
+	return true;
 }
 
 static void R_GPUWorldMarkCountValidationFailure(void)
@@ -1054,7 +1095,8 @@ static qboolean R_GPUWorldMarkTryMark(qboolean nearwaterportal, qboolean perf)
 	}
 	R_GPUWorldMarkRefreshDynamicLightmaps();
 	R_GPUWorldMarkChainSpecialSurfaces(perf);
-	R_GPUWorldMarkDispatch();
+	if (!R_GPUWorldMarkDispatch())
+		return false;
 	if (!R_GPUWorldMarkValidate())
 		return false;
 	r_gpuworldmark_frame_active = true;
