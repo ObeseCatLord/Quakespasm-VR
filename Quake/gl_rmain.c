@@ -201,6 +201,8 @@ int r_perf_alias_draws;
 int r_perf_alias_culled;
 int r_perf_alias_glsl_draws;
 int r_perf_alias_batch_flushes;
+int r_perf_alias_instanced_submits;
+int r_perf_alias_instanced_draws;
 
 static int r_perf_setup_calls;
 static int r_perf_scene_calls;
@@ -245,6 +247,8 @@ static void R_PerfResetFrame(void) {
   r_perf_surfaces_culled = r_perf_surfaces_chained = r_perf_efrag_leaves = 0;
   r_perf_alias_draws = r_perf_alias_culled = r_perf_alias_glsl_draws = 0;
   r_perf_alias_batch_flushes = 0;
+  r_perf_alias_instanced_submits = 0;
+  r_perf_alias_instanced_draws = 0;
   r_perf_setup_calls = r_perf_scene_calls = 0;
   r_perf_entities_opaque = r_perf_entities_alpha = 0;
   r_perf_entities_alias = r_perf_entities_brush = r_perf_entities_sprite = 0;
@@ -312,7 +316,8 @@ static void R_PerfLogFrame(double total_ms) {
            "cull=%d) marks=%d surf(unique=%d cull=%d chain=%d) efragleaf=%d "
            "ents(opaque=%d alpha=%d alias=%d brush=%d sprite=%d) "
            "draw(world=%.3f water=%.3f entopq=%.3f entalpha=%.3f aliasdraw=%d "
-           "aliascull=%d aliasglsl=%d aliasflush=%d sky=%.3f shadows=%.3f "
+           "aliascull=%d aliasglsl=%d aliasflush=%d aliasinstsub=%d "
+           "aliasinstdraw=%d sky=%.3f shadows=%.3f "
            "dlights=%.3f particles=%.3f outlines=%.3f viewmodel=%.3f "
            "debugdraw=%.3f) sharedvis(hit=%d miss=%d fallback=%d validate=%d)\n",
            cl.worldmodel ? cl.worldmodel->name : "<none>",
@@ -331,7 +336,8 @@ static void R_PerfLogFrame(double total_ms) {
            r_perf_entities_alias, r_perf_entities_brush, r_perf_entities_sprite,
            r_perf_world_ms, r_perf_water_ms, r_perf_entities_opaque_ms,
            r_perf_entities_alpha_ms, r_perf_alias_draws, r_perf_alias_culled,
-           r_perf_alias_glsl_draws, r_perf_alias_batch_flushes, r_perf_sky_ms,
+           r_perf_alias_glsl_draws, r_perf_alias_batch_flushes,
+           r_perf_alias_instanced_submits, r_perf_alias_instanced_draws, r_perf_sky_ms,
            r_perf_shadows_ms, r_perf_dlights_ms, r_perf_particles_ms,
            r_perf_outlines_ms, r_perf_viewmodel_ms, r_perf_debugdraw_ms,
            sharedvis_hits, sharedvis_misses, sharedvis_fallbacks,

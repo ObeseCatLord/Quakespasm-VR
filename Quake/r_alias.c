@@ -380,6 +380,7 @@ static void GL_AliasInstanced_Flush (void)
 	{
 		r_perf_alias_glsl_draws++;
 		r_perf_alias_batch_flushes++;
+		r_perf_alias_instanced_draws++;
 	}
 	GL_DrawElementsInstancedFunc (GL_TRIANGLES, r_alias_instance_hdr->numindexes,
 		GL_UNSIGNED_SHORT, (void *)(intptr_t)r_alias_instance_model->vboindexofs,
@@ -441,6 +442,8 @@ static void GL_AliasInstanced_Queue (entity_t *e, aliashdr_t *hdr,
 	instance->lightalpha[1] = lightcolor[1];
 	instance->lightalpha[2] = lightcolor[2];
 	instance->lightalpha[3] = entalpha;
+	if (r_perfdebug.value)
+		r_perf_alias_instanced_submits++;
 }
 
 void GLAlias_DeleteInstanceBuffer (void)

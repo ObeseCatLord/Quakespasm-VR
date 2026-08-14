@@ -421,6 +421,8 @@ extern int r_perf_alias_draws;
 extern int r_perf_alias_culled;
 extern int r_perf_alias_glsl_draws;
 extern int r_perf_alias_batch_flushes;
+extern int r_perf_alias_instanced_submits;
+extern int r_perf_alias_instanced_draws;
 
 void R_InitParticles (void);
 void R_DrawParticles (void);
