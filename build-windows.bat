@@ -7,7 +7,12 @@ if not exist "%VSWHERE%" (
     exit /b 1
 )
 
-for /f "usebackq tokens=*" %%i in (`"%VSWHERE%" -latest -requires Microsoft.Component.MSBuild -find MSBuild\**\Bin\amd64\MSBuild.exe`) do set MSBUILD=%%i
+set "MSBUILD="
+for /f "usebackq tokens=*" %%i in (`"%VSWHERE%" -latest -products * -find MSBuild\**\Bin\amd64\MSBuild.exe`) do set "MSBUILD=%%i"
+
+if not defined MSBUILD (
+    for /f "usebackq tokens=*" %%i in (`"%VSWHERE%" -latest -products * -find MSBuild\**\Bin\MSBuild.exe`) do set "MSBUILD=%%i"
+)
 
 if not defined MSBUILD (
     echo ERROR: MSBuild.exe not found via vswhere.
