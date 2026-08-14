@@ -756,6 +756,7 @@ void R_Clear(void) {
   if ((gl_clear.value || skyroom_drawing) && !skyroom_drawn)
     clearbits |= GL_COLOR_BUFFER_BIT;
   glClear(clearbits);
+  VR_DrawHiddenAreaDepthMask();
 }
 
 /*
