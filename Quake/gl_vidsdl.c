@@ -181,6 +181,13 @@ PFNGLBUFFERDATAARBPROC GL_BufferDataFunc = NULL; //ericw
 PFNGLBUFFERSUBDATAARBPROC GL_BufferSubDataFunc = NULL; //ericw
 PFNGLDELETEBUFFERSARBPROC GL_DeleteBuffersFunc = NULL; //ericw
 PFNGLGENBUFFERSARBPROC GL_GenBuffersFunc = NULL; //ericw
+PFNGLBUFFERSTORAGEPROC GL_BufferStorageFunc = NULL;
+PFNGLMAPBUFFERRANGEPROC GL_MapBufferRangeFunc = NULL;
+PFNGLUNMAPBUFFERPROC GL_UnmapBufferFunc = NULL;
+PFNGLFENCESYNCPROC GL_FenceSyncFunc = NULL;
+PFNGLCLIENTWAITSYNCPROC GL_ClientWaitSyncFunc = NULL;
+PFNGLDELETESYNCPROC GL_DeleteSyncFunc = NULL;
+PFNGLMEMORYBARRIERPROC GL_MemoryBarrierFunc = NULL;
 QS_PFNGLMULTIDRAWELEMENTSPROC GL_MultiDrawElementsFunc = NULL;
 
 QS_PFNGLCREATESHADERPROC GL_CreateShaderFunc = NULL; //ericw
@@ -905,6 +912,7 @@ static void VID_Restart (void)
 	GLSLGamma_DeleteTexture ();
 	R_ScaleView_DeleteTexture ();
 	R_GPUTimer_Shutdown ();
+	GL_FrameResources_Shutdown ();
 	R_DeleteShaders ();
 	GLAlias_DeleteInstanceBuffer ();
 	GL_DeleteBModelVertexBuffer ();
@@ -1191,6 +1199,30 @@ static void GL_PrintCapabilityReport (void)
 static void GL_CheckExtensions (void)
 {
 	int swap_control;
+
+	/* Persistent frame resources are optional as a group.  Do not use one
+	 * partially resolved entry point on compatibility contexts. */
+	GL_BufferStorageFunc = NULL;
+	GL_MapBufferRangeFunc = NULL;
+	GL_UnmapBufferFunc = NULL;
+	GL_FenceSyncFunc = NULL;
+	GL_ClientWaitSyncFunc = NULL;
+	GL_DeleteSyncFunc = NULL;
+	GL_MemoryBarrierFunc = NULL;
+	if (gl_caps.buffer_storage != gl_capability_unavailable)
+	{
+		GL_BufferStorageFunc = (PFNGLBUFFERSTORAGEPROC) SDL_GL_GetProcAddress ("glBufferStorage");
+		GL_MapBufferRangeFunc = (PFNGLMAPBUFFERRANGEPROC) SDL_GL_GetProcAddress ("glMapBufferRange");
+		GL_UnmapBufferFunc = (PFNGLUNMAPBUFFERPROC) SDL_GL_GetProcAddress ("glUnmapBuffer");
+		GL_FenceSyncFunc = (PFNGLFENCESYNCPROC) SDL_GL_GetProcAddress ("glFenceSync");
+		GL_ClientWaitSyncFunc = (PFNGLCLIENTWAITSYNCPROC) SDL_GL_GetProcAddress ("glClientWaitSync");
+		GL_DeleteSyncFunc = (PFNGLDELETESYNCPROC) SDL_GL_GetProcAddress ("glDeleteSync");
+		GL_MemoryBarrierFunc = (PFNGLMEMORYBARRIERPROC) SDL_GL_GetProcAddress ("glMemoryBarrier");
+		if (!GL_BufferStorageFunc || !GL_MapBufferRangeFunc || !GL_UnmapBufferFunc ||
+			!GL_FenceSyncFunc || !GL_ClientWaitSyncFunc || !GL_DeleteSyncFunc ||
+			!GL_MemoryBarrierFunc)
+			Con_Warning ("Persistent frame resources unavailable: missing OpenGL entry points\n");
+	}
 
 	/* This must be resolved for every context; world EBO batching falls back safely. */
 	GL_MultiDrawElementsFunc = NULL;
@@ -1659,6 +1691,7 @@ void GL_BeginRendering (int *x, int *y, int *width, int *height)
 	*x = *y = 0;
 	*width = vid.width;
 	*height = vid.height;
+	GL_FrameResources_Begin ();
 }
 
 /*
@@ -1668,6 +1701,7 @@ GL_EndRendering
 */
 void GL_EndRendering (void)
 {
+	GL_FrameResources_End ();
 	if (!scr_skipupdate)
 	{
 #if defined(USE_SDL2)
@@ -1685,6 +1719,7 @@ void	VID_Shutdown (void)
 	{
 		VID_Gamma_Shutdown (); //johnfitz
 		R_GPUTimer_Shutdown ();
+		GL_FrameResources_Shutdown ();
 		GLAlias_DeleteInstanceBuffer ();
 #if defined(USE_SDL2)
 		SDL_GL_DeleteContext(gl_context);

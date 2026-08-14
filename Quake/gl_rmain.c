@@ -354,7 +354,9 @@ static void R_PerfLogFrame(double total_ms) {
            "aliasinstdraw=%d sky=%.3f shadows=%.3f "
            "dlights=%.3f particles=%.3f outlines=%.3f viewmodel=%.3f "
            "debugdraw=%.3f) sharedvis(hit=%d miss=%d fallback=%d validate=%d) "
-           "sharedents(build=%d reuse=%d fallback=%d)\n",
+           "sharedents(build=%d reuse=%d fallback=%d) "
+           "frameres(upload_bytes=%zu high_water_bytes=%zu waits=%u "
+           "capacity_exhausted_uploads=%u fallback_uploads=%u)\n",
            cl.worldmodel ? cl.worldmodel->name : "<none>",
            (int)host_framecount, (int)vr_enabled.value, R_PerfDebugEye(),
            R_PerfDebugEyeCount(), R_IsVRStereoFrame() ? r_vr_eye_index : 0,
@@ -377,7 +379,12 @@ static void R_PerfLogFrame(double total_ms) {
            r_perf_outlines_ms, r_perf_viewmodel_ms, r_perf_debugdraw_ms,
            sharedvis_hits, sharedvis_misses, sharedvis_fallbacks,
            sharedvis_validation, r_perf_entity_snapshot_builds,
-           r_perf_entity_snapshot_reuses, r_perf_entity_snapshot_fallbacks);
+           r_perf_entity_snapshot_reuses, r_perf_entity_snapshot_fallbacks,
+           gl_frame_resource_stats.upload_bytes,
+           gl_frame_resource_stats.high_water_bytes,
+           gl_frame_resource_stats.waits,
+           gl_frame_resource_stats.wraps,
+           gl_frame_resource_stats.fallback_uploads);
 }
 
 static void R_PerfPollGPUTimers(void) {
