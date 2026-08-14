@@ -1201,6 +1201,7 @@ DEFINE_CVAR(vr_180_snap_turn, 1, CVAR_ARCHIVE);
 DEFINE_CVAR(vr_turn_speed, 2, CVAR_ARCHIVE);
 DEFINE_CVAR(vr_haptic, 1, CVAR_ARCHIVE);
 DEFINE_CVAR(vr_msaa, 4, CVAR_ARCHIVE);
+DEFINE_CVAR(vr_mirror, 1, CVAR_ARCHIVE);
 DEFINE_CVAR(vr_highprecision_targets, 1, CVAR_ARCHIVE);
 DEFINE_CVAR(vr_movement_mode, 0, CVAR_ARCHIVE);
 DEFINE_CVAR(vr_joystick_yaw_multi, 1.0, CVAR_ARCHIVE);
@@ -4360,6 +4361,7 @@ void VID_VR_Init() {
   Cvar_RegisterVariable(&vr_movement_mode);
   Cvar_RegisterVariable(&vr_movement_speed);
   Cvar_RegisterVariable(&vr_msaa);
+  Cvar_RegisterVariable(&vr_mirror);
   Cvar_RegisterVariable(&vr_highprecision_targets);
   Cvar_RegisterVariable(&vr_snap_turn);
   Cvar_RegisterVariable(&vr_180_snap_turn);
@@ -5457,25 +5459,35 @@ void VR_UpdateScreenContent() {
   R_EndVRFrame();
 
   // Blit mirror texture to backbuffer
-  const qboolean perf_debug = VR_PerfActive();
-  const qboolean perf_log_all = VR_PerfLogAll();
-  const double vr_mirror_start = perf_debug ? Sys_DoubleTime() : 0.0;
+  int mirror_mode = (int)vr_mirror.value;
+  if (mirror_mode < 0 || mirror_mode > 2) {
+    mirror_mode = (mirror_mode < 0) ? 0 : 2;
+  }
+  if (mirror_mode > 0) {
+    vr_eye_t *mirror_eye = &eyes[mirror_mode - 1];
+    const qboolean perf_debug = VR_PerfActive();
+    const qboolean perf_log_all = VR_PerfLogAll();
+    const double vr_mirror_start = perf_debug ? Sys_DoubleTime() : 0.0;
 
-  glBindFramebufferEXT(GL_READ_FRAMEBUFFER_EXT, eyes[0].fbo.framebuffer);
-  glBindFramebufferEXT(GL_DRAW_FRAMEBUFFER_EXT, 0);
-  glBlitFramebufferEXT(0, eyes[0].fbo.size.width, eyes[0].fbo.size.height, 0, 0,
-                       h, w, 0, GL_COLOR_BUFFER_BIT, GL_LINEAR);
-  glBindFramebufferEXT(GL_READ_FRAMEBUFFER_EXT, 0);
+    glBindFramebufferEXT(GL_READ_FRAMEBUFFER_EXT, mirror_eye->fbo.framebuffer);
+    glBindFramebufferEXT(GL_DRAW_FRAMEBUFFER_EXT, 0);
+    glBlitFramebufferEXT(0, mirror_eye->fbo.size.width,
+                         mirror_eye->fbo.size.height, 0, 0, h, w, 0,
+                         GL_COLOR_BUFFER_BIT, GL_LINEAR);
+    glBindFramebufferEXT(GL_READ_FRAMEBUFFER_EXT, 0);
 
-  if (perf_debug) {
-    double vr_mirror_ms = (Sys_DoubleTime() - vr_mirror_start) * 1000.0;
-    if (perf_log_all || vr_mirror_ms >= q_max(0.0f, r_perfdebug_min_ms.value)) {
-      DebugLog("r_vr_mirrordebug: map=%s mirror_cpu=%.3f eyesize=%ux%u target=%dx%d "
-               "msaa=%d\n",
-               cl.worldmodel ? cl.worldmodel->name : "<none>",
-               vr_mirror_ms, (unsigned int)eyes[0].fbo.size.width,
-               (unsigned int)eyes[0].fbo.size.height,
-               w, h, (int)vr_msaa.value);
+    if (perf_debug) {
+      double vr_mirror_ms = (Sys_DoubleTime() - vr_mirror_start) * 1000.0;
+      if (perf_log_all ||
+          vr_mirror_ms >= q_max(0.0f, r_perfdebug_min_ms.value)) {
+        DebugLog(
+            "r_vr_mirrordebug: map=%s mirror_cpu=%.3f mode=%d eyesize=%ux%u "
+            "target=%dx%d msaa=%d\n",
+            cl.worldmodel ? cl.worldmodel->name : "<none>", vr_mirror_ms,
+            mirror_mode, (unsigned int)mirror_eye->fbo.size.width,
+            (unsigned int)mirror_eye->fbo.size.height, w, h,
+            (int)vr_msaa.value);
+      }
     }
   }
 }
