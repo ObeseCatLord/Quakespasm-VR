@@ -263,6 +263,19 @@ static vr::TrackedDevicePose_t ovr_DevicePose[vr::k_unMaxTrackedDeviceCount];
 
 static vr_eye_t eyes[2];
 static vr_eye_t *current_eye = NULL;
+static qboolean vr_initialized = false;
+
+/* OpenVR supplies this mesh in normalized [0, 1] texture coordinates. Keep
+ * an NDC copy because it is rendered before R_SetupGL establishes the eye
+ * projection. */
+typedef struct {
+  GLfloat *vertices;
+  uint32_t triangle_count;
+} vr_hidden_area_mesh_t;
+
+#define VR_HIDDEN_AREA_MAX_TRIANGLES (1U << 20)
+
+static vr_hidden_area_mesh_t hidden_area_meshes[2];
 static vr_controller controllers[2];
 static vr_controller_render_model_t controller_render_models[2];
 static qboolean vr_adjust_suppressed_rtrigger = false;
@@ -273,6 +286,183 @@ static qboolean VR_AdjustWeaponConsumeTrigger(void);
 static void VR_AimOffsetToWorld(const vec3_t local, const vec3_t angles,
                                 float scale, vec3_t world);
 static void VR_FreeControllerRenderModels(void);
+
+static void VR_FreeHiddenAreaMeshes(void) {
+  int i;
+
+  for (i = 0; i < 2; ++i) {
+    free(hidden_area_meshes[i].vertices);
+    hidden_area_meshes[i].vertices = NULL;
+    hidden_area_meshes[i].triangle_count = 0;
+  }
+}
+
+static void VR_LoadHiddenAreaMesh(int eye_index) {
+  vr::HiddenAreaMesh_t source;
+  vr_hidden_area_mesh_t *destination;
+  size_t vertex_count;
+  size_t float_count;
+  size_t i;
+  float min_x = 0.0f, max_x = 0.0f;
+  float min_y = 0.0f, max_y = 0.0f;
+
+  if (eye_index < 0 || eye_index >= 2 || !ovrHMD)
+    return;
+
+  destination = &hidden_area_meshes[eye_index];
+  source = ovrHMD->GetHiddenAreaMesh(eyes[eye_index].eye,
+                                     vr::k_eHiddenAreaMesh_Standard);
+  if (!source.pVertexData || !source.unTriangleCount ||
+      source.unTriangleCount > VR_HIDDEN_AREA_MAX_TRIANGLES ||
+      source.unTriangleCount > SIZE_MAX / 3) {
+    Con_Printf("VR hidden-area mesh: %s eye unavailable\n",
+               eye_index == 0 ? "left" : "right");
+    return;
+  }
+
+  vertex_count = (size_t)source.unTriangleCount * 3;
+  if (vertex_count > SIZE_MAX / 2 ||
+      vertex_count * 2 > SIZE_MAX / sizeof(*destination->vertices)) {
+    Con_Warning("VR hidden-area mesh: %s eye is too large\n",
+                eye_index == 0 ? "left" : "right");
+    return;
+  }
+  float_count = vertex_count * 2;
+  destination->vertices = (GLfloat *)malloc(float_count *
+                                              sizeof(*destination->vertices));
+  if (!destination->vertices) {
+    Con_Warning("VR hidden-area mesh: %s eye allocation failed\n",
+                eye_index == 0 ? "left" : "right");
+    return;
+  }
+
+  for (i = 0; i < vertex_count; ++i) {
+    const float source_x = source.pVertexData[i].v[0];
+    const float source_y = source.pVertexData[i].v[1];
+
+    if (i == 0) {
+      min_x = max_x = source_x;
+      min_y = max_y = source_y;
+    } else {
+      min_x = q_min(min_x, source_x);
+      max_x = q_max(max_x, source_x);
+      min_y = q_min(min_y, source_y);
+      max_y = q_max(max_y, source_y);
+    }
+    /* Valve documents the source positions as normalized coordinates. */
+    destination->vertices[i * 2 + 0] = source_x * 2.0f - 1.0f;
+    destination->vertices[i * 2 + 1] = source_y * 2.0f - 1.0f;
+  }
+  destination->triangle_count = source.unTriangleCount;
+  Con_Printf("VR hidden-area mesh: %s eye %u triangles source=[%.4f..%.4f, %.4f..%.4f]\n",
+             eye_index == 0 ? "left" : "right",
+             (unsigned int)destination->triangle_count, min_x, max_x, min_y,
+             max_y);
+}
+
+/*
+ * OpenVR's Standard mesh covers pixels that lens distortion will discard.
+ * Writing depth zero there makes normal world draws fail early without
+ * requiring a stencil attachment on either the MSAA or resolve eye FBO.
+ */
+void VR_DrawHiddenAreaDepthMask(void) {
+  vr_hidden_area_mesh_t *mesh;
+  GLint matrix_mode;
+  GLint depth_func;
+  GLint current_program = 0;
+  GLboolean depth_write;
+  GLboolean color_mask[4];
+  GLdouble depth_range[2];
+  qboolean depth_test;
+  qboolean cull_face;
+  qboolean blend;
+  qboolean alpha_test;
+  qboolean texture_2d;
+  qboolean restore_program = false;
+  uint32_t i;
+
+  if (!vr_initialized || !vr_hidden_area.value || !current_eye ||
+      !R_IsVRStereoFrame() || current_eye->index < 0 ||
+      current_eye->index >= 2)
+    return;
+
+  mesh = &hidden_area_meshes[current_eye->index];
+  if (!mesh->vertices || !mesh->triangle_count)
+    return;
+
+  glGetIntegerv(GL_MATRIX_MODE, &matrix_mode);
+  glGetIntegerv(GL_DEPTH_FUNC, &depth_func);
+  glGetBooleanv(GL_DEPTH_WRITEMASK, &depth_write);
+  glGetBooleanv(GL_COLOR_WRITEMASK, color_mask);
+  glGetDoublev(GL_DEPTH_RANGE, depth_range);
+  depth_test = glIsEnabled(GL_DEPTH_TEST);
+  cull_face = glIsEnabled(GL_CULL_FACE);
+  blend = glIsEnabled(GL_BLEND);
+  alpha_test = glIsEnabled(GL_ALPHA_TEST);
+  texture_2d = glIsEnabled(GL_TEXTURE_2D);
+  if (GL_UseProgramFunc) {
+    glGetIntegerv(GL_CURRENT_PROGRAM, &current_program);
+    if (current_program) {
+      GL_UseProgram(0);
+      restore_program = true;
+    }
+  }
+
+  glMatrixMode(GL_PROJECTION);
+  glPushMatrix();
+  glLoadIdentity();
+  glMatrixMode(GL_MODELVIEW);
+  glPushMatrix();
+  glLoadIdentity();
+
+  glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
+  glEnable(GL_DEPTH_TEST);
+  glDepthMask(GL_TRUE);
+  glDepthFunc(GL_ALWAYS);
+  glDepthRange(0.0, 0.0);
+  glDisable(GL_CULL_FACE);
+  glDisable(GL_BLEND);
+  glDisable(GL_ALPHA_TEST);
+  glDisable(GL_TEXTURE_2D);
+
+  glBegin(GL_TRIANGLES);
+  for (i = 0; i < mesh->triangle_count * 3; ++i)
+    glVertex2fv(&mesh->vertices[i * 2]);
+  glEnd();
+
+  glColorMask(color_mask[0], color_mask[1], color_mask[2], color_mask[3]);
+  glDepthMask(depth_write);
+  glDepthFunc(depth_func);
+  glDepthRange(depth_range[0], depth_range[1]);
+  if (depth_test)
+    glEnable(GL_DEPTH_TEST);
+  else
+    glDisable(GL_DEPTH_TEST);
+  if (cull_face)
+    glEnable(GL_CULL_FACE);
+  else
+    glDisable(GL_CULL_FACE);
+  if (blend)
+    glEnable(GL_BLEND);
+  else
+    glDisable(GL_BLEND);
+  if (alpha_test)
+    glEnable(GL_ALPHA_TEST);
+  else
+    glDisable(GL_ALPHA_TEST);
+  if (texture_2d)
+    glEnable(GL_TEXTURE_2D);
+  else
+    glDisable(GL_TEXTURE_2D);
+
+  glMatrixMode(GL_MODELVIEW);
+  glPopMatrix();
+  glMatrixMode(GL_PROJECTION);
+  glPopMatrix();
+  glMatrixMode(matrix_mode);
+  if (restore_program)
+    GL_UseProgram((GLuint)current_program);
+}
 
 static void VR_SetTrigger(vr_controller *controller, int quakeKey,
                           qboolean down) {
@@ -308,7 +498,6 @@ static void VR_ReleaseControllerInputs(void) {
 static vec3_t lastOrientation = {0, 0, 0};
 static vec3_t lastAim = {0, 0, 0};
 
-static qboolean vr_initialized = false;
 extern "C" {
 int vr_weaponmenu_selection = -1;
 int vr_weaponmenu_selection_type = VR_WEAPONMENU_SELECTION_NONE;
@@ -1202,6 +1391,7 @@ DEFINE_CVAR(vr_turn_speed, 2, CVAR_ARCHIVE);
 DEFINE_CVAR(vr_haptic, 1, CVAR_ARCHIVE);
 DEFINE_CVAR(vr_msaa, 4, CVAR_ARCHIVE);
 DEFINE_CVAR(vr_mirror, 1, CVAR_ARCHIVE);
+DEFINE_CVAR(vr_hidden_area, 1, CVAR_ARCHIVE);
 DEFINE_CVAR(vr_highprecision_targets, 1, CVAR_ARCHIVE);
 DEFINE_CVAR(vr_movement_mode, 0, CVAR_ARCHIVE);
 DEFINE_CVAR(vr_joystick_yaw_multi, 1.0, CVAR_ARCHIVE);
@@ -4362,6 +4552,7 @@ void VID_VR_Init() {
   Cvar_RegisterVariable(&vr_movement_speed);
   Cvar_RegisterVariable(&vr_msaa);
   Cvar_RegisterVariable(&vr_mirror);
+  Cvar_RegisterVariable(&vr_hidden_area);
   Cvar_RegisterVariable(&vr_highprecision_targets);
   Cvar_RegisterVariable(&vr_snap_turn);
   Cvar_RegisterVariable(&vr_180_snap_turn);
@@ -4905,6 +5096,10 @@ qboolean VR_Enable() {
     eyes[i].fov_y = (atan(-UpTan) + atan(DownTan)) / M_PI_DIV_180;
   }
 
+  VR_FreeHiddenAreaMeshes();
+  for (int i = 0; i < 2; ++i)
+    VR_LoadHiddenAreaMesh(i);
+
   current_eye = &eyes[1];
 
   vr::VRCompositor()->SetTrackingSpace(vr::TrackingUniverseStanding);
@@ -4932,6 +5127,7 @@ void VID_VR_Disable() {
 
   VR_ReleaseControllerInputs();
   VR_FreeControllerRenderModels();
+  VR_FreeHiddenAreaMeshes();
   vr::VR_Shutdown();
   ovrHMD = NULL;
 
