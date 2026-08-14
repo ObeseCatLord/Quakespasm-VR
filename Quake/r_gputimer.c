@@ -17,6 +17,8 @@
 
 #define R_GPUTIMER_RING_SIZE 64
 #define R_GPUTIMER_FINALIZE_TIMEOUT_MS 25
+#define R_GPUTIMER_WALL_CLOCK_TOLERANCE_MS 5.0
+#define R_GPUTIMER_SYS_TIME_WRAP_SECONDS (4294967296.0 / 1000.0)
 
 typedef void (APIENTRY *r_gputimer_gen_queries_t)(GLsizei n, GLuint *ids);
 typedef void (APIENTRY *r_gputimer_delete_queries_t)(GLsizei n, const GLuint *ids);
@@ -31,6 +33,7 @@ typedef struct r_gputimer_query_s
 	GLuint id;
 	char name[R_GPUTIMER_NAME_MAX];
 	unsigned int sample_id;
+	double started_at;
 } r_gputimer_query_t;
 
 typedef struct r_gputimer_state_s
@@ -82,6 +85,25 @@ static void *R_GPUTimer_GetProc (r_gputimer_proc_resolver_t resolver, const char
 	if (!proc && arb_name)
 		proc = resolver (arb_name);
 	return proc;
+}
+
+static int R_GPUTimer_ResultIsPlausible (const r_gputimer_query_t *query,
+	unsigned long long nanoseconds)
+{
+	double elapsed = Sys_DoubleTime () - query->started_at;
+	double maximum_nanoseconds;
+
+	/*
+	 * GL_GPU_DISJOINT_EXT is defined only by the OpenGL ES
+	 * GL_EXT_disjoint_timer_query extension, not by the desktop core/ARB timer
+	 * query path used here.  A completed GL_TIME_ELAPSED result must therefore
+	 * fit within the host interval from BeginQuery through this poll.  The
+	 * tolerance covers SDL_GetTicks resolution and minor clock skew.
+	 */
+	if (elapsed < 0.0)
+		return 0; /* Sys_DoubleTime wrapped; reject an unbounded result. */
+	maximum_nanoseconds = (elapsed * 1000.0 + R_GPUTIMER_WALL_CLOCK_TOLERANCE_MS) * 1000000.0;
+	return (double) nanoseconds <= maximum_nanoseconds;
 }
 
 void R_GPUTimer_Init (const r_gputimer_config_t *config)
@@ -172,14 +194,20 @@ void R_GPUTimer_Shutdown (void)
 	R_GPUTimer_Flush ();
 	if (r_gputimer.count && r_gputimer.result_callback)
 	{
-		double deadline = Sys_DoubleTime () +
-			((double) R_GPUTIMER_FINALIZE_TIMEOUT_MS / 1000.0);
+		double started_at = Sys_DoubleTime ();
 
 		do
 		{
 			unsigned int completed_before = r_gputimer.stats.completed;
+			double elapsed;
+
 			R_GPUTimer_EmitAvailableResults ();
-			if (!r_gputimer.count || Sys_DoubleTime () >= deadline)
+			elapsed = Sys_DoubleTime () - started_at;
+			/* Sys_DoubleTime is SDL_GetTicks()/1000 and wraps every 2^32 ms. */
+			if (elapsed < 0.0)
+				elapsed += R_GPUTIMER_SYS_TIME_WRAP_SECONDS;
+			if (!r_gputimer.count || elapsed >=
+				((double) R_GPUTIMER_FINALIZE_TIMEOUT_MS / 1000.0))
 				break;
 			if (r_gputimer.stats.completed == completed_before)
 				Sys_Sleep (1);
@@ -246,6 +274,7 @@ void R_GPUTimer_Begin (const char *name, unsigned int sample_id)
 	slot = (r_gputimer.head + r_gputimer.count) % R_GPUTIMER_RING_SIZE;
 	q_strlcpy (r_gputimer.queries[slot].name, name, sizeof(r_gputimer.queries[slot].name));
 	r_gputimer.queries[slot].sample_id = sample_id;
+	r_gputimer.queries[slot].started_at = Sys_DoubleTime ();
 	r_gputimer.BeginQuery (GL_TIME_ELAPSED, r_gputimer.queries[slot].id);
 	r_gputimer.active_slot = slot;
 	r_gputimer.active = 1;
@@ -288,20 +317,31 @@ int R_GPUTimer_Poll (r_gputimer_result_t *result)
 	if (!r_gputimer.available || !result || !r_gputimer.count)
 		return 0;
 
-	query = &r_gputimer.queries[r_gputimer.head];
-	r_gputimer.GetQueryObjectiv (query->id, GL_QUERY_RESULT_AVAILABLE, &available);
-	if (!available)
-		return 0;
+	while (r_gputimer.count)
+	{
+		query = &r_gputimer.queries[r_gputimer.head];
+		r_gputimer.GetQueryObjectiv (query->id, GL_QUERY_RESULT_AVAILABLE, &available);
+		if (!available)
+			return 0;
 
-	/* GL_QUERY_RESULT is safe only after GL_QUERY_RESULT_AVAILABLE is true. */
-	r_gputimer.GetQueryObjectui64v (query->id, GL_QUERY_RESULT, &nanoseconds);
-	q_strlcpy (result->name, query->name, sizeof(result->name));
-	result->sample_id = query->sample_id;
-	result->milliseconds = (double) nanoseconds / 1000000.0;
-	r_gputimer.head = (r_gputimer.head + 1) % R_GPUTIMER_RING_SIZE;
-	r_gputimer.count--;
-	r_gputimer.stats.completed++;
-	return 1;
+		/* GL_QUERY_RESULT is safe only after GL_QUERY_RESULT_AVAILABLE is true. */
+		r_gputimer.GetQueryObjectui64v (query->id, GL_QUERY_RESULT, &nanoseconds);
+		r_gputimer.head = (r_gputimer.head + 1) % R_GPUTIMER_RING_SIZE;
+		r_gputimer.count--;
+		if (!R_GPUTimer_ResultIsPlausible (query, nanoseconds))
+		{
+			r_gputimer.stats.invalid++;
+			continue;
+		}
+
+		q_strlcpy (result->name, query->name, sizeof(result->name));
+		result->sample_id = query->sample_id;
+		result->milliseconds = (double) nanoseconds / 1000000.0;
+		r_gputimer.stats.completed++;
+		return 1;
+	}
+
+	return 0;
 }
 
 void R_GPUTimer_GetStats (r_gputimer_stats_t *stats)
