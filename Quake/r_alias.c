@@ -72,7 +72,10 @@ typedef struct {
 
 static GLuint r_alias_program;
 static GLuint r_md3_program;
+static GLuint r_md5_program;
 static qboolean r_md3_glsl_active;
+static qboolean r_md3_glsl_alphatest;
+static qboolean r_md5_glsl_active;
 
 // uniforms used in vert shader
 static GLint  blendLoc;
@@ -93,6 +96,13 @@ static GLint  md3TexLoc;
 static GLint  md3UseOverbrightLoc;
 static GLint  md3UseAlphaTestLoc;
 static GLint  md3UseShadingLoc;
+
+static GLint  md5BlendLoc;
+static GLint  md5ShadevectorLoc;
+static GLint  md5LightColorLoc;
+static GLint  md5TexLoc;
+static GLint  md5UseAlphaTestLoc;
+static GLint  md5UseShadingLoc;
 
 #define pose1VertexAttrIndex 0
 #define pose1NormalAttrIndex 1
@@ -333,13 +343,12 @@ void GLAlias_CreateShaders (void)
 			"void main()\n"
 			"{\n"
 			"  vec4 result = texture2D(Tex, gl_TexCoord[0].xy);\n"
-			"  if (UseAlphaTest && result.a < 0.666) discard;\n"
 			"  result *= gl_Color;\n"
+			"  if (UseAlphaTest && result.a < 0.666) discard;\n"
 			"  if (UseOverbright) result.rgb *= 2.0;\n"
 			"  result = clamp(result, 0.0, 1.0);\n"
 			"  float fog = exp(-gl_Fog.density * gl_Fog.density * FogFragCoord * FogFragCoord);\n"
-			"  result = mix(gl_Fog.color, result, clamp(fog, 0.0, 1.0));\n"
-			"  result.a = gl_Color.a;\n"
+			"  result.rgb = mix(gl_Fog.color.rgb, result.rgb, clamp(fog, 0.0, 1.0));\n"
 			"  gl_FragColor = result;\n"
 			"}\n";
 
@@ -354,6 +363,65 @@ void GLAlias_CreateShaders (void)
 			md3UseOverbrightLoc = GL_GetUniformLocation (&r_md3_program, "UseOverbright");
 			md3UseAlphaTestLoc = GL_GetUniformLocation (&r_md3_program, "UseAlphaTest");
 			md3UseShadingLoc = GL_GetUniformLocation (&r_md3_program, "UseShading");
+		}
+	}
+
+	/* MD5 poses use full float positions and normals, unlike MD3's packed data. */
+	{
+		const GLchar *md5VertSource = \
+			"#version 110\n"
+			"uniform float Blend;\n"
+			"uniform vec3 ShadeVector;\n"
+			"uniform vec4 LightColor;\n"
+			"uniform bool UseShading;\n"
+			"attribute vec4 TexCoords;\n"
+			"attribute vec3 Pose1Vert;\n"
+			"attribute vec3 Pose1Normal;\n"
+			"attribute vec3 Pose2Vert;\n"
+			"attribute vec3 Pose2Normal;\n"
+			"varying float FogFragCoord;\n"
+			"float shadedot(vec3 normal)\n"
+			"{\n"
+			"  float d = dot(normal, ShadeVector);\n"
+			"  return d < 0.0 ? 1.0 + d * (13.0 / 44.0) : 1.0 + d;\n"
+			"}\n"
+			"void main()\n"
+			"{\n"
+			"  gl_TexCoord[0] = TexCoords;\n"
+			"  vec4 vertex = vec4(mix(Pose1Vert, Pose2Vert, Blend), 1.0);\n"
+			"  gl_Position = gl_ModelViewProjectionMatrix * vertex;\n"
+			"  FogFragCoord = gl_Position.w;\n"
+			"  if (UseShading)\n"
+			"    gl_FrontColor = LightColor * vec4(vec3(shadedot(normalize(mix(Pose1Normal, Pose2Normal, Blend)))), 1.0);\n"
+			"  else\n"
+			"    gl_FrontColor = LightColor;\n"
+			"}\n";
+		const GLchar *md5FragSource = \
+			"#version 110\n"
+			"uniform sampler2D Tex;\n"
+			"uniform bool UseAlphaTest;\n"
+			"varying float FogFragCoord;\n"
+			"void main()\n"
+			"{\n"
+			"  vec4 result = texture2D(Tex, gl_TexCoord[0].xy);\n"
+			"  result *= gl_Color;\n"
+			"  if (UseAlphaTest && result.a < 0.666) discard;\n"
+			"  result = clamp(result, 0.0, 1.0);\n"
+			"  float fog = exp(-gl_Fog.density * gl_Fog.density * FogFragCoord * FogFragCoord);\n"
+			"  result.rgb = mix(gl_Fog.color.rgb, result.rgb, clamp(fog, 0.0, 1.0));\n"
+			"  gl_FragColor = result;\n"
+			"}\n";
+
+		r_md5_program = GL_CreateProgram (md5VertSource, md5FragSource,
+			Q_COUNTOF(bindings), bindings);
+		if (r_md5_program != 0)
+		{
+			md5BlendLoc = GL_GetUniformLocation (&r_md5_program, "Blend");
+			md5ShadevectorLoc = GL_GetUniformLocation (&r_md5_program, "ShadeVector");
+			md5LightColorLoc = GL_GetUniformLocation (&r_md5_program, "LightColor");
+			md5TexLoc = GL_GetUniformLocation (&r_md5_program, "Tex");
+			md5UseAlphaTestLoc = GL_GetUniformLocation (&r_md5_program, "UseAlphaTest");
+			md5UseShadingLoc = GL_GetUniformLocation (&r_md5_program, "UseShading");
 		}
 	}
 }
@@ -931,8 +999,9 @@ static void GL_DrawMD3Frame_GLSL (const aliashdr_t *surface, int surfaceindex,
 	GL_Uniform3fFunc (md3ShadevectorLoc, shadevector[0], shadevector[1], shadevector[2]);
 	GL_Uniform4fFunc (md3LightColorLoc, lightcolor[0], lightcolor[1], lightcolor[2], entalpha);
 	GL_Uniform1iFunc (md3TexLoc, 0);
-	GL_Uniform1iFunc (md3UseOverbrightLoc, overbright ? 1 : 0);
-	GL_Uniform1iFunc (md3UseAlphaTestLoc, R_MD3UsesAlpha((aliashdr_t *)surface, currententity->skinnum) ? 1 : 0);
+	/* Overbright is a second additive draw so Fog_StartAdditive can blacken fog. */
+	GL_Uniform1iFunc (md3UseOverbrightLoc, 0);
+	GL_Uniform1iFunc (md3UseAlphaTestLoc, r_md3_glsl_alphatest ? 1 : 0);
 	GL_Uniform1iFunc (md3UseShadingLoc, shading ? 1 : 0);
 
 	GL_SelectTexture (GL_TEXTURE0);
@@ -1135,6 +1204,9 @@ static void R_DrawMD3Model (entity_t *e, qboolean cull, qboolean viewmodel)
 		!(gl_fullbrights.value && R_MD3HasFullbrights(md3, skinnum)) &&
 		r_md3_program != 0 && e->model->md3meshvbo != 0 &&
 		e->model->md3meshindexesvbo != 0;
+	r_md3_glsl_alphatest = r_md3_glsl_active && alphatest;
+	if (r_md3_glsl_active && alphatest)
+		glDisable (GL_ALPHA_TEST); /* shader tests texture alpha multiplied by entalpha */
 
 	if (viewmodel)
 	{
@@ -1175,8 +1247,7 @@ static void R_DrawMD3Model (entity_t *e, qboolean cull, qboolean viewmodel)
 		else
 		{
 			R_DrawMD3Pass (md3, lerpdata, skinnum, false);
-			/* The GLSL pass applies overbright in its fragment shader. */
-			if (overbright && !r_md3_glsl_active)
+			if (overbright)
 			{
 				glEnable (GL_BLEND);
 				glBlendFunc (GL_ONE, GL_ONE);
@@ -1208,6 +1279,7 @@ static void R_DrawMD3Model (entity_t *e, qboolean cull, qboolean viewmodel)
 
 cleanup:
 	r_md3_glsl_active = false;
+	r_md3_glsl_alphatest = false;
 	glTexEnvf (GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_REPLACE);
 	glHint (GL_PERSPECTIVE_CORRECTION_HINT, GL_NICEST);
 	glShadeModel (GL_FLAT);
@@ -1224,9 +1296,9 @@ cleanup:
 
 					MD5 DRAWING
 
-Rerelease MD5 poses are baked to float vertices while loading, so this mirrors
-the MD3 fixed-function path and deliberately avoids a second renderer or a
-skeletal VBO dependency in the OpenVR build.
+Rerelease MD5 poses are baked to float vertices while loading.  The regular
+textured pass can interpolate those poses on the GPU; special and multi-pass
+modes retain the fixed-function path below.
 ==============================================================================
 */
 
@@ -1253,6 +1325,79 @@ static qboolean R_MD5UsesAlpha (aliashdr_t *surface, int skinnum, int anim)
 		surface = R_NextMD5Surface (surface);
 	}
 	return false;
+}
+
+static qboolean R_MD5HasFullbrights (aliashdr_t *surface, int skinnum, int anim)
+{
+	while (surface)
+	{
+		if (surface->fbtextures[R_MD5SurfaceSkin(surface, skinnum)][anim])
+			return true;
+		surface = R_NextMD5Surface (surface);
+	}
+	return false;
+}
+
+static void *GLMD5_GetXYZOffset (const aliashdr_t *surface, int surfaceindex, int pose)
+{
+	return (void *)(intptr_t)((size_t)currententity->model->md5vboxyzofs[surfaceindex] +
+		(size_t)pose * surface->numverts * sizeof(md5vertex_t) + offsetof(md5vertex_t, xyz));
+}
+
+static void *GLMD5_GetNormalOffset (const aliashdr_t *surface, int surfaceindex, int pose)
+{
+	return (void *)(intptr_t)((size_t)currententity->model->md5vboxyzofs[surfaceindex] +
+		(size_t)pose * surface->numverts * sizeof(md5vertex_t) + offsetof(md5vertex_t, normal));
+}
+
+static void GL_DrawMD5Frame_GLSL (const aliashdr_t *surface, int surfaceindex,
+	lerpdata_t lerpdata, gltexture_t *texture)
+{
+	float blend = lerpdata.pose1 != lerpdata.pose2 ? lerpdata.blend : 0.0f;
+
+	GL_UseProgram (r_md5_program);
+	GL_BindBuffer (GL_ARRAY_BUFFER, currententity->model->md5meshvbo);
+	GL_BindBuffer (GL_ELEMENT_ARRAY_BUFFER, currententity->model->md5meshindexesvbo);
+
+	GL_EnableVertexAttribArrayFunc (texCoordsAttrIndex);
+	GL_EnableVertexAttribArrayFunc (pose1VertexAttrIndex);
+	GL_EnableVertexAttribArrayFunc (pose2VertexAttrIndex);
+	GL_EnableVertexAttribArrayFunc (pose1NormalAttrIndex);
+	GL_EnableVertexAttribArrayFunc (pose2NormalAttrIndex);
+
+	GL_VertexAttribPointerFunc (texCoordsAttrIndex, 2, GL_FLOAT, GL_FALSE,
+		sizeof(md5vertex_t), (void *)(intptr_t)currententity->model->md5vbostofs[surfaceindex]);
+	GL_VertexAttribPointerFunc (pose1VertexAttrIndex, 3, GL_FLOAT, GL_FALSE,
+		sizeof(md5vertex_t), GLMD5_GetXYZOffset(surface, surfaceindex, lerpdata.pose1));
+	GL_VertexAttribPointerFunc (pose2VertexAttrIndex, 3, GL_FLOAT, GL_FALSE,
+		sizeof(md5vertex_t), GLMD5_GetXYZOffset(surface, surfaceindex, lerpdata.pose2));
+	GL_VertexAttribPointerFunc (pose1NormalAttrIndex, 3, GL_FLOAT, GL_FALSE,
+		sizeof(md5vertex_t), GLMD5_GetNormalOffset(surface, surfaceindex, lerpdata.pose1));
+	GL_VertexAttribPointerFunc (pose2NormalAttrIndex, 3, GL_FLOAT, GL_FALSE,
+		sizeof(md5vertex_t), GLMD5_GetNormalOffset(surface, surfaceindex, lerpdata.pose2));
+
+	GL_Uniform1fFunc (md5BlendLoc, blend);
+	GL_Uniform3fFunc (md5ShadevectorLoc, shadevector[0], shadevector[1], shadevector[2]);
+	GL_Uniform4fFunc (md5LightColorLoc, lightcolor[0], lightcolor[1], lightcolor[2], entalpha);
+	GL_Uniform1iFunc (md5TexLoc, 0);
+	GL_Uniform1iFunc (md5UseAlphaTestLoc, texture && (texture->flags & TEXPREF_ALPHA) ? 1 : 0);
+	GL_Uniform1iFunc (md5UseShadingLoc, shading ? 1 : 0);
+
+	GL_SelectTexture (GL_TEXTURE0);
+	GL_Bind (texture);
+	if (r_perfdebug.value)
+		r_perf_alias_glsl_draws++;
+	glDrawElements (GL_TRIANGLES, surface->numindexes, GL_UNSIGNED_SHORT,
+		(void *)(intptr_t)currententity->model->md5vboindexofs[surfaceindex]);
+
+	GL_DisableVertexAttribArrayFunc (texCoordsAttrIndex);
+	GL_DisableVertexAttribArrayFunc (pose1VertexAttrIndex);
+	GL_DisableVertexAttribArrayFunc (pose2VertexAttrIndex);
+	GL_DisableVertexAttribArrayFunc (pose1NormalAttrIndex);
+	GL_DisableVertexAttribArrayFunc (pose2NormalAttrIndex);
+	GL_UseProgram (0);
+	GL_SelectTexture (GL_TEXTURE0);
+	rs_aliaspasses += surface->numtris;
 }
 
 static void GL_DrawMD5Frame (aliashdr_t *surface, lerpdata_t lerpdata)
@@ -1333,6 +1478,7 @@ static void R_DrawMD5Pass (aliashdr_t *surface, lerpdata_t lerpdata,
 	int skinnum, qboolean fullbright)
 {
 	int anim = (int)(cl.time * 10) & 3;
+	int surfaceindex = 0;
 
 	while (surface)
 	{
@@ -1342,10 +1488,16 @@ static void R_DrawMD5Pass (aliashdr_t *surface, lerpdata_t lerpdata,
 
 		if (texture || !fullbright)
 		{
-			GL_Bind (texture);
-			GL_DrawMD5Frame (surface, lerpdata);
+			if (r_md5_glsl_active && !fullbright)
+				GL_DrawMD5Frame_GLSL (surface, surfaceindex, lerpdata, texture);
+			else
+			{
+				GL_Bind (texture);
+				GL_DrawMD5Frame (surface, lerpdata);
+			}
 		}
 		surface = R_NextMD5Surface (surface);
+		surfaceindex++;
 	}
 }
 
@@ -1417,6 +1569,15 @@ static void R_DrawMD5Model (entity_t *e, qboolean cull, qboolean viewmodel)
 	if (!viewmodel)
 		R_SetupAliasLighting (e);
 	GL_DisableMultitexture ();
+	/* Restrict GLSL to the normal textured pass; the fallback retains every
+	 * diagnostic and multi-pass behavior, including additive fullbrights. */
+	r_md5_glsl_active = !viewmodel && !r_drawflat_cheatsafe &&
+		!r_lightmap_cheatsafe && !r_fullbright_cheatsafe &&
+		!(gl_fullbrights.value && R_MD5HasFullbrights(md5, skinnum, anim)) &&
+		r_md5_program != 0 && e->model->md5meshvbo != 0 &&
+		e->model->md5meshindexesvbo != 0;
+	if (r_md5_glsl_active && alphatest)
+		glDisable (GL_ALPHA_TEST); /* shader tests texture alpha multiplied by entalpha */
 
 	if (viewmodel)
 	{
@@ -1457,6 +1618,8 @@ static void R_DrawMD5Model (entity_t *e, qboolean cull, qboolean viewmodel)
 		else
 		{
 			R_DrawMD5Pass (md5, lerpdata, skinnum, false);
+			/* Draw the normal pass again against additive black fog, matching the
+			 * fixed-function overbright composition after fog is applied. */
 			if (overbright)
 			{
 				glEnable (GL_BLEND);
@@ -1487,6 +1650,7 @@ static void R_DrawMD5Model (entity_t *e, qboolean cull, qboolean viewmodel)
 	}
 
 cleanup:
+	r_md5_glsl_active = false;
 	glTexEnvf (GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_REPLACE);
 	glHint (GL_PERSPECTIVE_CORRECTION_HINT, GL_NICEST);
 	glShadeModel (GL_FLAT);
