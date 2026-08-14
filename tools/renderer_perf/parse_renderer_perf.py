@@ -32,7 +32,15 @@ PAIR_RE = re.compile(
 FLOAT_RE = re.compile(r"^[+-]?(?:\d+\.\d*|\d*\.\d+|\d+)(?:[eE][+-]?\d+)?$")
 INT_RE = re.compile(r"^[+-]?\d+$")
 ABS_LINUX_RE = re.compile(r"^/[^\s]+$")
-ABS_WINDOWS_RE = re.compile(r"^[A-Za-z]:\\")
+ABS_WINDOWS_RE = re.compile(r"^[A-Za-z]:[\\/]")
+ABS_UNC_RE = re.compile(r"^(?:\\\\|//)[^\\/]+[\\/][^\\/]+")
+ABS_PATH_PREFIX_RE = r"(?:[A-Za-z]:[\\/]|(?:\\\\|//)[^\\/\s\"']+[\\/][^\\/\s\"']+|/)"
+QUOTED_ABS_PATH_RE = re.compile(
+    rf"(?P<quote>[\"'])(?P<path>{ABS_PATH_PREFIX_RE}[^\"']*)(?P=quote)"
+)
+RAW_ABS_PATH_RE = re.compile(
+    rf"(?<![A-Za-z0-9:/\\])(?P<path>{ABS_PATH_PREFIX_RE}[^\s\"'()]*)"
+)
 
 
 def parse_numeric(value: str) -> Any:
@@ -62,19 +70,31 @@ def strip_quotes(value: str) -> str:
 
 
 def is_abs_path(value: str) -> bool:
-    return bool(ABS_LINUX_RE.match(value) or ABS_WINDOWS_RE.match(value))
+    return bool(
+        ABS_LINUX_RE.match(value)
+        or ABS_WINDOWS_RE.match(value)
+        or ABS_UNC_RE.match(value)
+    )
 
 
 def redact_abs_path(value: str) -> str:
     if not value:
         return value
     if is_abs_path(value):
-        return value.split("/")[-1]
-    if "\\" in value:
-        candidate = value.split("\\")[-1]
-        if is_abs_path(value.replace("\\", "/")):
-            return candidate
+        return re.split(r"[\\/]", value.rstrip("\\/"))[-1]
     return value
+
+
+def redact_unsupported_line(line: str) -> str:
+    """Redact absolute paths embedded in malformed tagged-line diagnostics."""
+    def redact_match(match: re.Match[str]) -> str:
+        return redact_abs_path(match.group("path"))
+
+    def redact_quoted_match(match: re.Match[str]) -> str:
+        return match.group("quote") + redact_match(match) + match.group("quote")
+
+    line = QUOTED_ABS_PATH_RE.sub(redact_quoted_match, line)
+    return RAW_ABS_PATH_RE.sub(redact_match, line)
 
 
 def parse_kv_pairs(text: str) -> Dict[str, Any]:
@@ -320,7 +340,11 @@ def analyze_lines(lines: Sequence[str]) -> Dict[str, Any]:
             continue
         if has_perf_tag:
             unsupported.append(
-                {"line_no": line_no, "line": stripped[:120], "reason": "unmatched_format"}
+                {
+                    "line_no": line_no,
+                    "line": redact_unsupported_line(stripped)[:120],
+                    "reason": "unmatched_format",
+                }
             )
 
     groups = summarize_records(records)

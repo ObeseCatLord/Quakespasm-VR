@@ -127,6 +127,46 @@ def main() -> int:
     assert redacted_mj4, "expected at least one mj4m1.bsp map entry"
     assert summary["records"][0]["fields"]["map"] == "e1m1.bsp"
 
+    # Windows absolute paths must not leak in log fields or command-line metadata.
+    assert parse_renderer_perf.redact_abs_path(r"C:\Users\Player\run.log") == "run.log"
+    assert parse_renderer_perf.redact_abs_path(r"C:/Users\Player/run.log") == "run.log"
+    assert parse_renderer_perf.redact_abs_path(r"\\server\share\logs\run.log") == "run.log"
+    assert parse_renderer_perf.redact_abs_path("maps/e1m1.bsp") == "maps/e1m1.bsp"
+    assert parse_renderer_perf.parse_line_body(
+        r'map="C:\Users\Player\id1\start.bsp"'
+    )["map"] == "start.bsp"
+    metadata = parse_renderer_perf.build_metadata(
+        parse_renderer_perf.parse_args(
+            ["--meta-map", r"C:\Users\Player\id1\start.bsp"]
+        )
+    )
+    assert metadata["map"] == "start.bsp"
+
+    malformed_summary = parse_renderer_perf.analyze_lines(
+        [
+            r"r_perfdebug: malformed map=C:\Users\Player\id1\start.bsp",
+            r"r_perfdebug: malformed map=C:/Users\Player/id1/start.bsp",
+            r"r_perfdebug: malformed map=\\server\share\logs\run.log",
+            r"r_perfdebug: malformed map=//server/share/logs/run.log",
+            "r_perfdebug: malformed map=/home/player/id1/start.bsp detail=missing_vr",
+            "r_perfdebug: malformed eye=0/1 url=https://example.test/path",
+        ]
+    )
+    unsupported_lines = [entry["line"] for entry in malformed_summary["unsupported"]]
+    assert unsupported_lines == [
+        "r_perfdebug: malformed map=start.bsp",
+        "r_perfdebug: malformed map=start.bsp",
+        "r_perfdebug: malformed map=run.log",
+        "r_perfdebug: malformed map=run.log",
+        "r_perfdebug: malformed map=start.bsp detail=missing_vr",
+        "r_perfdebug: malformed eye=0/1 url=https://example.test/path",
+    ]
+    long_unsupported = parse_renderer_perf.analyze_lines(
+        ["r_perfdebug: malformed note=" + "x" * 80 + r" map=C:\Users\Player\id1\start.bsp"]
+    )["unsupported"][0]["line"]
+    assert len(long_unsupported) == 120
+    assert "Users" not in long_unsupported
+
     print("renderer_perf self-test passed")
     return 0
 
