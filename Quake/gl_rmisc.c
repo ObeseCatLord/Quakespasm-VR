@@ -726,3 +726,264 @@ void GL_ClearBufferBindings (void)
 	GL_BindBufferFunc (GL_ARRAY_BUFFER, 0);
 	GL_BindBufferFunc (GL_ELEMENT_ARRAY_BUFFER, 0);
 }
+
+/*
+============================================================================
+					FRAME RESOURCES
+============================================================================
+
+The renderer's compatibility paths cannot assume persistent mapping.  Keep
+the first use deliberately small: opaque alias instance data gets a set of
+three reusable array buffers.  On GL_ARB_buffer_storage systems these are
+persistently mapped and protected by fences; elsewhere BufferData orphaning
+plus BufferSubData retains the established streaming behavior.
+*/
+
+#define GL_FRAME_RESOURCE_COUNT 3
+#define GL_FRAME_RESOURCE_BYTES (512 * 1024)
+#define GL_FRAME_RESOURCE_ALIGN 16
+
+typedef struct
+{
+	GLuint		buffer;
+	GLubyte		*mapped;
+	GLsync		fence;
+} gl_frame_resource_t;
+
+static gl_frame_resource_t gl_frame_resources[GL_FRAME_RESOURCE_COUNT];
+static int gl_frame_resource_index;
+static size_t gl_frame_resource_offset;
+static qboolean gl_frame_resources_initialized;
+static qboolean gl_frame_resources_active;
+static qboolean gl_frame_resources_persistent;
+gl_frame_resource_stats_t gl_frame_resource_stats;
+
+static qboolean GL_FrameResources_HasPersistentSupport (void)
+{
+	return gl_caps.buffer_storage != gl_capability_unavailable &&
+		GL_BufferStorageFunc && GL_MapBufferRangeFunc && GL_UnmapBufferFunc &&
+		GL_FenceSyncFunc && GL_ClientWaitSyncFunc && GL_DeleteSyncFunc &&
+		GL_MemoryBarrierFunc;
+}
+
+static void GL_FrameResources_Destroy (void)
+{
+	int i;
+
+	for (i = 0; i < GL_FRAME_RESOURCE_COUNT; i++)
+	{
+		gl_frame_resource_t *resource = &gl_frame_resources[i];
+
+		if (resource->fence && GL_DeleteSyncFunc)
+		{
+			GL_DeleteSyncFunc (resource->fence);
+			resource->fence = NULL;
+		}
+		if (resource->mapped && GL_UnmapBufferFunc && resource->buffer)
+		{
+			GL_BindBuffer (GL_ARRAY_BUFFER, resource->buffer);
+			if (!GL_UnmapBufferFunc (GL_ARRAY_BUFFER))
+				Con_Warning ("Persistent alias instance buffer became corrupted while unmapping\n");
+			resource->mapped = NULL;
+		}
+		if (resource->buffer && GL_DeleteBuffersFunc)
+		{
+			GLuint buffer = resource->buffer;
+			GL_DeleteBuffersFunc (1, &buffer);
+			resource->buffer = 0;
+		}
+	}
+	GL_ClearBufferBindings ();
+	gl_frame_resources_initialized = false;
+	gl_frame_resources_active = false;
+	gl_frame_resources_persistent = false;
+	gl_frame_resource_index = 0;
+	gl_frame_resource_offset = 0;
+}
+
+static qboolean GL_FrameResources_Create (void)
+{
+	int i;
+	GLbitfield flags;
+
+	if (gl_frame_resources_initialized)
+		return true;
+	if (!gl_vbo_able || !GL_GenBuffersFunc || !GL_DeleteBuffersFunc ||
+		!GL_BindBufferFunc || !GL_BufferDataFunc || !GL_BufferSubDataFunc)
+		return false;
+
+	gl_frame_resources_persistent = GL_FrameResources_HasPersistentSupport ();
+	flags = GL_MAP_WRITE_BIT | GL_MAP_PERSISTENT_BIT | GL_MAP_COHERENT_BIT;
+	for (i = 0; i < GL_FRAME_RESOURCE_COUNT; i++)
+	{
+		gl_frame_resource_t *resource = &gl_frame_resources[i];
+
+		GL_GenBuffersFunc (1, &resource->buffer);
+		if (!resource->buffer)
+		{
+			GL_FrameResources_Destroy ();
+			return false;
+		}
+		GL_BindBuffer (GL_ARRAY_BUFFER, resource->buffer);
+		if (gl_frame_resources_persistent)
+		{
+			GL_BufferStorageFunc (GL_ARRAY_BUFFER, GL_FRAME_RESOURCE_BYTES, NULL, flags);
+			resource->mapped = (GLubyte *)GL_MapBufferRangeFunc (GL_ARRAY_BUFFER, 0,
+				GL_FRAME_RESOURCE_BYTES, flags);
+			if (!resource->mapped)
+			{
+				Con_Warning ("Persistent alias instance mapping failed; using orphaned uploads\n");
+				GL_FrameResources_Destroy ();
+				gl_frame_resources_persistent = false;
+				break;
+			}
+		}
+	}
+
+	if (!gl_frame_resources_persistent && !gl_frame_resources_initialized)
+	{
+		/* A failed persistent map leaves immutable buffers behind.  Recreate
+		 * conventional mutable buffers before enabling the fallback. */
+		for (i = 0; i < GL_FRAME_RESOURCE_COUNT; i++)
+		{
+			gl_frame_resource_t *resource = &gl_frame_resources[i];
+			if (!resource->buffer)
+			{
+				GL_GenBuffersFunc (1, &resource->buffer);
+				if (!resource->buffer)
+				{
+					GL_FrameResources_Destroy ();
+					return false;
+				}
+			}
+		}
+	}
+
+	gl_frame_resources_initialized = true;
+	GL_ClearBufferBindings ();
+	Con_Printf ("Alias frame resources: mode=%s slots=%d slot_bytes=%d\n",
+		gl_frame_resources_persistent ? "persistent-map" : "orphan-subdata",
+		GL_FRAME_RESOURCE_COUNT, GL_FRAME_RESOURCE_BYTES);
+	return true;
+}
+
+void GL_FrameResources_Begin (void)
+{
+	gl_frame_resource_t *resource;
+	GLenum result;
+
+	if (gl_frame_resources_active)
+		return;
+	memset (&gl_frame_resource_stats, 0, sizeof (gl_frame_resource_stats));
+	if (!GL_FrameResources_Create ())
+		return;
+
+	resource = &gl_frame_resources[gl_frame_resource_index];
+	if (gl_frame_resources_persistent && resource->fence)
+	{
+		result = GL_ClientWaitSyncFunc (resource->fence,
+			GL_SYNC_FLUSH_COMMANDS_BIT, 0);
+		if (result == GL_TIMEOUT_EXPIRED)
+		{
+			gl_frame_resource_stats.waits++;
+			result = GL_ClientWaitSyncFunc (resource->fence,
+				GL_SYNC_FLUSH_COMMANDS_BIT, (GLuint64)-1);
+		}
+		if (result == GL_WAIT_FAILED)
+		{
+			Con_Warning ("Alias frame-resource fence wait failed; forcing completion\n");
+			glFinish ();
+		}
+		else if (result != GL_CONDITION_SATISFIED && result != GL_ALREADY_SIGNALED)
+		{
+			Con_Warning ("Alias frame-resource fence timed out; forcing completion\n");
+			glFinish ();
+		}
+		GL_DeleteSyncFunc (resource->fence);
+		resource->fence = NULL;
+	}
+	if (!gl_frame_resources_persistent)
+	{
+		GL_BindBuffer (GL_ARRAY_BUFFER, resource->buffer);
+		GL_BufferDataFunc (GL_ARRAY_BUFFER, GL_FRAME_RESOURCE_BYTES, NULL, GL_STREAM_DRAW);
+	}
+	gl_frame_resource_offset = 0;
+	gl_frame_resources_active = true;
+}
+
+void GL_FrameResources_End (void)
+{
+	gl_frame_resource_t *resource;
+
+	if (!gl_frame_resources_active)
+		return;
+	resource = &gl_frame_resources[gl_frame_resource_index];
+	if (gl_frame_resources_persistent)
+	{
+		resource->fence = GL_FenceSyncFunc (GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+		if (!resource->fence)
+		{
+			Con_Warning ("Alias frame-resource fence creation failed; forcing completion\n");
+			glFinish ();
+		}
+	}
+	if (++gl_frame_resource_index == GL_FRAME_RESOURCE_COUNT)
+		gl_frame_resource_index = 0;
+	gl_frame_resources_active = false;
+}
+
+void GL_FrameResources_Shutdown (void)
+{
+	if (gl_frame_resources_initialized)
+		GL_FrameResources_Destroy ();
+}
+
+qboolean GL_FrameResources_UploadAliasInstances (const void *data, size_t size,
+	GLuint *buffer, GLintptr *offset)
+{
+	size_t aligned;
+	gl_frame_resource_t *resource;
+
+	if (!data || !buffer || !offset || size == 0)
+		return false;
+	if (!gl_frame_resources_active)
+		GL_FrameResources_Begin ();
+	if (!gl_frame_resources_active)
+		return false;
+
+	if (gl_frame_resource_offset > SIZE_MAX - (GL_FRAME_RESOURCE_ALIGN - 1))
+		return false;
+	aligned = (gl_frame_resource_offset + (GL_FRAME_RESOURCE_ALIGN - 1)) &
+		~(size_t)(GL_FRAME_RESOURCE_ALIGN - 1);
+	if (aligned > GL_FRAME_RESOURCE_BYTES || size > GL_FRAME_RESOURCE_BYTES - aligned)
+	{
+		gl_frame_resource_stats.wraps++;
+		return false;
+	}
+
+	resource = &gl_frame_resources[gl_frame_resource_index];
+	if (gl_frame_resources_persistent)
+	{
+		memcpy (resource->mapped + aligned, data, size);
+		GL_MemoryBarrierFunc (GL_CLIENT_MAPPED_BUFFER_BARRIER_BIT);
+	}
+	else
+	{
+		GL_BindBuffer (GL_ARRAY_BUFFER, resource->buffer);
+		GL_BufferSubDataFunc (GL_ARRAY_BUFFER, aligned, size, data);
+		gl_frame_resource_stats.fallback_uploads++;
+	}
+	*buffer = resource->buffer;
+	*offset = (GLintptr)aligned;
+	gl_frame_resource_offset = aligned + size;
+	gl_frame_resource_stats.upload_bytes += size;
+	if (gl_frame_resource_offset > gl_frame_resource_stats.high_water_bytes)
+		gl_frame_resource_stats.high_water_bytes = gl_frame_resource_offset;
+	return true;
+}
+
+void GL_FrameResources_RecordFallbackUpload (size_t size)
+{
+	gl_frame_resource_stats.fallback_uploads++;
+	gl_frame_resource_stats.upload_bytes += size;
+}

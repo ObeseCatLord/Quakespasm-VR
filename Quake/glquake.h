@@ -219,6 +219,17 @@ extern PFNGLGENBUFFERSARBPROC  GL_GenBuffersFunc;
 extern	qboolean	gl_vbo_able;
 //ericw
 
+/* Optional GL_ARB_buffer_storage / sync entry points.  They are resolved at
+ * runtime because the baseline renderer continues to support old
+ * compatibility contexts. */
+extern PFNGLBUFFERSTORAGEPROC GL_BufferStorageFunc;
+extern PFNGLMAPBUFFERRANGEPROC GL_MapBufferRangeFunc;
+extern PFNGLUNMAPBUFFERPROC GL_UnmapBufferFunc;
+extern PFNGLFENCESYNCPROC GL_FenceSyncFunc;
+extern PFNGLCLIENTWAITSYNCPROC GL_ClientWaitSyncFunc;
+extern PFNGLDELETESYNCPROC GL_DeleteSyncFunc;
+extern PFNGLMEMORYBARRIERPROC GL_MemoryBarrierFunc;
+
 typedef void (APIENTRYP QS_PFNGLMULTIDRAWELEMENTSPROC) (GLenum mode,
 	const GLsizei *count, GLenum type, const GLvoid *const *indices,
 	GLsizei drawcount);
@@ -545,6 +556,23 @@ void R_RenderScene (void);
 void GL_UseProgram (GLuint program);
 void GL_BindBuffer (GLenum target, GLuint buffer);
 void GL_ClearBufferBindings (void);
+
+typedef struct {
+	size_t	upload_bytes;
+	size_t	high_water_bytes;
+	unsigned int	wraps;
+	unsigned int	waits;
+	unsigned int	fallback_uploads;
+} gl_frame_resource_stats_t;
+
+extern gl_frame_resource_stats_t gl_frame_resource_stats;
+
+void GL_FrameResources_Begin (void);
+void GL_FrameResources_End (void);
+void GL_FrameResources_Shutdown (void);
+qboolean GL_FrameResources_UploadAliasInstances (const void *data, size_t size,
+	GLuint *buffer, GLintptr *offset);
+void GL_FrameResources_RecordFallbackUpload (size_t size);
 
 void GLSLGamma_DeleteTexture (void);
 void GLSLGamma_GammaCorrect (void);

@@ -55,6 +55,17 @@ def main() -> int:
     vr1_snapshot_reuse = groups["vr/eye_1"]["by_tag"]["r_perfdebug"]["metrics"]["sharedents.reuse"]
     assert vr1_snapshot_reuse["count"] == 1
     assert_within("vr eye1 snapshot reuse", vr1_snapshot_reuse["median"], 1.0)
+    vr1_frame_upload = groups["vr/eye_1"]["by_tag"]["r_perfdebug"]["metrics"]["frameres.upload_bytes"]
+    assert vr1_frame_upload["count"] == 1
+    assert_within("vr eye1 frame upload bytes", vr1_frame_upload["median"], 1728.0)
+    vr1_frame_high_water = groups["vr/eye_1"]["by_tag"]["r_perfdebug"]["metrics"]["frameres.high_water_bytes"]
+    assert_within("vr eye1 frame high-water bytes", vr1_frame_high_water["median"], 1728.0)
+    vr1_frame_waits = groups["vr/eye_1"]["by_tag"]["r_perfdebug"]["metrics"]["frameres.waits"]
+    assert_within("vr eye1 frame waits", vr1_frame_waits["median"], 1.0)
+    vr1_frame_exhausted = groups["vr/eye_1"]["by_tag"]["r_perfdebug"]["metrics"]["frameres.capacity_exhausted_uploads"]
+    assert_within("vr eye1 capacity exhausted uploads", vr1_frame_exhausted["median"], 0.0)
+    vr1_frame_fallback = groups["vr/eye_1"]["by_tag"]["r_perfdebug"]["metrics"]["frameres.fallback_uploads"]
+    assert_within("vr eye1 fallback uploads", vr1_frame_fallback["median"], 0.0)
 
     eye0_total_cpu = groups["vr/eye_0"]["by_tag"]["r_vr_eyedebug"]["metrics"]["total_cpu"]
     assert eye0_total_cpu["count"] == 1

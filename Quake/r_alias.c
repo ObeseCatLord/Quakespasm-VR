@@ -329,6 +329,9 @@ static void GL_AliasInstanced_Flush (void)
 {
 	int i;
 	const size_t stride = sizeof (r_alias_instances[0]);
+	const size_t upload_size = r_alias_instance_count * stride;
+	GLuint instance_buffer;
+	GLintptr instance_offset;
 
 	if (r_alias_instance_count == 0)
 		return;
@@ -353,24 +356,35 @@ static void GL_AliasInstanced_Flush (void)
 	GL_VertexAttribPointerFunc (pose2NormalAttrIndex, 4, GL_BYTE, GL_TRUE,
 		sizeof (meshxyz_t), GLARB_GetNormalOffsetForModel (r_alias_instance_model, r_alias_instance_hdr, r_alias_instance_pose2));
 
-	GL_BindBuffer (GL_ARRAY_BUFFER, r_alias_instance_vbo);
-	GL_BufferDataFunc (GL_ARRAY_BUFFER, r_alias_instance_count * stride, NULL, GL_STREAM_DRAW);
-	GL_BufferSubDataFunc (GL_ARRAY_BUFFER, 0, r_alias_instance_count * stride, r_alias_instances);
+	if (!GL_FrameResources_UploadAliasInstances (r_alias_instances, upload_size,
+		&instance_buffer, &instance_offset))
+	{
+		/* The fixed frame ring never overwrites an in-flight range.  Its rare
+		 * overflow path retains the previous orphan/subdata upload behavior. */
+		instance_buffer = r_alias_instance_vbo;
+		instance_offset = 0;
+		GL_BindBuffer (GL_ARRAY_BUFFER, instance_buffer);
+		GL_BufferDataFunc (GL_ARRAY_BUFFER, upload_size, NULL, GL_STREAM_DRAW);
+		GL_BufferSubDataFunc (GL_ARRAY_BUFFER, 0, upload_size, r_alias_instances);
+		GL_FrameResources_RecordFallbackUpload (upload_size);
+	}
+	else
+		GL_BindBuffer (GL_ARRAY_BUFFER, instance_buffer);
 	for (i = 0; i < 4; i++)
 	{
 		GLuint attrib = instanceMatrix0AttrIndex + i;
 		GL_EnableVertexAttribArrayFunc (attrib);
 		GL_VertexAttribPointerFunc (attrib, 4, GL_FLOAT, GL_FALSE, stride,
-			(void *)(intptr_t)(offsetof (alias_instance_t, matrix) + i * 4 * sizeof (float)));
+			(void *)(intptr_t)(instance_offset + offsetof (alias_instance_t, matrix) + i * 4 * sizeof (float)));
 		GL_VertexAttribDivisorFunc (attrib, 1);
 	}
 	GL_EnableVertexAttribArrayFunc (instanceShadeBlendAttrIndex);
 	GL_VertexAttribPointerFunc (instanceShadeBlendAttrIndex, 4, GL_FLOAT, GL_FALSE,
-		stride, (void *)(intptr_t)offsetof (alias_instance_t, shadeblend));
+		stride, (void *)(intptr_t)(instance_offset + offsetof (alias_instance_t, shadeblend)));
 	GL_VertexAttribDivisorFunc (instanceShadeBlendAttrIndex, 1);
 	GL_EnableVertexAttribArrayFunc (instanceLightAlphaAttrIndex);
 	GL_VertexAttribPointerFunc (instanceLightAlphaAttrIndex, 4, GL_FLOAT, GL_FALSE,
-		stride, (void *)(intptr_t)offsetof (alias_instance_t, lightalpha));
+		stride, (void *)(intptr_t)(instance_offset + offsetof (alias_instance_t, lightalpha)));
 	GL_VertexAttribDivisorFunc (instanceLightAlphaAttrIndex, 1);
 
 	GL_Uniform1iFunc (instancedTexLoc, 0);
