@@ -925,6 +925,17 @@ static void R_GPUWorldMarkValidationSetupFailed(const char *reason)
 	r_gpuworldmark_runtime_disabled = true;
 }
 
+static void R_GPUWorldMarkValidationReadbackFailed(GLenum error)
+{
+	if (!r_gpuworldmark_runtime_disabled)
+	{
+		Con_Warning("r_gpuworldmark: validation command readback failed (GL error 0x%x); disabling GPU path\n",
+			(unsigned int)error);
+		R_GPUWorldMarkCountValidationFailure();
+	}
+	r_gpuworldmark_runtime_disabled = true;
+}
+
 static qboolean R_GPUWorldMarkFallbackCountable(qboolean nearwaterportal)
 {
 	return r_gpuworldmark.value && cl.worldmodel &&
@@ -940,6 +951,7 @@ static qboolean R_GPUWorldMarkValidate(void)
 	unsigned int i;
 	qboolean valid = true;
 	size_t bytes;
+	GLenum error;
 
 	if (!r_gpuworldmark_validate.value)
 		return true;
@@ -965,16 +977,21 @@ static qboolean R_GPUWorldMarkValidate(void)
 		R_GPUWorldMarkValidationSetupFailed("command readback allocation failed");
 		return false;
 	}
-	/* This optional readback intentionally synchronizes validation mode only. */
+	/* Attribute errors to this validation-only synchronization/readback batch. */
+	while ((error = glGetError()) != GL_NO_ERROR)
+		Con_DWarning("r_gpuworldmark: clearing pre-existing validation GL error 0x%x\n",
+			(unsigned int)error);
 	GL_MemoryBarrierFunc(GL_BUFFER_UPDATE_BARRIER_BIT);
 	GL_BindBufferFunc(GL_DRAW_INDIRECT_BUFFER, r_gpuworldmark_command_buffer);
 	r_gpuworldmark_get_buffer_sub_data(GL_DRAW_INDIRECT_BUFFER, 0, bytes,
 		commands);
 	GL_BindBufferFunc(GL_DRAW_INDIRECT_BUFFER, 0);
-	if (glGetError() != GL_NO_ERROR)
+	if ((error = glGetError()) != GL_NO_ERROR)
 	{
+		while (glGetError() != GL_NO_ERROR)
+			;
 		free(commands);
-		R_GPUWorldMarkValidationSetupFailed("command readback failed");
+		R_GPUWorldMarkValidationReadbackFailed(error);
 		return false;
 	}
 	for (i = 0; valid && i < r_gpuworldmark_num_commands; i++)
