@@ -73,28 +73,37 @@ static int r_novis_surface_cache_num_surfaces;
 /*
  * Legacy texture chains remain the compatibility path for water, sky,
  * fences, debug modes, and brush models.  The normal GLSL world pass uses
- * these map-stable texture buckets instead, so visibility only appends the
- * surviving surfaces and never has to sort them per frame.
+ * these map-stable texture/lightmap buckets instead, so visibility only
+ * appends the surviving surfaces and never has to sort them per frame.
  */
 static qmodel_t *r_world_material_model;
 static msurface_t *r_world_material_surfaces;
 static texture_t **r_world_material_textures;
 static unsigned int r_world_material_numsurfaces;
 static int r_world_material_numtextures;
+static int r_world_material_numbuckets;
 static int *r_world_material_heads;
 static int *r_world_material_next;
 static int *r_world_material_surface_ids;
+static texture_t **r_world_material_bucket_textures;
+static int *r_world_material_bucket_lightmaps;
 static qboolean r_world_material_lists_ready;
 static qboolean r_world_material_lists_warned;
 
-static int R_WorldMaterialTextureIndex(texture_t **keys, int *values,
-	unsigned int mask, texture_t *texture)
+static unsigned int R_WorldMaterialKeyHash(texture_t *texture, int lightmap)
 {
-	unsigned int slot = ((uintptr_t)texture >> 4) * 2654435761U & mask;
+	return (unsigned int)(((uintptr_t)texture >> 4) * 2654435761U) ^
+		(unsigned int)lightmap * 2246822519U;
+}
+
+static int R_WorldMaterialKeyIndex(texture_t **keys, int *lightmaps,
+	int *values, unsigned int mask, texture_t *texture, int lightmap)
+{
+	unsigned int slot = R_WorldMaterialKeyHash(texture, lightmap) & mask;
 
 	while (keys[slot])
 	{
-		if (keys[slot] == texture)
+		if (keys[slot] == texture && lightmaps[slot] == lightmap)
 			return values[slot];
 		slot = (slot + 1) & mask;
 	}
@@ -104,15 +113,17 @@ static int R_WorldMaterialTextureIndex(texture_t **keys, int *values,
 static qboolean R_EnsureWorldMaterialLists(qmodel_t *model)
 {
 	texture_t **keys;
-	int *values, *heads, *next, *surface_ids;
+	texture_t **bucket_textures;
+	int *key_lightmaps, *values, *heads, *next, *surface_ids;
+	int *bucket_lightmaps;
 	size_t lookup_capacity;
-	unsigned int i, slot;
+	unsigned int i, slot, bucket_count;
 
 	if (!model || !model->surfaces || !model->textures ||
 		model->numsurfaces == 0 || model->numsurfaces > Q_MAXINT ||
 		model->numtextures <= 0 ||
 		(size_t)model->numsurfaces > SIZE_MAX / sizeof(*next) ||
-		(size_t)model->numtextures > SIZE_MAX / sizeof(*heads))
+		(size_t)model->numsurfaces > SIZE_MAX / sizeof(*surface_ids))
 		goto failed;
 
 	if (r_world_material_model == model &&
@@ -121,72 +132,133 @@ static qboolean R_EnsureWorldMaterialLists(qmodel_t *model)
 		r_world_material_numsurfaces == model->numsurfaces &&
 		r_world_material_numtextures == model->numtextures &&
 		r_world_material_heads && r_world_material_next &&
-		r_world_material_surface_ids)
+		r_world_material_surface_ids && r_world_material_numbuckets > 0 &&
+		r_world_material_bucket_textures && r_world_material_bucket_lightmaps)
 		return true;
 
 	if ((size_t)model->numtextures > SIZE_MAX / 2)
 		goto failed;
 	lookup_capacity = 1;
-	while (lookup_capacity < (size_t)model->numtextures * 2)
+	while (lookup_capacity < (size_t)model->numsurfaces * 2)
 	{
-		if (lookup_capacity > SIZE_MAX / 2)
+		if (lookup_capacity > SIZE_MAX / 2 || lookup_capacity > UINT_MAX / 2)
 			goto failed;
 		lookup_capacity <<= 1;
 	}
 	if (lookup_capacity > SIZE_MAX / sizeof(*keys) ||
+		lookup_capacity > SIZE_MAX / sizeof(*key_lightmaps) ||
 		lookup_capacity > SIZE_MAX / sizeof(*values))
 		goto failed;
 
 	keys = (texture_t **)calloc(lookup_capacity, sizeof(*keys));
+	key_lightmaps = (int *)malloc(lookup_capacity * sizeof(*key_lightmaps));
 	values = (int *)malloc(lookup_capacity * sizeof(*values));
-	heads = (int *)malloc(model->numtextures * sizeof(*heads));
 	next = (int *)malloc(model->numsurfaces * sizeof(*next));
 	surface_ids = (int *)malloc(model->numsurfaces * sizeof(*surface_ids));
-	if (!keys || !values || !heads || !next || !surface_ids)
+	if (!keys || !key_lightmaps || !values || !next || !surface_ids)
 	{
 		free(keys);
+		free(key_lightmaps);
 		free(values);
-		free(heads);
 		free(next);
 		free(surface_ids);
 		goto failed;
 	}
 
-	for (i = 0; i < (unsigned int)model->numtextures; i++)
-	{
-		texture_t *texture = model->textures[i];
-
-		if (!texture)
-			continue;
-		slot = ((uintptr_t)texture >> 4) * 2654435761U &
-			(unsigned int)(lookup_capacity - 1);
-		while (keys[slot] && keys[slot] != texture)
-			slot = (slot + 1) & (unsigned int)(lookup_capacity - 1);
-		keys[slot] = texture;
-		values[slot] = (int)i;
-	}
+	bucket_count = 0;
 	for (i = 0; i < model->numsurfaces; i++)
 	{
 		texture_t *texture = model->surfaces[i].texinfo ?
 			model->surfaces[i].texinfo->texture : NULL;
+		int lightmap = model->surfaces[i].lightmaptexturenum;
+		int bucket;
 
-		surface_ids[i] = texture ? R_WorldMaterialTextureIndex(keys, values,
-			(unsigned int)(lookup_capacity - 1), texture) : -1;
+		if (!texture)
+		{
+			surface_ids[i] = -1;
+			continue;
+		}
+
+		bucket = R_WorldMaterialKeyIndex(keys, key_lightmaps, values,
+			(unsigned int)(lookup_capacity - 1), texture, lightmap);
+		if (bucket < 0)
+		{
+			if (bucket_count >= (unsigned int)model->numsurfaces)
+			{
+				free(keys);
+				free(key_lightmaps);
+				free(values);
+				free(next);
+				free(surface_ids);
+				goto failed;
+			}
+			bucket = (int)bucket_count++;
+			slot = R_WorldMaterialKeyHash(texture, lightmap) &
+				(unsigned int)(lookup_capacity - 1);
+			while (keys[slot])
+				slot = (slot + 1) & (unsigned int)(lookup_capacity - 1);
+			keys[slot] = texture;
+			key_lightmaps[slot] = lightmap;
+			values[slot] = bucket;
+		}
+		surface_ids[i] = bucket;
+	}
+	if (bucket_count == 0 ||
+		(size_t)bucket_count > SIZE_MAX / sizeof(*heads) ||
+		(size_t)bucket_count > SIZE_MAX / sizeof(*bucket_textures) ||
+		(size_t)bucket_count > SIZE_MAX / sizeof(*bucket_lightmaps))
+	{
+		free(keys);
+		free(key_lightmaps);
+		free(values);
+		free(next);
+		free(surface_ids);
+		goto failed;
+	}
+	heads = (int *)malloc(bucket_count * sizeof(*heads));
+	bucket_textures = (texture_t **)malloc(bucket_count *
+		sizeof(*bucket_textures));
+	bucket_lightmaps = (int *)malloc(bucket_count * sizeof(*bucket_lightmaps));
+	if (!heads || !bucket_textures || !bucket_lightmaps)
+	{
+		free(keys);
+		free(key_lightmaps);
+		free(values);
+		free(heads);
+		free(bucket_textures);
+		free(bucket_lightmaps);
+		free(next);
+		free(surface_ids);
+		goto failed;
+	}
+	for (i = 0; i < (unsigned int)lookup_capacity; i++)
+	{
+		if (keys[i])
+		{
+			bucket_textures[values[i]] = keys[i];
+			bucket_lightmaps[values[i]] = key_lightmaps[i];
+		}
 	}
 	free(keys);
+	free(key_lightmaps);
 	free(values);
 
 	free(r_world_material_heads);
 	free(r_world_material_next);
 	free(r_world_material_surface_ids);
+	free(r_world_material_bucket_textures);
+	free(r_world_material_bucket_lightmaps);
 	r_world_material_heads = heads;
 	r_world_material_next = next;
 	r_world_material_surface_ids = surface_ids;
+	r_world_material_bucket_textures = bucket_textures;
+	r_world_material_bucket_lightmaps = bucket_lightmaps;
 	r_world_material_model = model;
 	r_world_material_surfaces = model->surfaces;
 	r_world_material_textures = model->textures;
 	r_world_material_numsurfaces = model->numsurfaces;
 	r_world_material_numtextures = model->numtextures;
+	r_world_material_numbuckets = (int)bucket_count;
 	return true;
 
 failed:
@@ -207,7 +279,7 @@ static void R_ResetWorldMaterialLists(qmodel_t *model)
 	if (!R_EnsureWorldMaterialLists(model))
 		return;
 
-	for (i = 0; i < r_world_material_numtextures; i++)
+	for (i = 0; i < r_world_material_numbuckets; i++)
 		r_world_material_heads[i] = -1;
 	r_world_material_lists_ready = true;
 }
@@ -241,7 +313,7 @@ static qboolean R_WorldMaterialSurfaceEligible(msurface_t *surf)
 		return false;
 	index = R_WorldMaterialSurfaceIndex(surf);
 	return index >= 0 && r_world_material_surface_ids[index] >= 0 &&
-		r_world_material_surface_ids[index] < r_world_material_numtextures;
+		r_world_material_surface_ids[index] < r_world_material_numbuckets;
 }
 
 static void R_AppendWorldMaterialSurface(msurface_t *surf)
@@ -268,6 +340,15 @@ void R_InvalidateNoVisSurfaceCache(void)
 	r_novis_surface_cache_oldskyleaf = false;
 	r_novis_surface_cache_ready = false;
 	r_novis_surface_cache_num_surfaces = 0;
+
+	/* Do not reuse surface/lightmap IDs if a later map reuses these addresses. */
+	r_world_material_model = NULL;
+	r_world_material_surfaces = NULL;
+	r_world_material_textures = NULL;
+	r_world_material_numsurfaces = 0;
+	r_world_material_numtextures = 0;
+	r_world_material_numbuckets = 0;
+	r_world_material_lists_ready = false;
 }
 
 static qboolean R_NoVisSurfaceCacheMatches(qmodel_t *worldmodel,
@@ -1755,9 +1836,9 @@ static void R_DrawWorldMaterialLists_GLSL(qmodel_t *model)
 {
 	const int overbright = !!gl_overbright.value;
 	const int wide10bits = !!r_lightmapwide.value;
-	int i, index, lastlightmap;
+	int i, index;
 	msurface_t *s;
-	texture_t *t;
+	texture_t *t, *animated;
 	gltexture_t *fullbright;
 
 	GL_UseProgram(r_world_program);
@@ -1783,13 +1864,15 @@ static void R_DrawWorldMaterialLists_GLSL(qmodel_t *model)
 	GL_Uniform1iFunc(useLightmapOnlyLoc, 0);
 	GL_Uniform1fFunc(alphaLoc, 1.0f);
 
-	for (i = 0; i < r_world_material_numtextures; i++)
+	for (i = 0; i < r_world_material_numbuckets; i++)
 	{
-		if (r_world_material_heads[i] < 0 || !(t = model->textures[i]))
+		if (r_world_material_heads[i] < 0 ||
+			!(t = r_world_material_bucket_textures[i]))
 			continue;
+		animated = R_TextureAnimation(t, 0);
 
 		if (gl_fullbrights.value &&
-			(fullbright = R_TextureAnimation(t, 0)->fullbright))
+			(fullbright = animated->fullbright))
 		{
 			GL_SelectTexture(GL_TEXTURE2);
 			GL_Bind(fullbright);
@@ -1799,20 +1882,14 @@ static void R_DrawWorldMaterialLists_GLSL(qmodel_t *model)
 			GL_Uniform1iFunc(useFullbrightTexLoc, 0);
 
 		GL_SelectTexture(GL_TEXTURE0);
-		GL_Bind(R_TextureAnimation(t, 0)->gltexture);
+		GL_Bind(animated->gltexture);
+		GL_SelectTexture(GL_TEXTURE1);
+		GL_Bind(lightmaps[r_world_material_bucket_lightmaps[i]].texture);
 		R_ClearBatch();
-		lastlightmap = -1;
 		for (index = r_world_material_heads[i]; index >= 0;
 			index = r_world_material_next[index])
 		{
 			s = &model->surfaces[index];
-			if (s->lightmaptexturenum != lastlightmap)
-			{
-				R_FlushBatch();
-				GL_SelectTexture(GL_TEXTURE1);
-				GL_Bind(lightmaps[s->lightmaptexturenum].texture);
-				lastlightmap = s->lightmaptexturenum;
-			}
 			R_BatchSurface(s);
 			rs_brushpasses++;
 		}
@@ -1958,7 +2035,9 @@ static void R_DrawTextureChains_GLSL(qmodel_t *model, entity_t *ent,
 		r_world_material_surfaces == model->surfaces &&
 		r_world_material_textures == model->textures &&
 		r_world_material_numsurfaces == model->numsurfaces &&
-		r_world_material_numtextures == model->numtextures)
+		r_world_material_numtextures == model->numtextures &&
+		r_world_material_numbuckets > 0 &&
+		r_world_material_bucket_textures && r_world_material_bucket_lightmaps)
 	{
 		R_DrawWorldMaterialLists_GLSL(model);
 		R_DrawTextureChains_GLSL_Legacy(model, ent, chain, true);
