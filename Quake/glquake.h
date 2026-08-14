@@ -46,6 +46,7 @@ typedef struct {
 	qboolean		compatibility_profile;
 	qboolean		core_profile;
 	qboolean		requested_gl43_compatibility;
+	qboolean		explicit_gl43_compatibility_request;
 	gl_capability_source_t	vertex_array_object;
 	gl_capability_source_t	instancing;
 	gl_capability_source_t	timer_query;

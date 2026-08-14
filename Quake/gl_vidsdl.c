@@ -117,11 +117,22 @@ static void *GL_ResolveTimerProc (const char *name)
 #endif
 }
 
-static qboolean VID_RequestGL43CompatibilityContext (void)
+static qboolean VID_RequestGL43CompatibilityContext (qboolean *explicit_request)
 {
 #if defined(USE_SDL2) && !defined(__APPLE__)
-	return COM_CheckParm("-gl43compat") != 0 || COM_CheckParm("-gl43") != 0;
+	qboolean explicit_mode;
+
+	if (explicit_request)
+		*explicit_request = false;
+	if (COM_CheckParm("-legacygl"))
+		return false;
+	explicit_mode = COM_CheckParm("-gl43compat") != 0 || COM_CheckParm("-gl43") != 0;
+	if (explicit_request)
+		*explicit_request = explicit_mode;
+	return true;
 #else
+	if (explicit_request)
+		*explicit_request = false;
 	return false;
 #endif
 }
@@ -639,6 +650,7 @@ static qboolean VID_SetMode (int width, int height, int refreshrate, int bpp, qb
 	int		previous_display;
 #if !defined(__APPLE__)
 	qboolean	request_gl43_compatibility;
+	qboolean	request_gl43_compatibility_explicit;
 #endif
 #endif
 
@@ -661,10 +673,12 @@ static qboolean VID_SetMode (int width, int height, int refreshrate, int bpp, qb
 		stencilbits = 8;
 	}
 #if defined(USE_SDL2) && !defined(__APPLE__)
-	request_gl43_compatibility = VID_RequestGL43CompatibilityContext ();
+	request_gl43_compatibility = VID_RequestGL43CompatibilityContext (&request_gl43_compatibility_explicit);
 	VID_SetGLAttributes (depthbits, stencilbits, fsaa, request_gl43_compatibility);
 	if (request_gl43_compatibility)
-		Con_Printf ("Requesting OpenGL 4.3 compatibility context (-gl43compat)\n");
+		Con_Printf ("Requesting OpenGL 4.3 compatibility context (%s)\n",
+			request_gl43_compatibility_explicit ?
+				"requested" : "default on SDL2 (use -legacygl to force legacy)");
 #else
 	SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, depthbits);
 	SDL_GL_SetAttribute(SDL_GL_STENCIL_SIZE, stencilbits);
@@ -1114,7 +1128,7 @@ static void GL_DetectCapabilities (void)
 	memset (&gl_caps, 0, sizeof(gl_caps));
 	gl_caps.version_major = gl_version_major;
 	gl_caps.version_minor = gl_version_minor;
-	gl_caps.requested_gl43_compatibility = VID_RequestGL43CompatibilityContext ();
+	gl_caps.requested_gl43_compatibility = VID_RequestGL43CompatibilityContext (&gl_caps.explicit_gl43_compatibility_request);
 
 	/* Profile masks were introduced with OpenGL 3.2. */
 	if (GL_HasVersion (3, 2))
@@ -1154,7 +1168,10 @@ static void GL_PrintCapabilityReport (void)
 		gl_caps.version_major, gl_caps.version_minor,
 		gl_caps.compatibility_profile ? "compatibility" :
 			(gl_caps.core_profile ? "core" : "unknown-profile"),
-		gl_caps.requested_gl43_compatibility ? " (GL 4.3 compatibility requested)" : "");
+		gl_caps.requested_gl43_compatibility ?
+			(gl_caps.explicit_gl43_compatibility_request ?
+				" (GL 4.3 compatibility requested explicitly)" :
+				" (GL 4.3 compatibility requested by default)") : "");
 	Con_SafePrintf ("GL_CAPABILITIES: VAO=%s instancing/divisor=%s timer-query=%s\n",
 		GL_CapabilitySourceName (gl_caps.vertex_array_object),
 		GL_CapabilitySourceName (gl_caps.instancing),
@@ -1589,7 +1606,8 @@ static void GL_Init (void)
 	if (gl_caps.requested_gl43_compatibility &&
 	    (!GL_HasVersion (4, 3) || !gl_caps.compatibility_profile))
 	{
-		Con_Warning ("Requested OpenGL 4.3 compatibility context was not obtained; using %d.%d %s context\n",
+		Con_Warning ("Requested OpenGL 4.3 compatibility context%s was not obtained; using %d.%d %s context\n",
+			gl_caps.explicit_gl43_compatibility_request ? " explicitly" : " (default)",
 			gl_caps.version_major, gl_caps.version_minor,
 			gl_caps.compatibility_profile ? "compatibility" :
 				(gl_caps.core_profile ? "core" : "unknown-profile"));
