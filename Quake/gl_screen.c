@@ -447,6 +447,13 @@ void SCR_SizeDown_f(void) {
 /* Last desktop dimensions to which automatic UI scaling was applied. */
 static int scr_autoscale_width = -1;
 static int scr_autoscale_height = -1;
+static qboolean scr_autoscale_dirty = true;
+static qboolean scr_autoscale_applying;
+
+static void SCR_Callback_autoScale(cvar_t *var) {
+  if (!scr_autoscale_applying)
+    scr_autoscale_dirty = true;
+}
 
 /*
 =================
@@ -460,23 +467,24 @@ never changes the scale cvars used by the VR presentation path.
 static void SCR_ApplyAutoScale(void) {
   float scale;
 
-  if (vr_enabled.value || !scr_autoscale.value) {
-    /* Reapply if automatic desktop scaling is subsequently enabled/entered. */
-    scr_autoscale_width = scr_autoscale_height = -1;
+  if (vr_enabled.value || !scr_autoscale.value)
     return;
-  }
 
   if (glwidth <= 0 || glheight <= 0 ||
-      (glwidth == scr_autoscale_width && glheight == scr_autoscale_height))
+      (!scr_autoscale_dirty && glwidth == scr_autoscale_width &&
+       glheight == scr_autoscale_height))
     return;
 
   scr_autoscale_width = glwidth;
   scr_autoscale_height = glheight;
   scale = q_max(1.0f, q_min((float)glwidth / 640.0f,
                            (float)glheight / 480.0f));
+  scr_autoscale_applying = true;
   Cvar_SetValueQuick(&scr_conscale, scale);
   Cvar_SetValueQuick(&scr_menuscale, scale);
   Cvar_SetValueQuick(&scr_sbarscale, scale);
+  scr_autoscale_applying = false;
+  scr_autoscale_dirty = false;
 }
 
 static void SCR_Callback_refdef(cvar_t *var) { vid.recalc_refdef = 1; }
@@ -495,6 +503,11 @@ void SCR_Conwidth_f(cvar_t *var) {
   vid.conwidth = CLAMP(320, vid.conwidth, vid.width);
   vid.conwidth &= 0xFFFFFFF8;
   vid.conheight = vid.conwidth * vid.height / vid.width;
+}
+
+static void SCR_Callback_conscale(cvar_t *var) {
+  SCR_Conwidth_f(var);
+  SCR_Callback_autoScale(var);
 }
 
 //============================================================================
@@ -516,16 +529,19 @@ SCR_Init
 */
 void SCR_Init(void) {
   // johnfitz -- new cvars
+  Cvar_SetCallback(&scr_menuscale, SCR_Callback_autoScale);
   Cvar_RegisterVariable(&scr_menuscale);
+  Cvar_SetCallback(&scr_sbarscale, SCR_Callback_autoScale);
   Cvar_RegisterVariable(&scr_sbarscale);
 	Cvar_SetCallback(&scr_sbaralpha, SCR_Callback_refdef);
   Cvar_RegisterVariable(&scr_sbaralpha);
   Cvar_SetCallback(&scr_hudstyle, SCR_HUDStyle_f);
   Cvar_RegisterVariable(&scr_hudstyle);
   Cvar_SetCallback(&scr_conwidth, &SCR_Conwidth_f);
-  Cvar_SetCallback(&scr_conscale, &SCR_Conwidth_f);
+  Cvar_SetCallback(&scr_conscale, SCR_Callback_conscale);
   Cvar_RegisterVariable(&scr_conwidth);
   Cvar_RegisterVariable(&scr_conscale);
+  Cvar_SetCallback(&scr_autoscale, SCR_Callback_autoScale);
   Cvar_RegisterVariable(&scr_autoscale);
   Cvar_RegisterVariable(&scr_crosshairscale);
   Cvar_RegisterVariable(&scr_crosshair_desktop_fallback);
