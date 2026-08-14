@@ -26,8 +26,21 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 
 extern cvar_t gl_fullbrights, r_drawflat, gl_overbright, r_oldwater, r_oldwater_max_drawpolys, r_oldskyleaf, r_showtris; //johnfitz
 
+/* Non-archived because this is an optional renderer experiment, not game
+ * content or a user preference that should follow a config between drivers. */
+cvar_t r_gpuworldmark = {"r_gpuworldmark", "0", CVAR_NONE};
+cvar_t r_gpuworldmark_validate = {"r_gpuworldmark_validate", "0", CVAR_NONE};
+
 byte *SV_FatPVS (vec3_t org, qmodel_t *worldmodel);
 qboolean R_BackFaceCull(msurface_t *surf);
+extern GLuint gl_bmodel_vbo;
+extern GLuint gl_bmodel_ebo;
+extern int r_perf_gpuworld_dispatches;
+extern int r_perf_gpuworld_mdi_calls;
+extern int r_perf_gpuworld_command_slots;
+extern int r_perf_gpuworld_fallbacks;
+extern int r_perf_gpuworld_validation_failures;
+static GLuint r_world_program;
 
 /*
  * The VR compositor supplies both eye positions before it begins rendering.
@@ -89,6 +102,64 @@ static texture_t **r_world_material_bucket_textures;
 static int *r_world_material_bucket_lightmaps;
 static qboolean r_world_material_lists_ready;
 static qboolean r_world_material_lists_warned;
+
+/*
+ * The first GPU world-marking path is deliberately narrow.  It only owns
+ * no-VIS, opaque GLSL world surfaces with immutable style-0 lightmaps.  The
+ * command buffer has one fixed slot per surface: compute changes count to
+ * zero or its immutable index count, so MDI needs no CPU readback.
+ */
+typedef struct
+{
+	float mins[4];
+	float maxs[4];
+	float plane[4];
+	unsigned int flags;
+	unsigned int index_count;
+	unsigned int first_index;
+	unsigned int command_index;
+} r_gpuworldmark_surface_t;
+
+typedef struct
+{
+	unsigned int count;
+	unsigned int instance_count;
+	unsigned int first_index;
+	int base_vertex;
+	unsigned int base_instance;
+} r_gpuworldmark_command_t;
+
+typedef struct
+{
+	int first_command;
+	int command_count;
+} r_gpuworldmark_range_t;
+
+typedef void (APIENTRYP r_gpuworldmark_get_buffer_sub_data_t) (GLenum target,
+	GLintptr offset, GLsizeiptr size, void *data);
+
+static GLuint r_gpuworldmark_program;
+static GLuint r_gpuworldmark_surface_buffer;
+static GLuint r_gpuworldmark_command_buffer;
+static qmodel_t *r_gpuworldmark_model;
+static msurface_t *r_gpuworldmark_model_surfaces;
+static texture_t **r_gpuworldmark_model_textures;
+static GLuint r_gpuworldmark_vbo, r_gpuworldmark_ebo;
+static unsigned int r_gpuworldmark_num_commands;
+static msurface_t **r_gpuworldmark_command_surfaces;
+static msurface_t **r_gpuworldmark_special_surfaces;
+static int r_gpuworldmark_num_special_surfaces;
+static r_gpuworldmark_range_t *r_gpuworldmark_ranges;
+static qboolean r_gpuworldmark_resources_ready;
+static qboolean r_gpuworldmark_frame_active;
+static qboolean r_gpuworldmark_runtime_disabled;
+static qboolean r_gpuworldmark_logged_unavailable;
+static qboolean r_gpuworldmark_logged_active;
+static qboolean r_gpuworldmark_lightmap_refresh_pending;
+static GLint r_gpuworldmark_surface_count_loc;
+static GLint r_gpuworldmark_view_origin_loc;
+static GLint r_gpuworldmark_frustum_loc[4];
+static r_gpuworldmark_get_buffer_sub_data_t r_gpuworldmark_get_buffer_sub_data;
 
 static unsigned int R_WorldMaterialKeyHash(texture_t *texture, int lightmap)
 {
@@ -309,7 +380,7 @@ static qboolean R_WorldMaterialSurfaceEligible(msurface_t *surf)
 	int index;
 
 	if (!surf || surf->flags & (SURF_DRAWTURB | SURF_DRAWTILED | SURF_NOTEXTURE |
-		SURF_DRAWFENCE))
+		SURF_DRAWFENCE | SURF_DRAWSKY | SURF_DRAWBACKGROUND))
 		return false;
 	index = R_WorldMaterialSurfaceIndex(surf);
 	return index >= 0 && r_world_material_surface_ids[index] >= 0 &&
@@ -328,8 +399,263 @@ static void R_AppendWorldMaterialSurface(msurface_t *surf)
 	r_world_material_heads[material] = index;
 }
 
+static qboolean R_GPUWorldMarkSurfaceEligible(msurface_t *surf)
+{
+	int map;
+
+	if (!R_WorldMaterialSurfaceEligible(surf) || !surf->polys ||
+		(surf->flags & (SURF_DRAWSKY | SURF_DRAWBACKGROUND)) ||
+		surf->numedges < 3 || surf->vbo_firstindex < 0)
+		return false;
+	/* Animated light styles are retained by the CPU path. */
+	for (map = 0; map < MAXLIGHTMAPS && surf->styles[map] != 255; map++)
+		if (surf->styles[map] != 0)
+			return false;
+	return true;
+}
+
+static qboolean R_GPUWorldMarkHasDynamicLights(void)
+{
+	int i;
+
+	if (!r_dynamic.value || gl_flashblend.value)
+		return false;
+	for (i = 0; i < MAX_DLIGHTS; i++)
+		if (cl_dlights[i].die >= cl.time && cl_dlights[i].radius)
+			return true;
+	return false;
+}
+
+static qboolean R_GPUWorldMarkCapabilitiesAvailable(void)
+{
+	return gl_glsl_able && gl_vbo_able &&
+		gl_caps.shader_storage_buffer_object != gl_capability_unavailable &&
+		gl_caps.compute_shader != gl_capability_unavailable &&
+		gl_caps.memory_barrier != gl_capability_unavailable &&
+		gl_caps.draw_indirect != gl_capability_unavailable &&
+		gl_caps.multi_draw_indirect != gl_capability_unavailable &&
+		GL_GenBuffersFunc && GL_DeleteBuffersFunc && GL_BindBufferFunc &&
+		GL_BufferDataFunc && GL_BindBufferBaseFunc &&
+		GL_ShaderStorageBlockBindingFunc &&
+		GL_DispatchComputeFunc && GL_MemoryBarrierFunc &&
+		GL_MultiDrawElementsIndirectFunc;
+}
+
+static void R_GPUWorldMarkFreeResources(void)
+{
+	if ((r_gpuworldmark_surface_buffer || r_gpuworldmark_command_buffer) &&
+		GL_DeleteBuffersFunc)
+	{
+		if (r_gpuworldmark_surface_buffer)
+			GL_DeleteBuffersFunc(1, &r_gpuworldmark_surface_buffer);
+		if (r_gpuworldmark_command_buffer)
+			GL_DeleteBuffersFunc(1, &r_gpuworldmark_command_buffer);
+	}
+	free(r_gpuworldmark_command_surfaces);
+	free(r_gpuworldmark_special_surfaces);
+	free(r_gpuworldmark_ranges);
+	r_gpuworldmark_surface_buffer = 0;
+	r_gpuworldmark_command_buffer = 0;
+	r_gpuworldmark_command_surfaces = NULL;
+	r_gpuworldmark_special_surfaces = NULL;
+	r_gpuworldmark_ranges = NULL;
+	r_gpuworldmark_num_commands = 0;
+	r_gpuworldmark_num_special_surfaces = 0;
+	r_gpuworldmark_model = NULL;
+	r_gpuworldmark_model_surfaces = NULL;
+	r_gpuworldmark_model_textures = NULL;
+	r_gpuworldmark_vbo = r_gpuworldmark_ebo = 0;
+	r_gpuworldmark_resources_ready = false;
+	r_gpuworldmark_frame_active = false;
+	r_gpuworldmark_lightmap_refresh_pending = false;
+}
+
+void R_GPUWorldMarkContextLost(void)
+{
+	R_GPUWorldMarkFreeResources();
+	r_gpuworldmark_program = 0; /* R_DeleteShaders owns the GL deletion. */
+	r_gpuworldmark_get_buffer_sub_data = NULL;
+}
+
+static qboolean R_GPUWorldMarkResourcesMatch(qmodel_t *model)
+{
+	return r_gpuworldmark_resources_ready &&
+		r_gpuworldmark_model == model &&
+		r_gpuworldmark_model_surfaces == model->surfaces &&
+		r_gpuworldmark_model_textures == model->textures &&
+		r_gpuworldmark_vbo == gl_bmodel_vbo &&
+		r_gpuworldmark_ebo == gl_bmodel_ebo;
+}
+
+static qboolean R_GPUWorldMarkBuildResources(qmodel_t *model)
+{
+	r_gpuworldmark_surface_t *surface_data = NULL;
+	r_gpuworldmark_command_t *command_data = NULL;
+	msurface_t **command_surfaces = NULL, **special_surfaces = NULL;
+	r_gpuworldmark_range_t *ranges = NULL;
+	int *next_command = NULL;
+	unsigned int *bucket_counts = NULL;
+	unsigned int i, command_count, special_count;
+	size_t surface_bytes, command_bytes;
+	GLenum error;
+
+	if (R_GPUWorldMarkResourcesMatch(model))
+		return true;
+	R_GPUWorldMarkFreeResources();
+	if (!R_EnsureWorldMaterialLists(model) || !r_novis_surface_cache_ready ||
+		!gl_bmodel_vbo || !gl_bmodel_ebo ||
+		(size_t)r_novis_surface_cache_num_surfaces > Q_MAXINT)
+		return false;
+	if ((size_t)r_novis_surface_cache_num_surfaces >
+		SIZE_MAX / sizeof(*special_surfaces) ||
+		(size_t)r_world_material_numbuckets > SIZE_MAX / sizeof(*ranges) ||
+		(size_t)r_world_material_numbuckets > SIZE_MAX / sizeof(*bucket_counts) ||
+		(size_t)r_world_material_numbuckets > SIZE_MAX / sizeof(*next_command))
+		return false;
+
+	bucket_counts = (unsigned int *)calloc(r_world_material_numbuckets,
+		sizeof(*bucket_counts));
+	special_surfaces = (msurface_t **)malloc(
+		r_novis_surface_cache_num_surfaces * sizeof(*special_surfaces));
+	if (!bucket_counts || !special_surfaces)
+		goto failed;
+	command_count = special_count = 0;
+	for (i = 0; i < (unsigned int)r_novis_surface_cache_num_surfaces; i++)
+	{
+		msurface_t *surf = r_novis_surface_cache_surfaces[i];
+		int index, material;
+
+		if (!R_GPUWorldMarkSurfaceEligible(surf) ||
+			(size_t)surf->numedges - 2 > UINT_MAX / 3)
+		{
+			special_surfaces[special_count++] = surf;
+			continue;
+		}
+		index = R_WorldMaterialSurfaceIndex(surf);
+		material = r_world_material_surface_ids[index];
+		if (material < 0 || material >= r_world_material_numbuckets ||
+			bucket_counts[material] == UINT_MAX || command_count == UINT_MAX)
+			goto failed;
+		bucket_counts[material]++;
+		command_count++;
+	}
+	if (!command_count ||
+		(size_t)command_count > SIZE_MAX / sizeof(*surface_data) ||
+		(size_t)command_count > SIZE_MAX / sizeof(*command_data) ||
+		(size_t)command_count > SIZE_MAX / sizeof(*command_surfaces))
+		goto failed;
+	surface_bytes = command_count * sizeof(*surface_data);
+	command_bytes = command_count * sizeof(*command_data);
+	surface_data = (r_gpuworldmark_surface_t *)malloc(surface_bytes);
+	command_data = (r_gpuworldmark_command_t *)malloc(command_bytes);
+	command_surfaces = (msurface_t **)malloc(command_count *
+		sizeof(*command_surfaces));
+	ranges = (r_gpuworldmark_range_t *)malloc(r_world_material_numbuckets *
+		sizeof(*ranges));
+	next_command = (int *)malloc(r_world_material_numbuckets *
+		sizeof(*next_command));
+	if (!surface_data || !command_data || !command_surfaces || !ranges ||
+		!next_command)
+		goto failed;
+	command_count = 0;
+	for (i = 0; i < (unsigned int)r_world_material_numbuckets; i++)
+	{
+		ranges[i].first_command = (int)command_count;
+		ranges[i].command_count = (int)bucket_counts[i];
+		next_command[i] = (int)command_count;
+		command_count += bucket_counts[i];
+	}
+	for (i = 0; i < (unsigned int)r_novis_surface_cache_num_surfaces; i++)
+	{
+		msurface_t *surf = r_novis_surface_cache_surfaces[i];
+		int index, material, command;
+		r_gpuworldmark_surface_t *meta;
+		r_gpuworldmark_command_t *draw;
+
+		if (!R_GPUWorldMarkSurfaceEligible(surf) ||
+			(size_t)surf->numedges - 2 > UINT_MAX / 3)
+			continue;
+		index = R_WorldMaterialSurfaceIndex(surf);
+		material = r_world_material_surface_ids[index];
+		command = next_command[material]++;
+		meta = &surface_data[command];
+		draw = &command_data[command];
+		memset(meta, 0, sizeof(*meta));
+		memset(draw, 0, sizeof(*draw));
+		memcpy(meta->mins, surf->mins, sizeof(surf->mins));
+		memcpy(meta->maxs, surf->maxs, sizeof(surf->maxs));
+		memcpy(meta->plane, surf->plane->normal, sizeof(surf->plane->normal));
+		meta->plane[3] = surf->plane->dist;
+		meta->flags = (unsigned int)surf->flags;
+		meta->index_count = 3U * ((unsigned int)surf->numedges - 2U);
+		meta->first_index = (unsigned int)surf->vbo_firstindex;
+		meta->command_index = (unsigned int)command;
+		draw->count = meta->index_count;
+		draw->instance_count = 1;
+		draw->first_index = meta->first_index;
+		command_surfaces[command] = surf;
+	}
+
+	/* Monado and other callers can leave unrelated GL errors pending.  Drain
+	 * them before attribution, then inspect only this allocation/upload batch. */
+	while ((error = glGetError()) != GL_NO_ERROR)
+		Con_DWarning("r_gpuworldmark: clearing pre-existing GL error 0x%x\n",
+			(unsigned int)error);
+	GL_GenBuffersFunc(1, &r_gpuworldmark_surface_buffer);
+	GL_GenBuffersFunc(1, &r_gpuworldmark_command_buffer);
+	if (!r_gpuworldmark_surface_buffer || !r_gpuworldmark_command_buffer)
+		goto failed;
+	GL_BindBufferFunc(GL_SHADER_STORAGE_BUFFER, r_gpuworldmark_surface_buffer);
+	GL_BufferDataFunc(GL_SHADER_STORAGE_BUFFER, surface_bytes, surface_data,
+		GL_STATIC_DRAW);
+	GL_BindBufferFunc(GL_DRAW_INDIRECT_BUFFER, r_gpuworldmark_command_buffer);
+	GL_BufferDataFunc(GL_DRAW_INDIRECT_BUFFER, command_bytes, command_data,
+		GL_DYNAMIC_DRAW);
+	GL_BindBufferFunc(GL_SHADER_STORAGE_BUFFER, 0);
+	GL_BindBufferFunc(GL_DRAW_INDIRECT_BUFFER, 0);
+	while ((error = glGetError()) != GL_NO_ERROR)
+	{
+		Con_Warning("r_gpuworldmark: GPU buffer setup failed (GL error 0x%x)\n",
+			(unsigned int)error);
+		goto failed;
+	}
+
+	r_gpuworldmark_command_surfaces = command_surfaces;
+	r_gpuworldmark_special_surfaces = special_surfaces;
+	r_gpuworldmark_ranges = ranges;
+	r_gpuworldmark_num_commands = command_count;
+	r_gpuworldmark_num_special_surfaces = (int)special_count;
+	r_gpuworldmark_model = model;
+	r_gpuworldmark_model_surfaces = model->surfaces;
+	r_gpuworldmark_model_textures = model->textures;
+	r_gpuworldmark_vbo = gl_bmodel_vbo;
+	r_gpuworldmark_ebo = gl_bmodel_ebo;
+	r_gpuworldmark_resources_ready = true;
+	r_gpuworldmark_lightmap_refresh_pending = true;
+	free(surface_data);
+	free(command_data);
+	free(bucket_counts);
+	free(next_command);
+	return true;
+
+failed:
+	free(surface_data);
+	free(command_data);
+	free(command_surfaces);
+	free(special_surfaces);
+	free(ranges);
+	free(bucket_counts);
+	free(next_command);
+	R_GPUWorldMarkFreeResources();
+	return false;
+}
+
 void R_InvalidateNoVisSurfaceCache(void)
 {
+	R_GPUWorldMarkFreeResources();
+	r_gpuworldmark_runtime_disabled = false;
+	r_gpuworldmark_logged_unavailable = false;
+	r_gpuworldmark_logged_active = false;
 	r_novis_surface_cache_model = NULL;
 	r_novis_surface_cache_leafs = NULL;
 	r_novis_surface_cache_model_surfaces = NULL;
@@ -508,6 +834,222 @@ static void R_ChainNoVisSurfaceCache(qboolean perf)
 		r_perf_surfaces_unique += r_novis_surface_cache_num_surfaces;
 }
 
+static void R_GPUWorldMarkChainSpecialSurfaces(qboolean perf)
+{
+	int i;
+
+	for (i = 0; i < r_gpuworldmark_num_special_surfaces; i++)
+	{
+		msurface_t *surf = r_gpuworldmark_special_surfaces[i];
+
+		surf->visframe = r_visframecount;
+		if (!R_CullBox(surf->mins, surf->maxs) && !R_BackFaceCull(surf))
+		{
+			rs_brushpolys++;
+			R_ChainSurface(surf, chain_world);
+			R_RenderDynamicLightmaps(surf);
+			R_AppendWorldMaterialSurface(surf);
+			if (perf)
+				r_perf_surfaces_chained++;
+			if (surf->texinfo->texture->warpimage)
+				surf->texinfo->texture->update_warp = true;
+		}
+		else if (perf)
+			r_perf_surfaces_culled++;
+	}
+}
+
+static void R_GPUWorldMarkRefreshDynamicLightmaps(void)
+{
+	unsigned int i;
+
+	if (!r_gpuworldmark_lightmap_refresh_pending)
+		return;
+	/* A light can have touched an off-screen surface.  Refresh that compact,
+	 * immutable GPU list once before re-enabling GPU draws. */
+	for (i = 0; i < r_gpuworldmark_num_commands; i++)
+	{
+		msurface_t *surf = r_gpuworldmark_command_surfaces[i];
+		int map;
+		qboolean dirty = surf->cached_dlight;
+
+		for (map = 0; !dirty && map < MAXLIGHTMAPS &&
+			surf->styles[map] != 255; map++)
+			if (d_lightstylevalue[surf->styles[map]] != surf->cached_light[map])
+				dirty = true;
+		if (dirty)
+			R_RenderDynamicLightmaps(surf);
+	}
+	r_gpuworldmark_lightmap_refresh_pending = false;
+}
+
+static void R_GPUWorldMarkDispatch(void)
+{
+	int i;
+
+	GL_UseProgram(r_gpuworldmark_program);
+	GL_Uniform1iFunc(r_gpuworldmark_surface_count_loc,
+		(GLint)r_gpuworldmark_num_commands);
+	GL_Uniform3fFunc(r_gpuworldmark_view_origin_loc,
+		r_refdef.vieworg[0], r_refdef.vieworg[1], r_refdef.vieworg[2]);
+	for (i = 0; i < 4; i++)
+		GL_Uniform4fFunc(r_gpuworldmark_frustum_loc[i], frustum[i].normal[0],
+			frustum[i].normal[1], frustum[i].normal[2], frustum[i].dist);
+	GL_BindBufferBaseFunc(GL_SHADER_STORAGE_BUFFER, 0,
+		r_gpuworldmark_surface_buffer);
+	GL_BindBufferBaseFunc(GL_SHADER_STORAGE_BUFFER, 1,
+		r_gpuworldmark_command_buffer);
+	GL_DispatchComputeFunc((r_gpuworldmark_num_commands + 63U) / 64U, 1, 1);
+	GL_MemoryBarrierFunc(GL_COMMAND_BARRIER_BIT | GL_SHADER_STORAGE_BARRIER_BIT);
+	if (r_perfdebug.value != 0.0f)
+		r_perf_gpuworld_dispatches++;
+	GL_UseProgram(0);
+}
+
+static void R_GPUWorldMarkCountValidationFailure(void)
+{
+	if (r_perfdebug.value != 0.0f)
+		r_perf_gpuworld_validation_failures++;
+}
+
+/* Validation is explicitly opt-in.  A setup/readback failure cannot prove a
+ * command stream correct, so disable only this validation-enabled GPU attempt
+ * rather than retrying (and synchronizing/warning) on every subsequent view. */
+static void R_GPUWorldMarkValidationSetupFailed(const char *reason)
+{
+	if (!r_gpuworldmark_runtime_disabled)
+	{
+		Con_Warning("r_gpuworldmark: validation %s; disabling GPU path\n", reason);
+		R_GPUWorldMarkCountValidationFailure();
+	}
+	r_gpuworldmark_runtime_disabled = true;
+}
+
+static qboolean R_GPUWorldMarkFallbackCountable(qboolean nearwaterportal)
+{
+	return r_gpuworldmark.value && cl.worldmodel &&
+		cl.worldmodel->visdata == NULL && !r_novis.value &&
+		!nearwaterportal && !skyroom_drawing && !r_showtris.value &&
+		!r_drawflat_cheatsafe && !r_fullbright_cheatsafe &&
+		!r_lightmap_cheatsafe;
+}
+
+static qboolean R_GPUWorldMarkValidate(void)
+{
+	r_gpuworldmark_command_t *commands;
+	unsigned int i;
+	qboolean valid = true;
+	size_t bytes;
+
+	if (!r_gpuworldmark_validate.value)
+		return true;
+	if (!r_gpuworldmark_get_buffer_sub_data)
+		r_gpuworldmark_get_buffer_sub_data =
+			(r_gpuworldmark_get_buffer_sub_data_t)SDL_GL_GetProcAddress(
+				"glGetBufferSubData");
+	if (!r_gpuworldmark_get_buffer_sub_data)
+	{
+		R_GPUWorldMarkValidationSetupFailed("readback unavailable");
+		return false;
+	}
+	if ((size_t)r_gpuworldmark_num_commands >
+		SIZE_MAX / sizeof(*commands))
+	{
+		R_GPUWorldMarkValidationSetupFailed("command readback size overflow");
+		return false;
+	}
+	bytes = r_gpuworldmark_num_commands * sizeof(*commands);
+	commands = (r_gpuworldmark_command_t *)malloc(bytes);
+	if (!commands)
+	{
+		R_GPUWorldMarkValidationSetupFailed("command readback allocation failed");
+		return false;
+	}
+	/* This optional readback intentionally synchronizes validation mode only. */
+	GL_MemoryBarrierFunc(GL_BUFFER_UPDATE_BARRIER_BIT);
+	GL_BindBufferFunc(GL_DRAW_INDIRECT_BUFFER, r_gpuworldmark_command_buffer);
+	r_gpuworldmark_get_buffer_sub_data(GL_DRAW_INDIRECT_BUFFER, 0, bytes,
+		commands);
+	GL_BindBufferFunc(GL_DRAW_INDIRECT_BUFFER, 0);
+	if (glGetError() != GL_NO_ERROR)
+	{
+		free(commands);
+		R_GPUWorldMarkValidationSetupFailed("command readback failed");
+		return false;
+	}
+	for (i = 0; valid && i < r_gpuworldmark_num_commands; i++)
+	{
+		msurface_t *surf = r_gpuworldmark_command_surfaces[i];
+		unsigned int expected = (!R_CullBox(surf->mins, surf->maxs) &&
+			!R_BackFaceCull(surf)) ? 3U * ((unsigned int)surf->numedges - 2U) : 0;
+
+		if (commands[i].count != expected)
+		{
+			Con_Warning("r_gpuworldmark: validation mismatch surface %d (%s; gpu %u cpu %u); disabling GPU path\n",
+				R_WorldMaterialSurfaceIndex(surf),
+				commands[i].count ? "extra" : "missing", commands[i].count,
+				expected);
+			valid = false;
+		}
+	}
+	free(commands);
+	if (!valid)
+	{
+		r_gpuworldmark_runtime_disabled = true;
+		R_GPUWorldMarkCountValidationFailure();
+	}
+	return valid;
+}
+
+static qboolean R_GPUWorldMarkTryMark(qboolean nearwaterportal, qboolean perf)
+{
+	if (!r_gpuworldmark.value || r_gpuworldmark_runtime_disabled ||
+		!cl.worldmodel || cl.worldmodel->visdata != NULL || r_novis.value ||
+		nearwaterportal || skyroom_drawing || r_showtris.value || r_drawflat_cheatsafe ||
+		r_fullbright_cheatsafe || r_lightmap_cheatsafe)
+		return false;
+	if (!R_GPUWorldMarkCapabilitiesAvailable() || !r_gpuworldmark_program)
+	{
+		if (!r_gpuworldmark_logged_unavailable)
+		{
+			Con_Printf("r_gpuworldmark: GL4.3 compute/SSBO/MDI unavailable; using CPU world marking\n");
+			r_gpuworldmark_logged_unavailable = true;
+		}
+		return false;
+	}
+	if (!R_EnsureNoVisSurfaceCache())
+		return false;
+	/* Style 0 is normally the fixed 264 value.  If even it is animated, the
+	 * complete world must use CPU lightmap updates for this frame. */
+	if (d_lightstylevalue[0] != 264 || R_GPUWorldMarkHasDynamicLights())
+	{
+		r_gpuworldmark_lightmap_refresh_pending = true;
+		return false;
+	}
+	if (!R_GPUWorldMarkBuildResources(cl.worldmodel))
+	{
+		if (!r_gpuworldmark_logged_unavailable)
+		{
+			Con_Warning("r_gpuworldmark: resource setup failed; using CPU world marking\n");
+			r_gpuworldmark_logged_unavailable = true;
+		}
+		return false;
+	}
+	R_GPUWorldMarkRefreshDynamicLightmaps();
+	R_GPUWorldMarkChainSpecialSurfaces(perf);
+	R_GPUWorldMarkDispatch();
+	if (!R_GPUWorldMarkValidate())
+		return false;
+	r_gpuworldmark_frame_active = true;
+	if (!r_gpuworldmark_logged_active)
+	{
+		Con_Printf("r_gpuworldmark: enabled for no-VIS opaque world surfaces (%u commands)\n",
+			r_gpuworldmark_num_commands);
+		r_gpuworldmark_logged_active = true;
+	}
+	return true;
+}
+
 static void R_VRSharedVisibilityInvalidate(qboolean validation)
 {
 	r_vr_sharedvis_built = false;
@@ -642,6 +1184,7 @@ static void R_VRSharedVisibilityChainSurfaces(qboolean perf)
 {
 	msurface_t *surf;
 	int i;
+	qboolean gpuworldmark;
 
 	for (i = 0; i < lightmap_count; i++)
 		lightmaps[i].polys = NULL;
@@ -649,6 +1192,23 @@ static void R_VRSharedVisibilityChainSurfaces(qboolean perf)
 		if (cl.worldmodel->textures[i])
 			cl.worldmodel->textures[i]->texturechains[chain_world] = NULL;
 	R_ResetWorldMaterialLists(cl.worldmodel);
+	r_gpuworldmark_frame_active = false;
+	gpuworldmark = R_GPUWorldMarkTryMark(false, perf);
+	if (!gpuworldmark)
+	{
+		if (perf && R_GPUWorldMarkFallbackCountable(false))
+			r_perf_gpuworld_fallbacks++;
+		/* Validation/resource rejection may have chained special surfaces;
+		 * rebuild this eye's normal shared CPU chains from a clean slate. */
+		for (i = 0; i < lightmap_count; i++)
+			lightmaps[i].polys = NULL;
+		for (i = 0; i < cl.worldmodel->numtextures; i++)
+			if (cl.worldmodel->textures[i])
+				cl.worldmodel->textures[i]->texturechains[chain_world] = NULL;
+		R_ResetWorldMaterialLists(cl.worldmodel);
+	}
+	else
+		return;
 
 	for (i = 0; i < r_vr_sharedvis_num_surfaces; i++)
 	{
@@ -844,7 +1404,7 @@ void R_MarkSurfaces (void)
 	mleaf_t		*leaf;
 	msurface_t	*surf, **mark;
 	int			i, j;
-	qboolean	cache, nearwaterportal;
+	qboolean	cache, nearwaterportal, gpuworldmark;
 	qboolean	perf;
 
 	perf = r_perfdebug.value != 0;
@@ -933,6 +1493,21 @@ void R_MarkSurfaces (void)
 		if (cl.worldmodel->textures[i])
 			cl.worldmodel->textures[i]->texturechains[chain_world] = NULL;
 	R_ResetWorldMaterialLists(cl.worldmodel);
+	r_gpuworldmark_frame_active = false;
+	gpuworldmark = R_GPUWorldMarkTryMark(nearwaterportal, perf);
+	if (!gpuworldmark)
+	{
+		if (perf && R_GPUWorldMarkFallbackCountable(nearwaterportal))
+			r_perf_gpuworld_fallbacks++;
+		/* Validation can reject an already-dispatched view.  Rebuild clean CPU
+		 * chains for this same frame instead of leaving partial special chains. */
+		for (i=0; i<cl.worldmodel->numtextures; i++)
+			if (cl.worldmodel->textures[i])
+				cl.worldmodel->textures[i]->texturechains[chain_world] = NULL;
+		for (i=0; i<lightmap_count; i++)
+			lightmaps[i].polys = NULL;
+		R_ResetWorldMaterialLists(cl.worldmodel);
+	}
 
 	// iterate through leaves, marking surfaces
 	leaf = &cl.worldmodel->leafs[1];
@@ -951,7 +1526,8 @@ void R_MarkSurfaces (void)
 				continue;
 			}
 
-			if (!cache && (r_oldskyleaf.value || leaf->contents != CONTENTS_SKY))
+			if (!gpuworldmark && !cache &&
+				(r_oldskyleaf.value || leaf->contents != CONTENTS_SKY))
 			{
 				if (perf)
 					r_perf_marksurfaces_scanned += leaf->nummarksurfaces;
@@ -990,7 +1566,7 @@ void R_MarkSurfaces (void)
 		}
 	}
 
-	if (cache)
+	if (cache && !gpuworldmark)
 		R_ChainNoVisSurfaceCache(perf);
 }
 
@@ -1409,10 +1985,6 @@ float GL_WaterAlphaForEntitySurface (entity_t *ent, msurface_t *s)
 	return entalpha;
 }
 
-static GLuint r_world_program;
-extern GLuint gl_bmodel_vbo;
-extern GLuint gl_bmodel_ebo;
-
 // uniforms used in vert shader
 
 // uniforms used in frag shader
@@ -1803,6 +2375,18 @@ void GLWorld_CreateShaders (void)
 		"	gl_FragColor = result;\n"
 		"}\n";
 
+	const GLchar *gpuWorldMarkSource =
+		"#version 430\n"
+		"layout(local_size_x = 64) in;\n"
+		"struct Surface { vec4 mins; vec4 maxs; vec4 plane; uint flags; uint indexCount; uint firstIndex; uint commandIndex; };\n"
+		"struct Draw { uint count; uint instanceCount; uint firstIndex; int baseVertex; uint baseInstance; };\n"
+		"layout(std430, binding = 0) readonly buffer Surfaces { Surface surfaces[]; };\n"
+		"layout(std430, binding = 1) buffer Draws { Draw draws[]; };\n"
+		"uniform int uSurfaceCount; uniform vec3 uViewOrigin;\n"
+		"uniform vec4 uFrustum0, uFrustum1, uFrustum2, uFrustum3;\n"
+		"bool cullBox(Surface s, vec4 p) { vec3 v = vec3(p.x < 0.0 ? s.mins.x : s.maxs.x, p.y < 0.0 ? s.mins.y : s.maxs.y, p.z < 0.0 ? s.mins.z : s.maxs.z); return dot(p.xyz, v) < p.w; }\n"
+		"void main() { uint id = gl_GlobalInvocationID.x; if (id >= uint(uSurfaceCount)) return; Surface s = surfaces[id]; bool outside = cullBox(s,uFrustum0) || cullBox(s,uFrustum1) || cullBox(s,uFrustum2) || cullBox(s,uFrustum3); float side = dot(uViewOrigin, s.plane.xyz) - s.plane.w; bool backface = (side < 0.0) != ((s.flags & 2u) != 0u); draws[s.commandIndex].count = (!outside && !backface) ? s.indexCount : 0u; }\n";
+
 	if (!gl_glsl_alias_able)
 		return;
 
@@ -1820,6 +2404,38 @@ void GLWorld_CreateShaders (void)
 		useLightmapWideLoc = GL_GetUniformLocation (&r_world_program, "UseLightmapWide");
 		useLightmapOnlyLoc = GL_GetUniformLocation (&r_world_program, "UseLightmapOnly");
 		alphaLoc = GL_GetUniformLocation (&r_world_program, "Alpha");
+	}
+
+	r_gpuworldmark_program = 0;
+	if (R_GPUWorldMarkCapabilitiesAvailable())
+	{
+		r_gpuworldmark_program = GL_CreateComputeProgram(gpuWorldMarkSource,
+			"gpu world marking");
+		if (r_gpuworldmark_program)
+		{
+			r_gpuworldmark_surface_count_loc = GL_GetUniformLocation(
+				&r_gpuworldmark_program, "uSurfaceCount");
+			r_gpuworldmark_view_origin_loc = GL_GetUniformLocation(
+				&r_gpuworldmark_program, "uViewOrigin");
+			r_gpuworldmark_frustum_loc[0] = GL_GetUniformLocation(
+				&r_gpuworldmark_program, "uFrustum0");
+			r_gpuworldmark_frustum_loc[1] = GL_GetUniformLocation(
+				&r_gpuworldmark_program, "uFrustum1");
+			r_gpuworldmark_frustum_loc[2] = GL_GetUniformLocation(
+				&r_gpuworldmark_program, "uFrustum2");
+			r_gpuworldmark_frustum_loc[3] = GL_GetUniformLocation(
+				&r_gpuworldmark_program, "uFrustum3");
+			if (r_gpuworldmark_surface_count_loc < 0 ||
+				r_gpuworldmark_view_origin_loc < 0 ||
+				r_gpuworldmark_frustum_loc[0] < 0 ||
+				r_gpuworldmark_frustum_loc[1] < 0 ||
+				r_gpuworldmark_frustum_loc[2] < 0 ||
+				r_gpuworldmark_frustum_loc[3] < 0)
+			{
+				Con_Warning("r_gpuworldmark: compute uniform setup failed\n");
+				r_gpuworldmark_program = 0;
+			}
+		}
 	}
 }
 
@@ -1901,6 +2517,75 @@ static void R_DrawWorldMaterialLists_GLSL(qmodel_t *model)
 	GL_DisableVertexAttribArrayFunc(LMCoordsAttrIndex);
 	GL_UseProgram(0);
 	GL_SelectTexture(GL_TEXTURE0);
+}
+
+static void R_DrawGPUWorldMark_GLSL(qmodel_t *model)
+{
+	const int overbright = !!gl_overbright.value;
+	const int wide10bits = !!r_lightmapwide.value;
+	int i;
+	texture_t *t, *animated;
+	gltexture_t *fullbright;
+
+	GL_UseProgram(r_world_program);
+	GL_BindBuffer(GL_ARRAY_BUFFER, gl_bmodel_vbo);
+	GL_BindBuffer(GL_ELEMENT_ARRAY_BUFFER, gl_bmodel_ebo);
+	GL_BindBufferFunc(GL_DRAW_INDIRECT_BUFFER, r_gpuworldmark_command_buffer);
+	GL_EnableVertexAttribArrayFunc(vertAttrIndex);
+	GL_EnableVertexAttribArrayFunc(texCoordsAttrIndex);
+	GL_EnableVertexAttribArrayFunc(LMCoordsAttrIndex);
+	GL_VertexAttribPointerFunc(vertAttrIndex, 3, GL_FLOAT, GL_FALSE,
+		VERTEXSIZE * sizeof(float), ((float *)0));
+	GL_VertexAttribPointerFunc(texCoordsAttrIndex, 2, GL_FLOAT, GL_FALSE,
+		VERTEXSIZE * sizeof(float), ((float *)0) + 3);
+	GL_VertexAttribPointerFunc(LMCoordsAttrIndex, 2, GL_FLOAT, GL_FALSE,
+		VERTEXSIZE * sizeof(float), ((float *)0) + 5);
+	GL_Uniform1iFunc(texLoc, 0);
+	GL_Uniform1iFunc(LMTexLoc, 1);
+	GL_Uniform1iFunc(fullbrightTexLoc, 2);
+	GL_Uniform1iFunc(useOverbrightLoc, overbright);
+	GL_Uniform1iFunc(useAlphaTestLoc, 0);
+	GL_Uniform1iFunc(useLightmapWideLoc, wide10bits);
+	GL_Uniform1iFunc(useLightmapOnlyLoc, 0);
+	GL_Uniform1fFunc(alphaLoc, 1.0f);
+
+	for (i = 0; i < r_world_material_numbuckets; i++)
+	{
+		r_gpuworldmark_range_t *range = &r_gpuworldmark_ranges[i];
+		if (!range->command_count ||
+			!(t = r_world_material_bucket_textures[i]))
+			continue;
+		animated = R_TextureAnimation(t, 0);
+		if (gl_fullbrights.value && (fullbright = animated->fullbright))
+		{
+			GL_SelectTexture(GL_TEXTURE2);
+			GL_Bind(fullbright);
+			GL_Uniform1iFunc(useFullbrightTexLoc, 1);
+		}
+		else
+			GL_Uniform1iFunc(useFullbrightTexLoc, 0);
+		GL_SelectTexture(GL_TEXTURE0);
+		GL_Bind(animated->gltexture);
+		GL_SelectTexture(GL_TEXTURE1);
+		GL_Bind(lightmaps[r_world_material_bucket_lightmaps[i]].texture);
+		GL_MultiDrawElementsIndirectFunc(GL_TRIANGLES, GL_UNSIGNED_INT,
+			(const void *)(uintptr_t)(range->first_command *
+			sizeof(r_gpuworldmark_command_t)), range->command_count,
+			sizeof(r_gpuworldmark_command_t));
+		if (r_perfdebug.value != 0.0f)
+		{
+			r_perf_gpuworld_mdi_calls++;
+			r_perf_gpuworld_command_slots += range->command_count;
+		}
+	}
+
+	GL_BindBufferFunc(GL_DRAW_INDIRECT_BUFFER, 0);
+	GL_DisableVertexAttribArrayFunc(vertAttrIndex);
+	GL_DisableVertexAttribArrayFunc(texCoordsAttrIndex);
+	GL_DisableVertexAttribArrayFunc(LMCoordsAttrIndex);
+	GL_UseProgram(0);
+	GL_SelectTexture(GL_TEXTURE0);
+	Q_UNUSED(model);
 }
 
 /*
@@ -2039,6 +2724,10 @@ static void R_DrawTextureChains_GLSL(qmodel_t *model, entity_t *ent,
 		r_world_material_numbuckets > 0 &&
 		r_world_material_bucket_textures && r_world_material_bucket_lightmaps)
 	{
+		if (r_gpuworldmark_frame_active && r_gpuworldmark_resources_ready &&
+			r_gpuworldmark_model == model &&
+			r_gpuworldmark_num_commands > 0)
+			R_DrawGPUWorldMark_GLSL(model);
 		R_DrawWorldMaterialLists_GLSL(model);
 		R_DrawTextureChains_GLSL_Legacy(model, ent, chain, true);
 	}

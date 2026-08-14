@@ -44,6 +44,15 @@ def main() -> int:
     ]
     assert desktop_worldbatch_flushes["count"] == 2
     assert_within("desktop worldbatch flushes", desktop_worldbatch_flushes["median"], 1.0)
+    desktop_gpu_dispatch = groups["desktop"]["by_tag"]["r_perfdebug"]["metrics"][
+        "gpuworld.dispatch"
+    ]
+    assert desktop_gpu_dispatch["count"] == 2
+    assert_within("desktop gpu dispatch median", desktop_gpu_dispatch["median"], 0.5)
+    desktop_gpu_slots = groups["desktop"]["by_tag"]["r_perfdebug"]["metrics"][
+        "gpuworld.slots"
+    ]
+    assert_within("desktop gpu slots median", desktop_gpu_slots["median"], 21.0)
 
     vr0 = groups["vr/eye_0"]["by_tag"]["r_perfdebug"]["metrics"]["total"]
     assert vr0["count"] == 2
@@ -60,6 +69,10 @@ def main() -> int:
     vr0_worldbatch_mdraw = groups["vr/eye_0"]["by_tag"]["r_perfdebug"]["metrics"]["worldbatch.mdraw"]
     assert vr0_worldbatch_mdraw["count"] == 1
     assert_within("vr eye0 worldbatch mdraw p50", vr0_worldbatch_mdraw["median"], 2.0)
+    vr0_gpu_ranges = groups["vr/eye_0"]["by_tag"]["r_perfdebug"]["metrics"][
+        "gpuworld.ranges"
+    ]
+    assert_within("vr eye0 gpu ranges", vr0_gpu_ranges["median"], 5.0)
     vr1_snapshot_reuse = groups["vr/eye_1"]["by_tag"]["r_perfdebug"]["metrics"]["sharedents.reuse"]
     assert vr1_snapshot_reuse["count"] == 1
     assert_within("vr eye1 snapshot reuse", vr1_snapshot_reuse["median"], 1.0)

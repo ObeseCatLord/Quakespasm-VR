@@ -16,6 +16,7 @@
 #endif
 
 #define R_GPUTIMER_RING_SIZE 64
+#define R_GPUTIMER_FINALIZE_TIMEOUT_MS 25
 
 typedef void (APIENTRY *r_gputimer_gen_queries_t)(GLsizei n, GLuint *ids);
 typedef void (APIENTRY *r_gputimer_delete_queries_t)(GLsizei n, const GLuint *ids);
@@ -23,6 +24,7 @@ typedef void (APIENTRY *r_gputimer_begin_query_t)(GLenum target, GLuint id);
 typedef void (APIENTRY *r_gputimer_end_query_t)(GLenum target);
 typedef void (APIENTRY *r_gputimer_get_query_object_iv_t)(GLuint id, GLenum pname, GLint *params);
 typedef void (APIENTRY *r_gputimer_get_query_object_ui64v_t)(GLuint id, GLenum pname, unsigned long long *params);
+typedef void (APIENTRY *r_gputimer_flush_t)(void);
 
 typedef struct r_gputimer_query_s
 {
@@ -47,6 +49,8 @@ typedef struct r_gputimer_state_s
 	r_gputimer_end_query_t EndQuery;
 	r_gputimer_get_query_object_iv_t GetQueryObjectiv;
 	r_gputimer_get_query_object_ui64v_t GetQueryObjectui64v;
+	r_gputimer_flush_t Flush;
+	r_gputimer_result_callback_t result_callback;
 } r_gputimer_state_t;
 
 static r_gputimer_state_t r_gputimer;
@@ -103,8 +107,10 @@ void R_GPUTimer_Init (const r_gputimer_config_t *config)
 	r_gputimer.EndQuery = (r_gputimer_end_query_t) R_GPUTimer_GetProc (config->get_proc_address, "glEndQuery", "glEndQueryARB");
 	r_gputimer.GetQueryObjectiv = (r_gputimer_get_query_object_iv_t) R_GPUTimer_GetProc (config->get_proc_address, "glGetQueryObjectiv", "glGetQueryObjectivARB");
 	r_gputimer.GetQueryObjectui64v = (r_gputimer_get_query_object_ui64v_t) R_GPUTimer_GetProc (config->get_proc_address, "glGetQueryObjectui64v", "glGetQueryObjectui64vEXT");
+	r_gputimer.Flush = (r_gputimer_flush_t) R_GPUTimer_GetProc (config->get_proc_address, "glFlush", NULL);
 	if (!r_gputimer.GenQueries || !r_gputimer.DeleteQueries || !r_gputimer.BeginQuery ||
-		!r_gputimer.EndQuery || !r_gputimer.GetQueryObjectiv || !r_gputimer.GetQueryObjectui64v)
+		!r_gputimer.EndQuery || !r_gputimer.GetQueryObjectiv || !r_gputimer.GetQueryObjectui64v ||
+		!r_gputimer.Flush)
 	{
 		memset (&r_gputimer, 0, sizeof(r_gputimer));
 		return;
@@ -126,6 +132,17 @@ void R_GPUTimer_Init (const r_gputimer_config_t *config)
 	r_gputimer.enabled = 1;
 }
 
+static void R_GPUTimer_EmitAvailableResults (void)
+{
+	r_gputimer_result_t result;
+
+	if (!r_gputimer.result_callback)
+		return;
+
+	while (R_GPUTimer_Poll (&result))
+		r_gputimer.result_callback (&result);
+}
+
 void R_GPUTimer_Shutdown (void)
 {
 	GLuint ids[R_GPUTIMER_RING_SIZE];
@@ -136,8 +153,38 @@ void R_GPUTimer_Shutdown (void)
 
 	if (r_gputimer.active)
 	{
-		r_gputimer.EndQuery (GL_TIME_ELAPSED);
+		if (r_gputimer.active_slot != R_GPUTIMER_RING_SIZE)
+		{
+			r_gputimer.EndQuery (GL_TIME_ELAPSED);
+			r_gputimer.count++;
+			r_gputimer.stats.submitted++;
+		}
+		r_gputimer.active = 0;
 		r_gputimer.stats.invalid++;
+	}
+
+	/*
+	 * Unlike a desktop swap, VR does not necessarily flush this context.  Give
+	 * the oldest pending query a short, bounded opportunity to complete before
+	 * deleting it so a capture ending immediately after its last eye still
+	 * retains completed samples.  Normal frame polling never waits.
+	 */
+	R_GPUTimer_Flush ();
+	if (r_gputimer.count && r_gputimer.result_callback)
+	{
+		double deadline = Sys_DoubleTime () +
+			((double) R_GPUTIMER_FINALIZE_TIMEOUT_MS / 1000.0);
+
+		do
+		{
+			unsigned int completed_before = r_gputimer.stats.completed;
+			R_GPUTimer_EmitAvailableResults ();
+			if (!r_gputimer.count || Sys_DoubleTime () >= deadline)
+				break;
+			if (r_gputimer.stats.completed == completed_before)
+				Sys_Sleep (1);
+		}
+		while (r_gputimer.count);
 	}
 
 	for (i = 0; i < R_GPUTIMER_RING_SIZE; i++)
@@ -157,6 +204,18 @@ void R_GPUTimer_SetEnabled (int enabled)
 int R_GPUTimer_IsAvailable (void)
 {
 	return r_gputimer.available;
+}
+
+void R_GPUTimer_SetResultCallback (r_gputimer_result_callback_t callback)
+{
+	r_gputimer.result_callback = callback;
+}
+
+void R_GPUTimer_Flush (void)
+{
+	if (r_gputimer.available && r_gputimer.Flush &&
+		(r_gputimer.active || r_gputimer.count))
+		r_gputimer.Flush ();
 }
 
 void R_GPUTimer_Begin (const char *name, unsigned int sample_id)

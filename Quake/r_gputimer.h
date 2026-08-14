@@ -34,6 +34,9 @@ typedef struct r_gputimer_result_s
 	double milliseconds;
 } r_gputimer_result_t;
 
+/* Receives samples recovered during bounded timer shutdown finalization. */
+typedef void (*r_gputimer_result_callback_t) (const r_gputimer_result_t *result);
+
 typedef struct r_gputimer_stats_s
 {
 	unsigned int submitted;
@@ -52,6 +55,13 @@ void R_GPUTimer_Shutdown (void);
 
 void R_GPUTimer_SetEnabled (int enabled);
 int R_GPUTimer_IsAvailable (void);
+void R_GPUTimer_SetResultCallback (r_gputimer_result_callback_t callback);
+
+/*
+ * Submits outstanding query work without waiting.  VR uses this after both
+ * eyes because it has no window swap to provide the usual GL command flush.
+ */
+void R_GPUTimer_Flush (void);
 
 /* Segments may not overlap or nest.  An unmatched/mismatched End is invalid. */
 void R_GPUTimer_Begin (const char *name, unsigned int sample_id);
