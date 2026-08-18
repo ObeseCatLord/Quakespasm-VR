@@ -51,7 +51,9 @@ fi
 
 install -m 0755 Quake/quakespasm-openvr.bin \
 	"$straight_dir/quakespasm-openvr.bin"
-deploy/install_coop_server_assets.sh "$straight_dir"
+if [ -x deploy/install_coop_server_assets.sh ]; then
+	deploy/install_coop_server_assets.sh "$straight_dir"
+fi
 file "$straight_dir/quakespasm-openvr.bin"
 sha256sum "$straight_dir/quakespasm-openvr.bin"
 REMOTE_SCRIPT

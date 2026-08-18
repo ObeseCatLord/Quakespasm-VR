@@ -23,6 +23,10 @@ history.txt
 Quake/history.txt
 PERFORMANCE_ANALYSIS*.txt
 Build/
+/deploy/
+/tools/
+/MacOSX/
+Quake/Makefile.darwin
 quakespasm
 quakespasm-openvr
 quakespasm-openvr.bin
@@ -38,5 +42,4 @@ script_pid.txt
 !test_client_vr.sh
 !build_deploy_straight.sh
 !build_deploy_foundry.sh
-!deploy/install_coop_server_assets.sh
 !Quake/build_cross_win64-openvr.sh

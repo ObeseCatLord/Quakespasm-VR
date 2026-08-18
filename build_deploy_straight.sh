@@ -15,7 +15,9 @@ install -m 0755 "$ROOT_DIR/Quake/quakespasm-openvr" \
 	"$STRAIGHT_DIR/quakespasm-openvr"
 install -m 0644 "$ROOT_DIR/Quake/quakespasm.pak" \
 	"$STRAIGHT_DIR/quakespasm.pak"
-"$ROOT_DIR/deploy/install_coop_server_assets.sh" "$STRAIGHT_DIR"
+if [ -x "$ROOT_DIR/deploy/install_coop_server_assets.sh" ]; then
+	"$ROOT_DIR/deploy/install_coop_server_assets.sh" "$STRAIGHT_DIR"
+fi
 sha256sum "$ROOT_DIR/Quake/quakespasm-openvr.bin" \
 	"$STRAIGHT_DIR/quakespasm-openvr.bin" \
 	"$ROOT_DIR/Quake/quakespasm-openvr" \
