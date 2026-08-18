@@ -178,6 +178,7 @@ jobs:
           openvr_lib="$(dpkg -L libopenvr-dev | grep '/libopenvr_api\.so$' | head -n 1)"
           test -n "$openvr_lib"
           install -m 0644 "$openvr_lib" "$folder/libopenvr_api.so"
+          install -m 0644 "$openvr_lib" "$folder/libopenvr_api.so.1"
           install -m 0644 /usr/share/doc/libopenvr-dev/copyright "$folder/third-party-licenses/OpenVR.txt"
 
           strings Quake/quakespasm-openvr.bin | grep -F 'Press F1 to refresh add-on catalogue'
@@ -186,6 +187,13 @@ jobs:
             exit 1
           fi
           test "$(find "$folder" -maxdepth 1 -type f \( -name '*.o' -o -name '*.pdb' \) | wc -l)" -eq 0
+
+          log="$folder/qconsole.log"
+          timeout 20s "$folder/quakespasm-openvr" \
+            -basedir "$folder" -dedicated 1 -condebug +quit
+          test -f "$log"
+          grep -Fq 'Playing shareware version.' "$log"
+          rm "$log"
 
           cd "$RUNNER_TEMP"
           zip -qr "$GITHUB_WORKSPACE/${{ needs.metadata.outputs.package_stem }}_linux-x86_64.zip" '${{ needs.metadata.outputs.package_stem }}'
