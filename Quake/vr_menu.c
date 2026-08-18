@@ -20,6 +20,7 @@ extern cvar_t vr_turn_speed;
 extern cvar_t vr_haptic;
 extern cvar_t vr_movement_instant_stop;
 extern cvar_t vr_movement_speed;
+extern cvar_t vr_weaponmenu_mode;
 
 extern void M_DrawSlider(int x, int y, float range, float value,
                          const char *format);
@@ -41,10 +42,37 @@ extern void M_DrawSlider(int x, int y, float range, float value,
 // cvars moved to top extern "C" block
 
 static int vr_options_cursor = 0;
+static int vr_options_view_start = 0;
 
 #define VR_MAX_TURN_SPEED 10.0f
 #define VR_MAX_FLOOR_OFFSET 200.0f
 #define VR_MAX_GUNANGLE 180.0f
+#define VR_MENU_ROW_H 8.0f
+#define VR_MENU_VISIBLE_ROWS 18
+
+static int VR_MenuVisibleRows(void) {
+  return (int)VR_OPTION_MAX < VR_MENU_VISIBLE_ROWS ? (int)VR_OPTION_MAX
+                                                   : VR_MENU_VISIBLE_ROWS;
+}
+
+static void VR_MenuKeepVisible(void) {
+  int visible_rows = VR_MenuVisibleRows();
+  int max_start = q_max(0, VR_OPTION_MAX - visible_rows);
+
+  vr_options_cursor = CLAMP(0, vr_options_cursor, VR_OPTION_MAX - 1);
+  if (vr_options_view_start < 0)
+    vr_options_view_start = 0;
+  if (vr_options_view_start > max_start)
+    vr_options_view_start = max_start;
+
+  if (vr_options_cursor < vr_options_view_start) {
+    vr_options_view_start = vr_options_cursor;
+  } else if (vr_options_cursor >= vr_options_view_start + visible_rows) {
+    vr_options_view_start = vr_options_cursor - visible_rows + 1;
+  }
+
+  vr_options_view_start = CLAMP(0, vr_options_view_start, max_start);
+}
 
 // M_DrawSlider moved to top extern "C" block
 
@@ -240,6 +268,19 @@ static void VR_MenuPrintOptionValue(int cx, int cy, int option) {
   case VR_OPTION_PROJECTILESPAWN_Z_OFFSET:
     printAsStr(vr_projectilespawn_z_offset);
     break;
+  case VR_OPTION_WEAPONMENU_MODE:
+    switch ((int)vr_weaponmenu_mode.value) {
+    case VR_WEAPONMENU_MODE_PLAYSPACE:
+      value_string = "Playspace";
+      break;
+    case VR_WEAPONMENU_MODE_VIEW:
+      value_string = "View-locked";
+      break;
+    default:
+      value_string = "Unknown";
+      break;
+    }
+    break;
   case VR_OPTION_HUD_SCALE:
     printAsStr(vr_hud_scale);
     break;
@@ -405,6 +446,9 @@ void VR_MenuKeyOption(int key, int option) {
   case VR_OPTION_MOVEMENT_SPEED:
     adjustF(vr_movement_speed, 0.1f, 0.5f, 3.0f);
     break;
+  case VR_OPTION_WEAPONMENU_MODE:
+    adjustI(vr_weaponmenu_mode, 1, 0, VR_WEAPONMENU_MODE_VIEW);
+    break;
   case VR_OPTION_IMPULSE9:
     VR_MenuPlaySound("items/r_item2.wav", 0.5);
     Cmd_ExecuteString("impulse 9", cmd_source_t::src_command);
@@ -442,6 +486,7 @@ void VR_MenuKey(int key) {
     if (vr_options_cursor < 0) {
       vr_options_cursor = VR_OPTION_MAX - 1;
     }
+    VR_MenuKeepVisible();
     break;
 
   case K_DOWNARROW:
@@ -450,6 +495,7 @@ void VR_MenuKey(int key) {
     if (vr_options_cursor >= VR_OPTION_MAX) {
       vr_options_cursor = 0;
     }
+    VR_MenuKeepVisible();
     break;
 
   case K_LEFTARROW:
@@ -471,22 +517,42 @@ void VR_MenuKey(int key) {
 
 qboolean VR_MenuPointerMove(float x, float y) {
   int option;
+  int row;
+  int visible_rows = VR_MenuVisibleRows();
+  float list_top = 48.0f;
+  float list_bottom = list_top + VR_MENU_ROW_H * visible_rows;
 
   /* VR options begin at the same baseline used by VR_MenuDraw(). */
-  if (x < 8.0f || x >= 320.0f || y < 48.0f ||
-      y >= 48.0f + (float)VR_OPTION_MAX * 8.0f)
+  if (x < 8.0f || x >= 320.0f || y < list_top || y >= list_bottom)
     return false;
 
-  option = (int)((y - 48.0f) / 8.0f);
+  row = (int)((y - list_top) / VR_MENU_ROW_H);
+  option = vr_options_view_start + row;
   if (option < 0 || option >= VR_OPTION_MAX)
+    return false;
+  if (row < 0 || row >= visible_rows)
     return false;
 
   vr_options_cursor = option;
+  VR_MenuKeepVisible();
   return true;
 }
 
 void VR_MenuDraw(void) {
   int y = 4;
+  int i;
+  int visible_rows = VR_MenuVisibleRows();
+  int first_visible;
+  int last_visible;
+  const int indicator_x = 304;
+  const int top_indicator_y = 48;
+  const int bottom_indicator_y = 48 + (VR_MENU_ROW_H * visible_rows) - VR_MENU_ROW_H;
+
+  VR_MenuKeepVisible();
+  first_visible = vr_options_view_start;
+  last_visible = (int)VR_OPTION_MAX < first_visible + visible_rows
+                     ? (int)VR_OPTION_MAX
+                     : first_visible + visible_rows;
 
   // plaque
   M_DrawTransPic(16, y, Draw_CachePic("gfx/qplaque.lmp"));
@@ -503,8 +569,14 @@ void VR_MenuDraw(void) {
 
   y += 16;
 
-  int i;
-  for (i = 0; i < VR_OPTION_MAX; i++) {
+  if (first_visible > 0) {
+    M_Print(indicator_x - 4, top_indicator_y, "^");
+  }
+  if (last_visible < VR_OPTION_MAX) {
+    M_Print(indicator_x - 4, bottom_indicator_y, "v");
+  }
+
+  for (i = first_visible; i < last_visible; i++) {
     switch (i) {
     case VR_OPTION_ENABLED:
       M_Print(16, y, "               VR Enabled");
@@ -592,6 +664,10 @@ void VR_MenuDraw(void) {
       break;
     case VR_OPTION_PROJECTILESPAWN_Z_OFFSET:
       M_Print(16, y, "       Projectile Spawn Z");
+      VR_MenuPrintOptionValue(240, y, i);
+      break;
+    case VR_OPTION_WEAPONMENU_MODE:
+      M_Print(16, y, "      Weapon Wheel Mode");
       VR_MenuPrintOptionValue(240, y, i);
       break;
     case VR_OPTION_HUD_SCALE:
