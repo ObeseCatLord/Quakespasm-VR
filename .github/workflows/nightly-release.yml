@@ -1,4 +1,4 @@
-name: Nightly Release
+name: Nightly Build and Tag
 
 on:
   schedule:
@@ -19,7 +19,6 @@ jobs:
     outputs:
       package_stem: ${{ steps.metadata.outputs.package_stem }}
       release_tag: ${{ steps.metadata.outputs.release_tag }}
-      release_title: ${{ steps.metadata.outputs.release_title }}
     steps:
       - name: Generate immutable nightly identity
         id: metadata
@@ -29,7 +28,6 @@ jobs:
           short_sha="${GITHUB_SHA:0:8}"
           release_tag="nightly-${date_utc}-g${short_sha}"
           echo "release_tag=${release_tag}" >> "$GITHUB_OUTPUT"
-          echo "release_title=Nightly ${date_utc:0:4}-${date_utc:4:2}-${date_utc:6:2} (g${short_sha})" >> "$GITHUB_OUTPUT"
           echo "package_stem=quakespasm-openvr-${release_tag}" >> "$GITHUB_OUTPUT"
 
   build-windows:
@@ -126,10 +124,10 @@ jobs:
           $zip = Join-Path $env:GITHUB_WORKSPACE '${{ needs.metadata.outputs.package_stem }}_win64.zip'
           Compress-Archive -Path $folder -DestinationPath $zip -CompressionLevel Optimal
 
-      - name: Upload Windows release ZIP
+      - name: Upload Windows nightly artifact
         uses: actions/upload-artifact@v4
         with:
-          name: release-windows-x64
+          name: nightly-windows-x64
           path: ${{ needs.metadata.outputs.package_stem }}_win64.zip
           if-no-files-found: error
 
@@ -205,15 +203,15 @@ jobs:
           cd "$RUNNER_TEMP"
           zip -qr "$GITHUB_WORKSPACE/${{ needs.metadata.outputs.package_stem }}_linux-x86_64.zip" '${{ needs.metadata.outputs.package_stem }}'
 
-      - name: Upload Linux release ZIP
+      - name: Upload Linux nightly artifact
         uses: actions/upload-artifact@v4
         with:
-          name: release-linux-x86_64
+          name: nightly-linux-x86_64
           path: ${{ needs.metadata.outputs.package_stem }}_linux-x86_64.zip
           if-no-files-found: error
 
   publish:
-    name: Publish GitHub prerelease
+    name: Publish immutable nightly tag
     needs:
       - metadata
       - build-windows
@@ -221,58 +219,16 @@ jobs:
     runs-on: ubuntu-22.04
     env:
       GH_TOKEN: ${{ github.token }}
-      RELEASE_NOTES: |
-        Automated nightly build of QuakeSpasm OpenVR from commit ${{ github.sha }}.
-
-        Assets:
-        - Windows x64: native Visual Studio/MSVC build with OpenVR, SDL2, codec DLLs, SteamVR bindings, and add-on catalogue downloading via Windows Schannel.
-        - Linux x86_64: OpenVR launcher and engine binary, with libopenvr_api.so included. System SDL2, OpenGL, curl, and codec libraries are still required.
-
-        Extract the ZIP for your platform into a Quake installation containing your legally obtained id1 game data. This package does not include Quake game data.
-
-        Nightly builds are prereleases identified by UTC date and source commit. Existing tags are never moved to a different commit.
     steps:
-      - name: Download release packages
-        uses: actions/download-artifact@v4
-        with:
-          pattern: release-*
-          path: release-assets
-          merge-multiple: true
-
-      - name: Verify complete release set
-        shell: bash
-        run: |
-          windows="release-assets/${{ needs.metadata.outputs.package_stem }}_win64.zip"
-          linux="release-assets/${{ needs.metadata.outputs.package_stem }}_linux-x86_64.zip"
-          test -s "$windows"
-          test -s "$linux"
-          zip_count="$(find release-assets -maxdepth 1 -type f -name '*.zip' | wc -l)"
-          test "$zip_count" -eq 2
-          (cd release-assets && sha256sum *.zip > SHA256SUMS.txt)
-
-      - name: Create or update nightly prerelease
+      - name: Create or verify nightly tag
         shell: bash
         run: |
           tag='${{ needs.metadata.outputs.release_tag }}'
-          title='${{ needs.metadata.outputs.release_title }}'
-          windows='release-assets/${{ needs.metadata.outputs.package_stem }}_win64.zip'
-          linux='release-assets/${{ needs.metadata.outputs.package_stem }}_linux-x86_64.zip'
-          checksums='release-assets/SHA256SUMS.txt'
-          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            target="$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json targetCommitish --jq .targetCommitish)"
+          ref="repos/$GITHUB_REPOSITORY/git/ref/tags/$tag"
+          if target="$(gh api "$ref" --jq .object.sha 2>/dev/null)"; then
             test "$target" = "$GITHUB_SHA"
-            draft="$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft)"
-            if test "$draft" != true; then
-              mapfile -t published_assets < <(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' | sort)
-              mapfile -t expected_assets < <(printf '%s\n' "$(basename "$windows")" "$(basename "$linux")" "$(basename "$checksums")" | sort)
-              test "${published_assets[*]}" = "${expected_assets[*]}"
-              exit 0
-            fi
           else
-            gh release create "$tag" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "$title" --notes "$RELEASE_NOTES" --prerelease --draft
+            gh api --method POST "repos/$GITHUB_REPOSITORY/git/refs" \
+              -f ref="refs/tags/$tag" \
+              -f sha="$GITHUB_SHA" >/dev/null
           fi
-          gh release upload "$tag" --repo "$GITHUB_REPOSITORY" --clobber "$windows" "$linux" "$checksums"
-          mapfile -t uploaded_assets < <(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' | sort)
-          mapfile -t expected_assets < <(printf '%s\n' "$(basename "$windows")" "$(basename "$linux")" "$(basename "$checksums")" | sort)
-          test "${uploaded_assets[*]}" = "${expected_assets[*]}"
-          gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --title "$title" --notes "$RELEASE_NOTES" --prerelease --draft=false
