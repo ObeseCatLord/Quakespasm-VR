@@ -1506,7 +1506,8 @@ void Host_CoopAutosaveFrame(void) {
 
   if (!sv.active || sv.state != ss_active || sv.paused ||
       svs.maxclients <= 1 || !coop.value || deathmatch.value ||
-      !sv_save_multiplayer.value || !sv_coop_autosave.value ||
+      !sv_save_multiplayer.value ||
+      !SV_CoopFeatureEnabled(&sv_coop_autosave, true) ||
       Host_LoadgameHasPendingClients()) {
     sv.coop_autosave_initialized = false;
     return;
@@ -2311,7 +2312,7 @@ static void Host_Spawn_f(void) {
     if (clientnum >= 0 && clientnum < MAX_SCOREBOARD)
       svs.coop_initial_spawn_client[clientnum] = false;
     if ((svs.coop_loadgame_late_join_spawns_near || !initial_spawn_client) &&
-        sv_coop_respawn_near_player.value)
+        SV_CoopFeatureEnabled(&sv_coop_respawn_near_player, true))
       SV_CoopRespawnPlaceNearPlayer(ent);
     if (sv.loadgame) {
       sv.loadgame_resumed = true;

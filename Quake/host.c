@@ -82,7 +82,7 @@ cvar_t	skill = {"skill","1",CVAR_NONE};			// 0 - 3
 cvar_t	deathmatch = {"deathmatch","0",CVAR_NONE};	// 0, 1, or 2
 cvar_t	coop = {"coop","0",CVAR_NONE};			// 0 or 1
 cvar_t	sv_nofriendlyfire = {"sv_nofriendlyfire","0",CVAR_NOTIFY|CVAR_SERVERINFO};
-cvar_t	sv_coop_noplayerclip = {"sv_coop_noplayerclip","1",CVAR_NOTIFY|CVAR_SERVERINFO};
+cvar_t	sv_coop_noplayerclip = {"sv_coop_noplayerclip","-1",CVAR_ARCHIVE|CVAR_NOTIFY|CVAR_SERVERINFO};
 cvar_t	sv_save_multiplayer = {"sv_save_multiplayer","1",CVAR_NONE};
 cvar_t	sv_cmdfile = {"sv_cmdfile","",CVAR_NONE};
 
@@ -778,18 +778,56 @@ Host_WriteConfiguration
 Writes key bindings and archived cvars to config.cfg
 ===============
 */
+static const char *Host_GetConfigWritePath (char *path, size_t path_size)
+{
+	const char *postcfg = NULL;
+	int i;
+
+	if (!COM_CheckParm ("-writepostcfg"))
+		return NULL;
+
+	for (i = 1; i + 1 < com_argc; i++)
+	{
+		if (!com_argv[i] || q_strcasecmp (com_argv[i], "-postcfg"))
+			continue;
+		if (!com_argv[i + 1] || com_argv[i + 1][0] == '-' || com_argv[i + 1][0] == '+')
+			continue;
+		postcfg = com_argv[++i];
+	}
+
+	if (!postcfg)
+		return NULL;
+
+	if (postcfg[0] == '/' || postcfg[0] == '\\' ||
+		(postcfg[0] && postcfg[1] == ':'))
+		q_strlcpy (path, postcfg, path_size);
+	else
+		q_snprintf (path, path_size, "%s/%s", com_basedir, postcfg);
+
+	return path;
+}
+
 void Host_WriteConfiguration (void)
 {
+	char	config_path[MAX_OSPATH];
+	const char *write_path;
 	FILE	*f;
 
 // dedicated servers initialize the host but don't parse and set the
 // config.cfg cvars
 	if (host_initialized && !isDedicated && !host_parms->errstate)
 	{
-		f = fopen (va("%s/config.cfg", com_gamedir), "w");
+		write_path = Host_GetConfigWritePath (config_path, sizeof(config_path));
+		if (!write_path)
+		{
+			q_snprintf (config_path, sizeof(config_path), "%s/config.cfg", com_gamedir);
+			write_path = config_path;
+		}
+
+		f = fopen (write_path, "w");
 		if (!f)
 		{
-			Con_Printf ("Couldn't write config.cfg.\n");
+			Con_Printf ("Couldn't write %s.\n", write_path);
 			return;
 		}
 

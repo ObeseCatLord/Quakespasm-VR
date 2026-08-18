@@ -47,22 +47,26 @@ cvar_t sv_nopunchangle = {"sv_nopunchangle", "0", CVAR_NONE};
 // orientation first, so when packets get clipped it's distant or behind-camera
 // entities that drop, not your weapon hand or the player next to you.
 cvar_t sv_netsort = {"sv_netsort", "1", CVAR_NONE};
-cvar_t sv_coop_weapon_targetfix = {"sv_coop_weapon_targetfix", "1", CVAR_NONE};
+cvar_t sv_coop_classic = {"sv_coop_classic", "0", CVAR_ARCHIVE | CVAR_NOTIFY | CVAR_SERVERINFO};
+cvar_t sv_coop_notelefrag = {"sv_coop_notelefrag", "-1", CVAR_ARCHIVE | CVAR_NOTIFY | CVAR_SERVERINFO};
+cvar_t sv_coop_player_teleport_fallback = {"sv_coop_player_teleport_fallback", "-1", CVAR_ARCHIVE | CVAR_NOTIFY | CVAR_SERVERINFO};
+cvar_t sv_coop_shared_pickups = {"sv_coop_shared_pickups", "-1", CVAR_ARCHIVE | CVAR_NOTIFY | CVAR_SERVERINFO};
+cvar_t sv_coop_weapon_targetfix = {"sv_coop_weapon_targetfix", "-1", CVAR_ARCHIVE};
 cvar_t sv_coop_pickup_targetlog = {"sv_coop_pickup_targetlog", "0", CVAR_NONE};
 cvar_t sv_coop_pickup_targetfix = {"sv_coop_pickup_targetfix", "0", CVAR_NONE};
 cvar_t sv_coop_pickup_targetfix_classes = {"sv_coop_pickup_targetfix_classes", "", CVAR_NONE};
-cvar_t sv_coop_ammo_respawn = {"sv_coop_ammo_respawn", "1", CVAR_NOTIFY | CVAR_SERVERINFO};
+cvar_t sv_coop_ammo_respawn = {"sv_coop_ammo_respawn", "-1", CVAR_ARCHIVE | CVAR_NOTIFY | CVAR_SERVERINFO};
 cvar_t sv_coop_ammo_respawn_time = {"sv_coop_ammo_respawn_time", "30", CVAR_NOTIFY | CVAR_SERVERINFO};
-cvar_t sv_coop_progression_item_respawn = {"sv_coop_progression_item_respawn", "1", CVAR_NOTIFY | CVAR_SERVERINFO};
+cvar_t sv_coop_progression_item_respawn = {"sv_coop_progression_item_respawn", "-1", CVAR_ARCHIVE | CVAR_NOTIFY | CVAR_SERVERINFO};
 cvar_t sv_coop_progression_item_respawn_time = {"sv_coop_progression_item_respawn_time", "5", CVAR_NOTIFY | CVAR_SERVERINFO};
 cvar_t sv_coop_progression_item_respawn_classes = {"sv_coop_progression_item_respawn_classes", "item_jboots item_jboots_timed item_artifact_envirosuit item_artifact_wetsuit item_artifact_airtank item_artifact_divingsuit", CVAR_NOTIFY | CVAR_SERVERINFO};
-cvar_t sv_coop_revive = {"sv_coop_revive", "1", CVAR_NOTIFY | CVAR_SERVERINFO};
+cvar_t sv_coop_revive = {"sv_coop_revive", "-1", CVAR_ARCHIVE | CVAR_NOTIFY | CVAR_SERVERINFO};
 cvar_t sv_coop_revive_health = {"sv_coop_revive_health", "25", CVAR_NOTIFY | CVAR_SERVERINFO};
 cvar_t sv_coop_revive_range = {"sv_coop_revive_range", "96", CVAR_NOTIFY | CVAR_SERVERINFO};
-cvar_t sv_coop_respawn_near_player = {"sv_coop_respawn_near_player", "1", CVAR_NOTIFY | CVAR_SERVERINFO};
+cvar_t sv_coop_respawn_near_player = {"sv_coop_respawn_near_player", "-1", CVAR_ARCHIVE | CVAR_NOTIFY | CVAR_SERVERINFO};
 cvar_t sv_coop_respawn_delay = {"sv_coop_respawn_delay", "10", CVAR_NOTIFY | CVAR_SERVERINFO};
-cvar_t sv_coop_respawn_keep_weapons_ammo = {"sv_coop_respawn_keep_weapons_ammo", "1", CVAR_NOTIFY | CVAR_SERVERINFO};
-cvar_t sv_coop_autosave = {"sv_coop_autosave", "1", CVAR_NOTIFY | CVAR_SERVERINFO};
+cvar_t sv_coop_respawn_keep_weapons_ammo = {"sv_coop_respawn_keep_weapons_ammo", "-1", CVAR_ARCHIVE | CVAR_NOTIFY | CVAR_SERVERINFO};
+cvar_t sv_coop_autosave = {"sv_coop_autosave", "-1", CVAR_ARCHIVE | CVAR_NOTIFY | CVAR_SERVERINFO};
 cvar_t sv_coop_autosave_slots = {"sv_coop_autosave_slots", "4", CVAR_NONE};
 cvar_t sv_coop_autosave_min_interval = {"sv_coop_autosave_min_interval", "30", CVAR_NONE};
 cvar_t sv_coop_autosave_kill_interval = {"sv_coop_autosave_kill_interval", "10", CVAR_NONE};
@@ -81,6 +85,25 @@ static qboolean SV_IsLocalClient (client_t *client)
 {
 	return client && client->netconnection &&
 		Q_strcmp (NET_QSocketGetAddressString (client->netconnection), "LOCAL") == 0;
+}
+
+/*
+ * Co-op compatibility switches use a tri-state value: -1 inherits the
+ * selected profile, while 0 and 1 are explicit per-feature overrides.
+ * This lets sv_coop_classic restore traditional behavior without taking
+ * control away from an administrator's individual settings.
+ */
+qboolean SV_CoopFeatureEnabled(const cvar_t *feature,
+                               qboolean modern_default)
+{
+	return SV_CoopFeatureLevel(feature, modern_default ? 1 : 0) != 0;
+}
+
+int SV_CoopFeatureLevel(const cvar_t *feature, int modern_default)
+{
+	if (feature && feature->value >= 0.0f)
+		return (int)feature->value;
+	return sv_coop_classic.value ? 0 : modern_default;
 }
 
 static int SV_RemoteUnreliableLimit (void)
@@ -143,6 +166,90 @@ static void SV_UpdateClientMSS (client_t *client)
 	if (client->datagram.data == client->datagram_buf)
 		client->datagram.maxsize = q_min ((int)sizeof(client->datagram_buf),
 			maxsize);
+}
+
+static qboolean SV_AmmoCapacityValuesValid(const float values[4],
+	const edict_t *ent)
+{
+	const float current[4] = {
+		ent->v.ammo_shells, ent->v.ammo_nails,
+		ent->v.ammo_rockets, ent->v.ammo_cells};
+	int i;
+
+	for (i = 0; i < 4; ++i)
+		if (!isfinite(values[i]) || values[i] <= 0.0f ||
+		    floorf(values[i]) != values[i] ||
+		    values[i] > 1000000.0f || values[i] < current[i])
+			return false;
+	return true;
+}
+
+static qboolean SV_ReadAmmoCapacityFields(edict_t *ent, float values[4])
+{
+	static const char *names[4] = {
+		"maxshells", "maxnails", "maxrockets", "maxcells"};
+	int i;
+
+	for (i = 0; i < 4; ++i)
+	{
+		ddef_t *def = ED_FindField(names[i]);
+		eval_t *value;
+
+		if (!def || (def->type & ~DEF_SAVEGLOBAL) != ev_float)
+			return false;
+		value = GetEdictFieldValue(ent, def->ofs);
+		if (!value)
+			return false;
+		values[i] = value->_float;
+	}
+	return SV_AmmoCapacityValuesValid(values, ent);
+}
+
+static qboolean SV_ReadAmmoCapacityGlobals(edict_t *ent,
+	const char *const names[4], qboolean require_saveglobal, float values[4])
+{
+	int i;
+
+	for (i = 0; i < 4; ++i)
+	{
+		ddef_t *def = ED_FindGlobal(names[i]);
+
+		if (!def || (def->type & ~DEF_SAVEGLOBAL) != ev_float ||
+		    def->ofs >= qcvm->progs->numglobals ||
+		    (require_saveglobal && !(def->type & DEF_SAVEGLOBAL)))
+			return false;
+		values[i] = G_FLOAT(def->ofs);
+	}
+	return SV_AmmoCapacityValuesValid(values, ent);
+}
+
+static void SV_WriteAmmoCapacityStats(edict_t *ent, int *statsi)
+{
+	static const char *const saveglobal_names[4] = {
+		"ammo_shells_max", "ammo_nails_max", "ammo_rockets_max",
+		"ammo_cells_max"};
+	static const char *const max_ammo_names[4] = {
+		"MAX_AMMO_SHELLS", "MAX_AMMO_NAILS", "MAX_AMMO_ROCKETS",
+		"MAX_AMMO_CELLS"};
+	static const char *const ammo_max_names[4] = {
+		"AMMO_MAXSHELLS", "AMMO_MAXNAILS", "AMMO_MAXROCKETS",
+		"AMMO_MAXCELLS"};
+	static const int stats[4] = {
+		STAT_VR_MAX_SHELLS, STAT_VR_MAX_NAILS,
+		STAT_VR_MAX_ROCKETS, STAT_VR_MAX_CELLS};
+	float values[4];
+	int i;
+
+	/* Prefer per-player fields, then coherent dynamic/static global families.
+	 * Never combine names from different conventions. */
+	if (!SV_ReadAmmoCapacityFields(ent, values) &&
+	    !SV_ReadAmmoCapacityGlobals(ent, saveglobal_names, true, values) &&
+	    !SV_ReadAmmoCapacityGlobals(ent, max_ammo_names, false, values) &&
+	    !SV_ReadAmmoCapacityGlobals(ent, ammo_max_names, false, values))
+		return;
+
+	for (i = 0; i < 4; ++i)
+		statsi[stats[i]] = (int)values[i];
 }
 
 void SV_CalcStats(client_t *client, int *statsi, float *statsf, const char **statss)
@@ -214,6 +321,10 @@ void SV_CalcStats(client_t *client, int *statsi, float *statsf, const char **sta
 	val = GetEdictFieldValueByName(ent, "weapons2");
 	if (val)
 		statsi[STAT_VR_WEAPONS2] = (int)val->_float;
+
+	SV_WriteAmmoCapacityStats(ent, statsi);
+	if (coop.value && SV_CoopFeatureEnabled(&sv_coop_noplayerclip, true))
+		statsi[STAT_VR_COOP_POLICY] |= VR_COOP_POLICY_NO_PLAYER_CLIP;
 
 	for (i = 0; i < sv.numcustomstats; i++)
 	{
@@ -429,6 +540,10 @@ void SV_Init (void)
 	Cvar_RegisterVariable (&sv_replacement_maxpackets);
 	Cvar_RegisterVariable (&sv_predict_nqmovement);
 	Cvar_RegisterVariable (&sv_nopunchangle);
+	Cvar_RegisterVariable (&sv_coop_classic);
+	Cvar_RegisterVariable (&sv_coop_notelefrag);
+	Cvar_RegisterVariable (&sv_coop_player_teleport_fallback);
+	Cvar_RegisterVariable (&sv_coop_shared_pickups);
 	Cvar_RegisterVariable (&sv_coop_weapon_targetfix);
 	Cvar_RegisterVariable (&sv_coop_pickup_targetlog);
 	Cvar_RegisterVariable (&sv_coop_pickup_targetfix);
@@ -454,6 +569,10 @@ void SV_Init (void)
 	Cvar_RegisterVariable (&sv_skyroom_pvs);
 	PM_Register ();
 	Cvar_SetCallback (&sv_coop_ammo_respawn, Host_Callback_Notify);
+	Cvar_SetCallback (&sv_coop_classic, Host_Callback_Notify);
+	Cvar_SetCallback (&sv_coop_notelefrag, Host_Callback_Notify);
+	Cvar_SetCallback (&sv_coop_player_teleport_fallback, Host_Callback_Notify);
+	Cvar_SetCallback (&sv_coop_shared_pickups, Host_Callback_Notify);
 	Cvar_SetCallback (&sv_coop_ammo_respawn_time, Host_Callback_Notify);
 	Cvar_SetCallback (&sv_coop_progression_item_respawn, Host_Callback_Notify);
 	Cvar_SetCallback (&sv_coop_progression_item_respawn_time, Host_Callback_Notify);
