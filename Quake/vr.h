@@ -34,6 +34,9 @@ extern "C" {
 #define VR_MOVEMENT_MODE_RAW_INPUT 2
 #define VR_MAX_MOVEMENT_MODE VR_MOVEMENT_MODE_RAW_INPUT
 
+#define VR_WEAPONMENU_MODE_PLAYSPACE 0
+#define VR_WEAPONMENU_MODE_VIEW 1
+
 #define VR_GUNMODELOFFSETS_VANILLA                                             \
   0 // Gun model offset defaults for vanilla models
 #define VR_GUNMODELOFFSETS_ENHANCED                                            \
@@ -61,6 +64,8 @@ void IN_VRTurn180_f(void);
 void VR_UpdateScreenContent();
 void VR_ShowCrosshair();
 void VR_BeginWeaponMenu();
+void VR_EndWeaponMenu();
+void VR_PrepareWeaponMenu();
 void VR_DrawWeaponMenu();
 void VR_DrawAdjustmentControllers();
 void VR_ApplyCurrentViewWeaponTransform();
@@ -122,6 +127,7 @@ extern cvar_t vr_hud_scale;
 extern cvar_t vr_menu_scale;
 extern cvar_t vr_movement_instant_stop;
 extern cvar_t vr_movement_speed;
+extern cvar_t vr_weaponmenu_mode;
 extern cvar_t vr_weaponmenu_player_teleport;
 extern float vr_game_projectile_z_extra;
 

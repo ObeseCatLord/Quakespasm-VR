@@ -521,12 +521,33 @@ static void VR_ReleaseControllerInputs(void) {
 static vec3_t lastOrientation = {0, 0, 0};
 static vec3_t lastAim = {0, 0, 0};
 
+static vr::HmdVector3_t vr_head_raw_position;
+static vr::HmdQuaternion_t vr_head_raw_orientation;
+static qboolean vr_head_raw_valid = false;
+
 extern "C" {
 int vr_weaponmenu_selection = -1;
 int vr_weaponmenu_selection_type = VR_WEAPONMENU_SELECTION_NONE;
 }
 static qboolean vr_weaponmenu_anchor_valid = false;
 static vec3_t vr_weaponmenu_anchor_viewangles;
+typedef struct {
+  qboolean active;
+  qboolean capture_valid;
+  qboolean frame_valid;
+  qboolean capture_from_hand;
+  int mode;
+  float gun_angle;
+  vr::HmdVector3_t raw_position;
+  vr::HmdQuaternion_t raw_orientation;
+  qmodel_t *worldmodel;
+  int viewentity;
+  vec3_t frame_hand_origin;
+  vec3_t frame_menu_angles;
+  int last_selection;
+  int last_selection_type;
+} vr_weaponmenu_session_t;
+static vr_weaponmenu_session_t vr_weaponmenu_session;
 
 extern void GL_ClearBindings(void);
 
@@ -1480,6 +1501,7 @@ DEFINE_CVAR(vr_menu_scale, 0.13, CVAR_ARCHIVE);
 DEFINE_CVAR(vr_movement_instant_stop, 0, CVAR_ARCHIVE);
 DEFINE_CVAR(vr_movement_defaults_version, 0, CVAR_ARCHIVE);
 DEFINE_CVAR(vr_movement_speed, 1.0, CVAR_ARCHIVE);
+DEFINE_CVAR(vr_weaponmenu_mode, VR_WEAPONMENU_MODE_PLAYSPACE, CVAR_ARCHIVE);
 DEFINE_CVAR(vr_weaponmenu_player_teleport, 1, CVAR_ARCHIVE);
 
 #define VR_MOVEMENT_DEFAULTS_VERSION 2
@@ -4598,6 +4620,7 @@ void VID_VR_Init() {
   // This is only called once at game start
   Cvar_RegisterVariable(&vr_enabled);
   Cvar_SetCallback(&vr_enabled, VR_Enabled_f);
+  Cvar_RegisterVariable(&vr_weaponmenu_mode);
   Cvar_RegisterVariable(&vr_weaponmenu_player_teleport);
   Cmd_AddCommand("vr_weaponlist", VR_WeaponList_f);
   if (COM_CheckParm("-novr")) {
@@ -5201,6 +5224,7 @@ void VID_VR_Disable() {
     return;
   }
 
+  VR_EndWeaponMenu();
   VR_ReleaseControllerInputs();
   VR_FreeControllerRenderModels();
   VR_FreeHiddenAreaMeshes();
@@ -5468,6 +5492,7 @@ void VR_UpdateScreenContent() {
 
   controllers[0].seenThisFrame = false;
   controllers[1].seenThisFrame = false;
+  vr_head_raw_valid = false;
   controllers[0].deviceIndex = vr::k_unTrackedDeviceIndexInvalid;
   controllers[1].deviceIndex = vr::k_unTrackedDeviceIndexInvalid;
 
@@ -5478,7 +5503,11 @@ void VR_UpdateScreenContent() {
     if (ovr_DevicePose[iDevice].bPoseIsValid &&
         ovrHMD->GetTrackedDeviceClass(iDevice) == vr::TrackedDeviceClass_HMD) {
       vr::HmdVector3_t headPos =
-          Matrix34ToVector(ovr_DevicePose->mDeviceToAbsoluteTracking);
+          Matrix34ToVector(ovr_DevicePose[iDevice].mDeviceToAbsoluteTracking);
+      vr_head_raw_position = headPos;
+      vr_head_raw_orientation = Matrix34ToQuaternion(
+          ovr_DevicePose[iDevice].mDeviceToAbsoluteTracking);
+      vr_head_raw_valid = true;
       headOrigin[0] = headPos.v[2];
       headOrigin[1] = headPos.v[0];
       headOrigin[2] = headPos.v[1];
@@ -5495,8 +5524,7 @@ void VR_UpdateScreenContent() {
       headPos.v[0] -= lastHeadOrigin[1];
       headPos.v[2] -= lastHeadOrigin[0];
 
-      vr::HmdQuaternion_t headQuat =
-          Matrix34ToQuaternion(ovr_DevicePose->mDeviceToAbsoluteTracking);
+      vr::HmdQuaternion_t headQuat = vr_head_raw_orientation;
       vr::HmdVector3_t leyePos =
           Matrix34ToVector(ovrHMD->GetEyeToHeadTransform(eyes[0].eye));
       vr::HmdVector3_t reyePos =
@@ -5715,6 +5743,8 @@ void VR_UpdateScreenContent() {
   VectorScale(vr_menu_view_origin, 0.5f, vr_menu_view_origin);
   VectorAdd(player->origin, vr_menu_view_origin, vr_menu_view_origin);
   vr_menu_view_origin_valid = true;
+
+  VR_PrepareWeaponMenu();
 
   // Render the scene for each eye into their FBOs
   R_BeginVRFrame();
@@ -6737,8 +6767,9 @@ extern "C" void VR_TriggerHaptic(int controller, float durationSeconds) {
 
   vr::TrackedDeviceIndex_t deviceIndex =
       vr::VRSystem()->GetTrackedDeviceIndexForControllerRole(
-          controller == 0 ? vr::TrackedControllerRole_LeftHand
-                          : vr::TrackedControllerRole_RightHand);
+          (controller == 0) != (vr_lefthanded.value != 0.0f)
+              ? vr::TrackedControllerRole_LeftHand
+              : vr::TrackedControllerRole_RightHand);
 
   if (deviceIndex != vr::k_unTrackedDeviceIndexInvalid) {
     vr::VRSystem()->TriggerHapticPulse(deviceIndex, 0, usDuration);
@@ -6842,6 +6873,7 @@ void VR_TrackWeapons(void) {
 
 // Start/Reset weapon tracking (call on map change / disconnect)
 void VR_ResetWeaponTracking(void) {
+  VR_EndWeaponMenu();
   vr_weapon_cycle_target = -1;
 
   // Rogue expansion uses different bitmasks: RIT_AXE=2048, and reuses
@@ -7189,19 +7221,105 @@ static void VR_GetPlayerShirtColor(int playernum, float boost, float min_peak,
   color[2] *= scale;
 }
 
+static void VR_RunWeaponMenu(qboolean draw);
+
+static void VR_WeaponMenuCapturedAngles(
+    const vr_weaponmenu_session_t *session, vec3_t angles) {
+  QuatToYawPitchRoll(session->raw_orientation, angles);
+
+  if (session->capture_from_hand) {
+    vec3_t controller_matrix[3], gun_matrix[3], combined[3];
+    CreateRotMat(0, session->gun_angle, gun_matrix);
+    RotMatFromAngleVector(angles, controller_matrix);
+    R_ConcatRotations(gun_matrix, controller_matrix, combined);
+    AngleVectorFromRotMat(combined, angles);
+  }
+}
+
 extern "C" void VR_BeginWeaponMenu(void) {
+  int mode = (int)vr_weaponmenu_mode.value;
+
   vr_weaponmenu_selection = -1;
   vr_weaponmenu_selection_type = VR_WEAPONMENU_SELECTION_NONE;
   vr_weaponmenu_anchor_valid = false;
+  memset(&vr_weaponmenu_session, 0, sizeof(vr_weaponmenu_session));
+  vr_weaponmenu_session.active = true;
+  vr_weaponmenu_session.mode =
+      mode == VR_WEAPONMENU_MODE_VIEW ? VR_WEAPONMENU_MODE_VIEW
+                                      : VR_WEAPONMENU_MODE_PLAYSPACE;
+  vr_weaponmenu_session.gun_angle = vr_gunangle.value;
+  vr_weaponmenu_session.last_selection = -1;
+  vr_weaponmenu_session.last_selection_type = VR_WEAPONMENU_SELECTION_NONE;
+}
+
+extern "C" void VR_EndWeaponMenu(void) {
+  vr_weaponmenu_selection = -1;
+  vr_weaponmenu_selection_type = VR_WEAPONMENU_SELECTION_NONE;
+  vr_weaponmenu_session.active = false;
+  vr_weaponmenu_session.capture_valid = false;
+  vr_weaponmenu_session.frame_valid = false;
+  vr_weaponmenu_session.last_selection = -1;
+  vr_weaponmenu_session.last_selection_type = VR_WEAPONMENU_SELECTION_NONE;
+  vr_weaponmenu_anchor_valid = false;
+}
+
+extern "C" void VR_PrepareWeaponMenu(void) {
+  if (!vr_enabled.value || !cl.in_vr_weaponmenu ||
+      !vr_weaponmenu_session.active ||
+      vr_weaponmenu_session.mode != VR_WEAPONMENU_MODE_PLAYSPACE) {
+    vr_weaponmenu_session.frame_valid = false;
+    return;
+  }
+
+  if (cls.state != ca_connected || cls.signon != SIGNONS || !cl.entities ||
+      cl.viewentity <= 0 || cl.viewentity >= cl.max_edicts) {
+    vr_weaponmenu_session.frame_valid = false;
+    return;
+  }
+
+  if (!vr_weaponmenu_session.capture_valid) {
+    if (controllers[1].seenThisFrame) {
+      vr_weaponmenu_session.raw_position = controllers[1].rawvector;
+      vr_weaponmenu_session.raw_orientation = controllers[1].raworientation;
+      vr_weaponmenu_session.capture_from_hand = true;
+    } else if (vr_head_raw_valid) {
+      vr_weaponmenu_session.raw_position = vr_head_raw_position;
+      vr_weaponmenu_session.raw_orientation = vr_head_raw_orientation;
+      vr_weaponmenu_session.capture_from_hand = false;
+    } else {
+      vr_weaponmenu_session.frame_valid = false;
+      return;
+    }
+    vr_weaponmenu_session.worldmodel = cl.worldmodel;
+    vr_weaponmenu_session.viewentity = cl.viewentity;
+    vr_weaponmenu_session.capture_valid = true;
+  } else if (vr_weaponmenu_session.worldmodel != cl.worldmodel ||
+             vr_weaponmenu_session.viewentity != cl.viewentity) {
+    VR_EndWeaponMenu();
+    return;
+  }
+
+  VR_TrackingPointToWorld(vr_weaponmenu_session.raw_position,
+                          vr_weaponmenu_session.frame_hand_origin);
+  VR_WeaponMenuCapturedAngles(&vr_weaponmenu_session,
+                              vr_weaponmenu_session.frame_menu_angles);
+  vr_weaponmenu_session.frame_valid = true;
+  VR_RunWeaponMenu(false);
 }
 
 static void VR_DrawText3DAligned(vec3_t origin, vec3_t right, vec3_t up,
                                  const char *str, float scale, vec3_t color,
-                                 qboolean centered) {
+                                 qboolean centered, qboolean depth_test) {
+  qboolean old_depth_test;
+
   if (!char_texture)
     return;
 
-  glDisable(GL_DEPTH_TEST);
+  old_depth_test = glIsEnabled(GL_DEPTH_TEST);
+  if (depth_test)
+    glEnable(GL_DEPTH_TEST);
+  else
+    glDisable(GL_DEPTH_TEST);
   glDisable(GL_CULL_FACE);
   glDisable(GL_BLEND);
   glEnable(GL_ALPHA_TEST);
@@ -7254,43 +7372,123 @@ static void VR_DrawText3DAligned(vec3_t origin, vec3_t right, vec3_t up,
   }
   glEnd();
   glColor3f(1.0f, 1.0f, 1.0f);
-  glEnable(GL_DEPTH_TEST);
+  if (old_depth_test)
+    glEnable(GL_DEPTH_TEST);
+  else
+    glDisable(GL_DEPTH_TEST);
   glEnable(GL_CULL_FACE);
   glTexEnvf(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_REPLACE);
 }
 
 static void VR_DrawText3D(vec3_t origin, vec3_t right, vec3_t up,
-                          const char *str, float scale, vec3_t color) {
-  VR_DrawText3DAligned(origin, right, up, str, scale, color, true);
+                          const char *str, float scale, vec3_t color,
+                          qboolean depth_test) {
+  VR_DrawText3DAligned(origin, right, up, str, scale, color, true, depth_test);
 }
 
 static void VR_DrawText3DOutlined(vec3_t origin, vec3_t right, vec3_t up,
                                   const char *str, float scale, vec3_t color,
-                                  qboolean centered) {
+                                  qboolean centered, qboolean depth_test) {
   vec3_t outline_color = {0.0f, 0.0f, 0.0f};
   vec3_t pos;
   float offset = q_max(0.28f, scale * 1.15f);
 
   VectorCopy(origin, pos);
   VectorMA(pos, offset, right, pos);
-  VR_DrawText3DAligned(pos, right, up, str, scale, outline_color, centered);
+  VR_DrawText3DAligned(pos, right, up, str, scale, outline_color, centered,
+                       depth_test);
 
   VectorCopy(origin, pos);
   VectorMA(pos, -offset, right, pos);
-  VR_DrawText3DAligned(pos, right, up, str, scale, outline_color, centered);
+  VR_DrawText3DAligned(pos, right, up, str, scale, outline_color, centered,
+                       depth_test);
 
   VectorCopy(origin, pos);
   VectorMA(pos, offset, up, pos);
-  VR_DrawText3DAligned(pos, right, up, str, scale, outline_color, centered);
+  VR_DrawText3DAligned(pos, right, up, str, scale, outline_color, centered,
+                       depth_test);
 
   VectorCopy(origin, pos);
   VectorMA(pos, -offset, up, pos);
-  VR_DrawText3DAligned(pos, right, up, str, scale, outline_color, centered);
+  VR_DrawText3DAligned(pos, right, up, str, scale, outline_color, centered,
+                       depth_test);
 
-  VR_DrawText3DAligned(origin, right, up, str, scale, color, centered);
+  VR_DrawText3DAligned(origin, right, up, str, scale, color, centered,
+                       depth_test);
 }
 
-void VR_DrawWeaponMenu(void) {
+static qboolean VR_WeaponMenuTargetVisible(vec3_t start, vec3_t target) {
+  vec3_t impact, remaining;
+
+  if (!cl.worldmodel)
+    return true;
+  TraceLine(start, target, impact);
+  VectorSubtract(target, impact, remaining);
+  return VectorLength(remaining) < 1.0f;
+}
+
+typedef struct {
+  GLint matrix_mode;
+  GLint depth_func;
+  GLint texture_env_mode;
+  GLboolean depth_write;
+  GLfloat color[4];
+  qboolean depth_test;
+  qboolean cull_face;
+  qboolean blend;
+  qboolean alpha_test;
+  qboolean texture_2d;
+} vr_weaponmenu_gl_state_t;
+
+static void VR_SaveWeaponMenuGLState(vr_weaponmenu_gl_state_t *state) {
+  glGetIntegerv(GL_MATRIX_MODE, &state->matrix_mode);
+  glGetIntegerv(GL_DEPTH_FUNC, &state->depth_func);
+  glGetTexEnviv(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE,
+                &state->texture_env_mode);
+  glGetBooleanv(GL_DEPTH_WRITEMASK, &state->depth_write);
+  glGetFloatv(GL_CURRENT_COLOR, state->color);
+  state->depth_test = glIsEnabled(GL_DEPTH_TEST);
+  state->cull_face = glIsEnabled(GL_CULL_FACE);
+  state->blend = glIsEnabled(GL_BLEND);
+  state->alpha_test = glIsEnabled(GL_ALPHA_TEST);
+  state->texture_2d = glIsEnabled(GL_TEXTURE_2D);
+}
+
+static void VR_RestoreWeaponMenuGLState(
+    const vr_weaponmenu_gl_state_t *state) {
+  glMatrixMode(state->matrix_mode);
+  glDepthFunc(state->depth_func);
+  glDepthMask(state->depth_write);
+  glTexEnvf(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, state->texture_env_mode);
+  glColor4fv(state->color);
+
+  if (state->depth_test)
+    glEnable(GL_DEPTH_TEST);
+  else
+    glDisable(GL_DEPTH_TEST);
+  if (state->cull_face)
+    glEnable(GL_CULL_FACE);
+  else
+    glDisable(GL_CULL_FACE);
+  if (state->blend)
+    glEnable(GL_BLEND);
+  else
+    glDisable(GL_BLEND);
+  if (state->alpha_test)
+    glEnable(GL_ALPHA_TEST);
+  else
+    glDisable(GL_ALPHA_TEST);
+  if (state->texture_2d)
+    glEnable(GL_TEXTURE_2D);
+  else
+    glDisable(GL_TEXTURE_2D);
+}
+
+static void VR_RunWeaponMenu(qboolean draw) {
+  vr_weaponmenu_gl_state_t gl_state;
+  qboolean playspace =
+      vr_enabled.value && vr_weaponmenu_session.active &&
+      vr_weaponmenu_session.mode == VR_WEAPONMENU_MODE_PLAYSPACE;
   vr_dyn_weapon_t *visible[MAX_DYN_WEAPONS];
   int num_visible = VR_GetVisibleWeapons(visible, MAX_DYN_WEAPONS);
   int player_indices[MAX_SCOREBOARD];
@@ -7298,12 +7496,26 @@ void VR_DrawWeaponMenu(void) {
   qboolean respawn_action = VR_CanUseRespawnMenu();
   qboolean quick_actions = VR_CanUseQuickSaveMenu();
 
+  /* A playspace session may be invalidated by a map/player transition while
+   * the button is still held.  Do not silently fall back to the legacy mode. */
+  if (vr_enabled.value && cl.in_vr_weaponmenu &&
+      !vr_weaponmenu_session.active)
+    return;
+
+  if (playspace && !vr_weaponmenu_session.frame_valid)
+    return;
+
   if (num_visible == 0 && num_players == 0 && !respawn_action &&
       !quick_actions) {
-    vr_weaponmenu_selection = -1;
-    vr_weaponmenu_selection_type = VR_WEAPONMENU_SELECTION_NONE;
+    if (!draw || !playspace) {
+      vr_weaponmenu_selection = -1;
+      vr_weaponmenu_selection_type = VR_WEAPONMENU_SELECTION_NONE;
+    }
     return;
   }
+
+  if (draw)
+    VR_SaveWeaponMenuGLState(&gl_state);
 
   // Position the weapon wheel in front of the player's view. Desktop keeps the
   // opening angle stable for look-to-select, but follows the player's origin so
@@ -7317,6 +7529,9 @@ void VR_DrawWeaponMenu(void) {
     }
     VectorCopy(r_refdef.vieworg, origin);
     VectorCopy(vr_weaponmenu_anchor_viewangles, menu_angles);
+  } else if (playspace) {
+    VectorCopy(vr_weaponmenu_session.frame_hand_origin, origin);
+    VectorCopy(vr_weaponmenu_session.frame_menu_angles, menu_angles);
   } else {
     vr_weaponmenu_anchor_valid = false;
     VectorCopy(r_refdef.vieworg, origin);
@@ -7347,19 +7562,28 @@ void VR_DrawWeaponMenu(void) {
   }
 
   // Push the UI slightly further away for every ring added
-  /* Restore the compact pre-July-12 wheel geometry. */
-  const float weapon_mesh_scale = 1.0f;
-  float base_radius = 15.0f * weapon_mesh_scale;
-  float wheel_dist = 75.0f + ((target_rings - 1) * 8.0f); // Further away
+  /* The playspace preset follows Q3VR's compact hand-local proportions while
+   * retaining enough room for QuakeSpasm's multi-ring mod inventories. */
+  const float weapon_mesh_scale = playspace ? 0.28f : 1.0f;
+  const float text_layout_scale = playspace ? 0.60f : 1.0f;
+  float base_radius = playspace ? 4.0f : 15.0f;
+  float wheel_dist = playspace ? 10.0f + ((target_rings - 1) * 2.0f)
+                               : 75.0f + ((target_rings - 1) * 8.0f);
 
   // Move the menu forward and slightly down from the camera
   VectorMA(origin, wheel_dist, forward, origin);
-  VectorMA(origin, -10.0f, up, origin);
+  if (!playspace)
+    VectorMA(origin, -10.0f, up, origin);
 
   // Setup drawing state - clear depth so menu draws on top of world
-  glDisable(GL_DEPTH_TEST);
-  glClear(GL_DEPTH_BUFFER_BIT);
-  glEnable(GL_DEPTH_TEST);
+  if (draw) {
+    glEnable(GL_DEPTH_TEST);
+    if (!playspace) {
+      glDisable(GL_DEPTH_TEST);
+      glClear(GL_DEPTH_BUFFER_BIT);
+      glEnable(GL_DEPTH_TEST);
+    }
+  }
 
   // Store weapon positions for raycast selection (zero-init to avoid
   // garbage positions for weapons whose models fail to load)
@@ -7439,9 +7663,9 @@ void VR_DrawWeaponMenu(void) {
       VectorMA(pos, cos(angle) * current_radius, right, pos);
       VectorMA(pos, sin(angle) * current_radius, up, pos);
       if (w->has_offset) {
-        VectorMA(pos, w->offset[0], right, pos);
-        VectorMA(pos, w->offset[1], up, pos);
-        VectorMA(pos, w->offset[2], forward, pos);
+        VectorMA(pos, w->offset[0] * weapon_mesh_scale, right, pos);
+        VectorMA(pos, w->offset[1] * weapon_mesh_scale, up, pos);
+        VectorMA(pos, w->offset[2] * weapon_mesh_scale, forward, pos);
       }
 
       // Orient the weapon model to face the player
@@ -7466,47 +7690,64 @@ void VR_DrawWeaponMenu(void) {
       qboolean is_equipped = VR_WeaponIsActive(w);
 
       float schema_scale = w->scale > 0.0f ? w->scale : 1.0f;
-      float scale =
-          weapon_mesh_scale * (is_selected ? 0.40f : 0.25f) * schema_scale;
-      if (scale > 0.0f && scale < (1.0f / ENTSCALE_DEFAULT))
-        scale = 1.0f / ENTSCALE_DEFAULT;
+      float entity_scale = (is_selected ? 0.40f : 0.25f) * schema_scale;
+      float layout_entity_scale = 0.25f * schema_scale;
+      if (entity_scale > 0.0f && entity_scale < (1.0f / ENTSCALE_DEFAULT))
+        entity_scale = 1.0f / ENTSCALE_DEFAULT;
+      if (layout_entity_scale > 0.0f &&
+          layout_entity_scale < (1.0f / ENTSCALE_DEFAULT))
+        layout_entity_scale = 1.0f / ENTSCALE_DEFAULT;
+      float visual_scale = entity_scale * weapon_mesh_scale;
+      float layout_scale = playspace ? layout_entity_scale * weapon_mesh_scale
+                                     : visual_scale;
 
       // Center model vertically using its bounding box so weapons with
       // low origins (axe, super shotgun) don't clip into neighbours.
       float vert_center = (mdl->mins[2] + mdl->maxs[2]) / 2.0f;
-      VectorMA(ent.origin, -vert_center * scale, up, ent.origin);
+      VectorMA(ent.origin, -vert_center * layout_scale, up, ent.origin);
 
-      ent.scale = ENTSCALE_ENCODE(scale);
+      ent.scale = ENTSCALE_ENCODE(entity_scale);
       ent.alpha = ENTALPHA_ENCODE(1.0f);
 
-      // Render without frustum culling
-      currententity = &ent;
+      if (draw) {
+        // Render without frustum culling.  The outer transform preserves the
+        // full precision of schema-relative entity scales in compact mode.
+        currententity = &ent;
 
-      if (is_selected) {
-        vr_weaponcolor[0] = 0.5f;
-        vr_weaponcolor[1] = 4.0f;
-        vr_weaponcolor[2] = 0.5f;
-      } else if (is_equipped) {
-        vr_weaponcolor[0] = 4.0f;
-        vr_weaponcolor[1] = 4.0f;
-        vr_weaponcolor[2] = 0.0f;
-      } else {
-        vr_weaponcolor[0] = 1.5f; // Boosted to be clearly visible/glowy
-        vr_weaponcolor[1] = 1.5f;
-        vr_weaponcolor[2] = 1.5f;
+        if (is_selected) {
+          vr_weaponcolor[0] = 0.5f;
+          vr_weaponcolor[1] = 4.0f;
+          vr_weaponcolor[2] = 0.5f;
+        } else if (is_equipped) {
+          vr_weaponcolor[0] = 4.0f;
+          vr_weaponcolor[1] = 4.0f;
+          vr_weaponcolor[2] = 0.0f;
+        } else {
+          vr_weaponcolor[0] = 1.5f;
+          vr_weaponcolor[1] = 1.5f;
+          vr_weaponcolor[2] = 1.5f;
+        }
+
+        if (weapon_mesh_scale != 1.0f) {
+          glPushMatrix();
+          glTranslatef(ent.origin[0], ent.origin[1], ent.origin[2]);
+          glScalef(weapon_mesh_scale, weapon_mesh_scale, weapon_mesh_scale);
+          glTranslatef(-ent.origin[0], -ent.origin[1], -ent.origin[2]);
+        }
+        R_DrawAliasModel_NoCull(&ent);
+        if (weapon_mesh_scale != 1.0f)
+          glPopMatrix();
+
+        vr_weaponcolor[0] = 1.0f;
+        vr_weaponcolor[1] = 1.0f;
+        vr_weaponcolor[2] = 1.0f;
       }
-
-      R_DrawAliasModel_NoCull(&ent);
-
-      vr_weaponcolor[0] = 1.0f;
-      vr_weaponcolor[1] = 1.0f;
-      vr_weaponcolor[2] = 1.0f;
 
       // Draw Ammo Text
       int ammo = -1;
       int max_ammo = 0;
 
-      if (VR_GetWeaponAmmo(w, &ammo, &max_ammo)) {
+      if (draw && VR_GetWeaponAmmo(w, &ammo, &max_ammo)) {
         char ammo_str[32];
         if (max_ammo > 0)
           q_snprintf(ammo_str, sizeof(ammo_str), "%d/%d", ammo, max_ammo);
@@ -7523,17 +7764,18 @@ void VR_DrawWeaponMenu(void) {
         // Position text above the model's visual top.  ent.origin is the
         // vertically-centered model origin; add the distance from center to
         // model top so text always clears the weapon.
-        float model_top = (mdl->maxs[2] - vert_center) * scale;
+        float model_top = (mdl->maxs[2] - vert_center) * visual_scale;
         VectorCopy(ent.origin, text_pos);
-        VectorMA(text_pos, -2.0f, forward, text_pos);
-        VectorMA(text_pos, model_top + 1.5f, up, text_pos);
+        VectorMA(text_pos, -2.0f * text_layout_scale, forward, text_pos);
+        VectorMA(text_pos, model_top + 1.5f * text_layout_scale, up, text_pos);
 
-        float tscale = 0.15f;
+        float tscale = 0.15f * text_layout_scale;
         if (is_selected) {
-          tscale = 0.20f; // Bigger for selected
+          tscale = 0.20f * text_layout_scale;
         }
 
-        VR_DrawText3D(text_pos, right, up, ammo_str, tscale, text_color);
+        VR_DrawText3D(text_pos, right, up, ammo_str, tscale, text_color,
+                      playspace);
       }
 
       // Save position for selection raycasting.
@@ -7541,7 +7783,7 @@ void VR_DrawWeaponMenu(void) {
       // to align with the visual weapon mass.
       vec3_t target_pos;
       VectorCopy(ent.origin, target_pos);
-      VectorMA(target_pos, 3.0f, right, target_pos);
+      VectorMA(target_pos, 3.0f * weapon_mesh_scale, right, target_pos);
       VectorCopy(target_pos, weapon_positions[w_index]);
       weapon_position_valid[w_index] = true;
     }
@@ -7551,10 +7793,10 @@ void VR_DrawWeaponMenu(void) {
   if (num_players > 0 || respawn_action) {
     float outer_radius =
         base_radius + ((target_rings > 1) ? ((target_rings - 2) * base_radius) : 0.0f);
-    float list_offset = outer_radius + 16.0f * weapon_mesh_scale;
-    float text_scale = 0.30f;
+    float list_offset = outer_radius + (playspace ? 6.0f : 16.0f);
+    float text_scale = 0.30f * text_layout_scale;
     float char_width = 8.0f * text_scale;
-    float line_spacing = 5.0f;
+    float line_spacing = 5.0f * text_layout_scale;
     float start_y = num_players > 0
                         ? ((num_players - 1) * line_spacing) * 0.5f
                         : 0.0f;
@@ -7577,8 +7819,9 @@ void VR_DrawWeaponMenu(void) {
       VectorMA(text_pos,
                num_players > 0 ? start_y + line_spacing : start_y,
                up, text_pos);
-      VR_DrawText3DOutlined(text_pos, right, up, label, text_scale, text_color,
-                            false);
+      if (draw)
+        VR_DrawText3DOutlined(text_pos, right, up, label, text_scale,
+                              text_color, false, playspace);
 
       VectorCopy(text_pos, text_center);
       VectorMA(text_center, (len * char_width) * 0.5f, right, text_center);
@@ -7605,8 +7848,9 @@ void VR_DrawWeaponMenu(void) {
       VectorCopy(origin, text_pos);
       VectorMA(text_pos, list_offset, right, text_pos);
       VectorMA(text_pos, start_y - i * line_spacing, up, text_pos);
-      VR_DrawText3DOutlined(text_pos, right, up, label, text_scale, text_color,
-                            false);
+      if (draw)
+        VR_DrawText3DOutlined(text_pos, right, up, label, text_scale,
+                              text_color, false, playspace);
 
       VectorCopy(text_pos, text_center);
       VectorMA(text_center, (len * char_width) * 0.5f, right, text_center);
@@ -7618,14 +7862,14 @@ void VR_DrawWeaponMenu(void) {
   if (quick_actions) {
     float outer_radius =
         base_radius + ((target_rings > 1) ? ((target_rings - 2) * base_radius) : 0.0f);
-    float list_offset = outer_radius + 16.0f * weapon_mesh_scale;
+    float list_offset = outer_radius + (playspace ? 6.0f : 16.0f);
     const char *labels[2] = {"QUICK SAVE", "QUICK LOAD"};
     const int selection_types[2] = {
         VR_WEAPONMENU_SELECTION_QUICKSAVE,
         VR_WEAPONMENU_SELECTION_QUICKLOAD};
-    float text_scale = 0.30f;
+    float text_scale = 0.30f * text_layout_scale;
     float char_width = 8.0f * text_scale;
-    float line_spacing = 5.0f;
+    float line_spacing = 5.0f * text_layout_scale;
 
     for (int i = 0; i < 2; i++) {
       vec3_t text_pos, text_center, text_color;
@@ -7647,8 +7891,9 @@ void VR_DrawWeaponMenu(void) {
        * wheel, so right-align the left-side label at the same radius. */
       VectorMA(text_pos, -(len * char_width), right, text_pos);
       VectorMA(text_pos, (0.5f - i) * line_spacing, up, text_pos);
-      VR_DrawText3DOutlined(text_pos, right, up, label, text_scale, text_color,
-                            false);
+      if (draw)
+        VR_DrawText3DOutlined(text_pos, right, up, label, text_scale,
+                              text_color, false, playspace);
 
       VectorCopy(text_pos, text_center);
       VectorMA(text_center, (len * char_width) * 0.5f, right, text_center);
@@ -7657,20 +7902,46 @@ void VR_DrawWeaponMenu(void) {
     }
   }
 
+  /* Playspace selection was prepared once before either eye.  Per-eye draws
+   * consume that authoritative snapshot without input or haptic side effects. */
+  if (playspace && draw) {
+    currententity = &cl.viewent;
+    VR_RestoreWeaponMenuGLState(&gl_state);
+    return;
+  }
+
   // --- Pointer-based selection: determine which weapon or player the right
   // controller is aiming at. Desktop falls back to view direction.
   vec3_t aim_origin, aim_fwd, aim_right_dummy, aim_up_dummy;
   qboolean use_view_aim =
       (!vr_enabled.value ||
-       (cl.handpos[1][0] == 0 && cl.handpos[1][1] == 0 &&
-        cl.handpos[1][2] == 0));
+       (playspace ? !controllers[1].seenThisFrame
+                  : (cl.handpos[1][0] == 0 && cl.handpos[1][1] == 0 &&
+                     cl.handpos[1][2] == 0)));
   float best_score = 0.85f; // Minimum threshold (~31 degree cone)
   int best_index = -1;
   int best_type = VR_WEAPONMENU_SELECTION_NONE;
 
   if (use_view_aim) {
-    VectorCopy(r_refdef.vieworg, aim_origin);
-    AngleVectors(r_refdef.viewangles, aim_fwd, aim_right_dummy, aim_up_dummy);
+    if (playspace && vr_head_raw_valid) {
+      vec3_t head_angles;
+      VR_TrackingPointToWorld(vr_head_raw_position, aim_origin);
+      QuatToYawPitchRoll(vr_head_raw_orientation, head_angles);
+      AngleVectors(head_angles, aim_fwd, aim_right_dummy, aim_up_dummy);
+    } else {
+      VectorCopy(r_refdef.vieworg, aim_origin);
+      AngleVectors(r_refdef.viewangles, aim_fwd, aim_right_dummy, aim_up_dummy);
+    }
+  } else if (playspace) {
+    vr_weaponmenu_session_t live_hand;
+    vec3_t hand_angles;
+    memset(&live_hand, 0, sizeof(live_hand));
+    live_hand.raw_orientation = controllers[1].raworientation;
+    live_hand.capture_from_hand = true;
+    live_hand.gun_angle = vr_gunangle.value;
+    VR_TrackingPointToWorld(controllers[1].rawvector, aim_origin);
+    VR_WeaponMenuCapturedAngles(&live_hand, hand_angles);
+    AngleVectors(hand_angles, aim_fwd, aim_right_dummy, aim_up_dummy);
   } else {
     VectorCopy(cl.handpos[1], aim_origin);
     AngleVectors(cl.handrot[1], aim_fwd, aim_right_dummy, aim_up_dummy);
@@ -7686,7 +7957,9 @@ void VR_DrawWeaponMenu(void) {
     VectorNormalize(dir);
 
     score = DotProduct(aim_fwd, dir);
-    if (score > best_score) {
+    if (score > best_score &&
+        (!playspace ||
+         VR_WeaponMenuTargetVisible(aim_origin, weapon_positions[i]))) {
       best_score = score;
       best_index = i;
       best_type = VR_WEAPONMENU_SELECTION_WEAPON;
@@ -7704,7 +7977,9 @@ void VR_DrawWeaponMenu(void) {
     VectorNormalize(dir);
 
     score = DotProduct(aim_fwd, dir);
-    if (score > best_score) {
+    if (score > best_score &&
+        (!playspace || VR_WeaponMenuTargetVisible(
+                           aim_origin, player_positions[playernum]))) {
       best_score = score;
       best_index = playernum;
       best_type = VR_WEAPONMENU_SELECTION_PLAYER;
@@ -7718,7 +7993,9 @@ void VR_DrawWeaponMenu(void) {
     VectorSubtract(respawn_position, aim_origin, dir);
     VectorNormalize(dir);
     score = DotProduct(aim_fwd, dir);
-    if (score > best_score) {
+    if (score > best_score &&
+        (!playspace ||
+         VR_WeaponMenuTargetVisible(aim_origin, respawn_position))) {
       best_score = score;
       best_index = 0;
       best_type = VR_WEAPONMENU_SELECTION_RESPAWN;
@@ -7735,7 +8012,9 @@ void VR_DrawWeaponMenu(void) {
     VectorNormalize(dir);
 
     score = DotProduct(aim_fwd, dir);
-    if (score > best_score) {
+    if (score > best_score &&
+        (!playspace || VR_WeaponMenuTargetVisible(
+                           aim_origin, quick_action_positions[i]))) {
       best_score = score;
       best_index = 0;
       best_type = i == 0 ? VR_WEAPONMENU_SELECTION_QUICKSAVE
@@ -7747,19 +8026,22 @@ void VR_DrawWeaponMenu(void) {
   vr_weaponmenu_selection_type = best_type;
 
   // Trigger haptic if selection changed
-  static int last_vr_weaponmenu_selection = -1;
-  static int last_vr_weaponmenu_selection_type = VR_WEAPONMENU_SELECTION_NONE;
-  if ((vr_weaponmenu_selection != last_vr_weaponmenu_selection ||
-       vr_weaponmenu_selection_type != last_vr_weaponmenu_selection_type) &&
+  if ((vr_weaponmenu_selection != vr_weaponmenu_session.last_selection ||
+       vr_weaponmenu_selection_type !=
+           vr_weaponmenu_session.last_selection_type) &&
       vr_weaponmenu_selection != -1) {
-    VR_TriggerHaptic(1, 0.05f); // Haptic on right controller
+    VR_TriggerHaptic(1, 0.05f); // Haptic on the logical weapon controller
   }
-  last_vr_weaponmenu_selection = vr_weaponmenu_selection;
-  last_vr_weaponmenu_selection_type = vr_weaponmenu_selection_type;
+  vr_weaponmenu_session.last_selection = vr_weaponmenu_selection;
+  vr_weaponmenu_session.last_selection_type = vr_weaponmenu_selection_type;
 
   // Restore currententity reference
   currententity = &cl.viewent;
+  if (draw)
+    VR_RestoreWeaponMenuGLState(&gl_state);
 }
+
+void VR_DrawWeaponMenu(void) { VR_RunWeaponMenu(true); }
 
 #ifdef __cplusplus
 }

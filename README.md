@@ -46,8 +46,10 @@ extended protocol support.
 - VR and desktop modes are both first-class. Use `-vr` or `-novr`.
 - VR multiplayer sends weapon pose, muzzle pose, playspace information, and
   controller-related state.
-- The VR weapon wheel detects more mod weapons, supports multiple weapons in a
-  shared slot, and avoids non-weapon inventory models.
+- The compact VR weapon wheel opens at a fixed playspace point near the hand,
+  detects more mod weapons, supports multiple weapons in a shared slot, and
+  avoids non-weapon inventory models. Its legacy view-locked presentation
+  remains available in the VR options menu.
 - `vrweapons.txt` can define held-weapon offsets, muzzle offsets, scales, and
   multiplayer-only deltas without hardcoding a mod in C.
 - In-game calibration commands can freeze the current weapon and save
@@ -328,7 +330,7 @@ Useful commands:
 | Command | Purpose |
 | --- | --- |
 | `menu_vr` | Opens the VR options menu. |
-| `+vr_weaponmenu` | Opens the VR weapon wheel while held. |
+| `+vr_weaponmenu` | Opens the VR weapon wheel while held (compact playspace placement by default). |
 | `vr_turn180` | Performs a 180-degree snap turn. |
 | `vradjustweapon` | Freeze the current weapon and save a controller-aligned held offset. |
 | `vradjustmpweapon` | Save a multiplayer-only held offset delta. |
@@ -368,6 +370,7 @@ QuakeSpasm cvar.
 | `vr_joystick_yaw_multi` | `1.0` | VR | VR stick turn multiplier. |
 | `vr_lefthanded` | `0` | VR | Left-handed weapon/control mode. |
 | `vr_menu_scale` | `0.13` | VR | VR menu scale. |
+| `vr_weaponmenu_mode` | `0` | VR | Weapon wheel placement: `0` is compact playspace (default); `1` is legacy view-locked. |
 | `vr_movement_instant_stop` | `0` | VR | Optional instant stop for VR locomotion when input stops. |
 | `vr_movement_mode` | `0` | VR | Selects VR movement direction mode. |
 | `vr_movement_speed` | `1.0` | VR | Optional VR locomotion multiplier. |
