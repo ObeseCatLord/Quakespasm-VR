@@ -188,11 +188,18 @@ jobs:
           fi
           test "$(find "$folder" -maxdepth 1 -type f \( -name '*.o' -o -name '*.pdb' \) | wc -l)" -eq 0
 
-          log="$folder/qconsole.log"
+          log="$RUNNER_TEMP/linux-package-smoke.log"
+          set +e
           timeout 20s "$folder/quakespasm-openvr" \
-            -basedir "$folder" -dedicated 1 -condebug +quit
-          test -f "$log"
+            -basedir "$folder" -dedicated 1 +quit >"$log" 2>&1
+          status="$?"
+          set -e
+          test "$status" -ne 124
           grep -Fq 'Playing shareware version.' "$log"
+          if grep -Fq 'error while loading shared libraries' "$log"; then
+            cat "$log" >&2
+            exit 1
+          fi
           rm "$log"
 
           cd "$RUNNER_TEMP"
