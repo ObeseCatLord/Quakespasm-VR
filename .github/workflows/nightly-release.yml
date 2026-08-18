@@ -170,14 +170,17 @@ jobs:
           ldd Quake/quakespasm-openvr.bin
 
           folder="$RUNNER_TEMP/${{ needs.metadata.outputs.package_stem }}"
-          install -d "$folder/third-party-licenses"
-          install -m 0755 Quake/quakespasm-openvr Quake/quakespasm-openvr.bin "$folder/"
-          install -m 0644 Windows/static-release-files/quakespasm.pak LICENSE.txt README.md "$folder/"
+          install -d "$folder"
+          # The Linux archive is intentionally self-contained for all
+          # distributable engine files. System SDL/OpenGL/curl/audio
+          # dependencies and the user's legally obtained id1 remain external.
+          install -m 0755 Quake/quakespasm-openvr.bin "$folder/"
+          install -m 0644 Windows/static-release-files/quakespasm.pak LICENSE.txt "$folder/"
           openvr_lib="$(dpkg -L libopenvr-dev | grep '/libopenvr_api\.so$' | head -n 1)"
           test -n "$openvr_lib"
           install -m 0644 "$openvr_lib" "$folder/libopenvr_api.so"
-          install -m 0644 "$openvr_lib" "$folder/libopenvr_api.so.1"
-          install -m 0644 /usr/share/doc/libopenvr-dev/copyright "$folder/third-party-licenses/OpenVR.txt"
+          test -f "$folder/libopenvr_api.so"
+          test ! -e "$folder/libopenvr_api.so.1"
 
           strings Quake/quakespasm-openvr.bin | grep -F 'Press F1 to refresh add-on catalogue'
           if strings Quake/quakespasm-openvr.bin | grep -Fq 'Catalogue downloads disabled in this build'; then
@@ -188,7 +191,7 @@ jobs:
 
           log="$RUNNER_TEMP/linux-package-smoke.log"
           set +e
-          timeout 20s "$folder/quakespasm-openvr" \
+          timeout 20s "$folder/quakespasm-openvr.bin" \
             -basedir "$folder" -dedicated 1 +quit >"$log" 2>&1
           status="$?"
           set -e
