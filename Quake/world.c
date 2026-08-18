@@ -44,7 +44,7 @@ typedef struct
 	edict_t		*passedict;
 } moveclip_t;
 
-static qboolean SV_IsActiveClientEdict (edict_t *ent)
+qboolean SV_IsActiveClientEdict (edict_t *ent)
 {
 	int entnum;
 
@@ -89,7 +89,7 @@ static qboolean SV_IsPointMove (moveclip_t *clip)
 
 static qboolean SV_ShouldSkipCoopPlayerClip (moveclip_t *clip, edict_t *touch)
 {
-	if (!sv_coop_noplayerclip.value || !coop.value)
+	if (!SV_CoopFeatureEnabled(&sv_coop_noplayerclip, true) || !coop.value)
 		return false;
 	if (!clip->passedict)
 		return false;
@@ -100,6 +100,26 @@ static qboolean SV_ShouldSkipCoopPlayerClip (moveclip_t *clip, edict_t *touch)
 
 	return SV_IsActiveClientEdict(clip->passedict)
 		&& SV_IsActiveClientEdict(touch);
+}
+
+qboolean SV_ShouldSuppressCoopTelefrag(edict_t *trigger, edict_t *other)
+{
+	const char *classname;
+	edict_t *owner;
+
+	if (!coop.value || !SV_CoopFeatureEnabled(&sv_coop_notelefrag, true))
+		return false;
+	if (!trigger || trigger->free || !SV_IsActiveClientEdict(other))
+		return false;
+	if (!trigger->v.classname)
+		return false;
+
+	classname = PR_GetString(trigger->v.classname);
+	if (!classname || q_strcasecmp(classname, "teledeath"))
+		return false;
+
+	owner = PROG_TO_EDICT(trigger->v.owner);
+	return owner != other && SV_IsActiveClientEdict(owner);
 }
 
 static qboolean SV_EdictStringFieldSet (edict_t *ent, const char *fieldname)
@@ -223,7 +243,7 @@ static qboolean SV_IsCoopWeaponTargetFixCandidate (edict_t *weapon, edict_t *pla
 	const char	*classname;
 	int		fixlevel;
 
-	fixlevel = (int)sv_coop_weapon_targetfix.value;
+	fixlevel = SV_CoopFeatureLevel(&sv_coop_weapon_targetfix, 1);
 	if (fixlevel <= 0 || !coop.value)
 		return false;
 	if (!SV_IsActiveClientEdict(player))
@@ -352,7 +372,7 @@ static qboolean SV_IsAmmoClassname (const char *classname)
 
 static qboolean SV_IsCoopAmmoRespawnCandidate (edict_t *ammo, edict_t *player)
 {
-	if (!sv_coop_ammo_respawn.value || !coop.value)
+	if (!SV_CoopFeatureEnabled(&sv_coop_ammo_respawn, true) || !coop.value)
 		return false;
 	if (!SV_IsActiveClientEdict(player))
 		return false;
@@ -368,7 +388,7 @@ static qboolean SV_IsCoopProgressionItemRespawnCandidate (edict_t *item, edict_t
 {
 	const char	*classname;
 
-	if (!sv_coop_progression_item_respawn.value || !coop.value)
+	if (!SV_CoopFeatureEnabled(&sv_coop_progression_item_respawn, true) || !coop.value)
 		return false;
 	if (!SV_IsActiveClientEdict(player))
 		return false;
@@ -1115,7 +1135,8 @@ void SV_CoopSharedApplyToJoiningClient (edict_t *player)
 	int i, type;
 	eval_t *val;
 
-	if (!coop.value || !player || player->free)
+	if (!coop.value || !SV_CoopFeatureEnabled(&sv_coop_shared_pickups, true) ||
+	    !player || player->free)
 		return;
 	if (!sv_coop_shared_level_progress_valid)
 	{
@@ -1233,7 +1254,8 @@ void SV_CoopSharedMergeRestoredClient (edict_t *source)
 	sv_coop_shared_inventory_t current;
 	int i;
 
-	if (!coop.value || !source || source->free)
+	if (!coop.value || !SV_CoopFeatureEnabled(&sv_coop_shared_pickups, true) ||
+	    !source || source->free)
 		return;
 	SV_CaptureCoopSharedInventory(source, &current);
 	if (!sv_coop_shared_level_progress_valid)
@@ -1305,7 +1327,7 @@ void SV_CoopSharedMergeRestoredClient (edict_t *source)
 
 static qboolean SV_IsCoopSharedPickupCandidate (edict_t *pickup, edict_t *player)
 {
-	if (!coop.value)
+	if (!coop.value || !SV_CoopFeatureEnabled(&sv_coop_shared_pickups, true))
 		return false;
 	if (!SV_IsActiveClientEdict(player))
 		return false;
@@ -1978,7 +2000,7 @@ qboolean SV_CoopSharedBeginClientTouch (edict_t *client)
 {
 	int	index;
 
-	if (!coop.value)
+	if (!coop.value || !SV_CoopFeatureEnabled(&sv_coop_shared_pickups, true))
 		return false;
 
 	index = SV_CoopSharedClientIndex(client);
@@ -2399,6 +2421,8 @@ void SV_TouchLinks (edict_t *ent)
 		|| ent->v.absmax[2] < touch->v.absmin[2] )
 			continue;
 		if (SV_ShouldSkipRecentTeleportTrigger(touch, ent))
+			continue;
+		if (SV_ShouldSuppressCoopTelefrag(touch, ent))
 			continue;
 		old_self = pr_global_struct->self;
 		old_other = pr_global_struct->other;

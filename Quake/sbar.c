@@ -65,6 +65,16 @@ static int		hipweapons[4] = {HIT_LASER_CANNON_BIT,HIT_MJOLNIR_BIT,4,HIT_PROXIMIT
 //MED 01/04/97 added hipnotic items array
 static qpic_t		*hsb_items[2];
 
+/* MG3 ships its extra-weapon inventory icons outside the status-bar WAD. */
+static qpic_t		*mg3_weapons[2][2]; // 0 is owned, 1 is active; laser, mjolnir
+
+static qboolean Sbar_IsMG3 (void)
+{
+	const char *game = COM_SkipPath (com_gamedir);
+
+	return game && !q_strcasecmp (game, "mg3");
+}
+
 void Sbar_MiniDeathmatchOverlay (void);
 void Sbar_DeathmatchOverlay (void);
 void M_DrawPic (int x, int y, qpic_t *pic);
@@ -234,6 +244,14 @@ void Sbar_LoadPics (void)
 
 		hsb_items[0] = Draw_PicFromWad ("sb_wsuit");
 		hsb_items[1] = Draw_PicFromWad ("sb_eshld");
+	}
+
+	if (Sbar_IsMG3 ())
+	{
+		mg3_weapons[0][0] = Draw_TryCachePic ("gfx/weapons/ui_h_weapon_laser_1.lmp", 0);
+		mg3_weapons[1][0] = Draw_TryCachePic ("gfx/weapons/ui_h_weapon_laser_2.lmp", 0);
+		mg3_weapons[0][1] = Draw_TryCachePic ("gfx/weapons/ui_h_weapon_mjolnir_1.lmp", 0);
+		mg3_weapons[1][1] = Draw_TryCachePic ("gfx/weapons/ui_h_weapon_mjolnir_2.lmp", 0);
 	}
 
 	if (rogue)
@@ -646,6 +664,22 @@ void Sbar_DrawInventory (void)
 		}
 	}
 
+	if (Sbar_IsMG3 ())
+	{
+		for (i = 0; i < 2; i++)
+		{
+			const int bit = i ? 128 : 8388608;
+			const int active = cl.stats[STAT_ACTIVEWEAPON] == bit;
+			qpic_t *pic;
+
+			if (!(cl.items & bit))
+				continue;
+			pic = mg3_weapons[active][i];
+			if (pic)
+				Sbar_DrawPic (176 + i * 24, -16, pic);
+		}
+	}
+
 	if (rogue)
 	{
     // check for powered up weapon.
@@ -970,7 +1004,7 @@ static void Sbar_DrawModernInventory (hudstyle_t style, float width, float heigh
 		const int row_height = 16;
 		x = width + 1.5f;
 		y = (height - 148.0f) * 0.5f + row_height * 3.5f + 0.5f;
-		if (hipnotic)
+		if (hipnotic || Sbar_IsMG3 ())
 			y += 12;
 
 		for (i = 0; i < 7; i++)
@@ -1042,6 +1076,23 @@ static void Sbar_DrawModernInventory (hudstyle_t style, float width, float heigh
 						(int)y - row_height * (i + 7), hsb_weapons[flashon][i]);
 				if (flashon > 1)
 					sb_updates = 0;
+			}
+		}
+
+		if (Sbar_IsMG3 ())
+		{
+			for (i = 0; i < 2; i++)
+			{
+				const int bit = i ? 128 : 8388608;
+				const int active = cl.stats[STAT_ACTIVEWEAPON] == bit;
+				qpic_t *mg3_pic;
+
+				if (!(cl.items & bit))
+					continue;
+				mg3_pic = mg3_weapons[active][i];
+				if (mg3_pic)
+					Sbar_DrawPic ((int)x - (active ? 24 : 18),
+						(int)y - row_height * (i + 7), mg3_pic);
 			}
 		}
 	}

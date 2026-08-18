@@ -363,7 +363,8 @@ void SV_CoopReviveFromTrace(vec3_t start, vec3_t end, edict_t *ent,
   edict_t *target;
   float target_fraction;
 
-  if (!coop.value || !sv_coop_revive.value || !coop_revive_trace_owner)
+  if (!coop.value || !SV_CoopFeatureEnabled(&sv_coop_revive, true) ||
+      !coop_revive_trace_owner)
     return;
   if (ent != coop_revive_trace_owner ||
       !SV_CoopIsActiveClient(coop_revive_trace_owner))
@@ -431,7 +432,7 @@ void SV_CoopReviveApplyPending(void) {
   coop_revive_pending_attacker = NULL;
   coop_revive_pending_target = NULL;
 
-  if (!coop.value || !sv_coop_revive.value)
+  if (!coop.value || !SV_CoopFeatureEnabled(&sv_coop_revive, true))
     return;
   if (!SV_CoopIsActiveClient(attacker) || !SV_CoopIsDeadClient(target))
     return;
@@ -713,7 +714,7 @@ static qboolean SV_CoopRespawnIsAliveClient(edict_t *ent) {
 }
 
 static qboolean SV_CoopRespawnDelayApplies(void) {
-  return coop.value && sv_coop_respawn_near_player.value &&
+  return coop.value && SV_CoopFeatureEnabled(&sv_coop_respawn_near_player, true) &&
          sv_coop_respawn_delay.value > 0.0f;
 }
 
@@ -1748,7 +1749,9 @@ qboolean SV_CoopRespawnPlaceNearPlayer(edict_t *ent) {
   vec3_t spot;
   coop_respawn_postthink_state_t state;
 
-  if (!coop.value || !sv_coop_respawn_near_player.value || !ent || ent->free)
+  if (!coop.value ||
+      !SV_CoopFeatureEnabled(&sv_coop_respawn_near_player, true) || !ent ||
+      ent->free)
     return false;
 
   entnum = NUM_FOR_EDICT(ent);
@@ -1788,8 +1791,18 @@ qboolean SV_CoopRespawnTeleportToPlayer(edict_t *ent, edict_t *target) {
   if (!SV_CoopRespawnFindNearbySpot(
           ent, target->v.origin, target, player_radii,
           (int)(sizeof(player_radii) / sizeof(player_radii[0])), 384.0f, true,
-          spot))
-    return false;
+          spot)) {
+    if (!SV_CoopFeatureEnabled(&sv_coop_player_teleport_fallback, true) ||
+        !SV_CoopFeatureEnabled(&sv_coop_noplayerclip, true) ||
+        !SV_CoopFeatureEnabled(&sv_coop_notelefrag, true))
+      return false;
+
+    /* An explicit player teleport is allowed to fall back to the teammate's
+     * exact origin. With player collision and co-op telefrags disabled this
+     * remains usable even in maps whose first room has no conservative hull
+     * candidate. The safe search above is still always preferred. */
+    VectorCopy(target->v.origin, spot);
+  }
 
   memset(&state, 0, sizeof(state));
   state.old_force_retouch = pr_global_struct->force_retouch;
@@ -1917,10 +1930,12 @@ static void SV_CoopRespawnEndPostThink(
   }
 
   if (state->was_dead && SV_CoopRespawnIsAliveClient(ent)) {
-    if (sv_coop_respawn_keep_weapons_ammo.value && state->inventory_valid)
+    if (SV_CoopFeatureEnabled(&sv_coop_respawn_keep_weapons_ammo, true) &&
+        state->inventory_valid)
       SV_CoopRespawnRestoreInventory(ent, &state->inventory);
 
-    if (sv_coop_respawn_near_player.value && !state->force_standard_spawn) {
+    if (SV_CoopFeatureEnabled(&sv_coop_respawn_near_player, true) &&
+        !state->force_standard_spawn) {
       if (SV_CoopRespawnFindSpot(ent, state->death_origin, &anchor, spot, true))
         SV_CoopRespawnRelocate(ent, anchor, spot, state);
       else if (net_lagdebug.value)
@@ -2040,7 +2055,8 @@ void SV_Impact(edict_t *e1, edict_t *e2) {
   SV_DebugLogTriggerImpact(e1, e2);
   SV_DebugLogTriggerImpact(e2, e1);
 
-  if (e1->v.touch && e1->v.solid != SOLID_NOT) {
+  if (e1->v.touch && e1->v.solid != SOLID_NOT &&
+      !SV_ShouldSuppressCoopTelefrag(e1, e2)) {
     coop_touch_sync = SV_CoopSharedBeginClientTouch(e2);
     pr_global_struct->self = EDICT_TO_PROG(e1);
     pr_global_struct->other = EDICT_TO_PROG(e2);
@@ -2052,7 +2068,8 @@ void SV_Impact(edict_t *e1, edict_t *e2) {
       SV_CoopSharedEndClientTouch(e2);
   }
 
-  if (!e1->free && !e2->free && e2->v.touch && e2->v.solid != SOLID_NOT) {
+  if (!e1->free && !e2->free && e2->v.touch && e2->v.solid != SOLID_NOT &&
+      !SV_ShouldSuppressCoopTelefrag(e2, e1)) {
     coop_touch_sync = SV_CoopSharedBeginClientTouch(e1);
     pr_global_struct->self = EDICT_TO_PROG(e2);
     pr_global_struct->other = EDICT_TO_PROG(e1);
@@ -2821,18 +2838,33 @@ static void SV_ClampVRMuzzleToWorld(edict_t *ent, vec3_t muzzle) {
   }
 }
 
+typedef struct sv_vr_weapon_pose_restore_s {
+  qboolean applied;
+  vec3_t origin;
+  vec3_t v_angle;
+  vec3_t v_forward;
+  vec3_t v_right;
+  vec3_t v_up;
+} sv_vr_weapon_pose_restore_t;
+
 static void SV_ApplyVRWeaponOffset(edict_t *ent, int num, qboolean is_remote_vr,
-                                   vec3_t restoreOrigin, vec3_t restoreVAngle) {
-  _VectorCopy(ent->v.origin, restoreOrigin);
-  _VectorCopy(ent->v.v_angle, restoreVAngle);
+                                   sv_vr_weapon_pose_restore_t *restore) {
+  restore->applied = false;
 
   if (is_remote_vr ||
       (vr_enabled.value && !isDedicated && num == cl.viewentity)) {
     vec3_t muzzle, source_offset;
 
+    restore->applied = true;
+    VectorCopy(ent->v.origin, restore->origin);
+    VectorCopy(ent->v.v_angle, restore->v_angle);
+    VectorCopy(pr_global_struct->v_forward, restore->v_forward);
+    VectorCopy(pr_global_struct->v_right, restore->v_right);
+    VectorCopy(pr_global_struct->v_up, restore->v_up);
+
     if (is_remote_vr) {
       if (svs.clients[num - 1].vr_handpos_relative) {
-        VectorAdd(restoreOrigin, svs.clients[num - 1].vr_handpos, muzzle);
+        VectorAdd(restore->origin, svs.clients[num - 1].vr_handpos, muzzle);
       } else {
         VectorCopy(svs.clients[num - 1].vr_handpos, muzzle); /* old clients */
       }
@@ -2841,6 +2873,13 @@ static void SV_ApplyVRWeaponOffset(edict_t *ent, int num, qboolean is_remote_vr,
       VR_GetMuzzleAdjustedHandPos(muzzle);
       VectorCopy(cl.handrot[1], ent->v.v_angle);
     }
+
+    /* Legacy QuakeC commonly computes v_forward during PlayerPreThink and
+     * consumes it later while firing in a think/PostThink callback. Keep the
+     * global aim basis synchronized with the temporary hand-only v_angle so
+     * continuous weapons such as lightning cannot inherit HMD direction. */
+    AngleVectors(ent->v.v_angle, pr_global_struct->v_forward,
+                 pr_global_struct->v_right, pr_global_struct->v_up);
 
     SV_ClampVRMuzzleToWorld(ent, muzzle);
     VR_GetWeaponProjectileSourceOffset(PR_GetString(ent->v.weaponmodel),
@@ -2852,13 +2891,17 @@ static void SV_ApplyVRWeaponOffset(edict_t *ent, int num, qboolean is_remote_vr,
 
 static void SV_RestoreVRWeaponOffset(edict_t *ent, int num,
                                      qboolean is_remote_vr,
-                                     vec3_t restoreOrigin,
-                                     vec3_t restoreVAngle) {
-  if (is_remote_vr ||
-      (vr_enabled.value && !isDedicated && num == cl.viewentity)) {
-    _VectorCopy(restoreOrigin, ent->v.origin);
-    _VectorCopy(restoreVAngle, ent->v.v_angle);
-  }
+                                     const sv_vr_weapon_pose_restore_t *restore) {
+  (void)num;
+  (void)is_remote_vr;
+  if (!restore->applied)
+    return;
+
+  VectorCopy(restore->origin, ent->v.origin);
+  VectorCopy(restore->v_angle, ent->v.v_angle);
+  VectorCopy(restore->v_forward, pr_global_struct->v_forward);
+  VectorCopy(restore->v_right, pr_global_struct->v_right);
+  VectorCopy(restore->v_up, pr_global_struct->v_up);
 }
 
 qboolean SV_IsVRClientSlot(int num) {
@@ -3252,8 +3295,7 @@ qboolean SV_RunClientPMoveCommand(client_t *client) {
   /* Legacy QuakeC expects its lifecycle hooks once per server physics frame,
    * while PMove itself consumes each accepted command in sequence. */
   if (!command_hook) {
-    vec3_t thinkRestoreOrigin;
-    vec3_t thinkRestoreVAngle;
+    sv_vr_weapon_pose_restore_t thinkRestore;
     vec3_t prethink_velocity;
     vec3_t postthink_velocity;
     vec3_t preserved_velocity_delta;
@@ -3299,11 +3341,9 @@ qboolean SV_RunClientPMoveCommand(client_t *client) {
                                     postthink_teleport_time);
     SV_CheckVelocity(ent);
 
-    SV_ApplyVRWeaponOffset(ent, num, is_remote_vr, thinkRestoreOrigin,
-                           thinkRestoreVAngle);
+    SV_ApplyVRWeaponOffset(ent, num, is_remote_vr, &thinkRestore);
     think_ok = SV_RunThink(ent);
-    SV_RestoreVRWeaponOffset(ent, num, is_remote_vr, thinkRestoreOrigin,
-                             thinkRestoreVAngle);
+    SV_RestoreVRWeaponOffset(ent, num, is_remote_vr, &thinkRestore);
     if (!think_ok || ent->free) {
       goto done;
     }
@@ -3321,8 +3361,7 @@ qboolean SV_RunClientPMoveCommand(client_t *client) {
     }
 
     if (command_hook) {
-      vec3_t thinkRestoreOrigin;
-      vec3_t thinkRestoreVAngle;
+      sv_vr_weapon_pose_restore_t thinkRestore;
 
       /* Explicit command physics owns its per-command QuakeC callback. */
       is_remote_vr = cmd.vr_active &&
@@ -3336,11 +3375,9 @@ qboolean SV_RunClientPMoveCommand(client_t *client) {
         break;
       SV_CheckVelocity(ent);
 
-      SV_ApplyVRWeaponOffset(ent, num, is_remote_vr, thinkRestoreOrigin,
-                             thinkRestoreVAngle);
+      SV_ApplyVRWeaponOffset(ent, num, is_remote_vr, &thinkRestore);
       think_ok = SV_RunThink(ent);
-      SV_RestoreVRWeaponOffset(ent, num, is_remote_vr, thinkRestoreOrigin,
-                               thinkRestoreVAngle);
+      SV_RestoreVRWeaponOffset(ent, num, is_remote_vr, &thinkRestore);
       if (!think_ok || ent->free)
         break;
 
@@ -3368,8 +3405,7 @@ qboolean SV_RunClientPMoveCommand(client_t *client) {
   }
 
   if (!ent->free && processed) {
-    vec3_t restoreOrigin;
-    vec3_t restoreVAngle;
+    sv_vr_weapon_pose_restore_t weaponRestore;
 
     SV_LinkEdict(ent, false);
     pr_global_struct->time = qcvm->time;
@@ -3390,8 +3426,7 @@ qboolean SV_RunClientPMoveCommand(client_t *client) {
     SV_SetQCInputGlobals(&gameplaycmd);
     is_remote_vr = gameplaycmd.vr_active &&
         (isDedicated || num != cl.viewentity);
-    SV_ApplyVRWeaponOffset(ent, num, is_remote_vr, restoreOrigin,
-                           restoreVAngle);
+    SV_ApplyVRWeaponOffset(ent, num, is_remote_vr, &weaponRestore);
     pr_global_struct->self = EDICT_TO_PROG(ent);
     SV_CoopReviveBeginPostThink(ent);
     {
@@ -3402,8 +3437,7 @@ qboolean SV_RunClientPMoveCommand(client_t *client) {
         SV_FriendlyFireEnd();
     }
     SV_CoopReviveEndPostThink();
-    SV_RestoreVRWeaponOffset(ent, num, is_remote_vr, restoreOrigin,
-                             restoreVAngle);
+    SV_RestoreVRWeaponOffset(ent, num, is_remote_vr, &weaponRestore);
     SV_CoopRespawnEndPostThink(ent, num, &coop_respawn_state);
     SV_CoopReviveApplyPending();
 
@@ -3526,10 +3560,8 @@ void SV_Physics_Client(edict_t *ent, int num) {
     // during PostThink.  We restore the body origin before movement physics
     // (SV_WalkMove, etc.) which needs the real collision hull position.
     {
-      vec3_t thinkRestoreOrigin;
-      vec3_t thinkRestoreVAngle;
-      SV_ApplyVRWeaponOffset(ent, num, is_remote_vr, thinkRestoreOrigin,
-                             thinkRestoreVAngle);
+      sv_vr_weapon_pose_restore_t thinkRestore;
+      SV_ApplyVRWeaponOffset(ent, num, is_remote_vr, &thinkRestore);
 
       qboolean think_ok = true;
       switch ((int)ent->v.movetype) {
@@ -3553,8 +3585,7 @@ void SV_Physics_Client(edict_t *ent, int num) {
         Sys_Error("SV_Physics_client: bad movetype %i", (int)ent->v.movetype);
       }
 
-      SV_RestoreVRWeaponOffset(ent, num, is_remote_vr, thinkRestoreOrigin,
-                               thinkRestoreVAngle);
+      SV_RestoreVRWeaponOffset(ent, num, is_remote_vr, &thinkRestore);
 
       if (!think_ok) {
         SV_CoopRespawnRestoreSuppressedInput(ent, num, &coop_respawn_state);
@@ -3641,10 +3672,8 @@ void SV_Physics_Client(edict_t *ent, int num) {
 
   // replace player origin with hand origin for duration of post think (where
   // weapons are done)
-  vec3_t restoreOrigin;
-  vec3_t restoreVAngle;
-  SV_ApplyVRWeaponOffset(ent, num, is_remote_vr, restoreOrigin,
-                         restoreVAngle);
+  sv_vr_weapon_pose_restore_t weaponRestore;
+  SV_ApplyVRWeaponOffset(ent, num, is_remote_vr, &weaponRestore);
 
   pr_global_struct->self = EDICT_TO_PROG(ent);
 
@@ -3657,8 +3686,7 @@ void SV_Physics_Client(edict_t *ent, int num) {
   }
   SV_CoopReviveEndPostThink();
 
-  SV_RestoreVRWeaponOffset(ent, num, is_remote_vr, restoreOrigin,
-                           restoreVAngle);
+  SV_RestoreVRWeaponOffset(ent, num, is_remote_vr, &weaponRestore);
   SV_CoopRespawnEndPostThink(ent, num, &coop_respawn_state);
   SV_CoopReviveApplyPending();
 }

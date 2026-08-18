@@ -2035,6 +2035,11 @@ void World_AddEntsToPmove (edict_t *ignore, vec3_t boxminmax[2])
 
 			if (other->free || other == ignore)
 				continue;
+			if (coop.value &&
+				SV_CoopFeatureEnabled(&sv_coop_noplayerclip, true) &&
+				SV_IsActiveClientEdict(ignore) &&
+				SV_IsActiveClientEdict(other))
+				continue;
 			solid = (int)other->v.solid;
 			if (solid != SOLID_BBOX && solid != SOLID_SLIDEBOX && solid != SOLID_BSP)
 				continue;
@@ -2117,6 +2122,10 @@ void World_AddEntsToPmove (edict_t *ignore, vec3_t boxminmax[2])
 		if (solidsize == ES_SOLID_NOT)
 			continue;
 		if (i == cl.viewentity)
+			continue;
+		if (cl.gametype == GAME_COOP &&
+			(cl.stats[STAT_VR_COOP_POLICY] & VR_COOP_POLICY_NO_PLAYER_CLIP) &&
+			i <= cl.maxclients)
 			continue;
 
 		if (solidsize == ES_SOLID_BSP)

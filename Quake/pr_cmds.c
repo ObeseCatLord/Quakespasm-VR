@@ -4915,6 +4915,7 @@ static void PF_cl_registercommand(void)
 static struct svcustomstat_s *PR_CustomStat(int idx, int type)
 {
 	size_t i;
+	int lastidx;
 	if (idx < 0 || idx >= MAX_CL_STATS)
 		return NULL;
 	switch(type)
@@ -4929,6 +4930,18 @@ static struct svcustomstat_s *PR_CustomStat(int idx, int type)
 			return NULL;
 		break;
 	default:
+		return NULL;
+	}
+
+	lastidx = idx + (type == ev_vector ? 2 : 0);
+	if ((idx <= STAT_VR_MAX_CELLS && lastidx >= STAT_VR_MAX_SHELLS) ||
+	    (idx <= STAT_VR_COOP_POLICY && lastidx >= STAT_VR_COOP_POLICY))
+	{
+		Con_Warning("custom stat %d%s overlaps OpenVR reserved stats %d-%d/"
+			"%d; registration ignored\n", idx,
+			type == ev_vector ? " (vector)" : "",
+			STAT_VR_MAX_SHELLS, STAT_VR_MAX_CELLS,
+			STAT_VR_COOP_POLICY);
 		return NULL;
 	}
 

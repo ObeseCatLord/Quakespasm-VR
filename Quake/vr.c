@@ -894,6 +894,8 @@ static int VR_FindDynWeapon(int bitmask, int owned_stat, int owned_mask,
 }
 
 static int VR_FindDynWeaponForActive(int active, int model_index) {
+  int schema_without_model = -1;
+
   for (int i = 0; i < num_dyn_weapons; i++) {
     vr_dyn_weapon_t *w = &dyn_weapons[i];
     qboolean active_match = false;
@@ -908,12 +910,27 @@ static int VR_FindDynWeaponForActive(int active, int model_index) {
 
     if (!active_match)
       continue;
+    /*
+     * wwheel.txt identifies a weapon by its active selector, but does not
+     * carry a model name.  Once that explicit schema entry is observed,
+     * learn the current viewmodel instead of creating a second, hidden
+     * discovery entry.  Keep this limited to schema entries: non-schema
+     * selectors are commonly reused by unrelated mod weapons.
+     */
+    if (w->from_schema && !VR_DynWeaponHasModelDiscriminator(w)) {
+      if (schema_without_model < 0)
+        schema_without_model = i;
+      continue;
+    }
     if (w->model_index > 0 && w->model_index == model_index)
       return i;
     if (w->model_index == 0 && VR_ModelIndexMatchesPath(model_index,
                                                         w->model_path))
       return i;
   }
+
+  if (schema_without_model >= 0)
+    return schema_without_model;
 
   /*
    * A matching active bit alone is not an identity.  Mods freely reuse those
@@ -1147,15 +1164,15 @@ static void VR_AddQBJ3WeaponDefaults(void) {
   VR_AddBuiltinWeaponDefault(2, 3, "progs/v_flakshotgun.mdl", -1, 0, -1, 0,
                              STAT_SHELLS, 100, 0.2f);
   VR_AddBuiltinWeaponDefault(4, 4, "progs/v_tnailgun.mdl", -1, 0, -1, 0,
-                             STAT_NAILS, 200, 0.2f);
+                             STAT_NAILS, 300, 0.2f);
   VR_AddBuiltinWeaponDefault(8, 5, "progs/v_rebar.mdl", -1, 0, -1, 0,
-                             STAT_NAILS, 200, 0.2f);
+                             STAT_NAILS, 300, 0.2f);
   VR_AddBuiltinWeaponDefault(16, 6, "progs/v_grenlauncher.mdl", -1, 0, -1, 0,
                              STAT_ROCKETS, 100, 0.2f);
   VR_AddBuiltinWeaponDefault(32, 7, "progs/v_mmml.mdl", -1, 0, -1, 0,
                              STAT_ROCKETS, 100, 0.2f);
   VR_AddBuiltinWeaponDefault(64, 8, "progs/v_invoker.mdl", -1, 0, -1, 0,
-                             STAT_CELLS, 100, 0.2f);
+                             STAT_CELLS, 10, 0.2f);
 }
 
 static void VR_AddMjolnirWeaponDefaults(void) {
@@ -1181,12 +1198,25 @@ static void VR_AddMjolnirWeaponDefaults(void) {
                              1.0f);
 }
 
+static void VR_AddMG3WeaponDefaults(void) {
+  if (!VR_GameDirIs("mg3"))
+    return;
+
+  /* MG3's hammer is not present in every wwheel.txt, so keep it as a
+   * profile fallback. Use pickup models for readable wheel silhouettes. */
+  VR_AddBuiltinWeaponDefault(128, 1, "progs/g_hammer.mdl", -1, 0, -1, 0,
+                             -1, 0, 1.0f);
+  VR_AddBuiltinWeaponDefault(8388608, 225, "progs/g_laserg.mdl", -1, 0,
+                             -1, 0, STAT_CELLS, 100, 1.0f);
+}
+
 static void VR_AddBuiltinWeaponDefaults(void) {
   VR_AddDwellWeaponDefaults();
   VR_AddAlkalineWeaponDefaults();
   VR_AddEnyoWeaponDefaults();
   VR_AddQBJ3WeaponDefaults();
   VR_AddMjolnirWeaponDefaults();
+  VR_AddMG3WeaponDefaults();
 }
 
 static qboolean VR_IsDwellDefaultWeaponEntry(const vr_dyn_weapon_t *w) {
@@ -1306,6 +1336,29 @@ static qboolean VR_GetWeaponAmmo(const vr_dyn_weapon_t *w, int *ammo,
 
   if (stat < 0 || stat >= MAX_CL_STATS)
     return false;
+
+#ifdef STAT_VR_MAX_SHELLS
+  switch (stat) {
+  case STAT_SHELLS:
+    if (cl.stats[STAT_VR_MAX_SHELLS] > 0)
+      *max_ammo = cl.stats[STAT_VR_MAX_SHELLS];
+    break;
+  case STAT_NAILS:
+    if (cl.stats[STAT_VR_MAX_NAILS] > 0)
+      *max_ammo = cl.stats[STAT_VR_MAX_NAILS];
+    break;
+  case STAT_ROCKETS:
+    if (cl.stats[STAT_VR_MAX_ROCKETS] > 0)
+      *max_ammo = cl.stats[STAT_VR_MAX_ROCKETS];
+    break;
+  case STAT_CELLS:
+    if (cl.stats[STAT_VR_MAX_CELLS] > 0)
+      *max_ammo = cl.stats[STAT_VR_MAX_CELLS];
+    break;
+  default:
+    break;
+  }
+#endif
 
   *ammo = cl.stats[stat];
   return true;
