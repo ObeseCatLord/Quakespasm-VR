@@ -1216,13 +1216,18 @@ static void Host_SavegameRefreshClientSpawnParms(void) {
     sv_player = host_client->edict;
     Host_SaveClientSpawnParms(host_client);
   }
+  /* MG3 upgrades are campaign-wide.  The first pass builds their union from
+     every client; apply that complete union to every saved client afterward. */
+  for (i = 0; i < svs.maxclients; i++) {
+    if (!svs.clients[i].active)
+      continue;
+    SV_MG3UpgradeApplySpawnParms(svs.clients[i].spawn_parms);
+  }
   host_client = old_host_client;
   sv_player = old_sv_player;
 }
 
 static qboolean Host_SavegameCanSave(qboolean quiet) {
-  int i;
-
   if (!sv.active) {
     if (!quiet)
       Con_Printf("Not playing a local game.\n");
@@ -1248,12 +1253,16 @@ static qboolean Host_SavegameCanSave(qboolean quiet) {
     }
   }
 
-  for (i = 0; i < svs.maxclients; i++) {
-    if (svs.clients[i].active && (svs.clients[i].edict->v.health <= 0)) {
+  if (svs.maxclients == 1) {
+    if (svs.clients[0].active && svs.clients[0].edict->v.health <= 0) {
       if (!quiet)
         Con_Printf("Can't savegame with a dead player\n");
       return false;
     }
+  } else if (Host_SavegameActiveClients() <= 0) {
+    if (!quiet)
+      Con_Printf("Can't save a multiplayer game without active players.\n");
+    return false;
   }
 
   return true;
@@ -2195,6 +2204,7 @@ static void Host_Spawn_f(void) {
   client_t *client;
   edict_t *ent;
   qboolean loaded_client;
+  qboolean respawn_loaded_client;
   qboolean initial_spawn_client;
 
   if (cmd_source == src_command) {
@@ -2216,11 +2226,19 @@ static void Host_Spawn_f(void) {
     saved_clientnum =
         Host_LoadgameFindSavedClientForSpawn(clientnum, host_client->name);
   loaded_client = saved_clientnum >= 0;
+  respawn_loaded_client = false;
+  if (loaded_client) {
+    edict_t *saved_ent =
+        (edict_t *)Host_LoadgameClientEdictSnapshot(saved_clientnum);
+    respawn_loaded_client = saved_ent->v.health <= 0 ||
+                            saved_ent->v.deadflag != DEAD_NO;
+  }
   initial_spawn_client = clientnum >= 0 && clientnum < MAX_SCOREBOARD &&
       svs.coop_initial_spawn_client[clientnum];
 
   // run the entrance script
-  if (loaded_client) { // saved client edicts are fully inited already
+  if (loaded_client && !respawn_loaded_client) {
+    // Living saved client edicts are fully initialized already.
     ent = host_client->edict;
     memcpy(host_client->spawn_parms,
            sv.loadgame_client_spawn_parms[saved_clientnum],
@@ -2248,6 +2266,15 @@ static void Host_Spawn_f(void) {
     Host_LoadgameMaybeClearLoadedFlag();
     sv.paused = false;
   } else {
+    if (respawn_loaded_client) {
+      memcpy(host_client->spawn_parms,
+             sv.loadgame_client_spawn_parms[saved_clientnum],
+             sizeof(host_client->spawn_parms));
+      SV_MG3UpgradeApplySpawnParms(host_client->spawn_parms);
+      host_client->colors = sv.loadgame_client_colors[saved_clientnum];
+      host_client->old_frags = sv.loadgame_client_old_frags[saved_clientnum];
+    }
+
     // set up the edict
     ent = host_client->edict;
 
@@ -2271,6 +2298,16 @@ static void Host_Spawn_f(void) {
       Sys_Printf("%s entered the game\n", host_client->name);
 
     PR_ExecuteProgram(pr_global_struct->PutClientInServer);
+    if (respawn_loaded_client) {
+      ent->v.frags = host_client->old_frags;
+      sv.loadgame_client_saved[saved_clientnum] = false;
+      sv.loadgame_client_name_required[saved_clientnum] = false;
+      sv.loadgame_client_names[saved_clientnum][0] = 0;
+      memset(sv.loadgame_client_spawn_parms[saved_clientnum], 0,
+             sizeof(sv.loadgame_client_spawn_parms[saved_clientnum]));
+      sv.loadgame_client_colors[saved_clientnum] = 0;
+      sv.loadgame_client_old_frags[saved_clientnum] = 0;
+    }
     if (clientnum >= 0 && clientnum < MAX_SCOREBOARD)
       svs.coop_initial_spawn_client[clientnum] = false;
     if ((svs.coop_loadgame_late_join_spawns_near || !initial_spawn_client) &&
@@ -2541,8 +2578,9 @@ static void Host_Kick_f(void) {
     else
       who = save->name;
 
-    // can't kick yourself!
-    if (host_client == save)
+    // A remote client cannot kick itself.  A dedicated console has no client
+    // identity; host_client merely points at whichever client ran last.
+    if (cmd_source != src_command && host_client == save)
       return;
 
     if (Cmd_Argc() > 2) {

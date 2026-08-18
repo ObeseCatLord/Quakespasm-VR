@@ -506,7 +506,7 @@ QuakeSpasm cvar.
 | `sv_predict_nqmovement` | `0` | PMove | Experimental opt-in for advertising PMove prediction metadata while the server still runs vanilla NQ movement; default `0` matches QSS-M and avoids correction judder. |
 | `sv_trustedmovement` | `1` | PMove | Allows negotiated predictive PMove for network clients; retained as an administrative emergency gate. |
 | `sv_replacement_maxpackets` | `0` | Networking | QSS-M-style uncapped replacement-delta drain by default; positive values manually cap split packets sent to one client per server frame. |
-| `sv_save_multiplayer` | `1` | Save/load | Allows multiplayer/co-op saves in controlled use. |
+| `sv_save_multiplayer` | `1` | Save/load | Allows co-op saves. Dead clients no longer block a save; they respawn with persistent spawn parameters when the save is loaded, while living clients restore exactly. Empty multiplayer servers still cannot be saved. |
 | `sv_skyroom_pvs` | `1` | Rendering/server | Adds skyroom PVS for skyroom entity visibility. |
 | `sv_spectatormaxspeed` | `500` | PMove | Spectator max speed. |
 | `sv_triggerdebug` | `0` | Diagnostics | Logs trigger/touch decisions. |
