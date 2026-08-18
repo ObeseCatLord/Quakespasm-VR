@@ -40,6 +40,9 @@ script_pid.txt
 !test_server.sh
 !test_client_desktop.sh
 !test_client_vr.sh
-!build_deploy_straight.sh
-!build_deploy_foundry.sh
 !Quake/build_cross_win64-openvr.sh
+
+# Local build/deployment helpers are intentionally not part of the public repo.
+/build-windows.bat
+/build_deploy_foundry.sh
+/build_deploy_straight.sh
