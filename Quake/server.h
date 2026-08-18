@@ -463,6 +463,7 @@ qboolean SV_CoopRespawnTeleportToPlayer(edict_t *ent, edict_t *target);
 qboolean SV_CoopRespawnTeleportToSpawn(edict_t *ent, edict_t *spawn);
 void SV_CoopRespawnSyncSharedKeys(edict_t *source);
 void SV_CoopRespawnRefreshClientInventory(edict_t *ent);
+qboolean SV_CoopRespawnPrepareChangelevel(edict_t *ent);
 
 #define SV_COOP_GIVEKEYS_SILVER 1
 #define SV_COOP_GIVEKEYS_GOLD 2

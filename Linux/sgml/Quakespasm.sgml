@@ -127,8 +127,8 @@ Compile time options include
 QuakeSpasm developers cross-compile windows binaries using <url url="http://mingw-w64.sf.net" name="MinGW-w64"> and <url url="https://mingw.osdn.io" name="MinGW">.
 The project can also be built using Microsoft Visual Studio 2005 and newer versions.</p>
 <sect1>Mac OS X<p>
-A Quakespasm App (including program launcher and update framework) can be made using the <bf>Xcode</bf> template found in the MacOSX directory.
-Alternatively, have a look at <bf>Makefile.darwin</bf> for more instructions on building from a console.
+No public macOS command-line build recipe is maintained in this repository
+branch; refer to upstream QuakeSpasm docs for supported macOS build paths.
 </p>
 
 <sect1>Quake '2021 re-release'<p>

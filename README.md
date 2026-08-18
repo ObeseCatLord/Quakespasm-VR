@@ -256,20 +256,15 @@ beside the executable or in common system paths, then launches the binary.
 ### Windows
 
 Native Windows builds use Visual Studio/MSBuild. Install Visual Studio 2022
-with the Desktop development with C++ workload, then run from a Developer
-Command Prompt or normal `cmd.exe`:
+with the Desktop development with C++ workload and Git, then run from a Visual
+Studio Developer Command Prompt. The vcpkg manifest supplies the static curl
+library used by the add-on catalogue:
 
 ```bat
-build-windows.bat
-```
-
-The default build is `Release|x64`. Optional arguments select debug and 32-bit
-builds:
-
-```bat
-build-windows.bat debug
-build-windows.bat release x86
-build-windows.bat debug x86
+git clone https://github.com/microsoft/vcpkg .vcpkg
+.\.vcpkg\bootstrap-vcpkg.bat -disableMetrics
+.\.vcpkg\vcpkg.exe install --triplet x64-windows-static-md --x-manifest-root=%CD% --x-install-root=%CD%\vcpkg_installed
+msbuild Windows\VisualStudio\quakespasm.sln /p:Configuration=Release /p:Platform=x64 /p:UseCurl=true /p:CurlRoot=%CD%\vcpkg_installed\x64-windows-static-md /maxcpucount /verbosity:minimal
 ```
 
 The output executable is written under:
@@ -281,39 +276,29 @@ Windows\VisualStudio\Build-quakespasm-sdl2\<Platform>\<Configuration>\quakespasm
 The Visual Studio project uses the checked-in Windows SDL2, OpenVR, and codec
 library directories and copies the needed DLLs into the output directory.
 
-### Windows Cross-Build From Linux
-
-Linux can also cross-compile the Windows x64 executable with MinGW-w64:
-
-```sh
-sudo apt install mingw-w64 clang
-cd Quake
-./build_cross_win64-openvr.sh
-```
-
-`clang` is optional but recommended for the C++ OpenVR files. The script falls
-back to MinGW g++ and the makefile disables C++ exceptions/RTTI for the VR C++
-translation units to avoid OpenVR/SEH unwinder crashes. The output is
-`Quake/quakespasm-openvr.exe`.
-
 Do not commit built executables, object files, local logs, or generated Visual
 Studio output.
 
 ## Nightly releases
 
-GitHub Actions publishes prereleases with immutable UTC date and source-commit
-tags such as `nightly-20260713-g15c9adf2`. Every completed nightly contains
-both of these CI-built packages:
+GitHub Actions creates immutable source tags with UTC-date + source-commit
+suffixes such as `nightly-20260713-g15c9adf2`. Nightlies do not create entries
+or downloadable assets on the GitHub Releases page. Open the matching completed
+run of the **Nightly Build and Tag** workflow on the Actions page to download
+these workflow artifacts:
 
-- `quakespasm-openvr-nightly-YYYYMMDD-gCOMMIT_win64.zip`
-- `quakespasm-openvr-nightly-YYYYMMDD-gCOMMIT_linux-x86_64.zip`
+- `nightly-windows-x64`, containing
+  `quakespasm-openvr-nightly-YYYYMMDD-gCOMMIT_win64.zip`
+- `nightly-linux-x86_64`, containing
+  `quakespasm-openvr-nightly-YYYYMMDD-gCOMMIT_linux-x86_64.zip`
 
 The Windows package is built natively with Visual Studio and includes the
-OpenVR, SDL2, and codec runtime DLLs. The Linux package includes the launcher,
-engine binary, and `libopenvr_api.so`; SDL2, OpenGL, curl, and codec libraries
-remain system dependencies. Both packages include `quakespasm.pak` but no
-commercial Quake game data. Extract the appropriate ZIP into a Quake install
-that contains your legally obtained `id1` data.
+OpenVR, SDL2, and codec runtime DLLs plus license files. The Linux package
+includes `quakespasm-openvr.bin` and `libopenvr_api.so`, without a launcher
+script; SDL2, OpenGL, curl, and codec libraries remain system dependencies.
+Both packages include `quakespasm.pak` but no commercial Quake game data.
+Extract the appropriate ZIP into a Quake install that contains your legally
+obtained `id1` data.
 
 ## Controls
 

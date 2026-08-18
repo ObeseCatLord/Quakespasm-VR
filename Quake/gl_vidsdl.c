@@ -1648,6 +1648,8 @@ static void GL_CheckExtensions (void)
 	//
 	if (COM_CheckParm("-nopackedpixels"))
 		Con_Warning ("EXT_packed_pixels disabled at command line\n");
+	else if (host_bigendian) /** FIXME: See https://github.com/sezero/quakespasm/issues/114 **/
+		Con_Warning ("EXT_packed_pixels disabled on big endian systems\n");
 	else if (gl_glsl_alias_able)
 	{
 		gl_packed_pixels = true;

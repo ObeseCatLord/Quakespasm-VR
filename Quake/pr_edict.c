@@ -290,7 +290,8 @@ static ddef_t *ED_FieldAtOfs (int ofs)
 	ddef_t		*def;
 	int			i;
 
-	for (i = 0; i < qcvm->progs->numfielddefs; i++)
+	/* fielddefs[0] is the sentinel, not a real entity field */
+	for (i = 1; i < qcvm->progs->numfielddefs; i++)
 	{
 		def = &qcvm->fielddefs[i];
 		if (def->ofs == ofs)

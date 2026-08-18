@@ -1315,6 +1315,37 @@ void SV_CoopRespawnRefreshClientInventory(edict_t *ent) {
   SV_CoopRespawnRememberAliveInventory(ent, num);
 }
 
+qboolean SV_CoopRespawnPrepareChangelevel(edict_t *ent) {
+  coop_respawn_inventory_t current;
+  coop_respawn_inventory_t inventory;
+  int index;
+  int num;
+
+  if (!coop.value ||
+      !SV_CoopFeatureEnabled(&sv_coop_respawn_keep_weapons_ammo, true) ||
+      !SV_CoopIsDeadClient(ent))
+    return false;
+
+  num = NUM_FOR_EDICT(ent);
+  index = num - 1;
+  if (index < 0 || index >= MAX_SCOREBOARD)
+    return false;
+
+  if (!coop_respawn_last_inventory_valid[index])
+    return false;
+
+  /* Death code is allowed to clear inventory before a changelevel.  Rebuild
+     the outgoing player from the last alive snapshot plus anything still on
+     the corpse, then let the mod's SetChangeParms encode its own supported
+     inventory fields. */
+  inventory = coop_respawn_last_inventory[index];
+  SV_CoopRespawnSaveInventory(ent, &current);
+  SV_CoopRespawnMergeInventory(&inventory, &current);
+  SV_CoopRespawnRestoreInventory(ent, &inventory);
+
+  return true;
+}
+
 static void SV_CoopRespawnRememberSafeOrigin(edict_t *ent, int num) {
   int index;
 
@@ -1849,6 +1880,8 @@ static void SV_CoopRespawnBeginPostThink(
 
   memset(state, 0, sizeof(*state));
   state->was_dead = SV_CoopIsDeadClient(ent);
+  if (coop.value && !state->was_dead)
+    SV_CoopRespawnRememberAliveState(ent, num);
   state->mod_owns_respawn = SV_CoopRespawnModOwnsLifecycle(ent);
   if (state->mod_owns_respawn) {
     index = num - 1;
@@ -1871,7 +1904,6 @@ static void SV_CoopRespawnBeginPostThink(
   if (!state->was_dead) {
     coop_respawn_dead_since[index] = 0;
     coop_respawn_force_standard_spawn[index] = false;
-    SV_CoopRespawnRememberAliveState(ent, num);
     return;
   }
 
