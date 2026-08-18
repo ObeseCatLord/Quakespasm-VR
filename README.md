@@ -540,41 +540,6 @@ sv_triggerdebug 1
 `net_lagdebug` and related diagnostics should be treated as log tools, not as
 normal player-facing output.
 
-For a repeatable server-side stress check against the heavy `vr/codex_intense`
-save, run:
-
-```sh
-tools/net_stress_smoke
-```
-
-The smoke starts a local dedicated server on port `26010` by default, loads the
-save from the straight install, prints key networking defaults, and fails on
-startup errors or packet overflow diagnostics.
-
-When a desktop display is available, this companion smoke also starts two small
-`-novr` client windows by default and verifies live replacement-delta snapshots,
-ACKs, and same-IP co-op socket handling on the same save:
-
-```sh
-tools/net_connected_stress_smoke
-```
-
-It uses port `26011` by default and fails if connected clients do not ACK
-replacement snapshots, if predictive movement authority or explicit command
-time is absent, if client movement is not received, if the same-IP multi-client
-path is not exercised, if no multi-packet replacement drain occurs under the
-configured test packet cap, or if replacement entity clipping/packet overflow
-diagnostics appear. It uses `TEST_MAXPACKETSIZE=1024` by default to force split
-coverage; set `TEST_MAXPACKETSIZE=1400` for a production-cap run. Set
-`CLIENTS=1` for a lighter single-client run.
-
-Set `NET_PROXY_PROFILE` to `delay`, `jitter`, `loss`, `reorder`, `gap1`,
-`gap2`, `gap3`, `stall200`, or `all` to route traffic through the deterministic
-user-space UDP impairment proxy. The connected smoke defaults to a repeating
-wall/jump input pattern; `SYNTHETIC_VR=1` also injects headless room-scale and
-hand-pose command data without requiring a headset. These test-only cvars are
-off during normal and offline play.
-
 ## Compatibility Caveats
 
 - Full DarkPlaces/FTE CSQC is not implemented. This fork implements the subset
