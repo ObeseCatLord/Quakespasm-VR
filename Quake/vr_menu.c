@@ -197,6 +197,9 @@ static void VR_MenuPrintOptionValue(int cx, int cy, int option) {
       value_string = value_buffer;
     }
     break;
+  case VR_OPTION_HIDDEN_AREA:
+    M_DrawCheckbox(cx, cy, (int)vr_hidden_area.value);
+    break;
   case VR_OPTION_GUNMODELOFFSETS:
     switch ((int)vr_gunmodeloffsets.value) {
     case VR_GUNMODELOFFSETS_VANILLA:
@@ -359,6 +362,9 @@ void VR_MenuKeyOption(int key, int option) {
     int max;
     glGetIntegerv(GL_MAX_SAMPLES, &max);
     adjustI(vr_msaa, 1, 0, max);
+    break;
+  case VR_OPTION_HIDDEN_AREA:
+    Cvar_SetValue(vr_hidden_area.name, !(int)vr_hidden_area.value);
     break;
   case VR_OPTION_GUNANGLE:
     adjustF(vr_gunangle, 2.5f, -VR_MAX_GUNANGLE, VR_MAX_GUNANGLE);
@@ -550,6 +556,10 @@ void VR_MenuDraw(void) {
       break;
     case VR_OPTION_MSAA:
       M_Print(16, y, "                     MSAA");
+      VR_MenuPrintOptionValue(240, y, i);
+      break;
+    case VR_OPTION_HIDDEN_AREA:
+      M_Print(16, y, "         Hidden Area Mask");
       VR_MenuPrintOptionValue(240, y, i);
       break;
     case VR_OPTION_GUNANGLE:

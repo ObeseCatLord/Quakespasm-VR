@@ -193,11 +193,8 @@
 
   Compiling for Mac OS X:
 
-  A Quakespasm App (including program launcher and update framework) can
-  be made using the Xcode template found in the MacOSX directory.
-
-  Alternatively, have a look at Makefile.darwin for more instructions on
-  building from a console.
+  No public macOS command-line build recipe is maintained in this repository
+  branch; refer to upstream QuakeSpasm docs for supported macOS build paths.
 
 
   Quake '2021 re-release':

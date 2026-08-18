@@ -4018,6 +4018,8 @@ transition to another level
 void SV_SaveSpawnparms (void)
 {
 	int		i, j;
+	float		saved_health, saved_deadflag;
+	qboolean	preserve_dead_inventory;
 
 	svs.serverflags = pr_global_struct->serverflags;
 
@@ -4027,8 +4029,25 @@ void SV_SaveSpawnparms (void)
 			continue;
 
 	// call the progs to get default spawn parms for the new client
+		preserve_dead_inventory =
+			SV_CoopRespawnPrepareChangelevel(host_client->edict);
+		saved_health = host_client->edict->v.health;
+		saved_deadflag = host_client->edict->v.deadflag;
+		if (preserve_dead_inventory)
+		{
+			/* Most mods intentionally give dead players SetNewParms.  Present
+			 * the cached inventory as alive only while SetChangeParms encodes
+			 * it, so co-op map transitions do not strip that player's weapons. */
+			host_client->edict->v.health = 1;
+			host_client->edict->v.deadflag = DEAD_NO;
+		}
 		pr_global_struct->self = EDICT_TO_PROG(host_client->edict);
 		PR_ExecuteProgram (pr_global_struct->SetChangeParms);
+		if (preserve_dead_inventory)
+		{
+			host_client->edict->v.health = saved_health;
+			host_client->edict->v.deadflag = saved_deadflag;
+		}
 		for (j=0 ; j<NUM_SPAWN_PARMS ; j++)
 			host_client->spawn_parms[j] = (&pr_global_struct->parm1)[j];
 		SV_MG3UpgradeSyncSpawnParms(host_client->spawn_parms);

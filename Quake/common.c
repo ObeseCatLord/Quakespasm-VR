@@ -205,7 +205,7 @@ void Vec_Append (void **pvec, size_t element_size, const void *data, size_t coun
 	if (!count)
 		return;
 	Vec_Grow (pvec, element_size, count);
-	memcpy ((byte *)*pvec + VEC_HEADER(*pvec).size, data, count * element_size);
+	memcpy ((byte *)*pvec + VEC_HEADER(*pvec).size * element_size, data, count * element_size);
 	VEC_HEADER(*pvec).size += count;
 }
 
@@ -1572,7 +1572,11 @@ FIXME: make this buffer size safe someday
 ============
 */
 #define	VA_NUM_BUFFS	4
+#if (MAX_OSPATH >= 1024)
+#define	VA_BUFFERLEN	MAX_OSPATH
+#else
 #define	VA_BUFFERLEN	1024
+#endif
 
 static char *get_va_buffer(void)
 {

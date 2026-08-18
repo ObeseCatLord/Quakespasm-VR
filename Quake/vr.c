@@ -363,7 +363,9 @@ static void VR_LoadHiddenAreaMesh(int eye_index) {
 /*
  * OpenVR's Standard mesh covers pixels that lens distortion will discard.
  * Writing depth zero there makes normal world draws fail early without
- * requiring a stencil attachment on either the MSAA or resolve eye FBO.
+ * requiring a stencil attachment on either the MSAA or resolve eye FBO. The
+ * same mesh is drawn again after the eye to keep depth-independent overlays
+ * from tinting the hidden region.
  */
 void VR_DrawHiddenAreaDepthMask(void) {
   vr_hidden_area_mesh_t *mesh;
@@ -372,12 +374,15 @@ void VR_DrawHiddenAreaDepthMask(void) {
   GLint current_program = 0;
   GLboolean depth_write;
   GLboolean color_mask[4];
+  GLfloat current_color[4];
   GLdouble depth_range[2];
   qboolean depth_test;
   qboolean cull_face;
   qboolean blend;
   qboolean alpha_test;
   qboolean texture_2d;
+  qboolean fog;
+  qboolean lighting;
   qboolean restore_program = false;
   uint32_t i;
 
@@ -394,12 +399,15 @@ void VR_DrawHiddenAreaDepthMask(void) {
   glGetIntegerv(GL_DEPTH_FUNC, &depth_func);
   glGetBooleanv(GL_DEPTH_WRITEMASK, &depth_write);
   glGetBooleanv(GL_COLOR_WRITEMASK, color_mask);
+  glGetFloatv(GL_CURRENT_COLOR, current_color);
   glGetDoublev(GL_DEPTH_RANGE, depth_range);
   depth_test = glIsEnabled(GL_DEPTH_TEST);
   cull_face = glIsEnabled(GL_CULL_FACE);
   blend = glIsEnabled(GL_BLEND);
   alpha_test = glIsEnabled(GL_ALPHA_TEST);
   texture_2d = glIsEnabled(GL_TEXTURE_2D);
+  fog = glIsEnabled(GL_FOG);
+  lighting = glIsEnabled(GL_LIGHTING);
   if (GL_UseProgramFunc) {
     glGetIntegerv(GL_CURRENT_PROGRAM, &current_program);
     if (current_program) {
@@ -415,7 +423,11 @@ void VR_DrawHiddenAreaDepthMask(void) {
   glPushMatrix();
   glLoadIdentity();
 
-  glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
+  /* The depth write prevents later scene rendering in the hidden region.
+   * Write an explicit black color as well so the compositor never exposes
+   * the eye framebuffer's (potentially colored) clear value at the mask. */
+  glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+  glColor4f(0.0f, 0.0f, 0.0f, 1.0f);
   glEnable(GL_DEPTH_TEST);
   glDepthMask(GL_TRUE);
   glDepthFunc(GL_ALWAYS);
@@ -424,12 +436,15 @@ void VR_DrawHiddenAreaDepthMask(void) {
   glDisable(GL_BLEND);
   glDisable(GL_ALPHA_TEST);
   glDisable(GL_TEXTURE_2D);
+  glDisable(GL_FOG);
+  glDisable(GL_LIGHTING);
 
   glBegin(GL_TRIANGLES);
   for (i = 0; i < mesh->triangle_count * 3; ++i)
     glVertex2fv(&mesh->vertices[i * 2]);
   glEnd();
 
+  glColor4fv(current_color);
   glColorMask(color_mask[0], color_mask[1], color_mask[2], color_mask[3]);
   glDepthMask(depth_write);
   glDepthFunc(depth_func);
@@ -454,6 +469,14 @@ void VR_DrawHiddenAreaDepthMask(void) {
     glEnable(GL_TEXTURE_2D);
   else
     glDisable(GL_TEXTURE_2D);
+  if (fog)
+    glEnable(GL_FOG);
+  else
+    glDisable(GL_FOG);
+  if (lighting)
+    glEnable(GL_LIGHTING);
+  else
+    glDisable(GL_LIGHTING);
 
   glMatrixMode(GL_MODELVIEW);
   glPopMatrix();
@@ -5255,6 +5278,9 @@ static void RenderScreenForCurrentEye_OVR() {
     perf_setup_ms = (perf_scene_start - perf_setup_start) * 1000.0;
 
   SCR_UpdateScreenContent();
+  /* Full-screen blends and 2D drawing ignore the early depth mask.  Repaint
+   * it last so the submitted eye texture always has a black hidden region. */
+  VR_DrawHiddenAreaDepthMask();
   if (perf_debug)
     perf_scene_ms = (Sys_DoubleTime() - perf_scene_start) * 1000.0;
 
