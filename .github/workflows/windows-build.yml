@@ -1,4 +1,4 @@
-name: Windows MSVC Build
+name: Quakespasm VR Windows MSVC Build
 
 on:
   push:

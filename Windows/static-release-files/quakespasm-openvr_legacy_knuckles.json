@@ -224,9 +224,9 @@
   },
   "category": "steamvr_input",
   "controller_type": "knuckles",
-  "description": "Recommended legacy SteamVR bindings for QuakeSpasm-OpenVR with Valve Index controllers.",
+  "description": "Recommended legacy SteamVR bindings for Quakespasm VR with Valve Index controllers.",
   "interaction_profile": "",
-  "name": "QuakeSpasm-OpenVR Index Controller Bindings",
+  "name": "Quakespasm VR Index Controller Bindings",
   "options": {
     "mirror_actions": false
   },

@@ -260,6 +260,8 @@ OBJS = strlcat.o \
 	wad.o \
 	cmd.o \
 	common.o \
+	addon_catalog.o \
+	steam.o \
 	debug_log.o \
 	miniz.o \
 	crc.o \

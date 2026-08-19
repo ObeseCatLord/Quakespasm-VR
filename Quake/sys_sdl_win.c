@@ -24,9 +24,20 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
+#ifdef _WIN32_WINNT
+#undef _WIN32_WINNT
+#endif
+#define _WIN32_WINNT 0x0600
 #include <windows.h>
 #include <mmsystem.h>
 #include <tlhelp32.h>
+#include <shlobj.h>
+
+#ifdef _MSC_VER
+#pragma comment(lib, "ole32.lib")
+#pragma comment(lib, "shell32.lib")
+#pragma comment(lib, "uuid.lib")
+#endif
 
 #include "quakedef.h"
 
@@ -205,7 +216,12 @@ int Sys_FileWrite (int handle, const void *data, int count)
 #endif
 int Sys_FileType (const char *path)
 {
-	DWORD result = GetFileAttributes(path);
+	wchar_t wpath[MAX_OSPATH];
+	DWORD result;
+
+	if (!UTF8ToWideString(path, wpath, countof(wpath)))
+		return FS_ENT_NONE;
+	result = GetFileAttributesW(wpath);
 
 	if (result == INVALID_FILE_ATTRIBUTES)
 		return FS_ENT_NONE;
@@ -291,13 +307,74 @@ qboolean Sys_IsStartedFromMapEditor (void)
 
 static char	cwd[1024];
 
+qboolean Sys_GetSteamDir (char *path, size_t pathsize)
+{
+	HKEY key;
+	wchar_t wpath[MAX_PATH];
+	DWORD type, bytes = sizeof(wpath) - sizeof(wpath[0]);
+
+	if (RegOpenKeyExW(HKEY_CURRENT_USER, L"Software\\Valve\\Steam", 0, KEY_READ, &key) != ERROR_SUCCESS)
+		return false;
+	if (RegQueryValueExW(key, L"SteamPath", NULL, &type, (BYTE *)wpath, &bytes) != ERROR_SUCCESS ||
+		type != REG_SZ || bytes < sizeof(wchar_t) || bytes > sizeof(wpath) - sizeof(wpath[0]))
+	{
+		RegCloseKey(key);
+		return false;
+	}
+	RegCloseKey(key);
+	/* Registry strings are allowed to omit their terminating NUL. */
+	wpath[bytes / sizeof(wchar_t)] = 0;
+	if (!WideCharToMultiByte(CP_UTF8, 0, wpath, -1, path, (int)pathsize, NULL, NULL))
+	{
+		if (pathsize) path[0] = 0;
+		return false;
+	}
+	return Sys_FileType(va("%s/config/libraryfolders.vdf", path)) & FS_ENT_FILE;
+}
+
+static HRESULT Sys_InitCOM (void)
+{
+	HRESULT hr = CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
+	if (hr == RPC_E_CHANGED_MODE)
+		hr = CoInitializeEx(NULL, COINIT_MULTITHREADED);
+	/* S_FALSE is successful but still requires a matching CoUninitialize. */
+	return hr == S_FALSE ? S_OK : hr;
+}
+
+qboolean Sys_GetSteamQuakeContentDir (char *path, size_t pathsize, const char *library)
+{
+	PWSTR savedgames;
+	HRESULT hr;
+	qboolean result;
+
+	(void)library;
+	hr = Sys_InitCOM();
+	if (FAILED(hr))
+		return false;
+	hr = SHGetKnownFolderPath(&FOLDERID_SavedGames, 0, NULL, &savedgames);
+	if (FAILED(hr))
+	{
+		CoUninitialize();
+		return false;
+	}
+	result = WideCharToMultiByte(CP_UTF8, 0, savedgames, -1, path,
+		(int)pathsize, NULL, NULL) != 0;
+	CoTaskMemFree(savedgames);
+	CoUninitialize();
+	if (!result || q_strlcat(path, "/Nightdive Studios/Quake", pathsize) >= pathsize)
+		return false;
+	return Sys_FileType(path) & FS_ENT_DIRECTORY;
+}
+
 static void Sys_GetBasedir (char *argv0, char *dst, size_t dstsize)
 {
+	wchar_t wdst[MAX_OSPATH];
 	char *tmp;
 	size_t rc;
 
-	rc = GetCurrentDirectory(dstsize, dst);
-	if (rc == 0 || rc > dstsize)
+	rc = GetCurrentDirectoryW(countof(wdst), wdst);
+	if (rc == 0 || rc >= countof(wdst) ||
+		!WideCharToMultiByte(CP_UTF8, 0, wdst, -1, dst, (int)dstsize, NULL, NULL))
 		Sys_Error ("Couldn't determine current directory");
 
 	tmp = dst;
@@ -375,7 +452,7 @@ void Sys_Init (void)
 	if ((vinfo.dwMajorVersion < 4) ||
 		(vinfo.dwPlatformId == VER_PLATFORM_WIN32s))
 	{
-		Sys_Error ("QuakeSpasm requires at least Win95 or NT 4.0");
+		Sys_Error (QUAKESPASM_PROJECT_NAME " requires at least Win95 or NT 4.0");
 	}
 
 	if (vinfo.dwPlatformId == VER_PLATFORM_WIN32_NT)
@@ -418,7 +495,11 @@ void Sys_Init (void)
 
 void Sys_mkdir (const char *path)
 {
-	if (CreateDirectory(path, NULL) != 0)
+	wchar_t wpath[MAX_OSPATH];
+
+	if (!UTF8ToWideString(path, wpath, countof(wpath)))
+		Sys_Error("Unable to convert directory path %s", path);
+	if (CreateDirectoryW(wpath, NULL) != 0)
 		return;
 	if (GetLastError() != ERROR_ALREADY_EXISTS)
 		Sys_Error("Unable to create directory %s", path);

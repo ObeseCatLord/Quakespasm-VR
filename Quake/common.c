@@ -27,6 +27,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include <errno.h>
 #include "vr.h"
 #include "debug_log.h"
+#include "steam.h"
 
 #include "miniz.h"
 
@@ -1649,6 +1650,10 @@ typedef struct
 
 char	com_gamedir[MAX_OSPATH];
 char	com_basedir[MAX_OSPATH];
+#define COM_MAX_CONTENT_ROOTS 2
+static char	com_content_roots[COM_MAX_CONTENT_ROOTS][MAX_OSPATH];
+static int	com_content_root_count;
+static qboolean	com_separate_userdir;
 int	file_from_pak;		// ZOID: global indicating that file came from a pak
 
 searchpath_t	*com_searchpaths;
@@ -1690,6 +1695,70 @@ static qboolean COM_HasRereleaseModelPack (const char *root)
 	return root && *root &&
 		q_snprintf (pakfile, sizeof(pakfile), "%s/id1/pak0.pak", root) < (int)sizeof(pakfile) &&
 		(Sys_FileType (pakfile) & FS_ENT_FILE);
+}
+
+static qboolean COM_HasGameData (const char *root)
+{
+	char pakfile[MAX_OSPATH];
+
+	return root && *root &&
+		q_snprintf(pakfile, sizeof(pakfile), "%s/%s/pak0.pak", root, GAMENAME) < (int)sizeof(pakfile) &&
+		(Sys_FileType(pakfile) & FS_ENT_FILE);
+}
+
+static qboolean COM_PathsEqual (const char *a, const char *b)
+{
+	size_t alen, blen;
+	if (!a || !b)
+		return false;
+	alen = strlen(a);
+	blen = strlen(b);
+	while (alen > 1 && (a[alen - 1] == '/' || a[alen - 1] == '\\')) --alen;
+	while (blen > 1 && (b[blen - 1] == '/' || b[blen - 1] == '\\')) --blen;
+	return alen == blen && !q_strncasecmp(a, b, alen);
+}
+
+static void COM_AddContentRoot (const char *path)
+{
+	int i;
+	if (!path || !*path || com_content_root_count == COM_MAX_CONTENT_ROOTS ||
+		!(Sys_FileType(path) & FS_ENT_DIRECTORY))
+		return;
+	for (i = 0; i < com_content_root_count; ++i)
+		if (!q_strcasecmp(com_content_roots[i], path))
+			return;
+	q_strlcpy(com_content_roots[com_content_root_count++], path,
+		sizeof(com_content_roots[0]));
+}
+
+static void COM_SetContentRoots (const char *basedir, const char *nightdive)
+{
+	char path[MAX_OSPATH];
+	com_content_root_count = 0;
+	/* Bundled add-ons first; downloaded Nightdive content intentionally wins. */
+	if (basedir && q_snprintf(path, sizeof(path), "%s/addons", basedir) < (int)sizeof(path))
+		COM_AddContentRoot(path);
+	COM_AddContentRoot(nightdive);
+}
+
+int COM_GetContentRoots (const char **roots, int maxroots)
+{
+	int i, count = q_min(com_content_root_count, maxroots);
+	if (!roots || maxroots < 1)
+		return 0;
+	for (i = 0; i < count; ++i)
+		roots[i] = com_content_roots[i];
+	return count;
+}
+
+qboolean COM_HasSeparateUserDir (void)
+{
+	return com_separate_userdir;
+}
+
+const char *COM_GetWriteRoot (void)
+{
+	return COM_HasSeparateUserDir() ? host_parms->userdir : com_basedir;
 }
 
 /*
@@ -2373,23 +2442,15 @@ static qboolean COM_IsRereleaseModelSource (const pack_t *pack)
 COM_AddGameDirectory -- johnfitz -- modified based on topaz's tutorial
 =================
 */
-static void COM_AddGameDirectory (const char *base, const char *dir)
+static void COM_AddGameDirectoryRoot (const char *base, const char *dir, unsigned int path_id)
 {
 	int i;
-	unsigned int path_id;
 	searchpath_t *search;
 	pack_t *pak, *qspak;
 	char pakfile[MAX_OSPATH];
-	qboolean been_here = false;
 
 	q_strlcpy (com_gamedir, va("%s/%s", base, dir), sizeof(com_gamedir));
 
-	// assign a path_id to this game directory
-	if (com_searchpaths)
-		path_id = com_searchpaths->path_id << 1;
-	else	path_id = 1U;
-
-_add_path:
 	// add the directory to the search path
 	search = (searchpath_t *) Z_Malloc(sizeof(searchpath_t));
 	search->path_id = path_id;
@@ -2406,7 +2467,6 @@ _add_path:
 			qspak = NULL;
 		else {
 			qboolean old = com_modified;
-			if (been_here) base = host_parms->userdir;
 			q_snprintf (pakfile, sizeof(pakfile), "%s/quakespasm.pak", base);
 			qspak = COM_LoadPackFile (pakfile);
 			com_modified = old;
@@ -2429,13 +2489,29 @@ _add_path:
 		if (!pak) break;
 	}
 
-	if (!been_here && host_parms->userdir != host_parms->basedir)
+}
+
+static void COM_AddGameDirectoryAll (const char *dir)
+{
+	char path[MAX_OSPATH];
+	int i;
+	unsigned int path_id = com_searchpaths ? com_searchpaths->path_id << 1 : 1U;
+
+	if (q_snprintf(path, sizeof(path), "%s/%s", com_basedir, dir) < (int)sizeof(path) &&
+		(Sys_FileType(path) & FS_ENT_DIRECTORY))
+		COM_AddGameDirectoryRoot(com_basedir, dir, path_id);
+	for (i = 0; i < com_content_root_count; ++i)
+		if (q_snprintf(path, sizeof(path), "%s/%s", com_content_roots[i], dir) < (int)sizeof(path) &&
+			(Sys_FileType(path) & FS_ENT_DIRECTORY))
+			COM_AddGameDirectoryRoot(com_content_roots[i], dir, path_id);
+	if (COM_HasSeparateUserDir())
 	{
-		been_here = true;
-		q_strlcpy(com_gamedir, va("%s/%s", host_parms->userdir, dir), sizeof(com_gamedir));
-		Sys_mkdir(com_gamedir);
-		goto _add_path;
+		q_snprintf(path, sizeof(path), "%s/%s", host_parms->userdir, dir);
+		Sys_mkdir(path);
+		COM_AddGameDirectoryRoot(host_parms->userdir, dir, path_id);
 	}
+	else
+		q_strlcpy(com_gamedir, va("%s/%s", com_basedir, dir), sizeof(com_gamedir));
 }
 
 /*
@@ -2514,55 +2590,20 @@ active filesystem.
 */
 static void COM_TryAutoRereleaseModelPack (void)
 {
-	static const char *const steam_rerelease_paths[] =
-	{
-		/* Also covers the user's Steam installation under a Windows prefix. */
-		"Windows/Steam/steamapps/common/Quake/rerelease",
-		".steam/steam/steamapps/common/Quake/rerelease",
-		".steam/debian-installation/steamapps/common/Quake/rerelease",
-		".local/share/Steam/steamapps/common/Quake/rerelease",
-		".var/app/com.valvesoftware.Steam/data/Steam/steamapps/common/Quake/rerelease"
-	};
-	char		root[MAX_OSPATH];
-	const char	*home;
-	const char	*programfiles;
-	size_t		i;
+	steam_quake_install_t install;
+	char rerelease[MAX_OSPATH];
 
-	/* A colocated rerelease is useful for portable installs. */
-	if (q_snprintf (root, sizeof(root), "%s/rerelease", com_basedir) < (int)sizeof(root) &&
-		COM_HasRereleaseModelPack (root))
+	/* Keep portable classic+rerelease layouts working without Steam. */
+	if (q_snprintf(rerelease, sizeof(rerelease), "%s/rerelease", com_basedir) < (int)sizeof(rerelease) &&
+		COM_HasRereleaseModelPack(rerelease) && !COM_PathsEqual(com_basedir, rerelease))
 	{
-		COM_AddRereleaseModelPack (root);
+		COM_AddRereleaseModelPack(rerelease);
 		return;
 	}
-
-	/* HOME is available on Unix and Wine; USERPROFILE covers native Windows. */
-	home = getenv ("HOME");
-	if (!home || !*home)
-		home = getenv ("USERPROFILE");
-	if (home && *home)
-	{
-		for (i = 0; i < countof(steam_rerelease_paths); i++)
-		{
-			if (q_snprintf (root, sizeof(root), "%s/%s", home, steam_rerelease_paths[i]) < (int)sizeof(root) &&
-				COM_HasRereleaseModelPack (root))
-			{
-				COM_AddRereleaseModelPack (root);
-				return;
-			}
-		}
-	}
-
-	/* Native Steam's usual Windows installation, if its environment exists. */
-	programfiles = getenv ("ProgramFiles(x86)");
-	if (!programfiles || !*programfiles)
-		programfiles = getenv ("PROGRAMFILES(X86)");
-	if (programfiles && *programfiles &&
-		q_snprintf (root, sizeof(root), "%s/Steam/steamapps/common/Quake/rerelease", programfiles) < (int)sizeof(root) &&
-		COM_HasRereleaseModelPack (root))
-	{
-		COM_AddRereleaseModelPack (root);
-	}
+	if (Steam_FindQuakeInstall(&install) &&
+		q_snprintf(rerelease, sizeof(rerelease), "%s/rerelease", install.path) < (int)sizeof(rerelease) &&
+		COM_HasRereleaseModelPack(rerelease) && !COM_PathsEqual(com_basedir, rerelease))
+		COM_AddRereleaseModelPack(rerelease);
 }
 
 //==============================================================================
@@ -2664,6 +2705,52 @@ static qboolean COM_CurrentGameHasStartMap (void)
 		path_id == com_searchpaths->path_id;
 }
 
+/* Checks all roots.  COM_AddGameDirectoryAll() then mounts every matching
+ * root in deterministic low-to-high precedence order. */
+qboolean COM_GameDirExists (const char *dir)
+{
+	char path[MAX_OSPATH];
+	int i;
+
+	if (!dir || !*dir)
+		return false;
+	if (q_snprintf(path, sizeof(path), "%s/%s", com_basedir, dir) < (int)sizeof(path) &&
+		(Sys_FileType(path) & FS_ENT_DIRECTORY))
+		return true;
+	if (COM_HasSeparateUserDir() &&
+		q_snprintf(path, sizeof(path), "%s/%s", host_parms->userdir, dir) < (int)sizeof(path) &&
+		(Sys_FileType(path) & FS_ENT_DIRECTORY))
+		return true;
+	for (i = 0; i < com_content_root_count; ++i)
+		if (q_snprintf(path, sizeof(path), "%s/%s", com_content_roots[i], dir) < (int)sizeof(path) &&
+			(Sys_FileType(path) & FS_ENT_DIRECTORY))
+			return true;
+	return false;
+}
+
+/* Catalogue downloads are complete only once their primary pak exists.  A
+ * directory alone may be residue from a cancelled or failed installation. */
+qboolean COM_GameDirHasPak0 (const char *dir)
+{
+	char path[MAX_OSPATH];
+	int i;
+
+	if (!dir || !*dir)
+		return false;
+	if (q_snprintf(path, sizeof(path), "%s/%s/pak0.pak", com_basedir, dir) < (int)sizeof(path) &&
+		(Sys_FileType(path) & FS_ENT_FILE))
+		return true;
+	if (COM_HasSeparateUserDir() &&
+		q_snprintf(path, sizeof(path), "%s/%s/pak0.pak", host_parms->userdir, dir) < (int)sizeof(path) &&
+		(Sys_FileType(path) & FS_ENT_FILE))
+		return true;
+	for (i = 0; i < com_content_root_count; ++i)
+		if (q_snprintf(path, sizeof(path), "%s/%s/pak0.pak", com_content_roots[i], dir) < (int)sizeof(path) &&
+			(Sys_FileType(path) & FS_ENT_FILE))
+			return true;
+	return false;
+}
+
 static void COM_Game_f (void)
 {
 	qboolean play_after_change = !q_strcasecmp(Cmd_Argv(0), "playgame");
@@ -2698,13 +2785,15 @@ static void COM_Game_f (void)
 			}
 		}
 
-		if (Sys_FileType(va("%s/%s", com_basedir, p)) != FS_ENT_DIRECTORY)
+		if (!COM_GameDirExists(p))
 		{
-			if (host_parms->userdir == host_parms->basedir || (Sys_FileType(va("%s/%s", host_parms->userdir, p)) != FS_ENT_DIRECTORY))
-			{
-				Con_Printf ("No such game directory \"%s\"\n", p);
-				return;
-			}
+			Con_Printf ("No such game directory \"%s\"\n", p);
+			return;
+		}
+		if (*p2 && !COM_GameDirExists(&p2[1]))
+		{
+			Con_Printf ("No such mission pack directory \"%s\"\n", &p2[1]);
+			return;
 		}
 
 		/* A user-selected game change supersedes any pending server-directed
@@ -2764,17 +2853,17 @@ static void COM_Game_f (void)
 		if (q_strcasecmp(p, GAMENAME)) //game is not id1
 		{
 			if (*p2) {
-				COM_AddGameDirectory (com_basedir, &p2[1]);
+				COM_AddGameDirectoryAll(&p2[1]);
 				standard_quake = false;
 				if (!strcmp(p2,"-hipnotic") || !strcmp(p2,"-quoth"))
 					hipnotic = true;
 				else if (!strcmp(p2,"-rogue"))
 					rogue = true;
 				if (q_strcasecmp(p, &p2[1])) //don't load twice
-					COM_AddGameDirectory (com_basedir, p);
+					COM_AddGameDirectoryAll(p);
 			}
 			else {
-				COM_AddGameDirectory (com_basedir, p);
+				COM_AddGameDirectoryAll(p);
 				// QuakeSpasm extension: treat '-game missionpack' as '-missionpack'
 				if (!q_strcasecmp(p,"hipnotic") || !q_strcasecmp(p,"quoth")) {
 					hipnotic = true;
@@ -2789,7 +2878,7 @@ static void COM_Game_f (void)
 		else // just update com_gamedir
 		{
 			q_snprintf (com_gamedir, sizeof(com_gamedir), "%s/%s",
-					(host_parms->userdir != host_parms->basedir)?
+					COM_HasSeparateUserDir()?
 						   host_parms->userdir : com_basedir,
 					GAMENAME);
 		}
@@ -2851,16 +2940,27 @@ COM_InitFilesystem
 void COM_InitFilesystem (void) //johnfitz -- modified based on topaz's tutorial
 {
 	int i, j;
+	qboolean explicit_basedir = false;
+	qboolean steam_found = false;
+	steam_quake_install_t steam_install;
+	char rerelease[MAX_OSPATH], nightdive[MAX_OSPATH];
 
 	Cvar_RegisterVariable (&registered);
 	Cvar_RegisterVariable (&cmdline);
 	Cmd_AddCommand ("path", COM_Path_f);
 	Cmd_AddCommand ("game", COM_Game_f); //johnfitz
 	Cmd_AddCommand ("playgame", COM_Game_f);
+	/* Preserve the platform's original user-directory policy.  An explicit
+	 * -basedir must not turn the executable directory into an extra write root. */
+	com_separate_userdir = host_parms && host_parms->userdir &&
+		host_parms->userdir != host_parms->basedir;
 
 	i = COM_CheckParm ("-basedir");
 	if (i && i < com_argc-1)
+	{
 		q_strlcpy (com_basedir, com_argv[i + 1], sizeof(com_basedir));
+		explicit_basedir = true;
+	}
 	else
 		q_strlcpy (com_basedir, host_parms->basedir, sizeof(com_basedir));
 
@@ -2869,20 +2969,63 @@ void COM_InitFilesystem (void) //johnfitz -- modified based on topaz's tutorial
 	if ((com_basedir[j-1] == '\\') || (com_basedir[j-1] == '/'))
 		com_basedir[j-1] = 0;
 
+	/* Explicit and local valid installs take priority.  If neither is present,
+	 * Steam's manifest is authoritative, including games in non-default libs. */
+	memset(&steam_install, 0, sizeof(steam_install));
+	rerelease[0] = 0;
+	nightdive[0] = 0;
+	if (!COM_CheckParm("-nosteam"))
+	{
+		steam_found = Steam_FindQuakeInstall(&steam_install);
+		if (steam_found &&
+			q_snprintf(rerelease, sizeof(rerelease), "%s/rerelease", steam_install.path) >= (int)sizeof(rerelease))
+			rerelease[0] = 0;
+	}
+	if (!explicit_basedir && !COM_HasGameData(com_basedir) && steam_found)
+	{
+		qboolean prefer_classic = COM_CheckParm("-classic") || COM_CheckParm("-original") ||
+			COM_CheckParm("-preforiginal") || COM_CheckParm("-norerelease");
+		qboolean have_classic = COM_HasGameData(steam_install.path);
+		qboolean have_rerelease = rerelease[0] && COM_HasGameData(rerelease);
+		if (have_classic && prefer_classic)
+		{
+			q_strlcpy(com_basedir, steam_install.path, sizeof(com_basedir));
+			com_separate_userdir = true;
+			Con_Printf("Using Steam Quake classic data from %s\n", com_basedir);
+		}
+		else if (have_rerelease)
+		{
+			q_strlcpy(com_basedir, rerelease, sizeof(com_basedir));
+			com_separate_userdir = true;
+			Con_Printf("Using Steam Quake rerelease data from %s\n", com_basedir);
+		}
+		else if (have_classic)
+		{
+			q_strlcpy(com_basedir, steam_install.path, sizeof(com_basedir));
+			com_separate_userdir = true;
+			Con_Printf("Using Steam Quake classic data from %s\n", com_basedir);
+		}
+	}
+	if (steam_found && (COM_PathsEqual(com_basedir, steam_install.path) ||
+		(rerelease[0] && COM_PathsEqual(com_basedir, rerelease))))
+		Sys_GetSteamQuakeContentDir(nightdive, sizeof(nightdive), steam_install.library);
+	COM_SetContentRoots(com_basedir, nightdive);
+
 	// start up with GAMENAME by default (id1)
-	COM_AddGameDirectory (com_basedir, GAMENAME);
+	COM_AddGameDirectoryAll(GAMENAME);
 
 	/*
-	 * An explicit path always wins.  Automatic Steam probing is deliberately
-	 * disabled by default: opt in with -autodetectrerelease.  -norerelease can
-	 * suppress that probe in shared launch scripts.  The directory is the
-	 * .../common/Quake/rerelease root, not its id1 child.
+	 * -rerelease remains a model-only compatibility mount for a deliberately
+	 * selected classic data root.  Never add it when the active data root is
+	 * already the rerelease, which would duplicate the same pak.
 	 */
 	i = COM_CheckParm ("-rerelease");
 	if (i)
 	{
-		if (i < com_argc - 1)
+		if (i < com_argc - 1 && !COM_PathsEqual(com_basedir, com_argv[i + 1]))
 			COM_AddRereleaseModelPack (com_argv[i + 1]);
+		else if (i < com_argc - 1)
+			Con_Printf ("Rerelease data root already active\n");
 		else
 			Con_Warning ("-rerelease requires a rerelease root path\n");
 	}
@@ -2898,11 +3041,11 @@ void COM_InitFilesystem (void) //johnfitz -- modified based on topaz's tutorial
 
 	// add mission pack requests (only one should be specified)
 	if (COM_CheckParm ("-rogue"))
-		COM_AddGameDirectory (com_basedir, "rogue");
+		COM_AddGameDirectoryAll("rogue");
 	if (COM_CheckParm ("-hipnotic"))
-		COM_AddGameDirectory (com_basedir, "hipnotic");
+		COM_AddGameDirectoryAll("hipnotic");
 	if (COM_CheckParm ("-quoth"))
-		COM_AddGameDirectory (com_basedir, "quoth");
+		COM_AddGameDirectoryAll("quoth");
 
 	i = COM_CheckParm ("-game");
 	if (i && i < com_argc-1)
@@ -2916,7 +3059,9 @@ void COM_InitFilesystem (void) //johnfitz -- modified based on topaz's tutorial
 		if (p && COM_CheckParm ("-hipnotic") && !q_strcasecmp(p, "hipnotic")) p = NULL;
 		if (p && COM_CheckParm ("-quoth") && !q_strcasecmp(p, "quoth")) p = NULL;
 		if (p != NULL) {
-			COM_AddGameDirectory (com_basedir, p);
+			if (!COM_GameDirExists(p))
+				Sys_Error ("No such game directory \"%s\"", p);
+			COM_AddGameDirectoryAll(p);
 			// QuakeSpasm extension: treat '-game missionpack' as '-missionpack'
 			if (!q_strcasecmp(p,"rogue")) {
 				rogue = true;

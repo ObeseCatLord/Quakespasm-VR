@@ -1,7 +1,7 @@
 [Desktop Entry]
-Name=Quakespasm
-Comment=A modernised fork of the Quake engine
-Exec=quakespasm
+Name=Quakespasm VR
+Comment=A VR and desktop port of the Quake engine
+Exec=quakespasm-openvr
 Icon=net.sourceforge.quakespasm.Quakespasm
 StartupNotify=true
 PrefersNonDefaultGPU=true

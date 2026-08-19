@@ -33,9 +33,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include <sys/stat.h>
 #include <sys/time.h>
 #include <fcntl.h>
-#ifdef DO_USERDIRS
 #include <pwd.h>
-#endif
 
 #if defined(SDL_FRAMEWORK) || defined(NO_SDL_CONFIG)
 #if defined(USE_SDL2)
@@ -306,6 +304,40 @@ static int Sys_NumCPUs (void)
 #endif
 
 static char	cwd[MAX_OSPATH];
+
+qboolean Sys_GetSteamDir (char *path, size_t pathsize)
+{
+	const char *home = getenv("HOME");
+	struct passwd *pwent;
+	static const char *const suffixes[] = {
+		".steam/steam", ".steam/debian-installation", ".local/share/Steam",
+		".var/app/com.valvesoftware.Steam/data/Steam",
+		".var/app/com.valvesoftware.Steam/.steam/steam",
+		".var/app/com.valvesoftware.Steam/.local/share/Steam"
+	};
+	int i;
+
+	if (!home || !*home)
+	{
+		pwent = getpwuid(getuid());
+		home = pwent ? pwent->pw_dir : NULL;
+	}
+	if (!home || !*home)
+		return false;
+	for (i = 0; i < (int)countof(suffixes); ++i)
+		if (q_snprintf(path, pathsize, "%s/%s", home, suffixes[i]) < (int)pathsize &&
+			(Sys_FileType(va("%s/config/libraryfolders.vdf", path)) & FS_ENT_FILE))
+			return true;
+	return false;
+}
+
+qboolean Sys_GetSteamQuakeContentDir (char *path, size_t pathsize, const char *library)
+{
+	if (!library || !*library ||
+		q_snprintf(path, pathsize, "%s/steamapps/compatdata/2310/pfx/drive_c/users/steamuser/Saved Games/Nightdive Studios/Quake", library) >= (int)pathsize)
+		return false;
+	return Sys_FileType(path) & FS_ENT_DIRECTORY;
+}
 #ifdef DO_USERDIRS
 static char	userdir[MAX_OSPATH];
 #ifdef PLATFORM_OSX

@@ -1,16 +1,16 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <component type="desktop-application">
   <id>net.sourceforge.quakespasm.Quakespasm</id>
-  <name>Quakespasm</name>
+  <name>Quakespasm VR</name>
   <developer id="quakespasm.sourceforge.net"><name>Quakespasm contributors</name></developer>
-  <summary>A modern port of the original Quake engine</summary>
+  <summary>A VR and desktop port of the original Quake engine</summary>
   <metadata_license>CC0-1.0</metadata_license>
   <project_license>GPL-2.0-only</project_license>
   <url type="homepage">https://quakespasm.sourceforge.net/</url>
   <launchable type="desktop-id">net.sourceforge.quakespasm.Quakespasm.desktop</launchable>
   <description>
-    <p>Quakespasm is a *Nix friendly Quake Engine based on the SDL port of the popular FitzQuake.
-      It includes some new features, important fixes, and aims for portability and 64 bit correctness.</p>
+    <p>Quakespasm VR is a Quake source port focused on VR play, modern mods,
+      same-build cooperative multiplayer, and full desktop play.</p>
     <p>Features:</p>
       <ul>
         <li>Supports Windows, Mac OS X, Linux, other unices.</li>
@@ -23,10 +23,10 @@
         <li>Countless bug fixes, security fixes and other improvements.</li>
         <li>Support for playing the 'Quake 2021 re-release' content</li>
       </ul>
-    <p>Quakespasm requires a copy of the Quake game data, at the least in the form of the shareware data file
+    <p>Quakespasm VR requires a legally obtained copy of the Quake game data, at the least in the form of the shareware data file
       pak0.pak. In order to set this up, open (and if necessary create) the directory
       <code>~/.var/app/net.sourceforge.quakespasm.Quakespasm/data</code> on your computer and copy the <code>id1</code> directory
-      from a copy of Quake there. Quakespasm will notify you on startup if it cannot find or access the game data.</p>
+      from a copy of Quake there. Quakespasm VR will notify you on startup if it cannot find or access the game data.</p>
   </description>
   <screenshots>
     <screenshot type="default">

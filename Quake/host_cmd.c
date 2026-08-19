@@ -117,19 +117,22 @@ static const filelist_item_t *Modlist_Find(const char *gamedir) {
 
 static void Modlist_LoadMetadata(filelist_item_t *item) {
   char path[MAX_OSPATH];
-  const char *bases[2];
+  const char *bases[6], *roots[4];
   size_t base_count;
   size_t i;
+  int root_count;
   int parsed;
 
   if (!item || (item->full_name[0] || item->description[0]))
     return;
 
   base_count = 0;
-  if (host_parms->userdir &&
-      host_parms->userdir != host_parms->basedir &&
-      host_parms->userdir[0])
+  if (COM_HasSeparateUserDir())
     bases[base_count++] = host_parms->userdir;
+  root_count = COM_GetContentRoots(roots, countof(roots));
+  /* Metadata follows the same precedence as mounted content. */
+  for (i = root_count; i > 0; --i)
+    bases[base_count++] = roots[i - 1];
   bases[base_count++] = com_basedir;
 
   for (i = 0; i < base_count; i++) {
@@ -519,8 +522,13 @@ static void Modlist_ScanRoot(const char *root) {
 #endif
 
 void Modlist_Init(void) {
+	const char *roots[4];
+	int i, root_count;
   Modlist_ScanRoot(com_basedir);
-  if (host_parms->userdir != host_parms->basedir)
+	root_count = COM_GetContentRoots(roots, countof(roots));
+	for (i = 0; i < root_count; ++i)
+		Modlist_ScanRoot(roots[i]);
+  if (COM_HasSeparateUserDir())
     Modlist_ScanRoot(host_parms->userdir);
 }
 

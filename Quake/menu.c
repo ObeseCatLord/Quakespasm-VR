@@ -1958,7 +1958,7 @@ qboolean M_Quit_TextEntry(void) { return true; }
 
 void M_Quit_Draw(void) // johnfitz -- modified for new quit message
 {
-  char msg1[] = "QuakeSpasm " QUAKESPASM_VER_STRING;
+  char msg1[] = QUAKESPASM_PROJECT_NAME " " QUAKESPASM_VER_STRING;
   char msg2[] =
       "by Ozkan Sezer,Eric Wasylishen,others"; /* msg2/msg3 are [38] at most */
   char msg3[] = "Press y to quit";

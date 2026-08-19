@@ -26,6 +26,11 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 
 void Sys_Init (void);
 
+/* Returns Steam's install root, not a game's data directory. */
+qboolean Sys_GetSteamDir (char *path, size_t pathsize);
+/* Finds the Nightdive add-on directory without making it the engine userdir. */
+qboolean Sys_GetSteamQuakeContentDir (char *path, size_t pathsize, const char *library);
+
 qboolean Sys_IsStartedFromMapEditor (void);
 
 //

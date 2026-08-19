@@ -135,14 +135,7 @@ static qboolean CL_AutoReconnect_IsSafeServer(const char *server)
 
 static qboolean CL_AutoReconnect_GameExists(const char *game)
 {
-	if (!q_strcasecmp(game, GAMENAME))
-		return Sys_FileType(va("%s/%s", com_basedir, GAMENAME)) == FS_ENT_DIRECTORY;
-
-	if (Sys_FileType(va("%s/%s", com_basedir, game)) == FS_ENT_DIRECTORY)
-		return true;
-
-	return host_parms->userdir != host_parms->basedir &&
-	       Sys_FileType(va("%s/%s", host_parms->userdir, game)) == FS_ENT_DIRECTORY;
+	return COM_GameDirExists(game);
 }
 
 static qboolean CL_AutoReconnect_ResolveInstalledGame(const char *game,

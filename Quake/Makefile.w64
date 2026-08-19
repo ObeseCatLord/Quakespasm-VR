@@ -179,7 +179,7 @@ CFLAGS+= -DUSE_CODEC_UMX
 endif
 CFLAGS+= $(CODEC_INC)
 
-COMMON_LIBS= -lopengl32 -lwinmm -L../Windows/OpenVR/lib/win64 -lopenvr_api
+COMMON_LIBS= -lopengl32 -lwinmm -luuid -lole32 -lshell32 -L../Windows/OpenVR/lib/win64 -lopenvr_api
 
 LIBS = $(COMMON_LIBS) $(NET_LIBS) $(CODEC_LINK) $(CODECLIBS)
 
@@ -258,6 +258,7 @@ OBJS = strlcat.o \
 	wad.o \
 	cmd.o \
 	common.o \
+	steam.o \
 	miniz.o \
 	crc.o \
 	cvar.o \

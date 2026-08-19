@@ -1,7 +1,7 @@
-Quakespasm-OpenVR Linux Build Instructions (Cross-compiling for Windows)
+Quakespasm VR Linux Build Instructions (Cross-compiling for Windows)
 ======================================================================
 
-To build the Windows version of Quakespasm-OpenVR on Linux, you must use a
+To build the Windows version of Quakespasm VR on Linux, you must use a
 combination of MinGW-w64 (for C code) and Clang (for C++ code).
 
 IMPORTANT: Using MinGW's g++ for the C++ VR components (vr.c) causes a severe

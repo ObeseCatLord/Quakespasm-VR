@@ -236,6 +236,7 @@ copy "$(SolutionDir)\..\static-release-files\*.*" "$(TargetDir)"</Command>
     <ClCompile Include="..\..\Quake\cl_tent.c" />
     <ClCompile Include="..\..\Quake\cmd.c" />
     <ClCompile Include="..\..\Quake\common.c" />
+    <ClCompile Include="..\..\Quake\steam.c" />
     <ClCompile Include="..\..\Quake\console.c" />
     <ClCompile Include="..\..\Quake\crc.c" />
     <ClCompile Include="..\..\Quake\cvar.c" />
