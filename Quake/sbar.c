@@ -306,18 +306,6 @@ void Sbar_DrawPic (int x, int y, qpic_t *pic)
 	Draw_Pic (x, y + 24, pic);
 }
 
-/* MG3's inventory art is authored at 2x (48x32), while the classic status
- * bar used by VR allocates one 24x16 cell per weapon. Scale the complete icon
- * into its cell so its embedded slot number and the following weapon remain
- * visible. Desktop keeps MG3's native HUD rendering. */
-static void Sbar_DrawMG3WeaponPic (int x, int y, qpic_t *pic)
-{
-	if (vr_enabled.value)
-		Draw_SubPic (x, y + 24, 24, 16, pic, 0, 0, 1, 1, NULL, 1);
-	else
-		Sbar_DrawPic (x, y, pic);
-}
-
 /*
 =============
 Sbar_DrawPicAlpha -- johnfitz
@@ -342,6 +330,20 @@ Sbar_DrawCharacter -- johnfitz -- rewritten now that GL_SetCanvas is doing the w
 void Sbar_DrawCharacter (int x, int y, int num)
 {
 	Draw_Character (x, y + 24, num);
+}
+
+/* MG3's 48x32 extra-weapon art omits the slot number used by Quake's 24x16
+ * inventory cells. Trim its transparent margins and fit the visible art beside
+ * an explicit number so every HUD layout retains standard size and spacing. */
+static void Sbar_DrawMG3WeaponPic (int x, int y, int slot, qpic_t *pic)
+{
+	Sbar_DrawCharacter (x, y + 4, 18 + slot);
+	if (slot == 9)
+		Draw_SubPic (x + 8, y + 28, 16, 8, pic,
+			11 / 48.0f, 10 / 32.0f, 26 / 48.0f, 13 / 32.0f, NULL, 1);
+	else
+		Draw_SubPic (x + 8, y + 27, 16, 10, pic,
+			7 / 48.0f, 5 / 32.0f, 34 / 48.0f, 22 / 32.0f, NULL, 1);
 }
 
 /*
@@ -688,7 +690,7 @@ void Sbar_DrawInventory (void)
 				continue;
 			pic = mg3_weapons[active][i];
 			if (pic)
-				Sbar_DrawMG3WeaponPic (176 + i * 24, -16, pic);
+				Sbar_DrawMG3WeaponPic (176 + i * 24, -16, i ? 0 : 9, pic);
 		}
 	}
 
@@ -1103,8 +1105,8 @@ static void Sbar_DrawModernInventory (hudstyle_t style, float width, float heigh
 					continue;
 				mg3_pic = mg3_weapons[active][i];
 				if (mg3_pic)
-					Sbar_DrawPic ((int)x - (active ? 24 : 18),
-						(int)y - row_height * (i + 7), mg3_pic);
+					Sbar_DrawMG3WeaponPic ((int)x - (active ? 24 : 18),
+						(int)y - row_height * (i + 7), i ? 0 : 9, mg3_pic);
 			}
 		}
 	}
