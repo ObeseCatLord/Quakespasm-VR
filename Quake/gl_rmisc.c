@@ -45,6 +45,8 @@ extern cvar_t r_oldskyleaf;
 extern cvar_t r_drawworld;
 extern cvar_t r_showtris;
 extern cvar_t r_showbboxes;
+extern cvar_t r_showfields;
+extern cvar_t r_showskel;
 extern cvar_t r_lerpmodels;
 extern cvar_t r_lerpmove;
 extern cvar_t r_nolerp_list;
@@ -241,6 +243,8 @@ void R_Init (void)
 	Cvar_RegisterVariable (&r_drawworld);
 	Cvar_RegisterVariable (&r_showtris);
 	Cvar_RegisterVariable (&r_showbboxes);
+	Cvar_RegisterVariable (&r_showfields);
+	Cvar_RegisterVariable (&r_showskel);
 	Cvar_RegisterVariable (&gl_farclip);
 	Cvar_RegisterVariable (&gl_fullbrights);
 	Cvar_RegisterVariable (&gl_overbright);
@@ -462,6 +466,10 @@ void R_NewMap (void)
 	Sky_NewMap (); //johnfitz -- skybox in worldspawn
 	Fog_NewMap (); //johnfitz -- global fog in worldspawn
 	R_ParseWorldspawn (); //ericw -- wateralpha, lavaalpha, telealpha, slimealpha in worldspawn
+
+	if (map_checks.value && !cl.worldmodel->visdata &&
+		COM_FileExists (va ("maps/%s.pts", cl.mapname), NULL))
+		Cbuf_AddText ("pointfile\n");
 
 	load_subdivide_size = gl_subdivide_size.value; //johnfitz -- is this the right place to set this?
 }

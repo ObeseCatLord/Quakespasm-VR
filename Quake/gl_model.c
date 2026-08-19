@@ -3814,17 +3814,19 @@ static void Mod_LoadAliasModel (qmodel_t *mod, void *buffer)
 
 	if (pheader->numverts <= 0)
 		Sys_Error ("model %s has no vertices", mod->name);
-
-	if (pheader->numverts > MAXALIASVERTS)
+	else if (pheader->numverts > MAXALIASVERTS)
 		Sys_Error ("model %s has too many vertices (%d; max = %d)", mod->name, pheader->numverts, MAXALIASVERTS);
+	else if (pheader->numverts > MAXALIASVERTS_QS && (developer.value || map_checks.value))
+		Con_Warning ("model %s vertex count of %d exceeds QS limit of %d\n", mod->name, pheader->numverts, MAXALIASVERTS_QS);
 
 	pheader->numtris = LittleLong (pinmodel->numtris);
 
 	if (pheader->numtris <= 0)
 		Sys_Error ("model %s has no triangles", mod->name);
-
-	if (pheader->numtris > MAXALIASTRIS)
+	else if (pheader->numtris > MAXALIASTRIS)
 		Sys_Error ("model %s has too many triangles (%d; max = %d)", mod->name, pheader->numtris, MAXALIASTRIS);
+	else if (pheader->numtris > MAXALIASTRIS_QS && (developer.value || map_checks.value))
+		Con_Warning ("model %s triangle count of %d exceeds QS limit of %d\n", mod->name, pheader->numtris, MAXALIASTRIS_QS);
 
 	pheader->numframes = LittleLong (pinmodel->numframes);
 	numframes = pheader->numframes;
@@ -4501,7 +4503,6 @@ models and ordinary alias-frame interpolation at draw time.
 ==============================================================================
 */
 
-#define MAX_MD5_JOINTS			256
 #define MAX_MD5_VERTICES		65535
 #define MAX_MD5_TRIANGLES		1048576
 #define MAX_MD5_WEIGHTS		1048576
@@ -5554,6 +5555,23 @@ static qboolean Mod_LoadMD5MeshModel (qmodel_t *mod, const byte *buffer, size_t 
 
 	for (surface = 0; surface < (int)numsurfaces - 1; surface++)
 		surfaces[surface]->nextsurface = (intptr_t)((byte *)surfaces[surface + 1] - (byte *)surfaces[surface]);
+
+	/* The renderer normally only needs skinned vertices, but retaining the
+	 * evaluated joint matrices lets r_showskel display exactly the same pose.
+	 * Store this once on the first surface: Mod_GetMD5Extradata returns it. */
+	if (!isDedicated)
+	{
+		int *parents = (int *)Hunk_Alloc ((int)(numjoints * sizeof (*parents)));
+		float *poses = (float *)Hunk_Alloc ((int)((size_t)numposes * numjoints * 12 * sizeof (*poses)));
+		const float *source = animation ? animation : bindposes;
+
+		for (joint = 0; joint < (int)numjoints; joint++)
+			parents[joint] = joints[joint].parent;
+		memcpy (poses, source, (size_t)numposes * numjoints * 12 * sizeof (*poses));
+		surfaces[0]->md5_numbones = (int)numjoints;
+		surfaces[0]->md5_boneparents = (intptr_t)((byte *)parents - (byte *)surfaces[0]);
+		surfaces[0]->md5_boneposes = (intptr_t)((byte *)poses - (byte *)surfaces[0]);
+	}
 
 	mod->type = mod_alias;
 	mod->numframes = numposes;

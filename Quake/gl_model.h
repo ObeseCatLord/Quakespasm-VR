@@ -337,6 +337,7 @@ typedef struct md5vertex_s
 #define MAX_MD3_SURFACES	32
 #define MAX_MD3_VERTICES	65535
 #define MAX_MD5_SURFACES	32
+#define MAX_MD5_JOINTS		256
 
 typedef enum
 {
@@ -414,6 +415,11 @@ typedef struct {
 	int					commands;	// gl command list with embedded s/t
 	aliasposeverttype_t	poseverttype;
 	intptr_t		nextsurface;	// MD3: offset to next aliashdr_t, 0 at end
+	/* MD5 skeleton retained for r_showskel. boneposes contains numposes
+	 * consecutive 3x4 row-major matrices, one set per animation frame. */
+	int				md5_numbones;
+	intptr_t		md5_boneparents;
+	intptr_t		md5_boneposes;
 	struct gltexture_s	*gltextures[MAX_SKINS][4]; //johnfitz
 	struct gltexture_s	*fbtextures[MAX_SKINS][4]; //johnfitz
 	int					texels[MAX_SKINS];	// only for player skins
@@ -423,6 +429,8 @@ typedef struct {
 #define	MAXALIASVERTS	0x7fff //spike/Ironwail -- 16-bit index buffer + onseam duplication
 #define	MAXALIASFRAMES	4096 //spike -- was 256; Keep/Mjolnir includes >1024-frame alias models
 #define	MAXALIASTRIS	4096 //ericw -- was 2048
+#define	MAXALIASVERTS_QS	2000 //johnfitz -- was 1024
+#define	MAXALIASTRIS_QS	4096 //ericw -- was 2048
 extern	aliashdr_t	*pheader;
 extern	stvert_t	stverts[MAXALIASVERTS];
 extern	mtriangle_t	triangles[MAXALIASTRIS];

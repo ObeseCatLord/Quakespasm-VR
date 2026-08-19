@@ -69,6 +69,34 @@ static int findhandle (void)
 	return -1;
 }
 
+FILE *Sys_fopen (const char *path, const char *mode)
+{
+	if (strchr (mode, 'w'))
+	{
+		char dir[MAX_OSPATH];
+		int i, rc;
+		q_strlcpy (dir, path, sizeof (dir));
+		for (i = 1; dir[i]; i++)
+		{
+			if (dir[i] != '/')
+				continue;
+			dir[i] = '\0';
+			rc = mkdir (dir, 0777);
+			if (rc != 0 && errno == EEXIST)
+			{
+				struct stat st;
+				if (stat (dir, &st) == 0 && S_ISDIR(st.st_mode))
+					rc = 0;
+			}
+			if (rc != 0)
+				return NULL;
+			dir[i] = '/';
+		}
+	}
+
+	return fopen (path, mode);
+}
+
 long Sys_filelength (FILE *f)
 {
 	long		pos, end;
@@ -87,7 +115,7 @@ int Sys_FileOpenRead (const char *path, int *hndl)
 	int	i, retval;
 
 	i = findhandle ();
-	f = fopen(path, "rb");
+	f = Sys_fopen (path, "rb");
 
 	if (!f)
 	{
@@ -110,7 +138,7 @@ int Sys_FileOpenWrite (const char *path)
 	int		i;
 
 	i = findhandle ();
-	f = fopen(path, "wb");
+	f = Sys_fopen (path, "wb");
 
 	if (!f)
 		Sys_Error ("Error opening %s: %s", path, strerror(errno));
@@ -156,6 +184,43 @@ int Sys_FileType (const char *path)
 		return FS_ENT_FILE;
 
 	return FS_ENT_NONE;
+}
+
+qboolean Sys_GetParentProcessName (char *dst, size_t dstsize)
+{
+#ifdef __linux__
+	char link[MAX_OSPATH];
+	ssize_t size;
+
+	q_snprintf (link, sizeof (link), "/proc/%d/exe", getppid ());
+	if (!dstsize)
+		return false;
+	size = readlink (link, dst, dstsize - 1);
+	if (size < 0)
+		return false;
+	dst[size] = '\0';
+	return true;
+#else
+	return false;
+#endif
+}
+
+qboolean Sys_IsStartedFromMapEditor (void)
+{
+	char path[MAX_OSPATH];
+	const char *slash, *exe;
+
+	if (!Sys_GetParentProcessName (path, sizeof (path)))
+		return false;
+
+	slash = strrchr (path, '/');
+	exe = slash ? slash + 1 : path;
+
+	return
+		q_strcasestr (exe, "trenchbroom") != NULL ||
+		q_strcasestr (exe, "nextbroom") != NULL ||
+		q_strcasestr (exe, "jack") != NULL ||
+		q_strcasestr (exe, "qrucible") != NULL;
 }
 
 

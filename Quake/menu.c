@@ -970,6 +970,7 @@ enum {
   OPT_CONTRAST,
   OPT_MOUSESPEED,
   OPT_SBALPHA,
+  OPT_CENTERPRINTBG,
   OPT_SNDVOL,
   OPT_MUSICVOL,
   OPT_MUSICEXT,
@@ -995,10 +996,28 @@ enum {
 };
 
 #define SLIDER_RANGE 10
+#define OPTIONS_VISIBLE_ITEMS 20
 
 int options_cursor;
+static int options_scroll;
+
+static int M_Options_RowY(int index) {
+  if (index < options_scroll || index >= options_scroll + OPTIONS_VISIBLE_ITEMS)
+    return -1000;
+  return 32 + 8 * (index - options_scroll);
+}
+
+static void M_Options_EnsureCursorVisible(void) {
+  if (options_cursor < options_scroll)
+    options_scroll = options_cursor;
+  if (options_cursor >= options_scroll + OPTIONS_VISIBLE_ITEMS)
+    options_scroll = options_cursor - OPTIONS_VISIBLE_ITEMS + 1;
+  options_scroll = CLAMP(0, options_scroll,
+                         q_max(0, OPTIONS_ITEMS - OPTIONS_VISIBLE_ITEMS));
+}
 
 void M_Menu_Options_f(void) {
+  M_Options_EnsureCursorVisible();
   IN_Deactivate(modestate == MS_WINDOWED);
   key_dest = key_menu;
   m_state = m_options;
@@ -1064,6 +1083,16 @@ void M_AdjustSliders(int dir) {
       f = 1;
     Cvar_SetValue("scr_sbaralpha", f);
     break;
+  case OPT_CENTERPRINTBG: {
+    cvar_t *centerprintbg = Cvar_FindVar("scr_centerprintbg");
+    if (centerprintbg) {
+      int style = ((int)centerprintbg->value + dir) % 4;
+      if (style < 0)
+        style += 4;
+      Cvar_SetValue("scr_centerprintbg", style);
+    }
+    break;
+  }
   case OPT_MUSICVOL: // music volume
     f = bgmvolume.value + dir * 0.1;
     if (f < 0)
@@ -1172,97 +1201,119 @@ void M_Options_Draw(void) {
 
   // Draw the items in the order of the enum defined above:
   // OPT_CUSTOMIZE:
-  M_Print(16, 32, "              Controls");
+  M_Print(16, M_Options_RowY(OPT_CUSTOMIZE), "              Controls");
   // OPT_WEAPONS:
-  M_Print(16, 32 + 8 * OPT_WEAPONS, "        Weapon bindings");
+  M_Print(16, M_Options_RowY(OPT_WEAPONS), "        Weapon bindings");
   // OPT_CONSOLE:
-  M_Print(16, 32 + 8 * OPT_CONSOLE, "          Goto console");
+  M_Print(16, M_Options_RowY(OPT_CONSOLE), "          Goto console");
   // OPT_DEFAULTS:
-  M_Print(16, 32 + 8 * OPT_DEFAULTS, "          Reset config");
+  M_Print(16, M_Options_RowY(OPT_DEFAULTS), "          Reset config");
 
   // OPT_SCALE:
-  M_Print(16, 32 + 8 * OPT_SCALE, "                 Scale");
+  M_Print(16, M_Options_RowY(OPT_SCALE), "                 Scale");
   l = (vid.width / 320.0) - 1;
   r = l > 0 ? (scr_conscale.value - 1) / l : 0;
-  M_DrawSlider(220, 32 + 8 * OPT_SCALE, r, scr_conscale.value, "%.1f");
+  M_DrawSlider(220, M_Options_RowY(OPT_SCALE), r, scr_conscale.value, "%.1f");
 
   // OPT_SCRSIZE:
-  M_Print(16, 32 + 8 * OPT_SCRSIZE, "           Screen size");
+  M_Print(16, M_Options_RowY(OPT_SCRSIZE), "           Screen size");
   r = (scr_viewsize.value - 30) / (120 - 30);
-  M_DrawSlider(220, 32 + 8 * OPT_SCRSIZE, r, scr_viewsize.value, "%.0f");
+  M_DrawSlider(220, M_Options_RowY(OPT_SCRSIZE), r, scr_viewsize.value, "%.0f");
 
   // OPT_GAMMA:
-  M_Print(16, 32 + 8 * OPT_GAMMA, "            Brightness");
+  M_Print(16, M_Options_RowY(OPT_GAMMA), "            Brightness");
   r = (2.0 - vid_gamma.value) / 1.5;
-  M_DrawSlider(220, 32 + 8 * OPT_GAMMA, r, vid_gamma.value, "%.2f");
+  M_DrawSlider(220, M_Options_RowY(OPT_GAMMA), r, vid_gamma.value, "%.2f");
 
   // OPT_CONTRAST:
-  M_Print(16, 32 + 8 * OPT_CONTRAST, "              Contrast");
+  M_Print(16, M_Options_RowY(OPT_CONTRAST), "              Contrast");
   r = vid_contrast.value - 1.0;
-  M_DrawSlider(220, 32 + 8 * OPT_CONTRAST, r, vid_contrast.value, "%.1f");
+  M_DrawSlider(220, M_Options_RowY(OPT_CONTRAST), r, vid_contrast.value, "%.1f");
 
   // OPT_MOUSESPEED:
-  M_Print(16, 32 + 8 * OPT_MOUSESPEED, "           Mouse Speed");
+  M_Print(16, M_Options_RowY(OPT_MOUSESPEED), "           Mouse Speed");
   r = (sensitivity.value - 1) / 10;
-  M_DrawSlider(220, 32 + 8 * OPT_MOUSESPEED, r, sensitivity.value, "%.1f");
+  M_DrawSlider(220, M_Options_RowY(OPT_MOUSESPEED), r, sensitivity.value, "%.1f");
 
   // OPT_SBALPHA:
-  M_Print(16, 32 + 8 * OPT_SBALPHA, "       Statusbar alpha");
+  M_Print(16, M_Options_RowY(OPT_SBALPHA), "       Statusbar alpha");
   r = (1.0 - scr_sbaralpha.value); // scr_sbaralpha range is 1.0 to 0.0
-  M_DrawSlider(220, 32 + 8 * OPT_SBALPHA, r, scr_sbaralpha.value, "%.2f");
+  M_DrawSlider(220, M_Options_RowY(OPT_SBALPHA), r, scr_sbaralpha.value, "%.2f");
+
+  // OPT_CENTERPRINTBG:
+  M_Print(16, M_Options_RowY(OPT_CENTERPRINTBG), " Center text background");
+  {
+    cvar_t *centerprintbg = Cvar_FindVar("scr_centerprintbg");
+    if (!centerprintbg)
+      M_Print(220, M_Options_RowY(OPT_CENTERPRINTBG), "unavailable");
+    else if (centerprintbg->value >= 3)
+      M_Print(220, M_Options_RowY(OPT_CENTERPRINTBG), "menu strip");
+    else if (centerprintbg->value >= 2)
+      M_Print(220, M_Options_RowY(OPT_CENTERPRINTBG), "menu box");
+    else if (centerprintbg->value >= 1)
+      M_Print(220, M_Options_RowY(OPT_CENTERPRINTBG), "text box");
+    else
+      M_Print(220, M_Options_RowY(OPT_CENTERPRINTBG), "off");
+  }
 
   // OPT_SNDVOL:
-  M_Print(16, 32 + 8 * OPT_SNDVOL, "          Sound Volume");
+  M_Print(16, M_Options_RowY(OPT_SNDVOL), "          Sound Volume");
   r = sfxvolume.value;
-  M_DrawSlider(220, 32 + 8 * OPT_SNDVOL, r, sfxvolume.value, "%.1f");
+  M_DrawSlider(220, M_Options_RowY(OPT_SNDVOL), r, sfxvolume.value, "%.1f");
 
   // OPT_MUSICVOL:
-  M_Print(16, 32 + 8 * OPT_MUSICVOL, "          Music Volume");
+  M_Print(16, M_Options_RowY(OPT_MUSICVOL), "          Music Volume");
   r = bgmvolume.value;
-  M_DrawSlider(220, 32 + 8 * OPT_MUSICVOL, r, bgmvolume.value, "%.1f");
+  M_DrawSlider(220, M_Options_RowY(OPT_MUSICVOL), r, bgmvolume.value, "%.1f");
 
   // OPT_MUSICEXT:
-  M_Print(16, 32 + 8 * OPT_MUSICEXT, "        External Music");
-  M_DrawCheckbox(220, 32 + 8 * OPT_MUSICEXT, bgm_extmusic.value);
+  M_Print(16, M_Options_RowY(OPT_MUSICEXT), "        External Music");
+  M_DrawCheckbox(220, M_Options_RowY(OPT_MUSICEXT), bgm_extmusic.value);
 
   // OPT_ALWAYRUN:
-  M_Print(16, 32 + 8 * OPT_ALWAYRUN, "            Always Run");
+  M_Print(16, M_Options_RowY(OPT_ALWAYRUN), "            Always Run");
   if (cl_alwaysrun.value)
-    M_Print(220, 32 + 8 * OPT_ALWAYRUN, "quakespasm");
+    M_Print(220, M_Options_RowY(OPT_ALWAYRUN), "quakespasm");
   else if (cl_forwardspeed.value > 200.0)
-    M_Print(220, 32 + 8 * OPT_ALWAYRUN, "vanilla");
+    M_Print(220, M_Options_RowY(OPT_ALWAYRUN), "vanilla");
   else
-    M_Print(220, 32 + 8 * OPT_ALWAYRUN, "off");
+    M_Print(220, M_Options_RowY(OPT_ALWAYRUN), "off");
 
   // OPT_INVMOUSE:
-  M_Print(16, 32 + 8 * OPT_INVMOUSE, "          Invert Mouse");
-  M_DrawCheckbox(220, 32 + 8 * OPT_INVMOUSE, m_pitch.value < 0);
+  M_Print(16, M_Options_RowY(OPT_INVMOUSE), "          Invert Mouse");
+  M_DrawCheckbox(220, M_Options_RowY(OPT_INVMOUSE), m_pitch.value < 0);
 
   // OPT_ALWAYSMLOOK:
-  M_Print(16, 32 + 8 * OPT_ALWAYSMLOOK, "            Mouse Look");
-  M_DrawCheckbox(220, 32 + 8 * OPT_ALWAYSMLOOK, in_mlook.state & 1);
+  M_Print(16, M_Options_RowY(OPT_ALWAYSMLOOK), "            Mouse Look");
+  M_DrawCheckbox(220, M_Options_RowY(OPT_ALWAYSMLOOK), in_mlook.state & 1);
 
   // OPT_LOOKSPRING:
-  M_Print(16, 32 + 8 * OPT_LOOKSPRING, "            Lookspring");
-  M_DrawCheckbox(220, 32 + 8 * OPT_LOOKSPRING, lookspring.value);
+  M_Print(16, M_Options_RowY(OPT_LOOKSPRING), "            Lookspring");
+  M_DrawCheckbox(220, M_Options_RowY(OPT_LOOKSPRING), lookspring.value);
 
   // OPT_LOOKSTRAFE:
-  M_Print(16, 32 + 8 * OPT_LOOKSTRAFE, "            Lookstrafe");
-  M_DrawCheckbox(220, 32 + 8 * OPT_LOOKSTRAFE, lookstrafe.value);
+  M_Print(16, M_Options_RowY(OPT_LOOKSTRAFE), "            Lookstrafe");
+  M_DrawCheckbox(220, M_Options_RowY(OPT_LOOKSTRAFE), lookstrafe.value);
 
   // OPT_VIDEO:
   if (vid_menudrawfn)
-    M_Print(16, 32 + 8 * OPT_VIDEO, "         Video Options");
+    M_Print(16, M_Options_RowY(OPT_VIDEO), "         Video Options");
 
   // OPT_VR:
   if (vid_menudrawfn)
-    M_Print(16, 32 + 8 * OPT_VR, "         VR Options");
+    M_Print(16, M_Options_RowY(OPT_VR), "         VR Options");
 
   // OPT_MODELS:
-  M_Print(16, 32 + 8 * OPT_MODELS, "        Models Options");
+  M_Print(16, M_Options_RowY(OPT_MODELS), "        Models Options");
 
   // cursor
-  M_DrawCharacter(200, 32 + options_cursor * 8, 12 + ((int)(realtime * 4) & 1));
+  M_DrawCharacter(200, M_Options_RowY(options_cursor),
+                  12 + ((int)(realtime * 4) & 1));
+
+  if (options_scroll > 0)
+    M_Print(304, 24, "^");
+  if (options_scroll + OPTIONS_VISIBLE_ITEMS < OPTIONS_ITEMS)
+    M_Print(304, 192, "v");
 }
 
 void M_Options_Key(int k) {
@@ -1344,40 +1395,158 @@ void M_Options_Key(int k) {
         options_cursor = 0;
     }
   }
+
+  if (k == K_UPARROW || k == K_DOWNARROW)
+    M_Options_EnsureCursorVisible();
 }
 
 //=============================================================================
 /* KEYS MENU */
 
-const char *bindnames[][2] = {{"+attack", "attack"},
-                              {"+button3", "alt fire"},
-                              {"impulse 10", "next weapon"},
-                              {"impulse 12", "prev weapon"},
-                              {"+jump", "jump / swim up"},
-                              {"+forward", "walk forward"},
-                              {"+back", "backpedal"},
-                              {"+left", "turn left"},
-                              {"+right", "turn right"},
-                              {"+speed", "run"},
-                              {"+moveleft", "step left"},
-                              {"+moveright", "step right"},
-                              {"+strafe", "sidestep"},
-                              {"+lookup", "look up"},
-                              {"+lookdown", "look down"},
-                              {"centerview", "center view"},
-                              {"+mlook", "mouse look"},
-                              {"+klook", "keyboard look"},
-                              {"+moveup", "swim up"},
-                              {"+movedown", "swim down"},
-                              {"+vr_weaponmenu", "VR weapon wheel"},
-                              {"vr_turn180", "180 snap turn"}};
+typedef struct {
+  const char *command;
+  const char *description;
+} menukeybind_t;
 
-#define NUMCOMMANDS Q_COUNTOF(bindnames)
+static const menukeybind_t default_bindnames[] = {
+    {"+attack", "attack"},
+    {"impulse 10", "next weapon"},
+    {"impulse 12", "prev weapon"},
+    {"+jump", "jump / swim up"},
+    {"+forward", "walk forward"},
+    {"+back", "backpedal"},
+    {"+left", "turn left"},
+    {"+right", "turn right"},
+    {"+speed", "run"},
+    {"+moveleft", "step left"},
+    {"+moveright", "step right"},
+    {"+strafe", "sidestep"},
+    {"+lookup", "look up"},
+    {"+lookdown", "look down"},
+    {"centerview", "center view"},
+    {"+mlook", "mouse look"},
+    {"+klook", "keyboard look"},
+    {"+moveup", "swim up"},
+    {"+movedown", "swim down"},
+    {"+altmodifier", "gamepad alt modifier"},
+    {"+vr_weaponmenu", "VR weapon wheel"},
+    {"vr_turn180", "180 snap turn"},
+};
 
+#define KEYMENU_VISIBLE_ITEMS 18
+
+static menukeybind_t *custom_bindnames;
 static int keys_cursor;
+static int keys_scroll;
 static qboolean bind_grab;
 
+static int M_Keys_NumCommands(void) {
+  return Q_COUNTOF(default_bindnames) + (int)VEC_SIZE(custom_bindnames);
+}
+
+static const menukeybind_t *M_Keys_GetBind(int index) {
+  if (index < (int)Q_COUNTOF(default_bindnames))
+    return &default_bindnames[index];
+  return &custom_bindnames[index - Q_COUNTOF(default_bindnames)];
+}
+
+static void M_Keys_ClearCustomBindings(void) {
+  int i;
+
+  for (i = 0; i < (int)VEC_SIZE(custom_bindnames); i++) {
+    free((void *)custom_bindnames[i].command);
+    free((void *)custom_bindnames[i].description);
+  }
+  VEC_FREE(custom_bindnames);
+}
+
+static void M_Keys_AddCustomBinding(const char *command, const char *description) {
+  menukeybind_t entry;
+  int i;
+
+  if (!command || !description)
+    return;
+  if (!strcmp(command, "-"))
+    command = "";
+
+  if (*command) {
+    const char *token_end = COM_Parse(command);
+    if (!token_end || (!Cmd_Exists(com_token) && !Cmd_AliasExists(com_token))) {
+      Con_DPrintf("Skipping unsupported key binding: \"%s\" = \"%s\"\n",
+                  description, command);
+      return;
+    }
+    if (!strcmp(command, "+klook") || !strcmp(command, "+mlook"))
+      return;
+    for (i = 0; i < M_Keys_NumCommands(); i++)
+      if (M_Keys_GetBind(i)->command[0] &&
+          !strcmp(M_Keys_GetBind(i)->command, command))
+        return;
+  }
+
+  entry.command = strdup(command);
+  entry.description = strdup(description);
+  if (!entry.command || !entry.description)
+    Sys_Error("M_Keys_AddCustomBinding: out of memory");
+  VEC_PUSH(custom_bindnames, entry);
+}
+
+static void M_Keys_LoadCustomBindings(void) {
+  char *file;
+  char *line;
+
+  M_Keys_ClearCustomBindings();
+  file = (char *)COM_LoadMallocFile("bindlist.lst", NULL);
+  if (!file)
+    return;
+
+  line = file;
+  while (*line) {
+    char *next = line;
+    while (*next && *next != '\n' && *next != '\r')
+      next++;
+    if (*next)
+      *next++ = '\0';
+    while (*next == '\n' || *next == '\r')
+      next++;
+
+    Cmd_TokenizeString(line);
+    if (Cmd_Argc() >= 2)
+      M_Keys_AddCustomBinding(Cmd_Argv(0), Cmd_Argv(1));
+    line = next;
+  }
+
+  free(file);
+}
+
+static void M_Keys_EnsureCursorVisible(void) {
+  if (keys_cursor < keys_scroll)
+    keys_scroll = keys_cursor;
+  if (keys_cursor >= keys_scroll + KEYMENU_VISIBLE_ITEMS)
+    keys_scroll = keys_cursor - KEYMENU_VISIBLE_ITEMS + 1;
+  if (keys_scroll < 0)
+    keys_scroll = 0;
+}
+
+static void M_Keys_MoveCursor(int direction) {
+  int count = M_Keys_NumCommands();
+
+  if (!count)
+    return;
+  do {
+    keys_cursor += direction;
+    if (keys_cursor < 0)
+      keys_cursor = count - 1;
+    else if (keys_cursor >= count)
+      keys_cursor = 0;
+  } while (!M_Keys_GetBind(keys_cursor)->command[0]);
+  M_Keys_EnsureCursorVisible();
+}
+
 void M_Menu_Keys_f(void) {
+  M_Keys_LoadCustomBindings();
+  keys_cursor = 0;
+  keys_scroll = 0;
   IN_Deactivate(modestate == MS_WINDOWED);
   key_dest = key_menu;
   m_state = m_keys;
@@ -1430,17 +1599,21 @@ void M_Keys_Draw(void) {
   M_DrawPic((320 - p->width) / 2, 4, p);
 
   if (bind_grab)
-    M_Print(12, 32, "Press a key or button for this action");
+    M_Print(12, 32, "Press a key (hold modifier for alt layer)");
   else
     M_Print(18, 32, "Enter to change, backspace to clear");
 
-  // search for known bindings
-  for (i = 0; i < (int)NUMCOMMANDS; i++) {
-    y = 48 + 8 * i;
+  for (i = keys_scroll; i < M_Keys_NumCommands() &&
+                         i < keys_scroll + KEYMENU_VISIBLE_ITEMS; i++) {
+    const menukeybind_t *bind = M_Keys_GetBind(i);
+    y = 48 + 8 * (i - keys_scroll);
 
-    M_Print(16, y, bindnames[i][1]);
+    if (!bind->command[0])
+      continue;
 
-    M_FindKeysForCommand(bindnames[i][0], keys);
+    M_Print(16, y, bind->description);
+
+    M_FindKeysForCommand(bind->command, keys);
 
     if (keys[0] == -1) {
       M_Print(140, y, "???");
@@ -1461,10 +1634,15 @@ void M_Keys_Draw(void) {
     }
   }
 
+  if (keys_scroll > 0)
+    M_Print(300, 40, "^");
+  if (keys_scroll + KEYMENU_VISIBLE_ITEMS < M_Keys_NumCommands())
+    M_Print(300, 192, "v");
   if (bind_grab)
-    M_DrawCharacter(130, 48 + keys_cursor * 8, '=');
+    M_DrawCharacter(130, 48 + (keys_cursor - keys_scroll) * 8, '=');
   else
-    M_DrawCharacter(130, 48 + keys_cursor * 8, 12 + ((int)(realtime * 4) & 1));
+    M_DrawCharacter(130, 48 + (keys_cursor - keys_scroll) * 8,
+                    12 + ((int)(realtime * 4) & 1));
 }
 
 void M_Keys_Key(int k) {
@@ -1474,8 +1652,15 @@ void M_Keys_Key(int k) {
   if (bind_grab) { // defining a key
     S_LocalSound("misc/menu1.wav");
     if ((k != K_ESCAPE) && (k != '`')) {
-      sprintf(cmd, "bind \"%s\" \"%s\"\n", Key_KeynumToString(k),
-              bindnames[keys_cursor][0]);
+      const char *command = M_Keys_GetBind(keys_cursor)->command;
+      if (!Cmd_IsGamepadAltModifier(command)) {
+        if (Key_IsKeyGamepadAltModifier(k))
+          return;
+        if (Key_GetGamepadAltModifierState() && k >= K_LTHUMB &&
+            k <= K_RTRIGGER)
+          k += K_LTHUMB_ALT - K_LTHUMB;
+      }
+      sprintf(cmd, "bind \"%s\" \"%s\"\n", Key_KeynumToString(k), command);
       Cbuf_InsertText(cmd);
     }
 
@@ -1495,26 +1680,22 @@ void M_Keys_Key(int k) {
   case K_LEFTARROW:
   case K_UPARROW:
     S_LocalSound("misc/menu1.wav");
-    keys_cursor--;
-    if (keys_cursor < 0)
-      keys_cursor = NUMCOMMANDS - 1;
+    M_Keys_MoveCursor(-1);
     break;
 
   case K_DOWNARROW:
   case K_RIGHTARROW:
     S_LocalSound("misc/menu1.wav");
-    keys_cursor++;
-    if (keys_cursor >= (int)NUMCOMMANDS)
-      keys_cursor = 0;
+    M_Keys_MoveCursor(1);
     break;
 
   case K_ENTER: // go into bind mode
   case K_KP_ENTER:
   case K_ABUTTON:
-    M_FindKeysForCommand(bindnames[keys_cursor][0], keys);
+    M_FindKeysForCommand(M_Keys_GetBind(keys_cursor)->command, keys);
     S_LocalSound("misc/menu2.wav");
     if (keys[2] != -1)
-      M_UnbindCommand(bindnames[keys_cursor][0]);
+      M_UnbindCommand(M_Keys_GetBind(keys_cursor)->command);
     bind_grab = true;
     IN_Activate(); // activate to allow mouse key binding
     break;
@@ -1522,7 +1703,7 @@ void M_Keys_Key(int k) {
   case K_BACKSPACE: // delete bindings
   case K_DEL:
     S_LocalSound("misc/menu2.wav");
-    M_UnbindCommand(bindnames[keys_cursor][0]);
+    M_UnbindCommand(M_Keys_GetBind(keys_cursor)->command);
     break;
   }
 }
@@ -2615,12 +2796,22 @@ static qboolean M_Mods_IsActive(const filelist_item_t *item) {
 }
 
 static qboolean M_Mods_Matches(const filelist_item_t *item) {
-  return !m_mods_filter[0] || q_strcasestr(item->name, m_mods_filter) != NULL;
+  return !m_mods_filter[0] ||
+         q_strcasestr(Modlist_GetFullName(item), m_mods_filter) != NULL ||
+         q_strcasestr(item->name, m_mods_filter) != NULL;
+}
+
+static const char *M_Mods_CatalogueName(const addon_catalog_entry_t *item) {
+  const char *name = NULL;
+
+  if (item && Modlist_GetMetadata(item->gamedir, &name, NULL) && name && *name)
+    return name;
+  return item ? item->name : "";
 }
 
 static qboolean M_Mods_CatalogueMatches(const addon_catalog_entry_t *item) {
   return !m_mods_filter[0] ||
-         q_strcasestr(item->name, m_mods_filter) != NULL ||
+         q_strcasestr(M_Mods_CatalogueName(item), m_mods_filter) != NULL ||
          q_strcasestr(item->gamedir, m_mods_filter) != NULL ||
          q_strcasestr(item->author, m_mods_filter) != NULL;
 }
@@ -2822,7 +3013,7 @@ static void M_Mods_Draw(void) {
         catalogue = M_Mods_CatalogueItem(index);
         if (!catalogue)
           continue;
-        M_Mods_PrintName(48, 64 + i * 8, catalogue->name, false);
+        M_Mods_PrintName(48, 64 + i * 8, M_Mods_CatalogueName(catalogue), false);
         if (catalogue->installed)
           status = "INSTALLED";
         else if (AddonCatalog_State() == ADDON_CATALOG_INSTALLING && index == m_mods_cursor)
@@ -2838,7 +3029,7 @@ static void M_Mods_Draw(void) {
         if (!item)
           continue;
         active = M_Mods_IsActive(item);
-        M_Mods_PrintName(48, 64 + i * 8, item->name, active);
+        M_Mods_PrintName(48, 64 + i * 8, Modlist_GetFullName(item), active);
         if (active)
           M_PrintWhite(208, 64 + i * 8, "ACTIVE");
         else
@@ -3691,10 +3882,14 @@ static qboolean M_PointerHit(float x, float y) {
     break;
 
   case m_options:
-    if (M_PointerRows(x, y, 8, 320, 32, 8, OPTIONS_ITEMS, &selection)) {
+    if (M_PointerRows(x, y, 8, 320, 32, 8,
+                      q_min(OPTIONS_VISIBLE_ITEMS,
+                            OPTIONS_ITEMS - options_scroll), &selection)) {
+      selection += options_scroll;
       if (!vid_menudrawfn && (selection == OPT_VIDEO || selection == OPT_VR))
         break;
       options_cursor = selection;
+      M_Options_EnsureCursorVisible();
       return true;
     }
     break;
@@ -3706,9 +3901,14 @@ static qboolean M_PointerHit(float x, float y) {
     return VR_MenuPointerMove(x, y);
 
   case m_keys:
-    if (M_PointerRows(x, y, 8, 312, 48, 8, NUMCOMMANDS, &selection)) {
-      keys_cursor = selection;
-      return true;
+    if (M_PointerRows(x, y, 8, 312, 48, 8, KEYMENU_VISIBLE_ITEMS,
+                      &selection)) {
+      selection += keys_scroll;
+      if (selection < M_Keys_NumCommands() &&
+          M_Keys_GetBind(selection)->command[0]) {
+        keys_cursor = selection;
+        return true;
+      }
     }
     break;
 

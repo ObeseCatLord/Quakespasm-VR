@@ -992,6 +992,11 @@ qboolean Cmd_AliasExists (const char *alias_name)
 	return false;
 }
 
+qboolean Cmd_IsGamepadAltModifier(const char *name)
+{
+	return name && !strcmp(name, "+altmodifier");
+}
+
 
 
 /*

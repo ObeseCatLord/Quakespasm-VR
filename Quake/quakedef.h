@@ -325,6 +325,7 @@ extern	cvar_t		sys_ticrate;
 extern	cvar_t		sys_throttle;
 extern	cvar_t		sys_nostdout;
 extern	cvar_t		developer;
+extern	cvar_t		map_checks;
 extern	cvar_t		max_edicts; //johnfitz
 
 extern	qboolean	host_initialized;	// true if into command execution
@@ -338,6 +339,8 @@ typedef struct filelist_item_s
 {
 	char			name[32];
 	unsigned int		path_id;
+	char			full_name[64];
+	char			description[160];
 	struct filelist_item_s	*next;
 } filelist_item_t;
 
@@ -369,6 +372,11 @@ void ExtraMaps_Init (void);
 void Modlist_Init (void);
 void Modlist_Rebuild (void);
 void DemoList_Init (void);
+
+const char		*Modlist_GetFullName (const filelist_item_t *item);
+const char		*Modlist_GetDescription (const filelist_item_t *item);
+qboolean		Modlist_GetMetadata (const char *gamedir,
+		const char		**name, const char **description);
 
 void ExtraMaps_NewGame (void);
 void DemoList_Rebuild (void);

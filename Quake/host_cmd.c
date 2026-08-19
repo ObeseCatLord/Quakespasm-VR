@@ -23,6 +23,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 
 #include "quakedef.h"
 #include <errno.h>
+#include "q_ctype.h"
 #ifndef _WIN32
 #include <dirent.h>
 #endif
@@ -58,14 +59,14 @@ void Host_Quit_f(void) {
 FileList_Add
 ==================
 */
-static void FileList_Add(const char *name, filelist_item_t **list,
-                         unsigned int path_id) {
+static filelist_item_t *FileList_Add(const char *name, filelist_item_t **list,
+                                    unsigned int path_id) {
   filelist_item_t *item, *cursor, *prev;
 
   // ignore duplicate
   for (item = *list; item; item = item->next) {
     if (!Q_strcmp(name, item->name))
-      return;
+      return item;
   }
 
   item = (filelist_item_t *)Z_Malloc(sizeof(filelist_item_t));
@@ -89,6 +90,8 @@ static void FileList_Add(const char *name, filelist_item_t **list,
     item->next = prev->next;
     prev->next = item;
   }
+
+  return item;
 }
 
 static void FileList_Clear(filelist_item_t **list) {
@@ -99,6 +102,126 @@ static void FileList_Clear(filelist_item_t **list) {
     Z_Free(*list);
     *list = blah;
   }
+}
+
+static const filelist_item_t *Modlist_Find(const char *gamedir) {
+  filelist_item_t *item;
+  if (!gamedir)
+    return NULL;
+  for (item = modlist; item; item = item->next) {
+    if (!q_strcasecmp(item->name, gamedir))
+      return item;
+  }
+  return NULL;
+}
+
+static void Modlist_LoadMetadata(filelist_item_t *item) {
+  char path[MAX_OSPATH];
+  const char *bases[2];
+  size_t base_count;
+  size_t i;
+  int parsed;
+
+  if (!item || (item->full_name[0] || item->description[0]))
+    return;
+
+  base_count = 0;
+  if (host_parms->userdir &&
+      host_parms->userdir != host_parms->basedir &&
+      host_parms->userdir[0])
+    bases[base_count++] = host_parms->userdir;
+  bases[base_count++] = com_basedir;
+
+  for (i = 0; i < base_count; i++) {
+    char *buf, *cursor, *line, *line_end;
+    qboolean has_newline;
+    const char *base;
+    base = bases[i];
+    if (q_snprintf(path, sizeof(path), "%s/%s/descript.ion", base,
+                   item->name) >= sizeof(path))
+      continue;
+
+    buf = (char *)COM_LoadMallocFile_TextMode_OSPath(path, NULL);
+    if (!buf)
+      continue;
+
+    parsed = 0;
+    cursor = buf;
+    while (parsed < 2 && *cursor) {
+      while (*cursor == '\r' || *cursor == '\n')
+        ++cursor;
+
+      if (!*cursor)
+        break;
+
+      line_end = strchr(cursor, '\n');
+      has_newline = false;
+      if (line_end) {
+        *line_end = '\0';
+        has_newline = true;
+      } else {
+        line_end = cursor + strlen(cursor);
+      }
+
+      line = cursor;
+      while (*line && q_isspace(*line))
+        ++line;
+
+      if (*line) {
+        while (line_end > line && q_isspace(line_end[-1]))
+          --line_end;
+        *line_end = '\0';
+      }
+
+      if (*line) {
+        if (parsed == 0)
+          q_strlcpy(item->full_name, line, sizeof(item->full_name));
+        else if (parsed == 1)
+          q_strlcpy(item->description, line, sizeof(item->description));
+        ++parsed;
+      }
+
+      if (!has_newline)
+        break;
+      cursor = line_end + 1;
+      if (!*cursor)
+        break;
+    }
+    free(buf);
+    if (item->full_name[0] || item->description[0])
+      break;
+  }
+}
+
+const char *Modlist_GetFullName(const filelist_item_t *item) {
+  if (!item)
+    return "";
+  if (item->full_name[0])
+    return item->full_name;
+  return item->name;
+}
+
+const char *Modlist_GetDescription(const filelist_item_t *item) {
+  if (!item)
+    return "";
+  return item->description;
+}
+
+qboolean Modlist_GetMetadata(const char *gamedir, const char **name,
+                             const char **description) {
+  const filelist_item_t *item;
+  if (!gamedir || (!name && !description))
+    return false;
+
+  item = Modlist_Find(gamedir);
+  if (!item)
+    return false;
+
+  if (name)
+    *name = item->full_name[0] ? item->full_name : NULL;
+  if (description)
+    *description = item->description[0] ? item->description : NULL;
+  return true;
 }
 
 filelist_item_t *extralevels;
@@ -232,7 +355,13 @@ static void Host_Maps_Mod_f(void) {
 
 filelist_item_t *modlist;
 
-static void Modlist_Add(const char *name) { FileList_Add(name, &modlist, 0); }
+static void Modlist_Add(const char *name) {
+  filelist_item_t *item;
+  item = FileList_Add(name, &modlist, 0);
+  if (item) {
+    Modlist_LoadMetadata(item);
+  }
+}
 
 static qboolean Modlist_ValidName(const char *name) {
   const unsigned char *c;

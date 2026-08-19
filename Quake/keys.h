@@ -160,7 +160,19 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #define K_VR_RIGHT_STICK_DOWN 254
 #define K_VR_ALTFIRE 256
 
-#define MAX_KEYS 257
+/* virtual gamepad buttons emitted while a +altmodifier binding is held */
+#define K_LTHUMB_ALT 257
+#define K_RTHUMB_ALT 258
+#define K_LSHOULDER_ALT 259
+#define K_RSHOULDER_ALT 260
+#define K_ABUTTON_ALT 261
+#define K_BBUTTON_ALT 262
+#define K_XBUTTON_ALT 263
+#define K_YBUTTON_ALT 264
+#define K_LTRIGGER_ALT 265
+#define K_RTRIGGER_ALT 266
+
+#define MAX_KEYS 267
 
 #define MAXCMDLINE 256
 
@@ -193,6 +205,8 @@ void Char_Event(int key);
 qboolean Key_TextEntry(void);
 
 void Key_SetBinding(int keynum, const char *binding);
+qboolean Key_IsKeyGamepadAltModifier(int keynum);
+qboolean Key_GetGamepadAltModifierState(void);
 const char *Key_KeynumToString(int keynum);
 void Key_WriteBindings(FILE *f);
 

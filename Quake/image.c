@@ -43,6 +43,10 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 	#pragma GCC diagnostic pop
 #endif
 
+// HACK: override fopen for stbiw and lodepng to handle Unicode paths and automatic subdirectory creation
+#pragma push_macro("fopen")
+#define fopen Sys_fopen
+
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #define STB_IMAGE_WRITE_STATIC
 #include "stb_image_write.h"
@@ -53,6 +57,8 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #define LODEPNG_NO_COMPILE_ERROR_TEXT
 #include "lodepng.h"
 #include "lodepng.c"
+
+#pragma pop_macro("fopen")
 
 static char loadfilename[MAX_OSPATH]; //file scope so that error messages can use it
 

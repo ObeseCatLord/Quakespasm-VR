@@ -335,6 +335,19 @@ cvar_t cl_alwaysrun = {"cl_alwaysrun", "0",
 
 /*
 ================
+CL_InCutscene
+
+Scripted camera entities repeatedly set the view angle while hiding the
+viewmodel.  Do not let keyboard/controller pitch drift fight those updates;
+the tracked VR head pose remains independent of the game-input angles.
+================
+*/
+static qboolean CL_InCutscene(void) {
+  return cl.fixangle && !cl.viewent.model;
+}
+
+/*
+================
 CL_AdjustAngles
 
 Moves the local angle positions
@@ -343,6 +356,11 @@ Moves the local angle positions
 void CL_AdjustAngles(void) {
   float speed;
   float up, down;
+
+  if (CL_InCutscene()) {
+    V_StopPitchDrift();
+    return;
+  }
 
   if ((in_speed.state & 1) ^ (cl_alwaysrun.value != 0.0))
     speed = host_frametime * cl_anglespeedkey.value;

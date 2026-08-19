@@ -112,6 +112,7 @@ void Cmd_RemoveCommand (cmd_function_t *cmd);
 qboolean Cmd_Exists (const char *cmd_name);
 // used by the cvar code to check for cvar / command name overlap
 qboolean Cmd_AliasExists (const char *alias_name);
+qboolean Cmd_IsGamepadAltModifier(const char *name);
 
 const char	*Cmd_CompleteCommand (const char *partial);
 // attempts to match a partial command for automatic command line completion
