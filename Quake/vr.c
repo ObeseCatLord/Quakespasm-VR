@@ -1872,12 +1872,13 @@ static qboolean VR_ViewmodelUsesNeutralProfile(const aliashdr_t *hdr) {
 }
 
 static void VR_ApplyNeutralViewmodelTransform(aliashdr_t *hdr,
-                                               qboolean rerelease_model) {
+                                               qboolean rerelease_model,
+                                               qboolean axe_model) {
   float scaleCorrect =
       (vr_world_scale.value / 0.75f) * vr_gunmodelscale.value;
 
   if (rerelease_model)
-    scaleCorrect /= 3.0f;
+    scaleCorrect *= axe_model ? (1.0f / 3.0f) : 0.5f;
 
   /* Preserve global user tuning, but do not apply an MDL-pack-specific slot. */
   VectorScale(hdr->original_scale, scaleCorrect, hdr->scale);
@@ -1912,7 +1913,8 @@ void Mod_Weapon(qmodel_t *model, aliashdr_t *hdr) {
   if (VR_ViewmodelUsesNeutralProfile(hdr)) {
     VR_ApplyNeutralViewmodelTransform(
         hdr, Mod_UseRereleaseReplacementForFrame(
-                 model, cl.viewent.skinnum, cl.viewent.frame));
+                 model, cl.viewent.skinnum, cl.viewent.frame),
+        !q_strcasecmp(name, "progs/v_axe.mdl"));
     return;
   }
 
