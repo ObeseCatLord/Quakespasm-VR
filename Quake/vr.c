@@ -1826,7 +1826,11 @@ static void VR_Enabled_f(cvar_t *var) {
     Cvar_SetValueQuick(&vr_enabled, 0);
 }
 
-static void VR_Gunmodeloffsets_f(cvar_t *var) { InitAllWeaponCVars(); }
+static void VR_ReloadWeaponAdjustmentProfiles(void);
+
+static void VR_Gunmodeloffsets_f(cvar_t *var) {
+  VR_ReloadWeaponAdjustmentProfiles();
+}
 
 static void VR_Deadzone_f(cvar_t *var) {
   // clamp the mouse to a max of 0 - 70 degrees
@@ -1846,6 +1850,30 @@ static vec3_t vr_weapon_mp_muzzle_offset[MAX_WEAPONS];
 static qboolean vr_weapon_has_mp_muzzle_offset[MAX_WEAPONS];
 static vec3_t vr_weapon_schema_mp_muzzle_offset[MAX_WEAPONS];
 static qboolean vr_weapon_has_schema_mp_muzzle_offset[MAX_WEAPONS];
+/*
+ * Enhanced rerelease MD5 viewmodels share the classic filename, but not the
+ * classic mesh origin.  Keep their user calibrations separate so selecting
+ * enhanced models neither inherits nor overwrites the MDL profile.
+ */
+static vec3_t vr_weapon_enhanced_held_offset[MAX_WEAPONS];
+static qboolean vr_weapon_has_enhanced_held_offset[MAX_WEAPONS];
+static vec3_t vr_weapon_enhanced_mp_held_offset[MAX_WEAPONS];
+static qboolean vr_weapon_has_enhanced_mp_held_offset[MAX_WEAPONS];
+static vec3_t vr_weapon_enhanced_muzzle_offset[MAX_WEAPONS];
+static qboolean vr_weapon_has_enhanced_muzzle_offset[MAX_WEAPONS];
+static vec3_t vr_weapon_enhanced_mp_muzzle_offset[MAX_WEAPONS];
+static qboolean vr_weapon_has_enhanced_mp_muzzle_offset[MAX_WEAPONS];
+/* Parsed enhanced profile values are staged while vr_weapons.txt is loaded.
+ * vr_weapon_cmd_t is public legacy API, so keep this format-only state local
+ * to vr.c rather than extending that structure. */
+static vec3_t vr_schema_enhanced_held_offset[MAX_VR_WEAPONS];
+static qboolean vr_schema_has_enhanced_held_offset[MAX_VR_WEAPONS];
+static vec3_t vr_schema_enhanced_mp_held_offset[MAX_VR_WEAPONS];
+static qboolean vr_schema_has_enhanced_mp_held_offset[MAX_VR_WEAPONS];
+static vec3_t vr_schema_enhanced_muzzle_offset[MAX_VR_WEAPONS];
+static qboolean vr_schema_has_enhanced_muzzle_offset[MAX_VR_WEAPONS];
+static vec3_t vr_schema_enhanced_mp_muzzle_offset[MAX_VR_WEAPONS];
+static qboolean vr_schema_has_enhanced_mp_muzzle_offset[MAX_VR_WEAPONS];
 static vec3_t vr_weapon_muzzle_source_offset[MAX_WEAPONS];
 static qboolean vr_weapon_has_muzzle_source_offset[MAX_WEAPONS];
 static qboolean vr_weapon_muzzle_source_viewofs[MAX_WEAPONS];
@@ -1871,23 +1899,43 @@ static qboolean VR_ViewmodelUsesNeutralProfile(const aliashdr_t *hdr) {
   return hdr && hdr->poseverttype == ALIAS_POSE_MD5;
 }
 
+static float VR_ViewmodelOffsetScale(const char *name,
+                                     qboolean rerelease_model) {
+  float scale = (vr_world_scale.value / 0.75f) * vr_gunmodelscale.value;
+
+  if (rerelease_model) {
+    if (name && !q_strcasecmp(name, "progs/v_axe.mdl"))
+      scale *= 1.0f / 3.0f;
+    else if (!name || q_strcasecmp(name, "progs/v_shot2.mdl"))
+      scale *= 0.5f;
+  }
+
+  return scale;
+}
+
 static void VR_ApplyNeutralViewmodelTransform(aliashdr_t *hdr,
                                                qboolean rerelease_model,
                                                qboolean axe_model,
-                                               qboolean double_shotgun_model) {
-  float scaleCorrect =
-      (vr_world_scale.value / 0.75f) * vr_gunmodelscale.value;
-
-  if (rerelease_model) {
-    if (axe_model)
-      scaleCorrect *= 1.0f / 3.0f;
-    else if (!double_shotgun_model)
-      scaleCorrect *= 0.5f;
-  }
+                                               qboolean double_shotgun_model,
+                                               int slot) {
+  const char *name = axe_model ? "progs/v_axe.mdl"
+                               : (double_shotgun_model
+                                      ? "progs/v_shot2.mdl"
+                                      : NULL);
+  float scaleCorrect = VR_ViewmodelOffsetScale(name, rerelease_model);
+  vec3_t offset = {0, 0, 0};
 
   /* Preserve global user tuning, but do not apply an MDL-pack-specific slot. */
+  if (slot >= 0 && slot < MAX_WEAPONS) {
+    if (vr_weapon_has_enhanced_held_offset[slot])
+      VectorCopy(vr_weapon_enhanced_held_offset[slot], offset);
+    if (VR_IsMultiplayerClient() &&
+        vr_weapon_has_enhanced_mp_held_offset[slot])
+      VectorAdd(offset, vr_weapon_enhanced_mp_held_offset[slot], offset);
+  }
+
   VectorScale(hdr->original_scale, scaleCorrect, hdr->scale);
-  VectorCopy(hdr->original_scale_origin, hdr->scale_origin);
+  VectorAdd(hdr->original_scale_origin, offset, hdr->scale_origin);
   hdr->scale_origin[2] += vr_gunmodely.value;
   VectorScale(hdr->scale_origin, scaleCorrect, hdr->scale_origin);
 }
@@ -1902,16 +1950,14 @@ void Mod_Weapon(qmodel_t *model, aliashdr_t *hdr) {
     lastWeaponHeader = hdr;
     lastWeaponModel = model;
     weaponCVarEntry = -1;
-    if (!VR_ViewmodelUsesNeutralProfile(hdr)) {
-      for (int i = 0; i < MAX_WEAPONS; i++) {
-        if (!strcmp(vr_weapon_offset[i * VARS_PER_WEAPON + 4].string, name)) {
-          weaponCVarEntry = i;
-          break;
-        }
+    for (int i = 0; i < MAX_WEAPONS; i++) {
+      if (!strcmp(vr_weapon_offset[i * VARS_PER_WEAPON + 4].string, name)) {
+        weaponCVarEntry = i;
+        break;
       }
-      if (weaponCVarEntry == -1) {
-        DebugLog("VR: no weapon offset for %s\n", name);
-      }
+    }
+    if (weaponCVarEntry == -1) {
+      DebugLog("VR: no weapon offset for %s\n", name);
     }
   }
 
@@ -1920,7 +1966,7 @@ void Mod_Weapon(qmodel_t *model, aliashdr_t *hdr) {
         hdr, Mod_UseRereleaseReplacementForFrame(
                  model, cl.viewent.skinnum, cl.viewent.frame),
         !q_strcasecmp(name, "progs/v_axe.mdl"),
-        !q_strcasecmp(name, "progs/v_shot2.mdl"));
+        !q_strcasecmp(name, "progs/v_shot2.mdl"), weaponCVarEntry);
     return;
   }
 
@@ -1963,6 +2009,16 @@ static aliashdr_t *VR_ActiveAliasHeader(qmodel_t *model, int skinnum,
       return md5;
   }
   return (aliashdr_t *)Mod_Extradata(model);
+}
+
+static qboolean VR_CurrentViewmodelUsesEnhancedProfile(void) {
+  aliashdr_t *hdr;
+
+  if (!cl.viewent.model || cl.viewent.model->type != mod_alias)
+    return false;
+  hdr = VR_ActiveAliasHeader(cl.viewent.model, cl.viewent.skinnum,
+                             cl.viewent.frame);
+  return VR_ViewmodelUsesNeutralProfile(hdr);
 }
 
 void VR_ApplyCurrentViewWeaponTransform(void) {
@@ -2046,6 +2102,14 @@ void InitWeaponCVars(int i, const char *id, const char *offsetX,
   vr_weapon_schema_mp_muzzle_offset[i][1] = 0.0f;
   vr_weapon_schema_mp_muzzle_offset[i][2] = 0.0f;
   vr_weapon_has_schema_mp_muzzle_offset[i] = false;
+  VectorCopy(vec3_origin, vr_weapon_enhanced_held_offset[i]);
+  vr_weapon_has_enhanced_held_offset[i] = false;
+  VectorCopy(vec3_origin, vr_weapon_enhanced_mp_held_offset[i]);
+  vr_weapon_has_enhanced_mp_held_offset[i] = false;
+  VectorCopy(vec3_origin, vr_weapon_enhanced_muzzle_offset[i]);
+  vr_weapon_has_enhanced_muzzle_offset[i] = false;
+  VectorCopy(vec3_origin, vr_weapon_enhanced_mp_muzzle_offset[i]);
+  vr_weapon_has_enhanced_mp_muzzle_offset[i] = false;
   vr_weapon_muzzle_source_offset[i][0] = 0.0f;
   vr_weapon_muzzle_source_offset[i][1] = 0.0f;
   vr_weapon_muzzle_source_offset[i][2] = 0.0f;
@@ -2170,6 +2234,128 @@ static void VR_RegisterHeldWeaponOffsetIfMissing3(const char *id, float x,
   vec3_t offset = {x, y, z};
 
   VR_RegisterHeldWeaponOffsetIfMissing(id, offset, scale);
+}
+
+static int VR_FindOrCreateEnhancedWeaponOffsetSlot(const char *id,
+                                                   const char *kind) {
+  int slot;
+  int free_slot = -1;
+
+  if (!id || !id[0])
+    return -1;
+
+  slot = VR_FindWeaponOffsetSlot(id, &free_slot);
+  if (slot >= 0)
+    return slot;
+  if (free_slot < 0) {
+    Con_Printf("VR: No free enhanced %s offset slot for %s\n", kind, id);
+    return -1;
+  }
+
+  InitWeaponCVars(free_slot, id, "0", "0", "0", "1");
+  return free_slot;
+}
+
+static void VR_RegisterEnhancedHeldOffset(const char *id, const vec3_t offset) {
+  int slot = VR_FindOrCreateEnhancedWeaponOffsetSlot(id, "held");
+
+  if (slot < 0)
+    return;
+  VectorCopy(offset, vr_weapon_enhanced_held_offset[slot]);
+  vr_weapon_has_enhanced_held_offset[slot] = true;
+}
+
+static void VR_RegisterEnhancedMPHeldOffset(const char *id,
+                                            const vec3_t offset) {
+  int slot = VR_FindOrCreateEnhancedWeaponOffsetSlot(id, "multiplayer held");
+
+  if (slot < 0)
+    return;
+  VectorCopy(offset, vr_weapon_enhanced_mp_held_offset[slot]);
+  vr_weapon_has_enhanced_mp_held_offset[slot] = true;
+}
+
+static void VR_RegisterEnhancedMuzzleOffset(const char *id,
+                                             const vec3_t offset) {
+  int slot = VR_FindOrCreateEnhancedWeaponOffsetSlot(id, "muzzle");
+
+  if (slot < 0)
+    return;
+  VectorCopy(offset, vr_weapon_enhanced_muzzle_offset[slot]);
+  vr_weapon_has_enhanced_muzzle_offset[slot] = true;
+}
+
+static void VR_RegisterEnhancedMPMuzzleOffset(const char *id,
+                                               const vec3_t offset) {
+  int slot =
+      VR_FindOrCreateEnhancedWeaponOffsetSlot(id, "multiplayer muzzle");
+
+  if (slot < 0)
+    return;
+  VectorCopy(offset, vr_weapon_enhanced_mp_muzzle_offset[slot]);
+  vr_weapon_has_enhanced_mp_muzzle_offset[slot] = true;
+}
+
+static void VR_ReloadWeaponAdjustmentProfiles(void) {
+  typedef struct {
+    char id[64];
+    vec3_t held;
+    vec3_t mp_held;
+    vec3_t muzzle;
+    vec3_t mp_muzzle;
+    qboolean has_held;
+    qboolean has_mp_held;
+    qboolean has_muzzle;
+    qboolean has_mp_muzzle;
+  } enhanced_profile_t;
+  enhanced_profile_t saved[MAX_WEAPONS];
+  int count = 0;
+
+  /* Selecting a classic preset has always rebuilt the classic cvars. Preserve
+   * only the independent enhanced geometry calibrations across that rebuild;
+   * reloading the whole schema here would immediately undo the selected
+   * classic preset. IDs are retained because preset changes may reorder slots. */
+  memset(saved, 0, sizeof(saved));
+  for (int i = 0; i < MAX_WEAPONS; ++i) {
+    const char *id = vr_weapon_offset[i * VARS_PER_WEAPON + 4].string;
+
+    if (!id || !id[0] || !Q_strcmp(id, "-1") ||
+        (!vr_weapon_has_enhanced_held_offset[i] &&
+         !vr_weapon_has_enhanced_mp_held_offset[i] &&
+         !vr_weapon_has_enhanced_muzzle_offset[i] &&
+         !vr_weapon_has_enhanced_mp_muzzle_offset[i]))
+      continue;
+
+    Q_strncpy(saved[count].id, id, sizeof(saved[count].id));
+    VectorCopy(vr_weapon_enhanced_held_offset[i], saved[count].held);
+    VectorCopy(vr_weapon_enhanced_mp_held_offset[i], saved[count].mp_held);
+    VectorCopy(vr_weapon_enhanced_muzzle_offset[i], saved[count].muzzle);
+    VectorCopy(vr_weapon_enhanced_mp_muzzle_offset[i],
+               saved[count].mp_muzzle);
+    saved[count].has_held = vr_weapon_has_enhanced_held_offset[i];
+    saved[count].has_mp_held = vr_weapon_has_enhanced_mp_held_offset[i];
+    saved[count].has_muzzle = vr_weapon_has_enhanced_muzzle_offset[i];
+    saved[count].has_mp_muzzle =
+        vr_weapon_has_enhanced_mp_muzzle_offset[i];
+    ++count;
+  }
+
+  InitAllWeaponCVars();
+
+  for (int i = 0; i < count; ++i) {
+    if (saved[i].has_held)
+      VR_RegisterEnhancedHeldOffset(saved[i].id, saved[i].held);
+    if (saved[i].has_mp_held)
+      VR_RegisterEnhancedMPHeldOffset(saved[i].id, saved[i].mp_held);
+    if (saved[i].has_muzzle)
+      VR_RegisterEnhancedMuzzleOffset(saved[i].id, saved[i].muzzle);
+    if (saved[i].has_mp_muzzle)
+      VR_RegisterEnhancedMPMuzzleOffset(saved[i].id, saved[i].mp_muzzle);
+  }
+
+  lastWeaponHeader = NULL;
+  lastWeaponModel = NULL;
+  weaponCVarEntry = -1;
 }
 
 static void VR_RegisterDwellHeldWeaponDefaults(void) {
@@ -2439,6 +2625,16 @@ static vec3_t vr_adjust_current_handrot = {0, 0, 0};
 static vec3_t vr_adjust_original_scale_origin = {0, 0, 0};
 static int vr_adjust_slot = -1;
 static char vr_adjust_model[64];
+static qboolean vr_adjust_enhanced_profile = false;
+
+static void VR_AdjustCancel(qboolean cancel_return_to_grip) {
+  vr_adjust_mode = VR_ADJUST_NONE;
+  vr_adjust_slot = -1;
+  vr_adjust_model[0] = 0;
+  vr_adjust_enhanced_profile = false;
+  if (cancel_return_to_grip)
+    vr_adjust_muzzle_return_to_grip = false;
+}
 
 static qboolean VR_AdjustmentVisualsActive(void) {
   return vr_adjust_mode != VR_ADJUST_NONE || vr_adjust_muzzle_return_to_grip;
@@ -2751,12 +2947,19 @@ static qboolean VR_LineStartsWithKey(const char *line, size_t len,
          (len == keylen || VR_IsTokenBreak(line[keylen]));
 }
 
-static qboolean VR_LineIsAdjustmentKey(const char *line, size_t len) {
+static qboolean VR_LineIsClassicAdjustmentKey(const char *line, size_t len) {
   return VR_LineStartsWithKey(line, len, "held_scale") ||
          VR_LineStartsWithKey(line, len, "held_offset") ||
          VR_LineStartsWithKey(line, len, "mp_held_offset") ||
          VR_LineStartsWithKey(line, len, "muzzle_offset") ||
          VR_LineStartsWithKey(line, len, "mp_muzzle_offset");
+}
+
+static qboolean VR_LineIsEnhancedAdjustmentKey(const char *line, size_t len) {
+  return VR_LineStartsWithKey(line, len, "enhanced_held_offset") ||
+         VR_LineStartsWithKey(line, len, "enhanced_mp_held_offset") ||
+         VR_LineStartsWithKey(line, len, "enhanced_muzzle_offset") ||
+         VR_LineStartsWithKey(line, len, "enhanced_mp_muzzle_offset");
 }
 
 static qboolean VR_LineIsGlobalAdjustmentKey(const char *line, size_t len) {
@@ -2784,7 +2987,9 @@ static qboolean VR_TextAppendFilteredLines(vr_textbuf_t *buf, const char *text,
     line_len = line_end - p;
     full_len = line_len + (line_end < end ? 1 : 0);
 
-    if (strip_adjustments && VR_LineIsAdjustmentKey(p, line_len))
+    /* Global calibration replaces classic per-weapon values. Enhanced model
+     * geometry has an independent profile and must survive this rewrite. */
+    if (strip_adjustments && VR_LineIsClassicAdjustmentKey(p, line_len))
       strip = true;
     if (strip_globals && VR_LineIsGlobalAdjustmentKey(p, line_len))
       strip = true;
@@ -2829,8 +3034,51 @@ static qboolean VR_BlockMatchesViewmodel(const char *block, size_t len,
   return matched;
 }
 
-static qboolean VR_AppendAdjustmentLines(vr_textbuf_t *buf, int slot) {
+static qboolean VR_AppendAdjustmentLines(vr_textbuf_t *buf, int slot,
+                                         qboolean enhanced) {
   char line[256];
+
+  if (enhanced) {
+    if (vr_weapon_has_enhanced_held_offset[slot]) {
+      q_snprintf(line, sizeof(line), "enhanced_held_offset %.7g %.7g %.7g",
+                 vr_weapon_enhanced_held_offset[slot][0],
+                 vr_weapon_enhanced_held_offset[slot][1],
+                 vr_weapon_enhanced_held_offset[slot][2]);
+      if (!VR_TextAppendLine(buf, line))
+        return false;
+    }
+
+    if (vr_weapon_has_enhanced_muzzle_offset[slot]) {
+      q_snprintf(line, sizeof(line), "enhanced_muzzle_offset %.7g %.7g %.7g",
+                 vr_weapon_enhanced_muzzle_offset[slot][0],
+                 vr_weapon_enhanced_muzzle_offset[slot][1],
+                 vr_weapon_enhanced_muzzle_offset[slot][2]);
+      if (!VR_TextAppendLine(buf, line))
+        return false;
+    }
+
+    if (vr_weapon_has_enhanced_mp_held_offset[slot]) {
+      q_snprintf(line, sizeof(line),
+                 "enhanced_mp_held_offset %.7g %.7g %.7g",
+                 vr_weapon_enhanced_mp_held_offset[slot][0],
+                 vr_weapon_enhanced_mp_held_offset[slot][1],
+                 vr_weapon_enhanced_mp_held_offset[slot][2]);
+      if (!VR_TextAppendLine(buf, line))
+        return false;
+    }
+
+    if (vr_weapon_has_enhanced_mp_muzzle_offset[slot]) {
+      q_snprintf(line, sizeof(line),
+                 "enhanced_mp_muzzle_offset %.7g %.7g %.7g",
+                 vr_weapon_enhanced_mp_muzzle_offset[slot][0],
+                 vr_weapon_enhanced_mp_muzzle_offset[slot][1],
+                 vr_weapon_enhanced_mp_muzzle_offset[slot][2]);
+      if (!VR_TextAppendLine(buf, line))
+        return false;
+    }
+
+    return true;
+  }
 
   q_snprintf(line, sizeof(line), "held_scale %.7g",
              vr_weapon_offset[slot * VARS_PER_WEAPON + 3].value);
@@ -2874,7 +3122,7 @@ static qboolean VR_AppendAdjustmentLines(vr_textbuf_t *buf, int slot) {
 
 static qboolean VR_WriteUpdatedWeaponBlock(vr_textbuf_t *buf,
                                            const char *block, size_t len,
-                                           int slot) {
+                                           int slot, qboolean enhanced) {
   const char *p = block;
   const char *end = block + len;
   qboolean inserted = false;
@@ -2890,13 +3138,14 @@ static qboolean VR_WriteUpdatedWeaponBlock(vr_textbuf_t *buf,
     line_len = line_end - p;
     full_len = line_len + (line_end < end ? 1 : 0);
 
-    if (VR_LineIsAdjustmentKey(p, line_len)) {
+    if ((enhanced && VR_LineIsEnhancedAdjustmentKey(p, line_len)) ||
+        (!enhanced && VR_LineIsClassicAdjustmentKey(p, line_len))) {
       p += full_len;
       continue;
     }
 
     if (!inserted && VR_LineStartsWithKey(p, line_len, "}")) {
-      if (!VR_AppendAdjustmentLines(buf, slot))
+      if (!VR_AppendAdjustmentLines(buf, slot, enhanced))
         return false;
       inserted = true;
     }
@@ -2906,13 +3155,13 @@ static qboolean VR_WriteUpdatedWeaponBlock(vr_textbuf_t *buf,
     p += full_len;
   }
 
-  if (!inserted && !VR_AppendAdjustmentLines(buf, slot))
+  if (!inserted && !VR_AppendAdjustmentLines(buf, slot, enhanced))
     return false;
 
   return true;
 }
 
-static qboolean VR_SaveWeaponAdjustmentsToSchema(int slot) {
+static qboolean VR_SaveWeaponAdjustmentsToSchema(int slot, qboolean enhanced) {
   const char *id;
   char *data;
   const char *src;
@@ -2955,7 +3204,8 @@ static qboolean VR_SaveWeaponAdjustmentsToSchema(int slot) {
     close++;
 
     if (VR_BlockMatchesViewmodel(open, close - open, id)) {
-      ok = VR_WriteUpdatedWeaponBlock(&out, open, close - open, slot);
+      ok = VR_WriteUpdatedWeaponBlock(&out, open, close - open, slot,
+                                       enhanced);
       updated = true;
     } else {
       ok = VR_TextAppendN(&out, open, close - open);
@@ -2975,7 +3225,7 @@ static qboolean VR_SaveWeaponAdjustmentsToSchema(int slot) {
     if (ok)
       ok = VR_TextAppendLine(&out, line);
     if (ok)
-      ok = VR_AppendAdjustmentLines(&out, slot);
+      ok = VR_AppendAdjustmentLines(&out, slot, enhanced);
     if (ok)
       ok = VR_TextAppendLine(&out, "}");
   }
@@ -3036,7 +3286,7 @@ static qboolean VR_AppendSchemaBlockForSlot(vr_textbuf_t *buf, int slot) {
   q_snprintf(line, sizeof(line), "viewmodel %s", id);
   if (!VR_TextAppendLine(buf, line))
     return false;
-  if (!VR_AppendAdjustmentLines(buf, slot))
+  if (!VR_AppendAdjustmentLines(buf, slot, false))
     return false;
   if (!VR_TextAppendLine(buf, "}"))
     return false;
@@ -3862,18 +4112,31 @@ void VR_GetMuzzleAdjustedHandPos(vec3_t out) {
   VectorCopy(cl.handpos[1], out);
 
   if (weaponCVarEntry >= 0) {
-    vec3_t local = {
-        vr_weapon_muzzle_offset[weaponCVarEntry * VARS_PER_WEAPON_MUZZLE]
-            .value,
-        vr_weapon_muzzle_offset[weaponCVarEntry * VARS_PER_WEAPON_MUZZLE + 1]
-            .value,
-        vr_weapon_muzzle_offset[weaponCVarEntry * VARS_PER_WEAPON_MUZZLE + 2]
-            .value};
+    qboolean enhanced = VR_CurrentViewmodelUsesEnhancedProfile();
+    vec3_t local = {0, 0, 0};
     vec3_t world;
 
-    if (VR_IsMultiplayerClient() &&
-        vr_weapon_has_mp_muzzle_offset[weaponCVarEntry])
-      VectorAdd(local, vr_weapon_mp_muzzle_offset[weaponCVarEntry], local);
+    if (enhanced) {
+      if (vr_weapon_has_enhanced_muzzle_offset[weaponCVarEntry])
+        VectorCopy(vr_weapon_enhanced_muzzle_offset[weaponCVarEntry], local);
+      if (VR_IsMultiplayerClient() &&
+          vr_weapon_has_enhanced_mp_muzzle_offset[weaponCVarEntry])
+        VectorAdd(local, vr_weapon_enhanced_mp_muzzle_offset[weaponCVarEntry],
+                  local);
+    } else {
+      local[0] =
+          vr_weapon_muzzle_offset[weaponCVarEntry * VARS_PER_WEAPON_MUZZLE]
+              .value;
+      local[1] = vr_weapon_muzzle_offset[weaponCVarEntry *
+                                             VARS_PER_WEAPON_MUZZLE + 1]
+                     .value;
+      local[2] = vr_weapon_muzzle_offset[weaponCVarEntry *
+                                             VARS_PER_WEAPON_MUZZLE + 2]
+                     .value;
+      if (VR_IsMultiplayerClient() &&
+          vr_weapon_has_mp_muzzle_offset[weaponCVarEntry])
+        VectorAdd(local, vr_weapon_mp_muzzle_offset[weaponCVarEntry], local);
+    }
 
     VR_AimOffsetToWorld(local, cl.handrot[1], vr_gunmodelscale.value, world);
     VectorAdd(out, world, out);
@@ -3911,13 +4174,18 @@ static void VR_AdjustBegin(vr_adjust_mode_t mode) {
   aliashdr_t *hdr;
 
   if (VR_AdjustModeIsMuzzle(mode) && vr_adjust_muzzle_return_to_grip) {
-    vr_adjust_muzzle_return_to_grip = false;
+    VR_AdjustCancel(true);
     Con_Printf("vradjustmuzzle: return-to-grip hold cancelled.\n");
     return;
   }
 
+  /* A held weapon adjustment is a new calibration session, so it must not
+   * inherit the post-muzzle pose clamp from the preceding session. */
+  if (VR_AdjustModeIsWeapon(mode) && vr_adjust_muzzle_return_to_grip)
+    VR_AdjustCancel(true);
+
   if (vr_adjust_mode == mode) {
-    vr_adjust_mode = VR_ADJUST_NONE;
+    VR_AdjustCancel(false);
     Con_Printf("vradjust: cancelled.\n");
     return;
   }
@@ -3936,6 +4204,12 @@ static void VR_AdjustBegin(vr_adjust_mode_t mode) {
   VectorCopy(cl.handrot[1], vr_adjust_current_handrot);
   hdr = VR_ActiveAliasHeader(cl.viewent.model, cl.viewent.skinnum,
                              cl.viewent.frame);
+  if (!hdr) {
+    Con_Printf("vradjust: active held weapon has no alias data.\n");
+    VR_AdjustCancel(false);
+    return;
+  }
+  vr_adjust_enhanced_profile = VR_ViewmodelUsesNeutralProfile(hdr);
   VectorCopy(hdr->original_scale_origin, vr_adjust_original_scale_origin);
 
   if (mode == VR_ADJUST_WEAPON) {
@@ -3992,12 +4266,22 @@ static void VR_AdjustWeaponUpdatePose(void) {
   VectorCopy(cl.handpos[1], vr_adjust_current_handpos);
   VectorCopy(cl.handrot[1], vr_adjust_current_handrot);
 
+  if ((vr_adjust_mode != VR_ADJUST_NONE ||
+       vr_adjust_muzzle_return_to_grip) &&
+      (!cl.viewent.model ||
+       Q_strcmp(cl.viewent.model->name, vr_adjust_model) ||
+       VR_CurrentViewmodelUsesEnhancedProfile() != vr_adjust_enhanced_profile)) {
+    Con_Printf("vradjust: active weapon profile changed; cancelled.\n");
+    VR_AdjustCancel(true);
+    return;
+  }
+
   if (vr_adjust_muzzle_return_to_grip) {
     vec3_t delta;
 
     VectorSubtract(vr_adjust_current_handpos, vr_adjust_frozen_handpos, delta);
     if (DotProduct(delta, delta) <= 64.0f) {
-      vr_adjust_muzzle_return_to_grip = false;
+      VR_AdjustCancel(true);
       Con_Printf("vradjustmuzzle: live muzzle restored.\n");
       return;
     }
@@ -4019,9 +4303,10 @@ static qboolean VR_AdjustWeaponCommit(void) {
       !cl.viewent.model ||
       Q_strcmp(cl.viewent.model->name, vr_adjust_model) ||
       Q_strcmp(vr_weapon_offset[slot * VARS_PER_WEAPON + 4].string,
-               vr_adjust_model)) {
+               vr_adjust_model) ||
+      VR_CurrentViewmodelUsesEnhancedProfile() != vr_adjust_enhanced_profile) {
     Con_Printf("vradjust: active weapon changed; cancelled.\n");
-    vr_adjust_mode = VR_ADJUST_NONE;
+    VR_AdjustCancel(true);
     return true;
   }
 
@@ -4029,19 +4314,38 @@ static qboolean VR_AdjustWeaponCommit(void) {
     vec3_t old_offset, old_anchor_world, target_delta_world;
     vec3_t frozen_angles, new_scale_origin;
     vec3_t base_offset, mp_held_offset, new_effective_offset, new_base_offset;
-    float scaleCorrect =
-        (vr_world_scale.value / 0.75f) * vr_gunmodelscale.value;
+    float scaleCorrect = VR_ViewmodelOffsetScale(
+        vr_adjust_model,
+        vr_adjust_enhanced_profile &&
+            Mod_UseRereleaseReplacementForFrame(
+                cl.viewent.model, cl.viewent.skinnum, cl.viewent.frame));
 
-    base_offset[0] = vr_weapon_offset[slot * VARS_PER_WEAPON].value;
-    base_offset[1] = vr_weapon_offset[slot * VARS_PER_WEAPON + 1].value;
-    base_offset[2] = vr_weapon_offset[slot * VARS_PER_WEAPON + 2].value;
+    if (vr_adjust_enhanced_profile) {
+      if (vr_weapon_has_enhanced_held_offset[slot]) {
+        VectorCopy(vr_weapon_enhanced_held_offset[slot], base_offset);
+      } else {
+        VectorCopy(vec3_origin, base_offset);
+      }
+    } else {
+      base_offset[0] = vr_weapon_offset[slot * VARS_PER_WEAPON].value;
+      base_offset[1] = vr_weapon_offset[slot * VARS_PER_WEAPON + 1].value;
+      base_offset[2] = vr_weapon_offset[slot * VARS_PER_WEAPON + 2].value;
+    }
     mp_held_offset[0] = mp_held_offset[1] = mp_held_offset[2] = 0.0f;
-    if (VR_IsMultiplayerClient() && vr_weapon_has_mp_held_offset[slot])
-      VectorCopy(vr_weapon_mp_held_offset[slot], mp_held_offset);
+    if (VR_IsMultiplayerClient()) {
+      if (vr_adjust_enhanced_profile &&
+          vr_weapon_has_enhanced_mp_held_offset[slot]) {
+        VectorCopy(vr_weapon_enhanced_mp_held_offset[slot], mp_held_offset);
+      } else if (!vr_adjust_enhanced_profile &&
+                 vr_weapon_has_mp_held_offset[slot]) {
+        VectorCopy(vr_weapon_mp_held_offset[slot], mp_held_offset);
+      }
+    }
 
     VectorCopy(vr_adjust_original_scale_origin, old_offset);
     VectorAdd(old_offset, base_offset, old_offset);
     VectorAdd(old_offset, mp_held_offset, old_offset);
+    old_offset[2] += vr_gunmodely.value;
 
     VR_HandRotToViewmodelAngles(vr_adjust_frozen_handrot, frozen_angles);
     VR_ModelOffsetToWorld(old_offset, frozen_angles, scaleCorrect,
@@ -4057,42 +4361,68 @@ static qboolean VR_AdjustWeaponCommit(void) {
 
     VectorSubtract(new_scale_origin, vr_adjust_original_scale_origin,
                    new_effective_offset);
+    new_effective_offset[2] -= vr_gunmodely.value;
 
     if (vr_adjust_mode == VR_ADJUST_MP_WEAPON) {
       VectorSubtract(new_effective_offset, base_offset, mp_held_offset);
-      VR_SetMPHeldOffsetForSlot(slot, mp_held_offset);
+      if (vr_adjust_enhanced_profile) {
+        VectorCopy(mp_held_offset, vr_weapon_enhanced_mp_held_offset[slot]);
+        vr_weapon_has_enhanced_mp_held_offset[slot] = true;
+      } else {
+        VR_SetMPHeldOffsetForSlot(slot, mp_held_offset);
+      }
 
-      Con_Printf("vradjustmpweapon: mp_held_offset %.7g %.7g %.7g\n",
+      Con_Printf("vradjustmpweapon: %smp_held_offset %.7g %.7g %.7g\n",
+                 vr_adjust_enhanced_profile ? "enhanced_" : "",
                  mp_held_offset[0], mp_held_offset[1], mp_held_offset[2]);
     } else {
       VectorSubtract(new_effective_offset, mp_held_offset, new_base_offset);
 
-      for (int i = 0; i < 3; i++) {
-        q_snprintf(value, sizeof(value), "%.7g", new_base_offset[i]);
-        Cvar_SetQuick(&vr_weapon_offset[slot * VARS_PER_WEAPON + i], value);
+      if (vr_adjust_enhanced_profile) {
+        VectorCopy(new_base_offset, vr_weapon_enhanced_held_offset[slot]);
+        vr_weapon_has_enhanced_held_offset[slot] = true;
+      } else {
+        for (int i = 0; i < 3; i++) {
+          q_snprintf(value, sizeof(value), "%.7g", new_base_offset[i]);
+          Cvar_SetQuick(&vr_weapon_offset[slot * VARS_PER_WEAPON + i], value);
+        }
       }
 
-      Con_Printf("vradjustweapon: held_offset %.7g %.7g %.7g\n",
-                 vr_weapon_offset[slot * VARS_PER_WEAPON].value,
-                 vr_weapon_offset[slot * VARS_PER_WEAPON + 1].value,
-                 vr_weapon_offset[slot * VARS_PER_WEAPON + 2].value);
+      Con_Printf("vradjustweapon: %sheld_offset %.7g %.7g %.7g\n",
+                 vr_adjust_enhanced_profile ? "enhanced_" : "",
+                 new_base_offset[0], new_base_offset[1], new_base_offset[2]);
     }
   } else {
     vec3_t base, mp_muzzle_offset = {0, 0, 0};
     vec3_t effective, old_offset_world, old_preorigin_world;
     vec3_t target_preorigin, local;
 
-    base[0] =
-        vr_weapon_muzzle_offset[slot * VARS_PER_WEAPON_MUZZLE].value;
-    base[1] =
-        vr_weapon_muzzle_offset[slot * VARS_PER_WEAPON_MUZZLE + 1].value;
-    base[2] =
-        vr_weapon_muzzle_offset[slot * VARS_PER_WEAPON_MUZZLE + 2].value;
+    if (vr_adjust_enhanced_profile) {
+      if (vr_weapon_has_enhanced_muzzle_offset[slot]) {
+        VectorCopy(vr_weapon_enhanced_muzzle_offset[slot], base);
+      } else {
+        VectorCopy(vec3_origin, base);
+      }
+    } else {
+      base[0] =
+          vr_weapon_muzzle_offset[slot * VARS_PER_WEAPON_MUZZLE].value;
+      base[1] =
+          vr_weapon_muzzle_offset[slot * VARS_PER_WEAPON_MUZZLE + 1].value;
+      base[2] =
+          vr_weapon_muzzle_offset[slot * VARS_PER_WEAPON_MUZZLE + 2].value;
+    }
     VectorCopy(base, effective);
-    if (VR_IsMultiplayerClient() &&
-        vr_weapon_has_mp_muzzle_offset[slot]) {
-      VectorCopy(vr_weapon_mp_muzzle_offset[slot], mp_muzzle_offset);
-      VectorAdd(effective, mp_muzzle_offset, effective);
+    if (VR_IsMultiplayerClient()) {
+      if (vr_adjust_enhanced_profile &&
+          vr_weapon_has_enhanced_mp_muzzle_offset[slot]) {
+        VectorCopy(vr_weapon_enhanced_mp_muzzle_offset[slot],
+                   mp_muzzle_offset);
+        VectorAdd(effective, mp_muzzle_offset, effective);
+      } else if (!vr_adjust_enhanced_profile &&
+                 vr_weapon_has_mp_muzzle_offset[slot]) {
+        VectorCopy(vr_weapon_mp_muzzle_offset[slot], mp_muzzle_offset);
+        VectorAdd(effective, mp_muzzle_offset, effective);
+      }
     }
 
     /*
@@ -4114,9 +4444,16 @@ static qboolean VR_AdjustWeaponCommit(void) {
 
     if (vr_adjust_mode == VR_ADJUST_MP_MUZZLE) {
       VectorSubtract(local, base, mp_muzzle_offset);
-      VR_SetMPMuzzleOffsetForSlot(slot, mp_muzzle_offset);
+      if (vr_adjust_enhanced_profile) {
+        VectorCopy(mp_muzzle_offset,
+                   vr_weapon_enhanced_mp_muzzle_offset[slot]);
+        vr_weapon_has_enhanced_mp_muzzle_offset[slot] = true;
+      } else {
+        VR_SetMPMuzzleOffsetForSlot(slot, mp_muzzle_offset);
+      }
 
-      Con_Printf("vradjustmpmuzzle: mp_muzzle_offset %.7g %.7g %.7g\n",
+      Con_Printf("vradjustmpmuzzle: %smp_muzzle_offset %.7g %.7g %.7g\n",
+                 vr_adjust_enhanced_profile ? "enhanced_" : "",
                  mp_muzzle_offset[0], mp_muzzle_offset[1],
                  mp_muzzle_offset[2]);
       Con_Printf("vradjustmpmuzzle: saved; return the controller to the grip "
@@ -4126,28 +4463,33 @@ static qboolean VR_AdjustWeaponCommit(void) {
 
       /* Preserve a multiplayer correction when editing the shared base. */
       VectorSubtract(local, mp_muzzle_offset, new_base);
-      for (int i = 0; i < 3; i++) {
-        q_snprintf(value, sizeof(value), "%.7g", new_base[i]);
-        Cvar_SetQuick(
-            &vr_weapon_muzzle_offset[slot * VARS_PER_WEAPON_MUZZLE + i],
-            value);
+      if (vr_adjust_enhanced_profile) {
+        VectorCopy(new_base, vr_weapon_enhanced_muzzle_offset[slot]);
+        vr_weapon_has_enhanced_muzzle_offset[slot] = true;
+      } else {
+        for (int i = 0; i < 3; i++) {
+          q_snprintf(value, sizeof(value), "%.7g", new_base[i]);
+          Cvar_SetQuick(
+              &vr_weapon_muzzle_offset[slot * VARS_PER_WEAPON_MUZZLE + i],
+              value);
+        }
       }
 
-      Con_Printf("vradjustmuzzle: muzzle_offset %.7g %.7g %.7g\n",
-                 vr_weapon_muzzle_offset[slot * VARS_PER_WEAPON_MUZZLE].value,
-                 vr_weapon_muzzle_offset[slot * VARS_PER_WEAPON_MUZZLE + 1]
-                     .value,
-                 vr_weapon_muzzle_offset[slot * VARS_PER_WEAPON_MUZZLE + 2]
-                     .value);
+      Con_Printf("vradjustmuzzle: %smuzzle_offset %.7g %.7g %.7g\n",
+                 vr_adjust_enhanced_profile ? "enhanced_" : "",
+                 new_base[0], new_base[1], new_base[2]);
       Con_Printf("vradjustmuzzle: saved; return the controller to the grip to "
                  "resume live muzzle tracking.\n");
     }
     vr_adjust_muzzle_return_to_grip = true;
   }
 
-  VR_SaveWeaponAdjustmentsToSchema(slot);
+  VR_SaveWeaponAdjustmentsToSchema(slot, vr_adjust_enhanced_profile);
   lastWeaponHeader = NULL;
-  vr_adjust_mode = VR_ADJUST_NONE;
+  if (VR_AdjustModeIsMuzzle(vr_adjust_mode))
+    vr_adjust_mode = VR_ADJUST_NONE;
+  else
+    VR_AdjustCancel(true);
   return true;
 }
 
@@ -4719,6 +5061,22 @@ void VR_LoadWeaponSchema(void) {
   qboolean has_global_mp_muzzle_offset = false;
 
   num_vr_weapons = 0;
+  memset(vr_schema_enhanced_held_offset, 0,
+         sizeof(vr_schema_enhanced_held_offset));
+  memset(vr_schema_has_enhanced_held_offset, 0,
+         sizeof(vr_schema_has_enhanced_held_offset));
+  memset(vr_schema_enhanced_mp_held_offset, 0,
+         sizeof(vr_schema_enhanced_mp_held_offset));
+  memset(vr_schema_has_enhanced_mp_held_offset, 0,
+         sizeof(vr_schema_has_enhanced_mp_held_offset));
+  memset(vr_schema_enhanced_muzzle_offset, 0,
+         sizeof(vr_schema_enhanced_muzzle_offset));
+  memset(vr_schema_has_enhanced_muzzle_offset, 0,
+         sizeof(vr_schema_has_enhanced_muzzle_offset));
+  memset(vr_schema_enhanced_mp_muzzle_offset, 0,
+         sizeof(vr_schema_enhanced_mp_muzzle_offset));
+  memset(vr_schema_has_enhanced_mp_muzzle_offset, 0,
+         sizeof(vr_schema_has_enhanced_mp_muzzle_offset));
 
   // Try to load vr_weapons.txt from the active search path. This is freed
   // below, so it must come from the zone allocator rather than temp hunk.
@@ -4812,6 +5170,43 @@ void VR_LoadWeaponSchema(void) {
           VectorCopy(w->mp_muzzle_offset, w->schema_mp_muzzle_offset);
           w->has_mp_muzzle_offset = true;
           w->has_schema_mp_muzzle_offset = true;
+        } else if (!Q_strcmp(key, "enhanced_held_offset")) {
+          vr_schema_enhanced_held_offset[num_vr_weapons][0] = Q_atof(com_token);
+          start = (char *)COM_Parse(start);
+          vr_schema_enhanced_held_offset[num_vr_weapons][1] = Q_atof(com_token);
+          start = (char *)COM_Parse(start);
+          vr_schema_enhanced_held_offset[num_vr_weapons][2] = Q_atof(com_token);
+          vr_schema_has_enhanced_held_offset[num_vr_weapons] = true;
+        } else if (!Q_strcmp(key, "enhanced_mp_held_offset")) {
+          vr_schema_enhanced_mp_held_offset[num_vr_weapons][0] =
+              Q_atof(com_token);
+          start = (char *)COM_Parse(start);
+          vr_schema_enhanced_mp_held_offset[num_vr_weapons][1] =
+              Q_atof(com_token);
+          start = (char *)COM_Parse(start);
+          vr_schema_enhanced_mp_held_offset[num_vr_weapons][2] =
+              Q_atof(com_token);
+          vr_schema_has_enhanced_mp_held_offset[num_vr_weapons] = true;
+        } else if (!Q_strcmp(key, "enhanced_muzzle_offset")) {
+          vr_schema_enhanced_muzzle_offset[num_vr_weapons][0] =
+              Q_atof(com_token);
+          start = (char *)COM_Parse(start);
+          vr_schema_enhanced_muzzle_offset[num_vr_weapons][1] =
+              Q_atof(com_token);
+          start = (char *)COM_Parse(start);
+          vr_schema_enhanced_muzzle_offset[num_vr_weapons][2] =
+              Q_atof(com_token);
+          vr_schema_has_enhanced_muzzle_offset[num_vr_weapons] = true;
+        } else if (!Q_strcmp(key, "enhanced_mp_muzzle_offset")) {
+          vr_schema_enhanced_mp_muzzle_offset[num_vr_weapons][0] =
+              Q_atof(com_token);
+          start = (char *)COM_Parse(start);
+          vr_schema_enhanced_mp_muzzle_offset[num_vr_weapons][1] =
+              Q_atof(com_token);
+          start = (char *)COM_Parse(start);
+          vr_schema_enhanced_mp_muzzle_offset[num_vr_weapons][2] =
+              Q_atof(com_token);
+          vr_schema_has_enhanced_mp_muzzle_offset[num_vr_weapons] = true;
         } else if (!Q_strcmp(key, "muzzle_source_offset")) {
           w->muzzle_source_offset[0] = Q_atof(com_token);
           start = (char *)COM_Parse(start);
@@ -4878,7 +5273,11 @@ void VR_LoadWeaponSchema(void) {
           (w->has_held_scale || w->has_held_offset ||
            w->has_mp_held_offset || w->has_muzzle_offset ||
            w->has_mp_muzzle_offset || w->has_muzzle_source_offset ||
-           w->has_muzzle_source_viewofs || w->has_spawn_at_self_origin) &&
+           w->has_muzzle_source_viewofs || w->has_spawn_at_self_origin ||
+           vr_schema_has_enhanced_held_offset[num_vr_weapons] ||
+           vr_schema_has_enhanced_mp_held_offset[num_vr_weapons] ||
+           vr_schema_has_enhanced_muzzle_offset[num_vr_weapons] ||
+           vr_schema_has_enhanced_mp_muzzle_offset[num_vr_weapons]) &&
           w->model_path[0]) {
         Q_strncpy(w->viewmodel_path, w->model_path, sizeof(w->viewmodel_path));
       }
@@ -4896,7 +5295,11 @@ void VR_LoadWeaponSchema(void) {
             (w->has_held_scale || w->has_held_offset ||
              w->has_mp_held_offset || w->has_muzzle_offset ||
              w->has_mp_muzzle_offset || w->has_muzzle_source_offset ||
-             w->has_muzzle_source_viewofs || w->has_spawn_at_self_origin))) {
+             w->has_muzzle_source_viewofs || w->has_spawn_at_self_origin ||
+             vr_schema_has_enhanced_held_offset[num_vr_weapons] ||
+             vr_schema_has_enhanced_mp_held_offset[num_vr_weapons] ||
+             vr_schema_has_enhanced_muzzle_offset[num_vr_weapons] ||
+             vr_schema_has_enhanced_mp_muzzle_offset[num_vr_weapons]))) {
         Con_Printf("VR: Ignoring vr_weapons.txt entry without bitmask/stat ownership or held viewmodel\n");
         continue;
       }
@@ -4988,6 +5391,18 @@ void VR_LoadWeaponSchema(void) {
     if (w->viewmodel_path[0] && w->has_spawn_at_self_origin)
       VR_RegisterWeaponSpawnStyle(w->viewmodel_path,
                                   w->spawn_at_self_origin);
+    if (w->viewmodel_path[0] && vr_schema_has_enhanced_held_offset[i])
+      VR_RegisterEnhancedHeldOffset(w->viewmodel_path,
+                                    vr_schema_enhanced_held_offset[i]);
+    if (w->viewmodel_path[0] && vr_schema_has_enhanced_mp_held_offset[i])
+      VR_RegisterEnhancedMPHeldOffset(w->viewmodel_path,
+                                      vr_schema_enhanced_mp_held_offset[i]);
+    if (w->viewmodel_path[0] && vr_schema_has_enhanced_muzzle_offset[i])
+      VR_RegisterEnhancedMuzzleOffset(w->viewmodel_path,
+                                      vr_schema_enhanced_muzzle_offset[i]);
+    if (w->viewmodel_path[0] && vr_schema_has_enhanced_mp_muzzle_offset[i])
+      VR_RegisterEnhancedMPMuzzleOffset(
+          w->viewmodel_path, vr_schema_enhanced_mp_muzzle_offset[i]);
     if (w->bitmask || w->owned_stat >= 0 || w->active_stat >= 0)
       VR_AddOrUpdateDynWeapon(w->bitmask, w->impulse, w->model_path, 0, false,
                               w->scale, w->offset, w->has_offset,
