@@ -132,7 +132,7 @@ if ($successes.Count -gt 0) {
         }
     }
 
-    Show-MessageBox "Recommended QuakeSpasm-OpenVR SteamVR bindings were installed. If the game is already running, restart it before testing the controllers." "Bindings Installed" 0x40
+    Show-MessageBox "Recommended Quakespasm VR SteamVR bindings were installed. If the game is already running, restart it before testing the controllers." "Bindings Installed" 0x40
     exit 0
 }
 
@@ -142,5 +142,5 @@ foreach ($item in $failures) {
     Write-Host "  $item"
 }
 
-Show-MessageBox "SteamVR did not accept the QuakeSpasm-OpenVR bindings. Launch quakespasm-openvr.exe once in SteamVR, then run this installer again." "Binding Install Failed" 0x30
+Show-MessageBox "SteamVR did not accept the Quakespasm VR bindings. Launch quakespasm-openvr.exe once in SteamVR, then run this installer again." "Binding Install Failed" 0x30
 exit 1

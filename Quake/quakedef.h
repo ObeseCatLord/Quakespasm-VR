@@ -48,6 +48,9 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 // combined version string like "0.92.1-beta1"
 #define	QUAKESPASM_VER_STRING	QS_STRINGIFY(QUAKESPASM_VERSION) "." QS_STRINGIFY(QUAKESPASM_VER_PATCH) QUAKESPASM_VER_SUFFIX
 
+/* User-visible project name. Keep executable/protocol identifiers stable. */
+#define	QUAKESPASM_PROJECT_NAME	"Quakespasm VR"
+
 //define	PARANOID			// speed sapping error checking
 
 #define	GAMENAME	"id1"		// directory to look in by default

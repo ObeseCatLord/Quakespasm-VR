@@ -87,23 +87,12 @@ static qboolean AddonCatalog_IsSafeBaseURL (const char *url, char *out, size_t o
 
 static qboolean AddonCatalog_IsInstalled (const char *gamedir)
 {
-	char path[MAX_OSPATH];
-	if (host_parms->userdir != host_parms->basedir)
-	{
-		q_snprintf (path, sizeof(path), "%s/%s/pak0.pak",
-			host_parms->userdir, gamedir);
-		if (Sys_FileType(path) & FS_ENT_FILE)
-			return true;
-	}
-	q_snprintf (path, sizeof(path), "%s/%s/pak0.pak", com_basedir, gamedir);
-	return Sys_FileType(path) & FS_ENT_FILE;
+	return COM_GameDirHasPak0(gamedir);
 }
 
 static const char *AddonCatalog_InstallRoot (void)
 {
-	if (host_parms->userdir != host_parms->basedir)
-		return host_parms->userdir;
-	return com_basedir;
+	return COM_GetWriteRoot();
 }
 
 static qboolean AddonCatalog_AppendJSON (json_t *json)

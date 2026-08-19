@@ -704,7 +704,7 @@ static qboolean VID_SetMode (int width, int height, int refreshrate, int bpp, qb
 	SDL_GL_SetAttribute(SDL_GL_MULTISAMPLESAMPLES, fsaa);
 #endif
 
-	q_snprintf(caption, sizeof(caption), "QuakeSpasm " QUAKESPASM_VER_STRING);
+	q_snprintf(caption, sizeof(caption), QUAKESPASM_PROJECT_NAME " " QUAKESPASM_VER_STRING);
 
 #if defined(USE_SDL2)
 	/* Create the window if needed, hidden */

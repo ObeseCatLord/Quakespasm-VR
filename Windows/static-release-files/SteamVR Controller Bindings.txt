@@ -1,8 +1,8 @@
-QuakeSpasm-OpenVR SteamVR Controller Bindings
+Quakespasm VR SteamVR Controller Bindings
 =============================================
 
 Windows SteamVR's default legacy bindings for Valve Index controllers do not
-expose every button cleanly to QuakeSpasm-OpenVR. In particular, the Index A
+expose every button cleanly to Quakespasm VR. In particular, the Index A
 buttons are often folded into Grip, and Axis2 is usually left unavailable.
 
 The included binding installer imports a recommended legacy binding for Index
@@ -17,7 +17,7 @@ controllers:
 Setup:
 
 1. Start SteamVR.
-2. If QuakeSpasm-OpenVR has never appeared in SteamVR's controller binding UI,
+2. If Quakespasm VR has never appeared in SteamVR's controller binding UI,
    launch quakespasm-openvr.exe once, then close it.
 3. Run "Install SteamVR Controller Bindings.bat".
 4. Restart quakespasm-openvr.exe before testing the controllers.

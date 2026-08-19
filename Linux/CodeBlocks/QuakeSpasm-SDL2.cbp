@@ -89,6 +89,9 @@
 		<Unit filename="../../Quake/common.c">
 			<Option compilerVar="CC" />
 		</Unit>
+		<Unit filename="../../Quake/steam.c">
+			<Option compilerVar="CC" />
+		</Unit>
 		<Unit filename="../../Quake/common.h" />
 		<Unit filename="../../Quake/console.c">
 			<Option compilerVar="CC" />

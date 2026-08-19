@@ -374,6 +374,10 @@
 				>
 			</File>
 			<File
+				RelativePath="..\..\Quake\steam.c"
+				>
+			</File>
+			<File
 				RelativePath="..\..\Quake\console.c"
 				>
 			</File>

@@ -1,8 +1,8 @@
-# QuakeSpasm-OpenVR
+# Quakespasm VR
 
-This repository is a custom QuakeSpasm-OpenVR fork focused on VR play,
-modern single-player mods, and same-build co-op multiplayer. It keeps the
-gameflorist's QuakeSpasm-OpenVR lineage and VR controls, then adds CSQC
+Quakespasm VR is a Quake source port focused on VR play, modern single-player
+mods, and same-build co-op multiplayer. It continues gameflorist's
+QuakeSpasm-OpenVR lineage and VR controls, then adds CSQC
 compatibility, QSS-M-inspired networking, co-op quality-of-life behavior,
 modern particle/weather support, and per-mod VR weapon calibration.
 
@@ -11,7 +11,7 @@ default branch is the active VR/co-op/mod-compatibility branch.
 
 ## Goals
 
-- Keep QuakeSpasm-OpenVR usable for both VR and `-novr` desktop play.
+- Keep Quakespasm VR usable for both VR and `-novr` desktop play.
 - Support large modern mods such as Arcane Dimensions, Alkaline, Dwell,
   Mjolnir, QBJ3, Raven Keep, Peril, Enyo, and Quake VR-derived mods.
 - Prefer smooth latest-client co-op over legacy client interoperability. Networked
@@ -149,7 +149,19 @@ extended protocol support.
 
 ## Running
 
-Place the executable beside your `id1` folder or Quake rerelease game data.
+If Quake is installed through Steam, extract Quakespasm VR into any folder that
+does not already contain Quake game data and run it. The engine finds Steam's
+Quake installation through `appmanifest_2310.acf`, including non-default Steam
+libraries, and uses the 2021 rerelease content by default. Downloaded rerelease
+add-ons are discovered from both the installation and Nightdive's Saved Games
+directory. Configuration files, saves, and downloaded catalogue add-ons remain
+in the Quakespasm VR folder (or the configured user directory), never in the
+Steam installation.
+
+For a portable/custom installation, place the executable beside your legally
+obtained `id1` folder, or select it explicitly with `-basedir`. Use `-nosteam`
+to disable Steam discovery. `-classic` (also `-original`) prefers Steam's
+original data when both original and rerelease content are installed.
 
 ```sh
 ./quakespasm-openvr.bin -vr -game ad
@@ -157,7 +169,7 @@ Place the executable beside your `id1` folder or Quake rerelease game data.
 ./quakespasm-openvr.bin -dedicated 16 -game vr +coop 1 +map start
 # Explicit enhanced-model pack, without making rerelease game data active:
 ./quakespasm-openvr.bin -rerelease "$HOME/Windows/Steam/steamapps/common/Quake/rerelease"
-# Optional conventional-Steam-location scan (disabled unless requested):
+# Optional enhanced-model-only scan for a deliberately selected classic install:
 ./quakespasm-openvr.bin -autodetectrerelease
 ```
 
@@ -286,7 +298,7 @@ Studio output.
 GitHub Actions creates immutable source tags with UTC-date + source-commit
 suffixes such as `nightly-20260713-g15c9adf2`. Nightlies do not create entries
 or downloadable assets on the GitHub Releases page. Open the matching completed
-run of the **Nightly Build and Tag** workflow on the Actions page to download
+run of the **Quakespasm VR Nightly Build and Tag** workflow on the Actions page to download
 these workflow artifacts:
 
 - `nightly-windows-x64`, containing
@@ -299,8 +311,9 @@ OpenVR, SDL2, and codec runtime DLLs plus license files. The Linux package
 includes `quakespasm-openvr.bin` and `libopenvr_api.so`, without a launcher
 script; SDL2, OpenGL, curl, and codec libraries remain system dependencies.
 Both packages include `quakespasm.pak` but no commercial Quake game data.
-Extract the appropriate ZIP into a Quake install that contains your legally
-obtained `id1` data.
+Steam users can extract the appropriate ZIP into any otherwise empty folder;
+the game data is found automatically. For a portable/custom installation,
+extract it beside your legally obtained `id1` data or use `-basedir`.
 
 ## Controls
 

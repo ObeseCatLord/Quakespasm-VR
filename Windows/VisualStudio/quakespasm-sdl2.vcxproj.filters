@@ -51,6 +51,9 @@
     <ClCompile Include="..\..\Quake\common.c">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="..\..\Quake\steam.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="..\..\Quake\console.c">
       <Filter>Source Files</Filter>
     </ClCompile>
