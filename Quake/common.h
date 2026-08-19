@@ -305,6 +305,8 @@ typedef struct pack_s
 {
 	char	filename[MAX_OSPATH];
 	int		handle;
+	int		filesize;
+	unsigned short	directory_crc;
 	int		numfiles;
 	packfile_t	*files;
 } pack_t;
@@ -322,6 +324,12 @@ typedef struct searchpath_s
 	 * active search path while making the official model companions available.
 	 */
 	qboolean rerelease_models;
+	/*
+	 * True when files from this path are known to be official rerelease model
+	 * companions. Unlike rerelease_models, this is provenance only and does
+	 * not restrict which files the search path may serve.
+	 */
+	qboolean rerelease_model_source;
 	struct searchpath_s	*next;
 } searchpath_t;
 
