@@ -2226,7 +2226,9 @@ byte *COM_LoadMallocFile_TextMode_OSPath (const char *path, long *len_out)
 	// othewise multiline messages have a garbage character at the end of each line.
 	// TODO: could handle in a way that allows loading CRLF savegames on mac/linux
 	// without the junk characters appearing.
-	f = fopen (path, "rt");
+	/* OS paths are UTF-8; on Windows Sys_fopen performs the required wide
+	 * conversion.  Plain fopen breaks Steam discovery in non-ASCII paths. */
+	f = Sys_fopen (path, "rt");
 	if (f == NULL)
 		return NULL;
 
