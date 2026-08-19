@@ -477,6 +477,30 @@ qboolean Mod_UseMD5ModelForFrame (qmodel_t *mod, int skinnum, int frame)
 }
 
 /*
+=================
+Mod_UseEnhancedReplacementForFrame
+
+True only when the enhanced-model option is actively replacing a classic MDL
+for this frame. Native MD3/MD5-only models are not enhanced-option replacements.
+=================
+*/
+qboolean Mod_UseEnhancedReplacementForFrame (qmodel_t *mod, int skinnum,
+							 int frame)
+{
+	mod_alias_cache_t *cache;
+
+	if (!mod || mod->type != mod_alias || !r_enhancedmodels.value)
+		return false;
+
+	cache = Mod_GetAliasCache (mod);
+	if (!cache->mdl_offset)
+		return false;
+
+	return Mod_UseMD3ModelForFrame (mod, skinnum, frame) ||
+		Mod_UseMD5ModelForFrame (mod, skinnum, frame);
+}
+
+/*
 ===============
 Mod_PointInLeaf
 ===============

@@ -7311,15 +7311,21 @@ static void VR_DrawText3DAligned(vec3_t origin, vec3_t right, vec3_t up,
                                  const char *str, float scale, vec3_t color,
                                  qboolean centered, qboolean depth_test) {
   qboolean old_depth_test;
+  GLboolean old_depth_write;
 
   if (!char_texture)
     return;
 
   old_depth_test = glIsEnabled(GL_DEPTH_TEST);
-  if (depth_test)
+  glGetBooleanv(GL_DEPTH_WRITEMASK, &old_depth_write);
+  if (depth_test) {
     glEnable(GL_DEPTH_TEST);
-  else
+    /* Outlined labels are several coplanar passes. Test them against the
+     * scene, but do not let those passes occlude one another. */
+    glDepthMask(GL_FALSE);
+  } else {
     glDisable(GL_DEPTH_TEST);
+  }
   glDisable(GL_CULL_FACE);
   glDisable(GL_BLEND);
   glEnable(GL_ALPHA_TEST);
@@ -7376,6 +7382,7 @@ static void VR_DrawText3DAligned(vec3_t origin, vec3_t right, vec3_t up,
     glEnable(GL_DEPTH_TEST);
   else
     glDisable(GL_DEPTH_TEST);
+  glDepthMask(old_depth_write);
   glEnable(GL_CULL_FACE);
   glTexEnvf(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_REPLACE);
 }
@@ -7690,6 +7697,8 @@ static void VR_RunWeaponMenu(qboolean draw) {
       qboolean is_equipped = VR_WeaponIsActive(w);
 
       float schema_scale = w->scale > 0.0f ? w->scale : 1.0f;
+      if (Mod_UseEnhancedReplacementForFrame(mdl, ent.skinnum, ent.frame))
+        schema_scale *= 0.5f;
       float entity_scale = (is_selected ? 0.40f : 0.25f) * schema_scale;
       float layout_entity_scale = 0.25f * schema_scale;
       if (entity_scale > 0.0f && entity_scale < (1.0f / ENTSCALE_DEFAULT))

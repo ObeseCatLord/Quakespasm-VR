@@ -53,6 +53,9 @@ void TraceLine (vec3_t start, vec3_t end, vec3_t impact)
 	trace_t	trace;
 
 	memset (&trace, 0, sizeof(trace));
+	trace.fraction = 1;
+	trace.allsolid = true;
+	VectorCopy (end, trace.endpos);
 	SV_RecursiveHullCheck (cl.worldmodel->hulls, 0, 0, 1, start, end, &trace);
 
 	VectorCopy (trace.endpos, impact);
@@ -123,4 +126,3 @@ void Chase_UpdateForDrawing (void)
 	if (r_refdef.viewangles[PITCH] == 90 || r_refdef.viewangles[PITCH] == -90)
 		r_refdef.viewangles[YAW] = cl.viewangles[YAW];
 }
-
