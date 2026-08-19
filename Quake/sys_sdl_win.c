@@ -311,7 +311,10 @@ qboolean Sys_GetSteamDir (char *path, size_t pathsize)
 {
 	HKEY key;
 	wchar_t wpath[MAX_PATH];
-	DWORD type, bytes = sizeof(wpath) - sizeof(wpath[0]);
+	wchar_t wconfig[MAX_PATH];
+	static const wchar_t suffix[] = L"\\config\\libraryfolders.vdf";
+	DWORD type, bytes = sizeof(wpath) - sizeof(wpath[0]), attributes;
+	size_t pathlen;
 
 	if (RegOpenKeyExW(HKEY_CURRENT_USER, L"Software\\Valve\\Steam", 0, KEY_READ, &key) != ERROR_SUCCESS)
 		return false;
@@ -324,12 +327,20 @@ qboolean Sys_GetSteamDir (char *path, size_t pathsize)
 	RegCloseKey(key);
 	/* Registry strings are allowed to omit their terminating NUL. */
 	wpath[bytes / sizeof(wchar_t)] = 0;
+	pathlen = wcslen(wpath);
+	if (pathlen + countof(suffix) > countof(wconfig))
+		return false;
+	wcscpy(wconfig, wpath);
+	wcscat(wconfig, suffix);
+	attributes = GetFileAttributesW(wconfig);
+	if (attributes == INVALID_FILE_ATTRIBUTES || (attributes & FILE_ATTRIBUTE_DIRECTORY))
+		return false;
 	if (!WideCharToMultiByte(CP_UTF8, 0, wpath, -1, path, (int)pathsize, NULL, NULL))
 	{
 		if (pathsize) path[0] = 0;
 		return false;
 	}
-	return Sys_FileType(va("%s/config/libraryfolders.vdf", path)) & FS_ENT_FILE;
+	return true;
 }
 
 static HRESULT Sys_InitCOM (void)
