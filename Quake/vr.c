@@ -7245,6 +7245,11 @@ static void VR_WeaponMenuCapturedAngles(
 extern "C" void VR_BeginWeaponMenu(void) {
   int mode = (int)vr_weaponmenu_mode.value;
 
+  /* The mode cvar is a VR preference. Desktop always uses the legacy
+   * screen-based wheel, even when playspace is selected for VR. */
+  if (!vr_enabled.value)
+    mode = VR_WEAPONMENU_MODE_VIEW;
+
   vr_weaponmenu_selection = -1;
   vr_weaponmenu_selection_type = VR_WEAPONMENU_SELECTION_NONE;
   vr_weaponmenu_anchor_valid = false;
