@@ -1873,12 +1873,17 @@ static qboolean VR_ViewmodelUsesNeutralProfile(const aliashdr_t *hdr) {
 
 static void VR_ApplyNeutralViewmodelTransform(aliashdr_t *hdr,
                                                qboolean rerelease_model,
-                                               qboolean axe_model) {
+                                               qboolean axe_model,
+                                               qboolean double_shotgun_model) {
   float scaleCorrect =
       (vr_world_scale.value / 0.75f) * vr_gunmodelscale.value;
 
-  if (rerelease_model)
-    scaleCorrect *= axe_model ? (1.0f / 3.0f) : 0.5f;
+  if (rerelease_model) {
+    if (axe_model)
+      scaleCorrect *= 1.0f / 3.0f;
+    else if (!double_shotgun_model)
+      scaleCorrect *= 0.5f;
+  }
 
   /* Preserve global user tuning, but do not apply an MDL-pack-specific slot. */
   VectorScale(hdr->original_scale, scaleCorrect, hdr->scale);
@@ -1914,7 +1919,8 @@ void Mod_Weapon(qmodel_t *model, aliashdr_t *hdr) {
     VR_ApplyNeutralViewmodelTransform(
         hdr, Mod_UseRereleaseReplacementForFrame(
                  model, cl.viewent.skinnum, cl.viewent.frame),
-        !q_strcasecmp(name, "progs/v_axe.mdl"));
+        !q_strcasecmp(name, "progs/v_axe.mdl"),
+        !q_strcasecmp(name, "progs/v_shot2.mdl"));
     return;
   }
 
@@ -7842,11 +7848,12 @@ static void VR_RunWeaponMenu(qboolean draw) {
                       playspace);
       }
 
-      // Save position for selection raycasting.
-      // Use ent.origin (vertically centred) plus a small rightward nudge
-      // to align with the visual weapon mass.
+      // Save the stable layout centre for selection raycasting.  The entity
+      // origin was offset to centre the normal-size model at pos, so using
+      // ent.origin here puts the hotspot below models whose bounds have a
+      // positive vertical centre.
       vec3_t target_pos;
-      VectorCopy(ent.origin, target_pos);
+      VectorCopy(pos, target_pos);
       VectorMA(target_pos, 3.0f * weapon_mesh_scale, right, target_pos);
       VectorCopy(target_pos, weapon_positions[w_index]);
       weapon_position_valid[w_index] = true;
