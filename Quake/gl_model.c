@@ -67,6 +67,8 @@ typedef struct mod_alias_cache_s
 	int		mdl_offset;
 	int		md3_offset;
 	int		md5_offset;
+	qboolean	md3_from_rerelease;
+	qboolean	md5_from_rerelease;
 } mod_alias_cache_t;
 
 #define MOD_ALIAS_CACHE_DATA_OFFSET \
@@ -80,6 +82,8 @@ typedef struct mod_alias_build_s
 	int		mdl_offset;
 	int		md3_offset;
 	int		md5_offset;
+	qboolean	md3_from_rerelease;
+	qboolean	md5_from_rerelease;
 	vec3_t		md3mins;
 	vec3_t		md3maxs;
 	vec3_t		md5mins;
@@ -313,6 +317,8 @@ static void Mod_FinishAliasBuild (qmodel_t *mod)
 		(int)MOD_ALIAS_CACHE_DATA_OFFSET + mod_alias_build.md3_offset : 0;
 	cache->md5_offset = mod_alias_build.md5_offset ?
 		(int)MOD_ALIAS_CACHE_DATA_OFFSET + mod_alias_build.md5_offset : 0;
+	cache->md3_from_rerelease = mod_alias_build.md3_from_rerelease;
+	cache->md5_from_rerelease = mod_alias_build.md5_from_rerelease;
 	memcpy ((byte *)cache + MOD_ALIAS_CACHE_DATA_OFFSET, mod_alias_build.base, rawsize);
 
 	Hunk_FreeToLowMark (mod_alias_build.startmark);
@@ -498,6 +504,23 @@ qboolean Mod_UseEnhancedReplacementForFrame (qmodel_t *mod, int skinnum,
 
 	return Mod_UseMD3ModelForFrame (mod, skinnum, frame) ||
 		Mod_UseMD5ModelForFrame (mod, skinnum, frame);
+}
+
+qboolean Mod_UseRereleaseReplacementForFrame (qmodel_t *mod, int skinnum,
+							 int frame)
+{
+	mod_alias_cache_t *cache;
+
+	if (!Mod_UseEnhancedReplacementForFrame (mod, skinnum, frame))
+		return false;
+
+	cache = Mod_GetAliasCache (mod);
+	if (Mod_UseMD3ModelForFrame (mod, skinnum, frame))
+		return cache->md3_from_rerelease;
+	if (Mod_UseMD5ModelForFrame (mod, skinnum, frame))
+		return cache->md5_from_rerelease;
+
+	return false;
 }
 
 /*
@@ -795,6 +818,8 @@ static qmodel_t *Mod_LoadModel (qmodel_t *mod, qboolean crash)
 		byte *md5buf = NULL;
 		unsigned int md3_path_id = 0;
 		unsigned int md5_path_id = 0;
+		qboolean md3_from_rerelease = false;
+		qboolean md5_from_rerelease = false;
 
 		Mod_BeginAliasBuild ();
 
@@ -808,7 +833,8 @@ static qmodel_t *Mod_LoadModel (qmodel_t *mod, qboolean crash)
 		{
 			COM_StripExtension (mod->name, md3_name, sizeof(md3_name));
 			COM_AddExtension (md3_name, ".md3", sizeof(md3_name));
-			if (!COM_FileExists (md3_name, &md3_path_id) || md3_path_id < mod->path_id)
+			if (!COM_FileExistsEx (md3_name, &md3_path_id, &md3_from_rerelease) ||
+				md3_path_id < mod->path_id)
 				md3_path_id = 0;
 		}
 
@@ -817,7 +843,8 @@ static qmodel_t *Mod_LoadModel (qmodel_t *mod, qboolean crash)
 		{
 			COM_StripExtension (mod->name, md5_name, sizeof(md5_name));
 			COM_AddExtension (md5_name, ".md5mesh", sizeof(md5_name));
-			if (!COM_FileExists (md5_name, &md5_path_id) || md5_path_id < mod->path_id)
+			if (!COM_FileExistsEx (md5_name, &md5_path_id, &md5_from_rerelease) ||
+				md5_path_id < mod->path_id)
 				md5_path_id = 0;
 		}
 
@@ -840,6 +867,7 @@ static qmodel_t *Mod_LoadModel (qmodel_t *mod, qboolean crash)
 			md3_filesize = com_filesize;
 			if (md3buf)
 			{
+				mod_alias_build.md3_from_rerelease = md3_from_rerelease;
 				/* Load companion skins against the replacement's search path. */
 				mod->path_id = md3_path_id;
 				Mod_LoadMD3Model (mod, md3buf, (size_t)md3_filesize);
@@ -856,6 +884,7 @@ static qmodel_t *Mod_LoadModel (qmodel_t *mod, qboolean crash)
 			md5_filesize = com_filesize;
 			if (md5buf)
 			{
+				mod_alias_build.md5_from_rerelease = md5_from_rerelease;
 				mod->path_id = md5_path_id;
 				Mod_LoadMD5MeshModel (mod, md5buf, (size_t)md5_filesize);
 				mod->path_id = original_path_id;

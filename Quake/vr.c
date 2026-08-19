@@ -1868,9 +1868,13 @@ static qboolean VR_ViewmodelUsesNeutralProfile(const aliashdr_t *hdr) {
   return hdr && hdr->poseverttype == ALIAS_POSE_MD5;
 }
 
-static void VR_ApplyNeutralViewmodelTransform(aliashdr_t *hdr) {
+static void VR_ApplyNeutralViewmodelTransform(aliashdr_t *hdr,
+                                               qboolean rerelease_model) {
   float scaleCorrect =
       (vr_world_scale.value / 0.75f) * vr_gunmodelscale.value;
+
+  if (rerelease_model)
+    scaleCorrect /= 3.0f;
 
   /* Preserve global user tuning, but do not apply an MDL-pack-specific slot. */
   VectorScale(hdr->original_scale, scaleCorrect, hdr->scale);
@@ -1903,7 +1907,9 @@ void Mod_Weapon(qmodel_t *model, aliashdr_t *hdr) {
   }
 
   if (VR_ViewmodelUsesNeutralProfile(hdr)) {
-    VR_ApplyNeutralViewmodelTransform(hdr);
+    VR_ApplyNeutralViewmodelTransform(
+        hdr, Mod_UseRereleaseReplacementForFrame(
+                 model, cl.viewent.skinnum, cl.viewent.frame));
     return;
   }
 
@@ -7697,8 +7703,6 @@ static void VR_RunWeaponMenu(qboolean draw) {
       qboolean is_equipped = VR_WeaponIsActive(w);
 
       float schema_scale = w->scale > 0.0f ? w->scale : 1.0f;
-      if (Mod_UseEnhancedReplacementForFrame(mdl, ent.skinnum, ent.frame))
-        schema_scale *= 0.5f;
       float entity_scale = (is_selected ? 0.40f : 0.25f) * schema_scale;
       float layout_entity_scale = 0.25f * schema_scale;
       if (entity_scale > 0.0f && entity_scale < (1.0f / ENTSCALE_DEFAULT))

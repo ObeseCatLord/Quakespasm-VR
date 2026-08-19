@@ -586,6 +586,8 @@ qboolean Mod_UseMD3ModelForFrame (qmodel_t *mod, int skinnum, int frame);
 qboolean Mod_UseMD5ModelForFrame (qmodel_t *mod, int skinnum, int frame);
 qboolean Mod_UseEnhancedReplacementForFrame (qmodel_t *mod, int skinnum,
 							 int frame);
+qboolean Mod_UseRereleaseReplacementForFrame (qmodel_t *mod, int skinnum,
+							 int frame);
 void	Mod_TouchModel (const char *name);
 void	Mod_ForEachModel (void (*callback)(qmodel_t *mod));
 
