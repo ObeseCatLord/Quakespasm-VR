@@ -1770,7 +1770,7 @@ can be used for detecting a file's presence.
 ===========
 */
 static int COM_FindFile (const char *filename, int *handle, FILE **file,
-							unsigned int *path_id)
+							unsigned int *path_id, qboolean *rerelease_models)
 {
 	searchpath_t	*search;
 	char		netpath[MAX_OSPATH];
@@ -1781,6 +1781,8 @@ static int COM_FindFile (const char *filename, int *handle, FILE **file,
 		Sys_Error ("COM_FindFile: both handle and file set");
 
 	file_from_pak = 0;
+	if (rerelease_models)
+		*rerelease_models = false;
 
 //
 // search through the path, one element at a time
@@ -1802,6 +1804,8 @@ static int COM_FindFile (const char *filename, int *handle, FILE **file,
 				file_from_pak = 1;
 				if (path_id)
 					*path_id = search->path_id;
+				if (rerelease_models)
+					*rerelease_models = search->rerelease_models;
 				if (handle)
 				{
 					*handle = pak->handle;
@@ -1835,6 +1839,8 @@ static int COM_FindFile (const char *filename, int *handle, FILE **file,
 
 			if (path_id)
 				*path_id = search->path_id;
+			if (rerelease_models)
+				*rerelease_models = search->rerelease_models;
 			if (handle)
 			{
 				com_filesize = Sys_FileOpenRead (netpath, &i);
@@ -1880,7 +1886,13 @@ Returns whether the file is found in the quake filesystem.
 */
 qboolean COM_FileExists (const char *filename, unsigned int *path_id)
 {
-	int ret = COM_FindFile (filename, NULL, NULL, path_id);
+	return COM_FileExistsEx (filename, path_id, NULL);
+}
+
+qboolean COM_FileExistsEx (const char *filename, unsigned int *path_id,
+							qboolean *rerelease_models)
+{
+	int ret = COM_FindFile (filename, NULL, NULL, path_id, rerelease_models);
 	return (ret == -1) ? false : true;
 }
 
@@ -1895,7 +1907,7 @@ it may actually be inside a pak file
 */
 int COM_OpenFile (const char *filename, int *handle, unsigned int *path_id)
 {
-	return COM_FindFile (filename, handle, NULL, path_id);
+	return COM_FindFile (filename, handle, NULL, path_id, NULL);
 }
 
 /*
@@ -1908,7 +1920,7 @@ into the file.
 */
 int COM_FOpenFile (const char *filename, FILE **file, unsigned int *path_id)
 {
-	return COM_FindFile (filename, NULL, file, path_id);
+	return COM_FindFile (filename, NULL, file, path_id, NULL);
 }
 
 /*
