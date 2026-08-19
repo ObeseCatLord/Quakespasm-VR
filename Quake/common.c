@@ -1127,6 +1127,18 @@ const char *COM_SkipPath (const char *pathname)
 
 /*
 ============
+COM_SkipSpace
+============
+*/
+const char *COM_SkipSpace (const char *str)
+{
+	while (q_isspace (*str))
+		str++;
+	return str;
+}
+
+/*
+============
 COM_StripExtension
 ============
 */

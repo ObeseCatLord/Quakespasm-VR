@@ -125,6 +125,21 @@ typedef struct
 		eval_t *ptr;
 	} customstats[MAX_CL_STATS*2];	//strings or numeric...
 	size_t		numcustomstats;
+
+	struct
+	{
+		qboolean	active;
+		int			warnings;
+
+		const char	*changelevel;
+		int			trigger_changelevel;
+		int			valid_changelevel;
+		int			intermission;
+		int			skill_triggers;
+		int			coop_spawns;
+		int			dm_spawns;
+		int			skill_ents[3];
+	} mapchecks;					// additional map checks (for level designers)
 } server_t;
 
 void SV_SetupSkyRoom (const char *value);

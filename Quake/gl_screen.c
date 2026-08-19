@@ -26,6 +26,8 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "quakedef.h"
 #include "vr.h"
 
+void M_DrawTextBox(int x, int y, int width, int lines);
+
 /*
 
 background clear
@@ -86,6 +88,7 @@ cvar_t scr_conwidth = {"scr_conwidth", "0", CVAR_ARCHIVE};
 cvar_t scr_conscale = {"scr_conscale", "1", CVAR_ARCHIVE};
 cvar_t scr_autoscale = {"scr_autoscale", "1", CVAR_ARCHIVE};
 cvar_t scr_crosshairscale = {"scr_crosshairscale", "1", CVAR_ARCHIVE};
+cvar_t scr_infoscale = {"scr_infoscale", "2.0", CVAR_ARCHIVE};
 cvar_t scr_crosshair_desktop_fallback = {"scr_crosshair_desktop_fallback", "1", CVAR_ARCHIVE};
 cvar_t scr_showfps = {"scr_showfps", "0", CVAR_NONE};
 cvar_t scr_clock = {"scr_clock", "0", CVAR_NONE};
@@ -100,6 +103,7 @@ cvar_t scr_centertime = {"scr_centertime", "4", CVAR_NONE};
 cvar_t scr_showturtle = {"showturtle", "0", CVAR_NONE};
 cvar_t scr_showpause = {"showpause", "1", CVAR_NONE};
 cvar_t scr_printspeed = {"scr_printspeed", "8", CVAR_NONE};
+cvar_t scr_centerprintbg = {"scr_centerprintbg", "2", CVAR_ARCHIVE}; // 0=off; 1=classic box; 2=menu box; 3=menu strip
 cvar_t gl_triplebuffer = {"gl_triplebuffer", "1", CVAR_ARCHIVE};
 
 cvar_t cl_gun_fovscale = {"cl_gun_fovscale", "1", CVAR_ARCHIVE}; // Qrack
@@ -146,6 +150,7 @@ char scr_centerstring[1024];
 float scr_centertime_start; // for slow victory printing
 float scr_centertime_off;
 int scr_center_lines;
+int scr_center_maxcols;
 int scr_erase_lines;
 int scr_erase_center;
 
@@ -237,6 +242,22 @@ static int SCR_CenterPrintLineCount(const char *str)
   return lines;
 }
 
+static int SCR_CenterPrintMaxColumns(const char *str)
+{
+  int maxcols = 0;
+  int cols = 0;
+
+  for (; str && *str; str++) {
+    if (*str == '\n') {
+      maxcols = q_max(maxcols, cols);
+      cols = 0;
+    } else {
+      cols++;
+    }
+  }
+  return q_max(maxcols, cols);
+}
+
 /*
 ==============
 SCR_CenterPrint
@@ -251,6 +272,39 @@ void SCR_CenterPrint(const char *str) // update centerprint data
   scr_centertime_off = scr_centertime.value;
   scr_centertime_start = cl.time;
   scr_center_lines = SCR_CenterPrintLineCount(scr_centerstring);
+  scr_center_maxcols = SCR_CenterPrintMaxColumns(scr_centerstring);
+}
+
+static void SCR_DrawCenterStringBG(int y)
+{
+  static const float black[3] = {0, 0, 0};
+  int len, lines, x;
+
+  if (cl.intermission || scr_center_lines <= 0 || scr_center_maxcols <= 0)
+    return;
+
+  lines = scr_center_lines;
+  switch ((int)scr_centerprintbg.value) {
+  case 1: /* Classic Quake menu text box. */
+    len = (scr_center_maxcols + 3) & ~1;
+    x = (320 - len * 8) / 2;
+    GL_SetCanvasColor(1, 1, 1, 0.7f);
+    M_DrawTextBox(x - 8, y - 12, len, lines + 1);
+    GL_SetCanvasColor(1, 1, 1, 1);
+    break;
+  case 2: /* Compact translucent menu-style box. */
+    len = q_min(scr_center_maxcols, 40) + 2;
+    x = (320 - len * 8) / 2;
+    Draw_FillEx(x, y - 4, len * 8, lines * 8 + 8, black,
+                0.7f);
+    break;
+  case 3: /* Full-width menu-style strip. */
+    Draw_FillEx(0, y - 4, 320, lines * 8 + 8, black,
+                0.7f);
+    break;
+  default:
+    break;
+  }
 }
 
 void SCR_DrawCenterString(void) // actually do the drawing
@@ -278,6 +332,8 @@ void SCR_DrawCenterString(void) // actually do the drawing
     y = 48;
   if (crosshair.value)
     y -= 8;
+
+  SCR_DrawCenterStringBG(y);
 
   do {
     // scan the width of the line
@@ -544,6 +600,7 @@ void SCR_Init(void) {
   Cvar_SetCallback(&scr_autoscale, SCR_Callback_autoScale);
   Cvar_RegisterVariable(&scr_autoscale);
   Cvar_RegisterVariable(&scr_crosshairscale);
+  Cvar_RegisterVariable(&scr_infoscale);
   Cvar_RegisterVariable(&scr_crosshair_desktop_fallback);
   Cvar_RegisterVariable(&scr_showfps);
   Cvar_RegisterVariable(&scr_clock);
@@ -560,6 +617,7 @@ void SCR_Init(void) {
   Cvar_RegisterVariable(&scr_showpause);
   Cvar_RegisterVariable(&scr_centertime);
   Cvar_RegisterVariable(&scr_printspeed);
+  Cvar_RegisterVariable(&scr_centerprintbg);
   Cvar_RegisterVariable(&gl_triplebuffer);
   Cvar_RegisterVariable(&cl_gun_fovscale);
 
@@ -650,41 +708,78 @@ void SCR_DrawDevStats(void) {
   int y = 25 - 9; // 9=number of lines to print
   int x = 0;      // margin
 
-  if (!devstats.value)
-    return;
+  if (devstats.value) {
+    GL_SetCanvas(CANVAS_BOTTOMLEFT);
 
-  GL_SetCanvas(CANVAS_BOTTOMLEFT);
+    Draw_Fill(x, y * 8, 19 * 8, 9 * 8, 0, 0.5); // dark rectangle
 
-  Draw_Fill(x, y * 8, 19 * 8, 9 * 8, 0, 0.5); // dark rectangle
+    sprintf(str, "devstats |Curr Peak");
+    Draw_String(x, (y++) * 8 - x, str);
 
-  sprintf(str, "devstats |Curr Peak");
-  Draw_String(x, (y++) * 8 - x, str);
+    sprintf(str, "---------+---------");
+    Draw_String(x, (y++) * 8 - x, str);
 
-  sprintf(str, "---------+---------");
-  Draw_String(x, (y++) * 8 - x, str);
+    sprintf(str, "Edicts   |%4i %4i", dev_stats.edicts, dev_peakstats.edicts);
+    Draw_String(x, (y++) * 8 - x, str);
 
-  sprintf(str, "Edicts   |%4i %4i", dev_stats.edicts, dev_peakstats.edicts);
-  Draw_String(x, (y++) * 8 - x, str);
+    sprintf(str, "Packet   |%4i %4i", dev_stats.packetsize,
+            dev_peakstats.packetsize);
+    Draw_String(x, (y++) * 8 - x, str);
 
-  sprintf(str, "Packet   |%4i %4i", dev_stats.packetsize,
-          dev_peakstats.packetsize);
-  Draw_String(x, (y++) * 8 - x, str);
+    sprintf(str, "Visedicts|%4i %4i", dev_stats.visedicts,
+            dev_peakstats.visedicts);
+    Draw_String(x, (y++) * 8 - x, str);
 
-  sprintf(str, "Visedicts|%4i %4i", dev_stats.visedicts,
-          dev_peakstats.visedicts);
-  Draw_String(x, (y++) * 8 - x, str);
+    sprintf(str, "Efrags   |%4i %4i", dev_stats.efrags, dev_peakstats.efrags);
+    Draw_String(x, (y++) * 8 - x, str);
 
-  sprintf(str, "Efrags   |%4i %4i", dev_stats.efrags, dev_peakstats.efrags);
-  Draw_String(x, (y++) * 8 - x, str);
+    sprintf(str, "Dlights  |%4i %4i", dev_stats.dlights, dev_peakstats.dlights);
+    Draw_String(x, (y++) * 8 - x, str);
 
-  sprintf(str, "Dlights  |%4i %4i", dev_stats.dlights, dev_peakstats.dlights);
-  Draw_String(x, (y++) * 8 - x, str);
+    sprintf(str, "Beams    |%4i %4i", dev_stats.beams, dev_peakstats.beams);
+    Draw_String(x, (y++) * 8 - x, str);
 
-  sprintf(str, "Beams    |%4i %4i", dev_stats.beams, dev_peakstats.beams);
-  Draw_String(x, (y++) * 8 - x, str);
+    sprintf(str, "Tempents |%4i %4i", dev_stats.tempents, dev_peakstats.tempents);
+    Draw_String(x, (y++) * 8 - x, str);
+  }
 
-  sprintf(str, "Tempents |%4i %4i", dev_stats.tempents, dev_peakstats.tempents);
-  Draw_String(x, (y++) * 8 - x, str);
+  {
+    static const float black[3] = {0, 0, 0};
+    const char *text = R_GetShowFieldsText();
+    const char *line;
+    int maxchars = 0, lines = 0, chars;
+
+    if (!text || !*text)
+      return;
+    for (line = text; ; line++) {
+      if (*line == '\n' || !*line) {
+        chars = (int)(line - text);
+        maxchars = q_max(maxchars, chars);
+        lines++;
+        if (!*line)
+          break;
+        text = line + 1;
+      }
+    }
+    maxchars = q_min(maxchars, 39);
+    GL_SetCanvas(CANVAS_INFO);
+    x = 320 - maxchars * 8 - 4;
+    y = 200 - lines * 8 - 4;
+    Draw_FillEx(x - 4, y - 4, maxchars * 8 + 8, lines * 8 + 8, black, 0.75f);
+    for (line = R_GetShowFieldsText(); *line; ) {
+      const char *end = strchr(line, '\n');
+      char display[256];
+      size_t len = end ? (size_t)(end - line) : strlen(line);
+      len = q_min(len, sizeof(display) - 1);
+      memcpy(display, line, len);
+      display[len] = 0;
+      Draw_String(x, y, display);
+      y += 8;
+      if (!end)
+        break;
+      line = end + 1;
+    }
+  }
 }
 
 /*

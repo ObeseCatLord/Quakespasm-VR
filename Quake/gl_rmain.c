@@ -129,6 +129,8 @@ cvar_t r_oldskyleaf = {"r_oldskyleaf", "0", CVAR_NONE};
 cvar_t r_drawworld = {"r_drawworld", "1", CVAR_NONE};
 cvar_t r_showtris = {"r_showtris", "0", CVAR_NONE};
 cvar_t r_showbboxes = {"r_showbboxes", "0", CVAR_NONE};
+cvar_t r_showfields = {"r_showfields", "0", CVAR_NONE};
+cvar_t r_showskel = {"r_showskel", "0", CVAR_NONE};
 cvar_t r_lerpmodels = {"r_lerpmodels", "1", CVAR_NONE};
 cvar_t r_lerpmove = {"r_lerpmove", "1", CVAR_NONE};
 cvar_t r_nolerp_list = {
@@ -1193,7 +1195,7 @@ void R_DrawEntitiesOnList(qboolean alphapass) // johnfitz -- added parameter
   if (!r_drawentities.value)
     return;
 
-  if (alphapass && r_alphasort.value) {
+  if (alphapass && r_alphasort.value && !map_checks.value) {
     sorted_alpha_entity_t alpha_ents[MAX_VISEDICTS];
     int alpha_count = 0;
 
@@ -1370,6 +1372,31 @@ void R_EmitWireBox(vec3_t mins, vec3_t maxs) {
   glEnd();
 }
 
+static char r_showfields_text[1024];
+
+const char *R_GetShowFieldsText(void) { return r_showfields_text; }
+
+static void R_SetShowFieldsText(edict_t *ed)
+{
+  const char *classname = ed->v.classname ? PR_GetString(ed->v.classname) : "";
+  const char *target = ed->v.target ? PR_GetString(ed->v.target) : "";
+  const char *targetname = ed->v.targetname ? PR_GetString(ed->v.targetname) : "";
+
+  q_snprintf(r_showfields_text, sizeof(r_showfields_text),
+             "edict %d%s%s\n"
+             "origin %g %g %g\n"
+             "mins   %g %g %g\n"
+             "maxs   %g %g %g\n"
+             "health %g  think %g%s%s%s%s",
+             NUM_FOR_EDICT(ed), *classname ? "  " : "", classname,
+             ed->v.origin[0], ed->v.origin[1], ed->v.origin[2],
+             ed->v.mins[0], ed->v.mins[1], ed->v.mins[2],
+             ed->v.maxs[0], ed->v.maxs[1], ed->v.maxs[2],
+             ed->v.health, ed->v.nextthink,
+             *target ? "\ntarget " : "", target,
+             *targetname ? "\ntargetname " : "", targetname);
+}
+
 /*
 ================
 R_ShowBoundingBoxes -- johnfitz
@@ -1379,21 +1406,27 @@ draw bounding boxes -- the server-side boxes, not the renderer cullboxes
 */
 void R_ShowBoundingBoxes(void) {
   extern edict_t *sv_player;
-  vec3_t mins, maxs;
+  vec3_t mins, maxs, center, delta;
   edict_t *ed;
   int i;
   qcvm_t *oldvm;
+  edict_t *focused = NULL;
+  float bestscore = FLT_MAX;
+  qboolean draw_boxes = !!r_showbboxes.value;
 
-  if (!r_showbboxes.value || cl.maxclients > 1 || !r_drawentities.value ||
+  r_showfields_text[0] = 0;
+  if ((!draw_boxes && !r_showfields.value) || cl.maxclients > 1 || !r_drawentities.value ||
       !sv.active)
     return;
 
-  glDisable(GL_DEPTH_TEST);
-  glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
-  GL_PolygonOffset(OFFSET_SHOWTRIS);
-  glDisable(GL_TEXTURE_2D);
-  glDisable(GL_CULL_FACE);
-  glColor3f(1, 1, 1);
+  if (draw_boxes) {
+    glDisable(GL_DEPTH_TEST);
+    glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
+    GL_PolygonOffset(OFFSET_SHOWTRIS);
+    glDisable(GL_TEXTURE_2D);
+    glDisable(GL_CULL_FACE);
+    glColor3f(1, 1, 1);
+  }
 
   oldvm = qcvm;
   PR_SwitchQCVM(NULL);
@@ -1408,29 +1441,81 @@ void R_ShowBoundingBoxes(void) {
     //			if (!SV_VisibleToClient (sv_player, ed, sv.worldmodel))
     //				continue; //don't draw if not in pvs
 
-    if (ed->v.mins[0] == ed->v.maxs[0] && ed->v.mins[1] == ed->v.maxs[1] &&
-        ed->v.mins[2] == ed->v.maxs[2]) {
-      // point entity
-      R_EmitWirePoint(ed->v.origin);
-    } else {
-      // box entity
-      VectorAdd(ed->v.mins, ed->v.origin, mins);
-      VectorAdd(ed->v.maxs, ed->v.origin, maxs);
-      R_EmitWireBox(mins, maxs);
+    VectorAdd(ed->v.mins, ed->v.origin, mins);
+    VectorAdd(ed->v.maxs, ed->v.origin, maxs);
+    VectorAdd(mins, maxs, center);
+    VectorScale(center, 0.5f, center);
+    VectorSubtract(center, r_origin, delta);
+    if (DotProduct(delta, vpn) > 0) {
+      float score = DotProduct(delta, delta) -
+                    DotProduct(delta, vpn) * DotProduct(delta, vpn);
+      if (score < bestscore) {
+        bestscore = score;
+        focused = ed;
+      }
+    }
+
+    if (draw_boxes) {
+      if (ed->v.mins[0] == ed->v.maxs[0] && ed->v.mins[1] == ed->v.maxs[1] &&
+          ed->v.mins[2] == ed->v.maxs[2])
+        R_EmitWirePoint(ed->v.origin);
+      else
+        R_EmitWireBox(mins, maxs);
     }
   }
 
-  glColor3f(1, 1, 1);
-  glEnable(GL_TEXTURE_2D);
-  glEnable(GL_CULL_FACE);
-  glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
-  GL_PolygonOffset(OFFSET_NONE);
-  glEnable(GL_DEPTH_TEST);
+  if (focused && (draw_boxes || r_showfields.value))
+    R_SetShowFieldsText(focused);
+
+  if (draw_boxes) {
+    glColor3f(1, 1, 1);
+    glEnable(GL_TEXTURE_2D);
+    if (gl_cull.value)
+      glEnable(GL_CULL_FACE);
+    else
+      glDisable(GL_CULL_FACE);
+    glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+    GL_PolygonOffset(OFFSET_NONE);
+    glEnable(GL_DEPTH_TEST);
+  }
 
   PR_SwitchQCVM(NULL);
   PR_SwitchQCVM(oldvm);
 
-  Sbar_Changed(); // so we don't get dots collecting on the statusbar
+  if (draw_boxes)
+    Sbar_Changed(); // so we don't get dots collecting on the statusbar
+}
+
+/*
+================
+R_ShowSkeletons
+
+Draw the visible MD5 skeletons after world rendering.  This is intentionally
+local-server-only like r_showbboxes: exposing complete entity pose data during
+multiplayer is both noisy and not useful for ordinary play.
+================
+*/
+static void R_ShowSkeletons(void) {
+  int i;
+
+  if (!r_showskel.value || cl.maxclients > 1 || !r_drawentities.value)
+    return;
+
+  glDisable(GL_DEPTH_TEST);
+  glDisable(GL_TEXTURE_2D);
+  glDisable(GL_CULL_FACE);
+  glColor4f(1, 1, 0, 1);
+
+  for (i = 0; i < cl_numvisedicts; i++)
+    R_DrawAliasModel_ShowSkel(cl_visedicts[i]);
+
+  glColor4f(1, 1, 1, 1);
+  glEnable(GL_TEXTURE_2D);
+  if (gl_cull.value)
+    glEnable(GL_CULL_FACE);
+  else
+    glDisable(GL_CULL_FACE);
+  glEnable(GL_DEPTH_TEST);
 }
 
 /*
@@ -1909,6 +1994,7 @@ void R_RenderScene(void) {
   R_ShowTris(); // johnfitz
 
   R_ShowBoundingBoxes(); // johnfitz
+  R_ShowSkeletons();
   R_PerfAdd(&r_perf_debugdraw_ms, perf_start);
   R_PerfAdd(&r_perf_scene_ms, perf_scene_start);
 }

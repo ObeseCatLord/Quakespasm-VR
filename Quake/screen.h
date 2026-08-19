@@ -62,6 +62,7 @@ typedef enum {
 	CANVAS_DEFAULT,
 	CANVAS_CONSOLE,
 	CANVAS_MENU,
+	CANVAS_INFO,
 	CANVAS_SBAR,
 	CANVAS_SBAR2,
 	CANVAS_WARPIMAGE,
@@ -79,6 +80,7 @@ extern	cvar_t		scr_conscale;
 extern	cvar_t		scr_autoscale;
 extern	cvar_t		scr_scale;
 extern	cvar_t		scr_crosshairscale;
+extern	cvar_t		scr_infoscale;
 
 typedef enum hudstyle_t
 {

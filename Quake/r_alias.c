@@ -2120,6 +2120,76 @@ cleanup:
 
 /*
 =================
+R_DrawAliasModel_ShowSkel
+
+MD5 mesh rendering expands each animation pose to skinned vertices while the
+model is loaded.  r_showskel retains the evaluated 3x4 joint matrices in the
+first surface header, then interpolates each joint position once before
+emitting the parent links.  Keeping that O(bones) pass avoids recomputing a
+parent joint for every line.
+=================
+*/
+void R_DrawAliasModel_ShowSkel (entity_t *e)
+{
+	aliashdr_t *md5;
+	entity_t *previousentity;
+	lerpdata_t lerpdata;
+	const int *parents;
+	const float *pose1, *pose2;
+	vec3_t positions[MAX_MD5_JOINTS];
+	float fovscale = 1.0f;
+	int i;
+
+	if (!e || !e->model || !Mod_UseMD5ModelForFrame (e->model, e->skinnum, e->frame))
+		return;
+	if (R_CullModelForEntity (e))
+		return;
+
+	md5 = Mod_GetMD5Extradata (e->model);
+	if (!md5 || md5->md5_numbones < 1 || md5->md5_numbones > MAX_MD5_JOINTS ||
+		!md5->md5_boneparents || !md5->md5_boneposes)
+		return;
+
+	previousentity = currententity;
+	currententity = e;
+	R_SetupAliasFrame (md5, e->frame, &lerpdata);
+	R_SetupEntityTransform (e, &lerpdata);
+	currententity = previousentity;
+	parents = (const int *)((const byte *)md5 + md5->md5_boneparents);
+	pose1 = (const float *)((const byte *)md5 + md5->md5_boneposes) +
+		(size_t)lerpdata.pose1 * md5->md5_numbones * 12;
+	pose2 = (const float *)((const byte *)md5 + md5->md5_boneposes) +
+		(size_t)lerpdata.pose2 * md5->md5_numbones * 12;
+
+	for (i = 0; i < md5->md5_numbones; i++)
+	{
+		const float *a = pose1 + i * 12;
+		const float *b = pose2 + i * 12;
+		positions[i][0] = a[3] + (b[3] - a[3]) * lerpdata.blend;
+		positions[i][1] = a[7] + (b[7] - a[7]) * lerpdata.blend;
+		positions[i][2] = a[11] + (b[11] - a[11]) * lerpdata.blend;
+	}
+
+	if (!vr_enabled.value && e == &cl.viewent && scr_fov.value > 90.f && cl_gun_fovscale.value)
+		fovscale = tan(scr_fov.value * (0.5f * M_PI / 180.f));
+	glPushMatrix ();
+	R_RotateForEntity (lerpdata.origin, lerpdata.angles, e->scale);
+	glTranslatef (md5->scale_origin[0], md5->scale_origin[1] * fovscale,
+		md5->scale_origin[2] * fovscale);
+	glScalef (md5->scale[0], md5->scale[1] * fovscale, md5->scale[2] * fovscale);
+	glBegin (GL_LINES);
+	for (i = 0; i < md5->md5_numbones; i++)
+		if (parents[i] >= 0 && parents[i] < md5->md5_numbones)
+		{
+			glVertex3fv (positions[parents[i]]);
+			glVertex3fv (positions[i]);
+		}
+	glEnd ();
+	glPopMatrix ();
+}
+
+/*
+=================
 R_DrawAliasModel -- johnfitz -- almost completely rewritten
 =================
 */

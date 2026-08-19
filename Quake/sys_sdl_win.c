@@ -26,6 +26,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #endif
 #include <windows.h>
 #include <mmsystem.h>
+#include <tlhelp32.h>
 
 #include "quakedef.h"
 
@@ -68,6 +69,66 @@ static int findhandle (void)
 	return -1;
 }
 
+static qboolean UTF8ToWideString (const char *src, wchar_t *dst, size_t maxchars)
+{
+	if (MultiByteToWideChar (CP_UTF8, 0, src, -1, dst, (int) maxchars))
+		return true;
+	errno = GetLastError () == ERROR_INSUFFICIENT_BUFFER ? ENAMETOOLONG : EINVAL;
+	return false;
+}
+
+FILE *Sys_fopen (const char *path, const char *mode)
+{
+	wchar_t	wpath[MAX_PATH];
+	wchar_t	wmode[8];
+	int		i;
+	FILE	*f;
+
+	for (i = 0; mode[i]; i++)
+	{
+		if (i == ((int) (sizeof (wmode) / sizeof (wmode[0])) - 1))
+			Sys_Error ("Sys_fopen: invalid mode \"%s\"", mode);
+		wmode[i] = mode[i];
+	}
+	wmode[i] = 0;
+
+	if (!UTF8ToWideString (path, wpath, Q_COUNTOF (wpath)))
+		return NULL;
+
+	if (wpath[0] && strchr (mode, 'w'))
+	{
+		// create directory structure
+		for (i = 1; wpath[i]; i++)
+		{
+			DWORD attr;
+			wchar_t wc;
+			if (wpath[i] != L'\\' && wpath[i] != L'/')
+				continue;
+
+			// keep the trailing slash
+			wc = wpath[i + 1];
+			wpath[i + 1] = L'\0';
+
+			attr = GetFileAttributesW (wpath);
+			if (attr != INVALID_FILE_ATTRIBUTES && !(attr & FILE_ATTRIBUTE_DIRECTORY))
+				return NULL;
+
+			if (attr == INVALID_FILE_ATTRIBUTES && !CreateDirectoryW (wpath, NULL))
+			{
+				DWORD err = GetLastError ();
+				if (err != ERROR_ALREADY_EXISTS)
+					return NULL;
+			}
+
+			wpath[i + 1] = wc;
+		}
+	}
+
+	f = _wfopen (wpath, wmode);
+
+	return f;
+}
+
 long Sys_filelength (FILE *f)
 {
 	long		pos, end;
@@ -86,7 +147,7 @@ int Sys_FileOpenRead (const char *path, int *hndl)
 	int	i, retval;
 
 	i = findhandle ();
-	f = fopen(path, "rb");
+	f = Sys_fopen (path, "rb");
 
 	if (!f)
 	{
@@ -109,7 +170,7 @@ int Sys_FileOpenWrite (const char *path)
 	int		i;
 
 	i = findhandle ();
-	f = fopen(path, "wb");
+	f = Sys_fopen (path, "wb");
 
 	if (!f)
 		Sys_Error ("Error opening %s: %s", path, strerror(errno));
@@ -152,6 +213,80 @@ int Sys_FileType (const char *path)
 		return FS_ENT_DIRECTORY;
 
 	return FS_ENT_FILE;
+}
+
+typedef struct procinfo_s
+{
+	DWORD id;
+	DWORD parent_id;
+	wchar_t	name[MAX_PATH];
+} procinfo_t;
+
+static procinfo_t *Sys_GetProc (DWORD id, procinfo_t *proc, DWORD *parent_id)
+{
+	HANDLE			hSnapshot;
+	PROCESSENTRY32W	proc_entry;
+	procinfo_t		*result = NULL;
+
+	hSnapshot = CreateToolhelp32Snapshot (TH32CS_SNAPPROCESS, 0);
+	if (hSnapshot == INVALID_HANDLE_VALUE)
+		return NULL;
+
+	proc_entry.dwSize = sizeof (proc_entry);
+	if (Process32FirstW (hSnapshot, &proc_entry))
+	{
+		do
+		{
+			if (proc_entry.th32ProcessID == id)
+			{
+				proc->id = proc_entry.th32ProcessID;
+				proc->parent_id = proc_entry.th32ParentProcessID;
+				wcsncpy (proc->name, proc_entry.szExeFile, Q_COUNTOF (proc->name));
+				proc->name[Q_COUNTOF (proc->name) - 1] = 0;
+				if (parent_id)
+					*parent_id = proc->parent_id;
+				result = proc;
+				break;
+			}
+		} while (Process32NextW (hSnapshot, &proc_entry));
+	}
+
+	CloseHandle (hSnapshot);
+	return result;
+}
+
+qboolean Sys_IsStartedFromMapEditor (void)
+{
+	qboolean		from_editor = false;
+	procinfo_t		proc;
+	procinfo_t		parent;
+	DWORD			parent_id = 0;
+
+	if (!Sys_GetProc (GetCurrentProcessId (), &proc, &parent_id))
+		return false;
+
+	while (parent_id)
+	{
+		if (!Sys_GetProc (parent_id, &parent, &proc.parent_id))
+			break;
+
+		if (_wcsicmp (parent.name, L"cmd.exe") == 0)
+		{
+			parent_id = parent.parent_id;
+			continue;
+		}
+
+		#define PARENT_STARTS_WITH(prefix)	(_wcsnicmp (parent.name, L##prefix, wcslen (L##prefix)) == 0)
+		if (PARENT_STARTS_WITH ("TrenchBroom") ||
+			PARENT_STARTS_WITH ("NextBroom") ||
+			PARENT_STARTS_WITH ("jack") ||
+			PARENT_STARTS_WITH ("qrucible"))
+			from_editor = true;
+		#undef PARENT_STARTS_WITH
+		break;
+	}
+
+	return from_editor;
 }
 
 static char	cwd[1024];
@@ -440,4 +575,3 @@ void Sys_SendKeyEvents (void)
 	IN_Commands();		//ericw -- allow joysticks to add keys so they can be used to confirm SCR_ModalMessage
 	IN_SendKeyEvents();
 }
-

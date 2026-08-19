@@ -2183,6 +2183,7 @@ void CL_ParseServerMessage (void)
 			}
 			cl.mtime[1] = cl.mtime[0];
 			cl.mtime[0] = newtime;
+			cl.fixangle = false;
 			break;
 
 		case svc_moveack:
@@ -2240,6 +2241,7 @@ void CL_ParseServerMessage (void)
 		case svc_setangle:
 			for (i=0 ; i<3 ; i++)
 				cl.viewangles[i] = MSG_ReadAngle (cl.protocolflags);
+			cl.fixangle = true;
 			VR_SetAngles (cl.viewangles);
 			break;
 

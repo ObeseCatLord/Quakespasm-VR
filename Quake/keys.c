@@ -254,6 +254,16 @@ keyname_t keynames[] = {
     {"VR_RIGHT_STICK_UP", K_VR_RIGHT_STICK_UP},
     {"VR_RIGHT_STICK_DOWN", K_VR_RIGHT_STICK_DOWN},
     {"VR_ALTFIRE", K_VR_ALTFIRE},
+    {"LTHUMB_ALT", K_LTHUMB_ALT},
+    {"RTHUMB_ALT", K_RTHUMB_ALT},
+    {"LSHOULDER_ALT", K_LSHOULDER_ALT},
+    {"RSHOULDER_ALT", K_RSHOULDER_ALT},
+    {"ABUTTON_ALT", K_ABUTTON_ALT},
+    {"BBUTTON_ALT", K_BBUTTON_ALT},
+    {"XBUTTON_ALT", K_XBUTTON_ALT},
+    {"YBUTTON_ALT", K_YBUTTON_ALT},
+    {"LTRIGGER_ALT", K_LTRIGGER_ALT},
+    {"RTRIGGER_ALT", K_RTRIGGER_ALT},
 
     {NULL, 0}};
 
@@ -787,6 +797,21 @@ void Key_WriteBindings(FILE *f) {
   }
 }
 
+qboolean Key_IsKeyGamepadAltModifier(int keynum) {
+  return keynum >= 0 && keynum < MAX_KEYS &&
+         Cmd_IsGamepadAltModifier(keybindings[keynum]);
+}
+
+qboolean Key_GetGamepadAltModifierState(void) {
+  int keynum;
+
+  for (keynum = K_LTHUMB; keynum <= K_RTRIGGER; keynum++)
+    if (keydown[keynum] && Key_IsKeyGamepadAltModifier(keynum))
+      return true;
+
+  return false;
+}
+
 void History_Init(void) {
   int i, c;
   FILE *hf;
@@ -850,6 +875,11 @@ void History_Shutdown(void) {
 Key_Init
 ===================
 */
+/* The modifier state is read directly from keydown[], but these no-op
+ * commands make the binding usable from configs and bindlist.lst. */
+static void Key_AltModifierDown_f(void) {}
+static void Key_AltModifierUp_f(void) {}
+
 void Key_Init(void) {
   int i;
 
@@ -917,6 +947,8 @@ void Key_Init(void) {
   Cmd_AddCommand("bind", Key_Bind_f);
   Cmd_AddCommand("unbind", Key_Unbind_f);
   Cmd_AddCommand("unbindall", Key_Unbindall_f);
+  Cmd_AddCommand("+altmodifier", Key_AltModifierDown_f);
+  Cmd_AddCommand("-altmodifier", Key_AltModifierUp_f);
 }
 
 static struct {
@@ -975,6 +1007,23 @@ Should NOT be called during an interrupt!
 */
 void Key_Event(int key, qboolean down) { Key_EventWithKeycode(key, down, 0); }
 
+static qboolean Key_IsMenuRepeatAllowed(int key) {
+  switch (key) {
+  case K_UPARROW:
+  case K_DOWNARROW:
+  case K_LEFTARROW:
+  case K_RIGHTARROW:
+    return true;
+  default:
+    return false;
+  }
+}
+
+static void Key_MenuKeydown(int key, qboolean repeat) {
+  if (!repeat || Key_IsMenuRepeatAllowed(key))
+    M_Keydown(key);
+}
+
 /*
 ===================
 Key_EventWithKeycode
@@ -994,13 +1043,25 @@ void Key_EventWithKeycode(int key, qboolean down, int keycode) {
   if (key < 0 || key >= MAX_KEYS)
     return;
 
-  was_down = keydown[key];
-
   // handle fullscreen toggle
   if (down && (key == K_ENTER || key == K_KP_ENTER) && keydown[K_ALT]) {
     VID_Toggle();
     return;
   }
+
+  /* A held +altmodifier exposes a second layer of the physical gamepad
+   * buttons.  Releases follow an already-active alternate key so a modifier
+   * released first cannot leave a +command stuck down. */
+  if (key >= K_LTHUMB && key <= K_RTRIGGER &&
+      !Key_IsKeyGamepadAltModifier(key)) {
+    int altkey = key + (K_LTHUMB_ALT - K_LTHUMB);
+    if ((!down && keydown[altkey]) ||
+        (down && Key_GetGamepadAltModifierState() &&
+         (keybindings[altkey] || !keybindings[key])))
+      key = altkey;
+  }
+
+  was_down = keydown[key];
 
   // handle autorepeats and stray key up events
   if (down) {
@@ -1055,7 +1116,7 @@ void Key_EventWithKeycode(int key, qboolean down, int keycode) {
       Key_Message(key);
       break;
     case key_menu:
-      M_Keydown(key);
+      Key_MenuKeydown(key, was_down);
       break;
     case key_game:
     case key_console:
@@ -1098,7 +1159,7 @@ void Key_EventWithKeycode(int key, qboolean down, int keycode) {
     if (was_down)
       return;
     key_menu_consumed[key] = true;
-    M_Keydown(key);
+    Key_MenuKeydown(key, was_down);
     return;
   }
 
@@ -1127,7 +1188,7 @@ void Key_EventWithKeycode(int key, qboolean down, int keycode) {
     Key_Message(key);
     break;
   case key_menu:
-    M_Keydown(key);
+    Key_MenuKeydown(key, was_down);
     break;
 
   case key_game:

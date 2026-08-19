@@ -26,6 +26,8 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 
 void Sys_Init (void);
 
+qboolean Sys_IsStartedFromMapEditor (void);
+
 //
 // file IO
 //
@@ -39,6 +41,7 @@ void Sys_FileClose (int handle);
 void Sys_FileSeek (int handle, int position);
 int Sys_FileRead (int handle, void *dest, int count);
 int Sys_FileWrite (int handle,const void *data, int count);
+FILE *Sys_fopen (const char *path, const char *mode);
 void Sys_mkdir (const char *path);
 
 int Sys_FileType (const char *path);
@@ -70,4 +73,3 @@ void Sys_SendKeyEvents (void);
 // Perform Key_Event () callbacks until the input que is empty
 
 #endif	/* _QUAKE_SYS_H */
-
