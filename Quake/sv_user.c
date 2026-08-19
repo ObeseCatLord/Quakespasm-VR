@@ -1415,11 +1415,11 @@ void SV_RunClients(void) {
         SV_ClearStaleClientInput(host_client);
       SV_ClientThink();
     } else if (!host_client->usingpmove) {
-      /* A tap received entirely while paused must not fire on unpause. */
+      /* Do not carry an attack tap across a pause.  Keep impulses pending,
+       * though: the single-player console pauses the server, and commands
+       * such as "impulse 9" must reach QuakeC after the console closes.
+       * This also matches the traditional Quake/QuakeSpasm behaviour. */
       host_client->net_latched_buttons = 0;
-      host_client->net_latched_impulse = 0;
-      host_client->cmd.impulse = 0;
-      host_client->edict->v.impulse = 0;
     }
   }
 }
