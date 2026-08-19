@@ -544,6 +544,9 @@ typedef struct {
   int viewentity;
   vec3_t frame_hand_origin;
   vec3_t frame_menu_angles;
+  vec3_t frame_laser_origin;
+  vec3_t frame_laser_end;
+  qboolean frame_laser_valid;
   int last_selection;
   int last_selection_type;
 } vr_weaponmenu_session_t;
@@ -7269,12 +7272,14 @@ extern "C" void VR_EndWeaponMenu(void) {
   vr_weaponmenu_session.active = false;
   vr_weaponmenu_session.capture_valid = false;
   vr_weaponmenu_session.frame_valid = false;
+  vr_weaponmenu_session.frame_laser_valid = false;
   vr_weaponmenu_session.last_selection = -1;
   vr_weaponmenu_session.last_selection_type = VR_WEAPONMENU_SELECTION_NONE;
   vr_weaponmenu_anchor_valid = false;
 }
 
 extern "C" void VR_PrepareWeaponMenu(void) {
+  vr_weaponmenu_session.frame_laser_valid = false;
   if (!vr_enabled.value || !cl.in_vr_weaponmenu ||
       !vr_weaponmenu_session.active ||
       vr_weaponmenu_session.mode != VR_WEAPONMENU_MODE_PLAYSPACE) {
@@ -7502,6 +7507,45 @@ static void VR_RestoreWeaponMenuGLState(
     glDisable(GL_TEXTURE_2D);
 }
 
+static void VR_DrawWeaponMenuLaser(void) {
+  GLfloat old_line_width, old_point_size;
+  qboolean old_point_smooth;
+
+  if (!vr_weaponmenu_session.frame_laser_valid)
+    return;
+
+  glGetFloatv(GL_LINE_WIDTH, &old_line_width);
+  glGetFloatv(GL_POINT_SIZE, &old_point_size);
+  old_point_smooth = glIsEnabled(GL_POINT_SMOOTH);
+
+  /* Match Q3VR's controller-to-selector beam. Draw it over the menu so its
+   * endpoint remains readable even when it lands on a weapon model. */
+  glDisable(GL_DEPTH_TEST);
+  glDepthMask(GL_FALSE);
+  glDisable(GL_TEXTURE_2D);
+  glDisable(GL_ALPHA_TEST);
+  glDisable(GL_BLEND);
+  glDisable(GL_CULL_FACE);
+  glColor3f(0.15f, 0.45f, 1.0f);
+  glLineWidth(2.5f);
+  glBegin(GL_LINES);
+  glVertex3fv(vr_weaponmenu_session.frame_laser_origin);
+  glVertex3fv(vr_weaponmenu_session.frame_laser_end);
+  glEnd();
+
+  glEnable(GL_POINT_SMOOTH);
+  glColor3f(0.45f, 0.75f, 1.0f);
+  glPointSize(7.0f);
+  glBegin(GL_POINTS);
+  glVertex3fv(vr_weaponmenu_session.frame_laser_end);
+  glEnd();
+
+  glLineWidth(old_line_width);
+  glPointSize(old_point_size);
+  if (!old_point_smooth)
+    glDisable(GL_POINT_SMOOTH);
+}
+
 static void VR_RunWeaponMenu(qboolean draw) {
   vr_weaponmenu_gl_state_t gl_state;
   qboolean playspace =
@@ -7584,8 +7628,8 @@ static void VR_RunWeaponMenu(qboolean draw) {
    * retaining enough room for QuakeSpasm's multi-ring mod inventories. */
   const float weapon_mesh_scale = playspace ? 0.28f : 1.0f;
   const float text_layout_scale = playspace ? 0.60f : 1.0f;
-  float base_radius = playspace ? 4.0f : 15.0f;
-  float wheel_dist = playspace ? 10.0f + ((target_rings - 1) * 2.0f)
+  float base_radius = playspace ? 5.0f : 15.0f;
+  float wheel_dist = playspace ? 10.5f + ((target_rings - 1) * 2.5f)
                                : 75.0f + ((target_rings - 1) * 8.0f);
 
   // Move the menu forward and slightly down from the camera
@@ -7923,6 +7967,7 @@ static void VR_RunWeaponMenu(qboolean draw) {
   /* Playspace selection was prepared once before either eye.  Per-eye draws
    * consume that authoritative snapshot without input or haptic side effects. */
   if (playspace && draw) {
+    VR_DrawWeaponMenuLaser();
     currententity = &cl.viewent;
     VR_RestoreWeaponMenuGLState(&gl_state);
     return;
@@ -7937,6 +7982,7 @@ static void VR_RunWeaponMenu(qboolean draw) {
                   : (cl.handpos[1][0] == 0 && cl.handpos[1][1] == 0 &&
                      cl.handpos[1][2] == 0)));
   float best_score = 0.85f; // Minimum threshold (~31 degree cone)
+  float best_pointer_distance = 999999.0f;
   int best_index = -1;
   int best_type = VR_WEAPONMENU_SELECTION_NONE;
 
@@ -7965,12 +8011,49 @@ static void VR_RunWeaponMenu(qboolean draw) {
     AngleVectors(cl.handrot[1], aim_fwd, aim_right_dummy, aim_up_dummy);
   }
 
+  if (playspace) {
+    vec3_t plane_delta;
+    float denominator, distance;
+
+    VectorSubtract(origin, aim_origin, plane_delta);
+    denominator = DotProduct(aim_fwd, forward);
+    if (fabsf(denominator) > 0.001f) {
+      distance = DotProduct(plane_delta, forward) / denominator;
+      if (distance > 0.0f && distance < 128.0f) {
+        VectorCopy(aim_origin, vr_weaponmenu_session.frame_laser_origin);
+        VectorMA(aim_origin, distance, aim_fwd,
+                 vr_weaponmenu_session.frame_laser_end);
+        vr_weaponmenu_session.frame_laser_valid = true;
+      }
+    }
+  }
+
   for (int i = 0; i < num_visible; i++) {
     vec3_t dir;
     float score;
 
     if (!weapon_position_valid[i])
       continue;
+
+    if (playspace && vr_weaponmenu_session.frame_laser_valid) {
+      float pointer_right, pointer_up, pointer_distance;
+
+      VectorSubtract(weapon_positions[i],
+                     vr_weaponmenu_session.frame_laser_end, dir);
+      pointer_right = DotProduct(dir, right);
+      pointer_up = DotProduct(dir, up);
+      pointer_distance =
+          sqrtf(pointer_right * pointer_right + pointer_up * pointer_up);
+      if (pointer_distance < best_pointer_distance &&
+          pointer_distance <= base_radius * 0.55f &&
+          VR_WeaponMenuTargetVisible(aim_origin, weapon_positions[i])) {
+        best_pointer_distance = pointer_distance;
+        best_index = i;
+        best_type = VR_WEAPONMENU_SELECTION_WEAPON;
+      }
+      continue;
+    }
+
     VectorSubtract(weapon_positions[i], aim_origin, dir);
     VectorNormalize(dir);
 
@@ -7983,6 +8066,11 @@ static void VR_RunWeaponMenu(qboolean draw) {
       best_type = VR_WEAPONMENU_SELECTION_WEAPON;
     }
   }
+
+  /* A pointer hit is more precise than the angular tests used by the text
+   * actions, so do not let a nearby label steal a weapon under the dot. */
+  if (best_type == VR_WEAPONMENU_SELECTION_WEAPON)
+    best_score = 2.0f;
 
   for (int i = 0; i < num_players; i++) {
     int playernum = player_indices[i];

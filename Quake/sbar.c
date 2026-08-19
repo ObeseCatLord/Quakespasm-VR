@@ -306,6 +306,18 @@ void Sbar_DrawPic (int x, int y, qpic_t *pic)
 	Draw_Pic (x, y + 24, pic);
 }
 
+/* MG3's inventory art is authored at 2x (48x32), while the classic status
+ * bar used by VR allocates one 24x16 cell per weapon. Scale the complete icon
+ * into its cell so its embedded slot number and the following weapon remain
+ * visible. Desktop keeps MG3's native HUD rendering. */
+static void Sbar_DrawMG3WeaponPic (int x, int y, qpic_t *pic)
+{
+	if (vr_enabled.value)
+		Draw_SubPic (x, y + 24, 24, 16, pic, 0, 0, 1, 1, NULL, 1);
+	else
+		Sbar_DrawPic (x, y, pic);
+}
+
 /*
 =============
 Sbar_DrawPicAlpha -- johnfitz
@@ -676,7 +688,7 @@ void Sbar_DrawInventory (void)
 				continue;
 			pic = mg3_weapons[active][i];
 			if (pic)
-				Sbar_DrawPic (176 + i * 24, -16, pic);
+				Sbar_DrawMG3WeaponPic (176 + i * 24, -16, pic);
 		}
 	}
 

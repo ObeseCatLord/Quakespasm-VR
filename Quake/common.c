@@ -53,6 +53,13 @@ static void COM_Path_f (void);
 #define PAK0_COUNT_V091		308	/* id1/pak0.pak - v0.91/0.92, not supported */
 #define PAK0_CRC_V091		28804	/* id1/pak0.pak - v0.91/0.92, not supported */
 
+/* Quake rerelease id1/pak0.pak metadata. The directory CRC covers every
+ * filename, offset, and length; the size/count checks make the signature
+ * explicit and avoid classifying arbitrary complete MD5 replacement sets. */
+#define PAK0_CRC_RERELEASE	20578
+#define PAK0_COUNT_RERELEASE	1121
+#define PAK0_SIZE_RERELEASE	180815252
+
 char	com_token[1024];
 int		com_argc;
 char	**com_argv;
@@ -1805,7 +1812,7 @@ static int COM_FindFile (const char *filename, int *handle, FILE **file,
 				if (path_id)
 					*path_id = search->path_id;
 				if (rerelease_models)
-					*rerelease_models = search->rerelease_models;
+					*rerelease_models = search->rerelease_model_source;
 				if (handle)
 				{
 					*handle = pak->handle;
@@ -1840,7 +1847,7 @@ static int COM_FindFile (const char *filename, int *handle, FILE **file,
 			if (path_id)
 				*path_id = search->path_id;
 			if (rerelease_models)
-				*rerelease_models = search->rerelease_models;
+				*rerelease_models = search->rerelease_model_source;
 			if (handle)
 			{
 				com_filesize = Sys_FileOpenRead (netpath, &i);
@@ -2212,10 +2219,12 @@ static pack_t *COM_LoadPackFile (const char *packfile)
 	int		numpackfiles;
 	pack_t		*pack;
 	int		packhandle;
+	int		packsize;
 	dpackfile_t	info[MAX_FILES_IN_PACK];
 	unsigned short	crc;
 
-	if (Sys_FileOpenRead (packfile, &packhandle) == -1)
+	packsize = Sys_FileOpenRead (packfile, &packhandle);
+	if (packsize == -1)
 		return NULL;
 
 	if (Sys_FileRead(packhandle, &header, sizeof(header)) != (int) sizeof(header) ||
@@ -2268,11 +2277,83 @@ static pack_t *COM_LoadPackFile (const char *packfile)
 	pack = (pack_t *) Z_Malloc (sizeof (pack_t));
 	q_strlcpy (pack->filename, packfile, sizeof(pack->filename));
 	pack->handle = packhandle;
+	pack->filesize = packsize;
+	pack->directory_crc = crc;
 	pack->numfiles = numpackfiles;
 	pack->files = newfiles;
 
 	//Sys_Printf ("Added packfile %s (%i files)\n", packfile, numpackfiles);
 	return pack;
+}
+
+/*
+=================
+COM_IsRereleaseModelSource
+
+Recognize the official rerelease pack even when it is installed as the normal
+id1 pak instead of mounted separately with -rerelease.
+=================
+*/
+static qboolean COM_IsRereleaseModelSource (const pack_t *pack)
+{
+	static const struct
+	{
+		const char *name;
+		int length;
+		unsigned int crc32;
+	} required_models[] = {
+		{"progs/v_axe.md5mesh", 91226, 0x82833cbfU},
+		{"progs/v_light.md5mesh", 80581, 0xd476b687U},
+		{"progs/v_nail.md5mesh", 109665, 0x1a0eeacaU},
+		{"progs/v_nail2.md5mesh", 76297, 0x368ad370U},
+		{"progs/v_rock.md5mesh", 50580, 0x419a2f23U},
+		{"progs/v_rock2.md5mesh", 74453, 0x83715486U},
+		{"progs/v_shot.md5mesh", 57743, 0x22e45f22U},
+		{"progs/v_shot2.md5mesh", 53629, 0xb583405fU}
+	};
+	byte buffer[8192];
+	int i, j;
+
+	if (!pack || pack->filesize != PAK0_SIZE_RERELEASE ||
+		pack->numfiles != PAK0_COUNT_RERELEASE ||
+		pack->directory_crc != PAK0_CRC_RERELEASE)
+		return false;
+
+	for (i = 0; i < (int)(sizeof(required_models) / sizeof(required_models[0])); i++)
+	{
+		unsigned int crc = 0xffffffffU;
+		int remaining;
+
+		for (j = 0; j < pack->numfiles; j++)
+			if (!strcmp (pack->files[j].name, required_models[i].name))
+				break;
+		if (j == pack->numfiles ||
+			pack->files[j].filelen != required_models[i].length)
+			return false;
+
+		Sys_FileSeek (pack->handle, pack->files[j].filepos);
+		remaining = pack->files[j].filelen;
+		while (remaining > 0)
+		{
+			int count = q_min (remaining, (int)sizeof(buffer));
+			int k, bit;
+
+			if (Sys_FileRead (pack->handle, buffer, count) != count)
+				return false;
+			for (k = 0; k < count; k++)
+			{
+				crc ^= buffer[k];
+				for (bit = 0; bit < 8; bit++)
+					crc = (crc >> 1) ^ (0xedb88320U &
+						(unsigned int)-(int)(crc & 1U));
+			}
+			remaining -= count;
+		}
+		if ((~crc) != required_models[i].crc32)
+			return false;
+	}
+
+	return true;
 }
 
 /*
@@ -2322,6 +2403,7 @@ _add_path:
 			search = (searchpath_t *) Z_Malloc(sizeof(searchpath_t));
 			search->path_id = path_id;
 			search->pack = pak;
+			search->rerelease_model_source = COM_IsRereleaseModelSource (pak);
 			search->next = com_searchpaths;
 			com_searchpaths = search;
 		}
@@ -2392,6 +2474,7 @@ static void COM_AddRereleaseModelPack (const char *root)
 	search->path_id = 1;
 	search->pack = pak;
 	search->rerelease_models = true;
+	search->rerelease_model_source = true;
 	search->next = NULL;
 	if (!com_searchpaths)
 		com_searchpaths = search;
