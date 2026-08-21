@@ -347,6 +347,7 @@ const char *COM_GetGameNames(qboolean full);
 qboolean COM_GameDirMatches(const char *tdirs);
 qboolean COM_GameDirExists(const char *dir);
 qboolean COM_GameDirHasPak0(const char *dir);
+qboolean COM_DirectoryHasPak0(const char *directory);
 /* Read-only content roots, in low-to-high precedence order. */
 int COM_GetContentRoots(const char **roots, int maxroots);
 qboolean COM_HasSeparateUserDir(void);

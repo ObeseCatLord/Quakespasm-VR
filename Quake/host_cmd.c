@@ -441,8 +441,7 @@ static qboolean Modlist_Check(const char *base, const char *name) {
 
   q_snprintf(modpath, sizeof(modpath), "%s/%s", base, name);
 
-  q_snprintf(itempath, sizeof(itempath), "%s/pak0.pak", modpath);
-  if (Sys_FileType(itempath) & FS_ENT_FILE)
+  if (COM_DirectoryHasPak0(modpath))
     return true;
 
   q_snprintf(itempath, sizeof(itempath), "%s/progs.dat", modpath);

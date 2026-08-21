@@ -1249,6 +1249,7 @@ qboolean SV_ReadClientMessage(void) {
 static void SV_UpdateClientPMoveMode(client_t *client) {
   qboolean usingpmove;
   qboolean local_singleplayer;
+  qboolean legacy_prethink_mod;
   move_authority_t authority;
   moveack_discontinuity_t fallback_reason;
   int requested_mode;
@@ -1261,6 +1262,11 @@ static void SV_UpdateClientPMoveMode(client_t *client) {
     return;
 
   local_singleplayer = sv.active && svs.maxclients <= 1;
+  /* Re:Mobilize 1.2 consumes its held lighthook impulses exclusively from
+   * PlayerPreThink. Engine PMove batches several commands behind one legacy
+   * PreThink callback, so a hook press later in the bundle would be lost.
+   * Preserve the mod's original per-frame QuakeC input semantics. */
+  legacy_prethink_mod = COM_GameDirMatches("rm1.2");
 
   requested_mode = CLAMP(0, (int)sv_pmove_mode.value, 3);
   authority = MOVE_AUTHORITY_LEGACY_FRAME;
@@ -1280,7 +1286,7 @@ static void SV_UpdateClientPMoveMode(client_t *client) {
        movetype == MOVETYPE_FLY || movetype == MOVETYPE_NOCLIP);
   usingpmove = requested_mode != 0 && sv_trustedmovement.value &&
       !local_singleplayer && client->spawned && client->knowntoqc &&
-      !sv_nqplayerphysics.value &&
+      !sv_nqplayerphysics.value && !legacy_prethink_mod &&
       (client->protocol_pext2 & PEXT2_EXPLICITCMDMSEC) &&
       (!customphysics || !customphysics->function) && valid_state;
 
@@ -1299,6 +1305,8 @@ static void SV_UpdateClientPMoveMode(client_t *client) {
           MOVE_AUTHORITY_PMOVE_QC_COMMAND :
           MOVE_AUTHORITY_PMOVE_ENGINE_COMPAT;
     }
+  } else if (legacy_prethink_mod) {
+    fallback_reason = MOVEACK_DISCONTINUITY_UNSUPPORTED_STATE;
   } else if (customphysics && customphysics->function) {
     fallback_reason = MOVEACK_DISCONTINUITY_CUSTOMPHYSICS;
   } else if (client->spawned && client->knowntoqc && !valid_state) {
@@ -1323,7 +1331,8 @@ static void SV_UpdateClientPMoveMode(client_t *client) {
       Con_Printf("net_lagdebug: server PMove %s for %s mode=%s sv_runclientcommand=%d\n",
                  usingpmove ? "enabled" : "disabled",
                  client->name,
-                 local_singleplayer ? "local-singleplayer" : "latest-client",
+                 local_singleplayer ? "local-singleplayer" :
+                 legacy_prethink_mod ? "legacy-prethink-mod" : "latest-client",
                  qcvm->extfuncs.SV_RunClientCommand ? 1 : 0);
   }
   else if (net_lagdebug.value && !sv_trustedmovement.value &&
