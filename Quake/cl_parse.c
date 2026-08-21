@@ -1992,6 +1992,102 @@ static void CL_DumpPacket (void)
 
 #define SHOWNET(x) if(cl_shownet.value==2)Con_Printf ("%3i:%s\n", msg_readcount-1, x);
 
+static qboolean CL_OfferVRIKProtocol(const char *command)
+{
+	const char *version;
+
+	if (Q_strncmp(command, "vrik_protocol", 13) ||
+		(command[13] != ' ' && command[13] != '\t'))
+		return false;
+	version = command + 13;
+	while (*version == ' ' || *version == '\t')
+		version++;
+	if (*version++ != '1')
+		return true;
+	while (*version == ' ' || *version == '\t' || *version == '\r')
+		version++;
+	if (*version || cl.vrik_cap_sent)
+		return true;
+	if (cls.message.cursize + 1 + (int)sizeof("vrik_cap 1") >
+		cls.message.maxsize)
+		return true;
+
+	cl.vrik_protocol_offered = true;
+	MSG_WriteByte(&cls.message, clc_stringcmd);
+	MSG_WriteString(&cls.message, "vrik_cap 1");
+	cl.vrik_cap_sent = true;
+	return true;
+}
+
+static qboolean CL_VRIKSequenceIsNewer(unsigned short sequence,
+	unsigned short previous)
+{
+	return (short)(sequence - previous) > 0;
+}
+
+static qboolean CL_ParseVRIKPose(void)
+{
+	vrik_pose_t pose;
+	entity_t *ent;
+	int entitynum;
+	unsigned int generation;
+	int tracker;
+	int axis;
+
+	if (net_message.cursize - msg_readcount < 2 + 4 + VRIK_POSE_WIRE_BYTES)
+	{
+		msg_badread = true;
+		return false;
+	}
+
+	entitynum = (unsigned short)MSG_ReadShort();
+	generation = (unsigned int)MSG_ReadLong();
+	Q_memset(&pose, 0, sizeof(pose));
+	pose.sequence = (unsigned short)MSG_ReadShort();
+	pose.flags = MSG_ReadByte();
+	pose.body_yaw = MSG_ReadShort() * (360.0f / 65536.0f);
+	for (tracker = 0; tracker < VRIK_TRACKER_COUNT; tracker++)
+		for (axis = 0; axis < 3; axis++)
+			pose.position[tracker][axis] = MSG_ReadShort() * (1.0f / 8.0f);
+	for (tracker = 0; tracker < VRIK_TRACKER_COUNT; tracker++)
+		for (axis = 0; axis < 3; axis++)
+			pose.orientation[tracker][axis] = MSG_ReadShort() * (360.0f / 65536.0f);
+
+	if (msg_badread || !cl.vrik_protocol_offered ||
+		!generation || entitynum < 1 || entitynum > cl.maxclients || entitynum >= cl.max_edicts ||
+		entitynum >= cl.num_entities || (pose.flags & ~VRIK_FLAG_KNOWN))
+	{
+		msg_badread = true;
+		return false;
+	}
+	if ((pose.flags & VRIK_FLAG_ACTIVE) &&
+		!(pose.flags & VRIK_FLAG_HEAD_TRACKED))
+		return false;
+
+	ent = &cl.entities[entitynum];
+	if (!ent->vrik_sequence_valid || ent->vrik_generation != generation)
+	{
+		ent->vrik_pose_count = 0;
+		ent->vrik_sequence_valid = false;
+		ent->vrik_generation = generation;
+	}
+	else if (ent->vrik_sequence_valid &&
+		!CL_VRIKSequenceIsNewer(pose.sequence, ent->vrik_last_sequence))
+		return true;
+	if (ent->vrik_pose_count > 0)
+	{
+		ent->vrik_poses[1] = ent->vrik_poses[0];
+		ent->vrik_pose_times[1] = ent->vrik_pose_times[0];
+	}
+	ent->vrik_poses[0] = pose;
+	ent->vrik_pose_times[0] = realtime;
+	ent->vrik_last_sequence = pose.sequence;
+	ent->vrik_sequence_valid = true;
+	if (ent->vrik_pose_count < 2)
+		ent->vrik_pose_count++;
+	return true;
+}
+
 //mods and servers might not send the \n instantly.
 //some mods bug out and omit the \n entirely, this function helps prevent the damage from spreading too much.
 //some servers or mods use //prefixed commands as extensions to avoid spam about unrecognised commands.
@@ -2016,7 +2112,8 @@ static void CL_ParseStuffText(const char *msg)
 		//handle special commands
 		if (cl.stuffcmdbuf[0] == '/' && cl.stuffcmdbuf[1] == '/')
 		{
-			handled = Cmd_ExecuteString(cl.stuffcmdbuf+2, src_server);
+			handled = CL_OfferVRIKProtocol(cl.stuffcmdbuf + 2) ||
+				Cmd_ExecuteString(cl.stuffcmdbuf+2, src_server);
 			if (!handled)
 				Con_DPrintf("Server sent unknown command %s\n", Cmd_Argv(0));
 		}
@@ -2188,6 +2285,12 @@ void CL_ParseServerMessage (void)
 
 		case svc_moveack:
 			CL_ParseMoveAck ();
+			break;
+
+		case svc_vrikpose:
+			SHOWNET("svc_vrikpose");
+			if (!CL_ParseVRIKPose())
+				Host_Error("CL_ParseServerMessage: malformed VRIK pose");
 			break;
 
 		case svcdp_csqcentities:
@@ -2538,6 +2641,8 @@ void CL_ParseServerMessage (void)
 			break;
 		}
 
-		lastcmd = cmd; //johnfitz
+		/* Some negotiated extension opcodes live above svc_strings[].  Keep
+		 * malformed-packet diagnostics from indexing that table out of bounds. */
+		lastcmd = cmd < (int)NUM_SVC_STRINGS ? cmd : svc_bad; //johnfitz
 	}
 }

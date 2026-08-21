@@ -314,6 +314,11 @@ typedef struct
 	unsigned	protocol_pext1;
 	unsigned	protocol_pext2;
 	qboolean	vr_relative_muzzle_supported;
+	qboolean	vrik_protocol_offered;
+	qboolean	vrik_cap_sent;
+	double		vrik_next_send_time;
+	unsigned short	vrik_next_sequence;
+	qboolean	vrik_last_sent_active;
 
 	qboolean	sendprespawn;
 

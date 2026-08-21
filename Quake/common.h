@@ -380,6 +380,10 @@ void COM_LoadCacheFile (const char *path, struct cache_user_s *cu,
 	// uses cache mem for allocating the buffer.
 byte *COM_LoadMallocFile (const char *path, unsigned int *path_id);
 	// allocates the buffer on the system mem (malloc).
+/* Loads only from a search path whose pack was verified as official rerelease
+ * model content, ignoring higher-priority mod files with the same name. */
+byte *COM_LoadMallocFileFromRerelease (const char *path,
+									 unsigned int *path_id);
 void COM_Effectinfo_Enumerate (int (*cb)(const char *pname));
 
 // Opens the given path directly, ignoring search paths.

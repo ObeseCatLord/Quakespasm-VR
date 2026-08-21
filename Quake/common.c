@@ -1862,7 +1862,8 @@ can be used for detecting a file's presence.
 ===========
 */
 static int COM_FindFile (const char *filename, int *handle, FILE **file,
-							unsigned int *path_id, qboolean *rerelease_models)
+							unsigned int *path_id, qboolean *rerelease_models,
+							qboolean rerelease_only)
 {
 	searchpath_t	*search;
 	char		netpath[MAX_OSPATH];
@@ -1881,6 +1882,8 @@ static int COM_FindFile (const char *filename, int *handle, FILE **file,
 //
 	for (search = com_searchpaths; search; search = search->next)
 	{
+		if (rerelease_only && !search->rerelease_model_source)
+			continue;
 		if (search->rerelease_models && !COM_IsRereleaseModelAsset (filename))
 			continue;
 
@@ -1984,7 +1987,7 @@ qboolean COM_FileExists (const char *filename, unsigned int *path_id)
 qboolean COM_FileExistsEx (const char *filename, unsigned int *path_id,
 							qboolean *rerelease_models)
 {
-	int ret = COM_FindFile (filename, NULL, NULL, path_id, rerelease_models);
+	int ret = COM_FindFile (filename, NULL, NULL, path_id, rerelease_models, false);
 	return (ret == -1) ? false : true;
 }
 
@@ -1999,7 +2002,7 @@ it may actually be inside a pak file
 */
 int COM_OpenFile (const char *filename, int *handle, unsigned int *path_id)
 {
-	return COM_FindFile (filename, handle, NULL, path_id, NULL);
+	return COM_FindFile (filename, handle, NULL, path_id, NULL, false);
 }
 
 /*
@@ -2012,7 +2015,7 @@ into the file.
 */
 int COM_FOpenFile (const char *filename, FILE **file, unsigned int *path_id)
 {
-	return COM_FindFile (filename, NULL, file, path_id, NULL);
+	return COM_FindFile (filename, NULL, file, path_id, NULL, false);
 }
 
 /*
@@ -2053,7 +2056,8 @@ static byte	*loadbuf;
 static cache_user_t *loadcache;
 static int	loadsize;
 
-byte *COM_LoadFile (const char *path, int usehunk, unsigned int *path_id)
+static byte *COM_LoadFileInternal (const char *path, int usehunk,
+	unsigned int *path_id, qboolean rerelease_only)
 {
 	int		h;
 	byte	*buf;
@@ -2063,7 +2067,10 @@ byte *COM_LoadFile (const char *path, int usehunk, unsigned int *path_id)
 	buf = NULL;	// quiet compiler warning
 
 // look for it in the filesystem or pack files
-	len = COM_OpenFile (path, &h, path_id);
+	if (rerelease_only)
+		len = COM_FindFile (path, &h, NULL, path_id, NULL, true);
+	else
+		len = COM_OpenFile (path, &h, path_id);
 	if (h == -1)
 		return NULL;
 
@@ -2110,6 +2117,11 @@ byte *COM_LoadFile (const char *path, int usehunk, unsigned int *path_id)
 	return buf;
 }
 
+byte *COM_LoadFile (const char *path, int usehunk, unsigned int *path_id)
+{
+	return COM_LoadFileInternal (path, usehunk, path_id, false);
+}
+
 byte *COM_LoadHunkFile (const char *path, unsigned int *path_id)
 {
 	return COM_LoadFile (path, LOADFILE_HUNK, path_id);
@@ -2147,6 +2159,12 @@ byte *COM_LoadStackFile (const char *path, void *buffer, int bufsize, unsigned i
 byte *COM_LoadMallocFile (const char *path, unsigned int *path_id)
 {
 	return COM_LoadFile (path, LOADFILE_MALLOC, path_id);
+}
+
+byte *COM_LoadMallocFileFromRerelease (const char *path,
+	unsigned int *path_id)
+{
+	return COM_LoadFileInternal (path, LOADFILE_MALLOC, path_id, true);
 }
 
 void COM_Effectinfo_Enumerate (int (*cb)(const char *pname))
@@ -2452,6 +2470,9 @@ static qboolean COM_IsRereleaseModelSource (const pack_t *pack)
 		int length;
 		unsigned int crc32;
 	} required_models[] = {
+		{"progs/player.md5mesh", 178658, 0x7911b9b0U},
+		{"progs/player.md5anim", 331510, 0x0561e50aU},
+		{"progs/player_00_00.lmp", 65544, 0x72e1fabfU},
 		{"progs/v_axe.md5mesh", 91226, 0x82833cbfU},
 		{"progs/v_light.md5mesh", 80581, 0xd476b687U},
 		{"progs/v_nail.md5mesh", 109665, 0x1a0eeacaU},

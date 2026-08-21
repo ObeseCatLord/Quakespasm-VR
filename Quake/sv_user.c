@@ -1056,6 +1056,68 @@ static qboolean SV_ClientCommandIs(const char *s, const char *name) {
   return !q_strncasecmp(s, name, len) && (unsigned char)s[len] <= ' ';
 }
 
+static qboolean SV_HandleVRIKCapability(const char *s)
+{
+  const char *value;
+
+  if (!SV_ClientCommandIs(s, "vrik_cap"))
+    return false;
+
+  value = s;
+  while (*value == ' ' || *value == '\t')
+    value++;
+  while (*value && *value != ' ' && *value != '\t')
+    value++;
+  while (*value == ' ' || *value == '\t')
+    value++;
+
+  if (*value++ != '1')
+    return true;
+  while (*value == ' ' || *value == '\t' || *value == '\r' || *value == '\n')
+    value++;
+  if (*value)
+    return true;
+
+  /* Capability is latched for the connection. Repeated declarations must
+   * not reset sequence or rate-limit state. */
+  if (host_client->vrik_capable)
+    return true;
+
+  host_client->vrik_capable = true;
+  host_client->vrik_sequence_valid = false;
+  host_client->vrik_inactive_sent = false;
+  host_client->vrik_generation = 0;
+  host_client->vrik_next_accept_time = 0;
+  return true;
+}
+
+static qboolean SV_ReadVRIKPose(qboolean accept)
+{
+  vrik_pose_t pose;
+  int tracker;
+  int axis;
+
+  if (net_message.cursize - msg_readcount < VRIK_POSE_WIRE_BYTES) {
+    msg_badread = true;
+    return false;
+  }
+
+  Q_memset(&pose, 0, sizeof(pose));
+  pose.sequence = (unsigned short)MSG_ReadShort();
+  pose.flags = MSG_ReadByte();
+  pose.body_yaw = MSG_ReadShort() * (360.0f / 65536.0f);
+  for (tracker = 0; tracker < VRIK_TRACKER_COUNT; tracker++)
+    for (axis = 0; axis < 3; axis++)
+      pose.position[tracker][axis] = MSG_ReadShort() * (1.0f / 8.0f);
+  for (tracker = 0; tracker < VRIK_TRACKER_COUNT; tracker++)
+    for (axis = 0; axis < 3; axis++)
+      pose.orientation[tracker][axis] = MSG_ReadShort() * (360.0f / 65536.0f);
+
+  if (!msg_badread && accept)
+    SV_ReceiveVRIKPose(host_client, &pose);
+  return !msg_badread;
+}
+
 static void SV_SetClientPredictionStatus(const char *s) {
   const char *value = s;
 
@@ -1145,6 +1207,7 @@ static qboolean SV_ParseClientMessage(void) {
   int ccmd;
   const char *s;
   int movecommands = 0;
+  int vrikcommands = 0;
 
   MSG_BeginReading();
 
@@ -1181,6 +1244,8 @@ static qboolean SV_ParseClientMessage(void) {
       s = MSG_ReadString();
       if (SV_ClientCommandIs(s, "predstatus"))
         SV_SetClientPredictionStatus(s);
+      else if (SV_HandleVRIKCapability(s))
+        ;
       else if (SV_IsEngineClientCommand(s))
         Cmd_ExecuteString(s, src_client);
       else if (!SV_ClientCommandIs(s, "spawn") &&
@@ -1207,6 +1272,14 @@ static qboolean SV_ParseClientMessage(void) {
         return true;
       movecommands++;
       SV_ReadClientMove(&host_client->cmd);
+      break;
+
+    case clc_vrikpose:
+      /* One freshest pose per received datagram is enough.  Consume extras
+       * so a malicious peer cannot turn packet contents into extra relay
+       * rate, while retaining normal parsing alignment. */
+      if (!SV_ReadVRIKPose(vrikcommands++ == 0))
+        return false;
       break;
 
     case clcdp_ackframe:

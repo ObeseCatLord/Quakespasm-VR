@@ -6,6 +6,7 @@
 
 typedef enum _vr_menu_options_t {
   VR_OPTION_ENABLED,
+  VR_OPTION_VRIK,
 
   VR_OPTION_AIMMODE,
   VR_OPTION_DEADZONE,

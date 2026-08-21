@@ -683,6 +683,87 @@ static qboolean CL_VRRoomScaleSampleAccepted(const vec3_t move)
   return horizontal_length <= 16.0f && fabsf(move[2]) <= 16.0f;
 }
 
+static qboolean CL_VRIKPoseIsValid(const vrik_pose_t *pose)
+{
+  int tracker;
+  int axis;
+
+  if (pose->flags & ~VRIK_FLAG_KNOWN)
+    return false;
+  if ((pose->flags & VRIK_FLAG_ACTIVE) &&
+      !(pose->flags & VRIK_FLAG_HEAD_TRACKED))
+    return false;
+  if (!isfinite(pose->body_yaw))
+    return false;
+
+  for (tracker = 0; tracker < VRIK_TRACKER_COUNT; tracker++) {
+    for (axis = 0; axis < 3; axis++) {
+      if (!isfinite(pose->position[tracker][axis]) ||
+          !isfinite(pose->orientation[tracker][axis]))
+        return false;
+    }
+    if (pose->position[tracker][0] * pose->position[tracker][0] +
+            pose->position[tracker][1] * pose->position[tracker][1] +
+            pose->position[tracker][2] * pose->position[tracker][2] >
+        VRIK_MAX_ROOT_LOCAL_OFFSET * VRIK_MAX_ROOT_LOCAL_OFFSET)
+      return false;
+  }
+  return true;
+}
+
+static void CL_WriteVRIKAngle16(sizebuf_t *buf, float angle)
+{
+  MSG_WriteShort(buf, (short)(Q_rint(angle * 65536.0 / 360.0) & 0xffff));
+}
+
+static void CL_WriteVRIKPose(sizebuf_t *buf, const vrik_pose_t *pose)
+{
+  int tracker;
+  int axis;
+
+  MSG_WriteShort(buf, (short)pose->sequence);
+  MSG_WriteByte(buf, pose->flags);
+  CL_WriteVRIKAngle16(buf, pose->body_yaw);
+  for (tracker = 0; tracker < VRIK_TRACKER_COUNT; tracker++)
+    for (axis = 0; axis < 3; axis++)
+      MSG_WriteShort(buf, Q_rint(pose->position[tracker][axis] * 8.0f));
+  for (tracker = 0; tracker < VRIK_TRACKER_COUNT; tracker++)
+    for (axis = 0; axis < 3; axis++)
+      CL_WriteVRIKAngle16(buf, pose->orientation[tracker][axis]);
+}
+
+/* VRIK is a standalone newest-pose message: never put it in move history. */
+static void CL_AppendVRIKPose(sizebuf_t *buf)
+{
+  vrik_pose_t pose;
+  qboolean captured;
+
+  if (!cl.vrik_protocol_offered || !cl.vrik_cap_sent ||
+      realtime < cl.vrik_next_send_time ||
+      buf->cursize + 1 + VRIK_POSE_WIRE_BYTES > buf->maxsize)
+    return;
+
+  Q_memset(&pose, 0, sizeof(pose));
+  captured = VR_GetVRIKPose(&pose);
+  if (captured && !CL_VRIKPoseIsValid(&pose)) {
+    Con_DPrintf("CL_SendMove: discarded invalid VRIK tracking sample\n");
+    captured = false;
+  }
+
+  /* Transmit one immediate inactive sample when VRIK is turned off. */
+  if (!captured) {
+    if (!cl.vrik_last_sent_active)
+      return;
+    pose.flags = 0;
+  }
+
+  pose.sequence = cl.vrik_next_sequence++;
+  MSG_WriteByte(buf, clc_vrikpose);
+  CL_WriteVRIKPose(buf, &pose);
+  cl.vrik_last_sent_active = (pose.flags & VRIK_FLAG_ACTIVE) != 0;
+  cl.vrik_next_send_time = realtime + 0.05;
+}
+
 void CL_SendMove(const usercmd_t *cmd) {
   int seq;
   int first_seq;
@@ -789,6 +870,7 @@ void CL_SendMove(const usercmd_t *cmd) {
     //
     cl.movecmds[seq & (CL_MOVE_HISTORY - 1)].seconds = 0;
     CL_WriteAckFrames(&buf);
+    CL_AppendVRIKPose(&buf);
     if (buf.cursize) {
       if (NET_SendUnreliableMessage(cls.netcon, &buf) == -1) {
         Con_Printf("CL_SendMove: lost server connection\n");
@@ -813,6 +895,7 @@ void CL_SendMove(const usercmd_t *cmd) {
   cl_lagdebug_last_sendmove = realtime;
 
   CL_WriteAckFrames(&buf);
+  CL_AppendVRIKPose(&buf);
 
   /* Repeat the last two sequenced commands.  The server discards sequences it
    * already accepted, while a dropped packet no longer loses a one-frame fire

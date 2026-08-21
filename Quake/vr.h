@@ -105,6 +105,7 @@ void VR_PollPoses();
 void InitAllWeaponCVars();
 
 extern cvar_t vr_enabled;
+extern cvar_t vr_vrik;
 extern cvar_t vr_aimmode;
 extern cvar_t vr_crosshair;
 extern cvar_t vr_msaa;
@@ -139,6 +140,9 @@ extern cvar_t vr_weapon_offset[MAX_WEAPONS * VARS_PER_WEAPON];
 extern cvar_t vr_weapon_muzzle_offset[MAX_WEAPONS * VARS_PER_WEAPON_MUZZLE];
 extern int weaponCVarEntry;
 extern vec3_t vr_room_scale_move;
+
+qboolean VR_VRIKAvailable(void);
+qboolean VR_GetVRIKPose(vrik_pose_t *pose);
 
 #define MAX_VR_WEAPONS 64
 
