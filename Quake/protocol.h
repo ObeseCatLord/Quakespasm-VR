@@ -69,6 +69,49 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #define PEXT2_REQUIRED_LATEST (PEXT2_SUPPORTED_SERVER)
 #define PEXT2_ACCEPTED_CLIENT (PEXT2_SUPPORTED_CLIENT)
 
+/*
+ * Quakespasm-VR inverse-kinematics transport.  This deliberately is not a
+ * PEXT bit: the server advertises it through comment stufftext and only sends
+ * the private svc to clients which explicitly opt in.  Thus an older peer
+ * continues to use normal player animation without seeing an unknown opcode.
+ *
+ * Positions are relative to the normal player entity origin, in Quake units.
+ * The wire format is fixed-point 13.3 for positions and angle16 for all
+ * angles, irrespective of the negotiated RMQ coordinate/angle flags.
+ */
+#define VRIK_PROTOCOL_VERSION 1
+#define VRIK_MAX_ROOT_LOCAL_OFFSET 256.0f
+#define VRIK_POSE_STALE_TIME 0.25
+
+#define VRIK_FLAG_ACTIVE 0x01
+#define VRIK_FLAG_HEAD_TRACKED 0x02
+#define VRIK_FLAG_LEFT_HAND_TRACKED 0x04
+#define VRIK_FLAG_RIGHT_HAND_TRACKED 0x08
+#define VRIK_FLAG_DOMINANT_LEFT 0x10
+#define VRIK_FLAG_KNOWN (VRIK_FLAG_ACTIVE | VRIK_FLAG_HEAD_TRACKED | \
+	VRIK_FLAG_LEFT_HAND_TRACKED | VRIK_FLAG_RIGHT_HAND_TRACKED | \
+	VRIK_FLAG_DOMINANT_LEFT)
+
+typedef enum
+{
+	VRIK_TRACKER_HEAD = 0,
+	VRIK_TRACKER_LEFT_HAND,
+	VRIK_TRACKER_RIGHT_HAND,
+	VRIK_TRACKER_COUNT
+} vrik_tracker_t;
+
+typedef struct
+{
+	unsigned short	sequence;
+	unsigned char	flags;
+	float		body_yaw;
+	vec3_t		position[VRIK_TRACKER_COUNT];
+	vec3_t		orientation[VRIK_TRACKER_COUNT];
+} vrik_pose_t;
+
+#define VRIK_POSE_WIRE_BYTES (2 + 1 + 2 + (VRIK_TRACKER_COUNT * 3 * 2) + \
+	(VRIK_TRACKER_COUNT * 3 * 2))
+
 // if the high bit of the servercmd is set, the low bits are fast update flags:
 #define U_MOREBITS (1 << 0)
 #define U_ORIGIN1 (1 << 1)
@@ -337,6 +380,8 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #define svc_backtolobby 55
 #define svc_localsound 56
 #define svc_moveack 57 // [short] last accepted sequenced move
+/* Sent only after the //vrik_protocol 1 / vrik_cap 1 handshake. */
+#define svc_vrikpose 87 // [short entity][long generation][vrik pose]
 // PEXT2_EXPLICITCMDMSEC adds [byte flags][byte authority][short mode_epoch]
 // [short discontinuity_epoch][byte reason].
 #define MOVEACK_FLAG_AUTHORITATIVE 0x01
@@ -396,6 +441,7 @@ typedef enum {
 #define clc_disconnect 2
 #define clc_move 3      // [short sequence][float servertime][byte msec if PEXT2_EXPLICITCMDMSEC][angles][move][buttons][impulse][extbits]
 #define clc_stringcmd 4 // [string] message
+#define clc_vrikpose 5  // [vrik_pose_t in fixed wire format]
 #define clcdp_ackframe 50
 #define clcfte_qcrequest 81
 

@@ -1515,6 +1515,7 @@ vec3_t vr_room_scale_move;
   cvar_t name = {#name, #defaultValue, type}
 
 DEFINE_CVAR(vr_enabled, 0, CVAR_NONE);
+DEFINE_CVAR(vr_vrik, 0, CVAR_ARCHIVE);
 DEFINE_CVAR(vr_viewkick, 0, CVAR_NONE);
 DEFINE_CVAR(vr_lefthanded, 0, CVAR_NONE);
 
@@ -1878,6 +1879,21 @@ static void VR_ReloadWeaponAdjustmentProfiles(void);
 
 static void VR_Gunmodeloffsets_f(cvar_t *var) {
   VR_ReloadWeaponAdjustmentProfiles();
+}
+
+qboolean VR_VRIKAvailable(void) {
+  qmodel_t *model = Mod_GetRereleasePlayerMD5Model();
+  md5liveinfo_t live;
+
+  return model && Mod_GetMD5LiveData(model, &live) && live.compatible;
+}
+
+static void VR_VRIK_f(cvar_t *var) {
+  if (!var->value || VR_VRIKAvailable())
+    return;
+
+  Con_Printf("VRIK requires the official Quake rerelease player MD5 files.\n");
+  Cvar_SetQuick(var, "0");
 }
 
 static void VR_Deadzone_f(cvar_t *var) {
@@ -2812,6 +2828,108 @@ static void VR_TrackingPointToWorld(const vr::HmdVector3_t point,
   out[0] = -headLocal[0] + player->origin[0];
   out[1] = -headLocal[1] + player->origin[1];
   out[2] = headLocal[2] + player->origin[2] + vr_floor_offset.value;
+}
+
+static float VR_VRIKNormalizeAngle(float angle) {
+  while (angle > 180.0f)
+    angle -= 360.0f;
+  while (angle < -180.0f)
+    angle += 360.0f;
+  return angle;
+}
+
+static void VR_VRIKToRootLocal(const vec3_t world, const vec3_t origin,
+                               float yaw, vec3_t local) {
+  const float radians = yaw * M_PI_DIV_180;
+  const float c = cosf(radians);
+  const float s = sinf(radians);
+  vec3_t delta;
+
+  VectorSubtract(world, origin, delta);
+  /* Conventional Quake entity space: +X forward, +Y left, +Z up. */
+  local[0] = delta[0] * c + delta[1] * s;
+  local[1] = -delta[0] * s + delta[1] * c;
+  local[2] = delta[2];
+}
+
+static qboolean VR_VRIKControllerTracked(int index) {
+  vr::TrackedDeviceIndex_t device;
+
+  if (index < 0 || index > 1 || !controllers[index].seenThisFrame)
+    return false;
+  device = controllers[index].deviceIndex;
+  return device != vr::k_unTrackedDeviceIndexInvalid &&
+         device < vr::k_unMaxTrackedDeviceCount &&
+         ovr_DevicePose[device].bPoseIsValid;
+}
+
+static void VR_VRIKControllerAngles(int index, vec3_t out) {
+  vec3_t controller_matrix[3], gun_matrix[3], combined[3];
+
+  /* Match the established controller-aim transform in every aim mode. */
+  CreateRotMat(0, vr_gunangle.value, gun_matrix);
+  RotMatFromAngleVector(controllers[index].orientation, controller_matrix);
+  R_ConcatRotations(gun_matrix, controller_matrix, combined);
+  AngleVectorFromRotMat(combined, out);
+}
+
+qboolean VR_GetVRIKPose(vrik_pose_t *pose) {
+  entity_t *player;
+  vec3_t head_world;
+  float body_yaw;
+  int physical_left;
+  int physical_right;
+  int tracker;
+
+  if (!pose)
+    return false;
+  Q_memset(pose, 0, sizeof(*pose));
+  if (!vr_vrik.value || !vr_enabled.value || !vr_initialized ||
+      !VR_VRIKAvailable() || cls.state != ca_connected ||
+      cls.signon != SIGNONS || !cl.entities || cl.viewentity < 1 ||
+      cl.viewentity >= cl.max_edicts || cl.stats[STAT_HEALTH] <= 0 ||
+      !vr_head_raw_valid)
+    return false;
+
+  player = &cl.entities[cl.viewentity];
+  body_yaw = player->angles[YAW];
+  if (!isfinite(body_yaw))
+    body_yaw = cl.viewangles[YAW];
+
+  pose->body_yaw = body_yaw;
+  pose->flags = VRIK_FLAG_ACTIVE | VRIK_FLAG_HEAD_TRACKED;
+  if (vr_lefthanded.value)
+    pose->flags |= VRIK_FLAG_DOMINANT_LEFT;
+
+  VR_TrackingPointToWorld(vr_head_raw_position, head_world);
+  VR_VRIKToRootLocal(head_world, player->origin, body_yaw,
+                     pose->position[VRIK_TRACKER_HEAD]);
+  VectorCopy(cl.viewangles, pose->orientation[VRIK_TRACKER_HEAD]);
+
+  /* controllers[] follows dominant/off-hand ordering; the rig needs anatomy. */
+  physical_left = vr_lefthanded.value ? 1 : 0;
+  physical_right = vr_lefthanded.value ? 0 : 1;
+  if (VR_VRIKControllerTracked(physical_left)) {
+    pose->flags |= VRIK_FLAG_LEFT_HAND_TRACKED;
+    VR_VRIKToRootLocal(cl.handpos[physical_left], player->origin, body_yaw,
+                       pose->position[VRIK_TRACKER_LEFT_HAND]);
+    VR_VRIKControllerAngles(physical_left,
+                            pose->orientation[VRIK_TRACKER_LEFT_HAND]);
+  }
+  if (VR_VRIKControllerTracked(physical_right)) {
+    pose->flags |= VRIK_FLAG_RIGHT_HAND_TRACKED;
+    VR_VRIKToRootLocal(cl.handpos[physical_right], player->origin, body_yaw,
+                       pose->position[VRIK_TRACKER_RIGHT_HAND]);
+    VR_VRIKControllerAngles(physical_right,
+                            pose->orientation[VRIK_TRACKER_RIGHT_HAND]);
+  }
+
+  /* Orientations use the same body-yaw-relative Quake convention. */
+  for (tracker = 0; tracker < VRIK_TRACKER_COUNT; tracker++)
+    pose->orientation[tracker][YAW] = VR_VRIKNormalizeAngle(
+        pose->orientation[tracker][YAW] - body_yaw);
+
+  return true;
 }
 
 static qboolean VR_DeviceLocalToWorld(int hand, float x, float y, float z,
@@ -5027,6 +5145,8 @@ void VID_VR_Init() {
   // This is only called once at game start
   Cvar_RegisterVariable(&vr_enabled);
   Cvar_SetCallback(&vr_enabled, VR_Enabled_f);
+  Cvar_RegisterVariable(&vr_vrik);
+  Cvar_SetCallback(&vr_vrik, VR_VRIK_f);
   Cvar_RegisterVariable(&vr_weaponmenu_mode);
   Cvar_RegisterVariable(&vr_weaponmenu_player_teleport);
   Cmd_AddCommand("vr_weaponlist", VR_WeaponList_f);

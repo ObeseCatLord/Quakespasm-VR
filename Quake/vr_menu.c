@@ -110,6 +110,12 @@ static void VR_MenuPrintOptionValue(int cx, int cy, int option) {
   case VR_OPTION_ENABLED:
     M_DrawCheckbox(cx, cy, (int)vr_enabled.value);
     break;
+  case VR_OPTION_VRIK:
+    if (!VR_VRIKAvailable())
+      value_string = "unavailable";
+    else
+      M_DrawCheckbox(cx, cy, (int)vr_vrik.value);
+    break;
   /*case VR_OPTION_PERFHUD:
       if (vr_perfhud.value == 1) value_string = "Latency Timing";
       else if (vr_perfhud.value == 2) value_string = "Render Timing";
@@ -356,6 +362,9 @@ void VR_MenuKeyOption(int key, int option) {
     //    VR_MenuPlaySound( "items/r_item2.wav", 0.5 );
     // }
     break;
+  case VR_OPTION_VRIK:
+    Cvar_SetValue(vr_vrik.name, !(int)vr_vrik.value);
+    break;
   /*case VR_OPTION_PERFHUD:
       intValue = (int)vr_perfhud.value;
       intValue = CLAMP( debug[0], isLeft ? intValue - 1 : intValue + 1,
@@ -580,6 +589,10 @@ void VR_MenuDraw(void) {
     switch (i) {
     case VR_OPTION_ENABLED:
       M_Print(16, y, "               VR Enabled");
+      VR_MenuPrintOptionValue(240, y, i);
+      break;
+    case VR_OPTION_VRIK:
+      M_Print(16, y, "           Networked VRIK");
       VR_MenuPrintOptionValue(240, y, i);
       break;
     case VR_OPTION_AIMMODE:

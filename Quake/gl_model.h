@@ -332,12 +332,66 @@ typedef struct md5vertex_s
 	float	st[2];
 } md5vertex_t;
 
+/*
+ * Live MD5 data retained alongside the baked pose stream.  The normal alias
+ * renderer continues to use md5vertex_t poses; these compact records are for
+ * callers which need to skin a separately adjusted joint palette (VRIK).
+ * position is joint-local and already multiplied by bias; position[3] is the
+ * bias, matching the loader's CPU skinning convention.
+ */
+typedef struct md5livejoint_s
+{
+	char	name[32];
+	int	parent;
+	float	bind[12];
+} md5livejoint_t;
+
+typedef struct md5livevertex_s
+{
+	unsigned int	firstweight;
+	unsigned int	numweights;
+	float		st[2];
+} md5livevertex_t;
+
+typedef struct md5liveweight_s
+{
+	int		joint;
+	float		position[4];
+} md5liveweight_t;
+
 #define MD3_VERSION		15
 #define MD3_XYZ_SCALE		(1.0f / 64.0f)
 #define MAX_MD3_SURFACES	32
 #define MAX_MD3_VERTICES	65535
 #define MAX_MD5_SURFACES	32
 #define MAX_MD5_JOINTS		256
+
+/* The official rerelease naming contract.  Missing optional joints are -1. */
+typedef enum
+{
+	MD5_VRIK_HIP,
+	MD5_VRIK_SPINE1,
+	MD5_VRIK_SPINE2,
+	MD5_VRIK_NECK,
+	MD5_VRIK_HEAD,
+	MD5_VRIK_SHOULDER_L,
+	MD5_VRIK_UPPERARM_L,
+	MD5_VRIK_LOWERARM_L,
+	MD5_VRIK_HAND_L,
+	MD5_VRIK_SHOULDER_R,
+	MD5_VRIK_UPPERARM_R,
+	MD5_VRIK_LOWERARM_R,
+	MD5_VRIK_HAND_R,
+	MD5_VRIK_UPPERLEG_L,
+	MD5_VRIK_LOWERLEG_L,
+	MD5_VRIK_FOOT_L,
+	MD5_VRIK_UPPERLEG_R,
+	MD5_VRIK_LOWERLEG_R,
+	MD5_VRIK_FOOT_R,
+	MD5_VRIK_GUN,
+	MD5_VRIK_AXE,
+	MD5_VRIK_JOINT_COUNT
+} md5vrikjoint_t;
 
 typedef enum
 {
@@ -415,16 +469,50 @@ typedef struct {
 	int					commands;	// gl command list with embedded s/t
 	aliasposeverttype_t	poseverttype;
 	intptr_t		nextsurface;	// MD3: offset to next aliashdr_t, 0 at end
-	/* MD5 skeleton retained for r_showskel. boneposes contains numposes
+	/* MD5 skeleton retained for r_showskel/VRIK. boneposes contains numposes
 	 * consecutive 3x4 row-major matrices, one set per animation frame. */
 	int				md5_numbones;
 	intptr_t		md5_boneparents;
 	intptr_t		md5_boneposes;
+	intptr_t		md5_livejoints;
+	int				md5_numliveweights;
+	intptr_t		md5_livevertices;
+	intptr_t		md5_liveweights;
 	struct gltexture_s	*gltextures[MAX_SKINS][4]; //johnfitz
 	struct gltexture_s	*fbtextures[MAX_SKINS][4]; //johnfitz
 	int					texels[MAX_SKINS];	// only for player skins
 	maliasframedesc_t	frames[1];	// variable sized
 } aliashdr_t;
+
+/*
+ * Read-only view of a retained MD5 skeleton.  The pointers are alias-cache
+ * data and remain valid until the owning qmodel_t is purged.  boneposes are
+ * model-space matrices in frame-major order.  jointindex values are -1 for
+ * absent optional joints; compatible is true only when all upper-body IK
+ * joints and live skinning records are available.
+ */
+typedef struct md5liveinfo_s
+{
+	const aliashdr_t		*firstsurface;
+	const md5livejoint_t	*joints;
+	const float			*boneposes;
+	int				numbones;
+	int				numposes;
+	int				jointindex[MD5_VRIK_JOINT_COUNT];
+	qboolean			compatible;
+	qboolean			from_rerelease;
+} md5liveinfo_t;
+
+typedef struct md5livesurface_s
+{
+	const aliashdr_t		*header;
+	const md5livevertex_t	*vertices;
+	const md5liveweight_t	*weights;
+	const unsigned short	*indexes;
+	int				numverts;
+	int				numweights;
+	int				numindexes;
+} md5livesurface_t;
 
 #define	MAXALIASVERTS	0x7fff //spike/Ironwail -- 16-bit index buffer + onseam duplication
 #define	MAXALIASFRAMES	4096 //spike -- was 256; Keep/Mjolnir includes >1024-frame alias models
@@ -590,6 +678,11 @@ aliashdr_t *Mod_GetMD3Extradata (qmodel_t *mod);
 qboolean Mod_UseMD3Model (qmodel_t *mod, int skinnum);
 aliashdr_t *Mod_GetMD5Extradata (qmodel_t *mod);
 qboolean Mod_UseMD5Model (qmodel_t *mod, int skinnum);
+qboolean Mod_GetMD5LiveData (qmodel_t *mod, md5liveinfo_t *out);
+qboolean Mod_GetMD5LiveSurface (const md5liveinfo_t *info, int surface,
+	md5livesurface_t *out);
+qmodel_t *Mod_GetRereleasePlayerMD5Model (void);
+qboolean Mod_GetRereleasePlayerMD5LiveData (md5liveinfo_t *out);
 qboolean Mod_UseMD3ModelForFrame (qmodel_t *mod, int skinnum, int frame);
 qboolean Mod_UseMD5ModelForFrame (qmodel_t *mod, int skinnum, int frame);
 qboolean Mod_UseEnhancedReplacementForFrame (qmodel_t *mod, int skinnum,

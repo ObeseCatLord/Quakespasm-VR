@@ -81,6 +81,148 @@ static void SVFTE_SetupFrames (client_t *client);
 static qboolean SVFTE_SendClientDatagram (client_t *client, int maxsize);
 static void SV_WriteMoveAckPayloadToMessage (client_t *client, sizebuf_t *msg);
 
+#define VRIK_SVC_MESSAGE_BYTES (1 + 2 + 4 + VRIK_POSE_WIRE_BYTES)
+#define VRIK_SERVER_MIN_INTERVAL 0.025
+static unsigned int sv_vrik_next_generation;
+
+static qboolean SV_VRIKPoseIsValid(const vrik_pose_t *pose)
+{
+	int tracker;
+	int axis;
+
+	if (pose->flags & ~VRIK_FLAG_KNOWN)
+		return false;
+	if ((pose->flags & VRIK_FLAG_ACTIVE) &&
+		!(pose->flags & VRIK_FLAG_HEAD_TRACKED))
+		return false;
+	if (!isfinite(pose->body_yaw))
+		return false;
+	for (tracker = 0; tracker < VRIK_TRACKER_COUNT; tracker++)
+	{
+		for (axis = 0; axis < 3; axis++)
+			if (!isfinite(pose->position[tracker][axis]) ||
+				!isfinite(pose->orientation[tracker][axis]))
+				return false;
+		if (pose->position[tracker][0] * pose->position[tracker][0] +
+				pose->position[tracker][1] * pose->position[tracker][1] +
+				pose->position[tracker][2] * pose->position[tracker][2] >
+			VRIK_MAX_ROOT_LOCAL_OFFSET * VRIK_MAX_ROOT_LOCAL_OFFSET)
+			return false;
+	}
+	return true;
+}
+
+static qboolean SV_VRIKSequenceIsNewer(unsigned short sequence,
+	unsigned short previous)
+{
+	return (short)(sequence - previous) > 0;
+}
+
+static void SV_WriteVRIKAngle16(sizebuf_t *msg, float angle)
+{
+	MSG_WriteShort(msg, (short)(Q_rint(angle * 65536.0 / 360.0) & 0xffff));
+}
+
+static void SV_WriteVRIKPose(sizebuf_t *msg, int entitynum,
+	unsigned int generation, const vrik_pose_t *pose)
+{
+	int tracker;
+	int axis;
+
+	MSG_WriteByte(msg, svc_vrikpose);
+	MSG_WriteShort(msg, entitynum);
+	MSG_WriteLong(msg, (int)generation);
+	MSG_WriteShort(msg, (short)pose->sequence);
+	MSG_WriteByte(msg, pose->flags);
+	SV_WriteVRIKAngle16(msg, pose->body_yaw);
+	for (tracker = 0; tracker < VRIK_TRACKER_COUNT; tracker++)
+		for (axis = 0; axis < 3; axis++)
+			MSG_WriteShort(msg, Q_rint(pose->position[tracker][axis] * 8.0f));
+	for (tracker = 0; tracker < VRIK_TRACKER_COUNT; tracker++)
+		for (axis = 0; axis < 3; axis++)
+			SV_WriteVRIKAngle16(msg, pose->orientation[tracker][axis]);
+}
+
+static void SV_RelayVRIKPose(client_t *source, const vrik_pose_t *pose)
+{
+	int source_num;
+	int i;
+
+	if (!source || !source->edict)
+		return;
+	source_num = NUM_FOR_EDICT(source->edict);
+	for (i = 0; i < svs.maxclients; i++)
+	{
+		client_t *recipient = &svs.clients[i];
+
+		if (recipient == source || !recipient->active || !recipient->spawned ||
+			!recipient->vrik_capable)
+			continue;
+		if (recipient->datagram.cursize + VRIK_SVC_MESSAGE_BYTES >
+			recipient->datagram.maxsize)
+			continue;
+		SV_WriteVRIKPose(&recipient->datagram, source_num,
+			source->vrik_generation, pose);
+	}
+}
+
+void SV_ReceiveVRIKPose(client_t *client, const vrik_pose_t *pose)
+{
+	if (!client || !pose || !client->active || !client->spawned ||
+		!client->edict || !client->vrik_capable ||
+		!SV_VRIKPoseIsValid(pose))
+		return;
+	if (client->vrik_sequence_valid &&
+		!SV_VRIKSequenceIsNewer(pose->sequence, client->vrik_last_sequence))
+		return;
+
+	/* Client scheduling is not an authority boundary. Bound accepted and
+	 * amplified pose traffic even if a peer sends one pose per datagram. */
+	if (realtime < client->vrik_next_accept_time)
+		return;
+	if (!(pose->flags & VRIK_FLAG_ACTIVE) && client->vrik_inactive_sent)
+		return;
+
+	if (!client->vrik_generation)
+	{
+		client->vrik_generation = ++sv_vrik_next_generation;
+		if (!client->vrik_generation)
+			client->vrik_generation = ++sv_vrik_next_generation;
+	}
+	client->vrik_pose = *pose;
+	client->vrik_last_sequence = pose->sequence;
+	client->vrik_sequence_valid = true;
+	client->vrik_pose_time = realtime;
+	client->vrik_next_accept_time = realtime + VRIK_SERVER_MIN_INTERVAL;
+	client->vrik_inactive_sent = !(pose->flags & VRIK_FLAG_ACTIVE);
+	SV_RelayVRIKPose(client, pose);
+}
+
+void SV_ExpireVRIKPoses(void)
+{
+	int i;
+
+	for (i = 0; i < svs.maxclients; i++)
+	{
+		client_t *client = &svs.clients[i];
+		vrik_pose_t inactive;
+
+		if (!client->active || !client->vrik_capable ||
+			!client->vrik_sequence_valid || client->vrik_inactive_sent ||
+			!(client->vrik_pose.flags & VRIK_FLAG_ACTIVE) ||
+			realtime - client->vrik_pose_time <= VRIK_POSE_STALE_TIME)
+			continue;
+
+		Q_memset(&inactive, 0, sizeof(inactive));
+		inactive.sequence = client->vrik_last_sequence + 1;
+		client->vrik_pose = inactive;
+		client->vrik_last_sequence = inactive.sequence;
+		client->vrik_pose_time = realtime;
+		client->vrik_inactive_sent = true;
+		SV_RelayVRIKPose(client, &inactive);
+	}
+}
+
 static qboolean SV_IsLocalClient (client_t *client)
 {
 	return client && client->netconnection &&
@@ -943,6 +1085,10 @@ void SV_SendServerinfo (client_t *client)
 	 * muzzle coordinates without breaking older servers. */
 	MSG_WriteByte (&client->message, svc_stufftext);
 	MSG_WriteString (&client->message, "//vr_relative_muzzle 1\n");
+	/* Comment-prefixed negotiation keeps pre-VRIK clients on their normal
+	 * animation path and avoids spending a PEXT2 compatibility bit. */
+	MSG_WriteByte (&client->message, svc_stufftext);
+	MSG_WriteString (&client->message, "//vrik_protocol 1\n");
 
 	MSG_WriteByte (&client->message, svc_signonnum);
 	MSG_WriteByte (&client->message, 1);
@@ -3720,6 +3866,7 @@ void SV_SendClientMessages (void)
 
 // update frags, names, etc
 	SV_UpdateToReliableMessages ();
+	SV_ExpireVRIKPoses ();
 
 	for (i=0, host_client = svs.clients ; i<svs.maxclients ; i++, host_client++)
 	{

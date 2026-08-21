@@ -87,6 +87,13 @@ typedef struct entity_s
 	short					previouspose;	//johnfitz -- animation lerping
 	short					currentpose;	//johnfitz -- animation lerping
 //	short					futurepose;		//johnfitz -- animation lerping
+	/* Last two root-local VRIK samples received for this entity. */
+	vrik_pose_t				vrik_poses[2];
+	double					vrik_pose_times[2];
+	unsigned short				vrik_last_sequence;
+	unsigned int				vrik_generation;
+	unsigned char				vrik_pose_count;
+	qboolean				vrik_sequence_valid;
 	float					movelerpstart;	//johnfitz -- transform lerping
 	vec3_t					previousorigin;	//johnfitz -- transform lerping
 	vec3_t					currentorigin;	//johnfitz -- transform lerping

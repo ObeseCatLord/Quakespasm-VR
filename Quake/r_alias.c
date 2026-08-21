@@ -103,6 +103,14 @@ static qboolean r_md3_glsl_alphatest;
 static qboolean r_md5_glsl_active;
 static qboolean r_md5_glsl_alphatest;
 
+static qboolean r_vrik_pose_pending;
+static qboolean r_vrik_skin_active;
+static vrik_pose_t r_vrik_pending_pose;
+static const aliashdr_t *r_vrik_skin_surface;
+static md5vertex_t *r_vrik_skin_vertices;
+static int r_vrik_skin_capacity;
+static float r_vrik_palette[MAX_MD5_JOINTS * 12];
+
 // uniforms used in vert shader
 static GLint  blendLoc;
 static GLint  shadevectorLoc;
@@ -1721,6 +1729,572 @@ cleanup:
 	glPopMatrix ();
 }
 
+static float R_VRIKLerpAngle (float from, float to, float blend)
+{
+	float delta = to - from;
+
+	while (delta > 180.0f) delta -= 360.0f;
+	while (delta < -180.0f) delta += 360.0f;
+	return from + delta * blend;
+}
+
+static qboolean R_VRIKSampleEntityPose (const entity_t *entity, vrik_pose_t *out)
+{
+	const vrik_pose_t *newest, *older;
+	double newesttime, oldertime, sampletime;
+	float blend;
+	int tracker, axis;
+
+	if (!entity || !out || entity->vrik_pose_count < 1)
+		return false;
+	newest = &entity->vrik_poses[0];
+	newesttime = entity->vrik_pose_times[0];
+	if (!(newest->flags & VRIK_FLAG_ACTIVE) ||
+		!(newest->flags & VRIK_FLAG_HEAD_TRACKED) ||
+		realtime - newesttime > VRIK_POSE_STALE_TIME)
+		return false;
+
+	*out = *newest;
+	if (entity->vrik_pose_count < 2)
+		return true;
+	older = &entity->vrik_poses[1];
+	oldertime = entity->vrik_pose_times[1];
+	if (!(older->flags & VRIK_FLAG_ACTIVE) || newesttime <= oldertime)
+		return true;
+
+	/* A short interpolation delay absorbs the natural 20 Hz pose cadence. */
+	sampletime = realtime - 0.075;
+	blend = (float)((sampletime - oldertime) / (newesttime - oldertime));
+	blend = CLAMP(0.0f, blend, 1.0f);
+	for (tracker = 0; tracker < VRIK_TRACKER_COUNT; tracker++)
+		for (axis = 0; axis < 3; axis++)
+		{
+			out->position[tracker][axis] = older->position[tracker][axis] +
+				(newest->position[tracker][axis] - older->position[tracker][axis]) * blend;
+			out->orientation[tracker][axis] = R_VRIKLerpAngle (
+				older->orientation[tracker][axis], newest->orientation[tracker][axis], blend);
+		}
+	out->body_yaw = R_VRIKLerpAngle (older->body_yaw, newest->body_yaw, blend);
+	return true;
+}
+
+static void R_VRIKMatrixOrigin (const float matrix[12], vec3_t origin)
+{
+	origin[0] = matrix[3];
+	origin[1] = matrix[7];
+	origin[2] = matrix[11];
+}
+
+static void R_VRIKSetMatrixOrigin (float matrix[12], const vec3_t origin)
+{
+	matrix[3] = origin[0];
+	matrix[7] = origin[1];
+	matrix[11] = origin[2];
+}
+
+static void R_VRIKMatrixMultiply (const float first[12], const float second[12],
+	float out[12])
+{
+	float result[12];
+
+	R_ConcatTransforms ((float (*)[4])first, (float (*)[4])second,
+		(float (*)[4])result);
+	memcpy (out, result, sizeof(result));
+}
+
+static void R_VRIKMatrixInverseRigid (const float matrix[12], float inverse[12])
+{
+	int row, column;
+
+	for (row = 0; row < 3; row++)
+		for (column = 0; column < 3; column++)
+			inverse[row * 4 + column] = matrix[column * 4 + row];
+	for (row = 0; row < 3; row++)
+		inverse[row * 4 + 3] = -(inverse[row * 4 + 0] * matrix[3] +
+			inverse[row * 4 + 1] * matrix[7] +
+			inverse[row * 4 + 2] * matrix[11]);
+}
+
+static void R_VRIKOrthonormalize (float matrix[12])
+{
+	vec3_t x = {matrix[0], matrix[4], matrix[8]};
+	vec3_t y = {matrix[1], matrix[5], matrix[9]};
+	vec3_t z;
+	float projection;
+
+	if (!VectorNormalize (x))
+		x[0] = 1, x[1] = 0, x[2] = 0;
+	projection = DotProduct (x, y);
+	VectorMA (y, -projection, x, y);
+	if (!VectorNormalize (y))
+	{
+		y[0] = 0, y[1] = 1, y[2] = 0;
+		projection = DotProduct (x, y);
+		VectorMA (y, -projection, x, y);
+		VectorNormalize (y);
+	}
+	CrossProduct (x, y, z);
+	VectorNormalize (z);
+	matrix[0] = x[0]; matrix[4] = x[1]; matrix[8] = x[2];
+	matrix[1] = y[0]; matrix[5] = y[1]; matrix[9] = y[2];
+	matrix[2] = z[0]; matrix[6] = z[1]; matrix[10] = z[2];
+}
+
+static void R_VRIKLerpPalette (const md5liveinfo_t *live,
+	const lerpdata_t *lerpdata, float *palette)
+{
+	const float *first = live->boneposes +
+		(size_t)lerpdata->pose1 * live->numbones * 12;
+	const float *second = live->boneposes +
+		(size_t)lerpdata->pose2 * live->numbones * 12;
+	int joint, component;
+
+	for (joint = 0; joint < live->numbones; joint++)
+	{
+		float *matrix = palette + joint * 12;
+		for (component = 0; component < 12; component++)
+			matrix[component] = first[joint * 12 + component] +
+				(second[joint * 12 + component] - first[joint * 12 + component]) *
+				lerpdata->blend;
+		R_VRIKOrthonormalize (matrix);
+	}
+}
+
+static qboolean R_VRIKBuildBodyBasis (const md5liveinfo_t *live,
+	const float *palette, vec3_t lateral, vec3_t forward, vec3_t up)
+{
+	vec3_t leftshoulder, rightshoulder, hip, head;
+	int left = live->jointindex[MD5_VRIK_SHOULDER_L];
+	int right = live->jointindex[MD5_VRIK_SHOULDER_R];
+	int hipjoint = live->jointindex[MD5_VRIK_HIP];
+	int headjoint = live->jointindex[MD5_VRIK_HEAD];
+
+	if (left < 0 || right < 0 || hipjoint < 0 || headjoint < 0)
+		return false;
+	R_VRIKMatrixOrigin (palette + left * 12, leftshoulder);
+	R_VRIKMatrixOrigin (palette + right * 12, rightshoulder);
+	R_VRIKMatrixOrigin (palette + hipjoint * 12, hip);
+	R_VRIKMatrixOrigin (palette + headjoint * 12, head);
+	VectorSubtract (rightshoulder, leftshoulder, lateral);
+	VectorSubtract (head, hip, up);
+	if (!VectorNormalize (lateral) || !VectorNormalize (up))
+		return false;
+	CrossProduct (lateral, up, forward);
+	if (!VectorNormalize (forward))
+		return false;
+	CrossProduct (forward, lateral, up);
+	VectorNormalize (up);
+	return true;
+}
+
+static void R_VRIKLocalVectorToModel (const vec3_t local,
+	const vec3_t lateral, const vec3_t forward, const vec3_t up, vec3_t model)
+{
+	/* Network local coordinates are Quake +X forward, +Y left, +Z up. */
+	model[0] = forward[0] * local[0] - lateral[0] * local[1] + up[0] * local[2];
+	model[1] = forward[1] * local[0] - lateral[1] * local[1] + up[1] * local[2];
+	model[2] = forward[2] * local[0] - lateral[2] * local[1] + up[2] * local[2];
+}
+
+static void R_VRIKCanonicalMatrix (vec3_t direction,
+	vec3_t preferred_up, vec3_t origin, float matrix[12])
+{
+	vec3_t x, y, z;
+
+	VectorCopy (direction, x);
+	if (!VectorNormalize (x))
+		x[0] = 1, x[1] = 0, x[2] = 0;
+	CrossProduct (x, preferred_up, y); /* local +Y is left */
+	if (!VectorNormalize (y))
+	{
+		vec3_t fallback = {0, 0, 1};
+		CrossProduct (x, fallback, y);
+		if (!VectorNormalize (y))
+			y[0] = 0, y[1] = 1, y[2] = 0;
+	}
+	CrossProduct (y, x, z);
+	VectorNormalize (z);
+	matrix[0] = x[0]; matrix[1] = y[0]; matrix[2] = z[0]; matrix[3] = origin[0];
+	matrix[4] = x[1]; matrix[5] = y[1]; matrix[6] = z[1]; matrix[7] = origin[1];
+	matrix[8] = x[2]; matrix[9] = y[2]; matrix[10] = z[2]; matrix[11] = origin[2];
+}
+
+static void R_VRIKAnglesToModelMatrix (const vec3_t angles,
+	const vec3_t lateral, const vec3_t forward, const vec3_t up,
+	const vec3_t origin, float matrix[12])
+{
+	vec3_t quakeforward, quakeright, quakeup;
+	vec3_t x, y, z, quakeleft;
+
+	AngleVectors ((float *)angles, quakeforward, quakeright, quakeup);
+	quakeleft[0] = -quakeright[0];
+	quakeleft[1] = -quakeright[1];
+	quakeleft[2] = -quakeright[2];
+	R_VRIKLocalVectorToModel (quakeforward, lateral, forward, up, x);
+	R_VRIKLocalVectorToModel (quakeleft, lateral, forward, up, y);
+	R_VRIKLocalVectorToModel (quakeup, lateral, forward, up, z);
+	VectorNormalize (x); VectorNormalize (y); VectorNormalize (z);
+	matrix[0] = x[0]; matrix[1] = y[0]; matrix[2] = z[0]; matrix[3] = origin[0];
+	matrix[4] = x[1]; matrix[5] = y[1]; matrix[6] = z[1]; matrix[7] = origin[1];
+	matrix[8] = x[2]; matrix[9] = y[2]; matrix[10] = z[2]; matrix[11] = origin[2];
+}
+
+static void R_VRIKRotateToward (float matrix[12], const vec3_t from,
+	const vec3_t to)
+{
+	vec3_t a, b, axis, origin;
+	float cosine, sine, one;
+	float delta[12], result[12];
+
+	VectorCopy (from, a); VectorCopy (to, b);
+	if (!VectorNormalize (a) || !VectorNormalize (b))
+		return;
+	cosine = CLAMP(-1.0f, DotProduct (a, b), 1.0f);
+	CrossProduct (a, b, axis);
+	sine = VectorNormalize (axis);
+	if (sine < 0.0001f)
+	{
+		if (cosine > 0.0f)
+			return;
+		axis[0] = 0, axis[1] = 0, axis[2] = 1;
+		if (fabsf(DotProduct (axis, a)) > 0.9f)
+			axis[0] = 0, axis[1] = 1, axis[2] = 0;
+		CrossProduct (a, axis, axis);
+		VectorNormalize (axis);
+		sine = 0.0f;
+	}
+	one = 1.0f - cosine;
+	delta[0] = cosine + axis[0] * axis[0] * one;
+	delta[1] = axis[0] * axis[1] * one - axis[2] * sine;
+	delta[2] = axis[0] * axis[2] * one + axis[1] * sine;
+	delta[3] = 0;
+	delta[4] = axis[1] * axis[0] * one + axis[2] * sine;
+	delta[5] = cosine + axis[1] * axis[1] * one;
+	delta[6] = axis[1] * axis[2] * one - axis[0] * sine;
+	delta[7] = 0;
+	delta[8] = axis[2] * axis[0] * one - axis[1] * sine;
+	delta[9] = axis[2] * axis[1] * one + axis[0] * sine;
+	delta[10] = cosine + axis[2] * axis[2] * one;
+	delta[11] = 0;
+	R_VRIKMatrixOrigin (matrix, origin);
+	R_VRIKMatrixMultiply (delta, matrix, result);
+	memcpy (matrix, result, sizeof(result));
+	R_VRIKSetMatrixOrigin (matrix, origin);
+}
+
+static void R_VRIKSolveArm (const md5liveinfo_t *live, float *palette,
+	qboolean rightside, vec3_t target, const vec3_t targetangles,
+	vec3_t lateral, vec3_t forward, vec3_t up)
+{
+	int upperindex = live->jointindex[rightside ? MD5_VRIK_UPPERARM_R : MD5_VRIK_UPPERARM_L];
+	int lowerindex = live->jointindex[rightside ? MD5_VRIK_LOWERARM_R : MD5_VRIK_LOWERARM_L];
+	int handindex = live->jointindex[rightside ? MD5_VRIK_HAND_R : MD5_VRIK_HAND_L];
+	float *upper = palette + upperindex * 12;
+	float *lower = palette + lowerindex * 12;
+	float *hand = palette + handindex * 12;
+	float canonical[12], inverse[12], correction[12], desiredhand[12];
+	vec3_t shoulder, oldelbow, oldhand, toward, pole, bendnormal, bendaxis;
+	vec3_t elbow, oldupperdir, oldlowerdir, newupperdir, newlowerdir;
+	float upperlength, lowerlength, distance, cosine, anglecos, anglesin;
+
+	R_VRIKMatrixOrigin (upper, shoulder);
+	R_VRIKMatrixOrigin (lower, oldelbow);
+	R_VRIKMatrixOrigin (hand, oldhand);
+	VectorSubtract (oldelbow, shoulder, oldupperdir);
+	VectorSubtract (oldhand, oldelbow, oldlowerdir);
+	upperlength = VectorLength (oldupperdir);
+	lowerlength = VectorLength (oldlowerdir);
+	if (upperlength < 0.01f || lowerlength < 0.01f)
+		return;
+
+	/* Preserve the MD5 hand's bone-local basis behind a canonical wrist frame. */
+	R_VRIKCanonicalMatrix (oldlowerdir, up, oldhand, canonical);
+	R_VRIKMatrixInverseRigid (canonical, inverse);
+	R_VRIKMatrixMultiply (inverse, hand, correction);
+
+	VectorSubtract (target, shoulder, toward);
+	distance = VectorLength (toward);
+	if (distance < 0.001f)
+		return;
+	VectorScale (toward, 1.0f / distance, toward);
+	distance = CLAMP(fabsf(upperlength - lowerlength) + 0.01f, distance,
+		upperlength + lowerlength - 0.01f);
+	VectorScale (lateral, rightside ? 1.0f : -1.0f, pole);
+	VectorMA (pole, -0.35f, forward, pole);
+	CrossProduct (toward, pole, bendnormal);
+	if (!VectorNormalize (bendnormal))
+		VectorCopy (up, bendnormal);
+	CrossProduct (bendnormal, toward, bendaxis);
+	VectorNormalize (bendaxis);
+	cosine = CLAMP(-1.0f,
+		(upperlength * upperlength + distance * distance - lowerlength * lowerlength) /
+		(2.0f * upperlength * distance), 1.0f);
+	anglecos = cosine * upperlength;
+	anglesin = sqrtf(q_max(0.0f, 1.0f - cosine * cosine)) * upperlength;
+	VectorMA (shoulder, anglecos, toward, elbow);
+	VectorMA (elbow, anglesin, bendaxis, elbow);
+
+	VectorSubtract (elbow, shoulder, newupperdir);
+	VectorSubtract (target, elbow, newlowerdir);
+	R_VRIKRotateToward (upper, oldupperdir, newupperdir);
+	R_VRIKRotateToward (lower, oldlowerdir, newlowerdir);
+	R_VRIKSetMatrixOrigin (lower, elbow);
+
+	R_VRIKAnglesToModelMatrix (targetangles, lateral, forward, up, target, canonical);
+	R_VRIKMatrixMultiply (canonical, correction, desiredhand);
+	R_VRIKSetMatrixOrigin (desiredhand, target);
+	memcpy (hand, desiredhand, sizeof(desiredhand));
+}
+
+static void R_VRIKMoveJoint (const md5liveinfo_t *live, float *palette,
+	md5vrikjoint_t semantic, vec3_t delta, float scale)
+{
+	int index = live->jointindex[semantic];
+	vec3_t origin;
+
+	if (index < 0)
+		return;
+	R_VRIKMatrixOrigin (palette + index * 12, origin);
+	VectorMA (origin, scale, delta, origin);
+	R_VRIKSetMatrixOrigin (palette + index * 12, origin);
+}
+
+static void R_VRIKSolvePalette (const md5liveinfo_t *live,
+	const vrik_pose_t *pose, float *palette)
+{
+	vec3_t lateral, forward, up, oldhead, targethead, headdelta;
+	vec3_t lefttarget, righttarget;
+	float basehand[12], weaponoffset[12], inverse[12], attached[12];
+	int headindex, handright, handleft, gun, axe, weapon = -1;
+	qboolean dominantleft;
+
+	if (!R_VRIKBuildBodyBasis (live, palette, lateral, forward, up))
+		return;
+	headindex = live->jointindex[MD5_VRIK_HEAD];
+	handright = live->jointindex[MD5_VRIK_HAND_R];
+	handleft = live->jointindex[MD5_VRIK_HAND_L];
+	gun = live->jointindex[MD5_VRIK_GUN];
+	axe = live->jointindex[MD5_VRIK_AXE];
+	dominantleft = (pose->flags & VRIK_FLAG_DOMINANT_LEFT) != 0;
+
+	/* Capture the animation's active weapon-to-right-hand offset before IK. */
+	if (handright >= 0 && (gun >= 0 || axe >= 0))
+	{
+		vec3_t handorigin, gunorigin, axeorigin;
+		float gundistance = FLT_MAX, axedistance = FLT_MAX;
+		R_VRIKMatrixOrigin (palette + handright * 12, handorigin);
+		if (gun >= 0)
+		{
+			R_VRIKMatrixOrigin (palette + gun * 12, gunorigin);
+			VectorSubtract (gunorigin, handorigin, gunorigin);
+			gundistance = VectorLength (gunorigin);
+		}
+		if (axe >= 0)
+		{
+			R_VRIKMatrixOrigin (palette + axe * 12, axeorigin);
+			VectorSubtract (axeorigin, handorigin, axeorigin);
+			axedistance = VectorLength (axeorigin);
+		}
+		weapon = gundistance <= axedistance ? gun : axe;
+		if (q_min(gundistance, axedistance) > 64.0f)
+			weapon = -1;
+		if (weapon >= 0)
+		{
+			memcpy (basehand, palette + handright * 12, sizeof(basehand));
+			R_VRIKMatrixInverseRigid (basehand, inverse);
+			R_VRIKMatrixMultiply (inverse, palette + weapon * 12, weaponoffset);
+		}
+	}
+
+	R_VRIKMatrixOrigin (palette + headindex * 12, oldhead);
+	R_VRIKLocalVectorToModel (pose->position[VRIK_TRACKER_HEAD], lateral,
+		forward, up, targethead);
+	VectorSubtract (targethead, oldhead, headdelta);
+	if (VectorLength (headdelta) > 24.0f)
+	{
+		VectorNormalize (headdelta);
+		VectorScale (headdelta, 24.0f, headdelta);
+		VectorAdd (oldhead, headdelta, targethead);
+	}
+	R_VRIKMoveJoint (live, palette, MD5_VRIK_SPINE1, headdelta, 0.12f);
+	R_VRIKMoveJoint (live, palette, MD5_VRIK_SPINE2, headdelta, 0.32f);
+	R_VRIKMoveJoint (live, palette, MD5_VRIK_NECK, headdelta, 0.68f);
+	R_VRIKMoveJoint (live, palette, MD5_VRIK_HEAD, headdelta, 1.0f);
+	R_VRIKMoveJoint (live, palette, MD5_VRIK_SHOULDER_L, headdelta, 0.32f);
+	R_VRIKMoveJoint (live, palette, MD5_VRIK_SHOULDER_R, headdelta, 0.32f);
+	R_VRIKMoveJoint (live, palette, MD5_VRIK_UPPERARM_L, headdelta, 0.32f);
+	R_VRIKMoveJoint (live, palette, MD5_VRIK_UPPERARM_R, headdelta, 0.32f);
+
+	/* Head rotation preserves the rig-specific bone basis like the hands. */
+	{
+		float body[12], target[12], correction[12], result[12];
+		vec3_t bodyforward, headorigin;
+		VectorCopy (forward, bodyforward);
+		R_VRIKCanonicalMatrix (bodyforward, up, oldhead, body);
+		R_VRIKMatrixInverseRigid (body, inverse);
+		R_VRIKMatrixMultiply (inverse, palette + headindex * 12, correction);
+		R_VRIKMatrixOrigin (palette + headindex * 12, headorigin);
+		R_VRIKAnglesToModelMatrix (pose->orientation[VRIK_TRACKER_HEAD], lateral,
+			forward, up, headorigin, target);
+		R_VRIKMatrixMultiply (target, correction, result);
+		R_VRIKSetMatrixOrigin (result, headorigin);
+		memcpy (palette + headindex * 12, result, sizeof(result));
+	}
+
+	if (pose->flags & VRIK_FLAG_LEFT_HAND_TRACKED)
+	{
+		R_VRIKLocalVectorToModel (pose->position[VRIK_TRACKER_LEFT_HAND], lateral,
+			forward, up, lefttarget);
+		R_VRIKSolveArm (live, palette, false, lefttarget,
+			pose->orientation[VRIK_TRACKER_LEFT_HAND], lateral, forward, up);
+	}
+	if (pose->flags & VRIK_FLAG_RIGHT_HAND_TRACKED)
+	{
+		R_VRIKLocalVectorToModel (pose->position[VRIK_TRACKER_RIGHT_HAND], lateral,
+			forward, up, righttarget);
+		R_VRIKSolveArm (live, palette, true, righttarget,
+			pose->orientation[VRIK_TRACKER_RIGHT_HAND], lateral, forward, up);
+	}
+
+	/* Re-parent only the animation's in-hand prop, preserving its grip offset. */
+	if (weapon >= 0)
+	{
+		int destination = dominantleft ? handleft : handright;
+		if (destination >= 0 &&
+			((dominantleft && (pose->flags & VRIK_FLAG_LEFT_HAND_TRACKED)) ||
+			 (!dominantleft && (pose->flags & VRIK_FLAG_RIGHT_HAND_TRACKED))))
+		{
+			R_VRIKMatrixMultiply (palette + destination * 12, weaponoffset, attached);
+			memcpy (palette + weapon * 12, attached, sizeof(attached));
+		}
+	}
+}
+
+static void R_VRIKComputeNormals (md5vertex_t *vertices, int numverts,
+	const unsigned short *indexes, int numindexes)
+{
+	int i;
+
+	for (i = 0; i < numverts; i++)
+		vertices[i].normal[0] = vertices[i].normal[1] = vertices[i].normal[2] = 0;
+	for (i = 0; i + 2 < numindexes; i += 3)
+	{
+		md5vertex_t *a = &vertices[indexes[i + 0]];
+		md5vertex_t *b = &vertices[indexes[i + 1]];
+		md5vertex_t *c = &vertices[indexes[i + 2]];
+		vec3_t first, second, normal;
+		VectorSubtract (b->xyz, a->xyz, first);
+		VectorSubtract (c->xyz, a->xyz, second);
+		CrossProduct (first, second, normal);
+		VectorAdd (a->normal, normal, a->normal);
+		VectorAdd (b->normal, normal, b->normal);
+		VectorAdd (c->normal, normal, c->normal);
+	}
+	for (i = 0; i < numverts; i++)
+		if (!VectorNormalize (vertices[i].normal))
+			vertices[i].normal[0] = vertices[i].normal[1] = 0,
+			vertices[i].normal[2] = 1;
+}
+
+static qboolean R_VRIKPrepareSkin (qmodel_t *model, const lerpdata_t *lerpdata)
+{
+	md5liveinfo_t live;
+	md5livesurface_t surface;
+	int vertex, influence;
+
+	r_vrik_skin_active = false;
+	if (!r_vrik_pose_pending || !Mod_GetMD5LiveData (model, &live) ||
+		!live.compatible || !Mod_GetMD5LiveSurface (&live, 0, &surface) ||
+		surface.header->nextsurface)
+		return false;
+	if (surface.numverts > r_vrik_skin_capacity)
+	{
+		md5vertex_t *resized = (md5vertex_t *)realloc (r_vrik_skin_vertices,
+			(size_t)surface.numverts * sizeof(*resized));
+		if (!resized)
+			return false;
+		r_vrik_skin_vertices = resized;
+		r_vrik_skin_capacity = surface.numverts;
+	}
+
+	R_VRIKLerpPalette (&live, lerpdata, r_vrik_palette);
+	R_VRIKSolvePalette (&live, &r_vrik_pending_pose, r_vrik_palette);
+	for (vertex = 0; vertex < surface.numverts; vertex++)
+	{
+		const md5livevertex_t *source = &surface.vertices[vertex];
+		md5vertex_t *destination = &r_vrik_skin_vertices[vertex];
+		destination->xyz[0] = destination->xyz[1] = destination->xyz[2] = 0;
+		destination->st[0] = source->st[0];
+		destination->st[1] = source->st[1];
+		for (influence = 0; influence < (int)source->numweights; influence++)
+		{
+			const md5liveweight_t *weight =
+				&surface.weights[source->firstweight + influence];
+			const float *matrix = r_vrik_palette + weight->joint * 12;
+			vec3_t transformed;
+			transformed[0] = matrix[0] * weight->position[0] +
+				matrix[1] * weight->position[1] + matrix[2] * weight->position[2] +
+				matrix[3] * weight->position[3];
+			transformed[1] = matrix[4] * weight->position[0] +
+				matrix[5] * weight->position[1] + matrix[6] * weight->position[2] +
+				matrix[7] * weight->position[3];
+			transformed[2] = matrix[8] * weight->position[0] +
+				matrix[9] * weight->position[1] + matrix[10] * weight->position[2] +
+				matrix[11] * weight->position[3];
+			VectorAdd (destination->xyz, transformed, destination->xyz);
+		}
+	}
+	R_VRIKComputeNormals (r_vrik_skin_vertices, surface.numverts,
+		surface.indexes, surface.numindexes);
+	r_vrik_skin_surface = surface.header;
+	r_vrik_skin_active = true;
+	return true;
+}
+
+static int R_VRIKReplacementFrame (const entity_t *entity,
+	const qmodel_t *replacement)
+{
+	vec3_t movement;
+
+	if (entity->frame >= 0 && entity->frame < replacement->numframes &&
+		!q_strcasestr(entity->model->name, "ee_pl"))
+		return entity->frame;
+	VectorSubtract (entity->currentorigin, entity->previousorigin, movement);
+	if (movement[0] * movement[0] + movement[1] * movement[1] > 0.25f)
+		return 6 + ((int)(cl.time * 10.0) % 6); /* stock gun run */
+	return 12 + ((int)(cl.time * 10.0) % 5); /* stock stand */
+}
+
+static qboolean R_VRIKSubstitutePlayer (entity_t *entity, entity_t *replacement)
+{
+	qmodel_t *model;
+	vrik_pose_t pose;
+	uintptr_t address;
+
+	/* The VR option controls publication of this client's tracking. Receiving
+	 * clients render any negotiated active pose automatically, including
+	 * desktop spectators; non-VR players never publish one. */
+	if (!cl.entities || !entity || !entity->model)
+		return false;
+	address = (uintptr_t)entity;
+	if (address < (uintptr_t)&cl.entities[1] ||
+		address > (uintptr_t)&cl.entities[cl.maxclients] ||
+		entity == &cl.entities[cl.viewentity] ||
+		!R_VRIKSampleEntityPose (entity, &pose))
+		return false;
+	model = Mod_GetRereleasePlayerMD5Model ();
+	if (!model)
+		return false;
+
+	*replacement = *entity;
+	replacement->model = model;
+	replacement->frame = R_VRIKReplacementFrame (entity, model);
+	replacement->lerpflags |= LERP_RESETANIM;
+	r_vrik_pending_pose = pose;
+	r_vrik_pose_pending = true;
+	return true;
+}
+
 /*
 ==============================================================================
 
@@ -1840,10 +2414,18 @@ static void GL_DrawMD5Frame (aliashdr_t *surface, lerpdata_t lerpdata)
 	int index, i;
 	qboolean lerping;
 
-	verts1 = (const md5vertex_t *)((const byte *)surface + surface->vertexes) +
-		lerpdata.pose1 * surface->numverts;
-	verts2 = (const md5vertex_t *)((const byte *)surface + surface->vertexes) +
-		lerpdata.pose2 * surface->numverts;
+	if (r_vrik_skin_active && surface == r_vrik_skin_surface)
+	{
+		verts1 = verts2 = r_vrik_skin_vertices;
+		lerpdata.pose1 = lerpdata.pose2 = 0;
+	}
+	else
+	{
+		verts1 = (const md5vertex_t *)((const byte *)surface + surface->vertexes) +
+			lerpdata.pose1 * surface->numverts;
+		verts2 = (const md5vertex_t *)((const byte *)surface + surface->vertexes) +
+			lerpdata.pose2 * surface->numverts;
+	}
 	indexes = (const unsigned short *)((const byte *)surface + surface->indexes);
 	lerping = lerpdata.pose1 != lerpdata.pose2;
 	blend = lerping ? lerpdata.blend : 0.0f;
@@ -1939,7 +2521,7 @@ static void R_DrawMD5UntexturedPass (aliashdr_t *surface, lerpdata_t lerpdata,
 	const vec3_t drawcolor, float drawalpha, qboolean drawfog)
 {
 	int surfaceindex = 0;
-	qboolean useglsl = r_md5_program != 0 && currententity->model->md5meshvbo != 0 &&
+	qboolean useglsl = !r_vrik_skin_active && r_md5_program != 0 && currententity->model->md5meshvbo != 0 &&
 		currententity->model->md5meshindexesvbo != 0;
 
 	while (surface)
@@ -1974,10 +2556,13 @@ static void R_DrawMD5Model (entity_t *e, qboolean cull, qboolean viewmodel)
 		r_perf_alias_draws++;
 	R_SetupAliasFrame (md5, e->frame, &lerpdata);
 	R_SetupEntityTransform (e, &lerpdata);
+	if (r_vrik_pose_pending)
+		R_VRIKPrepareSkin (e->model, &lerpdata);
 	if (cull && R_CullModelForEntity(e))
 	{
 		if (r_perfdebug.value)
 			r_perf_alias_culled++;
+		r_vrik_skin_active = false;
 		return;
 	}
 
@@ -2021,7 +2606,7 @@ static void R_DrawMD5Model (entity_t *e, qboolean cull, qboolean viewmodel)
 	GL_DisableMultitexture ();
 	/* Keep legacy composition as separate GLSL draws so overbright and
 	 * fullbright overlays retain their additive fog behavior. */
-	r_md5_glsl_active = !r_drawflat_cheatsafe && !r_lightmap_cheatsafe &&
+	r_md5_glsl_active = !r_vrik_skin_active && !r_drawflat_cheatsafe && !r_lightmap_cheatsafe &&
 		r_md5_program != 0 && e->model->md5meshvbo != 0 &&
 		e->model->md5meshindexesvbo != 0;
 	r_md5_glsl_alphatest = r_md5_glsl_active && alphatest;
@@ -2107,6 +2692,7 @@ static void R_DrawMD5Model (entity_t *e, qboolean cull, qboolean viewmodel)
 cleanup:
 	r_md5_glsl_active = false;
 	r_md5_glsl_alphatest = false;
+	r_vrik_skin_active = false;
 	glTexEnvf (GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_REPLACE);
 	glHint (GL_PERSPECTIVE_CORRECTION_HINT, GL_NICEST);
 	glShadeModel (GL_FLAT);
@@ -2195,12 +2781,26 @@ R_DrawAliasModel -- johnfitz -- almost completely rewritten
 */
 void R_DrawAliasModel (entity_t *e)
 {
+	entity_t	vrikentity;
+	entity_t	*savedentity;
 	aliashdr_t	*paliashdr;
 	int		anim, skinnum;
 	gltexture_t	*tx, *fb;
 	lerpdata_t	lerpdata;
 	qboolean	alphatest = !!(e->model->flags & MF_HOLEY);
 	float		fovscale = 1.0f;
+
+	if (R_VRIKSubstitutePlayer (e, &vrikentity))
+	{
+		savedentity = currententity;
+		currententity = &vrikentity;
+		/* Tracked hands can leave the animation's static bounds. */
+		R_DrawMD5Model (&vrikentity, false, false);
+		currententity = savedentity;
+		r_vrik_pose_pending = false;
+		r_vrik_skin_active = false;
+		return;
+	}
 
 	if (Mod_UseMD3ModelForFrame (e->model, e->skinnum, e->frame))
 	{

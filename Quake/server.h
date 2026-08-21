@@ -298,6 +298,14 @@ typedef struct client_s
 	qboolean		knowntoqc;			// PutClientInServer was called
 	qboolean		csqcactive;
 	qboolean		usingpmove;
+	qboolean		vrik_capable;
+	qboolean		vrik_sequence_valid;
+	qboolean		vrik_inactive_sent;
+	unsigned short		vrik_last_sequence;
+	unsigned int		vrik_generation;
+	double			vrik_pose_time;
+	double			vrik_next_accept_time;
+	vrik_pose_t		vrik_pose;
 
 	// VR Data
 	qboolean		is_vr_client;
@@ -505,6 +513,8 @@ qboolean SV_CheckBottom (edict_t *ent);
 qboolean SV_movestep (edict_t *ent, vec3_t move, qboolean relink);
 
 void SV_ResetClientMoveState (client_t *client);
+void SV_ReceiveVRIKPose (client_t *client, const vrik_pose_t *pose);
+void SV_ExpireVRIKPoses (void);
 void SV_WriteClientdataToMessage (edict_t *ent, sizebuf_t *msg);
 
 void SV_MoveToGoal (void);

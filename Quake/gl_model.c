@@ -35,6 +35,7 @@ static void Mod_LoadBrushModel (qmodel_t *mod, void *buffer);
 static void Mod_LoadAliasModel (qmodel_t *mod, void *buffer);
 static qboolean Mod_LoadMD3Model (qmodel_t *mod, const byte *buffer, size_t filesize);
 static qboolean Mod_LoadMD5MeshModel (qmodel_t *mod, const byte *buffer, size_t filesize);
+static qmodel_t *Mod_LoadVerifiedRereleasePlayerMD5 (void);
 static qmodel_t *Mod_LoadModel (qmodel_t *mod, qboolean crash);
 static void Mod_EnhancedModels_f (cvar_t *var);
 static void Mod_MigrateEnhancedModels_f (void);
@@ -91,6 +92,7 @@ typedef struct mod_alias_build_s
 } mod_alias_build_t;
 
 static mod_alias_build_t mod_alias_build;
+static qboolean mod_md5_rerelease_only;
 
 static byte	*mod_novis;
 static int	mod_novis_capacity;
@@ -380,6 +382,180 @@ aliashdr_t *Mod_GetMD5Extradata (qmodel_t *mod)
 	if (!cache->md5_offset)
 		return NULL;
 	return (aliashdr_t *)((byte *)cache + cache->md5_offset);
+}
+
+static const char *const md5_vrik_joint_names[MD5_VRIK_JOINT_COUNT] =
+{
+	"Hip", "Spine1", "Spine2", "Neck", "Head",
+	"Shoulder_L", "UpperArm_L", "LowerArm_L", "Hand_L",
+	"Shoulder_R", "UpperArm_R", "LowerArm_R", "Hand_R",
+	"UpperLeg_L", "LowerLeg_L", "Foot_L",
+	"UpperLeg_R", "LowerLeg_R", "Foot_R", "Gun", "Axe"
+};
+
+static qboolean Mod_MD5LiveSurfaceValid (const aliashdr_t *surface,
+	int numbones)
+{
+	const md5livevertex_t *vertices;
+	const md5liveweight_t *weights;
+	int vert;
+
+	if (!surface || surface->poseverttype != ALIAS_POSE_MD5 ||
+		surface->numverts < 1 || surface->numindexes < 3 ||
+		surface->numindexes % 3 || surface->md5_numliveweights < 1 ||
+		surface->md5_livevertices <= 0 || surface->md5_liveweights <= 0 ||
+		surface->indexes <= 0)
+		return false;
+
+	vertices = (const md5livevertex_t *)((const byte *)surface +
+		surface->md5_livevertices);
+	weights = (const md5liveweight_t *)((const byte *)surface +
+		surface->md5_liveweights);
+	for (vert = 0; vert < surface->numverts; vert++)
+	{
+		unsigned int first = vertices[vert].firstweight;
+		unsigned int count = vertices[vert].numweights;
+		unsigned int weight;
+
+		if (!count || first > (unsigned int)surface->md5_numliveweights ||
+			count > (unsigned int)surface->md5_numliveweights - first)
+			return false;
+		for (weight = 0; weight < count; weight++)
+			if (weights[first + weight].joint < 0 ||
+				weights[first + weight].joint >= numbones)
+				return false;
+	}
+
+	return true;
+}
+
+/*
+ * Return retained MD5 inputs without selecting it as the normal renderer's
+ * replacement.  This intentionally bypasses r_enhancedmodels: VRIK decides
+ * per remote player whether it needs this data.
+ */
+qboolean Mod_GetMD5LiveData (qmodel_t *mod, md5liveinfo_t *out)
+{
+	mod_alias_cache_t *cache;
+	const aliashdr_t *surface;
+	const md5livejoint_t *joints;
+	int joint, required, surfacecount;
+
+	if (!out)
+		return false;
+	memset (out, 0, sizeof(*out));
+	for (joint = 0; joint < MD5_VRIK_JOINT_COUNT; joint++)
+		out->jointindex[joint] = -1;
+
+	if (!mod || mod->type != mod_alias)
+		return false;
+
+	cache = Mod_GetAliasCache (mod);
+	if (!cache->md5_offset)
+		return false;
+	surface = (const aliashdr_t *)((byte *)cache + cache->md5_offset);
+	if (surface->poseverttype != ALIAS_POSE_MD5 ||
+		surface->md5_numbones < 1 || surface->md5_numbones > MAX_MD5_JOINTS ||
+		surface->numposes < 1 || surface->md5_livejoints <= 0 ||
+		surface->md5_boneposes <= 0)
+		return false;
+
+	joints = (const md5livejoint_t *)((const byte *)surface +
+		surface->md5_livejoints);
+	for (joint = 0; joint < surface->md5_numbones; joint++)
+		if (joints[joint].parent < -1 || joints[joint].parent >= joint)
+			return false;
+
+	out->firstsurface = surface;
+	out->joints = joints;
+	out->boneposes = (const float *)((const byte *)surface +
+		surface->md5_boneposes);
+	out->numbones = surface->md5_numbones;
+	out->numposes = surface->numposes;
+	out->from_rerelease = cache->md5_from_rerelease;
+	for (joint = 0; joint < surface->md5_numbones; joint++)
+	{
+		int semantic;
+		for (semantic = 0; semantic < MD5_VRIK_JOINT_COUNT; semantic++)
+			if (!q_strcasecmp (joints[joint].name,
+				md5_vrik_joint_names[semantic]))
+			{
+				out->jointindex[semantic] = joint;
+				break;
+			}
+	}
+
+	/* The upper body is required; legs and equipment are optional overrides. */
+	out->compatible = true;
+	for (required = MD5_VRIK_HIP; required <= MD5_VRIK_HAND_R; required++)
+		if (out->jointindex[required] < 0)
+			out->compatible = false;
+	for (surface = out->firstsurface, surfacecount = 0;
+		surface && surfacecount < MAX_MD5_SURFACES;
+		surface = surface->nextsurface ?
+		(const aliashdr_t *)((const byte *)surface + surface->nextsurface) : NULL,
+		surfacecount++)
+		if (!Mod_MD5LiveSurfaceValid (surface, out->numbones))
+		{
+			out->compatible = false;
+			break;
+		}
+	if (surfacecount == MAX_MD5_SURFACES && surface)
+		out->compatible = false;
+
+	return true;
+}
+
+qboolean Mod_GetMD5LiveSurface (const md5liveinfo_t *info, int surfaceindex,
+	md5livesurface_t *out)
+{
+	const aliashdr_t *surface;
+	int index;
+
+	if (!out)
+		return false;
+	memset (out, 0, sizeof(*out));
+	if (!info || !info->firstsurface || surfaceindex < 0 ||
+		surfaceindex >= MAX_MD5_SURFACES)
+		return false;
+
+	surface = info->firstsurface;
+	for (index = 0; index < surfaceindex && surface; index++)
+		surface = surface->nextsurface ?
+			(const aliashdr_t *)((const byte *)surface + surface->nextsurface) : NULL;
+	if (!surface || !Mod_MD5LiveSurfaceValid (surface, info->numbones))
+		return false;
+
+	out->header = surface;
+	out->vertices = (const md5livevertex_t *)((const byte *)surface +
+		surface->md5_livevertices);
+	out->weights = (const md5liveweight_t *)((const byte *)surface +
+		surface->md5_liveweights);
+	out->indexes = (const unsigned short *)((const byte *)surface + surface->indexes);
+	out->numverts = surface->numverts;
+	out->numweights = surface->md5_numliveweights;
+	out->numindexes = surface->numindexes;
+	return true;
+}
+
+qmodel_t *Mod_GetRereleasePlayerMD5Model (void)
+{
+	return Mod_LoadVerifiedRereleasePlayerMD5 ();
+}
+
+qboolean Mod_GetRereleasePlayerMD5LiveData (md5liveinfo_t *out)
+{
+	qmodel_t *mod;
+
+	if (!out)
+		return false;
+	mod = Mod_GetRereleasePlayerMD5Model ();
+	if (!mod || !Mod_GetMD5LiveData (mod, out) || !out->from_rerelease)
+	{
+		memset (out, 0, sizeof(*out));
+		return false;
+	}
+	return true;
 }
 
 qboolean Mod_UseMD3Model (qmodel_t *mod, int skinnum)
@@ -4846,6 +5022,15 @@ static byte *Mod_MD5LoadImage (qmodel_t *mod, const char *shader,
 	byte *data;
 	int i;
 
+	/* The verified VRIK avatar must not acquire a same-named mod texture.
+	 * Its official indexed skin is loaded through the source-restricted LMP
+	 * fallback below. */
+	if (mod_md5_rerelease_only)
+	{
+		usedname[0] = '\0';
+		return NULL;
+	}
+
 	for (i = 0; i < (int)Q_COUNTOF(prefixes); i++)
 	{
 		q_snprintf (usedname, usednamesize, "%s%s%s", prefixes[i], shader, suffix);
@@ -4880,7 +5065,9 @@ static byte *Mod_MD5LoadLMP (qmodel_t *mod, const char *shader,
 	for (i = 0; i < (int)Q_COUNTOF(prefixes); i++)
 	{
 		q_snprintf (filename, filenamesize, "%s%s%s.lmp", prefixes[i], shader, suffix);
-		data = COM_LoadMallocFile (filename, path_id);
+		data = mod_md5_rerelease_only ?
+			COM_LoadMallocFileFromRerelease (filename, path_id) :
+			COM_LoadMallocFile (filename, path_id);
 		if (data && *path_id >= mod->path_id)
 			return data;
 		free (data);
@@ -5052,7 +5239,9 @@ static qboolean Mod_MD5LoadAnimation (qmodel_t *mod, const md5joint_t *joints,
 	*outinterval = 0.1f;
 	COM_StripExtension (mod->name, filename, sizeof(filename));
 	COM_AddExtension (filename, ".md5anim", sizeof(filename));
-	filedata = COM_LoadMallocFile (filename, &path_id);
+	filedata = mod_md5_rerelease_only ?
+		COM_LoadMallocFileFromRerelease (filename, &path_id) :
+		COM_LoadMallocFile (filename, &path_id);
 	if (!filedata || path_id < mod->path_id)
 	{
 		free (filedata);
@@ -5314,6 +5503,17 @@ static qboolean Mod_LoadMD5MeshModel (qmodel_t *mod, const byte *buffer, size_t 
 		Mod_MD5Fail (&parser, "invalid animation pose count");
 		goto done;
 	}
+	/* Keep the source skeleton and animation matrices for optional VRIK CPU
+	 * skinning.  Dedicated servers retain their previous no-renderer path. */
+	if (!isDedicated &&
+		(!Mod_MD5AddBytes (&decodedbytes, numjoints, sizeof(md5livejoint_t)) ||
+		 !Mod_MD5AddBytes (&decodedbytes, numjoints, sizeof(int)) ||
+		 !Mod_MD5AddBytes (&decodedbytes, (size_t)numposes * numjoints * 12,
+			sizeof(float))))
+	{
+		Mod_MD5Fail (&parser, "decoded data exceeds 64 MiB limit");
+		goto done;
+	}
 
 	for (k = 0; k < 3; k++)
 		mins[k] = FLT_MAX, maxs[k] = -FLT_MAX;
@@ -5475,6 +5675,9 @@ static qboolean Mod_LoadMD5MeshModel (qmodel_t *mod, const byte *buffer, size_t 
 			!Mod_MD5AddBytes (&surfacebytes, (size_t)(numposes - 1), sizeof(out->frames[0])) ||
 			!Mod_MD5AddBytes (&surfacebytes, (size_t)numposes * numverts, sizeof(*vertices)) ||
 			!Mod_MD5AddBytes (&surfacebytes, numindexes, sizeof(*indexes)) ||
+			(!isDedicated &&
+			 (!Mod_MD5AddBytes (&surfacebytes, numverts, sizeof(md5livevertex_t)) ||
+			  !Mod_MD5AddBytes (&surfacebytes, numweights, sizeof(md5liveweight_t)))) ||
 			decodedbytes > MAX_MD5_DECODED_BYTES - surfacebytes)
 		{
 			Mod_MD5Fail (&parser, "decoded data exceeds 64 MiB limit");
@@ -5529,6 +5732,30 @@ static qboolean Mod_LoadMD5MeshModel (qmodel_t *mod, const byte *buffer, size_t 
 			out->indexes = (intptr_t)((byte *)persistent - (byte *)out);
 		}
 		if (!isDedicated)
+		{
+			md5livevertex_t *persistentverts;
+			md5liveweight_t *persistentweights;
+
+			persistentverts = (md5livevertex_t *)Hunk_Alloc ((int)(numverts * sizeof(*persistentverts)));
+			persistentweights = (md5liveweight_t *)Hunk_Alloc ((int)(numweights * sizeof(*persistentweights)));
+			for (vert = 0; vert < (int)numverts; vert++)
+			{
+				persistentverts[vert].firstweight = (unsigned int)vertinfo[vert].firstweight;
+				persistentverts[vert].numweights = (unsigned int)vertinfo[vert].count;
+				persistentverts[vert].st[0] = vertinfo[vert].st[0];
+				persistentverts[vert].st[1] = vertinfo[vert].st[1];
+			}
+			for (vert = 0; vert < (int)numweights; vert++)
+			{
+				persistentweights[vert].joint = weights[vert].joint;
+				memcpy (persistentweights[vert].position, weights[vert].position,
+					sizeof(persistentweights[vert].position));
+			}
+			out->md5_numliveweights = (int)numweights;
+			out->md5_livevertices = (intptr_t)((byte *)persistentverts - (byte *)out);
+			out->md5_liveweights = (intptr_t)((byte *)persistentweights - (byte *)out);
+		}
+		if (!isDedicated)
 			Mod_MD5LoadSkin (mod, out, shader);
 		surfaces[surface] = out;
 
@@ -5558,19 +5785,31 @@ static qboolean Mod_LoadMD5MeshModel (qmodel_t *mod, const byte *buffer, size_t 
 
 	/* The renderer normally only needs skinned vertices, but retaining the
 	 * evaluated joint matrices lets r_showskel display exactly the same pose.
-	 * Store this once on the first surface: Mod_GetMD5Extradata returns it. */
+	 * Keep the model-space bind joints too, so VRIK can skin an adjusted
+	 * palette without changing the ordinary baked-pose renderer.  Store this
+	 * once on the first surface: Mod_GetMD5Extradata returns it. */
 	if (!isDedicated)
 	{
+		md5livejoint_t *livejoints = (md5livejoint_t *)Hunk_Alloc (
+			(int)(numjoints * sizeof (*livejoints)));
 		int *parents = (int *)Hunk_Alloc ((int)(numjoints * sizeof (*parents)));
 		float *poses = (float *)Hunk_Alloc ((int)((size_t)numposes * numjoints * 12 * sizeof (*poses)));
 		const float *source = animation ? animation : bindposes;
 
 		for (joint = 0; joint < (int)numjoints; joint++)
+		{
+			q_strlcpy (livejoints[joint].name, joints[joint].name,
+				sizeof(livejoints[joint].name));
+			livejoints[joint].parent = joints[joint].parent;
+			memcpy (livejoints[joint].bind, joints[joint].bind,
+				sizeof(livejoints[joint].bind));
 			parents[joint] = joints[joint].parent;
+		}
 		memcpy (poses, source, (size_t)numposes * numjoints * 12 * sizeof (*poses));
 		surfaces[0]->md5_numbones = (int)numjoints;
 		surfaces[0]->md5_boneparents = (intptr_t)((byte *)parents - (byte *)surfaces[0]);
 		surfaces[0]->md5_boneposes = (intptr_t)((byte *)poses - (byte *)surfaces[0]);
+		surfaces[0]->md5_livejoints = (intptr_t)((byte *)livejoints - (byte *)surfaces[0]);
 	}
 
 	mod->type = mod_alias;
@@ -5596,6 +5835,62 @@ done:
 	free (animation);
 	free (joints);
 	return valid;
+}
+
+/*
+===============================
+Mod_LoadVerifiedRereleasePlayerMD5
+
+Load the network avatar into its own cache directly from a pack whose complete
+rerelease signature was verified by common.c. This ignores the active game's
+player.mdl and higher-priority same-named MD5 files, allowing QBJ3, Enyo, and
+other mods to retain their normal desktop-player models.
+===============================
+*/
+static qmodel_t *Mod_LoadVerifiedRereleasePlayerMD5 (void)
+{
+	static const char cache_name[] = "progs/@vrik_rerelease_player.md5mesh";
+	qmodel_t *mod;
+	byte *buffer;
+	unsigned int path_id = 0;
+	int filesize;
+	char savedname[MAX_QPATH];
+	qboolean loaded;
+
+	if (isDedicated)
+		return NULL;
+	mod = Mod_FindName (cache_name);
+	if (!mod->needload && Cache_Check (&mod->cache))
+		return mod;
+
+	buffer = COM_LoadMallocFileFromRerelease ("progs/player.md5mesh", &path_id);
+	if (!buffer)
+		return NULL;
+	filesize = com_filesize;
+	q_strlcpy (savedname, mod->name, sizeof(savedname));
+	q_strlcpy (mod->name, "progs/player.md5mesh", sizeof(mod->name));
+	mod->path_id = path_id;
+	mod->needload = false;
+	loadmodel = mod;
+	q_strlcpy (loadname, "vrikplayer", sizeof(loadname));
+
+	Mod_BeginAliasBuild ();
+	mod_md5_rerelease_only = true;
+	loaded = Mod_LoadMD5MeshModel (mod, buffer, (size_t)filesize);
+	mod_md5_rerelease_only = false;
+	free (buffer);
+	q_strlcpy (mod->name, savedname, sizeof(mod->name));
+
+	if (!loaded)
+	{
+		Hunk_FreeToLowMark (mod_alias_build.startmark);
+		memset (&mod_alias_build, 0, sizeof(mod_alias_build));
+		mod->needload = true;
+		return NULL;
+	}
+	mod_alias_build.md5_from_rerelease = true;
+	Mod_FinishAliasBuild (mod);
+	return mod;
 }
 
 //=============================================================================
