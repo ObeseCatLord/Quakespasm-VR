@@ -31,6 +31,10 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 
 #include "miniz.h"
 
+#ifndef _WIN32
+#include <dirent.h>
+#endif
+
 static char	*largv[MAX_NUM_ARGVS + 1];
 static char	argvdummy[] = " ";
 
@@ -2371,6 +2375,69 @@ static pack_t *COM_LoadPackFile (const char *packfile)
 
 /*
 =================
+COM_FindNumberedPack
+
+Numbered Quake packs are conventionally lowercase, but many Windows-authored
+mods ship names such as Pak0.pak. Windows resolves those names naturally; on
+case-sensitive systems retain the exact lowercase name as first priority, then
+find a deterministic case-insensitive match in the same directory.
+=================
+*/
+static qboolean COM_FindNumberedPack (const char *directory, int number,
+										char *path, size_t pathsize)
+{
+	char expected[32];
+
+	q_snprintf (expected, sizeof(expected), "pak%i.pak", number);
+	if (q_snprintf (path, pathsize, "%s/%s", directory, expected) < (int)pathsize &&
+		(Sys_FileType (path) & FS_ENT_FILE))
+		return true;
+
+#ifndef _WIN32
+	{
+		DIR *dir;
+		struct dirent *entry;
+		char best[MAX_QPATH] = "";
+
+		dir = opendir (directory);
+		if (!dir)
+			return false;
+		while ((entry = readdir (dir)) != NULL)
+		{
+			char candidate[MAX_OSPATH];
+
+			if (q_strcasecmp (entry->d_name, expected))
+				continue;
+			if (q_snprintf (candidate, sizeof(candidate), "%s/%s", directory,
+					entry->d_name) >= (int)sizeof(candidate) ||
+				!(Sys_FileType (candidate) & FS_ENT_FILE))
+				continue;
+			if (!best[0] || strcmp (entry->d_name, best) < 0)
+				q_strlcpy (best, entry->d_name, sizeof(best));
+		}
+		closedir (dir);
+
+		if (!best[0] ||
+			q_snprintf (path, pathsize, "%s/%s", directory, best) >= (int)pathsize)
+			return false;
+		Con_DPrintf ("Using non-lowercase pack %s (expected %s)\n", path, expected);
+		return true;
+	}
+#else
+	return false;
+#endif
+}
+
+qboolean COM_DirectoryHasPak0 (const char *directory)
+{
+	char path[MAX_OSPATH];
+
+	return directory && *directory &&
+		COM_FindNumberedPack (directory, 0, path, sizeof(path));
+}
+
+/*
+=================
 COM_IsRereleaseModelSource
 
 Recognize the official rerelease pack even when it is installed as the normal
@@ -2463,8 +2530,8 @@ static void COM_AddGameDirectoryRoot (const char *base, const char *dir, unsigne
 	// add any pak files in the format pak0.pak pak1.pak, ...
 	for (i = 0; ; i++)
 	{
-		q_snprintf (pakfile, sizeof(pakfile), "%s/pak%i.pak", com_gamedir, i);
-		pak = COM_LoadPackFile (pakfile);
+		pak = COM_FindNumberedPack (com_gamedir, i, pakfile, sizeof(pakfile)) ?
+			COM_LoadPackFile (pakfile) : NULL;
 		if (i != 0 || path_id != 1 || fitzmode)
 			qspak = NULL;
 		else {
@@ -2739,16 +2806,16 @@ qboolean COM_GameDirHasPak0 (const char *dir)
 
 	if (!dir || !*dir)
 		return false;
-	if (q_snprintf(path, sizeof(path), "%s/%s/pak0.pak", com_basedir, dir) < (int)sizeof(path) &&
-		(Sys_FileType(path) & FS_ENT_FILE))
+	if (q_snprintf(path, sizeof(path), "%s/%s", com_basedir, dir) < (int)sizeof(path) &&
+		COM_DirectoryHasPak0 (path))
 		return true;
 	if (COM_HasSeparateUserDir() &&
-		q_snprintf(path, sizeof(path), "%s/%s/pak0.pak", host_parms->userdir, dir) < (int)sizeof(path) &&
-		(Sys_FileType(path) & FS_ENT_FILE))
+		q_snprintf(path, sizeof(path), "%s/%s", host_parms->userdir, dir) < (int)sizeof(path) &&
+		COM_DirectoryHasPak0 (path))
 		return true;
 	for (i = 0; i < com_content_root_count; ++i)
-		if (q_snprintf(path, sizeof(path), "%s/%s/pak0.pak", com_content_roots[i], dir) < (int)sizeof(path) &&
-			(Sys_FileType(path) & FS_ENT_FILE))
+		if (q_snprintf(path, sizeof(path), "%s/%s", com_content_roots[i], dir) < (int)sizeof(path) &&
+			COM_DirectoryHasPak0 (path))
 			return true;
 	return false;
 }
@@ -2920,6 +2987,7 @@ static void COM_Game_f (void)
 		Cbuf_AddText ("vid_unlock\n");
 		Cbuf_AddText ("mod_migrate_enhancedmodels\n");
 		Cmd_QueuePostConfigAfterGameChange ();
+		Cbuf_AddText ("vr_migrate_mod_bindings\n");
 		Cbuf_AddText ("host_migrate_network_defaults\n");
 		Cbuf_AddText ("cl_migrate_network_defaults\n");
 		Cbuf_AddText ("vr_migrate_movement_defaults\n");

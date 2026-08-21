@@ -111,6 +111,54 @@ void VR_ApplyDefaultBindings(qboolean overwrite) {
 }
 
 static void VR_DefaultBindings_f(void) { VR_ApplyDefaultBindings(false); }
+
+/* Re:Mobilize-style mods define their held lighthook action in quake.rc, but
+ * have no portable way to name a VR controller input.  Use the established
+ * secondary-action control only while it is still at the engine default;
+ * never replace a user's explicit mod-specific binding. */
+static qboolean VR_CurrentGameDefinesLightHook(void) {
+  char *quake_rc;
+  qboolean defines_hook;
+
+  quake_rc = (char *)COM_LoadMallocFile("quake.rc", NULL);
+  if (!quake_rc)
+    return false;
+  defines_hook = q_strcasestr(quake_rc, "alias +hook") != NULL &&
+                 q_strcasestr(quake_rc, "impulse 24") != NULL &&
+                 Cmd_AliasExists("+hook") && Cmd_AliasExists("-hook");
+  free(quake_rc);
+  return defines_hook;
+}
+
+static void VR_MigrateModBindings_f(void) {
+  const char *mouse_binding;
+  const char *vr_binding;
+  qboolean defines_hook;
+
+  mouse_binding = keybindings[K_MOUSE2];
+  vr_binding = keybindings[K_VR_ALTFIRE];
+  defines_hook = VR_CurrentGameDefinesLightHook();
+
+  /* RM's quake.rc provides the desktop binding, as it does in other source
+   * ports.  Undo only that exact mod binding after leaving an RM-compatible
+   * game so it cannot leak into unrelated mods. */
+  if (!defines_hook) {
+    if (mouse_binding && !strcmp(mouse_binding, "+hook"))
+      Key_SetBinding(K_MOUSE2, "+button3");
+    if (vr_binding && !strcmp(vr_binding, "+hook"))
+      Key_SetBinding(K_VR_ALTFIRE, "+button3");
+    return;
+  }
+
+  if (!vr_enabled.value)
+    return;
+
+  if (!vr_binding || !*vr_binding || !strcmp(vr_binding, "+button3")) {
+    Key_SetBinding(K_VR_ALTFIRE, "+hook");
+    Con_Printf("VR: bound the mod's light hook to VR_ALTFIRE\n");
+  }
+}
+
 static void VR_WeaponList_f(void);
 
 // rendering
@@ -4982,6 +5030,7 @@ void VID_VR_Init() {
   Cvar_RegisterVariable(&vr_weaponmenu_mode);
   Cvar_RegisterVariable(&vr_weaponmenu_player_teleport);
   Cmd_AddCommand("vr_weaponlist", VR_WeaponList_f);
+  Cmd_AddCommand("vr_migrate_mod_bindings", VR_MigrateModBindings_f);
   if (COM_CheckParm("-novr")) {
     return;
   }
