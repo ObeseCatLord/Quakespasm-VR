@@ -90,7 +90,6 @@ static const char default_cfg[] =
     "bind ABUTTON \"+showscores\"\n"
     "bind XBUTTON \"impulse 12\"\n"
     "bind VR_RIGHT_STICK_UP \"+vr_weaponmenu\"\n"
-    "bind VR_RIGHT_STICK_DOWN \"vr_turn180\"\n"
 
     "gamma 1.0\n"
     "volume 0.2\n"

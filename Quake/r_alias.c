@@ -1992,14 +1992,30 @@ static void R_VRIKAnglesToModelMatrix (const vec3_t angles,
 static void R_VRIKTrackedItemMatrix (const float tracked[12],
 	const vec3_t origin, float item[12])
 {
-	/* MD5 hand, gun, and axe geometry all extend along joint-local +Y,
-	 * whereas a tracked Quake pose points along +X.  Joint-local +Z is the
-	 * dorsal/up axis.  This fixed proper rotation is deliberately identical
-	 * for both anatomical hands: the mirrored skin and skeleton already encode
-	 * handedness, while mirroring this target would reverse the left palm. */
+	/* MD5 hand and gun geometry extend along joint-local +Y, whereas a tracked
+	 * Quake pose points along +X.  Joint-local +Z is the dorsal/up axis.  This
+	 * fixed proper rotation is deliberately identical for both anatomical
+	 * hands: the mirrored skin and skeleton already encode handedness, while
+	 * mirroring this target would reverse the left palm.  The axe's +Y handle
+	 * is vertical in the bind pose and receives its separate rotation below. */
 	item[0] = -tracked[1]; item[1] = tracked[0]; item[2] = tracked[2];
 	item[4] = -tracked[5]; item[5] = tracked[4]; item[6] = tracked[6];
 	item[8] = -tracked[9]; item[9] = tracked[8]; item[10] = tracked[10];
+	R_VRIKSetMatrixOrigin (item, origin);
+}
+
+static void R_VRIKTrackedAxeMatrix (const float tracked[12],
+	const vec3_t origin, float item[12])
+{
+	/* The rerelease axe handle runs along joint-local +Y, but unlike the gun
+	 * its bind-pose grip is vertical relative to the fist.  Keep local +X on
+	 * tracked right, rotate local +Y to tracked up, and use tracked back for
+	 * local +Z.  These three axes form a proper rotation (determinant +1), so
+	 * the axe points upward without reflecting the blade or changing the
+	 * captured grip point. */
+	item[0] = -tracked[1]; item[1] = tracked[2]; item[2] = -tracked[0];
+	item[4] = -tracked[5]; item[5] = tracked[6]; item[6] = -tracked[4];
+	item[8] = -tracked[9]; item[9] = tracked[10]; item[10] = -tracked[8];
 	R_VRIKSetMatrixOrigin (item, origin);
 }
 
@@ -2247,9 +2263,11 @@ static void R_VRIKSolvePalette (const md5liveinfo_t *live,
 			pose->orientation[VRIK_TRACKER_RIGHT_HAND], lateral, forward, up);
 	}
 
-	/* Re-parent only the animation's in-hand prop.  Its +Y axis follows the
-	 * separately transmitted gameplay aim frame, while its captured local grip
-	 * point remains locked to the tracked wrist. */
+	/* Re-parent only the animation's in-hand prop.  The gun's +Y axis follows
+	 * the separately transmitted gameplay aim frame.  The axe instead follows
+	 * the dominant controller's raw grip frame and rotates its +Y handle to
+	 * tracked up, avoiding the gun-specific pitch adjustment.  In either case,
+	 * the captured local grip point remains locked to the tracked wrist. */
 	if (weapon >= 0)
 	{
 		int destination = dominantleft ? handleft : handright;
@@ -2260,9 +2278,20 @@ static void R_VRIKSolvePalette (const md5liveinfo_t *live,
 			float tracked[12];
 			vec3_t handorigin, weaponorigin;
 
-			R_VRIKAnglesToModelMatrix (pose->aim_orientation, lateral, forward,
-				up, vec3_origin, tracked);
-			R_VRIKTrackedItemMatrix (tracked, vec3_origin, attached);
+			if (weapon == axe)
+			{
+				int tracker = dominantleft ? VRIK_TRACKER_LEFT_HAND :
+					VRIK_TRACKER_RIGHT_HAND;
+				R_VRIKAnglesToModelMatrix (pose->orientation[tracker], lateral,
+					forward, up, vec3_origin, tracked);
+				R_VRIKTrackedAxeMatrix (tracked, vec3_origin, attached);
+			}
+			else
+			{
+				R_VRIKAnglesToModelMatrix (pose->aim_orientation, lateral, forward,
+					up, vec3_origin, tracked);
+				R_VRIKTrackedItemMatrix (tracked, vec3_origin, attached);
+			}
 			R_VRIKMatrixOrigin (palette + destination * 12, handorigin);
 			weaponorigin[0] = handorigin[0] -
 				(attached[0] * weaponhandlocal[0] +
