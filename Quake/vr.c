@@ -2886,13 +2886,22 @@ static void VR_VRIKRootLocalAngles(const vec3_t world_angles, float body_yaw,
 }
 
 static void VR_VRIKControllerAngles(int index, float body_yaw, vec3_t out) {
-  vec3_t controller_matrix[3], gun_matrix[3], world_matrix[3];
+  vec3_t controller_matrix[3];
 
-  /* Match the established controller-aim transform in every aim mode. */
+  RotMatFromAngleVector(controllers[index].orientation, controller_matrix);
+  VR_VRIKMatrixToRootLocalAngles(controller_matrix, body_yaw, out);
+}
+
+static void VR_VRIKControllerAimAngles(int index, float body_yaw, vec3_t out) {
+  vec3_t controller_matrix[3], gun_matrix[3], aim_matrix[3];
+
+  /* Gameplay aim includes a controller-local pitch adjustment.  Keep it out
+   * of the wrist pose: pre-multiplying it into the hand frame rotates palm
+   * motion around the weapon's oblique axis. */
   CreateRotMat(0, vr_gunangle.value, gun_matrix);
   RotMatFromAngleVector(controllers[index].orientation, controller_matrix);
-  R_ConcatRotations(gun_matrix, controller_matrix, world_matrix);
-  VR_VRIKMatrixToRootLocalAngles(world_matrix, body_yaw, out);
+  R_ConcatRotations(gun_matrix, controller_matrix, aim_matrix);
+  VR_VRIKMatrixToRootLocalAngles(aim_matrix, body_yaw, out);
 }
 
 qboolean VR_GetVRIKPose(vrik_pose_t *pose) {
@@ -2947,6 +2956,10 @@ qboolean VR_GetVRIKPose(vrik_pose_t *pose) {
                             pose->orientation[VRIK_TRACKER_RIGHT_HAND]);
   }
 
+  /* controllers[1] is always the dominant hand, independent of handedness. */
+  if (VR_VRIKControllerTracked(1))
+    VR_VRIKControllerAimAngles(1, body_yaw, pose->aim_orientation);
+
   for (tracker = 0; tracker < VRIK_TRACKER_COUNT; tracker++) {
     pose->orientation[tracker][PITCH] = VR_VRIKNormalizeAngle(
         pose->orientation[tracker][PITCH]);
@@ -2955,6 +2968,12 @@ qboolean VR_GetVRIKPose(vrik_pose_t *pose) {
     pose->orientation[tracker][ROLL] = VR_VRIKNormalizeAngle(
         pose->orientation[tracker][ROLL]);
   }
+  pose->aim_orientation[PITCH] =
+      VR_VRIKNormalizeAngle(pose->aim_orientation[PITCH]);
+  pose->aim_orientation[YAW] =
+      VR_VRIKNormalizeAngle(pose->aim_orientation[YAW]);
+  pose->aim_orientation[ROLL] =
+      VR_VRIKNormalizeAngle(pose->aim_orientation[ROLL]);
 
   return true;
 }

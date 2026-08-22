@@ -109,6 +109,9 @@ static qboolean SV_VRIKPoseIsValid(const vrik_pose_t *pose)
 			VRIK_MAX_ROOT_LOCAL_OFFSET * VRIK_MAX_ROOT_LOCAL_OFFSET)
 			return false;
 	}
+	for (axis = 0; axis < 3; axis++)
+		if (!isfinite(pose->aim_orientation[axis]))
+			return false;
 	return true;
 }
 
@@ -141,6 +144,8 @@ static void SV_WriteVRIKPose(sizebuf_t *msg, int entitynum,
 	for (tracker = 0; tracker < VRIK_TRACKER_COUNT; tracker++)
 		for (axis = 0; axis < 3; axis++)
 			SV_WriteVRIKAngle16(msg, pose->orientation[tracker][axis]);
+	for (axis = 0; axis < 3; axis++)
+		SV_WriteVRIKAngle16(msg, pose->aim_orientation[axis]);
 }
 
 static void SV_RelayVRIKPose(client_t *source, const vrik_pose_t *pose)
@@ -1090,7 +1095,7 @@ void SV_SendServerinfo (client_t *client)
 	/* Comment-prefixed negotiation keeps pre-VRIK clients on their normal
 	 * animation path and avoids spending a PEXT2 compatibility bit. */
 	MSG_WriteByte (&client->message, svc_stufftext);
-	MSG_WriteString (&client->message, "//vrik_protocol 1\n");
+	MSG_WriteString (&client->message, "//vrik_protocol 2\n");
 
 	MSG_WriteByte (&client->message, svc_signonnum);
 	MSG_WriteByte (&client->message, 1);

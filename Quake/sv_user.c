@@ -1071,7 +1071,7 @@ static qboolean SV_HandleVRIKCapability(const char *s)
   while (*value == ' ' || *value == '\t')
     value++;
 
-  if (*value++ != '1')
+  if (*value++ != '2')
     return true;
   while (*value == ' ' || *value == '\t' || *value == '\r' || *value == '\n')
     value++;
@@ -1088,7 +1088,7 @@ static qboolean SV_HandleVRIKCapability(const char *s)
   host_client->vrik_inactive_sent = false;
   host_client->vrik_generation = 0;
   host_client->vrik_next_accept_time = 0;
-  Con_DPrintf("VRIK: client %s negotiated protocol 1\n", host_client->name);
+  Con_DPrintf("VRIK: client %s negotiated protocol 2\n", host_client->name);
   return true;
 }
 
@@ -1113,6 +1113,8 @@ static qboolean SV_ReadVRIKPose(qboolean accept)
   for (tracker = 0; tracker < VRIK_TRACKER_COUNT; tracker++)
     for (axis = 0; axis < 3; axis++)
       pose.orientation[tracker][axis] = MSG_ReadShort() * (360.0f / 65536.0f);
+  for (axis = 0; axis < 3; axis++)
+    pose.aim_orientation[axis] = MSG_ReadShort() * (360.0f / 65536.0f);
 
   if (!msg_badread && accept)
     SV_ReceiveVRIKPose(host_client, &pose);

@@ -708,6 +708,9 @@ static qboolean CL_VRIKPoseIsValid(const vrik_pose_t *pose)
         VRIK_MAX_ROOT_LOCAL_OFFSET * VRIK_MAX_ROOT_LOCAL_OFFSET)
       return false;
   }
+  for (axis = 0; axis < 3; axis++)
+    if (!isfinite(pose->aim_orientation[axis]))
+      return false;
   return true;
 }
 
@@ -730,6 +733,8 @@ static void CL_WriteVRIKPose(sizebuf_t *buf, const vrik_pose_t *pose)
   for (tracker = 0; tracker < VRIK_TRACKER_COUNT; tracker++)
     for (axis = 0; axis < 3; axis++)
       CL_WriteVRIKAngle16(buf, pose->orientation[tracker][axis]);
+  for (axis = 0; axis < 3; axis++)
+    CL_WriteVRIKAngle16(buf, pose->aim_orientation[axis]);
 }
 
 /* VRIK is a standalone newest-pose message: never put it in move history. */

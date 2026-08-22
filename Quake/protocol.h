@@ -79,7 +79,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
  * The wire format is fixed-point 13.3 for positions and angle16 for all
  * angles, irrespective of the negotiated RMQ coordinate/angle flags.
  */
-#define VRIK_PROTOCOL_VERSION 1
+#define VRIK_PROTOCOL_VERSION 2
 #define VRIK_MAX_ROOT_LOCAL_OFFSET 256.0f
 #define VRIK_POSE_STALE_TIME 0.25
 
@@ -107,10 +107,14 @@ typedef struct
 	float		body_yaw;
 	vec3_t		position[VRIK_TRACKER_COUNT];
 	vec3_t		orientation[VRIK_TRACKER_COUNT];
+	/* The dominant controller's gameplay aim frame.  Hand orientations above
+	 * are unmodified grip poses so wrist/palm motion is not skewed by weapon
+	 * pitch calibration; attached props and muzzle effects use this frame. */
+	vec3_t		aim_orientation;
 } vrik_pose_t;
 
 #define VRIK_POSE_WIRE_BYTES (2 + 1 + 2 + (VRIK_TRACKER_COUNT * 3 * 2) + \
-	(VRIK_TRACKER_COUNT * 3 * 2))
+	(VRIK_TRACKER_COUNT * 3 * 2) + (3 * 2))
 
 // if the high bit of the servercmd is set, the low bits are fast update flags:
 #define U_MOREBITS (1 << 0)
@@ -380,7 +384,7 @@ typedef struct
 #define svc_backtolobby 55
 #define svc_localsound 56
 #define svc_moveack 57 // [short] last accepted sequenced move
-/* Sent only after the //vrik_protocol 1 / vrik_cap 1 handshake. */
+/* Sent only after the //vrik_protocol 2 / vrik_cap 2 handshake. */
 #define svc_vrikpose 87 // [short entity][long generation][vrik pose]
 // PEXT2_EXPLICITCMDMSEC adds [byte flags][byte authority][short mode_epoch]
 // [short discontinuity_epoch][byte reason].

@@ -1807,6 +1807,17 @@ static qboolean R_VRIKSampleEntityPose (const entity_t *entity, vrik_pose_t *out
 			out->orientation[tracker][axis] = R_VRIKLerpAngle (
 				older->orientation[tracker][axis], newest->orientation[tracker][axis], blend);
 		}
+	{
+		unsigned char dominanttracked =
+			(newest->flags & VRIK_FLAG_DOMINANT_LEFT) ?
+			VRIK_FLAG_LEFT_HAND_TRACKED : VRIK_FLAG_RIGHT_HAND_TRACKED;
+		if (!((older->flags ^ newest->flags) & VRIK_FLAG_DOMINANT_LEFT) &&
+			(older->flags & dominanttracked) &&
+			(newest->flags & dominanttracked))
+			for (axis = 0; axis < 3; axis++)
+				out->aim_orientation[axis] = R_VRIKLerpAngle (
+					older->aim_orientation[axis], newest->aim_orientation[axis], blend);
+	}
 	out->body_yaw = R_VRIKLerpAngle (older->body_yaw, newest->body_yaw, blend);
 	return true;
 }
@@ -1978,6 +1989,20 @@ static void R_VRIKAnglesToModelMatrix (const vec3_t angles,
 	matrix[8] = x[2]; matrix[9] = y[2]; matrix[10] = z[2]; matrix[11] = origin[2];
 }
 
+static void R_VRIKTrackedItemMatrix (const float tracked[12],
+	const vec3_t origin, float item[12])
+{
+	/* MD5 hand, gun, and axe geometry all extend along joint-local +Y,
+	 * whereas a tracked Quake pose points along +X.  Joint-local +Z is the
+	 * dorsal/up axis.  This fixed proper rotation is deliberately identical
+	 * for both anatomical hands: the mirrored skin and skeleton already encode
+	 * handedness, while mirroring this target would reverse the left palm. */
+	item[0] = -tracked[1]; item[1] = tracked[0]; item[2] = tracked[2];
+	item[4] = -tracked[5]; item[5] = tracked[4]; item[6] = tracked[6];
+	item[8] = -tracked[9]; item[9] = tracked[8]; item[10] = tracked[10];
+	R_VRIKSetMatrixOrigin (item, origin);
+}
+
 static void R_VRIKRotateToward (float matrix[12], const vec3_t from,
 	const vec3_t to)
 {
@@ -2031,7 +2056,7 @@ static void R_VRIKSolveArm (const md5liveinfo_t *live, float *palette,
 	float *upper = palette + upperindex * 12;
 	float *lower = palette + lowerindex * 12;
 	float *hand = palette + handindex * 12;
-	float canonical[12], inverse[12], correction[12], desiredhand[12];
+	float tracked[12], desiredhand[12];
 	vec3_t shoulder, oldelbow, oldhand, toward, pole, bendnormal, bendaxis;
 	vec3_t elbow, oldupperdir, oldlowerdir, newupperdir, newlowerdir;
 	float upperlength, lowerlength, distance, restreach, stretch;
@@ -2046,13 +2071,6 @@ static void R_VRIKSolveArm (const md5liveinfo_t *live, float *palette,
 	lowerlength = VectorLength (oldlowerdir);
 	if (upperlength < 0.01f || lowerlength < 0.01f)
 		return;
-
-	/* Preserve the MD5 hand's bone-local basis relative to the avatar's forward
-	 * frame.  Referencing it to the diagonally posed forearm bakes that pose's
-	 * rightward yaw into every controller orientation. */
-	R_VRIKCanonicalMatrix (forward, up, oldhand, canonical);
-	R_VRIKMatrixInverseRigid (canonical, inverse);
-	R_VRIKMatrixMultiply (inverse, hand, correction);
 
 	VectorSubtract (target, shoulder, toward);
 	distance = VectorLength (toward);
@@ -2090,9 +2108,11 @@ static void R_VRIKSolveArm (const md5liveinfo_t *live, float *palette,
 	R_VRIKRotateToward (lower, oldlowerdir, newlowerdir);
 	R_VRIKSetMatrixOrigin (lower, elbow);
 
-	R_VRIKAnglesToModelMatrix (targetangles, lateral, forward, up, target, canonical);
-	R_VRIKMatrixMultiply (canonical, correction, desiredhand);
-	R_VRIKSetMatrixOrigin (desiredhand, target);
+	/* A tracked wrist must not inherit the current animation frame's hand
+	 * basis.  That basis changes between stand/run/attack poses and previously
+	 * turned the same physical controller pitch into roll on some frames. */
+	R_VRIKAnglesToModelMatrix (targetangles, lateral, forward, up, target, tracked);
+	R_VRIKTrackedItemMatrix (tracked, target, desiredhand);
 	memcpy (hand, desiredhand, sizeof(desiredhand));
 }
 
@@ -2113,8 +2133,8 @@ static void R_VRIKSolvePalette (const md5liveinfo_t *live,
 	const vrik_pose_t *pose, qboolean muzzleflash, float *palette)
 {
 	vec3_t lateral, forward, up, hip, oldhead, targethead, headdelta, torso;
-	vec3_t lefttarget, righttarget;
-	float basehand[12], weaponoffset[12], inverse[12], attached[12];
+	vec3_t lefttarget, righttarget, weaponhandlocal = {0, 0, 0};
+	float weaponhand[12], inverse[12], attached[12];
 	int headindex, hipindex, handright, handleft, gun, axe, flames[2], weapon = -1;
 	qboolean dominantleft;
 
@@ -2130,7 +2150,9 @@ static void R_VRIKSolvePalette (const md5liveinfo_t *live,
 	flames[1] = live->jointindex[MD5_VRIK_BIG_FLAME];
 	dominantleft = (pose->flags & VRIK_FLAG_DOMINANT_LEFT) != 0;
 
-	/* Capture the animation's active weapon-to-right-hand offset before IK. */
+	/* Capture the active prop's animated grip point before IK.  Its orientation
+	 * is intentionally not retained: that animation-relative basis changes by
+	 * frame and was the source of controller pitch becoming weapon roll. */
 	if (handright >= 0 && (gun >= 0 || axe >= 0))
 	{
 		vec3_t handorigin, gunorigin, axeorigin;
@@ -2153,9 +2175,9 @@ static void R_VRIKSolvePalette (const md5liveinfo_t *live,
 			weapon = -1;
 		if (weapon >= 0)
 		{
-			memcpy (basehand, palette + handright * 12, sizeof(basehand));
-			R_VRIKMatrixInverseRigid (basehand, inverse);
-			R_VRIKMatrixMultiply (inverse, palette + weapon * 12, weaponoffset);
+			R_VRIKMatrixInverseRigid (palette + weapon * 12, inverse);
+			R_VRIKMatrixMultiply (inverse, palette + handright * 12, weaponhand);
+			R_VRIKMatrixOrigin (weaponhand, weaponhandlocal);
 		}
 	}
 
@@ -2225,7 +2247,9 @@ static void R_VRIKSolvePalette (const md5liveinfo_t *live,
 			pose->orientation[VRIK_TRACKER_RIGHT_HAND], lateral, forward, up);
 	}
 
-	/* Re-parent only the animation's in-hand prop, preserving its grip offset. */
+	/* Re-parent only the animation's in-hand prop.  Its +Y axis follows the
+	 * separately transmitted gameplay aim frame, while its captured local grip
+	 * point remains locked to the tracked wrist. */
 	if (weapon >= 0)
 	{
 		int destination = dominantleft ? handleft : handright;
@@ -2233,7 +2257,26 @@ static void R_VRIKSolvePalette (const md5liveinfo_t *live,
 			((dominantleft && (pose->flags & VRIK_FLAG_LEFT_HAND_TRACKED)) ||
 			 (!dominantleft && (pose->flags & VRIK_FLAG_RIGHT_HAND_TRACKED))))
 		{
-			R_VRIKMatrixMultiply (palette + destination * 12, weaponoffset, attached);
+			float tracked[12];
+			vec3_t handorigin, weaponorigin;
+
+			R_VRIKAnglesToModelMatrix (pose->aim_orientation, lateral, forward,
+				up, vec3_origin, tracked);
+			R_VRIKTrackedItemMatrix (tracked, vec3_origin, attached);
+			R_VRIKMatrixOrigin (palette + destination * 12, handorigin);
+			weaponorigin[0] = handorigin[0] -
+				(attached[0] * weaponhandlocal[0] +
+				 attached[1] * weaponhandlocal[1] +
+				 attached[2] * weaponhandlocal[2]);
+			weaponorigin[1] = handorigin[1] -
+				(attached[4] * weaponhandlocal[0] +
+				 attached[5] * weaponhandlocal[1] +
+				 attached[6] * weaponhandlocal[2]);
+			weaponorigin[2] = handorigin[2] -
+				(attached[8] * weaponhandlocal[0] +
+				 attached[9] * weaponhandlocal[1] +
+				 attached[10] * weaponhandlocal[2]);
+			R_VRIKSetMatrixOrigin (attached, weaponorigin);
 			memcpy (palette + weapon * 12, attached, sizeof(attached));
 			if (weapon == gun)
 			{
