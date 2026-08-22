@@ -23,9 +23,10 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 //r_alias.c -- alias model rendering
 
 #include "quakedef.h"
+#include "vr.h"
 
 extern cvar_t r_drawflat, gl_overbright_models, gl_fullbrights, r_lerpmodels, r_lerpmove; //johnfitz
-extern cvar_t scr_fov, cl_gun_fovscale, vr_enabled;
+extern cvar_t scr_fov, cl_gun_fovscale;
 extern vec3_t vr_weaponcolor;
 
 cvar_t r_alias_batching = {"r_alias_batching", "1", CVAR_ARCHIVE};
@@ -2561,26 +2562,25 @@ static qboolean R_VRIKSubstitutePlayer (entity_t *entity, entity_t *replacement)
 	vrik_pose_t pose;
 	uintptr_t address;
 	int entitynum;
+	qboolean tracked;
 
-	/* The VR option controls publication of this client's tracking. Receiving
-	 * clients render any negotiated active pose automatically, including
-	 * desktop spectators; non-VR players never publish one. */
-	if (!cl.entities || !entity || !entity->model ||
-		!Mod_IsVRIKCompatible (entity->model))
+	/* With VRIK enabled, the verified rerelease Ranger is the common multiplayer
+	 * avatar for tracked and untracked players alike.  Enyo and QBJ3 keep their
+	 * own incompatible character/frame sets. */
+	if (!vr_vrik.value || !VR_VRIKAllowedForGame () || !cl.entities ||
+		!entity || !entity->model)
 		return false;
 	address = (uintptr_t)entity;
 	if (address < (uintptr_t)&cl.entities[1] ||
 		address > (uintptr_t)&cl.entities[cl.maxclients] ||
-		entity == &cl.entities[cl.viewentity] ||
-		!R_VRIKSampleEntityPose (entity, &pose))
+		entity == &cl.entities[cl.viewentity])
 		return false;
-	/* Render the character model that this game actually assigned.  The
-	 * compatibility guard above proves that its retained MD5 mesh exposes the
-	 * skeleton consumed by the solver; incompatible mod avatars remain wholly
-	 * on their ordinary MDL/MD3 animation path. */
-	model = entity->model;
+	model = Mod_GetRereleasePlayerMD5Model ();
+	if (!model)
+		return false;
 	entitynum = (int)(entity - cl.entities);
-	if (entitynum >= 1 && entitynum <= MAX_SCOREBOARD &&
+	tracked = R_VRIKSampleEntityPose (entity, &pose);
+	if (tracked && entitynum >= 1 && entitynum <= MAX_SCOREBOARD &&
 		r_vrik_rendered_generation[entitynum] != entity->vrik_generation)
 	{
 		r_vrik_rendered_generation[entitynum] = entity->vrik_generation;
@@ -2593,14 +2593,16 @@ static qboolean R_VRIKSubstitutePlayer (entity_t *entity, entity_t *replacement)
 	replacement->frame = R_VRIKReplacementFrame (entity, model);
 	R_VRIKRestoreRenderState (replacement, entitynum, model,
 		entity->vrik_generation);
-	/* Tracking positions are root-local to the sender's sampled body yaw.  Use
-	 * that same interpolated yaw for the outer entity transform so converting
-	 * them back to model space is an exact inverse, even between snapshots. */
-	replacement->angles[YAW] = pose.body_yaw;
-	replacement->previousangles[YAW] = pose.body_yaw;
-	replacement->currentangles[YAW] = pose.body_yaw;
-	r_vrik_pending_pose = pose;
-	r_vrik_pose_pending = true;
+	if (tracked)
+	{
+		/* Tracking positions are root-local to the sender's sampled body yaw.
+		 * Use that same interpolated yaw for the outer entity transform. */
+		replacement->angles[YAW] = pose.body_yaw;
+		replacement->previousangles[YAW] = pose.body_yaw;
+		replacement->currentangles[YAW] = pose.body_yaw;
+		r_vrik_pending_pose = pose;
+	}
+	r_vrik_pose_pending = tracked;
 	r_vrik_active_player = entitynum - 1;
 	return true;
 }
@@ -3172,11 +3174,15 @@ void R_DrawAliasModel (entity_t *e)
 
 	if (R_VRIKSubstitutePlayer (e, &vrikentity))
 	{
+		qboolean tracked = r_vrik_pose_pending;
 		savedentity = currententity;
 		currententity = &vrikentity;
 		/* Tracked hands can leave the animation's static bounds. */
 		R_DrawMD5Model (&vrikentity, false, false);
-		R_VRIKStoreMuzzleTransform (e, vrikentity.model);
+		if (tracked)
+			R_VRIKStoreMuzzleTransform (e, vrikentity.model);
+		else
+			e->vrik_muzzle_valid = false;
 		R_VRIKSaveRenderState (&vrikentity, r_vrik_active_player + 1);
 		currententity = savedentity;
 		r_vrik_pose_pending = false;
@@ -3544,6 +3550,8 @@ static void R_DrawMD5ModelOutline (entity_t *e, float r, float g, float b,
 		return;
 	R_SetupAliasFrame (md5, e->frame, &lerpdata);
 	R_SetupEntityTransform (e, &lerpdata);
+	if (r_vrik_pose_pending)
+		R_VRIKPrepareSkin (e->model, &lerpdata);
 	glPushMatrix ();
 	R_RotateForEntity (lerpdata.origin, lerpdata.angles, e->scale);
 	glTranslatef (md5->scale_origin[0], md5->scale_origin[1], md5->scale_origin[2]);
@@ -3559,6 +3567,7 @@ static void R_DrawMD5ModelOutline (entity_t *e, float r, float g, float b,
 	R_DrawMD5UntexturedPass (md5, lerpdata, color, a, false);
 	glEnable (GL_TEXTURE_2D);
 	glPopMatrix ();
+	r_vrik_skin_active = false;
 }
 
 /*
@@ -3570,8 +3579,23 @@ No frustum culling, no texturing, no lighting -- just a solid color mesh.
 */
 void R_DrawAliasModelOutline (entity_t *e, float r, float g, float b, float a, float inflate)
 {
+	entity_t	vrikentity;
+	entity_t	*savedentity;
 	aliashdr_t	*paliashdr;
 	lerpdata_t	lerpdata;
+
+	if (R_VRIKSubstitutePlayer (e, &vrikentity))
+	{
+		savedentity = currententity;
+		currententity = &vrikentity;
+		R_DrawMD5ModelOutline (&vrikentity, r, g, b, a, inflate);
+		R_VRIKSaveRenderState (&vrikentity, r_vrik_active_player + 1);
+		currententity = savedentity;
+		r_vrik_pose_pending = false;
+		r_vrik_skin_active = false;
+		r_vrik_active_player = -1;
+		return;
+	}
 
 	if (Mod_UseMD3ModelForFrame (e->model, e->skinnum, e->frame))
 	{
@@ -3768,6 +3792,8 @@ static void GL_DrawMD5Shadow (entity_t *e)
 		return;
 	R_SetupAliasFrame (md5, e->frame, &lerpdata);
 	R_SetupEntityTransform (e, &lerpdata);
+	if (r_vrik_pose_pending)
+		R_VRIKPrepareSkin (e->model, &lerpdata);
 	R_LightPoint (e->origin);
 	lheight = currententity->origin[2] - lightspot[2];
 	glPushMatrix ();
@@ -3793,6 +3819,7 @@ static void GL_DrawMD5Shadow (entity_t *e)
 	glDisable (GL_BLEND);
 	glDepthMask (GL_TRUE);
 	glPopMatrix ();
+	r_vrik_skin_active = false;
 }
 
 /*
@@ -3804,6 +3831,8 @@ TODO: orient shadow onto "lightplane" (a global mplane_t*)
 */
 void GL_DrawAliasShadow (entity_t *e)
 {
+	entity_t	vrikentity;
+	entity_t	*savedentity;
 	float	shadowmatrix[16] = {1,				0,				0,				0,
 								0,				1,				0,				0,
 								SHADOW_SKEW_X,	SHADOW_SKEW_Y,	SHADOW_VSCALE,	0,
@@ -3812,10 +3841,24 @@ void GL_DrawAliasShadow (entity_t *e)
 	aliashdr_t	*paliashdr;
 	lerpdata_t	lerpdata;
 
-	if (R_CullModelForEntity(e))
-		return;
-
 	if (e == &cl.viewent || e->model->flags & MOD_NOSHADOW)
+		return;
+	if (R_VRIKSubstitutePlayer (e, &vrikentity))
+	{
+		savedentity = currententity;
+		currententity = &vrikentity;
+		entalpha = ENTALPHA_DECODE(vrikentity.alpha);
+		if (entalpha != 0)
+			GL_DrawMD5Shadow (&vrikentity);
+		R_VRIKSaveRenderState (&vrikentity, r_vrik_active_player + 1);
+		currententity = savedentity;
+		r_vrik_pose_pending = false;
+		r_vrik_skin_active = false;
+		r_vrik_active_player = -1;
+		return;
+	}
+
+	if (R_CullModelForEntity(e))
 		return;
 
 	entalpha = ENTALPHA_DECODE(e->alpha);
