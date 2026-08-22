@@ -2002,25 +2002,25 @@ static qboolean CL_OfferVRIKProtocol(const char *command)
 	version = command + 13;
 	while (*version == ' ' || *version == '\t')
 		version++;
-	if (*version++ != '1')
+	if (*version++ != '2')
 		return true;
 	/* CL_ParseStuffText calls extension handlers before removing the line
-	 * terminator, so the server's canonical "//vrik_protocol 1\n" offer still
+	 * terminator, so the server's canonical "//vrik_protocol 2\n" offer still
 	 * has its newline here. */
 	while (*version == ' ' || *version == '\t' || *version == '\r' ||
 		*version == '\n')
 		version++;
 	if (*version || cl.vrik_cap_sent)
 		return true;
-	if (cls.message.cursize + 1 + (int)sizeof("vrik_cap 1") >
+	if (cls.message.cursize + 1 + (int)sizeof("vrik_cap 2") >
 		cls.message.maxsize)
 		return true;
 
 	cl.vrik_protocol_offered = true;
 	MSG_WriteByte(&cls.message, clc_stringcmd);
-	MSG_WriteString(&cls.message, "vrik_cap 1");
+	MSG_WriteString(&cls.message, "vrik_cap 2");
 	cl.vrik_cap_sent = true;
-	Con_DPrintf("VRIK: negotiated protocol 1 with server\n");
+	Con_DPrintf("VRIK: negotiated protocol 2 with server\n");
 	return true;
 }
 
@@ -2058,6 +2058,8 @@ static qboolean CL_ParseVRIKPose(void)
 	for (tracker = 0; tracker < VRIK_TRACKER_COUNT; tracker++)
 		for (axis = 0; axis < 3; axis++)
 			pose.orientation[tracker][axis] = MSG_ReadShort() * (360.0f / 65536.0f);
+	for (axis = 0; axis < 3; axis++)
+		pose.aim_orientation[axis] = MSG_ReadShort() * (360.0f / 65536.0f);
 
 	if (msg_badread || !cl.vrik_protocol_offered ||
 		!generation || entitynum < 1 || entitynum > cl.maxclients || entitynum >= cl.max_edicts ||
