@@ -94,6 +94,12 @@ typedef struct entity_s
 	unsigned int				vrik_generation;
 	unsigned char				vrik_pose_count;
 	qboolean				vrik_sequence_valid;
+	/* Last rendered VRIK gun muzzle, used by the next client relink so the
+	 * muzzle-flash light follows the controller-held weapon. */
+	qboolean				vrik_muzzle_valid;
+	double					vrik_muzzle_time;
+	vec3_t					vrik_muzzle_origin;
+	vec3_t					vrik_muzzle_forward;
 	float					movelerpstart;	//johnfitz -- transform lerping
 	vec3_t					previousorigin;	//johnfitz -- transform lerping
 	vec3_t					currentorigin;	//johnfitz -- transform lerping
