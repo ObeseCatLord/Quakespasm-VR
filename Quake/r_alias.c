@@ -2110,13 +2110,11 @@ static void R_VRIKMoveJoint (const md5liveinfo_t *live, float *palette,
 }
 
 static void R_VRIKSolvePalette (const md5liveinfo_t *live,
-	const vrik_pose_t *pose, float *palette)
+	const vrik_pose_t *pose, qboolean muzzleflash, float *palette)
 {
 	vec3_t lateral, forward, up, hip, oldhead, targethead, headdelta, torso;
 	vec3_t lefttarget, righttarget;
 	float basehand[12], weaponoffset[12], inverse[12], attached[12];
-	float flameoffset[2][12];
-	qboolean flamevalid[2] = {false, false};
 	int headindex, hipindex, handright, handleft, gun, axe, flames[2], weapon = -1;
 	qboolean dominantleft;
 
@@ -2158,18 +2156,6 @@ static void R_VRIKSolvePalette (const md5liveinfo_t *live,
 			memcpy (basehand, palette + handright * 12, sizeof(basehand));
 			R_VRIKMatrixInverseRigid (basehand, inverse);
 			R_VRIKMatrixMultiply (inverse, palette + weapon * 12, weaponoffset);
-			if (weapon == gun)
-			{
-				int flame;
-				R_VRIKMatrixInverseRigid (palette + gun * 12, inverse);
-				for (flame = 0; flame < 2; flame++)
-					if (flames[flame] >= 0)
-					{
-						R_VRIKMatrixMultiply (inverse, palette + flames[flame] * 12,
-							flameoffset[flame]);
-						flamevalid[flame] = true;
-					}
-			}
 		}
 	}
 
@@ -2254,13 +2240,6 @@ static void R_VRIKSolvePalette (const md5liveinfo_t *live,
 				vec3_t gunorigin;
 				int flame;
 				R_VRIKMatrixOrigin (attached, gunorigin);
-				for (flame = 0; flame < 2; flame++)
-					if (flamevalid[flame])
-					{
-						float moved[12];
-						R_VRIKMatrixMultiply (attached, flameoffset[flame], moved);
-						memcpy (palette + flames[flame] * 12, moved, sizeof(moved));
-					}
 				/* The gun mesh's measured barrel axis is local +Y.  Use it
 				 * unconditionally for both the muzzle point and direction; a
 				 * grip-to-flame vector changes under pitch/roll and is not aim. */
@@ -2271,6 +2250,22 @@ static void R_VRIKSolvePalette (const md5liveinfo_t *live,
 					VectorNormalize (r_vrik_muzzle_model_forward) != 0.0f;
 				VectorMA (gunorigin, VRIK_GUN_MUZZLE_OFFSET,
 					r_vrik_muzzle_model_forward, r_vrik_muzzle_model_origin);
+				/* The flare meshes also extend along their joint-local +Y axis.
+				 * Their original joints are animated under Spine1, so retaining a
+				 * gun-relative offset after hand IK leaves them beside the weapon
+				 * with their old orientation.  During the actual flash, give both
+				 * flare joints the gun basis and the measured muzzle origin.  Leave
+				 * them in the original animation otherwise so hidden flare geometry
+				 * does not become permanently visible. */
+				if (muzzleflash)
+					for (flame = 0; flame < 2; flame++)
+						if (flames[flame] >= 0)
+						{
+							memcpy (palette + flames[flame] * 12, attached,
+								sizeof(attached));
+							R_VRIKSetMatrixOrigin (palette + flames[flame] * 12,
+								r_vrik_muzzle_model_origin);
+						}
 			}
 		}
 	}
@@ -2325,7 +2320,9 @@ static qboolean R_VRIKPrepareSkin (qmodel_t *model, const lerpdata_t *lerpdata)
 	}
 
 	R_VRIKLerpPalette (&live, lerpdata, r_vrik_palette);
-	R_VRIKSolvePalette (&live, &r_vrik_pending_pose, r_vrik_palette);
+	R_VRIKSolvePalette (&live, &r_vrik_pending_pose,
+		currententity && (currententity->effects & EF_MUZZLEFLASH),
+		r_vrik_palette);
 	for (vertex = 0; vertex < surface.numverts; vertex++)
 	{
 		const md5livevertex_t *source = &surface.vertices[vertex];
