@@ -1888,6 +1888,13 @@ qboolean VR_VRIKAvailable(void) {
   return model && Mod_GetMD5LiveData(model, &live) && live.compatible;
 }
 
+qboolean VR_VRIKAllowedForGame(void) {
+  /* These conversions replace Ranger with vertex-animated characters whose
+   * frame sets do not map safely to the rerelease MD5.  Keep the exclusion
+   * deliberately narrow until another mod demonstrates the same constraint. */
+  return !VR_GameDirIs("enyo") && !VR_GameDirIs("qbj3");
+}
+
 static void VR_VRIK_f(cvar_t *var) {
   if (!var->value || VR_VRIKAvailable())
     return;
@@ -2915,7 +2922,8 @@ qboolean VR_GetVRIKPose(vrik_pose_t *pose) {
   if (!pose)
     return false;
   Q_memset(pose, 0, sizeof(*pose));
-  if (!vr_vrik.value || !vr_enabled.value || !vr_initialized ||
+  if (!vr_vrik.value || !VR_VRIKAllowedForGame() || !vr_enabled.value ||
+      !vr_initialized ||
       !VR_VRIKAvailable() || cls.state != ca_connected ||
       cls.signon != SIGNONS || !cl.entities || cl.viewentity < 1 ||
       cl.viewentity >= cl.max_edicts || cl.stats[STAT_HEALTH] <= 0 ||
@@ -2923,10 +2931,7 @@ qboolean VR_GetVRIKPose(vrik_pose_t *pose) {
     return false;
 
   player = &cl.entities[cl.viewentity];
-  /* Never replace a mod's character with Ranger merely because tracking is
-   * available.  The model actually assigned to this player must expose the
-   * compatible MD5 skeleton that the IK solver will deform. */
-  if (!player->model || !Mod_IsVRIKCompatible(player->model))
+  if (!player->model)
     return false;
   body_yaw = player->angles[YAW];
   if (!isfinite(body_yaw))

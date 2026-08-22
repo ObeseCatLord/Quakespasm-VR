@@ -681,7 +681,6 @@ qboolean Mod_UseMD3Model (qmodel_t *mod, int skinnum);
 aliashdr_t *Mod_GetMD5Extradata (qmodel_t *mod);
 qboolean Mod_UseMD5Model (qmodel_t *mod, int skinnum);
 qboolean Mod_GetMD5LiveData (qmodel_t *mod, md5liveinfo_t *out);
-qboolean Mod_IsVRIKCompatible (qmodel_t *mod);
 qboolean Mod_GetMD5LiveSurface (const md5liveinfo_t *info, int surface,
 	md5livesurface_t *out);
 qmodel_t *Mod_GetRereleasePlayerMD5Model (void);

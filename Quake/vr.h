@@ -142,6 +142,7 @@ extern int weaponCVarEntry;
 extern vec3_t vr_room_scale_move;
 
 qboolean VR_VRIKAvailable(void);
+qboolean VR_VRIKAllowedForGame(void);
 qboolean VR_GetVRIKPose(vrik_pose_t *pose);
 
 #define MAX_VR_WEAPONS 64

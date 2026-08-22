@@ -113,6 +113,8 @@ static void VR_MenuPrintOptionValue(int cx, int cy, int option) {
   case VR_OPTION_VRIK:
     if (!VR_VRIKAvailable())
       value_string = "unavailable";
+    else if (!VR_VRIKAllowedForGame())
+      value_string = "unsupported";
     else
       M_DrawCheckbox(cx, cy, (int)vr_vrik.value);
     break;
@@ -363,7 +365,8 @@ void VR_MenuKeyOption(int key, int option) {
     // }
     break;
   case VR_OPTION_VRIK:
-    Cvar_SetValue(vr_vrik.name, !(int)vr_vrik.value);
+    if (VR_VRIKAllowedForGame())
+      Cvar_SetValue(vr_vrik.name, !(int)vr_vrik.value);
     break;
   /*case VR_OPTION_PERFHUD:
       intValue = (int)vr_perfhud.value;
