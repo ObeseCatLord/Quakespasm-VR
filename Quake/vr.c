@@ -90,7 +90,7 @@ static const vr_default_binding_t vr_default_bindings[] = {
     {K_ABUTTON, "+showscores"},
     {K_XBUTTON, "impulse 12"},
     {K_VR_RIGHT_STICK_UP, "+vr_weaponmenu"},
-    {K_VR_RIGHT_STICK_DOWN, "vr_turn180"},
+    /* vr_turn180 remains available, but is intentionally unbound by default. */
 };
 
 void VR_ApplyDefaultBindings(qboolean overwrite) {
@@ -1515,7 +1515,7 @@ vec3_t vr_room_scale_move;
   cvar_t name = {#name, #defaultValue, type}
 
 DEFINE_CVAR(vr_enabled, 0, CVAR_NONE);
-DEFINE_CVAR(vr_vrik, 0, CVAR_ARCHIVE);
+DEFINE_CVAR(vr_vrik, 1, CVAR_ARCHIVE);
 DEFINE_CVAR(vr_viewkick, 0, CVAR_NONE);
 DEFINE_CVAR(vr_lefthanded, 0, CVAR_NONE);
 
