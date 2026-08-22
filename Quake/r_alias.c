@@ -2166,9 +2166,9 @@ static void R_VRIKSolvePalette (const md5liveinfo_t *live,
 	flames[1] = live->jointindex[MD5_VRIK_BIG_FLAME];
 	dominantleft = (pose->flags & VRIK_FLAG_DOMINANT_LEFT) != 0;
 
-	/* Capture the active prop's animated grip point before IK.  Its orientation
-	 * is intentionally not retained: that animation-relative basis changes by
-	 * frame and was the source of controller pitch becoming weapon roll. */
+	/* Capture the active prop's complete animated fist socket before IK.  The
+	 * prop itself will still receive the stable tracked basis; retaining this
+	 * relative transform lets the fist wrap that prop after both are moved. */
 	if (handright >= 0 && (gun >= 0 || axe >= 0))
 	{
 		vec3_t handorigin, gunorigin, axeorigin;
@@ -2306,6 +2306,19 @@ static void R_VRIKSolvePalette (const md5liveinfo_t *live,
 				 attached[9] * weaponhandlocal[1] +
 				 attached[10] * weaponhandlocal[2]);
 			R_VRIKSetMatrixOrigin (attached, weaponorigin);
+			/* The rerelease animation authors this prop socket against Hand_R.
+			 * Reconstruct that complete fist transform for right dominance so
+			 * the weapon cannot sit above or outside the hand.  There is no
+			 * authored left-hand prop socket to mirror reliably, so retain the
+			 * left hand's independently solved controller orientation. */
+			if (!dominantleft)
+			{
+				float correctedhand[12];
+				R_VRIKMatrixMultiply (attached, weaponhand, correctedhand);
+				R_VRIKSetMatrixOrigin (correctedhand, handorigin);
+				memcpy (palette + destination * 12, correctedhand,
+					sizeof(correctedhand));
+			}
 			memcpy (palette + weapon * 12, attached, sizeof(attached));
 			if (weapon == gun)
 			{
@@ -2432,8 +2445,7 @@ static int R_VRIKReplacementFrame (const entity_t *entity,
 {
 	vec3_t movement;
 
-	if (entity->frame >= 0 && entity->frame < replacement->numframes &&
-		!q_strcasestr(entity->model->name, "ee_pl"))
+	if (entity->frame >= 0 && entity->frame < replacement->numframes)
 		return entity->frame;
 	VectorSubtract (entity->currentorigin, entity->previousorigin, movement);
 	if (movement[0] * movement[0] + movement[1] * movement[1] > 0.25f)
@@ -2458,9 +2470,8 @@ static void R_VRIKRestoreRenderState (entity_t *replacement, int entitynum,
 		return;
 	}
 
-	/* Animation poses belong to the replacement MD5, not the source mod model.
-	 * Keep their state in this sidecar so turning VRIK off cannot leave invalid
-	 * pose indexes in the ordinary entity. */
+	/* Keep VRIK's MD5 interpolation state in this sidecar so tracking loss or
+	 * disabling VRIK cannot disturb the ordinary entity's animation state. */
 	replacement->lerpflags = state->lerpflags &
 		~(LERP_MOVESTEP | LERP_FINISH);
 	replacement->lerpflags |= entityflags &
@@ -2554,7 +2565,8 @@ static qboolean R_VRIKSubstitutePlayer (entity_t *entity, entity_t *replacement)
 	/* The VR option controls publication of this client's tracking. Receiving
 	 * clients render any negotiated active pose automatically, including
 	 * desktop spectators; non-VR players never publish one. */
-	if (!cl.entities || !entity || !entity->model)
+	if (!cl.entities || !entity || !entity->model ||
+		!Mod_IsVRIKCompatible (entity->model))
 		return false;
 	address = (uintptr_t)entity;
 	if (address < (uintptr_t)&cl.entities[1] ||
@@ -2562,9 +2574,11 @@ static qboolean R_VRIKSubstitutePlayer (entity_t *entity, entity_t *replacement)
 		entity == &cl.entities[cl.viewentity] ||
 		!R_VRIKSampleEntityPose (entity, &pose))
 		return false;
-	model = Mod_GetRereleasePlayerMD5Model ();
-	if (!model)
-		return false;
+	/* Render the character model that this game actually assigned.  The
+	 * compatibility guard above proves that its retained MD5 mesh exposes the
+	 * skeleton consumed by the solver; incompatible mod avatars remain wholly
+	 * on their ordinary MDL/MD3 animation path. */
+	model = entity->model;
 	entitynum = (int)(entity - cl.entities);
 	if (entitynum >= 1 && entitynum <= MAX_SCOREBOARD &&
 		r_vrik_rendered_generation[entitynum] != entity->vrik_generation)

@@ -2923,6 +2923,11 @@ qboolean VR_GetVRIKPose(vrik_pose_t *pose) {
     return false;
 
   player = &cl.entities[cl.viewentity];
+  /* Never replace a mod's character with Ranger merely because tracking is
+   * available.  The model actually assigned to this player must expose the
+   * compatible MD5 skeleton that the IK solver will deform. */
+  if (!player->model || !Mod_IsVRIKCompatible(player->model))
+    return false;
   body_yaw = player->angles[YAW];
   if (!isfinite(body_yaw))
     body_yaw = cl.viewangles[YAW];
