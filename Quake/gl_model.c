@@ -507,6 +507,17 @@ qboolean Mod_GetMD5LiveData (qmodel_t *mod, md5liveinfo_t *out)
 	return true;
 }
 
+qboolean Mod_IsVRIKCompatible (qmodel_t *mod)
+{
+	md5liveinfo_t live;
+
+	/* The current CPU skinning path deforms one combined surface.  Treat a
+	 * multi-surface rig as unsupported instead of advertising VRIK and then
+	 * silently drawing its ordinary animation. */
+	return Mod_GetMD5LiveData (mod, &live) && live.compatible &&
+		!live.firstsurface->nextsurface;
+}
+
 qboolean Mod_GetMD5LiveSurface (const md5liveinfo_t *info, int surfaceindex,
 	md5livesurface_t *out)
 {
@@ -5842,10 +5853,11 @@ done:
 ===============================
 Mod_LoadVerifiedRereleasePlayerMD5
 
-Load the network avatar into its own cache directly from a pack whose complete
-rerelease signature was verified by common.c. This ignores the active game's
-player.mdl and higher-priority same-named MD5 files, allowing QBJ3, Enyo, and
-other mods to retain their normal desktop-player models.
+Load the official player MD5 into its own cache directly from a pack whose
+complete rerelease signature was verified by common.c.  This is used to check
+whether the VRIK feature's required assets are installed without replacing the
+active game's player model; rendering only deforms the compatible model that
+the game actually assigned to the entity.
 ===============================
 */
 static qmodel_t *Mod_LoadVerifiedRereleasePlayerMD5 (void)
