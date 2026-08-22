@@ -2863,14 +2863,36 @@ static qboolean VR_VRIKControllerTracked(int index) {
          ovr_DevicePose[device].bPoseIsValid;
 }
 
-static void VR_VRIKControllerAngles(int index, vec3_t out) {
-  vec3_t controller_matrix[3], gun_matrix[3], combined[3];
+static void VR_VRIKMatrixToRootLocalAngles(vec3_t world_matrix[3],
+                                           float body_yaw, vec3_t out) {
+  vec3_t inverse_body_yaw[3], local_matrix[3];
+
+  /* Euler yaw subtraction is only valid while pitch and roll are zero.  In a
+   * general controller pose it swaps axes near a flip (a 180 degree yaw could
+   * arrive as roll).  Compose the complete orientation into body space first,
+   * then extract the wire-format Euler angles. */
+  CreateRotMat(1, -body_yaw, inverse_body_yaw);
+  R_ConcatRotations(world_matrix, inverse_body_yaw, local_matrix);
+  AngleVectorFromRotMat(local_matrix, out);
+}
+
+static void VR_VRIKRootLocalAngles(const vec3_t world_angles, float body_yaw,
+                                   vec3_t out) {
+  vec3_t world_matrix[3], angles;
+
+  VectorCopy(world_angles, angles);
+  RotMatFromAngleVector(angles, world_matrix);
+  VR_VRIKMatrixToRootLocalAngles(world_matrix, body_yaw, out);
+}
+
+static void VR_VRIKControllerAngles(int index, float body_yaw, vec3_t out) {
+  vec3_t controller_matrix[3], gun_matrix[3], world_matrix[3];
 
   /* Match the established controller-aim transform in every aim mode. */
   CreateRotMat(0, vr_gunangle.value, gun_matrix);
   RotMatFromAngleVector(controllers[index].orientation, controller_matrix);
-  R_ConcatRotations(gun_matrix, controller_matrix, combined);
-  AngleVectorFromRotMat(combined, out);
+  R_ConcatRotations(gun_matrix, controller_matrix, world_matrix);
+  VR_VRIKMatrixToRootLocalAngles(world_matrix, body_yaw, out);
 }
 
 qboolean VR_GetVRIKPose(vrik_pose_t *pose) {
@@ -2904,7 +2926,8 @@ qboolean VR_GetVRIKPose(vrik_pose_t *pose) {
   VR_TrackingPointToWorld(vr_head_raw_position, head_world);
   VR_VRIKToRootLocal(head_world, player->origin, body_yaw,
                      pose->position[VRIK_TRACKER_HEAD]);
-  VectorCopy(cl.viewangles, pose->orientation[VRIK_TRACKER_HEAD]);
+  VR_VRIKRootLocalAngles(cl.viewangles, body_yaw,
+                         pose->orientation[VRIK_TRACKER_HEAD]);
 
   /* controllers[] follows dominant/off-hand ordering; the rig needs anatomy. */
   physical_left = vr_lefthanded.value ? 1 : 0;
@@ -2913,21 +2936,25 @@ qboolean VR_GetVRIKPose(vrik_pose_t *pose) {
     pose->flags |= VRIK_FLAG_LEFT_HAND_TRACKED;
     VR_VRIKToRootLocal(cl.handpos[physical_left], player->origin, body_yaw,
                        pose->position[VRIK_TRACKER_LEFT_HAND]);
-    VR_VRIKControllerAngles(physical_left,
+    VR_VRIKControllerAngles(physical_left, body_yaw,
                             pose->orientation[VRIK_TRACKER_LEFT_HAND]);
   }
   if (VR_VRIKControllerTracked(physical_right)) {
     pose->flags |= VRIK_FLAG_RIGHT_HAND_TRACKED;
     VR_VRIKToRootLocal(cl.handpos[physical_right], player->origin, body_yaw,
                        pose->position[VRIK_TRACKER_RIGHT_HAND]);
-    VR_VRIKControllerAngles(physical_right,
+    VR_VRIKControllerAngles(physical_right, body_yaw,
                             pose->orientation[VRIK_TRACKER_RIGHT_HAND]);
   }
 
-  /* Orientations use the same body-yaw-relative Quake convention. */
-  for (tracker = 0; tracker < VRIK_TRACKER_COUNT; tracker++)
+  for (tracker = 0; tracker < VRIK_TRACKER_COUNT; tracker++) {
+    pose->orientation[tracker][PITCH] = VR_VRIKNormalizeAngle(
+        pose->orientation[tracker][PITCH]);
     pose->orientation[tracker][YAW] = VR_VRIKNormalizeAngle(
-        pose->orientation[tracker][YAW] - body_yaw);
+        pose->orientation[tracker][YAW]);
+    pose->orientation[tracker][ROLL] = VR_VRIKNormalizeAngle(
+        pose->orientation[tracker][ROLL]);
+  }
 
   return true;
 }

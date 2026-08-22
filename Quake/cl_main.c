@@ -2054,11 +2054,19 @@ void CL_RelinkEntities (void)
 			vec3_t		fv, rv, uv;
 
 			dl = CL_AllocDlight (i);
-			VectorCopy (ent->origin,  dl->origin);
-			dl->origin[2] += 16;
-			AngleVectors (ent->angles, fv, rv, uv);
-
-			VectorMA (dl->origin, 18, fv, dl->origin);
+			if (ent->vrik_muzzle_valid &&
+				realtime - ent->vrik_muzzle_time < 0.25)
+			{
+				VectorCopy (ent->vrik_muzzle_origin, dl->origin);
+				VectorCopy (ent->vrik_muzzle_forward, fv);
+			}
+			else
+			{
+				VectorCopy (ent->origin,  dl->origin);
+				dl->origin[2] += 16;
+				AngleVectors (ent->angles, fv, rv, uv);
+				VectorMA (dl->origin, 18, fv, dl->origin);
+			}
 			dl->radius = 200 + (rand()&31);
 			dl->minlight = 32;
 			dl->die = cl.time + 0.1;

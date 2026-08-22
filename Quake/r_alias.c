@@ -111,6 +111,38 @@ static md5vertex_t *r_vrik_skin_vertices;
 static int r_vrik_skin_capacity;
 static float r_vrik_palette[MAX_MD5_JOINTS * 12];
 static unsigned int r_vrik_rendered_generation[MAX_SCOREBOARD + 1];
+static int r_vrik_active_player = -1;
+static qboolean r_vrik_muzzle_model_valid;
+static vec3_t r_vrik_muzzle_model_origin;
+static vec3_t r_vrik_muzzle_model_forward;
+static vec3_t r_vrik_draw_origin;
+static vec3_t r_vrik_draw_angles;
+
+typedef struct
+{
+	qboolean valid;
+	qmodel_t *model;
+	unsigned int generation;
+	byte lerpflags;
+	float lerpstart;
+	float lerptime;
+	short previouspose;
+	short currentpose;
+	int effects;
+	float movelerpstart;
+	vec3_t previousorigin;
+	vec3_t currentorigin;
+	vec3_t previousangles;
+	vec3_t currentangles;
+} vrikrenderstate_t;
+
+static vrikrenderstate_t r_vrik_renderstate[MAX_SCOREBOARD + 1];
+
+#define VRIK_ARM_MAX_STRETCH 1.10f
+/* The official rerelease gun mesh spans local Y -11.76 .. +20.20.  Keep the
+ * light at the measured barrel tip instead of inferring an aim vector from
+ * the animated (and independently parented) muzzle-flash joints. */
+#define VRIK_GUN_MUZZLE_OFFSET 20.0f
 
 // uniforms used in vert shader
 static GLint  blendLoc;
@@ -1880,10 +1912,13 @@ static qboolean R_VRIKBuildBodyBasis (const md5liveinfo_t *live,
 	VectorSubtract (head, hip, up);
 	if (!VectorNormalize (lateral) || !VectorNormalize (up))
 		return false;
-	CrossProduct (lateral, up, forward);
+	/* lateral points toward the model's right shoulder.  In Quake's
+	 * forward/left/up coordinates, forward is up x right.  right x up points
+	 * backward and mirrors every root-local tracking target front-to-back. */
+	CrossProduct (up, lateral, forward);
 	if (!VectorNormalize (forward))
 		return false;
-	CrossProduct (forward, lateral, up);
+	CrossProduct (lateral, forward, up);
 	VectorNormalize (up);
 	return true;
 }
@@ -1905,15 +1940,18 @@ static void R_VRIKCanonicalMatrix (vec3_t direction,
 	VectorCopy (direction, x);
 	if (!VectorNormalize (x))
 		x[0] = 1, x[1] = 0, x[2] = 0;
-	CrossProduct (x, preferred_up, y); /* local +Y is left */
+	/* Quake's canonical frame is forward/left/up.  up x forward is left;
+	 * forward x up is right and made this matrix a reflection, which appeared
+	 * as a clockwise twist when applied to tracked hands and heads. */
+	CrossProduct (preferred_up, x, y);
 	if (!VectorNormalize (y))
 	{
 		vec3_t fallback = {0, 0, 1};
-		CrossProduct (x, fallback, y);
+		CrossProduct (fallback, x, y);
 		if (!VectorNormalize (y))
 			y[0] = 0, y[1] = 1, y[2] = 0;
 	}
-	CrossProduct (y, x, z);
+	CrossProduct (x, y, z);
 	VectorNormalize (z);
 	matrix[0] = x[0]; matrix[1] = y[0]; matrix[2] = z[0]; matrix[3] = origin[0];
 	matrix[4] = x[1]; matrix[5] = y[1]; matrix[6] = z[1]; matrix[7] = origin[1];
@@ -1996,7 +2034,8 @@ static void R_VRIKSolveArm (const md5liveinfo_t *live, float *palette,
 	float canonical[12], inverse[12], correction[12], desiredhand[12];
 	vec3_t shoulder, oldelbow, oldhand, toward, pole, bendnormal, bendaxis;
 	vec3_t elbow, oldupperdir, oldlowerdir, newupperdir, newlowerdir;
-	float upperlength, lowerlength, distance, cosine, anglecos, anglesin;
+	float upperlength, lowerlength, distance, restreach, stretch;
+	float solveupper, solvelower, cosine, anglecos, anglesin;
 
 	R_VRIKMatrixOrigin (upper, shoulder);
 	R_VRIKMatrixOrigin (lower, oldelbow);
@@ -2008,8 +2047,10 @@ static void R_VRIKSolveArm (const md5liveinfo_t *live, float *palette,
 	if (upperlength < 0.01f || lowerlength < 0.01f)
 		return;
 
-	/* Preserve the MD5 hand's bone-local basis behind a canonical wrist frame. */
-	R_VRIKCanonicalMatrix (oldlowerdir, up, oldhand, canonical);
+	/* Preserve the MD5 hand's bone-local basis relative to the avatar's forward
+	 * frame.  Referencing it to the diagonally posed forearm bakes that pose's
+	 * rightward yaw into every controller orientation. */
+	R_VRIKCanonicalMatrix (forward, up, oldhand, canonical);
 	R_VRIKMatrixInverseRigid (canonical, inverse);
 	R_VRIKMatrixMultiply (inverse, hand, correction);
 
@@ -2018,8 +2059,16 @@ static void R_VRIKSolveArm (const md5liveinfo_t *live, float *palette,
 	if (distance < 0.001f)
 		return;
 	VectorScale (toward, 1.0f / distance, toward);
+	restreach = upperlength + lowerlength;
 	distance = CLAMP(fabsf(upperlength - lowerlength) + 0.01f, distance,
-		upperlength + lowerlength - 0.01f);
+		restreach * VRIK_ARM_MAX_STRETCH);
+	/* Keep the wrist at the bounded target.  Beyond the ordinary reach, scale
+	 * both analytic segments together so the small permitted stretch is shared
+	 * instead of turning the lower arm into an arbitrarily long spike. */
+	VectorMA (shoulder, distance, toward, target);
+	stretch = distance > restreach ? distance / restreach : 1.0f;
+	solveupper = upperlength * stretch;
+	solvelower = lowerlength * stretch;
 	VectorScale (lateral, rightside ? 1.0f : -1.0f, pole);
 	VectorMA (pole, -0.35f, forward, pole);
 	CrossProduct (toward, pole, bendnormal);
@@ -2028,10 +2077,10 @@ static void R_VRIKSolveArm (const md5liveinfo_t *live, float *palette,
 	CrossProduct (bendnormal, toward, bendaxis);
 	VectorNormalize (bendaxis);
 	cosine = CLAMP(-1.0f,
-		(upperlength * upperlength + distance * distance - lowerlength * lowerlength) /
-		(2.0f * upperlength * distance), 1.0f);
-	anglecos = cosine * upperlength;
-	anglesin = sqrtf(q_max(0.0f, 1.0f - cosine * cosine)) * upperlength;
+		(solveupper * solveupper + distance * distance - solvelower * solvelower) /
+		(2.0f * solveupper * distance), 1.0f);
+	anglecos = cosine * solveupper;
+	anglesin = sqrtf(q_max(0.0f, 1.0f - cosine * cosine)) * solveupper;
 	VectorMA (shoulder, anglecos, toward, elbow);
 	VectorMA (elbow, anglesin, bendaxis, elbow);
 
@@ -2063,19 +2112,24 @@ static void R_VRIKMoveJoint (const md5liveinfo_t *live, float *palette,
 static void R_VRIKSolvePalette (const md5liveinfo_t *live,
 	const vrik_pose_t *pose, float *palette)
 {
-	vec3_t lateral, forward, up, oldhead, targethead, headdelta;
+	vec3_t lateral, forward, up, hip, oldhead, targethead, headdelta, torso;
 	vec3_t lefttarget, righttarget;
 	float basehand[12], weaponoffset[12], inverse[12], attached[12];
-	int headindex, handright, handleft, gun, axe, weapon = -1;
+	float flameoffset[2][12];
+	qboolean flamevalid[2] = {false, false};
+	int headindex, hipindex, handright, handleft, gun, axe, flames[2], weapon = -1;
 	qboolean dominantleft;
 
 	if (!R_VRIKBuildBodyBasis (live, palette, lateral, forward, up))
 		return;
 	headindex = live->jointindex[MD5_VRIK_HEAD];
+	hipindex = live->jointindex[MD5_VRIK_HIP];
 	handright = live->jointindex[MD5_VRIK_HAND_R];
 	handleft = live->jointindex[MD5_VRIK_HAND_L];
 	gun = live->jointindex[MD5_VRIK_GUN];
 	axe = live->jointindex[MD5_VRIK_AXE];
+	flames[0] = live->jointindex[MD5_VRIK_SMALL_FLAME];
+	flames[1] = live->jointindex[MD5_VRIK_BIG_FLAME];
 	dominantleft = (pose->flags & VRIK_FLAG_DOMINANT_LEFT) != 0;
 
 	/* Capture the animation's active weapon-to-right-hand offset before IK. */
@@ -2104,12 +2158,40 @@ static void R_VRIKSolvePalette (const md5liveinfo_t *live,
 			memcpy (basehand, palette + handright * 12, sizeof(basehand));
 			R_VRIKMatrixInverseRigid (basehand, inverse);
 			R_VRIKMatrixMultiply (inverse, palette + weapon * 12, weaponoffset);
+			if (weapon == gun)
+			{
+				int flame;
+				R_VRIKMatrixInverseRigid (palette + gun * 12, inverse);
+				for (flame = 0; flame < 2; flame++)
+					if (flames[flame] >= 0)
+					{
+						R_VRIKMatrixMultiply (inverse, palette + flames[flame] * 12,
+							flameoffset[flame]);
+						flamevalid[flame] = true;
+					}
+			}
 		}
 	}
 
+	R_VRIKMatrixOrigin (palette + hipindex * 12, hip);
 	R_VRIKMatrixOrigin (palette + headindex * 12, oldhead);
 	R_VRIKLocalVectorToModel (pose->position[VRIK_TRACKER_HEAD], lateral,
 		forward, up, targethead);
+	/* Cap head-to-hip reach just like an arm.  This retains a small amount of
+	 * height accommodation without letting a tall play space turn the neck and
+	 * upper spine into a giraffe. */
+	VectorSubtract (oldhead, hip, torso);
+	{
+		float restreach = VectorLength (torso);
+		float targetreach;
+		VectorSubtract (targethead, hip, torso);
+		targetreach = VectorLength (torso);
+		if (restreach > 0.01f && targetreach > restreach * VRIK_ARM_MAX_STRETCH)
+		{
+			VectorScale (torso, 1.0f / targetreach, torso);
+			VectorMA (hip, restreach * VRIK_ARM_MAX_STRETCH, torso, targethead);
+		}
+	}
 	VectorSubtract (targethead, oldhead, headdelta);
 	if (VectorLength (headdelta) > 24.0f)
 	{
@@ -2167,6 +2249,29 @@ static void R_VRIKSolvePalette (const md5liveinfo_t *live,
 		{
 			R_VRIKMatrixMultiply (palette + destination * 12, weaponoffset, attached);
 			memcpy (palette + weapon * 12, attached, sizeof(attached));
+			if (weapon == gun)
+			{
+				vec3_t gunorigin;
+				int flame;
+				R_VRIKMatrixOrigin (attached, gunorigin);
+				for (flame = 0; flame < 2; flame++)
+					if (flamevalid[flame])
+					{
+						float moved[12];
+						R_VRIKMatrixMultiply (attached, flameoffset[flame], moved);
+						memcpy (palette + flames[flame] * 12, moved, sizeof(moved));
+					}
+				/* The gun mesh's measured barrel axis is local +Y.  Use it
+				 * unconditionally for both the muzzle point and direction; a
+				 * grip-to-flame vector changes under pitch/roll and is not aim. */
+				r_vrik_muzzle_model_forward[0] = attached[1];
+				r_vrik_muzzle_model_forward[1] = attached[5];
+				r_vrik_muzzle_model_forward[2] = attached[9];
+				r_vrik_muzzle_model_valid =
+					VectorNormalize (r_vrik_muzzle_model_forward) != 0.0f;
+				VectorMA (gunorigin, VRIK_GUN_MUZZLE_OFFSET,
+					r_vrik_muzzle_model_forward, r_vrik_muzzle_model_origin);
+			}
 		}
 	}
 }
@@ -2204,6 +2309,7 @@ static qboolean R_VRIKPrepareSkin (qmodel_t *model, const lerpdata_t *lerpdata)
 	int vertex, influence;
 
 	r_vrik_skin_active = false;
+	r_vrik_muzzle_model_valid = false;
 	if (!r_vrik_pose_pending || !Mod_GetMD5LiveData (model, &live) ||
 		!live.compatible || !Mod_GetMD5LiveSurface (&live, 0, &surface) ||
 		surface.header->nextsurface)
@@ -2266,6 +2372,109 @@ static int R_VRIKReplacementFrame (const entity_t *entity,
 	return 12 + ((int)(cl.time * 10.0) % 5); /* stock stand */
 }
 
+static void R_VRIKRestoreRenderState (entity_t *replacement, int entitynum,
+	qmodel_t *model, unsigned int generation)
+{
+	vrikrenderstate_t *state = &r_vrik_renderstate[entitynum];
+	byte entityflags = replacement->lerpflags;
+
+	if (!state->valid || state->model != model || state->generation != generation)
+	{
+		memset (state, 0, sizeof(*state));
+		state->valid = true;
+		state->model = model;
+		state->generation = generation;
+		replacement->lerpflags = (replacement->lerpflags &
+			(LERP_MOVESTEP | LERP_FINISH)) | LERP_RESETANIM | LERP_RESETMOVE;
+		return;
+	}
+
+	/* Animation poses belong to the replacement MD5, not the source mod model.
+	 * Keep their state in this sidecar so turning VRIK off cannot leave invalid
+	 * pose indexes in the ordinary entity. */
+	replacement->lerpflags = state->lerpflags &
+		~(LERP_MOVESTEP | LERP_FINISH);
+	replacement->lerpflags |= entityflags &
+		(LERP_MOVESTEP | LERP_FINISH);
+	replacement->lerpstart = state->lerpstart;
+	replacement->lerptime = state->lerptime;
+	replacement->previouspose = state->previouspose;
+	replacement->currentpose = state->currentpose;
+	if ((replacement->effects & EF_MUZZLEFLASH) &&
+		!(state->effects & EF_MUZZLEFLASH) && r_lerpmodels.value != 2)
+		replacement->lerpflags |= LERP_RESETANIM | LERP_RESETANIM2;
+	replacement->movelerpstart = state->movelerpstart;
+	VectorCopy (state->previousorigin, replacement->previousorigin);
+	VectorCopy (state->currentorigin, replacement->currentorigin);
+	VectorCopy (state->previousangles, replacement->previousangles);
+	VectorCopy (state->currentangles, replacement->currentangles);
+}
+
+static void R_VRIKSaveRenderState (const entity_t *replacement, int entitynum)
+{
+	vrikrenderstate_t *state = &r_vrik_renderstate[entitynum];
+
+	state->lerpflags = replacement->lerpflags;
+	state->lerpstart = replacement->lerpstart;
+	state->lerptime = replacement->lerptime;
+	state->previouspose = replacement->previouspose;
+	state->currentpose = replacement->currentpose;
+	state->effects = replacement->effects;
+	state->movelerpstart = replacement->movelerpstart;
+	VectorCopy (replacement->previousorigin, state->previousorigin);
+	VectorCopy (replacement->currentorigin, state->currentorigin);
+	VectorCopy (replacement->previousangles, state->previousangles);
+	VectorCopy (replacement->currentangles, state->currentangles);
+}
+
+static void R_VRIKStoreMuzzleTransform (entity_t *entity, qmodel_t *model)
+{
+	aliashdr_t *md5;
+	vec3_t localorigin, localforward;
+	vec3_t forward, right, up;
+	float entityscale;
+	int axis;
+
+	if (!entity || !model || !r_vrik_muzzle_model_valid)
+	{
+		if (entity)
+			entity->vrik_muzzle_valid = false;
+		return;
+	}
+	md5 = Mod_GetMD5Extradata (model);
+	if (!md5)
+	{
+		entity->vrik_muzzle_valid = false;
+		return;
+	}
+
+	entityscale = ENTSCALE_DECODE (entity->scale);
+	for (axis = 0; axis < 3; axis++)
+	{
+		localorigin[axis] = entityscale * (md5->scale_origin[axis] +
+			md5->scale[axis] * r_vrik_muzzle_model_origin[axis]);
+		localforward[axis] = md5->scale[axis] *
+			r_vrik_muzzle_model_forward[axis];
+	}
+	AngleVectors (r_vrik_draw_angles, forward, right, up);
+	VectorCopy (r_vrik_draw_origin, entity->vrik_muzzle_origin);
+	VectorMA (entity->vrik_muzzle_origin, localorigin[0], forward,
+		entity->vrik_muzzle_origin);
+	VectorMA (entity->vrik_muzzle_origin, -localorigin[1], right,
+		entity->vrik_muzzle_origin);
+	VectorMA (entity->vrik_muzzle_origin, localorigin[2], up,
+		entity->vrik_muzzle_origin);
+	entity->vrik_muzzle_forward[0] = forward[0] * localforward[0] -
+		right[0] * localforward[1] + up[0] * localforward[2];
+	entity->vrik_muzzle_forward[1] = forward[1] * localforward[0] -
+		right[1] * localforward[1] + up[1] * localforward[2];
+	entity->vrik_muzzle_forward[2] = forward[2] * localforward[0] -
+		right[2] * localforward[1] + up[2] * localforward[2];
+	entity->vrik_muzzle_valid =
+		VectorNormalize (entity->vrik_muzzle_forward) != 0.0f;
+	entity->vrik_muzzle_time = realtime;
+}
+
 static qboolean R_VRIKSubstitutePlayer (entity_t *entity, entity_t *replacement)
 {
 	qmodel_t *model;
@@ -2299,9 +2508,17 @@ static qboolean R_VRIKSubstitutePlayer (entity_t *entity, entity_t *replacement)
 	*replacement = *entity;
 	replacement->model = model;
 	replacement->frame = R_VRIKReplacementFrame (entity, model);
-	replacement->lerpflags |= LERP_RESETANIM;
+	R_VRIKRestoreRenderState (replacement, entitynum, model,
+		entity->vrik_generation);
+	/* Tracking positions are root-local to the sender's sampled body yaw.  Use
+	 * that same interpolated yaw for the outer entity transform so converting
+	 * them back to model space is an exact inverse, even between snapshots. */
+	replacement->angles[YAW] = pose.body_yaw;
+	replacement->previousangles[YAW] = pose.body_yaw;
+	replacement->currentangles[YAW] = pose.body_yaw;
 	r_vrik_pending_pose = pose;
 	r_vrik_pose_pending = true;
+	r_vrik_active_player = entitynum - 1;
 	return true;
 }
 
@@ -2498,18 +2715,84 @@ static int R_MD5TriangleCount (aliashdr_t *surface)
 	return tris;
 }
 
+static gltexture_t *R_VRIKPlayerTexture (qmodel_t *model,
+	gltexture_t *source, int playernum, int surfaceindex, int skin, int anim)
+{
+	gltexture_t *translated;
+	char name[64];
+	int top, bottom;
+
+	if (playernum < 0 || playernum >= MAX_SCOREBOARD || gl_nocolors.value ||
+		!source || source->source_format != SRC_INDEXED)
+		return source;
+
+	q_snprintf (name, sizeof(name), "vrik_player_%d_%d_%d_%d",
+		playernum, surfaceindex, skin, anim);
+	translated = TexMgr_FindTexture (model, name);
+	if (!translated)
+	{
+		/* Clone the reload metadata rather than the shared GL texture.  The
+		 * rerelease player LMP remains indexed, so the ordinary Quake palette
+		 * translation can produce one independent shirt/pants texture per
+		 * player without modifying the official model's skin. */
+		translated = TexMgr_NewTexture ();
+		translated->owner = model;
+		q_strlcpy (translated->name, name, sizeof(translated->name));
+		translated->width = source->width;
+		translated->height = source->height;
+		translated->flags = source->flags & ~TEXPREF_OVERWRITE;
+		q_strlcpy (translated->source_file, source->source_file,
+			sizeof(translated->source_file));
+		translated->source_offset = source->source_offset;
+		translated->source_format = source->source_format;
+		translated->source_width = source->source_width;
+		translated->source_height = source->source_height;
+		translated->source_crc = source->source_crc;
+		translated->shirt = -1;
+		translated->pants = -1;
+		translated->visframe = 0;
+		Con_DPrintf ("VRIK: created translated player texture %d (%s)\n",
+			playernum + 1, source->source_file);
+	}
+
+	top = (cl.scores[playernum].colors & 0xf0) >> 4;
+	bottom = cl.scores[playernum].colors & 0x0f;
+	if (translated->shirt != top || translated->pants != bottom)
+		TexMgr_ReloadImage (translated, top, bottom);
+	return translated;
+}
+
+static int R_MD5PlayerNumber (void)
+{
+	uintptr_t address;
+
+	if (r_vrik_active_player >= 0)
+		return r_vrik_active_player;
+	if (!cl.entities || !currententity)
+		return -1;
+	address = (uintptr_t)currententity;
+	if (address < (uintptr_t)&cl.entities[1] ||
+		address > (uintptr_t)&cl.entities[cl.maxclients])
+		return -1;
+	return (int)(currententity - cl.entities) - 1;
+}
+
 static void R_DrawMD5Pass (aliashdr_t *surface, lerpdata_t lerpdata,
 	int skinnum, qboolean fullbright, const vec3_t drawcolor, float drawalpha,
 	qboolean drawshading, qboolean drawfog)
 {
 	int anim = (int)(cl.time * 10) & 3;
 	int surfaceindex = 0;
+	int playernum = R_MD5PlayerNumber ();
 
 	while (surface)
 	{
 		int skin = R_MD5SurfaceSkin (surface, skinnum);
 		gltexture_t *texture = fullbright ? surface->fbtextures[skin][anim] :
 			surface->gltextures[skin][anim];
+		if (!fullbright && playernum >= 0)
+			texture = R_VRIKPlayerTexture (currententity->model, texture,
+				playernum, surfaceindex, skin, anim);
 
 		if (texture || !fullbright)
 		{
@@ -2567,7 +2850,11 @@ static void R_DrawMD5Model (entity_t *e, qboolean cull, qboolean viewmodel)
 	R_SetupAliasFrame (md5, e->frame, &lerpdata);
 	R_SetupEntityTransform (e, &lerpdata);
 	if (r_vrik_pose_pending)
+	{
+		VectorCopy (lerpdata.origin, r_vrik_draw_origin);
+		VectorCopy (lerpdata.angles, r_vrik_draw_angles);
 		R_VRIKPrepareSkin (e->model, &lerpdata);
+	}
 	if (cull && R_CullModelForEntity(e))
 	{
 		if (r_perfdebug.value)
@@ -2806,9 +3093,12 @@ void R_DrawAliasModel (entity_t *e)
 		currententity = &vrikentity;
 		/* Tracked hands can leave the animation's static bounds. */
 		R_DrawMD5Model (&vrikentity, false, false);
+		R_VRIKStoreMuzzleTransform (e, vrikentity.model);
+		R_VRIKSaveRenderState (&vrikentity, r_vrik_active_player + 1);
 		currententity = savedentity;
 		r_vrik_pose_pending = false;
 		r_vrik_skin_active = false;
+		r_vrik_active_player = -1;
 		return;
 	}
 
@@ -2905,7 +3195,13 @@ void R_DrawAliasModel (entity_t *e)
 	if (e->colormap != vid.colormap && !gl_nocolors.value)
 	{
 		if ((uintptr_t)e >= (uintptr_t)&cl.entities[1] && (uintptr_t)e <= (uintptr_t)&cl.entities[cl.maxclients]) /* && !strcmp (currententity->model->name, "progs/player.mdl") */
-			tx = playertextures[e - cl.entities - 1];
+		{
+			int playernum = (int)(e - cl.entities) - 1;
+			if (!playertextures[playernum])
+				R_TranslateNewPlayerSkin (playernum);
+			if (playertextures[playernum])
+				tx = playertextures[playernum];
+		}
 	}
 	if (!gl_fullbrights.value)
 		fb = NULL;

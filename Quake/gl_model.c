@@ -390,7 +390,8 @@ static const char *const md5_vrik_joint_names[MD5_VRIK_JOINT_COUNT] =
 	"Shoulder_L", "UpperArm_L", "LowerArm_L", "Hand_L",
 	"Shoulder_R", "UpperArm_R", "LowerArm_R", "Hand_R",
 	"UpperLeg_L", "LowerLeg_L", "Foot_L",
-	"UpperLeg_R", "LowerLeg_R", "Foot_R", "Gun", "Axe"
+	"UpperLeg_R", "LowerLeg_R", "Foot_R", "Gun", "Axe",
+	"small_flame", "big_flame"
 };
 
 static qboolean Mod_MD5LiveSurfaceValid (const aliashdr_t *surface,
