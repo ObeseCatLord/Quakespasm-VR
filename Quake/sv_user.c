@@ -1088,6 +1088,7 @@ static qboolean SV_HandleVRIKCapability(const char *s)
   host_client->vrik_inactive_sent = false;
   host_client->vrik_generation = 0;
   host_client->vrik_next_accept_time = 0;
+  Con_DPrintf("VRIK: client %s negotiated protocol 1\n", host_client->name);
   return true;
 }
 

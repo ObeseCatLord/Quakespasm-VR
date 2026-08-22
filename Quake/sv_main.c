@@ -188,6 +188,8 @@ void SV_ReceiveVRIKPose(client_t *client, const vrik_pose_t *pose)
 		client->vrik_generation = ++sv_vrik_next_generation;
 		if (!client->vrik_generation)
 			client->vrik_generation = ++sv_vrik_next_generation;
+		Con_DPrintf("VRIK: accepted pose stream from %s generation %u\n",
+			client->name, client->vrik_generation);
 	}
 	client->vrik_pose = *pose;
 	client->vrik_last_sequence = pose->sequence;

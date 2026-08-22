@@ -110,6 +110,7 @@ static const aliashdr_t *r_vrik_skin_surface;
 static md5vertex_t *r_vrik_skin_vertices;
 static int r_vrik_skin_capacity;
 static float r_vrik_palette[MAX_MD5_JOINTS * 12];
+static unsigned int r_vrik_rendered_generation[MAX_SCOREBOARD + 1];
 
 // uniforms used in vert shader
 static GLint  blendLoc;
@@ -2270,6 +2271,7 @@ static qboolean R_VRIKSubstitutePlayer (entity_t *entity, entity_t *replacement)
 	qmodel_t *model;
 	vrik_pose_t pose;
 	uintptr_t address;
+	int entitynum;
 
 	/* The VR option controls publication of this client's tracking. Receiving
 	 * clients render any negotiated active pose automatically, including
@@ -2285,6 +2287,14 @@ static qboolean R_VRIKSubstitutePlayer (entity_t *entity, entity_t *replacement)
 	model = Mod_GetRereleasePlayerMD5Model ();
 	if (!model)
 		return false;
+	entitynum = (int)(entity - cl.entities);
+	if (entitynum >= 1 && entitynum <= MAX_SCOREBOARD &&
+		r_vrik_rendered_generation[entitynum] != entity->vrik_generation)
+	{
+		r_vrik_rendered_generation[entitynum] = entity->vrik_generation;
+		Con_DPrintf("VRIK: rendering tracked entity %d generation %u\n",
+			entitynum, entity->vrik_generation);
+	}
 
 	*replacement = *entity;
 	replacement->model = model;

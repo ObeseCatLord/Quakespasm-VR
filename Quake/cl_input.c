@@ -760,6 +760,8 @@ static void CL_AppendVRIKPose(sizebuf_t *buf)
   pose.sequence = cl.vrik_next_sequence++;
   MSG_WriteByte(buf, clc_vrikpose);
   CL_WriteVRIKPose(buf, &pose);
+  if ((pose.flags & VRIK_FLAG_ACTIVE) && !cl.vrik_last_sent_active)
+    Con_DPrintf("VRIK: publishing active tracked pose\n");
   cl.vrik_last_sent_active = (pose.flags & VRIK_FLAG_ACTIVE) != 0;
   cl.vrik_next_send_time = realtime + 0.05;
 }

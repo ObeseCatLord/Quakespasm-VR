@@ -2004,7 +2004,11 @@ static qboolean CL_OfferVRIKProtocol(const char *command)
 		version++;
 	if (*version++ != '1')
 		return true;
-	while (*version == ' ' || *version == '\t' || *version == '\r')
+	/* CL_ParseStuffText calls extension handlers before removing the line
+	 * terminator, so the server's canonical "//vrik_protocol 1\n" offer still
+	 * has its newline here. */
+	while (*version == ' ' || *version == '\t' || *version == '\r' ||
+		*version == '\n')
 		version++;
 	if (*version || cl.vrik_cap_sent)
 		return true;
@@ -2016,6 +2020,7 @@ static qboolean CL_OfferVRIKProtocol(const char *command)
 	MSG_WriteByte(&cls.message, clc_stringcmd);
 	MSG_WriteString(&cls.message, "vrik_cap 1");
 	cl.vrik_cap_sent = true;
+	Con_DPrintf("VRIK: negotiated protocol 1 with server\n");
 	return true;
 }
 
@@ -2029,6 +2034,7 @@ static qboolean CL_ParseVRIKPose(void)
 {
 	vrik_pose_t pose;
 	entity_t *ent;
+	qboolean newstream;
 	int entitynum;
 	unsigned int generation;
 	int tracker;
@@ -2065,7 +2071,8 @@ static qboolean CL_ParseVRIKPose(void)
 		return false;
 
 	ent = &cl.entities[entitynum];
-	if (!ent->vrik_sequence_valid || ent->vrik_generation != generation)
+	newstream = !ent->vrik_sequence_valid || ent->vrik_generation != generation;
+	if (newstream)
 	{
 		ent->vrik_pose_count = 0;
 		ent->vrik_sequence_valid = false;
@@ -2085,6 +2092,9 @@ static qboolean CL_ParseVRIKPose(void)
 	ent->vrik_sequence_valid = true;
 	if (ent->vrik_pose_count < 2)
 		ent->vrik_pose_count++;
+	if (newstream && (pose.flags & VRIK_FLAG_ACTIVE))
+		Con_DPrintf("VRIK: receiving active pose for entity %d generation %u\n",
+			entitynum, generation);
 	return true;
 }
 
