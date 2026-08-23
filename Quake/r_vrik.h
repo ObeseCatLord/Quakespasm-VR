@@ -72,7 +72,9 @@ typedef struct r_vrik_lowerbody_model_targets_s
 
 /* The default preserves each animated leg's authored bend plane.  The paired
  * policy derives one outer-leg pair from those animated/bind poles and mirrors
- * it across the sagittal plane midway between the two upper-leg roots. */
+ * it across the sagittal plane midway between the two upper-leg roots.  It
+ * also preserves each selected outer knee's final outward hemisphere when a
+ * one-foot or overlaid solve changes that leg's target plane. */
 typedef enum r_vrik_lowerbody_pole_policy_e
 {
 	R_VRIK_LOWERBODY_POLES_ANIMATED = 0,
@@ -135,8 +137,9 @@ qboolean R_VRIKApplyLowerBody (const md5liveinfo_t *live, float *palette,
 	const r_vrik_lowerbody_model_targets_t *targets);
 /* Explicit lower-body entry point for avatars that need paired outer-leg
  * bend planes.  Target positions, confidence, and requested orientations are
- * interpreted exactly as by R_VRIKApplyLowerBody; only the two-leg knee pole
- * selection differs when both feet are supplied. */
+ * interpreted exactly as by R_VRIKApplyLowerBody.  The mirrored policy also
+ * constrains every selected outer knee to its final outward target-plane
+ * hemisphere, including one-foot and overlaid solves. */
 qboolean R_VRIKApplyLowerBodyWithPolePolicy (const md5liveinfo_t *live,
 	float *palette, const r_vrik_lowerbody_model_targets_t *targets,
 	r_vrik_lowerbody_pole_policy_t pole_policy);

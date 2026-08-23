@@ -47,6 +47,7 @@ qboolean R_VRIKAnimalArmBasisForTest (vec3_t lateral, vec3_t forward,
 qboolean R_VRIKAvatarMapLowerTargetForTest (
 	r_vrik_lowerbody_model_targets_t *targets);
 qboolean R_VRIKAvatarHipOverlayForTest (void);
+qboolean R_VRIKTrackedPreserveHipBranchesForTest (void);
 int R_VRIKAvatarLowerPolePolicyForTest (const r_avatar_profile_t *profile);
 unsigned char R_VRIKVoreBaseFootMaskForTest (unsigned char supplied_mask,
 	unsigned char *overlay_mask);
@@ -55,6 +56,7 @@ void R_VRIKProfileArmPoleForTest (qboolean rightside, float outward,
 void R_VRIKProfileArmPoleWithUpForTest (qboolean rightside, float outward,
 	float back, float upward, vec3_t pole);
 qboolean R_VRIKAvatarUprightPostureForTest (qboolean tracked);
+qboolean R_VRIKAnimalAuthoredPostureForTest (int avatar, qboolean tracked);
 qboolean R_VRIKShamblerDesktopArmRepairForTest (void);
 qboolean R_VRIKAvatarUprightFootContactsForTest (void);
 qboolean R_VRIKAvatarUprightUnreachableContactForTest (void);
@@ -84,6 +86,69 @@ static void MultiplyMatrix (const float first[12], const float second[12],
 			first[row * 4 + 3];
 	}
 	memcpy (out, result, sizeof(result));
+}
+
+static qboolean VoreHipPreservesUnmappedChildForTest (void)
+{
+	const r_avatar_profile_t *profile = R_AvatarProfileForId (PLAYER_AVATAR_VORE);
+	md5liveinfo_t source, target;
+	md5livejoint_t sourcejoints[3], targetjoints[4];
+	r_avatar_rig_t sourcerig, targetrig;
+	r_avatar_presentation_context_t context;
+	float sourcepalette[36], targetpalette[48];
+	int i;
+
+	if (!profile || !profile->preserve_hip_rotation)
+		return false;
+	memset (&source, 0, sizeof (source)); memset (&target, 0, sizeof (target));
+	memset (sourcejoints, 0, sizeof (sourcejoints));
+	memset (targetjoints, 0, sizeof (targetjoints));
+	memset (&sourcerig, 0, sizeof (sourcerig));
+	memset (&targetrig, 0, sizeof (targetrig)); memset (&context, 0, sizeof (context));
+	memset (sourcepalette, 0, sizeof (sourcepalette)); memset (targetpalette, 0,
+		sizeof (targetpalette));
+	for (i = 0; i < 3; ++i)
+	{
+		sourcejoints[i].parent = i ? 0 : -1;
+		sourcejoints[i].bind[0] = sourcejoints[i].bind[5] =
+			sourcejoints[i].bind[10] = sourcepalette[i * 12] =
+			sourcepalette[i * 12 + 5] = sourcepalette[i * 12 + 10] = 1.0f;
+		/* Canonical Hip and explicit outer-leg semantics turn together. */
+		sourcepalette[i * 12] = sourcepalette[i * 12 + 5] = 0.0f;
+		sourcepalette[i * 12 + 1] = -1.0f; sourcepalette[i * 12 + 4] = 1.0f;
+	}
+	for (i = 0; i < 4; ++i)
+	{
+		targetjoints[i].parent = i ? 0 : -1;
+		targetjoints[i].bind[0] = targetjoints[i].bind[5] =
+			targetjoints[i].bind[10] = 1.0f;
+	}
+	source.joints = sourcejoints; source.numbones = 3;
+	target.joints = targetjoints; target.numbones = 4;
+	for (i = 0; i < MD5_VRIK_JOINT_COUNT; ++i)
+		sourcerig.joint[i] = targetrig.joint[i] = -1;
+	sourcerig.profile = targetrig.profile = profile;
+	sourcerig.live = &source; targetrig.live = &target;
+	sourcerig.valid = targetrig.valid = true;
+	sourcerig.joint[MD5_VRIK_HIP] = targetrig.joint[MD5_VRIK_HIP] = 0;
+	sourcerig.joint[MD5_VRIK_UPPERLEG_L] = targetrig.joint[MD5_VRIK_UPPERLEG_L] = 1;
+	sourcerig.joint[MD5_VRIK_UPPERLEG_R] = targetrig.joint[MD5_VRIK_UPPERLEG_R] = 2;
+	context.rotation[0] = context.rotation[5] = context.rotation[10] = 1.0f;
+	context.inverse[0] = context.inverse[5] = context.inverse[10] = 1.0f;
+	if (!R_AvatarRetargetPaletteWithContext (&sourcerig, &targetrig, &context,
+		sourcepalette, targetpalette))
+		return false;
+	/* The unmapped middle-leg child stays bind-relative to the unturned Hip;
+	 * mapped outer-leg semantics still receive the canonical animation turn. */
+	return fabsf (targetpalette[0] - 1.0f) < 0.001f &&
+		fabsf (targetpalette[1]) < 0.001f && fabsf (targetpalette[4]) < 0.001f &&
+		fabsf (targetpalette[5] - 1.0f) < 0.001f &&
+		fabsf (targetpalette[12]) < 0.001f &&
+		fabsf (targetpalette[13] + 1.0f) < 0.001f &&
+		fabsf (targetpalette[16] - 1.0f) < 0.001f &&
+		fabsf (targetpalette[36] - 1.0f) < 0.001f &&
+		fabsf (targetpalette[37]) < 0.001f && fabsf (targetpalette[40]) < 0.001f &&
+		fabsf (targetpalette[41] - 1.0f) < 0.001f;
 }
 
 int main (void)
@@ -253,9 +318,15 @@ int main (void)
 			fabsf (targets.orientation[R_VRIK_LOWER_HIP][4] - 1.0f) < 0.001f &&
 			fabsf (targets.orientation[R_VRIK_LOWER_HIP][5]) < 0.001f);
 		assert (R_VRIKAvatarHipOverlayForTest ());
+		assert (R_VRIKTrackedPreserveHipBranchesForTest ());
 	}
 	assert (R_VRIKAvatarUprightPostureForTest (false));
 	assert (R_VRIKAvatarUprightPostureForTest (true));
+	assert (R_VRIKAnimalAuthoredPostureForTest (PLAYER_AVATAR_DOG, false));
+	assert (R_VRIKAnimalAuthoredPostureForTest (PLAYER_AVATAR_FIEND, false));
+	assert (R_VRIKAnimalAuthoredPostureForTest (PLAYER_AVATAR_DOG, true));
+	assert (R_VRIKAnimalAuthoredPostureForTest (PLAYER_AVATAR_FIEND, true));
+	assert (VoreHipPreservesUnmappedChildForTest ());
 	assert (R_VRIKShamblerDesktopArmRepairForTest ());
 	assert (R_VRIKAvatarUprightFootContactsForTest ());
 	assert (R_VRIKAvatarUprightUnreachableContactForTest ());
