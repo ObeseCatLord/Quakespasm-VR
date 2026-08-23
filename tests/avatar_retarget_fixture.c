@@ -224,7 +224,7 @@ static void test_profile_basis_policies(void)
 	assert(!strcmp(dog->contact_root[1], "RearFoot_R") && !dog->contact_root[2]);
 	assert(dog->desktop_refine && dog->arm_pole_outward == 1.0f &&
 		dog->arm_pole_back == 0.35f && !dog->mirror_outer_leg_poles &&
-		dog->posture_policy == R_AVATAR_POSTURE_UPRIGHT &&
+		dog->posture_policy == R_AVATAR_POSTURE_AUTHORED &&
 		dog->head_forward_axis[1] == 1.0f && dog->preserve_hip_rotation &&
 		dog->actual_path_ik);
 	assert((dog->joint[MD5_VRIK_SHOULDER_L].flags & R_AVATAR_MAP_VIRTUAL) &&
@@ -236,7 +236,7 @@ static void test_profile_basis_policies(void)
 	assert(fiend->basis_policy == R_AVATAR_BASIS_FEET_UP_HEAD_FORWARD);
 	assert(!strcmp(fiend->contact_root[0], "hoof_L") &&
 		!strcmp(fiend->contact_root[1], "hoof_R") && fiend->desktop_refine &&
-		fiend->posture_policy == R_AVATAR_POSTURE_UPRIGHT &&
+		fiend->posture_policy == R_AVATAR_POSTURE_AUTHORED &&
 		fiend->head_forward_axis[1] == 1.0f && fiend->preserve_hip_rotation &&
 		fiend->actual_path_ik && !strcmp(fiend->joint[MD5_VRIK_FOOT_L].name, "hoof_L") &&
 		!strcmp(fiend->joint[MD5_VRIK_FOOT_R].name, "hoof_R"));
@@ -246,7 +246,8 @@ static void test_profile_basis_policies(void)
 		shambler->posture_policy == R_AVATAR_POSTURE_AUTHORED &&
 		!shambler->preserve_hip_rotation);
 	vore = R_AvatarProfileForId(PLAYER_AVATAR_VORE);
-	assert(vore->mirror_outer_leg_poles);
+	assert(vore->mirror_outer_leg_poles && vore->preserve_hip_rotation &&
+		vore->posture_policy == R_AVATAR_POSTURE_AUTHORED);
 
 	/* A synthetic quadruped makes its floor-to-hip direction the first column
 	 * and flips its left/forward columns together so the head stays forward. */

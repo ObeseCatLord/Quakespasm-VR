@@ -61,7 +61,7 @@ static const r_avatar_profile_t r_avatar_profiles[PLAYER_AVATAR_COUNT] = {
 			A("RearHigh_R"), A("RearMid_R"), A("RearFoot_R"), N, N, N, N },
 		R_AVATAR_BASIS_FEET_UP_HEAD_FORWARD,
 		{ "RearFoot_L", "RearFoot_R", NULL, NULL }, true, 1.0f, 0.35f, false,
-		R_AVATAR_POSTURE_UPRIGHT, { 0.0f, 1.0f, 0.0f }, true, 0.0f, true
+		R_AVATAR_POSTURE_AUTHORED, { 0.0f, 1.0f, 0.0f }, true, 0.0f, true
 	},
 	[PLAYER_AVATAR_OGRE] = {
 		PLAYER_AVATAR_OGRE, "ogre", "progs/ogre.md5mesh",
@@ -111,7 +111,7 @@ static const r_avatar_profile_t r_avatar_profiles[PLAYER_AVATAR_COUNT] = {
 			A("lower_leg_R"), A("hoof_R"), N, N, N, N },
 		R_AVATAR_BASIS_FEET_UP_HEAD_FORWARD,
 		{ "hoof_L", "hoof_R", NULL, NULL }, true, 1.0f, 0.35f, false,
-		R_AVATAR_POSTURE_UPRIGHT, { 0.0f, 1.0f, 0.0f }, true, 0.0f, true
+		R_AVATAR_POSTURE_AUTHORED, { 0.0f, 1.0f, 0.0f }, true, 0.0f, true
 	},
 	[PLAYER_AVATAR_SHAMBLER] = {
 		PLAYER_AVATAR_SHAMBLER, "shambler", "progs/shambler.md5mesh",
@@ -148,7 +148,8 @@ static const r_avatar_profile_t r_avatar_profiles[PLAYER_AVATAR_COUNT] = {
 			V("upper_arm_R"), A("upper_arm_R"), A("lower_arm_R"), A("hand_R"),
 			A("leg_1_L"), A("leg_2_L"), A("leg_3_L"),
 			A("leg_1_R"), A("leg_2_R"), A("leg_3_R"), N, N, N, N },
-		R_AVATAR_BASIS_HUMANOID, { NULL, NULL, NULL, NULL }, false, 1.0f, 0.35f, true
+		R_AVATAR_BASIS_HUMANOID, { NULL, NULL, NULL, NULL }, false, 1.0f, 0.35f, true,
+		R_AVATAR_POSTURE_AUTHORED, { 0.0f, 0.0f, 0.0f }, true, 0.0f, false
 	}
 };
 
@@ -485,8 +486,8 @@ qboolean R_AvatarRetargetPaletteWithContext (const r_avatar_rig_t *source,
 			R_AvatarInverseRigid(context->rotation, inv);
 			R_AvatarMultiply(inv, mapped, delta);
 			R_AvatarMultiply(delta, target->live->joints[i].bind, desired);
-			/* Animal upright posture keeps its own Hip orientation so its rear
-			 * legs and tail continue to follow authored bind-relative locals. */
+			/* Profiles with bind-relative unmapped children keep their authored
+			 * Hip orientation so those children remain in their intended plane. */
 			if (semantic == MD5_VRIK_HIP && target->profile->preserve_hip_rotation)
 			{
 				desired[0] = target->live->joints[i].bind[0];

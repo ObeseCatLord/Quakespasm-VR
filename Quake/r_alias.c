@@ -3048,6 +3048,175 @@ static qboolean R_VRIKApplyAvatarUprightPosture (const r_avatar_rig_t *rig,
 	return true;
 }
 
+static qboolean R_VRIKRepairShamblerDesktopArm (const md5liveinfo_t *live,
+	float *palette, int shoulder, int upper, int lower, int hand)
+{
+	const int chain[4] = {shoulder, upper, lower, hand};
+	vec3_t bindposition[4], position[4], solved[4], direction, bindchord;
+	vec3_t chord, mappedchord, outward, relative, perpendicular;
+	float length[3], bindinverse[12], shoulderdelta[12], correction[12];
+	float transport[12], intendedhand[12];
+	float distance, total = 0.0f, minreach, strongestmagnitude = 0.0f;
+	float bend[2];
+	int i, iteration, strongest = -1;
+
+	if (!live || !palette || shoulder < 0 || upper < 0 || lower < 0 || hand < 0 ||
+		shoulder >= live->numbones || upper >= live->numbones ||
+		lower >= live->numbones || hand >= live->numbones ||
+		live->joints[upper].parent != shoulder ||
+		live->joints[lower].parent != upper || live->joints[hand].parent != lower)
+		return false;
+	for (i = 0; i < 4; ++i)
+	{
+		R_VRIKMatrixOrigin (live->joints[chain[i]].bind, bindposition[i]);
+		R_VRIKMatrixOrigin (palette + chain[i] * 12, position[i]);
+		if (!isfinite (bindposition[i][0]) || !isfinite (bindposition[i][1]) ||
+			!isfinite (bindposition[i][2]) || !isfinite (position[i][0]) ||
+			!isfinite (position[i][1]) || !isfinite (position[i][2]))
+			return false;
+	}
+	for (i = 0; i < 3; ++i)
+	{
+		VectorSubtract (bindposition[i + 1], bindposition[i], direction);
+		length[i] = VectorLength (direction);
+		if (length[i] < 0.001f || !isfinite (length[i]))
+			return false;
+		total += length[i];
+	}
+	minreach = q_max (0.0f, q_max (length[0], q_max (length[1], length[2])) -
+		(total - q_max (length[0], q_max (length[1], length[2]))));
+	VectorSubtract (bindposition[3], bindposition[0], bindchord);
+	VectorSubtract (position[3], position[0], chord);
+	distance = VectorLength (chord);
+	if (!VectorNormalize (bindchord) || !VectorNormalize (chord) ||
+		!isfinite (distance) || distance < minreach - 0.001f ||
+		distance > total + 0.001f)
+		return false;
+	/* The raw wrist endpoint is authoritative.  Seed its physical chain from
+	 * the bind arm's authored outward bend plane instead of the crossed raw
+	 * intermediates, then constrain that seed with bind segment lengths. */
+	for (i = 1; i < 3; ++i)
+	{
+		float magnitude;
+		VectorSubtract (bindposition[i], bindposition[0], relative);
+		VectorMA (relative, -DotProduct (relative, bindchord), bindchord,
+			perpendicular);
+		magnitude = VectorLength (perpendicular);
+		if (magnitude > 0.001f && (strongest < 0 || magnitude > strongestmagnitude))
+		{
+			VectorScale (perpendicular, 1.0f / magnitude, outward);
+			strongestmagnitude = magnitude;
+			strongest = i;
+		}
+	}
+	/* Preserve the bind shoulder's complete twist before aligning its transported
+	 * chord to the raw wrist chord.  Transport = C * D is equivariant under an
+	 * arbitrary global rigid transform, unlike a basis rebuilt from chords
+	 * alone. */
+	R_VRIKMatrixInverseRigid (live->joints[shoulder].bind, bindinverse);
+	R_VRIKMatrixMultiply (palette + shoulder * 12, bindinverse, shoulderdelta);
+	mappedchord[0] = shoulderdelta[0] * bindchord[0] +
+		shoulderdelta[1] * bindchord[1] + shoulderdelta[2] * bindchord[2];
+	mappedchord[1] = shoulderdelta[4] * bindchord[0] +
+		shoulderdelta[5] * bindchord[1] + shoulderdelta[6] * bindchord[2];
+	mappedchord[2] = shoulderdelta[8] * bindchord[0] +
+		shoulderdelta[9] * bindchord[1] + shoulderdelta[10] * bindchord[2];
+	if (strongest < 0 || !R_VRIKBuildRotationToward (mappedchord, chord,
+		correction))
+		return false;
+	R_VRIKMatrixMultiply (correction, shoulderdelta, transport);
+	for (i = 0; i < 4; ++i)
+	{
+		VectorSubtract (bindposition[i], bindposition[0], relative);
+		solved[i][0] = position[0][0] + transport[0] * relative[0] +
+			transport[1] * relative[1] + transport[2] * relative[2];
+		solved[i][1] = position[0][1] + transport[4] * relative[0] +
+			transport[5] * relative[1] + transport[6] * relative[2];
+		solved[i][2] = position[0][2] + transport[8] * relative[0] +
+			transport[9] * relative[1] + transport[10] * relative[2];
+	}
+	/* The transported authored side defines which of the two planar solutions
+	 * is anatomical after the endpoint is pinned to the raw retarget pose. */
+	perpendicular[0] = transport[0] * outward[0] + transport[1] * outward[1] +
+		transport[2] * outward[2];
+	perpendicular[1] = transport[4] * outward[0] + transport[5] * outward[1] +
+		transport[6] * outward[2];
+	perpendicular[2] = transport[8] * outward[0] + transport[9] * outward[1] +
+		transport[10] * outward[2];
+	VectorCopy (perpendicular, outward);
+	VectorCopy (position[0], solved[0]);
+	VectorCopy (position[3], solved[3]);
+	for (iteration = 0; iteration < 64; ++iteration)
+	{
+		VectorCopy (position[3], solved[3]);
+		for (i = 2; i >= 0; --i)
+		{
+			VectorSubtract (solved[i], solved[i + 1], direction);
+			if (!VectorNormalize (direction)) return false;
+			VectorMA (solved[i + 1], length[i], direction, solved[i]);
+		}
+		VectorCopy (position[0], solved[0]);
+		for (i = 1; i < 4; ++i)
+		{
+			VectorSubtract (solved[i], solved[i - 1], direction);
+			if (!VectorNormalize (direction)) return false;
+			VectorMA (solved[i - 1], length[i - 1], direction, solved[i]);
+		}
+		VectorSubtract (position[3], solved[3], direction);
+		if (VectorLength (direction) < 0.001f)
+			break;
+	}
+	VectorSubtract (position[3], solved[3], direction);
+	if (VectorLength (direction) >= 0.01f)
+		return false;
+	for (i = 1; i < 3; ++i)
+	{
+		VectorSubtract (solved[i], solved[0], relative);
+		VectorMA (relative, -DotProduct (relative, chord), chord, perpendicular);
+		bend[i - 1] = DotProduct (perpendicular, outward);
+	}
+	if (bend[0] < -0.001f && bend[1] < -0.001f)
+	{
+		for (i = 1; i < 3; ++i)
+		{
+			VectorSubtract (solved[i], solved[0], relative);
+			VectorMA (relative, -2.0f * DotProduct (relative, outward), outward,
+				relative);
+			VectorAdd (solved[0], relative, solved[i]);
+		}
+		for (i = 1; i < 3; ++i)
+		{
+			VectorSubtract (solved[i], solved[0], relative);
+			VectorMA (relative, -DotProduct (relative, chord), chord, perpendicular);
+			bend[i - 1] = DotProduct (perpendicular, outward);
+		}
+	}
+	/* A summed bend can hide one inward intermediate behind a larger outward
+	 * neighbour.  Do not mutate a raw retarget palette unless both joints are
+	 * on the authored side; unsupported mixed paths remain animation-authored. */
+	if (bend[0] <= 0.001f || bend[1] <= 0.001f)
+		return false;
+	memcpy (intendedhand, palette + hand * 12, sizeof (intendedhand));
+	for (i = 0; i < 3; ++i)
+	{
+		vec3_t oldnext;
+		R_VRIKMatrixOrigin (palette + chain[i] * 12, position[i]);
+		R_VRIKMatrixOrigin (palette + chain[i + 1] * 12, oldnext);
+		VectorSubtract (oldnext, position[i], oldnext);
+		VectorSubtract (solved[i + 1], solved[i], direction);
+		R_VRIKRotateJointSubtreeToward (live, palette, chain[i], oldnext,
+			direction);
+	}
+	for (i = 1; i < 4; ++i)
+	{
+		R_VRIKMatrixOrigin (palette + chain[i] * 12, position[i]);
+		VectorSubtract (solved[i], position[i], direction);
+		R_VRIKTranslateJointSubtree (live, palette, chain[i], direction);
+	}
+	R_VRIKSetJointSubtreeTransform (live, palette, hand, intendedhand);
+	return true;
+}
+
 static void R_VRIKRepairShamblerDesktopArms (const r_avatar_profile_t *profile,
 	const md5liveinfo_t *live, float *palette)
 {
@@ -3057,38 +3226,71 @@ static void R_VRIKRepairShamblerDesktopArms (const r_avatar_profile_t *profile,
 		r_vrik_pose_pending || !live || !palette)
 		return;
 	for (side = 0; side < 2; ++side)
+		R_VRIKRepairShamblerDesktopArm (live, palette,
+			live->jointindex[side ? MD5_VRIK_SHOULDER_R : MD5_VRIK_SHOULDER_L],
+			live->jointindex[side ? MD5_VRIK_UPPERARM_R : MD5_VRIK_UPPERARM_L],
+			live->jointindex[side ? MD5_VRIK_LOWERARM_R : MD5_VRIK_LOWERARM_L],
+			live->jointindex[side ? MD5_VRIK_HAND_R : MD5_VRIK_HAND_L]);
+}
+
+typedef struct r_vrik_hip_branch_snapshot_s
+{
+	int count;
+	int root[MD5_VRIK_JOINT_COUNT];
+	float transform[MD5_VRIK_JOINT_COUNT][12];
+} r_vrik_hip_branch_snapshot_t;
+
+/* A tracked Hip is already present in the canonical palette before semantic
+ * retargeting.  Preserve each topmost real mapped branch while reapplying it
+ * only to direct unmapped Hip children (Vore's middle leg/tails). */
+static void R_VRIKCaptureMappedHipBranches (const r_avatar_rig_t *rig,
+	const md5liveinfo_t *live, const float *palette,
+	r_vrik_hip_branch_snapshot_t *snapshot)
+{
+	int hip, semantic;
+
+	if (!snapshot)
+		return;
+	snapshot->count = 0;
+	if (!rig || !live || !palette || (hip = live->jointindex[MD5_VRIK_HIP]) < 0)
+		return;
+	for (semantic = 0; semantic < MD5_VRIK_JOINT_COUNT; ++semantic)
 	{
-		int upper = live->jointindex[side ? MD5_VRIK_UPPERARM_R : MD5_VRIK_UPPERARM_L];
-		int lower = live->jointindex[side ? MD5_VRIK_LOWERARM_R : MD5_VRIK_LOWERARM_L];
-		int hand = live->jointindex[side ? MD5_VRIK_HAND_R : MD5_VRIK_HAND_L];
-		int joint;
+		int joint = rig->joint[semantic], parent, other;
+		qboolean ancestor = false, duplicate = false;
 
-		if (upper < 0 || lower < 0 || hand < 0)
+		if (joint < 0 || joint == hip || (rig->virtual_mask & (1u << semantic)) ||
+			!R_VRIKJointDescendsFrom (live, joint, hip))
 			continue;
-		/* Co-located shoulders put Shambler's arm origins on the correct sides;
-		 * the visible fold is incompatible transported twist.  Rebuild every
-		 * authored arm-subtree basis from its current parent and bind-local
-		 * transform, preserving every raw animation origin and hand endpoint. */
-		for (joint = 0; joint < live->numbones; ++joint)
-			if (R_VRIKJointDescendsFrom (live, joint, upper))
-		{
-			int parent = live->joints[joint].parent;
-			float inverse[12], local[12], desired[12];
-			vec3_t origin;
-
-			if (parent < 0)
-				memcpy (desired, live->joints[joint].bind, sizeof (desired));
-			else
-			{
-				R_VRIKMatrixInverseRigid (live->joints[parent].bind, inverse);
-				R_VRIKMatrixMultiply (inverse, live->joints[joint].bind, local);
-				R_VRIKMatrixMultiply (palette + parent * 12, local, desired);
-			}
-			R_VRIKMatrixOrigin (palette + joint * 12, origin);
-			R_VRIKSetMatrixOrigin (desired, origin);
-			memcpy (palette + joint * 12, desired, sizeof (desired));
-		}
+		for (other = 0; other < snapshot->count; ++other)
+			if (snapshot->root[other] == joint)
+				duplicate = true;
+		if (duplicate)
+			continue;
+		for (parent = live->joints[joint].parent; parent >= 0 && parent != hip;
+			parent = live->joints[parent].parent)
+			for (other = 0; other < MD5_VRIK_JOINT_COUNT; ++other)
+				if (!(rig->virtual_mask & (1u << other)) && rig->joint[other] == parent)
+					ancestor = true;
+		if (ancestor)
+			continue;
+		snapshot->root[snapshot->count] = joint;
+		memcpy (snapshot->transform[snapshot->count], palette + joint * 12,
+			sizeof (snapshot->transform[snapshot->count]));
+		snapshot->count++;
 	}
+}
+
+static void R_VRIKRestoreMappedHipBranches (const md5liveinfo_t *live,
+	float *palette, const r_vrik_hip_branch_snapshot_t *snapshot)
+{
+	int i;
+
+	if (!live || !palette || !snapshot)
+		return;
+	for (i = 0; i < snapshot->count; ++i)
+		R_VRIKSetJointSubtreeTransform (live, palette, snapshot->root[i],
+			snapshot->transform[i]);
 }
 
 static unsigned char R_VRIKRefineAvatarActualLowerPaths (const md5liveinfo_t *live,
@@ -3227,8 +3429,7 @@ static void R_VRIKRefineAvatarPalette (const md5liveinfo_t *canonical,
 	r_vrik_lowerbody_targets_t lower;
 	qboolean have_lower = false;
 	unsigned char suppliedlower = 0;
-	float upperauthority[3][12];
-	qboolean upperauthorityvalid[3] = {false, false, false};
+	r_vrik_hip_branch_snapshot_t hipbranches;
 	int semantic, role;
 
 	if (!canonical || !targetrig || !targetrig->valid || !context || !sourcepalette ||
@@ -3375,19 +3576,13 @@ static void R_VRIKRefineAvatarPalette (const md5liveinfo_t *canonical,
 			targetfootbasisvalid[role - R_VRIK_LOWER_LEFT_FOOT] = true;
 		}
 	}
-	/* Dog/Fiend suppress the base Hip rotation, so only they consume the
-	 * tracker Hip overlay.  Snapshot upper authorities before it rotates their
-	 * shared torso branch; they are restored before endpoint refinement. */
+	/* The canonical palette already contains the tracked Hip before semantic
+	 * retargeting.  Reapply it only to unmapped authored branches; mapped
+	 * semantic branches are restored exactly so they do not receive it twice. */
 	if (r_vrik_pose_pending && targetrig->profile->preserve_hip_rotation)
 	{
-		int roots[3] = {MD5_VRIK_HEAD, MD5_VRIK_HAND_L, MD5_VRIK_HAND_R};
-		int i;
-		for (i = 0; i < 3; ++i) if (target.jointindex[roots[i]] >= 0)
-		{
-			memcpy (upperauthority[i], targetpalette + target.jointindex[roots[i]] * 12,
-				sizeof (upperauthority[i]));
-			upperauthorityvalid[i] = true;
-		}
+		R_VRIKCaptureMappedHipBranches (targetrig, &target, targetpalette,
+			&hipbranches);
 		have_lower = R_VRIKGetLowerBodyTargets (r_vrik_active_player + 1, &lower);
 		if (have_lower)
 			suppliedlower = R_VRIKAvatarSuppliedLowerMask (&lower);
@@ -3410,16 +3605,7 @@ static void R_VRIKRefineAvatarPalette (const md5liveinfo_t *canonical,
 				R_VRIKApplyLowerBodyWithPolePolicy (&target, targetpalette,
 					&hiptarget, R_VRIKAvatarLowerPolePolicy (targetrig->profile));
 		}
-		for (i = 0; i < 3; ++i) if (upperauthorityvalid[i])
-		{
-			float desired[12]; vec3_t origin;
-			memcpy (desired, upperauthority[i], sizeof (desired));
-			R_VRIKMatrixOrigin (targetpalette + target.jointindex[roots[i]] * 12,
-				origin);
-			R_VRIKSetMatrixOrigin (desired, origin);
-			R_VRIKSetJointSubtreeTransform (&target, targetpalette,
-				target.jointindex[roots[i]], desired);
-		}
+		R_VRIKRestoreMappedHipBranches (&target, targetpalette, &hipbranches);
 	}
 	if (R_VRIKAvatarRefinesUpperEndpoints (r_vrik_pose_pending,
 		targetrig->profile))
@@ -6184,20 +6370,37 @@ void R_DrawAliasModel_ShowTris (entity_t *e)
  * deliberately executes the production palette path, whose optional lower
  * body calls stay inactive in the synthetic arm-only rig. */
 static int r_vrik_lower_policy_calls_for_test;
+static qboolean r_vrik_lower_targets_for_test;
+static qboolean r_vrik_apply_hip_for_test;
+static r_vrik_lowerbody_targets_t r_vrik_test_lower_targets;
 
 qboolean R_VRIKGetLowerBodyTargets (int entitynum,
 	r_vrik_lowerbody_targets_t *out)
 {
-	(void)entitynum; (void)out;
-	return false;
+	(void)entitynum;
+	if (!r_vrik_lower_targets_for_test || !out)
+		return false;
+	*out = r_vrik_test_lower_targets;
+	return true;
 }
 
 qboolean R_VRIKApplyLowerBodyWithPolePolicy (const md5liveinfo_t *live,
 	float *palette, const r_vrik_lowerbody_model_targets_t *targets,
 	r_vrik_lowerbody_pole_policy_t pole_policy)
 {
-	(void)live; (void)palette; (void)targets; (void)pole_policy;
+	(void)pole_policy;
 	r_vrik_lower_policy_calls_for_test++;
+	if (r_vrik_apply_hip_for_test && live && palette && targets &&
+		(targets->usable_mask & R_VRIK_LOWER_BIT (R_VRIK_LOWER_HIP)) &&
+		live->jointindex[MD5_VRIK_HIP] >= 0)
+	{
+		float hip[12];
+
+		memcpy (hip, targets->orientation[R_VRIK_LOWER_HIP], sizeof (hip));
+		R_VRIKSetMatrixOrigin (hip, targets->position[R_VRIK_LOWER_HIP]);
+		R_VRIKSetJointSubtreeTransform (live, palette,
+			live->jointindex[MD5_VRIK_HIP], hip);
+	}
 	return false;
 }
 
@@ -6206,6 +6409,102 @@ qboolean R_VRIKBuildBodyIndexesForTest (const md5liveinfo_t *live,
 	r_vrik_skincache_t *cache)
 {
 	return R_VRIKBuildBodyIndexes (live, profile, surface, cache);
+}
+
+qboolean R_VRIKTrackedPreserveHipBranchesForTest (void)
+{
+	const r_avatar_profile_t *vore = R_AvatarProfileForId (PLAYER_AVATAR_VORE);
+	const r_avatar_profile_t *dog = R_AvatarProfileForId (PLAYER_AVATAR_DOG);
+	const r_avatar_profile_t *fiend = R_AvatarProfileForId (PLAYER_AVATAR_FIEND);
+	md5liveinfo_t canonical, live;
+	md5livejoint_t canonicaljoints[1], joints[6];
+	r_avatar_rig_t rig;
+	r_avatar_presentation_context_t context;
+	r_vrik_lowerbody_targets_t savedtargets;
+	float sourcepalette[12], palette[6 * 12], raw[6 * 12], expected[6 * 12];
+	float hip[12];
+	qboolean savedpending, savedtargetsvalid, savedapply, passed = false;
+	int joint, semantic;
+
+	if (!vore || !dog || !fiend || !vore->preserve_hip_rotation ||
+		!dog->preserve_hip_rotation || !fiend->preserve_hip_rotation)
+		return false;
+	memset (&canonical, 0, sizeof (canonical)); memset (&live, 0, sizeof (live));
+	memset (canonicaljoints, 0, sizeof (canonicaljoints));
+	memset (joints, 0, sizeof (joints)); memset (&rig, 0, sizeof (rig));
+	memset (&context, 0, sizeof (context)); memset (sourcepalette, 0,
+		sizeof (sourcepalette)); memset (palette, 0, sizeof (palette));
+	for (semantic = 0; semantic < MD5_VRIK_JOINT_COUNT; ++semantic)
+		canonical.jointindex[semantic] = live.jointindex[semantic] =
+			rig.joint[semantic] = -1;
+	for (joint = 0; joint < 6; ++joint)
+	{
+		joints[joint].parent = joint ? 0 : -1;
+		joints[joint].bind[0] = joints[joint].bind[5] =
+			joints[joint].bind[10] = palette[joint * 12] =
+			palette[joint * 12 + 5] = palette[joint * 12 + 10] = 1.0f;
+	}
+	/* LowerLeg_L is mapped beneath UpperLeg_L, so only the latter is a
+	 * snapshot root.  Joint 4 is Vore's unmapped middle-leg analogue. */
+	joints[2].parent = 1;
+	canonicaljoints[0].bind[0] = canonicaljoints[0].bind[5] =
+		canonicaljoints[0].bind[10] = 1.0f;
+	canonical.joints = canonicaljoints; canonical.numbones = 1;
+	canonical.jointindex[MD5_VRIK_HIP] = 0;
+	live.joints = joints; live.numbones = 6;
+	rig.profile = vore; rig.live = &live; rig.valid = true;
+	rig.joint[MD5_VRIK_HIP] = live.jointindex[MD5_VRIK_HIP] = 0;
+	rig.joint[MD5_VRIK_UPPERLEG_L] = live.jointindex[MD5_VRIK_UPPERLEG_L] = 1;
+	rig.joint[MD5_VRIK_LOWERLEG_L] = live.jointindex[MD5_VRIK_LOWERLEG_L] = 2;
+	rig.joint[MD5_VRIK_UPPERLEG_R] = live.jointindex[MD5_VRIK_UPPERLEG_R] = 3;
+	rig.joint[MD5_VRIK_SPINE2] = live.jointindex[MD5_VRIK_SPINE2] = 5;
+	/* H is the canonical tracked Hip.  Retargeted semantic branches already
+	 * have H once; the unmapped middle child remains authored/bind-relative. */
+	memset (hip, 0, sizeof (hip));
+	hip[1] = -1.0f; hip[4] = 1.0f; hip[10] = 1.0f;
+	hip[3] = 10.0f; hip[7] = 20.0f; hip[11] = 30.0f;
+	memcpy (sourcepalette, hip, sizeof (hip));
+	R_VRIKSetMatrixOrigin (palette, (vec3_t){10.0f, 20.0f, 30.0f});
+	for (joint = 1; joint < 6; ++joint)
+	{
+		R_VRIKSetMatrixOrigin (palette + joint * 12,
+			(vec3_t){10.0f + joint, 20.0f, 30.0f});
+		if (joint != 4)
+			memcpy (palette + joint * 12, hip, sizeof (hip));
+	}
+	/* Keep the mapped roots distinct so exact origin restoration is covered. */
+	R_VRIKSetMatrixOrigin (palette + 1 * 12, (vec3_t){11.0f, 20.0f, 30.0f});
+	R_VRIKSetMatrixOrigin (palette + 2 * 12, (vec3_t){12.0f, 20.0f, 30.0f});
+	R_VRIKSetMatrixOrigin (palette + 3 * 12, (vec3_t){10.0f, 21.0f, 30.0f});
+	R_VRIKSetMatrixOrigin (palette + 5 * 12, (vec3_t){10.0f, 20.0f, 31.0f});
+	memcpy (raw, palette, sizeof (raw)); memcpy (expected, raw, sizeof (expected));
+	R_VRIKSetJointSubtreeTransform (&live, expected, 0, hip);
+	context.rotation[0] = context.rotation[5] = context.rotation[10] = 1.0f;
+	context.inverse[0] = context.inverse[5] = context.inverse[10] = 1.0f;
+	savedpending = r_vrik_pose_pending;
+	savedtargetsvalid = r_vrik_lower_targets_for_test;
+	savedapply = r_vrik_apply_hip_for_test;
+	savedtargets = r_vrik_test_lower_targets;
+	memset (&r_vrik_test_lower_targets, 0, sizeof (r_vrik_test_lower_targets));
+	r_vrik_test_lower_targets.present_mask = r_vrik_test_lower_targets.tracked_mask =
+		R_VRIK_LOWER_BIT (R_VRIK_LOWER_HIP);
+	r_vrik_test_lower_targets.confidence[R_VRIK_LOWER_HIP] = 1.0f;
+	r_vrik_lower_targets_for_test = true;
+	r_vrik_apply_hip_for_test = true;
+	r_vrik_pose_pending = true;
+	R_VRIKRefineAvatarPalette (&canonical, &rig, &context, sourcepalette, palette);
+	if (!memcmp (palette, expected, sizeof (float) * 12) &&
+		!memcmp (palette + 1 * 12, raw + 1 * 12, sizeof (float) * 12) &&
+		!memcmp (palette + 2 * 12, raw + 2 * 12, sizeof (float) * 12) &&
+		!memcmp (palette + 3 * 12, raw + 3 * 12, sizeof (float) * 12) &&
+		!memcmp (palette + 5 * 12, raw + 5 * 12, sizeof (float) * 12) &&
+		!memcmp (palette + 4 * 12, expected + 4 * 12, sizeof (float) * 12))
+		passed = true;
+	r_vrik_pose_pending = savedpending;
+	r_vrik_lower_targets_for_test = savedtargetsvalid;
+	r_vrik_apply_hip_for_test = savedapply;
+	r_vrik_test_lower_targets = savedtargets;
+	return passed;
 }
 
 qboolean R_VRIKRefineArmOverreachForTest (void)
@@ -6551,15 +6850,55 @@ qboolean R_VRIKAvatarUprightPostureForTest (qboolean tracked)
 		fabsf (localforward[2]) < 0.01f;
 }
 
+qboolean R_VRIKAnimalAuthoredPostureForTest (int avatar, qboolean tracked)
+{
+	const r_avatar_profile_t *profile = R_AvatarProfileForId (avatar);
+	md5liveinfo_t live;
+	md5livejoint_t joints[2];
+	r_avatar_rig_t rig;
+	r_avatar_presentation_context_t context;
+	float palette[24], raw[24];
+	int i;
+
+	if (!profile || (profile->id != PLAYER_AVATAR_DOG &&
+		profile->id != PLAYER_AVATAR_FIEND) ||
+		profile->basis_policy != R_AVATAR_BASIS_FEET_UP_HEAD_FORWARD ||
+		profile->posture_policy != R_AVATAR_POSTURE_AUTHORED)
+		return false;
+	memset (&live, 0, sizeof (live)); memset (joints, 0, sizeof (joints));
+	memset (&rig, 0, sizeof (rig)); memset (&context, 0, sizeof (context));
+	memset (palette, 0, sizeof (palette));
+	for (i = 0; i < MD5_VRIK_JOINT_COUNT; ++i)
+		rig.joint[i] = -1;
+	joints[0].parent = -1; joints[1].parent = 0;
+	for (i = 0; i < 2; ++i)
+		palette[i * 12] = palette[i * 12 + 5] = palette[i * 12 + 10] = 1.0f;
+	palette[12 + 7] = 3.0f;
+	live.joints = joints; live.numbones = 2;
+	rig.profile = profile; rig.live = &live; rig.valid = true;
+	rig.joint[MD5_VRIK_HIP] = 0; rig.joint[MD5_VRIK_HEAD] = 1;
+	memcpy (raw, palette, sizeof (raw));
+	/* Authored animal presentation must bypass both the Hip posture turn and
+	 * its desktop head-forward follow-up correction. */
+	return !R_VRIKApplyAvatarUprightPosture (&rig, &context, tracked, palette) &&
+		!memcmp (palette, raw, sizeof (raw));
+}
+
 qboolean R_VRIKShamblerDesktopArmRepairForTest (void)
 {
 	md5liveinfo_t canonical, live;
-	md5livejoint_t joints[8];
+	md5liveinfo_t adversarial;
+	md5livejoint_t joints[10];
+	md5livejoint_t adversarialjoints[4];
 	r_avatar_profile_t profile;
 	r_avatar_rig_t rig;
 	r_avatar_presentation_context_t context;
-	float sourcepalette[12], palette[8 * 12], raw[8 * 12], repaired[8 * 12];
-	float tracked[8 * 12], global[12], expected[12], inverse[12], local[12];
+	float sourcepalette[12], palette[10 * 12], raw[10 * 12], repaired[10 * 12];
+	float tracked[10 * 12], global[12], expected[12];
+	float inverse[12], rawchildlocal[12], childlocal[12];
+	float adversarialpalette[4 * 12], adversarialraw[4 * 12];
+	vec3_t a, b;
+	float actual;
 	qboolean pending;
 	int semantic, joint;
 
@@ -6570,97 +6909,138 @@ qboolean R_VRIKShamblerDesktopArmRepairForTest (void)
 	memset (sourcepalette, 0, sizeof (sourcepalette));
 	for (semantic = 0; semantic < MD5_VRIK_JOINT_COUNT; semantic++)
 		live.jointindex[semantic] = rig.joint[semantic] = -1;
-	for (joint = 0; joint < 8; joint++)
+	for (joint = 0; joint < 10; joint++)
 	{
-		joints[joint].parent = joint ? joint - 1 : -1;
+		joints[joint].parent = joint ? 0 : -1;
 		joints[joint].bind[0] = joints[joint].bind[5] =
 			joints[joint].bind[10] = palette[joint * 12] =
 			palette[joint * 12 + 5] = palette[joint * 12 + 10] = 1.0f;
 	}
-	/* Hip plus complete left/right arm chains and a left hand child exercise
-	 * the production early-gate exemption and complete subtree restoration. */
-	joints[1].parent = 0; joints[2].parent = 1; joints[3].parent = 2;
-	joints[4].parent = 0; joints[5].parent = 4; joints[6].parent = 5;
-	joints[7].parent = 3;
-	joints[1].bind[7] = 8.0f; joints[2].bind[7] = 16.0f;
-	joints[3].bind[7] = 24.0f; joints[4].bind[7] = -8.0f;
-	joints[5].bind[7] = -16.0f; joints[6].bind[7] = -24.0f;
-	joints[7].bind[7] = 28.0f;
-	/* Deliberately non-identical authored local frames make basis restoration
-	 * observable even though every raw animation basis below is rigidly posed. */
-	joints[1].bind[0] = joints[1].bind[5] = 0.0f;
-	joints[1].bind[1] = -1.0f; joints[1].bind[4] = 1.0f;
-	joints[2].bind[5] = joints[2].bind[10] = 0.0f;
-	joints[2].bind[6] = -1.0f; joints[2].bind[9] = 1.0f;
-	joints[3].bind[0] = joints[3].bind[10] = 0.0f;
-	joints[3].bind[2] = 1.0f; joints[3].bind[8] = -1.0f;
-	joints[4].bind[0] = joints[4].bind[5] = 0.0f;
-	joints[4].bind[1] = 1.0f; joints[4].bind[4] = -1.0f;
-	joints[5].bind[5] = joints[5].bind[10] = 0.0f;
-	joints[5].bind[6] = 1.0f; joints[5].bind[9] = -1.0f;
-	joints[6].bind[0] = joints[6].bind[10] = 0.0f;
-	joints[6].bind[2] = -1.0f; joints[6].bind[8] = 1.0f;
-	joints[7].bind[0] = joints[7].bind[5] = 0.0f;
-	joints[7].bind[1] = -1.0f; joints[7].bind[4] = 1.0f;
-	for (joint = 0; joint < 8; ++joint)
-	{
-		memcpy (palette + joint * 12, joints[joint].bind, sizeof (joints[joint].bind));
-		/* Rigidly pose every raw basis before repair, then verify that rebuilding
-		 * bind-local frames commutes with an additional rigid transform. */
-		palette[joint * 12] = 0.0f; palette[joint * 12 + 1] = -1.0f;
-		palette[joint * 12 + 4] = 1.0f; palette[joint * 12 + 5] = 0.0f;
-		palette[joint * 12 + 3] = 10.0f - joints[joint].bind[7];
-		palette[joint * 12 + 7] = 3.0f;
-	}
-	palette[3 * 12 + 3] = 12.0f;
-	palette[6 * 12 + 3] = 8.0f;
-	/* This intentionally deformed span must be irrelevant: the basis-only
-	 * repair has no lateral or endpoint policy that can break equivariance. */
-	palette[1 * 12 + 3] = -8.0f; palette[4 * 12 + 3] = 8.0f;
+	/* Hip plus two physical shoulder -> upper -> lower -> hand paths.  Their
+	 * crossed intermediates are a raw-retarget failure; both wrist sockets and
+	 * the left-hand child are intentionally authoritative animation output. */
+	joints[2].parent = 1; joints[3].parent = 2; joints[4].parent = 3;
+	joints[5].parent = 4; joints[7].parent = 6; joints[8].parent = 7;
+	joints[9].parent = 8;
+	/* The bind chains are anatomical; raw retargeting below deliberately
+	 * crosses only the upper/lower origins while preserving both wrists. */
+	joints[1].bind[3] = -2.0f;
+	joints[2].bind[3] = -3.0f; joints[2].bind[7] = 2.0f;
+	joints[3].bind[3] = -3.0f; joints[3].bind[7] = 4.0f;
+	joints[4].bind[3] = -2.0f; joints[4].bind[7] = 8.0f;
+	joints[5].bind[3] = -2.0f; joints[5].bind[7] = 9.0f;
+	joints[6].bind[3] = 2.0f;
+	joints[7].bind[3] = 3.0f; joints[7].bind[7] = 2.0f;
+	joints[8].bind[3] = 3.0f; joints[8].bind[7] = 4.0f;
+	joints[9].bind[3] = 2.0f; joints[9].bind[7] = 8.0f;
+	palette[1 * 12 + 3] = -2.0f;
+	palette[2 * 12 + 3] = 2.0f; palette[2 * 12 + 7] = 2.0f;
+	palette[3 * 12 + 3] = 2.0f; palette[3 * 12 + 7] = 4.0f;
+	palette[4 * 12 + 3] = -2.0f; palette[4 * 12 + 7] = 8.0f;
+	palette[5 * 12 + 3] = -2.0f; palette[5 * 12 + 7] = 9.0f;
+	palette[6 * 12 + 3] = 2.0f;
+	palette[7 * 12 + 3] = -2.0f; palette[7 * 12 + 7] = 2.0f;
+	palette[8 * 12 + 3] = -2.0f; palette[8 * 12 + 7] = 4.0f;
+	palette[9 * 12 + 3] = 2.0f; palette[9 * 12 + 7] = 8.0f;
+	palette[4 * 12] = palette[4 * 12 + 5] = 0.0f;
+	palette[4 * 12 + 1] = -1.0f; palette[4 * 12 + 4] = 1.0f;
+	palette[9 * 12 + 5] = palette[9 * 12 + 10] = 0.0f;
+	palette[9 * 12 + 6] = -1.0f; palette[9 * 12 + 9] = 1.0f;
 	memcpy (raw, palette, sizeof (raw));
-	live.joints = joints; live.numbones = 8; live.compatible = true;
+	live.joints = joints; live.numbones = 10; live.compatible = true;
 	rig.profile = &profile; rig.live = &live; rig.valid = true;
-	rig.joint[MD5_VRIK_HIP] = 0; rig.joint[MD5_VRIK_UPPERARM_L] = 1;
-	rig.joint[MD5_VRIK_LOWERARM_L] = 2; rig.joint[MD5_VRIK_HAND_L] = 3;
-	rig.joint[MD5_VRIK_UPPERARM_R] = 4; rig.joint[MD5_VRIK_LOWERARM_R] = 5;
-	rig.joint[MD5_VRIK_HAND_R] = 6;
+	rig.joint[MD5_VRIK_HIP] = 0; rig.joint[MD5_VRIK_SHOULDER_L] = 1;
+	rig.joint[MD5_VRIK_UPPERARM_L] = 2; rig.joint[MD5_VRIK_LOWERARM_L] = 3;
+	rig.joint[MD5_VRIK_HAND_L] = 4; rig.joint[MD5_VRIK_SHOULDER_R] = 6;
+	rig.joint[MD5_VRIK_UPPERARM_R] = 7; rig.joint[MD5_VRIK_LOWERARM_R] = 8;
+	rig.joint[MD5_VRIK_HAND_R] = 9;
 	profile.id = PLAYER_AVATAR_SHAMBLER;
 	context.inverse[0] = context.inverse[5] = context.inverse[10] = 1.0f;
 	sourcepalette[0] = sourcepalette[5] = sourcepalette[10] = 1.0f;
 	R_VRIKRefineAvatarPalette (&canonical, &rig, &context, sourcepalette, palette);
-	for (joint = 0; joint < 8; ++joint)
+	if (memcmp (palette + 4 * 12, raw + 4 * 12, sizeof (float) * 12) ||
+		memcmp (palette + 9 * 12, raw + 9 * 12, sizeof (float) * 12) ||
+		fabsf (palette[1 * 12 + 3] - raw[1 * 12 + 3]) > 0.001f ||
+		fabsf (palette[1 * 12 + 7] - raw[1 * 12 + 7]) > 0.001f ||
+		fabsf (palette[6 * 12 + 3] - raw[6 * 12 + 3]) > 0.001f ||
+		fabsf (palette[6 * 12 + 7] - raw[6 * 12 + 7]) > 0.001f)
+		return false;
+	if ((fabsf (palette[2 * 12 + 3] - raw[2 * 12 + 3]) < 0.01f &&
+		fabsf (palette[3 * 12 + 3] - raw[3 * 12 + 3]) < 0.01f) ||
+		(fabsf (palette[7 * 12 + 3] - raw[7 * 12 + 3]) < 0.01f &&
+		fabsf (palette[8 * 12 + 3] - raw[8 * 12 + 3]) < 0.01f))
+		return false;
+	if (palette[2 * 12 + 3] >= -2.0f || palette[7 * 12 + 3] <= 2.0f)
+		return false;
+	for (joint = 0; joint < 3; ++joint)
 	{
-		int parent = joints[joint].parent, component;
-
-		if (fabsf (palette[joint * 12 + 3] - raw[joint * 12 + 3]) > 0.001f ||
-			fabsf (palette[joint * 12 + 7] - raw[joint * 12 + 7]) > 0.001f ||
-			fabsf (palette[joint * 12 + 11] - raw[joint * 12 + 11]) > 0.001f)
+		R_VRIKMatrixOrigin (palette + (1 + joint) * 12, a);
+		R_VRIKMatrixOrigin (palette + (2 + joint) * 12, b);
+		VectorSubtract (b, a, a);
+		actual = VectorLength (a);
+		R_VRIKMatrixOrigin (joints[1 + joint].bind, b);
+		R_VRIKMatrixOrigin (joints[2 + joint].bind, a);
+		VectorSubtract (a, b, b);
+		if (fabsf (actual - VectorLength (b)) > 0.001f)
 			return false;
-		if (parent < 0 || joint == 0)
-			continue;
-		R_VRIKMatrixInverseRigid (palette + parent * 12, inverse);
-		R_VRIKMatrixMultiply (inverse, palette + joint * 12, local);
-		R_VRIKMatrixInverseRigid (joints[parent].bind, inverse);
-		R_VRIKMatrixMultiply (inverse, joints[joint].bind, expected);
-		for (component = 0; component < 12; ++component)
-			if ((component % 4) != 3 && fabsf (local[component] -
-			expected[component]) > 0.001f)
-				return false;
+		R_VRIKMatrixOrigin (palette + (6 + joint) * 12, a);
+		R_VRIKMatrixOrigin (palette + (7 + joint) * 12, b);
+		VectorSubtract (b, a, a);
+		actual = VectorLength (a);
+		R_VRIKMatrixOrigin (joints[6 + joint].bind, b);
+		R_VRIKMatrixOrigin (joints[7 + joint].bind, a);
+		VectorSubtract (a, b, b);
+		if (fabsf (actual - VectorLength (b)) > 0.001f)
+			return false;
 	}
+	R_VRIKMatrixInverseRigid (raw + 4 * 12, inverse);
+	R_VRIKMatrixMultiply (inverse, raw + 5 * 12, rawchildlocal);
+	R_VRIKMatrixInverseRigid (palette + 4 * 12, inverse);
+	R_VRIKMatrixMultiply (inverse, palette + 5 * 12, childlocal);
+	for (joint = 0; joint < 12; ++joint)
+		if (fabsf (childlocal[joint] - rawchildlocal[joint]) > 0.001f)
+			return false;
+	/* A rigid +90 degree twist about the left shoulder-to-wrist chord must
+	 * commute with the desktop solve, including the restored wrist socket. */
 	memcpy (repaired, palette, sizeof (repaired));
 	memset (global, 0, sizeof (global));
-	global[1] = -1.0f; global[3] = 11.0f;
-	global[4] = 1.0f; global[7] = -5.0f; global[10] = 1.0f;
-	for (joint = 0; joint < 8; ++joint)
+	global[2] = 1.0f; global[5] = 1.0f; global[8] = -1.0f;
+	global[3] = -2.0f; global[11] = -2.0f;
+	for (joint = 0; joint < 10; ++joint)
 		R_VRIKMatrixMultiply (global, raw + joint * 12, palette + joint * 12);
 	R_VRIKRefineAvatarPalette (&canonical, &rig, &context, sourcepalette, palette);
-	for (joint = 0; joint < 8; ++joint)
+	for (joint = 0; joint < 10; ++joint)
 	{
 		R_VRIKMatrixMultiply (global, repaired + joint * 12, expected);
 		for (semantic = 0; semantic < 12; ++semantic)
 			if (fabsf (palette[joint * 12 + semantic] - expected[semantic]) > 0.001f)
 				return false;
 	}
+	/* The strongest authored bend is outward at Lower, but Upper is inward.
+	 * The old summed test accepted this (-1 + 3); reject it before mutation. */
+	memset (&adversarial, 0, sizeof (adversarial));
+	memset (adversarialjoints, 0, sizeof (adversarialjoints));
+	memset (adversarialpalette, 0, sizeof (adversarialpalette));
+	for (joint = 0; joint < 4; ++joint)
+	{
+		adversarialjoints[joint].parent = joint - 1;
+		adversarialjoints[joint].bind[0] = adversarialjoints[joint].bind[5] =
+			adversarialjoints[joint].bind[10] = adversarialpalette[joint * 12] =
+			adversarialpalette[joint * 12 + 5] =
+			adversarialpalette[joint * 12 + 10] = 1.0f;
+	}
+	adversarialjoints[1].bind[3] = -1.0f; adversarialjoints[1].bind[7] = 2.0f;
+	adversarialjoints[2].bind[3] = 3.0f; adversarialjoints[2].bind[7] = 4.0f;
+	adversarialjoints[3].bind[7] = 8.0f;
+	for (joint = 0; joint < 4; ++joint)
+		memcpy (adversarialpalette + joint * 12, adversarialjoints[joint].bind,
+			sizeof (adversarialjoints[joint].bind));
+	memcpy (adversarialraw, adversarialpalette, sizeof (adversarialraw));
+	adversarial.joints = adversarialjoints; adversarial.numbones = 4;
+	if (R_VRIKRepairShamblerDesktopArm (&adversarial, adversarialpalette,
+		0, 1, 2, 3) || memcmp (adversarialpalette, adversarialraw,
+		sizeof (adversarialraw)))
+		return false;
 	memcpy (tracked, raw, sizeof (tracked));
 	pending = r_vrik_pose_pending;
 	r_vrik_pose_pending = true;

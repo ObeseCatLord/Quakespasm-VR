@@ -246,6 +246,74 @@ static void R_VRIKReflectPoleAcrossPlane (const vec3_t source,
 	reflected[2] = source[2] + scale * plane_normal[2];
 }
 
+/* The current roots carry a retargeted hip's orientation, so prefer them to
+ * bind-space axes.  A collapsed/invalid current pose still has the authored
+ * root separation as a deterministic fallback. */
+static qboolean R_VRIKGetLegLateralAxis (const md5liveinfo_t *live,
+	const float *palette, vec3_t lateral)
+{
+	int leftindex, rightindex;
+	vec3_t leftroot, rightroot;
+
+	if (!live || !live->joints)
+		return false;
+	leftindex = live->jointindex[MD5_VRIK_UPPERLEG_L];
+	rightindex = live->jointindex[MD5_VRIK_UPPERLEG_R];
+	if (leftindex < 0 || rightindex < 0 || leftindex >= live->numbones ||
+		rightindex >= live->numbones)
+		return false;
+	if (palette)
+	{
+		R_VRIKMatrixOrigin (palette + leftindex * 12, leftroot);
+		R_VRIKMatrixOrigin (palette + rightindex * 12, rightroot);
+		if (R_VRIKFiniteVector (leftroot) && R_VRIKFiniteVector (rightroot))
+		{
+			VectorSubtract (rightroot, leftroot, lateral);
+			if (VectorNormalize (lateral))
+				return true;
+		}
+	}
+	R_VRIKMatrixOrigin (live->joints[leftindex].bind, leftroot);
+	R_VRIKMatrixOrigin (live->joints[rightindex].bind, rightroot);
+	if (!R_VRIKFiniteVector (leftroot) || !R_VRIKFiniteVector (rightroot))
+		return false;
+	VectorSubtract (rightroot, leftroot, lateral);
+	return VectorNormalize (lateral) != 0.0f;
+}
+
+/* The pole has already been projected onto the final target plane.  Reflect
+ * only its inward component over the projected outward axis, then give an
+ * exact tie the same bounded deterministic bias used by pair construction.
+ * A target direction parallel to the lateral axis has no meaningful outward
+ * hemisphere; leaving the prior finite fallback alone is deterministic. */
+static void R_VRIKConstrainPoleOutward (vec3_t pole, const vec3_t toward,
+	const vec3_t outward)
+{
+	vec3_t projected, plane, corrected;
+	float component;
+
+	if (!R_VRIKFiniteVector (outward))
+		return;
+	VectorCopy (outward, projected);
+	VectorCopy (toward, plane);
+	VectorMA (projected, -DotProduct (projected, plane), plane, projected);
+	if (!VectorNormalize (projected))
+		return;
+	component = DotProduct (pole, projected);
+	if (component < 0.0f)
+	{
+		R_VRIKReflectPoleAcrossPlane (pole, projected, corrected);
+		VectorCopy (corrected, pole);
+		return;
+	}
+	if (component < 0.01f)
+	{
+		VectorMA (pole, 0.01f - component, projected, corrected);
+		if (VectorNormalize (corrected))
+			VectorCopy (corrected, pole);
+	}
+}
+
 /* Create a shared, mirrored pole pair from the currently animated knees (or
  * their bind vectors when an animation frame is straight/collapsed).  The
  * plane is midway between the upper-leg roots and normal to their lateral
@@ -281,8 +349,7 @@ static qboolean R_VRIKBuildMirroredLegPoles (const md5liveinfo_t *live,
 				return false;
 		}
 	}
-	VectorSubtract (roots[1], roots[0], lateral);
-	if (!VectorNormalize (lateral))
+	if (!R_VRIKGetLegLateralAxis (live, palette, lateral))
 		return false;
 	/* Express the right pole in left-pole space, then average both authored
 	 * choices.  Mirroring that stable average produces an equal/opposite pair
@@ -331,7 +398,7 @@ qboolean R_VRIKBuildMirroredLegPolesForTest (const md5liveinfo_t *live,
 
 static void R_VRIKSolveLeg (const md5liveinfo_t *live, float *palette,
 	int side, const vec3_t supplied_target, float confidence,
-	const vec3_t supplied_pole)
+	const vec3_t supplied_pole, const vec3_t supplied_outward)
 {
 	md5vrikjoint_t uppersemantic = side ? MD5_VRIK_UPPERLEG_R : MD5_VRIK_UPPERLEG_L;
 	md5vrikjoint_t lowersemantic = side ? MD5_VRIK_LOWERLEG_R : MD5_VRIK_LOWERLEG_L;
@@ -423,6 +490,11 @@ static void R_VRIKSolveLeg (const md5liveinfo_t *live, float *palette,
 				return;
 		}
 	}
+	/* The pair seed is outward before projection, but a one-foot or overlay
+	 * target can rotate its solve plane far enough to invert that component.
+	 * Enforce the policy only after this leg's final plane is known. */
+	if (supplied_outward)
+		R_VRIKConstrainPoleOutward (pole, toward, supplied_outward);
 	cosine = CLAMP (-1.0f,
 		(upperlength * upperlength + distance * distance - lowerlength * lowerlength) /
 		(2.0f * upperlength * distance), 1.0f);
@@ -585,8 +657,9 @@ qboolean R_VRIKApplyLowerBodyWithPolePolicy (const md5liveinfo_t *live,
 {
 	int hipindex, role;
 	vec3_t hip, delta;
-	vec3_t paired_poles[2];
+	vec3_t paired_poles[2], lateral, outward[2];
 	qboolean use_paired_poles = false;
+	qboolean use_outward_axis = false;
 
 	if (!live || !palette || !targets || !R_VRIKBuildRigCache (live))
 		return false;
@@ -620,21 +693,29 @@ qboolean R_VRIKApplyLowerBodyWithPolePolicy (const md5liveinfo_t *live,
 	if (pole_policy == R_VRIK_LOWERBODY_POLES_MIRRORED_PAIR &&
 		(targets->usable_mask &
 			(R_VRIK_LOWER_BIT (R_VRIK_LOWER_LEFT_FOOT) |
-			 R_VRIK_LOWER_BIT (R_VRIK_LOWER_RIGHT_FOOT))) ==
-		(R_VRIK_LOWER_BIT (R_VRIK_LOWER_LEFT_FOOT) |
-		 R_VRIK_LOWER_BIT (R_VRIK_LOWER_RIGHT_FOOT)))
-		use_paired_poles = R_VRIKBuildMirroredLegPoles (live, palette,
-			paired_poles);
+			 R_VRIK_LOWER_BIT (R_VRIK_LOWER_RIGHT_FOOT))))
+	{
+		use_outward_axis = R_VRIKGetLegLateralAxis (live, palette, lateral);
+		if (use_outward_axis)
+		{
+			VectorScale (lateral, -1.0f, outward[0]);
+			VectorCopy (lateral, outward[1]);
+			use_paired_poles = R_VRIKBuildMirroredLegPoles (live, palette,
+				paired_poles);
+		}
+	}
 	if (targets->usable_mask & R_VRIK_LOWER_BIT (R_VRIK_LOWER_LEFT_FOOT))
 		R_VRIKSolveLeg (live, palette, 0,
 			targets->position[R_VRIK_LOWER_LEFT_FOOT],
 			targets->confidence[R_VRIK_LOWER_LEFT_FOOT],
-			use_paired_poles ? paired_poles[0] : NULL);
+			use_paired_poles ? paired_poles[0] : NULL,
+			use_outward_axis ? outward[0] : NULL);
 	if (targets->usable_mask & R_VRIK_LOWER_BIT (R_VRIK_LOWER_RIGHT_FOOT))
 		R_VRIKSolveLeg (live, palette, 1,
 			targets->position[R_VRIK_LOWER_RIGHT_FOOT],
 			targets->confidence[R_VRIK_LOWER_RIGHT_FOOT],
-			use_paired_poles ? paired_poles[1] : NULL);
+			use_paired_poles ? paired_poles[1] : NULL,
+			use_outward_axis ? outward[1] : NULL);
 	for (role = R_VRIK_LOWER_LEFT_FOOT;
 		role <= R_VRIK_LOWER_RIGHT_FOOT; role++)
 		if ((targets->usable_mask & R_VRIK_LOWER_BIT (role)) &&

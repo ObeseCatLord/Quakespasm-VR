@@ -94,6 +94,47 @@ static void AssertFinitePalette (const float *palette, int bones)
 		assert (isfinite (palette[index]));
 }
 
+/* Return the solved knee's component perpendicular to its final hip-to-foot
+ * direction.  With +Y from left to right, the left knee must bend toward -Y
+ * and the right knee toward +Y, including after a target rotates that plane. */
+static float KneeOutwardComponent (float *palette, int side)
+{
+	int upper = side ? 4 : 1;
+	int lower = side ? 5 : 2;
+	int foot = side ? 6 : 3;
+	vec3_t hip, knee, target, lateral, outward, toward, bend;
+
+	hip[0] = palette[upper * 12 + 3];
+	hip[1] = palette[upper * 12 + 7];
+	hip[2] = palette[upper * 12 + 11];
+	knee[0] = palette[lower * 12 + 3];
+	knee[1] = palette[lower * 12 + 7];
+	knee[2] = palette[lower * 12 + 11];
+	target[0] = palette[foot * 12 + 3];
+	target[1] = palette[foot * 12 + 7];
+	target[2] = palette[foot * 12 + 11];
+	lateral[0] = palette[1 * 12 + 3];
+	lateral[1] = palette[1 * 12 + 7];
+	lateral[2] = palette[1 * 12 + 11];
+	lateral[0] = palette[4 * 12 + 3] - lateral[0];
+	lateral[1] = palette[4 * 12 + 7] - lateral[1];
+	lateral[2] = palette[4 * 12 + 11] - lateral[2];
+	assert (VectorNormalize (lateral));
+	VectorCopy (lateral, outward);
+	if (!side)
+		VectorInverse (outward);
+	VectorSubtract (target, hip, toward);
+	assert (VectorNormalize (toward));
+	VectorSubtract (knee, hip, bend);
+	VectorMA (bend, -DotProduct (bend, toward), toward, bend);
+	return DotProduct (bend, outward);
+}
+
+static void AssertOutwardKnee (float *palette, int side)
+{
+	assert (KneeOutwardComponent (palette, side) > 0.0001f);
+}
+
 static void BuildTwoLegs (md5liveinfo_t *live, md5livejoint_t joints[7],
 	float palette[7 * 12], aliashdr_t *surface)
 {
@@ -296,6 +337,120 @@ static void TestMirroredPoleZeroLateralTie (void)
 	assert (DistanceTo (palette + 6 * 12, 0.6f, 1.0f, -1.5f) < 0.01f);
 }
 
+static void TestMirroredOneFootOutwardKnees (void)
+{
+	md5liveinfo_t live;
+	md5livejoint_t joints[7];
+	aliashdr_t surface;
+	float palette[7 * 12], animated_palette[7 * 12], parallel_palette[7 * 12];
+	r_vrik_lowerbody_model_targets_t targets;
+
+	/* The authored knees are inward.  These targets tilt the final planes far
+	 * enough that merely fixing the shared pole before projection would turn
+	 * the final knee inward again.  Each one-foot overlay must retain its
+	 * side's outward hemisphere. */
+	BuildTwoLegs (&live, joints, palette, &surface);
+	IdentityAt (palette + 2 * 12, 0, -0.5f, -0.8660254f);
+	IdentityAt (palette + 3 * 12, 0, -0.5f, -1.8660254f);
+	IdentityAt (palette + 5 * 12, 0, 0.5f, -0.8660254f);
+	IdentityAt (palette + 6 * 12, 0, 0.5f, -1.8660254f);
+	memset (&targets, 0, sizeof(targets));
+	targets.usable_mask = R_VRIK_LOWER_BIT (R_VRIK_LOWER_LEFT_FOOT);
+	targets.confidence[R_VRIK_LOWER_LEFT_FOOT] = 1.0f;
+	targets.position[R_VRIK_LOWER_LEFT_FOOT][1] = -2.55f;
+	targets.position[R_VRIK_LOWER_LEFT_FOOT][2] = -0.77f;
+	memcpy (animated_palette, palette, sizeof(animated_palette));
+	assert (R_VRIKApplyLowerBodyWithPolePolicy (&live, palette, &targets,
+		R_VRIK_LOWERBODY_POLES_MIRRORED_PAIR));
+	assert (R_VRIKApplyLowerBodyWithPolePolicy (&live, animated_palette,
+		&targets, R_VRIK_LOWERBODY_POLES_ANIMATED));
+	AssertFinitePalette (palette, 7);
+	AssertFinitePalette (animated_palette, 7);
+	AssertOutwardKnee (palette, 0);
+	assert (KneeOutwardComponent (animated_palette, 0) < -0.0001f);
+
+	BuildTwoLegs (&live, joints, palette, &surface);
+	IdentityAt (palette + 2 * 12, 0, -0.5f, -0.8660254f);
+	IdentityAt (palette + 3 * 12, 0, -0.5f, -1.8660254f);
+	IdentityAt (palette + 5 * 12, 0, 0.5f, -0.8660254f);
+	IdentityAt (palette + 6 * 12, 0, 0.5f, -1.8660254f);
+	memset (&targets, 0, sizeof(targets));
+	targets.usable_mask = R_VRIK_LOWER_BIT (R_VRIK_LOWER_RIGHT_FOOT);
+	targets.confidence[R_VRIK_LOWER_RIGHT_FOOT] = 1.0f;
+	targets.position[R_VRIK_LOWER_RIGHT_FOOT][1] = 2.55f;
+	targets.position[R_VRIK_LOWER_RIGHT_FOOT][2] = -0.77f;
+	assert (R_VRIKApplyLowerBodyWithPolePolicy (&live, palette, &targets,
+		R_VRIK_LOWERBODY_POLES_MIRRORED_PAIR));
+	AssertFinitePalette (palette, 7);
+	AssertOutwardKnee (palette, 1);
+
+	/* Pair mode must independently project and constrain both knees for
+	 * asymmetric lateral offsets, rather than assuming mirrored targets. */
+	BuildTwoLegs (&live, joints, palette, &surface);
+	IdentityAt (palette + 2 * 12, 0, -0.5f, -0.8660254f);
+	IdentityAt (palette + 3 * 12, 0, -0.5f, -1.8660254f);
+	IdentityAt (palette + 5 * 12, 0, 0.5f, -0.8660254f);
+	IdentityAt (palette + 6 * 12, 0, 0.5f, -1.8660254f);
+	memset (&targets, 0, sizeof(targets));
+	targets.usable_mask = R_VRIK_LOWER_BIT (R_VRIK_LOWER_LEFT_FOOT) |
+		R_VRIK_LOWER_BIT (R_VRIK_LOWER_RIGHT_FOOT);
+	targets.confidence[R_VRIK_LOWER_LEFT_FOOT] = 1.0f;
+	targets.confidence[R_VRIK_LOWER_RIGHT_FOOT] = 1.0f;
+	targets.position[R_VRIK_LOWER_LEFT_FOOT][0] = 0.25f;
+	targets.position[R_VRIK_LOWER_LEFT_FOOT][1] = -2.35f;
+	targets.position[R_VRIK_LOWER_LEFT_FOOT][2] = -0.95f;
+	targets.position[R_VRIK_LOWER_RIGHT_FOOT][0] = -0.35f;
+	targets.position[R_VRIK_LOWER_RIGHT_FOOT][1] = 2.2f;
+	targets.position[R_VRIK_LOWER_RIGHT_FOOT][2] = -1.05f;
+	assert (R_VRIKApplyLowerBodyWithPolePolicy (&live, palette, &targets,
+		R_VRIK_LOWERBODY_POLES_MIRRORED_PAIR));
+	AssertFinitePalette (palette, 7);
+	AssertOutwardKnee (palette, 0);
+	AssertOutwardKnee (palette, 1);
+
+	/* A lateral target makes the projected outward axis undefined.  Both the
+	 * exact and near-parallel cases must remain finite, and the exact fallback
+	 * must be repeatable rather than selecting a floating-point hemisphere. */
+	BuildTwoLegs (&live, joints, palette, &surface);
+	memset (&targets, 0, sizeof(targets));
+	targets.usable_mask = R_VRIK_LOWER_BIT (R_VRIK_LOWER_LEFT_FOOT);
+	targets.confidence[R_VRIK_LOWER_LEFT_FOOT] = 1.0f;
+	targets.position[R_VRIK_LOWER_LEFT_FOOT][1] = -2.5f;
+	assert (R_VRIKApplyLowerBodyWithPolePolicy (&live, palette, &targets,
+		R_VRIK_LOWERBODY_POLES_MIRRORED_PAIR));
+	AssertFinitePalette (palette, 7);
+	memcpy (parallel_palette, palette, sizeof(parallel_palette));
+	BuildTwoLegs (&live, joints, palette, &surface);
+	assert (R_VRIKApplyLowerBodyWithPolePolicy (&live, palette, &targets,
+		R_VRIK_LOWERBODY_POLES_MIRRORED_PAIR));
+	assert (!memcmp (parallel_palette, palette, sizeof(parallel_palette)));
+	targets.position[R_VRIK_LOWER_LEFT_FOOT][2] = -0.0001f;
+	BuildTwoLegs (&live, joints, palette, &surface);
+	assert (R_VRIKApplyLowerBodyWithPolePolicy (&live, palette, &targets,
+		R_VRIK_LOWERBODY_POLES_MIRRORED_PAIR));
+	AssertFinitePalette (palette, 7);
+
+	/* Collapsed authored upper segments and foot-at-hip requests must use the
+	 * same deterministic finite fallback while retaining outward hemispheres. */
+	BuildTwoLegs (&live, joints, palette, &surface);
+	IdentityAt (palette + 2 * 12, 0, -1, 0);
+	IdentityAt (palette + 3 * 12, 0, -1, -1);
+	IdentityAt (palette + 5 * 12, 0, 1, 0);
+	IdentityAt (palette + 6 * 12, 0, 1, -1);
+	memset (&targets, 0, sizeof(targets));
+	targets.usable_mask = R_VRIK_LOWER_BIT (R_VRIK_LOWER_LEFT_FOOT) |
+		R_VRIK_LOWER_BIT (R_VRIK_LOWER_RIGHT_FOOT);
+	targets.confidence[R_VRIK_LOWER_LEFT_FOOT] = 1.0f;
+	targets.confidence[R_VRIK_LOWER_RIGHT_FOOT] = 1.0f;
+	targets.position[R_VRIK_LOWER_LEFT_FOOT][1] = -1.0f;
+	targets.position[R_VRIK_LOWER_RIGHT_FOOT][1] = 1.0f;
+	assert (R_VRIKApplyLowerBodyWithPolePolicy (&live, palette, &targets,
+		R_VRIK_LOWERBODY_POLES_MIRRORED_PAIR));
+	AssertFinitePalette (palette, 7);
+	AssertOutwardKnee (palette, 0);
+	AssertOutwardKnee (palette, 1);
+}
+
 static void TestPairedLegTargetsAndDegeneracy (void)
 {
 	md5liveinfo_t live;
@@ -453,6 +608,8 @@ int main (void)
 	TestMirroredPairedLegPoles ();
 	R_VRIKResetSkinCaches ();
 	TestMirroredPoleZeroLateralTie ();
+	R_VRIKResetSkinCaches ();
+	TestMirroredOneFootOutwardKnees ();
 	R_VRIKResetSkinCaches ();
 	TestPairedLegTargetsAndDegeneracy ();
 	TestCalibrationProjection ();
