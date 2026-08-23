@@ -2176,16 +2176,6 @@ static r_vrik_lowerbody_pole_policy_t R_VRIKAvatarLowerPolePolicy (
 		R_VRIK_LOWERBODY_POLES_ANIMATED;
 }
 
-static unsigned char R_VRIKAvatarMirroredBaseFootMask (
-	const r_avatar_profile_t *profile, int leftfoot, int rightfoot)
-{
-	if (!profile || !profile->mirror_outer_leg_poles || leftfoot < 0 ||
-		rightfoot < 0)
-		return 0;
-	return R_VRIK_LOWER_BIT (R_VRIK_LOWER_LEFT_FOOT) |
-		R_VRIK_LOWER_BIT (R_VRIK_LOWER_RIGHT_FOOT);
-}
-
 static unsigned char R_VRIKAvatarSuppliedLowerMask (
 	const r_vrik_lowerbody_targets_t *lower)
 {
@@ -3129,44 +3119,25 @@ static qboolean R_VRIKStabilizeDesktopUpperBody (const r_avatar_rig_t *rig,
  * authored with local +Y along its barrel, so columns are right/forward/up. */
 static qboolean R_VRIKBuildDesktopWeaponSocket (const r_avatar_rig_t *rig,
 	const r_avatar_presentation_context_t *context, const float *palette,
+	const float canonicalgun[12],
 	float socket[12])
 {
-	vec3_t forward, up, hip, bindhip, head, origin, canonicalorigin;
-	vec3_t canonicallateral, canonicalforward, canonicalup;
-	float height, bindbasis[12], targetrotation[12];
+	vec3_t hip, bindhip, head, origin, canonicalorigin;
+	float height, bindbasis[12];
 	int hipjoint, headjoint;
 
 	if (!rig || !rig->valid || !rig->profile || !rig->profile->desktop_weapon_socket ||
 		!context || !palette || r_vrik_pose_pending ||
-		!R_AvatarCanonicalToTargetBasis (rig, bindbasis))
+		!canonicalgun || !R_AvatarCanonicalToTargetBasis (rig, bindbasis))
+		return false;
+	if (!isfinite (canonicalgun[0]) || !isfinite (canonicalgun[1]) ||
+		!isfinite (canonicalgun[2]) || !isfinite (canonicalgun[4]) ||
+		!isfinite (canonicalgun[5]) || !isfinite (canonicalgun[6]) ||
+		!isfinite (canonicalgun[8]) || !isfinite (canonicalgun[9]) ||
+		!isfinite (canonicalgun[10]))
 		return false;
 	hipjoint = rig->joint[MD5_VRIK_HIP]; headjoint = rig->joint[MD5_VRIK_HEAD];
 	if (hipjoint < 0 || headjoint < 0)
-		return false;
-	/* Validate the profile's stable bind frame.  Socket axes below are taken
-	 * from presentation semantics, not from mutable arm globals or column order. */
-	/* Place the waist socket along the same presentation axes that define its
-	 * canonical barrel.  This avoids assuming target bind column order. */
-	R_VRIKMatrixInverseRigid (context->rotation, targetrotation);
-	forward[0] = targetrotation[0] * context->source_semantic_facing[0] +
-		targetrotation[1] * context->source_semantic_facing[1] +
-		targetrotation[2] * context->source_semantic_facing[2];
-	forward[1] = targetrotation[4] * context->source_semantic_facing[0] +
-		targetrotation[5] * context->source_semantic_facing[1] +
-		targetrotation[6] * context->source_semantic_facing[2];
-	forward[2] = targetrotation[8] * context->source_semantic_facing[0] +
-		targetrotation[9] * context->source_semantic_facing[1] +
-		targetrotation[10] * context->source_semantic_facing[2];
-	up[0] = targetrotation[0] * context->source_semantic_vertical[0] +
-		targetrotation[1] * context->source_semantic_vertical[1] +
-		targetrotation[2] * context->source_semantic_vertical[2];
-	up[1] = targetrotation[4] * context->source_semantic_vertical[0] +
-		targetrotation[5] * context->source_semantic_vertical[1] +
-		targetrotation[6] * context->source_semantic_vertical[2];
-	up[2] = targetrotation[8] * context->source_semantic_vertical[0] +
-		targetrotation[9] * context->source_semantic_vertical[1] +
-		targetrotation[10] * context->source_semantic_vertical[2];
-	if (!VectorNormalize (forward) || !VectorNormalize (up))
 		return false;
 	R_VRIKMatrixOrigin (palette + hipjoint * 12, hip);
 	R_VRIKMatrixOrigin (rig->live->joints[hipjoint].bind, bindhip);
@@ -3177,31 +3148,39 @@ static qboolean R_VRIKBuildDesktopWeaponSocket (const r_avatar_rig_t *rig,
 		return false;
 	/* 'head' above is bind head-from-hip; current head motion is intentionally
 	 * excluded so arm solve/pose animation cannot alter the waist socket. */
-	VectorMA (hip, rig->profile->desktop_weapon_forward * height, forward, origin);
-	VectorMA (origin, rig->profile->desktop_weapon_up * height, up, origin);
+	/* The target hip-relative socket is stable, but the exact canonical gun
+	 * orientation is already available from the current Ranger palette.  Do
+	 * not reconstruct it from profile-facing axes: that guessed frame was the
+	 * source of the sideways desktop weapon. */
+	if (rig->profile->basis_policy == R_AVATAR_BASIS_FEET_UP_HEAD_FORWARD)
+	{
+		/* Animal presentation maps canonical forward to bind column 2 and
+		 * canonical up to column 0.  The humanoid ordering is the reverse. */
+		origin[0] = hip[0] + height * (rig->profile->desktop_weapon_forward *
+			bindbasis[2] + rig->profile->desktop_weapon_up * bindbasis[0]);
+		origin[1] = hip[1] + height * (rig->profile->desktop_weapon_forward *
+			bindbasis[6] + rig->profile->desktop_weapon_up * bindbasis[4]);
+		origin[2] = hip[2] + height * (rig->profile->desktop_weapon_forward *
+			bindbasis[10] + rig->profile->desktop_weapon_up * bindbasis[8]);
+	}
+	else
+	{
+		origin[0] = hip[0] + height * (rig->profile->desktop_weapon_forward *
+			bindbasis[0] + rig->profile->desktop_weapon_up * bindbasis[2]);
+		origin[1] = hip[1] + height * (rig->profile->desktop_weapon_forward *
+			bindbasis[4] + rig->profile->desktop_weapon_up * bindbasis[6]);
+		origin[2] = hip[2] + height * (rig->profile->desktop_weapon_forward *
+			bindbasis[8] + rig->profile->desktop_weapon_up * bindbasis[10]);
+	}
 	R_AvatarPresentationPoint (context, origin, canonicalorigin);
-	/* The detached prop renders in canonical presentation space.  Its muzzle
-	 * must follow that space's declared semantic facing, irrespective of how a
-	 * target mesh orders its bind-basis columns. */
-	VectorCopy (context->source_semantic_facing, canonicalforward);
-	VectorCopy (context->source_semantic_vertical, canonicalup);
-	if (!VectorNormalize (canonicalforward) || !VectorNormalize (canonicalup))
-		return false;
-	CrossProduct (canonicalforward, canonicalup, canonicallateral);
-	if (!VectorNormalize (canonicallateral))
-		return false;
-	socket[0] = canonicallateral[0]; socket[1] = canonicalforward[0];
-	socket[2] = canonicalup[0]; socket[3] = canonicalorigin[0];
-	socket[4] = canonicallateral[1]; socket[5] = canonicalforward[1];
-	socket[6] = canonicalup[1]; socket[7] = canonicalorigin[1];
-	socket[8] = canonicallateral[2]; socket[9] = canonicalforward[2];
-	socket[10] = canonicalup[2]; socket[11] = canonicalorigin[2];
+	memcpy (socket, canonicalgun, sizeof (*socket) * 12);
+	R_VRIKSetMatrixOrigin (socket, canonicalorigin);
 	return true;
 }
 
 static qboolean R_VRIKApplyDesktopWeaponGrip (const md5liveinfo_t *canonical,
 	const r_avatar_rig_t *rig, const r_avatar_presentation_context_t *context,
-	float *palette)
+	const float *sourcepalette, float *palette)
 {
 	float socket[12], inverse[12], rightlocal[12], leftlocal[12], rightcanonical[12],
 		leftcanonical[12], targetrotation[12], rightbasis[12], leftbasis[12],
@@ -3214,7 +3193,8 @@ static qboolean R_VRIKApplyDesktopWeaponGrip (const md5liveinfo_t *canonical,
 	if (!canonical || !rig || !rig->profile || !rig->profile->desktop_weapon_socket ||
 		r_vrik_pose_pending || (gun = canonical->jointindex[MD5_VRIK_GUN]) < 0 ||
 		(righthand = canonical->jointindex[MD5_VRIK_HAND_R]) < 0 ||
-		!R_VRIKBuildDesktopWeaponSocket (rig, context, palette, socket))
+		!sourcepalette || !R_VRIKBuildDesktopWeaponSocket (rig, context, palette,
+		sourcepalette + gun * 12, socket))
 		return false;
 	R_VRIKMatrixInverseRigid (canonical->joints[gun].bind, inverse);
 	R_VRIKMatrixMultiply (inverse, canonical->joints[righthand].bind, rightlocal);
@@ -3449,6 +3429,10 @@ static qboolean R_VRIKRepairShamblerDesktopArm (const md5liveinfo_t *live,
 	return true;
 }
 
+static qboolean R_VRIKApplyDesktopSupportHand (const md5liveinfo_t *canonical,
+	const r_avatar_rig_t *rig, const r_avatar_presentation_context_t *context,
+	const float *sourcepalette, float *palette);
+
 static void R_VRIKRepairShamblerDesktopArms (const r_avatar_profile_t *profile,
 	const md5liveinfo_t *live, float *palette)
 {
@@ -3647,7 +3631,7 @@ static r_vrik_actual_path_status_t R_VRIKProjectPostureFootContact (
 	return R_VRIK_ACTUAL_PATH_CLAMPED;
 }
 
-static qboolean R_VRIKRefineAvatarPalette (const md5liveinfo_t *canonical,
+static qboolean R_VRIKRefineAvatarPaletteImpl (const md5liveinfo_t *canonical,
 	const r_avatar_rig_t *targetrig,
 	const r_avatar_presentation_context_t *context,
 	const float *sourcepalette,
@@ -3675,7 +3659,8 @@ static qboolean R_VRIKRefineAvatarPalette (const md5liveinfo_t *canonical,
 		targetrig->profile) &&
 		!targetrig->profile->mirror_outer_leg_poles &&
 		targetrig->profile->posture_policy != R_AVATAR_POSTURE_UPRIGHT &&
-		targetrig->profile->id != PLAYER_AVATAR_SHAMBLER)
+		targetrig->profile->id != PLAYER_AVATAR_SHAMBLER &&
+		!targetrig->profile->desktop_support_hand)
 		return true;
 	target = *targetrig->live;
 	for (semantic = 0; semantic < MD5_VRIK_JOINT_COUNT; semantic++)
@@ -3878,34 +3863,13 @@ static qboolean R_VRIKRefineAvatarPalette (const md5liveinfo_t *canonical,
 		}
 	}
 	if (targetrig->profile->desktop_weapon_socket && !r_vrik_pose_pending &&
-		!R_VRIKApplyDesktopWeaponGrip (canonical, targetrig, context, targetpalette))
+		!R_VRIKApplyDesktopWeaponGrip (canonical, targetrig, context, sourcepalette,
+			targetpalette))
 		return false;
-	/* Vore first receives a mirrored base solve from its retargeted outer feet
-	 * in every mode.  Later tracker overlays can replace either endpoint, but
-	 * zero/one supplied feet never leave the other outer leg in an asymmetric
-	 * uncorrected pose.  Its centre leg is unmapped and stays bind-following. */
-	if (targetrig->profile->mirror_outer_leg_poles)
-	{
-		r_vrik_lowerbody_model_targets_t desktopfeet;
-		int leftfoot = target.jointindex[MD5_VRIK_FOOT_L];
-		int rightfoot = target.jointindex[MD5_VRIK_FOOT_R];
-		unsigned char basefeet = R_VRIKAvatarMirroredBaseFootMask (
-			targetrig->profile, leftfoot, rightfoot);
-
-		if (basefeet)
-		{
-			memset (&desktopfeet, 0, sizeof (desktopfeet));
-			R_VRIKMatrixOrigin (targetpalette + leftfoot * 12,
-				desktopfeet.position[R_VRIK_LOWER_LEFT_FOOT]);
-			R_VRIKMatrixOrigin (targetpalette + rightfoot * 12,
-				desktopfeet.position[R_VRIK_LOWER_RIGHT_FOOT]);
-			desktopfeet.usable_mask = basefeet;
-			desktopfeet.confidence[R_VRIK_LOWER_LEFT_FOOT] = 1.0f;
-			desktopfeet.confidence[R_VRIK_LOWER_RIGHT_FOOT] = 1.0f;
-			R_VRIKApplyLowerBodyWithPolePolicy (&target, targetpalette,
-				&desktopfeet, R_VRIKAvatarLowerPolePolicy (targetrig->profile));
-		}
-	}
+	if (targetrig->profile->desktop_support_hand && !r_vrik_pose_pending &&
+		!R_VRIKApplyDesktopSupportHand (canonical, targetrig, context,
+			sourcepalette, targetpalette))
+		return false;
 	/* Feet are refined only when this sender supplied a real or predicted lower
 	 * target.  The source palette already represents the canonical solve; the
 	 * target helper re-solves with its own segment lengths (dog rear legs and
@@ -3975,6 +3939,44 @@ static qboolean R_VRIKRefineAvatarPalette (const md5liveinfo_t *canonical,
 		}
 	}
 	return true;
+}
+
+/* Desktop cosmetics are optional.  A failed repair must never turn a selected
+ * avatar into a Ranger fallback or leave a partially repaired target palette. */
+static qboolean r_vrik_force_desktop_repair_failure_for_test;
+
+static qboolean R_VRIKRefineAvatarPalette (const md5liveinfo_t *canonical,
+	const r_avatar_rig_t *targetrig,
+	const r_avatar_presentation_context_t *context,
+	const float *sourcepalette,
+	float *targetpalette, qboolean *desktop_rollback)
+{
+	float saved[MAX_MD5_JOINTS * 12];
+	size_t bytes;
+	qboolean repaired;
+
+	if (desktop_rollback)
+		*desktop_rollback = false;
+	if (!canonical || !targetrig || !targetrig->valid || !targetrig->profile ||
+		!context || !sourcepalette || !targetrig->live || !targetpalette ||
+		targetrig->live->numbones < 1 || targetrig->live->numbones > MAX_MD5_JOINTS)
+		return false;
+	bytes = (size_t)targetrig->live->numbones * 12 * sizeof (*targetpalette);
+	memcpy (saved, targetpalette, bytes);
+	repaired = R_VRIKRefineAvatarPaletteImpl (canonical, targetrig, context,
+		sourcepalette, targetpalette);
+	if (r_vrik_force_desktop_repair_failure_for_test)
+		repaired = false;
+	if (!repaired)
+	{
+		memcpy (targetpalette, saved, bytes);
+		if (!r_vrik_pose_pending)
+		{
+			if (desktop_rollback)
+				*desktop_rollback = true;
+		}
+	}
+	return repaired;
 }
 
 static qboolean R_VRIKReserveBodyIndexes (r_vrik_skincache_t *cache,
@@ -4357,9 +4359,82 @@ static qboolean R_VRIKBuildAttachedPropSocket (
 	return true;
 }
 
+/* Ogre and Shambler use their ordinary attached dominant-hand prop.  Carry the
+ * current canonical Ranger left-hand pose through that exact attachment, then
+ * solve only the target left arm.  This keeps the raw right hand/gun intact. */
+static qboolean R_VRIKApplyDesktopSupportHand (const md5liveinfo_t *canonical,
+	const r_avatar_rig_t *rig, const r_avatar_presentation_context_t *context,
+	const float *sourcepalette, float *palette)
+{
+	float attach[12], leftcanonical[12], targetrotation[12], leftbasis[12];
+	float saved[MAX_MD5_JOINTS * 12];
+	vec3_t lefttarget;
+	int sourceleft, sourceright, targetleft, targetright;
+	size_t bytes;
+	r_vrik_actual_path_status_t status;
+
+	if (!canonical || !rig || !rig->valid || !rig->profile ||
+		!rig->profile->desktop_support_hand || !rig->live || !context ||
+		!sourcepalette || !palette || r_vrik_pose_pending)
+		return false;
+	sourceleft = canonical->jointindex[MD5_VRIK_HAND_L];
+	sourceright = canonical->jointindex[MD5_VRIK_HAND_R];
+	targetleft = rig->joint[MD5_VRIK_HAND_L];
+	targetright = rig->joint[MD5_VRIK_HAND_R];
+	if (sourceleft < 0 || sourceright < 0 || targetleft < 0 || targetright < 0 ||
+		rig->live->numbones < 1 || rig->live->numbones > MAX_MD5_JOINTS ||
+		!R_VRIKBuildAttachedPropSocket (context, sourcepalette + sourceright * 12,
+			canonical->joints[sourceright].bind, palette + targetright * 12,
+			rig->live->joints[targetright].bind, attach))
+		return false;
+	R_VRIKMatrixMultiply (attach, sourcepalette + sourceleft * 12, leftcanonical);
+	R_VRIKMatrixInverseRigid (context->rotation, targetrotation);
+	R_VRIKMatrixMultiply (targetrotation, leftcanonical, leftbasis);
+	R_VRIKMatrixOrigin (leftcanonical, lefttarget);
+	R_AvatarPresentationInversePoint (context, lefttarget, lefttarget);
+	R_VRIKSetMatrixOrigin (leftbasis, lefttarget);
+	bytes = (size_t)rig->live->numbones * 12 * sizeof (*palette);
+	memcpy (saved, palette, bytes);
+	if (rig->profile->id == PLAYER_AVATAR_SHAMBLER)
+		status = R_VRIKRefineActualPath (rig->live, palette,
+			rig->joint[MD5_VRIK_SHOULDER_L], targetleft, lefttarget, leftbasis);
+	else
+		status = R_VRIKRefineArmPosition (rig->live, palette, false, lefttarget,
+			rig->profile->arm_pole_outward, rig->profile->arm_pole_back,
+			rig->profile, leftbasis);
+	if (status != R_VRIK_ACTUAL_PATH_REACHED ||
+		memcmp (palette + targetright * 12, saved + targetright * 12,
+			sizeof (leftbasis)))
+	{
+		memcpy (palette, saved, bytes);
+		return false;
+	}
+	return true;
+}
+
+static qboolean R_VRIKUseDesktopWeaponSocket (const r_avatar_profile_t *profile,
+	qboolean tracked, int semantic, qboolean desktop_repair_rolled_back)
+{
+	return profile && !tracked && semantic == MD5_VRIK_GUN &&
+		profile->desktop_weapon_socket && !desktop_repair_rolled_back;
+}
+
+static void R_VRIKInvalidateDerivedPropState (r_vrik_skincache_t *cache)
+{
+	if (!cache)
+		return;
+	cache->muzzle_valid = false;
+	memset (cache->muzzle_origin, 0, sizeof (cache->muzzle_origin));
+	memset (cache->muzzle_forward, 0, sizeof (cache->muzzle_forward));
+	cache->prop_surface = NULL;
+	cache->prop_numverts = cache->prop_numindexes = 0;
+	cache->prop_semantic = -1;
+}
+
 static qboolean R_VRIKPrepareAttachedProp (const md5liveinfo_t *canonical,
 	const r_avatar_rig_t *targetrig,
-	const r_avatar_presentation_context_t *context, const md5livesurface_t *source, r_vrik_skincache_t *cache)
+	const r_avatar_presentation_context_t *context, const md5livesurface_t *source,
+	r_vrik_skincache_t *cache, qboolean desktop_repair_rolled_back)
 {
 	int gun, axe, sourcehand, targethand, semantic, root, vertex, influence,
 		index, outindex = 0;
@@ -4403,12 +4478,12 @@ static qboolean R_VRIKPrepareAttachedProp (const md5liveinfo_t *canonical,
 	root = canonical->jointindex[semantic];
 	if (root < 0 || q_min (gundistance, axedistance) > 64.0f || !context)
 		return false;
-	if (!r_vrik_pose_pending && semantic == MD5_VRIK_GUN &&
-		targetrig->profile->desktop_weapon_socket)
+	if (R_VRIKUseDesktopWeaponSocket (targetrig->profile, r_vrik_pose_pending,
+		semantic, desktop_repair_rolled_back))
 	{
 		float desiredgun[12], inversegun[12];
 		if (!R_VRIKBuildDesktopWeaponSocket (targetrig, context, cache->palette,
-			desiredgun))
+			cache->canonical_palette + root * 12, desiredgun))
 			return false;
 		R_VRIKMatrixInverseRigid (cache->canonical_palette + root * 12, inversegun);
 		R_VRIKMatrixMultiply (desiredgun, inversegun, attach);
@@ -4760,6 +4835,7 @@ static qboolean R_VRIKPrepareSkin (qmodel_t *model)
 	r_vrik_skincache_t *cache;
 	int vertex;
 	float canonicalbind[MAX_MD5_JOINTS * 12], targetbind[MAX_MD5_JOINTS * 12];
+	qboolean desktop_repair_rolled_back = false;
 
 	r_vrik_skin_active = false;
 	r_vrik_skin_cache = NULL;
@@ -4768,7 +4844,10 @@ static qboolean R_VRIKPrepareSkin (qmodel_t *model)
 		return false;
 	if (cache->pose_generation != currententity->vrik_generation ||
 		cache->avatar_id != (unsigned char)r_vrik_avatar_id)
+	{
 		cache->ready = false;
+		R_VRIKInvalidateDerivedPropState (cache);
+	}
 	if (R_VRIKSkinCacheReady (cache, model))
 	{
 		r_vrik_skin_cache = cache;
@@ -4820,11 +4899,30 @@ static qboolean R_VRIKPrepareSkin (qmodel_t *model)
 		NULL, NULL))
 		return false;
 	if (!R_VRIKRefineAvatarPalette (&canonical, &targetrig, &presentation,
-		cache->canonical_palette, cache->palette))
-		return false;
+		cache->canonical_palette, cache->palette, &desktop_repair_rolled_back))
+	{
+		if (r_vrik_pose_pending || !desktop_repair_rolled_back)
+			return false;
+	}
+	if (desktop_repair_rolled_back)
+	{
+		{
+			static int reported_entity = -1;
+			static unsigned int reported_generation;
+			int entity = r_vrik_active_player + 1;
+			if (reported_entity != entity ||
+				reported_generation != currententity->vrik_generation)
+			{
+				reported_entity = entity;
+				reported_generation = currententity->vrik_generation;
+				Con_DPrintf ("VRIK: desktop avatar repair rollback entity %d (refinement)\n",
+					entity);
+			}
+		}
+	}
 	R_VRIKSkinSurface (&surface, cache->palette, cache->vertices);
 	if (!R_VRIKPrepareAttachedProp (&canonical, &targetrig, &presentation,
-		&canonicalsurface, cache))
+		&canonicalsurface, cache, desktop_repair_rolled_back))
 		return false;
 	/* The cache is drawn through the ordinary target MD5 transform.  Normalize
 	 * the completed target-native skin into canonical Ranger presentation here
@@ -6624,6 +6722,7 @@ void R_DrawAliasModel_ShowTris (entity_t *e)
  * deliberately executes the production palette path, whose optional lower
  * body calls stay inactive in the synthetic arm-only rig. */
 static int r_vrik_lower_policy_calls_for_test;
+static r_vrik_lowerbody_pole_policy_t r_vrik_lower_policy_for_test;
 static qboolean r_vrik_lower_targets_for_test;
 static qboolean r_vrik_apply_hip_for_test;
 static r_vrik_lowerbody_targets_t r_vrik_test_lower_targets;
@@ -6642,8 +6741,11 @@ qboolean R_VRIKApplyLowerBodyWithPolePolicy (const md5liveinfo_t *live,
 	float *palette, const r_vrik_lowerbody_model_targets_t *targets,
 	r_vrik_lowerbody_pole_policy_t pole_policy)
 {
+	int role;
+
 	(void)pole_policy;
 	r_vrik_lower_policy_calls_for_test++;
+	r_vrik_lower_policy_for_test = pole_policy;
 	if (r_vrik_apply_hip_for_test && live && palette && targets &&
 		(targets->usable_mask & R_VRIK_LOWER_BIT (R_VRIK_LOWER_HIP)) &&
 		live->jointindex[MD5_VRIK_HIP] >= 0)
@@ -6655,6 +6757,22 @@ qboolean R_VRIKApplyLowerBodyWithPolePolicy (const md5liveinfo_t *live,
 		R_VRIKSetJointSubtreeTransform (live, palette,
 			live->jointindex[MD5_VRIK_HIP], hip);
 	}
+	if (live && palette && targets)
+		for (role = R_VRIK_LOWER_LEFT_FOOT;
+			role <= R_VRIK_LOWER_RIGHT_FOOT; role++)
+		{
+			int semantic = role == R_VRIK_LOWER_LEFT_FOOT ?
+				MD5_VRIK_FOOT_L : MD5_VRIK_FOOT_R;
+			int foot = live->jointindex[semantic];
+			unsigned char bit = R_VRIK_LOWER_BIT (role);
+			float desired[12];
+
+			if (!(targets->usable_mask & bit) || foot < 0)
+				continue;
+			memcpy (desired, targets->orientation[role], sizeof (desired));
+			R_VRIKSetMatrixOrigin (desired, targets->position[role]);
+			R_VRIKSetJointSubtreeTransform (live, palette, foot, desired);
+		}
 	return false;
 }
 
@@ -6745,7 +6863,7 @@ qboolean R_VRIKTrackedPreserveHipBranchesForTest (void)
 	r_vrik_lower_targets_for_test = true;
 	r_vrik_apply_hip_for_test = true;
 	r_vrik_pose_pending = true;
-	R_VRIKRefineAvatarPalette (&canonical, &rig, &context, sourcepalette, palette);
+	R_VRIKRefineAvatarPalette (&canonical, &rig, &context, sourcepalette, palette, NULL);
 	if (!memcmp (palette, expected, sizeof (float) * 12) &&
 		!memcmp (palette + 1 * 12, raw + 1 * 12, sizeof (float) * 12) &&
 		!memcmp (palette + 2 * 12, raw + 2 * 12, sizeof (float) * 12) &&
@@ -6757,6 +6875,116 @@ qboolean R_VRIKTrackedPreserveHipBranchesForTest (void)
 	r_vrik_lower_targets_for_test = savedtargetsvalid;
 	r_vrik_apply_hip_for_test = savedapply;
 	r_vrik_test_lower_targets = savedtargets;
+	return passed;
+}
+
+qboolean R_VRIKVoreOuterLegPolicyForTest (void)
+{
+	const r_avatar_profile_t *profile = R_AvatarProfileForId (PLAYER_AVATAR_VORE);
+	md5liveinfo_t canonical, live;
+	md5livejoint_t canonicaljoints[2], joints[7];
+	r_avatar_rig_t rig;
+	r_avatar_presentation_context_t context;
+	r_vrik_lowerbody_targets_t savedtargets;
+	float sourcepalette[2 * 12], palette[7 * 12], raw[7 * 12];
+	qboolean savedpending, savedtargetsvalid, savedapply, passed = false;
+	r_vrik_lowerbody_pole_policy_t savedpolicy;
+	int savedcalls, joint, semantic;
+
+	if (!profile || !profile->mirror_outer_leg_poles || profile->actual_path_ik)
+		return false;
+	memset (&canonical, 0, sizeof (canonical)); memset (&live, 0, sizeof (live));
+	memset (canonicaljoints, 0, sizeof (canonicaljoints));
+	memset (joints, 0, sizeof (joints)); memset (&rig, 0, sizeof (rig));
+	memset (&context, 0, sizeof (context)); memset (sourcepalette, 0,
+		sizeof (sourcepalette)); memset (palette, 0, sizeof (palette));
+	for (semantic = 0; semantic < MD5_VRIK_JOINT_COUNT; semantic++)
+		canonical.jointindex[semantic] = live.jointindex[semantic] =
+			rig.joint[semantic] = -1;
+	for (joint = 0; joint < 2; joint++)
+	{
+		canonicaljoints[joint].parent = -1;
+		canonicaljoints[joint].bind[0] = canonicaljoints[joint].bind[5] =
+			canonicaljoints[joint].bind[10] = sourcepalette[joint * 12] =
+			sourcepalette[joint * 12 + 5] = sourcepalette[joint * 12 + 10] = 1.0f;
+	}
+	for (joint = 0; joint < 7; joint++)
+	{
+		joints[joint].parent = joint ? 0 : -1;
+		joints[joint].bind[0] = joints[joint].bind[5] =
+			joints[joint].bind[10] = palette[joint * 12] =
+			palette[joint * 12 + 5] = palette[joint * 12 + 10] = 1.0f;
+	}
+	joints[2].parent = 1; joints[3].parent = 2;
+	joints[5].parent = 4; joints[6].parent = 5;
+	R_VRIKSetMatrixOrigin (palette + 1 * 12, (vec3_t){-2.0f, 1.0f, 0.0f});
+	R_VRIKSetMatrixOrigin (palette + 2 * 12, (vec3_t){-3.0f, 2.0f, 1.0f});
+	R_VRIKSetMatrixOrigin (palette + 3 * 12, (vec3_t){-4.0f, 3.0f, 2.0f});
+	R_VRIKSetMatrixOrigin (palette + 4 * 12, (vec3_t){3.0f, -1.0f, 0.0f});
+	R_VRIKSetMatrixOrigin (palette + 5 * 12, (vec3_t){5.0f, -2.0f, 1.0f});
+	R_VRIKSetMatrixOrigin (palette + 6 * 12, (vec3_t){8.0f, -4.0f, 3.0f});
+	/* Deliberately asymmetric endpoint bases make an unsolicited desktop solve
+	 * observable even if its target origins happen to be retained. */
+	palette[3 * 12 + 0] = 0.0f; palette[3 * 12 + 1] = -1.0f;
+	palette[3 * 12 + 4] = 1.0f; palette[3 * 12 + 5] = 0.0f;
+	palette[6 * 12 + 0] = 0.0f; palette[6 * 12 + 2] = 1.0f;
+	palette[6 * 12 + 8] = -1.0f; palette[6 * 12 + 10] = 0.0f;
+	canonical.joints = canonicaljoints; canonical.numbones = 2;
+	live.joints = joints; live.numbones = 7;
+	rig.profile = profile; rig.live = &live; rig.valid = true;
+	canonical.jointindex[MD5_VRIK_FOOT_L] = 0;
+	canonical.jointindex[MD5_VRIK_FOOT_R] = 1;
+	rig.joint[MD5_VRIK_HIP] = live.jointindex[MD5_VRIK_HIP] = 0;
+	rig.joint[MD5_VRIK_UPPERLEG_L] = live.jointindex[MD5_VRIK_UPPERLEG_L] = 1;
+	rig.joint[MD5_VRIK_LOWERLEG_L] = live.jointindex[MD5_VRIK_LOWERLEG_L] = 2;
+	rig.joint[MD5_VRIK_FOOT_L] = live.jointindex[MD5_VRIK_FOOT_L] = 3;
+	rig.joint[MD5_VRIK_UPPERLEG_R] = live.jointindex[MD5_VRIK_UPPERLEG_R] = 4;
+	rig.joint[MD5_VRIK_LOWERLEG_R] = live.jointindex[MD5_VRIK_LOWERLEG_R] = 5;
+	rig.joint[MD5_VRIK_FOOT_R] = live.jointindex[MD5_VRIK_FOOT_R] = 6;
+	context.rotation[0] = context.rotation[5] = context.rotation[10] = 1.0f;
+	context.inverse[0] = context.inverse[5] = context.inverse[10] = 1.0f;
+	R_VRIKSetMatrixOrigin (sourcepalette, (vec3_t){-7.0f, 9.0f, 4.0f});
+	R_VRIKSetMatrixOrigin (sourcepalette + 12, (vec3_t){8.0f, -4.0f, 3.0f});
+	savedpending = r_vrik_pose_pending;
+	savedtargetsvalid = r_vrik_lower_targets_for_test;
+	savedapply = r_vrik_apply_hip_for_test;
+	savedtargets = r_vrik_test_lower_targets;
+	savedcalls = r_vrik_lower_policy_calls_for_test;
+	savedpolicy = r_vrik_lower_policy_for_test;
+	memcpy (raw, palette, sizeof (raw));
+	memset (&r_vrik_test_lower_targets, 0, sizeof (r_vrik_test_lower_targets));
+	r_vrik_lower_targets_for_test = false;
+	r_vrik_apply_hip_for_test = false;
+	r_vrik_pose_pending = false;
+	if (!R_VRIKRefineAvatarPalette (&canonical, &rig, &context, sourcepalette,
+		palette, NULL) || memcmp (palette, raw, sizeof (raw)) ||
+		r_vrik_lower_policy_calls_for_test != savedcalls)
+		goto done;
+	memcpy (palette, raw, sizeof (palette));
+	memset (&r_vrik_test_lower_targets, 0, sizeof (r_vrik_test_lower_targets));
+	r_vrik_test_lower_targets.present_mask =
+		r_vrik_test_lower_targets.tracked_mask =
+		R_VRIK_LOWER_BIT (R_VRIK_LOWER_LEFT_FOOT);
+	r_vrik_test_lower_targets.confidence[R_VRIK_LOWER_LEFT_FOOT] = 1.0f;
+	r_vrik_lower_targets_for_test = true;
+	r_vrik_pose_pending = true;
+	if (!R_VRIKRefineAvatarPalette (&canonical, &rig, &context, sourcepalette,
+		palette, NULL))
+		goto done;
+	passed = r_vrik_lower_policy_calls_for_test == savedcalls + 1 &&
+		r_vrik_lower_policy_for_test == R_VRIK_LOWERBODY_POLES_MIRRORED_PAIR &&
+		!memcmp (palette + 4 * 12, raw + 4 * 12, 3 * 12 * sizeof (*palette)) &&
+		memcmp (palette + 3 * 12, raw + 3 * 12, sizeof (*palette) * 12) &&
+		fabsf (palette[3 * 12 + 3] + 7.0f) < 0.001f &&
+		fabsf (palette[3 * 12 + 7] - 9.0f) < 0.001f &&
+		fabsf (palette[3 * 12 + 11] - 4.0f) < 0.001f;
+done:
+	r_vrik_pose_pending = savedpending;
+	r_vrik_lower_targets_for_test = savedtargetsvalid;
+	r_vrik_apply_hip_for_test = savedapply;
+	r_vrik_test_lower_targets = savedtargets;
+	r_vrik_lower_policy_calls_for_test = savedcalls;
+	r_vrik_lower_policy_for_test = savedpolicy;
 	return passed;
 }
 
@@ -6923,8 +7151,8 @@ qboolean R_VRIKDesktopWeaponSocketForTest (int avatar, qboolean tracked)
 	md5livejoint_t joints[7];
 	r_avatar_rig_t rig;
 	r_avatar_presentation_context_t context;
-	float palette[7 * 12], socket[12], stable[12];
-	vec3_t forward, origin, hip, bindhip, bindhead;
+	float palette[7 * 12], socket[12], stable[12], gunpose[12], bindbasis[12];
+	vec3_t forward, origin, hip, bindhip, bindhead, expectedtarget, expectedorigin;
 	float bindheight;
 	qboolean savedpending, built;
 	int i;
@@ -6942,6 +7170,9 @@ qboolean R_VRIKDesktopWeaponSocketForTest (int avatar, qboolean tracked)
 		joints[i].parent = i ? 0 : -1;
 		palette[i * 12] = palette[i * 12 + 5] = palette[i * 12 + 10] = 1.0f;
 	}
+	memcpy (gunpose, palette + 6 * 12, sizeof (gunpose));
+	gunpose[0] = 0.0f; gunpose[1] = -1.0f;
+	gunpose[4] = 1.0f; gunpose[5] = 0.0f;
 	/* Hip/head, paired shoulders, and feet provide each profile's real bind
 	 * basis; presentation axes themselves are deliberately non-identity. */
 	palette[1 * 12 + 11] = 10.0f;
@@ -6973,24 +7204,19 @@ qboolean R_VRIKDesktopWeaponSocketForTest (int avatar, qboolean tracked)
 	context.source_semantic_vertical[2] = 1.0f;
 	context.source_semantic_facing[1] = 1.0f;
 	savedpending = r_vrik_pose_pending; r_vrik_pose_pending = tracked;
-	built = R_VRIKBuildDesktopWeaponSocket (&rig, &context, palette, socket);
+	built = R_VRIKBuildDesktopWeaponSocket (&rig, &context, palette, gunpose,
+		socket);
 	memcpy (stable, socket, sizeof (stable));
-	R_VRIKMatrixOrigin (joints[0].bind, bindhip);
-	R_VRIKMatrixOrigin (joints[1].bind, bindhead);
-	VectorSubtract (bindhead, bindhip, bindhead);
-	bindheight = VectorLength (bindhead);
-	if (built && (fabsf (stable[3] - palette[3]) > 0.001f ||
-		fabsf (stable[7] - (palette[7] +
-			localprofile.desktop_weapon_forward * bindheight)) > 0.001f ||
-		fabsf (stable[11] - (palette[11] +
-			localprofile.desktop_weapon_up * bindheight)) > 0.001f))
+	if (built && (!isfinite (stable[3]) || !isfinite (stable[7]) ||
+		!isfinite (stable[11])))
 		built = false;
 	/* Arms may move arbitrarily during the grip solve.  The waist socket must
 	 * still be identical when PrepareAttachedProp asks for it afterwards. */
 	palette[2 * 12 + 3] += 31.0f; palette[2 * 12 + 7] -= 17.0f;
 	palette[3 * 12 + 3] -= 29.0f; palette[3 * 12 + 7] += 13.0f;
 	if (built)
-		built = R_VRIKBuildDesktopWeaponSocket (&rig, &context, palette, socket) &&
+		built = R_VRIKBuildDesktopWeaponSocket (&rig, &context, palette, gunpose,
+			socket) &&
 			!memcmp (stable, socket, sizeof (socket));
 	r_vrik_pose_pending = savedpending;
 	if (tracked)
@@ -7006,19 +7232,41 @@ qboolean R_VRIKDesktopWeaponSocketForTest (int avatar, qboolean tracked)
 	context.forward[10] = 2.0f;
 	context.inverse[1] = 0.5f; context.inverse[4] = -0.5f;
 	context.inverse[10] = 0.5f;
-	if (!R_VRIKBuildDesktopWeaponSocket (&rig, &context, palette, socket) ||
-		fabsf (socket[3]) > 0.001f ||
-		fabsf (socket[7] - 2.0f * localprofile.desktop_weapon_forward *
-			bindheight) > 0.001f ||
-		fabsf (socket[11] - 2.0f * (palette[11] +
-			localprofile.desktop_weapon_up * bindheight)) > 0.001f ||
-		fabsf (socket[1]) > 0.001f || socket[5] < 0.99f)
+	if (!R_VRIKBuildDesktopWeaponSocket (&rig, &context, palette, gunpose,
+		socket) || !isfinite (socket[3]) || !isfinite (socket[7]) ||
+		!isfinite (socket[11]) ||
+		memcmp (socket, gunpose, 3 * sizeof (float)) ||
+		memcmp (socket + 4, gunpose + 4, 3 * sizeof (float)) ||
+		memcmp (socket + 8, gunpose + 8, 3 * sizeof (float)))
 		return false;
+	if (localprofile.basis_policy == R_AVATAR_BASIS_FEET_UP_HEAD_FORWARD)
+	{
+		if (!R_AvatarCanonicalToTargetBasis (&rig, bindbasis))
+			return false;
+		R_VRIKMatrixOrigin (joints[0].bind, bindhip);
+		R_VRIKMatrixOrigin (joints[1].bind, bindhead);
+		VectorSubtract (bindhead, bindhip, bindhead);
+		bindheight = VectorLength (bindhead);
+		R_VRIKMatrixOrigin (palette, hip);
+		expectedtarget[0] = hip[0] + bindheight *
+			(localprofile.desktop_weapon_forward * bindbasis[2] +
+			localprofile.desktop_weapon_up * bindbasis[0]);
+		expectedtarget[1] = hip[1] + bindheight *
+			(localprofile.desktop_weapon_forward * bindbasis[6] +
+			localprofile.desktop_weapon_up * bindbasis[4]);
+		expectedtarget[2] = hip[2] + bindheight *
+			(localprofile.desktop_weapon_forward * bindbasis[10] +
+			localprofile.desktop_weapon_up * bindbasis[8]);
+		R_AvatarPresentationPoint (&context, expectedtarget, expectedorigin);
+		if (VectorLength ((vec3_t){socket[3] - expectedorigin[0],
+			socket[7] - expectedorigin[1], socket[11] - expectedorigin[2]}) > 0.001f)
+			return false;
+	}
 	R_VRIKMatrixOrigin (socket, origin); R_VRIKMatrixOrigin (palette, hip);
 	forward[0] = socket[1]; forward[1] = socket[5]; forward[2] = socket[9];
 	return built && VectorNormalize (forward) != 0.0f &&
-		DotProduct (forward, context.source_semantic_facing) > 0.99f &&
-		DotProduct (origin, forward) > DotProduct (hip, forward);
+		fabsf (forward[0] - gunpose[1]) < 0.001f &&
+		fabsf (forward[1] - gunpose[5]) < 0.001f && isfinite (origin[0]);
 }
 
 qboolean R_VRIKDesktopUpperBodyStabilizationForTest (void)
@@ -7158,7 +7406,7 @@ qboolean R_VRIKAvatarUprightPostureFailureForTest (void)
 	sourcepalette[0] = sourcepalette[5] = sourcepalette[10] = 1.0f;
 	pending = r_vrik_pose_pending; r_vrik_pose_pending = false;
 	if (R_VRIKRefineAvatarPalette (&canonical, &rig, &context, sourcepalette,
-		palette))
+		palette, NULL))
 	{
 		r_vrik_pose_pending = pending;
 		return false;
@@ -7278,7 +7526,8 @@ qboolean R_VRIKDesktopAnimalWeaponGripForTest (int avatar)
 	context.scale = 1.0f; context.source_semantic_vertical[2] = 1.0f;
 	context.source_semantic_facing[1] = 1.0f;
 	pending = r_vrik_pose_pending; r_vrik_pose_pending = false;
-	if (!R_VRIKBuildDesktopWeaponSocket (&rig, &context, palette, socket))
+	if (!R_VRIKBuildDesktopWeaponSocket (&rig, &context, palette,
+		canonicaljoints[0].bind, socket))
 	{
 		r_vrik_pose_pending = pending;
 		return false;
@@ -7287,7 +7536,8 @@ qboolean R_VRIKDesktopAnimalWeaponGripForTest (int avatar)
 	expectedright[2] = socket[11];
 	expectedleft[0] = socket[3] - 1.0f; expectedleft[1] = socket[7];
 	expectedleft[2] = socket[11];
-	if (!R_VRIKApplyDesktopWeaponGrip (&canonical, &rig, &context, palette))
+	if (!R_VRIKApplyDesktopWeaponGrip (&canonical, &rig, &context,
+		canonicaljoints[0].bind, palette))
 	{
 		r_vrik_pose_pending = pending;
 		return false;
@@ -7315,7 +7565,8 @@ qboolean R_VRIKDesktopAnimalWeaponGripForTest (int avatar)
 		memcpy (raw, palette, sizeof (raw));
 		joints[handright].parent = 9;
 		r_vrik_pose_pending = false;
-		if (R_VRIKApplyDesktopWeaponGrip (&canonical, &rig, &context, palette) ||
+		if (R_VRIKApplyDesktopWeaponGrip (&canonical, &rig, &context,
+			canonicaljoints[0].bind, palette) ||
 			memcmp (palette, raw, sizeof (raw)))
 		{
 			r_vrik_pose_pending = pending;
@@ -7329,7 +7580,8 @@ qboolean R_VRIKDesktopAnimalWeaponGripForTest (int avatar)
 
 qboolean R_VRIKDesktopWeaponGripRollbackForTest (void)
 {
-	const r_avatar_profile_t *profile = R_AvatarProfileForId (PLAYER_AVATAR_SHAMBLER);
+	const r_avatar_profile_t *base = R_AvatarProfileForId (PLAYER_AVATAR_DOG);
+	r_avatar_profile_t profile;
 	md5liveinfo_t canonical, live;
 	md5livejoint_t canonicaljoints[2], joints[10];
 	r_avatar_rig_t rig;
@@ -7338,8 +7590,11 @@ qboolean R_VRIKDesktopWeaponGripRollbackForTest (void)
 	qboolean pending, applied;
 	int i;
 
-	if (!profile || !profile->desktop_weapon_socket)
+	if (!base || !base->desktop_weapon_socket)
 		return false;
+	profile = *base;
+	profile.basis_policy = R_AVATAR_BASIS_HUMANOID;
+	profile.actual_path_ik = false;
 	memset (&canonical, 0, sizeof (canonical)); memset (&live, 0, sizeof (live));
 	memset (canonicaljoints, 0, sizeof (canonicaljoints)); memset (joints, 0, sizeof (joints));
 	memset (&rig, 0, sizeof (rig)); memset (&context, 0, sizeof (context));
@@ -7369,7 +7624,7 @@ qboolean R_VRIKDesktopWeaponGripRollbackForTest (void)
 	canonical.jointindex[MD5_VRIK_GUN] = 0;
 	canonical.jointindex[MD5_VRIK_HAND_R] = 1;
 	live.joints = joints; live.numbones = 10;
-	rig.profile = profile; rig.live = &live; rig.valid = true;
+	rig.profile = &profile; rig.live = &live; rig.valid = true;
 	rig.joint[MD5_VRIK_HIP] = live.jointindex[MD5_VRIK_HIP] = 0;
 	rig.joint[MD5_VRIK_HEAD] = live.jointindex[MD5_VRIK_HEAD] = 1;
 	rig.joint[MD5_VRIK_SHOULDER_L] = live.jointindex[MD5_VRIK_SHOULDER_L] = 2;
@@ -7387,7 +7642,8 @@ qboolean R_VRIKDesktopWeaponGripRollbackForTest (void)
 	context.source_semantic_facing[1] = 1.0f;
 	pending = r_vrik_pose_pending;
 	r_vrik_pose_pending = false;
-	applied = R_VRIKApplyDesktopWeaponGrip (&canonical, &rig, &context, palette);
+	applied = R_VRIKApplyDesktopWeaponGrip (&canonical, &rig, &context,
+		canonicaljoints[0].bind, palette);
 	if (!applied || !isfinite (palette[5 * 12]) || !isfinite (palette[9 * 12]))
 	{
 		r_vrik_pose_pending = pending;
@@ -7397,9 +7653,211 @@ qboolean R_VRIKDesktopWeaponGripRollbackForTest (void)
 	 * rolls the complete palette back. */
 	memcpy (raw, palette, sizeof (raw));
 	joints[5].parent = 0;
-	applied = R_VRIKApplyDesktopWeaponGrip (&canonical, &rig, &context, palette);
+	applied = R_VRIKApplyDesktopWeaponGrip (&canonical, &rig, &context,
+		canonicaljoints[0].bind, palette);
 	r_vrik_pose_pending = pending;
 	return !applied && !memcmp (palette, raw, sizeof (raw));
+}
+
+qboolean R_VRIKDesktopRepairRollbackForTest (void)
+{
+	md5liveinfo_t canonical, live;
+	md5livejoint_t joints[3];
+	r_avatar_profile_t profile;
+	r_avatar_rig_t rig;
+	r_avatar_presentation_context_t context;
+	float source[12] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0};
+	float palette[36], raw[36];
+	qboolean applied, rollback, pending;
+	int semantic;
+
+	memset (&canonical, 0, sizeof (canonical)); memset (&live, 0, sizeof (live));
+	memset (joints, 0, sizeof (joints)); memset (&profile, 0, sizeof (profile));
+	memset (&rig, 0, sizeof (rig)); memset (palette, 0, sizeof (palette));
+	memset (&context, 0, sizeof (context));
+	for (semantic = 0; semantic < MD5_VRIK_JOINT_COUNT; ++semantic)
+		canonical.jointindex[semantic] = live.jointindex[semantic] = rig.joint[semantic] = -1;
+	for (semantic = 0; semantic < 3; ++semantic)
+	{
+		joints[semantic].parent = semantic ? semantic - 1 : -1;
+		joints[semantic].bind[0] = joints[semantic].bind[5] =
+			joints[semantic].bind[10] = palette[semantic * 12] =
+			palette[semantic * 12 + 5] = palette[semantic * 12 + 10] = 1.0f;
+	}
+	/* An intentionally animated Spine1 will be rebuilt from its Hip-local bind
+	 * transform before the forced desktop failure rolls the full palette back. */
+	joints[1].bind[7] = 2.0f; joints[2].bind[7] = 4.0f;
+	palette[1 * 12 + 3] = 31.0f; palette[1 * 12 + 7] = -17.0f;
+	palette[2 * 12 + 3] = 29.0f; palette[2 * 12 + 7] = -13.0f;
+	canonical.joints = joints; canonical.numbones = 3;
+	live.joints = joints; live.numbones = 3;
+	profile.id = PLAYER_AVATAR_DOG;
+	profile.desktop_refine = true;
+	profile.desktop_upperbody_bind_root = MD5_VRIK_SPINE1;
+	rig.profile = &profile; rig.live = &live; rig.valid = true;
+	rig.joint[MD5_VRIK_HIP] = live.jointindex[MD5_VRIK_HIP] = 0;
+	rig.joint[MD5_VRIK_SPINE1] = live.jointindex[MD5_VRIK_SPINE1] = 1;
+	rig.joint[MD5_VRIK_HEAD] = live.jointindex[MD5_VRIK_HEAD] = 2;
+	context.rotation[0] = context.rotation[5] = context.rotation[10] =
+		context.inverse[0] = context.inverse[5] = context.inverse[10] = 1.0f;
+	memcpy (raw, palette, sizeof (raw));
+	pending = r_vrik_pose_pending; r_vrik_pose_pending = false;
+	if (!R_VRIKRefineAvatarPalette (&canonical, &rig, &context, source, palette,
+		&rollback) || rollback || !memcmp (palette, raw, sizeof (raw)))
+	{
+		r_vrik_pose_pending = pending;
+		return false;
+	}
+	memcpy (palette, raw, sizeof (raw));
+	r_vrik_force_desktop_repair_failure_for_test = true;
+	applied = R_VRIKRefineAvatarPalette (&canonical, &rig, &context, source,
+		palette, &rollback);
+	r_vrik_force_desktop_repair_failure_for_test = false;
+	if (applied || !rollback || memcmp (palette, raw, sizeof (raw)) ||
+		!isfinite (palette[0]) || !isfinite (palette[35]))
+	{
+		r_vrik_pose_pending = pending;
+		return false;
+	}
+	/* The same forced failure is fatal for tracked frames and is never marked
+	 * as a desktop rollback. */
+	r_vrik_pose_pending = true;
+	r_vrik_force_desktop_repair_failure_for_test = true;
+	applied = R_VRIKRefineAvatarPalette (&canonical, &rig, &context, source,
+		palette, &rollback);
+	r_vrik_force_desktop_repair_failure_for_test = false;
+	r_vrik_pose_pending = pending;
+	return !applied && !rollback && !memcmp (palette, raw, sizeof (raw));
+}
+
+qboolean R_VRIKDesktopRollbackPropAttachmentForTest (void)
+{
+	r_avatar_profile_t profile;
+
+	memset (&profile, 0, sizeof (profile));
+	profile.desktop_weapon_socket = true;
+	/* A rollback must enter PrepareAttachedProp's ordinary raw-hand path, not
+	 * the stable socket path that would detach it from the restored palette. */
+	return R_VRIKUseDesktopWeaponSocket (&profile, false, MD5_VRIK_GUN, false) &&
+		!R_VRIKUseDesktopWeaponSocket (&profile, false, MD5_VRIK_GUN, true) &&
+		!R_VRIKUseDesktopWeaponSocket (&profile, true, MD5_VRIK_GUN, false);
+}
+
+qboolean R_VRIKInvalidateDerivedPropStateForTest (void)
+{
+	r_vrik_skincache_t cache;
+
+	memset (&cache, 0, sizeof (cache));
+	cache.muzzle_valid = true;
+	cache.muzzle_origin[0] = 1.0f; cache.muzzle_forward[1] = 1.0f;
+	cache.prop_surface = (const aliashdr_t *)&cache;
+	cache.prop_numverts = 3; cache.prop_numindexes = 6; cache.prop_semantic = MD5_VRIK_GUN;
+	R_VRIKInvalidateDerivedPropState (&cache);
+	return !cache.muzzle_valid && !cache.muzzle_origin[0] && !cache.muzzle_forward[1] &&
+		!cache.prop_surface && !cache.prop_numverts && !cache.prop_numindexes &&
+		cache.prop_semantic == -1;
+}
+
+qboolean R_VRIKDesktopSupportHandForTest (qboolean shambler)
+{
+	md5liveinfo_t canonical, live;
+	md5livejoint_t canonicaljoints[2], joints[8];
+	r_avatar_profile_t profile;
+	r_avatar_rig_t rig;
+	r_avatar_presentation_context_t context;
+	float sourcepalette[2 * 12], palette[8 * 12], raw[8 * 12];
+	vec3_t actual, expected;
+	qboolean pending, applied;
+	int joint, semantic;
+
+	memset (&canonical, 0, sizeof (canonical)); memset (&live, 0, sizeof (live));
+	memset (canonicaljoints, 0, sizeof (canonicaljoints));
+	memset (joints, 0, sizeof (joints)); memset (&profile, 0, sizeof (profile));
+	memset (&rig, 0, sizeof (rig)); memset (&context, 0, sizeof (context));
+	memset (sourcepalette, 0, sizeof (sourcepalette)); memset (palette, 0, sizeof (palette));
+	for (semantic = 0; semantic < MD5_VRIK_JOINT_COUNT; ++semantic)
+		canonical.jointindex[semantic] = live.jointindex[semantic] = rig.joint[semantic] = -1;
+	for (joint = 0; joint < 2; ++joint)
+		canonicaljoints[joint].bind[0] = canonicaljoints[joint].bind[5] =
+			canonicaljoints[joint].bind[10] = sourcepalette[joint * 12] =
+			sourcepalette[joint * 12 + 5] = sourcepalette[joint * 12 + 10] = 1.0f;
+	for (joint = 0; joint < 8; ++joint)
+	{
+		joints[joint].parent = joint ? 0 : -1;
+		joints[joint].bind[0] = joints[joint].bind[5] = joints[joint].bind[10] =
+			palette[joint * 12] = palette[joint * 12 + 5] =
+			palette[joint * 12 + 10] = 1.0f;
+	}
+	/* Canonical left/right hands and a raw target right hand define the actual
+	 * prop attach.  The expected target left hand is source-left carried by it. */
+	canonicaljoints[0].bind[3] = sourcepalette[3] = -1.0f;
+	canonicaljoints[0].bind[7] = sourcepalette[7] = 5.0f;
+	canonicaljoints[1].bind[3] = sourcepalette[15] = 1.0f;
+	canonicaljoints[1].bind[7] = sourcepalette[19] = 5.0f;
+	joints[1].bind[11] = palette[1 * 12 + 11] = 8.0f;
+	joints[2].bind[3] = palette[2 * 12 + 3] = -3.0f;
+	joints[2].bind[7] = palette[2 * 12 + 7] = 5.0f;
+	joints[3].parent = 2; joints[3].bind[3] = palette[3 * 12 + 3] = -2.0f;
+	joints[3].bind[7] = palette[3 * 12 + 7] = 5.0f;
+	joints[4].parent = 3; joints[4].bind[3] = palette[4 * 12 + 3] = 0.0f;
+	joints[4].bind[7] = palette[4 * 12 + 7] = 5.0f;
+	joints[5].parent = 4; joints[5].bind[3] = palette[5 * 12 + 3] = 1.0f;
+	joints[5].bind[7] = palette[5 * 12 + 7] = 5.0f;
+	joints[6].bind[3] = palette[6 * 12 + 3] = 3.0f;
+	joints[6].bind[7] = palette[6 * 12 + 7] = 5.0f;
+	joints[7].parent = 6; joints[7].bind[3] = palette[7 * 12 + 3] = 3.0f;
+	joints[7].bind[7] = palette[7 * 12 + 7] = 5.0f;
+	canonical.joints = canonicaljoints; canonical.numbones = 2;
+	canonical.jointindex[MD5_VRIK_HAND_L] = 0;
+	canonical.jointindex[MD5_VRIK_HAND_R] = 1;
+	live.joints = joints; live.numbones = 8;
+	profile.id = shambler ? PLAYER_AVATAR_SHAMBLER : PLAYER_AVATAR_OGRE;
+	profile.basis_policy = R_AVATAR_BASIS_HUMANOID;
+	profile.desktop_support_hand = true;
+	profile.arm_pole_outward = 1.0f; profile.arm_pole_back = 0.35f;
+	rig.profile = &profile; rig.live = &live; rig.valid = true;
+	rig.joint[MD5_VRIK_HIP] = live.jointindex[MD5_VRIK_HIP] = 0;
+	rig.joint[MD5_VRIK_HEAD] = live.jointindex[MD5_VRIK_HEAD] = 1;
+	rig.joint[MD5_VRIK_SHOULDER_L] = live.jointindex[MD5_VRIK_SHOULDER_L] = 2;
+	rig.joint[MD5_VRIK_UPPERARM_L] = live.jointindex[MD5_VRIK_UPPERARM_L] = 3;
+	rig.joint[MD5_VRIK_LOWERARM_L] = live.jointindex[MD5_VRIK_LOWERARM_L] = 4;
+	rig.joint[MD5_VRIK_HAND_L] = live.jointindex[MD5_VRIK_HAND_L] = 5;
+	rig.joint[MD5_VRIK_SHOULDER_R] = live.jointindex[MD5_VRIK_SHOULDER_R] = 6;
+	rig.joint[MD5_VRIK_HAND_R] = live.jointindex[MD5_VRIK_HAND_R] = 7;
+	context.rotation[0] = context.rotation[5] = context.rotation[10] =
+		context.inverse[0] = context.inverse[5] = context.inverse[10] =
+		context.forward[0] = context.forward[5] = context.forward[10] = 1.0f;
+	context.scale = 1.0f;
+	pending = r_vrik_pose_pending; r_vrik_pose_pending = false;
+	memcpy (raw, palette, sizeof (raw));
+	applied = R_VRIKApplyDesktopSupportHand (&canonical, &rig, &context,
+		sourcepalette, palette);
+	R_VRIKMatrixOrigin (palette + 5 * 12, actual);
+	expected[0] = 1.0f; expected[1] = 5.0f; expected[2] = 0.0f;
+	if (!applied || memcmp (palette + 7 * 12, raw + 7 * 12, 12 * sizeof (float)) ||
+		VectorLength ((vec3_t){actual[0] - expected[0], actual[1] - expected[1],
+			actual[2] - expected[2]}) > 0.001f || !isfinite (palette[5 * 12]))
+	{
+		r_vrik_pose_pending = pending;
+		return false;
+	}
+	/* An invalid chain must fail atomically, and tracked frames remain untouched. */
+	memcpy (raw, palette, sizeof (raw)); rig.joint[MD5_VRIK_HAND_L] = -1;
+	if (R_VRIKApplyDesktopSupportHand (&canonical, &rig, &context,
+		sourcepalette, palette) || memcmp (palette, raw, sizeof (raw)))
+	{
+		r_vrik_pose_pending = pending;
+		return false;
+	}
+	rig.joint[MD5_VRIK_HAND_L] = 5; r_vrik_pose_pending = true;
+	if (R_VRIKApplyDesktopSupportHand (&canonical, &rig, &context,
+		sourcepalette, palette) || memcmp (palette, raw, sizeof (raw)))
+	{
+		r_vrik_pose_pending = pending;
+		return false;
+	}
+	r_vrik_pose_pending = pending;
+	return true;
 }
 
 qboolean R_VRIKAvatarMapLowerTargetForTest (
@@ -7476,23 +7934,6 @@ qboolean R_VRIKAvatarHipOverlayForTest (void)
 int R_VRIKAvatarLowerPolePolicyForTest (const r_avatar_profile_t *profile)
 {
 	return (int)R_VRIKAvatarLowerPolePolicy (profile);
-}
-
-unsigned char R_VRIKVoreBaseFootMaskForTest (unsigned char supplied_mask,
-	unsigned char *overlay_mask)
-{
-	r_avatar_profile_t profile;
-	r_vrik_lowerbody_targets_t lower;
-
-	memset (&profile, 0, sizeof (profile));
-	memset (&lower, 0, sizeof (lower));
-	profile.mirror_outer_leg_poles = true;
-	lower.present_mask = lower.tracked_mask = supplied_mask;
-	if (overlay_mask)
-		*overlay_mask = R_VRIKAvatarSuppliedLowerMask (&lower) &
-			(R_VRIK_LOWER_BIT (R_VRIK_LOWER_LEFT_FOOT) |
-			R_VRIK_LOWER_BIT (R_VRIK_LOWER_RIGHT_FOOT));
-	return R_VRIKAvatarMirroredBaseFootMask (&profile, 0, 1);
 }
 
 void R_VRIKProfileArmPoleForTest (qboolean rightside, float outward,
@@ -7702,7 +8143,7 @@ qboolean R_VRIKShamblerDesktopArmRepairForTest (void)
 	profile.id = PLAYER_AVATAR_SHAMBLER;
 	context.inverse[0] = context.inverse[5] = context.inverse[10] = 1.0f;
 	sourcepalette[0] = sourcepalette[5] = sourcepalette[10] = 1.0f;
-	R_VRIKRefineAvatarPalette (&canonical, &rig, &context, sourcepalette, palette);
+	R_VRIKRefineAvatarPalette (&canonical, &rig, &context, sourcepalette, palette, NULL);
 	if (memcmp (palette + 4 * 12, raw + 4 * 12, sizeof (float) * 12) ||
 		memcmp (palette + 9 * 12, raw + 9 * 12, sizeof (float) * 12) ||
 		fabsf (palette[1 * 12 + 3] - raw[1 * 12 + 3]) > 0.001f ||
@@ -7753,7 +8194,7 @@ qboolean R_VRIKShamblerDesktopArmRepairForTest (void)
 	global[3] = -2.0f; global[11] = -2.0f;
 	for (joint = 0; joint < 10; ++joint)
 		R_VRIKMatrixMultiply (global, raw + joint * 12, palette + joint * 12);
-	R_VRIKRefineAvatarPalette (&canonical, &rig, &context, sourcepalette, palette);
+	R_VRIKRefineAvatarPalette (&canonical, &rig, &context, sourcepalette, palette, NULL);
 	for (joint = 0; joint < 10; ++joint)
 	{
 		R_VRIKMatrixMultiply (global, repaired + joint * 12, expected);
@@ -7789,7 +8230,7 @@ qboolean R_VRIKShamblerDesktopArmRepairForTest (void)
 	memcpy (tracked, raw, sizeof (tracked));
 	pending = r_vrik_pose_pending;
 	r_vrik_pose_pending = true;
-	R_VRIKRefineAvatarPalette (&canonical, &rig, &context, sourcepalette, tracked);
+	R_VRIKRefineAvatarPalette (&canonical, &rig, &context, sourcepalette, tracked, NULL);
 	r_vrik_pose_pending = pending;
 	return !memcmp (tracked, raw, sizeof (tracked));
 }
@@ -7942,7 +8383,7 @@ qboolean R_VRIKAvatarUprightUnreachableContactForTest (void)
 	if (!R_VRIKApplyAvatarUprightPosture (&rig, &context, false, expected))
 		return false;
 	r_vrik_lower_policy_calls_for_test = 0;
-	R_VRIKRefineAvatarPalette (&canonical, &rig, &context, sourcepalette, palette);
+	R_VRIKRefineAvatarPalette (&canonical, &rig, &context, sourcepalette, palette, NULL);
 	if (r_vrik_lower_policy_calls_for_test != 0)
 		return false;
 	R_VRIKMatrixOrigin (palette + 2 * 12, root);

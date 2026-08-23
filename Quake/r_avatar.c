@@ -75,6 +75,7 @@ static const r_avatar_profile_t r_avatar_profiles[PLAYER_AVATAR_COUNT] = {
 			A("Thigh_L"), A("Calf_L"), A("Foot_L"), A("Thigh_R"), A("Calf_R"),
 			A("Foot_R"), N, N, N, N },
 		R_AVATAR_BASIS_HUMANOID, { NULL, NULL, NULL, NULL }, false, 1.0f, 0.35f, false
+		, .desktop_support_hand = true
 	},
 	[PLAYER_AVATAR_KNIGHT] = {
 		PLAYER_AVATAR_KNIGHT, "knight", "progs/knight.md5mesh",
@@ -127,7 +128,7 @@ static const r_avatar_profile_t r_avatar_profiles[PLAYER_AVATAR_COUNT] = {
 			A("lower_leg_R"), A("foot_R"), N, N, N, N },
 		R_AVATAR_BASIS_HUMANOID, { NULL, NULL, NULL, NULL }, false, 0.136f, 0.223f, false,
 		R_AVATAR_POSTURE_AUTHORED, 0.0f, { 0.0f, 0.0f, 0.0f }, false, 0.965f, false,
-		true, 0.30f, 0.20f, { -4.55128f, 11.20621f, -17.71073f }, MD5_VRIK_SPINE2
+		false, 0.0f, 0.0f, { 0.0f, 0.0f, 0.0f }, 0, true
 	},
 	[PLAYER_AVATAR_ZOMBIE] = {
 		PLAYER_AVATAR_ZOMBIE, "zombie", "progs/zombie.md5mesh",
