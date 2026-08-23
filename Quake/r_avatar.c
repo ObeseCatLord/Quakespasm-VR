@@ -55,12 +55,13 @@ static const r_avatar_profile_t r_avatar_profiles[PLAYER_AVATAR_COUNT] = {
 		R_AVATAR_CAP_LEGS | R_AVATAR_CAP_RETARGET | R_AVATAR_CAP_STANDARD_WEAPON,
 		1.340388376f, R_AVATAR_EQUIPMENT_ATTACH_HAND, { NULL, NULL, NULL, NULL }, {
 			A("Hip"), A("Spine1"), A("Spine2"), A("Neck"), A("Head"),
-			A("FrontHigh_L"), A("FrontMid_L"), A("FrontLow_L"), A("FrontFoot_L"),
-			A("FrontHigh_R"), A("FrontMid_R"), A("FrontLow_R"), A("FrontFoot_R"),
+			V("FrontHigh_L"), A("FrontHigh_L"), A("FrontMid_L"), A("FrontFoot_L"),
+			V("FrontHigh_R"), A("FrontHigh_R"), A("FrontMid_R"), A("FrontFoot_R"),
 			A("RearHigh_L"), A("RearMid_L"), A("RearFoot_L"),
 			A("RearHigh_R"), A("RearMid_R"), A("RearFoot_R"), N, N, N, N },
 		R_AVATAR_BASIS_FEET_UP_HEAD_FORWARD,
-		{ "RearFoot_L", "RearFoot_R", NULL, NULL }, true, 1.0f, 0.35f, false
+		{ "RearFoot_L", "RearFoot_R", NULL, NULL }, true, 1.0f, 0.35f, false,
+		R_AVATAR_POSTURE_UPRIGHT, MD5_VRIK_SPINE1, { 0.0f, 1.0f, 0.0f }, true, 0.0f, true
 	},
 	[PLAYER_AVATAR_OGRE] = {
 		PLAYER_AVATAR_OGRE, "ogre", "progs/ogre.md5mesh",
@@ -106,10 +107,11 @@ static const r_avatar_profile_t r_avatar_profiles[PLAYER_AVATAR_COUNT] = {
 			A("spine_1"), V("spine_1"), A("spine_2"), V("spine_2"), A("head"),
 			A("shoulder_L"), A("upper_arm_L"), A("lower_arm_L"), A("hand_L"),
 			A("shoulder_R"), A("upper_arm_R"), A("lower_arm_R"), A("hand_R"),
-			A("upper_leg_L"), A("lower_leg_L"), A("foot_L"), A("upper_leg_R"),
-			A("lower_leg_R"), A("foot_R"), N, N, N, N },
+			A("upper_leg_L"), A("lower_leg_L"), A("hoof_L"), A("upper_leg_R"),
+			A("lower_leg_R"), A("hoof_R"), N, N, N, N },
 		R_AVATAR_BASIS_FEET_UP_HEAD_FORWARD,
-		{ "hoof_L", "hoof_R", NULL, NULL }, true, 1.0f, 0.35f, false
+		{ "hoof_L", "hoof_R", NULL, NULL }, true, 1.0f, 0.35f, false,
+		R_AVATAR_POSTURE_UPRIGHT, MD5_VRIK_SPINE2, { 0.0f, 1.0f, 0.0f }, true, 0.0f, true
 	},
 	[PLAYER_AVATAR_SHAMBLER] = {
 		PLAYER_AVATAR_SHAMBLER, "shambler", "progs/shambler.md5mesh",
@@ -121,7 +123,8 @@ static const r_avatar_profile_t r_avatar_profiles[PLAYER_AVATAR_COUNT] = {
 			A("shoulder_R"), A("upper_arm_R"), A("lower_arm_R"), A("hand_R"),
 			A("upper_leg_L"), A("lower_leg_L"), A("foot_L"), A("upper_leg_R"),
 			A("lower_leg_R"), A("foot_R"), N, N, N, N },
-		R_AVATAR_BASIS_HUMANOID, { NULL, NULL, NULL, NULL }, true, 1.0f, 0.0f, false
+		R_AVATAR_BASIS_HUMANOID, { NULL, NULL, NULL, NULL }, false, 0.136f, 0.223f, false,
+		R_AVATAR_POSTURE_AUTHORED, 0, { 0.0f, 0.0f, 0.0f }, false, 0.965f, false
 	},
 	[PLAYER_AVATAR_ZOMBIE] = {
 		PLAYER_AVATAR_ZOMBIE, "zombie", "progs/zombie.md5mesh",
@@ -473,6 +476,20 @@ qboolean R_AvatarRetargetPaletteWithContext (const r_avatar_rig_t *source,
 			R_AvatarInverseRigid(context->rotation, inv);
 			R_AvatarMultiply(inv, mapped, delta);
 			R_AvatarMultiply(delta, target->live->joints[i].bind, desired);
+			/* Animal upright posture keeps its own Hip orientation so its rear
+			 * legs and tail continue to follow authored bind-relative locals. */
+			if (semantic == MD5_VRIK_HIP && target->profile->preserve_hip_rotation)
+			{
+				desired[0] = target->live->joints[i].bind[0];
+				desired[1] = target->live->joints[i].bind[1];
+				desired[2] = target->live->joints[i].bind[2];
+				desired[4] = target->live->joints[i].bind[4];
+				desired[5] = target->live->joints[i].bind[5];
+				desired[6] = target->live->joints[i].bind[6];
+				desired[8] = target->live->joints[i].bind[8];
+				desired[9] = target->live->joints[i].bind[9];
+				desired[10] = target->live->joints[i].bind[10];
+			}
 			desired[3] = target->live->joints[i].bind[3] +
 				(context->inverse[0] * (source_palette[sj * 12 + 3] - source->live->joints[sj].bind[3]) + context->inverse[1] * (source_palette[sj * 12 + 7] - source->live->joints[sj].bind[7]) + context->inverse[2] * (source_palette[sj * 12 + 11] - source->live->joints[sj].bind[11]));
 			desired[7] = target->live->joints[i].bind[7] +

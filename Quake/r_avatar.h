@@ -27,6 +27,13 @@ typedef enum r_avatar_basis_policy_e {
 	R_AVATAR_BASIS_FEET_UP_HEAD_FORWARD
 } r_avatar_basis_policy_t;
 
+typedef enum r_avatar_posture_policy_e {
+	/* Leave the authored retargeted body posture untouched. */
+	R_AVATAR_POSTURE_AUTHORED = 0,
+	/* Turn the declared torso branch upright around the Hip pivot. */
+	R_AVATAR_POSTURE_UPRIGHT
+} r_avatar_posture_policy_t;
+
 #define R_AVATAR_CAP_HEAD             (1u << 0)
 #define R_AVATAR_CAP_ARMS             (1u << 1)
 #define R_AVATAR_CAP_LEGS             (1u << 2)
@@ -59,6 +66,16 @@ typedef struct r_avatar_profile_s {
 	float arm_pole_outward;
 	float arm_pole_back;
 	qboolean mirror_outer_leg_poles;
+	/* Optional model-specific post-retarget posture correction.  The root is
+	 * semantic so descendants, rather than every model joint, are affected. */
+	r_avatar_posture_policy_t posture_policy;
+	int torso_root_semantic;
+	float head_forward_axis[3];
+	qboolean preserve_hip_rotation;
+	/* Retained exclusively for tracked profile arm solves. */
+	float arm_pole_up;
+	/* Solve the physical parent chain when a semantic endpoint skips joints. */
+	qboolean actual_path_ik;
 } r_avatar_profile_t;
 
 /* Runtime resolution has no ownership of live data.  joint[] are the
