@@ -319,12 +319,63 @@ qboolean R_AvatarResolveRig (const r_avatar_profile_t *profile,
 	return true;
 }
 
-qboolean R_AvatarRetargetPalette (const r_avatar_rig_t *source,
-	const r_avatar_rig_t *target, const float *source_palette, float *target_palette)
+qboolean R_AvatarBuildPresentationContext (const r_avatar_rig_t *source,
+	const r_avatar_rig_t *target, r_avatar_presentation_context_t *out)
+{
+	float sourcebasis[12], targetbasis[12], targetinverse[12], sourcehip[3], targethip[3];
+	int r, c;
+	if (!source || !target || !out || !source->valid || !target->valid ||
+		!R_AvatarBuildBindBodyBasis(source, sourcebasis) ||
+		!R_AvatarBuildBindBodyBasis(target, targetbasis)) return false;
+	R_AvatarInverseRigid(targetbasis, targetinverse);
+	R_AvatarMultiply(sourcebasis, targetinverse, out->rotation);
+	out->scale = R_AvatarQuantizedDisplayScale(target->profile);
+	if (out->scale <= 0.0f || !R_AvatarOrthonormal(out->rotation)) return false;
+	memcpy(out->forward, out->rotation, sizeof(out->forward));
+	for (r = 0; r < 3; ++r) for (c = 0; c < 3; ++c)
+		out->forward[r * 4 + c] *= out->scale;
+	R_AvatarBindOrigin(source, MD5_VRIK_HIP, sourcehip);
+	R_AvatarBindOrigin(target, MD5_VRIK_HIP, targethip);
+	for (r = 0; r < 3; ++r)
+		out->forward[r * 4 + 3] = sourcehip[r] -
+			(out->forward[r * 4] * targethip[0] + out->forward[r * 4 + 1] * targethip[1] + out->forward[r * 4 + 2] * targethip[2]);
+	for (r = 0; r < 3; ++r) for (c = 0; c < 3; ++c)
+		out->inverse[r * 4 + c] = out->rotation[c * 4 + r] / out->scale;
+	for (r = 0; r < 3; ++r)
+		out->inverse[r * 4 + 3] = -(out->inverse[r * 4] * out->forward[3] + out->inverse[r * 4 + 1] * out->forward[7] + out->inverse[r * 4 + 2] * out->forward[11]);
+	return R_AvatarFiniteMatrix(out->forward) && R_AvatarFiniteMatrix(out->inverse);
+}
+
+void R_AvatarPresentationAddCanonicalZ (r_avatar_presentation_context_t *context, float z)
+{
+	if (!context || !isfinite(z)) return;
+	context->forward[11] += z;
+	context->inverse[3] -= context->inverse[2] * z;
+	context->inverse[7] -= context->inverse[6] * z;
+	context->inverse[11] -= context->inverse[10] * z;
+}
+
+void R_AvatarPresentationPoint (const r_avatar_presentation_context_t *context,
+	const float in[3], float out[3])
+{
+	float point[3] = {in[0], in[1], in[2]};
+	int r; for (r = 0; r < 3; ++r) out[r] = context->forward[r * 4] * point[0] + context->forward[r * 4 + 1] * point[1] + context->forward[r * 4 + 2] * point[2] + context->forward[r * 4 + 3];
+}
+
+void R_AvatarPresentationInversePoint (const r_avatar_presentation_context_t *context,
+	const float in[3], float out[3])
+{
+	float point[3] = {in[0], in[1], in[2]};
+	int r; for (r = 0; r < 3; ++r) out[r] = context->inverse[r * 4] * point[0] + context->inverse[r * 4 + 1] * point[1] + context->inverse[r * 4 + 2] * point[2] + context->inverse[r * 4 + 3];
+}
+
+qboolean R_AvatarRetargetPaletteWithContext (const r_avatar_rig_t *source,
+	const r_avatar_rig_t *target, const r_avatar_presentation_context_t *context,
+	const float *source_palette, float *target_palette)
 {
 	int i, semantic, owner[MAX_MD5_JOINTS];
-	float local[12], inv[12], delta[12], targetlocal[12], desiredglobal[12];
-	if (!source || !target || !source->valid || !target->valid || !source_palette || !target_palette ||
+	float local[12], inv[12], desired[12], delta[12], mapped[12];
+	if (!source || !target || !context || !source->valid || !target->valid || !source_palette || !target_palette ||
 		source->live->numbones > MAX_MD5_JOINTS || target->live->numbones > MAX_MD5_JOINTS) return false;
 	for (i = 0; i < source->live->numbones; ++i) if (!R_AvatarOrthonormal(source_palette + i * 12)) return false;
 	for (i = 0; i < MAX_MD5_JOINTS; ++i) owner[i] = -1;
@@ -339,26 +390,40 @@ qboolean R_AvatarRetargetPalette (const r_avatar_rig_t *source,
 		else { R_AvatarInverseRigid(target->live->joints[parent].bind, inv); R_AvatarMultiply(inv, target->live->joints[i].bind, local); }
 		if (semantic >= 0 && source->joint[semantic] >= 0 && !(source->virtual_mask & (1u << semantic))) {
 			int sj = source->joint[semantic];
-			/* Use a global bind-to-solved orientation delta.  A target can
-			 * collapse Ranger's Spine1/Spine2/Neck chain into one chest, yet
-			 * still receives the complete canonical chest motion. */
+			/* Absolute global transport: rotate the canonical global animation
+			 * delta through the presentation body's rigid basis, but map origins
+			 * solely through L^-1 so non-unit display scale never contaminates a
+			 * bone rotation. */
 			R_AvatarInverseRigid(source->live->joints[sj].bind, inv);
-			R_AvatarMultiply(inv, source_palette + sj * 12, delta);
-			delta[3] = delta[7] = delta[11] = 0.0f;
-			R_AvatarMultiply(target->live->joints[i].bind, delta, desiredglobal);
-			if (parent >= 0) {
-				R_AvatarInverseRigid(target_palette + parent * 12, inv);
-				R_AvatarMultiply(inv, desiredglobal, targetlocal);
-			} else memcpy(targetlocal, desiredglobal, sizeof(targetlocal));
-			/* Preserve authored local bone length and root placement. */
-			targetlocal[3] = local[3]; targetlocal[7] = local[7]; targetlocal[11] = local[11];
-			memcpy(local, targetlocal, sizeof(local));
+			R_AvatarMultiply(source_palette + sj * 12, inv, delta);
+			delta[3] = delta[7] = delta[11] = 0;
+			R_AvatarMultiply(delta, context->rotation, mapped);
+			R_AvatarInverseRigid(context->rotation, inv);
+			R_AvatarMultiply(inv, mapped, delta);
+			R_AvatarMultiply(delta, target->live->joints[i].bind, desired);
+			desired[3] = target->live->joints[i].bind[3] +
+				(context->inverse[0] * (source_palette[sj * 12 + 3] - source->live->joints[sj].bind[3]) + context->inverse[1] * (source_palette[sj * 12 + 7] - source->live->joints[sj].bind[7]) + context->inverse[2] * (source_palette[sj * 12 + 11] - source->live->joints[sj].bind[11]));
+			desired[7] = target->live->joints[i].bind[7] +
+				(context->inverse[4] * (source_palette[sj * 12 + 3] - source->live->joints[sj].bind[3]) + context->inverse[5] * (source_palette[sj * 12 + 7] - source->live->joints[sj].bind[7]) + context->inverse[6] * (source_palette[sj * 12 + 11] - source->live->joints[sj].bind[11]));
+			desired[11] = target->live->joints[i].bind[11] +
+				(context->inverse[8] * (source_palette[sj * 12 + 3] - source->live->joints[sj].bind[3]) + context->inverse[9] * (source_palette[sj * 12 + 7] - source->live->joints[sj].bind[7]) + context->inverse[10] * (source_palette[sj * 12 + 11] - source->live->joints[sj].bind[11]));
+			if (parent < 0) memcpy(local, desired, sizeof(local));
+			else { R_AvatarInverseRigid(target_palette + parent * 12, inv); R_AvatarMultiply(inv, desired, local); }
 		}
 		if (parent < 0) memcpy(target_palette + i * 12, local, sizeof(local));
 		else R_AvatarMultiply(target_palette + parent * 12, local, target_palette + i * 12);
 		if (!R_AvatarOrthonormal(target_palette + i * 12)) return false;
 	}
 	return true;
+}
+
+qboolean R_AvatarRetargetPalette (const r_avatar_rig_t *source,
+	const r_avatar_rig_t *target, const float *source_palette, float *target_palette)
+{
+	r_avatar_presentation_context_t context;
+	return R_AvatarBuildPresentationContext(source, target, &context) &&
+		R_AvatarRetargetPaletteWithContext(source, target, &context,
+			source_palette, target_palette);
 }
 
 qboolean R_AvatarCanonicalToTargetBasis (const r_avatar_rig_t *rig, float out[12])

@@ -121,6 +121,12 @@ static qmodel_t *r_vrik_canonical_model;
 static lerpdata_t r_vrik_canonical_lerpdata;
 static vec3_t r_vrik_draw_origin;
 static vec3_t r_vrik_draw_angles;
+static qboolean r_vrik_ordinary_ranger;
+
+static void R_VRIKClearOrdinaryRanger (void)
+{
+	r_vrik_ordinary_ranger = false;
+}
 
 typedef struct
 {
@@ -1998,6 +2004,35 @@ static void R_VRIKLerpPalette (const md5liveinfo_t *live,
 	}
 }
 
+static qboolean R_VRIKShouldSubstituteAvatar (player_avatar_id_t avatar,
+	qboolean tracked, qboolean vrik_enabled)
+{
+	/* The old Ranger renderer is the known-good desktop path.  A VRIK-enabled
+	 * Ranger uses replacement so the 3af2 ordinary-MD5 path is
+	 * selected even without a pose packet; applying a pose still requires
+	 * tracking.  Alternate cosmetics always use the replacement. */
+	(void)tracked;
+	return avatar != PLAYER_AVATAR_RANGER || vrik_enabled;
+}
+
+static qboolean R_VRIKShouldApplyPose (qboolean tracked, qboolean enabled)
+{
+	return tracked && enabled;
+}
+
+#ifdef R_ALIAS_LOWER_TARGETS_TEST
+qboolean R_VRIKShouldSubstituteAvatarForTest (int avatar, qboolean tracked,
+	qboolean vrik_enabled)
+{
+	return R_VRIKShouldSubstituteAvatar ((player_avatar_id_t)avatar, tracked,
+		vrik_enabled);
+}
+qboolean R_VRIKShouldApplyPoseForTest (qboolean tracked, qboolean enabled)
+{
+	return R_VRIKShouldApplyPose(tracked, enabled);
+}
+#endif
+
 static qboolean R_VRIKBuildBodyBasis (const md5liveinfo_t *live,
 	const float *palette, vec3_t lateral, vec3_t forward, vec3_t up)
 {
@@ -2308,20 +2343,12 @@ static void R_VRIKRefineArmPosition (const md5liveinfo_t *live,
 	R_VRIKTranslateJointSubtree (live, palette, handindex, oldhand);
 }
 
-static qboolean R_VRIKAvatarTargetPoint (const r_avatar_rig_t *canonicalrig,
-	const r_avatar_rig_t *targetrig, const vec3_t canonical, vec3_t target)
+static qboolean R_VRIKAvatarTargetPoint (const r_avatar_presentation_context_t *context,
+	const vec3_t canonical, vec3_t target)
 {
-	float basis[12];
-
-	if (!canonicalrig || !targetrig ||
-		!R_AvatarCanonicalToTargetPresentation (canonicalrig, targetrig, basis))
+	if (!context)
 		return false;
-	target[0] = basis[0] * canonical[0] + basis[1] * canonical[1] +
-		basis[2] * canonical[2] + basis[3];
-	target[1] = basis[4] * canonical[0] + basis[5] * canonical[1] +
-		basis[6] * canonical[2] + basis[7];
-	target[2] = basis[8] * canonical[0] + basis[9] * canonical[1] +
-		basis[10] * canonical[2] + basis[11];
+	R_AvatarPresentationInversePoint (context, canonical, target);
 	return true;
 }
 
@@ -2385,15 +2412,21 @@ static void R_VRIKRotateJointSubtreeToward (const md5liveinfo_t *live,
 }
 
 static void R_VRIKRefineAvatarPalette (const md5liveinfo_t *canonical,
-	const r_avatar_rig_t *canonicalrig, const r_avatar_rig_t *targetrig,
+	const r_avatar_rig_t *targetrig,
+	const r_avatar_presentation_context_t *context,
 	const float *sourcepalette,
 	float *targetpalette)
 {
 	md5liveinfo_t target;
 	int semantic;
 
-	if (!canonical || !targetrig || !targetrig->valid || !sourcepalette ||
+	if (!canonical || !targetrig || !targetrig->valid || !context || !sourcepalette ||
 		!targetpalette || !targetrig->live)
+		return;
+	/* Desktop avatars use canonical animation only.  Re-solving their head or
+	 * limbs against absent tracker targets changes a valid retargeted pose and
+	 * also detaches any prop anchored to that hand. */
+	if (!r_vrik_pose_pending)
 		return;
 	target = *targetrig->live;
 	for (semantic = 0; semantic < MD5_VRIK_JOINT_COUNT; semantic++)
@@ -2411,7 +2444,7 @@ static void R_VRIKRefineAvatarPalette (const md5liveinfo_t *canonical,
 		if (sourcejoint < 0 || targetjoint < 0)
 			continue;
 		R_VRIKMatrixOrigin (sourcepalette + sourcejoint * 12, sourceorigin);
-		if (!R_VRIKAvatarTargetPoint (canonicalrig, targetrig, sourceorigin,
+		if (!R_VRIKAvatarTargetPoint (context, sourceorigin,
 			targetorigin))
 			continue;
 		if (semantic == MD5_VRIK_HAND_L || semantic == MD5_VRIK_HAND_R)
@@ -2452,7 +2485,7 @@ static void R_VRIKRefineAvatarPalette (const md5liveinfo_t *canonical,
 					sourcejoint < 0)
 					continue;
 				R_VRIKMatrixOrigin (sourcepalette + sourcejoint * 12, sourceorigin);
-				if (!R_VRIKAvatarTargetPoint (canonicalrig, targetrig, sourceorigin,
+				if (!R_VRIKAvatarTargetPoint (context, sourceorigin,
 					modeltargets.position[role]))
 					continue;
 				modeltargets.usable_mask |= bit;
@@ -2601,6 +2634,83 @@ static qboolean R_VRIKReserveProp (r_vrik_skincache_t *cache, int verts,
 	return true;
 }
 
+static void R_VRIKSkinSurface (const md5livesurface_t *surface,
+	const float *palette, md5vertex_t *vertices)
+{
+	int vertex, influence;
+	for (vertex = 0; vertex < surface->numverts; vertex++) {
+		const md5livevertex_t *source = &surface->vertices[vertex];
+		md5vertex_t *destination = &vertices[vertex];
+		destination->xyz[0] = destination->xyz[1] = destination->xyz[2] = 0;
+		destination->st[0] = source->st[0]; destination->st[1] = source->st[1];
+		for (influence = 0; influence < (int)source->numweights; influence++) {
+			const md5liveweight_t *weight = &surface->weights[source->firstweight + influence];
+			const float *matrix = palette + weight->joint * 12;
+			destination->xyz[0] += matrix[0] * weight->position[0] + matrix[1] * weight->position[1] + matrix[2] * weight->position[2] + matrix[3] * weight->position[3];
+			destination->xyz[1] += matrix[4] * weight->position[0] + matrix[5] * weight->position[1] + matrix[6] * weight->position[2] + matrix[7] * weight->position[3];
+			destination->xyz[2] += matrix[8] * weight->position[0] + matrix[9] * weight->position[1] + matrix[10] * weight->position[2] + matrix[11] * weight->position[3];
+		}
+	}
+}
+
+static qboolean R_VRIKPropVertexOwnedBy (const md5liveinfo_t *live,
+	const md5livesurface_t *surface, int vertex, int root);
+
+static float R_VRIKMinimumBindZ (const md5liveinfo_t *live,
+	const md5livesurface_t *surface, const float *palette,
+	const unsigned short *indexes, int numindexes, int exclude1, int exclude2,
+	const r_avatar_presentation_context_t *presentation)
+{
+	float minimum = FLT_MAX; int index, influence;
+	for (index = 0; index < numindexes; index++) {
+		int vertex = indexes[index]; const md5livevertex_t *input; vec3_t point;
+		if (vertex < 0 || vertex >= surface->numverts ||
+			(exclude1 >= 0 && R_VRIKPropVertexOwnedBy(live, surface, vertex, exclude1)) ||
+			(exclude2 >= 0 && R_VRIKPropVertexOwnedBy(live, surface, vertex, exclude2))) continue;
+		input = &surface->vertices[vertex]; point[0] = point[1] = point[2] = 0;
+		for (influence = 0; influence < (int)input->numweights; influence++) {
+			const md5liveweight_t *weight = &surface->weights[input->firstweight + influence];
+			const float *m = palette + weight->joint * 12;
+			point[0] += m[0]*weight->position[0] + m[1]*weight->position[1] + m[2]*weight->position[2] + m[3]*weight->position[3];
+			point[1] += m[4]*weight->position[0] + m[5]*weight->position[1] + m[6]*weight->position[2] + m[7]*weight->position[3];
+			point[2] += m[8]*weight->position[0] + m[9]*weight->position[1] + m[10]*weight->position[2] + m[11]*weight->position[3];
+		}
+		if (presentation) { vec3_t mapped; R_AvatarPresentationPoint(presentation, point, mapped); minimum = q_min(minimum, mapped[2]); }
+		else minimum = q_min(minimum, point[2]);
+	}
+	return minimum;
+}
+
+static qboolean R_VRIKApplyBindFloorCorrection (const md5liveinfo_t *canonical,
+	const md5livesurface_t *canonicalsurface, const float *canonicalbind,
+	int canonicalexclude1, int canonicalexclude2, const md5liveinfo_t *target,
+	const md5livesurface_t *targetsurface, const float *targetbind,
+	const unsigned short *targetindexes, int targetnumindexes,
+	r_avatar_presentation_context_t *presentation, float *sourcefloor_out,
+	float *targetfloor_out)
+{
+	float sourcefloor, targetfloor;
+
+	if (!canonical || !canonicalsurface || !canonicalbind || !target ||
+		!targetsurface || !targetbind || !targetindexes || targetnumindexes < 1 ||
+		!presentation)
+		return false;
+	sourcefloor = R_VRIKMinimumBindZ (canonical, canonicalsurface,
+		canonicalbind, canonicalsurface->indexes, canonicalsurface->numindexes,
+		canonicalexclude1, canonicalexclude2, NULL);
+	targetfloor = R_VRIKMinimumBindZ (target, targetsurface, targetbind,
+		targetindexes, targetnumindexes, -1, -1, presentation);
+	if (!isfinite (sourcefloor) || !isfinite (targetfloor) ||
+		sourcefloor == FLT_MAX || targetfloor == FLT_MAX)
+		return false;
+	R_AvatarPresentationAddCanonicalZ (presentation, sourcefloor - targetfloor);
+	if (sourcefloor_out)
+		*sourcefloor_out = sourcefloor;
+	if (targetfloor_out)
+		*targetfloor_out = targetfloor;
+	return true;
+}
+
 static qboolean R_VRIKPropVertexOwnedBy (const md5liveinfo_t *live,
 	const md5livesurface_t *surface, int vertex, int root)
 {
@@ -2618,15 +2728,51 @@ static qboolean R_VRIKPropVertexOwnedBy (const md5liveinfo_t *live,
 	return owned >= 0.999999f;
 }
 
+/* Presentation scale belongs to skinned points, not the detached Ranger
+ * weapon.  Build a rigid target-hand socket in canonical presentation space,
+ * then transport canonical prop points through its source-hand inverse. */
+static qboolean R_VRIKBuildAttachedPropSocket (
+	const r_avatar_presentation_context_t *context,
+	const float sourcehandpose[12], const float sourcehandbind[12],
+	const float targethandpose[12], const float targethandbind[12],
+	float attach[12])
+{
+	float targethandcanonical[12], targetbindcanonical[12], sourcebind[12];
+	float correction[12], inverse[12];
+	vec3_t origin, canonicalorigin;
+
+	if (!context || !sourcehandpose || !sourcehandbind || !targethandpose ||
+		!targethandbind || !attach)
+		return false;
+	/* Hraw is rigid: P supplies the scaled/translated hand point only.  C
+	 * maps the alternate hand's bind grip into the canonical Ranger grip. */
+	R_VRIKMatrixMultiply (context->rotation, targethandpose,
+		targethandcanonical);
+	R_VRIKMatrixOrigin (targethandpose, origin);
+	R_AvatarPresentationPoint (context, origin, canonicalorigin);
+	R_VRIKSetMatrixOrigin (targethandcanonical, canonicalorigin);
+	R_VRIKMatrixMultiply (context->rotation, targethandbind,
+		targetbindcanonical);
+	targetbindcanonical[3] = targetbindcanonical[7] = targetbindcanonical[11] = 0.0f;
+	memcpy (sourcebind, sourcehandbind, sizeof(sourcebind));
+	sourcebind[3] = sourcebind[7] = sourcebind[11] = 0.0f;
+	R_VRIKMatrixInverseRigid (targetbindcanonical, inverse);
+	R_VRIKMatrixMultiply (inverse, sourcebind, correction);
+	R_VRIKMatrixMultiply (targethandcanonical, correction, targethandcanonical);
+	R_VRIKMatrixInverseRigid (sourcehandpose, inverse);
+	R_VRIKMatrixMultiply (targethandcanonical, inverse, attach);
+	return true;
+}
+
 static qboolean R_VRIKPrepareAttachedProp (const md5liveinfo_t *canonical,
-	const r_avatar_rig_t *canonicalrig, const r_avatar_rig_t *targetrig,
-	const md5livesurface_t *source, r_vrik_skincache_t *cache)
+	const r_avatar_rig_t *targetrig,
+	const r_avatar_presentation_context_t *context, const md5livesurface_t *source, r_vrik_skincache_t *cache)
 {
 	int gun, axe, sourcehand, targethand, semantic, root, vertex, influence,
 		index, outindex = 0;
 	vec3_t handorigin, gunorigin, axeorigin;
 	float gundistance = FLT_MAX, axedistance = FLT_MAX;
-	float presentation[12], inverse[12], attach[12], targethandcanonical[12];
+	float attach[12];
 	qboolean dominantleft = r_vrik_pose_pending &&
 		(r_vrik_pending_pose.flags & VRIK_FLAG_DOMINANT_LEFT);
 
@@ -2635,11 +2781,11 @@ static qboolean R_VRIKPrepareAttachedProp (const md5liveinfo_t *canonical,
 	cache->prop_numverts = cache->prop_numindexes = 0;
 	cache->prop_surface = NULL;
 	cache->prop_semantic = -1;
-	if (!targetrig || !targetrig->profile)
+	if (!targetrig || !targetrig->profile || !targetrig->live)
 		return false;
 	if (targetrig->profile->equipment_policy != R_AVATAR_EQUIPMENT_ATTACH_HAND)
 		return true;
-	if (!canonical || !canonicalrig || !source)
+	if (!canonical || !source)
 		return false;
 	gun = canonical->jointindex[MD5_VRIK_GUN];
 	axe = canonical->jointindex[MD5_VRIK_AXE];
@@ -2662,15 +2808,13 @@ static qboolean R_VRIKPrepareAttachedProp (const md5liveinfo_t *canonical,
 	}
 	semantic = gundistance <= axedistance ? MD5_VRIK_GUN : MD5_VRIK_AXE;
 	root = canonical->jointindex[semantic];
-	if (root < 0 || q_min (gundistance, axedistance) > 64.0f ||
-		!R_AvatarTargetToCanonicalPresentation (canonicalrig, targetrig,
-			presentation))
+	if (root < 0 || q_min (gundistance, axedistance) > 64.0f || !context)
 		return false;
-	R_VRIKMatrixMultiply (presentation, cache->palette + targethand * 12,
-		targethandcanonical);
-	R_VRIKMatrixInverseRigid (cache->canonical_palette + sourcehand * 12,
-		inverse);
-	R_VRIKMatrixMultiply (targethandcanonical, inverse, attach);
+	if (!R_VRIKBuildAttachedPropSocket (context,
+		cache->canonical_palette + sourcehand * 12,
+		canonical->joints[sourcehand].bind, cache->palette + targethand * 12,
+		targetrig->live->joints[targethand].bind, attach))
+		return false;
 	if (!R_VRIKReserveProp (cache, source->numverts, source->numindexes))
 		return false;
 	for (index = 0; index + 2 < source->numindexes; index += 3)
@@ -3009,8 +3153,10 @@ static qboolean R_VRIKPrepareSkin (qmodel_t *model)
 	md5livesurface_t surface, canonicalsurface;
 	const r_avatar_profile_t *profile;
 	r_avatar_rig_t canonicalrig, targetrig;
+	r_avatar_presentation_context_t presentation;
 	r_vrik_skincache_t *cache;
-	int vertex, influence;
+	int vertex;
+	float canonicalbind[MAX_MD5_JOINTS * 12], targetbind[MAX_MD5_JOINTS * 12];
 
 	r_vrik_skin_active = false;
 	r_vrik_skin_cache = NULL;
@@ -3038,8 +3184,17 @@ static qboolean R_VRIKPrepareSkin (qmodel_t *model)
 			&canonical, &canonicalrig) ||
 		!R_AvatarResolveRig (profile, &target, &targetrig))
 		return false;
+	if (!R_AvatarBuildPresentationContext (&canonicalrig, &targetrig,
+		&presentation))
+		return false;
 	if (!R_VRIKSkinCacheReserve (cache, surface.numverts))
 		return false;
+	if (!R_VRIKBuildBodyIndexes (&target, profile, &surface, cache))
+		return false;
+	for (vertex = 0; vertex < canonical.numbones; vertex++)
+		memcpy (canonicalbind + vertex * 12, canonical.joints[vertex].bind, 12 * sizeof(float));
+	for (vertex = 0; vertex < target.numbones; vertex++)
+		memcpy (targetbind + vertex * 12, target.joints[vertex].bind, 12 * sizeof(float));
 
 	/* Canonical Ranger animation and VRIK are deliberately solved before
 	 * touching the selected mesh.  Monster AI frames never enter this path. */
@@ -3049,64 +3204,34 @@ static qboolean R_VRIKPrepareSkin (qmodel_t *model)
 		R_VRIKSolvePalette (&canonical, &r_vrik_pending_pose,
 			currententity && (currententity->effects & EF_MUZZLEFLASH),
 			cache->canonical_palette, cache);
-	if (!R_AvatarRetargetPalette (&canonicalrig, &targetrig,
+	if (!R_AvatarRetargetPaletteWithContext (&canonicalrig, &targetrig, &presentation,
 		cache->canonical_palette,
 		cache->palette))
 		return false;
-	R_VRIKRefineAvatarPalette (&canonical, &canonicalrig, &targetrig,
-		cache->canonical_palette, cache->palette);
-	for (vertex = 0; vertex < surface.numverts; vertex++)
-	{
-		const md5livevertex_t *source = &surface.vertices[vertex];
-		md5vertex_t *destination = &cache->vertices[vertex];
-		destination->xyz[0] = destination->xyz[1] = destination->xyz[2] = 0;
-		destination->st[0] = source->st[0];
-		destination->st[1] = source->st[1];
-		for (influence = 0; influence < (int)source->numweights; influence++)
-		{
-			const md5liveweight_t *weight =
-				&surface.weights[source->firstweight + influence];
-			const float *matrix = cache->palette + weight->joint * 12;
-			vec3_t transformed;
-			transformed[0] = matrix[0] * weight->position[0] +
-				matrix[1] * weight->position[1] + matrix[2] * weight->position[2] +
-				matrix[3] * weight->position[3];
-			transformed[1] = matrix[4] * weight->position[0] +
-				matrix[5] * weight->position[1] + matrix[6] * weight->position[2] +
-				matrix[7] * weight->position[3];
-			transformed[2] = matrix[8] * weight->position[0] +
-				matrix[9] * weight->position[1] + matrix[10] * weight->position[2] +
-				matrix[11] * weight->position[3];
-			VectorAdd (destination->xyz, transformed, destination->xyz);
-		}
-	}
-	if (!R_VRIKPrepareAttachedProp (&canonical, &canonicalrig, &targetrig,
-		&canonicalsurface, cache))
+	/* Floor anchoring is an authored bind-body property, never an animated
+	 * frame property: otherwise a run cycle would make the presentation bob. */
+	if (!R_VRIKApplyBindFloorCorrection (&canonical, &canonicalsurface,
+		canonicalbind, canonical.jointindex[MD5_VRIK_GUN],
+		canonical.jointindex[MD5_VRIK_AXE], &target, &surface, targetbind,
+		cache->body_indexes, cache->body_numindexes, &presentation,
+		NULL, NULL))
 		return false;
-	if (!R_VRIKBuildBodyIndexes (&target, profile, &surface, cache))
+	R_VRIKRefineAvatarPalette (&canonical, &targetrig, &presentation,
+		cache->canonical_palette, cache->palette);
+	R_VRIKSkinSurface (&surface, cache->palette, cache->vertices);
+	if (!R_VRIKPrepareAttachedProp (&canonical, &targetrig, &presentation,
+		&canonicalsurface, cache))
 		return false;
 	/* The cache is drawn through the ordinary target MD5 transform.  Normalize
 	 * the completed target-native skin into canonical Ranger presentation here
 	 * (before normals), rather than scaling the entity or collision state. */
 	{
-		float presentation[12];
-		if (!R_AvatarTargetToCanonicalPresentation (&canonicalrig, &targetrig,
-			presentation))
-			return false;
 		for (vertex = 0; vertex < surface.numverts; vertex++)
 		{
 			md5vertex_t *destination = &cache->vertices[vertex];
 			vec3_t source;
 			VectorCopy (destination->xyz, source);
-			destination->xyz[0] = presentation[0] * source[0] +
-				presentation[1] * source[1] + presentation[2] * source[2] +
-				presentation[3];
-			destination->xyz[1] = presentation[4] * source[0] +
-				presentation[5] * source[1] + presentation[6] * source[2] +
-				presentation[7];
-			destination->xyz[2] = presentation[8] * source[0] +
-				presentation[9] * source[1] + presentation[10] * source[2] +
-				presentation[11];
+			R_AvatarPresentationPoint (&presentation, source, destination->xyz);
 		}
 	}
 	R_VRIKComputeNormals (cache->vertices, surface.numverts,
@@ -3252,9 +3377,12 @@ static qboolean R_VRIKSubstitutePlayer (entity_t *entity, entity_t *replacement)
 	int avatar, entitynum;
 	qboolean tracked;
 
+	/* This flag authorizes the post-draw ordinary-Ranger state save for one
+	 * substitution only; never carry it from a previous player or pass. */
+	R_VRIKClearOrdinaryRanger ();
 	/* Alternate avatars are a cosmetic remote-player replacement even without
-	 * local VR tracking.  Ranger retains the historical vr_vrik gate; every
-	 * path still observes the established compatibility policy. */
+	 * local VR tracking.  An untracked Ranger must stay on the ordinary MD5
+	 * draw path: its established renderer owns all native head/weapon seams. */
 	if (!VR_VRIKAllowedForGame () || !cl.entities ||
 		!entity || !entity->model)
 		return false;
@@ -3267,8 +3395,27 @@ static qboolean R_VRIKSubstitutePlayer (entity_t *entity, entity_t *replacement)
 	avatar = cl.avatar_ids[entitynum - 1];
 	if (!PlayerAvatar_IsValidId (avatar))
 		avatar = PLAYER_AVATAR_RANGER;
-	if (avatar == PLAYER_AVATAR_RANGER && !vr_vrik.value)
+	tracked = R_VRIKSampleEntityPose (entity, &pose);
+	if (!R_VRIKShouldSubstituteAvatar ((player_avatar_id_t)avatar, tracked,
+		vr_vrik.value != 0.0f))
 		return false;
+	/* Preserve the 3af2a3e4 desktop Ranger oracle: with VRIK selected but no
+	 * active tracked pose, substitute the verified Ranger and let normal baked
+	 * MD5 rendering handle it. */
+	if (avatar == PLAYER_AVATAR_RANGER && !R_VRIKShouldApplyPose(tracked, vr_vrik.value != 0.0f))
+	{
+		model = Mod_GetRereleasePlayerMD5Model ();
+		if (!model) return false;
+		*replacement = *entity;
+		replacement->model = model;
+		replacement->frame = R_VRIKReplacementFrame (entity, model);
+		R_VRIKRestoreRenderState (replacement, entitynum, model,
+			entity->vrik_generation, PLAYER_AVATAR_RANGER);
+		r_vrik_active_player = entitynum - 1;
+		r_vrik_ordinary_ranger = true;
+		r_vrik_skin_pending = false;
+		return true;
+	}
 	model = Mod_GetRereleaseAvatarMD5Model ((player_avatar_id_t)avatar);
 	if (!model && avatar != PLAYER_AVATAR_RANGER)
 	{
@@ -3304,7 +3451,6 @@ static qboolean R_VRIKSubstitutePlayer (entity_t *entity, entity_t *replacement)
 			&targetrig))
 			return false;
 	}
-	tracked = R_VRIKSampleEntityPose (entity, &pose);
 	if (tracked && entitynum >= 1 && entitynum <= MAX_SCOREBOARD &&
 		r_vrik_rendered_generation[entitynum] != entity->vrik_generation)
 	{
@@ -3332,7 +3478,7 @@ static qboolean R_VRIKSubstitutePlayer (entity_t *entity, entity_t *replacement)
 		&r_vrik_canonical_lerpdata);
 	R_VRIKSaveRenderState (&canonicalentity, entitynum);
 	currententity = savedentity;
-	if (tracked)
+	if (R_VRIKShouldApplyPose(tracked, vr_vrik.value != 0.0f))
 	{
 		/* Tracking positions are root-local to the sender's sampled body yaw.
 		 * Use that same interpolated yaw for the outer entity transform. */
@@ -3347,7 +3493,7 @@ static qboolean R_VRIKSubstitutePlayer (entity_t *entity, entity_t *replacement)
 	}
 	else
 		R_VRIKClearLowerBodyTargets (entitynum);
-	r_vrik_pose_pending = tracked;
+	r_vrik_pose_pending = R_VRIKShouldApplyPose(tracked, vr_vrik.value != 0.0f);
 	r_vrik_skin_pending = true;
 	r_vrik_active_player = entitynum - 1;
 	r_vrik_avatar_id = (player_avatar_id_t)avatar;
@@ -3361,6 +3507,8 @@ static qboolean R_VRIKEnsureReplacementSkin (entity_t *replacement)
 {
 	qmodel_t *ranger;
 
+	if (replacement && !r_vrik_skin_pending)
+		return true;
 	if (replacement && R_VRIKPrepareSkin (replacement->model))
 		return true;
 	if (!replacement || r_vrik_avatar_id == PLAYER_AVATAR_RANGER)
@@ -3372,11 +3520,13 @@ static qboolean R_VRIKEnsureReplacementSkin (entity_t *replacement)
 	replacement->model = ranger;
 	replacement->frame = 0;
 	r_vrik_avatar_id = PLAYER_AVATAR_RANGER;
+	R_VRIKClearOrdinaryRanger ();
 	return R_VRIKPrepareSkin (replacement->model);
 }
 
 static void R_VRIKEndSubstitution (void)
 {
+	R_VRIKClearOrdinaryRanger ();
 	r_vrik_pose_pending = false;
 	r_vrik_skin_pending = false;
 	r_vrik_skin_active = false;
@@ -4024,6 +4174,8 @@ void R_DrawAliasModel (entity_t *e)
 		{
 			/* Tracked hands can leave the animation's static bounds. */
 			R_DrawMD5Model (&vrikentity, false, false);
+			if (r_vrik_ordinary_ranger)
+				R_VRIKSaveRenderState (&vrikentity, (int)(e - cl.entities));
 			if (tracked)
 				R_VRIKStoreMuzzleTransform (e, vrikentity.model);
 			else
@@ -4437,6 +4589,8 @@ void R_DrawAliasModelOutline (entity_t *e, float r, float g, float b, float a, f
 		if (R_VRIKEnsureReplacementSkin (&vrikentity))
 		{
 			R_DrawMD5ModelOutline (&vrikentity, r, g, b, a, inflate);
+			if (r_vrik_ordinary_ranger)
+				R_VRIKSaveRenderState (&vrikentity, (int)(e - cl.entities));
 			currententity = savedentity;
 			R_VRIKEndSubstitution ();
 			return;
@@ -4700,6 +4854,8 @@ void GL_DrawAliasShadow (entity_t *e)
 			entalpha = ENTALPHA_DECODE(vrikentity.alpha);
 			if (entalpha != 0)
 				GL_DrawMD5Shadow (&vrikentity);
+			if (r_vrik_ordinary_ranger)
+				R_VRIKSaveRenderState (&vrikentity, (int)(e - cl.entities));
 			currententity = savedentity;
 			R_VRIKEndSubstitution ();
 			return;
@@ -4910,5 +5066,43 @@ qboolean R_VRIKRefineArmOverreachForTest (void)
 	VectorSubtract (hand, shoulder, delta);
 	return isfinite (hand[0]) && isfinite (hand[1]) && isfinite (hand[2]) &&
 		VectorLength (delta) <= 4.0f * VRIK_ARM_MAX_STRETCH + 0.01f;
+}
+
+qboolean R_VRIKOrdinaryRangerLifecycleForTest (void)
+{
+	r_vrik_ordinary_ranger = true;
+	R_VRIKClearOrdinaryRanger ();
+	if (r_vrik_ordinary_ranger)
+		return false;
+	r_vrik_ordinary_ranger = true;
+	R_VRIKEndSubstitution ();
+	return !r_vrik_ordinary_ranger;
+}
+
+qboolean R_VRIKAttachedPropForTest (
+	const r_avatar_presentation_context_t *context, const float sourcehandpose[12],
+	const float sourcehandbind[12], const float targethandpose[12],
+	const float targethandbind[12], const float sourceprop[12],
+	float socket[12], float out[12])
+{
+	if (!sourceprop || !out || !R_VRIKBuildAttachedPropSocket (context,
+		sourcehandpose, sourcehandbind, targethandpose, targethandbind, socket))
+		return false;
+	R_VRIKMatrixMultiply (socket, sourceprop, out);
+	return true;
+}
+
+qboolean R_VRIKApplyBindFloorCorrectionForTest (const md5liveinfo_t *canonical,
+	const md5livesurface_t *canonicalsurface, const float *canonicalbind,
+	int canonicalexclude1, int canonicalexclude2, const md5liveinfo_t *target,
+	const md5livesurface_t *targetsurface, const float *targetbind,
+	const unsigned short *targetindexes, int targetnumindexes,
+	r_avatar_presentation_context_t *presentation, float *sourcefloor,
+	float *targetfloor)
+{
+	return R_VRIKApplyBindFloorCorrection (canonical, canonicalsurface,
+		canonicalbind, canonicalexclude1, canonicalexclude2, target,
+		targetsurface, targetbind, targetindexes, targetnumindexes, presentation,
+		sourcefloor, targetfloor);
 }
 #endif

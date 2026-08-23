@@ -17,6 +17,20 @@ static void ident(float m[12], float x, float y, float z)
 	m[3] = x; m[7] = y; m[11] = z;
 }
 
+static void rotation_x(float m[12])
+{
+	ident(m, 0, 0, 0);
+	m[5] = 0; m[6] = -1;
+	m[9] = 1; m[10] = 0;
+}
+
+static void rotation_z(float m[12])
+{
+	ident(m, 0, 0, 0);
+	m[0] = 0; m[1] = -1;
+	m[4] = 1; m[5] = 0;
+}
+
 static void multiply(const float a[12], const float b[12], float out[12])
 {
 	int r, c; float t[12];
@@ -169,6 +183,55 @@ static void test_dynamic_presentation_basis(void)
 	assert(fabsf(mappedhead[0]) < .01f && mappedhead[1] > 9.9f && fabsf(mappedhead[2]) < .01f);
 }
 
+static void test_ancestor_translation_applied_once(void)
+{
+	fixture_t source, target;
+	r_avatar_rig_t sr, tr;
+	float solved[MAX_MD5_JOINTS * 12], output[MAX_MD5_JOINTS * 12];
+	float parentmotion[12], invparent[12], childbindlocal[12], unmappedlocal[12];
+	float parentdelta[3], childdelta[3], local[12];
+	int i, parent, child, targetparentindex, targetchild, unmapped;
+
+	ranger(&source, 1); ranger(&target, 1);
+	/* An unmapped descendant must retain its authored bind-local under the
+	 * solved parent.  Its global motion comes from that parent exactly once. */
+	unmapped = target.live.numbones++;
+	strncpy(target.joints[unmapped].name, "UnmappedChild",
+		sizeof(target.joints[unmapped].name) - 1);
+	target.joints[unmapped].parent = 2; /* target Spine2 */
+	rotation_z(unmappedlocal);
+	origin(unmappedlocal, 7, -3, 2);
+	multiply(target.joints[target.joints[unmapped].parent].bind, unmappedlocal,
+		target.joints[unmapped].bind);
+	assert(R_AvatarResolveRig(R_AvatarProfileForId(PLAYER_AVATAR_RANGER), &source.live, &sr));
+	assert(R_AvatarResolveRig(R_AvatarProfileForId(PLAYER_AVATAR_RANGER), &target.live, &tr));
+	for (i = 0; i < source.live.numbones; ++i)
+		memcpy(solved + i * 12, source.joints[i].bind, 12 * sizeof(float));
+	parent = sr.joint[MD5_VRIK_SPINE1];
+	child = sr.joint[MD5_VRIK_SPINE2];
+	ident(parentmotion, 2, -3, 4);
+	multiply(parentmotion, source.joints[parent].bind, solved + parent * 12);
+	inverse(source.joints[parent].bind, invparent);
+	multiply(invparent, source.joints[child].bind, childbindlocal);
+	multiply(solved + parent * 12, childbindlocal, solved + child * 12);
+	assert(R_AvatarRetargetPalette(&sr, &tr, solved, output));
+	targetparentindex = tr.joint[MD5_VRIK_SPINE1];
+	targetchild = tr.joint[MD5_VRIK_SPINE2];
+	for (i = 0; i < 3; ++i) {
+		int origincomponent = i * 4 + 3;
+		parentdelta[i] = output[targetparentindex * 12 + origincomponent] -
+			target.joints[targetparentindex].bind[origincomponent];
+		childdelta[i] = output[targetchild * 12 + origincomponent] -
+			target.joints[targetchild].bind[origincomponent];
+		assert(fabsf(parentdelta[i] - parentmotion[origincomponent]) < 0.001f);
+		assert(fabsf(childdelta[i] - parentdelta[i]) < 0.001f);
+	}
+	inverse(output + targetchild * 12, invparent);
+	multiply(invparent, output + unmapped * 12, local);
+	for (i = 0; i < 12; ++i)
+		assert(fabsf(local[i] - unmappedlocal[i]) < 0.001f);
+}
+
 static void test_rejection_and_monsters(void)
 {
 	fixture_t bad, dog, vore, enforcer; r_avatar_rig_t rig;
@@ -186,8 +249,83 @@ static void test_rejection_and_monsters(void)
 	assert(!strcmp(p->joint[MD5_VRIK_HAND_R].name, "hand_R"));
 }
 
+static void test_all_profile_palettes_are_bounded(void)
+{
+	fixture_t source, target;
+	r_avatar_rig_t sr, tr;
+	float solved[MAX_MD5_JOINTS * 12], output[MAX_MD5_JOINTS * 12];
+	int avatar, joint, component;
+
+	ranger(&source, 1);
+	assert(R_AvatarResolveRig(R_AvatarProfileForId(PLAYER_AVATAR_RANGER), &source.live, &sr));
+	for (joint = 0; joint < source.live.numbones; ++joint)
+		memcpy(solved + joint * 12, source.joints[joint].bind, 12 * sizeof(float));
+	for (avatar = PLAYER_AVATAR_RANGER; avatar < PLAYER_AVATAR_COUNT; ++avatar) {
+		named_profile(&target, R_AvatarProfileForId(avatar));
+		assert(R_AvatarResolveRig(R_AvatarProfileForId(avatar), &target.live, &tr));
+		assert(R_AvatarRetargetPalette(&sr, &tr, solved, output));
+		for (joint = 0; joint < target.live.numbones; ++joint)
+			for (component = 0; component < 12; ++component)
+				assert(isfinite(output[joint * 12 + component]) &&
+					fabsf(output[joint * 12 + component]) < 10000.0f);
+	}
+}
+
+static void test_absolute_global_transport(void)
+{
+	fixture_t source, target;
+	r_avatar_rig_t sr, tr;
+	r_avatar_presentation_context_t context;
+	float solved[MAX_MD5_JOINTS * 12], output[MAX_MD5_JOINTS * 12];
+	float motion[12], invbind[12], delta[12], expected[12], inverse_r[12], mapped[12];
+	int i, joint;
+	ranger(&source, 1); ranger(&target, 2);
+	assert(R_AvatarResolveRig(R_AvatarProfileForId(PLAYER_AVATAR_RANGER), &source.live, &sr));
+	assert(R_AvatarResolveRig(R_AvatarProfileForId(PLAYER_AVATAR_RANGER), &target.live, &tr));
+	assert(R_AvatarBuildPresentationContext(&sr, &tr, &context));
+	for (i = 0; i < source.live.numbones; ++i) memcpy(solved + i * 12, source.joints[i].bind, 12 * sizeof(float));
+	joint = sr.joint[MD5_VRIK_HAND_R];
+	rotation_x(motion); motion[3] = 3; motion[7] = -2; motion[11] = 1;
+	multiply(motion, source.joints[joint].bind, solved + joint * 12);
+	assert(R_AvatarRetargetPaletteWithContext(&sr, &tr, &context, solved, output));
+	inverse(source.joints[joint].bind, invbind); multiply(solved + joint * 12, invbind, delta);
+	delta[3] = delta[7] = delta[11] = 0; inverse(context.rotation, inverse_r);
+	multiply(delta, context.rotation, mapped); multiply(inverse_r, mapped, expected);
+	multiply(expected, target.joints[tr.joint[MD5_VRIK_HAND_R]].bind, expected);
+	expected[3] = target.joints[tr.joint[MD5_VRIK_HAND_R]].bind[3] + context.inverse[0]*(solved[joint*12+3]-source.joints[joint].bind[3]) + context.inverse[1]*(solved[joint*12+7]-source.joints[joint].bind[7]) + context.inverse[2]*(solved[joint*12+11]-source.joints[joint].bind[11]);
+	expected[7] = target.joints[tr.joint[MD5_VRIK_HAND_R]].bind[7] + context.inverse[4]*(solved[joint*12+3]-source.joints[joint].bind[3]) + context.inverse[5]*(solved[joint*12+7]-source.joints[joint].bind[7]) + context.inverse[6]*(solved[joint*12+11]-source.joints[joint].bind[11]);
+	expected[11] = target.joints[tr.joint[MD5_VRIK_HAND_R]].bind[11] + context.inverse[8]*(solved[joint*12+3]-source.joints[joint].bind[3]) + context.inverse[9]*(solved[joint*12+7]-source.joints[joint].bind[7]) + context.inverse[10]*(solved[joint*12+11]-source.joints[joint].bind[11]);
+	for (i = 0; i < 12; ++i) assert(fabsf(output[tr.joint[MD5_VRIK_HAND_R]*12+i] - expected[i]) < .001f);
+}
+
+static void test_nonunit_presentation_roundtrips(void)
+{
+	fixture_t source, target;
+	r_avatar_rig_t sr, tr;
+	r_avatar_presentation_context_t context;
+	vec3_t point_in = {3, -4, 5}, mapped, roundtrip, inplace;
+	int avatar;
+	ranger(&source, 1);
+	assert(R_AvatarResolveRig(R_AvatarProfileForId(PLAYER_AVATAR_RANGER), &source.live, &sr));
+	for (avatar = PLAYER_AVATAR_DOG; avatar <= PLAYER_AVATAR_SHAMBLER; avatar += PLAYER_AVATAR_SHAMBLER - PLAYER_AVATAR_DOG) {
+		named_profile(&target, R_AvatarProfileForId(avatar));
+		assert(R_AvatarResolveRig(R_AvatarProfileForId(avatar), &target.live, &tr));
+		assert(R_AvatarBuildPresentationContext(&sr, &tr, &context));
+		assert(fabsf(context.scale - 1.0f) > .01f);
+		R_AvatarPresentationPoint(&context, point_in, mapped);
+		R_AvatarPresentationInversePoint(&context, mapped, roundtrip);
+		assert(fabsf(roundtrip[0]-point_in[0]) < .01f && fabsf(roundtrip[1]-point_in[1]) < .01f && fabsf(roundtrip[2]-point_in[2]) < .01f);
+		memcpy(inplace, point_in, sizeof(inplace));
+		R_AvatarPresentationPoint(&context, inplace, inplace);
+		assert(fabsf(inplace[0]-mapped[0]) < .01f && fabsf(inplace[1]-mapped[1]) < .01f && fabsf(inplace[2]-mapped[2]) < .01f);
+		R_AvatarPresentationInversePoint(&context, inplace, inplace);
+		assert(fabsf(inplace[0]-point_in[0]) < .01f && fabsf(inplace[1]-point_in[1]) < .01f && fabsf(inplace[2]-point_in[2]) < .01f);
+		assert(fabsf(context.rotation[0]*(context.rotation[5]*context.rotation[10]-context.rotation[6]*context.rotation[9]) - context.rotation[1]*(context.rotation[4]*context.rotation[10]-context.rotation[6]*context.rotation[8]) + context.rotation[2]*(context.rotation[4]*context.rotation[9]-context.rotation[5]*context.rotation[8])-1.0f) < .03f);
+	}
+}
+
 int main(void)
 {
-	test_identity_and_locals(); test_rotation_and_basis(); test_dynamic_presentation_basis(); test_rejection_and_monsters();
+	test_identity_and_locals(); test_rotation_and_basis(); test_dynamic_presentation_basis(); test_ancestor_translation_applied_once(); test_rejection_and_monsters(); test_all_profile_palettes_are_bounded(); test_absolute_global_transport(); test_nonunit_presentation_roundtrips();
 	puts("avatar retarget fixture: ok"); return 0;
 }
