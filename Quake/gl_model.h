@@ -480,6 +480,11 @@ typedef struct {
 	int				md5_numliveweights;
 	intptr_t		md5_livevertices;
 	intptr_t		md5_liveweights;
+	/* Lazily validated semantic joint map for VRIK.  This lives with the
+	 * retained alias cache, so draw paths do not rescan joint names every eye. */
+	int				md5_vrik_jointindex[MD5_VRIK_JOINT_COUNT];
+	qboolean			md5_vrik_compatible;
+	qboolean			md5_vrik_validated;
 	struct gltexture_s	*gltextures[MAX_SKINS][4]; //johnfitz
 	struct gltexture_s	*fbtextures[MAX_SKINS][4]; //johnfitz
 	int					texels[MAX_SKINS];	// only for player skins

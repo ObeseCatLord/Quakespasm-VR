@@ -24,6 +24,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 
 #include "quakedef.h"
 #include "vr.h"
+#include "r_vrik.h"
 
 extern cvar_t r_drawflat, gl_overbright_models, gl_fullbrights, r_lerpmodels, r_lerpmove; //johnfitz
 extern cvar_t scr_fov, cl_gun_fovscale;
@@ -107,15 +108,9 @@ static qboolean r_md5_glsl_alphatest;
 static qboolean r_vrik_pose_pending;
 static qboolean r_vrik_skin_active;
 static vrik_pose_t r_vrik_pending_pose;
-static const aliashdr_t *r_vrik_skin_surface;
-static md5vertex_t *r_vrik_skin_vertices;
-static int r_vrik_skin_capacity;
-static float r_vrik_palette[MAX_MD5_JOINTS * 12];
+static r_vrik_skincache_t *r_vrik_skin_cache;
 static unsigned int r_vrik_rendered_generation[MAX_SCOREBOARD + 1];
 static int r_vrik_active_player = -1;
-static qboolean r_vrik_muzzle_model_valid;
-static vec3_t r_vrik_muzzle_model_origin;
-static vec3_t r_vrik_muzzle_model_forward;
 static vec3_t r_vrik_draw_origin;
 static vec3_t r_vrik_draw_angles;
 
@@ -1823,6 +1818,95 @@ static qboolean R_VRIKSampleEntityPose (const entity_t *entity, vrik_pose_t *out
 	return true;
 }
 
+/* Lower roles deliberately do not borrow the legacy head/hand interpolation
+ * payload.  v3's present mask means a finite currently usable payload, while
+ * tracked means that payload is a fresh hardware measurement.  A lost sender
+ * clears presence, so a present-but-untracked role remains independently
+ * usable as its newest held/predicted target rather than being dropped. */
+static qboolean R_VRIKSampleEntityLowerTargets (const entity_t *entity,
+	r_vrik_lowerbody_targets_t *out)
+{
+	const vrik_codec_pose_t *newest, *older;
+	double newesttime, oldertime, sampletime;
+	float blend = 1.0f;
+	int role;
+
+	if (!out)
+		return false;
+	memset (out, 0, sizeof(*out));
+	if (!entity || entity->vrik_pose_count < 1)
+		return false;
+	newest = &entity->vrik_v3_poses[0];
+	newesttime = entity->vrik_pose_times[0];
+	if (!(newest->flags & VRIK_V3_FLAG_ACTIVE) ||
+		realtime - newesttime > VRIK_POSE_STALE_TIME)
+		return false;
+	older = NULL;
+	if (entity->vrik_pose_count >= 2)
+	{
+		older = &entity->vrik_v3_poses[1];
+		oldertime = entity->vrik_pose_times[1];
+		if (!(older->flags & VRIK_V3_FLAG_ACTIVE) || newesttime <= oldertime)
+			older = NULL;
+		else
+		{
+			sampletime = realtime - 0.075;
+			blend = CLAMP (0.0f, (float)((sampletime - oldertime) /
+				(newesttime - oldertime)), 1.0f);
+		}
+	}
+	for (role = 0; role < R_VRIK_LOWER_ROLE_COUNT; role++)
+	{
+		int target = VRIK_TARGET_HIP + role;
+		unsigned char sourcebit = VRIK_TARGET_BIT (target);
+		unsigned char destinationbit = R_VRIK_LOWER_BIT (role);
+		int axis;
+
+		if (!(newest->present_mask & sourcebit))
+			continue;
+		out->present_mask |= destinationbit;
+		/* The protocol supplies no prediction start timestamp.  Packet receive
+		 * times measure transport age, not the age of this held value, so do
+		 * not invent a confidence fade from them.  The sender bounds a held
+		 * target to VRIK_POSE_STALE_TIME (250 ms); retain full confidence here
+		 * and let the receiver's same stale timeout clear the complete pose. */
+		out->confidence[role] = 1.0f;
+		VectorCopy (newest->targets[target].position, out->position[role]);
+		VectorCopy (newest->targets[target].orientation, out->orientation[role]);
+		if (!(newest->tracked_mask & sourcebit))
+		{
+			out->predicted_mask |= destinationbit;
+			continue;
+		}
+		out->tracked_mask |= destinationbit;
+		/* Interpolate only consecutive fresh measurements of this exact role.
+		 * Crossing a tracked/predicted boundary would manufacture motion from a
+		 * held payload whose source age is not carried by protocol v3. */
+		if (older && (older->present_mask & sourcebit) &&
+			(older->tracked_mask & sourcebit))
+			for (axis = 0; axis < 3; axis++)
+			{
+				out->position[role][axis] = older->targets[target].position[axis] +
+					(newest->targets[target].position[axis] -
+					older->targets[target].position[axis]) * blend;
+				out->orientation[role][axis] = R_VRIKLerpAngle (
+					older->targets[target].orientation[axis],
+					newest->targets[target].orientation[axis], blend);
+			}
+	}
+	return out->present_mask != 0;
+}
+
+#ifdef R_ALIAS_LOWER_TARGETS_TEST
+/* Keep the receive-to-render translation testable without making it part of
+ * the renderer API. */
+qboolean R_VRIKSampleEntityLowerTargetsForTest (const entity_t *entity,
+	r_vrik_lowerbody_targets_t *out)
+{
+	return R_VRIKSampleEntityLowerTargets (entity, out);
+}
+#endif
+
 static void R_VRIKMatrixOrigin (const float matrix[12], vec3_t origin)
 {
 	origin[0] = matrix[3];
@@ -2147,13 +2231,16 @@ static void R_VRIKMoveJoint (const md5liveinfo_t *live, float *palette,
 }
 
 static void R_VRIKSolvePalette (const md5liveinfo_t *live,
-	const vrik_pose_t *pose, qboolean muzzleflash, float *palette)
+	const vrik_pose_t *pose, qboolean muzzleflash, float *palette,
+	r_vrik_skincache_t *cache)
 {
 	vec3_t lateral, forward, up, hip, oldhead, targethead, headdelta, torso;
 	vec3_t lefttarget, righttarget, weaponhandlocal = {0, 0, 0};
 	float weaponhand[12], inverse[12], attached[12];
 	int headindex, hipindex, handright, handleft, gun, axe, flames[2], weapon = -1;
 	qboolean dominantleft;
+	r_vrik_lowerbody_targets_t lower;
+	r_vrik_lowerbody_model_targets_t lowermodel;
 
 	if (!R_VRIKBuildBodyBasis (live, palette, lateral, forward, up))
 		return;
@@ -2166,6 +2253,31 @@ static void R_VRIKSolvePalette (const md5liveinfo_t *live,
 	flames[0] = live->jointindex[MD5_VRIK_SMALL_FLAME];
 	flames[1] = live->jointindex[MD5_VRIK_BIG_FLAME];
 	dominantleft = (pose->flags & VRIK_FLAG_DOMINANT_LEFT) != 0;
+
+	/* v2 does not populate this renderer-facing input, so its old upper-body
+	 * path remains byte-for-byte selected when lower roles are absent.  A v3
+	 * receiver will supply root-local tracker targets through r_vrik; convert
+	 * them once against the same animated Ranger basis used by head/hands. */
+	if (R_VRIKGetLowerBodyTargets (r_vrik_active_player + 1, &lower))
+	{
+		int role;
+		memset (&lowermodel, 0, sizeof(lowermodel));
+		for (role = 0; role < R_VRIK_LOWER_ROLE_COUNT; role++)
+			if (lower.present_mask & R_VRIK_LOWER_BIT (role))
+			{
+				unsigned char bit = R_VRIK_LOWER_BIT (role);
+				if (!(lower.tracked_mask & bit) && !(lower.predicted_mask & bit))
+					continue;
+				R_VRIKLocalVectorToModel (lower.position[role], lateral, forward,
+					up, lowermodel.position[role]);
+				R_VRIKAnglesToModelMatrix (lower.orientation[role], lateral, forward,
+					up, lowermodel.position[role], lowermodel.orientation[role]);
+				lowermodel.usable_mask |= bit;
+				lowermodel.orientation_mask |= bit;
+				lowermodel.confidence[role] = lower.confidence[role];
+			}
+		R_VRIKApplyLowerBody (live, palette, &lowermodel);
+	}
 
 	/* Capture the active prop's complete animated fist socket before IK.  The
 	 * prop itself will still receive the stable tracked basis; retaining this
@@ -2329,13 +2441,13 @@ static void R_VRIKSolvePalette (const md5liveinfo_t *live,
 				/* The gun mesh's measured barrel axis is local +Y.  Use it
 				 * unconditionally for both the muzzle point and direction; a
 				 * grip-to-flame vector changes under pitch/roll and is not aim. */
-				r_vrik_muzzle_model_forward[0] = attached[1];
-				r_vrik_muzzle_model_forward[1] = attached[5];
-				r_vrik_muzzle_model_forward[2] = attached[9];
-				r_vrik_muzzle_model_valid =
-					VectorNormalize (r_vrik_muzzle_model_forward) != 0.0f;
+				cache->muzzle_forward[0] = attached[1];
+				cache->muzzle_forward[1] = attached[5];
+				cache->muzzle_forward[2] = attached[9];
+				cache->muzzle_valid =
+					VectorNormalize (cache->muzzle_forward) != 0.0f;
 				VectorMA (gunorigin, VRIK_GUN_MUZZLE_OFFSET,
-					r_vrik_muzzle_model_forward, r_vrik_muzzle_model_origin);
+					cache->muzzle_forward, cache->muzzle_origin);
 				/* The flare meshes also extend along their joint-local +Y axis.
 				 * Their original joints are animated under Spine1, so retaining a
 				 * gun-relative offset after hand IK leaves them beside the weapon
@@ -2350,7 +2462,7 @@ static void R_VRIKSolvePalette (const md5liveinfo_t *live,
 							memcpy (palette + flames[flame] * 12, attached,
 								sizeof(attached));
 							R_VRIKSetMatrixOrigin (palette + flames[flame] * 12,
-								r_vrik_muzzle_model_origin);
+								cache->muzzle_origin);
 						}
 			}
 		}
@@ -2387,32 +2499,35 @@ static qboolean R_VRIKPrepareSkin (qmodel_t *model, const lerpdata_t *lerpdata)
 {
 	md5liveinfo_t live;
 	md5livesurface_t surface;
+	r_vrik_skincache_t *cache;
 	int vertex, influence;
 
 	r_vrik_skin_active = false;
-	r_vrik_muzzle_model_valid = false;
+	r_vrik_skin_cache = NULL;
+	cache = R_VRIKGetSkinCache (r_vrik_active_player + 1, model);
+	if (!cache)
+		return false;
+	if (R_VRIKSkinCacheReady (cache, model))
+	{
+		r_vrik_skin_cache = cache;
+		r_vrik_skin_active = true;
+		return true;
+	}
 	if (!r_vrik_pose_pending || !Mod_GetMD5LiveData (model, &live) ||
 		!live.compatible || !Mod_GetMD5LiveSurface (&live, 0, &surface) ||
 		surface.header->nextsurface)
 		return false;
-	if (surface.numverts > r_vrik_skin_capacity)
-	{
-		md5vertex_t *resized = (md5vertex_t *)realloc (r_vrik_skin_vertices,
-			(size_t)surface.numverts * sizeof(*resized));
-		if (!resized)
-			return false;
-		r_vrik_skin_vertices = resized;
-		r_vrik_skin_capacity = surface.numverts;
-	}
+	if (!R_VRIKSkinCacheReserve (cache, surface.numverts))
+		return false;
 
-	R_VRIKLerpPalette (&live, lerpdata, r_vrik_palette);
+	R_VRIKLerpPalette (&live, lerpdata, cache->palette);
 	R_VRIKSolvePalette (&live, &r_vrik_pending_pose,
 		currententity && (currententity->effects & EF_MUZZLEFLASH),
-		r_vrik_palette);
+		cache->palette, cache);
 	for (vertex = 0; vertex < surface.numverts; vertex++)
 	{
 		const md5livevertex_t *source = &surface.vertices[vertex];
-		md5vertex_t *destination = &r_vrik_skin_vertices[vertex];
+		md5vertex_t *destination = &cache->vertices[vertex];
 		destination->xyz[0] = destination->xyz[1] = destination->xyz[2] = 0;
 		destination->st[0] = source->st[0];
 		destination->st[1] = source->st[1];
@@ -2420,7 +2535,7 @@ static qboolean R_VRIKPrepareSkin (qmodel_t *model, const lerpdata_t *lerpdata)
 		{
 			const md5liveweight_t *weight =
 				&surface.weights[source->firstweight + influence];
-			const float *matrix = r_vrik_palette + weight->joint * 12;
+			const float *matrix = cache->palette + weight->joint * 12;
 			vec3_t transformed;
 			transformed[0] = matrix[0] * weight->position[0] +
 				matrix[1] * weight->position[1] + matrix[2] * weight->position[2] +
@@ -2434,9 +2549,10 @@ static qboolean R_VRIKPrepareSkin (qmodel_t *model, const lerpdata_t *lerpdata)
 			VectorAdd (destination->xyz, transformed, destination->xyz);
 		}
 	}
-	R_VRIKComputeNormals (r_vrik_skin_vertices, surface.numverts,
+	R_VRIKComputeNormals (cache->vertices, surface.numverts,
 		surface.indexes, surface.numindexes);
-	r_vrik_skin_surface = surface.header;
+	R_VRIKSkinCacheCommit (cache, surface.header);
+	r_vrik_skin_cache = cache;
 	r_vrik_skin_active = true;
 	return true;
 }
@@ -2516,7 +2632,8 @@ static void R_VRIKStoreMuzzleTransform (entity_t *entity, qmodel_t *model)
 	float entityscale;
 	int axis;
 
-	if (!entity || !model || !r_vrik_muzzle_model_valid)
+	if (!entity || !model || !r_vrik_skin_cache ||
+		!r_vrik_skin_cache->muzzle_valid)
 	{
 		if (entity)
 			entity->vrik_muzzle_valid = false;
@@ -2533,9 +2650,9 @@ static void R_VRIKStoreMuzzleTransform (entity_t *entity, qmodel_t *model)
 	for (axis = 0; axis < 3; axis++)
 	{
 		localorigin[axis] = entityscale * (md5->scale_origin[axis] +
-			md5->scale[axis] * r_vrik_muzzle_model_origin[axis]);
+			md5->scale[axis] * r_vrik_skin_cache->muzzle_origin[axis]);
 		localforward[axis] = md5->scale[axis] *
-			r_vrik_muzzle_model_forward[axis];
+			r_vrik_skin_cache->muzzle_forward[axis];
 	}
 	AngleVectors (r_vrik_draw_angles, forward, right, up);
 	VectorCopy (r_vrik_draw_origin, entity->vrik_muzzle_origin);
@@ -2560,6 +2677,7 @@ static qboolean R_VRIKSubstitutePlayer (entity_t *entity, entity_t *replacement)
 {
 	qmodel_t *model;
 	vrik_pose_t pose;
+	r_vrik_lowerbody_targets_t lower;
 	uintptr_t address;
 	int entitynum;
 	qboolean tracked;
@@ -2601,7 +2719,13 @@ static qboolean R_VRIKSubstitutePlayer (entity_t *entity, entity_t *replacement)
 		replacement->previousangles[YAW] = pose.body_yaw;
 		replacement->currentangles[YAW] = pose.body_yaw;
 		r_vrik_pending_pose = pose;
+		if (R_VRIKSampleEntityLowerTargets (entity, &lower))
+			R_VRIKSetLowerBodyTargets (entitynum, &lower);
+		else
+			R_VRIKClearLowerBodyTargets (entitynum);
 	}
+	else
+		R_VRIKClearLowerBodyTargets (entitynum);
 	r_vrik_pose_pending = tracked;
 	r_vrik_active_player = entitynum - 1;
 	return true;
@@ -2726,9 +2850,10 @@ static void GL_DrawMD5Frame (aliashdr_t *surface, lerpdata_t lerpdata)
 	int index, i;
 	qboolean lerping;
 
-	if (r_vrik_skin_active && surface == r_vrik_skin_surface)
+	if (r_vrik_skin_active && r_vrik_skin_cache &&
+		surface == r_vrik_skin_cache->surface)
 	{
-		verts1 = verts2 = r_vrik_skin_vertices;
+		verts1 = verts2 = r_vrik_skin_cache->vertices;
 		lerpdata.pose1 = lerpdata.pose2 = 0;
 	}
 	else

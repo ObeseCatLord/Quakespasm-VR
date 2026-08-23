@@ -50,6 +50,229 @@ static int vr_options_view_start = 0;
 #define VR_MENU_ROW_H 8.0f
 #define VR_MENU_VISIBLE_ROWS 18
 
+static size_t VR_MenuFBTBoundedLength(const char *text, size_t maximum) {
+  size_t length = 0;
+
+  if (!text)
+    return 0;
+  while (length < maximum && text[length])
+    ++length;
+  return length;
+}
+
+static qboolean VR_MenuFBTSerialIsSafe(const char *serial) {
+  size_t i;
+  size_t length = VR_MenuFBTBoundedLength(serial, VR_FBT_SERIAL_MAX);
+
+  if (!length || length == VR_FBT_SERIAL_MAX)
+    return false;
+  for (i = 0; i < length; ++i) {
+    unsigned char c = (unsigned char)serial[i];
+
+    if (!((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+          (c >= '0' && c <= '9') || c == '.' || c == '_' || c == ':' ||
+          c == '-'))
+      return false;
+  }
+  return true;
+}
+
+static qboolean VR_MenuFBTSerialEquals(const char *a, const char *b) {
+  size_t i;
+  size_t a_length = VR_MenuFBTBoundedLength(a, VR_FBT_SERIAL_MAX);
+  size_t b_length = VR_MenuFBTBoundedLength(b, VR_FBT_SERIAL_MAX);
+
+  if (!VR_MenuFBTSerialIsSafe(a) || !VR_MenuFBTSerialIsSafe(b) ||
+      a_length != b_length)
+    return false;
+  for (i = 0; i < a_length; ++i)
+    if (a[i] != b[i])
+      return false;
+  return true;
+}
+
+static uint32_t VR_MenuFBTSerialHash(const char *serial) {
+  uint32_t hash = UINT32_C(2166136261);
+  size_t serial_length;
+  size_t i;
+
+  if (!VR_MenuFBTSerialIsSafe(serial))
+    return 0;
+  serial_length = VR_MenuFBTBoundedLength(serial, VR_FBT_SERIAL_MAX);
+  for (i = 0; i < serial_length; ++i) {
+    hash ^= (unsigned char)serial[i];
+    hash *= UINT32_C(16777619);
+  }
+  return hash;
+}
+
+static void VR_MenuFormatFBTRoleStatus(vr_fbt_role_t role, char *value,
+                                       size_t size) {
+  vr_fbt_role_status_t status = {};
+
+  if (!value || !size)
+    return;
+  value[0] = 0;
+  if (!VR_GetFBTRoleStatus(role, &status)) {
+    q_snprintf(value, size, "unavailable");
+    return;
+  }
+  if (status.identity_kind == VR_FBT_IDENTITY_NONE ||
+      status.state == VR_FBT_STATE_UNASSIGNED) {
+    q_snprintf(value, size, "unassigned");
+    return;
+  }
+  if (status.state == VR_FBT_STATE_LOST || !status.connected) {
+    if (status.identity_kind == VR_FBT_IDENTITY_SERIAL &&
+        VR_MenuFBTSerialIsSafe(status.serial)) {
+      q_snprintf(value, size, "offline #%08x",
+                 VR_MenuFBTSerialHash(status.serial));
+    } else {
+      q_snprintf(value, size, "lost");
+    }
+    return;
+  }
+  if (status.identity_kind == VR_FBT_IDENTITY_EPHEMERAL) {
+    q_snprintf(value, size, "session #%u", status.device_index);
+    return;
+  }
+  switch (status.state) {
+  case VR_FBT_STATE_CONNECTED_INVALID:
+    q_snprintf(value, size, "connected-invalid");
+    break;
+  case VR_FBT_STATE_PREDICTING:
+    q_snprintf(value, size, "predicting");
+    break;
+  case VR_FBT_STATE_TRACKING:
+    q_snprintf(value, size, "tracking");
+    break;
+  default:
+    q_snprintf(value, size, "unavailable");
+    break;
+  }
+}
+
+static qboolean VR_MenuFBTCandidateAssignedElsewhere(
+    const vr_fbt_candidate_status_t *candidate, vr_fbt_role_t requested_role,
+    const vr_fbt_role_status_t roles[VR_FBT_ROLE_COUNT]) {
+  int role;
+
+  for (role = 0; role < VR_FBT_ROLE_COUNT; ++role) {
+    const vr_fbt_role_status_t *assigned = &roles[role];
+
+    if ((vr_fbt_role_t)role == requested_role)
+      continue;
+    if (assigned->identity_kind == VR_FBT_IDENTITY_SERIAL &&
+        candidate->has_safe_serial &&
+        VR_MenuFBTSerialEquals(assigned->serial, candidate->serial))
+      return true;
+    if (assigned->identity_kind == VR_FBT_IDENTITY_EPHEMERAL &&
+        !candidate->has_safe_serial && candidate->ephemeral_identity &&
+        assigned->ephemeral_identity == candidate->ephemeral_identity)
+      return true;
+  }
+  return false;
+}
+
+static qboolean VR_MenuFBTCandidateIsEligible(
+    const vr_fbt_candidate_status_t *candidate, vr_fbt_role_t requested_role,
+    const vr_fbt_role_status_t roles[VR_FBT_ROLE_COUNT]) {
+  if (!candidate->connected)
+    return false;
+  if (candidate->has_safe_serial) {
+    if (candidate->serial_ambiguous ||
+        !VR_MenuFBTSerialIsSafe(candidate->serial))
+      return false;
+  } else if (!candidate->ephemeral_identity || candidate->ephemeral_ambiguous) {
+    return false;
+  }
+  return !VR_MenuFBTCandidateAssignedElsewhere(candidate, requested_role,
+                                                roles);
+}
+
+static qboolean VR_MenuFBTCandidateMatchesRole(
+    const vr_fbt_candidate_status_t *candidate,
+    const vr_fbt_role_status_t *role) {
+  if (role->identity_kind == VR_FBT_IDENTITY_SERIAL)
+    return candidate->has_safe_serial &&
+           VR_MenuFBTSerialEquals(candidate->serial, role->serial);
+  if (role->identity_kind == VR_FBT_IDENTITY_EPHEMERAL)
+    return !candidate->has_safe_serial && candidate->ephemeral_identity &&
+           candidate->ephemeral_identity == role->ephemeral_identity;
+  return false;
+}
+
+static void VR_MenuCycleFBTRole(vr_fbt_role_t requested_role,
+                                qboolean is_left) {
+  vr_fbt_role_status_t roles[VR_FBT_ROLE_COUNT] = {};
+  unsigned int candidate_ordinals[VR_FBT_MAX_CANDIDATES];
+  unsigned int candidate_devices[VR_FBT_MAX_CANDIDATES];
+  unsigned int candidate_count;
+  unsigned int eligible_count = 0;
+  int current_option = -1;
+  int target_option;
+  int option_count;
+  int role;
+  unsigned int ordinal;
+
+  for (role = 0; role < VR_FBT_ROLE_COUNT; ++role)
+    if (!VR_GetFBTRoleStatus((vr_fbt_role_t)role, &roles[role]))
+      return;
+
+  candidate_count = VR_GetFBTCandidateCount();
+  if (candidate_count > VR_FBT_MAX_CANDIDATES)
+    candidate_count = VR_FBT_MAX_CANDIDATES;
+  for (ordinal = 0; ordinal < candidate_count; ++ordinal) {
+    vr_fbt_candidate_status_t candidate = {};
+    unsigned int insertion;
+
+    if (!VR_GetFBTCandidateStatus(ordinal, &candidate) ||
+        !VR_MenuFBTCandidateIsEligible(&candidate, requested_role, roles))
+      continue;
+    insertion = eligible_count;
+    while (insertion > 0 &&
+           candidate.device_index < candidate_devices[insertion - 1]) {
+      candidate_ordinals[insertion] = candidate_ordinals[insertion - 1];
+      candidate_devices[insertion] = candidate_devices[insertion - 1];
+      --insertion;
+    }
+    candidate_ordinals[insertion] = ordinal;
+    candidate_devices[insertion] = candidate.device_index;
+    ++eligible_count;
+  }
+
+  /* Unassigned is available only when at least one real candidate exists. */
+  if (!eligible_count)
+    return;
+
+  if (roles[requested_role].identity_kind == VR_FBT_IDENTITY_NONE)
+    current_option = 0;
+  else {
+    for (ordinal = 0; ordinal < eligible_count; ++ordinal) {
+      vr_fbt_candidate_status_t candidate = {};
+
+      if (VR_GetFBTCandidateStatus(candidate_ordinals[ordinal], &candidate) &&
+          VR_MenuFBTCandidateMatchesRole(&candidate, &roles[requested_role])) {
+        current_option = (int)ordinal + 1;
+        break;
+      }
+    }
+  }
+
+  option_count = (int)eligible_count + 1;
+  if (current_option < 0)
+    target_option = is_left ? (int)eligible_count : 0;
+  else
+    target_option = (current_option + (is_left ? option_count - 1 : 1)) %
+                    option_count;
+
+  if (target_option == 0)
+    VR_UnassignFBTRole(requested_role);
+  else
+    VR_AssignFBTCandidate(requested_role,
+                          candidate_ordinals[target_option - 1]);
+}
+
 static int VR_MenuVisibleRows(void) {
   return (int)VR_OPTION_MAX < VR_MENU_VISIBLE_ROWS ? (int)VR_OPTION_MAX
                                                    : VR_MENU_VISIBLE_ROWS;
@@ -117,6 +340,44 @@ static void VR_MenuPrintOptionValue(int cx, int cy, int option) {
       value_string = "unsupported";
     else
       M_DrawCheckbox(cx, cy, (int)vr_vrik.value);
+    break;
+  case VR_OPTION_FBT_ENABLED:
+    M_DrawCheckbox(cx, cy, (int)vr_fbt_enabled.value);
+    break;
+  case VR_OPTION_FBT_HIP:
+    VR_MenuFormatFBTRoleStatus(VR_FBT_ROLE_HIP, value_buffer,
+                               sizeof(value_buffer));
+    value_string = value_buffer;
+    break;
+  case VR_OPTION_FBT_LEFT_FOOT:
+    VR_MenuFormatFBTRoleStatus(VR_FBT_ROLE_LEFT_FOOT, value_buffer,
+                               sizeof(value_buffer));
+    value_string = value_buffer;
+    break;
+  case VR_OPTION_FBT_RIGHT_FOOT:
+    VR_MenuFormatFBTRoleStatus(VR_FBT_ROLE_RIGHT_FOOT, value_buffer,
+                               sizeof(value_buffer));
+    value_string = value_buffer;
+    break;
+  case VR_OPTION_FBT_RESCAN: {
+    vr_fbt_role_status_t status = {};
+
+    if (!VR_GetFBTRoleStatus(VR_FBT_ROLE_HIP, &status))
+      value_string = "unavailable";
+    else if (!VR_GetFBTCandidateCount())
+      value_string = "no trackers";
+    else
+      value_string = "rescan";
+    break;
+  }
+  case VR_OPTION_FBT_PROFILE:
+    value_string = VR_GetFBTSelectedProfileName();
+    break;
+  case VR_OPTION_FBT_CALIBRATION:
+    value_string = VR_GetFBTCalibrationStatus();
+    break;
+  case VR_OPTION_FBT_CALIBRATION_CANCEL:
+    value_string = "cancel";
     break;
   /*case VR_OPTION_PERFHUD:
       if (vr_perfhud.value == 1) value_string = "Latency Timing";
@@ -368,6 +629,38 @@ void VR_MenuKeyOption(int key, int option) {
     if (VR_VRIKAllowedForGame())
       Cvar_SetValue(vr_vrik.name, !(int)vr_vrik.value);
     break;
+  case VR_OPTION_FBT_ENABLED:
+    if (key == K_LEFTARROW || key == K_RIGHTARROW || key == K_ENTER)
+      Cvar_SetValue(vr_fbt_enabled.name, !(int)vr_fbt_enabled.value);
+    break;
+  case VR_OPTION_FBT_HIP:
+    if (key == K_LEFTARROW || key == K_RIGHTARROW)
+      VR_MenuCycleFBTRole(VR_FBT_ROLE_HIP, isLeft);
+    break;
+  case VR_OPTION_FBT_LEFT_FOOT:
+    if (key == K_LEFTARROW || key == K_RIGHTARROW)
+      VR_MenuCycleFBTRole(VR_FBT_ROLE_LEFT_FOOT, isLeft);
+    break;
+  case VR_OPTION_FBT_RIGHT_FOOT:
+    if (key == K_LEFTARROW || key == K_RIGHTARROW)
+      VR_MenuCycleFBTRole(VR_FBT_ROLE_RIGHT_FOOT, isLeft);
+    break;
+  case VR_OPTION_FBT_RESCAN:
+    if (key == K_LEFTARROW || key == K_RIGHTARROW || key == K_ENTER)
+      Cmd_ExecuteString("vr_fbt_rescan", cmd_source_t::src_command);
+    break;
+  case VR_OPTION_FBT_PROFILE:
+    /* Profile names are selected explicitly from the console so the menu
+       never needs to expose filesystem paths or tracker identities. */
+    break;
+  case VR_OPTION_FBT_CALIBRATION:
+    if (key == K_LEFTARROW || key == K_RIGHTARROW || key == K_ENTER)
+      VR_ActivateFBTCalibrationMenu();
+    break;
+  case VR_OPTION_FBT_CALIBRATION_CANCEL:
+    if (key == K_LEFTARROW || key == K_RIGHTARROW || key == K_ENTER)
+      VR_CancelFBTCalibrationMenu();
+    break;
   /*case VR_OPTION_PERFHUD:
       intValue = (int)vr_perfhud.value;
       intValue = CLAMP( debug[0], isLeft ? intValue - 1 : intValue + 1,
@@ -596,6 +889,38 @@ void VR_MenuDraw(void) {
       break;
     case VR_OPTION_VRIK:
       M_Print(16, y, "           Networked VRIK");
+      VR_MenuPrintOptionValue(240, y, i);
+      break;
+    case VR_OPTION_FBT_ENABLED:
+      M_Print(16, y, "      Full Body Tracking");
+      VR_MenuPrintOptionValue(240, y, i);
+      break;
+    case VR_OPTION_FBT_HIP:
+      M_Print(16, y, "             Hip Tracker");
+      VR_MenuPrintOptionValue(240, y, i);
+      break;
+    case VR_OPTION_FBT_LEFT_FOOT:
+      M_Print(16, y, "       Left Foot Tracker");
+      VR_MenuPrintOptionValue(240, y, i);
+      break;
+    case VR_OPTION_FBT_RIGHT_FOOT:
+      M_Print(16, y, "      Right Foot Tracker");
+      VR_MenuPrintOptionValue(240, y, i);
+      break;
+    case VR_OPTION_FBT_RESCAN:
+      M_Print(16, y, "          Rescan Trackers");
+      VR_MenuPrintOptionValue(240, y, i);
+      break;
+    case VR_OPTION_FBT_PROFILE:
+      M_Print(16, y, "       FBT Profile (console)");
+      VR_MenuPrintOptionValue(240, y, i);
+      break;
+    case VR_OPTION_FBT_CALIBRATION:
+      M_Print(16, y, "         FBT Calibration");
+      VR_MenuPrintOptionValue(240, y, i);
+      break;
+    case VR_OPTION_FBT_CALIBRATION_CANCEL:
+      M_Print(16, y, "      Cancel FBT Calibration");
       VR_MenuPrintOptionValue(240, y, i);
       break;
     case VR_OPTION_AIMMODE:

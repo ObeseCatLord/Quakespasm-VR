@@ -26,6 +26,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "quakedef.h"
 #include "bgmusic.h"
 #include "vr.h"
+#include "vrik_codec.h"
 
 const char *svc_strings[] =
 {
@@ -1995,6 +1996,7 @@ static void CL_DumpPacket (void)
 static qboolean CL_OfferVRIKProtocol(const char *command)
 {
 	const char *version;
+	int offered_version;
 
 	if (Q_strncmp(command, "vrik_protocol", 13) ||
 		(command[13] != ' ' && command[13] != '\t'))
@@ -2002,8 +2004,13 @@ static qboolean CL_OfferVRIKProtocol(const char *command)
 	version = command + 13;
 	while (*version == ' ' || *version == '\t')
 		version++;
-	if (*version++ != '2')
+	if (*version == '3')
+		offered_version = 3;
+	else if (*version == '2')
+		offered_version = 2;
+	else
 		return true;
+	version++;
 	/* CL_ParseStuffText calls extension handlers before removing the line
 	 * terminator, so the server's canonical "//vrik_protocol 2\n" offer still
 	 * has its newline here. */
@@ -2012,35 +2019,100 @@ static qboolean CL_OfferVRIKProtocol(const char *command)
 		version++;
 	if (*version || cl.vrik_cap_sent)
 		return true;
-	if (cls.message.cursize + 1 + (int)sizeof("vrik_cap 2") >
+	if (cls.message.cursize + 1 + (int)sizeof("vrik_cap 3") >
 		cls.message.maxsize)
 		return true;
 
+	if (vrik_latch_protocol_version((uint8_t)offered_version,
+		&cl.vrik_cap_sent, &cl.vrik_protocol_version) != VRIK_CODEC_OK)
+		return true;
 	cl.vrik_protocol_offered = true;
 	MSG_WriteByte(&cls.message, clc_stringcmd);
-	MSG_WriteString(&cls.message, "vrik_cap 2");
-	cl.vrik_cap_sent = true;
-	Con_DPrintf("VRIK: negotiated protocol 2 with server\n");
+	MSG_WriteString(&cls.message,
+		offered_version >= VRIK_PROTOCOL_VERSION ? "vrik_cap 3" : "vrik_cap 2");
+	Con_DPrintf("VRIK: negotiated protocol %d with server\n", offered_version);
 	return true;
 }
 
-static qboolean CL_VRIKSequenceIsNewer(unsigned short sequence,
-	unsigned short previous)
+static qboolean CL_VRIKPoseWithinRootLocalLimit(const vrik_codec_pose_t *pose)
 {
-	return (short)(sequence - previous) > 0;
+	int target;
+	double max_squared = (double)VRIK_MAX_ROOT_LOCAL_OFFSET *
+		(double)VRIK_MAX_ROOT_LOCAL_OFFSET;
+
+	if (!pose)
+		return false;
+	for (target = 0; target < VRIK_TARGET_COUNT; ++target)
+		if (pose->present_mask & VRIK_TARGET_BIT(target))
+		{
+			double x = pose->targets[target].position[0];
+			double y = pose->targets[target].position[1];
+			double z = pose->targets[target].position[2];
+			if (x * x + y * y + z * z > max_squared)
+				return false;
+		}
+	return true;
+}
+
+static void CL_VRIKV2ToLegacyPose(const vrik_v2_pose_t *source,
+	vrik_pose_t *destination)
+{
+	int target;
+
+	Q_memset(destination, 0, sizeof(*destination));
+	destination->sequence = source->sequence;
+	destination->flags = source->flags;
+	destination->body_yaw = source->body_yaw;
+	for (target = 0; target < VRIK_TRACKER_COUNT; ++target)
+	{
+		VectorCopy(source->targets[target].position,
+			destination->position[target]);
+		VectorCopy(source->targets[target].orientation,
+			destination->orientation[target]);
+	}
+	VectorCopy(source->aim_orientation, destination->aim_orientation);
+}
+
+static void CL_VRIKV3ToLegacyPose(const vrik_codec_pose_t *source,
+	vrik_pose_t *destination)
+{
+	int target;
+
+	Q_memset(destination, 0, sizeof(*destination));
+	destination->sequence = source->sequence;
+	if (!(source->flags & VRIK_V3_FLAG_ACTIVE) ||
+		!(source->tracked_mask & VRIK_TARGET_BIT(VRIK_TARGET_HEAD)))
+		return;
+	destination->flags = VRIK_FLAG_ACTIVE | VRIK_FLAG_HEAD_TRACKED;
+	if (source->flags & VRIK_V3_FLAG_DOMINANT_LEFT)
+		destination->flags |= VRIK_FLAG_DOMINANT_LEFT;
+	for (target = 0; target < VRIK_TRACKER_COUNT; ++target)
+	{
+		if (source->tracked_mask & VRIK_TARGET_BIT(target))
+			destination->flags |= (unsigned char)(VRIK_FLAG_HEAD_TRACKED << target);
+		VectorCopy(source->targets[target].position,
+			destination->position[target]);
+		VectorCopy(source->targets[target].orientation,
+			destination->orientation[target]);
+	}
+	destination->body_yaw = source->body_yaw;
+	VectorCopy(source->aim_orientation, destination->aim_orientation);
 }
 
 static qboolean CL_ParseVRIKPose(void)
 {
 	vrik_pose_t pose;
+	vrik_v2_pose_t pose_v2;
+	vrik_codec_pose_t pose_v3;
 	entity_t *ent;
 	qboolean newstream;
 	int entitynum;
 	unsigned int generation;
-	int tracker;
-	int axis;
+	int body_bytes;
+	size_t consumed;
+	vrik_codec_status_t status;
 
-	if (net_message.cursize - msg_readcount < 2 + 4 + VRIK_POSE_WIRE_BYTES)
+	if (net_message.cursize - msg_readcount < 2 + 4)
 	{
 		msg_badread = true;
 		return false;
@@ -2048,29 +2120,50 @@ static qboolean CL_ParseVRIKPose(void)
 
 	entitynum = (unsigned short)MSG_ReadShort();
 	generation = (unsigned int)MSG_ReadLong();
-	Q_memset(&pose, 0, sizeof(pose));
-	pose.sequence = (unsigned short)MSG_ReadShort();
-	pose.flags = MSG_ReadByte();
-	pose.body_yaw = MSG_ReadShort() * (360.0f / 65536.0f);
-	for (tracker = 0; tracker < VRIK_TRACKER_COUNT; tracker++)
-		for (axis = 0; axis < 3; axis++)
-			pose.position[tracker][axis] = MSG_ReadShort() * (1.0f / 8.0f);
-	for (tracker = 0; tracker < VRIK_TRACKER_COUNT; tracker++)
-		for (axis = 0; axis < 3; axis++)
-			pose.orientation[tracker][axis] = MSG_ReadShort() * (360.0f / 65536.0f);
-	for (axis = 0; axis < 3; axis++)
-		pose.aim_orientation[axis] = MSG_ReadShort() * (360.0f / 65536.0f);
-
 	if (msg_badread || !cl.vrik_protocol_offered ||
 		!generation || entitynum < 1 || entitynum > cl.maxclients || entitynum >= cl.max_edicts ||
-		entitynum >= cl.num_entities || (pose.flags & ~VRIK_FLAG_KNOWN))
+		entitynum >= cl.num_entities)
 	{
 		msg_badread = true;
 		return false;
 	}
-	if ((pose.flags & VRIK_FLAG_ACTIVE) &&
-		!(pose.flags & VRIK_FLAG_HEAD_TRACKED))
-		return false;
+	Q_memset(&pose_v3, 0, sizeof(pose_v3));
+	if (cl.vrik_protocol_version >= VRIK_PROTOCOL_VERSION)
+	{
+		body_bytes = MSG_ReadByte();
+		if (msg_badread || body_bytes < 0 || body_bytes > VRIK_V3_MAX_BODY_BYTES ||
+			net_message.cursize - msg_readcount < body_bytes)
+		{
+			msg_badread = true;
+			return false;
+		}
+		status = vrik_v3_decode(net_message.data + msg_readcount,
+			(size_t)body_bytes, &pose_v3, &consumed);
+		/* The declared length is authoritative for framing.  Consume it even
+		 * when this sample is rejected, preserving later commands. */
+		msg_readcount += body_bytes;
+		if (status != VRIK_CODEC_OK || consumed != (size_t)body_bytes ||
+			!CL_VRIKPoseWithinRootLocalLimit(&pose_v3))
+			return true;
+		CL_VRIKV3ToLegacyPose(&pose_v3, &pose);
+	}
+	else
+	{
+		if (net_message.cursize - msg_readcount < VRIK_POSE_WIRE_BYTES)
+		{
+			msg_badread = true;
+			return false;
+		}
+		status = vrik_v2_decode(net_message.data + msg_readcount,
+			VRIK_POSE_WIRE_BYTES, &pose_v2, &consumed);
+		msg_readcount += VRIK_POSE_WIRE_BYTES;
+		if (status != VRIK_CODEC_OK || consumed != VRIK_POSE_WIRE_BYTES ||
+			vrik_v2_validate_legacy_pose(&pose_v2) != VRIK_CODEC_OK)
+			return true;
+		if (vrik_v2_to_normalized(&pose_v2, &pose_v3) != VRIK_CODEC_OK)
+			return true;
+		CL_VRIKV2ToLegacyPose(&pose_v2, &pose);
+	}
 
 	ent = &cl.entities[entitynum];
 	newstream = !ent->vrik_sequence_valid || ent->vrik_generation != generation;
@@ -2081,14 +2174,16 @@ static qboolean CL_ParseVRIKPose(void)
 		ent->vrik_generation = generation;
 	}
 	else if (ent->vrik_sequence_valid &&
-		!CL_VRIKSequenceIsNewer(pose.sequence, ent->vrik_last_sequence))
+		!vrik_sequence_is_newer(pose.sequence, ent->vrik_last_sequence))
 		return true;
 	if (ent->vrik_pose_count > 0)
 	{
 		ent->vrik_poses[1] = ent->vrik_poses[0];
+		ent->vrik_v3_poses[1] = ent->vrik_v3_poses[0];
 		ent->vrik_pose_times[1] = ent->vrik_pose_times[0];
 	}
 	ent->vrik_poses[0] = pose;
+	ent->vrik_v3_poses[0] = pose_v3;
 	ent->vrik_pose_times[0] = realtime;
 	ent->vrik_last_sequence = pose.sequence;
 	ent->vrik_sequence_valid = true;

@@ -257,6 +257,12 @@ copy "$(SolutionDir)\..\SDL\lib64\*.dll" "$(TargetDir)"
     <ClCompile Include="..\..\Quake\pr_edict.c" />
     <ClCompile Include="..\..\Quake\pr_exec.c" />
     <ClCompile Include="..\..\Quake\r_alias.c" />
+    <ClCompile Include="..\..\Quake\r_vrik.c" />
+    <ClCompile Include="..\..\Quake\vr_fbt.c" />
+    <ClCompile Include="..\..\Quake\vr_fbt_filter.c" />
+    <ClCompile Include="..\..\Quake\vr_fbt_profile.c" />
+    <ClCompile Include="..\..\Quake\vr_fbt_storage.c" />
+    <ClCompile Include="..\..\Quake\vrik_codec.c" />
     <ClCompile Include="..\..\Quake\r_brush.c" />
     <ClCompile Include="..\..\Quake\r_part.c" />
     <ClCompile Include="..\..\Quake\r_sprite.c" />
@@ -340,6 +346,7 @@ copy "$(SolutionDir)\..\SDL\lib64\*.dll" "$(TargetDir)"
     <ClInclude Include="..\..\Quake\q_sound.h" />
     <ClInclude Include="..\..\Quake\q_stdinc.h" />
     <ClInclude Include="..\..\Quake\render.h" />
+    <ClInclude Include="..\..\Quake\r_vrik.h" />
     <ClInclude Include="..\..\Quake\resource.h" />
     <ClInclude Include="..\..\Quake\sbar.h" />
     <ClInclude Include="..\..\Quake\screen.h" />
@@ -360,6 +367,11 @@ copy "$(SolutionDir)\..\SDL\lib64\*.dll" "$(TargetDir)"
     <ClInclude Include="..\..\Quake\sys.h" />
     <ClInclude Include="..\..\Quake\vid.h" />
     <ClInclude Include="..\..\Quake\view.h" />
+    <ClInclude Include="..\..\Quake\vr_fbt.h" />
+    <ClInclude Include="..\..\Quake\vr_fbt_filter.h" />
+    <ClInclude Include="..\..\Quake\vr_fbt_profile.h" />
+    <ClInclude Include="..\..\Quake\vr_fbt_storage.h" />
+    <ClInclude Include="..\..\Quake\vrik_codec.h" />
     <ClInclude Include="..\..\Quake\wad.h" />
     <ClInclude Include="..\..\Quake\world.h" />
     <ClInclude Include="..\..\Quake\wsaerror.h" />

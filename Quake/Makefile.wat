@@ -187,6 +187,7 @@ GLOBJS = &
 	gl_mesh.obj &
 	r_sprite.obj &
 	r_alias.obj &
+	r_vrik.obj &
 	r_brush.obj &
 	gl_model.obj
 
@@ -231,6 +232,8 @@ OBJS = strlcat.obj &
 	sv_user.obj &
 	world.obj &
 	zone.obj &
+	vr_fbt.obj &
+	vrik_codec.obj &
 	$(SYSOBJ_SYS) $(SYSOBJ_MAIN)
 
 # ------------------------

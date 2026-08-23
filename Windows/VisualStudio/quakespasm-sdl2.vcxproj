@@ -277,6 +277,12 @@ copy "$(SolutionDir)\..\static-release-files\*.*" "$(TargetDir)"</Command>
     <ClCompile Include="..\..\Quake\pr_edict.c" />
     <ClCompile Include="..\..\Quake\pr_exec.c" />
     <ClCompile Include="..\..\Quake\r_alias.c" />
+    <ClCompile Include="..\..\Quake\r_vrik.c" />
+    <ClCompile Include="..\..\Quake\vr_fbt.c" />
+    <ClCompile Include="..\..\Quake\vr_fbt_filter.c" />
+    <ClCompile Include="..\..\Quake\vr_fbt_profile.c" />
+    <ClCompile Include="..\..\Quake\vr_fbt_storage.c" />
+    <ClCompile Include="..\..\Quake\vrik_codec.c" />
     <ClCompile Include="..\..\Quake\r_brush.c" />
     <ClCompile Include="..\..\Quake\r_part.c" />
     <ClCompile Include="..\..\Quake\r_part_fte.c" />
@@ -313,6 +319,9 @@ copy "$(SolutionDir)\..\static-release-files\*.*" "$(TargetDir)"</Command>
     <ClCompile Include="..\..\Quake\sys_sdl_win.c" />
     <ClCompile Include="..\..\Quake\view.c" />
     <ClCompile Include="..\..\Quake\vr.c">
+      <CompileAs>CompileAsCpp</CompileAs>
+    </ClCompile>
+    <ClCompile Include="..\..\Quake\vr_fbt_visual.c">
       <CompileAs>CompileAsCpp</CompileAs>
     </ClCompile>
     <ClCompile Include="..\..\Quake\vr_menu.c">
@@ -368,6 +377,7 @@ copy "$(SolutionDir)\..\static-release-files\*.*" "$(TargetDir)"</Command>
     <ClInclude Include="..\..\Quake\q_sound.h" />
     <ClInclude Include="..\..\Quake\q_stdinc.h" />
     <ClInclude Include="..\..\Quake\render.h" />
+    <ClInclude Include="..\..\Quake\r_vrik.h" />
     <ClInclude Include="..\..\Quake\resource.h" />
     <ClInclude Include="..\..\Quake\sbar.h" />
     <ClInclude Include="..\..\Quake\screen.h" />
@@ -388,6 +398,12 @@ copy "$(SolutionDir)\..\static-release-files\*.*" "$(TargetDir)"</Command>
     <ClInclude Include="..\..\Quake\sys.h" />
     <ClInclude Include="..\..\Quake\vid.h" />
     <ClInclude Include="..\..\Quake\view.h" />
+    <ClInclude Include="..\..\Quake\vr_fbt.h" />
+    <ClInclude Include="..\..\Quake\vr_fbt_filter.h" />
+    <ClInclude Include="..\..\Quake\vr_fbt_profile.h" />
+    <ClInclude Include="..\..\Quake\vr_fbt_storage.h" />
+    <ClInclude Include="..\..\Quake\vr_fbt_visual.h" />
+    <ClInclude Include="..\..\Quake\vrik_codec.h" />
     <ClInclude Include="..\..\Quake\vr.h" />
     <ClInclude Include="..\..\Quake\vr_menu.h" />
     <ClInclude Include="..\..\Quake\wad.h" />

@@ -162,6 +162,24 @@
     <ClCompile Include="..\..\Quake\r_alias.c">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="..\..\Quake\r_vrik.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Quake\vr_fbt.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Quake\vr_fbt_filter.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Quake\vr_fbt_profile.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Quake\vr_fbt_storage.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Quake\vrik_codec.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="..\..\Quake\r_brush.c">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -389,6 +407,9 @@
     <ClInclude Include="..\..\Quake\render.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="..\..\Quake\r_vrik.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
     <ClInclude Include="..\..\Quake\resource.h">
       <Filter>Header Files</Filter>
     </ClInclude>
@@ -450,6 +471,21 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="..\..\Quake\view.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\Quake\vr_fbt.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\Quake\vr_fbt_filter.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\Quake\vr_fbt_profile.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\Quake\vr_fbt_storage.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\Quake\vrik_codec.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="..\..\Quake\wad.h">

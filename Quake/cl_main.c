@@ -329,6 +329,7 @@ CL_ClearState
 */
 void CL_ClearState (void)
 {
+	VR_InvalidateFBTTransientOutput ();
 	VR_ResetWeaponTracking();
 	CL_ClearPendingCmd();
 
@@ -386,6 +387,7 @@ This is also called on Host_Error, so it shouldn't cause any errors
 void CL_Disconnect (void)
 {
 	DebugLog("CL_Disconnect: state=%d signon=%d\n", cls.state, cls.signon);
+	VR_InvalidateFBTTransientOutput ();
 	CL_ClearPendingCmd();
 
 	if (key_dest == key_message)

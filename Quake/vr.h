@@ -1,6 +1,8 @@
 // 2016 Dominic Szablewski - phoboslab.org
 
 #include "quakedef.h"
+#include "vr_fbt.h"
+#include "vrik_codec.h"
 
 #ifndef __R_VR_H
 #define __R_VR_H
@@ -68,6 +70,8 @@ void VR_EndWeaponMenu();
 void VR_PrepareWeaponMenu();
 void VR_DrawWeaponMenu();
 void VR_DrawAdjustmentControllers();
+/* Draws copied tracker calibration/debug packets after the view model. */
+void VR_DrawFBTCalibrationVisuals(void);
 void VR_ApplyCurrentViewWeaponTransform();
 enum {
   VR_WEAPONMENU_SELECTION_NONE = 0,
@@ -102,6 +106,67 @@ void VR_SetMatrices();
 void VR_DrawHiddenAreaDepthMask();
 void VR_HandleGammaCorrect();
 void VR_PollPoses();
+
+/*
+ * OpenVR poses are acquired as one immutable engine-owned snapshot.  The
+ * accessors below copy data out; callers must never retain OpenVR-owned pose
+ * pointers or combine data from different snapshot IDs.  Read the info first,
+ * then pass its ID to VR_GetPoseSnapshotDevice; the latter fails if a newer
+ * snapshot has replaced it.  The compositor error is the raw OpenVR
+ * EVRCompositorError value (zero means success).
+ */
+typedef struct {
+  uint64_t id;
+  double time;
+  int last_compositor_error;
+  qboolean valid;
+} vr_pose_snapshot_info_t;
+
+typedef struct {
+  qboolean pose_valid;
+  qboolean device_connected;
+  int tracking_result;
+  int device_class;
+  int controller_role;
+  float device_to_absolute_tracking[3][4];
+  vec3_t velocity;
+  vec3_t angular_velocity;
+} vr_pose_snapshot_device_t;
+
+qboolean VR_GetPoseSnapshotInfo(vr_pose_snapshot_info_t *info);
+unsigned int VR_GetPoseSnapshotDeviceCount(void);
+qboolean VR_GetPoseSnapshotDevice(uint64_t snapshot_id,
+                                  unsigned int device_index,
+                                  vr_pose_snapshot_device_t *device);
+
+/*
+ * Full-body tracker data is exposed as copies from the engine-owned manager.
+ * Candidate ordinals are transient list positions, not persistent device
+ * identifiers; saved/profile code should use VR_BindFBTSerial only with a
+ * serial it has already validated through its own UI.
+ */
+unsigned int VR_GetFBTCandidateCount(void);
+qboolean VR_GetFBTCandidateStatus(unsigned int candidate_ordinal,
+                                  vr_fbt_candidate_status_t *status);
+qboolean VR_GetFBTRoleStatus(vr_fbt_role_t role,
+                             vr_fbt_role_status_t *status);
+qboolean VR_GetFBTRoleTiming(vr_fbt_role_t role, double now,
+                             vr_fbt_timing_t *timing);
+qboolean VR_AssignFBTCandidate(vr_fbt_role_t role,
+                               unsigned int candidate_ordinal);
+qboolean VR_BindFBTSerial(vr_fbt_role_t role, const char *serial);
+qboolean VR_UnassignFBTRole(vr_fbt_role_t role);
+/* UI-only labels never expose tracker serials. */
+const char *VR_GetFBTSelectedProfileName(void);
+const char *VR_GetFBTCalibrationStatus(void);
+void VR_ActivateFBTCalibrationMenu(void);
+void VR_CancelFBTCalibrationMenu(void);
+/* Appends only cached calibrated lower-body targets to an already-normalized
+ * protocol-v3 head/hands pose.  It never exposes raw tracker transforms. */
+qboolean VR_AppendFBTToVRIKPose(vrik_codec_pose_t *pose);
+/* Discards cached lower-body output across a client/runtime transition.  A
+ * new successful pose snapshot is required before it may be appended again. */
+void VR_InvalidateFBTTransientOutput(void);
 void InitAllWeaponCVars();
 
 extern cvar_t vr_enabled;
@@ -130,6 +195,8 @@ extern cvar_t vr_movement_instant_stop;
 extern cvar_t vr_movement_speed;
 extern cvar_t vr_weaponmenu_mode;
 extern cvar_t vr_weaponmenu_player_teleport;
+extern cvar_t vr_fbt_enabled;
+extern cvar_t vr_fbt_debug;
 extern float vr_game_projectile_z_extra;
 
 #define MAX_WEAPONS 99 // cvar slot names are two digits: vr_wofs_*_01..99

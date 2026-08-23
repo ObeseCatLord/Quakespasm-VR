@@ -25,6 +25,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "quakedef.h"
 #include "pmove.h"
 #include "vr.h"
+#include "vrik_codec.h"
 
 server_t	sv;
 server_static_t	svs;
@@ -81,77 +82,156 @@ static void SVFTE_SetupFrames (client_t *client);
 static qboolean SVFTE_SendClientDatagram (client_t *client, int maxsize);
 static void SV_WriteMoveAckPayloadToMessage (client_t *client, sizebuf_t *msg);
 
-#define VRIK_SVC_MESSAGE_BYTES (1 + 2 + 4 + VRIK_POSE_WIRE_BYTES)
+#define VRIK_SVC_V2_MESSAGE_BYTES (1 + 2 + 4 + VRIK_POSE_WIRE_BYTES)
 #define VRIK_SERVER_MIN_INTERVAL 0.025
 static unsigned int sv_vrik_next_generation;
 
-static qboolean SV_VRIKPoseIsValid(const vrik_pose_t *pose)
+static qboolean SV_VRIKPoseV3IsValid(const vrik_codec_pose_t *pose)
 {
-	int tracker;
-	int axis;
+	int target;
+	double max_squared = (double)VRIK_MAX_ROOT_LOCAL_OFFSET *
+		(double)VRIK_MAX_ROOT_LOCAL_OFFSET;
 
-	if (pose->flags & ~VRIK_FLAG_KNOWN)
+	if (!pose)
 		return false;
-	if ((pose->flags & VRIK_FLAG_ACTIVE) &&
-		!(pose->flags & VRIK_FLAG_HEAD_TRACKED))
-		return false;
-	if (!isfinite(pose->body_yaw))
-		return false;
-	for (tracker = 0; tracker < VRIK_TRACKER_COUNT; tracker++)
+	for (target = 0; target < VRIK_TARGET_COUNT; ++target)
 	{
-		for (axis = 0; axis < 3; axis++)
-			if (!isfinite(pose->position[tracker][axis]) ||
-				!isfinite(pose->orientation[tracker][axis]))
-				return false;
-		if (pose->position[tracker][0] * pose->position[tracker][0] +
-				pose->position[tracker][1] * pose->position[tracker][1] +
-				pose->position[tracker][2] * pose->position[tracker][2] >
-			VRIK_MAX_ROOT_LOCAL_OFFSET * VRIK_MAX_ROOT_LOCAL_OFFSET)
+		double x, y, z;
+		if (!(pose->present_mask & VRIK_TARGET_BIT(target)))
+			continue;
+		x = pose->targets[target].position[0];
+		y = pose->targets[target].position[1];
+		z = pose->targets[target].position[2];
+		if (x * x + y * y + z * z > max_squared)
 			return false;
 	}
-	for (axis = 0; axis < 3; axis++)
-		if (!isfinite(pose->aim_orientation[axis]))
-			return false;
 	return true;
 }
 
-static qboolean SV_VRIKSequenceIsNewer(unsigned short sequence,
-	unsigned short previous)
+static void SV_VRIKV2ToLegacyPose(const vrik_v2_pose_t *source,
+	vrik_pose_t *destination)
 {
-	return (short)(sequence - previous) > 0;
+	int target;
+
+	Q_memset(destination, 0, sizeof(*destination));
+	destination->sequence = source->sequence;
+	destination->flags = source->flags;
+	destination->body_yaw = source->body_yaw;
+	for (target = 0; target < VRIK_TRACKER_COUNT; ++target)
+	{
+		VectorCopy(source->targets[target].position,
+			destination->position[target]);
+		VectorCopy(source->targets[target].orientation,
+			destination->orientation[target]);
+	}
+	VectorCopy(source->aim_orientation, destination->aim_orientation);
 }
 
-static void SV_WriteVRIKAngle16(sizebuf_t *msg, float angle)
+static void SV_VRIKV3ToLegacyPose(const vrik_codec_pose_t *source,
+	vrik_pose_t *destination)
 {
-	MSG_WriteShort(msg, (short)(Q_rint(angle * 65536.0 / 360.0) & 0xffff));
+	vrik_v2_pose_t converted;
+	int target;
+
+	Q_memset(&converted, 0, sizeof(converted));
+	converted.sequence = source->sequence;
+	if ((source->flags & VRIK_V3_FLAG_ACTIVE) &&
+		(source->tracked_mask & VRIK_TARGET_BIT(VRIK_TARGET_HEAD)))
+	{
+		converted.flags = VRIK_FLAG_ACTIVE | VRIK_FLAG_HEAD_TRACKED;
+		if (source->flags & VRIK_V3_FLAG_DOMINANT_LEFT)
+			converted.flags |= VRIK_FLAG_DOMINANT_LEFT;
+		for (target = 0; target < VRIK_TRACKER_COUNT; ++target)
+		{
+			if (source->tracked_mask & VRIK_TARGET_BIT(target))
+				converted.flags |= (unsigned char)(VRIK_FLAG_HEAD_TRACKED << target);
+			if (source->present_mask & VRIK_TARGET_BIT(target))
+			{
+				VectorCopy(source->targets[target].position,
+					converted.targets[target].position);
+				VectorCopy(source->targets[target].orientation,
+					converted.targets[target].orientation);
+			}
+		}
+		converted.body_yaw = source->body_yaw;
+		VectorCopy(source->aim_orientation, converted.aim_orientation);
+	}
+	SV_VRIKV2ToLegacyPose(&converted, destination);
 }
 
-static void SV_WriteVRIKPose(sizebuf_t *msg, int entitynum,
-	unsigned int generation, const vrik_pose_t *pose)
+static qboolean SV_LegacyPoseToV2(const vrik_pose_t *source,
+	vrik_v2_pose_t *destination)
 {
 	int tracker;
-	int axis;
 
+	if (!source || !destination)
+		return false;
+	Q_memset(destination, 0, sizeof(*destination));
+	destination->sequence = source->sequence;
+	destination->flags = source->flags;
+	destination->body_yaw = source->body_yaw;
+	for (tracker = 0; tracker < VRIK_TRACKER_COUNT; ++tracker)
+	{
+		VectorCopy(source->position[tracker], destination->targets[tracker].position);
+		VectorCopy(source->orientation[tracker], destination->targets[tracker].orientation);
+	}
+	VectorCopy(source->aim_orientation, destination->aim_orientation);
+	return vrik_v2_validate_legacy_pose(destination) == VRIK_CODEC_OK;
+}
+
+static qboolean SV_WriteVRIKPoseV2(sizebuf_t *msg, int entitynum,
+	unsigned int generation, const vrik_codec_pose_t *pose,
+	const unsigned char raw_body[VRIK_V2_BODY_BYTES])
+{
+	vrik_pose_t legacy;
+	vrik_v2_pose_t encoded_pose;
+	uint8_t body[VRIK_V2_BODY_BYTES];
+	const uint8_t *wire_body = raw_body;
+	size_t written;
+	int i;
+
+	if (!wire_body)
+	{
+		SV_VRIKV3ToLegacyPose(pose, &legacy);
+		if (!SV_LegacyPoseToV2(&legacy, &encoded_pose) ||
+			vrik_v2_encode(&encoded_pose, body, sizeof(body), &written) != VRIK_CODEC_OK ||
+			written != VRIK_V2_BODY_BYTES)
+			return false;
+		wire_body = body;
+	}
 	MSG_WriteByte(msg, svc_vrikpose);
 	MSG_WriteShort(msg, entitynum);
 	MSG_WriteLong(msg, (int)generation);
-	MSG_WriteShort(msg, (short)pose->sequence);
-	MSG_WriteByte(msg, pose->flags);
-	SV_WriteVRIKAngle16(msg, pose->body_yaw);
-	for (tracker = 0; tracker < VRIK_TRACKER_COUNT; tracker++)
-		for (axis = 0; axis < 3; axis++)
-			MSG_WriteShort(msg, Q_rint(pose->position[tracker][axis] * 8.0f));
-	for (tracker = 0; tracker < VRIK_TRACKER_COUNT; tracker++)
-		for (axis = 0; axis < 3; axis++)
-			SV_WriteVRIKAngle16(msg, pose->orientation[tracker][axis]);
-	for (axis = 0; axis < 3; axis++)
-		SV_WriteVRIKAngle16(msg, pose->aim_orientation[axis]);
+	for (i = 0; i < (int)VRIK_V2_BODY_BYTES; ++i)
+		MSG_WriteByte(msg, wire_body[i]);
+	return true;
 }
 
-static void SV_RelayVRIKPose(client_t *source, const vrik_pose_t *pose)
+static qboolean SV_WriteVRIKPoseV3(sizebuf_t *msg, int entitynum,
+	unsigned int generation, const vrik_codec_pose_t *pose)
+{
+	uint8_t body[VRIK_V3_MAX_BODY_BYTES];
+	size_t written;
+	int i;
+
+	if (vrik_v3_encode(pose, body, sizeof(body), &written) != VRIK_CODEC_OK ||
+		written > VRIK_V3_MAX_BODY_BYTES)
+		return false;
+	MSG_WriteByte(msg, svc_vrikpose);
+	MSG_WriteShort(msg, entitynum);
+	MSG_WriteLong(msg, (int)generation);
+	MSG_WriteByte(msg, (int)written);
+	for (i = 0; i < (int)written; ++i)
+		MSG_WriteByte(msg, body[i]);
+	return true;
+}
+
+static void SV_RelayVRIKPose(client_t *source, const vrik_codec_pose_t *pose)
 {
 	int source_num;
 	int i;
+	int required_bytes;
+	size_t v3_body_bytes;
 
 	if (!source || !source->edict)
 		return;
@@ -163,29 +243,45 @@ static void SV_RelayVRIKPose(client_t *source, const vrik_pose_t *pose)
 		if (recipient == source || !recipient->active || !recipient->spawned ||
 			!recipient->vrik_capable)
 			continue;
-		if (recipient->datagram.cursize + VRIK_SVC_MESSAGE_BYTES >
+		if (recipient->vrik_protocol_version >= VRIK_PROTOCOL_VERSION)
+		{
+			if (vrik_v3_body_size(pose->present_mask, &v3_body_bytes) !=
+				VRIK_CODEC_OK)
+				continue;
+			required_bytes = 1 + 2 + 4 + 1 + (int)v3_body_bytes;
+		}
+		else
+			required_bytes = VRIK_SVC_V2_MESSAGE_BYTES;
+		if (recipient->datagram.cursize + required_bytes >
 			recipient->datagram.maxsize)
 			continue;
-		SV_WriteVRIKPose(&recipient->datagram, source_num,
-			source->vrik_generation, pose);
+		if (recipient->vrik_protocol_version >= VRIK_PROTOCOL_VERSION)
+			(void)SV_WriteVRIKPoseV3(&recipient->datagram, source_num,
+				source->vrik_generation, pose);
+		else
+			(void)SV_WriteVRIKPoseV2(&recipient->datagram, source_num,
+				source->vrik_generation, pose,
+				source->vrik_v2_body_valid ? source->vrik_v2_body : NULL);
 	}
 }
 
-void SV_ReceiveVRIKPose(client_t *client, const vrik_pose_t *pose)
+static void SV_ReceiveVRIKPoseInternal(client_t *client,
+	const vrik_codec_pose_t *pose,
+	const unsigned char raw_v2_body[VRIK_V2_BODY_BYTES])
 {
 	if (!client || !pose || !client->active || !client->spawned ||
 		!client->edict || !client->vrik_capable ||
-		!SV_VRIKPoseIsValid(pose))
+		!SV_VRIKPoseV3IsValid(pose))
 		return;
 	if (client->vrik_sequence_valid &&
-		!SV_VRIKSequenceIsNewer(pose->sequence, client->vrik_last_sequence))
+		!vrik_sequence_is_newer(pose->sequence, client->vrik_last_sequence))
 		return;
 
 	/* Client scheduling is not an authority boundary. Bound accepted and
 	 * amplified pose traffic even if a peer sends one pose per datagram. */
 	if (realtime < client->vrik_next_accept_time)
 		return;
-	if (!(pose->flags & VRIK_FLAG_ACTIVE) && client->vrik_inactive_sent)
+	if (!(pose->flags & VRIK_V3_FLAG_ACTIVE) && client->vrik_inactive_sent)
 		return;
 
 	if (!client->vrik_generation)
@@ -196,13 +292,44 @@ void SV_ReceiveVRIKPose(client_t *client, const vrik_pose_t *pose)
 		Con_DPrintf("VRIK: accepted pose stream from %s generation %u\n",
 			client->name, client->vrik_generation);
 	}
-	client->vrik_pose = *pose;
+	client->vrik_pose_v3 = *pose;
+	client->vrik_v2_body_valid = raw_v2_body != NULL;
+	if (raw_v2_body)
+		memcpy(client->vrik_v2_body, raw_v2_body, VRIK_V2_BODY_BYTES);
+	SV_VRIKV3ToLegacyPose(pose, &client->vrik_pose);
 	client->vrik_last_sequence = pose->sequence;
 	client->vrik_sequence_valid = true;
 	client->vrik_pose_time = realtime;
 	client->vrik_next_accept_time = realtime + VRIK_SERVER_MIN_INTERVAL;
-	client->vrik_inactive_sent = !(pose->flags & VRIK_FLAG_ACTIVE);
+	client->vrik_inactive_sent = !(pose->flags & VRIK_V3_FLAG_ACTIVE);
 	SV_RelayVRIKPose(client, pose);
+}
+
+void SV_ReceiveVRIKPose(client_t *client, const vrik_pose_t *pose)
+{
+	vrik_v2_pose_t legacy;
+	vrik_codec_pose_t normalized;
+
+	if (!SV_LegacyPoseToV2(pose, &legacy) ||
+		vrik_v2_to_normalized(&legacy, &normalized) != VRIK_CODEC_OK)
+		return;
+	SV_ReceiveVRIKPoseInternal(client, &normalized, NULL);
+}
+
+void SV_ReceiveVRIKPoseV2(client_t *client, const vrik_v2_pose_t *pose,
+	const unsigned char body[VRIK_V2_BODY_BYTES])
+{
+	vrik_codec_pose_t normalized;
+
+	if (!pose || !body || vrik_v2_validate_legacy_pose(pose) != VRIK_CODEC_OK ||
+		vrik_v2_to_normalized(pose, &normalized) != VRIK_CODEC_OK)
+		return;
+	SV_ReceiveVRIKPoseInternal(client, &normalized, body);
+}
+
+void SV_ReceiveVRIKPoseV3(client_t *client, const vrik_codec_pose_t *pose)
+{
+	SV_ReceiveVRIKPoseInternal(client, pose, NULL);
 }
 
 void SV_ExpireVRIKPoses(void)
@@ -212,17 +339,19 @@ void SV_ExpireVRIKPoses(void)
 	for (i = 0; i < svs.maxclients; i++)
 	{
 		client_t *client = &svs.clients[i];
-		vrik_pose_t inactive;
+		vrik_codec_pose_t inactive;
 
 		if (!client->active || !client->vrik_capable ||
 			!client->vrik_sequence_valid || client->vrik_inactive_sent ||
-			!(client->vrik_pose.flags & VRIK_FLAG_ACTIVE) ||
+			!(client->vrik_pose_v3.flags & VRIK_V3_FLAG_ACTIVE) ||
 			realtime - client->vrik_pose_time <= VRIK_POSE_STALE_TIME)
 			continue;
 
 		Q_memset(&inactive, 0, sizeof(inactive));
 		inactive.sequence = client->vrik_last_sequence + 1;
-		client->vrik_pose = inactive;
+		client->vrik_pose_v3 = inactive;
+		client->vrik_v2_body_valid = false;
+		SV_VRIKV3ToLegacyPose(&inactive, &client->vrik_pose);
 		client->vrik_last_sequence = inactive.sequence;
 		client->vrik_pose_time = realtime;
 		client->vrik_inactive_sent = true;
@@ -1092,8 +1221,11 @@ void SV_SendServerinfo (client_t *client)
 	 * muzzle coordinates without breaking older servers. */
 	MSG_WriteByte (&client->message, svc_stufftext);
 	MSG_WriteString (&client->message, "//vr_relative_muzzle 1\n");
-	/* Comment-prefixed negotiation keeps pre-VRIK clients on their normal
-	 * animation path and avoids spending a PEXT2 compatibility bit. */
+	/* Offer v3 first, followed by v2.  A v3-aware client latches the first
+	 * offer; an existing v2 client ignores v3 and still sees its original v2
+	 * offer.  This keeps all v2 pose bytes and opcodes unchanged. */
+	MSG_WriteByte (&client->message, svc_stufftext);
+	MSG_WriteString (&client->message, "//vrik_protocol 3\n");
 	MSG_WriteByte (&client->message, svc_stufftext);
 	MSG_WriteString (&client->message, "//vrik_protocol 2\n");
 
