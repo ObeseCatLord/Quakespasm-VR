@@ -2039,6 +2039,8 @@ static qboolean R_VRIKBuildBodyBasis (const md5liveinfo_t *live,
 	vec3_t leftshoulder, rightshoulder, hip, head;
 	int left = live->jointindex[MD5_VRIK_SHOULDER_L];
 	int right = live->jointindex[MD5_VRIK_SHOULDER_R];
+	int leftupper = live->jointindex[MD5_VRIK_UPPERARM_L];
+	int rightupper = live->jointindex[MD5_VRIK_UPPERARM_R];
 	int hipjoint = live->jointindex[MD5_VRIK_HIP];
 	int headjoint = live->jointindex[MD5_VRIK_HEAD];
 
@@ -2049,8 +2051,22 @@ static qboolean R_VRIKBuildBodyBasis (const md5liveinfo_t *live,
 	R_VRIKMatrixOrigin (palette + hipjoint * 12, hip);
 	R_VRIKMatrixOrigin (palette + headjoint * 12, head);
 	VectorSubtract (rightshoulder, leftshoulder, lateral);
+	/* Some non-humanoid rigs co-locate the semantic shoulder pivots.  Their
+	 * upper-arm origins still encode the left/right body span (and are the
+	 * same fallback used by the avatar presentation basis), so keep the live
+	 * tracking and desktop refinement frames well-defined for those rigs. */
+	if (!VectorNormalize (lateral))
+	{
+		if (leftupper < 0 || rightupper < 0)
+			return false;
+		R_VRIKMatrixOrigin (palette + leftupper * 12, leftshoulder);
+		R_VRIKMatrixOrigin (palette + rightupper * 12, rightshoulder);
+		VectorSubtract (rightshoulder, leftshoulder, lateral);
+		if (!VectorNormalize (lateral))
+			return false;
+	}
 	VectorSubtract (head, hip, up);
-	if (!VectorNormalize (lateral) || !VectorNormalize (up))
+	if (!VectorNormalize (up))
 		return false;
 	/* lateral points toward the model's right shoulder.  In Quake's
 	 * forward/left/up coordinates, forward is up x right.  right x up points
@@ -2063,6 +2079,71 @@ static qboolean R_VRIKBuildBodyBasis (const md5liveinfo_t *live,
 	return true;
 }
 
+/* The animal presentation maps its feet-to-hip axis to canonical up and its
+ * head-facing axis to canonical forward.  Arm poles must use that same live
+ * frame; the conventional head-to-hip frame would bend Dog/Fiend arms in a
+ * different plane from their retargeted body. */
+static qboolean R_VRIKBuildAvatarArmBasis (const md5liveinfo_t *live,
+	const float *palette, const r_avatar_profile_t *profile, vec3_t lateral,
+	vec3_t forward, vec3_t up)
+{
+	vec3_t hip, head, left, right, footleft, footright, headfromhip;
+	float projection;
+	int hipjoint, headjoint, leftshoulder, rightshoulder, leftupper, rightupper;
+	int leftfoot, rightfoot;
+
+	if (!profile || profile->basis_policy != R_AVATAR_BASIS_FEET_UP_HEAD_FORWARD)
+		return R_VRIKBuildBodyBasis (live, palette, lateral, forward, up);
+	hipjoint = live->jointindex[MD5_VRIK_HIP];
+	headjoint = live->jointindex[MD5_VRIK_HEAD];
+	leftfoot = live->jointindex[MD5_VRIK_FOOT_L];
+	rightfoot = live->jointindex[MD5_VRIK_FOOT_R];
+	leftshoulder = live->jointindex[MD5_VRIK_SHOULDER_L];
+	rightshoulder = live->jointindex[MD5_VRIK_SHOULDER_R];
+	leftupper = live->jointindex[MD5_VRIK_UPPERARM_L];
+	rightupper = live->jointindex[MD5_VRIK_UPPERARM_R];
+	if (hipjoint < 0 || headjoint < 0 || leftfoot < 0 || rightfoot < 0 ||
+		leftshoulder < 0 || rightshoulder < 0)
+		return false;
+	R_VRIKMatrixOrigin (palette + hipjoint * 12, hip);
+	R_VRIKMatrixOrigin (palette + headjoint * 12, head);
+	R_VRIKMatrixOrigin (palette + leftfoot * 12, footleft);
+	R_VRIKMatrixOrigin (palette + rightfoot * 12, footright);
+	up[0] = hip[0] - (footleft[0] + footright[0]) * 0.5f;
+	up[1] = hip[1] - (footleft[1] + footright[1]) * 0.5f;
+	up[2] = hip[2] - (footleft[2] + footright[2]) * 0.5f;
+	if (!VectorNormalize (up))
+		return false;
+	R_VRIKMatrixOrigin (palette + leftshoulder * 12, left);
+	R_VRIKMatrixOrigin (palette + rightshoulder * 12, right);
+	VectorSubtract (right, left, lateral);
+	projection = DotProduct (lateral, up);
+	VectorMA (lateral, -projection, up, lateral);
+	if (!VectorNormalize (lateral))
+	{
+		if (leftupper < 0 || rightupper < 0)
+			return false;
+		R_VRIKMatrixOrigin (palette + leftupper * 12, left);
+		R_VRIKMatrixOrigin (palette + rightupper * 12, right);
+		VectorSubtract (right, left, lateral);
+		projection = DotProduct (lateral, up);
+		VectorMA (lateral, -projection, up, lateral);
+		if (!VectorNormalize (lateral))
+			return false;
+	}
+	CrossProduct (up, lateral, forward);
+	if (!VectorNormalize (forward))
+		return false;
+	VectorSubtract (head, hip, headfromhip);
+	if (DotProduct (forward, headfromhip) < 0.0f)
+	{
+		VectorScale (lateral, -1.0f, lateral);
+		VectorScale (forward, -1.0f, forward);
+	}
+	CrossProduct (lateral, forward, up);
+	return VectorNormalize (up) != 0.0f;
+}
+
 static void R_VRIKLocalVectorToModel (const vec3_t local,
 	const vec3_t lateral, const vec3_t forward, const vec3_t up, vec3_t model)
 {
@@ -2070,6 +2151,62 @@ static void R_VRIKLocalVectorToModel (const vec3_t local,
 	model[0] = forward[0] * local[0] - lateral[0] * local[1] + up[0] * local[2];
 	model[1] = forward[1] * local[0] - lateral[1] * local[1] + up[1] * local[2];
 	model[2] = forward[2] * local[0] - lateral[2] * local[1] + up[2] * local[2];
+}
+
+static qboolean R_VRIKAvatarRefinesUpperEndpoints (qboolean tracked,
+	const r_avatar_profile_t *profile)
+{
+	return tracked || (profile && profile->desktop_refine);
+}
+
+static qboolean R_VRIKAvatarRefinesSemantic (qboolean tracked,
+	const r_avatar_profile_t *profile, int semantic)
+{
+	if (tracked)
+		return semantic >= MD5_VRIK_HEAD && semantic <= MD5_VRIK_HAND_R;
+	return profile && profile->desktop_refine &&
+		(semantic == MD5_VRIK_HAND_L || semantic == MD5_VRIK_HAND_R);
+}
+
+static r_vrik_lowerbody_pole_policy_t R_VRIKAvatarLowerPolePolicy (
+	const r_avatar_profile_t *profile)
+{
+	return profile && profile->mirror_outer_leg_poles ?
+		R_VRIK_LOWERBODY_POLES_MIRRORED_PAIR :
+		R_VRIK_LOWERBODY_POLES_ANIMATED;
+}
+
+static unsigned char R_VRIKAvatarMirroredBaseFootMask (
+	const r_avatar_profile_t *profile, int leftfoot, int rightfoot)
+{
+	if (!profile || !profile->mirror_outer_leg_poles || leftfoot < 0 ||
+		rightfoot < 0)
+		return 0;
+	return R_VRIK_LOWER_BIT (R_VRIK_LOWER_LEFT_FOOT) |
+		R_VRIK_LOWER_BIT (R_VRIK_LOWER_RIGHT_FOOT);
+}
+
+static unsigned char R_VRIKAvatarSuppliedFootMask (
+	const r_vrik_lowerbody_targets_t *lower)
+{
+	unsigned char feet = R_VRIK_LOWER_BIT (R_VRIK_LOWER_LEFT_FOOT) |
+		R_VRIK_LOWER_BIT (R_VRIK_LOWER_RIGHT_FOOT);
+
+	if (!lower)
+		return 0;
+	return lower->present_mask & (lower->tracked_mask | lower->predicted_mask) &
+		feet;
+}
+
+static void R_VRIKProfileArmPole (const vec3_t lateral,
+	const vec3_t forward, qboolean rightside, float outward, float back,
+	vec3_t pole)
+{
+	float side = (rightside ? 1.0f : -1.0f) * outward;
+
+	pole[0] = side * lateral[0] - back * forward[0];
+	pole[1] = side * lateral[1] - back * forward[1];
+	pole[2] = side * lateral[2] - back * forward[2];
 }
 
 static void R_VRIKCanonicalMatrix (vec3_t direction,
@@ -2265,28 +2402,36 @@ static void R_VRIKTranslateJointSubtree (const md5liveinfo_t *live,
 	float *palette, int root, const vec3_t delta);
 static void R_VRIKRotateJointSubtreeToward (const md5liveinfo_t *live,
 	float *palette, int root, const vec3_t from, const vec3_t to);
+static void R_VRIKSetJointSubtreeTransform (const md5liveinfo_t *live,
+	float *palette, int root, const float desired[12]);
 
 /* A retargeted avatar needs the exact canonical wrist position, but its own
  * segment lengths and elbow plane.  This intentionally leaves the hand basis
  * produced by the retargeter intact; only the two-bone reach is refined. */
 static void R_VRIKRefineArmPosition (const md5liveinfo_t *live,
-	float *palette, qboolean rightside, const vec3_t target)
+	float *palette, qboolean rightside, const vec3_t target,
+	float poleoutward, float poleback, const r_avatar_profile_t *profile)
 {
 	int upperindex = live->jointindex[rightside ? MD5_VRIK_UPPERARM_R : MD5_VRIK_UPPERARM_L];
 	int lowerindex = live->jointindex[rightside ? MD5_VRIK_LOWERARM_R : MD5_VRIK_LOWERARM_L];
 	int handindex = live->jointindex[rightside ? MD5_VRIK_HAND_R : MD5_VRIK_HAND_L];
 	float *upper, *lower, *hand;
+	float intendedhand[12];
 	vec3_t shoulder, elbow, oldelbow, oldhand, toward, boundedtarget, lateral, forward, up;
 	vec3_t oldupperdir, oldlowerdir, newupperdir, newlowerdir, pole, normal, bend;
 	float upperlength, lowerlength, distance, reach, stretch, solveupper,
 		solvelower, cosine, along, across;
 
 	if (upperindex < 0 || lowerindex < 0 || handindex < 0 ||
-		!R_VRIKBuildBodyBasis (live, palette, lateral, forward, up))
+		!R_VRIKBuildAvatarArmBasis (live, palette, profile, lateral, forward, up))
 		return;
 	upper = palette + upperindex * 12;
 	lower = palette + lowerindex * 12;
 	hand = palette + handindex * 12;
+	/* The retargeter supplied the anatomical wrist basis.  The reach solve
+	 * rotates complete arm subtrees, so restore that intended basis once the
+	 * wrist has reached its solved endpoint. */
+	memcpy (intendedhand, hand, sizeof (intendedhand));
 	R_VRIKMatrixOrigin (upper, shoulder);
 	R_VRIKMatrixOrigin (lower, oldelbow);
 	R_VRIKMatrixOrigin (hand, oldhand);
@@ -2308,8 +2453,8 @@ static void R_VRIKRefineArmPosition (const md5liveinfo_t *live,
 	stretch = distance > reach ? distance / reach : 1.0f;
 	solveupper = upperlength * stretch;
 	solvelower = lowerlength * stretch;
-	VectorScale (lateral, rightside ? 1.0f : -1.0f, pole);
-	VectorMA (pole, -0.35f, forward, pole);
+	R_VRIKProfileArmPole (lateral, forward, rightside, poleoutward,
+		poleback, pole);
 	CrossProduct (toward, pole, normal);
 	if (!VectorNormalize (normal))
 		VectorCopy (up, normal);
@@ -2341,6 +2486,9 @@ static void R_VRIKRefineArmPosition (const md5liveinfo_t *live,
 	R_VRIKMatrixOrigin (hand, oldhand);
 	VectorSubtract (boundedtarget, oldhand, oldhand);
 	R_VRIKTranslateJointSubtree (live, palette, handindex, oldhand);
+	R_VRIKMatrixOrigin (hand, oldhand);
+	R_VRIKSetMatrixOrigin (intendedhand, oldhand);
+	R_VRIKSetJointSubtreeTransform (live, palette, handindex, intendedhand);
 }
 
 static qboolean R_VRIKAvatarTargetPoint (const r_avatar_presentation_context_t *context,
@@ -2349,6 +2497,34 @@ static qboolean R_VRIKAvatarTargetPoint (const r_avatar_presentation_context_t *
 	if (!context)
 		return false;
 	R_AvatarPresentationInversePoint (context, canonical, target);
+	return true;
+}
+
+static qboolean R_VRIKAvatarMapLowerTarget (
+	const r_avatar_presentation_context_t *context, const float canonical[12],
+	const float targetbasis[12], int role, float confidence,
+	r_vrik_lowerbody_model_targets_t *targets)
+{
+	vec3_t canonicalorigin;
+	unsigned char bit;
+
+	if (!context || !canonical || !targetbasis || !targets ||
+		role < R_VRIK_LOWER_LEFT_FOOT ||
+		role > R_VRIK_LOWER_RIGHT_FOOT)
+		return false;
+	R_VRIKMatrixOrigin (canonical, canonicalorigin);
+	if (!R_VRIKAvatarTargetPoint (context, canonicalorigin,
+		targets->position[role]))
+		return false;
+	/* Retargeting already transported source bind -> target bind semantics.
+	 * Preserve that freshly retargeted target-foot frame verbatim; mapping a
+	 * canonical absolute controller orientation here would discard it. */
+	memcpy (targets->orientation[role], targetbasis,
+		sizeof (targets->orientation[role]));
+	bit = R_VRIK_LOWER_BIT (role);
+	targets->usable_mask |= bit;
+	targets->orientation_mask |= bit;
+	targets->confidence[role] = confidence;
 	return true;
 }
 
@@ -2411,6 +2587,35 @@ static void R_VRIKRotateJointSubtreeToward (const md5liveinfo_t *live,
 		}
 }
 
+/* Replace one joint's global transform without leaving children in the old
+ * wrist frame.  The delta rotates every descendant around the joint origin,
+ * preserving the complete hand/prop subtree rather than merely overwriting
+ * the hand's 3x3 basis. */
+static void R_VRIKSetJointSubtreeTransform (const md5liveinfo_t *live,
+	float *palette, int root, const float desired[12])
+{
+	float inverse[12], delta[12];
+	int joint;
+
+	if (!live || !palette || !desired || root < 0 || root >= live->numbones)
+		return;
+	R_VRIKMatrixInverseRigid (palette + root * 12, inverse);
+	R_VRIKMatrixMultiply (desired, inverse, delta);
+	for (joint = 0; joint < live->numbones; joint++)
+		if (R_VRIKJointDescendsFrom (live, joint, root))
+		{
+			float transformed[12];
+
+			if (joint == root)
+				memcpy (palette + joint * 12, desired, sizeof (transformed));
+			else
+			{
+				R_VRIKMatrixMultiply (delta, palette + joint * 12, transformed);
+				memcpy (palette + joint * 12, transformed, sizeof (transformed));
+			}
+		}
+}
+
 static void R_VRIKRefineAvatarPalette (const md5liveinfo_t *canonical,
 	const r_avatar_rig_t *targetrig,
 	const r_avatar_presentation_context_t *context,
@@ -2418,15 +2623,20 @@ static void R_VRIKRefineAvatarPalette (const md5liveinfo_t *canonical,
 	float *targetpalette)
 {
 	md5liveinfo_t target;
-	int semantic;
+	float targetfootbasis[2][12];
+	qboolean targetfootbasisvalid[2] = {false, false};
+	int semantic, role;
 
 	if (!canonical || !targetrig || !targetrig->valid || !context || !sourcepalette ||
 		!targetpalette || !targetrig->live)
 		return;
-	/* Desktop avatars use canonical animation only.  Re-solving their head or
-	 * limbs against absent tracker targets changes a valid retargeted pose and
-	 * also detaches any prop anchored to that hand. */
-	if (!r_vrik_pose_pending)
+	/* A profile may opt into a desktop canonical endpoint refinement.  Profiles
+	 * that do not declare this retain the old animation-only path exactly;
+	 * tracked poses always refine and their controller-derived targets remain
+	 * the source of truth. */
+	if (!R_VRIKAvatarRefinesUpperEndpoints (r_vrik_pose_pending,
+		targetrig->profile) &&
+		!targetrig->profile->mirror_outer_leg_poles)
 		return;
 	target = *targetrig->live;
 	for (semantic = 0; semantic < MD5_VRIK_JOINT_COUNT; semantic++)
@@ -2435,28 +2645,76 @@ static void R_VRIKRefineAvatarPalette (const md5liveinfo_t *canonical,
 	 * validation.  Loader compatibility remains Ranger-name-specific, so do
 	 * not mutate it; only the target-length helper needs this local approval. */
 	target.compatible = true;
-	for (semantic = MD5_VRIK_HEAD; semantic <= MD5_VRIK_HAND_R; semantic++)
+	/* Keep the freshly retargeted target-foot frames before either the Vore
+	 * base solve or a tracked endpoint correction mutates the palette. */
+	for (role = R_VRIK_LOWER_LEFT_FOOT; role <= R_VRIK_LOWER_RIGHT_FOOT; role++)
 	{
-		int sourcejoint = canonical->jointindex[semantic];
-		int targetjoint = target.jointindex[semantic];
-		vec3_t sourceorigin, targetorigin;
+		int footsemantic = role == R_VRIK_LOWER_LEFT_FOOT ?
+			MD5_VRIK_FOOT_L : MD5_VRIK_FOOT_R;
+		int footjoint = target.jointindex[footsemantic];
 
-		if (sourcejoint < 0 || targetjoint < 0)
-			continue;
-		R_VRIKMatrixOrigin (sourcepalette + sourcejoint * 12, sourceorigin);
-		if (!R_VRIKAvatarTargetPoint (context, sourceorigin,
-			targetorigin))
-			continue;
-		if (semantic == MD5_VRIK_HAND_L || semantic == MD5_VRIK_HAND_R)
-			R_VRIKRefineArmPosition (&target, targetpalette,
-				semantic == MD5_VRIK_HAND_R, targetorigin);
-		else if (semantic == MD5_VRIK_HEAD)
+		if (footjoint >= 0)
 		{
-			vec3_t currentorigin, delta;
-			R_VRIKMatrixOrigin (targetpalette + targetjoint * 12, currentorigin);
-			VectorSubtract (targetorigin, currentorigin, delta);
-			R_VRIKTranslateJointSubtree (&target, targetpalette, targetjoint,
-				delta);
+			memcpy (targetfootbasis[role - R_VRIK_LOWER_LEFT_FOOT],
+				targetpalette + footjoint * 12, sizeof (targetfootbasis[0]));
+			targetfootbasisvalid[role - R_VRIK_LOWER_LEFT_FOOT] = true;
+		}
+	}
+	if (R_VRIKAvatarRefinesUpperEndpoints (r_vrik_pose_pending,
+		targetrig->profile))
+	{
+		for (semantic = MD5_VRIK_HEAD; semantic <= MD5_VRIK_HAND_R; semantic++)
+		{
+			int sourcejoint = canonical->jointindex[semantic];
+			int targetjoint = target.jointindex[semantic];
+			vec3_t sourceorigin, targetorigin;
+
+			if (!R_VRIKAvatarRefinesSemantic (r_vrik_pose_pending,
+				targetrig->profile, semantic) || sourcejoint < 0 || targetjoint < 0)
+				continue;
+			R_VRIKMatrixOrigin (sourcepalette + sourcejoint * 12, sourceorigin);
+			if (!R_VRIKAvatarTargetPoint (context, sourceorigin,
+				targetorigin))
+				continue;
+			if (semantic == MD5_VRIK_HAND_L || semantic == MD5_VRIK_HAND_R)
+				R_VRIKRefineArmPosition (&target, targetpalette,
+					semantic == MD5_VRIK_HAND_R, targetorigin,
+					targetrig->profile->arm_pole_outward,
+					targetrig->profile->arm_pole_back, targetrig->profile);
+			else if (semantic == MD5_VRIK_HEAD)
+			{
+				vec3_t currentorigin, delta;
+				R_VRIKMatrixOrigin (targetpalette + targetjoint * 12, currentorigin);
+				VectorSubtract (targetorigin, currentorigin, delta);
+				R_VRIKTranslateJointSubtree (&target, targetpalette, targetjoint,
+					delta);
+			}
+		}
+	}
+	/* Vore first receives a mirrored base solve from its retargeted outer feet
+	 * in every mode.  Later tracker overlays can replace either endpoint, but
+	 * zero/one supplied feet never leave the other outer leg in an asymmetric
+	 * uncorrected pose.  Its centre leg is unmapped and stays bind-following. */
+	if (targetrig->profile->mirror_outer_leg_poles)
+	{
+		r_vrik_lowerbody_model_targets_t desktopfeet;
+		int leftfoot = target.jointindex[MD5_VRIK_FOOT_L];
+		int rightfoot = target.jointindex[MD5_VRIK_FOOT_R];
+		unsigned char basefeet = R_VRIKAvatarMirroredBaseFootMask (
+			targetrig->profile, leftfoot, rightfoot);
+
+		if (basefeet)
+		{
+			memset (&desktopfeet, 0, sizeof (desktopfeet));
+			R_VRIKMatrixOrigin (targetpalette + leftfoot * 12,
+				desktopfeet.position[R_VRIK_LOWER_LEFT_FOOT]);
+			R_VRIKMatrixOrigin (targetpalette + rightfoot * 12,
+				desktopfeet.position[R_VRIK_LOWER_RIGHT_FOOT]);
+			desktopfeet.usable_mask = basefeet;
+			desktopfeet.confidence[R_VRIK_LOWER_LEFT_FOOT] = 1.0f;
+			desktopfeet.confidence[R_VRIK_LOWER_RIGHT_FOOT] = 1.0f;
+			R_VRIKApplyLowerBodyWithPolePolicy (&target, targetpalette,
+				&desktopfeet, R_VRIKAvatarLowerPolePolicy (targetrig->profile));
 		}
 	}
 	/* Feet are refined only when this sender supplied a real or predicted lower
@@ -2467,10 +2725,12 @@ static void R_VRIKRefineAvatarPalette (const md5liveinfo_t *canonical,
 	{
 		r_vrik_lowerbody_targets_t lower;
 		r_vrik_lowerbody_model_targets_t modeltargets;
-		int role;
+		unsigned char suppliedfeet = 0;
 
 		memset (&modeltargets, 0, sizeof(modeltargets));
 		if (R_VRIKGetLowerBodyTargets (r_vrik_active_player + 1, &lower))
+		{
+			suppliedfeet = R_VRIKAvatarSuppliedFootMask (&lower);
 			for (role = R_VRIK_LOWER_LEFT_FOOT;
 				role <= R_VRIK_LOWER_RIGHT_FOOT; role++)
 			{
@@ -2478,21 +2738,19 @@ static void R_VRIKRefineAvatarPalette (const md5liveinfo_t *canonical,
 					MD5_VRIK_FOOT_L : MD5_VRIK_FOOT_R;
 				int sourcejoint = canonical->jointindex[sourcesemantic];
 				unsigned char bit = R_VRIK_LOWER_BIT (role);
-				vec3_t sourceorigin;
 
-				if (!(lower.present_mask & bit) ||
-					(!(lower.tracked_mask & bit) && !(lower.predicted_mask & bit)) ||
-					sourcejoint < 0)
+				if (!(suppliedfeet & bit) || sourcejoint < 0 ||
+					!targetfootbasisvalid[role - R_VRIK_LOWER_LEFT_FOOT])
 					continue;
-				R_VRIKMatrixOrigin (sourcepalette + sourcejoint * 12, sourceorigin);
-				if (!R_VRIKAvatarTargetPoint (context, sourceorigin,
-					modeltargets.position[role]))
-					continue;
-				modeltargets.usable_mask |= bit;
-				modeltargets.confidence[role] = lower.confidence[role];
+				R_VRIKAvatarMapLowerTarget (context,
+					sourcepalette + sourcejoint * 12,
+					targetfootbasis[role - R_VRIK_LOWER_LEFT_FOOT], role,
+					lower.confidence[role], &modeltargets);
 			}
+		}
 		if (modeltargets.usable_mask)
-			R_VRIKApplyLowerBody (&target, targetpalette, &modeltargets);
+			R_VRIKApplyLowerBodyWithPolePolicy (&target, targetpalette,
+				&modeltargets, R_VRIKAvatarLowerPolePolicy (targetrig->profile));
 	}
 }
 
@@ -2681,11 +2939,91 @@ static float R_VRIKMinimumBindZ (const md5liveinfo_t *live,
 	return minimum;
 }
 
+/* Contact declarations name skeletal roots, never arbitrary mesh regions.
+ * A seam vertex is accepted when at least a quarter of its bind weight is in
+ * one of the declared subtrees; weak incidental tail/belly blends cannot
+ * become the grounding point. */
+static float R_VRIKMinimumBindContactZ (const md5liveinfo_t *live,
+	const md5livesurface_t *surface, const float *palette,
+	const unsigned short *indexes, int numindexes, const int *roots,
+	int numroots, const r_avatar_presentation_context_t *presentation)
+{
+	float minimum = FLT_MAX;
+	int index, influence, root;
+
+	if (!live || !surface || !palette || !indexes || !roots || numroots < 1)
+		return FLT_MAX;
+	for (index = 0; index < numindexes; index++)
+	{
+		int vertex = indexes[index];
+		const md5livevertex_t *input;
+		float contactweight = 0.0f;
+		vec3_t point;
+
+		if (vertex < 0 || vertex >= surface->numverts)
+			return FLT_MAX;
+		input = &surface->vertices[vertex];
+		for (influence = 0; influence < (int)input->numweights; influence++)
+		{
+			const md5liveweight_t *weight =
+				&surface->weights[input->firstweight + influence];
+			if (weight->joint < 0 || weight->joint >= live->numbones)
+				return FLT_MAX;
+			for (root = 0; root < numroots; root++)
+				if (R_VRIKJointDescendsFrom (live, weight->joint, roots[root]))
+				{
+					contactweight += weight->position[3];
+					break;
+				}
+		}
+		if (contactweight < 0.25f)
+			continue;
+		point[0] = point[1] = point[2] = 0.0f;
+		for (influence = 0; influence < (int)input->numweights; influence++)
+		{
+			const md5liveweight_t *weight =
+				&surface->weights[input->firstweight + influence];
+			const float *m = palette + weight->joint * 12;
+			point[0] += m[0] * weight->position[0] +
+				m[1] * weight->position[1] + m[2] * weight->position[2] +
+				m[3] * weight->position[3];
+			point[1] += m[4] * weight->position[0] +
+				m[5] * weight->position[1] + m[6] * weight->position[2] +
+				m[7] * weight->position[3];
+			point[2] += m[8] * weight->position[0] +
+				m[9] * weight->position[1] + m[10] * weight->position[2] +
+				m[11] * weight->position[3];
+		}
+		if (presentation)
+		{
+			vec3_t mapped;
+			R_AvatarPresentationPoint (presentation, point, mapped);
+			minimum = q_min (minimum, mapped[2]);
+		}
+		else
+			minimum = q_min (minimum, point[2]);
+	}
+	return minimum;
+}
+
+static int R_VRIKFindLiveJoint (const md5liveinfo_t *live, const char *name)
+{
+	int joint;
+
+	if (!live || !name || !*name)
+		return -1;
+	for (joint = 0; joint < live->numbones; joint++)
+		if (!strcmp (live->joints[joint].name, name))
+			return joint;
+	return -1;
+}
+
 static qboolean R_VRIKApplyBindFloorCorrection (const md5liveinfo_t *canonical,
 	const md5livesurface_t *canonicalsurface, const float *canonicalbind,
 	int canonicalexclude1, int canonicalexclude2, const md5liveinfo_t *target,
 	const md5livesurface_t *targetsurface, const float *targetbind,
 	const unsigned short *targetindexes, int targetnumindexes,
+	const r_avatar_profile_t *profile,
 	r_avatar_presentation_context_t *presentation, float *sourcefloor_out,
 	float *targetfloor_out)
 {
@@ -2695,11 +3033,43 @@ static qboolean R_VRIKApplyBindFloorCorrection (const md5liveinfo_t *canonical,
 		!targetsurface || !targetbind || !targetindexes || targetnumindexes < 1 ||
 		!presentation)
 		return false;
-	sourcefloor = R_VRIKMinimumBindZ (canonical, canonicalsurface,
-		canonicalbind, canonicalsurface->indexes, canonicalsurface->numindexes,
-		canonicalexclude1, canonicalexclude2, NULL);
-	targetfloor = R_VRIKMinimumBindZ (target, targetsurface, targetbind,
-		targetindexes, targetnumindexes, -1, -1, presentation);
+	if (profile && profile->contact_root[0])
+	{
+		int sourceroots[2] = {
+			canonical->jointindex[MD5_VRIK_FOOT_L],
+			canonical->jointindex[MD5_VRIK_FOOT_R]
+		};
+		int targetroots[4];
+		int root, targetrootcount = 0;
+
+		if (sourceroots[0] < 0 || sourceroots[1] < 0)
+			return false;
+		for (root = 0; root < (int)(sizeof (profile->contact_root) /
+			sizeof (profile->contact_root[0])); root++)
+			if (profile->contact_root[root])
+			{
+				targetroots[targetrootcount] = R_VRIKFindLiveJoint (target,
+					profile->contact_root[root]);
+				if (targetroots[targetrootcount] < 0)
+					return false;
+				targetrootcount++;
+			}
+		sourcefloor = R_VRIKMinimumBindContactZ (canonical, canonicalsurface,
+			canonicalbind, canonicalsurface->indexes, canonicalsurface->numindexes,
+			sourceroots, (int)(sizeof (sourceroots) / sizeof (sourceroots[0])), NULL);
+		targetfloor = R_VRIKMinimumBindContactZ (target, targetsurface, targetbind,
+			targetindexes, targetnumindexes, targetroots, targetrootcount,
+			presentation);
+	}
+	else
+	{
+		/* Preserve the historical all-body path exactly for legacy profiles. */
+		sourcefloor = R_VRIKMinimumBindZ (canonical, canonicalsurface,
+			canonicalbind, canonicalsurface->indexes, canonicalsurface->numindexes,
+			canonicalexclude1, canonicalexclude2, NULL);
+		targetfloor = R_VRIKMinimumBindZ (target, targetsurface, targetbind,
+			targetindexes, targetnumindexes, -1, -1, presentation);
+	}
 	if (!isfinite (sourcefloor) || !isfinite (targetfloor) ||
 		sourcefloor == FLT_MAX || targetfloor == FLT_MAX)
 		return false;
@@ -3213,7 +3583,7 @@ static qboolean R_VRIKPrepareSkin (qmodel_t *model)
 	if (!R_VRIKApplyBindFloorCorrection (&canonical, &canonicalsurface,
 		canonicalbind, canonical.jointindex[MD5_VRIK_GUN],
 		canonical.jointindex[MD5_VRIK_AXE], &target, &surface, targetbind,
-		cache->body_indexes, cache->body_numindexes, &presentation,
+		cache->body_indexes, cache->body_numindexes, profile, &presentation,
 		NULL, NULL))
 		return false;
 	R_VRIKRefineAvatarPalette (&canonical, &targetrig, &presentation,
@@ -5026,10 +5396,10 @@ qboolean R_VRIKBuildBodyIndexesForTest (const md5liveinfo_t *live,
 qboolean R_VRIKRefineArmOverreachForTest (void)
 {
 	md5liveinfo_t live;
-	md5livejoint_t joints[7];
-	float palette[7 * 12];
-	vec3_t target = {100.0f, 2.0f, 5.0f};
-	vec3_t shoulder, hand, delta;
+	md5livejoint_t joints[8];
+	float palette[8 * 12], intendedhand[12];
+	vec3_t target = {2.0f, 4.0f, 3.0f};
+	vec3_t hand, gun, delta;
 	int joint, semantic;
 
 	memset (&live, 0, sizeof(live));
@@ -5037,35 +5407,58 @@ qboolean R_VRIKRefineArmOverreachForTest (void)
 	memset (palette, 0, sizeof(palette));
 	for (semantic = 0; semantic < MD5_VRIK_JOINT_COUNT; semantic++)
 		live.jointindex[semantic] = -1;
-	for (joint = 0; joint < 7; joint++)
+	for (joint = 0; joint < 8; joint++)
 	{
 		palette[joint * 12 + 0] = palette[joint * 12 + 5] =
 			palette[joint * 12 + 10] = 1.0f;
 		joints[joint].parent = joint ? 0 : -1;
 	}
-	/* Hip, head, left/right shoulders, right upper/lower/hand. */
+	/* Hip, head, coincident shoulders, right upper/lower/hand/gun.  The left
+	 * upper-arm semantic deliberately aliases its shoulder here: the body
+	 * basis must fall back to the distinct upper-arm origins. */
 	palette[1 * 12 + 11] = 8.0f;
-	palette[2 * 12 + 7] = -2.0f; palette[2 * 12 + 11] = 5.0f;
-	palette[3 * 12 + 7] = 2.0f; palette[3 * 12 + 11] = 5.0f;
+	palette[2 * 12 + 11] = 5.0f;
+	palette[3 * 12 + 11] = 5.0f;
 	palette[4 * 12 + 7] = 2.0f; palette[4 * 12 + 11] = 5.0f;
 	palette[5 * 12 + 7] = 2.0f; palette[5 * 12 + 11] = 3.0f;
 	palette[6 * 12 + 7] = 2.0f; palette[6 * 12 + 11] = 1.0f;
+	/* The intended wrist is deliberately not aligned to the reach plane. */
+	palette[6 * 12 + 5] = 0.0f; palette[6 * 12 + 6] = -1.0f;
+	palette[6 * 12 + 9] = 1.0f; palette[6 * 12 + 10] = 0.0f;
+	palette[7 * 12 + 5] = 0.0f; palette[7 * 12 + 6] = -1.0f;
+	palette[7 * 12 + 9] = 1.0f; palette[7 * 12 + 10] = 0.0f;
+	palette[7 * 12 + 7] = 2.0f; palette[7 * 12 + 11] = 2.0f;
 	joints[1].parent = 0; joints[2].parent = 0; joints[3].parent = 0;
 	joints[4].parent = 3; joints[5].parent = 4; joints[6].parent = 5;
-	live.joints = joints; live.numbones = 7;
+	joints[7].parent = 6;
+	live.joints = joints; live.numbones = 8;
 	live.jointindex[MD5_VRIK_HIP] = 0;
 	live.jointindex[MD5_VRIK_HEAD] = 1;
 	live.jointindex[MD5_VRIK_SHOULDER_L] = 2;
 	live.jointindex[MD5_VRIK_SHOULDER_R] = 3;
+	live.jointindex[MD5_VRIK_UPPERARM_L] = 2;
 	live.jointindex[MD5_VRIK_UPPERARM_R] = 4;
 	live.jointindex[MD5_VRIK_LOWERARM_R] = 5;
 	live.jointindex[MD5_VRIK_HAND_R] = 6;
-	R_VRIKRefineArmPosition (&live, palette, true, target);
-	R_VRIKMatrixOrigin (palette + 4 * 12, shoulder);
+	live.jointindex[MD5_VRIK_GUN] = 7;
+	memcpy (intendedhand, palette + 6 * 12, sizeof (intendedhand));
+	R_VRIKRefineArmPosition (&live, palette, true, target, 1.0f, 0.35f, NULL);
 	R_VRIKMatrixOrigin (palette + 6 * 12, hand);
-	VectorSubtract (hand, shoulder, delta);
+	R_VRIKMatrixOrigin (palette + 7 * 12, gun);
+	VectorSubtract (gun, hand, delta);
 	return isfinite (hand[0]) && isfinite (hand[1]) && isfinite (hand[2]) &&
-		VectorLength (delta) <= 4.0f * VRIK_ARM_MAX_STRETCH + 0.01f;
+		fabsf (hand[0] - target[0]) < 0.001f &&
+		fabsf (hand[1] - target[1]) < 0.001f &&
+		fabsf (hand[2] - target[2]) < 0.001f &&
+		!memcmp (palette + 6 * 12, intendedhand, 3 * sizeof (float)) &&
+		!memcmp (palette + 6 * 12 + 4, intendedhand + 4, 3 * sizeof (float)) &&
+		!memcmp (palette + 6 * 12 + 8, intendedhand + 8, 3 * sizeof (float)) &&
+		fabsf (delta[0] - intendedhand[1]) < 0.001f &&
+		fabsf (delta[1] - intendedhand[5]) < 0.001f &&
+		fabsf (delta[2] - intendedhand[9]) < 0.001f &&
+		fabsf (palette[7 * 12 + 1] - intendedhand[1]) < 0.001f &&
+		fabsf (palette[7 * 12 + 5] - intendedhand[5]) < 0.001f &&
+		fabsf (palette[7 * 12 + 9] - intendedhand[9]) < 0.001f;
 }
 
 qboolean R_VRIKOrdinaryRangerLifecycleForTest (void)
@@ -5097,12 +5490,109 @@ qboolean R_VRIKApplyBindFloorCorrectionForTest (const md5liveinfo_t *canonical,
 	int canonicalexclude1, int canonicalexclude2, const md5liveinfo_t *target,
 	const md5livesurface_t *targetsurface, const float *targetbind,
 	const unsigned short *targetindexes, int targetnumindexes,
+	const r_avatar_profile_t *profile,
 	r_avatar_presentation_context_t *presentation, float *sourcefloor,
 	float *targetfloor)
 {
 	return R_VRIKApplyBindFloorCorrection (canonical, canonicalsurface,
 		canonicalbind, canonicalexclude1, canonicalexclude2, target,
-		targetsurface, targetbind, targetindexes, targetnumindexes, presentation,
+		targetsurface, targetbind, targetindexes, targetnumindexes, profile, presentation,
 		sourcefloor, targetfloor);
+}
+
+qboolean R_VRIKAvatarRefinesUpperEndpointsForTest (qboolean tracked,
+	const r_avatar_profile_t *profile)
+{
+	return R_VRIKAvatarRefinesUpperEndpoints (tracked, profile);
+}
+
+qboolean R_VRIKAvatarRefinesSemanticForTest (qboolean tracked,
+	const r_avatar_profile_t *profile, int semantic)
+{
+	return R_VRIKAvatarRefinesSemantic (tracked, profile, semantic);
+}
+
+qboolean R_VRIKAnimalArmBasisForTest (vec3_t lateral, vec3_t forward,
+	vec3_t up)
+{
+	md5liveinfo_t live;
+	md5livejoint_t joints[6];
+	r_avatar_profile_t profile;
+	float palette[6 * 12];
+	int joint, semantic;
+
+	memset (&live, 0, sizeof (live));
+	memset (joints, 0, sizeof (joints));
+	memset (&profile, 0, sizeof (profile));
+	memset (palette, 0, sizeof (palette));
+	for (semantic = 0; semantic < MD5_VRIK_JOINT_COUNT; semantic++)
+		live.jointindex[semantic] = -1;
+	for (joint = 0; joint < 6; joint++)
+		palette[joint * 12] = palette[joint * 12 + 5] =
+			palette[joint * 12 + 10] = 1.0f;
+	/* Hip, head (authored forward), left/right shoulders, left/right feet. */
+	palette[1 * 12 + 7] = 8.0f;
+	palette[2 * 12 + 3] = -2.0f;
+	palette[3 * 12 + 3] = 2.0f;
+	palette[4 * 12 + 3] = -2.0f; palette[4 * 12 + 11] = -4.0f;
+	palette[5 * 12 + 3] = 2.0f; palette[5 * 12 + 11] = -4.0f;
+	live.joints = joints; live.numbones = 6;
+	live.jointindex[MD5_VRIK_HIP] = 0;
+	live.jointindex[MD5_VRIK_HEAD] = 1;
+	live.jointindex[MD5_VRIK_SHOULDER_L] = 2;
+	live.jointindex[MD5_VRIK_SHOULDER_R] = 3;
+	live.jointindex[MD5_VRIK_FOOT_L] = 4;
+	live.jointindex[MD5_VRIK_FOOT_R] = 5;
+	profile.basis_policy = R_AVATAR_BASIS_FEET_UP_HEAD_FORWARD;
+	return R_VRIKBuildAvatarArmBasis (&live, palette, &profile, lateral,
+		forward, up);
+}
+
+qboolean R_VRIKAvatarMapLowerTargetForTest (
+	r_vrik_lowerbody_model_targets_t *targets)
+{
+	r_avatar_presentation_context_t context;
+	float canonical[12] = {1, 0, 0, 1, 0, 1, 0, 2, 0, 0, 1, 3};
+	/* Simulates a non-identity target foot bind correction from retargeting. */
+	float targetbasis[12] = {-1, 0, 0, 41, 0, -1, 0, 42, 0, 0, 1, 43};
+
+	if (!targets)
+		return false;
+	memset (&context, 0, sizeof (context));
+	/* Canonical-to-target: +90 degrees around Z plus a nonzero correction. */
+	context.inverse[1] = -1.0f; context.inverse[3] = 5.0f;
+	context.inverse[4] = 1.0f; context.inverse[7] = -3.0f;
+	context.inverse[10] = 1.0f; context.inverse[11] = 2.0f;
+	return R_VRIKAvatarMapLowerTarget (&context, canonical, targetbasis,
+		R_VRIK_LOWER_LEFT_FOOT, 1.0f, targets);
+}
+
+int R_VRIKAvatarLowerPolePolicyForTest (const r_avatar_profile_t *profile)
+{
+	return (int)R_VRIKAvatarLowerPolePolicy (profile);
+}
+
+unsigned char R_VRIKVoreBaseFootMaskForTest (unsigned char supplied_mask,
+	unsigned char *overlay_mask)
+{
+	r_avatar_profile_t profile;
+	r_vrik_lowerbody_targets_t lower;
+
+	memset (&profile, 0, sizeof (profile));
+	memset (&lower, 0, sizeof (lower));
+	profile.mirror_outer_leg_poles = true;
+	lower.present_mask = lower.tracked_mask = supplied_mask;
+	if (overlay_mask)
+		*overlay_mask = R_VRIKAvatarSuppliedFootMask (&lower);
+	return R_VRIKAvatarMirroredBaseFootMask (&profile, 0, 1);
+}
+
+void R_VRIKProfileArmPoleForTest (qboolean rightside, float outward,
+	float back, vec3_t pole)
+{
+	const vec3_t lateral = {1.0f, 0.0f, 0.0f};
+	const vec3_t forward = {0.0f, 1.0f, 0.0f};
+
+	R_VRIKProfileArmPole (lateral, forward, rightside, outward, back, pole);
 }
 #endif

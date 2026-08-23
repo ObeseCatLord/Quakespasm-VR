@@ -22,7 +22,8 @@ static const r_avatar_profile_t r_avatar_profiles[PLAYER_AVATAR_COUNT] = {
 			A("Shoulder_R"), A("UpperArm_R"), A("LowerArm_R"), A("Hand_R"),
 			A("UpperLeg_L"), A("LowerLeg_L"), A("Foot_L"),
 			A("UpperLeg_R"), A("LowerLeg_R"), A("Foot_R"), A("Gun"), A("Axe"),
-			A("small_flame"), A("big_flame") }
+			A("small_flame"), A("big_flame") },
+		R_AVATAR_BASIS_HUMANOID, { NULL, NULL, NULL, NULL }, false, 1.0f, 0.35f, false
 	},
 	[PLAYER_AVATAR_SOLDIER] = {
 		PLAYER_AVATAR_SOLDIER, "soldier", "progs/soldier.md5mesh",
@@ -33,7 +34,8 @@ static const r_avatar_profile_t r_avatar_profiles[PLAYER_AVATAR_COUNT] = {
 			A("Shoulder_L"), A("UpperArm_L"), A("LowerArm_L"), A("Hand_L"),
 			A("Shoulder_R"), A("UpperArm_R"), A("LowerArm_R"), A("Hand_R"),
 			A("UpperLeg_L"), A("LowerLeg_L"), A("Foot_L"),
-			A("UpperLeg_R"), A("LowerLeg_R"), A("Foot_R"), N, N, N, N }
+			A("UpperLeg_R"), A("LowerLeg_R"), A("Foot_R"), N, N, N, N },
+		R_AVATAR_BASIS_HUMANOID, { NULL, NULL, NULL, NULL }, false, 1.0f, 0.35f, false
 	},
 	[PLAYER_AVATAR_ENFORCER] = {
 		PLAYER_AVATAR_ENFORCER, "enforcer", "progs/enforcer.md5mesh",
@@ -44,7 +46,8 @@ static const r_avatar_profile_t r_avatar_profiles[PLAYER_AVATAR_COUNT] = {
 			V("upper_arm_L"), A("upper_arm_L"), A("lower_arm_L"), A("hand_L"),
 			V("upper_arm_R"), A("upper_arm_R"), A("lower_arm_R"), A("hand_R"),
 			A("upper_leg_L"), A("lower_leg_L"), A("foot_L"),
-			A("upper_leg"), A("lower_leg"), A("foot"), N, N, N, N }
+			A("upper_leg"), A("lower_leg"), A("foot"), N, N, N, N },
+		R_AVATAR_BASIS_HUMANOID, { NULL, NULL, NULL, NULL }, false, 1.0f, 0.35f, false
 	},
 	[PLAYER_AVATAR_DOG] = {
 		PLAYER_AVATAR_DOG, "dog", "progs/dog.md5mesh",
@@ -54,8 +57,10 @@ static const r_avatar_profile_t r_avatar_profiles[PLAYER_AVATAR_COUNT] = {
 			A("Hip"), A("Spine1"), A("Spine2"), A("Neck"), A("Head"),
 			A("FrontHigh_L"), A("FrontMid_L"), A("FrontLow_L"), A("FrontFoot_L"),
 			A("FrontHigh_R"), A("FrontMid_R"), A("FrontLow_R"), A("FrontFoot_R"),
-			A("RearHigh_L"), A("RearMid_L"), A("RearLow_L"),
-			A("RearHigh_R"), A("RearMid_R"), A("RearLow_R"), N, N, N, N }
+			A("RearHigh_L"), A("RearMid_L"), A("RearFoot_L"),
+			A("RearHigh_R"), A("RearMid_R"), A("RearFoot_R"), N, N, N, N },
+		R_AVATAR_BASIS_FEET_UP_HEAD_FORWARD,
+		{ "RearFoot_L", "RearFoot_R", NULL, NULL }, true, 1.0f, 0.35f, false
 	},
 	[PLAYER_AVATAR_OGRE] = {
 		PLAYER_AVATAR_OGRE, "ogre", "progs/ogre.md5mesh",
@@ -66,7 +71,8 @@ static const r_avatar_profile_t r_avatar_profiles[PLAYER_AVATAR_COUNT] = {
 			A("Shoulder_L"), A("UpperArm_L"), A("Forearm_L"), A("Hand_L"),
 			A("Shoulder_R"), A("UpperArm_R"), A("Forearm_R"), A("Hand_R"),
 			A("Thigh_L"), A("Calf_L"), A("Foot_L"), A("Thigh_R"), A("Calf_R"),
-			A("Foot_R"), N, N, N, N }
+			A("Foot_R"), N, N, N, N },
+		R_AVATAR_BASIS_HUMANOID, { NULL, NULL, NULL, NULL }, false, 1.0f, 0.35f, false
 	},
 	[PLAYER_AVATAR_KNIGHT] = {
 		PLAYER_AVATAR_KNIGHT, "knight", "progs/knight.md5mesh",
@@ -77,7 +83,8 @@ static const r_avatar_profile_t r_avatar_profiles[PLAYER_AVATAR_COUNT] = {
 			V("upper_arm_L"), A("upper_arm_L"), A("lower_arm_L"), A("hand_L"),
 			V("upper_arm_R"), A("upper_arm_R"), A("lower_arm_R"), A("hand_R"),
 			A("upper_leg_L"), A("lower_leg_L"), A("foot_L"), A("upper_leg_R"),
-			A("lower_leg_R"), A("foot_R"), N, N, N, N }
+			A("lower_leg_R"), A("foot_R"), N, N, N, N },
+		R_AVATAR_BASIS_HUMANOID, { NULL, NULL, NULL, NULL }, false, 1.0f, 0.35f, false
 	},
 	[PLAYER_AVATAR_DEATH_KNIGHT] = {
 		PLAYER_AVATAR_DEATH_KNIGHT, "hknight", "progs/hknight.md5mesh",
@@ -88,7 +95,8 @@ static const r_avatar_profile_t r_avatar_profiles[PLAYER_AVATAR_COUNT] = {
 			V("upper_arm_L"), A("upper_arm_L"), A("lower_arm_L"), A("hand_L"),
 			V("upper_arm_R"), A("upper_arm_R"), A("lower_arm_R"), A("hand_R"),
 			A("lower_leg_L.001"), A("lower_leg_L"), A("foot_L"), A("upper_leg_R"),
-			A("lower_leg_R"), A("foot_R"), N, N, N, N }
+			A("lower_leg_R"), A("foot_R"), N, N, N, N },
+		R_AVATAR_BASIS_HUMANOID, { NULL, NULL, NULL, NULL }, false, 1.0f, 0.35f, false
 	},
 	[PLAYER_AVATAR_FIEND] = {
 		PLAYER_AVATAR_FIEND, "fiend", "progs/demon.md5mesh",
@@ -99,7 +107,9 @@ static const r_avatar_profile_t r_avatar_profiles[PLAYER_AVATAR_COUNT] = {
 			A("shoulder_L"), A("upper_arm_L"), A("lower_arm_L"), A("hand_L"),
 			A("shoulder_R"), A("upper_arm_R"), A("lower_arm_R"), A("hand_R"),
 			A("upper_leg_L"), A("lower_leg_L"), A("foot_L"), A("upper_leg_R"),
-			A("lower_leg_R"), A("foot_R"), N, N, N, N }
+			A("lower_leg_R"), A("foot_R"), N, N, N, N },
+		R_AVATAR_BASIS_FEET_UP_HEAD_FORWARD,
+		{ "hoof_L", "hoof_R", NULL, NULL }, true, 1.0f, 0.35f, false
 	},
 	[PLAYER_AVATAR_SHAMBLER] = {
 		PLAYER_AVATAR_SHAMBLER, "shambler", "progs/shambler.md5mesh",
@@ -110,7 +120,8 @@ static const r_avatar_profile_t r_avatar_profiles[PLAYER_AVATAR_COUNT] = {
 			A("shoulder_L"), A("upper_arm_L"), A("lower_arm_L"), A("hand_L"),
 			A("shoulder_R"), A("upper_arm_R"), A("lower_arm_R"), A("hand_R"),
 			A("upper_leg_L"), A("lower_leg_L"), A("foot_L"), A("upper_leg_R"),
-			A("lower_leg_R"), A("foot_R"), N, N, N, N }
+			A("lower_leg_R"), A("foot_R"), N, N, N, N },
+		R_AVATAR_BASIS_HUMANOID, { NULL, NULL, NULL, NULL }, true, 1.0f, 0.0f, false
 	},
 	[PLAYER_AVATAR_ZOMBIE] = {
 		PLAYER_AVATAR_ZOMBIE, "zombie", "progs/zombie.md5mesh",
@@ -121,7 +132,8 @@ static const r_avatar_profile_t r_avatar_profiles[PLAYER_AVATAR_COUNT] = {
 			V("upper_arm_L"), A("upper_arm_L"), A("lower_arm_L"), A("hand_L"),
 			V("upper_arm_R"), A("upper_arm_R"), A("lower_arm_R"), A("hand_R"),
 			A("upper_leg_L"), A("lower_leg_L"), A("foot_L"), A("upper_leg_R"),
-			A("lower_leg_R"), A("foot_R"), N, N, N, N }
+			A("lower_leg_R"), A("foot_R"), N, N, N, N },
+		R_AVATAR_BASIS_HUMANOID, { NULL, NULL, NULL, NULL }, false, 1.0f, 0.35f, false
 	},
 	[PLAYER_AVATAR_VORE] = {
 		PLAYER_AVATAR_VORE, "vore", "progs/shalrath.md5mesh",
@@ -132,7 +144,8 @@ static const r_avatar_profile_t r_avatar_profiles[PLAYER_AVATAR_COUNT] = {
 			V("upper_arm_L"), A("upper_arm_L"), A("lower_arm_L"), A("hand_L"),
 			V("upper_arm_R"), A("upper_arm_R"), A("lower_arm_R"), A("hand_R"),
 			A("leg_1_L"), A("leg_2_L"), A("leg_3_L"),
-			A("leg_1_R"), A("leg_2_R"), A("leg_3_R"), N, N, N, N }
+			A("leg_1_R"), A("leg_2_R"), A("leg_3_R"), N, N, N, N },
+		R_AVATAR_BASIS_HUMANOID, { NULL, NULL, NULL, NULL }, false, 1.0f, 0.35f, true
 	}
 };
 
@@ -189,7 +202,7 @@ static void R_AvatarBindOrigin (const r_avatar_rig_t *rig, int semantic, float o
 
 /* Columns are authored forward, left, up.  These are model-space bases,
  * not a guessed world/Quake axis convention. */
-static qboolean R_AvatarBuildBindBodyBasis (const r_avatar_rig_t *rig, float out[12])
+static qboolean R_AvatarBuildBindHumanoidBasis (const r_avatar_rig_t *rig, float out[12])
 {
 	float hip[3], head[3], left[3], right[3], forward[3], up[3], projection;
 	int leftsemantic = MD5_VRIK_SHOULDER_L, rightsemantic = MD5_VRIK_SHOULDER_R;
@@ -221,6 +234,65 @@ static qboolean R_AvatarBuildBindBodyBasis (const r_avatar_rig_t *rig, float out
 	out[1] = left[0]; out[5] = left[1]; out[9] = left[2];
 	out[2] = up[0]; out[6] = up[1]; out[10] = up[2];
 	return true;
+}
+
+/* Animal presentation columns are [up, left, forward].  This maps the
+ * canonical humanoid's vertical axis to the animal's feet-to-hip axis while
+ * retaining a proper frame whose final axis faces the authored head. */
+static qboolean R_AvatarBuildBindFeetUpHeadForwardBasis (const r_avatar_rig_t *rig,
+	float out[12])
+{
+	float hip[3], head[3], footleft[3], footright[3], up[3], left[3], right[3];
+	float forward[3], projection, midpoint[3], headfromhip[3];
+	int leftsemantic = MD5_VRIK_SHOULDER_L, rightsemantic = MD5_VRIK_SHOULDER_R;
+	if (!rig || !rig->valid || !out || rig->joint[MD5_VRIK_HIP] < 0 ||
+		rig->joint[MD5_VRIK_HEAD] < 0 || rig->joint[MD5_VRIK_FOOT_L] < 0 ||
+		rig->joint[MD5_VRIK_FOOT_R] < 0) return false;
+	R_AvatarBindOrigin(rig, MD5_VRIK_HIP, hip);
+	R_AvatarBindOrigin(rig, MD5_VRIK_HEAD, head);
+	R_AvatarBindOrigin(rig, MD5_VRIK_FOOT_L, footleft);
+	R_AvatarBindOrigin(rig, MD5_VRIK_FOOT_R, footright);
+	midpoint[0] = (footleft[0] + footright[0]) * 0.5f;
+	midpoint[1] = (footleft[1] + footright[1]) * 0.5f;
+	midpoint[2] = (footleft[2] + footright[2]) * 0.5f;
+	up[0] = hip[0] - midpoint[0]; up[1] = hip[1] - midpoint[1]; up[2] = hip[2] - midpoint[2];
+	if (!R_AvatarNormalize3(up)) return false;
+	if (rig->joint[leftsemantic] < 0 || rig->joint[rightsemantic] < 0) return false;
+	R_AvatarBindOrigin(rig, leftsemantic, left); R_AvatarBindOrigin(rig, rightsemantic, right);
+	left[0] -= right[0]; left[1] -= right[1]; left[2] -= right[2];
+	projection = DotProduct(left, up);
+	left[0] -= projection * up[0]; left[1] -= projection * up[1]; left[2] -= projection * up[2];
+	if (!R_AvatarNormalize3(left)) {
+		leftsemantic = MD5_VRIK_UPPERARM_L; rightsemantic = MD5_VRIK_UPPERARM_R;
+		if (rig->joint[leftsemantic] < 0 || rig->joint[rightsemantic] < 0) return false;
+		R_AvatarBindOrigin(rig, leftsemantic, left); R_AvatarBindOrigin(rig, rightsemantic, right);
+		left[0] -= right[0]; left[1] -= right[1]; left[2] -= right[2];
+		projection = DotProduct(left, up);
+		left[0] -= projection * up[0]; left[1] -= projection * up[1]; left[2] -= projection * up[2];
+		if (!R_AvatarNormalize3(left)) return false;
+	}
+	forward[0] = up[1] * left[2] - up[2] * left[1];
+	forward[1] = up[2] * left[0] - up[0] * left[2];
+	forward[2] = up[0] * left[1] - up[1] * left[0];
+	if (!R_AvatarNormalize3(forward)) return false;
+	headfromhip[0] = head[0] - hip[0]; headfromhip[1] = head[1] - hip[1]; headfromhip[2] = head[2] - hip[2];
+	if (DotProduct(forward, headfromhip) < 0.0f) {
+		left[0] = -left[0]; left[1] = -left[1]; left[2] = -left[2];
+		forward[0] = -forward[0]; forward[1] = -forward[1]; forward[2] = -forward[2];
+	}
+	R_AvatarIdentity(out);
+	out[0] = up[0]; out[4] = up[1]; out[8] = up[2];
+	out[1] = left[0]; out[5] = left[1]; out[9] = left[2];
+	out[2] = forward[0]; out[6] = forward[1]; out[10] = forward[2];
+	return true;
+}
+
+static qboolean R_AvatarBuildBindBodyBasis (const r_avatar_rig_t *rig, float out[12])
+{
+	if (rig && rig->profile && rig->profile->basis_policy ==
+		R_AVATAR_BASIS_FEET_UP_HEAD_FORWARD)
+		return R_AvatarBuildBindFeetUpHeadForwardBasis(rig, out);
+	return R_AvatarBuildBindHumanoidBasis(rig, out);
 }
 
 static qboolean R_AvatarOrthonormal (const float m[12])

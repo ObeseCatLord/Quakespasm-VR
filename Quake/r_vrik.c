@@ -236,8 +236,71 @@ static void R_VRIKOrientSubtree (const md5liveinfo_t *live, float *palette,
 	R_VRIKRotateSubtree (live, palette, semantic, origin, delta);
 }
 
+static void R_VRIKReflectPoleAcrossPlane (const vec3_t source,
+	const vec3_t plane_normal, vec3_t reflected)
+{
+	float scale = -2.0f * DotProduct (source, plane_normal);
+
+	reflected[0] = source[0] + scale * plane_normal[0];
+	reflected[1] = source[1] + scale * plane_normal[1];
+	reflected[2] = source[2] + scale * plane_normal[2];
+}
+
+/* Create a shared, mirrored pole pair from the currently animated knees (or
+ * their bind vectors when an animation frame is straight/collapsed).  The
+ * plane is midway between the upper-leg roots and normal to their lateral
+ * separation, so this affects only the legs' outer bend symmetry. */
+static qboolean R_VRIKBuildMirroredLegPoles (const md5liveinfo_t *live,
+	const float *palette, vec3_t poles[2])
+{
+	int side;
+	vec3_t roots[2], knees[2], source[2], lateral, reflected, combined;
+
+	for (side = 0; side < 2; side++)
+	{
+		int uppersemantic = side ? MD5_VRIK_UPPERLEG_R : MD5_VRIK_UPPERLEG_L;
+		int lowersemantic = side ? MD5_VRIK_LOWERLEG_R : MD5_VRIK_LOWERLEG_L;
+		int upperindex = live->jointindex[uppersemantic];
+		int lowerindex = live->jointindex[lowersemantic];
+
+		if (!r_vrik_rigcache.leg_valid[side] || upperindex < 0 ||
+			lowerindex < 0)
+			return false;
+		R_VRIKMatrixOrigin (palette + upperindex * 12, roots[side]);
+		R_VRIKMatrixOrigin (palette + lowerindex * 12, knees[side]);
+		if (!R_VRIKFiniteVector (roots[side]) ||
+			!R_VRIKFiniteVector (knees[side]))
+			return false;
+		VectorSubtract (knees[side], roots[side], source[side]);
+		if (!VectorNormalize (source[side]))
+		{
+			VectorCopy (r_vrik_rigcache.bind_knee_vector[side], source[side]);
+			if (!VectorNormalize (source[side]))
+				return false;
+		}
+	}
+	VectorSubtract (roots[1], roots[0], lateral);
+	if (!VectorNormalize (lateral))
+		return false;
+	/* Express the right pole in left-pole space, then average both authored
+	 * choices.  Mirroring that stable average produces an equal/opposite pair
+	 * without moving either supplied foot target. */
+	R_VRIKReflectPoleAcrossPlane (source[1], lateral, reflected);
+	VectorAdd (source[0], reflected, combined);
+	if (!VectorNormalize (combined))
+	{
+		VectorCopy (source[0], combined);
+		if (!VectorNormalize (combined))
+			return false;
+	}
+	VectorCopy (combined, poles[0]);
+	R_VRIKReflectPoleAcrossPlane (combined, lateral, poles[1]);
+	return R_VRIKFiniteVector (poles[0]) && R_VRIKFiniteVector (poles[1]);
+}
+
 static void R_VRIKSolveLeg (const md5liveinfo_t *live, float *palette,
-	int side, const vec3_t supplied_target, float confidence)
+	int side, const vec3_t supplied_target, float confidence,
+	const vec3_t supplied_pole)
 {
 	md5vrikjoint_t uppersemantic = side ? MD5_VRIK_UPPERLEG_R : MD5_VRIK_UPPERLEG_L;
 	md5vrikjoint_t lowersemantic = side ? MD5_VRIK_LOWERLEG_R : MD5_VRIK_LOWERLEG_L;
@@ -301,9 +364,17 @@ static void R_VRIKSolveLeg (const md5liveinfo_t *live, float *palette,
 			upperlength + lowerlength - 0.01f));
 	VectorMA (hip, distance, toward, target);
 
-	/* Project the current animated knee onto the solve plane.  The bind vector
-	 * is a stable fallback for straight animation frames. */
-	VectorCopy (oldupperdir, pole);
+	/* Project the requested paired pole, or this leg's current animated knee,
+	 * onto the solve plane.  The bind vector is a stable straight-frame
+	 * fallback. */
+	if (supplied_pole && R_VRIKFiniteVector (supplied_pole))
+	{
+		VectorCopy (supplied_pole, pole);
+	}
+	else
+	{
+		VectorCopy (oldupperdir, pole);
+	}
 	VectorMA (pole, -DotProduct (pole, toward), toward, pole);
 	if (!VectorNormalize (pole))
 	{
@@ -477,11 +548,14 @@ qboolean R_VRIKGetLowerBodyTargets (int entitynum,
 	return out->present_mask != 0;
 }
 
-qboolean R_VRIKApplyLowerBody (const md5liveinfo_t *live, float *palette,
-	const r_vrik_lowerbody_model_targets_t *targets)
+qboolean R_VRIKApplyLowerBodyWithPolePolicy (const md5liveinfo_t *live,
+	float *palette, const r_vrik_lowerbody_model_targets_t *targets,
+	r_vrik_lowerbody_pole_policy_t pole_policy)
 {
 	int hipindex, role;
 	vec3_t hip, delta;
+	vec3_t paired_poles[2];
+	qboolean use_paired_poles = false;
 
 	if (!live || !palette || !targets || !R_VRIKBuildRigCache (live))
 		return false;
@@ -512,14 +586,24 @@ qboolean R_VRIKApplyLowerBody (const md5liveinfo_t *live, float *palette,
 			R_VRIKOrientSubtree (live, palette, MD5_VRIK_HIP,
 				targets->orientation[R_VRIK_LOWER_HIP]);
 	}
+	if (pole_policy == R_VRIK_LOWERBODY_POLES_MIRRORED_PAIR &&
+		(targets->usable_mask &
+			(R_VRIK_LOWER_BIT (R_VRIK_LOWER_LEFT_FOOT) |
+			 R_VRIK_LOWER_BIT (R_VRIK_LOWER_RIGHT_FOOT))) ==
+		(R_VRIK_LOWER_BIT (R_VRIK_LOWER_LEFT_FOOT) |
+		 R_VRIK_LOWER_BIT (R_VRIK_LOWER_RIGHT_FOOT)))
+		use_paired_poles = R_VRIKBuildMirroredLegPoles (live, palette,
+			paired_poles);
 	if (targets->usable_mask & R_VRIK_LOWER_BIT (R_VRIK_LOWER_LEFT_FOOT))
 		R_VRIKSolveLeg (live, palette, 0,
 			targets->position[R_VRIK_LOWER_LEFT_FOOT],
-			targets->confidence[R_VRIK_LOWER_LEFT_FOOT]);
+			targets->confidence[R_VRIK_LOWER_LEFT_FOOT],
+			use_paired_poles ? paired_poles[0] : NULL);
 	if (targets->usable_mask & R_VRIK_LOWER_BIT (R_VRIK_LOWER_RIGHT_FOOT))
 		R_VRIKSolveLeg (live, palette, 1,
 			targets->position[R_VRIK_LOWER_RIGHT_FOOT],
-			targets->confidence[R_VRIK_LOWER_RIGHT_FOOT]);
+			targets->confidence[R_VRIK_LOWER_RIGHT_FOOT],
+			use_paired_poles ? paired_poles[1] : NULL);
 	for (role = R_VRIK_LOWER_LEFT_FOOT;
 		role <= R_VRIK_LOWER_RIGHT_FOOT; role++)
 		if ((targets->usable_mask & R_VRIK_LOWER_BIT (role)) &&
@@ -528,6 +612,13 @@ qboolean R_VRIKApplyLowerBody (const md5liveinfo_t *live, float *palette,
 				role == R_VRIK_LOWER_LEFT_FOOT ? MD5_VRIK_FOOT_L : MD5_VRIK_FOOT_R,
 				targets->orientation[role]);
 	return true;
+}
+
+qboolean R_VRIKApplyLowerBody (const md5liveinfo_t *live, float *palette,
+	const r_vrik_lowerbody_model_targets_t *targets)
+{
+	return R_VRIKApplyLowerBodyWithPolePolicy (live, palette, targets,
+		R_VRIK_LOWERBODY_POLES_ANIMATED);
 }
 
 qboolean R_VRIKGetCalibrationReference (qmodel_t *model,
