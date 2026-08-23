@@ -24,7 +24,9 @@ FIXTURES := \
 	vrik_protocol_fixture \
 	vrik_relay_fixture \
 	vrik_lowerbody_fixture \
-	vrik_renderer_boundary_fixture
+	vrik_renderer_boundary_fixture \
+	avatar_protocol_fixture \
+	avatar_retarget_fixture
 BINARIES := $(addprefix $(BUILD_DIR)/,$(FIXTURES))
 
 .PHONY: all test clean
@@ -74,8 +76,14 @@ $(BUILD_DIR)/vrik_lowerbody_fixture: vrik_lowerbody_fixture.c ../Quake/r_vrik.c 
 
 # r_alias is a complete renderer unit.  Section GC keeps this fixture linked
 # only to its test seam and the receive-to-render translation it covers.
-$(BUILD_DIR)/vrik_renderer_boundary_fixture: vrik_renderer_boundary_fixture.c ../Quake/r_alias.c | $(BUILD_DIR)
+$(BUILD_DIR)/vrik_renderer_boundary_fixture: vrik_renderer_boundary_fixture.c ../Quake/r_alias.c ../Quake/mathlib.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -Wno-error=missing-field-initializers -Wno-error=unused-parameter -DR_ALIAS_LOWER_TARGETS_TEST -ffunction-sections -fdata-sections $(SANITIZE_FLAGS) $^ $(LDFLAGS) -Wl,--gc-sections $(SANITIZE_FLAGS) $(LDLIBS) -o $@
+
+$(BUILD_DIR)/avatar_retarget_fixture: avatar_retarget_fixture.c ../Quake/r_avatar.c | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(SANITIZE_FLAGS) $^ $(LDFLAGS) $(SANITIZE_FLAGS) $(LDLIBS) -o $@
+
+$(BUILD_DIR)/avatar_protocol_fixture: avatar_protocol_fixture.c ../Quake/player_avatar.c | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(SANITIZE_FLAGS) $^ $(LDFLAGS) $(SANITIZE_FLAGS) $(LDLIBS) -o $@
 
 # This directory contains only test executables.  Its name is fixed above so
 # cleanup cannot be redirected outside tests/ by a command-line variable.

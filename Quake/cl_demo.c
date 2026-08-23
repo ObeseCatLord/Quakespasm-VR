@@ -20,6 +20,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 */
 
 #include "quakedef.h"
+#include "player_avatar.h"
 
 static void CL_FinishTimeDemo (void);
 
@@ -345,6 +346,26 @@ void CL_Record_f (void)
 			MSG_WriteByte (&net_message, svc_updatecolors);
 			MSG_WriteByte (&net_message, i);
 			MSG_WriteByte (&net_message, cl.scores[i].colors);
+		}
+
+		/* A recording begun mid-game otherwise misses reliable avatar updates
+		 * sent before recording started. */
+		if (cl.avatar_protocol_offered)
+		{
+			/* Slot updates are deliberately ignored until the protocol offer has
+			 * been parsed, so preserve that ordering in a late-recorded demo. */
+			MSG_WriteByte (&net_message, svc_stufftext);
+			MSG_WriteString (&net_message, va("//avatar_protocol %d\n",
+				PLAYER_AVATAR_PROTOCOL_VERSION));
+			for (i = 0; i < cl.maxclients; i++)
+			{
+				int avatar_id = cl.avatar_ids[i];
+				if (!PlayerAvatar_IsValidId(avatar_id))
+					avatar_id = PLAYER_AVATAR_RANGER;
+				MSG_WriteByte (&net_message, svc_stufftext);
+				MSG_WriteString (&net_message, va("//avatar_slot %d %d %d\n",
+					PLAYER_AVATAR_PROTOCOL_VERSION, i, avatar_id));
+			}
 		}
 
 		// send all current light styles

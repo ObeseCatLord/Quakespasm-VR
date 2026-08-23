@@ -300,6 +300,9 @@ typedef struct client_s
 	qboolean		knowntoqc;			// PutClientInServer was called
 	qboolean		csqcactive;
 	qboolean		usingpmove;
+	qboolean		avatar_capable;
+	unsigned char		avatar_id;
+	unsigned short		avatar_dirty_slots;
 	qboolean		vrik_capable;
 	unsigned char		vrik_protocol_version;
 	qboolean		vrik_sequence_valid;
@@ -519,6 +522,8 @@ qboolean SV_CheckBottom (edict_t *ent);
 qboolean SV_movestep (edict_t *ent, vec3_t move, qboolean relink);
 
 void SV_ResetClientMoveState (client_t *client);
+void SV_SendAvatarTable (client_t *client);
+void SV_BroadcastAvatarSlot (int slot, int avatar_id);
 void SV_ReceiveVRIKPose (client_t *client, const vrik_pose_t *pose);
 void SV_ReceiveVRIKPoseV2 (client_t *client, const vrik_v2_pose_t *pose,
 	const unsigned char body[VRIK_V2_BODY_BYTES]);

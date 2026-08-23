@@ -25,6 +25,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "vr.h"
 #include "pmove.h"
 #include "vrik_codec.h"
+#include "player_avatar.h"
 
 edict_t *sv_player;
 
@@ -1103,6 +1104,40 @@ static qboolean SV_HandleVRIKCapability(const char *s)
 	return true;
 }
 
+static qboolean SV_HandleAvatarCapability(const char *s)
+{
+	if (!SV_ClientCommandIs(s, "avatar_cap"))
+		return false;
+	if (!PlayerAvatar_ParseCapabilityCommand(s))
+		return true;
+	/* Avatar capability is connection-latched.  A duplicate must not trigger
+	 * a second signon snapshot or change the negotiated version. */
+	if (host_client->avatar_capable)
+		return true;
+	host_client->avatar_capable = true;
+	if (host_client->spawned)
+		SV_SendAvatarTable(host_client);
+	Con_DPrintf("Avatar: client %s negotiated protocol %d\n", host_client->name,
+		PLAYER_AVATAR_PROTOCOL_VERSION);
+	return true;
+}
+
+static qboolean SV_HandleAvatarSet(const char *s)
+{
+	int avatar_id;
+
+	if (!SV_ClientCommandIs(s, "avatar_set"))
+		return false;
+	if (!host_client->avatar_capable ||
+		!PlayerAvatar_ParseSetCommand(s, &avatar_id))
+		return true;
+	if (host_client->avatar_id == avatar_id)
+		return true;
+	host_client->avatar_id = (unsigned char)avatar_id;
+	SV_BroadcastAvatarSlot((int)(host_client - svs.clients), avatar_id);
+	return true;
+}
+
 static qboolean SV_ReadVRIKPose(qboolean accept)
 {
 	vrik_v2_pose_t pose_v2;
@@ -1274,6 +1309,10 @@ static qboolean SV_ParseClientMessage(void) {
       s = MSG_ReadString();
       if (SV_ClientCommandIs(s, "predstatus"))
         SV_SetClientPredictionStatus(s);
+		else if (SV_HandleAvatarCapability(s))
+			;
+		else if (SV_HandleAvatarSet(s))
+			;
       else if (SV_HandleVRIKCapability(s))
         ;
       else if (SV_IsEngineClientCommand(s))

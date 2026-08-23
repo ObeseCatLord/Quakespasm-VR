@@ -232,6 +232,7 @@ GLOBJS = \
 	gl_mesh.o \
 	r_sprite.o \
 	r_alias.o \
+	r_avatar.o \
 	r_vrik.o \
 	r_brush.o \
 	gl_model.o
@@ -251,6 +252,7 @@ OBJS = strlcat.o \
 	cl_demo.o \
 	cl_input.o \
 	cl_main.o \
+	player_avatar.o \
 	cl_parse.o \
 	cl_tent.o \
 	console.o \

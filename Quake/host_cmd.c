@@ -2510,6 +2510,10 @@ static void Host_Spawn_f(void) {
     MSG_WriteByte(&host_client->message, client->colors);
   }
 
+  /* This snapshot is sent after the client's signon data is rebuilt, so an
+     early capability declaration cannot be lost when this buffer is cleared. */
+  SV_SendAvatarTable(host_client);
+
   // send all current light styles
   for (i = 0; i < MAX_LIGHTSTYLES; i++) {
     MSG_WriteByte(&host_client->message, svc_lightstyle);

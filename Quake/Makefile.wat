@@ -187,6 +187,7 @@ GLOBJS = &
 	gl_mesh.obj &
 	r_sprite.obj &
 	r_alias.obj &
+	r_avatar.obj &
 	r_vrik.obj &
 	r_brush.obj &
 	gl_model.obj
@@ -206,6 +207,7 @@ OBJS = strlcat.obj &
 	cl_demo.obj &
 	cl_input.obj &
 	cl_main.obj &
+	player_avatar.obj &
 	cl_parse.obj &
 	cl_tent.obj &
 	console.obj &

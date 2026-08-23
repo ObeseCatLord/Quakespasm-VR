@@ -150,6 +150,9 @@
     <ClCompile Include="..\..\Quake\pl_win.c">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="..\..\Quake\player_avatar.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="..\..\Quake\pr_cmds.c">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -160,6 +163,9 @@
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="..\..\Quake\r_alias.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Quake\r_avatar.c">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="..\..\Quake\r_vrik.c">
@@ -383,6 +389,9 @@
     <ClInclude Include="..\..\Quake\platform.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="..\..\Quake\player_avatar.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
     <ClInclude Include="..\..\Quake\pr_comp.h">
       <Filter>Header Files</Filter>
     </ClInclude>
@@ -405,6 +414,9 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="..\..\Quake\render.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\Quake\r_avatar.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="..\..\Quake\r_vrik.h">

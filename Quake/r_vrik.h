@@ -9,9 +9,25 @@ typedef struct r_vrik_skincache_s
 {
 	qmodel_t *model;
 	int hostframe;
+	unsigned int pose_generation;
+	unsigned char avatar_id;
 	const aliashdr_t *surface;
 	md5vertex_t *vertices;
 	int capacity;
+	unsigned short *body_indexes;
+	int body_index_capacity;
+	int body_numindexes;
+	const aliashdr_t *prop_surface;
+	md5vertex_t *prop_vertices;
+	unsigned short *prop_indexes;
+	int prop_vertex_capacity;
+	int prop_index_capacity;
+	int prop_numverts;
+	int prop_numindexes;
+	int prop_semantic;
+	/* Canonical Ranger pose is kept separately so target retargeting may never
+	 * overwrite a source joint before one of its descendants consumes it. */
+	float canonical_palette[MAX_MD5_JOINTS * 12];
 	float palette[MAX_MD5_JOINTS * 12];
 	qboolean ready;
 	qboolean muzzle_valid;

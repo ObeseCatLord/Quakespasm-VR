@@ -37,6 +37,7 @@ static void Mod_LoadAliasModel (qmodel_t *mod, void *buffer);
 static qboolean Mod_LoadMD3Model (qmodel_t *mod, const byte *buffer, size_t filesize);
 static qboolean Mod_LoadMD5MeshModel (qmodel_t *mod, const byte *buffer, size_t filesize);
 static qmodel_t *Mod_LoadVerifiedRereleasePlayerMD5 (void);
+static qmodel_t *Mod_LoadVerifiedRereleaseAvatarMD5 (player_avatar_id_t avatar);
 static qmodel_t *Mod_LoadModel (qmodel_t *mod, qboolean crash);
 static void Mod_EnhancedModels_f (cvar_t *var);
 static void Mod_MigrateEnhancedModels_f (void);
@@ -517,6 +518,31 @@ qboolean Mod_GetMD5LiveData (qmodel_t *mod, md5liveinfo_t *out)
 	return true;
 }
 
+/*
+ * Return the complete retained surface count only when every linked surface
+ * is valid.  Callers can then enumerate [0, count) with
+ * Mod_GetMD5LiveSurface without treating a malformed partial mesh as a rig.
+ */
+int Mod_GetMD5LiveSurfaceCount (const md5liveinfo_t *info)
+{
+	const aliashdr_t *surface;
+	int count;
+
+	if (!info || !info->firstsurface || info->numbones < 1 ||
+		info->numbones > MAX_MD5_JOINTS)
+		return 0;
+
+	for (surface = info->firstsurface, count = 0;
+		surface && count < MAX_MD5_SURFACES;
+		surface = surface->nextsurface ?
+			(const aliashdr_t *)((const byte *)surface + surface->nextsurface) : NULL,
+		count++)
+		if (!Mod_MD5LiveSurfaceValid (surface, info->numbones))
+			return 0;
+
+	return surface ? 0 : count;
+}
+
 qboolean Mod_GetMD5LiveSurface (const md5liveinfo_t *info, int surfaceindex,
 	md5livesurface_t *out)
 {
@@ -561,6 +587,36 @@ qboolean Mod_GetRereleasePlayerMD5LiveData (md5liveinfo_t *out)
 	if (!out)
 		return false;
 	mod = Mod_GetRereleasePlayerMD5Model ();
+	if (!mod || !Mod_GetMD5LiveData (mod, out) || !out->from_rerelease)
+	{
+		memset (out, 0, sizeof(*out));
+		return false;
+	}
+	return true;
+}
+
+qmodel_t *Mod_GetRereleaseAvatarMD5Model (player_avatar_id_t avatar)
+{
+	if ((int)avatar < PLAYER_AVATAR_RANGER ||
+		(int)avatar >= PLAYER_AVATAR_COUNT)
+		return NULL;
+	if (avatar == PLAYER_AVATAR_RANGER)
+		return Mod_GetRereleasePlayerMD5Model ();
+	return Mod_LoadVerifiedRereleaseAvatarMD5 (avatar);
+}
+
+qboolean Mod_GetRereleaseAvatarMD5LiveData (player_avatar_id_t avatar,
+	md5liveinfo_t *out)
+{
+	qmodel_t *mod;
+
+	if (!out)
+		return false;
+	/* Keep the Ranger compatibility contract exactly as the established API. */
+	if (avatar == PLAYER_AVATAR_RANGER)
+		return Mod_GetRereleasePlayerMD5LiveData (out);
+
+	mod = Mod_GetRereleaseAvatarMD5Model (avatar);
 	if (!mod || !Mod_GetMD5LiveData (mod, out) || !out->from_rerelease)
 	{
 		memset (out, 0, sizeof(*out));
@@ -5890,6 +5946,110 @@ static qmodel_t *Mod_LoadVerifiedRereleasePlayerMD5 (void)
 	mod->needload = false;
 	loadmodel = mod;
 	q_strlcpy (loadname, "vrikplayer", sizeof(loadname));
+
+	Mod_BeginAliasBuild ();
+	mod_md5_rerelease_only = true;
+	loaded = Mod_LoadMD5MeshModel (mod, buffer, (size_t)filesize);
+	mod_md5_rerelease_only = false;
+	free (buffer);
+	q_strlcpy (mod->name, savedname, sizeof(mod->name));
+
+	if (!loaded)
+	{
+		Hunk_FreeToLowMark (mod_alias_build.startmark);
+		memset (&mod_alias_build, 0, sizeof(mod_alias_build));
+		mod->needload = true;
+		return NULL;
+	}
+	mod_alias_build.md5_from_rerelease = true;
+	Mod_FinishAliasBuild (mod);
+	return mod;
+}
+
+typedef struct verified_rerelease_avatar_s
+{
+	const char	*asset_path;
+	const char	*cache_name;
+	const char	*load_name;
+} verified_rerelease_avatar_t;
+
+/*
+ * This is deliberately an allowlist, rather than an avatar-ID-to-path
+ * formatter.  Avatar selection must never make an arbitrary asset in a
+ * verified pack loadable, and excluded creatures therefore have no entry.
+ */
+static const verified_rerelease_avatar_t verified_rerelease_avatars[
+	PLAYER_AVATAR_COUNT] =
+{
+	[PLAYER_AVATAR_SOLDIER] = {
+		"progs/soldier.md5mesh", "progs/@vrik_rerelease_soldier.md5mesh",
+		"vriksoldier"},
+	[PLAYER_AVATAR_ENFORCER] = {
+		"progs/enforcer.md5mesh", "progs/@vrik_rerelease_enforcer.md5mesh",
+		"vrikenforcer"},
+	[PLAYER_AVATAR_DOG] = {
+		"progs/dog.md5mesh", "progs/@vrik_rerelease_dog.md5mesh",
+		"vrikdog"},
+	[PLAYER_AVATAR_OGRE] = {
+		"progs/ogre.md5mesh", "progs/@vrik_rerelease_ogre.md5mesh",
+		"vrikogre"},
+	[PLAYER_AVATAR_KNIGHT] = {
+		"progs/knight.md5mesh", "progs/@vrik_rerelease_knight.md5mesh",
+		"vrikknight"},
+	[PLAYER_AVATAR_DEATH_KNIGHT] = {
+		"progs/hknight.md5mesh", "progs/@vrik_rerelease_hknight.md5mesh",
+		"vrikhknight"},
+	[PLAYER_AVATAR_FIEND] = {
+		"progs/demon.md5mesh", "progs/@vrik_rerelease_demon.md5mesh",
+		"vrikdemon"},
+	[PLAYER_AVATAR_SHAMBLER] = {
+		"progs/shambler.md5mesh", "progs/@vrik_rerelease_shambler.md5mesh",
+		"vrikshambler"},
+	[PLAYER_AVATAR_ZOMBIE] = {
+		"progs/zombie.md5mesh", "progs/@vrik_rerelease_zombie.md5mesh",
+		"vrikzombie"},
+	[PLAYER_AVATAR_VORE] = {
+		"progs/shalrath.md5mesh", "progs/@vrik_rerelease_shalrath.md5mesh",
+		"vrikshalrath"}
+};
+
+/*
+ * Load an allowlisted rerelease avatar into an independent cache entry.  The
+ * temporary real asset name is required because the MD5 loader derives its
+ * companion animation from mod->name.  mod_md5_rerelease_only also forces
+ * that companion and indexed skins through the verified rerelease source.
+ */
+static qmodel_t *Mod_LoadVerifiedRereleaseAvatarMD5 (player_avatar_id_t avatar)
+{
+	const verified_rerelease_avatar_t *asset;
+	qmodel_t *mod;
+	byte *buffer;
+	unsigned int path_id = 0;
+	int filesize;
+	char savedname[MAX_QPATH];
+	qboolean loaded;
+
+	if (isDedicated || (int)avatar <= PLAYER_AVATAR_RANGER ||
+		(int)avatar >= PLAYER_AVATAR_COUNT)
+		return NULL;
+	asset = &verified_rerelease_avatars[avatar];
+	if (!asset->asset_path || !asset->cache_name || !asset->load_name)
+		return NULL;
+
+	mod = Mod_FindName (asset->cache_name);
+	if (!mod->needload && Cache_Check (&mod->cache))
+		return mod;
+
+	buffer = COM_LoadMallocFileFromRerelease (asset->asset_path, &path_id);
+	if (!buffer)
+		return NULL;
+	filesize = com_filesize;
+	q_strlcpy (savedname, mod->name, sizeof(savedname));
+	q_strlcpy (mod->name, asset->asset_path, sizeof(mod->name));
+	mod->path_id = path_id;
+	mod->needload = false;
+	loadmodel = mod;
+	q_strlcpy (loadname, asset->load_name, sizeof(loadname));
 
 	Mod_BeginAliasBuild ();
 	mod_md5_rerelease_only = true;

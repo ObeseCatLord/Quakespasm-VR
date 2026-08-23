@@ -253,10 +253,12 @@ copy "$(SolutionDir)\..\SDL\lib64\*.dll" "$(TargetDir)"
     <ClCompile Include="..\..\Quake\net_wins.c" />
     <ClCompile Include="..\..\Quake\net_wipx.c" />
     <ClCompile Include="..\..\Quake\pl_win.c" />
+    <ClCompile Include="..\..\Quake\player_avatar.c" />
     <ClCompile Include="..\..\Quake\pr_cmds.c" />
     <ClCompile Include="..\..\Quake\pr_edict.c" />
     <ClCompile Include="..\..\Quake\pr_exec.c" />
     <ClCompile Include="..\..\Quake\r_alias.c" />
+    <ClCompile Include="..\..\Quake\r_avatar.c" />
     <ClCompile Include="..\..\Quake\r_vrik.c" />
     <ClCompile Include="..\..\Quake\vr_fbt.c" />
     <ClCompile Include="..\..\Quake\vr_fbt_filter.c" />
@@ -337,6 +339,7 @@ copy "$(SolutionDir)\..\SDL\lib64\*.dll" "$(TargetDir)"
     <ClInclude Include="..\..\Quake\net_wins.h" />
     <ClInclude Include="..\..\Quake\net_wipx.h" />
     <ClInclude Include="..\..\Quake\platform.h" />
+    <ClInclude Include="..\..\Quake\player_avatar.h" />
     <ClInclude Include="..\..\Quake\progdefs.h" />
     <ClInclude Include="..\..\Quake\progs.h" />
     <ClInclude Include="..\..\Quake\protocol.h" />
@@ -346,6 +349,7 @@ copy "$(SolutionDir)\..\SDL\lib64\*.dll" "$(TargetDir)"
     <ClInclude Include="..\..\Quake\q_sound.h" />
     <ClInclude Include="..\..\Quake\q_stdinc.h" />
     <ClInclude Include="..\..\Quake\render.h" />
+    <ClInclude Include="..\..\Quake\r_avatar.h" />
     <ClInclude Include="..\..\Quake\r_vrik.h" />
     <ClInclude Include="..\..\Quake\resource.h" />
     <ClInclude Include="..\..\Quake\sbar.h" />
