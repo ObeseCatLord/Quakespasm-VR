@@ -689,7 +689,7 @@ void M_MultiPlayer_Key(int key) {
 /* SETUP MENU */
 
 int setup_cursor = 5;
-int setup_cursor_table[] = {40, 56, 80, 104, 128, 164};
+int setup_cursor_table[] = {40, 56, 80, 104, 136, 164};
 
 char setup_hostname[16];
 char setup_myname[16];
@@ -734,8 +734,8 @@ void M_Setup_Draw(void) {
 
   M_Print(64, 80, "Shirt color");
   M_Print(64, 104, "Pants color");
-  M_Print(64, 128, "Avatar model");
-  M_Print(160, 128, PlayerAvatar_DisplayNameForId(setup_avatar));
+  M_Print(64, 120, "Player model");
+  M_Print(64, 136, PlayerAvatar_DisplayNameForId(setup_avatar));
 
   M_DrawTextBox(64, 164 - 8, 14, 1);
   M_Print(72, 164, "Accept Changes");
