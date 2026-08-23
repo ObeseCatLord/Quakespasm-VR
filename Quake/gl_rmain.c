@@ -1988,6 +1988,8 @@ void R_RenderScene(void) {
 
   perf_start = R_PerfStart();
   R_DrawViewModel(); // johnfitz -- moved here from R_RenderView
+  if (!skyroom_drawing)
+    VR_DrawFBTCalibrationVisuals();
   R_PerfAdd(&r_perf_viewmodel_ms, perf_start);
 
   perf_start = R_PerfStart();

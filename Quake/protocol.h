@@ -79,7 +79,8 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
  * The wire format is fixed-point 13.3 for positions and angle16 for all
  * angles, irrespective of the negotiated RMQ coordinate/angle flags.
  */
-#define VRIK_PROTOCOL_VERSION 2
+#define VRIK_PROTOCOL_LEGACY_VERSION 2
+#define VRIK_PROTOCOL_VERSION 3
 #define VRIK_MAX_ROOT_LOCAL_OFFSET 256.0f
 #define VRIK_POSE_STALE_TIME 0.25
 
@@ -115,6 +116,11 @@ typedef struct
 
 #define VRIK_POSE_WIRE_BYTES (2 + 1 + 2 + (VRIK_TRACKER_COUNT * 3 * 2) + \
 	(VRIK_TRACKER_COUNT * 3 * 2) + (3 * 2))
+
+/* Version 3 keeps its variable-length codec body explicitly framed.  The
+ * length byte lets a receiver discard a malformed body without losing the
+ * following client/server commands in the same datagram. */
+#define VRIK_V3_MAX_BODY_BYTES 85
 
 // if the high bit of the servercmd is set, the low bits are fast update flags:
 #define U_MOREBITS (1 << 0)
@@ -384,7 +390,7 @@ typedef struct
 #define svc_backtolobby 55
 #define svc_localsound 56
 #define svc_moveack 57 // [short] last accepted sequenced move
-/* Sent only after the //vrik_protocol 2 / vrik_cap 2 handshake. */
+/* Sent only after the //vrik_protocol N / vrik_cap N handshake. */
 #define svc_vrikpose 87 // [short entity][long generation][vrik pose]
 // PEXT2_EXPLICITCMDMSEC adds [byte flags][byte authority][short mode_epoch]
 // [short discontinuity_epoch][byte reason].
@@ -445,7 +451,7 @@ typedef enum {
 #define clc_disconnect 2
 #define clc_move 3      // [short sequence][float servertime][byte msec if PEXT2_EXPLICITCMDMSEC][angles][move][buttons][impulse][extbits]
 #define clc_stringcmd 4 // [string] message
-#define clc_vrikpose 5  // [vrik_pose_t in fixed wire format]
+#define clc_vrikpose 5  // v2 [fixed pose], v3 [byte bodylen][codec body]
 #define clcdp_ackframe 50
 #define clcfte_qcrequest 81
 

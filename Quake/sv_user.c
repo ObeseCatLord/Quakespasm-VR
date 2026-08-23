@@ -24,6 +24,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "quakedef.h"
 #include "vr.h"
 #include "pmove.h"
+#include "vrik_codec.h"
 
 edict_t *sv_player;
 
@@ -1058,7 +1059,8 @@ static qboolean SV_ClientCommandIs(const char *s, const char *name) {
 
 static qboolean SV_HandleVRIKCapability(const char *s)
 {
-  const char *value;
+	const char *value;
+	int version;
 
   if (!SV_ClientCommandIs(s, "vrik_cap"))
     return false;
@@ -1071,8 +1073,13 @@ static qboolean SV_HandleVRIKCapability(const char *s)
   while (*value == ' ' || *value == '\t')
     value++;
 
-  if (*value++ != '2')
-    return true;
+	if (*value == '3')
+		version = 3;
+	else if (*value == '2')
+		version = 2;
+	else
+		return true;
+	value++;
   while (*value == ' ' || *value == '\t' || *value == '\r' || *value == '\n')
     value++;
   if (*value)
@@ -1080,45 +1087,65 @@ static qboolean SV_HandleVRIKCapability(const char *s)
 
   /* Capability is latched for the connection. Repeated declarations must
    * not reset sequence or rate-limit state. */
-  if (host_client->vrik_capable)
-    return true;
+	if (host_client->vrik_capable)
+		return true;
 
-  host_client->vrik_capable = true;
+	if (vrik_latch_protocol_version((uint8_t)version,
+		&host_client->vrik_capable, &host_client->vrik_protocol_version) !=
+		VRIK_CODEC_OK)
+		return true;
   host_client->vrik_sequence_valid = false;
   host_client->vrik_inactive_sent = false;
   host_client->vrik_generation = 0;
   host_client->vrik_next_accept_time = 0;
-  Con_DPrintf("VRIK: client %s negotiated protocol 2\n", host_client->name);
-  return true;
+	Con_DPrintf("VRIK: client %s negotiated protocol %d\n", host_client->name,
+		version);
+	return true;
 }
 
 static qboolean SV_ReadVRIKPose(qboolean accept)
 {
-  vrik_pose_t pose;
-  int tracker;
-  int axis;
+	vrik_v2_pose_t pose_v2;
+	vrik_codec_pose_t pose_v3;
+	vrik_codec_status_t status;
+	size_t consumed;
+	int body_bytes;
 
-  if (net_message.cursize - msg_readcount < VRIK_POSE_WIRE_BYTES) {
-    msg_badread = true;
-    return false;
-  }
+	if (host_client->vrik_protocol_version >= VRIK_PROTOCOL_VERSION)
+	{
+		body_bytes = MSG_ReadByte();
+		if (msg_badread || body_bytes < 0 || body_bytes > VRIK_V3_MAX_BODY_BYTES ||
+			net_message.cursize - msg_readcount < body_bytes)
+		{
+			msg_badread = true;
+			return false;
+		}
+		status = vrik_v3_decode(net_message.data + msg_readcount,
+			(size_t)body_bytes, &pose_v3, &consumed);
+		/* Keep the datagram aligned on a rejected body.  This is deliberately
+		 * not a connection error unless its declared bytes were truncated. */
+		msg_readcount += body_bytes;
+		if (status != VRIK_CODEC_OK || consumed != (size_t)body_bytes)
+			return true;
+		if (accept)
+			SV_ReceiveVRIKPoseV3(host_client, &pose_v3);
+		return true;
+	}
 
-  Q_memset(&pose, 0, sizeof(pose));
-  pose.sequence = (unsigned short)MSG_ReadShort();
-  pose.flags = MSG_ReadByte();
-  pose.body_yaw = MSG_ReadShort() * (360.0f / 65536.0f);
-  for (tracker = 0; tracker < VRIK_TRACKER_COUNT; tracker++)
-    for (axis = 0; axis < 3; axis++)
-      pose.position[tracker][axis] = MSG_ReadShort() * (1.0f / 8.0f);
-  for (tracker = 0; tracker < VRIK_TRACKER_COUNT; tracker++)
-    for (axis = 0; axis < 3; axis++)
-      pose.orientation[tracker][axis] = MSG_ReadShort() * (360.0f / 65536.0f);
-  for (axis = 0; axis < 3; axis++)
-    pose.aim_orientation[axis] = MSG_ReadShort() * (360.0f / 65536.0f);
-
-  if (!msg_badread && accept)
-    SV_ReceiveVRIKPose(host_client, &pose);
-  return !msg_badread;
+	if (net_message.cursize - msg_readcount < VRIK_POSE_WIRE_BYTES) {
+		msg_badread = true;
+		return false;
+	}
+	status = vrik_v2_decode(net_message.data + msg_readcount,
+		VRIK_POSE_WIRE_BYTES, &pose_v2, &consumed);
+	msg_readcount += VRIK_POSE_WIRE_BYTES;
+	if (status != VRIK_CODEC_OK || consumed != VRIK_POSE_WIRE_BYTES ||
+		vrik_v2_validate_legacy_pose(&pose_v2) != VRIK_CODEC_OK)
+		return true;
+	if (accept)
+		SV_ReceiveVRIKPoseV2(host_client, &pose_v2,
+			net_message.data + msg_readcount - VRIK_POSE_WIRE_BYTES);
+	return true;
 }
 
 static void SV_SetClientPredictionStatus(const char *s) {

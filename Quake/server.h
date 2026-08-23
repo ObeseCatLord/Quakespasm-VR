@@ -25,6 +25,8 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 
 // server.h
 
+#include "vrik_codec.h"
+
 #define	NUM_SPAWN_PARMS		16
 
 typedef struct
@@ -299,6 +301,7 @@ typedef struct client_s
 	qboolean		csqcactive;
 	qboolean		usingpmove;
 	qboolean		vrik_capable;
+	unsigned char		vrik_protocol_version;
 	qboolean		vrik_sequence_valid;
 	qboolean		vrik_inactive_sent;
 	unsigned short		vrik_last_sequence;
@@ -306,6 +309,9 @@ typedef struct client_s
 	double			vrik_pose_time;
 	double			vrik_next_accept_time;
 	vrik_pose_t		vrik_pose;
+	vrik_codec_pose_t	vrik_pose_v3;
+	qboolean		vrik_v2_body_valid;
+	unsigned char		vrik_v2_body[VRIK_V2_BODY_BYTES];
 
 	// VR Data
 	qboolean		is_vr_client;
@@ -514,6 +520,9 @@ qboolean SV_movestep (edict_t *ent, vec3_t move, qboolean relink);
 
 void SV_ResetClientMoveState (client_t *client);
 void SV_ReceiveVRIKPose (client_t *client, const vrik_pose_t *pose);
+void SV_ReceiveVRIKPoseV2 (client_t *client, const vrik_v2_pose_t *pose,
+	const unsigned char body[VRIK_V2_BODY_BYTES]);
+void SV_ReceiveVRIKPoseV3 (client_t *client, const vrik_codec_pose_t *pose);
 void SV_ExpireVRIKPoses (void);
 void SV_WriteClientdataToMessage (edict_t *ent, sizebuf_t *msg);
 

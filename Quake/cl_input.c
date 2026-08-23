@@ -28,6 +28,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "quakedef.h"
 #include "pmove.h"
 #include "vr.h"
+#include "vrik_codec.h"
 
 extern cvar_t cl_maxpitch; // johnfitz -- variable pitch clamping
 extern cvar_t cl_minpitch; // johnfitz -- variable pitch clamping
@@ -683,74 +684,60 @@ static qboolean CL_VRRoomScaleSampleAccepted(const vec3_t move)
   return horizontal_length <= 16.0f && fabsf(move[2]) <= 16.0f;
 }
 
-static qboolean CL_VRIKPoseIsValid(const vrik_pose_t *pose)
+static qboolean CL_VRIKPoseToV2(const vrik_pose_t *pose,
+                                vrik_v2_pose_t *out)
 {
   int tracker;
-  int axis;
 
-  if (pose->flags & ~VRIK_FLAG_KNOWN)
+  if (!pose || !out)
     return false;
-  if ((pose->flags & VRIK_FLAG_ACTIVE) &&
-      !(pose->flags & VRIK_FLAG_HEAD_TRACKED))
-    return false;
-  if (!isfinite(pose->body_yaw))
-    return false;
-
+  Q_memset(out, 0, sizeof(*out));
+  out->sequence = pose->sequence;
+  out->flags = pose->flags;
+  out->body_yaw = pose->body_yaw;
   for (tracker = 0; tracker < VRIK_TRACKER_COUNT; tracker++) {
-    for (axis = 0; axis < 3; axis++) {
-      if (!isfinite(pose->position[tracker][axis]) ||
-          !isfinite(pose->orientation[tracker][axis]))
-        return false;
-    }
-    if (pose->position[tracker][0] * pose->position[tracker][0] +
-            pose->position[tracker][1] * pose->position[tracker][1] +
-            pose->position[tracker][2] * pose->position[tracker][2] >
-        VRIK_MAX_ROOT_LOCAL_OFFSET * VRIK_MAX_ROOT_LOCAL_OFFSET)
-      return false;
+    VectorCopy(pose->position[tracker], out->targets[tracker].position);
+    VectorCopy(pose->orientation[tracker], out->targets[tracker].orientation);
   }
-  for (axis = 0; axis < 3; axis++)
-    if (!isfinite(pose->aim_orientation[axis]))
-      return false;
-  return true;
+  VectorCopy(pose->aim_orientation, out->aim_orientation);
+  return vrik_v2_validate_legacy_pose(out) == VRIK_CODEC_OK;
 }
 
-static void CL_WriteVRIKAngle16(sizebuf_t *buf, float angle)
+static qboolean CL_VRIKPoseToV3(const vrik_pose_t *pose,
+                                vrik_codec_pose_t *out)
 {
-  MSG_WriteShort(buf, (short)(Q_rint(angle * 65536.0 / 360.0) & 0xffff));
-}
+  vrik_v2_pose_t legacy;
 
-static void CL_WriteVRIKPose(sizebuf_t *buf, const vrik_pose_t *pose)
-{
-  int tracker;
-  int axis;
-
-  MSG_WriteShort(buf, (short)pose->sequence);
-  MSG_WriteByte(buf, pose->flags);
-  CL_WriteVRIKAngle16(buf, pose->body_yaw);
-  for (tracker = 0; tracker < VRIK_TRACKER_COUNT; tracker++)
-    for (axis = 0; axis < 3; axis++)
-      MSG_WriteShort(buf, Q_rint(pose->position[tracker][axis] * 8.0f));
-  for (tracker = 0; tracker < VRIK_TRACKER_COUNT; tracker++)
-    for (axis = 0; axis < 3; axis++)
-      CL_WriteVRIKAngle16(buf, pose->orientation[tracker][axis]);
-  for (axis = 0; axis < 3; axis++)
-    CL_WriteVRIKAngle16(buf, pose->aim_orientation[axis]);
+  if (!CL_VRIKPoseToV2(pose, &legacy))
+    return false;
+  /* The tracker adapter will extend this normalized sample with calibrated
+   * HIP/foot targets.  Keeping the conversion here makes v3's wire path
+   * independent of the legacy renderer-facing pose type. */
+  return vrik_v2_to_normalized(&legacy, out) == VRIK_CODEC_OK;
 }
 
 /* VRIK is a standalone newest-pose message: never put it in move history. */
 static void CL_AppendVRIKPose(sizebuf_t *buf)
 {
   vrik_pose_t pose;
+  vrik_v2_pose_t pose_v2;
+  vrik_codec_pose_t pose_v3;
+  uint8_t encoded[VRIK_V3_MAX_BODY_BYTES];
+  size_t encoded_bytes;
+  size_t available;
   qboolean captured;
+  qboolean v3;
+  int i;
 
   if (!cl.vrik_protocol_offered || !cl.vrik_cap_sent ||
-      realtime < cl.vrik_next_send_time ||
-      buf->cursize + 1 + VRIK_POSE_WIRE_BYTES > buf->maxsize)
+      realtime < cl.vrik_next_send_time)
     return;
+
+  v3 = cl.vrik_protocol_version >= VRIK_PROTOCOL_VERSION;
 
   Q_memset(&pose, 0, sizeof(pose));
   captured = VR_GetVRIKPose(&pose);
-  if (captured && !CL_VRIKPoseIsValid(&pose)) {
+  if (captured && !CL_VRIKPoseToV2(&pose, &pose_v2)) {
     Con_DPrintf("CL_SendMove: discarded invalid VRIK tracking sample\n");
     captured = false;
   }
@@ -762,9 +749,40 @@ static void CL_AppendVRIKPose(sizebuf_t *buf)
     pose.flags = 0;
   }
 
-  pose.sequence = cl.vrik_next_sequence++;
+  pose.sequence = cl.vrik_next_sequence;
+  if (!CL_VRIKPoseToV2(&pose, &pose_v2))
+    return;
+
+  encoded_bytes = 0;
+  if (v3) {
+    if (!CL_VRIKPoseToV3(&pose, &pose_v3))
+      return;
+    /* The bridge appends only calibrated, filtered FBT roles from the
+     * current successful host snapshot.  No active profile leaves pose_v3
+     * unchanged, preserving the ordinary head/hands v3 path. */
+    if (pose.flags & VRIK_FLAG_ACTIVE)
+      (void)VR_AppendFBTToVRIKPose(&pose_v3);
+    if (vrik_v3_encode(&pose_v3, encoded, sizeof(encoded), &encoded_bytes) !=
+            VRIK_CODEC_OK ||
+        encoded_bytes > VRIK_V3_MAX_BODY_BYTES)
+      return;
+    available = 1 + 1 + encoded_bytes;
+  } else {
+    if (vrik_v2_encode(&pose_v2, encoded, sizeof(encoded), &encoded_bytes) !=
+        VRIK_CODEC_OK)
+      return;
+    available = 1 + encoded_bytes;
+  }
+  if (buf->cursize + (int)available > buf->maxsize)
+    return;
   MSG_WriteByte(buf, clc_vrikpose);
-  CL_WriteVRIKPose(buf, &pose);
+  if (v3)
+    MSG_WriteByte(buf, (int)encoded_bytes);
+  for (i = 0; i < (int)encoded_bytes; ++i)
+    MSG_WriteByte(buf, encoded[i]);
+  /* Do not consume a sequence number until the complete framed message fits
+   * and was written.  A later retry must retain this newest-pose sequence. */
+  cl.vrik_next_sequence++;
   if ((pose.flags & VRIK_FLAG_ACTIVE) && !cl.vrik_last_sent_active)
     Con_DPrintf("VRIK: publishing active tracked pose\n");
   cl.vrik_last_sent_active = (pose.flags & VRIK_FLAG_ACTIVE) != 0;

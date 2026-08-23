@@ -316,6 +316,7 @@ typedef struct
 	qboolean	vr_relative_muzzle_supported;
 	qboolean	vrik_protocol_offered;
 	qboolean	vrik_cap_sent;
+	unsigned char	vrik_protocol_version;
 	double		vrik_next_send_time;
 	unsigned short	vrik_next_sequence;
 	qboolean	vrik_last_sent_active;

@@ -25,6 +25,8 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 
 // refresh.h -- public interface to refresh functions
 
+#include "vrik_codec.h"
+
 #define	MAXCLIPPLANES	11
 
 #define	TOP_RANGE		16			// soldier uniform colors
@@ -89,6 +91,9 @@ typedef struct entity_s
 //	short					futurepose;		//johnfitz -- animation lerping
 	/* Last two root-local VRIK samples received for this entity. */
 	vrik_pose_t				vrik_poses[2];
+	/* Normalized v3 samples retain optional FBT roles for the VRIK solver.
+	 * v2-compatible views remain in vrik_poses above. */
+	vrik_codec_pose_t		vrik_v3_poses[2];
 	double					vrik_pose_times[2];
 	unsigned short				vrik_last_sequence;
 	unsigned int				vrik_generation;

@@ -8,11 +8,22 @@ extern "C" {
 #include "quakedef.h"
 #include "sys.h"
 #include "vr_menu.h"
+#include "r_vrik.h"
+#include "vr_fbt_profile.h"
+#include "vr_fbt_storage.h"
+#include "vr_fbt_visual.h"
+#include "vr_fbt_filter.h"
 #include "zone.h"
 #include "debug_log.h"
 
 #ifdef __cplusplus
 }
+#endif
+
+#include <limits.h>
+#include <assert.h>
+#ifndef _WIN32
+#include <dirent.h>
 #endif
 
 #ifdef _WIN32
@@ -308,10 +319,83 @@ int num_vr_weapons = 0;
 
 static vr::IVRSystem *ovrHMD;
 static vr::TrackedDevicePose_t ovr_DevicePose[vr::k_unMaxTrackedDeviceCount];
+static vr::ETrackedDeviceClass
+    vr_pose_snapshot_device_class[vr::k_unMaxTrackedDeviceCount];
+static vr::ETrackedControllerRole
+    vr_pose_snapshot_controller_role[vr::k_unMaxTrackedDeviceCount];
+static uint64_t vr_pose_snapshot_id = 0;
+static double vr_pose_snapshot_time = 0.0;
+/* Advances on every pose attempt.  Snapshot time remains immutable when a
+ * compositor error retains the last good OpenVR pose array. */
+static double vr_pose_clock_time = 0.0;
+static int vr_pose_snapshot_last_compositor_error =
+    vr::VRCompositorError_RequestFailed;
+static qboolean vr_pose_snapshot_valid = false;
+
+/* FBT is deliberately a bridge around the hardware-independent Phase-1
+ * manager.  Nothing outside this file receives an OpenVR object or pointer. */
+typedef struct {
+  qboolean generic_connected;
+  qboolean has_verified_serial;
+  qboolean identity_dirty;
+  uint64_t ephemeral_identity;
+  char verified_serial[VR_FBT_SERIAL_MAX];
+} vr_fbt_openvr_identity_t;
+
+static vr_fbt_manager_t vr_fbt_manager;
+static vr_fbt_openvr_identity_t
+    vr_fbt_identities[vr::k_unMaxTrackedDeviceCount];
+static uint64_t vr_fbt_next_ephemeral_identity = 1;
+static qboolean vr_fbt_manager_initialized = false;
+static qboolean vr_fbt_rescan_requested = false;
+static qboolean vr_fbt_debug_pending = false;
+static double vr_fbt_debug_last_print_time = 0.0;
+static vr_fbt_role_status_t vr_fbt_debug_roles[VR_FBT_ROLE_COUNT];
+static unsigned int vr_fbt_debug_candidate_count = 0;
+static qboolean vr_fbt_debug_have_state = false;
+static qboolean vr_openvr_disable_pending = false;
+
+#define VR_FBT_CALIBRATION_WINDOW_SECONDS 1.0
+
+/* A profile is only made live after a complete storage load or an explicit
+ * calibration accept.  Capture output remains separate so a cancellation or
+ * bad sample can never disturb the last usable calibration. */
+typedef enum {
+  VR_FBT_CALIBRATION_IDLE = 0,
+  VR_FBT_CALIBRATION_READY,
+  VR_FBT_CALIBRATION_CAPTURING,
+  VR_FBT_CALIBRATION_PREVIEW
+} vr_fbt_calibration_state_t;
+
+static vr_fbt_profile_t vr_fbt_active_profile;
+static vr_fbt_profile_t vr_fbt_preview_profile;
+static qboolean vr_fbt_active_profile_valid = false;
+static qboolean vr_fbt_preview_profile_valid = false;
+static char vr_fbt_selected_profile[VR_FBT_PROFILE_NAME_MAX];
+static char vr_fbt_calibration_name[VR_FBT_PROFILE_NAME_MAX];
+static vr_fbt_profile_capture_t vr_fbt_capture;
+static vr_fbt_calibration_state_t vr_fbt_calibration_state =
+    VR_FBT_CALIBRATION_IDLE;
+typedef struct {
+  qboolean present;
+  qboolean have_output;
+  uint64_t output_epoch;
+  double output_time;
+  vr_fbt_filter_output_t output;
+} vr_fbt_cached_target_t;
+static vr_fbt_filter_t vr_fbt_filter;
+static vr_fbt_cached_target_t vr_fbt_cached_targets[VR_FBT_ROLE_COUNT];
+/* Incremented on client/runtime transitions.  Cached output is never valid
+ * for a new epoch until a successful immutable snapshot refreshes it. */
+static uint64_t vr_fbt_transient_epoch = 1;
 
 static vr_eye_t eyes[2];
 static vr_eye_t *current_eye = NULL;
 static qboolean vr_initialized = false;
+/* VR_Init can log through the console, which may refresh the screen before
+ * VR_Enable has completed.  Keep this distinct from vr_initialized: no
+ * rendering/input path may treat partially-created OpenVR/GL state as live. */
+static qboolean vr_initializing = false;
 
 /* OpenVR supplies this mesh in normalized [0, 1] texture coordinates. Keep
  * an NDC copy because it is rendered before R_SetupGL establishes the eye
@@ -333,7 +417,21 @@ static void VR_AdjustWeaponUpdatePose(void);
 static qboolean VR_AdjustWeaponConsumeTrigger(void);
 static void VR_AimOffsetToWorld(const vec3_t local, const vec3_t angles,
                                 float scale, vec3_t world);
+static qboolean VR_AcquirePoseSnapshot(void);
 static void VR_FreeControllerRenderModels(void);
+static void VR_FBT_ResetRuntimeState(void);
+static qboolean VR_DispatchOpenVREvents(void);
+static void VR_FBT_ReconcileSnapshot(void);
+static void VR_FBT_DebugMaybeReport(void);
+static const char *VR_FBT_RoleName(vr_fbt_role_t role);
+static void VR_FBT_PrintList(void);
+static void VR_FBT_LoadSelectedProfile(qboolean report_failure);
+static void VR_FBT_PrepareCalibrationVisuals(void);
+static void VR_FBT_CaptureSnapshot(void);
+static void VR_FBT_ResetFilteredTargets(void);
+static void VR_FBT_UpdateCalibratedTargets(void);
+static double VR_PoseClockNow(void);
+static void VR_FBT_AgeCachedTargets(double now, qboolean acquisition_failed);
 
 static void VR_FreeHiddenAreaMeshes(void) {
   int i;
@@ -1555,6 +1653,710 @@ DEFINE_CVAR(vr_movement_defaults_version, 0, CVAR_ARCHIVE);
 DEFINE_CVAR(vr_movement_speed, 1.0, CVAR_ARCHIVE);
 DEFINE_CVAR(vr_weaponmenu_mode, VR_WEAPONMENU_MODE_PLAYSPACE, CVAR_ARCHIVE);
 DEFINE_CVAR(vr_weaponmenu_player_teleport, 1, CVAR_ARCHIVE);
+DEFINE_CVAR(vr_fbt_enabled, 0, CVAR_ARCHIVE);
+DEFINE_CVAR(vr_fbt_debug, 0, CVAR_NONE);
+
+static void VR_FBT_Enabled_f(cvar_t *var) {
+  float enabled = var->value != 0.0f ? 1.0f : 0.0f;
+
+  if (var->value != enabled) {
+    Cvar_SetValueQuick(var, enabled);
+    return;
+  }
+  if (!enabled) {
+    VR_FBT_ResetRuntimeState();
+    VR_InvalidateFBTTransientOutput();
+    VR_FBT_VisualClearPackets();
+    if (vr_fbt_calibration_state != VR_FBT_CALIBRATION_IDLE) {
+      memset(&vr_fbt_capture, 0, sizeof(vr_fbt_capture));
+      vr_fbt_preview_profile_valid = false;
+      vr_fbt_calibration_state = VR_FBT_CALIBRATION_IDLE;
+      Con_Printf("FBT: calibration cancelled because tracking was disabled\n");
+    }
+  } else {
+    unsigned int device;
+    vr_fbt_rescan_requested = true;
+    for (device = 0; device < vr::k_unMaxTrackedDeviceCount; ++device)
+      vr_fbt_identities[device].identity_dirty = true;
+    VR_FBT_LoadSelectedProfile(false);
+  }
+}
+
+static void VR_FBT_Debug_f(cvar_t *var) {
+  const char *value = var->string;
+
+  if (value && value[0] && !value[1] &&
+      (value[0] == '0' || value[0] == '1' || value[0] == '2'))
+    return;
+  Con_Printf("usage: vr_fbt_debug [0|1|2]\n");
+  Cvar_SetValueQuick(var, 0);
+}
+
+static qboolean VR_FBT_ParseRole(const char *text, vr_fbt_role_t *role) {
+  if (!strcmp(text, "hip"))
+    *role = VR_FBT_ROLE_HIP;
+  else if (!strcmp(text, "left_foot"))
+    *role = VR_FBT_ROLE_LEFT_FOOT;
+  else if (!strcmp(text, "right_foot"))
+    *role = VR_FBT_ROLE_RIGHT_FOOT;
+  else
+    return false;
+  return true;
+}
+
+static qboolean VR_FBT_ParseDecimal(const char *text, unsigned int *value) {
+  unsigned int parsed = 0;
+  const unsigned char *cursor = (const unsigned char *)text;
+
+  if (!text || !*text)
+    return false;
+  while (*cursor) {
+    unsigned int digit;
+
+    if (*cursor < '0' || *cursor > '9')
+      return false;
+    digit = *cursor - '0';
+    if (parsed > (UINT_MAX - digit) / 10)
+      return false;
+    parsed = parsed * 10 + digit;
+    ++cursor;
+  }
+  *value = parsed;
+  return true;
+}
+
+static int VR_FBT_FindCandidateByDeviceIndex(unsigned int device_index) {
+  unsigned int candidate;
+
+  for (candidate = 0; candidate < VR_FBT_GetCandidateCount(&vr_fbt_manager);
+       ++candidate) {
+    vr_fbt_candidate_status_t status;
+
+    if (VR_FBT_GetCandidate(&vr_fbt_manager, candidate, &status) &&
+        status.device_index == device_index && status.connected)
+      return (int)candidate;
+  }
+  return -1;
+}
+
+static void VR_FBT_List_f(void) {
+  if (Cmd_Argc() != 1) {
+    Con_Printf("usage: vr_fbt_list\n");
+    return;
+  }
+  VR_FBT_PrintList();
+}
+
+static void VR_FBT_Assign_f(void) {
+  const char *selector;
+  const char *serial = NULL;
+  vr_fbt_role_t role;
+  unsigned int device_index;
+  int candidate = -1;
+  qboolean explicit_index = false;
+
+  if (Cmd_Argc() != 3 || !VR_FBT_ParseRole(Cmd_Argv(2), &role)) {
+    Con_Printf("usage: vr_fbt_assign <index:<decimal>|serial:<safe>|device-index|safe-serial> <hip|left_foot|right_foot>\n");
+    return;
+  }
+  selector = Cmd_Argv(1);
+  if (!strncmp(selector, "index:", 6)) {
+    explicit_index = true;
+    selector += 6;
+  } else if (!strncmp(selector, "serial:", 7)) {
+    serial = selector + 7;
+  }
+
+  if (!serial && VR_FBT_ParseDecimal(selector, &device_index)) {
+    candidate = VR_FBT_FindCandidateByDeviceIndex(device_index);
+    if (candidate >= 0) {
+      if (!VR_AssignFBTCandidate(role, (unsigned int)candidate)) {
+        Con_Printf("FBT: tracker is ambiguous or already assigned to another role\n");
+        return;
+      }
+    } else if (explicit_index) {
+      Con_Printf("FBT: device index %u is not a connected tracker candidate\n",
+                 device_index);
+      return;
+    } else {
+      /* A numeric serial is valid.  Unprefixed decimal text prefers a live
+       * device index, then falls back to the offline-safe serial behavior. */
+      serial = selector;
+    }
+  } else if (!serial) {
+    if (explicit_index) {
+      Con_Printf("FBT: index selector requires a full decimal device index\n");
+      return;
+    }
+    serial = selector;
+  }
+
+  if (serial) {
+    unsigned int index;
+    unsigned int matches = 0;
+
+    if (!VR_FBT_SerialIsSafe(serial)) {
+      Con_Printf("FBT: serial selector must contain a safe serial\n");
+      return;
+    }
+    for (index = 0; index < VR_FBT_GetCandidateCount(&vr_fbt_manager);
+         ++index) {
+      vr_fbt_candidate_status_t status;
+
+      if (VR_FBT_GetCandidate(&vr_fbt_manager, index, &status) &&
+          status.has_safe_serial && !strcmp(status.serial, serial)) {
+        candidate = (int)index;
+        ++matches;
+      }
+    }
+    if (matches > 1) {
+      Con_Printf("FBT: safe serial is ambiguous among current tracker candidates\n");
+      return;
+    }
+    if (matches == 1) {
+      if (!VR_AssignFBTCandidate(role, (unsigned int)candidate)) {
+        Con_Printf("FBT: tracker is ambiguous or already assigned to another role\n");
+        return;
+      }
+    } else if (!VR_BindFBTSerial(role, serial)) {
+      Con_Printf("FBT: safe serial is already assigned to another role\n");
+      return;
+    }
+  }
+  Con_Printf("FBT: assigned %s\n", VR_FBT_RoleName(role));
+  VR_FBT_DebugMaybeReport();
+}
+
+static void VR_FBT_Unassign_f(void) {
+  vr_fbt_role_t role;
+
+  if (Cmd_Argc() != 2 || !VR_FBT_ParseRole(Cmd_Argv(1), &role)) {
+    Con_Printf("usage: vr_fbt_unassign <hip|left_foot|right_foot>\n");
+    return;
+  }
+  if (!VR_UnassignFBTRole(role)) {
+    Con_Printf("FBT: unable to unassign role\n");
+    return;
+  }
+  Con_Printf("FBT: unassigned %s\n", VR_FBT_RoleName(role));
+  VR_FBT_DebugMaybeReport();
+}
+
+static void VR_FBT_Rescan_f(void) {
+  unsigned int device;
+
+  if (Cmd_Argc() != 1) {
+    Con_Printf("usage: vr_fbt_rescan\n");
+    return;
+  }
+  vr_fbt_rescan_requested = true;
+  for (device = 0; device < vr::k_unMaxTrackedDeviceCount; ++device)
+    vr_fbt_identities[device].identity_dirty = true;
+  Con_Printf("FBT: rescan queued for the next pose snapshot\n");
+}
+
+static const char *VR_FBT_StorageErrorName(vr_fbt_storage_error_t error) {
+  switch (error) {
+  case VR_FBT_STORAGE_ERR_NOT_FOUND:
+    return "not found";
+  case VR_FBT_STORAGE_ERR_FORMAT:
+    return "invalid profile file";
+  case VR_FBT_STORAGE_ERR_IO:
+  case VR_FBT_STORAGE_ERR_REPLACE:
+    return "I/O failure";
+  case VR_FBT_STORAGE_ERR_NAME:
+    return "invalid name";
+  default:
+    return "storage failure";
+  }
+}
+
+static qboolean VR_FBT_ApplyProfileBindings(const vr_fbt_profile_t *profile) {
+  int role;
+
+  if (!profile)
+    return false;
+  /* The pure parser rejects duplicate identities.  Validate before changing
+   * any live binding so malformed storage can never partially reassign roles. */
+  for (role = 0; role < VR_FBT_ROLE_COUNT; ++role)
+    if (profile->roles[role].present &&
+        !VR_FBT_SerialIsSafe(profile->roles[role].serial))
+      return false;
+  for (role = 0; role < VR_FBT_ROLE_COUNT; ++role)
+    VR_UnassignFBTRole((vr_fbt_role_t)role);
+  for (role = 0; role < VR_FBT_ROLE_COUNT; ++role)
+    if (profile->roles[role].present &&
+        !VR_BindFBTSerial((vr_fbt_role_t)role,
+                          profile->roles[role].serial))
+      return false; /* impossible after the validation above, but fail closed */
+  return true;
+}
+
+static qboolean VR_FBT_SelectLoadedProfile(const vr_fbt_profile_t *profile,
+                                           qboolean persist_selection) {
+  vr_fbt_storage_error_t storage_error;
+  qboolean selection_not_durable = false;
+
+  if (!profile || strcmp(profile->avatar_fingerprint,
+                         VR_FBT_PROFILE_AVATAR_FINGERPRINT) ||
+      !VR_FBT_StorageNameIsSafe(profile->name))
+    return false;
+  if (persist_selection &&
+      !VR_FBT_StorageSaveSelected(profile->name, &storage_error)) {
+    if (storage_error != VR_FBT_STORAGE_ERR_COMMITTED_NOT_DURABLE) {
+      Con_Printf("FBT: could not select profile (%s); current profile kept\n",
+                 VR_FBT_StorageErrorName(storage_error));
+      return false;
+    }
+    selection_not_durable = true;
+  }
+  if (!VR_FBT_ApplyProfileBindings(profile)) {
+    if (selection_not_durable)
+      Con_Printf("FBT: selected profile is visible but could not be applied at runtime\n");
+    else
+      Con_Printf("FBT: profile bindings were rejected; current profile kept\n");
+    return false;
+  }
+  vr_fbt_active_profile = *profile;
+  vr_fbt_active_profile_valid = true;
+  VR_FBT_ResetFilteredTargets();
+  q_strlcpy(vr_fbt_selected_profile, profile->name,
+            sizeof(vr_fbt_selected_profile));
+  if (selection_not_durable)
+    Con_Warning("FBT: selected profile is visible but not crash-durable\n");
+  return true;
+}
+
+static void VR_FBT_LoadSelectedProfile(qboolean report_failure) {
+  char selected[VR_FBT_PROFILE_NAME_MAX];
+  vr_fbt_profile_t loaded;
+  vr_fbt_storage_error_t storage_error;
+  vr_fbt_profile_error_t profile_error;
+
+  if (!VR_FBT_StorageLoadSelected(selected, sizeof(selected), &storage_error)) {
+    if (report_failure && storage_error != VR_FBT_STORAGE_ERR_NOT_FOUND)
+      Con_Printf("FBT: could not load selected profile (%s)\n",
+                 VR_FBT_StorageErrorName(storage_error));
+    return;
+  }
+  if (!VR_FBT_StorageLoadProfile(selected, &loaded, &profile_error,
+                                 &storage_error)) {
+    if (report_failure)
+      Con_Printf("FBT: selected profile is unavailable (%s); current profile kept\n",
+                 VR_FBT_StorageErrorName(storage_error));
+    return;
+  }
+  if (!VR_FBT_SelectLoadedProfile(&loaded, false) && report_failure)
+    Con_Printf("FBT: selected profile is not compatible with this Ranger rig\n");
+}
+
+static void VR_FBT_ProfileList_f(void) {
+  char directory[MAX_OSPATH];
+  int count = 0;
+
+  if (Cmd_Argc() != 1) {
+    Con_Printf("usage: vr_fbt_profile_list\n");
+    return;
+  }
+  if (vr_fbt_active_profile_valid)
+    Con_Printf("FBT: selected profile %s (%u calibrated role%s)\n",
+               vr_fbt_active_profile.name,
+               (unsigned int)(vr_fbt_active_profile.roles[0].present +
+                              vr_fbt_active_profile.roles[1].present +
+                              vr_fbt_active_profile.roles[2].present),
+               (vr_fbt_active_profile.roles[0].present +
+                vr_fbt_active_profile.roles[1].present +
+                vr_fbt_active_profile.roles[2].present) == 1 ? "" : "s");
+  else
+    Con_Printf("FBT: no selected calibration profile\n");
+  if (q_snprintf(directory, sizeof(directory), "%s/vrik/profiles",
+                 COM_GetWriteRoot()) < 0 ||
+      strlen(directory) >= sizeof(directory)) {
+    Con_Printf("FBT: could not enumerate saved profiles\n");
+    return;
+  }
+  Con_Printf("FBT: saved profiles:");
+#ifdef _WIN32
+  {
+    WIN32_FIND_DATAA entry;
+    HANDLE handle;
+    char pattern[MAX_OSPATH];
+
+    if (q_snprintf(pattern, sizeof(pattern), "%s/*.cfg", directory) >= 0 &&
+        strlen(pattern) < sizeof(pattern)) {
+      handle = FindFirstFileA(pattern, &entry);
+      if (handle != INVALID_HANDLE_VALUE) {
+        do {
+          char name[VR_FBT_PROFILE_NAME_MAX];
+          size_t length = strlen(entry.cFileName);
+
+          if (!(entry.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) &&
+              length > 4 && !strcmp(entry.cFileName + length - 4, ".cfg") &&
+              length - 4 < sizeof(name)) {
+            memcpy(name, entry.cFileName, length - 4);
+            name[length - 4] = 0;
+            if (VR_FBT_StorageNameIsSafe(name)) {
+              Con_Printf(" %s", name);
+              ++count;
+            }
+          }
+        } while (FindNextFileA(handle, &entry));
+        FindClose(handle);
+      }
+    }
+  }
+#else
+  {
+    DIR *directory_stream = opendir(directory);
+    struct dirent *entry;
+
+    if (directory_stream) {
+      while ((entry = readdir(directory_stream)) != NULL) {
+        char name[VR_FBT_PROFILE_NAME_MAX];
+        size_t length = strlen(entry->d_name);
+
+        if (length <= 4 || strcmp(entry->d_name + length - 4, ".cfg") ||
+            length - 4 >= sizeof(name))
+          continue;
+        memcpy(name, entry->d_name, length - 4);
+        name[length - 4] = 0;
+        if (VR_FBT_StorageNameIsSafe(name)) {
+          Con_Printf(" %s", name);
+          ++count;
+        }
+      }
+      closedir(directory_stream);
+    }
+  }
+#endif
+  Con_Printf("%s\n", count ? "" : " none");
+  Con_Printf("FBT: use vr_fbt_profile_select <name> to load one\n");
+}
+
+static void VR_FBT_ProfileSelect_f(void) {
+  vr_fbt_profile_t loaded;
+  vr_fbt_storage_error_t storage_error;
+  vr_fbt_profile_error_t profile_error;
+  const char *name;
+
+  if (Cmd_Argc() != 2 || !VR_FBT_StorageNameIsSafe(Cmd_Argv(1))) {
+    Con_Printf("usage: vr_fbt_profile_select <[A-Za-z0-9_-]{1,32}>\n");
+    return;
+  }
+  name = Cmd_Argv(1);
+  if (!VR_FBT_StorageLoadProfile(name, &loaded, &profile_error,
+                                 &storage_error)) {
+    Con_Printf("FBT: could not load profile %s (%s); current profile kept\n",
+               name, VR_FBT_StorageErrorName(storage_error));
+    return;
+  }
+  if (!VR_FBT_SelectLoadedProfile(&loaded, true))
+    return;
+  Con_Printf("FBT: selected profile %s\n", loaded.name);
+}
+
+/* A same-name profile replacement must not be followed by a redundant
+ * selected.cfg write: if that write fails, the old selected name would already
+ * resolve to the replacement despite reporting failure.  For a different
+ * name, an ordinary selected write failure leaves the old selection untouched;
+ * a committed-not-durable failure is visible and therefore completes selection. */
+static qboolean VR_FBT_SaveProfileAndSelect(
+    const vr_fbt_profile_t *profile, vr_fbt_profile_error_t *profile_error,
+    vr_fbt_storage_error_t *storage_error, qboolean *not_durable,
+    qboolean *profile_visible) {
+  char selected[VR_FBT_PROFILE_NAME_MAX];
+  qboolean already_selected;
+
+  if (!profile || !profile_error || !storage_error || !not_durable ||
+      !profile_visible)
+    return false;
+  *not_durable = false;
+  *profile_visible = false;
+  already_selected =
+      VR_FBT_StorageLoadSelected(selected, sizeof(selected), storage_error) &&
+      !strcmp(selected, profile->name);
+  if (!VR_FBT_StorageSaveProfile(profile, profile_error, storage_error)) {
+    if (*storage_error != VR_FBT_STORAGE_ERR_COMMITTED_NOT_DURABLE)
+      return false;
+    *not_durable = true;
+  }
+  *profile_visible = true;
+  if (already_selected)
+    return true;
+  if (VR_FBT_StorageSaveSelected(profile->name, storage_error))
+    return true;
+  if (*storage_error != VR_FBT_STORAGE_ERR_COMMITTED_NOT_DURABLE)
+    return false;
+  *not_durable = true;
+  return true;
+}
+
+static void VR_FBT_ProfileSave_f(void) {
+  vr_fbt_storage_error_t storage_error;
+  vr_fbt_profile_error_t profile_error;
+  qboolean not_durable;
+  qboolean profile_visible;
+
+  if (Cmd_Argc() != 1) {
+    Con_Printf("usage: vr_fbt_profile_save\n");
+    return;
+  }
+  if (!vr_fbt_active_profile_valid) {
+    Con_Printf("FBT: no accepted profile to save; use vr_fbt_calibrate_accept\n");
+    return;
+  }
+  if (!VR_FBT_SaveProfileAndSelect(&vr_fbt_active_profile, &profile_error,
+                                   &storage_error, &not_durable,
+                                   &profile_visible)) {
+    Con_Printf("FBT: profile save failed (%s); active profile kept\n",
+               VR_FBT_StorageErrorName(storage_error));
+    return;
+  }
+  if (not_durable)
+    Con_Warning("FBT: saved profile is visible but not crash-durable\n");
+  Con_Printf("FBT: saved accepted profile %s\n", vr_fbt_active_profile.name);
+}
+
+static void VR_FBT_ProfileReset_f(void) {
+  int role;
+
+  if (Cmd_Argc() != 1) {
+    Con_Printf("usage: vr_fbt_profile_reset\n");
+    return;
+  }
+  vr_fbt_preview_profile_valid = false;
+  vr_fbt_calibration_state = VR_FBT_CALIBRATION_IDLE;
+  memset(&vr_fbt_capture, 0, sizeof(vr_fbt_capture));
+  for (role = 0; role < VR_FBT_ROLE_COUNT; ++role)
+    VR_UnassignFBTRole((vr_fbt_role_t)role);
+  memset(&vr_fbt_active_profile, 0, sizeof(vr_fbt_active_profile));
+  vr_fbt_active_profile_valid = false;
+  VR_FBT_ResetFilteredTargets();
+  vr_fbt_selected_profile[0] = 0;
+  Con_Printf("FBT: cleared runtime profile and bindings; saved files were not removed\n");
+}
+
+/* The renderer owns the only validated bind-skeleton projection.  This bridge
+ * supplies one OpenVR snapshot's HMD/floor basis and never invents Ranger
+ * offsets or a model-unit scale itself. */
+static qboolean VR_FBT_ProjectCalibrationTargets(
+    r_vrik_calibration_projection_t *projection,
+    r_vrik_calibration_projection_input_t *input) {
+  qmodel_t *ranger_model;
+  unsigned int device;
+
+  if (!projection || !input)
+    return false;
+  ranger_model = Mod_GetRereleasePlayerMD5Model();
+  if (!ranger_model)
+    return false;
+  for (device = 0; device < vr::k_unMaxTrackedDeviceCount; ++device) {
+    const vr::TrackedDevicePose_t *pose = &ovr_DevicePose[device];
+    const float (*matrix)[4] = pose->mDeviceToAbsoluteTracking.m;
+    float length;
+
+    if (vr_pose_snapshot_device_class[device] != vr::TrackedDeviceClass_HMD ||
+        !pose->bDeviceIsConnected || !pose->bPoseIsValid)
+      continue;
+    memset(input, 0, sizeof(*input));
+    input->hmd_position[0] = matrix[0][3];
+    input->hmd_position[1] = matrix[1][3];
+    input->hmd_position[2] = matrix[2][3];
+    /* OpenVR standing tracking is right-handed, Y-up.  Its HMD forward is
+     * local -Z; use only the horizontal component for neutral calibration. */
+    input->forward[0] = -matrix[0][2];
+    input->forward[1] = 0.0f;
+    input->forward[2] = -matrix[2][2];
+    length = VectorNormalize(input->forward);
+    if (!isfinite(length) || length < 0.01f)
+      return false;
+    input->up[0] = 0.0f;
+    input->up[1] = 1.0f;
+    input->up[2] = 0.0f;
+    CrossProduct(input->forward, input->up, input->right);
+    if (!VectorNormalize(input->right))
+      return false;
+    input->floor_height = 0.0f;
+    return R_VRIKProjectCalibrationReference(ranger_model, input, projection);
+  }
+  return false;
+}
+
+static qboolean VR_FBT_CalibrationReferenceAvailable(void) {
+  r_vrik_calibration_projection_t projection;
+  r_vrik_calibration_projection_input_t input;
+
+  return VR_FBT_ProjectCalibrationTargets(&projection, &input);
+}
+
+static qboolean VR_FBT_CalibrationBindingsReady(char serials[VR_FBT_ROLE_COUNT]
+                                                           [VR_FBT_SERIAL_MAX],
+                                                 unsigned int *role_mask) {
+  int role;
+  unsigned int mask = 0;
+
+  if (!serials || !role_mask)
+    return false;
+  memset(serials, 0, sizeof(char) * VR_FBT_ROLE_COUNT * VR_FBT_SERIAL_MAX);
+  for (role = 0; role < VR_FBT_ROLE_COUNT; ++role) {
+    vr_fbt_role_status_t status;
+
+    if (!VR_GetFBTRoleStatus((vr_fbt_role_t)role, &status))
+      return false;
+    if (status.identity_kind != VR_FBT_IDENTITY_SERIAL ||
+        status.state != VR_FBT_STATE_TRACKING || !status.connected ||
+        !status.pose_valid ||
+        status.tracking_result != VR_FBT_TRACKING_RESULT_RUNNING_OK)
+      continue;
+    if (!VR_FBT_SerialIsSafe(status.serial))
+      return false;
+    q_strlcpy(serials[role], status.serial, VR_FBT_SERIAL_MAX);
+    mask |= VR_FBT_PROFILE_ROLE_BIT(role);
+  }
+  *role_mask = mask;
+  return mask != 0;
+}
+
+static void VR_FBT_CalibrateBegin_f(void) {
+  char serials[VR_FBT_ROLE_COUNT][VR_FBT_SERIAL_MAX];
+  const char *expected[VR_FBT_ROLE_COUNT];
+  unsigned int role_mask;
+  int role;
+
+  if (Cmd_Argc() != 2 || !VR_FBT_StorageNameIsSafe(Cmd_Argv(1))) {
+    Con_Printf("usage: vr_fbt_calibrate_begin <[A-Za-z0-9_-]{1,32}>\n");
+    return;
+  }
+  if (!vr_fbt_enabled.value) {
+    Con_Printf("FBT: enable full body tracking before calibration\n");
+    return;
+  }
+  if (!VR_FBT_CalibrationBindingsReady(serials, &role_mask)) {
+    Con_Printf("FBT: assign at least one safe-serial tracker role before calibration\n");
+    return;
+  }
+  if (!VR_FBT_CalibrationReferenceAvailable()) {
+    Con_Printf("FBT: validated Ranger calibration projection is unavailable; capture was not started\n");
+    return;
+  }
+  for (role = 0; role < VR_FBT_ROLE_COUNT; ++role)
+    expected[role] = serials[role];
+  if (!VR_FBT_ProfileCaptureBegin(&vr_fbt_capture, role_mask, expected)) {
+    Con_Printf("FBT: calibration setup failed; current profile kept\n");
+    return;
+  }
+  q_strlcpy(vr_fbt_calibration_name, Cmd_Argv(1),
+            sizeof(vr_fbt_calibration_name));
+  vr_fbt_preview_profile_valid = false;
+  vr_fbt_calibration_state = VR_FBT_CALIBRATION_READY;
+  Con_Printf("FBT: calibration ready for %s; stand neutral, then use vr_fbt_calibrate_capture\n",
+             vr_fbt_calibration_name);
+}
+
+static void VR_FBT_CalibrateCapture_f(void) {
+  if (Cmd_Argc() != 1) {
+    Con_Printf("usage: vr_fbt_calibrate_capture\n");
+    return;
+  }
+  if (vr_fbt_calibration_state != VR_FBT_CALIBRATION_READY) {
+    Con_Printf("FBT: begin calibration first\n");
+    return;
+  }
+  vr_fbt_calibration_state = VR_FBT_CALIBRATION_CAPTURING;
+  Con_Printf("FBT: capturing one second of neutral tracker poses\n");
+}
+
+static void VR_FBT_CalibrateAccept_f(void) {
+  vr_fbt_storage_error_t storage_error;
+  vr_fbt_profile_error_t profile_error;
+  qboolean not_durable;
+  qboolean profile_visible;
+
+  if (Cmd_Argc() != 1) {
+    Con_Printf("usage: vr_fbt_calibrate_accept\n");
+    return;
+  }
+  if (vr_fbt_calibration_state != VR_FBT_CALIBRATION_PREVIEW ||
+      !vr_fbt_preview_profile_valid) {
+    Con_Printf("FBT: no completed calibration preview to accept\n");
+    return;
+  }
+  if (!VR_FBT_SaveProfileAndSelect(&vr_fbt_preview_profile, &profile_error,
+                                   &storage_error, &not_durable,
+                                   &profile_visible)) {
+    if (profile_visible)
+      Con_Printf("FBT: accepted calibration was saved but not selected (%s); current profile kept\n",
+                 VR_FBT_StorageErrorName(storage_error));
+    else
+      Con_Printf("FBT: could not save accepted calibration (%s); current profile kept\n",
+                 VR_FBT_StorageErrorName(storage_error));
+    return;
+  }
+  if (!VR_FBT_SelectLoadedProfile(&vr_fbt_preview_profile, false)) {
+    Con_Printf("FBT: accepted calibration could not be applied; saved file kept\n");
+    return;
+  }
+  vr_fbt_preview_profile_valid = false;
+  vr_fbt_calibration_state = VR_FBT_CALIBRATION_IDLE;
+  if (not_durable)
+    Con_Warning("FBT: accepted calibration is visible but not crash-durable\n");
+  Con_Printf("FBT: accepted and saved calibration %s\n",
+             vr_fbt_active_profile.name);
+}
+
+static void VR_FBT_CalibrateCancel_f(void) {
+  if (Cmd_Argc() != 1) {
+    Con_Printf("usage: vr_fbt_calibrate_cancel\n");
+    return;
+  }
+  if (vr_fbt_calibration_state == VR_FBT_CALIBRATION_IDLE) {
+    Con_Printf("FBT: no calibration is in progress\n");
+    return;
+  }
+  memset(&vr_fbt_capture, 0, sizeof(vr_fbt_capture));
+  vr_fbt_preview_profile_valid = false;
+  vr_fbt_calibration_state = VR_FBT_CALIBRATION_IDLE;
+  vr_fbt_calibration_name[0] = 0;
+  Con_Printf("FBT: calibration cancelled; current profile kept\n");
+}
+
+const char *VR_GetFBTSelectedProfileName(void) {
+  return vr_fbt_active_profile_valid ? vr_fbt_active_profile.name : "none";
+}
+
+const char *VR_GetFBTCalibrationStatus(void) {
+  switch (vr_fbt_calibration_state) {
+  case VR_FBT_CALIBRATION_READY:
+    return "ready: capture";
+  case VR_FBT_CALIBRATION_CAPTURING:
+    return "capturing";
+  case VR_FBT_CALIBRATION_PREVIEW:
+    return "preview: accept";
+  default:
+    return "start calibration";
+  }
+}
+
+void VR_ActivateFBTCalibrationMenu(void) {
+  char command[128];
+  const char *name = vr_fbt_active_profile_valid ? vr_fbt_active_profile.name
+                                                  : "default";
+
+  if (vr_fbt_calibration_state == VR_FBT_CALIBRATION_READY) {
+    Cbuf_AddText("vr_fbt_calibrate_capture\n");
+  } else if (vr_fbt_calibration_state == VR_FBT_CALIBRATION_PREVIEW) {
+    Cbuf_AddText("vr_fbt_calibrate_accept\n");
+  } else if (vr_fbt_calibration_state == VR_FBT_CALIBRATION_IDLE &&
+             VR_FBT_StorageNameIsSafe(name)) {
+    q_snprintf(command, sizeof(command), "vr_fbt_calibrate_begin %s\n", name);
+    Cbuf_AddText(command);
+  }
+}
+
+void VR_CancelFBTCalibrationMenu(void) {
+  if (vr_fbt_calibration_state != VR_FBT_CALIBRATION_IDLE)
+    Cbuf_AddText("vr_fbt_calibrate_cancel\n");
+}
 
 #define VR_MOVEMENT_DEFAULTS_VERSION 2
 
@@ -2837,6 +3639,251 @@ static void VR_TrackingPointToWorld(const vr::HmdVector3_t point,
   out[2] = headLocal[2] + player->origin[2] + vr_floor_offset.value;
 }
 
+static void VR_FBT_MatrixPointToWorld(const float matrix[3][4], float x,
+                                      float y, float z, vec3_t out) {
+  vr::HmdVector3_t point;
+
+  point.v[0] = matrix[0][0] * x + matrix[0][1] * y + matrix[0][2] * z +
+               matrix[0][3];
+  point.v[1] = matrix[1][0] * x + matrix[1][1] * y + matrix[1][2] * z +
+               matrix[1][3];
+  point.v[2] = matrix[2][0] * x + matrix[2][1] * y + matrix[2][2] * z +
+               matrix[2][3];
+  VR_TrackingPointToWorld(point, out);
+}
+
+static void VR_FBT_QuaternionAxes(const double orientation[4],
+                                  double axes[3][3]) {
+  const double w = orientation[0];
+  const double x = orientation[1];
+  const double y = orientation[2];
+  const double z = orientation[3];
+
+  axes[0][0] = 1.0 - 2.0 * (y * y + z * z);
+  axes[0][1] = 2.0 * (x * y + w * z);
+  axes[0][2] = 2.0 * (x * z - w * y);
+  axes[1][0] = 2.0 * (x * y - w * z);
+  axes[1][1] = 1.0 - 2.0 * (x * x + z * z);
+  axes[1][2] = 2.0 * (y * z + w * x);
+  axes[2][0] = 2.0 * (x * z + w * y);
+  axes[2][1] = 2.0 * (y * z - w * x);
+  axes[2][2] = 1.0 - 2.0 * (x * x + y * y);
+}
+
+static qboolean VR_FBT_ProfileTransformToVisual(
+    const vr_fbt_profile_transform_t *transform, float origin[3],
+    float axes[3][3]) {
+  double rotation[3][3];
+  vr::HmdVector3_t tracking;
+  vec3_t point;
+  int axis;
+
+  if (!transform || !origin || !axes ||
+      !isfinite(transform->position[0]) || !isfinite(transform->position[1]) ||
+      !isfinite(transform->position[2]) || !isfinite(transform->orientation[0]) ||
+      !isfinite(transform->orientation[1]) || !isfinite(transform->orientation[2]) ||
+      !isfinite(transform->orientation[3]))
+    return false;
+  VR_FBT_QuaternionAxes(transform->orientation, rotation);
+  tracking.v[0] = transform->position[0];
+  tracking.v[1] = transform->position[1];
+  tracking.v[2] = transform->position[2];
+  VR_TrackingPointToWorld(tracking, origin);
+  for (axis = 0; axis < 3; ++axis) {
+    tracking.v[0] = transform->position[0] + rotation[axis][0];
+    tracking.v[1] = transform->position[1] + rotation[axis][1];
+    tracking.v[2] = transform->position[2] + rotation[axis][2];
+    VR_TrackingPointToWorld(tracking, point);
+    axes[axis][0] = point[0] - origin[0];
+    axes[axis][1] = point[1] - origin[1];
+    axes[axis][2] = point[2] - origin[2];
+  }
+  return true;
+}
+
+static qboolean VR_FBT_RoleRawTransform(
+    const vr_fbt_role_status_t *status, vr_fbt_profile_transform_t *out) {
+  vr::HmdMatrix34_t matrix;
+  vr::HmdQuaternion_t orientation;
+
+  if (!status || !out || !status->connected || !status->pose_valid ||
+      status->tracking_result != VR_FBT_TRACKING_RESULT_RUNNING_OK)
+    return false;
+  memcpy(matrix.m, status->device_to_absolute_tracking, sizeof(matrix.m));
+  orientation = Matrix34ToQuaternion(matrix);
+  if (!isfinite(orientation.w) || !isfinite(orientation.x) ||
+      !isfinite(orientation.y) || !isfinite(orientation.z))
+    return false;
+  out->position[0] = matrix.m[0][3];
+  out->position[1] = matrix.m[1][3];
+  out->position[2] = matrix.m[2][3];
+  out->orientation[0] = orientation.w;
+  out->orientation[1] = orientation.x;
+  out->orientation[2] = orientation.y;
+  out->orientation[3] = orientation.z;
+  return true;
+}
+
+static qboolean VR_FBT_AddVisualPacket(vr_fbt_role_t role,
+                                       const r_vrik_calibration_projection_t *preview,
+                                       vr_fbt_visual_packet_t *packet) {
+  vr_fbt_role_status_t status;
+  vr_fbt_profile_transform_t raw;
+  vr_fbt_profile_transform_t corrected;
+  vec3_t endpoint;
+  int axis;
+
+  if (!packet || !VR_GetFBTRoleStatus(role, &status) ||
+      !VR_FBT_RoleRawTransform(&status, &raw))
+    return false;
+  memset(packet, 0, sizeof(*packet));
+  packet->role = role;
+  packet->device_index = status.device_index;
+  packet->draw_tracker = true;
+  for (axis = 0; axis < 3; ++axis) {
+    VR_FBT_MatrixPointToWorld(status.device_to_absolute_tracking,
+                              axis == 0 ? 1.0f : 0.0f,
+                              axis == 1 ? 1.0f : 0.0f,
+                              axis == 2 ? 1.0f : 0.0f, endpoint);
+    if (axis == 0)
+      VR_FBT_MatrixPointToWorld(status.device_to_absolute_tracking, 0, 0, 0,
+                                packet->tracker_origin);
+    packet->tracker_axis[axis][0] = endpoint[0] - packet->tracker_origin[0];
+    packet->tracker_axis[axis][1] = endpoint[1] - packet->tracker_origin[1];
+    packet->tracker_axis[axis][2] = endpoint[2] - packet->tracker_origin[2];
+  }
+  if (preview) {
+    corrected.position[0] = preview->position[role][0];
+    corrected.position[1] = preview->position[role][1];
+    corrected.position[2] = preview->position[role][2];
+    corrected.orientation[0] = preview->orientation_wxyz[role][0];
+    corrected.orientation[1] = preview->orientation_wxyz[role][1];
+    corrected.orientation[2] = preview->orientation_wxyz[role][2];
+    corrected.orientation[3] = preview->orientation_wxyz[role][3];
+  } else if (!vr_fbt_active_profile_valid ||
+             !vr_fbt_active_profile.roles[role].present ||
+             !VR_FBT_ProfileApplyCorrection(
+                 &raw, &vr_fbt_active_profile.roles[role].device_to_anatomical,
+                 &corrected)) {
+    return true;
+  }
+  if (
+      !VR_FBT_ProfileTransformToVisual(&corrected, packet->target_origin,
+                                       packet->target_axis))
+    return true;
+  packet->draw_target = true;
+  packet->draw_offset_line = true;
+  return true;
+}
+
+static void VR_FBT_PrepareCalibrationVisuals(void) {
+  vr_fbt_visual_packet_t packets[VR_FBT_ROLE_COUNT];
+  vr_fbt_visual_prepare_t prepare;
+  r_vrik_calibration_projection_t preview;
+  r_vrik_calibration_projection_input_t preview_input;
+  const r_vrik_calibration_projection_t *preview_ptr = NULL;
+  qboolean show;
+  unsigned int count = 0;
+  int role;
+
+  if (!vr_initialized || !vr_pose_snapshot_valid)
+    return;
+  show = vr_fbt_calibration_state != VR_FBT_CALIBRATION_IDLE ||
+         (int)vr_fbt_debug.value > 0;
+  if (show && vr_fbt_calibration_state != VR_FBT_CALIBRATION_IDLE &&
+      VR_FBT_ProjectCalibrationTargets(&preview, &preview_input))
+    preview_ptr = &preview;
+  if (show)
+    for (role = 0; role < VR_FBT_ROLE_COUNT; ++role)
+      if (VR_FBT_AddVisualPacket((vr_fbt_role_t)role, preview_ptr,
+                                 &packets[count]))
+        ++count;
+  memset(&prepare, 0, sizeof(prepare));
+  prepare.host_frame_id = vr_pose_snapshot_id;
+  prepare.openvr_system = ovrHMD;
+  prepare.openvr_render_models = vr::VRRenderModels();
+  prepare.packets = packets;
+  prepare.packet_count = count;
+  VR_FBT_VisualPrepare(&prepare);
+}
+
+void VR_DrawFBTCalibrationVisuals(void) {
+  if (vr_initialized)
+    VR_FBT_VisualDraw();
+}
+
+static void VR_FBT_CaptureSnapshot(void) {
+  vr_fbt_profile_capture_sample_t samples[VR_FBT_ROLE_COUNT];
+  r_vrik_calibration_projection_t projection;
+  r_vrik_calibration_projection_input_t input;
+  vr_fbt_profile_capture_metadata_t metadata;
+  vr_fbt_profile_error_t profile_error;
+  int role;
+
+  if (vr_fbt_calibration_state != VR_FBT_CALIBRATION_CAPTURING ||
+      !vr_pose_snapshot_valid)
+    return;
+  if (!VR_FBT_ProjectCalibrationTargets(&projection, &input)) {
+    vr_fbt_calibration_state = VR_FBT_CALIBRATION_IDLE;
+    memset(&vr_fbt_capture, 0, sizeof(vr_fbt_capture));
+    Con_Printf("FBT: Ranger reference projection was lost; calibration cancelled\n");
+    return;
+  }
+  memset(samples, 0, sizeof(samples));
+  for (role = 0; role < VR_FBT_ROLE_COUNT; ++role) {
+    vr_fbt_role_status_t status;
+    vr_fbt_profile_capture_sample_t *sample = &samples[role];
+
+    if (!(vr_fbt_capture.required_role_mask & VR_FBT_PROFILE_ROLE_BIT(role)) ||
+        !VR_GetFBTRoleStatus((vr_fbt_role_t)role, &status))
+      continue;
+    sample->present = 1;
+    sample->connected = status.connected;
+    sample->pose_valid = status.pose_valid &&
+                         status.tracking_result == VR_FBT_TRACKING_RESULT_RUNNING_OK;
+    q_strlcpy(sample->serial, status.serial, sizeof(sample->serial));
+    if (!VR_FBT_RoleRawTransform(&status, &sample->raw_tracker_transform))
+      sample->pose_valid = 0;
+    sample->reference_target_transform.position[0] = projection.position[role][0];
+    sample->reference_target_transform.position[1] = projection.position[role][1];
+    sample->reference_target_transform.position[2] = projection.position[role][2];
+    sample->reference_target_transform.orientation[0] = projection.orientation_wxyz[role][0];
+    sample->reference_target_transform.orientation[1] = projection.orientation_wxyz[role][1];
+    sample->reference_target_transform.orientation[2] = projection.orientation_wxyz[role][2];
+    sample->reference_target_transform.orientation[3] = projection.orientation_wxyz[role][3];
+    sample->linear_velocity_metres_per_second[0] = status.velocity[0];
+    sample->linear_velocity_metres_per_second[1] = status.velocity[1];
+    sample->linear_velocity_metres_per_second[2] = status.velocity[2];
+    sample->angular_velocity_radians_per_second[0] = status.angular_velocity[0];
+    sample->angular_velocity_radians_per_second[1] = status.angular_velocity[1];
+    sample->angular_velocity_radians_per_second[2] = status.angular_velocity[2];
+  }
+  VR_FBT_ProfileCaptureAddSnapshot(&vr_fbt_capture, vr_pose_snapshot_id,
+                                   vr_pose_snapshot_time, samples);
+  if (!vr_fbt_capture.started ||
+      vr_pose_snapshot_time - vr_fbt_capture.first_snapshot_time <
+          VR_FBT_CALIBRATION_WINDOW_SECONDS)
+    return;
+  memset(&metadata, 0, sizeof(metadata));
+  q_strlcpy(metadata.name, vr_fbt_calibration_name, sizeof(metadata.name));
+  metadata.hmd_height_metres = input.hmd_position[1];
+  metadata.floor_height_metres = input.floor_height;
+  metadata.body_forward[0] = input.forward[0];
+  metadata.body_forward[1] = input.forward[1];
+  metadata.body_forward[2] = input.forward[2];
+  if (!VR_FBT_ProfileCaptureFinalize(&vr_fbt_capture, &metadata,
+                                     &vr_fbt_preview_profile,
+                                     &profile_error)) {
+    vr_fbt_calibration_state = VR_FBT_CALIBRATION_IDLE;
+    memset(&vr_fbt_capture, 0, sizeof(vr_fbt_capture));
+    Con_Printf("FBT: neutral capture was not stable enough; current profile kept\n");
+    return;
+  }
+  vr_fbt_preview_profile_valid = true;
+  vr_fbt_calibration_state = VR_FBT_CALIBRATION_PREVIEW;
+  Con_Printf("FBT: calibration preview ready; use vr_fbt_calibrate_accept to save\n");
+}
+
 static float VR_VRIKNormalizeAngle(float angle) {
   while (angle > 180.0f)
     angle -= 360.0f;
@@ -2890,6 +3937,280 @@ static void VR_VRIKRootLocalAngles(const vec3_t world_angles, float body_yaw,
   VectorCopy(world_angles, angles);
   RotMatFromAngleVector(angles, world_matrix);
   VR_VRIKMatrixToRootLocalAngles(world_matrix, body_yaw, out);
+}
+
+static qboolean VR_FBT_MatrixToQuaternion(const vec3_t matrix, const vec3_t row1,
+                                          const vec3_t row2, float out[4]) {
+  float trace = matrix[0] + row1[1] + row2[2];
+  float scale;
+
+  if (trace > 0.0f) {
+    scale = sqrtf(trace + 1.0f) * 2.0f;
+    out[0] = 0.25f * scale;
+    out[1] = (row2[1] - row1[2]) / scale;
+    out[2] = (matrix[2] - row2[0]) / scale;
+    out[3] = (row1[0] - matrix[1]) / scale;
+  } else if (matrix[0] > row1[1] && matrix[0] > row2[2]) {
+    scale = sqrtf(1.0f + matrix[0] - row1[1] - row2[2]) * 2.0f;
+    out[0] = (row2[1] - row1[2]) / scale;
+    out[1] = 0.25f * scale;
+    out[2] = (matrix[1] + row1[0]) / scale;
+    out[3] = (matrix[2] + row2[0]) / scale;
+  } else if (row1[1] > row2[2]) {
+    scale = sqrtf(1.0f + row1[1] - matrix[0] - row2[2]) * 2.0f;
+    out[0] = (matrix[2] - row2[0]) / scale;
+    out[1] = (matrix[1] + row1[0]) / scale;
+    out[2] = 0.25f * scale;
+    out[3] = (row1[2] + row2[1]) / scale;
+  } else {
+    scale = sqrtf(1.0f + row2[2] - matrix[0] - row1[1]) * 2.0f;
+    out[0] = (row1[0] - matrix[1]) / scale;
+    out[1] = (matrix[2] + row2[0]) / scale;
+    out[2] = (row1[2] + row2[1]) / scale;
+    out[3] = 0.25f * scale;
+  }
+  if (!isfinite(scale) || scale < 0.0001f)
+    return false;
+  scale = sqrtf(out[0] * out[0] + out[1] * out[1] + out[2] * out[2] +
+                out[3] * out[3]);
+  if (!isfinite(scale) || scale < 0.0001f)
+    return false;
+  out[0] /= scale;
+  out[1] /= scale;
+  out[2] /= scale;
+  out[3] /= scale;
+  return true;
+}
+
+static void VR_FBT_QuaternionToMatrix(const float q[4], vec3_t rows[3]) {
+  const float w = q[0], x = q[1], y = q[2], z = q[3];
+
+  rows[0][0] = 1.0f - 2.0f * (y * y + z * z);
+  rows[0][1] = 2.0f * (x * y - w * z);
+  rows[0][2] = 2.0f * (x * z + w * y);
+  rows[1][0] = 2.0f * (x * y + w * z);
+  rows[1][1] = 1.0f - 2.0f * (x * x + z * z);
+  rows[1][2] = 2.0f * (y * z - w * x);
+  rows[2][0] = 2.0f * (x * z - w * y);
+  rows[2][1] = 2.0f * (y * z + w * x);
+  rows[2][2] = 1.0f - 2.0f * (x * x + y * y);
+}
+
+static uint64_t VR_FBT_Identity(const vr_fbt_role_status_t *status) {
+  uint64_t hash = UINT64_C(1469598103934665603);
+  const unsigned char *cursor;
+
+  if (!status)
+    return 0;
+  if (status->identity_kind == VR_FBT_IDENTITY_EPHEMERAL)
+    return status->ephemeral_identity;
+  if (status->identity_kind != VR_FBT_IDENTITY_SERIAL ||
+      !VR_FBT_SerialIsSafe(status->serial))
+    return 0;
+  cursor = (const unsigned char *)status->serial;
+  while (*cursor) {
+    hash ^= *cursor++;
+    hash *= UINT64_C(1099511628211);
+  }
+  return hash ? hash : 1;
+}
+
+static double VR_PoseClockNow(void) {
+  double now = Sys_DoubleTime();
+
+  /* This clock governs expiry only.  It is independent from the immutable
+   * snapshot timestamp so a failed WaitGetPoses can age retained output. */
+  if (!isfinite(now) || now < vr_pose_clock_time)
+    return vr_pose_clock_time;
+  vr_pose_clock_time = now;
+  return now;
+}
+
+static void VR_FBT_ResetFilteredTargets(void) {
+  VR_FBT_FilterInit(&vr_fbt_filter);
+  memset(vr_fbt_cached_targets, 0, sizeof(vr_fbt_cached_targets));
+}
+
+void VR_InvalidateFBTTransientOutput(void) {
+  ++vr_fbt_transient_epoch;
+  if (!vr_fbt_transient_epoch)
+    ++vr_fbt_transient_epoch;
+  VR_FBT_ResetFilteredTargets();
+}
+
+static void VR_FBT_AgeCachedTargets(double now, qboolean acquisition_failed) {
+  int role;
+
+  if (!isfinite(now))
+    return;
+  for (role = 0; role < VR_FBT_ROLE_COUNT; ++role) {
+    vr_fbt_cached_target_t *cached = &vr_fbt_cached_targets[role];
+
+    if (!cached->have_output ||
+        cached->output_epoch != vr_fbt_transient_epoch ||
+        now < cached->output_time)
+      continue;
+    /* A failed WaitGetPoses leaves the immutable snapshot untouched, but it
+     * cannot leave a lower-body target claiming fresh hardware tracking. */
+    if (acquisition_failed)
+      cached->output.tracked = false;
+    if (now - cached->output_time > VR_FBT_LOSS_WINDOW_SECONDS) {
+      cached->output.tracked = false;
+      cached->output.state = VR_FBT_FILTER_STATE_LOST;
+      cached->present = false;
+      cached->have_output = false;
+    }
+  }
+}
+
+static void VR_FBT_UpdateCalibratedTargets(void) {
+  entity_t *player;
+  float body_yaw;
+  int role;
+
+  if (!vr_fbt_active_profile_valid || !vr_fbt_enabled.value || !cl.entities ||
+      cl.viewentity < 1 || cl.viewentity >= cl.max_edicts ||
+      cls.state != ca_connected || cls.signon != SIGNONS)
+    return;
+  player = &cl.entities[cl.viewentity];
+  body_yaw = isfinite(player->angles[YAW]) ? player->angles[YAW]
+                                            : cl.viewangles[YAW];
+  for (role = 0; role < VR_FBT_ROLE_COUNT; ++role) {
+    vr_fbt_role_status_t status;
+    vr_fbt_filter_input_t input;
+    vr_fbt_filter_output_t output;
+    vr_fbt_profile_transform_t raw, corrected;
+    vec3_t world_origin, world_axis[3], root_units;
+    vec3_t world_matrix[3], root_angles, root_matrix[3];
+    qboolean matched;
+
+    if (!VR_GetFBTRoleStatus((vr_fbt_role_t)role, &status))
+      continue;
+    matched = vr_fbt_active_profile.roles[role].present &&
+              status.identity_kind == VR_FBT_IDENTITY_SERIAL &&
+              VR_FBT_SerialIsSafe(status.serial) &&
+              !strcmp(status.serial, vr_fbt_active_profile.roles[role].serial);
+    memset(&input, 0, sizeof(input));
+    input.snapshot_id = vr_pose_snapshot_id;
+    input.snapshot_time = vr_pose_snapshot_time;
+    input.identity = VR_FBT_Identity(&status);
+    input.identity_valid = matched && input.identity != 0;
+    input.connected = matched && status.connected;
+    input.floor_valid = 1;
+    input.floor_height = vr_floor_offset.value / meters_to_units;
+    input.root_yaw_degrees = body_yaw;
+    input.root_yaw_valid = isfinite(body_yaw);
+    if (matched && VR_FBT_RoleRawTransform(&status, &raw) &&
+        VR_FBT_ProfileApplyCorrection(
+            &raw, &vr_fbt_active_profile.roles[role].device_to_anatomical,
+            &corrected) &&
+        VR_FBT_ProfileTransformToVisual(&corrected, world_origin, world_axis)) {
+      VR_VRIKToRootLocal(world_origin, player->origin, body_yaw, root_units);
+      input.position[0] = root_units[0] / meters_to_units;
+      input.position[1] = root_units[1] / meters_to_units;
+      input.position[2] = root_units[2] / meters_to_units;
+      /* TrackingPointToWorld is a handedness/axis conversion.  Derive the
+       * world basis from its converted axis endpoints instead of repeating
+       * that conversion for the orientation path.  OpenVR local -Z is the
+       * Quake forward row, -X is its (already flipped) left/right row, and
+       * +Y is up. */
+      VectorScale(world_axis[2], -1.0f / meters_to_units, world_matrix[0]);
+      VectorScale(world_axis[0], -1.0f / meters_to_units, world_matrix[1]);
+      VectorScale(world_axis[1], 1.0f / meters_to_units, world_matrix[2]);
+      VR_VRIKMatrixToRootLocalAngles(world_matrix, body_yaw, root_angles);
+      RotMatFromAngleVector(root_angles, root_matrix);
+      input.tracking_valid = VR_FBT_MatrixToQuaternion(
+          root_matrix[0], root_matrix[1], root_matrix[2], input.orientation);
+      /* Transform the source velocity through the same tracking-to-world and
+       * root-local frame.  This preserves the filter's metres/second contract. */
+      {
+        vr::HmdVector3_t start, end;
+        vec3_t world_start, world_end, local_start, local_end;
+	float corrected_linear_velocity[3];
+	float device_to_anatomical[3];
+
+	device_to_anatomical[0] = (float)(corrected.position[0] - raw.position[0]);
+	device_to_anatomical[1] = (float)(corrected.position[1] - raw.position[1]);
+	device_to_anatomical[2] = (float)(corrected.position[2] - raw.position[2]);
+	if (!VR_FBT_FilterCorrectedPointVelocity(corrected_linear_velocity,
+		status.velocity, status.angular_velocity, device_to_anatomical))
+		corrected_linear_velocity[0] = corrected_linear_velocity[1] =
+			corrected_linear_velocity[2] = 0.0f;
+        start.v[0] = corrected.position[0];
+        start.v[1] = corrected.position[1];
+        start.v[2] = corrected.position[2];
+        end.v[0] = start.v[0] + corrected_linear_velocity[0];
+        end.v[1] = start.v[1] + corrected_linear_velocity[1];
+        end.v[2] = start.v[2] + corrected_linear_velocity[2];
+        VR_TrackingPointToWorld(start, world_start);
+        VR_TrackingPointToWorld(end, world_end);
+        VR_VRIKToRootLocal(world_start, player->origin, body_yaw, local_start);
+        VR_VRIKToRootLocal(world_end, player->origin, body_yaw, local_end);
+        input.linear_velocity[0] = (local_end[0] - local_start[0]) / meters_to_units;
+        input.linear_velocity[1] = (local_end[1] - local_start[1]) / meters_to_units;
+        input.linear_velocity[2] = (local_end[2] - local_start[2]) / meters_to_units;
+        end.v[0] = start.v[0] + status.angular_velocity[0];
+        end.v[1] = start.v[1] + status.angular_velocity[1];
+        end.v[2] = start.v[2] + status.angular_velocity[2];
+        VR_TrackingPointToWorld(end, world_end);
+        VR_VRIKToRootLocal(world_end, player->origin, body_yaw, local_end);
+        input.angular_velocity[0] = (local_end[0] - local_start[0]) / meters_to_units;
+        input.angular_velocity[1] = (local_end[1] - local_start[1]) / meters_to_units;
+        input.angular_velocity[2] = (local_end[2] - local_start[2]) / meters_to_units;
+      }
+    }
+    VR_FBT_FilterUpdate(&vr_fbt_filter, (vr_fbt_filter_role_t)role, &input,
+                        &output);
+    /* Prediction and holding are usable finite payloads, but LOST is not.
+     * Clear its cache state so v3 cannot retain a lower-body present bit. */
+    if (output.state == VR_FBT_FILTER_STATE_LOST) {
+      vr_fbt_cached_targets[role].present = false;
+      vr_fbt_cached_targets[role].have_output = false;
+    } else {
+      vr_fbt_cached_targets[role].present = true;
+      vr_fbt_cached_targets[role].output = output;
+      vr_fbt_cached_targets[role].output_epoch = vr_fbt_transient_epoch;
+      vr_fbt_cached_targets[role].output_time = vr_pose_snapshot_time;
+      vr_fbt_cached_targets[role].have_output = true;
+    }
+  }
+}
+
+qboolean VR_AppendFBTToVRIKPose(vrik_codec_pose_t *pose) {
+  int role;
+  double now;
+
+  if (!pose || !vr_fbt_active_profile_valid || !vr_fbt_enabled.value)
+    return false;
+  now = VR_PoseClockNow();
+  VR_FBT_AgeCachedTargets(now, false);
+  for (role = 0; role < VR_FBT_ROLE_COUNT; ++role) {
+    const vr_fbt_cached_target_t *cached = &vr_fbt_cached_targets[role];
+    const int target = VRIK_TARGET_HIP + role;
+    vec3_t matrix[3], angles;
+
+    /* This helper owns only lower-body bits.  Callers may reuse a pose
+     * structure, so a LOST role must actively clear old presence/tracking. */
+    pose->present_mask &= ~VRIK_TARGET_BIT(target);
+    pose->tracked_mask &= ~VRIK_TARGET_BIT(target);
+    if (!cached->present || !cached->have_output ||
+        cached->output_epoch != vr_fbt_transient_epoch ||
+        cached->output.state == VR_FBT_FILTER_STATE_LOST)
+      continue;
+    pose->present_mask |= VRIK_TARGET_BIT(target);
+    if (cached->output.tracked)
+      pose->tracked_mask |= VRIK_TARGET_BIT(target);
+    pose->targets[target].position[0] =
+        cached->output.position[0] * meters_to_units;
+    pose->targets[target].position[1] =
+        cached->output.position[1] * meters_to_units;
+    pose->targets[target].position[2] =
+        cached->output.position[2] * meters_to_units;
+    VR_FBT_QuaternionToMatrix(cached->output.orientation, matrix);
+    AngleVectorFromRotMat(matrix, angles);
+    VectorCopy(angles, pose->targets[target].orientation);
+  }
+  return true;
 }
 
 static void VR_VRIKControllerAngles(int index, float body_yaw, vec3_t out) {
@@ -5199,14 +6520,34 @@ void InitAllWeaponCVars() {
 
 void VID_VR_Init() {
   // This is only called once at game start
+  VR_FBT_Init(&vr_fbt_manager);
+  VR_FBT_FilterInit(&vr_fbt_filter);
+  vr_fbt_manager_initialized = true;
   Cvar_RegisterVariable(&vr_enabled);
   Cvar_SetCallback(&vr_enabled, VR_Enabled_f);
   Cvar_RegisterVariable(&vr_vrik);
   Cvar_SetCallback(&vr_vrik, VR_VRIK_f);
   Cvar_RegisterVariable(&vr_weaponmenu_mode);
   Cvar_RegisterVariable(&vr_weaponmenu_player_teleport);
+  Cvar_RegisterVariable(&vr_fbt_enabled);
+  Cvar_SetCallback(&vr_fbt_enabled, VR_FBT_Enabled_f);
+  Cvar_RegisterVariable(&vr_fbt_debug);
+  Cvar_SetCallback(&vr_fbt_debug, VR_FBT_Debug_f);
   Cmd_AddCommand("vr_weaponlist", VR_WeaponList_f);
   Cmd_AddCommand("vr_migrate_mod_bindings", VR_MigrateModBindings_f);
+  Cmd_AddCommand("vr_fbt_list", VR_FBT_List_f);
+  Cmd_AddCommand("vr_fbt_assign", VR_FBT_Assign_f);
+  Cmd_AddCommand("vr_fbt_unassign", VR_FBT_Unassign_f);
+  Cmd_AddCommand("vr_fbt_rescan", VR_FBT_Rescan_f);
+  Cmd_AddCommand("vr_fbt_profile_list", VR_FBT_ProfileList_f);
+  Cmd_AddCommand("vr_fbt_profile_select", VR_FBT_ProfileSelect_f);
+  Cmd_AddCommand("vr_fbt_profile_save", VR_FBT_ProfileSave_f);
+  Cmd_AddCommand("vr_fbt_profile_reset", VR_FBT_ProfileReset_f);
+  Cmd_AddCommand("vr_fbt_calibrate_begin", VR_FBT_CalibrateBegin_f);
+  Cmd_AddCommand("vr_fbt_calibrate_capture", VR_FBT_CalibrateCapture_f);
+  Cmd_AddCommand("vr_fbt_calibrate_accept", VR_FBT_CalibrateAccept_f);
+  Cmd_AddCommand("vr_fbt_calibrate_cancel", VR_FBT_CalibrateCancel_f);
+  VR_FBT_LoadSelectedProfile(false);
   if (COM_CheckParm("-novr")) {
     return;
   }
@@ -5809,19 +7150,35 @@ qboolean VR_Enable() {
   if (vr_initialized) {
     return true;
   }
+
+  /* A console print during startup can re-enter through SCR_UpdateScreen.
+   * VR_UpdateScreenContent will leave that nested refresh alone; callers
+   * outside the renderer must still regard VR as unavailable until setup is
+   * complete. */
+  if (vr_initializing)
+    return false;
+
+  vr_initializing = true;
+  vr_pose_snapshot_valid = false;
+  vr_pose_snapshot_last_compositor_error = vr::VRCompositorError_RequestFailed;
   vr::EVRInitError eInit = vr::VRInitError_None;
   ovrHMD = vr::VR_Init(&eInit, vr::VRApplication_Scene);
 
   if (eInit != vr::VRInitError_None) {
     Con_Printf("%s\nFailed to Initialize Steam VR",
                VR_GetVRInitErrorAsEnglishDescription(eInit));
+    ovrHMD = NULL;
     vr_enabled.value = 0;
+    vr_initializing = false;
     return false;
   }
 
   if (!InitOpenGLExtensions()) {
     Con_Printf("Failed to initialize OpenGL extensions");
+    vr::VR_Shutdown();
+    ovrHMD = NULL;
     vr_enabled.value = 0;
+    vr_initializing = false;
     return false;
   }
 
@@ -5869,6 +7226,7 @@ qboolean VR_Enable() {
   attempt_to_refocus_retry =
       900; // Try to refocus our for the first 900 frames :/
   vr_initialized = true;
+  vr_initializing = false;
   return true;
 }
 
@@ -5878,13 +7236,21 @@ void VID_VR_Shutdown() { VID_VR_Disable(); }
 
 void VID_VR_Disable() {
   if (!vr_initialized) {
+    VR_InvalidateFBTTransientOutput();
+    VR_FBT_ResetRuntimeState();
+    vr_initializing = false;
+    vr_openvr_disable_pending = false;
     return;
   }
 
+  vr_pose_snapshot_valid = false;
+  VR_InvalidateFBTTransientOutput();
+  VR_FBT_ResetRuntimeState();
   VR_EndWeaponMenu();
   VR_ReleaseControllerInputs();
   VR_FreeControllerRenderModels();
   VR_FreeHiddenAreaMeshes();
+  VR_FBT_VisualShutdown(vr::VRRenderModels());
   vr::VR_Shutdown();
   ovrHMD = NULL;
 
@@ -5894,6 +7260,8 @@ void VID_VR_Disable() {
   // TODO: Cleanup frame buffers
 
   vr_initialized = false;
+  vr_initializing = false;
+  vr_openvr_disable_pending = false;
 }
 
 static void RenderScreenForCurrentEye_OVR() {
@@ -6107,11 +7475,516 @@ static void VR_PollControllerInputOnly(int controllerIndex,
   controller->deviceIndex = device;
 }
 
-void VR_PollPoses() {
-  if (vr_initialized) {
-    vr::VRCompositor()->WaitGetPoses(ovr_DevicePose,
-                                     vr::k_unMaxTrackedDeviceCount, nullptr, 0);
+static void VR_FBT_ClearOpenVRIdentity(unsigned int device) {
+  if (device >= vr::k_unMaxTrackedDeviceCount)
+    return;
+  memset(&vr_fbt_identities[device], 0, sizeof(vr_fbt_identities[device]));
+}
+
+/* Keep a manager's explicit serial bindings across a runtime restart, but
+ * discard every observed device and all session-only identities. */
+static void VR_FBT_ResetRuntimeState(void) {
+  int role;
+
+  if (!vr_fbt_manager_initialized)
+    return;
+
+  memset(vr_fbt_manager.candidates, 0, sizeof(vr_fbt_manager.candidates));
+  vr_fbt_manager.candidate_count = 0;
+  vr_fbt_manager.last_snapshot_id = 0;
+  vr_fbt_manager.last_snapshot_time = 0.0;
+  vr_fbt_manager.has_snapshot = 0;
+  for (role = 0; role < VR_FBT_ROLE_COUNT; ++role) {
+    vr_fbt_role_status_t *status = &vr_fbt_manager.roles[role];
+    char serial[VR_FBT_SERIAL_MAX];
+    qboolean keep_serial =
+        status->identity_kind == VR_FBT_IDENTITY_SERIAL &&
+        VR_FBT_SerialIsSafe(status->serial);
+
+    if (keep_serial)
+      q_strlcpy(serial, status->serial, sizeof(serial));
+    memset(status, 0, sizeof(*status));
+    status->device_index = (unsigned int)-1;
+    status->state = keep_serial ? VR_FBT_STATE_LOST : VR_FBT_STATE_UNASSIGNED;
+    if (keep_serial) {
+      status->identity_kind = VR_FBT_IDENTITY_SERIAL;
+      q_strlcpy(status->serial, serial, sizeof(status->serial));
+    }
   }
+  memset(vr_fbt_identities, 0, sizeof(vr_fbt_identities));
+  vr_fbt_next_ephemeral_identity = 1;
+  vr_fbt_rescan_requested = false;
+  vr_fbt_debug_have_state = false;
+  vr_fbt_debug_pending = false;
+}
+
+static uint64_t VR_FBT_NewEphemeralIdentity(void) {
+  uint64_t identity = vr_fbt_next_ephemeral_identity++;
+
+  /* Zero is the manager's explicit "no session identity" value. */
+  if (!identity) {
+    identity = vr_fbt_next_ephemeral_identity++;
+    if (!identity)
+      identity = 1;
+  }
+  return identity;
+}
+
+static qboolean VR_FBT_ReadSafeSerial(unsigned int device, char *serial,
+                                      size_t serial_size) {
+  vr::ETrackedPropertyError error = vr::TrackedProp_Success;
+  uint32_t length;
+
+  if (!ovrHMD || !serial || serial_size < VR_FBT_SERIAL_MAX)
+    return false;
+  serial[0] = 0;
+  length = ovrHMD->GetStringTrackedDeviceProperty(
+      device, vr::Prop_SerialNumber_String, serial, (uint32_t)serial_size,
+      &error);
+  serial[serial_size - 1] = 0;
+  return error == vr::TrackedProp_Success && length > 0 &&
+         length < serial_size && VR_FBT_SerialIsSafe(serial);
+}
+
+/*
+ * This is the sole owner of IVRSystem::PollNextEvent.  Add future OpenVR
+ * event consumers here rather than introducing a second poller.  All event
+ * types not handled below are intentionally ignored for now.
+ */
+static qboolean VR_DispatchOpenVREvents(void) {
+  vr::VREvent_t event;
+  qboolean disable_after_dispatch = false;
+
+  if (!ovrHMD)
+    return false;
+  while (ovrHMD->PollNextEvent(&event, sizeof(event))) {
+    qboolean relevant = false;
+
+    switch ((vr::EVREventType)event.eventType) {
+    case vr::VREvent_Quit:
+      /* OpenVR requires this acknowledgement before the app exits. */
+      ovrHMD->AcknowledgeQuit_Exiting();
+      disable_after_dispatch = true;
+      break;
+    case vr::VREvent_ProcessQuit:
+    case vr::VREvent_DriverRequestedQuit:
+      disable_after_dispatch = true;
+      break;
+    case vr::VREvent_TrackedDeviceActivated:
+    case vr::VREvent_TrackedDeviceDeactivated:
+    case vr::VREvent_TrackedDeviceUpdated:
+    case vr::VREvent_PropertyChanged:
+    case vr::VREvent_WirelessDisconnect:
+    case vr::VREvent_WirelessReconnect:
+      relevant = true;
+      break;
+    default:
+      break;
+    }
+    if (disable_after_dispatch)
+      break;
+    if (!relevant)
+      continue;
+
+    vr_fbt_rescan_requested = true;
+    if (event.trackedDeviceIndex < vr::k_unMaxTrackedDeviceCount)
+      vr_fbt_identities[event.trackedDeviceIndex].identity_dirty = true;
+    else {
+      unsigned int device;
+      for (device = 0; device < vr::k_unMaxTrackedDeviceCount; ++device)
+        vr_fbt_identities[device].identity_dirty = true;
+    }
+  }
+  if (!disable_after_dispatch)
+    return true;
+
+  /* Do not call VR_Shutdown from inside event dispatch.  Queue the regular
+   * cvar path after dispatch, and let callers reject this invalid snapshot. */
+  if (!vr_openvr_disable_pending) {
+    vr_openvr_disable_pending = true;
+    Cbuf_AddText("vr_enabled 0\n");
+  }
+  return false;
+}
+
+static void VR_FBT_ReconcileSnapshot(void) {
+  vr_fbt_candidate_t candidates[VR_FBT_MAX_CANDIDATES];
+  unsigned int candidate_count = 0;
+  unsigned int device;
+
+  if (!vr_fbt_manager_initialized || !vr_fbt_enabled.value)
+    return;
+
+  for (device = 0; device < vr::k_unMaxTrackedDeviceCount; ++device) {
+    const vr::TrackedDevicePose_t *pose = &ovr_DevicePose[device];
+    vr_fbt_openvr_identity_t *identity = &vr_fbt_identities[device];
+    vr_fbt_candidate_t *candidate;
+    char serial[VR_FBT_SERIAL_MAX];
+
+    if (vr_pose_snapshot_device_class[device] !=
+        vr::TrackedDeviceClass_GenericTracker) {
+      VR_FBT_ClearOpenVRIdentity(device);
+      continue;
+    }
+    if (candidate_count >= VR_FBT_MAX_CANDIDATES)
+      break;
+    if (!pose->bDeviceIsConnected) {
+      VR_FBT_ClearOpenVRIdentity(device);
+      identity = &vr_fbt_identities[device];
+    } else {
+      if (identity->identity_dirty || !identity->generic_connected)
+        VR_FBT_ClearOpenVRIdentity(device);
+      identity = &vr_fbt_identities[device];
+      identity->generic_connected = true;
+      if (!identity->ephemeral_identity)
+        identity->ephemeral_identity = VR_FBT_NewEphemeralIdentity();
+
+      /* Property reads are bounded.  A previous verified serial remains valid
+       * only for this still-connected, non-invalidated device instance. */
+      if (!identity->has_verified_serial || vr_fbt_rescan_requested) {
+        if (VR_FBT_ReadSafeSerial(device, serial, sizeof(serial))) {
+          q_strlcpy(identity->verified_serial, serial,
+                    sizeof(identity->verified_serial));
+          identity->has_verified_serial = true;
+        }
+      }
+      identity->identity_dirty = false;
+    }
+
+    candidate = &candidates[candidate_count++];
+    memset(candidate, 0, sizeof(*candidate));
+    candidate->device_index = device;
+    candidate->connected = pose->bDeviceIsConnected != 0;
+    candidate->pose_valid = pose->bPoseIsValid != 0;
+    candidate->tracking_result = (int)pose->eTrackingResult;
+    candidate->snapshot_id = vr_pose_snapshot_id;
+    candidate->snapshot_time = vr_pose_snapshot_time;
+    memcpy(candidate->device_to_absolute_tracking,
+           pose->mDeviceToAbsoluteTracking.m,
+           sizeof(candidate->device_to_absolute_tracking));
+    VectorCopy(pose->vVelocity.v, candidate->velocity);
+    VectorCopy(pose->vAngularVelocity.v, candidate->angular_velocity);
+    if (candidate->connected && identity->has_verified_serial)
+      q_strlcpy(candidate->serial, identity->verified_serial,
+                sizeof(candidate->serial));
+    if (candidate->connected)
+      candidate->ephemeral_identity = identity->ephemeral_identity;
+  }
+
+  vr_fbt_rescan_requested = false;
+  if (VR_FBT_Reconcile(&vr_fbt_manager, vr_pose_snapshot_id,
+                       vr_pose_snapshot_time, candidates, candidate_count))
+    VR_FBT_DebugMaybeReport();
+}
+
+static const char *VR_FBT_RoleName(vr_fbt_role_t role) {
+  switch (role) {
+  case VR_FBT_ROLE_HIP:
+    return "hip";
+  case VR_FBT_ROLE_LEFT_FOOT:
+    return "left_foot";
+  case VR_FBT_ROLE_RIGHT_FOOT:
+    return "right_foot";
+  default:
+    return "unknown";
+  }
+}
+
+static const char *VR_FBT_StateName(vr_fbt_state_t state) {
+  switch (state) {
+  case VR_FBT_STATE_UNASSIGNED:
+    return "unassigned";
+  case VR_FBT_STATE_CONNECTED_INVALID:
+    return "connected-invalid";
+  case VR_FBT_STATE_TRACKING:
+    return "tracking";
+  case VR_FBT_STATE_PREDICTING:
+    return "predicting";
+  case VR_FBT_STATE_LOST:
+    return "lost";
+  default:
+    return "unknown";
+  }
+}
+
+static void VR_FBT_IdentityLabel(qboolean has_safe_serial, const char *serial,
+                                 char *label, size_t label_size) {
+  uint32_t hash = 2166136261u;
+  const unsigned char *cursor = (const unsigned char *)serial;
+
+  if (!has_safe_serial || !VR_FBT_SerialIsSafe(serial)) {
+    q_strlcpy(label, "session-only", label_size);
+    return;
+  }
+  while (*cursor) {
+    hash ^= *cursor++;
+    hash *= 16777619u;
+  }
+  q_snprintf(label, label_size, "serial#%08x", (unsigned int)hash);
+}
+
+static double VR_FBT_Age(double then, double now) {
+  return now >= then && then > 0.0 ? now - then : 0.0;
+}
+
+static void VR_FBT_PrintList(void) {
+  unsigned int candidate;
+  int role;
+  double now = Sys_DoubleTime();
+
+  Con_Printf("FBT: %s, %u tracker candidate%s, snapshot %llu age %.3fs\n",
+             vr_fbt_enabled.value ? "enabled" : "disabled",
+             VR_FBT_GetCandidateCount(&vr_fbt_manager),
+             VR_FBT_GetCandidateCount(&vr_fbt_manager) == 1 ? "" : "s",
+             (unsigned long long)vr_fbt_manager.last_snapshot_id,
+             VR_FBT_Age(vr_fbt_manager.last_snapshot_time, now));
+  for (role = 0; role < VR_FBT_ROLE_COUNT; ++role) {
+    vr_fbt_role_status_t status;
+    char identity_label[20];
+
+    if (!VR_FBT_GetRoleStatus(&vr_fbt_manager, (vr_fbt_role_t)role, &status))
+      continue;
+    if (status.identity_kind == VR_FBT_IDENTITY_NONE) {
+      Con_Printf("  role %s: unassigned\n", VR_FBT_RoleName((vr_fbt_role_t)role));
+      continue;
+    }
+    VR_FBT_IdentityLabel(status.identity_kind == VR_FBT_IDENTITY_SERIAL,
+                         status.serial, identity_label, sizeof(identity_label));
+    if (status.device_index == (unsigned int)-1)
+      Con_Printf("  role %s: %s index offline %s tracking %d snapshot %llu age %.3fs\n",
+                 VR_FBT_RoleName((vr_fbt_role_t)role),
+                 VR_FBT_StateName(status.state),
+                 identity_label,
+                 status.tracking_result,
+                 (unsigned long long)vr_fbt_manager.last_snapshot_id,
+                 VR_FBT_Age(status.last_reconciled_time, now));
+    else
+      Con_Printf("  role %s: %s index %u %s tracking %d snapshot %llu age %.3fs\n",
+                 VR_FBT_RoleName((vr_fbt_role_t)role),
+                 VR_FBT_StateName(status.state), status.device_index,
+                 identity_label,
+                 status.tracking_result,
+                 (unsigned long long)vr_fbt_manager.last_snapshot_id,
+                 VR_FBT_Age(status.last_reconciled_time, now));
+  }
+  for (candidate = 0; candidate < VR_FBT_GetCandidateCount(&vr_fbt_manager);
+       ++candidate) {
+    vr_fbt_candidate_status_t status;
+    const char *state;
+    char identity_label[20];
+
+    if (!VR_FBT_GetCandidate(&vr_fbt_manager, candidate, &status))
+      continue;
+    state = !status.connected ? "disconnected"
+            : !status.pose_valid ? "connected-invalid"
+            : status.tracking_result == VR_FBT_TRACKING_RESULT_RUNNING_OK
+                ? "tracking"
+                : "predicting";
+    VR_FBT_IdentityLabel(status.has_safe_serial, status.serial, identity_label,
+                         sizeof(identity_label));
+    Con_Printf("  candidate %u: %s index %u %s tracking %d snapshot %llu age %.3fs\n",
+               candidate, state, status.device_index,
+               identity_label,
+               status.tracking_result, (unsigned long long)status.snapshot_id,
+               VR_FBT_Age(status.snapshot_time, now));
+  }
+}
+
+static qboolean VR_FBT_RoleStatusChanged(const vr_fbt_role_status_t *a,
+                                         const vr_fbt_role_status_t *b) {
+  return a->state != b->state || a->identity_kind != b->identity_kind ||
+         a->device_index != b->device_index || a->connected != b->connected ||
+         a->pose_valid != b->pose_valid ||
+         a->tracking_result != b->tracking_result ||
+         a->ephemeral_identity != b->ephemeral_identity ||
+         strcmp(a->serial, b->serial) != 0;
+}
+
+static void VR_FBT_DebugMaybeReport(void) {
+  vr_fbt_role_status_t current[VR_FBT_ROLE_COUNT];
+  unsigned int count;
+  int role;
+  qboolean changed = !vr_fbt_debug_have_state;
+  double now;
+
+  if ((int)vr_fbt_debug.value <= 0)
+    return;
+  count = VR_FBT_GetCandidateCount(&vr_fbt_manager);
+  for (role = 0; role < VR_FBT_ROLE_COUNT; ++role) {
+    VR_FBT_GetRoleStatus(&vr_fbt_manager, (vr_fbt_role_t)role,
+                         &current[role]);
+    if (vr_fbt_debug_have_state &&
+        VR_FBT_RoleStatusChanged(&current[role], &vr_fbt_debug_roles[role]))
+      changed = true;
+  }
+  if (vr_fbt_debug_have_state && count != vr_fbt_debug_candidate_count)
+    changed = true;
+  memcpy(vr_fbt_debug_roles, current, sizeof(current));
+  vr_fbt_debug_candidate_count = count;
+  vr_fbt_debug_have_state = true;
+  if (changed)
+    vr_fbt_debug_pending = true;
+
+  now = Sys_DoubleTime();
+  if (!vr_fbt_debug_pending || now - vr_fbt_debug_last_print_time < 0.5)
+    return;
+  vr_fbt_debug_pending = false;
+  vr_fbt_debug_last_print_time = now;
+  if ((int)vr_fbt_debug.value == 1) {
+    Con_Printf("FBT: tracker state changed (snapshot %llu, %u candidates)\n",
+               (unsigned long long)vr_fbt_manager.last_snapshot_id, count);
+  } else {
+    VR_FBT_PrintList();
+  }
+}
+
+unsigned int VR_GetFBTCandidateCount(void) {
+  return vr_fbt_manager_initialized ? VR_FBT_GetCandidateCount(&vr_fbt_manager)
+                                    : 0;
+}
+
+qboolean VR_GetFBTCandidateStatus(unsigned int candidate_ordinal,
+                                  vr_fbt_candidate_status_t *status) {
+  return vr_fbt_manager_initialized &&
+         VR_FBT_GetCandidate(&vr_fbt_manager, candidate_ordinal, status);
+}
+
+qboolean VR_GetFBTRoleStatus(vr_fbt_role_t role,
+                             vr_fbt_role_status_t *status) {
+  return vr_fbt_manager_initialized &&
+         VR_FBT_GetRoleStatus(&vr_fbt_manager, role, status);
+}
+
+qboolean VR_GetFBTRoleTiming(vr_fbt_role_t role, double now,
+                             vr_fbt_timing_t *timing) {
+  return vr_fbt_manager_initialized &&
+         VR_FBT_GetRoleTiming(&vr_fbt_manager, role, now, timing);
+}
+
+qboolean VR_AssignFBTCandidate(vr_fbt_role_t role,
+                               unsigned int candidate_ordinal) {
+  qboolean assigned = vr_fbt_manager_initialized &&
+                      VR_FBT_AssignCandidate(&vr_fbt_manager, role,
+                                             candidate_ordinal);
+
+  if (assigned)
+    VR_FBT_DebugMaybeReport();
+  return assigned;
+}
+
+qboolean VR_BindFBTSerial(vr_fbt_role_t role, const char *serial) {
+  qboolean bound = vr_fbt_manager_initialized &&
+                   VR_FBT_BindSerial(&vr_fbt_manager, role, serial);
+
+  if (bound)
+    VR_FBT_DebugMaybeReport();
+  return bound;
+}
+
+qboolean VR_UnassignFBTRole(vr_fbt_role_t role) {
+  qboolean unassigned = vr_fbt_manager_initialized &&
+                        VR_FBT_UnassignRole(&vr_fbt_manager, role);
+
+  if (unassigned)
+    VR_FBT_DebugMaybeReport();
+  return unassigned;
+}
+
+/* WaitGetPoses is the sole writer for the engine's OpenVR pose snapshot.
+ * Keep failed calls out of the published storage: OpenVR may leave a partial
+ * output array on an error, which would otherwise let head and controller
+ * consumers observe different pose epochs. */
+static qboolean VR_AcquirePoseSnapshot(void) {
+  vr::TrackedDevicePose_t poses[vr::k_unMaxTrackedDeviceCount];
+  vr::EVRCompositorError error;
+  uint32_t device;
+  double snapshot_time;
+
+  snapshot_time = VR_PoseClockNow();
+  if (!vr_initialized || !vr::VRCompositor()) {
+    vr_pose_snapshot_last_compositor_error =
+        vr::VRCompositorError_RequestFailed;
+    VR_FBT_AgeCachedTargets(snapshot_time, true);
+    return false;
+  }
+
+  error = vr::VRCompositor()->WaitGetPoses(
+      poses, vr::k_unMaxTrackedDeviceCount, nullptr, 0);
+  vr_pose_snapshot_last_compositor_error = (int)error;
+  if (error != vr::VRCompositorError_None) {
+    VR_FBT_AgeCachedTargets(snapshot_time, true);
+    return false;
+  }
+
+  memcpy(ovr_DevicePose, poses, sizeof(ovr_DevicePose));
+  if (!VR_DispatchOpenVREvents()) {
+    vr_pose_snapshot_valid = false;
+    VR_FBT_AgeCachedTargets(snapshot_time, true);
+    return false;
+  }
+  for (device = 0; device < vr::k_unMaxTrackedDeviceCount; ++device) {
+    vr_pose_snapshot_device_class[device] =
+        ovrHMD->GetTrackedDeviceClass(device);
+    vr_pose_snapshot_controller_role[device] =
+        vr_pose_snapshot_device_class[device] ==
+                vr::TrackedDeviceClass_Controller
+            ? ovrHMD->GetControllerRoleForTrackedDeviceIndex(device)
+            : vr::TrackedControllerRole_Invalid;
+  }
+
+  /* IDs distinguish snapshots even when a coarse monotonic clock returns the
+   * same value twice.  Clamp backwards clock movement so diagnostics remain
+   * monotonic as well. */
+  ++vr_pose_snapshot_id;
+  vr_pose_snapshot_time = snapshot_time;
+  vr_pose_snapshot_valid = true;
+  /* Tracker poses always come from the immutable WaitGetPoses copy above;
+   * the central event dispatcher supplies identity invalidation hints only. */
+  VR_FBT_ReconcileSnapshot();
+  return true;
+}
+
+qboolean VR_GetPoseSnapshotInfo(vr_pose_snapshot_info_t *info) {
+  if (!info)
+    return false;
+
+  info->id = vr_pose_snapshot_id;
+  info->time = vr_pose_snapshot_time;
+  info->last_compositor_error = vr_pose_snapshot_last_compositor_error;
+  info->valid = vr_pose_snapshot_valid;
+  return vr_pose_snapshot_valid;
+}
+
+unsigned int VR_GetPoseSnapshotDeviceCount(void) {
+  return vr::k_unMaxTrackedDeviceCount;
+}
+
+qboolean VR_GetPoseSnapshotDevice(uint64_t snapshot_id,
+                                  unsigned int device_index,
+                                  vr_pose_snapshot_device_t *device) {
+  const vr::TrackedDevicePose_t *pose;
+
+  if (!device || !vr_pose_snapshot_valid || snapshot_id != vr_pose_snapshot_id ||
+      device_index >= vr::k_unMaxTrackedDeviceCount)
+    return false;
+
+  pose = &ovr_DevicePose[device_index];
+  device->pose_valid = pose->bPoseIsValid;
+  device->device_connected = pose->bDeviceIsConnected;
+  device->tracking_result = (int)pose->eTrackingResult;
+  device->device_class = (int)vr_pose_snapshot_device_class[device_index];
+  device->controller_role =
+      (int)vr_pose_snapshot_controller_role[device_index];
+  memcpy(device->device_to_absolute_tracking,
+         pose->mDeviceToAbsoluteTracking.m,
+         sizeof(device->device_to_absolute_tracking));
+  VectorCopy(pose->vVelocity.v, device->velocity);
+  VectorCopy(pose->vAngularVelocity.v, device->angular_velocity);
+  return true;
+}
+
+void VR_PollPoses() {
+  VR_AcquirePoseSnapshot();
 }
 
 void VR_UpdateScreenContent() {
@@ -6120,10 +7993,17 @@ void VR_UpdateScreenContent() {
   vec3_t stereo_visibility_origins[2];
   GLint w, h;
   entity_t menu_player;
+  qboolean acquired_pose;
 
   if (!vr_enabled.value) {
     return;
   }
+
+  /* VR_Enable may print while OpenVR/OpenComposite is starting.  Console
+   * output can force a nested SCR_UpdateScreen; do not initialize a second
+   * runtime or render against the incomplete first one. */
+  if (vr_initializing)
+    return;
 
   if (cls.state == ca_connected && cls.signon == SIGNONS)
     VR_TrackWeapons();
@@ -6143,9 +8023,12 @@ void VR_UpdateScreenContent() {
   if (cl.entities && cl.viewentity >= 0 && cl.viewentity < cl.max_edicts)
     player = &cl.entities[cl.viewentity];
 
-  // Update poses
-  vr::VRCompositor()->WaitGetPoses(ovr_DevicePose,
-                                   vr::k_unMaxTrackedDeviceCount, nullptr, 0);
+  /* Update every head/controller-derived value from one published snapshot.
+   * A compositor failure reuses the preceding complete snapshot, preserving
+   * the existing rendering/input path without processing partial output. */
+  acquired_pose = VR_AcquirePoseSnapshot();
+  if (!acquired_pose && !vr_pose_snapshot_valid)
+    return;
 
   controllers[0].seenThisFrame = false;
   controllers[1].seenThisFrame = false;
@@ -6158,7 +8041,8 @@ void VR_UpdateScreenContent() {
        iDevice++) {
     // HMD vectors update
     if (ovr_DevicePose[iDevice].bPoseIsValid &&
-        ovrHMD->GetTrackedDeviceClass(iDevice) == vr::TrackedDeviceClass_HMD) {
+        vr_pose_snapshot_device_class[iDevice] ==
+            vr::TrackedDeviceClass_HMD) {
       vr::HmdVector3_t headPos =
           Matrix34ToVector(ovr_DevicePose[iDevice].mDeviceToAbsoluteTracking);
       vr_head_raw_position = headPos;
@@ -6202,21 +8086,19 @@ void VR_UpdateScreenContent() {
     }
     // Controller vectors update
     else if (ovr_DevicePose[iDevice].bPoseIsValid &&
-             ovrHMD->GetTrackedDeviceClass(iDevice) ==
+             vr_pose_snapshot_device_class[iDevice] ==
                  vr::TrackedDeviceClass_Controller) {
       vr::HmdVector3_t rawControllerPos =
           Matrix34ToVector(ovr_DevicePose[iDevice].mDeviceToAbsoluteTracking);
       vr::HmdQuaternion_t rawControllerQuat = Matrix34ToQuaternion(
           ovr_DevicePose[iDevice].mDeviceToAbsoluteTracking);
-      vr::HmdVector3_t rawControllerVel = ovr_DevicePose[iDevice].vVelocity;
-
       int controllerIndex = -1;
 
-      if (ovrHMD->GetControllerRoleForTrackedDeviceIndex(iDevice) ==
+      if (vr_pose_snapshot_controller_role[iDevice] ==
           vr::TrackedControllerRole_LeftHand) {
         // Swap controller values for our southpaw players
         controllerIndex = vr_lefthanded.value ? 1 : 0;
-      } else if (ovrHMD->GetControllerRoleForTrackedDeviceIndex(iDevice) ==
+      } else if (vr_pose_snapshot_controller_role[iDevice] ==
                  vr::TrackedControllerRole_RightHand) {
         // Swap controller values for our southpaw players
         controllerIndex = vr_lefthanded.value ? 0 : 1;
@@ -6358,6 +8240,8 @@ void VR_UpdateScreenContent() {
 
   SetHandPos(0, player);
   SetHandPos(1, player);
+  if (acquired_pose)
+    VR_FBT_UpdateCalibratedTargets();
   if (cls.state == ca_connected && cls.signon == SIGNONS)
     VR_AdjustWeaponUpdatePose();
 
@@ -6402,6 +8286,9 @@ void VR_UpdateScreenContent() {
   vr_menu_view_origin_valid = true;
 
   VR_PrepareWeaponMenu();
+  if (acquired_pose)
+    VR_FBT_CaptureSnapshot();
+  VR_FBT_PrepareCalibrationVisuals();
 
   // Render the scene for each eye into their FBOs
   R_BeginVRFrame();

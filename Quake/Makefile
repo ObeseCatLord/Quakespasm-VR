@@ -232,6 +232,7 @@ GLOBJS = \
 	gl_mesh.o \
 	r_sprite.o \
 	r_alias.o \
+	r_vrik.o \
 	r_brush.o \
 	gl_model.o
 
@@ -281,6 +282,12 @@ OBJS = strlcat.o \
 	world.o \
 	zone.o \
 	vr.o \
+	vr_fbt.o \
+	vr_fbt_filter.o \
+	vr_fbt_profile.o \
+	vr_fbt_storage.o \
+	vr_fbt_visual.o \
+	vrik_codec.o \
 	vr_menu.o \
 	$(SYSOBJ_SYS) $(SYSOBJ_MAIN)
 
@@ -298,6 +305,8 @@ all: $(DEFAULT_TARGET)
 
 # VR files need C++ compiler
 vr.o: vr.c
+	$(CXX) $(DFLAGS) -c $(subst -std=gnu11,,$(CFLAGS)) $(SDL_CFLAGS) -o $@ $<
+vr_fbt_visual.o: vr_fbt_visual.c
 	$(CXX) $(DFLAGS) -c $(subst -std=gnu11,,$(CFLAGS)) $(SDL_CFLAGS) -o $@ $<
 vr_menu.o: vr_menu.c
 	$(CXX) $(DFLAGS) -c $(subst -std=gnu11,,$(CFLAGS)) $(SDL_CFLAGS) -o $@ $<

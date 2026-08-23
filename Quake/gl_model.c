@@ -26,6 +26,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 
 #include "quakedef.h"
 #include "debug_log.h"
+#include "r_vrik.h"
 
 static qmodel_t*	loadmodel;
 static char	loadname[32];	// for hunk tags
@@ -438,7 +439,7 @@ static qboolean Mod_MD5LiveSurfaceValid (const aliashdr_t *surface,
 qboolean Mod_GetMD5LiveData (qmodel_t *mod, md5liveinfo_t *out)
 {
 	mod_alias_cache_t *cache;
-	const aliashdr_t *surface;
+	aliashdr_t *surface;
 	const md5livejoint_t *joints;
 	int joint, required, surfacecount;
 
@@ -447,14 +448,13 @@ qboolean Mod_GetMD5LiveData (qmodel_t *mod, md5liveinfo_t *out)
 	memset (out, 0, sizeof(*out));
 	for (joint = 0; joint < MD5_VRIK_JOINT_COUNT; joint++)
 		out->jointindex[joint] = -1;
-
 	if (!mod || mod->type != mod_alias)
 		return false;
 
 	cache = Mod_GetAliasCache (mod);
 	if (!cache->md5_offset)
 		return false;
-	surface = (const aliashdr_t *)((byte *)cache + cache->md5_offset);
+	surface = (aliashdr_t *)((byte *)cache + cache->md5_offset);
 	if (surface->poseverttype != ALIAS_POSE_MD5 ||
 		surface->md5_numbones < 1 || surface->md5_numbones > MAX_MD5_JOINTS ||
 		surface->numposes < 1 || surface->md5_livejoints <= 0 ||
@@ -474,35 +474,45 @@ qboolean Mod_GetMD5LiveData (qmodel_t *mod, md5liveinfo_t *out)
 	out->numbones = surface->md5_numbones;
 	out->numposes = surface->numposes;
 	out->from_rerelease = cache->md5_from_rerelease;
-	for (joint = 0; joint < surface->md5_numbones; joint++)
+	if (!surface->md5_vrik_validated)
 	{
-		int semantic;
-		for (semantic = 0; semantic < MD5_VRIK_JOINT_COUNT; semantic++)
-			if (!q_strcasecmp (joints[joint].name,
-				md5_vrik_joint_names[semantic]))
+		const aliashdr_t *validatesurface;
+		for (joint = 0; joint < MD5_VRIK_JOINT_COUNT; joint++)
+			surface->md5_vrik_jointindex[joint] = -1;
+		for (joint = 0; joint < surface->md5_numbones; joint++)
+		{
+			int semantic;
+			for (semantic = 0; semantic < MD5_VRIK_JOINT_COUNT; semantic++)
+				if (!q_strcasecmp (joints[joint].name,
+					md5_vrik_joint_names[semantic]))
+				{
+					surface->md5_vrik_jointindex[semantic] = joint;
+					break;
+				}
+		}
+
+		/* The upper body is required; legs and equipment are optional overrides. */
+		surface->md5_vrik_compatible = true;
+		for (required = MD5_VRIK_HIP; required <= MD5_VRIK_HAND_R; required++)
+			if (surface->md5_vrik_jointindex[required] < 0)
+				surface->md5_vrik_compatible = false;
+		for (validatesurface = surface, surfacecount = 0;
+			validatesurface && surfacecount < MAX_MD5_SURFACES;
+			validatesurface = validatesurface->nextsurface ?
+			(const aliashdr_t *)((const byte *)validatesurface +
+				validatesurface->nextsurface) : NULL, surfacecount++)
+			if (!Mod_MD5LiveSurfaceValid (validatesurface, out->numbones))
 			{
-				out->jointindex[semantic] = joint;
+				surface->md5_vrik_compatible = false;
 				break;
 			}
+		if (surfacecount == MAX_MD5_SURFACES && validatesurface)
+			surface->md5_vrik_compatible = false;
+		surface->md5_vrik_validated = true;
 	}
-
-	/* The upper body is required; legs and equipment are optional overrides. */
-	out->compatible = true;
-	for (required = MD5_VRIK_HIP; required <= MD5_VRIK_HAND_R; required++)
-		if (out->jointindex[required] < 0)
-			out->compatible = false;
-	for (surface = out->firstsurface, surfacecount = 0;
-		surface && surfacecount < MAX_MD5_SURFACES;
-		surface = surface->nextsurface ?
-		(const aliashdr_t *)((const byte *)surface + surface->nextsurface) : NULL,
-		surfacecount++)
-		if (!Mod_MD5LiveSurfaceValid (surface, out->numbones))
-		{
-			out->compatible = false;
-			break;
-		}
-	if (surfacecount == MAX_MD5_SURFACES && surface)
-		out->compatible = false;
+	memcpy (out->jointindex, surface->md5_vrik_jointindex,
+		sizeof(out->jointindex));
+	out->compatible = surface->md5_vrik_compatible;
 
 	return true;
 }
@@ -828,6 +838,10 @@ void Mod_ClearAll (void)
 	int		i;
 	qmodel_t	*mod;
 
+	/* Host_ClearMemory releases the alias-cache backing store immediately
+	 * afterwards, so discard any VRIK pointers into its rendered data first. */
+	R_VRIKResetSkinCaches ();
+
 	for (i=0 , mod=mod_known ; i<mod_numknown ; i++, mod++)
 	{
 		if (mod->type != mod_alias)
@@ -845,6 +859,8 @@ void Mod_ResetAll (void)
 {
 	int		i;
 	qmodel_t	*mod;
+
+	R_VRIKResetSkinCaches ();
 
 	//ericw -- free alias model VBOs
 	GLMesh_DeleteVertexBuffers ();
