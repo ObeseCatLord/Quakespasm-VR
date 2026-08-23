@@ -69,12 +69,27 @@ typedef struct r_avatar_profile_s {
 	/* Optional model-specific post-retarget posture correction.  It rotates the
 	 * complete Hip-descendant hierarchy rather than selected model joints. */
 	r_avatar_posture_policy_t posture_policy;
+	/* A bounded Hip-descendant turn for rigs whose authored torso is nearly
+	 * horizontal.  Zero retains the full policy turn for legacy callers. */
+	float posture_degrees;
 	float head_forward_axis[3];
 	qboolean preserve_hip_rotation;
 	/* Retained exclusively for tracked profile arm solves. */
 	float arm_pole_up;
 	/* Solve the physical parent chain when a semantic endpoint skips joints. */
 	qboolean actual_path_ik;
+	/* Desktop-only stable weapon pose.  The socket is body-relative, so the
+	 * animated Ranger fist cannot turn a detached monster weapon backwards. */
+	qboolean desktop_weapon_socket;
+	float desktop_weapon_forward;
+	float desktop_weapon_up;
+	/* Gun-local left support anchor.  A zero vector mirrors the validated
+	 * dominant grip across the gun's forward/up plane. */
+	float desktop_weapon_support[3];
+	/* Desktop animal upper-body branch rebuilt from target bind-local transforms
+	 * under the current Hip before posture/grip repair; a nonpositive value
+	 * disables it (preserving zero-initialized legacy profiles). */
+	int desktop_upperbody_bind_root;
 } r_avatar_profile_t;
 
 /* Runtime resolution has no ownership of live data.  joint[] are the

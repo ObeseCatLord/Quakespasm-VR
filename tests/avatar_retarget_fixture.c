@@ -224,7 +224,7 @@ static void test_profile_basis_policies(void)
 	assert(!strcmp(dog->contact_root[1], "RearFoot_R") && !dog->contact_root[2]);
 	assert(dog->desktop_refine && dog->arm_pole_outward == 1.0f &&
 		dog->arm_pole_back == 0.35f && !dog->mirror_outer_leg_poles &&
-		dog->posture_policy == R_AVATAR_POSTURE_AUTHORED &&
+		dog->posture_policy == R_AVATAR_POSTURE_UPRIGHT && dog->posture_degrees == 60.0f &&
 		dog->head_forward_axis[1] == 1.0f && dog->preserve_hip_rotation &&
 		dog->actual_path_ik);
 	assert((dog->joint[MD5_VRIK_SHOULDER_L].flags & R_AVATAR_MAP_VIRTUAL) &&
@@ -236,7 +236,7 @@ static void test_profile_basis_policies(void)
 	assert(fiend->basis_policy == R_AVATAR_BASIS_FEET_UP_HEAD_FORWARD);
 	assert(!strcmp(fiend->contact_root[0], "hoof_L") &&
 		!strcmp(fiend->contact_root[1], "hoof_R") && fiend->desktop_refine &&
-		fiend->posture_policy == R_AVATAR_POSTURE_AUTHORED &&
+		fiend->posture_policy == R_AVATAR_POSTURE_UPRIGHT && fiend->posture_degrees == 35.0f &&
 		fiend->head_forward_axis[1] == 1.0f && fiend->preserve_hip_rotation &&
 		fiend->actual_path_ik && !strcmp(fiend->joint[MD5_VRIK_FOOT_L].name, "hoof_L") &&
 		!strcmp(fiend->joint[MD5_VRIK_FOOT_R].name, "hoof_R"));
@@ -244,9 +244,13 @@ static void test_profile_basis_policies(void)
 	assert(!shambler->desktop_refine && shambler->arm_pole_outward == 0.136f &&
 		shambler->arm_pole_back == 0.223f && shambler->arm_pole_up == 0.965f &&
 		shambler->posture_policy == R_AVATAR_POSTURE_AUTHORED &&
-		!shambler->preserve_hip_rotation);
+		!shambler->preserve_hip_rotation &&
+		shambler->desktop_upperbody_bind_root == MD5_VRIK_SPINE2 &&
+		fabsf (shambler->desktop_weapon_support[0] + 4.55128f) < .00001f &&
+		fabsf (shambler->desktop_weapon_support[1] - 11.20621f) < .00001f &&
+		fabsf (shambler->desktop_weapon_support[2] + 17.71073f) < .00001f);
 	vore = R_AvatarProfileForId(PLAYER_AVATAR_VORE);
-	assert(vore->mirror_outer_leg_poles && vore->preserve_hip_rotation &&
+	assert(vore->mirror_outer_leg_poles && !vore->preserve_hip_rotation &&
 		vore->posture_policy == R_AVATAR_POSTURE_AUTHORED);
 
 	/* A synthetic quadruped makes its floor-to-hip direction the first column

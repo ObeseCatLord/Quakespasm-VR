@@ -44,6 +44,11 @@ qboolean R_VRIKAvatarRefinesSemanticForTest (qboolean tracked,
 	const r_avatar_profile_t *profile, int semantic);
 qboolean R_VRIKAnimalArmBasisForTest (vec3_t lateral, vec3_t forward,
 	vec3_t up);
+qboolean R_VRIKDesktopWeaponSocketForTest (int avatar, qboolean tracked);
+qboolean R_VRIKDesktopUpperBodyStabilizationForTest (void);
+qboolean R_VRIKAvatarUprightPostureFailureForTest (void);
+qboolean R_VRIKDesktopAnimalWeaponGripForTest (int avatar);
+qboolean R_VRIKDesktopWeaponGripRollbackForTest (void);
 qboolean R_VRIKAvatarMapLowerTargetForTest (
 	r_vrik_lowerbody_model_targets_t *targets);
 qboolean R_VRIKAvatarHipOverlayForTest (void);
@@ -98,7 +103,7 @@ static qboolean VoreHipPreservesUnmappedChildForTest (void)
 	float sourcepalette[36], targetpalette[48];
 	int i;
 
-	if (!profile || !profile->preserve_hip_rotation)
+	if (!profile || profile->preserve_hip_rotation)
 		return false;
 	memset (&source, 0, sizeof (source)); memset (&target, 0, sizeof (target));
 	memset (sourcejoints, 0, sizeof (sourcejoints));
@@ -138,17 +143,17 @@ static qboolean VoreHipPreservesUnmappedChildForTest (void)
 	if (!R_AvatarRetargetPaletteWithContext (&sourcerig, &targetrig, &context,
 		sourcepalette, targetpalette))
 		return false;
-	/* The unmapped middle-leg child stays bind-relative to the unturned Hip;
-	 * mapped outer-leg semantics still receive the canonical animation turn. */
-	return fabsf (targetpalette[0] - 1.0f) < 0.001f &&
-		fabsf (targetpalette[1]) < 0.001f && fabsf (targetpalette[4]) < 0.001f &&
-		fabsf (targetpalette[5] - 1.0f) < 0.001f &&
+	/* With Vore's Hip no longer rotation-suppressed, its unmapped centre leg
+	 * receives the same global Hip animation through the ordinary hierarchy. */
+	return fabsf (targetpalette[0]) < 0.001f &&
+		fabsf (targetpalette[1] + 1.0f) < 0.001f && fabsf (targetpalette[4] - 1.0f) < 0.001f &&
+		fabsf (targetpalette[5]) < 0.001f &&
 		fabsf (targetpalette[12]) < 0.001f &&
 		fabsf (targetpalette[13] + 1.0f) < 0.001f &&
 		fabsf (targetpalette[16] - 1.0f) < 0.001f &&
-		fabsf (targetpalette[36] - 1.0f) < 0.001f &&
-		fabsf (targetpalette[37]) < 0.001f && fabsf (targetpalette[40]) < 0.001f &&
-		fabsf (targetpalette[41] - 1.0f) < 0.001f;
+		fabsf (targetpalette[36]) < 0.001f &&
+		fabsf (targetpalette[37] + 1.0f) < 0.001f && fabsf (targetpalette[40] - 1.0f) < 0.001f &&
+		fabsf (targetpalette[41]) < 0.001f;
 }
 
 int main (void)
@@ -326,6 +331,15 @@ int main (void)
 	assert (R_VRIKAnimalAuthoredPostureForTest (PLAYER_AVATAR_FIEND, false));
 	assert (R_VRIKAnimalAuthoredPostureForTest (PLAYER_AVATAR_DOG, true));
 	assert (R_VRIKAnimalAuthoredPostureForTest (PLAYER_AVATAR_FIEND, true));
+	assert (R_VRIKDesktopWeaponSocketForTest (PLAYER_AVATAR_DOG, false));
+	assert (R_VRIKDesktopWeaponSocketForTest (PLAYER_AVATAR_FIEND, false));
+	assert (R_VRIKDesktopWeaponSocketForTest (PLAYER_AVATAR_SHAMBLER, false));
+	assert (R_VRIKDesktopWeaponSocketForTest (PLAYER_AVATAR_SHAMBLER, true));
+	assert (R_VRIKDesktopUpperBodyStabilizationForTest ());
+	assert (R_VRIKAvatarUprightPostureFailureForTest ());
+	assert (R_VRIKDesktopAnimalWeaponGripForTest (PLAYER_AVATAR_DOG));
+	assert (R_VRIKDesktopAnimalWeaponGripForTest (PLAYER_AVATAR_FIEND));
+	assert (R_VRIKDesktopWeaponGripRollbackForTest ());
 	assert (VoreHipPreservesUnmappedChildForTest ());
 	assert (R_VRIKShamblerDesktopArmRepairForTest ());
 	assert (R_VRIKAvatarUprightFootContactsForTest ());
