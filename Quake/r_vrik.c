@@ -254,7 +254,9 @@ static qboolean R_VRIKBuildMirroredLegPoles (const md5liveinfo_t *live,
 	const float *palette, vec3_t poles[2])
 {
 	int side;
-	vec3_t roots[2], knees[2], source[2], lateral, reflected, combined;
+	vec3_t roots[2], knees[2], source[2], lateral, reflected, combined,
+		corrected, sagittal;
+	float lateralcomponent;
 
 	for (side = 0; side < 2; side++)
 	{
@@ -293,9 +295,38 @@ static qboolean R_VRIKBuildMirroredLegPoles (const md5liveinfo_t *live,
 		if (!VectorNormalize (combined))
 			return false;
 	}
+	/* lateral points from the left root to the right root.  The left pole
+	 * convention is outward (-lateral), so reflect only an inward lateral
+	 * component.  Do not invert the authored sagittal bend direction. */
+	lateralcomponent = DotProduct (combined, lateral);
+	if (lateralcomponent > 0.0f)
+	{
+		VectorMA (combined, -2.0f * lateralcomponent, lateral, corrected);
+		VectorCopy (corrected, combined);
+	}
+	/* A perfectly sagittal symmetric seed has no outward hemisphere.  Preserve
+	 * its sagittal component and add a bounded 1% outward lateral bias so the
+	 * left/right convention remains strict and deterministic before reflection. */
+	lateralcomponent = DotProduct (combined, lateral);
+	if (fabsf (lateralcomponent) < 0.01f)
+	{
+		VectorMA (combined, -lateralcomponent, lateral, sagittal);
+		VectorMA (sagittal, -0.01f, lateral, combined);
+		if (!VectorNormalize (combined))
+			return false;
+	}
 	VectorCopy (combined, poles[0]);
 	R_VRIKReflectPoleAcrossPlane (combined, lateral, poles[1]);
 	return R_VRIKFiniteVector (poles[0]) && R_VRIKFiniteVector (poles[1]);
+}
+
+/* Narrow fixture seam: exposes the selected bend vectors before the solver
+ * projects them onto each requested foot direction. */
+qboolean R_VRIKBuildMirroredLegPolesForTest (const md5liveinfo_t *live,
+	const float *palette, vec3_t poles[2])
+{
+	return R_VRIKBuildRigCache (live) &&
+		R_VRIKBuildMirroredLegPoles (live, palette, poles);
 }
 
 static void R_VRIKSolveLeg (const md5liveinfo_t *live, float *palette,

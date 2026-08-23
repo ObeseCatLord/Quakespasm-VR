@@ -8,6 +8,9 @@ int host_framecount;
 static qmodel_t *fixture_model;
 static md5liveinfo_t fixture_live;
 
+qboolean R_VRIKBuildMirroredLegPolesForTest (const md5liveinfo_t *live,
+	const float *palette, vec3_t poles[2]);
+
 void Sys_Error (const char *error, ...)
 {
 	(void)error;
@@ -193,15 +196,27 @@ static void TestMirroredPairedLegPoles (void)
 	md5livejoint_t joints[7];
 	aliashdr_t surface;
 	float palette[7 * 12], legacy_palette[7 * 12];
+	vec3_t poles[2];
 	r_vrik_lowerbody_model_targets_t targets;
 
 	BuildTwoLegs (&live, joints, palette, &surface);
-	/* Both animated knees are initially biased toward +lateral.  Pair mode
-	 * must turn that into equal/opposite poles for symmetric roots/targets. */
+	/* The left knee is inward and the right knee mirrors it inward.  Pair mode
+	 * must turn that into equal/opposite outward poles for symmetric targets. */
 	IdentityAt (palette + 2 * 12, 0, -0.5f, -0.8660254f);
 	IdentityAt (palette + 3 * 12, 0, -0.5f, -1.8660254f);
-	IdentityAt (palette + 5 * 12, 0, 1.5f, -0.8660254f);
-	IdentityAt (palette + 6 * 12, 0, 1.5f, -1.8660254f);
+	IdentityAt (palette + 5 * 12, 0, 0.5f, -0.8660254f);
+	IdentityAt (palette + 6 * 12, 0, 0.5f, -1.8660254f);
+	assert (R_VRIKBuildMirroredLegPolesForTest (&live, palette, poles));
+	/* lateral is +Y: left/right paired poles must be strictly outward. */
+	assert (poles[0][1] < 0.0f);
+	assert (poles[1][1] > 0.0f);
+	/* Reflecting only the inward lateral component retains the authored
+	 * front/back bend: both poles keep -Z while their Y sides mirror. */
+	assert (fabsf (poles[0][0]) < 0.001f && fabsf (poles[1][0]) < 0.001f);
+	assert (fabsf (poles[0][1] + 0.5f) < 0.001f &&
+		fabsf (poles[1][1] - 0.5f) < 0.001f);
+	assert (fabsf (poles[0][2] + 0.8660254f) < 0.001f &&
+		fabsf (poles[1][2] + 0.8660254f) < 0.001f);
 	memcpy (legacy_palette, palette, sizeof(palette));
 	memset (&targets, 0, sizeof(targets));
 	targets.usable_mask = R_VRIK_LOWER_BIT (R_VRIK_LOWER_LEFT_FOOT) |
@@ -219,6 +234,7 @@ static void TestMirroredPairedLegPoles (void)
 	AssertFinitePalette (palette, 7);
 	assert (DistanceTo (palette + 3 * 12, 0.6f, -1.0f, -1.5f) < 0.01f);
 	assert (DistanceTo (palette + 6 * 12, 0.6f, 1.0f, -1.5f) < 0.01f);
+	/* The strict outward poles must not move either supplied foot. */
 	assert (fabsf (palette[2 * 12 + 3] - palette[5 * 12 + 3]) < 0.01f);
 	assert (fabsf (palette[2 * 12 + 7] + palette[5 * 12 + 7]) < 0.01f);
 	assert (fabsf (palette[2 * 12 + 11] - palette[5 * 12 + 11]) < 0.01f);
@@ -228,11 +244,56 @@ static void TestMirroredPairedLegPoles (void)
 	BuildTwoLegs (&live, joints, palette, &surface);
 	IdentityAt (palette + 2 * 12, 0, -0.5f, -0.8660254f);
 	IdentityAt (palette + 3 * 12, 0, -0.5f, -1.8660254f);
-	IdentityAt (palette + 5 * 12, 0, 1.5f, -0.8660254f);
-	IdentityAt (palette + 6 * 12, 0, 1.5f, -1.8660254f);
+	IdentityAt (palette + 5 * 12, 0, 0.5f, -0.8660254f);
+	IdentityAt (palette + 6 * 12, 0, 0.5f, -1.8660254f);
 	assert (R_VRIKApplyLowerBodyWithPolePolicy (&live, palette, &targets,
 		R_VRIK_LOWERBODY_POLES_ANIMATED));
 	assert (!memcmp (legacy_palette, palette, sizeof(palette)));
+}
+
+static void TestMirroredPoleZeroLateralTie (void)
+{
+	md5liveinfo_t live;
+	md5livejoint_t joints[7];
+	aliashdr_t surface;
+	float palette[7 * 12], before[7 * 12];
+	vec3_t poles[2];
+	r_vrik_lowerbody_model_targets_t targets;
+
+	BuildTwoLegs (&live, joints, palette, &surface);
+	/* Both knees lie exactly in the sagittal plane of their roots.  The shared
+	 * pole must use the deterministic outward tie bias rather than choosing a
+	 * hemisphere from floating-point noise. */
+	IdentityAt (palette + 2 * 12, 0, -1, -1);
+	IdentityAt (palette + 3 * 12, 0, -1, -2);
+	IdentityAt (palette + 5 * 12, 0, 1, -1);
+	IdentityAt (palette + 6 * 12, 0, 1, -2);
+	memcpy (before, palette, sizeof (before));
+	assert (R_VRIKBuildMirroredLegPolesForTest (&live, palette, poles));
+	assert (isfinite (poles[0][0]) && isfinite (poles[0][1]) &&
+		isfinite (poles[0][2]) && isfinite (poles[1][0]) &&
+		isfinite (poles[1][1]) && isfinite (poles[1][2]));
+	assert (poles[0][1] < -0.009f && poles[1][1] > 0.009f);
+	assert (fabsf (poles[0][0] - poles[1][0]) < 0.0001f &&
+		fabsf (poles[0][1] + poles[1][1]) < 0.0001f &&
+		fabsf (poles[0][2] - poles[1][2]) < 0.0001f);
+	assert (!memcmp (before, palette, sizeof (before)));
+	memset (&targets, 0, sizeof (targets));
+	targets.usable_mask = R_VRIK_LOWER_BIT (R_VRIK_LOWER_LEFT_FOOT) |
+		R_VRIK_LOWER_BIT (R_VRIK_LOWER_RIGHT_FOOT);
+	targets.confidence[R_VRIK_LOWER_LEFT_FOOT] = 1.0f;
+	targets.confidence[R_VRIK_LOWER_RIGHT_FOOT] = 1.0f;
+	targets.position[R_VRIK_LOWER_LEFT_FOOT][0] = 0.6f;
+	targets.position[R_VRIK_LOWER_LEFT_FOOT][1] = -1.0f;
+	targets.position[R_VRIK_LOWER_LEFT_FOOT][2] = -1.5f;
+	targets.position[R_VRIK_LOWER_RIGHT_FOOT][0] = 0.6f;
+	targets.position[R_VRIK_LOWER_RIGHT_FOOT][1] = 1.0f;
+	targets.position[R_VRIK_LOWER_RIGHT_FOOT][2] = -1.5f;
+	assert (R_VRIKApplyLowerBodyWithPolePolicy (&live, palette, &targets,
+		R_VRIK_LOWERBODY_POLES_MIRRORED_PAIR));
+	AssertFinitePalette (palette, 7);
+	assert (DistanceTo (palette + 3 * 12, 0.6f, -1.0f, -1.5f) < 0.01f);
+	assert (DistanceTo (palette + 6 * 12, 0.6f, 1.0f, -1.5f) < 0.01f);
 }
 
 static void TestPairedLegTargetsAndDegeneracy (void)
@@ -390,6 +451,8 @@ int main (void)
 	TestCrossLegIsolation ();
 	R_VRIKResetSkinCaches ();
 	TestMirroredPairedLegPoles ();
+	R_VRIKResetSkinCaches ();
+	TestMirroredPoleZeroLateralTie ();
 	R_VRIKResetSkinCaches ();
 	TestPairedLegTargetsAndDegeneracy ();
 	TestCalibrationProjection ();

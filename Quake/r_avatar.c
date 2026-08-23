@@ -61,7 +61,7 @@ static const r_avatar_profile_t r_avatar_profiles[PLAYER_AVATAR_COUNT] = {
 			A("RearHigh_R"), A("RearMid_R"), A("RearFoot_R"), N, N, N, N },
 		R_AVATAR_BASIS_FEET_UP_HEAD_FORWARD,
 		{ "RearFoot_L", "RearFoot_R", NULL, NULL }, true, 1.0f, 0.35f, false,
-		R_AVATAR_POSTURE_UPRIGHT, MD5_VRIK_SPINE1, { 0.0f, 1.0f, 0.0f }, true, 0.0f, true
+		R_AVATAR_POSTURE_UPRIGHT, { 0.0f, 1.0f, 0.0f }, true, 0.0f, true
 	},
 	[PLAYER_AVATAR_OGRE] = {
 		PLAYER_AVATAR_OGRE, "ogre", "progs/ogre.md5mesh",
@@ -111,7 +111,7 @@ static const r_avatar_profile_t r_avatar_profiles[PLAYER_AVATAR_COUNT] = {
 			A("lower_leg_R"), A("hoof_R"), N, N, N, N },
 		R_AVATAR_BASIS_FEET_UP_HEAD_FORWARD,
 		{ "hoof_L", "hoof_R", NULL, NULL }, true, 1.0f, 0.35f, false,
-		R_AVATAR_POSTURE_UPRIGHT, MD5_VRIK_SPINE2, { 0.0f, 1.0f, 0.0f }, true, 0.0f, true
+		R_AVATAR_POSTURE_UPRIGHT, { 0.0f, 1.0f, 0.0f }, true, 0.0f, true
 	},
 	[PLAYER_AVATAR_SHAMBLER] = {
 		PLAYER_AVATAR_SHAMBLER, "shambler", "progs/shambler.md5mesh",
@@ -124,7 +124,7 @@ static const r_avatar_profile_t r_avatar_profiles[PLAYER_AVATAR_COUNT] = {
 			A("upper_leg_L"), A("lower_leg_L"), A("foot_L"), A("upper_leg_R"),
 			A("lower_leg_R"), A("foot_R"), N, N, N, N },
 		R_AVATAR_BASIS_HUMANOID, { NULL, NULL, NULL, NULL }, false, 0.136f, 0.223f, false,
-		R_AVATAR_POSTURE_AUTHORED, 0, { 0.0f, 0.0f, 0.0f }, false, 0.965f, false
+		R_AVATAR_POSTURE_AUTHORED, { 0.0f, 0.0f, 0.0f }, false, 0.965f, false
 	},
 	[PLAYER_AVATAR_ZOMBIE] = {
 		PLAYER_AVATAR_ZOMBIE, "zombie", "progs/zombie.md5mesh",
@@ -406,6 +406,15 @@ qboolean R_AvatarBuildPresentationContext (const r_avatar_rig_t *source,
 	R_AvatarMultiply(sourcebasis, targetinverse, out->rotation);
 	out->scale = R_AvatarQuantizedDisplayScale(target->profile);
 	if (out->scale <= 0.0f || !R_AvatarOrthonormal(out->rotation)) return false;
+	/* Humanoid sourcebasis columns are vertical, left, facing.  Preserve the
+	 * actual source axes for target-only posture work; Ranger's authored
+	 * facing is not necessarily raw model +X. */
+	out->source_semantic_vertical[0] = sourcebasis[0];
+	out->source_semantic_vertical[1] = sourcebasis[4];
+	out->source_semantic_vertical[2] = sourcebasis[8];
+	out->source_semantic_facing[0] = sourcebasis[2];
+	out->source_semantic_facing[1] = sourcebasis[6];
+	out->source_semantic_facing[2] = sourcebasis[10];
 	memcpy(out->forward, out->rotation, sizeof(out->forward));
 	for (r = 0; r < 3; ++r) for (c = 0; c < 3; ++c)
 		out->forward[r * 4 + c] *= out->scale;
