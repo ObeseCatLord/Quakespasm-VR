@@ -32,6 +32,14 @@ static void IdentityAt (float matrix[12], float x, float y, float z)
 	matrix[11] = z;
 }
 
+static void RotateYAt (float matrix[12], float x, float y, float z)
+{
+	IdentityAt (matrix, x, y, z);
+	matrix[0] = matrix[10] = 0.0f;
+	matrix[2] = 1.0f;
+	matrix[8] = -1.0f;
+}
+
 static void BuildLeg (md5liveinfo_t *live, md5livejoint_t joints[4],
 	float palette[4 * 12], aliashdr_t *surface)
 {
@@ -179,6 +187,105 @@ static void TestCrossLegIsolation (void)
 	assert (!memcmp (right_before, palette + 4 * 12, sizeof(right_before)));
 }
 
+static void TestMirroredPairedLegPoles (void)
+{
+	md5liveinfo_t live;
+	md5livejoint_t joints[7];
+	aliashdr_t surface;
+	float palette[7 * 12], legacy_palette[7 * 12];
+	r_vrik_lowerbody_model_targets_t targets;
+
+	BuildTwoLegs (&live, joints, palette, &surface);
+	/* Both animated knees are initially biased toward +lateral.  Pair mode
+	 * must turn that into equal/opposite poles for symmetric roots/targets. */
+	IdentityAt (palette + 2 * 12, 0, -0.5f, -0.8660254f);
+	IdentityAt (palette + 3 * 12, 0, -0.5f, -1.8660254f);
+	IdentityAt (palette + 5 * 12, 0, 1.5f, -0.8660254f);
+	IdentityAt (palette + 6 * 12, 0, 1.5f, -1.8660254f);
+	memcpy (legacy_palette, palette, sizeof(palette));
+	memset (&targets, 0, sizeof(targets));
+	targets.usable_mask = R_VRIK_LOWER_BIT (R_VRIK_LOWER_LEFT_FOOT) |
+		R_VRIK_LOWER_BIT (R_VRIK_LOWER_RIGHT_FOOT);
+	targets.confidence[R_VRIK_LOWER_LEFT_FOOT] = 1.0f;
+	targets.confidence[R_VRIK_LOWER_RIGHT_FOOT] = 1.0f;
+	targets.position[R_VRIK_LOWER_LEFT_FOOT][0] = 0.6f;
+	targets.position[R_VRIK_LOWER_LEFT_FOOT][1] = -1.0f;
+	targets.position[R_VRIK_LOWER_LEFT_FOOT][2] = -1.5f;
+	targets.position[R_VRIK_LOWER_RIGHT_FOOT][0] = 0.6f;
+	targets.position[R_VRIK_LOWER_RIGHT_FOOT][1] = 1.0f;
+	targets.position[R_VRIK_LOWER_RIGHT_FOOT][2] = -1.5f;
+	assert (R_VRIKApplyLowerBodyWithPolePolicy (&live, palette, &targets,
+		R_VRIK_LOWERBODY_POLES_MIRRORED_PAIR));
+	AssertFinitePalette (palette, 7);
+	assert (DistanceTo (palette + 3 * 12, 0.6f, -1.0f, -1.5f) < 0.01f);
+	assert (DistanceTo (palette + 6 * 12, 0.6f, 1.0f, -1.5f) < 0.01f);
+	assert (fabsf (palette[2 * 12 + 3] - palette[5 * 12 + 3]) < 0.01f);
+	assert (fabsf (palette[2 * 12 + 7] + palette[5 * 12 + 7]) < 0.01f);
+	assert (fabsf (palette[2 * 12 + 11] - palette[5 * 12 + 11]) < 0.01f);
+
+	/* The explicit animated policy is exactly the legacy wrapper. */
+	assert (R_VRIKApplyLowerBody (&live, legacy_palette, &targets));
+	BuildTwoLegs (&live, joints, palette, &surface);
+	IdentityAt (palette + 2 * 12, 0, -0.5f, -0.8660254f);
+	IdentityAt (palette + 3 * 12, 0, -0.5f, -1.8660254f);
+	IdentityAt (palette + 5 * 12, 0, 1.5f, -0.8660254f);
+	IdentityAt (palette + 6 * 12, 0, 1.5f, -1.8660254f);
+	assert (R_VRIKApplyLowerBodyWithPolePolicy (&live, palette, &targets,
+		R_VRIK_LOWERBODY_POLES_ANIMATED));
+	assert (!memcmp (legacy_palette, palette, sizeof(palette)));
+}
+
+static void TestPairedLegTargetsAndDegeneracy (void)
+{
+	md5liveinfo_t live;
+	md5livejoint_t joints[7];
+	aliashdr_t surface;
+	float palette[7 * 12];
+	r_vrik_lowerbody_model_targets_t targets;
+
+	BuildTwoLegs (&live, joints, palette, &surface);
+	memset (&targets, 0, sizeof(targets));
+	targets.usable_mask = R_VRIK_LOWER_BIT (R_VRIK_LOWER_LEFT_FOOT) |
+		R_VRIK_LOWER_BIT (R_VRIK_LOWER_RIGHT_FOOT);
+	targets.orientation_mask = targets.usable_mask;
+	targets.confidence[R_VRIK_LOWER_LEFT_FOOT] = 1.0f;
+	targets.confidence[R_VRIK_LOWER_RIGHT_FOOT] = 1.0f;
+	targets.position[R_VRIK_LOWER_LEFT_FOOT][0] = 0.65f;
+	targets.position[R_VRIK_LOWER_LEFT_FOOT][1] = -0.75f;
+	targets.position[R_VRIK_LOWER_LEFT_FOOT][2] = -1.4f;
+	targets.position[R_VRIK_LOWER_RIGHT_FOOT][0] = -0.35f;
+	targets.position[R_VRIK_LOWER_RIGHT_FOOT][1] = 1.3f;
+	targets.position[R_VRIK_LOWER_RIGHT_FOOT][2] = -1.55f;
+	RotateYAt (targets.orientation[R_VRIK_LOWER_LEFT_FOOT], 0, 0, 0);
+	IdentityAt (targets.orientation[R_VRIK_LOWER_RIGHT_FOOT], 0, 0, 0);
+	assert (R_VRIKApplyLowerBodyWithPolePolicy (&live, palette, &targets,
+		R_VRIK_LOWERBODY_POLES_MIRRORED_PAIR));
+	assert (DistanceTo (palette + 3 * 12, 0.65f, -0.75f, -1.4f) < 0.01f);
+	assert (DistanceTo (palette + 6 * 12, -0.35f, 1.3f, -1.55f) < 0.01f);
+	assert (fabsf (palette[3 * 12] - 0.0f) < 0.01f);
+	assert (fabsf (palette[3 * 12 + 2] - 1.0f) < 0.01f);
+	assert (fabsf (palette[3 * 12 + 8] + 1.0f) < 0.01f);
+	assert (fabsf (palette[3 * 12 + 10] - 0.0f) < 0.01f);
+
+	/* Both collapsed legs and foot-at-hip targets must choose finite, stable
+	 * pair fallbacks rather than leaking a singularity into the palette. */
+	BuildTwoLegs (&live, joints, palette, &surface);
+	IdentityAt (palette + 2 * 12, 0, -1, 0);
+	IdentityAt (palette + 3 * 12, 0, -1, -1);
+	IdentityAt (palette + 5 * 12, 0, 1, 0);
+	IdentityAt (palette + 6 * 12, 0, 1, -1);
+	memset (&targets, 0, sizeof(targets));
+	targets.usable_mask = R_VRIK_LOWER_BIT (R_VRIK_LOWER_LEFT_FOOT) |
+		R_VRIK_LOWER_BIT (R_VRIK_LOWER_RIGHT_FOOT);
+	targets.confidence[R_VRIK_LOWER_LEFT_FOOT] = 1.0f;
+	targets.confidence[R_VRIK_LOWER_RIGHT_FOOT] = 1.0f;
+	targets.position[R_VRIK_LOWER_LEFT_FOOT][1] = -1.0f;
+	targets.position[R_VRIK_LOWER_RIGHT_FOOT][1] = 1.0f;
+	assert (R_VRIKApplyLowerBodyWithPolePolicy (&live, palette, &targets,
+		R_VRIK_LOWERBODY_POLES_MIRRORED_PAIR));
+	AssertFinitePalette (palette, 7);
+}
+
 static void TestCalibrationProjection (void)
 {
 	qmodel_t model;
@@ -281,6 +388,10 @@ int main (void)
 	TestLegSingularities ();
 	R_VRIKResetSkinCaches ();
 	TestCrossLegIsolation ();
+	R_VRIKResetSkinCaches ();
+	TestMirroredPairedLegPoles ();
+	R_VRIKResetSkinCaches ();
+	TestPairedLegTargetsAndDegeneracy ();
 	TestCalibrationProjection ();
 	return 0;
 }

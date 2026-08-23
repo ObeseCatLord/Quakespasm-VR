@@ -35,8 +35,22 @@ qboolean R_VRIKApplyBindFloorCorrectionForTest (const md5liveinfo_t *canonical,
 	int canonicalexclude1, int canonicalexclude2, const md5liveinfo_t *target,
 	const md5livesurface_t *targetsurface, const float *targetbind,
 	const unsigned short *targetindexes, int targetnumindexes,
+	const r_avatar_profile_t *profile,
 	r_avatar_presentation_context_t *presentation, float *sourcefloor,
 	float *targetfloor);
+qboolean R_VRIKAvatarRefinesUpperEndpointsForTest (qboolean tracked,
+	const r_avatar_profile_t *profile);
+qboolean R_VRIKAvatarRefinesSemanticForTest (qboolean tracked,
+	const r_avatar_profile_t *profile, int semantic);
+qboolean R_VRIKAnimalArmBasisForTest (vec3_t lateral, vec3_t forward,
+	vec3_t up);
+qboolean R_VRIKAvatarMapLowerTargetForTest (
+	r_vrik_lowerbody_model_targets_t *targets);
+int R_VRIKAvatarLowerPolePolicyForTest (const r_avatar_profile_t *profile);
+unsigned char R_VRIKVoreBaseFootMaskForTest (unsigned char supplied_mask,
+	unsigned char *overlay_mask);
+void R_VRIKProfileArmPoleForTest (qboolean rightside, float outward,
+	float back, vec3_t pole);
 
 static void SetTarget (vrik_codec_pose_t *pose, int target, float x)
 {
@@ -162,6 +176,64 @@ int main (void)
 	assert (!R_VRIKShouldApplyPoseForTest (false, true));
 	assert (R_VRIKShouldApplyPoseForTest (true, true));
 	{
+		r_avatar_profile_t profile;
+		vec3_t pole, lateral, forward, up;
+		r_vrik_lowerbody_model_targets_t targets;
+		unsigned char overlay;
+
+		memset (&profile, 0, sizeof (profile));
+		assert (!R_VRIKAvatarRefinesUpperEndpointsForTest (false, &profile));
+		assert (R_VRIKAvatarRefinesUpperEndpointsForTest (true, &profile));
+		profile.desktop_refine = true;
+		assert (R_VRIKAvatarRefinesUpperEndpointsForTest (false, &profile));
+		assert (!R_VRIKAvatarRefinesSemanticForTest (false, &profile,
+			MD5_VRIK_HEAD));
+		assert (R_VRIKAvatarRefinesSemanticForTest (false, &profile,
+			MD5_VRIK_HAND_L));
+		assert (R_VRIKAvatarRefinesSemanticForTest (true, &profile,
+			MD5_VRIK_HEAD));
+		R_VRIKProfileArmPoleForTest (true, 1.0f, 0.0f, pole);
+		assert (fabsf (pole[0] - 1.0f) < 0.001f && fabsf (pole[1]) < 0.001f);
+		R_VRIKProfileArmPoleForTest (false, 1.0f, 0.35f, pole);
+		assert (fabsf (pole[0] + 1.0f) < 0.001f &&
+			fabsf (pole[1] + 0.35f) < 0.001f);
+		assert (R_VRIKAvatarLowerPolePolicyForTest (&profile) ==
+			R_VRIK_LOWERBODY_POLES_ANIMATED);
+		profile.mirror_outer_leg_poles = true;
+		assert (R_VRIKAvatarLowerPolePolicyForTest (&profile) ==
+			R_VRIK_LOWERBODY_POLES_MIRRORED_PAIR);
+		assert (R_VRIKVoreBaseFootMaskForTest (0, &overlay) ==
+			(R_VRIK_LOWER_BIT (R_VRIK_LOWER_LEFT_FOOT) |
+			R_VRIK_LOWER_BIT (R_VRIK_LOWER_RIGHT_FOOT)));
+		assert (overlay == 0);
+		assert (R_VRIKVoreBaseFootMaskForTest (
+			R_VRIK_LOWER_BIT (R_VRIK_LOWER_LEFT_FOOT), &overlay) ==
+			(R_VRIK_LOWER_BIT (R_VRIK_LOWER_LEFT_FOOT) |
+			R_VRIK_LOWER_BIT (R_VRIK_LOWER_RIGHT_FOOT)));
+		assert (overlay == R_VRIK_LOWER_BIT (R_VRIK_LOWER_LEFT_FOOT));
+		assert (R_VRIKVoreBaseFootMaskForTest (
+			R_VRIK_LOWER_BIT (R_VRIK_LOWER_LEFT_FOOT) |
+			R_VRIK_LOWER_BIT (R_VRIK_LOWER_RIGHT_FOOT), &overlay) ==
+			(R_VRIK_LOWER_BIT (R_VRIK_LOWER_LEFT_FOOT) |
+			R_VRIK_LOWER_BIT (R_VRIK_LOWER_RIGHT_FOOT)));
+		assert (overlay == (R_VRIK_LOWER_BIT (R_VRIK_LOWER_LEFT_FOOT) |
+			R_VRIK_LOWER_BIT (R_VRIK_LOWER_RIGHT_FOOT)));
+		assert (R_VRIKAnimalArmBasisForTest (lateral, forward, up));
+		assert (fabsf (lateral[0] - 1.0f) < 0.001f &&
+			fabsf (forward[1] - 1.0f) < 0.001f &&
+			fabsf (up[2] - 1.0f) < 0.001f);
+		memset (&targets, 0, sizeof (targets));
+		assert (R_VRIKAvatarMapLowerTargetForTest (&targets));
+		assert ((targets.usable_mask & R_VRIK_LOWER_BIT (R_VRIK_LOWER_LEFT_FOOT)) &&
+			(targets.orientation_mask & R_VRIK_LOWER_BIT (R_VRIK_LOWER_LEFT_FOOT)));
+		assert (fabsf (targets.position[R_VRIK_LOWER_LEFT_FOOT][0] - 3.0f) < 0.001f &&
+			fabsf (targets.position[R_VRIK_LOWER_LEFT_FOOT][1] + 2.0f) < 0.001f &&
+			fabsf (targets.position[R_VRIK_LOWER_LEFT_FOOT][2] - 5.0f) < 0.001f);
+		assert (fabsf (targets.orientation[R_VRIK_LOWER_LEFT_FOOT][0] + 1.0f) < 0.001f &&
+			fabsf (targets.orientation[R_VRIK_LOWER_LEFT_FOOT][5] + 1.0f) < 0.001f &&
+			fabsf (targets.orientation[R_VRIK_LOWER_LEFT_FOOT][10] - 1.0f) < 0.001f);
+	}
+	{
 		r_avatar_presentation_context_t context;
 		float sourcehand[12] = {1, 0, 0, 4, 0, 1, 0, 5, 0, 0, 1, 6};
 		float sourcebind[12] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0};
@@ -278,7 +350,7 @@ int main (void)
 		target.boneposes = animation_a;
 		assert (R_VRIKApplyBindFloorCorrectionForTest (&canonical, &canonicalsurface,
 			canonicalbind, 1, -1, &target, &targetsurface, targetbind,
-			cache.body_indexes, cache.body_numindexes, &corrected, &sourcefloor,
+			cache.body_indexes, cache.body_numindexes, &profile, &corrected, &sourcefloor,
 			&targetfloor));
 		/* The Sword triangle at z=-100 is absent from both the body index stream
 		 * and the floor calculation; c makes the body floor -1 before correction. */
@@ -290,12 +362,90 @@ int main (void)
 		target.boneposes = animation_b;
 		assert (R_VRIKApplyBindFloorCorrectionForTest (&canonical, &canonicalsurface,
 			canonicalbind, 1, -1, &target, &targetsurface, targetbind,
-			cache.body_indexes, cache.body_numindexes, &repeated, &repeatedsource,
+			cache.body_indexes, cache.body_numindexes, &profile, &repeated, &repeatedsource,
 			&repeatedtarget));
 		assert (fabsf (repeatedsource - sourcefloor) < 0.001f &&
 			fabsf (repeatedtarget - targetfloor) < 0.001f &&
 			fabsf (repeated.forward[11] - corrected.forward[11]) < 0.001f);
 		free (cache.body_indexes);
+	}
+	{
+		/* Declared contacts must ignore a much lower tail triangle and accept
+		 * foot seam vertices through cumulative descendant-root weight. */
+		md5liveinfo_t canonical, target;
+		md5livejoint_t canonicaljoints[4], targetjoints[4];
+		md5livevertex_t canonicalvertices[6], targetvertices[6];
+		md5liveweight_t canonicalweights[6], targetweights[6];
+		unsigned short indexes[] = {0, 1, 2, 3, 4, 5};
+		md5livesurface_t canonicalsurface, targetsurface;
+		r_avatar_profile_t profile;
+		r_avatar_presentation_context_t presentation;
+		float canonicalbind[4 * 12], targetbind[4 * 12];
+		float sourcefloor, targetfloor;
+		int joint, vertex;
+
+		memset (&canonical, 0, sizeof (canonical));
+		memset (&target, 0, sizeof (target));
+		memset (canonicaljoints, 0, sizeof (canonicaljoints));
+		memset (targetjoints, 0, sizeof (targetjoints));
+		memset (canonicalvertices, 0, sizeof (canonicalvertices));
+		memset (targetvertices, 0, sizeof (targetvertices));
+		memset (canonicalweights, 0, sizeof (canonicalweights));
+		memset (targetweights, 0, sizeof (targetweights));
+		memset (&canonicalsurface, 0, sizeof (canonicalsurface));
+		memset (&targetsurface, 0, sizeof (targetsurface));
+		memset (&profile, 0, sizeof (profile));
+		memset (&presentation, 0, sizeof (presentation));
+		memset (canonicalbind, 0, sizeof (canonicalbind));
+		memset (targetbind, 0, sizeof (targetbind));
+		for (joint = 0; joint < 4; joint++)
+		{
+			canonicalbind[joint * 12] = canonicalbind[joint * 12 + 5] =
+				canonicalbind[joint * 12 + 10] = 1.0f;
+			targetbind[joint * 12] = targetbind[joint * 12 + 5] =
+				targetbind[joint * 12 + 10] = 1.0f;
+			canonicaljoints[joint].parent = targetjoints[joint].parent =
+				joint ? 0 : -1;
+		}
+		strcpy (targetjoints[1].name, "target_foot_l");
+		strcpy (targetjoints[2].name, "target_foot_r");
+		canonical.joints = canonicaljoints; canonical.numbones = 4;
+		target.joints = targetjoints; target.numbones = 4;
+		canonical.jointindex[MD5_VRIK_FOOT_L] = 1;
+		canonical.jointindex[MD5_VRIK_FOOT_R] = 2;
+		for (vertex = 0; vertex < 6; vertex++)
+		{
+			canonicalvertices[vertex].firstweight = targetvertices[vertex].firstweight = vertex;
+			canonicalvertices[vertex].numweights = targetvertices[vertex].numweights = 1;
+			canonicalweights[vertex].joint = targetweights[vertex].joint =
+				vertex < 3 ? 1 + (vertex & 1) : 3;
+			canonicalweights[vertex].position[3] = targetweights[vertex].position[3] = 1.0f;
+			canonicalweights[vertex].position[2] = vertex < 3 ? -2.0f : -100.0f;
+			targetweights[vertex].position[2] = vertex < 3 ? -4.0f : -100.0f;
+		}
+		canonicalsurface.vertices = canonicalvertices;
+		canonicalsurface.weights = canonicalweights;
+		canonicalsurface.indexes = indexes;
+		canonicalsurface.numverts = 6; canonicalsurface.numindexes = 6;
+		targetsurface.vertices = targetvertices;
+		targetsurface.weights = targetweights;
+		targetsurface.indexes = indexes;
+		targetsurface.numverts = 6; targetsurface.numindexes = 6;
+		presentation.scale = 1.0f;
+		presentation.rotation[0] = presentation.rotation[5] = presentation.rotation[10] = 1.0f;
+		presentation.forward[0] = presentation.forward[5] = presentation.forward[10] = 1.0f;
+		profile.contact_root[0] = "target_foot_l";
+		profile.contact_root[1] = "target_foot_r";
+		assert (R_VRIKApplyBindFloorCorrectionForTest (&canonical,
+			&canonicalsurface, canonicalbind, -1, -1, &target, &targetsurface,
+			targetbind, indexes, 6, &profile, &presentation, &sourcefloor,
+			&targetfloor));
+		assert (fabsf (sourcefloor + 2.0f) < 0.001f &&
+			fabsf (targetfloor + 4.0f) < 0.001f);
+		profile.contact_root[1] = "missing";
+		assert (!R_VRIKApplyBindFloorCorrectionForTest (&canonical,
+			&canonicalsurface, canonicalbind, -1, -1, &target, &targetsurface,
+			targetbind, indexes, 6, &profile, &presentation, NULL, NULL));
 	}
 	return 0;
 }

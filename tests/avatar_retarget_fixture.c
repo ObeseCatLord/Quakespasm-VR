@@ -183,6 +183,71 @@ static void test_dynamic_presentation_basis(void)
 	assert(fabsf(mappedhead[0]) < .01f && mappedhead[1] > 9.9f && fabsf(mappedhead[2]) < .01f);
 }
 
+static void test_profile_basis_policies(void)
+{
+	fixture_t humanoid, animal;
+	r_avatar_rig_t humanoidrig, animalrig;
+	const r_avatar_profile_t *dog, *fiend, *shambler, *vore;
+	float basis[12], headfromhip[3], forward[3], determinant;
+
+	/* This is the legacy humanoid construction: head-forward then shoulder-left.
+	 * Keep these exact axes while adding the explicitly opted-in animal path. */
+	ranger(&humanoid, 1);
+	origin(humanoid.joints[0].bind, 0, 0, 0);
+	origin(humanoid.joints[4].bind, 0, 10, 0);
+	origin(humanoid.joints[5].bind, 1, 5, 0);
+	origin(humanoid.joints[9].bind, -1, 5, 0);
+	assert(R_AvatarResolveRig(R_AvatarProfileForId(PLAYER_AVATAR_RANGER),
+		&humanoid.live, &humanoidrig));
+	assert(R_AvatarCanonicalToTargetBasis(&humanoidrig, basis));
+	assert(fabsf(basis[0]) < .001f && fabsf(basis[4] - 1.0f) < .001f &&
+		fabsf(basis[8]) < .001f);
+	assert(fabsf(basis[1] - 1.0f) < .001f && fabsf(basis[5]) < .001f &&
+		fabsf(basis[9]) < .001f);
+	assert(fabsf(basis[2]) < .001f && fabsf(basis[6]) < .001f &&
+		fabsf(basis[10] + 1.0f) < .001f);
+
+	dog = R_AvatarProfileForId(PLAYER_AVATAR_DOG);
+	assert(dog->basis_policy == R_AVATAR_BASIS_FEET_UP_HEAD_FORWARD);
+	assert(!strcmp(dog->joint[MD5_VRIK_FOOT_L].name, "RearFoot_L"));
+	assert(!strcmp(dog->joint[MD5_VRIK_FOOT_R].name, "RearFoot_R"));
+	assert(!strcmp(dog->contact_root[0], "RearFoot_L"));
+	assert(!strcmp(dog->contact_root[1], "RearFoot_R") && !dog->contact_root[2]);
+	assert(dog->desktop_refine && dog->arm_pole_outward == 1.0f &&
+		dog->arm_pole_back == 0.35f && !dog->mirror_outer_leg_poles);
+	fiend = R_AvatarProfileForId(PLAYER_AVATAR_FIEND);
+	assert(fiend->basis_policy == R_AVATAR_BASIS_FEET_UP_HEAD_FORWARD);
+	assert(!strcmp(fiend->contact_root[0], "hoof_L") &&
+		!strcmp(fiend->contact_root[1], "hoof_R") && fiend->desktop_refine);
+	shambler = R_AvatarProfileForId(PLAYER_AVATAR_SHAMBLER);
+	assert(shambler->desktop_refine && shambler->arm_pole_outward == 1.0f &&
+		shambler->arm_pole_back == 0.0f);
+	vore = R_AvatarProfileForId(PLAYER_AVATAR_VORE);
+	assert(vore->mirror_outer_leg_poles);
+
+	/* A synthetic quadruped makes its floor-to-hip direction the first column
+	 * and flips its left/forward columns together so the head stays forward. */
+	named_profile(&animal, dog);
+	origin(animal.joints[0].bind, 0, 0, 2);
+	origin(animal.joints[4].bind, 10, 0, 4);
+	origin(animal.joints[5].bind, 4, 2, 3);
+	origin(animal.joints[9].bind, 4, -2, 3);
+	origin(animal.joints[15].bind, -2, 2, 0);
+	origin(animal.joints[18].bind, -2, -2, 0);
+	assert(R_AvatarResolveRig(dog, &animal.live, &animalrig));
+	assert(R_AvatarCanonicalToTargetBasis(&animalrig, basis));
+	assert(basis[0] > .7f && basis[8] > .7f);
+	assert(basis[5] < -.99f && basis[2] > .7f && basis[10] < -.7f);
+	headfromhip[0] = 10; headfromhip[1] = 0; headfromhip[2] = 2;
+	forward[0] = basis[2]; forward[1] = basis[6]; forward[2] = basis[10];
+	assert(forward[0] * headfromhip[0] + forward[1] * headfromhip[1] +
+		forward[2] * headfromhip[2] > 0.0f);
+	determinant = basis[0] * (basis[5] * basis[10] - basis[6] * basis[9]) -
+		basis[1] * (basis[4] * basis[10] - basis[6] * basis[8]) +
+		basis[2] * (basis[4] * basis[9] - basis[5] * basis[8]);
+	assert(fabsf(determinant - 1.0f) < .001f);
+}
+
 static void test_ancestor_translation_applied_once(void)
 {
 	fixture_t source, target;
@@ -326,6 +391,6 @@ static void test_nonunit_presentation_roundtrips(void)
 
 int main(void)
 {
-	test_identity_and_locals(); test_rotation_and_basis(); test_dynamic_presentation_basis(); test_ancestor_translation_applied_once(); test_rejection_and_monsters(); test_all_profile_palettes_are_bounded(); test_absolute_global_transport(); test_nonunit_presentation_roundtrips();
+	test_identity_and_locals(); test_rotation_and_basis(); test_dynamic_presentation_basis(); test_profile_basis_policies(); test_ancestor_translation_applied_once(); test_rejection_and_monsters(); test_all_profile_palettes_are_bounded(); test_absolute_global_transport(); test_nonunit_presentation_roundtrips();
 	puts("avatar retarget fixture: ok"); return 0;
 }

@@ -20,6 +20,13 @@ typedef enum r_avatar_equipment_policy_e {
 	R_AVATAR_EQUIPMENT_ATTACH_HAND
 } r_avatar_equipment_policy_t;
 
+typedef enum r_avatar_basis_policy_e {
+	/* Preserve the original head-forward, shoulder-left humanoid basis. */
+	R_AVATAR_BASIS_HUMANOID = 0,
+	/* Use feet-to-hip as up and head-facing as the presentation forward axis. */
+	R_AVATAR_BASIS_FEET_UP_HEAD_FORWARD
+} r_avatar_basis_policy_t;
+
 #define R_AVATAR_CAP_HEAD             (1u << 0)
 #define R_AVATAR_CAP_ARMS             (1u << 1)
 #define R_AVATAR_CAP_LEGS             (1u << 2)
@@ -45,6 +52,13 @@ typedef struct r_avatar_profile_s {
 	r_avatar_equipment_policy_t equipment_policy;
 	const char *native_equipment_joint[4];
 	r_avatar_joint_map_t joint[MD5_VRIK_JOINT_COUNT];
+	r_avatar_basis_policy_t basis_policy;
+	/* Empty entries retain the legacy all-body floor contact behaviour. */
+	const char *contact_root[4];
+	qboolean desktop_refine;
+	float arm_pole_outward;
+	float arm_pole_back;
+	qboolean mirror_outer_leg_poles;
 } r_avatar_profile_t;
 
 /* Runtime resolution has no ownership of live data.  joint[] are the
