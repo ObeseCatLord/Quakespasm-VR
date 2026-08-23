@@ -76,7 +76,7 @@ $(BUILD_DIR)/vrik_lowerbody_fixture: vrik_lowerbody_fixture.c ../Quake/r_vrik.c 
 
 # r_alias is a complete renderer unit.  Section GC keeps this fixture linked
 # only to its test seam and the receive-to-render translation it covers.
-$(BUILD_DIR)/vrik_renderer_boundary_fixture: vrik_renderer_boundary_fixture.c ../Quake/r_alias.c ../Quake/mathlib.c | $(BUILD_DIR)
+$(BUILD_DIR)/vrik_renderer_boundary_fixture: vrik_renderer_boundary_fixture.c ../Quake/r_alias.c ../Quake/r_avatar.c ../Quake/mathlib.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -Wno-error=missing-field-initializers -Wno-error=unused-parameter -DR_ALIAS_LOWER_TARGETS_TEST -ffunction-sections -fdata-sections $(SANITIZE_FLAGS) $^ $(LDFLAGS) -Wl,--gc-sections $(SANITIZE_FLAGS) $(LDLIBS) -o $@
 
 $(BUILD_DIR)/avatar_retarget_fixture: avatar_retarget_fixture.c ../Quake/r_avatar.c | $(BUILD_DIR)
