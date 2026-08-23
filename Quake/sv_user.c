@@ -1115,8 +1115,10 @@ static qboolean SV_HandleAvatarCapability(const char *s)
 	if (host_client->avatar_capable)
 		return true;
 	host_client->avatar_capable = true;
-	if (host_client->spawned)
-		SV_SendAvatarTable(host_client);
+	/* Capability normally arrives during signon, before spawned is set. Queue
+	 * the full current table now; SV_FlushAvatarSlots keeps any entries that
+	 * do not fit in the reliable buffer for a later send. */
+	SV_SendAvatarTable(host_client);
 	Con_DPrintf("Avatar: client %s negotiated protocol %d\n", host_client->name,
 		PLAYER_AVATAR_PROTOCOL_VERSION);
 	return true;
