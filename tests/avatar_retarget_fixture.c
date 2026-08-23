@@ -245,10 +245,8 @@ static void test_profile_basis_policies(void)
 		shambler->arm_pole_back == 0.223f && shambler->arm_pole_up == 0.965f &&
 		shambler->posture_policy == R_AVATAR_POSTURE_AUTHORED &&
 		!shambler->preserve_hip_rotation &&
-		shambler->desktop_upperbody_bind_root == MD5_VRIK_SPINE2 &&
-		fabsf (shambler->desktop_weapon_support[0] + 4.55128f) < .00001f &&
-		fabsf (shambler->desktop_weapon_support[1] - 11.20621f) < .00001f &&
-		fabsf (shambler->desktop_weapon_support[2] + 17.71073f) < .00001f);
+		!shambler->desktop_weapon_socket && !shambler->desktop_upperbody_bind_root &&
+		shambler->desktop_support_hand);
 	vore = R_AvatarProfileForId(PLAYER_AVATAR_VORE);
 	assert(vore->mirror_outer_leg_poles && !vore->preserve_hip_rotation &&
 		vore->posture_policy == R_AVATAR_POSTURE_AUTHORED);

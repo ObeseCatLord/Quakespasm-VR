@@ -49,13 +49,16 @@ qboolean R_VRIKDesktopUpperBodyStabilizationForTest (void);
 qboolean R_VRIKAvatarUprightPostureFailureForTest (void);
 qboolean R_VRIKDesktopAnimalWeaponGripForTest (int avatar);
 qboolean R_VRIKDesktopWeaponGripRollbackForTest (void);
+qboolean R_VRIKDesktopRepairRollbackForTest (void);
+qboolean R_VRIKDesktopRollbackPropAttachmentForTest (void);
+qboolean R_VRIKInvalidateDerivedPropStateForTest (void);
+qboolean R_VRIKDesktopSupportHandForTest (qboolean shambler);
 qboolean R_VRIKAvatarMapLowerTargetForTest (
 	r_vrik_lowerbody_model_targets_t *targets);
 qboolean R_VRIKAvatarHipOverlayForTest (void);
 qboolean R_VRIKTrackedPreserveHipBranchesForTest (void);
+qboolean R_VRIKVoreOuterLegPolicyForTest (void);
 int R_VRIKAvatarLowerPolePolicyForTest (const r_avatar_profile_t *profile);
-unsigned char R_VRIKVoreBaseFootMaskForTest (unsigned char supplied_mask,
-	unsigned char *overlay_mask);
 void R_VRIKProfileArmPoleForTest (qboolean rightside, float outward,
 	float back, vec3_t pole);
 void R_VRIKProfileArmPoleWithUpForTest (qboolean rightside, float outward,
@@ -258,7 +261,6 @@ int main (void)
 		r_avatar_profile_t profile;
 		vec3_t pole, lateral, forward, up;
 		r_vrik_lowerbody_model_targets_t targets;
-		unsigned char overlay;
 
 		memset (&profile, 0, sizeof (profile));
 		assert (!R_VRIKAvatarRefinesUpperEndpointsForTest (false, &profile));
@@ -286,22 +288,6 @@ int main (void)
 		profile.mirror_outer_leg_poles = true;
 		assert (R_VRIKAvatarLowerPolePolicyForTest (&profile) ==
 			R_VRIK_LOWERBODY_POLES_MIRRORED_PAIR);
-		assert (R_VRIKVoreBaseFootMaskForTest (0, &overlay) ==
-			(R_VRIK_LOWER_BIT (R_VRIK_LOWER_LEFT_FOOT) |
-			R_VRIK_LOWER_BIT (R_VRIK_LOWER_RIGHT_FOOT)));
-		assert (overlay == 0);
-		assert (R_VRIKVoreBaseFootMaskForTest (
-			R_VRIK_LOWER_BIT (R_VRIK_LOWER_LEFT_FOOT), &overlay) ==
-			(R_VRIK_LOWER_BIT (R_VRIK_LOWER_LEFT_FOOT) |
-			R_VRIK_LOWER_BIT (R_VRIK_LOWER_RIGHT_FOOT)));
-		assert (overlay == R_VRIK_LOWER_BIT (R_VRIK_LOWER_LEFT_FOOT));
-		assert (R_VRIKVoreBaseFootMaskForTest (
-			R_VRIK_LOWER_BIT (R_VRIK_LOWER_LEFT_FOOT) |
-			R_VRIK_LOWER_BIT (R_VRIK_LOWER_RIGHT_FOOT), &overlay) ==
-			(R_VRIK_LOWER_BIT (R_VRIK_LOWER_LEFT_FOOT) |
-			R_VRIK_LOWER_BIT (R_VRIK_LOWER_RIGHT_FOOT)));
-		assert (overlay == (R_VRIK_LOWER_BIT (R_VRIK_LOWER_LEFT_FOOT) |
-			R_VRIK_LOWER_BIT (R_VRIK_LOWER_RIGHT_FOOT)));
 		assert (R_VRIKAnimalArmBasisForTest (lateral, forward, up));
 		assert (fabsf (lateral[0] - 1.0f) < 0.001f &&
 			fabsf (forward[1] - 1.0f) < 0.001f &&
@@ -324,6 +310,7 @@ int main (void)
 			fabsf (targets.orientation[R_VRIK_LOWER_HIP][5]) < 0.001f);
 		assert (R_VRIKAvatarHipOverlayForTest ());
 		assert (R_VRIKTrackedPreserveHipBranchesForTest ());
+		assert (R_VRIKVoreOuterLegPolicyForTest ());
 	}
 	assert (R_VRIKAvatarUprightPostureForTest (false));
 	assert (R_VRIKAvatarUprightPostureForTest (true));
@@ -333,13 +320,15 @@ int main (void)
 	assert (R_VRIKAnimalAuthoredPostureForTest (PLAYER_AVATAR_FIEND, true));
 	assert (R_VRIKDesktopWeaponSocketForTest (PLAYER_AVATAR_DOG, false));
 	assert (R_VRIKDesktopWeaponSocketForTest (PLAYER_AVATAR_FIEND, false));
-	assert (R_VRIKDesktopWeaponSocketForTest (PLAYER_AVATAR_SHAMBLER, false));
-	assert (R_VRIKDesktopWeaponSocketForTest (PLAYER_AVATAR_SHAMBLER, true));
 	assert (R_VRIKDesktopUpperBodyStabilizationForTest ());
 	assert (R_VRIKAvatarUprightPostureFailureForTest ());
 	assert (R_VRIKDesktopAnimalWeaponGripForTest (PLAYER_AVATAR_DOG));
 	assert (R_VRIKDesktopAnimalWeaponGripForTest (PLAYER_AVATAR_FIEND));
-	assert (R_VRIKDesktopWeaponGripRollbackForTest ());
+	assert (R_VRIKDesktopRepairRollbackForTest ());
+	assert (R_VRIKDesktopRollbackPropAttachmentForTest ());
+	assert (R_VRIKInvalidateDerivedPropStateForTest ());
+	assert (R_VRIKDesktopSupportHandForTest (false));
+	assert (R_VRIKDesktopSupportHandForTest (true));
 	assert (VoreHipPreservesUnmappedChildForTest ());
 	assert (R_VRIKShamblerDesktopArmRepairForTest ());
 	assert (R_VRIKAvatarUprightFootContactsForTest ());

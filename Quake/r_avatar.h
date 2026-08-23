@@ -90,6 +90,9 @@ typedef struct r_avatar_profile_s {
 	 * under the current Hip before posture/grip repair; a nonpositive value
 	 * disables it (preserving zero-initialized legacy profiles). */
 	int desktop_upperbody_bind_root;
+	/* Desktop-only offhand repair derived from the attached dominant-hand prop.
+	 * This deliberately has no world-space anchor. */
+	qboolean desktop_support_hand;
 } r_avatar_profile_t;
 
 /* Runtime resolution has no ownership of live data.  joint[] are the
