@@ -2409,10 +2409,17 @@ static void R_VRIKSetJointSubtreeTransform (const md5liveinfo_t *live,
 static qboolean R_VRIKBuildRotationToward (const vec3_t from,
 	const vec3_t to, float delta[12]);
 
+typedef enum r_vrik_actual_path_status_e
+{
+	R_VRIK_ACTUAL_PATH_FAILED,
+	R_VRIK_ACTUAL_PATH_REACHED,
+	R_VRIK_ACTUAL_PATH_CLAMPED
+} r_vrik_actual_path_status_t;
+
 /* The Dog forepaw and the animal FBT contacts have an authored intermediate
  * joint which semantic retargeting intentionally skips.  Solve their actual
  * parent chain rather than translating a leaf away from that joint. */
-static qboolean R_VRIKRefineActualPath (const md5liveinfo_t *live,
+static r_vrik_actual_path_status_t R_VRIKRefineActualPath (const md5liveinfo_t *live,
 	float *palette, int root, int endpoint, const vec3_t target,
 	const float endpointbasis[12])
 {
@@ -2420,11 +2427,11 @@ static qboolean R_VRIKRefineActualPath (const md5liveinfo_t *live,
 	vec3_t position[8], solved[8], direction, endpointtarget;
 	vec3_t seedside, relative, perpendicular, originaldirection, originalside;
 	float length[7], total = 0.0f, rootdistance, extension = 1.0f, intended[12];
-	qboolean collinear = false;
+	qboolean collinear = false, clamped = false;
 
 	if (!live || !palette || !target || !endpointbasis || root < 0 ||
 		endpoint < 0 || root >= live->numbones || endpoint >= live->numbones)
-		return false;
+		return R_VRIK_ACTUAL_PATH_FAILED;
 	memcpy (intended, endpointbasis, sizeof (intended));
 	for (i = endpoint; i >= 0 && count < (int)(sizeof (chain) / sizeof (chain[0]));
 		i = live->joints[i].parent)
@@ -2434,7 +2441,7 @@ static qboolean R_VRIKRefineActualPath (const md5liveinfo_t *live,
 			break;
 	}
 	if (count < 4 || chain[count - 1] != root)
-		return false;
+		return R_VRIK_ACTUAL_PATH_FAILED;
 	for (i = 0; i < count / 2; ++i)
 	{
 		int swap = chain[i]; chain[i] = chain[count - 1 - i];
@@ -2448,13 +2455,13 @@ static qboolean R_VRIKRefineActualPath (const md5liveinfo_t *live,
 		VectorSubtract (position[i + 1], position[i], direction);
 		length[i] = VectorLength (direction);
 		if (length[i] < 0.001f)
-			return false;
+			return R_VRIK_ACTUAL_PATH_FAILED;
 		total += length[i];
 	}
 	VectorSubtract (endpointtarget, position[0], direction);
 	rootdistance = VectorLength (direction);
 	if (!isfinite (rootdistance))
-		return false;
+		return R_VRIK_ACTUAL_PATH_FAILED;
 	/* An unreachable tracker point receives the same bounded extension policy
 	 * as the legacy two-bone solve.  Reachable paths retain every authored
 	 * segment length exactly; this explicit fallback never detaches the leaf. */
@@ -2463,8 +2470,11 @@ static qboolean R_VRIKRefineActualPath (const md5liveinfo_t *live,
 		extension = q_min (rootdistance / total, VRIK_ARM_MAX_STRETCH);
 		for (i = 0; i + 1 < count; ++i) length[i] *= extension;
 		total *= extension;
-		if (rootdistance > total + 0.001f)
+		/* Only this >1.10 case shortens the requested endpoint.  Reaching the
+		 * exact stretched bound is still an exact, REACHED contact. */
+		if (rootdistance > total)
 		{
+			clamped = true;
 			VectorScale (direction, total / rootdistance, direction);
 			VectorAdd (position[0], direction, endpointtarget);
 		}
@@ -2477,7 +2487,7 @@ static qboolean R_VRIKRefineActualPath (const md5liveinfo_t *live,
 	 * unique collinear chain directly, including bounded overreach. */
 	if (rootdistance >= total - 0.001f)
 	{
-		if (!VectorNormalize (direction)) return false;
+		if (!VectorNormalize (direction)) return R_VRIK_ACTUAL_PATH_FAILED;
 		collinear = true;
 		for (i = 1; i < count; ++i)
 			VectorMA (solved[i - 1], length[i - 1], direction, solved[i]);
@@ -2489,9 +2499,9 @@ static qboolean R_VRIKRefineActualPath (const md5liveinfo_t *live,
 		/* A straight authored chain and an on-line reachable target is a FABRIK
 		 * symmetry singularity: neither pass can choose a bend side.  Seed a
 		 * small, deterministic arch, preferring the authored bend plane. */
-		if (!VectorNormalize (direction)) return false;
+		if (!VectorNormalize (direction)) return R_VRIK_ACTUAL_PATH_FAILED;
 		VectorSubtract (position[count - 1], position[0], originaldirection);
-		if (!VectorNormalize (originaldirection)) return false;
+		if (!VectorNormalize (originaldirection)) return R_VRIK_ACTUAL_PATH_FAILED;
 		/* Choose the bend reference only in the original authored frame, then
 		 * parallel-transport it to the current target direction. */
 		for (i = 1; i + 1 < count; ++i)
@@ -2524,15 +2534,16 @@ static qboolean R_VRIKRefineActualPath (const md5liveinfo_t *live,
 				if (fabsf (DotProduct (perpendicular, originaldirection)) > .9f)
 					perpendicular[0] = 0, perpendicular[1] = 1, perpendicular[2] = 0;
 				CrossProduct (originaldirection, perpendicular, originalside);
-				if (!VectorNormalize (originalside)) return false;
+				if (!VectorNormalize (originalside)) return R_VRIK_ACTUAL_PATH_FAILED;
 			}
 		}
-		if (!R_VRIKBuildRotationToward (originaldirection, direction, transport)) return false;
+		if (!R_VRIKBuildRotationToward (originaldirection, direction, transport))
+			return R_VRIK_ACTUAL_PATH_FAILED;
 		seedside[0] = transport[0] * originalside[0] + transport[1] * originalside[1] + transport[2] * originalside[2];
 		seedside[1] = transport[4] * originalside[0] + transport[5] * originalside[1] + transport[6] * originalside[2];
 		seedside[2] = transport[8] * originalside[0] + transport[9] * originalside[1] + transport[10] * originalside[2];
 		VectorMA (seedside, -DotProduct (seedside, direction), direction, seedside);
-		if (!VectorNormalize (seedside)) return false;
+		if (!VectorNormalize (seedside)) return R_VRIK_ACTUAL_PATH_FAILED;
 		deficit = sqrtf (q_max (0.0f, total * total - rootdistance * rootdistance));
 		for (i = 1; i + 1 < count; ++i)
 		{
@@ -2553,14 +2564,14 @@ static qboolean R_VRIKRefineActualPath (const md5liveinfo_t *live,
 		for (i = count - 2; i >= 0; --i)
 		{
 			VectorSubtract (solved[i], solved[i + 1], direction);
-			if (!VectorNormalize (direction)) return false;
+			if (!VectorNormalize (direction)) return R_VRIK_ACTUAL_PATH_FAILED;
 			VectorMA (solved[i + 1], length[i], direction, solved[i]);
 		}
 		VectorCopy (position[0], solved[0]);
 		for (i = 1; i < count; ++i)
 		{
 			VectorSubtract (solved[i], solved[i - 1], direction);
-			if (!VectorNormalize (direction)) return false;
+			if (!VectorNormalize (direction)) return R_VRIK_ACTUAL_PATH_FAILED;
 			VectorMA (solved[i - 1], length[i - 1], direction, solved[i]);
 		}
 		VectorSubtract (endpointtarget, solved[count - 1], direction);
@@ -2568,7 +2579,7 @@ static qboolean R_VRIKRefineActualPath (const md5liveinfo_t *live,
 	}
 	VectorSubtract (endpointtarget, solved[count - 1], direction);
 	if (VectorLength (direction) >= 0.01f)
-		return false;
+		return R_VRIK_ACTUAL_PATH_FAILED;
 	for (i = 0; i + 1 < count; ++i)
 	{
 		vec3_t oldnext;
@@ -2595,7 +2606,7 @@ static qboolean R_VRIKRefineActualPath (const md5liveinfo_t *live,
 		R_VRIKSetMatrixOrigin (desired, endpointtarget);
 		R_VRIKSetJointSubtreeTransform (live, palette, endpoint, desired);
 	}
-	return true;
+	return clamped ? R_VRIK_ACTUAL_PATH_CLAMPED : R_VRIK_ACTUAL_PATH_REACHED;
 }
 
 /* A retargeted avatar needs the exact canonical wrist position, but its own
@@ -2918,6 +2929,40 @@ static qboolean R_VRIKRotateSubtreeAroundPivotToward (const md5liveinfo_t *live,
 	return true;
 }
 
+/* The animal posture is a single rigid correction about Hip.  Applying it
+ * only to a torso semantic leaves direct Hip children (tail and rear legs)
+ * in the old quadruped frame. */
+static qboolean R_VRIKRotateHipDescendantsAroundPivotToward (
+	const md5liveinfo_t *live, float *palette, int hipjoint,
+	const vec3_t pivot, const vec3_t from, const vec3_t to)
+{
+	float delta[12];
+	int joint;
+
+	if (!live || !palette || hipjoint < 0 || hipjoint >= live->numbones ||
+		!R_VRIKBuildRotationToward (from, to, delta))
+		return false;
+	for (joint = 0; joint < live->numbones; joint++)
+		if (joint != hipjoint && R_VRIKJointDescendsFrom (live, joint, hipjoint))
+		{
+			float transformed[12];
+			vec3_t oldorigin, relative, neworigin;
+
+			R_VRIKMatrixOrigin (palette + joint * 12, oldorigin);
+			VectorSubtract (oldorigin, pivot, relative);
+			neworigin[0] = delta[0] * relative[0] + delta[1] * relative[1] +
+				delta[2] * relative[2] + pivot[0];
+			neworigin[1] = delta[4] * relative[0] + delta[5] * relative[1] +
+				delta[6] * relative[2] + pivot[1];
+			neworigin[2] = delta[8] * relative[0] + delta[9] * relative[1] +
+				delta[10] * relative[2] + pivot[2];
+			R_VRIKMatrixMultiply (delta, palette + joint * 12, transformed);
+			R_VRIKSetMatrixOrigin (transformed, neworigin);
+			memcpy (palette + joint * 12, transformed, sizeof (transformed));
+		}
+	return true;
+}
+
 static qboolean R_VRIKApplyAvatarUprightPosture (const r_avatar_rig_t *rig,
 	const r_avatar_presentation_context_t *context, qboolean tracked,
 	float *palette)
@@ -2925,27 +2970,41 @@ static qboolean R_VRIKApplyAvatarUprightPosture (const r_avatar_rig_t *rig,
 	const r_avatar_profile_t *profile;
 	float preserved[3][12], desired[12];
 	vec3_t hip, head, current, canonicalup, canonicalforward, localforward;
-	int hipjoint, headjoint, torso, handleft, handright;
+	int hipjoint, headjoint, handleft, handright;
 
 	if (!rig || !rig->valid || !rig->live || !context || !palette ||
 		!(profile = rig->profile) || profile->posture_policy != R_AVATAR_POSTURE_UPRIGHT)
 		return false;
 	hipjoint = rig->joint[MD5_VRIK_HIP];
 	headjoint = rig->joint[MD5_VRIK_HEAD];
-	torso = profile->torso_root_semantic >= 0 &&
-		profile->torso_root_semantic < MD5_VRIK_JOINT_COUNT ?
-		rig->joint[profile->torso_root_semantic] : -1;
 	handleft = rig->joint[MD5_VRIK_HAND_L]; handright = rig->joint[MD5_VRIK_HAND_R];
-	if (hipjoint < 0 || headjoint < 0 || torso < 0 ||
-		!R_VRIKJointDescendsFrom (rig->live, headjoint, torso))
+	if (hipjoint < 0 || headjoint < 0 ||
+		!R_VRIKJointDescendsFrom (rig->live, headjoint, hipjoint))
 		return false;
 	R_VRIKMatrixOrigin (palette + hipjoint * 12, hip);
 	R_VRIKMatrixOrigin (palette + headjoint * 12, head);
 	VectorSubtract (head, hip, current);
-	canonicalup[0] = context->inverse[2]; canonicalup[1] = context->inverse[6];
-	canonicalup[2] = context->inverse[10];
-	canonicalforward[0] = context->inverse[0]; canonicalforward[1] = context->inverse[4];
-	canonicalforward[2] = context->inverse[8];
+	/* The inverse matrix maps source semantic vectors into target model space.
+	 * Do not substitute raw source +X/+Z: Ranger's bind body frame is authored
+	 * and can be slightly rotated relative to model axes. */
+	canonicalup[0] = context->inverse[0] * context->source_semantic_vertical[0] +
+		context->inverse[1] * context->source_semantic_vertical[1] +
+		context->inverse[2] * context->source_semantic_vertical[2];
+	canonicalup[1] = context->inverse[4] * context->source_semantic_vertical[0] +
+		context->inverse[5] * context->source_semantic_vertical[1] +
+		context->inverse[6] * context->source_semantic_vertical[2];
+	canonicalup[2] = context->inverse[8] * context->source_semantic_vertical[0] +
+		context->inverse[9] * context->source_semantic_vertical[1] +
+		context->inverse[10] * context->source_semantic_vertical[2];
+	canonicalforward[0] = context->inverse[0] * context->source_semantic_facing[0] +
+		context->inverse[1] * context->source_semantic_facing[1] +
+		context->inverse[2] * context->source_semantic_facing[2];
+	canonicalforward[1] = context->inverse[4] * context->source_semantic_facing[0] +
+		context->inverse[5] * context->source_semantic_facing[1] +
+		context->inverse[6] * context->source_semantic_facing[2];
+	canonicalforward[2] = context->inverse[8] * context->source_semantic_facing[0] +
+		context->inverse[9] * context->source_semantic_facing[1] +
+		context->inverse[10] * context->source_semantic_facing[2];
 	localforward[0] = profile->head_forward_axis[0];
 	localforward[1] = profile->head_forward_axis[1];
 	localforward[2] = profile->head_forward_axis[2];
@@ -2955,7 +3014,7 @@ static qboolean R_VRIKApplyAvatarUprightPosture (const r_avatar_rig_t *rig,
 	memcpy (preserved[0], palette + headjoint * 12, sizeof (preserved[0]));
 	if (handleft >= 0) memcpy (preserved[1], palette + handleft * 12, sizeof (preserved[1]));
 	if (handright >= 0) memcpy (preserved[2], palette + handright * 12, sizeof (preserved[2]));
-	if (!R_VRIKRotateSubtreeAroundPivotToward (rig->live, palette, torso,
+	if (!R_VRIKRotateHipDescendantsAroundPivotToward (rig->live, palette, hipjoint,
 		hip, current, canonicalup))
 		return false;
 	if (tracked)
@@ -2989,12 +3048,57 @@ static qboolean R_VRIKApplyAvatarUprightPosture (const r_avatar_rig_t *rig,
 	return true;
 }
 
+static void R_VRIKRepairShamblerDesktopArms (const r_avatar_profile_t *profile,
+	const md5liveinfo_t *live, float *palette)
+{
+	int side;
+
+	if (!profile || profile->id != PLAYER_AVATAR_SHAMBLER ||
+		r_vrik_pose_pending || !live || !palette)
+		return;
+	for (side = 0; side < 2; ++side)
+	{
+		int upper = live->jointindex[side ? MD5_VRIK_UPPERARM_R : MD5_VRIK_UPPERARM_L];
+		int lower = live->jointindex[side ? MD5_VRIK_LOWERARM_R : MD5_VRIK_LOWERARM_L];
+		int hand = live->jointindex[side ? MD5_VRIK_HAND_R : MD5_VRIK_HAND_L];
+		int joint;
+
+		if (upper < 0 || lower < 0 || hand < 0)
+			continue;
+		/* Co-located shoulders put Shambler's arm origins on the correct sides;
+		 * the visible fold is incompatible transported twist.  Rebuild every
+		 * authored arm-subtree basis from its current parent and bind-local
+		 * transform, preserving every raw animation origin and hand endpoint. */
+		for (joint = 0; joint < live->numbones; ++joint)
+			if (R_VRIKJointDescendsFrom (live, joint, upper))
+		{
+			int parent = live->joints[joint].parent;
+			float inverse[12], local[12], desired[12];
+			vec3_t origin;
+
+			if (parent < 0)
+				memcpy (desired, live->joints[joint].bind, sizeof (desired));
+			else
+			{
+				R_VRIKMatrixInverseRigid (live->joints[parent].bind, inverse);
+				R_VRIKMatrixMultiply (inverse, live->joints[joint].bind, local);
+				R_VRIKMatrixMultiply (palette + parent * 12, local, desired);
+			}
+			R_VRIKMatrixOrigin (palette + joint * 12, origin);
+			R_VRIKSetMatrixOrigin (desired, origin);
+			memcpy (palette + joint * 12, desired, sizeof (desired));
+		}
+	}
+}
+
 static unsigned char R_VRIKRefineAvatarActualLowerPaths (const md5liveinfo_t *live,
 	const r_avatar_profile_t *profile, float *palette,
-	const r_vrik_lowerbody_model_targets_t *targets)
+	const r_vrik_lowerbody_model_targets_t *targets, unsigned char *clampedmask)
 {
 	int role; unsigned char unresolved = 0;
 
+	if (clampedmask)
+		*clampedmask = 0;
 	if (!live || !profile || !profile->actual_path_ik || !palette || !targets)
 		return 0;
 	for (role = R_VRIK_LOWER_LEFT_FOOT; role <= R_VRIK_LOWER_RIGHT_FOOT;
@@ -3010,12 +3114,103 @@ static unsigned char R_VRIKRefineAvatarActualLowerPaths (const md5liveinfo_t *li
 
 		if (!(targets->usable_mask & bit) || root < 0 || foot < 0)
 			continue;
-		if (!R_VRIKRefineActualPath (live, palette, root, foot,
-			targets->position[role], targets->orientation_mask & bit ?
-			targets->orientation[role] : palette + foot * 12))
-			unresolved |= bit;
+		{
+			r_vrik_actual_path_status_t status = R_VRIKRefineActualPath (
+				live, palette, root, foot,
+				targets->position[role], targets->orientation_mask & bit ?
+				targets->orientation[role] : palette + foot * 12);
+
+			if (status == R_VRIK_ACTUAL_PATH_FAILED)
+				unresolved |= bit;
+			else if (status == R_VRIK_ACTUAL_PATH_CLAMPED && clampedmask)
+				*clampedmask |= bit;
+		}
 	}
 	return unresolved;
+}
+
+static qboolean R_VRIKActualPathReach (const md5liveinfo_t *live,
+	const float *palette, int root, int endpoint, float *reach)
+{
+	int chain[8], count = 0, i;
+	float total = 0.0f;
+
+	if (!live || !palette || !reach || root < 0 || endpoint < 0 ||
+		root >= live->numbones || endpoint >= live->numbones)
+		return false;
+	for (i = endpoint; i >= 0 && count < (int)(sizeof (chain) / sizeof (chain[0]));
+		i = live->joints[i].parent)
+	{
+		chain[count++] = i;
+		if (i == root)
+			break;
+	}
+	if (count < 4 || chain[count - 1] != root)
+		return false;
+	for (i = 0; i + 1 < count; ++i)
+	{
+		vec3_t a, b, segment;
+
+		R_VRIKMatrixOrigin (palette + chain[i] * 12, a);
+		R_VRIKMatrixOrigin (palette + chain[i + 1] * 12, b);
+		VectorSubtract (b, a, segment);
+		if (VectorLength (segment) < 0.001f)
+			return false;
+		total += VectorLength (segment);
+	}
+	*reach = total * VRIK_ARM_MAX_STRETCH;
+	return isfinite (*reach) && *reach > 0.0f;
+}
+
+/* Keep an animal's saved foot height when its full 3-D contact is beyond the
+ * bounded physical chain.  Only the ground-plane component is shortened;
+ * an unreachable vertical component saturates at the closest point on the
+ * reachable sphere before the physical-chain solver runs. */
+static r_vrik_actual_path_status_t R_VRIKProjectPostureFootContact (
+	const md5liveinfo_t *live, const float *palette, int root, int endpoint,
+	const vec3_t saved, const vec3_t presentationup, vec3_t projected)
+{
+	vec3_t rootorigin, relative, lateral, up;
+	float maxreach, height, lateralradius, allowedradius, distance;
+
+	if (!presentationup)
+		return R_VRIK_ACTUAL_PATH_FAILED;
+	VectorCopy (presentationup, up);
+	if (!R_VRIKActualPathReach (live, palette, root, endpoint, &maxreach) ||
+		!VectorNormalize (up))
+		return R_VRIK_ACTUAL_PATH_FAILED;
+	R_VRIKMatrixOrigin (palette + root * 12, rootorigin);
+	VectorSubtract (saved, rootorigin, relative);
+	distance = VectorLength (relative);
+	if (!isfinite (distance))
+		return R_VRIK_ACTUAL_PATH_FAILED;
+	if (distance <= maxreach + 0.001f)
+	{
+		VectorCopy (saved, projected);
+		return R_VRIK_ACTUAL_PATH_REACHED;
+	}
+	height = DotProduct (relative, up);
+	/* A saved contact can be vertically farther than the bounded physical path
+	 * after the whole-Hip posture turn.  Saturate height first, then collapse
+	 * lateral reach: this is the unique closest point on the reachable sphere
+	 * and keeps the saved endpoint basis attached to a real four-joint solve. */
+	if (fabsf (height) > maxreach)
+	{
+		height = height < 0.0f ? -maxreach : maxreach;
+		memset (lateral, 0, sizeof (lateral));
+		VectorMA (rootorigin, height, up, projected);
+		return R_VRIK_ACTUAL_PATH_CLAMPED;
+	}
+	VectorMA (relative, -height, up, lateral);
+	lateralradius = VectorLength (lateral);
+	allowedradius = sqrtf (q_max (0.0f, maxreach * maxreach - height * height));
+	if (lateralradius > 0.001f)
+		VectorScale (lateral, allowedradius / lateralradius, lateral);
+	else
+		memset (lateral, 0, sizeof (lateral));
+	VectorMA (rootorigin, height, up, projected);
+	VectorAdd (projected, lateral, projected);
+	return R_VRIK_ACTUAL_PATH_CLAMPED;
 }
 
 static void R_VRIKRefineAvatarPalette (const md5liveinfo_t *canonical,
@@ -3025,6 +3220,8 @@ static void R_VRIKRefineAvatarPalette (const md5liveinfo_t *canonical,
 	float *targetpalette)
 {
 	md5liveinfo_t target;
+	float posturefootbasis[2][12];
+	qboolean posturefootbasisvalid[2] = {false, false};
 	float targetfootbasis[2][12];
 	qboolean targetfootbasisvalid[2] = {false, false};
 	r_vrik_lowerbody_targets_t lower;
@@ -3043,7 +3240,9 @@ static void R_VRIKRefineAvatarPalette (const md5liveinfo_t *canonical,
 	 * the source of truth. */
 	if (!R_VRIKAvatarRefinesUpperEndpoints (r_vrik_pose_pending,
 		targetrig->profile) &&
-		!targetrig->profile->mirror_outer_leg_poles)
+		!targetrig->profile->mirror_outer_leg_poles &&
+		targetrig->profile->posture_policy != R_AVATAR_POSTURE_UPRIGHT &&
+		targetrig->profile->id != PLAYER_AVATAR_SHAMBLER)
 		return;
 	target = *targetrig->live;
 	for (semantic = 0; semantic < MD5_VRIK_JOINT_COUNT; semantic++)
@@ -3052,10 +3251,114 @@ static void R_VRIKRefineAvatarPalette (const md5liveinfo_t *canonical,
 	 * validation.  Loader compatibility remains Ranger-name-specific, so do
 	 * not mutate it; only the target-length helper needs this local approval. */
 	target.compatible = true;
+	/* Whole-Hip animal posture turns the rear-leg branches as intended, so
+	 * retain their raw-retargeted contact endpoints before that turn. */
+	if (targetrig->profile->posture_policy == R_AVATAR_POSTURE_UPRIGHT)
+		for (role = R_VRIK_LOWER_LEFT_FOOT; role <= R_VRIK_LOWER_RIGHT_FOOT;
+			role++)
+		{
+			int footsemantic = role == R_VRIK_LOWER_LEFT_FOOT ?
+				MD5_VRIK_FOOT_L : MD5_VRIK_FOOT_R;
+			int footjoint = target.jointindex[footsemantic];
+
+			if (footjoint >= 0)
+			{
+				memcpy (posturefootbasis[role - R_VRIK_LOWER_LEFT_FOOT],
+					targetpalette + footjoint * 12, sizeof (posturefootbasis[0]));
+				posturefootbasisvalid[role - R_VRIK_LOWER_LEFT_FOOT] = true;
+			}
+		}
 	/* Dog and Fiend opt into a branch-local posture correction after raw
 	 * retargeting.  It deliberately precedes endpoint IK so desktop hands can
 	 * still be placed normally and tracked controller bases remain restored. */
 	R_VRIKApplyAvatarUprightPosture (targetrig, context, r_vrik_pose_pending,
+		targetpalette);
+	/* Re-solve the physical rear-leg paths to their animation-first contacts in
+	 * every mode.  A tracked Hip can subsequently carry unsupplied legs, and
+	 * supplied one/two-foot overlays below replace these saved endpoints. */
+	if (targetrig->profile->posture_policy == R_AVATAR_POSTURE_UPRIGHT &&
+		targetrig->profile->actual_path_ik)
+	{
+		r_vrik_lowerbody_model_targets_t posturefeet, fallbackfeet;
+		vec3_t postureup;
+		unsigned char unresolved, preclamped = 0, solverclamped = 0;
+		qboolean postureupvalid;
+
+		memset (&posturefeet, 0, sizeof (posturefeet));
+		memset (&fallbackfeet, 0, sizeof (fallbackfeet));
+		/* This is the same source-semantic vertical used by the upright posture
+		 * turn, expressed in the target model's presentation space. */
+		postureup[0] = context->inverse[0] * context->source_semantic_vertical[0] +
+			context->inverse[1] * context->source_semantic_vertical[1] +
+			context->inverse[2] * context->source_semantic_vertical[2];
+		postureup[1] = context->inverse[4] * context->source_semantic_vertical[0] +
+			context->inverse[5] * context->source_semantic_vertical[1] +
+			context->inverse[6] * context->source_semantic_vertical[2];
+		postureup[2] = context->inverse[8] * context->source_semantic_vertical[0] +
+			context->inverse[9] * context->source_semantic_vertical[1] +
+			context->inverse[10] * context->source_semantic_vertical[2];
+		postureupvalid = VectorNormalize (postureup) != 0.0f;
+		for (role = R_VRIK_LOWER_LEFT_FOOT; role <= R_VRIK_LOWER_RIGHT_FOOT;
+			role++)
+			if (posturefootbasisvalid[role - R_VRIK_LOWER_LEFT_FOOT])
+			{
+				unsigned char bit = R_VRIK_LOWER_BIT (role);
+				int rootsemantic = role == R_VRIK_LOWER_LEFT_FOOT ?
+					MD5_VRIK_UPPERLEG_L : MD5_VRIK_UPPERLEG_R;
+				int footsemantic = role == R_VRIK_LOWER_LEFT_FOOT ?
+					MD5_VRIK_FOOT_L : MD5_VRIK_FOOT_R;
+				int root = target.jointindex[rootsemantic];
+				int foot = target.jointindex[footsemantic];
+				vec3_t saved;
+				r_vrik_actual_path_status_t projected;
+
+				R_VRIKMatrixOrigin (posturefootbasis[role - R_VRIK_LOWER_LEFT_FOOT], saved);
+				projected = postureupvalid ?
+					R_VRIKProjectPostureFootContact (&target, targetpalette, root, foot,
+						saved, postureup, posturefeet.position[role]) :
+					R_VRIK_ACTUAL_PATH_FAILED;
+				if (projected == R_VRIK_ACTUAL_PATH_FAILED)
+				{
+					/* An impossible presentation-up component is intentionally left
+					 * in its postured animation state.  It is not a conventional
+					 * lower-body failure and must not receive a fallback target. */
+					continue;
+				}
+				memcpy (fallbackfeet.orientation[role],
+					posturefootbasis[role - R_VRIK_LOWER_LEFT_FOOT],
+					sizeof (fallbackfeet.orientation[role]));
+				VectorCopy (saved, fallbackfeet.position[role]);
+				fallbackfeet.confidence[role] = 1.0f;
+				fallbackfeet.orientation_mask |= bit;
+				memcpy (posturefeet.orientation[role],
+					posturefootbasis[role - R_VRIK_LOWER_LEFT_FOOT],
+					sizeof (posturefeet.orientation[role]));
+				posturefeet.usable_mask |= bit;
+				posturefeet.orientation_mask |= bit;
+				posturefeet.confidence[role] = 1.0f;
+				if (projected == R_VRIK_ACTUAL_PATH_CLAMPED)
+					preclamped |= bit;
+			}
+		unresolved = R_VRIKRefineAvatarActualLowerPaths (&target,
+			targetrig->profile, targetpalette, &posturefeet, &solverclamped);
+		/* A projected contact is logically clamped even if the solver can reach
+		 * that projected point exactly; neither kind of clamped contact may fall
+		 * through into the conventional two-bone fallback. */
+		unresolved &= (unsigned char)~(preclamped | solverclamped);
+		if (unresolved)
+		{
+			/* Only a failed physical solve reaches this conventional bounded
+			 * fallback.  Reached and ground-preserving clamped contacts stay put. */
+			fallbackfeet.usable_mask = unresolved;
+			fallbackfeet.orientation_mask &= unresolved;
+			R_VRIKApplyLowerBodyWithPolePolicy (&target, targetpalette,
+				&fallbackfeet, R_VRIKAvatarLowerPolePolicy (targetrig->profile));
+		}
+	}
+	/* Keep Shambler's named, anatomically sided arms out of its chest only on
+	 * desktop raw-retarget frames.  Tracked controller/FBT poses stay wholly
+	 * authoritative and Shambler does not opt into generic desktop refinement. */
+	R_VRIKRepairShamblerDesktopArms (targetrig->profile, &target,
 		targetpalette);
 	/* Foot endpoint bases are independent tracked authorities.  Capture them
 	 * after posture, but before a tracked Hip rotates the animal leg branches. */
@@ -3226,7 +3529,7 @@ static void R_VRIKRefineAvatarPalette (const md5liveinfo_t *canonical,
 						&hiptargets, R_VRIKAvatarLowerPolePolicy (targetrig->profile));
 				{
 					unsigned char unresolved = R_VRIKRefineAvatarActualLowerPaths (
-						&target, targetrig->profile, targetpalette, &modeltargets);
+						&target, targetrig->profile, targetpalette, &modeltargets, NULL);
 					/* Degenerate authored paths are still handled deterministically by
 					 * the established bounded two-bone target overlay. */
 					if (unresolved)
@@ -5877,6 +6180,27 @@ void R_DrawAliasModel_ShowTris (entity_t *e)
 }
 
 #ifdef R_ALIAS_LOWER_TARGETS_TEST
+/* The renderer-boundary fixture links r_alias without r_vrik.  This seam now
+ * deliberately executes the production palette path, whose optional lower
+ * body calls stay inactive in the synthetic arm-only rig. */
+static int r_vrik_lower_policy_calls_for_test;
+
+qboolean R_VRIKGetLowerBodyTargets (int entitynum,
+	r_vrik_lowerbody_targets_t *out)
+{
+	(void)entitynum; (void)out;
+	return false;
+}
+
+qboolean R_VRIKApplyLowerBodyWithPolePolicy (const md5liveinfo_t *live,
+	float *palette, const r_vrik_lowerbody_model_targets_t *targets,
+	r_vrik_lowerbody_pole_policy_t pole_policy)
+{
+	(void)live; (void)palette; (void)targets; (void)pole_policy;
+	r_vrik_lower_policy_calls_for_test++;
+	return false;
+}
+
 qboolean R_VRIKBuildBodyIndexesForTest (const md5liveinfo_t *live,
 	const r_avatar_profile_t *profile, const md5livesurface_t *surface,
 	r_vrik_skincache_t *cache)
@@ -6173,13 +6497,14 @@ qboolean R_VRIKAvatarUprightPostureForTest (qboolean tracked)
 		joints[i].parent = i ? 0 : -1;
 		palette[i * 12] = palette[i * 12 + 5] = palette[i * 12 + 10] = 1.0f;
 	}
-	/* Hip, Spine1, Spine2, Head, both hands, and a Hip-sibling tail. */
+	/* Hip, Spine1, Spine2, Head, both hands, and a direct Hip tail. */
 	joints[1].parent = 0; joints[2].parent = 1; joints[3].parent = 2;
 	joints[4].parent = joints[5].parent = 2; joints[6].parent = 0;
 	palette[1 * 12 + 7] = 1.0f; palette[2 * 12 + 7] = 2.0f;
 	palette[3 * 12 + 7] = 3.0f; palette[4 * 12 + 3] = -2.0f;
 	palette[4 * 12 + 7] = 2.0f; palette[5 * 12 + 3] = 2.0f;
 	palette[5 * 12 + 7] = 2.0f; palette[6 * 12 + 3] = -4.0f;
+	palette[6 * 12 + 7] = 1.0f;
 	/* Distinct authoritative bases prove they survive the tracked torso turn. */
 	palette[3 * 12 + 0] = 0.0f; palette[3 * 12 + 1] = -1.0f;
 	palette[3 * 12 + 4] = 1.0f; palette[3 * 12 + 5] = 0.0f;
@@ -6197,14 +6522,16 @@ qboolean R_VRIKAvatarUprightPostureForTest (qboolean tracked)
 	rig.joint[MD5_VRIK_HAND_L] = 4; rig.joint[MD5_VRIK_HAND_R] = 5;
 	rig.profile = &profile; rig.live = &live; rig.valid = true;
 	profile.posture_policy = R_AVATAR_POSTURE_UPRIGHT;
-	profile.torso_root_semantic = MD5_VRIK_SPINE1;
 	profile.head_forward_axis[1] = 1.0f;
 	context.inverse[0] = context.inverse[5] = context.inverse[10] = 1.0f;
+	context.source_semantic_facing[1] = 1.0f;
+	context.source_semantic_vertical[2] = 1.0f;
 	if (!R_VRIKApplyAvatarUprightPosture (&rig, &context, tracked, palette))
 		return false;
 	R_VRIKMatrixOrigin (palette + 3 * 12, head);
 	R_VRIKMatrixOrigin (palette + 6 * 12, tail);
-	if (head[2] < 2.9f || fabsf (tail[0] + 4.0f) > 0.001f)
+	if (head[2] < 2.9f || fabsf (tail[0] + 4.0f) > 0.001f ||
+		tail[2] < 0.99f)
 		return false;
 	if (tracked)
 	{
@@ -6220,8 +6547,415 @@ qboolean R_VRIKAvatarUprightPostureForTest (qboolean tracked)
 	localforward[0] = palette[3 * 12 + 1];
 	localforward[1] = palette[3 * 12 + 5];
 	localforward[2] = palette[3 * 12 + 9];
-	return localforward[0] > 0.99f && fabsf (localforward[1]) < 0.01f &&
+	return fabsf (localforward[0]) < 0.01f && localforward[1] > 0.99f &&
 		fabsf (localforward[2]) < 0.01f;
+}
+
+qboolean R_VRIKShamblerDesktopArmRepairForTest (void)
+{
+	md5liveinfo_t canonical, live;
+	md5livejoint_t joints[8];
+	r_avatar_profile_t profile;
+	r_avatar_rig_t rig;
+	r_avatar_presentation_context_t context;
+	float sourcepalette[12], palette[8 * 12], raw[8 * 12], repaired[8 * 12];
+	float tracked[8 * 12], global[12], expected[12], inverse[12], local[12];
+	qboolean pending;
+	int semantic, joint;
+
+	memset (&canonical, 0, sizeof (canonical)); memset (&live, 0, sizeof (live));
+	memset (joints, 0, sizeof (joints)); memset (&profile, 0, sizeof (profile));
+	memset (&rig, 0, sizeof (rig)); memset (&context, 0, sizeof (context));
+	memset (palette, 0, sizeof (palette));
+	memset (sourcepalette, 0, sizeof (sourcepalette));
+	for (semantic = 0; semantic < MD5_VRIK_JOINT_COUNT; semantic++)
+		live.jointindex[semantic] = rig.joint[semantic] = -1;
+	for (joint = 0; joint < 8; joint++)
+	{
+		joints[joint].parent = joint ? joint - 1 : -1;
+		joints[joint].bind[0] = joints[joint].bind[5] =
+			joints[joint].bind[10] = palette[joint * 12] =
+			palette[joint * 12 + 5] = palette[joint * 12 + 10] = 1.0f;
+	}
+	/* Hip plus complete left/right arm chains and a left hand child exercise
+	 * the production early-gate exemption and complete subtree restoration. */
+	joints[1].parent = 0; joints[2].parent = 1; joints[3].parent = 2;
+	joints[4].parent = 0; joints[5].parent = 4; joints[6].parent = 5;
+	joints[7].parent = 3;
+	joints[1].bind[7] = 8.0f; joints[2].bind[7] = 16.0f;
+	joints[3].bind[7] = 24.0f; joints[4].bind[7] = -8.0f;
+	joints[5].bind[7] = -16.0f; joints[6].bind[7] = -24.0f;
+	joints[7].bind[7] = 28.0f;
+	/* Deliberately non-identical authored local frames make basis restoration
+	 * observable even though every raw animation basis below is rigidly posed. */
+	joints[1].bind[0] = joints[1].bind[5] = 0.0f;
+	joints[1].bind[1] = -1.0f; joints[1].bind[4] = 1.0f;
+	joints[2].bind[5] = joints[2].bind[10] = 0.0f;
+	joints[2].bind[6] = -1.0f; joints[2].bind[9] = 1.0f;
+	joints[3].bind[0] = joints[3].bind[10] = 0.0f;
+	joints[3].bind[2] = 1.0f; joints[3].bind[8] = -1.0f;
+	joints[4].bind[0] = joints[4].bind[5] = 0.0f;
+	joints[4].bind[1] = 1.0f; joints[4].bind[4] = -1.0f;
+	joints[5].bind[5] = joints[5].bind[10] = 0.0f;
+	joints[5].bind[6] = 1.0f; joints[5].bind[9] = -1.0f;
+	joints[6].bind[0] = joints[6].bind[10] = 0.0f;
+	joints[6].bind[2] = -1.0f; joints[6].bind[8] = 1.0f;
+	joints[7].bind[0] = joints[7].bind[5] = 0.0f;
+	joints[7].bind[1] = -1.0f; joints[7].bind[4] = 1.0f;
+	for (joint = 0; joint < 8; ++joint)
+	{
+		memcpy (palette + joint * 12, joints[joint].bind, sizeof (joints[joint].bind));
+		/* Rigidly pose every raw basis before repair, then verify that rebuilding
+		 * bind-local frames commutes with an additional rigid transform. */
+		palette[joint * 12] = 0.0f; palette[joint * 12 + 1] = -1.0f;
+		palette[joint * 12 + 4] = 1.0f; palette[joint * 12 + 5] = 0.0f;
+		palette[joint * 12 + 3] = 10.0f - joints[joint].bind[7];
+		palette[joint * 12 + 7] = 3.0f;
+	}
+	palette[3 * 12 + 3] = 12.0f;
+	palette[6 * 12 + 3] = 8.0f;
+	/* This intentionally deformed span must be irrelevant: the basis-only
+	 * repair has no lateral or endpoint policy that can break equivariance. */
+	palette[1 * 12 + 3] = -8.0f; palette[4 * 12 + 3] = 8.0f;
+	memcpy (raw, palette, sizeof (raw));
+	live.joints = joints; live.numbones = 8; live.compatible = true;
+	rig.profile = &profile; rig.live = &live; rig.valid = true;
+	rig.joint[MD5_VRIK_HIP] = 0; rig.joint[MD5_VRIK_UPPERARM_L] = 1;
+	rig.joint[MD5_VRIK_LOWERARM_L] = 2; rig.joint[MD5_VRIK_HAND_L] = 3;
+	rig.joint[MD5_VRIK_UPPERARM_R] = 4; rig.joint[MD5_VRIK_LOWERARM_R] = 5;
+	rig.joint[MD5_VRIK_HAND_R] = 6;
+	profile.id = PLAYER_AVATAR_SHAMBLER;
+	context.inverse[0] = context.inverse[5] = context.inverse[10] = 1.0f;
+	sourcepalette[0] = sourcepalette[5] = sourcepalette[10] = 1.0f;
+	R_VRIKRefineAvatarPalette (&canonical, &rig, &context, sourcepalette, palette);
+	for (joint = 0; joint < 8; ++joint)
+	{
+		int parent = joints[joint].parent, component;
+
+		if (fabsf (palette[joint * 12 + 3] - raw[joint * 12 + 3]) > 0.001f ||
+			fabsf (palette[joint * 12 + 7] - raw[joint * 12 + 7]) > 0.001f ||
+			fabsf (palette[joint * 12 + 11] - raw[joint * 12 + 11]) > 0.001f)
+			return false;
+		if (parent < 0 || joint == 0)
+			continue;
+		R_VRIKMatrixInverseRigid (palette + parent * 12, inverse);
+		R_VRIKMatrixMultiply (inverse, palette + joint * 12, local);
+		R_VRIKMatrixInverseRigid (joints[parent].bind, inverse);
+		R_VRIKMatrixMultiply (inverse, joints[joint].bind, expected);
+		for (component = 0; component < 12; ++component)
+			if ((component % 4) != 3 && fabsf (local[component] -
+			expected[component]) > 0.001f)
+				return false;
+	}
+	memcpy (repaired, palette, sizeof (repaired));
+	memset (global, 0, sizeof (global));
+	global[1] = -1.0f; global[3] = 11.0f;
+	global[4] = 1.0f; global[7] = -5.0f; global[10] = 1.0f;
+	for (joint = 0; joint < 8; ++joint)
+		R_VRIKMatrixMultiply (global, raw + joint * 12, palette + joint * 12);
+	R_VRIKRefineAvatarPalette (&canonical, &rig, &context, sourcepalette, palette);
+	for (joint = 0; joint < 8; ++joint)
+	{
+		R_VRIKMatrixMultiply (global, repaired + joint * 12, expected);
+		for (semantic = 0; semantic < 12; ++semantic)
+			if (fabsf (palette[joint * 12 + semantic] - expected[semantic]) > 0.001f)
+				return false;
+	}
+	memcpy (tracked, raw, sizeof (tracked));
+	pending = r_vrik_pose_pending;
+	r_vrik_pose_pending = true;
+	R_VRIKRefineAvatarPalette (&canonical, &rig, &context, sourcepalette, tracked);
+	r_vrik_pose_pending = pending;
+	return !memcmp (tracked, raw, sizeof (tracked));
+}
+
+qboolean R_VRIKAvatarUprightFootContactsForTest (void)
+{
+	md5liveinfo_t live;
+	md5livejoint_t joints[10];
+	r_avatar_profile_t profile;
+	r_avatar_rig_t rig;
+	r_avatar_presentation_context_t context;
+	r_vrik_lowerbody_model_targets_t targets;
+	float palette[10 * 12], saved[2][12];
+	float leftcontactx, leftcontactz, rightcontactx, rightcontactz;
+	int i, semantic;
+
+	memset (&live, 0, sizeof (live)); memset (joints, 0, sizeof (joints));
+	memset (&profile, 0, sizeof (profile)); memset (&rig, 0, sizeof (rig));
+	memset (&context, 0, sizeof (context)); memset (palette, 0, sizeof (palette));
+	for (semantic = 0; semantic < MD5_VRIK_JOINT_COUNT; ++semantic)
+		live.jointindex[semantic] = rig.joint[semantic] = -1;
+	for (i = 0; i < 10; ++i)
+	{
+		joints[i].parent = i ? 0 : -1;
+		palette[i * 12] = palette[i * 12 + 5] = palette[i * 12 + 10] = 1.0f;
+	}
+	/* Hip, head, then two physical four-joint rear-leg paths. */
+	joints[1].parent = 0; joints[2].parent = 0; joints[3].parent = 2;
+	joints[4].parent = 3; joints[5].parent = 4; joints[6].parent = 0;
+	joints[7].parent = 6; joints[8].parent = 7; joints[9].parent = 8;
+	palette[1 * 12 + 7] = 2.0f;
+	palette[2 * 12 + 3] = -1.0f; palette[2 * 12 + 11] = -1.0f;
+	palette[3 * 12 + 3] = -1.0f; palette[3 * 12 + 11] = -2.0f;
+	palette[4 * 12 + 3] = -1.0f; palette[4 * 12 + 11] = -2.5f;
+	palette[5 * 12 + 3] = -1.0f; palette[5 * 12 + 11] = -3.0f;
+	palette[6 * 12 + 3] = 1.0f; palette[6 * 12 + 11] = -1.0f;
+	palette[7 * 12 + 3] = 1.0f; palette[7 * 12 + 11] = -2.0f;
+	palette[8 * 12 + 3] = 1.0f; palette[8 * 12 + 11] = -2.5f;
+	palette[9 * 12 + 3] = 1.0f; palette[9 * 12 + 11] = -3.0f;
+	live.joints = joints; live.numbones = 10; live.compatible = true;
+	rig.live = &live; rig.profile = &profile; rig.valid = true;
+	rig.joint[MD5_VRIK_HIP] = 0; rig.joint[MD5_VRIK_HEAD] = 1;
+	rig.joint[MD5_VRIK_UPPERLEG_L] = 2; rig.joint[MD5_VRIK_LOWERLEG_L] = 3;
+	rig.joint[MD5_VRIK_FOOT_L] = 5; rig.joint[MD5_VRIK_UPPERLEG_R] = 6;
+	rig.joint[MD5_VRIK_LOWERLEG_R] = 7; rig.joint[MD5_VRIK_FOOT_R] = 9;
+	for (semantic = 0; semantic < MD5_VRIK_JOINT_COUNT; ++semantic)
+		live.jointindex[semantic] = rig.joint[semantic];
+	profile.posture_policy = R_AVATAR_POSTURE_UPRIGHT;
+	profile.actual_path_ik = true; profile.head_forward_axis[1] = 1.0f;
+	context.inverse[0] = context.inverse[5] = context.inverse[10] = 1.0f;
+	context.source_semantic_vertical[2] = 1.0f;
+	context.source_semantic_facing[1] = 1.0f;
+	memcpy (saved[0], palette + 5 * 12, sizeof (saved[0]));
+	memcpy (saved[1], palette + 9 * 12, sizeof (saved[1]));
+	if (!R_VRIKApplyAvatarUprightPosture (&rig, &context, false, palette))
+		return false;
+	memset (&targets, 0, sizeof (targets));
+	for (i = 0; i < 2; ++i)
+	{
+		int role = R_VRIK_LOWER_LEFT_FOOT + i;
+		R_VRIKMatrixOrigin (saved[i], targets.position[role]);
+		memcpy (targets.orientation[role], saved[i], sizeof (saved[i]));
+		targets.usable_mask |= R_VRIK_LOWER_BIT (role);
+		targets.orientation_mask |= R_VRIK_LOWER_BIT (role);
+		targets.confidence[role] = 1.0f;
+	}
+	if (R_VRIKRefineAvatarActualLowerPaths (&live, &profile, palette,
+		&targets, NULL) || palette[5 * 12 + 11] > -2.0f ||
+		palette[9 * 12 + 11] > -2.0f)
+		return false;
+	leftcontactx = palette[5 * 12 + 3]; leftcontactz = palette[5 * 12 + 11];
+	rightcontactx = palette[9 * 12 + 3]; rightcontactz = palette[9 * 12 + 11];
+	/* One supplied foot replaces only its saved contact; then two do likewise. */
+	memset (&targets, 0, sizeof (targets));
+	targets.usable_mask = R_VRIK_LOWER_BIT (R_VRIK_LOWER_LEFT_FOOT);
+	targets.confidence[R_VRIK_LOWER_LEFT_FOOT] = 1.0f;
+	targets.position[R_VRIK_LOWER_LEFT_FOOT][0] = -1.5f;
+	targets.position[R_VRIK_LOWER_LEFT_FOOT][2] = -2.75f;
+	if (R_VRIKRefineAvatarActualLowerPaths (&live, &profile, palette,
+		&targets, NULL) || palette[5 * 12 + 3] > leftcontactx - 0.2f ||
+		palette[5 * 12 + 11] > leftcontactz - 0.1f ||
+		fabsf (palette[9 * 12 + 3] - rightcontactx) > 0.001f ||
+		fabsf (palette[9 * 12 + 11] - rightcontactz) > 0.001f)
+		return false;
+	targets.usable_mask |= R_VRIK_LOWER_BIT (R_VRIK_LOWER_RIGHT_FOOT);
+	targets.confidence[R_VRIK_LOWER_RIGHT_FOOT] = 1.0f;
+	targets.position[R_VRIK_LOWER_RIGHT_FOOT][0] = 1.5f;
+	targets.position[R_VRIK_LOWER_RIGHT_FOOT][2] = -2.5f;
+	if (R_VRIKRefineAvatarActualLowerPaths (&live, &profile, palette,
+		&targets, NULL) || !isfinite (palette[5 * 12]) || !isfinite (palette[9 * 12]) ||
+		palette[9 * 12 + 3] < rightcontactx + 0.2f ||
+		palette[9 * 12 + 11] > rightcontactz - 0.1f)
+		return false;
+	return true;
+}
+
+qboolean R_VRIKAvatarUprightUnreachableContactForTest (void)
+{
+	md5liveinfo_t canonical, live;
+	md5livejoint_t joints[6];
+	r_avatar_profile_t profile;
+	r_avatar_rig_t rig;
+	r_avatar_presentation_context_t context;
+	float sourcepalette[12], palette[6 * 12], expected[6 * 12], savedbasis[12];
+	vec3_t root, endpoint, delta;
+	int i, semantic, component;
+
+	memset (&canonical, 0, sizeof (canonical)); memset (&live, 0, sizeof (live));
+	memset (joints, 0, sizeof (joints)); memset (&profile, 0, sizeof (profile));
+	memset (&rig, 0, sizeof (rig)); memset (&context, 0, sizeof (context));
+	memset (sourcepalette, 0, sizeof (sourcepalette)); memset (palette, 0,
+		sizeof (palette));
+	for (semantic = 0; semantic < MD5_VRIK_JOINT_COUNT; ++semantic)
+		live.jointindex[semantic] = rig.joint[semantic] = -1;
+	for (i = 0; i < 6; ++i)
+	{
+		joints[i].parent = i ? 0 : -1;
+		palette[i * 12] = palette[i * 12 + 5] = palette[i * 12 + 10] = 1.0f;
+	}
+	/* The short physical path stays at raw y=100.  Turning y toward the
+	 * presentation z axis puts its root at z=100, while its saved raw foot has
+	 * z=-4: the height must saturate at the closest reachable groundward point. */
+	joints[1].parent = 0; joints[2].parent = 0; joints[3].parent = 2;
+	joints[4].parent = 3; joints[5].parent = 4;
+	palette[1 * 12 + 7] = 2.0f;
+	for (i = 2; i < 6; ++i)
+	{
+		palette[i * 12 + 3] = -1.0f;
+		palette[i * 12 + 7] = 100.0f;
+		palette[i * 12 + 11] = -(float)(i - 1);
+	}
+	/* The saved endpoint frame must survive the closest-point physical solve. */
+	palette[5 * 12] = palette[5 * 12 + 5] = 0.0f;
+	palette[5 * 12 + 1] = -1.0f; palette[5 * 12 + 4] = 1.0f;
+	memcpy (savedbasis, palette + 5 * 12, sizeof (savedbasis));
+	live.joints = joints; live.numbones = 6; live.compatible = true;
+	rig.live = &live; rig.profile = &profile; rig.valid = true;
+	rig.joint[MD5_VRIK_HIP] = 0; rig.joint[MD5_VRIK_HEAD] = 1;
+	rig.joint[MD5_VRIK_UPPERLEG_L] = 2; rig.joint[MD5_VRIK_LOWERLEG_L] = 3;
+	rig.joint[MD5_VRIK_FOOT_L] = 5;
+	for (semantic = 0; semantic < MD5_VRIK_JOINT_COUNT; ++semantic)
+		live.jointindex[semantic] = rig.joint[semantic];
+	profile.posture_policy = R_AVATAR_POSTURE_UPRIGHT;
+	profile.actual_path_ik = true; profile.head_forward_axis[1] = 1.0f;
+	context.inverse[0] = context.inverse[5] = context.inverse[10] = 1.0f;
+	context.source_semantic_vertical[2] = 1.0f;
+	context.source_semantic_facing[1] = 1.0f;
+	sourcepalette[0] = sourcepalette[5] = sourcepalette[10] = 1.0f;
+	memcpy (expected, palette, sizeof (expected));
+	if (!R_VRIKApplyAvatarUprightPosture (&rig, &context, false, expected))
+		return false;
+	r_vrik_lower_policy_calls_for_test = 0;
+	R_VRIKRefineAvatarPalette (&canonical, &rig, &context, sourcepalette, palette);
+	if (r_vrik_lower_policy_calls_for_test != 0)
+		return false;
+	R_VRIKMatrixOrigin (palette + 2 * 12, root);
+	R_VRIKMatrixOrigin (expected + 2 * 12, endpoint);
+	VectorSubtract (root, endpoint, delta);
+	if (VectorLength (delta) > 0.001f)
+		return false;
+	R_VRIKMatrixOrigin (palette + 5 * 12, endpoint);
+	VectorSubtract (endpoint, root, delta);
+	if (fabsf (delta[2] + 3.3f) > 0.01f || fabsf (delta[0]) > 0.01f ||
+		fabsf (delta[1]) > 0.01f)
+		return false;
+	for (i = 2; i < 5; ++i)
+	{
+		R_VRIKMatrixOrigin (palette + i * 12, root);
+		R_VRIKMatrixOrigin (palette + (i + 1) * 12, endpoint);
+		VectorSubtract (endpoint, root, delta);
+		if (fabsf (VectorLength (delta) - 1.1f) > 0.01f)
+			return false;
+	}
+	for (component = 0; component < 12; ++component)
+		if ((component % 4) != 3 && fabsf (palette[5 * 12 + component] -
+			savedbasis[component]) > 0.001f)
+			return false;
+	return memcmp (palette + 5 * 12, expected + 5 * 12, sizeof (savedbasis)) != 0;
+}
+
+qboolean R_VRIKPostureContactProjectionForTest (void)
+{
+	md5liveinfo_t live;
+	md5livejoint_t joints[9];
+	float base[9 * 12], palette[9 * 12], before[9 * 12], basis[12];
+	vec3_t up = {0.0f, 0.6f, 0.8f}, saved, projected, root, relative, lateral;
+	vec3_t leftsupplied = {0.8f, 0.2f, 0.1f};
+	vec3_t rightsupplied = {-0.8f, 0.2f, 0.1f};
+	float height, maxreach, lateralreach;
+	r_vrik_actual_path_status_t status;
+	int i;
+
+	memset (&live, 0, sizeof (live)); memset (joints, 0, sizeof (joints));
+	memset (base, 0, sizeof (base));
+	for (i = 0; i < 9; ++i)
+	{
+		joints[i].parent = i ? 0 : -1;
+		base[i * 12] = base[i * 12 + 5] = base[i * 12 + 10] = 1.0f;
+	}
+	/* Two fresh physical four-joint paths, each 1.7595 native units long.
+	 * The 2.078-unit saved Dog residual is 1.181x that native reach. */
+	joints[1].parent = 0; joints[2].parent = 1; joints[3].parent = 2;
+	joints[4].parent = 3; joints[5].parent = 0; joints[6].parent = 5;
+	joints[7].parent = 6; joints[8].parent = 7;
+	base[2 * 12 + 3] = 0.5865f; base[3 * 12 + 3] = 1.1730f;
+	base[4 * 12 + 3] = 1.7595f; base[6 * 12 + 3] = -0.5865f;
+	base[7 * 12 + 3] = -1.1730f; base[8 * 12 + 3] = -1.7595f;
+	live.joints = joints; live.numbones = 9;
+	/* Give the saved endpoint an observable basis that must survive projection. */
+	memcpy (basis, base + 4 * 12, sizeof (basis));
+	basis[0] = 0.0f; basis[1] = -1.0f; basis[4] = 1.0f; basis[5] = 0.0f;
+	/* Fiend-like non-axis presentation up: height is exactly 1 while the
+	 * remaining saved lateral distance makes the 2.078 contact unreachable. */
+	saved[0] = sqrtf (2.078f * 2.078f - 1.0f);
+	saved[1] = up[1]; saved[2] = up[2];
+	memcpy (palette, base, sizeof (palette));
+	status = R_VRIKProjectPostureFootContact (&live, palette, 1, 4, saved,
+		up, projected);
+	if (status != R_VRIK_ACTUAL_PATH_CLAMPED)
+		return false;
+	R_VRIKMatrixOrigin (palette + 1 * 12, root);
+	VectorSubtract (projected, root, relative);
+	height = DotProduct (relative, up);
+	VectorMA (relative, -height, up, lateral);
+	maxreach = 3.0f * 0.5865f * VRIK_ARM_MAX_STRETCH;
+	lateralreach = sqrtf (q_max (0.0f, maxreach * maxreach - height * height));
+	if (fabsf (height - 1.0f) > 0.001f ||
+		VectorLength (lateral) > lateralreach + 0.001f)
+		return false;
+	status = R_VRIKRefineActualPath (&live, palette, 1, 4, projected, basis);
+	if (status != R_VRIK_ACTUAL_PATH_REACHED)
+		return false;
+	R_VRIKMatrixOrigin (palette + 4 * 12, root);
+	VectorSubtract (root, projected, relative);
+	if (VectorLength (relative) > 0.01f)
+		return false;
+	for (i = 0; i < 12; ++i)
+		if ((i % 4) != 3 && fabsf (palette[4 * 12 + i] - basis[i]) > 0.001f)
+			return false;
+	/* Height beyond the maximum saturates to the closest reachable point. */
+	memcpy (palette, base, sizeof (palette)); memcpy (before, palette, sizeof (before));
+	VectorScale (up, maxreach + 0.1f, saved);
+	if (R_VRIKProjectPostureFootContact (&live, palette, 1, 4, saved, up,
+		projected) != R_VRIK_ACTUAL_PATH_CLAMPED || memcmp (palette, before,
+		sizeof (palette)))
+		return false;
+	R_VRIKMatrixOrigin (palette + 1 * 12, root);
+	VectorSubtract (projected, root, relative);
+	VectorMA (relative, -DotProduct (relative, up), up, lateral);
+	if (fabsf (DotProduct (relative, up) - maxreach) > 0.001f ||
+		VectorLength (lateral) > 0.001f)
+		return false;
+	/* Exact stretch remains reached; only a target shortened by the solver is
+	 * reported clamped. */
+	memcpy (palette, base, sizeof (palette));
+	saved[0] = maxreach; saved[1] = saved[2] = 0.0f;
+	if (R_VRIKRefineActualPath (&live, palette, 1, 4, saved, basis) !=
+		R_VRIK_ACTUAL_PATH_REACHED)
+		return false;
+	memcpy (palette, base, sizeof (palette)); saved[0] = 2.078f;
+	if (R_VRIKRefineActualPath (&live, palette, 1, 4, saved, basis) !=
+		R_VRIK_ACTUAL_PATH_CLAMPED)
+		return false;
+	/* Zero, one, and two supplied feet each begin from a fresh base.  The
+	 * unsupplied projected contact preserves height; supplied endpoints win and
+	 * never perturb the other side. */
+	memcpy (palette, base, sizeof (palette));
+	saved[0] = sqrtf (2.078f * 2.078f - 1.0f);
+	saved[1] = up[1]; saved[2] = up[2];
+	if (R_VRIKProjectPostureFootContact (&live, palette, 1, 4, saved, up,
+		projected) != R_VRIK_ACTUAL_PATH_CLAMPED ||
+		!R_VRIKRefineActualPath (&live, palette, 1, 4, projected, basis))
+		return false;
+	R_VRIKMatrixOrigin (palette + 4 * 12, root);
+	if (fabsf (DotProduct (root, up) - 1.0f) > 0.01f)
+		return false;
+	memcpy (palette, base, sizeof (palette)); memcpy (before, palette, sizeof (before));
+	if (!R_VRIKRefineActualPath (&live, palette, 1, 4, leftsupplied, basis) ||
+		memcmp (palette + 5 * 12, before + 5 * 12, 4 * 12 * sizeof (float)))
+		return false;
+	R_VRIKMatrixOrigin (palette + 4 * 12, root); VectorSubtract (root, leftsupplied, root);
+	if (VectorLength (root) > 0.01f) return false;
+	memcpy (palette, base, sizeof (palette));
+	if (!R_VRIKRefineActualPath (&live, palette, 1, 4, leftsupplied, basis) ||
+		!R_VRIKRefineActualPath (&live, palette, 5, 8, rightsupplied,
+			base + 8 * 12))
+		return false;
+	R_VRIKMatrixOrigin (palette + 4 * 12, root); VectorSubtract (root, leftsupplied, root);
+	if (VectorLength (root) > 0.01f) return false;
+	R_VRIKMatrixOrigin (palette + 8 * 12, root); VectorSubtract (root, rightsupplied, root);
+	return VectorLength (root) <= 0.01f;
 }
 
 qboolean R_VRIKActualPathForTest (void)
@@ -6229,6 +6963,7 @@ qboolean R_VRIKActualPathForTest (void)
 	md5liveinfo_t live; md5livejoint_t joints[4]; float palette[48], basis[12];
 	vec3_t target = {0.0f, 4.0f, 0.0f}, a, b;
 	float before[48];
+	r_vrik_actual_path_status_t status;
 	int i;
 
 	memset (&live, 0, sizeof (live)); memset (joints, 0, sizeof (joints));
@@ -6243,7 +6978,8 @@ qboolean R_VRIKActualPathForTest (void)
 	/* This is captured before a hypothetical Hip rotation: the physical-path
 	 * solve must install it verbatim after moving the leg chain. */
 	basis[0] = 0.0f; basis[1] = -1.0f; basis[4] = 1.0f; basis[5] = 0.0f;
-	if (!R_VRIKRefineActualPath (&live, palette, 0, 3, target, basis)) return false;
+	status = R_VRIKRefineActualPath (&live, palette, 0, 3, target, basis);
+	if (status != R_VRIK_ACTUAL_PATH_CLAMPED) return false;
 	for (i = 0; i < 3; ++i)
 	{
 		R_VRIKMatrixOrigin (palette + i * 12, a);
@@ -6267,7 +7003,8 @@ qboolean R_VRIKActualPathForTest (void)
 	}
 	target[0] = 0.0f; target[1] = 2.9989f; target[2] = 0.0f;
 	memcpy (basis, palette + 36, sizeof (basis));
-	if (!R_VRIKRefineActualPath (&live, palette, 0, 3, target, basis)) return false;
+	status = R_VRIKRefineActualPath (&live, palette, 0, 3, target, basis);
+	if (status != R_VRIK_ACTUAL_PATH_REACHED) return false;
 	R_VRIKMatrixOrigin (palette + 36, a); VectorSubtract (a, target, a);
 	if (VectorLength (a) > 0.01f) return false;
 	/* Exact on-line regressions break the formerly symmetric +X-chain case. */

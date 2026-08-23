@@ -164,7 +164,7 @@ static void test_rotation_and_basis(void)
 
 static void test_dynamic_presentation_basis(void)
 {
-	fixture_t source, target; r_avatar_rig_t sr, tr; float presentation[12], hip[3], head[3], mappedhip[3], mappedhead[3];
+	fixture_t source, target; r_avatar_rig_t sr, tr; r_avatar_presentation_context_t context; float presentation[12], hip[3], head[3], mappedhip[3], mappedhead[3];
 	ranger(&source, 1); ranger(&target, 1);
 	/* Deliberately make the canonical bind face +Y and target bind face +X.
 	 * The target left span is +Y; both bases remain proper handed frames. */
@@ -174,6 +174,15 @@ static void test_dynamic_presentation_basis(void)
 	origin(target.joints[5].bind, 5, 1, 0); origin(target.joints[9].bind, 5, -1, 0);
 	assert(R_AvatarResolveRig(R_AvatarProfileForId(PLAYER_AVATAR_RANGER), &source.live, &sr));
 	assert(R_AvatarResolveRig(R_AvatarProfileForId(PLAYER_AVATAR_RANGER), &target.live, &tr));
+	assert(R_AvatarBuildPresentationContext(&sr, &tr, &context));
+	/* Stored semantic vertical/facing axes come from the authored bind body
+	 * frame, rather than raw source +X/+Z. */
+	assert(fabsf(context.source_semantic_vertical[0]) < .01f &&
+		context.source_semantic_vertical[1] > .99f &&
+		fabsf(context.source_semantic_vertical[2]) < .01f);
+	assert(fabsf(context.source_semantic_facing[0]) < .01f &&
+		fabsf(context.source_semantic_facing[1]) < .01f &&
+		context.source_semantic_facing[2] < -.99f);
 	assert(R_AvatarTargetToCanonicalPresentation(&sr, &tr, presentation));
 	origin(source.joints[0].bind, 0, 0, 0);
 	hip[0] = target.joints[0].bind[3]; hip[1] = target.joints[0].bind[7]; hip[2] = target.joints[0].bind[11];
@@ -216,7 +225,6 @@ static void test_profile_basis_policies(void)
 	assert(dog->desktop_refine && dog->arm_pole_outward == 1.0f &&
 		dog->arm_pole_back == 0.35f && !dog->mirror_outer_leg_poles &&
 		dog->posture_policy == R_AVATAR_POSTURE_UPRIGHT &&
-		dog->torso_root_semantic == MD5_VRIK_SPINE1 &&
 		dog->head_forward_axis[1] == 1.0f && dog->preserve_hip_rotation &&
 		dog->actual_path_ik);
 	assert((dog->joint[MD5_VRIK_SHOULDER_L].flags & R_AVATAR_MAP_VIRTUAL) &&
@@ -229,7 +237,6 @@ static void test_profile_basis_policies(void)
 	assert(!strcmp(fiend->contact_root[0], "hoof_L") &&
 		!strcmp(fiend->contact_root[1], "hoof_R") && fiend->desktop_refine &&
 		fiend->posture_policy == R_AVATAR_POSTURE_UPRIGHT &&
-		fiend->torso_root_semantic == MD5_VRIK_SPINE2 &&
 		fiend->head_forward_axis[1] == 1.0f && fiend->preserve_hip_rotation &&
 		fiend->actual_path_ik && !strcmp(fiend->joint[MD5_VRIK_FOOT_L].name, "hoof_L") &&
 		!strcmp(fiend->joint[MD5_VRIK_FOOT_R].name, "hoof_R"));

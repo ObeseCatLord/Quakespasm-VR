@@ -55,6 +55,10 @@ void R_VRIKProfileArmPoleForTest (qboolean rightside, float outward,
 void R_VRIKProfileArmPoleWithUpForTest (qboolean rightside, float outward,
 	float back, float upward, vec3_t pole);
 qboolean R_VRIKAvatarUprightPostureForTest (qboolean tracked);
+qboolean R_VRIKShamblerDesktopArmRepairForTest (void);
+qboolean R_VRIKAvatarUprightFootContactsForTest (void);
+qboolean R_VRIKAvatarUprightUnreachableContactForTest (void);
+qboolean R_VRIKPostureContactProjectionForTest (void);
 qboolean R_VRIKActualPathForTest (void);
 
 static void SetTarget (vrik_codec_pose_t *pose, int target, float x)
@@ -252,6 +256,10 @@ int main (void)
 	}
 	assert (R_VRIKAvatarUprightPostureForTest (false));
 	assert (R_VRIKAvatarUprightPostureForTest (true));
+	assert (R_VRIKShamblerDesktopArmRepairForTest ());
+	assert (R_VRIKAvatarUprightFootContactsForTest ());
+	assert (R_VRIKAvatarUprightUnreachableContactForTest ());
+	assert (R_VRIKPostureContactProjectionForTest ());
 	assert (R_VRIKActualPathForTest ());
 	{
 		r_avatar_presentation_context_t context;

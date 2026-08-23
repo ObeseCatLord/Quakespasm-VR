@@ -66,10 +66,9 @@ typedef struct r_avatar_profile_s {
 	float arm_pole_outward;
 	float arm_pole_back;
 	qboolean mirror_outer_leg_poles;
-	/* Optional model-specific post-retarget posture correction.  The root is
-	 * semantic so descendants, rather than every model joint, are affected. */
+	/* Optional model-specific post-retarget posture correction.  It rotates the
+	 * complete Hip-descendant hierarchy rather than selected model joints. */
 	r_avatar_posture_policy_t posture_policy;
-	int torso_root_semantic;
 	float head_forward_axis[3];
 	qboolean preserve_hip_rotation;
 	/* Retained exclusively for tracked profile arm solves. */
@@ -98,6 +97,11 @@ typedef struct r_avatar_presentation_context_s {
 	float scale;
 	float forward[12];
 	float inverse[12];
+	/* The source rig's authored semantic vertical and facing axes in source
+	 * model space.  These avoid treating raw model axes as Ranger body axes
+	 * when a target-only presentation refinement needs its semantic frame. */
+	float source_semantic_vertical[3];
+	float source_semantic_facing[3];
 } r_avatar_presentation_context_t;
 
 const r_avatar_profile_t *R_AvatarProfileForId (int id);
