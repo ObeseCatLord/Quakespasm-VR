@@ -61,7 +61,8 @@ static const r_avatar_profile_t r_avatar_profiles[PLAYER_AVATAR_COUNT] = {
 			A("RearHigh_R"), A("RearMid_R"), A("RearFoot_R"), N, N, N, N },
 		R_AVATAR_BASIS_FEET_UP_HEAD_FORWARD,
 		{ "RearFoot_L", "RearFoot_R", NULL, NULL }, true, 1.0f, 0.35f, false,
-		R_AVATAR_POSTURE_AUTHORED, { 0.0f, 1.0f, 0.0f }, true, 0.0f, true
+		R_AVATAR_POSTURE_UPRIGHT, 60.0f, { 0.0f, 1.0f, 0.0f }, true, 0.0f, true,
+		true, 0.38f, 0.25f, { 0.0f, 0.0f, 0.0f }, MD5_VRIK_SPINE1
 	},
 	[PLAYER_AVATAR_OGRE] = {
 		PLAYER_AVATAR_OGRE, "ogre", "progs/ogre.md5mesh",
@@ -111,7 +112,8 @@ static const r_avatar_profile_t r_avatar_profiles[PLAYER_AVATAR_COUNT] = {
 			A("lower_leg_R"), A("hoof_R"), N, N, N, N },
 		R_AVATAR_BASIS_FEET_UP_HEAD_FORWARD,
 		{ "hoof_L", "hoof_R", NULL, NULL }, true, 1.0f, 0.35f, false,
-		R_AVATAR_POSTURE_AUTHORED, { 0.0f, 1.0f, 0.0f }, true, 0.0f, true
+		R_AVATAR_POSTURE_UPRIGHT, 35.0f, { 0.0f, 1.0f, 0.0f }, true, 0.0f, true,
+		true, 0.38f, 0.25f, { 0.0f, 0.0f, 0.0f }, MD5_VRIK_SPINE2
 	},
 	[PLAYER_AVATAR_SHAMBLER] = {
 		PLAYER_AVATAR_SHAMBLER, "shambler", "progs/shambler.md5mesh",
@@ -124,7 +126,8 @@ static const r_avatar_profile_t r_avatar_profiles[PLAYER_AVATAR_COUNT] = {
 			A("upper_leg_L"), A("lower_leg_L"), A("foot_L"), A("upper_leg_R"),
 			A("lower_leg_R"), A("foot_R"), N, N, N, N },
 		R_AVATAR_BASIS_HUMANOID, { NULL, NULL, NULL, NULL }, false, 0.136f, 0.223f, false,
-		R_AVATAR_POSTURE_AUTHORED, { 0.0f, 0.0f, 0.0f }, false, 0.965f, false
+		R_AVATAR_POSTURE_AUTHORED, 0.0f, { 0.0f, 0.0f, 0.0f }, false, 0.965f, false,
+		true, 0.30f, 0.20f, { -4.55128f, 11.20621f, -17.71073f }, MD5_VRIK_SPINE2
 	},
 	[PLAYER_AVATAR_ZOMBIE] = {
 		PLAYER_AVATAR_ZOMBIE, "zombie", "progs/zombie.md5mesh",
@@ -149,7 +152,7 @@ static const r_avatar_profile_t r_avatar_profiles[PLAYER_AVATAR_COUNT] = {
 			A("leg_1_L"), A("leg_2_L"), A("leg_3_L"),
 			A("leg_1_R"), A("leg_2_R"), A("leg_3_R"), N, N, N, N },
 		R_AVATAR_BASIS_HUMANOID, { NULL, NULL, NULL, NULL }, false, 1.0f, 0.35f, true,
-		R_AVATAR_POSTURE_AUTHORED, { 0.0f, 0.0f, 0.0f }, true, 0.0f, false
+		R_AVATAR_POSTURE_AUTHORED, 0.0f, { 0.0f, 0.0f, 0.0f }, false, 0.0f, false
 	}
 };
 
