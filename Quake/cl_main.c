@@ -27,6 +27,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "vr.h"
 #include "debug_log.h"
 #include "pmove.h"
+#include "player_avatar.h"
 
 // we need to declare some mouse variables here, because the menu system
 // references them even when on a unix system.
@@ -34,6 +35,65 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 // these two are not intended to be set directly
 cvar_t	cl_name = {"_cl_name", "player", CVAR_ARCHIVE};
 cvar_t	cl_color = {"_cl_color", "0", CVAR_ARCHIVE};
+cvar_t	cl_avatar = {"cl_avatar", "ranger", CVAR_ARCHIVE};
+
+static void CL_TrySendAvatarCapability(void)
+{
+	if (!cl.avatar_cap_pending || cl.avatar_cap_sent ||
+		cls.state != ca_connected)
+		return;
+	if (cls.message.cursize + 1 + (int)sizeof("avatar_cap 1") >
+		cls.message.maxsize)
+		return;
+	MSG_WriteByte(&cls.message, clc_stringcmd);
+	MSG_WriteString(&cls.message, "avatar_cap 1");
+	cl.avatar_cap_pending = false;
+	cl.avatar_cap_sent = true;
+	/* Queue the choice after capability in the same reliable command stream. */
+	CL_SendAvatarSelection();
+}
+
+static void CL_TrySendAvatarSelection(void)
+{
+	int id;
+
+	if (!cl.avatar_set_pending || !cl.avatar_cap_sent ||
+		cls.state != ca_connected)
+		return;
+	id = PlayerAvatar_IdForKey(cl_avatar.string);
+	if (id < 0)
+		return;
+	if (cls.message.cursize + 1 + (int)sizeof("avatar_set 10") >
+		cls.message.maxsize)
+		return;
+	MSG_WriteByte(&cls.message, clc_stringcmd);
+	MSG_WriteString(&cls.message, va("avatar_set %d", id));
+	cl.avatar_set_pending = false;
+}
+
+void CL_SendAvatarSelection (void)
+{
+	int id = PlayerAvatar_IdForKey(cl_avatar.string);
+
+	if (id < 0 || !cl.avatar_cap_sent || cls.state != ca_connected)
+		return;
+	cl.avatar_set_pending = true;
+	CL_TrySendAvatarSelection();
+}
+
+static void CL_Avatar_f(cvar_t *var)
+{
+	int id = PlayerAvatar_IdForKey(var->string);
+
+	if (id < 0)
+	{
+		Con_Warning("cl_avatar: unsupported avatar \"%s\"; using ranger\n",
+			var->string);
+		Cvar_SetQuick(var, PlayerAvatar_KeyForId(PLAYER_AVATAR_RANGER));
+		return;
+	}
+	CL_SendAvatarSelection();
+}
 
 cvar_t	cl_shownet = {"cl_shownet","0",CVAR_NONE};	// can be 0, 1, or 2
 cvar_t	cl_nolerp = {"cl_nolerp","0",CVAR_NONE};
@@ -374,6 +434,7 @@ void CL_ClearState (void)
 	cl_prediction_metadata_valid = false;
 	cl_prediction_mode_epoch = 0;
 	cl_prediction_discontinuity_epoch = 0;
+	memset(cl.avatar_ids, PLAYER_AVATAR_RANGER, sizeof(cl.avatar_ids));
 }
 
 /*
@@ -422,6 +483,12 @@ void CL_Disconnect (void)
 	cls.demopaused = false;
 	cl.intermission = 0;
 	cl.sendprespawn = false;
+	cl.avatar_protocol_offered = false;
+	cl.avatar_cap_sent = false;
+	cl.avatar_cap_pending = false;
+	cl.avatar_set_pending = false;
+	cl.avatar_protocol_version = 0;
+	memset(cl.avatar_ids, PLAYER_AVATAR_RANGER, sizeof(cl.avatar_ids));
 	CL_ClearSignons ();
 
 	V_ResetEffects ();
@@ -2392,6 +2459,9 @@ void CL_SendCmd (void)
 	if (cls.state != ca_connected)
 		return;
 
+	CL_TrySendAvatarCapability();
+	CL_TrySendAvatarSelection();
+
 	CL_BaseMove (&cmd, true);
 	IN_Move (&cmd);
 	VR_Move (&cmd);
@@ -2562,6 +2632,9 @@ void CL_Init (void)
 
 	Cvar_RegisterVariable (&cl_name);
 	Cvar_RegisterVariable (&cl_color);
+	Cvar_RegisterVariable (&cl_avatar);
+	Cvar_SetCallback (&cl_avatar, CL_Avatar_f);
+	CL_Avatar_f (&cl_avatar);
 	Cvar_RegisterVariable (&cl_upspeed);
 	Cvar_RegisterVariable (&cl_forwardspeed);
 	Cvar_RegisterVariable (&cl_backspeed);

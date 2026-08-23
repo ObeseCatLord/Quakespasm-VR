@@ -25,6 +25,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "addon_catalog.h"
 #include "bgmusic.h"
 #include "vr_menu.h"
+#include "player_avatar.h"
 // clang-format on
 
 void (*vid_menucmdfn)(void); // johnfitz
@@ -687,8 +688,8 @@ void M_MultiPlayer_Key(int key) {
 //=============================================================================
 /* SETUP MENU */
 
-int setup_cursor = 4;
-int setup_cursor_table[] = {40, 56, 80, 104, 140};
+int setup_cursor = 5;
+int setup_cursor_table[] = {40, 56, 80, 104, 128, 164};
 
 char setup_hostname[16];
 char setup_myname[16];
@@ -696,8 +697,10 @@ int setup_oldtop;
 int setup_oldbottom;
 int setup_top;
 int setup_bottom;
+int setup_avatar;
+int setup_oldavatar;
 
-#define NUM_SETUP_CMDS 5
+#define NUM_SETUP_CMDS 6
 
 void M_Menu_Setup_f(void) {
   IN_Deactivate(modestate == MS_WINDOWED);
@@ -708,6 +711,10 @@ void M_Menu_Setup_f(void) {
   Q_strcpy(setup_hostname, hostname.string);
   setup_top = setup_oldtop = ((int)cl_color.value) >> 4;
   setup_bottom = setup_oldbottom = ((int)cl_color.value) & 15;
+  setup_avatar = PlayerAvatar_IdForKey(cl_avatar.string);
+  if (!PlayerAvatar_IsValidId(setup_avatar))
+    setup_avatar = PLAYER_AVATAR_RANGER;
+  setup_oldavatar = setup_avatar;
 }
 
 void M_Setup_Draw(void) {
@@ -727,9 +734,11 @@ void M_Setup_Draw(void) {
 
   M_Print(64, 80, "Shirt color");
   M_Print(64, 104, "Pants color");
+  M_Print(64, 128, "Avatar model");
+  M_Print(160, 128, PlayerAvatar_DisplayNameForId(setup_avatar));
 
-  M_DrawTextBox(64, 140 - 8, 14, 1);
-  M_Print(72, 140, "Accept Changes");
+  M_DrawTextBox(64, 164 - 8, 14, 1);
+  M_Print(72, 164, "Accept Changes");
 
   p = Draw_CachePic("gfx/bigbox.lmp");
   M_DrawTransPic(160, 64, p);
@@ -772,16 +781,18 @@ void M_Setup_Key(int k) {
     break;
 
   case K_LEFTARROW:
-    if (setup_cursor < 2)
+    if (setup_cursor < 2 || setup_cursor == 5)
       return;
     S_LocalSound("misc/menu3.wav");
     if (setup_cursor == 2)
       setup_top = setup_top - 1;
     if (setup_cursor == 3)
       setup_bottom = setup_bottom - 1;
+    if (setup_cursor == 4)
+      setup_avatar = setup_avatar - 1;
     break;
   case K_RIGHTARROW:
-    if (setup_cursor < 2)
+    if (setup_cursor < 2 || setup_cursor == 5)
       return;
   forward:
     S_LocalSound("misc/menu3.wav");
@@ -789,6 +800,8 @@ void M_Setup_Key(int k) {
       setup_top = setup_top + 1;
     if (setup_cursor == 3)
       setup_bottom = setup_bottom + 1;
+    if (setup_cursor == 4)
+      setup_avatar = setup_avatar + 1;
     break;
 
   case K_ENTER:
@@ -797,16 +810,18 @@ void M_Setup_Key(int k) {
     if (setup_cursor == 0 || setup_cursor == 1)
       return;
 
-    if (setup_cursor == 2 || setup_cursor == 3)
+    if (setup_cursor == 2 || setup_cursor == 3 || setup_cursor == 4)
       goto forward;
 
-    // setup_cursor == 4 (OK)
+    // setup_cursor == 5 (OK)
     if (Q_strcmp(cl_name.string, setup_myname) != 0)
       Cbuf_AddText(va("name \"%s\"\n", setup_myname));
     if (Q_strcmp(hostname.string, setup_hostname) != 0)
       Cvar_Set("hostname", setup_hostname);
     if (setup_top != setup_oldtop || setup_bottom != setup_oldbottom)
       Cbuf_AddText(va("color %i %i\n", setup_top, setup_bottom));
+    if (setup_avatar != setup_oldavatar)
+      Cvar_Set("cl_avatar", PlayerAvatar_KeyForId(setup_avatar));
     m_entersound = true;
     M_Menu_MultiPlayer_f();
     break;
@@ -832,6 +847,10 @@ void M_Setup_Key(int k) {
     setup_bottom = 0;
   if (setup_bottom < 0)
     setup_bottom = 13;
+  if (setup_avatar >= PLAYER_AVATAR_COUNT)
+    setup_avatar = PLAYER_AVATAR_RANGER;
+  if (setup_avatar < PLAYER_AVATAR_RANGER)
+    setup_avatar = PLAYER_AVATAR_COUNT - 1;
 }
 
 void M_Setup_Char(int k) {

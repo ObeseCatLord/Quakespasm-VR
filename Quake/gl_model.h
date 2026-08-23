@@ -24,6 +24,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #define GL_MODEL_H
 
 #include "modelgen.h"
+#include "player_avatar.h"
 #include "spritegn.h"
 
 /*
@@ -686,10 +687,16 @@ qboolean Mod_UseMD3Model (qmodel_t *mod, int skinnum);
 aliashdr_t *Mod_GetMD5Extradata (qmodel_t *mod);
 qboolean Mod_UseMD5Model (qmodel_t *mod, int skinnum);
 qboolean Mod_GetMD5LiveData (qmodel_t *mod, md5liveinfo_t *out);
+/* Returns zero unless every retained surface is safe to enumerate. */
+int Mod_GetMD5LiveSurfaceCount (const md5liveinfo_t *info);
 qboolean Mod_GetMD5LiveSurface (const md5liveinfo_t *info, int surface,
 	md5livesurface_t *out);
 qmodel_t *Mod_GetRereleasePlayerMD5Model (void);
 qboolean Mod_GetRereleasePlayerMD5LiveData (md5liveinfo_t *out);
+/* Loads only a fixed allowlist from the signature-verified rerelease pack. */
+qmodel_t *Mod_GetRereleaseAvatarMD5Model (player_avatar_id_t avatar);
+qboolean Mod_GetRereleaseAvatarMD5LiveData (player_avatar_id_t avatar,
+	md5liveinfo_t *out);
 qboolean Mod_UseMD3ModelForFrame (qmodel_t *mod, int skinnum, int frame);
 qboolean Mod_UseMD5ModelForFrame (qmodel_t *mod, int skinnum, int frame);
 qboolean Mod_UseEnhancedReplacementForFrame (qmodel_t *mod, int skinnum,

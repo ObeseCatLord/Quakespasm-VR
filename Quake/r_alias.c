@@ -25,6 +25,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "quakedef.h"
 #include "vr.h"
 #include "r_vrik.h"
+#include "r_avatar.h"
 
 extern cvar_t r_drawflat, gl_overbright_models, gl_fullbrights, r_lerpmodels, r_lerpmove; //johnfitz
 extern cvar_t scr_fov, cl_gun_fovscale;
@@ -106,11 +107,18 @@ static qboolean r_md5_glsl_active;
 static qboolean r_md5_glsl_alphatest;
 
 static qboolean r_vrik_pose_pending;
+/* A selected avatar always needs a CPU skin, even when its owner is not
+ * currently transmitting tracked targets.  The source animation remains the
+ * verified Ranger in either case. */
+static qboolean r_vrik_skin_pending;
 static qboolean r_vrik_skin_active;
 static vrik_pose_t r_vrik_pending_pose;
 static r_vrik_skincache_t *r_vrik_skin_cache;
 static unsigned int r_vrik_rendered_generation[MAX_SCOREBOARD + 1];
 static int r_vrik_active_player = -1;
+static player_avatar_id_t r_vrik_avatar_id = PLAYER_AVATAR_RANGER;
+static qmodel_t *r_vrik_canonical_model;
+static lerpdata_t r_vrik_canonical_lerpdata;
 static vec3_t r_vrik_draw_origin;
 static vec3_t r_vrik_draw_angles;
 
@@ -119,6 +127,7 @@ typedef struct
 	qboolean valid;
 	qmodel_t *model;
 	unsigned int generation;
+	player_avatar_id_t avatar_id;
 	byte lerpflags;
 	float lerpstart;
 	float lerptime;
@@ -2217,6 +2226,505 @@ static void R_VRIKSolveArm (const md5liveinfo_t *live, float *palette,
 	memcpy (hand, desiredhand, sizeof(desiredhand));
 }
 
+static void R_VRIKTranslateJointSubtree (const md5liveinfo_t *live,
+	float *palette, int root, const vec3_t delta);
+static void R_VRIKRotateJointSubtreeToward (const md5liveinfo_t *live,
+	float *palette, int root, const vec3_t from, const vec3_t to);
+
+/* A retargeted avatar needs the exact canonical wrist position, but its own
+ * segment lengths and elbow plane.  This intentionally leaves the hand basis
+ * produced by the retargeter intact; only the two-bone reach is refined. */
+static void R_VRIKRefineArmPosition (const md5liveinfo_t *live,
+	float *palette, qboolean rightside, const vec3_t target)
+{
+	int upperindex = live->jointindex[rightside ? MD5_VRIK_UPPERARM_R : MD5_VRIK_UPPERARM_L];
+	int lowerindex = live->jointindex[rightside ? MD5_VRIK_LOWERARM_R : MD5_VRIK_LOWERARM_L];
+	int handindex = live->jointindex[rightside ? MD5_VRIK_HAND_R : MD5_VRIK_HAND_L];
+	float *upper, *lower, *hand;
+	vec3_t shoulder, elbow, oldelbow, oldhand, toward, boundedtarget, lateral, forward, up;
+	vec3_t oldupperdir, oldlowerdir, newupperdir, newlowerdir, pole, normal, bend;
+	float upperlength, lowerlength, distance, reach, stretch, solveupper,
+		solvelower, cosine, along, across;
+
+	if (upperindex < 0 || lowerindex < 0 || handindex < 0 ||
+		!R_VRIKBuildBodyBasis (live, palette, lateral, forward, up))
+		return;
+	upper = palette + upperindex * 12;
+	lower = palette + lowerindex * 12;
+	hand = palette + handindex * 12;
+	R_VRIKMatrixOrigin (upper, shoulder);
+	R_VRIKMatrixOrigin (lower, oldelbow);
+	R_VRIKMatrixOrigin (hand, oldhand);
+	VectorSubtract (oldelbow, shoulder, oldupperdir);
+	VectorSubtract (oldhand, oldelbow, oldlowerdir);
+	upperlength = VectorLength (oldupperdir);
+	lowerlength = VectorLength (oldlowerdir);
+	if (upperlength < 0.01f || lowerlength < 0.01f)
+		return;
+	VectorSubtract (target, shoulder, toward);
+	distance = VectorLength (toward);
+	if (distance < 0.001f)
+		return;
+	VectorScale (toward, 1.0f / distance, toward);
+	reach = upperlength + lowerlength;
+	distance = CLAMP (fabsf (upperlength - lowerlength) + 0.01f, distance,
+		reach * VRIK_ARM_MAX_STRETCH);
+	VectorMA (shoulder, distance, toward, boundedtarget);
+	stretch = distance > reach ? distance / reach : 1.0f;
+	solveupper = upperlength * stretch;
+	solvelower = lowerlength * stretch;
+	VectorScale (lateral, rightside ? 1.0f : -1.0f, pole);
+	VectorMA (pole, -0.35f, forward, pole);
+	CrossProduct (toward, pole, normal);
+	if (!VectorNormalize (normal))
+		VectorCopy (up, normal);
+	CrossProduct (normal, toward, bend);
+	if (!VectorNormalize (bend))
+		return;
+	cosine = CLAMP (-1.0f, (solveupper * solveupper + distance * distance -
+		solvelower * solvelower) / (2.0f * solveupper * distance), 1.0f);
+	along = cosine * solveupper;
+	across = sqrtf (q_max (0.0f, 1.0f - cosine * cosine)) * solveupper;
+	VectorMA (shoulder, along, toward, elbow);
+	VectorMA (elbow, across, bend, elbow);
+	VectorSubtract (elbow, shoulder, newupperdir);
+	VectorSubtract (boundedtarget, elbow, newlowerdir);
+	R_VRIKRotateJointSubtreeToward (live, palette, upperindex, oldupperdir,
+		newupperdir);
+	/* The upper correction carried the lower chain along, so measure its
+	 * direction again before the elbow correction.  Move the complete lower
+	 * subtree to the analytic elbow first; setting only its root detaches hand
+	 * children when a target needs the permitted small stretch. */
+	R_VRIKMatrixOrigin (lower, oldelbow);
+	VectorSubtract (elbow, oldelbow, oldelbow);
+	R_VRIKTranslateJointSubtree (live, palette, lowerindex, oldelbow);
+	R_VRIKMatrixOrigin (lower, oldelbow);
+	R_VRIKMatrixOrigin (hand, oldhand);
+	VectorSubtract (oldhand, oldelbow, oldlowerdir);
+	R_VRIKRotateJointSubtreeToward (live, palette, lowerindex, oldlowerdir,
+		newlowerdir);
+	R_VRIKMatrixOrigin (hand, oldhand);
+	VectorSubtract (boundedtarget, oldhand, oldhand);
+	R_VRIKTranslateJointSubtree (live, palette, handindex, oldhand);
+}
+
+static qboolean R_VRIKAvatarTargetPoint (const r_avatar_rig_t *canonicalrig,
+	const r_avatar_rig_t *targetrig, const vec3_t canonical, vec3_t target)
+{
+	float basis[12];
+
+	if (!canonicalrig || !targetrig ||
+		!R_AvatarCanonicalToTargetPresentation (canonicalrig, targetrig, basis))
+		return false;
+	target[0] = basis[0] * canonical[0] + basis[1] * canonical[1] +
+		basis[2] * canonical[2] + basis[3];
+	target[1] = basis[4] * canonical[0] + basis[5] * canonical[1] +
+		basis[6] * canonical[2] + basis[7];
+	target[2] = basis[8] * canonical[0] + basis[9] * canonical[1] +
+		basis[10] * canonical[2] + basis[11];
+	return true;
+}
+
+static qboolean R_VRIKJointDescendsFrom (const md5liveinfo_t *live,
+	int joint, int root)
+{
+	for (; live && joint >= 0 && joint < live->numbones;
+		joint = live->joints[joint].parent)
+		if (joint == root)
+			return true;
+	return false;
+}
+
+static void R_VRIKTranslateJointSubtree (const md5liveinfo_t *live,
+	float *palette, int root, const vec3_t delta)
+{
+	int joint;
+
+	for (joint = 0; live && joint < live->numbones; joint++)
+		if (R_VRIKJointDescendsFrom (live, joint, root))
+		{
+			vec3_t origin;
+			R_VRIKMatrixOrigin (palette + joint * 12, origin);
+			VectorAdd (origin, delta, origin);
+			R_VRIKSetMatrixOrigin (palette + joint * 12, origin);
+		}
+}
+
+static void R_VRIKRotateJointSubtreeToward (const md5liveinfo_t *live,
+	float *palette, int root, const vec3_t from, const vec3_t to)
+{
+	float before[12], inverse[12], delta[12];
+	vec3_t pivot;
+	int joint;
+
+	if (!live || !palette || root < 0 || root >= live->numbones)
+		return;
+	memcpy (before, palette + root * 12, sizeof(before));
+	R_VRIKMatrixOrigin (before, pivot);
+	R_VRIKRotateToward (palette + root * 12, from, to);
+	R_VRIKMatrixInverseRigid (before, inverse);
+	R_VRIKMatrixMultiply (palette + root * 12, inverse, delta);
+	for (joint = 0; joint < live->numbones; joint++)
+		if (joint != root && R_VRIKJointDescendsFrom (live, joint, root))
+		{
+			float transformed[12];
+			vec3_t oldorigin, relative, neworigin;
+
+			R_VRIKMatrixOrigin (palette + joint * 12, oldorigin);
+			VectorSubtract (oldorigin, pivot, relative);
+			neworigin[0] = delta[0] * relative[0] + delta[1] * relative[1] +
+				delta[2] * relative[2] + pivot[0];
+			neworigin[1] = delta[4] * relative[0] + delta[5] * relative[1] +
+				delta[6] * relative[2] + pivot[1];
+			neworigin[2] = delta[8] * relative[0] + delta[9] * relative[1] +
+				delta[10] * relative[2] + pivot[2];
+			R_VRIKMatrixMultiply (delta, palette + joint * 12, transformed);
+			R_VRIKSetMatrixOrigin (transformed, neworigin);
+			memcpy (palette + joint * 12, transformed, sizeof(transformed));
+		}
+}
+
+static void R_VRIKRefineAvatarPalette (const md5liveinfo_t *canonical,
+	const r_avatar_rig_t *canonicalrig, const r_avatar_rig_t *targetrig,
+	const float *sourcepalette,
+	float *targetpalette)
+{
+	md5liveinfo_t target;
+	int semantic;
+
+	if (!canonical || !targetrig || !targetrig->valid || !sourcepalette ||
+		!targetpalette || !targetrig->live)
+		return;
+	target = *targetrig->live;
+	for (semantic = 0; semantic < MD5_VRIK_JOINT_COUNT; semantic++)
+		target.jointindex[semantic] = targetrig->joint[semantic];
+	/* This local semantic view has just passed the avatar profile's hierarchy
+	 * validation.  Loader compatibility remains Ranger-name-specific, so do
+	 * not mutate it; only the target-length helper needs this local approval. */
+	target.compatible = true;
+	for (semantic = MD5_VRIK_HEAD; semantic <= MD5_VRIK_HAND_R; semantic++)
+	{
+		int sourcejoint = canonical->jointindex[semantic];
+		int targetjoint = target.jointindex[semantic];
+		vec3_t sourceorigin, targetorigin;
+
+		if (sourcejoint < 0 || targetjoint < 0)
+			continue;
+		R_VRIKMatrixOrigin (sourcepalette + sourcejoint * 12, sourceorigin);
+		if (!R_VRIKAvatarTargetPoint (canonicalrig, targetrig, sourceorigin,
+			targetorigin))
+			continue;
+		if (semantic == MD5_VRIK_HAND_L || semantic == MD5_VRIK_HAND_R)
+			R_VRIKRefineArmPosition (&target, targetpalette,
+				semantic == MD5_VRIK_HAND_R, targetorigin);
+		else if (semantic == MD5_VRIK_HEAD)
+		{
+			vec3_t currentorigin, delta;
+			R_VRIKMatrixOrigin (targetpalette + targetjoint * 12, currentorigin);
+			VectorSubtract (targetorigin, currentorigin, delta);
+			R_VRIKTranslateJointSubtree (&target, targetpalette, targetjoint,
+				delta);
+		}
+	}
+	/* Feet are refined only when this sender supplied a real or predicted lower
+	 * target.  The source palette already represents the canonical solve; the
+	 * target helper re-solves with its own segment lengths (dog rear legs and
+	 * Vore's outer legs are described by their semantic profiles). */
+	if (r_vrik_pose_pending)
+	{
+		r_vrik_lowerbody_targets_t lower;
+		r_vrik_lowerbody_model_targets_t modeltargets;
+		int role;
+
+		memset (&modeltargets, 0, sizeof(modeltargets));
+		if (R_VRIKGetLowerBodyTargets (r_vrik_active_player + 1, &lower))
+			for (role = R_VRIK_LOWER_LEFT_FOOT;
+				role <= R_VRIK_LOWER_RIGHT_FOOT; role++)
+			{
+				int sourcesemantic = role == R_VRIK_LOWER_LEFT_FOOT ?
+					MD5_VRIK_FOOT_L : MD5_VRIK_FOOT_R;
+				int sourcejoint = canonical->jointindex[sourcesemantic];
+				unsigned char bit = R_VRIK_LOWER_BIT (role);
+				vec3_t sourceorigin;
+
+				if (!(lower.present_mask & bit) ||
+					(!(lower.tracked_mask & bit) && !(lower.predicted_mask & bit)) ||
+					sourcejoint < 0)
+					continue;
+				R_VRIKMatrixOrigin (sourcepalette + sourcejoint * 12, sourceorigin);
+				if (!R_VRIKAvatarTargetPoint (canonicalrig, targetrig, sourceorigin,
+					modeltargets.position[role]))
+					continue;
+				modeltargets.usable_mask |= bit;
+				modeltargets.confidence[role] = lower.confidence[role];
+			}
+		if (modeltargets.usable_mask)
+			R_VRIKApplyLowerBody (&target, targetpalette, &modeltargets);
+	}
+}
+
+static qboolean R_VRIKReserveBodyIndexes (r_vrik_skincache_t *cache,
+	int indexes)
+{
+	unsigned short *body;
+
+	if (!cache || indexes < 3 || (indexes % 3) != 0)
+		return false;
+	if (indexes <= cache->body_index_capacity)
+		return true;
+	body = (unsigned short *)realloc (cache->body_indexes,
+		(size_t)indexes * sizeof(*body));
+	if (!body)
+		return false;
+	cache->body_indexes = body;
+	cache->body_index_capacity = indexes;
+	return true;
+}
+
+static float R_VRIKEquipmentVertexWeight (const md5liveinfo_t *live,
+	const md5livesurface_t *surface, int vertex, const int *equipment,
+	int equipmentcount)
+{
+	const md5livevertex_t *source;
+	float owned = 0.0f;
+	int influence, root;
+
+	if (!live || !surface || vertex < 0 || vertex >= surface->numverts)
+		return 0.0f;
+	source = &surface->vertices[vertex];
+	for (influence = 0; influence < (int)source->numweights; influence++)
+	{
+		const md5liveweight_t *weight =
+			&surface->weights[source->firstweight + influence];
+		for (root = 0; root < equipmentcount; root++)
+			if (R_VRIKJointDescendsFrom (live, weight->joint, equipment[root]))
+			{
+				owned += weight->position[3];
+				break;
+			}
+	}
+	return CLAMP (0.0f, owned, 1.0f);
+}
+
+/* Keep one body index stream per host-frame cache.  A clean native prop has
+ * all three vertices at 1.0 and disappears entirely.  Knight/HKnight swords
+ * share/blend vertices with the hand, so additionally reject triangles whose
+ * average equipment ownership is at least half (or whose core is strongly
+ * owned) without indiscriminately punching out the hand mesh. */
+static qboolean R_VRIKBuildBodyIndexes (const md5liveinfo_t *live,
+	const r_avatar_profile_t *profile, const md5livesurface_t *surface,
+	r_vrik_skincache_t *cache)
+{
+	int equipment[4] = {-1, -1, -1, -1};
+	int equipmentcount = 0, joint, index, outindex = 0;
+
+	if (!live || !profile || !surface || !cache ||
+		surface->numindexes < 3 || (surface->numindexes % 3) != 0 ||
+		!R_VRIKReserveBodyIndexes (cache, surface->numindexes))
+		return false;
+	/* Ranger owns its authored Gun/Axe geometry.  Only alternates that receive
+	 * a detached canonical prop may filter native equipment triangles. */
+	if (profile->equipment_policy != R_AVATAR_EQUIPMENT_ATTACH_HAND)
+	{
+		memcpy (cache->body_indexes, surface->indexes,
+			(size_t)surface->numindexes * sizeof(*cache->body_indexes));
+		cache->body_numindexes = surface->numindexes;
+		return true;
+	}
+	for (joint = 0; joint < 4; joint++)
+		if (profile->native_equipment_joint[joint])
+		{
+			int candidate;
+			for (candidate = 0; candidate < live->numbones; candidate++)
+				if (!q_strcasecmp (live->joints[candidate].name,
+					profile->native_equipment_joint[joint]))
+				{
+					equipment[equipmentcount++] = candidate;
+					break;
+				}
+		}
+	for (index = 0; index < surface->numindexes; index += 3)
+	{
+		float weight[3], average, minimum, maximum;
+		int point;
+
+		for (point = 0; point < 3; point++)
+			weight[point] = R_VRIKEquipmentVertexWeight (live, surface,
+				surface->indexes[index + point], equipment, equipmentcount);
+		average = (weight[0] + weight[1] + weight[2]) / 3.0f;
+		minimum = q_min (weight[0], q_min (weight[1], weight[2]));
+		maximum = q_max (weight[0], q_max (weight[1], weight[2]));
+		if (equipmentcount && (average >= 0.5f ||
+			(minimum >= 0.25f && maximum >= 0.75f)))
+			continue;
+		for (point = 0; point < 3; point++)
+		{
+			unsigned short vertex = surface->indexes[index + point];
+			if (vertex >= surface->numverts)
+				return false;
+			cache->body_indexes[outindex++] = vertex;
+		}
+	}
+	cache->body_numindexes = outindex;
+	return true;
+}
+
+static void R_VRIKComputeNormals (md5vertex_t *vertices, int numverts,
+	const unsigned short *indexes, int numindexes);
+
+static qboolean R_VRIKReserveProp (r_vrik_skincache_t *cache, int verts,
+	int indexes)
+{
+	md5vertex_t *vertices;
+	unsigned short *indices;
+
+	if (!cache || verts < 1 || indexes < 3)
+		return false;
+	if (verts > cache->prop_vertex_capacity)
+	{
+		vertices = (md5vertex_t *)realloc (cache->prop_vertices,
+			(size_t)verts * sizeof(*vertices));
+		if (!vertices)
+			return false;
+		cache->prop_vertices = vertices;
+		cache->prop_vertex_capacity = verts;
+	}
+	if (indexes > cache->prop_index_capacity)
+	{
+		indices = (unsigned short *)realloc (cache->prop_indexes,
+			(size_t)indexes * sizeof(*indices));
+		if (!indices)
+			return false;
+		cache->prop_indexes = indices;
+		cache->prop_index_capacity = indexes;
+	}
+	return true;
+}
+
+static qboolean R_VRIKPropVertexOwnedBy (const md5liveinfo_t *live,
+	const md5livesurface_t *surface, int vertex, int root)
+{
+	const md5livevertex_t *source = &surface->vertices[vertex];
+	float owned = 0.0f;
+	int influence;
+
+	for (influence = 0; influence < (int)source->numweights; influence++)
+	{
+		const md5liveweight_t *weight =
+			&surface->weights[source->firstweight + influence];
+		if (R_VRIKJointDescendsFrom (live, weight->joint, root))
+			owned += weight->position[3];
+	}
+	return owned >= 0.999999f;
+}
+
+static qboolean R_VRIKPrepareAttachedProp (const md5liveinfo_t *canonical,
+	const r_avatar_rig_t *canonicalrig, const r_avatar_rig_t *targetrig,
+	const md5livesurface_t *source, r_vrik_skincache_t *cache)
+{
+	int gun, axe, sourcehand, targethand, semantic, root, vertex, influence,
+		index, outindex = 0;
+	vec3_t handorigin, gunorigin, axeorigin;
+	float gundistance = FLT_MAX, axedistance = FLT_MAX;
+	float presentation[12], inverse[12], attach[12], targethandcanonical[12];
+	qboolean dominantleft = r_vrik_pose_pending &&
+		(r_vrik_pending_pose.flags & VRIK_FLAG_DOMINANT_LEFT);
+
+	if (!cache)
+		return false;
+	cache->prop_numverts = cache->prop_numindexes = 0;
+	cache->prop_surface = NULL;
+	cache->prop_semantic = -1;
+	if (!targetrig || !targetrig->profile)
+		return false;
+	if (targetrig->profile->equipment_policy != R_AVATAR_EQUIPMENT_ATTACH_HAND)
+		return true;
+	if (!canonical || !canonicalrig || !source)
+		return false;
+	gun = canonical->jointindex[MD5_VRIK_GUN];
+	axe = canonical->jointindex[MD5_VRIK_AXE];
+	sourcehand = canonical->jointindex[dominantleft ? MD5_VRIK_HAND_L : MD5_VRIK_HAND_R];
+	targethand = targetrig->joint[dominantleft ? MD5_VRIK_HAND_L : MD5_VRIK_HAND_R];
+	if (sourcehand < 0 || targethand < 0 || (gun < 0 && axe < 0))
+		return false;
+	R_VRIKMatrixOrigin (cache->canonical_palette + sourcehand * 12, handorigin);
+	if (gun >= 0)
+	{
+		R_VRIKMatrixOrigin (cache->canonical_palette + gun * 12, gunorigin);
+		VectorSubtract (gunorigin, handorigin, gunorigin);
+		gundistance = VectorLength (gunorigin);
+	}
+	if (axe >= 0)
+	{
+		R_VRIKMatrixOrigin (cache->canonical_palette + axe * 12, axeorigin);
+		VectorSubtract (axeorigin, handorigin, axeorigin);
+		axedistance = VectorLength (axeorigin);
+	}
+	semantic = gundistance <= axedistance ? MD5_VRIK_GUN : MD5_VRIK_AXE;
+	root = canonical->jointindex[semantic];
+	if (root < 0 || q_min (gundistance, axedistance) > 64.0f ||
+		!R_AvatarTargetToCanonicalPresentation (canonicalrig, targetrig,
+			presentation))
+		return false;
+	R_VRIKMatrixMultiply (presentation, cache->palette + targethand * 12,
+		targethandcanonical);
+	R_VRIKMatrixInverseRigid (cache->canonical_palette + sourcehand * 12,
+		inverse);
+	R_VRIKMatrixMultiply (targethandcanonical, inverse, attach);
+	if (!R_VRIKReserveProp (cache, source->numverts, source->numindexes))
+		return false;
+	for (index = 0; index + 2 < source->numindexes; index += 3)
+		if (R_VRIKPropVertexOwnedBy (canonical, source, source->indexes[index], root) &&
+			R_VRIKPropVertexOwnedBy (canonical, source, source->indexes[index + 1], root) &&
+			R_VRIKPropVertexOwnedBy (canonical, source, source->indexes[index + 2], root))
+		{
+			cache->prop_indexes[outindex++] = source->indexes[index];
+			cache->prop_indexes[outindex++] = source->indexes[index + 1];
+			cache->prop_indexes[outindex++] = source->indexes[index + 2];
+		}
+	if (!outindex)
+		return false;
+	for (vertex = 0; vertex < source->numverts; vertex++)
+	{
+		const md5livevertex_t *input = &source->vertices[vertex];
+		md5vertex_t *output = &cache->prop_vertices[vertex];
+		vec3_t skinned;
+		skinned[0] = skinned[1] = skinned[2] = 0.0f;
+		output->st[0] = input->st[0]; output->st[1] = input->st[1];
+		for (influence = 0; influence < (int)input->numweights; influence++)
+		{
+			const md5liveweight_t *weight = &source->weights[input->firstweight + influence];
+			const float *matrix = cache->canonical_palette + weight->joint * 12;
+			skinned[0] += matrix[0] * weight->position[0] + matrix[1] * weight->position[1] + matrix[2] * weight->position[2] + matrix[3] * weight->position[3];
+			skinned[1] += matrix[4] * weight->position[0] + matrix[5] * weight->position[1] + matrix[6] * weight->position[2] + matrix[7] * weight->position[3];
+			skinned[2] += matrix[8] * weight->position[0] + matrix[9] * weight->position[1] + matrix[10] * weight->position[2] + matrix[11] * weight->position[3];
+		}
+		output->xyz[0] = attach[0] * skinned[0] + attach[1] * skinned[1] + attach[2] * skinned[2] + attach[3];
+		output->xyz[1] = attach[4] * skinned[0] + attach[5] * skinned[1] + attach[6] * skinned[2] + attach[7];
+		output->xyz[2] = attach[8] * skinned[0] + attach[9] * skinned[1] + attach[10] * skinned[2] + attach[11];
+	}
+	R_VRIKComputeNormals (cache->prop_vertices, source->numverts,
+		cache->prop_indexes, outindex);
+	cache->prop_surface = source->header;
+	cache->prop_numverts = source->numverts;
+	cache->prop_numindexes = outindex;
+	cache->prop_semantic = semantic;
+	if (semantic == MD5_VRIK_GUN && cache->muzzle_valid)
+	{
+		vec3_t original, originalforward;
+		VectorCopy (cache->muzzle_origin, original);
+		VectorCopy (cache->muzzle_forward, originalforward);
+		cache->muzzle_origin[0] = attach[0] * original[0] + attach[1] * original[1] + attach[2] * original[2] + attach[3];
+		cache->muzzle_origin[1] = attach[4] * original[0] + attach[5] * original[1] + attach[6] * original[2] + attach[7];
+		cache->muzzle_origin[2] = attach[8] * original[0] + attach[9] * original[1] + attach[10] * original[2] + attach[11];
+		cache->muzzle_forward[0] = attach[0] * originalforward[0] + attach[1] * originalforward[1] + attach[2] * originalforward[2];
+		cache->muzzle_forward[1] = attach[4] * originalforward[0] + attach[5] * originalforward[1] + attach[6] * originalforward[2];
+		cache->muzzle_forward[2] = attach[8] * originalforward[0] + attach[9] * originalforward[1] + attach[10] * originalforward[2];
+		VectorNormalize (cache->muzzle_forward);
+	}
+	return true;
+}
+
 static void R_VRIKMoveJoint (const md5liveinfo_t *live, float *palette,
 	md5vrikjoint_t semantic, vec3_t delta, float scale)
 {
@@ -2495,10 +3003,12 @@ static void R_VRIKComputeNormals (md5vertex_t *vertices, int numverts,
 			vertices[i].normal[2] = 1;
 }
 
-static qboolean R_VRIKPrepareSkin (qmodel_t *model, const lerpdata_t *lerpdata)
+static qboolean R_VRIKPrepareSkin (qmodel_t *model)
 {
-	md5liveinfo_t live;
-	md5livesurface_t surface;
+	md5liveinfo_t canonical, target;
+	md5livesurface_t surface, canonicalsurface;
+	const r_avatar_profile_t *profile;
+	r_avatar_rig_t canonicalrig, targetrig;
 	r_vrik_skincache_t *cache;
 	int vertex, influence;
 
@@ -2507,23 +3017,44 @@ static qboolean R_VRIKPrepareSkin (qmodel_t *model, const lerpdata_t *lerpdata)
 	cache = R_VRIKGetSkinCache (r_vrik_active_player + 1, model);
 	if (!cache)
 		return false;
+	if (cache->pose_generation != currententity->vrik_generation ||
+		cache->avatar_id != (unsigned char)r_vrik_avatar_id)
+		cache->ready = false;
 	if (R_VRIKSkinCacheReady (cache, model))
 	{
 		r_vrik_skin_cache = cache;
 		r_vrik_skin_active = true;
 		return true;
 	}
-	if (!r_vrik_pose_pending || !Mod_GetMD5LiveData (model, &live) ||
-		!live.compatible || !Mod_GetMD5LiveSurface (&live, 0, &surface) ||
-		surface.header->nextsurface)
+	profile = R_AvatarProfileForId (r_vrik_avatar_id);
+	if (!profile || !r_vrik_canonical_model ||
+		!Mod_GetRereleasePlayerMD5LiveData (&canonical) ||
+		!canonical.compatible || !Mod_GetMD5LiveData (model, &target) ||
+		!target.from_rerelease || Mod_GetMD5LiveSurfaceCount (&canonical) != 1 ||
+		Mod_GetMD5LiveSurfaceCount (&target) != 1 ||
+		!Mod_GetMD5LiveSurface (&canonical, 0, &canonicalsurface) ||
+		!Mod_GetMD5LiveSurface (&target, 0, &surface) ||
+		!R_AvatarResolveRig (R_AvatarProfileForId (PLAYER_AVATAR_RANGER),
+			&canonical, &canonicalrig) ||
+		!R_AvatarResolveRig (profile, &target, &targetrig))
 		return false;
 	if (!R_VRIKSkinCacheReserve (cache, surface.numverts))
 		return false;
 
-	R_VRIKLerpPalette (&live, lerpdata, cache->palette);
-	R_VRIKSolvePalette (&live, &r_vrik_pending_pose,
-		currententity && (currententity->effects & EF_MUZZLEFLASH),
-		cache->palette, cache);
+	/* Canonical Ranger animation and VRIK are deliberately solved before
+	 * touching the selected mesh.  Monster AI frames never enter this path. */
+	R_VRIKLerpPalette (&canonical, &r_vrik_canonical_lerpdata,
+		cache->canonical_palette);
+	if (r_vrik_pose_pending)
+		R_VRIKSolvePalette (&canonical, &r_vrik_pending_pose,
+			currententity && (currententity->effects & EF_MUZZLEFLASH),
+			cache->canonical_palette, cache);
+	if (!R_AvatarRetargetPalette (&canonicalrig, &targetrig,
+		cache->canonical_palette,
+		cache->palette))
+		return false;
+	R_VRIKRefineAvatarPalette (&canonical, &canonicalrig, &targetrig,
+		cache->canonical_palette, cache->palette);
 	for (vertex = 0; vertex < surface.numverts; vertex++)
 	{
 		const md5livevertex_t *source = &surface.vertices[vertex];
@@ -2549,9 +3080,40 @@ static qboolean R_VRIKPrepareSkin (qmodel_t *model, const lerpdata_t *lerpdata)
 			VectorAdd (destination->xyz, transformed, destination->xyz);
 		}
 	}
+	if (!R_VRIKPrepareAttachedProp (&canonical, &canonicalrig, &targetrig,
+		&canonicalsurface, cache))
+		return false;
+	if (!R_VRIKBuildBodyIndexes (&target, profile, &surface, cache))
+		return false;
+	/* The cache is drawn through the ordinary target MD5 transform.  Normalize
+	 * the completed target-native skin into canonical Ranger presentation here
+	 * (before normals), rather than scaling the entity or collision state. */
+	{
+		float presentation[12];
+		if (!R_AvatarTargetToCanonicalPresentation (&canonicalrig, &targetrig,
+			presentation))
+			return false;
+		for (vertex = 0; vertex < surface.numverts; vertex++)
+		{
+			md5vertex_t *destination = &cache->vertices[vertex];
+			vec3_t source;
+			VectorCopy (destination->xyz, source);
+			destination->xyz[0] = presentation[0] * source[0] +
+				presentation[1] * source[1] + presentation[2] * source[2] +
+				presentation[3];
+			destination->xyz[1] = presentation[4] * source[0] +
+				presentation[5] * source[1] + presentation[6] * source[2] +
+				presentation[7];
+			destination->xyz[2] = presentation[8] * source[0] +
+				presentation[9] * source[1] + presentation[10] * source[2] +
+				presentation[11];
+		}
+	}
 	R_VRIKComputeNormals (cache->vertices, surface.numverts,
-		surface.indexes, surface.numindexes);
+		cache->body_indexes, cache->body_numindexes);
 	R_VRIKSkinCacheCommit (cache, surface.header);
+	cache->pose_generation = currententity->vrik_generation;
+	cache->avatar_id = (unsigned char)r_vrik_avatar_id;
 	r_vrik_skin_cache = cache;
 	r_vrik_skin_active = true;
 	return true;
@@ -2571,17 +3133,19 @@ static int R_VRIKReplacementFrame (const entity_t *entity,
 }
 
 static void R_VRIKRestoreRenderState (entity_t *replacement, int entitynum,
-	qmodel_t *model, unsigned int generation)
+	qmodel_t *model, unsigned int generation, player_avatar_id_t avatar_id)
 {
 	vrikrenderstate_t *state = &r_vrik_renderstate[entitynum];
 	byte entityflags = replacement->lerpflags;
 
-	if (!state->valid || state->model != model || state->generation != generation)
+	if (!state->valid || state->model != model || state->generation != generation ||
+		state->avatar_id != avatar_id)
 	{
 		memset (state, 0, sizeof(*state));
 		state->valid = true;
 		state->model = model;
 		state->generation = generation;
+		state->avatar_id = avatar_id;
 		replacement->lerpflags = (replacement->lerpflags &
 			(LERP_MOVESTEP | LERP_FINISH)) | LERP_RESETANIM | LERP_RESETMOVE;
 		return;
@@ -2675,17 +3239,23 @@ static void R_VRIKStoreMuzzleTransform (entity_t *entity, qmodel_t *model)
 
 static qboolean R_VRIKSubstitutePlayer (entity_t *entity, entity_t *replacement)
 {
+	entity_t canonicalentity;
+	entity_t *savedentity;
+	aliashdr_t *canonicalmd5;
+	md5liveinfo_t canonicallive, targetlive;
+	r_avatar_rig_t canonicalrig, targetrig;
+	const r_avatar_profile_t *profile;
 	qmodel_t *model;
 	vrik_pose_t pose;
 	r_vrik_lowerbody_targets_t lower;
 	uintptr_t address;
-	int entitynum;
+	int avatar, entitynum;
 	qboolean tracked;
 
-	/* With VRIK enabled, the verified rerelease Ranger is the common multiplayer
-	 * avatar for tracked and untracked players alike.  Enyo and QBJ3 keep their
-	 * own incompatible character/frame sets. */
-	if (!vr_vrik.value || !VR_VRIKAllowedForGame () || !cl.entities ||
+	/* Alternate avatars are a cosmetic remote-player replacement even without
+	 * local VR tracking.  Ranger retains the historical vr_vrik gate; every
+	 * path still observes the established compatibility policy. */
+	if (!VR_VRIKAllowedForGame () || !cl.entities ||
 		!entity || !entity->model)
 		return false;
 	address = (uintptr_t)entity;
@@ -2693,10 +3263,47 @@ static qboolean R_VRIKSubstitutePlayer (entity_t *entity, entity_t *replacement)
 		address > (uintptr_t)&cl.entities[cl.maxclients] ||
 		entity == &cl.entities[cl.viewentity])
 		return false;
-	model = Mod_GetRereleasePlayerMD5Model ();
+	entitynum = (int)(entity - cl.entities);
+	avatar = cl.avatar_ids[entitynum - 1];
+	if (!PlayerAvatar_IsValidId (avatar))
+		avatar = PLAYER_AVATAR_RANGER;
+	if (avatar == PLAYER_AVATAR_RANGER && !vr_vrik.value)
+		return false;
+	model = Mod_GetRereleaseAvatarMD5Model ((player_avatar_id_t)avatar);
+	if (!model && avatar != PLAYER_AVATAR_RANGER)
+	{
+		avatar = PLAYER_AVATAR_RANGER;
+		model = Mod_GetRereleasePlayerMD5Model ();
+	}
 	if (!model)
 		return false;
-	entitynum = (int)(entity - cl.entities);
+	r_vrik_canonical_model = Mod_GetRereleasePlayerMD5Model ();
+	if (!r_vrik_canonical_model)
+		return false;
+	canonicalmd5 = Mod_GetMD5Extradata (r_vrik_canonical_model);
+	if (!canonicalmd5)
+		return false;
+	if (!Mod_GetRereleasePlayerMD5LiveData (&canonicallive) ||
+		!R_AvatarResolveRig (R_AvatarProfileForId (PLAYER_AVATAR_RANGER),
+			&canonicallive, &canonicalrig))
+		return false;
+	profile = R_AvatarProfileForId (avatar);
+	if (!profile || !Mod_GetMD5LiveData (model, &targetlive) ||
+		!targetlive.from_rerelease ||
+		!R_AvatarResolveRig (profile, &targetlive, &targetrig))
+	{
+		/* A bad/partial selected mesh must never fall through to native monster
+		 * animation.  Ranger is the safe verified fallback; preserving the
+		 * original entity is the final fallback when it is unavailable too. */
+		if (avatar == PLAYER_AVATAR_RANGER)
+			return false;
+		avatar = PLAYER_AVATAR_RANGER;
+		model = r_vrik_canonical_model;
+		profile = R_AvatarProfileForId (avatar);
+		if (!profile || !R_AvatarResolveRig (profile, &canonicallive,
+			&targetrig))
+			return false;
+	}
 	tracked = R_VRIKSampleEntityPose (entity, &pose);
 	if (tracked && entitynum >= 1 && entitynum <= MAX_SCOREBOARD &&
 		r_vrik_rendered_generation[entitynum] != entity->vrik_generation)
@@ -2708,9 +3315,23 @@ static qboolean R_VRIKSubstitutePlayer (entity_t *entity, entity_t *replacement)
 
 	*replacement = *entity;
 	replacement->model = model;
-	replacement->frame = R_VRIKReplacementFrame (entity, model);
-	R_VRIKRestoreRenderState (replacement, entitynum, model,
-		entity->vrik_generation);
+	/* The target header is only used to drive its draw transform.  All visible
+	 * vertices arrive through the CPU cache, so native monster AI frames must
+	 * never influence player locomotion. */
+	replacement->frame = 0;
+	canonicalentity = *entity;
+	canonicalentity.model = r_vrik_canonical_model;
+	canonicalentity.frame = R_VRIKReplacementFrame (entity,
+		r_vrik_canonical_model);
+	R_VRIKRestoreRenderState (&canonicalentity, entitynum,
+		r_vrik_canonical_model, entity->vrik_generation,
+		(player_avatar_id_t)avatar);
+	savedentity = currententity;
+	currententity = &canonicalentity;
+	R_SetupAliasFrame (canonicalmd5, canonicalentity.frame,
+		&r_vrik_canonical_lerpdata);
+	R_VRIKSaveRenderState (&canonicalentity, entitynum);
+	currententity = savedentity;
 	if (tracked)
 	{
 		/* Tracking positions are root-local to the sender's sampled body yaw.
@@ -2727,8 +3348,42 @@ static qboolean R_VRIKSubstitutePlayer (entity_t *entity, entity_t *replacement)
 	else
 		R_VRIKClearLowerBodyTargets (entitynum);
 	r_vrik_pose_pending = tracked;
+	r_vrik_skin_pending = true;
 	r_vrik_active_player = entitynum - 1;
+	r_vrik_avatar_id = (player_avatar_id_t)avatar;
 	return true;
+}
+
+/* A replacement is valid only when its CPU skin is ready.  Do this before a
+ * draw path selects the target MD5 header: otherwise an allocation/profile
+ * failure would expose native monster frame 0. */
+static qboolean R_VRIKEnsureReplacementSkin (entity_t *replacement)
+{
+	qmodel_t *ranger;
+
+	if (replacement && R_VRIKPrepareSkin (replacement->model))
+		return true;
+	if (!replacement || r_vrik_avatar_id == PLAYER_AVATAR_RANGER)
+		return false;
+	ranger = r_vrik_canonical_model ? r_vrik_canonical_model :
+		Mod_GetRereleasePlayerMD5Model ();
+	if (!ranger)
+		return false;
+	replacement->model = ranger;
+	replacement->frame = 0;
+	r_vrik_avatar_id = PLAYER_AVATAR_RANGER;
+	return R_VRIKPrepareSkin (replacement->model);
+}
+
+static void R_VRIKEndSubstitution (void)
+{
+	r_vrik_pose_pending = false;
+	r_vrik_skin_pending = false;
+	r_vrik_skin_active = false;
+	r_vrik_skin_cache = NULL;
+	r_vrik_active_player = -1;
+	r_vrik_canonical_model = NULL;
+	r_vrik_avatar_id = PLAYER_AVATAR_RANGER;
 }
 
 /*
@@ -2847,7 +3502,7 @@ static void GL_DrawMD5Frame (aliashdr_t *surface, lerpdata_t lerpdata)
 	const md5vertex_t *verts1, *verts2;
 	const unsigned short *indexes;
 	float blend, iblend, sscale, tscale;
-	int index, i;
+	int index, i, numindexes;
 	qboolean lerping;
 
 	if (r_vrik_skin_active && r_vrik_skin_cache &&
@@ -2855,6 +3510,8 @@ static void GL_DrawMD5Frame (aliashdr_t *surface, lerpdata_t lerpdata)
 	{
 		verts1 = verts2 = r_vrik_skin_cache->vertices;
 		lerpdata.pose1 = lerpdata.pose2 = 0;
+		indexes = r_vrik_skin_cache->body_indexes;
+		numindexes = r_vrik_skin_cache->body_numindexes;
 	}
 	else
 	{
@@ -2862,8 +3519,9 @@ static void GL_DrawMD5Frame (aliashdr_t *surface, lerpdata_t lerpdata)
 			lerpdata.pose1 * surface->numverts;
 		verts2 = (const md5vertex_t *)((const byte *)surface + surface->vertexes) +
 			lerpdata.pose2 * surface->numverts;
+		indexes = (const unsigned short *)((const byte *)surface + surface->indexes);
+		numindexes = surface->numindexes;
 	}
-	indexes = (const unsigned short *)((const byte *)surface + surface->indexes);
 	lerping = lerpdata.pose1 != lerpdata.pose2;
 	blend = lerping ? lerpdata.blend : 0.0f;
 	iblend = 1.0f - blend;
@@ -2871,7 +3529,7 @@ static void GL_DrawMD5Frame (aliashdr_t *surface, lerpdata_t lerpdata)
 	tscale = (float)surface->skinheight / (float)TexMgr_PadConditional(surface->skinheight);
 
 	glBegin (GL_TRIANGLES);
-	for (i = 0; i < surface->numindexes; i++)
+	for (i = 0; i < numindexes; i++)
 	{
 		const md5vertex_t *v1, *v2;
 
@@ -2910,7 +3568,41 @@ static void GL_DrawMD5Frame (aliashdr_t *surface, lerpdata_t lerpdata)
 	}
 	glEnd ();
 
-	rs_aliaspasses += surface->numtris;
+	rs_aliaspasses += numindexes / 3;
+}
+
+static void GL_DrawVRIKPropFrame (void)
+{
+	r_vrik_skincache_t *cache = r_vrik_skin_cache;
+	float sscale, tscale;
+	int i;
+
+	if (!cache || !cache->prop_surface || !cache->prop_vertices ||
+		!cache->prop_indexes || cache->prop_numindexes < 3)
+		return;
+	sscale = (float)cache->prop_surface->skinwidth /
+		(float)TexMgr_PadConditional (cache->prop_surface->skinwidth);
+	tscale = (float)cache->prop_surface->skinheight /
+		(float)TexMgr_PadConditional (cache->prop_surface->skinheight);
+	glBegin (GL_TRIANGLES);
+	for (i = 0; i < cache->prop_numindexes; i++)
+	{
+		const md5vertex_t *vertex = &cache->prop_vertices[cache->prop_indexes[i]];
+		glTexCoord2f (vertex->st[0] * sscale, vertex->st[1] * tscale);
+		if (shading)
+		{
+			float dot = DotProduct (vertex->normal, shadevector);
+			if (dot < 0.0f)
+				dot = 1.0f + dot * (13.0f / 44.0f);
+			else
+				dot = 1.0f + dot;
+			glColor4f (dot * lightcolor[0], dot * lightcolor[1],
+				dot * lightcolor[2], entalpha);
+		}
+		glVertex3fv (vertex->xyz);
+	}
+	glEnd ();
+	rs_aliaspasses += cache->prop_numindexes / 3;
 }
 
 static int R_MD5TriangleCount (aliashdr_t *surface)
@@ -3000,7 +3692,10 @@ static void R_DrawMD5Pass (aliashdr_t *surface, lerpdata_t lerpdata,
 		int skin = R_MD5SurfaceSkin (surface, skinnum);
 		gltexture_t *texture = fullbright ? surface->fbtextures[skin][anim] :
 			surface->gltextures[skin][anim];
-		if (!fullbright && playernum >= 0)
+		/* Shirt/pants translation belongs only to the Ranger atlas.  Applying it
+		 * to a monster's indexed skin corrupts its authored colours. */
+		if (!fullbright && playernum >= 0 &&
+			(!r_vrik_skin_pending || r_vrik_avatar_id == PLAYER_AVATAR_RANGER))
 			texture = R_VRIKPlayerTexture (currententity->model, texture,
 				playernum, surfaceindex, skin, anim);
 
@@ -3017,6 +3712,22 @@ static void R_DrawMD5Pass (aliashdr_t *surface, lerpdata_t lerpdata,
 		}
 		surface = R_NextMD5Surface (surface);
 		surfaceindex++;
+	}
+	if (r_vrik_skin_active && r_vrik_skin_cache &&
+		r_vrik_skin_cache->prop_surface && r_vrik_canonical_model)
+	{
+		aliashdr_t *propsurface = (aliashdr_t *)r_vrik_skin_cache->prop_surface;
+		int skin = R_MD5SurfaceSkin (propsurface, 0);
+		gltexture_t *texture = fullbright ? propsurface->fbtextures[skin][anim] :
+			propsurface->gltextures[skin][anim];
+		if (!fullbright && playernum >= 0)
+			texture = R_VRIKPlayerTexture (r_vrik_canonical_model, texture,
+				playernum, 0, skin, anim);
+		if (texture || !fullbright)
+		{
+			GL_Bind (texture);
+			GL_DrawVRIKPropFrame ();
+		}
 	}
 }
 
@@ -3038,6 +3749,9 @@ static void R_DrawMD5UntexturedPass (aliashdr_t *surface, lerpdata_t lerpdata,
 		surface = R_NextMD5Surface (surface);
 		surfaceindex++;
 	}
+	if (r_vrik_skin_active && r_vrik_skin_cache &&
+		r_vrik_skin_cache->prop_surface)
+		GL_DrawVRIKPropFrame ();
 }
 
 static void R_DrawMD5Model (entity_t *e, qboolean cull, qboolean viewmodel)
@@ -3059,11 +3773,11 @@ static void R_DrawMD5Model (entity_t *e, qboolean cull, qboolean viewmodel)
 		r_perf_alias_draws++;
 	R_SetupAliasFrame (md5, e->frame, &lerpdata);
 	R_SetupEntityTransform (e, &lerpdata);
-	if (r_vrik_pose_pending)
+	if (r_vrik_skin_pending)
 	{
 		VectorCopy (lerpdata.origin, r_vrik_draw_origin);
 		VectorCopy (lerpdata.angles, r_vrik_draw_angles);
-		R_VRIKPrepareSkin (e->model, &lerpdata);
+		R_VRIKPrepareSkin (e->model);
 	}
 	if (cull && R_CullModelForEntity(e))
 	{
@@ -3106,7 +3820,11 @@ static void R_DrawMD5Model (entity_t *e, qboolean cull, qboolean viewmodel)
 	alphatest = R_MD5UsesAlpha (md5, skinnum, anim);
 	if (alphatest)
 		glEnable (GL_ALPHA_TEST);
-	rs_aliaspolys += R_MD5TriangleCount (md5);
+	if (r_vrik_skin_active && r_vrik_skin_cache)
+		rs_aliaspolys += (r_vrik_skin_cache->body_numindexes +
+			r_vrik_skin_cache->prop_numindexes) / 3;
+	else
+		rs_aliaspolys += R_MD5TriangleCount (md5);
 	if (!viewmodel)
 		R_SetupAliasLighting (e);
 	drawfog = !viewmodel && Fog_GetDensity() > 0.0f;
@@ -3302,18 +4020,21 @@ void R_DrawAliasModel (entity_t *e)
 		qboolean tracked = r_vrik_pose_pending;
 		savedentity = currententity;
 		currententity = &vrikentity;
-		/* Tracked hands can leave the animation's static bounds. */
-		R_DrawMD5Model (&vrikentity, false, false);
-		if (tracked)
-			R_VRIKStoreMuzzleTransform (e, vrikentity.model);
-		else
-			e->vrik_muzzle_valid = false;
-		R_VRIKSaveRenderState (&vrikentity, r_vrik_active_player + 1);
+		if (R_VRIKEnsureReplacementSkin (&vrikentity))
+		{
+			/* Tracked hands can leave the animation's static bounds. */
+			R_DrawMD5Model (&vrikentity, false, false);
+			if (tracked)
+				R_VRIKStoreMuzzleTransform (e, vrikentity.model);
+			else
+				e->vrik_muzzle_valid = false;
+			currententity = savedentity;
+			R_VRIKEndSubstitution ();
+			return;
+		}
 		currententity = savedentity;
-		r_vrik_pose_pending = false;
-		r_vrik_skin_active = false;
-		r_vrik_active_player = -1;
-		return;
+		e->vrik_muzzle_valid = false;
+		R_VRIKEndSubstitution ();
 	}
 
 	if (Mod_UseMD3ModelForFrame (e->model, e->skinnum, e->frame))
@@ -3675,8 +4396,8 @@ static void R_DrawMD5ModelOutline (entity_t *e, float r, float g, float b,
 		return;
 	R_SetupAliasFrame (md5, e->frame, &lerpdata);
 	R_SetupEntityTransform (e, &lerpdata);
-	if (r_vrik_pose_pending)
-		R_VRIKPrepareSkin (e->model, &lerpdata);
+	if (r_vrik_skin_pending)
+		R_VRIKPrepareSkin (e->model);
 	glPushMatrix ();
 	R_RotateForEntity (lerpdata.origin, lerpdata.angles, e->scale);
 	glTranslatef (md5->scale_origin[0], md5->scale_origin[1], md5->scale_origin[2]);
@@ -3713,13 +4434,15 @@ void R_DrawAliasModelOutline (entity_t *e, float r, float g, float b, float a, f
 	{
 		savedentity = currententity;
 		currententity = &vrikentity;
-		R_DrawMD5ModelOutline (&vrikentity, r, g, b, a, inflate);
-		R_VRIKSaveRenderState (&vrikentity, r_vrik_active_player + 1);
+		if (R_VRIKEnsureReplacementSkin (&vrikentity))
+		{
+			R_DrawMD5ModelOutline (&vrikentity, r, g, b, a, inflate);
+			currententity = savedentity;
+			R_VRIKEndSubstitution ();
+			return;
+		}
 		currententity = savedentity;
-		r_vrik_pose_pending = false;
-		r_vrik_skin_active = false;
-		r_vrik_active_player = -1;
-		return;
+		R_VRIKEndSubstitution ();
 	}
 
 	if (Mod_UseMD3ModelForFrame (e->model, e->skinnum, e->frame))
@@ -3917,8 +4640,8 @@ static void GL_DrawMD5Shadow (entity_t *e)
 		return;
 	R_SetupAliasFrame (md5, e->frame, &lerpdata);
 	R_SetupEntityTransform (e, &lerpdata);
-	if (r_vrik_pose_pending)
-		R_VRIKPrepareSkin (e->model, &lerpdata);
+	if (r_vrik_skin_pending)
+		R_VRIKPrepareSkin (e->model);
 	R_LightPoint (e->origin);
 	lheight = currententity->origin[2] - lightspot[2];
 	glPushMatrix ();
@@ -3972,15 +4695,17 @@ void GL_DrawAliasShadow (entity_t *e)
 	{
 		savedentity = currententity;
 		currententity = &vrikentity;
-		entalpha = ENTALPHA_DECODE(vrikentity.alpha);
-		if (entalpha != 0)
-			GL_DrawMD5Shadow (&vrikentity);
-		R_VRIKSaveRenderState (&vrikentity, r_vrik_active_player + 1);
+		if (R_VRIKEnsureReplacementSkin (&vrikentity))
+		{
+			entalpha = ENTALPHA_DECODE(vrikentity.alpha);
+			if (entalpha != 0)
+				GL_DrawMD5Shadow (&vrikentity);
+			currententity = savedentity;
+			R_VRIKEndSubstitution ();
+			return;
+		}
 		currententity = savedentity;
-		r_vrik_pose_pending = false;
-		r_vrik_skin_active = false;
-		r_vrik_active_player = -1;
-		return;
+		R_VRIKEndSubstitution ();
 	}
 
 	if (R_CullModelForEntity(e))
@@ -4133,3 +4858,57 @@ void R_DrawAliasModel_ShowTris (entity_t *e)
 
 	glPopMatrix ();
 }
+
+#ifdef R_ALIAS_LOWER_TARGETS_TEST
+qboolean R_VRIKBuildBodyIndexesForTest (const md5liveinfo_t *live,
+	const r_avatar_profile_t *profile, const md5livesurface_t *surface,
+	r_vrik_skincache_t *cache)
+{
+	return R_VRIKBuildBodyIndexes (live, profile, surface, cache);
+}
+
+qboolean R_VRIKRefineArmOverreachForTest (void)
+{
+	md5liveinfo_t live;
+	md5livejoint_t joints[7];
+	float palette[7 * 12];
+	vec3_t target = {100.0f, 2.0f, 5.0f};
+	vec3_t shoulder, hand, delta;
+	int joint, semantic;
+
+	memset (&live, 0, sizeof(live));
+	memset (joints, 0, sizeof(joints));
+	memset (palette, 0, sizeof(palette));
+	for (semantic = 0; semantic < MD5_VRIK_JOINT_COUNT; semantic++)
+		live.jointindex[semantic] = -1;
+	for (joint = 0; joint < 7; joint++)
+	{
+		palette[joint * 12 + 0] = palette[joint * 12 + 5] =
+			palette[joint * 12 + 10] = 1.0f;
+		joints[joint].parent = joint ? 0 : -1;
+	}
+	/* Hip, head, left/right shoulders, right upper/lower/hand. */
+	palette[1 * 12 + 11] = 8.0f;
+	palette[2 * 12 + 7] = -2.0f; palette[2 * 12 + 11] = 5.0f;
+	palette[3 * 12 + 7] = 2.0f; palette[3 * 12 + 11] = 5.0f;
+	palette[4 * 12 + 7] = 2.0f; palette[4 * 12 + 11] = 5.0f;
+	palette[5 * 12 + 7] = 2.0f; palette[5 * 12 + 11] = 3.0f;
+	palette[6 * 12 + 7] = 2.0f; palette[6 * 12 + 11] = 1.0f;
+	joints[1].parent = 0; joints[2].parent = 0; joints[3].parent = 0;
+	joints[4].parent = 3; joints[5].parent = 4; joints[6].parent = 5;
+	live.joints = joints; live.numbones = 7;
+	live.jointindex[MD5_VRIK_HIP] = 0;
+	live.jointindex[MD5_VRIK_HEAD] = 1;
+	live.jointindex[MD5_VRIK_SHOULDER_L] = 2;
+	live.jointindex[MD5_VRIK_SHOULDER_R] = 3;
+	live.jointindex[MD5_VRIK_UPPERARM_R] = 4;
+	live.jointindex[MD5_VRIK_LOWERARM_R] = 5;
+	live.jointindex[MD5_VRIK_HAND_R] = 6;
+	R_VRIKRefineArmPosition (&live, palette, true, target);
+	R_VRIKMatrixOrigin (palette + 4 * 12, shoulder);
+	R_VRIKMatrixOrigin (palette + 6 * 12, hand);
+	VectorSubtract (hand, shoulder, delta);
+	return isfinite (hand[0]) && isfinite (hand[1]) && isfinite (hand[2]) &&
+		VectorLength (delta) <= 4.0f * VRIK_ARM_MAX_STRETCH + 0.01f;
+}
+#endif

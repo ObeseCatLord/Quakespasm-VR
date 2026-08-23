@@ -24,6 +24,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 // cl_parse.c  -- parse a message received from the server
 
 #include "quakedef.h"
+#include "player_avatar.h"
 #include "bgmusic.h"
 #include "vr.h"
 #include "vrik_codec.h"
@@ -2034,6 +2035,39 @@ static qboolean CL_OfferVRIKProtocol(const char *command)
 	return true;
 }
 
+static qboolean CL_OfferAvatarProtocol(const char *command)
+{
+	if (Q_strncmp(command, "avatar_protocol", 15) ||
+		(command[15] != ' ' && command[15] != '\t'))
+		return false;
+	/* Treat malformed offers as consumed extension traffic rather than
+	 * executing a server-supplied console command. */
+	if (!PlayerAvatar_LatchProtocolOffer(command,
+		&cl.avatar_protocol_offered, &cl.avatar_cap_pending,
+		cl.avatar_cap_sent))
+		return true;
+	cl.avatar_protocol_version = PLAYER_AVATAR_PROTOCOL_VERSION;
+	Con_DPrintf("Avatar: negotiated protocol %d with server\n",
+		PLAYER_AVATAR_PROTOCOL_VERSION);
+	return true;
+}
+
+static qboolean CL_ParseAvatarSlot(const char *command)
+{
+	int slot;
+	int id;
+
+	if (Q_strncmp(command, "avatar_slot", 11) ||
+		(command[11] != ' ' && command[11] != '\t'))
+		return false;
+	if (!cl.avatar_protocol_offered ||
+		cl.avatar_protocol_version != PLAYER_AVATAR_PROTOCOL_VERSION)
+		return true;
+	if (PlayerAvatar_ParseSlotCommand(command, &slot, &id))
+		cl.avatar_ids[slot] = (unsigned char)id;
+	return true;
+}
+
 static qboolean CL_VRIKPoseWithinRootLocalLimit(const vrik_codec_pose_t *pose)
 {
 	int target;
@@ -2219,7 +2253,9 @@ static void CL_ParseStuffText(const char *msg)
 		//handle special commands
 		if (cl.stuffcmdbuf[0] == '/' && cl.stuffcmdbuf[1] == '/')
 		{
-			handled = CL_OfferVRIKProtocol(cl.stuffcmdbuf + 2) ||
+			handled = CL_OfferAvatarProtocol(cl.stuffcmdbuf + 2) ||
+				CL_ParseAvatarSlot(cl.stuffcmdbuf + 2) ||
+				CL_OfferVRIKProtocol(cl.stuffcmdbuf + 2) ||
 				Cmd_ExecuteString(cl.stuffcmdbuf+2, src_server);
 			if (!handled)
 				Con_DPrintf("Server sent unknown command %s\n", Cmd_Argv(0));

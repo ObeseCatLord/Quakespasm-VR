@@ -143,6 +143,7 @@ typedef struct
 extern client_static_t	cls;
 
 void CL_ApplyPredictionViewSmoothing (vec3_t vieworg);
+void CL_SendAvatarSelection (void);
 
 //
 // the client_state_t structure is wiped completely at every
@@ -317,6 +318,12 @@ typedef struct
 	qboolean	vrik_protocol_offered;
 	qboolean	vrik_cap_sent;
 	unsigned char	vrik_protocol_version;
+	qboolean	avatar_protocol_offered;
+	qboolean	avatar_cap_sent;
+	qboolean	avatar_cap_pending;
+	qboolean	avatar_set_pending;
+	unsigned char	avatar_protocol_version;
+	unsigned char	avatar_ids[MAX_SCOREBOARD];
 	double		vrik_next_send_time;
 	unsigned short	vrik_next_sequence;
 	qboolean	vrik_last_sent_active;
@@ -336,6 +343,7 @@ typedef struct
 //
 extern	cvar_t	cl_name;
 extern	cvar_t	cl_color;
+extern	cvar_t	cl_avatar;
 
 extern	cvar_t	cl_upspeed;
 extern	cvar_t	cl_forwardspeed;

@@ -361,7 +361,11 @@ r_vrik_skincache_t *R_VRIKGetSkinCache (int entitynum, qmodel_t *model)
 		cache->hostframe = host_framecount;
 		cache->surface = NULL;
 		cache->ready = false;
+		cache->body_numindexes = 0;
 		cache->muzzle_valid = false;
+		cache->prop_surface = NULL;
+		cache->prop_numverts = cache->prop_numindexes = 0;
+		cache->prop_semantic = -1;
 	}
 	return cache;
 }
@@ -399,6 +403,9 @@ void R_VRIKResetSkinCaches (void)
 	for (entitynum = 0; entitynum <= MAX_SCOREBOARD; entitynum++)
 	{
 		free (r_vrik_skin_caches[entitynum].vertices);
+		free (r_vrik_skin_caches[entitynum].body_indexes);
+		free (r_vrik_skin_caches[entitynum].prop_vertices);
+		free (r_vrik_skin_caches[entitynum].prop_indexes);
 		memset (&r_vrik_skin_caches[entitynum], 0,
 			sizeof(r_vrik_skin_caches[entitynum]));
 	}

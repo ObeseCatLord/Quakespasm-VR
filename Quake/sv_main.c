@@ -26,9 +26,76 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "pmove.h"
 #include "vr.h"
 #include "vrik_codec.h"
+#include "player_avatar.h"
 
 server_t	sv;
 server_static_t	svs;
+
+static qboolean SV_WriteAvatarSlot(client_t *client, int slot, int avatar_id)
+{
+	char text[64];
+
+	if (!client || slot < 0 || slot >= svs.maxclients ||
+		!PlayerAvatar_BuildSlotCommand(client->avatar_capable, text,
+			sizeof(text), slot, avatar_id))
+		return false;
+	if (client->message.cursize + 1 + (int)strlen(text) + 1 >
+		client->message.maxsize)
+		return false;
+	MSG_WriteByte(&client->message, svc_stufftext);
+	MSG_WriteString(&client->message, text);
+	return true;
+}
+
+static void SV_FlushAvatarSlots(client_t *client)
+{
+	int slot;
+
+	if (!client || !client->avatar_capable)
+		return;
+	for (slot = 0; slot < svs.maxclients; slot++)
+	{
+		unsigned short bit = (unsigned short)(1u << slot);
+		int avatar_id;
+
+		if (!(client->avatar_dirty_slots & bit))
+			continue;
+		avatar_id = svs.clients[slot].active &&
+			PlayerAvatar_IsValidId(svs.clients[slot].avatar_id) ?
+			svs.clients[slot].avatar_id : PLAYER_AVATAR_RANGER;
+		if (!SV_WriteAvatarSlot(client, slot, avatar_id))
+			return;
+		client->avatar_dirty_slots &= (unsigned short)~bit;
+	}
+}
+
+void SV_SendAvatarTable(client_t *client)
+{
+	int slot;
+
+	if (!client || !client->avatar_capable)
+		return;
+	for (slot = 0; slot < svs.maxclients; slot++)
+		client->avatar_dirty_slots |= (unsigned short)(1u << slot);
+	SV_FlushAvatarSlots(client);
+}
+
+void SV_BroadcastAvatarSlot(int slot, int avatar_id)
+{
+	int recipient;
+
+	if (slot < 0 || slot >= svs.maxclients || !PlayerAvatar_IsValidId(avatar_id))
+		return;
+	for (recipient = 0; recipient < svs.maxclients; recipient++)
+		if (svs.clients[recipient].active)
+		{
+			client_t *client = &svs.clients[recipient];
+			if (!client->avatar_capable)
+				continue;
+			client->avatar_dirty_slots |= (unsigned short)(1u << slot);
+			SV_FlushAvatarSlots(client);
+		}
+}
 
 static char	localmodels[MAX_MODELS][8];	// inline model names for precache
 
@@ -1221,6 +1288,8 @@ void SV_SendServerinfo (client_t *client)
 	 * muzzle coordinates without breaking older servers. */
 	MSG_WriteByte (&client->message, svc_stufftext);
 	MSG_WriteString (&client->message, "//vr_relative_muzzle 1\n");
+	MSG_WriteByte (&client->message, svc_stufftext);
+	MSG_WriteString (&client->message, "//avatar_protocol 1\n");
 	/* Offer v3 first, followed by v2.  A v3-aware client latches the first
 	 * offer; an existing v2 client ignores v3 and still sees its original v2
 	 * offer.  This keeps all v2 pose bytes and opcodes unchanged. */
@@ -1268,11 +1337,16 @@ void SV_ConnectClient (int clientnum)
 	SVFTE_DestroyFrames (client);
 	memset (client, 0, sizeof(*client));
 	client->netconnection = netconnection;
+	client->avatar_id = PLAYER_AVATAR_RANGER;
 	SV_ResetClientMoveState (client);
 
 	strcpy (client->name, "unconnected");
 	client->active = true;
 	client->spawned = false;
+	/* A reused client slot may previously have represented a monster avatar.
+	 * Existing capable peers must see its Ranger default before this client has
+	 * selected a new avatar. */
+	SV_BroadcastAvatarSlot(clientnum, PLAYER_AVATAR_RANGER);
 	client->edict = ent;
 	client->message.data = client->msgbuf;
 	client->message.maxsize = sizeof(client->msgbuf);
@@ -4011,6 +4085,7 @@ void SV_SendClientMessages (void)
 	{
 		if (!host_client->active)
 			continue;
+		SV_FlushAvatarSlots(host_client);
 		SV_PresendClientDatagram (host_client);
 	}
 
