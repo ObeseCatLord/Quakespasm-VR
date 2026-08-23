@@ -214,27 +214,43 @@ static void test_profile_basis_policies(void)
 	assert(!strcmp(dog->contact_root[0], "RearFoot_L"));
 	assert(!strcmp(dog->contact_root[1], "RearFoot_R") && !dog->contact_root[2]);
 	assert(dog->desktop_refine && dog->arm_pole_outward == 1.0f &&
-		dog->arm_pole_back == 0.35f && !dog->mirror_outer_leg_poles);
+		dog->arm_pole_back == 0.35f && !dog->mirror_outer_leg_poles &&
+		dog->posture_policy == R_AVATAR_POSTURE_UPRIGHT &&
+		dog->torso_root_semantic == MD5_VRIK_SPINE1 &&
+		dog->head_forward_axis[1] == 1.0f && dog->preserve_hip_rotation &&
+		dog->actual_path_ik);
+	assert((dog->joint[MD5_VRIK_SHOULDER_L].flags & R_AVATAR_MAP_VIRTUAL) &&
+		!strcmp(dog->joint[MD5_VRIK_SHOULDER_L].name, "FrontHigh_L") &&
+		!strcmp(dog->joint[MD5_VRIK_UPPERARM_L].name, "FrontHigh_L") &&
+		!strcmp(dog->joint[MD5_VRIK_LOWERARM_L].name, "FrontMid_L") &&
+		!strcmp(dog->joint[MD5_VRIK_HAND_L].name, "FrontFoot_L"));
 	fiend = R_AvatarProfileForId(PLAYER_AVATAR_FIEND);
 	assert(fiend->basis_policy == R_AVATAR_BASIS_FEET_UP_HEAD_FORWARD);
 	assert(!strcmp(fiend->contact_root[0], "hoof_L") &&
-		!strcmp(fiend->contact_root[1], "hoof_R") && fiend->desktop_refine);
+		!strcmp(fiend->contact_root[1], "hoof_R") && fiend->desktop_refine &&
+		fiend->posture_policy == R_AVATAR_POSTURE_UPRIGHT &&
+		fiend->torso_root_semantic == MD5_VRIK_SPINE2 &&
+		fiend->head_forward_axis[1] == 1.0f && fiend->preserve_hip_rotation &&
+		fiend->actual_path_ik && !strcmp(fiend->joint[MD5_VRIK_FOOT_L].name, "hoof_L") &&
+		!strcmp(fiend->joint[MD5_VRIK_FOOT_R].name, "hoof_R"));
 	shambler = R_AvatarProfileForId(PLAYER_AVATAR_SHAMBLER);
-	assert(shambler->desktop_refine && shambler->arm_pole_outward == 1.0f &&
-		shambler->arm_pole_back == 0.0f);
+	assert(!shambler->desktop_refine && shambler->arm_pole_outward == 0.136f &&
+		shambler->arm_pole_back == 0.223f && shambler->arm_pole_up == 0.965f &&
+		shambler->posture_policy == R_AVATAR_POSTURE_AUTHORED &&
+		!shambler->preserve_hip_rotation);
 	vore = R_AvatarProfileForId(PLAYER_AVATAR_VORE);
 	assert(vore->mirror_outer_leg_poles);
 
 	/* A synthetic quadruped makes its floor-to-hip direction the first column
 	 * and flips its left/forward columns together so the head stays forward. */
 	named_profile(&animal, dog);
-	origin(animal.joints[0].bind, 0, 0, 2);
-	origin(animal.joints[4].bind, 10, 0, 4);
-	origin(animal.joints[5].bind, 4, 2, 3);
-	origin(animal.joints[9].bind, 4, -2, 3);
-	origin(animal.joints[15].bind, -2, 2, 0);
-	origin(animal.joints[18].bind, -2, -2, 0);
 	assert(R_AvatarResolveRig(dog, &animal.live, &animalrig));
+	origin(animal.joints[animalrig.joint[MD5_VRIK_HIP]].bind, 0, 0, 2);
+	origin(animal.joints[animalrig.joint[MD5_VRIK_HEAD]].bind, 10, 0, 4);
+	origin(animal.joints[animalrig.joint[MD5_VRIK_SHOULDER_L]].bind, 4, 2, 3);
+	origin(animal.joints[animalrig.joint[MD5_VRIK_SHOULDER_R]].bind, 4, -2, 3);
+	origin(animal.joints[animalrig.joint[MD5_VRIK_FOOT_L]].bind, -2, 2, 0);
+	origin(animal.joints[animalrig.joint[MD5_VRIK_FOOT_R]].bind, -2, -2, 0);
 	assert(R_AvatarCanonicalToTargetBasis(&animalrig, basis));
 	assert(basis[0] > .7f && basis[8] > .7f);
 	assert(basis[5] < -.99f && basis[2] > .7f && basis[10] < -.7f);
@@ -363,6 +379,41 @@ static void test_absolute_global_transport(void)
 	for (i = 0; i < 12; ++i) assert(fabsf(output[tr.joint[MD5_VRIK_HAND_R]*12+i] - expected[i]) < .001f);
 }
 
+static void test_preserve_hip_rotation(void)
+{
+	fixture_t source, target;
+	r_avatar_rig_t sr, tr;
+	r_avatar_presentation_context_t context;
+	float solved[MAX_MD5_JOINTS * 12], output[MAX_MD5_JOINTS * 12];
+	float rotate[12], inversehip[12], local[12], tailbindlocal[12];
+	int hip, tail, i;
+
+	ranger(&source, 1); named_profile(&target, R_AvatarProfileForId(PLAYER_AVATAR_DOG));
+	tail = target.live.numbones++;
+	strncpy(target.joints[tail].name, "Tail1", sizeof(target.joints[tail].name) - 1);
+	hip = 0; /* Dog's named fixture creates Hip first. */
+	target.joints[tail].parent = hip;
+	ident(tailbindlocal, 3, -2, 1);
+	multiply(target.joints[hip].bind, tailbindlocal, target.joints[tail].bind);
+	assert(R_AvatarResolveRig(R_AvatarProfileForId(PLAYER_AVATAR_RANGER), &source.live, &sr));
+	assert(R_AvatarResolveRig(R_AvatarProfileForId(PLAYER_AVATAR_DOG), &target.live, &tr));
+	assert(R_AvatarBuildPresentationContext(&sr, &tr, &context));
+	for (i = 0; i < source.live.numbones; ++i)
+		memcpy(solved + i * 12, source.joints[i].bind, 12 * sizeof(float));
+	hip = sr.joint[MD5_VRIK_HIP]; rotation_z(rotate); rotate[3] = 4; rotate[7] = -3; rotate[11] = 2;
+	multiply(rotate, source.joints[hip].bind, solved + hip * 12);
+	assert(R_AvatarRetargetPaletteWithContext(&sr, &tr, &context, solved, output));
+	hip = tr.joint[MD5_VRIK_HIP];
+	for (i = 0; i < 12; ++i) if ((i % 4) != 3)
+		assert(fabsf(output[hip * 12 + i] - target.joints[hip].bind[i]) < .001f);
+	assert(fabsf(output[hip * 12 + 3] - target.joints[hip].bind[3]) > .01f ||
+		fabsf(output[hip * 12 + 7] - target.joints[hip].bind[7]) > .01f ||
+		fabsf(output[hip * 12 + 11] - target.joints[hip].bind[11]) > .01f);
+	inverse(output + hip * 12, inversehip); multiply(inversehip, output + tail * 12, local);
+	for (i = 0; i < 12; ++i)
+		assert(fabsf(local[i] - tailbindlocal[i]) < .001f);
+}
+
 static void test_nonunit_presentation_roundtrips(void)
 {
 	fixture_t source, target;
@@ -391,6 +442,6 @@ static void test_nonunit_presentation_roundtrips(void)
 
 int main(void)
 {
-	test_identity_and_locals(); test_rotation_and_basis(); test_dynamic_presentation_basis(); test_profile_basis_policies(); test_ancestor_translation_applied_once(); test_rejection_and_monsters(); test_all_profile_palettes_are_bounded(); test_absolute_global_transport(); test_nonunit_presentation_roundtrips();
+	test_identity_and_locals(); test_rotation_and_basis(); test_dynamic_presentation_basis(); test_profile_basis_policies(); test_ancestor_translation_applied_once(); test_rejection_and_monsters(); test_all_profile_palettes_are_bounded(); test_absolute_global_transport(); test_preserve_hip_rotation(); test_nonunit_presentation_roundtrips();
 	puts("avatar retarget fixture: ok"); return 0;
 }

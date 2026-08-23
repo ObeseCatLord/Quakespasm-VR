@@ -46,11 +46,16 @@ qboolean R_VRIKAnimalArmBasisForTest (vec3_t lateral, vec3_t forward,
 	vec3_t up);
 qboolean R_VRIKAvatarMapLowerTargetForTest (
 	r_vrik_lowerbody_model_targets_t *targets);
+qboolean R_VRIKAvatarHipOverlayForTest (void);
 int R_VRIKAvatarLowerPolePolicyForTest (const r_avatar_profile_t *profile);
 unsigned char R_VRIKVoreBaseFootMaskForTest (unsigned char supplied_mask,
 	unsigned char *overlay_mask);
 void R_VRIKProfileArmPoleForTest (qboolean rightside, float outward,
 	float back, vec3_t pole);
+void R_VRIKProfileArmPoleWithUpForTest (qboolean rightside, float outward,
+	float back, float upward, vec3_t pole);
+qboolean R_VRIKAvatarUprightPostureForTest (qboolean tracked);
+qboolean R_VRIKActualPathForTest (void);
 
 static void SetTarget (vrik_codec_pose_t *pose, int target, float x)
 {
@@ -197,6 +202,11 @@ int main (void)
 		R_VRIKProfileArmPoleForTest (false, 1.0f, 0.35f, pole);
 		assert (fabsf (pole[0] + 1.0f) < 0.001f &&
 			fabsf (pole[1] + 0.35f) < 0.001f);
+		R_VRIKProfileArmPoleWithUpForTest (true, 0.136f, 0.223f, 0.965f,
+			pole);
+		assert (fabsf (pole[0] - 0.136f) < 0.001f &&
+			fabsf (pole[1] + 0.223f) < 0.001f &&
+			fabsf (pole[2] - 0.965f) < 0.001f);
 		assert (R_VRIKAvatarLowerPolePolicyForTest (&profile) ==
 			R_VRIK_LOWERBODY_POLES_ANIMATED);
 		profile.mirror_outer_leg_poles = true;
@@ -232,7 +242,17 @@ int main (void)
 		assert (fabsf (targets.orientation[R_VRIK_LOWER_LEFT_FOOT][0] + 1.0f) < 0.001f &&
 			fabsf (targets.orientation[R_VRIK_LOWER_LEFT_FOOT][5] + 1.0f) < 0.001f &&
 			fabsf (targets.orientation[R_VRIK_LOWER_LEFT_FOOT][10] - 1.0f) < 0.001f);
+		assert ((targets.usable_mask & R_VRIK_LOWER_BIT (R_VRIK_LOWER_HIP)) &&
+			(targets.orientation_mask & R_VRIK_LOWER_BIT (R_VRIK_LOWER_HIP)));
+		assert (fabsf (targets.orientation[R_VRIK_LOWER_HIP][0]) < 0.001f &&
+			fabsf (targets.orientation[R_VRIK_LOWER_HIP][1] + 1.0f) < 0.001f &&
+			fabsf (targets.orientation[R_VRIK_LOWER_HIP][4] - 1.0f) < 0.001f &&
+			fabsf (targets.orientation[R_VRIK_LOWER_HIP][5]) < 0.001f);
+		assert (R_VRIKAvatarHipOverlayForTest ());
 	}
+	assert (R_VRIKAvatarUprightPostureForTest (false));
+	assert (R_VRIKAvatarUprightPostureForTest (true));
+	assert (R_VRIKActualPathForTest ());
 	{
 		r_avatar_presentation_context_t context;
 		float sourcehand[12] = {1, 0, 0, 4, 0, 1, 0, 5, 0, 0, 1, 6};
