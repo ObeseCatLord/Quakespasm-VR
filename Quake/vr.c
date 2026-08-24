@@ -3290,6 +3290,62 @@ static void VR_RegisterWeaponMuzzleOffset(const char *id,
   InitWeaponMuzzleCVars(slot, offsetX, offsetY, offsetZ);
 }
 
+typedef struct {
+  const char *viewmodel;
+  vec3_t held_offset;
+  vec3_t muzzle_offset;
+} vr_enhanced_weapon_default_t;
+
+/*
+ * Calibrated against the 2021 rerelease viewmodels. These are fallback
+ * profiles: a mod's vr_weapons.txt is loaded afterwards and therefore keeps
+ * full control over any values the player has adjusted and saved.
+ */
+static const vr_enhanced_weapon_default_t vr_enhanced_weapon_defaults[] = {
+    {"progs/v_axe.mdl", {-19.72028f, 12.02455f, 23.92703f},
+     {0.0f, 0.0f, 37.0f}},
+    {"progs/v_shot.mdl", {-5.718559f, 0.381319f, 7.430882f},
+     {0.0f, 0.0f, 10.0f}},
+    {"progs/v_shot2.mdl", {-7.427664f, 0.3130722f, 6.934306f},
+     {0.0f, 0.0f, 8.5f}},
+    {"progs/v_nail.mdl", {-12.55625f, 0.4279174f, 13.18545f},
+     {0.0f, 0.0f, 15.0f}},
+    {"progs/v_nail2.mdl", {-18.29596f, 0.3225229f, 14.23901f},
+     {0.0f, 0.0f, 19.0f}},
+    {"progs/v_rock.mdl", {-10.28861f, -0.03083239f, 10.17257f},
+     {0.0f, 0.0f, 13.0f}},
+    {"progs/v_rock2.mdl", {-16.54977f, -0.157425f, 11.40173f},
+     {0.0f, 0.0f, 19.0f}},
+    {"progs/v_light.mdl", {-8.610199f, -0.4010587f, 10.71593f},
+     {0.0f, 0.0f, 13.0f}},
+};
+
+static void VR_RegisterEnhancedWeaponDefaults(void) {
+  for (size_t i = 0;
+       i < sizeof(vr_enhanced_weapon_defaults) /
+               sizeof(vr_enhanced_weapon_defaults[0]);
+       ++i) {
+    const vr_enhanced_weapon_default_t *entry =
+        &vr_enhanced_weapon_defaults[i];
+
+    VR_RegisterEnhancedHeldOffset(entry->viewmodel, entry->held_offset);
+    VR_RegisterEnhancedMuzzleOffset(entry->viewmodel, entry->muzzle_offset);
+  }
+}
+
+static void VR_RegisterMG3WeaponOffsetDefaults(void) {
+  vec3_t muzzle_offset = {2.626634f, 8.260719f, 3.612768f};
+
+  if (!VR_GameDirIs("mg3"))
+    return;
+
+  {
+    vec3_t held_offset = {56.79274f, 4.62593f, 17.5531f};
+    VR_RegisterHeldWeaponOffset("progs/v_laserg.mdl", held_offset, 0.33f);
+  }
+  VR_RegisterWeaponMuzzleOffset("progs/v_laserg.mdl", muzzle_offset);
+}
+
 static void VR_RegisterWeaponMPHeldOffset(const char *id, const vec3_t offset,
                                           qboolean has_schema_offset,
                                           const vec3_t schema_offset) {
@@ -4830,6 +4886,8 @@ static qboolean VR_AppendSchemaBlockForSlot(vr_textbuf_t *buf, int slot) {
   if (!VR_TextAppendLine(buf, line))
     return false;
   if (!VR_AppendAdjustmentLines(buf, slot, false))
+    return false;
+  if (!VR_AppendAdjustmentLines(buf, slot, true))
     return false;
   if (!VR_TextAppendLine(buf, "}"))
     return false;
@@ -7132,6 +7190,8 @@ void VR_InitGame() {
   /* Profile metadata is the fallback.  A matching file schema wins below. */
   VR_AddBuiltinWeaponDefaults();
   InitAllWeaponCVars();
+  VR_RegisterEnhancedWeaponDefaults();
+  VR_RegisterMG3WeaponOffsetDefaults();
   VR_CreateDefaultWeaponSchemaIfMissing();
   VR_FillMissingDefaultWeaponSchemaBlocks();
   VR_LoadWWheelSchema();
