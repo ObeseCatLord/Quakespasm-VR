@@ -529,6 +529,98 @@ static qboolean sv_coop_shared_level_progress_valid;
 static string_t sv_coop_shared_ckey_names[4];
 static float sv_coop_shared_ckey_skins[4];
 
+/* wwheel.txt is a declarative weapon-ownership list supplied by modern mods.
+ * Keep one server-side interpretation beside the coop inventory bridge so
+ * respawn preservation, shared pickups and admin give-all agree with the VR
+ * wheel instead of each carrying an incomplete stock-only mask. */
+int SV_DeclaredWeaponBits (void)
+{
+	static dprograms_t *cached_progs;
+	static unsigned short cached_crc;
+	static char cached_gamedir[MAX_OSPATH];
+	static int cached_bits;
+	char *data, *cursor;
+	const char *gamedir = COM_SkipPath(com_gamedir);
+	unsigned int path_id = 0;
+	int weaponnum = 0;
+	qboolean in_slot = false;
+	qboolean have_weaponnum = false;
+	qboolean have_impulse = false;
+
+	if (cached_progs == qcvm->progs && cached_crc == qcvm->crc &&
+		!q_strcasecmp(cached_gamedir, gamedir ? gamedir : ""))
+		return cached_bits;
+
+	cached_progs = qcvm->progs;
+	cached_crc = qcvm->crc;
+	q_strlcpy(cached_gamedir, gamedir ? gamedir : "", sizeof(cached_gamedir));
+	cached_bits = 0;
+
+	data = (char *)COM_LoadZoneFile("wwheel.txt", &path_id);
+	/* Do not make an inherited id1 wheel authoritative for a mod which has no
+	 * roster of its own.  Active-game directories and PAKs use the highest
+	 * mounted path id. */
+	if (data && (!com_searchpaths || path_id != com_searchpaths->path_id))
+	{
+		Z_Free(data);
+		data = NULL;
+	}
+	for (cursor = data; cursor; )
+	{
+		cursor = (char *)COM_Parse(cursor);
+		if (!cursor || !com_token[0])
+			break;
+		if (!q_strcasecmp(com_token, "slot"))
+		{
+			if (in_slot && have_weaponnum && have_impulse)
+				cached_bits |= weaponnum;
+			in_slot = true;
+			weaponnum = 0;
+			have_weaponnum = false;
+			have_impulse = false;
+			continue;
+		}
+		if (!in_slot)
+			continue;
+		if (!q_strcasecmp(com_token, "}"))
+		{
+			if (have_weaponnum && have_impulse)
+				cached_bits |= weaponnum;
+			in_slot = false;
+			continue;
+		}
+		if (!q_strcasecmp(com_token, "weaponnum") ||
+			!q_strcasecmp(com_token, "weapon_num"))
+		{
+			cursor = (char *)COM_Parse(cursor);
+			if (!cursor || !com_token[0])
+				break;
+			weaponnum = Q_atoi(com_token);
+			have_weaponnum = weaponnum > 0;
+		}
+		else if (!q_strcasecmp(com_token, "impulse"))
+		{
+			cursor = (char *)COM_Parse(cursor);
+			if (!cursor || !com_token[0])
+				break;
+			have_impulse = Q_atoi(com_token) > 0;
+		}
+	}
+	if (in_slot && have_weaponnum && have_impulse)
+		cached_bits |= weaponnum;
+	if (data)
+		Z_Free(data);
+
+	/* MG3 normally carries wwheel.txt in its PAK.  Retain its two distinctive
+	 * bonus-hammer/axe/laser bits if a repack omits that optional text file, identified by
+	 * the mod's upgrade and laser APIs rather than by a user-created config. */
+	if (ED_FindFunction("UpgradeTouch") &&
+		ED_FindFunction("weapon_laser_gun"))
+		cached_bits |= 128 | 4096 | 8388608;
+
+	return cached_bits;
+}
+
 void SV_CoopSharedResetClientSlot (int slot)
 {
 	if (slot < 0 || slot >= MAX_SCOREBOARD)
@@ -564,6 +656,7 @@ static int SV_CoopSharedItemMask (void)
 		IT_GRENADE_LAUNCHER | IT_ROCKET_LAUNCHER | IT_LIGHTNING |
 		IT_SUPER_LIGHTNING | IT_AXE | IT_KEY1 | IT_KEY2 |
 		IT_SIGIL1 | IT_SIGIL2 | IT_SIGIL3 | IT_SIGIL4;
+	mask |= SV_DeclaredWeaponBits();
 
 	if (rogue)
 		mask |= RIT_AXE | RIT_LAVA_NAILGUN | RIT_LAVA_SUPER_NAILGUN |
@@ -2002,6 +2095,11 @@ qboolean SV_CoopSharedBeginClientTouch (edict_t *client)
 
 	if (!coop.value || !SV_CoopFeatureEnabled(&sv_coop_shared_pickups, true))
 		return false;
+	/* A dead client has no consumable inventory.  In particular, do not let a
+	 * corpse touching another trigger establish the "before" side of a key
+	 * consumption transaction. */
+	if (!client || client->v.health <= 0 || client->v.deadflag != DEAD_NO)
+		return false;
 
 	index = SV_CoopSharedClientIndex(client);
 	if (index < 0)
@@ -2034,6 +2132,16 @@ void SV_CoopSharedEndClientTouch (edict_t *client)
 	sv_coop_shared_touch_depth[index]--;
 	if (sv_coop_shared_touch_depth[index] > 0)
 		return;
+
+	/* Door/trigger scripts legitimately remove shared keys, but lethal touches
+	 * also commonly clear the player's whole inventory.  The latter is death
+	 * state, not progression: propagating it makes every player lose keys and
+	 * overwrites the remembered level inventory before respawn can restore it. */
+	if (client->v.health <= 0 || client->v.deadflag != DEAD_NO)
+	{
+		sv_coop_shared_touch_valid[index] = false;
+		return;
+	}
 
 	SV_CaptureCoopSharedInventory(client, &after);
 	SV_SyncCoopSharedKeyLoss(client, &sv_coop_shared_touch_before[index], &after);

@@ -1883,7 +1883,7 @@ static qboolean R_VRIKSampleEntityLowerTargets (const entity_t *entity,
 		/* The protocol supplies no prediction start timestamp.  Packet receive
 		 * times measure transport age, not the age of this held value, so do
 		 * not invent a confidence fade from them.  The sender bounds a held
-		 * target to VRIK_POSE_STALE_TIME (250 ms); retain full confidence here
+		 * target to VRIK_POSE_STALE_TIME; retain full confidence here
 		 * and let the receiver's same stale timeout clear the complete pose. */
 		out->confidence[role] = 1.0f;
 		VectorCopy (newest->targets[target].position, out->position[role]);

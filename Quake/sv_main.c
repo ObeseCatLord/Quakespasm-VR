@@ -293,45 +293,6 @@ static qboolean SV_WriteVRIKPoseV3(sizebuf_t *msg, int entitynum,
 	return true;
 }
 
-static void SV_RelayVRIKPose(client_t *source, const vrik_codec_pose_t *pose)
-{
-	int source_num;
-	int i;
-	int required_bytes;
-	size_t v3_body_bytes;
-
-	if (!source || !source->edict)
-		return;
-	source_num = NUM_FOR_EDICT(source->edict);
-	for (i = 0; i < svs.maxclients; i++)
-	{
-		client_t *recipient = &svs.clients[i];
-
-		if (recipient == source || !recipient->active || !recipient->spawned ||
-			!recipient->vrik_capable)
-			continue;
-		if (recipient->vrik_protocol_version >= VRIK_PROTOCOL_VERSION)
-		{
-			if (vrik_v3_body_size(pose->present_mask, &v3_body_bytes) !=
-				VRIK_CODEC_OK)
-				continue;
-			required_bytes = 1 + 2 + 4 + 1 + (int)v3_body_bytes;
-		}
-		else
-			required_bytes = VRIK_SVC_V2_MESSAGE_BYTES;
-		if (recipient->datagram.cursize + required_bytes >
-			recipient->datagram.maxsize)
-			continue;
-		if (recipient->vrik_protocol_version >= VRIK_PROTOCOL_VERSION)
-			(void)SV_WriteVRIKPoseV3(&recipient->datagram, source_num,
-				source->vrik_generation, pose);
-		else
-			(void)SV_WriteVRIKPoseV2(&recipient->datagram, source_num,
-				source->vrik_generation, pose,
-				source->vrik_v2_body_valid ? source->vrik_v2_body : NULL);
-	}
-}
-
 static void SV_ReceiveVRIKPoseInternal(client_t *client,
 	const vrik_codec_pose_t *pose,
 	const unsigned char raw_v2_body[VRIK_V2_BODY_BYTES])
@@ -369,7 +330,6 @@ static void SV_ReceiveVRIKPoseInternal(client_t *client,
 	client->vrik_pose_time = realtime;
 	client->vrik_next_accept_time = realtime + VRIK_SERVER_MIN_INTERVAL;
 	client->vrik_inactive_sent = !(pose->flags & VRIK_V3_FLAG_ACTIVE);
-	SV_RelayVRIKPose(client, pose);
 }
 
 void SV_ReceiveVRIKPose(client_t *client, const vrik_pose_t *pose)
@@ -422,7 +382,6 @@ void SV_ExpireVRIKPoses(void)
 		client->vrik_last_sequence = inactive.sequence;
 		client->vrik_pose_time = realtime;
 		client->vrik_inactive_sent = true;
-		SV_RelayVRIKPose(client, &inactive);
 	}
 }
 
@@ -2006,13 +1965,31 @@ static struct deltaframe_s *SVFTE_BeginFrame (client_t *client, int sequence)
 	return frame;
 }
 
+/* Head/controller pitch and roll are aim data, not the orientation of the
+ * player's body root.  Leave the QuakeC state alone and sanitize only the
+ * networked render transform, which keeps rigid mod avatars upright. */
+static void SV_GetEntityPresentationAngles (edict_t *ent, vec3_t angles)
+{
+	int entnum;
+
+	VectorCopy (ent->v.angles, angles);
+	entnum = NUM_FOR_EDICT (ent);
+	if (entnum < 1 || entnum > svs.maxclients ||
+		!svs.clients[entnum - 1].active ||
+		!svs.clients[entnum - 1].is_vr_client)
+		return;
+
+	angles[PITCH] = 0.0f;
+	angles[ROLL] = 0.0f;
+}
+
 static void SVFTE_BuildEntityState (client_t *client, edict_t *ent, entity_state_t *state)
 {
 	eval_t *val;
 
 	*state = nullentitystate;
 	VectorCopy (ent->v.origin, state->origin);
-	VectorCopy (ent->v.angles, state->angles);
+	SV_GetEntityPresentationAngles (ent, state->angles);
 	state->modelindex = ent->v.modelindex;
 	state->frame = ent->v.frame;
 	state->colormap = ent->v.colormap;
@@ -2809,7 +2786,7 @@ void SV_WriteEntitiesToClient (edict_t	*clent, sizebuf_t *msg)
 	int		e, i, j, numents;
 	int		bits;
 	byte	*pvs;
-	vec3_t	org, forward, right, up;
+	vec3_t	org, forward, right, up, presentation_angles;
 	float	miss, dist, size;
 	eval_t	*val;
 	edict_t	*ent;
@@ -2941,6 +2918,7 @@ skip_pvs_cull:
 	{
 		e = net_edicts_sorted[j];
 		ent = EDICT_NUM (e);
+		SV_GetEntityPresentationAngles (ent, presentation_angles);
 
 		// johnfitz -- max size for protocol 15 is 18 bytes, not 16 as originally
 		// assumed here.  And, for protocol 85 the max size is actually 24 bytes.
@@ -2962,13 +2940,13 @@ skip_pvs_cull:
 				bits |= U_ORIGIN1<<i;
 		}
 
-		if ( ent->v.angles[0] != ent->baseline.angles[0] )
+		if ( presentation_angles[0] != ent->baseline.angles[0] )
 			bits |= U_ANGLE1;
 
-		if ( ent->v.angles[1] != ent->baseline.angles[1] )
+		if ( presentation_angles[1] != ent->baseline.angles[1] )
 			bits |= U_ANGLE2;
 
-		if ( ent->v.angles[2] != ent->baseline.angles[2] )
+		if ( presentation_angles[2] != ent->baseline.angles[2] )
 			bits |= U_ANGLE3;
 
 		if (ent->v.movetype == MOVETYPE_STEP)
@@ -3059,15 +3037,15 @@ skip_pvs_cull:
 		if (bits & U_ORIGIN1)
 			MSG_WriteCoord (msg, ent->v.origin[0], sv.protocolflags);
 		if (bits & U_ANGLE1)
-			MSG_WriteAngle(msg, ent->v.angles[0], sv.protocolflags);
+			MSG_WriteAngle(msg, presentation_angles[0], sv.protocolflags);
 		if (bits & U_ORIGIN2)
 			MSG_WriteCoord (msg, ent->v.origin[1], sv.protocolflags);
 		if (bits & U_ANGLE2)
-			MSG_WriteAngle(msg, ent->v.angles[1], sv.protocolflags);
+			MSG_WriteAngle(msg, presentation_angles[1], sv.protocolflags);
 		if (bits & U_ORIGIN3)
 			MSG_WriteCoord (msg, ent->v.origin[2], sv.protocolflags);
 		if (bits & U_ANGLE3)
-			MSG_WriteAngle(msg, ent->v.angles[2], sv.protocolflags);
+			MSG_WriteAngle(msg, presentation_angles[2], sv.protocolflags);
 
 		//johnfitz -- PROTOCOL_FITZQUAKE
 		if (bits & U_ALPHA)
@@ -3439,6 +3417,70 @@ static qboolean SVFTE_SendBufferedDatagram (client_t *client, sizebuf_t *msg,
 	return true;
 }
 
+/* Relay the newest pose for each source once per recipient.  This lives on
+ * the snapshot send path instead of source->recipient private datagrams so a
+ * busy datagram defers a pose to its own packet rather than silently dropping
+ * it.  Delivery remains intentionally unreliable; the next 20 Hz sequence
+ * supersedes a lost packet. */
+static qboolean SVFTE_AppendPendingVRIK (client_t *recipient, sizebuf_t *msg,
+	int *packet_count, int *total_bytes, int *max_packet_bytes)
+{
+	int i;
+
+	if (!recipient->vrik_capable)
+		return true;
+
+	for (i = 0; i < svs.maxclients && i < MAX_SCOREBOARD; ++i)
+	{
+		client_t *source = &svs.clients[i];
+		int required_bytes;
+		size_t v3_body_bytes;
+		qboolean written;
+
+		if (source == recipient || !source->active || !source->spawned ||
+			!source->vrik_capable || !source->vrik_sequence_valid ||
+			!source->vrik_generation)
+			continue;
+		if (recipient->vrik_relay_sequence_valid[i] &&
+			recipient->vrik_relay_generation[i] == source->vrik_generation &&
+			recipient->vrik_relay_sequence[i] == source->vrik_last_sequence)
+			continue;
+
+		if (recipient->vrik_protocol_version >= VRIK_PROTOCOL_VERSION)
+		{
+			if (vrik_v3_body_size(source->vrik_pose_v3.present_mask,
+					&v3_body_bytes) != VRIK_CODEC_OK)
+				continue;
+			required_bytes = 1 + 2 + 4 + 1 + (int)v3_body_bytes;
+		}
+		else
+			required_bytes = VRIK_SVC_V2_MESSAGE_BYTES;
+
+		if (required_bytes >= msg->maxsize)
+			continue;
+		if (msg->cursize + required_bytes >= msg->maxsize &&
+			!SVFTE_SendBufferedDatagram(recipient, msg, packet_count,
+				total_bytes, max_packet_bytes))
+			return false;
+
+		if (recipient->vrik_protocol_version >= VRIK_PROTOCOL_VERSION)
+			written = SV_WriteVRIKPoseV3(msg, i + 1,
+				source->vrik_generation, &source->vrik_pose_v3);
+		else
+			written = SV_WriteVRIKPoseV2(msg, i + 1,
+				source->vrik_generation, &source->vrik_pose_v3,
+				source->vrik_v2_body_valid ? source->vrik_v2_body : NULL);
+		if (!written)
+			continue;
+
+		recipient->vrik_relay_sequence_valid[i] = true;
+		recipient->vrik_relay_generation[i] = source->vrik_generation;
+		recipient->vrik_relay_sequence[i] = source->vrik_last_sequence;
+	}
+
+	return true;
+}
+
 static int SVFTE_AppendPrivateDatagram (client_t *client, sizebuf_t *msg,
 	int *packet_count, int *total_bytes, int *max_packet_bytes)
 {
@@ -3691,6 +3733,10 @@ static qboolean SVFTE_SendClientDatagram (client_t *client, int maxsize)
 			break;
 		}
 	}
+
+	if (!SVFTE_AppendPendingVRIK (client, &msg, &packet_count,
+			&total_bytes, &max_packet_bytes))
+		return false;
 
 	append_result = SVFTE_AppendPrivateDatagram (client, &msg, &packet_count,
 		&total_bytes, &max_packet_bytes);

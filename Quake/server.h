@@ -315,6 +315,12 @@ typedef struct client_s
 	vrik_codec_pose_t	vrik_pose_v3;
 	qboolean		vrik_v2_body_valid;
 	unsigned char		vrik_v2_body[VRIK_V2_BODY_BYTES];
+	/* Latest-pose relay cursors, indexed by source client.  VRIK is still
+	 * unreliable, but a full private datagram must defer the newest pose rather
+	 * than silently losing the stream for this recipient. */
+	qboolean		vrik_relay_sequence_valid[MAX_SCOREBOARD];
+	unsigned short		vrik_relay_sequence[MAX_SCOREBOARD];
+	unsigned int		vrik_relay_generation[MAX_SCOREBOARD];
 
 	// VR Data
 	qboolean		is_vr_client;
@@ -504,6 +510,7 @@ qboolean SV_CoopRespawnPrepareChangelevel(edict_t *ent);
   (SV_COOP_GIVEKEYS_SILVER | SV_COOP_GIVEKEYS_GOLD |                         \
    SV_COOP_GIVEKEYS_CUSTOM)
 qboolean SV_CoopGiveKeys(edict_t *player, int key_flags);
+int SV_DeclaredWeaponBits(void);
 qboolean SV_CoopUsesCountedKeys(void);
 void SV_CoopSharedApplyToJoiningClient(edict_t *player);
 void SV_CoopSharedMergeRestoredClient(edict_t *source);

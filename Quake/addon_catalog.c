@@ -508,7 +508,7 @@ qboolean AddonCatalog_StartInstall (int index, qboolean allow_unverified)
 		return false;
 	if (!entry->verified && !allow_unverified)
 	{
-		AddonCatalog_SetMessage("Unverified package: press Enter again to confirm");
+		AddonCatalog_SetMessage("Unverified: select again to confirm");
 		return false;
 	}
 	job = (addon_install_t *)malloc(sizeof(*job));

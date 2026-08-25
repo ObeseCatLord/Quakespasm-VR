@@ -2796,6 +2796,8 @@ void M_Menu_Credits_f(void) {}
 
 #define MAX_MODS_ON_SCREEN 9
 #define MODS_FILTER_MAX 22
+#define MODS_VR_KEY_COLS 10
+#define MODS_VR_KEY_COUNT 43
 
 /*
  * The installed browser and optional Ironwail-style catalogue share filtering,
@@ -2809,6 +2811,8 @@ static int m_mods_matches;
 static char m_mods_filter[MODS_FILTER_MAX + 1];
 static qboolean m_mods_catalogue;
 static int m_mods_confirm = -1;
+static qboolean m_mods_vr_keyboard;
+static int m_mods_vr_key_cursor;
 
 static qboolean M_Mods_IsActive(const filelist_item_t *item) {
   return !q_strcasecmp(item->name, COM_SkipPath(com_gamedir));
@@ -2937,6 +2941,109 @@ static void M_Mods_SelectActive(void) {
   }
 }
 
+static qboolean M_Mods_SetCatalogue(qboolean catalogue) {
+  if (m_mods_catalogue == catalogue)
+    return false;
+
+  m_mods_catalogue = catalogue;
+  if (!m_mods_catalogue)
+    Modlist_Rebuild();
+  m_mods_cursor = 0;
+  m_mods_first = 0;
+  m_mods_confirm = -1;
+  M_Mods_Refresh();
+  return true;
+}
+
+static qboolean M_Mods_CatalogueBusy(void) {
+  addon_catalog_state_t state = AddonCatalog_State();
+  return state == ADDON_CATALOG_REFRESHING ||
+         state == ADDON_CATALOG_INSTALLING;
+}
+
+static const char *M_Mods_VRKeyLabel(int index) {
+  static char glyph[2];
+
+  if (index >= 0 && index < 26) {
+    glyph[0] = 'A' + index;
+    glyph[1] = 0;
+    return glyph;
+  }
+  if (index < 36) {
+    glyph[0] = '0' + index - 26;
+    glyph[1] = 0;
+    return glyph;
+  }
+  switch (index) {
+  case 36:
+    return "SP";
+  case 37:
+    return "-";
+  case 38:
+    return "_";
+  case 39:
+    return ".";
+  case 40:
+    return "<-";
+  case 41:
+    return "CL";
+  default:
+    return "OK";
+  }
+}
+
+static void M_Mods_FilterChanged(void) {
+  m_mods_cursor = 0;
+  m_mods_first = 0;
+  m_mods_confirm = -1;
+  M_Mods_Refresh();
+}
+
+static void M_Mods_VRKeyboardActivate(void) {
+  size_t length = strlen(m_mods_filter);
+
+  if (m_mods_vr_key_cursor < 26) {
+    if (length < MODS_FILTER_MAX) {
+      m_mods_filter[length] = 'A' + m_mods_vr_key_cursor;
+      m_mods_filter[length + 1] = 0;
+      M_Mods_FilterChanged();
+    }
+  } else if (m_mods_vr_key_cursor < 36) {
+    if (length < MODS_FILTER_MAX) {
+      m_mods_filter[length] = '0' + m_mods_vr_key_cursor - 26;
+      m_mods_filter[length + 1] = 0;
+      M_Mods_FilterChanged();
+    }
+  } else if (m_mods_vr_key_cursor == 36) {
+    if (length < MODS_FILTER_MAX && length > 0 &&
+        m_mods_filter[length - 1] != ' ') {
+      m_mods_filter[length] = ' ';
+      m_mods_filter[length + 1] = 0;
+      M_Mods_FilterChanged();
+    }
+  } else if (m_mods_vr_key_cursor >= 37 &&
+             m_mods_vr_key_cursor <= 39) {
+    static const char punctuation[] = "-_.";
+    if (length < MODS_FILTER_MAX) {
+      m_mods_filter[length] = punctuation[m_mods_vr_key_cursor - 37];
+      m_mods_filter[length + 1] = 0;
+      M_Mods_FilterChanged();
+    }
+  } else if (m_mods_vr_key_cursor == 40) {
+    if (length > 0) {
+      m_mods_filter[length - 1] = 0;
+      M_Mods_FilterChanged();
+    }
+  } else if (m_mods_vr_key_cursor == 41) {
+    if (length > 0) {
+      m_mods_filter[0] = 0;
+      M_Mods_FilterChanged();
+    }
+  } else {
+    m_mods_vr_keyboard = false;
+  }
+}
+
 static void M_Menu_Mods_f(void) {
   IN_Deactivate(modestate == MS_WINDOWED);
   key_dest = key_menu;
@@ -2948,6 +3055,8 @@ static void M_Menu_Mods_f(void) {
   m_mods_filter[0] = 0;
   m_mods_catalogue = false;
   m_mods_confirm = -1;
+  m_mods_vr_keyboard = false;
+  m_mods_vr_key_cursor = 0;
   m_mods_cursor = 0;
   m_mods_first = 0;
   M_Mods_Refresh();
@@ -2989,6 +3098,37 @@ static void M_Mods_DrawScrollbar(int x, int y) {
     M_PrintWhite(x, y + (thumbfirst + i) * 8, "#");
 }
 
+static void M_Mods_DrawVRKeyboard(void) {
+  char field[MODS_FILTER_MAX + 2];
+  int index;
+
+  M_DrawTransPic(16, 4, Draw_CachePic("gfx/qplaque.lmp"));
+  M_PrintWhite(104, 8, "SEARCH ADD-ONS");
+  M_DrawTextBox(16, 24, 34, 19);
+  M_Print(32, 40, m_mods_catalogue ? "CATALOGUE FILTER" : "INSTALLED FILTER");
+  M_DrawTextBox(32, 48, 30, 1);
+  q_snprintf(field, sizeof(field), "%s_", m_mods_filter);
+  M_PrintWhite(40, 56, field);
+
+  for (index = 0; index < MODS_VR_KEY_COUNT; index++) {
+    int column = index % MODS_VR_KEY_COLS;
+    int row = index / MODS_VR_KEY_COLS;
+    int x = 8 + column * 30;
+    int y = 72 + row * 16;
+    const char *label = M_Mods_VRKeyLabel(index);
+
+    if (index == m_mods_vr_key_cursor) {
+      M_DrawCharacter(x, y, 12 + ((int)(realtime * 4) & 1));
+      M_PrintWhite(x + 8, y, label);
+    } else {
+      M_Print(x + 8, y, label);
+    }
+  }
+
+  M_Print(24, 160, "Point/stick: choose  RT/L-A: enter");
+  M_Print(40, 176, "R-A: clear  R-B/L-click: done");
+}
+
 static void M_Mods_Draw(void) {
   filelist_item_t *item;
   const addon_catalog_entry_t *catalogue;
@@ -2997,6 +3137,11 @@ static void M_Mods_Draw(void) {
   const char *status;
 
   M_Mods_Refresh();
+
+  if (vr_enabled.value && m_mods_vr_keyboard) {
+    M_Mods_DrawVRKeyboard();
+    return;
+  }
 
   M_DrawTransPic(16, 4, Draw_CachePic("gfx/qplaque.lmp"));
   M_PrintWhite(144, 8, "MODS");
@@ -3015,7 +3160,7 @@ static void M_Mods_Draw(void) {
       if (AddonCatalog_State() == ADDON_CATALOG_REFRESHING)
         M_PrintWhite(80, 88, "Refreshing catalogue...");
       else if (vr_enabled.value)
-        M_PrintWhite(48, 88, "Right A or point to refresh.");
+        M_PrintWhite(32, 88, "Press R-A or point at [refresh].");
       else
         M_PrintWhite(52, 88, "Press F1 to refresh catalogue.");
     } else {
@@ -3068,22 +3213,35 @@ static void M_Mods_Draw(void) {
 
   M_Print(32, 152, "SEARCH");
   M_DrawTextBox(88, 144, 24, 1);
-  M_Print(96, 152, m_mods_filter[0] ? m_mods_filter : "all installed add-ons");
+  M_Print(96, 152,
+          m_mods_filter[0]
+              ? m_mods_filter
+              : (vr_enabled.value
+                     ? "point here to search"
+                     : (m_mods_catalogue ? "all catalogue add-ons"
+                                         : "all installed add-ons")));
   if ((int)(realtime * 4) & 1)
     M_DrawCharacter(96 + 8 * (int)strlen(m_mods_filter), 152, 10);
 
-  if (m_mods_catalogue)
-    M_Print(32, 168, AddonCatalog_Message());
+  if (m_mods_catalogue) {
+    if (vr_enabled.value && AddonCatalog_State() == ADDON_CATALOG_IDLE)
+      M_Print(32, 168, "Press R-A or point at refresh.");
+    else
+      M_Print(32, 168, AddonCatalog_Message());
+  }
+  else if (vr_enabled.value) {
+    if (M_Mods_CatalogueBusy())
+      M_Print(32, 168, "Catalogue working; R-B cancels.");
+    else
+      M_Print(16, 168, "Point+R-Trigger/L-A: play R-B: back");
+  }
   else
     M_Print(32, 168, "Enter: play     Type: search");
   if (vr_enabled.value) {
-    if (m_mods_catalogue)
-      M_Print(24, 176, "Trigger/L-A: select  R-A: refresh");
-    else
-      M_Print(32, 176, "Trigger/L-A: play  Stick: move");
-    M_Print(32, 184, "[installed/catalogue]");
-    if (m_mods_catalogue)
-      M_Print(208, 184, "[refresh]");
+    M_Print(16, 176, "L-stick:move R-stick:page RT/L-A:use");
+    M_Print(28, 184, M_Mods_CatalogueBusy()
+                         ? "[INST/CAT] [R-A]refresh [R-B]cancel"
+                         : "[INST/CAT] [R-A]refresh [R-B]back");
   } else {
     M_Print(32, 176, "Tab: installed/catalogue");
     if (m_mods_catalogue)
@@ -3106,17 +3264,100 @@ static void M_Mods_MoveCursor(int amount) {
   M_Mods_KeepCursorVisible();
 }
 
-static void M_Mods_Key(int key) {
-  filelist_item_t *item;
+static void M_Mods_VRKeyboardMove(int amount) {
+  m_mods_vr_key_cursor += amount;
+  while (m_mods_vr_key_cursor < 0)
+    m_mods_vr_key_cursor += MODS_VR_KEY_COUNT;
+  while (m_mods_vr_key_cursor >= MODS_VR_KEY_COUNT)
+    m_mods_vr_key_cursor -= MODS_VR_KEY_COUNT;
+  S_LocalSound("misc/menu1.wav");
+}
+
+static void M_Mods_VRKeyboardMoveVertical(int direction) {
+  const int rows =
+      (MODS_VR_KEY_COUNT + MODS_VR_KEY_COLS - 1) / MODS_VR_KEY_COLS;
+  int column = m_mods_vr_key_cursor % MODS_VR_KEY_COLS;
+  int row = m_mods_vr_key_cursor / MODS_VR_KEY_COLS;
+  int row_count;
+
+  row = (row + rows + direction) % rows;
+  row_count = q_min(MODS_VR_KEY_COLS,
+                    MODS_VR_KEY_COUNT - row * MODS_VR_KEY_COLS);
+  column = q_min(column, row_count - 1);
+  m_mods_vr_key_cursor = row * MODS_VR_KEY_COLS + column;
+  S_LocalSound("misc/menu1.wav");
+}
+
+static void M_Mods_VRKeyboardKey(int key) {
+  size_t length;
 
   switch (key) {
   case K_ESCAPE:
   case K_BBUTTON:
+  case K_LTHUMB:
+    m_mods_vr_keyboard = false;
+    S_LocalSound("misc/menu2.wav");
+    return;
+
+  case K_LEFTARROW:
+    M_Mods_VRKeyboardMove(-1);
+    return;
+  case K_RIGHTARROW:
+    M_Mods_VRKeyboardMove(1);
+    return;
+  case K_UPARROW:
+  case K_VR_RIGHT_STICK_UP:
+    M_Mods_VRKeyboardMoveVertical(-1);
+    return;
+  case K_DOWNARROW:
+  case K_VR_RIGHT_STICK_DOWN:
+    M_Mods_VRKeyboardMoveVertical(1);
+    return;
+
+  case K_BACKSPACE:
+    length = strlen(m_mods_filter);
+    if (length > 0) {
+      m_mods_filter[length - 1] = 0;
+      M_Mods_FilterChanged();
+      S_LocalSound("misc/menu1.wav");
+    }
+    return;
+
+  case K_DEL:
+  case K_XBUTTON:
+    if (m_mods_filter[0]) {
+      m_mods_filter[0] = 0;
+      M_Mods_FilterChanged();
+      S_LocalSound("misc/menu1.wav");
+    }
+    return;
+
+  case K_ENTER:
+  case K_KP_ENTER:
+  case K_ABUTTON:
+    M_Mods_VRKeyboardActivate();
+    S_LocalSound("misc/menu2.wav");
+    return;
+  }
+}
+
+static void M_Mods_Key(int key) {
+  filelist_item_t *item;
+
+  if (m_mods_vr_keyboard) {
+    M_Mods_VRKeyboardKey(key);
+    return;
+  }
+
+  switch (key) {
+  case K_ESCAPE:
+  case K_BBUTTON:
+    if (M_Mods_CatalogueBusy())
+      AddonCatalog_Cancel();
     M_Menu_Main_f();
     break;
 
   case K_DOWNARROW:
-  case K_RIGHTARROW:
   case K_MWHEELDOWN:
     if (m_mods_matches) {
       S_LocalSound("misc/menu1.wav");
@@ -3125,7 +3366,6 @@ static void M_Mods_Key(int key) {
     break;
 
   case K_UPARROW:
-  case K_LEFTARROW:
   case K_MWHEELUP:
     if (m_mods_matches) {
       S_LocalSound("misc/menu1.wav");
@@ -3133,7 +3373,28 @@ static void M_Mods_Key(int key) {
     }
     break;
 
+  case K_RIGHTARROW:
+    if (vr_enabled.value) {
+      if (M_Mods_SetCatalogue(true))
+        S_LocalSound("misc/menu1.wav");
+    } else if (m_mods_matches) {
+      S_LocalSound("misc/menu1.wav");
+      M_Mods_MoveCursor(1);
+    }
+    break;
+
+  case K_LEFTARROW:
+    if (vr_enabled.value) {
+      if (M_Mods_SetCatalogue(false))
+        S_LocalSound("misc/menu1.wav");
+    } else if (m_mods_matches) {
+      S_LocalSound("misc/menu1.wav");
+      M_Mods_MoveCursor(-1);
+    }
+    break;
+
   case K_PGDN:
+  case K_VR_RIGHT_STICK_DOWN:
     if (m_mods_matches) {
       S_LocalSound("misc/menu1.wav");
       M_Mods_MoveCursor(MAX_MODS_ON_SCREEN);
@@ -3141,6 +3402,7 @@ static void M_Mods_Key(int key) {
     break;
 
   case K_PGUP:
+  case K_VR_RIGHT_STICK_UP:
     if (m_mods_matches) {
       S_LocalSound("misc/menu1.wav");
       M_Mods_MoveCursor(-MAX_MODS_ON_SCREEN);
@@ -3175,14 +3437,8 @@ static void M_Mods_Key(int key) {
     break;
 
   case K_TAB:
-    m_mods_catalogue = !m_mods_catalogue;
-    if (!m_mods_catalogue)
-      Modlist_Rebuild();
-    m_mods_cursor = 0;
-    m_mods_first = 0;
-    m_mods_confirm = -1;
-    M_Mods_Refresh();
-    S_LocalSound("misc/menu1.wav");
+    if (M_Mods_SetCatalogue(!m_mods_catalogue))
+      S_LocalSound("misc/menu1.wav");
     break;
 
   case K_DEL:
@@ -3196,8 +3452,18 @@ static void M_Mods_Key(int key) {
     }
     break;
 
-  case K_F1:
+  case K_LTHUMB:
+    if (vr_enabled.value) {
+      m_mods_vr_keyboard = true;
+      m_mods_vr_key_cursor = m_mods_filter[0] ? MODS_VR_KEY_COUNT - 1 : 0;
+      S_LocalSound("misc/menu2.wav");
+    }
+    break;
+
   case K_XBUTTON: /* right-controller A */
+    M_Mods_SetCatalogue(true);
+    /* fallthrough */
+  case K_F1:
     if (m_mods_catalogue) {
       AddonCatalog_Refresh();
       m_mods_confirm = -1;
@@ -3253,10 +3519,7 @@ static void M_Mods_Char(int key) {
 
   m_mods_filter[length] = key;
   m_mods_filter[length + 1] = 0;
-  m_mods_cursor = 0;
-  m_mods_first = 0;
-  m_mods_confirm = -1;
-  M_Mods_Refresh();
+  M_Mods_FilterChanged();
 }
 
 //=============================================================================
@@ -3371,7 +3634,7 @@ static void M_ServerModDownload_Draw(void) {
   }
 
   if (vr_enabled.value)
-    M_Print(40, 180, "Trigger/L-A: select  R-B: return");
+    M_Print(40, 180, "R-Trigger/L-A: select R-B: return");
   else
     M_Print(56, 180, "Enter: select  Esc: return");
 }
@@ -3475,12 +3738,12 @@ static void M_Models_Draw(void) {
   M_Print(176, 64, enhanced ? "enhanced" : "classic");
   M_Print(24, 80, "HUD layout");
   M_Print(152, 80, M_HUDStyleName());
-  M_Print(24, 104, "Enhanced models use MD3 or MD5");
-  M_Print(24, 112, "files when a mod supplies them.");
-  M_Print(24, 128, "Modern HUD layouts are desktop only;");
-  M_Print(24, 136, "VR and custom mod HUDs stay unchanged.");
-  M_Print(24, 152, "Missing models or skins fall back");
-  M_Print(24, 160, "to the original Quake model.");
+  M_PrintWhite(24, 104, "WARNING: Enabling Enhanced models");
+  M_PrintWhite(24, 112, "can make mod items invisible or");
+  M_PrintWhite(24, 120, "display them incorrectly.");
+  M_Print(24, 136, "Enhanced uses MD3/MD5 when supplied.");
+  M_Print(24, 152, "Modern HUD layouts are desktop only;");
+  M_Print(24, 160, "VR and custom mod HUDs stay unchanged.");
   M_DrawCharacter(160, 64 + m_models_cursor * 16,
                   12 + ((int)(realtime * 4) & 1));
 }
@@ -3671,10 +3934,10 @@ qboolean M_ConsumesBoundKey(int key) {
 
   /* These buttons are menu actions here, so own both their press and release
    * even when the user has also bound them to a gameplay +command. */
-  if (key == K_ABUTTON)
-    return true;
-
-  return m_mods_catalogue && (key == K_F1 || key == K_XBUTTON);
+  return key == K_ABUTTON || key == K_BBUTTON || key == K_XBUTTON ||
+         key == K_LTHUMB || key == K_VR_RIGHT_STICK_UP ||
+         key == K_VR_RIGHT_STICK_DOWN ||
+         (m_mods_catalogue && key == K_F1);
 }
 
 void M_Keydown(int key) {
@@ -3973,6 +4236,20 @@ static qboolean M_PointerHit(float x, float y) {
     int visible;
 
     M_Mods_Refresh();
+    if (vr_enabled.value && m_mods_vr_keyboard) {
+      int column, row, index;
+
+      if (x < 8 || x >= 308 || y < 72 || y >= 152)
+        break;
+      column = (int)((x - 8) / 30);
+      row = (int)((y - 72) / 16);
+      index = row * MODS_VR_KEY_COLS + column;
+      if (index < 0 || index >= MODS_VR_KEY_COUNT)
+        break;
+      m_mods_vr_key_cursor = index;
+      return true;
+    }
+
     visible = q_min(MAX_MODS_ON_SCREEN, m_mods_matches - m_mods_first);
     if (visible > 0 &&
         M_PointerRows(x, y, 32, 280, 64, 8, visible, &selection)) {
@@ -3981,12 +4258,20 @@ static qboolean M_PointerHit(float x, float y) {
       return true;
     }
     if (vr_enabled.value) {
-      if (x >= 32 && x < 200 && y >= 184 && y < 192) {
+      if (x >= 88 && x < 288 && y >= 144 && y < 168) {
+        m_pointer_activate_key = K_LTHUMB;
+        return true;
+      }
+      if (x >= 28 && x < 108 && y >= 184 && y < 192) {
         m_pointer_activate_key = K_TAB;
         return true;
       }
-      if (m_mods_catalogue && x >= 208 && x < 280 && y >= 184 && y < 192) {
-        m_pointer_activate_key = K_F1;
+      if (x >= 116 && x < 212 && y >= 184 && y < 192) {
+        m_pointer_activate_key = K_XBUTTON;
+        return true;
+      }
+      if (x >= 220 && x < 316 && y >= 184 && y < 192) {
+        m_pointer_activate_key = K_BBUTTON;
         return true;
       }
     } else {

@@ -117,10 +117,10 @@ static const filelist_item_t *Modlist_Find(const char *gamedir) {
 
 static void Modlist_LoadMetadata(filelist_item_t *item) {
   char path[MAX_OSPATH];
-  const char *bases[6], *roots[4];
+  const char *bases[7], *roots[4], *rerelease_roots[2];
   size_t base_count;
   size_t i;
-  int root_count;
+  int root_count, rerelease_count;
   int parsed;
 
   if (!item || (item->full_name[0] || item->description[0]))
@@ -134,6 +134,10 @@ static void Modlist_LoadMetadata(filelist_item_t *item) {
   for (i = root_count; i > 0; --i)
     bases[base_count++] = roots[i - 1];
   bases[base_count++] = com_basedir;
+  rerelease_count = COM_GetRereleaseContentRoots(rerelease_roots,
+    countof(rerelease_roots));
+  for (i = rerelease_count; i > 0; --i)
+    bases[base_count++] = rerelease_roots[i - 1];
 
   for (i = 0; i < base_count; i++) {
     char *buf, *cursor, *line, *line_end;
@@ -522,8 +526,13 @@ static void Modlist_ScanRoot(const char *root) {
 
 void Modlist_Init(void) {
 	const char *roots[4];
-	int i, root_count;
+	const char *rerelease_roots[2];
+	int i, root_count, rerelease_count;
   Modlist_ScanRoot(com_basedir);
+	rerelease_count = COM_GetRereleaseContentRoots(rerelease_roots,
+		countof(rerelease_roots));
+	for (i = 0; i < rerelease_count; ++i)
+		Modlist_ScanRoot(rerelease_roots[i]);
 	root_count = COM_GetContentRoots(roots, countof(roots));
 	for (i = 0; i < root_count; ++i)
 		Modlist_ScanRoot(roots[i]);
@@ -3045,6 +3054,7 @@ static void Host_GiveAllFallback(client_t *client) {
                    RIT_MULTI_GRENADE | RIT_MULTI_ROCKET | RIT_PLASMA_GUN;
   if (hipnotic)
     weapon_bits |= HIT_PROXIMITY_GUN | HIT_LASER_CANNON | HIT_MJOLNIR;
+  weapon_bits |= SV_DeclaredWeaponBits();
 
   sv_player->v.items = (int)sv_player->v.items | weapon_bits;
   val = GetEdictFieldValueByName(sv_player, "weapons");

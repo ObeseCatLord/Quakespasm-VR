@@ -13,6 +13,8 @@ jobs:
   build-linux:
     name: Build Linux
     runs-on: ubuntu-22.04
+    env:
+      LINUX_GLIBC_MAX: '2.39'
 
     steps:
       - name: Check out repository
@@ -22,6 +24,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y \
+            binutils \
             build-essential \
             libcurl4-openssl-dev \
             libflac-dev \
@@ -41,10 +44,21 @@ jobs:
           make -C Quake -f Makefile.linux -j"$(nproc)"
 
       - name: Verify build outputs
+        shell: bash
         run: |
           test -x Quake/quakespasm-openvr
           test -x Quake/quakespasm-openvr.bin
           ldd Quake/quakespasm-openvr.bin
+          max_glibc="$(readelf --version-info --wide Quake/quakespasm-openvr.bin |
+            grep -oE 'GLIBC_[0-9]+\.[0-9]+' | sed 's/GLIBC_//' |
+            sort -Vu | tail -n 1)"
+          echo "quakespasm-openvr.bin maximum GLIBC requirement: ${max_glibc:-none}"
+          if test -n "$max_glibc" &&
+             test "$(printf '%s\n%s\n' "$max_glibc" "$LINUX_GLIBC_MAX" |
+               sort -V | tail -n 1)" != "$LINUX_GLIBC_MAX"; then
+            echo "Linux binary requires GLIBC_$max_glibc, newer than allowed GLIBC_$LINUX_GLIBC_MAX" >&2
+            exit 1
+          fi
 
       - name: Upload Linux build
         uses: actions/upload-artifact@v4

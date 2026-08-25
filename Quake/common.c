@@ -1657,7 +1657,18 @@ char	com_basedir[MAX_OSPATH];
 #define COM_MAX_CONTENT_ROOTS 2
 static char	com_content_roots[COM_MAX_CONTENT_ROOTS][MAX_OSPATH];
 static int	com_content_root_count;
+static char	com_nightdive_content_root[MAX_OSPATH];
 static qboolean	com_separate_userdir;
+/*
+ * A classic installation may use the rerelease as a lowest-priority source
+ * for its separate campaign directories and as a source of the localization
+ * table.  Rerelease id1 stays outside the normal search path so its maps,
+ * progs, textures, and models cannot override the active installation.
+ */
+static char	com_rerelease_content_root[MAX_OSPATH];
+static char	com_rerelease_addons_root[MAX_OSPATH];
+static char	com_rerelease_localization_pack[MAX_OSPATH];
+static qboolean	com_engine_pak_loaded;
 int	file_from_pak;		// ZOID: global indicating that file came from a pak
 
 searchpath_t	*com_searchpaths;
@@ -1701,6 +1712,26 @@ static qboolean COM_HasRereleaseModelPack (const char *root)
 		(Sys_FileType (pakfile) & FS_ENT_FILE);
 }
 
+static void COM_SetRereleaseContentRoot (const char *root)
+{
+	char pakfile[MAX_OSPATH];
+
+	if (!root || !*root ||
+		q_snprintf(pakfile, sizeof(pakfile), "%s/id1/pak0.pak", root) >= (int)sizeof(pakfile) ||
+		!(Sys_FileType(pakfile) & FS_ENT_FILE))
+		return;
+
+	q_strlcpy(com_rerelease_localization_pack, pakfile,
+		sizeof(com_rerelease_localization_pack));
+	q_strlcpy(com_rerelease_content_root, root,
+		sizeof(com_rerelease_content_root));
+	com_rerelease_addons_root[0] = 0;
+	if (q_snprintf(pakfile, sizeof(pakfile), "%s/addons", root) < (int)sizeof(pakfile) &&
+		(Sys_FileType(pakfile) & FS_ENT_DIRECTORY))
+		q_strlcpy(com_rerelease_addons_root, pakfile,
+			sizeof(com_rerelease_addons_root));
+}
+
 static qboolean COM_HasGameData (const char *root)
 {
 	char pakfile[MAX_OSPATH];
@@ -1739,10 +1770,14 @@ static void COM_SetContentRoots (const char *basedir, const char *nightdive)
 {
 	char path[MAX_OSPATH];
 	com_content_root_count = 0;
+	com_nightdive_content_root[0] = 0;
 	/* Bundled add-ons first; downloaded Nightdive content intentionally wins. */
 	if (basedir && q_snprintf(path, sizeof(path), "%s/addons", basedir) < (int)sizeof(path))
 		COM_AddContentRoot(path);
 	COM_AddContentRoot(nightdive);
+	if (nightdive && *nightdive && (Sys_FileType(nightdive) & FS_ENT_DIRECTORY))
+		q_strlcpy(com_nightdive_content_root, nightdive,
+			sizeof(com_nightdive_content_root));
 }
 
 int COM_GetContentRoots (const char **roots, int maxroots)
@@ -1752,6 +1787,21 @@ int COM_GetContentRoots (const char **roots, int maxroots)
 		return 0;
 	for (i = 0; i < count; ++i)
 		roots[i] = com_content_roots[i];
+	return count;
+}
+
+int COM_GetRereleaseContentRoots (const char **roots, int maxroots)
+{
+	int count = 0;
+
+	if (!roots || maxroots < 1)
+		return 0;
+	if (!com_rerelease_content_root[0] ||
+		COM_PathsEqual(com_basedir, com_rerelease_content_root))
+		return 0;
+	roots[count++] = com_rerelease_content_root;
+	if (com_rerelease_addons_root[0] && count < maxroots)
+		roots[count++] = com_rerelease_addons_root;
 	return count;
 }
 
@@ -2393,6 +2443,91 @@ static pack_t *COM_LoadPackFile (const char *packfile)
 
 /*
 =================
+COM_LoadRereleaseLocalization
+
+Load one localization table from the separately detected rerelease pack.
+The pack is never mounted, and this deliberately accepts no other asset path.
+The normal game/mod search is tried first by LOC_LoadLocalizationSource, so a
+loose or packed replacement in the active installation retains precedence.
+=================
+*/
+static char *COM_LoadRereleaseLocalization (const char *filename, size_t *len_out)
+{
+	dpackheader_t header;
+	dpackfile_t *files = NULL;
+	char *data = NULL;
+	int handle = -1;
+	int packsize;
+	int numfiles;
+	int i;
+
+	if (len_out)
+		*len_out = 0;
+	if (!com_rerelease_localization_pack[0] ||
+		strcmp(filename, "localization/loc_english.txt"))
+		return NULL;
+
+	/* This is an optional automatically discovered source, so malformed input
+	 * must fail closed instead of taking down the engine through Sys_Error. */
+	packsize = Sys_FileOpenRead(com_rerelease_localization_pack, &handle);
+	if (packsize < (int)sizeof(header) ||
+		Sys_FileRead(handle, &header, sizeof(header)) != (int)sizeof(header) ||
+		memcmp(header.id, "PACK", 4))
+		goto done;
+	header.dirofs = LittleLong(header.dirofs);
+	header.dirlen = LittleLong(header.dirlen);
+	if (header.dirofs < (int)sizeof(header) || header.dirlen <= 0 ||
+		header.dirlen % (int)sizeof(dpackfile_t) ||
+		header.dirlen > MAX_FILES_IN_PACK * (int)sizeof(dpackfile_t) ||
+		header.dirofs > packsize - header.dirlen)
+		goto done;
+	numfiles = header.dirlen / (int)sizeof(dpackfile_t);
+	files = (dpackfile_t *)malloc((size_t)header.dirlen);
+	if (!files)
+		goto done;
+	Sys_FileSeek(handle, header.dirofs);
+	if (Sys_FileRead(handle, files, header.dirlen) != header.dirlen)
+		goto done;
+
+	for (i = 0; i < numfiles; ++i)
+	{
+		char entry_name[sizeof(files[i].name) + 1];
+		int filepos = LittleLong(files[i].filepos);
+		int filelen = LittleLong(files[i].filelen);
+
+		memcpy(entry_name, files[i].name, sizeof(files[i].name));
+		entry_name[sizeof(files[i].name)] = 0;
+		if (strcmp(entry_name, filename))
+			continue;
+		/* Localization files are small text assets; reject corrupt lengths. */
+		if (filepos < 0 || filelen <= 0 || filelen > 16 * 1024 * 1024 ||
+			filepos > packsize - filelen)
+			break;
+		data = (char *)malloc((size_t)filelen + 1);
+		if (!data)
+			break;
+		Sys_FileSeek(handle, filepos);
+		if (Sys_FileRead(handle, data, filelen) != filelen)
+		{
+			free(data);
+			data = NULL;
+			break;
+		}
+		data[filelen] = 0;
+		if (len_out)
+			*len_out = (size_t)filelen;
+		break;
+	}
+
+done:
+	free(files);
+	if (handle != -1)
+		Sys_FileClose(handle);
+	return data;
+}
+
+/*
+=================
 COM_FindNumberedPack
 
 Numbered Quake packs are conventionally lowercase, but many Windows-authored
@@ -2553,12 +2688,21 @@ static void COM_AddGameDirectoryRoot (const char *base, const char *dir, unsigne
 	{
 		pak = COM_FindNumberedPack (com_gamedir, i, pakfile, sizeof(pakfile)) ?
 			COM_LoadPackFile (pakfile) : NULL;
-		if (i != 0 || path_id != 1 || fitzmode)
+		if (i != 0 || path_id != 1 || fitzmode || com_engine_pak_loaded)
 			qspak = NULL;
 		else {
 			qboolean old = com_modified;
 			q_snprintf (pakfile, sizeof(pakfile), "%s/quakespasm.pak", base);
 			qspak = COM_LoadPackFile (pakfile);
+			/* In zero-setup mode com_basedir points at Steam's rerelease,
+			 * while the distributable engine pak remains beside the executable. */
+			if (!qspak && host_parms && host_parms->basedir &&
+				!COM_PathsEqual(base, host_parms->basedir))
+			{
+				q_snprintf(pakfile, sizeof(pakfile), "%s/quakespasm.pak",
+					host_parms->basedir);
+				qspak = COM_LoadPackFile(pakfile);
+			}
 			com_modified = old;
 		}
 		if (pak) {
@@ -2570,6 +2714,7 @@ static void COM_AddGameDirectoryRoot (const char *base, const char *dir, unsigne
 			com_searchpaths = search;
 		}
 		if (qspak) {
+			com_engine_pak_loaded = true;
 			search = (searchpath_t *) Z_Malloc(sizeof(searchpath_t));
 			search->path_id = path_id;
 			search->pack = qspak;
@@ -2587,13 +2732,36 @@ static void COM_AddGameDirectoryAll (const char *dir)
 	int i;
 	unsigned int path_id = com_searchpaths ? com_searchpaths->path_id << 1 : 1U;
 
+	/* Rerelease campaigns are a read-only, lowest-priority content source.
+	 * Keep rerelease id1 out of this path: classic id1 remains authoritative,
+	 * while localization is imported through the single-file fallback above
+	 * and enhanced-model discovery remains opt-in. */
+	if (q_strcasecmp(dir, GAMENAME) && com_rerelease_content_root[0] &&
+		!COM_PathsEqual(com_basedir, com_rerelease_content_root) &&
+		q_snprintf(path, sizeof(path), "%s/%s", com_rerelease_content_root, dir) < (int)sizeof(path) &&
+		(Sys_FileType(path) & FS_ENT_DIRECTORY))
+		COM_AddGameDirectoryRoot(com_rerelease_content_root, dir, path_id);
+	if (q_strcasecmp(dir, GAMENAME) && com_rerelease_addons_root[0] &&
+		!COM_PathsEqual(com_basedir, com_rerelease_content_root) &&
+		q_snprintf(path, sizeof(path), "%s/%s", com_rerelease_addons_root, dir) < (int)sizeof(path) &&
+		(Sys_FileType(path) & FS_ENT_DIRECTORY))
+		COM_AddGameDirectoryRoot(com_rerelease_addons_root, dir, path_id);
 	if (q_snprintf(path, sizeof(path), "%s/%s", com_basedir, dir) < (int)sizeof(path) &&
 		(Sys_FileType(path) & FS_ENT_DIRECTORY))
 		COM_AddGameDirectoryRoot(com_basedir, dir, path_id);
 	for (i = 0; i < com_content_root_count; ++i)
+	{
+		/* Nightdive user content belongs to the remaster.  Do not let an
+		 * incidental Steam install override a deliberately selected classic id1. */
+		if (!q_strcasecmp(dir, GAMENAME) && com_nightdive_content_root[0] &&
+			COM_PathsEqual(com_content_roots[i], com_nightdive_content_root) &&
+			(!com_rerelease_content_root[0] ||
+			 !COM_PathsEqual(com_basedir, com_rerelease_content_root)))
+			continue;
 		if (q_snprintf(path, sizeof(path), "%s/%s", com_content_roots[i], dir) < (int)sizeof(path) &&
 			(Sys_FileType(path) & FS_ENT_DIRECTORY))
 			COM_AddGameDirectoryRoot(com_content_roots[i], dir, path_id);
+	}
 	if (COM_HasSeparateUserDir())
 	{
 		q_snprintf(path, sizeof(path), "%s/%s", host_parms->userdir, dir);
@@ -2800,7 +2968,8 @@ static qboolean COM_CurrentGameHasStartMap (void)
 qboolean COM_GameDirExists (const char *dir)
 {
 	char path[MAX_OSPATH];
-	int i;
+	const char *rerelease_roots[2];
+	int i, rerelease_count;
 
 	if (!dir || !*dir)
 		return false;
@@ -2811,6 +2980,13 @@ qboolean COM_GameDirExists (const char *dir)
 		q_snprintf(path, sizeof(path), "%s/%s", host_parms->userdir, dir) < (int)sizeof(path) &&
 		(Sys_FileType(path) & FS_ENT_DIRECTORY))
 		return true;
+	rerelease_count = COM_GetRereleaseContentRoots(rerelease_roots,
+		countof(rerelease_roots));
+	if (q_strcasecmp(dir, GAMENAME))
+		for (i = 0; i < rerelease_count; ++i)
+			if (q_snprintf(path, sizeof(path), "%s/%s", rerelease_roots[i], dir) < (int)sizeof(path) &&
+				(Sys_FileType(path) & FS_ENT_DIRECTORY))
+				return true;
 	for (i = 0; i < com_content_root_count; ++i)
 		if (q_snprintf(path, sizeof(path), "%s/%s", com_content_roots[i], dir) < (int)sizeof(path) &&
 			(Sys_FileType(path) & FS_ENT_DIRECTORY))
@@ -2823,7 +2999,8 @@ qboolean COM_GameDirExists (const char *dir)
 qboolean COM_GameDirHasPak0 (const char *dir)
 {
 	char path[MAX_OSPATH];
-	int i;
+	const char *rerelease_roots[2];
+	int i, rerelease_count;
 
 	if (!dir || !*dir)
 		return false;
@@ -2834,6 +3011,13 @@ qboolean COM_GameDirHasPak0 (const char *dir)
 		q_snprintf(path, sizeof(path), "%s/%s", host_parms->userdir, dir) < (int)sizeof(path) &&
 		COM_DirectoryHasPak0 (path))
 		return true;
+	rerelease_count = COM_GetRereleaseContentRoots(rerelease_roots,
+		countof(rerelease_roots));
+	if (q_strcasecmp(dir, GAMENAME))
+		for (i = 0; i < rerelease_count; ++i)
+			if (q_snprintf(path, sizeof(path), "%s/%s", rerelease_roots[i], dir) < (int)sizeof(path) &&
+				COM_DirectoryHasPak0(path))
+				return true;
 	for (i = 0; i < com_content_root_count; ++i)
 		if (q_snprintf(path, sizeof(path), "%s/%s", com_content_roots[i], dir) < (int)sizeof(path) &&
 			COM_DirectoryHasPak0 (path))
@@ -2977,7 +3161,6 @@ static void COM_Game_f (void)
 		 * their runtime strings in fgd/messages.fgd, so reload after mounting
 		 * the new game instead of retaining the previous game's table. */
 		LOC_Init();
-		VR_InitGame();
 
 		//clear out and reload appropriate data
 		Cache_Flush ();
@@ -2989,6 +3172,11 @@ static void COM_Game_f (void)
 			Draw_NewGame ();
 			R_NewGame ();
 		}
+		/* VR_InitGame parses the newly mounted weapon schemas and may load their
+		 * display models.  Run it after Mod_ResetAll; doing this before the model
+		 * reset left schema records referring to model-cache entries that were
+		 * immediately discarded during an automatic server mod switch. */
+		VR_InitGame();
 		ExtraMaps_NewGame ();
 		Host_Resetdemos ();
 		DemoList_Rebuild ();
@@ -3034,7 +3222,7 @@ void COM_InitFilesystem (void) //johnfitz -- modified based on topaz's tutorial
 	qboolean explicit_basedir = false;
 	qboolean steam_found = false;
 	steam_quake_install_t steam_install;
-	char rerelease[MAX_OSPATH], nightdive[MAX_OSPATH];
+	char rerelease[MAX_OSPATH], sibling_rerelease[MAX_OSPATH], nightdive[MAX_OSPATH];
 
 	Cvar_RegisterVariable (&registered);
 	Cvar_RegisterVariable (&cmdline);
@@ -3064,7 +3252,12 @@ void COM_InitFilesystem (void) //johnfitz -- modified based on topaz's tutorial
 	 * Steam's manifest is authoritative, including games in non-default libs. */
 	memset(&steam_install, 0, sizeof(steam_install));
 	rerelease[0] = 0;
+	sibling_rerelease[0] = 0;
 	nightdive[0] = 0;
+	com_rerelease_content_root[0] = 0;
+	com_rerelease_addons_root[0] = 0;
+	com_rerelease_localization_pack[0] = 0;
+	com_engine_pak_loaded = false;
 	if (!COM_CheckParm("-nosteam"))
 	{
 		steam_found = Steam_FindQuakeInstall(&steam_install);
@@ -3097,10 +3290,31 @@ void COM_InitFilesystem (void) //johnfitz -- modified based on topaz's tutorial
 			Con_Printf("Using Steam Quake classic data from %s\n", com_basedir);
 		}
 	}
-	if (steam_found && (COM_PathsEqual(com_basedir, steam_install.path) ||
-		(rerelease[0] && COM_PathsEqual(com_basedir, rerelease))))
+	/* Downloaded Nightdive add-ons remain available to a portable install that
+	 * supplies its own classic id1 data. */
+	if (steam_found && !COM_CheckParm("-norerelease"))
 		Sys_GetSteamQuakeContentDir(nightdive, sizeof(nightdive), steam_install.library);
 	COM_SetContentRoots(com_basedir, nightdive);
+
+	/*
+	 * Localization is safe to discover independently of enhanced models: the
+	 * rerelease pack is not mounted, and the loader below can read only the
+	 * English localization table.  This lets a classic/portable basedir use
+	 * Steam's current strings without enabling enhanced-model discovery.
+	 */
+	i = COM_CheckParm("-rerelease");
+	if (i && i < com_argc - 1)
+		COM_SetRereleaseContentRoot(com_argv[i + 1]);
+	else if (!COM_CheckParm("-norerelease"))
+	{
+		if (q_snprintf(sibling_rerelease, sizeof(sibling_rerelease),
+			"%s/rerelease", com_basedir) < (int)sizeof(sibling_rerelease) &&
+			COM_HasRereleaseModelPack(sibling_rerelease) &&
+			!COM_PathsEqual(com_basedir, sibling_rerelease))
+			COM_SetRereleaseContentRoot(sibling_rerelease);
+		else if (rerelease[0] && COM_HasRereleaseModelPack(rerelease))
+			COM_SetRereleaseContentRoot(rerelease);
+	}
 
 	// start up with GAMENAME by default (id1)
 	COM_AddGameDirectoryAll(GAMENAME);
@@ -3424,6 +3638,16 @@ static qboolean LOC_LoadLocalizationSource (const char *file, qboolean allow_kpf
 	if (*out_text)
 	{
 		*out_len = Q_strlen(*out_text);
+		return true;
+	}
+
+	/* A classic basedir can inherit only the localization table from an
+	 * automatically detected rerelease, without mounting any commercial game
+	 * data into the normal filesystem. */
+	*out_text = COM_LoadRereleaseLocalization(file, out_len);
+	if (*out_text)
+	{
+		Con_DPrintf("Loaded '%s' from detected rerelease data\n", file);
 		return true;
 	}
 
