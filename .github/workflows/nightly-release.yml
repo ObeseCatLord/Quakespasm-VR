@@ -135,6 +135,8 @@ jobs:
     name: Build Linux x86_64
     needs: metadata
     runs-on: ubuntu-22.04
+    env:
+      LINUX_GLIBC_MAX: '2.39'
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -143,6 +145,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y \
+            binutils \
             build-essential \
             libcurl4-openssl-dev \
             libflac-dev \
@@ -181,6 +184,19 @@ jobs:
           install -m 0644 "$openvr_lib" "$folder/libopenvr_api.so"
           test -f "$folder/libopenvr_api.so"
           test ! -e "$folder/libopenvr_api.so.1"
+
+          for elf in "$folder/quakespasm-openvr.bin" "$folder/libopenvr_api.so"; do
+            max_glibc="$(readelf --version-info --wide "$elf" |
+              grep -oE 'GLIBC_[0-9]+\.[0-9]+' | sed 's/GLIBC_//' |
+              sort -Vu | tail -n 1)"
+            echo "$(basename "$elf") maximum GLIBC requirement: ${max_glibc:-none}"
+            if test -n "$max_glibc" &&
+               test "$(printf '%s\n%s\n' "$max_glibc" "$LINUX_GLIBC_MAX" |
+                 sort -V | tail -n 1)" != "$LINUX_GLIBC_MAX"; then
+              echo "$(basename "$elf") requires GLIBC_$max_glibc, newer than allowed GLIBC_$LINUX_GLIBC_MAX" >&2
+              exit 1
+            fi
+          done
 
           strings Quake/quakespasm-openvr.bin | grep -F 'Press F1 to refresh add-on catalogue'
           if strings Quake/quakespasm-openvr.bin | grep -Fq 'Catalogue downloads disabled in this build'; then

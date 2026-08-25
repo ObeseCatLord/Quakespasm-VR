@@ -1014,6 +1014,7 @@ static int SV_CoopRespawnKeepItemMask(void) {
          IT_SUPER_LIGHTNING | IT_AXE | IT_SHELLS | IT_NAILS | IT_ROCKETS |
          IT_CELLS | IT_KEY1 | IT_KEY2 | IT_SIGIL1 | IT_SIGIL2 |
          IT_SIGIL3 | IT_SIGIL4;
+  mask |= SV_DeclaredWeaponBits();
 
   if (rogue)
     mask |= RIT_AXE | RIT_LAVA_NAILGUN | RIT_LAVA_SUPER_NAILGUN |
@@ -2483,6 +2484,9 @@ void SV_PushMove(edict_t *pusher, float movetime) {
                 PR_GetString(pusher->v.classname), NUM_FOR_EDICT(pusher),
                 pusher_center[0], pusher_center[1], pusher_center[2]);
           }
+          /* SV_PushEntity already evaluated triggers for this movement
+           * transaction.  Relink the epsilon-adjusted final position without
+           * firing arbitrary mod trigger callbacks a second time. */
           SV_LinkEdict(check, false);
           continue;
         }
@@ -3560,7 +3564,11 @@ void SV_Physics_Client(edict_t *ent, int num) {
     VectorAdd(ent->v.origin, svs.clients[num - 1].vr_roomscale_accum,
               ent->v.origin);
     VectorCopy(vec3_origin, svs.clients[num - 1].vr_roomscale_accum);
-    SV_LinkEdict(ent, true);
+    /* Refresh collision/area bounds now, but defer QuakeC trigger callbacks to
+     * the normal final client relink below.  Touching here as well made remote
+     * VR clients fire same-frame ALL_CLIENTS triggers twice, unlike desktop
+     * clients and Ironwail's single final trigger pass. */
+    SV_LinkEdict(ent, false);
   }
 
   was_onground = ((int)ent->v.flags & FL_ONGROUND) != 0;

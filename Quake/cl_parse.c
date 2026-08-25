@@ -800,7 +800,17 @@ qboolean CL_ParseServerInfo (void)
 		cl.model_precache[i] = Mod_ForName (model_precache[i], false);
 		if (cl.model_precache[i] == NULL)
 		{
-			Host_Error ("Model %s not found", model_precache[i]);
+			/* A server-directed game switch can expose an incomplete or stale
+			 * local add-on.  Treat that as a failed connection, not a fatal host
+			 * error: leaving auto-reconnect armed otherwise retries the same bad
+			 * precache indefinitely and looks like a client crash. */
+			Con_Warning ("Cannot join server: model %s was not found in game %s.\n",
+				model_precache[i], COM_GetGameNames(false));
+			CL_AutoReconnect_Cancel ();
+			CL_Disconnect ();
+			SCR_EndLoadingPlaque ();
+			M_Menu_Main_f ();
+			return false;
 		}
 		CL_KeepaliveMessage ();
 	}

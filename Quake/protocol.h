@@ -82,7 +82,10 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #define VRIK_PROTOCOL_LEGACY_VERSION 2
 #define VRIK_PROTOCOL_VERSION 3
 #define VRIK_MAX_ROOT_LOCAL_OFFSET 256.0f
-#define VRIK_POSE_STALE_TIME 0.25
+/* 20 Hz poses are intentionally unreliable.  Keep the last valid pose across
+ * ordinary packet loss and frame hitches; a received explicit inactive pose
+ * still turns VRIK off immediately. */
+#define VRIK_POSE_STALE_TIME 1.0
 
 #define VRIK_FLAG_ACTIVE 0x01
 #define VRIK_FLAG_HEAD_TRACKED 0x02

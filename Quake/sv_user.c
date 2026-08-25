@@ -1394,6 +1394,7 @@ static void SV_UpdateClientPMoveMode(client_t *client) {
   qboolean usingpmove;
   qboolean local_singleplayer;
   qboolean legacy_prethink_mod;
+  qboolean legacy_qc_ladder_mod;
   move_authority_t authority;
   moveack_discontinuity_t fallback_reason;
   int requested_mode;
@@ -1411,6 +1412,14 @@ static void SV_UpdateClientPMoveMode(client_t *client) {
    * PreThink callback, so a hook press later in the bundle would be lost.
    * Preserve the mod's original per-frame QuakeC input semantics. */
   legacy_prethink_mod = COM_GameDirMatches("rm1.2");
+  /* Legacy mods such as QBJ3 own ladder movement in PlayerPreThink and use a
+   * one-frame .onladder field as QuakeC state.  Engine PMove interprets that
+   * same field as a QSS ladder volume and applies its own sustained jump/climb
+   * acceleration, bypassing the mod's jump-off transition.  Without the
+   * command-physics extension there is no safe per-command QC equivalent, so
+   * retain the classic movement contract used by Ironwail. */
+  legacy_qc_ladder_mod = qcvm->extfields.onladder >= 0 &&
+      !qcvm->extfuncs.SV_RunClientCommand;
 
   requested_mode = CLAMP(0, (int)sv_pmove_mode.value, 3);
   authority = MOVE_AUTHORITY_LEGACY_FRAME;
@@ -1431,6 +1440,7 @@ static void SV_UpdateClientPMoveMode(client_t *client) {
   usingpmove = requested_mode != 0 && sv_trustedmovement.value &&
       !local_singleplayer && client->spawned && client->knowntoqc &&
       !sv_nqplayerphysics.value && !legacy_prethink_mod &&
+      !legacy_qc_ladder_mod &&
       (client->protocol_pext2 & PEXT2_EXPLICITCMDMSEC) &&
       (!customphysics || !customphysics->function) && valid_state;
 
@@ -1449,7 +1459,7 @@ static void SV_UpdateClientPMoveMode(client_t *client) {
           MOVE_AUTHORITY_PMOVE_QC_COMMAND :
           MOVE_AUTHORITY_PMOVE_ENGINE_COMPAT;
     }
-  } else if (legacy_prethink_mod) {
+  } else if (legacy_prethink_mod || legacy_qc_ladder_mod) {
     fallback_reason = MOVEACK_DISCONTINUITY_UNSUPPORTED_STATE;
   } else if (customphysics && customphysics->function) {
     fallback_reason = MOVEACK_DISCONTINUITY_CUSTOMPHYSICS;
@@ -1476,7 +1486,9 @@ static void SV_UpdateClientPMoveMode(client_t *client) {
                  usingpmove ? "enabled" : "disabled",
                  client->name,
                  local_singleplayer ? "local-singleplayer" :
-                 legacy_prethink_mod ? "legacy-prethink-mod" : "latest-client",
+                 legacy_prethink_mod ? "legacy-prethink-mod" :
+                 legacy_qc_ladder_mod ? "legacy-qc-ladder-mod" :
+                 "latest-client",
                  qcvm->extfuncs.SV_RunClientCommand ? 1 : 0);
   }
   else if (net_lagdebug.value && !sv_trustedmovement.value &&

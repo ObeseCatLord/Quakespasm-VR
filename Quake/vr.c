@@ -745,6 +745,11 @@ static int num_dyn_weapons = 8;
 static qboolean rogue_weapons_added = false;
 static qboolean hipnotic_weapons_added = false;
 static qboolean dwell_weapons_added = false;
+/* A non-empty wwheel.txt is the mod's authoritative weapon roster.  Once
+ * present, generic stock fallbacks may help supply a model for a declared
+ * slot, but undeclared stock entries must never leak into the wheel merely
+ * because the mod reuses their STAT_ITEMS bits for something else. */
+static qboolean vr_has_authoritative_wwheel = false;
 static int dwell_weapon_indices[3] = {-1, -1, -1};
 double vr_next_weapon_switch_time = 0; // Debounce for switching
 static int vr_weapon_cycle_target = -1;
@@ -1066,6 +1071,11 @@ static qboolean VR_ModelIndexLooksWeapon(int model_index) {
 static int VR_FindDynWeapon(int bitmask, int owned_stat, int owned_mask,
                             int active_stat, int active_mask,
                             const char *model_path, int model_index) {
+  const qboolean query_has_model =
+      (model_path && model_path[0]) || model_index > 0;
+  int fallback = -1;
+  int profile = -1;
+
   for (int i = 0; i < num_dyn_weapons; i++) {
     qboolean selector_match = false;
 
@@ -1078,16 +1088,30 @@ static int VR_FindDynWeapon(int bitmask, int owned_stat, int owned_mask,
         dyn_weapons[i].active_mask == active_mask)
       selector_match = true;
 
-    if (selector_match &&
-        VR_DynWeaponModelMatches(&dyn_weapons[i], model_path, model_index))
+    if (!selector_match ||
+        !VR_DynWeaponModelMatches(&dyn_weapons[i], model_path, model_index))
+      continue;
+
+    if (query_has_model)
       return i;
+
+    /* A selector-only schema such as wwheel.txt cannot distinguish a stock
+     * fallback from a mod profile reusing the same item bit.  Attach it to
+     * the most authoritative existing entry so MG3's hammer remains the
+     * hammer instead of turning the generic axe entry into the schema winner. */
+    if (dyn_weapons[i].from_schema)
+      return i;
+    if (dyn_weapons[i].game_profile)
+      profile = i;
+    else if (fallback < 0)
+      fallback = i;
   }
 
-  return -1;
+  return profile >= 0 ? profile : fallback;
 }
 
 static int VR_FindDynWeaponForActive(int active, int model_index) {
-  int schema_without_model = -1;
+  int schema_match = -1;
 
   for (int i = 0; i < num_dyn_weapons; i++) {
     vr_dyn_weapon_t *w = &dyn_weapons[i];
@@ -1105,14 +1129,16 @@ static int VR_FindDynWeaponForActive(int active, int model_index) {
       continue;
     /*
      * wwheel.txt identifies a weapon by its active selector, but does not
-     * carry a model name.  Once that explicit schema entry is observed,
-     * learn the current viewmodel instead of creating a second, hidden
-     * discovery entry.  Keep this limited to schema entries: non-schema
+     * authoritatively identifies the slot by its active selector.  Once that
+     * entry is observed, learn the current viewmodel even when its provisional
+     * display model came from a stock fallback.  Otherwise a custom weapon
+     * which reuses a vanilla bit creates a second entry and leaves the wrong
+     * vanilla model visible.  Keep this limited to schema entries: non-schema
      * selectors are commonly reused by unrelated mod weapons.
      */
-    if (w->from_schema && !VR_DynWeaponHasModelDiscriminator(w)) {
-      if (schema_without_model < 0)
-        schema_without_model = i;
+    if (w->from_schema) {
+      if (schema_match < 0)
+        schema_match = i;
       continue;
     }
     if (w->model_index > 0 && w->model_index == model_index)
@@ -1122,8 +1148,8 @@ static int VR_FindDynWeaponForActive(int active, int model_index) {
       return i;
   }
 
-  if (schema_without_model >= 0)
-    return schema_without_model;
+  if (schema_match >= 0)
+    return schema_match;
 
   /*
    * A matching active bit alone is not an identity.  Mods freely reuse those
@@ -1395,9 +1421,11 @@ static void VR_AddMG3WeaponDefaults(void) {
   if (!VR_GameDirIs("mg3"))
     return;
 
-  /* MG3's hammer is not present in every wwheel.txt, so keep it as a
-   * profile fallback. Use pickup models for readable wheel silhouettes. */
-  VR_AddBuiltinWeaponDefault(128, 1, "progs/g_hammer.mdl", -1, 0, -1, 0,
+  /* MG3's wwheel axe slot is 4096, but its separately awarded hammer/mjolnir
+   * is active/owned bit 128 in QuakeC and is omitted from that roster.  Keep
+   * the verified bonus weapon as an explicit profile fallback. */
+  VR_AddBuiltinWeaponDefault(128, 1, "progs/g_hammer.mdl", STAT_ITEMS, 128,
+                             STAT_ACTIVEWEAPON, 128,
                              -1, 0, 1.0f);
   VR_AddBuiltinWeaponDefault(8388608, 225, "progs/g_laserg.mdl", -1, 0,
                              -1, 0, STAT_CELLS, 100, 1.0f);
@@ -5047,40 +5075,6 @@ static const vr_qbj3_weapon_default_t vr_qbj3_weapon_defaults[] = {
      "muzzle_offset 0 0 0\nmp_held_offset 0 0 0\n"},
     {"progs/v_berserk.mdl",
      "model progs/v_berserk.mdl\nscale 0.2\nheld_scale 0.2\n"},
-    {"progs/v_axe.mdl",
-     "held_scale 0.33\nheld_offset 0 0 0\nmuzzle_offset 0 0 0\n"},
-    {"progs/v_shot.mdl",
-     "held_scale 0.5\nheld_offset 0 0 0\nmuzzle_offset 0 0 0\n"},
-    {"progs/v_shot2.mdl",
-     "held_scale 0.8\nheld_offset 0 0 0\nmuzzle_offset 0 0 0\n"},
-    {"progs/v_nail.mdl",
-     "held_scale 0.5\nheld_offset 0 0 0\nmuzzle_offset 0 0 0\n"},
-    {"progs/v_nail2.mdl",
-     "held_scale 0.5\nheld_offset 0 0 0\nmuzzle_offset 0 0 0\n"},
-    {"progs/v_rock.mdl",
-     "held_scale 0.5\nheld_offset 0 0 0\nmuzzle_offset 0 0 0\n"},
-    {"progs/v_rock2.mdl",
-     "held_scale 0.5\nheld_offset 0 0 0\nmuzzle_offset 0 0 0\n"},
-    {"progs/v_light.mdl",
-     "held_scale 0.5\nheld_offset 0 0 0\nmuzzle_offset 0 0 0\n"},
-    {"progs/v_hammer.mdl",
-     "held_scale 0.33\nheld_offset 0 0 0\nmuzzle_offset 0 0 0\n"},
-    {"progs/v_laserg.mdl",
-     "held_scale 0.33\nheld_offset 0 0 0\nmuzzle_offset 0 0 0\n"},
-    {"progs/v_prox.mdl",
-     "held_scale 0.5\nheld_offset 0 0 0\nmuzzle_offset 0 0 0\n"},
-    {"progs/v_lava.mdl",
-     "held_scale 0.5\nheld_offset 0 0 0\nmuzzle_offset 0 0 0\n"},
-    {"progs/v_lava2.mdl",
-     "held_scale 0.5\nheld_offset 0 0 0\nmuzzle_offset 0 0 0\n"},
-    {"progs/v_multi.mdl",
-     "held_scale 0.5\nheld_offset 0 0 0\nmuzzle_offset 0 0 0\n"},
-    {"progs/v_multi2.mdl",
-     "held_scale 0.5\nheld_offset 0 0 0\nmuzzle_offset 0 0 0\n"},
-    {"progs/v_plasma.mdl",
-     "held_scale 0.5\nheld_offset 0 0 0\nmuzzle_offset 0 0 0\n"},
-    {"progs/v_axe2.mdl",
-     "held_scale 0.33\nheld_offset 0 0 0\nmuzzle_offset 0 0 0\n"},
 };
 
 static qboolean VR_BlockHasKey(const char *block, size_t len,
@@ -7065,6 +7059,7 @@ static qboolean VR_WWheelAmmoFromEntVar(int entvaroffs, int *ammo_stat,
 static void VR_LoadWWheelSchema(void) {
   char *data;
   char *start;
+  unsigned int path_id = 0;
   int weaponnum = 0;
   int impulse = 0;
   int entvaroffs = 0;
@@ -7076,9 +7071,17 @@ static void VR_LoadWWheelSchema(void) {
   qboolean have_impulse = false;
   qboolean have_entvaroffs = false;
 
-  data = (char *)COM_LoadZoneFile("wwheel.txt", NULL);
+  data = (char *)COM_LoadZoneFile("wwheel.txt", &path_id);
   if (!data) {
     DebugLog("VR: no wwheel.txt found for %s\n", com_gamedir);
+    return;
+  }
+  /* Search paths intentionally fall back to id1, but a base-game weapon
+   * roster is not authoritative for a mod which does not provide its own.
+   * All roots and PAKs mounted for the active game share the highest path id. */
+  if (!com_searchpaths || path_id != com_searchpaths->path_id) {
+    DebugLog("VR: ignoring inherited wwheel.txt for %s\n", com_gamedir);
+    Z_Free(data);
     return;
   }
 
@@ -7155,7 +7158,7 @@ static void VR_LoadWWheelSchema(void) {
       if (!start || !com_token[0])
         break;
       impulse = Q_atoi(com_token);
-      have_impulse = true;
+      have_impulse = impulse > 0;
       continue;
     }
 
@@ -7177,6 +7180,7 @@ static void VR_LoadWWheelSchema(void) {
   }
   VR_COMMIT_WWHEEL_SLOT();
   Z_Free(data);
+  vr_has_authoritative_wwheel = loaded > 0;
   Con_Printf("VR: Loaded %d weapon slots from wwheel.txt\n", loaded);
 #undef VR_COMMIT_WWHEEL_SLOT
 }
@@ -7185,8 +7189,27 @@ static void VR_LoadWWheelSchema(void) {
 // Stored as a plain C float so config.cfg can never override it.
 float vr_game_projectile_z_extra = 0.0f;
 
+static void VR_ResetWeaponGameTransitionState(void) {
+  /* A game-directory switch is a hard ownership boundary.  Do not carry an
+   * open wheel, a pending retry impulse, or a calibration session into a mod
+   * which may reuse the same item bits and viewmodel names for other weapons. */
+  VR_EndWeaponMenu();
+  cl.in_vr_weaponmenu = false;
+  VR_AdjustCancel(true);
+  vr_weapon_cycle_target = -1;
+  vr_weapon_cycle_impulse = 0;
+  vr_weapon_cycle_attempts = 0;
+  vr_weapon_cycle_next_time = 0.0;
+  vr_next_weapon_switch_time = 0.0;
+  lastWeaponHeader = NULL;
+  lastWeaponModel = NULL;
+  weaponCVarEntry = -1;
+}
+
 void VR_InitGame() {
+  VR_ResetWeaponGameTransitionState();
   VR_ResetDynWeaponsToBase();
+  vr_has_authoritative_wwheel = false;
   /* Profile metadata is the fallback.  A matching file schema wins below. */
   VR_AddBuiltinWeaponDefaults();
   InitAllWeaponCVars();
@@ -7194,11 +7217,12 @@ void VR_InitGame() {
   VR_RegisterMG3WeaponOffsetDefaults();
   VR_CreateDefaultWeaponSchemaIfMissing();
   VR_FillMissingDefaultWeaponSchemaBlocks();
-  VR_LoadWWheelSchema();
+  /* Load model-bearing definitions first.  The selector-only wheel can then
+   * merge ownership/impulse metadata into those entries instead of creating
+   * a second authoritative entry for the same custom weapon. */
   VR_LoadWeaponSchema();
+  VR_LoadWWheelSchema();
   VR_RegisterDwellHeldWeaponDefaults();
-  lastWeaponHeader = NULL;
-  weaponCVarEntry = -1;
 
   // Per-game extra Z offset — currently 0 for all games.
   // The base vr_projectilespawn_z_offset cvar (default 24) handles QuakeC's
@@ -9539,6 +9563,13 @@ VR_WeaponVisibility(const vr_dyn_weapon_t *w) {
 
   if (VR_IsDwellDefaultWeaponEntry(w) && !VR_IsDwellGame())
     return VR_WEAPON_HIDDEN_DWELL_ONLY;
+
+  /* wwheel.txt is a complete selection roster, not a hint.  Apply this rule
+   * globally rather than maintaining per-mod exclusion lists: entries which
+   * the roster did not claim stay hidden even if unrelated mod inventory bits
+   * happen to look like vanilla weapon ownership. */
+  if (vr_has_authoritative_wwheel && !w->from_schema && !w->game_profile)
+    return VR_WEAPON_HIDDEN_SCHEMA_FALLBACK;
 
   /*
    * The precedence is file schema > selected game profile > generic stock.

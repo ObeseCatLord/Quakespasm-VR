@@ -350,6 +350,8 @@ qboolean COM_GameDirHasPak0(const char *dir);
 qboolean COM_DirectoryHasPak0(const char *directory);
 /* Read-only content roots, in low-to-high precedence order. */
 int COM_GetContentRoots(const char **roots, int maxroots);
+/* Detected Steam rerelease roots used as lowest-priority campaign sources. */
+int COM_GetRereleaseContentRoots(const char **roots, int maxroots);
 qboolean COM_HasSeparateUserDir(void);
 const char *COM_GetWriteRoot(void);
 
