@@ -11,7 +11,7 @@ on:
 
 jobs:
   build-linux:
-    name: Build Linux
+    name: Build Linux x86_64
     runs-on: ubuntu-22.04
     env:
       LINUX_GLIBC_MAX: '2.39'
@@ -26,6 +26,7 @@ jobs:
           sudo apt-get install -y \
             binutils \
             build-essential \
+            file \
             libcurl4-openssl-dev \
             libflac-dev \
             libgl1-mesa-dev \
@@ -60,10 +61,134 @@ jobs:
             exit 1
           fi
 
+          openvr_needed="$(readelf -d Quake/quakespasm-openvr.bin | awk '/NEEDED.*libopenvr_api/ {gsub(/[\[\]]/, "", $5); print $5; exit}')"
+          test -n "$openvr_needed"
+          openvr_path="$(ldconfig -p | awk -v soname="$openvr_needed" '$1 == soname {print $NF; exit}')"
+          if test -z "$openvr_path"; then
+            openvr_path="$(dpkg -L libopenvr-dev | awk -v soname="$openvr_needed" '$0 ~ ("/" soname "$") {print; exit}')"
+          fi
+          test -n "$openvr_path"
+          openvr_path="$(readlink -f "$openvr_path")"
+          openvr_runtime="$(basename "$openvr_path")"
+          readelf -Ws Quake/quakespasm-openvr.bin | grep -Eq 'UND.*VR_InitInternal2'
+          readelf -Ws "$openvr_path" | grep -Eq 'VR_InitInternal2'
+
+      - name: Stage Linux x86_64 VR runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          binary=Quake/quakespasm-openvr.bin
+          openvr_needed="$(readelf -d "$binary" | awk '/NEEDED.*libopenvr_api/ {gsub(/[\[\]]/, "", $5); print $5; exit}')"
+          openvr_path="$(ldconfig -p | awk -v soname="$openvr_needed" '$1 == soname {print $NF; exit}')"
+          if test -z "$openvr_path"; then
+            openvr_path="$(dpkg -L libopenvr-dev | awk -v soname="$openvr_needed" '$0 ~ ("/" soname "$") {print; exit}')"
+          fi
+          test -n "$openvr_path"
+          openvr_path="$(readlink -f "$openvr_path")"
+          openvr_runtime="$(basename "$openvr_path")"
+          folder="$RUNNER_TEMP/quakespasm-openvr-linux-x86_64"
+          install -d "$folder"
+          install -m 0755 Quake/quakespasm-openvr "$binary" "$folder/"
+          for loader_name in libopenvr_api.so "$openvr_needed" "$openvr_runtime"; do
+            install -m 0644 "$openvr_path" "$folder/$loader_name"
+          done
+
       - name: Upload Linux build
         uses: actions/upload-artifact@v4
         with:
-          name: quakespasm-openvr-linux
-          path: |
-            Quake/quakespasm-openvr
-            Quake/quakespasm-openvr.bin
+          name: quakespasm-openvr-linux-x86_64
+          path: ${{ runner.temp }}/quakespasm-openvr-linux-x86_64
+
+  build-linux-arm64:
+    name: Build Linux ARM64 VR
+    runs-on: ubuntu-24.04-arm
+    env:
+      LINUX_GLIBC_MAX: '2.39'
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            binutils \
+            build-essential \
+            file \
+            libcurl4-openssl-dev \
+            libflac-dev \
+            libgl1-mesa-dev \
+            libmad0-dev \
+            libogg-dev \
+            libopenvr-dev \
+            libopusfile-dev \
+            libsdl2-dev \
+            libvorbis-dev \
+            libxmp-dev \
+            pkg-config
+
+      - name: Build ARM64 VR engine
+        run: |
+          make -C Quake -f Makefile.linux clean
+          make -C Quake -f Makefile.linux FLAC_DYNAMIC=1 -j"$(nproc)"
+
+      - name: Verify ARM64 VR build outputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          binary=Quake/quakespasm-openvr.bin
+          test -x Quake/quakespasm-openvr
+          test -x "$binary"
+          file "$binary" | grep -Eq 'ELF 64-bit.*aarch64|ELF 64-bit.*ARM aarch64'
+          openvr_needed="$(readelf -d "$binary" | awk '/NEEDED.*libopenvr_api/ {gsub(/[\[\]]/, "", $5); print $5; exit}')"
+          test -n "$openvr_needed"
+          openvr_path="$(ldconfig -p | awk -v soname="$openvr_needed" '$1 == soname {print $NF; exit}')"
+          if test -z "$openvr_path"; then
+            openvr_path="$(dpkg -L libopenvr-dev | awk -v soname="$openvr_needed" '$0 ~ ("/" soname "$") {print; exit}')"
+          fi
+          test -n "$openvr_path"
+          openvr_path="$(readlink -f "$openvr_path")"
+          openvr_runtime="$(basename "$openvr_path")"
+          file "$openvr_path" | grep -Eq 'ELF 64-bit.*aarch64|ELF 64-bit.*ARM aarch64'
+          readelf -Ws "$binary" | grep -Eq 'UND.*VR_InitInternal2'
+          readelf -Ws "$openvr_path" | grep -Eq 'VR_InitInternal2'
+          readelf -d "$binary" | grep -Eq '\((RPATH|RUNPATH)\).*\$ORIGIN'
+          for elf in "$binary" "$openvr_path"; do
+            max_glibc="$(readelf --version-info --wide "$elf" |
+              grep -oE 'GLIBC_[0-9]+\.[0-9]+' | sed 's/GLIBC_//' |
+              sort -Vu | tail -n 1)"
+            echo "$(basename "$elf") maximum GLIBC requirement: ${max_glibc:-none}"
+            if test -n "$max_glibc" &&
+               test "$(printf '%s\n%s\n' "$max_glibc" "$LINUX_GLIBC_MAX" |
+                 sort -V | tail -n 1)" != "$LINUX_GLIBC_MAX"; then
+              echo "$(basename "$elf") requires GLIBC_$max_glibc, newer than allowed GLIBC_$LINUX_GLIBC_MAX" >&2
+              exit 1
+            fi
+          done
+
+      - name: Stage Linux ARM64 VR runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          binary=Quake/quakespasm-openvr.bin
+          openvr_needed="$(readelf -d "$binary" | awk '/NEEDED.*libopenvr_api/ {gsub(/[\[\]]/, "", $5); print $5; exit}')"
+          openvr_path="$(ldconfig -p | awk -v soname="$openvr_needed" '$1 == soname {print $NF; exit}')"
+          if test -z "$openvr_path"; then
+            openvr_path="$(dpkg -L libopenvr-dev | awk -v soname="$openvr_needed" '$0 ~ ("/" soname "$") {print; exit}')"
+          fi
+          test -n "$openvr_path"
+          openvr_path="$(readlink -f "$openvr_path")"
+          openvr_runtime="$(basename "$openvr_path")"
+          folder="$RUNNER_TEMP/quakespasm-openvr-linux-arm64"
+          install -d "$folder"
+          install -m 0755 Quake/quakespasm-openvr "$binary" "$folder/"
+          for loader_name in libopenvr_api.so "$openvr_needed" "$openvr_runtime"; do
+            install -m 0644 "$openvr_path" "$folder/$loader_name"
+          done
+
+      - name: Upload Linux ARM64 VR build
+        uses: actions/upload-artifact@v4
+        with:
+          name: quakespasm-openvr-linux-arm64
+          path: ${{ runner.temp }}/quakespasm-openvr-linux-arm64

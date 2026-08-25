@@ -147,6 +147,7 @@ jobs:
           sudo apt-get install -y \
             binutils \
             build-essential \
+            file \
             libcurl4-openssl-dev \
             libflac-dev \
             libgl1-mesa-dev \
@@ -172,18 +173,38 @@ jobs:
           test -x Quake/quakespasm-openvr.bin
           ldd Quake/quakespasm-openvr.bin
 
+          binary=Quake/quakespasm-openvr.bin
+          openvr_needed="$(readelf -d "$binary" | awk '/NEEDED.*libopenvr_api/ {gsub(/[\[\]]/, "", $5); print $5; exit}')"
+          test -n "$openvr_needed"
+          openvr_lib="$(ldconfig -p | awk -v soname="$openvr_needed" '$1 == soname {print $NF; exit}')"
+          if test -z "$openvr_lib"; then
+            openvr_lib="$(dpkg -L libopenvr-dev | awk -v soname="$openvr_needed" '$0 ~ ("/" soname "$") {print; exit}')"
+          fi
+          test -n "$openvr_lib"
+          openvr_lib="$(readlink -f "$openvr_lib")"
+          openvr_runtime="$(basename "$openvr_lib")"
+          readelf -Ws "$binary" | grep -Eq 'UND.*VR_InitInternal2'
+          readelf -Ws "$openvr_lib" | grep -Eq 'VR_InitInternal2'
+          readelf -d "$binary" | grep -Eq '\((RPATH|RUNPATH)\).*\$ORIGIN'
+
           folder="$RUNNER_TEMP/${{ needs.metadata.outputs.package_stem }}"
           install -d "$folder"
           # The Linux archive is intentionally self-contained for all
           # distributable engine files. System SDL/OpenGL/curl/audio
           # dependencies and the user's legally obtained id1 remain external.
-          install -m 0755 Quake/quakespasm-openvr.bin "$folder/"
-          install -m 0644 Windows/static-release-files/quakespasm.pak LICENSE.txt "$folder/"
-          openvr_lib="$(dpkg -L libopenvr-dev | grep '/libopenvr_api\.so$' | head -n 1)"
-          test -n "$openvr_lib"
-          install -m 0644 "$openvr_lib" "$folder/libopenvr_api.so"
+          install -m 0755 "$binary" "$folder/"
+          install -m 0644 Quake/quakespasm.pak LICENSE.txt "$folder/"
+          # The linker records the runtime SONAME, which is not always the
+          # unversioned development filename. Ship it and the conventional
+          # unversioned loader name so both direct and wrapper launches work.
+          for loader_name in libopenvr_api.so "$openvr_needed" "$openvr_runtime"; do
+            install -m 0644 "$openvr_lib" "$folder/$loader_name"
+          done
           test -f "$folder/libopenvr_api.so"
-          test ! -e "$folder/libopenvr_api.so.1"
+          test -f "$folder/$openvr_needed"
+          test -f "$folder/$openvr_runtime"
+          file "$folder/quakespasm-openvr.bin" | grep -Eq 'ELF 64-bit.*x86-64'
+          file "$folder/$openvr_needed" | grep -Eq 'ELF 64-bit.*x86-64'
 
           for elf in "$folder/quakespasm-openvr.bin" "$folder/libopenvr_api.so"; do
             max_glibc="$(readelf --version-info --wide "$elf" |
@@ -197,6 +218,12 @@ jobs:
               exit 1
             fi
           done
+
+          debug_log="$RUNNER_TEMP/linux-openvr-loader.log"
+          LD_DEBUG=libs "$folder/quakespasm-openvr.bin" \
+            -basedir "$folder" -dedicated 1 +quit >"$debug_log" 2>&1 || true
+          grep -Fq "$folder/$openvr_needed" "$debug_log"
+          rm "$debug_log"
 
           strings Quake/quakespasm-openvr.bin | grep -F 'Press F1 to refresh add-on catalogue'
           if strings Quake/quakespasm-openvr.bin | grep -Fq 'Catalogue downloads disabled in this build'; then
@@ -229,12 +256,138 @@ jobs:
           path: ${{ needs.metadata.outputs.package_stem }}_linux-x86_64.zip
           if-no-files-found: error
 
+  build-linux-arm64:
+    name: Build Linux ARM64 VR
+    needs: metadata
+    runs-on: ubuntu-24.04-arm
+    env:
+      LINUX_GLIBC_MAX: '2.39'
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            binutils \
+            build-essential \
+            file \
+            libcurl4-openssl-dev \
+            libflac-dev \
+            libgl1-mesa-dev \
+            libmad0-dev \
+            libogg-dev \
+            libopenvr-dev \
+            libopusfile-dev \
+            libsdl2-dev \
+            libvorbis-dev \
+            libxmp-dev \
+            pkg-config \
+            zip
+
+      - name: Build ARM64 VR engine
+        run: |
+          make -C Quake -f Makefile.linux clean
+          make -C Quake -f Makefile.linux FLAC_DYNAMIC=1 -j"$(nproc)"
+
+      - name: Verify and package ARM64 VR runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          binary=Quake/quakespasm-openvr.bin
+          test -x Quake/quakespasm-openvr
+          test -x "$binary"
+          ldd "$binary"
+          file "$binary" | grep -Eq 'ELF 64-bit.*aarch64|ELF 64-bit.*ARM aarch64'
+
+          openvr_needed="$(readelf -d "$binary" | awk '/NEEDED.*libopenvr_api/ {gsub(/[\[\]]/, "", $5); print $5; exit}')"
+          test -n "$openvr_needed"
+          openvr_lib="$(ldconfig -p | awk -v soname="$openvr_needed" '$1 == soname {print $NF; exit}')"
+          if test -z "$openvr_lib"; then
+            openvr_lib="$(dpkg -L libopenvr-dev | awk -v soname="$openvr_needed" '$0 ~ ("/" soname "$") {print; exit}')"
+          fi
+          test -n "$openvr_lib"
+          openvr_lib="$(readlink -f "$openvr_lib")"
+          openvr_runtime="$(basename "$openvr_lib")"
+          file "$openvr_lib" | grep -Eq 'ELF 64-bit.*aarch64|ELF 64-bit.*ARM aarch64'
+          readelf -Ws "$binary" | grep -Eq 'UND.*VR_InitInternal2'
+          readelf -Ws "$openvr_lib" | grep -Eq 'VR_InitInternal2'
+          readelf -d "$binary" | grep -Eq '\((RPATH|RUNPATH)\).*\$ORIGIN'
+
+          folder="$RUNNER_TEMP/${{ needs.metadata.outputs.package_stem }}"
+          install -d "$folder"
+          # Keep this archive self-contained for distributable engine files;
+          # SteamVR/OpenXR, SDL, OpenGL and audio dependencies remain system
+          # dependencies, while the user supplies legally obtained game data.
+          install -m 0755 "$binary" "$folder/"
+          install -m 0644 Quake/quakespasm.pak LICENSE.txt "$folder/"
+          for loader_name in libopenvr_api.so "$openvr_needed" "$openvr_runtime"; do
+            install -m 0644 "$openvr_lib" "$folder/$loader_name"
+          done
+          test -f "$folder/libopenvr_api.so"
+          test -f "$folder/$openvr_needed"
+          test -f "$folder/$openvr_runtime"
+          file "$folder/quakespasm-openvr.bin" | grep -Eq 'ELF 64-bit.*aarch64|ELF 64-bit.*ARM aarch64'
+          file "$folder/$openvr_needed" | grep -Eq 'ELF 64-bit.*aarch64|ELF 64-bit.*ARM aarch64'
+
+          for elf in "$folder/quakespasm-openvr.bin" "$folder/$openvr_needed"; do
+            max_glibc="$(readelf --version-info --wide "$elf" |
+              grep -oE 'GLIBC_[0-9]+\.[0-9]+' | sed 's/GLIBC_//' |
+              sort -Vu | tail -n 1)"
+            echo "$(basename "$elf") maximum GLIBC requirement: ${max_glibc:-none}"
+            if test -n "$max_glibc" &&
+               test "$(printf '%s\n%s\n' "$max_glibc" "$LINUX_GLIBC_MAX" |
+                 sort -V | tail -n 1)" != "$LINUX_GLIBC_MAX"; then
+              echo "$(basename "$elf") requires GLIBC_$max_glibc, newer than allowed GLIBC_$LINUX_GLIBC_MAX" >&2
+              exit 1
+            fi
+          done
+
+          strings "$binary" | grep -F 'Press F1 to refresh add-on catalogue'
+          if strings "$binary" | grep -Fq 'Catalogue downloads disabled in this build'; then
+            echo 'ARM64 executable contains the disabled catalogue path' >&2
+            exit 1
+          fi
+          test "$(find "$folder" -maxdepth 1 -type f \( -name '*.o' -o -name '*.pdb' \) | wc -l)" -eq 0
+
+          debug_log="$RUNNER_TEMP/linux-arm64-openvr-loader.log"
+          LD_DEBUG=libs "$folder/quakespasm-openvr.bin" \
+            -basedir "$folder" -dedicated 1 +quit >"$debug_log" 2>&1 || true
+          grep -Fq "$folder/$openvr_needed" "$debug_log"
+          rm "$debug_log"
+
+          log="$RUNNER_TEMP/linux-arm64-package-smoke.log"
+          set +e
+          timeout 20s "$folder/quakespasm-openvr.bin" \
+            -basedir "$folder" -dedicated 1 +quit >"$log" 2>&1
+          status="$?"
+          set -e
+          test "$status" -ne 124
+          grep -Fq 'Playing shareware version.' "$log"
+          if grep -Fq 'error while loading shared libraries' "$log"; then
+            cat "$log" >&2
+            exit 1
+          fi
+          rm "$log"
+
+          cd "$RUNNER_TEMP"
+          zip -qr "$GITHUB_WORKSPACE/${{ needs.metadata.outputs.package_stem }}_linux-arm64.zip" '${{ needs.metadata.outputs.package_stem }}'
+
+      - name: Upload Linux ARM64 nightly artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-linux-arm64
+          path: ${{ needs.metadata.outputs.package_stem }}_linux-arm64.zip
+          if-no-files-found: error
+
   publish:
     name: Publish immutable nightly tag
     needs:
       - metadata
       - build-windows
       - build-linux
+      - build-linux-arm64
     runs-on: ubuntu-22.04
     env:
       GH_TOKEN: ${{ github.token }}
