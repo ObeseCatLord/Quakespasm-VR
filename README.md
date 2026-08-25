@@ -13,10 +13,11 @@ weapon calibration.
 - Improved VR-synchronized networking.
 - A weapon wheel for both VR and desktop players.
 - Streamlined co-op options, including respawning or teleporting near another
-  player.
+  player via the weapon wheel.
 - Per-mod weapon-offset calibration, with built-in profiles for popular mods.
 - Support for the 2021 rerelease models and automatic rerelease discovery.
 - An installed-mod browser and downloadable add-on catalogue.
+- Networked VRIK so you can see other people wave at youy
 
 ## Building from source
 
