@@ -13,6 +13,7 @@ extern "C" {
 #include "vr_fbt_storage.h"
 #include "vr_fbt_visual.h"
 #include "vr_fbt_filter.h"
+#include "vr_weapon_catalog.h"
 #include "zone.h"
 #include "debug_log.h"
 
@@ -750,6 +751,7 @@ static qboolean dwell_weapons_added = false;
  * slot, but undeclared stock entries must never leak into the wheel merely
  * because the mod reuses their STAT_ITEMS bits for something else. */
 static qboolean vr_has_authoritative_wwheel = false;
+static vr_weapon_catalog_t vr_weapon_catalog;
 static int dwell_weapon_indices[3] = {-1, -1, -1};
 double vr_next_weapon_switch_time = 0; // Debounce for switching
 static int vr_weapon_cycle_target = -1;
@@ -1440,6 +1442,20 @@ static void VR_AddBuiltinWeaponDefaults(void) {
   VR_AddMG3WeaponDefaults();
 }
 
+static vr_weapon_catalog_source_t
+VR_DynWeaponCatalogSource(const vr_dyn_weapon_t *w) {
+  if (w->from_schema)
+    return VR_WEAPON_CATALOG_SOURCE_SCHEMA;
+  if (w->game_profile)
+    return VR_WEAPON_CATALOG_SOURCE_PROFILE;
+  /* Stock fallbacks also learn their precache index; their model path, not
+   * that observation bit, distinguishes them from a runtime-only custom
+   * weapon. */
+  if (w->discovered && (!w->model_path || !w->model_path[0]))
+    return VR_WEAPON_CATALOG_SOURCE_DISCOVERED;
+  return VR_WEAPON_CATALOG_SOURCE_STOCK;
+}
+
 static qboolean VR_IsDwellDefaultWeaponEntry(const vr_dyn_weapon_t *w) {
   int index;
 
@@ -1561,20 +1577,20 @@ static qboolean VR_GetWeaponAmmo(const vr_dyn_weapon_t *w, int *ammo,
 #ifdef STAT_VR_MAX_SHELLS
   switch (stat) {
   case STAT_SHELLS:
-    if (cl.stats[STAT_VR_MAX_SHELLS] > 0)
-      *max_ammo = cl.stats[STAT_VR_MAX_SHELLS];
+    *max_ammo = VR_WeaponCatalog_ResolveAmmoMax(
+        *max_ammo, cl.stats[STAT_VR_MAX_SHELLS]);
     break;
   case STAT_NAILS:
-    if (cl.stats[STAT_VR_MAX_NAILS] > 0)
-      *max_ammo = cl.stats[STAT_VR_MAX_NAILS];
+    *max_ammo = VR_WeaponCatalog_ResolveAmmoMax(
+        *max_ammo, cl.stats[STAT_VR_MAX_NAILS]);
     break;
   case STAT_ROCKETS:
-    if (cl.stats[STAT_VR_MAX_ROCKETS] > 0)
-      *max_ammo = cl.stats[STAT_VR_MAX_ROCKETS];
+    *max_ammo = VR_WeaponCatalog_ResolveAmmoMax(
+        *max_ammo, cl.stats[STAT_VR_MAX_ROCKETS]);
     break;
   case STAT_CELLS:
-    if (cl.stats[STAT_VR_MAX_CELLS] > 0)
-      *max_ammo = cl.stats[STAT_VR_MAX_CELLS];
+    *max_ammo = VR_WeaponCatalog_ResolveAmmoMax(
+        *max_ammo, cl.stats[STAT_VR_MAX_CELLS]);
     break;
   default:
     break;
@@ -7208,6 +7224,7 @@ static void VR_ResetWeaponGameTransitionState(void) {
 
 void VR_InitGame() {
   VR_ResetWeaponGameTransitionState();
+  VR_WeaponCatalog_Reset(&vr_weapon_catalog);
   VR_ResetDynWeaponsToBase();
   vr_has_authoritative_wwheel = false;
   /* Profile metadata is the fallback.  A matching file schema wins below. */
@@ -9454,6 +9471,11 @@ void VR_TrackWeapons(void) {
     return;
   }
 
+  /* Preserve every distinct selector/viewmodel observation for diagnostics
+   * and transition regression checks. Observations never authorize a guessed
+   * QuakeC impulse or suppress an otherwise selectable fallback. */
+  VR_WeaponCatalog_Observe(&vr_weapon_catalog, active, model_idx);
+
   int found = VR_FindDynWeaponForActive(active, model_idx);
   vr_dyn_weapon_t *w = (found >= 0) ? &dyn_weapons[found] : NULL;
 
@@ -9557,6 +9579,12 @@ typedef enum {
 
 static vr_weapon_visibility_t
 VR_WeaponVisibility(const vr_dyn_weapon_t *w) {
+  qboolean owned;
+  qboolean active;
+  qboolean has_schema_peer = false;
+  qboolean has_profile_peer = false;
+  vr_weapon_catalog_source_t source;
+
   if (w->discovered && w->model_index > 0 &&
       !VR_ModelIndexLooksWeapon(w->model_index))
     return VR_WEAPON_HIDDEN_INVALID_MODEL;
@@ -9568,9 +9596,6 @@ VR_WeaponVisibility(const vr_dyn_weapon_t *w) {
    * globally rather than maintaining per-mod exclusion lists: entries which
    * the roster did not claim stay hidden even if unrelated mod inventory bits
    * happen to look like vanilla weapon ownership. */
-  if (vr_has_authoritative_wwheel && !w->from_schema && !w->game_profile)
-    return VR_WEAPON_HIDDEN_SCHEMA_FALLBACK;
-
   /*
    * The precedence is file schema > selected game profile > generic stock.
    * This leaves only one canonical entry for a reused item bit, while model
@@ -9582,14 +9607,30 @@ VR_WeaponVisibility(const vr_dyn_weapon_t *w) {
 
       if (other == w || other->bitmask != w->bitmask)
         continue;
-      if (!w->from_schema && other->from_schema)
-        return VR_WEAPON_HIDDEN_SCHEMA_FALLBACK;
-      if (!w->from_schema && !w->game_profile && other->game_profile)
-        return VR_WEAPON_HIDDEN_PROFILE_FALLBACK;
+      if (other->from_schema)
+        has_schema_peer = true;
+      if (other->game_profile)
+        has_profile_peer = true;
     }
   }
 
-  if (!VR_WeaponIsOwned(w))
+  owned = VR_WeaponIsOwned(w);
+  active = VR_WeaponIsActive(w);
+  source = VR_DynWeaponCatalogSource(w);
+  if (!VR_WeaponCatalog_ShouldExpose(source, vr_has_authoritative_wwheel,
+                                     has_schema_peer, has_profile_peer, owned,
+                                     active)) {
+    if (!owned && !active)
+      return VR_WEAPON_HIDDEN_UNOWNED;
+    if (source != VR_WEAPON_CATALOG_SOURCE_SCHEMA && has_schema_peer)
+      return VR_WEAPON_HIDDEN_SCHEMA_FALLBACK;
+    if (source != VR_WEAPON_CATALOG_SOURCE_SCHEMA &&
+        source != VR_WEAPON_CATALOG_SOURCE_PROFILE && has_profile_peer)
+      return VR_WEAPON_HIDDEN_PROFILE_FALLBACK;
+    return VR_WEAPON_HIDDEN_SCHEMA_FALLBACK;
+  }
+
+  if (!owned && !active)
     return VR_WEAPON_HIDDEN_UNOWNED;
 
   return VR_WEAPON_VISIBLE;

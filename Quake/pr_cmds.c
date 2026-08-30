@@ -2412,6 +2412,7 @@ static void PF_makestatic (void)
 {
 	edict_t	*ent;
 	entity_state_t *st;
+	eval_t	*val;
 	int	modelindex;
 
 	ent = G_EDICT(OFS_PARM0);
@@ -2457,9 +2458,16 @@ static void PF_makestatic (void)
 	st->colormap = ent->v.colormap;
 	st->skin = ent->v.skin;
 	st->alpha = ent->alpha;
-	// Keep static entity scale out of signon data; QBJ3 has enemies that
-	// disappear when their spawnstatic scale is encoded here.
-	st->scale = ENTSCALE_DEFAULT;
+	/*
+	 * Capable signon protocols support static scale just like dynamic entities.
+	 * QBJ3's static entities are not compatible with that encoding, so retain
+	 * its established workaround without discarding scale for every other game.
+	 */
+	if (!COM_GameDirMatches ("qbj3") &&
+		(val = GetEdictFieldValue (ent, qcvm->extfields.scale)))
+		st->scale = ENTSCALE_ENCODE (val->_float);
+	else
+		st->scale = ENTSCALE_DEFAULT;
 
 // throw the entity away now
 	ED_Free (ent);

@@ -1755,6 +1755,8 @@ static void MSG_WriteStaticOrBaseLine (sizebuf_t *buf, int idx,
 		bits |= B_LARGEFRAME;
 	if (state->alpha != ENTALPHA_DEFAULT)
 		bits |= B_ALPHA;
+	if (state->scale != ENTSCALE_DEFAULT && sv.protocol == PROTOCOL_RMQ)
+		bits |= B_SCALE;
 
 	if (idx >= 0)
 	{
@@ -1786,6 +1788,8 @@ static void MSG_WriteStaticOrBaseLine (sizebuf_t *buf, int idx,
 	}
 	if (bits & B_ALPHA)
 		MSG_WriteByte (buf, state->alpha);
+	if (bits & B_SCALE)
+		MSG_WriteByte (buf, state->scale);
 }
 
 void SVFTE_DestroyFrames (client_t *client)
