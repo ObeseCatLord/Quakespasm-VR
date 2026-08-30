@@ -24,6 +24,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "quakedef.h"
 #include "vr.h"
 #include "pmove.h"
+#include "sv_pmove_policy.h"
 #include "vrik_codec.h"
 #include "player_avatar.h"
 
@@ -1390,6 +1391,36 @@ qboolean SV_ReadClientMessage(void) {
   return true;
 }
 
+static move_authority_t
+SV_PMovePolicyAuthority(sv_pmove_policy_authority_t authority)
+{
+  switch (authority) {
+  case SV_PMOVE_POLICY_AUTHORITY_ENGINE_COMPAT:
+    return MOVE_AUTHORITY_PMOVE_ENGINE_COMPAT;
+  case SV_PMOVE_POLICY_AUTHORITY_QC_COMMAND:
+    return MOVE_AUTHORITY_PMOVE_QC_COMMAND;
+  case SV_PMOVE_POLICY_AUTHORITY_LEGACY_FRAME:
+  default:
+    return MOVE_AUTHORITY_LEGACY_FRAME;
+  }
+}
+
+static moveack_discontinuity_t
+SV_PMovePolicyFallback(sv_pmove_policy_fallback_t fallback)
+{
+  switch (fallback) {
+  case SV_PMOVE_POLICY_FALLBACK_CUSTOMPHYSICS:
+    return MOVEACK_DISCONTINUITY_CUSTOMPHYSICS;
+  case SV_PMOVE_POLICY_FALLBACK_UNSUPPORTED_STATE:
+    return MOVEACK_DISCONTINUITY_UNSUPPORTED_STATE;
+  case SV_PMOVE_POLICY_FALLBACK_INVALID_STATE:
+    return MOVEACK_DISCONTINUITY_INVALID_STATE;
+  case SV_PMOVE_POLICY_FALLBACK_ADMIN:
+  default:
+    return MOVEACK_DISCONTINUITY_ADMIN;
+  }
+}
+
 static void SV_UpdateClientPMoveMode(client_t *client) {
   qboolean usingpmove;
   qboolean local_singleplayer;
@@ -1397,6 +1428,8 @@ static void SV_UpdateClientPMoveMode(client_t *client) {
   qboolean legacy_qc_ladder_mod;
   move_authority_t authority;
   moveack_discontinuity_t fallback_reason;
+  sv_pmove_policy_input_t pmove_policy_input;
+  sv_pmove_policy_result_t pmove_policy_result;
   int requested_mode;
   eval_t *customphysics;
   int movetype;
@@ -1422,8 +1455,6 @@ static void SV_UpdateClientPMoveMode(client_t *client) {
       !qcvm->extfuncs.SV_RunClientCommand;
 
   requested_mode = CLAMP(0, (int)sv_pmove_mode.value, 3);
-  authority = MOVE_AUTHORITY_LEGACY_FRAME;
-  fallback_reason = MOVEACK_DISCONTINUITY_ADMIN;
   customphysics = client->edict ?
       GetEdictFieldValue(client->edict, qcvm->extfields.customphysics) : NULL;
   movetype = client->edict ? (int)client->edict->v.movetype : MOVETYPE_NONE;
@@ -1437,38 +1468,25 @@ static void SV_UpdateClientPMoveMode(client_t *client) {
       (movetype == MOVETYPE_WALK || movetype == MOVETYPE_TOSS ||
        movetype == MOVETYPE_BOUNCE || movetype == MOVETYPE_GIB ||
        movetype == MOVETYPE_FLY || movetype == MOVETYPE_NOCLIP);
-  usingpmove = requested_mode != 0 && sv_trustedmovement.value &&
-      !local_singleplayer && client->spawned && client->knowntoqc &&
-      !sv_nqplayerphysics.value && !legacy_prethink_mod &&
-      !legacy_qc_ladder_mod &&
-      (client->protocol_pext2 & PEXT2_EXPLICITCMDMSEC) &&
-      (!customphysics || !customphysics->function) && valid_state;
-
-  if (usingpmove) {
-    if (requested_mode == 3) {
-      if (qcvm->extfuncs.SV_RunClientCommand)
-        authority = MOVE_AUTHORITY_PMOVE_QC_COMMAND;
-      else {
-        usingpmove = false;
-        fallback_reason = MOVEACK_DISCONTINUITY_UNSUPPORTED_STATE;
-      }
-    } else if (requested_mode == 2) {
-      authority = MOVE_AUTHORITY_PMOVE_ENGINE_COMPAT;
-    } else {
-      authority = qcvm->extfuncs.SV_RunClientCommand ?
-          MOVE_AUTHORITY_PMOVE_QC_COMMAND :
-          MOVE_AUTHORITY_PMOVE_ENGINE_COMPAT;
-    }
-  } else if (legacy_prethink_mod || legacy_qc_ladder_mod) {
-    fallback_reason = MOVEACK_DISCONTINUITY_UNSUPPORTED_STATE;
-  } else if (customphysics && customphysics->function) {
-    fallback_reason = MOVEACK_DISCONTINUITY_CUSTOMPHYSICS;
-  } else if (client->spawned && client->knowntoqc && !valid_state) {
-    fallback_reason = MOVEACK_DISCONTINUITY_INVALID_STATE;
-  } else if (requested_mode != 0 && sv_trustedmovement.value &&
-             !sv_nqplayerphysics.value) {
-    fallback_reason = MOVEACK_DISCONTINUITY_UNSUPPORTED_STATE;
-  }
+  pmove_policy_input.requested_mode = requested_mode;
+  pmove_policy_input.trusted_movement = sv_trustedmovement.value != 0;
+  pmove_policy_input.local_singleplayer = local_singleplayer;
+  pmove_policy_input.client_spawned = client->spawned;
+  pmove_policy_input.client_known_to_qc = client->knowntoqc;
+  pmove_policy_input.nq_player_physics = sv_nqplayerphysics.value != 0;
+  pmove_policy_input.legacy_prethink_mod = legacy_prethink_mod;
+  pmove_policy_input.has_qc_onladder_field = qcvm->extfields.onladder >= 0;
+  pmove_policy_input.has_sv_runclientcommand =
+      qcvm->extfuncs.SV_RunClientCommand != 0;
+  pmove_policy_input.has_explicit_cmd_msec =
+      (client->protocol_pext2 & PEXT2_EXPLICITCMDMSEC) != 0;
+  pmove_policy_input.customphysics_active =
+      customphysics && customphysics->function;
+  pmove_policy_input.valid_state = valid_state;
+  pmove_policy_result = SV_PMovePolicyEvaluate(&pmove_policy_input);
+  usingpmove = pmove_policy_result.using_pmove;
+  authority = SV_PMovePolicyAuthority(pmove_policy_result.authority);
+  fallback_reason = SV_PMovePolicyFallback(pmove_policy_result.fallback);
 
   if (usingpmove != client->usingpmove || authority != client->move_authority) {
     if (!usingpmove) {

@@ -23,6 +23,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 // world.c -- world query functions
 
 #include "quakedef.h"
+#include "coop_inventory_policy.h"
 
 /*
 
@@ -61,23 +62,85 @@ qboolean SV_IsActiveClientEdict (edict_t *ent)
 	return ((int)ent->v.flags & FL_CLIENT) != 0;
 }
 
+typedef struct
+{
+	edict_t	*trigger;
+	float	until;
+} sv_recent_teleport_trigger_t;
+
+/* QuakeC owns teleportation.  This merely prevents the exact trigger that
+ * just moved a client from immediately processing it again on the following
+ * relink; broad classname filtering breaks chained and custom teleporters. */
+static sv_recent_teleport_trigger_t sv_recent_teleport_triggers[MAX_SCOREBOARD];
+
+static qboolean SV_IsTeleportTrigger (edict_t *touch)
+{
+	static dprograms_t	*cached_progs;
+	static unsigned short	cached_crc;
+	static func_t		teleport_touch;
+	dfunction_t		*func;
+	const char		*classname;
+
+	if (!touch || touch->free)
+		return false;
+	if (touch->v.classname)
+	{
+		classname = PR_GetString(touch->v.classname);
+		if (classname && !q_strcasecmp(classname, "trigger_teleport"))
+			return true;
+	}
+
+	if (cached_progs != qcvm->progs || cached_crc != qcvm->crc)
+	{
+		cached_progs = qcvm->progs;
+		cached_crc = qcvm->crc;
+		func = ED_FindFunction("teleport_touch");
+		teleport_touch = func ? (func_t)(func - qcvm->functions) : 0;
+	}
+
+	return teleport_touch && touch->v.touch == teleport_touch;
+}
+
 static qboolean SV_ShouldSkipRecentTeleportTrigger (edict_t *touch, edict_t *ent)
 {
-	const char	*classname;
+	sv_recent_teleport_trigger_t	*recent;
+	int					clientnum;
 
 	if (!SV_IsActiveClientEdict(ent))
 		return false;
-	if (ent->v.teleport_time <= qcvm->time)
-		return false;
-	if (!touch->v.classname)
-		return false;
 
-	classname = PR_GetString(touch->v.classname);
-	if (!classname || !classname[0])
+	clientnum = NUM_FOR_EDICT(ent) - 1;
+	if (clientnum < 0 || clientnum >= MAX_SCOREBOARD)
 		return false;
+	recent = &sv_recent_teleport_triggers[clientnum];
+	if (recent->until <= qcvm->time || ent->v.teleport_time != recent->until)
+	{
+		recent->trigger = NULL;
+		recent->until = 0;
+		return false;
+	}
 
-	return !q_strcasecmp(classname, "trigger_teleport")
-		|| q_strcasestr(classname, "teleport");
+	return recent->trigger == touch;
+}
+
+static void SV_RecordRecentTeleportTrigger (edict_t *touch, edict_t *ent,
+	float teleport_time_before, vec3_t origin_before)
+{
+	sv_recent_teleport_trigger_t	*recent;
+	int					clientnum;
+
+	if (!SV_IsTeleportTrigger(touch) || !SV_IsActiveClientEdict(ent) ||
+		ent->v.teleport_time <= qcvm->time ||
+		(ent->v.teleport_time <= teleport_time_before &&
+		 VectorCompare(ent->v.origin, origin_before)))
+		return;
+
+	clientnum = NUM_FOR_EDICT(ent) - 1;
+	if (clientnum < 0 || clientnum >= MAX_SCOREBOARD)
+		return;
+	recent = &sv_recent_teleport_triggers[clientnum];
+	recent->trigger = touch;
+	recent->until = ent->v.teleport_time;
 }
 
 static qboolean SV_IsPointMove (moveclip_t *clip)
@@ -311,6 +374,7 @@ static void SV_FireCoopPickupTargets (edict_t *weapon, edict_t *player, const ch
 {
 	ddef_t		*activator_def;
 	dfunction_t	*use_targets;
+	int		old_activator;
 
 	if (!SV_CoopWeaponHasTargets(weapon))
 		return;
@@ -325,8 +389,10 @@ static void SV_FireCoopPickupTargets (edict_t *weapon, edict_t *player, const ch
 	pr_global_struct->self = EDICT_TO_PROG(weapon);
 	pr_global_struct->other = EDICT_TO_PROG(player);
 	pr_global_struct->time = qcvm->time;
+	old_activator = G_INT(activator_def->ofs);
 	G_INT(activator_def->ofs) = EDICT_TO_PROG(player);
 	PR_ExecuteProgram ((func_t)(use_targets - qcvm->functions));
+	G_INT(activator_def->ofs) = old_activator;
 
 	if (!weapon->free)
 		SV_ClearCoopWeaponTargets(weapon);
@@ -420,6 +486,14 @@ static qboolean SV_CoopPickupFuncIsNull (func_t func)
 	return null_func && func == null_func;
 }
 
+static qboolean SV_CoopPickupHasPendingThink (edict_t *pickup)
+{
+	/* SV_RunThink clamps an overdue positive nextthink to the current frame;
+	 * it is still live mod-owned work, not a stale/cancelled callback. */
+	return pickup && pickup->v.nextthink > 0 &&
+		!SV_CoopPickupFuncIsNull(pickup->v.think);
+}
+
 static void SV_ScheduleCoopPickupRespawn (edict_t *pickup, float respawn_time, const char *reason,
 	func_t restore_touch, func_t restore_use, qboolean hide_until_respawn)
 {
@@ -434,6 +508,15 @@ static void SV_ScheduleCoopPickupRespawn (edict_t *pickup, float respawn_time, c
 
 	if (respawn_time < 1)
 		respawn_time = 1;
+	/* A mod may already have accepted the pickup and scheduled its own
+	 * follow-up.  Do not replace that lifecycle with the stock SUB_regen. */
+	if (SV_CoopPickupHasPendingThink(pickup))
+	{
+		Con_DPrintf("%s: preserving pending think for %s\n",
+			reason,
+			pickup->v.classname ? PR_GetString(pickup->v.classname) : "pickup");
+		return;
+	}
 
 	if (restore_touch && SV_CoopPickupFuncIsNull(pickup->v.touch))
 		pickup->v.touch = restore_touch;
@@ -625,6 +708,8 @@ void SV_CoopSharedResetClientSlot (int slot)
 {
 	if (slot < 0 || slot >= MAX_SCOREBOARD)
 		return;
+	memset(&sv_recent_teleport_triggers[slot], 0,
+		sizeof(sv_recent_teleport_triggers[slot]));
 	memset(&sv_coop_shared_touch_before[slot], 0,
 		sizeof(sv_coop_shared_touch_before[slot]));
 	sv_coop_shared_touch_valid[slot] = false;
@@ -1122,8 +1207,8 @@ static void SV_CoopSharedCopyCustomKeyMetadata (
 	if (index < 0 || !after->extra[index].valid)
 		return;
 	before_bits = before->extra[index].valid ? before->extra[index].bits : 0;
-	gained = (after->extra[index].bits & ~before_bits) &
-		SV_COOP_SHARED_DRAKE_CUSTOM_KEYS;
+	gained = CoopInventoryPolicy_AddedBits(before_bits,
+		after->extra[index].bits) & SV_COOP_SHARED_DRAKE_CUSTOM_KEYS;
 	for (i = 0; i < 4; ++i)
 	{
 		if (!(gained & key_bits[i]))
@@ -1144,12 +1229,14 @@ static qboolean SV_CoopSharedHasPersistentProgressGain (
 		if (!after->extra[i].valid)
 			continue;
 		if (sv_coop_shared_fields[i].policy == SV_COOP_SHARED_PROGRESS_MAX &&
-		    after->extra[i].value >
-			(before->extra[i].valid ? before->extra[i].value : 0.0f))
+		    CoopInventoryPolicy_HasValueGain(before->extra[i].valid,
+			before->extra[i].value, after->extra[i].valid,
+			after->extra[i].value))
 			return true;
 		if (!q_strcasecmp(sv_coop_shared_fields[i].name, "items_movemod") &&
-		    (after->extra[i].bits &
-		     ~(before->extra[i].valid ? before->extra[i].bits : 0)))
+		    CoopInventoryPolicy_AddedBits(
+			before->extra[i].valid ? before->extra[i].bits : 0,
+			after->extra[i].bits))
 			return true;
 	}
 	return false;
@@ -1357,8 +1444,9 @@ void SV_CoopSharedMergeRestoredClient (edict_t *source)
 	}
 	else
 	{
-		sv_coop_shared_level_progress.items |=
-			current.items & SV_CoopSharedStockKeyMask();
+		sv_coop_shared_level_progress.items = CoopInventoryPolicy_UnionBits(
+			sv_coop_shared_level_progress.items,
+			current.items & SV_CoopSharedStockKeyMask());
 		if (SV_CoopUsesCountedKeys() && current.worldtype_valid)
 		{
 			int saved_world = sv_coop_shared_level_progress.worldtype_valid
@@ -1384,8 +1472,9 @@ void SV_CoopSharedMergeRestoredClient (edict_t *source)
 			    !q_strcasecmp(sv_coop_shared_fields[i].name, "items_movemod"))
 			{
 				saved->valid = true;
-				saved->bits |= current.extra[i].bits &
-					(key_mask ? key_mask : SV_COOP_SHARED_ALL_BITS);
+				saved->bits = CoopInventoryPolicy_UnionBits(saved->bits,
+					current.extra[i].bits & (key_mask ? key_mask :
+					SV_COOP_SHARED_ALL_BITS));
 			}
 			else if (sv_coop_shared_fields[i].policy ==
 				 SV_COOP_SHARED_PROGRESS_MAX ||
@@ -1731,11 +1820,15 @@ static qboolean SV_CoopSharedInventoryHasAmmoGain (
 	const sv_coop_shared_inventory_t *after)
 {
 	int	i;
+	const float before_ammo[] = {
+		before->ammo_shells, before->ammo_nails, before->ammo_rockets,
+		before->ammo_cells};
+	const float after_ammo[] = {
+		after->ammo_shells, after->ammo_nails, after->ammo_rockets,
+		after->ammo_cells};
 
-	if (after->ammo_shells > before->ammo_shells ||
-	    after->ammo_nails > before->ammo_nails ||
-	    after->ammo_rockets > before->ammo_rockets ||
-	    after->ammo_cells > before->ammo_cells)
+	if (CoopInventoryPolicy_HasFloatGain(before_ammo, after_ammo,
+		sizeof(before_ammo) / sizeof(before_ammo[0])))
 		return true;
 
 	for (i = 0; i < SV_COOP_SHARED_FIELD_COUNT; ++i)
@@ -1744,8 +1837,9 @@ static qboolean SV_CoopSharedInventoryHasAmmoGain (
 		    SV_CoopSharedIsKeyCountField(sv_coop_shared_fields[i].name) ||
 		    !after->extra[i].valid)
 			continue;
-		if (after->extra[i].value >
-		    (before->extra[i].valid ? before->extra[i].value : 0.0f))
+		if (CoopInventoryPolicy_HasValueGain(before->extra[i].valid,
+			before->extra[i].value, after->extra[i].valid,
+			after->extra[i].value))
 			return true;
 	}
 
@@ -1758,10 +1852,17 @@ static qboolean SV_CoopSharedInventoryHasAcceptedGain (
 	qboolean counted_keys)
 {
 	int	i;
+	const float before_ammo[] = {
+		before->ammo_shells, before->ammo_nails, before->ammo_rockets,
+		before->ammo_cells};
+	const float after_ammo[] = {
+		after->ammo_shells, after->ammo_nails, after->ammo_rockets,
+		after->ammo_cells};
 
-	if ((after->items & ~before->items) != 0)
-		return true;
-	if (SV_CoopSharedInventoryHasAmmoGain(before, after))
+	if (CoopInventoryPolicy_HasAcceptedBaseGain(before->items, after->items,
+		before_ammo, after_ammo,
+		sizeof(before_ammo) / sizeof(before_ammo[0])) ||
+	    SV_CoopSharedInventoryHasAmmoGain(before, after))
 		return true;
 	if (counted_keys && after->worldtype_valid)
 	{
@@ -1779,13 +1880,15 @@ static qboolean SV_CoopSharedInventoryHasAcceptedGain (
 		if (sv_coop_shared_fields[i].policy == SV_COOP_SHARED_BITMASK)
 		{
 			int	before_bits = before->extra[i].valid ? before->extra[i].bits : 0;
-			if ((after->extra[i].bits & ~before_bits) != 0)
+			if (CoopInventoryPolicy_AddedBits(before_bits,
+				after->extra[i].bits) != 0)
 				return true;
 		}
 		else if ((!SV_CoopSharedIsKeyCountField(sv_coop_shared_fields[i].name) ||
 			  counted_keys) &&
-			 after->extra[i].value >
-			 (before->extra[i].valid ? before->extra[i].value : 0.0f))
+			 CoopInventoryPolicy_HasValueGain(before->extra[i].valid,
+				before->extra[i].value, after->extra[i].valid,
+				after->extra[i].value))
 		{
 			/* Extra ammo proves that a duplicate mod weapon was accepted;
 			 * counted-key fields prove a quantity pickup.  Neither value is
@@ -1806,7 +1909,8 @@ static qboolean SV_CoopSharedInventoryHasKeyGain (
 	int	before_items = before->items;
 	int	after_items = after->items;
 
-	if (((after_items & ~before_items) & SV_CoopSharedStockKeyMask()) != 0)
+	if ((CoopInventoryPolicy_AddedBits(before_items, after_items) &
+		SV_CoopSharedStockKeyMask()) != 0)
 		return true;
 	if (counted_keys && after->worldtype_valid)
 	{
@@ -1833,7 +1937,8 @@ static qboolean SV_CoopSharedInventoryHasKeyGain (
 		if (!key_mask || !after->extra[i].valid)
 			continue;
 		before_bits = before->extra[i].valid ? before->extra[i].bits : 0;
-		gain = after->extra[i].bits & ~before_bits;
+		gain = CoopInventoryPolicy_AddedBits(before_bits,
+			after->extra[i].bits);
 		if (gain & key_mask)
 			return true;
 	}
@@ -1865,22 +1970,26 @@ static void SV_CoopSharedApplyInventoryGain (
 	 * direct weapon_touch confirms a duplicate weapon, while a key delta/count
 	 * confirms a counted key.  This avoids treating unrelated SOLID_TRIGGER
 	 * mapper fields as inventory. */
-	gain = after->items & ~before->items;
+	gain = CoopInventoryPolicy_AddedBits(before->items, after->items);
 	if (ammo_gain && direct_weapon_touch)
 	{
-		gain |= declared->items & after->items &
-			(SV_CoopSharedItemMask() & ~SV_CoopSharedStockKeyMask());
+		gain |= CoopInventoryPolicy_ConfirmedDeclaredBits(after->items,
+			declared->items, SV_CoopSharedItemMask() &
+			~SV_CoopSharedStockKeyMask());
 		/* AD-style pickups declare the granted stock weapon in self.weapon
 		 * instead of self.items.  Only trust it after the progs' exact
 		 * weapon_touch accepted the pickup and changed ammo, and intersect it
 		 * with ownership the source player actually has after the touch. */
-		gain |= declared_weapon_bits & after->items &
-			(SV_CoopSharedItemMask() & ~SV_CoopSharedStockKeyMask());
+		gain |= CoopInventoryPolicy_ConfirmedDeclaredBits(after->items,
+			declared_weapon_bits, SV_CoopSharedItemMask() &
+			~SV_CoopSharedStockKeyMask());
 	}
 	if (key_gain)
-		gain |= declared->items & after->items & SV_CoopSharedStockKeyMask();
+		gain |= CoopInventoryPolicy_ConfirmedDeclaredBits(after->items,
+			declared->items, SV_CoopSharedStockKeyMask());
 	if (gain)
-		player->v.items = (int)player->v.items | gain;
+		player->v.items = CoopInventoryPolicy_UnionBits(
+			(int)player->v.items, gain);
 
 	if (share_key_counts && after->worldtype_valid)
 	{
@@ -1920,20 +2029,26 @@ static void SV_CoopSharedApplyInventoryGain (
 		{
 			int	before_bits = before->extra[i].valid ? before->extra[i].bits : 0;
 
-			gain = after->extra[i].valid ? (after->extra[i].bits & ~before_bits) : 0;
+			gain = after->extra[i].valid ?
+				CoopInventoryPolicy_AddedBits(before_bits,
+					after->extra[i].bits) : 0;
 			if (ammo_gain && direct_weapon_touch && declared->extra[i].valid &&
 			    after->extra[i].valid)
-				gain |= declared->extra[i].bits & after->extra[i].bits;
+				gain |= CoopInventoryPolicy_ConfirmedDeclaredBits(
+					after->extra[i].bits, declared->extra[i].bits,
+					SV_COOP_SHARED_ALL_BITS);
 			if (key_gain && declared->extra[i].valid && after->extra[i].valid)
-				gain |= declared->extra[i].bits & after->extra[i].bits &
-					SV_CoopSharedExtraKeyMask(sv_coop_shared_fields[i].name);
+				gain |= CoopInventoryPolicy_ConfirmedDeclaredBits(
+					after->extra[i].bits, declared->extra[i].bits,
+					SV_CoopSharedExtraKeyMask(sv_coop_shared_fields[i].name));
 			if (!gain)
 				continue;
 
 			if (type == ev_ext_integer)
-				val->_int = val->_int | gain;
+				val->_int = CoopInventoryPolicy_UnionBits(val->_int, gain);
 			else
-				val->_float = (int)val->_float | gain;
+				val->_float = (float)CoopInventoryPolicy_UnionBits(
+					(int)val->_float, gain);
 		}
 		else
 		{
@@ -1962,7 +2077,8 @@ static qboolean SV_CoopSharedInventoryHasKeyLoss (
 {
 	int	i;
 
-	if (((before->items & ~after->items) & SV_CoopSharedStockKeyMask()) != 0)
+	if ((CoopInventoryPolicy_RemovedBits(before->items, after->items) &
+		SV_CoopSharedStockKeyMask()) != 0)
 		return true;
 	if (SV_CoopUsesCountedKeys() && after->worldtype_valid)
 	{
@@ -1980,7 +2096,8 @@ static qboolean SV_CoopSharedInventoryHasKeyLoss (
 		if (sv_coop_shared_fields[i].policy == SV_COOP_SHARED_BITMASK)
 		{
 			int	key_mask = SV_CoopSharedExtraKeyMask(sv_coop_shared_fields[i].name);
-			if (key_mask && ((before->extra[i].bits & ~after->extra[i].bits) & key_mask) != 0)
+			if (key_mask && (CoopInventoryPolicy_RemovedBits(
+				before->extra[i].bits, after->extra[i].bits) & key_mask) != 0)
 				return true;
 		}
 		else if (SV_CoopUsesCountedKeys() &&
@@ -2006,7 +2123,8 @@ static void SV_CoopSharedApplyKeyLoss (
 	if (!SV_IsActiveClientEdict(player))
 		return;
 
-	lost_items = (before->items & ~after->items) & SV_CoopSharedStockKeyMask();
+	lost_items = CoopInventoryPolicy_RemovedBits(before->items, after->items) &
+		SV_CoopSharedStockKeyMask();
 	if (lost_items)
 		player->v.items = (int)player->v.items & ~lost_items;
 
@@ -2038,7 +2156,8 @@ static void SV_CoopSharedApplyKeyLoss (
 
 			if (!key_mask)
 				continue;
-			lost_bits = (before->extra[i].bits & ~after->extra[i].bits) & key_mask;
+			lost_bits = CoopInventoryPolicy_RemovedBits(before->extra[i].bits,
+				after->extra[i].bits) & key_mask;
 			if (!lost_bits)
 				continue;
 
@@ -2342,7 +2461,10 @@ typedef struct areanode_s
 	link_t	solid_edicts;
 } areanode_t;
 
-#define	AREA_DEPTH	7
+/* Changing this alters the area-node selected by droptofloor.  Keep the
+ * original Quake/Ironwail depth: deeper trees can make items miss moving
+ * platforms (notably mge2m2) and fall out of the world. */
+#define	AREA_DEPTH	4
 #define	AREA_NODES	(2<<AREA_DEPTH)
 
 static	areanode_t	sv_areanodes[AREA_NODES];
@@ -2403,6 +2525,8 @@ void SV_ClearWorld (void)
 {
 	SV_InitBoxHull ();
 
+	memset (sv_recent_teleport_triggers, 0,
+		sizeof(sv_recent_teleport_triggers));
 	memset (sv_areanodes, 0, sizeof(sv_areanodes));
 	sv_numareanodes = 0;
 	SV_CreateAreaNode (0, sv.worldmodel->mins, sv.worldmodel->maxs);
@@ -2491,6 +2615,7 @@ void SV_TouchLinks (edict_t *ent)
 	int		mark;
 	qboolean	coop_weapon_targetfix;
 	qboolean	coop_pickup_targetfix;
+	qboolean	coop_target_pickup_accepted;
 	qboolean	coop_targetlog;
 	qboolean	coop_ammo_respawn;
 	qboolean	coop_progression_item_respawn;
@@ -2501,6 +2626,8 @@ void SV_TouchLinks (edict_t *ent)
 	func_t		coop_pickup_touch;
 	func_t		coop_pickup_use;
 	sv_coop_target_state_t	coop_targets_before;
+	sv_coop_shared_inventory_t	coop_target_inventory_before;
+	sv_coop_shared_inventory_t	coop_target_inventory_after;
 	sv_coop_shared_inventory_t	coop_shared_before;
 	sv_coop_shared_inventory_t	coop_shared_after;
 	sv_coop_shared_inventory_t	coop_shared_declared;
@@ -2514,6 +2641,9 @@ void SV_TouchLinks (edict_t *ent)
 
 	for (i = 0; i < listcount; i++)
 	{
+		float	teleport_time_before;
+		vec3_t	origin_before;
+
 		touch = list[i];
 	// re-validate in case of PR_ExecuteProgram having side effects that make
 	// edicts later in the list no longer touch
@@ -2539,17 +2669,20 @@ void SV_TouchLinks (edict_t *ent)
 		coop_targetlog = coop.value && sv_coop_pickup_targetlog.value
 			&& !touch->free && SV_IsActiveClientEdict(ent)
 			&& touch->v.classname && SV_CoopWeaponHasTargets(touch);
-			if (coop_weapon_targetfix || coop_pickup_targetfix || coop_targetlog)
-				SV_CaptureCoopTargetState(touch, &coop_targets_before);
-			else
-				memset(&coop_targets_before, 0, sizeof(coop_targets_before));
-			coop_ammo_respawn = SV_IsCoopAmmoRespawnCandidate(touch, ent);
-			coop_progression_item_respawn = SV_IsCoopProgressionItemRespawnCandidate(touch, ent);
-			coop_pickup_touch = touch->v.touch;
-			coop_pickup_use = touch->v.use;
-			coop_shared_pickup = SV_IsCoopSharedPickupCandidate(touch, ent);
-			coop_shared_direct_weapon = coop_shared_pickup &&
-				SV_IsDirectWeaponTouch(touch->v.touch);
+		if (coop_weapon_targetfix || coop_pickup_targetfix || coop_targetlog)
+			SV_CaptureCoopTargetState(touch, &coop_targets_before);
+		else
+			memset(&coop_targets_before, 0, sizeof(coop_targets_before));
+		if (coop_weapon_targetfix || coop_pickup_targetfix)
+			SV_CaptureCoopSharedInventory(ent, &coop_target_inventory_before);
+		coop_target_pickup_accepted = false;
+		coop_ammo_respawn = SV_IsCoopAmmoRespawnCandidate(touch, ent);
+		coop_progression_item_respawn = SV_IsCoopProgressionItemRespawnCandidate(touch, ent);
+		coop_pickup_touch = touch->v.touch;
+		coop_pickup_use = touch->v.use;
+		coop_shared_pickup = SV_IsCoopSharedPickupCandidate(touch, ent);
+		coop_shared_direct_weapon = coop_shared_pickup &&
+			SV_IsDirectWeaponTouch(touch->v.touch);
 		if (coop_shared_pickup)
 		{
 			SV_CaptureCoopSharedInventory(ent, &coop_shared_before);
@@ -2563,8 +2696,20 @@ void SV_TouchLinks (edict_t *ent)
 		pr_global_struct->self = EDICT_TO_PROG(touch);
 		pr_global_struct->other = EDICT_TO_PROG(ent);
 		pr_global_struct->time = qcvm->time;
+		teleport_time_before = ent->v.teleport_time;
+		VectorCopy(ent->v.origin, origin_before);
 		PR_ExecuteProgram (touch->v.touch);
 		SV_MG3UpgradeTouchEnd(ent, &mg3_upgrade);
+		SV_RecordRecentTeleportTrigger(touch, ent, teleport_time_before,
+			origin_before);
+
+		if (coop_weapon_targetfix || coop_pickup_targetfix)
+		{
+			SV_CaptureCoopSharedInventory(ent, &coop_target_inventory_after);
+			coop_target_pickup_accepted = SV_CoopSharedInventoryHasAcceptedGain(
+				&coop_target_inventory_before, &coop_target_inventory_after,
+				SV_CoopUsesCountedKeys());
+		}
 
 		if (coop_shared_pickup)
 		{
@@ -2576,12 +2721,14 @@ void SV_TouchLinks (edict_t *ent)
 		}
 			if (coop_shared_touch_sync)
 				SV_CoopSharedEndClientTouch(ent);
-			if (coop_weapon_targetfix && !touch->free && touch->v.solid == SOLID_TRIGGER
+			if (coop_weapon_targetfix && coop_target_pickup_accepted &&
+				!touch->free && touch->v.solid == SOLID_TRIGGER
 				&& SV_CoopTargetStateUnchanged(touch, &coop_targets_before))
 			{
 				SV_FireCoopPickupTargets(touch, ent, "sv_coop_weapon_targetfix");
 			}
-			if (coop_pickup_targetfix && !touch->free && touch->v.solid == SOLID_TRIGGER
+			if (coop_pickup_targetfix && coop_target_pickup_accepted &&
+				!touch->free && touch->v.solid == SOLID_TRIGGER
 				&& SV_CoopTargetStateUnchanged(touch, &coop_targets_before))
 			{
 				SV_FireCoopPickupTargets(touch, ent, "sv_coop_pickup_targetfix");
