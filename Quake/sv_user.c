@@ -1105,6 +1105,77 @@ static qboolean SV_HandleVRIKCapability(const char *s)
 	return true;
 }
 
+#ifdef USE_VOICECHAT
+static qboolean SV_HandleVoiceCapability(const char *s)
+{
+	const char *value;
+	int source_slot;
+
+	if (!SV_ClientCommandIs(s, "voice_cap"))
+		return false;
+	value = s;
+	while (*value == ' ' || *value == '\t')
+		value++;
+	while (*value && *value != ' ' && *value != '\t')
+		value++;
+	while (*value == ' ' || *value == '\t')
+		value++;
+	if (*value++ != '1')
+		return true;
+	while (*value == ' ' || *value == '\t' || *value == '\r' ||
+		*value == '\n')
+		value++;
+	if (*value || host_client->voice_capable || !sv_voice.value)
+		return true;
+
+	host_client->voice_capable = true;
+	/* Do not replay packets which predate this recipient's negotiation. */
+	for (source_slot = 0; source_slot < svs.maxclients &&
+		source_slot < MAX_SCOREBOARD; ++source_slot)
+	{
+		host_client->voice_relay_generation[source_slot] =
+			svs.clients[source_slot].voice_generation;
+		host_client->voice_relay_serial[source_slot] =
+			svs.clients[source_slot].voice_next_serial;
+	}
+	Con_DPrintf("Voice: client %s negotiated protocol %d\n",
+		host_client->name, VOICE_PROTOCOL_VERSION);
+	return true;
+}
+
+static qboolean SV_ReadVoicePacket(qboolean accept)
+{
+	voice_packet_t packet;
+	unsigned int payload_bytes;
+	unsigned int i;
+
+	Q_memset(&packet, 0, sizeof(packet));
+	packet.sequence = (uint16_t)MSG_ReadShort();
+	packet.timestamp = (uint32_t)MSG_ReadLong();
+	packet.talkspurt = (uint8_t)MSG_ReadByte();
+	packet.flags = (uint8_t)MSG_ReadByte();
+	payload_bytes = (uint16_t)MSG_ReadShort();
+	if (msg_badread)
+		return false;
+	for (i = 0; i < payload_bytes; ++i)
+	{
+		int value = MSG_ReadByte();
+		if (i < VOICE_MAX_PAYLOAD)
+			packet.payload[i] = (uint8_t)value;
+	}
+	if (msg_badread)
+		return false;
+	if (payload_bytes > VOICE_MAX_PAYLOAD ||
+		(packet.flags & ~VOICE_FLAG_KNOWN) ||
+		(!payload_bytes && !(packet.flags & VOICE_FLAG_END)))
+		return true;
+	packet.payload_bytes = (uint16_t)payload_bytes;
+	if (accept)
+		SV_ReceiveVoicePacket(host_client, &packet);
+	return true;
+}
+#endif
+
 static qboolean SV_HandleAvatarCapability(const char *s)
 {
 	if (!SV_ClientCommandIs(s, "avatar_cap"))
@@ -1276,6 +1347,9 @@ static qboolean SV_ParseClientMessage(void) {
   const char *s;
   int movecommands = 0;
   int vrikcommands = 0;
+#ifdef USE_VOICECHAT
+  int voicecommands = 0;
+#endif
 
   MSG_BeginReading();
 
@@ -1318,6 +1392,10 @@ static qboolean SV_ParseClientMessage(void) {
 			;
       else if (SV_HandleVRIKCapability(s))
         ;
+#ifdef USE_VOICECHAT
+      else if (SV_HandleVoiceCapability(s))
+        ;
+#endif
       else if (SV_IsEngineClientCommand(s))
         Cmd_ExecuteString(s, src_client);
       else if (!SV_ClientCommandIs(s, "spawn") &&
@@ -1353,6 +1431,16 @@ static qboolean SV_ParseClientMessage(void) {
       if (!SV_ReadVRIKPose(vrikcommands++ == 0))
         return false;
       break;
+
+#ifdef USE_VOICECHAT
+    case clc_voice:
+      /* Normal 72 Hz client cadence produces at most one 50 Hz voice frame,
+       * but allow a short VAD pre-roll burst without permitting unbounded
+       * amplification from one datagram. */
+      if (!SV_ReadVoicePacket(voicecommands++ < 4))
+        return false;
+      break;
+#endif
 
     case clcdp_ackframe:
       SVFTE_Ack(host_client, MSG_ReadLong());
