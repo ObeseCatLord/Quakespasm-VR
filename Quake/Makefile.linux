@@ -16,6 +16,8 @@ USE_CODEC_FLAC=1
 USE_CODEC_MP3=1
 USE_CODEC_VORBIS=1
 USE_CODEC_OPUS=1
+### Enable experimental in-game voice chat (SDL2 capture + libopus)
+USE_VOICE ?= 1
 # either xmp or mikmod (or modplug)
 USE_CODEC_MIKMOD=0
 USE_CODEC_XMP=1
@@ -159,6 +161,16 @@ CFLAGS+= -DUSE_CODEC_OPUS
 CFLAGS+= $(shell $(PKG_CONFIG) --cflags opusfile)
 CODECLIBS+= $(shell $(PKG_CONFIG) --libs   opusfile)
 endif
+ifeq ($(USE_VOICE),1)
+ifneq ($(USE_SDL2),1)
+$(error USE_VOICE=1 requires USE_SDL2=1)
+endif
+ifneq ($(USE_CODEC_OPUS),1)
+$(error USE_VOICE=1 requires USE_CODEC_OPUS=1)
+endif
+CFLAGS+= -DUSE_VOICECHAT $(shell $(PKG_CONFIG) --cflags opus)
+CODECLIBS+= $(shell $(PKG_CONFIG) --libs opus)
+endif
 ifeq ($(USE_CODEC_VORBIS),1)
 CFLAGS+= -DUSE_CODEC_VORBIS $(cpp_vorbisdec)
 CODECLIBS+= $(lib_vorbisdec)
@@ -213,6 +225,9 @@ MUSIC_OBJS= bgmusic.o \
 	snd_xmp.o \
 	snd_umx.o
 COMOBJ_SND = snd_dma.o snd_mix.o snd_mem.o $(MUSIC_OBJS)
+ifeq ($(USE_VOICE),1)
+COMOBJ_SND += voice.o voice_vad.o voice_jitter.o
+endif
 SYSOBJ_SND = snd_sdl.o
 SYSOBJ_CDA = cd_sdl.o
 SYSOBJ_INPUT = in_sdl.o

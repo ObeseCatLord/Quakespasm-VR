@@ -395,6 +395,8 @@ typedef struct
 #define svc_moveack 57 // [short] last accepted sequenced move
 /* Sent only after the //vrik_protocol N / vrik_cap N handshake. */
 #define svc_vrikpose 87 // [short entity][long generation][vrik pose]
+/* Sent only after the //voice_protocol 1 / voice_cap 1 handshake. */
+#define svc_voice 88 // [byte source][long generation][framed Opus packet]
 // PEXT2_EXPLICITCMDMSEC adds [byte flags][byte authority][short mode_epoch]
 // [short discontinuity_epoch][byte reason].
 #define MOVEACK_FLAG_AUTHORITATIVE 0x01
@@ -455,6 +457,7 @@ typedef enum {
 #define clc_move 3      // [short sequence][float servertime][byte msec if PEXT2_EXPLICITCMDMSEC][angles][move][buttons][impulse][extbits]
 #define clc_stringcmd 4 // [string] message
 #define clc_vrikpose 5  // v2 [fixed pose], v3 [byte bodylen][codec body]
+#define clc_voice 6     // [short seq][long timestamp][byte talkspurt][byte flags][short bodylen][Opus body]
 #define clcdp_ackframe 50
 #define clcfte_qcrequest 81
 

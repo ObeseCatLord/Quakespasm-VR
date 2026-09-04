@@ -318,6 +318,9 @@ typedef struct
 	qboolean	vrik_protocol_offered;
 	qboolean	vrik_cap_sent;
 	unsigned char	vrik_protocol_version;
+	qboolean	voice_protocol_offered;
+	qboolean	voice_cap_sent;
+	unsigned char	voice_protocol_version;
 	qboolean	avatar_protocol_offered;
 	qboolean	avatar_cap_sent;
 	qboolean	avatar_cap_pending;

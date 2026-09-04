@@ -28,6 +28,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "bgmusic.h"
 #include "vr.h"
 #include "vrik_codec.h"
+#include "voice.h"
 
 const char *svc_strings[] =
 {
@@ -2076,6 +2077,37 @@ static qboolean CL_OfferVRIKProtocol(const char *command)
 	return true;
 }
 
+static qboolean CL_OfferVoiceProtocol(const char *command)
+{
+	const char *version;
+
+	if (Q_strncmp(command, "voice_protocol", 14) ||
+		(command[14] != ' ' && command[14] != '\t'))
+		return false;
+	version = command + 14;
+	while (*version == ' ' || *version == '\t')
+		version++;
+	if (*version++ != '1')
+		return true;
+	while (*version == ' ' || *version == '\t' || *version == '\r' ||
+		*version == '\n')
+		version++;
+	if (*version || cl.voice_cap_sent || !Voice_Available())
+		return true;
+	if (cls.message.cursize + 1 + (int)sizeof("voice_cap 1") >
+		cls.message.maxsize)
+		return true;
+
+	cl.voice_protocol_offered = true;
+	cl.voice_protocol_version = VOICE_PROTOCOL_VERSION;
+	cl.voice_cap_sent = true;
+	MSG_WriteByte(&cls.message, clc_stringcmd);
+	MSG_WriteString(&cls.message, "voice_cap 1");
+	Con_DPrintf("Voice: negotiated protocol %d with server\n",
+		VOICE_PROTOCOL_VERSION);
+	return true;
+}
+
 static qboolean CL_OfferAvatarProtocol(const char *command)
 {
 	if (Q_strncmp(command, "avatar_protocol", 15) ||
@@ -2270,6 +2302,38 @@ static qboolean CL_ParseVRIKPose(void)
 	return true;
 }
 
+static qboolean CL_ParseVoicePacket(void)
+{
+	voice_packet_t packet;
+	unsigned int generation, payload_bytes;
+	int source_slot;
+
+	Q_memset(&packet, 0, sizeof(packet));
+	source_slot = MSG_ReadByte() - 1;
+	generation = (unsigned int)MSG_ReadLong();
+	packet.sequence = (uint16_t)MSG_ReadShort();
+	packet.timestamp = (uint32_t)MSG_ReadLong();
+	packet.talkspurt = (uint8_t)MSG_ReadByte();
+	packet.flags = (uint8_t)MSG_ReadByte();
+	payload_bytes = (uint16_t)MSG_ReadShort();
+	if (msg_badread || net_message.cursize - msg_readcount < (int)payload_bytes)
+	{
+		msg_badread = true;
+		return false;
+	}
+	if (payload_bytes <= VOICE_MAX_PAYLOAD)
+		Q_memcpy(packet.payload, net_message.data + msg_readcount, payload_bytes);
+	msg_readcount += payload_bytes;
+	if (!cl.voice_protocol_offered || !generation || source_slot < 0 ||
+		source_slot >= cl.maxclients || payload_bytes > VOICE_MAX_PAYLOAD ||
+		(packet.flags & ~VOICE_FLAG_KNOWN) ||
+		(!payload_bytes && !(packet.flags & VOICE_FLAG_END)))
+		return true;
+	packet.payload_bytes = (uint16_t)payload_bytes;
+	Voice_ReceivePacket(source_slot, generation, &packet);
+	return true;
+}
+
 //mods and servers might not send the \n instantly.
 //some mods bug out and omit the \n entirely, this function helps prevent the damage from spreading too much.
 //some servers or mods use //prefixed commands as extensions to avoid spam about unrecognised commands.
@@ -2297,6 +2361,7 @@ static void CL_ParseStuffText(const char *msg)
 			handled = CL_OfferAvatarProtocol(cl.stuffcmdbuf + 2) ||
 				CL_ParseAvatarSlot(cl.stuffcmdbuf + 2) ||
 				CL_OfferVRIKProtocol(cl.stuffcmdbuf + 2) ||
+				CL_OfferVoiceProtocol(cl.stuffcmdbuf + 2) ||
 				Cmd_ExecuteString(cl.stuffcmdbuf+2, src_server);
 			if (!handled)
 				Con_DPrintf("Server sent unknown command %s\n", Cmd_Argv(0));
@@ -2475,6 +2540,12 @@ void CL_ParseServerMessage (void)
 			SHOWNET("svc_vrikpose");
 			if (!CL_ParseVRIKPose())
 				Host_Error("CL_ParseServerMessage: malformed VRIK pose");
+			break;
+
+		case svc_voice:
+			SHOWNET("svc_voice");
+			if (!CL_ParseVoicePacket())
+				Host_Error("CL_ParseServerMessage: malformed voice packet");
 			break;
 
 		case svcdp_csqcentities:

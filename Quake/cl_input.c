@@ -29,6 +29,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "pmove.h"
 #include "vr.h"
 #include "vrik_codec.h"
+#include "voice.h"
 
 extern cvar_t cl_maxpitch; // johnfitz -- variable pitch clamping
 extern cvar_t cl_minpitch; // johnfitz -- variable pitch clamping
@@ -896,6 +897,7 @@ void CL_SendMove(const usercmd_t *cmd) {
     cl.movecmds[seq & (CL_MOVE_HISTORY - 1)].seconds = 0;
     CL_WriteAckFrames(&buf);
     CL_AppendVRIKPose(&buf);
+    Voice_AppendOutgoing(&buf);
     if (buf.cursize) {
       if (NET_SendUnreliableMessage(cls.netcon, &buf) == -1) {
         Con_Printf("CL_SendMove: lost server connection\n");
@@ -940,6 +942,9 @@ void CL_SendMove(const usercmd_t *cmd) {
     Con_Printf("CL_SendMove: move packet overflowed\n");
     return;
   }
+
+  /* Voice is best-effort and always follows the complete movement bundle. */
+  Voice_AppendOutgoing(&buf);
 
   if (NET_SendUnreliableMessage(cls.netcon, &buf) == -1) {
     Con_Printf("CL_SendMove: lost server connection\n");
