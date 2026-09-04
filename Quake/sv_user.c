@@ -1147,7 +1147,6 @@ static qboolean SV_ReadVoicePacket(qboolean accept)
 {
 	voice_packet_t packet;
 	unsigned int payload_bytes;
-	unsigned int i;
 
 	Q_memset(&packet, 0, sizeof(packet));
 	packet.sequence = (uint16_t)MSG_ReadShort();
@@ -1155,16 +1154,14 @@ static qboolean SV_ReadVoicePacket(qboolean accept)
 	packet.talkspurt = (uint8_t)MSG_ReadByte();
 	packet.flags = (uint8_t)MSG_ReadByte();
 	payload_bytes = (uint16_t)MSG_ReadShort();
-	if (msg_badread)
-		return false;
-	for (i = 0; i < payload_bytes; ++i)
+	if (msg_badread || net_message.cursize - msg_readcount < (int)payload_bytes)
 	{
-		int value = MSG_ReadByte();
-		if (i < VOICE_MAX_PAYLOAD)
-			packet.payload[i] = (uint8_t)value;
-	}
-	if (msg_badread)
+		msg_badread = true;
 		return false;
+	}
+	if (payload_bytes <= VOICE_MAX_PAYLOAD)
+		Q_memcpy(packet.payload, net_message.data + msg_readcount, payload_bytes);
+	msg_readcount += payload_bytes;
 	if (payload_bytes > VOICE_MAX_PAYLOAD ||
 		(packet.flags & ~VOICE_FLAG_KNOWN) ||
 		(!payload_bytes && !(packet.flags & VOICE_FLAG_END)))

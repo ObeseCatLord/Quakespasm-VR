@@ -1,8 +1,8 @@
 # Experimental voice chat
 
-The Linux build includes low-latency Opus voice chat by default. The game
-receives voice and opens the default microphone for its level meter, but never
-transmits until the player opts in:
+The Linux and Windows builds include low-latency Opus voice chat by default.
+The game receives voice without opening the microphone, and only opens the
+selected capture device after the player opts in:
 
 ```
 voice_transmit 1
