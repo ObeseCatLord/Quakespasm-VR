@@ -39,7 +39,7 @@ jobs:
       - name: Set up MSBuild
         uses: microsoft/setup-msbuild@v2
 
-      - name: Set up libcurl with Windows Schannel
+      - name: Set up libcurl with Windows Schannel and Opus
         if: matrix.platform == 'x64'
         shell: pwsh
         run: |
@@ -62,7 +62,9 @@ jobs:
           if ('${{ matrix.platform }}' -eq 'x64') {
             $options += @(
               "-property:CurlRoot=$env:GITHUB_WORKSPACE\vcpkg_installed\x64-windows-static-md",
-              '-property:UseCurl=true'
+              '-property:UseCurl=true',
+              "-property:OpusRoot=$env:GITHUB_WORKSPACE\vcpkg_installed\x64-windows-static-md",
+              '-property:UseVoice=true'
             )
           }
           msbuild Windows\VisualStudio\quakespasm.sln $options
@@ -85,6 +87,9 @@ jobs:
             }
             if ($text.Contains('Catalogue downloads disabled in this build')) {
               throw 'The x64 executable contains the disabled catalogue path'
+            }
+            if (!$text.Contains('voice_list_devices') -or !$text.Contains('voice_transmit')) {
+              throw 'The x64 executable was built without voice chat support'
             }
             $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
             $vs = & $vswhere -latest -property installationPath
@@ -115,7 +120,7 @@ jobs:
           if ('${{ matrix.platform }}' -eq 'x64') {
             $licenses = Join-Path $stage 'third-party-licenses'
             New-Item -ItemType Directory -Force $licenses | Out-Null
-            foreach ($package in @('curl', 'zlib')) {
+            foreach ($package in @('curl', 'zlib', 'opus')) {
               $copyright = Join-Path $env:GITHUB_WORKSPACE "vcpkg_installed\x64-windows-static-md\share\$package\copyright"
               if (!(Test-Path $copyright)) { throw "Missing vcpkg copyright file: $copyright" }
               Copy-Item $copyright (Join-Path $licenses "$package.txt")

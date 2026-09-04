@@ -48,7 +48,7 @@ jobs:
       - name: Set up MSBuild
         uses: microsoft/setup-msbuild@v2
 
-      - name: Set up static libcurl with Windows Schannel
+      - name: Set up static libcurl with Windows Schannel and Opus
         shell: pwsh
         run: |
           .\.vcpkg\bootstrap-vcpkg.bat -disableMetrics
@@ -66,6 +66,8 @@ jobs:
             '-property:Platform=x64',
             "-property:CurlRoot=$env:GITHUB_WORKSPACE\vcpkg_installed\x64-windows-static-md",
             '-property:UseCurl=true',
+            "-property:OpusRoot=$env:GITHUB_WORKSPACE\vcpkg_installed\x64-windows-static-md",
+            '-property:UseVoice=true',
             '-maxcpucount',
             '-verbosity:minimal'
           )
@@ -83,6 +85,7 @@ jobs:
           $text = [Text.Encoding]::ASCII.GetString([IO.File]::ReadAllBytes($exe))
           if (!$text.Contains('Press F1 to refresh add-on catalogue')) { throw 'Add-on catalogue support is absent' }
           if ($text.Contains('Catalogue downloads disabled in this build')) { throw 'Disabled add-on catalogue path is present' }
+          if (!$text.Contains('voice_list_devices') -or !$text.Contains('voice_transmit')) { throw 'Voice chat support is absent' }
           $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
           $vs = & $vswhere -latest -property installationPath
           $dumpbin = Get-ChildItem "$vs\VC\Tools\MSVC\*\bin\Hostx64\x64\dumpbin.exe" |
@@ -105,7 +108,7 @@ jobs:
 
           $licenses = Join-Path $folder 'third-party-licenses'
           New-Item -ItemType Directory -Force $licenses | Out-Null
-          foreach ($package in @('curl', 'zlib')) {
+          foreach ($package in @('curl', 'zlib', 'opus')) {
             $copyright = Join-Path $env:GITHUB_WORKSPACE "vcpkg_installed\x64-windows-static-md\share\$package\copyright"
             if (!(Test-Path $copyright)) { throw "Missing vcpkg copyright file: $copyright" }
             Copy-Item $copyright (Join-Path $licenses "$package.txt")

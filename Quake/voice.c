@@ -38,8 +38,10 @@ typedef struct voice_speaker_s
 } voice_speaker_t;
 
 static cvar_t voice_receive = {"voice_receive", "1", CVAR_ARCHIVE};
-static cvar_t voice_transmit = {"voice_transmit", "0", CVAR_ARCHIVE};
-static cvar_t voice_mode = {"voice_mode", "0", CVAR_ARCHIVE}; /* 0 VAD, 1 PTT */
+/* These report local menu choices, not script-controlled permissions. Stuffed
+ * commands can reach the ordinary command buffer through aliases and exec. */
+static cvar_t voice_transmit = {"voice_transmit", "0", CVAR_ROM};
+static cvar_t voice_mode = {"voice_mode", "0", CVAR_ROM}; /* 0 VAD, 1 PTT */
 static cvar_t voice_input_device = {"voice_input_device", "", CVAR_ARCHIVE};
 static cvar_t voice_input_gain = {"voice_input_gain", "1", CVAR_ARCHIVE};
 static cvar_t voice_vad_sensitivity = {"voice_vad_sensitivity", "55", CVAR_ARCHIVE};
@@ -59,6 +61,9 @@ static uint16_t voice_next_sequence;
 static uint32_t voice_next_timestamp;
 static uint8_t voice_talkspurt;
 static qboolean voice_initialized, voice_ptt, voice_sending;
+static qboolean voice_capture_consent;
+static qboolean voice_ptt_keys[MAX_KEYS];
+static qboolean voice_ptt_allowed[MAX_KEYS];
 static float voice_input_meter;
 static vec3_t voice_listener_origin, voice_listener_right;
 
@@ -83,6 +88,8 @@ static qboolean Voice_OpenCapture(void)
 		voice_input_device.string : NULL;
 
 	Voice_CloseCapture();
+	if (!voice_capture_consent || !voice_transmit.value)
+		return false;
 	SDL_zero(desired);
 	desired.freq = VOICE_SAMPLE_RATE;
 	desired.format = AUDIO_S16SYS;
@@ -170,8 +177,27 @@ static void Voice_PlayerVolume_f(void)
 		voice_speakers[slot].volume);
 }
 
-static void Voice_PTTDown_f(void) { voice_ptt = true; }
-static void Voice_PTTUp_f(void) { voice_ptt = false; }
+/* Bindings retain their command names for Controls, but only a physical input
+ * event may press PTT. Server text/aliases can execute these commands too. */
+static void Voice_PTTCommand_f(void) { }
+
+void Voice_PTTKeyEvent(int key, qboolean down)
+{
+	int i;
+	if (key < 0 || key >= MAX_KEYS)
+		return;
+	voice_ptt_keys[key] = down && voice_capture_consent && voice_ptt_allowed[key] &&
+		keybindings[key] && !q_strcasecmp(keybindings[key], "+voicerecord");
+	voice_ptt = false;
+	for (i = 0; i < MAX_KEYS; ++i)
+		voice_ptt |= voice_ptt_keys[i];
+}
+
+static void Voice_ClearPTT(void)
+{
+	voice_ptt = false;
+	Q_memset(voice_ptt_keys, 0, sizeof(voice_ptt_keys));
+}
 
 static qboolean Voice_QueuePacket(const int16_t *samples, unsigned int flags)
 {
@@ -205,7 +231,7 @@ static void Voice_TransmitChanged(cvar_t *var)
 {
 	if (!voice_initialized)
 		return;
-	if (var->value)
+	if (var->value && voice_capture_consent)
 	{
 		if (!voice_capture_device)
 			Voice_OpenCapture();
@@ -213,12 +239,37 @@ static void Voice_TransmitChanged(cvar_t *var)
 	}
 
 	/* Disarming transmission also releases the microphone immediately. */
+	voice_outgoing.read = voice_outgoing.write = 0;
 	if (voice_sending)
 		Voice_QueuePacket(NULL, VOICE_FLAG_END);
 	voice_sending = false;
-	voice_ptt = false;
+	Voice_ClearPTT();
 	voice_input_meter = 0.0f;
+	voice_preroll_write = voice_preroll_count = 0;
 	Voice_CloseCapture();
+}
+
+/* Called only from menu input, never registered as console commands. Permission
+ * lasts for this process and cannot be restored by config or server text. */
+void Voice_SetTransmitEnabled(qboolean enabled)
+{
+	if (!voice_initialized)
+		return;
+	voice_capture_consent = enabled;
+	Cvar_SetValueROM("voice_transmit", enabled ? 1 : 0);
+}
+
+void Voice_SetPTTKeyAllowed(int key, qboolean allowed)
+{
+	/* Called only when a physical Controls-menu interaction binds a key. */
+	if (key >= 0 && key < MAX_KEYS)
+		voice_ptt_allowed[key] = allowed;
+}
+
+void Voice_SetMode(int mode)
+{
+	Cvar_SetValueROM("voice_mode", mode == 1 ? 1 : 0);
+	Voice_ClearPTT();
 }
 
 static void Voice_EncodeCaptureFrame(int16_t *samples)
@@ -237,7 +288,7 @@ static void Voice_EncodeCaptureFrame(int16_t *samples)
 		(int)CLAMP(0.0f, voice_vad_sensitivity.value, 100.0f));
 	Voice_VADProcessFrame(&voice_vad, samples, VOICE_FRAME_SAMPLES, &result);
 	voice_input_meter = result.meter / 32768.0f;
-	gate = Voice_MultiplayerSessionActive() && voice_transmit.value &&
+	gate = Voice_MultiplayerSessionActive() && voice_capture_consent && voice_transmit.value &&
 		((int)voice_mode.value == 1 ? voice_ptt : result.active);
 
 	if (gate && !voice_sending)
@@ -278,11 +329,12 @@ static void Voice_WriteSpeakerPCM(voice_speaker_t *speaker,
 	int write = SDL_AtomicGet(&speaker->pcm_write);
 	int outframes = frames * shm->speed / VOICE_SAMPLE_RATE;
 	int i;
-	float left = 1.0f, right = 1.0f;
+	float left = voice_radio_volume.value, right = voice_radio_volume.value;
 	vec3_t delta;
 	float distance, blend, pan, positional;
 
-	if (slot + 1 < cl.num_entities)
+	if (slot >= 0 && slot + 1 < cl.num_entities &&
+		cl.entities[slot + 1].model && cl.entities[slot + 1].msgtime == cl.mtime[0])
 	{
 		VectorSubtract(cl.entities[slot + 1].origin, voice_listener_origin, delta);
 		distance = VectorLength(delta);
@@ -314,6 +366,22 @@ void Voice_Init(void)
 {
 	voice_vad_config_t config;
 	int error, i;
+	cvar_t *existing;
+
+	/* Fail closed if a pre-created variable would split the menu permission
+	 * from the static state read by capture (e.g. after starting with no sound). */
+	existing = Cvar_FindVar("voice_transmit");
+	if (existing && existing != &voice_transmit)
+	{
+		Con_Printf("Voice unavailable: voice_transmit was defined before sound startup. Restart the game.\n");
+		return;
+	}
+	existing = Cvar_FindVar("voice_mode");
+	if (existing && existing != &voice_mode)
+	{
+		Con_Printf("Voice unavailable: voice_mode was defined before sound startup. Restart the game.\n");
+		return;
+	}
 
 	Cvar_RegisterVariable(&voice_receive);
 	Cvar_RegisterVariable(&voice_transmit);
@@ -331,8 +399,8 @@ void Voice_Init(void)
 	Cmd_AddCommand("voice_status", Voice_Status_f);
 	Cmd_AddCommand("voice_mute", Voice_Mute_f);
 	Cmd_AddCommand("voice_player_volume", Voice_PlayerVolume_f);
-	Cmd_AddCommand("+voicerecord", Voice_PTTDown_f);
-	Cmd_AddCommand("-voicerecord", Voice_PTTUp_f);
+	Cmd_AddCommand("+voicerecord", Voice_PTTCommand_f);
+	Cmd_AddCommand("-voicerecord", Voice_PTTCommand_f);
 
 	voice_encoder = opus_encoder_create(VOICE_SAMPLE_RATE, 1,
 		OPUS_APPLICATION_VOIP, &error);
@@ -359,7 +427,11 @@ void Voice_Init(void)
 		Voice_JitterInit(&voice_speakers[i].jitter, VOICE_JITTER_MAX_PACKETS);
 		voice_speakers[i].volume = 1.0f;
 	}
+	if (shm)
+		SNDDMA_LockBuffer();
 	voice_initialized = true;
+	if (shm)
+		SNDDMA_Submit();
 	if (voice_transmit.value)
 		Voice_OpenCapture();
 }
@@ -368,6 +440,15 @@ void Voice_Shutdown(void)
 {
 	int i;
 	Voice_CloseCapture();
+	voice_capture_consent = false;
+	Voice_ClearPTT();
+	Q_memset(voice_ptt_allowed, 0, sizeof(voice_ptt_allowed));
+	Cvar_SetValueROM("voice_transmit", 0);
+	if (shm)
+		SNDDMA_LockBuffer();
+	voice_initialized = false;
+	if (shm)
+		SNDDMA_Submit();
 	if (voice_encoder)
 		opus_encoder_destroy(voice_encoder);
 	voice_encoder = NULL;
@@ -377,7 +458,6 @@ void Voice_Shutdown(void)
 			opus_decoder_destroy(voice_speakers[i].decoder);
 		voice_speakers[i].decoder = NULL;
 	}
-	voice_initialized = false;
 }
 
 void Voice_ResetConnection(void)
@@ -385,6 +465,14 @@ void Voice_ResetConnection(void)
 	int i;
 	voice_outgoing.read = voice_outgoing.write = 0;
 	voice_sending = false;
+	Voice_ClearPTT();
+	voice_preroll_write = voice_preroll_count = 0;
+	if (voice_capture_device)
+		SDL_ClearQueuedAudio(voice_capture_device);
+	/* The callback owns pcm_read. Both indices must change while it is excluded,
+	 * or an in-flight callback can republish its old read position. */
+	if (shm)
+		SNDDMA_LockBuffer();
 	for (i = 0; i < MAX_SCOREBOARD; ++i)
 	{
 		Voice_JitterReset(&voice_speakers[i].jitter);
@@ -395,6 +483,8 @@ void Voice_ResetConnection(void)
 		SDL_AtomicSet(&voice_speakers[i].pcm_read, 0);
 		SDL_AtomicSet(&voice_speakers[i].pcm_write, 0);
 	}
+	if (shm)
+		SNDDMA_Submit();
 }
 
 void Voice_Frame(void)
@@ -527,6 +617,12 @@ void Voice_ReceivePacket(int speaker_slot, unsigned int generation,
 	speaker = &voice_speakers[speaker_slot];
 	if (speaker->generation != generation)
 	{
+		if (shm)
+			SNDDMA_LockBuffer();
+		SDL_AtomicSet(&speaker->pcm_read, 0);
+		SDL_AtomicSet(&speaker->pcm_write, 0);
+		if (shm)
+			SNDDMA_Submit();
 		Voice_JitterReset(&speaker->jitter);
 		opus_decoder_ctl(speaker->decoder, OPUS_RESET_STATE);
 		speaker->generation = generation;

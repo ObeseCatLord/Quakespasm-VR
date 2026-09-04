@@ -223,12 +223,13 @@ voice_jitter_status_t Voice_JitterNextFrame(voice_jitter_t *jitter,
 			return VOICE_JITTER_OK;
 		jitter->expected_sequence = jitter->entries[0].sequence;
 		jitter->next_deadline_ms = jitter->entries[0].arrival_ms + jitter->target_delay_ms;
-		jitter->playout_started = 1;
 	}
 
 	frame->deadline_ms = jitter->next_deadline_ms;
 	if ((uint32_t)(now_ms - jitter->next_deadline_ms) >= 0x80000000u)
 		return VOICE_JITTER_OK;
+	/* Keep startup reorderable until the first playout deadline is reached. */
+	jitter->playout_started = 1;
 
 	if (jitter->count != 0 &&
 		jitter->entries[0].sequence == jitter->expected_sequence) {

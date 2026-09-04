@@ -132,8 +132,14 @@ static void TestJitterReorderDuplicateLossAndWrap(void)
 	Voice_JitterInit(&jitter, 4);
 	InsertPacket(&jitter, 0u, 101u, 1010u, 1u, 0x31, VOICE_JITTER_OK,
 		"insert base packet");
+	ExpectStatus(Voice_JitterNextFrame(&jitter, 0u, &frame), VOICE_JITTER_OK,
+		"premature startup poll should wait");
+	Expect(frame.action == VOICE_JITTER_WAIT && frame.deadline_ms == 60u,
+		"premature startup poll must not begin playout");
+	Expect(!jitter.playout_started,
+		"premature startup poll must leave startup reorderable");
 	InsertPacket(&jitter, 5u, 100u, 1000u, 1u, 0x30, VOICE_JITTER_OK,
-		"insert reordered older packet");
+		"startup reorder after a premature poll must be accepted");
 	InsertPacket(&jitter, 6u, 100u, 1000u, 1u, 0x30, VOICE_JITTER_DUPLICATE,
 		"duplicate packet must be rejected");
 	ExpectStatus(Voice_JitterNextFrame(&jitter, 59u, &frame), VOICE_JITTER_OK,

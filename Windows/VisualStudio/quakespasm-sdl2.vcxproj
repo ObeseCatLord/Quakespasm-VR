@@ -331,7 +331,9 @@ copy "$(SolutionDir)\..\static-release-files\*.*" "$(TargetDir)"</Command>
     <ClCompile Include="..\..\Quake\sv_user.c" />
     <ClCompile Include="..\..\Quake\sys_sdl_win.c" />
     <ClCompile Include="..\..\Quake\view.c" />
-    <ClCompile Include="..\..\Quake\voice.c" />
+    <ClCompile Include="..\..\Quake\voice.c">
+      <ExcludedFromBuild Condition="'$(UseVoice)'!='true'">true</ExcludedFromBuild>
+    </ClCompile>
     <ClCompile Include="..\..\Quake\voice_jitter.c" />
     <ClCompile Include="..\..\Quake\voice_vad.c" />
     <ClCompile Include="..\..\Quake\vr.c">
