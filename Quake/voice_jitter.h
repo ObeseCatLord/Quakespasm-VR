@@ -98,6 +98,7 @@ typedef struct voice_jitter_s {
 
 void Voice_JitterInit(voice_jitter_t *jitter, unsigned int capacity);
 void Voice_JitterReset(voice_jitter_t *jitter);
+void Voice_JitterEndTalkspurt(voice_jitter_t *jitter);
 int Voice_JitterSequenceIsNewer(uint16_t sequence, uint16_t previous);
 voice_jitter_status_t Voice_JitterInsert(voice_jitter_t *jitter,
 	const voice_jitter_packet_t *packet, uint32_t now_ms);

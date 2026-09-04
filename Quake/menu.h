@@ -33,6 +33,7 @@ enum m_state_e {
 	m_setup,
 	m_net,
 	m_options,
+	m_voice,
 	m_video,
 	m_vr,
 	m_keys,

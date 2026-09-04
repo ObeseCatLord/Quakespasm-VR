@@ -62,6 +62,11 @@ static qboolean voice_initialized, voice_ptt, voice_sending;
 static float voice_input_meter;
 static vec3_t voice_listener_origin, voice_listener_right;
 
+static qboolean Voice_MultiplayerSessionActive(void)
+{
+	return cls.state == ca_connected && cl.maxclients > 1 && cl.voice_cap_sent;
+}
+
 static void Voice_CloseCapture(void)
 {
 	if (voice_capture_device)
@@ -208,8 +213,8 @@ static void Voice_EncodeCaptureFrame(int16_t *samples)
 		(int)CLAMP(0.0f, voice_vad_sensitivity.value, 100.0f));
 	Voice_VADProcessFrame(&voice_vad, samples, VOICE_FRAME_SAMPLES, &result);
 	voice_input_meter = result.meter / 32768.0f;
-	gate = voice_transmit.value && ((int)voice_mode.value == 1 ? voice_ptt :
-		result.active);
+	gate = Voice_MultiplayerSessionActive() && voice_transmit.value &&
+		((int)voice_mode.value == 1 ? voice_ptt : result.active);
 
 	if (gate && !voice_sending)
 	{
@@ -400,6 +405,7 @@ void Voice_Frame(void)
 			if (frame.flags & VOICE_FLAG_END)
 			{
 				speaker->talking_until = 0;
+				Voice_JitterEndTalkspurt(&speaker->jitter);
 				continue;
 			}
 			frames = opus_decode(speaker->decoder,
@@ -510,6 +516,36 @@ void Voice_ReceivePacket(int speaker_slot, unsigned int generation,
 }
 
 qboolean Voice_Available(void) { return voice_initialized; }
+const char *Voice_InputDeviceName(void)
+{
+	return voice_input_device.string[0] ? voice_input_device.string : "default";
+}
+void Voice_CycleInputDevice(int direction)
+{
+	int count = SDL_GetNumAudioDevices(SDL_TRUE);
+	int current = -1;
+	int i, next;
+
+	if (!voice_initialized || count < 0)
+		return;
+	if (voice_input_device.string[0])
+		for (i = 0; i < count; ++i)
+			if (!q_strcasecmp(voice_input_device.string,
+				SDL_GetAudioDeviceName(i, SDL_TRUE)))
+			{
+				current = i;
+				break;
+			}
+
+	/* The default device is entry zero; SDL's named devices follow it. */
+	next = (current + 1 + (direction < 0 ? count : 1)) % (count + 1);
+	if (!next)
+		Cvar_Set("voice_input_device", "");
+	else
+		Cvar_Set("voice_input_device", SDL_GetAudioDeviceName(next - 1, SDL_TRUE));
+	Voice_OpenCapture();
+}
+qboolean Voice_TransmitEnabled(void) { return voice_transmit.value != 0; }
 qboolean Voice_IsTransmitting(void) { return voice_sending; }
 float Voice_InputLevel(void) { return voice_input_meter; }
 qboolean Voice_SpeakerTalking(int slot)
@@ -517,4 +553,7 @@ qboolean Voice_SpeakerTalking(int slot)
 	return slot >= 0 && slot < MAX_SCOREBOARD &&
 		voice_speakers[slot].talking_until > realtime;
 }
-qboolean Voice_HUDEnabled(void) { return voice_hud.value != 0; }
+qboolean Voice_HUDEnabled(void)
+{
+	return voice_hud.value != 0 && Voice_MultiplayerSessionActive();
+}

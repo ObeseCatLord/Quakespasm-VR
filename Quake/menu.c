@@ -26,6 +26,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "bgmusic.h"
 #include "vr_menu.h"
 #include "player_avatar.h"
+#include "voice.h"
 // clang-format on
 
 void (*vid_menucmdfn)(void); // johnfitz
@@ -53,6 +54,7 @@ void M_Menu_ServerList_f(void);
 void M_Menu_Options_f(void);
 void M_Menu_Keys_f(void);
 static void M_Menu_Weapons_f(void);
+static void M_Menu_Voice_f(void);
 void M_Menu_Video_f(void);
 void M_Menu_VR_f(void);
 void M_Menu_Help_f(void);
@@ -75,6 +77,7 @@ void M_ServerList_Draw(void);
 void M_Options_Draw(void);
 void M_Keys_Draw(void);
 static void M_Weapons_Draw(void);
+static void M_Voice_Draw(void);
 void M_Video_Draw(void);
 void M_VR_Draw(void);
 void M_Help_Draw(void);
@@ -97,6 +100,7 @@ void M_ServerList_Key(int key);
 void M_Options_Key(int key);
 void M_Keys_Key(int key);
 static void M_Weapons_Key(int key);
+static void M_Voice_Key(int key);
 void M_Video_Key(int key);
 void M_VR_Key(int key);
 void M_Help_Key(int key);
@@ -1003,6 +1007,7 @@ enum {
   // #endif
   OPT_VIDEO, // This is the last before OPTIONS_ITEMS
   OPT_VR,
+  OPT_VOICE,
   OPT_MODELS,
   OPTIONS_ITEMS
 };
@@ -1322,6 +1327,9 @@ void M_Options_Draw(void) {
   if (vid_menudrawfn)
     M_Print(16, M_Options_RowY(OPT_VR), "         VR Options");
 
+  // OPT_VOICE:
+  M_Print(16, M_Options_RowY(OPT_VOICE), "      Voice chat options");
+
   // OPT_MODELS:
   M_Print(16, M_Options_RowY(OPT_MODELS), "        Models Options");
 
@@ -1370,6 +1378,9 @@ void M_Options_Key(int k) {
       break;
     case OPT_VR:
       M_Menu_VR_f();
+      break;
+    case OPT_VOICE:
+      M_Menu_Voice_f();
       break;
     case OPT_MODELS:
       M_Menu_Models_f();
@@ -1429,6 +1440,9 @@ typedef struct {
 
 static const menukeybind_t default_bindnames[] = {
     {"+attack", "attack"},
+#ifdef USE_VOICECHAT
+    {"+voicerecord", "push to talk"},
+#endif
     {"impulse 10", "next weapon"},
     {"impulse 12", "prev weapon"},
     {"+jump", "jump / swim up"},
@@ -3693,6 +3707,171 @@ static void M_ServerModDownload_Key(int key) {
 }
 
 //=============================================================================
+/* VOICE CHAT MENU */
+
+enum {
+  VOICEOPT_RECEIVE,
+  VOICEOPT_TRANSMIT,
+  VOICEOPT_MODE,
+  VOICEOPT_DEVICE,
+  VOICEOPT_INPUT_GAIN,
+  VOICEOPT_VAD,
+  VOICEOPT_VOLUME,
+  VOICEOPT_RADIO_VOLUME,
+  VOICEOPT_DISTANCE,
+  VOICEOPT_HUD,
+  VOICEOPT_COUNT
+};
+
+#define VOICEOPT_TOP 40
+#define VOICEOPT_ROW_HEIGHT 14
+
+static int m_voice_cursor;
+
+static int M_Voice_RowY(int row) {
+  return VOICEOPT_TOP + row * VOICEOPT_ROW_HEIGHT;
+}
+
+static void M_Menu_Voice_f(void) {
+  IN_Deactivate(modestate == MS_WINDOWED);
+  key_dest = key_menu;
+  m_state = m_voice;
+  m_entersound = true;
+}
+
+static const char *M_Voice_DeviceLabel(void) {
+  static char label[21];
+  const char *name = Voice_InputDeviceName();
+
+  if (strlen(name) <= 20)
+    return name;
+  q_snprintf(label, sizeof(label), "%.17s...", name);
+  return label;
+}
+
+static void M_Voice_Adjust(int direction) {
+  float value;
+
+  if (!Voice_Available())
+    return;
+  S_LocalSound("misc/menu3.wav");
+  switch (m_voice_cursor) {
+  case VOICEOPT_RECEIVE:
+    Cvar_SetValue("voice_receive", !Cvar_VariableValue("voice_receive"));
+    break;
+  case VOICEOPT_TRANSMIT:
+    Cvar_SetValue("voice_transmit", !Cvar_VariableValue("voice_transmit"));
+    break;
+  case VOICEOPT_MODE:
+    Cvar_SetValue("voice_mode", !Cvar_VariableValue("voice_mode"));
+    break;
+  case VOICEOPT_DEVICE:
+    Voice_CycleInputDevice(direction);
+    break;
+  case VOICEOPT_INPUT_GAIN:
+    value = CLAMP(0.0f, Cvar_VariableValue("voice_input_gain") +
+                            direction * 0.25f, 4.0f);
+    Cvar_SetValue("voice_input_gain", value);
+    break;
+  case VOICEOPT_VAD:
+    value = CLAMP(0.0f, Cvar_VariableValue("voice_vad_sensitivity") +
+                            direction * 5.0f, 100.0f);
+    Cvar_SetValue("voice_vad_sensitivity", value);
+    break;
+  case VOICEOPT_VOLUME:
+    value = CLAMP(0.0f, Cvar_VariableValue("voice_volume") +
+                            direction * 0.1f, 2.0f);
+    Cvar_SetValue("voice_volume", value);
+    break;
+  case VOICEOPT_RADIO_VOLUME:
+    value = CLAMP(0.0f, Cvar_VariableValue("voice_radio_volume") +
+                            direction * 0.1f, 2.0f);
+    Cvar_SetValue("voice_radio_volume", value);
+    break;
+  case VOICEOPT_DISTANCE:
+    value = CLAMP(128.0f, Cvar_VariableValue("voice_spatial_distance") +
+                              direction * 128.0f, 4096.0f);
+    Cvar_SetValue("voice_spatial_distance", value);
+    break;
+  case VOICEOPT_HUD:
+    Cvar_SetValue("voice_hud", !Cvar_VariableValue("voice_hud"));
+    break;
+  }
+}
+
+static void M_Voice_Draw(void) {
+  float value;
+
+  M_DrawTransPic(16, 4, Draw_CachePic("gfx/qplaque.lmp"));
+  M_PrintWhite(120, 8, "VOICE CHAT");
+  if (!Voice_Available()) {
+    M_PrintWhite(56, 88, "Voice is unavailable in this build");
+    return;
+  }
+
+  M_Print(16, M_Voice_RowY(VOICEOPT_RECEIVE), "Receive voice");
+  M_DrawCheckbox(184, M_Voice_RowY(VOICEOPT_RECEIVE),
+                 Cvar_VariableValue("voice_receive"));
+  M_Print(16, M_Voice_RowY(VOICEOPT_TRANSMIT), "Transmit microphone");
+  M_DrawCheckbox(184, M_Voice_RowY(VOICEOPT_TRANSMIT),
+                 Cvar_VariableValue("voice_transmit"));
+  M_Print(16, M_Voice_RowY(VOICEOPT_MODE), "Transmit mode");
+  M_Print(184, M_Voice_RowY(VOICEOPT_MODE),
+          Cvar_VariableValue("voice_mode") ? "push-to-talk" : "voice activity");
+  M_Print(16, M_Voice_RowY(VOICEOPT_DEVICE), "Input device");
+  M_Print(152, M_Voice_RowY(VOICEOPT_DEVICE), M_Voice_DeviceLabel());
+
+  M_Print(16, M_Voice_RowY(VOICEOPT_INPUT_GAIN), "Microphone gain");
+  value = Cvar_VariableValue("voice_input_gain");
+  M_DrawSlider(184, M_Voice_RowY(VOICEOPT_INPUT_GAIN), value / 4.0f, value, "%.2f");
+  M_Print(16, M_Voice_RowY(VOICEOPT_VAD), "VAD sensitivity");
+  value = Cvar_VariableValue("voice_vad_sensitivity");
+  M_DrawSlider(184, M_Voice_RowY(VOICEOPT_VAD), value / 100.0f, value, "%.0f");
+  M_Print(16, M_Voice_RowY(VOICEOPT_VOLUME), "Voice volume");
+  value = Cvar_VariableValue("voice_volume");
+  M_DrawSlider(184, M_Voice_RowY(VOICEOPT_VOLUME), value / 2.0f, value, "%.1f");
+  M_Print(16, M_Voice_RowY(VOICEOPT_RADIO_VOLUME), "Distant voice volume");
+  value = Cvar_VariableValue("voice_radio_volume");
+  M_DrawSlider(184, M_Voice_RowY(VOICEOPT_RADIO_VOLUME), value / 2.0f, value, "%.1f");
+  M_Print(16, M_Voice_RowY(VOICEOPT_DISTANCE), "Spatial distance");
+  value = Cvar_VariableValue("voice_spatial_distance");
+  M_DrawSlider(184, M_Voice_RowY(VOICEOPT_DISTANCE),
+               (value - 128.0f) / (4096.0f - 128.0f), value, "%.0f");
+  M_Print(16, M_Voice_RowY(VOICEOPT_HUD), "Voice HUD");
+  M_DrawCheckbox(184, M_Voice_RowY(VOICEOPT_HUD),
+                 Cvar_VariableValue("voice_hud"));
+
+  M_DrawCharacter(144, M_Voice_RowY(m_voice_cursor),
+                  12 + ((int)(realtime * 4) & 1));
+}
+
+static void M_Voice_Key(int key) {
+  switch (key) {
+  case K_ESCAPE:
+  case K_BBUTTON:
+    M_Menu_Options_f();
+    break;
+  case K_LEFTARROW:
+    M_Voice_Adjust(-1);
+    break;
+  case K_RIGHTARROW:
+  case K_ENTER:
+  case K_KP_ENTER:
+  case K_ABUTTON:
+    M_Voice_Adjust(1);
+    break;
+  case K_UPARROW:
+    S_LocalSound("misc/menu1.wav");
+    m_voice_cursor = (m_voice_cursor + VOICEOPT_COUNT - 1) % VOICEOPT_COUNT;
+    break;
+  case K_DOWNARROW:
+    S_LocalSound("misc/menu1.wav");
+    m_voice_cursor = (m_voice_cursor + 1) % VOICEOPT_COUNT;
+    break;
+  }
+}
+
+//=============================================================================
 /* MODELS MENU */
 
 static void M_Menu_Models_f(void) {
@@ -3793,6 +3972,7 @@ void M_Init(void) {
   Cmd_AddCommand("menu_options", M_Menu_Options_f);
   Cmd_AddCommand("menu_keys", M_Menu_Keys_f);
   Cmd_AddCommand("menu_weapons", M_Menu_Weapons_f);
+  Cmd_AddCommand("menu_voice", M_Menu_Voice_f);
   Cmd_AddCommand("menu_video", M_Menu_Video_f);
   Cmd_AddCommand("menu_vr", M_Menu_VR_f);
   Cmd_AddCommand("menu_mods", M_Menu_Mods_f);
@@ -3857,6 +4037,10 @@ void M_Draw(void) {
 
   case m_options:
     M_Options_Draw();
+    break;
+
+  case m_voice:
+    M_Voice_Draw();
     break;
 
   case m_keys:
@@ -3981,6 +4165,10 @@ void M_Keydown(int key) {
 
   case m_options:
     M_Options_Key(key);
+    return;
+
+  case m_voice:
+    M_Voice_Key(key);
     return;
 
   case m_keys:
@@ -4172,6 +4360,14 @@ static qboolean M_PointerHit(float x, float y) {
         break;
       options_cursor = selection;
       M_Options_EnsureCursorVisible();
+      return true;
+    }
+    break;
+
+  case m_voice:
+    if (M_PointerRows(x, y, 8, 312, VOICEOPT_TOP, VOICEOPT_ROW_HEIGHT,
+                      VOICEOPT_COUNT, &selection)) {
+      m_voice_cursor = selection;
       return true;
     }
     break;

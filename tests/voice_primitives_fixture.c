@@ -189,11 +189,47 @@ static void TestJitterTalkspurtOverflowAndStaleReset(void)
 	PullPacket(&jitter, 660u, 30u, 0x30);
 }
 
+static void TestJitterEndAndPLCCannotLatchTalker(void)
+{
+	voice_jitter_t jitter;
+	voice_jitter_frame_t frame;
+
+	Voice_JitterInit(&jitter, 4);
+	InsertPacket(&jitter, 0u, 40u, 400u, 3u, 0x40, VOICE_JITTER_OK,
+		"talkspurt packet should insert");
+	PullPacket(&jitter, 60u, 40u, 0x40);
+	Voice_JitterEndTalkspurt(&jitter);
+	ExpectStatus(Voice_JitterNextFrame(&jitter, 80u, &frame), VOICE_JITTER_OK,
+		"ended talkspurt should stay idle");
+	Expect(frame.action == VOICE_JITTER_WAIT && !jitter.have_talkspurt,
+		"END must not produce unbounded PLC");
+
+	Voice_JitterInit(&jitter, 4);
+	InsertPacket(&jitter, 0u, 50u, 500u, 4u, 0x50, VOICE_JITTER_OK,
+		"loss test packet should insert");
+	PullPacket(&jitter, 60u, 50u, 0x50);
+	PullPLC(&jitter, 80u, 51u);
+	ExpectStatus(Voice_JitterNextFrame(&jitter, VOICE_JITTER_STALE_MS, &frame),
+		VOICE_JITTER_OK, "PLC must not refresh packet activity time");
+	Expect(frame.action == VOICE_JITTER_WAIT && !jitter.have_talkspurt,
+		"missing END must become idle after the stale timeout");
+
+	Voice_JitterInit(&jitter, 4);
+	InsertPacket(&jitter, 0u, 60u, 600u, 5u, 0x60, VOICE_JITTER_OK,
+		"recovery test packet should insert");
+	PullPacket(&jitter, 60u, 60u, 0x60);
+	PullPLC(&jitter, 80u, 61u);
+	PullPLC(&jitter, 100u, 62u);
+	InsertPacket(&jitter, 110u, 62u, 620u, 6u, 0x62, VOICE_JITTER_OK,
+		"newer talkspurt must recover after PLC advanced past it");
+}
+
 int main(void)
 {
 	TestVADGatePrerollAndHangover();
 	TestJitterReorderDuplicateLossAndWrap();
 	TestJitterTalkspurtOverflowAndStaleReset();
+	TestJitterEndAndPLCCannotLatchTalker();
 
 	if (failures != 0) {
 		fprintf(stderr, "voice_primitives_fixture: %d failure(s)\n", failures);

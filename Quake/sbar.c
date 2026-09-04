@@ -1294,18 +1294,20 @@ static float Sbar_CSQCScale (void)
 	return CLAMP (1.0, scr_sbarscale.value, (float)glwidth / 320.0);
 }
 
-static void Sbar_DrawVoiceStatus(void)
+void Sbar_DrawVoiceStatus(void)
 {
 	char text[64];
-	int i, y = 8;
+	const char *mic_state;
+	int i, y = 4;
 	int x = q_max(8, glwidth - 184);
 	int meter = (int)(CLAMP(0.0f, Voice_InputLevel(), 1.0f) * 80.0f);
 
 	if (!Voice_HUDEnabled())
 		return;
 	GL_SetCanvas(CANVAS_DEFAULT);
-	q_snprintf(text, sizeof(text), "MIC %s",
-		Voice_IsTransmitting() ? "LIVE" : "OFF");
+	mic_state = !Voice_TransmitEnabled() ? "OFF" :
+		(Voice_IsTransmitting() ? "LIVE" : "READY");
+	q_snprintf(text, sizeof(text), "MIC %s", mic_state);
 	Draw_String(x, y, text);
 	Draw_Fill(x + 72, y + 1, 80, 6, 0, 0.65f);
 	if (meter > 0)
@@ -1333,7 +1335,8 @@ void Sbar_Draw (void)
 	if (scr_con_current == vid.height)
 		return;		// console is full screen
 
-	Sbar_DrawVoiceStatus();
+	if (!vr_enabled.value)
+		Sbar_DrawVoiceStatus();
 
 	if (cl.qcvm.extfuncs.CSQC_DrawHud && !qcvm)
 	{
