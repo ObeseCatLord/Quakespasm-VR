@@ -337,16 +337,46 @@ entity_t	*CL_EntityNum (int num)
 CL_ParseStartSoundPacket
 ==================
 */
-static qboolean CL_IsLocalPlayerHapticSound (int ent)
+enum { CL_SOUND_CHANNEL_VOICE = 2 };
+
+static qboolean CL_IsExcludedLocalHapticSample (int channel, const char *sample)
+{
+	const char	*basename;
+	qboolean	player_sample;
+
+	if (!sample || !sample[0])
+		return false;
+	basename = strrchr (sample, '/');
+	basename = basename ? basename + 1 : sample;
+	player_sample = q_strcasestr (sample, "player/") != NULL ||
+		q_strcasestr (sample, "players/") != NULL;
+
+	/* Sound channels are only conventions and mods routinely use AUTO, BODY,
+	 * ITEM, or custom channels for valid interaction feedback.  Filter the two
+	 * unwanted semantic families by sample name instead.  The basename checks
+	 * cover common player/foot1 and player/walk1 conventions without treating a
+	 * weapon sound such as bazooka/step1 as locomotion. */
+	return q_strcasestr (sample, "footstep") != NULL ||
+		q_strcasestr (sample, "waterstep") != NULL ||
+		q_strcasestr (sample, "steps/") != NULL ||
+		!q_strncasecmp (basename, "foot", 4) ||
+		!q_strncasecmp (basename, "walk", 4) ||
+		((channel == CL_SOUND_CHANNEL_VOICE || player_sample) &&
+		 (q_strcasestr (basename, "pain") != NULL ||
+		  q_strcasestr (basename, "drown") != NULL ||
+		  q_strcasestr (basename, "burn") != NULL));
+}
+
+static qboolean CL_IsLocalPlayerHapticSound (int ent, int channel,
+	const char *sample)
 {
 	/*
-	 * Weapon sound channels are not a stable mod interface.  QBJ3, for example,
-	 * uses CHAN_AUTO for primary fire, reloads, and mechanical weapon sounds.
-	 * The packet entity is stable, though: only pulse for the local player.
-	 * This intentionally includes reload/draw feedback while excluding every
-	 * world and monster sound.
+	 * The packet entity is the stable network boundary: allow feedback for every
+	 * local-player interaction except the explicit locomotion/damage sounds
+	 * above, while excluding all world, monster, and remote-player sounds.
 	 */
-	return ent == cl.viewentity;
+	return ent == cl.viewentity &&
+		!CL_IsExcludedLocalHapticSample (channel, sample);
 }
 
 void CL_ParseStartSoundPacket(void)
@@ -402,7 +432,8 @@ void CL_ParseStartSoundPacket(void)
 		pos[i] = MSG_ReadCoord (cl.protocolflags);
 
 	if (vr_enabled.value && vr_haptic.value &&
-		CL_IsLocalPlayerHapticSound (ent))
+		CL_IsLocalPlayerHapticSound (ent, channel,
+			cl.sound_precache[sound_num] ? cl.sound_precache[sound_num]->name : NULL))
 		VR_TriggerHaptic (1, 0.005f);
 
 	S_StartSound (ent, channel, cl.sound_precache[sound_num], pos, volume/255.0, attenuation);

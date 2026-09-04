@@ -3254,6 +3254,7 @@ Usage: sv_givekeys [playername | # slot | all] [silver | gold | all]
 */
 static void Host_SV_GiveKeys_f(void) {
   client_t *client;
+  edict_t *granted_source = NULL;
   qcvm_t *old_qcvm;
   int i, count;
   int key_flags = SV_COOP_GIVEKEYS_ALL;
@@ -3296,6 +3297,7 @@ static void Host_SV_GiveKeys_f(void) {
         continue;
       Con_Printf("sv_givekeys: gave %s to %s\n",
                  Host_GiveKeysKindName(key_flags), svs.clients[i].name);
+      granted_source = svs.clients[i].edict;
       count++;
     }
   } else {
@@ -3303,12 +3305,15 @@ static void Host_SV_GiveKeys_f(void) {
     if (Host_GiveKeysClient(client, key_flags)) {
       Con_Printf("sv_givekeys: gave %s to %s\n",
                  Host_GiveKeysKindName(key_flags), client->name);
+      granted_source = client->edict;
       count++;
     }
   }
 
   if (!count)
     Con_Printf("sv_givekeys: no matching active client\n");
+  else
+    SV_CoopSharedRebuildGrantedKeys(granted_source);
 
   if (qcvm != old_qcvm) {
     PR_SwitchQCVM(NULL);

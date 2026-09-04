@@ -1379,21 +1379,21 @@ static void VR_AddQBJ3WeaponDefaults(void) {
     return;
 
   VR_AddBuiltinWeaponDefault(4096, 1, "progs/v_wrench.mdl", -1, 0, -1, 0,
-                             -1, 0, 0.2f);
+                             -1, 0, 1.0f);
   VR_AddBuiltinWeaponDefault(1, 2, "progs/v_pistol.mdl", -1, 0, -1, 0,
-                             STAT_SHELLS, 100, 0.2f);
+                             STAT_AMMO, 0, 1.0f);
   VR_AddBuiltinWeaponDefault(2, 3, "progs/v_flakshotgun.mdl", -1, 0, -1, 0,
-                             STAT_SHELLS, 100, 0.2f);
+                             STAT_SHELLS, 100, 1.0f);
   VR_AddBuiltinWeaponDefault(4, 4, "progs/v_tnailgun.mdl", -1, 0, -1, 0,
-                             STAT_NAILS, 300, 0.2f);
+                             STAT_NAILS, 300, 1.0f);
   VR_AddBuiltinWeaponDefault(8, 5, "progs/v_rebar.mdl", -1, 0, -1, 0,
-                             STAT_NAILS, 300, 0.2f);
+                             STAT_NAILS, 300, 1.0f);
   VR_AddBuiltinWeaponDefault(16, 6, "progs/v_grenlauncher.mdl", -1, 0, -1, 0,
-                             STAT_ROCKETS, 100, 0.2f);
+                             STAT_ROCKETS, 100, 1.0f);
   VR_AddBuiltinWeaponDefault(32, 7, "progs/v_mmml.mdl", -1, 0, -1, 0,
-                             STAT_ROCKETS, 100, 0.2f);
+                             STAT_ROCKETS, 100, 1.0f);
   VR_AddBuiltinWeaponDefault(64, 8, "progs/v_invoker.mdl", -1, 0, -1, 0,
-                             STAT_CELLS, 10, 0.2f);
+                             STAT_CELLS, 10, 1.0f);
 }
 
 static void VR_AddMjolnirWeaponDefaults(void) {
@@ -1574,6 +1574,13 @@ static qboolean VR_GetWeaponAmmo(const vr_dyn_weapon_t *w, int *ammo,
   if (stat < 0 || stat >= MAX_CL_STATS)
     return false;
 
+  /* STAT_AMMO is QuakeC's currentammo, not a per-weapon reserve.  It is valid
+   * for magazine-driven schemas such as QBJ3's pistol only while that weapon
+   * is active; otherwise hiding the value is preferable to displaying the
+   * equipped weapon's ammo under a different wheel entry. */
+  if (stat == STAT_AMMO && !VR_WeaponIsActive(w))
+    return false;
+
 #ifdef STAT_VR_MAX_SHELLS
   switch (stat) {
   case STAT_SHELLS:
@@ -1694,6 +1701,7 @@ DEFINE_CVAR(vr_hud_scale, 0.025, CVAR_ARCHIVE);
 DEFINE_CVAR(vr_menu_scale, 0.13, CVAR_ARCHIVE);
 DEFINE_CVAR(vr_movement_instant_stop, 0, CVAR_ARCHIVE);
 DEFINE_CVAR(vr_movement_defaults_version, 0, CVAR_ARCHIVE);
+DEFINE_CVAR(vr_hud_defaults_version, 0, CVAR_ARCHIVE);
 DEFINE_CVAR(vr_movement_speed, 1.0, CVAR_ARCHIVE);
 DEFINE_CVAR(vr_weaponmenu_mode, VR_WEAPONMENU_MODE_PLAYSPACE, CVAR_ARCHIVE);
 DEFINE_CVAR(vr_weaponmenu_player_teleport, 1, CVAR_ARCHIVE);
@@ -2432,6 +2440,28 @@ void VR_MigrateMovementDefaults_f(void)
 
   Cvar_SetQuick(&vr_movement_defaults_version,
                 va("%d", VR_MOVEMENT_DEFAULTS_VERSION));
+}
+
+#define VR_HUD_DEFAULTS_VERSION 1
+
+void VR_MigrateHudDefaults_f(void)
+{
+  int version = (int)vr_hud_defaults_version.value;
+
+  if (!vr_enabled.value)
+    return;
+  if (version >= VR_HUD_DEFAULTS_VERSION)
+    return;
+
+  /* The former default selects a compact custom CSQC HUD in QBJ3 (and can do
+   * the same in other mods), bypassing the native status bar's VR full-HUD
+   * override.  Migrate that old default once after vr_autoexec.cfg, while
+   * preserving subsequent user choices. */
+  if (version < 1 && VR_MovementDefaultMatches(scr_viewsize.value, 110.0f))
+    Cvar_SetQuick(&scr_viewsize, "100");
+
+  Cvar_SetQuick(&vr_hud_defaults_version,
+                va("%d", VR_HUD_DEFAULTS_VERSION));
 }
 
 static qboolean InitOpenGLExtensions() {
@@ -5024,13 +5054,13 @@ typedef struct {
  */
 static const vr_qbj3_weapon_default_t vr_qbj3_weapon_defaults[] = {
     {"progs/v_wrench.mdl",
-     "bitmask 4096\nmodel progs/v_wrench.mdl\nimpulse 1\nscale 0.2\n"
+     "bitmask 4096\nmodel progs/v_wrench.mdl\nimpulse 1\nscale 1\n"
      "offset 0 0 0\nowned_stat items\nowned_mask 4096\nheld_scale 0.2\n"
      "held_offset -5.090864 45.71518 64.70464\n"
      "muzzle_offset 0 0 0\n"},
     {"progs/v_pistol.mdl",
-     "bitmask 1\nmodel progs/v_pistol.mdl\nimpulse 2\nscale 0.2\n"
-     "offset 0 0 0\nowned_stat items\nowned_mask 1\n"
+     "bitmask 1\nmodel progs/v_pistol.mdl\nimpulse 2\nscale 1\n"
+     "offset 0 0 0\nammo ammo\nowned_stat items\nowned_mask 1\n"
      "projectile_spawn_at_self_origin 1\nmuzzle_source_viewofs 1\n"
      "muzzle_source_offset 0 0 0\nheld_scale 0.2\n"
      "held_offset 3.388845 37.75988 56.43581\n"
@@ -5038,7 +5068,7 @@ static const vr_qbj3_weapon_default_t vr_qbj3_weapon_defaults[] = {
      "mp_held_offset 0 0 0\n"
      "mp_muzzle_offset 8.531928 5.180611 -8.759525\n"},
     {"progs/v_flakshotgun.mdl",
-     "bitmask 2\nmodel progs/v_flakshotgun.mdl\nimpulse 3\nscale 0.2\n"
+     "bitmask 2\nmodel progs/v_flakshotgun.mdl\nimpulse 3\nscale 1\n"
      "offset 0 0 0\nowned_stat items\nowned_mask 2\n"
      "projectile_spawn_at_self_origin 1\nmuzzle_source_viewofs 1\n"
      "muzzle_source_offset 0 -4 12\nheld_scale 0.2\n"
@@ -5047,7 +5077,7 @@ static const vr_qbj3_weapon_default_t vr_qbj3_weapon_defaults[] = {
      "mp_held_offset 0 0 0\n"
      "mp_muzzle_offset -1.482679 -11.57735 -45.51331\n"},
     {"progs/v_tnailgun.mdl",
-     "bitmask 4\nmodel progs/v_tnailgun.mdl\nimpulse 4\nscale 0.2\n"
+     "bitmask 4\nmodel progs/v_tnailgun.mdl\nimpulse 4\nscale 1\n"
      "offset 0 0 0\nowned_stat items\nowned_mask 4\n"
      "projectile_spawn_at_self_origin 1\nmuzzle_source_viewofs 1\n"
      "muzzle_source_offset 0 -6 11\nheld_scale 0.2\n"
@@ -5056,7 +5086,7 @@ static const vr_qbj3_weapon_default_t vr_qbj3_weapon_defaults[] = {
      "mp_held_offset 0 0 0\n"
      "mp_muzzle_offset 0.2494569 -5.47333 -53.83134\n"},
     {"progs/v_rebar.mdl",
-     "bitmask 8\nmodel progs/v_rebar.mdl\nimpulse 5\nscale 0.2\n"
+     "bitmask 8\nmodel progs/v_rebar.mdl\nimpulse 5\nscale 1\n"
      "offset 0 0 0\nowned_stat items\nowned_mask 8\n"
      "projectile_spawn_at_self_origin 1\nmuzzle_source_viewofs 1\n"
      "muzzle_source_offset 0 -8 15\nheld_scale 0.2\n"
@@ -5065,7 +5095,7 @@ static const vr_qbj3_weapon_default_t vr_qbj3_weapon_defaults[] = {
      "mp_held_offset 0 0 0\n"
      "mp_muzzle_offset 0.8458476 -13.62684 -0.612349\n"},
     {"progs/v_grenlauncher.mdl",
-     "bitmask 16\nmodel progs/v_grenlauncher.mdl\nimpulse 6\nscale 0.2\n"
+     "bitmask 16\nmodel progs/v_grenlauncher.mdl\nimpulse 6\nscale 1\n"
      "offset 0 0 0\nowned_stat items\nowned_mask 16\n"
      "projectile_spawn_at_self_origin 1\nmuzzle_source_viewofs 0\n"
      "muzzle_source_offset 0 0 0\nheld_scale 0.2\n"
@@ -5074,7 +5104,7 @@ static const vr_qbj3_weapon_default_t vr_qbj3_weapon_defaults[] = {
      "mp_held_offset 0 0 0\n"
      "mp_muzzle_offset -1.372849 -11.28279 1.222856\n"},
     {"progs/v_mmml.mdl",
-     "bitmask 32\nmodel progs/v_mmml.mdl\nimpulse 7\nscale 0.2\n"
+     "bitmask 32\nmodel progs/v_mmml.mdl\nimpulse 7\nscale 1\n"
      "offset 0 0 0\nowned_stat items\nowned_mask 32\n"
      "projectile_spawn_at_self_origin 1\nmuzzle_source_viewofs 1\n"
      "muzzle_source_offset 0 -10 15\nheld_scale 0.2\n"
@@ -5083,14 +5113,14 @@ static const vr_qbj3_weapon_default_t vr_qbj3_weapon_defaults[] = {
      "mp_held_offset 0 0 0\n"
      "mp_muzzle_offset -0.2388192 -8.662317 -24.89419\n"},
     {"progs/v_invoker.mdl",
-     "bitmask 64\nmodel progs/v_invoker.mdl\nimpulse 8\nscale 0.2\n"
+     "bitmask 64\nmodel progs/v_invoker.mdl\nimpulse 8\nscale 1\n"
      "offset 0 0 0\nowned_stat items\nowned_mask 64\n"
      "projectile_spawn_at_self_origin 1\nmuzzle_source_viewofs 1\n"
      "muzzle_source_offset 0 0 4\nheld_scale 0.2\n"
      "held_offset -0.4811821 24.50682 24.40611\n"
      "muzzle_offset 0 0 0\nmp_held_offset 0 0 0\n"},
     {"progs/v_berserk.mdl",
-     "model progs/v_berserk.mdl\nscale 0.2\nheld_scale 0.2\n"},
+     "model progs/v_berserk.mdl\nscale 1\nheld_scale 0.2\n"},
 };
 
 static qboolean VR_BlockHasKey(const char *block, size_t len,
@@ -5134,11 +5164,46 @@ static qboolean VR_QBJ3DefaultUsesExistingGlobal(
          (has_global_muzzle_offset && !Q_strcmp(key, "muzzle_offset"));
 }
 
+static qboolean VR_QBJ3LegacyWheelScaleLine(const char *line, size_t len) {
+  char value[32];
+  const char *p = line;
+  const char *end = line + len;
+  size_t value_len;
+
+  if (!VR_LineStartsWithKey(line, len, "scale"))
+    return false;
+
+  while (p < end && (*p == ' ' || *p == '\t' || *p == '\r'))
+    p++;
+  p += strlen("scale");
+  while (p < end && (*p == ' ' || *p == '\t' || *p == '\r'))
+    p++;
+
+  value_len = 0;
+  while (p + value_len < end &&
+         !VR_IsTokenBreak(p[value_len]) && p[value_len] != '/' &&
+         value_len + 1 < sizeof(value))
+    value_len++;
+  if (!value_len)
+    return false;
+
+  memcpy(value, p, value_len);
+  value[value_len] = 0;
+  p += value_len;
+  while (p < end && (*p == ' ' || *p == '\t' || *p == '\r'))
+    p++;
+  /* An annotated value is an explicit user choice, not an old generated
+   * default. */
+  if (p + 1 < end && p[0] == '/' && p[1] == '/')
+    return false;
+  return fabsf(Q_atof(value) - 0.2f) < 0.0001f;
+}
+
 static qboolean VR_AppendQBJ3MissingDefaultLines(
     vr_textbuf_t *buf, const char *block, size_t len,
     const vr_qbj3_weapon_default_t *entry, qboolean has_global_held_scale,
     qboolean has_global_held_offset, qboolean has_global_muzzle_offset,
-    qboolean *changed) {
+    qboolean migrate_legacy_wheel_scale, qboolean *changed) {
   const char *p = block;
   const char *end = block + len;
   qboolean inserted = false;
@@ -5152,6 +5217,19 @@ static qboolean VR_AppendQBJ3MissingDefaultLines(
       line_end++;
     line_len = line_end - p;
     full_len = line_len + (line_end < end ? 1 : 0);
+
+    /* QBJ3's original generated schema accidentally copied its 0.2 in-hand
+     * model scale into the independent wheel-scale field.  Repair only the
+     * recognized QBJ3 blocks and leave held_scale (and custom wheel scales)
+     * untouched. */
+    if (migrate_legacy_wheel_scale &&
+        VR_QBJ3LegacyWheelScaleLine(p, line_len)) {
+      if (!VR_TextAppendLine(buf, "scale 1"))
+        return false;
+      *changed = true;
+      p += full_len;
+      continue;
+    }
 
     if (!inserted && VR_LineStartsWithKey(p, line_len, "}")) {
       char line[256];
@@ -5259,6 +5337,8 @@ static qboolean VR_AppendQBJ3DefaultSchema(vr_textbuf_t *buf,
   qboolean has_global_held_scale;
   qboolean has_global_held_offset;
   qboolean has_global_muzzle_offset;
+  qboolean has_wheel_scale_marker;
+  qboolean migrate_legacy_wheel_scale;
   const char *p;
   const char *end;
 
@@ -5274,6 +5354,16 @@ static qboolean VR_AppendQBJ3DefaultSchema(vr_textbuf_t *buf,
   has_global_muzzle_offset =
       existing && VR_BlockHasKey(existing, strlen(existing),
                                  "global_muzzle_offset");
+  has_wheel_scale_marker =
+      existing && strstr(existing, "// qbj3_wheel_scale_v1") != NULL;
+  migrate_legacy_wheel_scale = existing && !has_wheel_scale_marker;
+
+  if (!has_wheel_scale_marker) {
+    if (!VR_TextAppendLine(buf, "// qbj3_wheel_scale_v1"))
+      return false;
+    if (existing && count)
+      (*count)++;
+  }
 
   if (!has_global_held_scale) {
     if (!VR_TextAppendLine(buf, "global_held_scale 0.2"))
@@ -5325,7 +5415,8 @@ static qboolean VR_AppendQBJ3DefaultSchema(vr_textbuf_t *buf,
                 buf, open, close - open,
                 &vr_qbj3_weapon_defaults[default_index],
                 has_global_held_scale, has_global_held_offset,
-                has_global_muzzle_offset, &changed))
+                has_global_muzzle_offset, migrate_legacy_wheel_scale,
+                &changed))
           return false;
         if (changed && count)
           (*count)++;
@@ -6593,6 +6684,8 @@ void VID_VR_Init() {
   vr_fbt_manager_initialized = true;
   Cvar_RegisterVariable(&vr_enabled);
   Cvar_SetCallback(&vr_enabled, VR_Enabled_f);
+  Cvar_RegisterVariable(&vr_hud_defaults_version);
+  Cmd_AddCommand("vr_migrate_hud_defaults", VR_MigrateHudDefaults_f);
   Cvar_RegisterVariable(&vr_vrik);
   Cvar_SetCallback(&vr_vrik, VR_VRIK_f);
   Cvar_RegisterVariable(&vr_weaponmenu_mode);
@@ -7320,6 +7413,7 @@ qboolean VR_Enable() {
   VR_ResetOrientation(); // Recenter the HMD
 
   Cbuf_AddText("exec vr_autoexec.cfg\n"
+               "vr_migrate_hud_defaults\n"
                "vr_migrate_movement_defaults\n"
                "vr_defaultbindings\n"); // Load user VR settings, then ensure
                                          // core controller actions exist.

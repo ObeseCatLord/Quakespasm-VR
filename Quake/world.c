@@ -66,6 +66,7 @@ typedef struct
 {
 	edict_t	*trigger;
 	float	until;
+	qboolean	qc_teleport_time;
 } sv_recent_teleport_trigger_t;
 
 /* QuakeC owns teleportation.  This merely prevents the exact trigger that
@@ -86,7 +87,9 @@ static qboolean SV_IsTeleportTrigger (edict_t *touch)
 	if (touch->v.classname)
 	{
 		classname = PR_GetString(touch->v.classname);
-		if (classname && !q_strcasecmp(classname, "trigger_teleport"))
+		if (classname &&
+			(!q_strcasecmp(classname, "trigger_teleport") ||
+			 !q_strcasecmp(classname, "trigger_instateleport")))
 			return true;
 	}
 
@@ -101,6 +104,16 @@ static qboolean SV_IsTeleportTrigger (edict_t *touch)
 	return teleport_touch && touch->v.touch == teleport_touch;
 }
 
+static qboolean SV_IsInstantTeleportTrigger (edict_t *touch)
+{
+	const char *classname;
+
+	if (!touch || touch->free || !touch->v.classname)
+		return false;
+	classname = PR_GetString(touch->v.classname);
+	return classname && !q_strcasecmp(classname, "trigger_instateleport");
+}
+
 static qboolean SV_ShouldSkipRecentTeleportTrigger (edict_t *touch, edict_t *ent)
 {
 	sv_recent_teleport_trigger_t	*recent;
@@ -113,10 +126,12 @@ static qboolean SV_ShouldSkipRecentTeleportTrigger (edict_t *touch, edict_t *ent
 	if (clientnum < 0 || clientnum >= MAX_SCOREBOARD)
 		return false;
 	recent = &sv_recent_teleport_triggers[clientnum];
-	if (recent->until <= qcvm->time || ent->v.teleport_time != recent->until)
+	if (recent->until <= qcvm->time ||
+		(recent->qc_teleport_time && ent->v.teleport_time != recent->until))
 	{
 		recent->trigger = NULL;
 		recent->until = 0;
+		recent->qc_teleport_time = false;
 		return false;
 	}
 
@@ -124,15 +139,13 @@ static qboolean SV_ShouldSkipRecentTeleportTrigger (edict_t *touch, edict_t *ent
 }
 
 static void SV_RecordRecentTeleportTrigger (edict_t *touch, edict_t *ent,
-	float teleport_time_before, vec3_t origin_before)
+	vec3_t origin_before)
 {
 	sv_recent_teleport_trigger_t	*recent;
 	int					clientnum;
 
 	if (!SV_IsTeleportTrigger(touch) || !SV_IsActiveClientEdict(ent) ||
-		ent->v.teleport_time <= qcvm->time ||
-		(ent->v.teleport_time <= teleport_time_before &&
-		 VectorCompare(ent->v.origin, origin_before)))
+		VectorCompare(ent->v.origin, origin_before))
 		return;
 
 	clientnum = NUM_FOR_EDICT(ent) - 1;
@@ -140,7 +153,26 @@ static void SV_RecordRecentTeleportTrigger (edict_t *touch, edict_t *ent,
 		return;
 	recent = &sv_recent_teleport_triggers[clientnum];
 	recent->trigger = touch;
-	recent->until = ent->v.teleport_time;
+	if (ent->v.teleport_time > qcvm->time)
+	{
+		recent->until = ent->v.teleport_time;
+		recent->qc_teleport_time = true;
+	}
+	else if (SV_IsInstantTeleportTrigger(touch))
+	{
+		/* QBJ3-family instant destinations deliberately omit teleport_time.
+		 * A short exact-trigger lock prevents an overlapping source brush from
+		 * immediately processing the same client again without suppressing a
+		 * different trigger in an intentional portal chain. */
+		recent->until = qcvm->time + 0.1f;
+		recent->qc_teleport_time = false;
+	}
+	else
+	{
+		recent->trigger = NULL;
+		recent->until = 0;
+		recent->qc_teleport_time = false;
+	}
 }
 
 static qboolean SV_IsPointMove (moveclip_t *clip)
@@ -1306,6 +1338,220 @@ static void SV_CoopSharedRememberLevelProgress (
 	sv_coop_shared_level_progress_valid = true;
 }
 
+static qboolean SV_CoopSharedIsLivingPlayer (edict_t *player)
+{
+	return SV_IsActiveClientEdict(player) && player->v.health > 0 &&
+		player->v.deadflag == DEAD_NO;
+}
+
+/*
+ * Apply only the canonical shared-key subset.  Weapons, ammo, powerups, and
+ * map-specific non-key fields remain owned by the player's normal inventory.
+ * Exact replacement matters here: a door consumption must clear a key just as
+ * reliably as a pickup grants one.
+ */
+static void SV_CoopSharedApplyCanonicalKeys (edict_t *player)
+{
+	int	i, type;
+	eval_t	*val;
+
+	if (!player || player->free || !sv_coop_shared_level_progress_valid)
+		return;
+
+	player->v.items = ((int)player->v.items & ~SV_CoopSharedStockKeyMask()) |
+		(sv_coop_shared_level_progress.items & SV_CoopSharedStockKeyMask());
+	if (SV_CoopUsesCountedKeys() &&
+	    sv_coop_shared_level_progress.worldtype_valid)
+	{
+		SV_CoopSharedSetWorldKeyCount(player, false,
+			SV_CoopSharedWorldSilverCount(
+				sv_coop_shared_level_progress.worldtype));
+		SV_CoopSharedSetWorldKeyCount(player, true,
+			SV_CoopSharedWorldGoldCount(
+				sv_coop_shared_level_progress.worldtype));
+	}
+
+	for (i = 0; i < SV_COOP_SHARED_FIELD_COUNT; ++i)
+	{
+		const sv_coop_shared_value_t *saved =
+			&sv_coop_shared_level_progress.extra[i];
+		int key_mask =
+			SV_CoopSharedExtraKeyMask(sv_coop_shared_fields[i].name);
+
+		if (!SV_CoopSharedGetField(player, i, &val, &type))
+			continue;
+		if (key_mask)
+		{
+			int current = SV_CoopSharedGetExtraBitMask(val, type);
+			int bits = saved->valid ? saved->bits : 0;
+			SV_CoopSharedSetExtraBitMask(val, type,
+				(current & ~key_mask) | (bits & key_mask));
+		}
+		else if (SV_CoopUsesCountedKeys() &&
+			 SV_CoopSharedIsKeyCountField(sv_coop_shared_fields[i].name))
+		{
+			val->_float = saved->valid ? saved->value : 0.0f;
+		}
+	}
+}
+
+static void SV_CoopSharedApplyCanonicalTeamKeys (void)
+{
+	edict_t	*authority = NULL;
+	int	i;
+
+	for (i = 0; i < svs.maxclients; ++i)
+	{
+		edict_t *player;
+
+		if (!svs.clients[i].active || !svs.clients[i].spawned)
+			continue;
+		player = svs.clients[i].edict;
+		if (!player || player->free)
+			continue;
+		SV_CoopSharedApplyCanonicalKeys(player);
+		if (SV_CoopSharedIsLivingPlayer(player))
+		{
+			SV_CoopRespawnRefreshClientInventory(player);
+			if (!authority)
+				authority = player;
+		}
+		else if (!authority)
+		{
+			authority = player;
+		}
+	}
+
+	/* Update only key fields in every existing respawn cache.  Refreshing a
+	 * dead player's complete inventory here would discard its pre-death weapons. */
+	if (authority)
+		SV_CoopRespawnSyncSharedKeys(authority);
+}
+
+/*
+ * A shared inventory is a team union, not the inventory of whichever player
+ * touched the most recent pickup.  Rebuild its key portion after every
+ * confirmed gain/loss so keys collected by different players cannot replace
+ * one another in late-join and respawn state.
+ */
+static void SV_CoopSharedRebuildTeamKeys (edict_t *source)
+{
+	sv_coop_shared_inventory_t	current;
+	int	items = 0;
+	int	silver = 0, gold = 0;
+	int	extra_bits[SV_COOP_SHARED_FIELD_COUNT] = {0};
+	float	extra_counts[SV_COOP_SHARED_FIELD_COUNT] = {0};
+	qboolean extra_valid[SV_COOP_SHARED_FIELD_COUNT] = {false};
+	qboolean worldtype_valid = false;
+	int	i, j;
+
+	if (!source || source->free)
+		return;
+
+	/* Preserve progression maxima and custom-key presentation metadata from
+	 * the accepted transaction, then replace only key ownership below. */
+	SV_CaptureCoopSharedInventory(source, &current);
+	SV_CoopSharedRememberLevelProgress(source, &current);
+
+	for (i = 0; i < svs.maxclients; ++i)
+	{
+		edict_t *player = svs.clients[i].edict;
+
+		if (!svs.clients[i].active || !svs.clients[i].spawned ||
+		    !SV_CoopSharedIsLivingPlayer(player))
+			continue;
+		SV_CaptureCoopSharedInventory(player, &current);
+		items |= current.items & SV_CoopSharedStockKeyMask();
+		if (SV_CoopUsesCountedKeys() && current.worldtype_valid)
+		{
+			worldtype_valid = true;
+			silver = q_max(silver,
+				SV_CoopSharedWorldSilverCount(current.worldtype));
+			gold = q_max(gold,
+				SV_CoopSharedWorldGoldCount(current.worldtype));
+		}
+		for (j = 0; j < SV_COOP_SHARED_FIELD_COUNT; ++j)
+		{
+			int key_mask =
+				SV_CoopSharedExtraKeyMask(sv_coop_shared_fields[j].name);
+
+			if (!current.extra[j].valid)
+				continue;
+			if (key_mask)
+			{
+				extra_valid[j] = true;
+				extra_bits[j] |= current.extra[j].bits & key_mask;
+			}
+			else if (SV_CoopUsesCountedKeys() &&
+				 SV_CoopSharedIsKeyCountField(
+					sv_coop_shared_fields[j].name))
+			{
+				extra_valid[j] = true;
+				extra_counts[j] = q_max(extra_counts[j],
+					current.extra[j].value);
+			}
+		}
+	}
+
+	sv_coop_shared_level_progress.items = items;
+	if (SV_CoopUsesCountedKeys() && worldtype_valid)
+	{
+		int worldtype = sv_coop_shared_level_progress.worldtype_valid ?
+			(int)sv_coop_shared_level_progress.worldtype : 0;
+		worldtype = SV_CoopSharedWorldWithSilverCount(worldtype, silver);
+		worldtype = SV_CoopSharedWorldWithGoldCount(worldtype, gold);
+		sv_coop_shared_level_progress.worldtype_valid = true;
+		sv_coop_shared_level_progress.worldtype = (float)worldtype;
+	}
+	for (i = 0; i < SV_COOP_SHARED_FIELD_COUNT; ++i)
+	{
+		int key_mask =
+			SV_CoopSharedExtraKeyMask(sv_coop_shared_fields[i].name);
+
+		if (key_mask)
+		{
+			sv_coop_shared_level_progress.extra[i].valid = extra_valid[i];
+			sv_coop_shared_level_progress.extra[i].bits = extra_bits[i];
+		}
+		else if (SV_CoopUsesCountedKeys() &&
+			 SV_CoopSharedIsKeyCountField(sv_coop_shared_fields[i].name))
+		{
+			sv_coop_shared_level_progress.extra[i].valid = extra_valid[i];
+			sv_coop_shared_level_progress.extra[i].value = extra_counts[i];
+		}
+	}
+	sv_coop_shared_level_progress_valid = true;
+	SV_CoopSharedApplyCanonicalTeamKeys();
+}
+
+void SV_CoopSharedRebuildGrantedKeys (edict_t *source)
+{
+	if (!coop.value || !SV_CoopFeatureEnabled(&sv_coop_shared_pickups, true) ||
+	    !source || source->free)
+		return;
+
+	/* Admin grants enter through host_cmd.c rather than a pickup touch.  Fold
+	 * them into the same canonical team state so peers, respawns, and late
+	 * joiners see the grant exactly as they would a collected key. */
+	SV_CoopSharedRebuildTeamKeys(source);
+}
+
+void SV_CoopSharedReconcileClientDeath (edict_t *player)
+{
+	if (!coop.value || !SV_CoopFeatureEnabled(&sv_coop_shared_pickups, true) ||
+	    !player || player->free ||
+	    !sv_coop_shared_level_progress_valid)
+		return;
+
+	/* Mods may clear, drop, or transfer keys inside PlayerDie.  Copper-family
+	 * TransferKeys can additionally duplicate an engine-shared counted key on a
+	 * recipient.  The snapshot reflects the last accepted pickup/door
+	 * transaction, so restore that exact recognized key state after QuakeC
+	 * finishes the death transition.  Classic co-op disables this policy via
+	 * sv_coop_shared_pickups/SV_CoopFeatureEnabled above. */
+	SV_CoopSharedApplyCanonicalTeamKeys();
+}
+
 void SV_CoopSharedApplyToJoiningClient (edict_t *player)
 {
 	static const char *name_fields[4] = {
@@ -2191,8 +2437,7 @@ static void SV_SyncCoopSharedKeyLoss (
 		SV_CoopSharedApplyKeyLoss(client, before, after);
 	}
 
-	SV_CoopSharedRememberLevelProgress(source, after);
-	SV_CoopRespawnSyncSharedKeys(source);
+	SV_CoopSharedRebuildTeamKeys(source);
 }
 
 static int SV_CoopSharedClientIndex (edict_t *client)
@@ -2304,8 +2549,8 @@ static void SV_ShareCoopPickupInventory (
 	}
 
 	if (key_gain)
-		SV_CoopRespawnSyncSharedKeys(source);
-	if (key_gain || SV_CoopSharedHasPersistentProgressGain(before, after))
+		SV_CoopSharedRebuildTeamKeys(source);
+	else if (SV_CoopSharedHasPersistentProgressGain(before, after))
 		SV_CoopSharedRememberLevelProgress(source, after);
 
 	Con_DPrintf("coop pickup share: %s from %s\n",
@@ -2641,7 +2886,6 @@ void SV_TouchLinks (edict_t *ent)
 
 	for (i = 0; i < listcount; i++)
 	{
-		float	teleport_time_before;
 		vec3_t	origin_before;
 
 		touch = list[i];
@@ -2696,12 +2940,10 @@ void SV_TouchLinks (edict_t *ent)
 		pr_global_struct->self = EDICT_TO_PROG(touch);
 		pr_global_struct->other = EDICT_TO_PROG(ent);
 		pr_global_struct->time = qcvm->time;
-		teleport_time_before = ent->v.teleport_time;
 		VectorCopy(ent->v.origin, origin_before);
 		PR_ExecuteProgram (touch->v.touch);
 		SV_MG3UpgradeTouchEnd(ent, &mg3_upgrade);
-		SV_RecordRecentTeleportTrigger(touch, ent, teleport_time_before,
-			origin_before);
+		SV_RecordRecentTeleportTrigger(touch, ent, origin_before);
 
 		if (coop_weapon_targetfix || coop_pickup_targetfix)
 		{

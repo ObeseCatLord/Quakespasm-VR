@@ -514,6 +514,8 @@ int SV_DeclaredWeaponBits(void);
 qboolean SV_CoopUsesCountedKeys(void);
 void SV_CoopSharedApplyToJoiningClient(edict_t *player);
 void SV_CoopSharedMergeRestoredClient(edict_t *source);
+void SV_CoopSharedRebuildGrantedKeys(edict_t *source);
+void SV_CoopSharedReconcileClientDeath(edict_t *player);
 qboolean SV_CoopSharedBeginClientTouch(edict_t *client);
 void SV_CoopSharedEndClientTouch(edict_t *client);
 void SV_CoopSharedResetState(void);
