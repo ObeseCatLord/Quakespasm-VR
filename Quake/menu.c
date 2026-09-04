@@ -1695,6 +1695,7 @@ void M_Keys_Key(int k) {
       }
       sprintf(cmd, "bind \"%s\" \"%s\"\n", Key_KeynumToString(k), command);
       Cbuf_InsertText(cmd);
+      Voice_SetPTTKeyAllowed(k, !strcmp(command, "+voicerecord"));
     }
 
     bind_grab = false;
@@ -3760,10 +3761,10 @@ static void M_Voice_Adjust(int direction) {
     Cvar_SetValue("voice_receive", !Cvar_VariableValue("voice_receive"));
     break;
   case VOICEOPT_TRANSMIT:
-    Cvar_SetValue("voice_transmit", !Cvar_VariableValue("voice_transmit"));
+    Voice_SetTransmitEnabled(!Voice_TransmitEnabled());
     break;
   case VOICEOPT_MODE:
-    Cvar_SetValue("voice_mode", !Cvar_VariableValue("voice_mode"));
+    Voice_SetMode(!Cvar_VariableValue("voice_mode"));
     break;
   case VOICEOPT_DEVICE:
     Voice_CycleInputDevice(direction);
@@ -3843,6 +3844,10 @@ static void M_Voice_Draw(void) {
 
   M_DrawCharacter(144, M_Voice_RowY(m_voice_cursor),
                   12 + ((int)(realtime * 4) & 1));
+  if (Cvar_VariableValue("voice_mode"))
+    M_PrintWhite(16, 188, "Assign PTT in Controls each session");
+  else
+    M_PrintWhite(16, 188, "Microphone permission: this session");
 }
 
 static void M_Voice_Key(int key) {

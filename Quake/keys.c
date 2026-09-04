@@ -23,6 +23,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 
 #include "arch_def.h"
 #include "quakedef.h"
+#include "voice.h"
 #ifdef VR_SUPPORT
 #include "vr.h"
 #endif
@@ -1077,6 +1078,12 @@ void Key_EventWithKeycode(int key, qboolean down, int keycode) {
     return; // ignore stray key up events
 
   keydown[key] = down;
+
+  /* Microphone PTT must originate in physical desktop/VR input. Console
+   * command execution also accepts untrusted server text. Always deliver up
+   * edges, including after a menu opens or a binding changes. */
+  if (!down || (!key_inputgrab.active && key_dest == key_game && !con_forcedup))
+    Voice_PTTKeyEvent(key, down);
 
   /* A menu-local key press must also own its matching release. Otherwise a
    * consumed F1 bound to a button command (for example +zoom) emits only the

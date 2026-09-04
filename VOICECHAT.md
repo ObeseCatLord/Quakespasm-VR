@@ -2,20 +2,24 @@
 
 The Linux and Windows builds include low-latency Opus voice chat by default.
 The game receives voice without opening the microphone, and only opens the
-selected capture device after the player opts in:
+selected capture device after the player enables **Transmit microphone** under
+**Options > Voice chat options**. This permission must be granted locally each
+time the game starts. Config files and server commands cannot grant it.
 
-```
-voice_transmit 1
-```
-
-Voice activity detection is the default (`voice_mode 0`). For push-to-talk,
-use `voice_mode 1` and bind **push to talk** in the Controls menu (or bind
-`+voicerecord` directly from the console).
+Voice activity detection is the default. For push-to-talk, select
+**Push-to-talk** in the voice menu and assign **push to talk** to a physical
+key/controller button in **Controls**. Assigning that button in Controls grants
+permission for this run; repeat this each time the game starts. Existing console
+or config bindings alone cannot grant permission because servers can also change
+bindings. Running `+voicerecord` as a console command or through an alias cannot
+press PTT. Physical release always stops PTT, including after a menu opens or a
+binding changes while held.
 
 Useful controls:
 
 - `voice_receive 0|1`: disable or enable received voice.
-- `voice_transmit 0|1`: disarm or arm microphone transmission.
+- `voice_transmit`: report microphone permission (read-only; change it in the menu).
+- `voice_mode`: report VAD/PTT mode (read-only; change it in the menu).
 - `voice_vad_sensitivity 0..100`: higher values open the gate more readily.
 - `voice_input_gain 0..4`: software gain before metering, VAD, and encoding.
 - `voice_volume 0..2`: overall received voice gain.
