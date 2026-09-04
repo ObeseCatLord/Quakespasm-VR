@@ -31,8 +31,9 @@ extern "C" {
 #include <GL/gl.h>
 #include <windows.h>
 #ifdef USE_VOICECHAT
-#include <functiondiscoverykeys_devpkey.h>
 #include <mmdeviceapi.h>
+#include <propkeydef.h>
+#include <functiondiscoverykeys_devpkey.h>
 #endif
 
 #ifndef APIENTRYP
