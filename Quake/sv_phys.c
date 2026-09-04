@@ -673,8 +673,13 @@ static vec3_t coop_respawn_death_angles[MAX_SCOREBOARD];
 static vec3_t coop_respawn_death_v_angle[MAX_SCOREBOARD];
 static qboolean coop_respawn_death_anchor_valid[MAX_SCOREBOARD];
 static double coop_respawn_dead_since[MAX_SCOREBOARD];
+static double coop_respawn_limbo_since[MAX_SCOREBOARD];
 static qboolean coop_respawn_force_standard_spawn[MAX_SCOREBOARD];
 static qboolean coop_respawn_mod_cleanup_pending[MAX_SCOREBOARD];
+static qboolean coop_respawn_frame_started_alive[MAX_SCOREBOARD];
+static qboolean coop_respawn_frame_death_handled[MAX_SCOREBOARD];
+static coop_respawn_postthink_state_t
+    coop_respawn_frame_predeath_state[MAX_SCOREBOARD];
 
 void SV_ResetTransientClientSlot(int slot) {
   if (slot < 0 || slot >= MAX_SCOREBOARD)
@@ -692,8 +697,13 @@ void SV_ResetTransientClientSlot(int slot) {
   VectorClear(coop_respawn_death_v_angle[slot]);
   coop_respawn_death_anchor_valid[slot] = false;
   coop_respawn_dead_since[slot] = 0.0;
+  coop_respawn_limbo_since[slot] = 0.0;
   coop_respawn_force_standard_spawn[slot] = false;
   coop_respawn_mod_cleanup_pending[slot] = false;
+  coop_respawn_frame_started_alive[slot] = false;
+  coop_respawn_frame_death_handled[slot] = false;
+  memset(&coop_respawn_frame_predeath_state[slot], 0,
+         sizeof(coop_respawn_frame_predeath_state[slot]));
 }
 
 void SV_ResetTransientClientState(void) {
@@ -801,6 +811,36 @@ static qboolean SV_CoopRespawnHasQBJ3VoidAPI(void) {
          SV_CoopRespawnFieldHasType("csf_color_prev", ev_vector);
 }
 
+static qboolean SV_CoopRespawnHasQBJ3TeleportAPI(void) {
+  return SV_CoopRespawnFindFunction("teleport_limbo_think", 0) != NULL &&
+         SV_CoopRespawnFindFunction("teleport_exit_limbo", 1) != NULL &&
+         SV_CoopRespawnFieldHasType("customflags", ev_float) &&
+         SV_CoopRespawnFieldHasType("dest", ev_vector) &&
+         SV_CoopRespawnFieldHasType("goalentity", ev_entity);
+}
+
+static qboolean SV_CoopRespawnHasValidTeleportGoal(edict_t *ent) {
+  const char *classname;
+  edict_t *goal;
+  int goalref;
+
+  if (!ent)
+    return false;
+  goalref = ent->v.goalentity;
+  if (goalref <= 0 || goalref % qcvm->edict_size != 0 ||
+      goalref > (qcvm->num_edicts - 1) * qcvm->edict_size)
+    return false;
+  goal = PROG_TO_EDICT(goalref);
+  if (goal->free || !goal->v.classname)
+    return false;
+
+  classname = PR_GetString(goal->v.classname);
+  return !strcmp(classname, "info_teleport_destination") ||
+         !strcmp(classname, "info_teleport_target") ||
+         !strcmp(classname, "misc_teleporttrain") ||
+         !strcmp(classname, "info_notnull");
+}
+
 static qboolean SV_CoopRespawnModOwnsLifecycle(edict_t *ent) {
   qboolean flags_valid;
   int customflags;
@@ -845,6 +885,95 @@ static qboolean SV_CoopRespawnCallEntityFunction(edict_t *ent,
   memcpy(&qcvm->globals[OFS_PARM0], old_parms, sizeof(old_parms));
   memcpy(&qcvm->globals[OFS_RETURN], old_return, sizeof(old_return));
   return !ent->free && SV_CoopIsActiveClient(ent);
+}
+
+static qboolean SV_CoopRespawnCallSelfFunction(edict_t *ent,
+                                               const char *name) {
+  dfunction_t *func;
+  float old_parms[MAX_PARMS * 3], old_return[3], old_time;
+  int old_self, old_other, old_argc;
+
+  if (!ent || ent->free || !(func = SV_CoopRespawnFindFunction(name, 0)))
+    return false;
+
+  old_self = pr_global_struct->self;
+  old_other = pr_global_struct->other;
+  old_time = pr_global_struct->time;
+  old_argc = qcvm->argc;
+  memcpy(old_parms, &qcvm->globals[OFS_PARM0], sizeof(old_parms));
+  memcpy(old_return, &qcvm->globals[OFS_RETURN], sizeof(old_return));
+
+  pr_global_struct->self = EDICT_TO_PROG(ent);
+  pr_global_struct->other = EDICT_TO_PROG(qcvm->edicts);
+  pr_global_struct->time = qcvm->time;
+  qcvm->argc = 0;
+  PR_ExecuteProgram(func - qcvm->functions);
+
+  pr_global_struct->self = old_self;
+  pr_global_struct->other = old_other;
+  pr_global_struct->time = old_time;
+  qcvm->argc = old_argc;
+  memcpy(&qcvm->globals[OFS_PARM0], old_parms, sizeof(old_parms));
+  memcpy(&qcvm->globals[OFS_RETURN], old_return, sizeof(old_return));
+  return !ent->free && SV_CoopIsActiveClient(ent);
+}
+
+static void SV_CoopRespawnRecoverStuckTeleportLimbo(edict_t *ent, int num) {
+  qboolean flags_valid;
+  eval_t *dest;
+  int customflags;
+  int index = num - 1;
+
+  if (index < 0 || index >= MAX_SCOREBOARD)
+    return;
+  if (!coop.value || deathmatch.value || !ent || ent->free ||
+      !SV_CoopRespawnHasQBJ3TeleportAPI()) {
+    coop_respawn_limbo_since[index] = 0.0;
+    return;
+  }
+
+  customflags = SV_CoopRespawnCustomFlags(ent, &flags_valid);
+  if (!flags_valid || !(customflags & QBJ3_CFL_LIMBO)) {
+    coop_respawn_limbo_since[index] = 0.0;
+    return;
+  }
+  if (coop_respawn_limbo_since[index] <= 0.0) {
+    coop_respawn_limbo_since[index] = qcvm->time;
+    return;
+  }
+
+  /* QBJ3 retries a blocked destination every 100 ms and forces it after five
+   * seconds.  If that lifecycle is still intact one second later, set the
+   * mod's own force flag and run its normal limbo think once.  That completes
+   * the destination teleport as well as restoring visibility/collision;
+   * calling teleport_exit_limbo alone would leave the player on the source
+   * trigger and could immediately enter limbo again. */
+  if (qcvm->time - coop_respawn_limbo_since[index] < 6.0 ||
+      ent->v.takedamage != DAMAGE_NO || ent->v.solid != SOLID_NOT ||
+      ent->v.movetype != MOVETYPE_NONE)
+    return;
+
+  /* This is an engine-forced retry, so be more defensive than the ordinary
+   * QuakeC path: a destination removed or repurposed while the player was in
+   * limbo must not be dereferenced by teleport_limbo_think. */
+  if (!SV_CoopRespawnHasValidTeleportGoal(ent)) {
+    coop_respawn_limbo_since[index] = 0.0;
+    return;
+  }
+
+  dest = SV_CoopRespawnGetTypedField(ent, "dest", ev_vector);
+  if (!dest)
+    return;
+  dest->vector[2] = 1.0f;
+  if (!SV_CoopRespawnCallSelfFunction(ent, "teleport_limbo_think"))
+    return;
+  customflags = SV_CoopRespawnCustomFlags(ent, &flags_valid);
+  if (flags_valid && !(customflags & QBJ3_CFL_LIMBO)) {
+    coop_respawn_limbo_since[index] = 0.0;
+    if (net_lagdebug.value)
+      Con_Printf("net_lagdebug: completed stuck QBJ3 teleport limbo for client %d\n",
+                 num);
+  }
 }
 
 static void SV_CoopRespawnFinishModLifecycle(edict_t *ent, int num) {
@@ -1408,6 +1537,73 @@ static void SV_CoopRespawnRecordDeathAnchor(
     coop_respawn_dead_since[index] = qcvm->time;
 }
 
+static void SV_CoopRespawnBeginFrameDeathTracking(void) {
+  int i;
+
+  memset(coop_respawn_frame_started_alive, 0,
+         sizeof(coop_respawn_frame_started_alive));
+  memset(coop_respawn_frame_death_handled, 0,
+         sizeof(coop_respawn_frame_death_handled));
+  memset(coop_respawn_frame_predeath_state, 0,
+         sizeof(coop_respawn_frame_predeath_state));
+
+  if (qcvm != &sv.qcvm || !coop.value)
+    return;
+
+  for (i = 1; i <= svs.maxclients && i <= MAX_SCOREBOARD; ++i) {
+    edict_t *ent = EDICT_NUM(i);
+    coop_respawn_postthink_state_t *state =
+        &coop_respawn_frame_predeath_state[i - 1];
+
+    if (!SV_CoopRespawnIsAliveClient(ent))
+      continue;
+
+    coop_respawn_frame_started_alive[i - 1] = true;
+    state->old_force_retouch = pr_global_struct->force_retouch;
+    VectorCopy(ent->v.origin, state->death_origin);
+    VectorCopy(ent->v.angles, state->death_angles);
+    VectorCopy(ent->v.v_angle, state->death_v_angle);
+  }
+}
+
+static void SV_CoopRespawnHandleDeathTransition(
+    edict_t *ent, int num, const coop_respawn_postthink_state_t *state) {
+  int index = num - 1;
+
+  if (!coop.value || !ent || ent->free || !state || index < 0 ||
+      index >= MAX_SCOREBOARD ||
+      coop_respawn_frame_death_handled[index])
+    return;
+
+  coop_respawn_frame_death_handled[index] = true;
+  SV_CoopSharedReconcileClientDeath(ent);
+  SV_CoopRespawnRecordDeathAnchor(ent, num, state);
+  if (!SV_CoopRespawnAnyAliveClient())
+    SV_CoopRespawnMarkTeamWipe();
+}
+
+static void SV_CoopRespawnEndFrameDeathTracking(void) {
+  int i;
+
+  if (qcvm != &sv.qcvm || !coop.value)
+    return;
+
+  for (i = 1; i <= svs.maxclients && i <= MAX_SCOREBOARD; ++i) {
+    edict_t *ent;
+
+    if (!coop_respawn_frame_started_alive[i - 1] ||
+        coop_respawn_frame_death_handled[i - 1])
+      continue;
+
+    ent = EDICT_NUM(i);
+    if (!SV_CoopIsDeadClient(ent))
+      continue;
+
+    SV_CoopRespawnHandleDeathTransition(
+        ent, i, &coop_respawn_frame_predeath_state[i - 1]);
+  }
+}
+
 static void SV_CoopRespawnUseDeathAnchor(
     int num, coop_respawn_postthink_state_t *state) {
   int index;
@@ -1945,6 +2141,7 @@ static void SV_CoopRespawnEndPostThink(
   edict_t *anchor = NULL;
   vec3_t spot;
 
+  SV_CoopRespawnRecoverStuckTeleportLimbo(ent, num);
   SV_CoopRespawnFinishModLifecycle(ent, num);
   if (state->mod_owns_respawn)
     return;
@@ -1955,9 +2152,7 @@ static void SV_CoopRespawnEndPostThink(
   }
 
   if (!state->was_dead && SV_CoopIsDeadClient(ent)) {
-    SV_CoopRespawnRecordDeathAnchor(ent, num, state);
-    if (!SV_CoopRespawnAnyAliveClient())
-      SV_CoopRespawnMarkTeamWipe();
+    SV_CoopRespawnHandleDeathTransition(ent, num, state);
     SV_CoopRespawnRestoreSuppressedInput(ent, num, state);
     return;
   }
@@ -3970,6 +4165,11 @@ void SV_Physics(double frametime) {
   if (qcvm == &sv.qcvm && ff_active)
     SV_FriendlyFireReset();
 
+  /* Snapshot before StartFrame and before client/entity physics.  Death QC
+   * may run from any of those phases, including missiles and monsters which
+   * are processed after the victim's own post-think. */
+  SV_CoopRespawnBeginFrameDeathTracking();
+
   if (qcvm->extglobals.physics_mode)
     physics_mode = *qcvm->extglobals.physics_mode;
   else
@@ -3981,6 +4181,7 @@ void SV_Physics(double frametime) {
   pr_global_struct->frametime = qcvm->frametime = frametime;
 
   if (!physics_mode) {
+    SV_CoopRespawnEndFrameDeathTracking();
     qcvm->time += frametime;
     return;
   }
@@ -3991,6 +4192,7 @@ void SV_Physics(double frametime) {
         continue;
       SV_RunThink(ent);
     }
+    SV_CoopRespawnEndFrameDeathTracking();
     qcvm->time += frametime;
     return;
   }
@@ -4072,6 +4274,11 @@ void SV_Physics(double frametime) {
     }
     // johnfitz
   }
+
+  /* Complete alive-to-dead transitions only after every entity has run.
+   * The immediate player-postthink path marks deaths it already handled, so
+   * this catches later projectile/monster/trigger deaths exactly once. */
+  SV_CoopRespawnEndFrameDeathTracking();
 
   if (pr_global_struct->force_retouch)
     pr_global_struct->force_retouch--;

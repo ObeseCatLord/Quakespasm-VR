@@ -3192,6 +3192,12 @@ static void COM_Game_f (void)
 			Cvar_Reset ("r_drawviewmodel");
 
 		VID_Lock ();
+		/* HUD-default migration is archived per game. Reset its in-memory value
+		 * before the new mod's config is read: an existing config restores its
+		 * completed version, while a fresh mod receives the VR full-HUD default
+		 * exactly once. */
+		if (!isDedicated)
+			Cvar_Set ("vr_hud_defaults_version", "0");
 		Cbuf_AddText ("exec quake.rc\n");
 		Cbuf_AddText ("vid_unlock\n");
 		Cbuf_AddText ("mod_migrate_enhancedmodels\n");
@@ -3200,6 +3206,8 @@ static void COM_Game_f (void)
 		Cbuf_AddText ("host_migrate_network_defaults\n");
 		Cbuf_AddText ("cl_migrate_network_defaults\n");
 		Cbuf_AddText ("vr_migrate_movement_defaults\n");
+		if (!isDedicated)
+			Cbuf_AddText ("vr_migrate_hud_defaults\n");
 
 		if ((play_after_change || vr_enabled.value) &&
 			!CL_AutoReconnect_IsActive() && COM_CurrentGameHasStartMap ())

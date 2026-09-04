@@ -1116,10 +1116,10 @@ static qmodel_t *Mod_LoadModel (qmodel_t *mod, qboolean crash)
 			md3_filesize = com_filesize;
 			if (md3buf)
 			{
-				mod_alias_build.md3_from_rerelease = md3_from_rerelease;
 				/* Load companion skins against the replacement's search path. */
 				mod->path_id = md3_path_id;
-				Mod_LoadMD3Model (mod, md3buf, (size_t)md3_filesize);
+				if (Mod_LoadMD3Model (mod, md3buf, (size_t)md3_filesize))
+					mod_alias_build.md3_from_rerelease = md3_from_rerelease;
 				mod->path_id = original_path_id;
 				free (md3buf);
 			}
@@ -1133,9 +1133,9 @@ static qmodel_t *Mod_LoadModel (qmodel_t *mod, qboolean crash)
 			md5_filesize = com_filesize;
 			if (md5buf)
 			{
-				mod_alias_build.md5_from_rerelease = md5_from_rerelease;
 				mod->path_id = md5_path_id;
-				Mod_LoadMD5MeshModel (mod, md5buf, (size_t)md5_filesize);
+				if (Mod_LoadMD5MeshModel (mod, md5buf, (size_t)md5_filesize))
+					mod_alias_build.md5_from_rerelease = md5_from_rerelease;
 				mod->path_id = original_path_id;
 				free (md5buf);
 			}

@@ -1872,6 +1872,46 @@ static void PF_Remove (void)
 	ED_Free (ed);
 }
 
+/*
+ * The QBJ3/UDoB/Tomb of Thunder code family keeps fixed client edicts
+ * allocated after disconnect, clears FL_CLIENT, then assumes that
+ * nextent()/find(classname, "player") enumerate only active client slots.
+ * An inactive hole consequently stops centerprintlocal() before later clients,
+ * while stale player edicts can occupy co-op teleport destinations forever.
+ *
+ * Vanilla and many other mods deliberately depend on the standard builtins
+ * returning every non-free edict, including disconnected client bodies.  Keep
+ * this as a narrowly identified compatibility rule.  The four-function
+ * fingerprint identifies the shared Copper-derived implementation in the
+ * installed QBJ3, UDoB, Tomb of Thunder, Dwell, and CTSJ2 programs without
+ * tying compatibility to an installation folder name.  Spiritworld uses the
+ * same sources even though the current local copy is source-only.
+ */
+static qboolean PF_ProgsNeedsActiveClientEnumeration (void)
+{
+	static dprograms_t	*cached_progs;
+	static unsigned short	cached_crc;
+	static qboolean		cached_result;
+
+	if (cached_progs != qcvm->progs || cached_crc != qcvm->crc)
+	{
+		cached_progs = qcvm->progs;
+		cached_crc = qcvm->crc;
+		cached_result = ED_FindFunction ("centerprintlocal") != NULL &&
+			ED_FindFunction ("teleport_check_for_client") != NULL &&
+			ED_FindFunction ("teleport_enter_limbo") != NULL &&
+			ED_FindFunction ("spawn_tpush") != NULL;
+	}
+
+	return cached_result;
+}
+
+static qboolean PF_SkipInactiveClientSlot (int entnum)
+{
+	return PF_ProgsNeedsActiveClientEnumeration () && entnum >= 1 &&
+		entnum <= svs.maxclients && !svs.clients[entnum - 1].active;
+}
+
 
 // entity (entity start, .string field, string match) find = #5;
 static void PF_Find (void)
@@ -1902,7 +1942,7 @@ static void PF_Find (void)
 	for (e++ ; e < qcvm->num_edicts ; e++)
 	{
 		ed = EDICT_NUM(e);
-		if (ed->free)
+		if (ed->free || PF_SkipInactiveClientSlot (e))
 			continue;
 		t = E_STRING(ed,f);
 		if (!t)
@@ -2189,7 +2229,7 @@ static void PF_nextent (void)
 			return;
 		}
 		ent = EDICT_NUM(i);
-		if (!ent->free)
+		if (!ent->free && !PF_SkipInactiveClientSlot (i))
 		{
 			RETURN_EDICT(ent);
 			return;
