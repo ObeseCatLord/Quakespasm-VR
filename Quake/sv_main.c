@@ -105,6 +105,7 @@ extern cvar_t nomonsters;
 // Live cap for remote unreliable packets. Match QSS-M's DATAGRAM_MTU by
 // default; lower this only when a specific network path needs more headroom.
 cvar_t sv_maxpacketsize = {"sv_maxpacketsize", "1400", CVAR_NONE};
+cvar_t sv_voice = {"sv_voice", "1", CVAR_NOTIFY | CVAR_SERVERINFO};
 cvar_t sv_netdiag_interval = {"sv_netdiag_interval", "5", CVAR_NONE};
 cvar_t sv_replacement_maxpackets = {"sv_replacement_maxpackets", "0", CVAR_NONE};
 cvar_t sv_predict_nqmovement = {"sv_predict_nqmovement", "0", CVAR_NOTIFY | CVAR_SERVERINFO};
@@ -152,6 +153,77 @@ static void SV_WriteMoveAckPayloadToMessage (client_t *client, sizebuf_t *msg);
 #define VRIK_SVC_V2_MESSAGE_BYTES (1 + 2 + 4 + VRIK_POSE_WIRE_BYTES)
 #define VRIK_SERVER_MIN_INTERVAL 0.025
 static unsigned int sv_vrik_next_generation;
+static unsigned int sv_voice_next_generation;
+
+#define VOICE_SERVER_MAX_PACKETS_PER_SECOND 75u
+#define VOICE_SERVER_MAX_BYTES_PER_SECOND 16000u
+#define VOICE_SERVER_MAX_PACKET_AGE 0.25
+#define VOICE_SERVER_DATAGRAM_BUDGET 900
+#define VOICE_SERVER_PACKETS_PER_SOURCE_TICK 3
+
+static qboolean SV_VoicePacketIsDuplicate(const client_t *client,
+	const voice_packet_t *packet)
+{
+	uint64_t first, serial;
+
+	if (!client->voice_next_serial)
+		return false;
+	first = client->voice_next_serial >= VOICE_SERVER_QUEUE_CAPACITY ?
+		client->voice_next_serial - VOICE_SERVER_QUEUE_CAPACITY + 1 : 1;
+	for (serial = first; serial <= client->voice_next_serial; ++serial)
+	{
+		const server_voice_packet_t *queued =
+			&client->voice_packets[(serial - 1) % VOICE_SERVER_QUEUE_CAPACITY];
+		if (queued->serial == serial &&
+			queued->packet.sequence == packet->sequence &&
+			queued->packet.talkspurt == packet->talkspurt &&
+			queued->packet.flags == packet->flags)
+			return true;
+	}
+	return false;
+}
+
+void SV_ReceiveVoicePacket(client_t *client, const voice_packet_t *packet)
+{
+	server_voice_packet_t *queued;
+	unsigned int packet_bytes;
+
+	if (!client || !packet || !sv_voice.value || !client->active ||
+		!client->spawned || !client->voice_capable)
+		return;
+	if ((packet->flags & ~VOICE_FLAG_KNOWN) ||
+		packet->payload_bytes > VOICE_MAX_PAYLOAD ||
+		(!packet->payload_bytes && !(packet->flags & VOICE_FLAG_END)))
+		return;
+
+	if (realtime < client->voice_rate_window_start ||
+		realtime - client->voice_rate_window_start >= 1.0)
+	{
+		client->voice_rate_window_start = realtime;
+		client->voice_rate_packets = 0;
+		client->voice_rate_bytes = 0;
+	}
+	packet_bytes = VOICE_CLC_HEADER_BYTES + packet->payload_bytes;
+	if (client->voice_rate_packets >= VOICE_SERVER_MAX_PACKETS_PER_SECOND ||
+		client->voice_rate_bytes + packet_bytes > VOICE_SERVER_MAX_BYTES_PER_SECOND)
+		return;
+	client->voice_rate_packets++;
+	client->voice_rate_bytes += packet_bytes;
+
+	if (SV_VoicePacketIsDuplicate(client, packet))
+		return;
+	client->voice_next_serial++;
+	if (!client->voice_next_serial)
+	{
+		memset(client->voice_packets, 0, sizeof(client->voice_packets));
+		client->voice_next_serial = 1;
+	}
+	queued = &client->voice_packets[
+		(client->voice_next_serial - 1) % VOICE_SERVER_QUEUE_CAPACITY];
+	queued->serial = client->voice_next_serial;
+	queued->arrival_time = realtime;
+	queued->packet = *packet;
+}
 
 static qboolean SV_VRIKPoseV3IsValid(const vrik_codec_pose_t *pose)
 {
@@ -840,6 +912,7 @@ void SV_Init (void)
 	Cvar_RegisterVariable (&sv_gameplayfix_random);
 	Cvar_RegisterVariable (&sv_inputtimeout);
 	Cvar_RegisterVariable (&sv_maxpacketsize);
+	Cvar_RegisterVariable (&sv_voice);
 	Cvar_RegisterVariable (&sv_netdiag_interval);
 	Cvar_RegisterVariable (&sv_replacement_maxpackets);
 	Cvar_RegisterVariable (&sv_predict_nqmovement);
@@ -1256,6 +1329,13 @@ void SV_SendServerinfo (client_t *client)
 	MSG_WriteString (&client->message, "//vrik_protocol 3\n");
 	MSG_WriteByte (&client->message, svc_stufftext);
 	MSG_WriteString (&client->message, "//vrik_protocol 2\n");
+#ifdef USE_VOICECHAT
+	if (sv_voice.value)
+	{
+		MSG_WriteByte (&client->message, svc_stufftext);
+		MSG_WriteString (&client->message, "//voice_protocol 1\n");
+	}
+#endif
 
 	MSG_WriteByte (&client->message, svc_signonnum);
 	MSG_WriteByte (&client->message, 1);
@@ -1297,6 +1377,9 @@ void SV_ConnectClient (int clientnum)
 	memset (client, 0, sizeof(*client));
 	client->netconnection = netconnection;
 	client->avatar_id = PLAYER_AVATAR_RANGER;
+	client->voice_generation = ++sv_voice_next_generation;
+	if (!client->voice_generation)
+		client->voice_generation = ++sv_voice_next_generation;
 	SV_ResetClientMoveState (client);
 
 	strcpy (client->name, "unconnected");
@@ -3485,6 +3568,117 @@ static qboolean SVFTE_AppendPendingVRIK (client_t *recipient, sizebuf_t *msg,
 	return true;
 }
 
+#ifdef USE_VOICECHAT
+static server_voice_packet_t *SV_VoicePacketForSerial(client_t *source,
+	uint64_t serial)
+{
+	server_voice_packet_t *packet;
+	uint64_t oldest;
+
+	if (!source->voice_next_serial || serial < 1 ||
+		serial > source->voice_next_serial)
+		return NULL;
+	oldest = source->voice_next_serial >= VOICE_SERVER_QUEUE_CAPACITY ?
+		source->voice_next_serial - VOICE_SERVER_QUEUE_CAPACITY + 1 : 1;
+	if (serial < oldest)
+		return NULL;
+	packet = &source->voice_packets[(serial - 1) % VOICE_SERVER_QUEUE_CAPACITY];
+	return packet->serial == serial ? packet : NULL;
+}
+
+static void SV_WriteVoicePacket(sizebuf_t *msg, int source_slot,
+	unsigned int source_generation, const voice_packet_t *packet)
+{
+	MSG_WriteByte(msg, svc_voice);
+	MSG_WriteByte(msg, source_slot + 1);
+	MSG_WriteLong(msg, (int)source_generation);
+	MSG_WriteShort(msg, packet->sequence);
+	MSG_WriteLong(msg, (int)packet->timestamp);
+	MSG_WriteByte(msg, packet->talkspurt);
+	MSG_WriteByte(msg, packet->flags);
+	MSG_WriteShort(msg, packet->payload_bytes);
+	if (packet->payload_bytes)
+		SZ_Write(msg, packet->payload, packet->payload_bytes);
+}
+
+/* Voice is deliberately sent after the gameplay snapshot, in at most one
+ * separately-budgeted unreliable datagram.  The server tick is 20 Hz while
+ * voice frames are 50 Hz, so each source may contribute up to three frames. */
+static qboolean SVFTE_SendPendingVoice(client_t *recipient,
+	int *packet_count, int *total_bytes, int *max_packet_bytes)
+{
+	byte data[VOICE_SERVER_DATAGRAM_BUDGET];
+	sizebuf_t msg;
+	int source_count, start, round, offset;
+	qboolean full = false;
+
+	if (!sv_voice.value || !recipient->voice_capable)
+		return true;
+	source_count = q_min(svs.maxclients, MAX_SCOREBOARD);
+	if (source_count <= 1)
+		return true;
+
+	msg.data = data;
+	msg.maxsize = q_min((int)sizeof(data), SV_ClientUnreliableLimit(recipient));
+	msg.cursize = 0;
+	msg.allowoverflow = false;
+	msg.overflowed = false;
+	start = recipient->voice_relay_next_source % source_count;
+
+	for (round = 0; round < VOICE_SERVER_PACKETS_PER_SOURCE_TICK && !full;
+		++round)
+	{
+		for (offset = 0; offset < source_count; ++offset)
+		{
+			int source_slot = (start + offset) % source_count;
+			client_t *source = &svs.clients[source_slot];
+			server_voice_packet_t *queued;
+			uint64_t oldest, serial;
+			int required_bytes;
+
+			if (source == recipient || !source->active || !source->spawned ||
+				!source->voice_capable || !source->voice_generation ||
+				!source->voice_next_serial)
+				continue;
+			oldest = source->voice_next_serial >= VOICE_SERVER_QUEUE_CAPACITY ?
+				source->voice_next_serial - VOICE_SERVER_QUEUE_CAPACITY + 1 : 1;
+			if (recipient->voice_relay_generation[source_slot] !=
+				source->voice_generation)
+			{
+				recipient->voice_relay_generation[source_slot] =
+					source->voice_generation;
+				recipient->voice_relay_serial[source_slot] = oldest - 1;
+			}
+			if (recipient->voice_relay_serial[source_slot] + 1 < oldest)
+				recipient->voice_relay_serial[source_slot] = oldest - 1;
+			serial = recipient->voice_relay_serial[source_slot] + 1;
+			queued = SV_VoicePacketForSerial(source, serial);
+			while (queued && realtime - queued->arrival_time >
+				VOICE_SERVER_MAX_PACKET_AGE)
+			{
+				recipient->voice_relay_serial[source_slot] = serial++;
+				queued = SV_VoicePacketForSerial(source, serial);
+			}
+			if (!queued)
+				continue;
+
+			required_bytes = VOICE_SVC_HEADER_BYTES + queued->packet.payload_bytes;
+			if (msg.cursize + required_bytes > msg.maxsize)
+			{
+				full = true;
+				break;
+			}
+			SV_WriteVoicePacket(&msg, source_slot, source->voice_generation,
+				&queued->packet);
+			recipient->voice_relay_serial[source_slot] = serial;
+		}
+	}
+	recipient->voice_relay_next_source = (unsigned char)((start + 1) % source_count);
+	return SVFTE_SendBufferedDatagram(recipient, &msg, packet_count,
+		total_bytes, max_packet_bytes);
+}
+#endif
+
 static int SVFTE_AppendPrivateDatagram (client_t *client, sizebuf_t *msg,
 	int *packet_count, int *total_bytes, int *max_packet_bytes)
 {
@@ -3763,6 +3957,12 @@ static qboolean SVFTE_SendClientDatagram (client_t *client, int maxsize)
 	if (!SVFTE_SendBufferedDatagram (client, &msg, &packet_count,
 			&total_bytes, &max_packet_bytes))
 		return false;
+
+#ifdef USE_VOICECHAT
+	if (!SVFTE_SendPendingVoice(client, &packet_count, &total_bytes,
+			&max_packet_bytes))
+		return false;
+#endif
 
 	if (packet_count > 1)
 		client->net_snapshot_split_packets += packet_count - 1;

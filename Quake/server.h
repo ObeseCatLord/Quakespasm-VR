@@ -26,6 +26,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 // server.h
 
 #include "vrik_codec.h"
+#include "voice_protocol.h"
 
 #define	NUM_SPAWN_PARMS		16
 
@@ -43,6 +44,14 @@ typedef struct
 //=============================================================================
 
 #define MAX_SIGNON_BUFFERS 256
+#define VOICE_SERVER_QUEUE_CAPACITY 32
+
+typedef struct server_voice_packet_s
+{
+	uint64_t serial;
+	double arrival_time;
+	voice_packet_t packet;
+} server_voice_packet_t;
 
 typedef enum {ss_loading, ss_active} server_state_t;
 
@@ -321,6 +330,16 @@ typedef struct client_s
 	qboolean		vrik_relay_sequence_valid[MAX_SCOREBOARD];
 	unsigned short		vrik_relay_sequence[MAX_SCOREBOARD];
 	unsigned int		vrik_relay_generation[MAX_SCOREBOARD];
+	qboolean		voice_capable;
+	unsigned int		voice_generation;
+	server_voice_packet_t voice_packets[VOICE_SERVER_QUEUE_CAPACITY];
+	uint64_t		voice_next_serial;
+	double			voice_rate_window_start;
+	unsigned int		voice_rate_packets;
+	unsigned int		voice_rate_bytes;
+	uint64_t		voice_relay_serial[MAX_SCOREBOARD];
+	unsigned int		voice_relay_generation[MAX_SCOREBOARD];
+	unsigned char		voice_relay_next_source;
 
 	// VR Data
 	qboolean		is_vr_client;
@@ -336,6 +355,7 @@ typedef struct client_s
 
 void SVFTE_Ack (client_t *client, int sequence);
 void SVFTE_DestroyFrames (client_t *client);
+void SV_ReceiveVoicePacket (client_t *client, const voice_packet_t *packet);
 
 //=============================================================================
 
@@ -448,6 +468,7 @@ qboolean SV_CoopFeatureEnabled(const cvar_t *feature,
 int SV_CoopFeatureLevel(const cvar_t *feature, int modern_default);
 qboolean SV_ShouldSuppressCoopTelefrag(edict_t *trigger, edict_t *other);
 extern cvar_t sv_netdiag_interval;
+extern cvar_t sv_voice;
 extern cvar_t sv_save_multiplayer;
 extern cvar_t sv_cmdfile;
 extern cvar_t fraglimit;

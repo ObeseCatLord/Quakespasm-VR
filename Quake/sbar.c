@@ -22,6 +22,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 // sbar.c -- status bar code
 
 #include "quakedef.h"
+#include "voice.h"
 
 extern cvar_t vr_enabled;
 
@@ -1293,6 +1294,35 @@ static float Sbar_CSQCScale (void)
 	return CLAMP (1.0, scr_sbarscale.value, (float)glwidth / 320.0);
 }
 
+static void Sbar_DrawVoiceStatus(void)
+{
+	char text[64];
+	int i, y = 8;
+	int x = q_max(8, glwidth - 184);
+	int meter = (int)(CLAMP(0.0f, Voice_InputLevel(), 1.0f) * 80.0f);
+
+	if (!Voice_HUDEnabled())
+		return;
+	GL_SetCanvas(CANVAS_DEFAULT);
+	q_snprintf(text, sizeof(text), "MIC %s",
+		Voice_IsTransmitting() ? "LIVE" : "OFF");
+	Draw_String(x, y, text);
+	Draw_Fill(x + 72, y + 1, 80, 6, 0, 0.65f);
+	if (meter > 0)
+		Draw_Fill(x + 72, y + 1, meter, 6,
+			meter > 68 ? 251 : 112, 0.9f);
+	y += 12;
+	for (i = 0; i < cl.maxclients && i < MAX_SCOREBOARD; ++i)
+	{
+		if (!Voice_SpeakerTalking(i))
+			continue;
+		q_snprintf(text, sizeof(text), "> %s",
+			cl.scores[i].name[0] ? cl.scores[i].name : "player");
+		Draw_String(x, y, text);
+		y += 10;
+	}
+}
+
 void Sbar_Draw (void)
 {
 	float w; //johnfitz
@@ -1302,6 +1332,8 @@ void Sbar_Draw (void)
 
 	if (scr_con_current == vid.height)
 		return;		// console is full screen
+
+	Sbar_DrawVoiceStatus();
 
 	if (cl.qcvm.extfuncs.CSQC_DrawHud && !qcvm)
 	{
