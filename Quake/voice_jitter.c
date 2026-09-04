@@ -57,6 +57,18 @@ static void Voice_JitterFinalizeTalkspurt(voice_jitter_t *jitter)
 	jitter->target_delay_ms = (uint8_t)Voice_JitterClampTarget(next_target);
 }
 
+void Voice_JitterEndTalkspurt(voice_jitter_t *jitter)
+{
+	unsigned int next_target;
+
+	if (!jitter || !jitter->have_talkspurt)
+		return;
+	Voice_JitterFinalizeTalkspurt(jitter);
+	next_target = jitter->target_delay_ms;
+	Voice_JitterReset(jitter);
+	jitter->target_delay_ms = (uint8_t)next_target;
+}
+
 void Voice_JitterReset(voice_jitter_t *jitter)
 {
 	if (!jitter)
@@ -133,13 +145,13 @@ voice_jitter_status_t Voice_JitterInsert(voice_jitter_t *jitter,
 	Voice_JitterMaybeResetStale(jitter, now_ms);
 
 	if (jitter->have_talkspurt) {
-		if (jitter->playout_started &&
-			Voice_JitterSequenceCompare(packet->sequence, jitter->expected_sequence) < 0)
-			return VOICE_JITTER_TOO_OLD;
 		if (packet->talkspurt != jitter->current_talkspurt &&
 			(!jitter->have_highest ||
 			Voice_JitterSequenceIsNewer(packet->sequence, jitter->highest_sequence)))
 			new_talkspurt = 1;
+		if (!new_talkspurt && jitter->playout_started &&
+			Voice_JitterSequenceCompare(packet->sequence, jitter->expected_sequence) < 0)
+			return VOICE_JITTER_TOO_OLD;
 	} else {
 		new_talkspurt = 1;
 	}
@@ -244,6 +256,5 @@ voice_jitter_status_t Voice_JitterNextFrame(voice_jitter_t *jitter,
 
 	jitter->expected_sequence = (uint16_t)(jitter->expected_sequence + 1u);
 	jitter->next_deadline_ms += VOICE_JITTER_FRAME_MS;
-	jitter->last_activity_ms = now_ms;
 	return VOICE_JITTER_OK;
 }

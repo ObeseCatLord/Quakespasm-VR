@@ -20,6 +20,9 @@ void Voice_ReceivePacket(int source_slot, uint32_t source_generation,
 	const voice_packet_t *packet);
 
 qboolean Voice_Available(void);
+const char *Voice_InputDeviceName(void);
+void Voice_CycleInputDevice(int direction);
+qboolean Voice_TransmitEnabled(void);
 qboolean Voice_IsTransmitting(void);
 float Voice_InputLevel(void);
 qboolean Voice_SpeakerTalking(int source_slot);
@@ -36,6 +39,9 @@ qboolean Voice_HUDEnabled(void);
 #define Voice_AppendOutgoing(message) 0
 #define Voice_ReceivePacket(source_slot, source_generation, packet) 0
 #define Voice_Available() 0
+#define Voice_InputDeviceName() "unavailable"
+#define Voice_CycleInputDevice(direction) ((void)0)
+#define Voice_TransmitEnabled() 0
 #define Voice_IsTransmitting() 0
 #define Voice_InputLevel() 0.0f
 #define Voice_SpeakerTalking(source_slot) 0

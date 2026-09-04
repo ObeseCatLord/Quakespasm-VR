@@ -9,7 +9,8 @@ voice_transmit 1
 ```
 
 Voice activity detection is the default (`voice_mode 0`). For push-to-talk,
-use `voice_mode 1` and bind `+voicerecord` to a key or controller button.
+use `voice_mode 1` and bind **push to talk** in the Controls menu (or bind
+`+voicerecord` directly from the console).
 
 Useful controls:
 
@@ -28,9 +29,17 @@ Useful controls:
 - `voice_input_device "<name>"; voice_restart`: select and reopen a device.
 - `voice_status`: print capture, receive, transmit, mode, and input-level state.
 
+The same common controls are available under **Options > Voice chat options**.
+Changing the input device there reopens capture immediately. In co-op, an
+actively speaking player's existing world-space nametag changes from
+`playername` to `((playername))` as an additional positional indicator.
+
 Servers can disable negotiation and relay with `sv_voice 0`. Voice is carried
 in bounded, unreliable supplemental datagrams after gameplay snapshots; stale
 speech is dropped instead of increasing latency.
+
+The microphone gate and voice HUD stay inactive outside a negotiated
+multiplayer connection, including disconnected and single-player games.
 
 For a build without voice or a direct libopus dependency:
 
