@@ -113,14 +113,18 @@ static void Voice_ListDevices_f(void)
 
 static void Voice_Restart_f(void)
 {
-	if (voice_initialized)
+	if (!voice_initialized)
+		return;
+	Voice_CloseCapture();
+	if (voice_transmit.value)
 		Voice_OpenCapture();
 }
 
 static void Voice_Status_f(void)
 {
 	Con_Printf("Voice: %s, receive %s, transmit %s, mode %s, level %.0f%%\n",
-		voice_capture_device ? "capture ready" : "capture unavailable",
+		voice_capture_device ? "capture ready" :
+			(voice_transmit.value ? "capture unavailable" : "capture disabled"),
 		voice_receive.value ? "on" : "off",
 		voice_transmit.value ? "armed" : "off",
 		(int)voice_mode.value == 1 ? "push-to-talk" : "VAD",
@@ -195,6 +199,26 @@ static qboolean Voice_QueuePacket(const int16_t *samples, unsigned int flags)
 	}
 	voice_outgoing.write = next;
 	return true;
+}
+
+static void Voice_TransmitChanged(cvar_t *var)
+{
+	if (!voice_initialized)
+		return;
+	if (var->value)
+	{
+		if (!voice_capture_device)
+			Voice_OpenCapture();
+		return;
+	}
+
+	/* Disarming transmission also releases the microphone immediately. */
+	if (voice_sending)
+		Voice_QueuePacket(NULL, VOICE_FLAG_END);
+	voice_sending = false;
+	voice_ptt = false;
+	voice_input_meter = 0.0f;
+	Voice_CloseCapture();
 }
 
 static void Voice_EncodeCaptureFrame(int16_t *samples)
@@ -301,6 +325,7 @@ void Voice_Init(void)
 	Cvar_RegisterVariable(&voice_radio_volume);
 	Cvar_RegisterVariable(&voice_spatial_distance);
 	Cvar_RegisterVariable(&voice_hud);
+	Cvar_SetCallback(&voice_transmit, Voice_TransmitChanged);
 	Cmd_AddCommand("voice_list_devices", Voice_ListDevices_f);
 	Cmd_AddCommand("voice_restart", Voice_Restart_f);
 	Cmd_AddCommand("voice_status", Voice_Status_f);
@@ -335,7 +360,8 @@ void Voice_Init(void)
 		voice_speakers[i].volume = 1.0f;
 	}
 	voice_initialized = true;
-	Voice_OpenCapture();
+	if (voice_transmit.value)
+		Voice_OpenCapture();
 }
 
 void Voice_Shutdown(void)
@@ -543,7 +569,8 @@ void Voice_CycleInputDevice(int direction)
 		Cvar_Set("voice_input_device", "");
 	else
 		Cvar_Set("voice_input_device", SDL_GetAudioDeviceName(next - 1, SDL_TRUE));
-	Voice_OpenCapture();
+	if (voice_transmit.value)
+		Voice_OpenCapture();
 }
 qboolean Voice_TransmitEnabled(void) { return voice_transmit.value != 0; }
 qboolean Voice_IsTransmitting(void) { return voice_sending; }
