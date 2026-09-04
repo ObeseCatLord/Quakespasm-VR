@@ -37,6 +37,9 @@ void Sbar_Changed (void);
 void Sbar_Draw (void);
 // called every frame by screen
 
+void Sbar_DrawVoiceStatus (void);
+// VR draws this on a separate panel above the compact status bar
+
 void Sbar_IntermissionOverlay (void);
 // called each frame after the level has been completed
 
@@ -45,4 +48,3 @@ void Sbar_FinaleOverlay (void);
 qboolean Sbar_IsShowingScores (void);
 
 #endif	/* _QUAKE_SBAR_H */
-

@@ -28,6 +28,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "debug_log.h"
 #include "pmove.h"
 #include "player_avatar.h"
+#include "voice.h"
 
 // we need to declare some mouse variables here, because the menu system
 // references them even when on a unix system.
@@ -389,6 +390,7 @@ CL_ClearState
 */
 void CL_ClearState (void)
 {
+	Voice_ResetConnection();
 	VR_InvalidateFBTTransientOutput ();
 	VR_ResetWeaponTracking();
 	CL_ClearPendingCmd();
@@ -488,7 +490,11 @@ void CL_Disconnect (void)
 	cl.avatar_cap_pending = false;
 	cl.avatar_set_pending = false;
 	cl.avatar_protocol_version = 0;
+	cl.voice_protocol_offered = false;
+	cl.voice_cap_sent = false;
+	cl.voice_protocol_version = 0;
 	memset(cl.avatar_ids, PLAYER_AVATAR_RANGER, sizeof(cl.avatar_ids));
+	Voice_ResetConnection();
 	CL_ClearSignons ();
 
 	V_ResetEffects ();

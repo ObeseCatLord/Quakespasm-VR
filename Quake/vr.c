@@ -8893,6 +8893,14 @@ void VR_DrawSbar() {
   glTranslatef(0, 0, 10);                       // move hud down a bit
   glScalef(scale_hud, scale_hud, scale_hud);
 
+  /* Keep voice state close to the wrist HUD without drawing through its
+   * fixed 48-pixel health/ammo canvas.  Positive local coordinates preserve
+   * Quake's normal text clipping; the panel transform supplies the offset. */
+  glPushMatrix();
+  glTranslatef(0, -44, 0);
+  Sbar_DrawVoiceStatus();
+  glPopMatrix();
+
   Sbar_Draw();
 
   glEnable(GL_DEPTH_TEST);

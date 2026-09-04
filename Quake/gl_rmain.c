@@ -25,6 +25,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "r_gputimer.h"
 #include "debug_log.h"
 #include "vr.h"
+#include "voice.h"
 
 extern cvar_t r_alias_batching;
 
@@ -1860,6 +1861,7 @@ static void R_DrawCoopNametags(void) {
   int i, playernum;
   entity_t *e;
   vec3_t tagorg, shadoworg;
+  char tagtext[MAX_SCOREBOARDNAME + 5];
   float scale, r, g, b;
   extern gltexture_t *char_texture;
 
@@ -1893,6 +1895,12 @@ static void R_DrawCoopNametags(void) {
     if (!cl.scores[playernum].name[0])
       continue;
 
+    if (Voice_SpeakerTalking(playernum))
+      q_snprintf(tagtext, sizeof(tagtext), "((%s))",
+                 cl.scores[playernum].name);
+    else
+      q_strlcpy(tagtext, cl.scores[playernum].name, sizeof(tagtext));
+
     R_GetPlayerShirtColor(playernum, 1.65f, 0.55f, &r, &g, &b);
 
     scale = ENTSCALE_DECODE(e->scale);
@@ -1901,8 +1909,8 @@ static void R_DrawCoopNametags(void) {
 
     VectorMA(tagorg, NAMETAG_SHADOW_OFFSET, vright, shadoworg);
     VectorMA(shadoworg, -NAMETAG_SHADOW_OFFSET, vup, shadoworg);
-    R_DrawNametagString(shadoworg, cl.scores[playernum].name, 0, 0, 0, 0.65f);
-    R_DrawNametagString(tagorg, cl.scores[playernum].name, r, g, b, 1.0f);
+    R_DrawNametagString(shadoworg, tagtext, 0, 0, 0, 0.65f);
+    R_DrawNametagString(tagorg, tagtext, r, g, b, 1.0f);
   }
 
   glDepthMask(GL_TRUE);

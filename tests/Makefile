@@ -26,7 +26,8 @@ FIXTURES := \
 	vrik_lowerbody_fixture \
 	vrik_renderer_boundary_fixture \
 	avatar_protocol_fixture \
-	avatar_retarget_fixture
+	avatar_retarget_fixture \
+	voice_primitives_fixture
 BINARIES := $(addprefix $(BUILD_DIR)/,$(FIXTURES))
 
 .PHONY: all test clean
@@ -83,6 +84,9 @@ $(BUILD_DIR)/avatar_retarget_fixture: avatar_retarget_fixture.c ../Quake/r_avata
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(SANITIZE_FLAGS) $^ $(LDFLAGS) $(SANITIZE_FLAGS) $(LDLIBS) -o $@
 
 $(BUILD_DIR)/avatar_protocol_fixture: avatar_protocol_fixture.c ../Quake/player_avatar.c | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(SANITIZE_FLAGS) $^ $(LDFLAGS) $(SANITIZE_FLAGS) $(LDLIBS) -o $@
+
+$(BUILD_DIR)/voice_primitives_fixture: voice_primitives_fixture.c ../Quake/voice_vad.c ../Quake/voice_jitter.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(SANITIZE_FLAGS) $^ $(LDFLAGS) $(SANITIZE_FLAGS) $(LDLIBS) -o $@
 
 # This directory contains only test executables.  Its name is fixed above so
