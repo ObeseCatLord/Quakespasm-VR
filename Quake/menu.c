@@ -3844,10 +3844,7 @@ static void M_Voice_Draw(void) {
 
   M_DrawCharacter(144, M_Voice_RowY(m_voice_cursor),
                   12 + ((int)(realtime * 4) & 1));
-  if (Cvar_VariableValue("voice_mode"))
-    M_PrintWhite(16, 188, "Assign PTT in Controls each session");
-  else
-    M_PrintWhite(16, 188, "Microphone permission: this session");
+  M_PrintWhite(16, 188, Voice_SettingsHint());
 }
 
 static void M_Voice_Key(int key) {
