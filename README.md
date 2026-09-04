@@ -62,8 +62,8 @@ msbuild Windows\VisualStudio\quakespasm.sln `
   /p:Configuration=Release /p:Platform=x64 /m
 ```
 
-For a full build with add-on downloading enabled, install the manifest's curl
-dependency with vcpkg and pass it to MSBuild:
+For a full build with add-on downloading and spatial voice chat enabled,
+install the manifest dependencies with vcpkg and pass them to MSBuild:
 
 ```powershell
 git clone https://github.com/microsoft/vcpkg.git .vcpkg
@@ -73,7 +73,8 @@ git -C .vcpkg checkout cd61e1e26a038e82d6550a3ebbe0fbbfe7da78e3
   "--x-manifest-root=$PWD" "--x-install-root=$PWD\vcpkg_installed"
 msbuild Windows\VisualStudio\quakespasm.sln `
   /p:Configuration=Release /p:Platform=x64 /m `
-  "/p:CurlRoot=$PWD\vcpkg_installed\x64-windows-static-md" /p:UseCurl=true
+  "/p:CurlRoot=$PWD\vcpkg_installed\x64-windows-static-md" /p:UseCurl=true `
+  "/p:OpusRoot=$PWD\vcpkg_installed\x64-windows-static-md" /p:UseVoice=true
 ```
 
 The executable and its runtime DLLs are written to
