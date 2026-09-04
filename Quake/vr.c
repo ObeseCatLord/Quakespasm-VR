@@ -30,6 +30,10 @@ extern "C" {
 #ifdef _WIN32
 #include <GL/gl.h>
 #include <windows.h>
+#ifdef USE_VOICECHAT
+#include <functiondiscoverykeys_devpkey.h>
+#include <mmdeviceapi.h>
+#endif
 
 #ifndef APIENTRYP
 #define APIENTRYP APIENTRY *
@@ -397,6 +401,198 @@ static qboolean vr_initialized = false;
  * VR_Enable has completed.  Keep this distinct from vr_initialized: no
  * rendering/input path may treat partially-created OpenVR/GL state as live. */
 static qboolean vr_initializing = false;
+
+#ifdef USE_VOICECHAT
+/* SteamVR's audio property is an endpoint ID on Windows and a backend-specific
+ * source name on Linux.  Return only names SDL can actually open by name. */
+static qboolean VR_CopyUniqueSDLCaptureDevice(const char *candidate,
+                                              char *name, size_t size) {
+  int count;
+  int matches = 0;
+  int match = -1;
+
+  if (!candidate || !candidate[0] || !name || !size)
+    return false;
+
+  count = SDL_GetNumAudioDevices(SDL_TRUE);
+  for (int i = 0; i < count; ++i) {
+    const char *device = SDL_GetAudioDeviceName(i, SDL_TRUE);
+    if (device && !q_strcasecmp(candidate, device)) {
+      ++matches;
+      match = i;
+    }
+  }
+  if (matches != 1)
+    return false;
+
+  {
+    const char *device = SDL_GetAudioDeviceName(match, SDL_TRUE);
+    if (!device || strlen(device) >= size)
+      return false;
+    q_strlcpy(name, device, size);
+  }
+  return true;
+}
+
+typedef struct {
+  const char *model;
+  const char *capture_device;
+} vr_headset_mic_alias_t;
+
+/* These bridge OpenVR's HMD model labels to known, exact Pulse/PipeWire SDL
+ * capture labels.  Do not add vendor-only aliases: they can select a separate
+ * USB microphone from the same manufacturer. */
+static const vr_headset_mic_alias_t vr_headset_mic_aliases[] = {
+    {"Index HMD", "Valve VR Radio & HMD Mic"},
+    {"Valve Index", "Valve VR Radio & HMD Mic"},
+};
+
+static qboolean VR_CopyUniqueSDLHeadsetCaptureDevice(const char *model,
+                                                      char *name, size_t size) {
+  int count;
+  int matches = 0;
+  int match = -1;
+
+  /* Model-only matching is intentionally conservative; generic OpenVR model
+   * values are insufficient proof that a capture device belongs to the HMD. */
+  if (!model || strlen(model) < 6 || !q_strcasecmp(model, "HMD") ||
+      !q_strcasecmp(model, "Headset") || !name || !size)
+    return false;
+
+  count = SDL_GetNumAudioDevices(SDL_TRUE);
+  for (int i = 0; i < count; ++i) {
+    const char *device = SDL_GetAudioDeviceName(i, SDL_TRUE);
+    if (device && q_strcasestr(device, model)) {
+      ++matches;
+      match = i;
+    }
+  }
+  if (matches == 1) {
+    const char *device = SDL_GetAudioDeviceName(match, SDL_TRUE);
+    if (!device || strlen(device) >= size)
+      return false;
+    q_strlcpy(name, device, size);
+    return true;
+  }
+
+  for (size_t i = 0;
+       i < sizeof(vr_headset_mic_aliases) / sizeof(vr_headset_mic_aliases[0]);
+       ++i) {
+    if (!q_strcasecmp(model, vr_headset_mic_aliases[i].model) &&
+        VR_CopyUniqueSDLCaptureDevice(vr_headset_mic_aliases[i].capture_device,
+                                      name, size))
+      return true;
+  }
+  return false;
+}
+
+#ifdef _WIN32
+static qboolean VR_WindowsEndpointFriendlyName(const char *endpoint_id,
+                                               char *name, size_t size) {
+  IMMDeviceEnumerator *enumerator = NULL;
+  IMMDevice *device = NULL;
+  IPropertyStore *store = NULL;
+  PROPVARIANT value;
+  HRESULT init_result;
+  HRESULT result;
+  int wide_length;
+  int utf8_length;
+  qboolean success = false;
+
+  if (!endpoint_id || !endpoint_id[0] || !name || !size)
+    return false;
+  name[0] = 0;
+
+  init_result = CoInitializeEx(NULL, COINIT_MULTITHREADED);
+  result = CoCreateInstance(__uuidof(MMDeviceEnumerator), NULL,
+                            CLSCTX_INPROC_SERVER,
+                            __uuidof(IMMDeviceEnumerator),
+                            (void **)&enumerator);
+  if (FAILED(result))
+    goto done;
+  /* GetDevice takes a wide endpoint ID. */
+  {
+    wchar_t endpoint_wide[512];
+    wide_length = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS,
+                                      endpoint_id, -1, endpoint_wide,
+                                      sizeof(endpoint_wide) /
+                                          sizeof(endpoint_wide[0]));
+    if (!wide_length)
+      goto done;
+    result = enumerator->GetDevice(endpoint_wide, &device);
+  }
+  if (FAILED(result))
+    goto done;
+  result = device->OpenPropertyStore(STGM_READ, &store);
+  if (FAILED(result))
+    goto done;
+  memset(&value, 0, sizeof(value));
+  result = store->GetValue(PKEY_Device_FriendlyName, &value);
+  if (FAILED(result) || value.vt != VT_LPWSTR || !value.pwszVal)
+    goto clear_value;
+  utf8_length = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS,
+                                    value.pwszVal, -1, name, (int)size,
+                                    NULL, NULL);
+  success = utf8_length > 0 && name[0] != 0;
+clear_value:
+  PropVariantClear(&value);
+done:
+  if (store)
+    store->Release();
+  if (device)
+    device->Release();
+  if (enumerator)
+    enumerator->Release();
+  if (SUCCEEDED(init_result))
+    CoUninitialize();
+  return success;
+}
+#endif
+
+qboolean VR_VoiceSessionActive(void) {
+  return vr_initialized && !vr_initializing && ovrHMD != NULL;
+}
+
+qboolean VR_GetHeadsetMicrophoneName(char *name, size_t size) {
+  static const vr::ETrackedDeviceProperty default_recording_property =
+      (vr::ETrackedDeviceProperty)2301;
+  vr::ETrackedPropertyError property_error = vr::TrackedProp_Success;
+  char runtime_device[512];
+  char model[256];
+
+  if (name && size)
+    name[0] = 0;
+  if (!name || !size || !VR_VoiceSessionActive())
+    return false;
+
+  runtime_device[0] = 0;
+  ovrHMD->GetStringTrackedDeviceProperty(
+      vr::k_unTrackedDeviceIndex_Hmd, default_recording_property,
+      runtime_device, sizeof(runtime_device), &property_error);
+
+#ifdef _WIN32
+  if (property_error == vr::TrackedProp_Success && runtime_device[0]) {
+    char friendly_name[512];
+    if (VR_WindowsEndpointFriendlyName(runtime_device, friendly_name,
+                                       sizeof(friendly_name)) &&
+        VR_CopyUniqueSDLCaptureDevice(friendly_name, name, size))
+      return true;
+  }
+#else
+  if (property_error == vr::TrackedProp_Success && runtime_device[0] &&
+      VR_CopyUniqueSDLCaptureDevice(runtime_device, name, size))
+    return true;
+#endif
+
+  model[0] = 0;
+  ovrHMD->GetStringTrackedDeviceProperty(
+      vr::k_unTrackedDeviceIndex_Hmd, vr::Prop_ModelNumber_String, model,
+      sizeof(model), &property_error);
+  if (property_error != vr::TrackedProp_Success)
+    return false;
+  return VR_CopyUniqueSDLHeadsetCaptureDevice(model, name, size);
+}
+#endif /* USE_VOICECHAT */
 
 /* OpenVR supplies this mesh in normalized [0, 1] texture coordinates. Keep
  * an NDC copy because it is rendered before R_SetupGL establishes the eye

@@ -334,6 +334,9 @@ copy "$(SolutionDir)\..\static-release-files\*.*" "$(TargetDir)"</Command>
     <ClCompile Include="..\..\Quake\voice.c">
       <ExcludedFromBuild Condition="'$(UseVoice)'!='true'">true</ExcludedFromBuild>
     </ClCompile>
+    <ClCompile Include="..\..\Quake\voice_settings.c">
+      <ExcludedFromBuild Condition="'$(UseVoice)'!='true'">true</ExcludedFromBuild>
+    </ClCompile>
     <ClCompile Include="..\..\Quake\voice_jitter.c" />
     <ClCompile Include="..\..\Quake\voice_vad.c" />
     <ClCompile Include="..\..\Quake\vr.c">
@@ -419,6 +422,7 @@ copy "$(SolutionDir)\..\static-release-files\*.*" "$(TargetDir)"</Command>
     <ClInclude Include="..\..\Quake\vid.h" />
     <ClInclude Include="..\..\Quake\view.h" />
     <ClInclude Include="..\..\Quake\voice.h" />
+    <ClInclude Include="..\..\Quake\voice_settings.h" />
     <ClInclude Include="..\..\Quake\voice_jitter.h" />
     <ClInclude Include="..\..\Quake\voice_protocol.h" />
     <ClInclude Include="..\..\Quake\voice_vad.h" />

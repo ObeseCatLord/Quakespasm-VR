@@ -58,6 +58,22 @@ extern "C" {
 void VID_VR_Init();
 void VID_VR_Shutdown();
 qboolean VR_Enable();
+#if defined(VR_SUPPORT) && defined(USE_VOICECHAT)
+/*
+ * Returns an SDL capture-device name for the active HMD only when OpenVR has
+ * identified one.  It never substitutes the operating system's default mic.
+ */
+qboolean VR_GetHeadsetMicrophoneName(char *name, size_t size);
+qboolean VR_VoiceSessionActive(void);
+#else
+static inline qboolean VR_GetHeadsetMicrophoneName(char *name, size_t size)
+{
+  if (name && size)
+    name[0] = 0;
+  return false;
+}
+static inline qboolean VR_VoiceSessionActive(void) { return false; }
+#endif
 void VR_ApplyDefaultBindings(qboolean overwrite);
 void VR_MigrateMovementDefaults_f(void);
 void VID_VR_Disable();

@@ -226,7 +226,7 @@ MUSIC_OBJS= bgmusic.o \
 	snd_umx.o
 COMOBJ_SND = snd_dma.o snd_mix.o snd_mem.o $(MUSIC_OBJS)
 ifeq ($(USE_VOICE),1)
-COMOBJ_SND += voice.o voice_vad.o voice_jitter.o
+COMOBJ_SND += voice.o voice_settings.o voice_vad.o voice_jitter.o
 endif
 SYSOBJ_SND = snd_sdl.o
 SYSOBJ_CDA = cd_sdl.o
