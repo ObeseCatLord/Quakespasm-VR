@@ -2601,6 +2601,12 @@ void CL_ParseServerMessage (void)
 				cl.viewangles[i] = MSG_ReadAngle (cl.protocolflags);
 			cl.fixangle = true;
 			VR_SetAngles (cl.viewangles);
+			/* Controller aiming derives view/movement from tracking every
+			 * frame.  Rebase that space to a teleport's authoritative yaw,
+			 * otherwise the next pose overwrites the server's exit heading. */
+			if (vr_enabled.value &&
+			    (int)vr_aimmode.value == VR_AIMMODE_CONTROLLER)
+				VR_PushYaw ();
 			break;
 
 		case svc_setview:
