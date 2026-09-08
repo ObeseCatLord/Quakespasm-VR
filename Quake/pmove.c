@@ -1832,7 +1832,15 @@ static void PM_ApplyVRRoomScaleMove (void)
 	saved_frametime = frametime;
 	frametime = 1.0f;
 	VectorCopy (move, pmove.velocity);
-	PM_StepSlideMove (false);
+	/* Tracking must obey the same airborne step policy as locomotion. */
+	if (pmove.onground || pmove.waterlevel >= 2 || pmove.pm_type == PM_FLY ||
+		pmove.pm_type == PM_6DOF || pmove.onladder || pmove.waterjumptime ||
+		VectorLength (velocity) > 1000)
+		PM_StepSlideMove (false);
+	else if (movevars.airstep)
+		PM_StepSlideMove (true);
+	else
+		PM_SlideMove ();
 	VectorCopy (velocity, pmove.velocity);
 	frametime = saved_frametime;
 }

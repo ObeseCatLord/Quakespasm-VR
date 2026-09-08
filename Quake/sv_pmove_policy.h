@@ -32,6 +32,8 @@ typedef struct
 	int nq_player_physics;
 	int legacy_prethink_mod;
 	int has_qc_onladder_field;
+	int compatible_qc_ladder_mod;
+	int qc_ladder_legacy_state;
 	int has_sv_runclientcommand;
 	int has_explicit_cmd_msec;
 	int customphysics_active;
@@ -54,7 +56,8 @@ SV_PMovePolicyEvaluate(const sv_pmove_policy_input_t *input)
 {
 	sv_pmove_policy_result_t result;
 	const int legacy_qc_ladder_mod = input->has_qc_onladder_field &&
-		!input->has_sv_runclientcommand;
+		!input->has_sv_runclientcommand &&
+		(!input->compatible_qc_ladder_mod || input->qc_ladder_legacy_state);
 
 	result.using_pmove = input->requested_mode != 0 &&
 		input->trusted_movement && !input->local_singleplayer &&

@@ -116,7 +116,9 @@ cvar_t	cl_predict_smooth = {"cl_predict_smooth","1",CVAR_NONE};
 cvar_t	cl_predict_smooth_time = {"cl_predict_smooth_time","0.10",CVAR_NONE};
 cvar_t	cl_predict_smooth_min = {"cl_predict_smooth_min","0.125",CVAR_NONE};
 cvar_t	cl_predict_smooth_max = {"cl_predict_smooth_max","4",CVAR_NONE};
-cvar_t	cl_predict_autofallback = {"cl_predict_autofallback","1",CVAR_NONE};
+// QSS-M keeps replaying through ordinary finite reconciliation corrections.
+// Retain the diagnostic opt-in; invalid/non-finite state still quarantines.
+cvar_t	cl_predict_autofallback = {"cl_predict_autofallback","0",CVAR_NONE};
 cvar_t	cl_predict_error_log = {"cl_predict_error_log","1",CVAR_NONE};
 
 /* Client-only safety state.  Never let a bad server sample affect authority. */
@@ -1721,7 +1723,9 @@ static qboolean CL_PredictPlayer (entity_t *ent)
 	if (CL_PredictionSampleIsExpectedDiscontinuity ())
 	{
 		CL_ClearPredictionHistory ();
-		return false;
+		memset (propagate, 0, sizeof(propagate));
+		/* The acknowledged snapshot is already the new replay baseline.
+		 * Do not insert one interpolated frame when prediction resumes. */
 	}
 
 	PMCL_SetMoveVars ();
@@ -1783,6 +1787,10 @@ static qboolean CL_PredictPlayer (entity_t *ent)
 	}
 
 	pending = cl.pendingcmd;
+	/* The partial command has not passed through CL_SendMove's VR tagging.
+	 * Predict its tracking now without consuming the send accumulator. */
+	pending.vr_active = vr_enabled.value &&
+		(int)vr_aimmode.value == VR_AIMMODE_CONTROLLER;
 	if ((cl.protocol_pext2 & PEXT2_EXPLICITCMDMSEC) &&
 		cl.move_msec_sample_valid)
 	{
