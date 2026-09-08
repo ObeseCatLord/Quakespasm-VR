@@ -965,6 +965,10 @@ void SV_DropClient (qboolean crash)
 			saveSelf = pr_global_struct->self;
 			pr_global_struct->self = EDICT_TO_PROG(host_client->edict);
 			PR_ExecuteProgram (pr_global_struct->ClientDisconnect);
+			/* A disconnect may transfer/drop keys just like PlayerDie.  They
+			 * were already shared: do not let that duplicate the team's token
+			 * or let a departing player clear progression for the survivors. */
+			SV_CoopSharedReconcileClientDeath(host_client->edict);
 			pr_global_struct->self = saveSelf;
 		}
 

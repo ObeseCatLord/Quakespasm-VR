@@ -1176,8 +1176,8 @@ LOAD / SAVE GAME
 #define SAVEGAME_MULTICLIENT_VERSION 6
 #define SAVEGAME_VERSION 7
 
-static void Host_SaveClientSpawnParms(client_t *client);
 #define COOP_AUTOSAVE_MAPSTART_DELAY 3.0
+#define COOP_AUTOSAVE_RETRY_DELAY 5.0
 #define COOP_AUTOSAVE_MAX_SLOTS 20
 
 /*
@@ -1372,31 +1372,6 @@ static qboolean Host_LoadgameParseString(const char **data) {
   return true;
 }
 
-static void Host_SavegameRefreshClientSpawnParms(void) {
-  int i;
-  client_t *old_host_client;
-  edict_t *old_sv_player;
-
-  old_host_client = host_client;
-  old_sv_player = sv_player;
-  for (i = 0; i < svs.maxclients; i++) {
-    if (!svs.clients[i].active || !svs.clients[i].edict)
-      continue;
-    host_client = &svs.clients[i];
-    sv_player = host_client->edict;
-    Host_SaveClientSpawnParms(host_client);
-  }
-  /* MG3 upgrades are campaign-wide.  The first pass builds their union from
-     every client; apply that complete union to every saved client afterward. */
-  for (i = 0; i < svs.maxclients; i++) {
-    if (!svs.clients[i].active)
-      continue;
-    SV_MG3UpgradeApplySpawnParms(svs.clients[i].spawn_parms);
-  }
-  host_client = old_host_client;
-  sv_player = old_sv_player;
-}
-
 static qboolean Host_SavegameCanSave(qboolean quiet) {
   if (!sv.active) {
     if (!quiet)
@@ -1458,6 +1433,7 @@ static qboolean Host_SavegameWrite(const char *savename, qboolean quiet) {
   int frags;
   char comment[SAVEGAME_COMMENT_LENGTH + 1];
   qboolean switched_qcvm, write_failed;
+  edict_t *client_snapshot;
 
   if (!Host_SavegameCanSave(quiet))
     return false;
@@ -1500,7 +1476,12 @@ static qboolean Host_SavegameWrite(const char *savename, qboolean quiet) {
     switched_qcvm = true;
   }
 
-  Host_SavegameRefreshClientSpawnParms();
+  /* Save the existing spawn parms and the exact current edicts/globals.
+     SetChangeParms is a level-transition callback, not an inventory query:
+     stock Quake and mods can strip keys/powerups, change health, and mutate
+     progression there.  Calling it here changes the running game on every
+     manual or automatic save.  Persistent upgrade parms are synchronized at
+     their actual pickup boundary, without executing transition QuakeC. */
 
   fprintf(f, "%i\n", SAVEGAME_VERSION);
   Host_SavegameComment(comment);
@@ -1530,13 +1511,19 @@ static qboolean Host_SavegameWrite(const char *savename, qboolean quiet) {
   }
 
   ED_WriteGlobals(f);
+  client_snapshot = (edict_t *)Z_Malloc(qcvm->edict_size);
   for (i = 0; i < qcvm->num_edicts; i++) {
     if (i > 0 && i <= svs.maxclients && !svs.clients[i - 1].active)
       fprintf(f, "{\n}\n");
+    else if (i > 0 && i <= svs.maxclients) {
+      SV_CoopRespawnSaveClientEdict(EDICT_NUM(i), client_snapshot);
+      ED_Write(f, client_snapshot);
+    }
     else
       ED_Write(f, EDICT_NUM(i));
     fflush(f);
   }
+  Z_Free(client_snapshot);
   write_failed = ferror(f) != 0 || fflush(f) != 0;
   if (fclose(f) != 0)
     write_failed = true;
@@ -1664,6 +1651,7 @@ static int Host_LoadgameFindSavedClientForSpawn(int clientnum,
 }
 
 void Host_CoopAutosaveFrame(void) {
+  int i;
   int found_secrets;
   int killed_monsters;
   int kill_interval;
@@ -1686,6 +1674,28 @@ void Host_CoopAutosaveFrame(void) {
   if (Host_SavegameActiveClients() <= 0)
     return;
 
+  /* Do not create a checkpoint with a connecting slot's blank/partially
+     initialized player edict. Keep existing progress/cooldown state while
+     waiting, so a late join does not re-arm map-start saves repeatedly. */
+  for (i = 0; i < svs.maxclients; i++) {
+    if (svs.clients[i].active &&
+        (!svs.clients[i].knowntoqc || !svs.clients[i].spawned))
+      return;
+  }
+
+  /* Dedicated servers never receive the client-side intermission message.
+     Respect the known QC intermission convention, including later stages;
+     gameover alone can still mean normal co-op waiting, so do not use it. */
+  {
+    ddef_t *intermission = ED_FindGlobal("intermission");
+    dfunction_t *execute = ED_FindFunction("execute_changelevel");
+    if (intermission &&
+        (intermission->type & ~DEF_SAVEGLOBAL) == ev_float &&
+        execute && execute->numparms == 0 &&
+        qcvm->globals[intermission->ofs] != 0)
+      return;
+  }
+
   found_secrets = (int)pr_global_struct->found_secrets;
   killed_monsters = (int)pr_global_struct->killed_monsters;
   kill_interval = (int)sv_coop_autosave_kill_interval.value;
@@ -1699,6 +1709,7 @@ void Host_CoopAutosaveFrame(void) {
     sv.coop_autosave_mapstart_done = false;
     sv.coop_autosave_last_time = 0;
     sv.coop_autosave_last_realtime = 0;
+    sv.coop_autosave_retry_realtime = 0;
     sv.coop_autosave_last_secrets = found_secrets;
     sv.coop_autosave_last_kill_bucket = kill_bucket;
     sv.coop_autosave_last_serverflags = serverflags;
@@ -1719,6 +1730,9 @@ void Host_CoopAutosaveFrame(void) {
   if (!reason)
     return;
 
+  if (realtime < sv.coop_autosave_retry_realtime)
+    return;
+
   min_interval = sv_coop_autosave_min_interval.value;
   if (min_interval < 0)
     min_interval = 0;
@@ -1734,9 +1748,15 @@ void Host_CoopAutosaveFrame(void) {
 
   q_snprintf(savename, sizeof(savename), "coop_auto%i",
              sv.coop_autosave_next_slot % slots);
-  if (!Host_SavegameWrite(savename, true))
+  if (!Host_SavegameWrite(savename, true)) {
+    /* A full/read-only disk must not make the server repeat synchronous
+       save I/O every frame. Keep this progress event and slot pending. */
+    sv.coop_autosave_retry_realtime = realtime +
+        q_max(COOP_AUTOSAVE_RETRY_DELAY, min_interval);
     return;
+  }
 
+  sv.coop_autosave_retry_realtime = 0;
   Con_Printf("Coop autosaved %s.sav (%s).\n", savename, reason);
   sv.coop_autosave_next_slot = (sv.coop_autosave_next_slot + 1) % slots;
   sv.coop_autosave_last_time = qcvm->time;
@@ -1982,6 +2002,8 @@ static void Host_Loadgame_f(void) {
 
   qcvm->num_edicts = entnum;
   qcvm->time = time;
+
+  SV_RestoreSavedMapvarInitialization();
 
   free(start);
   start = NULL;
@@ -2294,6 +2316,8 @@ static void Host_Kill_f(void) {
   pr_global_struct->time = qcvm->time;
   pr_global_struct->self = EDICT_TO_PROG(sv_player);
   PR_ExecuteProgram(pr_global_struct->ClientKill);
+  if (sv_player->v.health <= 0 || sv_player->v.deadflag != DEAD_NO)
+    SV_CoopSharedReconcileClientDeath(sv_player);
 }
 
 /*
@@ -2387,6 +2411,7 @@ static void Host_Spawn_f(void) {
   qboolean loaded_client;
   qboolean respawn_loaded_client;
   qboolean initial_spawn_client;
+  qboolean initialize_spawn_parms;
 
   if (cmd_source == src_command) {
     Con_Printf("spawn is not valid from the console\n");
@@ -2407,6 +2432,8 @@ static void Host_Spawn_f(void) {
     saved_clientnum =
         Host_LoadgameFindSavedClientForSpawn(clientnum, host_client->name);
   loaded_client = saved_clientnum >= 0;
+  initialize_spawn_parms = host_client->spawn_parms_pending && !loaded_client;
+  host_client->spawn_parms_pending = false;
   respawn_loaded_client = false;
   saved_ent = NULL;
   if (loaded_client) {
@@ -2432,6 +2459,9 @@ static void Host_Spawn_f(void) {
     ent->v.colormap = NUM_FOR_EDICT(ent);
     ent->v.team = (host_client->colors & 15) + 1;
     host_client->old_frags = (int)ent->v.frags;
+    /* This player can run QC before the network's final begin command.
+       Reconcile stale saved keys before linking it into the live world. */
+    SV_CoopSharedApplyToJoiningClient(ent);
     SV_LinkEdict(ent, false);
     sv.loadgame_client_saved[saved_clientnum] = false;
     sv.loadgame_client_name_required[saved_clientnum] = false;
@@ -2464,6 +2494,17 @@ static void Host_Spawn_f(void) {
     ent->v.team = (host_client->colors & 15) + 1;
     ent->v.netname = PR_SetEngineString(host_client->name);
 
+    if (initialize_spawn_parms) {
+      /* This is a genuine newcomer, not the saved player from this slot.
+         Evaluate defaults only now; other clients may have finished their
+         pending restores since this connection was accepted. */
+      pr_global_struct->self = EDICT_TO_PROG(ent);
+      PR_ExecuteProgram(pr_global_struct->SetNewParms);
+      for (i = 0; i < NUM_SPAWN_PARMS; i++)
+        host_client->spawn_parms[i] = (&pr_global_struct->parm1)[i];
+      SV_InheritTransitionMapvars(host_client);
+    }
+
     // copy spawn parms out of the client_t
     SV_MG3UpgradeApplySpawnParms(host_client->spawn_parms);
     for (i = 0; i < NUM_SPAWN_PARMS; i++)
@@ -2478,7 +2519,10 @@ static void Host_Spawn_f(void) {
       Sys_Printf("%s entered the game\n", host_client->name);
 
     PR_ExecuteProgram(pr_global_struct->PutClientInServer);
+    if (!respawn_loaded_client)
+      SV_CoopSharedApplyToJoiningClient(ent);
     if (respawn_loaded_client) {
+      SV_CoopRespawnRestoreSavedInventory(ent, saved_ent);
       ent->v.frags = host_client->old_frags;
       sv.loadgame_client_saved[saved_clientnum] = false;
       sv.loadgame_client_name_required[saved_clientnum] = false;
@@ -3091,19 +3135,6 @@ static void Host_GiveAllFallback(client_t *client) {
     val->_float = q_max(val->_float, 100);
 }
 
-static void Host_SaveClientSpawnParms(client_t *client) {
-  int i;
-
-  if (!pr_global_struct->SetChangeParms)
-    return;
-
-  pr_global_struct->self = EDICT_TO_PROG(client->edict);
-  PR_ExecuteProgram(pr_global_struct->SetChangeParms);
-  for (i = 0; i < NUM_SPAWN_PARMS; i++)
-    client->spawn_parms[i] = (&pr_global_struct->parm1)[i];
-  SV_MG3UpgradeSyncSpawnParms(client->spawn_parms);
-}
-
 static qboolean Host_GiveAllClient(client_t *client) {
   client_t *old_host_client;
   edict_t *old_sv_player;
@@ -3122,14 +3153,14 @@ static qboolean Host_GiveAllClient(client_t *client) {
     pr_global_struct->self = EDICT_TO_PROG(client->edict);
     pr_global_struct->time = qcvm->time;
     PR_ExecuteProgram(func - qcvm->functions);
-    Host_SaveClientSpawnParms(client);
+    SV_CoopRespawnRefreshClientInventory(sv_player);
     host_client = old_host_client;
     sv_player = old_sv_player;
     return true;
   }
 
   Host_GiveAllFallback(client);
-  Host_SaveClientSpawnParms(client);
+  SV_CoopRespawnRefreshClientInventory(sv_player);
 
   host_client = old_host_client;
   sv_player = old_sv_player;
