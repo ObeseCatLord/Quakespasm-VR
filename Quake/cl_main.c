@@ -393,6 +393,7 @@ void CL_ClearState (void)
 	Voice_ResetConnection();
 	VR_InvalidateFBTTransientOutput ();
 	VR_ResetWeaponTracking();
+	VR_ClearPendingYaw();
 	CL_ClearPendingCmd();
 
 	if (cl.qcvm.extfuncs.CSQC_Shutdown)
@@ -450,6 +451,7 @@ This is also called on Host_Error, so it shouldn't cause any errors
 void CL_Disconnect (void)
 {
 	DebugLog("CL_Disconnect: state=%d signon=%d\n", cls.state, cls.signon);
+	VR_ClearPendingYaw();
 	VR_InvalidateFBTTransientOutput ();
 	CL_ClearPendingCmd();
 

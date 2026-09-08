@@ -1418,6 +1418,67 @@ static void SV_CoopRespawnRestoreInventory(
         SV_CoopRespawnMaxFloat(ent->v.currentammo, inventory->currentammo);
 }
 
+/* A loaded dead player has already passed through the mod's normal
+ * PutClientInServer path. That fresh state is an entrance default, not a
+ * second inventory source: merging it with the serialized projection turns a
+ * saved 10 rockets into a default 100. Restore only the typed inventory
+ * subset captured above, leaving callbacks, health, movement, references,
+ * and other freshly initialized QC state alone. */
+static void SV_CoopRespawnRestoreSavedInventoryExact(
+    edict_t *ent, const coop_respawn_inventory_t *inventory) {
+  int i;
+  int type;
+  int mask;
+  eval_t *val;
+  float fresh_weapon = ent->v.weapon;
+  string_t fresh_weaponmodel = ent->v.weaponmodel;
+  string_t weaponmodel = inventory->weaponmodel;
+
+  /* An old projection can select an owned weapon without a model. A fresh
+   * model is safe only for that exact same selected weapon; otherwise clear it
+   * rather than display an incompatible starter model. */
+  if (inventory->weapon > 0 && (inventory->items & (int)inventory->weapon) &&
+      !weaponmodel) {
+    if (fresh_weapon == inventory->weapon && fresh_weaponmodel)
+      weaponmodel = fresh_weaponmodel;
+  }
+
+  mask = SV_CoopRespawnKeepItemMask();
+  ent->v.items = ((int)ent->v.items & ~mask) | (inventory->items & mask);
+  ent->v.ammo_shells = inventory->ammo_shells;
+  ent->v.ammo_nails = inventory->ammo_nails;
+  ent->v.ammo_rockets = inventory->ammo_rockets;
+  ent->v.ammo_cells = inventory->ammo_cells;
+  ent->v.currentammo = inventory->currentammo;
+  ent->v.weapon = inventory->weapon;
+  ent->v.weaponmodel = weaponmodel;
+
+  for (i = 0; i < COOP_RESPAWN_EXTRA_COUNT; i++) {
+    if (!inventory->extra_valid[i])
+      continue;
+
+    val = SV_CoopRespawnGetExtraField(ent, i, &type);
+    if (!val)
+      continue;
+
+    if (coop_respawn_extra_fields[i].policy == COOP_RESPAWN_EXTRA_STRING) {
+      val->string = inventory->extra_string[i];
+    } else if (coop_respawn_extra_fields[i].policy ==
+               COOP_RESPAWN_EXTRA_BITMASK) {
+      mask = coop_respawn_extra_fields[i].mask;
+      if (type == ev_ext_integer)
+        val->_int = (val->_int & ~mask) | (inventory->extra_bits[i] & mask);
+      else
+        val->_float = ((int)val->_float & ~mask) |
+                      (inventory->extra_bits[i] & mask);
+    } else {
+      /* MAXFLOAT fields are exact here too: a saved zero custom ammo value
+       * must not inherit a nonzero entrance default. */
+      val->_float = inventory->extra_value[i];
+    }
+  }
+}
+
 static void SV_CoopRespawnRememberAliveInventory(edict_t *ent, int num) {
   int index;
 
@@ -1462,6 +1523,9 @@ void SV_CoopRespawnSaveClientEdict(edict_t *ent, edict_t *snapshot) {
   SV_CoopRespawnSaveInventory(ent, &current);
   SV_CoopRespawnMergeInventory(&inventory, &current);
   SV_CoopRespawnRestoreInventory(snapshot, &inventory);
+  /* The ordinary respawn helper maps currentammo to reserve ammo.  Saved
+     projections must retain the cached magazine/current-ammo value exactly. */
+  snapshot->v.currentammo = inventory.currentammo;
 }
 
 void SV_CoopRespawnRestoreSavedInventory(edict_t *ent, edict_t *snapshot) {
@@ -1476,7 +1540,7 @@ void SV_CoopRespawnRestoreSavedInventory(edict_t *ent, edict_t *snapshot) {
   if (coop.value &&
       SV_CoopFeatureEnabled(&sv_coop_respawn_keep_weapons_ammo, true)) {
     SV_CoopRespawnSaveInventory(snapshot, &inventory);
-    SV_CoopRespawnRestoreInventory(ent, &inventory);
+    SV_CoopRespawnRestoreSavedInventoryExact(ent, &inventory);
   }
   /* Key sharing is independent of optional weapon retention. Pending saved
      players must receive current team keys before physics, not stale keys. */

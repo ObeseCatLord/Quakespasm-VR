@@ -106,6 +106,8 @@ void VR_UpdateCommandViewAngles(usercmd_t *cmd);
 void VR_LoadWeaponSchema();
 void VR_InitGame();
 void VR_PushYaw();
+void VR_ClearPendingYaw();
+void VR_RequestServerYaw(float yaw);
 void VR_TrackWeapons();
 void VR_ResetWeaponTracking();
 int VR_GetSelectedWeaponImpulse(int selection);
