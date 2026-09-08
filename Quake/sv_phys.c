@@ -1445,6 +1445,44 @@ void SV_CoopRespawnRefreshClientInventory(edict_t *ent) {
   SV_CoopRespawnRememberAliveInventory(ent, num);
 }
 
+void SV_CoopRespawnSaveClientEdict(edict_t *ent, edict_t *snapshot) {
+  int index = NUM_FOR_EDICT(ent) - 1;
+  coop_respawn_inventory_t inventory, current;
+
+  /* This projection is for serialization only.  Never run transition QC or
+     revive/mutate the live corpse to obtain inventory for a co-op save. */
+  memcpy(snapshot, ent, qcvm->edict_size);
+  if (!coop.value ||
+      !SV_CoopFeatureEnabled(&sv_coop_respawn_keep_weapons_ammo, true) ||
+      !SV_CoopIsDeadClient(ent) || index < 0 || index >= MAX_SCOREBOARD ||
+      !coop_respawn_last_inventory_valid[index])
+    return;
+
+  inventory = coop_respawn_last_inventory[index];
+  SV_CoopRespawnSaveInventory(ent, &current);
+  SV_CoopRespawnMergeInventory(&inventory, &current);
+  SV_CoopRespawnRestoreInventory(snapshot, &inventory);
+}
+
+void SV_CoopRespawnRestoreSavedInventory(edict_t *ent, edict_t *snapshot) {
+  coop_respawn_inventory_t inventory;
+
+  if (!ent || ent->free || !snapshot || snapshot->free)
+    return;
+
+  /* The detached saved edict has no live client index.  Transfer only the
+     same typed inventory subset as normal respawn; leave the fresh mod's
+     callbacks, movement, health and entity references initialized by QC. */
+  if (coop.value &&
+      SV_CoopFeatureEnabled(&sv_coop_respawn_keep_weapons_ammo, true)) {
+    SV_CoopRespawnSaveInventory(snapshot, &inventory);
+    SV_CoopRespawnRestoreInventory(ent, &inventory);
+  }
+  /* Key sharing is independent of optional weapon retention. Pending saved
+     players must receive current team keys before physics, not stale keys. */
+  SV_CoopSharedApplyToJoiningClient(ent);
+}
+
 qboolean SV_CoopRespawnPrepareChangelevel(edict_t *ent) {
   coop_respawn_inventory_t current;
   coop_respawn_inventory_t inventory;

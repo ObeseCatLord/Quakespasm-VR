@@ -1344,6 +1344,72 @@ void SV_SendServerinfo (client_t *client)
 	client->spawned = false;		// need prespawn, spawn, etc
 }
 
+/* Recognize QBJ3's four-bank module by its typed QC contract, not the game
+ * directory. AD's six-bank module has different initialization semantics. */
+static ddef_t *SV_MapvarInitializationGlobal(void)
+{
+	ddef_t *started, *bank;
+	dfunction_t *reader, *writer, *reset, *decode;
+	int i;
+	char name[32];
+
+	started = ED_FindGlobal("mapvar_started");
+	reader = ED_FindFunction("read_mapvar");
+	writer = ED_FindFunction("write_mapvar");
+	reset = ED_FindFunction("mapvar_reset");
+	decode = ED_FindFunction("DecodeLevelParms");
+	if (!started || started->type != ev_float ||
+	    !reader || reader->numparms != 1 ||
+	    !writer || writer->numparms != 2 ||
+	    !reset || reset->numparms != 0 ||
+	    !decode || decode->numparms != 0 || ED_FindGlobal("mapvars[4]"))
+		return NULL;
+	for (i = 0; i < 4; ++i)
+	{
+		q_snprintf(name, sizeof(name), "mapvars[%d]", i);
+		bank = ED_FindGlobal(name);
+		if (!bank || bank->type != (ev_float | DEF_SAVEGLOBAL))
+			return NULL;
+	}
+	return started;
+}
+
+void SV_RestoreSavedMapvarInitialization(void)
+{
+	ddef_t *started = SV_MapvarInitializationGlobal();
+
+	/* Save files contain the authoritative banks but not this nosave flag.
+	 * Do not let new/dead clients reset them or import stale entrance parms. */
+	if (started)
+		qcvm->globals[started->ofs] = 1;
+}
+
+void SV_InheritTransitionMapvars(client_t *client)
+{
+	ddef_t *started;
+	int i, j;
+
+	if (!coop.value || sv.loadgame)
+		return;
+	started = SV_MapvarInitializationGlobal();
+	if (!started || qcvm->globals[started->ofs] != 0)
+		return;
+	for (i = 0; i < svs.maxclients && i < MAX_SCOREBOARD; ++i)
+	{
+		client_t *carrier = &svs.clients[i];
+		if (carrier == client || !carrier->active ||
+		    !svs.coop_initial_spawn_client[i])
+			continue;
+		/* Carried clients may still be signing on. Let a newcomer who
+		 * spawns first import their completion banks, but keep its own gear
+		 * defaults. Real Decode must activate the module: startup readers
+		 * must keep waiting until an actual player exists. */
+		for (j = 12; j < 16; ++j)
+			client->spawn_parms[j] = carrier->spawn_parms[j];
+		return;
+	}
+}
+
 /*
 ================
 SV_ConnectClient
@@ -1399,12 +1465,18 @@ void SV_ConnectClient (int clientnum)
 	client->datagram.cursize = 0;
 	client->datagram.allowoverflow = true;
 
-	/* A connection has no trustworthy player name yet.  Always initialize
-	   defaults here; Host_Spawn_f applies a saved snapshot only after resolving
-	   the signon name (or the unambiguous single-player slot). */
-	PR_ExecuteProgram (pr_global_struct->SetNewParms);
-	for (i=0 ; i<NUM_SPAWN_PARMS ; i++)
-		client->spawn_parms[i] = (&pr_global_struct->parm1)[i];
+	/* Like stock save restoration, do not run new-game QC for a saved player.
+	 * Multiplayer identity is not known until signon supplies the name, so
+	 * defer defaults during loading instead of assigning another slot's parms.
+	 * Host_Spawn_f initializes unmatched newcomers once identity is resolved. */
+	client->spawn_parms_pending = sv.loadgame;
+	if (!client->spawn_parms_pending)
+	{
+		PR_ExecuteProgram (pr_global_struct->SetNewParms);
+		for (i=0 ; i<NUM_SPAWN_PARMS ; i++)
+			client->spawn_parms[i] = (&pr_global_struct->parm1)[i];
+		SV_InheritTransitionMapvars(client);
+	}
 	/* MG3 campaign upgrades are shared co-op progression.  Merge the durable
 	 * union before signon so reconnecting and late-joining clients decode the
 	 * same health/ammo caps in PutClientInServer. */

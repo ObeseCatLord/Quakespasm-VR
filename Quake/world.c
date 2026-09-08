@@ -62,6 +62,25 @@ qboolean SV_IsActiveClientEdict (edict_t *ent)
 	return ((int)ent->v.flags & FL_CLIENT) != 0;
 }
 
+static qboolean SV_IsCoopInventoryClient (edict_t *ent)
+{
+	int num;
+	client_t *client;
+
+	if (!ent || ent->free || !((int)ent->v.flags & FL_CLIENT))
+		return false;
+	num = NUM_FOR_EDICT(ent);
+	if (num < 1 || num > svs.maxclients)
+		return false;
+	client = &svs.clients[num - 1];
+	/* QC and trigger physics already run after spawn, before network begin.
+	 * Track their accepted inventory transactions during that interval too;
+	 * otherwise begin can overwrite a real pickup with an older team cache.
+	 * Do not broaden the separate movement/teleport eligibility checks. */
+	return client->active && client->edict == ent &&
+		(client->spawned || client->knowntoqc);
+}
+
 typedef struct
 {
 	edict_t	*trigger;
@@ -197,6 +216,21 @@ static qboolean SV_ShouldSkipCoopPlayerClip (moveclip_t *clip, edict_t *touch)
 		&& SV_IsActiveClientEdict(touch);
 }
 
+static qboolean SV_IsTelefragClient(edict_t *ent)
+{
+	int num;
+
+	if (!ent || ent->free || !((int)ent->v.flags & FL_CLIENT))
+		return false;
+	num = NUM_FOR_EDICT(ent);
+	if (num < 1 || num > svs.maxclients)
+		return false;
+	/* PutClientInServer creates a teledeath before signon reaches "begin".
+	 * It is already a real player even though client->spawned is still false.
+	 * Keep the normal active-client test stricter for movement and pickups. */
+	return svs.clients[num - 1].active && svs.clients[num - 1].edict == ent;
+}
+
 qboolean SV_ShouldSuppressCoopTelefrag(edict_t *trigger, edict_t *other)
 {
 	const char *classname;
@@ -204,17 +238,18 @@ qboolean SV_ShouldSuppressCoopTelefrag(edict_t *trigger, edict_t *other)
 
 	if (!coop.value || !SV_CoopFeatureEnabled(&sv_coop_notelefrag, true))
 		return false;
-	if (!trigger || trigger->free || !SV_IsActiveClientEdict(other))
+	if (!trigger || trigger->free || !SV_IsTelefragClient(other))
 		return false;
 	if (!trigger->v.classname)
 		return false;
 
 	classname = PR_GetString(trigger->v.classname);
-	if (!classname || q_strcasecmp(classname, "teledeath"))
+	if (!classname || (q_strcasecmp(classname, "teledeath") &&
+	                   q_strcasecmp(classname, "teledeath2")))
 		return false;
 
 	owner = PROG_TO_EDICT(trigger->v.owner);
-	return owner != other && SV_IsActiveClientEdict(owner);
+	return owner != other && SV_IsTelefragClient(owner);
 }
 
 static qboolean SV_EdictStringFieldSet (edict_t *ent, const char *fieldname)
@@ -1030,7 +1065,7 @@ static void SV_CoopGiveDeclaredCustomKeyMetadata (edict_t *player,
 				dst_name->string = src_name->string;
 				copied = true;
 			}
-			else if (dst_name && !SV_IsActiveClientEdict(source) &&
+			else if (dst_name && !SV_IsCoopInventoryClient(source) &&
 				 source->v.netname)
 			{
 				dst_name->string = source->v.netname;
@@ -1340,7 +1375,7 @@ static void SV_CoopSharedRememberLevelProgress (
 
 static qboolean SV_CoopSharedIsLivingPlayer (edict_t *player)
 {
-	return SV_IsActiveClientEdict(player) && player->v.health > 0 &&
+	return SV_IsCoopInventoryClient(player) && player->v.health > 0 &&
 		player->v.deadflag == DEAD_NO;
 }
 
@@ -1404,10 +1439,8 @@ static void SV_CoopSharedApplyCanonicalTeamKeys (void)
 	{
 		edict_t *player;
 
-		if (!svs.clients[i].active || !svs.clients[i].spawned)
-			continue;
 		player = svs.clients[i].edict;
-		if (!player || player->free)
+		if (!SV_IsCoopInventoryClient(player))
 			continue;
 		SV_CoopSharedApplyCanonicalKeys(player);
 		if (SV_CoopSharedIsLivingPlayer(player))
@@ -1457,8 +1490,7 @@ static void SV_CoopSharedRebuildTeamKeys (edict_t *source)
 	{
 		edict_t *player = svs.clients[i].edict;
 
-		if (!svs.clients[i].active || !svs.clients[i].spawned ||
-		    !SV_CoopSharedIsLivingPlayer(player))
+		if (!SV_CoopSharedIsLivingPlayer(player))
 			continue;
 		SV_CaptureCoopSharedInventory(player, &current);
 		items |= current.items & SV_CoopSharedStockKeyMask();
@@ -1628,6 +1660,10 @@ void SV_CoopSharedApplyToJoiningClient (edict_t *player)
 				val->_float = sv_coop_shared_ckey_skins[i];
 		}
 	}
+	/* A saved player may reconnect after the team spent a key.  Their old
+	 * snapshot is not a new pickup: use today's exact team key state, while
+	 * retaining the additive handling above for non-key progression. */
+	SV_CoopSharedApplyCanonicalKeys(player);
 	SV_CoopRespawnRefreshClientInventory(player);
 }
 
@@ -1747,9 +1783,9 @@ void SV_CoopSharedMergeRestoredClient (edict_t *source)
 	}
 
 	/* A restored player may arrive after an unmatched client seeded an empty
-	 * snapshot. Bring every already-spawned client up to the merged state. */
+	 * snapshot. Bring every QC-initialized client up to the merged state. */
 	for (i = 0; i < svs.maxclients; ++i)
-		if (svs.clients[i].active && svs.clients[i].spawned)
+		if (SV_IsCoopInventoryClient(svs.clients[i].edict))
 			SV_CoopSharedApplyToJoiningClient(svs.clients[i].edict);
 }
 
@@ -1757,7 +1793,7 @@ static qboolean SV_IsCoopSharedPickupCandidate (edict_t *pickup, edict_t *player
 {
 	if (!coop.value || !SV_CoopFeatureEnabled(&sv_coop_shared_pickups, true))
 		return false;
-	if (!SV_IsActiveClientEdict(player))
+	if (!SV_IsCoopInventoryClient(player))
 		return false;
 	if (!pickup || pickup->free || pickup->v.solid != SOLID_TRIGGER)
 		return false;
@@ -1887,7 +1923,7 @@ static qboolean SV_MG3UpgradeTouchBegin (edict_t *pickup, edict_t *player,
 
 	memset(state, 0, sizeof(*state));
 	if (!pickup || pickup->free || !player || player->free ||
-	    !SV_IsActiveClientEdict(player) || !pickup->v.classname ||
+	    !SV_IsCoopInventoryClient(player) || !pickup->v.classname ||
 	    !SV_MG3UpgradeAPIAvailable())
 		return false;
 
@@ -2034,10 +2070,10 @@ static void SV_MG3UpgradeTouchEnd (edict_t *source,
 			continue;
 		SV_MG3UpgradeApplySpawnParms(svs.clients[i].spawn_parms);
 
-		if (i == state->client_index || !svs.clients[i].spawned)
+		if (i == state->client_index)
 			continue;
 		player = svs.clients[i].edict;
-		if (!player || player->free)
+		if (!SV_IsCoopInventoryClient(player))
 			continue;
 
 		if (state->type == 0)
@@ -2206,7 +2242,7 @@ static void SV_CoopSharedApplyInventoryGain (
 	eval_t	*val;
 	qboolean	ammo_gain;
 
-	if (!SV_IsActiveClientEdict(player))
+	if (!SV_IsCoopInventoryClient(player))
 		return;
 
 	ammo_gain = SV_CoopSharedInventoryHasAmmoGain(before, after);
@@ -2366,7 +2402,7 @@ static void SV_CoopSharedApplyKeyLoss (
 	int	lost_items;
 	eval_t	*val;
 
-	if (!SV_IsActiveClientEdict(player))
+	if (!SV_IsCoopInventoryClient(player))
 		return;
 
 	lost_items = CoopInventoryPolicy_RemovedBits(before->items, after->items) &
@@ -2426,7 +2462,7 @@ static void SV_SyncCoopSharedKeyLoss (
 {
 	int	i;
 
-	if (!coop.value || !SV_IsActiveClientEdict(source))
+	if (!coop.value || !SV_IsCoopInventoryClient(source))
 		return;
 	if (!SV_CoopSharedInventoryHasKeyLoss(before, after))
 		return;
@@ -2444,7 +2480,7 @@ static int SV_CoopSharedClientIndex (edict_t *client)
 {
 	int	num;
 
-	if (!client || client->free || !SV_IsActiveClientEdict(client))
+	if (!SV_IsCoopInventoryClient(client))
 		return -1;
 
 	num = NUM_FOR_EDICT(client);

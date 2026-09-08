@@ -77,6 +77,7 @@ typedef struct
 	int			coop_autosave_next_slot;
 	double		coop_autosave_last_time;
 	double		coop_autosave_last_realtime;
+	double		coop_autosave_retry_realtime;
 	int			coop_autosave_last_secrets;
 	int			coop_autosave_last_kill_bucket;
 	int			coop_autosave_last_serverflags;
@@ -261,6 +262,7 @@ typedef struct client_s
 
 // spawn parms are carried from level to level
 	float			spawn_parms[NUM_SPAWN_PARMS];
+	qboolean		spawn_parms_pending; // load connection awaiting name resolution
 
 // client known data for deltas
 	int				old_frags;
@@ -522,7 +524,11 @@ qboolean SV_CoopRespawnTeleportToPlayer(edict_t *ent, edict_t *target);
 qboolean SV_CoopRespawnTeleportToSpawn(edict_t *ent, edict_t *spawn);
 void SV_CoopRespawnSyncSharedKeys(edict_t *source);
 void SV_CoopRespawnRefreshClientInventory(edict_t *ent);
+void SV_CoopRespawnSaveClientEdict(edict_t *ent, edict_t *snapshot);
+void SV_CoopRespawnRestoreSavedInventory(edict_t *ent, edict_t *snapshot);
 qboolean SV_CoopRespawnPrepareChangelevel(edict_t *ent);
+void SV_RestoreSavedMapvarInitialization(void);
+void SV_InheritTransitionMapvars(client_t *client);
 
 #define SV_COOP_GIVEKEYS_SILVER 1
 #define SV_COOP_GIVEKEYS_GOLD 2
