@@ -289,6 +289,9 @@ struct {
 
 static float vrYaw;
 static bool readbackYaw;
+/* cl.viewangles is rewritten from tracking even while the HMD is untracked. */
+static bool controllerYawPending;
+static float controllerYawTarget;
 
 vec3_t vr_viewOffset;
 static vec3_t lastHudPosition{0.0, 0.0, 0.0};
@@ -2938,6 +2941,11 @@ void HmdVec3RotateY(vr::HmdVector3_t *pos, float angle) {
 
 // ----------------------------------------------------------------------------
 // Callbacks for cvars
+
+static void VR_AimMode_f(cvar_t *var) {
+  (void)var;
+  VR_ClearPendingYaw();
+}
 
 static void VR_Enabled_f(cvar_t *var) {
   VID_VR_Disable();
@@ -6911,6 +6919,7 @@ void VID_VR_Init() {
     return;
   }
   Cvar_RegisterVariable(&vr_aimmode);
+  Cvar_SetCallback(&vr_aimmode, VR_AimMode_f);
   Cvar_RegisterVariable(&vr_crosshair_alpha);
   Cvar_RegisterVariable(&vr_crosshair_depth);
   Cvar_RegisterVariable(&vr_crosshair_size);
@@ -7623,11 +7632,37 @@ qboolean VR_Enable() {
   return true;
 }
 
-void VR_PushYaw() { readbackYaw = true; }
+void VR_PushYaw() {
+  if ((int)vr_aimmode.value == VR_AIMMODE_CONTROLLER) {
+    controllerYawTarget = cl.viewangles[YAW];
+    controllerYawPending = true;
+  } else {
+    readbackYaw = true;
+  }
+}
+
+void VR_ClearPendingYaw() {
+  readbackYaw = false;
+  controllerYawPending = false;
+}
+
+void VR_RequestServerYaw(float yaw) {
+  if (!vr_enabled.value || (int)vr_aimmode.value != VR_AIMMODE_CONTROLLER)
+    return;
+
+  /* Called after the complete server message: svc_clientdata may hide the
+   * weapon AFTER svc_setangle, and viewent.model still belongs to the last
+   * rendered frame.  Hidden-weapon fixangle is the same scripted-camera
+   * convention used by CL_InCutscene.  Camera updates must not cancel the
+   * user's physical head turns, including a pending setview rebase. */
+  controllerYawPending = cl.stats[STAT_WEAPON] != 0 && !cl.intermission;
+  controllerYawTarget = yaw;
+}
 
 void VID_VR_Shutdown() { VID_VR_Disable(); }
 
 void VID_VR_Disable() {
+  VR_ClearPendingYaw();
   if (!vr_initialized) {
     VR_InvalidateFBTTransientOutput();
     VR_FBT_ResetRuntimeState();
@@ -8381,8 +8416,15 @@ void VR_PollPoses() {
 }
 
 static void VR_ApplyPendingControllerYaw() {
-  if (!readbackYaw || (int)vr_aimmode.value != VR_AIMMODE_CONTROLLER)
+  if (!controllerYawPending || (int)vr_aimmode.value != VR_AIMMODE_CONTROLLER)
     return;
+
+  /* A later message may enter a camera without carrying another setangle.
+   * Never apply an old gameplay rebase after that transition. */
+  if (cl.intermission || (cl.fixangle && !cl.stats[STAT_WEAPON])) {
+    controllerYawPending = false;
+    return;
+  }
 
   /* All eye, hand, room-scale and movement transforms must see the same yaw.
    * Do this before deriving any of them, not after the controller loop.  A
@@ -8394,8 +8436,8 @@ static void VR_ApplyPendingControllerYaw() {
       vec3_t orientation;
       QuatToYawPitchRoll(Matrix34ToQuaternion(
           ovr_DevicePose[device].mDeviceToAbsoluteTracking), orientation);
-      vrYaw += cl.viewangles[YAW] - orientation[YAW];
-      readbackYaw = false;
+      vrYaw += controllerYawTarget - orientation[YAW];
+      controllerYawPending = false;
       return;
     }
   }

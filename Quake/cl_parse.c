@@ -2449,6 +2449,8 @@ CL_ParseServerMessage
 */
 void CL_ParseServerMessage (void)
 {
+	qboolean received_setangle = false;
+	float server_yaw = 0;
 	int			cmd;
 	int			i;
 	const char		*str; //johnfitz
@@ -2484,6 +2486,8 @@ void CL_ParseServerMessage (void)
 			SHOWNET("END OF MESSAGE");
 
 			CL_UpdateItemsFromStats ();
+			if (received_setangle)
+				VR_RequestServerYaw (server_yaw);
 
 			if (*cl.stuffcmdbuf && net_message.cursize < 512)
 				CL_ParseStuffText("\n");	//there's a few mods that forget to write \ns, that then fuck up other things too. So make sure it gets flushed to the cbuf. the cursize check is to reduce backbuffer overflows that would give a false positive.
@@ -2601,12 +2605,10 @@ void CL_ParseServerMessage (void)
 				cl.viewangles[i] = MSG_ReadAngle (cl.protocolflags);
 			cl.fixangle = true;
 			VR_SetAngles (cl.viewangles);
-			/* Controller aiming derives view/movement from tracking every
-			 * frame.  Rebase that space to a teleport's authoritative yaw,
-			 * otherwise the next pose overwrites the server's exit heading. */
-			if (vr_enabled.value &&
-			    (int)vr_aimmode.value == VR_AIMMODE_CONTROLLER)
-				VR_PushYaw ();
+			/* Classify camera versus teleport only once the matching weapon
+			 * stat has been parsed, independent of command ordering. */
+			server_yaw = cl.viewangles[YAW];
+			received_setangle = true;
 			break;
 
 		case svc_setview:
