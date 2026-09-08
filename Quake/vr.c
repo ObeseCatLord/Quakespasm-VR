@@ -14,6 +14,7 @@ extern "C" {
 #include "vr_fbt_visual.h"
 #include "vr_fbt_filter.h"
 #include "vr_weapon_catalog.h"
+#include "vr_weaponmenu_hit.h"
 #include "zone.h"
 #include "debug_log.h"
 
@@ -8379,6 +8380,27 @@ void VR_PollPoses() {
   VR_AcquirePoseSnapshot();
 }
 
+static void VR_ApplyPendingControllerYaw() {
+  if (!readbackYaw || (int)vr_aimmode.value != VR_AIMMODE_CONTROLLER)
+    return;
+
+  /* All eye, hand, room-scale and movement transforms must see the same yaw.
+   * Do this before deriving any of them, not after the controller loop.  A
+   * temporarily untracked headset leaves the request pending.  Mouse/head
+   * aim modes retain their existing delta/offset semantics below. */
+  for (uint32_t device = 0; device < vr::k_unMaxTrackedDeviceCount; ++device) {
+    if (ovr_DevicePose[device].bPoseIsValid &&
+        vr_pose_snapshot_device_class[device] == vr::TrackedDeviceClass_HMD) {
+      vec3_t orientation;
+      QuatToYawPitchRoll(Matrix34ToQuaternion(
+          ovr_DevicePose[device].mDeviceToAbsoluteTracking), orientation);
+      vrYaw += cl.viewangles[YAW] - orientation[YAW];
+      readbackYaw = false;
+      return;
+    }
+  }
+}
+
 void VR_UpdateScreenContent() {
   vec3_t orientation;
   vec3_t eye_view_offsets[2];
@@ -8421,6 +8443,8 @@ void VR_UpdateScreenContent() {
   acquired_pose = VR_AcquirePoseSnapshot();
   if (!acquired_pose && !vr_pose_snapshot_valid)
     return;
+
+  VR_ApplyPendingControllerYaw();
 
   controllers[0].seenThisFrame = false;
   controllers[1].seenThisFrame = false;
@@ -8548,7 +8572,7 @@ void VR_UpdateScreenContent() {
   cl.aimangles[ROLL] = 0.0;
 
   QuatToYawPitchRoll(eyes[1].orientation, orientation);
-  if (readbackYaw) {
+  if (readbackYaw && (int)vr_aimmode.value != VR_AIMMODE_CONTROLLER) {
     vrYaw = cl.viewangles[YAW] - (orientation[YAW] - vrYaw);
     readbackYaw = false;
   }
@@ -10617,19 +10641,18 @@ static void VR_RunWeaponMenu(qboolean draw) {
   // garbage positions for weapons whose models fail to load)
   vec3_t weapon_positions[MAX_DYN_WEAPONS];
   qboolean weapon_position_valid[MAX_DYN_WEAPONS];
-  vec3_t player_positions[MAX_SCOREBOARD];
-  qboolean player_position_valid[MAX_SCOREBOARD];
-  vec3_t respawn_position;
-  qboolean respawn_position_valid = false;
-  vec3_t quick_action_positions[2];
-  qboolean quick_action_position_valid[2];
+  typedef struct {
+    vec3_t origin;
+    float width;
+    float height;
+    float outline_padding;
+    int selection;
+    int type;
+  } vr_weaponmenu_label_rect_t;
+  vr_weaponmenu_label_rect_t label_rects[MAX_SCOREBOARD + 3];
+  int num_label_rects = 0;
   memset(weapon_positions, 0, sizeof(weapon_positions));
   memset(weapon_position_valid, 0, sizeof(weapon_position_valid));
-  memset(player_positions, 0, sizeof(player_positions));
-  memset(player_position_valid, 0, sizeof(player_position_valid));
-  VectorCopy(vec3_origin, respawn_position);
-  memset(quick_action_positions, 0, sizeof(quick_action_positions));
-  memset(quick_action_position_valid, 0, sizeof(quick_action_position_valid));
 
   int current_assigned_index = 0;
 
@@ -10831,7 +10854,7 @@ static void VR_RunWeaponMenu(qboolean draw) {
                         : 0.0f;
 
     if (respawn_action) {
-      vec3_t text_pos, text_center, text_color;
+      vec3_t text_pos, text_color;
       char label[24];
       qboolean is_selected =
           vr_weaponmenu_selection_type == VR_WEAPONMENU_SELECTION_RESPAWN;
@@ -10852,15 +10875,19 @@ static void VR_RunWeaponMenu(qboolean draw) {
         VR_DrawText3DOutlined(text_pos, right, up, label, text_scale,
                               text_color, false, playspace);
 
-      VectorCopy(text_pos, text_center);
-      VectorMA(text_center, (len * char_width) * 0.5f, right, text_center);
-      VectorCopy(text_center, respawn_position);
-      respawn_position_valid = true;
+      VectorCopy(text_pos, label_rects[num_label_rects].origin);
+      label_rects[num_label_rects].width = len * char_width;
+      label_rects[num_label_rects].height = 8.0f * text_scale;
+      label_rects[num_label_rects].outline_padding =
+          q_max(0.28f, text_scale * 1.15f);
+      label_rects[num_label_rects].selection = 0;
+      label_rects[num_label_rects].type = VR_WEAPONMENU_SELECTION_RESPAWN;
+      num_label_rects++;
     }
 
     for (int i = 0; i < num_players; i++) {
       int playernum = player_indices[i];
-      vec3_t text_pos, text_center, text_color;
+      vec3_t text_pos, text_color;
       char label[MAX_SCOREBOARDNAME + 3];
       const char *name = cl.scores[playernum].name;
       qboolean is_selected =
@@ -10881,10 +10908,14 @@ static void VR_RunWeaponMenu(qboolean draw) {
         VR_DrawText3DOutlined(text_pos, right, up, label, text_scale,
                               text_color, false, playspace);
 
-      VectorCopy(text_pos, text_center);
-      VectorMA(text_center, (len * char_width) * 0.5f, right, text_center);
-      VectorCopy(text_center, player_positions[playernum]);
-      player_position_valid[playernum] = true;
+      VectorCopy(text_pos, label_rects[num_label_rects].origin);
+      label_rects[num_label_rects].width = len * char_width;
+      label_rects[num_label_rects].height = 8.0f * text_scale;
+      label_rects[num_label_rects].outline_padding =
+          q_max(0.28f, text_scale * 1.15f);
+      label_rects[num_label_rects].selection = playernum;
+      label_rects[num_label_rects].type = VR_WEAPONMENU_SELECTION_PLAYER;
+      num_label_rects++;
     }
   }
 
@@ -10901,7 +10932,7 @@ static void VR_RunWeaponMenu(qboolean draw) {
     float line_spacing = 5.0f * text_layout_scale;
 
     for (int i = 0; i < 2; i++) {
-      vec3_t text_pos, text_center, text_color;
+      vec3_t text_pos, text_color;
       char label[24];
       qboolean is_selected =
           vr_weaponmenu_selection_type == selection_types[i];
@@ -10924,10 +10955,14 @@ static void VR_RunWeaponMenu(qboolean draw) {
         VR_DrawText3DOutlined(text_pos, right, up, label, text_scale,
                               text_color, false, playspace);
 
-      VectorCopy(text_pos, text_center);
-      VectorMA(text_center, (len * char_width) * 0.5f, right, text_center);
-      VectorCopy(text_center, quick_action_positions[i]);
-      quick_action_position_valid[i] = true;
+      VectorCopy(text_pos, label_rects[num_label_rects].origin);
+      label_rects[num_label_rects].width = len * char_width;
+      label_rects[num_label_rects].height = 8.0f * text_scale;
+      label_rects[num_label_rects].outline_padding =
+          q_max(0.28f, text_scale * 1.15f);
+      label_rects[num_label_rects].selection = 0;
+      label_rects[num_label_rects].type = selection_types[i];
+      num_label_rects++;
     }
   }
 
@@ -11034,64 +11069,22 @@ static void VR_RunWeaponMenu(qboolean draw) {
     }
   }
 
-  /* A pointer hit is more precise than the angular tests used by the text
-   * actions, so do not let a nearby label steal a weapon under the dot. */
-  if (best_type == VR_WEAPONMENU_SELECTION_WEAPON)
-    best_score = 2.0f;
+  /* Playspace weapon dots are more precise than labels.  Otherwise, an
+   * actual label hit beats the desktop/legacy weapon cone. */
+  if (!(playspace && vr_weaponmenu_session.frame_laser_valid &&
+        best_type == VR_WEAPONMENU_SELECTION_WEAPON)) {
+    for (int i = 0; i < num_label_rects; i++) {
+      vec3_t hit_point;
 
-  for (int i = 0; i < num_players; i++) {
-    int playernum = player_indices[i];
-    vec3_t dir;
-    float score;
-
-    if (!player_position_valid[playernum])
-      continue;
-    VectorSubtract(player_positions[playernum], aim_origin, dir);
-    VectorNormalize(dir);
-
-    score = DotProduct(aim_fwd, dir);
-    if (score > best_score &&
-        (!playspace || VR_WeaponMenuTargetVisible(
-                           aim_origin, player_positions[playernum]))) {
-      best_score = score;
-      best_index = playernum;
-      best_type = VR_WEAPONMENU_SELECTION_PLAYER;
-    }
-  }
-
-  if (respawn_position_valid) {
-    vec3_t dir;
-    float score;
-
-    VectorSubtract(respawn_position, aim_origin, dir);
-    VectorNormalize(dir);
-    score = DotProduct(aim_fwd, dir);
-    if (score > best_score &&
-        (!playspace ||
-         VR_WeaponMenuTargetVisible(aim_origin, respawn_position))) {
-      best_score = score;
-      best_index = 0;
-      best_type = VR_WEAPONMENU_SELECTION_RESPAWN;
-    }
-  }
-
-  for (int i = 0; i < 2; i++) {
-    vec3_t dir;
-    float score;
-
-    if (!quick_action_position_valid[i])
-      continue;
-    VectorSubtract(quick_action_positions[i], aim_origin, dir);
-    VectorNormalize(dir);
-
-    score = DotProduct(aim_fwd, dir);
-    if (score > best_score &&
-        (!playspace || VR_WeaponMenuTargetVisible(
-                           aim_origin, quick_action_positions[i]))) {
-      best_score = score;
-      best_index = 0;
-      best_type = i == 0 ? VR_WEAPONMENU_SELECTION_QUICKSAVE
-                         : VR_WEAPONMENU_SELECTION_QUICKLOAD;
+      if (VR_WeaponMenuRayHitsLabelRect(
+              aim_origin, aim_fwd, forward, label_rects[i].origin, right, up,
+              label_rects[i].width, label_rects[i].height,
+              label_rects[i].outline_padding, hit_point) &&
+          (!playspace || VR_WeaponMenuTargetVisible(aim_origin, hit_point))) {
+        best_index = label_rects[i].selection;
+        best_type = label_rects[i].type;
+        break;
+      }
     }
   }
 
