@@ -4383,6 +4383,11 @@ static void SV_PresendClientDatagram (client_t *client)
 		return;
 	if (!client->spawned)
 		return;
+	/* Later pushers/triggers may establish QC ladder state after the player
+	 * has finished. Suppress both snapshot prediction and its move ACK before
+	 * serialization; the next frame still owns input/authority transfer. */
+	if (client->usingpmove && SV_QBJ3NeedsLegacyPhysics (client))
+		client->move_prediction_allowed = false;
 	if (!client->pendingentities_bits || !client->frames)
 		SVFTE_SetupFrames (client);
 	SVFTE_BuildSnapshotForClient (client);

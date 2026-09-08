@@ -45,7 +45,7 @@ qboolean onground;
 
 usercmd_t cmd;
 
-static void SV_UpdateClientPMoveMode(client_t *client);
+static void SV_UpdateClientPMoveMode(client_t *client, qboolean allow_promotion);
 
 #define SV_VANILLA_JUMP_VELOCITY 270.0f
 #define SV_VANILLA_WATERJUMP_VELOCITY 225.0f
@@ -778,7 +778,7 @@ static void SV_ApplyAcceptedUsercmd(client_t *client, const usercmd_t *acceptedc
   }
 }
 
-static void SV_LoadQueuedPMoveUsercmd(client_t *client) {
+void SV_LoadQueuedPMoveUsercmd(client_t *client) {
   usercmd_t *queuedcmd;
 
   if (!client->move_queue_count) {
@@ -789,6 +789,8 @@ static void SV_LoadQueuedPMoveUsercmd(client_t *client) {
   }
 
   queuedcmd = &client->move_queue[client->move_queue_head];
+  /* Reloading a deferred head must replace, not accumulate, its tracking. */
+  VectorClear(client->vr_roomscale_accum);
   SV_ApplyAcceptedUsercmd(client, queuedcmd);
   client->pendingmovemessage = queuedcmd->sequence;
   client->move_pending = true;
@@ -818,25 +820,29 @@ static qboolean SV_QueuePMoveUsercmd(client_t *client,
   return true;
 }
 
+/* Validate each fresh sample before batching; a frame may legitimately
+ * accumulate several individually valid tracking displacements. */
+static void SV_ValidateVRRoomScaleUsercmd(client_t *client, usercmd_t *cmd) {
+  float horizontal = sqrtf(cmd->vr_roomscalemove[0] * cmd->vr_roomscalemove[0] +
+                           cmd->vr_roomscalemove[1] * cmd->vr_roomscalemove[1]);
+
+  if (!isfinite(horizontal) || !isfinite(cmd->vr_roomscalemove[2]) ||
+      fabsf(cmd->vr_roomscalemove[2]) > 16.0f || horizontal > 16.0f) {
+    VectorClear(cmd->vr_roomscalemove);
+    client->move_discontinuity_epoch++;
+    client->move_discontinuity_reason = MOVEACK_DISCONTINUITY_TRACKING_OUTLIER;
+    client->net_move_roomscale_outliers++;
+  }
+}
+
 static qboolean SV_AcceptPMoveUsercmd(client_t *client,
                                       const usercmd_t *acceptedcmd) {
   usercmd_t pmovecmd;
   qboolean has_input;
-  float roomscale_horizontal;
 
   pmovecmd = *acceptedcmd;
   SV_NormalizeAcceptedUsercmd(client, &pmovecmd);
-  roomscale_horizontal = sqrtf(pmovecmd.vr_roomscalemove[0] *
-                               pmovecmd.vr_roomscalemove[0] +
-                               pmovecmd.vr_roomscalemove[1] *
-                               pmovecmd.vr_roomscalemove[1]);
-  if (fabsf(pmovecmd.vr_roomscalemove[2]) > 16.0f ||
-      roomscale_horizontal > 16.0f) {
-    client->move_discontinuity_epoch++;
-    client->move_discontinuity_reason =
-        MOVEACK_DISCONTINUITY_TRACKING_OUTLIER;
-    client->net_move_roomscale_outliers++;
-  }
+  SV_ValidateVRRoomScaleUsercmd(client, &pmovecmd);
   if (!SV_QueuePMoveUsercmd(client, &pmovecmd))
     return false;
 
@@ -870,10 +876,13 @@ static void SV_AcceptLatestUsercmd(client_t *client,
   qboolean has_input;
 
   latestcmd = *acceptedcmd;
+  SV_ValidateVRRoomScaleUsercmd(client, &latestcmd);
   latestcmd.seconds = 0;
 
   client->net_latest_buttons = latestcmd.buttons;
-  client->net_latched_buttons |= latestcmd.buttons & 1;
+  /* Preserve a brief jump as well as fire until the frame's QuakeC pass.
+   * Redundant/reordered commands have already been rejected by sequence. */
+  client->net_latched_buttons |= latestcmd.buttons & (BUTTON_ATTACK | BUTTON_JUMP);
   if (latestcmd.impulse)
     client->net_latched_impulse = latestcmd.impulse;
   latestcmd.buttons |= client->net_latched_buttons;
@@ -980,7 +989,7 @@ void SV_ReadClientMove(usercmd_t *move) {
                   host_client->name, gap, sequence, accepted_base);
   }
 
-  SV_UpdateClientPMoveMode(host_client);
+  SV_UpdateClientPMoveMode(host_client, false);
   if (host_client->usingpmove) {
     if (!SV_AcceptPMoveUsercmd(host_client, &readcmd))
       return;
@@ -1034,6 +1043,13 @@ static void SV_ClearStaleClientInput(client_t *client) {
   client->cmd.forwardmove = 0;
   client->cmd.sidemove = 0;
   client->cmd.upmove = 0;
+  client->cmd.buttons = 0;
+  client->cmd.impulse = 0;
+  client->net_latest_buttons = 0;
+  client->net_latched_buttons = 0;
+  client->net_latched_impulse = 0;
+  VectorClear(client->cmd.vr_roomscalemove);
+  VectorClear(client->vr_roomscale_accum);
   SV_ClearClientPMoveState(client);
   client->edict->v.button0 = 0;
   client->edict->v.button2 = 0;
@@ -1506,7 +1522,115 @@ SV_PMovePolicyFallback(sv_pmove_policy_fallback_t fallback)
   }
 }
 
-static void SV_UpdateClientPMoveMode(client_t *client) {
+/* This adapter is verified against the installed QBJ3 progs, not every mod
+ * declaring .onladder. Keep unknown revisions on their original QC contract.
+ * The CRC is the existing whole-progs checksum calculated by PR_LoadProgs. */
+static qboolean SV_QBJ3PMoveCompatible(void) {
+  return COM_GameDirMatches("qbj3") &&
+      (qcvm->crc == 35566 || qcvm->crc == 15169) &&
+      qcvm->extfields.onladder >= 0 && !qcvm->extfuncs.SV_RunClientCommand;
+}
+
+static qboolean SV_QBJ3LegacyState(edict_t *ent) {
+  eval_t *val;
+
+  if (!SV_QBJ3PMoveCompatible())
+    return false;
+  if (!ent || ent->free || ent->v.health <= 0 || ent->v.waterlevel > 0)
+    return true;
+  val = GetEdictFieldValue(ent, qcvm->extfields.onladder);
+  if (val && val->_float)
+    return true;
+  val = GetEdictFieldValueByName(ent, "wasonladder");
+  if (!val || val->_float)
+    return true;
+  val = GetEdictFieldValue(ent, qcvm->extfields.gravity);
+  if (val && val->_float != 0 && val->_float != 1)
+    return true;
+  val = GetEdictFieldValueByName(ent, "pausetime");
+  return val && val->_float > qcvm->time;
+}
+
+/* Long commands can cross a thin QC trigger between endpoint links. Close
+ * to a ladder, use the existing server-frame sampler instead. This is only
+ * a conservative admission bound; actual touch/facing/lock rules stay in QC. */
+static qboolean SV_QBJ3LongMoveNearLadder(client_t *client) {
+  extern cvar_t sv_maxvelocity, sv_gravity;
+  edict_t *other, *ent = client->edict;
+  vec3_t tracking = {0, 0, 0};
+  float seconds = 0, reach;
+  int j, n;
+  qboolean longcmd = false;
+
+  if (!SV_QBJ3PMoveCompatible() || !ent)
+    return false;
+  if (client->move_queue_count) {
+    const usercmd_t *cmd = &client->move_queue[client->move_queue_head];
+    seconds = cmd->seconds;
+    longcmd = cmd->msec > 25;
+    for (j = 0; j < 3; j++)
+      tracking[j] = fabsf(cmd->vr_roomscalemove[j]);
+  }
+  if (!longcmd && client->usingpmove)
+    return false;
+  if (!client->usingpmove) {
+    /* Once QC owns a nearby ladder, shorter packets must not cause mode
+     * oscillation. Resume only outside the maximum-command neighborhood. */
+    seconds = q_max(seconds, 0.125f);
+    for (j = 0; j < 3; j++)
+      tracking[j] = q_max(tracking[j], 16.0f);
+  }
+  /* Use one common velocity envelope for entry and exit. Include speed
+   * gained over up to five 25ms substeps, a jump and gravity, rather than
+   * assuming the pre-batch component clamp also limits PMove's output. */
+  reach = q_max(fabsf(sv_maxvelocity.value), VectorLength(ent->v.velocity));
+  reach += 5 * fabsf(sv_maxspeed.value) +
+      q_max(270.0f, sv_vr_jump_velocity.value) + fabsf(sv_gravity.value) * 0.125f;
+  reach = reach * seconds + 5 * q_max(18.0f, Cvar_VariableValue("pm_stepheight"));
+  for (n = 1, other = NEXT_EDICT(qcvm->edicts); n < qcvm->num_edicts;
+       n++, other = NEXT_EDICT(other)) {
+    if (other->free || (int)other->v.solid != SOLID_TRIGGER ||
+        strcmp(PR_GetString(other->v.classname), "trigger_ladder"))
+      continue;
+    for (j = 0; j < 3; j++)
+      if (ent->v.origin[j] + ent->v.maxs[j] + reach + tracking[j] < other->v.absmin[j] ||
+          ent->v.origin[j] + ent->v.mins[j] - reach - tracking[j] > other->v.absmax[j])
+        break;
+    if (j == 3)
+      return true;
+  }
+  return false;
+}
+
+qboolean SV_QBJ3NeedsLegacyPhysics(client_t *client) {
+  return SV_QBJ3LegacyState(client->edict) || SV_QBJ3LongMoveNearLadder(client);
+}
+
+/* Move unsimulated records into the existing frame-driven input consumer.
+ * Its latest held state, event latches and tracking accumulation remain the
+ * only legacy input policy. Already simulated records are outside the queue. */
+static void SV_TransferPMoveToLegacy(client_t *client) {
+  usercmd_t pending[MOVE_BUNDLE_MAX];
+  unsigned int i, count = client->move_queue_count;
+  double received_time = client->last_move_time;
+
+  for (i = 0; i < count; i++)
+    pending[i] = client->move_queue[
+        (client->move_queue_head + i) % MOVE_BUNDLE_MAX];
+  VectorClear(client->vr_roomscale_accum);
+  VectorClear(client->vr_roomscalemove);
+  VectorClear(client->cmd.vr_roomscalemove);
+  SV_ClearClientPMoveState(client);
+  client->net_latched_buttons = 0;
+  client->net_latched_impulse = 0;
+  client->net_latest_buttons = client->cmd.buttons;
+  client->cmd.impulse = 0;
+  for (i = 0; i < count; i++)
+    SV_AcceptLatestUsercmd(client, &pending[i]);
+  client->last_move_time = received_time;
+}
+
+static void SV_UpdateClientPMoveMode(client_t *client, qboolean allow_promotion) {
   qboolean usingpmove;
   qboolean local_singleplayer;
   qboolean legacy_prethink_mod;
@@ -1530,14 +1654,11 @@ static void SV_UpdateClientPMoveMode(client_t *client) {
    * PreThink callback, so a hook press later in the bundle would be lost.
    * Preserve the mod's original per-frame QuakeC input semantics. */
   legacy_prethink_mod = COM_GameDirMatches("rm1.2");
-  /* Legacy mods such as QBJ3 own ladder movement in PlayerPreThink and use a
-   * one-frame .onladder field as QuakeC state.  Engine PMove interprets that
-   * same field as a QSS ladder volume and applies its own sustained jump/climb
-   * acceleration, bypassing the mod's jump-off transition.  Without the
-   * command-physics extension there is no safe per-command QC equivalent, so
-   * retain the classic movement contract used by Ironwail. */
+  /* Unknown ladder mods retain their whole-mod gate. Verified QBJ3 uses
+   * shared PMove only while its QC-owned ladder/water state is inactive. */
   legacy_qc_ladder_mod = qcvm->extfields.onladder >= 0 &&
-      !qcvm->extfuncs.SV_RunClientCommand;
+      !qcvm->extfuncs.SV_RunClientCommand &&
+      (!SV_QBJ3PMoveCompatible() || SV_QBJ3NeedsLegacyPhysics(client));
 
   requested_mode = CLAMP(0, (int)sv_pmove_mode.value, 3);
   customphysics = client->edict ?
@@ -1561,6 +1682,9 @@ static void SV_UpdateClientPMoveMode(client_t *client) {
   pmove_policy_input.nq_player_physics = sv_nqplayerphysics.value != 0;
   pmove_policy_input.legacy_prethink_mod = legacy_prethink_mod;
   pmove_policy_input.has_qc_onladder_field = qcvm->extfields.onladder >= 0;
+  pmove_policy_input.compatible_qc_ladder_mod = SV_QBJ3PMoveCompatible();
+  pmove_policy_input.qc_ladder_legacy_state =
+      SV_QBJ3NeedsLegacyPhysics(client);
   pmove_policy_input.has_sv_runclientcommand =
       qcvm->extfuncs.SV_RunClientCommand != 0;
   pmove_policy_input.has_explicit_cmd_msec =
@@ -1573,12 +1697,26 @@ static void SV_UpdateClientPMoveMode(client_t *client) {
   authority = SV_PMovePolicyAuthority(pmove_policy_result.authority);
   fallback_reason = SV_PMovePolicyFallback(pmove_policy_result.fallback);
 
+  /* Never promote after legacy input was accepted in this frame. Finish its
+   * QC pass first, then begin command movement at the next frame boundary. */
+  if (usingpmove && !client->usingpmove &&
+      (!allow_promotion || client->net_latched_buttons ||
+       client->net_latched_impulse || client->vr_roomscale_accum[0] ||
+       client->vr_roomscale_accum[1] || client->vr_roomscale_accum[2])) {
+    usingpmove = false;
+    authority = MOVE_AUTHORITY_LEGACY_FRAME;
+  }
+
   if (usingpmove != client->usingpmove || authority != client->move_authority) {
     if (!usingpmove) {
-      SV_ClearClientPMoveState(client);
-      VectorCopy(vec3_origin, client->cmd.vr_roomscalemove);
-      VectorCopy(vec3_origin, client->vr_roomscalemove);
-      VectorCopy(vec3_origin, client->vr_roomscale_accum);
+      if (client->usingpmove && valid_state && SV_QBJ3PMoveCompatible())
+        SV_TransferPMoveToLegacy(client);
+      else {
+        SV_ClearClientPMoveState(client);
+        VectorClear(client->cmd.vr_roomscalemove);
+        VectorClear(client->vr_roomscalemove);
+        VectorClear(client->vr_roomscale_accum);
+      }
     }
     client->move_mode_epoch++;
     client->move_discontinuity_epoch++;
@@ -1618,7 +1756,7 @@ static void SV_GotServerMessage(struct qsocket_s *sock) {
        i++, host_client++) {
     if (host_client->netconnection == sock) {
       sv_player = host_client->edict;
-      SV_UpdateClientPMoveMode(host_client);
+      SV_UpdateClientPMoveMode(host_client, false);
       if (!SV_ParseClientMessage())
         SV_DropClient(false);
       break;
@@ -1634,6 +1772,12 @@ SV_RunClients
 void SV_RunClients(void) {
   int i;
 
+  /* Decide promotions before receiving this frame's input. A ladder contact
+   * can leave unsimulated commands queued from the preceding physics frame. */
+  for (i = 0; i < svs.maxclients; i++)
+    if (svs.clients[i].active)
+      SV_UpdateClientPMoveMode(&svs.clients[i], true);
+
   NET_GetServerMessages(SV_GotServerMessage);
 
   for (i = 0, host_client = svs.clients; i < svs.maxclients;
@@ -1642,7 +1786,7 @@ void SV_RunClients(void) {
       continue;
 
     sv_player = host_client->edict;
-    SV_UpdateClientPMoveMode(host_client);
+    SV_UpdateClientPMoveMode(host_client, false);
 
     if (host_client->netconnection &&
         NET_IsTimedOut(host_client->netconnection)) {
@@ -1661,7 +1805,7 @@ void SV_RunClients(void) {
       continue;
     }
 
-    SV_UpdateClientPMoveMode(host_client);
+    SV_UpdateClientPMoveMode(host_client, false);
 
     if (!host_client->netconnection) {
       eval_t *ev;
@@ -1683,11 +1827,15 @@ void SV_RunClients(void) {
         SV_ClearStaleClientInput(host_client);
       SV_ClientThink();
     } else if (!host_client->usingpmove) {
-      /* Do not carry an attack tap across a pause.  Keep impulses pending,
-       * though: the single-player console pauses the server, and commands
-       * such as "impulse 9" must reach QuakeC after the console closes.
-       * This also matches the traditional Quake/QuakeSpasm behaviour. */
+      /* Discard released fire/jump taps across a pause; retain held input.
+       * Keep impulses pending so console commands such as "impulse 9"
+       * still reach QuakeC after the single-player console closes. */
       host_client->net_latched_buttons = 0;
+      host_client->cmd.buttons = host_client->net_latest_buttons;
+      host_client->edict->v.button0 = host_client->cmd.buttons & BUTTON_ATTACK;
+      host_client->edict->v.button2 =
+          (host_client->cmd.buttons & BUTTON_JUMP) >> 1;
+      SV_SetExtendedButtons(host_client->edict, host_client->cmd.buttons);
     }
   }
 }

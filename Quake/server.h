@@ -506,8 +506,10 @@ void SV_SetExtendedButtons (edict_t *ent, int buttons);
 void SV_AddUpdates (void);
 
 void SV_ClientThink (void);
+void SV_LoadQueuedPMoveUsercmd(client_t *client);
 void SV_FinishPMoveUsercmd(client_t *client);
 qboolean SV_RunClientPMoveCommand(client_t *client);
+qboolean SV_QBJ3NeedsLegacyPhysics(client_t *client);
 void SV_AddClientToServer (struct qsocket_s	*ret);
 
 void SV_ClientPrintf (const char *fmt, ...) FUNC_PRINTF(1,2);

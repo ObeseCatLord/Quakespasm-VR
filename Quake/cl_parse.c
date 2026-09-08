@@ -2380,14 +2380,6 @@ static void CL_ParseStuffText(const char *msg)
 CL_ParseMoveAck
 =====================
 */
-static void CL_ApplyMoveAck (int ack16)
-{
-	int ack;
-
-	ack = CL_ExpandMoveAck16 (ack16);
-	CL_UpdateMoveAck (ack);
-}
-
 static qboolean CL_ParseMoveAckPayload (void)
 {
 	int ack16;
@@ -2404,9 +2396,11 @@ static qboolean CL_ParseMoveAckPayload (void)
 	}
 
 	ack16 = MSG_ReadShort () & 0xffff;
-	CL_ApplyMoveAck (ack16);
 	if (!(cl.protocol_pext2 & PEXT2_EXPLICITCMDMSEC))
+	{
+		CL_UpdateMoveAck (CL_ExpandMoveAck16 (ack16));
 		return !msg_badread;
+	}
 
 	if (net_message.cursize - msg_readcount < 7)
 	{
@@ -2427,6 +2421,12 @@ static qboolean CL_ParseMoveAckPayload (void)
 		msg_badread = true;
 		return false;
 	}
+
+	/* Validate the entire payload before advancing the replay baseline. An
+	 * older ack must not restore old authority/epochs after a mode switch.
+	 * Equal acks still carry changes made without a new movement command. */
+	if (!CL_UpdateMoveAck (CL_ExpandMoveAck16 (ack16)))
+		return true;
 
 	cl.move_ack_authority = (move_authority_t)authority;
 	cl.move_ack_prediction_allowed =

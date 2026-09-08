@@ -125,6 +125,7 @@ This allows self-damage (rocket jumping) while blocking inter-player damage.
 =============
 */
 static float  ff_saved_takedamage[MAX_SCOREBOARD];
+static qboolean ff_protected_clients[MAX_SCOREBOARD];
 static int    ff_saved_teamplay;
 static qboolean ff_active = false;
 static edict_t *ff_saved_edicts;
@@ -157,9 +158,13 @@ static qboolean SV_FriendlyFireBegin(edict_t *ent) {
 
   for (int i = 1; i <= svs.maxclients; i++) {
     edict_t *cl = EDICT_NUM(i);
-    ff_saved_takedamage[i - 1] = cl->v.takedamage;
-    if (i != owner_num && !cl->free && svs.clients[i - 1].active)
+    ff_protected_clients[i - 1] = false;
+    if (i != owner_num && !cl->free && svs.clients[i - 1].active &&
+        cl->v.takedamage != DAMAGE_NO) {
+      ff_saved_takedamage[i - 1] = cl->v.takedamage;
+      ff_protected_clients[i - 1] = true;
       cl->v.takedamage = DAMAGE_NO;
+    }
   }
 
   return true;
@@ -180,7 +185,13 @@ static void SV_FriendlyFireEnd(void) {
   pr_global_struct->teamplay = ff_saved_teamplay;
   for (int i = 1; i <= svs.maxclients; i++) {
     edict_t *cl = EDICT_NUM(i);
-    cl->v.takedamage = ff_saved_takedamage[i - 1];
+    /* Restore only our temporary shield. The owner was never shielded and
+     * may have respawned or left teleport limbo during this callback. Restoring
+     * its old DAMAGE_NO here made an otherwise living player invulnerable.
+     * Likewise, preserve a teammate's QC change to another damage mode. */
+    if (ff_protected_clients[i - 1] && !cl->free &&
+        svs.clients[i - 1].active && cl->v.takedamage == DAMAGE_NO)
+      cl->v.takedamage = ff_saved_takedamage[i - 1];
   }
   ff_active = false;
   ff_saved_edicts = NULL;
@@ -2461,7 +2472,8 @@ If steptrace is not NULL, the trace of any vertical wall hit will be stored
 ============
 */
 #define MAX_CLIP_PLANES 5
-int SV_FlyMove(edict_t *ent, float time, trace_t *steptrace) {
+static int SV_FlyMoveInternal(edict_t *ent, float time, trace_t *steptrace,
+                              qboolean touch) {
   int bumpcount, numbumps;
   vec3_t dir;
   float d;
@@ -2525,7 +2537,8 @@ int SV_FlyMove(edict_t *ent, float time, trace_t *steptrace) {
     //
     // run the impact function
     //
-    SV_Impact(ent, trace.ent);
+    if (touch)
+      SV_Impact(ent, trace.ent);
     if (ent->free)
       break; // removed by the impact function
 
@@ -2581,6 +2594,10 @@ int SV_FlyMove(edict_t *ent, float time, trace_t *steptrace) {
   return blocked;
 }
 
+int SV_FlyMove(edict_t *ent, float time, trace_t *steptrace) {
+  return SV_FlyMoveInternal(ent, time, steptrace, true);
+}
+
 /*
 ============
 SV_AddGravity
@@ -2615,7 +2632,7 @@ SV_PushEntity
 Does not change the entities velocity at all
 ============
 */
-trace_t SV_PushEntity(edict_t *ent, vec3_t push) {
+static trace_t SV_PushEntityInternal(edict_t *ent, vec3_t push, qboolean touch) {
   trace_t trace;
   vec3_t end;
 
@@ -2633,12 +2650,16 @@ trace_t SV_PushEntity(edict_t *ent, vec3_t push) {
         SV_Move(ent->v.origin, ent->v.mins, ent->v.maxs, end, MOVE_NORMAL, ent);
 
   VectorCopy(trace.endpos, ent->v.origin);
-  SV_LinkEdict(ent, true);
+  SV_LinkEdict(ent, touch);
 
-  if (trace.ent)
+  if (touch && trace.ent)
     SV_Impact(ent, trace.ent);
 
   return trace;
+}
+
+trace_t SV_PushEntity(edict_t *ent, vec3_t push) {
+  return SV_PushEntityInternal(ent, push, true);
 }
 
 /*
@@ -2985,7 +3006,7 @@ Try fixing by pushing one pixel in each direction.
 This is a hack, but in the interest of good gameplay...
 ======================
 */
-int SV_TryUnstick(edict_t *ent, vec3_t oldvel) {
+static int SV_TryUnstick(edict_t *ent, vec3_t oldvel, qboolean touch) {
   int i;
   vec3_t oldorg;
   vec3_t dir;
@@ -3032,13 +3053,13 @@ int SV_TryUnstick(edict_t *ent, vec3_t oldvel) {
       break;
     }
 
-    SV_PushEntity(ent, dir);
+    SV_PushEntityInternal(ent, dir, touch);
 
     // retry the original move
     ent->v.velocity[0] = oldvel[0];
     ent->v.velocity[1] = oldvel[1];
     ent->v.velocity[2] = 0;
-    clip = SV_FlyMove(ent, 0.1, &steptrace);
+    clip = SV_FlyMoveInternal(ent, 0.1, &steptrace, touch);
 
     if (fabs(oldorg[1] - ent->v.origin[1]) > 4 ||
         fabs(oldorg[0] - ent->v.origin[0]) > 4) {
@@ -3062,7 +3083,7 @@ Only used by players
 ======================
 */
 #define STEPSIZE 18
-void SV_WalkMove(edict_t *ent) {
+static void SV_WalkMoveInternal(edict_t *ent, qboolean touch) {
   vec3_t upmove, downmove;
   vec3_t oldorg, oldvel;
   vec3_t nosteporg, nostepvel;
@@ -3079,7 +3100,7 @@ void SV_WalkMove(edict_t *ent) {
   VectorCopy(ent->v.origin, oldorg);
   VectorCopy(ent->v.velocity, oldvel);
 
-  clip = SV_FlyMove(ent, qcvm->frametime, &steptrace);
+  clip = SV_FlyMoveInternal(ent, qcvm->frametime, &steptrace, touch);
 
   if (!(clip & 2))
     return; // move didn't block on a step
@@ -3093,7 +3114,7 @@ void SV_WalkMove(edict_t *ent) {
   if (sv_nostep.value)
     return;
 
-  if ((int)sv_player->v.flags & FL_WATERJUMP)
+  if ((int)ent->v.flags & FL_WATERJUMP)
     return;
 
   VectorCopy(ent->v.origin, nosteporg);
@@ -3110,13 +3131,13 @@ void SV_WalkMove(edict_t *ent) {
   downmove[2] = -STEPSIZE + oldvel[2] * qcvm->frametime;
 
   // move up
-  SV_PushEntity(ent, upmove); // FIXME: don't link?
+  SV_PushEntityInternal(ent, upmove, touch); // FIXME: don't link?
 
   // move forward
   ent->v.velocity[0] = oldvel[0];
   ent->v.velocity[1] = oldvel[1];
   ent->v.velocity[2] = 0;
-  clip = SV_FlyMove(ent, qcvm->frametime, &steptrace);
+  clip = SV_FlyMoveInternal(ent, qcvm->frametime, &steptrace, touch);
 
   // check for stuckness, possibly due to the limited precision of floats
   // in the clipping hulls
@@ -3124,7 +3145,7 @@ void SV_WalkMove(edict_t *ent) {
     if (fabs(oldorg[1] - ent->v.origin[1]) < 0.03125 &&
         fabs(oldorg[0] - ent->v.origin[0]) <
             0.03125) { // stepping up didn't make any progress
-      clip = SV_TryUnstick(ent, oldvel);
+      clip = SV_TryUnstick(ent, oldvel, touch);
     }
   }
 
@@ -3133,7 +3154,7 @@ void SV_WalkMove(edict_t *ent) {
     SV_WallFriction(ent, &steptrace);
 
   // move down
-  downtrace = SV_PushEntity(ent, downmove); // FIXME: don't link?
+  downtrace = SV_PushEntityInternal(ent, downmove, touch); // FIXME: don't link?
 
   if (downtrace.plane.normal[2] > 0.7) {
     if (ent->v.solid == SOLID_BSP) {
@@ -3147,6 +3168,10 @@ void SV_WalkMove(edict_t *ent) {
     VectorCopy(nosteporg, ent->v.origin);
     VectorCopy(nostepvel, ent->v.velocity);
   }
+}
+
+void SV_WalkMove(edict_t *ent) {
+  SV_WalkMoveInternal(ent, true);
 }
 
 // Replace player origin with hand muzzle position for the duration of
@@ -3620,6 +3645,12 @@ qboolean SV_RunClientPMoveCommand(client_t *client) {
   if (num < 1 || num > svs.maxclients)
     return false;
 
+  /* Prefix PostThink restores the last processed pose. A later callback can
+   * clear the fallback before the next frame, so reload the actual deferred
+   * head before either PreThink or movement consumes input again. */
+  if (client->move_pending)
+    SV_LoadQueuedPMoveUsercmd(client);
+
   ent = client->edict;
   is_remote_vr = client->cmd.vr_active &&
       (isDedicated || num != cl.viewentity);
@@ -3749,6 +3780,14 @@ qboolean SV_RunClientPMoveCommand(client_t *client) {
     lastcmd = cmd;
     SV_FinishPMoveUsercmd(client);
     processed++;
+    /* A real QC trigger may have entered a ladder or custom liquid. Stop
+     * before another command can overwrite that state. Keep the remainder
+     * queued until the next frame's legacy handoff, including its events and
+     * tracking, and do not advertise prediction for this contact snapshot. */
+    if (SV_QBJ3NeedsLegacyPhysics(client)) {
+      client->move_prediction_allowed = false;
+      break;
+    }
   }
 
   if (!ent->free && processed) {
@@ -3803,6 +3842,8 @@ qboolean SV_RunClientPMoveCommand(client_t *client) {
   }
 
 done:
+  if (SV_QBJ3NeedsLegacyPhysics(client))
+    client->move_prediction_allowed = false;
   if (coop_started && (ent->free || !processed))
     SV_CoopRespawnRestoreSuppressedInput(ent, num, &coop_respawn_state);
 
@@ -3821,6 +3862,36 @@ done:
   }
 
   return processed > 0;
+}
+
+/* Sweep auxiliary tracking with the existing collision/step solver.  Only
+ * origin is committed: normal physics owns velocity/ground state and the one
+ * final trigger pass.  Blocked tracking is consumed, never saved as debt. */
+static void SV_ApplyLegacyVRRoomScaleMove(edict_t *ent, client_t *client) {
+  vec3_t move, saved_velocity;
+  float saved_flags;
+  int saved_groundentity;
+
+  VectorCopy(client->vr_roomscale_accum, move);
+  VectorClear(client->vr_roomscale_accum);
+  move[2] = 0;
+  if ((!move[0] && !move[1]) || qcvm->frametime <= 0)
+    return;
+
+  VectorCopy(ent->v.velocity, saved_velocity);
+  saved_flags = ent->v.flags;
+  saved_groundentity = ent->v.groundentity;
+  VectorScale(move, 1.0f / qcvm->frametime, ent->v.velocity);
+  if (ent->v.movetype == MOVETYPE_NOCLIP) {
+    VectorAdd(ent->v.origin, move, ent->v.origin);
+  } else if (ent->v.movetype == MOVETYPE_WALK)
+    SV_WalkMoveInternal(ent, false);
+  else
+    SV_FlyMoveInternal(ent, qcvm->frametime, NULL, false);
+  VectorCopy(saved_velocity, ent->v.velocity);
+  ent->v.flags = saved_flags;
+  ent->v.groundentity = saved_groundentity;
+  SV_LinkEdict(ent, false);
 }
 
 /*
@@ -3855,18 +3926,8 @@ void SV_Physics_Client(edict_t *ent, int num) {
     return;
   }
 
-  // Apply roomscale displacement for remote clients
-  if (is_remote_vr &&
-      VectorLength(svs.clients[num - 1].vr_roomscale_accum) > 0) {
-    VectorAdd(ent->v.origin, svs.clients[num - 1].vr_roomscale_accum,
-              ent->v.origin);
-    VectorCopy(vec3_origin, svs.clients[num - 1].vr_roomscale_accum);
-    /* Refresh collision/area bounds now, but defer QuakeC trigger callbacks to
-     * the normal final client relink below.  Touching here as well made remote
-     * VR clients fire same-frame ALL_CLIENTS triggers twice, unlike desktop
-     * clients and Ironwail's single final trigger pass. */
-    SV_LinkEdict(ent, false);
-  }
+  if (is_remote_vr)
+    SV_ApplyLegacyVRRoomScaleMove(ent, &svs.clients[num - 1]);
 
   was_onground = ((int)ent->v.flags & FL_ONGROUND) != 0;
   prethink_groundentity = SV_CurrentGroundEntity(ent);
