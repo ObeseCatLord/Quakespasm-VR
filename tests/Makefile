@@ -27,7 +27,8 @@ FIXTURES := \
 	vrik_renderer_boundary_fixture \
 	avatar_protocol_fixture \
 	avatar_retarget_fixture \
-	voice_primitives_fixture
+	voice_primitives_fixture \
+	voice_settings_fixture
 BINARIES := $(addprefix $(BUILD_DIR)/,$(FIXTURES))
 
 .PHONY: all test clean
@@ -93,3 +94,18 @@ $(BUILD_DIR)/voice_primitives_fixture: voice_primitives_fixture.c ../Quake/voice
 # cleanup cannot be redirected outside tests/ by a command-line variable.
 clean:
 	rm -rf -- .build
+
+# SDK-backed audio fixtures run separately from the engine/VR fixtures.
+SPATIAL_FIXTURE_SOURCES = spatial_audio_fixture.c ../Quake/snd_steamaudio.c ../Quake/snd_room.c ../Quake/voice_jitter.c
+.PHONY: test-spatial benchmark-spatial
+test-spatial: $(BUILD_DIR)/spatial_audio_fixture
+	./$<
+$(BUILD_DIR)/spatial_audio_fixture: $(SPATIAL_FIXTURE_SOURCES) ../Quake/snd_steamaudio.h | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(SANITIZE_FLAGS) $(shell pkg-config --cflags steamaudio opus) $(SPATIAL_FIXTURE_SOURCES) $(LDFLAGS) $(SANITIZE_FLAGS) $(shell pkg-config --libs steamaudio sdl2 opus) $(LDLIBS) -o $@
+benchmark-spatial: $(BUILD_DIR)/spatial_audio_benchmark
+	./$< --benchmark
+$(BUILD_DIR)/spatial_audio_benchmark: $(SPATIAL_FIXTURE_SOURCES) ../Quake/snd_steamaudio.h | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -O2 $(shell pkg-config --cflags steamaudio opus) $(SPATIAL_FIXTURE_SOURCES) $(LDFLAGS) $(shell pkg-config --libs steamaudio sdl2 opus) $(LDLIBS) -o $@
+
+$(BUILD_DIR)/voice_settings_fixture: voice_settings_fixture.c ../Quake/voice_settings.c ../Quake/voice_settings.h ../Quake/voice_capture.h | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(SANITIZE_FLAGS) $(filter %.c,$^) $(LDFLAGS) $(SANITIZE_FLAGS) $(shell sdl2-config --libs) -o $@

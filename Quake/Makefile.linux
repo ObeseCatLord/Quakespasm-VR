@@ -236,7 +236,7 @@ $(error USE_STEAMAUDIO=1 requires steamaudio.pc; use nix develop or USE_STEAMAUD
 endif
 CFLAGS += -DUSE_STEAMAUDIO $(shell $(PKG_CONFIG) --cflags steamaudio)
 LIBS += $(shell $(PKG_CONFIG) --libs steamaudio)
-COMOBJ_SND += snd_spatial.o snd_steamaudio.o
+COMOBJ_SND += snd_spatial.o snd_steamaudio.o snd_room.o
 endif
 ifeq ($(USE_VOICE),1)
 COMOBJ_SND += voice.o voice_settings.o voice_vad.o voice_jitter.o
