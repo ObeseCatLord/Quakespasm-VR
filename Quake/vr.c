@@ -3006,10 +3006,10 @@ qboolean VR_VRIKAvailable(void) {
 }
 
 qboolean VR_VRIKAllowedForGame(void) {
-  /* These conversions replace Ranger with vertex-animated characters whose
-   * frame sets do not map safely to the rerelease MD5.  Keep the exclusion
-   * deliberately narrow until another mod demonstrates the same constraint. */
-  return !VR_GameDirIs("enyo") && !VR_GameDirIs("qbj3");
+  /* QBJ3 transmits the ordinary tracked pose. Its renderer independently
+   * requires the local QBJ3 rig and a supported live player before replacing
+   * anything; senders need not install another viewer's cosmetic assets. */
+  return !VR_GameDirIs("enyo");
 }
 
 static void VR_VRIK_f(cvar_t *var) {

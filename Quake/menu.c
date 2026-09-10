@@ -742,7 +742,9 @@ void M_Setup_Draw(void) {
   M_Print(64, 104, "Pants color");
   M_Print(64, 120, "Player model");
   M_Print(64, 136, CustomAvatar_DisplayNameForId(setup_avatar));
-  if (CustomAvatar_Get(setup_avatar))
+  if (!q_strcasecmp(COM_SkipPath(com_gamedir), "qbj3"))
+    M_PrintWhite(32, 148, "QBJ3: local rig for tracked VR");
+  else if (CustomAvatar_Get(setup_avatar))
     M_PrintWhite(32, 148, VR_VRIKAllowedForGame() ?
         "Requires rerelease player data" : "Not supported by this mod");
 

@@ -522,6 +522,15 @@ static void R_VRIKSolveLeg (const md5liveinfo_t *live, float *palette,
 		oldlowerdir, newlowerdir);
 }
 
+void R_VRIKInvalidateEntitySkinCache (int entitynum)
+{
+	if (entitynum < 1 || entitynum > MAX_SCOREBOARD)
+		return;
+	r_vrik_skin_caches[entitynum].ready = false;
+	r_vrik_skin_caches[entitynum].hostframe = -1;
+	r_vrik_skin_caches[entitynum].muzzle_valid = false;
+}
+
 r_vrik_skincache_t *R_VRIKGetSkinCache (int entitynum, qmodel_t *model)
 {
 	r_vrik_skincache_t *cache;

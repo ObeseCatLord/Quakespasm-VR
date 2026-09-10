@@ -422,7 +422,7 @@ static int CA_ParseManifest(custom_avatar_t *a, const byte *p, size_t n)
 {
 	size_t at = 0;
 	char word[64], value[64];
-	int quoted, seen_name = 0, seen_scale = 0, seen_bones[19] = {0}, semantic, r, i;
+	int quoted, seen_name = 0, seen_scale = 0, seen_equipment = 0, seen_bones[19] = {0}, semantic, r, i;
 	if (!CA_ByteText(p, n) || CA_Token(p, n, &at, word, sizeof(word), &quoted) != 1 || quoted ||
 		strcmp(word, "version") || CA_Token(p, n, &at, value, sizeof(value), &quoted) != 1 ||
 		quoted || strcmp(value, "1"))
@@ -430,6 +430,7 @@ static int CA_ParseManifest(custom_avatar_t *a, const byte *p, size_t n)
 	for (i = 0; i < 19; ++i)
 		q_strlcpy(a->bones[i], ca_bone_names[i], sizeof(a->bones[i]));
 	a->profile.display_scale = 1.0f;
+	a->profile.equipment_policy = R_AVATAR_EQUIPMENT_ATTACH_HAND;
 	while ((r = CA_Token(p, n, &at, word, sizeof(word), &quoted)) > 0)
 	{
 		if (quoted)
@@ -448,6 +449,16 @@ static int CA_ParseManifest(custom_avatar_t *a, const byte *p, size_t n)
 		{
 			if (seen_scale++ || CA_Token(p, n, &at, value, sizeof(value), &quoted) != 1 || quoted ||
 				!CA_Scale(value, &a->profile.display_scale))
+				return 0;
+		}
+		else if (!strcmp(word, "equipment"))
+		{
+			if (seen_equipment++ || CA_Token(p, n, &at, value, sizeof(value), &quoted) != 1 || quoted)
+				return 0;
+			if (!strcmp(value, "native"))
+				/* Keep the package's skinned props; do not add Ranger's gun. */
+				a->profile.equipment_policy = R_AVATAR_EQUIPMENT_RANGER;
+			else if (strcmp(value, "ranger"))
 				return 0;
 		}
 		else if (!strcmp(word, "bone"))
@@ -526,6 +537,7 @@ fail:
 static void CA_Profile(custom_avatar_t *a)
 {
 	float scale = a->profile.display_scale;
+	r_avatar_equipment_policy_t equipment = a->profile.equipment_policy;
 	int i;
 	memset(&a->profile, 0, sizeof(a->profile));
 	a->profile.id = (player_avatar_id_t)a->id;
@@ -535,7 +547,7 @@ static void CA_Profile(custom_avatar_t *a)
 	a->profile.capabilities = R_AVATAR_CAP_HEAD | R_AVATAR_CAP_ARMS | R_AVATAR_CAP_LEGS |
 							  R_AVATAR_CAP_RETARGET | R_AVATAR_CAP_STANDARD_WEAPON;
 	a->profile.display_scale = scale;
-	a->profile.equipment_policy = R_AVATAR_EQUIPMENT_ATTACH_HAND;
+	a->profile.equipment_policy = equipment;
 	a->profile.basis_policy = R_AVATAR_BASIS_HUMANOID;
 	a->profile.arm_pole_outward = 1.0f;
 	a->profile.arm_pole_back = .35f;

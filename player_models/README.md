@@ -32,11 +32,30 @@ mismatched, or rejected packages fall back to Ranger (or the ordinary player whe
 re-release data is unavailable). Legacy peers receive Ranger. Different local
 installation orders do not affect identity. No automatic model download occurs.
 
-The existing QBJ3 and Enyo exclusions remain: their player animation frames are
-not compatible with Ranger. These mods retain their normal player presentation,
-even when a custom avatar is selected. Other total conversions also need a
-compatible source-player animation frame set; adding a rig alone does not convert
-an incompatible animation set.
+Enyo remains excluded. Other total conversions also need a compatible
+source-player animation frame set; adding a rig alone does not convert an
+incompatible animation set.
+
+### QBJ3 drop-in VRIK
+
+Install the rigged QBJ3 package as `player_models/qbj3/`, with `equipment native`
+in its manifest. Restart, enable VRIK, and retain your preferred avatar setting:
+QBJ3 automatically uses this **local native-player enhancement** only for live,
+tracked remote `player_qbj.mdl` players. Desktop players, corpses, lost tracking,
+invisibility models and missing/invalid packages retain native QBJ3 rendering.
+The verified QBJ3 QC body frames use Ranger's ordinal layout; unsupported model
+names or frame counts are rejected. Official re-release player data remains required.
+
+This automatic enhancement ignores avatar selections in QBJ3, as the prior
+exclusion did. It does not negotiate the local package through custom-avatar
+descriptors or assert that every viewer has identical replacement bytes. Each
+viewer installs their own copy, like other local enhanced-model replacements;
+senders do not need the optional QBJ3 art to transmit their tracked pose.
+
+The supplied package's gun follows the right hand and its wrench follows the
+torso. These are fixed cosmetic accessories, not inventory-driven weapon swaps
+or automatic left-hand mirroring. No Ranger gun/axe is added, and gameplay weapon
+selection, aiming, projectile origins and collision are unchanged.
 
 ## Files
 
@@ -71,6 +90,15 @@ bone Hip Pelvis
 bone LowerArm_L Forearm_L
 ```
 
+Optional `equipment native` retains weapons/accessories authored into the mesh
+and suppresses the additional Ranger weapon. Bind these props to the intended
+hand or torso, including through unmapped child bones. This is a fixed cosmetic
+loadout; it does not switch meshes from the player's inventory. Omit the setting,
+or use `equipment ranger`, to retain the default Ranger attachment behavior.
+Clients must support this directive; earlier builds reject manifests containing
+it. Descriptor-selected custom avatars require identical package bytes on viewing
+clients; the local QBJ3 enhancement described above does not negotiate identity.
+
 Only the semantic names below may be remapped. Unknown/duplicate directives,
 duplicate bone mappings, comments, escaped strings and paths are not accepted.
 The manifest is limited to 8 KiB. Do not put commands or other settings in it.
@@ -102,8 +130,9 @@ Additional intermediary bones are allowed, but preserve those descendant chains.
 Bone parents precede children. Joint names must be unique and at most 31 bytes;
 global bind transforms must be rigid, finite, and orthonormal. Apply object scale
 before exporting. Do not bake mirrored/nonuniform scale into joint matrices.
-Do not include held weapons in the mesh: the existing player weapon attachment
-system supplies them.
+With the default equipment mode, omit held weapons from the mesh because the
+player attachment system supplies them. Use `equipment native` for a character
+whose authored mesh already includes its own weapons.
 
 Limits: 256 joints, 16,384 exported vertices (including UV splits), 32,768
 triangles, four referenced influences per vertex, and an 8 MiB mesh file. Every
