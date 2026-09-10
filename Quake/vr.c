@@ -464,6 +464,14 @@ static qboolean VR_CopyUniqueSDLHeadsetCaptureDevice(const char *model,
       !q_strcasecmp(model, "Headset") || !name || !size)
     return false;
 
+  /* Monado qualifies this HMD with its manufacturer, whereas SDL exposes
+   * e.g. "Beyond Analog Stereo" (or the selected audio profile's suffix).
+   * Normalize only known product labels, never a manufacturer-only guess. */
+  if (!q_strcasecmp(model, "Bigscreen, Inc.Beyond") ||
+      !q_strcasecmp(model, "Bigscreen, Inc. Beyond") ||
+      !q_strcasecmp(model, "Bigscreen Beyond"))
+    model = "Beyond";
+
   count = SDL_GetNumAudioDevices(SDL_TRUE);
   for (int i = 0; i < count; ++i) {
     const char *device = SDL_GetAudioDeviceName(i, SDL_TRUE);
@@ -479,6 +487,9 @@ static qboolean VR_CopyUniqueSDLHeadsetCaptureDevice(const char *model,
     q_strlcpy(name, device, size);
     return true;
   }
+  /* An alias must not disambiguate multiple matching physical devices. */
+  if (matches > 1)
+    return false;
 
   for (size_t i = 0;
        i < sizeof(vr_headset_mic_aliases) / sizeof(vr_headset_mic_aliases[0]);

@@ -811,5 +811,11 @@ qboolean Voice_SpeakerTalking(int slot)
 }
 qboolean Voice_HUDEnabled(void)
 {
-	return voice_hud.value != 0 && Voice_MultiplayerSessionActive();
+	/* Reserved client slots alone do not make a local single-player game a
+	 * multiplayer session. Never display live mic state over demo playback or
+	 * stale connection state during signon. The Voice options remain available. */
+	return voice_initialized && voice_hud.value != 0 &&
+		!cls.demoplayback && cls.signon == SIGNONS &&
+		Voice_MultiplayerSessionActive() &&
+		(!sv.active || coop.value || deathmatch.value || net_activeconnections > 1);
 }
