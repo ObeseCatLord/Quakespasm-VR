@@ -12,6 +12,7 @@ typedef struct {
 	unsigned char transmit;
 	unsigned char mode;
 	char device[512];
+	unsigned char self_reverb;
 } voice_settings_profile_t;
 
 typedef struct {

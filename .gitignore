@@ -47,3 +47,6 @@ Quake/.sound-config*
 /build-windows.bat
 /build_deploy_foundry.sh
 /build_deploy_straight.sh
+
+# Reproducible isolated environment-audio listening harness.
+!scripts/run-spatial-audio.sh

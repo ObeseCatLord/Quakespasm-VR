@@ -13,6 +13,7 @@ version.
 #include "voice_jitter.h"
 #include "voice_vad.h"
 #include "voice_settings.h"
+#include "voice_capture.h"
 #include "vr.h"
 
 #include <opus/opus.h>
@@ -47,6 +48,8 @@ static cvar_t voice_receive = {"voice_receive", "1", CVAR_ARCHIVE};
 /* These report local menu choices, not script-controlled permissions. Stuffed
  * commands can reach the ordinary command buffer through aliases and exec. */
 static cvar_t voice_transmit = {"voice_transmit", "0", CVAR_ROM};
+static cvar_t voice_self_reverb = {"voice_self_reverb", "0", CVAR_ROM};
+static cvar_t voice_self_reverb_volume = {"voice_self_reverb_volume", "0.6", CVAR_ARCHIVE};
 static cvar_t voice_mode = {"voice_mode", "0", CVAR_ROM}; /* 0 VAD, 1 PTT */
 static cvar_t voice_input_device = {"voice_input_device", "", CVAR_ROM};
 static cvar_t voice_input_gain = {"voice_input_gain", "1", CVAR_ARCHIVE};
@@ -77,7 +80,7 @@ static voice_settings_t voice_settings;
 static qboolean voice_settings_loaded, voice_settings_save_failed, voice_vr_launch;
 static char voice_settings_path[MAX_OSPATH];
 static double voice_next_device_check;
-static qboolean voice_last_runtime_active;
+static qboolean voice_last_runtime_active, voice_last_capture_wanted, voice_self_active;
 
 static void Voice_RefreshCapture(qboolean force);
 
@@ -133,6 +136,8 @@ static qboolean Voice_MultiplayerSessionActive(void)
 
 static void Voice_CloseCapture(void)
 {
+	voice_self_active = false;
+	Spatial_SelfEnable(false, 0);
 	if (voice_capture_device)
 	{
 		SDL_CloseAudioDevice(voice_capture_device);
@@ -146,7 +151,7 @@ static qboolean Voice_OpenCapture(void)
 	const char *device = voice_input_device.string;
 
 	Voice_CloseCapture();
-	if (!voice_capture_consent || !voice_transmit.value || !device[0])
+	if (!voice_capture_consent || !device[0])
 		return false;
 	SDL_zero(desired);
 	desired.freq = VOICE_SAMPLE_RATE;
@@ -180,6 +185,7 @@ static void Voice_Restart_f(void)
 {
 	if (!voice_initialized)
 		return;
+	Voice_CloseCapture();
 	Voice_RefreshCapture(true);
 }
 
@@ -297,7 +303,6 @@ static void Voice_StopTransmit(void)
 	Voice_VADReset(&voice_vad);
 	if (voice_encoder)
 		opus_encoder_ctl(voice_encoder, OPUS_RESET_STATE);
-	Voice_CloseCapture();
 }
 
 static qboolean Voice_UniqueCaptureDevice(const char *name)
@@ -317,32 +322,40 @@ static void Voice_RefreshCapture(qboolean force)
 	voice_settings_profile_t *profile = Voice_Profile();
 	char device[VOICE_SETTINGS_DEVICE_BYTES] = "";
 	qboolean active = !voice_vr_launch || VR_VoiceSessionActive();
+	qboolean in_game = cls.state == ca_connected && cls.signon == SIGNONS &&
+		cl.worldmodel && !cls.demoplayback;
 	qboolean wanted = profile->transmit && (voice_vr_launch || profile->device[0]);
-	qboolean authorized;
+	voice_capture_route_t route = Voice_CaptureRoute(1, active, in_game,
+		Voice_MultiplayerSessionActive(), wanted, profile->self_reverb, Spatial_Active());
+	qboolean authorized, changed;
 	qboolean stopped = voice_capture_device &&
 		SDL_GetAudioDeviceStatus(voice_capture_device) == SDL_AUDIO_STOPPED;
 	if (!voice_initialized)
 		return;
-	/* Runtime loss must close capture immediately, even between retry polls. */
+	/* Purpose/runtime loss closes capture immediately, between device polls. */
 	if (!force && !stopped && active == voice_last_runtime_active &&
-		realtime < voice_next_device_check)
+		route.capture == voice_last_capture_wanted && realtime < voice_next_device_check)
 		return;
 	voice_last_runtime_active = active;
+	voice_last_capture_wanted = route.capture;
 	voice_next_device_check = realtime + 1.0;
 	if (profile->device[0])
 		q_strlcpy(device, profile->device, sizeof(device));
 	else if (voice_vr_launch && active)
 		VR_GetHeadsetMicrophoneName(device, sizeof(device));
-	authorized = wanted && active && device[0] && Voice_UniqueCaptureDevice(device);
-	if (force || stopped || authorized != voice_capture_consent ||
-		strcmp(device, voice_input_device.string) || voice_mode.value != profile->mode ||
-		voice_transmit.value != wanted)
+	authorized = route.capture && device[0] && Voice_UniqueCaptureDevice(device);
+	changed = strcmp(device, voice_input_device.string) != 0;
+	if (force || stopped || authorized != voice_capture_consent || changed ||
+		voice_mode.value != profile->mode || voice_transmit.value != wanted)
 	{
 		Voice_StopTransmit();
+		if (!authorized || stopped || changed)
+			Voice_CloseCapture();
 		voice_capture_consent = authorized;
 		Cvar_SetROM("voice_input_device", device);
 		Cvar_SetValueROM("voice_mode", profile->mode);
 		Cvar_SetValueROM("voice_transmit", wanted);
+		Cvar_SetValueROM("voice_self_reverb", profile->self_reverb);
 	}
 	if (authorized && !voice_capture_device && !Voice_OpenCapture())
 		voice_next_device_check = realtime + 10.0;
@@ -359,6 +372,30 @@ void Voice_SetTransmitEnabled(qboolean enabled)
 		return;
 	}
 	Voice_Profile()->transmit = enabled ? 1 : 0;
+	Voice_RefreshCapture(true);
+	Voice_SaveSettings();
+}
+
+void Voice_SetSelfReverb(qboolean enabled)
+{
+	if (!voice_initialized)
+		return;
+	if (enabled && !Spatial_Active())
+	{
+		Con_Printf("Local room microphone requires Steam Audio.\n");
+		return;
+	}
+	if (enabled && !voice_vr_launch && !Voice_Profile()->device[0])
+	{
+		Con_Printf("Voice: select an Input device in the Voice menu first.\n");
+		return;
+	}
+	Voice_Profile()->self_reverb = enabled ? 1 : 0;
+	if (!enabled)
+	{
+		voice_self_active = false;
+		Spatial_SelfEnable(false, 0);
+	}
 	Voice_RefreshCapture(true);
 	Voice_SaveSettings();
 }
@@ -395,6 +432,11 @@ static void Voice_EncodeCaptureFrame(int16_t *samples)
 		int sample = (int)(samples[i] * gain);
 		samples[i] = (int16_t)CLAMP(-32768, sample, 32767);
 	}
+	/* Local wet-only feed is independent of VAD/PTT and never replays preroll.
+	 * After a game hitch, monitor only the newest two frames of capture. */
+	if (voice_self_active && SDL_GetQueuedAudioSize(voice_capture_device) <=
+		VOICE_FRAME_SAMPLES * sizeof(int16_t))
+		Spatial_SelfPCM(samples, VOICE_FRAME_SAMPLES);
 	Voice_VADSetSensitivity(&voice_vad,
 		(int)CLAMP(0.0f, voice_vad_sensitivity.value, 100.0f));
 	Voice_VADProcessFrame(&voice_vad, samples, VOICE_FRAME_SAMPLES, &result);
@@ -489,6 +531,12 @@ void Voice_Init(void)
 		Con_Printf("Voice unavailable: voice_transmit was defined before sound startup. Restart the game.\n");
 		return;
 	}
+	existing = Cvar_FindVar("voice_self_reverb");
+	if (existing && existing != &voice_self_reverb)
+	{
+		Con_Printf("Voice unavailable: voice_self_reverb was defined before sound startup. Restart the game.\n");
+		return;
+	}
 	existing = Cvar_FindVar("voice_mode");
 	if (existing && existing != &voice_mode)
 	{
@@ -504,6 +552,8 @@ void Voice_Init(void)
 
 	Cvar_RegisterVariable(&voice_receive);
 	Cvar_RegisterVariable(&voice_transmit);
+	Cvar_RegisterVariable(&voice_self_reverb);
+	Cvar_RegisterVariable(&voice_self_reverb_volume);
 	Cvar_RegisterVariable(&voice_mode);
 	Cvar_RegisterVariable(&voice_input_device);
 	Cvar_RegisterVariable(&voice_input_gain);
@@ -559,6 +609,7 @@ void Voice_Shutdown(void)
 {
 	int i;
 	Voice_StopTransmit();
+	Voice_CloseCapture();
 	voice_capture_consent = false;
 	Voice_ClearPTT();
 	Q_memset(voice_ptt_allowed, 0, sizeof(voice_ptt_allowed));
@@ -582,6 +633,8 @@ void Voice_Shutdown(void)
 void Voice_ResetConnection(void)
 {
 	int i;
+	voice_self_active = false;
+	Spatial_SelfEnable(false, 0);
 	voice_outgoing.read = voice_outgoing.write = 0;
 	voice_sending = false;
 	Voice_ClearPTT();
@@ -616,6 +669,9 @@ void Voice_Frame(void)
 	if (!voice_initialized)
 		return;
 	Voice_RefreshCapture(false);
+	voice_self_active = voice_capture_device && voice_capture_consent &&
+		Voice_Profile()->self_reverb && Spatial_Active();
+	Spatial_SelfEnable(voice_self_active, voice_self_reverb_volume.value);
 	if (voice_capture_device)
 	{
 		queued = SDL_GetQueuedAudioSize(voice_capture_device);
@@ -811,10 +867,14 @@ const char *Voice_SettingsHint(void)
 		return "Settings NOT saved - see console";
 	if (!voice_vr_launch && !Voice_Profile()->device[0])
 		return "Select an Input device to use voice";
-	if (voice_transmit.value && !voice_capture_device)
+	if (voice_self_active)
+		return "Local room mic active (headphones)";
+	if ((voice_transmit.value || voice_self_reverb.value) && !voice_capture_device &&
+		(Voice_MultiplayerSessionActive() || voice_self_reverb.value))
 		return "Mic unavailable - choose Input device";
 	return "Microphone settings persist";
 }
+qboolean Voice_SelfReverbEnabled(void) { return voice_self_reverb.value != 0; }
 qboolean Voice_TransmitEnabled(void) { return voice_transmit.value != 0; }
 qboolean Voice_IsTransmitting(void) { return voice_sending; }
 float Voice_InputLevel(void) { return voice_input_meter; }

@@ -1,0 +1,5 @@
+--- a/core/src/core/array_math.cpp
++++ b/core/src/core/array_math.cpp
+@@ -260 +260 @@
+-            y = float4::add(y, float4::load(&outData[i]));
++            y = float4::add(y, float4::loadu(&outData[i]));
