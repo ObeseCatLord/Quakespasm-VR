@@ -9,6 +9,10 @@ stdenv.mkDerivation rec {
     sha256 = "0id6277ndrl0d4b04i5zc7v36nxh26ahd7x0jy8wid6shlkij2ci";
   };
   sourceRoot = "${src.name}/core";
+  # The PFFFT path has odd complex-bin strides; the SIMD unaligned branch
+  # must also use an unaligned accumulator load (multichannel reverb crashes).
+  patches = [ ./steamaudio-unaligned-accumulate.patch ];
+  patchFlags = [ "-p2" ];
   nativeBuildInputs = [ cmake flatbuffers ];
   buildInputs = [ pffft libmysofa flatbuffers zlib ];
   postPatch = ''
