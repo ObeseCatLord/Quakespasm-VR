@@ -5,6 +5,7 @@
 #include "r_vrik.h"
 #include "vr.h"
 #include <SDL.h>
+#include <limits.h>
 
 static sa_renderer_t *renderer;
 static cvar_t snd_hrtf = {"snd_hrtf", "1", CVAR_ARCHIVE};
@@ -16,6 +17,12 @@ static cvar_t voice_radio_filter = {"voice_radio_filter", "1", CVAR_ARCHIVE};
 static cvar_t voice_radio_compression = {"voice_radio_compression", "0", CVAR_ARCHIVE};
 static cvar_t voice_radio_drive = {"voice_radio_drive", "0", CVAR_ARCHIVE};
 static cvar_t snd_occlusion = {"snd_occlusion", "1", CVAR_ARCHIVE};
+static cvar_t snd_reverb = {"snd_reverb", "0.25", CVAR_ARCHIVE};
+static cvar_t snd_reverb_mode = {"snd_reverb_mode", "2", CVAR_ARCHIVE};
+static cvar_t snd_reverb_rays = {"snd_reverb_rays", "2048", CVAR_ARCHIVE};
+static cvar_t snd_reverb_bounces = {"snd_reverb_bounces", "16", CVAR_ARCHIVE};
+static cvar_t voice_reverb = {"voice_reverb", "0.12", CVAR_ARCHIVE};
+
 static double occlusion_due[MAX_CHANNELS + MAX_SCOREBOARD];
 static float occlusion_values[MAX_CHANNELS + MAX_SCOREBOARD];
 static int occlusion_budget, occlusion_cursor;
@@ -82,6 +89,17 @@ static void Spatial_Status_f(void)
     Con_Printf("voice queued %d, dropped %d, partial-block missing %.0f, snapshot misses %.0f, clips %.0f, nonfinite %.0f\n", s.stream_frames, s.dropped_frames, (double)s.underrun_frames, (double)s.snapshot_misses, (double)s.clipped, (double)s.nonfinite);
     Con_Printf("SDK allocations/frees during rendering: %.0f\n", (double)s.rt_allocations);
     Con_Printf("Output peak %.4f (1.0 = full scale)\n", s.output_peak);
+    {
+        sa_room_stats_t room;
+        SA_RoomStats(renderer, &room);
+        Con_Printf("Room: %s, mode %.0f, wet %.2f, %d triangles (copy %.1f MiB), build %.1f ms\n",
+            room.failed ? "failed" : room.ready ? "ready" : "pending/none", snd_reverb_mode.value,
+            snd_reverb.value, room.triangles, room.geometry_bytes / 1048576.0, room.build_ticks * ms);
+        Con_Printf("simulation runs %.0f, last/max %.2f/%.2f ms, result age %.1f ms, RT60 %.2f/%.2f/%.2f s\n",
+            (double)room.runs, room.last_ticks * ms, room.max_ticks * ms,
+            room.result_timestamp ? (SDL_GetPerformanceCounter() - room.result_timestamp) * ms : 0,
+            room.rt60[0], room.rt60[1], room.rt60[2]);
+    }
 }
 void Spatial_Register(void)
 {
@@ -90,6 +108,9 @@ void Spatial_Register(void)
     Cvar_RegisterVariable(&voice_radio_compression);
     Cvar_RegisterVariable(&voice_radio_drive);
     Cvar_RegisterVariable(&snd_occlusion);
+    Cvar_RegisterVariable(&snd_reverb); Cvar_RegisterVariable(&snd_reverb_mode);
+    Cvar_RegisterVariable(&snd_reverb_rays); Cvar_RegisterVariable(&snd_reverb_bounces);
+    Cvar_RegisterVariable(&voice_reverb);
     Cmd_AddCommand("snd_spatial_status", Spatial_Status_f);
     Cmd_AddCommand("snd_spatial_probe", Spatial_Probe_f);
 }
@@ -161,6 +182,78 @@ void Spatial_CacheSound(sfx_t *sfx, const wavinfo_t *info, const byte *data)
     samples[num_samples].sample.loop = info->loopstart < 0 ? -1 : (int)((int64_t)info->loopstart * SA_RATE / info->rate);
     ++num_samples;
 }
+void Spatial_ClearWorld(void)
+{
+    if (!renderer) return;
+    SDL_LockAudio(); SA_LoadRoom(renderer, NULL); SDL_UnlockAudio();
+}
+void Spatial_NewMap(void)
+{
+    qmodel_t *model = cl.worldmodel;
+    sa_geometry_t g = {0};
+    size_t capacity = 0;
+    int i, j;
+    if (!renderer || !model) return;
+    for (i = 0; i < model->nummodelsurfaces; ++i) {
+        msurface_t *face = &model->surfaces[model->firstmodelsurface + i];
+        if (!(face->flags & (SURF_DRAWSKY | SURF_DRAWTURB | SURF_DRAWFENCE)) && face->numedges >= 3)
+            capacity += face->numedges - 2;
+    }
+    if (!capacity || capacity > 4000000 || model->numvertexes <= 0) {
+        Spatial_ClearWorld(); Con_Printf("Room acoustics: no usable world geometry or scene too large\n"); return;
+    }
+    g.num_vertices = model->numvertexes;
+    g.vertices = malloc((size_t)g.num_vertices * 3 * sizeof(float));
+    g.triangles = malloc(capacity * 3 * sizeof(int));
+    g.materials = malloc(capacity * sizeof(int));
+    if (!g.vertices || !g.triangles || !g.materials) goto fail;
+    for (i = 0; i < g.num_vertices; ++i) {
+        const float *v = model->vertexes[i].position;
+        if (!isfinite(v[0]) || !isfinite(v[1]) || !isfinite(v[2])) goto fail;
+        g.vertices[3*i] = -v[1] * SA_METERS_PER_UNIT;
+        g.vertices[3*i+1] = v[2] * SA_METERS_PER_UNIT;
+        g.vertices[3*i+2] = -v[0] * SA_METERS_PER_UNIT;
+    }
+    for (i = 0; i < model->nummodelsurfaces; ++i) {
+        msurface_t *face = &model->surfaces[model->firstmodelsurface + i];
+        int first = -1, previous = -1, material = 0;
+        const char *name;
+        if (face->flags & (SURF_DRAWSKY | SURF_DRAWTURB | SURF_DRAWFENCE)) continue;
+        name = face->texinfo->texture->name;
+        if (q_strcasestr(name, "metal")) material = 1;
+        else if (q_strcasestr(name, "wood")) material = 2;
+        else if (q_strcasestr(name, "rock")) material = 3;
+        for (j = 0; j < face->numedges; ++j) {
+            int edge, vertex;
+            if (face->firstedge + j < 0 || face->firstedge + j >= model->numsurfedges) goto fail;
+            edge = model->surfedges[face->firstedge + j];
+            if (edge == INT_MIN || abs(edge) >= model->numedges) goto fail;
+            vertex = model->edges[abs(edge)].v[edge < 0 ? 1 : 0];
+            if (vertex < 0 || vertex >= g.num_vertices) goto fail;
+            if (j >= 2) {
+                vec3_t a, b, cross;
+                int *tri = &g.triangles[g.num_triangles * 3];
+                VectorSubtract(model->vertexes[previous].position, model->vertexes[first].position, a);
+                VectorSubtract(model->vertexes[vertex].position, model->vertexes[first].position, b);
+                CrossProduct(a, b, cross);
+                if (DotProduct(cross, cross) > .000001f) {
+                    float orientation = DotProduct(cross, face->plane->normal) * ((face->flags & SURF_PLANEBACK) ? -1 : 1);
+                    tri[0] = first; tri[1] = orientation < 0 ? vertex : previous; tri[2] = orientation < 0 ? previous : vertex;
+                    g.materials[g.num_triangles++] = material;
+                }
+            }
+            if (j == 0) first = vertex;
+            previous = vertex;
+        }
+    }
+    Con_Printf("Room acoustics: %d world triangles, building CPU scene off-thread\n", g.num_triangles);
+    SDL_LockAudio(); SA_LoadRoom(renderer, &g); SDL_UnlockAudio();
+    return;
+fail:
+    free(g.vertices); free(g.triangles); free(g.materials);
+    Spatial_ClearWorld(); Con_Printf("Room acoustics: scene export failed; direct audio remains available\n");
+}
+
 void Spatial_Start(int channel, sfx_t *sfx, int offset)
 {
     int i;
@@ -222,6 +315,11 @@ void Spatial_Update(void)
     settings.radio_compression = voice_radio_compression.value;
     settings.radio_drive = voice_radio_drive.value;
     settings.occlusion = snd_occlusion.value;
+    settings.reverb = cls.signon == SIGNONS ? snd_reverb.value : 0;
+    settings.voice_reverb = voice_reverb.value;
+    settings.room_mode = (int)CLAMP(0, snd_reverb_mode.value, 2);
+    settings.room_rays = (int)CLAMP(256, snd_reverb_rays.value, 4096);
+    settings.room_bounces = (int)CLAMP(2, snd_reverb_bounces.value, 32);
     SA_SetSettings(renderer, &settings);
     for (n = 0; n < total_channels; ++n) {
         i = (n + occlusion_cursor) % total_channels;
@@ -241,6 +339,9 @@ void Spatial_Update(void)
             VectorCopy(c->origin, ch->origin);
             c->position_valid = 1;
         }
+        /* Local entity sounds include footsteps/jumps, but entchannel -1 is UI. */
+        c->room_send = i >= NUM_AMBIENTS && ch->entchannel != -1 ? 1 : 0;
+        if (c->sample && c->sample->loop >= 0) c->room_send *= .35f;
         c->obstruction = Spatial_Obstruction(i, c->origin, c->kind == SA_POSITIONAL);
         SA_SetSource(renderer, i, c);
     }

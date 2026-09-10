@@ -6,6 +6,7 @@
 #define SA_RATE 48000
 #define SA_BLOCK 256
 #define SA_STREAM_FRAMES 8192
+#define SA_METERS_PER_UNIT 0.0381f
 typedef struct sa_renderer_s sa_renderer_t;
 typedef struct {
     const float *pcm; /* immutable until reset with callback excluded */
@@ -17,6 +18,7 @@ typedef struct {
     unsigned generation;
     int active, kind, offset, position_valid;
     float origin[3], gain, attenuation;
+    float room_send;
     float obstruction; /* 0 clear, 1 blocked; game-thread trace */
 } sa_source_t;
 typedef struct {
@@ -27,6 +29,8 @@ typedef struct {
     int hrtf, pure_voice;
     float radio_gain, voice_distance;
     float radio_filter, radio_compression, radio_drive, occlusion;
+    float reverb, voice_reverb;
+    int room_mode, room_rays, room_bounces;
 } sa_settings_t;
 /* Callback-published cursor for one non-stream source. */
 typedef struct {
@@ -39,6 +43,20 @@ typedef struct {
     float output_peak;
     int active, stream_frames, dropped_frames;
 } sa_stats_t;
+/* Ownership transfers to SA_LoadRoom; all coordinates already in SDK meters. */
+typedef struct {
+    int num_vertices, num_triangles;
+    float *vertices;
+    int *triangles, *materials;
+} sa_geometry_t;
+typedef struct {
+    int ready, failed, triangles;
+    size_t geometry_bytes;
+    uint64_t build_ticks, runs, last_ticks, max_ticks, result_timestamp;
+    float rt60[3];
+} sa_room_stats_t;
+void SA_LoadRoom(sa_renderer_t *r, sa_geometry_t *geometry); /* callback excluded; NULL unloads */
+void SA_RoomStats(sa_renderer_t *r, sa_room_stats_t *stats);
 sa_renderer_t *SA_Create(int sources, int streams);
 void SA_Destroy(sa_renderer_t *r); /* callback excluded */
 void SA_Reset(sa_renderer_t *r); /* callback excluded; retains allocations */
