@@ -85,6 +85,10 @@ msbuild Windows\VisualStudio\quakespasm.sln `
 The executable and its runtime DLLs are written to
 `Windows/VisualStudio/Build-quakespasm-sdl2/x64/Release`.
 
+The optional Linux Steam Audio prototype provides HRTF voice and SFX rendering.
+See [SPATIAL_AUDIO.md](SPATIAL_AUDIO.md) for the pinned Nix build, isolated testing
+guidance, A/B controls, and remaining headset/Windows validation.
+
 ## Classic co-op
 
 Quakespasm VR's streamlined co-op behavior is enabled by default. A server

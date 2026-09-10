@@ -40,6 +40,14 @@ Useful controls:
 - `voice_restart`: retry the selected device.
 - `voice_status`: print capture, receive, transmit, mode, and input-level state.
 
+Received voice has a 2× (+6 dB) baseline boost relative to the original voice
+mix, in both Steam Audio and legacy playback, including the distant radio path.
+`voice_volume 1` is the new normal level; its 0–2 range remains a user trim.
+Existing saved values are retained, so an old setting of 2 also becomes twice
+as loud. Set it to 1 to match the old level at 2. Microphone gain and VAD are
+unchanged. This is fixed playback gain, not automatic loudness normalization;
+microphone sensitivity and recording levels still differ between players.
+
 The same common controls are available under **Options > Voice chat options**.
 Changing the input device there reopens capture immediately. In co-op, an
 actively speaking player's existing world-space nametag changes from

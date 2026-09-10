@@ -23,6 +23,7 @@
  */
 
 #include "quakedef.h"
+#include "snd_spatial.h"
 #include "snd_codec.h"
 #include "bgmusic.h"
 
@@ -346,6 +347,7 @@ void BGM_PlayCDtrack (byte track, qboolean looping)
 
 void BGM_Stop (void)
 {
+	Spatial_ClearMusic();
 	if (bgmstream)
 	{
 		bgmstream->status = STREAM_NONE;
@@ -393,9 +395,9 @@ static void BGM_UpdateStream (void)
 	if (s_rawend < paintedtime)
 		s_rawend = paintedtime;
 
-	while (s_rawend < paintedtime + MAX_RAW_SAMPLES)
+	while (Spatial_Active() ? Spatial_MusicSpace() > 1024 : s_rawend < paintedtime + MAX_RAW_SAMPLES)
 	{
-		bufferSamples = MAX_RAW_SAMPLES - (s_rawend - paintedtime);
+		bufferSamples = Spatial_Active() ? Spatial_MusicSpace() - 512 : MAX_RAW_SAMPLES - (s_rawend - paintedtime);
 
 		/* decide how much data needs to be read from the file */
 		fileSamples = bufferSamples * bgmstream->info.rate / shm->speed;
@@ -449,6 +451,12 @@ static void BGM_UpdateStream (void)
 			}
 			else
 			{
+				if (Spatial_Active()) {
+					Spatial_FinishMusic();
+					S_CodecCloseStream(bgmstream);
+					bgmstream = NULL;
+					return;
+				}
 				BGM_Stop();
 				return;
 			}
@@ -475,4 +483,3 @@ void BGM_Update (void)
 	if (bgmstream)
 		BGM_UpdateStream ();
 }
-

@@ -6,6 +6,7 @@ extern "C" {
 
 #include "vr.h"
 #include "quakedef.h"
+#include "snd_spatial.h"
 #include "sys.h"
 #include "vr_menu.h"
 #include "r_vrik.h"
@@ -8815,6 +8816,11 @@ void VR_UpdateScreenContent() {
   VectorScale(vr_menu_view_origin, 0.5f, vr_menu_view_origin);
   VectorAdd(player->origin, vr_menu_view_origin, vr_menu_view_origin);
   vr_menu_view_origin_valid = true;
+  {
+    vec3_t audio_forward, audio_right, audio_up;
+    AngleVectors(r_refdef.viewangles, audio_forward, audio_right, audio_up);
+    Spatial_Listener(vr_menu_view_origin, audio_forward, audio_right, audio_up);
+  }
 
   VR_PrepareWeaponMenu();
   if (acquired_pose)

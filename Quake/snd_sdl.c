@@ -24,6 +24,7 @@
 
 #include "quakedef.h"
 #include "voice.h"
+#include "snd_spatial.h"
 
 #if defined(SDL_FRAMEWORK) || defined(NO_SDL_CONFIG)
 #if defined(USE_SDL2)
@@ -46,6 +47,11 @@ static void SDLCALL paint_audio (void *unused, Uint8 *stream, int len)
 	if (!shm)
 	{	/* shouldn't happen, but just in case */
 		memset(stream, 0, len);
+		return;
+	}
+
+	if (Spatial_Active()) {
+		Spatial_Render(stream, len);
 		return;
 	}
 
@@ -94,6 +100,8 @@ qboolean SNDDMA_Init (dma_t *dma)
 		return false;
 	}
 
+	Spatial_Init();
+
 	/* Set up the desired format */
 	desired.freq = snd_mixspeed.value;
 	desired.format = (loadas8bit.value) ? AUDIO_U8 : AUDIO_S16SYS;
@@ -108,6 +116,11 @@ qboolean SNDDMA_Init (dma_t *dma)
 		desired.samples = 2048; /* for 48 kHz */
 	else
 		desired.samples = 4096; /* for 96 kHz */
+	if (Spatial_Active()) {
+		desired.freq = 48000;
+		desired.format = AUDIO_S16SYS;
+		desired.samples = 256;
+	}
 	desired.callback = paint_audio;
 	desired.userdata = NULL;
 
@@ -115,6 +128,7 @@ qboolean SNDDMA_Init (dma_t *dma)
 	if (SDL_OpenAudio(&desired, NULL) == -1)
 	{
 		Con_Printf("Couldn't open SDL audio: %s\n", SDL_GetError());
+		Spatial_Shutdown();
 		SDL_QuitSubSystem(SDL_INIT_AUDIO);
 		return false;
 	}
@@ -164,6 +178,7 @@ qboolean SNDDMA_Init (dma_t *dma)
 	if (!shm->buffer)
 	{
 		SDL_CloseAudio();
+		Spatial_Shutdown();
 		SDL_QuitSubSystem(SDL_INIT_AUDIO);
 		shm = NULL;
 		Con_Printf ("Failed allocating memory for SDL audio\n");
@@ -186,6 +201,7 @@ void SNDDMA_Shutdown (void)
 	{
 		Con_Printf ("Shutting down SDL sound\n");
 		SDL_CloseAudio();
+		Spatial_Shutdown();
 		SDL_QuitSubSystem(SDL_INIT_AUDIO);
 		if (shm->buffer)
 			free (shm->buffer);
