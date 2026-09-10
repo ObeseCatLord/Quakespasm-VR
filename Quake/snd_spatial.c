@@ -88,6 +88,7 @@ static void Spatial_Status_f(void)
     Con_Printf("render mean %.3f ms, max %.3f ms, max pose age %.2f ms\n", s.blocks ? s.render_ticks * ms / s.blocks : 0, s.max_render_ticks * ms, s.max_pose_age_ticks * ms);
     Con_Printf("voice queued %d, dropped %d, partial-block missing %.0f, snapshot misses %.0f, clips %.0f, nonfinite %.0f\n", s.stream_frames, s.dropped_frames, (double)s.underrun_frames, (double)s.snapshot_misses, (double)s.clipped, (double)s.nonfinite);
     Con_Printf("SDK allocations/frees during rendering: %.0f\n", (double)s.rt_allocations);
+    Con_Printf("self microphone queued %d, dropped %d frames\n", s.self_frames, s.self_dropped);
     Con_Printf("Output peak %.4f (1.0 = full scale)\n", s.output_peak);
     {
         sa_room_stats_t room;
@@ -181,6 +182,20 @@ void Spatial_CacheSound(sfx_t *sfx, const wavinfo_t *info, const byte *data)
     samples[num_samples].sample.frames = got / sizeof(float);
     samples[num_samples].sample.loop = info->loopstart < 0 ? -1 : (int)((int64_t)info->loopstart * SA_RATE / info->rate);
     ++num_samples;
+}
+void Spatial_SelfEnable(qboolean enabled, float gain)
+{
+    static qboolean was_enabled;
+    if (!renderer) { was_enabled = false; return; }
+    if (!enabled && was_enabled) {
+        SDL_LockAudio(); SA_ResetSelf(renderer); SDL_UnlockAudio();
+    }
+    SA_SetSelf(renderer, enabled ? gain : 0);
+    was_enabled = enabled;
+}
+void Spatial_SelfPCM(const int16_t *pcm, int frames)
+{
+    if (renderer) SA_WriteSelf(renderer, pcm, frames);
 }
 void Spatial_ClearWorld(void)
 {

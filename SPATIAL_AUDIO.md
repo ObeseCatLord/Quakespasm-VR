@@ -1,7 +1,7 @@
 # Steam Audio prototype
 
-Experimental Linux backend. Environmental acoustics, release-runtime packaging
-and Windows SDK integration are deferred. Normal builds retain legacy audio.
+Experimental Linux backend with runtime environmental acoustics. Release-runtime
+packaging and Windows SDK integration remain deferred. Normal builds retain legacy audio.
 
 ## Build and run
 
@@ -32,8 +32,11 @@ Use `-novr` for desktop testing; add `+map e1m1` or `+connect SERVER_ADDRESS`
 as needed. Start your VR runtime first. Use a separate writable game directory
 for isolated tests; never point writable config/save directories at another
 installation through symlinks. Existing local microphone consent rules apply.
-The test harness and isolated-launch helper are maintained privately, not
-included in public checkouts.
+Run `scripts/run-spatial-audio.sh desktop +map e1m1`, or
+`scripts/run-spatial-audio.sh vr -game qbj3 +map qbj3_draqu`, for isolated
+configs and saves. `QSVR_DATA` selects game assets and `QSVR_PROFILE` selects the
+writable profile (default `/tmp/qsvr-environment-$USER`). No microphone
+preferences are copied from your working installation.
 
 ## Controls and listening checks
 
@@ -195,3 +198,23 @@ The Nix package includes a one-line Steam Audio 4.8.1 fix for an aligned load
 inside its unaligned complex-accumulation path. This is necessary for reliable
 multichannel convolution with this CPU/PFFFT build. Non-Nix SDK builds need an
 equivalent fix if they use the affected path.
+
+## Local microphone reflections
+
+The Voice menu's **Local mic reverb** is a separate, saved opt-in for each desktop
+and VR profile, off by default. Select a microphone on desktop first. It works
+in single-player and with PTT released. PTT/VAD and Transmit microphone continue
+to gate network packets only; the local feed is dry capture PCM sent exclusively
+to the room's wet bus, without Opus, network jitter, or direct sidetone.
+`voice_self_reverb_volume` (default 0.6, range 0–2) sets its send level before the
+master `snd_reverb` wet level. `voice_self_reverb` reports the menu choice and is
+read-only, like microphone transmission consent. Existing v1 preferences migrate
+with local reverb disabled.
+
+Capture closes outside active gameplay, during demos or after VR runtime loss.
+Local reflection capture requires the Steam Audio backend. The existing 20 ms
+capture chunks and game-frame dequeue add latency ahead of the reflections;
+headset listening must determine whether jump/footstep reverb alone is more
+convincing. There is no acoustic echo cancellation: use headphones, since speakers
+can feed the wet return back into the microphone. Turning local reverb off clears
+its queued PCM and the shared room tail (briefly clearing SFX reverb too).
