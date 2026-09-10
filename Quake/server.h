@@ -558,6 +558,9 @@ void SV_MG3UpgradeCollectSpawnParms(const float *spawn_parms);
 void SV_MG3UpgradeApplySpawnParms(float *spawn_parms);
 void SV_MG3UpgradeSyncSpawnParms(float *spawn_parms);
 void SV_ResetTransientClientState(void);
+qboolean SV_QBJ3AkimboSupported(void);
+qboolean SV_QBJ3AkimboAim(edict_t *ent, vec3_t muzzle);
+void SV_ClearAkimboContext(void);
 void SV_ResetTransientClientSlot(int slot);
 
 qboolean SV_CheckBottom (edict_t *ent);

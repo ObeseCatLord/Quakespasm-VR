@@ -122,6 +122,25 @@ center the sticks after switching. Existing weapon/muzzle calibrations are
 mirrored automatically; the `vradjust` commands work with either hand without
 requiring separate offset files.
 
+QBJ3's twin nailgun supports independent hands in controller VR when the
+optional `progs/v_tnailgun_vr_left.mdl` and `progs/v_tnailgun_vr_right.mdl`
+split assets are installed and the server supports akimbo. `vr_qbj3_akimbo`
+defaults to `1`; set it to `0` for the original paired weapon. The primary
+trigger retains QBJ3's alternating fire sequence and ammunition cost.
+This applies only to QBJ3's `progs/v_tnailgun.mdl`, not other nailguns or mods.
+Its dedicated split assets work with both Classic and Enhanced selected;
+the original calibrated geometry is retained in either setting. Desktop and
+weapon-wheel models are unchanged. Missing assets, older servers, or a lost
+controller pose use the original paired behavior.
+
+Split guns retain the canonical held scale, held offsets, and multiplayer
+held adjustments. Their muzzles follow their rendered barrel mouths;
+the original paired-weapon muzzle offsets are preserved but not used in
+split mode. Use `vradjustweapon` for grip calibration (the paired model is
+shown during adjustment). To edit the paired muzzle profile, disable akimbo
+first; muzzle-adjust commands explain this instead of saving an ineffective
+split-mode adjustment.
+
 | Input | Action |
 | --- | --- |
 | Left stick | Move |

@@ -317,6 +317,7 @@ typedef struct
 	unsigned	protocol_pext1;
 	unsigned	protocol_pext2;
 	qboolean	vr_relative_muzzle_supported;
+	qboolean	vr_qbj3_akimbo_supported;
 	qboolean	vrik_protocol_offered;
 	qboolean	vrik_cap_sent;
 	unsigned char	vrik_protocol_version;

@@ -100,6 +100,11 @@ enum {
 extern int vr_weaponmenu_selection;
 extern int vr_weaponmenu_selection_type;
 void VR_TriggerHaptic(int controller, float durationSeconds);
+/* Anatomical left=0/right=1, independent of the dominant-hand setting. */
+qboolean VR_GetAkimboPoses(vec3_t muzzle[2], vec3_t angles[2]);
+qboolean VR_DrawAkimboViewModels(void);
+qboolean VR_IsAkimboViewEntity(const entity_t *ent);
+qboolean VR_UseAkimboClassicViewModel(const entity_t *ent);
 /* Applied once per pose frame: slot 1 remains the weapon hand, slot 0 off-hand. */
 qboolean VR_IsLeftHanded(void);
 void VR_Draw2D();

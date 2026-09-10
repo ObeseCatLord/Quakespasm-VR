@@ -632,12 +632,19 @@ static qboolean SV_ReadUsercmd(usercmd_t *readcmd, int sequence) {
   readcmd->impulse = MSG_ReadByte();
 
   extbits = MSG_ReadByte();
-  if (extbits & ~(MOVEEXT_VR | MOVEEXT_VR_RELATIVE | MOVEEXT_QCINPUT)) {
+  if (extbits & ~(MOVEEXT_VR | MOVEEXT_VR_RELATIVE | MOVEEXT_QCINPUT |
+                  MOVEEXT_VR_AKIMBO)) {
     msg_badread = true;
     return false;
   }
 
   if ((extbits & MOVEEXT_VR_RELATIVE) && !(extbits & MOVEEXT_VR)) {
+    msg_badread = true;
+    return false;
+  }
+  if ((extbits & MOVEEXT_VR_AKIMBO) != 0 &&
+      (extbits & (MOVEEXT_VR | MOVEEXT_VR_RELATIVE)) !=
+          (MOVEEXT_VR | MOVEEXT_VR_RELATIVE)) {
     msg_badread = true;
     return false;
   }
@@ -663,6 +670,35 @@ static qboolean SV_ReadUsercmd(usercmd_t *readcmd, int sequence) {
       if (!isfinite(readcmd->vr_handpos[i]) ||
           !isfinite(readcmd->vr_handrot[i]) ||
           !isfinite(readcmd->vr_roomscalemove[i])) {
+        msg_badread = true;
+        return false;
+      }
+    }
+  }
+
+  if (extbits & MOVEEXT_VR_AKIMBO) {
+    if (net_message.cursize - msg_readcount < 12 * 4) {
+      msg_badread = true;
+      return false;
+    }
+    readcmd->vr_akimbo_active = true;
+    for (i = 0; i < 2; i++) {
+      readcmd->vr_akimbo_muzzle[i][0] = MSG_ReadFloat();
+      readcmd->vr_akimbo_muzzle[i][1] = MSG_ReadFloat();
+      readcmd->vr_akimbo_muzzle[i][2] = MSG_ReadFloat();
+    }
+    for (i = 0; i < 2; i++) {
+      readcmd->vr_akimbo_angles[i][0] = MSG_ReadFloat();
+      readcmd->vr_akimbo_angles[i][1] = MSG_ReadFloat();
+      readcmd->vr_akimbo_angles[i][2] = MSG_ReadFloat();
+    }
+    for (i = 0; i < 2; i++) {
+      if (!isfinite(readcmd->vr_akimbo_muzzle[i][0]) ||
+          !isfinite(readcmd->vr_akimbo_muzzle[i][1]) ||
+          !isfinite(readcmd->vr_akimbo_muzzle[i][2]) ||
+          !isfinite(readcmd->vr_akimbo_angles[i][0]) ||
+          !isfinite(readcmd->vr_akimbo_angles[i][1]) ||
+          !isfinite(readcmd->vr_akimbo_angles[i][2])) {
         msg_badread = true;
         return false;
       }
@@ -805,6 +841,11 @@ static qboolean SV_QueuePMoveUsercmd(client_t *client,
      * discontinuity and retain the newest command as the restart point. */
     SV_ClearClientPMoveState(client);
     VectorCopy(vec3_origin, client->cmd.vr_roomscalemove);
+    client->cmd.vr_akimbo_active = false;
+    VectorClear(client->cmd.vr_akimbo_muzzle[0]);
+    VectorClear(client->cmd.vr_akimbo_muzzle[1]);
+    VectorClear(client->cmd.vr_akimbo_angles[0]);
+    VectorClear(client->cmd.vr_akimbo_angles[1]);
     VectorCopy(vec3_origin, client->vr_roomscalemove);
     VectorCopy(vec3_origin, client->vr_roomscale_accum);
     client->move_discontinuity_epoch++;
@@ -1049,6 +1090,11 @@ static void SV_ClearStaleClientInput(client_t *client) {
   client->net_latched_buttons = 0;
   client->net_latched_impulse = 0;
   VectorClear(client->cmd.vr_roomscalemove);
+  client->cmd.vr_akimbo_active = false;
+  VectorClear(client->cmd.vr_akimbo_muzzle[0]);
+  VectorClear(client->cmd.vr_akimbo_muzzle[1]);
+  VectorClear(client->cmd.vr_akimbo_angles[0]);
+  VectorClear(client->cmd.vr_akimbo_angles[1]);
   VectorClear(client->vr_roomscale_accum);
   SV_ClearClientPMoveState(client);
   client->edict->v.button0 = 0;

@@ -547,6 +547,7 @@ const vec_t *R_VRStereoSortOrigin (void);
 void R_DrawWorld (void);
 void R_DrawAliasModel (entity_t *e);
 void R_DrawAliasModel_NoCull (entity_t *e);
+void R_SyncAliasViewmodelAnimation(void);
 void R_DrawAliasModel_ShowSkel (entity_t *e);
 const char *R_GetShowFieldsText (void);
 void R_BeginAliasBatchScope (void);

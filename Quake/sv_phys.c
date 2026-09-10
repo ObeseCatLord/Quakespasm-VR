@@ -3210,6 +3210,61 @@ static void SV_ClampVRMuzzleToWorld(edict_t *ent, vec3_t muzzle) {
   }
 }
 
+typedef struct sv_akimbo_context_s {
+  edict_t *ent;
+  vec3_t body_origin;
+  vec3_t muzzle[2];
+  vec3_t angles[2];
+} sv_akimbo_context_t;
+
+static sv_akimbo_context_t sv_akimbo_context;
+
+void SV_ClearAkimboContext(void) {
+  memset(&sv_akimbo_context, 0, sizeof(sv_akimbo_context));
+}
+
+qboolean SV_QBJ3AkimboSupported(void) {
+  return qcvm == &sv.qcvm &&
+      !q_strcasecmp(COM_SkipPath(com_gamedir), "qbj3") &&
+      ED_FindFunction("W_FireTwinNailgun") != NULL;
+}
+
+/* Called only at QBJ3's aim builtin, after QC has selected its original
+ * alternating fire frame. QC still owns ammunition, cadence and spawning. */
+qboolean SV_QBJ3AkimboAim(edict_t *ent, vec3_t muzzle) {
+  int hand, i;
+  float offs;
+  vec3_t temporary_origin, source;
+
+  if (qcvm != &sv.qcvm || sv_akimbo_context.ent != ent ||
+      !qcvm->xfunction ||
+      strcmp(PR_GetString(qcvm->xfunction->s_name), "W_FireTwinNailgun") ||
+      strcmp(PR_GetString(ent->v.weaponmodel), "progs/v_tnailgun.mdl") ||
+      ent->v.weapon != 4 ||
+      (ent->v.weaponframe != 11 && ent->v.weaponframe != 15))
+    return false;
+
+  hand = ent->v.weaponframe == 11 ? 1 : 0;
+  offs = hand ? 4.0f : -4.0f;
+  VectorCopy(sv_akimbo_context.muzzle[hand], muzzle);
+  /* The outer scope has already moved ent->origin to the dominant hand.
+   * Clamp from the saved body eye, not that temporary projectile source. */
+  VectorCopy(ent->v.origin, temporary_origin);
+  VectorCopy(sv_akimbo_context.body_origin, ent->v.origin);
+  SV_ClampVRMuzzleToWorld(ent, muzzle);
+  VectorCopy(temporary_origin, ent->v.origin);
+
+  VectorCopy(sv_akimbo_context.angles[hand], ent->v.v_angle);
+  ent->v.v_angle[ROLL] = 0; /* QC roll is camera tilt, not wrist roll. */
+  AngleVectors(ent->v.v_angle, pr_global_struct->v_forward,
+      pr_global_struct->v_right, pr_global_struct->v_up);
+  for (i = 0; i < 3; ++i)
+    source[i] = ent->v.view_ofs[i] + 11 * pr_global_struct->v_forward[i] +
+        offs * pr_global_struct->v_right[i] - 6 * pr_global_struct->v_up[i];
+  VectorSubtract(muzzle, source, ent->v.origin);
+  return true;
+}
+
 typedef struct sv_vr_weapon_pose_restore_s {
   qboolean applied;
   vec3_t origin;
@@ -3217,11 +3272,14 @@ typedef struct sv_vr_weapon_pose_restore_s {
   vec3_t v_forward;
   vec3_t v_right;
   vec3_t v_up;
+  sv_akimbo_context_t previous_akimbo;
 } sv_vr_weapon_pose_restore_t;
 
 static void SV_ApplyVRWeaponOffset(edict_t *ent, int num, qboolean is_remote_vr,
                                    sv_vr_weapon_pose_restore_t *restore) {
   restore->applied = false;
+  restore->previous_akimbo = sv_akimbo_context;
+  SV_ClearAkimboContext();
 
   if (is_remote_vr ||
       (vr_enabled.value && !isDedicated && num == cl.viewentity)) {
@@ -3233,6 +3291,33 @@ static void SV_ApplyVRWeaponOffset(edict_t *ent, int num, qboolean is_remote_vr,
     VectorCopy(pr_global_struct->v_forward, restore->v_forward);
     VectorCopy(pr_global_struct->v_right, restore->v_right);
     VectorCopy(pr_global_struct->v_up, restore->v_up);
+
+    if (SV_QBJ3AkimboSupported() &&
+        !strcmp(PR_GetString(ent->v.weaponmodel), "progs/v_tnailgun.mdl") &&
+        ent->v.weapon == 4) {
+      qboolean active = false;
+      if (is_remote_vr) {
+        const usercmd_t *cmd = &svs.clients[num - 1].cmd;
+        if (cmd->vr_active && cmd->vr_handpos_relative &&
+            cmd->vr_akimbo_active && !svs.clients[num - 1].input_stale) {
+          int hand;
+          for (hand = 0; hand < 2; ++hand) {
+            VectorAdd(restore->origin, cmd->vr_akimbo_muzzle[hand],
+                sv_akimbo_context.muzzle[hand]);
+            VectorCopy(cmd->vr_akimbo_angles[hand],
+                sv_akimbo_context.angles[hand]);
+          }
+          active = true;
+        }
+      } else {
+        active = VR_GetAkimboPoses(sv_akimbo_context.muzzle,
+            sv_akimbo_context.angles);
+      }
+      if (active) {
+        sv_akimbo_context.ent = ent;
+        VectorCopy(restore->origin, sv_akimbo_context.body_origin);
+      }
+    }
 
     if (is_remote_vr) {
       if (svs.clients[num - 1].vr_handpos_relative) {
@@ -3273,6 +3358,7 @@ static void SV_RestoreVRWeaponOffset(edict_t *ent, int num,
                                      const sv_vr_weapon_pose_restore_t *restore) {
   (void)num;
   (void)is_remote_vr;
+  sv_akimbo_context = restore->previous_akimbo;
   if (!restore->applied)
     return;
 

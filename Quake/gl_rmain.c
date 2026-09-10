@@ -1323,8 +1323,10 @@ void R_DrawViewModel(void) {
 
   VR_ApplyCurrentViewWeaponTransform();
 
-  if (vr_enabled.value)
-    R_DrawAliasModel_NoCull(currententity);
+  if (vr_enabled.value) {
+    if (!VR_DrawAkimboViewModels())
+      R_DrawAliasModel_NoCull(currententity);
+  }
   else
     R_DrawAliasModel(currententity);
 

@@ -2248,6 +2248,7 @@ vector aim(entity, missilespeed)
 cvar_t	sv_aim = {"sv_aim", "1", CVAR_NONE}; // ericw -- turn autoaim off by default. was 0.93
 static void PF_aim (void)
 {
+	qboolean akimbo;
 	edict_t	*ent, *check, *bestent;
 	vec3_t	start, dir, end, bestdir;
 	int		i, j;
@@ -2259,8 +2260,12 @@ static void PF_aim (void)
 	speed = G_FLOAT(OFS_PARM1);
 	(void) speed; /* variable set but not used */
 
-	VectorCopy (ent->v.origin, start);
-	start[2] += 20;
+	akimbo = SV_QBJ3AkimboAim(ent, start);
+	if (!akimbo)
+	{
+		VectorCopy (ent->v.origin, start);
+		start[2] += 20;
+	}
 
 // try sending a trace straight
 	VectorCopy (pr_global_struct->v_forward, dir);
@@ -2304,7 +2309,19 @@ static void PF_aim (void)
 
 	if (bestent)
 	{
-		VectorSubtract (bestent->v.origin, ent->v.origin, dir);
+		if (akimbo)
+		{
+			/* Use the same physical muzzle and target center as the visibility
+			 * tests above; the temporary QC origin is source compensation. */
+			for (j = 0; j < 3; ++j)
+				end[j] = bestent->v.origin[j] +
+					0.5f * (bestent->v.mins[j] + bestent->v.maxs[j]);
+			VectorSubtract(end, start, dir);
+		}
+		else
+		{
+			VectorSubtract (bestent->v.origin, ent->v.origin, dir);
+		}
 		dist = DotProduct (dir, pr_global_struct->v_forward);
 		VectorScale (pr_global_struct->v_forward, dist, end);
 		end[2] = dir[2];

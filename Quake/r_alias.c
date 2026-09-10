@@ -1233,6 +1233,16 @@ void R_SetupAliasFrame (aliashdr_t *paliashdr, int frame, lerpdata_t *lerpdata)
 R_SetupEntityTransform -- johnfitz -- set up transform part of lerpdata
 =================
 */
+void R_SyncAliasViewmodelAnimation(void)
+{
+	entity_t *saved = currententity;
+	lerpdata_t unused;
+	currententity = &cl.viewent;
+	R_SetupAliasFrame((aliashdr_t *)Mod_Extradata(cl.viewent.model),
+		cl.viewent.frame, &unused);
+	currententity = saved;
+}
+
 void R_SetupEntityTransform (entity_t *e, lerpdata_t *lerpdata)
 {
 	float blend;
@@ -1259,7 +1269,8 @@ void R_SetupEntityTransform (entity_t *e, lerpdata_t *lerpdata)
 	}
 
 	//set up values
-	if (r_lerpmove.value && e != &cl.viewent && e->lerpflags & LERP_MOVESTEP)
+	if (r_lerpmove.value && e != &cl.viewent &&
+		!VR_IsAkimboViewEntity(e) && e->lerpflags & LERP_MOVESTEP)
 	{
 		if (e->lerpflags & LERP_FINISH)
 			blend = CLAMP (0.0f, (float)(cl.time - e->movelerpstart) / (e->lerpfinish - e->movelerpstart), 1.0f);
@@ -1327,7 +1338,7 @@ void R_SetupAliasLighting (entity_t	*e)
 	}
 
 	// minimum light value on gun (24)
-	if (e == &cl.viewent)
+	if (e == &cl.viewent || VR_IsAkimboViewEntity(e))
 	{
 		add = 72.0f - (lightcolor[0] + lightcolor[1] + lightcolor[2]);
 		if (add > 0.0f)
@@ -6660,12 +6671,14 @@ void R_DrawAliasModel_NoCull (entity_t *e)
 
 	if (!e || !e->model)
 		return;
-	if (Mod_UseMD3ModelForFrame (e->model, e->skinnum, e->frame))
+	if (!VR_UseAkimboClassicViewModel(e) &&
+		Mod_UseMD3ModelForFrame (e->model, e->skinnum, e->frame))
 	{
 		R_DrawMD3Model (e, false, true);
 		return;
 	}
-	if (Mod_UseMD5ModelForFrame (e->model, e->skinnum, e->frame))
+	if (!VR_UseAkimboClassicViewModel(e) &&
+		Mod_UseMD5ModelForFrame (e->model, e->skinnum, e->frame))
 	{
 		R_DrawMD5Model (e, false, true);
 		return;
