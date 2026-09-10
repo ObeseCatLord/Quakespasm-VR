@@ -19,6 +19,7 @@ weapon calibration.
 - An installed-mod browser and downloadable add-on catalogue.
 - Networked VRIK so you can see other people wave at you, including full body tracking
 - VOIP
+- Steam Frame Support (Untested)
 
 ## Building from source
 
