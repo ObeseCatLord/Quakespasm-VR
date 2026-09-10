@@ -13,11 +13,13 @@ weapon calibration.
 - Improved VR-synchronized networking.
 - A weapon wheel for both VR and desktop players.
 - Streamlined co-op options, including respawning or teleporting near another
-  player via the weapon wheel.
+  player via the weapon wheel. Player outlines can be seen through walls when the scoreboard is shown.
 - Per-mod weapon-offset calibration, with built-in profiles for popular mods.
 - Support for the 2021 rerelease models and automatic rerelease discovery.
 - An installed-mod browser and downloadable add-on catalogue.
-- Networked VRIK so you can see other people wave at youy
+- Networked VRIK so you can see other people wave at you, including full body tracking
+- VOIP
+- Steam Frame Support (Untested)
 - Drop-in cosmetic player-model packages, selected in Multiplayer > Setup and
   synchronized by package identity. See the [custom player-model specification](player_models/README.md)
   for installation, rig requirements, and compatibility limits.
@@ -103,33 +105,6 @@ Bindings can be changed under **Options > Customize Controls** or with the
 console `bind` command. Mods may replace or extend actions through
 `bindlist.lst`.
 
-### Keyboard and mouse
-
-| Input | Action |
-| --- | --- |
-| Mouse | Look |
-| Mouse 1 or Ctrl | Attack |
-| Mouse 2 | Use / alternate fire (`+button3`) |
-| W/A/S/D | Move forward/left/back/right |
-| Arrow keys | Move forward/back and turn |
-| Space | Jump / swim up |
-| Shift | Run |
-| E / C | Swim up / down |
-| Q | Hold the weapon wheel |
-| 1–8 | Select weapon |
-| Mouse wheel down / `/` | Next weapon |
-| Mouse wheel up | Previous weapon |
-| Tab | Show scores |
-| T | Chat |
-| Esc | Main menu |
-| `~` or `` ` `` | Console |
-| F2 / F3 | Save / load menu |
-| F4 / F5 | Options / multiplayer menu |
-| F6 / F9 | Quick save / quick load |
-| F10 | Quit |
-| F12 | Screenshot |
-| Pause | Pause |
-
 ### VR controllers
 
 These are the default OpenVR actions. Physical button names can vary between
@@ -158,8 +133,3 @@ requiring separate offset files.
 | Right A button | Previous weapon |
 | Left grip | Show scores |
 | Right grip | Use / alternate fire |
-
-On Valve Index controllers, use/alternate fire is placed on the right
-trackpad by the recommended SteamVR binding, while right grip shows scores.
-The `vr_turn180` action is available in Customize Controls but is intentionally
-unbound by default.
