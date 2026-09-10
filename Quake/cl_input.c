@@ -542,6 +542,9 @@ static void CL_WriteUsercmd(sizebuf_t *buf, const usercmd_t *histcmd) {
     if (histcmd->vr_handpos_relative)
       extbits |= MOVEEXT_VR_RELATIVE;
   }
+  if (histcmd->vr_akimbo_active && histcmd->vr_active &&
+      histcmd->vr_handpos_relative)
+    extbits |= MOVEEXT_VR_AKIMBO;
   if (histcmd->weapon || histcmd->cursor_screen[0] || histcmd->cursor_screen[1] ||
       histcmd->cursor_start[0] || histcmd->cursor_start[1] || histcmd->cursor_start[2] ||
       histcmd->cursor_impact[0] || histcmd->cursor_impact[1] || histcmd->cursor_impact[2] ||
@@ -574,6 +577,19 @@ static void CL_WriteUsercmd(sizebuf_t *buf, const usercmd_t *histcmd) {
     MSG_WriteFloat(buf, histcmd->vr_roomscalemove[2]);
   }
 
+  if (extbits & MOVEEXT_VR_AKIMBO) {
+    for (i = 0; i < 2; i++) {
+      MSG_WriteFloat(buf, histcmd->vr_akimbo_muzzle[i][0]);
+      MSG_WriteFloat(buf, histcmd->vr_akimbo_muzzle[i][1]);
+      MSG_WriteFloat(buf, histcmd->vr_akimbo_muzzle[i][2]);
+    }
+    for (i = 0; i < 2; i++) {
+      MSG_WriteFloat(buf, histcmd->vr_akimbo_angles[i][0]);
+      MSG_WriteFloat(buf, histcmd->vr_akimbo_angles[i][1]);
+      MSG_WriteFloat(buf, histcmd->vr_akimbo_angles[i][2]);
+    }
+  }
+
   if (extbits & MOVEEXT_QCINPUT) {
     MSG_WriteLong(buf, histcmd->weapon);
     MSG_WriteShort(buf, histcmd->cursor_screen[0] * 32767);
@@ -590,15 +606,18 @@ static void CL_WriteUsercmd(sizebuf_t *buf, const usercmd_t *histcmd) {
 
 static void CL_WriteAckFrames(sizebuf_t *buf)
 {
-  unsigned int i;
+  unsigned int i, count;
 
-  for (i = 0; i < cl.ackframes_count; i++) {
+  count = 0;
+  while (count < cl.ackframes_count && buf->cursize + 5 <= buf->maxsize) {
     MSG_WriteByte(buf, clcdp_ackframe);
-    MSG_WriteLong(buf, cl.ackframes[i]);
+    MSG_WriteLong(buf, cl.ackframes[count]);
     cl.net_snapshot_acks_sent++;
+    count++;
   }
-
-  cl.ackframes_count = 0;
+  for (i = count; i < cl.ackframes_count; i++)
+    cl.ackframes[i - count] = cl.ackframes[i];
+  cl.ackframes_count -= count;
 }
 
 void CL_FlushAckFrames(void)
@@ -673,6 +692,24 @@ static unsigned char CL_SampleMoveMsec(void)
 static qboolean CL_VRVectorIsFinite(const vec3_t value)
 {
   return isfinite(value[0]) && isfinite(value[1]) && isfinite(value[2]);
+}
+
+static void CL_ClearAkimboUsercmd(usercmd_t *cmd)
+{
+  cmd->vr_akimbo_active = false;
+  Q_memset(cmd->vr_akimbo_muzzle, 0, sizeof(cmd->vr_akimbo_muzzle));
+  Q_memset(cmd->vr_akimbo_angles, 0, sizeof(cmd->vr_akimbo_angles));
+}
+
+static qboolean CL_AkimboUsercmdIsFinite(const usercmd_t *cmd)
+{
+  int hand;
+
+  for (hand = 0; hand < 2; hand++)
+    if (!CL_VRVectorIsFinite(cmd->vr_akimbo_muzzle[hand]) ||
+        !CL_VRVectorIsFinite(cmd->vr_akimbo_angles[hand]))
+      return false;
+  return true;
 }
 
 static qboolean CL_VRRoomScaleSampleAccepted(const vec3_t move)
@@ -831,6 +868,7 @@ void CL_SendMove(const usercmd_t *cmd) {
   Q_memset(sendcmd.vr_handrot, 0, sizeof(sendcmd.vr_handrot));
   sendcmd.vr_active = false;
   sendcmd.vr_handpos_relative = false;
+  CL_ClearAkimboUsercmd(&sendcmd);
 
   if (cl_nettest_vr.value) {
     sendcmd.vr_active = true;
@@ -857,6 +895,22 @@ void CL_SendMove(const usercmd_t *cmd) {
 	  }
       sendcmd.vr_handpos_relative = true;
       VectorSubtract(world_muzzle, pose_origin, sendcmd.vr_handpos);
+      if (cl.vr_qbj3_akimbo_supported) {
+        vec3_t world_akimbo_muzzle[2];
+        vec3_t akimbo_angles[2];
+        int hand;
+
+        if (VR_GetAkimboPoses(world_akimbo_muzzle, akimbo_angles)) {
+          for (hand = 0; hand < 2; hand++) {
+            VectorSubtract(world_akimbo_muzzle[hand], pose_origin,
+                           sendcmd.vr_akimbo_muzzle[hand]);
+            VectorCopy(akimbo_angles[hand], sendcmd.vr_akimbo_angles[hand]);
+          }
+          sendcmd.vr_akimbo_active = CL_AkimboUsercmdIsFinite(&sendcmd);
+          if (!sendcmd.vr_akimbo_active)
+            CL_ClearAkimboUsercmd(&sendcmd);
+        }
+      }
     } else {
       VectorCopy(world_muzzle, sendcmd.vr_handpos);
     }
@@ -875,6 +929,7 @@ void CL_SendMove(const usercmd_t *cmd) {
     VectorCopy(vec3_origin, sendcmd.vr_handpos);
     VectorCopy(vec3_origin, sendcmd.vr_handrot);
     VectorCopy(vec3_origin, sendcmd.vr_roomscalemove);
+    CL_ClearAkimboUsercmd(&sendcmd);
   }
 
   seq = cl.movemessages++;
@@ -921,9 +976,6 @@ void CL_SendMove(const usercmd_t *cmd) {
   }
   cl_lagdebug_last_sendmove = realtime;
 
-  CL_WriteAckFrames(&buf);
-  CL_AppendVRIKPose(&buf);
-
   /* Repeat the last two sequenced commands.  The server discards sequences it
    * already accepted, while a dropped packet no longer loses a one-frame fire
    * press or weapon impulse. */
@@ -942,6 +994,11 @@ void CL_SendMove(const usercmd_t *cmd) {
     Con_Printf("CL_SendMove: move packet overflowed\n");
     return;
   }
+
+  /* Keep gameplay command delivery ahead of optional pose traffic.  Acks are
+   * retained if a full three-command dual-pose bundle leaves no room. */
+  CL_WriteAckFrames(&buf);
+  CL_AppendVRIKPose(&buf);
 
   /* Voice is best-effort and always follows the complete movement bundle. */
   Voice_AppendOutgoing(&buf);
@@ -964,6 +1021,13 @@ static void CL_VRRelativeMuzzle_f(void) {
       Cmd_Argc() < 2 || Q_atoi(Cmd_Argv(1)) != 0;
 }
 
+static void CL_VRQBJ3AkimboProtocol_f(void) {
+  if (cmd_source != src_server)
+    return;
+  cl.vr_qbj3_akimbo_supported =
+      Cmd_Argc() < 2 || Q_atoi(Cmd_Argv(1)) != 0;
+}
+
 /*
 ============
 CL_InitInput
@@ -978,6 +1042,8 @@ void CL_InitInput(void) {
   Cvar_RegisterVariable(&cl_nettest_hand_y);
   Cvar_RegisterVariable(&cl_nettest_hand_z);
   Cmd_AddCommand_ServerCommand("vr_relative_muzzle", CL_VRRelativeMuzzle_f);
+  Cmd_AddCommand_ServerCommand("vr_qbj3_akimbo_protocol",
+                               CL_VRQBJ3AkimboProtocol_f);
   Cmd_AddCommand("+moveup", IN_UpDown);
   Cmd_AddCommand("-moveup", IN_UpUp);
   Cmd_AddCommand("+movedown", IN_DownDown);

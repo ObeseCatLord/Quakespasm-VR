@@ -638,6 +638,7 @@ void Host_Error (const char *error, ...)
 	if (inerror)
 		Sys_Error ("Host_Error: recursively entered");
 	inerror = true;
+	SV_ClearAkimboContext();
 
 	PR_SwitchQCVM(NULL);
 
@@ -1092,6 +1093,7 @@ not reinitialize anything.
 */
 void Host_ClearMemory (void)
 {
+	SV_ClearAkimboContext();
 	if (cl.qcvm.extfuncs.CSQC_Shutdown)
 	{
 		PR_SwitchQCVM(&cl.qcvm);

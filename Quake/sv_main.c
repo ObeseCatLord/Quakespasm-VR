@@ -1347,6 +1347,11 @@ void SV_SendServerinfo (client_t *client)
 	 * muzzle coordinates without breaking older servers. */
 	MSG_WriteByte (&client->message, svc_stufftext);
 	MSG_WriteString (&client->message, "//vr_relative_muzzle 1\n");
+	if (SV_QBJ3AkimboSupported())
+	{
+		MSG_WriteByte (&client->message, svc_stufftext);
+		MSG_WriteString (&client->message, "//vr_qbj3_akimbo_protocol 1\n");
+	}
 	MSG_WriteByte (&client->message, svc_stufftext);
 	MSG_WriteString (&client->message, "//avatar_protocol 1\n");
 	MSG_WriteByte (&client->message, svc_stufftext);

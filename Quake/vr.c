@@ -1903,6 +1903,7 @@ DEFINE_CVAR(vr_enabled, 0, CVAR_NONE);
 DEFINE_CVAR(vr_vrik, 1, CVAR_ARCHIVE);
 DEFINE_CVAR(vr_viewkick, 0, CVAR_NONE);
 DEFINE_CVAR(vr_lefthanded, 0, CVAR_ARCHIVE);
+DEFINE_CVAR(vr_qbj3_akimbo, 1, CVAR_ARCHIVE);
 
 DEFINE_CVAR(vr_crosshair, 1, CVAR_ARCHIVE);
 DEFINE_CVAR(vr_crosshair_depth, 0, CVAR_ARCHIVE);
@@ -3184,8 +3185,12 @@ void Mod_Weapon(qmodel_t *model, aliashdr_t *hdr) {
   }
 }
 
+static qboolean VR_AkimboModels(qmodel_t *models[2], aliashdr_t *headers[2]);
+
 static aliashdr_t *VR_ActiveAliasHeader(qmodel_t *model, int skinnum,
                                         int frame) {
+  if (model == cl.viewent.model && VR_UseAkimboClassicViewModel(&cl.viewent))
+    return (aliashdr_t *)Mod_Extradata(model);
   if (Mod_UseMD3ModelForFrame(model, skinnum, frame)) {
     aliashdr_t *md3 = Mod_GetMD3Extradata(model);
     if (md3)
@@ -6119,6 +6124,140 @@ void VR_GetMuzzleAdjustedHandPos(vec3_t out) {
   }
 }
 
+static entity_t vr_akimbo_entities[2];
+
+qboolean VR_IsAkimboViewEntity(const entity_t *ent) {
+  return ent == &vr_akimbo_entities[0] || ent == &vr_akimbo_entities[1];
+}
+
+qboolean VR_UseAkimboClassicViewModel(const entity_t *ent) {
+  qmodel_t *models[2];
+  aliashdr_t *headers[2];
+  return vr_enabled.value && (VR_IsAkimboViewEntity(ent) ||
+      (ent == &cl.viewent && VR_AkimboModels(models, headers)));
+}
+
+/* The split package preserves the original MDL quantization and all 19
+ * frames. No user calibration is baked into, or rewritten by, the package.
+ * These are QBJ3-specific assets, not original-Quake enhanced replacements.
+ * Use their retained MDL geometry regardless of r_enhancedmodels, including
+ * the paired model used during grip adjustment. Other weapons are untouched. */
+static qboolean VR_AkimboModels(qmodel_t *models[2], aliashdr_t *headers[2]) {
+  static const char *paths[2] = {"progs/v_tnailgun_vr_left.mdl",
+                                "progs/v_tnailgun_vr_right.mdl"};
+  aliashdr_t *source;
+  if (!vr_qbj3_akimbo.value || !vr_enabled.value ||
+      (int)vr_aimmode.value != VR_AIMMODE_CONTROLLER ||
+      !cl.vr_qbj3_akimbo_supported || !VR_GameDirIs("qbj3") ||
+      cls.state != ca_connected || cls.signon != SIGNONS ||
+      cl.stats[STAT_HEALTH] <= 0 || !cl.viewent.model ||
+      cl.viewent.model->type != mod_alias ||
+      strcmp(cl.viewent.model->name, "progs/v_tnailgun.mdl") ||
+      cl.viewent.frame < 0 || cl.viewent.frame >= 19)
+    return false;
+  source = (aliashdr_t *)Mod_Extradata(cl.viewent.model);
+  if (!source || source->poseverttype != ALIAS_POSE_MDL ||
+      source->numframes != 19 || source->numverts != 1968)
+    return false;
+  for (int hand = 0; hand < 2; ++hand) {
+    models[hand] = Mod_ForName(paths[hand], false);
+    if (!models[hand] || models[hand]->type != mod_alias)
+      return false;
+  }
+  /* Loading a model can move alias cache blocks. Acquire all header pointers
+   * only after both loads; never compare against a pre-load cache address. */
+  source = (aliashdr_t *)Mod_Extradata(cl.viewent.model);
+  for (int hand = 0; hand < 2; ++hand) {
+    headers[hand] = (aliashdr_t *)Mod_Extradata(models[hand]);
+    if (!headers[hand] || headers[hand]->poseverttype != ALIAS_POSE_MDL ||
+        headers[hand]->numframes != 19 ||
+        headers[hand]->numverts != (hand ? 980 : 988) ||
+        !VectorCompare(headers[hand]->original_scale, source->original_scale) ||
+        !VectorCompare(headers[hand]->original_scale_origin,
+                       source->original_scale_origin))
+      return false;
+    if (headers[hand]->numposes != source->numposes)
+      return false;
+    for (int frame = 0; frame < 19; ++frame)
+      if (headers[hand]->frames[frame].firstpose != source->frames[frame].firstpose ||
+          headers[hand]->frames[frame].numposes != source->frames[frame].numposes)
+        return false;
+  }
+  return true;
+}
+
+static void VR_AkimboModelTransform(aliashdr_t *hdr, int hand) {
+  Mod_Weapon(cl.viewent.model, hdr);
+  if (!hand) {
+    /* Mirror the calibrated grip residual, NOT the already left-handed
+     * geometry. For symmetric source grips this is exactly
+     * mirrorY(F(right_grip))-F(left_grip), independent of held scale.
+     * Include the MDL quantization origin: simply negating scale_origin
+     * would incorrectly mirror compressed-coordinate space. */
+    float ratio = hdr->scale[1] / hdr->original_scale[1];
+    hdr->scale_origin[1] = 2 * ratio * hdr->original_scale_origin[1] -
+                           hdr->scale_origin[1];
+  }
+}
+
+qboolean VR_GetAkimboPoses(vec3_t muzzle[2], vec3_t angles[2]) {
+  qmodel_t *models[2];
+  aliashdr_t *headers[2];
+  /* A disconnected/missing controller must never inherit its old pose.
+   * Adjustments use the original paired model and existing saved profile. */
+  if (VR_AdjustmentVisualsActive() || !VR_VRIKControllerTracked(0) ||
+      !VR_VRIKControllerTracked(1) || !VR_AkimboModels(models, headers))
+    return false;
+  for (int hand = 0; hand < 2; ++hand) {
+    int index = hand == (VR_IsLeftHanded() ? 0 : 1) ? 1 : 0;
+    vec3_t local, world, modelangles;
+    /* Source idle barrel-mouth centroid; kept in source coordinates so the
+     * physical projectile origin follows the exact held scale and offset.
+     * Recoil/flash animation does not steer the controller's firing ray. */
+    const vec3_t anchor = {54.75913167f, hand ? -10.49037877f : 10.28241703f,
+                           -16.05048694f};
+    VR_AkimboModelTransform(headers[hand], hand);
+    for (int axis = 0; axis < 3; ++axis)
+      local[axis] = (anchor[axis] - headers[hand]->original_scale_origin[axis]) /
+          headers[hand]->original_scale[axis] * headers[hand]->scale[axis] +
+          headers[hand]->scale_origin[axis];
+    VectorCopy(cl.handrot[index], angles[hand]);
+    VR_HandRotToViewmodelAngles(angles[hand], modelangles);
+    VR_ModelOffsetToWorld(local, modelangles, 1, false, world);
+    VectorAdd(cl.handpos[index], cl.vmeshoffset, muzzle[hand]);
+    VectorAdd(muzzle[hand], world, muzzle[hand]);
+    for (int axis = 0; axis < 3; ++axis)
+      if (!isfinite(muzzle[hand][axis]) || !isfinite(angles[hand][axis]))
+        return false;
+  }
+  return true;
+}
+
+qboolean VR_DrawAkimboViewModels(void) {
+  vec3_t muzzle[2], angles[2];
+  qmodel_t *models[2];
+  aliashdr_t *headers[2];
+  entity_t *saved = currententity;
+  if (!VR_GetAkimboPoses(muzzle, angles) || !VR_AkimboModels(models, headers))
+    return false;
+  /* Advance the original animation exactly once, then give both halves the
+   * same complete interpolation state. This also consumes network resets. */
+  R_SyncAliasViewmodelAnimation();
+  for (int hand = 0; hand < 2; ++hand) {
+    int index = hand == (VR_IsLeftHanded() ? 0 : 1) ? 1 : 0;
+    entity_t *ent = &vr_akimbo_entities[hand];
+    *ent = cl.viewent;
+    ent->model = models[hand];
+    VectorAdd(cl.handpos[index], cl.vmeshoffset, ent->origin);
+    VR_HandRotToViewmodelAngles(angles[hand], ent->angles);
+    VR_AkimboModelTransform(headers[hand], hand);
+    currententity = ent;
+    R_DrawAliasModel_NoCull(ent);
+  }
+  currententity = saved;
+  return true;
+}
+
 static qboolean VR_AdjustCanStart(void) {
   if (!vr_enabled.value || !vr_initialized) {
     Con_Printf("vradjust: VR is not enabled.\n");
@@ -6148,6 +6287,17 @@ static qboolean VR_AdjustCanStart(void) {
 static void VR_AdjustBegin(vr_adjust_mode_t mode) {
   const char *id;
   aliashdr_t *hdr;
+
+  if (VR_AdjustModeIsMuzzle(mode)) {
+    qmodel_t *models[2];
+    aliashdr_t *headers[2];
+    if (VR_AkimboModels(models, headers)) {
+      Con_Printf("Akimbo muzzles follow the rendered barrels. Use "
+          "vradjustweapon to adjust the grip, or vr_qbj3_akimbo 0 to "
+          "adjust the original paired-weapon muzzle profile.\n");
+      return;
+    }
+  }
 
   if (VR_AdjustModeIsMuzzle(mode) && vr_adjust_muzzle_return_to_grip) {
     VR_AdjustCancel(true);
@@ -7000,6 +7150,7 @@ void VID_VR_Init() {
   Cvar_SetCallback(&vr_gunmodeloffsets, VR_Gunmodeloffsets_f);
   Cvar_RegisterVariable(&vr_gunmodelpitch);
   Cvar_RegisterVariable(&vr_gunmodelscale);
+  Cvar_RegisterVariable(&vr_qbj3_akimbo);
   Cvar_RegisterVariable(&vr_gunmodely);
   Cvar_RegisterVariable(&vr_crosshairy);
   Cvar_RegisterVariable(&vr_joystick_axis_deadzone);
@@ -8940,9 +9091,15 @@ void VR_ShowCrosshair() {
   // calc the line and draw
   // TODO: Make the laser align correctly
   if (vr_aimmode.value == VR_AIMMODE_CONTROLLER) {
-    VR_GetMuzzleAdjustedHandPos(start);
+    vec3_t muzzles[2], angles[2];
+    qboolean akimbo = VR_GetAkimboPoses(muzzles, angles);
+    if (akimbo) {
+      VectorCopy(muzzles[VR_IsLeftHanded() ? 0 : 1], start);
+    } else {
+      VR_GetMuzzleAdjustedHandPos(start);
+    }
     AngleVectors(cl.handrot[1], forward, right, up);
-    if (weaponCVarEntry >= 0 && !VR_IsMuzzleAdjustMode()) {
+    if (!akimbo && weaponCVarEntry >= 0 && !VR_IsMuzzleAdjustMode()) {
       vec3_t source_comp;
 
       if (VR_GetMuzzleSourceCompensation(weaponCVarEntry, cl.handrot[1],
