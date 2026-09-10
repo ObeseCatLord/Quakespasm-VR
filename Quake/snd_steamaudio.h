@@ -41,7 +41,7 @@ typedef struct {
     uint64_t blocks, clipped, nonfinite, snapshot_misses, underrun_frames, rt_allocations;
     uint64_t render_ticks, max_render_ticks, max_pose_age_ticks;
     float output_peak;
-    int active, stream_frames, dropped_frames;
+    int active, stream_frames, dropped_frames, self_frames, self_dropped;
 } sa_stats_t;
 /* Ownership transfers to SA_LoadRoom; all coordinates already in SDK meters. */
 typedef struct {
@@ -57,6 +57,9 @@ typedef struct {
 } sa_room_stats_t;
 void SA_LoadRoom(sa_renderer_t *r, sa_geometry_t *geometry); /* callback excluded; NULL unloads */
 void SA_RoomStats(sa_renderer_t *r, sa_room_stats_t *stats);
+void SA_SetSelf(sa_renderer_t *r, float gain);
+void SA_ResetSelf(sa_renderer_t *r); /* callback excluded */
+int SA_WriteSelf(sa_renderer_t *r, const int16_t *pcm, int frames);
 sa_renderer_t *SA_Create(int sources, int streams);
 void SA_Destroy(sa_renderer_t *r); /* callback excluded */
 void SA_Reset(sa_renderer_t *r); /* callback excluded; retains allocations */

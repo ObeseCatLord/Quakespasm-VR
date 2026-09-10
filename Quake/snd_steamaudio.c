@@ -34,7 +34,8 @@ struct sa_renderer_s {
     sa_listener_t listener, render_listener;
     sa_settings_t settings, render_settings;
     sa_playback_t *playback;
-    sa_ring_t *voice, music;
+    sa_ring_t *voice, music, self;
+    float self_gain, render_self_gain, last_self_gain;
     SDL_atomic_t clock;
     float mono[SA_BLOCK], left[SA_BLOCK], right[SA_BLOCK];
     float mixed[SA_BLOCK * 2], radio_pcm[SA_BLOCK];
@@ -172,6 +173,8 @@ void SA_Reset(sa_renderer_t *r)
 {
     int i;
     SAR_Reset(r->room, 0);
+    memset(&r->self, 0, sizeof(r->self));
+    r->self_gain = r->render_self_gain = r->last_self_gain = 0;
     memset(r->control, 0, r->count * sizeof(*r->control));
     memset(r->snapshot, 0, r->count * sizeof(*r->snapshot));
     memset(r->progress, 0, r->count * sizeof(*r->progress));
@@ -209,6 +212,31 @@ void SA_LoadRoom(sa_renderer_t *r, sa_geometry_t *geometry)
     if (geometry) r->room = SAR_Create(r->context, r->hrtf, geometry);
 }
 void SA_RoomStats(sa_renderer_t *r, sa_room_stats_t *stats) { SAR_Stats(r->room, stats); }
+void SA_SetSelf(sa_renderer_t *r, float gain)
+{
+    SDL_AtomicLock(&r->control_lock); r->self_gain = isfinite(gain) ? fminf(2, fmaxf(0, gain)) : 0; SDL_AtomicUnlock(&r->control_lock);
+}
+void SA_ResetSelf(sa_renderer_t *r)
+{
+    memset(&r->self, 0, sizeof(r->self));
+    r->self_gain = r->render_self_gain = r->last_self_gain = 0;
+    r->remainder = 0; SAR_Reset(r->room, 0);
+}
+int SA_WriteSelf(sa_renderer_t *r, const int16_t *pcm, int frames)
+{
+    sa_ring_t *q = &r->self;
+    int i, write = SDL_AtomicGet(&q->write);
+    /* At most two 20 ms capture frames. Drop new stale work rather than let
+     * local monitoring grow to the much larger network-voice ring capacity. */
+    if (frames < 0 || frames > 1920 || ring_count(q) + frames > 1920) {
+        if (frames > 0) SDL_AtomicAdd(&q->dropped, frames);
+        return 0;
+    }
+    for (i = 0; i < frames; ++i) {
+        q->pcm[write] = pcm[i] / 32768.0f; write = (write + 1) % SA_STREAM_FRAMES;
+    }
+    SDL_AtomicSet(&q->write, write); return frames;
+}
 unsigned SA_Finished(sa_renderer_t *r, int index) { return (unsigned)SDL_AtomicGet(&r->playback[index].finished); }
 void SA_GetProgress(sa_renderer_t *r, int index, sa_progress_t *progress)
 {
@@ -258,6 +286,7 @@ static void render_block(sa_renderer_t *r)
     if (SDL_AtomicTryLock(&r->control_lock)) {
         memcpy(r->snapshot, r->control, r->count * sizeof(*r->snapshot));
         r->render_listener = r->listener; r->render_settings = r->settings;
+        r->render_self_gain = r->self_gain;
         SDL_AtomicUnlock(&r->control_lock);
     } else ++r->stats.snapshot_misses; /* Never wait for the game thread. */
     memset(r->mixed, 0, sizeof(r->mixed));
@@ -389,6 +418,21 @@ static void render_block(sa_renderer_t *r)
         p->left = l; p->right = rr; p->spatial = spatial;
         ++active;
     }
+    {
+        sa_ring_t *q = &r->self;
+        int read = SDL_AtomicGet(&q->read), write = SDL_AtomicGet(&q->write);
+        if (r->render_self_gain <= 0) {
+            if (r->last_self_gain > 0) SAR_Reset(r->room, 0);
+            read = write;
+        } else {
+            for (i = 0; i < SA_BLOCK && read != write; ++i) {
+                r->room_send[i] += q->pcm[read] * r->render_self_gain;
+                read = (read + 1) % SA_STREAM_FRAMES;
+            }
+        }
+        r->last_self_gain = r->render_self_gain;
+        SDL_AtomicSet(&q->read, read);
+    }
     if (r->room) SAR_Render(r->room, r->room_send, r->voice_send, r->mixed, &r->render_listener, &r->render_settings);
     {
         sa_ring_t *q = &r->music;
@@ -467,6 +511,8 @@ void SA_GetStats(sa_renderer_t *r, sa_stats_t *stats)
 {
     int i;
     *stats = r->stats;
+    stats->self_frames = ring_count(&r->self);
+    stats->self_dropped = SDL_AtomicGet(&r->self.dropped);
     for (i = 0; i < r->streams; ++i) {
         stats->stream_frames += ring_count(&r->voice[i]);
         stats->dropped_frames += SDL_AtomicGet(&r->voice[i].dropped);

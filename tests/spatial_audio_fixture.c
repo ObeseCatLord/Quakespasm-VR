@@ -114,6 +114,25 @@ static void room_test(void)
         SA_Render(r, out, SA_BLOCK); if (i > 5) tail += energy(out, SA_BLOCK, 0);
     }
     assert(tail > 1e-8);
+    /* Local PCM has no direct contribution and needs no network source. */
+    {
+        int16_t mic[960] = {16384};
+        SA_Reset(r); SA_SetSelf(r, 1);
+        assert(SA_WriteSelf(r, mic, 960) == 960);
+        assert(SA_WriteSelf(r, mic, 960) == 960);
+        assert(SA_WriteSelf(r, mic, 960) == 0);
+        SA_GetStats(r, &stats); assert(stats.self_frames == 1920 && stats.self_dropped == 960);
+        tail = 0;
+        for (i = 0; i < 150; ++i) {
+            SA_Render(r, out, SA_BLOCK); if (i > 5) tail += energy(out, SA_BLOCK, 0);
+        }
+        assert(tail > 1e-8);
+        SA_ResetSelf(r); SA_Render(r, out, SA_BLOCK); assert(energy(out, SA_BLOCK, 0) == 0);
+        SA_LoadRoom(r, NULL); SA_SetSelf(r, 1); SA_WriteSelf(r, mic, 960);
+        for (i = 0; i < 8; ++i) {
+            SA_Render(r, out, SA_BLOCK); assert(energy(out, SA_BLOCK, 0) == 0);
+        }
+    }
     SA_GetStats(r, &stats); assert(stats.rt_allocations == 0 && stats.nonfinite == 0);
     printf("Room: triangles %d, simulation %.3f ms, RT60 %.2f/%.2f/%.2f, render max %.3f ms; tails/reset/parametric/hybrid passed\n",
         room.triangles, room.last_ticks * 1000.0 / SDL_GetPerformanceFrequency(),

@@ -17,11 +17,12 @@
 #endif
 
 /* Keep this independent of the in-memory struct layout and its padding. */
-#define VOICE_SETTINGS_VERSION 1
+#define VOICE_SETTINGS_VERSION 2
 #define VOICE_SETTINGS_MAGIC_BYTES 8
 #define VOICE_SETTINGS_PROFILE_BYTES (2 + VOICE_SETTINGS_DEVICE_BYTES)
-#define VOICE_SETTINGS_FILE_BYTES (VOICE_SETTINGS_MAGIC_BYTES + 1 + \
+#define VOICE_SETTINGS_V1_BYTES (VOICE_SETTINGS_MAGIC_BYTES + 1 + \
 	2 * VOICE_SETTINGS_PROFILE_BYTES + VOICE_SETTINGS_MAX_KEYS)
+#define VOICE_SETTINGS_FILE_BYTES (VOICE_SETTINGS_V1_BYTES + 2)
 #define VOICE_SETTINGS_PATH_BYTES 4096
 
 static const unsigned char voice_settings_magic[VOICE_SETTINGS_MAGIC_BYTES] = {
@@ -37,7 +38,7 @@ static int VoiceSettings_PathMissing(const char *path);
 static int VoiceSettings_ProfileValid(const voice_settings_profile_t *profile)
 {
 	const char *terminator;
-	if (!profile || profile->transmit > 1 || profile->mode > 1)
+	if (!profile || profile->transmit > 1 || profile->mode > 1 || profile->self_reverb > 1)
 		return 0;
 	terminator = (const char *)memchr(profile->device, 0,
 		sizeof(profile->device));
@@ -112,23 +113,34 @@ static void VoiceSettings_Serialize(const voice_settings_t *settings,
 	VoiceSettings_WriteProfile(cursor, &settings->vr);
 	cursor += VOICE_SETTINGS_PROFILE_BYTES;
 	memcpy(cursor, settings->ptt_allowed, VOICE_SETTINGS_MAX_KEYS);
+	cursor += VOICE_SETTINGS_MAX_KEYS;
+	*cursor++ = settings->desktop.self_reverb;
+	*cursor = settings->vr.self_reverb;
 }
 
-static int VoiceSettings_Deserialize(const unsigned char wire[VOICE_SETTINGS_FILE_BYTES],
+static int VoiceSettings_Deserialize(const unsigned char *wire, size_t bytes,
 	voice_settings_t *settings)
 {
-	voice_settings_t loaded;
+	voice_settings_t loaded = {0};
+	unsigned int version;
 	const unsigned char *cursor = wire;
+	if (bytes != VOICE_SETTINGS_V1_BYTES && bytes != VOICE_SETTINGS_FILE_BYTES) return 0;
 	if (memcmp(cursor, voice_settings_magic, sizeof(voice_settings_magic)) != 0)
 		return 0;
 	cursor += sizeof(voice_settings_magic);
-	if (*cursor++ != VOICE_SETTINGS_VERSION)
-		return 0;
+	version = *cursor++;
+	if (!((version == 1 && bytes == VOICE_SETTINGS_V1_BYTES) ||
+		(version == VOICE_SETTINGS_VERSION && bytes == VOICE_SETTINGS_FILE_BYTES))) return 0;
 	VoiceSettings_ReadProfile(&loaded.desktop, cursor);
 	cursor += VOICE_SETTINGS_PROFILE_BYTES;
 	VoiceSettings_ReadProfile(&loaded.vr, cursor);
 	cursor += VOICE_SETTINGS_PROFILE_BYTES;
 	memcpy(loaded.ptt_allowed, cursor, sizeof(loaded.ptt_allowed));
+	if (version == 2) {
+		cursor += VOICE_SETTINGS_MAX_KEYS;
+		loaded.desktop.self_reverb = *cursor++;
+		loaded.vr.self_reverb = *cursor;
+	}
 	if (!VoiceSettings_Valid(&loaded) ||
 		!VoiceSettings_ProfileCanonical(&loaded.desktop) ||
 		!VoiceSettings_ProfileCanonical(&loaded.vr))
@@ -143,6 +155,8 @@ int VoiceSettings_Load(const char *path, voice_settings_t *settings)
 	unsigned char wire[VOICE_SETTINGS_FILE_BYTES];
 	voice_settings_t loaded;
 	int result = -1;
+	size_t bytes;
+	unsigned char extra;
 	if (!path || !path[0] || !settings)
 		return -1;
 	errno = 0;
@@ -154,9 +168,9 @@ int VoiceSettings_Load(const char *path, voice_settings_t *settings)
 #endif
 		return errno == ENOENT ? 0 : -1;
 	}
-	if (SDL_RWread(file, wire, 1, sizeof(wire)) == sizeof(wire) &&
-		SDL_RWread(file, wire, 1, 1) == 0 &&
-		VoiceSettings_Deserialize(wire, &loaded))
+	bytes = SDL_RWread(file, wire, 1, sizeof(wire));
+	if (SDL_RWread(file, &extra, 1, 1) == 0 &&
+		VoiceSettings_Deserialize(wire, bytes, &loaded))
 		result = 1;
 	if (SDL_RWclose(file) != 0)
 		result = -1;
