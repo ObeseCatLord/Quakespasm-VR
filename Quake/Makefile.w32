@@ -250,6 +250,7 @@ OBJS = strlcat.o \
 	cl_input.o \
 	cl_main.o \
 	player_avatar.o \
+	custom_avatar.o \
 	cl_parse.o \
 	cl_tent.o \
 	console.o \

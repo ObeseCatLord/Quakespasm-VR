@@ -62,6 +62,28 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 
 static char loadfilename[MAX_OSPATH]; //file scope so that error messages can use it
 
+byte *Image_DecodeRGBA (const byte *bytes, size_t length, int maxdimension,
+	int *width, int *height)
+{
+	int components, w, h;
+	byte *rgba;
+
+	if (!bytes || !length || length > INT_MAX || !width || !height ||
+		maxdimension < 1 || maxdimension > 8192 ||
+		!stbi_info_from_memory(bytes, (int)length, &w, &h, &components) ||
+		w < 1 || h < 1 || w > maxdimension || h > maxdimension ||
+		w > INT_MAX / h / 4)
+		return NULL;
+	/* Check dimensions before allocating the decoded image, not afterwards. */
+	rgba = stbi_load_from_memory(bytes, (int)length, width, height, &components, 4);
+	if (rgba && (*width != w || *height != h))
+	{
+		stbi_image_free(rgba);
+		return NULL;
+	}
+	return rgba;
+}
+
 typedef struct stdio_buffer_s {
 	FILE *f;
 	unsigned char buffer[1024];

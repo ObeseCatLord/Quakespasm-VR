@@ -23,6 +23,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 // gl_texmgr.c -- fitzquake's texture manager. manages opengl texture images
 
 #include "quakedef.h"
+#include "r_vrik.h"
 
 static const int gl_solid_format = 3;
 static const int gl_alpha_format = 4;
@@ -315,6 +316,7 @@ gltexture_t *TexMgr_NewTexture(void) {
 
   glt = free_gltextures;
   free_gltextures = glt->next;
+  glt->owned_source = NULL;
   glt->next = active_gltextures;
   active_gltextures = glt;
 
@@ -351,6 +353,8 @@ void TexMgr_FreeTexture(gltexture_t *kill) {
     free_gltextures = kill;
 
     GL_DeleteTexture(kill);
+    free(kill->owned_source);
+    kill->owned_source = NULL;
     numgltextures--;
     return;
   }
@@ -362,6 +366,8 @@ void TexMgr_FreeTexture(gltexture_t *kill) {
       free_gltextures = kill;
 
       GL_DeleteTexture(kill);
+      free(kill->owned_source);
+      kill->owned_source = NULL;
       numgltextures--;
       return;
     }
@@ -1029,6 +1035,13 @@ TexMgr_LoadImage32 -- handles 32bit source data
 static void TexMgr_LoadImage32(gltexture_t *glt, unsigned *data) {
   int internalformat, miplevel, mipwidth, mipheight, picmip;
 
+  if (glt->owned_source == (byte *)data) {
+    /* Mipmap generation is destructive; preserve the full-size reload source. */
+    unsigned *copy = (unsigned *)Hunk_Alloc(glt->width * glt->height * 4);
+    memcpy(copy, data, glt->width * glt->height * 4);
+    data = copy;
+  }
+
   if (!gl_texture_NPOT) {
     // resample up
     data = TexMgr_ResampleTexture(data, glt->width, glt->height,
@@ -1268,6 +1281,33 @@ gltexture_t *TexMgr_LoadImage(qmodel_t *owner, const char *name, int width,
 ================================================================================
 */
 
+gltexture_t *TexMgr_LoadOwnedRGBA(qmodel_t *owner, const char *name,
+                                int width, int height, byte *rgba, unsigned flags) {
+  gltexture_t *texture;
+  byte *upload;
+  if (!rgba || isDedicated || width < 1 || height < 1 ||
+      width > 2048 || height > 2048 || numgltextures == MAX_GLTEXTURES) {
+    free(rgba);
+    return NULL;
+  }
+  upload = (byte *)malloc((size_t)width * height * 4);
+  if (!upload) {
+    free(rgba);
+    return NULL;
+  }
+  memcpy(upload, rgba, (size_t)width * height * 4);
+  /* These snapshots have a unique owner/name and are released together with
+   * its alias cache. Never overwrite someone else's source ownership. */
+  texture = TexMgr_LoadImage(owner, name, width, height, SRC_RGBA, upload, "",
+                            (src_offset_t)rgba, flags & ~TEXPREF_OVERWRITE);
+  free(upload);
+  if (texture)
+    texture->owned_source = rgba;
+  else
+    free(rgba);
+  return texture;
+}
+
 /*
 ================
 TexMgr_ReloadImage -- reloads a texture, and colormaps it if needed
@@ -1391,7 +1431,7 @@ TexMgr_ReloadImages -- reloads all texture images. called only by vid_restart
 ================
 */
 void TexMgr_ReloadImages(void) {
-  gltexture_t *glt;
+  gltexture_t *glt, *next;
 
   // ericw -- tricky bug: if the hunk is almost full, an allocation in
   // TexMgr_ReloadImage triggers cache items to be freed, which calls back into
@@ -1408,6 +1448,16 @@ void TexMgr_ReloadImages(void) {
   }
 
   in_reload_images = false;
+  /* Reload scratch space can evict alias caches while list mutation is
+   * suppressed. Reclaim owned cosmetic sources whose owner was evicted;
+   * otherwise a later model reload would duplicate its retained pixels. */
+  for (glt = active_gltextures; glt; glt = next) {
+    next = glt->next;
+    if (glt->owned_source && glt->owner && !glt->owner->cache.data) {
+      R_VRIKInvalidateSkinCaches();
+      TexMgr_FreeTexture(glt);
+    }
+  }
 }
 
 /*

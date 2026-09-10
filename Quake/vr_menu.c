@@ -7,6 +7,7 @@ extern "C" {
 #include "vr.h"
 
 extern cvar_t vr_enabled;
+extern cvar_t vr_lefthanded;
 extern cvar_t vr_crosshair;
 extern cvar_t vr_crosshair_depth;
 extern cvar_t vr_crosshair_size;
@@ -333,6 +334,9 @@ static void VR_MenuPrintOptionValue(int cx, int cy, int option) {
   case VR_OPTION_ENABLED:
     M_DrawCheckbox(cx, cy, (int)vr_enabled.value);
     break;
+  case VR_OPTION_LEFT_HANDED:
+    M_DrawCheckbox(cx, cy, vr_lefthanded.value != 0);
+    break;
   case VR_OPTION_VRIK:
     if (!VR_VRIKAvailable())
       value_string = "unavailable";
@@ -619,6 +623,9 @@ void VR_MenuKeyOption(int key, int option) {
   };
 
   switch (option) {
+  case VR_OPTION_LEFT_HANDED:
+    Cvar_SetValue(vr_lefthanded.name, vr_lefthanded.value == 0);
+    break;
   case VR_OPTION_ENABLED:
     // Cvar_SetValue( "vr_enabled", ! (int)vr_enabled.value );
     // if ( (int)vr_enabled.value ) {
@@ -885,6 +892,10 @@ void VR_MenuDraw(void) {
     switch (i) {
     case VR_OPTION_ENABLED:
       M_Print(16, y, "               VR Enabled");
+      VR_MenuPrintOptionValue(240, y, i);
+      break;
+    case VR_OPTION_LEFT_HANDED:
+      M_Print(16, y, "          Left-handed Mode");
       VR_MenuPrintOptionValue(240, y, i);
       break;
     case VR_OPTION_VRIK:

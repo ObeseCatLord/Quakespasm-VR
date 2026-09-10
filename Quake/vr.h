@@ -100,6 +100,8 @@ enum {
 extern int vr_weaponmenu_selection;
 extern int vr_weaponmenu_selection_type;
 void VR_TriggerHaptic(int controller, float durationSeconds);
+/* Applied once per pose frame: slot 1 remains the weapon hand, slot 0 off-hand. */
+qboolean VR_IsLeftHanded(void);
 void VR_Draw2D();
 void VR_Move(usercmd_t *cmd);
 void VR_UpdateCommandViewAngles(usercmd_t *cmd);

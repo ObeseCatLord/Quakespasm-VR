@@ -662,6 +662,24 @@ int	Hunk_LowMark (void)
 	return hunk_low_used;
 }
 
+qboolean Hunk_HasHeadroom (int workspace, int cachesize)
+{
+	int i, available, cacheavailable;
+	if (workspace < 0 || cachesize < 0 || workspace > INT_MAX - cachesize)
+		return false;
+	for (i = 0; i < hunk_numsegments; ++i)
+	{
+		const hunkseg_t *seg = hunk_segments[i];
+		if (hunk_low_used < seg->base || hunk_low_used >= seg->base + seg->size)
+			continue;
+		available = seg->size - (hunk_low_used - seg->base);
+		cacheavailable = LASTSEG->size -
+			(q_max(hunk_low_used, LASTSEG->base) - LASTSEG->base);
+		return available >= workspace && cacheavailable >= workspace + cachesize;
+	}
+	return false;
+}
+
 void Hunk_FreeToLowMark (int mark)
 {
 	int i;

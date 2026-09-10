@@ -25,6 +25,8 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 
 // client.h
 
+#include "player_avatar.h"
+
 typedef struct
 {
 	int		length;
@@ -327,6 +329,12 @@ typedef struct
 	qboolean	avatar_set_pending;
 	unsigned char	avatar_protocol_version;
 	unsigned char	avatar_ids[MAX_SCOREBOARD];
+	qboolean	avatar_custom_protocol_offered;
+	qboolean	avatar_custom_cap_sent;
+	qboolean	avatar_custom_cap_pending;
+	unsigned char	avatar_custom_protocol_version;
+	char		avatar_custom_keys[MAX_SCOREBOARD][PLAYER_AVATAR_CUSTOM_KEY_MAX + 1];
+	char		avatar_custom_digests[MAX_SCOREBOARD][PLAYER_AVATAR_CUSTOM_DIGEST_MAX + 1];
 	double		vrik_next_send_time;
 	unsigned short	vrik_next_sequence;
 	qboolean	vrik_last_sent_active;

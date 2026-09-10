@@ -1075,6 +1075,13 @@ static qboolean SV_ClientCommandIs(const char *s, const char *name) {
   return !q_strncasecmp(s, name, len) && (unsigned char)s[len] <= ' ';
 }
 
+static qboolean SV_AvatarCommandPrefix(const char *s, const char *name)
+{
+	while (*s == ' ' || *s == '\t')
+		s++;
+	return !q_strncasecmp(s, name, strlen(name));
+}
+
 static qboolean SV_HandleVRIKCapability(const char *s)
 {
 	const char *value;
@@ -1191,8 +1198,10 @@ static qboolean SV_ReadVoicePacket(qboolean accept)
 
 static qboolean SV_HandleAvatarCapability(const char *s)
 {
-	if (!SV_ClientCommandIs(s, "avatar_cap"))
+	if (!SV_AvatarCommandPrefix(s, "avatar_cap"))
 		return false;
+	if (!SV_ClientCommandIs(s, "avatar_cap"))
+		return true;
 	if (!PlayerAvatar_ParseCapabilityCommand(s))
 		return true;
 	/* Avatar capability is connection-latched.  A duplicate must not trigger
@@ -1212,16 +1221,73 @@ static qboolean SV_HandleAvatarCapability(const char *s)
 static qboolean SV_HandleAvatarSet(const char *s)
 {
 	int avatar_id;
+	qboolean had_custom;
 
-	if (!SV_ClientCommandIs(s, "avatar_set"))
+	if (!SV_AvatarCommandPrefix(s, "avatar_set"))
 		return false;
+	if (!SV_ClientCommandIs(s, "avatar_set"))
+		return true;
 	if (!host_client->avatar_capable ||
 		!PlayerAvatar_ParseSetCommand(s, &avatar_id))
 		return true;
+	/* The legacy numeric projection of a custom choice is Ranger.  Clear the
+	 * authoritative descriptor before the duplicate check so selecting Ranger
+	 * after a custom avatar cannot be mistaken for a no-op. */
+	had_custom = host_client->avatar_custom_key[0] != 0;
+	host_client->avatar_custom_key[0] = 0;
+	host_client->avatar_custom_digest[0] = 0;
 	if (host_client->avatar_id == avatar_id)
+	{
+		if (had_custom)
+			SV_BroadcastAvatarSlot((int)(host_client - svs.clients), avatar_id);
 		return true;
+	}
 	host_client->avatar_id = (unsigned char)avatar_id;
 	SV_BroadcastAvatarSlot((int)(host_client - svs.clients), avatar_id);
+	return true;
+}
+
+static qboolean SV_HandleCustomAvatarCapability(const char *s)
+{
+	if (!SV_AvatarCommandPrefix(s, "avatar_custom_cap"))
+		return false;
+	if (!SV_ClientCommandIs(s, "avatar_custom_cap"))
+		return true;
+	if (!host_client->avatar_capable ||
+		!PlayerAvatar_ParseCustomCapabilityCommand(s))
+		return true;
+	if (host_client->avatar_custom_capable)
+		return true;
+	host_client->avatar_custom_capable = true;
+	SV_SendAvatarTable(host_client);
+	Con_DPrintf("Avatar: client %s negotiated custom protocol %d\n",
+		host_client->name, PLAYER_AVATAR_CUSTOM_PROTOCOL_VERSION);
+	return true;
+}
+
+static qboolean SV_HandleCustomAvatarSet(const char *s)
+{
+	char key[PLAYER_AVATAR_CUSTOM_KEY_MAX + 1];
+	char digest[PLAYER_AVATAR_CUSTOM_DIGEST_MAX + 1];
+
+	if (!SV_AvatarCommandPrefix(s, "avatar_custom_set"))
+		return false;
+	if (!SV_ClientCommandIs(s, "avatar_custom_set"))
+		return true;
+	if (!host_client->avatar_capable || !host_client->avatar_custom_capable ||
+		!PlayerAvatar_ParseCustomSetCommand(s, key, sizeof(key), digest,
+			sizeof(digest)))
+		return true;
+	if (host_client->avatar_id == PLAYER_AVATAR_RANGER &&
+		!strcmp(host_client->avatar_custom_key, key) &&
+		!strcmp(host_client->avatar_custom_digest, digest))
+		return true;
+	strcpy(host_client->avatar_custom_key, key);
+	strcpy(host_client->avatar_custom_digest, digest);
+	/* Stable custom identities never use local numeric IDs on the wire. */
+	host_client->avatar_id = PLAYER_AVATAR_RANGER;
+	SV_BroadcastAvatarSlot((int)(host_client - svs.clients),
+		PLAYER_AVATAR_RANGER);
 	return true;
 }
 
@@ -1401,7 +1467,11 @@ static qboolean SV_ParseClientMessage(void) {
         SV_SetClientPredictionStatus(s);
 		else if (SV_HandleAvatarCapability(s))
 			;
+		else if (SV_HandleCustomAvatarCapability(s))
+			;
 		else if (SV_HandleAvatarSet(s))
+			;
+		else if (SV_HandleCustomAvatarSet(s))
 			;
       else if (SV_HandleVRIKCapability(s))
         ;

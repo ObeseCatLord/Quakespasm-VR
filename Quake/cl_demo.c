@@ -357,14 +357,36 @@ void CL_Record_f (void)
 			MSG_WriteByte (&net_message, svc_stufftext);
 			MSG_WriteString (&net_message, va("//avatar_protocol %d\n",
 				PLAYER_AVATAR_PROTOCOL_VERSION));
+			if (cl.avatar_custom_protocol_offered)
+			{
+				MSG_WriteByte (&net_message, svc_stufftext);
+				MSG_WriteString (&net_message, va("//avatar_custom_protocol %d\n",
+					PLAYER_AVATAR_CUSTOM_PROTOCOL_VERSION));
+			}
 			for (i = 0; i < cl.maxclients; i++)
 			{
 				int avatar_id = cl.avatar_ids[i];
+				char custom_slot[128];
+				const char *key = cl.avatar_custom_keys[i];
+				const char *digest = cl.avatar_custom_digests[i];
 				if (!PlayerAvatar_IsValidId(avatar_id))
 					avatar_id = PLAYER_AVATAR_RANGER;
 				MSG_WriteByte (&net_message, svc_stufftext);
 				MSG_WriteString (&net_message, va("//avatar_slot %d %d %d\n",
 					PLAYER_AVATAR_PROTOCOL_VERSION, i, avatar_id));
+				/* Match live ordering: the legacy numeric projection arrives first,
+				 * then the local-only stable descriptor (or an explicit clear). */
+				if (cl.avatar_custom_protocol_offered)
+				{
+					if (!PlayerAvatar_ValidCustomKey(key) ||
+						!PlayerAvatar_ValidCustomDigest(digest))
+						key = digest = NULL;
+					if (!PlayerAvatar_BuildCustomSlotCommand(true, custom_slot,
+						sizeof(custom_slot), i, key, digest))
+						Sys_Error("CL_Record_f: invalid custom avatar snapshot");
+					MSG_WriteByte (&net_message, svc_stufftext);
+					MSG_WriteString (&net_message, custom_slot);
+				}
 			}
 		}
 

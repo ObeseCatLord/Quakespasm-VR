@@ -28,6 +28,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "debug_log.h"
 #include "pmove.h"
 #include "player_avatar.h"
+#include "custom_avatar.h"
 #include "voice.h"
 
 // we need to declare some mouse variables here, because the menu system
@@ -54,29 +55,58 @@ static void CL_TrySendAvatarCapability(void)
 	CL_SendAvatarSelection();
 }
 
+static void CL_TrySendCustomAvatarCapability(void)
+{
+	if (!cl.avatar_custom_cap_pending || cl.avatar_custom_cap_sent ||
+		!cl.avatar_cap_sent || cls.state != ca_connected)
+		return;
+	if (cls.message.cursize + 1 + (int)sizeof("avatar_custom_cap 1") >
+		cls.message.maxsize)
+		return;
+	MSG_WriteByte(&cls.message, clc_stringcmd);
+	MSG_WriteString(&cls.message, "avatar_custom_cap 1");
+	cl.avatar_custom_cap_pending = false;
+	cl.avatar_custom_cap_sent = true;
+	CL_SendAvatarSelection();
+}
+
 static void CL_TrySendAvatarSelection(void)
 {
 	int id;
+	const custom_avatar_t *custom;
+	char command[128];
 
 	if (!cl.avatar_set_pending || !cl.avatar_cap_sent ||
 		cls.state != ca_connected)
 		return;
-	id = PlayerAvatar_IdForKey(cl_avatar.string);
+	id = CustomAvatar_IdForKey(cl_avatar.string);
 	if (id < 0)
 		return;
-	if (cls.message.cursize + 1 + (int)sizeof("avatar_set 10") >
+	custom = CustomAvatar_Get(id);
+	if (custom && !cl.avatar_custom_cap_sent)
+	{
+		/* Project to Ranger on legacy servers, or until custom negotiation.
+		 * The custom capability callback queues the saved choice again. */
+		id = PLAYER_AVATAR_RANGER;
+		custom = NULL;
+	}
+	if (custom)
+		q_snprintf(command, sizeof(command), "avatar_custom_set %s %s", custom->key, custom->digest);
+	else
+		q_snprintf(command, sizeof(command), "avatar_set %d", id);
+	if (cls.message.cursize + 2 + (int)strlen(command) >
 		cls.message.maxsize)
 		return;
 	MSG_WriteByte(&cls.message, clc_stringcmd);
-	MSG_WriteString(&cls.message, va("avatar_set %d", id));
+	MSG_WriteString(&cls.message, command);
 	cl.avatar_set_pending = false;
 }
 
 void CL_SendAvatarSelection (void)
 {
-	int id = PlayerAvatar_IdForKey(cl_avatar.string);
+	int id = CustomAvatar_IdForKey(cl_avatar.string);
 
-	if (id < 0 || !cl.avatar_cap_sent || cls.state != ca_connected)
+	if (id < 0 || cls.state != ca_connected)
 		return;
 	cl.avatar_set_pending = true;
 	CL_TrySendAvatarSelection();
@@ -84,14 +114,13 @@ void CL_SendAvatarSelection (void)
 
 static void CL_Avatar_f(cvar_t *var)
 {
-	int id = PlayerAvatar_IdForKey(var->string);
+	int id = CustomAvatar_IdForKey(var->string);
 
 	if (id < 0)
 	{
 		Con_Warning("cl_avatar: unsupported avatar \"%s\"; using ranger\n",
 			var->string);
-		Cvar_SetQuick(var, PlayerAvatar_KeyForId(PLAYER_AVATAR_RANGER));
-		return;
+		Cvar_SetQuick(var, CustomAvatar_KeyForId(PLAYER_AVATAR_RANGER));
 	}
 	CL_SendAvatarSelection();
 }
@@ -440,6 +469,8 @@ void CL_ClearState (void)
 	cl_prediction_mode_epoch = 0;
 	cl_prediction_discontinuity_epoch = 0;
 	memset(cl.avatar_ids, PLAYER_AVATAR_RANGER, sizeof(cl.avatar_ids));
+	memset(cl.avatar_custom_keys, 0, sizeof(cl.avatar_custom_keys));
+	memset(cl.avatar_custom_digests, 0, sizeof(cl.avatar_custom_digests));
 }
 
 /*
@@ -494,10 +525,16 @@ void CL_Disconnect (void)
 	cl.avatar_cap_pending = false;
 	cl.avatar_set_pending = false;
 	cl.avatar_protocol_version = 0;
+	cl.avatar_custom_protocol_offered = false;
+	cl.avatar_custom_cap_sent = false;
+	cl.avatar_custom_cap_pending = false;
+	cl.avatar_custom_protocol_version = 0;
 	cl.voice_protocol_offered = false;
 	cl.voice_cap_sent = false;
 	cl.voice_protocol_version = 0;
 	memset(cl.avatar_ids, PLAYER_AVATAR_RANGER, sizeof(cl.avatar_ids));
+	memset(cl.avatar_custom_keys, 0, sizeof(cl.avatar_custom_keys));
+	memset(cl.avatar_custom_digests, 0, sizeof(cl.avatar_custom_digests));
 	Voice_ResetConnection();
 	CL_ClearSignons ();
 
@@ -2476,6 +2513,7 @@ void CL_SendCmd (void)
 		return;
 
 	CL_TrySendAvatarCapability();
+	CL_TrySendCustomAvatarCapability();
 	CL_TrySendAvatarSelection();
 
 	CL_BaseMove (&cmd, true);
@@ -2645,6 +2683,7 @@ void CL_Init (void)
 
 	CL_InitInput ();
 	CL_InitTEnts ();
+	CustomAvatar_Init ();
 
 	Cvar_RegisterVariable (&cl_name);
 	Cvar_RegisterVariable (&cl_color);

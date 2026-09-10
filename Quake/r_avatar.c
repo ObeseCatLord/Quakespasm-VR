@@ -244,20 +244,20 @@ static qboolean R_AvatarBuildBindHumanoidBasis (const r_avatar_rig_t *rig, float
 	return true;
 }
 
-/* Animal presentation columns are [up, left, forward].  This maps the
- * canonical humanoid's vertical axis to the animal's feet-to-hip axis while
- * retaining a proper frame whose final axis faces the authored head. */
+/* Use the same [vertical, anatomical left, vertical x left] convention as
+ * the humanoid source. The third column is backward, not gaze-forward.
+ * Flipping it toward the animal's head also flips anatomical left and makes
+ * the presentation face opposite Ranger while swapping its body sides. */
 static qboolean R_AvatarBuildBindFeetUpHeadForwardBasis (const r_avatar_rig_t *rig,
 	float out[12])
 {
-	float hip[3], head[3], footleft[3], footright[3], up[3], left[3], right[3];
-	float forward[3], projection, midpoint[3], headfromhip[3];
+	float hip[3], footleft[3], footright[3], up[3], left[3], right[3];
+	float forward[3], projection, midpoint[3];
 	int leftsemantic = MD5_VRIK_SHOULDER_L, rightsemantic = MD5_VRIK_SHOULDER_R;
 	if (!rig || !rig->valid || !out || rig->joint[MD5_VRIK_HIP] < 0 ||
 		rig->joint[MD5_VRIK_HEAD] < 0 || rig->joint[MD5_VRIK_FOOT_L] < 0 ||
 		rig->joint[MD5_VRIK_FOOT_R] < 0) return false;
 	R_AvatarBindOrigin(rig, MD5_VRIK_HIP, hip);
-	R_AvatarBindOrigin(rig, MD5_VRIK_HEAD, head);
 	R_AvatarBindOrigin(rig, MD5_VRIK_FOOT_L, footleft);
 	R_AvatarBindOrigin(rig, MD5_VRIK_FOOT_R, footright);
 	midpoint[0] = (footleft[0] + footright[0]) * 0.5f;
@@ -283,11 +283,6 @@ static qboolean R_AvatarBuildBindFeetUpHeadForwardBasis (const r_avatar_rig_t *r
 	forward[1] = up[2] * left[0] - up[0] * left[2];
 	forward[2] = up[0] * left[1] - up[1] * left[0];
 	if (!R_AvatarNormalize3(forward)) return false;
-	headfromhip[0] = head[0] - hip[0]; headfromhip[1] = head[1] - hip[1]; headfromhip[2] = head[2] - hip[2];
-	if (DotProduct(forward, headfromhip) < 0.0f) {
-		left[0] = -left[0]; left[1] = -left[1]; left[2] = -left[2];
-		forward[0] = -forward[0]; forward[1] = -forward[1]; forward[2] = -forward[2];
-	}
 	R_AvatarIdentity(out);
 	out[0] = up[0]; out[4] = up[1]; out[8] = up[2];
 	out[1] = left[0]; out[5] = left[1]; out[9] = left[2];

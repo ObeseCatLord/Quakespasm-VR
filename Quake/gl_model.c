@@ -27,6 +27,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "quakedef.h"
 #include "debug_log.h"
 #include "r_vrik.h"
+#include "custom_avatar.h"
 
 static qmodel_t*	loadmodel;
 static char	loadname[32];	// for hunk tags
@@ -72,6 +73,7 @@ typedef struct mod_alias_cache_s
 	int		md5_offset;
 	qboolean	md3_from_rerelease;
 	qboolean	md5_from_rerelease;
+	int		custom_avatar_id;
 } mod_alias_cache_t;
 
 #define MOD_ALIAS_CACHE_DATA_OFFSET \
@@ -87,6 +89,7 @@ typedef struct mod_alias_build_s
 	int		md5_offset;
 	qboolean	md3_from_rerelease;
 	qboolean	md5_from_rerelease;
+	int		custom_avatar_id;
 	vec3_t		md3mins;
 	vec3_t		md3maxs;
 	vec3_t		md5mins;
@@ -95,6 +98,8 @@ typedef struct mod_alias_build_s
 
 static mod_alias_build_t mod_alias_build;
 static qboolean mod_md5_rerelease_only;
+static const custom_avatar_t *mod_custom_avatar;
+static const custom_avatar_data_t *mod_custom_data;
 
 static byte	*mod_novis;
 static int	mod_novis_capacity;
@@ -323,6 +328,7 @@ static void Mod_FinishAliasBuild (qmodel_t *mod)
 		(int)MOD_ALIAS_CACHE_DATA_OFFSET + mod_alias_build.md5_offset : 0;
 	cache->md3_from_rerelease = mod_alias_build.md3_from_rerelease;
 	cache->md5_from_rerelease = mod_alias_build.md5_from_rerelease;
+	cache->custom_avatar_id = mod_alias_build.custom_avatar_id;
 	memcpy ((byte *)cache + MOD_ALIAS_CACHE_DATA_OFFSET, mod_alias_build.base, rawsize);
 
 	Hunk_FreeToLowMark (mod_alias_build.startmark);
@@ -341,7 +347,11 @@ static mod_alias_cache_t *Mod_GetAliasCache (qmodel_t *mod)
 	}
 
 	if (!cache || cache->magic != MOD_ALIAS_CACHE_MAGIC)
+	{
+		if (CustomAvatar_IdForModelName(mod->name) >= 0)
+			return NULL;
 		Sys_Error ("Mod_Extradata: invalid alias cache for %s", mod->name);
+	}
 
 	return cache;
 }
@@ -357,6 +367,8 @@ void *Mod_Extradata (qmodel_t *mod)
 {
 	mod_alias_cache_t *cache = Mod_GetAliasCache (mod);
 
+	if (!cache)
+		return NULL;
 	if (cache->mdl_offset)
 		return (byte *)cache + cache->mdl_offset;
 	if (cache->md3_offset)
@@ -372,7 +384,7 @@ aliashdr_t *Mod_GetMD3Extradata (qmodel_t *mod)
 {
 	mod_alias_cache_t *cache = Mod_GetAliasCache (mod);
 
-	if (!cache->md3_offset)
+	if (!cache || !cache->md3_offset)
 		return NULL;
 	return (aliashdr_t *)((byte *)cache + cache->md3_offset);
 }
@@ -381,7 +393,7 @@ aliashdr_t *Mod_GetMD5Extradata (qmodel_t *mod)
 {
 	mod_alias_cache_t *cache = Mod_GetAliasCache (mod);
 
-	if (!cache->md5_offset)
+	if (!cache || !cache->md5_offset)
 		return NULL;
 	return (aliashdr_t *)((byte *)cache + cache->md5_offset);
 }
@@ -453,7 +465,7 @@ qboolean Mod_GetMD5LiveData (qmodel_t *mod, md5liveinfo_t *out)
 		return false;
 
 	cache = Mod_GetAliasCache (mod);
-	if (!cache->md5_offset)
+	if (!cache || !cache->md5_offset)
 		return false;
 	surface = (aliashdr_t *)((byte *)cache + cache->md5_offset);
 	if (surface->poseverttype != ALIAS_POSE_MD5 ||
@@ -475,6 +487,7 @@ qboolean Mod_GetMD5LiveData (qmodel_t *mod, md5liveinfo_t *out)
 	out->numbones = surface->md5_numbones;
 	out->numposes = surface->numposes;
 	out->from_rerelease = cache->md5_from_rerelease;
+	out->custom_avatar_id = cache->custom_avatar_id;
 	if (!surface->md5_vrik_validated)
 	{
 		const aliashdr_t *validatesurface;
@@ -634,7 +647,7 @@ qboolean Mod_UseMD3Model (qmodel_t *mod, int skinnum)
 		return false;
 
 	cache = Mod_GetAliasCache (mod);
-	if (!cache->md3_offset)
+	if (!cache || !cache->md3_offset)
 		return false;
 
 	/* A native .md3 has no classic variant to fall back to. */
@@ -663,7 +676,7 @@ qboolean Mod_UseMD5Model (qmodel_t *mod, int skinnum)
 		return false;
 
 	cache = Mod_GetAliasCache (mod);
-	if (!cache->md5_offset)
+	if (!cache || !cache->md5_offset)
 		return false;
 
 	/* A native .md5mesh has no classic variant to fall back to. */
@@ -702,6 +715,8 @@ qboolean Mod_UseMD3ModelForFrame (qmodel_t *mod, int skinnum, int frame)
 		return false;
 
 	cache = Mod_GetAliasCache (mod);
+	if (!cache)
+		return false;
 	if (!cache->mdl_offset)
 		return true;
 
@@ -718,6 +733,8 @@ qboolean Mod_UseMD5ModelForFrame (qmodel_t *mod, int skinnum, int frame)
 		return false;
 
 	cache = Mod_GetAliasCache (mod);
+	if (!cache)
+		return false;
 	if (!cache->mdl_offset)
 		return true;
 
@@ -742,7 +759,7 @@ qboolean Mod_UseEnhancedReplacementForFrame (qmodel_t *mod, int skinnum,
 		return false;
 
 	cache = Mod_GetAliasCache (mod);
-	if (!cache->mdl_offset)
+	if (!cache || !cache->mdl_offset)
 		return false;
 
 	return Mod_UseMD3ModelForFrame (mod, skinnum, frame) ||
@@ -758,6 +775,8 @@ qboolean Mod_UseRereleaseReplacementForFrame (qmodel_t *mod, int skinnum,
 		return false;
 
 	cache = Mod_GetAliasCache (mod);
+	if (!cache)
+		return false;
 	if (Mod_UseMD3ModelForFrame (mod, skinnum, frame))
 		return cache->md3_from_rerelease;
 	if (Mod_UseMD5ModelForFrame (mod, skinnum, frame))
@@ -1011,6 +1030,11 @@ static qmodel_t *Mod_LoadModel (qmodel_t *mod, qboolean crash)
 	byte	stackbuf[1024];		// avoid dirtying the cache heap
 	int	mod_type;
 	int	model_filesize;
+	int custom_id = CustomAvatar_IdForModelName(mod->name);
+
+	/* Cache eviction must not turn a cosmetic cache key into a VFS filename. */
+	if (custom_id >= 0)
+		return Mod_GetCustomAvatarModel(custom_id);
 
 	if (!mod->needload)
 	{
@@ -5263,10 +5287,51 @@ static qboolean Mod_MD5LoadSkinFrame (qmodel_t *mod, aliashdr_t *surface,
 	return surface->gltextures[skin][frame] != NULL;
 }
 
+static qboolean Mod_CustomAvatarSkin (qmodel_t *mod, aliashdr_t *surface)
+{
+	int kind, frame, width, height;
+	for (kind = CUSTOM_AVATAR_SKIN; kind <= CUSTOM_AVATAR_GLOW; ++kind)
+	{
+		byte *rgba;
+		gltexture_t *texture;
+		char name[64];
+		if (!mod_custom_data->bytes[kind])
+			continue;
+		rgba = Image_DecodeRGBA(mod_custom_data->bytes[kind],
+			mod_custom_data->sizes[kind], CUSTOM_AVATAR_MAX_IMAGE_DIMENSION,
+			&width, &height);
+		if (!rgba)
+			return false;
+		if (kind == CUSTOM_AVATAR_GLOW)
+			Mod_NormalizeExternalFullbright(rgba, width, height);
+		q_snprintf(name, sizeof(name), "%s:%s", mod->name,
+			kind == CUSTOM_AVATAR_SKIN ? "skin" : "glow");
+		texture = TexMgr_LoadOwnedRGBA(mod, name, width, height, rgba,
+			Mod_TrueColorTextureFlags(rgba, width, height,
+				TEXPREF_MIPMAP | TEXPREF_ALPHA));
+		if (!texture)
+			return false;
+		for (frame = 0; frame < 4; ++frame)
+			if (kind == CUSTOM_AVATAR_SKIN)
+				surface->gltextures[0][frame] = texture;
+			else
+				surface->fbtextures[0][frame] = texture;
+		if (kind == CUSTOM_AVATAR_SKIN)
+		{
+			surface->skinwidth = width;
+			surface->skinheight = height;
+		}
+	}
+	surface->numskins = 1;
+	return surface->gltextures[0][0] != NULL;
+}
+
 static qboolean Mod_MD5LoadSkin (qmodel_t *mod, aliashdr_t *surface,
 	const char *shader)
 {
 	int skin, frame, numframes;
+	if (mod_custom_avatar)
+		return Mod_CustomAvatarSkin(mod, surface);
 
 	/* The rerelease encodes skin and animation frame as _SS_FF. */
 	for (skin = 0; skin < MAX_SKINS; skin++)
@@ -5524,6 +5589,11 @@ static qboolean Mod_LoadMD5MeshModel (qmodel_t *mod, const byte *buffer, size_t 
 		Mod_MD5Fail (&parser, "invalid mesh header");
 		goto done;
 	}
+	if (mod_custom_avatar && numsurfaces != 1)
+	{
+		Mod_MD5Fail(&parser, "custom avatars require one mesh");
+		goto done;
+	}
 
 	joints = (md5joint_t *)calloc (numjoints, sizeof(*joints));
 	if (!joints)
@@ -5540,6 +5610,11 @@ static qboolean Mod_LoadMD5MeshModel (qmodel_t *mod, const byte *buffer, size_t 
 
 		if (!Mod_MD5Token (&parser))
 			goto done;
+		if (mod_custom_avatar && strlen(com_token) >= sizeof(joints[joint].name))
+		{
+			Mod_MD5Fail(&parser, "custom avatar joint name too long");
+			goto done;
+		}
 		q_strlcpy (joints[joint].name, com_token, sizeof(joints[joint].name));
 		if (!joints[joint].name[0] || !Mod_MD5Int (&parser, &parent) ||
 			parent < -1 || parent >= joint || !Mod_MD5Vec3 (&parser, pos) ||
@@ -5551,6 +5626,22 @@ static qboolean Mod_LoadMD5MeshModel (qmodel_t *mod, const byte *buffer, size_t 
 			goto done;
 		}
 		joints[joint].parent = parent;
+		if (mod_custom_avatar)
+		{
+			int previous;
+			for (previous = 0; previous < joint; ++previous)
+				if (!strcmp(joints[previous].name, joints[joint].name))
+				{
+					Mod_MD5Fail(&parser, "duplicate custom avatar joint");
+					goto done;
+				}
+			if (fabsf(pos[0]) > 1024 || fabsf(pos[1]) > 1024 ||
+				fabsf(pos[2]) > 1024 || DotProduct(quat, quat) > 1.0001f)
+			{
+				Mod_MD5Fail(&parser, "custom avatar bind transform out of range");
+				goto done;
+			}
+		}
 		Mod_MD5QuaternionW (quat);
 		/* MD5 mesh joints are model-space bind transforms. Companion .md5anim
 		 * frames are local and are concatenated in Mod_MD5LoadAnimation; doing
@@ -5559,6 +5650,48 @@ static qboolean Mod_LoadMD5MeshModel (qmodel_t *mod, const byte *buffer, size_t 
 	}
 	if (!Mod_MD5Expect (&parser, "}"))
 		goto done;
+	if (mod_custom_avatar)
+	{
+		static const int parents[19] = {-1, 0, 1, 2, 3, 2, 5, 6, 7,
+			2, 9, 10, 11, 0, 13, 14, 0, 16, 17};
+		md5livejoint_t livejoints[MAX_MD5_JOINTS];
+		md5liveinfo_t live;
+		r_avatar_rig_t rig;
+		float basis[12];
+		memset(&live, 0, sizeof(live));
+		for (joint = 0; joint < (int)numjoints; ++joint)
+		{
+			q_strlcpy(livejoints[joint].name, joints[joint].name,
+				sizeof(livejoints[joint].name));
+			livejoints[joint].parent = joints[joint].parent;
+			memcpy(livejoints[joint].bind, joints[joint].bind, sizeof(joints[joint].bind));
+		}
+		live.joints = livejoints;
+		live.numbones = (int)numjoints;
+		if (!R_AvatarResolveRig(&mod_custom_avatar->profile, &live, &rig) ||
+			!R_AvatarCanonicalToTargetBasis(&rig, basis))
+		{
+			Mod_MD5Fail(&parser, "invalid custom avatar semantic rig");
+			goto done;
+		}
+		for (joint = 0; joint <= MD5_VRIK_FOOT_R; ++joint)
+			if (rig.joint[joint] < 0)
+			{
+				Mod_MD5Fail(&parser, "custom avatar missing required joint");
+				goto done;
+			}
+		for (joint = 1; joint <= MD5_VRIK_FOOT_R; ++joint)
+		{
+			int ancestor = livejoints[rig.joint[joint]].parent;
+			while (ancestor >= 0 && ancestor != rig.joint[parents[joint]])
+				ancestor = livejoints[ancestor].parent;
+			if (ancestor < 0)
+			{
+				Mod_MD5Fail(&parser, "custom avatar semantic hierarchy is invalid");
+				goto done;
+			}
+		}
+	}
 	bindposes = (float *)malloc (numjoints * 12 * sizeof(*bindposes));
 	if (!bindposes)
 	{
@@ -5570,7 +5703,8 @@ static qboolean Mod_LoadMD5MeshModel (qmodel_t *mod, const byte *buffer, size_t 
 			sizeof(joints[joint].bind));
 
 	/* A missing or invalid companion animation is safely rendered as bind pose. */
-	Mod_MD5LoadAnimation (mod, joints, (int)numjoints, &animation, &numposes, &frameinterval);
+	if (!mod_custom_avatar)
+		Mod_MD5LoadAnimation (mod, joints, (int)numjoints, &animation, &numposes, &frameinterval);
 	if (numposes < 1 || numposes > MAXALIASFRAMES)
 	{
 		Mod_MD5Fail (&parser, "invalid animation pose count");
@@ -5607,7 +5741,9 @@ static qboolean Mod_LoadMD5MeshModel (qmodel_t *mod, const byte *buffer, size_t 
 			goto surface_done;
 		q_strlcpy (shader, com_token, sizeof(shader));
 		if (!shader[0] || !Mod_MD5Expect (&parser, "numverts") || !Mod_MD5Size (&parser, &numverts) ||
-			numverts < 1 || numverts > MAX_MD5_VERTICES)
+			numverts < 1 || numverts > MAX_MD5_VERTICES ||
+			(mod_custom_avatar && (strcmp(shader, "skin") ||
+			 numverts > CUSTOM_AVATAR_MAX_VERTICES)))
 		{
 			Mod_MD5Fail (&parser, "invalid mesh vertex count");
 			goto surface_done;
@@ -5636,11 +5772,18 @@ static qboolean Mod_LoadMD5MeshModel (qmodel_t *mod, const byte *buffer, size_t 
 				goto surface_done;
 			}
 			vertseen[index] = true;
+			if (mod_custom_avatar && (vertinfo[index].count > CUSTOM_AVATAR_MAX_INFLUENCES ||
+				fabsf(vertinfo[index].st[0]) > 16 || fabsf(vertinfo[index].st[1]) > 16))
+			{
+				Mod_MD5Fail(&parser, "custom avatar vertex exceeds influence/UV limit");
+				goto surface_done;
+			}
 			if (!Mod_MD5Token (&parser))
 				goto surface_done;
 		}
 		if (strcmp (com_token, "numtris") || !Mod_MD5Size (&parser, &numtris) ||
-			numtris < 1 || numtris > MAX_MD5_TRIANGLES || numtris > SIZE_MAX / 3)
+			numtris < 1 || numtris > MAX_MD5_TRIANGLES || numtris > SIZE_MAX / 3 ||
+			(mod_custom_avatar && numtris > CUSTOM_AVATAR_MAX_TRIANGLES))
 		{
 			Mod_MD5Fail (&parser, "invalid mesh triangle count");
 			goto surface_done;
@@ -5680,7 +5823,8 @@ static qboolean Mod_LoadMD5MeshModel (qmodel_t *mod, const byte *buffer, size_t 
 				goto surface_done;
 		}
 		if (strcmp (com_token, "numweights") || !Mod_MD5Size (&parser, &numweights) ||
-			numweights < 1 || numweights > MAX_MD5_WEIGHTS)
+			numweights < 1 || numweights > MAX_MD5_WEIGHTS ||
+			(mod_custom_avatar && numweights > CUSTOM_AVATAR_MAX_VERTICES * CUSTOM_AVATAR_MAX_INFLUENCES))
 		{
 			Mod_MD5Fail (&parser, "invalid mesh weight count");
 			goto surface_done;
@@ -5710,6 +5854,12 @@ static qboolean Mod_LoadMD5MeshModel (qmodel_t *mod, const byte *buffer, size_t 
 				goto surface_done;
 			}
 			weightseen[index] = true;
+			if (mod_custom_avatar && (fabsf(weights[index].position[0]) > 1024 ||
+				fabsf(weights[index].position[1]) > 1024 || fabsf(weights[index].position[2]) > 1024))
+			{
+				Mod_MD5Fail(&parser, "custom avatar weight position out of range");
+				goto surface_done;
+			}
 			weights[index].joint = (int)bone;
 			weights[index].position[0] *= bias;
 			weights[index].position[1] *= bias;
@@ -5741,6 +5891,19 @@ static qboolean Mod_LoadMD5MeshModel (qmodel_t *mod, const byte *buffer, size_t 
 			{
 				Mod_MD5Fail (&parser, "missing mesh weight");
 				goto surface_done;
+			}
+		if (mod_custom_avatar)
+			for (vert = 0; vert < (int)numverts; ++vert)
+			{
+				double sum = 0;
+				size_t influence;
+				for (influence = 0; influence < vertinfo[vert].count; ++influence)
+					sum += weights[vertinfo[vert].firstweight + influence].position[3];
+				if (fabs(sum - 1.0) > 0.001)
+				{
+					Mod_MD5Fail(&parser, "custom avatar weights must sum to one");
+					goto surface_done;
+				}
 			}
 
 		if ((size_t)numposes > SIZE_MAX / numverts ||
@@ -5829,7 +5992,14 @@ static qboolean Mod_LoadMD5MeshModel (qmodel_t *mod, const byte *buffer, size_t 
 			out->md5_liveweights = (intptr_t)((byte *)persistentweights - (byte *)out);
 		}
 		if (!isDedicated)
-			Mod_MD5LoadSkin (mod, out, shader);
+		{
+			qboolean skinned = Mod_MD5LoadSkin (mod, out, shader);
+			if (mod_custom_avatar && !skinned)
+			{
+				Mod_MD5Fail(&parser, "invalid custom avatar skin");
+				goto surface_done;
+			}
+		}
 		surfaces[surface] = out;
 
 		free (weightseen); weightseen = NULL;
@@ -6067,6 +6237,79 @@ static qmodel_t *Mod_LoadVerifiedRereleaseAvatarMD5 (player_avatar_id_t avatar)
 	}
 	mod_alias_build.md5_from_rerelease = true;
 	Mod_FinishAliasBuild (mod);
+	return mod;
+}
+
+/* A registered cosmetic cache key always returns here, including after cache
+ * eviction. No package filename or network descriptor enters the game VFS. */
+qmodel_t *Mod_GetCustomAvatarModel (int id)
+{
+	const custom_avatar_t *avatar = CustomAvatar_Get(id);
+	custom_avatar_data_t data;
+	mod_alias_cache_t *cache;
+	qmodel_t *mod = NULL;
+	qboolean loaded;
+	int i;
+
+	if (isDedicated || !avatar || CustomAvatar_HasFailed(id))
+		return NULL;
+	for (i = 0; i < mod_numknown; ++i)
+		if (!strcmp(mod_known[i].name, avatar->model_name))
+		{
+			mod = mod_known + i;
+			break;
+		}
+	if (!mod && mod_numknown == MAX_MOD_KNOWN)
+		return NULL;
+	if (!mod)
+		mod = Mod_FindName(avatar->model_name);
+	cache = (mod_alias_cache_t *)Cache_Check(&mod->cache);
+	if (!mod->needload && cache && cache->magic == MOD_ALIAS_CACHE_MAGIC &&
+		cache->custom_avatar_id == id)
+		return mod;
+	if (!cache)
+		TexMgr_FreeTexturesForOwner(mod);
+	/* Bounded one-pose geometry uses <4 MiB; leave room for the largest
+	 * permitted temporary texture resample as well as its final alias cache.
+	 * Optional cosmetics must not force the fatal hunk-segment/cache paths. */
+	if (!Hunk_HasHeadroom(24 * 1024 * 1024, 4 * 1024 * 1024))
+	{
+		Con_Warning("Custom avatar %s: insufficient rendering memory; using Ranger\n", avatar->key);
+		CustomAvatar_MarkFailed(id);
+		return NULL;
+	}
+	if (!CustomAvatar_ReadData(id, &data))
+	{
+		Con_Warning("Custom avatar %s changed or could not be read; restart after correcting the package\n", avatar->key);
+		CustomAvatar_MarkFailed(id);
+		return NULL;
+	}
+	if (cache)
+		Cache_Free(&mod->cache, true);
+	R_VRIKInvalidateSkinCaches();
+	mod->path_id = 0;
+	mod->needload = false;
+	loadmodel = mod;
+	q_strlcpy(loadname, "customavatar", sizeof(loadname));
+	Mod_BeginAliasBuild();
+	mod_custom_avatar = avatar;
+	mod_custom_data = &data;
+	loaded = Mod_LoadMD5MeshModel(mod, data.bytes[CUSTOM_AVATAR_MESH],
+		data.sizes[CUSTOM_AVATAR_MESH]);
+	mod_custom_avatar = NULL;
+	mod_custom_data = NULL;
+	CustomAvatar_FreeData(&data);
+	if (!loaded)
+	{
+		Hunk_FreeToLowMark(mod_alias_build.startmark);
+		memset(&mod_alias_build, 0, sizeof(mod_alias_build));
+		mod->needload = true;
+		CustomAvatar_MarkFailed(id);
+		Con_Warning("Custom avatar %s rejected; using Ranger\n", avatar->key);
+		return NULL;
+	}
+	mod_alias_build.custom_avatar_id = id;
+	Mod_FinishAliasBuild(mod);
 	return mod;
 }
 

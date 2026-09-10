@@ -623,6 +623,17 @@ typedef struct {
 static vr_hidden_area_mesh_t hidden_area_meshes[2];
 static vr_controller controllers[2];
 static vr_controller_render_model_t controller_render_models[2];
+static qboolean vr_applied_lefthanded = false;
+static qboolean vr_hand_wait_neutral[2] = {false, false};
+static qboolean vr_emitted_keys[MAX_KEYS];
+static int vr_last_snap = 0;
+
+qboolean VR_IsLeftHanded(void) {
+  return vr_applied_lefthanded;
+}
+
+static void VR_ApplyHandedness(void);
+static void VR_FilterHandednessInput(int controllerIndex);
 static qboolean vr_adjust_suppressed_rtrigger = false;
 static qboolean vr_adjust_muzzle_return_to_grip = false;
 
@@ -846,6 +857,17 @@ void VR_DrawHiddenAreaDepthMask(void) {
     GL_UseProgram((GLuint)current_program);
 }
 
+/* Keep ownership of emitted logical keys across a role change. Key_Event
+ * remains responsible for alternate bindings and menu-consumed releases. */
+static void VR_KeyEvent(int key, qboolean down) {
+  if (key < 0 || key >= MAX_KEYS)
+    return;
+  if (!down && !vr_emitted_keys[key])
+    return;
+  vr_emitted_keys[key] = down;
+  Key_Event(key, down);
+}
+
 static void VR_SetTrigger(vr_controller *controller, int quakeKey,
                           qboolean down) {
   if (down) {
@@ -853,18 +875,19 @@ static void VR_SetTrigger(vr_controller *controller, int quakeKey,
       if (controller->triggerKey == quakeKey)
         return;
 
-      Key_Event(controller->triggerKey, false);
+      if (controller->triggerKey)
+        VR_KeyEvent(controller->triggerKey, false);
     }
 
     controller->triggerDown = true;
     controller->triggerKey = quakeKey;
-    Key_Event(quakeKey, true);
+    VR_KeyEvent(quakeKey, true);
   } else {
     if (!controller->triggerDown)
       return;
 
-    Key_Event(controller->triggerKey ? controller->triggerKey : quakeKey,
-              false);
+    if (controller->triggerKey)
+      VR_KeyEvent(controller->triggerKey, false);
     controller->triggerDown = false;
     controller->triggerKey = 0;
   }
@@ -1878,7 +1901,7 @@ vec3_t vr_room_scale_move;
 DEFINE_CVAR(vr_enabled, 0, CVAR_NONE);
 DEFINE_CVAR(vr_vrik, 1, CVAR_ARCHIVE);
 DEFINE_CVAR(vr_viewkick, 0, CVAR_NONE);
-DEFINE_CVAR(vr_lefthanded, 0, CVAR_NONE);
+DEFINE_CVAR(vr_lefthanded, 0, CVAR_ARCHIVE);
 
 DEFINE_CVAR(vr_crosshair, 1, CVAR_ARCHIVE);
 DEFINE_CVAR(vr_crosshair_depth, 0, CVAR_ARCHIVE);
@@ -4607,7 +4630,7 @@ qboolean VR_GetVRIKPose(vrik_pose_t *pose) {
 
   pose->body_yaw = body_yaw;
   pose->flags = VRIK_FLAG_ACTIVE | VRIK_FLAG_HEAD_TRACKED;
-  if (vr_lefthanded.value)
+  if (VR_IsLeftHanded())
     pose->flags |= VRIK_FLAG_DOMINANT_LEFT;
 
   VR_TrackingPointToWorld(vr_head_raw_position, head_world);
@@ -4617,8 +4640,8 @@ qboolean VR_GetVRIKPose(vrik_pose_t *pose) {
                          pose->orientation[VRIK_TRACKER_HEAD]);
 
   /* controllers[] follows dominant/off-hand ordering; the rig needs anatomy. */
-  physical_left = vr_lefthanded.value ? 1 : 0;
-  physical_right = vr_lefthanded.value ? 0 : 1;
+  physical_left = VR_IsLeftHanded() ? 1 : 0;
+  physical_right = VR_IsLeftHanded() ? 0 : 1;
   if (VR_VRIKControllerTracked(physical_left)) {
     pose->flags |= VRIK_FLAG_LEFT_HAND_TRACKED;
     VR_VRIKToRootLocal(cl.handpos[physical_left], player->origin, body_yaw,
@@ -5967,7 +5990,7 @@ static void VR_HandRotToViewmodelAngles(const vec3_t handrot,
 
 static void VR_ModelOffsetToWorld(const vec3_t local,
                                   const vec3_t viewmodel_angles,
-                                  float scale, vec3_t world) {
+                                  float scale, qboolean mirrored, vec3_t world) {
   float yaw = viewmodel_angles[YAW] * M_PI_DIV_180;
   float pitch = viewmodel_angles[PITCH] * M_PI_DIV_180;
   float roll = viewmodel_angles[ROLL] * M_PI_DIV_180;
@@ -5975,11 +5998,12 @@ static void VR_ModelOffsetToWorld(const vec3_t local,
   float sp = sin(pitch), cp = cos(pitch);
   float sr = sin(roll), cr = cos(roll);
   float x1, y1, z1, x2, y2, z2;
+  float lateral = mirrored ? -local[1] : local[1];
 
-  // Match R_RotateForEntity: yaw around Z, -pitch around Y, roll around X.
+  // Match the held draw: entity rotation * local Y reflection * header offset.
   x1 = local[0];
-  y1 = local[1] * cr - local[2] * sr;
-  z1 = local[1] * sr + local[2] * cr;
+  y1 = lateral * cr - local[2] * sr;
+  z1 = lateral * sr + local[2] * cr;
 
   x2 = x1 * cp - z1 * sp;
   y2 = y1;
@@ -5992,7 +6016,7 @@ static void VR_ModelOffsetToWorld(const vec3_t local,
 
 static void VR_WorldToModelOffset(const vec3_t world,
                                   const vec3_t viewmodel_angles,
-                                  float scale, vec3_t local) {
+                                  float scale, qboolean mirrored, vec3_t local) {
   float yaw = viewmodel_angles[YAW] * M_PI_DIV_180;
   float pitch = viewmodel_angles[PITCH] * M_PI_DIV_180;
   float roll = viewmodel_angles[ROLL] * M_PI_DIV_180;
@@ -6020,6 +6044,38 @@ static void VR_WorldToModelOffset(const vec3_t world,
   local[0] = x2;
   local[1] = y2 * cr + z2 * sr;
   local[2] = -y2 * sr + z2 * cr;
+  if (mirrored)
+    local[1] = -local[1];
+}
+
+/* User calibrations stay canonical on disk. The muzzle and mesh MUST share
+ * one reflection plane: aim-space right is not generally model-space Y when
+ * gunmodelpitch and wrist roll are nonzero. R * mirrorY * inverse(R) is its
+ * own inverse, so it also maps adjusted world targets back to canonical space.
+ * QuakeC source compensation still uses VR_AimOffsetToWorld without reflection. */
+static void VR_ReflectMuzzleVector(const vec3_t world, const vec3_t handrot,
+                                   vec3_t reflected) {
+  vec3_t model_angles, local;
+  VR_HandRotToViewmodelAngles(handrot, model_angles);
+  VR_WorldToModelOffset(world, model_angles, 1, false, local);
+  VR_ModelOffsetToWorld(local, model_angles, 1, true, reflected);
+}
+
+static void VR_MuzzleOffsetToWorld(const vec3_t local, const vec3_t angles,
+                                   float scale, vec3_t world) {
+  VR_AimOffsetToWorld(local, angles, scale, world);
+  if (VR_IsLeftHanded())
+    VR_ReflectMuzzleVector(world, angles, world);
+}
+
+static void VR_WorldToMuzzleOffset(const vec3_t world, const vec3_t angles,
+                                   float scale, vec3_t local) {
+  vec3_t canonical;
+  if (VR_IsLeftHanded())
+    VR_ReflectMuzzleVector(world, angles, canonical);
+  else
+    VectorCopy(world, canonical);
+  VR_WorldToAimOffset(canonical, angles, scale, local);
 }
 
 void VR_GetMuzzleAdjustedHandPos(vec3_t out) {
@@ -6057,7 +6113,7 @@ void VR_GetMuzzleAdjustedHandPos(vec3_t out) {
         VectorAdd(local, vr_weapon_mp_muzzle_offset[weaponCVarEntry], local);
     }
 
-    VR_AimOffsetToWorld(local, cl.handrot[1], vr_gunmodelscale.value, world);
+    VR_MuzzleOffsetToWorld(local, cl.handrot[1], vr_gunmodelscale.value, world);
     VectorAdd(out, world, out);
   }
 }
@@ -6268,7 +6324,7 @@ static qboolean VR_AdjustWeaponCommit(void) {
 
     VR_HandRotToViewmodelAngles(vr_adjust_frozen_handrot, frozen_angles);
     VR_ModelOffsetToWorld(old_offset, frozen_angles, scaleCorrect,
-                          old_anchor_world);
+                          VR_IsLeftHanded(), old_anchor_world);
     VectorAdd(vr_adjust_frozen_handpos, old_anchor_world, old_anchor_world);
 
     VectorSubtract(old_anchor_world, vr_adjust_current_handpos,
@@ -6276,7 +6332,7 @@ static qboolean VR_AdjustWeaponCommit(void) {
     // Weapon adjustment is a recentering tool. Use the frozen rotation so
     // wrist movement while placing the controller cannot skew the saved offset.
     VR_WorldToModelOffset(target_delta_world, frozen_angles, scaleCorrect,
-                          new_scale_origin);
+                          VR_IsLeftHanded(), new_scale_origin);
 
     VectorSubtract(new_scale_origin, vr_adjust_original_scale_origin,
                    new_effective_offset);
@@ -6350,7 +6406,7 @@ static qboolean VR_AdjustWeaponCommit(void) {
      * of that movement. This lets a projectile that is forward/left of the
      * grip be corrected by moving the controller forward/left onto it.
      */
-    VR_AimOffsetToWorld(effective, vr_adjust_frozen_handrot,
+    VR_MuzzleOffsetToWorld(effective, vr_adjust_frozen_handrot,
                         vr_gunmodelscale.value, old_offset_world);
     VectorAdd(vr_adjust_frozen_handpos, old_offset_world,
               old_preorigin_world);
@@ -6358,7 +6414,7 @@ static qboolean VR_AdjustWeaponCommit(void) {
     /* Fixed QuakeC source compensation remains in the normal spawn path. */
     VectorSubtract(old_preorigin_world, vr_adjust_current_handpos,
                    target_preorigin);
-    VR_WorldToAimOffset(target_preorigin, vr_adjust_frozen_handrot,
+    VR_WorldToMuzzleOffset(target_preorigin, vr_adjust_frozen_handrot,
                         vr_gunmodelscale.value, local);
 
     if (vr_adjust_mode == VR_ADJUST_MP_MUZZLE) {
@@ -6901,6 +6957,7 @@ void VID_VR_Init() {
   vr_fbt_manager_initialized = true;
   Cvar_RegisterVariable(&vr_enabled);
   Cvar_SetCallback(&vr_enabled, VR_Enabled_f);
+  Cvar_RegisterVariable(&vr_lefthanded);
   Cvar_RegisterVariable(&vr_hud_defaults_version);
   Cmd_AddCommand("vr_migrate_hud_defaults", VR_MigrateHudDefaults_f);
   Cvar_RegisterVariable(&vr_vrik);
@@ -6950,7 +7007,6 @@ void VID_VR_Init() {
   Cvar_RegisterVariable(&vr_joystick_yaw_multi);
   Cvar_RegisterVariable(&vr_haptic);
   Cvar_RegisterVariable(&vr_joystick_axis_menu_deadzone_extra);
-  Cvar_RegisterVariable(&vr_lefthanded);
   Cvar_RegisterVariable(&vr_movement_mode);
   Cvar_RegisterVariable(&vr_movement_speed);
   Cvar_RegisterVariable(&vr_msaa);
@@ -8497,6 +8553,9 @@ void VR_UpdateScreenContent() {
   if (!acquired_pose && !vr_pose_snapshot_valid)
     return;
 
+  /* A menu click may change the cvar during the first eye. Apply it only at
+   * this shared pose boundary, before mapping either eye's controller roles. */
+  VR_ApplyHandedness();
   VR_ApplyPendingControllerYaw();
 
   controllers[0].seenThisFrame = false;
@@ -8566,11 +8625,11 @@ void VR_UpdateScreenContent() {
       if (vr_pose_snapshot_controller_role[iDevice] ==
           vr::TrackedControllerRole_LeftHand) {
         // Swap controller values for our southpaw players
-        controllerIndex = vr_lefthanded.value ? 1 : 0;
+        controllerIndex = VR_IsLeftHanded() ? 1 : 0;
       } else if (vr_pose_snapshot_controller_role[iDevice] ==
                  vr::TrackedControllerRole_RightHand) {
         // Swap controller values for our southpaw players
-        controllerIndex = vr_lefthanded.value ? 0 : 1;
+        controllerIndex = VR_IsLeftHanded() ? 0 : 1;
       }
 
       if (controllerIndex != -1) {
@@ -8603,17 +8662,20 @@ void VR_UpdateScreenContent() {
   if (!controllers[0].seenThisFrame) {
     vr::TrackedDeviceIndex_t device =
         ovrHMD->GetTrackedDeviceIndexForControllerRole(
-            vr_lefthanded.value ? vr::TrackedControllerRole_RightHand
+            VR_IsLeftHanded() ? vr::TrackedControllerRole_RightHand
                                 : vr::TrackedControllerRole_LeftHand);
     VR_PollControllerInputOnly(0, device);
   }
   if (!controllers[1].seenThisFrame) {
     vr::TrackedDeviceIndex_t device =
         ovrHMD->GetTrackedDeviceIndexForControllerRole(
-            vr_lefthanded.value ? vr::TrackedControllerRole_LeftHand
+            VR_IsLeftHanded() ? vr::TrackedControllerRole_LeftHand
                                 : vr::TrackedControllerRole_RightHand);
     VR_PollControllerInputOnly(1, device);
   }
+
+  VR_FilterHandednessInput(0);
+  VR_FilterHandednessInput(1);
 
   if (!controllers[0].seenThisFrame)
     VR_SetTrigger(&controllers[0], K_LTRIGGER, false);
@@ -8952,6 +9014,11 @@ void VR_Draw2D() {
   vec3_t menu_angles, menu_origin, forward, right, up, target, smoothedTarget;
   float scale_hud = vr_menu_scale.value;
 
+  /* The add-on browser has a larger reading/pointing surface. This same scale
+   * drives the stereo panel transform and ray-to-menu coordinate conversion. */
+  if (key_dest == key_menu && m_state == m_mods)
+    scale_hud *= 1.35f;
+
   int oldglwidth = glwidth, oldglheight = glheight, oldconwidth = vid.conwidth,
       oldconheight = vid.conheight;
 
@@ -9141,7 +9208,7 @@ void VR_DrawSbar() {
 
         AngleVectors(sbar_angles, forward, right, up);
 
-    VectorMA(cl.handpos[1], -5, right, target);
+    VectorMA(cl.handpos[1], VR_IsLeftHanded() ? 5 : -5, right, target);
   } else {
     VectorCopy(cl.aimangles, sbar_angles)
 
@@ -9208,6 +9275,38 @@ static vr_controller_axes_t controllerAxes[2] = {
     {-1, -1, -1, -1, false},
     {-1, -1, -1, -1, false},
 };
+
+static void VR_ApplyHandedness(void) {
+  qboolean left = vr_lefthanded.value != 0;
+  if (left == vr_applied_lefthanded)
+    return;
+
+  /* A wheel release normally commits the hovered selection, including player
+   * teleport. Cancel it and calibration before synthesizing any releases. */
+  VR_EndWeaponMenu();
+  cl.in_vr_weaponmenu = false;
+  VR_AdjustCancel(true);
+  VR_ReleaseControllerInputs();
+  for (int key = 0; key < MAX_KEYS; ++key)
+    if (vr_emitted_keys[key])
+      VR_KeyEvent(key, false);
+  vr_last_snap = 0;
+  M_PointerLeave(M_POINTER_VR);
+  vr_menu_pointer_valid = false;
+
+  vr_applied_lefthanded = left;
+  for (int i = 0; i < 2; ++i) {
+    memset(&controllers[i], 0, sizeof(controllers[i]));
+    controllers[i].deviceIndex = vr::k_unTrackedDeviceIndexInvalid;
+    controllerAxes[i].trackpad = controllerAxes[i].joystick = -1;
+    controllerAxes[i].trigger = controllerAxes[i].grip = -1;
+    controllerAxes[i].identified = false;
+    modelIdentified[i] = isViveWand[i] = isIndexController[i] = false;
+    vr_hand_wait_neutral[i] = true;
+  }
+  /* Controller render caches key themselves by physical model name. FBT serial
+   * bindings remain anatomical and must not be reset or swapped here. */
+}
 
 static int VR_ControllerIndex(const vr_controller *controller) {
   return controller == &controllers[1] ? 1 : 0;
@@ -9338,6 +9437,31 @@ float GetAxis(vr::VRControllerState_t *state, int controllerIndex, int axis,
   return sign * v;
 }
 
+static void VR_FilterHandednessInput(int controllerIndex) {
+  vr_controller *controller = &controllers[controllerIndex];
+  const uint64_t buttons =
+      vr::ButtonMaskFromId(vr::k_EButton_Grip) |
+      vr::ButtonMaskFromId(vr::k_EButton_SteamVR_Touchpad) |
+      vr::ButtonMaskFromId(vr::k_EButton_ApplicationMenu) |
+      vr::ButtonMaskFromId(vr::k_EButton_A) |
+      vr::ButtonMaskFromId(vr::k_EButton_Axis2) |
+      vr::ButtonMaskFromId(vr::k_EButton_Axis3) |
+      vr::ButtonMaskFromId(vr::k_EButton_Axis4);
+  if (!vr_hand_wait_neutral[controllerIndex])
+    return;
+
+  /* Consume the button that changed this option until released in its new
+   * role. A missing controller cannot unblock itself using a zeroed cache. */
+  if (controller->seenThisFrame && !(controller->state.ulButtonPressed & buttons) &&
+      VR_ReadTrigger(controller, controllerIndex) < 0.45f &&
+      GetAxis(&controller->state, controllerIndex, 0, 0) == 0 &&
+      GetAxis(&controller->state, controllerIndex, 1, 0) == 0)
+    vr_hand_wait_neutral[controllerIndex] = false;
+
+  memset(&controller->state, 0, sizeof(controller->state));
+  memset(&controller->lastState, 0, sizeof(controller->lastState));
+}
+
 static qboolean VR_ShouldUseMovementViewAngles(void) {
   return vr_enabled.value && vr_initialized &&
          (int)vr_aimmode.value == VR_AIMMODE_CONTROLLER &&
@@ -9379,7 +9503,7 @@ void DoKey(vr_controller *controller, vr::EVRButtonId vrButton, int quakeKey) {
       controller->emittedButtonPressed |= mask;
     else
       controller->emittedButtonPressed &= ~mask;
-    Key_Event(quakeKey, isDown);
+    VR_KeyEvent(quakeKey, isDown);
   }
 }
 
@@ -9551,13 +9675,13 @@ void DoAxis(vr_controller *controller, int axis, int quakeKeyNeg,
   bool posWasDown = lastVal > 0.0f;
   bool posDown = val > 0.0f;
   if (posDown != posWasDown) {
-    Key_Event(quakeKeyPos, posDown);
+    VR_KeyEvent(quakeKeyPos, posDown);
   }
 
   bool negWasDown = lastVal < 0.0f;
   bool negDown = val < 0.0f;
   if (negDown != negWasDown) {
-    Key_Event(quakeKeyNeg, negDown);
+    VR_KeyEvent(quakeKeyNeg, negDown);
   }
 }
 
@@ -9736,11 +9860,10 @@ void VR_Move(usercmd_t *cmd) {
 
     if (emit_input_events) {
       if (vr_snap_turn.value != 0) {
-        static int lastSnap = 0;
         int snap = yawMove > 0.0f ? 1 : yawMove < 0.0f ? -1 : 0;
-        if (snap != lastSnap) {
+        if (snap != vr_last_snap) {
           vrYaw -= snap * vr_snap_turn.value;
-          lastSnap = snap;
+          vr_last_snap = snap;
         }
       } else {
         vrYaw -=
@@ -9788,7 +9911,7 @@ extern "C" void VR_TriggerHaptic(int controller, float durationSeconds) {
 
   vr::TrackedDeviceIndex_t deviceIndex =
       vr::VRSystem()->GetTrackedDeviceIndexForControllerRole(
-          (controller == 0) != (vr_lefthanded.value != 0.0f)
+          (controller == 0) != (VR_IsLeftHanded() != false)
               ? vr::TrackedControllerRole_LeftHand
               : vr::TrackedControllerRole_RightHand);
 

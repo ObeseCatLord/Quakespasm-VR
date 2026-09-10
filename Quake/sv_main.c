@@ -31,19 +31,36 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 server_t	sv;
 server_static_t	svs;
 
-static qboolean SV_WriteAvatarSlot(client_t *client, int slot, int avatar_id)
+static qboolean SV_WriteAvatarSlot(client_t *client, int slot, int avatar_id,
+	const char *custom_key, const char *custom_digest)
 {
-	char text[64];
+	char numeric_text[64];
+	char custom_text[128];
+	int required;
 
 	if (!client || slot < 0 || slot >= svs.maxclients ||
-		!PlayerAvatar_BuildSlotCommand(client->avatar_capable, text,
-			sizeof(text), slot, avatar_id))
+		!PlayerAvatar_BuildSlotCommand(client->avatar_capable, numeric_text,
+			sizeof(numeric_text), slot, avatar_id))
 		return false;
-	if (client->message.cursize + 1 + (int)strlen(text) + 1 >
+	if (client->avatar_custom_capable &&
+		!PlayerAvatar_BuildCustomSlotCommand(true, custom_text,
+			sizeof(custom_text), slot, custom_key, custom_digest))
+		return false;
+	/* Keep the numeric projection and string descriptor atomic in the reliable
+	 * queue: a full buffer must leave this slot dirty for a later complete pair. */
+	required = 1 + (int)strlen(numeric_text) + 1;
+	if (client->avatar_custom_capable)
+		required += 1 + (int)strlen(custom_text) + 1;
+	if (client->message.cursize + required >
 		client->message.maxsize)
 		return false;
 	MSG_WriteByte(&client->message, svc_stufftext);
-	MSG_WriteString(&client->message, text);
+	MSG_WriteString(&client->message, numeric_text);
+	if (client->avatar_custom_capable)
+	{
+		MSG_WriteByte(&client->message, svc_stufftext);
+		MSG_WriteString(&client->message, custom_text);
+	}
 	return true;
 }
 
@@ -57,13 +74,23 @@ static void SV_FlushAvatarSlots(client_t *client)
 	{
 		unsigned short bit = (unsigned short)(1u << slot);
 		int avatar_id;
+		const char *custom_key = NULL;
+		const char *custom_digest = NULL;
 
 		if (!(client->avatar_dirty_slots & bit))
 			continue;
 		avatar_id = svs.clients[slot].active &&
 			PlayerAvatar_IsValidId(svs.clients[slot].avatar_id) ?
 			svs.clients[slot].avatar_id : PLAYER_AVATAR_RANGER;
-		if (!SV_WriteAvatarSlot(client, slot, avatar_id))
+		if (svs.clients[slot].active && svs.clients[slot].avatar_custom_key[0] &&
+			PlayerAvatar_ValidCustomKey(svs.clients[slot].avatar_custom_key) &&
+			PlayerAvatar_ValidCustomDigest(svs.clients[slot].avatar_custom_digest))
+		{
+			avatar_id = PLAYER_AVATAR_RANGER;
+			custom_key = svs.clients[slot].avatar_custom_key;
+			custom_digest = svs.clients[slot].avatar_custom_digest;
+		}
+		if (!SV_WriteAvatarSlot(client, slot, avatar_id, custom_key, custom_digest))
 			return;
 		client->avatar_dirty_slots &= (unsigned short)~bit;
 	}
@@ -1322,6 +1349,8 @@ void SV_SendServerinfo (client_t *client)
 	MSG_WriteString (&client->message, "//vr_relative_muzzle 1\n");
 	MSG_WriteByte (&client->message, svc_stufftext);
 	MSG_WriteString (&client->message, "//avatar_protocol 1\n");
+	MSG_WriteByte (&client->message, svc_stufftext);
+	MSG_WriteString (&client->message, "//avatar_custom_protocol 1\n");
 	/* Offer v3 first, followed by v2.  A v3-aware client latches the first
 	 * offer; an existing v2 client ignores v3 and still sees its original v2
 	 * offer.  This keeps all v2 pose bytes and opcodes unchanged. */

@@ -57,6 +57,7 @@ typedef struct gltexture_s {
 	unsigned int		flags;
 	char			source_file[MAX_QPATH]; //relative filepath to data source, or "" if source is in memory
 	src_offset_t		source_offset; //byte offset into file, or memory address
+	byte			*owned_source; //optional malloc-owned immutable reload pixels
 	enum srcformat		source_format; //format of pixel data (indexed, lightmap, or rgba)
 	unsigned int		source_width; //size of image in source data
 	unsigned int		source_height; //size of image in source data
@@ -69,6 +70,10 @@ typedef struct gltexture_s {
 
 extern gltexture_t *notexture;
 extern gltexture_t *nulltexture;
+
+/* Transfers malloc-owned RGBA even on failure. No VFS lookup on vid_restart. */
+gltexture_t *TexMgr_LoadOwnedRGBA (qmodel_t *owner, const char *name,
+	int width, int height, byte *rgba, unsigned flags);
 
 extern unsigned int d_8to24table[256];
 extern unsigned int d_8to24table_fbright[256];

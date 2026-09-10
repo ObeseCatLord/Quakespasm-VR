@@ -25,6 +25,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 
 #include "quakedef.h"
 #include "player_avatar.h"
+#include "custom_avatar.h"
 #include "bgmusic.h"
 #include "vr.h"
 #include "vrik_codec.h"
@@ -2110,9 +2111,10 @@ static qboolean CL_OfferVoiceProtocol(const char *command)
 
 static qboolean CL_OfferAvatarProtocol(const char *command)
 {
-	if (Q_strncmp(command, "avatar_protocol", 15) ||
-		(command[15] != ' ' && command[15] != '\t'))
+	if (Q_strncmp(command, "avatar_protocol", 15))
 		return false;
+	if (command[15] != ' ' && command[15] != '\t')
+		return true;
 	/* Treat malformed offers as consumed extension traffic rather than
 	 * executing a server-supplied console command. */
 	if (!PlayerAvatar_LatchProtocolOffer(command,
@@ -2125,19 +2127,81 @@ static qboolean CL_OfferAvatarProtocol(const char *command)
 	return true;
 }
 
+static qboolean CL_OfferCustomAvatarProtocol(const char *command)
+{
+	if (Q_strncmp(command, "avatar_custom_protocol", 22))
+		return false;
+	if (command[22] != ' ' && command[22] != '\t')
+		return true;
+	/* This is extension traffic even when it is malformed or the base avatar
+	 * offer was absent, so it can never fall through to console execution. */
+	if (!PlayerAvatar_LatchCustomProtocolOffer(command,
+			&cl.avatar_custom_protocol_offered, &cl.avatar_custom_cap_pending,
+			cl.avatar_custom_cap_sent))
+		return true;
+	cl.avatar_custom_protocol_version = PLAYER_AVATAR_CUSTOM_PROTOCOL_VERSION;
+	Con_DPrintf("Avatar: negotiated custom protocol %d with server\n",
+		PLAYER_AVATAR_CUSTOM_PROTOCOL_VERSION);
+	return true;
+}
+
 static qboolean CL_ParseAvatarSlot(const char *command)
 {
 	int slot;
 	int id;
 
-	if (Q_strncmp(command, "avatar_slot", 11) ||
-		(command[11] != ' ' && command[11] != '\t'))
+	if (Q_strncmp(command, "avatar_slot", 11))
 		return false;
+	if (command[11] != ' ' && command[11] != '\t')
+		return true;
 	if (!cl.avatar_protocol_offered ||
 		cl.avatar_protocol_version != PLAYER_AVATAR_PROTOCOL_VERSION)
 		return true;
 	if (PlayerAvatar_ParseSlotCommand(command, &slot, &id))
 		cl.avatar_ids[slot] = (unsigned char)id;
+	return true;
+}
+
+static qboolean CL_ParseCustomAvatarSlot(const char *command)
+{
+	char key[PLAYER_AVATAR_CUSTOM_KEY_MAX + 1];
+	char digest[PLAYER_AVATAR_CUSTOM_DIGEST_MAX + 1];
+	int slot, id, clear;
+	qboolean changed;
+
+	if (Q_strncmp(command, "avatar_custom_slot", 18))
+		return false;
+	if (command[18] != ' ' && command[18] != '\t')
+		return true;
+	if (!cl.avatar_custom_protocol_offered ||
+		cl.avatar_custom_protocol_version != PLAYER_AVATAR_CUSTOM_PROTOCOL_VERSION)
+		return true;
+	if (!PlayerAvatar_ParseCustomSlotCommand(command, &slot, key, sizeof(key),
+		digest, sizeof(digest), &clear))
+		return true;
+	if (clear)
+	{
+		cl.avatar_custom_keys[slot][0] = 0;
+		cl.avatar_custom_digests[slot][0] = 0;
+		return true;
+	}
+	/* Every table resend projects Ranger immediately before this descriptor.
+	 * Resolve even an unchanged descriptor; only its warning is deduplicated. */
+	changed = strcmp(cl.avatar_custom_keys[slot], key) ||
+		strcmp(cl.avatar_custom_digests[slot], digest);
+	strcpy(cl.avatar_custom_keys[slot], key);
+	strcpy(cl.avatar_custom_digests[slot], digest);
+	id = CustomAvatar_Resolve(key, digest);
+	if (id < 0)
+	{
+		/* A remote descriptor never selects paths or loads assets.  Preserve it
+		 * so repeated snapshots do not spam this warning, and draw Ranger. */
+		if (changed)
+			Con_Warning("Avatar: custom package %s is unavailable or differs locally; using ranger\n",
+				key);
+		id = PLAYER_AVATAR_RANGER;
+	}
+	cl.avatar_ids[slot] = (unsigned char)id;
 	return true;
 }
 
@@ -2359,7 +2423,9 @@ static void CL_ParseStuffText(const char *msg)
 		if (cl.stuffcmdbuf[0] == '/' && cl.stuffcmdbuf[1] == '/')
 		{
 			handled = CL_OfferAvatarProtocol(cl.stuffcmdbuf + 2) ||
+				CL_OfferCustomAvatarProtocol(cl.stuffcmdbuf + 2) ||
 				CL_ParseAvatarSlot(cl.stuffcmdbuf + 2) ||
+				CL_ParseCustomAvatarSlot(cl.stuffcmdbuf + 2) ||
 				CL_OfferVRIKProtocol(cl.stuffcmdbuf + 2) ||
 				CL_OfferVoiceProtocol(cl.stuffcmdbuf + 2) ||
 				Cmd_ExecuteString(cl.stuffcmdbuf+2, src_server);

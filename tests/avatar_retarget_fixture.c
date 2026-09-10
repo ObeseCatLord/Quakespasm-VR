@@ -251,8 +251,8 @@ static void test_profile_basis_policies(void)
 	assert(vore->mirror_outer_leg_poles && !vore->preserve_hip_rotation &&
 		vore->posture_policy == R_AVATAR_POSTURE_AUTHORED);
 
-	/* A synthetic quadruped makes its floor-to-hip direction the first column
-	 * and flips its left/forward columns together so the head stays forward. */
+	/* Both bind policies preserve anatomical left.  Up cross left is backward,
+	 * not gaze-forward: flipping it toward the head reverses the animal rig. */
 	named_profile(&animal, dog);
 	assert(R_AvatarResolveRig(dog, &animal.live, &animalrig));
 	origin(animal.joints[animalrig.joint[MD5_VRIK_HIP]].bind, 0, 0, 2);
@@ -263,11 +263,11 @@ static void test_profile_basis_policies(void)
 	origin(animal.joints[animalrig.joint[MD5_VRIK_FOOT_R]].bind, -2, -2, 0);
 	assert(R_AvatarCanonicalToTargetBasis(&animalrig, basis));
 	assert(basis[0] > .7f && basis[8] > .7f);
-	assert(basis[5] < -.99f && basis[2] > .7f && basis[10] < -.7f);
+	assert(basis[5] > .99f && basis[2] < -.7f && basis[10] > .7f);
 	headfromhip[0] = 10; headfromhip[1] = 0; headfromhip[2] = 2;
 	forward[0] = basis[2]; forward[1] = basis[6]; forward[2] = basis[10];
 	assert(forward[0] * headfromhip[0] + forward[1] * headfromhip[1] +
-		forward[2] * headfromhip[2] > 0.0f);
+		forward[2] * headfromhip[2] < 0.0f);
 	determinant = basis[0] * (basis[5] * basis[10] - basis[6] * basis[9]) -
 		basis[1] * (basis[4] * basis[10] - basis[6] * basis[8]) +
 		basis[2] * (basis[4] * basis[9] - basis[5] * basis[8]);
