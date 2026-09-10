@@ -155,3 +155,16 @@ more expensive reflections/pathing. No scene or simulation implementation is
 included here. A combined distributable needs the GPLv3-compatible license route
 and appropriate component notices; this prototype does not constitute a complete
 dependency-license audit.
+
+## Direct environment controls
+
+`snd_occlusion 1` enables smoothed static-world muffling on positional SFX and
+voice. Moving doors/meshes are intentionally omitted. Voice uses a gentler gain
+reduction and higher low-pass cutoff than SFX. Traces are bounded and staggered;
+embedded sound origins can still produce imperfect results.
+
+`voice_radio_filter 1` colors only centered radio with a 300–3400 Hz bandpass.
+Set it to 0 for comparison. `voice_radio_compression` (0–1, default 0) and
+`voice_radio_drive` (0–4, default 0) optionally compress/saturate that colored
+branch. Existing radio volume and spatial-distance controls still apply.
+These controls currently belong to the Steam Audio backend.

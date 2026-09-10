@@ -17,6 +17,7 @@ typedef struct {
     unsigned generation;
     int active, kind, offset, position_valid;
     float origin[3], gain, attenuation;
+    float obstruction; /* 0 clear, 1 blocked; game-thread trace */
 } sa_source_t;
 typedef struct {
     float origin[3], forward[3], right[3], up[3];
@@ -25,6 +26,7 @@ typedef struct {
 typedef struct {
     int hrtf, pure_voice;
     float radio_gain, voice_distance;
+    float radio_filter, radio_compression, radio_drive, occlusion;
 } sa_settings_t;
 /* Callback-published cursor for one non-stream source. */
 typedef struct {
