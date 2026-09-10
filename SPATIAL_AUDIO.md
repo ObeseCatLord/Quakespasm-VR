@@ -266,3 +266,12 @@ Audio enabled/voice disabled; the final local binary has both enabled. An
 actual-engine menu screenshot confirmed that all rows fit and a fresh isolated
 SDL preference directory starts with local mic reverb off and no desktop input
 device selected. The launcher isolates both `XDG_CONFIG_HOME` and `XDG_DATA_HOME`.
+
+Subsequent VR headphone listening on QBJ3 confirmed that the basic environment
+and self-reflection effects are compelling. The tester did not find the 20 ms
+capture chunking objectionable for self reflections. A local dedicated-server
+relay with a muted microphone sender and VR listener confirmed that the default
+radio bandpass sounds clearly different from direct positional voice. These are
+subjective single-user results, not a broad microphone or performance survey.
+Additional radio hiss, squelch sounds and stronger distortion/compression are
+deferred; the default bandpass is the accepted scope for this pass.
