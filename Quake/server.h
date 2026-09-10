@@ -27,6 +27,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 
 #include "vrik_codec.h"
 #include "voice_protocol.h"
+#include "player_avatar.h"
 
 #define	NUM_SPAWN_PARMS		16
 
@@ -312,7 +313,10 @@ typedef struct client_s
 	qboolean		csqcactive;
 	qboolean		usingpmove;
 	qboolean		avatar_capable;
+	qboolean		avatar_custom_capable;
 	unsigned char		avatar_id;
+	char			avatar_custom_key[PLAYER_AVATAR_CUSTOM_KEY_MAX + 1];
+	char			avatar_custom_digest[PLAYER_AVATAR_CUSTOM_DIGEST_MAX + 1];
 	unsigned short		avatar_dirty_slots;
 	qboolean		vrik_capable;
 	unsigned char		vrik_protocol_version;

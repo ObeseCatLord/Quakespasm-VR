@@ -587,6 +587,17 @@ void R_VRIKResetSkinCaches (void)
 	memset (&r_vrik_rigcache, 0, sizeof(r_vrik_rigcache));
 }
 
+void R_VRIKInvalidateSkinCaches (void)
+{
+	int entitynum;
+	for (entitynum = 0; entitynum <= MAX_SCOREBOARD; ++entitynum)
+	{
+		r_vrik_skin_caches[entitynum].ready = false;
+		r_vrik_skin_caches[entitynum].surface = NULL;
+		r_vrik_skin_caches[entitynum].prop_surface = NULL;
+	}
+}
+
 void R_VRIKSkinCacheCommit (r_vrik_skincache_t *cache,
 	const aliashdr_t *surface)
 {

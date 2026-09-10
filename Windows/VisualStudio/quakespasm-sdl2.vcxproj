@@ -284,6 +284,7 @@ copy "$(SolutionDir)\..\static-release-files\*.*" "$(TargetDir)"</Command>
     <ClCompile Include="..\..\Quake\net_wipx.c" />
     <ClCompile Include="..\..\Quake\pl_win.c" />
     <ClCompile Include="..\..\Quake\player_avatar.c" />
+    <ClCompile Include="..\..\Quake\custom_avatar.c" />
     <ClCompile Include="..\..\Quake\pmove.c" />
     <ClCompile Include="..\..\Quake\pr_cmds.c" />
     <ClCompile Include="..\..\Quake\pr_edict.c" />
@@ -390,6 +391,7 @@ copy "$(SolutionDir)\..\static-release-files\*.*" "$(TargetDir)"</Command>
     <ClInclude Include="..\..\Quake\openvr.h" />
     <ClInclude Include="..\..\Quake\platform.h" />
     <ClInclude Include="..\..\Quake\player_avatar.h" />
+    <ClInclude Include="..\..\Quake\custom_avatar.h" />
     <ClInclude Include="..\..\Quake\progdefs.h" />
     <ClInclude Include="..\..\Quake\progs.h" />
     <ClInclude Include="..\..\Quake\protocol.h" />

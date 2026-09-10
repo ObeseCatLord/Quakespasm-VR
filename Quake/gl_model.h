@@ -509,6 +509,7 @@ typedef struct md5liveinfo_s
 	int				jointindex[MD5_VRIK_JOINT_COUNT];
 	qboolean			compatible;
 	qboolean			from_rerelease;
+	int				custom_avatar_id; //0 unless loaded from an immutable local package
 } md5liveinfo_t;
 
 typedef struct md5livesurface_s
@@ -692,6 +693,7 @@ int Mod_GetMD5LiveSurfaceCount (const md5liveinfo_t *info);
 qboolean Mod_GetMD5LiveSurface (const md5liveinfo_t *info, int surface,
 	md5livesurface_t *out);
 qmodel_t *Mod_GetRereleasePlayerMD5Model (void);
+qmodel_t *Mod_GetCustomAvatarModel (int id);
 qboolean Mod_GetRereleasePlayerMD5LiveData (md5liveinfo_t *out);
 /* Loads only a fixed allowlist from the signature-verified rerelease pack. */
 qmodel_t *Mod_GetRereleaseAvatarMD5Model (player_avatar_id_t avatar);

@@ -26,6 +26,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "vr.h"
 #include "r_vrik.h"
 #include "r_avatar.h"
+#include "custom_avatar.h"
 
 extern cvar_t r_drawflat, gl_overbright_models, gl_fullbrights, r_lerpmodels, r_lerpmove; //johnfitz
 extern cvar_t scr_fov, cl_gun_fovscale;
@@ -62,6 +63,29 @@ static qboolean shading = true; //johnfitz -- if false, disable vertex shading f
 static qboolean r_alias_batch_scope;
 static qboolean r_alias_glsl_batch_active;
 static qmodel_t *r_alias_glsl_batch_model;
+
+/* The held model's mesh is authored for the right hand.  Reflect it in model
+ * space after the entity pose but before its header offset, so that offset is
+ * reflected with the mesh too.  This deliberately keys on cl.viewent rather
+ * than a viewmodel/no-cull flag: weapon-wheel entries also use that path. */
+static qboolean R_ApplyLeftHandedViewmodelMirror (const entity_t *e,
+	GLint *savedfrontface)
+{
+	if (!vr_enabled.value || !VR_IsLeftHanded() || e != &cl.viewent)
+		return false;
+
+	glGetIntegerv (GL_FRONT_FACE, savedfrontface);
+	glFrontFace (*savedfrontface == GL_CW ? GL_CCW : GL_CW);
+	glScalef (1.0f, -1.0f, 1.0f);
+	return true;
+}
+
+static void R_RestoreLeftHandedViewmodelMirror (qboolean mirrored,
+	GLint savedfrontface)
+{
+	if (mirrored)
+		glFrontFace (savedfrontface);
+}
 
 //johnfitz -- struct for passing lerp information to drawing functions
 typedef struct {
@@ -1617,6 +1641,8 @@ static void R_DrawMD3Model (entity_t *e, qboolean cull, qboolean viewmodel)
 	int skinnum;
 	qboolean alphatest = false;
 	qboolean drawfog;
+	qboolean mirrored;
+	GLint savedfrontface = GL_CW;
 	float fovscale = 1.0f;
 
 	md3 = Mod_GetMD3Extradata (e->model);
@@ -1641,6 +1667,7 @@ static void R_DrawMD3Model (entity_t *e, qboolean cull, qboolean viewmodel)
 
 	glPushMatrix ();
 	R_RotateForEntity (lerpdata.origin, lerpdata.angles, e->scale);
+	mirrored = R_ApplyLeftHandedViewmodelMirror (e, &savedfrontface);
 	glTranslatef (md3->scale_origin[0], md3->scale_origin[1] * fovscale,
 		md3->scale_origin[2] * fovscale);
 	glScalef (md3->scale[0], md3->scale[1] * fovscale, md3->scale[2] * fovscale);
@@ -1770,6 +1797,7 @@ cleanup:
 	if (alphatest)
 		glDisable (GL_ALPHA_TEST);
 	glColor3f (1, 1, 1);
+	R_RestoreLeftHandedViewmodelMirror (mirrored, savedfrontface);
 	glPopMatrix ();
 }
 
@@ -2409,12 +2437,13 @@ typedef enum r_vrik_actual_path_status_e
 /* The Dog forepaw and the animal FBT contacts have an authored intermediate
  * joint which semantic retargeting intentionally skips.  Solve their actual
  * parent chain rather than translating a leaf away from that joint. */
-static r_vrik_actual_path_status_t R_VRIKRefineActualPath (const md5liveinfo_t *live,
+static r_vrik_actual_path_status_t R_VRIKRefineActualPathWithLengths (
+	const md5liveinfo_t *live,
 	float *palette, int root, int endpoint, const vec3_t target,
-	const float endpointbasis[12])
+	const float endpointbasis[12], qboolean bindlengths)
 {
 	int chain[8], count = 0, i, iteration;
-	vec3_t position[8], solved[8], direction, endpointtarget;
+	vec3_t position[8], bindposition[8], solved[8], direction, endpointtarget;
 	vec3_t seedside, relative, perpendicular, originaldirection, originalside;
 	float length[7], total = 0.0f, rootdistance, extension = 1.0f, intended[12];
 	qboolean collinear = false, clamped = false;
@@ -2438,11 +2467,16 @@ static r_vrik_actual_path_status_t R_VRIKRefineActualPath (const md5liveinfo_t *
 		chain[count - 1 - i] = swap;
 	}
 	for (i = 0; i < count; ++i)
+	{
 		R_VRIKMatrixOrigin (palette + chain[i] * 12, position[i]);
+		if (bindlengths)
+			R_VRIKMatrixOrigin (live->joints[chain[i]].bind, bindposition[i]);
+	}
 	VectorCopy (target, endpointtarget);
 	for (i = 0; i + 1 < count; ++i)
 	{
-		VectorSubtract (position[i + 1], position[i], direction);
+		VectorSubtract (bindlengths ? bindposition[i + 1] : position[i + 1],
+			bindlengths ? bindposition[i] : position[i], direction);
 		length[i] = VectorLength (direction);
 		if (length[i] < 0.001f)
 			return R_VRIK_ACTUAL_PATH_FAILED;
@@ -2580,9 +2614,9 @@ static r_vrik_actual_path_status_t R_VRIKRefineActualPath (const md5liveinfo_t *
 		R_VRIKRotateJointSubtreeToward (live, palette, chain[i], oldnext,
 			direction);
 	}
-	/* Rigid rotations preserve reachable segment lengths.  The explicit
-	 * bounded-extension case instead moves each child branch to the solved
-	 * point, so a distant endpoint is never detached from its interior chain. */
+	/* Rigid rotations preserve the incoming segment lengths.  Move each child
+	 * branch to its solved point when restoring authored Shambler lengths or
+	 * applying bounded extension, without detaching the endpoint from its chain. */
 	for (i = 1; i < count; ++i)
 	{
 		R_VRIKMatrixOrigin (palette + chain[i] * 12, position[i]);
@@ -2599,6 +2633,14 @@ static r_vrik_actual_path_status_t R_VRIKRefineActualPath (const md5liveinfo_t *
 	return clamped ? R_VRIK_ACTUAL_PATH_CLAMPED : R_VRIK_ACTUAL_PATH_REACHED;
 }
 
+static r_vrik_actual_path_status_t R_VRIKRefineActualPath (const md5liveinfo_t *live,
+	float *palette, int root, int endpoint, const vec3_t target,
+	const float endpointbasis[12])
+{
+	return R_VRIKRefineActualPathWithLengths (live, palette, root, endpoint,
+		target, endpointbasis, false);
+}
+
 /* A retargeted avatar needs the exact canonical wrist position, but its own
  * segment lengths and elbow plane.  This intentionally leaves the hand basis
  * produced by the retargeter intact; only the two-bone reach is refined. */
@@ -2607,6 +2649,8 @@ static r_vrik_actual_path_status_t R_VRIKRefineArmPosition (const md5liveinfo_t 
 	float poleoutward, float poleback, const r_avatar_profile_t *profile,
 	const float endpointbasis[12])
 {
+	int shoulderindex = live->jointindex[rightside ? MD5_VRIK_SHOULDER_R :
+		MD5_VRIK_SHOULDER_L];
 	int upperindex = live->jointindex[rightside ? MD5_VRIK_UPPERARM_R : MD5_VRIK_UPPERARM_L];
 	int lowerindex = live->jointindex[rightside ? MD5_VRIK_LOWERARM_R : MD5_VRIK_LOWERARM_L];
 	int handindex = live->jointindex[rightside ? MD5_VRIK_HAND_R : MD5_VRIK_HAND_L];
@@ -2616,17 +2660,38 @@ static r_vrik_actual_path_status_t R_VRIKRefineArmPosition (const md5liveinfo_t 
 	vec3_t oldupperdir, oldlowerdir, newupperdir, newlowerdir, pole, normal, bend;
 	float upperlength, lowerlength, distance, rawdistance, reach, stretch, solveupper,
 		solvelower, cosine, along, across;
+	qboolean trackedphysical = profile && r_vrik_pose_pending &&
+		(profile->id == PLAYER_AVATAR_FIEND || profile->id == PLAYER_AVATAR_SHAMBLER);
 
-	if (upperindex < 0 || lowerindex < 0 || handindex < 0 ||
-		!R_VRIKBuildAvatarArmBasis (live, palette, profile, lateral, forward, up))
+	if (upperindex < 0 || lowerindex < 0 || handindex < 0)
 		return R_VRIK_ACTUAL_PATH_FAILED;
-	if (profile && profile->actual_path_ik)
+	if (profile && (profile->actual_path_ik || trackedphysical))
 	{
-		r_vrik_actual_path_status_t status = R_VRIKRefineActualPath (live, palette,
-			upperindex, handindex, target,
-			endpointbasis ? endpointbasis : palette + handindex * 12);
+		int root = upperindex;
+		r_vrik_actual_path_status_t status;
+
+		/* The tracked Fiend/Shambler shoulder is a real physical link before
+		 * the semantic upper arm.  Validate that full four-joint path before any
+		 * generic body-frame work; its solver supplies its own bend frame. */
+		if (trackedphysical)
+		{
+			if (shoulderindex < 0 || upperindex < 0 || lowerindex < 0 ||
+				handindex < 0 || shoulderindex == upperindex ||
+				live->joints[upperindex].parent != shoulderindex ||
+				live->joints[lowerindex].parent != upperindex ||
+				live->joints[handindex].parent != lowerindex)
+				return R_VRIK_ACTUAL_PATH_FAILED;
+			root = shoulderindex;
+		}
+		status = R_VRIKRefineActualPathWithLengths (live, palette, root,
+			handindex, target, endpointbasis ? endpointbasis : palette + handindex * 12,
+			trackedphysical && profile->id == PLAYER_AVATAR_SHAMBLER);
 		if (status != R_VRIK_ACTUAL_PATH_FAILED)
 			return status;
+		/* The verified physical solver validates before mutation.  A tracked
+		 * shoulder-chain failure must not quietly fall back to the shorter arm. */
+		if (trackedphysical)
+			return R_VRIK_ACTUAL_PATH_FAILED;
 		/* Only Fiend's direct physical Upper->Lower->Hand topology may use
 		 * the analytic fallback.  A hidden/interposed Dog link is evidence that
 		 * the physical-chain repair failed, not permission to detach it. */
@@ -2634,6 +2699,8 @@ static r_vrik_actual_path_status_t R_VRIKRefineArmPosition (const md5liveinfo_t 
 			live->joints[handindex].parent != lowerindex)
 			return R_VRIK_ACTUAL_PATH_FAILED;
 	}
+	if (!R_VRIKBuildAvatarArmBasis (live, palette, profile, lateral, forward, up))
+		return R_VRIK_ACTUAL_PATH_FAILED;
 	upper = palette + upperindex * 12;
 	lower = palette + lowerindex * 12;
 	hand = palette + handindex * 12;
@@ -2930,18 +2997,15 @@ static qboolean R_VRIKBuildRotationTowardLimited (const vec3_t from,
 	return R_VRIKBuildRotationToward (a, intermediate, delta);
 }
 
-/* Rotate one hierarchy branch about a pivot which is deliberately outside
- * that branch (the target Hip for quadrupeds). */
-static qboolean R_VRIKRotateSubtreeAroundPivotToward (const md5liveinfo_t *live,
-	float *palette, int root, const vec3_t pivot, const vec3_t from,
-	const vec3_t to)
+/* Apply a prevalidated rigid turn about a pivot deliberately outside the
+ * branch (the target Hip for quadrupeds). */
+static void R_VRIKTransformSubtreeAroundPivot (const md5liveinfo_t *live,
+	float *palette, int root, const vec3_t pivot, const float delta[12])
 {
-	float delta[12];
 	int joint;
 
-	if (!live || !palette || root < 0 || root >= live->numbones ||
-		!R_VRIKBuildRotationToward (from, to, delta))
-		return false;
+	if (!live || !palette || !delta || root < 0 || root >= live->numbones)
+		return;
 	for (joint = 0; joint < live->numbones; joint++)
 		if (R_VRIKJointDescendsFrom (live, joint, root))
 		{
@@ -2960,6 +3024,20 @@ static qboolean R_VRIKRotateSubtreeAroundPivotToward (const md5liveinfo_t *live,
 			R_VRIKSetMatrixOrigin (transformed, neworigin);
 			memcpy (palette + joint * 12, transformed, sizeof (transformed));
 		}
+}
+
+/* Rotate one hierarchy branch about a pivot which is deliberately outside
+ * that branch (the target Hip for quadrupeds). */
+static qboolean R_VRIKRotateSubtreeAroundPivotToward (const md5liveinfo_t *live,
+	float *palette, int root, const vec3_t pivot, const vec3_t from,
+	const vec3_t to)
+{
+	float delta[12];
+
+	if (!live || !palette || root < 0 || root >= live->numbones ||
+		!R_VRIKBuildRotationToward (from, to, delta))
+		return false;
+	R_VRIKTransformSubtreeAroundPivot (live, palette, root, pivot, delta);
 	return true;
 }
 
@@ -3154,13 +3232,13 @@ static qboolean R_VRIKBuildDesktopWeaponSocket (const r_avatar_rig_t *rig,
 	 * source of the sideways desktop weapon. */
 	if (rig->profile->basis_policy == R_AVATAR_BASIS_FEET_UP_HEAD_FORWARD)
 	{
-		/* Animal presentation maps canonical forward to bind column 2 and
-		 * canonical up to column 0.  The humanoid ordering is the reverse. */
-		origin[0] = hip[0] + height * (rig->profile->desktop_weapon_forward *
+		/* The shared animal bind frame has up in column 0 and backward in
+		 * column 2, so the visual forward waist offset uses its negation. */
+		origin[0] = hip[0] + height * (-rig->profile->desktop_weapon_forward *
 			bindbasis[2] + rig->profile->desktop_weapon_up * bindbasis[0]);
-		origin[1] = hip[1] + height * (rig->profile->desktop_weapon_forward *
+		origin[1] = hip[1] + height * (-rig->profile->desktop_weapon_forward *
 			bindbasis[6] + rig->profile->desktop_weapon_up * bindbasis[4]);
-		origin[2] = hip[2] + height * (rig->profile->desktop_weapon_forward *
+		origin[2] = hip[2] + height * (-rig->profile->desktop_weapon_forward *
 			bindbasis[10] + rig->profile->desktop_weapon_up * bindbasis[8]);
 	}
 	else
@@ -3509,6 +3587,129 @@ static void R_VRIKRestoreMappedHipBranches (const md5liveinfo_t *live,
 			snapshot->transform[i]);
 }
 
+typedef struct r_vrik_upper_endpoint_snapshot_s
+{
+	int joint[3];
+	float transform[3][12];
+} r_vrik_upper_endpoint_snapshot_t;
+
+/* Tracked Dog/Fiend keeps the Hip and lower branches authoritative. Rebuild
+ * only the declared upper branch under the restored Hip, align its full body
+ * heading to the solved canonical frame, then apply the profile hunch pitch.
+ * The independently retargeted head/wrists retain their bases for final IK. */
+static void R_VRIKRepairTrackedAnimalUpperBody (const md5liveinfo_t *canonical,
+	const r_avatar_rig_t *rig, const r_avatar_presentation_context_t *context,
+	const float *sourcepalette, float *palette)
+{
+	const r_avatar_profile_t *profile;
+	static const int endpointsemantics[3] = {
+		MD5_VRIK_HEAD, MD5_VRIK_HAND_L, MD5_VRIK_HAND_R
+	};
+	r_vrik_upper_endpoint_snapshot_t endpoints;
+	float targetbasis[12], targetbasisinverse[12], solvedframe[12];
+	float desired[12], bodyturn[12], pitch[12];
+	vec3_t hip, bindhip, current;
+	vec3_t sourceright, sourceforward, sourceup;
+	vec3_t targetright, targetforward, targetup;
+	int hipjoint, rootsemantic, root;
+	int index, joint;
+
+	if (!r_vrik_pose_pending || !canonical || !rig || !rig->valid ||
+		!rig->live || !context || !sourcepalette || !palette ||
+		!(profile = rig->profile) ||
+		(profile->id != PLAYER_AVATAR_DOG && profile->id != PLAYER_AVATAR_FIEND) ||
+		profile->posture_policy != R_AVATAR_POSTURE_UPRIGHT ||
+		profile->posture_degrees <= 0.0f)
+		return;
+	rootsemantic = profile->desktop_upperbody_bind_root;
+	if (rootsemantic <= 0 || rootsemantic >= MD5_VRIK_JOINT_COUNT)
+		return;
+	hipjoint = rig->joint[MD5_VRIK_HIP];
+	root = rig->joint[rootsemantic];
+	if (hipjoint < 0 || root < 0 ||
+		!R_VRIKJointDescendsFrom (rig->live, root, hipjoint))
+		return;
+	/* Capture every tracked upper endpoint before any branch write.  No fallible
+	 * operation follows the precomputed turn, so this either changes the full
+	 * branch or leaves it untouched. */
+	for (index = 0; index < (int)(sizeof (endpointsemantics) /
+		sizeof (endpointsemantics[0])); index++)
+	{
+		joint = rig->joint[endpointsemantics[index]];
+		if (joint < 0 || !R_VRIKJointDescendsFrom (rig->live, joint, root))
+			return;
+		endpoints.joint[index] = joint;
+		memcpy (endpoints.transform[index], palette + joint * 12,
+			sizeof (endpoints.transform[index]));
+	}
+	if (!R_VRIKBuildBodyBasis (canonical, sourcepalette, sourceright,
+		sourceforward, sourceup) || !R_AvatarCanonicalToTargetBasis (rig,
+		targetbasis))
+		return;
+	/* Source body axes are right/forward/up.  Target animal bind columns are
+	 * up/left/back, so compose the matching complete frames before pitching. */
+	targetright[0] = context->inverse[0] * sourceright[0] +
+		context->inverse[1] * sourceright[1] + context->inverse[2] * sourceright[2];
+	targetright[1] = context->inverse[4] * sourceright[0] +
+		context->inverse[5] * sourceright[1] + context->inverse[6] * sourceright[2];
+	targetright[2] = context->inverse[8] * sourceright[0] +
+		context->inverse[9] * sourceright[1] + context->inverse[10] * sourceright[2];
+	targetforward[0] = context->inverse[0] * sourceforward[0] +
+		context->inverse[1] * sourceforward[1] + context->inverse[2] * sourceforward[2];
+	targetforward[1] = context->inverse[4] * sourceforward[0] +
+		context->inverse[5] * sourceforward[1] + context->inverse[6] * sourceforward[2];
+	targetforward[2] = context->inverse[8] * sourceforward[0] +
+		context->inverse[9] * sourceforward[1] + context->inverse[10] * sourceforward[2];
+	targetup[0] = context->inverse[0] * sourceup[0] +
+		context->inverse[1] * sourceup[1] + context->inverse[2] * sourceup[2];
+	targetup[1] = context->inverse[4] * sourceup[0] +
+		context->inverse[5] * sourceup[1] + context->inverse[6] * sourceup[2];
+	targetup[2] = context->inverse[8] * sourceup[0] +
+		context->inverse[9] * sourceup[1] + context->inverse[10] * sourceup[2];
+	if (!VectorNormalize (targetright) || !VectorNormalize (targetforward) ||
+		!VectorNormalize (targetup))
+		return;
+	memset (solvedframe, 0, sizeof (solvedframe));
+	solvedframe[0] = targetup[0]; solvedframe[4] = targetup[1];
+	solvedframe[8] = targetup[2];
+	solvedframe[1] = -targetright[0]; solvedframe[5] = -targetright[1];
+	solvedframe[9] = -targetright[2];
+	solvedframe[2] = -targetforward[0]; solvedframe[6] = -targetforward[1];
+	solvedframe[10] = -targetforward[2];
+	R_VRIKMatrixInverseRigid (targetbasis, targetbasisinverse);
+	R_VRIKMatrixMultiply (solvedframe, targetbasisinverse, bodyturn);
+	R_VRIKMatrixOrigin (palette + hipjoint * 12, hip);
+	R_VRIKMatrixOrigin (rig->live->joints[hipjoint].bind, bindhip);
+	/* The solved source body frame already incorporates the tracked Hip.  Place
+	 * bind-native upper geometry directly around that current Hip, rather than
+	 * composing the target Hip rotation and then applying the solved frame a
+	 * second time. */
+	bodyturn[3] = hip[0] - (bodyturn[0] * bindhip[0] +
+		bodyturn[1] * bindhip[1] + bodyturn[2] * bindhip[2]);
+	bodyturn[7] = hip[1] - (bodyturn[4] * bindhip[0] +
+		bodyturn[5] * bindhip[1] + bodyturn[6] * bindhip[2]);
+	bodyturn[11] = hip[2] - (bodyturn[8] * bindhip[0] +
+		bodyturn[9] * bindhip[1] + bodyturn[10] * bindhip[2]);
+	R_VRIKMatrixMultiply (bodyturn, rig->live->joints[root].bind, desired);
+	R_VRIKMatrixOrigin (desired, current);
+	VectorSubtract (current, hip, current);
+	if (!R_VRIKBuildRotationTowardLimited (current, targetup,
+		profile->posture_degrees, pitch))
+		return;
+	for (joint = 0; joint < rig->live->numbones; ++joint)
+		if (joint == root || R_VRIKJointDescendsFrom (rig->live, joint, root))
+			R_VRIKMatrixMultiply (bodyturn, rig->live->joints[joint].bind,
+				palette + joint * 12);
+	R_VRIKTransformSubtreeAroundPivot (rig->live, palette, root, hip, pitch);
+	for (index = 0; index < 3; ++index)
+	{
+		R_VRIKMatrixOrigin (palette + endpoints.joint[index] * 12, current);
+		R_VRIKSetMatrixOrigin (endpoints.transform[index], current);
+		R_VRIKSetJointSubtreeTransform (rig->live, palette, endpoints.joint[index],
+			endpoints.transform[index]);
+	}
+}
+
 static unsigned char R_VRIKRefineAvatarActualLowerPaths (const md5liveinfo_t *live,
 	const r_avatar_profile_t *profile, float *palette,
 	const r_vrik_lowerbody_model_targets_t *targets, unsigned char *clampedmask)
@@ -3633,6 +3834,63 @@ static r_vrik_actual_path_status_t R_VRIKProjectPostureFootContact (
 }
 #endif
 
+/* Retargeted animation can put a tripod knee on the inward solution even
+ * without any foot trackers. Correct only that bend, using the existing
+ * outward-pole solver and the current foot socket, not invented tracker data.
+ * Run after real lower targets so those remain authoritative. */
+static void R_VRIKRepairAvatarInwardLegs (const md5liveinfo_t *live,
+	const r_avatar_profile_t *profile, float *palette)
+{
+	r_vrik_lowerbody_model_targets_t targets;
+	vec3_t roots[2], lateral, knee, foot, toward, bend;
+	int side, joint;
+
+	if (!profile || !profile->mirror_outer_leg_poles)
+		return;
+	for (side = 0; side < 2; ++side)
+	{
+		joint = live->jointindex[side ? MD5_VRIK_UPPERLEG_R : MD5_VRIK_UPPERLEG_L];
+		if (joint < 0 || joint >= live->numbones)
+			return;
+		R_VRIKMatrixOrigin (palette + joint * 12, roots[side]);
+	}
+	VectorSubtract (roots[1], roots[0], lateral);
+	if (!VectorNormalize (lateral))
+		return;
+	memset (&targets, 0, sizeof (targets));
+	for (side = 0; side < 2; ++side)
+	{
+		int lower = live->jointindex[side ? MD5_VRIK_LOWERLEG_R : MD5_VRIK_LOWERLEG_L];
+		int endpoint = live->jointindex[side ? MD5_VRIK_FOOT_R : MD5_VRIK_FOOT_L];
+		int role = side ? R_VRIK_LOWER_RIGHT_FOOT : R_VRIK_LOWER_LEFT_FOOT;
+		unsigned char bit = R_VRIK_LOWER_BIT (role);
+		float outward;
+
+		if (lower < 0 || endpoint < 0 || lower >= live->numbones ||
+			endpoint >= live->numbones)
+			continue;
+		R_VRIKMatrixOrigin (palette + lower * 12, knee);
+		R_VRIKMatrixOrigin (palette + endpoint * 12, foot);
+		VectorSubtract (foot, roots[side], toward);
+		if (!VectorNormalize (toward))
+			continue;
+		VectorSubtract (knee, roots[side], bend);
+		VectorMA (bend, -DotProduct (bend, toward), toward, bend);
+		outward = DotProduct (bend, lateral) * (side ? 1.0f : -1.0f);
+		if (!isfinite (outward) || outward >= -0.0001f)
+			continue;
+		targets.usable_mask |= bit;
+		targets.orientation_mask |= bit;
+		targets.confidence[role] = 1.0f;
+		VectorCopy (foot, targets.position[role]);
+		memcpy (targets.orientation[role], palette + endpoint * 12,
+			sizeof (targets.orientation[role]));
+	}
+	if (targets.usable_mask)
+		R_VRIKApplyLowerBodyWithPolePolicy (live, palette, &targets,
+			R_VRIK_LOWERBODY_POLES_MIRRORED_PAIR);
+}
+
 static qboolean R_VRIKRefineAvatarPaletteImpl (const md5liveinfo_t *canonical,
 	const r_avatar_rig_t *targetrig,
 	const r_avatar_presentation_context_t *context,
@@ -3646,6 +3904,8 @@ static qboolean R_VRIKRefineAvatarPaletteImpl (const md5liveinfo_t *canonical,
 	qboolean have_lower = false;
 	unsigned char suppliedlower = 0;
 	r_vrik_hip_branch_snapshot_t hipbranches;
+	float upperrollback[MAX_MD5_JOINTS * 12];
+	qboolean trackedanimal, uppervalid = true;
 	int semantic, role;
 
 	if (!canonical || !targetrig || !targetrig->valid || !context || !sourcepalette ||
@@ -3738,6 +3998,17 @@ static qboolean R_VRIKRefineAvatarPaletteImpl (const md5liveinfo_t *canonical,
 		}
 		R_VRIKRestoreMappedHipBranches (&target, targetpalette, &hipbranches);
 	}
+	trackedanimal = r_vrik_pose_pending &&
+		(targetrig->profile->id == PLAYER_AVATAR_DOG ||
+		 targetrig->profile->id == PLAYER_AVATAR_FIEND);
+	/* Torso reconstruction and both hand solves form one optional transaction.
+	 * Snapshot after tracked Hip restoration, so a failed arm cannot discard
+	 * that authority or publish half of the new upper-body pose. */
+	if (trackedanimal)
+		memcpy (upperrollback, targetpalette,
+			(size_t)target.numbones * 12 * sizeof (float));
+	R_VRIKRepairTrackedAnimalUpperBody (canonical, targetrig, context,
+		sourcepalette, targetpalette);
 	if (R_VRIKAvatarRefinesUpperEndpoints (r_vrik_pose_pending,
 		targetrig->profile))
 	{
@@ -3753,12 +4024,19 @@ static qboolean R_VRIKRefineAvatarPaletteImpl (const md5liveinfo_t *canonical,
 			R_VRIKMatrixOrigin (sourcepalette + sourcejoint * 12, sourceorigin);
 			if (!R_VRIKAvatarTargetPoint (context, sourceorigin,
 				targetorigin))
+			{
+				uppervalid = false;
 				continue;
+			}
 			if (semantic == MD5_VRIK_HAND_L || semantic == MD5_VRIK_HAND_R)
-				R_VRIKRefineArmPosition (&target, targetpalette,
+			{
+				if (R_VRIKRefineArmPosition (&target, targetpalette,
 					semantic == MD5_VRIK_HAND_R, targetorigin,
 					targetrig->profile->arm_pole_outward,
-					targetrig->profile->arm_pole_back, targetrig->profile, NULL);
+					targetrig->profile->arm_pole_back, targetrig->profile, NULL) ==
+					R_VRIK_ACTUAL_PATH_FAILED)
+					uppervalid = false;
+			}
 			else if (semantic == MD5_VRIK_HEAD)
 			{
 				vec3_t currentorigin, delta;
@@ -3769,6 +4047,12 @@ static qboolean R_VRIKRefineAvatarPaletteImpl (const md5liveinfo_t *canonical,
 			}
 		}
 	}
+	/* CLAMPED is a valid bounded-reach result, not a failed solve. On genuine
+	 * failure retain this avatar's pre-repair pose rather than substituting
+	 * Ranger. The independent lower-body pass still runs below. */
+	if (trackedanimal && !uppervalid)
+		memcpy (targetpalette, upperrollback,
+			(size_t)target.numbones * 12 * sizeof (float));
 	/* The waist weapon pose is a desktop cosmetic.  If an unusual animation
 	 * frame cannot reach it, keep the repaired body and attach the prop to the
 	 * ordinary dominant hand instead of rolling Dog/Fiend back to the raw,
@@ -3851,6 +4135,7 @@ static qboolean R_VRIKRefineAvatarPaletteImpl (const md5liveinfo_t *canonical,
 				&modeltargets, R_VRIKAvatarLowerPolePolicy (targetrig->profile));
 		}
 	}
+	R_VRIKRepairAvatarInwardLegs (&target, targetrig->profile, targetpalette);
 	return true;
 }
 
@@ -4764,6 +5049,17 @@ static void R_VRIKComputeNormals (md5vertex_t *vertices, int numverts,
 			vertices[i].normal[2] = 1;
 }
 
+static const r_avatar_profile_t *R_PlayerAvatarProfile (int id)
+{
+	const custom_avatar_t *custom = CustomAvatar_Get(id);
+	return custom ? &custom->profile : R_AvatarProfileForId(id);
+}
+
+static qboolean R_PlayerAvatarModelMatches (int id, const md5liveinfo_t *live)
+{
+	return CustomAvatar_Get(id) ? live->custom_avatar_id == id : live->from_rerelease;
+}
+
 static qboolean R_VRIKPrepareSkin (qmodel_t *model)
 {
 	md5liveinfo_t canonical, target;
@@ -4794,11 +5090,12 @@ static qboolean R_VRIKPrepareSkin (qmodel_t *model)
 		r_vrik_skin_active = true;
 		return true;
 	}
-	profile = R_AvatarProfileForId (r_vrik_avatar_id);
+	profile = R_PlayerAvatarProfile (r_vrik_avatar_id);
 	if (!profile || !r_vrik_canonical_model ||
 		!Mod_GetRereleasePlayerMD5LiveData (&canonical) ||
 		!canonical.compatible || !Mod_GetMD5LiveData (model, &target) ||
-		!target.from_rerelease || Mod_GetMD5LiveSurfaceCount (&canonical) != 1 ||
+		!R_PlayerAvatarModelMatches(r_vrik_avatar_id, &target) ||
+		Mod_GetMD5LiveSurfaceCount (&canonical) != 1 ||
 		Mod_GetMD5LiveSurfaceCount (&target) != 1 ||
 		!Mod_GetMD5LiveSurface (&canonical, 0, &canonicalsurface) ||
 		!Mod_GetMD5LiveSurface (&target, 0, &surface) ||
@@ -5036,7 +5333,7 @@ static qboolean R_VRIKSubstitutePlayer (entity_t *entity, entity_t *replacement)
 		return false;
 	entitynum = (int)(entity - cl.entities);
 	avatar = cl.avatar_ids[entitynum - 1];
-	if (!PlayerAvatar_IsValidId (avatar))
+	if (!R_PlayerAvatarProfile (avatar))
 		avatar = PLAYER_AVATAR_RANGER;
 	tracked = R_VRIKSampleEntityPose (entity, &pose);
 	if (!R_VRIKShouldSubstituteAvatar ((player_avatar_id_t)avatar, tracked,
@@ -5059,7 +5356,8 @@ static qboolean R_VRIKSubstitutePlayer (entity_t *entity, entity_t *replacement)
 		r_vrik_skin_pending = false;
 		return true;
 	}
-	model = Mod_GetRereleaseAvatarMD5Model ((player_avatar_id_t)avatar);
+	model = CustomAvatar_Get(avatar) ? Mod_GetCustomAvatarModel(avatar) :
+		Mod_GetRereleaseAvatarMD5Model ((player_avatar_id_t)avatar);
 	if (!model && avatar != PLAYER_AVATAR_RANGER)
 	{
 		avatar = PLAYER_AVATAR_RANGER;
@@ -5077,9 +5375,9 @@ static qboolean R_VRIKSubstitutePlayer (entity_t *entity, entity_t *replacement)
 		!R_AvatarResolveRig (R_AvatarProfileForId (PLAYER_AVATAR_RANGER),
 			&canonicallive, &canonicalrig))
 		return false;
-	profile = R_AvatarProfileForId (avatar);
+	profile = R_PlayerAvatarProfile (avatar);
 	if (!profile || !Mod_GetMD5LiveData (model, &targetlive) ||
-		!targetlive.from_rerelease ||
+		!R_PlayerAvatarModelMatches(avatar, &targetlive) ||
 		!R_AvatarResolveRig (profile, &targetlive, &targetrig))
 	{
 		/* A bad/partial selected mesh must never fall through to native monster
@@ -5108,6 +5406,8 @@ static qboolean R_VRIKSubstitutePlayer (entity_t *entity, entity_t *replacement)
 	 * vertices arrive through the CPU cache, so native monster AI frames must
 	 * never influence player locomotion. */
 	replacement->frame = 0;
+	if (CustomAvatar_Get(avatar))
+		replacement->skinnum = 0;
 	canonicalentity = *entity;
 	canonicalentity.model = r_vrik_canonical_model;
 	canonicalentity.frame = R_VRIKReplacementFrame (entity,
@@ -5556,6 +5856,8 @@ static void R_DrawMD5Model (entity_t *e, qboolean cull, qboolean viewmodel)
 	int skinnum, anim;
 	qboolean alphatest = false;
 	qboolean drawfog;
+	qboolean mirrored;
+	GLint savedfrontface = GL_CW;
 	float fovscale = 1.0f;
 
 	md5 = Mod_GetMD5Extradata (e->model);
@@ -5585,6 +5887,7 @@ static void R_DrawMD5Model (entity_t *e, qboolean cull, qboolean viewmodel)
 		fovscale = tan(scr_fov.value * (0.5f * M_PI / 180.f));
 	glPushMatrix ();
 	R_RotateForEntity (lerpdata.origin, lerpdata.angles, e->scale);
+	mirrored = R_ApplyLeftHandedViewmodelMirror (e, &savedfrontface);
 	glTranslatef (md5->scale_origin[0], md5->scale_origin[1] * fovscale,
 		md5->scale_origin[2] * fovscale);
 	glScalef (md5->scale[0], md5->scale[1] * fovscale, md5->scale[2] * fovscale);
@@ -5719,6 +6022,7 @@ cleanup:
 	if (alphatest)
 		glDisable (GL_ALPHA_TEST);
 	glColor3f (1, 1, 1);
+	R_RestoreLeftHandedViewmodelMirror (mirrored, savedfrontface);
 	glPopMatrix ();
 }
 
@@ -6293,6 +6597,8 @@ void R_DrawAliasModel_NoCull (entity_t *e)
 	int	anim, skinnum;
 	gltexture_t	*tx, *fb;
 	lerpdata_t	lerpdata;
+	qboolean	mirrored;
+	GLint		savedfrontface = GL_CW;
 
 	if (!e || !e->model)
 		return;
@@ -6316,6 +6622,7 @@ void R_DrawAliasModel_NoCull (entity_t *e)
 
 	glPushMatrix ();
 	R_RotateForEntity (lerpdata.origin, lerpdata.angles, e->scale);
+	mirrored = R_ApplyLeftHandedViewmodelMirror (e, &savedfrontface);
 	glTranslatef (paliashdr->scale_origin[0], paliashdr->scale_origin[1], paliashdr->scale_origin[2]);
 	glScalef (paliashdr->scale[0], paliashdr->scale[1], paliashdr->scale[2]);
 
@@ -6367,6 +6674,7 @@ cleanup_nocull:
 	glDepthMask(GL_TRUE);
 	glDisable(GL_BLEND);
 	glColor3f(1,1,1);
+	R_RestoreLeftHandedViewmodelMirror (mirrored, savedfrontface);
 	glPopMatrix ();
 }
 
@@ -7191,13 +7499,13 @@ qboolean R_VRIKDesktopWeaponSocketForTest (int avatar, qboolean tracked)
 		bindheight = VectorLength (bindhead);
 		R_VRIKMatrixOrigin (palette, hip);
 		expectedtarget[0] = hip[0] + bindheight *
-			(localprofile.desktop_weapon_forward * bindbasis[2] +
+			(-localprofile.desktop_weapon_forward * bindbasis[2] +
 			localprofile.desktop_weapon_up * bindbasis[0]);
 		expectedtarget[1] = hip[1] + bindheight *
-			(localprofile.desktop_weapon_forward * bindbasis[6] +
+			(-localprofile.desktop_weapon_forward * bindbasis[6] +
 			localprofile.desktop_weapon_up * bindbasis[4]);
 		expectedtarget[2] = hip[2] + bindheight *
-			(localprofile.desktop_weapon_forward * bindbasis[10] +
+			(-localprofile.desktop_weapon_forward * bindbasis[10] +
 			localprofile.desktop_weapon_up * bindbasis[8]);
 		R_AvatarPresentationPoint (&context, expectedtarget, expectedorigin);
 		if (VectorLength ((vec3_t){socket[3] - expectedorigin[0],
@@ -8207,7 +8515,44 @@ qboolean R_VRIKShamblerDesktopArmRepairForTest (void)
 	R_VRIKRefineAvatarPalette (&canonical, &rig, &context, sourcepalette, tracked,
 		NULL, NULL);
 	r_vrik_pose_pending = pending;
-	return !memcmp (tracked, raw, sizeof (tracked));
+	/* Tracked Shambler now uses its real shoulder chains, but it must retain
+	 * the retargeted wrist bases while the physical path moves its arm joints. */
+	if (!memcmp (tracked, raw, sizeof (tracked)))
+		return false;
+	for (joint = 0; joint < 12; ++joint)
+		if ((joint % 4) != 3 &&
+			(fabsf (tracked[4 * 12 + joint] - raw[4 * 12 + joint]) > 0.001f ||
+			 fabsf (tracked[9 * 12 + joint] - raw[9 * 12 + joint]) > 0.001f))
+			return false;
+	/* The live solver must restore authored morphology on both asymmetric raw
+	 * inputs, not merely move the wrists while retaining shortened segments. */
+	for (semantic = 0; semantic < 2; ++semantic)
+	{
+		int shoulder = semantic ? 6 : 1;
+		for (joint = 0; joint < 3; ++joint)
+		{
+			R_VRIKMatrixOrigin (tracked + (shoulder + joint) * 12, a);
+			R_VRIKMatrixOrigin (tracked + (shoulder + joint + 1) * 12, b);
+			VectorSubtract (b, a, a);
+			actual = VectorLength (a);
+			R_VRIKMatrixOrigin (joints[shoulder + joint].bind, a);
+			R_VRIKMatrixOrigin (joints[shoulder + joint + 1].bind, b);
+			VectorSubtract (b, a, a);
+			if (fabsf (actual - VectorLength (a)) > 0.001f)
+				return false;
+		}
+		R_VRIKMatrixOrigin (tracked + shoulder * 12, a);
+		R_VRIKMatrixOrigin (raw + shoulder * 12, b);
+		VectorSubtract (b, a, a);
+		if (VectorLength (a) > 0.001f)
+			return false;
+	}
+	R_VRIKMatrixInverseRigid (tracked + 4 * 12, inverse);
+	R_VRIKMatrixMultiply (inverse, tracked + 5 * 12, childlocal);
+	for (joint = 0; joint < 12; ++joint)
+		if (fabsf (childlocal[joint] - rawchildlocal[joint]) > 0.001f)
+			return false;
+	return true;
 }
 
 qboolean R_VRIKAvatarUprightFootContactsForTest (void)

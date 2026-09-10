@@ -208,6 +208,7 @@ OBJS = strlcat.obj &
 	cl_input.obj &
 	cl_main.obj &
 	player_avatar.obj &
+	custom_avatar.obj &
 	cl_parse.obj &
 	cl_tent.obj &
 	console.obj &

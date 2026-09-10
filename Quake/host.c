@@ -986,6 +986,9 @@ void SV_DropClient (qboolean crash)
 	host_client->knowntoqc = false;
 	host_client->name[0] = 0;
 	host_client->old_frags = -999999;
+	/* Drop the complete cosmetic descriptor for capable observers now, rather
+	 * than waiting for this physical slot to be reused. */
+	SV_BroadcastAvatarSlot(dropped_slot, PLAYER_AVATAR_RANGER);
 	net_activeconnections--;
 	SV_ResetTransientClientSlot(dropped_slot);
 	SV_CoopSharedResetClientSlot(dropped_slot);

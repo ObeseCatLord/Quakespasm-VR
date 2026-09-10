@@ -18,6 +18,9 @@ weapon calibration.
 - Support for the 2021 rerelease models and automatic rerelease discovery.
 - An installed-mod browser and downloadable add-on catalogue.
 - Networked VRIK so you can see other people wave at youy
+- Drop-in cosmetic player-model packages, selected in Multiplayer > Setup and
+  synchronized by package identity. See the [custom player-model specification](player_models/README.md)
+  for installation, rig requirements, and compatibility limits.
 
 ## Building from source
 
@@ -131,6 +134,14 @@ console `bind` command. Mods may replace or extend actions through
 
 These are the default OpenVR actions. Physical button names can vary between
 controller families and SteamVR binding profiles.
+
+Enable **Options > VR Settings > Left-handed Mode** (`vr_lefthanded 1`) to
+swap the weapon hand and off-hand. The controls below swap left/right: your
+left hand holds the mirrored weapon, fires, turns, and points at menus; your
+right hand moves and jumps. The setting is saved. Release held buttons and
+center the sticks after switching. Existing weapon/muzzle calibrations are
+mirrored automatically; the `vradjust` commands work with either hand without
+requiring separate offset files.
 
 | Input | Action |
 | --- | --- |
