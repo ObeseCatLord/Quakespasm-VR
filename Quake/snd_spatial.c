@@ -11,7 +11,34 @@ static cvar_t snd_hrtf = {"snd_hrtf", "1", CVAR_ARCHIVE};
 static cvar_t snd_spatial_weapons = {"snd_spatial_weapons", "1", CVAR_ARCHIVE};
 static sa_source_t sources[MAX_CHANNELS];
 static sfx_t *bound[MAX_CHANNELS];
-static sa_settings_t settings = {1, 0, 0.45f, 768};
+static sa_settings_t settings = {.hrtf = 1, .radio_gain = 0.45f, .voice_distance = 768};
+static cvar_t voice_radio_filter = {"voice_radio_filter", "1", CVAR_ARCHIVE};
+static cvar_t voice_radio_compression = {"voice_radio_compression", "0", CVAR_ARCHIVE};
+static cvar_t voice_radio_drive = {"voice_radio_drive", "0", CVAR_ARCHIVE};
+static cvar_t snd_occlusion = {"snd_occlusion", "1", CVAR_ARCHIVE};
+static double occlusion_due[MAX_CHANNELS + MAX_SCOREBOARD];
+static float occlusion_values[MAX_CHANNELS + MAX_SCOREBOARD];
+static int occlusion_budget, occlusion_cursor;
+static float Spatial_Obstruction(int index, const float *origin, qboolean enabled)
+{
+    trace_t trace;
+    vec3_t start, end;
+    if (!enabled || !snd_occlusion.value || !cl.worldmodel) return 0;
+    if (realtime < occlusion_due[index] && occlusion_due[index] < realtime + 1)
+        return occlusion_values[index];
+    if (index < MAX_CHANNELS) {
+        if (occlusion_budget <= 0) return occlusion_values[index];
+        --occlusion_budget;
+    }
+    memset(&trace, 0, sizeof(trace));
+    trace.fraction = 1; trace.allsolid = true;
+    VectorCopy(listener_origin, start); VectorCopy(origin, end);
+    SV_RecursiveHullCheck(&cl.worldmodel->hulls[0], cl.worldmodel->hulls[0].firstclipnode,
+        0, 1, start, end, &trace);
+    occlusion_values[index] = !trace.startsolid && !trace.allsolid && trace.fraction < 1;
+    occlusion_due[index] = realtime + 0.075;
+    return occlusion_values[index];
+}
 static struct { sfx_t *sfx; sa_sample_t sample; } samples[1024];
 static int num_samples;
 static SDL_AudioStream *music_converter;
@@ -59,6 +86,10 @@ static void Spatial_Status_f(void)
 void Spatial_Register(void)
 {
     Cvar_RegisterVariable(&snd_hrtf); Cvar_RegisterVariable(&snd_spatial_weapons);
+    Cvar_RegisterVariable(&voice_radio_filter);
+    Cvar_RegisterVariable(&voice_radio_compression);
+    Cvar_RegisterVariable(&voice_radio_drive);
+    Cvar_RegisterVariable(&snd_occlusion);
     Cmd_AddCommand("snd_spatial_status", Spatial_Status_f);
     Cmd_AddCommand("snd_spatial_probe", Spatial_Probe_f);
 }
@@ -90,6 +121,8 @@ void Spatial_Reset(void)
     memset(sources, 0, sizeof(sources)); memset(bound, 0, sizeof(bound));
     SDL_UnlockAudio();
     paintedtime = soundtime = s_rawend = 0;
+    memset(occlusion_due, 0, sizeof(occlusion_due));
+    memset(occlusion_values, 0, sizeof(occlusion_values));
 }
 void Spatial_ClearMusic(void)
 {
@@ -141,6 +174,7 @@ void Spatial_Start(int channel, sfx_t *sfx, int offset)
         c->sample = &samples[i].sample; c->active = 1; break;
     }
     c->offset = offset;
+    occlusion_due[channel] = 0; occlusion_values[channel] = 0;
     /* Position/gain are published together by Spatial_Update. */
 }
 void Spatial_Stop(int channel)
@@ -179,12 +213,18 @@ void Spatial_Listener(const float *origin, const float *forward, const float *ri
 }
 void Spatial_Update(void)
 {
-    int i;
+    int i, n;
     if (!renderer) return;
     Spatial_PumpMusic();
+    occlusion_budget = 64; /* bounded world traces per game frame */
     settings.hrtf = snd_hrtf.value != 0;
+    settings.radio_filter = voice_radio_filter.value;
+    settings.radio_compression = voice_radio_compression.value;
+    settings.radio_drive = voice_radio_drive.value;
+    settings.occlusion = snd_occlusion.value;
     SA_SetSettings(renderer, &settings);
-    for (i = 0; i < total_channels; ++i) {
+    for (n = 0; n < total_channels; ++n) {
+        i = (n + occlusion_cursor) % total_channels;
         channel_t *ch = &snd_channels[i];
         sa_source_t *c = &sources[i];
         if (!ch->sfx) { if (c->active) Spatial_Stop(i); continue; }
@@ -201,8 +241,10 @@ void Spatial_Update(void)
             VectorCopy(c->origin, ch->origin);
             c->position_valid = 1;
         }
+        c->obstruction = Spatial_Obstruction(i, c->origin, c->kind == SA_POSITIONAL);
         SA_SetSource(renderer, i, c);
     }
+    occlusion_cursor = (occlusion_cursor + 64) % MAX_CHANNELS;
 }
 void Spatial_Render(unsigned char *stream, int bytes)
 {
@@ -241,6 +283,7 @@ void Spatial_VoiceSource(int slot, float gain, qboolean enabled)
             c.origin[2] = ent->origin[2] + mouth[2];
         }
     }
+    c.obstruction = Spatial_Obstruction(MAX_CHANNELS + slot, c.origin, enabled && c.position_valid);
     SA_SetSource(renderer, MAX_CHANNELS + slot, &c);
 }
 void Spatial_VoicePCM(int slot, const int16_t *pcm, int frames) { if (renderer) SA_WriteVoice(renderer, slot, pcm, frames); }
