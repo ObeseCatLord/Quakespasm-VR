@@ -1782,7 +1782,7 @@ static float R_VRIKLerpAngle (float from, float to, float blend)
 	return from + delta * blend;
 }
 
-static qboolean R_VRIKSampleEntityPose (const entity_t *entity, vrik_pose_t *out)
+qboolean R_VRIKSampleEntityPose (const entity_t *entity, vrik_pose_t *out)
 {
 	const vrik_pose_t *newest, *older;
 	double newesttime, oldertime, sampletime;
