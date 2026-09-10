@@ -114,6 +114,25 @@ static void room_test(void)
         SA_Render(r, out, SA_BLOCK); if (i > 5) tail += energy(out, SA_BLOCK, 0);
     }
     assert(tail > 1e-8);
+    /* A positional speaker excites a tail; the radio-only branch cannot. */
+    {
+        int16_t speech[960] = {16384};
+        sa_source_t speaker = {.active=1, .generation=1, .gain=1,
+            .kind=SA_VOICE, .position_valid=1};
+        int positional;
+        settings.radio_gain = .5f; settings.radio_filter = 1;
+        for (positional = 0; positional <= 1; ++positional) {
+            SA_Reset(r); SA_SetSettings(r, &settings);
+            speaker.position_valid = positional; SA_SetSource(r, 1, &speaker);
+            assert(SA_WriteVoice(r, 0, speech, 960) == 960);
+            tail = 0;
+            for (i = 0; i < 150; ++i) {
+                SA_Render(r, out, SA_BLOCK); if (i > 20) tail += energy(out, SA_BLOCK, 0);
+            }
+            if (positional) assert(tail > 1e-10);
+            else assert(tail < 1e-10);
+        }
+    }
     /* Local PCM has no direct contribution and needs no network source. */
     {
         int16_t mic[960] = {16384};
