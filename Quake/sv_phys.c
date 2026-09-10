@@ -3258,6 +3258,13 @@ static void SV_ApplyVRWeaponOffset(edict_t *ent, int num, qboolean is_remote_vr,
                                        (int)ent->v.weapon, ent->v.v_angle,
                                        ent->v.view_ofs[2], source_offset);
     VectorSubtract(muzzle, source_offset, ent->v.origin);
+
+    /* QuakeC v_angle roll describes player camera tilt, not wrist rotation.
+     * QBJ3 PostThink decays nonzero roll with fixangle; feeding it hand roll
+     * repeatedly turns the HMD toward weapon yaw. Keep the full hand pose
+     * for muzzle placement above and VR replication, but expose no camera
+     * roll to weapon think/PostThink. Pitch/yaw still aim along the weapon. */
+    ent->v.v_angle[ROLL] = 0;
   }
 }
 
