@@ -185,6 +185,7 @@ static void Voice_Restart_f(void)
 {
 	if (!voice_initialized)
 		return;
+	Voice_CloseCapture();
 	Voice_RefreshCapture(true);
 }
 
@@ -431,8 +432,10 @@ static void Voice_EncodeCaptureFrame(int16_t *samples)
 		int sample = (int)(samples[i] * gain);
 		samples[i] = (int16_t)CLAMP(-32768, sample, 32767);
 	}
-	/* Local wet-only feed is independent of VAD/PTT and never replays preroll. */
-	if (voice_self_active)
+	/* Local wet-only feed is independent of VAD/PTT and never replays preroll.
+	 * After a game hitch, monitor only the newest two frames of capture. */
+	if (voice_self_active && SDL_GetQueuedAudioSize(voice_capture_device) <=
+		VOICE_FRAME_SAMPLES * sizeof(int16_t))
 		Spatial_SelfPCM(samples, VOICE_FRAME_SAMPLES);
 	Voice_VADSetSensitivity(&voice_vad,
 		(int)CLAMP(0.0f, voice_vad_sensitivity.value, 100.0f));
@@ -865,7 +868,7 @@ const char *Voice_SettingsHint(void)
 	if (!voice_vr_launch && !Voice_Profile()->device[0])
 		return "Select an Input device to use voice";
 	if (voice_self_active)
-		return "Local room mic; PTT sends voice";
+		return "Local room mic active (headphones)";
 	if ((voice_transmit.value || voice_self_reverb.value) && !voice_capture_device &&
 		(Voice_MultiplayerSessionActive() || voice_self_reverb.value))
 		return "Mic unavailable - choose Input device";

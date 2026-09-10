@@ -3856,7 +3856,7 @@ static void M_Voice_Draw(void) {
   M_Print(16, M_Voice_RowY(VOICEOPT_SELF_LEVEL), "Local reverb level");
   value = Cvar_VariableValue("voice_self_reverb_volume");
   M_DrawSlider(184, M_Voice_RowY(VOICEOPT_SELF_LEVEL), value / 2.0f, value, "%.1f");
-  M_DrawCharacter(144, M_Voice_RowY(m_voice_cursor),
+  M_DrawCharacter(8, M_Voice_RowY(m_voice_cursor),
                   12 + ((int)(realtime * 4) & 1));
   M_PrintWhite(16, 188, Voice_SettingsHint());
 }

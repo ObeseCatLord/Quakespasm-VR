@@ -153,9 +153,8 @@ After headset validation: Windows x64 SDK/project/CI/runtime staging and testing
 retain the existing non-SDK Win32 build. Existing Windows builds compile the
 no-op integration boundary and do not enable this renderer yet.
 
-Then consider direct occlusion, coarse room-dependent reverb, and only afterward
-more expensive reflections/pathing. No scene or simulation implementation is
-included here. A combined distributable needs the GPLv3-compatible license route
+After tuning the static runtime acoustics below, consider moving brush models,
+source-specific reflection paths and optional baked probes. A combined distributable needs the GPLv3-compatible license route
 and appropriate component notices; this prototype does not constitute a complete
 dependency-license audit.
 
@@ -218,3 +217,52 @@ headset listening must determine whether jump/footstep reverb alone is more
 convincing. There is no acoustic echo cancellation: use headphones, since speakers
 can feed the wet return back into the microphone. Turning local reverb off clears
 its queued PCM and the shared room tail (briefly clearing SFX reverb too).
+
+## Environment validation (Linux, 2026-09-10)
+
+Run the focused fixtures with:
+
+```sh
+nix develop --command bash -c 'make -C tests test-spatial .build/voice_settings_fixture .build/voice_primitives_fixture && ./tests/.build/voice_settings_fixture && ./tests/.build/voice_primitives_fixture'
+```
+
+ASan/UBSan fixtures cover radio frequency rejection and occlusion filtering,
+synthetic-room hybrid/parametric tails, radio exclusion from room effects,
+positional voice reverb, wet-only local mic output without network speakers,
+local queue overflow/reset, scene teardown, and v1 preference migration with
+self capture disabled. Production capture-purpose gates are exercised separately
+from the unchanged PTT/VAD packet gate. These do not open a microphone.
+
+Actual-engine smoke tests used an isolated profile, SDL offscreen video and dummy
+audio, at 72 game FPS, with default 2048-ray/16-bounce hybrid acoustics. Each map
+was allowed to finish scene construction before a roughly five-second DSP
+measurement window. QBJ3 tests included jump input and a `player/plyrjmp8.wav`
+probe; E1M1 used `player/land.wav`. Results on this Ryzen 7 9800X3D:
+
+| Map | Exported triangles | Scene build | Simulation last / max | Audio block mean / max |
+|---|---:|---:|---:|---:|
+| E1M1 | 13,909 | 13.7 ms | 20.10 / 21.65 ms | 0.212 / 0.453 ms |
+| QBJ3 DraQu | 558,409 | 705.4 ms | 25.61 / 26.69 ms | 0.267 / 0.508 ms |
+| QBJ3 HCM | 736,587 | 896.0 ms | 39.79 / 41.65 ms | 0.380 / 0.707 ms |
+
+All measured windows reported zero clipped/nonfinite samples and zero SDK
+allocation/free calls during rendering. The same process changed between the
+QBJ3 maps and shut down cleanly. The exported geometry copies were 12.0/16.8 MiB
+for these QBJ3 maps; this excludes the SDK acceleration structure and DSP memory.
+The simulation runs on a separate thread, sleeping 100 ms after each run, so its
+time is not added to each audio block. Audio block deadline is 5.333 ms.
+
+These are low-source-count desktop smoke tests, without headset/GPU contention,
+multiple live speakers, real mic latency, or subjective listening. For headset
+acceptance, compare `snd_reverb 0`/`0.25` and `snd_occlusion 0`/`1`; jump and walk
+between a tight room, large hall and exterior. Compare nearby speech with radio,
+then enable Local mic reverb and try it both with PTT released and transmission
+disabled. Check intelligibility, tail loudness, self-monitor latency and comfort
+before increasing wet gain. Music/menu sounds should remain dry. Moving doors
+and per-source reflection paths remain intentionally outside this first pass.
+
+Linux builds also passed with Steam Audio disabled/voice enabled and with Steam
+Audio enabled/voice disabled; the final local binary has both enabled. An
+actual-engine menu screenshot confirmed that all rows fit and a fresh isolated
+SDL preference directory starts with local mic reverb off and no desktop input
+device selected. The launcher isolates both `XDG_CONFIG_HOME` and `XDG_DATA_HOME`.
