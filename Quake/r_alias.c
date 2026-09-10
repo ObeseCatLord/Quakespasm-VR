@@ -4676,7 +4676,12 @@ static qboolean R_VRIKPrepareAttachedProp (const md5liveinfo_t *canonical,
 	if (!targetrig || !targetrig->profile || !targetrig->live)
 		return false;
 	if (targetrig->profile->equipment_policy != R_AVATAR_EQUIPMENT_ATTACH_HAND)
+	{
+		/* Native custom props have no canonical Ranger muzzle socket. */
+		if (CustomAvatar_Get(targetrig->profile->id))
+			R_VRIKInvalidateDerivedPropState(cache);
 		return true;
+	}
 	if (!canonical || !source)
 		return false;
 	gun = canonical->jointindex[MD5_VRIK_GUN];
@@ -5302,6 +5307,39 @@ static void R_VRIKStoreMuzzleTransform (entity_t *entity, qmodel_t *model)
 	entity->vrik_muzzle_time = realtime;
 }
 
+static qboolean R_VRIKRejectQBJ3Player (entity_t *entity, int entitynum)
+{
+	/* Leave native interpolation and angles intact on a cosmetic fallback. */
+	if (entitynum >= 1 && entitynum <= MAX_SCOREBOARD)
+	{
+		r_vrik_renderstate[entitynum].valid = false;
+		R_VRIKInvalidateEntitySkinCache(entitynum);
+		R_VRIKClearLowerBodyTargets(entitynum);
+	}
+	if (entity)
+		entity->vrik_muzzle_valid = false;
+	return false;
+}
+
+static int R_VRIKQBJ3Avatar (const entity_t *entity, qboolean tracked)
+{
+	const custom_avatar_t *custom;
+	int id;
+	/* QBJ3 QC retains Ranger's 143 ordinals, unlike its MDL frame labels.
+	 * Keep native corpses, eyes, gibs and unsupported model names/frame counts. */
+	if (!tracked || !vr_vrik.value ||
+		q_strcasecmp(entity->model->name, "progs/player_qbj.mdl") ||
+		entity->model->numframes != 143 || entity->frame < 0 ||
+		entity->frame > 142 || (entity->frame >= 41 && entity->frame <= 102))
+		return -1;
+	id = CustomAvatar_IdForKey("qbj3");
+	custom = CustomAvatar_Get(id);
+	if (!custom || CustomAvatar_HasFailed(id) ||
+		custom->profile.equipment_policy != R_AVATAR_EQUIPMENT_RANGER)
+		return -1;
+	return id;
+}
+
 static qboolean R_VRIKSubstitutePlayer (entity_t *entity, entity_t *replacement)
 {
 	entity_t canonicalentity;
@@ -5315,7 +5353,7 @@ static qboolean R_VRIKSubstitutePlayer (entity_t *entity, entity_t *replacement)
 	r_vrik_lowerbody_targets_t lower;
 	uintptr_t address;
 	int avatar, entitynum;
-	qboolean tracked;
+	qboolean tracked, qbj3;
 
 	/* This flag authorizes the post-draw ordinary-Ranger state save for one
 	 * substitution only; never carry it from a previous player or pass. */
@@ -5332,10 +5370,19 @@ static qboolean R_VRIKSubstitutePlayer (entity_t *entity, entity_t *replacement)
 		entity == &cl.entities[cl.viewentity])
 		return false;
 	entitynum = (int)(entity - cl.entities);
-	avatar = cl.avatar_ids[entitynum - 1];
+	qbj3 = !q_strcasecmp(COM_SkipPath(com_gamedir), "qbj3");
+	tracked = R_VRIKSampleEntityPose (entity, &pose);
+	if (qbj3)
+	{
+		/* Local native-model enhancement, independent of avatar descriptors. */
+		avatar = R_VRIKQBJ3Avatar(entity, tracked);
+		if (avatar < 0)
+			return R_VRIKRejectQBJ3Player(entity, entitynum);
+	}
+	else
+		avatar = cl.avatar_ids[entitynum - 1];
 	if (!R_PlayerAvatarProfile (avatar))
 		avatar = PLAYER_AVATAR_RANGER;
-	tracked = R_VRIKSampleEntityPose (entity, &pose);
 	if (!R_VRIKShouldSubstituteAvatar ((player_avatar_id_t)avatar, tracked,
 		vr_vrik.value != 0.0f))
 		return false;
@@ -5358,6 +5405,8 @@ static qboolean R_VRIKSubstitutePlayer (entity_t *entity, entity_t *replacement)
 	}
 	model = CustomAvatar_Get(avatar) ? Mod_GetCustomAvatarModel(avatar) :
 		Mod_GetRereleaseAvatarMD5Model ((player_avatar_id_t)avatar);
+	if (!model && qbj3)
+		return R_VRIKRejectQBJ3Player(entity, entitynum);
 	if (!model && avatar != PLAYER_AVATAR_RANGER)
 	{
 		avatar = PLAYER_AVATAR_RANGER;
@@ -5367,19 +5416,21 @@ static qboolean R_VRIKSubstitutePlayer (entity_t *entity, entity_t *replacement)
 		return false;
 	r_vrik_canonical_model = Mod_GetRereleasePlayerMD5Model ();
 	if (!r_vrik_canonical_model)
-		return false;
+		return qbj3 ? R_VRIKRejectQBJ3Player(entity, entitynum) : false;
 	canonicalmd5 = Mod_GetMD5Extradata (r_vrik_canonical_model);
-	if (!canonicalmd5)
-		return false;
+	if (!canonicalmd5 || (qbj3 && canonicalmd5->numframes < 143))
+		return qbj3 ? R_VRIKRejectQBJ3Player(entity, entitynum) : false;
 	if (!Mod_GetRereleasePlayerMD5LiveData (&canonicallive) ||
 		!R_AvatarResolveRig (R_AvatarProfileForId (PLAYER_AVATAR_RANGER),
 			&canonicallive, &canonicalrig))
-		return false;
+		return qbj3 ? R_VRIKRejectQBJ3Player(entity, entitynum) : false;
 	profile = R_PlayerAvatarProfile (avatar);
 	if (!profile || !Mod_GetMD5LiveData (model, &targetlive) ||
 		!R_PlayerAvatarModelMatches(avatar, &targetlive) ||
 		!R_AvatarResolveRig (profile, &targetlive, &targetrig))
 	{
+		if (qbj3)
+			return R_VRIKRejectQBJ3Player(entity, entitynum);
 		/* A bad/partial selected mesh must never fall through to native monster
 		 * animation.  Ranger is the safe verified fallback; preserving the
 		 * original entity is the final fallback when it is unavailable too. */
@@ -5454,6 +5505,13 @@ static qboolean R_VRIKEnsureReplacementSkin (entity_t *replacement)
 		return true;
 	if (replacement && R_VRIKPrepareSkin (replacement->model))
 		return true;
+	if (!q_strcasecmp(COM_SkipPath(com_gamedir), "qbj3"))
+	{
+		int entitynum = r_vrik_active_player + 1;
+		return R_VRIKRejectQBJ3Player(cl.entities && entitynum >= 1 &&
+			entitynum <= cl.maxclients ? &cl.entities[entitynum] : NULL,
+			entitynum);
+	}
 	if (!replacement || r_vrik_avatar_id == PLAYER_AVATAR_RANGER)
 		return false;
 	ranger = r_vrik_canonical_model ? r_vrik_canonical_model :

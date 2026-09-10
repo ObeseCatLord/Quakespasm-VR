@@ -120,6 +120,8 @@ r_vrik_skincache_t *R_VRIKGetSkinCache (int entitynum, qmodel_t *model);
 void R_VRIKResetSkinCaches (void);
 /* Keep allocated scratch buffers, but discard cache-owned model pointers. */
 void R_VRIKInvalidateSkinCaches (void);
+/* Discard one player's derived pose without releasing reusable storage. */
+void R_VRIKInvalidateEntitySkinCache (int entitynum);
 qboolean R_VRIKSkinCacheReady (const r_vrik_skincache_t *cache,
 	qmodel_t *model);
 qboolean R_VRIKSkinCacheReserve (r_vrik_skincache_t *cache, int numverts);
