@@ -23,6 +23,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 // common.c -- misc functions used in client and server
 
 #include "quakedef.h"
+#include "snd_spatial.h"
 #include "q_ctype.h"
 #include <errno.h>
 #include "vr.h"
@@ -3163,6 +3164,7 @@ static void COM_Game_f (void)
 		LOC_Init();
 
 		//clear out and reload appropriate data
+		Spatial_ClearCache();
 		Cache_Flush ();
 		Mod_ResetAll();
 		Sky_ClearAll();

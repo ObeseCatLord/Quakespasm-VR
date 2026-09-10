@@ -26,6 +26,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 
 #include "quakedef.h"
 #include "voice.h"
+#include "snd_spatial.h"
 #include "snd_codec.h"
 #include "bgmusic.h"
 
@@ -168,6 +169,7 @@ void S_Init (void)
 		return;
 	}
 
+	Spatial_Register();
 	Cvar_RegisterVariable(&nosound);
 	Cvar_RegisterVariable(&sfxvolume);
 	Cvar_RegisterVariable(&precache);
@@ -459,6 +461,8 @@ void S_StartSound (int entnum, int entchannel, sfx_t *sfx, vec3_t origin, float 
 	if (nosound.value)
 		return;
 
+	Spatial_SyncClock();
+
 // pick a channel to play on
 	target_chan = SND_PickChannel(entnum, entchannel);
 	if (!target_chan)
@@ -473,7 +477,7 @@ void S_StartSound (int entnum, int entchannel, sfx_t *sfx, vec3_t origin, float 
 	target_chan->entchannel = entchannel;
 	SND_Spatialize(target_chan);
 
-	if (!target_chan->leftvol && !target_chan->rightvol)
+	if (!Spatial_Active() && !target_chan->leftvol && !target_chan->rightvol)
 		return;		// not audible at all
 
 // new channel
@@ -513,17 +517,19 @@ void S_StartSound (int entnum, int entchannel, sfx_t *sfx, vec3_t origin, float 
 			break;
 		}
 	}
+	Spatial_Start((int)(target_chan - snd_channels), sfx, target_chan->pos);
 }
 
 void S_StopSound (int entnum, int entchannel)
 {
 	int	i;
 
-	for (i = 0; i < MAX_DYNAMIC_CHANNELS; i++)
+	for (i = NUM_AMBIENTS; i < NUM_AMBIENTS + MAX_DYNAMIC_CHANNELS; i++)
 	{
 		if (snd_channels[i].entnum == entnum
 			&& snd_channels[i].entchannel == entchannel)
 		{
+			Spatial_Stop(i);
 			snd_channels[i].end = 0;
 			snd_channels[i].sfx = NULL;
 			return;
@@ -538,6 +544,7 @@ void S_StopAllSounds (qboolean clear)
 	if (!sound_started)
 		return;
 
+	Spatial_Reset();
 	total_channels = MAX_DYNAMIC_CHANNELS + NUM_AMBIENTS;	// no statics
 
 	for (i = 0; i < MAX_CHANNELS; i++)
@@ -564,6 +571,7 @@ void S_ClearBuffer (void)
 	if (!sound_started || !shm)
 		return;
 
+	if (Spatial_Active()) { Spatial_ClearMusic(); return; }
 	SNDDMA_LockBuffer ();
 	if (! shm->buffer)
 		return;
@@ -620,6 +628,7 @@ void S_StaticSound (sfx_t *sfx, vec3_t origin, float vol, float attenuation)
 	ss->end = paintedtime + sc->length;
 
 	SND_Spatialize (ss);
+	Spatial_Start((int)(ss - snd_channels), sfx, 0);
 }
 
 
@@ -696,6 +705,7 @@ void S_RawSamples (int samples, int rate, int width, int channels, byte *data, f
 	float scale;
 	int intVolume;
 
+	if (Spatial_Active()) { Spatial_RawSamples(samples, rate, width, channels, data, volume); return; }
 	if (s_rawend < paintedtime)
 		s_rawend = paintedtime;
 
@@ -778,6 +788,7 @@ void S_Update (vec3_t origin, vec3_t forward, vec3_t right, vec3_t up)
 	channel_t	*ch;
 	channel_t	*combine;
 
+	Spatial_SyncClock();
 	Voice_UpdateSpatialization(origin, forward, right, up);
 	Voice_Frame();
 
@@ -791,6 +802,10 @@ void S_Update (vec3_t origin, vec3_t forward, vec3_t right, vec3_t up)
 
 // update general area ambient sound sources
 	S_UpdateAmbientSounds ();
+	if (Spatial_Active()) {
+		Spatial_Update();
+		return;
+	}
 
 	combine = NULL;
 
@@ -911,6 +926,7 @@ static void S_Update_ (void)
 
 	if (!sound_started || (snd_blocked > 0))
 		return;
+	if (Spatial_Active()) { Spatial_SyncClock(); return; }
 
 	SNDDMA_LockBuffer ();
 	if (! shm->buffer)

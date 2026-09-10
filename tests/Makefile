@@ -34,6 +34,21 @@ BINARIES := $(addprefix $(BUILD_DIR)/,$(FIXTURES))
 
 all: test
 
+# Optional: requires the Steam Audio development package (provided by nix develop).
+.PHONY: test-spatial
+test-spatial: $(BUILD_DIR)/spatial_audio_fixture
+	./$<
+
+SPATIAL_FIXTURE_SOURCES = spatial_audio_fixture.c ../Quake/snd_steamaudio.c ../Quake/voice_jitter.c
+$(BUILD_DIR)/spatial_audio_fixture: $(SPATIAL_FIXTURE_SOURCES) ../Quake/snd_steamaudio.h | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(SANITIZE_FLAGS) $(shell pkg-config --cflags steamaudio opus) $(SPATIAL_FIXTURE_SOURCES) $(LDFLAGS) $(SANITIZE_FLAGS) $(shell pkg-config --libs steamaudio sdl2 opus) $(LDLIBS) -o $@
+
+.PHONY: benchmark-spatial
+benchmark-spatial: $(BUILD_DIR)/spatial_audio_benchmark
+	./$< --benchmark
+$(BUILD_DIR)/spatial_audio_benchmark: $(SPATIAL_FIXTURE_SOURCES) ../Quake/snd_steamaudio.h | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -O2 $(shell pkg-config --cflags steamaudio opus) $(SPATIAL_FIXTURE_SOURCES) $(LDFLAGS) $(shell pkg-config --libs steamaudio sdl2 opus) $(LDLIBS) -o $@
+
 test: $(BINARIES)
 	@set -e; for fixture in $(BINARIES); do \
 		printf '==> %s\n' "$$fixture"; \

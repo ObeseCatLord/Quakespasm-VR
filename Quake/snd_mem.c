@@ -22,6 +22,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 // snd_mem.c: sound caching
 
 #include "quakedef.h"
+#include "snd_spatial.h"
 
 /*
 ================
@@ -157,6 +158,7 @@ sfxcache_t *S_LoadSound (sfx_t *s)
 	sc->width = info.width;
 	sc->stereo = info.channels;
 
+	Spatial_CacheSound(s, &info, data + info.dataofs);
 	ResampleSfx (s, sc->speed, sc->width, data + info.dataofs);
 
 	return sc;

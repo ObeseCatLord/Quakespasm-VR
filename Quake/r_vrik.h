@@ -4,6 +4,9 @@
 
 #include "quakedef.h"
 
+/* Pose sampling is independent of visibility and skinning; shared with audio. */
+qboolean R_VRIKSampleEntityPose(const entity_t *entity, vrik_pose_t *out);
+
 /* CPU skinning is immutable for a remote player over one host frame. */
 typedef struct r_vrik_skincache_s
 {

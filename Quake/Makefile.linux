@@ -18,6 +18,8 @@ USE_CODEC_VORBIS=1
 USE_CODEC_OPUS=1
 ### Enable experimental in-game voice chat (SDL2 capture + libopus)
 USE_VOICE ?= 1
+# Enabled automatically when the SDK is installed; explicit =1 requires it.
+USE_STEAMAUDIO ?= $(shell pkg-config --exists steamaudio && echo 1 || echo 0)
 # either xmp or mikmod (or modplug)
 USE_CODEC_MIKMOD=0
 USE_CODEC_XMP=1
@@ -225,6 +227,14 @@ MUSIC_OBJS= bgmusic.o \
 	snd_xmp.o \
 	snd_umx.o
 COMOBJ_SND = snd_dma.o snd_mix.o snd_mem.o $(MUSIC_OBJS)
+ifeq ($(USE_STEAMAUDIO),1)
+ifeq ($(shell $(PKG_CONFIG) --exists steamaudio && echo yes),)
+$(error USE_STEAMAUDIO=1 requires steamaudio.pc; use nix develop or USE_STEAMAUDIO=0)
+endif
+CFLAGS += -DUSE_STEAMAUDIO $(shell $(PKG_CONFIG) --cflags steamaudio)
+LIBS += $(shell $(PKG_CONFIG) --libs steamaudio)
+COMOBJ_SND += snd_spatial.o snd_steamaudio.o
+endif
 ifeq ($(USE_VOICE),1)
 COMOBJ_SND += voice.o voice_settings.o voice_vad.o voice_jitter.o
 endif
@@ -327,6 +337,15 @@ OBJS = strlcat.o \
 DEFAULT_TARGET = quakespasm-openvr
 BINARY_TARGET = $(DEFAULT_TARGET).bin
 all: $(DEFAULT_TARGET)
+
+# Headers select different APIs for these features. A plain make after changing
+# a toggle must not silently reuse objects from the other backend.
+.PHONY: force-sound-config
+.sound-config: force-sound-config
+	@printf '%s\n' '$(USE_STEAMAUDIO) $(USE_VOICE) $(USE_SDL2) $(DO_USERDIRS)' > $@.tmp
+	@cmp -s $@.tmp $@ || mv $@.tmp $@
+	@rm -f $@.tmp
+$(OBJS): .sound-config
 
 %.o:	%.c
 	$(CC) $(DFLAGS) -c $(CFLAGS) $(SDL_CFLAGS) -o $@ $<

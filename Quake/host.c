@@ -26,6 +26,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "bgmusic.h"
 #include <setjmp.h>
 #include "vr.h"
+#include "snd_spatial.h"
 #include "pmove.h"
 #include "debug_log.h"
 #include "addon_catalog.h"
@@ -1584,9 +1585,11 @@ void _Host_Frame (double time)
 		time2 = Sys_DoubleTime ();
 
 // update audio
+	Spatial_SyncClock();
 	BGM_Update();	// adds music raw samples and/or advances midi driver
 	if (cls.signon == SIGNONS)
 	{
+		if (!vr_enabled.value) Spatial_Listener(r_origin, vpn, vright, vup);
 		S_Update (r_origin, vpn, vright, vup);
 		CL_DecayLights ();
 	}
