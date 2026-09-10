@@ -168,3 +168,30 @@ Set it to 0 for comparison. `voice_radio_compression` (0–1, default 0) and
 `voice_radio_drive` (0–4, default 0) optionally compress/saturate that colored
 branch. Existing radio volume and spatial-distance controls still apply.
 These controls currently belong to the Steam Audio backend.
+
+## Realtime room simulation
+
+`snd_reverb 0..1` sets the room wet level (default 0.25). `snd_reverb_mode`
+selects off (0), parametric (1), or hybrid early reflections plus a parametric
+tail (2, default). `voice_reverb 0..1` sets the positional voice send (default
+0.12); radio, music, menu sounds, and leaf ambience stay dry. Local movement
+sounds and weapons excite the room. Loops use a lower send.
+
+The client exports static BSP world faces at map load. Sky, liquid/teleporter,
+and alpha-tested fence faces are omitted. A worker builds the CPU scene and
+runs one listener-centered simulation with approximate hard-surface materials.
+Moving brush models/doors are not included. Direct audio continues while the
+scene builds or if setup fails. `snd_spatial_status` reports triangle/copy size,
+scene-build time, simulation time/result age, and estimated decay times.
+
+`snd_reverb_rays` (256–4096, default 2048) and `snd_reverb_bounces` (2–32,
+default 16) are diagnostic quality controls. Updates run at most ten times per
+second, with no queued backlog. Simulation uses a fixed 1.5-second response,
+first-order Ambisonics, a 150 ms early-reflection window, and one CPU worker.
+The convolution allocation retains the full response capacity; hybrid is not
+a promise of proportional CPU savings from its shorter early window.
+
+The Nix package includes a one-line Steam Audio 4.8.1 fix for an aligned load
+inside its unaligned complex-accumulation path. This is necessary for reliable
+multichannel convolution with this CPU/PFFFT build. Non-Nix SDK builds need an
+equivalent fix if they use the affected path.

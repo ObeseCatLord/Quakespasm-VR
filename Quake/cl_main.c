@@ -22,6 +22,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 // cl_main.c  -- client main loop
 
 #include "quakedef.h"
+#include "snd_spatial.h"
 #include "addon_catalog.h"
 #include "bgmusic.h"
 #include "vr.h"
@@ -421,6 +422,7 @@ CL_ClearState
 */
 void CL_ClearState (void)
 {
+	Spatial_ClearWorld();
 	Voice_ResetConnection();
 	VR_InvalidateFBTTransientOutput ();
 	VR_ResetWeaponTracking();

@@ -66,6 +66,62 @@ static double filter_energy(int voice_kind, float hz, float obstruction, float r
     SA_Destroy(r); return sum;
 }
 
+static sa_geometry_t test_room(void)
+{
+    const float vertices[] = {-4,-3,-5, 4,-3,-5, 4,3,-5, -4,3,-5,
+        -4,-3,5, 4,-3,5, 4,3,5, -4,3,5};
+    const int triangles[] = {0,1,2,0,2,3, 4,6,5,4,7,6, 0,5,1,0,4,5,
+        3,2,6,3,6,7, 0,3,7,0,7,4, 1,5,6,1,6,2};
+    sa_geometry_t g = {8,12,NULL,NULL,NULL};
+    g.vertices = malloc(sizeof(vertices)); g.triangles = malloc(sizeof(triangles));
+    g.materials = calloc(12, sizeof(int)); assert(g.vertices && g.triangles && g.materials);
+    memcpy(g.vertices, vertices, sizeof(vertices)); memcpy(g.triangles, triangles, sizeof(triangles));
+    return g;
+}
+static void room_test(void)
+{
+    sa_renderer_t *r = SA_Create(2, 1);
+    sa_geometry_t g = test_room();
+    sa_room_stats_t room = {0};
+    sa_stats_t stats;
+    sa_listener_t pose = listener;
+    sa_settings_t settings = {.hrtf=1, .reverb=.3f, .voice_reverb=.12f,
+        .room_mode=2, .room_rays=1024, .room_bounces=16};
+    float impulse = .5f, out[SA_BLOCK*2];
+    sa_sample_t wave = {&impulse,1,-1};
+    sa_source_t src = {.sample=&wave, .active=1, .generation=1, .gain=.4f, .room_send=1};
+    double tail = 0;
+    int i;
+    assert(r); pose.timestamp = SDL_GetPerformanceCounter();
+    SA_LoadRoom(r, &g); SA_SetListener(r, &pose); SA_SetSettings(r, &settings);
+    for (i = 0; i < 2000; ++i) {
+        SA_RoomStats(r, &room); assert(!room.failed);
+        if (room.ready) break;
+        SDL_Delay(5);
+    }
+    assert(room.ready && room.triangles == 12);
+    SA_SetSource(r, 0, &src);
+    for (i = 0; i < 150; ++i) {
+        SA_Render(r, out, SA_BLOCK);
+        if (i > 5) tail += energy(out, SA_BLOCK, 0);
+    }
+    assert(tail > 1e-8); /* Wet response outlives the single-sample source. */
+    assert(SA_Finished(r, 0) == 1);
+    SA_Reset(r); SA_Render(r, out, SA_BLOCK); assert(energy(out, SA_BLOCK, 0) == 0);
+    settings.room_mode = 1; SA_SetSettings(r, &settings); SA_SetSource(r, 0, &src);
+    tail = 0;
+    for (i = 0; i < 150; ++i) {
+        SA_Render(r, out, SA_BLOCK); if (i > 5) tail += energy(out, SA_BLOCK, 0);
+    }
+    assert(tail > 1e-8);
+    SA_GetStats(r, &stats); assert(stats.rt_allocations == 0 && stats.nonfinite == 0);
+    printf("Room: triangles %d, simulation %.3f ms, RT60 %.2f/%.2f/%.2f, render max %.3f ms; tails/reset/parametric/hybrid passed\n",
+        room.triangles, room.last_ticks * 1000.0 / SDL_GetPerformanceFrequency(),
+        room.rt60[0],room.rt60[1],room.rt60[2],stats.max_render_ticks * 1000.0 / SDL_GetPerformanceFrequency());
+    SA_LoadRoom(r, NULL); /* Join/release independently of source PCM lifetime. */
+    g = test_room(); SA_LoadRoom(r, &g); SA_Destroy(r); /* cancel during construction */
+}
+
 int main(int argc, char **argv)
 {
     sa_renderer_t *r;
@@ -250,5 +306,6 @@ int main(int argc, char **argv)
             assert(stats.rt_allocations == 0); SA_Destroy(r);
         }
     }
+    room_test();
     SDL_Quit(); return 0;
 }

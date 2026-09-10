@@ -95,7 +95,7 @@ clean:
 	rm -rf -- .build
 
 # SDK-backed audio fixtures run separately from the engine/VR fixtures.
-SPATIAL_FIXTURE_SOURCES = spatial_audio_fixture.c ../Quake/snd_steamaudio.c ../Quake/voice_jitter.c
+SPATIAL_FIXTURE_SOURCES = spatial_audio_fixture.c ../Quake/snd_steamaudio.c ../Quake/snd_room.c ../Quake/voice_jitter.c
 .PHONY: test-spatial benchmark-spatial
 test-spatial: $(BUILD_DIR)/spatial_audio_fixture
 	./$<

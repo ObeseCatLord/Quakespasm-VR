@@ -3,6 +3,8 @@
 #define SND_SPATIAL_H
 #ifdef USE_STEAMAUDIO
 void Spatial_Register(void);
+void Spatial_NewMap(void);
+void Spatial_ClearWorld(void);
 qboolean Spatial_Init(void);
 qboolean Spatial_Active(void);
 void Spatial_Shutdown(void);
@@ -24,6 +26,8 @@ void Spatial_ResetVoice(int slot); /* caller excludes SDL callback */
 int Spatial_MusicSpace(void);
 void Spatial_RawSamples(int samples, int rate, int width, int channels, byte *data, float volume);
 #else
+#define Spatial_NewMap() ((void)0)
+#define Spatial_ClearWorld() ((void)0)
 #define Spatial_Register() ((void)0)
 #define Spatial_Init() false
 #define Spatial_Active() false
