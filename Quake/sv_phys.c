@@ -3246,6 +3246,12 @@ static void SV_ApplyVRWeaponOffset(edict_t *ent, int num, qboolean is_remote_vr,
       VectorCopy(cl.handrot[1], ent->v.v_angle);
     }
 
+    /* QuakeC v_angle roll is camera tilt, not wrist rotation. QBJ3 decays it
+     * via fixangle. Sanitize only this temporary QC angle before calculating
+     * both the globals and source compensation, so QC makevectors sees the
+     * identical basis. The physical muzzle and replicated hand keep roll. */
+    ent->v.v_angle[ROLL] = 0;
+
     /* Legacy QuakeC commonly computes v_forward during PlayerPreThink and
      * consumes it later while firing in a think/PostThink callback. Keep the
      * global aim basis synchronized with the temporary hand-only v_angle so
@@ -3258,6 +3264,7 @@ static void SV_ApplyVRWeaponOffset(edict_t *ent, int num, qboolean is_remote_vr,
                                        (int)ent->v.weapon, ent->v.v_angle,
                                        ent->v.view_ofs[2], source_offset);
     VectorSubtract(muzzle, source_offset, ent->v.origin);
+
   }
 }
 

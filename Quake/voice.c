@@ -9,6 +9,7 @@ version.
 
 #include "quakedef.h"
 #include "voice.h"
+#include "snd_spatial.h"
 #include "voice_jitter.h"
 #include "voice_vad.h"
 #include "voice_settings.h"
@@ -20,6 +21,9 @@ version.
 #define VOICE_OUTGOING_PACKETS 16
 #define VOICE_PCM_RING_FRAMES 16384
 #define VOICE_CAPTURE_BACKLOG_FRAMES 10
+/* Receive-side mix calibration: +6 dB relative to the original voice mix.
+ * Keep capture/VAD and the user's 0..2 playback trim independent. */
+#define VOICE_PLAYBACK_GAIN 2.0f
 
 typedef struct voice_outgoing_s
 {
@@ -50,6 +54,7 @@ static cvar_t voice_vad_sensitivity = {"voice_vad_sensitivity", "55", CVAR_ARCHI
 static cvar_t voice_volume = {"voice_volume", "1", CVAR_ARCHIVE};
 static cvar_t voice_radio_volume = {"voice_radio_volume", "0.45", CVAR_ARCHIVE};
 static cvar_t voice_spatial_distance = {"voice_spatial_distance", "768", CVAR_ARCHIVE};
+static cvar_t voice_positional_only = {"voice_positional_only", "0", CVAR_ARCHIVE};
 static cvar_t voice_hud = {"voice_hud", "1", CVAR_ARCHIVE};
 
 static SDL_AudioDeviceID voice_capture_device;
@@ -439,6 +444,8 @@ static void Voice_WriteSpeakerPCM(voice_speaker_t *speaker,
 	vec3_t delta;
 	float distance, blend, pan, positional;
 
+	if (Spatial_Active()) { Spatial_VoicePCM(slot, mono, frames); return; }
+
 	if (slot >= 0 && slot + 1 < cl.num_entities &&
 		cl.entities[slot + 1].model && cl.entities[slot + 1].msgtime == cl.mtime[0])
 	{
@@ -453,8 +460,8 @@ static void Voice_WriteSpeakerPCM(voice_speaker_t *speaker,
 		right = (1.0f - blend) * positional * (1.0f + 0.5f * pan) +
 			blend * voice_radio_volume.value;
 	}
-	left *= speaker->volume * voice_volume.value;
-	right *= speaker->volume * voice_volume.value;
+	left *= VOICE_PLAYBACK_GAIN * speaker->volume * voice_volume.value;
+	right *= VOICE_PLAYBACK_GAIN * speaker->volume * voice_volume.value;
 	for (i = 0; i < outframes; ++i)
 	{
 		int next = (write + 1) % VOICE_PCM_RING_FRAMES;
@@ -504,6 +511,7 @@ void Voice_Init(void)
 	Cvar_RegisterVariable(&voice_volume);
 	Cvar_RegisterVariable(&voice_radio_volume);
 	Cvar_RegisterVariable(&voice_spatial_distance);
+	Cvar_RegisterVariable(&voice_positional_only);
 	Cvar_RegisterVariable(&voice_hud);
 	Voice_LoadSettings();
 	Cmd_AddCommand("voice_list_devices", Voice_ListDevices_f);
@@ -586,6 +594,7 @@ void Voice_ResetConnection(void)
 		SNDDMA_LockBuffer();
 	for (i = 0; i < MAX_SCOREBOARD; ++i)
 	{
+		Spatial_ResetVoice(i);
 		Voice_JitterReset(&voice_speakers[i].jitter);
 		voice_speakers[i].generation = 0;
 		voice_speakers[i].talking_until = 0;
@@ -620,6 +629,10 @@ void Voice_Frame(void)
 			Voice_EncodeCaptureFrame(capture);
 		}
 	}
+	Spatial_VoiceSettings(voice_radio_volume.value, voice_spatial_distance.value, voice_positional_only.value != 0);
+	for (slot = 0; slot < MAX_SCOREBOARD; ++slot)
+		Spatial_VoiceSource(slot, VOICE_PLAYBACK_GAIN * voice_speakers[slot].volume * voice_volume.value,
+			voice_receive.value && slot < cl.maxclients && !voice_speakers[slot].muted);
 	if (!voice_receive.value || !shm)
 		return;
 	for (slot = 0; slot < cl.maxclients && slot < MAX_SCOREBOARD; ++slot)
@@ -738,6 +751,7 @@ void Voice_ReceivePacket(int speaker_slot, unsigned int generation,
 			SNDDMA_LockBuffer();
 		SDL_AtomicSet(&speaker->pcm_read, 0);
 		SDL_AtomicSet(&speaker->pcm_write, 0);
+		Spatial_ResetVoice(speaker_slot);
 		if (shm)
 			SNDDMA_Submit();
 		Voice_JitterReset(&speaker->jitter);

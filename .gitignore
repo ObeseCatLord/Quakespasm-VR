@@ -33,6 +33,7 @@ quakespasm-openvr.bin
 quakespasm.exe
 script_pid.txt
 *.sh
+Quake/.sound-config*
 !launch_native_vr.sh
 !test_interactive_mixed.sh
 !test_multi_client_mixed.sh
