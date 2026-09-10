@@ -21,6 +21,9 @@ version.
 #define VOICE_OUTGOING_PACKETS 16
 #define VOICE_PCM_RING_FRAMES 16384
 #define VOICE_CAPTURE_BACKLOG_FRAMES 10
+/* Receive-side mix calibration: +6 dB relative to the original voice mix.
+ * Keep capture/VAD and the user's 0..2 playback trim independent. */
+#define VOICE_PLAYBACK_GAIN 2.0f
 
 typedef struct voice_outgoing_s
 {
@@ -457,8 +460,8 @@ static void Voice_WriteSpeakerPCM(voice_speaker_t *speaker,
 		right = (1.0f - blend) * positional * (1.0f + 0.5f * pan) +
 			blend * voice_radio_volume.value;
 	}
-	left *= speaker->volume * voice_volume.value;
-	right *= speaker->volume * voice_volume.value;
+	left *= VOICE_PLAYBACK_GAIN * speaker->volume * voice_volume.value;
+	right *= VOICE_PLAYBACK_GAIN * speaker->volume * voice_volume.value;
 	for (i = 0; i < outframes; ++i)
 	{
 		int next = (write + 1) % VOICE_PCM_RING_FRAMES;
@@ -628,7 +631,7 @@ void Voice_Frame(void)
 	}
 	Spatial_VoiceSettings(voice_radio_volume.value, voice_spatial_distance.value, voice_positional_only.value != 0);
 	for (slot = 0; slot < MAX_SCOREBOARD; ++slot)
-		Spatial_VoiceSource(slot, voice_speakers[slot].volume * voice_volume.value,
+		Spatial_VoiceSource(slot, VOICE_PLAYBACK_GAIN * voice_speakers[slot].volume * voice_volume.value,
 			voice_receive.value && slot < cl.maxclients && !voice_speakers[slot].muted);
 	if (!voice_receive.value || !shm)
 		return;
