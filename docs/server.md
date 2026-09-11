@@ -49,6 +49,9 @@ only when calibrating the original paired viewmodel.
 
 ## Physical weapon contact (development)
 
+For adding or auditing mod support, see the
+[VR collision and melee engineering guide](vr-melee.md).
+
 The current development implementation is opt-in on the server:
 
 ```text
