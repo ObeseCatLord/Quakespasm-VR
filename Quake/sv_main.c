@@ -137,6 +137,7 @@ cvar_t sv_netdiag_interval = {"sv_netdiag_interval", "5", CVAR_NONE};
 cvar_t sv_replacement_maxpackets = {"sv_replacement_maxpackets", "0", CVAR_NONE};
 cvar_t sv_predict_nqmovement = {"sv_predict_nqmovement", "0", CVAR_NOTIFY | CVAR_SERVERINFO};
 cvar_t sv_nopunchangle = {"sv_nopunchangle", "0", CVAR_NONE};
+cvar_t sv_akimbo = {"sv_akimbo", "1", CVAR_ARCHIVE | CVAR_NOTIFY | CVAR_SERVERINFO};
 // When SV_WriteEntitiesToClient overflows the per-client datagram, the entity
 // that gets evicted is whichever the loop reached last. With sv_netsort=1
 // (ironwail's heuristic) entities are sorted by distance-to-player and PVS
@@ -174,6 +175,77 @@ cvar_t sv_skyroom_pvs = {"sv_skyroom_pvs", "1", CVAR_NONE};
 //============================================================================
 
 static void SVFTE_SetupFrames (client_t *client);
+
+static qboolean sv_qbj3_akimbo_protocol_pending;
+
+static int SV_FormatQBJ3AkimboProtocol(char *command, size_t size,
+	qboolean nailgun, qboolean berserk, qboolean enyo, qboolean dwell)
+{
+	return q_snprintf(command, size,
+		"//vr_qbj3_akimbo_protocol %d %d %d %d\n", nailgun ? 1 : 0,
+		berserk ? 1 : 0, enyo ? 1 : 0, dwell ? 1 : 0);
+}
+
+static void SV_WriteQBJ3AkimboProtocol(sizebuf_t *message, qboolean nailgun,
+	qboolean berserk, qboolean enyo, qboolean dwell)
+{
+	char command[64];
+
+	SV_FormatQBJ3AkimboProtocol(command, sizeof(command), nailgun, berserk,
+		enyo, dwell);
+	MSG_WriteByte(message, svc_stufftext);
+	MSG_WriteString(message, command);
+}
+
+static void SV_QueueQBJ3AkimboProtocol(qboolean nailgun, qboolean berserk,
+	qboolean enyo, qboolean dwell)
+{
+	char command[64];
+	int length;
+
+	length = SV_FormatQBJ3AkimboProtocol(command, sizeof(command), nailgun,
+		berserk, enyo, dwell);
+	if (length < 0 || length >= (int)sizeof(command) ||
+		sv.reliable_datagram.cursize + 1 + length + 1 >
+			sv.reliable_datagram.maxsize)
+	{
+		sv_qbj3_akimbo_protocol_pending = true;
+		return;
+	}
+	MSG_WriteByte(&sv.reliable_datagram, svc_stufftext);
+	MSG_WriteString(&sv.reliable_datagram, command);
+	sv_qbj3_akimbo_protocol_pending = false;
+}
+
+static void SV_AkimboPolicyChanged(cvar_t *var)
+{
+	qcvm_t *old_qcvm;
+	qboolean nailgun, berserk, enyo, dwell;
+
+	Host_Callback_Notify(var);
+	if (!sv.active)
+		return;
+
+	old_qcvm = qcvm;
+	if (qcvm != &sv.qcvm)
+	{
+		if (qcvm)
+			PR_SwitchQCVM(NULL);
+		PR_SwitchQCVM(&sv.qcvm);
+	}
+	nailgun = SV_QBJ3AkimboSupported();
+	berserk = SV_QBJ3BerserkAkimboSupported();
+	enyo = SV_EnyoAkimboSupported();
+	dwell = SV_DwellBerserkAkimboSupported();
+	if (qcvm != old_qcvm)
+	{
+		PR_SwitchQCVM(NULL);
+		if (old_qcvm)
+			PR_SwitchQCVM(old_qcvm);
+	}
+
+	SV_QueueQBJ3AkimboProtocol(nailgun, berserk, enyo, dwell);
+}
 static qboolean SVFTE_SendClientDatagram (client_t *client, int maxsize);
 static void SV_WriteMoveAckPayloadToMessage (client_t *client, sizebuf_t *msg);
 
@@ -944,6 +1016,7 @@ void SV_Init (void)
 	Cvar_RegisterVariable (&sv_replacement_maxpackets);
 	Cvar_RegisterVariable (&sv_predict_nqmovement);
 	Cvar_RegisterVariable (&sv_nopunchangle);
+	Cvar_RegisterVariable (&sv_akimbo);
 	Cvar_RegisterVariable (&sv_coop_classic);
 	Cvar_RegisterVariable (&sv_coop_notelefrag);
 	Cvar_RegisterVariable (&sv_coop_player_teleport_fallback);
@@ -989,6 +1062,7 @@ void SV_Init (void)
 	Cvar_SetCallback (&sv_coop_respawn_keep_weapons_ammo, Host_Callback_Notify);
 	Cvar_SetCallback (&sv_coop_autosave, Host_Callback_Notify);
 	Cvar_SetCallback (&sv_vr_jump_velocity, Host_Callback_Notify);
+	Cvar_SetCallback (&sv_akimbo, SV_AkimboPolicyChanged);
 	Cvar_RegisterVariable (&vr_movement_instant_stop);
 	Cvar_RegisterVariable (&vr_movement_defaults_version);
 	Cmd_AddCommand ("vr_migrate_movement_defaults", VR_MigrateMovementDefaults_f);
@@ -1347,11 +1421,9 @@ void SV_SendServerinfo (client_t *client)
 	 * muzzle coordinates without breaking older servers. */
 	MSG_WriteByte (&client->message, svc_stufftext);
 	MSG_WriteString (&client->message, "//vr_relative_muzzle 1\n");
-	if (SV_QBJ3AkimboSupported())
-	{
-		MSG_WriteByte (&client->message, svc_stufftext);
-		MSG_WriteString (&client->message, "//vr_qbj3_akimbo_protocol 1\n");
-	}
+	SV_WriteQBJ3AkimboProtocol(&client->message, SV_QBJ3AkimboSupported(),
+		SV_QBJ3BerserkAkimboSupported(), SV_EnyoAkimboSupported(),
+		SV_DwellBerserkAkimboSupported());
 	MSG_WriteByte (&client->message, svc_stufftext);
 	MSG_WriteString (&client->message, "//avatar_protocol 1\n");
 	MSG_WriteByte (&client->message, svc_stufftext);
@@ -4227,6 +4299,10 @@ void SV_UpdateToReliableMessages (void)
 	}
 
 	SZ_Clear (&sv.reliable_datagram);
+	if (sv_qbj3_akimbo_protocol_pending)
+		SV_QueueQBJ3AkimboProtocol(SV_QBJ3AkimboSupported(),
+			SV_QBJ3BerserkAkimboSupported(), SV_EnyoAkimboSupported(),
+			SV_DwellBerserkAkimboSupported());
 }
 
 
@@ -4919,6 +4995,10 @@ void SV_SpawnServer (const char *server)
 	edict_t		*ent;
 	int			i, signonsize;
 	qcvm_t		*vm = qcvm;
+
+	/* A deferred policy update belongs to the old world. Fresh signon
+	 * advertises the current mod and cvars below. */
+	sv_qbj3_akimbo_protocol_pending = false;
 
 	// let's not have any servers with no name
 	if (hostname.string[0] == 0)

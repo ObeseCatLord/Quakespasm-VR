@@ -28,13 +28,17 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "debug_log.h"
 #include "r_vrik.h"
 #include "custom_avatar.h"
+#include "vr_mdl_split.h"
 
 static qmodel_t*	loadmodel;
 static char	loadname[32];	// for hunk tags
+/* Unsupported optional source assets must not be re-read and hashed
+ * on every eye/render query. Retry at the existing model lifecycle boundary. */
+static qboolean mod_qbj3_generation_failed[VR_MDL_SPLIT_WEAPON_COUNT];
 
 static void Mod_LoadSpriteModel (qmodel_t *mod, void *buffer);
 static void Mod_LoadBrushModel (qmodel_t *mod, void *buffer);
-static void Mod_LoadAliasModel (qmodel_t *mod, void *buffer);
+static void Mod_LoadAliasModel (qmodel_t *mod, void *buffer, const char *skin_source);
 static qboolean Mod_LoadMD3Model (qmodel_t *mod, const byte *buffer, size_t filesize);
 static qboolean Mod_LoadMD5MeshModel (qmodel_t *mod, const byte *buffer, size_t filesize);
 static qmodel_t *Mod_LoadVerifiedRereleasePlayerMD5 (void);
@@ -912,6 +916,7 @@ void Mod_ClearAll (void)
 {
 	int		i;
 	qmodel_t	*mod;
+	memset(mod_qbj3_generation_failed, 0, sizeof(mod_qbj3_generation_failed));
 
 	/* Host_ClearMemory releases the alias-cache backing store immediately
 	 * afterwards, so discard any VRIK pointers into its rendered data first. */
@@ -934,6 +939,7 @@ void Mod_ResetAll (void)
 {
 	int		i;
 	qmodel_t	*mod;
+	memset(mod_qbj3_generation_failed, 0, sizeof(mod_qbj3_generation_failed));
 
 	R_VRIKResetSkinCaches ();
 
@@ -1024,12 +1030,80 @@ Mod_LoadModel
 Loads a model into the cache
 ==================
 */
+/* Generate only the private, pinned half-model names. All ordinary model caching,
+ * animation, texture ownership and GPU upload stay in the existing loader.
+ * The input is read independently through the active VFS, never modified. */
+static byte *Mod_GenerateQBJ3Half (const char *name, unsigned int *path_id,
+	size_t *size, const char **skin_source)
+{
+	static const char *const names[VR_MDL_SPLIT_WEAPON_COUNT][2] = {
+		{"vr/qbj3/progs/v_tnailgun_vr_left.mdl", "vr/qbj3/progs/v_tnailgun_vr_right.mdl"},
+		{"vr/qbj3/progs/v_berserk_vr_left.mdl", "vr/qbj3/progs/v_berserk_vr_right.mdl"},
+		{"vr/enyo/progs/ee_v_smgs_vr_left.mdl", "vr/enyo/progs/ee_v_smgs_vr_right.mdl"},
+		{"vr/dwell/progs/v_axeb_vr_left.mdl", "vr/dwell/progs/v_axeb_vr_right.mdl"}
+	};
+	static const char *const sources[VR_MDL_SPLIT_WEAPON_COUNT] = {
+		"progs/v_tnailgun.mdl", "progs/v_berserk.mdl", "progs/ee_v_smgs.mdl", "progs/v_axeb.mdl"};
+	static const char *const games[VR_MDL_SPLIT_WEAPON_COUNT] = {"qbj3", "qbj3", "enyo", "dwell"};
+	unsigned int override_id = 0;
+	int weapon, hand, length, result = -1;
+	FILE *file = NULL;
+	byte *input, *output = NULL;
+	*size = 0;
+	*skin_source = NULL;
+	if (isDedicated)
+		return NULL;
+	for (weapon = 0; weapon < VR_MDL_SPLIT_WEAPON_COUNT; ++weapon)
+		for (hand = 0; hand < 2; ++hand)
+			if (!strcmp(name, names[weapon][hand]) &&
+				(!q_strcasecmp(COM_SkipPath(com_gamedir), games[weapon]) ||
+				 (weapon == DWELL_MDL_WEAPON_BERSERK &&
+				  !q_strcasecmp(COM_SkipPath(com_gamedir), "dwellv2p2"))))
+				goto found;
+	return NULL;
+found:
+	if (mod_qbj3_generation_failed[weapon])
+		return NULL;
+	/* An explicit mod override retains normal searchpath precedence. The
+	 * base engine PAK is a fallback, not an override of local source generation. */
+	if (COM_FileExists(name, &override_id) && override_id > 1)
+		return NULL;
+	length = COM_FOpenFile(sources[weapon], &file, path_id);
+	if (!file)
+		return NULL;
+	if (length <= 0 || (size_t)length != QBJ3_MDL_SourceSize((qbj3_mdl_weapon_t)weapon))
+	{
+		fclose(file);
+		mod_qbj3_generation_failed[weapon] = true;
+		return NULL;
+	}
+	input = malloc((size_t)length);
+	if (!input)
+	{
+		fclose(file);
+		return NULL;
+	}
+	if (fread(input, 1, (size_t)length, file) == (size_t)length)
+		result = QBJ3_MDL_Split(input, (size_t)length, (qbj3_mdl_weapon_t)weapon,
+			(qbj3_mdl_side_t)hand, &output, size);
+	fclose(file);
+	free(input);
+	if (output)
+		*skin_source = sources[weapon];
+	else if (result == 0)
+		mod_qbj3_generation_failed[weapon] = true;
+	return output;
+}
+
 static qmodel_t *Mod_LoadModel (qmodel_t *mod, qboolean crash)
 {
 	byte	*buf;
 	byte	stackbuf[1024];		// avoid dirtying the cache heap
 	int	mod_type;
 	int	model_filesize;
+	byte *generated;
+	size_t generated_size;
+	const char *skin_source;
 	int custom_id = CustomAvatar_IdForModelName(mod->name);
 
 	/* Cache eviction must not turn a cosmetic cache key into a VFS filename. */
@@ -1058,14 +1132,17 @@ static qmodel_t *Mod_LoadModel (qmodel_t *mod, qboolean crash)
 //
 // load the file
 //
-	buf = COM_LoadStackFile (mod->name, stackbuf, sizeof(stackbuf), & mod->path_id);
+	generated = Mod_GenerateQBJ3Half(mod->name, &mod->path_id,
+		&generated_size, &skin_source);
+	buf = generated ? generated :
+		COM_LoadStackFile (mod->name, stackbuf, sizeof(stackbuf), & mod->path_id);
 	if (!buf)
 	{
 		if (crash)
 			Host_Error ("Mod_LoadModel: %s not found", mod->name); //johnfitz -- was "Mod_NumForName"
 		return NULL;
 	}
-	model_filesize = com_filesize;
+	model_filesize = generated ? (int)generated_size : com_filesize;
 
 //
 // allocate a new model
@@ -1165,7 +1242,7 @@ static qmodel_t *Mod_LoadModel (qmodel_t *mod, qboolean crash)
 			}
 		}
 
-		Mod_LoadAliasModel (mod, buf);
+		Mod_LoadAliasModel (mod, buf, skin_source ? skin_source : mod->name);
 		Mod_ExpandAliasBoundsForEnhanced (mod);
 		Mod_FinishAliasBuild (mod);
 		break;
@@ -1213,6 +1290,7 @@ static qmodel_t *Mod_LoadModel (qmodel_t *mod, qboolean crash)
 	PScript_UpdateModelEffects (mod);
 #endif
 
+	free(generated);
 	return mod;
 }
 
@@ -3781,7 +3859,8 @@ static void Mod_NormalizeExternalFullbright (byte *data, int width, int height)
 Mod_LoadAllSkins
 ===============
 */
-static void *Mod_LoadAllSkins (int numskins, daliasskintype_t *pskintype)
+static void *Mod_LoadAllSkins (int numskins, daliasskintype_t *pskintype,
+	const char *skin_source)
 {
 	int			i, j, k, size, groupskins;
 	char			name[MAX_QPATH];
@@ -3853,15 +3932,15 @@ static void *Mod_LoadAllSkins (int numskins, daliasskintype_t *pskintype)
 				if (Mod_CheckFullbrights ((byte *)(pskintype+1), size))
 				{
 					pheader->gltextures[i][0] = TexMgr_LoadImage (loadmodel, name, pheader->skinwidth, pheader->skinheight,
-						SRC_INDEXED, (byte *)(pskintype+1), loadmodel->name, offset, texflags | TEXPREF_NOBRIGHT);
+						SRC_INDEXED, (byte *)(pskintype+1), skin_source, offset, texflags | TEXPREF_NOBRIGHT);
 					q_snprintf (fbr_mask_name, sizeof(fbr_mask_name), "%s:frame%i_glow", loadmodel->name, i);
 					pheader->fbtextures[i][0] = TexMgr_LoadImage (loadmodel, fbr_mask_name, pheader->skinwidth, pheader->skinheight,
-						SRC_INDEXED, (byte *)(pskintype+1), loadmodel->name, offset, texflags | TEXPREF_FULLBRIGHT);
+						SRC_INDEXED, (byte *)(pskintype+1), skin_source, offset, texflags | TEXPREF_FULLBRIGHT);
 				}
 				else
 				{
 					pheader->gltextures[i][0] = TexMgr_LoadImage (loadmodel, name, pheader->skinwidth, pheader->skinheight,
-						SRC_INDEXED, (byte *)(pskintype+1), loadmodel->name, offset, texflags);
+						SRC_INDEXED, (byte *)(pskintype+1), skin_source, offset, texflags);
 				}
 			}
 
@@ -3896,15 +3975,15 @@ static void *Mod_LoadAllSkins (int numskins, daliasskintype_t *pskintype)
 				if (Mod_CheckFullbrights ((byte *)(pskintype), size))
 				{
 					pheader->gltextures[i][j&3] = TexMgr_LoadImage (loadmodel, name, pheader->skinwidth, pheader->skinheight,
-						SRC_INDEXED, (byte *)(pskintype), loadmodel->name, offset, texflags | TEXPREF_NOBRIGHT);
+						SRC_INDEXED, (byte *)(pskintype), skin_source, offset, texflags | TEXPREF_NOBRIGHT);
 					q_snprintf (fbr_mask_name, sizeof(fbr_mask_name), "%s:frame%i_%i_glow", loadmodel->name, i,j);
 					pheader->fbtextures[i][j&3] = TexMgr_LoadImage (loadmodel, fbr_mask_name, pheader->skinwidth, pheader->skinheight,
-						SRC_INDEXED, (byte *)(pskintype), loadmodel->name, offset, texflags | TEXPREF_FULLBRIGHT);
+						SRC_INDEXED, (byte *)(pskintype), skin_source, offset, texflags | TEXPREF_FULLBRIGHT);
 				}
 				else
 				{
 					pheader->gltextures[i][j&3] = TexMgr_LoadImage (loadmodel, name, pheader->skinwidth, pheader->skinheight,
-						SRC_INDEXED, (byte *)(pskintype), loadmodel->name, offset, texflags);
+						SRC_INDEXED, (byte *)(pskintype), skin_source, offset, texflags);
 					pheader->fbtextures[i][j&3] = NULL;
 				}
 				//johnfitz
@@ -4042,7 +4121,7 @@ void Mod_SetExtraFlags (qmodel_t *mod)
 Mod_LoadAliasModel
 =================
 */
-static void Mod_LoadAliasModel (qmodel_t *mod, void *buffer)
+static void Mod_LoadAliasModel (qmodel_t *mod, void *buffer, const char *skin_source)
 {
 	int					i, j;
 	mdl_t				*pinmodel;
@@ -4124,7 +4203,7 @@ static void Mod_LoadAliasModel (qmodel_t *mod, void *buffer)
 // load the skins
 //
 	pskintype = (daliasskintype_t *)&pinmodel[1];
-	pskintype = (daliasskintype_t *) Mod_LoadAllSkins (pheader->numskins, pskintype);
+	pskintype = (daliasskintype_t *) Mod_LoadAllSkins (pheader->numskins, pskintype, skin_source);
 
 //
 // load base s and t vertices

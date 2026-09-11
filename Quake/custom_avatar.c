@@ -651,7 +651,7 @@ static void CustomAvatar_List_f(void)
 		"%d custom packages. Install player_models/<key>/ beside id1 or in %s; restart to scan.\n",
 		ca_count, COM_GetWriteRoot());
 	Con_Printf(
-		"Avatars require official rerelease player data; QBJ3/Enyo use their normal players.\n");
+		"Avatars require official rerelease player data; QBJ3 also needs its local rig package.\n");
 }
 
 void CustomAvatar_Init(void)

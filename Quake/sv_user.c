@@ -633,12 +633,16 @@ static qboolean SV_ReadUsercmd(usercmd_t *readcmd, int sequence) {
 
   extbits = MSG_ReadByte();
   if (extbits & ~(MOVEEXT_VR | MOVEEXT_VR_RELATIVE | MOVEEXT_QCINPUT |
-                  MOVEEXT_VR_AKIMBO)) {
+                  MOVEEXT_VR_AKIMBO | MOVEEXT_VR_AKIMBO_BERSERK)) {
     msg_badread = true;
     return false;
   }
 
   if ((extbits & MOVEEXT_VR_RELATIVE) && !(extbits & MOVEEXT_VR)) {
+    msg_badread = true;
+    return false;
+  }
+  if ((extbits & MOVEEXT_VR_AKIMBO_BERSERK) && !(extbits & MOVEEXT_VR_AKIMBO)) {
     msg_badread = true;
     return false;
   }
@@ -682,6 +686,7 @@ static qboolean SV_ReadUsercmd(usercmd_t *readcmd, int sequence) {
       return false;
     }
     readcmd->vr_akimbo_active = true;
+    readcmd->vr_akimbo_berserk = (extbits & MOVEEXT_VR_AKIMBO_BERSERK) != 0;
     for (i = 0; i < 2; i++) {
       readcmd->vr_akimbo_muzzle[i][0] = MSG_ReadFloat();
       readcmd->vr_akimbo_muzzle[i][1] = MSG_ReadFloat();
@@ -842,6 +847,7 @@ static qboolean SV_QueuePMoveUsercmd(client_t *client,
     SV_ClearClientPMoveState(client);
     VectorCopy(vec3_origin, client->cmd.vr_roomscalemove);
     client->cmd.vr_akimbo_active = false;
+    client->cmd.vr_akimbo_berserk = false;
     VectorClear(client->cmd.vr_akimbo_muzzle[0]);
     VectorClear(client->cmd.vr_akimbo_muzzle[1]);
     VectorClear(client->cmd.vr_akimbo_angles[0]);
@@ -1091,6 +1097,7 @@ static void SV_ClearStaleClientInput(client_t *client) {
   client->net_latched_impulse = 0;
   VectorClear(client->cmd.vr_roomscalemove);
   client->cmd.vr_akimbo_active = false;
+  client->cmd.vr_akimbo_berserk = false;
   VectorClear(client->cmd.vr_akimbo_muzzle[0]);
   VectorClear(client->cmd.vr_akimbo_muzzle[1]);
   VectorClear(client->cmd.vr_akimbo_angles[0]);

@@ -465,6 +465,7 @@ typedef enum {
 #define MOVEEXT_VR_RELATIVE 2
 #define MOVEEXT_QCINPUT 4
 #define MOVEEXT_VR_AKIMBO 8
+#define MOVEEXT_VR_AKIMBO_BERSERK 16 /* pose kind; requires AKIMBO + relative VR */
 
 #define MOVE_BUNDLE_MAX 24 // retained server-side queue capacity for move records
 #define SNAPSHOT_PART_UNKNOWN 255
@@ -576,6 +577,7 @@ typedef struct {
   qboolean vr_handpos_relative;
   /* Anatomical left (0) and right (1) QBJ3 muzzle aim poses, body-relative. */
   qboolean vr_akimbo_active;
+  qboolean vr_akimbo_berserk;
   vec3_t vr_akimbo_muzzle[2];
   vec3_t vr_akimbo_angles[2];
 } usercmd_t;
