@@ -21,6 +21,7 @@ typedef struct r_vrik_skincache_s
 	int body_index_capacity;
 	int body_numindexes;
 	const aliashdr_t *prop_surface;
+	qmodel_t *prop_model;
 	md5vertex_t *prop_vertices;
 	unsigned short *prop_indexes;
 	int prop_vertex_capacity;

@@ -4677,6 +4677,7 @@ static void R_VRIKInvalidateDerivedPropState (r_vrik_skincache_t *cache)
 	memset (cache->muzzle_origin, 0, sizeof (cache->muzzle_origin));
 	memset (cache->muzzle_forward, 0, sizeof (cache->muzzle_forward));
 	cache->prop_surface = NULL;
+	cache->prop_model = NULL;
 	cache->prop_numverts = cache->prop_numindexes = 0;
 	cache->prop_semantic = -1;
 }
@@ -4698,6 +4699,7 @@ static qboolean R_VRIKPrepareAttachedProp (const md5liveinfo_t *canonical,
 		return false;
 	cache->prop_numverts = cache->prop_numindexes = 0;
 	cache->prop_surface = NULL;
+	cache->prop_model = NULL;
 	cache->prop_semantic = -1;
 	if (!targetrig || !targetrig->profile || !targetrig->live)
 		return false;
@@ -4783,6 +4785,7 @@ static qboolean R_VRIKPrepareAttachedProp (const md5liveinfo_t *canonical,
 	R_VRIKComputeNormals (cache->prop_vertices, source->numverts,
 		cache->prop_indexes, outindex);
 	cache->prop_surface = source->header;
+	cache->prop_model = r_vrik_canonical_model;
 	cache->prop_numverts = source->numverts;
 	cache->prop_numindexes = outindex;
 	cache->prop_semantic = semantic;
@@ -5091,6 +5094,123 @@ static qboolean R_PlayerAvatarModelMatches (int id, const md5liveinfo_t *live)
 	return CustomAvatar_Get(id) ? live->custom_avatar_id == id : live->from_rerelease;
 }
 
+/* This is the authored native-layout package, not an arbitrary same-key mesh.
+ * The registry's digest covers the manifest, mesh and both skin files. */
+static qmodel_t *R_VRIKQBJ3EquipmentModel (const r_avatar_profile_t *profile)
+{
+	const custom_avatar_t *source;
+	int id;
+	if (!profile || profile->equipment_policy != R_AVATAR_EQUIPMENT_ATTACH_HAND ||
+		q_strcasecmp(COM_SkipPath(com_gamedir), "qbj3"))
+		return NULL;
+	id = CustomAvatar_IdForKey("qbj3");
+	source = CustomAvatar_Get(id);
+	if (!source || strcmp(source->digest,
+		"ef98e3b1df7cf03715dbd54963329c84f91abf490a19f9faafd7e694c693dc42"))
+		return NULL;
+	return Mod_GetCustomAvatarModel(id);
+}
+
+/* Reuse the detached-prop stream and rigid socket transport. Both props share
+ * one QBJ3 atlas: shotgun follows the dominant hand, wrench follows the upper
+ * spine. Neither canonical animation nor gameplay weapon selection is changed. */
+static void R_VRIKPrepareQBJ3Equipment (qmodel_t *model,
+	const r_avatar_rig_t *canonicalrig, const r_avatar_rig_t *targetrig,
+	const r_avatar_presentation_context_t *context, r_vrik_skincache_t *cache)
+{
+	static const char *roots[2] = {"QBJ3_Shotgun", "QBJ3_BackWrench"};
+	static const int anchors[2] = {MD5_VRIK_HAND_R, MD5_VRIK_SPINE2};
+	md5liveinfo_t source;
+	md5livesurface_t surface;
+	r_avatar_rig_t sourcerig;
+	r_avatar_presentation_context_t sourcecontext;
+	const custom_avatar_t *custom;
+	int prop, outindex = 0;
+	qboolean left = r_vrik_pose_pending &&
+		(r_vrik_pending_pose.flags & VRIK_FLAG_DOMINANT_LEFT);
+
+	/* Missing optional equipment must not hide the selected avatar or invent
+	 * a Ranger prop/muzzle. The body remains on its already validated path. */
+	R_VRIKInvalidateDerivedPropState(cache);
+	if (!model || !Cache_Check(&model->cache) ||
+		!Mod_GetMD5LiveData(model, &source) ||
+		!(custom = CustomAvatar_Get(source.custom_avatar_id)) ||
+		Mod_GetMD5LiveSurfaceCount(&source) != 1 ||
+		!Mod_GetMD5LiveSurface(&source, 0, &surface) ||
+		!R_AvatarResolveRig(&custom->profile, &source, &sourcerig) ||
+		!R_AvatarBuildPresentationContext(canonicalrig, &sourcerig, &sourcecontext) ||
+		!R_VRIKReserveProp(cache, surface.numverts, surface.numindexes))
+		return;
+	memset(cache->prop_vertices, 0, surface.numverts * sizeof(*cache->prop_vertices));
+	for (prop = 0; prop < 2; prop++)
+	{
+		int root = R_VRIKFindLiveJoint(&source, roots[prop]);
+		int sourceanchor = sourcerig.joint[anchors[prop]];
+		int targetanchor = targetrig->joint[prop == 0 && left ?
+			MD5_VRIK_HAND_L : anchors[prop]];
+		int index, firstindex = outindex;
+		float sourcebind[12], attach[12];
+		vec3_t origin;
+		if (root < 0 || sourceanchor < 0 || targetanchor < 0 ||
+			source.joints[root].parent != sourceanchor)
+			return;
+		/* Socket transport expects a source in canonical presentation space.
+		 * Rotate the bind basis and map its origin separately (rigid prop size),
+		 * rather than treating QBJ3 raw coordinates as Ranger coordinates. */
+		R_VRIKMatrixMultiply(sourcecontext.rotation,
+			source.joints[sourceanchor].bind, sourcebind);
+		R_VRIKMatrixOrigin(source.joints[sourceanchor].bind, origin);
+		R_AvatarPresentationPoint(&sourcecontext, origin, origin);
+		R_VRIKSetMatrixOrigin(sourcebind, origin);
+		if (!R_VRIKBuildAttachedPropSocket(context, sourcebind, sourcebind,
+			cache->palette + targetanchor * 12,
+			targetrig->live->joints[targetanchor].bind, attach))
+			return;
+		for (index = 0; index + 2 < surface.numindexes; index += 3)
+		{
+			int point;
+			if (!R_VRIKPropVertexOwnedBy(&source, &surface, surface.indexes[index], root) ||
+				!R_VRIKPropVertexOwnedBy(&source, &surface, surface.indexes[index+1], root) ||
+				!R_VRIKPropVertexOwnedBy(&source, &surface, surface.indexes[index+2], root))
+				continue;
+			for (point = 0; point < 3; point++)
+			{
+				int vertex = surface.indexes[index + point], influence;
+				const md5livevertex_t *input = &surface.vertices[vertex];
+				md5vertex_t *output = &cache->prop_vertices[vertex];
+				vec3_t bindpoint = {0, 0, 0}, canonicalpoint;
+				for (influence = 0; influence < (int)input->numweights; influence++)
+				{
+					const md5liveweight_t *weight = &surface.weights[input->firstweight + influence];
+					const float *matrix = source.joints[weight->joint].bind;
+					int axis;
+					for (axis = 0; axis < 3; axis++)
+						bindpoint[axis] += matrix[axis*4] * weight->position[0] +
+							matrix[axis*4+1] * weight->position[1] +
+							matrix[axis*4+2] * weight->position[2] +
+							matrix[axis*4+3] * weight->position[3];
+				}
+				R_AvatarPresentationPoint(&sourcecontext, bindpoint, canonicalpoint);
+				for (int axis = 0; axis < 3; axis++)
+					output->xyz[axis] = attach[axis*4] * canonicalpoint[0] +
+						attach[axis*4+1] * canonicalpoint[1] +
+						attach[axis*4+2] * canonicalpoint[2] + attach[axis*4+3];
+				output->st[0] = input->st[0];
+				output->st[1] = input->st[1];
+				cache->prop_indexes[outindex++] = vertex;
+			}
+		}
+		if (outindex == firstindex)
+			return;
+	}
+	R_VRIKComputeNormals(cache->prop_vertices, surface.numverts,
+		cache->prop_indexes, outindex);
+	cache->prop_surface = surface.header;
+	cache->prop_model = model;
+	cache->prop_numverts = surface.numverts;
+	cache->prop_numindexes = outindex;
+}
+
 static qboolean R_VRIKPrepareSkin (qmodel_t *model)
 {
 	md5liveinfo_t canonical, target;
@@ -5099,6 +5219,7 @@ static qboolean R_VRIKPrepareSkin (qmodel_t *model)
 	r_avatar_rig_t canonicalrig, targetrig;
 	r_avatar_presentation_context_t presentation;
 	r_vrik_skincache_t *cache;
+	qmodel_t *equipmentmodel;
 	int vertex;
 	float canonicalbind[MAX_MD5_JOINTS * 12], targetbind[MAX_MD5_JOINTS * 12];
 	qboolean desktop_repair_rolled_back = false;
@@ -5122,8 +5243,17 @@ static qboolean R_VRIKPrepareSkin (qmodel_t *model)
 		return true;
 	}
 	profile = R_PlayerAvatarProfile (r_vrik_avatar_id);
+	/* Load before retaining live-data pointers; model loading may evict caches. */
+	equipmentmodel = R_VRIKQBJ3EquipmentModel(profile);
 	if (!profile || !r_vrik_canonical_model ||
-		!Mod_GetRereleasePlayerMD5LiveData (&canonical) ||
+		!Mod_GetMD5Extradata(r_vrik_canonical_model) ||
+		!Mod_GetMD5Extradata(model))
+		return false;
+	/* Warming a later model can evict an earlier one. Do not let a live-view
+	 * getter reload it after another view has already borrowed cache storage.
+	 * Optional equipment is likewise residency-only below, never retried here. */
+	if (!Cache_Check(&r_vrik_canonical_model->cache) || !Cache_Check(&model->cache) ||
+		!Mod_GetMD5LiveData(r_vrik_canonical_model, &canonical) ||
 		!canonical.compatible || !Mod_GetMD5LiveData (model, &target) ||
 		!R_PlayerAvatarModelMatches(r_vrik_avatar_id, &target) ||
 		Mod_GetMD5LiveSurfaceCount (&canonical) != 1 ||
@@ -5190,7 +5320,11 @@ static qboolean R_VRIKPrepareSkin (qmodel_t *model)
 		}
 	}
 	R_VRIKSkinSurface (&surface, cache->palette, cache->vertices);
-	if (!R_VRIKPrepareAttachedProp (&canonical, &targetrig, &presentation,
+	if (!q_strcasecmp(COM_SkipPath(com_gamedir), "qbj3") &&
+		profile->equipment_policy == R_AVATAR_EQUIPMENT_ATTACH_HAND)
+		R_VRIKPrepareQBJ3Equipment(equipmentmodel, &canonicalrig, &targetrig,
+			&presentation, cache);
+	else if (!R_VRIKPrepareAttachedProp (&canonical, &targetrig, &presentation,
 		&canonicalsurface, cache, desktop_weapon_socket_ready))
 		return false;
 	/* The cache is drawn through the ordinary target MD5 transform.  Normalize
@@ -5347,16 +5481,21 @@ static qboolean R_VRIKRejectQBJ3Player (entity_t *entity, int entitynum)
 	return false;
 }
 
+static qboolean R_VRIKQBJ3LivePlayer (const entity_t *entity)
+{
+	return entity && entity->model &&
+		!q_strcasecmp(entity->model->name, "progs/player_qbj.mdl") &&
+		entity->model->numframes == 143 && entity->frame >= 0 &&
+		entity->frame <= 142 && !(entity->frame >= 41 && entity->frame <= 102);
+}
+
 static int R_VRIKQBJ3Avatar (const entity_t *entity, qboolean tracked)
 {
 	const custom_avatar_t *custom;
 	int id;
 	/* QBJ3 QC retains Ranger's 143 ordinals, unlike its MDL frame labels.
 	 * Keep native corpses, eyes, gibs and unsupported model names/frame counts. */
-	if (!tracked || !vr_vrik.value ||
-		q_strcasecmp(entity->model->name, "progs/player_qbj.mdl") ||
-		entity->model->numframes != 143 || entity->frame < 0 ||
-		entity->frame > 142 || (entity->frame >= 41 && entity->frame <= 102))
+	if (!tracked || !vr_vrik.value || !R_VRIKQBJ3LivePlayer(entity))
 		return -1;
 	id = CustomAvatar_IdForKey("qbj3");
 	custom = CustomAvatar_Get(id);
@@ -5400,9 +5539,20 @@ static qboolean R_VRIKSubstitutePlayer (entity_t *entity, entity_t *replacement)
 	tracked = R_VRIKSampleEntityPose (entity, &pose);
 	if (qbj3)
 	{
-		/* Local native-model enhancement, independent of avatar descriptors. */
-		avatar = R_VRIKQBJ3Avatar(entity, tracked);
-		if (avatar < 0)
+		/* An explicit avatar wins; Ranger remains the native QBJ3 default.
+		 * Never retarget corpses, eyes or unrelated mod entities. */
+		if (!R_VRIKQBJ3LivePlayer(entity))
+			return R_VRIKRejectQBJ3Player(entity, entitynum);
+		avatar = cl.avatar_ids[entitynum - 1];
+		if (avatar == PLAYER_AVATAR_RANGER)
+		{
+			/* Unavailable/mismatched custom descriptors resolve to Ranger in
+			 * the receiver, but are not an explicit native-player selection. */
+			if (cl.avatar_custom_keys[entitynum - 1][0])
+				return R_VRIKRejectQBJ3Player(entity, entitynum);
+			avatar = R_VRIKQBJ3Avatar(entity, tracked);
+		}
+		if (avatar < 0 || !R_PlayerAvatarProfile(avatar))
 			return R_VRIKRejectQBJ3Player(entity, entitynum);
 	}
 	else
@@ -5897,7 +6047,8 @@ static void R_DrawMD5Pass (aliashdr_t *surface, lerpdata_t lerpdata,
 		int skin = R_MD5SurfaceSkin (propsurface, 0);
 		gltexture_t *texture = fullbright ? propsurface->fbtextures[skin][anim] :
 			propsurface->gltextures[skin][anim];
-		if (!fullbright && playernum >= 0)
+		if (!fullbright && playernum >= 0 &&
+			r_vrik_skin_cache->prop_model == r_vrik_canonical_model)
 			texture = R_VRIKPlayerTexture (r_vrik_canonical_model, texture,
 				playernum, 0, skin, anim);
 		if (texture || !fullbright)
