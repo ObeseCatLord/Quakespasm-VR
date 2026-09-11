@@ -40,6 +40,18 @@ typedef struct
 	edict_t	*ent;			// entity the surface is on
 } trace_t;
 
+/* Client weapon queries have no server edict, and do not expose the local
+ * brush plane distance as a world-space plane. They never modify prediction. */
+typedef struct
+{
+	qboolean startsolid, allsolid;
+	float fraction;
+	vec3_t endpos, normal;
+	int entity; /* client entity number, -1 for no contact */
+} cl_weapon_trace_t;
+
+cl_weapon_trace_t CL_TraceWeapon (const vec3_t start, const vec3_t end);
+
 
 #define	MOVE_NORMAL		0
 #define	MOVE_NOMONSTERS	1
@@ -69,6 +81,7 @@ int SV_TruePointContents (vec3_t p);
 edict_t	*SV_TestEntityPosition (edict_t *ent);
 
 trace_t SV_Move (vec3_t start, vec3_t mins, vec3_t maxs, vec3_t end, int type, edict_t *passedict);
+trace_t SV_ClipMoveToEntity (edict_t *ent, vec3_t start, vec3_t mins, vec3_t maxs, vec3_t end);
 // mins and maxs are reletive
 
 // if the entire move stays in a solid volume, trace.allsolid will be set
@@ -84,4 +97,3 @@ trace_t SV_Move (vec3_t start, vec3_t mins, vec3_t maxs, vec3_t end, int type, e
 qboolean SV_RecursiveHullCheck (hull_t *hull, int num, float p1f, float p2f, vec3_t p1, vec3_t p2, trace_t *trace);
 
 #endif	/* _QUAKE_WORLD_H */
-

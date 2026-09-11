@@ -1239,9 +1239,19 @@ void R_SyncAliasViewmodelAnimation(int poses[2], float *blend)
 {
 	entity_t *saved = currententity;
 	lerpdata_t lerp;
+	aliashdr_t *header;
 	currententity = &cl.viewent;
-	R_SetupAliasFrame((aliashdr_t *)Mod_Extradata(cl.viewent.model),
-		cl.viewent.frame, &lerp);
+	/* Match the actual viewmodel draw's format selection. Collision also uses
+	 * this synchronization for unsplit MD3/MD5 guns, not only classic pairs. */
+	if (!VR_UseAkimboClassicViewModel(&cl.viewent) &&
+		Mod_UseMD3ModelForFrame(cl.viewent.model, cl.viewent.skinnum, cl.viewent.frame))
+		header = Mod_GetMD3Extradata(cl.viewent.model);
+	else if (!VR_UseAkimboClassicViewModel(&cl.viewent) &&
+		Mod_UseMD5ModelForFrame(cl.viewent.model, cl.viewent.skinnum, cl.viewent.frame))
+		header = Mod_GetMD5Extradata(cl.viewent.model);
+	else
+		header = (aliashdr_t *)Mod_Extradata(cl.viewent.model);
+	R_SetupAliasFrame(header, cl.viewent.frame, &lerp);
 	poses[0] = lerp.pose1;
 	poses[1] = lerp.pose2;
 	*blend = lerp.blend;

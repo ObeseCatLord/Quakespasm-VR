@@ -1040,11 +1040,62 @@ static byte *Mod_GenerateQBJ3Half (const char *name, unsigned int *path_id,
 		{"vr/qbj3/progs/v_tnailgun_vr_left.mdl", "vr/qbj3/progs/v_tnailgun_vr_right.mdl"},
 		{"vr/qbj3/progs/v_berserk_vr_left.mdl", "vr/qbj3/progs/v_berserk_vr_right.mdl"},
 		{"vr/enyo/progs/ee_v_smgs_vr_left.mdl", "vr/enyo/progs/ee_v_smgs_vr_right.mdl"},
-		{"vr/dwell/progs/v_axeb_vr_left.mdl", "vr/dwell/progs/v_axeb_vr_right.mdl"}
+		{"vr/dwell/progs/v_axeb_vr_left.mdl", "vr/dwell/progs/v_axeb_vr_right.mdl"},
+		{"vr/qbj3/progs/v_wrench_vr_dominant.mdl", NULL},
+		{"vr/enyo/progs/ee_v_sword_vr_dominant.mdl", NULL},
+		{"vr/bonkjam/progs/v_hammer_default_vr_dominant.mdl", NULL},
+		{"vr/bonkjam/progs/v_hammer_default_bloody_vr_dominant.mdl", NULL},
+		{"vr/bonkjam/progs/v_hammer_default_gold_vr_dominant.mdl", NULL},
+		{"vr/bonkjam/progs/v_hammer_default_gold_bloody_vr_dominant.mdl", NULL},
+		{"vr/bonkjam/progs/v_hammer_alkaline_axe_vr_dominant.mdl", NULL},
+		{"vr/bonkjam/progs/v_hammer_sblade_vr_dominant.mdl", NULL},
+		{"vr/bonkjam/progs/v_hammer_buster_sword_vr_dominant.mdl", NULL},
+		{"vr/bonkjam/progs/v_hammer_pickaxe_vr_dominant.mdl", NULL},
+		{"vr/bonkjam/progs/v_hammer_katana_vr_dominant.mdl", NULL},
+		{"vr/bonkjam/progs/v_hammer_copper_axe_vr_dominant.mdl", NULL},
+		{"vr/bonkjam/progs/v_hammer_baseball_vr_dominant.mdl", NULL},
+		{"vr/bonkjam/progs/v_hammer_moving_past_it_vr_dominant.mdl", NULL},
+		{"vr/bonkjam/progs/v_hammer_mailbox_vr_dominant.mdl", NULL},
+		{"vr/bonkjam/progs/v_hammer_heavy_rocket_vr_dominant.mdl", NULL},
+		{"vr/bonkjam/progs/v_hammer_burger_vr_dominant.mdl", NULL},
+		{"vr/bonkjam/progs/v_hammer_guitar_vr_dominant.mdl", NULL},
+		{"vr/bonkjam/progs/v_hammer_dwarven_vr_dominant.mdl", NULL},
+		{"vr/bonkjam/progs/v_hammer_jester_mallet_vr_dominant.mdl", NULL},
+		{"vr/bonkjam/progs/v_hammer_error_vr_dominant.mdl", NULL},
+		{"vr/bonkjam/progs/v_hammer_sailor_sceptre_vr_dominant.mdl", NULL},
+		{"vr/bonkjam/progs/v_hammer_floyd_vr_dominant.mdl", NULL},
+		{"vr/bonkjam/progs/v_hammer_kebby_gears_vr_dominant.mdl", NULL},
+		{"vr/bonkjam/progs/v_hammer_squeaky_vr_dominant.mdl", NULL},
+		{"vr/bonkjam/progs/v_hammer_sentinel_vr_dominant.mdl", NULL},
+		{"vr/bonkjam/progs/v_hammer_pirate_skull_vr_dominant.mdl", NULL},
+		{"vr/bonkjam/progs/v_hammer_stop_sign_vr_dominant.mdl", NULL},
+		{"vr/bonkjam/progs/v_hammer_blocky_axe_vr_dominant.mdl", NULL},
+		{"vr/bonkjam/progs/v_hammer_brown_brick_vr_dominant.mdl", NULL},
+		{"vr/bonkjam/progs/v_hammer_mace_vr_dominant.mdl", NULL}
 	};
 	static const char *const sources[VR_MDL_SPLIT_WEAPON_COUNT] = {
-		"progs/v_tnailgun.mdl", "progs/v_berserk.mdl", "progs/ee_v_smgs.mdl", "progs/v_axeb.mdl"};
-	static const char *const games[VR_MDL_SPLIT_WEAPON_COUNT] = {"qbj3", "qbj3", "enyo", "dwell"};
+		"progs/v_tnailgun.mdl", "progs/v_berserk.mdl", "progs/ee_v_smgs.mdl", "progs/v_axeb.mdl",
+		"progs/v_wrench.mdl", "progs/ee_v_sword.mdl", "progs/v_hammer_default.mdl",
+		"progs/v_hammer_default_bloody.mdl", "progs/v_hammer_default_gold.mdl",
+		"progs/v_hammer_default_gold_bloody.mdl", "progs/v_hammer_alkaline_axe.mdl",
+		"progs/v_hammer_sblade.mdl", "progs/v_hammer_buster_sword.mdl",
+		"progs/v_hammer_pickaxe.mdl", "progs/v_hammer_katana.mdl",
+		"progs/v_hammer_copper_axe.mdl", "progs/v_hammer_baseball.mdl",
+		"progs/v_hammer_moving_past_it.mdl", "progs/v_hammer_mailbox.mdl",
+		"progs/v_hammer_heavy_rocket.mdl", "progs/v_hammer_burger.mdl",
+		"progs/v_hammer_guitar.mdl", "progs/v_hammer_dwarven.mdl",
+		"progs/v_hammer_jester_mallet.mdl", "progs/v_hammer_error.mdl",
+		"progs/v_hammer_sailor_sceptre.mdl", "progs/v_hammer_floyd.mdl",
+		"progs/v_hammer_kebby_gears.mdl", "progs/v_hammer_squeaky.mdl",
+		"progs/v_hammer_sentinel.mdl", "progs/v_hammer_pirate_skull.mdl",
+		"progs/v_hammer_stop_sign.mdl", "progs/v_hammer_blocky_axe.mdl",
+		"progs/v_hammer_brown_brick.mdl", "progs/v_hammer_mace.mdl"};
+	static const char *const games[VR_MDL_SPLIT_WEAPON_COUNT] = {
+		"qbj3", "qbj3", "enyo", "dwell", "qbj3", "enyo", "bonkjam", "bonkjam", "bonkjam", "bonkjam",
+		"bonkjam", "bonkjam", "bonkjam", "bonkjam", "bonkjam", "bonkjam", "bonkjam", "bonkjam",
+		"bonkjam", "bonkjam", "bonkjam", "bonkjam", "bonkjam", "bonkjam", "bonkjam", "bonkjam",
+		"bonkjam", "bonkjam", "bonkjam", "bonkjam", "bonkjam", "bonkjam", "bonkjam",
+		"bonkjam", "bonkjam"};
 	unsigned int override_id = 0;
 	int weapon, hand, length, result = -1;
 	FILE *file = NULL;
@@ -1055,7 +1106,7 @@ static byte *Mod_GenerateQBJ3Half (const char *name, unsigned int *path_id,
 		return NULL;
 	for (weapon = 0; weapon < VR_MDL_SPLIT_WEAPON_COUNT; ++weapon)
 		for (hand = 0; hand < 2; ++hand)
-			if (!strcmp(name, names[weapon][hand]) &&
+			if (names[weapon][hand] && !strcmp(name, names[weapon][hand]) &&
 				(!q_strcasecmp(COM_SkipPath(com_gamedir), games[weapon]) ||
 				 (weapon == DWELL_MDL_WEAPON_BERSERK &&
 				  !q_strcasecmp(COM_SkipPath(com_gamedir), "dwellv2p2"))))
@@ -1085,7 +1136,8 @@ found:
 	}
 	if (fread(input, 1, (size_t)length, file) == (size_t)length)
 		result = QBJ3_MDL_Split(input, (size_t)length, (qbj3_mdl_weapon_t)weapon,
-			(qbj3_mdl_side_t)hand, &output, size);
+			names[weapon][1] ? (qbj3_mdl_side_t)hand : QBJ3_MDL_SIDE_DOMINANT,
+			&output, size);
 	fclose(file);
 	free(input);
 	if (output)
@@ -1093,6 +1145,79 @@ found:
 	else if (result == 0)
 		mod_qbj3_generation_failed[weapon] = true;
 	return output;
+}
+
+/* Contact anchors are only valid for these source-pinned model bytes.  Keep
+ * this name allowlist at the load boundary so ordinary assets are never
+ * hashed, and fingerprint a loose virtual override's actual bytes too. */
+static qboolean Mod_TracksImmersiveMeleeMDL (const char *name)
+{
+	static const char *const names[] = {
+		"progs/v_axe.mdl",
+		"progs/c_ham.mdl",
+		"progs/v_axe2.mdl",
+		"progs/v_shadaxe0.mdl",
+		"progs/v_shadaxe3.mdl",
+		"progs/ad171/v_shadaxe0.mdl",
+		"progs/ad171/v_shadaxe3.mdl",
+		"progs/aoa/v_gungnir.mdl",
+		"progs/aoa/v_scimitar.mdl",
+		"progs/aoa/v_mace.mdl",
+		"progs/aoa/v_rapier.mdl",
+		"progs/v_hammer.mdl",
+		"progs/v_hammer_glow.mdl",
+		"progs/violentrumble/v_hammer.mdl",
+		"progs/violentrumble/v_hammerpw.mdl",
+		"progs/v_longsword.mdl",
+		"progs/v_longswordred.mdl",
+		"progs/v_alkaxe20fps.mdl",
+		"progs/v_axeb.mdl",
+		"progs/v_axeb_vr_left.mdl",
+		"progs/v_axeb_vr_right.mdl",
+		"progs/v_berserk.mdl",
+		"progs/v_berserk_vr_left.mdl",
+		"progs/v_berserk_vr_right.mdl",
+		"vr/qbj3/progs/v_berserk_vr_left.mdl",
+		"vr/qbj3/progs/v_berserk_vr_right.mdl",
+		"vr/dwell/progs/v_axeb_vr_left.mdl",
+		"vr/dwell/progs/v_axeb_vr_right.mdl",
+		"vr/qbj3/progs/v_wrench_vr_dominant.mdl",
+		"vr/enyo/progs/ee_v_sword_vr_dominant.mdl",
+		"vr/bonkjam/progs/v_hammer_default_vr_dominant.mdl",
+		"vr/bonkjam/progs/v_hammer_default_bloody_vr_dominant.mdl",
+		"vr/bonkjam/progs/v_hammer_default_gold_vr_dominant.mdl",
+		"vr/bonkjam/progs/v_hammer_default_gold_bloody_vr_dominant.mdl",
+		"vr/bonkjam/progs/v_hammer_alkaline_axe_vr_dominant.mdl",
+		"vr/bonkjam/progs/v_hammer_sblade_vr_dominant.mdl",
+		"vr/bonkjam/progs/v_hammer_buster_sword_vr_dominant.mdl",
+		"vr/bonkjam/progs/v_hammer_pickaxe_vr_dominant.mdl",
+		"vr/bonkjam/progs/v_hammer_katana_vr_dominant.mdl",
+		"vr/bonkjam/progs/v_hammer_copper_axe_vr_dominant.mdl",
+		"vr/bonkjam/progs/v_hammer_baseball_vr_dominant.mdl",
+		"vr/bonkjam/progs/v_hammer_moving_past_it_vr_dominant.mdl",
+		"vr/bonkjam/progs/v_hammer_mailbox_vr_dominant.mdl",
+		"vr/bonkjam/progs/v_hammer_heavy_rocket_vr_dominant.mdl",
+		"vr/bonkjam/progs/v_hammer_burger_vr_dominant.mdl",
+		"vr/bonkjam/progs/v_hammer_guitar_vr_dominant.mdl",
+		"vr/bonkjam/progs/v_hammer_dwarven_vr_dominant.mdl",
+		"vr/bonkjam/progs/v_hammer_jester_mallet_vr_dominant.mdl",
+		"vr/bonkjam/progs/v_hammer_error_vr_dominant.mdl",
+		"vr/bonkjam/progs/v_hammer_sailor_sceptre_vr_dominant.mdl",
+		"vr/bonkjam/progs/v_hammer_floyd_vr_dominant.mdl",
+		"vr/bonkjam/progs/v_hammer_kebby_gears_vr_dominant.mdl",
+		"vr/bonkjam/progs/v_hammer_squeaky_vr_dominant.mdl",
+		"vr/bonkjam/progs/v_hammer_sentinel_vr_dominant.mdl",
+		"vr/bonkjam/progs/v_hammer_pirate_skull_vr_dominant.mdl",
+		"vr/bonkjam/progs/v_hammer_stop_sign_vr_dominant.mdl",
+		"vr/bonkjam/progs/v_hammer_blocky_axe_vr_dominant.mdl",
+		"vr/bonkjam/progs/v_hammer_brown_brick_vr_dominant.mdl",
+		"vr/bonkjam/progs/v_hammer_mace_vr_dominant.mdl"};
+	unsigned int i;
+
+	for (i = 0; i < sizeof(names) / sizeof(names[0]); ++i)
+		if (!q_strcasecmp(name, names[i]))
+			return true;
+	return false;
 }
 
 static qmodel_t *Mod_LoadModel (qmodel_t *mod, qboolean crash)
@@ -1120,6 +1245,10 @@ static qmodel_t *Mod_LoadModel (qmodel_t *mod, qboolean crash)
 		else
 			return mod;		// not cached at all
 	}
+	/* A cache reload or a failed/non-MDL reload must never retain an old
+	 * approval fingerprint. It is filled only for the loaded alias bytes below. */
+	mod->immersive_mdl_crc32 = 0;
+	mod->immersive_mdl_size = 0;
 
 //
 // because the world is so huge, load it one piece at a time
@@ -1159,6 +1288,13 @@ static qmodel_t *Mod_LoadModel (qmodel_t *mod, qboolean crash)
 	mod->needload = false;
 
 	mod_type = (buf[0] | (buf[1] << 8) | (buf[2] << 16) | (buf[3] << 24));
+	if (model_filesize >= 0 && mod_type == IDPOLYHEADER &&
+		Mod_TracksImmersiveMeleeMDL(mod->name))
+	{
+		mod->immersive_mdl_size = (size_t)model_filesize;
+		mod->immersive_mdl_crc32 = QBJ3_MDL_CRC32(buf,
+			mod->immersive_mdl_size);
+	}
 	switch (mod_type)
 	{
 	case IDPOLYHEADER:
@@ -5435,7 +5571,8 @@ static qboolean Mod_MD5LoadSkin (qmodel_t *mod, aliashdr_t *surface,
 }
 
 static qboolean Mod_MD5LoadAnimation (qmodel_t *mod, const md5joint_t *joints,
-	int numjoints, float **outposes, int *outnumposes, float *outinterval)
+	int numjoints, float **outposes, int *outnumposes, float *outinterval,
+	size_t *outsize, uint32_t *outcrc)
 {
 	char filename[MAX_QPATH];
 	byte *filedata = NULL;
@@ -5447,6 +5584,7 @@ static qboolean Mod_MD5LoadAnimation (qmodel_t *mod, const md5joint_t *joints,
 	float *raw = NULL, *poses = NULL, *local = NULL;
 	byte *seen = NULL;
 	size_t numframes, animationjoints, rawcount;
+	size_t filebytes;
 	int frame, joint;
 	float framerate;
 	qboolean valid = false;
@@ -5454,6 +5592,8 @@ static qboolean Mod_MD5LoadAnimation (qmodel_t *mod, const md5joint_t *joints,
 	*outposes = NULL;
 	*outnumposes = 1;
 	*outinterval = 0.1f;
+	if (outsize) *outsize = 0;
+	if (outcrc) *outcrc = 0;
 	COM_StripExtension (mod->name, filename, sizeof(filename));
 	COM_AddExtension (filename, ".md5anim", sizeof(filename));
 	filedata = mod_md5_rerelease_only ?
@@ -5464,6 +5604,7 @@ static qboolean Mod_MD5LoadAnimation (qmodel_t *mod, const md5joint_t *joints,
 		free (filedata);
 		return true; /* static companion: bind pose is a valid fallback */
 	}
+	filebytes = (size_t)com_filesize;
 
 	parser.cursor = (const char *)filedata;
 	parser.error = NULL;
@@ -5615,6 +5756,8 @@ static qboolean Mod_MD5LoadAnimation (qmodel_t *mod, const md5joint_t *joints,
 	*outposes = poses;
 	*outnumposes = (int)numframes;
 	*outinterval = 1.0f / framerate;
+	if (outsize) *outsize = filebytes;
+	if (outcrc) *outcrc = QBJ3_MDL_CRC32(filedata, filebytes);
 	poses = NULL;
 	valid = true;
 
@@ -5644,9 +5787,16 @@ static qboolean Mod_LoadMD5MeshModel (qmodel_t *mod, const byte *buffer, size_t 
 	float frameinterval = 0.1f;
 	int hunkmark, joint, surface, frame, vert, k;
 	qboolean valid = false;
+	/* Only a source-verified enhanced axe currently needs edge identity.
+	 * Missing/bad animation must not inherit a valid animation fingerprint. */
+	qboolean track_edge = !strcmp(mod->name, "progs/v_axe.mdl");
+	size_t edge_anim_size = 0;
+	uint32_t edge_mesh_crc = 0, edge_anim_crc = 0;
 
 	if (filesize < 12)
 		return Mod_MD5Warning (mod, "file is shorter than an MD5 header");
+	if (track_edge)
+		edge_mesh_crc = QBJ3_MDL_CRC32(buffer, filesize);
 
 	memset (surfaces, 0, sizeof(surfaces));
 	parser.cursor = (const char *)buffer;
@@ -5783,7 +5933,8 @@ static qboolean Mod_LoadMD5MeshModel (qmodel_t *mod, const byte *buffer, size_t 
 
 	/* A missing or invalid companion animation is safely rendered as bind pose. */
 	if (!mod_custom_avatar)
-		Mod_MD5LoadAnimation (mod, joints, (int)numjoints, &animation, &numposes, &frameinterval);
+		Mod_MD5LoadAnimation (mod, joints, (int)numjoints, &animation, &numposes, &frameinterval,
+			track_edge ? &edge_anim_size : NULL, track_edge ? &edge_anim_crc : NULL);
 	if (numposes < 1 || numposes > MAXALIASFRAMES)
 	{
 		Mod_MD5Fail (&parser, "invalid animation pose count");
@@ -6008,6 +6159,10 @@ static qboolean Mod_LoadMD5MeshModel (qmodel_t *mod, const byte *buffer, size_t 
 		}
 		out = (aliashdr_t *)Hunk_AllocName ((int)headersize, loadname);
 		out->poseverttype = ALIAS_POSE_MD5;
+		out->immersive_md5_mesh_size = track_edge ? filesize : 0;
+		out->immersive_md5_mesh_crc32 = edge_mesh_crc;
+		out->immersive_md5_anim_size = edge_anim_size;
+		out->immersive_md5_anim_crc32 = edge_anim_crc;
 		out->numframes = out->numposes = numposes;
 		out->numverts = out->numverts_vbo = (int)numverts;
 		out->numtris = (int)numtris;

@@ -116,6 +116,7 @@ static void SV_ClearClientPMoveState(client_t *client) {
 }
 
 void SV_ResetClientMoveState(client_t *client) {
+  SV_VRContactResetClient(client);
   Q_memset(&client->cmd, 0, sizeof(client->cmd));
   VectorCopy(vec3_origin, client->wishdir);
   client->last_move_time = 0;
@@ -633,7 +634,8 @@ static qboolean SV_ReadUsercmd(usercmd_t *readcmd, int sequence) {
 
   extbits = MSG_ReadByte();
   if (extbits & ~(MOVEEXT_VR | MOVEEXT_VR_RELATIVE | MOVEEXT_QCINPUT |
-                  MOVEEXT_VR_AKIMBO | MOVEEXT_VR_AKIMBO_BERSERK)) {
+                  MOVEEXT_VR_AKIMBO | MOVEEXT_VR_AKIMBO_BERSERK |
+                  MOVEEXT_VR_CONTACT)) {
     msg_badread = true;
     return false;
   }
@@ -647,6 +649,12 @@ static qboolean SV_ReadUsercmd(usercmd_t *readcmd, int sequence) {
     return false;
   }
   if ((extbits & MOVEEXT_VR_AKIMBO) != 0 &&
+      (extbits & (MOVEEXT_VR | MOVEEXT_VR_RELATIVE)) !=
+          (MOVEEXT_VR | MOVEEXT_VR_RELATIVE)) {
+    msg_badread = true;
+    return false;
+  }
+  if ((extbits & MOVEEXT_VR_CONTACT) != 0 &&
       (extbits & (MOVEEXT_VR | MOVEEXT_VR_RELATIVE)) !=
           (MOVEEXT_VR | MOVEEXT_VR_RELATIVE)) {
     msg_badread = true;
@@ -726,6 +734,60 @@ static qboolean SV_ReadUsercmd(usercmd_t *readcmd, int sequence) {
     readcmd->cursor_impact[1] = MSG_ReadFloat();
     readcmd->cursor_impact[2] = MSG_ReadFloat();
     readcmd->cursor_entitynumber = MSG_ReadEntity(host_client->protocol_pext2);
+  }
+
+  if (extbits & MOVEEXT_VR_CONTACT) {
+    unsigned int flags;
+
+    if (net_message.cursize - msg_readcount < 7) {
+      msg_badread = true;
+      return false;
+    }
+    flags = (unsigned int)MSG_ReadByte();
+    if ((flags & ~VR_WEAPON_CONTACT_KNOWN_FLAGS) ||
+        !(flags & (VR_WEAPON_CONTACT_LEFT_VALID |
+                   VR_WEAPON_CONTACT_RIGHT_VALID))) {
+      msg_badread = true;
+      return false;
+    }
+    readcmd->vr_contact.flags = flags;
+    readcmd->vr_contact.modelindex = (unsigned short)MSG_ReadShort();
+    readcmd->vr_contact.weapon = MSG_ReadFloat();
+    if (!isfinite(readcmd->vr_contact.weapon)) {
+      msg_badread = true;
+      return false;
+    }
+    for (i = 0; i < 2; i++) {
+      if (!(flags & (1 << i)))
+        continue;
+      if (net_message.cursize - msg_readcount < 10 * 4) {
+        msg_badread = true;
+        return false;
+      }
+      readcmd->vr_contact.grip[i][0] = MSG_ReadFloat();
+      readcmd->vr_contact.grip[i][1] = MSG_ReadFloat();
+      readcmd->vr_contact.grip[i][2] = MSG_ReadFloat();
+      readcmd->vr_contact.base[i][0] = MSG_ReadFloat();
+      readcmd->vr_contact.base[i][1] = MSG_ReadFloat();
+      readcmd->vr_contact.base[i][2] = MSG_ReadFloat();
+      readcmd->vr_contact.tip[i][0] = MSG_ReadFloat();
+      readcmd->vr_contact.tip[i][1] = MSG_ReadFloat();
+      readcmd->vr_contact.tip[i][2] = MSG_ReadFloat();
+      readcmd->vr_contact.speed[i] = MSG_ReadFloat();
+      if (!isfinite(readcmd->vr_contact.grip[i][0]) ||
+          !isfinite(readcmd->vr_contact.grip[i][1]) ||
+          !isfinite(readcmd->vr_contact.grip[i][2]) ||
+          !isfinite(readcmd->vr_contact.base[i][0]) ||
+          !isfinite(readcmd->vr_contact.base[i][1]) ||
+          !isfinite(readcmd->vr_contact.base[i][2]) ||
+          !isfinite(readcmd->vr_contact.tip[i][0]) ||
+          !isfinite(readcmd->vr_contact.tip[i][1]) ||
+          !isfinite(readcmd->vr_contact.tip[i][2]) ||
+          !isfinite(readcmd->vr_contact.speed[i])) {
+        msg_badread = true;
+        return false;
+      }
+    }
   }
 
   return !msg_badread;
@@ -845,6 +907,7 @@ static qboolean SV_QueuePMoveUsercmd(client_t *client,
     /* Never overwrite an unsimulated pose/input record.  Drop the queue as a
      * discontinuity and retain the newest command as the restart point. */
     SV_ClearClientPMoveState(client);
+    SV_VRContactResetClient(client);
     VectorCopy(vec3_origin, client->cmd.vr_roomscalemove);
     client->cmd.vr_akimbo_active = false;
     client->cmd.vr_akimbo_berserk = false;
@@ -876,6 +939,7 @@ static void SV_ValidateVRRoomScaleUsercmd(client_t *client, usercmd_t *cmd) {
   if (!isfinite(horizontal) || !isfinite(cmd->vr_roomscalemove[2]) ||
       fabsf(cmd->vr_roomscalemove[2]) > 16.0f || horizontal > 16.0f) {
     VectorClear(cmd->vr_roomscalemove);
+    SV_VRContactResetClient(client);
     client->move_discontinuity_epoch++;
     client->move_discontinuity_reason = MOVEACK_DISCONTINUITY_TRACKING_OUTLIER;
     client->net_move_roomscale_outliers++;
@@ -888,6 +952,7 @@ static qboolean SV_AcceptPMoveUsercmd(client_t *client,
   qboolean has_input;
 
   pmovecmd = *acceptedcmd;
+  pmovecmd.vr_contact_received = realtime;
   SV_NormalizeAcceptedUsercmd(client, &pmovecmd);
   SV_ValidateVRRoomScaleUsercmd(client, &pmovecmd);
   if (!SV_QueuePMoveUsercmd(client, &pmovecmd))
@@ -918,12 +983,17 @@ static qboolean SV_AcceptPMoveUsercmd(client_t *client,
 }
 
 static void SV_AcceptLatestUsercmd(client_t *client,
-                                   const usercmd_t *acceptedcmd) {
+                                   const usercmd_t *acceptedcmd,
+                                   qboolean fresh) {
   usercmd_t latestcmd;
   qboolean has_input;
 
   latestcmd = *acceptedcmd;
+  if (fresh)
+    latestcmd.vr_contact_received = realtime;
   SV_ValidateVRRoomScaleUsercmd(client, &latestcmd);
+  if (fresh)
+    SV_VRContactAcceptLegacy(client, &latestcmd);
   latestcmd.seconds = 0;
 
   client->net_latest_buttons = latestcmd.buttons;
@@ -1031,6 +1101,7 @@ void SV_ReadClientMove(usercmd_t *move) {
     host_client->net_move_last_gap = gap;
     host_client->move_discontinuity_epoch++;
     host_client->move_discontinuity_reason = MOVEACK_DISCONTINUITY_GAP;
+    SV_VRContactResetClient(host_client);
     if (net_lagdebug.value)
       Con_Printf("net_lagdebug: accepted move gap from %s gap=%d seq=%d last=%d\n",
                   host_client->name, gap, sequence, accepted_base);
@@ -1041,7 +1112,7 @@ void SV_ReadClientMove(usercmd_t *move) {
     if (!SV_AcceptPMoveUsercmd(host_client, &readcmd))
       return;
   } else {
-    SV_AcceptLatestUsercmd(host_client, &readcmd);
+    SV_AcceptLatestUsercmd(host_client, &readcmd, true);
   }
 
   host_client->moveext = true;
@@ -1085,6 +1156,7 @@ static void SV_ClearStaleClientInput(client_t *client) {
                  client->vr_roomscalemove[2]);
     }
     client->input_stale = true;
+    SV_VRContactResetClient(client);
   }
 
   client->cmd.forwardmove = 0;
@@ -1749,7 +1821,7 @@ static void SV_TransferPMoveToLegacy(client_t *client) {
   client->net_latest_buttons = client->cmd.buttons;
   client->cmd.impulse = 0;
   for (i = 0; i < count; i++)
-    SV_AcceptLatestUsercmd(client, &pending[i]);
+    SV_AcceptLatestUsercmd(client, &pending[i], false);
   client->last_move_time = received_time;
 }
 
@@ -1845,6 +1917,7 @@ static void SV_UpdateClientPMoveMode(client_t *client, qboolean allow_promotion)
     client->move_discontinuity_epoch++;
     client->move_discontinuity_reason = usingpmove ?
         MOVEACK_DISCONTINUITY_RESET_TELEPORT : fallback_reason;
+    SV_VRContactResetClient(client);
     if (net_lagdebug.value)
       Con_Printf("net_lagdebug: server PMove %s for %s mode=%s sv_runclientcommand=%d\n",
                  usingpmove ? "enabled" : "disabled",

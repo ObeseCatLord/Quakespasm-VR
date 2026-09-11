@@ -1999,6 +1999,101 @@ static void PM_DecodeSolidSize (unsigned int solidsize, vec3_t mins, vec3_t maxs
 	maxs[2] = (int)((solidsize >> 16) & 65535) - 32768;
 }
 
+/* A read-only scene query for tracked weapons, not a movement simulation.
+ * Brushes use their linked pose, boxes their received collision hull (which
+ * need not exactly match an alias model's later step-animation interpolation).
+ * Main-thread only: no QC, callbacks or yields while box scratch is borrowed. */
+cl_weapon_trace_t CL_TraceWeapon (const vec3_t start, const vec3_t end)
+{
+	cl_weapon_trace_t result;
+	trace_t trace;
+	vec3_t a, b, mins, maxs;
+	float saved_dist[6];
+	int i;
+
+	memset (&result, 0, sizeof(result));
+	result.fraction = 1;
+	result.entity = -1;
+	VectorCopy (end, result.endpos);
+	if (!cl.worldmodel || cl.worldmodel->needload)
+		return result;
+	for (i = 0; i < 3; i++)
+		if (!isfinite(start[i]) || !isfinite(end[i]))
+			return result;
+	VectorCopy (start, a);
+	VectorCopy (end, b);
+	PM_EnsureInitialized ();
+	for (i = 0; i < 6; i++)
+		saved_dist[i] = box_planes[i].dist;
+	for (i = 0; i < cl.num_entities || i == 0; i++)
+	{
+		qmodel_t *model = cl.worldmodel;
+		vec3_t origin = {0, 0, 0}, angles = {0, 0, 0};
+		if (i)
+		{
+			entity_t *ent;
+			unsigned int solid;
+			if (!cl.entities || i == cl.viewentity)
+				continue;
+			ent = &cl.entities[i];
+			solid = ent->netstate.solidsize;
+			/* Replacement updates clear solids on removal. Legacy snapshots
+			 * may retain old fields, so message presence is required as well. */
+			if (solid == ES_SOLID_NOT || ent->msgtime != cl.mtime[0])
+				continue;
+			if (cl.gametype == GAME_COOP && i <= cl.maxclients &&
+				(cl.stats[STAT_VR_COOP_POLICY] & VR_COOP_POLICY_NO_PLAYER_CLIP))
+				continue;
+			if (solid == ES_SOLID_BSP)
+			{
+				model = ent->model;
+				if (!model || model->needload || model->type != mod_brush)
+					continue;
+				switch ((signed char)ent->netstate.skin)
+				{
+				case CONTENTS_WATER: case CONTENTS_SLIME: case CONTENTS_LAVA:
+				case CONTENTS_LADDER:
+					continue;
+				default:
+					break;
+				}
+				VectorCopy (ent->origin, origin);
+				VectorCopy (ent->angles, angles);
+			}
+			else
+			{
+				model = NULL;
+				PM_DecodeSolidSize (solid, mins, maxs);
+				PM_HullForBox (mins, maxs);
+				VectorCopy (ent->netstate.origin, origin);
+			}
+		}
+		if (!PM_TransformedHullCheck(model, a, b, vec3_origin, vec3_origin,
+			&trace, origin, angles))
+			continue;
+		if (trace.allsolid || trace.startsolid)
+		{
+			trace.startsolid = true;
+			trace.fraction = 0;
+			VectorCopy (a, trace.endpos);
+			VectorClear (trace.plane.normal);
+		}
+		if (trace.fraction < result.fraction ||
+			(trace.startsolid && !result.startsolid))
+		{
+			result.startsolid = trace.startsolid;
+			result.allsolid = trace.allsolid;
+			result.fraction = trace.fraction;
+			result.entity = i;
+			VectorCopy (trace.endpos, result.endpos);
+			VectorCopy (trace.plane.normal, result.normal);
+		}
+	}
+	for (i = 0; i < 6; i++)
+		box_planes[i].dist = saved_dist[i];
+	return result;
+}
+
 static qboolean PM_BoundsOverlap (const vec3_t mins1, const vec3_t maxs1,
 	const vec3_t mins2, const vec3_t maxs2)
 {

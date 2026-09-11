@@ -1903,6 +1903,8 @@ DEFINE_CVAR(vr_enabled, 0, CVAR_NONE);
 DEFINE_CVAR(vr_vrik, 1, CVAR_ARCHIVE);
 DEFINE_CVAR(vr_viewkick, 0, CVAR_NONE);
 DEFINE_CVAR(vr_lefthanded, 0, CVAR_ARCHIVE);
+DEFINE_CVAR(vr_immersive_melee, 1, CVAR_ARCHIVE);
+DEFINE_CVAR(vr_weapon_collision, 1, CVAR_ARCHIVE);
 DEFINE_CVAR(vr_qbj3_akimbo, 1, CVAR_ARCHIVE);
 DEFINE_CVAR(vr_akimbo, 1, CVAR_ARCHIVE);
 
@@ -6121,7 +6123,15 @@ static void VR_WorldToMuzzleOffset(const vec3_t world, const vec3_t angles,
   VR_WorldToAimOffset(canonical, angles, scale, local);
 }
 
-void VR_GetMuzzleAdjustedHandPos(vec3_t out) {
+/* Raw calibration queries never perform collision or consume contact history.
+ * Final muzzle queries may resolve presentation, but physical swing sampling
+ * must continue to use these raw controller-space points. */
+static void VR_GetRawWeaponEdge(vec3_t base, vec3_t tip);
+static qboolean VR_WeaponCollisionEnabled(int controller);
+static qboolean VR_GetWeaponCollisionOffset(int controller,
+    const vec3_t base, const vec3_t tip, vec3_t delta);
+
+static void VR_GetRawMuzzleAdjustedHandPos(vec3_t out) {
   if (VR_IsMuzzleAdjustMode()) {
     VectorCopy(vr_adjust_current_handpos, out);
     return;
@@ -6158,6 +6168,16 @@ void VR_GetMuzzleAdjustedHandPos(vec3_t out) {
 
     VR_MuzzleOffsetToWorld(local, cl.handrot[1], vr_gunmodelscale.value, world);
     VectorAdd(out, world, out);
+  }
+}
+
+void VR_GetMuzzleAdjustedHandPos(vec3_t out) {
+  vec3_t base, tip, delta;
+  VR_GetRawMuzzleAdjustedHandPos(out);
+  if (VR_WeaponCollisionEnabled(1)) {
+    VR_GetRawWeaponEdge(base, tip);
+    if (VR_GetWeaponCollisionOffset(1, base, tip, delta))
+      VectorAdd(out, delta, out);
   }
 }
 
@@ -6206,6 +6226,7 @@ typedef struct vr_akimbo_model_s {
   qboolean berserk;
   vec3_t contacts[2];
   const vr_akimbo_fists_t *fists;
+  int melee_edge_vertices[2][2];
 } vr_akimbo_model_t;
 
 static const vr_akimbo_model_t vr_akimbo_models[] = {
@@ -6213,22 +6234,24 @@ static const vr_akimbo_model_t vr_akimbo_models[] = {
    {"progs/v_tnailgun_vr_left.mdl", "progs/v_tnailgun_vr_right.mdl"},
    19, 1968, {988, 980}, false,
    {{54.75913167f, 10.28241703f, -16.05048694f},
-    {54.75913167f, -10.49037877f, -16.05048694f}}, NULL},
+    {54.75913167f, -10.49037877f, -16.05048694f}}, NULL, {{0, 0}, {0, 0}}},
   {"qbj3", &cl.vr_qbj3_berserk_akimbo_supported, "progs/v_berserk.mdl",
    {"progs/v_berserk_vr_left.mdl", "progs/v_berserk_vr_right.mdl"},
    101, 894, {447, 447}, true,
    {{24.69689480f, 15.34041551f, -7.01256642f},
-    {24.73065716f, -15.77186370f, -6.95642908f}}, &vr_qbj3_fists},
+    {24.73065716f, -15.77186370f, -6.95642908f}}, &vr_qbj3_fists,
+    {{0, 0}, {0, 0}}},
   {"enyo", &cl.vr_enyo_akimbo_supported, "progs/ee_v_smgs.mdl",
    {"progs/ee_v_smgs_vr_left.mdl", "progs/ee_v_smgs_vr_right.mdl"},
    17, 984, {492, 492}, false,
    {{64.10965419f, 19.31388339f, -13.71730390f},
-    {64.10965419f, -19.51840544f, -13.71730390f}}, NULL},
+    {64.10965419f, -19.51840544f, -13.71730390f}}, NULL, {{0, 0}, {0, 0}}},
   {"dwell", &cl.vr_dwell_berserk_akimbo_supported, "progs/v_axeb.mdl",
    {"progs/v_axeb_vr_left.mdl", "progs/v_axeb_vr_right.mdl"},
    51, 304, {152, 152}, true,
    {{33.219191864f, 14.249626011f, -17.862335034f},
-    {37.226840504f, -13.465485394f, -18.066500630f}}, &vr_dwell_fists}
+    {37.226840504f, -13.465485394f, -18.066500630f}}, &vr_dwell_fists,
+    {{54, 72}, {54, 72}}}
 };
 
 static const vr_akimbo_model_t *VR_AkimboModelDefinition(void) {
@@ -6326,6 +6349,102 @@ static qboolean VR_AkimboModels(qmodel_t *models[2], aliashdr_t *headers[2]) {
   return true;
 }
 
+/* QBJ3 berserk is the one paired model that has source-pinned fist contacts.
+ * Keep the general akimbo path cosmetic-only: this stricter branch requires
+ * every loaded source/output byte fingerprint, the advertised melee family,
+ * and the existing complete generated pair. A loose override is usable only
+ * if it is byte-identical to the approved output. */
+static qboolean VR_QBJ3BerserkImmersiveActive(qmodel_t *models[2],
+                                                aliashdr_t *headers[2]) {
+  const vr_akimbo_model_t *def = VR_AkimboModelDefinition();
+  aliashdr_t *source;
+  qmodel_t *local_models[2];
+  aliashdr_t *local_headers[2];
+  qmodel_t **checked_models = models ? models : local_models;
+  aliashdr_t **checked_headers = headers ? headers : local_headers;
+
+  if (!def || !def->berserk || strcmp(def->game, "qbj3") ||
+      !vr_enabled.value || !vr_immersive_melee.value ||
+      (int)vr_aimmode.value != VR_AIMMODE_CONTROLLER ||
+      !(cl.vr_weapon_contact_supported & VR_WEAPON_CONTACT_CAP_MELEE) ||
+      cl.vr_weapon_contact_profile != VR_WEAPON_CONTACT_PROFILE_QBJ3 ||
+      cls.state != ca_connected || cls.signon != SIGNONS ||
+      cl.stats[STAT_HEALTH] <= 0 || cl.intermission ||
+      !VR_VRIKControllerTracked(0) || !VR_VRIKControllerTracked(1) ||
+      !cl.viewent.model || cl.viewent.model->type != mod_alias ||
+      strcmp(cl.viewent.model->name, "progs/v_berserk.mdl") ||
+      !VR_AkimboModels(checked_models, checked_headers))
+    return false;
+  source = (aliashdr_t *)Mod_Extradata(cl.viewent.model);
+  if (!source || cl.viewent.model->immersive_mdl_size != 656804 ||
+      cl.viewent.model->immersive_mdl_crc32 != 0xc3af3566u ||
+      source->poseverttype != ALIAS_POSE_MDL || source->numverts != 894 ||
+      source->numtris != 1240 || source->numframes != 101 || !source->vertexes)
+    return false;
+  return checked_models[0]->immersive_mdl_size == 460932 &&
+      checked_models[0]->immersive_mdl_crc32 == 0x1e60e85bu &&
+      checked_models[1]->immersive_mdl_size == 460932 &&
+      checked_models[1]->immersive_mdl_crc32 == 0x7cf16657u &&
+      checked_headers[0]->poseverttype == ALIAS_POSE_MDL &&
+      checked_headers[1]->poseverttype == ALIAS_POSE_MDL &&
+      checked_headers[0]->numverts == 447 && checked_headers[1]->numverts == 447 &&
+      checked_headers[0]->numtris == 620 && checked_headers[1]->numtris == 620 &&
+      checked_headers[0]->numframes == 101 && checked_headers[1]->numframes == 101 &&
+      checked_headers[0]->frames[0].numposes > 0 &&
+      checked_headers[1]->frames[0].numposes > 0;
+}
+
+/* Dwell's berserk model is two complete axes, not bare fists.  The same
+ * complete-pair policy applies: a loose override is acceptable only when its
+ * loaded output bytes are the source-pinned generated bytes. */
+static qboolean VR_DwellAkimboImmersiveActive(qmodel_t *models[2],
+                                               aliashdr_t *headers[2]) {
+  const vr_akimbo_model_t *def = VR_AkimboModelDefinition();
+  aliashdr_t *source;
+  qmodel_t *local_models[2];
+  aliashdr_t *local_headers[2];
+  qmodel_t **checked_models = models ? models : local_models;
+  aliashdr_t **checked_headers = headers ? headers : local_headers;
+
+  if (!def || !def->berserk || strcmp(def->game, "dwell") ||
+      !vr_enabled.value || !vr_immersive_melee.value ||
+      (int)vr_aimmode.value != VR_AIMMODE_CONTROLLER ||
+      !(cl.vr_weapon_contact_supported & VR_WEAPON_CONTACT_CAP_MELEE) ||
+      cl.vr_weapon_contact_profile != VR_WEAPON_CONTACT_PROFILE_DWELL ||
+      cls.state != ca_connected || cls.signon != SIGNONS ||
+      cl.stats[STAT_HEALTH] <= 0 || cl.intermission ||
+      !VR_VRIKControllerTracked(0) || !VR_VRIKControllerTracked(1) ||
+      !cl.viewent.model || cl.viewent.model->type != mod_alias ||
+      strcmp(cl.viewent.model->name, "progs/v_axeb.mdl") ||
+      !VR_AkimboModels(checked_models, checked_headers))
+    return false;
+  source = (aliashdr_t *)Mod_Extradata(cl.viewent.model);
+  if (!source || cl.viewent.model->immersive_mdl_size != 106284 ||
+      cl.viewent.model->immersive_mdl_crc32 != 0x69c2bf5eu ||
+      source->poseverttype != ALIAS_POSE_MDL || source->numverts != 304 ||
+      source->numtris != 396 || source->numframes != 51 || !source->vertexes)
+    return false;
+  return checked_models[0]->immersive_mdl_size == 70284 &&
+      checked_models[0]->immersive_mdl_crc32 == 0x8e5fd44bu &&
+      checked_models[1]->immersive_mdl_size == 70284 &&
+      checked_models[1]->immersive_mdl_crc32 == 0xf3c035b6u &&
+      checked_headers[0]->poseverttype == ALIAS_POSE_MDL &&
+      checked_headers[1]->poseverttype == ALIAS_POSE_MDL &&
+      checked_headers[0]->numverts == 152 && checked_headers[1]->numverts == 152 &&
+      checked_headers[0]->numtris == 198 && checked_headers[1]->numtris == 198 &&
+      checked_headers[0]->numframes == 51 && checked_headers[1]->numframes == 51 &&
+      checked_headers[0]->frames[0].numposes > 0 &&
+      checked_headers[1]->frames[0].numposes > 0;
+}
+
+static qboolean VR_AkimboImmersiveActive(qmodel_t *models[2],
+                                          aliashdr_t *headers[2]) {
+  const vr_akimbo_model_t *def = VR_AkimboModelDefinition();
+  if (def && !strcmp(def->game, "dwell"))
+    return VR_DwellAkimboImmersiveActive(models, headers);
+  return VR_QBJ3BerserkImmersiveActive(models, headers);
+}
+
 static void VR_AkimboModelTransform(aliashdr_t *hdr, int hand) {
   const vr_akimbo_fists_t *fists = VR_AkimboModelDefinition()->fists;
   Mod_Weapon(cl.viewent.model, hdr);
@@ -6379,7 +6498,7 @@ static void VR_AkimboModelAngles(int hand, const vec3_t handangles,
   }
 }
 
-qboolean VR_GetAkimboPoses(vec3_t muzzle[2], vec3_t angles[2], qboolean *berserk) {
+static qboolean VR_GetRawAkimboPoses(vec3_t muzzle[2], vec3_t angles[2], qboolean *berserk) {
   qmodel_t *models[2];
   aliashdr_t *headers[2];
   if (berserk)
@@ -6393,9 +6512,9 @@ qboolean VR_GetAkimboPoses(vec3_t muzzle[2], vec3_t angles[2], qboolean *berserk
   for (int hand = 0; hand < 2; ++hand) {
     int index = hand == (VR_IsLeftHanded() ? 0 : 1) ? 1 : 0;
     vec3_t local, world, modelangles;
-    /* Source idle barrel-mouth centroid; kept in source coordinates so the
-     * physical projectile origin follows the exact held scale and offset.
-     * Recoil/flash animation does not steer the controller's firing ray. */
+    /* Source-verified held contact anchor; kept in source coordinates so the
+     * physical origin follows the exact held scale and offset. Recoil/flash
+     * animation does not steer the controller's firing ray or fist knuckles. */
     const float *anchor = def->contacts[hand];
     VR_AkimboModelTransform(headers[hand], hand);
     for (int axis = 0; axis < 3; ++axis)
@@ -6416,28 +6535,100 @@ qboolean VR_GetAkimboPoses(vec3_t muzzle[2], vec3_t angles[2], qboolean *berserk
   return true;
 }
 
+/* Unlike a firing muzzle, Dwell's physical contact is the source-pinned axe
+ * cutting edge. The split halves retain these local vertices losslessly; use
+ * the existing per-hand transform so controller centering and user scale are
+ * exactly the same as the drawn axes. */
+static qboolean VR_GetRawDwellAkimboEdges(vec3_t base[2], vec3_t tip[2]) {
+  const vr_akimbo_model_t *def = VR_AkimboModelDefinition();
+  qmodel_t *models[2];
+  aliashdr_t *headers[2];
+
+  if (!def || strcmp(def->game, "dwell") || !def->fists ||
+      !VR_AkimboModels(models, headers))
+    return false;
+  for (int hand = 0; hand < 2; ++hand) {
+    const trivertx_t *vertices;
+    vec3_t handangles, modelangles, local, world;
+    int index = hand == (VR_IsLeftHanded() ? 0 : 1) ? 1 : 0;
+
+    VR_AkimboModelTransform(headers[hand], hand);
+    vertices = (const trivertx_t *)((const byte *)headers[hand] +
+        headers[hand]->vertexes) + headers[hand]->frames[0].firstpose *
+        headers[hand]->numverts;
+    VectorCopy(cl.handrot[index], handangles);
+    VR_AkimboModelAngles(hand, handangles, modelangles);
+    for (int endpoint = 0; endpoint < 2; ++endpoint) {
+      int vertex = def->melee_edge_vertices[hand][endpoint];
+      vec3_t *out = endpoint ? &tip[hand] : &base[hand];
+      if (vertex < 0 || vertex >= headers[hand]->numverts)
+        return false;
+      for (int axis = 0; axis < 3; ++axis)
+        local[axis] = vertices[vertex].v[axis] * headers[hand]->scale[axis] +
+            headers[hand]->scale_origin[axis];
+      VR_ModelOffsetToWorld(local, modelangles, 1, false, world);
+      VectorAdd(cl.handpos[index], cl.vmeshoffset, *out);
+      VectorAdd(*out, world, *out);
+      if (!isfinite((*out)[0]) || !isfinite((*out)[1]) || !isfinite((*out)[2]))
+        return false;
+    }
+  }
+  return true;
+}
+
+qboolean VR_GetAkimboPoses(vec3_t muzzle[2], vec3_t angles[2], qboolean *berserk) {
+  if (!VR_GetRawAkimboPoses(muzzle, angles, berserk))
+    return false;
+  for (int hand = 0; hand < 2; hand++) {
+    vec3_t delta;
+    int index = hand == (VR_IsLeftHanded() ? 0 : 1) ? 1 : 0;
+    if (VR_GetWeaponCollisionOffset(index, cl.handpos[index], muzzle[hand], delta))
+      VectorAdd(muzzle[hand], delta, muzzle[hand]);
+  }
+  return true;
+}
+
 qboolean VR_DrawAkimboViewModels(void) {
-  vec3_t muzzle[2], angles[2];
+  vec3_t muzzle[2], angles[2], dwell_base[2], dwell_tip[2];
   qmodel_t *models[2];
   aliashdr_t *headers[2];
   int poses[2];
   float blend;
   entity_t *saved = currententity;
-  if (!VR_GetAkimboPoses(muzzle, angles, NULL) || !VR_AkimboModels(models, headers))
+  if (!VR_GetRawAkimboPoses(muzzle, angles, NULL) || !VR_AkimboModels(models, headers))
     return false;
-  /* Advance the original animation exactly once, then give both halves the
-   * same complete interpolation state. This also consumes network resets. */
-  R_SyncAliasViewmodelAnimation(poses, &blend);
+  qboolean immersive_pair = VR_AkimboImmersiveActive(models, headers);
+  qboolean dwell_axes = immersive_pair &&
+      !strcmp(VR_AkimboModelDefinition()->game, "dwell");
+  if (dwell_axes && !VR_GetRawDwellAkimboEdges(dwell_base, dwell_tip))
+    return false;
+  if (!immersive_pair) {
+    /* Advance the original animation exactly once, then give both halves the
+     * same complete interpolation state. This also consumes network resets. */
+    R_SyncAliasViewmodelAnimation(poses, &blend);
+  }
   for (int hand = 0; hand < 2; ++hand) {
     int index = hand == (VR_IsLeftHanded() ? 0 : 1) ? 1 : 0;
     entity_t *ent = &vr_akimbo_entities[hand];
     *ent = cl.viewent;
     ent->model = models[hand];
+    if (immersive_pair) {
+      /* A stable local idle fist/axe follows its tracked controller. Do not
+       * write the QC/source entity frame or consume its interpolation; skins
+       * and fullbright data remain on the original retained half. */
+      ent->frame = 0;
+      ent->lerpflags |= LERP_RESETANIM;
+    }
     VectorAdd(cl.handpos[index], cl.vmeshoffset, ent->origin);
+    vec3_t collision_delta;
+    if (VR_GetWeaponCollisionOffset(index,
+        dwell_axes ? dwell_base[hand] : cl.handpos[index],
+        dwell_axes ? dwell_tip[hand] : muzzle[hand], collision_delta))
+      VectorAdd(ent->origin, collision_delta, ent->origin);
     VR_AkimboModelAngles(hand, angles[hand], ent->angles);
     VR_AkimboModelTransform(headers[hand], hand);
     const vr_akimbo_fists_t *fists = VR_AkimboModelDefinition()->fists;
-    if (fists) {
+    if (fists && !immersive_pair) {
       /* Track the same eight palm vertices through the source animation.
        * Remove only palm translation, including the renderer's exact pose
        * interpolation, so the authored 30cm lunge cannot detach a tracked
@@ -6459,6 +6650,586 @@ qboolean VR_DrawAkimboViewModels(void) {
     R_DrawAliasModel_NoCull(ent);
   }
   currententity = saved;
+  return true;
+}
+
+/* Source-validated physical profiles. Unknown weapons/models retain
+ * their trigger behavior; having the vanilla inventory bit is not enough. */
+static qboolean vr_weapon_contact_discontinuity = true;
+
+typedef struct vr_immersive_melee_profile_s {
+  int contact_profile;
+  const char *source_name;
+  const char *held_name;
+  size_t held_size;
+  uint32_t held_crc32;
+  int vertices, triangles, frames, ready_pose;
+  int base_vertex, tip_vertex;
+  aliasposeverttype_t pose_type = ALIAS_POSE_MDL;
+  size_t animation_size = 0;
+  uint32_t animation_crc32 = 0;
+  qboolean native_trigger = false;
+  /* Full authored trigger combos retain their source animation. Their
+   * physical edge is admitted only after that animation has settled at its
+   * source-defined ready pose. */
+  qboolean native_animation = false;
+} vr_immersive_melee_profile_t;
+
+/* The virtual names are generated only from their pinned sources by the model
+ * loader. Their actual loaded bytes are checked again here, so a loose
+ * override cannot silently borrow source-specific contact anchors. */
+static const vr_immersive_melee_profile_t vr_immersive_melee_profiles[] = {
+  {VR_WEAPON_CONTACT_PROFILE_STOCK, "progs/v_axe.mdl", NULL,
+   57908, 0x2aa03605u, 98, 184, 9, 0, 83, 82},
+  {VR_WEAPON_CONTACT_PROFILE_STOCK, "progs/v_axe.mdl", NULL,
+   91226, 0x82833cbfu, 540, 756, 9, 0, 55, 54,
+   ALIAS_POSE_MD5, 3814, 0x6d4e64b2u},
+  {VR_WEAPON_CONTACT_PROFILE_DWELL, "progs/v_axe2.mdl", NULL,
+   70932, 0xf5d8df1bu, 155, 198, 51, 0, 112, 124},
+  {VR_WEAPON_CONTACT_PROFILE_AD, "progs/v_shadaxe0.mdl", NULL,
+   97860, 0x5afd327au, 281, 292, 21, 0, 50, 32},
+  {VR_WEAPON_CONTACT_PROFILE_AD, "progs/v_shadaxe3.mdl", NULL,
+   97860, 0x63b2522eu, 281, 292, 21, 0, 50, 32},
+  {VR_WEAPON_CONTACT_PROFILE_AD, "progs/v_longsword.mdl", NULL,
+   308932, 0x7a01f3f6u, 676, 810, 21, 0, 542, 549},
+  {VR_WEAPON_CONTACT_PROFILE_AD, "progs/v_longswordred.mdl", NULL,
+   308932, 0xfc48e614u, 676, 810, 21, 0, 542, 549},
+  {VR_WEAPON_CONTACT_PROFILE_COPPER, "progs/v_axe2.mdl", NULL,
+   70932, 0xf5d8df1bu, 155, 198, 51, 0, 112, 124},
+  {VR_WEAPON_CONTACT_PROFILE_COPPER, "progs/v_axe.mdl", NULL,
+   70932, 0xf5d8df1bu, 155, 198, 51, 0, 112, 124},
+  {VR_WEAPON_CONTACT_PROFILE_ALK, "progs/v_alkaxe20fps.mdl", NULL,
+   96428, 0x3003ca78u, 205, 246, 53, 0, 74, 77},
+  {VR_WEAPON_CONTACT_PROFILE_IMMORTAL, "progs/v_axe.mdl", NULL,
+   57908, 0x2aa03605u, 98, 184, 9, 0, 83, 82},
+  {VR_WEAPON_CONTACT_PROFILE_IMMORTAL, "progs/v_axe.mdl", NULL,
+   91226, 0x82833cbfu, 540, 756, 9, 0, 55, 54,
+   ALIAS_POSE_MD5, 3814, 0x6d4e64b2u},
+  {VR_WEAPON_CONTACT_PROFILE_IMMORTAL, "progs/c_ham.mdl", NULL,
+   76800, 0xadf76316u, 132, 252, 10, 0, 73, 77},
+  {VR_WEAPON_CONTACT_PROFILE_DRAKE, "progs/v_axe.mdl", NULL,
+   57908, 0x2aa03605u, 98, 184, 9, 0, 83, 82},
+  {VR_WEAPON_CONTACT_PROFILE_DRAKE, "progs/v_axe.mdl", NULL,
+   91226, 0x82833cbfu, 540, 756, 9, 0, 55, 54,
+   ALIAS_POSE_MD5, 3814, 0x6d4e64b2u},
+  {VR_WEAPON_CONTACT_PROFILE_MJOLNIR, "progs/v_axe.mdl", NULL,
+   77332, 0xfa7e2b13u, 176, 188, 9, 0, 36, 15},
+  {VR_WEAPON_CONTACT_PROFILE_MJOLNIR, "progs/v_axe.mdl", NULL,
+   91226, 0x82833cbfu, 540, 756, 9, 0, 55, 54,
+   ALIAS_POSE_MD5, 3814, 0x6d4e64b2u},
+  {VR_WEAPON_CONTACT_PROFILE_MJOLNIR, "progs/ad171/v_shadaxe0.mdl", NULL,
+   97860, 0x5afd327au, 281, 292, 21, 0, 50, 32},
+  {VR_WEAPON_CONTACT_PROFILE_MJOLNIR, "progs/ad171/v_shadaxe3.mdl", NULL,
+   97860, 0x63b2522eu, 281, 292, 21, 0, 50, 32},
+  {VR_WEAPON_CONTACT_PROFILE_STOCK, "progs/v_hammer.mdl", NULL,
+   58404, 0x69d95d37u, 132, 252, 5, 0, 88, 82,
+   ALIAS_POSE_MDL, 0, 0, true, true},
+  {VR_WEAPON_CONTACT_PROFILE_STOCK, "progs/v_hammer.mdl", NULL,
+   160740, 0xac452604u, 795, 1242, 5, 0, 318, 317,
+   ALIAS_POSE_MDL, 0, 0, true, true},
+  {VR_WEAPON_CONTACT_PROFILE_STOCK, "progs/v_hammer_glow.mdl", NULL,
+   160740, 0x52d3fcf0u, 795, 1242, 5, 0, 318, 317,
+   ALIAS_POSE_MDL, 0, 0, true, true},
+  {VR_WEAPON_CONTACT_PROFILE_MJOLNIR, "progs/violentrumble/v_hammer.mdl", NULL,
+   73476, 0x915b070eu, 204, 270, 5, 0, 193, 197,
+   ALIAS_POSE_MDL, 0, 0, true, true},
+  {VR_WEAPON_CONTACT_PROFILE_MJOLNIR, "progs/violentrumble/v_hammerpw.mdl", NULL,
+   260696, 0x149e344du, 204, 270, 5, 0, 199, 203,
+   ALIAS_POSE_MDL, 0, 0, true, true},
+  {VR_WEAPON_CONTACT_PROFILE_DRAKE, "progs/v_hammer.mdl", NULL,
+   58404, 0x69d95d37u, 132, 252, 5, 0, 88, 82,
+   ALIAS_POSE_MDL, 0, 0, true, true},
+  {VR_WEAPON_CONTACT_PROFILE_MJOLNIR, "progs/aoa/v_gungnir.mdl", NULL,
+   134249, 0xbfec06afu, 374, 472, 9, 0, 19, 20,
+   ALIAS_POSE_MDL, 0, 0, true, false},
+  {VR_WEAPON_CONTACT_PROFILE_MJOLNIR, "progs/aoa/v_scimitar.mdl", NULL,
+   1702496, 0xb7656883u, 265, 276, 22, 0, 164, 157,
+   ALIAS_POSE_MDL, 0, 0, true, true},
+  {VR_WEAPON_CONTACT_PROFILE_MJOLNIR, "progs/aoa/v_mace.mdl", NULL,
+   129844, 0x71952cc3u, 288, 502, 14, 0, 192, 185,
+   ALIAS_POSE_MDL, 0, 0, true, true},
+  {VR_WEAPON_CONTACT_PROFILE_MJOLNIR, "progs/aoa/v_rapier.mdl", NULL,
+   1750800, 0xe070bafau, 431, 781, 16, 0, 400, 365,
+   ALIAS_POSE_MDL, 0, 0, true, true},
+  {VR_WEAPON_CONTACT_PROFILE_QBJ3, "progs/v_wrench.mdl",
+   "vr/qbj3/progs/v_wrench_vr_dominant.mdl",
+   702244, 0x1bfff189u, 565, 540, 71, 10, 320, 358},
+  {VR_WEAPON_CONTACT_PROFILE_ENYO, "progs/ee_v_sword.mdl",
+   "vr/enyo/progs/ee_v_sword_vr_dominant.mdl",
+   344020, 0xa707a071u, 669, 679, 35, 0, 13, 77},
+  {VR_WEAPON_CONTACT_PROFILE_BONK, "progs/v_hammer_default.mdl",
+   "vr/bonkjam/progs/v_hammer_default_vr_dominant.mdl",
+   1020252, 0x6b015a17u, 714, 877, 255, 0, 344, 309},
+  {VR_WEAPON_CONTACT_PROFILE_BONK, "progs/v_hammer_default_bloody.mdl",
+   "vr/bonkjam/progs/v_hammer_default_bloody_vr_dominant.mdl",
+   1020252, 0xa58d9385u, 714, 877, 255, 0, 344, 309},
+  {VR_WEAPON_CONTACT_PROFILE_BONK, "progs/v_hammer_default_gold.mdl",
+   "vr/bonkjam/progs/v_hammer_default_gold_vr_dominant.mdl",
+   1020252, 0x2729b338u, 714, 877, 255, 0, 344, 309},
+  {VR_WEAPON_CONTACT_PROFILE_BONK, "progs/v_hammer_default_gold_bloody.mdl",
+   "vr/bonkjam/progs/v_hammer_default_gold_bloody_vr_dominant.mdl",
+   1020252, 0x795c367au, 714, 877, 255, 0, 344, 309},
+  {VR_WEAPON_CONTACT_PROFILE_BONK, "progs/v_hammer_alkaline_axe.mdl",
+   "vr/bonkjam/progs/v_hammer_alkaline_axe_vr_dominant.mdl",
+   1236740, 0x189776eeu, 919, 1185, 255, 0, 451, 475},
+  {VR_WEAPON_CONTACT_PROFILE_BONK, "progs/v_hammer_sblade.mdl",
+   "vr/bonkjam/progs/v_hammer_sblade_vr_dominant.mdl",
+   1237772, 0x9cb41fe1u, 920, 1185, 255, 0, 568, 549},
+  {VR_WEAPON_CONTACT_PROFILE_BONK, "progs/v_hammer_buster_sword.mdl",
+   "vr/bonkjam/progs/v_hammer_buster_sword_vr_dominant.mdl",
+   1318748, 0xe540f2d5u, 750, 827, 255, 0, 581, 599},
+  {VR_WEAPON_CONTACT_PROFILE_BONK, "progs/v_hammer_pickaxe.mdl",
+   "vr/bonkjam/progs/v_hammer_pickaxe_vr_dominant.mdl",
+   1340076, 0xe8a90d78u, 1020, 1129, 255, 0, 770, 725},
+  {VR_WEAPON_CONTACT_PROFILE_BONK, "progs/v_hammer_katana.mdl",
+   "vr/bonkjam/progs/v_hammer_katana_vr_dominant.mdl",
+   979724, 0x9cc9287au, 676, 795, 255, 0, 562, 590},
+  {VR_WEAPON_CONTACT_PROFILE_BONK, "progs/v_hammer_copper_axe.mdl",
+   "vr/bonkjam/progs/v_hammer_copper_axe_vr_dominant.mdl",
+   803116, 0x4e1a43e1u, 508, 593, 255, 0, 430, 437},
+  {VR_WEAPON_CONTACT_PROFILE_BONK, "progs/v_hammer_baseball.mdl",
+   "vr/bonkjam/progs/v_hammer_baseball_vr_dominant.mdl",
+   1514900, 0xa0ff1b47u, 1185, 1413, 255, 0, 517, 524},
+  {VR_WEAPON_CONTACT_PROFILE_BONK, "progs/v_hammer_moving_past_it.mdl",
+   "vr/bonkjam/progs/v_hammer_moving_past_it_vr_dominant.mdl",
+   1019924, 0xf964f136u, 713, 921, 255, 0, 421, 429},
+  {VR_WEAPON_CONTACT_PROFILE_BONK, "progs/v_hammer_mailbox.mdl",
+   "vr/bonkjam/progs/v_hammer_mailbox_vr_dominant.mdl",
+   1052124, 0xe9db2836u, 746, 805, 255, 0, 650, 658},
+  {VR_WEAPON_CONTACT_PROFILE_BONK, "progs/v_hammer_heavy_rocket.mdl",
+   "vr/bonkjam/progs/v_hammer_heavy_rocket_vr_dominant.mdl",
+   1857292, 0xfce0615eu, 1260, 1591, 255, 0, 728, 736},
+  {VR_WEAPON_CONTACT_PROFILE_BONK, "progs/v_hammer_burger.mdl",
+   "vr/bonkjam/progs/v_hammer_burger_vr_dominant.mdl",
+   1785212, 0x95ebd5f1u, 1194, 1343, 255, 0, 721, 724},
+  {VR_WEAPON_CONTACT_PROFILE_BONK, "progs/v_hammer_guitar.mdl",
+   "vr/bonkjam/progs/v_hammer_guitar_vr_dominant.mdl",
+   1145692, 0x960e3f31u, 834, 977, 255, 0, 483, 486},
+  {VR_WEAPON_CONTACT_PROFILE_BONK, "progs/v_hammer_dwarven.mdl",
+   "vr/bonkjam/progs/v_hammer_dwarven_vr_dominant.mdl",
+   1387500, 0x9ced4a20u, 1064, 1255, 255, 0, 675, 684},
+  {VR_WEAPON_CONTACT_PROFILE_BONK, "progs/v_hammer_jester_mallet.mdl",
+   "vr/bonkjam/progs/v_hammer_jester_mallet_vr_dominant.mdl",
+   1569244, 0x75410d00u, 986, 1261, 255, 0, 704, 785},
+  {VR_WEAPON_CONTACT_PROFILE_BONK, "progs/v_hammer_error.mdl",
+   "vr/bonkjam/progs/v_hammer_error_vr_dominant.mdl",
+   1929484, 0xdacfb47eu, 1584, 1589, 255, 0, 1464, 1472},
+  {VR_WEAPON_CONTACT_PROFILE_BONK, "progs/v_hammer_sailor_sceptre.mdl",
+   "vr/bonkjam/progs/v_hammer_sailor_sceptre_vr_dominant.mdl",
+   1409404, 0xa50ca8a4u, 1086, 1205, 255, 0, 945, 982},
+  {VR_WEAPON_CONTACT_PROFILE_BONK, "progs/v_hammer_floyd.mdl",
+   "vr/bonkjam/progs/v_hammer_floyd_vr_dominant.mdl",
+   1451524, 0x14515f65u, 875, 1063, 255, 0, 494, 485},
+  {VR_WEAPON_CONTACT_PROFILE_BONK, "progs/v_hammer_kebby_gears.mdl",
+   "vr/bonkjam/progs/v_hammer_kebby_gears_vr_dominant.mdl",
+   2136348, 0x5949fe05u, 1530, 1617, 255, 0, 1261, 1255},
+  {VR_WEAPON_CONTACT_PROFILE_BONK, "progs/v_hammer_squeaky.mdl",
+   "vr/bonkjam/progs/v_hammer_squeaky_vr_dominant.mdl",
+   1187924, 0x3aa7e63au, 873, 1101, 255, 0, 631, 555},
+  {VR_WEAPON_CONTACT_PROFILE_BONK, "progs/v_hammer_sentinel.mdl",
+   "vr/bonkjam/progs/v_hammer_sentinel_vr_dominant.mdl",
+   1733628, 0xc4586f63u, 1390, 1861, 255, 0, 582, 615},
+  {VR_WEAPON_CONTACT_PROFILE_BONK, "progs/v_hammer_pirate_skull.mdl",
+   "vr/bonkjam/progs/v_hammer_pirate_skull_vr_dominant.mdl",
+   1963148, 0x3e849458u, 1612, 1887, 255, 0, 500, 501},
+  {VR_WEAPON_CONTACT_PROFILE_BONK, "progs/v_hammer_stop_sign.mdl",
+   "vr/bonkjam/progs/v_hammer_stop_sign_vr_dominant.mdl",
+   913916, 0x601873dfu, 614, 681, 255, 0, 415, 422},
+  {VR_WEAPON_CONTACT_PROFILE_BONK, "progs/v_hammer_blocky_axe.mdl",
+   "vr/bonkjam/progs/v_hammer_blocky_axe_vr_dominant.mdl",
+   1760468, 0xba39619eu, 1419, 1668, 255, 0, 445, 444},
+  {VR_WEAPON_CONTACT_PROFILE_BONK, "progs/v_hammer_brown_brick.mdl",
+   "vr/bonkjam/progs/v_hammer_brown_brick_vr_dominant.mdl",
+   1710068, 0x2eaea24au, 1127, 968, 255, 0, 552, 742},
+  {VR_WEAPON_CONTACT_PROFILE_BONK, "progs/v_hammer_mace.mdl",
+   "vr/bonkjam/progs/v_hammer_mace_vr_dominant.mdl",
+   1193372, 0x413cf48au, 878, 1119, 255, 0, 159, 152}
+};
+
+/* Identity and immutable source checks are deliberately separate from native
+ * animation readiness: a known Scimitar/Mace must keep its authored trigger
+ * even while its physical edge is temporarily ineligible. */
+static const vr_immersive_melee_profile_t *VR_ImmersiveMeleeProfileIdentity(
+    qmodel_t **held_model, aliashdr_t **held_header) {
+  const vr_immersive_melee_profile_t *profile = NULL;
+  qmodel_t *model;
+  aliashdr_t *hdr;
+  size_t i;
+
+  if (!vr_enabled.value || !vr_immersive_melee.value ||
+      (int)vr_aimmode.value != VR_AIMMODE_CONTROLLER ||
+      !(cl.vr_weapon_contact_supported & VR_WEAPON_CONTACT_CAP_MELEE) || cls.state != ca_connected ||
+      cls.signon != SIGNONS || cl.stats[STAT_HEALTH] <= 0 || cl.intermission ||
+      !VR_VRIKControllerTracked(1) ||
+      !cl.viewent.model || cl.viewent.model->type != mod_alias)
+    return NULL;
+  hdr = VR_ActiveAliasHeader(cl.viewent.model, cl.viewent.skinnum, 0);
+  if (!hdr)
+    return NULL;
+  for (i = 0; i < sizeof(vr_immersive_melee_profiles) /
+      sizeof(vr_immersive_melee_profiles[0]); ++i) {
+    const vr_immersive_melee_profile_t *candidate =
+        &vr_immersive_melee_profiles[i];
+    if (cl.vr_weapon_contact_profile ==
+            candidate->contact_profile &&
+        !strcmp(cl.viewent.model->name,
+            candidate->source_name) &&
+        (candidate->held_name || hdr->poseverttype == candidate->pose_type)) {
+      /* Hipnotic and MG3 deliberately advertise the same stock profile and
+       * pathname but ship distinct classic models. Pick the exact source pin
+       * here, before topology/edge admission below, rather than accepting the
+       * first same-name row. MD5 identities are header-pinned later. */
+      if (!candidate->held_name && candidate->pose_type == ALIAS_POSE_MDL &&
+          (cl.viewent.model->immersive_mdl_size != candidate->held_size ||
+           cl.viewent.model->immersive_mdl_crc32 != candidate->held_crc32))
+        continue;
+      profile = candidate;
+      break;
+    }
+  }
+  if (!profile)
+    return NULL;
+  model = profile->held_name ? Mod_ForName(profile->held_name, false) :
+      cl.viewent.model;
+  if (!model || model->type != mod_alias)
+    return NULL;
+  /* Stock retains its selected classic/enhanced header. The custom held
+   * meshes deliberately use the verified virtual MDL header, while Mod_Weapon
+   * below applies calibration from the original source model. */
+  hdr = profile->held_name ? (aliashdr_t *)Mod_Extradata(model) :
+      VR_ActiveAliasHeader(model, cl.viewent.skinnum, 0);
+  if (!hdr || hdr->poseverttype != profile->pose_type ||
+      hdr->numverts != profile->vertices || hdr->numframes != profile->frames ||
+      hdr->numtris != profile->triangles || !hdr->vertexes ||
+      profile->ready_pose < 0 || profile->ready_pose >= hdr->numframes ||
+      hdr->frames[profile->ready_pose].numposes <= 0 ||
+      hdr->frames[profile->ready_pose].firstpose < 0 ||
+      hdr->frames[profile->ready_pose].firstpose >= hdr->numposes ||
+      profile->base_vertex < 0 || profile->base_vertex >= hdr->numverts ||
+      profile->tip_vertex < 0 || profile->tip_vertex >= hdr->numverts)
+    return NULL;
+  if (profile->pose_type == ALIAS_POSE_MD5) {
+    /* Mesh and companion animation independently determine the ready edge.
+     * Never accept a bind-pose fallback or a same-name altered animation. */
+    if (hdr->nextsurface || !profile->animation_size ||
+        hdr->immersive_md5_mesh_size != profile->held_size ||
+        hdr->immersive_md5_mesh_crc32 != profile->held_crc32 ||
+        hdr->immersive_md5_anim_size != profile->animation_size ||
+        hdr->immersive_md5_anim_crc32 != profile->animation_crc32)
+      return NULL;
+  } else if (model->immersive_mdl_size != profile->held_size ||
+      model->immersive_mdl_crc32 != profile->held_crc32) {
+    return NULL;
+  }
+  if (profile->pose_type == ALIAS_POSE_MDL && !profile->held_name &&
+      profile->contact_profile == VR_WEAPON_CONTACT_PROFILE_STOCK &&
+      !strcmp(profile->source_name, "progs/v_axe.mdl") &&
+      (fabsf(hdr->original_scale[0] - .2244189084f) >= .0000001f ||
+       fabsf(hdr->original_scale[1] - .2454846501f) >= .0000001f ||
+       fabsf(hdr->original_scale[2] - .2942478061f) >= .0000001f))
+    return NULL;
+  if (held_model)
+    *held_model = model;
+  if (held_header)
+    *held_header = hdr;
+  return profile;
+}
+
+static const vr_immersive_melee_profile_t *VR_ImmersiveMeleeProfile(
+    qmodel_t **held_model, aliashdr_t **held_header) {
+  const vr_immersive_melee_profile_t *profile =
+      VR_ImmersiveMeleeProfileIdentity(held_model, held_header);
+  if (profile && profile->native_animation) {
+    aliashdr_t *source = VR_ActiveAliasHeader(cl.viewent.model,
+        cl.viewent.skinnum, 0);
+    int poses[2], ready_pose;
+    float blend;
+    if (!source || profile->ready_pose >= source->numframes ||
+        source->frames[profile->ready_pose].numposes != 1)
+      return NULL;
+    /* Update canonical persistent interpolation before the scoped held copy.
+     * A just-arrived frame zero still blends the prior attack pose; do not
+     * freeze/render/contact it until both endpoints are the ready pose. */
+    R_SyncAliasViewmodelAnimation(poses, &blend);
+    ready_pose = source->frames[profile->ready_pose].firstpose;
+    if (cl.viewent.frame != profile->ready_pose ||
+        poses[0] != ready_pose || poses[1] != ready_pose || blend < 1.0f)
+      return NULL;
+  }
+  return profile;
+}
+
+qboolean VR_ImmersiveMeleeActive(void) {
+  /* Do not report a paired fist active until both tracked controllers and
+   * exact generated halves are available; otherwise its normal QC trigger
+   * path is untouched. */
+  return VR_ImmersiveMeleeProfile(NULL, NULL) != NULL ||
+      VR_AkimboImmersiveActive(NULL, NULL);
+}
+
+qboolean VR_ImmersiveMeleeSuppressTrigger(void) {
+  const vr_immersive_melee_profile_t *profile =
+      VR_ImmersiveMeleeProfileIdentity(NULL, NULL);
+  /* Gungnir's server adapter keeps projectile fire without scheduling a
+   * canned stab. Its physical edge/ready pose remain independently active. */
+  return profile ? !profile->native_trigger : VR_AkimboImmersiveActive(NULL, NULL);
+}
+
+static void VR_GetRawWeaponEdge(vec3_t base, vec3_t tip) {
+  aliashdr_t *hdr;
+  const vr_immersive_melee_profile_t *profile =
+      VR_ImmersiveMeleeProfile(NULL, &hdr);
+  if (profile) {
+    const byte *vertices = (const byte *)hdr + hdr->vertexes;
+    int first_vertex = hdr->frames[profile->ready_pose].firstpose * hdr->numverts;
+    vec3_t modelangles, local, world, origin;
+    /* Use the original source model's user calibration entry, not the
+     * generated virtual pathname. */
+    Mod_Weapon(cl.viewent.model, hdr);
+    VR_HandRotToViewmodelAngles(cl.handrot[1], modelangles);
+    VectorAdd(cl.handpos[1], cl.vmeshoffset, origin);
+    /* Source-verified ready-pose cutting edge, never hand/arm vertices. */
+    for (int point = 0; point < 2; point++) {
+      int vertex = first_vertex + (point ? profile->tip_vertex : profile->base_vertex);
+      for (int axis = 0; axis < 3; axis++) {
+        /* Reuse the loader's existing skinned pose stream; contact and
+         * rendering therefore share the same MD5 coordinates and offsets. */
+        float coordinate = hdr->poseverttype == ALIAS_POSE_MD5 ?
+            ((const md5vertex_t *)vertices)[vertex].xyz[axis] :
+            ((const trivertx_t *)vertices)[vertex].v[axis];
+        local[axis] = coordinate * hdr->scale[axis] + hdr->scale_origin[axis];
+      }
+      VR_ModelOffsetToWorld(local, modelangles, 1, VR_IsLeftHanded(), world);
+      VectorAdd(origin, world, point ? tip : base);
+    }
+  } else {
+    VectorCopy(cl.handpos[1], base);
+    VR_GetRawMuzzleAdjustedHandPos(tip);
+  }
+}
+
+static qboolean VR_WeaponCollisionEnabled(int controller) {
+  return vr_enabled.value && vr_weapon_collision.value &&
+      (cl.vr_weapon_contact_supported & VR_WEAPON_CONTACT_CAP_COLLISION) &&
+      (int)vr_aimmode.value == VR_AIMMODE_CONTROLLER &&
+      cls.state == ca_connected && cls.signon == SIGNONS &&
+      key_dest == key_game && !cl.intermission && cl.stats[STAT_HEALTH] > 0 &&
+      !vr_weaponmenu_session.active && !VR_AdjustmentVisualsActive() &&
+      vr_head_raw_valid && VR_VRIKControllerTracked(controller) &&
+      cl.entities && cl.viewentity > 0 && cl.viewentity < cl.num_entities &&
+      cl.viewent.model && cl.worldmodel;
+}
+
+/* Stateless two-stage Quake VR-style hand/shaft resolution. Return false for
+ * an impossible pose, not a fictitious clear muzzle. Neither raw tracking nor
+ * the movement/prediction world is modified. Both eyes use the same geometry. */
+static qboolean VR_ResolveWeaponGeometry(const vec3_t torso, const vec3_t grip,
+    const vec3_t base, const vec3_t tip, vec3_t delta) {
+  vec3_t resolved_grip, endpoints[2], extra = {0, 0, 0};
+  float greatest = 0;
+  cl_weapon_trace_t trace;
+  VectorCopy(vec3_origin, delta);
+  for (int axis = 0; axis < 3; axis++)
+    if (!isfinite(torso[axis]) || !isfinite(grip[axis]) ||
+        !isfinite(base[axis]) || !isfinite(tip[axis]))
+      return false;
+  trace = CL_TraceWeapon(torso, grip);
+  if (trace.startsolid || trace.allsolid)
+    return false;
+  VectorCopy(trace.endpos, resolved_grip);
+  VectorSubtract(resolved_grip, grip, delta);
+  VectorAdd(base, delta, endpoints[0]);
+  VectorAdd(tip, delta, endpoints[1]);
+  for (int point = 0; point < 2; point++) {
+    vec3_t correction;
+    trace = CL_TraceWeapon(resolved_grip, endpoints[point]);
+    if (trace.startsolid || trace.allsolid)
+      goto unresolved;
+    VectorSubtract(trace.endpos, endpoints[point], correction);
+    float length2 = DotProduct(correction, correction);
+    if (length2 > greatest) {
+      greatest = length2;
+      VectorCopy(correction, extra);
+    }
+  }
+  VectorAdd(delta, extra, delta);
+  VectorAdd(grip, delta, resolved_grip);
+  VectorAdd(base, delta, endpoints[0]);
+  VectorAdd(tip, delta, endpoints[1]);
+  /* Retraction from a front wall can push the grip into a rear wall. Check
+   * the final body-to-grip path, both shafts and the complete cutting edge;
+   * do not iterate/slide the real player to make an impossible pose fit. */
+  for (int segment = 0; segment < 4; segment++) {
+    trace = CL_TraceWeapon(segment == 0 ? torso :
+        segment == 3 ? endpoints[0] : resolved_grip,
+        segment == 0 ? resolved_grip : endpoints[segment == 1 ? 0 : 1]);
+    if (trace.startsolid || trace.allsolid || trace.fraction < 1)
+      goto unresolved;
+  }
+  return true;
+unresolved:
+  VectorCopy(vec3_origin, delta);
+  return false;
+}
+
+static qboolean VR_GetWeaponCollisionOffset(int controller,
+    const vec3_t base, const vec3_t tip, vec3_t delta) {
+  vec3_t torso;
+  VectorCopy(vec3_origin, delta);
+  if (!VR_WeaponCollisionEnabled(controller))
+    return false;
+  /* Use the tracked head/upper-body anchor, independent of the current eye.
+   * The server separately validates body-to-hand reach before any effect. */
+  VR_TrackingPointToWorld(vr_head_raw_position, torso);
+  return VR_ResolveWeaponGeometry(torso, cl.handpos[controller], base, tip, delta);
+}
+
+qboolean VR_GetWeaponContactSample(vr_weapon_contact_t *out) {
+  vec3_t start, end, velocity, angular, radius, spin;
+  vec3_t akimbo_muzzle[2], akimbo_angles[2];
+  vr::HmdVector3_t zero = {{0,0,0}};
+  const vr::TrackedDevicePose_t *pose;
+  qboolean melee;
+  qboolean paired_melee;
+  qboolean paired_akimbo = false;
+  qboolean dwell_axes = false;
+  int hand = VR_IsLeftHanded() ? 0 : 1;
+  memset(out, 0, sizeof(*out));
+  if (!vr_enabled.value || !cl.vr_weapon_contact_supported ||
+      (int)vr_aimmode.value != VR_AIMMODE_CONTROLLER ||
+      cls.state != ca_connected || cls.signon != SIGNONS ||
+      key_dest != key_game || cl.intermission || cl.stats[STAT_HEALTH] <= 0 ||
+      vr_weaponmenu_session.active || VR_AdjustmentVisualsActive() ||
+      !VR_VRIKControllerTracked(1) || !cl.viewent.model || !cl.worldmodel ||
+      !isfinite(meters_to_units) || meters_to_units <= 0)
+    return false;
+  /* Keep the one-edge branch separate from the public activation gate: a
+   * fist pair that goes untracked between checks must not become a fictitious
+   * single-hand immersive strike. */
+  melee = VR_ImmersiveMeleeProfile(NULL, NULL) != NULL;
+  paired_melee = VR_AkimboImmersiveActive(NULL, NULL);
+  dwell_axes = paired_melee && VR_AkimboModelDefinition() &&
+      !strcmp(VR_AkimboModelDefinition()->game, "dwell");
+  if (paired_melee &&
+      (!VR_VRIKControllerTracked(0) ||
+       !VR_GetRawAkimboPoses(akimbo_muzzle, akimbo_angles, &paired_akimbo) ||
+       !paired_akimbo ||
+       (dwell_axes && !VR_GetRawDwellAkimboEdges(out->base, out->tip))))
+    paired_melee = false;
+  if (!melee && !paired_melee && !(vr_weapon_collision.value &&
+      (cl.vr_weapon_contact_supported & VR_WEAPON_CONTACT_CAP_COLLISION)))
+    return false;
+  /* Explicit rebases must not become a swept strike, even when the real hand
+   * was also moving. An inactive sample uses the existing history reset path;
+   * it carries no new protocol state and does not interrupt smooth turning. */
+  if (vr_weapon_contact_discontinuity) {
+    vr_weapon_contact_discontinuity = false;
+    return false;
+  }
+  out->modelindex = cl.stats[STAT_WEAPON];
+  out->weapon = cl.stats[STAT_ACTIVEWEAPON];
+  if (paired_melee) {
+    /* The exact paired models contribute both physical contacts. QBJ3 keeps
+     * its controller-aligned knuckles; Dwell replaces them with the retained
+     * cutting-edge vertices populated above. */
+    out->flags = VR_WEAPON_CONTACT_LEFT_VALID | VR_WEAPON_CONTACT_RIGHT_VALID |
+        VR_WEAPON_CONTACT_IMMERSIVE_MELEE;
+    for (int h = 0; h < 2; h++) {
+      int index = h == (VR_IsLeftHanded() ? 0 : 1) ? 1 : 0;
+      VectorCopy(cl.handpos[index], out->grip[h]);
+      if (!dwell_axes) {
+        VectorCopy(cl.handpos[index], out->base[h]);
+        VectorCopy(akimbo_muzzle[h], out->tip[h]);
+      }
+    }
+  } else {
+    out->flags = (1u << hand) |
+        (melee ? VR_WEAPON_CONTACT_IMMERSIVE_MELEE : 0);
+    VectorCopy(cl.handpos[1], out->grip[hand]);
+    VR_GetRawWeaponEdge(out->base[hand], out->tip[hand]);
+  }
+  if (!melee && !paired_melee &&
+      VR_GetRawAkimboPoses(akimbo_muzzle, akimbo_angles, NULL)) {
+    out->flags = VR_WEAPON_CONTACT_LEFT_VALID | VR_WEAPON_CONTACT_RIGHT_VALID;
+    for (int h = 0; h < 2; h++) {
+      int index = h == (VR_IsLeftHanded() ? 0 : 1) ? 1 : 0;
+      VectorCopy(cl.handpos[index], out->grip[h]);
+      VectorCopy(cl.handpos[index], out->base[h]);
+      VectorCopy(akimbo_muzzle[h], out->tip[h]);
+    }
+  }
+  for (int h = 0; h < 2; h++) {
+    if (!(out->flags & (1u << h)))
+      continue;
+    int index = h == (VR_IsLeftHanded() ? 0 : 1) ? 1 : 0;
+    pose = &ovr_DevicePose[controllers[index].deviceIndex];
+    VR_TrackingPointToWorld(zero, start);
+    VR_TrackingPointToWorld(pose->vVelocity, end);
+    VectorSubtract(end, start, velocity);
+    VectorScale(velocity, 1 / meters_to_units, velocity);
+    VR_TrackingPointToWorld(pose->vAngularVelocity, end);
+    VectorSubtract(end, start, angular);
+    VectorScale(angular, 1 / meters_to_units, angular);
+    /* Rigid-point speed includes wrist rotation and excludes snap turning,
+     * locomotion and collision retraction. Values remain in physical metres. */
+    for (int point = 0; point < 2; point++) {
+      VectorSubtract(point ? out->tip[h] : out->base[h], out->grip[h], radius);
+      VectorScale(radius, 1 / meters_to_units, radius);
+      CrossProduct(angular, radius, spin);
+      VectorAdd(spin, velocity, spin);
+      out->speed[h] = fmaxf(out->speed[h], VectorLength(spin));
+    }
+    if (!isfinite(out->speed[h]))
+      return false;
+  }
+  return true;
+}
+
+qboolean VR_DrawTrackedViewModel(void) {
+  entity_t held, saved_viewent;
+  entity_t *saved_current;
+  vec3_t base, tip, delta;
+  qmodel_t *held_model;
+  aliashdr_t *held_header;
+  const vr_immersive_melee_profile_t *profile =
+      VR_ImmersiveMeleeProfile(&held_model, &held_header);
+  qboolean melee = profile != NULL;
+  if (!melee && !VR_WeaponCollisionEnabled(1))
+    return false;
+  if (!melee) {
+    int poses[2];
+    float blend;
+    /* Collision-only fallback still uses a scoped copy below. Advance the
+     * canonical source lerp first so ordinary authored viewmodel animation is
+     * not discarded by that copy. */
+    R_SyncAliasViewmodelAnimation(poses, &blend);
+  }
+  /* Scoped local presentation only. Existing viewmodel classification,
+   * handedness, lighting and format selection are reused; QC and other
+   * entities keep their own frame/animation state. */
+  saved_current = currententity;
+  saved_viewent = held = cl.viewent;
+  if (melee) {
+    held.model = held_model;
+    held.frame = profile->ready_pose;
+    held.lerpflags |= LERP_RESETANIM;
+    /* Generated dominant models inherit the source model's existing user
+     * held scale/offset slot. Do not create a virtual-path calibration. */
+    Mod_Weapon(cl.viewent.model, held_header);
+  }
+  VR_GetRawWeaponEdge(base, tip);
+  if (VR_GetWeaponCollisionOffset(1, base, tip, delta))
+    VectorAdd(held.origin, delta, held.origin);
+  if (!melee)
+    VR_ApplyCurrentViewWeaponTransform();
+  /* Renderer viewmodel policy uses pointer identity for left-hand mirroring,
+   * minimum light and shadows. Keep that identity during the draw; only this
+   * scoped presentation copy changes, never QC or the persistent animation. */
+  cl.viewent = held;
+  currententity = &cl.viewent;
+  R_DrawAliasModel_NoCull(currententity);
+  cl.viewent = saved_viewent;
+  currententity = saved_current;
   return true;
 }
 
@@ -7329,6 +8100,8 @@ void VID_VR_Init() {
   Cvar_RegisterVariable(&vr_enabled);
   Cvar_SetCallback(&vr_enabled, VR_Enabled_f);
   Cvar_RegisterVariable(&vr_lefthanded);
+  Cvar_RegisterVariable(&vr_immersive_melee);
+  Cvar_RegisterVariable(&vr_weapon_collision);
   Cvar_RegisterVariable(&vr_hud_defaults_version);
   Cmd_AddCommand("vr_migrate_hud_defaults", VR_MigrateHudDefaults_f);
   Cvar_RegisterVariable(&vr_vrik);
@@ -7946,6 +8719,7 @@ static void VR_LoadWWheelSchema(void) {
 float vr_game_projectile_z_extra = 0.0f;
 
 static void VR_ResetWeaponGameTransitionState(void) {
+  vr_weapon_contact_discontinuity = true;
   /* A game-directory switch is a hard ownership boundary.  Do not carry an
    * open wheel, a pending retry impulse, or a calibration session into a mod
    * which may reuse the same item bits and viewmodel names for other weapons. */
@@ -8877,6 +9651,7 @@ static void VR_ApplyPendingControllerYaw() {
       QuatToYawPitchRoll(Matrix34ToQuaternion(
           ovr_DevicePose[device].mDeviceToAbsoluteTracking), orientation);
       vrYaw += controllerYawTarget - orientation[YAW];
+      vr_weapon_contact_discontinuity = true;
       controllerYawPending = false;
       return;
     }
@@ -9639,6 +10414,7 @@ void VR_SetAngles(vec3_t angles) {
 }
 
 void VR_ResetOrientation() {
+  vr_weapon_contact_discontinuity = true;
   cl.aimangles[YAW] = cl.viewangles[YAW];
   cl.aimangles[PITCH] = cl.viewangles[PITCH];
   if (vr_enabled.value) {
@@ -10247,6 +11023,8 @@ void VR_Move(usercmd_t *cmd) {
         int snap = yawMove > 0.0f ? 1 : yawMove < 0.0f ? -1 : 0;
         if (snap != vr_last_snap) {
           vrYaw -= snap * vr_snap_turn.value;
+          if (snap)
+            vr_weapon_contact_discontinuity = true;
           vr_last_snap = snap;
         }
       } else {
@@ -10285,6 +11063,7 @@ void VR_Move(usercmd_t *cmd) {
 extern "C" void IN_VRTurn180_f(void) {
   if (vr_enabled.value && vr_180_snap_turn.value) {
     vrYaw -= 180.0f;
+    vr_weapon_contact_discontinuity = true;
   }
 }
 
@@ -10406,6 +11185,7 @@ void VR_TrackWeapons(void) {
 
 // Start/Reset weapon tracking (call on map change / disconnect)
 void VR_ResetWeaponTracking(void) {
+  vr_weapon_contact_discontinuity = true;
   VR_EndWeaponMenu();
   vr_weapon_cycle_target = -1;
 

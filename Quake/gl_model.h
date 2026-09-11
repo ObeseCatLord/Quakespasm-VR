@@ -472,6 +472,10 @@ typedef struct {
 	int					commands;	// gl command list with embedded s/t
 	aliasposeverttype_t	poseverttype;
 	intptr_t		nextsurface;	// MD3: offset to next aliashdr_t, 0 at end
+	/* Optional source identity for physical edges in an enhanced weapon.
+	 * Keep it with this surface, not the model's separate classic cache. */
+	size_t			immersive_md5_mesh_size, immersive_md5_anim_size;
+	uint32_t		immersive_md5_mesh_crc32, immersive_md5_anim_crc32;
 	/* MD5 skeleton retained for r_showskel/VRIK. boneposes contains numposes
 	 * consecutive 3x4 row-major matrices, one set per animation frame. */
 	int				md5_numbones;
@@ -672,6 +676,10 @@ typedef struct qmodel_s
 //
 // additional model data
 //
+	/* Raw bytes of the narrowly tracked immersive-melee MDL inputs. A zero
+	 * size means this model was not loaded from one of those exact paths. */
+	uint32_t	immersive_mdl_crc32;
+	size_t		immersive_mdl_size;
 	cache_user_t	cache;		// only access through Mod_Extradata
 
 } qmodel_t;

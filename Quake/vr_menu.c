@@ -563,6 +563,12 @@ static void VR_MenuPrintOptionValue(int cx, int cy, int option) {
   case VR_OPTION_HAPTIC:
     M_DrawCheckbox(cx, cy, (int)vr_haptic.value);
     break;
+  case VR_OPTION_IMMERSIVE_MELEE:
+    M_DrawCheckbox(cx, cy, (int)vr_immersive_melee.value);
+    break;
+  case VR_OPTION_WEAPON_COLLISION:
+    M_DrawCheckbox(cx, cy, (int)vr_weapon_collision.value);
+    break;
   case VR_OPTION_INSTANT_STOP:
     M_DrawCheckbox(cx, cy, (int)vr_movement_instant_stop.value);
     break;
@@ -623,6 +629,12 @@ void VR_MenuKeyOption(int key, int option) {
   };
 
   switch (option) {
+  case VR_OPTION_IMMERSIVE_MELEE:
+    Cvar_SetValue(vr_immersive_melee.name, !vr_immersive_melee.value);
+    break;
+  case VR_OPTION_WEAPON_COLLISION:
+    Cvar_SetValue(vr_weapon_collision.name, !vr_weapon_collision.value);
+    break;
   case VR_OPTION_LEFT_HANDED:
     Cvar_SetValue(vr_lefthanded.name, vr_lefthanded.value == 0);
     break;
@@ -1032,6 +1044,14 @@ void VR_MenuDraw(void) {
       break;
     case VR_OPTION_HAPTIC:
       M_Print(16, y, "          Weapon Haptics");
+      VR_MenuPrintOptionValue(240, y, i);
+      break;
+    case VR_OPTION_IMMERSIVE_MELEE:
+      M_Print(16, y, "          Immersive Melee");
+      VR_MenuPrintOptionValue(240, y, i);
+      break;
+    case VR_OPTION_WEAPON_COLLISION:
+      M_Print(16, y, "        Weapon Collision");
       VR_MenuPrintOptionValue(240, y, i);
       break;
     case VR_OPTION_INSTANT_STOP:
