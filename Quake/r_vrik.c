@@ -547,6 +547,7 @@ r_vrik_skincache_t *R_VRIKGetSkinCache (int entitynum, qmodel_t *model)
 		cache->body_numindexes = 0;
 		cache->muzzle_valid = false;
 		cache->prop_surface = NULL;
+		cache->prop_model = NULL;
 		cache->prop_numverts = cache->prop_numindexes = 0;
 		cache->prop_semantic = -1;
 	}
@@ -604,6 +605,7 @@ void R_VRIKInvalidateSkinCaches (void)
 		r_vrik_skin_caches[entitynum].ready = false;
 		r_vrik_skin_caches[entitynum].surface = NULL;
 		r_vrik_skin_caches[entitynum].prop_surface = NULL;
+		r_vrik_skin_caches[entitynum].prop_model = NULL;
 	}
 }
 
