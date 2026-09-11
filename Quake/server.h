@@ -467,6 +467,8 @@ extern cvar_t sv_trustedmovement;
 extern cvar_t sv_pmove_mode;
 extern cvar_t sv_triggerdebug;
 extern cvar_t sv_vr_jump_velocity;
+extern cvar_t sv_weapon_collision;
+extern cvar_t sv_immersive_melee;
 qboolean SV_IsVRClientSlot(int num);
 qboolean SV_IsActiveClientEdict(edict_t *ent);
 qboolean SV_CoopFeatureEnabled(const cvar_t *feature,
@@ -514,6 +516,19 @@ void SV_LoadQueuedPMoveUsercmd(client_t *client);
 void SV_FinishPMoveUsercmd(client_t *client);
 qboolean SV_RunClientPMoveCommand(client_t *client);
 qboolean SV_QBJ3NeedsLegacyPhysics(client_t *client);
+int SV_VRContactMode(void);
+int SV_VRContactProfile(void);
+void SV_VRContactAcceptLegacy(client_t *client, const usercmd_t *cmd);
+void SV_VRContactDrainLegacy(client_t *client);
+void SV_VRContactResetClient(client_t *client);
+void SV_VRContactProcessCommand(client_t *client, const usercmd_t *cmd);
+qboolean SV_VRContactFindAllows(edict_t *candidate, int field, const char *match);
+qboolean SV_VRContactNormalize(void);
+void SV_VRContactLeaveFunction(void);
+qboolean SV_VRContactBranch(int statement);
+qboolean SV_VRContactCall(int function);
+qboolean SV_VRContactFindRadius(void);
+qboolean SV_VRContactLoadEntity(int statement);
 void SV_AddClientToServer (struct qsocket_s	*ret);
 
 void SV_ClientPrintf (const char *fmt, ...) FUNC_PRINTF(1,2);

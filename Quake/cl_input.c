@@ -553,6 +553,9 @@ static void CL_WriteUsercmd(sizebuf_t *buf, const usercmd_t *histcmd) {
       histcmd->cursor_impact[0] || histcmd->cursor_impact[1] || histcmd->cursor_impact[2] ||
       histcmd->cursor_entitynumber)
     extbits |= MOVEEXT_QCINPUT;
+  if (histcmd->vr_contact.flags && histcmd->vr_active &&
+      histcmd->vr_handpos_relative)
+    extbits |= MOVEEXT_VR_CONTACT;
 
   MSG_WriteFloat(buf, histcmd->servertime);
   if (cl.protocol_pext2 & PEXT2_EXPLICITCMDMSEC)
@@ -604,6 +607,26 @@ static void CL_WriteUsercmd(sizebuf_t *buf, const usercmd_t *histcmd) {
     MSG_WriteFloat(buf, histcmd->cursor_impact[1]);
     MSG_WriteFloat(buf, histcmd->cursor_impact[2]);
     MSG_WriteEntity(buf, histcmd->cursor_entitynumber, cl.protocol_pext2);
+  }
+
+  if (extbits & MOVEEXT_VR_CONTACT) {
+    MSG_WriteByte(buf, histcmd->vr_contact.flags);
+    MSG_WriteShort(buf, histcmd->vr_contact.modelindex);
+    MSG_WriteFloat(buf, histcmd->vr_contact.weapon);
+    for (i = 0; i < 2; i++) {
+      if (!(histcmd->vr_contact.flags & (1 << i)))
+        continue;
+      MSG_WriteFloat(buf, histcmd->vr_contact.grip[i][0]);
+      MSG_WriteFloat(buf, histcmd->vr_contact.grip[i][1]);
+      MSG_WriteFloat(buf, histcmd->vr_contact.grip[i][2]);
+      MSG_WriteFloat(buf, histcmd->vr_contact.base[i][0]);
+      MSG_WriteFloat(buf, histcmd->vr_contact.base[i][1]);
+      MSG_WriteFloat(buf, histcmd->vr_contact.base[i][2]);
+      MSG_WriteFloat(buf, histcmd->vr_contact.tip[i][0]);
+      MSG_WriteFloat(buf, histcmd->vr_contact.tip[i][1]);
+      MSG_WriteFloat(buf, histcmd->vr_contact.tip[i][2]);
+      MSG_WriteFloat(buf, histcmd->vr_contact.speed[i]);
+    }
   }
 }
 
@@ -703,6 +726,35 @@ static void CL_ClearAkimboUsercmd(usercmd_t *cmd)
   cmd->vr_akimbo_berserk = false;
   Q_memset(cmd->vr_akimbo_muzzle, 0, sizeof(cmd->vr_akimbo_muzzle));
   Q_memset(cmd->vr_akimbo_angles, 0, sizeof(cmd->vr_akimbo_angles));
+}
+
+static void CL_ClearVRWeaponContactUsercmd(usercmd_t *cmd)
+{
+  Q_memset(&cmd->vr_contact, 0, sizeof(cmd->vr_contact));
+}
+
+static qboolean CL_VRWeaponContactUsercmdIsFinite(
+    const vr_weapon_contact_t *contact)
+{
+  int hand;
+
+  if ((contact->flags & ~VR_WEAPON_CONTACT_KNOWN_FLAGS) ||
+      !(contact->flags & (VR_WEAPON_CONTACT_LEFT_VALID |
+                          VR_WEAPON_CONTACT_RIGHT_VALID)) ||
+      contact->modelindex < 0 || contact->modelindex > 0xffff ||
+      !isfinite(contact->weapon))
+    return false;
+
+  for (hand = 0; hand < 2; hand++) {
+    if (!(contact->flags & (1 << hand)))
+      continue;
+    if (!CL_VRVectorIsFinite(contact->grip[hand]) ||
+        !CL_VRVectorIsFinite(contact->base[hand]) ||
+        !CL_VRVectorIsFinite(contact->tip[hand]) ||
+        !isfinite(contact->speed[hand]))
+      return false;
+  }
+  return true;
 }
 
 static qboolean CL_AkimboUsercmdIsFinite(const usercmd_t *cmd)
@@ -873,6 +925,7 @@ void CL_SendMove(const usercmd_t *cmd) {
   sendcmd.vr_active = false;
   sendcmd.vr_handpos_relative = false;
   CL_ClearAkimboUsercmd(&sendcmd);
+  CL_ClearVRWeaponContactUsercmd(&sendcmd);
 
   if (cl_nettest_vr.value) {
     sendcmd.vr_active = true;
@@ -917,6 +970,28 @@ void CL_SendMove(const usercmd_t *cmd) {
             CL_ClearAkimboUsercmd(&sendcmd);
         }
       }
+      if (cl.vr_weapon_contact_supported) {
+        vr_weapon_contact_t world_contact;
+        int hand;
+
+        Q_memset(&world_contact, 0, sizeof(world_contact));
+        if (VR_GetWeaponContactSample(&world_contact) &&
+            CL_VRWeaponContactUsercmdIsFinite(&world_contact)) {
+          sendcmd.vr_contact = world_contact;
+          for (hand = 0; hand < 2; hand++) {
+            if (!(sendcmd.vr_contact.flags & (1 << hand)))
+              continue;
+            VectorSubtract(sendcmd.vr_contact.grip[hand], pose_origin,
+                           sendcmd.vr_contact.grip[hand]);
+            VectorSubtract(sendcmd.vr_contact.base[hand], pose_origin,
+                           sendcmd.vr_contact.base[hand]);
+            VectorSubtract(sendcmd.vr_contact.tip[hand], pose_origin,
+                           sendcmd.vr_contact.tip[hand]);
+          }
+          if (!CL_VRWeaponContactUsercmdIsFinite(&sendcmd.vr_contact))
+            CL_ClearVRWeaponContactUsercmd(&sendcmd);
+        }
+      }
     } else {
       VectorCopy(world_muzzle, sendcmd.vr_handpos);
     }
@@ -936,7 +1011,11 @@ void CL_SendMove(const usercmd_t *cmd) {
     VectorCopy(vec3_origin, sendcmd.vr_handrot);
     VectorCopy(vec3_origin, sendcmd.vr_roomscalemove);
     CL_ClearAkimboUsercmd(&sendcmd);
+    CL_ClearVRWeaponContactUsercmd(&sendcmd);
   }
+
+  if (VR_ImmersiveMeleeSuppressTrigger())
+    sendcmd.buttons &= ~BUTTON_ATTACK;
 
   seq = cl.movemessages++;
   sendcmd.sequence = seq;
@@ -1040,6 +1119,35 @@ static void CL_VRQBJ3AkimboProtocol_f(void) {
       Cmd_Argc() >= 5 && Q_atoi(Cmd_Argv(4)) != 0;
 }
 
+static void CL_VRWeaponContactProtocol_f(void) {
+  int mode, profile;
+
+  cl.vr_weapon_contact_supported = 0;
+  cl.vr_weapon_contact_profile = VR_WEAPON_CONTACT_PROFILE_NONE;
+  if (cmd_source != src_server || Cmd_Argc() != 4 ||
+      Q_atoi(Cmd_Argv(1)) != 1)
+    return;
+
+  mode = Q_atoi(Cmd_Argv(2));
+  profile = Q_atoi(Cmd_Argv(3));
+  if (mode >= 0 && !(mode & ~VR_WEAPON_CONTACT_CAP_KNOWN) &&
+      profile >= 0 && profile < VR_WEAPON_CONTACT_PROFILE_COUNT) {
+    cl.vr_weapon_contact_supported = mode;
+    cl.vr_weapon_contact_profile = profile;
+  }
+}
+
+static void CL_VRWeaponContactHaptic_f(void) {
+  int hand;
+  if (cmd_source != src_server || Cmd_Argc() != 2 ||
+      !cl.vr_weapon_contact_supported || cls.state != ca_connected ||
+      cls.signon != SIGNONS || !vr_enabled.value || !vr_haptic.value)
+    return;
+  hand = Q_atoi(Cmd_Argv(1));
+  if (hand == 0 || hand == 1)
+    VR_TriggerHaptic(hand == (VR_IsLeftHanded() ? 0 : 1) ? 1 : 0, .004f);
+}
+
 /*
 ============
 CL_InitInput
@@ -1056,6 +1164,10 @@ void CL_InitInput(void) {
   Cmd_AddCommand_ServerCommand("vr_relative_muzzle", CL_VRRelativeMuzzle_f);
   Cmd_AddCommand_ServerCommand("vr_qbj3_akimbo_protocol",
                                CL_VRQBJ3AkimboProtocol_f);
+  Cmd_AddCommand_ServerCommand("vr_weapon_contact_protocol",
+                               CL_VRWeaponContactProtocol_f);
+  Cmd_AddCommand_ServerCommand("vr_weapon_contact_haptic",
+                               CL_VRWeaponContactHaptic_f);
   Cmd_AddCommand("+moveup", IN_UpDown);
   Cmd_AddCommand("-moveup", IN_UpUp);
   Cmd_AddCommand("+movedown", IN_DownDown);

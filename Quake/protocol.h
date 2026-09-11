@@ -466,6 +466,46 @@ typedef enum {
 #define MOVEEXT_QCINPUT 4
 #define MOVEEXT_VR_AKIMBO 8
 #define MOVEEXT_VR_AKIMBO_BERSERK 16 /* pose kind; requires AKIMBO + relative VR */
+#define MOVEEXT_VR_CONTACT 32 /* requires relative VR; follows QC input */
+
+#define VR_WEAPON_CONTACT_LEFT_VALID 1
+#define VR_WEAPON_CONTACT_CAP_COLLISION 1
+#define VR_WEAPON_CONTACT_CAP_MELEE 2
+#define VR_WEAPON_CONTACT_CAP_KNOWN 3
+/* Server-selected, verified QC families; never inferred from a mod directory
+ * or a familiar inventory bit by the receiving client. */
+enum {
+  VR_WEAPON_CONTACT_PROFILE_NONE,
+  VR_WEAPON_CONTACT_PROFILE_STOCK,
+  VR_WEAPON_CONTACT_PROFILE_QBJ3,
+  VR_WEAPON_CONTACT_PROFILE_ENYO,
+  VR_WEAPON_CONTACT_PROFILE_BONK,
+  VR_WEAPON_CONTACT_PROFILE_DWELL,
+  VR_WEAPON_CONTACT_PROFILE_AD,
+  VR_WEAPON_CONTACT_PROFILE_COPPER,
+  VR_WEAPON_CONTACT_PROFILE_ALK,
+  VR_WEAPON_CONTACT_PROFILE_IMMORTAL,
+  VR_WEAPON_CONTACT_PROFILE_DRAKE,
+  VR_WEAPON_CONTACT_PROFILE_MJOLNIR,
+  VR_WEAPON_CONTACT_PROFILE_COUNT
+};
+#define VR_WEAPON_CONTACT_RIGHT_VALID 2
+#define VR_WEAPON_CONTACT_IMMERSIVE_MELEE 4
+#define VR_WEAPON_CONTACT_KNOWN_FLAGS                                      \
+  (VR_WEAPON_CONTACT_LEFT_VALID | VR_WEAPON_CONTACT_RIGHT_VALID |       \
+   VR_WEAPON_CONTACT_IMMERSIVE_MELEE)
+
+/* Anatomical hands are left (0), right (1). Positions are body-relative on
+ * the wire; speed remains raw physical point speed in metres/second. */
+typedef struct {
+  unsigned int flags;
+  int modelindex;
+  float weapon;
+  vec3_t grip[2];
+  vec3_t base[2];
+  vec3_t tip[2];
+  float speed[2];
+} vr_weapon_contact_t;
 
 #define MOVE_BUNDLE_MAX 24 // retained server-side queue capacity for move records
 #define SNAPSHOT_PART_UNKNOWN 255
@@ -580,6 +620,10 @@ typedef struct {
   qboolean vr_akimbo_berserk;
   vec3_t vr_akimbo_muzzle[2];
   vec3_t vr_akimbo_angles[2];
+  vr_weapon_contact_t vr_contact;
+  /* Server-owned receipt clock, never serialized or supplied by the client.
+   * Retained through command queues so delayed poses cannot become shields. */
+  double vr_contact_received;
 } usercmd_t;
 
 #endif /* _QUAKE_PROTOCOL_H */

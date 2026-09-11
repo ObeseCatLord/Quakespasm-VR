@@ -171,12 +171,38 @@ cvar_t sv_coop_predictmove = {"sv_coop_predictmove", "0", CVAR_NOTIFY | CVAR_SER
 cvar_t sv_triggerdebug = {"sv_triggerdebug", "0", CVAR_NONE};
 cvar_t sv_vr_jump_velocity = {"sv_vr_jump_velocity", "297", CVAR_NOTIFY | CVAR_SERVERINFO};
 cvar_t sv_skyroom_pvs = {"sv_skyroom_pvs", "1", CVAR_NONE};
+/* Opt-in while the physical-interaction compatibility matrix is validated. */
+cvar_t sv_immersive_melee = {"sv_immersive_melee", "0", CVAR_NOTIFY | CVAR_SERVERINFO};
+cvar_t sv_weapon_collision = {"sv_weapon_collision", "0", CVAR_NOTIFY | CVAR_SERVERINFO};
 
 //============================================================================
 
 static void SVFTE_SetupFrames (client_t *client);
 
 static qboolean sv_qbj3_akimbo_protocol_pending;
+static int sv_contact_advertised_mode = -1;
+static int sv_contact_advertised_profile = -1;
+
+static void SV_WriteWeaponContactProtocol(sizebuf_t *message, int mode)
+{
+	char command[64];
+	q_snprintf(command, sizeof(command), "//vr_weapon_contact_protocol 1 %d %d\n",
+		mode, SV_VRContactProfile());
+	MSG_WriteByte(message, svc_stufftext);
+	MSG_WriteString(message, command);
+}
+
+static void SV_UpdateWeaponContactProtocol(void)
+{
+	int mode = SV_VRContactMode();
+	int profile = SV_VRContactProfile();
+	if ((mode == sv_contact_advertised_mode && profile == sv_contact_advertised_profile) ||
+		sv.reliable_datagram.cursize + 64 > sv.reliable_datagram.maxsize)
+		return;
+	SV_WriteWeaponContactProtocol(&sv.reliable_datagram, mode);
+	sv_contact_advertised_mode = mode;
+	sv_contact_advertised_profile = profile;
+}
 
 static int SV_FormatQBJ3AkimboProtocol(char *command, size_t size,
 	qboolean nailgun, qboolean berserk, qboolean enyo, qboolean dwell)
@@ -1017,6 +1043,8 @@ void SV_Init (void)
 	Cvar_RegisterVariable (&sv_predict_nqmovement);
 	Cvar_RegisterVariable (&sv_nopunchangle);
 	Cvar_RegisterVariable (&sv_akimbo);
+	Cvar_RegisterVariable (&sv_immersive_melee);
+	Cvar_RegisterVariable (&sv_weapon_collision);
 	Cvar_RegisterVariable (&sv_coop_classic);
 	Cvar_RegisterVariable (&sv_coop_notelefrag);
 	Cvar_RegisterVariable (&sv_coop_player_teleport_fallback);
@@ -1421,6 +1449,7 @@ void SV_SendServerinfo (client_t *client)
 	 * muzzle coordinates without breaking older servers. */
 	MSG_WriteByte (&client->message, svc_stufftext);
 	MSG_WriteString (&client->message, "//vr_relative_muzzle 1\n");
+	SV_WriteWeaponContactProtocol(&client->message, SV_VRContactMode());
 	SV_WriteQBJ3AkimboProtocol(&client->message, SV_QBJ3AkimboSupported(),
 		SV_QBJ3BerserkAkimboSupported(), SV_EnyoAkimboSupported(),
 		SV_DwellBerserkAkimboSupported());
@@ -4291,6 +4320,7 @@ void SV_UpdateToReliableMessages (void)
 		}
 	}
 
+	SV_UpdateWeaponContactProtocol();
 	for (j=0, client = svs.clients ; j<svs.maxclients ; j++, client++)
 	{
 		if (!client->active || !client->pextknown)

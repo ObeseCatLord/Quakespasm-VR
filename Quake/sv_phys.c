@@ -204,6 +204,1174 @@ static void SV_FriendlyFireReset(void) {
   ff_saved_maxclients = 0;
 }
 
+/* Physical weapon interaction is a command consumer, not another physics
+ * simulation. Keep the real player body and the mod's damage implementation. */
+#define VR_CONTACT_HISTORY 24
+typedef enum {
+  VR_CONTACT_HIT,
+  VR_CONTACT_WHIFF,
+  VR_CONTACT_PARRIED
+} sv_vr_contact_outcome_t;
+typedef struct {
+  vr_weapon_contact_t contact;
+  vec3_t handrot, handpos, akimbo_angles[2];
+  qboolean akimbo_active;
+  int sequence, buttons;
+  float time;
+  double received;
+  byte impulse;
+} sv_vr_contact_sample_t;
+typedef struct {
+  vr_weapon_contact_t previous;
+  int sequence;
+  float sample_time;
+  vec3_t body;
+  float arc[2];
+  float peak_speed[2], tier[2];
+  qboolean consumed[2];
+  qboolean authorized[2];
+  int subtype[2], hit_count[2], hit_entities[2][2];
+  float recovery_deadline[2];
+  qboolean valid;
+  unsigned int movement_epoch;
+  int button[2];
+  byte defensive_valid;
+  double defensive_received, defensive_processed;
+  qboolean parry_rearm[2];
+  double parry_received[2];
+  sv_vr_contact_sample_t pending[VR_CONTACT_HISTORY];
+  unsigned int count;
+} sv_vr_contact_state_t;
+static sv_vr_contact_state_t sv_vr_contacts[MAX_SCOREBOARD];
+static struct {
+  edict_t *player;
+  dfunction_t *function;
+  trace_t trace;
+  qboolean active;
+  qboolean force_miss;
+  int depth;
+  vec3_t target_origin;
+  float target_modelindex;
+  vec3_t muzzle;
+  qboolean has_muzzle;
+} sv_vr_contact_call;
+
+static void SV_ClampVRMuzzleToWorld(edict_t *ent, vec3_t muzzle);
+#include "vr_melee_qc.h"
+
+qboolean SV_VRContactFindRadius(void) {
+  edict_t *target;
+  if (!SV_VRMeleeScimitarSwingScope() || qcvm->xstatement != 112997)
+    return false;
+  target = sv_vr_contact_call.trace.ent;
+  G_INT(OFS_RETURN) = !sv_vr_contact_call.force_miss && target && !target->free &&
+      target != sv_vr_contact_call.player ? EDICT_TO_PROG(target) : 0;
+  return true;
+}
+
+qboolean SV_VRContactLoadEntity(int statement) {
+  /* Terminate the admitted single-result iterator before dereferencing its
+   * possibly removed target. Never write or restore an entity's .chain. */
+  return statement == 113032 && SV_VRMeleeScimitarSwingScope();
+}
+
+qboolean SV_VRContactBranch(int statement) {
+  if (!sv_vr_contact_call.active || statement != 116237 ||
+      qcvm->depth != sv_vr_contact_call.depth || !SV_VRMeleeGungnirProgs() ||
+      sv_vr_contact_call.function != &qcvm->functions[2654] ||
+      qcvm->xfunction != sv_vr_contact_call.function ||
+      pr_global_struct->self != EDICT_TO_PROG(sv_vr_contact_call.player))
+    return false;
+  /* Entry saved these locals but did not initialize them. Set usedAmmo only
+   * inside this admitted call; normal VM return restores its previous value.
+   * Take the exact no-ammo jump before any inventory writes can occur. */
+  G_FLOAT(34042) = 0;
+  return true;
+}
+
+/* Called before QC locals are restored. Copper's trace helper normalizes its
+ * result to the desktop ray length after doing native filtering. That length
+ * has no relation to an accepted physical blade sweep. Preserve every native
+ * result except that normalization, and only for an unfiltered acquisition. */
+void SV_VRContactLeaveFunction(void) {
+  prstack_t *caller;
+  const trace_t *contact;
+  if (!sv_vr_contact_call.active || !sv_vr_contact_call.force_miss)
+    return;
+  if (SV_VRMeleeCopperLeaveFunction())
+    return;
+  if (!SV_VRMeleeDwellProgs() || !sv_vr_contact_call.player ||
+      qcvm->xfunction != &qcvm->functions[396] || qcvm->xstatement != 13044 ||
+      qcvm->depth <= 0 || sv_vr_contact_call.function != &qcvm->functions[438])
+    return;
+  caller = &qcvm->stack[qcvm->depth - 1];
+  if (caller->f != sv_vr_contact_call.function ||
+      (caller->s != 14578 && caller->s != 14586) ||
+      pr_global_struct->self != EDICT_TO_PROG(sv_vr_contact_call.player) ||
+      G_INT(7680) != pr_global_struct->self || G_FLOAT(7681) != 0 ||
+      G_FLOAT(7689) != 1)
+    return;
+  contact = &sv_vr_contact_call.trace;
+  if (!contact->ent || contact->ent->free || !isfinite(contact->fraction) ||
+      contact->fraction < 0 || contact->fraction >= 1 ||
+      !SV_VRMeleeFiniteVector(contact->endpos) ||
+      pr_global_struct->trace_startsolid || pr_global_struct->trace_allsolid ||
+      pr_global_struct->trace_ent != EDICT_TO_PROG(contact->ent) ||
+      pr_global_struct->trace_endpos[0] != contact->endpos[0] ||
+      pr_global_struct->trace_endpos[1] != contact->endpos[1] ||
+      pr_global_struct->trace_endpos[2] != contact->endpos[2])
+    return;
+  pr_global_struct->trace_fraction = contact->fraction;
+}
+
+static qboolean SV_VRContactStockProgs(void) {
+  return SV_VRMeleeStockProgs();
+}
+
+int SV_VRContactMode(void) {
+  int mode = sv_weapon_collision.value ? VR_WEAPON_CONTACT_CAP_COLLISION : 0;
+  if (sv_immersive_melee.value && SV_VRContactProfile() != VR_WEAPON_CONTACT_PROFILE_NONE)
+    mode |= VR_WEAPON_CONTACT_CAP_MELEE;
+  return mode;
+}
+
+int SV_VRContactProfile(void) {
+  switch (SV_VRMeleeFamily()) {
+  case SV_VR_MELEE_FAMILY_STOCK:
+    return SV_VRContactStockProgs() ? VR_WEAPON_CONTACT_PROFILE_STOCK :
+        VR_WEAPON_CONTACT_PROFILE_NONE;
+  case SV_VR_MELEE_FAMILY_QBJ3: return VR_WEAPON_CONTACT_PROFILE_QBJ3;
+  case SV_VR_MELEE_FAMILY_ENYO: return VR_WEAPON_CONTACT_PROFILE_ENYO;
+  case SV_VR_MELEE_FAMILY_BONK: return VR_WEAPON_CONTACT_PROFILE_BONK;
+  case SV_VR_MELEE_FAMILY_DWELL: return VR_WEAPON_CONTACT_PROFILE_DWELL;
+  case SV_VR_MELEE_FAMILY_HONEY: return VR_WEAPON_CONTACT_PROFILE_STOCK;
+  case SV_VR_MELEE_FAMILY_AD: return VR_WEAPON_CONTACT_PROFILE_AD;
+  case SV_VR_MELEE_FAMILY_COPPER: return VR_WEAPON_CONTACT_PROFILE_COPPER;
+  case SV_VR_MELEE_FAMILY_ALK: return VR_WEAPON_CONTACT_PROFILE_ALK;
+  case SV_VR_MELEE_FAMILY_IMMORTAL: return VR_WEAPON_CONTACT_PROFILE_IMMORTAL;
+  case SV_VR_MELEE_FAMILY_DRAKE: return VR_WEAPON_CONTACT_PROFILE_DRAKE;
+  case SV_VR_MELEE_FAMILY_MJOLNIR: return VR_WEAPON_CONTACT_PROFILE_MJOLNIR;
+  default: return VR_WEAPON_CONTACT_PROFILE_NONE;
+  }
+}
+
+static sv_vr_melee_subtype_t SV_VRContactWeapon(edict_t *p) {
+  sv_vr_melee_subtype_t subtype;
+  if (!(SV_VRContactMode() & VR_WEAPON_CONTACT_CAP_MELEE))
+    return SV_VR_MELEE_NONE;
+  subtype = SV_VRMeleeWeapon(p);
+  if (subtype == SV_VR_MELEE_QBJ3_BERSERK)
+    return SV_QBJ3BerserkAkimboSupported() ? subtype : SV_VR_MELEE_NONE;
+  if (subtype == SV_VR_MELEE_DWELL_BERSERK)
+    return SV_DwellBerserkAkimboSupported() ? subtype : SV_VR_MELEE_NONE;
+  return subtype == SV_VR_MELEE_STOCK_AXE || subtype == SV_VR_MELEE_QBJ3_WRENCH ||
+      subtype == SV_VR_MELEE_ENYO_KATANA || subtype == SV_VR_MELEE_BONK_HAMMER ||
+      subtype == SV_VR_MELEE_DWELL_AXE || subtype == SV_VR_MELEE_HONEY_AXE ||
+      subtype == SV_VR_MELEE_AD_AXE || subtype == SV_VR_MELEE_COPPER_AXE ||
+      subtype == SV_VR_MELEE_ALK_AXE || subtype == SV_VR_MELEE_IMMORTAL_AXE ||
+      subtype == SV_VR_MELEE_IMMORTAL_HAMMER || subtype == SV_VR_MELEE_DRAKE_AXE ||
+      subtype == SV_VR_MELEE_MJOLNIR_AXE || SV_VRMeleeNativeTrigger(subtype) ?
+      subtype : SV_VR_MELEE_NONE;
+}
+
+void SV_VRContactResetClient(client_t *client) {
+  int n = (int)(client - svs.clients);
+  if (n >= 0 && n < MAX_SCOREBOARD)
+    memset(&sv_vr_contacts[n], 0, sizeof(sv_vr_contacts[n]));
+}
+
+void SV_VRContactAcceptLegacy(client_t *client, const usercmd_t *cmd) {
+  int n = (int)(client - svs.clients);
+  sv_vr_contact_state_t *s;
+  if (n < 0 || n >= MAX_SCOREBOARD)
+    return;
+  s = &sv_vr_contacts[n];
+  if (!cmd->vr_active || !cmd->vr_handpos_relative || !cmd->vr_contact.flags) {
+    SV_VRContactResetClient(client);
+    return;
+  }
+  if (s->count == VR_CONTACT_HISTORY)
+    SV_VRContactResetClient(client); /* gap: never join the old/new arcs */
+  s->pending[s->count].contact = cmd->vr_contact;
+  VectorCopy(cmd->vr_handrot, s->pending[s->count].handrot);
+  VectorCopy(cmd->vr_handpos, s->pending[s->count].handpos);
+  memcpy(s->pending[s->count].akimbo_angles, cmd->vr_akimbo_angles,
+      sizeof(cmd->vr_akimbo_angles));
+  s->pending[s->count].akimbo_active = cmd->vr_akimbo_active;
+  s->pending[s->count].sequence = cmd->sequence;
+  s->pending[s->count].impulse = cmd->impulse;
+  s->pending[s->count].buttons = cmd->buttons;
+  s->pending[s->count].received = cmd->vr_contact_received;
+  s->pending[s->count++].time = cmd->servertime;
+}
+
+/* Honey's corpse prelude uses find rather than a trace. Keep the native
+ * iterator and the mod's qualification/effects, but only expose the edict
+ * physically contacted. Nested death-target queries remain ordinary find. */
+qboolean SV_VRContactFindAllows(edict_t *candidate, int field, const char *match) {
+  if (!sv_vr_contact_call.active)
+    return true;
+  if (SV_VRMeleeMjolnirAxeGibFindSite() &&
+      field == SV_VRMeleeMjolnirDescriptor()->corpse_field && !strcmp(match, "TRUE"))
+    return candidate == sv_vr_contact_call.trace.ent;
+  if (SV_VRMeleeADScoped()) {
+    const sv_vr_melee_ad_descriptor_t *d = SV_VRMeleeADDescriptor();
+    if ((qcvm->xstatement == d->find_first || qcvm->xstatement == d->find_next) &&
+        field == d->corpse_field && !strcmp(match, "TRUE"))
+      return candidate == sv_vr_contact_call.trace.ent;
+  }
+  if (!sv_vr_contact_call.active || !SV_VRMeleeHoneyProgs() ||
+      sv_vr_contact_call.function != &qcvm->functions[218] ||
+      qcvm->xfunction != sv_vr_contact_call.function ||
+      (qcvm->xstatement != 4672 && qcvm->xstatement != 4703) ||
+      pr_global_struct->self != EDICT_TO_PROG(sv_vr_contact_call.player) ||
+      field != 105 || strcmp(match, "ZOMBIE_ONGROUND"))
+    return true;
+  return candidate == sv_vr_contact_call.trace.ent;
+}
+
+qboolean SV_VRContactNormalize(void) {
+  prstack_t *caller;
+  if (!sv_vr_contact_call.active)
+    return false;
+  if (SV_VRMeleeMjolnirAxeGibNormalizeSite() &&
+      SV_VRMeleeFiniteVector(pr_global_struct->v_forward)) {
+    VectorCopy(pr_global_struct->v_forward, G_VECTOR(OFS_RETURN));
+    return true;
+  }
+  if (SV_VRMeleeADScoped()) {
+    const sv_vr_melee_ad_descriptor_t *d = SV_VRMeleeADDescriptor();
+    if (qcvm->xstatement == d->normalize && sv_vr_contact_call.trace.ent &&
+        !sv_vr_contact_call.trace.ent->free &&
+        G_INT(d->parm + 12) == EDICT_TO_PROG(sv_vr_contact_call.trace.ent) &&
+        SV_VRMeleeFiniteVector(pr_global_struct->v_forward)) {
+      /* The original local is consumed only by the desktop facing predicate.
+       * Keep native range, upgrade qualification and all gib callbacks. */
+      VectorCopy(pr_global_struct->v_forward, G_VECTOR(OFS_RETURN));
+      return true;
+    }
+  }
+  if (!sv_vr_contact_call.active || !SV_VRMeleeHoneyProgs() ||
+      sv_vr_contact_call.function != &qcvm->functions[218] ||
+      qcvm->xfunction != &qcvm->functions[146] ||
+      qcvm->xstatement != 1809 || qcvm->depth <= 0 ||
+      pr_global_struct->self != EDICT_TO_PROG(sv_vr_contact_call.player))
+    return false;
+  caller = &qcvm->stack[qcvm->depth - 1];
+  if (caller->f != sv_vr_contact_call.function || caller->s != 4685 ||
+      !sv_vr_contact_call.trace.ent || sv_vr_contact_call.trace.ent->free ||
+      ((int *)qcvm->globals)[4049] != EDICT_TO_PROG(sv_vr_contact_call.trace.ent) ||
+      !SV_VRMeleeFiniteVector(pr_global_struct->v_forward))
+    return false;
+  /* This exact normalized vector is used only by infront's dot test.
+   * Verified physical contact replaces the desktop facing cone: downward
+   * chops and coincident origins must still work. Retain native global
+   * makevectors state for every subsequent blood/death-target callback. */
+  VectorCopy(pr_global_struct->v_forward, G_VECTOR(OFS_RETURN));
+  return true;
+}
+
+/* Only verified immediate acquisition sites are replaced. Damage, blood,
+ * sounds, powerups and nested gameplay traces execute in the installed progs.
+ * A completed Bonk whiff masks its five fan rays, not its ground/dash checks. */
+qboolean SV_VRContactTrace(edict_t *ent, const vec3_t start,
+    const vec3_t end, int nomonsters, trace_t *trace) {
+  if (SV_VRMeleeScimitarSwingScope() && qcvm->xstatement == 113038) {
+    edict_t *target = sv_vr_contact_call.trace.ent;
+    /* Native death callbacks may leave QC self changed. Once owned, never
+     * fall back to an unrestricted ray because a callback invalidated it. */
+    if (sv_vr_contact_call.force_miss || !target || target->free ||
+        target->v.modelindex != sv_vr_contact_call.target_modelindex ||
+        !VectorCompare(target->v.origin, sv_vr_contact_call.target_origin)) {
+      memset(trace, 0, sizeof(*trace));
+      trace->fraction = 1;
+      trace->inopen = true;
+      trace->ent = qcvm->edicts;
+      VectorCopy(end, trace->endpos);
+    } else {
+      *trace = sv_vr_contact_call.trace;
+    }
+    sv_vr_contact_call.active = false;
+    return true;
+  }
+  if (sv_vr_contact_call.active &&
+      (SV_VRMeleeHammerPrimaryTrace(ent, start, end, nomonsters, trace) ||
+       SV_VRMeleeRapierAttackTrace(ent, start, end, nomonsters, trace) ||
+       SV_VRMeleeDwellTrace(ent, start, end, nomonsters, trace) ||
+       SV_VRMeleeDrakeTrace(ent, start, end, nomonsters, trace) ||
+       SV_VRMeleeCopperTrace(ent, start, end, nomonsters, trace)))
+    return true;
+  if (!sv_vr_contact_call.active || ent != sv_vr_contact_call.player ||
+      qcvm->xfunction != sv_vr_contact_call.function ||
+      nomonsters ||
+      pr_global_struct->self != EDICT_TO_PROG(ent))
+    return false;
+  if (qcvm->xstatement == 116259 && SV_VRMeleeGungnirProgs() &&
+      qcvm->depth == sv_vr_contact_call.depth &&
+      sv_vr_contact_call.function == &qcvm->functions[2654]) {
+    if (sv_vr_contact_call.force_miss) {
+      memset(trace, 0, sizeof(*trace));
+      trace->fraction = 1;
+      trace->inopen = true;
+      trace->ent = qcvm->edicts;
+      VectorCopy(end, trace->endpos);
+    } else {
+      *trace = sv_vr_contact_call.trace;
+    }
+    sv_vr_contact_call.active = false;
+    return true;
+  }
+  if (qcvm->xstatement == 117777 && SV_VRMeleeMjolnirHammerProgs() &&
+      qcvm->depth == sv_vr_contact_call.depth &&
+      sv_vr_contact_call.function == &qcvm->functions[2682]) {
+    *trace = sv_vr_contact_call.trace;
+    /* The root's immediately following corpse query is scoped too. Leave
+     * ownership alive; no other trace site in its effects is overridden. */
+    return true;
+  }
+  if (SV_VRMeleeImmortalDescriptor() &&
+      qcvm->xstatement == SV_VRMeleeImmortalTraceStatement(SV_VRMeleeImmortalSelected(ent))) {
+    *trace = sv_vr_contact_call.trace;
+    sv_vr_contact_call.active = false;
+    return true;
+  }
+  if (SV_VRMeleeALKDescriptor() &&
+      qcvm->xstatement == SV_VRMeleeALKDescriptor()->trace) {
+    *trace = sv_vr_contact_call.trace;
+    sv_vr_contact_call.active = false;
+    return true;
+  }
+  if (SV_VRMeleeMjolnirDescriptor() &&
+      (qcvm->xstatement == SV_VRMeleeMjolnirAxeTraceStatement() ||
+       qcvm->xstatement == SV_VRMeleeMjolnirAxeDebugTraceStatement())) {
+    if (sv_vr_contact_call.force_miss) {
+      memset(trace, 0, sizeof(*trace));
+      trace->fraction = 1;
+      trace->inopen = true;
+      trace->ent = qcvm->edicts;
+      VectorCopy(end, trace->endpos);
+    } else {
+      *trace = sv_vr_contact_call.trace;
+    }
+    sv_vr_contact_call.active = false;
+    return true;
+  }
+  if (SV_VRMeleeADScoped()) {
+    const sv_vr_melee_ad_descriptor_t *d = SV_VRMeleeADDescriptor();
+    if (qcvm->xstatement != d->trace && qcvm->xstatement != d->debug_trace)
+      return false;
+    if (sv_vr_contact_call.force_miss) {
+      memset(trace, 0, sizeof(*trace));
+      trace->fraction = 1;
+      trace->inopen = true;
+      trace->ent = qcvm->edicts;
+      VectorCopy(end, trace->endpos);
+    } else {
+      *trace = sv_vr_contact_call.trace;
+    }
+    sv_vr_contact_call.active = false;
+    return true;
+  }
+  if (SV_VRMeleeHoneyProgs() && qcvm->xstatement == 4712) {
+    /* noStoneHit is the pinned W_FireAxe local set after Killed. Read it,
+     * not the old corpse: ThrowHead may already have repurposed that edict.
+     * A supplemental non-solid contact never permits normal tail damage. */
+    if (sv_vr_contact_call.force_miss || qcvm->globals[4144]) {
+      memset(trace, 0, sizeof(*trace));
+      trace->fraction = 1;
+      trace->inopen = true;
+      trace->ent = qcvm->edicts;
+      VectorCopy(end, trace->endpos);
+    } else {
+      *trace = sv_vr_contact_call.trace;
+    }
+    sv_vr_contact_call.active = false;
+    return true;
+  }
+  if (sv_vr_contact_call.force_miss) {
+    switch (qcvm->xstatement) {
+    case 13531: case 13547: case 13578: case 13616: case 13649:
+      break;
+    default: return false;
+    }
+    memset(trace, 0, sizeof(*trace));
+    trace->fraction = 1;
+    trace->inopen = true;
+    trace->ent = qcvm->edicts;
+    VectorCopy(end, trace->endpos);
+    return true;
+  }
+  if (qcvm->xstatement != SV_VRMeleeStockTraceStatement())
+    return false;
+  *trace = sv_vr_contact_call.trace;
+  sv_vr_contact_call.active = false;
+  return true;
+}
+
+static void SV_VRContactFeedback(client_t *client, int hand) {
+  char command[48];
+  /* Cosmetic feedback cannot overflow/delay a gameplay message. Only this
+   * validated contact path produces it; pain/footstep sounds are irrelevant. */
+  if (client->message.cursize + (int)sizeof(command) + 2 > client->message.maxsize)
+    return;
+  q_snprintf(command, sizeof(command), "//vr_weapon_contact_haptic %d\n", hand);
+  MSG_WriteByte(&client->message, svc_stufftext);
+  MSG_WriteString(&client->message, command);
+}
+
+static float SV_VRContactDistance(const vec3_t a, const vec3_t b) {
+  vec3_t d;
+  VectorSubtract(a, b, d);
+  return sqrtf(DotProduct(d, d));
+}
+
+/* Physical metres and metres/second, independent of world scale, locomotion
+ * or collision retraction. Bonk's original three tiers remain QC-owned.
+ * The chosen tier is committed at the first outcome, not upgraded on a
+ * second victim reached later in the same swing. */
+static float SV_VRContactTier(sv_vr_melee_subtype_t subtype,
+    float arc, float peak_speed) {
+  if (subtype != SV_VR_MELEE_BONK_HAMMER)
+    return 0;
+  if (arc >= .25f && peak_speed >= 1.5f)
+    return 4;
+  if (arc >= .12f && peak_speed >= .85f)
+    return 2;
+  return .2f;
+}
+
+/* Earliest point-sweep entry into a finite blade capsule, not the closest
+ * approach time (which could lie behind an intervening world/body hit).
+ * The radius covers the bounded spacing between sampled blade points. */
+static float SV_VRContactCapsuleFraction(const vec3_t start, const vec3_t end,
+    const vec3_t base, const vec3_t tip, float radius) {
+  vec3_t ray, axis, offset, nearest;
+  double aa, rr, ar, ao, ro, oo, a, b, c, disc, t;
+  float first = 2;
+  VectorSubtract(end, start, ray);
+  VectorSubtract(tip, base, axis);
+  VectorSubtract(start, base, offset);
+  aa = DotProduct(axis, axis);
+  rr = DotProduct(ray, ray);
+  ao = DotProduct(axis, offset);
+  t = aa > 0 ? CLAMP(0, ao / aa, 1) : 0;
+  for (int i = 0; i < 3; i++)
+    nearest[i] = base[i] + t * axis[i];
+  if (SV_VRContactDistance(start, nearest) <= radius)
+    return 0;
+  if (rr < 1e-12)
+    return first;
+  ar = DotProduct(axis, ray);
+  ro = DotProduct(ray, offset);
+  oo = DotProduct(offset, offset);
+  if (aa > 1e-12) {
+    a = rr - ar * ar / aa;
+    b = ro - ar * ao / aa;
+    c = oo - ao * ao / aa - radius * radius;
+    disc = b * b - a * c;
+    if (a > 1e-12 && disc >= 0) {
+      t = (-b - sqrt(disc)) / a;
+      if (t >= 0 && t <= 1 && ao + t * ar >= 0 && ao + t * ar <= aa)
+        first = t;
+    }
+  }
+  for (int cap = 0; cap < 2; cap++) {
+    VectorSubtract(start, cap ? tip : base, offset);
+    b = DotProduct(ray, offset);
+    c = DotProduct(offset, offset) - radius * radius;
+    disc = b * b - rr * c;
+    if (disc < 0)
+      continue;
+    t = (-b - sqrt(disc)) / rr;
+    if (t >= 0 && t <= 1 && t < first)
+      first = t;
+  }
+  return first;
+}
+
+static qboolean SV_VRContactSampleValid(const vr_weapon_contact_t *c) {
+  for (int hand = 0; hand < 2; hand++) {
+    if (!(c->flags & (1u << hand)))
+      continue;
+    if (!isfinite(c->speed[hand]) || c->speed[hand] < 0 ||
+        c->speed[hand] > 20 ||
+        SV_VRContactDistance(c->grip[hand], vec3_origin) > 96 ||
+        SV_VRContactDistance(c->base[hand], c->grip[hand]) > 96 ||
+        SV_VRContactDistance(c->tip[hand], c->grip[hand]) > 96)
+      return false;
+    for (int i = 0; i < 3; i++)
+      if (!isfinite(c->grip[hand][i]) || !isfinite(c->base[hand][i]) ||
+          !isfinite(c->tip[hand][i]))
+        return false;
+  }
+  return isfinite(c->weapon) &&
+      !(c->flags & ~VR_WEAPON_CONTACT_KNOWN_FLAGS) &&
+      (c->flags & (VR_WEAPON_CONTACT_LEFT_VALID | VR_WEAPON_CONTACT_RIGHT_VALID));
+}
+
+static qboolean SV_VRContactButtonTouch(edict_t *button) {
+  const char *classname = PR_GetString(button->v.classname);
+  dfunction_t *touch;
+  int index = 0, statement = 0;
+
+  /* These constructors install .touch only for physical (not shoot-only)
+   * buttons. Invoke that original callback so skill validity, elevator state
+   * and native enemy bookkeeping stay QC-owned. Similar names in another VM
+   * are not enough to authorize a new interaction. */
+  if (!strcmp(classname, "func_button_skill"))
+    return SV_VRMeleeQBJ3Progs() && button->v.touch == 882 &&
+        SV_VRMeleeFunctionPin(882, "skillbutton_touch", 29999, 0, 0, 0, NULL);
+  if (!strcmp(classname, "func_elvtr_button"))
+    return qcvm->crc == 30793 && SV_VRMeleeALKDescriptor() &&
+        button->v.touch == 937 &&
+        SV_VRMeleeFunctionPin(937, "elvtr_button_touch", 30399, 0, 0, 0, NULL);
+  if (strcmp(classname, "func_button"))
+    return false;
+  touch = ED_FindFunction("button_touch");
+  if (touch && !touch->numparms && touch->first_statement > 0 &&
+      button->v.touch == touch - qcvm->functions)
+    return true;
+  /* AD-derived buttons use a different callback name. These exact original
+   * callbacks were checked to require a real FL_CLIENT other and to retain
+   * their mod's activation/state rules. Never call an arbitrary .use here.
+   * The caller still excludes shoot-only buttons: these callbacks themselves
+   * do not reject a positive-health button. */
+  switch (qcvm->crc) {
+  case 10963: index = 1790; statement = 85767; break; /* AD and derivatives */
+  case 10710: index = 1514; statement = 69393; break; /* Ravenkeep */
+  case 43865: index = 3413; statement = 142718; break; /* Mjolnir */
+  default: return false;
+  }
+  if (!qcvm->progs || index >= qcvm->progs->numfunctions ||
+      button->v.touch != index)
+    return false;
+  touch = &qcvm->functions[index];
+  return !touch->numparms && touch->first_statement == statement &&
+      !strcmp(PR_GetString(touch->s_name), "func_button_touch");
+}
+
+/* Consume only the original W_Attack -> W_FireGungnir -> Attack1 call.
+ * Do not launch a second firing loop, or schedule/cancel animation thinks. */
+qboolean SV_VRContactCall(int function) {
+  client_t *client;
+  edict_t *player;
+  const usercmd_t *cmd;
+  const vr_weapon_contact_t *pose;
+  sv_vr_melee_qc_context_t saved;
+  eval_t *ammo;
+  int self, slot, statement;
+  if (sv_vr_contact_call.active && qcvm == &sv.qcvm &&
+      qcvm->xfunction == sv_vr_contact_call.function &&
+      qcvm->depth == sv_vr_contact_call.depth &&
+      pr_global_struct->self == EDICT_TO_PROG(sv_vr_contact_call.player)) {
+    if (SV_VRMeleeMaceSwing1Call(function) || SV_VRMeleeRapierAnimationCall(function)) {
+      float parameters[OFS_PARM7 + 3 - OFS_RETURN];
+      int argc = qcvm->argc;
+      statement = qcvm->xstatement;
+      memcpy(parameters, qcvm->globals + OFS_RETURN, sizeof(parameters));
+      if (SV_VRMeleeRapierAnimationCall(function)) {
+        qcvm->argc = 0;
+        PR_ExecuteProgram(SV_VRMeleeRapierFirstSwipeFunction() - qcvm->functions);
+      } else
+        SV_VRMeleeMaceReload(sv_vr_contact_call.player);
+      memcpy(qcvm->globals + OFS_RETURN, parameters, sizeof(parameters));
+      qcvm->argc = argc;
+      qcvm->xstatement = statement;
+      return true;
+    }
+    if (function == 2443 && qcvm->xstatement == 112962 &&
+        qcvm->xfunction == &qcvm->functions[2461] && SV_VRMeleeScimitarProgs())
+      return true; /* Root already executed reload, sound and lunge. */
+  }
+  if (function != 2621 || !qcvm || qcvm != &sv.qcvm ||
+      qcvm->xstatement != 116184 || !SV_VRMeleeGungnirProgs() ||
+      qcvm->xfunction != &qcvm->functions[2652] || qcvm->depth < 2 ||
+      qcvm->stack[qcvm->depth - 1].f != &qcvm->functions[2713] ||
+      qcvm->stack[qcvm->depth - 1].s != 121357 ||
+      !(SV_VRContactMode() & VR_WEAPON_CONTACT_CAP_MELEE))
+    return false;
+  self = pr_global_struct->self;
+  if (self <= 0 || self % qcvm->edict_size ||
+      (slot = self / qcvm->edict_size) > svs.maxclients)
+    return false;
+  player = PROG_TO_EDICT(self);
+  client = &svs.clients[slot - 1];
+  cmd = &client->cmd;
+  pose = &cmd->vr_contact;
+  if (!SV_VRMeleeGungnirSelected(player) || !cmd->vr_active ||
+      !cmd->vr_handpos_relative ||
+      !(pose->flags & VR_WEAPON_CONTACT_IMMERSIVE_MELEE))
+    return false; /* unsupported/disabled clients retain original behavior */
+  /* Recognized immersive requests fail closed when busy/stale, never fall
+   * back into Attack1's forbidden trigger stab or its delayed combo. */
+  if (!client->active || !client->spawned || client->input_stale ||
+      client->edict != player || !(cmd->buttons & BUTTON_ATTACK) ||
+      !SV_VRContactSampleValid(pose) || !SV_VRMeleeGungnirIdle(player) ||
+      pose->weapon != player->v.weapon || pose->modelindex <= 0 ||
+      pose->modelindex >= MAX_MODELS || !sv.model_precache[pose->modelindex] ||
+      strcmp(sv.model_precache[pose->modelindex], PR_GetString(player->v.weaponmodel)) ||
+      sv_vr_contact_call.active)
+    return true;
+  ammo = GetEdictFieldValueByName(player, "ammo_voidshards");
+  if (!ammo || !isfinite(ammo->_float) ||
+      !SV_VRMeleeContextBegin(&saved, player, player->v.v_angle, 0))
+    return true;
+  statement = qcvm->xstatement;
+  SV_VRMeleeGungnirReload(player);
+  if (ammo->_float > 0) {
+    qcvm->argc = 0;
+    PR_ExecuteProgram(2654);
+  }
+  SV_VRMeleeContextEnd(&saved, player);
+  /* Reentrant execution leaves xstatement at the callee's return. The
+   * interpreter resumes its original CALL with its original return address. */
+  qcvm->xstatement = statement;
+  return true;
+}
+
+static qboolean SV_VRContactParryEnabled(void) {
+  return svs.maxclients > 1 && sv_weapon_collision.value &&
+      (SV_VRContactMode() & VR_WEAPON_CONTACT_CAP_MELEE) &&
+      (!coop.value || !SV_CoopFeatureEnabled(&sv_coop_noplayerclip, true));
+}
+
+static qboolean SV_VRContactBladeReachable(edict_t *player,
+    const vr_weapon_contact_t *pose, int hand) {
+  vec3_t eye, grip, base, tip;
+  trace_t trace;
+  sv_vr_melee_subtype_t subtype = SV_VRContactWeapon(player);
+  float max_length = subtype == SV_VR_MELEE_STOCK_AXE ||
+      subtype == SV_VR_MELEE_HONEY_AXE ? 32 :
+      subtype == SV_VR_MELEE_QBJ3_WRENCH ? 48 : 96;
+  /* Both endpoints passing the generic reach envelope must not permit a
+   * fabricated 192-unit shield. Bound supported tool lengths separately. */
+  if (subtype == SV_VR_MELEE_NONE ||
+      SV_VRContactDistance(pose->base[hand], pose->tip[hand]) > max_length)
+    return false;
+  VectorAdd(player->v.origin, player->v.view_ofs, eye);
+  VectorAdd(player->v.origin, pose->grip[hand], grip);
+  VectorAdd(player->v.origin, pose->base[hand], base);
+  VectorAdd(player->v.origin, pose->tip[hand], tip);
+  for (int edge = 0; edge < 4; edge++) {
+    trace = SV_Move(edge == 0 ? eye : edge == 3 ? base : grip,
+        vec3_origin, vec3_origin,
+        edge == 0 ? grip : edge == 1 ? base : tip, MOVE_NOMONSTERS, player);
+    if (trace.startsolid || trace.allsolid || trace.fraction < 1)
+      return false;
+  }
+  return true;
+}
+
+typedef struct {
+  vec3_t base, tip;
+  int client, hand;
+} sv_vr_defending_blade_t;
+
+/* Latest processed geometry, not a rewind history. Packet receipt and
+ * consumption clocks are both server-owned; draining a delayed queue must
+ * not make its old pose look fresh. Validate again after gameplay has run. */
+static int SV_VRContactDefenders(edict_t *attacker,
+    sv_vr_defending_blade_t blades[MAX_SCOREBOARD * 2]) {
+  int count = 0;
+  if (!SV_VRContactParryEnabled())
+    return 0;
+  for (int i = 0; i < svs.maxclients && i < MAX_SCOREBOARD; i++) {
+    client_t *client = &svs.clients[i];
+    sv_vr_contact_state_t *state = &sv_vr_contacts[i];
+    edict_t *player = client->edict;
+    const vr_weapon_contact_t *pose = &state->previous;
+    if (!client->active || !client->spawned || client->input_stale ||
+        !client->is_vr_client || !client->vr_handpos_relative ||
+        !player || player == attacker || player->free ||
+        player->v.health <= 0 || player->v.deadflag || !state->valid ||
+        !state->defensive_valid || state->defensive_received <= 0 ||
+        realtime < state->defensive_received || realtime < state->defensive_processed ||
+        realtime - state->defensive_received > .1 ||
+        realtime - state->defensive_processed > .1 ||
+        state->movement_epoch != client->move_discontinuity_epoch ||
+        SV_VRContactDistance(player->v.origin, state->body) > 64 ||
+        !(pose->flags & VR_WEAPON_CONTACT_IMMERSIVE_MELEE) ||
+        pose->weapon != player->v.weapon || pose->modelindex <= 0 ||
+        pose->modelindex >= MAX_MODELS || !sv.model_precache[pose->modelindex] ||
+        strcmp(sv.model_precache[pose->modelindex], PR_GetString(player->v.weaponmodel)))
+      continue;
+    for (int hand = 0; hand < 2; hand++) {
+      if (!(state->defensive_valid & (1u << hand)) ||
+          !SV_VRContactBladeReachable(player, pose, hand))
+        continue;
+      VectorAdd(player->v.origin, pose->base[hand], blades[count].base);
+      VectorAdd(player->v.origin, pose->tip[hand], blades[count].tip);
+      blades[count].client = i;
+      blades[count++].hand = hand;
+    }
+  }
+  return count;
+}
+
+/* Downed zombies retain their tall standing collision bounds. Use the native
+ * MDL frame's bounds for this supplemental contact, otherwise an axe hovering
+ * well above the fallen body could gib it. This is a temporary query shape,
+ * never a change to the edict or its ordinary collision/animation. */
+static qboolean SV_VRContactCorpseTrace(edict_t *corpse,
+    const vec3_t start, const vec3_t end, trace_t *trace) {
+  qmodel_t *model;
+  aliashdr_t *header;
+  maliasframedesc_t *frame;
+  edict_t shape;
+  vec3_t local_start, local_end, delta, angles, forward, right, up, normal;
+  int index, frameindex;
+  if (!isfinite(corpse->v.modelindex) || !isfinite(corpse->v.frame) ||
+      corpse->v.modelindex < 1 || corpse->v.modelindex >= MAX_MODELS ||
+      corpse->v.frame < 0 || corpse->v.frame >= MAXALIASFRAMES ||
+      !SV_VRMeleeFiniteVector(corpse->v.angles))
+    return false;
+  index = (int)corpse->v.modelindex;
+  frameindex = (int)corpse->v.frame;
+  if (!(model = sv.models[index]) || model->type != mod_alias)
+    return false;
+  header = (aliashdr_t *)Mod_Extradata(model);
+  if (!header || header->poseverttype != ALIAS_POSE_MDL ||
+      frameindex < 0 || frameindex >= header->numframes)
+    return false;
+  frame = &header->frames[frameindex];
+  memset(&shape, 0, sizeof(shape));
+  shape.v.solid = SOLID_BBOX;
+  for (int axis = 0; axis < 3; axis++) {
+    shape.v.mins[axis] = frame->bboxmin.v[axis] * header->original_scale[axis] +
+        header->original_scale_origin[axis];
+    shape.v.maxs[axis] = frame->bboxmax.v[axis] * header->original_scale[axis] +
+        header->original_scale_origin[axis];
+    if (!isfinite(shape.v.mins[axis]) || !isfinite(shape.v.maxs[axis]) ||
+        shape.v.mins[axis] >= shape.v.maxs[axis])
+      return false;
+  }
+  VectorCopy(corpse->v.angles, angles);
+  angles[PITCH] = -angles[PITCH]; /* native alias model rotation */
+  AngleVectors(angles, forward, right, up);
+  VectorSubtract(start, corpse->v.origin, delta);
+  local_start[0] = DotProduct(delta, forward);
+  local_start[1] = -DotProduct(delta, right);
+  local_start[2] = DotProduct(delta, up);
+  VectorSubtract(end, corpse->v.origin, delta);
+  local_end[0] = DotProduct(delta, forward);
+  local_end[1] = -DotProduct(delta, right);
+  local_end[2] = DotProduct(delta, up);
+  *trace = SV_ClipMoveToEntity(&shape, local_start, vec3_origin, vec3_origin, local_end);
+  if (trace->fraction >= 1 || trace->startsolid || trace->allsolid)
+    return false;
+  VectorCopy(trace->endpos, delta);
+  VectorMA(corpse->v.origin, delta[0], forward, trace->endpos);
+  VectorMA(trace->endpos, -delta[1], right, trace->endpos);
+  VectorMA(trace->endpos, delta[2], up, trace->endpos);
+  VectorCopy(trace->plane.normal, normal);
+  VectorScale(forward, normal[0], trace->plane.normal);
+  VectorMA(trace->plane.normal, -normal[1], right, trace->plane.normal);
+  VectorMA(trace->plane.normal, normal[2], up, trace->plane.normal);
+  trace->plane.dist = DotProduct(trace->plane.normal, trace->endpos);
+  trace->ent = corpse;
+  return true;
+}
+
+/* Honey marks revivable zombies; AD and Mjolnir mark floor corpses. Query only
+ * these authored non-solid candidates in the physical sweep; do not link them as
+ * solid, change world collision, or make arbitrary dead entities hittable. */
+static void SV_VRContactCorpses(edict_t *player, vec3_t start,
+    vec3_t end, trace_t *nearest) {
+  const sv_vr_melee_ad_descriptor_t *ad = SV_VRMeleeADDescriptor();
+  const sv_vr_melee_mjolnir_descriptor_t *mjolnir = SV_VRMeleeMjolnirDescriptor();
+  for (int n = svs.maxclients + 1; n < qcvm->num_edicts; n++) {
+    edict_t *corpse = EDICT_NUM(n);
+    trace_t trace;
+    vec3_t delta;
+    if (corpse->free || corpse->v.solid != SOLID_NOT)
+      continue;
+    if (ad || mjolnir) {
+      if (strcmp(E_STRING(corpse, ad ? ad->corpse_field : mjolnir->corpse_field), "TRUE"))
+        continue;
+    } else if (strcmp(PR_GetString(corpse->v.classname), "monster_zombie") ||
+        strcmp(E_STRING(corpse, 105), "ZOMBIE_ONGROUND"))
+      continue;
+    VectorSubtract(corpse->v.origin, player->v.origin, delta);
+    if (!SV_VRMeleeFiniteVector(delta) || DotProduct(delta, delta) > 128 * 128)
+      continue;
+    if (SV_VRContactCorpseTrace(corpse, start, end, &trace) &&
+        trace.fraction < nearest->fraction - .00001f)
+      *nearest = trace;
+  }
+}
+
+static trace_t SV_VRContactSweep(edict_t *p, const vr_weapon_contact_t *old,
+    const vr_weapon_contact_t *now, int hand, qboolean test_parry,
+    const int *hit_entities, int hit_count, float min_time, float *event_time,
+    int *parry_client, int *parry_hand) {
+  vec3_t eye, grip, a, b;
+  trace_t result, trace, reach;
+  sv_vr_defending_blade_t blades[MAX_SCOREBOARD * 2];
+  int numblades = test_parry && (now->flags & VR_WEAPON_CONTACT_IMMERSIVE_MELEE) &&
+      SV_VRContactWeapon(p) != SV_VR_MELEE_NONE ? SV_VRContactDefenders(p, blades) : 0;
+  float first_time = 2;
+  sv_vr_melee_subtype_t subtype = SV_VRContactWeapon(p);
+  eval_t *tome = subtype == SV_VR_MELEE_MJOLNIR_AXE ?
+      GetEdictFieldValueByName(p, "tome_finished") : NULL;
+  qboolean authored_corpses = test_parry &&
+      (now->flags & VR_WEAPON_CONTACT_IMMERSIVE_MELEE) &&
+      (subtype == SV_VR_MELEE_HONEY_AXE ||
+       (subtype == SV_VR_MELEE_MJOLNIR_AXE &&
+        (SV_VRMeleeMjolnirAxeVariant(p) == SV_VR_MJOLNIR_AXE_SHADOW ||
+         (tome && isfinite(tome->_float) && tome->_float != 0))) ||
+       (subtype == SV_VR_MELEE_AD_AXE &&
+        ((int)GetEdictFieldValueByName(p, "moditems")->_float & 4096)));
+  int steps = CLAMP(1, (int)ceilf(SV_VRContactDistance(
+      now->base[hand], now->tip[hand]) / 3), 32);
+  memset(&result, 0, sizeof(result));
+  result.fraction = 1;
+  *event_time = 2;
+  *parry_client = *parry_hand = -1;
+  VectorAdd(p->v.origin, p->v.view_ofs, eye);
+  VectorAdd(p->v.origin, now->grip[hand], grip);
+  /* Quake BSPs have discrete point/player hulls, not arbitrary box sweeps.
+   * A 3-unit-wide "blade box" selects the 32-unit player hull. Use true point
+   * traces along the blade so a nearby wall cannot block an in-reach button. */
+  reach = SV_Move(eye, vec3_origin, vec3_origin, grip, MOVE_NOMONSTERS, p);
+  if (reach.startsolid || reach.allsolid || reach.fraction < 1)
+    return result;
+  /* Current blade, plus bounded sweeps of points along it. All points use the
+   * same current body translation, so walking itself is not a swing. */
+  for (int i = -1; i <= steps; i++) {
+    for (int axis = 0; axis < 3; axis++) {
+      float t = i < 0 ? 0 : (float)i / steps;
+      a[axis] = p->v.origin[axis] + (i < 0 ? now->base[hand][axis] :
+          old->base[hand][axis] + t * (old->tip[hand][axis] - old->base[hand][axis]));
+      b[axis] = p->v.origin[axis] + (i < 0 ? now->tip[hand][axis] :
+          now->base[hand][axis] + t * (now->tip[hand][axis] - now->base[hand][axis]));
+      /* After an outcome mutates geometry, only the remaining physical time
+       * interval may be retraced against that new geometry. */
+      if (i >= 0)
+        a[axis] += min_time * (b[axis] - a[axis]);
+    }
+    trace = SV_Move(a, vec3_origin, vec3_origin, b, MOVE_NORMAL, p);
+    if (trace.startsolid || trace.allsolid)
+      continue;
+    if (authored_corpses)
+      SV_VRContactCorpses(p, a, b, &trace);
+    for (int blade = 0; blade < numblades; blade++) {
+      vec3_t point, delta;
+      float entry = SV_VRContactCapsuleFraction(a, b,
+          blades[blade].base, blades[blade].tip, 4);
+      float contact_time = i < 0 ? 1 : min_time + (1 - min_time) * entry;
+      /* Ordinary world/body contact wins numerical ties. A different blade
+       * point's earlier body hit also wins via the shared first_time. */
+      if (entry > 1 || entry >= trace.fraction - .00001f ||
+          contact_time >= first_time - .00001f)
+        continue;
+      VectorSubtract(b, a, delta);
+      VectorMA(a, entry, delta, point);
+      reach = SV_Move(grip, vec3_origin, vec3_origin, point, MOVE_NOMONSTERS, p);
+      if (reach.startsolid || reach.allsolid || reach.fraction < 1)
+        continue;
+      memset(&result, 0, sizeof(result));
+      result.fraction = 1; /* Never pass a defending player as a QC damage hit. */
+      first_time = contact_time;
+      *parry_client = blades[blade].client;
+      *parry_hand = blades[blade].hand;
+    }
+    if (trace.fraction >= 1 || !trace.ent)
+      continue;
+    /* Previously hit entities still obstruct the real trace. They are only
+     * excluded as new outcomes; never change .solid or trace through them to
+     * manufacture the original mod's second target. Other blade points may
+     * independently reach a distinct target during the same physical sweep. */
+    qboolean already_hit = false;
+    for (int target = 0; target < hit_count; target++)
+      if (hit_entities[target] == NUM_FOR_EDICT(trace.ent))
+        already_hit = true;
+    if (already_hit)
+      continue;
+    /* A client endpoint cannot grant reach through intervening world/doors. */
+    reach = SV_Move(grip, vec3_origin, vec3_origin, trace.endpos, MOVE_NOMONSTERS, p);
+    if (reach.startsolid || reach.allsolid ||
+        (reach.fraction < 1 && SV_VRContactDistance(reach.endpos, trace.endpos) > 2))
+      continue;
+    /* A fraction along the current blade is not a time fraction. Prefer
+     * earliest swept contact; the current segment is the endpoint fallback. */
+    float contact_time = i < 0 ? 1 : min_time + (1 - min_time) * trace.fraction;
+    if (contact_time <= first_time + .00001f) {
+      result = trace;
+      first_time = contact_time;
+      *parry_client = *parry_hand = -1;
+    }
+  }
+  *event_time = first_time;
+  return result;
+}
+
+void SV_VRContactProcessCommand(client_t *client, const usercmd_t *cmd) {
+  int n = (int)(client - svs.clients);
+  sv_vr_contact_state_t *s;
+  const vr_weapon_contact_t sample = cmd->vr_contact;
+  const vr_weapon_contact_t *c = &sample;
+  edict_t *p = client->edict;
+  byte defensive_valid = 0;
+  float dt;
+  if (n < 0 || n >= MAX_SCOREBOARD)
+    return;
+  s = &sv_vr_contacts[n];
+  s->defensive_valid = 0;
+  if (!SV_VRContactMode() || !client->active || !client->spawned ||
+      !p || p->free || p->v.health <= 0 || p->v.deadflag || client->input_stale ||
+      !cmd->vr_active || !cmd->vr_handpos_relative || !SV_VRContactSampleValid(c) ||
+      c->modelindex <= 0 || c->modelindex >= MAX_MODELS ||
+      !sv.model_precache[c->modelindex] ||
+      strcmp(sv.model_precache[c->modelindex], PR_GetString(p->v.weaponmodel)) ||
+      c->weapon != p->v.weapon || !isfinite(cmd->servertime)) {
+    s->valid = false;
+    return;
+  }
+  dt = cmd->servertime - s->sample_time;
+  if (!s->valid || cmd->sequence != s->sequence + 1 || dt <= 0 || dt > .1f ||
+      c->modelindex != s->previous.modelindex || c->flags != s->previous.flags ||
+      c->weapon != s->previous.weapon ||
+      client->move_discontinuity_epoch != s->movement_epoch || cmd->impulse ||
+      SV_VRContactDistance(p->v.origin, s->body) > 64) {
+    memset(s->arc, 0, sizeof(s->arc));
+    memset(s->peak_speed, 0, sizeof(s->peak_speed));
+    memset(s->consumed, 0, sizeof(s->consumed));
+    memset(s->authorized, 0, sizeof(s->authorized));
+    memset(s->hit_count, 0, sizeof(s->hit_count));
+    memset(s->button, 0, sizeof(s->button));
+    goto remember;
+  }
+  for (int hand = 0; hand < 2; hand++) {
+    trace_t hit;
+    vec3_t aim;
+    sv_vr_melee_subtype_t subtype = SV_VRContactWeapon(p);
+    float distance, endpoint_motion, contact_time;
+    qboolean test_parry;
+    int button = 0, parry_client, parry_hand;
+    if (!(c->flags & (1u << hand)))
+      continue;
+    distance = SV_VRContactDistance(c->tip[hand], s->previous.tip[hand]);
+    endpoint_motion = q_max(distance,
+        SV_VRContactDistance(c->base[hand], s->previous.base[hand]));
+    /* Tracking discontinuity (including snap turn): restart, not a long hit
+     * ray. Raw physical point speed is independent of locomotion/retraction. */
+    if (endpoint_motion > 32 || endpoint_motion > c->speed[hand] * dt * 80 + 3) {
+      s->arc[hand] = 0;
+      s->peak_speed[hand] = 0;
+      s->consumed[hand] = true;
+      s->authorized[hand] = false;
+      s->hit_count[hand] = 0;
+      continue;
+    }
+    if (s->authorized[hand] && (s->subtype[hand] != subtype ||
+        qcvm->time >= s->recovery_deadline[hand])) {
+      s->authorized[hand] = false;
+      s->hit_count[hand] = 0;
+      s->consumed[hand] = true;
+    }
+    if (SV_VRContactParryEnabled() &&
+        (c->flags & VR_WEAPON_CONTACT_IMMERSIVE_MELEE) &&
+        SV_VRContactBladeReachable(p, c, hand))
+      defensive_valid |= 1u << hand;
+    /* Only an eligible moving stroke needs opponent blade queries. Ordinary
+     * gun pokes, resting guards and already-consumed swings still use their
+     * existing world/button sweep without O(players) defensive traces. */
+    test_parry = !s->consumed[hand] && !s->parry_rearm[hand] &&
+        s->arc[hand] + (c->speed[hand] >= .5f && distance > .05f ?
+            c->speed[hand] * dt : 0) >= .045f;
+    hit = SV_VRContactSweep(p, &s->previous, c, hand, test_parry,
+        s->hit_entities[hand], s->hit_count[hand], 0, &contact_time,
+        &parry_client, &parry_hand);
+    if (sv_weapon_collision.value && hit.ent && !hit.ent->free &&
+        hit.ent->v.solid == SOLID_BSP && hit.ent->v.touch &&
+        hit.ent->v.health <= 0) {
+      if (SV_VRContactButtonTouch(hit.ent)) {
+        button = NUM_FOR_EDICT(hit.ent);
+        if (button != s->button[hand]) {
+          int self = pr_global_struct->self, other = pr_global_struct->other;
+          float time = pr_global_struct->time;
+          pr_global_struct->self = EDICT_TO_PROG(hit.ent);
+          pr_global_struct->other = EDICT_TO_PROG(p);
+          pr_global_struct->time = qcvm->time;
+          PR_ExecuteProgram(hit.ent->v.touch);
+          pr_global_struct->self = self;
+          pr_global_struct->other = other;
+          pr_global_struct->time = time;
+          SV_VRContactFeedback(client, hand);
+          if (p->free || p->v.health <= 0 || p->v.deadflag ||
+              SV_VRContactDistance(p->v.origin, s->body) > 64) {
+            SV_VRContactResetClient(client);
+            return;
+          }
+        }
+      }
+    }
+    s->button[hand] = button;
+    if (!(c->flags & VR_WEAPON_CONTACT_IMMERSIVE_MELEE) ||
+        subtype == SV_VR_MELEE_NONE || subtype != SV_VRContactWeapon(p))
+      continue;
+    if (SV_VRMeleeNativeTrigger(subtype) && (cmd->buttons & BUTTON_ATTACK)) {
+      s->arc[hand] = s->peak_speed[hand] = 0;
+      s->consumed[hand] = true;
+      s->authorized[hand] = false;
+      s->hit_count[hand] = 0;
+      continue;
+    }
+    if (s->parry_rearm[hand]) {
+      /* A cancelled active swing needs a later received rest sample. Queued
+       * commands from the clash's packet cannot immediately resurrect it. */
+      s->arc[hand] = 0;
+      s->peak_speed[hand] = 0;
+      s->consumed[hand] = true;
+      s->authorized[hand] = false;
+      s->hit_count[hand] = 0;
+      if (cmd->vr_contact_received > s->parry_received[hand] && c->speed[hand] < .25f) {
+        s->parry_rearm[hand] = false;
+        s->consumed[hand] = false;
+      }
+      continue;
+    }
+    /* Speed is already physical metres/second, including wrist rotation.
+     * World-coordinate motion is a witness, not a second distance estimate:
+     * dividing it by a fixed units/metre constant changes the effort needed
+     * whenever the client changes vr_world_scale. A stationary blade cannot
+     * accumulate a swing from a stale nonzero speed sample. */
+    if (c->speed[hand] >= .5f && distance > .05f) {
+      s->arc[hand] += c->speed[hand] * dt;
+      s->peak_speed[hand] = q_max(s->peak_speed[hand], c->speed[hand]);
+    }
+    /* The accepted tracked aim supplies QC's forward/right/up basis. A
+     * cutting edge need not point forward (the axe ridge is perpendicular). */
+    VectorCopy(cmd->vr_akimbo_active ? cmd->vr_akimbo_angles[hand] :
+        cmd->vr_handrot, aim);
+    for (int contact_number = 0; contact_number < 2 && !s->consumed[hand] &&
+        s->arc[hand] >= .045f &&
+        (hit.fraction < 1 || parry_client >= 0 || c->speed[hand] < .25f);
+        contact_number++) {
+      qboolean first = !s->authorized[hand];
+      int target = hit.ent ? NUM_FOR_EDICT(hit.ent) : 0;
+      int target_limit = subtype == SV_VR_MELEE_STOCK_AXE ||
+          subtype == SV_VR_MELEE_HONEY_AXE ||
+          subtype == SV_VR_MELEE_AD_AXE ||
+          subtype == SV_VR_MELEE_COPPER_AXE ||
+          subtype == SV_VR_MELEE_ALK_AXE ||
+          subtype == SV_VR_MELEE_IMMORTAL_AXE ||
+          subtype == SV_VR_MELEE_IMMORTAL_HAMMER ||
+          subtype == SV_VR_MELEE_DRAKE_AXE ||
+          subtype == SV_VR_MELEE_MJOLNIR_AXE ||
+          SV_VRMeleeNativeTrigger(subtype) ||
+          subtype == SV_VR_MELEE_DWELL_AXE ||
+          subtype == SV_VR_MELEE_DWELL_BERSERK ? 1 : 2;
+      float deadline;
+      float tier = first ? SV_VRContactTier(subtype, s->arc[hand],
+          s->peak_speed[hand]) : s->tier[hand];
+      sv_vr_contact_outcome_t outcome = parry_client >= 0 ? VR_CONTACT_PARRIED :
+          hit.fraction < 1 ? VR_CONTACT_HIT : VR_CONTACT_WHIFF;
+      /* Ending a stroke after an impact is not a second missed attack. */
+      if (!first && outcome == VR_CONTACT_WHIFF) {
+        s->consumed[hand] = true;
+        break;
+      }
+      /* This exact accepted command owns the source, including historical
+       * legacy samples. Never borrow a newer client's pose for a Tome shot. */
+      VectorAdd(p->v.origin, cmd->vr_handpos, sv_vr_contact_call.muzzle);
+      sv_vr_contact_call.has_muzzle = SV_VRMeleeFiniteVector(sv_vr_contact_call.muzzle);
+      qboolean accepted = SV_VRMeleeOutcome(p, subtype, outcome,
+          outcome == VR_CONTACT_HIT ? &hit : NULL, aim, tier, hand, first, &deadline);
+      sv_vr_contact_call.has_muzzle = false;
+      if (accepted) {
+          if (first) {
+            s->authorized[hand] = true;
+            s->subtype[hand] = subtype;
+            s->tier[hand] = tier;
+            s->recovery_deadline[hand] = deadline;
+          }
+          if (outcome != VR_CONTACT_WHIFF)
+            SV_VRContactFeedback(client, hand);
+          if (outcome == VR_CONTACT_PARRIED) {
+            sv_vr_contact_state_t *opponent = &sv_vr_contacts[parry_client];
+            s->parry_rearm[hand] = true;
+            s->parry_received[hand] = realtime;
+            /* An idle guard is not an attack and incurs no invented cooldown.
+             * Cancel only an opponent's already-moving physical stroke. */
+            if (opponent->arc[parry_hand] > 0 ||
+                opponent->previous.speed[parry_hand] >= .5f) {
+              opponent->consumed[parry_hand] = true;
+              opponent->parry_rearm[parry_hand] = true;
+              opponent->parry_received[parry_hand] = realtime;
+              opponent->arc[parry_hand] = 0;
+              opponent->peak_speed[parry_hand] = 0;
+              opponent->authorized[parry_hand] = false;
+              opponent->hit_count[parry_hand] = 0;
+            }
+            SV_VRContactFeedback(&svs.clients[parry_client], parry_hand);
+          }
+          if (outcome == VR_CONTACT_HIT && s->hit_count[hand] < 2)
+            s->hit_entities[hand][s->hit_count[hand]++] = target;
+          if (outcome != VR_CONTACT_HIT || target == 0 ||
+              s->hit_count[hand] >= target_limit)
+            s->consumed[hand] = true;
+      } else {
+        /* A rejected gesture is consumed, not authorized. It cannot obtain
+         * a follow-up by bypassing the original cooldown or draw scheduler. */
+        s->consumed[hand] = true;
+      }
+      if (p->free || p->v.health <= 0 || p->v.deadflag ||
+          SV_VRContactDistance(p->v.origin, s->body) > 64) {
+        SV_VRContactResetClient(client);
+        return;
+      }
+      if (!s->consumed[hand])
+        hit = SV_VRContactSweep(p, &s->previous, c, hand, true,
+            s->hit_entities[hand], s->hit_count[hand], contact_time, &contact_time,
+            &parry_client, &parry_hand);
+    }
+    if (c->speed[hand] < .25f && !s->parry_rearm[hand]) {
+      s->arc[hand] = 0;
+      s->peak_speed[hand] = 0;
+      s->consumed[hand] = false;
+      s->authorized[hand] = false;
+      s->hit_count[hand] = 0;
+    }
+  }
+remember:
+  s->defensive_valid = defensive_valid;
+  s->defensive_received = cmd->vr_contact_received;
+  s->defensive_processed = realtime;
+  s->valid = true;
+  s->previous = *c;
+  s->sequence = cmd->sequence;
+  s->sample_time = cmd->servertime;
+  s->movement_epoch = client->move_discontinuity_epoch;
+  VectorCopy(p->v.origin, s->body);
+}
+
+void SV_VRContactDrainLegacy(client_t *client) {
+  int n = (int)(client - svs.clients);
+  if (n < 0 || n >= MAX_SCOREBOARD)
+    return;
+  sv_vr_contact_state_t *s = &sv_vr_contacts[n];
+  unsigned int count = s->count;
+  s->count = 0;
+  for (unsigned int i = 0; i < count; i++) {
+    usercmd_t cmd;
+    memset(&cmd, 0, sizeof(cmd));
+    cmd.vr_active = cmd.vr_handpos_relative = true;
+    cmd.vr_contact = s->pending[i].contact;
+    VectorCopy(s->pending[i].handrot, cmd.vr_handrot);
+    VectorCopy(s->pending[i].handpos, cmd.vr_handpos);
+    memcpy(cmd.vr_akimbo_angles, s->pending[i].akimbo_angles,
+        sizeof(cmd.vr_akimbo_angles));
+    cmd.vr_akimbo_active = s->pending[i].akimbo_active;
+    cmd.sequence = s->pending[i].sequence;
+    cmd.servertime = s->pending[i].time;
+    cmd.vr_contact_received = s->pending[i].received;
+    cmd.impulse = s->pending[i].impulse;
+    cmd.buttons = s->pending[i].buttons;
+    SV_VRContactProcessCommand(client, &cmd);
+  }
+}
+
 /*
 =============
 Coop client helpers
@@ -3699,6 +4867,14 @@ static void SV_ApplyVRWeaponOffset(edict_t *ent, int num, qboolean is_remote_vr,
     VR_GetWeaponProjectileSourceOffset(PR_GetString(ent->v.weaponmodel),
                                        (int)ent->v.weapon, ent->v.v_angle,
                                        ent->v.view_ofs[2], source_offset);
+    if (SV_VRMeleeGungnirSelected(ent)) {
+      /* The original spark uses a different source than its stab trace.
+       * Compensate only this verified projectile at the existing boundary;
+       * the user's calibrated controller muzzle remains authoritative. */
+      VectorScale(pr_global_struct->v_forward, 25, source_offset);
+      VectorMA(source_offset, 8, pr_global_struct->v_right, source_offset);
+      VectorMA(source_offset, 12, pr_global_struct->v_up, source_offset);
+    }
     VectorSubtract(muzzle, source_offset, ent->v.origin);
 
   }
@@ -4214,6 +5390,16 @@ qboolean SV_RunClientPMoveCommand(client_t *client) {
       break;
     }
 
+    {
+      usercmd_t contactcmd = cmd;
+      /* PostThink services latched trigger events after this batch. A later
+       * release/motion command must not sneak in a stab before that shot. */
+      contactcmd.buttons |= latched_buttons & BUTTON_ATTACK;
+      SV_VRContactProcessCommand(client, &contactcmd);
+    }
+    if (ent->free)
+      break;
+
     /* The accepted command carries exactly one room-scale sample.  PMove
      * consumes it during its first substep; clear the server-side latches so
      * a later frame cannot replay it (including rejected tracking outliers). */
@@ -4356,6 +5542,11 @@ void SV_Physics_Client(edict_t *ent, int num) {
     return; // unconnected slot
   if (!svs.clients[num - 1].knowntoqc && sv_gameplayfix_spawnbeforethinks.value)
     return;
+  /* A death after this client's previous physics pass must clear the stroke
+   * before QuakeC can respawn it. This also applies to singleplayer and mods
+   * which own their respawn lifecycle, independently of co-op policies. */
+  if (ent->free || ent->v.health <= 0 || ent->v.deadflag)
+    SV_VRContactResetClient(&svs.clients[num - 1]);
 
   // Exclude the local player: on a listen server / singleplayer, the local
   // player's vr_handpos arrives one frame late through loopback.  Using
@@ -4543,6 +5734,7 @@ void SV_Physics_Client(edict_t *ent, int num) {
   SV_CoopReviveEndPostThink();
 
   SV_RestoreVRWeaponOffset(ent, num, is_remote_vr, &weaponRestore);
+  SV_VRContactDrainLegacy(&svs.clients[num - 1]);
   SV_CoopRespawnEndPostThink(ent, num, &coop_respawn_state);
   SV_CoopReviveApplyPending();
 }
@@ -4765,6 +5957,10 @@ void SV_Physics(double frametime) {
   int physics_mode;
   edict_t *ent;
   eval_t *val;
+
+  /* An aborted QC call must not substitute a later, unrelated trace. */
+  sv_vr_contact_call.active = false;
+  sv_vr_contact_call.force_miss = false;
 
   /* PR_ExecuteProgram may abort the host frame through Host_Error.  Repair a
    * no-friendly-fire scope left by such an abort before any enemy think/touch

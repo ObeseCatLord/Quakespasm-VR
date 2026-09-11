@@ -311,6 +311,8 @@ static int PR_LeaveFunction (void)
 	if (qcvm->depth <= 0)
 		Host_Error("prog stack underflow");
 
+	SV_VRContactLeaveFunction();
+
 	// Restore locals from the stack
 	c = qcvm->xfunction->locals;
 	qcvm->localstack_used -= c;
@@ -545,6 +547,10 @@ void PR_ExecuteProgram (func_t fnum)
 	case OP_LOAD_ENT:
 	case OP_LOAD_S:
 	case OP_LOAD_FNC:
+		if (st->op == OP_LOAD_ENT && SV_VRContactLoadEntity(st - qcvm->statements)) {
+			OPC->edict = 0;
+			break;
+		}
 		ed = PROG_TO_EDICT(OPA->edict);
 #ifdef PARANOID
 		NUM_FOR_EDICT(ed);	// Make sure it's in range
@@ -564,7 +570,7 @@ void PR_ExecuteProgram (func_t fnum)
 		break;
 
 	case OP_IFNOT:
-		if (!OPA->_int)
+		if (SV_VRContactBranch(st - qcvm->statements) || !OPA->_int)
 			st += st->b - 1;	/* -1 to offset the st++ */
 		break;
 
@@ -592,6 +598,8 @@ void PR_ExecuteProgram (func_t fnum)
 		qcvm->argc = st->op - OP_CALL0;
 		if (!OPA->function)
 			PR_RunError("NULL function");
+		if (SV_VRContactCall(OPA->function))
+			break;
 		newf = &qcvm->functions[OPA->function];
 		if (newf->first_statement < 0)
 		{ // Built-in function

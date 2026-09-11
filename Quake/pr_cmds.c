@@ -36,6 +36,8 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 
 qboolean SV_EnyoAkimboTrace(edict_t *ent, const vec3_t start,
 	const vec3_t end, int nomonsters, trace_t *trace);
+qboolean SV_VRContactTrace(edict_t *ent, const vec3_t start,
+	const vec3_t end, int nomonsters, trace_t *trace);
 
 #define	STRINGTEMP_BUFFERS		1024
 #define	STRINGTEMP_LENGTH		1024
@@ -545,6 +547,8 @@ static void PF_normalize (void)
 	vec3_t	newvalue;
 	double	new_temp;
 
+	if (SV_VRContactNormalize())
+		return;
 	value1 = G_VECTOR(OFS_PARM0);
 
 	new_temp = (double)value1[0] * value1[0] + (double)value1[1] * value1[1] + (double)value1[2]*value1[2];
@@ -1443,10 +1447,12 @@ static void PF_traceline (void)
 	if (IS_NAN(v2[0]) || IS_NAN(v2[1]) || IS_NAN(v2[2]))
 		v2[0] = v2[1] = v2[2] = 0;
 
-	if (!SV_EnyoAkimboTrace(ent, v1, v2, nomonsters, &trace))
+	qboolean physical_contact = SV_VRContactTrace(ent, v1, v2, nomonsters, &trace);
+	if (!physical_contact && !SV_EnyoAkimboTrace(ent, v1, v2, nomonsters, &trace))
 		trace = SV_Move (v1, vec3_origin, vec3_origin, v2, nomonsters, ent);
 	SV_DebugLogTraceTrigger(trace.ent, v1, v2, &trace);
-	SV_CoopReviveFromTrace (v1, v2, ent, trace.fraction);
+	if (!physical_contact)
+		SV_CoopReviveFromTrace (v1, v2, ent, trace.fraction);
 
 	pr_global_struct->trace_allsolid = trace.allsolid;
 	pr_global_struct->trace_startsolid = trace.startsolid;
@@ -1788,6 +1794,8 @@ static void PF_findradius (void)
 	float	rad;
 	float	*org;
 	int		i;
+	if (SV_VRContactFindRadius())
+		return;
 
 	chain = (edict_t *)qcvm->edicts;
 
@@ -1951,7 +1959,8 @@ static void PF_Find (void)
 	for (e++ ; e < qcvm->num_edicts ; e++)
 	{
 		ed = EDICT_NUM(e);
-		if (ed->free || PF_SkipInactiveClientSlot (e))
+		if (ed->free || PF_SkipInactiveClientSlot (e) ||
+			!SV_VRContactFindAllows(ed, f, s))
 			continue;
 		t = E_STRING(ed,f);
 		if (!t)
