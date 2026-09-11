@@ -1157,6 +1157,8 @@ void R_SetupAliasFrame (aliashdr_t *paliashdr, int frame, lerpdata_t *lerpdata)
 {
 	entity_t		*e = currententity;
 	int				posenum, numposes;
+	int modelflags = VR_IsAkimboViewEntity(e) && cl.viewent.model ?
+		cl.viewent.model->flags : e->model->flags;
 
 	if ((frame >= paliashdr->numframes) || (frame < 0))
 	{
@@ -1209,7 +1211,7 @@ void R_SetupAliasFrame (aliashdr_t *paliashdr, int frame, lerpdata_t *lerpdata)
 	}
 
 	//set up values
-	if (r_lerpmodels.value && !(e->model->flags & MOD_NOLERP && r_lerpmodels.value != 2))
+	if (r_lerpmodels.value && !(modelflags & MOD_NOLERP && r_lerpmodels.value != 2))
 	{
 		if (e->lerpflags & LERP_FINISH && numposes == 1)
 			lerpdata->blend = CLAMP (0.0f, (float)(cl.time - e->lerpstart) / (e->lerpfinish - e->lerpstart), 1.0f);
@@ -1233,13 +1235,16 @@ void R_SetupAliasFrame (aliashdr_t *paliashdr, int frame, lerpdata_t *lerpdata)
 R_SetupEntityTransform -- johnfitz -- set up transform part of lerpdata
 =================
 */
-void R_SyncAliasViewmodelAnimation(void)
+void R_SyncAliasViewmodelAnimation(int poses[2], float *blend)
 {
 	entity_t *saved = currententity;
-	lerpdata_t unused;
+	lerpdata_t lerp;
 	currententity = &cl.viewent;
 	R_SetupAliasFrame((aliashdr_t *)Mod_Extradata(cl.viewent.model),
-		cl.viewent.frame, &unused);
+		cl.viewent.frame, &lerp);
+	poses[0] = lerp.pose1;
+	poses[1] = lerp.pose2;
+	*blend = lerp.blend;
 	currententity = saved;
 }
 

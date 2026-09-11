@@ -543,8 +543,11 @@ static void CL_WriteUsercmd(sizebuf_t *buf, const usercmd_t *histcmd) {
       extbits |= MOVEEXT_VR_RELATIVE;
   }
   if (histcmd->vr_akimbo_active && histcmd->vr_active &&
-      histcmd->vr_handpos_relative)
+      histcmd->vr_handpos_relative) {
     extbits |= MOVEEXT_VR_AKIMBO;
+    if (histcmd->vr_akimbo_berserk)
+      extbits |= MOVEEXT_VR_AKIMBO_BERSERK;
+  }
   if (histcmd->weapon || histcmd->cursor_screen[0] || histcmd->cursor_screen[1] ||
       histcmd->cursor_start[0] || histcmd->cursor_start[1] || histcmd->cursor_start[2] ||
       histcmd->cursor_impact[0] || histcmd->cursor_impact[1] || histcmd->cursor_impact[2] ||
@@ -697,6 +700,7 @@ static qboolean CL_VRVectorIsFinite(const vec3_t value)
 static void CL_ClearAkimboUsercmd(usercmd_t *cmd)
 {
   cmd->vr_akimbo_active = false;
+  cmd->vr_akimbo_berserk = false;
   Q_memset(cmd->vr_akimbo_muzzle, 0, sizeof(cmd->vr_akimbo_muzzle));
   Q_memset(cmd->vr_akimbo_angles, 0, sizeof(cmd->vr_akimbo_angles));
 }
@@ -895,12 +899,14 @@ void CL_SendMove(const usercmd_t *cmd) {
 	  }
       sendcmd.vr_handpos_relative = true;
       VectorSubtract(world_muzzle, pose_origin, sendcmd.vr_handpos);
-      if (cl.vr_qbj3_akimbo_supported) {
+      if (cl.vr_qbj3_akimbo_supported || cl.vr_qbj3_berserk_akimbo_supported ||
+          cl.vr_enyo_akimbo_supported || cl.vr_dwell_berserk_akimbo_supported) {
         vec3_t world_akimbo_muzzle[2];
         vec3_t akimbo_angles[2];
         int hand;
 
-        if (VR_GetAkimboPoses(world_akimbo_muzzle, akimbo_angles)) {
+        if (VR_GetAkimboPoses(world_akimbo_muzzle, akimbo_angles,
+                             &sendcmd.vr_akimbo_berserk)) {
           for (hand = 0; hand < 2; hand++) {
             VectorSubtract(world_akimbo_muzzle[hand], pose_origin,
                            sendcmd.vr_akimbo_muzzle[hand]);
@@ -1025,7 +1031,13 @@ static void CL_VRQBJ3AkimboProtocol_f(void) {
   if (cmd_source != src_server)
     return;
   cl.vr_qbj3_akimbo_supported =
-      Cmd_Argc() < 2 || Q_atoi(Cmd_Argv(1)) != 0;
+      Cmd_Argc() >= 2 && Q_atoi(Cmd_Argv(1)) != 0;
+  cl.vr_qbj3_berserk_akimbo_supported =
+      Cmd_Argc() >= 3 && Q_atoi(Cmd_Argv(2)) != 0;
+  cl.vr_enyo_akimbo_supported =
+      Cmd_Argc() >= 4 && Q_atoi(Cmd_Argv(3)) != 0;
+  cl.vr_dwell_berserk_akimbo_supported =
+      Cmd_Argc() >= 5 && Q_atoi(Cmd_Argv(4)) != 0;
 }
 
 /*

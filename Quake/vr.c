@@ -1904,6 +1904,7 @@ DEFINE_CVAR(vr_vrik, 1, CVAR_ARCHIVE);
 DEFINE_CVAR(vr_viewkick, 0, CVAR_NONE);
 DEFINE_CVAR(vr_lefthanded, 0, CVAR_ARCHIVE);
 DEFINE_CVAR(vr_qbj3_akimbo, 1, CVAR_ARCHIVE);
+DEFINE_CVAR(vr_akimbo, 1, CVAR_ARCHIVE);
 
 DEFINE_CVAR(vr_crosshair, 1, CVAR_ARCHIVE);
 DEFINE_CVAR(vr_crosshair_depth, 0, CVAR_ARCHIVE);
@@ -5366,7 +5367,8 @@ static const vr_qbj3_weapon_default_t vr_qbj3_weapon_defaults[] = {
      "held_offset -0.4811821 24.50682 24.40611\n"
      "muzzle_offset 0 0 0\nmp_held_offset 0 0 0\n"},
     {"progs/v_berserk.mdl",
-     "model progs/v_berserk.mdl\nscale 1\nheld_scale 0.2\n"},
+     "model progs/v_berserk.mdl\nscale 1\nheld_scale 0.2\n"
+     "held_offset 3.20228348 45.25361633 34.16704407\n"},
 };
 
 static qboolean VR_BlockHasKey(const char *block, size_t len,
@@ -5585,6 +5587,7 @@ static qboolean VR_AppendQBJ3DefaultSchema(vr_textbuf_t *buf,
   qboolean has_global_muzzle_offset;
   qboolean has_wheel_scale_marker;
   qboolean migrate_legacy_wheel_scale;
+  qboolean legacy_neutral_held_offset = false;
   const char *p;
   const char *end;
 
@@ -5603,6 +5606,35 @@ static qboolean VR_AppendQBJ3DefaultSchema(vr_textbuf_t *buf,
   has_wheel_scale_marker =
       existing && strstr(existing, "// qbj3_wheel_scale_v1") != NULL;
   migrate_legacy_wheel_scale = existing && !has_wheel_scale_marker;
+
+  /* Old generated QBJ3 profiles gave the uncalibrated berserk model only
+   * held_scale, leaving it to inherit a generated zero global offset. Fill
+   * its missing per-weapon calibration without changing that global line,
+   * any explicit per-weapon value (even zero), or custom/annotated globals. */
+  if (has_wheel_scale_marker && has_global_held_offset) {
+    const char *line = existing;
+    while (*line) {
+      const char *endline = strchr(line, '\n');
+      size_t length = endline ? (size_t)(endline - line) : strlen(line);
+      if (VR_LineStartsWithKey(line, length, "global_held_offset")) {
+        char text[256], extra;
+        float x, y, z;
+        if (length >= sizeof(text)) {
+          legacy_neutral_held_offset = false;
+          break;
+        }
+        memcpy(text, line, length);
+        text[length] = 0;
+        if (sscanf(text, "%*s %f %f %f %c", &x, &y, &z, &extra) != 3 ||
+            x != 0 || y != 0 || z != 0) {
+          legacy_neutral_held_offset = false;
+          break;
+        }
+        legacy_neutral_held_offset = true;
+      }
+      line += length + (endline ? 1 : 0);
+    }
+  }
 
   if (!has_wheel_scale_marker) {
     if (!VR_TextAppendLine(buf, "// qbj3_wheel_scale_v1"))
@@ -5660,7 +5692,10 @@ static qboolean VR_AppendQBJ3DefaultSchema(vr_textbuf_t *buf,
         if (!VR_AppendQBJ3MissingDefaultLines(
                 buf, open, close - open,
                 &vr_qbj3_weapon_defaults[default_index],
-                has_global_held_scale, has_global_held_offset,
+                has_global_held_scale,
+                has_global_held_offset && !(legacy_neutral_held_offset &&
+                    !strcmp(vr_qbj3_weapon_defaults[default_index].viewmodel,
+                            "progs/v_berserk.mdl")),
                 has_global_muzzle_offset, migrate_legacy_wheel_scale,
                 &changed))
           return false;
@@ -5687,7 +5722,9 @@ static qboolean VR_AppendQBJ3DefaultSchema(vr_textbuf_t *buf,
         !VR_TextAppendLine(buf, ""))
       return false;
     if (!VR_AppendQBJ3DefaultBlock(
-            buf, entry, has_global_held_scale, has_global_held_offset,
+            buf, entry, has_global_held_scale,
+            has_global_held_offset && !(legacy_neutral_held_offset &&
+                !strcmp(entry->viewmodel, "progs/v_berserk.mdl")),
             has_global_muzzle_offset))
       return false;
 
@@ -6126,6 +6163,85 @@ void VR_GetMuzzleAdjustedHandPos(vec3_t out) {
 
 static entity_t vr_akimbo_entities[2];
 
+typedef struct vr_akimbo_fists_s {
+  float grip_y_sum;
+  float correction[2][3][3];
+  int palms[2][8];
+  qboolean center_on_controller;
+} vr_akimbo_fists_t;
+
+static const vr_akimbo_fists_t vr_qbj3_fists = {
+  -18.0f + 17.59557724f,
+  {{{.293235116f, -.608031630f, .737774155f},
+    {.608031630f, .714125870f, .346874297f},
+    {-.737774155f, .346874297f, .579109246f}},
+   {{.295241133f, .603903037f, .740360585f},
+    {-.603903037f, .718431673f, -.345191327f},
+    {-.740360585f, -.345191327f, .576809459f}}},
+  {{499, 497, 498, 496, 501, 490, 424, 446},
+   {213, 210, 211, 209, 214, 203, 137, 159}}, false
+};
+
+/* Dwell's fists hold axes. Source wrist->knuckles maps to controller forward,
+ * while the axe shaft stays upright. Both grips are individually centered;
+ * the paired desktop model has asymmetric X/Z as well as lateral offsets. */
+static const vr_akimbo_fists_t vr_dwell_fists = {
+  0,
+  {{{-.294739431f, -.053186399f, -.954096366f},
+    {.009474343f, -.998563416f, .052738415f},
+    {-.955530693f, .006504655f, .294819919f}},
+   {{-.503862298f, .131800285f, -.853669415f},
+    {.317507833f, -.890842899f, -.324942618f},
+    {-.803312866f, -.434773060f, .407014527f}}},
+  {{277, 281, 276, 278, 289, 280, 282, 291},
+   {125, 137, 129, 128, 139, 124, 146, 126}}, true
+};
+
+typedef struct vr_akimbo_model_s {
+  const char *game;
+  const qboolean *supported;
+  const char *source;
+  const char *halves[2];
+  int frames, vertices, half_vertices[2];
+  qboolean berserk;
+  vec3_t contacts[2];
+  const vr_akimbo_fists_t *fists;
+} vr_akimbo_model_t;
+
+static const vr_akimbo_model_t vr_akimbo_models[] = {
+  {"qbj3", &cl.vr_qbj3_akimbo_supported, "progs/v_tnailgun.mdl",
+   {"progs/v_tnailgun_vr_left.mdl", "progs/v_tnailgun_vr_right.mdl"},
+   19, 1968, {988, 980}, false,
+   {{54.75913167f, 10.28241703f, -16.05048694f},
+    {54.75913167f, -10.49037877f, -16.05048694f}}, NULL},
+  {"qbj3", &cl.vr_qbj3_berserk_akimbo_supported, "progs/v_berserk.mdl",
+   {"progs/v_berserk_vr_left.mdl", "progs/v_berserk_vr_right.mdl"},
+   101, 894, {447, 447}, true,
+   {{24.69689480f, 15.34041551f, -7.01256642f},
+    {24.73065716f, -15.77186370f, -6.95642908f}}, &vr_qbj3_fists},
+  {"enyo", &cl.vr_enyo_akimbo_supported, "progs/ee_v_smgs.mdl",
+   {"progs/ee_v_smgs_vr_left.mdl", "progs/ee_v_smgs_vr_right.mdl"},
+   17, 984, {492, 492}, false,
+   {{64.10965419f, 19.31388339f, -13.71730390f},
+    {64.10965419f, -19.51840544f, -13.71730390f}}, NULL},
+  {"dwell", &cl.vr_dwell_berserk_akimbo_supported, "progs/v_axeb.mdl",
+   {"progs/v_axeb_vr_left.mdl", "progs/v_axeb_vr_right.mdl"},
+   51, 304, {152, 152}, true,
+   {{33.219191864f, 14.249626011f, -17.862335034f},
+    {37.226840504f, -13.465485394f, -18.066500630f}}, &vr_dwell_fists}
+};
+
+static const vr_akimbo_model_t *VR_AkimboModelDefinition(void) {
+  if (!cl.viewent.model)
+    return NULL;
+  for (size_t i = 0; i < sizeof(vr_akimbo_models) / sizeof(vr_akimbo_models[0]); ++i)
+    if ((VR_GameDirIs(vr_akimbo_models[i].game) ||
+         (!strcmp(vr_akimbo_models[i].game, "dwell") && VR_IsDwellGame())) &&
+        !strcmp(cl.viewent.model->name, vr_akimbo_models[i].source))
+      return &vr_akimbo_models[i];
+  return NULL;
+}
+
 qboolean VR_IsAkimboViewEntity(const entity_t *ent) {
   return ent == &vr_akimbo_entities[0] || ent == &vr_akimbo_entities[1];
 }
@@ -6137,30 +6253,54 @@ qboolean VR_UseAkimboClassicViewModel(const entity_t *ent) {
       (ent == &cl.viewent && VR_AkimboModels(models, headers)));
 }
 
-/* The split package preserves the original MDL quantization and all 19
+/* The split packages preserve the original MDL quantization and all
  * frames. No user calibration is baked into, or rewritten by, the package.
- * These are QBJ3-specific assets, not original-Quake enhanced replacements.
+ * These are source-mod-specific assets, not Quake enhanced replacements.
  * Use their retained MDL geometry regardless of r_enhancedmodels, including
  * the paired model used during grip adjustment. Other weapons are untouched. */
 static qboolean VR_AkimboModels(qmodel_t *models[2], aliashdr_t *headers[2]) {
-  static const char *paths[2] = {"progs/v_tnailgun_vr_left.mdl",
-                                "progs/v_tnailgun_vr_right.mdl"};
+  const vr_akimbo_model_t *def = VR_AkimboModelDefinition();
   aliashdr_t *source;
-  if (!vr_qbj3_akimbo.value || !vr_enabled.value ||
+  qboolean loose_pair;
+  if (!def || !vr_akimbo.value || !vr_enabled.value ||
+      (VR_GameDirIs("qbj3") && !vr_qbj3_akimbo.value) ||
       (int)vr_aimmode.value != VR_AIMMODE_CONTROLLER ||
-      !cl.vr_qbj3_akimbo_supported || !VR_GameDirIs("qbj3") ||
+      !*def->supported ||
       cls.state != ca_connected || cls.signon != SIGNONS ||
       cl.stats[STAT_HEALTH] <= 0 || !cl.viewent.model ||
       cl.viewent.model->type != mod_alias ||
-      strcmp(cl.viewent.model->name, "progs/v_tnailgun.mdl") ||
-      cl.viewent.frame < 0 || cl.viewent.frame >= 19)
+      cl.viewent.frame < 0 || cl.viewent.frame >= def->frames)
     return false;
   source = (aliashdr_t *)Mod_Extradata(cl.viewent.model);
   if (!source || source->poseverttype != ALIAS_POSE_MDL ||
-      source->numframes != 19 || source->numverts != 1968)
+      source->numframes != def->frames || source->numverts != def->vertices ||
+      (def->berserk && !source->vertexes))
     return false;
+  /* Choose the complete override pair or the private generated pair, never
+   * silently combine one custom half with one generated half. */
+  loose_pair = COM_FileExists(def->halves[0], NULL) &&
+               COM_FileExists(def->halves[1], NULL);
+  if (!loose_pair) {
+    qboolean overrides[2];
+    for (int hand = 0; hand < 2; ++hand) {
+      char name[MAX_QPATH];
+      unsigned int path_id = 0;
+      q_snprintf(name, sizeof(name), "vr/%s/%s", def->game, def->halves[hand]);
+      overrides[hand] = COM_FileExists(name, &path_id) && path_id > 1;
+    }
+    /* An incomplete namespaced override is no more usable than a missing
+     * half. Keep the original paired viewmodel instead of mixing authors. */
+    if (overrides[0] != overrides[1])
+      return false;
+  }
   for (int hand = 0; hand < 2; ++hand) {
-    models[hand] = Mod_ForName(paths[hand], false);
+    if (loose_pair)
+      models[hand] = Mod_ForName(def->halves[hand], false);
+    else {
+      char generated[MAX_QPATH];
+      q_snprintf(generated, sizeof(generated), "vr/%s/%s", def->game, def->halves[hand]);
+      models[hand] = Mod_ForName(generated, false);
+    }
     if (!models[hand] || models[hand]->type != mod_alias)
       return false;
   }
@@ -6170,15 +6310,15 @@ static qboolean VR_AkimboModels(qmodel_t *models[2], aliashdr_t *headers[2]) {
   for (int hand = 0; hand < 2; ++hand) {
     headers[hand] = (aliashdr_t *)Mod_Extradata(models[hand]);
     if (!headers[hand] || headers[hand]->poseverttype != ALIAS_POSE_MDL ||
-        headers[hand]->numframes != 19 ||
-        headers[hand]->numverts != (hand ? 980 : 988) ||
+        headers[hand]->numframes != def->frames ||
+        headers[hand]->numverts != def->half_vertices[hand] ||
         !VectorCompare(headers[hand]->original_scale, source->original_scale) ||
         !VectorCompare(headers[hand]->original_scale_origin,
                        source->original_scale_origin))
       return false;
     if (headers[hand]->numposes != source->numposes)
       return false;
-    for (int frame = 0; frame < 19; ++frame)
+    for (int frame = 0; frame < def->frames; ++frame)
       if (headers[hand]->frames[frame].firstpose != source->frames[frame].firstpose ||
           headers[hand]->frames[frame].numposes != source->frames[frame].numposes)
         return false;
@@ -6187,7 +6327,22 @@ static qboolean VR_AkimboModels(qmodel_t *models[2], aliashdr_t *headers[2]) {
 }
 
 static void VR_AkimboModelTransform(aliashdr_t *hdr, int hand) {
+  const vr_akimbo_fists_t *fists = VR_AkimboModelDefinition()->fists;
   Mod_Weapon(cl.viewent.model, hdr);
+  if (fists && fists->center_on_controller) {
+    /* Paired viewmodel translation cannot describe two tracked fists.
+     * Retain the user's held scale, but center each original grip separately.
+     * This also fixes old offset files without rewriting any user settings. */
+    aliashdr_t *source = (aliashdr_t *)Mod_Extradata(cl.viewent.model);
+    const trivertx_t *verts = (const trivertx_t *)((const byte *)source + source->vertexes);
+    for (int axis = 0; axis < 3; ++axis) {
+      float raw = 0;
+      for (int i = 0; i < 8; ++i)
+        raw += verts[fists->palms[hand][i]].v[axis] / 8.0f;
+      hdr->scale_origin[axis] = -raw * hdr->scale[axis];
+    }
+    return;
+  }
   if (!hand) {
     /* Mirror the calibrated grip residual, NOT the already left-handed
      * geometry. For symmetric source grips this is exactly
@@ -6197,32 +6352,58 @@ static void VR_AkimboModelTransform(aliashdr_t *hdr, int hand) {
     float ratio = hdr->scale[1] / hdr->original_scale[1];
     hdr->scale_origin[1] = 2 * ratio * hdr->original_scale_origin[1] -
                            hdr->scale_origin[1];
+    /* Berserk's palms are symmetric about Y=-0.20221138, not zero.
+     * Mirror the user's residual around the two actual grip anchors. */
+    if (VR_AkimboModelDefinition()->fists)
+      hdr->scale_origin[1] -= ratio * VR_AkimboModelDefinition()->fists->grip_y_sum;
   }
 }
 
-qboolean VR_GetAkimboPoses(vec3_t muzzle[2], vec3_t angles[2]) {
+/* Rotate the centered guard-pose fists into controller-forward space. The
+ * columns below are transformed with the exact same entity convention used
+ * for drawing; convert to Quake angles only after composing full rotations. */
+static void VR_AkimboModelAngles(int hand, const vec3_t handangles,
+                                 vec3_t out) {
+  VR_HandRotToViewmodelAngles(handangles, out);
+  const vr_akimbo_fists_t *fists = VR_AkimboModelDefinition()->fists;
+  if (fists) {
+    vec3_t axes[3], base;
+    VectorCopy(out, base);
+    for (int i = 0; i < 3; ++i) {
+      vec3_t column = {fists->correction[hand][0][i], fists->correction[hand][1][i],
+                       fists->correction[hand][2][i]};
+      VR_ModelOffsetToWorld(column, base, 1, false, axes[i]);
+    }
+    AngleVectorFromRotMat(axes, out);
+    out[PITCH] = -out[PITCH]; /* renderer pitch is opposite AngleVectors */
+  }
+}
+
+qboolean VR_GetAkimboPoses(vec3_t muzzle[2], vec3_t angles[2], qboolean *berserk) {
   qmodel_t *models[2];
   aliashdr_t *headers[2];
+  if (berserk)
+    *berserk = false;
   /* A disconnected/missing controller must never inherit its old pose.
    * Adjustments use the original paired model and existing saved profile. */
   if (VR_AdjustmentVisualsActive() || !VR_VRIKControllerTracked(0) ||
       !VR_VRIKControllerTracked(1) || !VR_AkimboModels(models, headers))
     return false;
+  const vr_akimbo_model_t *def = VR_AkimboModelDefinition();
   for (int hand = 0; hand < 2; ++hand) {
     int index = hand == (VR_IsLeftHanded() ? 0 : 1) ? 1 : 0;
     vec3_t local, world, modelangles;
     /* Source idle barrel-mouth centroid; kept in source coordinates so the
      * physical projectile origin follows the exact held scale and offset.
      * Recoil/flash animation does not steer the controller's firing ray. */
-    const vec3_t anchor = {54.75913167f, hand ? -10.49037877f : 10.28241703f,
-                           -16.05048694f};
+    const float *anchor = def->contacts[hand];
     VR_AkimboModelTransform(headers[hand], hand);
     for (int axis = 0; axis < 3; ++axis)
       local[axis] = (anchor[axis] - headers[hand]->original_scale_origin[axis]) /
           headers[hand]->original_scale[axis] * headers[hand]->scale[axis] +
           headers[hand]->scale_origin[axis];
     VectorCopy(cl.handrot[index], angles[hand]);
-    VR_HandRotToViewmodelAngles(angles[hand], modelangles);
+    VR_AkimboModelAngles(hand, angles[hand], modelangles);
     VR_ModelOffsetToWorld(local, modelangles, 1, false, world);
     VectorAdd(cl.handpos[index], cl.vmeshoffset, muzzle[hand]);
     VectorAdd(muzzle[hand], world, muzzle[hand]);
@@ -6230,6 +6411,8 @@ qboolean VR_GetAkimboPoses(vec3_t muzzle[2], vec3_t angles[2]) {
       if (!isfinite(muzzle[hand][axis]) || !isfinite(angles[hand][axis]))
         return false;
   }
+  if (berserk)
+    *berserk = def->berserk;
   return true;
 }
 
@@ -6237,20 +6420,41 @@ qboolean VR_DrawAkimboViewModels(void) {
   vec3_t muzzle[2], angles[2];
   qmodel_t *models[2];
   aliashdr_t *headers[2];
+  int poses[2];
+  float blend;
   entity_t *saved = currententity;
-  if (!VR_GetAkimboPoses(muzzle, angles) || !VR_AkimboModels(models, headers))
+  if (!VR_GetAkimboPoses(muzzle, angles, NULL) || !VR_AkimboModels(models, headers))
     return false;
   /* Advance the original animation exactly once, then give both halves the
    * same complete interpolation state. This also consumes network resets. */
-  R_SyncAliasViewmodelAnimation();
+  R_SyncAliasViewmodelAnimation(poses, &blend);
   for (int hand = 0; hand < 2; ++hand) {
     int index = hand == (VR_IsLeftHanded() ? 0 : 1) ? 1 : 0;
     entity_t *ent = &vr_akimbo_entities[hand];
     *ent = cl.viewent;
     ent->model = models[hand];
     VectorAdd(cl.handpos[index], cl.vmeshoffset, ent->origin);
-    VR_HandRotToViewmodelAngles(angles[hand], ent->angles);
+    VR_AkimboModelAngles(hand, angles[hand], ent->angles);
     VR_AkimboModelTransform(headers[hand], hand);
+    const vr_akimbo_fists_t *fists = VR_AkimboModelDefinition()->fists;
+    if (fists) {
+      /* Track the same eight palm vertices through the source animation.
+       * Remove only palm translation, including the renderer's exact pose
+       * interpolation, so the authored 30cm lunge cannot detach a tracked
+       * fist. Finger/forearm deformation and the glow still animate. */
+      aliashdr_t *source = (aliashdr_t *)Mod_Extradata(cl.viewent.model);
+      const trivertx_t *verts = (const trivertx_t *)((const byte *)source + source->vertexes);
+      vec3_t delta = {0, 0, 0}, world;
+      for (int i = 0; i < 8; ++i) {
+        int vertex = fists->palms[hand][i];
+        for (int axis = 0; axis < 3; ++axis)
+          delta[axis] += ((1 - blend) * verts[poses[0] * source->numverts + vertex].v[axis] +
+              blend * verts[poses[1] * source->numverts + vertex].v[axis] -
+              verts[vertex].v[axis]) * headers[hand]->scale[axis] / 8;
+      }
+      VR_ModelOffsetToWorld(delta, ent->angles, 1, false, world);
+      VectorSubtract(ent->origin, world, ent->origin);
+    }
     currententity = ent;
     R_DrawAliasModel_NoCull(ent);
   }
@@ -6288,12 +6492,25 @@ static void VR_AdjustBegin(vr_adjust_mode_t mode) {
   const char *id;
   aliashdr_t *hdr;
 
+  const vr_akimbo_model_t *def = VR_AkimboModelDefinition();
+  if (def && def->fists && def->fists->center_on_controller) {
+    qmodel_t *models[2];
+    aliashdr_t *headers[2];
+    if (VR_AkimboModels(models, headers)) {
+      Con_Printf("These akimbo grips and attack origins are locked to the "
+          "controllers. Held scale is retained, but paired position offsets "
+          "are ignored. Use vr_akimbo 0 only to adjust the original paired "
+          "viewmodel.\n");
+      return;
+    }
+  }
+
   if (VR_AdjustModeIsMuzzle(mode)) {
     qmodel_t *models[2];
     aliashdr_t *headers[2];
     if (VR_AkimboModels(models, headers)) {
-      Con_Printf("Akimbo muzzles follow the rendered barrels. Use "
-          "vradjustweapon to adjust the grip, or vr_qbj3_akimbo 0 to "
+      Con_Printf("Akimbo attack origins follow the split models. Use "
+          "vradjustweapon to adjust the grip, or vr_akimbo 0 to "
           "adjust the original paired-weapon muzzle profile.\n");
       return;
     }
@@ -6650,7 +6867,7 @@ static void VR_InitQBJ3WeaponCVars(void) {
               "0.2", "-0.387794", "15.84945", "-4.354416");
   QBJ3_WEAPON("progs/v_invoker.mdl", "-0.4811821", "24.50682", "24.40611",
               "0.2", "0", "0", "0");
-  QBJ3_WEAPON("progs/v_berserk.mdl", "0", "0", "0", "0.2", "0", "0",
+  QBJ3_WEAPON("progs/v_berserk.mdl", "3.20228348", "45.25361633", "34.16704407", "0.2", "0", "0",
               "0");
   QBJ3_WEAPON("progs/v_axe.mdl", "0", "0", "0", "0.33", "0", "0",
               "0");
@@ -7093,6 +7310,9 @@ void InitAllWeaponCVars() {
     }
   }
 
+  if (VR_IsDwellGame())
+    InitWeaponCVars(i++, "progs/v_axeb.mdl", "-4", "24", "37", "0.4");
+
   while (i < MAX_WEAPONS) {
     InitWeaponCVars(i++, "-1", "1.5", "1", "10", "0.5");
   }
@@ -7151,6 +7371,7 @@ void VID_VR_Init() {
   Cvar_RegisterVariable(&vr_gunmodelpitch);
   Cvar_RegisterVariable(&vr_gunmodelscale);
   Cvar_RegisterVariable(&vr_qbj3_akimbo);
+  Cvar_RegisterVariable(&vr_akimbo);
   Cvar_RegisterVariable(&vr_gunmodely);
   Cvar_RegisterVariable(&vr_crosshairy);
   Cvar_RegisterVariable(&vr_joystick_axis_deadzone);
@@ -9092,7 +9313,7 @@ void VR_ShowCrosshair() {
   // TODO: Make the laser align correctly
   if (vr_aimmode.value == VR_AIMMODE_CONTROLLER) {
     vec3_t muzzles[2], angles[2];
-    qboolean akimbo = VR_GetAkimboPoses(muzzles, angles);
+    qboolean akimbo = VR_GetAkimboPoses(muzzles, angles, NULL);
     if (akimbo) {
       VectorCopy(muzzles[VR_IsLeftHanded() ? 0 : 1], start);
     } else {

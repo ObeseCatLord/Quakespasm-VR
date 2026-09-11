@@ -116,6 +116,7 @@ jobs:
               $_.Name -notlike '*.vcxproj.*'
             } |
             Copy-Item -Destination $stage
+          Copy-Item Quake/quakespasm.pak $stage
           if (!(Test-Path (Join-Path $stage 'quakespasm-openvr.exe'))) { throw 'Staging omitted the executable' }
           if ('${{ matrix.platform }}' -eq 'x64') {
             $licenses = Join-Path $stage 'third-party-licenses'

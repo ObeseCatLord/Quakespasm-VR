@@ -559,7 +559,13 @@ void SV_MG3UpgradeApplySpawnParms(float *spawn_parms);
 void SV_MG3UpgradeSyncSpawnParms(float *spawn_parms);
 void SV_ResetTransientClientState(void);
 qboolean SV_QBJ3AkimboSupported(void);
+qboolean SV_QBJ3BerserkAkimboSupported(void);
+qboolean SV_EnyoAkimboSupported(void);
+qboolean SV_DwellBerserkAkimboSupported(void);
+extern cvar_t sv_akimbo;
 qboolean SV_QBJ3AkimboAim(edict_t *ent, vec3_t muzzle);
+qboolean SV_EnyoAkimboMakevectors(void);
+qboolean SV_DwellBerserkAkimboMakevectors(void);
 void SV_ClearAkimboContext(void);
 void SV_ResetTransientClientSlot(int slot);
 

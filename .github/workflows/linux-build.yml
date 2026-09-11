@@ -89,6 +89,7 @@ jobs:
           folder="$RUNNER_TEMP/quakespasm-openvr-linux-x86_64"
           install -d "$folder"
           install -m 0755 Quake/quakespasm-openvr "$binary" "$folder/"
+          install -m 0644 Quake/quakespasm.pak LICENSE.txt "$folder/"
           for loader_name in libopenvr_api.so "$openvr_needed" "$openvr_runtime"; do
             install -m 0644 "$openvr_path" "$folder/$loader_name"
           done
@@ -183,6 +184,7 @@ jobs:
           folder="$RUNNER_TEMP/quakespasm-openvr-linux-arm64"
           install -d "$folder"
           install -m 0755 Quake/quakespasm-openvr "$binary" "$folder/"
+          install -m 0644 Quake/quakespasm.pak LICENSE.txt "$folder/"
           for loader_name in libopenvr_api.so "$openvr_needed" "$openvr_runtime"; do
             install -m 0644 "$openvr_path" "$folder/$loader_name"
           done

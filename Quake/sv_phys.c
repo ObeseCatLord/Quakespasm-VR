@@ -3212,9 +3212,18 @@ static void SV_ClampVRMuzzleToWorld(edict_t *ent, vec3_t muzzle) {
 
 typedef struct sv_akimbo_context_s {
   edict_t *ent;
+  qboolean berserk;
+  qboolean enyo;
+  qboolean dwell;
+  qboolean enyo_makevectors;
+  qboolean enyo_clearance_pending;
   vec3_t body_origin;
   vec3_t muzzle[2];
   vec3_t angles[2];
+  vec3_t enyo_clearance_start;
+  vec3_t enyo_clearance_end;
+  vec3_t enyo_clearance_adjusted_start;
+  float enyo_clearance_t0;
 } sv_akimbo_context_t;
 
 static sv_akimbo_context_t sv_akimbo_context;
@@ -3224,19 +3233,120 @@ void SV_ClearAkimboContext(void) {
 }
 
 qboolean SV_QBJ3AkimboSupported(void) {
-  return qcvm == &sv.qcvm &&
+  return sv_akimbo.value && qcvm == &sv.qcvm &&
       !q_strcasecmp(COM_SkipPath(com_gamedir), "qbj3") &&
       ED_FindFunction("W_FireTwinNailgun") != NULL;
 }
 
+qboolean SV_QBJ3BerserkAkimboSupported(void) {
+  return sv_akimbo.value && qcvm == &sv.qcvm &&
+      !q_strcasecmp(COM_SkipPath(com_gamedir), "qbj3") &&
+      ED_FindFunction("W_Fire_Berserker_Multi") != NULL &&
+      ED_FindFunction("weaponanim_berserk_loop") != NULL;
+}
+
+/* This CRC is calculated over the same unmodified progs.dat bytes which
+ * produced SHA-256 b0d3865f1192b3858e7410ea31cbc82d88136e635b9c1d13d0aff9bbeddaeb1e.
+ * The function-layout checks below make the compact runtime pin specific to
+ * the audited W_FireSMG bytecode rather than merely to a mod directory. */
+#define ENYO_PROGS_CRC 22413
+#define ENYO_W_FIRESMG_STATEMENT 15323
+#define ENYO_W_FIRESMG_PARM_START 7335
+
+static qboolean SV_EnyoSMGFunction(const dfunction_t *function) {
+  return function && !strcmp(PR_GetString(function->s_name), "W_FireSMG") &&
+      function->first_statement == ENYO_W_FIRESMG_STATEMENT &&
+      function->parm_start == ENYO_W_FIRESMG_PARM_START &&
+      function->locals == 7 && function->numparms == 1 &&
+      function->parm_size[0] == 1;
+}
+
+qboolean SV_EnyoAkimboSupported(void) {
+  dfunction_t *function;
+
+  if (!sv_akimbo.value || qcvm != &sv.qcvm ||
+      q_strcasecmp(COM_SkipPath(com_gamedir), "enyo") ||
+      qcvm->crc != ENYO_PROGS_CRC)
+    return false;
+  function = ED_FindFunction("W_FireSMG");
+  return SV_EnyoSMGFunction(function);
+}
+
+/* The Dwell root is commonly mounted directly as dwellv2p2, while older
+ * launchers retain the dwell alias. Keep this allowlist exact. */
+static qboolean SV_DwellGameDir(void) {
+  const char *game = COM_SkipPath(com_gamedir);
+
+  return !q_strcasecmp(game, "dwell") || !q_strcasecmp(game, "dwellv2p2");
+}
+
+/* CRC 505 is the loaded-byte pin for
+ * fe7d21d4bdfd1a5e6672d1606efd774cb730d7f5b68941d82175596f22e719fd. */
+#define DWELL_PROGS_CRC 505
+#define DWELL_W_FIREAXE_STATEMENT 14560
+#define DWELL_W_FIREAXE_PARM_START 7805
+
+static qboolean SV_DwellFireAxeFunction(const dfunction_t *function) {
+  return function && !strcmp(PR_GetString(function->s_name), "W_FireAxe") &&
+      function->first_statement == DWELL_W_FIREAXE_STATEMENT &&
+      function->parm_start == DWELL_W_FIREAXE_PARM_START &&
+      function->locals == 9 && function->numparms == 0;
+}
+
+qboolean SV_DwellBerserkAkimboSupported(void) {
+  ddef_t *finished;
+  dfunction_t *function;
+
+  if (!sv_akimbo.value || qcvm != &sv.qcvm || !SV_DwellGameDir() ||
+      qcvm->crc != DWELL_PROGS_CRC)
+    return false;
+  finished = ED_FindField("berserk_finished");
+  if (!finished || (finished->type & ~DEF_SAVEGLOBAL) != ev_float)
+    return false;
+  function = ED_FindFunction("W_FireAxe");
+  return SV_DwellFireAxeFunction(function);
+}
+
+static qboolean SV_QBJ3BerserkWeapon(edict_t *ent) {
+  return SV_QBJ3BerserkAkimboSupported() && ent->v.weapon == IT_AXE &&
+      !strcmp(PR_GetString(ent->v.weaponmodel), "progs/v_berserk.mdl");
+}
+
+static qboolean SV_EnyoSMGWeapon(edict_t *ent) {
+  return SV_EnyoAkimboSupported() && ent->v.weapon == 4 &&
+      !strcmp(PR_GetString(ent->v.weaponmodel), "progs/ee_v_smgs.mdl");
+}
+
+static qboolean SV_DwellBerserkWeapon(edict_t *ent) {
+  eval_t *finished;
+
+  if (!SV_DwellBerserkAkimboSupported() || ent->v.weapon != 4096 ||
+      strcmp(PR_GetString(ent->v.weaponmodel), "progs/v_axeb.mdl"))
+    return false;
+  finished = GetEdictFieldValueByName(ent, "berserk_finished");
+  return finished && finished->_float > pr_global_struct->time;
+}
+
+static qboolean SV_AkimboVectorIsFinite(const vec3_t value) {
+  return isfinite(value[0]) && isfinite(value[1]) && isfinite(value[2]);
+}
+
+static qboolean SV_AkimboVectorsNear(const vec3_t a, const vec3_t b) {
+  vec3_t delta;
+
+  VectorSubtract(a, b, delta);
+  return DotProduct(delta, delta) <= 0.015625f; /* 1/8 unit endpoint slack */
+}
+
 /* Called only at QBJ3's aim builtin, after QC has selected its original
  * alternating fire frame. QC still owns ammunition, cadence and spawning. */
-qboolean SV_QBJ3AkimboAim(edict_t *ent, vec3_t muzzle) {
+static qboolean SV_QBJ3AkimboAimLegacy(edict_t *ent, vec3_t muzzle) {
   int hand, i;
   float offs;
   vec3_t temporary_origin, source;
 
-  if (qcvm != &sv.qcvm || sv_akimbo_context.ent != ent ||
+  if (!SV_QBJ3AkimboSupported() || sv_akimbo_context.ent != ent ||
+      sv_akimbo_context.berserk ||
       !qcvm->xfunction ||
       strcmp(PR_GetString(qcvm->xfunction->s_name), "W_FireTwinNailgun") ||
       strcmp(PR_GetString(ent->v.weaponmodel), "progs/v_tnailgun.mdl") ||
@@ -3262,6 +3372,207 @@ qboolean SV_QBJ3AkimboAim(edict_t *ent, vec3_t muzzle) {
     source[i] = ent->v.view_ofs[i] + 11 * pr_global_struct->v_forward[i] +
         offs * pr_global_struct->v_right[i] - 6 * pr_global_struct->v_up[i];
   VectorSubtract(muzzle, source, ent->v.origin);
+  return true;
+}
+
+/* W_FireSMG computes org after makevectors, then uses aim and one 16-unit
+ * traceline before FireBullets2. The one-shot state below is deliberately
+ * consumed only by that exact trace; QC continues to own every firing rule. */
+qboolean SV_EnyoAkimboMakevectors(void) {
+  dfunction_t *function;
+  edict_t *ent;
+  int hand;
+  float offs, t0;
+  vec3_t muzzle, forward, right, up, angles, origin, source_offset, clearance_start;
+  trace_t reverse;
+
+  if (!qcvm || !pr_global_struct->self)
+    return false;
+  ent = PROG_TO_EDICT(pr_global_struct->self);
+  function = qcvm->xfunction;
+  if (!SV_EnyoSMGWeapon(ent) || sv_akimbo_context.ent != ent ||
+      !sv_akimbo_context.enyo || sv_akimbo_context.berserk ||
+      !SV_EnyoSMGFunction(function) ||
+      !SV_AkimboVectorIsFinite(sv_akimbo_context.muzzle[0]) ||
+      !SV_AkimboVectorIsFinite(sv_akimbo_context.muzzle[1]) ||
+      !SV_AkimboVectorIsFinite(sv_akimbo_context.angles[0]) ||
+      !SV_AkimboVectorIsFinite(sv_akimbo_context.angles[1]))
+    return false;
+
+  sv_akimbo_context.enyo_makevectors = false;
+  sv_akimbo_context.enyo_clearance_pending = false;
+  /* W_FireSMG's scalar offs is in its local frame, not OFS_PARM0: the
+   * builtin's vector argument has already occupied that shared parameter. */
+  offs = qcvm->globals[function->parm_start];
+  if (offs != 0.0f && offs != 1.0f)
+    return false;
+  hand = offs == 0.0f ? 1 : 0; /* anatomical right, then left */
+
+  VectorCopy(sv_akimbo_context.angles[hand], angles);
+  angles[ROLL] = 0;
+  AngleVectors(angles, forward, right, up);
+  VectorCopy(sv_akimbo_context.muzzle[hand], muzzle);
+
+  /* Clamp from the body eye, never from SV_ApplyVRWeaponOffset's temporary
+   * hand origin. This is the calibrated physical muzzle M. */
+  VectorCopy(ent->v.origin, clearance_start);
+  VectorCopy(sv_akimbo_context.body_origin, ent->v.origin);
+  SV_ClampVRMuzzleToWorld(ent, muzzle);
+  VectorCopy(clearance_start, ent->v.origin);
+  if (!SV_AkimboVectorIsFinite(muzzle))
+    return false;
+
+  /* QC's original org B is M - 16F. A brush immediately behind M can leave
+   * B in solid even after the usual body-eye-to-M clamp, so move its start
+   * forward to B' using a reverse brush-only trace and a one-unit margin. */
+  VectorMA(muzzle, -16.0f, forward, clearance_start);
+  reverse = SV_Move(muzzle, vec3_origin, vec3_origin, clearance_start,
+      MOVE_NOMONSTERS, ent);
+  if (reverse.startsolid || reverse.allsolid)
+    return false;
+  VectorCopy(clearance_start, sv_akimbo_context.enyo_clearance_adjusted_start);
+  if (reverse.fraction < 1.0f) {
+    VectorCopy(reverse.endpos, sv_akimbo_context.enyo_clearance_adjusted_start);
+    VectorMA(sv_akimbo_context.enyo_clearance_adjusted_start, 1.0f, forward,
+        sv_akimbo_context.enyo_clearance_adjusted_start);
+  }
+  VectorSubtract(sv_akimbo_context.enyo_clearance_adjusted_start,
+      clearance_start, source_offset);
+  t0 = DotProduct(source_offset, forward) / 16.0f;
+  if (t0 < 0.0f)
+    return false;
+  if (t0 >= 1.0f) {
+    VectorCopy(muzzle, sv_akimbo_context.enyo_clearance_adjusted_start);
+    t0 = 1.0f;
+  }
+
+  /* Set self.origin so QC's untouched expression
+   * origin + view_ofs - 6up +/- 7right reconstructs B exactly. */
+  VectorCopy(ent->v.view_ofs, source_offset);
+  VectorMA(source_offset, -6.0f, up, source_offset);
+  VectorMA(source_offset, hand ? 7.0f : -7.0f, right, source_offset);
+  VectorSubtract(clearance_start, source_offset, origin);
+  if (!SV_AkimboVectorIsFinite(origin))
+    return false;
+
+  /* Commit only after every collision/finite check succeeds. A rejected
+   * off-hand origin must not leave QC with mixed dominant/off-hand bases. */
+  VectorCopy(origin, ent->v.origin);
+  VectorCopy(angles, ent->v.v_angle);
+  VectorCopy(forward, pr_global_struct->v_forward);
+  VectorCopy(right, pr_global_struct->v_right);
+  VectorCopy(up, pr_global_struct->v_up);
+
+  sv_akimbo_context.enyo_makevectors = true;
+  sv_akimbo_context.enyo_clearance_pending = true;
+  VectorCopy(clearance_start, sv_akimbo_context.enyo_clearance_start);
+  VectorCopy(muzzle, sv_akimbo_context.enyo_clearance_end);
+  sv_akimbo_context.enyo_clearance_t0 = t0;
+  return true;
+}
+
+qboolean SV_EnyoAkimboTrace(edict_t *ent, const vec3_t start,
+    const vec3_t end, int nomonsters, trace_t *trace) {
+  qboolean valid;
+
+  if (!sv_akimbo_context.enyo_clearance_pending)
+    return false;
+  sv_akimbo_context.enyo_clearance_pending = false;
+  valid = SV_EnyoSMGWeapon(ent) && sv_akimbo_context.ent == ent &&
+      sv_akimbo_context.enyo && sv_akimbo_context.enyo_makevectors &&
+      qcvm->xfunction && SV_EnyoSMGFunction(qcvm->xfunction) &&
+      nomonsters == 0 &&
+      SV_AkimboVectorIsFinite(start) && SV_AkimboVectorIsFinite(end) &&
+      SV_AkimboVectorIsFinite(sv_akimbo_context.enyo_clearance_start) &&
+      SV_AkimboVectorIsFinite(sv_akimbo_context.enyo_clearance_end) &&
+      SV_AkimboVectorIsFinite(sv_akimbo_context.enyo_clearance_adjusted_start) &&
+      SV_AkimboVectorsNear(start, sv_akimbo_context.enyo_clearance_start) &&
+      SV_AkimboVectorsNear(end, sv_akimbo_context.enyo_clearance_end);
+  if (!valid)
+    return false;
+
+  /* Preserve collision flags, but always express the fraction in QC's
+   * original B..M coordinates. QC reconstructs its bullet source from that
+   * fraction even when an overlapping entity sets startsolid/allsolid. */
+  *trace = SV_Move(sv_akimbo_context.enyo_clearance_adjusted_start,
+      vec3_origin, vec3_origin, sv_akimbo_context.enyo_clearance_end,
+      nomonsters, ent);
+  trace->fraction = sv_akimbo_context.enyo_clearance_t0 +
+      (1.0f - sv_akimbo_context.enyo_clearance_t0) * trace->fraction;
+  return true;
+}
+
+/* W_AxeSwing selects an authored ten-frame sequence. Scheduled float times
+ * can put its hit at base+2, +3, +4, or later, so cover every source frame.
+ * Choose the larger signed grip advance along each original axe-head axis;
+ * this is source-animation data, never a timing assumption or firing toggle.
+ * Controller indices: 0 is anatomical left, 1 is anatomical right. */
+static qboolean SV_DwellBerserkStrikeHand(float weaponframe, int *hand) {
+  static const char hands[] =
+      "0000000000" "0110011111" "0100000000"
+      "0111000000" "0111000111" "0";
+  int frame;
+
+  if (!isfinite(weaponframe) || weaponframe < 0 || weaponframe > 50)
+    return false;
+  frame = (int)weaponframe;
+  if (weaponframe != (float)frame)
+    return false;
+  *hand = hands[frame] - '0';
+  return true;
+}
+
+/* Dwell's exact W_FireAxe bytecode calls makevectors then traces from
+ * self.origin + self.view_ofs. Let its original sequence choose the fist,
+ * replace only that trace source/basis, and leave its range, hit, damage and
+ * cadence entirely in QuakeC. */
+qboolean SV_DwellBerserkAkimboMakevectors(void) {
+  edict_t *ent;
+  int hand;
+  vec3_t muzzle, temporary_origin, source;
+
+  if (!qcvm || !pr_global_struct->self)
+    return false;
+  ent = PROG_TO_EDICT(pr_global_struct->self);
+  if (!SV_DwellBerserkWeapon(ent) || sv_akimbo_context.ent != ent ||
+      !sv_akimbo_context.dwell || !sv_akimbo_context.berserk ||
+      sv_akimbo_context.enyo || !qcvm->xfunction ||
+      !SV_DwellFireAxeFunction(qcvm->xfunction) ||
+      !SV_DwellBerserkStrikeHand(ent->v.weaponframe, &hand) ||
+      !SV_AkimboVectorIsFinite(sv_akimbo_context.muzzle[hand]) ||
+      !SV_AkimboVectorIsFinite(sv_akimbo_context.angles[hand]) ||
+      !SV_AkimboVectorIsFinite(sv_akimbo_context.body_origin) ||
+      !SV_AkimboVectorIsFinite(ent->v.view_ofs))
+    return false;
+
+  VectorCopy(sv_akimbo_context.muzzle[hand], muzzle);
+  VectorCopy(ent->v.origin, temporary_origin);
+  VectorCopy(sv_akimbo_context.body_origin, ent->v.origin);
+  SV_ClampVRMuzzleToWorld(ent, muzzle);
+  VectorCopy(temporary_origin, ent->v.origin);
+  if (!SV_AkimboVectorIsFinite(muzzle))
+    return false;
+
+  VectorCopy(sv_akimbo_context.angles[hand], ent->v.v_angle);
+  ent->v.v_angle[ROLL] = 0;
+  AngleVectors(ent->v.v_angle, pr_global_struct->v_forward,
+      pr_global_struct->v_right, pr_global_struct->v_up);
+  VectorSubtract(muzzle, ent->v.view_ofs, source);
+  if (!SV_AkimboVectorIsFinite(source))
+    return false;
+  VectorCopy(source, ent->v.origin);
+  return true;
+}
+
+qboolean SV_QBJ3AkimboAim(edict_t *ent, vec3_t muzzle) {
+  if (SV_QBJ3AkimboAimLegacy(ent, muzzle))
+    return true;
+  if (!SV_EnyoSMGWeapon(ent) || sv_akimbo_context.ent != ent ||
+      !sv_akimbo_context.enyo || !sv_akimbo_context.enyo_makevectors ||
+      !qcvm->xfunction || !SV_EnyoSMGFunction(qcvm->xfunction) ||
+      !SV_AkimboVectorIsFinite(sv_akimbo_context.enyo_clearance_end))
+    return false;
+  VectorCopy(sv_akimbo_context.enyo_clearance_end, muzzle);
   return true;
 }
 
@@ -3292,15 +3603,24 @@ static void SV_ApplyVRWeaponOffset(edict_t *ent, int num, qboolean is_remote_vr,
     VectorCopy(pr_global_struct->v_right, restore->v_right);
     VectorCopy(pr_global_struct->v_up, restore->v_up);
 
-    if (SV_QBJ3AkimboSupported() &&
+    if ((SV_QBJ3AkimboSupported() &&
         !strcmp(PR_GetString(ent->v.weaponmodel), "progs/v_tnailgun.mdl") &&
-        ent->v.weapon == 4) {
+        ent->v.weapon == 4) || SV_QBJ3BerserkWeapon(ent) ||
+        SV_EnyoSMGWeapon(ent) || SV_DwellBerserkWeapon(ent)) {
       qboolean active = false;
+      qboolean qbj3_berserk = SV_QBJ3BerserkWeapon(ent);
+      qboolean enyo = SV_EnyoSMGWeapon(ent);
+      qboolean dwell = SV_DwellBerserkWeapon(ent);
+      qboolean pose_berserk = qbj3_berserk || dwell;
       if (is_remote_vr) {
         const usercmd_t *cmd = &svs.clients[num - 1].cmd;
         if (cmd->vr_active && cmd->vr_handpos_relative &&
-            cmd->vr_akimbo_active && !svs.clients[num - 1].input_stale) {
+            cmd->vr_akimbo_active && !svs.clients[num - 1].input_stale &&
+            cmd->vr_akimbo_berserk == pose_berserk) {
           int hand;
+          sv_akimbo_context.berserk = cmd->vr_akimbo_berserk;
+          sv_akimbo_context.enyo = enyo;
+          sv_akimbo_context.dwell = dwell;
           for (hand = 0; hand < 2; ++hand) {
             VectorAdd(restore->origin, cmd->vr_akimbo_muzzle[hand],
                 sv_akimbo_context.muzzle[hand]);
@@ -3311,11 +3631,42 @@ static void SV_ApplyVRWeaponOffset(edict_t *ent, int num, qboolean is_remote_vr,
         }
       } else {
         active = VR_GetAkimboPoses(sv_akimbo_context.muzzle,
-            sv_akimbo_context.angles);
+            sv_akimbo_context.angles, &sv_akimbo_context.berserk);
+        sv_akimbo_context.enyo = enyo;
+        sv_akimbo_context.dwell = dwell;
+        if (sv_akimbo_context.berserk != pose_berserk)
+          active = false;
       }
+      if (active && (!SV_AkimboVectorIsFinite(sv_akimbo_context.muzzle[0]) ||
+          !SV_AkimboVectorIsFinite(sv_akimbo_context.muzzle[1]) ||
+          !SV_AkimboVectorIsFinite(sv_akimbo_context.angles[0]) ||
+          !SV_AkimboVectorIsFinite(sv_akimbo_context.angles[1])))
+        active = false;
       if (active) {
         sv_akimbo_context.ent = ent;
         VectorCopy(restore->origin, sv_akimbo_context.body_origin);
+        /* Dwell chooses its striking fist only in W_FireAxe, after the
+         * original QC animation sequence has advanced. Do not let the
+         * generic dominant-hand fallback invent a second hand policy. */
+        if (dwell)
+          return;
+        /* Unlike the nailgun, QBJ3's berserk loop checks the hit frame
+         * BEFORE advancing its animation. Keep its five fan traces and
+         * combo/damage logic in QC, changing only the striking hand's pose.
+         * Its source expression is self.origin + self.view_ofs. */
+        if (SV_QBJ3BerserkWeapon(ent) &&
+            (ent->v.weaponframe == 14 || ent->v.weaponframe == 34 ||
+             ent->v.weaponframe == 54 || ent->v.weaponframe == 64)) {
+          int hand = (ent->v.weaponframe == 14 || ent->v.weaponframe == 64);
+          VectorCopy(sv_akimbo_context.muzzle[hand], muzzle);
+          SV_ClampVRMuzzleToWorld(ent, muzzle);
+          VectorCopy(sv_akimbo_context.angles[hand], ent->v.v_angle);
+          ent->v.v_angle[ROLL] = 0;
+          AngleVectors(ent->v.v_angle, pr_global_struct->v_forward,
+              pr_global_struct->v_right, pr_global_struct->v_up);
+          VectorSubtract(muzzle, ent->v.view_ofs, ent->v.origin);
+          return;
+        }
       }
     }
 

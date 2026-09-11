@@ -34,6 +34,9 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include <dirent.h>
 #endif
 
+qboolean SV_EnyoAkimboTrace(edict_t *ent, const vec3_t start,
+	const vec3_t end, int nomonsters, trace_t *trace);
+
 #define	STRINGTEMP_BUFFERS		1024
 #define	STRINGTEMP_LENGTH		1024
 static	char	pr_string_temp[STRINGTEMP_BUFFERS][STRINGTEMP_LENGTH];
@@ -258,6 +261,11 @@ makevectors(vector)
 */
 static void PF_makevectors (void)
 {
+	/* The audited Enyo SMG and Dwell berserk axe compute their source
+	 * immediately after this builtin. Scoped adapters supply their controller
+	 * basis/source; every other QuakeC makevectors call stays untouched. */
+	if (SV_EnyoAkimboMakevectors() || SV_DwellBerserkAkimboMakevectors())
+		return;
 	AngleVectors (G_VECTOR(OFS_PARM0), pr_global_struct->v_forward,
 		pr_global_struct->v_right, pr_global_struct->v_up);
 }
@@ -1435,7 +1443,8 @@ static void PF_traceline (void)
 	if (IS_NAN(v2[0]) || IS_NAN(v2[1]) || IS_NAN(v2[2]))
 		v2[0] = v2[1] = v2[2] = 0;
 
-	trace = SV_Move (v1, vec3_origin, vec3_origin, v2, nomonsters, ent);
+	if (!SV_EnyoAkimboTrace(ent, v1, v2, nomonsters, &trace))
+		trace = SV_Move (v1, vec3_origin, vec3_origin, v2, nomonsters, ent);
 	SV_DebugLogTraceTrigger(trace.ent, v1, v2, &trace);
 	SV_CoopReviveFromTrace (v1, v2, ent, trace.fraction);
 
