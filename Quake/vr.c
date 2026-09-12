@@ -6238,8 +6238,11 @@ static const vr_akimbo_model_t vr_akimbo_models[] = {
   {"qbj3", &cl.vr_qbj3_berserk_akimbo_supported, "progs/v_berserk.mdl",
    {"progs/v_berserk_vr_left.mdl", "progs/v_berserk_vr_right.mdl"},
    101, 894, {447, 447}, true,
-   {{24.69689480f, 15.34041551f, -7.01256642f},
-    {24.73065716f, -15.77186370f, -6.95642908f}}, &vr_qbj3_fists,
+   /* Ready-pose knuckle surface (retained vertex 347 in each half).
+    * Interior anchors left visible light contacts roughly two centimetres
+    * short of the physical melee sweep at the default weapon scale. */
+   {{25.58522001f, 14.90800858f, -4.91985899f},
+    {25.58522001f, -15.31243134f, -4.91985899f}}, &vr_qbj3_fists,
     {{0, 0}, {0, 0}}},
   {"enyo", &cl.vr_enyo_akimbo_supported, "progs/ee_v_smgs.mdl",
    {"progs/ee_v_smgs_vr_left.mdl", "progs/ee_v_smgs_vr_right.mdl"},
@@ -6715,6 +6718,7 @@ typedef struct vr_immersive_melee_profile_s {
   qboolean native_animation = false;
   qboolean authored_left_hand = false;
   const float *grip_raw = NULL;
+  float controller_roll = 0;
 } vr_immersive_melee_profile_t;
 
 /* Seven unique hand/tool-interface points in the pinned ready-pose mesh.
@@ -6800,7 +6804,7 @@ static const vr_immersive_melee_profile_t vr_immersive_melee_profiles[] = {
   {VR_WEAPON_CONTACT_PROFILE_QBJ3, "progs/v_wrench.mdl",
    "vr/qbj3/progs/v_wrench_vr_dominant.mdl",
    702244, 0x1bfff189u, 565, 540, 71, 10, 320, 358,
-   ALIAS_POSE_MDL, 0, 0, false, false, true, vr_qbj3_wrench_grip},
+   ALIAS_POSE_MDL, 0, 0, false, false, true, vr_qbj3_wrench_grip, 90},
   {VR_WEAPON_CONTACT_PROFILE_ENYO, "progs/ee_v_sword.mdl",
    "vr/enyo/progs/ee_v_sword_vr_dominant.mdl",
    344020, 0xa707a071u, 669, 679, 35, 0, 13, 77},
@@ -6914,6 +6918,30 @@ static void VR_ImmersiveMeleeModelTransform(
   if (profile->grip_raw)
     for (int axis = 0; axis < 3; ++axis)
       hdr->scale_origin[axis] = -profile->grip_raw[axis] * hdr->scale[axis];
+}
+
+static void VR_ImmersiveMeleeModelAngles(
+    const vr_immersive_melee_profile_t *profile, const vec3_t handangles,
+    vec3_t out) {
+  VR_HandRotToViewmodelAngles(handangles, out);
+  if (profile->controller_roll) {
+    vec3_t forward, right, up, axes[3], original, tracked;
+    VectorCopy(handangles, tracked);
+    AngleVectors(tracked, forward, right, up);
+    VectorCopy(out, original);
+    /* Roll about the tracked controller's forward axis, not the world or
+     * pitched model axis. Reflection happens afterward in model space;
+     * reverse the roll for the anatomical mirror in left-handed mode. */
+    float roll = VR_IsLeftHanded() ? -profile->controller_roll : profile->controller_roll;
+    for (int i = 0; i < 3; ++i) {
+      vec3_t basis = {0, 0, 0}, world;
+      basis[i] = 1;
+      VR_ModelOffsetToWorld(basis, original, 1, false, world);
+      RotatePointAroundVector(axes[i], forward, world, roll);
+    }
+    AngleVectorFromRotMat(axes, out);
+    out[PITCH] = -out[PITCH];
+  }
 }
 
 /* Identity and immutable source checks are deliberately separate from native
@@ -7056,7 +7084,7 @@ static void VR_GetRawWeaponEdge(vec3_t base, vec3_t tip) {
     /* Use the original source model's user calibration entry, not the
      * generated virtual pathname. */
     VR_ImmersiveMeleeModelTransform(profile, hdr);
-    VR_HandRotToViewmodelAngles(cl.handrot[1], modelangles);
+    VR_ImmersiveMeleeModelAngles(profile, cl.handrot[1], modelangles);
     VectorAdd(cl.handpos[1], cl.vmeshoffset, origin);
     /* Source-verified ready-pose cutting edge, never hand/arm vertices. */
     for (int point = 0; point < 2; point++) {
@@ -7287,6 +7315,8 @@ qboolean VR_DrawTrackedViewModel(void) {
     /* Generated dominant models inherit the source model's existing user
      * held scale/offset slot. Do not create a virtual-path calibration. */
     VR_ImmersiveMeleeModelTransform(profile, held_header);
+    if (profile->controller_roll)
+      VR_ImmersiveMeleeModelAngles(profile, cl.handrot[1], held.angles);
   }
   VR_GetRawWeaponEdge(base, tip);
   if (VR_GetWeaponCollisionOffset(1, base, tip, delta))

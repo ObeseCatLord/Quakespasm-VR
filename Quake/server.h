@@ -469,6 +469,7 @@ extern cvar_t sv_triggerdebug;
 extern cvar_t sv_vr_jump_velocity;
 extern cvar_t sv_weapon_collision;
 extern cvar_t sv_immersive_melee;
+extern cvar_t sv_melee_hitassist;
 qboolean SV_IsVRClientSlot(int num);
 qboolean SV_IsActiveClientEdict(edict_t *ent);
 qboolean SV_CoopFeatureEnabled(const cvar_t *feature,
@@ -579,6 +580,7 @@ qboolean SV_EnyoAkimboSupported(void);
 qboolean SV_DwellBerserkAkimboSupported(void);
 extern cvar_t sv_akimbo;
 qboolean SV_QBJ3AkimboAim(edict_t *ent, vec3_t muzzle);
+qboolean SV_QBJ3ShotgunSpreadBasis(const vec3_t angles);
 qboolean SV_EnyoAkimboMakevectors(void);
 qboolean SV_DwellBerserkAkimboMakevectors(void);
 void SV_ClearAkimboContext(void);
