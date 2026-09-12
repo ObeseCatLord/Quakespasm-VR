@@ -228,6 +228,8 @@ typedef struct {
   vec3_t body;
   float arc[2];
   float peak_speed[2], tier[2];
+  vec3_t stroke_direction[2];
+  byte stroke_endpoint[2];
   qboolean consumed[2];
   qboolean authorized[2];
   int subtype[2], hit_count[2], hit_entities[2][2];
@@ -258,6 +260,12 @@ static struct {
 
 static void SV_ClampVRMuzzleToWorld(edict_t *ent, vec3_t muzzle);
 #include "vr_melee_qc.h"
+#include "vr_melee_reach.h"
+
+void SV_VRContactResetProgs(void) {
+  SV_VRMeleeReachReset();
+  memset(sv_vr_contacts, 0, sizeof(sv_vr_contacts));
+}
 
 qboolean SV_VRContactFindRadius(void) {
   edict_t *target;
@@ -1186,44 +1194,132 @@ static trace_t SV_VRContactSweep(edict_t *p, const vr_weapon_contact_t *old,
  * Quake VR also supplements physical hand contact with forward attack rays.
  * Keep ours bounded, current-time-only and subordinate to real geometry.
  * Never use these synthetic endpoints for speed/history or defensive blades. */
-static trace_t SV_VRContactAssist(edict_t *p, const vr_weapon_contact_t *now,
+static trace_t SV_VRContactAssist(edict_t *p, const vr_weapon_contact_t *old,
+    const vr_weapon_contact_t *now,
     int hand, const vec3_t aim, const int *hit_entities, int hit_count,
     float min_time, float *event_time, int *parry_client, int *parry_hand) {
   vr_weapon_contact_t assist = *now;
-  vec3_t angles, forward, right, up, delta;
+  vec3_t angles, forward, right, up, source;
   trace_t result;
-  float projection = 0, reach;
+  float radius = 0, best_distance = FLT_MAX;
+  qboolean automatic = sv_melee_hitassist.value < 0;
   memset(&result, 0, sizeof(result));
   result.fraction = 1;
   *event_time = 2;
   *parry_client = *parry_hand = -1;
-  if (!isfinite(sv_melee_hitassist.value) || sv_melee_hitassist.value <= 0 ||
+  if (!isfinite(sv_melee_hitassist.value) || sv_melee_hitassist.value == 0 ||
       min_time >= 1 || !(now->flags & VR_WEAPON_CONTACT_IMMERSIVE_MELEE) ||
       SV_VRContactWeapon(p) == SV_VR_MELEE_NONE || !SV_VRMeleeFiniteVector(aim))
     return result;
   VectorCopy(aim, angles);
   AngleVectors(angles, forward, right, up);
-  VectorSubtract(now->base[hand], now->grip[hand], delta);
-  projection = q_max(projection, DotProduct(delta, forward));
-  VectorSubtract(now->tip[hand], now->grip[hand], delta);
-  projection = q_max(projection, DotProduct(delta, forward));
-  /* Eight extra world units by default, never past sixteen from the grip.
-   * A long weapon keeps its full physical reach without gaining more here. */
-  reach = q_min(16, projection + q_min(16, sv_melee_hitassist.value));
-  if (reach <= projection)
+  if (automatic && !SV_VRMeleeNativeReach(p, SV_VRContactWeapon(p), aim,
+      &radius, source))
     return result;
-  VectorCopy(now->grip[hand], assist.base[hand]);
-  VectorMA(assist.base[hand], reach, forward, assist.tip[hand]);
-  result = SV_VRContactSweepQuery(p, &assist, &assist, hand, true,
-      hit_entities, hit_count, min_time, event_time, parry_client, parry_hand, true);
-  /* Shootable switches can have takedamage too. Only actors gain assistance;
-   * ordinary buttons, walls and other obstructions remain physical-only. */
-  if (*parry_client < 0 && (!result.ent || result.ent->free ||
-      !result.ent->v.takedamage ||
-      (!((int)result.ent->v.flags & FL_MONSTER) && !SV_IsActiveClientEdict(result.ent)))) {
-    memset(&result, 0, sizeof(result));
-    result.fraction = 1;
-    *event_time = 2;
+  for (int ray = 0; ray < (automatic ? 2 : 1); ++ray) {
+    vec3_t direction, delta;
+    float reach, candidate_time;
+    int candidate_client, candidate_hand;
+    trace_t candidate;
+    VectorCopy(forward, direction);
+    VectorCopy(now->grip[hand], assist.base[hand]);
+    if (ray) {
+      /* Extend the moving cutting point, not a parallel ray from the grip.
+       * This includes hooks, backhands and vertical strokes even when the
+       * controller points elsewhere. Relative samples exclude body movement.
+       * Never add this synthetic ray to pose history or physical effort. */
+      qboolean tip = SV_VRContactDistance(old->tip[hand], now->tip[hand]) >=
+          SV_VRContactDistance(old->base[hand], now->base[hand]);
+      VectorCopy(tip ? now->tip[hand] : now->base[hand], assist.base[hand]);
+      VectorSubtract(assist.base[hand], tip ? old->tip[hand] : old->base[hand], direction);
+      if (VectorNormalize(direction) <= SV_VR_CONTACT_MOTION_EPSILON)
+        continue;
+    }
+    if (automatic) {
+      /* Native range starts at the mod's attack source, not at an already
+       * outstretched hand. Clip a current-time ray to that envelope; actual
+       * mesh contact stays independent and is always queried first. */
+      float along, remaining;
+      VectorSubtract(assist.base[hand], source, delta);
+      remaining = radius * radius - DotProduct(delta, delta);
+      if (!isfinite(remaining) || remaining <= 0)
+        continue;
+      along = DotProduct(delta, direction);
+      reach = -along + sqrtf(along * along + remaining);
+    } else {
+      /* Preserve explicit positive values as the old bounded manual mode.
+       * -1 selects native reach; zero remains strict physical contact. */
+      float projection = 0;
+      VectorSubtract(now->base[hand], now->grip[hand], delta);
+      projection = q_max(projection, DotProduct(delta, forward));
+      VectorSubtract(now->tip[hand], now->grip[hand], delta);
+      projection = q_max(projection, DotProduct(delta, forward));
+      reach = q_min(16, projection + q_min(16, sv_melee_hitassist.value));
+      if (reach <= projection)
+        continue;
+    }
+    VectorMA(assist.base[hand], reach, direction, assist.tip[hand]);
+    candidate = SV_VRContactSweepQuery(p, &assist, &assist, hand, true,
+        hit_entities, hit_count, min_time, &candidate_time,
+        &candidate_client, &candidate_hand, true);
+    /* A guard on either assisted ray cancels assistance. An alternate ray
+     * must never select a body to evade a valid parry on the first ray. */
+    if (candidate_client >= 0) {
+      *event_time = candidate_time;
+      *parry_client = candidate_client;
+      *parry_hand = candidate_hand;
+      return candidate;
+    }
+    /* Shootable switches may have takedamage too; assistance is actor-only. */
+    if (candidate.fraction >= 1 || !candidate.ent || candidate.ent->free ||
+        !candidate.ent->v.takedamage ||
+        (!((int)candidate.ent->v.flags & FL_MONSTER) &&
+         !SV_IsActiveClientEdict(candidate.ent)))
+      continue;
+    if (automatic && (SV_VRContactWeapon(p) == SV_VR_MELEE_MJOLNIR_SCIMITAR ||
+        SV_VRContactWeapon(p) == SV_VR_MELEE_MJOLNIR_MACE)) {
+      /* Native findradius qualifies the target's bounds center, not the
+       * nearest surface of a large hull. Keep that authored area limit. */
+      for (int axis = 0; axis < 3; ++axis)
+        delta[axis] = candidate.ent->v.origin[axis] - p->v.origin[axis] +
+            .5f * (candidate.ent->v.mins[axis] + candidate.ent->v.maxs[axis]) - source[axis];
+      if (DotProduct(delta, delta) > radius * radius)
+        continue;
+    }
+    if (ray) {
+      /* An endpoint can already be beyond a guard. Assistance is not actual
+       * blade contact: also require the hand-to-impact connection to clear
+       * defending blades, just as SweepQuery requires it to clear the world.
+       * Do not change ordinary physical overlap/contact behavior. */
+      sv_vr_defending_blade_t blades[MAX_SCOREBOARD * 2];
+      vec3_t grip;
+      int guard = -1, count = SV_VRContactDefenders(p, blades);
+      float nearest = 1 - .00001f;
+      VectorAdd(p->v.origin, now->grip[hand], grip);
+      for (int blade = 0; blade < count; ++blade) {
+        float entry = SV_VRContactCapsuleFraction(grip, candidate.endpos,
+            blades[blade].base, blades[blade].tip, 4);
+        if (entry < nearest) {
+          nearest = entry;
+          guard = blade;
+        }
+      }
+      if (guard >= 0) {
+        memset(&result, 0, sizeof(result));
+        result.fraction = 1;
+        *event_time = 1;
+        *parry_client = blades[guard].client;
+        *parry_hand = blades[guard].hand;
+        return result;
+      }
+    }
+    VectorSubtract(candidate.endpos, p->v.origin, delta);
+    float distance = SV_VRContactDistance(now->grip[hand], delta);
+    if (distance < best_distance) {
+      best_distance = distance;
+      result = candidate;
+      *event_time = candidate_time;
+    }
   }
   return result;
 }
@@ -1258,6 +1354,7 @@ void SV_VRContactProcessCommand(client_t *client, const usercmd_t *cmd) {
       SV_VRContactDistance(p->v.origin, s->body) > 64) {
     memset(s->arc, 0, sizeof(s->arc));
     memset(s->peak_speed, 0, sizeof(s->peak_speed));
+    memset(s->stroke_direction, 0, sizeof(s->stroke_direction));
     memset(s->consumed, 0, sizeof(s->consumed));
     memset(s->authorized, 0, sizeof(s->authorized));
     memset(s->hit_count, 0, sizeof(s->hit_count));
@@ -1269,7 +1366,7 @@ void SV_VRContactProcessCommand(client_t *client, const usercmd_t *cmd) {
     vec3_t aim;
     sv_vr_melee_subtype_t subtype = SV_VRContactWeapon(p);
     float distance, endpoint_motion, contact_time;
-    qboolean test_parry;
+    qboolean test_parry, rearming = false;
     int button = 0, parry_client, parry_hand;
     if (!(c->flags & (1u << hand)))
       continue;
@@ -1284,6 +1381,7 @@ void SV_VRContactProcessCommand(client_t *client, const usercmd_t *cmd) {
       s->consumed[hand] = true;
       s->authorized[hand] = false;
       s->hit_count[hand] = 0;
+      VectorClear(s->stroke_direction[hand]);
       continue;
     }
     if (s->authorized[hand] && (s->subtype[hand] != subtype ||
@@ -1291,6 +1389,28 @@ void SV_VRContactProcessCommand(client_t *client, const usercmd_t *cmd) {
       s->authorized[hand] = false;
       s->hit_count[hand] = 0;
       s->consumed[hand] = true;
+    }
+    /* A punch can reverse between two received poses without reporting a
+     * low-speed sample. Requiring a sampled stop then locks out every later
+     * punch. A substantial reversal of the SAME tracked endpoint starts a
+     * new gesture, which must earn its own arc and native cooldown admission.
+     * Never turn an opponent's parry into an immediate counterattack. */
+    if (s->consumed[hand] && !s->parry_rearm[hand] &&
+        c->speed[hand] >= SV_VR_CONTACT_STRIKE_SPEED) {
+      vec3_t movement;
+      float length;
+      VectorSubtract(s->stroke_endpoint[hand] ? c->tip[hand] : c->base[hand],
+          s->stroke_endpoint[hand] ? s->previous.tip[hand] : s->previous.base[hand],
+          movement);
+      length = VectorLength(movement);
+      if (length > SV_VR_CONTACT_MOTION_EPSILON &&
+          length >= .5f * endpoint_motion &&
+          DotProduct(movement, s->stroke_direction[hand]) < -.5f * length) {
+        s->arc[hand] = s->peak_speed[hand] = 0;
+        s->consumed[hand] = s->authorized[hand] = false;
+        s->hit_count[hand] = 0;
+        rearming = true;
+      }
     }
     if (SV_VRContactParryEnabled() &&
         (c->flags & VR_WEAPON_CONTACT_IMMERSIVE_MELEE) &&
@@ -1300,7 +1420,7 @@ void SV_VRContactProcessCommand(client_t *client, const usercmd_t *cmd) {
      * gun pokes, resting guards and already-consumed swings still use their
      * existing world/button sweep without O(players) defensive traces. */
     test_parry = !s->consumed[hand] && !s->parry_rearm[hand] &&
-        s->arc[hand] + (c->speed[hand] >= SV_VR_CONTACT_STRIKE_SPEED &&
+        s->arc[hand] + (!rearming && c->speed[hand] >= SV_VR_CONTACT_STRIKE_SPEED &&
             endpoint_motion > SV_VR_CONTACT_MOTION_EPSILON ? c->speed[hand] * dt : 0) >=
         SV_VR_CONTACT_STRIKE_ARC;
     hit = SV_VRContactSweep(p, &s->previous, c, hand, test_parry,
@@ -1361,7 +1481,7 @@ void SV_VRContactProcessCommand(client_t *client, const usercmd_t *cmd) {
      * dividing it by a fixed units/metre constant changes the effort needed
      * whenever the client changes vr_world_scale. A stationary blade cannot
      * accumulate a swing from a stale nonzero speed sample. */
-    if (c->speed[hand] >= SV_VR_CONTACT_STRIKE_SPEED &&
+    if (!rearming && c->speed[hand] >= SV_VR_CONTACT_STRIKE_SPEED &&
         endpoint_motion > SV_VR_CONTACT_MOTION_EPSILON) {
       s->arc[hand] += c->speed[hand] * dt;
       s->peak_speed[hand] = q_max(s->peak_speed[hand], c->speed[hand]);
@@ -1372,7 +1492,7 @@ void SV_VRContactProcessCommand(client_t *client, const usercmd_t *cmd) {
         cmd->vr_handrot, aim);
     if (!s->consumed[hand] && s->arc[hand] >= SV_VR_CONTACT_STRIKE_ARC &&
         hit.fraction >= 1 && parry_client < 0)
-      hit = SV_VRContactAssist(p, c, hand, aim, s->hit_entities[hand],
+      hit = SV_VRContactAssist(p, &s->previous, c, hand, aim, s->hit_entities[hand],
           s->hit_count[hand], 0, &contact_time, &parry_client, &parry_hand);
     for (int contact_number = 0; contact_number < 2 && !s->consumed[hand] &&
         s->arc[hand] >= SV_VR_CONTACT_STRIKE_ARC &&
@@ -1410,6 +1530,14 @@ void SV_VRContactProcessCommand(client_t *client, const usercmd_t *cmd) {
       qboolean accepted = SV_VRMeleeOutcome(p, subtype, outcome,
           outcome == VR_CONTACT_HIT ? &hit : NULL, aim, tier, hand, first, &deadline);
       sv_vr_contact_call.has_muzzle = false;
+      if (endpoint_motion > SV_VR_CONTACT_MOTION_EPSILON &&
+          c->speed[hand] >= SV_VR_CONTACT_STRIKE_SPEED) {
+        s->stroke_endpoint[hand] = distance >= endpoint_motion;
+        VectorSubtract(s->stroke_endpoint[hand] ? c->tip[hand] : c->base[hand],
+            s->stroke_endpoint[hand] ? s->previous.tip[hand] : s->previous.base[hand],
+            s->stroke_direction[hand]);
+        VectorNormalize(s->stroke_direction[hand]);
+      }
       if (accepted) {
           if (first) {
             s->authorized[hand] = true;
@@ -1458,7 +1586,7 @@ void SV_VRContactProcessCommand(client_t *client, const usercmd_t *cmd) {
             s->hit_entities[hand], s->hit_count[hand], contact_time, &contact_time,
             &parry_client, &parry_hand);
         if (hit.fraction >= 1 && parry_client < 0)
-          hit = SV_VRContactAssist(p, c, hand, aim, s->hit_entities[hand],
+          hit = SV_VRContactAssist(p, &s->previous, c, hand, aim, s->hit_entities[hand],
               s->hit_count[hand], remaining_time, &contact_time,
               &parry_client, &parry_hand);
       }

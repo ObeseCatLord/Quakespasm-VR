@@ -90,17 +90,26 @@ A short, light stroke is sufficient: ordinary physical attacks qualify at
 0.1 m/s with 1 cm of accumulated physical motion. Resting contact does not
 repeatedly attack; the mod's recovery time and the gesture rearm still apply.
 
-`sv_melee_hitassist` defaults to `8` extra Quake world units of combat reach.
-After a qualified physical swing misses, a controller-forward assist ray may
-reach a monster or player. Its endpoint is capped at 16 units from the hand;
-long weapons retain their original physical reach rather than gaining more.
-Set it to `0` for strict physical contact (values above 16 are clamped).
+`sv_melee_hitassist` defaults to `-1` (automatic native weapon reach).
+After a qualified physical swing misses, assistance follows the controller's
+forward direction and the moving cutting point's direction. Native reach is
+measured from the mod's attack source, not added to an outstretched arm.
+The engine derives ordinary reach calculations from verified QuakeC attack
+sites; unknown calculations do not silently receive the stock axe's range.
+Actual blade contact is preserved independently of this assistance.
+Set it to `0` for strict physical contact. Explicit positive values retain the
+older manual mode: that many extra units along controller-forward, capped at
+16 units from the grip. Existing configurations containing `8` should use `-1`
+to enable automatic reach.
 It does not shrink the player's collision hull, extend button pokes, bypass
 walls or parries, or change native damage and cooldowns. This assists all
 supported immersive melee profiles; desktop and ordinary trigger attacks are
-unaffected. The modest default is a comfort setting, not a full-mesh collider.
+unaffected. Assistance is not a full-mesh collider or an automatic attack.
 Bonk's medium/full charge thresholds are unchanged. A received sample below
-0.1 m/s rearms a completed stroke. Unfinished strokes retain their accumulated
+0.1 m/s rearms a completed stroke. A substantial reversal of the same tracked
+cutting point also rearms it, then requires fresh swing motion; this avoids
+locking out repeated punches when no full stop is received between samples.
+Unfinished strokes retain their accumulated
 motion until speed falls below 0.05 m/s; a parried stroke requires a later sample
 below 0.05 m/s. Physical edges already overlapping a target recover a real entry
 surface, even with assistance disabled, without granting hits through walls.
