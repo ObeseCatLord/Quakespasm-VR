@@ -145,6 +145,7 @@ typedef struct
 extern client_static_t	cls;
 
 void CL_ApplyPredictionViewSmoothing (vec3_t vieworg);
+void CL_ResetPredictionSmoothing (void);
 void CL_SendAvatarSelection (void);
 
 //

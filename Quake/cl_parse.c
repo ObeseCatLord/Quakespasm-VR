@@ -2511,6 +2511,15 @@ static qboolean CL_ParseMoveAckPayload (void)
 	if (!CL_UpdateMoveAck (CL_ExpandMoveAck16 (ack16)))
 		return true;
 
+	/* Equal ACKs can revoke prediction or change its baseline too. Clear only
+	 * presentation here: replay must still observe the epochs to invalidate
+	 * its water-jump propagation when prediction resumes. */
+	if (!(flags & MOVEACK_FLAG_PREDICTION_ALLOWED) ||
+		authority != cl.move_ack_authority ||
+		mode_epoch != cl.move_ack_mode_epoch ||
+		discontinuity_epoch != cl.move_ack_discontinuity_epoch)
+		CL_ResetPredictionSmoothing ();
+
 	cl.move_ack_authority = (move_authority_t)authority;
 	cl.move_ack_prediction_allowed =
 		(flags & MOVEACK_FLAG_PREDICTION_ALLOWED) != 0;

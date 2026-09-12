@@ -1521,7 +1521,6 @@ static qboolean Host_SavegameWrite(const char *savename, qboolean quiet) {
     }
     else
       ED_Write(f, EDICT_NUM(i));
-    fflush(f);
   }
   Z_Free(client_snapshot);
   write_failed = ferror(f) != 0 || fflush(f) != 0;

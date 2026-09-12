@@ -1830,6 +1830,7 @@ static void SV_UpdateClientPMoveMode(client_t *client, qboolean allow_promotion)
   qboolean local_singleplayer;
   qboolean legacy_prethink_mod;
   qboolean legacy_qc_ladder_mod;
+  qboolean qbj3_legacy_physics;
   move_authority_t authority;
   moveack_discontinuity_t fallback_reason;
   sv_pmove_policy_input_t pmove_policy_input;
@@ -1851,9 +1852,10 @@ static void SV_UpdateClientPMoveMode(client_t *client, qboolean allow_promotion)
   legacy_prethink_mod = COM_GameDirMatches("rm1.2");
   /* Unknown ladder mods retain their whole-mod gate. Verified QBJ3 uses
    * shared PMove only while its QC-owned ladder/water state is inactive. */
+  qbj3_legacy_physics = SV_QBJ3NeedsLegacyPhysics(client);
   legacy_qc_ladder_mod = qcvm->extfields.onladder >= 0 &&
       !qcvm->extfuncs.SV_RunClientCommand &&
-      (!SV_QBJ3PMoveCompatible() || SV_QBJ3NeedsLegacyPhysics(client));
+      (!SV_QBJ3PMoveCompatible() || qbj3_legacy_physics);
 
   requested_mode = CLAMP(0, (int)sv_pmove_mode.value, 3);
   customphysics = client->edict ?
@@ -1878,8 +1880,7 @@ static void SV_UpdateClientPMoveMode(client_t *client, qboolean allow_promotion)
   pmove_policy_input.legacy_prethink_mod = legacy_prethink_mod;
   pmove_policy_input.has_qc_onladder_field = qcvm->extfields.onladder >= 0;
   pmove_policy_input.compatible_qc_ladder_mod = SV_QBJ3PMoveCompatible();
-  pmove_policy_input.qc_ladder_legacy_state =
-      SV_QBJ3NeedsLegacyPhysics(client);
+  pmove_policy_input.qc_ladder_legacy_state = qbj3_legacy_physics;
   pmove_policy_input.has_sv_runclientcommand =
       qcvm->extfuncs.SV_RunClientCommand != 0;
   pmove_policy_input.has_explicit_cmd_msec =
