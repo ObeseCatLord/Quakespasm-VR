@@ -719,8 +719,7 @@ static qboolean SV_VRContactButtonTouch(edict_t *button) {
    * and native enemy bookkeeping stay QC-owned. Similar names in another VM
    * are not enough to authorize a new interaction. */
   if (!strcmp(classname, "func_button_skill"))
-    return SV_VRMeleeQBJ3Progs() && button->v.touch == 882 &&
-        SV_VRMeleeFunctionPin(882, "skillbutton_touch", 29999, 0, 0, 0, NULL);
+    return SV_VRMeleeQBJ3SkillButtonTouch(button->v.touch);
   if (!strcmp(classname, "func_elvtr_button"))
     return qcvm->crc == 30793 && SV_VRMeleeALKDescriptor() &&
         button->v.touch == 937 &&

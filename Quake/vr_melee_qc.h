@@ -49,6 +49,7 @@ enum {
 };
 
 #define SV_VR_MELEE_QBJ3_CRC 35566
+#define SV_VR_MELEE_QBJ3_FOUNDRY_CRC 15169
 #define SV_VR_MELEE_ENYO_CRC 22413
 #define SV_VR_MELEE_BONK_CRC 23056
 #define SV_VR_MELEE_BONK_HAMMER_SKIN_GLOBAL 873
@@ -198,23 +199,122 @@ static int SV_VRMeleeStockTraceStatement(void)
 	return descriptor ? descriptor->trace_statement : -1;
 }
 
-static qboolean SV_VRMeleeQBJ3Progs(void)
+typedef struct {
+	int crc, statements, functions, globals;
+	int berserk_helper_index, berserk_helper_first, berserk_helper_parm_start;
+	int wrench_index, wrench_first, wrench_parm_start;
+	int wrench_leaf_index, wrench_leaf_first, wrench_leaf_parm_start;
+	int berserk_index, berserk_first, berserk_parm_start;
+	int berserk_leaf_index, berserk_leaf_first, berserk_leaf_parm_start;
+	int idle_index, idle_first;
+	int draw_index, draw_first;
+	int sound_index, sound_first;
+	int skillbutton_index, skillbutton_first;
+} sv_vr_melee_qbj3_descriptor_t;
+
+/* Both distributed and locally optimized QBJ3 programs retain the native
+ * wrench/berserk ABI, but compiler layout changes move statements and locals.
+ * Keep the complete VM identity and each borrowed entry point revision-pinned. */
+static const sv_vr_melee_qbj3_descriptor_t sv_vr_melee_qbj3_descriptors[] = {
+	{SV_VR_MELEE_QBJ3_CRC, 65612, 3850, 7502,
+		145, 3264, 7382, 484, 14871, 7065, 485, 15056, 7382,
+		571, 18810, 7127, 572, 19015, 7382, 569, 18757, 575, 19438,
+		595, 20248, 882, 29999},
+	{SV_VR_MELEE_QBJ3_FOUNDRY_CRC, 66172, 3850, 10635,
+		145, 3317, 7450, 484, 15033, 8394, 485, 15218, 8411,
+		571, 18996, 8722, 572, 19201, 8739, 569, 18942, 575, 19624,
+		595, 20453, 882, 30448}
+};
+
+static qboolean SV_VRMeleeQBJ3DescriptorValid(
+	const sv_vr_melee_qbj3_descriptor_t *descriptor)
 {
+	static const byte scalar[] = {1};
 	static const byte entity_vector_vector[] = {1, 3, 3};
 
 	if (!qcvm || qcvm != &sv.qcvm || !qcvm->progs ||
-		qcvm->crc != SV_VR_MELEE_QBJ3_CRC ||
-		qcvm->progs->numstatements != 65612 ||
-		qcvm->progs->numfunctions != 3850 || qcvm->progs->numglobals != 7502)
+		qcvm->crc != descriptor->crc ||
+		qcvm->progs->numstatements != descriptor->statements ||
+		qcvm->progs->numfunctions != descriptor->functions ||
+		qcvm->progs->numglobals != descriptor->globals)
 		return false;
-	return SV_VRMeleeFunctionPin(484, "W_FireWrench", 14871, 7065, 17, 0, NULL) &&
-		SV_VRMeleeFunctionPin(485, "hitwrench", 15056, 7382, 11, 3,
+	return SV_VRMeleeFunctionPin(descriptor->berserk_helper_index, "has_berserk",
+			descriptor->berserk_helper_first, descriptor->berserk_helper_parm_start,
+			1, 1, scalar) &&
+		SV_VRMeleeFunctionPin(descriptor->wrench_index, "W_FireWrench",
+			descriptor->wrench_first, descriptor->wrench_parm_start, 17, 0, NULL) &&
+		SV_VRMeleeFunctionPin(descriptor->wrench_leaf_index, "hitwrench",
+			descriptor->wrench_leaf_first, descriptor->wrench_leaf_parm_start, 11, 3,
 			entity_vector_vector) &&
-		SV_VRMeleeFunctionPin(571, "W_Fire_Berserker_Multi", 18810, 7127, 17,
-			0, NULL) &&
-		SV_VRMeleeFunctionPin(572, "hit_berserker_punch", 19015, 7382, 11, 3,
+		SV_VRMeleeFunctionPin(descriptor->berserk_index, "W_Fire_Berserker_Multi",
+			descriptor->berserk_first, descriptor->berserk_parm_start, 17, 0, NULL) &&
+		SV_VRMeleeFunctionPin(descriptor->berserk_leaf_index, "hit_berserker_punch",
+			descriptor->berserk_leaf_first, descriptor->berserk_leaf_parm_start, 11, 3,
 			entity_vector_vector) &&
-		SV_VRMeleeFunctionPin(595, "SuperDamageSound", 20248, 0, 0, 0, NULL);
+		SV_VRMeleeFunctionPin(descriptor->idle_index, "weaponanim_idle_melee_loop",
+			descriptor->idle_first, 0, 0, 0, NULL) &&
+		SV_VRMeleeFunctionPin(descriptor->draw_index, "weaponanim_draw_loop",
+			descriptor->draw_first, 0, 0, 0, NULL) &&
+		SV_VRMeleeFunctionPin(descriptor->sound_index, "SuperDamageSound",
+			descriptor->sound_first, 0, 0, 0, NULL) &&
+		SV_VRMeleeFunctionPin(descriptor->skillbutton_index, "skillbutton_touch",
+			descriptor->skillbutton_first, 0, 0, 0, NULL);
+}
+
+static const sv_vr_melee_qbj3_descriptor_t *SV_VRMeleeQBJ3Descriptor(void)
+{
+	int i;
+
+	for (i = 0; i < (int)countof(sv_vr_melee_qbj3_descriptors); ++i)
+		if (SV_VRMeleeQBJ3DescriptorValid(&sv_vr_melee_qbj3_descriptors[i]))
+			return &sv_vr_melee_qbj3_descriptors[i];
+	return NULL;
+}
+
+static qboolean SV_VRMeleeQBJ3Progs(void)
+{
+	return SV_VRMeleeQBJ3Descriptor() != NULL;
+}
+
+static dfunction_t *SV_VRMeleeQBJ3LeafFunction(sv_vr_melee_subtype_t subtype)
+{
+	const sv_vr_melee_qbj3_descriptor_t *descriptor = SV_VRMeleeQBJ3Descriptor();
+
+	if (!descriptor)
+		return NULL;
+	if (subtype == SV_VR_MELEE_QBJ3_WRENCH)
+		return &qcvm->functions[descriptor->wrench_leaf_index];
+	if (subtype == SV_VR_MELEE_QBJ3_BERSERK)
+		return &qcvm->functions[descriptor->berserk_leaf_index];
+	return NULL;
+}
+
+static dfunction_t *SV_VRMeleeQBJ3SoundFunction(void)
+{
+	const sv_vr_melee_qbj3_descriptor_t *descriptor = SV_VRMeleeQBJ3Descriptor();
+
+	return descriptor ? &qcvm->functions[descriptor->sound_index] : NULL;
+}
+
+static qboolean SV_VRMeleeQBJ3IdleThink(int think)
+{
+	const sv_vr_melee_qbj3_descriptor_t *descriptor = SV_VRMeleeQBJ3Descriptor();
+
+	return descriptor && think == descriptor->idle_index;
+}
+
+static qboolean SV_VRMeleeQBJ3DrawThink(int think)
+{
+	const sv_vr_melee_qbj3_descriptor_t *descriptor = SV_VRMeleeQBJ3Descriptor();
+
+	return descriptor && think == descriptor->draw_index;
+}
+
+static qboolean SV_VRMeleeQBJ3SkillButtonTouch(int touch)
+{
+	const sv_vr_melee_qbj3_descriptor_t *descriptor = SV_VRMeleeQBJ3Descriptor();
+
+	return descriptor && touch == descriptor->skillbutton_index;
 }
 
 static qboolean SV_VRMeleeEnyoProgs(void)
@@ -545,14 +645,13 @@ static qboolean SV_VRMeleeLocomotionThink(edict_t *player)
 	if (family == SV_VR_MELEE_FAMILY_HONEY)
 		return think == 318 || think == 319;
 	if (family == SV_VR_MELEE_FAMILY_QBJ3) {
-		if (think == 569 && SV_VRMeleeFunctionPin(569,
-			"weaponanim_idle_melee_loop", 18757, 0, 0, 0, NULL))
+		if (SV_VRMeleeQBJ3IdleThink(think))
 			return true;
 		/* The native draw loop deliberately leaves .think installed after
 		 * its frame>=10 early return. Unlike a due attack, calling this
 		 * terminal draw again cannot strike or schedule another callback. */
-		if (think == 575 && isfinite(player->v.weaponframe) && player->v.weaponframe >= 10 &&
-			SV_VRMeleeFunctionPin(575, "weaponanim_draw_loop", 19438, 0, 0, 0, NULL))
+		if (isfinite(player->v.weaponframe) && player->v.weaponframe >= 10 &&
+			SV_VRMeleeQBJ3DrawThink(think))
 			return true;
 		return false;
 	}
@@ -1092,7 +1191,11 @@ static qboolean SV_VRMeleeOutcome(edict_t *player, sv_vr_melee_subtype_t subtype
 			switchblock->_float = qcvm->time + recovery;
 			SV_StartSound(player, 1, "weapons/sword1.wav", 128, 1);
 		} else if (subtype == SV_VR_MELEE_QBJ3_WRENCH) {
-			quad = &qcvm->functions[595];
+			quad = SV_VRMeleeQBJ3SoundFunction();
+			if (!quad) {
+				SV_VRMeleeContextEnd(&saved, player);
+				return false;
+			}
 			PR_ExecuteProgram(quad - qcvm->functions);
 			SV_StartSound(player, 6, "impact/wrench_swing.wav", 255, 1);
 		} else if (subtype == SV_VR_MELEE_QBJ3_BERSERK) {
@@ -1394,9 +1497,14 @@ static qboolean SV_VRMeleeOutcome(edict_t *player, sv_vr_melee_subtype_t subtype
 		sv_vr_contact_call.active = false;
 		sv_vr_contact_call.force_miss = false;
 	} else {
-		leaf = &qcvm->functions[subtype == SV_VR_MELEE_QBJ3_WRENCH ? 485 :
-			subtype == SV_VR_MELEE_QBJ3_BERSERK ? 572 :
-			subtype == SV_VR_MELEE_BONK_HAMMER ? 471 : 347];
+		leaf = (subtype == SV_VR_MELEE_QBJ3_WRENCH ||
+			subtype == SV_VR_MELEE_QBJ3_BERSERK) ?
+			SV_VRMeleeQBJ3LeafFunction(subtype) :
+			&qcvm->functions[subtype == SV_VR_MELEE_BONK_HAMMER ? 471 : 347];
+		if (!leaf) {
+			SV_VRMeleeContextEnd(&saved, player);
+			return false;
+		}
 		if (!first_outcome || contact) /* Direct leaves need hostile on every hit. */
 			hostile->_float = qcvm->time + 1;
 		SV_VRMeleeLeafArgs(contact->ent, org, dir);
