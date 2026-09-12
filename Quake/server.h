@@ -522,6 +522,7 @@ int SV_VRContactProfile(void);
 void SV_VRContactAcceptLegacy(client_t *client, const usercmd_t *cmd);
 void SV_VRContactDrainLegacy(client_t *client);
 void SV_VRContactResetClient(client_t *client);
+void SV_VRContactResetProgs(void);
 void SV_VRContactProcessCommand(client_t *client, const usercmd_t *cmd);
 qboolean SV_VRContactFindAllows(edict_t *candidate, int field, const char *match);
 qboolean SV_VRContactNormalize(void);

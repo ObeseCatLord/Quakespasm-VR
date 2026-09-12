@@ -1338,6 +1338,8 @@ void PR_SwitchQCVM(qcvm_t *nvm)
 void PR_ClearProgs(qcvm_t *vm)
 {
 	qcvm_t *oldvm = qcvm;
+	if (vm == &sv.qcvm)
+		SV_VRContactResetProgs();
 	if (!vm->progs)
 		return;	//wasn't loaded.
 	qcvm = NULL;

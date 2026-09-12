@@ -183,6 +183,13 @@ a received sample below 0.1 m/s after a consumed stroke. Unfinished strokes
 retain their accumulated motion until speed falls below 0.05 m/s; a parry also
 requires a later received sample below that lower threshold. Keep classification in sync with
 this gate, while preserving the separate Bonk charge tiers and native cooldowns.
+Completed strokes may also rearm on a greater-than-120-degree reversal of the
+same endpoint used for their last outcome. The reversal sample resets effort;
+that endpoint must supply at least half the dominant endpoint displacement,
+so pivot jitter at a nearly stationary tip cannot reset a continuing stroke.
+only subsequent samples earn the new stroke's arc. This does not bypass parry
+recovery or native attack readiness. Test continuous punches with no sampled
+low-speed pose, not only artificial stop/start sequences.
 Keep physical melee base/tip positions raw and calibrated too: do not feed
 collision-retracted display or ordinary firing-muzzle positions back into the
 physical sweep. Otherwise wall retraction itself can become a false stroke.
@@ -195,6 +202,25 @@ ordering (near guard versus farther body) distinct from temporal ordering
 between sampled sweeps. An assisted hit has time 1; callbacks cannot reopen an
 earlier part of the stroke. Preserve the native player hull: comfort reach is
 not a reason to change movement, floor support, or which gaps a player fits.
+Automatic reach (`-1`) is bounded by the selected weapon's native acquisition
+extent and source. Derive numeric geometry from the pinned compiled attack
+expressions where possible; do not guess reach from mesh scale or a weapon name.
+The extraction recognizer must reject ambiguous control flow and mutable
+temporaries, and reset its program-local cache whenever server QuakeC reloads.
+Area acquisitions, changing modes, and secondary lightning/projectile traces
+need their own audited selection rules, not a largest-number scan.
+Directional assistance uses controller-forward and the actual moving endpoint's
+trajectory. Compare unequal rays by world distance, never trace fraction; an
+assisted parry must not be bypassed by an alternate candidate ray.
+Endpoint-origin assistance also tests defending blades between the grip and
+impact; a cutting point already beyond a guard is not permission to bypass it.
+
+Quake VR is not evidence for shrinking the normal horizontal player footprint:
+its `QC/client.qc` uses `(-16,-16,-24)` to `(16,16,26)`, retaining the usual
+32-by-32 footprint and bottom. Its `SV_HullForEntity` still selects the standard
+BSP player hull for that width. Separate hand-contact traces are interactions,
+not a replacement movement hull or a special narrow-body/wide-feet solver.
+Keep movement/floor support independent of weapon assistance here as well.
 
 Embedded physical edges also work with assistance disabled. If a point trace
 starts inside a collider, recover its entry surface from the grip (then the

@@ -173,7 +173,7 @@ cvar_t sv_vr_jump_velocity = {"sv_vr_jump_velocity", "297", CVAR_NOTIFY | CVAR_S
 cvar_t sv_skyroom_pvs = {"sv_skyroom_pvs", "1", CVAR_NONE};
 /* Auto enables local singleplayer; network servers retain explicit opt-in. */
 cvar_t sv_immersive_melee = {"sv_immersive_melee", "-1", CVAR_NOTIFY | CVAR_SERVERINFO};
-cvar_t sv_melee_hitassist = {"sv_melee_hitassist", "8", CVAR_NOTIFY | CVAR_SERVERINFO};
+cvar_t sv_melee_hitassist = {"sv_melee_hitassist", "-1", CVAR_NOTIFY | CVAR_SERVERINFO};
 cvar_t sv_weapon_collision = {"sv_weapon_collision", "-1", CVAR_NOTIFY | CVAR_SERVERINFO};
 
 //============================================================================
