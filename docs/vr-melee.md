@@ -179,7 +179,9 @@ Weapon changes, death, reconnects, mod changes, lost tracking and explicit view
 rebases must not connect two unrelated samples into a damaging long sweep.
 Physical speed must exclude locomotion, snap turns and visual retraction.
 The ordinary stroke gate is 0.1 m/s and 1 cm of physical motion; rearm requires
-a received sample below 0.05 m/s. Keep parry stroke classification in sync with
+a received sample below 0.1 m/s after a consumed stroke. Unfinished strokes
+retain their accumulated motion until speed falls below 0.05 m/s; a parry also
+requires a later received sample below that lower threshold. Keep classification in sync with
 this gate, while preserving the separate Bonk charge tiers and native cooldowns.
 Keep physical melee base/tip positions raw and calibrated too: do not feed
 collision-retracted display or ordinary firing-muzzle positions back into the
@@ -193,6 +195,14 @@ ordering (near guard versus farther body) distinct from temporal ordering
 between sampled sweeps. An assisted hit has time 1; callbacks cannot reopen an
 earlier part of the stroke. Preserve the native player hull: comfort reach is
 not a reason to change movement, floor support, or which gaps a player fits.
+
+Embedded physical edges also work with assistance disabled. If a point trace
+starts inside a collider, recover its entry surface from the grip (then the
+eye if necessary), verify that collider contains the original edge point, and
+retain world and guard ordering. Do not use a reversed far-end ray to decide
+parry precedence. Recovered temporal overlap occurs at the remaining interval's
+start, not at a fraction of the recovery ray. A blade clipping a wall may hit
+that wall; it must not hit an actor through it or from an invalid grip in solid.
 
 Do not invent another packet stream or bypass accepted-command processing.
 Check legacy input and PMove, held/latched buttons, queued commands, stale input

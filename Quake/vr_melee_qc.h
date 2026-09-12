@@ -473,7 +473,9 @@ static qboolean SV_VRMeleeQBJ3BerserkActive(edict_t *player)
 		!isfinite(finished->_float))
 		return false;
 	bits = (int)items_qbj->_float;
-	return (bits & 4) != 0 || finished->_float > qcvm->time;
+	/* Compare at QuakeC precision, just like its `finished > time` test.
+	 * A timer written this tick must not become future solely by float rounding. */
+	return (bits & 4) != 0 || finished->_float > (float)qcvm->time;
 }
 
 static qboolean SV_VRMeleeBonkModel(edict_t *player)
