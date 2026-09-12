@@ -5315,7 +5315,7 @@ static const vr_qbj3_weapon_default_t vr_qbj3_weapon_defaults[] = {
      "held_offset 3.388845 37.75988 56.43581\n"
      "muzzle_offset -9.11632 9.013277 -45.533\n"
      "mp_held_offset 0 0 0\n"
-     "mp_muzzle_offset 8.531928 5.180611 -8.759525\n"},
+     "mp_muzzle_offset 2.606718 -2.808319 -7.51659\n"},
     {"progs/v_flakshotgun.mdl",
      "bitmask 2\nmodel progs/v_flakshotgun.mdl\nimpulse 3\nscale 1\n"
      "offset 0 0 0\nowned_stat items\nowned_mask 2\n"
@@ -6269,6 +6269,46 @@ qboolean VR_IsAkimboViewEntity(const entity_t *ent) {
   return ent == &vr_akimbo_entities[0] || ent == &vr_akimbo_entities[1];
 }
 
+/* Sound packets arrive outside renderer model preparation. Query only the
+ * current, already drawn pair; never load models from the haptic callback. */
+qboolean VR_AkimboHapticsActive(void) {
+  const vr_akimbo_model_t *def = VR_AkimboModelDefinition();
+  if (!def || !vr_enabled.value || !vr_akimbo.value ||
+      (VR_GameDirIs("qbj3") && !vr_qbj3_akimbo.value) || !*def->supported ||
+      (int)vr_aimmode.value != VR_AIMMODE_CONTROLLER ||
+      cls.state != ca_connected || cls.signon != SIGNONS ||
+      cl.stats[STAT_HEALTH] <= 0 || cl.intermission ||
+      VR_AdjustmentVisualsActive() || !VR_VRIKControllerTracked(0) ||
+      !VR_VRIKControllerTracked(1) || cl.viewent.model->type != mod_alias ||
+      cl.viewent.frame < 0 || cl.viewent.frame >= def->frames)
+    return false;
+  if (!Cache_Check(&cl.viewent.model->cache))
+    return false;
+  /* The resident block begins with the model cache directory, not a header.
+   * With residency established, this accessor cannot invoke a model load. */
+  aliashdr_t *source = (aliashdr_t *)Mod_Extradata(cl.viewent.model);
+  if (!source || source->poseverttype != ALIAS_POSE_MDL ||
+      source->numverts != def->vertices || source->numframes != def->frames)
+    return false;
+  for (int hand = 0; hand < 2; ++hand) {
+    qmodel_t *model = vr_akimbo_entities[hand].model;
+    char generated[MAX_QPATH];
+    q_snprintf(generated, sizeof(generated), "vr/%s/%s", def->game, def->halves[hand]);
+    if (!model || model->type != mod_alias ||
+        (strcmp(model->name, def->halves[hand]) && strcmp(model->name, generated)))
+      return false;
+    if (!Cache_Check(&model->cache))
+      return false;
+    aliashdr_t *hdr = (aliashdr_t *)Mod_Extradata(model);
+    if (!hdr || hdr->poseverttype != ALIAS_POSE_MDL ||
+        hdr->numframes != def->frames || hdr->numverts != def->half_vertices[hand] ||
+        !VectorCompare(hdr->original_scale, source->original_scale) ||
+        !VectorCompare(hdr->original_scale_origin, source->original_scale_origin))
+      return false;
+  }
+  return true;
+}
+
 qboolean VR_UseAkimboClassicViewModel(const entity_t *ent) {
   qmodel_t *models[2];
   aliashdr_t *headers[2];
@@ -6673,7 +6713,13 @@ typedef struct vr_immersive_melee_profile_s {
    * physical edge is admitted only after that animation has settled at its
    * source-defined ready pose. */
   qboolean native_animation = false;
+  qboolean authored_left_hand = false;
+  const float *grip_raw = NULL;
 } vr_immersive_melee_profile_t;
+
+/* Seven unique hand/tool-interface points in the pinned ready-pose mesh.
+ * Keep the compressed-coordinate centroid independent of held scale. */
+static const vec3_t vr_qbj3_wrench_grip = {158.428571f, 151.0f, 148.714286f};
 
 /* The virtual names are generated only from their pinned sources by the model
  * loader. Their actual loaded bytes are checked again here, so a loose
@@ -6753,7 +6799,8 @@ static const vr_immersive_melee_profile_t vr_immersive_melee_profiles[] = {
    ALIAS_POSE_MDL, 0, 0, true, true},
   {VR_WEAPON_CONTACT_PROFILE_QBJ3, "progs/v_wrench.mdl",
    "vr/qbj3/progs/v_wrench_vr_dominant.mdl",
-   702244, 0x1bfff189u, 565, 540, 71, 10, 320, 358},
+   702244, 0x1bfff189u, 565, 540, 71, 10, 320, 358,
+   ALIAS_POSE_MDL, 0, 0, false, false, true, vr_qbj3_wrench_grip},
   {VR_WEAPON_CONTACT_PROFILE_ENYO, "progs/ee_v_sword.mdl",
    "vr/enyo/progs/ee_v_sword_vr_dominant.mdl",
    344020, 0xa707a071u, 669, 679, 35, 0, 13, 77},
@@ -6845,6 +6892,29 @@ static const vr_immersive_melee_profile_t vr_immersive_melee_profiles[] = {
    "vr/bonkjam/progs/v_hammer_mace_vr_dominant.mdl",
    1193372, 0x413cf48au, 878, 1119, 255, 0, 159, 152}
 };
+
+qboolean VR_ViewmodelMirrored(const entity_t *ent) {
+  if (ent != &cl.viewent)
+    return false;
+  /* During tracked rendering cl.viewent temporarily names the verified
+   * generated mesh. No cache lookup/loading is allowed inside the renderer. */
+  if (ent->model)
+    for (const auto &profile : vr_immersive_melee_profiles)
+      if (profile.authored_left_hand && profile.held_name &&
+          !strcmp(ent->model->name, profile.held_name) &&
+          ent->model->immersive_mdl_size == profile.held_size &&
+          ent->model->immersive_mdl_crc32 == profile.held_crc32)
+        return !VR_IsLeftHanded();
+  return VR_IsLeftHanded();
+}
+
+static void VR_ImmersiveMeleeModelTransform(
+    const vr_immersive_melee_profile_t *profile, aliashdr_t *hdr) {
+  Mod_Weapon(cl.viewent.model, hdr);
+  if (profile->grip_raw)
+    for (int axis = 0; axis < 3; ++axis)
+      hdr->scale_origin[axis] = -profile->grip_raw[axis] * hdr->scale[axis];
+}
 
 /* Identity and immutable source checks are deliberately separate from native
  * animation readiness: a known Scimitar/Mace must keep its authored trigger
@@ -6985,7 +7055,7 @@ static void VR_GetRawWeaponEdge(vec3_t base, vec3_t tip) {
     vec3_t modelangles, local, world, origin;
     /* Use the original source model's user calibration entry, not the
      * generated virtual pathname. */
-    Mod_Weapon(cl.viewent.model, hdr);
+    VR_ImmersiveMeleeModelTransform(profile, hdr);
     VR_HandRotToViewmodelAngles(cl.handrot[1], modelangles);
     VectorAdd(cl.handpos[1], cl.vmeshoffset, origin);
     /* Source-verified ready-pose cutting edge, never hand/arm vertices. */
@@ -6999,7 +7069,8 @@ static void VR_GetRawWeaponEdge(vec3_t base, vec3_t tip) {
             ((const trivertx_t *)vertices)[vertex].v[axis];
         local[axis] = coordinate * hdr->scale[axis] + hdr->scale_origin[axis];
       }
-      VR_ModelOffsetToWorld(local, modelangles, 1, VR_IsLeftHanded(), world);
+      VR_ModelOffsetToWorld(local, modelangles, 1,
+          VR_IsLeftHanded() != profile->authored_left_hand, world);
       VectorAdd(origin, world, point ? tip : base);
     }
   } else {
@@ -7215,7 +7286,7 @@ qboolean VR_DrawTrackedViewModel(void) {
     held.lerpflags |= LERP_RESETANIM;
     /* Generated dominant models inherit the source model's existing user
      * held scale/offset slot. Do not create a virtual-path calibration. */
-    Mod_Weapon(cl.viewent.model, held_header);
+    VR_ImmersiveMeleeModelTransform(profile, held_header);
   }
   VR_GetRawWeaponEdge(base, tip);
   if (VR_GetWeaponCollisionOffset(1, base, tip, delta))
@@ -7262,6 +7333,15 @@ static qboolean VR_AdjustCanStart(void) {
 static void VR_AdjustBegin(vr_adjust_mode_t mode) {
   const char *id;
   aliashdr_t *hdr;
+
+  const vr_immersive_melee_profile_t *melee =
+      VR_ImmersiveMeleeProfileIdentity(NULL, NULL);
+  if (melee && melee->grip_raw) {
+    Con_Printf("This immersive melee grip is centered on the controller. "
+        "Held scale is retained; disable vr_immersive_melee to adjust the "
+        "original two-handed model's offsets.\n");
+    return;
+  }
 
   const vr_akimbo_model_t *def = VR_AkimboModelDefinition();
   if (def && def->fists && def->fists->center_on_controller) {
@@ -10049,9 +10129,36 @@ void VR_AddOrientationToViewAngles(vec3_t angles) {
   angles[ROLL] = orientation[ROLL];
 }
 
+/* Keep each pointer on the same per-hand ray used for networked akimbo fire.
+ * Resolve poses before changing GL state: loading a split model can upload
+ * textures and must not run inside the crosshair drawing state. */
+static int VR_GetCrosshairRays(vec3_t starts[2], vec3_t directions[2]) {
+  vec3_t right, up;
+  if ((int)vr_aimmode.value == VR_AIMMODE_CONTROLLER) {
+    vec3_t angles[2];
+    if (VR_GetAkimboPoses(starts, angles, NULL)) {
+      for (int hand = 0; hand < 2; ++hand)
+        AngleVectors(angles[hand], directions[hand], right, up);
+      return 2;
+    }
+    VR_GetMuzzleAdjustedHandPos(starts[0]);
+    AngleVectors(cl.handrot[1], directions[0], right, up);
+    if (weaponCVarEntry >= 0 && !VR_IsMuzzleAdjustMode()) {
+      vec3_t source_comp;
+      if (VR_GetMuzzleSourceCompensation(weaponCVarEntry, cl.handrot[1],
+                                       source_comp))
+        VectorAdd(starts[0], source_comp, starts[0]);
+    }
+  } else {
+    VectorCopy(cl.viewent.origin, starts[0]);
+    starts[0][2] -= cl.viewheight - 10;
+    AngleVectors(cl.aimangles, directions[0], right, up);
+  }
+  return 1;
+}
+
 void VR_ShowCrosshair() {
-  vec3_t forward, up, right;
-  vec3_t start, end, impact;
+  vec3_t starts[2], directions[2], end, impact;
   float size, alpha, pixel_size;
 
   // leads to exception in multiplayer
@@ -10075,6 +10182,8 @@ void VR_ShowCrosshair() {
     return;
   }
 
+  int ray_count = VR_GetCrosshairRays(starts, directions);
+
   // setup gl
   glDisable(GL_DEPTH_TEST);
   glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
@@ -10084,68 +10193,48 @@ void VR_ShowCrosshair() {
   glDisable(GL_TEXTURE_2D);
   glDisable(GL_CULL_FACE);
 
-  // calc the line and draw
-  // TODO: Make the laser align correctly
-  if (vr_aimmode.value == VR_AIMMODE_CONTROLLER) {
-    vec3_t muzzles[2], angles[2];
-    qboolean akimbo = VR_GetAkimboPoses(muzzles, angles, NULL);
-    if (akimbo) {
-      VectorCopy(muzzles[VR_IsLeftHanded() ? 0 : 1], start);
-    } else {
-      VR_GetMuzzleAdjustedHandPos(start);
-    }
-    AngleVectors(cl.handrot[1], forward, right, up);
-    if (!akimbo && weaponCVarEntry >= 0 && !VR_IsMuzzleAdjustMode()) {
-      vec3_t source_comp;
+  for (int ray = 0; ray < ray_count; ++ray) {
+    float *start = starts[ray];
+    float *forward = directions[ray];
+    switch ((int)vr_crosshair.value) {
+    default:
+    case VR_CROSSHAIR_POINT:
+      if (vr_crosshair_depth.value <= 0) {
+        // trace to first wall
+        VectorMA(start, 4096, forward, end);
 
-      if (VR_GetMuzzleSourceCompensation(weaponCVarEntry, cl.handrot[1],
-                                         source_comp))
-        VectorAdd(start, source_comp, start);
-    }
-  } else {
-    VectorCopy(cl.viewent.origin, start);
-    start[2] -= cl.viewheight - 10;
-    AngleVectors(cl.aimangles, forward, right, up);
-  }
+        end[2] += vr_crosshairy.value;
+        TraceLine(start, end, impact);
+      } else {
+        // fix crosshair to specific depth
+        VectorMA(start, vr_crosshair_depth.value * meters_to_units, forward,
+                 impact);
+      }
 
-  switch ((int)vr_crosshair.value) {
-  default:
-  case VR_CROSSHAIR_POINT:
-    if (vr_crosshair_depth.value <= 0) {
-      // trace to first wall
+      glEnable(GL_POINT_SMOOTH);
+      glColor4f(1, 0, 0, alpha);
+      glPointSize(pixel_size);
+
+      glBegin(GL_POINTS);
+      glVertex3f(impact[0], impact[1], impact[2]);
+      glEnd();
+      glDisable(GL_POINT_SMOOTH);
+      break;
+
+    case VR_CROSSHAIR_LINE:
+      // trace to first entity
       VectorMA(start, 4096, forward, end);
-
-      end[2] += vr_crosshairy.value;
       TraceLine(start, end, impact);
-    } else {
-      // fix crosshair to specific depth
-      VectorMA(start, vr_crosshair_depth.value * meters_to_units, forward,
-               impact);
+
+      glColor4f(1, 0, 0, alpha);
+      glLineWidth(pixel_size * 2.0f);
+      glBegin(GL_LINES);
+      impact[2] += vr_crosshairy.value * 10.f;
+      glVertex3f(start[0], start[1], start[2]);
+      glVertex3f(impact[0], impact[1], impact[2]);
+      glEnd();
+      break;
     }
-
-    glEnable(GL_POINT_SMOOTH);
-    glColor4f(1, 0, 0, alpha);
-    glPointSize(pixel_size);
-
-    glBegin(GL_POINTS);
-    glVertex3f(impact[0], impact[1], impact[2]);
-    glEnd();
-    glDisable(GL_POINT_SMOOTH);
-    break;
-
-  case VR_CROSSHAIR_LINE:
-    // trace to first entity
-    VectorMA(start, 4096, forward, end);
-    TraceLine(start, end, impact);
-
-    glColor4f(1, 0, 0, alpha);
-    glLineWidth(pixel_size * 2.0f);
-    glBegin(GL_LINES);
-    impact[2] += vr_crosshairy.value * 10.f;
-    glVertex3f(start[0], start[1], start[2]);
-    glVertex3f(impact[0], impact[1], impact[2]);
-    glEnd();
-    break;
   }
 
   // cleanup gl

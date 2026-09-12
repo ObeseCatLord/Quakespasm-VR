@@ -64,14 +64,14 @@ static qboolean r_alias_batch_scope;
 static qboolean r_alias_glsl_batch_active;
 static qmodel_t *r_alias_glsl_batch_model;
 
-/* The held model's mesh is authored for the right hand.  Reflect it in model
+/* Reflect the held model for its authored hand in model
  * space after the entity pose but before its header offset, so that offset is
  * reflected with the mesh too.  This deliberately keys on cl.viewent rather
  * than a viewmodel/no-cull flag: weapon-wheel entries also use that path. */
 static qboolean R_ApplyLeftHandedViewmodelMirror (const entity_t *e,
 	GLint *savedfrontface)
 {
-	if (!vr_enabled.value || !VR_IsLeftHanded() || e != &cl.viewent)
+	if (!vr_enabled.value || !VR_ViewmodelMirrored(e))
 		return false;
 
 	glGetIntegerv (GL_FRONT_FACE, savedfrontface);

@@ -625,6 +625,16 @@ static float SV_VRContactDistance(const vec3_t a, const vec3_t b) {
   return sqrtf(DotProduct(d, d));
 }
 
+/* A short, deliberate physical stroke should be enough to commit an authored
+ * melee attack. Keep rest/rearm below activation so slow deliberate motion
+ * can accumulate instead of resetting the stroke on every command. */
+#define SV_VR_CONTACT_STRIKE_SPEED .1f
+#define SV_VR_CONTACT_STRIKE_ARC .01f
+#define SV_VR_CONTACT_REST_SPEED .05f
+/* Only reject unchanged geometry, not a second rate/world-scale-dependent
+ * minimum swing speed. Contact endpoints are transmitted as floats. */
+#define SV_VR_CONTACT_MOTION_EPSILON .0001f
+
 /* Physical metres and metres/second, independent of world scale, locomotion
  * or collision retraction. Bonk's original three tiers remain QC-owned.
  * The chosen tier is committed at the first outcome, not upgraded on a
@@ -1176,8 +1186,9 @@ void SV_VRContactProcessCommand(client_t *client, const usercmd_t *cmd) {
      * gun pokes, resting guards and already-consumed swings still use their
      * existing world/button sweep without O(players) defensive traces. */
     test_parry = !s->consumed[hand] && !s->parry_rearm[hand] &&
-        s->arc[hand] + (c->speed[hand] >= .5f && distance > .05f ?
-            c->speed[hand] * dt : 0) >= .045f;
+        s->arc[hand] + (c->speed[hand] >= SV_VR_CONTACT_STRIKE_SPEED &&
+            endpoint_motion > SV_VR_CONTACT_MOTION_EPSILON ? c->speed[hand] * dt : 0) >=
+        SV_VR_CONTACT_STRIKE_ARC;
     hit = SV_VRContactSweep(p, &s->previous, c, hand, test_parry,
         s->hit_entities[hand], s->hit_count[hand], 0, &contact_time,
         &parry_client, &parry_hand);
@@ -1224,7 +1235,8 @@ void SV_VRContactProcessCommand(client_t *client, const usercmd_t *cmd) {
       s->consumed[hand] = true;
       s->authorized[hand] = false;
       s->hit_count[hand] = 0;
-      if (cmd->vr_contact_received > s->parry_received[hand] && c->speed[hand] < .25f) {
+      if (cmd->vr_contact_received > s->parry_received[hand] &&
+          c->speed[hand] < SV_VR_CONTACT_REST_SPEED) {
         s->parry_rearm[hand] = false;
         s->consumed[hand] = false;
       }
@@ -1235,7 +1247,8 @@ void SV_VRContactProcessCommand(client_t *client, const usercmd_t *cmd) {
      * dividing it by a fixed units/metre constant changes the effort needed
      * whenever the client changes vr_world_scale. A stationary blade cannot
      * accumulate a swing from a stale nonzero speed sample. */
-    if (c->speed[hand] >= .5f && distance > .05f) {
+    if (c->speed[hand] >= SV_VR_CONTACT_STRIKE_SPEED &&
+        endpoint_motion > SV_VR_CONTACT_MOTION_EPSILON) {
       s->arc[hand] += c->speed[hand] * dt;
       s->peak_speed[hand] = q_max(s->peak_speed[hand], c->speed[hand]);
     }
@@ -1244,8 +1257,9 @@ void SV_VRContactProcessCommand(client_t *client, const usercmd_t *cmd) {
     VectorCopy(cmd->vr_akimbo_active ? cmd->vr_akimbo_angles[hand] :
         cmd->vr_handrot, aim);
     for (int contact_number = 0; contact_number < 2 && !s->consumed[hand] &&
-        s->arc[hand] >= .045f &&
-        (hit.fraction < 1 || parry_client >= 0 || c->speed[hand] < .25f);
+        s->arc[hand] >= SV_VR_CONTACT_STRIKE_ARC &&
+        (hit.fraction < 1 || parry_client >= 0 ||
+         c->speed[hand] < SV_VR_CONTACT_REST_SPEED);
         contact_number++) {
       qboolean first = !s->authorized[hand];
       int target = hit.ent ? NUM_FOR_EDICT(hit.ent) : 0;
@@ -1294,7 +1308,7 @@ void SV_VRContactProcessCommand(client_t *client, const usercmd_t *cmd) {
             /* An idle guard is not an attack and incurs no invented cooldown.
              * Cancel only an opponent's already-moving physical stroke. */
             if (opponent->arc[parry_hand] > 0 ||
-                opponent->previous.speed[parry_hand] >= .5f) {
+                opponent->previous.speed[parry_hand] >= SV_VR_CONTACT_STRIKE_SPEED) {
               opponent->consumed[parry_hand] = true;
               opponent->parry_rearm[parry_hand] = true;
               opponent->parry_received[parry_hand] = realtime;
@@ -1325,7 +1339,7 @@ void SV_VRContactProcessCommand(client_t *client, const usercmd_t *cmd) {
             s->hit_entities[hand], s->hit_count[hand], contact_time, &contact_time,
             &parry_client, &parry_hand);
     }
-    if (c->speed[hand] < .25f && !s->parry_rearm[hand]) {
+    if (c->speed[hand] < SV_VR_CONTACT_REST_SPEED && !s->parry_rearm[hand]) {
       s->arc[hand] = 0;
       s->peak_speed[hand] = 0;
       s->consumed[hand] = false;
