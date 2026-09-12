@@ -153,6 +153,12 @@ to lie at its tip. Verify bounds visually on model-only renders and numerically
 after held-model calibration. Do not use weapon-wheel display scale. Test
 left-handed mirroring and both controllers for paired weapons.
 
+Record the retained hand's anatomical handedness, not just which side of the
+source mesh it occupied. QBJ3's split wrench retains a left hand: its renderer
+and raw contact edge use the same handedness XOR and scale-independent raw
+grip centroid. Controller-locked grips must share one transform between render
+and contact; do not independently rewrite the user's original model offsets.
+
 Keep supported identity distinct from readiness: an animation passing through
 frame zero is not necessarily ready for a physical swing. Native-trigger
 hybrids must keep their animations. Use canonical alias animation state via
@@ -172,6 +178,9 @@ Reuse the existing contact history and movement-discontinuity lifecycle.
 Weapon changes, death, reconnects, mod changes, lost tracking and explicit view
 rebases must not connect two unrelated samples into a damaging long sweep.
 Physical speed must exclude locomotion, snap turns and visual retraction.
+The ordinary stroke gate is 0.1 m/s and 1 cm of physical motion; rearm requires
+a received sample below 0.05 m/s. Keep parry stroke classification in sync with
+this gate, while preserving the separate Bonk charge tiers and native cooldowns.
 Keep physical melee base/tip positions raw and calibrated too: do not feed
 collision-retracted display or ordinary firing-muzzle positions back into the
 physical sweep. Otherwise wall retraction itself can become a false stroke.

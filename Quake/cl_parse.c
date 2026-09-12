@@ -382,6 +382,23 @@ static qboolean CL_IsLocalPlayerHapticSound (int ent, int channel,
 		!CL_IsExcludedLocalHapticSample (channel, sample);
 }
 
+/* Sound parsing must not load or regenerate models.  The VR-side query is a
+ * residency-only snapshot of the currently active paired viewmodel; it keeps
+ * this packet path independent of VR_GetAkimboPoses and its model setup. */
+static void CL_TriggerLocalPlayerSoundHaptic (int ent, int channel,
+	const char *sample)
+{
+	if (!vr_enabled.value || !vr_haptic.value ||
+		!CL_IsLocalPlayerHapticSound (ent, channel, sample))
+		return;
+	/* Every eligible interaction retains its established dominant pulse. A
+	 * confirmed paired viewmodel adds one logical off-hand pulse; ordinary guns
+	 * still receive exactly one pulse. */
+	VR_TriggerHaptic (1, 0.005f);
+	if (VR_AkimboHapticsActive ())
+		VR_TriggerHaptic (0, 0.005f);
+}
+
 void CL_ParseStartSoundPacket(void)
 {
 	vec3_t	pos;
@@ -434,10 +451,8 @@ void CL_ParseStartSoundPacket(void)
 	for (i = 0; i < 3; i++)
 		pos[i] = MSG_ReadCoord (cl.protocolflags);
 
-	if (vr_enabled.value && vr_haptic.value &&
-		CL_IsLocalPlayerHapticSound (ent, channel,
-			cl.sound_precache[sound_num] ? cl.sound_precache[sound_num]->name : NULL))
-		VR_TriggerHaptic (1, 0.005f);
+	CL_TriggerLocalPlayerSoundHaptic (ent, channel,
+		cl.sound_precache[sound_num] ? cl.sound_precache[sound_num]->name : NULL);
 
 	S_StartSound (ent, channel, cl.sound_precache[sound_num], pos, volume/255.0, attenuation);
 }

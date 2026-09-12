@@ -102,6 +102,8 @@ extern int vr_weaponmenu_selection_type;
 void VR_TriggerHaptic(int controller, float durationSeconds);
 /* Anatomical left=0/right=1, independent of the dominant-hand setting. */
 qboolean VR_GetAkimboPoses(vec3_t muzzle[2], vec3_t angles[2], qboolean *berserk);
+qboolean VR_AkimboHapticsActive(void);
+qboolean VR_ViewmodelMirrored(const entity_t *ent);
 qboolean VR_DrawAkimboViewModels(void);
 qboolean VR_ImmersiveMeleeActive(void);
 qboolean VR_ImmersiveMeleeSuppressTrigger(void);

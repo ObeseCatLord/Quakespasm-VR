@@ -83,6 +83,18 @@ lighter tap or a larger swing to choose its original charge tiers, and retains
 its floor hop and airborne missed-swing dash. QBJ3's two physical fists also
 require `sv_akimbo 1`.
 
+A short, light stroke is sufficient: ordinary physical attacks qualify at
+0.1 m/s with 1 cm of accumulated physical motion. Resting contact does not
+repeatedly attack; the mod's recovery time and the gesture rearm still apply.
+Bonk's medium/full charge thresholds are unchanged. A received sample below
+0.05 m/s rearms a completed stroke; slower deliberate strokes are not mistaken
+for rest while they accumulate toward a hit.
+
+In immersive mode, QBJ3's split wrench is centered on its retained grip and
+mirrored for the selected hand. Its configured weapon scale is retained; the
+original two-handed model's positional offsets are not applied to that grip.
+Disable immersive melee to adjust the original model with `vradjustweapon`.
+
 Chainsaws remain trigger-operated: no manual swing is required, and their
 native attack cadence and release behavior are retained. They still participate
 in general weapon collision and touch-button poking when enabled.

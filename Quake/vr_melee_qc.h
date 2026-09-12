@@ -1457,6 +1457,17 @@ static qboolean SV_VRMeleeOutcome(edict_t *player, sv_vr_melee_subtype_t subtype
 	/* Direct leaves retain the original explicit contact convention. */
 	VectorCopy(contact->endpos, org);
 	VectorMA(org, -4, forward, org);
+	/* QBJ3's forward fan backs its sparks away along aim. A physical wrench
+	 * or fist can hit sideways while aim points away from the wall, placing
+	 * that same effect inside solid. Keep its native effect/damage leaf, but
+	 * offset nondamageable brush impacts along the accepted surface normal. */
+	if ((subtype == SV_VR_MELEE_QBJ3_WRENCH ||
+		subtype == SV_VR_MELEE_QBJ3_BERSERK) &&
+		!contact->ent->v.takedamage && contact->ent->v.solid == SOLID_BSP &&
+		SV_VRMeleeFiniteVector(contact->plane.normal) &&
+		DotProduct(contact->plane.normal, contact->plane.normal) > .5f &&
+		DotProduct(contact->plane.normal, contact->plane.normal) < 1.5f)
+		VectorMA(contact->endpos, 4, contact->plane.normal, org);
 	VectorScale(right, 20, dir);
 	VectorMA(dir, -5, up, dir);
 	SV_VRMeleeTraceGlobals(contact); /* QBJ3 hitwrench reads trace_ent too. */
