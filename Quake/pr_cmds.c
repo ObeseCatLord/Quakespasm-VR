@@ -270,6 +270,7 @@ static void PF_makevectors (void)
 		return;
 	AngleVectors (G_VECTOR(OFS_PARM0), pr_global_struct->v_forward,
 		pr_global_struct->v_right, pr_global_struct->v_up);
+	SV_QBJ3ShotgunSpreadBasis(G_VECTOR(OFS_PARM0));
 }
 
 static void SV_DebugLogSetOrigin (edict_t *ent, const vec3_t oldorg,

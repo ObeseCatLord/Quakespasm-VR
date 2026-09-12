@@ -1009,10 +1009,10 @@ static void SV_VRContactCorpses(edict_t *player, vec3_t start,
   }
 }
 
-static trace_t SV_VRContactSweep(edict_t *p, const vr_weapon_contact_t *old,
+static trace_t SV_VRContactSweepQuery(edict_t *p, const vr_weapon_contact_t *old,
     const vr_weapon_contact_t *now, int hand, qboolean test_parry,
     const int *hit_entities, int hit_count, float min_time, float *event_time,
-    int *parry_client, int *parry_hand) {
+    int *parry_client, int *parry_hand, qboolean current_only) {
   vec3_t eye, grip, a, b;
   trace_t result, trace, reach;
   sv_vr_defending_blade_t blades[MAX_SCOREBOARD * 2];
@@ -1046,7 +1046,7 @@ static trace_t SV_VRContactSweep(edict_t *p, const vr_weapon_contact_t *old,
     return result;
   /* Current blade, plus bounded sweeps of points along it. All points use the
    * same current body translation, so walking itself is not a swing. */
-  for (int i = -1; i <= steps; i++) {
+  for (int i = -1; i <= (current_only ? -1 : steps); i++) {
     for (int axis = 0; axis < 3; axis++) {
       float t = i < 0 ? 0 : (float)i / steps;
       a[axis] = p->v.origin[axis] + (i < 0 ? now->base[hand][axis] :
@@ -1063,26 +1063,36 @@ static trace_t SV_VRContactSweep(edict_t *p, const vr_weapon_contact_t *old,
       continue;
     if (authored_corpses)
       SV_VRContactCorpses(p, a, b, &trace);
+    float nearest_guard = 2;
+    int guard = -1;
     for (int blade = 0; blade < numblades; blade++) {
       vec3_t point, delta;
       float entry = SV_VRContactCapsuleFraction(a, b,
           blades[blade].base, blades[blade].tip, 4);
-      float contact_time = i < 0 ? 1 : min_time + (1 - min_time) * entry;
-      /* Ordinary world/body contact wins numerical ties. A different blade
-       * point's earlier body hit also wins via the shared first_time. */
+      /* First resolve spatial ordering within this ray. Current-segment
+       * contacts all happen at time 1, but a body behind a guard must not
+       * overwrite that nearer guard merely because their times are equal. */
       if (entry > 1 || entry >= trace.fraction - .00001f ||
-          contact_time >= first_time - .00001f)
+          entry >= nearest_guard)
         continue;
       VectorSubtract(b, a, delta);
       VectorMA(a, entry, delta, point);
       reach = SV_Move(grip, vec3_origin, vec3_origin, point, MOVE_NOMONSTERS, p);
       if (reach.startsolid || reach.allsolid || reach.fraction < 1)
         continue;
-      memset(&result, 0, sizeof(result));
-      result.fraction = 1; /* Never pass a defending player as a QC damage hit. */
-      first_time = contact_time;
-      *parry_client = blades[blade].client;
-      *parry_hand = blades[blade].hand;
+      nearest_guard = entry;
+      guard = blade;
+    }
+    if (guard >= 0) {
+      float contact_time = i < 0 ? 1 : min_time + (1 - min_time) * nearest_guard;
+      if (contact_time < first_time - .00001f) {
+        memset(&result, 0, sizeof(result));
+        result.fraction = 1; /* A parry is never a QC body damage hit. */
+        first_time = contact_time;
+        *parry_client = blades[guard].client;
+        *parry_hand = blades[guard].hand;
+      }
+      continue; /* This ray cannot also hit a body behind its guard. */
     }
     if (trace.fraction >= 1 || !trace.ent)
       continue;
@@ -1111,6 +1121,60 @@ static trace_t SV_VRContactSweep(edict_t *p, const vr_weapon_contact_t *old,
     }
   }
   *event_time = first_time;
+  return result;
+}
+
+static trace_t SV_VRContactSweep(edict_t *p, const vr_weapon_contact_t *old,
+    const vr_weapon_contact_t *now, int hand, qboolean test_parry,
+    const int *hit_entities, int hit_count, float min_time, float *event_time,
+    int *parry_client, int *parry_hand) {
+  return SV_VRContactSweepQuery(p, old, now, hand, test_parry, hit_entities,
+      hit_count, min_time, event_time, parry_client, parry_hand, false);
+}
+
+/* Combat-only comfort reach, independent of the player's movement hull.
+ * Quake VR also supplements physical hand contact with forward attack rays.
+ * Keep ours bounded, current-time-only and subordinate to real geometry.
+ * Never use these synthetic endpoints for speed/history or defensive blades. */
+static trace_t SV_VRContactAssist(edict_t *p, const vr_weapon_contact_t *now,
+    int hand, const vec3_t aim, const int *hit_entities, int hit_count,
+    float min_time, float *event_time, int *parry_client, int *parry_hand) {
+  vr_weapon_contact_t assist = *now;
+  vec3_t angles, forward, right, up, delta;
+  trace_t result;
+  float projection = 0, reach;
+  memset(&result, 0, sizeof(result));
+  result.fraction = 1;
+  *event_time = 2;
+  *parry_client = *parry_hand = -1;
+  if (!isfinite(sv_melee_hitassist.value) || sv_melee_hitassist.value <= 0 ||
+      min_time >= 1 || !(now->flags & VR_WEAPON_CONTACT_IMMERSIVE_MELEE) ||
+      SV_VRContactWeapon(p) == SV_VR_MELEE_NONE || !SV_VRMeleeFiniteVector(aim))
+    return result;
+  VectorCopy(aim, angles);
+  AngleVectors(angles, forward, right, up);
+  VectorSubtract(now->base[hand], now->grip[hand], delta);
+  projection = q_max(projection, DotProduct(delta, forward));
+  VectorSubtract(now->tip[hand], now->grip[hand], delta);
+  projection = q_max(projection, DotProduct(delta, forward));
+  /* Eight extra world units by default, never past sixteen from the grip.
+   * A long weapon keeps its full physical reach without gaining more here. */
+  reach = q_min(16, projection + q_min(16, sv_melee_hitassist.value));
+  if (reach <= projection)
+    return result;
+  VectorCopy(now->grip[hand], assist.base[hand]);
+  VectorMA(assist.base[hand], reach, forward, assist.tip[hand]);
+  result = SV_VRContactSweepQuery(p, &assist, &assist, hand, true,
+      hit_entities, hit_count, min_time, event_time, parry_client, parry_hand, true);
+  /* Shootable switches can have takedamage too. Only actors gain assistance;
+   * ordinary buttons, walls and other obstructions remain physical-only. */
+  if (*parry_client < 0 && (!result.ent || result.ent->free ||
+      !result.ent->v.takedamage ||
+      (!((int)result.ent->v.flags & FL_MONSTER) && !SV_IsActiveClientEdict(result.ent)))) {
+    memset(&result, 0, sizeof(result));
+    result.fraction = 1;
+    *event_time = 2;
+  }
   return result;
 }
 
@@ -1256,6 +1320,10 @@ void SV_VRContactProcessCommand(client_t *client, const usercmd_t *cmd) {
      * cutting edge need not point forward (the axe ridge is perpendicular). */
     VectorCopy(cmd->vr_akimbo_active ? cmd->vr_akimbo_angles[hand] :
         cmd->vr_handrot, aim);
+    if (!s->consumed[hand] && s->arc[hand] >= SV_VR_CONTACT_STRIKE_ARC &&
+        hit.fraction >= 1 && parry_client < 0)
+      hit = SV_VRContactAssist(p, c, hand, aim, s->hit_entities[hand],
+          s->hit_count[hand], 0, &contact_time, &parry_client, &parry_hand);
     for (int contact_number = 0; contact_number < 2 && !s->consumed[hand] &&
         s->arc[hand] >= SV_VR_CONTACT_STRIKE_ARC &&
         (hit.fraction < 1 || parry_client >= 0 ||
@@ -1334,10 +1402,16 @@ void SV_VRContactProcessCommand(client_t *client, const usercmd_t *cmd) {
         SV_VRContactResetClient(client);
         return;
       }
-      if (!s->consumed[hand])
+      if (!s->consumed[hand]) {
+        float remaining_time = contact_time;
         hit = SV_VRContactSweep(p, &s->previous, c, hand, true,
             s->hit_entities[hand], s->hit_count[hand], contact_time, &contact_time,
             &parry_client, &parry_hand);
+        if (hit.fraction >= 1 && parry_client < 0)
+          hit = SV_VRContactAssist(p, c, hand, aim, s->hit_entities[hand],
+              s->hit_count[hand], remaining_time, &contact_time,
+              &parry_client, &parry_hand);
+      }
     }
     if (c->speed[hand] < SV_VR_CONTACT_REST_SPEED && !s->parry_rearm[hand]) {
       s->arc[hand] = 0;
@@ -2110,6 +2184,42 @@ static qboolean SV_CoopRespawnCallSelfFunction(edict_t *ent,
   return !ent->free && SV_CoopIsActiveClient(ent);
 }
 
+/* The supported QBJ3 weapon selector is the only safe way to make a retained
+ * selected weapon and its viewmodel agree after rejecting a stale fist model. */
+static qboolean SV_CoopRespawnRefreshQBJ3WeaponModel(edict_t *ent) {
+  dfunction_t *func;
+  float old_parms[MAX_PARMS * 3], old_return[3], old_time;
+  int old_self, old_other, old_argc;
+
+  if (!ent || ent->free || !SV_VRMeleeQBJ3Progs() ||
+      !(func = SV_CoopRespawnFindFunction("W_ChangeWeapon", 2)) ||
+      func->parm_size[0] != 1 || func->parm_size[1] != 1)
+    return false;
+
+  old_self = pr_global_struct->self;
+  old_other = pr_global_struct->other;
+  old_time = pr_global_struct->time;
+  old_argc = qcvm->argc;
+  memcpy(old_parms, &qcvm->globals[OFS_PARM0], sizeof(old_parms));
+  memcpy(old_return, &qcvm->globals[OFS_RETURN], sizeof(old_return));
+
+  pr_global_struct->self = EDICT_TO_PROG(ent);
+  pr_global_struct->other = EDICT_TO_PROG(qcvm->edicts);
+  pr_global_struct->time = qcvm->time;
+  qcvm->argc = 2;
+  G_FLOAT(OFS_PARM0) = ent->v.weapon;
+  G_FLOAT(OFS_PARM1) = 1.0f;
+  PR_ExecuteProgram(func - qcvm->functions);
+
+  pr_global_struct->self = old_self;
+  pr_global_struct->other = old_other;
+  pr_global_struct->time = old_time;
+  qcvm->argc = old_argc;
+  memcpy(&qcvm->globals[OFS_PARM0], old_parms, sizeof(old_parms));
+  memcpy(&qcvm->globals[OFS_RETURN], old_return, sizeof(old_return));
+  return !ent->free && SV_CoopIsActiveClient(ent);
+}
+
 static void SV_CoopRespawnRecoverStuckTeleportLimbo(edict_t *ent, int num) {
   qboolean flags_valid;
   eval_t *dest;
@@ -2555,11 +2665,22 @@ static void SV_CoopRespawnMergeInventory(
   }
 }
 
+/* QBJ3's temporary berserk is deliberately cleared by its PutClientInServer
+ * path. Do not put the corpse's fist viewmodel back after that fresh state,
+ * or the client will render immersive fists despite the expired powerup. */
+static qboolean SV_CoopRespawnRestoreWeaponModel(edict_t *ent,
+                                                  string_t weaponmodel) {
+  return !SV_VRMeleeQBJ3Progs() ||
+         strcmp(PR_GetString(weaponmodel), "progs/v_berserk.mdl") ||
+         SV_VRMeleeQBJ3BerserkActive(ent);
+}
+
 static void SV_CoopRespawnRestoreInventory(
     edict_t *ent, const coop_respawn_inventory_t *inventory) {
   int i;
   int type;
   eval_t *val;
+  qboolean refresh_weaponmodel = false;
 
   ent->v.items = (int)ent->v.items | inventory->items;
   ent->v.ammo_shells =
@@ -2573,8 +2694,12 @@ static void SV_CoopRespawnRestoreInventory(
 
   if (inventory->weapon > 0)
     ent->v.weapon = inventory->weapon;
-  if (inventory->weaponmodel)
-    ent->v.weaponmodel = inventory->weaponmodel;
+  if (inventory->weaponmodel) {
+    if (SV_CoopRespawnRestoreWeaponModel(ent, inventory->weaponmodel))
+      ent->v.weaponmodel = inventory->weaponmodel;
+    else
+      refresh_weaponmodel = true;
+  }
 
   for (i = 0; i < COOP_RESPAWN_EXTRA_COUNT; i++) {
     if (!inventory->extra_valid[i])
@@ -2608,6 +2733,9 @@ static void SV_CoopRespawnRestoreInventory(
   else
     ent->v.currentammo =
         SV_CoopRespawnMaxFloat(ent->v.currentammo, inventory->currentammo);
+
+  if (refresh_weaponmodel)
+    SV_CoopRespawnRefreshQBJ3WeaponModel(ent);
 }
 
 /* A loaded dead player has already passed through the mod's normal
@@ -2625,6 +2753,7 @@ static void SV_CoopRespawnRestoreSavedInventoryExact(
   float fresh_weapon = ent->v.weapon;
   string_t fresh_weaponmodel = ent->v.weaponmodel;
   string_t weaponmodel = inventory->weaponmodel;
+  qboolean refresh_weaponmodel = false;
 
   /* An old projection can select an owned weapon without a model. A fresh
    * model is safe only for that exact same selected weapon; otherwise clear it
@@ -2633,6 +2762,11 @@ static void SV_CoopRespawnRestoreSavedInventoryExact(
       !weaponmodel) {
     if (fresh_weapon == inventory->weapon && fresh_weaponmodel)
       weaponmodel = fresh_weaponmodel;
+  }
+  if (weaponmodel &&
+      !SV_CoopRespawnRestoreWeaponModel(ent, weaponmodel)) {
+    weaponmodel = fresh_weaponmodel;
+    refresh_weaponmodel = true;
   }
 
   mask = SV_CoopRespawnKeepItemMask();
@@ -2669,6 +2803,9 @@ static void SV_CoopRespawnRestoreSavedInventoryExact(
       val->_float = inventory->extra_value[i];
     }
   }
+
+  if (refresh_weaponmodel)
+    SV_CoopRespawnRefreshQBJ3WeaponModel(ent);
 }
 
 static void SV_CoopRespawnRememberAliveInventory(edict_t *ent, int num) {
@@ -4398,9 +4535,11 @@ typedef struct sv_akimbo_context_s {
   qboolean dwell;
   qboolean enyo_makevectors;
   qboolean enyo_clearance_pending;
+  qboolean qbj3_shotgun_spread;
   vec3_t body_origin;
   vec3_t muzzle[2];
   vec3_t angles[2];
+  float qbj3_shotgun_roll;
   vec3_t enyo_clearance_start;
   vec3_t enyo_clearance_end;
   vec3_t enyo_clearance_adjusted_start;
@@ -4424,6 +4563,14 @@ qboolean SV_QBJ3BerserkAkimboSupported(void) {
       !q_strcasecmp(COM_SkipPath(com_gamedir), "qbj3") &&
       ED_FindFunction("W_Fire_Berserker_Multi") != NULL &&
       ED_FindFunction("weaponanim_berserk_loop") != NULL;
+}
+
+/* QBJ3's player shotgun invokes FireBullets, where SpreadVector uses the
+ * current right/up globals.  Keep this independent from sv_akimbo: normal
+ * one-handed shotguns need the same physical roll. */
+static qboolean SV_QBJ3ShotgunWeapon(edict_t *ent) {
+  return qcvm == &sv.qcvm && !q_strcasecmp(COM_SkipPath(com_gamedir), "qbj3") &&
+      (ent->v.weapon == IT_SHOTGUN || ent->v.weapon == IT_SUPER_SHOTGUN);
 }
 
 /* This CRC is calculated over the same unmodified progs.dat bytes which
@@ -4757,6 +4904,30 @@ qboolean SV_QBJ3AkimboAim(edict_t *ent, vec3_t muzzle) {
   return true;
 }
 
+/* Do not give QBJ3 QuakeC a wrist roll: its fixangle handling treats roll as
+ * camera tilt.  At this one verified player-shot spread call, restore only
+ * the physical roll in the basis. Forward is unchanged by AngleVectors roll. */
+qboolean SV_QBJ3ShotgunSpreadBasis(const vec3_t angles) {
+  edict_t *ent;
+  vec3_t spread_angles;
+
+  if (!sv_akimbo_context.qbj3_shotgun_spread || !qcvm ||
+      !pr_global_struct->self || !qcvm->xfunction ||
+      strcmp(PR_GetString(qcvm->xfunction->s_name), "FireBullets"))
+    return false;
+  ent = PROG_TO_EDICT(pr_global_struct->self);
+  if (ent != sv_akimbo_context.ent ||
+      !SV_AkimboVectorIsFinite(angles) ||
+      !isfinite(sv_akimbo_context.qbj3_shotgun_roll))
+    return false;
+
+  VectorCopy(angles, spread_angles);
+  spread_angles[ROLL] = sv_akimbo_context.qbj3_shotgun_roll;
+  AngleVectors(spread_angles, pr_global_struct->v_forward,
+      pr_global_struct->v_right, pr_global_struct->v_up);
+  return true;
+}
+
 typedef struct sv_vr_weapon_pose_restore_s {
   qboolean applied;
   vec3_t origin;
@@ -4861,6 +5032,12 @@ static void SV_ApplyVRWeaponOffset(edict_t *ent, int num, qboolean is_remote_vr,
     } else {
       VR_GetMuzzleAdjustedHandPos(muzzle);
       VectorCopy(cl.handrot[1], ent->v.v_angle);
+    }
+
+    if (SV_QBJ3ShotgunWeapon(ent) && SV_AkimboVectorIsFinite(ent->v.v_angle)) {
+      sv_akimbo_context.ent = ent;
+      sv_akimbo_context.qbj3_shotgun_spread = true;
+      sv_akimbo_context.qbj3_shotgun_roll = ent->v.v_angle[ROLL];
     }
 
     /* QuakeC v_angle roll is camera tilt, not wrist rotation. QBJ3 decays it

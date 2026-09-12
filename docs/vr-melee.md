@@ -185,6 +185,15 @@ Keep physical melee base/tip positions raw and calibrated too: do not feed
 collision-retracted display or ordinary firing-muzzle positions back into the
 physical sweep. Otherwise wall retraction itself can become a false stroke.
 
+Combat reach assistance (`sv_melee_hitassist`) is a separate, current-time
+query after the physical sweep misses. It reuses world/guard validation and
+only accepts actors, not shootable switches. Never put its synthetic ray in
+tracking history or use it to measure swing effort. Keep within-ray spatial
+ordering (near guard versus farther body) distinct from temporal ordering
+between sampled sweeps. An assisted hit has time 1; callbacks cannot reopen an
+earlier part of the stroke. Preserve the native player hull: comfort reach is
+not a reason to change movement, floor support, or which gaps a player fits.
+
 Do not invent another packet stream or bypass accepted-command processing.
 Check legacy input and PMove, held/latched buttons, queued commands, stale input
 and sequence gaps. Unsupported or disabled melee must restore native controls.

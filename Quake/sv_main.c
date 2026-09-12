@@ -173,6 +173,7 @@ cvar_t sv_vr_jump_velocity = {"sv_vr_jump_velocity", "297", CVAR_NOTIFY | CVAR_S
 cvar_t sv_skyroom_pvs = {"sv_skyroom_pvs", "1", CVAR_NONE};
 /* Opt-in while the physical-interaction compatibility matrix is validated. */
 cvar_t sv_immersive_melee = {"sv_immersive_melee", "0", CVAR_NOTIFY | CVAR_SERVERINFO};
+cvar_t sv_melee_hitassist = {"sv_melee_hitassist", "8", CVAR_NOTIFY | CVAR_SERVERINFO};
 cvar_t sv_weapon_collision = {"sv_weapon_collision", "0", CVAR_NOTIFY | CVAR_SERVERINFO};
 
 //============================================================================
@@ -1044,6 +1045,7 @@ void SV_Init (void)
 	Cvar_RegisterVariable (&sv_nopunchangle);
 	Cvar_RegisterVariable (&sv_akimbo);
 	Cvar_RegisterVariable (&sv_immersive_melee);
+	Cvar_RegisterVariable (&sv_melee_hitassist);
 	Cvar_RegisterVariable (&sv_weapon_collision);
 	Cvar_RegisterVariable (&sv_coop_classic);
 	Cvar_RegisterVariable (&sv_coop_notelefrag);

@@ -86,6 +86,16 @@ require `sv_akimbo 1`.
 A short, light stroke is sufficient: ordinary physical attacks qualify at
 0.1 m/s with 1 cm of accumulated physical motion. Resting contact does not
 repeatedly attack; the mod's recovery time and the gesture rearm still apply.
+
+`sv_melee_hitassist` defaults to `8` extra Quake world units of combat reach.
+After a qualified physical swing misses, a controller-forward assist ray may
+reach a monster or player. Its endpoint is capped at 16 units from the hand;
+long weapons retain their original physical reach rather than gaining more.
+Set it to `0` for strict physical contact (values above 16 are clamped).
+It does not shrink the player's collision hull, extend button pokes, bypass
+walls or parries, or change native damage and cooldowns. This assists all
+supported immersive melee profiles; desktop and ordinary trigger attacks are
+unaffected. The modest default is a comfort setting, not a full-mesh collider.
 Bonk's medium/full charge thresholds are unchanged. A received sample below
 0.05 m/s rearms a completed stroke; slower deliberate strokes are not mistaken
 for rest while they accumulate toward a hit.
