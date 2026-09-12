@@ -328,9 +328,17 @@ static qboolean SV_VRContactStockProgs(void) {
   return SV_VRMeleeStockProgs();
 }
 
+static qboolean SV_VRContactPolicyEnabled(const cvar_t *policy) {
+  /* Do not overwrite cvars when a game starts: explicit administrator choices
+   * must survive map changes, and a prior remote server is not local policy.
+   * The archived vr_* preferences still control what the local client sends. */
+  return policy->value < 0 ? cls.state != ca_dedicated && svs.maxclients == 1 :
+      policy->value != 0;
+}
+
 int SV_VRContactMode(void) {
-  int mode = sv_weapon_collision.value ? VR_WEAPON_CONTACT_CAP_COLLISION : 0;
-  if (sv_immersive_melee.value && SV_VRContactProfile() != VR_WEAPON_CONTACT_PROFILE_NONE)
+  int mode = SV_VRContactPolicyEnabled(&sv_weapon_collision) ? VR_WEAPON_CONTACT_CAP_COLLISION : 0;
+  if (SV_VRContactPolicyEnabled(&sv_immersive_melee) && SV_VRContactProfile() != VR_WEAPON_CONTACT_PROFILE_NONE)
     mode |= VR_WEAPON_CONTACT_CAP_MELEE;
   return mode;
 }
@@ -839,7 +847,7 @@ qboolean SV_VRContactCall(int function) {
 }
 
 static qboolean SV_VRContactParryEnabled(void) {
-  return svs.maxclients > 1 && sv_weapon_collision.value &&
+  return svs.maxclients > 1 && SV_VRContactPolicyEnabled(&sv_weapon_collision) &&
       (SV_VRContactMode() & VR_WEAPON_CONTACT_CAP_MELEE) &&
       (!coop.value || !SV_CoopFeatureEnabled(&sv_coop_noplayerclip, true));
 }
@@ -1298,7 +1306,7 @@ void SV_VRContactProcessCommand(client_t *client, const usercmd_t *cmd) {
     hit = SV_VRContactSweep(p, &s->previous, c, hand, test_parry,
         s->hit_entities[hand], s->hit_count[hand], 0, &contact_time,
         &parry_client, &parry_hand);
-    if (sv_weapon_collision.value && hit.ent && !hit.ent->free &&
+    if (SV_VRContactPolicyEnabled(&sv_weapon_collision) && hit.ent && !hit.ent->free &&
         hit.ent->v.solid == SOLID_BSP && hit.ent->v.touch &&
         hit.ent->v.health <= 0) {
       if (SV_VRContactButtonTouch(hit.ent)) {

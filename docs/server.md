@@ -52,14 +52,17 @@ only when calibrating the original paired viewmodel.
 For adding or auditing mod support, see the
 [VR collision and melee engineering guide](vr-melee.md).
 
-The current development implementation is opt-in on the server:
+Multiplayer servers opt in to physical weapon interaction:
 
 ```text
 sv_weapon_collision 1
 sv_immersive_melee 1
 ```
 
-Both server variables default to `0` while compatibility work is in progress.
+Both server variables default to `-1` (automatic): enabled for a local
+singleplayer game, disabled for dedicated and multiplayer listen servers.
+Explicit `0` disables either feature, and `1` enables it regardless of mode.
+Starting a new game does not overwrite these server choices or VR preferences.
 Clients can independently disable Weapon Collision or Immersive Melee in VR
 Options (`vr_weapon_collision` and `vr_immersive_melee`). Unsupported weapons
 and servers retain ordinary trigger attacks; enabling contact does not replace
