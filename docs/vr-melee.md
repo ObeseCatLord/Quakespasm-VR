@@ -72,6 +72,10 @@ contact system.
 
 Record the actual loaded `progs.dat` and model identities, including search-path
 and PAK precedence. Verify that any source checkout matches that bytecode.
+Compare the deployed server, installed client and distributed package too:
+successful connections do not imply identical game-code layouts. QBJ3's
+distributed and locally optimized programs require separate verified adapter
+descriptors even though their native wrench and berserk interfaces agree.
 Follow each weapon from pickup/ownership and selection through input dispatch,
 ready states, attack stages, damage helpers and delayed callbacks. Audit all
 weapon banks, alternate modes and power-ups, not just familiar inventory bits.
@@ -214,6 +218,11 @@ source/bytecode evidence, the native oracle, actual contact results and known
 limitations. Challenge whether the adapter can be smaller before adding hooks.
 Build/test success alone is not headset gameplay validation; report the actual
 verification performed and leave untested comfort/feel explicitly unverified.
+
+When qualifying a second game-code revision, keep independent fixtures for both
+programs. Verify actual client capability negotiation as well as native contact
+outcomes, draw/idle readiness and button callbacks; testing only the local
+program can miss a server silently retaining native trigger attacks.
 
 For a controlled test, enable `sv_weapon_collision 1` and
 `sv_immersive_melee 1` on the server, with the corresponding client VR options
