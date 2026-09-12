@@ -33,6 +33,9 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "SDL.h"
 #endif
 #include <stdio.h>
+#ifdef __linux__
+#include <sys/prctl.h>
+#endif
 
 static void Sys_AtExit(void) { SDL_Quit(); }
 
@@ -68,6 +71,17 @@ static quakeparms_t parms;
 int main(int argc, char *argv[]) {
   int t;
   double time, oldtime, newtime;
+
+  /* Keep legacy executable paths for updater/SteamVR binding compatibility,
+   * but identify the running application by its actual project name. */
+#ifdef __linux__
+  prctl(PR_SET_NAME, QUAKESPASM_PROJECT_NAME, 0, 0, 0);
+#endif
+#ifdef USE_SDL2
+  SDL_SetHint("SDL_APP_NAME", QUAKESPASM_PROJECT_NAME);
+  SDL_SetHint("SDL_AUDIO_DEVICE_APP_NAME", QUAKESPASM_PROJECT_NAME);
+  SDL_setenv("SDL_VIDEO_X11_WMCLASS", QUAKESPASM_PROJECT_NAME, 0);
+#endif
 
   host_parms = &parms;
   parms.basedir = ".";

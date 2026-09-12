@@ -644,8 +644,8 @@ static float SV_VRContactDistance(const vec3_t a, const vec3_t b) {
 /* A short, deliberate physical stroke should be enough to commit an authored
  * melee attack. Keep rest/rearm below activation so slow deliberate motion
  * can accumulate instead of resetting the stroke on every command. */
-#define SV_VR_CONTACT_STRIKE_SPEED .1f
-#define SV_VR_CONTACT_STRIKE_ARC .01f
+#define SV_VR_CONTACT_STRIKE_SPEED .25f
+#define SV_VR_CONTACT_STRIKE_ARC .03f
 #define SV_VR_CONTACT_REST_SPEED .05f
 /* Only reject unchanged geometry, not a second rate/world-scale-dependent
  * minimum swing speed. Contact endpoints are transmitted as floats. */
@@ -3848,9 +3848,12 @@ static void SV_CoopRespawnEndPostThink(
         state->inventory_valid)
       SV_CoopRespawnRestoreInventory(ent, &state->inventory);
 
-    if (SV_CoopFeatureEnabled(&sv_coop_respawn_near_player, true) &&
-        !state->force_standard_spawn) {
-      if (SV_CoopRespawnFindSpot(ent, state->death_origin, &anchor, spot, true))
+    if (SV_CoopFeatureEnabled(&sv_coop_respawn_near_player, true)) {
+      /* A team wipe invalidates teammate anchors, not a safe death spot.
+       * In particular, a lone co-op player otherwise never gets in-place
+       * respawn. Keep native spawning when neither safe option is available. */
+      if (SV_CoopRespawnFindSpot(ent, state->death_origin, &anchor, spot,
+                                !state->force_standard_spawn))
         SV_CoopRespawnRelocate(ent, anchor, spot, state);
       else if (net_lagdebug.value)
         Con_Printf("net_lagdebug: coop respawn could not find a safe near-death or teammate spot for client %d death_origin=(%.1f %.1f %.1f)\n",
@@ -5166,15 +5169,17 @@ qboolean SV_QBJ3AkimboAim(edict_t *ent, vec3_t muzzle) {
 }
 
 /* Do not give QBJ3 QuakeC a wrist roll: its fixangle handling treats roll as
- * camera tilt.  At this one verified player-shot spread call, restore only
- * the physical roll in the basis. Forward is unchanged by AngleVectors roll. */
+ * camera tilt. At the verified hitscan and Flak player-shot calls, restore
+ * only the physical roll in the basis. Forward is unchanged by AngleVectors
+ * roll. */
 qboolean SV_QBJ3ShotgunSpreadBasis(const vec3_t angles) {
   edict_t *ent;
   vec3_t spread_angles;
 
   if (!sv_akimbo_context.qbj3_shotgun_spread || !qcvm ||
       !pr_global_struct->self || !qcvm->xfunction ||
-      strcmp(PR_GetString(qcvm->xfunction->s_name), "FireBullets"))
+      (strcmp(PR_GetString(qcvm->xfunction->s_name), "FireBullets") &&
+       strcmp(PR_GetString(qcvm->xfunction->s_name), "W_FireFlakShotgun")))
     return false;
   ent = PROG_TO_EDICT(pr_global_struct->self);
   if (ent != sv_akimbo_context.ent ||
@@ -5207,7 +5212,8 @@ static void SV_ApplyVRWeaponOffset(edict_t *ent, int num, qboolean is_remote_vr,
 
   if (is_remote_vr ||
       (vr_enabled.value && !isDedicated && num == cl.viewentity)) {
-    vec3_t muzzle, source_offset;
+    vec3_t muzzle, source_offset, flak_source_angles;
+    qboolean qbj3_flak_source = false;
 
     restore->applied = true;
     VectorCopy(ent->v.origin, restore->origin);
@@ -5299,12 +5305,17 @@ static void SV_ApplyVRWeaponOffset(edict_t *ent, int num, qboolean is_remote_vr,
       sv_akimbo_context.ent = ent;
       sv_akimbo_context.qbj3_shotgun_spread = true;
       sv_akimbo_context.qbj3_shotgun_roll = ent->v.v_angle[ROLL];
+      if (ent->v.weapon == IT_SUPER_SHOTGUN) {
+        /* Flak's QC source has a -4 up component. Preserve its physical
+         * controller roll for source compensation, while QC sees zero roll. */
+        VectorCopy(ent->v.v_angle, flak_source_angles);
+        qbj3_flak_source = true;
+      }
     }
 
     /* QuakeC v_angle roll is camera tilt, not wrist rotation. QBJ3 decays it
-     * via fixangle. Sanitize only this temporary QC angle before calculating
-     * both the globals and source compensation, so QC makevectors sees the
-     * identical basis. The physical muzzle and replicated hand keep roll. */
+     * via fixangle. Sanitize this temporary QC angle before its globals; the
+     * Flak source compensation above retains its separate physical roll. */
     ent->v.v_angle[ROLL] = 0;
 
     /* Legacy QuakeC commonly computes v_forward during PlayerPreThink and
@@ -5316,7 +5327,9 @@ static void SV_ApplyVRWeaponOffset(edict_t *ent, int num, qboolean is_remote_vr,
 
     SV_ClampVRMuzzleToWorld(ent, muzzle);
     VR_GetWeaponProjectileSourceOffset(PR_GetString(ent->v.weaponmodel),
-                                       (int)ent->v.weapon, ent->v.v_angle,
+                                       (int)ent->v.weapon,
+                                       qbj3_flak_source ? flak_source_angles :
+                                                           ent->v.v_angle,
                                        ent->v.view_ofs[2], source_offset);
     if (SV_VRMeleeGungnirSelected(ent)) {
       /* The original spark uses a different source than its stab trace.

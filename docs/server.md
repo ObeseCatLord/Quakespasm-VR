@@ -14,6 +14,12 @@ Use `sv_coop_classic 0` to return to the default streamlined profile.
 Profile-controlled co-op feature cvars use `-1` to inherit the profile;
 explicitly setting one to `0` or `1` overrides the profile for that feature.
 
+`sv_coop_respawn_near_player` first tries a safe position near the death
+location, including when the last player dies or only one player is connected.
+If that is unsafe, it tries a living teammate (unless the team was wiped out),
+then keeps the mod's normal spawn/checkpoint. Lava, voids and blocked positions
+remain excluded; classic co-op disables this feature unless explicitly enabled.
+
 ## VR akimbo
 
 | Variable | Default | Behavior |
@@ -87,7 +93,7 @@ its floor hop and airborne missed-swing dash. QBJ3's two physical fists also
 require `sv_akimbo 1`.
 
 A short, light stroke is sufficient: ordinary physical attacks qualify at
-0.1 m/s with 1 cm of accumulated physical motion. Resting contact does not
+0.25 m/s with 3 cm of accumulated physical motion. Resting contact does not
 repeatedly attack; the mod's recovery time and the gesture rearm still apply.
 
 `sv_melee_hitassist` defaults to `-1` (automatic native weapon reach).
@@ -106,7 +112,7 @@ walls or parries, or change native damage and cooldowns. This assists all
 supported immersive melee profiles; desktop and ordinary trigger attacks are
 unaffected. Assistance is not a full-mesh collider or an automatic attack.
 Bonk's medium/full charge thresholds are unchanged. A received sample below
-0.1 m/s rearms a completed stroke. A substantial reversal of the same tracked
+0.25 m/s rearms a completed stroke. A substantial reversal of the same tracked
 cutting point also rearms it, then requires fresh swing motion; this avoids
 locking out repeated punches when no full stop is received between samples.
 Unfinished strokes retain their accumulated
@@ -158,3 +164,19 @@ A parried swing consumes its normal attack cooldown and sends contact haptics
 to both players. Disconnected, stale, dead, or unreachable controller poses
 cannot serve as guards. Parrying uses the latest validated controller geometry
 processed by the server; it does not rewind player poses.
+
+## Prediction presentation
+
+`cl_predict_smooth` defaults to `0`: movement prediction replays normally, but
+the client does not add a separate decaying reconciliation offset to the camera.
+This follows QSS-M's direct predicted-origin presentation. It does not disable
+prediction, change packet timing, or change raw headset/controller poses.
+
+`cl_predict_smooth 1` opts into the extra camera correction (100 ms on desktop
+by default, capped at 60 ms and 1 unit in VR). Corrections are discarded when
+prediction is disabled, the player dies, or accepted server authority/epochs
+change. Ineligible history and non-world contact samples do not create a
+correction. This conservative contact rule also covers stationary brush models.
+Disabling this layer avoids lingering camera drift across gameplay handoffs;
+it can expose small reconciliation snaps instead. It is not a cure for packet
+loss, server stalls, or remote-entity interpolation problems.

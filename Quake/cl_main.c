@@ -142,7 +142,7 @@ cvar_t	cl_net_lerpbuffer = {"cl_net_lerpbuffer","0",CVAR_NONE};
 cvar_t	cl_net_lerpbuffer_adaptive = {"cl_net_lerpbuffer_adaptive","0",CVAR_NONE};
 cvar_t	cl_net_lerpbuffer_adaptive_max = {"cl_net_lerpbuffer_adaptive_max","0.30",CVAR_NONE};
 cvar_t	cl_net_lerpbuffer_adaptive_time = {"cl_net_lerpbuffer_adaptive_time","0.75",CVAR_NONE};
-cvar_t	cl_predict_smooth = {"cl_predict_smooth","1",CVAR_NONE};
+cvar_t	cl_predict_smooth = {"cl_predict_smooth","0",CVAR_NONE};
 cvar_t	cl_predict_smooth_time = {"cl_predict_smooth_time","0.10",CVAR_NONE};
 cvar_t	cl_predict_smooth_min = {"cl_predict_smooth_min","0.125",CVAR_NONE};
 cvar_t	cl_predict_smooth_max = {"cl_predict_smooth_max","4",CVAR_NONE};
@@ -1478,7 +1478,7 @@ static qboolean CL_PredictionVectorIsFinite (const vec3_t v)
 	return isfinite (v[0]) && isfinite (v[1]) && isfinite (v[2]);
 }
 
-static void CL_ResetPredictionSmoothing (void)
+void CL_ResetPredictionSmoothing (void)
 {
 	VectorClear (cl.prediction_error);
 	cl.prediction_error_time = 0;
@@ -1652,8 +1652,15 @@ static void CL_CheckPredictionError (entity_t *ent)
 	if (err > cl.net_prediction_error_max)
 		cl.net_prediction_error_max = err;
 	if (CL_PredictionSampleIsEligible (index))
+	{
 		CL_RecordPredictionErrorSample (ack, err);
-	CL_SetPredictionSmoothingError (ack, delta, err);
+		/* Error sampling can quarantine prediction and clear presentation state.
+		 * Do not recreate that state after the transition. */
+		if (!cl_prediction_quarantined)
+			CL_SetPredictionSmoothingError (ack, delta, err);
+	}
+	else
+		CL_ResetPredictionSmoothing ();
 
 	if (err < 0.25f)
 		return;
@@ -1679,7 +1686,20 @@ void CL_ApplyPredictionViewSmoothing (vec3_t vieworg)
 	float smooth_time;
 	float scale;
 
-	if (!cl_predict_smooth.value || cl.prediction_error_sequence < 0 ||
+	/* Local prediction shutdown need not receive a new server ACK. Never
+	 * translate an interpolated/dead camera with a former prediction error. */
+	if (CL_LocalSingleplayerActive () || cl_prediction_quarantined ||
+		!cl_predictmove.value || cl_nopred.value || cls.demoplayback ||
+		cls.state != ca_connected || cls.signon != SIGNONS ||
+		!cl.worldmodel || !cl.entities || cl.viewentity <= 0 ||
+		cl.viewentity >= cl.num_entities || cl.stats[STAT_HEALTH] <= 0 ||
+		cl.ackedmovemessages <= 0 ||
+		CL_PredictPMoveType (cl.entities[cl.viewentity].netstate.pmovetype) == PM_NONE ||
+		((cl.protocol_pext2 & PEXT2_EXPLICITCMDMSEC) &&
+		 (!cl.move_ack_prediction_allowed ||
+		  (cl.move_ack_authority != MOVE_AUTHORITY_PMOVE_ENGINE_COMPAT &&
+		   cl.move_ack_authority != MOVE_AUTHORITY_PMOVE_QC_COMMAND))) ||
+		!cl_predict_smooth.value || cl.prediction_error_sequence < 0 ||
 		!CL_PredictionVectorIsFinite (cl.prediction_error))
 	{
 		CL_ResetPredictionSmoothing ();

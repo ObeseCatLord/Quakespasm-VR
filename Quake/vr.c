@@ -6130,6 +6130,9 @@ static void VR_GetRawWeaponEdge(vec3_t base, vec3_t tip);
 static qboolean VR_WeaponCollisionEnabled(int controller);
 static qboolean VR_GetWeaponCollisionOffset(int controller,
     const vec3_t base, const vec3_t tip, vec3_t delta);
+static void VR_GetWeaponRenderRebase(vec3_t rebase);
+static qboolean VR_GetWeaponRenderCollisionOffset(int controller,
+    const vec3_t base, const vec3_t tip, vec3_t delta);
 
 static void VR_GetRawMuzzleAdjustedHandPos(vec3_t out) {
   if (VR_IsMuzzleAdjustMode()) {
@@ -6633,6 +6636,7 @@ qboolean VR_GetAkimboPoses(vec3_t muzzle[2], vec3_t angles[2], qboolean *berserk
 
 qboolean VR_DrawAkimboViewModels(void) {
   vec3_t muzzle[2], angles[2], dwell_base[2], dwell_tip[2];
+  vec3_t render_rebase;
   qmodel_t *models[2];
   aliashdr_t *headers[2];
   int poses[2];
@@ -6645,6 +6649,7 @@ qboolean VR_DrawAkimboViewModels(void) {
       !strcmp(VR_AkimboModelDefinition()->game, "dwell");
   if (dwell_axes && !VR_GetRawDwellAkimboEdges(dwell_base, dwell_tip))
     return false;
+  VR_GetWeaponRenderRebase(render_rebase);
   if (!immersive_pair) {
     /* Advance the original animation exactly once, then give both halves the
      * same complete interpolation state. This also consumes network resets. */
@@ -6664,10 +6669,15 @@ qboolean VR_DrawAkimboViewModels(void) {
     }
     VectorAdd(cl.handpos[index], cl.vmeshoffset, ent->origin);
     vec3_t collision_delta;
-    if (VR_GetWeaponCollisionOffset(index,
-        dwell_axes ? dwell_base[hand] : cl.handpos[index],
-        dwell_axes ? dwell_tip[hand] : muzzle[hand], collision_delta))
-      VectorAdd(ent->origin, collision_delta, ent->origin);
+    if (VR_WeaponCollisionEnabled(index)) {
+      /* The canonical viewmodel carries V_CalcRefdef's stair presentation
+       * rebase. Split hands need the same rebase before their world traces. */
+      VectorAdd(ent->origin, render_rebase, ent->origin);
+      if (VR_GetWeaponRenderCollisionOffset(index,
+          dwell_axes ? dwell_base[hand] : cl.handpos[index],
+          dwell_axes ? dwell_tip[hand] : muzzle[hand], collision_delta))
+        VectorAdd(ent->origin, collision_delta, ent->origin);
+    }
     VR_AkimboModelAngles(hand, angles[hand], ent->angles);
     VR_AkimboModelTransform(headers[hand], hand);
     const vr_akimbo_fists_t *fists = VR_AkimboModelDefinition()->fists;
@@ -7124,8 +7134,9 @@ static qboolean VR_WeaponCollisionEnabled(int controller) {
  * the movement/prediction world is modified. Both eyes use the same geometry. */
 static qboolean VR_ResolveWeaponGeometry(const vec3_t torso, const vec3_t grip,
     const vec3_t base, const vec3_t tip, vec3_t delta) {
-  vec3_t resolved_grip, endpoints[2], extra = {0, 0, 0};
-  float greatest = 0;
+  vec3_t resolved_grip, endpoints[2], extra = {0, 0, 0}, body_to_grip,
+      body_to_resolved_grip;
+  float greatest = 0, original_reach2, resolved_reach2;
   cl_weapon_trace_t trace;
   VectorCopy(vec3_origin, delta);
   for (int axis = 0; axis < 3; axis++)
@@ -7155,6 +7166,16 @@ static qboolean VR_ResolveWeaponGeometry(const vec3_t torso, const vec3_t grip,
   VectorAdd(grip, delta, resolved_grip);
   VectorAdd(base, delta, endpoints[0]);
   VectorAdd(tip, delta, endpoints[1]);
+  VectorSubtract(grip, torso, body_to_grip);
+  original_reach2 = DotProduct(body_to_grip, body_to_grip);
+  VectorSubtract(resolved_grip, torso, body_to_resolved_grip);
+  resolved_reach2 = DotProduct(body_to_resolved_grip, body_to_resolved_grip);
+  /* A muzzle/edge can be calibrated behind or below the tracked torso
+   * anchor. Its endpoint trace is valid, but never translate the held model
+   * farther from that anchor; retain the raw pose instead. */
+  if (resolved_reach2 > original_reach2 +
+      1e-5f * fmaxf(1.0f, original_reach2))
+    goto unresolved;
   /* Retraction from a front wall can push the grip into a rear wall. Check
    * the final body-to-grip path, both shafts and the complete cutting edge;
    * do not iterate/slide the real player to make an impossible pose fit. */
@@ -7181,6 +7202,32 @@ static qboolean VR_GetWeaponCollisionOffset(int controller,
    * The server separately validates body-to-hand reach before any effect. */
   VR_TrackingPointToWorld(vr_head_raw_position, torso);
   return VR_ResolveWeaponGeometry(torso, cl.handpos[controller], base, tip, delta);
+}
+
+/* V_CalcRefdef applies its stair-step presentation offset to cl.viewent but
+ * keeps tracking and firing poses raw. Derive that offset from the actual
+ * rendered dominant origin rather than duplicating the view smoother here. */
+static void VR_GetWeaponRenderRebase(vec3_t rebase) {
+  vec3_t raw_origin;
+  VectorAdd(cl.handpos[1], cl.vmeshoffset, raw_origin);
+  VectorSubtract(cl.viewent.origin, raw_origin, rebase);
+}
+
+static qboolean VR_GetWeaponRenderCollisionOffset(int controller,
+    const vec3_t base, const vec3_t tip, vec3_t delta) {
+  vec3_t torso, grip, rendered_base, rendered_tip, rebase;
+
+  VectorCopy(vec3_origin, delta);
+  if (!VR_WeaponCollisionEnabled(controller))
+    return false;
+  VR_GetWeaponRenderRebase(rebase);
+  VR_TrackingPointToWorld(vr_head_raw_position, torso);
+  VectorAdd(torso, rebase, torso);
+  VectorAdd(cl.handpos[controller], rebase, grip);
+  VectorAdd(base, rebase, rendered_base);
+  VectorAdd(tip, rebase, rendered_tip);
+  return VR_ResolveWeaponGeometry(torso, grip, rendered_base, rendered_tip,
+      delta);
 }
 
 qboolean VR_GetWeaponContactSample(vr_weapon_contact_t *out) {
@@ -7319,7 +7366,7 @@ qboolean VR_DrawTrackedViewModel(void) {
       VR_ImmersiveMeleeModelAngles(profile, cl.handrot[1], held.angles);
   }
   VR_GetRawWeaponEdge(base, tip);
-  if (VR_GetWeaponCollisionOffset(1, base, tip, delta))
+  if (VR_GetWeaponRenderCollisionOffset(1, base, tip, delta))
     VectorAdd(held.origin, delta, held.origin);
   if (!melee)
     VR_ApplyCurrentViewWeaponTransform();
