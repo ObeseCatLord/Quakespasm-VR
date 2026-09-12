@@ -6804,7 +6804,7 @@ static const vr_immersive_melee_profile_t vr_immersive_melee_profiles[] = {
   {VR_WEAPON_CONTACT_PROFILE_QBJ3, "progs/v_wrench.mdl",
    "vr/qbj3/progs/v_wrench_vr_dominant.mdl",
    702244, 0x1bfff189u, 565, 540, 71, 10, 320, 358,
-   ALIAS_POSE_MDL, 0, 0, false, false, true, vr_qbj3_wrench_grip, 90},
+   ALIAS_POSE_MDL, 0, 0, false, false, true, vr_qbj3_wrench_grip, 70},
   {VR_WEAPON_CONTACT_PROFILE_ENYO, "progs/ee_v_sword.mdl",
    "vr/enyo/progs/ee_v_sword_vr_dominant.mdl",
    344020, 0xa707a071u, 669, 679, 35, 0, 13, 77},

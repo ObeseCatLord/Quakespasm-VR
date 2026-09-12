@@ -20,7 +20,13 @@ player enhancement. `cl_avatar ranger` restores the native QBJ3 player; eligible
 tracked VR players then use the installed `player_models/qbj3` rig. Without a
 valid tracked pose, the default remains the original mod player. Custom selected
 avatars also work for untracked players using the existing animation retargeting.
-Native QBJ3 corpses and unsupported player-model frames are not replaced.
+An explicitly selected supported alternate also remains visible through the
+known player-slot death frames, without using a live tracking pose. Native
+Ranger corpses and unsupported player-model frames are not replaced. QBJ3's
+post-respawn body-queue corpse uses its copied Quake player-colormap to select
+the current matching scoreboard slot's avatar. A later avatar selection, slot
+reuse, or descriptor change can therefore update an existing queued corpse;
+the engine deliberately does not freeze or infer historical identity.
 
 For avatars configured to receive attached equipment (`equipment ranger`, also
 the manifest default), the supported QBJ3 package supplies its native layout:

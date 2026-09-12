@@ -97,8 +97,10 @@ walls or parries, or change native damage and cooldowns. This assists all
 supported immersive melee profiles; desktop and ordinary trigger attacks are
 unaffected. The modest default is a comfort setting, not a full-mesh collider.
 Bonk's medium/full charge thresholds are unchanged. A received sample below
-0.05 m/s rearms a completed stroke; slower deliberate strokes are not mistaken
-for rest while they accumulate toward a hit.
+0.1 m/s rearms a completed stroke. Unfinished strokes retain their accumulated
+motion until speed falls below 0.05 m/s; a parried stroke requires a later sample
+below 0.05 m/s. Physical edges already overlapping a target recover a real entry
+surface, even with assistance disabled, without granting hits through walls.
 
 In immersive mode, QBJ3's split wrench is centered on its retained grip and
 mirrored for the selected hand. Its configured weapon scale is retained; the

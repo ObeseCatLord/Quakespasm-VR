@@ -5481,12 +5481,41 @@ static qboolean R_VRIKRejectQBJ3Player (entity_t *entity, int entitynum)
 	return false;
 }
 
-static qboolean R_VRIKQBJ3LivePlayer (const entity_t *entity)
+static qboolean R_VRIKQBJ3PlayerFrame (const entity_t *entity)
 {
 	return entity && entity->model &&
 		!q_strcasecmp(entity->model->name, "progs/player_qbj.mdl") &&
 		entity->model->numframes == 143 && entity->frame >= 0 &&
-		entity->frame <= 142 && !(entity->frame >= 41 && entity->frame <= 102);
+		entity->frame <= 142;
+}
+
+static qboolean R_VRIKQBJ3LivePlayer (const entity_t *entity)
+{
+	return R_VRIKQBJ3PlayerFrame(entity) &&
+		!(entity->frame >= 41 && entity->frame <= 102);
+}
+
+static int R_VRIKQBJ3CorpseOwner (const entity_t *entity)
+{
+	uintptr_t address;
+	int slot;
+
+	if (!cl.entities || !cl.scores || !entity || cl.maxclients < 1 ||
+		cl.num_entities <= cl.maxclients + 1 ||
+		!R_VRIKQBJ3PlayerFrame(entity) || entity->frame < 41 ||
+		entity->frame > 102 || entity->colormap == vid.colormap)
+		return -1;
+	address = (uintptr_t)entity;
+	/* QBJ3 copies a player into a normal dynamic entity. Static entities and
+	 * arbitrary aliases have no attributable client identity. */
+	if (address < (uintptr_t)&cl.entities[cl.maxclients + 1] ||
+		address >= (uintptr_t)&cl.entities[cl.num_entities])
+		return -1;
+	for (slot = 0; slot < cl.maxclients && slot < MAX_SCOREBOARD; slot++)
+		if (cl.scores[slot].name[0] &&
+			entity->colormap == cl.scores[slot].translations)
+			return slot;
+	return -1;
 }
 
 static int R_VRIKQBJ3Avatar (const entity_t *entity, qboolean tracked)
@@ -5517,8 +5546,8 @@ static qboolean R_VRIKSubstitutePlayer (entity_t *entity, entity_t *replacement)
 	vrik_pose_t pose;
 	r_vrik_lowerbody_targets_t lower;
 	uintptr_t address;
-	int avatar, entitynum;
-	qboolean tracked, qbj3;
+	int avatar, entitynum, ownerslot = -1, renderstate;
+	qboolean corpse = false, tracked, qbj3, live;
 
 	/* This flag authorizes the post-draw ordinary-Ranger state save for one
 	 * substitution only; never carry it from a previous player or pass. */
@@ -5529,22 +5558,45 @@ static qboolean R_VRIKSubstitutePlayer (entity_t *entity, entity_t *replacement)
 	if (!VR_VRIKAllowedForGame () || !cl.entities ||
 		!entity || !entity->model)
 		return false;
-	address = (uintptr_t)entity;
-	if (address < (uintptr_t)&cl.entities[1] ||
-		address > (uintptr_t)&cl.entities[cl.maxclients] ||
-		entity == &cl.entities[cl.viewentity])
-		return false;
-	entitynum = (int)(entity - cl.entities);
 	qbj3 = !q_strcasecmp(COM_SkipPath(com_gamedir), "qbj3");
-	tracked = R_VRIKSampleEntityPose (entity, &pose);
+	address = (uintptr_t)entity;
+	if (address >= (uintptr_t)&cl.entities[1] &&
+		address <= (uintptr_t)&cl.entities[cl.maxclients] &&
+		entity != &cl.entities[cl.viewentity])
+		entitynum = (int)(entity - cl.entities);
+	else
+	{
+		if (!qbj3 || (ownerslot = R_VRIKQBJ3CorpseOwner(entity)) < 0)
+			return false;
+		/* Scratch cache/render state 0 is never shared with the live owner.
+		 * Reset it once per substitution, before Ensure can prepare the skin. */
+		corpse = true;
+		entitynum = 0;
+		R_VRIKInvalidateEntitySkinCache(0);
+		memset(&r_vrik_renderstate[0], 0, sizeof(r_vrik_renderstate[0]));
+		entity->vrik_muzzle_valid = false;
+	}
+	/* A player-slot death frame has a stable avatar identity, but must never
+	 * reuse its last received live tracking pose. */
+	live = !qbj3 || (!corpse && R_VRIKQBJ3LivePlayer(entity));
+	tracked = live && R_VRIKSampleEntityPose (entity, &pose);
 	if (qbj3)
 	{
 		/* An explicit avatar wins; Ranger remains the native QBJ3 default.
-		 * Never retarget corpses, eyes or unrelated mod entities. */
-		if (!R_VRIKQBJ3LivePlayer(entity))
+		 * A known death frame remains on its reserved player slot until QBJ3
+		 * copies it to its separate body queue, so its existing slot selection
+		 * is authoritative here. Never infer an identity for arbitrary entities. */
+		if (!corpse && !R_VRIKQBJ3PlayerFrame(entity))
 			return R_VRIKRejectQBJ3Player(entity, entitynum);
-		avatar = cl.avatar_ids[entitynum - 1];
-		if (avatar == PLAYER_AVATAR_RANGER)
+		avatar = cl.avatar_ids[corpse ? ownerslot : entitynum - 1];
+		if (!live)
+		{
+			/* Only an explicit, locally resolved alternate survives as a corpse.
+			 * Ranger and unresolved descriptors retain QBJ3's native death art. */
+			if (avatar == PLAYER_AVATAR_RANGER || !R_PlayerAvatarProfile(avatar))
+				return R_VRIKRejectQBJ3Player(entity, entitynum);
+		}
+		else if (avatar == PLAYER_AVATAR_RANGER)
 		{
 			/* Unavailable/mismatched custom descriptors resolve to Ranger in
 			 * the receiver, but are not an explicit native-player selection. */
@@ -5639,14 +5691,15 @@ static qboolean R_VRIKSubstitutePlayer (entity_t *entity, entity_t *replacement)
 	canonicalentity.model = r_vrik_canonical_model;
 	canonicalentity.frame = R_VRIKReplacementFrame (entity,
 		r_vrik_canonical_model);
-	R_VRIKRestoreRenderState (&canonicalentity, entitynum,
+	renderstate = corpse ? 0 : entitynum;
+	R_VRIKRestoreRenderState (&canonicalentity, renderstate,
 		r_vrik_canonical_model, entity->vrik_generation,
 		(player_avatar_id_t)avatar);
 	savedentity = currententity;
 	currententity = &canonicalentity;
 	R_SetupAliasFrame (canonicalmd5, canonicalentity.frame,
 		&r_vrik_canonical_lerpdata);
-	R_VRIKSaveRenderState (&canonicalentity, entitynum);
+	R_VRIKSaveRenderState (&canonicalentity, renderstate);
 	currententity = savedentity;
 	if (R_VRIKShouldApplyPose(tracked, vr_vrik.value != 0.0f))
 	{
@@ -5665,7 +5718,7 @@ static qboolean R_VRIKSubstitutePlayer (entity_t *entity, entity_t *replacement)
 		R_VRIKClearLowerBodyTargets (entitynum);
 	r_vrik_pose_pending = R_VRIKShouldApplyPose(tracked, vr_vrik.value != 0.0f);
 	r_vrik_skin_pending = true;
-	r_vrik_active_player = entitynum - 1;
+	r_vrik_active_player = corpse ? -1 : entitynum - 1;
 	r_vrik_avatar_id = (player_avatar_id_t)avatar;
 	return true;
 }

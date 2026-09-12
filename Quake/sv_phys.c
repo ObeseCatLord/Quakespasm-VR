@@ -1009,6 +1009,40 @@ static void SV_VRContactCorpses(edict_t *player, vec3_t start,
   }
 }
 
+/* A tracked edge can already be inside a collider when a stroke qualifies.
+ * Quake's startsolid trace has no usable entry fraction/plane. Recover a real
+ * surface from the attacker's side, and only if that surface belongs to the
+ * collider containing the original edge point. Never reinterpret startsolid
+ * as a hit or extend the weapon to an unrelated intervening target. */
+static qboolean SV_VRContactRecoverOverlap(edict_t *p, const vec3_t eye,
+    const vec3_t grip, vec3_t a, vec3_t b, trace_t *trace) {
+  vec3_t embedded, anchor;
+  VectorCopy(a, embedded);
+  for (int attempt = 0; attempt < 2; attempt++) {
+    trace_t entry, inside, reach;
+    VectorCopy(attempt ? eye : grip, anchor);
+    entry = SV_Move(anchor, vec3_origin, vec3_origin, embedded, MOVE_NORMAL, p);
+    if (entry.startsolid || entry.allsolid || entry.fraction >= 1 ||
+        !entry.ent || entry.ent->free)
+      continue;
+    inside = SV_ClipMoveToEntity(entry.ent, embedded, vec3_origin,
+        vec3_origin, embedded);
+    if (!inside.startsolid)
+      continue;
+    reach = SV_Move(grip, vec3_origin, vec3_origin, entry.endpos, MOVE_NOMONSTERS, p);
+    if (reach.startsolid || reach.allsolid ||
+        (reach.fraction < 1 && SV_VRContactDistance(reach.endpos, entry.endpos) > 2))
+      continue;
+    /* Guards must be ordered from the attacker, not backwards from the far
+     * endpoint: reversing that ray would bypass a guard in front of a body. */
+    VectorCopy(anchor, a);
+    VectorCopy(embedded, b);
+    *trace = entry;
+    return true;
+  }
+  return false;
+}
+
 static trace_t SV_VRContactSweepQuery(edict_t *p, const vr_weapon_contact_t *old,
     const vr_weapon_contact_t *now, int hand, qboolean test_parry,
     const int *hit_entities, int hit_count, float min_time, float *event_time,
@@ -1047,6 +1081,7 @@ static trace_t SV_VRContactSweepQuery(edict_t *p, const vr_weapon_contact_t *old
   /* Current blade, plus bounded sweeps of points along it. All points use the
    * same current body translation, so walking itself is not a swing. */
   for (int i = -1; i <= (current_only ? -1 : steps); i++) {
+    qboolean recovered = false;
     for (int axis = 0; axis < 3; axis++) {
       float t = i < 0 ? 0 : (float)i / steps;
       a[axis] = p->v.origin[axis] + (i < 0 ? now->base[hand][axis] :
@@ -1059,9 +1094,14 @@ static trace_t SV_VRContactSweepQuery(edict_t *p, const vr_weapon_contact_t *old
         a[axis] += min_time * (b[axis] - a[axis]);
     }
     trace = SV_Move(a, vec3_origin, vec3_origin, b, MOVE_NORMAL, p);
-    if (trace.startsolid || trace.allsolid)
-      continue;
-    if (authored_corpses)
+    if (trace.startsolid || trace.allsolid) {
+      if (!SV_VRContactRecoverOverlap(p, eye, grip, a, b, &trace))
+        continue;
+      recovered = true;
+    }
+    /* The recovered ray is only evidence for the already embedded collider,
+     * not an expanded weapon segment for hitting unrelated nonsolid corpses. */
+    if (authored_corpses && !recovered)
       SV_VRContactCorpses(p, a, b, &trace);
     float nearest_guard = 2;
     int guard = -1;
@@ -1084,7 +1124,8 @@ static trace_t SV_VRContactSweepQuery(edict_t *p, const vr_weapon_contact_t *old
       guard = blade;
     }
     if (guard >= 0) {
-      float contact_time = i < 0 ? 1 : min_time + (1 - min_time) * nearest_guard;
+      float contact_time = i < 0 ? 1 : recovered ? min_time :
+          min_time + (1 - min_time) * nearest_guard;
       if (contact_time < first_time - .00001f) {
         memset(&result, 0, sizeof(result));
         result.fraction = 1; /* A parry is never a QC body damage hit. */
@@ -1113,7 +1154,8 @@ static trace_t SV_VRContactSweepQuery(edict_t *p, const vr_weapon_contact_t *old
       continue;
     /* A fraction along the current blade is not a time fraction. Prefer
      * earliest swept contact; the current segment is the endpoint fallback. */
-    float contact_time = i < 0 ? 1 : min_time + (1 - min_time) * trace.fraction;
+    float contact_time = i < 0 ? 1 : recovered ? min_time :
+        min_time + (1 - min_time) * trace.fraction;
     if (contact_time <= first_time + .00001f) {
       result = trace;
       first_time = contact_time;
@@ -1413,7 +1455,12 @@ void SV_VRContactProcessCommand(client_t *client, const usercmd_t *cmd) {
               &parry_client, &parry_hand);
       }
     }
-    if (c->speed[hand] < SV_VR_CONTACT_REST_SPEED && !s->parry_rearm[hand]) {
+    /* A completed/rejected stroke only needs to slow below strike speed.
+     * Keep the lower rest threshold for unfinished strokes, so gentle motion
+     * around the qualification threshold does not repeatedly erase its arc. */
+    if ((c->speed[hand] < SV_VR_CONTACT_REST_SPEED ||
+        (s->consumed[hand] && c->speed[hand] < SV_VR_CONTACT_STRIKE_SPEED)) &&
+        !s->parry_rearm[hand]) {
       s->arc[hand] = 0;
       s->peak_speed[hand] = 0;
       s->consumed[hand] = false;
@@ -1998,6 +2045,8 @@ static qboolean SV_CoopRespawnDelayApplies(void) {
 #define QBJ3_CFL_LIMBO 2048
 #define QBJ3_VOID_CSHIFT_PRIORITY 70.0f
 #define QBJ3_VOID_CSHIFT_DENSITY 255.0f
+#define QBJ3_BERSERK_CSHIFT_PRIORITY 100.0f
+#define QBJ3_BERSERK_CSHIFT_DENSITY 32.0f
 
 static qboolean SV_CoopRespawnFieldHasType(const char *name,
                                            int expected_type) {
@@ -2052,6 +2101,26 @@ static qboolean SV_CoopRespawnCshiftMatchesVoidLayer(edict_t *ent,
 static qboolean SV_CoopRespawnHasVoidCshift(edict_t *ent) {
   return SV_CoopRespawnCshiftMatchesVoidLayer(ent, "") ||
          SV_CoopRespawnCshiftMatchesVoidLayer(ent, "_prev");
+}
+
+static qboolean SV_CoopRespawnCshiftMatchesBerserkLayer(edict_t *ent,
+                                                         const char *suffix) {
+  char name[32];
+  eval_t *priority, *density, *color;
+
+  q_snprintf(name, sizeof(name), "csf_priority%s", suffix);
+  priority = SV_CoopRespawnGetTypedField(ent, name, ev_float);
+  q_snprintf(name, sizeof(name), "csf_density%s", suffix);
+  density = SV_CoopRespawnGetTypedField(ent, name, ev_float);
+  q_snprintf(name, sizeof(name), "csf_color%s", suffix);
+  color = SV_CoopRespawnGetTypedField(ent, name, ev_vector);
+  if (!priority || !density || !color)
+    return false;
+
+  return fabs(priority->_float - QBJ3_BERSERK_CSHIFT_PRIORITY) < 0.01f &&
+         fabs(density->_float - QBJ3_BERSERK_CSHIFT_DENSITY) < 0.01f &&
+         fabs(color->vector[0] - 255.0f) < 0.01f &&
+         fabs(color->vector[1]) < 0.01f && fabs(color->vector[2]) < 0.01f;
 }
 
 static int SV_CoopRespawnCustomFlags(edict_t *ent, qboolean *valid) {
@@ -2151,6 +2220,55 @@ static qboolean SV_CoopRespawnCallEntityFunction(edict_t *ent,
   memcpy(&qcvm->globals[OFS_PARM0], old_parms, sizeof(old_parms));
   memcpy(&qcvm->globals[OFS_RETURN], old_return, sizeof(old_return));
   return !ent->free && SV_CoopIsActiveClient(ent);
+}
+
+static qboolean SV_CoopRespawnCallEntityFloatFunction(edict_t *ent,
+                                                       const char *name,
+                                                       float value) {
+  dfunction_t *func;
+  float old_parms[MAX_PARMS * 3], old_return[3], old_time;
+  int old_self, old_other, old_argc;
+
+  if (!ent || ent->free || !(func = SV_CoopRespawnFindFunction(name, 2)) ||
+      func->parm_size[0] != 1 || func->parm_size[1] != 1)
+    return false;
+
+  old_self = pr_global_struct->self;
+  old_other = pr_global_struct->other;
+  old_time = pr_global_struct->time;
+  old_argc = qcvm->argc;
+  memcpy(old_parms, &qcvm->globals[OFS_PARM0], sizeof(old_parms));
+  memcpy(old_return, &qcvm->globals[OFS_RETURN], sizeof(old_return));
+
+  pr_global_struct->self = EDICT_TO_PROG(ent);
+  pr_global_struct->other = EDICT_TO_PROG(qcvm->edicts);
+  pr_global_struct->time = qcvm->time;
+  qcvm->argc = 2;
+  G_INT(OFS_PARM0) = EDICT_TO_PROG(ent);
+  G_FLOAT(OFS_PARM1) = value;
+  PR_ExecuteProgram(func - qcvm->functions);
+
+  pr_global_struct->self = old_self;
+  pr_global_struct->other = old_other;
+  pr_global_struct->time = old_time;
+  qcvm->argc = old_argc;
+  memcpy(&qcvm->globals[OFS_PARM0], old_parms, sizeof(old_parms));
+  memcpy(&qcvm->globals[OFS_RETURN], old_return, sizeof(old_return));
+  return !ent->free && SV_CoopIsActiveClient(ent);
+}
+
+/* QBJ3's respawn initializer clears berserk_finished before its normal
+ * expiry path can call csf_clear(self, 100). Remove only that exact red
+ * berserk layer (including one deferred below a higher-priority layer) by
+ * invoking the mod's stack-aware clear rather than overwriting cshift state. */
+static void SV_CoopRespawnClearQBJ3InactiveBerserkCshift(edict_t *ent) {
+  if (!ent || ent->free || !SV_VRMeleeQBJ3Progs() ||
+      SV_VRMeleeQBJ3BerserkActive(ent) ||
+      (!SV_CoopRespawnCshiftMatchesBerserkLayer(ent, "") &&
+       !SV_CoopRespawnCshiftMatchesBerserkLayer(ent, "_prev")))
+    return;
+  SV_CoopRespawnCallEntityFloatFunction(ent, "csf_clear",
+                                        QBJ3_BERSERK_CSHIFT_PRIORITY);
 }
 
 static qboolean SV_CoopRespawnCallSelfFunction(edict_t *ent,
@@ -2871,6 +2989,7 @@ void SV_CoopRespawnRestoreSavedInventory(edict_t *ent, edict_t *snapshot) {
     SV_CoopRespawnSaveInventory(snapshot, &inventory);
     SV_CoopRespawnRestoreSavedInventoryExact(ent, &inventory);
   }
+  SV_CoopRespawnClearQBJ3InactiveBerserkCshift(ent);
   /* Key sharing is independent of optional weapon retention. Pending saved
      players must receive current team keys before physics, not stale keys. */
   SV_CoopSharedApplyToJoiningClient(ent);
@@ -3609,6 +3728,12 @@ static void SV_CoopRespawnEndPostThink(
       coop_respawn_force_standard_spawn[index] = false;
     }
   }
+
+  /* PutClientInServer also resets the timer on a reused client edict.  Run
+   * the same exact-layer cleanup for a reconnect/fresh spawn, while the
+   * active-state guard leaves a live berserk powerup alone. */
+  if (SV_CoopIsActiveClient(ent))
+    SV_CoopRespawnClearQBJ3InactiveBerserkCshift(ent);
 
   SV_CoopRespawnRestoreSuppressedInput(ent, num, state);
   SV_CoopRespawnRememberAliveState(ent, num);
