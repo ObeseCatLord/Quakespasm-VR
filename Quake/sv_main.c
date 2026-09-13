@@ -322,6 +322,7 @@ static void SV_AkimboPolicyChanged(cvar_t *var)
 }
 static qboolean SVFTE_SendClientDatagram (client_t *client, int maxsize);
 static void SV_WriteMoveAckPayloadToMessage (client_t *client, sizebuf_t *msg);
+static qboolean SV_GorillaAckStateIsFinite (const client_t *client);
 
 #define VRIK_SVC_V2_MESSAGE_BYTES (1 + 2 + 4 + VRIK_POSE_WIRE_BYTES)
 #define VRIK_SERVER_MIN_INTERVAL 0.025
@@ -2608,6 +2609,20 @@ static void SVFTE_CalcEntityDeltas (client_t *client)
 	snapshot_maxents = oldstop - olds;
 }
 
+static int SVFTE_EntityHeaderSize (const client_t *client)
+{
+	/* Service byte, move ACK, server time and entity-list terminator. Keep
+	 * stats and entities on the same budget, including the optional state. */
+	int size = 1 + 2 + 4 + 2;
+	if (client->protocol_pext2 & PEXT2_EXPLICITCMDMSEC)
+	{
+		size += 7;
+		if (SV_GorillaAckStateIsFinite (client))
+			size += 4 + 3 + 18 * 4 + 2 * 2 * 4;
+	}
+	return size;
+}
+
 static void SVFTE_WriteStatsToClient (client_t *client, sizebuf_t *msg,
 	struct deltaframe_s *frame)
 {
@@ -2617,7 +2632,7 @@ static void SVFTE_WriteStatsToClient (client_t *client, sizebuf_t *msg,
 	int			i, reserve;
 
 	SV_CalcStats (client, statsi, statsf, statss);
-	reserve = 9;
+	reserve = SVFTE_EntityHeaderSize (client);
 
 	for (i = 0; i < MAX_CL_STATS; i++)
 	{
@@ -2747,9 +2762,7 @@ static void SVFTE_WriteEntitiesToClient (client_t *client, sizebuf_t *msg,
 	state = client->previousentities;
 	stateend = state + client->numpreviousentities;
 
-	header_need = 1 + 2 + 4 + 2;
-	if (client->protocol_pext2 & PEXT2_EXPLICITCMDMSEC)
-		header_need += 7;
+	header_need = SVFTE_EntityHeaderSize (client);
 	if (msg->cursize + header_need > msg->maxsize)
 		return;
 

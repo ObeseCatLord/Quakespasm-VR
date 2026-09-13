@@ -7496,12 +7496,14 @@ void VR_DrawGorillaOffhand(void) {
     hdr->scale_origin[axis] = -raw[axis] * hdr->scale[axis];
   saved_viewent = cl.viewent;
   saved_current = currententity;
+  /* Capture the dominant viewmodel's presentation delta before this temporary
+   * hand replaces its origin. V_CalcRefdef may have applied a stair step. */
+  VR_GetWeaponRenderRebase(rebase);
   cl.viewent.model = model;
   cl.viewent.frame = 0;
   cl.viewent.skinnum = 0;
   cl.viewent.lerpflags |= LERP_RESETANIM | LERP_RESETMOVE;
   VectorCopy(cl.handpos[0], cl.viewent.origin);
-  VR_GetWeaponRenderRebase(rebase);
   VectorAdd(cl.viewent.origin, rebase, cl.viewent.origin);
   VR_FistModelAngles(qbj3 ? &vr_qbj3_fists : NULL, hand,
       cl.handrot[0], cl.viewent.angles);
