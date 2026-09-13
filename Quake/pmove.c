@@ -21,6 +21,8 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "quakedef.h"
 #include "vr.h"
 #include "pmove.h"
+#include "vr_gorilla.h"
+#include "vr_gorilla_swim.h"
 
 movevars_t		movevars;
 playermove_t	pmove;
@@ -467,7 +469,10 @@ static int PM_LastTraceEntNum (void)
 	return pmove_trace_entnum;
 }
 
-trace_t PM_PlayerTrace (vec3_t start, vec3_t end, unsigned int solidmask)
+static void PM_AddTouchedEnt (int num);
+
+static trace_t PM_PlayerTraceFiltered (vec3_t start, vec3_t end,
+	unsigned int solidmask, qboolean brushonly)
 {
 	trace_t		trace, total;
 	int		i;
@@ -486,6 +491,9 @@ trace_t PM_PlayerTrace (vec3_t start, vec3_t end, unsigned int solidmask)
 		if (pe->info == pmove.skipent)
 			continue;
 		if (pe->forcecontentsmask && !(pe->forcecontentsmask & solidmask))
+			continue;
+		if (brushonly && (!pe->model || pe->model->needload ||
+			pe->model->type != mod_brush))
 			continue;
 
 		if (!pe->model || pe->model->needload)
@@ -519,6 +527,78 @@ trace_t PM_PlayerTrace (vec3_t start, vec3_t end, unsigned int solidmask)
 		total.fraction = 0;
 	pmove_trace_entnum = total_entnum;
 	return total;
+}
+
+trace_t PM_PlayerTrace (vec3_t start, vec3_t end, unsigned int solidmask)
+{
+	return PM_PlayerTraceFiltered(start, end, solidmask, false);
+}
+
+static vr_gorilla_trace_t PM_GorillaTrace (void *context,
+	const float *start, const float *end, int body)
+{
+	vr_gorilla_trace_t result;
+	trace_t trace;
+	vec3_t mins, maxs, a, b;
+	int saved_trace = pmove_trace_entnum, index;
+	(void)context;
+	VectorCopy(start, a);
+	VectorCopy(end, b);
+	VectorCopy(pmove.player_mins, mins);
+	VectorCopy(pmove.player_maxs, maxs);
+	if (!body)
+	{
+		VectorClear(pmove.player_mins);
+		VectorClear(pmove.player_maxs);
+	}
+	trace = PM_PlayerTraceFiltered(a, b, MASK_PLAYERSOLID, !body);
+	index = pmove_trace_entnum;
+	VectorCopy(mins, pmove.player_mins);
+	VectorCopy(maxs, pmove.player_maxs);
+	pmove_trace_entnum = saved_trace;
+	memset(&result, 0, sizeof(result));
+	result.fraction = trace.fraction;
+	result.startsolid = trace.startsolid;
+	result.allsolid = trace.allsolid;
+	VectorCopy(trace.endpos, result.end);
+	VectorCopy(trace.plane.normal, result.normal);
+	/* Client physents use negative numbers; surface IDs on the wire do not. */
+	result.entity = index >= 0 ? abs(pmove.physents[index].info) : -1;
+	if (body && index >= 0 && trace.fraction < 1)
+		PM_AddTouchedEnt(index);
+	return result;
+}
+
+static int PM_GorillaSurface(void *context, int entity, unsigned int *model,
+	const float *point, float *out, int to_world)
+{
+	int i;
+	vec3_t axes[3], local;
+	(void)context;
+	for (i = 1; i < pmove.numphysent; i++)
+	{
+		physent_t *pe = &pmove.physents[i];
+		if (abs(pe->info) != entity)
+			continue;
+		if (!pe->model || pe->model->needload || pe->model->type != mod_brush ||
+			!pe->modelindex || (to_world && *model != pe->modelindex) ||
+			!VRG_Finite(pe->origin) || !VRG_Finite(pe->angles))
+			return 0;
+		*model = pe->modelindex;
+		AngleVectors(pe->angles, axes[0], axes[1], axes[2]);
+		if (to_world)
+		{
+			QAxisDeTransform(axes, point, local);
+			VectorAdd(local, pe->origin, out);
+		}
+		else
+		{
+			VectorSubtract(point, pe->origin, local);
+			QAxisTransform(axes, local, out);
+		}
+		return VRG_Finite(out);
+	}
+	return 0;
 }
 
 trace_t PM_TraceLine (vec3_t start, vec3_t end)
@@ -1044,7 +1124,7 @@ void PM_WaterMove (void)
 
 	upmove = PM_WaterUpMove ();
 
-	if (pmove.pm_type != PM_FLY && !pmove.cmd.forwardmove && !pmove.cmd.sidemove && !upmove && !pmove.onladder)
+	if (pmove.pm_type != PM_FLY && !pmove.cmd.forwardmove && !pmove.cmd.sidemove && !upmove && !pmove.onladder && !pmove.gorilla_swim_stroke)
 	{
 		VectorMA(wishvel, movevars.watersinkspeed, pmove.gravitydir, wishvel);
 	}
@@ -1231,7 +1311,8 @@ void PM_AirMove (void)
 			}
 			PM_Accelerate (wishdir, wishspeed, movevars.accelerate);
 			// add gravity
-			VectorMA(pmove.velocity, movevars.entgravity * movevars.gravity * frametime, pmove.gravitydir, pmove.velocity);
+			if (!pmove.gorilla_braced)
+				VectorMA(pmove.velocity, movevars.entgravity * movevars.gravity * frametime, pmove.gravitydir, pmove.velocity);
 		}
 		else
 		{
@@ -1260,7 +1341,8 @@ void PM_AirMove (void)
 		PM_AirAccelerate (wishdir, wishspeed, (movevars.flags&MOVEFLAG_USEAIRACCEL)?movevars.airaccelerate:movevars.accelerate);
 
 		// add gravity
-		VectorMA(pmove.velocity, movevars.entgravity * movevars.gravity * frametime, pmove.gravitydir, pmove.velocity);
+		if (!pmove.gorilla_braced)
+			VectorMA(pmove.velocity, movevars.entgravity * movevars.gravity * frametime, pmove.gravitydir, pmove.velocity);
 
 		if (DotProduct(pmove.velocity,pmove.velocity) > 1000*1000)
 		{
@@ -1845,7 +1927,8 @@ static void PM_ApplyVRRoomScaleMove (void)
 	frametime = saved_frametime;
 }
 
-static void PM_PlayerMoveStep (float gamespeed, qboolean apply_roomscale)
+static void PM_PlayerMoveStep (float gamespeed, qboolean apply_roomscale,
+	qboolean prepare_gorilla, float gorilla_seconds)
 {
 //	int i;
 //	int tmp;	//for rounding
@@ -1882,6 +1965,57 @@ static void PM_PlayerMoveStep (float gamespeed, qboolean apply_roomscale)
 	{
 		PM_ApplyVRRoomScaleMove ();
 		PM_CategorizePosition ();
+	}
+
+	/* Only actual ladder contact restores sticks. Water retains its native
+	 * drag/timers while physical palms can still push solid surfaces. */
+	if (prepare_gorilla && !pmove.gorilla_prepared)
+	{
+		pmove.gorilla_braced = false;
+		pmove.gorilla_swim_stroke = false;
+		pmove.gorilla_contact[0] = pmove.gorilla_contact[1] = -1;
+		if (pmove.gorilla_allowed && pmove.cmd.vr_active &&
+			(pmove.pm_type == PM_NORMAL || pmove.pm_type == PM_FLY) &&
+			!pmove.onladder &&
+			VRG_InputValid(&pmove.cmd.vr_gorilla))
+		{
+			vec3_t native_velocity;
+			VectorCopy(pmove.velocity, native_velocity);
+			vr_gorilla_result_t result = VRG_Step(&pmove.gorilla,
+				&pmove.cmd.vr_gorilla, pmove.origin, pmove.velocity,
+				gorilla_seconds * gamespeed,
+				movevars.gravity * movevars.entgravity, NULL, PM_GorillaTrace,
+				PM_GorillaSurface);
+			if (pmove.waterjumptime || (pmove.waterlevel >= 2 && !result.launched)) {
+				VectorCopy(native_velocity, pmove.velocity);
+				result.braced = false;
+			}
+			pmove.gorilla_braced = result.braced;
+			pmove.gorilla_contact[0] = result.contact[0];
+			pmove.gorilla_contact[1] = result.contact[1];
+			PM_CategorizePosition();
+			if (result.stepped && pmove.waterlevel >= 2 && !pmove.waterjumptime) {
+				unsigned int liquid = 0, solid = 0;
+				vec3_t palm;
+				for (int hand = 0; hand < 2; ++hand) {
+					VectorAdd(pmove.origin, pmove.cmd.vr_gorilla.hand[hand], palm);
+					if (PM_PointContents(palm) & CONTENTBITS_FLUID)
+						liquid |= 1u << hand;
+					if (result.contact[hand] >= 0)
+						solid |= 1u << hand;
+				}
+				pmove.gorilla_swim_stroke = VRG_SwimImpulse(&pmove.cmd.vr_gorilla,
+					liquid, solid, gorilla_seconds * gamespeed,
+					movevars.maxspeed * .7f, pmove.velocity);
+			}
+		}
+		else
+			VRG_Reset(&pmove.gorilla);
+	}
+	if (pmove.gorilla_allowed && pmove.gorilla.initialized &&
+		(pmove.pm_type == PM_NORMAL || pmove.pm_type == PM_FLY) && !pmove.onladder)
+	{
+		pmove.cmd.forwardmove = pmove.cmd.sidemove = pmove.cmd.upmove = 0;
 	}
 
 	if (movevars.autobunny && !pmove.onground)
@@ -1956,6 +2090,13 @@ void PM_PlayerMove (float gamespeed)
 
 	PM_EnsureInitialized ();
 	pmove.numtouch = 0;
+	pmove.gorilla_contact[0] = pmove.gorilla_contact[1] = -1;
+	if (!pmove.gorilla_prepared) {
+		pmove.gorilla_braced = false;
+		pmove.gorilla_swim_stroke = false;
+	}
+	if (pmove.pm_type != PM_NORMAL && pmove.pm_type != PM_FLY)
+		VRG_Reset(&pmove.gorilla);
 	cmd = pmove.cmd;
 	seconds = cmd.seconds;
 
@@ -1963,7 +2104,9 @@ void PM_PlayerMove (float gamespeed)
 	 * their original single-step semantics completely unchanged. */
 	if (!cmd.msec)
 	{
-		PM_PlayerMoveStep (gamespeed, false);
+		PM_PlayerMoveStep (gamespeed, false, true, seconds);
+		if (pmove.gorilla.initialized)
+			VectorCopy(pmove.origin, pmove.gorilla.origin);
 		pmove.cmd = cmd;
 		return;
 	}
@@ -1971,7 +2114,9 @@ void PM_PlayerMove (float gamespeed)
 	/* Keep a zero-length command's legacy categorization behavior. */
 	if (seconds <= 0)
 	{
-		PM_PlayerMoveStep (gamespeed, true);
+		PM_PlayerMoveStep (gamespeed, true, true, seconds);
+		if (pmove.gorilla.initialized)
+			VectorCopy(pmove.origin, pmove.gorilla.origin);
 		pmove.cmd = cmd;
 		return;
 	}
@@ -1984,8 +2129,10 @@ void PM_PlayerMove (float gamespeed)
 	{
 		pmove.cmd = cmd;
 		pmove.cmd.seconds = step_seconds;
-		PM_PlayerMoveStep (gamespeed, i == 0);
+		PM_PlayerMoveStep (gamespeed, i == 0, i == 0, seconds);
 	}
+	if (pmove.gorilla.initialized)
+		VectorCopy(pmove.origin, pmove.gorilla.origin);
 
 	/* PM_PlayerMove historically leaves the caller's command untouched. */
 	pmove.cmd = cmd;
@@ -2169,8 +2316,10 @@ void World_AddEntsToPmove (edict_t *ignore, vec3_t boxminmax[2])
 			{
 				int modelindex = (int)other->v.modelindex;
 				if (modelindex > 0 && modelindex < MAX_MODELS &&
-					sv.models[modelindex] && sv.models[modelindex]->type == mod_brush)
+					sv.models[modelindex] && sv.models[modelindex]->type == mod_brush) {
 					phys->model = sv.models[modelindex];
+					phys->modelindex = modelindex;
+				}
 			}
 			VectorCopy (other->v.origin, phys->origin);
 			VectorCopy (other->v.mins, phys->mins);
@@ -2260,6 +2409,7 @@ void World_AddEntsToPmove (edict_t *ignore, vec3_t boxminmax[2])
 		VectorCopy (touch->netstate.origin, phys->origin);
 		VectorCopy (touch->netstate.angles, phys->angles);
 		phys->model = (solidsize == ES_SOLID_BSP) ? touch->model : NULL;
+		phys->modelindex = phys->model ? touch->netstate.modelindex : 0;
 		phys->info = -i;
 		phys->forcecontentsmask = 0;
 

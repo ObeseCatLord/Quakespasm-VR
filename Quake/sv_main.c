@@ -138,6 +138,7 @@ cvar_t sv_replacement_maxpackets = {"sv_replacement_maxpackets", "0", CVAR_NONE}
 cvar_t sv_predict_nqmovement = {"sv_predict_nqmovement", "0", CVAR_NOTIFY | CVAR_SERVERINFO};
 cvar_t sv_nopunchangle = {"sv_nopunchangle", "0", CVAR_NONE};
 cvar_t sv_akimbo = {"sv_akimbo", "1", CVAR_ARCHIVE | CVAR_NOTIFY | CVAR_SERVERINFO};
+cvar_t sv_gorilla = {"sv_gorilla", "1", CVAR_NOTIFY | CVAR_SERVERINFO};
 // When SV_WriteEntitiesToClient overflows the per-client datagram, the entity
 // that gets evicted is whichever the loop reached last. With sv_netsort=1
 // (ironwail's heuristic) entities are sorted by distance-to-player and PVS
@@ -181,8 +182,54 @@ cvar_t sv_weapon_collision = {"sv_weapon_collision", "-1", CVAR_NOTIFY | CVAR_SE
 static void SVFTE_SetupFrames (client_t *client);
 
 static qboolean sv_qbj3_akimbo_protocol_pending;
+static qboolean sv_gorilla_protocol_pending;
 static int sv_contact_advertised_mode = -1;
 static int sv_contact_advertised_profile = -1;
+
+static int SV_FormatGorillaProtocol(char *command, size_t size)
+{
+	return q_snprintf(command, size, "//vr_gorilla_protocol 1 %d\n",
+		sv_gorilla.value != 0);
+}
+
+static void SV_WriteGorillaProtocol(sizebuf_t *message)
+{
+	char command[64];
+
+	SV_FormatGorillaProtocol(command, sizeof(command));
+	MSG_WriteByte(message, svc_stufftext);
+	MSG_WriteString(message, command);
+}
+
+static void SV_QueueGorillaProtocol(void)
+{
+	char command[64];
+	int length;
+
+	length = SV_FormatGorillaProtocol(command, sizeof(command));
+	if (length < 0 || length >= (int)sizeof(command) ||
+		sv.reliable_datagram.cursize + 1 + length + 1 >
+			sv.reliable_datagram.maxsize)
+	{
+		sv_gorilla_protocol_pending = true;
+		return;
+	}
+	MSG_WriteByte(&sv.reliable_datagram, svc_stufftext);
+	MSG_WriteString(&sv.reliable_datagram, command);
+	sv_gorilla_protocol_pending = false;
+}
+
+static void SV_GorillaPolicyChanged(cvar_t *var)
+{
+	int i;
+
+	Host_Callback_Notify(var);
+	for (i = 0; i < svs.maxclients; i++)
+		if (svs.clients[i].active)
+			SV_VRGorillaResetClient(&svs.clients[i]);
+	if (sv.active)
+		SV_QueueGorillaProtocol();
+}
 
 static void SV_WriteWeaponContactProtocol(sizebuf_t *message, int mode)
 {
@@ -1044,6 +1091,7 @@ void SV_Init (void)
 	Cvar_RegisterVariable (&sv_predict_nqmovement);
 	Cvar_RegisterVariable (&sv_nopunchangle);
 	Cvar_RegisterVariable (&sv_akimbo);
+	Cvar_RegisterVariable (&sv_gorilla);
 	Cvar_RegisterVariable (&sv_immersive_melee);
 	Cvar_RegisterVariable (&sv_melee_hitassist);
 	Cvar_RegisterVariable (&sv_weapon_collision);
@@ -1093,6 +1141,7 @@ void SV_Init (void)
 	Cvar_SetCallback (&sv_coop_autosave, Host_Callback_Notify);
 	Cvar_SetCallback (&sv_vr_jump_velocity, Host_Callback_Notify);
 	Cvar_SetCallback (&sv_akimbo, SV_AkimboPolicyChanged);
+	Cvar_SetCallback (&sv_gorilla, SV_GorillaPolicyChanged);
 	Cvar_RegisterVariable (&vr_movement_instant_stop);
 	Cvar_RegisterVariable (&vr_movement_defaults_version);
 	Cmd_AddCommand ("vr_migrate_movement_defaults", VR_MigrateMovementDefaults_f);
@@ -1451,6 +1500,7 @@ void SV_SendServerinfo (client_t *client)
 	 * muzzle coordinates without breaking older servers. */
 	MSG_WriteByte (&client->message, svc_stufftext);
 	MSG_WriteString (&client->message, "//vr_relative_muzzle 1\n");
+	SV_WriteGorillaProtocol(&client->message);
 	SV_WriteWeaponContactProtocol(&client->message, SV_VRContactMode());
 	SV_WriteQBJ3AkimboProtocol(&client->message, SV_QBJ3AkimboSupported(),
 		SV_QBJ3BerserkAkimboSupported(), SV_EnyoAkimboSupported(),
@@ -3602,9 +3652,46 @@ void SV_WriteClientdataToMessage (edict_t *ent, sizebuf_t *msg)
 SV_SendClientDatagram
 =======================
 */
+static qboolean SV_GorillaAckStateIsFinite(const client_t *client)
+{
+	int hand, axis;
+
+	if (!client || !sv_gorilla.value || !client->vr_gorilla_capable ||
+		client->vr_gorilla_state_sequence < 0 ||
+		client->vr_gorilla_state.initialized > 1 ||
+		(client->vr_gorilla_state.touching & ~VR_GORILLA_HANDS) ||
+		(client->vr_gorilla_state.recovering & ~VR_GORILLA_HANDS))
+		return false;
+	for (hand = 0; hand < 2; hand++)
+		if (client->vr_gorilla_state.surface[hand] < 0 ||
+			client->vr_gorilla_state.surface[hand] >= MAX_EDICTS ||
+			client->vr_gorilla_state.surface_model[hand] >= MAX_MODELS ||
+			(!client->vr_gorilla_state.surface[hand] &&
+				client->vr_gorilla_state.surface_model[hand]) ||
+			(client->vr_gorilla_state.surface[hand] &&
+				!client->vr_gorilla_state.surface_model[hand]))
+			return false;
+	for (hand = 0; hand < 2; hand++)
+		for (axis = 0; axis < 3; axis++)
+			if (!isfinite(client->vr_gorilla_state.anchor[hand][axis]) ||
+				!isfinite(client->vr_gorilla_state.recovery_offset[hand][axis]))
+				return false;
+	for (hand = 0; hand < 2; hand++)
+		if (DotProduct(client->vr_gorilla_state.recovery_offset[hand],
+			client->vr_gorilla_state.recovery_offset[hand]) >
+			VR_GORILLA_MAX_REACH * VR_GORILLA_MAX_REACH)
+			return false;
+	for (axis = 0; axis < 3; axis++)
+		if (!isfinite(client->vr_gorilla_state.velocity[axis]) ||
+			!isfinite(client->vr_gorilla_state.origin[axis]))
+			return false;
+	return true;
+}
+
 static void SV_WriteMoveAckPayloadToMessage(client_t *client, sizebuf_t *msg)
 {
 	int flags = 0;
+	int hand, axis;
 
 	MSG_WriteShort (msg, client->lastmovemessage & 0xffff);
 	if (!(client->protocol_pext2 & PEXT2_EXPLICITCMDMSEC))
@@ -3615,11 +3702,37 @@ static void SV_WriteMoveAckPayloadToMessage(client_t *client, sizebuf_t *msg)
 		flags |= MOVEACK_FLAG_PREDICTION_ALLOWED;
 	if (client->move_discontinuity_reason != MOVEACK_DISCONTINUITY_NONE)
 		flags |= MOVEACK_FLAG_DISCONTINUITY;
+	if (SV_GorillaAckStateIsFinite(client))
+		flags |= MOVEACK_FLAG_VR_GORILLA;
 	MSG_WriteByte (msg, flags);
 	MSG_WriteByte (msg, client->move_authority);
 	MSG_WriteShort (msg, client->move_mode_epoch);
 	MSG_WriteShort (msg, client->move_discontinuity_epoch);
 	MSG_WriteByte (msg, client->move_discontinuity_reason);
+	if (!(flags & MOVEACK_FLAG_VR_GORILLA))
+		return;
+	/* This sequence is intentionally independent from lastmovemessage: legacy
+	 * latest input is acknowledged on acceptance, while this state is only
+	 * committed by physics after its single QC lifecycle has finished. */
+	MSG_WriteLong (msg, client->vr_gorilla_state_sequence);
+	MSG_WriteByte (msg, client->vr_gorilla_state.initialized);
+	MSG_WriteByte (msg, client->vr_gorilla_state.touching);
+	MSG_WriteByte (msg, client->vr_gorilla_state.recovering);
+	for (hand = 0; hand < 2; hand++)
+		for (axis = 0; axis < 3; axis++)
+			MSG_WriteFloat (msg, client->vr_gorilla_state.anchor[hand][axis]);
+	for (hand = 0; hand < 2; hand++)
+		for (axis = 0; axis < 3; axis++)
+			MSG_WriteFloat (msg,
+				client->vr_gorilla_state.recovery_offset[hand][axis]);
+	for (axis = 0; axis < 3; axis++)
+		MSG_WriteFloat (msg, client->vr_gorilla_state.velocity[axis]);
+	for (axis = 0; axis < 3; axis++)
+		MSG_WriteFloat (msg, client->vr_gorilla_state.origin[axis]);
+	for (hand = 0; hand < 2; hand++)
+		MSG_WriteLong (msg, client->vr_gorilla_state.surface[hand]);
+	for (hand = 0; hand < 2; hand++)
+		MSG_WriteLong (msg, client->vr_gorilla_state.surface_model[hand]);
 }
 
 static void SV_MaybePrintSnapshotSummary (client_t *client, int client_index)
@@ -4335,6 +4448,8 @@ void SV_UpdateToReliableMessages (void)
 		SV_QueueQBJ3AkimboProtocol(SV_QBJ3AkimboSupported(),
 			SV_QBJ3BerserkAkimboSupported(), SV_EnyoAkimboSupported(),
 			SV_DwellBerserkAkimboSupported());
+	if (sv_gorilla_protocol_pending)
+		SV_QueueGorillaProtocol();
 }
 
 
@@ -5031,6 +5146,7 @@ void SV_SpawnServer (const char *server)
 	/* A deferred policy update belongs to the old world. Fresh signon
 	 * advertises the current mod and cvars below. */
 	sv_qbj3_akimbo_protocol_pending = false;
+	sv_gorilla_protocol_pending = false;
 
 	// let's not have any servers with no name
 	if (hostname.string[0] == 0)

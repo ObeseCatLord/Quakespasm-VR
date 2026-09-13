@@ -1071,7 +1071,9 @@ static byte *Mod_GenerateQBJ3Half (const char *name, unsigned int *path_id,
 		{"vr/bonkjam/progs/v_hammer_stop_sign_vr_dominant.mdl", NULL},
 		{"vr/bonkjam/progs/v_hammer_blocky_axe_vr_dominant.mdl", NULL},
 		{"vr/bonkjam/progs/v_hammer_brown_brick_vr_dominant.mdl", NULL},
-		{"vr/bonkjam/progs/v_hammer_mace_vr_dominant.mdl", NULL}
+		{"vr/bonkjam/progs/v_hammer_mace_vr_dominant.mdl", NULL},
+		{"vr/ranger/progs/v_hand_vr.mdl", NULL},
+		{"vr/enyo/progs/ee_hand_vr.mdl", NULL}
 	};
 	static const char *const sources[VR_MDL_SPLIT_WEAPON_COUNT] = {
 		"progs/v_tnailgun.mdl", "progs/v_berserk.mdl", "progs/ee_v_smgs.mdl", "progs/v_axeb.mdl",
@@ -1089,13 +1091,14 @@ static byte *Mod_GenerateQBJ3Half (const char *name, unsigned int *path_id,
 		"progs/v_hammer_kebby_gears.mdl", "progs/v_hammer_squeaky.mdl",
 		"progs/v_hammer_sentinel.mdl", "progs/v_hammer_pirate_skull.mdl",
 		"progs/v_hammer_stop_sign.mdl", "progs/v_hammer_blocky_axe.mdl",
-		"progs/v_hammer_brown_brick.mdl", "progs/v_hammer_mace.mdl"};
+		"progs/v_hammer_brown_brick.mdl", "progs/v_hammer_mace.mdl",
+		"progs/v_axe.mdl", "progs/ee_v_sword.mdl"};
 	static const char *const games[VR_MDL_SPLIT_WEAPON_COUNT] = {
 		"qbj3", "qbj3", "enyo", "dwell", "qbj3", "enyo", "bonkjam", "bonkjam", "bonkjam", "bonkjam",
 		"bonkjam", "bonkjam", "bonkjam", "bonkjam", "bonkjam", "bonkjam", "bonkjam", "bonkjam",
 		"bonkjam", "bonkjam", "bonkjam", "bonkjam", "bonkjam", "bonkjam", "bonkjam", "bonkjam",
 		"bonkjam", "bonkjam", "bonkjam", "bonkjam", "bonkjam", "bonkjam", "bonkjam",
-		"bonkjam", "bonkjam"};
+		"bonkjam", "bonkjam", "id1", "enyo"};
 	unsigned int override_id = 0;
 	int weapon, hand, length, result = -1;
 	FILE *file = NULL;
@@ -1107,7 +1110,8 @@ static byte *Mod_GenerateQBJ3Half (const char *name, unsigned int *path_id,
 	for (weapon = 0; weapon < VR_MDL_SPLIT_WEAPON_COUNT; ++weapon)
 		for (hand = 0; hand < 2; ++hand)
 			if (names[weapon][hand] && !strcmp(name, names[weapon][hand]) &&
-				(!q_strcasecmp(COM_SkipPath(com_gamedir), games[weapon]) ||
+				(weapon == RANGER_MDL_WEAPON_HAND ||
+				 !q_strcasecmp(COM_SkipPath(com_gamedir), games[weapon]) ||
 				 (weapon == DWELL_MDL_WEAPON_BERSERK &&
 				  !q_strcasecmp(COM_SkipPath(com_gamedir), "dwellv2p2"))))
 				goto found;

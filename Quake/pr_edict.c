@@ -241,6 +241,7 @@ FIXME: walk all entities and NULL out references to this entity
 */
 void ED_Free (edict_t *ed)
 {
+	SV_VRGorillaInvalidateSurface(ed);
 	SV_UnlinkEdict (ed);		// unlink from world bsp
 	ED_AddToFreeList (ed);
 

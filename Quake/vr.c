@@ -1932,6 +1932,14 @@ DEFINE_CVAR(vr_mirror, 1, CVAR_ARCHIVE);
 DEFINE_CVAR(vr_hidden_area, 1, CVAR_ARCHIVE);
 DEFINE_CVAR(vr_highprecision_targets, 1, CVAR_ARCHIVE);
 DEFINE_CVAR(vr_movement_mode, 0, CVAR_ARCHIVE);
+DEFINE_CVAR(vr_gorilla, 0, CVAR_ARCHIVE);
+static qboolean vr_gorilla_posture_valid;
+static qboolean vr_gorilla_discontinuity = true;
+static float vr_gorilla_floor_delta;
+static float vr_gorilla_posture_scale;
+static float vr_gorilla_posture_floor;
+static qboolean vr_gorilla_drawing_offhand;
+static qboolean vr_gorilla_offhand_mirrored;
 DEFINE_CVAR(vr_joystick_yaw_multi, 1.0, CVAR_ARCHIVE);
 DEFINE_CVAR(vr_joystick_axis_deadzone, 0.25, CVAR_ARCHIVE);
 DEFINE_CVAR(vr_joystick_axis_menu_deadzone_extra, 0.25, CVAR_ARCHIVE);
@@ -4000,6 +4008,50 @@ static vr_controller_render_model_t *VR_GetControllerRenderModel(int hand) {
   return cache;
 }
 
+qboolean VR_GorillaActive(void) {
+  return vr_enabled.value && vr_gorilla.value &&
+      (int)vr_aimmode.value == VR_AIMMODE_CONTROLLER &&
+      cls.state == ca_connected && cls.signon == SIGNONS &&
+      cl.vr_gorilla_supported && cl.vr_gorilla_allowed &&
+      !cl.intermission && cl.stats[STAT_HEALTH] > 0;
+}
+
+/* Only calibrate on entry/scale changes, never follow the current head height:
+ * crouching and reaching must remain real motion. This is a visual/tracked-pose
+ * offset, NOT a smaller collision hull or a displacement of the server body. */
+static void VR_UpdateGorillaPosture(entity_t *player) {
+  if (!VR_GorillaActive()) {
+    vr_gorilla_posture_valid = false;
+    vr_gorilla_floor_delta = 0;
+    vr_gorilla_discontinuity = true;
+    return;
+  }
+  if (!vr_head_raw_valid || !isfinite(meters_to_units) || meters_to_units <= 0)
+    return;
+  if (!vr_gorilla_posture_valid ||
+      vr_gorilla_posture_scale != vr_world_scale.value ||
+      vr_gorilla_posture_floor != vr_floor_offset.value) {
+    float feet = -24;
+    const unsigned int solid = player->netstate.solidsize;
+    if (solid && solid != ES_SOLID_BSP)
+      feet = -(float)((solid >> 8) & 255);
+    float head = vr_head_raw_position.v[1] * meters_to_units;
+    if (!isfinite(head) || head < 4 || head > 128)
+      return;
+    vr_gorilla_floor_delta = CLAMP(-96.0f,
+        feet + VR_GORILLA_EYE_HEIGHT - head - vr_floor_offset.value, 0.0f);
+    vr_gorilla_posture_scale = vr_world_scale.value;
+    vr_gorilla_posture_floor = vr_floor_offset.value;
+    vr_gorilla_posture_valid = true;
+    vr_gorilla_discontinuity = true;
+  }
+}
+
+static float VR_EffectiveFloorOffset(void) {
+  return vr_floor_offset.value +
+      (vr_gorilla_posture_valid ? vr_gorilla_floor_delta : 0);
+}
+
 static void VR_TrackingPointToWorld(const vr::HmdVector3_t point,
                                     vec3_t out) {
   entity_t *player = &cl.entities[cl.viewentity];
@@ -4015,7 +4067,7 @@ static void VR_TrackingPointToWorld(const vr::HmdVector3_t point,
 
   out[0] = -headLocal[0] + player->origin[0];
   out[1] = -headLocal[1] + player->origin[1];
-  out[2] = headLocal[2] + player->origin[2] + vr_floor_offset.value;
+  out[2] = headLocal[2] + player->origin[2] + VR_EffectiveFloorOffset();
 }
 
 static void VR_FBT_MatrixPointToWorld(const float matrix[3][4], float x,
@@ -4476,7 +4528,7 @@ static void VR_FBT_UpdateCalibratedTargets(void) {
     input.identity_valid = matched && input.identity != 0;
     input.connected = matched && status.connected;
     input.floor_valid = 1;
-    input.floor_height = vr_floor_offset.value / meters_to_units;
+    input.floor_height = VR_EffectiveFloorOffset() / meters_to_units;
     input.root_yaw_degrees = body_yaw;
     input.root_yaw_valid = isfinite(body_yaw);
     if (matched && VR_FBT_RoleRawTransform(&status, &raw) &&
@@ -6318,7 +6370,8 @@ qboolean VR_AkimboHapticsActive(void) {
 qboolean VR_UseAkimboClassicViewModel(const entity_t *ent) {
   qmodel_t *models[2];
   aliashdr_t *headers[2];
-  return vr_enabled.value && (VR_IsAkimboViewEntity(ent) ||
+  return vr_enabled.value && ((vr_gorilla_drawing_offhand && ent == &cl.viewent) ||
+      VR_IsAkimboViewEntity(ent) ||
       (ent == &cl.viewent && VR_AkimboModels(models, headers)));
 }
 
@@ -6527,10 +6580,9 @@ static void VR_AkimboModelTransform(aliashdr_t *hdr, int hand) {
 /* Rotate the centered guard-pose fists into controller-forward space. The
  * columns below are transformed with the exact same entity convention used
  * for drawing; convert to Quake angles only after composing full rotations. */
-static void VR_AkimboModelAngles(int hand, const vec3_t handangles,
-                                 vec3_t out) {
+static void VR_FistModelAngles(const vr_akimbo_fists_t *fists, int hand,
+                                const vec3_t handangles, vec3_t out) {
   VR_HandRotToViewmodelAngles(handangles, out);
-  const vr_akimbo_fists_t *fists = VR_AkimboModelDefinition()->fists;
   if (fists) {
     vec3_t axes[3], base;
     VectorCopy(out, base);
@@ -6542,6 +6594,11 @@ static void VR_AkimboModelAngles(int hand, const vec3_t handangles,
     AngleVectorFromRotMat(axes, out);
     out[PITCH] = -out[PITCH]; /* renderer pitch is opposite AngleVectors */
   }
+}
+
+static void VR_AkimboModelAngles(int hand, const vec3_t handangles,
+                                 vec3_t out) {
+  VR_FistModelAngles(VR_AkimboModelDefinition()->fists, hand, handangles, out);
 }
 
 static qboolean VR_GetRawAkimboPoses(vec3_t muzzle[2], vec3_t angles[2], qboolean *berserk) {
@@ -6910,6 +6967,8 @@ static const vr_immersive_melee_profile_t vr_immersive_melee_profiles[] = {
 qboolean VR_ViewmodelMirrored(const entity_t *ent) {
   if (ent != &cl.viewent)
     return false;
+  if (vr_gorilla_drawing_offhand)
+    return vr_gorilla_offhand_mirrored;
   /* During tracked rendering cl.viewent temporarily names the verified
    * generated mesh. No cache lookup/loading is allowed inside the renderer. */
   if (ent->model)
@@ -7329,6 +7388,132 @@ qboolean VR_GetWeaponContactSample(vr_weapon_contact_t *out) {
       return false;
   }
   return true;
+}
+
+qboolean VR_GetGorillaSample(vr_gorilla_input_t *out,
+                            const vec3_t body_origin, qboolean consume_reset) {
+  vec3_t world, zero_world, velocity_world;
+  vr::HmdVector3_t zero = {{0, 0, 0}};
+  memset(out, 0, sizeof(*out));
+  if (!VR_GorillaActive() || !vr_gorilla_posture_valid ||
+      !vr_head_raw_valid || !VR_VRIKControllerTracked(0) ||
+      !VR_VRIKControllerTracked(1) || key_dest != key_game ||
+      vr_weaponmenu_session.active || VR_AdjustmentVisualsActive()) {
+    vr_gorilla_discontinuity = true;
+    return false;
+  }
+  out->flags = VR_GORILLA_HANDS;
+  if (vr_gorilla_discontinuity) {
+    out->flags |= VR_GORILLA_RESET;
+    if (consume_reset)
+      vr_gorilla_discontinuity = false;
+  }
+  VR_TrackingPointToWorld(vr_head_raw_position, world);
+  VectorSubtract(world, body_origin, out->head);
+  VR_TrackingPointToWorld(zero, zero_world);
+  for (int h = 0; h < 2; ++h) {
+    const vr::TrackedDevicePose_t *pose =
+        &ovr_DevicePose[controllers[h].deviceIndex];
+    VR_TrackingPointToWorld(controllers[h].rawvector, world);
+    VectorSubtract(world, body_origin, out->hand[h]);
+    VR_TrackingPointToWorld(pose->vVelocity, velocity_world);
+    VectorSubtract(velocity_world, zero_world, out->velocity[h]);
+  }
+  return true;
+}
+
+/* Generated hands reuse the source weapon's held scale, but center their own
+ * palm at the controller. Never borrow the primary weapon's animation or
+ * calibration slot, and never mutate its persistent view entity. */
+void VR_DrawGorillaOffhand(void) {
+  const char *source_name = NULL, *hand_name = NULL;
+  vec3_t palm = {0, 0, 0}, raw, rebase;
+  entity_t saved_viewent;
+  entity_t *saved_current;
+  qmodel_t *source, *model;
+  aliashdr_t *source_hdr, *hdr;
+  aliashdr_t *saved_weapon_header;
+  qmodel_t *saved_weapon_model;
+  int saved_weapon_entry;
+  qboolean qbj3 = VR_GameDirIs("qbj3");
+  int hand = VR_IsLeftHanded() ? 1 : 0;
+  if (!VR_GorillaActive() || !vr_gorilla_posture_valid ||
+      !VR_VRIKControllerTracked(0) || !cl.viewent.model ||
+      VR_AdjustmentVisualsActive())
+    return;
+  if (qbj3) {
+    source_name = "progs/v_berserk.mdl";
+    hand_name = hand ? "vr/qbj3/progs/v_berserk_vr_right.mdl" :
+                       "vr/qbj3/progs/v_berserk_vr_left.mdl";
+    vr_gorilla_offhand_mirrored = false;
+  } else if (VR_GameDirIs("enyo")) {
+    source_name = "progs/ee_v_sword.mdl";
+    hand_name = "vr/enyo/progs/ee_hand_vr.mdl";
+    palm[0] = 23.4505f; palm[1] = 21.2798f; palm[2] = -24.5898f;
+    vr_gorilla_offhand_mirrored = VR_IsLeftHanded();
+  } else {
+    /* Mods retaining the original Ranger axe can reuse its hand too. The
+     * generator verifies the effective source bytes, not just the name. */
+    source_name = "progs/v_axe.mdl";
+    hand_name = "vr/ranger/progs/v_hand_vr.mdl";
+    palm[0] = 21.1814f; palm[1] = -10.6010f; palm[2] = -26.0675f;
+    vr_gorilla_offhand_mirrored = !VR_IsLeftHanded();
+  }
+  source = Mod_ForName(source_name, false);
+  model = Mod_ForName(hand_name, false);
+  if (!source || !model || source->needload || model->needload ||
+      source->type != mod_alias || model->type != mod_alias)
+    return;
+  source_hdr = (aliashdr_t *)Mod_Extradata(source);
+  hdr = (aliashdr_t *)Mod_Extradata(model);
+  if (!source_hdr || !hdr || source_hdr->poseverttype != ALIAS_POSE_MDL ||
+      hdr->poseverttype != ALIAS_POSE_MDL || hdr->numframes < 1)
+    return;
+  if (qbj3) {
+    const trivertx_t *verts;
+    if (source_hdr->numverts != 894 || hdr->numverts != 447)
+      return;
+    verts = (const trivertx_t *)((const byte *)source_hdr + source_hdr->vertexes);
+    VectorCopy(vec3_origin, raw);
+    for (int i = 0; i < 8; ++i)
+      for (int axis = 0; axis < 3; ++axis)
+        raw[axis] += verts[vr_qbj3_fists.palms[hand][i]].v[axis] / 8.0f;
+  } else {
+    for (int axis = 0; axis < 3; ++axis) {
+      if (!isfinite(hdr->original_scale[axis]) || !hdr->original_scale[axis])
+        return;
+      raw[axis] = (palm[axis] - hdr->original_scale_origin[axis]) /
+          hdr->original_scale[axis];
+    }
+  }
+  /* This hand borrows a different weapon's scale. Do not leave the global
+   * calibration cache selecting that weapon for next frame's muzzle/input. */
+  saved_weapon_header = lastWeaponHeader;
+  saved_weapon_model = lastWeaponModel;
+  saved_weapon_entry = weaponCVarEntry;
+  Mod_Weapon(source, hdr);
+  for (int axis = 0; axis < 3; ++axis)
+    hdr->scale_origin[axis] = -raw[axis] * hdr->scale[axis];
+  saved_viewent = cl.viewent;
+  saved_current = currententity;
+  cl.viewent.model = model;
+  cl.viewent.frame = 0;
+  cl.viewent.skinnum = 0;
+  cl.viewent.lerpflags |= LERP_RESETANIM | LERP_RESETMOVE;
+  VectorCopy(cl.handpos[0], cl.viewent.origin);
+  VR_GetWeaponRenderRebase(rebase);
+  VectorAdd(cl.viewent.origin, rebase, cl.viewent.origin);
+  VR_FistModelAngles(qbj3 ? &vr_qbj3_fists : NULL, hand,
+      cl.handrot[0], cl.viewent.angles);
+  vr_gorilla_drawing_offhand = true;
+  currententity = &cl.viewent;
+  R_DrawAliasModel_NoCull(currententity);
+  vr_gorilla_drawing_offhand = false;
+  cl.viewent = saved_viewent;
+  currententity = saved_current;
+  lastWeaponHeader = saved_weapon_header;
+  lastWeaponModel = saved_weapon_model;
+  weaponCVarEntry = saved_weapon_entry;
 }
 
 qboolean VR_DrawTrackedViewModel(void) {
@@ -8311,6 +8496,7 @@ void VID_VR_Init() {
   Cvar_RegisterVariable(&vr_haptic);
   Cvar_RegisterVariable(&vr_joystick_axis_menu_deadzone_extra);
   Cvar_RegisterVariable(&vr_movement_mode);
+  Cvar_RegisterVariable(&vr_gorilla);
   Cvar_RegisterVariable(&vr_movement_speed);
   Cvar_RegisterVariable(&vr_msaa);
   Cvar_RegisterVariable(&vr_mirror);
@@ -8877,6 +9063,9 @@ float vr_game_projectile_z_extra = 0.0f;
 
 static void VR_ResetWeaponGameTransitionState(void) {
   vr_weapon_contact_discontinuity = true;
+  vr_gorilla_discontinuity = true;
+  vr_gorilla_posture_valid = false;
+  vr_gorilla_floor_delta = 0;
   /* A game-directory switch is a hard ownership boundary.  Do not carry an
    * open wheel, a pending retry impulse, or a calibration session into a mod
    * which may reuse the same item bits and viewmodel names for other weapons. */
@@ -9211,7 +9400,7 @@ void SetHandPos(int index, entity_t *player) {
   cl.handpos[index][0] = -headLocal[0] + player->origin[0];
   cl.handpos[index][1] = -headLocal[1] + player->origin[1];
   cl.handpos[index][2] =
-      headLocal[2] + player->origin[2] + vr_floor_offset.value;
+      headLocal[2] + player->origin[2] + VR_EffectiveFloorOffset();
 }
 
 void IdentifyAxes(int controllerIndex, int device);
@@ -9809,6 +9998,7 @@ static void VR_ApplyPendingControllerYaw() {
           ovr_DevicePose[device].mDeviceToAbsoluteTracking), orientation);
       vrYaw += controllerYawTarget - orientation[YAW];
       vr_weapon_contact_discontinuity = true;
+      vr_gorilla_discontinuity = true;
       controllerYawPending = false;
       return;
     }
@@ -9981,6 +10171,7 @@ void VR_UpdateScreenContent() {
 
   VR_FilterHandednessInput(0);
   VR_FilterHandednessInput(1);
+  VR_UpdateGorillaPosture(player);
 
   if (!controllers[0].seenThisFrame)
     VR_SetTrigger(&controllers[0], K_LTRIGGER, false);
@@ -10110,7 +10301,7 @@ void VR_UpdateScreenContent() {
                 (r_refdef.viewangles[YAW] - eye_orientation[YAW]) *
                     M_PI_DIV_180,
                 eye_view_offsets[i]);
-    eye_view_offsets[i][2] += vr_floor_offset.value;
+    eye_view_offsets[i][2] += VR_EffectiveFloorOffset();
     VectorAdd(player->origin, eye_view_offsets[i], stereo_visibility_origins[i]);
   }
   /* R_MarkSurfaces validates these prepared leaves against each final eye. */
@@ -10581,6 +10772,7 @@ void VR_SetAngles(vec3_t angles) {
 
 void VR_ResetOrientation() {
   vr_weapon_contact_discontinuity = true;
+  vr_gorilla_discontinuity = true;
   cl.aimangles[YAW] = cl.viewangles[YAW];
   cl.aimangles[PITCH] = cl.viewangles[PITCH];
   if (vr_enabled.value) {
@@ -11189,8 +11381,10 @@ void VR_Move(usercmd_t *cmd) {
         int snap = yawMove > 0.0f ? 1 : yawMove < 0.0f ? -1 : 0;
         if (snap != vr_last_snap) {
           vrYaw -= snap * vr_snap_turn.value;
-          if (snap)
+          if (snap) {
             vr_weapon_contact_discontinuity = true;
+            vr_gorilla_discontinuity = true;
+          }
           vr_last_snap = snap;
         }
       } else {
@@ -11230,6 +11424,7 @@ extern "C" void IN_VRTurn180_f(void) {
   if (vr_enabled.value && vr_180_snap_turn.value) {
     vrYaw -= 180.0f;
     vr_weapon_contact_discontinuity = true;
+    vr_gorilla_discontinuity = true;
   }
 }
 
@@ -11352,6 +11547,7 @@ void VR_TrackWeapons(void) {
 // Start/Reset weapon tracking (call on map change / disconnect)
 void VR_ResetWeaponTracking(void) {
   vr_weapon_contact_discontinuity = true;
+  vr_gorilla_discontinuity = true;
   VR_EndWeaponMenu();
   vr_weapon_cycle_target = -1;
 
