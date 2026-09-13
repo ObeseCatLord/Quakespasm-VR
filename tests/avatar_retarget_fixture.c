@@ -450,8 +450,72 @@ static void test_nonunit_presentation_roundtrips(void)
 	}
 }
 
+static float joint_distance(const float *a, const float *b)
+{
+	float d=0;int k;for(k=3;k<12;k+=4)d+=(a[k]-b[k])*(a[k]-b[k]);return sqrtf(d);
+}
+
+static void assert_physical_lengths(const fixture_t *f,const float *pose)
+{
+	int i;
+	for(i=0;i<f->live.numbones;++i) {
+		int p=f->joints[i].parent;
+		if(p>=0 && strcmp(f->joints[i].name,"Hip"))
+			assert(fabsf(joint_distance(pose+i*12,pose+p*12)-joint_distance(f->joints[i].bind,f->joints[p].bind))<.001f);
+	}
+}
+
+static void test_humanoid_lengths_and_contacts(void)
+{
+	fixture_t source,target;r_avatar_rig_t sr,tr;r_avatar_profile_t profile;
+	r_avatar_presentation_context_t ctx;r_avatar_humanoid_t map;
+	float input[MAX_MD5_JOINTS*12],pose[MAX_MD5_JOINTS*12],saved[MAX_MD5_JOINTS*12],endpoint[12],pole[3];
+	int i,k,upper,end,angle;
+	ranger(&source,1);ranger(&target,2);
+	/* Different body aspect and an interposed, off-axis physical arm helper. */
+	for(i=0;i<19;++i)target.joints[i].bind[3]*=.6f;
+	memmove(target.joints+8,target.joints+7,12*sizeof(target.joints[0]));
+	for(i=8;i<20;++i)if(target.joints[i].parent>=7)++target.joints[i].parent;
+	strcpy(target.joints[7].name,"arm_helper");target.joints[7].parent=6;
+	ident(target.joints[7].bind,0,0,0);
+	for(k=3;k<12;k+=4)target.joints[7].bind[k]=(target.joints[6].bind[k]+target.joints[8].bind[k])*.5f;
+	target.joints[7].bind[7]+=.2f;target.joints[8].parent=7;target.live.numbones=20;
+	profile=*R_AvatarProfileForId(PLAYER_AVATAR_RANGER);profile.display_scale=.75f;
+	assert(R_AvatarResolveRig(R_AvatarProfileForId(PLAYER_AVATAR_RANGER),&source.live,&sr));
+	assert(R_AvatarResolveRig(&profile,&target.live,&tr));
+	assert(R_AvatarBuildPresentationContext(&sr,&tr,&ctx));
+	assert(R_AvatarBuildHumanoid(&sr,&tr,&ctx,&map));
+	upper=tr.joint[MD5_VRIK_UPPERARM_L];end=tr.joint[MD5_VRIK_HAND_L];
+	for(angle=0;angle<16;++angle) {
+		float delta[12],a=angle*(float)M_PI/8;
+		ident(delta,0,0,0);delta[0]=delta[5]=cosf(a);delta[1]=-sinf(a);delta[4]=sinf(a);
+		for(i=0;i<source.live.numbones;++i)multiply(delta,source.joints[i].bind,input+i*12);
+		assert(R_AvatarRetargetHumanoid(&sr,&tr,&ctx,&map,input,pose));
+		assert_physical_lengths(&target,pose);
+		memcpy(saved,pose,sizeof(pose));memcpy(endpoint,pose+end*12,sizeof(endpoint));
+		for(k=0;k<3;++k){endpoint[k*4+3]=(pose[upper*12+k*4+3]+pose[end*12+k*4+3])*.5f;pole[k]=pose[tr.joint[MD5_VRIK_LOWERARM_L]*12+k*4+3];}
+		assert(R_AvatarSolveHumanoidLimb(&tr,pose,MD5_VRIK_UPPERARM_L,endpoint,pole)<.001f);
+		assert_physical_lengths(&target,pose);
+		for(k=0;k<12;++k)assert(fabsf(pose[end*12+k]-endpoint[k])<.001f);
+		/* Beyond reach must return a residual, not lengthen any physical link. */
+		endpoint[3]+=100;
+		assert(R_AvatarSolveHumanoidLimb(&tr,pose,MD5_VRIK_UPPERARM_L,endpoint,pole)>50);
+		assert_physical_lengths(&target,pose);
+		memcpy(saved,pose,sizeof(pose));endpoint[0]=NAN;
+		assert(R_AvatarSolveHumanoidLimb(&tr,pose,MD5_VRIK_UPPERARM_L,endpoint,pole)<0);
+		assert(!memcmp(saved,pose,sizeof(pose)));
+	}
+	/* Failed calibration/pose input must not publish a partial result. */
+	tr.virtual_mask|=1u<<MD5_VRIK_HAND_L;
+	assert(!R_AvatarBuildHumanoid(&sr,&tr,&ctx,&map));
+	input[0]=NAN;memcpy(saved,pose,sizeof(pose));
+	assert(!R_AvatarRetargetHumanoid(&sr,&tr,&ctx,&map,input,pose));
+	assert(!memcmp(saved,pose,sizeof(pose)));
+}
+
 int main(void)
 {
+	test_humanoid_lengths_and_contacts();
 	test_identity_and_locals(); test_rotation_and_basis(); test_dynamic_presentation_basis(); test_profile_basis_policies(); test_ancestor_translation_applied_once(); test_rejection_and_monsters(); test_all_profile_palettes_are_bounded(); test_absolute_global_transport(); test_preserve_hip_rotation(); test_nonunit_presentation_roundtrips();
 	puts("avatar retarget fixture: ok"); return 0;
 }

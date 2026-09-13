@@ -1,5 +1,10 @@
 # Humanoid retargeting investigation
 
+This report records the pre-implementation investigation. See the subsequent
+[implemented humanoid policy](../../docs/humanoid-retargeting.md) for current
+behavior and remaining work. The probe now compares the legacy path with that
+implementation; the original diagnostic is retained in commit `f3890c7c`.
+
 Inspected Quakespasm-VR at `e821a718` plus the existing Alicia experiment,
 FPSloppa at `a873edb`, and the installed Anzu, Chino, Marmot Ranger, and QBJ3
 packages. This investigation adds an offline diagnostic, not a runtime pose

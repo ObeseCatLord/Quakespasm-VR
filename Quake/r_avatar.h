@@ -122,6 +122,30 @@ typedef struct r_avatar_presentation_context_s {
 	float source_semantic_facing[3];
 } r_avatar_presentation_context_t;
 
+/* Anatomical rotation calibration, independent of mesh/material format.
+ * Offsets map source joint axes to target skin-bind axes. Reference matrices
+ * are the target orientations in the source reference silhouette, NOT new
+ * inverse binds. Keep the authored skin binds unchanged. */
+typedef struct r_avatar_humanoid_s {
+	float offset[19][12];
+	float reference[19][12];
+	float motion_scale;
+} r_avatar_humanoid_t;
+
+qboolean R_AvatarBuildHumanoid(const r_avatar_rig_t *source,
+	const r_avatar_rig_t *target, const r_avatar_presentation_context_t *context,
+	r_avatar_humanoid_t *out);
+qboolean R_AvatarRetargetHumanoid(const r_avatar_rig_t *source,
+	const r_avatar_rig_t *target, const r_avatar_presentation_context_t *context,
+	const r_avatar_humanoid_t *map, const float *source_palette, float *out);
+/* Rotation-only analytic IK: keeps every physical bind offset intact. Returns
+ * residual distance for unreachable targets; negative means invalid input.
+ * endpoint is a target-model-space rigid wrist/foot transform. */
+float R_AvatarSolveHumanoidLimb(const r_avatar_rig_t *rig, float *palette,
+	int upper_semantic, const float endpoint[12], const float pole[3]);
+/* Head-to-ankles anatomical height; excludes hair, hats and carried props. */
+float R_AvatarHumanoidHeight(const r_avatar_rig_t *rig);
+
 const r_avatar_profile_t *R_AvatarProfileForId (int id);
 const r_avatar_profile_t *R_AvatarProfileForModelPath (const char *path);
 qboolean R_AvatarResolveRig (const r_avatar_profile_t *profile,
