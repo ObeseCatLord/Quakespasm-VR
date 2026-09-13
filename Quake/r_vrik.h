@@ -33,6 +33,9 @@ typedef struct r_vrik_skincache_s
 	 * overwrite a source joint before one of its descendants consumes it. */
 	float canonical_palette[MAX_MD5_JOINTS * 12];
 	float palette[MAX_MD5_JOINTS * 12];
+#ifdef USE_ALICIA_SPIKE
+	float alicia_presentation[12];
+#endif
 	qboolean ready;
 	qboolean muzzle_valid;
 	vec3_t muzzle_origin;

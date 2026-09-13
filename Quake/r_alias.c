@@ -27,6 +27,9 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "r_vrik.h"
 #include "r_avatar.h"
 #include "custom_avatar.h"
+#ifdef USE_ALICIA_SPIKE
+#include "r_alicia_spike.h"
+#endif
 
 extern cvar_t r_drawflat, gl_overbright_models, gl_fullbrights, r_lerpmodels, r_lerpmove; //johnfitz
 extern cvar_t scr_fov, cl_gun_fovscale;
@@ -5216,6 +5219,9 @@ static qboolean R_VRIKPrepareSkin (qmodel_t *model)
 	md5liveinfo_t canonical, target;
 	md5livesurface_t surface, canonicalsurface;
 	const r_avatar_profile_t *profile;
+#ifdef USE_ALICIA_SPIKE
+	r_avatar_profile_t alicia_profile;
+#endif
 	r_avatar_rig_t canonicalrig, targetrig;
 	r_avatar_presentation_context_t presentation;
 	r_vrik_skincache_t *cache;
@@ -5243,6 +5249,14 @@ static qboolean R_VRIKPrepareSkin (qmodel_t *model)
 		return true;
 	}
 	profile = R_PlayerAvatarProfile (r_vrik_avatar_id);
+#ifdef USE_ALICIA_SPIKE
+	if (profile && !strcmp(profile->key, "alicia") && r_alicia_pose.value == 2)
+	{
+		alicia_profile = *profile;
+		alicia_profile.desktop_refine = true;
+		profile = &alicia_profile;
+	}
+#endif
 	/* Load before retaining live-data pointers; model loading may evict caches. */
 	equipmentmodel = R_VRIKQBJ3EquipmentModel(profile);
 	if (!profile || !r_vrik_canonical_model ||
@@ -5319,7 +5333,14 @@ static qboolean R_VRIKPrepareSkin (qmodel_t *model)
 			}
 		}
 	}
+#ifdef USE_ALICIA_SPIKE
+	if (!strcmp(profile->key, "alicia") && r_alicia_pose.value == 1)
+		memcpy(cache->palette, targetbind, target.numbones * 12 * sizeof(float));
+#endif
 	R_VRIKSkinSurface (&surface, cache->palette, cache->vertices);
+#ifdef USE_ALICIA_SPIKE
+	memcpy(cache->alicia_presentation, presentation.forward, sizeof(cache->alicia_presentation));
+#endif
 	if (!q_strcasecmp(COM_SkipPath(com_gamedir), "qbj3") &&
 		profile->equipment_policy == R_AVATAR_EQUIPMENT_ATTACH_HAND)
 		R_VRIKPrepareQBJ3Equipment(equipmentmodel, &canonicalrig, &targetrig,
@@ -5327,6 +5348,10 @@ static qboolean R_VRIKPrepareSkin (qmodel_t *model)
 	else if (!R_VRIKPrepareAttachedProp (&canonical, &targetrig, &presentation,
 		&canonicalsurface, cache, desktop_weapon_socket_ready))
 		return false;
+#ifdef USE_ALICIA_SPIKE
+	if (!strcmp(profile->key, "alicia") && !r_alicia_props.value)
+		R_VRIKInvalidateDerivedPropState(cache);
+#endif
 	/* The cache is drawn through the ordinary target MD5 transform.  Normalize
 	 * the completed target-native skin into canonical Ranger presentation here
 	 * (before normals), rather than scaling the entity or collision state. */
@@ -5562,7 +5587,13 @@ static qboolean R_VRIKSubstitutePlayer (entity_t *entity, entity_t *replacement)
 	address = (uintptr_t)entity;
 	if (address >= (uintptr_t)&cl.entities[1] &&
 		address <= (uintptr_t)&cl.entities[cl.maxclients] &&
-		entity != &cl.entities[cl.viewentity])
+		(entity != &cl.entities[cl.viewentity]
+#ifdef USE_ALICIA_SPIKE
+		 || (r_alicia_preview.value && chase_active.value && !vr_enabled.value &&
+		     cl.viewentity >= 1 && cl.viewentity <= MAX_SCOREBOARD &&
+		     cl.avatar_ids[cl.viewentity-1] == CustomAvatar_IdForKey("alicia"))
+#endif
+		))
 		entitynum = (int)(entity - cl.entities);
 	else
 	{
@@ -5716,6 +5747,15 @@ static qboolean R_VRIKSubstitutePlayer (entity_t *entity, entity_t *replacement)
 	}
 	else
 		R_VRIKClearLowerBodyTargets (entitynum);
+#ifdef USE_ALICIA_SPIKE
+	if (entity == &cl.entities[cl.viewentity] && r_alicia_preview.value >= 2 && chase_active.value && !vr_enabled.value)
+	{
+		float turn = r_alicia_preview.value == 2 ? 180 : 90;
+		replacement->angles[YAW] += turn;
+		replacement->previousangles[YAW] += turn;
+		replacement->currentangles[YAW] += turn;
+	}
+#endif
 	r_vrik_pose_pending = R_VRIKShouldApplyPose(tracked, vr_vrik.value != 0.0f);
 	r_vrik_skin_pending = true;
 	r_vrik_active_player = corpse ? -1 : entitynum - 1;
@@ -6213,6 +6253,21 @@ static void R_DrawMD5Model (entity_t *e, qboolean cull, qboolean viewmodel)
 		R_SetupAliasLighting (e);
 	drawfog = !viewmodel && Fog_GetDensity() > 0.0f;
 	GL_DisableMultitexture ();
+#ifdef USE_ALICIA_SPIKE
+	if (!viewmodel && !r_drawflat_cheatsafe && !r_lightmap_cheatsafe &&
+		r_vrik_skin_active && r_vrik_skin_cache &&
+		R_AliciaSpikeDraw(e->model, r_vrik_skin_cache, r_vrik_active_player+1,
+			lightcolor, shadevector, entalpha))
+	{
+		if (r_vrik_skin_cache->prop_surface)
+		{
+			GL_Bind(r_vrik_skin_cache->prop_surface->gltextures[0][0]);
+			glTexEnvf(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
+			GL_DrawVRIKPropFrame();
+		}
+		goto cleanup;
+	}
+#endif
 	/* Keep legacy composition as separate GLSL draws so overbright and
 	 * fullbright overlays retain their additive fog behavior. */
 	r_md5_glsl_active = !r_vrik_skin_active && !r_drawflat_cheatsafe && !r_lightmap_cheatsafe &&
