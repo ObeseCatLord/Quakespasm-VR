@@ -139,6 +139,7 @@ cvar_t sv_predict_nqmovement = {"sv_predict_nqmovement", "0", CVAR_NOTIFY | CVAR
 cvar_t sv_nopunchangle = {"sv_nopunchangle", "0", CVAR_NONE};
 cvar_t sv_akimbo = {"sv_akimbo", "1", CVAR_ARCHIVE | CVAR_NOTIFY | CVAR_SERVERINFO};
 cvar_t sv_gorilla = {"sv_gorilla", "1", CVAR_NOTIFY | CVAR_SERVERINFO};
+cvar_t sv_gorilla_trustclient = {"sv_gorilla_trustclient", "1", CVAR_NOTIFY | CVAR_SERVERINFO};
 // When SV_WriteEntitiesToClient overflows the per-client datagram, the entity
 // that gets evicted is whichever the loop reached last. With sv_netsort=1
 // (ironwail's heuristic) entities are sorted by distance-to-player and PVS
@@ -188,7 +189,7 @@ static int sv_contact_advertised_profile = -1;
 
 static int SV_FormatGorillaProtocol(char *command, size_t size)
 {
-	return q_snprintf(command, size, "//vr_gorilla_protocol 1 %d\n",
+	return q_snprintf(command, size, "//vr_gorilla_protocol 1 %d\n//vr_gorilla_trusted 1\n",
 		sv_gorilla.value != 0);
 }
 
@@ -226,7 +227,7 @@ static void SV_GorillaPolicyChanged(cvar_t *var)
 	Host_Callback_Notify(var);
 	for (i = 0; i < svs.maxclients; i++)
 		if (svs.clients[i].active)
-			SV_VRGorillaResetClient(&svs.clients[i]);
+			SV_VRGorillaDiscontinuity(&svs.clients[i]);
 	if (sv.active)
 		SV_QueueGorillaProtocol();
 }
@@ -1093,6 +1094,7 @@ void SV_Init (void)
 	Cvar_RegisterVariable (&sv_nopunchangle);
 	Cvar_RegisterVariable (&sv_akimbo);
 	Cvar_RegisterVariable (&sv_gorilla);
+	Cvar_RegisterVariable (&sv_gorilla_trustclient);
 	Cvar_RegisterVariable (&sv_immersive_melee);
 	Cvar_RegisterVariable (&sv_melee_hitassist);
 	Cvar_RegisterVariable (&sv_weapon_collision);
@@ -1143,6 +1145,7 @@ void SV_Init (void)
 	Cvar_SetCallback (&sv_vr_jump_velocity, Host_Callback_Notify);
 	Cvar_SetCallback (&sv_akimbo, SV_AkimboPolicyChanged);
 	Cvar_SetCallback (&sv_gorilla, SV_GorillaPolicyChanged);
+	Cvar_SetCallback (&sv_gorilla_trustclient, SV_GorillaPolicyChanged);
 	Cvar_RegisterVariable (&vr_movement_instant_stop);
 	Cvar_RegisterVariable (&vr_movement_defaults_version);
 	Cmd_AddCommand ("vr_migrate_movement_defaults", VR_MigrateMovementDefaults_f);
@@ -2609,18 +2612,56 @@ static void SVFTE_CalcEntityDeltas (client_t *client)
 	snapshot_maxents = oldstop - olds;
 }
 
+static void SVFTE_BuildMoveSnapshot (client_t *client)
+{
+	sizebuf_t msg;
+	size_t i;
+	unsigned int owner = NUM_FOR_EDICT (client->edict);
+
+	memset (&msg, 0, sizeof(msg));
+	msg.data = client->snapshot_move;
+	msg.maxsize = sizeof(client->snapshot_move);
+	msg.allowoverflow = true;
+	client->snapshot_move_owner = 0;
+	MSG_WriteByte (&msg, svcfte_updateentities);
+	SV_WriteMoveAckPayloadToMessage (client, &msg);
+	MSG_WriteFloat (&msg, qcvm->time);
+	client->snapshot_move_header = msg.cursize;
+	for (i = 0; i < client->numpreviousentities; i++)
+	{
+		struct entity_num_state_s *state = &client->previousentities[i];
+		unsigned int bits;
+		if (state->num != owner)
+			continue;
+		/* Reset against the signon baseline, NOT the previous unreliable
+		 * snapshot. Unchanged fields (including zero velocity) must recover
+		 * correctly even when an earlier owner-changing packet was lost. */
+		bits = UF_RESET | MSGFTE_DeltaCalcBits (&client->edict->baseline, &state->state);
+		if (owner >= 0x4000)
+		{
+			MSG_WriteShort (&msg, 0x4000 | (owner & 0x3fff));
+			MSG_WriteByte (&msg, owner >> 14);
+		}
+		else
+			MSG_WriteShort (&msg, owner);
+		MSGFTE_WriteEntityUpdate (bits, &state->state, &msg,
+			client->protocol_pext2, sv.protocolflags);
+		client->snapshot_move_owner = owner;
+		break;
+	}
+	/* CSQC/customization can deliberately omit the native owner. Do not
+	 * fabricate a visible entity or authorize prediction from stale state. */
+	if (!client->snapshot_move_owner && (client->protocol_pext2 & PEXT2_EXPLICITCMDMSEC))
+		msg.data[3] &= ~MOVEACK_FLAG_PREDICTION_ALLOWED;
+	client->snapshot_move_size = msg.overflowed ? 0 : msg.cursize;
+}
+
 static int SVFTE_EntityHeaderSize (const client_t *client)
 {
-	/* Service byte, move ACK, server time and entity-list terminator. Keep
-	 * stats and entities on the same budget, including the optional state. */
-	int size = 1 + 2 + 4 + 2;
-	if (client->protocol_pext2 & PEXT2_EXPLICITCMDMSEC)
-	{
-		size += 7;
-		if (SV_GorillaAckStateIsFinite (client))
-			size += 4 + 3 + 18 * 4 + 2 * 2 * 4;
-	}
-	return size;
+	if (!client->snapshot_move_size)
+		return MAX_DATAGRAM; /* no ACK-only fallback after failed encoding */
+	return client->snapshot_move_size + 2 +
+		((client->pendingentities_bits[0] & UF_REMOVE) ? 2 : 0);
 }
 
 static void SVFTE_WriteStatsToClient (client_t *client, sizebuf_t *msg,
@@ -2763,16 +2804,46 @@ static void SVFTE_WriteEntitiesToClient (client_t *client, sizebuf_t *msg,
 	stateend = state + client->numpreviousentities;
 
 	header_need = SVFTE_EntityHeaderSize (client);
-	if (msg->cursize + header_need > msg->maxsize)
+	if (!client->snapshot_move_size || msg->cursize + header_need > msg->maxsize)
 		return;
 
-	MSG_WriteByte (msg, svcfte_updateentities);
-	SV_WriteMoveAckPayloadToMessage (client, msg);
-	MSG_WriteFloat (msg, qcvm->time);
+	SZ_Write (msg, client->snapshot_move, client->snapshot_move_header);
+	/* Remove-all must precede the mandatory owner, or it erases that owner.
+	 * Keep its normal resend bookkeeping; owner repetition needs no history. */
+	if (client->pendingentities_bits[0] & UF_REMOVE)
+	{
+		/* Dropped-frame bookkeeping can resurrect remove-all after presend
+		 * calculated ordinary deltas. Every surviving entity now needs an
+		 * independent baseline reset, including otherwise unchanged entities. */
+		for (state = client->previousentities; state < stateend; state++)
+			client->pendingentities_bits[state->num] = UF_RESET;
+		state = client->previousentities;
+		client->snapshotresume = 0;
+		MSG_WriteShort (msg, 0x8000);
+		client->pendingentities_bits[0] = 0;
+		if (frame->numents == frame->maxents)
+		{
+			frame->maxents += 64;
+			frame->ents = (void *)realloc (frame->ents, sizeof(*frame->ents) * frame->maxents);
+			if (!frame->ents)
+				Sys_Error ("SVFTE_WriteEntitiesToClient: realloc frame ents failed");
+		}
+		frame->ents[frame->numents].num = 0;
+		frame->ents[frame->numents].ebits = UF_REMOVE;
+		frame->ents[frame->numents++].csqcbits = 0;
+	}
+	SZ_Write (msg, client->snapshot_move + client->snapshot_move_header,
+		client->snapshot_move_size - client->snapshot_move_header);
 	payload_start = msg->cursize;
 
 	for (entnum = client->snapshotresume; entnum < client->numpendingentities; entnum++)
 	{
+		if (entnum && entnum == client->snapshot_move_owner)
+		{
+			/* The self-contained owner was already emitted in this packet. */
+			client->pendingentities_bits[entnum] = 0;
+			continue;
+		}
 		entbits = client->pendingentities_bits[entnum];
 		if (!(entbits & ~UF_RESET2))
 			continue;
@@ -3670,6 +3741,7 @@ static qboolean SV_GorillaAckStateIsFinite(const client_t *client)
 	int hand, axis;
 
 	if (!client || !sv_gorilla.value || !client->vr_gorilla_capable ||
+		SV_GorillaTrustedCommand((client_t *)client, &client->cmd) ||
 		client->vr_gorilla_state_sequence < 0 ||
 		client->vr_gorilla_state.initialized > 1 ||
 		(client->vr_gorilla_state.touching & ~VR_GORILLA_HANDS) ||
@@ -3717,11 +3789,15 @@ static void SV_WriteMoveAckPayloadToMessage(client_t *client, sizebuf_t *msg)
 		flags |= MOVEACK_FLAG_DISCONTINUITY;
 	if (SV_GorillaAckStateIsFinite(client))
 		flags |= MOVEACK_FLAG_VR_GORILLA;
+	if (client->vr_gorilla_trusted_capable && sv_gorilla_trustclient.value)
+		flags |= MOVEACK_FLAG_GORILLA_TRUSTED;
 	MSG_WriteByte (msg, flags);
 	MSG_WriteByte (msg, client->move_authority);
 	MSG_WriteShort (msg, client->move_mode_epoch);
 	MSG_WriteShort (msg, client->move_discontinuity_epoch);
 	MSG_WriteByte (msg, client->move_discontinuity_reason);
+	if (flags & MOVEACK_FLAG_GORILLA_TRUSTED)
+		MSG_WriteLong(msg, client->vr_gorilla_motion_generation);
 	if (!(flags & MOVEACK_FLAG_VR_GORILLA))
 		return;
 	/* This sequence is intentionally independent from lastmovemessage: legacy
@@ -4662,6 +4738,7 @@ static void SV_PresendClientDatagram (client_t *client)
 		SVFTE_SetupFrames (client);
 	SVFTE_BuildSnapshotForClient (client);
 	SVFTE_CalcEntityDeltas (client);
+	SVFTE_BuildMoveSnapshot (client);
 	client->snapshotresume = 0;
 }
 

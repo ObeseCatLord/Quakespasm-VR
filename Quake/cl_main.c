@@ -1738,19 +1738,24 @@ static void CL_PredictRetry_f (void)
 	Con_Printf ("Client prediction retry enabled.\n");
 }
 
-static qboolean CL_PredictPlayer (entity_t *ent)
+static struct {
+	int seq;
+	float waterjumptime;
+} cl_predict_propagate[CL_MOVE_HISTORY];
+
+static qboolean CL_GorillaCanTrust(void)
 {
-	static struct
-	{
-		int seq;
-		float waterjumptime;
-	} propagate[CL_MOVE_HISTORY];
-	int		seq;
-	int		startseq;
+	return cl.vr_gorilla_motion_generation_valid && cl.vr_gorilla_trusted_cap_sent &&
+		cl.vr_gorilla_allowed && cl.move_ack_prediction_allowed &&
+		cl.move_ack_authority == MOVE_AUTHORITY_PMOVE_ENGINE_COMPAT;
+}
+
+/* Shared body baseline setup. No presentation/error/history bookkeeping:
+ * command authoring must not sample pending input or quarantine twice. */
+static qboolean CL_SetupPlayerPrediction (entity_t *ent)
+{
 	int		i;
 	int		raw_pmovetype;
-	qboolean	predicted;
-	usercmd_t	pending;
 	vec3_t		bounds[2];
 	unsigned int	solidsize;
 
@@ -1773,26 +1778,16 @@ static qboolean CL_PredictPlayer (entity_t *ent)
 		!cl.move_ack_prediction_allowed)
 		return false;
 	if (!CL_PredictionVectorIsFinite (ent->msg_origins[0]))
-	{
-		CL_QuarantinePrediction ("non-finite authoritative movement state",
-			cl.ackedmovemessages, 0);
-		CL_ClearPredictionHistory ();
 		return false;
-	}
-	if (CL_PredictionSampleIsExpectedDiscontinuity ())
-	{
-		CL_ClearPredictionHistory ();
-		memset (propagate, 0, sizeof(propagate));
-		/* The acknowledged snapshot is already the new replay baseline.
-		 * Do not insert one interpolated frame when prediction resumes. */
-	}
 
 	PMCL_SetMoveVars ();
 	memset (&pmove, 0, sizeof(pmove));
 	VectorCopy (ent->msg_origins[0], pmove.origin);
 	/* A planted palm is simulation state, not a presentation cache. Never
 	 * replay from a state belonging to a different accepted command. */
-	if (VR_GorillaActive() && cl.vr_gorilla_state_valid)
+	if (CL_GorillaCanTrust())
+		pmove.gorilla_allowed = true;
+	else if (VR_GorillaActive() && cl.vr_gorilla_state_valid)
 	{
 		if (cl.vr_gorilla_state.initialized &&
 			cl.vr_gorilla_state_sequence != cl.ackedmovemessages)
@@ -1836,38 +1831,128 @@ static qboolean CL_PredictPlayer (entity_t *ent)
 	pmove.jump_secs = 0;
 	pmove.skipent = -cl.viewentity;
 	World_AddEntsToPmove (NULL, bounds);
-	if (ent->forcelink || (ent->lerpflags & LERP_RESETMOVE))
-		CL_ClearPredictionHistory ();
-	else
-		CL_CheckPredictionError (ent);
+	return true;
+}
+
+static void CL_ReplayPlayerCommands(qboolean record)
+{
+	int seq, startseq;
 
 	startseq = cl.ackedmovemessages + 1;
 	if (startseq < 2)
 		startseq = 2;
 	if (startseq < cl.movemessages - CL_MOVE_HISTORY)
 		startseq = cl.movemessages - CL_MOVE_HISTORY;
-	if (propagate[startseq & (CL_MOVE_HISTORY - 1)].seq == startseq)
+	if (cl_predict_propagate[startseq & (CL_MOVE_HISTORY - 1)].seq == startseq)
 		pmove.waterjumptime =
-			propagate[startseq & (CL_MOVE_HISTORY - 1)].waterjumptime;
+			cl_predict_propagate[startseq & (CL_MOVE_HISTORY - 1)].waterjumptime;
 
-	predicted = false;
 	for (seq = startseq; seq < cl.movemessages; seq++)
 	{
 		const usercmd_t *histcmd = &cl.movecmds[seq & (CL_MOVE_HISTORY - 1)];
 		if (histcmd->sequence != seq)
 			continue;
 		pmove.cmd = *histcmd;
+		if (pmove.cmd.vr_gorilla_motion.flags &&
+			(!CL_GorillaCanTrust() || pmove.cmd.vr_gorilla_motion.generation != cl.vr_gorilla_motion_generation))
+		{
+			/* A stale trusted result never becomes a raw-palm fallback. */
+			memset(&pmove.cmd.vr_gorilla_motion, 0, sizeof(pmove.cmd.vr_gorilla_motion));
+			memset(&pmove.cmd.vr_gorilla, 0, sizeof(pmove.cmd.vr_gorilla));
+		}
 		if (pmove.cmd.seconds > 0.5f)
 			pmove.cmd.seconds = 0.5f;
 		PM_PlayerMove (1);
-		CL_RecordPredictedMove (seq, histcmd, pmove.origin, pmove.velocity);
-		propagate[(seq + 1) & (CL_MOVE_HISTORY - 1)].seq = seq + 1;
-		propagate[(seq + 1) & (CL_MOVE_HISTORY - 1)].waterjumptime =
-			pmove.waterjumptime;
-		predicted = true;
+		if (record)
+		{
+			CL_RecordPredictedMove (seq, histcmd, pmove.origin, pmove.velocity);
+			cl_predict_propagate[(seq + 1) & (CL_MOVE_HISTORY - 1)].seq = seq + 1;
+			cl_predict_propagate[(seq + 1) & (CL_MOVE_HISTORY - 1)].waterjumptime = pmove.waterjumptime;
+		}
 	}
+}
+
+static void CL_PrepareLocalGorilla(int sequence)
+{
+	vec3_t correction;
+	memset(&pmove.gorilla, 0, sizeof(pmove.gorilla));
+	pmove.gorilla_allowed = true;
+	if (!cl.vr_gorilla_local_valid || cl.vr_gorilla_local_sequence != sequence - 1 ||
+		cl.vr_gorilla_local_generation != cl.vr_gorilla_motion_generation)
+		return;
+	pmove.gorilla = cl.vr_gorilla_local_state;
+	VectorSubtract(pmove.origin, pmove.gorilla.origin, correction);
+	if (!CL_PredictionVectorIsFinite(correction) || VectorLength(correction) > 64)
+	{
+		memset(&pmove.gorilla, 0, sizeof(pmove.gorilla));
+		return;
+	}
+	/* Unbound tracking references follow a corrected body. Planted world/
+	 * brush-local contacts remain attached to their surfaces; VRG revalidates
+	 * them. Preserve the launch filter across ordinary small corrections. */
+	for (int hand = 0; hand < 2; ++hand)
+		if (!(pmove.gorilla.touching & (1u << hand)))
+			VectorAdd(pmove.gorilla.anchor[hand], correction, pmove.gorilla.anchor[hand]);
+	VectorCopy(pmove.origin, pmove.gorilla.origin);
+}
+
+void CL_AuthorGorillaCommand(usercmd_t *cmd)
+{
+	entity_t *ent;
+	if (!CL_GorillaCanTrust() || !cmd->vr_gorilla.flags || cl.viewentity <= 0 ||
+		cl.viewentity >= cl.num_entities || !cl.entities)
+	{
+		cl.vr_gorilla_local_valid = false;
+		return;
+	}
+	ent = &cl.entities[cl.viewentity];
+	if ((cl_prediction_metadata_valid &&
+		(cl_prediction_mode_epoch != cl.move_ack_mode_epoch ||
+		 cl_prediction_discontinuity_epoch != cl.move_ack_discontinuity_epoch)) || ent->forcelink ||
+		!CL_SetupPlayerPrediction(ent))
+	{
+		cl.vr_gorilla_local_valid = false;
+		return;
+	}
+	CL_ReplayPlayerCommands(false);
+	CL_PrepareLocalGorilla(cmd->sequence);
+	pmove.cmd = *cmd;
+	pmove.gorilla_authoring = true;
+	PM_PlayerMove(1);
+	cmd->vr_gorilla_motion = pmove.gorilla_authored_motion;
+	cmd->vr_gorilla_motion.generation = cl.vr_gorilla_motion_generation;
+	cl.vr_gorilla_local_state = pmove.gorilla;
+	cl.vr_gorilla_local_generation = cl.vr_gorilla_motion_generation;
+	cl.vr_gorilla_local_sequence = cmd->sequence;
+	cl.vr_gorilla_local_valid = pmove.gorilla.initialized != 0;
+}
+
+static qboolean CL_PredictPlayer (entity_t *ent)
+{
+	usercmd_t pending;
+	if (!CL_PredictionVectorIsFinite(ent->msg_origins[0]))
+	{
+		CL_QuarantinePrediction("non-finite authoritative movement state", cl.ackedmovemessages, 0);
+		CL_ClearPredictionHistory();
+		return false;
+	}
+	if (!CL_SetupPlayerPrediction(ent))
+		return false;
+	if (CL_PredictionSampleIsExpectedDiscontinuity())
+	{
+		CL_ClearPredictionHistory();
+		memset(cl_predict_propagate, 0, sizeof(cl_predict_propagate));
+	}
+	if (ent->forcelink || (ent->lerpflags & LERP_RESETMOVE))
+		CL_ClearPredictionHistory();
+	else
+		CL_CheckPredictionError(ent);
+	CL_ReplayPlayerCommands(true);
 
 	pending = cl.pendingcmd;
+	/* Presentation samples solve raw palms on a disposable controller copy;
+	 * they must never reuse a contribution already authored for the wire. */
+	memset(&pending.vr_gorilla_motion, 0, sizeof(pending.vr_gorilla_motion));
 	/* The partial command has not passed through CL_SendMove's VR tagging.
 	 * Predict its tracking now without consuming the send accumulator. */
 	pending.vr_active = vr_enabled.value &&
@@ -1886,14 +1971,12 @@ static qboolean CL_PredictPlayer (entity_t *ent)
 	}
 	VectorCopy (cl.aimangles, pending.viewangles);
 	VR_UpdateCommandViewAngles (&pending);
+	if (CL_GorillaCanTrust())
+		CL_PrepareLocalGorilla(cl.movemessages);
 	pmove.cmd = pending;
 	if (pmove.cmd.seconds > 0.5f)
 		pmove.cmd.seconds = 0.5f;
 	PM_PlayerMove (1);
-	predicted = true;
-
-	if (!predicted)
-		return false;
 
 	VectorCopy (pmove.origin, ent->origin);
 	VectorCopy (pmove.velocity, cl.velocity);

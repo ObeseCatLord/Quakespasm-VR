@@ -232,7 +232,8 @@ typedef struct {
   vec3_t handrot, handpos, akimbo_angles[2];
   qboolean akimbo_active;
   int sequence, buttons;
-  float time;
+  float time, seconds;
+  byte msec;
   double received;
   byte impulse;
 } sv_vr_contact_sample_t;
@@ -433,6 +434,8 @@ void SV_VRContactAcceptLegacy(client_t *client, const usercmd_t *cmd) {
   s->pending[s->count].impulse = cmd->impulse;
   s->pending[s->count].buttons = cmd->buttons;
   s->pending[s->count].received = cmd->vr_contact_received;
+  s->pending[s->count].seconds = cmd->seconds;
+  s->pending[s->count].msec = cmd->msec;
   s->pending[s->count++].time = cmd->servertime;
 }
 
@@ -1361,8 +1364,12 @@ void SV_VRContactProcessCommand(client_t *client, const usercmd_t *cmd) {
     s->valid = false;
     return;
   }
-  dt = cmd->servertime - s->sample_time;
-  if (!s->valid || cmd->sequence != s->sequence + 1 || dt <= 0 || dt > .1f ||
+  /* Physical effort follows the accepted input clock, not cl.time: the
+   * latter can stand still while the downlink waits for another snapshot.
+   * Keep receipt time for defensive freshness and QC time for cooldowns. */
+  dt = cmd->msec ? cmd->msec * .001f : cmd->seconds;
+  if (!s->valid || cmd->sequence != s->sequence + 1 ||
+      !isfinite(dt) || dt <= 0 || dt > .125f ||
       c->modelindex != s->previous.modelindex || c->flags != s->previous.flags ||
       c->weapon != s->previous.weapon ||
       client->move_discontinuity_epoch != s->movement_epoch || cmd->impulse ||
@@ -1650,6 +1657,8 @@ void SV_VRContactDrainLegacy(client_t *client) {
     cmd.vr_akimbo_active = s->pending[i].akimbo_active;
     cmd.sequence = s->pending[i].sequence;
     cmd.servertime = s->pending[i].time;
+    cmd.seconds = s->pending[i].seconds;
+    cmd.msec = s->pending[i].msec;
     cmd.vr_contact_received = s->pending[i].received;
     cmd.impulse = s->pending[i].impulse;
     cmd.buttons = s->pending[i].buttons;
@@ -4675,7 +4684,7 @@ static void SV_GorillaTouchButtons(client_t *client, const int contacts[2]) {
       pr_global_struct->time = time;
       if (!client->vr_gorilla_state.initialized ||
           SV_GorillaCallbackMoved(client, player)) {
-        SV_VRGorillaResetClient(client);
+        SV_VRGorillaDiscontinuity(client);
         return;
       }
     }
@@ -5744,6 +5753,11 @@ void SV_RunPMoveForEntity(edict_t *ent, const usercmd_t *cmd) {
   if (host_client && host_client->edict == ent) {
     pmove.gorilla = host_client->vr_gorilla_state;
     pmove.gorilla_allowed = SV_GorillaEligible(host_client);
+    if (pmove.cmd.vr_gorilla_motion.flags && !SV_GorillaTrustedCommand(host_client, &pmove.cmd)) {
+      memset(&pmove.cmd.vr_gorilla_motion, 0, sizeof(pmove.cmd.vr_gorilla_motion));
+      memset(&pmove.cmd.vr_gorilla, 0, sizeof(pmove.cmd.vr_gorilla));
+      pmove.gorilla_allowed = false;
+    }
     if (qcvm->depth > 0 && sv_gorilla_qc_context.player == ent) {
       pmove.gorilla_prepared = sv_gorilla_qc_context.prepared;
       /* A callback (or a previous delegated move) may have teleported,
@@ -5829,7 +5843,7 @@ void SV_RunPMoveForEntity(edict_t *ent, const usercmd_t *cmd) {
       (host_client && host_client->edict == ent &&
        SV_GorillaCallbackMoved(host_client, ent))) {
     if (host_client && host_client->edict == ent)
-      SV_VRGorillaResetClient(host_client);
+      SV_VRGorillaDiscontinuity(host_client);
     return;
   }
 
@@ -5841,7 +5855,7 @@ void SV_RunPMoveForEntity(edict_t *ent, const usercmd_t *cmd) {
     if (pmove.gorilla_allowed && host_client && host_client->edict == ent &&
         (!host_client->vr_gorilla_state.initialized ||
          SV_GorillaCallbackMoved(host_client, ent))) {
-      SV_VRGorillaResetClient(host_client);
+      SV_VRGorillaDiscontinuity(host_client);
       return;
     }
   }
@@ -5850,7 +5864,7 @@ void SV_RunPMoveForEntity(edict_t *ent, const usercmd_t *cmd) {
     SV_GorillaTouchButtons(host_client, pmove.gorilla_contact);
   if (host_client && host_client->edict == ent &&
       SV_GorillaCallbackMoved(host_client, ent))
-    SV_VRGorillaResetClient(host_client);
+    SV_VRGorillaDiscontinuity(host_client);
 }
 
 static void SV_SetQCInputGlobals(const usercmd_t *cmd) {
@@ -5941,6 +5955,7 @@ qboolean SV_RunClientPMoveCommand(client_t *client) {
    * while PMove itself consumes each accepted command in sequence. */
   if (!command_hook) {
     sv_vr_weapon_pose_restore_t thinkRestore;
+    vec3_t prethink_origin;
     vec3_t prethink_velocity;
     vec3_t postthink_velocity;
     vec3_t preserved_velocity_delta;
@@ -5957,6 +5972,7 @@ qboolean SV_RunClientPMoveCommand(client_t *client) {
     SV_SetQCInputGlobals(&client->cmd);
 
     VectorCopy(ent->v.velocity, prethink_velocity);
+    VectorCopy(ent->v.origin, prethink_origin);
     prethink_flags = (int)ent->v.flags;
     prethink_waterlevel = (int)ent->v.waterlevel;
     prethink_watertype = (int)ent->v.watertype;
@@ -5969,6 +5985,10 @@ qboolean SV_RunClientPMoveCommand(client_t *client) {
     pr_global_struct->self = EDICT_TO_PROG(ent);
     PR_ExecuteProgram(pr_global_struct->PlayerPreThink);
     client->net_move_qc_prethinks++;
+    if (client->vr_gorilla_trusted_capable &&
+        (ent->free || !VectorCompare(prethink_origin, ent->v.origin) ||
+         (prethink_health > 0 && (ent->v.health <= 0 || ent->v.deadflag))))
+      SV_VRGorillaDiscontinuity(client);
     SV_GorillaLatchLadder(client, false);
     if (ent->free) {
       goto done;
@@ -5987,8 +6007,19 @@ qboolean SV_RunClientPMoveCommand(client_t *client) {
                                     postthink_teleport_time);
     SV_CheckVelocity(ent);
 
+    /* A scheduled Think may assign origin directly instead of calling
+     * setorigin. Fence its queued hand contributions just like PreThink,
+     * but do not mistake carriage before this QC scope for a teleport. */
+    prethink_health = ent->v.health;
     SV_ApplyVRWeaponOffset(ent, num, is_remote_vr, &thinkRestore);
+    VectorCopy(ent->v.origin, prethink_origin);
     think_ok = SV_RunThink(ent);
+    /* Compare inside the temporary weapon-origin scope. Restoration itself
+     * must neither hide a QC write nor look like an authoritative move. */
+    if (client->vr_gorilla_trusted_capable &&
+        (!think_ok || ent->free || !VectorCompare(prethink_origin, ent->v.origin) ||
+         (prethink_health > 0 && (ent->v.health <= 0 || ent->v.deadflag))))
+      SV_VRGorillaDiscontinuity(client);
     SV_RestoreVRWeaponOffset(ent, num, is_remote_vr, &thinkRestore);
     if (!think_ok || ent->free) {
       goto done;
@@ -6125,7 +6156,9 @@ done:
   if (processed && !ent->free && SV_GorillaEligible(client) &&
       !SV_GorillaCallbackMoved(client, ent)) {
     SV_VRGorillaFinishCommand(client, lastcmd.sequence);
-  } else
+  } else if (SV_GorillaCallbackMoved(client, ent))
+    SV_VRGorillaDiscontinuity(client);
+  else
     SV_VRGorillaResetClient(client);
   if (SV_QBJ3NeedsLegacyPhysics(client))
     client->move_prediction_allowed = false;
@@ -6380,7 +6413,7 @@ void SV_Physics_Client(edict_t *ent, int num) {
    * which own their respawn lifecycle, independently of co-op policies. */
   if (ent->free || ent->v.health <= 0 || ent->v.deadflag) {
     SV_VRContactResetClient(&svs.clients[num - 1]);
-    SV_VRGorillaResetClient(&svs.clients[num - 1]);
+    SV_VRGorillaDiscontinuity(&svs.clients[num - 1]);
   }
 
   // Exclude the local player: on a listen server / singleplayer, the local

@@ -1971,10 +1971,41 @@ static void PM_PlayerMoveStep (float gamespeed, qboolean apply_roomscale,
 	 * drag/timers while physical palms can still push solid surfaces. */
 	if (prepare_gorilla && !pmove.gorilla_prepared)
 	{
+		vec3_t hand_origin, hand_velocity;
+		qboolean hand_launched = false;
+		VectorCopy(pmove.origin, hand_origin);
+		VectorCopy(pmove.velocity, hand_velocity);
 		pmove.gorilla_braced = false;
 		pmove.gorilla_swim_stroke = false;
 		pmove.gorilla_contact[0] = pmove.gorilla_contact[1] = -1;
 		if (pmove.gorilla_allowed && pmove.cmd.vr_active &&
+			(pmove.pm_type == PM_NORMAL || pmove.pm_type == PM_FLY) &&
+			!pmove.onladder &&
+			(pmove.cmd.vr_gorilla_motion.flags & VR_GORILLA_MOTION_ACTIVE))
+		{
+			const vr_gorilla_motion_t *motion = &pmove.cmd.vr_gorilla_motion;
+			/* The command owner already solved its hand constraints. Reuse
+			 * body clipping, then let ordinary physics apply native forces.
+			 * Unfulfilled displacement is discarded, never banked as debt. */
+			VRG_Reset(&pmove.gorilla);
+			pmove.gorilla.initialized = 1;
+			VRG_MoveBody(NULL, PM_GorillaTrace, pmove.origin, motion->displacement);
+			if (!pmove.waterjumptime)
+				VectorAdd(pmove.velocity, motion->impulse, pmove.velocity);
+			hand_launched = (motion->flags & VR_GORILLA_MOTION_LAUNCHED) != 0;
+			pmove.gorilla_braced = !pmove.waterjumptime &&
+				(motion->flags & VR_GORILLA_MOTION_BRACED) != 0;
+			PM_CategorizePosition();
+			pmove.gorilla_swim_stroke = pmove.waterlevel >= 2 &&
+				!pmove.waterjumptime && (motion->flags & VR_GORILLA_MOTION_SWIM);
+			for (int hand = 0; hand < 2; ++hand)
+				for (int index = 0; index < pmove.numphysent; ++index)
+					if (motion->contact[hand] >= 0 &&
+						abs(pmove.physents[index].info) == motion->contact[hand] &&
+						pmove.physents[index].modelindex == motion->contact_model[hand])
+						pmove.gorilla_contact[hand] = motion->contact[hand];
+		}
+		else if (pmove.gorilla_allowed && pmove.cmd.vr_active &&
 			(pmove.pm_type == PM_NORMAL || pmove.pm_type == PM_FLY) &&
 			!pmove.onladder &&
 			VRG_InputValid(&pmove.cmd.vr_gorilla))
@@ -1991,6 +2022,7 @@ static void PM_PlayerMoveStep (float gamespeed, qboolean apply_roomscale,
 				result.braced = false;
 			}
 			pmove.gorilla_braced = result.braced;
+			hand_launched = result.launched;
 			pmove.gorilla_contact[0] = result.contact[0];
 			pmove.gorilla_contact[1] = result.contact[1];
 			PM_CategorizePosition();
@@ -2011,6 +2043,25 @@ static void PM_PlayerMoveStep (float gamespeed, qboolean apply_roomscale,
 		}
 		else
 			VRG_Reset(&pmove.gorilla);
+		if (pmove.gorilla_authoring)
+		{
+			vr_gorilla_motion_t *motion = &pmove.gorilla_authored_motion;
+			memset(motion, 0, sizeof(*motion));
+			motion->flags = (pmove.gorilla.initialized ? VR_GORILLA_MOTION_ACTIVE : 0) |
+				(pmove.gorilla_braced ? VR_GORILLA_MOTION_BRACED : 0) |
+				(pmove.gorilla_swim_stroke ? VR_GORILLA_MOTION_SWIM : 0) |
+				(hand_launched ? VR_GORILLA_MOTION_LAUNCHED : 0);
+			VectorSubtract(pmove.origin, hand_origin, motion->displacement);
+			VectorSubtract(pmove.velocity, hand_velocity, motion->impulse);
+			for (int hand = 0; hand < 2; ++hand)
+			{
+				motion->contact[hand] = pmove.gorilla_contact[hand];
+				for (int index = 0; index < pmove.numphysent; ++index)
+					if (motion->contact[hand] >= 0 &&
+						abs(pmove.physents[index].info) == motion->contact[hand])
+						motion->contact_model[hand] = pmove.physents[index].modelindex;
+			}
+		}
 	}
 	if (pmove.gorilla_allowed && pmove.gorilla.initialized &&
 		(pmove.pm_type == PM_NORMAL || pmove.pm_type == PM_FLY) && !pmove.onladder)
@@ -2089,6 +2140,7 @@ void PM_PlayerMove (float gamespeed)
 	int			i;
 
 	PM_EnsureInitialized ();
+	memset(&pmove.gorilla_authored_motion, 0, sizeof(pmove.gorilla_authored_motion));
 	pmove.numtouch = 0;
 	pmove.gorilla_contact[0] = pmove.gorilla_contact[1] = -1;
 	if (!pmove.gorilla_prepared) {

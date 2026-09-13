@@ -88,12 +88,35 @@ already pushing solid surfaces, and never truncates faster existing velocity.
 
 ## Networking and mod compatibility
 
-The client sends bounded physical palm/head samples in an optional negotiated
-movement extension. The server applies the same controller as client prediction
-and validates poses against body-relative reach, speed and timing bounds.
-Authoritative movement acknowledgements include planted-hand state so replay
-does not invent anchors from presentation frames. Legacy physics consumes an
-ordered auxiliary pose queue without multiplying QuakeC thinks or touches.
+For native predicted multiplayer movement, `sv_gorilla_trustclient 1` (default)
+lets the client solve its own palm contacts once per movement command. It sends
+the resulting hand displacement and added propulsion, not an absolute player
+position or replacement total velocity. The server clips that displacement
+against the normal body hull and preserves its own physics, platform carriage,
+knockback and gameplay callbacks. This mode assumes honest clients; it is not
+an anti-cheat boundary. `sv_gorilla_trustclient 0` selects the original
+server-solved palm path instead.
+
+Trusted contributions are frozen in the existing sequenced command history.
+Packet redundancy and prediction replay cannot commit the local hand controller
+again; render-only partial movement uses a disposable copy. Small corrections
+rebase tracking references and revalidate planted contacts without counting the
+correction itself as a hand stroke. Remote VRIK remains cosmetic: its delivery
+rate does not determine locomotion or permitted palm-button callbacks.
+
+The optional trusted input occupies 13 bytes with no displacement/impulse,
+25 bytes with either vector, or 37 bytes with both. A four-byte server-owned
+generation replaces the 95-byte palm-state reply in steady trusted operation.
+This generation rejects contributions authored before a server discontinuity;
+an ordinary packet gap does not invalidate every pending stroke. Movement ACKs
+and their complete owner-body baseline are repeated together in split snapshots,
+so losing one packet cannot pair a new ACK with an old player position.
+
+Local singleplayer, legacy physics, custom QC movement ownership, and peers
+without the trusted extension retain the original bounded palm/head samples.
+That path uses authoritative planted-hand state for prediction and an ordered
+auxiliary pose queue for legacy physics, without multiplying QuakeC thinks or
+touches. Both paths share the existing controller and native movement adapters.
 
 Death, teleportation, tracking discontinuities and mode changes discard old
 contacts. A client's local preference cannot enable the feature against server
@@ -120,7 +143,11 @@ Private local tests cover shared-controller geometry, below-floor recovery,
 posture lowering, generated model geometry, optional wire state and production
 PMove against a real BSP, sustained strokes through actual water in both native
 movement paths, weak environmental forces, and interpreted QC delegation.
-These tests do not establish physical-headset comfort,
+Connected synthetic-input tests additionally cover the real client authoring,
+wire and server movement path with an ordinary peer under delay, packet loss
+and reordering. They check unique consumption, generation fencing and immutable
+replay. Real-BSP tests also exercise native pusher carriage and a contribution
+consumed after the brush advances independently. These tests do not establish physical-headset comfort,
 hand mesh orientation or multiplayer feel. Before publishing, test real strokes,
 moving lifts, ladder entry/exit, death/teleport resets and mixed Gorilla/ordinary
 clients in VR. Keep private test fixtures and mod assets out of public packages.

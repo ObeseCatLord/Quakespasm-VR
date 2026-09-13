@@ -141,7 +141,8 @@ static qboolean SV_GorillaEligibleInput(client_t *client,
   if (!client || !client->active || !client->spawned ||
       !client->vr_gorilla_capable || !sv_gorilla.value ||
       !client->cmd.vr_active || !client->cmd.vr_handpos_relative ||
-      !SV_GorillaInputIsValid(input))
+      !(SV_GorillaTrustedCommand(client, &client->cmd) ||
+        SV_GorillaInputIsValid(input)))
     return false;
   ent = client->edict;
   if (!ent || ent->free || ent->v.health <= 0 || ent->v.deadflag ||
@@ -193,6 +194,23 @@ void SV_VRGorillaResetClient(client_t *client) {
   client->vr_gorilla_state_sequence = -1;
   client->vr_gorilla_legacy_head = 0;
   client->vr_gorilla_legacy_count = 0;
+}
+
+/* Unlike raw-state maintenance (including a lost command), an explicit
+ * lifecycle barrier fences motion already authored but still in flight. */
+void SV_VRGorillaDiscontinuity(client_t *client) {
+  if (!client)
+    return;
+  client->vr_gorilla_motion_generation++;
+  SV_VRGorillaResetClient(client);
+}
+
+qboolean SV_GorillaTrustedCommand(client_t *client, const usercmd_t *cmd) {
+  return client && cmd && client->vr_gorilla_trusted_capable &&
+      sv_gorilla.value && sv_gorilla_trustclient.value && client->usingpmove &&
+      client->move_authority == MOVE_AUTHORITY_PMOVE_ENGINE_COMPAT &&
+      (cmd->vr_gorilla_motion.flags & VR_GORILLA_MOTION_ACTIVE) &&
+      cmd->vr_gorilla_motion.generation == client->vr_gorilla_motion_generation;
 }
 
 void SV_VRGorillaAcceptLegacy(client_t *client, const usercmd_t *cmd) {
@@ -289,7 +307,7 @@ static void SV_ClearClientPMoveState(client_t *client) {
 
 void SV_ResetClientMoveState(client_t *client) {
   SV_VRContactResetClient(client);
-  SV_VRGorillaResetClient(client);
+  SV_VRGorillaDiscontinuity(client);
   Q_memset(&client->cmd, 0, sizeof(client->cmd));
   VectorCopy(vec3_origin, client->wishdir);
   client->last_move_time = 0;
@@ -896,7 +914,7 @@ static qboolean SV_ReadUsercmd(usercmd_t *readcmd, int sequence) {
   extbits = MSG_ReadByte();
   if (extbits & ~(MOVEEXT_VR | MOVEEXT_VR_RELATIVE | MOVEEXT_QCINPUT |
                   MOVEEXT_VR_AKIMBO | MOVEEXT_VR_AKIMBO_BERSERK |
-                  MOVEEXT_VR_CONTACT | MOVEEXT_VR_GORILLA)) {
+                  MOVEEXT_VR_CONTACT | MOVEEXT_VR_GORILLA | MOVEEXT_GORILLA_TRUSTED)) {
     msg_badread = true;
     return false;
   }
@@ -921,9 +939,15 @@ static qboolean SV_ReadUsercmd(usercmd_t *readcmd, int sequence) {
     msg_badread = true;
     return false;
   }
-  if ((extbits & MOVEEXT_VR_GORILLA) != 0 &&
+  if ((extbits & (MOVEEXT_VR_GORILLA | MOVEEXT_GORILLA_TRUSTED)) != 0 &&
       (extbits & (MOVEEXT_VR | MOVEEXT_VR_RELATIVE)) !=
           (MOVEEXT_VR | MOVEEXT_VR_RELATIVE)) {
+    msg_badread = true;
+    return false;
+  }
+
+  if ((extbits & MOVEEXT_GORILLA_TRUSTED) &&
+      ((extbits & MOVEEXT_VR_GORILLA) || !host_client->vr_gorilla_trusted_capable)) {
     msg_badread = true;
     return false;
   }
@@ -1116,6 +1140,37 @@ static qboolean SV_ReadUsercmd(usercmd_t *readcmd, int sequence) {
 	}
   }
 
+  if (extbits & MOVEEXT_GORILLA_TRUSTED) {
+    vr_gorilla_motion_t *motion = &readcmd->vr_gorilla_motion;
+    int flags;
+    if (net_message.cursize - msg_readcount < 13) {
+      msg_badread = true;
+      return false;
+    }
+    flags = MSG_ReadByte();
+    motion->flags = flags & VR_GORILLA_MOTION_FLAGS;
+    motion->generation = (unsigned int)MSG_ReadLong();
+    for (i = 0; i < 2; ++i) {
+      motion->contact[i] = (MSG_ReadShort() & 0xffff) - 1;
+      motion->contact_model[i] = MSG_ReadShort() & 0xffff;
+      if (motion->contact[i] >= MAX_EDICTS || motion->contact_model[i] >= MAX_MODELS ||
+          (motion->contact[i] < 0 && motion->contact_model[i]))
+        msg_badread = true;
+    }
+    if ((flags & ~63) || !(flags & VR_GORILLA_MOTION_ACTIVE) ||
+        net_message.cursize - msg_readcount < ((flags & 16) ? 12 : 0) + ((flags & 32) ? 12 : 0)) {
+      msg_badread = true;
+      return false;
+    }
+    if (flags & 16)
+      for (i = 0; i < 3; ++i) motion->displacement[i] = MSG_ReadFloat();
+    if (flags & 32)
+      for (i = 0; i < 3; ++i) motion->impulse[i] = MSG_ReadFloat();
+    for (i = 0; i < 3; ++i)
+      if (!isfinite(motion->displacement[i]) || !isfinite(motion->impulse[i]) ||
+          fabsf(motion->displacement[i]) > 64 || fabsf(motion->impulse[i]) > 1024)
+        msg_badread = true;
+  }
   return !msg_badread;
 }
 
@@ -1588,8 +1643,9 @@ static qboolean SV_HandleVRIKCapability(const char *s)
 static qboolean SV_HandleGorillaCapability(const char *s)
 {
   const char *value;
+  qboolean trusted = SV_ClientCommandIs(s, "vr_gorilla_trusted");
 
-  if (!SV_ClientCommandIs(s, "vr_gorilla_cap"))
+  if (!trusted && !SV_ClientCommandIs(s, "vr_gorilla_cap"))
     return false;
   value = s;
   while (*value && *value != ' ' && *value != '\t')
@@ -1601,7 +1657,13 @@ static qboolean SV_HandleGorillaCapability(const char *s)
   while (*value == ' ' || *value == '\t' || *value == '\r' ||
          *value == '\n')
     value++;
-  if (*value || host_client->vr_gorilla_capable)
+  if (*value)
+    return true;
+  if (trusted) {
+    host_client->vr_gorilla_trusted_capable = true;
+    return true;
+  }
+  if (host_client->vr_gorilla_capable)
     return true;
 
   host_client->vr_gorilla_capable = true;
@@ -2279,7 +2341,7 @@ static void SV_UpdateClientPMoveMode(client_t *client, qboolean allow_promotion)
     client->move_discontinuity_reason = usingpmove ?
         MOVEACK_DISCONTINUITY_RESET_TELEPORT : fallback_reason;
     SV_VRContactResetClient(client);
-    SV_VRGorillaResetClient(client);
+    SV_VRGorillaDiscontinuity(client);
     if (net_lagdebug.value)
       Con_Printf("net_lagdebug: server PMove %s for %s mode=%s sv_runclientcommand=%d\n",
                  usingpmove ? "enabled" : "disabled",

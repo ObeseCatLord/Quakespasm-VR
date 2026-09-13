@@ -405,6 +405,7 @@ typedef struct
 #define MOVEACK_FLAG_PREDICTION_ALLOWED 0x02
 #define MOVEACK_FLAG_DISCONTINUITY 0x04
 #define MOVEACK_FLAG_VR_GORILLA 0x08 /* [long state_sequence][state] */
+#define MOVEACK_FLAG_GORILLA_TRUSTED 0x10 /* negotiated [long motion generation] */
 
 typedef enum {
   MOVE_AUTHORITY_UNKNOWN = 0,
@@ -471,6 +472,7 @@ typedef enum {
 #define MOVEEXT_VR_AKIMBO_BERSERK 16 /* pose kind; requires AKIMBO + relative VR */
 #define MOVEEXT_VR_CONTACT 32 /* requires relative VR; follows QC input */
 #define MOVEEXT_VR_GORILLA 64 /* requires relative VR; follows contact input */
+#define MOVEEXT_GORILLA_TRUSTED 128 /* alternative to raw Gorilla, negotiated */
 
 #define VR_WEAPON_CONTACT_LEFT_VALID 1
 #define VR_WEAPON_CONTACT_CAP_COLLISION 1
@@ -627,6 +629,7 @@ typedef struct {
 	vr_weapon_contact_t vr_contact;
 	/* Optional command-time Gorilla hands/head tracking, body-relative. */
 	vr_gorilla_input_t vr_gorilla;
+	vr_gorilla_motion_t vr_gorilla_motion;
 	/* Server-owned receipt clock, never serialized or supplied by the client.
    * Retained through command queues so delayed poses cannot become shields. */
   double vr_contact_received;

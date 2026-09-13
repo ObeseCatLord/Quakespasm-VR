@@ -914,10 +914,10 @@ int MSG_ReadLong (void)
 		return -1;
 	}
 
-	c = net_message.data[msg_readcount]
-			+ (net_message.data[msg_readcount+1]<<8)
-			+ (net_message.data[msg_readcount+2]<<16)
-			+ (net_message.data[msg_readcount+3]<<24);
+	c = (int)((unsigned int)net_message.data[msg_readcount]
+			| ((unsigned int)net_message.data[msg_readcount+1]<<8)
+			| ((unsigned int)net_message.data[msg_readcount+2]<<16)
+			| ((unsigned int)net_message.data[msg_readcount+3]<<24));
 
 	msg_readcount += 4;
 
