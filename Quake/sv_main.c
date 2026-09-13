@@ -1444,6 +1444,9 @@ void SV_SendServerinfo (client_t *client)
 	int				i; //johnfitz
 
 	client->knowntoqc = false;
+	/* CL_ClearState resets its trusted-ACK parser gate for this serverinfo.
+	 * Wait for the new world's renewed request before emitting its ACK. */
+	client->vr_gorilla_trusted_capable = false;
 	client->protocol_pext1 = 0;
 	client->protocol_pext2 = PEXT2_REQUIRED_LATEST;
 	client->pextknown = true;

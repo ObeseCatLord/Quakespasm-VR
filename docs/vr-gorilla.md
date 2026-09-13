@@ -77,8 +77,18 @@ displacement, two-hand averaging, sliding and capped launches. Unlike the
 reference's render-frame velocity history, the engine uses a 40 ms command-time
 velocity filter so server simulation and client replay use the same time base.
 Launch threshold/cap are derived from the reference prefab's 0.4 m/s and 6.5 m/s
-values at Quake's default world scale. Quake's unchanged body hull, collision
+values at Quake's default world scale. Crossing the launch threshold does not
+release a planted palm: the remaining physical stroke can continue to push.
+Propulsion tops up velocity along the stroke rather than repeatedly adding the
+whole launch velocity. Braking an opposing native impulse uses the command-time
+filter; a faster existing velocity in the launch direction is retained.
+Small, collision-checked upward pushes can leave the ground without being
+cancelled by Quake's normal ground-snap threshold. Stationary grounded palms
+still use ordinary support snapping, and genuine floor contact can land again.
+Quake's unchanged body hull, collision
 queries, gravity, gameplay callbacks and network command pipeline remain in use.
+Consequently airborne trajectories are still Quake trajectories, not an exact
+match for Gorilla Tag's lower gravity.
 
 GorillaQuake preserves hand pushes against surfaces underwater but still lists
 immersive free-water swimming as a TODO. This port's free-water stroke helper
