@@ -1660,7 +1660,11 @@ static qboolean SV_HandleGorillaCapability(const char *s)
   if (*value)
     return true;
   if (trusted) {
-    host_client->vr_gorilla_trusted_capable = true;
+    /* Unlike the raw offer response, this request is sent with gameplay
+     * commands after begin. Ignore an old-world request arriving during
+     * signon, before the client has cleared and renewed its parser gate. */
+    if (host_client->spawned)
+      host_client->vr_gorilla_trusted_capable = true;
     return true;
   }
   if (host_client->vr_gorilla_capable)

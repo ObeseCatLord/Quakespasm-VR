@@ -442,17 +442,24 @@ static vr_gorilla_result_t VRG_Step(vr_gorilla_state_t *s,
     if (s->velocity[2]*gain>VRG_LAUNCH_MAX_SPEED)
       gain=VRG_LAUNCH_MAX_SPEED/s->velocity[2];
     float addition[3], scale;
-    for(j=0;j<3;++j) addition[j]=s->velocity[j]*gain;
+    /* A launch is not a release of the physical palm. Keep resolving the
+     * stroke until collision actually releases it, as GorillaLocomotion does.
+     * Top up along the stroke rather than adding its entire velocity on every
+     * command. Faster native movement is retained, and an opposing impulse
+     * is not subtracted just to reach the requested launch speed. */
+    float target_speed=speed*gain;
+    float along=VRG_Dot(velocity,s->velocity)/speed;
+    float remaining=fmaxf(0,target_speed-fmaxf(0,along));
+    /* Braking opposing velocity is duration-aware effort, not a
+     * fresh full launch on every headset sample. Reuse the stroke filter's
+     * time constant; same-direction launch top-up remains immediate. */
+    if (along < 0)
+      remaining*=alpha;
+    for(j=0;j<3;++j) addition[j]=s->velocity[j]*(remaining/speed);
     scale=VRGS_LimitContribution(velocity,addition,VRG_LAUNCH_MAX_SPEED);
     for(j=0;j<3;++j) velocity[j]+=addition[j]*scale;
     result.launched=1;
     result.braced=0;
-    for(h=0;h<2;++h) {
-      if (s->recovering&(1u<<h))
-        VRG_UnbindRecoveryHand(s,h,raw_hands[h]);
-      else
-        VRG_ResetHand(s,h,raw_hands[h]);
-    }
   }
   memcpy(s->origin,origin,3*sizeof(float));
   result.stepped=1;

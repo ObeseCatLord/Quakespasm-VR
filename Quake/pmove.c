@@ -1368,11 +1368,24 @@ static plane_t	groundplane;	//valid only when pmove.onground
 PM_CategorizePosition
 =============
 */
+/* Gorilla pushes are often smaller than the ordinary one-unit ground snap,
+ * and their launch speeds can be below Quake's 180-unit airborne threshold.
+ * Never apply these exceptions merely because the server offers Gorilla. */
+static qboolean PM_GorillaGroundContact (void)
+{
+	return pmove.gorilla_allowed && pmove.cmd.vr_active &&
+		pmove.cmd.vr_handpos_relative && !pmove.onladder && !pmove.waterjumptime &&
+		pmove.pm_type == PM_NORMAL &&
+		((pmove.cmd.vr_gorilla_motion.flags & VR_GORILLA_MOTION_ACTIVE) ||
+		 VRG_InputValid(&pmove.cmd.vr_gorilla));
+}
+
 void PM_CategorizePosition (void)
 {
 	vec3_t		point;
 	int			cont;
 	trace_t		trace;
+	qboolean	gorilla_airborne_brace;
 
 	if (pmove.gravitydir[0] == 0 && pmove.gravitydir[1] == 0 && pmove.gravitydir[2] == 0)
 	{
@@ -1429,10 +1442,15 @@ void PM_CategorizePosition (void)
 // is on ground
 
 // see if standing on something solid
+	gorilla_airborne_brace = PM_GorillaGroundContact() && !pmove.onground &&
+		DotProduct(pmove.gravitydir, pmove.velocity) <= 0 &&
+		(pmove.gorilla_braced || pmove.gorilla.touching ||
+		 (pmove.cmd.vr_gorilla_motion.flags & VR_GORILLA_MOTION_BRACED));
 	VectorAdd(pmove.origin, pmove.gravitydir, point);
 	trace.startsolid = trace.allsolid = true;
 	VectorClear(trace.endpos);
-	if (-DotProduct(pmove.gravitydir, pmove.velocity) > 180)
+	if (-DotProduct(pmove.gravitydir, pmove.velocity) > 180 ||
+		(PM_GorillaGroundContact() && -DotProduct(pmove.gravitydir, pmove.velocity) > .01f))
 	{
 		pmove.onground = false;
 	}
@@ -1447,7 +1465,11 @@ void PM_CategorizePosition (void)
 			trace = PM_PlayerTrace (trace.endpos, point, MASK_PLAYERSOLID);
 		}
 
-		if (!trace.startsolid && (trace.fraction == 1 || -DotProduct(pmove.gravitydir, trace.plane.normal) < MIN_STEP_NORMAL))
+		/* Retain a real hand-created lift across command boundaries, but a
+		 * stationary grounded brace still follows ordinary support snapping.
+		 * A trace starting at support (fraction zero) must ground us again. */
+		if (!trace.startsolid && (trace.fraction == 1 || -DotProduct(pmove.gravitydir, trace.plane.normal) < MIN_STEP_NORMAL ||
+			(gorilla_airborne_brace && trace.fraction > .0001f)))
 			pmove.onground = false;
 		else
 		{
@@ -1927,6 +1949,14 @@ static void PM_ApplyVRRoomScaleMove (void)
 	frametime = saved_frametime;
 }
 
+static void PM_GorillaCheckLift (const vec3_t previous_origin)
+{
+	vec3_t displacement;
+	VectorSubtract(pmove.origin, previous_origin, displacement);
+	if (PM_GorillaGroundContact() && DotProduct(displacement, pmove.gravitydir) < -.0001f)
+		pmove.onground = false;
+}
+
 static void PM_PlayerMoveStep (float gamespeed, qboolean apply_roomscale,
 	qboolean prepare_gorilla, float gorilla_seconds)
 {
@@ -1995,6 +2025,7 @@ static void PM_PlayerMoveStep (float gamespeed, qboolean apply_roomscale,
 			hand_launched = (motion->flags & VR_GORILLA_MOTION_LAUNCHED) != 0;
 			pmove.gorilla_braced = !pmove.waterjumptime &&
 				(motion->flags & VR_GORILLA_MOTION_BRACED) != 0;
+			PM_GorillaCheckLift(hand_origin);
 			PM_CategorizePosition();
 			pmove.gorilla_swim_stroke = pmove.waterlevel >= 2 &&
 				!pmove.waterjumptime && (motion->flags & VR_GORILLA_MOTION_SWIM);
@@ -2025,6 +2056,7 @@ static void PM_PlayerMoveStep (float gamespeed, qboolean apply_roomscale,
 			hand_launched = result.launched;
 			pmove.gorilla_contact[0] = result.contact[0];
 			pmove.gorilla_contact[1] = result.contact[1];
+			PM_GorillaCheckLift(hand_origin);
 			PM_CategorizePosition();
 			if (result.stepped && pmove.waterlevel >= 2 && !pmove.waterjumptime) {
 				unsigned int liquid = 0, solid = 0;
