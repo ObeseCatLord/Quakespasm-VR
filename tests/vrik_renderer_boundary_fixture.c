@@ -70,6 +70,7 @@ qboolean R_VRIKAvatarUprightFootContactsForTest (void);
 qboolean R_VRIKAvatarUprightUnreachableContactForTest (void);
 qboolean R_VRIKPostureContactProjectionForTest (void);
 qboolean R_VRIKActualPathForTest (void);
+qboolean R_VRIKHumanoidTargetsForTest(void);
 
 static void SetTarget (vrik_codec_pose_t *pose, int target, float x)
 {
@@ -161,6 +162,7 @@ static qboolean VoreHipPreservesUnmappedChildForTest (void)
 
 int main (void)
 {
+	assert(R_VRIKHumanoidTargetsForTest());
 	entity_t entity;
 	r_vrik_lowerbody_targets_t targets;
 	unsigned char hip = VRIK_TARGET_BIT (VRIK_TARGET_HIP);

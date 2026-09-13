@@ -1,6 +1,6 @@
 # Alicia: MD5 conversion and direct VRM drawing spikes
 
-This is an opt-in experiment on `codex/alicia-avatar-spikes`, based on `e821a718`.
+This is an opt-in experiment on `codex/humanoid-vrm-retargeting`, based on `e821a718`.
 It accepts only the inspected Alicia VRM, not arbitrary VRMs. No model, skin,
 palette, or commercial Quake data is included in this directory.
 
@@ -99,6 +99,11 @@ boundary and [glTF skinning](https://registry.khronos.org/glTF/specs/2.0/glTF-2.
 for the inverse-bind/joint-list convention.
 
 ## Retargeting findings
+
+The committed [humanoid policy](../../docs/humanoid-retargeting.md) now implements
+reference calibration, fixed-length poses, height normalization and target IK.
+The historical findings below describe the original spike. The preview enables
+the new policy; F7 switches it off/on for comparison.
 
 The follow-up [retargeting investigation](RETARGETING.md) quantifies the
 stretching across actual Ranger frames, compares FPSloppa's procedural IK,

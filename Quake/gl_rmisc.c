@@ -55,6 +55,7 @@ extern cvar_t r_lerpmove;
 extern cvar_t r_nolerp_list;
 extern cvar_t r_noshadow_list;
 extern cvar_t r_alias_batching;
+extern cvar_t r_avatar_humanoid;
 extern cvar_t r_alphasort;
 extern cvar_t r_perfdebug;
 extern cvar_t r_perfdebug_min_ms;
@@ -257,6 +258,7 @@ void R_Init (void)
 	Cvar_RegisterVariable (&r_lerpmodels);
 	Cvar_RegisterVariable (&r_lerpmove);
 	Cvar_RegisterVariable (&r_alias_batching);
+	Cvar_RegisterVariable (&r_avatar_humanoid);
 #ifdef USE_ALICIA_SPIKE
 	R_AliciaSpikeInit();
 #endif

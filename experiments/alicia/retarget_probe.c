@@ -1,5 +1,5 @@
-/* Offline diagnostic: current engine retargeter vs fixed bind-local offsets.
- * The latter isolates translation error; it is NOT a complete retargeter.
+/* Offline diagnostic: legacy retargeter vs calibrated humanoid implementation.
+ * Samples authored frames; does not exercise renderer IK or visual contacts.
  * Input generated privately by retarget_probe.py, supplied via include path.
  */
 #define main original_fixture_main
@@ -27,6 +27,7 @@ int main(void)
     for(model=0;model<(int)(sizeof(models)/sizeof(*models));model++) for(group=0;group<2;group++) {
         probe_model_t *m=&models[model]; md5liveinfo_t tl={0};
         r_avatar_profile_t profile={0};r_avatar_rig_t tr;r_avatar_presentation_context_t ctx;
+        r_avatar_humanoid_t humanoid;
         float minimum[8],maximum[8]={0},error[8]={0},bindlen[8];int worst[8]={0};
         float output[MAX_MD5_JOINTS*12],fixed[MAX_MD5_JOINTS*12];
         tl.joints=m->joints;tl.numbones=m->count;profile.display_scale=1;
@@ -34,6 +35,7 @@ int main(void)
         for(j=0;j<19;j++)profile.joint[j].name=m->semantics[j];
         assert(R_AvatarResolveRig(&profile,&tl,&tr));
         assert(R_AvatarBuildPresentationContext(&sr,&tr,&ctx));
+        assert(R_AvatarBuildHumanoid(&sr,&tr,&ctx,&humanoid));
         for(chain=0;chain<8;chain++) {
             bindlen[chain]=length_between(tl.joints[tr.joint[ends[chain][0]]].bind,tl.joints[tr.joint[ends[chain][1]]].bind);
             assert(bindlen[chain]>0);minimum[chain]=1e9;
@@ -47,16 +49,7 @@ int main(void)
                 for(k=0;k<19;k++)if(sr.joint[k]==j)mapped=1;
                 if(mapped)for(k=0;k<12;k++)assert(fabsf(output[j*12+k]-frames[frame][j*12+k])<.001f);
             }
-            memcpy(fixed,output,tl.numbones*12*sizeof(float));
-            /* Keep the engine's rotations and Hip animation, but reconstruct
-             * every other local translation from the target bind hierarchy. */
-            for(j=0;j<tl.numbones;j++) {
-                int parent=tl.joints[j].parent;float inv[12],local[12],desired[12];
-                if(parent<0||j==tr.joint[MD5_VRIK_HIP])continue;
-                inverse(tl.joints[parent].bind,inv);multiply(inv,tl.joints[j].bind,local);
-                multiply(fixed+parent*12,local,desired);
-                for(k=3;k<12;k+=4)fixed[j*12+k]=desired[k];
-            }
+            assert(R_AvatarRetargetHumanoid(&sr,&tr,&ctx,&humanoid,frames[frame],fixed));
             for(chain=0;chain<8;chain++) {
                 int a=tr.joint[ends[chain][0]],b=tr.joint[ends[chain][1]];
                 float ratio=length_between(output+a*12,output+b*12)/bindlen[chain];
