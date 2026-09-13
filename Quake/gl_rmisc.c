@@ -23,6 +23,9 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 // r_misc.c
 
 #include "quakedef.h"
+#ifdef USE_ALICIA_SPIKE
+#include "r_alicia_spike.h"
+#endif
 #include "vr.h"
 
 //johnfitz -- new cvars
@@ -254,6 +257,9 @@ void R_Init (void)
 	Cvar_RegisterVariable (&r_lerpmodels);
 	Cvar_RegisterVariable (&r_lerpmove);
 	Cvar_RegisterVariable (&r_alias_batching);
+#ifdef USE_ALICIA_SPIKE
+	R_AliciaSpikeInit();
+#endif
 	Cvar_RegisterVariable (&r_alphasort);
 	Cvar_RegisterVariable (&r_nolerp_list);
 	Cvar_SetCallback (&r_nolerp_list, R_Model_ExtraFlags_List_f);
