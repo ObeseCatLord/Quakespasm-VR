@@ -86,6 +86,178 @@ static qboolean SV_PlayerOnLadder(void) {
   return val && val->_float != 0;
 }
 
+static qboolean SV_GorillaInputIsValid(const vr_gorilla_input_t *input) {
+  int hand;
+  vec3_t arm;
+
+  if (!input || (input->flags & ~VR_GORILLA_FLAGS) ||
+      (input->flags & VR_GORILLA_HANDS) != VR_GORILLA_HANDS ||
+      !isfinite(input->head[0]) || !isfinite(input->head[1]) ||
+      !isfinite(input->head[2]) || VectorLength(input->head) > 160.0f)
+    return false;
+  for (hand = 0; hand < 2; hand++) {
+    if (!isfinite(input->hand[hand][0]) || !isfinite(input->hand[hand][1]) ||
+        !isfinite(input->hand[hand][2]) ||
+        !isfinite(input->velocity[hand][0]) ||
+        !isfinite(input->velocity[hand][1]) ||
+        !isfinite(input->velocity[hand][2]) ||
+        VectorLength(input->velocity[hand]) > VR_GORILLA_MAX_HAND_SPEED)
+      return false;
+    VectorSubtract(input->hand[hand], input->head, arm);
+    if (VectorLength(arm) > VR_GORILLA_MAX_REACH)
+      return false;
+  }
+  return true;
+}
+
+static qboolean SV_GorillaNativeLadder(edict_t *ent) {
+  eval_t *value;
+  if (!ent)
+    return false;
+  value = GetEdictFieldValue(ent, qcvm->extfields.onladder);
+  if (value)
+    return value->_float != 0;
+  /* Immortal's ladder_touch writes laddercount=1; PreThink consumes it.
+   * laddertime is an exit cooldown, not an active-contact predicate. */
+  value = GetEdictFieldValueByName(ent, "laddercount");
+  return value && value->_float > 0 &&
+      GetEdictFieldValueByName(ent, "laddertime") &&
+      GetEdictFieldValueByName(ent, "laddersoundtime") &&
+      ED_FindFunction("ladder_touch") && ED_FindFunction("trigger_ladder");
+}
+
+void SV_GorillaLatchLadder(client_t *client, qboolean begin_frame) {
+  if (!client)
+    return;
+  if (begin_frame)
+    client->vr_gorilla_ladder_frame = false;
+  client->vr_gorilla_ladder_frame |= SV_GorillaNativeLadder(client->edict);
+}
+
+static qboolean SV_GorillaEligibleInput(client_t *client,
+                                        const vr_gorilla_input_t *input) {
+  edict_t *ent;
+
+  if (!client || !client->active || !client->spawned ||
+      !client->vr_gorilla_capable || !sv_gorilla.value ||
+      !client->cmd.vr_active || !client->cmd.vr_handpos_relative ||
+      !SV_GorillaInputIsValid(input))
+    return false;
+  ent = client->edict;
+  if (!ent || ent->free || ent->v.health <= 0 || ent->v.deadflag ||
+      ((int)ent->v.movetype != MOVETYPE_WALK &&
+       (int)ent->v.movetype != MOVETYPE_FLY) ||
+      client->vr_gorilla_ladder_frame || SV_GorillaNativeLadder(ent))
+    return false;
+  return true;
+}
+
+qboolean SV_GorillaEligible(client_t *client) {
+  return client && SV_GorillaEligibleInput(client, &client->cmd.vr_gorilla);
+}
+
+static qboolean SV_GorillaStateIsFinite(const vr_gorilla_state_t *state) {
+  int hand, axis;
+
+  if (!state || state->initialized > 1 ||
+      (state->touching & ~VR_GORILLA_HANDS) ||
+      (state->recovering & ~VR_GORILLA_HANDS))
+    return false;
+  for (hand = 0; hand < 2; hand++) {
+    if (state->surface[hand] < 0 || state->surface[hand] >= MAX_EDICTS ||
+        state->surface_model[hand] >= MAX_MODELS ||
+        (!state->surface[hand] && state->surface_model[hand]) ||
+        (state->surface[hand] && !state->surface_model[hand]) ||
+        DotProduct(state->recovery_offset[hand], state->recovery_offset[hand]) >
+            VR_GORILLA_MAX_REACH * VR_GORILLA_MAX_REACH)
+      return false;
+    for (axis = 0; axis < 3; axis++)
+      if (!isfinite(state->anchor[hand][axis]) ||
+          !isfinite(state->recovery_offset[hand][axis]))
+        return false;
+  }
+  for (axis = 0; axis < 3; axis++)
+    if (!isfinite(state->velocity[axis]) || !isfinite(state->origin[axis]))
+      return false;
+  return true;
+}
+
+void SV_VRGorillaResetClient(client_t *client) {
+  if (!client)
+    return;
+  Q_memset(&client->vr_gorilla_state, 0, sizeof(client->vr_gorilla_state));
+  client->vr_gorilla_button[0] = 0;
+  client->vr_gorilla_button[1] = 0;
+  client->vr_gorilla_active = false;
+  client->vr_gorilla_move_deferred = false;
+  client->vr_gorilla_state_sequence = -1;
+  client->vr_gorilla_legacy_head = 0;
+  client->vr_gorilla_legacy_count = 0;
+}
+
+void SV_VRGorillaAcceptLegacy(client_t *client, const usercmd_t *cmd) {
+  vr_gorilla_legacy_sample_t *sample;
+  unsigned int tail;
+
+  if (!client || !cmd)
+    return;
+  /* Preserve active, inactive and reset samples in sequence order. Physics
+   * consumes those boundaries after PlayerPreThink; only server policy and
+   * queue discontinuities may erase an earlier unsimulated push. */
+  if (!client->active || !client->spawned || !client->vr_gorilla_capable) {
+	return;
+  }
+  if (!sv_gorilla.value) {
+    SV_VRGorillaResetClient(client);
+    return;
+  }
+  /* Capability negotiation only says this client understands the extension.
+   * A client that leaves vr_gorilla disabled sends no Gorilla flags and must
+   * not enter the auxiliary queue/prepass at all. Preserve an OFF boundary
+   * only when it is needed to retire an already-active/queued controller. */
+  if (!cmd->vr_gorilla.flags && !client->vr_gorilla_state.initialized &&
+      !client->vr_gorilla_legacy_count)
+    return;
+  if (client->vr_gorilla_legacy_count >= MOVE_BUNDLE_MAX) {
+    /* Preserve ordered, bounded samples; an overflow is a pose discontinuity,
+     * never permission to reuse an old planted hand. */
+    SV_VRGorillaResetClient(client);
+    client->move_discontinuity_epoch++;
+    client->move_discontinuity_reason = MOVEACK_DISCONTINUITY_TRACKING_OUTLIER;
+  }
+  tail = (client->vr_gorilla_legacy_head + client->vr_gorilla_legacy_count) %
+      MOVE_BUNDLE_MAX;
+  sample = &client->vr_gorilla_legacy_queue[tail];
+  sample->sequence = cmd->sequence;
+  sample->msec = cmd->msec;
+  sample->seconds = cmd->msec ? cmd->msec * 0.001f :
+      CLAMP(0.001f, host_frametime, 0.1f);
+  sample->input = cmd->vr_gorilla;
+  client->vr_gorilla_legacy_count++;
+}
+
+qboolean SV_VRGorillaDrainLegacy(client_t *client,
+                                 vr_gorilla_legacy_sample_t *sample) {
+  if (!client || !sample || !client->vr_gorilla_legacy_count)
+    return false;
+  *sample = client->vr_gorilla_legacy_queue[client->vr_gorilla_legacy_head];
+  client->vr_gorilla_legacy_head =
+      (client->vr_gorilla_legacy_head + 1) % MOVE_BUNDLE_MAX;
+  client->vr_gorilla_legacy_count--;
+  return true;
+}
+
+void SV_VRGorillaFinishCommand(client_t *client, int sequence) {
+  if (!client || sequence < 0 || sequence > client->lastacceptedmovemessage ||
+      !SV_GorillaStateIsFinite(&client->vr_gorilla_state)) {
+    if (client)
+      SV_VRGorillaResetClient(client);
+    return;
+  }
+  client->vr_gorilla_active = client->vr_gorilla_state.initialized != 0;
+  client->vr_gorilla_state_sequence = sequence;
+}
+
 void SV_SetExtendedButtons(edict_t *ent, int buttons) {
   eval_t *val;
 
@@ -117,6 +289,7 @@ static void SV_ClearClientPMoveState(client_t *client) {
 
 void SV_ResetClientMoveState(client_t *client) {
   SV_VRContactResetClient(client);
+  SV_VRGorillaResetClient(client);
   Q_memset(&client->cmd, 0, sizeof(client->cmd));
   VectorCopy(vec3_origin, client->wishdir);
   client->last_move_time = 0;
@@ -358,6 +531,8 @@ SV_WaterMove
 
 ===================
 */
+static qboolean sv_gorilla_swim_intent;
+
 void SV_WaterMove(void) {
   int i;
   vec3_t wishvel;
@@ -382,7 +557,8 @@ void SV_WaterMove(void) {
       wishvel[2] += 400;
   }
 
-  if (!cmd.forwardmove && !cmd.sidemove && !upmove && !onladder)
+  if (!cmd.forwardmove && !cmd.sidemove && !upmove && !onladder &&
+      !sv_gorilla_swim_intent)
     wishvel[2] -= 60; // drift towards bottom
   else
     wishvel[2] += upmove;
@@ -500,7 +676,8 @@ void SV_AirMove(void) {
     VectorCopy(wishvel, velocity);
   } else if (onground) {
     if (vr_movement_instant_stop.value && host_client &&
-        host_client->is_vr_client && wishspeed == 0) {
+        host_client->is_vr_client && wishspeed == 0 &&
+        !SV_GorillaEligible(host_client)) {
       velocity[0] = 0;
       velocity[1] = 0;
     } else {
@@ -510,6 +687,96 @@ void SV_AirMove(void) {
   } else { // not on ground, so little effect on velocity
     SV_AirAccelerate(wishspeed, wishvel);
   }
+}
+
+static void SV_ConsumeClientMove(void) {
+  if ((int)sv_player->v.flags & FL_WATERJUMP) {
+    SV_WaterJump();
+    return;
+  }
+  if (sv_player->v.movetype == MOVETYPE_NOCLIP && sv_altnoclip.value)
+    SV_NoclipMove();
+  else if ((sv_player->v.waterlevel >= 2 || SV_PlayerOnLadder()) &&
+           sv_player->v.movetype != MOVETYPE_NOCLIP)
+    SV_WaterMove();
+  else
+    SV_AirMove();
+}
+
+static void SV_GorillaConsumeDeferredMove(client_t *client,
+    qboolean water_step, qboolean swim_intent) {
+  client_t *saved_client;
+  edict_t *saved_player;
+  usercmd_t saved_cmd;
+  float *saved_origin, *saved_velocity, *saved_angles;
+  qboolean saved_onground;
+  qboolean gorilla;
+  qboolean saved_swim_intent;
+  vec3_t saved_forward, saved_right, saved_up;
+  if (!client || !client->vr_gorilla_move_deferred)
+    return;
+  if (!client->edict || client->edict->free || client->usingpmove ||
+      client->edict->v.movetype == MOVETYPE_NONE || client->edict->v.health <= 0) {
+    client->vr_gorilla_move_deferred = false;
+    return;
+  }
+  gorilla = SV_GorillaEligible(client);
+  /* Wait for the ordered hand samples before deciding idle sinking. A
+   * ladder transition instead resumes its original native input now. */
+  if (gorilla && !water_step)
+    return;
+  client->vr_gorilla_move_deferred = false;
+
+  /* PlayerPreThink may have entered a ladder/water/custom state after the
+   * command was deferred. Replay only normal movement consumption, never QC,
+   * angle setup or a second full SV_ClientThink pass. */
+  /* SV_Physics_Client iterates independently of SV_RunClients: these globals
+   * can still describe the last client in that earlier loop. Scope all native
+   * movement context to this player, then restore the caller's context. */
+  saved_client = host_client;
+  saved_player = sv_player;
+  saved_cmd = cmd;
+  saved_origin = origin;
+  saved_velocity = velocity;
+  saved_angles = angles;
+  saved_onground = onground;
+  saved_swim_intent = sv_gorilla_swim_intent;
+  VectorCopy(forward, saved_forward);
+  VectorCopy(right, saved_right);
+  VectorCopy(up, saved_up);
+  host_client = client;
+  sv_player = client->edict;
+  cmd = client->cmd;
+  /* Keep native drag, sinking and waterjump maintenance once per frame.
+   * Only the joystick vector is suppressed; the raw accepted command stays
+   * intact for native ladder transitions and mod button semantics. */
+  if (gorilla)
+    cmd.forwardmove = cmd.sidemove = cmd.upmove = 0;
+  sv_gorilla_swim_intent = gorilla && swim_intent;
+  onground = (int)sv_player->v.flags & FL_ONGROUND;
+  origin = sv_player->v.origin;
+  velocity = sv_player->v.velocity;
+  angles = sv_player->v.angles;
+  SV_ConsumeClientMove();
+  host_client = saved_client;
+  sv_player = saved_player;
+  cmd = saved_cmd;
+  origin = saved_origin;
+  velocity = saved_velocity;
+  angles = saved_angles;
+  onground = saved_onground;
+  sv_gorilla_swim_intent = saved_swim_intent;
+  VectorCopy(saved_forward, forward);
+  VectorCopy(saved_right, right);
+  VectorCopy(saved_up, up);
+}
+
+void SV_GorillaResumeDeferredMove(client_t *client) {
+  SV_GorillaConsumeDeferredMove(client, false, false);
+}
+
+void SV_GorillaConsumeWater(client_t *client, qboolean swim_intent) {
+  SV_GorillaConsumeDeferredMove(client, true, swim_intent);
 }
 
 /*
@@ -524,6 +791,8 @@ void SV_ClientThink(void) {
   vec3_t v_angle;
 
   cmd = host_client->cmd;
+  host_client->vr_gorilla_move_deferred = false;
+  SV_GorillaLatchLadder(host_client, true);
 
   if (sv_player->v.movetype == MOVETYPE_NONE)
     return;
@@ -564,22 +833,14 @@ void SV_ClientThink(void) {
     angles[YAW] = v_angle[YAW];
   }
 
-  if ((int)sv_player->v.flags & FL_WATERJUMP) {
-    SV_WaterJump();
+  if (SV_GorillaEligible(host_client)) {
+    /* Preserve raw cmd for QC. The physics owner consumes Gorilla after
+     * PlayerPreThink; if QC establishes a non-Gorilla state, it calls the
+     * narrowly scoped resume API below exactly once. */
+    host_client->vr_gorilla_move_deferred = true;
     return;
   }
-  //
-  // walk
-  //
-  // johnfitz -- alternate noclip
-  if (sv_player->v.movetype == MOVETYPE_NOCLIP && sv_altnoclip.value)
-    SV_NoclipMove();
-  else if ((sv_player->v.waterlevel >= 2 || SV_PlayerOnLadder()) &&
-           sv_player->v.movetype != MOVETYPE_NOCLIP)
-    SV_WaterMove();
-  else
-    SV_AirMove();
-  // johnfitz
+  SV_ConsumeClientMove();
 }
 
 /*
@@ -635,7 +896,7 @@ static qboolean SV_ReadUsercmd(usercmd_t *readcmd, int sequence) {
   extbits = MSG_ReadByte();
   if (extbits & ~(MOVEEXT_VR | MOVEEXT_VR_RELATIVE | MOVEEXT_QCINPUT |
                   MOVEEXT_VR_AKIMBO | MOVEEXT_VR_AKIMBO_BERSERK |
-                  MOVEEXT_VR_CONTACT)) {
+                  MOVEEXT_VR_CONTACT | MOVEEXT_VR_GORILLA)) {
     msg_badread = true;
     return false;
   }
@@ -655,6 +916,12 @@ static qboolean SV_ReadUsercmd(usercmd_t *readcmd, int sequence) {
     return false;
   }
   if ((extbits & MOVEEXT_VR_CONTACT) != 0 &&
+      (extbits & (MOVEEXT_VR | MOVEEXT_VR_RELATIVE)) !=
+          (MOVEEXT_VR | MOVEEXT_VR_RELATIVE)) {
+    msg_badread = true;
+    return false;
+  }
+  if ((extbits & MOVEEXT_VR_GORILLA) != 0 &&
       (extbits & (MOVEEXT_VR | MOVEEXT_VR_RELATIVE)) !=
           (MOVEEXT_VR | MOVEEXT_VR_RELATIVE)) {
     msg_badread = true;
@@ -790,6 +1057,65 @@ static qboolean SV_ReadUsercmd(usercmd_t *readcmd, int sequence) {
     }
   }
 
+  if (extbits & MOVEEXT_VR_GORILLA) {
+	vec3_t arm;
+	int hand;
+	float length2;
+
+    if (net_message.cursize - msg_readcount < 1 + 15 * 4) {
+      msg_badread = true;
+      return false;
+    }
+    readcmd->vr_gorilla.flags = (unsigned char)MSG_ReadByte();
+    for (i = 0; i < 3; i++)
+      readcmd->vr_gorilla.head[i] = MSG_ReadFloat();
+    for (i = 0; i < 2; i++) {
+      readcmd->vr_gorilla.hand[i][0] = MSG_ReadFloat();
+      readcmd->vr_gorilla.hand[i][1] = MSG_ReadFloat();
+      readcmd->vr_gorilla.hand[i][2] = MSG_ReadFloat();
+      readcmd->vr_gorilla.velocity[i][0] = MSG_ReadFloat();
+      readcmd->vr_gorilla.velocity[i][1] = MSG_ReadFloat();
+      readcmd->vr_gorilla.velocity[i][2] = MSG_ReadFloat();
+    }
+	if ((readcmd->vr_gorilla.flags & ~VR_GORILLA_FLAGS) ||
+		(readcmd->vr_gorilla.flags & VR_GORILLA_HANDS) != VR_GORILLA_HANDS ||
+		!isfinite(readcmd->vr_gorilla.head[0]) ||
+		!isfinite(readcmd->vr_gorilla.head[1]) ||
+		!isfinite(readcmd->vr_gorilla.head[2])) {
+      msg_badread = true;
+      return false;
+    }
+	length2 = DotProduct(readcmd->vr_gorilla.head, readcmd->vr_gorilla.head);
+	if (length2 > 160.0f * 160.0f) {
+		msg_badread = true;
+		return false;
+	}
+    for (hand = 0; hand < 2; hand++) {
+		if (!isfinite(readcmd->vr_gorilla.hand[hand][0]) ||
+			!isfinite(readcmd->vr_gorilla.hand[hand][1]) ||
+			!isfinite(readcmd->vr_gorilla.hand[hand][2]) ||
+			!isfinite(readcmd->vr_gorilla.velocity[hand][0]) ||
+			!isfinite(readcmd->vr_gorilla.velocity[hand][1]) ||
+			!isfinite(readcmd->vr_gorilla.velocity[hand][2])) {
+			msg_badread = true;
+			return false;
+		}
+		length2 = DotProduct(readcmd->vr_gorilla.velocity[hand],
+			readcmd->vr_gorilla.velocity[hand]);
+		if (length2 > VR_GORILLA_MAX_HAND_SPEED * VR_GORILLA_MAX_HAND_SPEED) {
+			msg_badread = true;
+			return false;
+		}
+		VectorSubtract(readcmd->vr_gorilla.hand[hand],
+			readcmd->vr_gorilla.head, arm);
+		length2 = DotProduct(arm, arm);
+		if (length2 > VR_GORILLA_MAX_REACH * VR_GORILLA_MAX_REACH) {
+			msg_badread = true;
+			return false;
+		}
+	}
+  }
+
   return !msg_badread;
 }
 
@@ -908,6 +1234,7 @@ static qboolean SV_QueuePMoveUsercmd(client_t *client,
      * discontinuity and retain the newest command as the restart point. */
     SV_ClearClientPMoveState(client);
     SV_VRContactResetClient(client);
+    SV_VRGorillaResetClient(client);
     VectorCopy(vec3_origin, client->cmd.vr_roomscalemove);
     client->cmd.vr_akimbo_active = false;
     client->cmd.vr_akimbo_berserk = false;
@@ -940,6 +1267,7 @@ static void SV_ValidateVRRoomScaleUsercmd(client_t *client, usercmd_t *cmd) {
       fabsf(cmd->vr_roomscalemove[2]) > 16.0f || horizontal > 16.0f) {
     VectorClear(cmd->vr_roomscalemove);
     SV_VRContactResetClient(client);
+    SV_VRGorillaResetClient(client);
     client->move_discontinuity_epoch++;
     client->move_discontinuity_reason = MOVEACK_DISCONTINUITY_TRACKING_OUTLIER;
     client->net_move_roomscale_outliers++;
@@ -994,6 +1322,8 @@ static void SV_AcceptLatestUsercmd(client_t *client,
   SV_ValidateVRRoomScaleUsercmd(client, &latestcmd);
   if (fresh)
     SV_VRContactAcceptLegacy(client, &latestcmd);
+  if (fresh)
+    SV_VRGorillaAcceptLegacy(client, &latestcmd);
   latestcmd.seconds = 0;
 
   client->net_latest_buttons = latestcmd.buttons;
@@ -1102,6 +1432,7 @@ void SV_ReadClientMove(usercmd_t *move) {
     host_client->move_discontinuity_epoch++;
     host_client->move_discontinuity_reason = MOVEACK_DISCONTINUITY_GAP;
     SV_VRContactResetClient(host_client);
+    SV_VRGorillaResetClient(host_client);
     if (net_lagdebug.value)
       Con_Printf("net_lagdebug: accepted move gap from %s gap=%d seq=%d last=%d\n",
                   host_client->name, gap, sequence, accepted_base);
@@ -1157,6 +1488,7 @@ static void SV_ClearStaleClientInput(client_t *client) {
     }
     client->input_stale = true;
     SV_VRContactResetClient(client);
+    SV_VRGorillaResetClient(client);
   }
 
   client->cmd.forwardmove = 0;
@@ -1251,6 +1583,32 @@ static qboolean SV_HandleVRIKCapability(const char *s)
 	Con_DPrintf("VRIK: client %s negotiated protocol %d\n", host_client->name,
 		version);
 	return true;
+}
+
+static qboolean SV_HandleGorillaCapability(const char *s)
+{
+  const char *value;
+
+  if (!SV_ClientCommandIs(s, "vr_gorilla_cap"))
+    return false;
+  value = s;
+  while (*value && *value != ' ' && *value != '\t')
+    value++;
+  while (*value == ' ' || *value == '\t')
+    value++;
+  if (*value++ != '1')
+    return true;
+  while (*value == ' ' || *value == '\t' || *value == '\r' ||
+         *value == '\n')
+    value++;
+  if (*value || host_client->vr_gorilla_capable)
+    return true;
+
+  host_client->vr_gorilla_capable = true;
+  SV_VRGorillaResetClient(host_client);
+  Con_DPrintf("Gorilla: client %s negotiated protocol 1\n",
+              host_client->name);
+  return true;
 }
 
 #ifdef USE_VOICECHAT
@@ -1600,6 +1958,8 @@ static qboolean SV_ParseClientMessage(void) {
 			;
       else if (SV_HandleVRIKCapability(s))
         ;
+      else if (SV_HandleGorillaCapability(s))
+        ;
 #ifdef USE_VOICECHAT
       else if (SV_HandleVoiceCapability(s))
         ;
@@ -1919,6 +2279,7 @@ static void SV_UpdateClientPMoveMode(client_t *client, qboolean allow_promotion)
     client->move_discontinuity_reason = usingpmove ?
         MOVEACK_DISCONTINUITY_RESET_TELEPORT : fallback_reason;
     SV_VRContactResetClient(client);
+    SV_VRGorillaResetClient(client);
     if (net_lagdebug.value)
       Con_Printf("net_lagdebug: server PMove %s for %s mode=%s sv_runclientcommand=%d\n",
                  usingpmove ? "enabled" : "disabled",

@@ -54,6 +54,14 @@ typedef struct server_voice_packet_s
 	voice_packet_t packet;
 } server_voice_packet_t;
 
+typedef struct vr_gorilla_legacy_sample_s
+{
+	int			sequence;
+	unsigned char	msec;
+	float			seconds;
+	vr_gorilla_input_t	input;
+} vr_gorilla_legacy_sample_t;
+
 typedef enum {ss_loading, ss_active} server_state_t;
 
 typedef struct
@@ -198,6 +206,17 @@ typedef struct client_s
 	usercmd_t		move_queue[MOVE_BUNDLE_MAX];
 	unsigned int	move_queue_head;
 	unsigned int	move_queue_count;
+	qboolean		vr_gorilla_capable;
+	qboolean		vr_gorilla_active;
+	qboolean		vr_gorilla_move_deferred;
+	qboolean		vr_gorilla_ladder_frame; /* contact may be consumed in PreThink */
+	vr_gorilla_state_t	vr_gorilla_state;
+	int			vr_gorilla_button[2];
+	/* -1 until a physics path has actually simulated a Gorilla sample. */
+	int			vr_gorilla_state_sequence;
+	vr_gorilla_legacy_sample_t vr_gorilla_legacy_queue[MOVE_BUNDLE_MAX];
+	unsigned int	vr_gorilla_legacy_head;
+	unsigned int	vr_gorilla_legacy_count;
 	move_authority_t	move_authority;
 	qboolean		move_prediction_allowed;
 	qboolean		move_client_quarantined;
@@ -467,6 +486,7 @@ extern cvar_t sv_trustedmovement;
 extern cvar_t sv_pmove_mode;
 extern cvar_t sv_triggerdebug;
 extern cvar_t sv_vr_jump_velocity;
+extern cvar_t sv_gorilla;
 extern cvar_t sv_weapon_collision;
 extern cvar_t sv_immersive_melee;
 extern cvar_t sv_melee_hitassist;
@@ -517,6 +537,16 @@ void SV_LoadQueuedPMoveUsercmd(client_t *client);
 void SV_FinishPMoveUsercmd(client_t *client);
 qboolean SV_RunClientPMoveCommand(client_t *client);
 qboolean SV_QBJ3NeedsLegacyPhysics(client_t *client);
+qboolean SV_GorillaEligible(client_t *client);
+void SV_GorillaLatchLadder(client_t *client, qboolean begin_frame);
+void SV_VRGorillaAcceptLegacy(client_t *client, const usercmd_t *cmd);
+qboolean SV_VRGorillaDrainLegacy(client_t *client,
+	vr_gorilla_legacy_sample_t *sample);
+void SV_VRGorillaFinishCommand(client_t *client, int sequence);
+void SV_VRGorillaResetClient(client_t *client);
+void SV_GorillaResumeDeferredMove(client_t *client);
+void SV_GorillaConsumeWater(client_t *client, qboolean swim_intent);
+void SV_VRGorillaInvalidateSurface(edict_t *ent);
 int SV_VRContactMode(void);
 int SV_VRContactProfile(void);
 void SV_VRContactAcceptLegacy(client_t *client, const usercmd_t *cmd);

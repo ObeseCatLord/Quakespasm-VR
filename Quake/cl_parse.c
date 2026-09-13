@@ -2471,6 +2471,9 @@ static qboolean CL_ParseMoveAckPayload (void)
 	int mode_epoch;
 	int discontinuity_epoch;
 	int reason;
+	int state_sequence = -1;
+	int hand, axis;
+	vr_gorilla_state_t gorilla_state;
 
 	if (net_message.cursize - msg_readcount < 2)
 	{
@@ -2497,12 +2500,82 @@ static qboolean CL_ParseMoveAckPayload (void)
 	discontinuity_epoch = MSG_ReadShort () & 0xffff;
 	reason = MSG_ReadByte ();
 	if (flags & ~(MOVEACK_FLAG_AUTHORITATIVE | MOVEACK_FLAG_PREDICTION_ALLOWED |
-		MOVEACK_FLAG_DISCONTINUITY) ||
+		MOVEACK_FLAG_DISCONTINUITY | MOVEACK_FLAG_VR_GORILLA) ||
 		authority < MOVE_AUTHORITY_UNKNOWN ||
 		authority > MOVE_AUTHORITY_PMOVE_QC_COMMAND)
 	{
 		msg_badread = true;
 		return false;
+	}
+	Q_memset(&gorilla_state, 0, sizeof(gorilla_state));
+	if (flags & MOVEACK_FLAG_VR_GORILLA)
+	{
+		if (!cl.vr_gorilla_supported ||
+			net_message.cursize - msg_readcount < 4 + 3 + 18 * 4 + 16)
+		{
+			msg_badread = true;
+			return false;
+		}
+		state_sequence = MSG_ReadLong();
+		gorilla_state.initialized = (unsigned char)MSG_ReadByte();
+		gorilla_state.touching = (unsigned char)MSG_ReadByte();
+		gorilla_state.recovering = (unsigned char)MSG_ReadByte();
+		for (hand = 0; hand < 2; hand++)
+			for (axis = 0; axis < 3; axis++)
+				gorilla_state.anchor[hand][axis] = MSG_ReadFloat();
+		for (hand = 0; hand < 2; hand++)
+			for (axis = 0; axis < 3; axis++)
+				gorilla_state.recovery_offset[hand][axis] = MSG_ReadFloat();
+		for (axis = 0; axis < 3; axis++)
+			gorilla_state.velocity[axis] = MSG_ReadFloat();
+		for (axis = 0; axis < 3; axis++)
+			gorilla_state.origin[axis] = MSG_ReadFloat();
+		for (hand = 0; hand < 2; hand++)
+			gorilla_state.surface[hand] = MSG_ReadLong();
+		for (hand = 0; hand < 2; hand++)
+			gorilla_state.surface_model[hand] = (unsigned int)MSG_ReadLong();
+		if (state_sequence < 0 || gorilla_state.initialized > 1 ||
+			(gorilla_state.touching & ~VR_GORILLA_HANDS) ||
+			(gorilla_state.recovering & ~VR_GORILLA_HANDS))
+		{
+			msg_badread = true;
+			return false;
+		}
+		for (hand = 0; hand < 2; hand++)
+			if (gorilla_state.surface[hand] < 0 ||
+				gorilla_state.surface[hand] >= MAX_EDICTS ||
+				gorilla_state.surface_model[hand] >= MAX_MODELS ||
+				(!gorilla_state.surface[hand] &&
+					gorilla_state.surface_model[hand]) ||
+				(gorilla_state.surface[hand] &&
+					!gorilla_state.surface_model[hand]))
+			{
+				msg_badread = true;
+				return false;
+			}
+		for (hand = 0; hand < 2; hand++)
+			for (axis = 0; axis < 3; axis++)
+				if (!isfinite(gorilla_state.anchor[hand][axis]) ||
+					!isfinite(gorilla_state.recovery_offset[hand][axis]))
+				{
+					msg_badread = true;
+					return false;
+				}
+		for (hand = 0; hand < 2; hand++)
+			if (DotProduct(gorilla_state.recovery_offset[hand],
+				gorilla_state.recovery_offset[hand]) >
+				VR_GORILLA_MAX_REACH * VR_GORILLA_MAX_REACH)
+			{
+				msg_badread = true;
+				return false;
+			}
+		for (axis = 0; axis < 3; axis++)
+			if (!isfinite(gorilla_state.velocity[axis]) ||
+				!isfinite(gorilla_state.origin[axis]))
+			{
+				msg_badread = true;
+				return false;
+			}
 	}
 
 	/* Validate the entire payload before advancing the replay baseline. An
@@ -2526,6 +2599,18 @@ static qboolean CL_ParseMoveAckPayload (void)
 	cl.move_ack_mode_epoch = (unsigned short)mode_epoch;
 	cl.move_ack_discontinuity_epoch = (unsigned short)discontinuity_epoch;
 	cl.move_ack_discontinuity_reason = (unsigned char)reason;
+	if (flags & MOVEACK_FLAG_VR_GORILLA)
+	{
+		cl.vr_gorilla_state = gorilla_state;
+		cl.vr_gorilla_state_sequence = state_sequence;
+		cl.vr_gorilla_state_valid = true;
+	}
+	else
+	{
+		Q_memset(&cl.vr_gorilla_state, 0, sizeof(cl.vr_gorilla_state));
+		cl.vr_gorilla_state_sequence = -1;
+		cl.vr_gorilla_state_valid = false;
+	}
 	return !msg_badread;
 }
 

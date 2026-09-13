@@ -1324,8 +1324,11 @@ void R_DrawViewModel(void) {
   VR_ApplyCurrentViewWeaponTransform();
 
   if (vr_enabled.value) {
-    if (!VR_DrawAkimboViewModels() && !VR_DrawTrackedViewModel())
-      R_DrawAliasModel_NoCull(currententity);
+    if (!VR_DrawAkimboViewModels()) {
+      if (!VR_DrawTrackedViewModel())
+        R_DrawAliasModel_NoCull(currententity);
+      VR_DrawGorillaOffhand();
+    }
   }
   else
     R_DrawAliasModel(currententity);

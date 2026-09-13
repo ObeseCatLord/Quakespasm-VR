@@ -23,6 +23,8 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #ifndef _QUAKE_PROTOCOL_H
 #define _QUAKE_PROTOCOL_H
 
+#include "vr_gorilla_types.h"
+
 // protocol.h -- communications protocols
 
 #define PROTOCOL_NETQUAKE 15 // johnfitz -- standard quake protocol
@@ -402,6 +404,7 @@ typedef struct
 #define MOVEACK_FLAG_AUTHORITATIVE 0x01
 #define MOVEACK_FLAG_PREDICTION_ALLOWED 0x02
 #define MOVEACK_FLAG_DISCONTINUITY 0x04
+#define MOVEACK_FLAG_VR_GORILLA 0x08 /* [long state_sequence][state] */
 
 typedef enum {
   MOVE_AUTHORITY_UNKNOWN = 0,
@@ -467,6 +470,7 @@ typedef enum {
 #define MOVEEXT_VR_AKIMBO 8
 #define MOVEEXT_VR_AKIMBO_BERSERK 16 /* pose kind; requires AKIMBO + relative VR */
 #define MOVEEXT_VR_CONTACT 32 /* requires relative VR; follows QC input */
+#define MOVEEXT_VR_GORILLA 64 /* requires relative VR; follows contact input */
 
 #define VR_WEAPON_CONTACT_LEFT_VALID 1
 #define VR_WEAPON_CONTACT_CAP_COLLISION 1
@@ -618,10 +622,12 @@ typedef struct {
   /* Anatomical left (0) and right (1) QBJ3 muzzle aim poses, body-relative. */
   qboolean vr_akimbo_active;
   qboolean vr_akimbo_berserk;
-  vec3_t vr_akimbo_muzzle[2];
-  vec3_t vr_akimbo_angles[2];
-  vr_weapon_contact_t vr_contact;
-  /* Server-owned receipt clock, never serialized or supplied by the client.
+	vec3_t vr_akimbo_muzzle[2];
+	vec3_t vr_akimbo_angles[2];
+	vr_weapon_contact_t vr_contact;
+	/* Optional command-time Gorilla hands/head tracking, body-relative. */
+	vr_gorilla_input_t vr_gorilla;
+	/* Server-owned receipt clock, never serialized or supplied by the client.
    * Retained through command queues so delayed poses cannot become shields. */
   double vr_contact_received;
 } usercmd_t;

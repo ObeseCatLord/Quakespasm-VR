@@ -322,6 +322,12 @@ typedef struct
 	qboolean	vr_qbj3_berserk_akimbo_supported;
 	qboolean	vr_enyo_akimbo_supported;
 	qboolean	vr_dwell_berserk_akimbo_supported;
+	qboolean	vr_gorilla_supported;
+	qboolean	vr_gorilla_allowed;
+	qboolean	vr_gorilla_cap_sent;
+	qboolean	vr_gorilla_state_valid;
+	int		vr_gorilla_state_sequence;
+	vr_gorilla_state_t vr_gorilla_state;
 	/* VR_WEAPON_CONTACT_CAP_*; enabled independently by the server. */
 	int		vr_weapon_contact_supported;
 	int		vr_weapon_contact_profile;

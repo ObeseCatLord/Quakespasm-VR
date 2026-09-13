@@ -3,6 +3,7 @@
 #include "quakedef.h"
 #include "vr_fbt.h"
 #include "vrik_codec.h"
+#include "vr_gorilla_types.h"
 
 #ifndef __R_VR_H
 #define __R_VR_H
@@ -109,6 +110,11 @@ qboolean VR_ImmersiveMeleeActive(void);
 qboolean VR_ImmersiveMeleeSuppressTrigger(void);
 extern cvar_t vr_immersive_melee;
 extern cvar_t vr_weapon_collision;
+extern cvar_t vr_gorilla;
+qboolean VR_GorillaActive(void);
+qboolean VR_GetGorillaSample(vr_gorilla_input_t *out,
+                            const vec3_t body_origin, qboolean consume_reset);
+void VR_DrawGorillaOffhand(void);
 qboolean VR_GetWeaponContactSample(vr_weapon_contact_t *out);
 qboolean VR_DrawTrackedViewModel(void);
 qboolean VR_IsAkimboViewEntity(const entity_t *ent);

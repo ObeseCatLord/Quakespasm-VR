@@ -556,6 +556,10 @@ static void CL_WriteUsercmd(sizebuf_t *buf, const usercmd_t *histcmd) {
   if (histcmd->vr_contact.flags && histcmd->vr_active &&
       histcmd->vr_handpos_relative)
     extbits |= MOVEEXT_VR_CONTACT;
+  if (histcmd->vr_gorilla.flags && histcmd->vr_active &&
+      histcmd->vr_handpos_relative && cl.vr_gorilla_supported &&
+      cl.vr_gorilla_allowed)
+    extbits |= MOVEEXT_VR_GORILLA;
 
   MSG_WriteFloat(buf, histcmd->servertime);
   if (cl.protocol_pext2 & PEXT2_EXPLICITCMDMSEC)
@@ -626,6 +630,20 @@ static void CL_WriteUsercmd(sizebuf_t *buf, const usercmd_t *histcmd) {
       MSG_WriteFloat(buf, histcmd->vr_contact.tip[i][1]);
       MSG_WriteFloat(buf, histcmd->vr_contact.tip[i][2]);
       MSG_WriteFloat(buf, histcmd->vr_contact.speed[i]);
+    }
+  }
+
+  if (extbits & MOVEEXT_VR_GORILLA) {
+    MSG_WriteByte(buf, histcmd->vr_gorilla.flags);
+    for (i = 0; i < 3; i++)
+      MSG_WriteFloat(buf, histcmd->vr_gorilla.head[i]);
+    for (i = 0; i < 2; i++) {
+      MSG_WriteFloat(buf, histcmd->vr_gorilla.hand[i][0]);
+      MSG_WriteFloat(buf, histcmd->vr_gorilla.hand[i][1]);
+      MSG_WriteFloat(buf, histcmd->vr_gorilla.hand[i][2]);
+      MSG_WriteFloat(buf, histcmd->vr_gorilla.velocity[i][0]);
+      MSG_WriteFloat(buf, histcmd->vr_gorilla.velocity[i][1]);
+      MSG_WriteFloat(buf, histcmd->vr_gorilla.velocity[i][2]);
     }
   }
 }
@@ -778,6 +796,28 @@ static qboolean CL_VRRoomScaleSampleAccepted(const vec3_t move)
   return horizontal_length <= 16.0f && fabsf(move[2]) <= 16.0f;
 }
 
+static qboolean CL_VRGorillaInputIsValid(const vr_gorilla_input_t *input)
+{
+  int hand;
+  vec3_t arm;
+
+  if (!input || (input->flags & ~VR_GORILLA_FLAGS) ||
+      (input->flags & VR_GORILLA_HANDS) != VR_GORILLA_HANDS ||
+      !CL_VRVectorIsFinite(input->head) ||
+      VectorLength(input->head) > 160.0f)
+    return false;
+  for (hand = 0; hand < 2; hand++) {
+    if (!CL_VRVectorIsFinite(input->hand[hand]) ||
+        !CL_VRVectorIsFinite(input->velocity[hand]) ||
+        VectorLength(input->velocity[hand]) > VR_GORILLA_MAX_HAND_SPEED)
+      return false;
+    VectorSubtract(input->hand[hand], input->head, arm);
+    if (VectorLength(arm) > VR_GORILLA_MAX_REACH)
+      return false;
+  }
+  return true;
+}
+
 static qboolean CL_VRIKPoseToV2(const vrik_pose_t *pose,
                                 vrik_v2_pose_t *out)
 {
@@ -926,6 +966,7 @@ void CL_SendMove(const usercmd_t *cmd) {
   sendcmd.vr_handpos_relative = false;
   CL_ClearAkimboUsercmd(&sendcmd);
   CL_ClearVRWeaponContactUsercmd(&sendcmd);
+  Q_memset(&sendcmd.vr_gorilla, 0, sizeof(sendcmd.vr_gorilla));
 
   if (cl_nettest_vr.value) {
     sendcmd.vr_active = true;
@@ -992,6 +1033,11 @@ void CL_SendMove(const usercmd_t *cmd) {
             CL_ClearVRWeaponContactUsercmd(&sendcmd);
         }
       }
+      if (cl.vr_gorilla_supported && cl.vr_gorilla_allowed) {
+        VR_GetGorillaSample(&sendcmd.vr_gorilla, pose_origin, true);
+        if (!CL_VRGorillaInputIsValid(&sendcmd.vr_gorilla))
+          Q_memset(&sendcmd.vr_gorilla, 0, sizeof(sendcmd.vr_gorilla));
+      }
     } else {
       VectorCopy(world_muzzle, sendcmd.vr_handpos);
     }
@@ -1012,6 +1058,7 @@ void CL_SendMove(const usercmd_t *cmd) {
     VectorCopy(vec3_origin, sendcmd.vr_roomscalemove);
     CL_ClearAkimboUsercmd(&sendcmd);
     CL_ClearVRWeaponContactUsercmd(&sendcmd);
+    Q_memset(&sendcmd.vr_gorilla, 0, sizeof(sendcmd.vr_gorilla));
   }
 
   if (VR_ImmersiveMeleeSuppressTrigger())
@@ -1137,6 +1184,30 @@ static void CL_VRWeaponContactProtocol_f(void) {
   }
 }
 
+static void CL_VRGorillaProtocol_f(void)
+{
+  qboolean allowed;
+
+  if (cmd_source != src_server || Cmd_Argc() != 3 ||
+      Q_atoi(Cmd_Argv(1)) != 1)
+    return;
+  allowed = Q_atoi(Cmd_Argv(2)) != 0;
+  if (!cl.vr_gorilla_supported || cl.vr_gorilla_allowed != allowed) {
+    cl.vr_gorilla_state_valid = false;
+    cl.vr_gorilla_state_sequence = -1;
+    Q_memset(&cl.vr_gorilla_state, 0, sizeof(cl.vr_gorilla_state));
+  }
+  cl.vr_gorilla_supported = true;
+  cl.vr_gorilla_allowed = allowed;
+  if (cl.vr_gorilla_cap_sent ||
+      cls.message.cursize + 1 + (int)sizeof("vr_gorilla_cap 1") >
+          cls.message.maxsize)
+    return;
+  cl.vr_gorilla_cap_sent = true;
+  MSG_WriteByte(&cls.message, clc_stringcmd);
+  MSG_WriteString(&cls.message, "vr_gorilla_cap 1");
+}
+
 static void CL_VRWeaponContactHaptic_f(void) {
   int hand;
   if (cmd_source != src_server || Cmd_Argc() != 2 ||
@@ -1166,6 +1237,7 @@ void CL_InitInput(void) {
                                CL_VRQBJ3AkimboProtocol_f);
   Cmd_AddCommand_ServerCommand("vr_weapon_contact_protocol",
                                CL_VRWeaponContactProtocol_f);
+	Cmd_AddCommand_ServerCommand("vr_gorilla_protocol", CL_VRGorillaProtocol_f);
   Cmd_AddCommand_ServerCommand("vr_weapon_contact_haptic",
                                CL_VRWeaponContactHaptic_f);
   Cmd_AddCommand("+moveup", IN_UpDown);

@@ -473,6 +473,9 @@ static void VR_MenuPrintOptionValue(int cx, int cy, int option) {
       break;
     }
     break;
+  case VR_OPTION_GORILLA:
+    M_DrawCheckbox(cx, cy, vr_gorilla.value != 0);
+    break;
   case VR_OPTION_SNAP_TURN:
     if (vr_snap_turn.value == 0) {
       value_string = "Smooth";
@@ -713,6 +716,9 @@ void VR_MenuKeyOption(int key, int option) {
     break;
   case VR_OPTION_MOVEMENT_MODE:
     adjustI(vr_movement_mode, 1, 0, VR_MAX_MOVEMENT_MODE);
+    break;
+  case VR_OPTION_GORILLA:
+    Cvar_SetValue("vr_gorilla", !vr_gorilla.value);
     break;
   case VR_OPTION_SNAP_TURN:
     adjustI(vr_snap_turn, 45, 0.f, 90.f);
@@ -972,6 +978,10 @@ void VR_MenuDraw(void) {
       break;
     case VR_OPTION_WORLD_SCALE:
       M_Print(16, y, "              World Scale");
+      VR_MenuPrintOptionValue(240, y, i);
+      break;
+    case VR_OPTION_GORILLA:
+      M_Print(16, y, "         Gorilla Movement");
       VR_MenuPrintOptionValue(240, y, i);
       break;
     case VR_OPTION_MOVEMENT_MODE:

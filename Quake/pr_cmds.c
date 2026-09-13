@@ -307,6 +307,11 @@ static void PF_setorigin (void)
 	e = G_EDICT(OFS_PARM0);
 	org = G_VECTOR(OFS_PARM1);
 	VectorCopy (e->v.origin, oldorg);
+	if (qcvm == &sv.qcvm && !VectorCompare(oldorg, org)) {
+		int player = NUM_FOR_EDICT(e);
+		if (player > 0 && player <= svs.maxclients && svs.clients)
+			SV_VRGorillaResetClient(&svs.clients[player - 1]);
+	}
 	VectorCopy (org, e->v.origin);
 	SV_LinkEdict (e, false);
 	SV_DebugLogSetOrigin (e, oldorg, org);
@@ -437,6 +442,8 @@ static void PF_setmodel (void)
 	{
 		PR_RunError ("no precache: %s", m);
 	}
+	if ((int)e->v.modelindex != i)
+		SV_VRGorillaInvalidateSurface(e);
 	e->v.model = PR_SetEngineString(*check);
 	e->v.modelindex = i; //SV_ModelIndex (m);
 

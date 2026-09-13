@@ -57,6 +57,7 @@ typedef struct
 	qmodel_t	*model;		// only for bsp models
 	vec3_t	mins, maxs;	// only for non-bsp models
 	int	info;		// for client or server to identify
+	unsigned int modelindex; // brush identity for optional local hand anchors
 	unsigned int forcecontentsmask;	//set from .skin
 } physent_t;
 
@@ -81,6 +82,13 @@ typedef struct
 
 	// input
 	usercmd_t	cmd;
+	/* Restored from the same accepted-command baseline as origin/velocity. */
+	vr_gorilla_state_t gorilla;
+	qboolean gorilla_allowed;
+	qboolean gorilla_braced;
+	qboolean gorilla_swim_stroke;
+	qboolean gorilla_prepared; /* enclosing QC owner already consumed this pose */
+	int gorilla_contact[2];
 
 	qboolean onladder;
 	qboolean safeorigin_known;

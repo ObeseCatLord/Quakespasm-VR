@@ -24,6 +24,21 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "quakedef.h"
 #include "pmove.h"
 #include "vr.h"
+#include "vr_gorilla.h"
+#include "vr_gorilla_swim.h"
+
+extern cvar_t sv_maxspeed;
+
+/* Scope only the auxiliary hand step across a QC physics callback. QC can
+ * delegate native movement to sv_pmove without consuming the same pose twice.
+ * This is call context, not a second command queue or movement owner. */
+typedef struct {
+  edict_t *player;
+  qboolean prepared, braced, swim_intent, delegated;
+} sv_gorilla_qc_context_t;
+static sv_gorilla_qc_context_t sv_gorilla_qc_context;
+static void SV_RunGorillaQCPhysics(client_t *client, func_t function,
+    const usercmd_t *command);
 
 /*
 
@@ -4540,6 +4555,134 @@ qboolean SV_CheckWater(edict_t *ent) {
   return ent->v.waterlevel > 1;
 }
 
+typedef struct {
+  edict_t *player;
+  edict_t *impacts[8];
+  int num_impacts;
+} sv_gorilla_trace_context_t;
+
+/* Never turn a callback-authored relocation into the new baseline of an old
+ * planted hand. Normal physics commits its baseline before invoking QC. */
+static qboolean SV_GorillaCallbackMoved(client_t *client, edict_t *ent) {
+  vec3_t delta;
+  if (!client->vr_gorilla_state.initialized)
+    return false;
+  if (ent->free || ent->v.health <= 0 || ent->v.deadflag)
+    return true;
+  VectorSubtract(ent->v.origin, client->vr_gorilla_state.origin, delta);
+  return !VRG_Finite(delta) || VectorLength(delta) > .01f;
+}
+
+static vr_gorilla_trace_t SV_GorillaTrace(void *context,
+    const float *start, const float *end, int body) {
+  sv_gorilla_trace_context_t *ctx = (sv_gorilla_trace_context_t *)context;
+  edict_t *player = ctx->player;
+  vec3_t a, b;
+  trace_t trace;
+  vr_gorilla_trace_t result;
+  VectorCopy(start, a);
+  VectorCopy(end, b);
+  trace = SV_Move(a, body ? player->v.mins : vec3_origin,
+      body ? player->v.maxs : vec3_origin, b,
+      body ? MOVE_NORMAL : MOVE_NOMONSTERS, player);
+  memset(&result, 0, sizeof(result));
+  result.fraction = trace.fraction;
+  result.startsolid = trace.startsolid;
+  result.allsolid = trace.allsolid;
+  VectorCopy(trace.endpos, result.end);
+  VectorCopy(trace.plane.normal, result.normal);
+  result.entity = trace.ent ? NUM_FOR_EDICT(trace.ent) : -1;
+  if (body && trace.ent && trace.fraction < 1) {
+    int i;
+    for (i = 0; i < ctx->num_impacts; ++i)
+      if (ctx->impacts[i] == trace.ent)
+        break;
+    if (i == ctx->num_impacts && i < (int)countof(ctx->impacts))
+      ctx->impacts[ctx->num_impacts++] = trace.ent;
+  }
+  return result;
+}
+
+void SV_VRGorillaInvalidateSurface(edict_t *surface) {
+  if (!surface || qcvm != &sv.qcvm || !svs.clients)
+    return;
+  int model = (int)surface->v.modelindex;
+  if (model <= 0 || model >= MAX_MODELS || !sv.models[model] ||
+      sv.models[model]->type != mod_brush)
+    return;
+  int number = NUM_FOR_EDICT(surface);
+  for (int i = 0; i < svs.maxclients; ++i) {
+    client_t *client = &svs.clients[i];
+    if (client->vr_gorilla_state.surface[0] == number ||
+        client->vr_gorilla_state.surface[1] == number)
+      SV_VRGorillaResetClient(client);
+  }
+}
+
+static int SV_GorillaSurface(void *context, int entity, unsigned int *model,
+    const float *point, float *out, int to_world) {
+  edict_t *surface;
+  unsigned int index;
+  (void)context;
+  if (entity <= 0 || entity >= qcvm->num_edicts)
+    return 0;
+  surface = EDICT_NUM(entity);
+  index = (unsigned int)surface->v.modelindex;
+  if (surface->free || surface->v.solid != SOLID_BSP || !index ||
+      index >= MAX_MODELS || !sv.models[index] ||
+      sv.models[index]->type != mod_brush ||
+      (to_world && *model != index) || !VRG_Finite(surface->v.origin))
+    return 0;
+  /* Use exactly SV_ClipMoveToEntity's origin-only legacy collision basis,
+   * including brushes with visual rotation. A platform never disables hand
+   * movement; do not introduce rotated palms against an unrotated body hull. */
+  *model = index;
+  if (to_world) {
+    VectorAdd(point, surface->v.origin, out);
+  } else {
+    VectorSubtract(point, surface->v.origin, out);
+  }
+  return VRG_Finite(out);
+}
+
+/* Palm pokes reuse the verified native button callbacks, not generic trigger
+ * touches/damage. Permission comes from sv_gorilla, independently of gun
+ * collision. Leave all ordinary buttons/pickups in their original QC path. */
+static void SV_GorillaTouchButtons(client_t *client, const int contacts[2]) {
+  edict_t *player = client->edict;
+  if (!client->vr_gorilla_state.initialized ||
+      SV_GorillaCallbackMoved(client, player)) {
+    SV_VRGorillaResetClient(client);
+    return;
+  }
+  for (int hand = 0; hand < 2; ++hand) {
+    int number = contacts[hand];
+    edict_t *button = number > 0 && number < qcvm->num_edicts ?
+        EDICT_NUM(number) : NULL;
+    if (!button || button->free || button->v.solid != SOLID_BSP ||
+        button->v.health > 0 || !button->v.touch ||
+        !SV_VRContactButtonTouch(button))
+      number = 0;
+    if (number && number != client->vr_gorilla_button[hand]) {
+      int self = pr_global_struct->self, other = pr_global_struct->other;
+      float time = pr_global_struct->time;
+      pr_global_struct->self = EDICT_TO_PROG(button);
+      pr_global_struct->other = EDICT_TO_PROG(player);
+      pr_global_struct->time = qcvm->time;
+      PR_ExecuteProgram(button->v.touch);
+      pr_global_struct->self = self;
+      pr_global_struct->other = other;
+      pr_global_struct->time = time;
+      if (!client->vr_gorilla_state.initialized ||
+          SV_GorillaCallbackMoved(client, player)) {
+        SV_VRGorillaResetClient(client);
+        return;
+      }
+    }
+    client->vr_gorilla_button[hand] = number;
+  }
+}
+
 static qboolean SV_EntityOnLadder(edict_t *ent) {
   eval_t *val;
 
@@ -5598,12 +5741,32 @@ void SV_RunPMoveForEntity(edict_t *ent, const usercmd_t *cmd) {
   pmove.pm_type = SV_PMoveTypeForEdict(ent);
   if (cmd)
     pmove.cmd = *cmd;
+  if (host_client && host_client->edict == ent) {
+    pmove.gorilla = host_client->vr_gorilla_state;
+    pmove.gorilla_allowed = SV_GorillaEligible(host_client);
+    if (qcvm->depth > 0 && sv_gorilla_qc_context.player == ent) {
+      pmove.gorilla_prepared = sv_gorilla_qc_context.prepared;
+      /* A callback (or a previous delegated move) may have teleported,
+       * killed or detached this player after preparation. Keep the once-only
+       * marker, but never reuse its gravity/sink suppression after reset. */
+      if (pmove.gorilla_allowed && pmove.gorilla.initialized &&
+          !SV_GorillaCallbackMoved(host_client, ent)) {
+        pmove.gorilla_braced = sv_gorilla_qc_context.braced;
+        pmove.gorilla_swim_stroke = sv_gorilla_qc_context.swim_intent;
+      } else
+        VRG_Reset(&pmove.gorilla);
+      sv_gorilla_qc_context.delegated = true;
+    }
+  }
 
   VectorSubtract(ent->v.absmin, extents, bounds[0]);
   VectorAdd(ent->v.absmax, extents, bounds[1]);
   World_AddEntsToPmove(ent, bounds);
 
   PM_PlayerMove(1);
+
+  if (host_client && host_client->edict == ent)
+    host_client->vr_gorilla_state = pmove.gorilla;
 
   if (host_client && host_client->edict == ent) {
     qboolean dynamic_contact = false;
@@ -5662,15 +5825,32 @@ void SV_RunPMoveForEntity(edict_t *ent, const usercmd_t *cmd) {
   SV_LinkEdict(ent, true);
   if (ent->free ||
       ent->v.teleport_time > pre_link_teleport_time ||
-      (!pre_link_fixangle && ent->v.fixangle))
+      (!pre_link_fixangle && ent->v.fixangle) ||
+      (host_client && host_client->edict == ent &&
+       SV_GorillaCallbackMoved(host_client, ent))) {
+    if (host_client && host_client->edict == ent)
+      SV_VRGorillaResetClient(host_client);
     return;
+  }
 
   for (i = 0; i < pmove.numtouch && !ent->free; i++) {
     int n = pmove.physents[pmove.touchindex[i]].info;
     if (n < 0 || n >= qcvm->num_edicts)
       continue;
     SV_Impact(ent, EDICT_NUM(n));
+    if (pmove.gorilla_allowed && host_client && host_client->edict == ent &&
+        (!host_client->vr_gorilla_state.initialized ||
+         SV_GorillaCallbackMoved(host_client, ent))) {
+      SV_VRGorillaResetClient(host_client);
+      return;
+    }
   }
+  if (!ent->free && host_client && host_client->edict == ent &&
+      pmove.gorilla_allowed)
+    SV_GorillaTouchButtons(host_client, pmove.gorilla_contact);
+  if (host_client && host_client->edict == ent &&
+      SV_GorillaCallbackMoved(host_client, ent))
+    SV_VRGorillaResetClient(host_client);
 }
 
 static void SV_SetQCInputGlobals(const usercmd_t *cmd) {
@@ -5684,6 +5864,8 @@ static void SV_SetQCInputGlobals(const usercmd_t *cmd) {
     qcvm->extglobals.input_movevalues[0] = cmd->forwardmove;
     qcvm->extglobals.input_movevalues[1] = cmd->sidemove;
     qcvm->extglobals.input_movevalues[2] = cmd->upmove;
+    if (SV_GorillaEligible(host_client))
+      VectorClear(qcvm->extglobals.input_movevalues);
   }
   if (qcvm->extglobals.input_angles)
     VectorCopy(cmd->viewangles, qcvm->extglobals.input_angles);
@@ -5751,6 +5933,7 @@ qboolean SV_RunClientPMoveCommand(client_t *client) {
   }
 
   command_hook = client->move_authority == MOVE_AUTHORITY_PMOVE_QC_COMMAND;
+  SV_GorillaLatchLadder(client, true);
   SV_CoopRespawnBeginPostThink(ent, num, &coop_respawn_state);
   coop_started = true;
 
@@ -5786,6 +5969,7 @@ qboolean SV_RunClientPMoveCommand(client_t *client) {
     pr_global_struct->self = EDICT_TO_PROG(ent);
     PR_ExecuteProgram(pr_global_struct->PlayerPreThink);
     client->net_move_qc_prethinks++;
+    SV_GorillaLatchLadder(client, false);
     if (ent->free) {
       goto done;
     }
@@ -5828,11 +6012,13 @@ qboolean SV_RunClientPMoveCommand(client_t *client) {
       /* Explicit command physics owns its per-command QuakeC callback. */
       is_remote_vr = cmd.vr_active &&
           (isDedicated || num != cl.viewentity);
+      SV_GorillaLatchLadder(client, true);
       SV_SetQCInputGlobals(&cmd);
       pr_global_struct->time = qcvm->time;
       pr_global_struct->self = EDICT_TO_PROG(ent);
       PR_ExecuteProgram(pr_global_struct->PlayerPreThink);
       client->net_move_qc_prethinks++;
+      SV_GorillaLatchLadder(client, false);
       if (ent->free)
         break;
       SV_CheckVelocity(ent);
@@ -5844,7 +6030,7 @@ qboolean SV_RunClientPMoveCommand(client_t *client) {
         break;
 
       pr_global_struct->self = EDICT_TO_PROG(ent);
-      PR_ExecuteProgram(qcvm->extfuncs.SV_RunClientCommand);
+      SV_RunGorillaQCPhysics(client, qcvm->extfuncs.SV_RunClientCommand, &cmd);
       client->net_move_qc_commands++;
       SV_LinkEdict(ent, true);
     } else {
@@ -5936,6 +6122,11 @@ qboolean SV_RunClientPMoveCommand(client_t *client) {
   }
 
 done:
+  if (processed && !ent->free && SV_GorillaEligible(client) &&
+      !SV_GorillaCallbackMoved(client, ent)) {
+    SV_VRGorillaFinishCommand(client, lastcmd.sequence);
+  } else
+    SV_VRGorillaResetClient(client);
   if (SV_QBJ3NeedsLegacyPhysics(client))
     client->move_prediction_allowed = false;
   if (coop_started && (ent->free || !processed))
@@ -5988,6 +6179,176 @@ static void SV_ApplyLegacyVRRoomScaleMove(edict_t *ent, client_t *client) {
   SV_LinkEdict(ent, false);
 }
 
+/* Consume only the auxiliary hand constraints in command order. QuakeC's
+ * PreThink/think/PostThink and gravity still run once per native server frame.
+ * The legacy latest-only input latch must not discard a push then release
+ * received together in a move bundle. */
+static qboolean SV_PrepareLegacyGorilla(edict_t *ent, client_t *client,
+    qboolean local, int *sequence, qboolean *swim_intent,
+    const usercmd_t *command) {
+  vr_gorilla_legacy_sample_t sample;
+  usercmd_t saved_cmd = client->cmd;
+  vr_gorilla_result_t result;
+  qboolean braced = client->vr_gorilla_state.initialized &&
+      client->vr_gorilla_state.touching && VectorLength(ent->v.velocity) < 1;
+  qboolean have_sample = false;
+  eval_t *gravity_field = GetEdictFieldValue(ent, qcvm->extfields.gravity);
+  float gravity = sv_gravity.value *
+      (gravity_field && gravity_field->_float ? gravity_field->_float : 1);
+  *sequence = -1;
+  *swim_intent = false;
+  if (command) {
+    sample.sequence = command->sequence;
+    sample.seconds = command->seconds;
+    sample.input = command->vr_gorilla;
+    have_sample = true;
+  } else if (local) {
+    /* Same shared controller, fresh local physical poses; discard the delayed
+     * loopback duplicates without running the local movement twice. */
+    unsigned int reset = 0;
+    while (SV_VRGorillaDrainLegacy(client, &sample)) {
+      reset |= sample.input.flags & VR_GORILLA_RESET;
+      *sequence = sample.sequence;
+    }
+    memset(&sample, 0, sizeof(sample));
+    sample.sequence = *sequence;
+    sample.seconds = qcvm->frametime;
+    VR_GetGorillaSample(&sample.input, ent->v.origin, false);
+    sample.input.flags |= reset;
+    have_sample = true;
+  }
+  while (have_sample || (!command && SV_VRGorillaDrainLegacy(client, &sample))) {
+    sv_gorilla_trace_context_t trace_context;
+    vec3_t native_velocity;
+    memset(&trace_context, 0, sizeof(trace_context));
+    trace_context.player = ent;
+    have_sample = false;
+    client->cmd.vr_gorilla = sample.input;
+    if (!SV_GorillaEligible(client)) {
+      /* An ordered OFF sample is not a queue discontinuity. Consume it
+       * without dropping a later ON/stroke from the same packet bundle. */
+      VRG_Reset(&client->vr_gorilla_state);
+      client->vr_gorilla_button[0] = client->vr_gorilla_button[1] = 0;
+      client->vr_gorilla_active = false;
+      *sequence = sample.sequence;
+      braced = false;
+      continue;
+    }
+    VectorCopy(ent->v.velocity, native_velocity);
+    result = VRG_Step(&client->vr_gorilla_state, &sample.input,
+        ent->v.origin, ent->v.velocity, sample.seconds, gravity, &trace_context,
+        SV_GorillaTrace, SV_GorillaSurface);
+    /* Like GorillaQuake, an underwater contact must not freeze native water
+     * physics. Timed water exits also retain their original momentum. */
+    if (((int)ent->v.flags & FL_WATERJUMP) ||
+        (ent->v.waterlevel >= 2 && !result.launched)) {
+      VectorCopy(native_velocity, ent->v.velocity);
+      result.braced = false;
+    }
+    if (result.stepped && ent->v.waterlevel >= 2 &&
+        !((int)ent->v.flags & FL_WATERJUMP)) {
+      unsigned int liquid = 0, solid = 0;
+      vec3_t palm;
+      for (int hand = 0; hand < 2; ++hand) {
+        int contents;
+        VectorAdd(ent->v.origin, sample.input.hand[hand], palm);
+        contents = SV_PointContents(palm);
+        if (contents == CONTENTS_WATER || contents == CONTENTS_SLIME ||
+            contents == CONTENTS_LAVA)
+          liquid |= 1u << hand;
+        if (result.contact[hand] >= 0)
+          solid |= 1u << hand;
+      }
+      *swim_intent |= VRG_SwimImpulse(&sample.input, liquid, solid,
+          sample.seconds, sv_maxspeed.value * .7f, ent->v.velocity);
+    }
+    braced = result.braced;
+    *sequence = sample.sequence;
+    SV_LinkEdict(ent, false);
+    for (int i = 0; i < trace_context.num_impacts && !ent->free; ++i) {
+      if (!trace_context.impacts[i]->free) {
+        SV_Impact(ent, trace_context.impacts[i]);
+        if (!client->vr_gorilla_state.initialized ||
+            SV_GorillaCallbackMoved(client, ent))
+          break;
+      }
+    }
+    if (!client->vr_gorilla_state.initialized ||
+        SV_GorillaCallbackMoved(client, ent)) {
+      SV_VRGorillaResetClient(client);
+      braced = false;
+      break;
+    }
+    SV_GorillaTouchButtons(client, result.contact);
+    if (ent->free || ent->v.health <= 0 || !SV_GorillaEligible(client) ||
+        !client->vr_gorilla_state.initialized ||
+        SV_GorillaCallbackMoved(client, ent)) {
+      SV_VRGorillaResetClient(client);
+      braced = false;
+      break;
+    }
+    if (local || command)
+      break;
+  }
+  client->cmd = saved_cmd;
+  if (!SV_GorillaEligible(client)) {
+    SV_VRGorillaResetClient(client);
+    return false;
+  }
+  return braced;
+}
+
+static void SV_RunGorillaQCPhysics(client_t *client, func_t function,
+    const usercmd_t *command) {
+  sv_gorilla_qc_context_t context = {0};
+  sv_gorilla_qc_context_t previous = sv_gorilla_qc_context;
+  edict_t *ent = client->edict;
+  client_t *saved_client = host_client;
+  edict_t *saved_player = sv_player;
+  int sequence;
+  if (!SV_GorillaEligible(client)) {
+    PR_ExecuteProgram(function);
+    return;
+  }
+  host_client = client;
+  sv_player = ent;
+  context.player = ent;
+  SV_CheckWater(ent);
+  context.braced = SV_PrepareLegacyGorilla(ent, client,
+      !command && !isDedicated && NUM_FOR_EDICT(ent) == cl.viewentity &&
+      vr_enabled.value, &sequence, &context.swim_intent, command);
+  if (ent->free || ent->v.health <= 0)
+    goto done;
+  context.prepared = true;
+  sv_gorilla_qc_context = context;
+  /* PreThink/think can deliberately modify angles, buttons and duration.
+   * Suppress only locomotion; do not initialize the other QC inputs twice. */
+  if (SV_GorillaEligible(client) && qcvm->extglobals.input_movevalues)
+    VectorClear(qcvm->extglobals.input_movevalues);
+  pr_global_struct->self = EDICT_TO_PROG(ent);
+  PR_ExecuteProgram(function);
+  context.delegated = sv_gorilla_qc_context.delegated;
+  sv_gorilla_qc_context = previous;
+  if (!command) {
+    if (context.delegated)
+      client->vr_gorilla_move_deferred = false;
+    else
+      SV_GorillaConsumeWater(client, context.swim_intent);
+  }
+  /* Ordinary motion performed by this original physics owner is expected.
+   * setorigin/death/free have already invalidated any stale planted state. */
+  if (!ent->free && SV_GorillaEligible(client) &&
+      client->vr_gorilla_state.initialized) {
+    VectorCopy(ent->v.origin, client->vr_gorilla_state.origin);
+    if (!command)
+      SV_VRGorillaFinishCommand(client, sequence);
+  }
+done:
+  sv_gorilla_qc_context = previous;
+  host_client = saved_client;
+  sv_player = saved_player;
+}
+
 /*
 ================
 SV_Physics_Client
@@ -5997,20 +6358,30 @@ Player character actions
 */
 void SV_Physics_Client(edict_t *ent, int num) {
   qboolean was_onground;
+  qboolean gorilla_braced = false;
+  qboolean gorilla_swim_intent = false;
+  int gorilla_sequence = -1;
   float prethink_velocity_z;
   coop_respawn_postthink_state_t coop_respawn_state;
   edict_t *prethink_groundentity;
   eval_t *val;
 
+  /* A Host_Error may unwind a QC callback without its normal scope exit. */
+  if (!qcvm->depth)
+    memset(&sv_gorilla_qc_context, 0, sizeof(sv_gorilla_qc_context));
+
   if (!svs.clients[num - 1].active)
     return; // unconnected slot
+  SV_GorillaLatchLadder(&svs.clients[num - 1], true);
   if (!svs.clients[num - 1].knowntoqc && sv_gameplayfix_spawnbeforethinks.value)
     return;
   /* A death after this client's previous physics pass must clear the stroke
    * before QuakeC can respawn it. This also applies to singleplayer and mods
    * which own their respawn lifecycle, independently of co-op policies. */
-  if (ent->free || ent->v.health <= 0 || ent->v.deadflag)
+  if (ent->free || ent->v.health <= 0 || ent->v.deadflag) {
     SV_VRContactResetClient(&svs.clients[num - 1]);
+    SV_VRGorillaResetClient(&svs.clients[num - 1]);
+  }
 
   // Exclude the local player: on a listen server / singleplayer, the local
   // player's vr_handpos arrives one frame late through loopback.  Using
@@ -6038,12 +6409,19 @@ void SV_Physics_Client(edict_t *ent, int num) {
   //
   pr_global_struct->time = qcvm->time;
   pr_global_struct->self = EDICT_TO_PROG(ent);
+  /* Legacy QC owns these globals. Do not introduce general input delivery
+   * merely because an otherwise normal client advertised the capability. */
+  if (SV_GorillaEligible(&svs.clients[num - 1]) &&
+      qcvm->extglobals.input_movevalues)
+    VectorClear(qcvm->extglobals.input_movevalues);
   PR_ExecuteProgram(pr_global_struct->PlayerPreThink);
+  SV_GorillaLatchLadder(&svs.clients[num - 1], false);
   if (ent->free) {
     SV_CoopRespawnRestoreSuppressedInput(ent, num, &coop_respawn_state);
     return;
   }
   SV_AdjustVRJumpVelocity(ent, num, was_onground, prethink_velocity_z);
+  SV_GorillaResumeDeferredMove(&svs.clients[num - 1]);
 
   //
   // do a move
@@ -6057,7 +6435,7 @@ void SV_Physics_Client(edict_t *ent, int num) {
       val->function) {
     pr_global_struct->time = qcvm->time;
     pr_global_struct->self = EDICT_TO_PROG(ent);
-    PR_ExecuteProgram(val->function);
+    SV_RunGorillaQCPhysics(&svs.clients[num - 1], val->function, NULL);
     if (ent->free) {
       SV_CoopRespawnRestoreSuppressedInput(ent, num, &coop_respawn_state);
       return;
@@ -6105,13 +6483,25 @@ void SV_Physics_Client(edict_t *ent, int num) {
     }
 
     // Movement physics -- uses body origin for collision detection
+    if (svs.clients[num - 1].vr_gorilla_capable &&
+        (svs.clients[num - 1].cmd.vr_gorilla.flags ||
+         svs.clients[num - 1].vr_gorilla_state.initialized ||
+         svs.clients[num - 1].vr_gorilla_legacy_count)) {
+      SV_CheckWater(ent);
+      gorilla_braced = SV_PrepareLegacyGorilla(ent, &svs.clients[num - 1],
+          !isDedicated && num == cl.viewentity && vr_enabled.value,
+          &gorilla_sequence, &gorilla_swim_intent, NULL);
+    }
+    if (ent->free)
+      return;
+    SV_GorillaConsumeWater(&svs.clients[num - 1], gorilla_swim_intent);
     switch ((int)ent->v.movetype) {
     case MOVETYPE_NONE:
       break;
 
     case MOVETYPE_WALK:
       if (!SV_CheckWater(ent) && !((int)ent->v.flags & FL_WATERJUMP) &&
-          !SV_EntityOnLadder(ent))
+          !SV_EntityOnLadder(ent) && !gorilla_braced)
         SV_AddGravity(ent);
       SV_CheckStuck(ent);
       SV_WalkMove(ent);
@@ -6174,6 +6564,12 @@ void SV_Physics_Client(edict_t *ent, int num) {
 
   SV_RestorePusherGroundContact(ent, prethink_groundentity);
 
+  /* Native gravity/steps may have moved the body after the hand constraint.
+   * Commit that motion before the final trigger/PostThink callbacks, so even
+   * short direct QC origin writes invalidate the old stroke below. */
+  if (svs.clients[num - 1].vr_gorilla_state.initialized)
+    VectorCopy(ent->v.origin, svs.clients[num - 1].vr_gorilla_state.origin);
+
   //
   // call standard player post-think
   //
@@ -6201,6 +6597,13 @@ void SV_Physics_Client(edict_t *ent, int num) {
   SV_VRContactDrainLegacy(&svs.clients[num - 1]);
   SV_CoopRespawnEndPostThink(ent, num, &coop_respawn_state);
   SV_CoopReviveApplyPending();
+  if (!ent->free && gorilla_sequence >= 0 &&
+      SV_GorillaEligible(&svs.clients[num - 1]) &&
+      !SV_GorillaCallbackMoved(&svs.clients[num - 1], ent)) {
+    SV_VRGorillaFinishCommand(&svs.clients[num - 1], gorilla_sequence);
+  } else if (!SV_GorillaEligible(&svs.clients[num - 1]) ||
+             SV_GorillaCallbackMoved(&svs.clients[num - 1], ent))
+    SV_VRGorillaResetClient(&svs.clients[num - 1]);
 }
 
 //============================================================================

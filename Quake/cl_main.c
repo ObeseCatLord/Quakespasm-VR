@@ -1790,6 +1790,28 @@ static qboolean CL_PredictPlayer (entity_t *ent)
 	PMCL_SetMoveVars ();
 	memset (&pmove, 0, sizeof(pmove));
 	VectorCopy (ent->msg_origins[0], pmove.origin);
+	/* A planted palm is simulation state, not a presentation cache. Never
+	 * replay from a state belonging to a different accepted command. */
+	if (VR_GorillaActive() && cl.vr_gorilla_state_valid)
+	{
+		if (cl.vr_gorilla_state.initialized &&
+			cl.vr_gorilla_state_sequence != cl.ackedmovemessages)
+			return false;
+		if (cl.vr_gorilla_state_sequence == cl.ackedmovemessages)
+		{
+			pmove.gorilla = cl.vr_gorilla_state;
+			pmove.gorilla_allowed = cl.vr_gorilla_state.initialized != 0;
+			for (i = 0; i < 2; i++)
+			{
+				int surface = pmove.gorilla.surface[i];
+				if (surface > 0 && (surface >= cl.num_entities ||
+					cl.entities[surface].forcelink ||
+					cl.entities[surface].netstate.solidsize != ES_SOLID_BSP ||
+					cl.entities[surface].netstate.modelindex != pmove.gorilla.surface_model[i]))
+					memset(&pmove.gorilla, 0, sizeof(pmove.gorilla));
+			}
+		}
+	}
 
 	solidsize = ent->netstate.solidsize;
 	if (solidsize && solidsize != ES_SOLID_BSP)
@@ -1850,6 +1872,11 @@ static qboolean CL_PredictPlayer (entity_t *ent)
 	 * Predict its tracking now without consuming the send accumulator. */
 	pending.vr_active = vr_enabled.value &&
 		(int)vr_aimmode.value == VR_AIMMODE_CONTROLLER;
+	{
+		vec3_t pose_origin;
+		VectorAdd(ent->origin, pending.vr_roomscalemove, pose_origin);
+		VR_GetGorillaSample(&pending.vr_gorilla, pose_origin, false);
+	}
 	if ((cl.protocol_pext2 & PEXT2_EXPLICITCMDMSEC) &&
 		cl.move_msec_sample_valid)
 	{

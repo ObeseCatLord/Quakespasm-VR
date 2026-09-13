@@ -13,6 +13,7 @@
 #define DWELL_MDL_BERSERK_SOURCE_SIZE ((size_t)106284)
 #define QBJ3_MDL_WRENCH_SOURCE_SIZE ((size_t)798364)
 #define ENYO_MDL_KATANA_SOURCE_SIZE ((size_t)403284)
+#define RANGER_MDL_HAND_SOURCE_SIZE ((size_t)57908)
 #define BONK_MDL_DEFAULT_SOURCE_SIZE ((size_t)1325884)
 #define BONK_MDL_ALKALINE_AXE_SOURCE_SIZE ((size_t)1542372)
 #define BONK_MDL_SBLADE_SOURCE_SIZE ((size_t)1543404)
@@ -76,6 +77,8 @@ typedef enum {
 	BONK_MDL_WEAPON_BLOCKY_AXE_DOMINANT = 32,
 	BONK_MDL_WEAPON_BROWN_BRICK_DOMINANT = 33,
 	BONK_MDL_WEAPON_MACE_DOMINANT = 34,
+	RANGER_MDL_WEAPON_HAND = 35,
+	ENYO_MDL_WEAPON_HAND = 36,
 	VR_MDL_SPLIT_WEAPON_COUNT
 } qbj3_mdl_weapon_t;
 
@@ -93,6 +96,8 @@ static size_t QBJ3_MDL_SourceSize (qbj3_mdl_weapon_t weapon)
 		weapon == DWELL_MDL_WEAPON_BERSERK ? DWELL_MDL_BERSERK_SOURCE_SIZE :
 		weapon == QBJ3_MDL_WEAPON_WRENCH_DOMINANT ? QBJ3_MDL_WRENCH_SOURCE_SIZE :
 		weapon == ENYO_MDL_WEAPON_KATANA_DOMINANT ? ENYO_MDL_KATANA_SOURCE_SIZE :
+		weapon == RANGER_MDL_WEAPON_HAND ? RANGER_MDL_HAND_SOURCE_SIZE :
+		weapon == ENYO_MDL_WEAPON_HAND ? ENYO_MDL_KATANA_SOURCE_SIZE :
 		weapon >= BONK_MDL_WEAPON_DEFAULT_DOMINANT &&
 		weapon <= BONK_MDL_WEAPON_DEFAULT_GOLD_BLOODY_DOMINANT ? BONK_MDL_DEFAULT_SOURCE_SIZE :
 		weapon == BONK_MDL_WEAPON_ALKALINE_AXE_DOMINANT ? BONK_MDL_ALKALINE_AXE_SOURCE_SIZE :
@@ -244,11 +249,12 @@ static int QBJ3_MDL_Split (const unsigned char *input, size_t input_size,
 	float yscale, yorigin;
 	size_t result_size, part, pos;
 	int failure = 0;
-	int dominant_recipe = 0;
+	int dominant_recipe = 0, retain_listed_components = 0;
 	const unsigned int *support_components = NULL;
 	unsigned int support_component_count = 0, expected_components = 0;
 	static const unsigned int wrench_support[] = {0, 2, 4, 6, 8, 9, 11, 13, 14, 19, 21};
 	static const unsigned int katana_support[] = {4, 5, 10, 11, 12, 13, 14, 15, 16, 17, 26, 27, 28, 29, 39, 40, 50, 51, 52, 53, 54};
+	static const unsigned int ranger_hand[] = {0};
 	static const unsigned int bonk_support[] = {1, 3, 5, 8, 15, 26, 27, 28, 34};
 	static const unsigned int bonk_alkaline_axe_support[] = {1, 3, 9, 11, 14, 25, 26, 27, 32};
 	static const unsigned int bonk_sblade_support[] = {1, 3, 5, 13, 16, 26, 27, 28, 30};
@@ -330,6 +336,24 @@ static int QBJ3_MDL_Split (const unsigned char *input, size_t input_size,
 		expected_verts = 1021; expected_tris = 1039; expected_frames = 35;
 		expected_output_size = 344020; expected_output_crc = 0xa707a071u;
 		dominant_recipe = 1; support_components = katana_support;
+		support_component_count = sizeof(katana_support) / sizeof(katana_support[0]); expected_components = 66;
+	}
+	else if (weapon == RANGER_MDL_WEAPON_HAND)
+	{
+		expected_input_size = RANGER_MDL_HAND_SOURCE_SIZE; expected_input_crc = 0x2aa03605u;
+		expected_verts = 98; expected_tris = 184; expected_frames = 9;
+		expected_output_size = 54836; expected_output_crc = 0x1c6d30e3u;
+		dominant_recipe = 1; retain_listed_components = 1;
+		support_components = ranger_hand;
+		support_component_count = sizeof(ranger_hand) / sizeof(ranger_hand[0]); expected_components = 3;
+	}
+	else if (weapon == ENYO_MDL_WEAPON_HAND)
+	{
+		expected_input_size = ENYO_MDL_KATANA_SOURCE_SIZE; expected_input_crc = 0x6e300552u;
+		expected_verts = 1021; expected_tris = 1039; expected_frames = 35;
+		expected_output_size = 290732; expected_output_crc = 0x025fcedeu;
+		dominant_recipe = 1; retain_listed_components = 1;
+		support_components = katana_support;
 		support_component_count = sizeof(katana_support) / sizeof(katana_support[0]); expected_components = 66;
 	}
 	else if (weapon >= BONK_MDL_WEAPON_DEFAULT_DOMINANT &&
@@ -449,7 +473,8 @@ static int QBJ3_MDL_Split (const unsigned char *input, size_t input_size,
 					(component_size[other] > component_size[root] ||
 					 (component_size[other] == component_size[root] && component_min[other] < component_min[root])))
 					++rank;
-			if (!QBJ3_MDL_ComponentListed(support_components, support_component_count, rank))
+			if (QBJ3_MDL_ComponentListed(support_components, support_component_count, rank) ==
+				retain_listed_components)
 			{
 				remap[i] = (int)selected_verts;
 				selected[selected_verts++] = i;
