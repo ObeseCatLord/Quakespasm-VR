@@ -556,7 +556,10 @@ static void CL_WriteUsercmd(sizebuf_t *buf, const usercmd_t *histcmd) {
   if (histcmd->vr_contact.flags && histcmd->vr_active &&
       histcmd->vr_handpos_relative)
     extbits |= MOVEEXT_VR_CONTACT;
-  if (histcmd->vr_gorilla.flags && histcmd->vr_active &&
+  if (histcmd->vr_gorilla_motion.flags && histcmd->vr_active &&
+      histcmd->vr_handpos_relative && cl.vr_gorilla_trusted_cap_sent)
+    extbits |= MOVEEXT_GORILLA_TRUSTED;
+  else if (histcmd->vr_gorilla.flags && histcmd->vr_active &&
       histcmd->vr_handpos_relative && cl.vr_gorilla_supported &&
       cl.vr_gorilla_allowed)
     extbits |= MOVEEXT_VR_GORILLA;
@@ -645,6 +648,24 @@ static void CL_WriteUsercmd(sizebuf_t *buf, const usercmd_t *histcmd) {
       MSG_WriteFloat(buf, histcmd->vr_gorilla.velocity[i][1]);
       MSG_WriteFloat(buf, histcmd->vr_gorilla.velocity[i][2]);
     }
+  }
+  if (extbits & MOVEEXT_GORILLA_TRUSTED) {
+    const vr_gorilla_motion_t *motion = &histcmd->vr_gorilla_motion;
+    int flags = motion->flags;
+    if (motion->displacement[0] || motion->displacement[1] || motion->displacement[2])
+      flags |= 16;
+    if (motion->impulse[0] || motion->impulse[1] || motion->impulse[2])
+      flags |= 32;
+    MSG_WriteByte(buf, flags);
+    MSG_WriteLong(buf, motion->generation);
+    for (i = 0; i < 2; ++i) {
+      MSG_WriteShort(buf, motion->contact[i] + 1);
+      MSG_WriteShort(buf, motion->contact_model[i]);
+    }
+    if (flags & 16)
+      for (i = 0; i < 3; ++i) MSG_WriteFloat(buf, motion->displacement[i]);
+    if (flags & 32)
+      for (i = 0; i < 3; ++i) MSG_WriteFloat(buf, motion->impulse[i]);
   }
 }
 
@@ -967,6 +988,7 @@ void CL_SendMove(const usercmd_t *cmd) {
   CL_ClearAkimboUsercmd(&sendcmd);
   CL_ClearVRWeaponContactUsercmd(&sendcmd);
   Q_memset(&sendcmd.vr_gorilla, 0, sizeof(sendcmd.vr_gorilla));
+  Q_memset(&sendcmd.vr_gorilla_motion, 0, sizeof(sendcmd.vr_gorilla_motion));
 
   if (cl_nettest_vr.value) {
     sendcmd.vr_active = true;
@@ -1064,8 +1086,17 @@ void CL_SendMove(const usercmd_t *cmd) {
   if (VR_ImmersiveMeleeSuppressTrigger())
     sendcmd.buttons &= ~BUTTON_ATTACK;
 
-  seq = cl.movemessages++;
+  if (cl.vr_gorilla_trusted_supported && !cl.vr_gorilla_trusted_cap_sent &&
+      sendcmd.vr_gorilla.flags &&
+      cls.message.cursize + 1 + (int)sizeof("vr_gorilla_trusted 1") <= cls.message.maxsize) {
+    MSG_WriteByte(&cls.message, clc_stringcmd);
+    MSG_WriteString(&cls.message, "vr_gorilla_trusted 1");
+    cl.vr_gorilla_trusted_cap_sent = true;
+  }
+  seq = cl.movemessages;
   sendcmd.sequence = seq;
+  CL_AuthorGorillaCommand(&sendcmd);
+  cl.movemessages++;
 	cl.net_move_msec_generated += sendcmd.msec;
   cl.movecmds[seq & (CL_MOVE_HISTORY - 1)] = sendcmd;
   cl.cmd = sendcmd;
@@ -1208,6 +1239,12 @@ static void CL_VRGorillaProtocol_f(void)
   MSG_WriteString(&cls.message, "vr_gorilla_cap 1");
 }
 
+static void CL_VRGorillaTrusted_f(void)
+{
+  if (cmd_source == src_server && Cmd_Argc() == 2 && Q_atoi(Cmd_Argv(1)) == 1)
+    cl.vr_gorilla_trusted_supported = true;
+}
+
 static void CL_VRWeaponContactHaptic_f(void) {
   int hand;
   if (cmd_source != src_server || Cmd_Argc() != 2 ||
@@ -1238,6 +1275,7 @@ void CL_InitInput(void) {
   Cmd_AddCommand_ServerCommand("vr_weapon_contact_protocol",
                                CL_VRWeaponContactProtocol_f);
 	Cmd_AddCommand_ServerCommand("vr_gorilla_protocol", CL_VRGorillaProtocol_f);
+	Cmd_AddCommand_ServerCommand("vr_gorilla_trusted", CL_VRGorillaTrusted_f);
   Cmd_AddCommand_ServerCommand("vr_weapon_contact_haptic",
                                CL_VRWeaponContactHaptic_f);
   Cmd_AddCommand("+moveup", IN_UpDown);

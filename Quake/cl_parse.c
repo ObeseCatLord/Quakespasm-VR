@@ -1506,9 +1506,12 @@ static void CLFTE_EntitiesDeltaed (void)
 			ent->msgtime = cl.mtime[0];
 			VectorCopy (ent->msg_origins[0], ent->msg_origins[1]);
 			VectorCopy (ent->msg_angles[0], ent->msg_angles[1]);
-			VectorCopy (ent->netstate.origin, ent->msg_origins[0]);
-			VectorCopy (ent->netstate.angles, ent->msg_angles[0]);
 		}
+		/* A continuation can update this entity at the same server time.
+		 * Promote its final endpoint without shifting interpolation history
+		 * twice (including entities omitted from the first packet). */
+		VectorCopy (ent->netstate.origin, ent->msg_origins[0]);
+		VectorCopy (ent->netstate.angles, ent->msg_angles[0]);
 
 		ent->skinnum = ent->netstate.skin;
 		ent->effects = ent->netstate.effects;
@@ -2472,6 +2475,7 @@ static qboolean CL_ParseMoveAckPayload (void)
 	int discontinuity_epoch;
 	int reason;
 	int state_sequence = -1;
+	unsigned int motion_generation = 0;
 	int hand, axis;
 	vr_gorilla_state_t gorilla_state;
 
@@ -2500,12 +2504,21 @@ static qboolean CL_ParseMoveAckPayload (void)
 	discontinuity_epoch = MSG_ReadShort () & 0xffff;
 	reason = MSG_ReadByte ();
 	if (flags & ~(MOVEACK_FLAG_AUTHORITATIVE | MOVEACK_FLAG_PREDICTION_ALLOWED |
-		MOVEACK_FLAG_DISCONTINUITY | MOVEACK_FLAG_VR_GORILLA) ||
+		MOVEACK_FLAG_DISCONTINUITY | MOVEACK_FLAG_VR_GORILLA | MOVEACK_FLAG_GORILLA_TRUSTED) ||
 		authority < MOVE_AUTHORITY_UNKNOWN ||
 		authority > MOVE_AUTHORITY_PMOVE_QC_COMMAND)
 	{
 		msg_badread = true;
 		return false;
+	}
+	if (flags & MOVEACK_FLAG_GORILLA_TRUSTED)
+	{
+		if (!cl.vr_gorilla_trusted_cap_sent || net_message.cursize - msg_readcount < 4)
+		{
+			msg_badread = true;
+			return false;
+		}
+		motion_generation = (unsigned int)MSG_ReadLong();
 	}
 	Q_memset(&gorilla_state, 0, sizeof(gorilla_state));
 	if (flags & MOVEACK_FLAG_VR_GORILLA)
@@ -2599,6 +2612,8 @@ static qboolean CL_ParseMoveAckPayload (void)
 	cl.move_ack_mode_epoch = (unsigned short)mode_epoch;
 	cl.move_ack_discontinuity_epoch = (unsigned short)discontinuity_epoch;
 	cl.move_ack_discontinuity_reason = (unsigned char)reason;
+	cl.vr_gorilla_motion_generation_valid = (flags & MOVEACK_FLAG_GORILLA_TRUSTED) != 0;
+	cl.vr_gorilla_motion_generation = motion_generation;
 	if (flags & MOVEACK_FLAG_VR_GORILLA)
 	{
 		cl.vr_gorilla_state = gorilla_state;

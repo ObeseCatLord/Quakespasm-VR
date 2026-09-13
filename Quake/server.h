@@ -207,6 +207,8 @@ typedef struct client_s
 	unsigned int	move_queue_head;
 	unsigned int	move_queue_count;
 	qboolean		vr_gorilla_capable;
+	qboolean		vr_gorilla_trusted_capable;
+	unsigned int	vr_gorilla_motion_generation;
 	qboolean		vr_gorilla_active;
 	qboolean		vr_gorilla_move_deferred;
 	qboolean		vr_gorilla_ladder_frame; /* contact may be consumed in PreThink */
@@ -304,6 +306,12 @@ typedef struct client_s
 	size_t			numpreviousentities;
 	size_t			maxpreviousentities;
 	unsigned int	snapshotresume;
+	/* Encoded ACK/time/owner tuple, frozen with previousentities. Repeated in
+	 * each continuation so packet loss cannot separate prediction baselines.
+	 * Bounded encoding fails closed if a future protocol outgrows this buffer. */
+	byte			snapshot_move[1024];
+	int				snapshot_move_size, snapshot_move_header;
+	unsigned int	snapshot_move_owner;
 	unsigned int	*pendingentities_bits;
 	size_t			numpendingentities;
 	unsigned int	*pendingcsqcentities_bits;
@@ -487,6 +495,7 @@ extern cvar_t sv_pmove_mode;
 extern cvar_t sv_triggerdebug;
 extern cvar_t sv_vr_jump_velocity;
 extern cvar_t sv_gorilla;
+extern cvar_t sv_gorilla_trustclient;
 extern cvar_t sv_weapon_collision;
 extern cvar_t sv_immersive_melee;
 extern cvar_t sv_melee_hitassist;
@@ -544,6 +553,8 @@ qboolean SV_VRGorillaDrainLegacy(client_t *client,
 	vr_gorilla_legacy_sample_t *sample);
 void SV_VRGorillaFinishCommand(client_t *client, int sequence);
 void SV_VRGorillaResetClient(client_t *client);
+void SV_VRGorillaDiscontinuity(client_t *client);
+qboolean SV_GorillaTrustedCommand(client_t *client, const usercmd_t *cmd);
 void SV_GorillaResumeDeferredMove(client_t *client);
 void SV_GorillaConsumeWater(client_t *client, qboolean swim_intent);
 void SV_VRGorillaInvalidateSurface(edict_t *ent);

@@ -30,4 +30,19 @@ typedef struct {
   float origin[3];           /* last processed body baseline; reset on warp */
 } vr_gorilla_state_t;
 
+/* Command-owned result of local hand locomotion. This is deliberately not
+ * total body velocity/position: native forces and collision remain native. */
+#define VR_GORILLA_MOTION_ACTIVE 1
+#define VR_GORILLA_MOTION_BRACED 2
+#define VR_GORILLA_MOTION_SWIM 4
+#define VR_GORILLA_MOTION_LAUNCHED 8
+#define VR_GORILLA_MOTION_FLAGS 15
+typedef struct {
+  unsigned int generation;
+  unsigned char flags;
+  float displacement[3], impulse[3];
+  int contact[2];
+  unsigned int contact_model[2];
+} vr_gorilla_motion_t;
+
 #endif

@@ -310,7 +310,7 @@ static void PF_setorigin (void)
 	if (qcvm == &sv.qcvm && !VectorCompare(oldorg, org)) {
 		int player = NUM_FOR_EDICT(e);
 		if (player > 0 && player <= svs.maxclients && svs.clients)
-			SV_VRGorillaResetClient(&svs.clients[player - 1]);
+			SV_VRGorillaDiscontinuity(&svs.clients[player - 1]);
 	}
 	VectorCopy (org, e->v.origin);
 	SV_LinkEdict (e, false);

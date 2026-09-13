@@ -146,6 +146,7 @@ extern client_static_t	cls;
 
 void CL_ApplyPredictionViewSmoothing (vec3_t vieworg);
 void CL_ResetPredictionSmoothing (void);
+void CL_AuthorGorillaCommand(usercmd_t *cmd);
 void CL_SendAvatarSelection (void);
 
 //
@@ -328,6 +329,13 @@ typedef struct
 	qboolean	vr_gorilla_state_valid;
 	int		vr_gorilla_state_sequence;
 	vr_gorilla_state_t vr_gorilla_state;
+	qboolean vr_gorilla_trusted_supported, vr_gorilla_trusted_cap_sent;
+	qboolean vr_gorilla_motion_generation_valid;
+	unsigned int vr_gorilla_motion_generation;
+	unsigned int vr_gorilla_local_generation;
+	int vr_gorilla_local_sequence;
+	qboolean vr_gorilla_local_valid;
+	vr_gorilla_state_t vr_gorilla_local_state;
 	/* VR_WEAPON_CONTACT_CAP_*; enabled independently by the server. */
 	int		vr_weapon_contact_supported;
 	int		vr_weapon_contact_profile;

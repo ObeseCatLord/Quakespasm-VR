@@ -89,6 +89,9 @@ typedef struct
 	qboolean gorilla_swim_stroke;
 	qboolean gorilla_prepared; /* enclosing QC owner already consumed this pose */
 	int gorilla_contact[2];
+	/* Author only the hand contribution, before the native movement step. */
+	qboolean gorilla_authoring;
+	vr_gorilla_motion_t gorilla_authored_motion;
 
 	qboolean onladder;
 	qboolean safeorigin_known;
