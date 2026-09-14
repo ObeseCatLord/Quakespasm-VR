@@ -20,6 +20,8 @@ USE_CODEC_OPUS=1
 USE_VOICE ?= 1
 # Experimental backend: opt in explicitly, including in SDK-enabled dev shells.
 USE_STEAMAUDIO ?= 0
+# Local Alicia-only experiment; no new importer in normal builds.
+USE_ALICIA_SPIKE ?= 0
 # either xmp or mikmod (or modplug)
 USE_CODEC_MIKMOD=0
 USE_CODEC_XMP=1
@@ -274,6 +276,11 @@ GLOBJS = \
 	r_brush.o \
 	gl_model.o
 
+ifeq ($(USE_ALICIA_SPIKE),1)
+CFLAGS += -DUSE_ALICIA_SPIKE
+GLOBJS += r_alicia_spike.o
+endif
+
 OBJS = strlcat.o \
 	strlcpy.o \
 	$(GLOBJS) \
@@ -346,7 +353,7 @@ all: $(DEFAULT_TARGET)
 # a toggle must not silently reuse objects from the other backend.
 .PHONY: force-sound-config
 .sound-config: force-sound-config
-	@printf '%s\n' '$(USE_STEAMAUDIO) $(USE_VOICE) $(USE_SDL2) $(DO_USERDIRS)' > $@.tmp
+	@printf '%s\n' '$(USE_STEAMAUDIO) $(USE_VOICE) $(USE_SDL2) $(DO_USERDIRS) $(USE_ALICIA_SPIKE)' > $@.tmp
 	@cmp -s $@.tmp $@ || mv $@.tmp $@
 	@rm -f $@.tmp
 $(OBJS): .sound-config
