@@ -932,6 +932,7 @@ typedef struct {
   qboolean frame_laser_valid;
   int last_selection;
   int last_selection_type;
+  int retained_weapon; // Catalog index, never an ordinal in the visible list.
 } vr_weaponmenu_session_t;
 static vr_weaponmenu_session_t vr_weaponmenu_session;
 
@@ -957,6 +958,7 @@ typedef struct {
   qboolean game_profile;
   qboolean from_schema;
   qboolean use_item_ownership;
+  char learned_model_path[MAX_QPATH]; // Owned storage for selector-only schemas.
 } vr_dyn_weapon_t;
 
 #define MAX_DYN_WEAPONS 128
@@ -11506,6 +11508,14 @@ void VR_TrackWeapons(void) {
 
   // Learned info for existing weapon
   if (w) {
+    /* Selector-only file rosters know the command and ownership but omit a
+     * display model. Once observed, retain its name across map precaches,
+     * not a pointer into the old map's model table. */
+    if (w->from_schema && (!w->model_path || !w->model_path[0])) {
+      q_strlcpy(w->learned_model_path, model_path,
+                sizeof(w->learned_model_path));
+      w->model_path = w->learned_model_path;
+    }
     if (!w->discovered || w->model_index != model_idx) {
       w->model_index = model_idx;
       w->discovered = true;
@@ -11552,6 +11562,19 @@ void VR_ResetWeaponTracking(void) {
   vr_gorilla_discontinuity = true;
   VR_EndWeaponMenu();
   vr_weapon_cycle_target = -1;
+  VR_WeaponCatalog_Reset(&vr_weapon_catalog);
+
+  /* Precache numbers belong to one server map, not to the weapon catalog.
+   * Keep file/profile ownership, impulses and model paths, but never let a
+   * previous map's learned number hide a known weapon until it is equipped.
+   * Runtime-only entries remain observations and can be relearned; they must
+   * not become stock fallbacks merely because their number was invalidated. */
+  for (int i = 0; i < num_dyn_weapons; i++) {
+    dyn_weapons[i].model_index = 0;
+    if (dyn_weapons[i].from_schema || dyn_weapons[i].game_profile ||
+        (dyn_weapons[i].model_path && dyn_weapons[i].model_path[0]))
+      dyn_weapons[i].discovered = false;
+  }
 
   // Rogue expansion uses different bitmasks: RIT_AXE=2048, and reuses
   // 4096 for RIT_LAVA_NAILGUN. Fix up the axe entry accordingly.
@@ -11591,8 +11614,7 @@ void VR_ResetWeaponTracking(void) {
   }
   VR_AddBuiltinWeaponDefaults();
 
-  // Keep learned/schema weapon knowledge across map loads.  Further discovery
-  // is passive: observe real weapon changes instead of sending probe impulses.
+  // Keep known weapon definitions across map loads; observations are map-local.
 }
 
 typedef enum {
@@ -11612,17 +11634,16 @@ VR_WeaponVisibility(const vr_dyn_weapon_t *w) {
   qboolean has_profile_peer = false;
   vr_weapon_catalog_source_t source;
 
-  if (w->discovered && w->model_index > 0 &&
-      !VR_ModelIndexLooksWeapon(w->model_index))
+  if (w->discovered && (w->model_index <= 0 ||
+      !VR_ModelIndexLooksWeapon(w->model_index)))
     return VR_WEAPON_HIDDEN_INVALID_MODEL;
 
   if (VR_IsDwellDefaultWeaponEntry(w) && !VR_IsDwellGame())
     return VR_WEAPON_HIDDEN_DWELL_ONLY;
 
-  /* wwheel.txt is a complete selection roster, not a hint.  Apply this rule
-   * globally rather than maintaining per-mod exclusion lists: entries which
-   * the roster did not claim stay hidden even if unrelated mod inventory bits
-   * happen to look like vanilla weapon ownership. */
+  /* File rosters suppress undeclared stock guesses, not genuinely new
+   * weapons observed in play. Unrelated item bits must never expose vanilla
+   * entries alongside a mod's custom roster. */
   /*
    * The precedence is file schema > selected game profile > generic stock.
    * This leaves only one canonical entry for a reused item bit, while model
@@ -11823,6 +11844,63 @@ extern "C" int VR_GetSelectedWeaponImpulse(int selection) {
   return 0;
 }
 
+static qboolean VR_WeaponMenuCanSelect(const vr_dyn_weapon_t *w) {
+  int ammo, max_ammo;
+
+  if (VR_WeaponVisibility(w) != VR_WEAPON_VISIBLE ||
+      !VR_WeaponIsOwned(w) || VR_WeaponSelectionImpulse(w) <= 0)
+    return false;
+
+  /* Unknown reserves and current-weapon magazine stats cannot establish
+   * whether an inactive mod weapon can fire/reload. Leave that to QuakeC. */
+  return w->ammo_stat == STAT_AMMO ||
+         !VR_GetWeaponAmmo(w, &ammo, &max_ammo) || ammo > 0;
+}
+
+static void VR_UpdateWeaponMenuSelection(vr_dyn_weapon_t **visible,
+                                         int count, int selection, int type) {
+  if (type == VR_WEAPONMENU_SELECTION_WEAPON &&
+      selection >= 0 && selection < count) {
+    vr_weaponmenu_session.retained_weapon =
+        (int)(visible[selection] - dyn_weapons);
+  } else if (type != VR_WEAPONMENU_SELECTION_NONE) {
+    /* Actions require an actual hit; never retain a teleport/save/load, or
+     * resurrect a weapon selection after pointing at one of those actions. */
+    vr_weaponmenu_session.retained_weapon = -1;
+  } else {
+    for (int i = 0; i < count; i++) {
+      if (visible[i] - dyn_weapons == vr_weaponmenu_session.retained_weapon &&
+          VR_WeaponMenuCanSelect(visible[i])) {
+        selection = i;
+        type = VR_WEAPONMENU_SELECTION_WEAPON;
+        break;
+      }
+    }
+  }
+  vr_weaponmenu_selection = selection;
+  vr_weaponmenu_selection_type = type;
+}
+
+extern "C" int VR_ResolveWeaponMenuSelection(void) {
+  vr_dyn_weapon_t *visible[MAX_DYN_WEAPONS];
+  int count;
+
+  if (!vr_weaponmenu_session.active)
+    return -1;
+  if (vr_weaponmenu_selection_type != VR_WEAPONMENU_SELECTION_WEAPON)
+    return vr_weaponmenu_selection;
+
+  /* Inventory may change between the final draw and button release. Resolve
+   * the remembered catalog entry again instead of selecting its old ordinal. */
+  count = VR_GetVisibleWeapons(visible, MAX_DYN_WEAPONS);
+  for (int i = 0; i < count; i++) {
+    if (visible[i] - dyn_weapons == vr_weaponmenu_session.retained_weapon &&
+        VR_WeaponMenuCanSelect(visible[i]))
+      return i;
+  }
+  return -1;
+}
+
 extern "C" void VR_SelectWeaponFromMenu(int selection) {
   vr_dyn_weapon_t *visible[MAX_DYN_WEAPONS];
   int num_visible = VR_GetVisibleWeapons(visible, MAX_DYN_WEAPONS);
@@ -11836,6 +11914,8 @@ extern "C" void VR_SelectWeaponFromMenu(int selection) {
     return;
 
   w = visible[selection];
+  if (!VR_WeaponMenuCanSelect(w))
+    return;
   impulse = VR_WeaponSelectionImpulse(w);
   if (impulse <= 0) {
     DebugLog("VR: selected weapon has no impulse bitmask=%d model=%d\n",
@@ -11958,6 +12038,7 @@ extern "C" void VR_BeginWeaponMenu(void) {
   vr_weaponmenu_session.gun_angle = vr_gunangle.value;
   vr_weaponmenu_session.last_selection = -1;
   vr_weaponmenu_session.last_selection_type = VR_WEAPONMENU_SELECTION_NONE;
+  vr_weaponmenu_session.retained_weapon = -1;
 }
 
 extern "C" void VR_EndWeaponMenu(void) {
@@ -11969,6 +12050,7 @@ extern "C" void VR_EndWeaponMenu(void) {
   vr_weaponmenu_session.frame_laser_valid = false;
   vr_weaponmenu_session.last_selection = -1;
   vr_weaponmenu_session.last_selection_type = VR_WEAPONMENU_SELECTION_NONE;
+  vr_weaponmenu_session.retained_weapon = -1;
   vr_weaponmenu_anchor_valid = false;
 }
 
@@ -12792,8 +12874,7 @@ static void VR_RunWeaponMenu(qboolean draw) {
     }
   }
 
-  vr_weaponmenu_selection = best_index;
-  vr_weaponmenu_selection_type = best_type;
+  VR_UpdateWeaponMenuSelection(visible, num_visible, best_index, best_type);
 
   // Trigger haptic if selection changed
   if ((vr_weaponmenu_selection != vr_weaponmenu_session.last_selection ||

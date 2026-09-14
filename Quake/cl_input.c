@@ -240,7 +240,7 @@ void IN_VRWeaponMenuUp(void) {
   cl.in_vr_weaponmenu = false;
 
   // If a weapon is selected when the menu is released, send the impulse
-  int sel = vr_weaponmenu_selection;
+  int sel = VR_ResolveWeaponMenuSelection();
   int sel_type = vr_weaponmenu_selection_type;
   VR_EndWeaponMenu();
   vr_weaponmenu_selection = -1; // Reset selection first

@@ -67,8 +67,10 @@ static inline int VR_WeaponCatalog_ShouldExpose(
     int has_schema_peer, int has_profile_peer, int owned, int active) {
   if (!owned && !active)
     return 0;
-  if (authoritative_schema && source != VR_WEAPON_CATALOG_SOURCE_SCHEMA &&
-      source != VR_WEAPON_CATALOG_SOURCE_PROFILE)
+  /* An actual extra weapon observed in play may extend an incomplete file
+   * roster. Still exclude undeclared stock guesses and duplicate selectors;
+   * observing a model does not itself authorize a guessed switch impulse. */
+  if (authoritative_schema && source == VR_WEAPON_CATALOG_SOURCE_STOCK)
     return 0;
   if (source != VR_WEAPON_CATALOG_SOURCE_SCHEMA && has_schema_peer)
     return 0;
