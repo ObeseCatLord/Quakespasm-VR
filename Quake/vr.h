@@ -132,6 +132,7 @@ void VR_RequestServerYaw(float yaw);
 void VR_TrackWeapons();
 void VR_ResetWeaponTracking();
 int VR_GetSelectedWeaponImpulse(int selection);
+int VR_ResolveWeaponMenuSelection(void);
 void VR_SelectWeaponFromMenu(int selection);
 void VR_SelectPlayerFromMenu(int selection);
 void VR_SelectRespawnFromMenu(void);
