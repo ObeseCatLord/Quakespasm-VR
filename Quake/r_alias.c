@@ -27,12 +27,18 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "r_vrik.h"
 #include "r_avatar.h"
 #include "custom_avatar.h"
+#ifdef USE_ALICIA_SPIKE
+#include "r_alicia_spike.h"
+#endif
 
 extern cvar_t r_drawflat, gl_overbright_models, gl_fullbrights, r_lerpmodels, r_lerpmove; //johnfitz
 extern cvar_t scr_fov, cl_gun_fovscale;
 extern vec3_t vr_weaponcolor;
 
 cvar_t r_alias_batching = {"r_alias_batching", "1", CVAR_ARCHIVE};
+/* 0 legacy, 1 calibrated humanoid + target IK, 2 calibrated FK diagnostic.
+ * Custom complete humanoids only; existing monster policies remain explicit. */
+cvar_t r_avatar_humanoid = {.name = "r_avatar_humanoid", .string = "0", .flags = CVAR_ARCHIVE};
 
 //up to 16 color translated skins
 gltexture_t *playertextures[MAX_SCOREBOARD]; //johnfitz -- changed to an array of pointers
@@ -4588,6 +4594,83 @@ static qboolean R_VRIKBuildAttachedPropSocket (
 	return true;
 }
 
+/* Same target-length solver for desktop contacts and tracked endpoints.
+ * The dominant desktop wrist follows the calibrated source motion; the other
+ * wrist follows that exact prop attachment, preserving source grip spacing. */
+static void R_VRIKRefineHumanoid(const md5liveinfo_t *canonical,
+	const r_avatar_rig_t *rig, const r_avatar_presentation_context_t *context,
+	const r_avatar_humanoid_t *map, const float trackingbasis[3][3],
+	r_vrik_skincache_t *cache)
+{
+	float attach[12],endpoint[12],mapped[12],invrotation[12];
+	float goals[19][3],pole[3];
+	r_vrik_lowerbody_targets_t lower;
+	unsigned int targets=0;int s,r;
+	qboolean tracked=r_vrik_pose_pending;
+	memset(cache->humanoid_residual,0,sizeof(cache->humanoid_residual));
+	R_VRIKMatrixInverseRigid(context->rotation,invrotation);
+	if (tracked) {
+		int semantics[3]={MD5_VRIK_HEAD,MD5_VRIK_HAND_L,MD5_VRIK_HAND_R};
+		int trackers[3]={VRIK_TRACKER_HEAD,VRIK_TRACKER_LEFT_HAND,VRIK_TRACKER_RIGHT_HAND};
+		/* Without foot trackers, keep the animation's foot goals while the
+		 * pelvis/head anchor moves. Otherwise a head-only crouch would translate
+		 * the entire avatar through the floor instead of bending its knees. */
+		for(s=MD5_VRIK_FOOT_L;s<=MD5_VRIK_FOOT_R;s+=3) {
+			for(r=0;r<3;++r)goals[s][r]=cache->palette[rig->joint[s]*12+r*4+3];
+			targets|=1u<<s;
+		}
+		for(s=0;s<3;++s) {
+			if(s==1 && !(r_vrik_pending_pose.flags & VRIK_FLAG_LEFT_HAND_TRACKED))continue;
+			if(s==2 && !(r_vrik_pending_pose.flags & VRIK_FLAG_RIGHT_HAND_TRACKED))continue;
+			R_VRIKLocalVectorToModel(r_vrik_pending_pose.position[trackers[s]],
+				trackingbasis[0],trackingbasis[1],trackingbasis[2],goals[semantics[s]]);
+			R_AvatarPresentationInversePoint(context,goals[semantics[s]],goals[semantics[s]]);
+			targets|=1u<<semantics[s];
+		}
+		if(R_VRIKGetLowerBodyTargets(r_vrik_active_player+1,&lower))for(s=0;s<3;++s) {
+			int semantic=s==0?MD5_VRIK_HIP:s==1?MD5_VRIK_FOOT_L:MD5_VRIK_FOOT_R;
+			unsigned char bit=R_VRIK_LOWER_BIT(s);
+			if(!(lower.present_mask & bit) || !((lower.tracked_mask|lower.predicted_mask)&bit) || lower.confidence[s]<=0)continue;
+			R_VRIKLocalVectorToModel(lower.position[s],trackingbasis[0],trackingbasis[1],trackingbasis[2],goals[semantic]);
+			R_AvatarPresentationInversePoint(context,goals[semantic],goals[semantic]);targets|=1u<<semantic;
+		}
+		/* Anchor the complete body instead of independently stretching the neck
+		 * and spine. A real pelvis target takes priority over head translation. */
+		s=(targets&(1u<<MD5_VRIK_HIP))?MD5_VRIK_HIP:MD5_VRIK_HEAD;
+		if(targets&(1u<<s)) {
+			float delta[3];for(r=0;r<3;++r)delta[r]=goals[s][r]-cache->palette[rig->joint[s]*12+r*4+3];
+			R_VRIKTranslateJointSubtree(rig->live,cache->palette,rig->joint[MD5_VRIK_HIP],delta);
+		}
+	} else {
+		int right=canonical->jointindex[MD5_VRIK_HAND_R];
+		if(!R_VRIKBuildAttachedPropSocket(context,cache->canonical_palette+right*12,
+			canonical->joints[right].bind,cache->palette+rig->joint[MD5_VRIK_HAND_R]*12,
+			map->reference[MD5_VRIK_HAND_R],attach))return;
+	}
+	for(s=0;s<4;++s) {
+		int upper=s==0?MD5_VRIK_UPPERARM_L:s==1?MD5_VRIK_UPPERARM_R:s==2?MD5_VRIK_UPPERLEG_L:MD5_VRIK_UPPERLEG_R;
+		int end=upper+2,source=canonical->jointindex[end];
+		memcpy(endpoint,cache->palette+rig->joint[end]*12,sizeof(endpoint));
+		if(tracked) {
+			if(!(targets&(1u<<end)))continue;
+			for(r=0;r<3;++r)endpoint[r*4+3]=goals[end][r];
+		} else {
+			if(s!=0)continue;
+			R_VRIKMatrixMultiply(attach,cache->canonical_palette+source*12,mapped);
+			for(r=0;r<3;++r)goals[end][r]=mapped[r*4+3];
+			R_AvatarPresentationInversePoint(context,goals[end],goals[end]);
+			mapped[3]=mapped[7]=mapped[11]=0;
+			R_VRIKMatrixMultiply(mapped,map->offset[end],endpoint);
+			R_VRIKMatrixMultiply(invrotation,endpoint,endpoint);
+			for(r=0;r<3;++r)endpoint[r*4+3]=goals[end][r];
+		}
+		/* Preserve the animated bend plane, then let the common solver handle
+		 * a straight or antiparallel chain deterministically. */
+		for(r=0;r<3;++r)pole[r]=cache->palette[rig->joint[upper+1]*12+r*4+3];
+		cache->humanoid_residual[s]=R_AvatarSolveHumanoidLimb(rig,cache->palette,upper,endpoint,pole);
+	}
+}
+
 /* Ogre and Shambler use their ordinary attached dominant-hand prop.  Carry the
  * current canonical Ranger left-hand pose through that exact attachment, then
  * solve only the target left arm.  This keeps the raw right hand/gun intact. */
@@ -4748,7 +4831,8 @@ static qboolean R_VRIKPrepareAttachedProp (const md5liveinfo_t *canonical,
 	else if (!R_VRIKBuildAttachedPropSocket (context,
 		cache->canonical_palette + sourcehand * 12,
 		canonical->joints[sourcehand].bind, cache->palette + targethand * 12,
-		targetrig->live->joints[targethand].bind, attach))
+		cache->humanoid ? cache->humanoid_reference[dominantleft ? MD5_VRIK_HAND_L : MD5_VRIK_HAND_R] :
+			targetrig->live->joints[targethand].bind, attach))
 		return false;
 	if (!R_VRIKReserveProp (cache, source->numverts, source->numindexes))
 		return false;
@@ -5164,7 +5248,8 @@ static void R_VRIKPrepareQBJ3Equipment (qmodel_t *model,
 		R_VRIKSetMatrixOrigin(sourcebind, origin);
 		if (!R_VRIKBuildAttachedPropSocket(context, sourcebind, sourcebind,
 			cache->palette + targetanchor * 12,
-			targetrig->live->joints[targetanchor].bind, attach))
+			cache->humanoid ? cache->humanoid_reference[prop == 0 && left ? MD5_VRIK_HAND_L : anchors[prop]] :
+				targetrig->live->joints[targetanchor].bind, attach))
 			return;
 		for (index = 0; index + 2 < surface.numindexes; index += 3)
 		{
@@ -5213,9 +5298,15 @@ static void R_VRIKPrepareQBJ3Equipment (qmodel_t *model,
 
 static qboolean R_VRIKPrepareSkin (qmodel_t *model)
 {
+	r_avatar_humanoid_t humanoid;
+	r_avatar_profile_t humanoid_profile;
+	float trackingbasis[3][3];
 	md5liveinfo_t canonical, target;
 	md5livesurface_t surface, canonicalsurface;
 	const r_avatar_profile_t *profile;
+#ifdef USE_ALICIA_SPIKE
+	r_avatar_profile_t alicia_profile;
+#endif
 	r_avatar_rig_t canonicalrig, targetrig;
 	r_avatar_presentation_context_t presentation;
 	r_vrik_skincache_t *cache;
@@ -5243,6 +5334,14 @@ static qboolean R_VRIKPrepareSkin (qmodel_t *model)
 		return true;
 	}
 	profile = R_PlayerAvatarProfile (r_vrik_avatar_id);
+#ifdef USE_ALICIA_SPIKE
+	if (profile && !strcmp(profile->key, "alicia") && r_alicia_pose.value == 2)
+	{
+		alicia_profile = *profile;
+		alicia_profile.desktop_refine = true;
+		profile = &alicia_profile;
+	}
+#endif
 	/* Load before retaining live-data pointers; model loading may evict caches. */
 	equipmentmodel = R_VRIKQBJ3EquipmentModel(profile);
 	if (!profile || !r_vrik_canonical_model ||
@@ -5267,6 +5366,19 @@ static qboolean R_VRIKPrepareSkin (qmodel_t *model)
 	if (!R_AvatarBuildPresentationContext (&canonicalrig, &targetrig,
 		&presentation))
 		return false;
+	/* Uniform anatomical normalization remains cosmetic. Preserve the manifest
+	 * scale as an explicit multiplier; never normalize to hair or prop bounds. */
+	cache->humanoid = r_avatar_humanoid.value != 0 && CustomAvatar_Get(profile->id) &&
+		R_AvatarBuildHumanoid(&canonicalrig,&targetrig,&presentation,&humanoid);
+	if(cache->humanoid) {
+		float sh=R_AvatarHumanoidHeight(&canonicalrig),th=R_AvatarHumanoidHeight(&targetrig);
+		if(sh>.001f && th>.001f) {
+			humanoid_profile=*profile;humanoid_profile.display_scale*=sh/th;
+			profile=&humanoid_profile;targetrig.profile=profile;
+			if(!R_AvatarBuildPresentationContext(&canonicalrig,&targetrig,&presentation) ||
+				!R_AvatarBuildHumanoid(&canonicalrig,&targetrig,&presentation,&humanoid))return false;
+		}
+	}
 	if (!R_VRIKSkinCacheReserve (cache, surface.numverts))
 		return false;
 	if (!R_VRIKBuildBodyIndexes (&target, profile, &surface, cache))
@@ -5280,14 +5392,23 @@ static qboolean R_VRIKPrepareSkin (qmodel_t *model)
 	 * touching the selected mesh.  Monster AI frames never enter this path. */
 	R_VRIKLerpPalette (&canonical, &r_vrik_canonical_lerpdata,
 		cache->canonical_palette);
+	if(cache->humanoid && r_vrik_pose_pending &&
+		!R_VRIKBuildBodyBasis(&canonical,cache->canonical_palette,trackingbasis[0],trackingbasis[1],trackingbasis[2]))
+		cache->humanoid=false;
 	if (r_vrik_pose_pending)
 		R_VRIKSolvePalette (&canonical, &r_vrik_pending_pose,
 			currententity && (currententity->effects & EF_MUZZLEFLASH),
 			cache->canonical_palette, cache);
-	if (!R_AvatarRetargetPaletteWithContext (&canonicalrig, &targetrig, &presentation,
-		cache->canonical_palette,
-		cache->palette))
+	if (cache->humanoid ? !R_AvatarRetargetHumanoid(&canonicalrig,&targetrig,&presentation,
+		&humanoid,cache->canonical_palette,cache->palette) :
+		!R_AvatarRetargetPaletteWithContext (&canonicalrig, &targetrig, &presentation,
+		cache->canonical_palette,cache->palette))
 		return false;
+	if(cache->humanoid)memcpy(cache->humanoid_reference,humanoid.reference,sizeof(humanoid.reference));
+	/* Floor anchoring follows the calibrated reference silhouette. The skin's
+	 * authored inverse binds and joint-local weights are never overwritten. */
+	if(cache->humanoid && !R_AvatarRetargetHumanoid(&canonicalrig,&targetrig,&presentation,
+		&humanoid,canonicalbind,targetbind))return false;
 	/* Floor anchoring is an authored bind-body property, never an animated
 	 * frame property: otherwise a run cycle would make the presentation bob. */
 	if (!R_VRIKApplyBindFloorCorrection (&canonical, &canonicalsurface,
@@ -5296,7 +5417,9 @@ static qboolean R_VRIKPrepareSkin (qmodel_t *model)
 		cache->body_indexes, cache->body_numindexes, profile, &presentation,
 		NULL, NULL))
 		return false;
-	if (!R_VRIKRefineAvatarPalette (&canonical, &targetrig, &presentation,
+	if(cache->humanoid && r_avatar_humanoid.value != 2)
+		R_VRIKRefineHumanoid(&canonical,&targetrig,&presentation,&humanoid,trackingbasis,cache);
+	if (!cache->humanoid && !R_VRIKRefineAvatarPalette (&canonical, &targetrig, &presentation,
 		cache->canonical_palette, cache->palette, &desktop_repair_rolled_back,
 		&desktop_weapon_socket_ready))
 	{
@@ -5319,7 +5442,15 @@ static qboolean R_VRIKPrepareSkin (qmodel_t *model)
 			}
 		}
 	}
+#ifdef USE_ALICIA_SPIKE
+	if (!strcmp(profile->key, "alicia") && r_alicia_pose.value == 1)
+		for(vertex=0;vertex<target.numbones;++vertex)
+			memcpy(cache->palette+vertex*12,target.joints[vertex].bind,12*sizeof(float));
+#endif
 	R_VRIKSkinSurface (&surface, cache->palette, cache->vertices);
+#ifdef USE_ALICIA_SPIKE
+	memcpy(cache->alicia_presentation, presentation.forward, sizeof(cache->alicia_presentation));
+#endif
 	if (!q_strcasecmp(COM_SkipPath(com_gamedir), "qbj3") &&
 		profile->equipment_policy == R_AVATAR_EQUIPMENT_ATTACH_HAND)
 		R_VRIKPrepareQBJ3Equipment(equipmentmodel, &canonicalrig, &targetrig,
@@ -5327,6 +5458,10 @@ static qboolean R_VRIKPrepareSkin (qmodel_t *model)
 	else if (!R_VRIKPrepareAttachedProp (&canonical, &targetrig, &presentation,
 		&canonicalsurface, cache, desktop_weapon_socket_ready))
 		return false;
+#ifdef USE_ALICIA_SPIKE
+	if (!strcmp(profile->key, "alicia") && !r_alicia_props.value)
+		R_VRIKInvalidateDerivedPropState(cache);
+#endif
 	/* The cache is drawn through the ordinary target MD5 transform.  Normalize
 	 * the completed target-native skin into canonical Ranger presentation here
 	 * (before normals), rather than scaling the entity or collision state. */
@@ -5562,7 +5697,13 @@ static qboolean R_VRIKSubstitutePlayer (entity_t *entity, entity_t *replacement)
 	address = (uintptr_t)entity;
 	if (address >= (uintptr_t)&cl.entities[1] &&
 		address <= (uintptr_t)&cl.entities[cl.maxclients] &&
-		entity != &cl.entities[cl.viewentity])
+		(entity != &cl.entities[cl.viewentity]
+#ifdef USE_ALICIA_SPIKE
+		 || (r_alicia_preview.value && chase_active.value && !vr_enabled.value &&
+		     cl.viewentity >= 1 && cl.viewentity <= MAX_SCOREBOARD &&
+		     cl.avatar_ids[cl.viewentity-1] == CustomAvatar_IdForKey("alicia"))
+#endif
+		))
 		entitynum = (int)(entity - cl.entities);
 	else
 	{
@@ -5716,6 +5857,15 @@ static qboolean R_VRIKSubstitutePlayer (entity_t *entity, entity_t *replacement)
 	}
 	else
 		R_VRIKClearLowerBodyTargets (entitynum);
+#ifdef USE_ALICIA_SPIKE
+	if (entity == &cl.entities[cl.viewentity] && r_alicia_preview.value >= 2 && chase_active.value && !vr_enabled.value)
+	{
+		float turn = r_alicia_preview.value == 2 ? 180 : 90;
+		replacement->angles[YAW] += turn;
+		replacement->previousangles[YAW] += turn;
+		replacement->currentangles[YAW] += turn;
+	}
+#endif
 	r_vrik_pose_pending = R_VRIKShouldApplyPose(tracked, vr_vrik.value != 0.0f);
 	r_vrik_skin_pending = true;
 	r_vrik_active_player = corpse ? -1 : entitynum - 1;
@@ -6213,6 +6363,21 @@ static void R_DrawMD5Model (entity_t *e, qboolean cull, qboolean viewmodel)
 		R_SetupAliasLighting (e);
 	drawfog = !viewmodel && Fog_GetDensity() > 0.0f;
 	GL_DisableMultitexture ();
+#ifdef USE_ALICIA_SPIKE
+	if (!viewmodel && !r_drawflat_cheatsafe && !r_lightmap_cheatsafe &&
+		r_vrik_skin_active && r_vrik_skin_cache &&
+		R_AliciaSpikeDraw(e->model, r_vrik_skin_cache, r_vrik_active_player+1,
+			lightcolor, shadevector, entalpha))
+	{
+		if (r_vrik_skin_cache->prop_surface)
+		{
+			GL_Bind(r_vrik_skin_cache->prop_surface->gltextures[0][0]);
+			glTexEnvf(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
+			GL_DrawVRIKPropFrame();
+		}
+		goto cleanup;
+	}
+#endif
 	/* Keep legacy composition as separate GLSL draws so overbright and
 	 * fullbright overlays retain their additive fog behavior. */
 	r_md5_glsl_active = !r_vrik_skin_active && !r_drawflat_cheatsafe && !r_lightmap_cheatsafe &&
@@ -7274,6 +7439,75 @@ qboolean R_VRIKGetLowerBodyTargets (int entitynum,
 		return false;
 	*out = r_vrik_test_lower_targets;
 	return true;
+}
+
+qboolean R_VRIKHumanoidTargetsForTest(void)
+{
+	static const int parents[19]={-1,0,1,2,3,2,5,6,7,2,9,10,11,0,13,14,0,16,17};
+	static const float positions[19][3]={
+		{0,0,20},{0,0,25},{0,0,30},{0,0,35},{0,0,40},
+		{0,4,33},{0,8,33},{0,14,29},{0,20,25},
+		{0,-4,33},{0,-8,33},{0,-14,29},{0,-20,25},
+		{0,3,20},{1,3,10},{0,3,0},{0,-3,20},{1,-3,10},{0,-3,0}};
+	const float basis[3][3]={{0,-1,0},{1,0,0},{0,0,1}};
+	md5livejoint_t joints[19];md5liveinfo_t live={0};r_avatar_rig_t rig;
+	r_avatar_presentation_context_t context;r_avatar_humanoid_t map;
+	r_vrik_skincache_t cache={0};vrik_pose_t savedpose=r_vrik_pending_pose;
+	r_vrik_lowerbody_targets_t savedlower=r_vrik_test_lower_targets;
+	qboolean savedpending=r_vrik_pose_pending,savedtargets=r_vrik_lower_targets_for_test,ok=false;
+	const r_avatar_profile_t *profile=R_AvatarProfileForId(PLAYER_AVATAR_RANGER);
+	int i,r;
+	memset(joints,0,sizeof(joints));live.joints=joints;live.numbones=19;
+	for(i=0;i<19;++i) {
+		strcpy(joints[i].name,profile->joint[i].name);joints[i].parent=parents[i];
+		joints[i].bind[0]=joints[i].bind[5]=joints[i].bind[10]=1;
+		for(r=0;r<3;++r)joints[i].bind[r*4+3]=positions[i][r];
+		live.jointindex[i]=i;memcpy(cache.canonical_palette+i*12,joints[i].bind,sizeof(joints[i].bind));
+	}
+	if(!R_AvatarResolveRig(profile,&live,&rig) || !R_AvatarBuildPresentationContext(&rig,&rig,&context) ||
+		!R_AvatarBuildHumanoid(&rig,&rig,&context,&map) ||
+		!R_AvatarRetargetHumanoid(&rig,&rig,&context,&map,cache.canonical_palette,cache.palette))goto done;
+	memset(&r_vrik_pending_pose,0,sizeof(r_vrik_pending_pose));r_vrik_pose_pending=true;
+	r_vrik_pending_pose.flags=VRIK_FLAG_RIGHT_HAND_TRACKED;
+	VectorCopy(positions[MD5_VRIK_HEAD],r_vrik_pending_pose.position[VRIK_TRACKER_HEAD]);
+	r_vrik_pending_pose.position[VRIK_TRACKER_RIGHT_HAND][0]=5;
+	r_vrik_pending_pose.position[VRIK_TRACKER_RIGHT_HAND][1]=-16;
+	r_vrik_pending_pose.position[VRIK_TRACKER_RIGHT_HAND][2]=27;
+	memset(&r_vrik_test_lower_targets,0,sizeof(r_vrik_test_lower_targets));r_vrik_lower_targets_for_test=true;
+	r_vrik_test_lower_targets.present_mask=r_vrik_test_lower_targets.tracked_mask=R_VRIK_LOWER_BIT(R_VRIK_LOWER_HIP)|R_VRIK_LOWER_BIT(R_VRIK_LOWER_LEFT_FOOT);
+	r_vrik_test_lower_targets.confidence[0]=r_vrik_test_lower_targets.confidence[1]=1;
+	VectorCopy(positions[0],r_vrik_test_lower_targets.position[0]);
+	r_vrik_test_lower_targets.position[0][0]=2;r_vrik_test_lower_targets.position[0][2]=18;
+	VectorCopy(positions[15],r_vrik_test_lower_targets.position[1]);
+	r_vrik_test_lower_targets.position[1][0]=2;r_vrik_test_lower_targets.position[1][2]=-2;
+	R_VRIKRefineHumanoid(&live,&rig,&context,&map,basis,&cache);
+	/* Raw hand and foot targets differ from canonical solved endpoints. */
+	for(r=0;r<3;++r) {
+		if(fabsf(cache.palette[12*12+r*4+3]-r_vrik_pending_pose.position[VRIK_TRACKER_RIGHT_HAND][r])>.002f ||
+			fabsf(cache.palette[15*12+r*4+3]-r_vrik_test_lower_targets.position[1][r])>.002f ||
+			fabsf(cache.palette[r*4+3]-r_vrik_test_lower_targets.position[0][r])>.002f)goto done;
+	}
+	for(i=1;i<19;++i) {
+		float before[3],after[3];
+		for(r=0;r<3;++r){before[r]=positions[i][r]-positions[parents[i]][r];after[r]=cache.palette[i*12+r*4+3]-cache.palette[parents[i]*12+r*4+3];}
+		if(fabsf(VectorLength(before)-VectorLength(after))>.002f)goto done;
+	}
+	r_vrik_pending_pose.position[VRIK_TRACKER_RIGHT_HAND][0]=100;
+	R_VRIKRefineHumanoid(&live,&rig,&context,&map,basis,&cache);
+	if(cache.humanoid_residual[1]<50)goto done;
+	/* A head-only crouch bends the legs around animation foot targets. */
+	r_vrik_lower_targets_for_test=false;r_vrik_pending_pose.flags=0;
+	r_vrik_pending_pose.position[VRIK_TRACKER_HEAD][2]=34;
+	if(!R_AvatarRetargetHumanoid(&rig,&rig,&context,&map,cache.canonical_palette,cache.palette))goto done;
+	R_VRIKRefineHumanoid(&live,&rig,&context,&map,basis,&cache);
+	if(fabsf(cache.palette[4*12+11]-34)>.002f ||
+		fabsf(cache.palette[15*12+11])>.002f || fabsf(cache.palette[18*12+11])>.002f)goto done;
+	for(i=0;i<19;++i)if(memcmp(cache.canonical_palette+i*12,joints[i].bind,sizeof(joints[i].bind)))goto done;
+	ok=true;
+done:
+	r_vrik_pending_pose=savedpose;r_vrik_pose_pending=savedpending;
+	r_vrik_test_lower_targets=savedlower;r_vrik_lower_targets_for_test=savedtargets;
+	return ok;
 }
 
 qboolean R_VRIKApplyLowerBodyWithPolePolicy (const md5liveinfo_t *live,
