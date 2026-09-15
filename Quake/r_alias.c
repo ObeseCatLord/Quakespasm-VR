@@ -5296,6 +5296,42 @@ static void R_VRIKPrepareQBJ3Equipment (qmodel_t *model,
 	cache->prop_numindexes = outindex;
 }
 
+/* Skin vertices are owned by the per-player cache, but alias surfaces live in
+ * the movable model cache. Another player's first draw (or a weapon load)
+ * can relocate those surfaces between stereo eyes without changing the host
+ * frame or pose generation. Rebase resident headers before reusing the skin;
+ * never reload a model while holding another model's borrowed header. */
+static aliashdr_t *R_VRIKResidentMD5Surface (qmodel_t *model)
+{
+	return model && Cache_Check (&model->cache) ?
+		Mod_GetMD5Extradata (model) : NULL;
+}
+
+static aliashdr_t *R_VRIKRefreshPropSurface (r_vrik_skincache_t *cache)
+{
+	aliashdr_t *prop;
+
+	if (!cache || !cache->prop_surface)
+		return NULL;
+	prop = R_VRIKResidentMD5Surface (cache->prop_model);
+	if (!prop)
+		R_VRIKInvalidateDerivedPropState (cache);
+	else
+		cache->prop_surface = prop;
+	return prop;
+}
+
+static qboolean R_VRIKRefreshCachedSurfaces (r_vrik_skincache_t *cache)
+{
+	aliashdr_t *body = R_VRIKResidentMD5Surface (cache->model);
+
+	if (!body)
+		return false;
+	cache->surface = body;
+	R_VRIKRefreshPropSurface (cache);
+	return true;
+}
+
 static qboolean R_VRIKPrepareSkin (qmodel_t *model)
 {
 	r_avatar_humanoid_t humanoid;
@@ -5327,7 +5363,8 @@ static qboolean R_VRIKPrepareSkin (qmodel_t *model)
 		cache->ready = false;
 		R_VRIKInvalidateDerivedPropState (cache);
 	}
-	if (R_VRIKSkinCacheReady (cache, model))
+	if (R_VRIKSkinCacheReady (cache, model) &&
+		R_VRIKRefreshCachedSurfaces (cache))
 	{
 		r_vrik_skin_cache = cache;
 		r_vrik_skin_active = true;
@@ -6104,16 +6141,17 @@ static void GL_DrawMD5Frame (aliashdr_t *surface, lerpdata_t lerpdata)
 static void GL_DrawVRIKPropFrame (void)
 {
 	r_vrik_skincache_t *cache = r_vrik_skin_cache;
+	const aliashdr_t *surface = R_VRIKRefreshPropSurface (cache);
 	float sscale, tscale;
 	int i;
 
-	if (!cache || !cache->prop_surface || !cache->prop_vertices ||
+	if (!surface || !cache->prop_vertices ||
 		!cache->prop_indexes || cache->prop_numindexes < 3)
 		return;
-	sscale = (float)cache->prop_surface->skinwidth /
-		(float)TexMgr_PadConditional (cache->prop_surface->skinwidth);
-	tscale = (float)cache->prop_surface->skinheight /
-		(float)TexMgr_PadConditional (cache->prop_surface->skinheight);
+	sscale = (float)surface->skinwidth /
+		(float)TexMgr_PadConditional (surface->skinwidth);
+	tscale = (float)surface->skinheight /
+		(float)TexMgr_PadConditional (surface->skinheight);
 	glBegin (GL_TRIANGLES);
 	for (i = 0; i < cache->prop_numindexes; i++)
 	{
@@ -6244,7 +6282,7 @@ static void R_DrawMD5Pass (aliashdr_t *surface, lerpdata_t lerpdata,
 		surfaceindex++;
 	}
 	if (r_vrik_skin_active && r_vrik_skin_cache &&
-		r_vrik_skin_cache->prop_surface && r_vrik_canonical_model)
+		R_VRIKRefreshPropSurface (r_vrik_skin_cache) && r_vrik_canonical_model)
 	{
 		aliashdr_t *propsurface = (aliashdr_t *)r_vrik_skin_cache->prop_surface;
 		int skin = R_MD5SurfaceSkin (propsurface, 0);
@@ -6311,6 +6349,14 @@ static void R_DrawMD5Model (entity_t *e, qboolean cull, qboolean viewmodel)
 		VectorCopy (lerpdata.origin, r_vrik_draw_origin);
 		VectorCopy (lerpdata.angles, r_vrik_draw_angles);
 		R_VRIKPrepareSkin (e->model);
+		/* Preparing a cold avatar/equipment model may move the header fetched
+		 * above. Its owner must still be resident before using its transform. */
+		md5 = R_VRIKResidentMD5Surface (e->model);
+		if (!md5)
+		{
+			r_vrik_skin_active = false;
+			return;
+		}
 	}
 	if (cull && R_CullModelForEntity(e))
 	{
@@ -6369,7 +6415,7 @@ static void R_DrawMD5Model (entity_t *e, qboolean cull, qboolean viewmodel)
 		R_AliciaSpikeDraw(e->model, r_vrik_skin_cache, r_vrik_active_player+1,
 			lightcolor, shadevector, entalpha))
 	{
-		if (r_vrik_skin_cache->prop_surface)
+		if (R_VRIKRefreshPropSurface (r_vrik_skin_cache))
 		{
 			GL_Bind(r_vrik_skin_cache->prop_surface->gltextures[0][0]);
 			glTexEnvf(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
