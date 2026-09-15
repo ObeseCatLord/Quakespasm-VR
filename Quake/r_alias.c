@@ -3225,6 +3225,74 @@ static qboolean R_VRIKStabilizeDesktopUpperBody (const r_avatar_rig_t *rig,
 	return true;
 }
 
+/* Stabilize the animal torso without freezing its arms in the bind pose.
+ * Retain animated parent-local rotations, but rebuild every physical link
+ * with its authored offset under the corrected torso. Raw retargeted origins
+ * are not safe link lengths, especially around Dog's unmapped foreleg joint. */
+static qboolean R_VRIKRebuildDesktopAnimalArms (const r_avatar_rig_t *rig,
+	const float *animated, float *palette)
+{
+	int roots[2], hands[2], side, joint, parent;
+	float inverse[12], local[12], bindlocal[12];
+	const md5liveinfo_t *live;
+
+	if (r_vrik_pose_pending)
+		return true;
+	if (!rig || !rig->valid || !rig->profile || !rig->live ||
+		!animated || !palette)
+		return false;
+	if (rig->profile->id != PLAYER_AVATAR_DOG &&
+		rig->profile->id != PLAYER_AVATAR_FIEND)
+		return true;
+	live = rig->live;
+	if (live->numbones < 1 || live->numbones > MAX_MD5_JOINTS)
+		return false;
+	for (side = 0; side < 2; side++)
+	{
+		int shoulder = side ? MD5_VRIK_SHOULDER_R : MD5_VRIK_SHOULDER_L;
+		int upper = side ? MD5_VRIK_UPPERARM_R : MD5_VRIK_UPPERARM_L;
+		roots[side] = rig->joint[(rig->virtual_mask & (1u << shoulder)) ?
+			upper : shoulder];
+		hands[side] = rig->joint[side ? MD5_VRIK_HAND_R : MD5_VRIK_HAND_L];
+		if (roots[side] < 0 || roots[side] >= live->numbones ||
+			hands[side] < 0 || hands[side] >= live->numbones ||
+			!R_VRIKJointDescendsFrom (live, hands[side], roots[side]))
+			return false;
+	}
+	if (R_VRIKJointDescendsFrom (live, roots[0], roots[1]) ||
+		R_VRIKJointDescendsFrom (live, roots[1], roots[0]))
+		return false;
+	/* Validate both write sets before modifying either arm. Resolved model
+	 * palettes are parent-first, so the reconstruction below needs no solver. */
+	for (joint = 0; joint < live->numbones; joint++)
+		if (R_VRIKJointDescendsFrom (live, joint, roots[0]) ||
+			R_VRIKJointDescendsFrom (live, joint, roots[1]))
+			if (live->joints[joint].parent < 0 || live->joints[joint].parent >= joint)
+				return false;
+	for (joint = 0; joint < live->numbones; joint++)
+		if (R_VRIKJointDescendsFrom (live, joint, roots[0]) ||
+			R_VRIKJointDescendsFrom (live, joint, roots[1]))
+		{
+			parent = live->joints[joint].parent;
+			R_VRIKMatrixInverseRigid (animated + parent * 12, inverse);
+			R_VRIKMatrixMultiply (inverse, animated + joint * 12, local);
+			R_VRIKMatrixInverseRigid (live->joints[parent].bind, inverse);
+			R_VRIKMatrixMultiply (inverse, live->joints[joint].bind, bindlocal);
+			local[3] = bindlocal[3]; local[7] = bindlocal[7]; local[11] = bindlocal[11];
+			R_VRIKMatrixMultiply (palette + parent * 12, local, palette + joint * 12);
+			if (joint == hands[0] || joint == hands[1])
+			{
+				/* The calibrated wrist orientation already matches the source
+				 * weapon. Do not pitch it a second time with the upright torso.
+				 * Hand children are rebuilt from this frame on subsequent iterations. */
+				memcpy (palette + joint * 12, animated + joint * 12, 3 * sizeof(float));
+				memcpy (palette + joint * 12 + 4, animated + joint * 12 + 4, 3 * sizeof(float));
+				memcpy (palette + joint * 12 + 8, animated + joint * 12 + 8, 3 * sizeof(float));
+			}
+		}
+	return true;
+}
+
 /* Build a stable desktop gun frame in presentation space.  The player gun is
  * authored with local +Y along its barrel, so columns are right/forward/up. */
 static qboolean R_VRIKBuildDesktopWeaponSocket (const r_avatar_rig_t *rig,
@@ -3937,7 +4005,7 @@ static qboolean R_VRIKRefineAvatarPaletteImpl (const md5liveinfo_t *canonical,
 	unsigned char suppliedlower = 0;
 	r_vrik_hip_branch_snapshot_t hipbranches;
 	float upperrollback[MAX_MD5_JOINTS * 12];
-	qboolean trackedanimal, uppervalid = true;
+	qboolean trackedanimal, desktopanimal, uppervalid = true;
 	int semantic, role;
 
 	if (!canonical || !targetrig || !targetrig->valid || !context || !sourcepalette ||
@@ -3945,6 +4013,9 @@ static qboolean R_VRIKRefineAvatarPaletteImpl (const md5liveinfo_t *canonical,
 		return false;
 	if (desktop_weapon_socket_ready)
 		*desktop_weapon_socket_ready = false;
+	desktopanimal = !r_vrik_pose_pending &&
+		(targetrig->profile->id == PLAYER_AVATAR_DOG ||
+		 targetrig->profile->id == PLAYER_AVATAR_FIEND);
 	/* A profile may opt into a desktop canonical endpoint refinement.  Profiles
 	 * that do not declare this retain the old animation-only path exactly;
 	 * tracked poses always refine and their controller-derived targets remain
@@ -3965,14 +4036,20 @@ static qboolean R_VRIKRefineAvatarPaletteImpl (const md5liveinfo_t *canonical,
 	target.compatible = true;
 	if (!r_vrik_pose_pending)
 	{
-		/* Dog/Fiend upper spines inherit highly animated Ranger torso motion
-		 * which has no stable relationship to the desktop waist socket.  Rebuild
-		 * only the declared upper-body branch; rear legs/tail stay Hip branches. */
+		if (desktopanimal)
+			memcpy (upperrollback, targetpalette,
+				(size_t)target.numbones * 12 * sizeof (float));
+		/* Dog/Fiend upper spines inherit Ranger torso twists that do not describe
+		 * their upright anatomy. Rebuild the declared body branch, then restore
+		 * its arm animation below; rear legs/tail remain separate Hip branches. */
 		if (!R_VRIKStabilizeDesktopUpperBody (targetrig, false, targetpalette))
 			return false;
 		if (targetrig->profile->posture_policy == R_AVATAR_POSTURE_UPRIGHT &&
 			!R_VRIKApplyAvatarUprightPosture (targetrig, context, false,
 				targetpalette))
+			return false;
+		if (desktopanimal &&
+			!R_VRIKRebuildDesktopAnimalArms (targetrig, upperrollback, targetpalette))
 			return false;
 	}
 	/* The upright turn rotates the complete Hip hierarchy, including Dog/Fiend
@@ -4041,7 +4118,10 @@ static qboolean R_VRIKRefineAvatarPaletteImpl (const md5liveinfo_t *canonical,
 			(size_t)target.numbones * 12 * sizeof (float));
 	R_VRIKRepairTrackedAnimalUpperBody (canonical, targetrig, context,
 		sourcepalette, targetpalette);
-	if (R_VRIKAvatarRefinesUpperEndpoints (r_vrik_pose_pending,
+	/* Desktop animals retain their animated physical arms above. Absolute
+	 * Ranger wrist goals belong to the uncorrected torso and can freeze the
+	 * shorter animal arms at a failed or fully extended reach. */
+	if (!desktopanimal && R_VRIKAvatarRefinesUpperEndpoints (r_vrik_pose_pending,
 		targetrig->profile))
 	{
 		for (semantic = MD5_VRIK_HEAD; semantic <= MD5_VRIK_HAND_R; semantic++)
@@ -4085,11 +4165,10 @@ static qboolean R_VRIKRefineAvatarPaletteImpl (const md5liveinfo_t *canonical,
 	if (trackedanimal && !uppervalid)
 		memcpy (targetpalette, upperrollback,
 			(size_t)target.numbones * 12 * sizeof (float));
-	/* The waist weapon pose is a desktop cosmetic.  If an unusual animation
-	 * frame cannot reach it, keep the repaired body and attach the prop to the
-	 * ordinary dominant hand instead of rolling Dog/Fiend back to the raw,
-	 * sideways retarget palette. */
-	if (targetrig->profile->desktop_weapon_socket && !r_vrik_pose_pending &&
+	/* A failed optional waist grip retains the repaired body and ordinary
+	 * dominant-hand attachment. Desktop animals always use that attachment:
+	 * fixed waist targets must not overwrite their reconstructed arm animation. */
+	if (!desktopanimal && targetrig->profile->desktop_weapon_socket && !r_vrik_pose_pending &&
 		R_VRIKApplyDesktopWeaponGrip (canonical, targetrig, context, sourcepalette,
 			targetpalette) && desktop_weapon_socket_ready)
 		*desktop_weapon_socket_ready = true;
@@ -8483,8 +8562,8 @@ qboolean R_VRIKDesktopWeaponGripRollbackForTest (void)
 		r_vrik_pose_pending = pending;
 		return false;
 	}
-	/* The same optional-grip failure must not roll the whole repaired desktop
-	 * animal back.  It only withholds the stable prop-socket readiness token. */
+	/* Full desktop animal refinement bypasses the optional waist grip and
+	 * succeeds with animated arms and ordinary hand-attached equipment. */
 	socketready = true;
 	applied = R_VRIKRefineAvatarPalette (&canonical, &rig, &context,
 		sourcepalette, palette, NULL, &socketready);
@@ -8524,7 +8603,9 @@ qboolean R_VRIKDesktopRepairRollbackForTest (void)
 	palette[2 * 12 + 3] = 29.0f; palette[2 * 12 + 7] = -13.0f;
 	canonical.joints = joints; canonical.numbones = 3;
 	live.joints = joints; live.numbones = 3;
-	profile.id = PLAYER_AVATAR_DOG;
+	/* This three-node fixture tests the generic desktop transaction, not an
+	 * animal's complete physical arm hierarchy. */
+	profile.id = PLAYER_AVATAR_RANGER;
 	profile.desktop_refine = true;
 	profile.desktop_upperbody_bind_root = MD5_VRIK_SPINE1;
 	rig.profile = &profile; rig.live = &live; rig.valid = true;

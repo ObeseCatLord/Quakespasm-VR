@@ -306,6 +306,7 @@ static void PF_setorigin (void)
 
 	e = G_EDICT(OFS_PARM0);
 	org = G_VECTOR(OFS_PARM1);
+	SV_VRWeaponPoseSetOrigin(e);
 	VectorCopy (e->v.origin, oldorg);
 	if (qcvm == &sv.qcvm && !VectorCompare(oldorg, org)) {
 		int player = NUM_FOR_EDICT(e);
