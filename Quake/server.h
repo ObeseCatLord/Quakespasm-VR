@@ -626,6 +626,7 @@ qboolean SV_QBJ3ShotgunSpreadBasis(const vec3_t angles);
 qboolean SV_EnyoAkimboMakevectors(void);
 qboolean SV_DwellBerserkAkimboMakevectors(void);
 void SV_ClearAkimboContext(void);
+void SV_VRWeaponPoseSetOrigin(edict_t *ent);
 void SV_ResetTransientClientSlot(int slot);
 
 qboolean SV_CheckBottom (edict_t *ent);

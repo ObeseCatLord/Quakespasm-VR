@@ -4962,10 +4962,47 @@ typedef struct sv_akimbo_context_s {
   float enyo_clearance_t0;
 } sv_akimbo_context_t;
 
+typedef struct sv_vr_weapon_pose_restore_s {
+  qboolean applied;
+  qboolean origin_relocated;
+  edict_t *ent;
+  struct sv_vr_weapon_pose_restore_s *previous;
+  vec3_t origin;
+  vec3_t v_angle;
+  vec3_t v_forward;
+  vec3_t v_right;
+  vec3_t v_up;
+  sv_akimbo_context_t previous_akimbo;
+} sv_vr_weapon_pose_restore_t;
+
 static sv_akimbo_context_t sv_akimbo_context;
+static sv_vr_weapon_pose_restore_t *sv_vr_weapon_pose_scope;
 
 void SV_ClearAkimboContext(void) {
   memset(&sv_akimbo_context, 0, sizeof(sv_akimbo_context));
+  /* Host_Error can unwind QC without returning through the scoped restore. */
+  sv_vr_weapon_pose_scope = NULL;
+}
+
+/* setorigin supplies an explicit world-space destination. A delayed teleport
+ * in Think/PostThink must not be undone by the temporary projectile source.
+ * Direct QC writes are not tracked; setorigin arguments are treated as
+ * world-space destinations and are not rebased. Invalidate suspended scopes
+ * too, without affecting other players
+ * or setters used to place projectiles/teleport flashes. */
+void SV_VRWeaponPoseSetOrigin(edict_t *ent) {
+  sv_vr_weapon_pose_restore_t *scope;
+
+  if (qcvm != &sv.qcvm)
+    return;
+  for (scope = sv_vr_weapon_pose_scope; scope; scope = scope->previous) {
+    if (scope->ent == ent)
+      scope->origin_relocated = true;
+    if (scope->previous_akimbo.ent == ent)
+      memset(&scope->previous_akimbo, 0, sizeof(scope->previous_akimbo));
+  }
+  if (sv_akimbo_context.ent == ent)
+    memset(&sv_akimbo_context, 0, sizeof(sv_akimbo_context));
 }
 
 qboolean SV_QBJ3AkimboSupported(void) {
@@ -5346,21 +5383,15 @@ qboolean SV_QBJ3ShotgunSpreadBasis(const vec3_t angles) {
   return true;
 }
 
-typedef struct sv_vr_weapon_pose_restore_s {
-  qboolean applied;
-  vec3_t origin;
-  vec3_t v_angle;
-  vec3_t v_forward;
-  vec3_t v_right;
-  vec3_t v_up;
-  sv_akimbo_context_t previous_akimbo;
-} sv_vr_weapon_pose_restore_t;
-
 static void SV_ApplyVRWeaponOffset(edict_t *ent, int num, qboolean is_remote_vr,
                                    sv_vr_weapon_pose_restore_t *restore) {
   restore->applied = false;
+  restore->origin_relocated = false;
+  restore->ent = ent;
+  restore->previous = sv_vr_weapon_pose_scope;
   restore->previous_akimbo = sv_akimbo_context;
-  SV_ClearAkimboContext();
+  memset(&sv_akimbo_context, 0, sizeof(sv_akimbo_context));
+  sv_vr_weapon_pose_scope = restore;
 
   if (is_remote_vr ||
       (vr_enabled.value && !isDedicated && num == cl.viewentity)) {
@@ -5501,12 +5532,16 @@ static void SV_RestoreVRWeaponOffset(edict_t *ent, int num,
                                      const sv_vr_weapon_pose_restore_t *restore) {
   (void)num;
   (void)is_remote_vr;
+  sv_vr_weapon_pose_scope = restore->previous;
   sv_akimbo_context = restore->previous_akimbo;
   if (!restore->applied)
     return;
 
-  VectorCopy(restore->origin, ent->v.origin);
-  VectorCopy(restore->v_angle, ent->v.v_angle);
+  if (!ent->free) {
+    if (!restore->origin_relocated)
+      VectorCopy(restore->origin, ent->v.origin);
+    VectorCopy(restore->v_angle, ent->v.v_angle);
+  }
   VectorCopy(restore->v_forward, pr_global_struct->v_forward);
   VectorCopy(restore->v_right, pr_global_struct->v_right);
   VectorCopy(restore->v_up, pr_global_struct->v_up);
