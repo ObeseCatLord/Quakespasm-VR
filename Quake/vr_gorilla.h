@@ -3,8 +3,8 @@
  * and Duncan Carroll's GorillaQuake. Shared by authoritative and predicted
  * movement. The normal Quake body hull and native gameplay remain external.
  *
- * Unlike the original render-frame velocity ring, this uses a command-time
- * exponential filter: replay and different headset refresh rates agree.
+ * Launches use the current collision-qualified physical stroke, not a
+ * render-frame velocity ring or a second accumulation of native momentum.
  *
  * Original GorillaLocomotion algorithm: Copyright (c) 2021 Another-Axiom.
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -30,12 +30,15 @@
 #include "vr_gorilla_types.h"
 #include "vr_gorilla_swim.h" /* shared bounded native-velocity contribution */
 
-/* GorillaLocomotion's 0.4m/s velocityLimit and 6.5m/s maxJumpSpeed at
- * Quake's default 26.2467 units/metre.  Keep a small tracker quantization
- * allowance on a single command; anchored hand motion is otherwise bounded
- * by the reported physical velocity and command duration. */
+/* Retain GorillaLocomotion's gentle 0.4m/s intent threshold. GorillaQuake
+ * adapts hand speed to Quake gravity with 95 * .75 units/s per physical m/s;
+ * our input already uses 26.2467 units/metre. The separate 301-unit cap
+ * preserves the reference 6.5m/s jump apex under stock Quake gravity (800),
+ * rather than copying its output speed into a world with 3x the gravity.
+ * Native/mod gravity is unchanged. */
 #define VRG_LAUNCH_THRESHOLD 10.5f
-#define VRG_LAUNCH_MAX_SPEED 170.6f
+#define VRG_LAUNCH_GAIN (71.25f / 26.2467f)
+#define VRG_LAUNCH_MAX_SPEED 301.0f
 #define VRG_TRACK_TOLERANCE 2.0f
 
 typedef struct {
@@ -254,12 +257,13 @@ static vr_gorilla_result_t VRG_Step(vr_gorilla_state_t *s,
     vr_gorilla_surface_fn surface) {
   vr_gorilla_result_t result;
   float hands[2][3], raw_hands[2][3], head[3], desired[3], resolved[3], movement[2][3]={{0}},
-      anchors[2][3], hit_anchor[2][3], move[3], before[3], actual[3], delta[3];
+      anchors[2][3], hit_anchor[2][3], move[3], stroke[3], before[3], actual[3], delta[3];
   int h,j,contact[2]={0}, seeded[2]={0}, suspended[2]={0},
       hit_surface[2]={-1,-1};
-  float alpha, speed, actual_speed, intent=0;
+  float alpha, speed, actual_speed, requested_speed, intent=0;
   memset(&result,0,sizeof(result));
   result.contact[0]=result.contact[1]=-1;
+  memset(s->velocity,0,sizeof(s->velocity)); /* retain existing ACK layout */
   if (!VRG_InputValid(in) || !VRG_Finite(origin) || !VRG_Finite(velocity) ||
       !isfinite(dt) || dt<=0 || dt>.125f || !isfinite(gravity)) {
     VRG_Reset(s);
@@ -325,14 +329,23 @@ static vr_gorilla_result_t VRG_Step(vr_gorilla_state_t *s,
     }
     if (!(s->touching&(1u<<h)) &&
         VRG_SeedEmbeddedPalm(ctx,trace,head,hands[h],resolved,&hit_surface[h])) {
-      s->surface[h]=0;
-      s->surface_model[h]=0;
-      memcpy(s->anchor[h],resolved,3*sizeof(float));
-      memcpy(anchors[h],resolved,3*sizeof(float));
-      memcpy(hit_anchor[h],resolved,3*sizeof(float));
-      VRG_SeedRecovery(s,h,raw_hands[h],resolved);
-      memcpy(hands[h],resolved,3*sizeof(float));
-      seeded[h]=contact[h]=1;
+      vr_gorilla_trace_t previous=VRG_HandTrace(ctx,trace,
+          anchors[h],anchors[h],VR_GORILLA_RADIUS);
+      /* A real clear-to-floor slap is a normal swept contact, not an
+       * initial overlap. Only recover an already embedded/discontinuous palm
+       * without energy; otherwise preserve this first frame of the stroke. */
+      if (previous.startsolid || previous.allsolid ||
+          VRG_Length(delta)>(VRG_Length(in->velocity[h])+VRG_Length(velocity))*dt+
+              VRG_TRACK_TOLERANCE) {
+        s->surface[h]=0;
+        s->surface_model[h]=0;
+        memcpy(s->anchor[h],resolved,3*sizeof(float));
+        memcpy(anchors[h],resolved,3*sizeof(float));
+        memcpy(hit_anchor[h],resolved,3*sizeof(float));
+        VRG_SeedRecovery(s,h,raw_hands[h],resolved);
+        memcpy(hands[h],resolved,3*sizeof(float));
+        seeded[h]=contact[h]=1;
+      }
     }
     /* A hand cannot push from the far side of a wall. Contact points may
      * touch the wall, so require only the clamped anchor's clear head path. */
@@ -370,8 +383,14 @@ static vr_gorilla_result_t VRG_Step(vr_gorilla_state_t *s,
   }
   for(j=0;j<3;++j) {
     move[j]=movement[0][j]+movement[1][j];
+    stroke[j]=0;
+    for(h=0;h<2;++h)
+      if (contact[h] && !seeded[h]) stroke[j]-=in->velocity[h][j];
     if ((contact[0] || (s->touching&1)) &&
-        (contact[1] || (s->touching&2))) move[j]*=.5f;
+        (contact[1] || (s->touching&2))) {
+      move[j]*=.5f;
+      stroke[j]*=.5f;
+    }
   }
   /* Reject tracker/anchor discontinuities rather than banking a large push. */
   if (!VRG_Finite(move) || VRG_Length(move)>64) {
@@ -427,35 +446,34 @@ static vr_gorilla_result_t VRG_Step(vr_gorilla_state_t *s,
     }
   }
   alpha=dt/(.04f+dt);
-  for(j=0;j<3;++j) {
-    actual[j]/=dt;
-    s->velocity[j]+=(actual[j]-s->velocity[j])*alpha;
-  }
+  for(j=0;j<3;++j) actual[j]/=dt;
   actual_speed=VRG_Length(actual);
-  speed=VRG_Length(s->velocity);
-  if (actual_speed<1) memset(s->velocity,0,sizeof(s->velocity));
+  requested_speed=VRG_Length(move)/dt;
+  /* Native flight reduces the remaining palm correction. It must not also
+   * dilute a deliberate physical stroke. Use that stroke only along the
+   * accepted body motion, attenuated by how much of the requested correction
+   * the unchanged hull permits. Blocked/idle palms cannot create a launch. */
+  speed=actual_speed;
+  if (actual_speed>0 && requested_speed>0)
+    speed=fmaxf(speed,fmaxf(0,VRG_Dot(stroke,actual)/actual_speed) *
+        fminf(1,actual_speed/requested_speed));
   if (result.braced && intent>=VRG_LAUNCH_THRESHOLD &&
-      actual_speed>=VRG_LAUNCH_THRESHOLD && speed>=VRG_LAUNCH_THRESHOLD &&
-      VRG_Dot(actual,s->velocity)>0) {
-    float gain=1.1f;
-    if (speed*gain>VRG_LAUNCH_MAX_SPEED) gain=VRG_LAUNCH_MAX_SPEED/speed;
-    if (s->velocity[2]*gain>VRG_LAUNCH_MAX_SPEED)
-      gain=VRG_LAUNCH_MAX_SPEED/s->velocity[2];
+      actual_speed>=VRG_LAUNCH_THRESHOLD && speed>=VRG_LAUNCH_THRESHOLD) {
     float addition[3], scale;
     /* A launch is not a release of the physical palm. Keep resolving the
      * stroke until collision actually releases it, as GorillaLocomotion does.
      * Top up along the stroke rather than adding its entire velocity on every
      * command. Faster native movement is retained, and an opposing impulse
      * is not subtracted just to reach the requested launch speed. */
-    float target_speed=speed*gain;
-    float along=VRG_Dot(velocity,s->velocity)/speed;
+    float target_speed=fminf(speed*VRG_LAUNCH_GAIN,VRG_LAUNCH_MAX_SPEED);
+    float along=VRG_Dot(velocity,actual)/actual_speed;
     float remaining=fmaxf(0,target_speed-fmaxf(0,along));
     /* Braking opposing velocity is duration-aware effort, not a
-     * fresh full launch on every headset sample. Reuse the stroke filter's
-     * time constant; same-direction launch top-up remains immediate. */
+     * fresh full launch on every headset sample. Same-direction launch
+     * top-up remains immediate. */
     if (along < 0)
       remaining*=alpha;
-    for(j=0;j<3;++j) addition[j]=s->velocity[j]*(remaining/speed);
+    for(j=0;j<3;++j) addition[j]=actual[j]*(remaining/actual_speed);
     scale=VRGS_LimitContribution(velocity,addition,VRG_LAUNCH_MAX_SPEED);
     for(j=0;j<3;++j) velocity[j]+=addition[j]*scale;
     result.launched=1;

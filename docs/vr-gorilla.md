@@ -14,6 +14,11 @@ support in both the client and server. It does not replace a mod's QuakeC.
   not enter the Gorilla hand-simulation queue or receive Gorilla state.
 - Plant either hand on solid scenery and push away. Two planted hands average
   their displacement. Stronger strokes produce a capped launch.
+  A brief ground slap counts on its first valid contact; slow bracing does not
+  require a hard swing. Launch strength uses GorillaQuake's Quake-adapted
+  hand-speed conversion, with a separate 301 units/second ceiling chosen to
+  approximate GorillaLocomotion's maximum jump height under normal Quake
+  gravity. The player's full hull, mod gravity and external forces are unchanged.
 - Stick propulsion is suppressed while hand locomotion owns movement. Turning,
   aiming and firing retain their existing controls.
 - Actual ladder contact retains native movement and stick controls. Entering
