@@ -26,7 +26,8 @@ typedef struct {
   float recovery_offset[2][3]; /* world-space raw-palm -> virtual-palm bias */
   int surface[2];            /* canonical entity number; world/unbound=0 */
   unsigned int surface_model[2]; /* model identity; reject replaced surfaces */
-  float velocity[3];         /* command-time launch filter, not body velocity */
+  float velocity[3];         /* reserved legacy filter slot in state/ACK layout;
+                              * current launches do not consume its history */
   float origin[3];           /* last processed body baseline; reset on warp */
 } vr_gorilla_state_t;
 

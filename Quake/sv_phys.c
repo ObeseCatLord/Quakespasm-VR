@@ -6253,7 +6253,7 @@ static void SV_ApplyLegacyVRRoomScaleMove(edict_t *ent, client_t *client) {
  * received together in a move bundle. */
 static qboolean SV_PrepareLegacyGorilla(edict_t *ent, client_t *client,
     qboolean local, int *sequence, qboolean *swim_intent,
-    const usercmd_t *command) {
+    qboolean native_launch, const usercmd_t *command) {
   vr_gorilla_legacy_sample_t sample;
   usercmd_t saved_cmd = client->cmd;
   vr_gorilla_result_t result;
@@ -6332,6 +6332,12 @@ static qboolean SV_PrepareLegacyGorilla(edict_t *ent, client_t *client,
     }
     braced = result.braced;
     *sequence = sample.sequence;
+    /* Native legacy input must not friction-scale an airborne launch using
+     * the pre-stroke ground flag. Do this before callbacks: later QC may
+     * teleport/re-ground the player, and that newer state must win. */
+    if (native_launch && result.launched && ent->v.velocity[2] > .01f &&
+        !((int)ent->v.flags & FL_WATERJUMP))
+      ent->v.flags = (int)ent->v.flags & ~FL_ONGROUND;
     SV_LinkEdict(ent, false);
     for (int i = 0; i < trace_context.num_impacts && !ent->free; ++i) {
       if (!trace_context.impacts[i]->free) {
@@ -6384,7 +6390,7 @@ static void SV_RunGorillaQCPhysics(client_t *client, func_t function,
   SV_CheckWater(ent);
   context.braced = SV_PrepareLegacyGorilla(ent, client,
       !command && !isDedicated && NUM_FOR_EDICT(ent) == cl.viewentity &&
-      vr_enabled.value, &sequence, &context.swim_intent, command);
+      vr_enabled.value, &sequence, &context.swim_intent, false, command);
   if (ent->free || ent->v.health <= 0)
     goto done;
   context.prepared = true;
@@ -6558,7 +6564,7 @@ void SV_Physics_Client(edict_t *ent, int num) {
       SV_CheckWater(ent);
       gorilla_braced = SV_PrepareLegacyGorilla(ent, &svs.clients[num - 1],
           !isDedicated && num == cl.viewentity && vr_enabled.value,
-          &gorilla_sequence, &gorilla_swim_intent, NULL);
+          &gorilla_sequence, &gorilla_swim_intent, true, NULL);
     }
     if (ent->free)
       return;
