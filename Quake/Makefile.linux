@@ -20,6 +20,8 @@ USE_CODEC_OPUS=1
 USE_VOICE ?= 1
 # Experimental backend: opt in explicitly, including in SDK-enabled dev shells.
 USE_STEAMAUDIO ?= 0
+# Official SDK directory, or leave empty to use the system steamaudio.pc.
+STEAMAUDIO_SDK ?=
 # Local Alicia-only experiment; no new importer in normal builds.
 USE_ALICIA_SPIKE ?= 0
 # either xmp or mikmod (or modplug)
@@ -233,11 +235,16 @@ ifeq ($(USE_STEAMAUDIO),1)
 ifneq ($(USE_SDL2),1)
 $(error USE_STEAMAUDIO=1 requires USE_SDL2=1)
 endif
+ifneq ($(STEAMAUDIO_SDK),)
+CFLAGS += -DUSE_STEAMAUDIO -I$(STEAMAUDIO_SDK)/include
+LIBS += -L$(STEAMAUDIO_SDK)/lib/linux-x64 -lphonon
+else
 ifeq ($(shell $(PKG_CONFIG) --exists steamaudio && echo yes),)
-$(error USE_STEAMAUDIO=1 requires steamaudio.pc; use nix develop or USE_STEAMAUDIO=0)
+$(error USE_STEAMAUDIO=1 requires STEAMAUDIO_SDK or steamaudio.pc; use nix develop or USE_STEAMAUDIO=0)
 endif
 CFLAGS += -DUSE_STEAMAUDIO $(shell $(PKG_CONFIG) --cflags steamaudio)
 LIBS += $(shell $(PKG_CONFIG) --libs steamaudio)
+endif
 COMOBJ_SND += snd_spatial.o snd_steamaudio.o snd_room.o
 endif
 ifeq ($(USE_VOICE),1)
@@ -353,7 +360,7 @@ all: $(DEFAULT_TARGET)
 # a toggle must not silently reuse objects from the other backend.
 .PHONY: force-sound-config
 .sound-config: force-sound-config
-	@printf '%s\n' '$(USE_STEAMAUDIO) $(USE_VOICE) $(USE_SDL2) $(DO_USERDIRS) $(USE_ALICIA_SPIKE)' > $@.tmp
+	@printf '%s\n' '$(USE_STEAMAUDIO) $(STEAMAUDIO_SDK) $(USE_VOICE) $(USE_SDL2) $(DO_USERDIRS) $(USE_ALICIA_SPIKE)' > $@.tmp
 	@cmp -s $@.tmp $@ || mv $@.tmp $@
 	@rm -f $@.tmp
 $(OBJS): .sound-config

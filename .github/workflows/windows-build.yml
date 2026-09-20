@@ -50,6 +50,26 @@ jobs:
             "--x-install-root=$env:GITHUB_WORKSPACE\vcpkg_installed"
           if ($LASTEXITCODE -ne 0) { throw "vcpkg install failed with exit code $LASTEXITCODE" }
 
+      - name: Download pinned Steam Audio SDK
+        if: matrix.platform == 'x64'
+        shell: pwsh
+        run: |
+          $sdk = Join-Path $env:GITHUB_WORKSPACE 'steam-audio-sdk'
+          $archive = Join-Path $env:RUNNER_TEMP 'steamaudio_4.8.1.zip'
+          Invoke-WebRequest 'https://github.com/ValveSoftware/steam-audio/releases/download/v4.8.1/steamaudio_4.8.1.zip' -OutFile $archive
+          if ((Get-FileHash -Algorithm SHA256 $archive).Hash.ToLowerInvariant() -ne '4a0aa5ec1176f38f0b0993a37c2259d9e86f27e22d5e24f83ec4c3cb9a1d5449') {
+            throw 'Steam Audio SDK SHA-256 mismatch'
+          }
+          Expand-Archive -LiteralPath $archive -DestinationPath $sdk
+          foreach ($file in @('include\phonon.h', 'lib\windows-x64\phonon.lib', 'lib\windows-x64\phonon.dll', 'THIRDPARTY.md')) {
+            if (!(Test-Path (Join-Path $sdk "steamaudio\$file"))) { throw "Steam Audio SDK is missing $file" }
+          }
+          $license = Join-Path $sdk 'steamaudio-LICENSE.txt'
+          Invoke-WebRequest 'https://raw.githubusercontent.com/ValveSoftware/steam-audio/v4.8.1/LICENSE.md' -OutFile $license
+          if ((Get-FileHash -Algorithm SHA256 $license).Hash.ToLowerInvariant() -ne 'cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30') {
+            throw 'Steam Audio license SHA-256 mismatch'
+          }
+
       - name: Build
         shell: pwsh
         run: |
@@ -64,7 +84,9 @@ jobs:
               "-property:CurlRoot=$env:GITHUB_WORKSPACE\vcpkg_installed\x64-windows-static-md",
               '-property:UseCurl=true',
               "-property:OpusRoot=$env:GITHUB_WORKSPACE\vcpkg_installed\x64-windows-static-md",
-              '-property:UseVoice=true'
+              '-property:UseVoice=true',
+              "-property:SteamAudioRoot=$env:GITHUB_WORKSPACE\steam-audio-sdk\steamaudio",
+              '-property:UseSteamAudio=true'
             )
           }
           msbuild Windows\VisualStudio\quakespasm.sln $options
@@ -81,6 +103,8 @@ jobs:
             if (!(Test-Path $path)) { throw "Missing $path" }
           }
           if ('${{ matrix.platform }}' -eq 'x64') {
+            $phonon = Join-Path $out 'phonon.dll'
+            if (!(Test-Path $phonon)) { throw "Missing $phonon" }
             $text = [Text.Encoding]::ASCII.GetString([IO.File]::ReadAllBytes($exe))
             if (!$text.Contains('Press F1 to refresh add-on catalogue')) {
               throw 'The x64 executable was built without add-on catalogue support'
@@ -99,6 +123,9 @@ jobs:
             $imports = & $dumpbin.FullName /imports $exe | Out-String
             if ($imports -notmatch '(?i)openvr_api\.dll' -or $imports -notmatch 'VR_InitInternal2') {
               throw 'The x64 executable does not import the OpenVR runtime entry point'
+            }
+            if ($imports -notmatch '(?i)phonon\.dll' -or $imports -notmatch 'iplContextCreate') {
+              throw 'The x64 executable does not import the Steam Audio runtime entry point'
             }
           }
           Get-ChildItem $out | Sort-Object Name | Select-Object Name, Length
@@ -126,6 +153,8 @@ jobs:
               if (!(Test-Path $copyright)) { throw "Missing vcpkg copyright file: $copyright" }
               Copy-Item $copyright (Join-Path $licenses "$package.txt")
             }
+            Copy-Item "$env:GITHUB_WORKSPACE\steam-audio-sdk\steamaudio-LICENSE.txt" (Join-Path $licenses 'steamaudio-LICENSE.txt')
+            Copy-Item "$env:GITHUB_WORKSPACE\steam-audio-sdk\steamaudio\THIRDPARTY.md" (Join-Path $licenses 'steamaudio-THIRDPARTY.txt')
           }
           Get-ChildItem $stage | Sort-Object Name | Select-Object Name, Length
 

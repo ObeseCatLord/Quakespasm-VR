@@ -234,6 +234,15 @@
     <ClCompile Include="..\..\Quake\snd_mix.c">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="..\..\Quake\snd_spatial.c" Condition="'$(UseSteamAudio)'=='true'">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Quake\snd_steamaudio.c" Condition="'$(UseSteamAudio)'=='true'">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Quake\snd_room.c" Condition="'$(UseSteamAudio)'=='true'">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="..\..\Quake\snd_modplug.c">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -492,6 +501,15 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="..\..\Quake\snd_opus.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\Quake\snd_room.h" Condition="'$(UseSteamAudio)'=='true'">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\Quake\snd_spatial.h" Condition="'$(UseSteamAudio)'=='true'">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\Quake\snd_steamaudio.h" Condition="'$(UseSteamAudio)'=='true'">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="..\..\Quake\snd_umx.h">

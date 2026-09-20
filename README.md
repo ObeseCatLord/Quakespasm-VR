@@ -67,7 +67,7 @@ msbuild Windows\VisualStudio\quakespasm.sln `
   /p:Configuration=Release /p:Platform=x64 /m
 ```
 
-For a full build with add-on downloading and spatial voice chat enabled,
+For a build with add-on downloading and voice chat enabled,
 install the manifest dependencies with vcpkg and pass them to MSBuild:
 
 ```powershell
@@ -85,9 +85,10 @@ msbuild Windows\VisualStudio\quakespasm.sln `
 The executable and its runtime DLLs are written to
 `Windows/VisualStudio/Build-quakespasm-sdl2/x64/Release`.
 
-The optional Linux Steam Audio prototype provides HRTF voice and SFX rendering.
-See [SPATIAL_AUDIO.md](SPATIAL_AUDIO.md) for the pinned Nix build, isolated testing
-guidance, A/B controls, and remaining headset/Windows validation.
+Linux x86-64 and Windows x64 release builds also enable Steam Audio for HRTF
+voice and sound effects. Source builds opt in separately; see
+[SPATIAL_AUDIO.md](SPATIAL_AUDIO.md) for SDK setup, required runtime files,
+listening checks, and diagnostic controls.
 
 ## Classic co-op
 

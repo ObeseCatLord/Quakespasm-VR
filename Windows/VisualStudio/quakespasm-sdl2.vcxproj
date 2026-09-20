@@ -69,6 +69,10 @@
     <_ProjectFileVersion>17.0.33516.290</_ProjectFileVersion>
     <UseCurl Condition="'$(UseCurl)'==''">false</UseCurl>
     <UseVoice Condition="'$(UseVoice)'==''">false</UseVoice>
+    <UseSteamAudio Condition="'$(UseSteamAudio)'==''">false</UseSteamAudio>
+    <SteamAudioRoot Condition="'$(SteamAudioRoot)'==''">$(SolutionDir)..\..\steam-audio\steamaudio</SteamAudioRoot>
+    <SteamAudioLibraryDirectory Condition="'$(Platform)'=='Win32'">$(SteamAudioRoot)\lib\windows-x86</SteamAudioLibraryDirectory>
+    <SteamAudioLibraryDirectory Condition="'$(Platform)'=='x64'">$(SteamAudioRoot)\lib\windows-x64</SteamAudioLibraryDirectory>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
     <OutDir>$(SolutionDir)Build-$(ProjectName)\x86\$(Configuration)\</OutDir>
@@ -234,6 +238,16 @@ copy "$(SolutionDir)\..\static-release-files\*.*" "$(TargetDir)"</Command>
       <AdditionalLibraryDirectories>$(OpusRoot)\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
     </Link>
   </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(UseSteamAudio)'=='true'">
+    <ClCompile>
+      <AdditionalIncludeDirectories>$(SteamAudioRoot)\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>USE_STEAMAUDIO;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <Link>
+      <AdditionalDependencies>phonon.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalLibraryDirectories>$(SteamAudioLibraryDirectory);%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+    </Link>
+  </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="..\..\Quake\addon_catalog.c" />
     <ClCompile Include="..\..\Quake\bgmusic.c" />
@@ -309,6 +323,9 @@ copy "$(SolutionDir)\..\static-release-files\*.*" "$(TargetDir)"</Command>
     <ClCompile Include="..\..\Quake\snd_mem.c" />
     <ClCompile Include="..\..\Quake\snd_mikmod.c" />
     <ClCompile Include="..\..\Quake\snd_mix.c" />
+    <ClCompile Include="..\..\Quake\snd_spatial.c" Condition="'$(UseSteamAudio)'=='true'" />
+    <ClCompile Include="..\..\Quake\snd_steamaudio.c" Condition="'$(UseSteamAudio)'=='true'" />
+    <ClCompile Include="..\..\Quake\snd_room.c" Condition="'$(UseSteamAudio)'=='true'" />
     <ClCompile Include="..\..\Quake\snd_modplug.c" />
     <ClCompile Include="..\..\Quake\snd_mp3.c" />
     <ClCompile Include="..\..\Quake\snd_mp3tag.c" />
@@ -414,6 +431,9 @@ copy "$(SolutionDir)\..\static-release-files\*.*" "$(TargetDir)"</Command>
     <ClInclude Include="..\..\Quake\snd_modplug.h" />
     <ClInclude Include="..\..\Quake\snd_mp3.h" />
     <ClInclude Include="..\..\Quake\snd_opus.h" />
+    <ClInclude Include="..\..\Quake\snd_room.h" Condition="'$(UseSteamAudio)'=='true'" />
+    <ClInclude Include="..\..\Quake\snd_spatial.h" Condition="'$(UseSteamAudio)'=='true'" />
+    <ClInclude Include="..\..\Quake\snd_steamaudio.h" Condition="'$(UseSteamAudio)'=='true'" />
     <ClInclude Include="..\..\Quake\snd_umx.h" />
     <ClInclude Include="..\..\Quake\snd_vorbis.h" />
     <ClInclude Include="..\..\Quake\snd_wave.h" />
@@ -444,6 +464,9 @@ copy "$(SolutionDir)\..\static-release-files\*.*" "$(TargetDir)"</Command>
   <ItemGroup>
     <ResourceCompile Include="..\QuakeSpasm.rc" />
   </ItemGroup>
+  <Target Name="CopySteamAudioRuntime" AfterTargets="Build" Condition="'$(UseSteamAudio)'=='true'">
+    <Copy SourceFiles="$(SteamAudioLibraryDirectory)\phonon.dll" DestinationFolder="$(TargetDir)" />
+  </Target>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
   </ImportGroup>

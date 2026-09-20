@@ -39,10 +39,22 @@ jobs:
             libxmp-dev \
             pkg-config
 
+      - name: Prepare pinned Steam Audio SDK
+        shell: bash
+        run: |
+          curl -fL --retry 3 -o "$RUNNER_TEMP/steamaudio.zip" https://github.com/ValveSoftware/steam-audio/releases/download/v4.8.1/steamaudio_4.8.1.zip
+          echo "4a0aa5ec1176f38f0b0993a37c2259d9e86f27e22d5e24f83ec4c3cb9a1d5449  $RUNNER_TEMP/steamaudio.zip" | sha256sum -c -
+          unzip -q "$RUNNER_TEMP/steamaudio.zip" -d "$RUNNER_TEMP"
+          curl -fsSL --retry 3 https://raw.githubusercontent.com/ValveSoftware/steam-audio/v4.8.1/LICENSE.md -o "$RUNNER_TEMP/steamaudio/steamaudio-LICENSE.txt"
+          echo "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30  $RUNNER_TEMP/steamaudio/steamaudio-LICENSE.txt" | sha256sum -c -
+          cp "$RUNNER_TEMP/steamaudio/THIRDPARTY.md" "$RUNNER_TEMP/steamaudio/steamaudio-THIRDPARTY.txt"
+          echo "$RUNNER_TEMP/steamaudio/lib/linux-x64" | sudo tee /etc/ld.so.conf.d/steamaudio.conf
+          sudo ldconfig
+
       - name: Build
         run: |
           make -C Quake -f Makefile.linux clean
-          make -C Quake -f Makefile.linux -j"$(nproc)"
+          make -C Quake -f Makefile.linux USE_STEAMAUDIO=1 STEAMAUDIO_SDK="$RUNNER_TEMP/steamaudio" -j"$(nproc)"
 
       - name: Verify build outputs
         shell: bash
@@ -90,6 +102,10 @@ jobs:
           install -d "$folder"
           install -m 0755 Quake/quakespasm-openvr "$binary" "$folder/"
           install -m 0644 Quake/quakespasm.pak LICENSE.txt "$folder/"
+          install -m 0644 "$RUNNER_TEMP/steamaudio/lib/linux-x64/libphonon.so" "$RUNNER_TEMP/steamaudio/steamaudio-LICENSE.txt" "$RUNNER_TEMP/steamaudio/steamaudio-THIRDPARTY.txt" "$folder/"
+          readelf -d "$binary" | grep -q 'Shared library: \[libphonon.so\]'
+          max_glibc="$(readelf --version-info "$folder/libphonon.so" | grep -oE 'GLIBC_[0-9]+\.[0-9]+' | sed 's/GLIBC_//' | sort -Vu | tail -n 1)"
+          test "$(printf '%s\n%s\n' "$max_glibc" "$LINUX_GLIBC_MAX" | sort -V | tail -n 1)" = "$LINUX_GLIBC_MAX"
           for loader_name in libopenvr_api.so "$openvr_needed" "$openvr_runtime"; do
             install -m 0644 "$openvr_path" "$folder/$loader_name"
           done
