@@ -1,7 +1,10 @@
-# Steam Audio prototype
+# Steam Audio
 
-Experimental Linux backend with runtime environmental acoustics. Release-runtime
-packaging and Windows SDK integration remain deferred. Normal builds retain legacy audio.
+Spatial voice and sound effects with runtime environmental acoustics. Linux
+x86-64 and Windows x64 release builds enable this backend and bundle Steam Audio
+4.8.1. Plain source builds remain opt-in. Linux ARM64 builds currently retain
+legacy audio unless built with a native Steam Audio SDK; the official desktop
+SDK does not provide a Linux ARM64 binary.
 
 ## Build and run
 
@@ -14,11 +17,37 @@ the Nix closure; its Apache license is installed with it.
 nix develop --command make -C Quake -f Makefile.linux USE_STEAMAUDIO=1 -j8
 ```
 
-Outside Nix, install the SDK and provide `steamaudio.pc` (the local derivation
-shows its contents). The Linux makefile defaults to `USE_STEAMAUDIO=0`, even
-when pkg-config finds the SDK. Explicit `USE_STEAMAUDIO=1` requires the package
-and SDL2. `USE_VOICE=0` independently
-disables capture/network voice while retaining spatial SFX. Feature toggles
+Outside Nix, download the [Steam Audio 4.8.1 SDK](https://github.com/ValveSoftware/steam-audio/releases/tag/v4.8.1)
+and extract its `steamaudio` directory. On Linux x86-64:
+
+```sh
+make -C Quake -f Makefile.linux USE_STEAMAUDIO=1 STEAMAUDIO_SDK=/path/to/steamaudio -j8
+cp /path/to/steamaudio/lib/linux-x64/libphonon.so Quake/
+```
+
+Alternatively provide `steamaudio.pc` (the Nix derivation shows its contents)
+and omit `STEAMAUDIO_SDK`. The Linux makefile defaults to `USE_STEAMAUDIO=0`,
+even when pkg-config finds the SDK. Explicit `USE_STEAMAUDIO=1` requires the
+SDK and SDL2. For native Windows x64, add these properties to the MSBuild
+command in the README:
+
+```powershell
+/p:UseSteamAudio=true "/p:SteamAudioRoot=C:\path\to\steamaudio"
+```
+
+The project copies `phonon.dll` beside the executable. Steam Audio support is
+independent of voice capture: `USE_VOICE=0` on Linux or `UseVoice=false` on
+Windows disables capture/network voice while retaining spatial SFX.
+
+Distributors must include `libphonon.so` (Linux) or `phonon.dll` (Windows)
+beside the executable, plus `steamaudio-LICENSE.txt` and
+`steamaudio-THIRDPARTY.txt`. These notices are the SDK tag's `LICENSE.md` and
+the SDK archive's `THIRDPARTY.md`, respectively. Official build workflows
+verify the SDK download and stage these files. The Linux library is checked
+alongside the executable against the GLIBC 2.39 ceiling. CPU audio needs no
+Steam client or optional GPU audio DLLs.
+
+Feature toggles
 invalidate existing objects so switching configurations does not reuse stale
 preprocessor choices.
 
@@ -149,9 +178,9 @@ there is no hidden audible-source cap or sound merging.
 
 ## Later work
 
-After headset validation: Windows x64 SDK/project/CI/runtime staging and testing;
-retain the existing non-SDK Win32 build. Existing Windows builds compile the
-no-op integration boundary and do not enable this renderer yet.
+Continue headset listening and long-session performance validation on Linux
+and Windows. The non-SDK Win32 build remains available; Steam Audio release
+integration targets x64.
 
 After tuning the static runtime acoustics below, consider moving brush models,
 source-specific reflection paths and optional baked probes. A combined distributable needs the GPLv3-compatible license route
