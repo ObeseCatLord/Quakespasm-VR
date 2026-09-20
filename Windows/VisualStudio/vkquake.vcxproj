@@ -251,6 +251,11 @@ copy "$(SolutionDir)\..\SDL3\lib64\*.dll" "$(TargetDir)"</Command>
     </ClCompile>
     <ClCompile Include="..\..\Quake\sys_sdl_win.c" />
     <ClCompile Include="..\..\Quake\tasks.c" />
+    <ClCompile Include="..\..\Quake\vr_openxr.cpp">
+      <CompileAs>CompileAsCpp</CompileAs>
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp14</LanguageStandard>
+    </ClCompile>
     <ClCompile Include="..\..\Quake\view.c" />
     <ClCompile Include="..\..\Quake\wad.c" />
     <ClCompile Include="..\..\Quake\world.c" />
@@ -1129,6 +1134,10 @@ copy "$(SolutionDir)\..\SDL3\lib64\*.dll" "$(TargetDir)"</Command>
     <ClInclude Include="..\..\Quake\sys.h" />
     <ClInclude Include="..\..\Quake\tasks.h" />
     <ClInclude Include="..\..\Quake\vid.h" />
+    <ClInclude Include="..\..\Quake\vr_openxr.h" />
+    <ClInclude Include="..\..\Quake\vr_openxr_vulkan.h" />
+    <ClInclude Include="..\..\Quake\vr_openxr_math.h" />
+    <ClInclude Include="..\..\Quake\sha256.h" />
     <ClInclude Include="..\..\Quake\view.h" />
     <ClInclude Include="..\..\Quake\wad.h" />
     <ClInclude Include="..\..\Quake\world.h" />

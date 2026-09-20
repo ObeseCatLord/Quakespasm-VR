@@ -289,6 +289,9 @@
    <ClCompile Include="..\..\Quake\pl_linux.c">
       <Filter>Main</Filter>
     </ClCompile>
+    <ClCompile Include="..\..\Quake\vr_openxr.cpp">
+      <Filter>Main</Filter>
+    </ClCompile>
     <ClCompile Include="..\..\Quake\view.c">
       <Filter>Main</Filter>
     </ClCompile>
@@ -1009,6 +1012,18 @@
       <Filter>Main</Filter>
     </ClInclude>
     <ClInclude Include="..\..\Quake\vid.h">
+      <Filter>Main</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\Quake\vr_openxr.h">
+      <Filter>Main</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\Quake\vr_openxr_vulkan.h">
+      <Filter>Main</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\Quake\vr_openxr_math.h">
+      <Filter>Main</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\Quake\sha256.h">
       <Filter>Main</Filter>
     </ClInclude>
     <ClInclude Include="..\..\Quake\view.h">

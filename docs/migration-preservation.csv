@@ -374,7 +374,7 @@ Quake/sbar.c,1f48e53e284f86b8597acbaba1b899089d22f803,1,1,16baf00c6b3f48148a5000
 Quake/sbar.h,bce73b5251f1358dc601e9be239b644850f32377,1,0,512644922e1d633676df98520f31858edae216d7,3155bb7a03eff1d47e2b1a5a9518629cde8021b7,,pending behavior mapping
 Quake/screen.h,73c888c82cc57872d8d27188964da55c3141aa61,1,1,86015b17ee127c28dc09b2a1dd8e270bf01a9a4f,50c8b96d80169ec368c2d44e5e3991f9fc5692b9,,pending behavior mapping
 Quake/server.h,2842a2758aa1df524c34b6c205e7b7ba34385070,1,0,007286922b573078cbd0b21e5695d5ec7e926f64,57264ef824407feb099bc308515ea6cc01487f74,,pending behavior mapping
-Quake/sha256.h,,0,1,a72d9bc7a720d9aa4ce02764145627ea416660be,,,pending behavior mapping
+Quake/sha256.h,,0,1,a72d9bc7a720d9aa4ce02764145627ea416660be,,,reused unchanged for OpenXR source checkpoint; integration pending
 Quake/shaders/vk_alias.frag,,0,1,fca562fae26e05fe69151792f6f67fd70b15c880,,,pending behavior mapping
 Quake/shaders/vk_alias.vert,,0,1,c5e52b36e403eabb742e1b2cf0143319e05a3e77,,,pending behavior mapping
 Quake/shaders/vk_basic.frag,,0,1,eb0e0f8130bdcb7db89230946b02d03edf02bd79,,,pending behavior mapping
@@ -446,14 +446,14 @@ Quake/sv_user.c,a2e530c95592c700dd0f21f983132811fe1d93d3,1,0,5d63914516945801d45
 Quake/sys.h,05d1055c6c3bbeb284de41c3d181eb1eaf6e30f9,1,0,58364f9e83a7c2b2d0fbe4c6f1623571c9fbff71,c98311ea29a0df17af932bf53a80b13f64aa946f,,pending behavior mapping
 Quake/sys_sdl_unix.c,58f7316b5b452480477b8be60f1ae988ca5dcbd4,1,0,694ae2e477fea1a38684b91d4e2b3c31a50a13c1,14c73a3b463f77791c7b5589993f5853d79940d2,,pending behavior mapping
 Quake/sys_sdl_win.c,2f6f7367a7e15c005fd2ac07c7c9494fecaa6d66,1,0,ffead99032940bb9b774a7e678ffb47b5925b964,aad3947252e0d6646cd2a88a76d0e9252dd6afc0,,pending behavior mapping
-Quake/thirdparty/openxr/LICENSE,,0,1,d645695673349e3947e8e5ae42332d0ac3164cd7,,,pending behavior mapping
-Quake/thirdparty/openxr/MONADO-BSL-1.0.txt,,0,1,9c35012cb9247d7e8daaa3cc3a69ed112395a8b2,,,pending behavior mapping
-Quake/thirdparty/openxr/PROVENANCE.md,,0,1,8e9a7bb34113457927ff2fa5242a5ecfa81c4558,,,pending behavior mapping
-Quake/thirdparty/openxr/XR_MNDX_xdev_space.h,,0,1,a53b681ca89b1c9f31aed7b60e2c8fe176d33ff7,,,pending behavior mapping
-Quake/thirdparty/openxr/openxr.h,,0,1,5b3c5424cd4af0dc3c7880ae03260de5d1750424,,,pending behavior mapping
-Quake/thirdparty/openxr/openxr_extension_helpers.h,,0,1,f6df96b3cad93ad20d36531693cd68d3921c4b31,,,pending behavior mapping
-Quake/thirdparty/openxr/openxr_platform.h,,0,1,9de27ad14a934fe7a751416d2312b84e9b163e7c,,,pending behavior mapping
-Quake/thirdparty/openxr/openxr_platform_defines.h,,0,1,79c5b2cfc2ff09d8afec806965c84ca27c5f090f,,,pending behavior mapping
+Quake/thirdparty/openxr/LICENSE,,0,1,d645695673349e3947e8e5ae42332d0ac3164cd7,,,reused unchanged for OpenXR source checkpoint; integration pending
+Quake/thirdparty/openxr/MONADO-BSL-1.0.txt,,0,1,9c35012cb9247d7e8daaa3cc3a69ed112395a8b2,,,reused unchanged for OpenXR source checkpoint; integration pending
+Quake/thirdparty/openxr/PROVENANCE.md,,0,1,8e9a7bb34113457927ff2fa5242a5ecfa81c4558,,,reused unchanged for OpenXR source checkpoint; integration pending
+Quake/thirdparty/openxr/XR_MNDX_xdev_space.h,,0,1,a53b681ca89b1c9f31aed7b60e2c8fe176d33ff7,,,reused unchanged for OpenXR source checkpoint; integration pending
+Quake/thirdparty/openxr/openxr.h,,0,1,5b3c5424cd4af0dc3c7880ae03260de5d1750424,,,reused unchanged for OpenXR source checkpoint; integration pending
+Quake/thirdparty/openxr/openxr_extension_helpers.h,,0,1,f6df96b3cad93ad20d36531693cd68d3921c4b31,,,reused unchanged for OpenXR source checkpoint; integration pending
+Quake/thirdparty/openxr/openxr_platform.h,,0,1,9de27ad14a934fe7a751416d2312b84e9b163e7c,,,reused unchanged for OpenXR source checkpoint; integration pending
+Quake/thirdparty/openxr/openxr_platform_defines.h,,0,1,79c5b2cfc2ff09d8afec806965c84ca27c5f090f,,,reused unchanged for OpenXR source checkpoint; integration pending
 Quake/ucrt_shim.c,,1,0,fab355c493ef380ce92d7372cc62fd4e1dd2562d,,,pending behavior mapping
 Quake/vid.h,46ae8d658fe2d2456b133de5f50ab6bdc3ba688b,0,0,46ae8d658fe2d2456b133de5f50ab6bdc3ba688b,a35094e19d05cb5b7298799553ea8d3789f5cdb0,,pending behavior mapping
 Quake/view.c,319a8a0d98e14d6eec62d4bc96e8584d9ec0beb9,1,1,04df933f4f3aa18dc20f40f187bfae1fa432de6b,5472f15b057d5f884bd16304ceeec67b554b02c7,,pending behavior mapping
@@ -519,10 +519,10 @@ Quake/vr_melee_scimitar.h,,1,0,85bb573d888663bc9020c8bd7a9b0364d0bd7560,,,pendin
 Quake/vr_menu.c,959df7a4207fd0365011b157029ec5ac6a4fe95a,1,1,d424987b1d1100bea70198b1e25215cb99a893eb,,,pending behavior mapping
 Quake/vr_menu.h,835debf0057a56470611fd802d8dbdd06d1e180c,1,1,ab7a4888752ebcc51e898773fa20f725e064d0fd,,,pending behavior mapping
 Quake/vr_menu_anchor.h,,0,1,f6de7f59c4de1e1b23e5c5ee7eeba1c281bb8aa1,,,pending behavior mapping
-Quake/vr_openxr.cpp,,0,1,67e01adfe773ab3edc316618b835dfb163b0baf6,,,pending behavior mapping
-Quake/vr_openxr.h,,0,1,49015dd41cb02a2ccace62752d42a4c3310c9a4a,,,pending behavior mapping
-Quake/vr_openxr_math.h,,0,1,fb43567f3056b57cb77dca7aaea4b48cbe032620,,,pending behavior mapping
-Quake/vr_openxr_vulkan.h,,0,1,3fafd0108de565cd0118bf28a97cf6abe3f29cbb,,,pending behavior mapping
+Quake/vr_openxr.cpp,,0,1,67e01adfe773ab3edc316618b835dfb163b0baf6,,,adapted Vulkan-only SDL2/SDL3 backend; integration and qualification pending
+Quake/vr_openxr.h,,0,1,49015dd41cb02a2ccace62752d42a4c3310c9a4a,,,adapted Vulkan-only SDL2/SDL3 backend; integration and qualification pending
+Quake/vr_openxr_math.h,,0,1,fb43567f3056b57cb77dca7aaea4b48cbe032620,,,reused unchanged for OpenXR source checkpoint; integration pending
+Quake/vr_openxr_vulkan.h,,0,1,3fafd0108de565cd0118bf28a97cf6abe3f29cbb,,,adapted Vulkan-only SDL2/SDL3 backend; integration and qualification pending
 Quake/vr_weapon_catalog.h,,1,0,0137d0e0bad61832f4f40a7be08b4cbb518db9ad,,,pending behavior mapping
 Quake/vr_weaponmenu_hit.h,,1,0,4ba7865ecd6e3679d5ec5a7de7a4b92b365e820b,,,pending behavior mapping
 Quake/vrik_codec.c,,1,0,a2cd944565bed31b01316528fcc6c39d4ea1ef6c,,,pending behavior mapping

@@ -1,10 +1,12 @@
 project(
     'vkquake',
     'c',
+    'cpp',
     meson_version : '>= 1.3',
-    default_options : ['c_std=gnu11,c11', 'buildtype=release', 'strip=false', 'debug=true', 'b_ndebug=if-release', 'warning_level=1', 'werror=true'])
+    default_options : ['c_std=gnu11,c11', 'cpp_std=c++14', 'buildtype=release', 'strip=false', 'debug=true', 'b_ndebug=if-release', 'warning_level=1', 'werror=true'])
 
 cc = meson.get_compiler('c')
+cpp = meson.get_compiler('cpp')
 
 # Always build keeping frame pointers to get better backtraces
 add_project_arguments(cc.get_supported_arguments('-fno-omit-frame-pointer', '/Oy-'), language: 'c')
@@ -14,7 +16,7 @@ add_project_arguments('-fno-common', language: 'c')
 
 if host_machine.system() == 'windows'
     foreach native : [true, false]
-        add_project_arguments('-D_CRT_SECURE_NO_WARNINGS', '-D_CRT_NONSTDC_NO_DEPRECATE', '-D_WINSOCK_DEPRECATED_NO_WARNINGS', language : 'c', native : native)
+        add_project_arguments('-D_CRT_SECURE_NO_WARNINGS', '-D_CRT_NONSTDC_NO_DEPRECATE', '-D_WINSOCK_DEPRECATED_NO_WARNINGS', language : ['c', 'cpp'], native : native)
     endforeach
 endif
 
@@ -94,7 +96,7 @@ else
     endif
 endif
 if use_sdl3
-    add_project_arguments('-DUSE_SDL3', language: 'c')
+    add_project_arguments('-DUSE_SDL3', language: ['c', 'cpp'])
     message('Info: Using SDL3.')
 else
     sdl_dep = dependency('sdl2')
@@ -296,6 +298,7 @@ srcs = [
 	'Quake/sys_sdl.c',
     'Quake/tasks.c',
     'Quake/view.c',
+    'Quake/vr_openxr.cpp',
     'Quake/wad.c',
     'Quake/world.c',
 	'Quake/hash_map.c',
@@ -467,5 +470,6 @@ executable(
     dependencies : deps,
     include_directories : incdirs,
     c_args : cflags,
+    cpp_args : cpp.get_supported_arguments('-Wno-missing-field-initializers'),
     c_pch : 'Quake/quakedef.h',
     win_subsystem : 'windows')

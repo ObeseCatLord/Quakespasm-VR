@@ -40,8 +40,8 @@ Vulkan attachment API; the legacy OpenGL transport is omitted from this donor
 module. This does not remove the requirement to migrate inherited OpenVR
 behavior through a Vulkan compositor path.
 
-Meson and the native Visual Studio project compile this module as C++, while
-the upstream renderer remains C. The backend uses SDL2/SDL3 loader APIs and
+Meson, the native Unix Makefile and the native Visual Studio project now
+include this module as C++, while the upstream renderer remains C. The backend uses SDL2/SDL3 loader APIs and
 loads OpenXR dynamically. Vendored headers, licensing and exact source pins
 are in `Quake/thirdparty/openxr/PROVENANCE.md`.
 
@@ -51,6 +51,29 @@ not connected yet. Importing the runtime interfaces does not qualify gaze,
 foveation, Vulkan stereo, or any headset. No new CLI switch claims otherwise.
 Routine builds/runtime tests are deferred until the implementation slice is
 complete, as requested. Source review is not build or device validation.
+
+## Checkpoint review
+
+Astra (`gpt-6-astra`, xhigh), 2026-09-20, reviewed the introduced backend and
+build changes against `30808413`. No concrete introduced defects were found
+within that source-review scope. Main review confirmed that the dynamic loader
+is reached only through explicit OpenXR preparation and that renderer retirement
+still precedes runtime image destruction. The interrupted earlier audit was not
+counted as a completed review.
+
+| Review item | Disposition |
+|---|---|
+| SDL2/SDL3 loader types and base-path ownership | Retained after source review |
+| Vulkan session/image lifecycle preservation | Retained; donor submission/mutex integration still required |
+| No installed runtime needed for desktop startup | Preserved by dormant, explicitly invoked loader discovery; runtime qualification pending |
+| Meson, Unix Makefile and native Visual Studio declarations | Source-reviewed; builds deferred |
+
+Visual Studio project XML is well formed and retains its original BOM/CRLF.
+The ten unchanged dependency/license files match the source byte-for-byte.
+Whitespace checks pass for adapted project files; pre-existing whitespace in
+vendored `openxr.h` is intentionally preserved. The original worktree's thirteen
+WIP files still match the preservation snapshot. None of these checks establishes
+build success, working VR, desktop runtime parity, or a performance improvement.
 
 ## Next integration gates
 
@@ -67,7 +90,18 @@ The next bounded end-to-end slice is:
    independent live avatar poses and their shadow poses within donor models.
 4. Establish task-enabled opaque multiview with moving brush lighting, restart,
    focus loss and shutdown before expanding the bulk migration. Then qualify
-   Linux and native Windows; device testing remains a separate user checkpoint.
+   Linux (including ARM64) and native Windows; headset testing remains a
+   separate user checkpoint.
+
+The donor integration points are `GL_InitInstance` / `GL_InitDevice` and the
+existing submission task in `Quake/gl_vidsdl.c`. Keep its queue mutex: OpenXR
+begin/end-frame and swapchain acquire/release calls can also access the bound
+queue and must be synchronized with donor submissions. Released color images
+must have the required attachment layout and all application accesses submitted;
+GPU completion before every release is not required. Use completion waits for
+resource retirement, rather than a new per-frame device-idle stall. These rules
+come from Khronos's official
+[`XR_KHR_vulkan_enable2` specification](https://github.com/KhronosGroup/OpenXR-Docs/blob/main/specification/sources/chapters/extensions/khr/khr_vulkan_enable2.adoc).
 
 Save dialect validation must precede world/game changes: the fork's multiplayer
 version 6 conflicts with donor KEX version 6. Prediction, command timing and
@@ -77,8 +111,11 @@ These are prerequisites, not optional cleanups after porting files.
 
 ## Runtime and performance requirements
 
-- Linux/Monado/Beyond 2e, Windows headsets, and Steam Frame PC streaming and
-  standalone Linux ARM64 remain release targets. No eye provider is assumed.
+- Windows, Linux, and Linux ARM64 (Steam Frame standalone) each require both
+  OpenXR VR and desktop support. Linux/Monado/Beyond 2e remains the primary
+  headset configuration. Steam Frame PC streaming is also a release target.
+  No eye provider is assumed; desktop operation must not require an installed
+  OpenXR runtime or connected headset.
 - Eye tracking is an optional VR-menu toggle, off by default. Missing/invalid
   gaze renders full quality. Fixed foveation is explicit opt-in only, never a
   default or automatic fallback. Runtime support must be detected; the presence

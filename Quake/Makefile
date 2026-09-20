@@ -51,6 +51,15 @@ BINTOC_EXE = ../Shaders/bintoc
 # ---------------------------
 include common.make
 
+# Keep donor sources in C; only the standalone OpenXR backend needs C++.
+OBJS += vr_openxr.o
+LINKER = $(CXX)
+
+vr_openxr.o: vr_openxr.cpp
+	$(CXX) $(DFLAGS) $(CPPFLAGS) $(filter-out -std=%,$(CFLAGS)) $(CXXFLAGS) $(SDL_CFLAGS) -std=c++14 -Wno-missing-field-initializers -c -o $@ $<
+
+sinclude vr_openxr.d
+
 # ---------------------------
 # libraries
 # ---------------------------
