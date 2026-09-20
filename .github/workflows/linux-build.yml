@@ -101,7 +101,7 @@ jobs:
           folder="$RUNNER_TEMP/quakespasm-openvr-linux-x86_64"
           install -d "$folder"
           install -m 0755 Quake/quakespasm-openvr "$binary" "$folder/"
-          install -m 0644 Quake/quakespasm.pak LICENSE.txt "$folder/"
+          install -m 0644 Quake/quakespasm.pak LICENSE.txt LICENSE-GPL-3.0.txt "$folder/"
           install -m 0644 "$RUNNER_TEMP/steamaudio/lib/linux-x64/libphonon.so" "$RUNNER_TEMP/steamaudio/steamaudio-LICENSE.txt" "$RUNNER_TEMP/steamaudio/steamaudio-THIRDPARTY.txt" "$folder/"
           readelf -d "$binary" | grep -q 'Shared library: \[libphonon.so\]'
           max_glibc="$(readelf --version-info "$folder/libphonon.so" | grep -oE 'GLIBC_[0-9]+\.[0-9]+' | sed 's/GLIBC_//' | sort -Vu | tail -n 1)"

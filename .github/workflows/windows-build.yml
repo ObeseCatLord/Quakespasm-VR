@@ -147,6 +147,7 @@ jobs:
           if (!(Test-Path (Join-Path $stage 'quakespasm-openvr.exe'))) { throw 'Staging omitted the executable' }
           if ('${{ matrix.platform }}' -eq 'x64') {
             $licenses = Join-Path $stage 'third-party-licenses'
+            Copy-Item LICENSE-GPL-3.0.txt $stage
             New-Item -ItemType Directory -Force $licenses | Out-Null
             foreach ($package in @('curl', 'zlib', 'opus')) {
               $copyright = Join-Path $env:GITHUB_WORKSPACE "vcpkg_installed\x64-windows-static-md\share\$package\copyright"

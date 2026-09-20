@@ -131,6 +131,7 @@ jobs:
             Copy-Item -Destination $folder
 
           Copy-Item Quake/quakespasm.pak $folder
+          Copy-Item LICENSE-GPL-3.0.txt $folder
           $licenses = Join-Path $folder 'third-party-licenses'
           New-Item -ItemType Directory -Force $licenses | Out-Null
           foreach ($package in @('curl', 'zlib', 'opus')) {
@@ -235,7 +236,7 @@ jobs:
           # distributable engine files. System SDL/OpenGL/curl/audio
           # dependencies and the user's legally obtained id1 remain external.
           install -m 0755 "$binary" "$folder/"
-          install -m 0644 Quake/quakespasm.pak LICENSE.txt "$folder/"
+          install -m 0644 Quake/quakespasm.pak LICENSE.txt LICENSE-GPL-3.0.txt "$folder/"
           install -m 0644 "$RUNNER_TEMP/steamaudio/lib/linux-x64/libphonon.so" "$RUNNER_TEMP/steamaudio/steamaudio-LICENSE.txt" "$RUNNER_TEMP/steamaudio/steamaudio-THIRDPARTY.txt" "$folder/"
           readelf -d "$binary" | grep -q 'Shared library: \[libphonon.so\]'
           # The linker records the runtime SONAME, which is not always the

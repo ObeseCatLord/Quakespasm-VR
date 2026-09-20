@@ -47,6 +47,11 @@ verify the SDK download and stage these files. The Linux library is checked
 alongside the executable against the GLIBC 2.39 ceiling. CPU audio needs no
 Steam client or optional GPU audio DLLs.
 
+The Steam Audio-enabled combined binaries use GPLv3 under the engine's existing
+GPL-2.0-or-later permission, because Apache-2.0 is compatible with GPLv3, not
+GPLv2. Include `LICENSE-GPL-3.0.txt` as well as the existing license and component
+notices; source-file license grants are unchanged.
+
 Feature toggles
 invalidate existing objects so switching configurations does not reuse stale
 preprocessor choices.
@@ -183,9 +188,8 @@ and Windows. The non-SDK Win32 build remains available; Steam Audio release
 integration targets x64.
 
 After tuning the static runtime acoustics below, consider moving brush models,
-source-specific reflection paths and optional baked probes. A combined distributable needs the GPLv3-compatible license route
-and appropriate component notices; this prototype does not constitute a complete
-dependency-license audit.
+source-specific reflection paths and optional baked probes. New dependencies
+still require their own compatibility and notice review.
 
 ## Direct environment controls
 
