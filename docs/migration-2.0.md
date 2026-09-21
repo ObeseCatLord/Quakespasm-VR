@@ -286,6 +286,28 @@ Source comparison, Astra review dispositions and local evidence are recorded in
 VR-014; full controller/roomscale, scripted-camera/demo, tracked weapon and
 network parity remain open. P1 is not complete and no speedup is claimed.
 
+## Coupled movement groundwork
+
+The inherited PMove solver and Gorilla/roomscale algorithms are now staged with
+their command types and required boundary declarations. The narrow adaptations
+use donor hull collision, the active VM's world model and a session-active view
+query. The three Gorilla headers remain byte-for-byte source copies. The solver
+is not yet linked into the gameplay executable; no private protocol capability
+or new prediction path is advertised.
+
+The Linux executable builds with the extended shared types. A focused solver
+fixture passes walking, jumping, freeze, roomscale once across substeps, outlier
+rejection, boxes, rotated brushes, stationary solid and water cases through both
+actual donor hull implementations. This is groundwork evidence, not gameplay
+parity or a performance measurement.
+
+The [Astra-reviewed movement plan](migration-movement-review.md) sets the next
+activation milestone: explicit private-dialect admission plus command timing,
+redundancy, authoritative baseline and prediction replay, followed by tracked
+movement/fire against the pinned dedicated server. Local single-player bypasses
+the source prediction policy and cannot prove that path. The new server side
+then reuses that command contract while retaining ordinary donor peers.
+
 ## Next integration gates
 
 Follow the [reviewed architecture plan](vkquake-base-migration-plan.md).

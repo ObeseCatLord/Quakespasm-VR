@@ -189,3 +189,30 @@ waits, and reads the settled renderer state without changing its ownership.
 The test does not validate moving/scaled avatars, eye-only visibility, inherited
 tracked weapons/controller input, headset behavior or performance. Stop only the isolated service
 you started when done. Keep raw logs local; they can contain device identifiers.
+
+## Staged shared movement solver
+
+`pmove_migration_fixture.c` runs the transplanted PMove algorithm against the
+real vkQuake hull functions in `world.c`. It covers walking/floor contact, jumping,
+frozen commands, once-per-command roomscale across substeps, outlier rejection,
+entity boxes, rotated brush normals, stationary/startsolid, water contents and source-equivalent raw clip leaves.
+Both slow and optimized hull implementations are selected explicitly; this
+fixture does not run cvar registration, so initializer strings alone do not
+activate the optimized path.
+
+```sh
+cc -std=gnu11 -DUSE_SDL3 -D_GNU_SOURCE -Wall -Wextra -Werror \
+  -Wno-unused-parameter -Wno-sign-compare -Wno-missing-field-initializers \
+  -ffunction-sections -fdata-sections tests/pmove_migration_fixture.c \
+  Quake/mathlib.c Quake/world.c -Wl,--gc-sections \
+  $(pkg-config --cflags --libs sdl3) -lm -o /tmp/quakespasm-pmove-fixture
+/tmp/quakespasm-pmove-fixture
+```
+
+The collision geometry is constructed by the fixture. Traces and movement are
+production code; this is not a dedicated-server, network, tracked-controller or
+full reference-parity test. The solver is intentionally not linked into the game
+until real command/replay and server/QC owners are integrated. Link-time section
+collection excludes those unimplemented owner calls from this focused fixture;
+no dummy gameplay implementations satisfy them. Its console/error functions and
+unused cvar/session boundary stand-ins are test-only.

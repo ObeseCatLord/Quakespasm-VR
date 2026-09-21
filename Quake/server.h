@@ -388,4 +388,12 @@ void SV_RunClients (void);
 void SV_SaveSpawnparms ();
 void SV_SpawnServer (const char *server);
 
+// Inherited PMove integration boundaries. The solver is staged until these
+// server owners and private command/replay admission are migrated together.
+extern cvar_t sv_vr_jump_velocity;
+extern cvar_t sv_coop_noplayerclip;
+qboolean SV_IsVRClientSlot (int num);
+qboolean SV_IsActiveClientEdict (edict_t *ent);
+qboolean SV_CoopFeatureEnabled (const cvar_t *feature, qboolean modern_default);
+
 #endif /* _QUAKE_SERVER_H */

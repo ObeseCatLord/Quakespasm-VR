@@ -265,6 +265,8 @@ struct pr_extglobals_s
 	QCEXTGLOBAL_FLOAT (frametime) \
 	// end
 #define QCEXTGLOBALS_GAME                          \
+	QCEXTGLOBAL_FLOAT (input_sequence)             \
+	QCEXTGLOBAL_FLOAT (input_servertime)           \
 	QCEXTGLOBAL_FLOAT (input_timelength)           \
 	QCEXTGLOBAL_VECTOR (input_movevalues)          \
 	QCEXTGLOBAL_VECTOR (input_angles)              \

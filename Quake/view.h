@@ -31,6 +31,7 @@ extern uint8_t v_blend[4];
 void V_Init (void);
 // Existing view/input owner; runtime lifetime remains in the backend.
 qboolean V_UseTrackedView (void);
+qboolean V_TrackedSessionActive (void);
 float V_VRUnitsPerMetre (void);
 float V_VRFloorOffset (void);
 qboolean V_TrackedPlayerBase (float *viewheight);

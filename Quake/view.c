@@ -266,6 +266,11 @@ qboolean V_ApplyTrackedView (vec3_t angles, float *tracking_yaw)
 	return true;
 }
 
+qboolean V_TrackedSessionActive (void)
+{
+	return GL_OpenXRFrame () != NULL;
+}
+
 qboolean V_UseTrackedView (void)
 {
 	const vrxr_frame_t *frame = GL_OpenXRFrame ();

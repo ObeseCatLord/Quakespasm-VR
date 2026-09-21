@@ -42,6 +42,18 @@ typedef struct
 	int contents; // spike -- the content type(s) that we found.
 } trace_t;
 
+/* Client weapon queries have no server edict, and do not expose the local
+ * brush plane distance as a world-space plane. They never modify prediction. */
+typedef struct
+{
+	qboolean startsolid, allsolid;
+	float fraction;
+	vec3_t endpos, normal;
+	int entity; /* client entity number, -1 for no contact */
+} cl_weapon_trace_t;
+
+cl_weapon_trace_t CL_TraceWeapon (const vec3_t start, const vec3_t end);
+
 #define MOVE_NORMAL		0
 #define MOVE_NOMONSTERS 1
 #define MOVE_MISSILE	2
