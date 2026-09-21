@@ -7,7 +7,9 @@ extern "C" {
 #endif
 
 /* No SDL window/context or Vulkan device is required for discovery. Returned
- * versions use Vulkan's encoding, not XrVersion. Shutdown on abandoned setup. */
+ * versions use Vulkan's encoding, not XrVersion, with patch zero. The maximum
+ * is the runtime's highest tested version, not a hard compatibility ceiling.
+ * Shutdown on abandoned setup. */
 int VRXR_PrepareVulkan(void (*log_message)(const char *),
                        uint32_t *minimum_version, uint32_t *maximum_version);
 /* These hooks preserve enable2 creation provenance. The renderer owns all

@@ -1209,10 +1209,11 @@ static bool vulkan_result(const char *where, XrResult xrResult, VkResult vkResul
 }
 static uint32_t vulkan_version(XrVersion version) {
 	/* Vulkan has fewer major-version bits than XrVersion. Saturate the upper
-	 * bound rather than overflowing an unconstrained runtime maximum. */
-	if(XR_VERSION_MAJOR(version)>0x7f || XR_VERSION_MINOR(version)>0x3ff || XR_VERSION_PATCH(version)>0xfff)
-		return VK_MAKE_API_VERSION(0,0x7f,0x3ff,0xfff);
-	return VK_MAKE_API_VERSION(0,XR_VERSION_MAJOR(version),XR_VERSION_MINOR(version),XR_VERSION_PATCH(version));
+	 * bound rather than overflowing an unconstrained runtime maximum. OpenXR
+	 * graphics requirements describe major/minor versions, ignoring patches. */
+	if(XR_VERSION_MAJOR(version)>0x7f || XR_VERSION_MINOR(version)>0x3ff)
+		return VK_MAKE_API_VERSION(0,0x7f,0x3ff,0);
+	return VK_MAKE_API_VERSION(0,XR_VERSION_MAJOR(version),XR_VERSION_MINOR(version),0);
 }
 }
 extern "C" int VRXR_PrepareVulkan(void (*log_message)(const char *),
@@ -1236,10 +1237,17 @@ extern "C" int VRXR_CreateVulkanInstance(PFN_vkGetInstanceProcAddr get_proc,
 	*instance=VK_NULL_HANDLE;
 	if(!g.useVulkan || !g.instance || g.terminal || g.vk.instance || !get_proc || !info) return 0;
 	const uint32_t version=info->pApplicationInfo && info->pApplicationInfo->apiVersion ? info->pApplicationInfo->apiVersion : VK_API_VERSION_1_0;
-	const XrVersion xrVersion=XR_MAKE_VERSION(VK_API_VERSION_MAJOR(version),VK_API_VERSION_MINOR(version),VK_API_VERSION_PATCH(version));
-	if(VK_API_VERSION_VARIANT(version) || xrVersion<g.vk.requirements.minApiVersionSupported || xrVersion>g.vk.requirements.maxApiVersionSupported) {
-		say("OpenXR: requested Vulkan API version is outside runtime requirements"); return 0;
+	const XrVersion xrVersion=XR_MAKE_VERSION(VK_API_VERSION_MAJOR(version),VK_API_VERSION_MINOR(version),0);
+	const XrVersion minimum=XR_MAKE_VERSION(XR_VERSION_MAJOR(g.vk.requirements.minApiVersionSupported),
+		XR_VERSION_MINOR(g.vk.requirements.minApiVersionSupported),0);
+	const XrVersion maximum=XR_MAKE_VERSION(XR_VERSION_MAJOR(g.vk.requirements.maxApiVersionSupported),
+		XR_VERSION_MINOR(g.vk.requirements.maxApiVersionSupported),0);
+	if(VK_API_VERSION_VARIANT(version) || xrVersion<minimum) {
+		say("OpenXR: requested Vulkan API version does not meet runtime requirements"); return 0;
 	}
+	/* The maximum is the runtime's highest tested version, not a prohibition
+	 * on compatible newer Vulkan versions (XR_KHR_vulkan_enable2). */
+	if(xrVersion>maximum) say("OpenXR: requested Vulkan API is newer than the runtime's tested version");
 	XrVulkanInstanceCreateInfoKHR create={XR_TYPE_VULKAN_INSTANCE_CREATE_INFO_KHR};
 	create.systemId=g.system; create.pfnGetInstanceProcAddr=get_proc; create.vulkanCreateInfo=info;
 	VkResult result=VK_ERROR_INITIALIZATION_FAILED;
