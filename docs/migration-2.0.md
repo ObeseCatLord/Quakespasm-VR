@@ -45,7 +45,58 @@ foveation, Vulkan stereo, or any headset. No new CLI switch claims otherwise.
 Routine builds/runtime tests are deferred until the implementation slice is
 complete, as requested. Source review is not build or device validation.
 
-## Checkpoint review
+## Vulkan graphics bootstrap checkpoint
+
+The renderer now honors explicit `-openxr` at Vulkan startup; `-novr` takes
+precedence and ordinary desktop startup does not discover OpenXR. Discovery can
+fall back to desktop before Vulkan handles are bound. Once the runtime has
+selected the binding, creation failures are diagnosed and partial renderer-owned
+handles are cleaned rather than mixed with an unrelated device.
+
+`Quake/gl_vidsdl.c` retains donor ownership of the instance, physical device,
+logical device, queue and all ordinary renderer resources. It obtains the XR
+requirements, uses the existing enable2 creation wrappers and runtime-selected
+GPU, and integrates core multiview queries into the donor feature/property chains.
+It enables the multiview bit only when supported for two views; geometry and
+tessellation multiview bits stay off. This is capability negotiation, not a
+multiview render pass. Desktop feature negotiation remains on the donor path.
+
+Runtime requirements and the actual GPU are checked separately from loader
+capability. The backend now compares major/minor versions (ignoring patches),
+rejects versions below the runtime minimum, and warns above its highest tested
+version. The startup selector prefers a known-tested version while honoring
+minimums above Vulkan 1.1. Main-thread runtime cleanup also covers errors before device
+creation completes, including the Windows fatal path. The failure helper retires
+its debug messenger before destroying the instance. No frame-loop device-idle wait or second lifecycle owner was
+introduced.
+
+**No session or swapchain is attached by this checkpoint.** Startup logs say so.
+Renderer/device bootstrap is the first part of P1; it does not close the early
+multiview proof, implement gameplay/input, qualify an HMD, or enable foveation.
+It currently retains donor WSI/graphics-queue requirements. Saved VR settings,
+menu toggles, OpenVR compositor integration and healthy runtime reattachment
+remain part of subsequent integration.
+
+Consolidated software checks after this slice was implemented:
+
+- Native Linux Meson `debugoptimized` build with SDL3 and Vulkan headers passed,
+  including the donor shaders and C/C++ executable. This host build is diagnostic
+  only; it is not a GLIBC-ceiling-qualified release artifact.
+- The [reused Vulkan boundary fixture](../tests/README.md) passed creation-result,
+  version/provenance, independent/array-image ownership, incomplete-frame and
+  retirement-order checks. It uses simulated dispatch and is not graphics or
+  headset proof. Porting it exposed a stale missing event callback in its reset
+  setup, which was corrected.
+- The build exposed an imported `const void*`/`void*` chain mismatch in runtime
+  foveation setup. Linking the mutable-next FB node before the const-next META
+  node fixes the C++ type error without changing flags or enabling foveation.
+- Whitespace checks passed. Native Windows/ARM, runtime/headset tests, performance
+  measurements and the P1 end-to-end gate remain pending.
+
+The code/design review is recorded in
+[the bootstrap review disposition](migration-bootstrap-review.md).
+
+## Initial checkpoint review
 
 Astra (`gpt-6-astra`, xhigh), 2026-09-20, reviewed the introduced backend and
 build changes against `30808413`. No concrete introduced defects were found
@@ -64,8 +115,8 @@ counted as a completed review.
 Visual Studio project XML is well formed and retains its original BOM/CRLF.
 The ten unchanged dependency/license files match the source byte-for-byte.
 Whitespace checks pass for adapted project files; pre-existing whitespace in
-vendored `openxr.h` is intentionally preserved. The original worktree's thirteen
-WIP files still match the preservation snapshot. None of these checks establishes
+vendored `openxr.h` is intentionally preserved. The original thirteen-file WIP snapshot was verified at that initial checkpoint;
+newer master now supplies the product checkout. None of these checks establishes
 build success, working VR, desktop runtime parity, or a performance improvement.
 
 ## Next integration gates
@@ -73,8 +124,9 @@ build success, working VR, desktop runtime parity, or a performance improvement.
 Follow the [reviewed architecture plan](vkquake-base-migration-plan.md).
 The next bounded end-to-end slice is:
 
-1. Let the existing runtime choose the Vulkan instance/device requirements;
-   retain vkQuake's device/resource owners and desktop startup path.
+1. The code-level runtime/instance/device bootstrap is now implemented and
+   Linux-build checked. Qualify its runtime GPU/WSI combinations as session
+   integration proceeds; retain the existing owners.
 2. Attach OpenXR swapchains to donor rendering. Join actual queue submission,
    not just recording tasks, before releasing images; retire task and GPU users
    before teardown. Add no second render graph or image-lifetime authority.

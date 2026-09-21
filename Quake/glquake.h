@@ -355,6 +355,9 @@ typedef struct
 	qboolean						 multi_draw_indirect;
 	qboolean						 screen_effects_sops;
 	qboolean						 shader_float16;
+	qboolean						 openxr_vulkan_available;
+	qboolean						 openxr_multiview_available;
+	uint32_t						 openxr_max_multiview_view_count;
 
 	// Instance extensions
 	qboolean get_surface_capabilities_2;

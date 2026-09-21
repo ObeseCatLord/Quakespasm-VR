@@ -649,16 +649,17 @@ static bool create_swapchains() {
 		XrVulkanSwapchainCreateInfoMETA imageFlags={XR_TYPE_VULKAN_SWAPCHAIN_CREATE_INFO_META};
 		if(g.useVulkan) {
 			info.usageFlags|=g.vk.extraUsage;
+			/* FB's next is mutable while the enclosing create chain is const.
+			 * Link this tail first, then prepend the const-next META structure. */
+			if(g.vk.densityMaps) {
+				foveation.flags=XR_SWAPCHAIN_CREATE_FOVEATION_FRAGMENT_DENSITY_MAP_BIT_FB;
+				info.next=&foveation;
+			}
 			if(g.vk.densityImageFlags) {
 				imageFlags.additionalCreateFlags=g.vk.densityImageFlags;
 				imageFlags.additionalUsageFlags=0;
 				imageFlags.next=info.next;
 				info.next=&imageFlags;
-			}
-			if(g.vk.densityMaps) {
-				foveation.flags=XR_SWAPCHAIN_CREATE_FOVEATION_FRAGMENT_DENSITY_MAP_BIT_FB;
-				foveation.next=info.next;
-				info.next=&foveation;
 			}
 		}
 		if(!ok("xrCreateSwapchain",g.xr.CreateSwapchain(g.session,&info,&chain.handle))) return false;

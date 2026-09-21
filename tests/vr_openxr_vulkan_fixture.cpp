@@ -21,6 +21,7 @@ static XrResult XRAPI_PTR create_device(XrInstance,const XrVulkanDeviceCreateInf
  *out=vk_result==VK_SUCCESS ? fake_device : VK_NULL_HANDLE; return xr_result;
 }
 static PFN_vkVoidFunction VKAPI_PTR unused_proc(VkInstance,const char *) { return 0; }
+static XrResult XRAPI_PTR no_events(XrInstance,XrEventDataBuffer *) { return XR_EVENT_UNAVAILABLE; }
 static void retire(void *owner) { assert(owner==&retirement);assert(!swapchain_destroys);++retirement; }
 static XrResult XRAPI_PTR destroy_chain(XrSwapchain) {assert(retirement==1);++swapchain_destroys;return XR_SUCCESS;}
 static int array_creates, acquires, releases, submitted_layers;
@@ -68,6 +69,7 @@ static void reset() {
  g.vk.requirements.minApiVersionSupported=XR_MAKE_VERSION(1,0,0);
  g.vk.requirements.maxApiVersionSupported=XR_MAKE_VERSION(1,3,0);
  g.xr.CreateVulkanInstance=create_instance;g.xr.VulkanGraphicsDevice=get_physical;g.xr.CreateVulkanDevice=create_device;
+ g.xr.PollEvent=no_events;
  xr_result=XR_SUCCESS;vk_result=VK_SUCCESS;instance_calls=device_calls=retirement=swapchain_destroys=0;
 }
 }

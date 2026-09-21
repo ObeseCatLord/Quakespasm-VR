@@ -23,6 +23,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 
 #include "quakedef.h"
 #include "steam.h"
+#include "vr_openxr.h"
 
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -781,7 +782,12 @@ void Sys_Error (const char *error, ...)
 	}
 
 	if (!Tasks_IsWorker ())
+	{
 		PR_SwitchQCVM (NULL);
+		/* Windows exits without Host_Shutdown. Abandon XR while Vulkan and
+		 * SDL are still alive; the backend shutdown is idempotent. */
+		VRXR_Shutdown ();
+	}
 
 	if (Tasks_IsWorker () || isDedicated)
 		WriteFile (houtput, errortxt1, strlen (errortxt1), &dummy, NULL);
