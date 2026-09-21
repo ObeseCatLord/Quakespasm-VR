@@ -101,6 +101,7 @@ typedef enum
 
 void VID_SetMouseCursor (mousecursor_t cursor);
 
+void VID_WindowSizeChanged (int width, int height);
 void VID_FocusGained (void);
 void VID_FocusLost (void);
 

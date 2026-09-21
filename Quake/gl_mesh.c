@@ -707,7 +707,7 @@ void R_AllocateEntityBLAS (entity_t *e)
 		return;
 
 	aliashdr_t *hdr = (aliashdr_t *)Mod_Extradata (e->model);
-	if (!hdr)
+	if (!hdr || hdr->numverts_vbo <= 0)
 		return;
 
 	// TODO: handle multi-surface models (nextsurface chain)
@@ -735,7 +735,7 @@ void R_AllocateEntityBLAS (entity_t *e)
 	blas_geometry.geometry.triangles.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR;
 	blas_geometry.geometry.triangles.vertexFormat = VK_FORMAT_R32G32B32_SFLOAT;
 	blas_geometry.geometry.triangles.vertexStride = sizeof (float) * 3;
-	blas_geometry.geometry.triangles.maxVertex = hdr->numverts_vbo;
+	blas_geometry.geometry.triangles.maxVertex = hdr->numverts_vbo - 1;
 	blas_geometry.geometry.triangles.indexType = VK_INDEX_TYPE_UINT16;
 
 	ZEROED_STRUCT (VkAccelerationStructureBuildGeometryInfoKHR, blas_geometry_info);
@@ -865,11 +865,12 @@ static void R_FlushPendingBLASBuilds (cb_context_t *cbx, int num_pending, qboole
 	if (num_pending == 0)
 		return;
 
-	// Barrier: compute writes -> AS reads
+	// Geometry inputs use SHADER_READ at the AS build stage; AS_READ is for
+	// acceleration structures and scratch, not the interpolated vertices.
 	ZEROED_STRUCT (VkMemoryBarrier, compute_barrier);
 	compute_barrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
 	compute_barrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
-	compute_barrier.dstAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR;
+	compute_barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
 	vulkan_globals.vk_cmd_pipeline_barrier (
 		cbx->cb, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR, 0, 1, &compute_barrier, 0, NULL, 0, NULL);
 
@@ -1043,7 +1044,7 @@ void R_UpdateAnimatedBLASes (cb_context_t *cbx)
 			geom->geometry.triangles.vertexFormat = VK_FORMAT_R32G32B32_SFLOAT;
 			geom->geometry.triangles.vertexData.deviceAddress = vertex_output_address;
 			geom->geometry.triangles.vertexStride = sizeof (float) * 3;
-			geom->geometry.triangles.maxVertex = hdr->numverts_vbo;
+			geom->geometry.triangles.maxVertex = hdr->numverts_vbo - 1;
 			geom->geometry.triangles.indexType = VK_INDEX_TYPE_UINT16;
 			geom->geometry.triangles.indexData.deviceAddress = hdr->index_buffer_address;
 

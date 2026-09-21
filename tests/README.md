@@ -84,3 +84,69 @@ cc -std=gnu11 -DUSE_SDL3 -D_GNU_SOURCE -Wno-unused-parameter \
 The image-ownership fixture additionally checks metadata queries before image
 acquisition, bounds/terminal rejection, and invalidation on shutdown. Metadata
 allows renderer view creation; it never authorizes access to image contents.
+
+## Window-size ownership
+
+`window_size_fixture.c` invokes the production SDL resize helper. It reproduces
+a delayed desktop-size event after XR attachment, checks a further window resize
+without changing the runtime target, and checks ordinary desktop behavior.
+
+```sh
+cc -std=gnu11 -DUSE_SDL3 -D_GNU_SOURCE -Wno-unused-parameter \
+  -ffunction-sections -fdata-sections tests/window_size_fixture.c \
+  -Wl,--gc-sections $(pkg-config --cflags --libs sdl3) -lm \
+  -o /tmp/quakespasm-window-size-fixture
+/tmp/quakespasm-window-size-fixture
+```
+
+## Local OpenXR GPU smoke
+
+This optional integration check needs a debug-symbol Linux build, GDB with
+Python support, Vulkan synchronization validation, Quake data, and a working
+Monado build with its simulated driver. It is not a performance benchmark.
+Use a disposable game directory with `id1/pak0.pak` and `id1/pak1.pak` copied or
+symlinked from your licensed installation; the test writes config there.
+
+Start an isolated Monado service in a separate terminal with a private
+`XDG_RUNTIME_DIR` and `XDG_CONFIG_HOME`, `SIMULATED_ENABLE=1` and
+`XRT_COMPOSITOR_FORCE_XCB=1`. Give it a terminal for stdin. Use that build's
+matching OpenXR runtime manifest. See the official
+[Monado development instructions](https://monado.freedesktop.org/developing-with-monado.html).
+Do not change the user's default runtime or stop another running service.
+
+In the test terminal, set `XR_TEST_ROOT` to the disposable test directory,
+`XR_TEST_BINARY` to the debug-symbol executable, and `XR_RUNTIME_JSON` to that
+matching manifest. Export the same private `XDG_RUNTIME_DIR` and
+`XDG_CONFIG_HOME` used by the service, and a private `XDG_DATA_HOME`.
+If the validation layer is outside system search paths, set `VK_LAYER_PATH` to
+its manifest directory. Then run from the repository root:
+
+```sh
+cp tests/openxr-local-smoke.cfg "$XR_TEST_ROOT/game/id1/"
+SDL_VIDEODRIVER=x11 timeout --signal=TERM 50s \
+  gdb --return-child-result -batch -x tests/openxr-local-smoke.gdb --args \
+  "$XR_TEST_BINARY" -validation 2 -basedir "$XR_TEST_ROOT/game" \
+  -window -width 640 -height 480 -nosound -openxr +map start \
+  > "$XR_TEST_ROOT/gpu-smoke.log" 2>&1
+```
+
+Require exit 0, all 13 `XR_SMOKE_probe` records, the final extent check, and no
+Vulkan validation errors or synchronization hazards. A timeout is a failure.
+The script asserts effective OIT, sample count and indirect state for each
+combination rather than accepting unsupported modes as coverage. It also checks
+that task rendering is effective. A GPU that cannot provide the requested modes
+fails this qualification; that does not by itself mean desktop/XR is unsupported.
+
+For visual evidence, optionally export `XR_SMOKE_CAPTURE` to an output `.png`
+path before running. With ImageMagick `import` installed and only this test's
+XCB compositor window named `Monado`, the harness saves `-initial.png` and
+`-resized.png` variants of that path. Inspect both eyes for full scene coverage,
+stereo differences and artifacts. Capture failures fail the check.
+
+The GDB gate inserts the script into the existing command queue after client
+signon. Do not replace this with startup `+exec`: map-loading keepalive refreshes
+can consume waits before the world is live. Each `viewpos` probe follows 75
+waits, and reads the settled renderer state without changing its ownership.
+The test does not validate moving/scaled avatars, eye-only visibility, inherited
+VR weapons/input, headset behavior or performance. Stop only the isolated service
+you started when done. Keep raw logs local; they can contain device identifiers.

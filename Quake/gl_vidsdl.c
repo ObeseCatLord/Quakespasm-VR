@@ -3418,6 +3418,22 @@ void GL_DrawSceneUpscale (cb_context_t *cbx)
 	R_EndDebugUtilsLabel (cbx);
 }
 
+void VID_WindowSizeChanged (int width, int height)
+{
+	if (vulkan_globals.stereo_active)
+	{
+		// SDL reports the desktop window, including delayed startup events.
+		// Runtime swapchain dimensions remain fixed for this XR attachment.
+		openxr_desktop_width = width;
+		openxr_desktop_height = height;
+		return;
+	}
+	vid.width = width;
+	vid.height = height;
+	vid.restart_next_frame = true;
+	Cvar_FindVar ("scr_conscale")->callback (NULL);
+}
+
 static void GL_OpenXRRetireImages (void *unused)
 {
 	// This callback runs on the main XR owner, outside the queue lock. Retire

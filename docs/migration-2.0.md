@@ -26,7 +26,7 @@ The [complete-scope feature map](migration-feature-map.md) is the current migrat
 [migration-preservation.csv](migration-preservation.csv) now covers 905 unique paths, extending the original 904-path snapshot with the current master delta. It retains old blob/WIP evidence and adds current-master blobs and feature routing. Exact source anchors and mechanical module routes are labeled separately. [History](migration-history-index.csv) and [public-interface](migration-interface-index.csv) indexes make omissions reviewable. These are scope/audit artifacts, **not proof of completed behavioral integration**. Historical deletions are reviewed rather than restored blindly; preserved WIP is not automatically accepted release behavior.
 
 The sections below record successive checkpoints. The latest implemented slice
-is **Initial stereo scene integration**; earlier limitations describe their
+is **Local multiview GPU qualification**; earlier limitations describe their
 respective commits, not the current head. None closes the full P1 gameplay gate.
 
 ## First source checkpoint
@@ -209,6 +209,32 @@ vendored `openxr.h` is intentionally preserved. The original thirteen-file WIP s
 newer master now supplies the product checkout. None of these checks establishes
 build success, working VR, desktop runtime parity, or a performance improvement.
 
+## Local multiview GPU qualification
+
+A real local Linux run now renders stock `start` through Monado's simulated
+OpenXR device and the host RTX 4090. Khronos synchronization validation exposed
+two concrete defects: delayed SDL window-size events corrupted the eye viewport,
+and animated ray-shadow geometry reused AS scratch storage with incomplete
+memory dependencies. Both are corrected at the existing donor owners. Astra
+also found an off-by-one `maxVertex` bound, now corrected in both size and build
+descriptions. See the [senior review disposition](migration-local-gpu-review.md).
+
+The consolidated debug-symbol SDL3 build and production resize fixture pass.
+The live check ran 1,136 scene frames with task rendering, verified all twelve
+effective OIT/MSAA/indirect combinations, exercised palette processing, paused,
+restarted the desktop window at 800x600 while preserving 896x1007 eye targets,
+then quit normally. It produced no Vulkan validation errors or synchronization
+hazards. Initial and post-resize compositor images were inspected and show full
+scene output with different eye views. The environment used Monado
+`v25.1.0-710-g735e29e4e`, NVIDIA 610.43.03 and validation layers 1.4.350.1.
+
+Earlier startup-script loading-screen captures are explicitly excluded from
+scene evidence. The reproducible [local GPU smoke gate](../tests/README.md#local-openxr-gpu-smoke)
+waits for signon and checks effective renderer state. The runtime, config and
+game data directory were isolated; headset/eye testing was not needed for this
+checkpoint. This is renderer qualification on one machine, not full P1 gameplay
+acceptance or a performance comparison. Windows and ARM checks remain deferred.
+
 ## Next integration gates
 
 Follow the [reviewed architecture plan](vkquake-base-migration-plan.md).
@@ -217,9 +243,10 @@ The next bounded end-to-end slice is:
 1. The code-level runtime/instance/device bootstrap is now implemented and
    Linux-build checked. Qualify its runtime GPU/WSI combinations as session
    integration proceeds; retain the existing owners.
-2. Attach OpenXR swapchains to donor rendering. Join actual queue submission,
-   not just recording tasks, before releasing images; retire task and GPU users
-   before teardown. Add no second render graph or image-lifetime authority.
+2. The initial OpenXR attachment and task-enabled scene are implemented and
+   locally GPU-checked. Qualify moving/scaled models, eye-only visibility,
+   reference changes, abort and runtime-loss recovery before closing P1. Retain
+   the existing submission join and task/GPU retirement boundaries.
 3. Reuse existing VR view/input/gameplay algorithms for an actual map, weapon,
    movement and HUD. Update gameplay/particles once per logical frame. Preserve
    independent live avatar poses and their shadow poses within donor models.
