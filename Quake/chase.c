@@ -87,7 +87,9 @@ void Chase_UpdateForDrawing (void)
 	vec3_t forward, up, right;
 	vec3_t ideal, crosshair_vec, temp;
 
-	AngleVectors (cl.viewangles, forward, right, up);
+	vec3_t view_angles;
+	VectorCopy (V_TrackedViewAngles (), view_angles);
+	AngleVectors (view_angles, forward, right, up);
 
 	// calc ideal camera location before checking for walls
 	for (i = 0; i < 3; i++)
@@ -114,5 +116,5 @@ void Chase_UpdateForDrawing (void)
 	VectorSubtract (crosshair_vec, r_refdef.vieworg, temp);
 	VectorAngles (temp, NULL, r_refdef.viewangles);
 	if (r_refdef.viewangles[PITCH] == 90 || r_refdef.viewangles[PITCH] == -90)
-		r_refdef.viewangles[YAW] = cl.viewangles[YAW];
+		r_refdef.viewangles[YAW] = view_angles[YAW];
 }

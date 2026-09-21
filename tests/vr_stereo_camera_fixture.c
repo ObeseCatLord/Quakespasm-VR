@@ -3,21 +3,30 @@
 #include "../Quake/gl_rmain.c"
 #include "../Quake/gl_screen.c"
 #include "../Quake/view.c"
+#include "../Quake/chase.c"
 
 vulkanglobals_t		 vulkan_globals;
 client_state_t cl;
 client_static_t cls;
 double host_frametime;
 qboolean noclip_anglehack;
-cvar_t chase_active, cl_forwardspeed, lookspring;
-qboolean CL_AngleLocked (void) { return false; }
-void Chase_UpdateForDrawing (void)
+qboolean con_forcedup;
+int r_trace_line_cache_counter;
+cvar_t lookspring;
+static int chase_traces;
+qboolean SV_RecursiveHullCheck (hull_t *hull, vec3_t p1, vec3_t p2, trace_t *trace, unsigned int hitcontents)
 {
-	// Simulate the completed collision-traced base. The live smoke also runs
-	// the real donor chase code; this spy isolates the floor-classification bug.
-	r_refdef.vieworg[0] = 10;
-	r_refdef.vieworg[1] = 20;
-	r_refdef.vieworg[2] = 30;
+	// Run the real chase calculation with a known collision point, followed
+	// by an unobstructed view ray. GPU smoke uses the real map hull instead.
+	if (chase_traces++ % 2 == 0)
+	{
+		trace->endpos[0] = 10;
+		trace->endpos[1] = 20;
+		trace->endpos[2] = 30;
+	}
+	else
+		VectorCopy (p2, trace->endpos);
+	return true;
 }
 static vrxr_frame_t	 test_frame;
 static unsigned char uniform_data[160];
@@ -47,6 +56,20 @@ void VRXR_AbortFrame (void)
 static void near_value (float actual, float expected)
 {
 	assert (fabsf (actual - expected) < .002f);
+}
+static void head_yaw (float degrees)
+{
+	const float radians = degrees * M_PI / 180.f;
+	float (*head)[4] = test_frame.devices[0].matrix;
+	head[0][0] = head[2][2] = cosf (radians);
+	head[0][2] = sinf (radians);
+	head[2][0] = -sinf (radians);
+	for (int eye = 0; eye < 2; ++eye)
+	{
+		memcpy (test_frame.views[eye].matrix, head, sizeof test_frame.views[eye].matrix);
+		for (int row = 0; row < 3; ++row)
+			test_frame.views[eye].matrix[row][3] += head[row][0] * (eye ? .032f : -.032f);
+	}
 }
 static void restore (void)
 {
@@ -110,6 +133,8 @@ int main (void)
 
 	// Run the real donor view preparation with inherited comfort controls.
 	entity_t player = {0};
+	qmodel_t world = {0};
+	cl.worldmodel = &world;
 	cl.entities = &player;
 	cl.stats[STAT_VIEWHEIGHT] = 22;
 	cl.stats[STAT_HEALTH] = 100;
@@ -237,6 +262,231 @@ int main (void)
 	vulkan_globals.stereo_active = false;
 	V_CalcViewRoll ();
 	near_value (r_refdef.viewangles[ROLL], 80);
+
+	// Head aiming reaches the real donor command constructor. The view must
+	// contain that head rotation once, including with an older paused base.
+	vulkan_globals.stereo_active = true;
+	cls.signon = SIGNONS;
+	cl.fixangle_time = -1;
+	cl.stats[STAT_HEALTH] = 100;
+	cl.v_dmg_time = 0;
+	v_gunkick.value = 0;
+	vr_viewkick.value = 0;
+	vr_world_scale.value = 1;
+	vr_aimmode.value = VR_AIMMODE_HEAD_MYAW;
+	vr_deadzone.value = 30;
+	VectorCopy (vec3_origin, cl.viewangles);
+	cl.viewangles[YAW] = 90;
+	V_ResetTrackedAim ();
+	V_UpdateTrackedAim ();
+	V_CalcRefdef ();
+	head_yaw (15);
+	for (int frame = 0; frame < 3; ++frame)
+	{
+		V_UpdateTrackedAim ();
+		usercmd_t command;
+		CL_BaseMove (&command);
+		near_value (command.viewangles[YAW], 105);
+		R_PrepareStereoFrame ();
+		near_value (r_refdef.viewangles[YAW], 105);
+		R_RestoreStereoView ();
+	}
+	// A reference rebase preserves visual/aim separation and input received
+	// while the new tracking basis is temporarily unavailable.
+	vr_aimmode.value = VR_AIMMODE_MOUSE_MYAW;
+	V_TrackedAimModeChanged (NULL);
+	cl.viewangles[YAW] = 20;
+	V_UpdateTrackedAim ();
+	near_value (tracked_view_angles[YAW], 35);
+	V_RebaseTrackedAim ();
+	test_frame.devices[0].valid = 0;
+	cl.viewangles[YAW] += 5;
+	V_UpdateTrackedAim ();
+	assert (tracked_reference_pending);
+	head_yaw (75);
+	test_frame.devices[0].valid = 1;
+	V_UpdateTrackedAim ();
+	near_value (cl.viewangles[YAW], 25);
+	near_value (tracked_view_angles[YAW], 40);
+	assert (!tracked_reference_pending);
+	// Mode changes clear only mode-specific requests, retaining the rebase.
+	V_RebaseTrackedAim ();
+	vr_aimmode.value = VR_AIMMODE_MOUSE_MYAW_MPITCH;
+	V_TrackedAimModeChanged (NULL);
+	assert (tracked_reference_pending);
+	head_yaw (90);
+	V_UpdateTrackedAim ();
+	near_value (tracked_view_angles[YAW], 40);
+	// Authoritative absolute and relative angles retain their distinct meaning.
+	vr_aimmode.value = VR_AIMMODE_HEAD_MYAW;
+	V_TrackedAimModeChanged (NULL);
+	cl.viewangles[YAW] = 120;
+	cl.viewangles[PITCH] = 6;
+	V_SetTrackedAngles (cl.viewangles);
+	cl.fixangle_time = cl.mtime[0];
+	V_UpdateTrackedAim ();
+	near_value (cl.viewangles[PITCH], 6);
+	near_value (tracked_view_angles[PITCH], 0);
+	near_value (tracked_view_angles[YAW], 120);
+	cl.fixangle_time = -1;
+	V_UpdateTrackedAim ();
+	near_value (cl.viewangles[PITCH], 0);
+	vec3_t server_delta = {0, 30, 0};
+	cl.viewangles[YAW] += 30;
+	V_TrackedAngleDelta (server_delta);
+	V_UpdateTrackedAim ();
+	near_value (cl.viewangles[YAW], 150);
+	near_value (tracked_view_angles[YAW], 150);
+	// Centerview copies visible aim without clearing tracking orientation.
+	vr_aimmode.value = VR_AIMMODE_MOUSE_MYAW;
+	V_TrackedAimModeChanged (NULL);
+	cl.viewangles[YAW] = 10;
+	V_UpdateTrackedAim ();
+	float before_yaw = tracked_yaw;
+	float before_orientation = tracked_previous_orientation[YAW];
+	V_StartPitchDrift ();
+	near_value (cl.viewangles[YAW], tracked_view_angles[YAW]);
+	near_value (tracked_previous_aim[YAW], cl.viewangles[YAW]);
+	near_value (tracked_yaw, before_yaw);
+	near_value (tracked_previous_orientation[YAW], before_orientation);
+	// An accepted server target survives unavailable tracking and takes
+	// precedence over a simultaneous reference-origin rebase.
+	vr_aimmode.value = VR_AIMMODE_CONTROLLER;
+	V_TrackedAimModeChanged (NULL);
+	cl.viewangles[YAW] = 270;
+	V_SetTrackedAngles (cl.viewangles);
+	cl.stats[STAT_WEAPON] = 1;
+	V_RequestTrackedServerYaw (270);
+	test_frame.devices[0].valid = 0;
+	V_UpdateTrackedAim ();
+	assert (tracked_server_yaw_pending);
+	V_RebaseTrackedAim ();
+	head_yaw (135);
+	test_frame.devices[0].valid = 1;
+	V_UpdateTrackedAim ();
+	near_value (tracked_view_angles[YAW], 270);
+	near_value (cl.viewangles[YAW], 270);
+	assert (!tracked_server_yaw_pending && !tracked_reference_pending);
+	// An expired angle lock cannot preserve an obsolete gameplay yaw target.
+	V_RequestTrackedServerYaw (90);
+	test_frame.devices[0].valid = 0;
+	cl.stats[STAT_WEAPON] = 0;
+	V_ValidateTrackedServerYaw (); // completed message, even if no frame runs
+	cl.stats[STAT_WEAPON] = 1;
+	assert (!tracked_server_yaw_pending);
+	V_PushTrackedYaw ();
+	cl.stats[STAT_WEAPON] = 0;
+	V_ValidateTrackedServerYaw ();
+	assert (tracked_server_yaw_pending); // standalone setview is distinct
+	cl.intermission = 1;
+	V_ValidateTrackedServerYaw ();
+	assert (!tracked_server_yaw_pending);
+	cl.intermission = 0;
+	test_frame.devices[0].valid = 1;
+	// Locked commands retain their authority while visual head movement
+	// accumulates. Unlock publishes it once, including repeated static poses.
+	for (int mode = VR_AIMMODE_HEAD_MYAW; mode <= VR_AIMMODE_HEAD_MYAW_MPITCH; ++mode)
+	{
+		V_ResetTrackedAim ();
+		vr_aimmode.value = mode;
+		VectorCopy (vec3_origin, cl.viewangles);
+		cl.viewangles[YAW] = 90;
+		head_yaw (0);
+		cl.fixangle_time = -1;
+		V_UpdateTrackedAim ();
+		cl.fixangle_time = cl.mtime[0];
+		for (int sample = 1; sample <= 3; ++sample)
+		{
+			head_yaw (sample == 1 ? 10 : 20);
+			V_UpdateTrackedAim ();
+			near_value (cl.viewangles[YAW], 90);
+			near_value (tracked_view_angles[YAW], sample == 1 ? 100 : 110);
+		}
+		cl.fixangle_time = -1;
+		for (int sample = 0; sample < 2; ++sample)
+		{
+			V_UpdateTrackedAim ();
+			usercmd_t command;
+			CL_BaseMove (&command);
+			near_value (command.viewangles[YAW], 110);
+			near_value (tracked_view_angles[YAW], 110);
+		}
+	}
+	// Centerview between lock expiry and the next rendered sample must not
+	// replay an aim correction it has already copied into command angles.
+	V_ResetTrackedAim ();
+	vr_aimmode.value = VR_AIMMODE_HEAD_MYAW;
+	cl.viewangles[YAW] = 90;
+	head_yaw (0);
+	V_UpdateTrackedAim ();
+	cl.fixangle_time = cl.mtime[0];
+	head_yaw (20);
+	V_UpdateTrackedAim ();
+	near_value (tracked_withheld_aim[YAW], 20);
+	cl.fixangle_time = -1;
+	V_StartPitchDrift ();
+	V_UpdateTrackedAim ();
+	near_value (cl.viewangles[YAW], 110);
+	near_value (tracked_view_angles[YAW], 110);
+	// Real chase orientation follows visual aim while retaining collision
+	// position. A paused base receives only the subsequent head-angle delta.
+	for (int mode = VR_AIMMODE_MOUSE_MYAW; mode <= VR_AIMMODE_CONTROLLER; mode += 1)
+	{
+		if (mode == VR_AIMMODE_BLENDED || mode == VR_AIMMODE_BLENDED_NOPITCH)
+			continue;
+		V_ResetTrackedAim ();
+		vr_aimmode.value = mode;
+		VectorCopy (vec3_origin, cl.viewangles);
+		cl.viewangles[YAW] = 20;
+		head_yaw (0);
+		V_UpdateTrackedAim ();
+		head_yaw (15);
+		V_UpdateTrackedAim ();
+		chase_active.value = 1;
+		R_InvalidateStereoReference ();
+		V_CalcRefdef ();
+		near_value (r_refdef.vieworg[2], 30);
+		near_value (r_refdef.viewangles[YAW], 35);
+		const float prepared_yaw = r_refdef.viewangles[YAW];
+		R_PrepareStereoFrame ();
+		near_value (r_refdef.viewangles[YAW], prepared_yaw);
+		R_RestoreStereoView ();
+		V_UpdateTrackedAim (); // consume pending origin rebase before motion
+		head_yaw (25);
+		V_UpdateTrackedAim ();
+		R_PrepareStereoFrame ();
+		near_value (r_refdef.viewangles[YAW], prepared_yaw + 10);
+		near_value (r_refdef.vieworg[2], 30);
+		R_RestoreStereoView ();
+	}
+	chase_active.value = 0;
+	// Clearing a client forgets the old world and prepared-base eligibility.
+	V_ResetTrackedAim ();
+	assert (!base_player_view && !tracked_aim_ready);
+	cl.viewangles[YAW] = 180;
+	V_UpdateTrackedAim ();
+	near_value (tracked_view_angles[YAW], 180);
+	// A paused new client must prepare its own base, not subtract the previous
+	// map's aim snapshot. Later paused frames keep that newly prepared base.
+	cl.paused = true;
+	assert (!base_angles_valid);
+	V_SetupFrame ();
+	assert (base_angles_valid && base_player_view);
+	R_PrepareStereoFrame ();
+	near_value (fabsf (r_refdef.viewangles[YAW]), 180);
+	R_RestoreStereoView ();
+	player.origin[0] += 100;
+	const float prepared_x = r_refdef.vieworg[0];
+	V_SetupFrame ();
+	near_value (r_refdef.vieworg[0], prepared_x);
+	cl.paused = false;
+	cls.demoplayback = true;
+	cl.viewangles[YAW] = 77;
+	V_UpdateTrackedAim ();
+	near_value (cl.viewangles[YAW], 77);
+	cls.demoplayback = false;
 	puts ("Production stereo camera: eye separation, pause restoration, skipped reference invalidation and abort GPU-drain boundary passed");
 	puts ("Inherited floor/scale/comfort: floor height, crouch, pitched basis, paused viewheight, LOCAL fallback and desktop gates passed");
+	puts ("Head aiming: actual command angles and paused visual view contain one head rotation");
+	puts ("Aim transitions: reference loss, mode changes, authoritative angles, centerview, pending cancellation/priority, locked accumulation, real chase and client clear passed");
 }

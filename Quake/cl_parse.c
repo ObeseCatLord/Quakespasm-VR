@@ -1783,6 +1783,8 @@ void CL_ParseServerMessage (void)
 	int			i;
 	const char *str;			   // johnfitz
 	int			total, j, lastcmd; // johnfitz
+	qboolean received_setangle = false;
+	float server_yaw = 0;
 
 	//
 	// if recording demos, copy the message out
@@ -1808,6 +1810,9 @@ void CL_ParseServerMessage (void)
 		if (cmd == -1)
 		{
 			SHOWNET ("END OF MESSAGE");
+			if (received_setangle)
+				V_RequestTrackedServerYaw (server_yaw);
+			V_ValidateTrackedServerYaw ();
 
 			if (cl.items != cl.stats[STAT_ITEMS])
 			{
@@ -1901,6 +1906,7 @@ void CL_ParseServerMessage (void)
 
 		case svc_serverinfo:
 			CL_ParseServerInfo ();
+			received_setangle = false;
 			vid.recalc_refdef = true; // leave intermission full screen
 			break;
 
@@ -1908,14 +1914,27 @@ void CL_ParseServerMessage (void)
 			for (i = 0; i < 3; i++)
 				cl.viewangles[i] = MSG_ReadAngle (cl.protocolflags);
 			cl.fixangle_time = cl.mtime[0];
+			V_SetTrackedAngles (cl.viewangles);
+			server_yaw = cl.viewangles[YAW];
+			received_setangle = true;
 			break;
 		case svcfte_setangledelta:
+		{
+			vec3_t delta;
 			for (i = 0; i < 3; i++)
-				cl.viewangles[i] += MSG_ReadAngle16 (cl.protocolflags);
+			{
+				delta[i] = MSG_ReadAngle16 (cl.protocolflags);
+				cl.viewangles[i] += delta[i];
+			}
+			V_TrackedAngleDelta (delta);
+			if (received_setangle)
+				server_yaw += delta[YAW];
 			break;
+		}
 
 		case svc_setview:
 			cl.viewentity = MSG_ReadShort ();
+			V_PushTrackedYaw ();
 			break;
 
 		case svc_lightstyle:

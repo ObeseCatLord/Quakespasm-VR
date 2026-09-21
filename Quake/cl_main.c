@@ -126,6 +126,7 @@ CL_ClearState
 */
 void CL_ClearState (void)
 {
+	V_ResetTrackedAim ();
 	if (!sv.active)
 		Host_ClearMemory ();
 
@@ -160,6 +161,7 @@ This is also called on Host_Error, so it shouldn't cause any errors
 */
 void CL_Disconnect (void)
 {
+	V_ResetTrackedAim ();
 	if (key_dest == key_message)
 		Key_EndChat (); // don't get stuck in chat mode
 

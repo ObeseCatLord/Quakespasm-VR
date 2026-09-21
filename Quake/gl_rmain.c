@@ -345,6 +345,7 @@ void R_InvalidateStereoReference (void)
 {
 	// Keep invalidation across skipped frames until a valid rendered pose.
 	stereo_have_reference = false;
+	V_RebaseTrackedAim ();
 }
 
 void R_RestoreStereoView (void)
@@ -377,7 +378,21 @@ void R_PrepareStereoFrame (void)
 	const float (*head)[4] = frame->devices[0].matrix;
 	const float units_per_metre = V_VRUnitsPerMetre ();
 	vec3_t base_forward, base_right, base_up, local, offset;
+	float tracking_yaw = stereo_base_angles[YAW];
+	const qboolean resolved_view = V_ApplyTrackedView (r_refdef.viewangles, &tracking_yaw);
 	AngleVectors (r_refdef.viewangles, base_forward, base_right, base_up);
+	if (resolved_view)
+	{
+		// The visual view already contains the head. Map tracking through the
+		// desired view basis * inverse(raw head), not through the head twice.
+		vec3_t columns[3];
+		for (int column = 0; column < 3; ++column)
+			for (int i = 0; i < 3; ++i)
+				columns[column][i] = base_right[i] * head[column][0] + base_up[i] * head[column][1] - base_forward[i] * head[column][2];
+		VectorCopy (columns[0], base_right);
+		VectorCopy (columns[1], base_up);
+		VectorScale (columns[2], -1, base_forward);
+	}
 	if (!stereo_have_reference || frame->reference_changed)
 	{
 		for (int i = 0; i < 3; ++i)
@@ -400,7 +415,7 @@ void R_PrepareStereoFrame (void)
 			// LOCAL has no known floor: retain relative height at the default offset.
 			r_refdef.vieworg[2] += V_VRFloorOffset () + 16.f;
 	}
-	vec3_t yaw_angles = {0, stereo_base_angles[YAW], 0};
+	vec3_t yaw_angles = {0, tracking_yaw, 0};
 	vec3_t yaw_forward, yaw_right, yaw_up;
 	AngleVectors (yaw_angles, yaw_forward, yaw_right, yaw_up);
 	R_XRVectorToWorld (local, yaw_forward, yaw_right, yaw_up, offset);

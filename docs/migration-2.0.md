@@ -260,6 +260,32 @@ This is partial VR-003/VR-004/VR-014 progress, not P1 completion: camera/command
 aiming, recenter/server-yaw, tracked weapons and roomscale authority still need
 their coherent inherited implementation. No performance improvement is claimed.
 
+## Inherited head/mouse aim and camera integration
+
+`vr_aimmode` (default 7) and `vr_deadzone` (default 30) now reuse the inherited
+resolver through the donor view/input owner. Modes 1–6 update actual command aim;
+the visual view remains separate and enters stereo preparation exactly once.
+Mode 7 retains its inherited default and head-driven visual view, but tracked
+controller command aim still awaits the coupled hand/weapon/movement migration.
+
+Absolute server angles, relative angle deltas, setview/readback, centerview,
+client reset and tracking-origin rebases now have distinct handling. Server
+angle locks preserve authoritative commands while visual head motion accumulates;
+unlock publishes that accumulated aim once. A hidden weapon cancels an accepted
+gameplay yaw target at message completion even if no frame is rendered. Standalone
+setview alignment retains separate request provenance. Same-world runtime
+recreation keeps yaw history; a new client clears it.
+
+The donor chase calculation now receives resolved visual angles and retains its
+collision result. Its saved contribution also allows paused head rotation to
+remain current. Existing input devices, command construction, packet formats,
+render tasks and camera collision remain their original owners.
+
+Source comparison, Astra review dispositions and local evidence are recorded in
+[migration-aim-review.md](migration-aim-review.md). This advances VR-005 and
+VR-014; full controller/roomscale, scripted-camera/demo, tracked weapon and
+network parity remain open. P1 is not complete and no speedup is claimed.
+
 ## Next integration gates
 
 Follow the [reviewed architecture plan](vkquake-base-migration-plan.md).

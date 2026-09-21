@@ -29,11 +29,21 @@ extern cvar_t vid_contrast;
 extern uint8_t v_blend[4];
 
 void V_Init (void);
-// Shared view/renderer boundary; no runtime ownership or input policy here.
+// Existing view/input owner; runtime lifetime remains in the backend.
 qboolean V_UseTrackedView (void);
 float V_VRUnitsPerMetre (void);
 float V_VRFloorOffset (void);
 qboolean V_TrackedPlayerBase (float *viewheight);
+void V_UpdateTrackedAim (void);
+void V_ResetTrackedAim (void);
+void V_RebaseTrackedAim (void);
+void V_SetTrackedAngles (const vec3_t angles);
+void V_PushTrackedYaw (void);
+void V_RequestTrackedServerYaw (float yaw);
+void V_ValidateTrackedServerYaw (void);
+const float *V_TrackedViewAngles (void);
+void V_TrackedAngleDelta (const vec3_t delta);
+qboolean V_ApplyTrackedView (vec3_t angles, float *tracking_yaw);
 void V_ResetBlend (void);
 void V_RenderView (
 	qboolean use_tasks, task_handle_t begin_rendering_task, task_handle_t setup_frame_task, task_handle_t draw_done_task, task_handle_t draw_gui_task);

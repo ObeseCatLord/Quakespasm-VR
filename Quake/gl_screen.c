@@ -1588,6 +1588,8 @@ void SCR_UpdateScreen (qboolean use_tasks)
 		in_update_screen = false;
 		return;
 	}
+	// Publish gameplay aim once on the main owner, before view/draw tasks.
+	V_UpdateTrackedAim ();
 
 	if (use_tasks)
 	{

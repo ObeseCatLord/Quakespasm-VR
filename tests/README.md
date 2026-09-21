@@ -77,17 +77,36 @@ It also runs production `V_CalcRefdef` and comfort functions, checking floor-kno
 height, crouching, scale/IPD changes, a pitched camera basis, a paused base whose
 server viewheight subsequently changes, `LOCAL` relative-height fallback,
 invalid scale values, and desktop/VR bob, movement/death roll and damage/gun-kick
-gates. These are view-adapter checks, not movement/aiming or network parity.
-The fixture also checks recoil recovery while suppressed and classification of a
-completed chase-camera base. Its chase function is a spy; the live smoke runs
-the real donor chase path separately.
+gates. It also checks recoil recovery while suppressed and classification of a
+completed chase-camera base. The real donor chase calculation runs with a stubbed
+hull trace that provides a known collision result; the live smoke uses real map
+collision.
+
+The same fixture links production `CL_BaseMove` and checks head aim in actual
+command angles, one visual head contribution, reference rebasing across lost
+tracking, mode changes, server absolute/relative angles, centerview, pending
+server-yaw cancellation/priority, and client resets. Modes 1/2 accumulate visual
+head movement through angle locks without changing locked commands, then publish
+it once on unlock, including centerview between lock expiry and frame update.
+A paused new client prepares a fresh base once. Modes 3/4/7 drive the real chase calculation and retain fresh
+orientation while paused. These checks do not establish controller, roomscale,
+full camera or QSS-M networking parity.
 
 ```sh
 cc -std=gnu11 -DUSE_SDL3 -D_GNU_SOURCE -Wno-unused-parameter \
   -ffunction-sections -fdata-sections tests/vr_stereo_camera_fixture.c \
-  Quake/mathlib.c -Wl,--gc-sections $(pkg-config --cflags --libs sdl3) -lm \
+  Quake/mathlib.c Quake/cl_input.c -Wl,--gc-sections $(pkg-config --cflags --libs sdl3) -lm \
   -o /tmp/quakespasm-stereo-camera
 /tmp/quakespasm-stereo-camera
+```
+
+`vr_aim_fixture.c` checks the reused pose signs, modes 1–7, blended deadzone,
+null-controller behavior and rejection of nonfinite pose input independently:
+
+```sh
+cc -std=c11 -Wall -Wextra -Werror tests/vr_aim_fixture.c -lm \
+  -o /tmp/quakespasm-aim-math
+/tmp/quakespasm-aim-math
 ```
 
 The image-ownership fixture additionally checks metadata queries before image
@@ -132,20 +151,23 @@ its manifest directory. Then run from the repository root:
 
 ```sh
 cp tests/openxr-local-smoke.cfg "$XR_TEST_ROOT/game/id1/"
-SDL_VIDEODRIVER=x11 timeout --signal=TERM 90s \
+SDL_VIDEODRIVER=x11 timeout --signal=TERM 110s \
   gdb --return-child-result -batch -x tests/openxr-local-smoke.gdb --args \
   "$XR_TEST_BINARY" -validation 2 -basedir "$XR_TEST_ROOT/game" \
   -window -width 640 -height 480 -nosound -openxr +map start \
   > "$XR_TEST_ROOT/gpu-smoke.log" 2>&1
 ```
 
-Require exit 0, all 19 `XR_SMOKE_probe` records, the final extent check, and no
+Require exit 0, all 24 `XR_SMOKE_probe` records, the final extent check, and no
 Vulkan validation errors or synchronization hazards. A timeout is a failure.
 The script asserts effective OIT, sample count and indirect state for each
 combination rather than accepting unsupported modes as coverage. It also checks
 that task rendering is effective. The final probes change worldscale and floor
 offset live, including while paused, and recover from an invalid zero scale.
 They also enable the real chase camera at scale 2, then return to first person.
+Head-aim and mouse-aim probes compare the rendered visual yaw with command and
+local-server angles; holding attack must consume shells. Final chase probes
+check resolved orientation with running and paused simulation.
 They require a floor-referenced simulated runtime, and compare world height to
 the inherited formula and eye separation to the runtime pose. `LOCAL` fallback
 is covered by the production camera fixture, not this GPU run.
@@ -155,7 +177,9 @@ fails this qualification; that does not by itself mean desktop/XR is unsupported
 For visual evidence, optionally export `XR_SMOKE_CAPTURE` to an output `.png`
 path before running. With ImageMagick `import` installed and only this test's
 XCB compositor window named `Monado`, the harness saves `-initial.png`,
-`-resized.png`, `-scaled.png`, `-raised.png` and `-chase.png` variants of that path. Inspect both eyes for full scene coverage,
+`-resized.png`, `-scaled.png`, `-raised.png`, `-chase.png`, `-head-aim.png`,
+`-mouse-aim.png` and `-chase-paused.png` variants of that path.
+Inspect both eyes for full scene coverage,
 stereo differences and artifacts. Capture failures fail the check.
 
 The GDB gate inserts the script into the existing command queue after client
@@ -163,5 +187,5 @@ signon. Do not replace this with startup `+exec`: map-loading keepalive refreshe
 can consume waits before the world is live. Each `viewpos` probe follows 75
 waits, and reads the settled renderer state without changing its ownership.
 The test does not validate moving/scaled avatars, eye-only visibility, inherited
-VR weapons/input, headset behavior or performance. Stop only the isolated service
+tracked weapons/controller input, headset behavior or performance. Stop only the isolated service
 you started when done. Keep raw logs local; they can contain device identifiers.

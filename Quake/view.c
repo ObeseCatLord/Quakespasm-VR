@@ -22,6 +22,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 // view.c -- player eye positioning
 
 #include "quakedef.h"
+#include "vr_aim.h"
 
 /*
 
@@ -77,11 +78,193 @@ cvar_t r_viewmodel_quake = {"r_viewmodel_quake", "0", CVAR_ARCHIVE_GAME};
 cvar_t vr_world_scale = {"vr_world_scale", "1.0", CVAR_ARCHIVE};
 cvar_t vr_floor_offset = {"vr_floor_offset", "-16", CVAR_ARCHIVE};
 cvar_t vr_viewkick = {"vr_viewkick", "0", CVAR_NONE};
+cvar_t vr_aimmode = {"vr_aimmode", "7", CVAR_ARCHIVE};
+cvar_t vr_deadzone = {"vr_deadzone", "30", CVAR_ARCHIVE};
 
 // These describe the saved V_CalcRefdef base, including when paused. Do not
 // subtract a newly received viewheight from a base prepared with an older one.
 static float base_viewheight;
-static qboolean base_player_view;
+static qboolean base_player_view, base_angles_valid;
+static vec3_t base_aim_angles;
+
+// Keep donor cl.viewangles as input/command aim. The inherited resolver also
+// needs an independent visual view and the preceding aim/head sample.
+static vec3_t tracked_view_angles, tracked_previous_aim, tracked_previous_orientation;
+static vec3_t tracked_raw_angles, tracked_withheld_aim;
+static float tracked_yaw;
+static qboolean tracked_aim_ready;
+static qboolean tracked_reference_pending, tracked_readback_yaw, tracked_server_yaw_pending;
+static float tracked_server_yaw;
+static qboolean tracked_server_yaw_from_setangle;
+
+static int V_TrackedAimMode (void)
+{
+	return isfinite (vr_aimmode.value) && vr_aimmode.value >= 1 && vr_aimmode.value <= 7 ? (int)vr_aimmode.value : VR_AIMMODE_HEAD_MYAW;
+}
+
+static void V_TrackedAimModeChanged (cvar_t *var)
+{
+	// Source VR_AimMode_f clears mode-specific requests, not pose history.
+	tracked_readback_yaw = tracked_server_yaw_pending = false;
+	if (V_TrackedAimMode () == VR_AIMMODE_CONTROLLER)
+	{
+		VectorCopy (vec3_origin, tracked_withheld_aim);
+		VectorCopy (cl.viewangles, tracked_previous_aim);
+	}
+}
+
+void V_ResetTrackedAim (void)
+{
+	tracked_aim_ready = false;
+	base_player_view = base_angles_valid = false;
+	VectorCopy (vec3_origin, tracked_withheld_aim);
+	tracked_reference_pending = tracked_readback_yaw = tracked_server_yaw_pending = false;
+}
+
+void V_RebaseTrackedAim (void)
+{
+	// A runtime origin change is not a new game. Retain mapped head and aim
+	// histories until a valid pose can establish the replacement yaw basis.
+	tracked_reference_pending = true;
+}
+
+void V_SetTrackedAngles (const vec3_t angles)
+{
+	VectorCopy (angles, tracked_view_angles);
+	VectorCopy (angles, tracked_previous_aim);
+	VectorCopy (vec3_origin, tracked_withheld_aim);
+}
+
+void V_PushTrackedYaw (void)
+{
+	if (!vulkan_globals.stereo_active)
+		return;
+	if (V_TrackedAimMode () == VR_AIMMODE_CONTROLLER)
+	{
+		tracked_server_yaw = tracked_aim_ready ? tracked_view_angles[YAW] : cl.viewangles[YAW];
+		tracked_server_yaw_pending = true;
+		tracked_server_yaw_from_setangle = false;
+	}
+	else
+		tracked_readback_yaw = true;
+}
+
+void V_RequestTrackedServerYaw (float yaw)
+{
+	if (!vulkan_globals.stereo_active || V_TrackedAimMode () != VR_AIMMODE_CONTROLLER)
+		return;
+	// Classify only after the whole message: a later stat can hide the weapon.
+	tracked_server_yaw_pending = cl.stats[STAT_WEAPON] != 0 && !cl.intermission;
+	tracked_server_yaw = yaw;
+	tracked_server_yaw_from_setangle = true;
+}
+
+void V_ValidateTrackedServerYaw (void)
+{
+	// Also run at message completion: hidden/revealed weapons can arrive
+	// between rendered frames, after the donor angle lock has expired.
+	if (cl.intermission || (tracked_server_yaw_from_setangle && !cl.stats[STAT_WEAPON]))
+		tracked_server_yaw_pending = false;
+}
+
+void V_TrackedAngleDelta (const vec3_t delta)
+{
+	for (int i = 0; i < 3; ++i)
+	{
+		tracked_view_angles[i] += delta[i];
+		tracked_previous_aim[i] += delta[i];
+	}
+	if (V_TrackedAimMode () == VR_AIMMODE_CONTROLLER)
+	{
+		tracked_yaw += delta[YAW];
+		tracked_previous_orientation[YAW] += delta[YAW];
+		if (tracked_server_yaw_pending)
+			tracked_server_yaw += delta[YAW];
+	}
+}
+
+void V_UpdateTrackedAim (void)
+{
+	const vrxr_frame_t *frame = GL_OpenXRFrame ();
+	V_ValidateTrackedServerYaw ();
+	if (!frame || !frame->should_render || !frame->devices[0].valid || cls.signon != SIGNONS || cls.demoplayback || cl.intermission)
+		return;
+	vec3_t orientation, aim;
+	if (!VR_AimPoseAngles (frame->devices[0].matrix, 0, tracked_raw_angles))
+	{
+		return;
+	}
+	const int mode = V_TrackedAimMode ();
+	VectorCopy (tracked_raw_angles, orientation);
+	if (!tracked_aim_ready)
+	{
+		// Establish a fresh yaw basis without replaying motion from another
+		// mode/session. Mouse/head modes retain the existing input aim offset.
+		tracked_yaw = (mode == VR_AIMMODE_CONTROLLER ? cl.viewangles[YAW] : 0) - orientation[YAW];
+		orientation[YAW] += tracked_yaw;
+		VectorCopy (orientation, tracked_previous_orientation);
+		VectorCopy (cl.viewangles, tracked_previous_aim);
+		VectorCopy (cl.viewangles, tracked_view_angles);
+		tracked_aim_ready = true;
+	}
+	else
+	{
+		if (tracked_reference_pending)
+			tracked_yaw = tracked_previous_orientation[YAW] - tracked_raw_angles[YAW];
+		orientation[YAW] += tracked_yaw;
+	}
+	tracked_reference_pending = false;
+	if (mode == VR_AIMMODE_CONTROLLER && tracked_server_yaw_pending)
+	{
+		tracked_yaw += tracked_server_yaw - orientation[YAW];
+		orientation[YAW] = tracked_server_yaw;
+		tracked_server_yaw_pending = false;
+	}
+	if (mode != VR_AIMMODE_CONTROLLER && tracked_readback_yaw)
+	{
+		// Preserve source ordering: this frame resolves with the old mapped
+		// orientation; the updated alignment enters the following sample.
+		tracked_yaw = tracked_view_angles[YAW] - (orientation[YAW] - tracked_yaw);
+		tracked_readback_yaw = false;
+	}
+	VectorAdd (cl.viewangles, tracked_withheld_aim, aim);
+	const float deadzone = isfinite (vr_deadzone.value) ? vr_deadzone.value : 30.f;
+	VR_AimResolve (mode, deadzone, orientation, tracked_previous_orientation, tracked_previous_aim, NULL, aim, tracked_view_angles);
+	// Controller shooting/movement require the inherited hand-pose command
+	// path. Do not silently substitute head aim or put hand aim in move angles.
+	if (mode != VR_AIMMODE_CONTROLLER)
+	{
+		if (CL_AngleLocked ())
+			VectorSubtract (aim, cl.viewangles, tracked_withheld_aim);
+		else
+		{
+			// Publish accumulated physical aim once when the server lock ends.
+			VectorCopy (aim, cl.viewangles);
+			VectorCopy (vec3_origin, tracked_withheld_aim);
+		}
+	}
+	VectorCopy (orientation, tracked_previous_orientation);
+	VectorCopy (aim, tracked_previous_aim);
+}
+
+const float *V_TrackedViewAngles (void)
+{
+	return tracked_aim_ready && V_UseTrackedView () && !cls.demoplayback && !cl.intermission ? tracked_view_angles : cl.viewangles;
+}
+
+qboolean V_ApplyTrackedView (vec3_t angles, float *tracking_yaw)
+{
+	if (!tracked_aim_ready || !base_angles_valid || !V_UseTrackedView () || cls.demoplayback || cl.intermission)
+		return false;
+	// Replace only the input-aim contribution of the prepared base. Its kick
+	// and idle contributions survive; a paused base receives the latest head.
+	for (int i = 0; i < 3; ++i)
+		angles[i] += tracked_view_angles[i] - base_aim_angles[i];
+	// Chase stores the visual input used by its collision-traced base, so
+	// paused tracking refreshes orientation without discarding that result.
+	*tracking_yaw = tracked_view_angles[YAW] - tracked_raw_angles[YAW];
+	return true;
+}
 
 qboolean V_UseTrackedView (void)
 {
@@ -187,7 +370,16 @@ cvar_t v_centerspeed = {"v_centerspeed", "500", CVAR_NONE};
 void V_StartPitchDrift (void)
 {
 	if (V_UseTrackedView ())
-		return; // Inherited aim-reset semantics arrive with the aiming port.
+	{
+		if (tracked_aim_ready && V_TrackedAimMode () != VR_AIMMODE_CONTROLLER && !cls.demoplayback && !cl.intermission && !CL_AngleLocked ())
+		{
+			cl.viewangles[PITCH] = tracked_view_angles[PITCH];
+			cl.viewangles[YAW] = tracked_view_angles[YAW];
+			VectorCopy (cl.viewangles, tracked_previous_aim);
+			VectorCopy (vec3_origin, tracked_withheld_aim);
+		}
+		return;
+	}
 #if 1
 	if (cl.laststop == cl.time)
 	{
@@ -728,7 +920,7 @@ void V_CalcIntermissionRefdef (void)
 {
 	entity_t *ent, *view;
 	float	  old;
-	base_player_view = false;
+	base_player_view = base_angles_valid = false;
 
 	// ent is the player model (visible when out of body)
 	ent = &cl.entities[cl.viewentity];
@@ -779,8 +971,9 @@ void V_CalcRefdef (void)
 
 	// refresh position
 	VectorCopy (ent->origin, r_refdef.vieworg);
-	base_player_view = true;
+	base_player_view = base_angles_valid = true;
 	base_viewheight = cl.stats[STAT_VIEWHEIGHT];
+	VectorCopy (cl.viewangles, base_aim_angles);
 	r_refdef.vieworg[2] += base_viewheight + bob;
 
 	// never let it sit exactly on a node line, because a water plane can
@@ -916,6 +1109,7 @@ void V_CalcRefdef (void)
 	if (chase_active.value)
 	{
 		Chase_UpdateForDrawing (); // johnfitz
+		VectorCopy (V_TrackedViewAngles (), base_aim_angles);
 		base_player_view = false; // collision-traced camera, not a player-eye base
 	}
 }
@@ -943,12 +1137,12 @@ void V_SetupFrame (void)
 {
 	V_UpdateBlend ();
 	if (con_forcedup)
-		base_player_view = false;
+		base_player_view = base_angles_valid = false;
 	if (!con_forcedup)
 	{
 		if (cl.intermission)
 			V_CalcIntermissionRefdef ();
-		else if (!cl.paused /* && (cl.maxclients > 1 || key_dest == key_game) */)
+		else if (!cl.paused || (V_UseTrackedView () && !base_angles_valid))
 			V_CalcRefdef ();
 	}
 }
@@ -1002,6 +1196,9 @@ void V_Init (void)
 	Cvar_RegisterVariable (&vr_world_scale);
 	Cvar_RegisterVariable (&vr_floor_offset);
 	Cvar_RegisterVariable (&vr_viewkick);
+	Cvar_RegisterVariable (&vr_aimmode);
+	Cvar_RegisterVariable (&vr_deadzone);
+	Cvar_SetCallback (&vr_aimmode, V_TrackedAimModeChanged);
 	Cmd_AddCommand ("v_cshift", V_cshift_f);
 	Cmd_AddCommand ("bf", V_BonusFlash_f);
 	Cmd_AddCommand ("centerview", V_StartPitchDrift);
