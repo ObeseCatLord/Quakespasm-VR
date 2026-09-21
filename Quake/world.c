@@ -86,11 +86,12 @@ typedef struct
 	edict_t	*trigger;
 	float	until;
 	qboolean	qc_teleport_time;
+	qboolean	instant_occupancy;
 } sv_recent_teleport_trigger_t;
 
-/* QuakeC owns teleportation.  This merely prevents the exact trigger that
- * just moved a client from immediately processing it again on the following
- * relink; broad classname filtering breaks chained and custom teleporters. */
+/* QuakeC owns teleportation.  An instant teleporter can omit teleport_time,
+ * so retain its exact source while the client remains inside that source.
+ * This does not suppress a distinct trigger in an intentional portal chain. */
 static sv_recent_teleport_trigger_t sv_recent_teleport_triggers[MAX_SCOREBOARD];
 
 static qboolean SV_IsTeleportTrigger (edict_t *touch)
@@ -133,6 +134,12 @@ static qboolean SV_IsInstantTeleportTrigger (edict_t *touch)
 	return classname && !q_strcasecmp(classname, "trigger_instateleport");
 }
 
+static qboolean SV_RecentTeleportTriggerIsValid (
+	const sv_recent_teleport_trigger_t *recent)
+{
+	return recent->trigger && !recent->trigger->free;
+}
+
 static qboolean SV_ShouldSkipRecentTeleportTrigger (edict_t *touch, edict_t *ent)
 {
 	sv_recent_teleport_trigger_t	*recent;
@@ -145,16 +152,23 @@ static qboolean SV_ShouldSkipRecentTeleportTrigger (edict_t *touch, edict_t *ent
 	if (clientnum < 0 || clientnum >= MAX_SCOREBOARD)
 		return false;
 	recent = &sv_recent_teleport_triggers[clientnum];
-	if (recent->until <= qcvm->time ||
-		(recent->qc_teleport_time && ent->v.teleport_time != recent->until))
+	if (!SV_RecentTeleportTriggerIsValid(recent))
 	{
-		recent->trigger = NULL;
-		recent->until = 0;
-		recent->qc_teleport_time = false;
+		memset(recent, 0, sizeof(*recent));
 		return false;
 	}
 
-	return recent->trigger == touch;
+	if (recent->trigger != touch)
+		return false;
+	if (recent->instant_occupancy)
+		return true;
+	if (recent->until <= qcvm->time ||
+		(recent->qc_teleport_time && ent->v.teleport_time != recent->until))
+	{
+		memset(recent, 0, sizeof(*recent));
+		return false;
+	}
+	return true;
 }
 
 static void SV_RecordRecentTeleportTrigger (edict_t *touch, edict_t *ent,
@@ -172,26 +186,57 @@ static void SV_RecordRecentTeleportTrigger (edict_t *touch, edict_t *ent,
 		return;
 	recent = &sv_recent_teleport_triggers[clientnum];
 	recent->trigger = touch;
-	if (ent->v.teleport_time > qcvm->time)
+	if (SV_IsInstantTeleportTrigger(touch))
+	{
+		/* Some mods also transport corpses. Do not let a dead touch install
+		 * a new occupancy latch after the death cleanup, before QC respawns. */
+		if (ent->v.health <= 0 || ent->v.deadflag != DEAD_NO)
+		{
+			memset(recent, 0, sizeof(*recent));
+			return;
+		}
+		recent->until = 0;
+		recent->qc_teleport_time = false;
+		recent->instant_occupancy = true;
+	}
+	else if (ent->v.teleport_time > qcvm->time)
 	{
 		recent->until = ent->v.teleport_time;
 		recent->qc_teleport_time = true;
-	}
-	else if (SV_IsInstantTeleportTrigger(touch))
-	{
-		/* QBJ3-family instant destinations deliberately omit teleport_time.
-		 * A short exact-trigger lock prevents an overlapping source brush from
-		 * immediately processing the same client again without suppressing a
-		 * different trigger in an intentional portal chain. */
-		recent->until = qcvm->time + 0.1f;
-		recent->qc_teleport_time = false;
+		recent->instant_occupancy = false;
 	}
 	else
 	{
-		recent->trigger = NULL;
-		recent->until = 0;
-		recent->qc_teleport_time = false;
+		memset(recent, 0, sizeof(*recent));
 	}
+}
+
+static void SV_ClearRecentTeleportTriggerIfExited (edict_t *ent,
+	edict_t **list, int listcount)
+{
+	sv_recent_teleport_trigger_t	*recent;
+	int					clientnum, i;
+
+	if (!SV_IsActiveClientEdict(ent))
+		return;
+	clientnum = NUM_FOR_EDICT(ent) - 1;
+	if (clientnum < 0 || clientnum >= MAX_SCOREBOARD)
+		return;
+	recent = &sv_recent_teleport_triggers[clientnum];
+	if (!recent->instant_occupancy)
+		return;
+	if (!SV_RecentTeleportTriggerIsValid(recent) || ent->v.health <= 0 ||
+		ent->v.deadflag != DEAD_NO)
+	{
+		memset(recent, 0, sizeof(*recent));
+		return;
+	}
+	for (i = 0; i < listcount; ++i)
+	{
+		if (list[i] == recent->trigger)
+			return;
+	}
+	memset(recent, 0, sizeof(*recent));
 }
 
 static qboolean SV_IsPointMove (moveclip_t *clip)
@@ -781,6 +826,29 @@ void SV_CoopSharedResetClientSlot (int slot)
 		sizeof(sv_coop_shared_touch_before[slot]));
 	sv_coop_shared_touch_valid[slot] = false;
 	sv_coop_shared_touch_depth[slot] = 0;
+}
+
+void SV_ClearRecentInstantTeleportTriggerForClientSlot (int slot)
+{
+	if (slot < 0 || slot >= MAX_SCOREBOARD)
+		return;
+	if (sv_recent_teleport_triggers[slot].instant_occupancy)
+		memset(&sv_recent_teleport_triggers[slot], 0,
+			sizeof(sv_recent_teleport_triggers[slot]));
+}
+
+void SV_InvalidateRecentTeleportTrigger (edict_t *trigger)
+{
+	int i;
+
+	if (qcvm != &sv.qcvm || !trigger)
+		return;
+	for (i = 0; i < MAX_SCOREBOARD; ++i)
+	{
+		if (sv_recent_teleport_triggers[i].trigger == trigger)
+			memset(&sv_recent_teleport_triggers[i], 0,
+				sizeof(sv_recent_teleport_triggers[i]));
+	}
 }
 
 void SV_CoopSharedResetState (void)
@@ -2919,6 +2987,7 @@ void SV_TouchLinks (edict_t *ent)
 
 	listcount = 0;
 	SV_AreaTriggerEdicts (ent, sv_areanodes, list, &listcount, qcvm->num_edicts);
+	SV_ClearRecentTeleportTriggerIfExited(ent, list, listcount);
 
 	for (i = 0; i < listcount; i++)
 	{
