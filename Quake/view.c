@@ -73,6 +73,40 @@ cvar_t gl_cshiftpercent_powerup = {"gl_cshiftpercent_powerup", "100", CVAR_NONE}
 
 cvar_t r_viewmodel_quake = {"r_viewmodel_quake", "0", CVAR_ARCHIVE_GAME};
 
+// Inherited Quakespasm VR scale/floor/comfort settings; keep their names and flags.
+cvar_t vr_world_scale = {"vr_world_scale", "1.0", CVAR_ARCHIVE};
+cvar_t vr_floor_offset = {"vr_floor_offset", "-16", CVAR_ARCHIVE};
+cvar_t vr_viewkick = {"vr_viewkick", "0", CVAR_NONE};
+
+// These describe the saved V_CalcRefdef base, including when paused. Do not
+// subtract a newly received viewheight from a base prepared with an older one.
+static float base_viewheight;
+static qboolean base_player_view;
+
+qboolean V_UseTrackedView (void)
+{
+	const vrxr_frame_t *frame = GL_OpenXRFrame ();
+	return frame && frame->should_render && frame->devices[0].valid;
+}
+
+float V_VRUnitsPerMetre (void)
+{
+	const float scale = vr_world_scale.value;
+	const float units = scale / (1.5f * 0.0254f);
+	return isfinite (units) && units > 0 ? units : 1.f / (1.5f * 0.0254f);
+}
+
+float V_VRFloorOffset (void)
+{
+	return isfinite (vr_floor_offset.value) ? vr_floor_offset.value : -16.f;
+}
+
+qboolean V_TrackedPlayerBase (float *viewheight)
+{
+	*viewheight = base_viewheight;
+	return base_player_view && V_UseTrackedView ();
+}
+
 extern int in_forward, in_forward2, in_back;
 
 vec3_t v_punchangles[2];	   // johnfitz -- copied from cl.punchangle.  0 is current, 1 is previous value. never the same unless map just loaded
@@ -99,7 +133,7 @@ float V_CalcRoll (vec3_t angles, vec3_t velocity)
 	sign = side < 0 ? -1 : 1;
 	side = fabs (side);
 
-	value = cl_rollangle.value;
+	value = V_UseTrackedView () ? 0 : cl_rollangle.value;
 	//	if (cl.inwater)
 	//		value *= 6;
 
@@ -122,7 +156,7 @@ float V_CalcBob (void)
 	float bob;
 	float cycle;
 
-	if (!cl_bobcycle.value) /* Avoid divide-by-zero, don't bob */
+	if (V_UseTrackedView () || !cl_bobcycle.value) /* Avoid divide-by-zero, don't bob */
 		return 0.0f;
 
 	cycle = cl.time - (int)(cl.time / cl_bobcycle.value) * cl_bobcycle.value;
@@ -152,6 +186,8 @@ cvar_t v_centerspeed = {"v_centerspeed", "500", CVAR_NONE};
 
 void V_StartPitchDrift (void)
 {
+	if (V_UseTrackedView ())
+		return; // Inherited aim-reset semantics arrive with the aiming port.
 #if 1
 	if (cl.laststop == cl.time)
 	{
@@ -190,7 +226,7 @@ void V_DriftPitch (void)
 {
 	float delta, move;
 
-	if (noclip_anglehack || !cl.onground || cls.demoplayback || CL_AngleLocked ())
+	if (noclip_anglehack || !cl.onground || cls.demoplayback || CL_AngleLocked () || V_UseTrackedView ())
 	// FIXME: noclip_anglehack is set on the server, so in a nonlocal game this won't work.
 	{
 		cl.driftmove = 0;
@@ -335,6 +371,8 @@ void V_ParseDamage (void)
 	//
 	// calculate view angle kicks
 	//
+	if (V_UseTrackedView () && !vr_viewkick.value)
+		return; // Preserve damage color/face feedback above.
 	ent = &cl.entities[cl.viewentity];
 
 	VectorSubtract (from, ent->origin, from);
@@ -665,12 +703,15 @@ void V_CalcViewRoll (void)
 
 	if (cl.v_dmg_time > 0)
 	{
-		r_refdef.viewangles[ROLL] += cl.v_dmg_time / v_kicktime.value * cl.v_dmg_roll;
-		r_refdef.viewangles[PITCH] += cl.v_dmg_time / v_kicktime.value * cl.v_dmg_pitch;
+		if (!V_UseTrackedView () || vr_viewkick.value)
+		{
+			r_refdef.viewangles[ROLL] += cl.v_dmg_time / v_kicktime.value * cl.v_dmg_roll;
+			r_refdef.viewangles[PITCH] += cl.v_dmg_time / v_kicktime.value * cl.v_dmg_pitch;
+		}
 		cl.v_dmg_time -= host_frametime;
 	}
 
-	if (cl.stats[STAT_HEALTH] <= 0)
+	if (cl.stats[STAT_HEALTH] <= 0 && !V_UseTrackedView ())
 	{
 		r_refdef.viewangles[ROLL] = 80; // dead view angle
 		return;
@@ -687,6 +728,7 @@ void V_CalcIntermissionRefdef (void)
 {
 	entity_t *ent, *view;
 	float	  old;
+	base_player_view = false;
 
 	// ent is the player model (visible when out of body)
 	ent = &cl.entities[cl.viewentity];
@@ -737,7 +779,9 @@ void V_CalcRefdef (void)
 
 	// refresh position
 	VectorCopy (ent->origin, r_refdef.vieworg);
-	r_refdef.vieworg[2] += cl.stats[STAT_VIEWHEIGHT] + bob;
+	base_player_view = true;
+	base_viewheight = cl.stats[STAT_VIEWHEIGHT];
+	r_refdef.vieworg[2] += base_viewheight + bob;
 
 	// never let it sit exactly on a node line, because a water plane can
 	// dissapear when viewed with the eye exactly on it.
@@ -761,7 +805,8 @@ void V_CalcRefdef (void)
 		for (i = 0; i < 3; i++)
 			r_refdef.vieworg[i] += scr_ofsx.value * forward[i] + scr_ofsy.value * right[i] + scr_ofsz.value * up[i];
 
-	V_BoundOffsets ();
+	if (!V_UseTrackedView ())
+		V_BoundOffsets ();
 
 	// set up gun position
 	VectorCopy (cl.viewangles, view->angles);
@@ -819,7 +864,7 @@ void V_CalcRefdef (void)
 	view->netstate.colormap = 0;
 
 	// johnfitz -- v_gunkick
-	if (v_gunkick.value == 1) // original quake kick
+	if (v_gunkick.value == 1 && (!V_UseTrackedView () || vr_viewkick.value)) // original quake kick
 		VectorAdd (r_refdef.viewangles, cl.punchangle, r_refdef.viewangles);
 	if (v_gunkick.value == 2) // lerped kick
 	{
@@ -839,7 +884,10 @@ void V_CalcRefdef (void)
 					punch[i] = q_max (punch[i] + delta, v_punchangles[0][i]);
 			}
 
-		VectorAdd (r_refdef.viewangles, punch, r_refdef.viewangles);
+		// Keep interpolation current while suppressed so re-enabling kicks or
+		// returning to desktop cannot replay a stale recoil accumulator.
+		if (!V_UseTrackedView () || vr_viewkick.value)
+			VectorAdd (r_refdef.viewangles, punch, r_refdef.viewangles);
 	}
 	// johnfitz
 
@@ -866,7 +914,10 @@ void V_CalcRefdef (void)
 		oldz = ent->origin[2];
 
 	if (chase_active.value)
+	{
 		Chase_UpdateForDrawing (); // johnfitz
+		base_player_view = false; // collision-traced camera, not a player-eye base
+	}
 }
 
 /*
@@ -891,6 +942,8 @@ V_SetupFrame
 void V_SetupFrame (void)
 {
 	V_UpdateBlend ();
+	if (con_forcedup)
+		base_player_view = false;
 	if (!con_forcedup)
 	{
 		if (cl.intermission)
@@ -946,6 +999,9 @@ V_Init
 */
 void V_Init (void)
 {
+	Cvar_RegisterVariable (&vr_world_scale);
+	Cvar_RegisterVariable (&vr_floor_offset);
+	Cvar_RegisterVariable (&vr_viewkick);
 	Cmd_AddCommand ("v_cshift", V_cshift_f);
 	Cmd_AddCommand ("bf", V_BonusFlash_f);
 	Cmd_AddCommand ("centerview", V_StartPitchDrift);

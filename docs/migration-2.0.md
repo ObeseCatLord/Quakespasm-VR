@@ -26,7 +26,7 @@ The [complete-scope feature map](migration-feature-map.md) is the current migrat
 [migration-preservation.csv](migration-preservation.csv) now covers 905 unique paths, extending the original 904-path snapshot with the current master delta. It retains old blob/WIP evidence and adds current-master blobs and feature routing. Exact source anchors and mechanical module routes are labeled separately. [History](migration-history-index.csv) and [public-interface](migration-interface-index.csv) indexes make omissions reviewable. These are scope/audit artifacts, **not proof of completed behavioral integration**. Historical deletions are reviewed rather than restored blindly; preserved WIP is not automatically accepted release behavior.
 
 The sections below record successive checkpoints. The latest implemented slice
-is **Local multiview GPU qualification**; earlier limitations describe their
+is **Inherited floor, scale and comfort view adapter**; earlier limitations describe their
 respective commits, not the current head. None closes the full P1 gameplay gate.
 
 ## First source checkpoint
@@ -234,6 +234,31 @@ waits for signon and checks effective renderer state. The runtime, config and
 game data directory were isolated; headset/eye testing was not needed for this
 checkpoint. This is renderer qualification on one machine, not full P1 gameplay
 acceptance or a performance comparison. Windows and ARM checks remain deferred.
+
+## Inherited floor, scale and comfort view adapter
+
+The inherited `vr_world_scale`, `vr_floor_offset` and `vr_viewkick` settings now
+work through existing donor view/render owners with their original defaults and
+flags. Head height and eye separation use the same scale as the stereo clip
+transform. A floor-known runtime uses player-relative physical height plus floor
+offset, replacing desktop eyeheight; `LOCAL` keeps relative-height fallback.
+Physical head displacement uses yaw only so desktop pitch cannot tilt the floor.
+The saved view base retains its own viewheight for correct paused behavior.
+
+Inherited bob, movement/death-roll, drift, bounds and kick gates are adapted;
+idle motion and stair smoothing remain. Invalid/nonpositive or overflowing scale
+uses an effective default without overwriting the saved setting. The runtime
+publishes floor metadata from its existing space owner. Eye tracking remains
+optional and inactive, with no foveation fallback introduced.
+
+The Linux build, production view/camera and backend fixtures passed. A live
+Monado check passed 19 probes over 1,586 scene frames, including scale/floor
+changes while paused, invalid-scale recovery and chase-camera transitions, with inspected eye images,
+normal exit and no Vulkan validation errors. See the
+[source comparison and review disposition](migration-view-adapter-review.md).
+This is partial VR-003/VR-004/VR-014 progress, not P1 completion: camera/command
+aiming, recenter/server-yaw, tracked weapons and roomscale authority still need
+their coherent inherited implementation. No performance improvement is claimed.
 
 ## Next integration gates
 

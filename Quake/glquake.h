@@ -48,7 +48,6 @@ void GL_EndXRFrame (void);
 void R_PrepareStereoFrame (void);
 void R_RestoreStereoView (void);
 void R_InvalidateStereoReference (void);
-#define VR_STEREO_UNITS_PER_METRE (1.0f / (1.5f * 0.0254f))
 extern vec3_t r_stereo_origins[2];
 extern float r_stereo_radius;
 

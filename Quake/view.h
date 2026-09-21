@@ -29,6 +29,11 @@ extern cvar_t vid_contrast;
 extern uint8_t v_blend[4];
 
 void V_Init (void);
+// Shared view/renderer boundary; no runtime ownership or input policy here.
+qboolean V_UseTrackedView (void);
+float V_VRUnitsPerMetre (void);
+float V_VRFloorOffset (void);
+qboolean V_TrackedPlayerBase (float *viewheight);
 void V_ResetBlend (void);
 void V_RenderView (
 	qboolean use_tasks, task_handle_t begin_rendering_task, task_handle_t setup_frame_task, task_handle_t draw_done_task, task_handle_t draw_gui_task);

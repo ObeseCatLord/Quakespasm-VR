@@ -375,6 +375,7 @@ void R_PrepareStereoFrame (void)
 	VectorCopy (r_refdef.viewangles, stereo_base_angles);
 	stereo_view_adjusted = true;
 	const float (*head)[4] = frame->devices[0].matrix;
+	const float units_per_metre = V_VRUnitsPerMetre ();
 	vec3_t base_forward, base_right, base_up, local, offset;
 	AngleVectors (r_refdef.viewangles, base_forward, base_right, base_up);
 	if (!stereo_have_reference || frame->reference_changed)
@@ -384,8 +385,25 @@ void R_PrepareStereoFrame (void)
 		stereo_have_reference = true;
 	}
 	for (int i = 0; i < 3; ++i)
-		local[i] = (head[i][3] - stereo_reference_position[i]) * VR_STEREO_UNITS_PER_METRE;
-	R_XRVectorToWorld (local, base_forward, base_right, base_up, offset);
+		local[i] = (head[i][3] - stereo_reference_position[i]) * units_per_metre;
+	float viewheight;
+	if (V_TrackedPlayerBase (&viewheight))
+	{
+		if (frame->floor_referenced)
+		{
+			// Inherited standing-space formula replaces desktop eye height. Keep
+			// node bias and stair smoothing already applied to the saved view base.
+			local[1] = head[1][3] * units_per_metre;
+			r_refdef.vieworg[2] += V_VRFloorOffset () - viewheight;
+		}
+		else
+			// LOCAL has no known floor: retain relative height at the default offset.
+			r_refdef.vieworg[2] += V_VRFloorOffset () + 16.f;
+	}
+	vec3_t yaw_angles = {0, stereo_base_angles[YAW], 0};
+	vec3_t yaw_forward, yaw_right, yaw_up;
+	AngleVectors (yaw_angles, yaw_forward, yaw_right, yaw_up);
+	R_XRVectorToWorld (local, yaw_forward, yaw_right, yaw_up, offset);
 	VectorAdd (r_refdef.vieworg, offset, r_refdef.vieworg);
 	for (int i = 0; i < 3; ++i) local[i] = -head[i][2];
 	R_XRVectorToWorld (local, base_forward, base_right, base_up, stereo_forward);
@@ -402,7 +420,7 @@ void R_PrepareStereoFrame (void)
 	{
 		const vrxr_view_t *view = &frame->views[eye];
 		for (int i = 0; i < 3; ++i)
-			local[i] = (view->matrix[i][3] - head[i][3]) * VR_STEREO_UNITS_PER_METRE;
+			local[i] = (view->matrix[i][3] - head[i][3]) * units_per_metre;
 		R_XRVectorToWorld (local, base_forward, base_right, base_up, offset);
 		VectorCopy (offset, vulkan_globals.stereo_eye_offset[eye]);
 		vulkan_globals.stereo_eye_offset[eye][3] = 0;

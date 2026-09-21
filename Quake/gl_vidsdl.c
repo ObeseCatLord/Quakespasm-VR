@@ -3558,7 +3558,7 @@ qboolean GL_BeginRendering (qboolean use_tasks, task_handle_t *begin_rendering_t
 			VRXR_EndFrame ();
 			return false;
 		}
-		if (!VRXR_StereoClip (&openxr_frame, VR_STEREO_UNITS_PER_METRE, 4.f, vulkan_globals.stereo_clip_from_center))
+		if (!VRXR_StereoClip (&openxr_frame, V_VRUnitsPerMetre (), 4.f, vulkan_globals.stereo_clip_from_center))
 		{
 			VRXR_AbortFrame ();
 			return false;

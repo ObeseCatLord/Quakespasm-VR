@@ -1157,7 +1157,9 @@ extern "C" int VRXR_BeginFrame(vrxr_frame_t *frame) {
 	}
 	g.frameBegun=true; g.shouldRender=g.frameState.shouldRender==XR_TRUE;
 	if(g.referencePending && g.pendingReferenceType==g.appSpaceType && g.pendingReferenceTime<=g.frameState.predictedDisplayTime) { g.referenceChanged=true; g.referencePending=false; }
-	frame->should_render=g.shouldRender; frame->focused=g.sessionState==XR_SESSION_STATE_FOCUSED; frame->reference_changed=g.referenceChanged ? 1 : 0; g.referenceChanged=false;
+	frame->should_render=g.shouldRender; frame->focused=g.sessionState==XR_SESSION_STATE_FOCUSED; frame->reference_changed=g.referenceChanged ? 1 : 0;
+	frame->floor_referenced=(g.appSpaceType==XR_REFERENCE_SPACE_TYPE_STAGE || g.appSpaceType==XR_REFERENCE_SPACE_TYPE_LOCAL_FLOOR_EXT) ? 1 : 0;
+	g.referenceChanged=false;
 	if(!locate_frame(frame)) { VRXR_AbortFrame(); return -1; }
 	if(g.shouldRender && !begin_images()) { VRXR_AbortFrame(); return -1; }
 	return 1;

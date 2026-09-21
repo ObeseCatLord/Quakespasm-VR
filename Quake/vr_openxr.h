@@ -40,6 +40,8 @@ typedef struct {
 } vrxr_gaze_t;
 typedef struct {
   int should_render, focused, reference_changed;
+  /* App reference space has runtime floor semantics (STAGE or LOCAL_FLOOR), never LOCAL. */
+  int floor_referenced;
   vrxr_device_t devices[VRXR_MAX_DEVICES];
   vrxr_input_t hands[2];
   vrxr_view_t views[2];

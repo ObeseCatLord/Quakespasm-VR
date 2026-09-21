@@ -81,6 +81,18 @@ static XrResult XRAPI_PTR end_array(XrSession,const XrFrameEndInfo *info) {
 static XrResult XRAPI_PTR queue_end(XrSession,const XrFrameEndInfo *) { assert(queue_lock_depth==1);return end_result; }
 static XrResult XRAPI_PTR queue_wait_frame(XrSession,const XrFrameWaitInfo *,XrFrameState *) { assert(!queue_lock_depth);return XR_SUCCESS; }
 static XrResult XRAPI_PTR queue_begin(XrSession,const XrFrameBeginInfo *) { assert(queue_lock_depth==1);return array_result; }
+static XrResult XRAPI_PTR frame_wait(XrSession,const XrFrameWaitInfo *,XrFrameState *state) {
+ assert(!queue_lock_depth);state->predictedDisplayTime=1;state->shouldRender=XR_FALSE;return XR_SUCCESS;
+}
+static XrResult XRAPI_PTR sync_actions(XrSession,const XrActionsSyncInfo *) { return XR_SUCCESS; }
+static XrResult XRAPI_PTR locate_space(XrSpace,XrSpace,XrTime,XrSpaceLocation *location) {
+ location->locationFlags=XR_SPACE_LOCATION_ORIENTATION_VALID_BIT|XR_SPACE_LOCATION_POSITION_VALID_BIT;return XR_SUCCESS;
+}
+static XrResult XRAPI_PTR locate_views(XrSession,const XrViewLocateInfo *,XrViewState *state,uint32_t capacity,uint32_t *count,XrView *views) {
+ assert(capacity==2);*count=2;state->viewStateFlags=XR_VIEW_STATE_ORIENTATION_VALID_BIT|XR_VIEW_STATE_POSITION_VALID_BIT;
+ for(uint32_t i=0;i<2;++i) views[i].type=XR_TYPE_VIEW;
+ return XR_SUCCESS;
+}
 static void reset() {
  g=State();g.useVulkan=true;g.instance=(XrInstance)(uintptr_t)1;g.system=7;
  g.vk.requirements.minApiVersionSupported=XR_MAKE_VERSION(1,0,0);
@@ -172,6 +184,12 @@ int main() {
  g.session=XR_NULL_HANDLE;assert(VRXR_SetVulkanQueueCallbacks(queue_lock,queue_unlock,&queue_lock_depth));g.session=(XrSession)(uintptr_t)9;
  g.xr.WaitFrame=queue_wait_frame;g.xr.BeginFrame=queue_begin;array_result=XR_ERROR_RUNTIME_FAILURE;
  vrxr_frame_t frame;assert(VRXR_BeginFrame(&frame)==-1);assert(!queue_lock_depth && queue_locks==queue_unlocks && error_logs==1);
+ reset();g.initialized=g.sessionRunning=true;g.appSpace=(XrSpace)(uintptr_t)10;g.viewSpace=(XrSpace)(uintptr_t)11;
+ assert(VRXR_SetVulkanQueueCallbacks(queue_lock,queue_unlock,&queue_lock_depth));g.session=(XrSession)(uintptr_t)9;
+ g.xr.WaitFrame=frame_wait;g.xr.BeginFrame=queue_begin;g.xr.EndFrame=queue_end;g.xr.SyncActions=sync_actions;g.xr.LocateSpace=locate_space;g.xr.LocateViews=locate_views;
+ g.appSpaceType=XR_REFERENCE_SPACE_TYPE_STAGE;assert(VRXR_BeginFrame(&frame)==1 && frame.floor_referenced);VRXR_EndFrame();
+ g.appSpaceType=XR_REFERENCE_SPACE_TYPE_LOCAL_FLOOR_EXT;assert(VRXR_BeginFrame(&frame)==1 && frame.floor_referenced);VRXR_EndFrame();
+ g.appSpaceType=XR_REFERENCE_SPACE_TYPE_LOCAL;assert(VRXR_BeginFrame(&frame)==1 && !frame.floor_referenced);VRXR_EndFrame();
  reset();g.log=log_error;g.session=(XrSession)(uintptr_t)9;assert(VRXR_SetVulkanQueueCallbacks(0,0,0)==0);
  g.session=XR_NULL_HANDLE;assert(VRXR_SetVulkanQueueCallbacks(queue_lock,queue_unlock,&queue_lock_depth));g.session=(XrSession)(uintptr_t)9;
  g.chain[0].handle=(XrSwapchain)(uintptr_t)11;g.xr.AcquireSwapchainImage=queue_acquire;g.xr.WaitSwapchainImage=wait_array;

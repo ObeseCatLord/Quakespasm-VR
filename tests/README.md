@@ -73,6 +73,15 @@ invalidation across a skipped frame, and the GPU-drain call before XR abort.
 Its wait is a spy: it does not reproduce real pending GPU buffer reuse or
 exercise the entire OpenXR begin/task path. Those remain runtime acceptance cases.
 
+It also runs production `V_CalcRefdef` and comfort functions, checking floor-known
+height, crouching, scale/IPD changes, a pitched camera basis, a paused base whose
+server viewheight subsequently changes, `LOCAL` relative-height fallback,
+invalid scale values, and desktop/VR bob, movement/death roll and damage/gun-kick
+gates. These are view-adapter checks, not movement/aiming or network parity.
+The fixture also checks recoil recovery while suppressed and classification of a
+completed chase-camera base. Its chase function is a spy; the live smoke runs
+the real donor chase path separately.
+
 ```sh
 cc -std=gnu11 -DUSE_SDL3 -D_GNU_SOURCE -Wno-unused-parameter \
   -ffunction-sections -fdata-sections tests/vr_stereo_camera_fixture.c \
@@ -123,24 +132,30 @@ its manifest directory. Then run from the repository root:
 
 ```sh
 cp tests/openxr-local-smoke.cfg "$XR_TEST_ROOT/game/id1/"
-SDL_VIDEODRIVER=x11 timeout --signal=TERM 50s \
+SDL_VIDEODRIVER=x11 timeout --signal=TERM 90s \
   gdb --return-child-result -batch -x tests/openxr-local-smoke.gdb --args \
   "$XR_TEST_BINARY" -validation 2 -basedir "$XR_TEST_ROOT/game" \
   -window -width 640 -height 480 -nosound -openxr +map start \
   > "$XR_TEST_ROOT/gpu-smoke.log" 2>&1
 ```
 
-Require exit 0, all 13 `XR_SMOKE_probe` records, the final extent check, and no
+Require exit 0, all 19 `XR_SMOKE_probe` records, the final extent check, and no
 Vulkan validation errors or synchronization hazards. A timeout is a failure.
 The script asserts effective OIT, sample count and indirect state for each
 combination rather than accepting unsupported modes as coverage. It also checks
-that task rendering is effective. A GPU that cannot provide the requested modes
+that task rendering is effective. The final probes change worldscale and floor
+offset live, including while paused, and recover from an invalid zero scale.
+They also enable the real chase camera at scale 2, then return to first person.
+They require a floor-referenced simulated runtime, and compare world height to
+the inherited formula and eye separation to the runtime pose. `LOCAL` fallback
+is covered by the production camera fixture, not this GPU run.
+A GPU that cannot provide the requested modes
 fails this qualification; that does not by itself mean desktop/XR is unsupported.
 
 For visual evidence, optionally export `XR_SMOKE_CAPTURE` to an output `.png`
 path before running. With ImageMagick `import` installed and only this test's
-XCB compositor window named `Monado`, the harness saves `-initial.png` and
-`-resized.png` variants of that path. Inspect both eyes for full scene coverage,
+XCB compositor window named `Monado`, the harness saves `-initial.png`,
+`-resized.png`, `-scaled.png`, `-raised.png` and `-chase.png` variants of that path. Inspect both eyes for full scene coverage,
 stereo differences and artifacts. Capture failures fail the check.
 
 The GDB gate inserts the script into the existing command queue after client
