@@ -7,30 +7,23 @@ The `2.0` branch starts directly at vkQuake commit
 on 2026-09-20. Its initial tree was identical to upstream. Subsequent commits
 are migration work. `vkquake-upstream` tracks the original repository at
 <https://github.com/Novum/vkQuake>; `origin` remains the project fork.
-The separate `quakespasm-2.0` worktree avoids modifying the existing `openxr`
-worktree. No history was reset, rewritten, pushed, or deployed.
+The separate `quakespasm-2.0` worktree avoids modifying the user’s product
+worktree (currently on `master`). No history was reset, rewritten, pushed, or deployed.
 
 Behavioral references:
 
 - Inherited base: `8c5a6007a60098b6a5b5c5b552def70e1238a852`.
-- Product: `7bc466b594e7a7e584dc47879eb6c00f971b01b1`.
+- Original product snapshot: `7bc466b594e7a7e584dc47879eb6c00f971b01b1`.
+- Current product authority: `1327f795cc2e3a8e4f7c9d68e31d64383930cc00`; includes four newer fixes/package/license commits missing from the OpenXR pin.
 - Migration source: `3080841333fa94000df7e1fb9e549c7158685dd6`.
 - The original worktree's 13 uncommitted files were copied with a binary patch
   and SHA-256 manifest into the shared Git directory's local-only
-  `migration-references/2.0-30808413/` snapshot. Those files remain in place.
+  `migration-references/2.0-30808413/` snapshot. The immutable snapshot remains in place; the product checkout is now clean on newer `master`.
   WIP is preserved evidence, not automatically accepted behavior.
 
-[migration-preservation.csv](migration-preservation.csv) enumerates the entire
-inherited tree, the product/development deltas, and the WIP paths: 904 unique
-paths. There are 553 committed delta paths at the migration source, one more
-than the architecture review's 552 because the reviewed plan was committed
-subsequently. Blob IDs distinguish inherited/current/donor content; empty
-source IDs include deleted paths. WIP hashes identify the preserved local
-snapshot. This is an exhaustive path inventory, **not a completed behavioral
-audit**. A `pending behavior mapping` entry must gain an explicit disposition
-(reused, adapted, donor equivalent with evidence, or obsolete with reason).
-Deleted paths must be reviewed for intentional removals rather than restored
-blindly. Unchanged inherited dependencies are included deliberately.
+The [complete-scope feature map](migration-feature-map.md) is the current migration checklist: 185 behavior/work items with source evidence, destination owners and acceptance criteria, plus [11 optional Ironwail/QSS-M additions](migration-useful-additions.md). Detailed [network](migration-network-map.md) and [renderer](migration-renderer-map.md) maps distinguish donor equivalents from actual ports and goals.
+
+[migration-preservation.csv](migration-preservation.csv) now covers 905 unique paths, extending the original 904-path snapshot with the current master delta. It retains old blob/WIP evidence and adds current-master blobs and feature routing. Exact source anchors and mechanical module routes are labeled separately. [History](migration-history-index.csv) and [public-interface](migration-interface-index.csv) indexes make omissions reviewable. These are scope/audit artifacts, **not proof of completed behavioral integration**. Historical deletions are reviewed rather than restored blindly; preserved WIP is not automatically accepted release behavior.
 
 ## First source checkpoint
 

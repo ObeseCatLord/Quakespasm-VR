@@ -6,6 +6,8 @@ and the OpenXR/Vulkan/performance goals. This document does not execute a rebase
 or declare a migration successful. The user subsequently authorized implementation
 on `2.0`; see [migration status](migration-2.0.md) for the current checkpoint.
 
+The original evidence table below records the architecture review snapshot. The [current feature map](migration-feature-map.md) supersedes its source-scope counts and adds newer master fixes, detailed migration owners, acceptance cases, and optional Ironwail/QSS-M candidates. The actual working branch is `2.0`.
+
 ## Evidence and limits
 
 | Item | Verified state |
@@ -133,7 +135,7 @@ Never equate a matching feature name with behavioral equivalence.
 ### 0. Preserve references and inventory before editing
 
 Create a separate migration worktree/branch rooted in the pinned vkQuake commit,
-proposed name `vkquake-vr`. Keep `master` and `openxr` histories and the dirty
+now created as `2.0`. Keep `master` and `openxr` histories and the dirty
 working tree intact. Archive or commit owned WIP separately with an explicit
 manifest; do not silently bundle unrelated edits into a migration checkpoint.
 Record the complete inherited-to-product, product-to-openxr and WIP ledgers.
