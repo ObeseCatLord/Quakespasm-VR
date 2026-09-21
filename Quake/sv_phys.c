@@ -6227,6 +6227,10 @@ static void SV_ApplyLegacyVRRoomScaleMove(edict_t *ent, client_t *client) {
 
   VectorCopy(client->vr_roomscale_accum, move);
   VectorClear(client->vr_roomscale_accum);
+  /* QuakeC owns frozen/cinematic/teleport-limbo positions, just as PM_NONE
+   * does in prediction. Consume tracking without moving or deferring it. */
+  if (ent->v.movetype == MOVETYPE_NONE)
+    return;
   move[2] = 0;
   if ((!move[0] && !move[1]) || qcvm->frametime <= 0)
     return;
