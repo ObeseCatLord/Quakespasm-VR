@@ -611,6 +611,8 @@ qboolean SV_CoopSharedBeginClientTouch(edict_t *client);
 void SV_CoopSharedEndClientTouch(edict_t *client);
 void SV_CoopSharedResetState(void);
 void SV_CoopSharedResetClientSlot(int slot);
+void SV_ClearRecentInstantTeleportTriggerForClientSlot(int slot);
+void SV_InvalidateRecentTeleportTrigger(edict_t *trigger);
 void SV_MG3UpgradeResetCampaign(void);
 void SV_MG3UpgradeCollectSpawnParms(const float *spawn_parms);
 void SV_MG3UpgradeApplySpawnParms(float *spawn_parms);

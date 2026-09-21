@@ -6453,6 +6453,7 @@ void SV_Physics_Client(edict_t *ent, int num) {
    * before QuakeC can respawn it. This also applies to singleplayer and mods
    * which own their respawn lifecycle, independently of co-op policies. */
   if (ent->free || ent->v.health <= 0 || ent->v.deadflag) {
+    SV_ClearRecentInstantTeleportTriggerForClientSlot(num - 1);
     SV_VRContactResetClient(&svs.clients[num - 1]);
     SV_VRGorillaDiscontinuity(&svs.clients[num - 1]);
   }
