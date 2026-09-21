@@ -96,6 +96,36 @@ Consolidated software checks after this slice was implemented:
 The code/design review is recorded in
 [the bootstrap review disposition](migration-bootstrap-review.md).
 
+## Queue and frame ownership checkpoint
+
+The OpenXR boundary now uses vkQuake's existing queue mutex through a small
+callback registration. Attachment requires a complete lock/unlock pair;
+registration cannot change while a session exists. The backend locks only the
+four runtime calls permitted to access the Vulkan queue, releasing the mutex
+before error logging or renderer retirement. Healthy detach preserves this
+binding; full shutdown clears it. There is no new submission thread, mutex,
+device, or session state machine.
+
+The donor recorder also now consumes the actual WSI acquisition result. If an
+image was not acquired, it skips the complete UI/presentation pass and screenshot
+readback instead of accessing the previous swapchain index. Scene work remains
+on the existing submission path, and pending screenshots wait for a successful
+acquisition. Frame-slot bookkeeping now distinguishes retired work from a new
+successful submission.
+
+The native Linux SDL3 `debugoptimized` build passes after these changes.
+The production frame-recorder fixture covers all OIT/SSAO variants and detects
+the original invalid-image access in a temporary negative control. Review and
+boundary-check details are in
+[the frame ownership disposition](migration-frame-boundary-review.md).
+Windows and ARM verification are explicitly deferred until the end.
+
+**Session attachment and stereo scene output remain unimplemented.** This
+checkpoint removes synchronization and invalid-image prerequisites; it does not
+close the multiview proof or provide headset, gaze, gameplay, or performance
+qualification. Image release must still follow actual application submission,
+and teardown must retire both recording tasks and GPU users.
+
 ## Initial checkpoint review
 
 Astra (`gpt-6-astra`, xhigh), 2026-09-20, reviewed the introduced backend and

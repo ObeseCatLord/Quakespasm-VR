@@ -828,6 +828,16 @@ static void GL_OpenXRLog (const char *message)
 	Con_Printf ("%s\n", message);
 }
 
+static void GL_OpenXRLockQueue (void *owner)
+{
+	SDL_LockMutex ((SDL_Mutex *)owner);
+}
+
+static void GL_OpenXRUnlockQueue (void *owner)
+{
+	SDL_UnlockMutex ((SDL_Mutex *)owner);
+}
+
 static void GL_OpenXRPrepareVulkan (uint32_t loader_api_version)
 {
 	const qboolean openxr_requested = COM_CheckParm ("-openxr") && !COM_CheckParm ("-novr");
@@ -1703,6 +1713,12 @@ static void GL_InitDevice (void)
 
 	vkGetDeviceQueue (vulkan_globals.device, vulkan_globals.gfx_queue_family_index, 0, &vulkan_globals.queue);
 	vulkan_globals.queue_mutex = SDL_CreateMutex ();
+	if (!vulkan_globals.queue_mutex)
+		Sys_Error ("Couldn't create Vulkan queue mutex: %s", SDL_GetError ());
+	// The runtime can use this same queue in its frame/image calls. Register the
+	// donor lock without holding it across runtime error handling or retirement.
+	if (openxr_vulkan_binding && !VRXR_SetVulkanQueueCallbacks (GL_OpenXRLockQueue, GL_OpenXRUnlockQueue, vulkan_globals.queue_mutex))
+		Sys_Error ("Couldn't register OpenXR Vulkan queue synchronization");
 
 	VkFormatProperties format_properties;
 
@@ -3176,6 +3192,7 @@ void GL_BeginRenderingTask (void *unused)
 		if (frame_timing_enabled)
 			rs_gpuwaitaccum_us += (uint32_t)((Sys_DoubleTime () - wait_start) * 1000000.0);
 	}
+	frame_submitted[current_cb_index] = false;
 
 	err = vkResetFences (vulkan_globals.device, 1, &command_buffer_fences[current_cb_index]);
 	if (err != VK_SUCCESS)
@@ -3678,7 +3695,8 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 	frame_readback_t readback = {.commands = render_passes_cb};
 	VkCommandBuffer	 submit_cbs[PCBX_NUM];
 	const uint32_t	 submit_count =
-		R_RecordFrame (parms, current_swapchain_buffer, submit_cbs, countof (submit_cbs), take_screenshot ? GL_RecordFrameReadback : NULL, &readback);
+		R_RecordFrame (parms, swapchain_acquired, current_swapchain_buffer, submit_cbs, countof (submit_cbs),
+			take_screenshot ? GL_RecordFrameReadback : NULL, &readback);
 
 	if (frame_timing_enabled && (timestamp_query_pool != VK_NULL_HANDLE))
 	{
@@ -3702,7 +3720,7 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 		submit_info.waitSemaphoreCount = swapchain_acquired ? 1 : 0;
 		submit_info.pWaitSemaphores = &image_aquired_semaphores[cb_index];
 		submit_info.signalSemaphoreCount = swapchain_acquired ? 1 : 0;
-		submit_info.pSignalSemaphores = &draw_complete_semaphores[current_swapchain_buffer];
+		submit_info.pSignalSemaphores = swapchain_acquired ? &draw_complete_semaphores[current_swapchain_buffer] : NULL;
 		VkPipelineStageFlags wait_dst_stage_mask = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
 		submit_info.pWaitDstStageMask = &wait_dst_stage_mask;
 
@@ -3714,12 +3732,16 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 	}
 
 	vulkan_globals.device_idle = false;
+	frame_submitted[cb_index] = true;
 
 	if (take_screenshot && (readback.buffer != VK_NULL_HANDLE))
 	{
 		WriteScreenshot (readback.buffer, readback.memory);
 	}
-	take_screenshot = false;
+	// A failed acquire has no readable presentation image. Keep the request for
+	// the next acquired frame, including across a swapchain restart.
+	if (swapchain_acquired)
+		take_screenshot = false;
 
 	if (swapchain_acquired == true)
 	{
@@ -3763,7 +3785,6 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 			num_images_acquired -= 1;
 	}
 
-	frame_submitted[cb_index] = true;
 	current_cb_index = (current_cb_index + 1) % DOUBLE_BUFFERED;
 }
 

@@ -20,6 +20,17 @@ int VRXR_CreateVulkanInstance(PFN_vkGetInstanceProcAddr get_proc,
                               const VkInstanceCreateInfo *info, VkInstance *instance);
 VkPhysicalDevice VRXR_VulkanPhysicalDevice(VkInstance instance);
 int VRXR_CreateVulkanDevice(const VkDeviceCreateInfo *info, VkDevice *device);
+/* Register the renderer's existing external synchronization for the attached
+ * Vulkan queue. Both callbacks are required together; both null clears the
+ * registration. This may only be changed while no XR session exists. The
+ * callbacks and owner must remain valid until a later successful clear or full
+ * VRXR_Shutdown; healthy VRXR_DetachVulkan retains them for reattachment.
+ * The adapter calls this pair only around xrBeginFrame, xrEndFrame,
+ * xrAcquireSwapchainImage, and xrReleaseSwapchainImage. Renderer submissions
+ * and presentation must use the same lock. Do not hold it around whole VRXR
+ * calls: error handling and image retirement run unlocked and may join workers
+ * that need this queue. Callbacks must not reenter XR, throw, or longjmp. */
+int VRXR_SetVulkanQueueCallbacks(void (*lock)(void *), void (*unlock)(void *), void *owner);
 /* Must use a created graphics queue. retire_images is mandatory and is called
  * once on any attachment teardown (including partial failure): join recording/
  * readback work, retire GPU commands, and destroy renderer views/auxiliary
@@ -28,9 +39,8 @@ int VRXR_CreateVulkanDevice(const VkDeviceCreateInfo *info, VkDevice *device);
  * or SAMPLED usage in addition to color attachment. Callback must not reenter XR,
  * present via WSI, or longjmp out of cleanup.
  * Discard unsubmitted image references and wait for pending work before resetting
- * command pools. The renderer must externally synchronize all accesses to the
- * bound queue, including XR begin/end-frame and acquire/release calls, with
- * its existing queue mutex or equivalent scheduling. array_layers=2 selects one
+ * command pools. Register the renderer's existing queue mutex with
+ * VRXR_SetVulkanQueueCallbacks before attaching. array_layers=2 selects one
  * stereo array swapchain (multiview target); 1 retains separate eye swapchains.
  * density_maps requests borrowed fragment-density-map images. It must remain
  * zero until the renderer has negotiated its image and pass requirements.

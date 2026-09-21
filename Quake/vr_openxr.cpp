@@ -139,8 +139,11 @@ struct VulkanBinding {
 	VkImageCreateFlags densityImageFlags;
 	void (*retireImages)(void *);
 	void *owner;
+	void (*lockQueue)(void *);
+	void (*unlockQueue)(void *);
+	void *queueOwner;
 	VulkanBinding() : getProc(0), instance(VK_NULL_HANDLE), physicalDevice(VK_NULL_HANDLE),
-		device(VK_NULL_HANDLE), requirements(), format(VK_FORMAT_UNDEFINED), extraUsage(0), arrayLayers(1), densityMaps(false), densityImageFlags(0), retireImages(0), owner(0) {}
+		device(VK_NULL_HANDLE), requirements(), format(VK_FORMAT_UNDEFINED), extraUsage(0), arrayLayers(1), densityMaps(false), densityImageFlags(0), retireImages(0), owner(0), lockQueue(0), unlockQueue(0), queueOwner(0) {}
 };
 struct State {
 	LoaderHandle loader;
@@ -188,6 +191,19 @@ struct State {
 		referenceChanged(false), referencePending(false), runtime(), systemName() {}
 };
 static State g;
+
+struct VulkanQueueLock {
+	bool locked;
+	VulkanQueueLock() : locked(false) {
+		if(g.useVulkan && g.session && g.vk.lockQueue && g.vk.unlockQueue) {
+			g.vk.lockQueue(g.vk.queueOwner);
+			locked=true;
+		}
+	}
+	~VulkanQueueLock() {
+		if(locked) g.vk.unlockQueue(g.vk.queueOwner);
+	}
+};
 
 /* Views and swapchain owners are distinct: Vulkan multiview stores both views
  * in one array image. Keep acquire/wait/release on the original Chain owner. */
@@ -827,13 +843,23 @@ static bool wait_chain(Chain &chain) {
 static void release_chain(Chain &chain) {
 	if (!chain.acquired || !chain.waited) return;
 	XrSwapchainImageReleaseInfo release={XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
-	if (!ok("xrReleaseSwapchainImage",g.xr.ReleaseSwapchainImage(chain.handle,&release))) g.terminal=true;
+	XrResult result;
+	{
+		VulkanQueueLock lock;
+		result=g.xr.ReleaseSwapchainImage(chain.handle,&release);
+	}
+	if (!ok("xrReleaseSwapchainImage",result)) g.terminal=true;
 	chain.acquired=false; chain.waited=false;
 }
 static bool begin_images() {
 	for(int eye=0;eye<swapchain_count();++eye) {
 		Chain &chain=g.chain[eye]; XrSwapchainImageAcquireInfo acquire={XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO};
-		if (!ok("xrAcquireSwapchainImage",g.xr.AcquireSwapchainImage(chain.handle,&acquire,&chain.index))) { g.terminal=true; return false; }
+		XrResult result;
+		{
+			VulkanQueueLock lock;
+			result=g.xr.AcquireSwapchainImage(chain.handle,&acquire,&chain.index);
+		}
+		if (!ok("xrAcquireSwapchainImage",result)) { g.terminal=true; return false; }
 		chain.acquired=true; chain.copiedMask=0;
 		if (!wait_chain(chain)) return false;
 	}
@@ -855,7 +881,12 @@ static void end_frame(bool submit) {
 	const XrCompositionLayerBaseHeader *layers[1]={reinterpret_cast<const XrCompositionLayerBaseHeader*>(&layer)};
 	XrFrameEndInfo end={XR_TYPE_FRAME_END_INFO}; end.displayTime=g.frameState.predictedDisplayTime; end.environmentBlendMode=g.blend;
 	if (submit && !g.terminal) { end.layerCount=1; end.layers=layers; }
-	if (!ok("xrEndFrame",g.xr.EndFrame(g.session,&end))) g.terminal=true;
+	XrResult result;
+	{
+		VulkanQueueLock lock;
+		result=g.xr.EndFrame(g.session,&end);
+	}
+	if (!ok("xrEndFrame",result)) g.terminal=true;
 	g.frameBegun=false; g.shouldRender=false;
 }
 static void poll_events() {
@@ -1117,7 +1148,10 @@ extern "C" int VRXR_BeginFrame(vrxr_frame_t *frame) {
 	if(result==XR_SESSION_LOSS_PENDING) { g.terminal=true; sayf("xrWaitFrame",result); destroy_stopped_runtime(); return -1; }
 	if(!ok("xrWaitFrame",result)) { g.terminal=true; destroy_stopped_runtime(); return -1; }
 	XrFrameBeginInfo begin={XR_TYPE_FRAME_BEGIN_INFO};
-	result=g.xr.BeginFrame(g.session,&begin);
+	{
+		VulkanQueueLock lock;
+		result=g.xr.BeginFrame(g.session,&begin);
+	}
 	if(result!=XR_SUCCESS && result!=XR_FRAME_DISCARDED) {
 		ok("xrBeginFrame",result); g.terminal=true; destroy_stopped_runtime(); return -1;
 	}
@@ -1283,6 +1317,13 @@ extern "C" int VRXR_CreateVulkanDevice(const VkDeviceCreateInfo *info, VkDevice 
 	}
 	return 1;
 }
+extern "C" int VRXR_SetVulkanQueueCallbacks(void (*lock)(void *), void (*unlock)(void *), void *owner) {
+	if(g.session || (!!lock != !!unlock)) return 0;
+	g.vk.lockQueue=lock;
+	g.vk.unlockQueue=unlock;
+	g.vk.queueOwner=lock ? owner : 0;
+	return 1;
+}
 extern "C" void VRXR_DetachVulkan(void) {
 	if(!g.useVulkan) return;
 	if(g.terminal) { destroy_stopped_runtime(); return; }
@@ -1294,7 +1335,7 @@ extern "C" int VRXR_AttachVulkan(uint32_t queue_family, uint32_t queue_index,
                                  void (*retire_images)(void *), void *owner, int density_maps,
                                  VkImageCreateFlags density_image_flags) {
 	if(!g.useVulkan || !g.instance || g.terminal || !g.vk.device || g.session || !retire_images ||
-	   (array_layers!=1 && array_layers!=kViews)) return 0;
+	   !g.vk.lockQueue || !g.vk.unlockQueue || (array_layers!=1 && array_layers!=kViews)) return 0;
 	if(density_maps && !g.foveationSupported) {
 		say("OpenXR: Vulkan fragment density maps requested but foveation is unavailable"); return 0;
 	}
