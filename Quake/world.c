@@ -1233,7 +1233,7 @@ static void World_ClipToNetwork (moveclip_t *clip)
 					touch_maxs[0] = touch_maxs[1] = touch->netstate.solidsize & 255;
 					touch_mins[0] = touch_mins[1] = -touch_maxs[0];
 					touch_mins[2] = -(int)((touch->netstate.solidsize >> 8) & 255);
-					touch_maxs[2] = ((touch->netstate.solidsize >> 16) & 65535) - 32768;
+					touch_maxs[2] = (int)((touch->netstate.solidsize >> 16) & 65535) - 32768;
 
 					VectorSubtract (touch_mins, clip->maxs, hullmins);
 					VectorSubtract (touch_maxs, clip->mins, hullmaxs);
@@ -1282,6 +1282,11 @@ static void World_ClipToNetwork (moveclip_t *clip)
 				trace.ent = qcvm->edicts;
 		}
 
+		// The legacy checker reports solid hits without contents metadata.
+		// Supply it here before the network-entity contents filter consumes it.
+		if ((sv_fte_recursivehullckeck.value <= 0.0f || !pr_checkextension.value) &&
+			(trace.fraction < 1 || trace.startsolid || trace.allsolid))
+			trace.contents = CONTENTS_SOLID;
 		if (trace.contents == CONTENTS_SOLID && touch->skinnum < 0)
 			trace.contents = touch->skinnum;
 		if (!((1 << (-trace.contents)) & clip->hitcontents))

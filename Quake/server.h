@@ -396,4 +396,7 @@ qboolean SV_IsVRClientSlot (int num);
 qboolean SV_IsActiveClientEdict (edict_t *ent);
 qboolean SV_CoopFeatureEnabled (const cvar_t *feature, qboolean modern_default);
 
+// Body codec only; sequence admission and receipt time remain queue-owned.
+qboolean SV_ReadPrivateUsercmd (usercmd_t *cmd, unsigned int sequence, unsigned int protocolflags, unsigned int capabilities);
+
 #endif /* _QUAKE_SERVER_H */

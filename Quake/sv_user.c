@@ -466,6 +466,357 @@ void SV_ClientThink (void)
 	// johnfitz
 }
 
+/* Pinned source codec from 1327f795; admission and receipt ownership stay with the caller. */
+qboolean SV_ReadPrivateUsercmd (usercmd_t *readcmd, unsigned int sequence,
+	unsigned int protocolflags, unsigned int capabilities)
+{
+	int i;
+	int extbits;
+
+	memset (readcmd, 0, sizeof (*readcmd));
+	readcmd->sequence = sequence;
+	readcmd->servertime = MSG_ReadFloat ();
+	if (!isfinite (readcmd->servertime))
+	{
+		msg_badread = true;
+		return false;
+	}
+	readcmd->msec = MSG_ReadByte ();
+	if (readcmd->msec < 1 || readcmd->msec > 125)
+	{
+		msg_badread = true;
+		return false;
+	}
+
+	for (i = 0; i < 3; i++)
+	{
+		readcmd->viewangles[i] = MSG_ReadAngle16 (protocolflags);
+		if (!isfinite (readcmd->viewangles[i]))
+		{
+			msg_badread = true;
+			return false;
+		}
+	}
+
+	readcmd->forwardmove = MSG_ReadShort ();
+	readcmd->sidemove = MSG_ReadShort ();
+	readcmd->upmove = MSG_ReadShort ();
+	readcmd->buttons = MSG_ReadByte ();
+	readcmd->impulse = MSG_ReadByte ();
+
+	extbits = MSG_ReadByte ();
+	if (extbits & ~(MOVEEXT_VR | MOVEEXT_VR_RELATIVE | MOVEEXT_QCINPUT |
+		MOVEEXT_VR_AKIMBO | MOVEEXT_VR_AKIMBO_BERSERK |
+		MOVEEXT_VR_CONTACT | MOVEEXT_VR_GORILLA | MOVEEXT_GORILLA_TRUSTED))
+	{
+		msg_badread = true;
+		return false;
+	}
+
+	if ((extbits & MOVEEXT_VR_RELATIVE) && !(extbits & MOVEEXT_VR))
+	{
+		msg_badread = true;
+		return false;
+	}
+	if ((extbits & MOVEEXT_VR_AKIMBO_BERSERK) && !(extbits & MOVEEXT_VR_AKIMBO))
+	{
+		msg_badread = true;
+		return false;
+	}
+	if ((extbits & MOVEEXT_VR_AKIMBO) != 0 &&
+		(extbits & (MOVEEXT_VR | MOVEEXT_VR_RELATIVE)) !=
+			(MOVEEXT_VR | MOVEEXT_VR_RELATIVE))
+	{
+		msg_badread = true;
+		return false;
+	}
+	if ((extbits & MOVEEXT_VR_CONTACT) != 0 &&
+		(extbits & (MOVEEXT_VR | MOVEEXT_VR_RELATIVE)) !=
+			(MOVEEXT_VR | MOVEEXT_VR_RELATIVE))
+	{
+		msg_badread = true;
+		return false;
+	}
+	if ((extbits & (MOVEEXT_VR_GORILLA | MOVEEXT_GORILLA_TRUSTED)) != 0 &&
+		(extbits & (MOVEEXT_VR | MOVEEXT_VR_RELATIVE)) !=
+			(MOVEEXT_VR | MOVEEXT_VR_RELATIVE))
+	{
+		msg_badread = true;
+		return false;
+	}
+
+	if ((extbits & MOVEEXT_GORILLA_TRUSTED) &&
+		((extbits & MOVEEXT_VR_GORILLA) ||
+		 !(capabilities & QSVR_MOVE_CAP_GORILLA_TRUSTED)))
+	{
+		msg_badread = true;
+		return false;
+	}
+
+	if (extbits & MOVEEXT_VR)
+	{
+		if (net_message.cursize - msg_readcount < 9 * 4)
+		{
+			msg_badread = true;
+			return false;
+		}
+
+		readcmd->vr_active = true;
+		readcmd->vr_handpos_relative = (extbits & MOVEEXT_VR_RELATIVE) != 0;
+		readcmd->vr_handpos[0] = MSG_ReadFloat ();
+		readcmd->vr_handpos[1] = MSG_ReadFloat ();
+		readcmd->vr_handpos[2] = MSG_ReadFloat ();
+		readcmd->vr_handrot[0] = MSG_ReadFloat ();
+		readcmd->vr_handrot[1] = MSG_ReadFloat ();
+		readcmd->vr_handrot[2] = MSG_ReadFloat ();
+		readcmd->vr_roomscalemove[0] = MSG_ReadFloat ();
+		readcmd->vr_roomscalemove[1] = MSG_ReadFloat ();
+		readcmd->vr_roomscalemove[2] = MSG_ReadFloat ();
+		for (i = 0; i < 3; i++)
+			if (!isfinite (readcmd->vr_handpos[i]) ||
+				!isfinite (readcmd->vr_handrot[i]) ||
+				!isfinite (readcmd->vr_roomscalemove[i]))
+			{
+				msg_badread = true;
+				return false;
+			}
+	}
+
+	if (extbits & MOVEEXT_VR_AKIMBO)
+	{
+		if (net_message.cursize - msg_readcount < 12 * 4)
+		{
+			msg_badread = true;
+			return false;
+		}
+		readcmd->vr_akimbo_active = true;
+		readcmd->vr_akimbo_berserk = (extbits & MOVEEXT_VR_AKIMBO_BERSERK) != 0;
+		for (i = 0; i < 2; i++)
+		{
+			readcmd->vr_akimbo_muzzle[i][0] = MSG_ReadFloat ();
+			readcmd->vr_akimbo_muzzle[i][1] = MSG_ReadFloat ();
+			readcmd->vr_akimbo_muzzle[i][2] = MSG_ReadFloat ();
+		}
+		for (i = 0; i < 2; i++)
+		{
+			readcmd->vr_akimbo_angles[i][0] = MSG_ReadFloat ();
+			readcmd->vr_akimbo_angles[i][1] = MSG_ReadFloat ();
+			readcmd->vr_akimbo_angles[i][2] = MSG_ReadFloat ();
+		}
+		for (i = 0; i < 2; i++)
+			if (!isfinite (readcmd->vr_akimbo_muzzle[i][0]) ||
+				!isfinite (readcmd->vr_akimbo_muzzle[i][1]) ||
+				!isfinite (readcmd->vr_akimbo_muzzle[i][2]) ||
+				!isfinite (readcmd->vr_akimbo_angles[i][0]) ||
+				!isfinite (readcmd->vr_akimbo_angles[i][1]) ||
+				!isfinite (readcmd->vr_akimbo_angles[i][2]))
+			{
+				msg_badread = true;
+				return false;
+			}
+	}
+
+	if (extbits & MOVEEXT_QCINPUT)
+	{
+		if (net_message.cursize - msg_readcount < 34)
+		{
+			msg_badread = true;
+			return false;
+		}
+
+		readcmd->weapon = MSG_ReadLong ();
+		readcmd->cursor_screen[0] = MSG_ReadShort () / 32767.0f;
+		readcmd->cursor_screen[1] = MSG_ReadShort () / 32767.0f;
+		readcmd->cursor_start[0] = MSG_ReadFloat ();
+		readcmd->cursor_start[1] = MSG_ReadFloat ();
+		readcmd->cursor_start[2] = MSG_ReadFloat ();
+		readcmd->cursor_impact[0] = MSG_ReadFloat ();
+		readcmd->cursor_impact[1] = MSG_ReadFloat ();
+		readcmd->cursor_impact[2] = MSG_ReadFloat ();
+		readcmd->cursor_entitynumber = MSG_ReadEntity (QSVR_PEXT2_REQUIRED);
+		for (i = 0; i < 3; i++)
+			if (!isfinite (readcmd->cursor_start[i]) ||
+				!isfinite (readcmd->cursor_impact[i]))
+			{
+				msg_badread = true;
+				return false;
+			}
+	}
+
+	if (extbits & MOVEEXT_VR_CONTACT)
+	{
+		unsigned int flags;
+
+		if (net_message.cursize - msg_readcount < 7)
+		{
+			msg_badread = true;
+			return false;
+		}
+		flags = (unsigned int)MSG_ReadByte ();
+		if ((flags & ~VR_WEAPON_CONTACT_KNOWN_FLAGS) ||
+			!(flags & (VR_WEAPON_CONTACT_LEFT_VALID |
+				VR_WEAPON_CONTACT_RIGHT_VALID)))
+		{
+			msg_badread = true;
+			return false;
+		}
+		readcmd->vr_contact.flags = flags;
+		readcmd->vr_contact.modelindex = (unsigned short)MSG_ReadShort ();
+		readcmd->vr_contact.weapon = MSG_ReadFloat ();
+		if (!isfinite (readcmd->vr_contact.weapon))
+		{
+			msg_badread = true;
+			return false;
+		}
+		for (i = 0; i < 2; i++)
+		{
+			if (!(flags & (1 << i)))
+				continue;
+			if (net_message.cursize - msg_readcount < 10 * 4)
+			{
+				msg_badread = true;
+				return false;
+			}
+			readcmd->vr_contact.grip[i][0] = MSG_ReadFloat ();
+			readcmd->vr_contact.grip[i][1] = MSG_ReadFloat ();
+			readcmd->vr_contact.grip[i][2] = MSG_ReadFloat ();
+			readcmd->vr_contact.base[i][0] = MSG_ReadFloat ();
+			readcmd->vr_contact.base[i][1] = MSG_ReadFloat ();
+			readcmd->vr_contact.base[i][2] = MSG_ReadFloat ();
+			readcmd->vr_contact.tip[i][0] = MSG_ReadFloat ();
+			readcmd->vr_contact.tip[i][1] = MSG_ReadFloat ();
+			readcmd->vr_contact.tip[i][2] = MSG_ReadFloat ();
+			readcmd->vr_contact.speed[i] = MSG_ReadFloat ();
+			if (!isfinite (readcmd->vr_contact.grip[i][0]) ||
+				!isfinite (readcmd->vr_contact.grip[i][1]) ||
+				!isfinite (readcmd->vr_contact.grip[i][2]) ||
+				!isfinite (readcmd->vr_contact.base[i][0]) ||
+				!isfinite (readcmd->vr_contact.base[i][1]) ||
+				!isfinite (readcmd->vr_contact.base[i][2]) ||
+				!isfinite (readcmd->vr_contact.tip[i][0]) ||
+				!isfinite (readcmd->vr_contact.tip[i][1]) ||
+				!isfinite (readcmd->vr_contact.tip[i][2]) ||
+				!isfinite (readcmd->vr_contact.speed[i]))
+			{
+				msg_badread = true;
+				return false;
+			}
+		}
+	}
+
+	if (extbits & MOVEEXT_VR_GORILLA)
+	{
+		vec3_t arm;
+		int hand;
+		float length2;
+
+		if (net_message.cursize - msg_readcount < 1 + 15 * 4)
+		{
+			msg_badread = true;
+			return false;
+		}
+		readcmd->vr_gorilla.flags = (unsigned char)MSG_ReadByte ();
+		for (i = 0; i < 3; i++)
+			readcmd->vr_gorilla.head[i] = MSG_ReadFloat ();
+		for (i = 0; i < 2; i++)
+		{
+			readcmd->vr_gorilla.hand[i][0] = MSG_ReadFloat ();
+			readcmd->vr_gorilla.hand[i][1] = MSG_ReadFloat ();
+			readcmd->vr_gorilla.hand[i][2] = MSG_ReadFloat ();
+			readcmd->vr_gorilla.velocity[i][0] = MSG_ReadFloat ();
+			readcmd->vr_gorilla.velocity[i][1] = MSG_ReadFloat ();
+			readcmd->vr_gorilla.velocity[i][2] = MSG_ReadFloat ();
+		}
+		if ((readcmd->vr_gorilla.flags & ~VR_GORILLA_FLAGS) ||
+			(readcmd->vr_gorilla.flags & VR_GORILLA_HANDS) != VR_GORILLA_HANDS ||
+			!isfinite (readcmd->vr_gorilla.head[0]) ||
+			!isfinite (readcmd->vr_gorilla.head[1]) ||
+			!isfinite (readcmd->vr_gorilla.head[2]))
+		{
+			msg_badread = true;
+			return false;
+		}
+		length2 = DotProduct (readcmd->vr_gorilla.head, readcmd->vr_gorilla.head);
+		if (length2 > 160.0f * 160.0f)
+		{
+			msg_badread = true;
+			return false;
+		}
+		for (hand = 0; hand < 2; hand++)
+		{
+			if (!isfinite (readcmd->vr_gorilla.hand[hand][0]) ||
+				!isfinite (readcmd->vr_gorilla.hand[hand][1]) ||
+				!isfinite (readcmd->vr_gorilla.hand[hand][2]) ||
+				!isfinite (readcmd->vr_gorilla.velocity[hand][0]) ||
+				!isfinite (readcmd->vr_gorilla.velocity[hand][1]) ||
+				!isfinite (readcmd->vr_gorilla.velocity[hand][2]))
+			{
+				msg_badread = true;
+				return false;
+			}
+			length2 = DotProduct (readcmd->vr_gorilla.velocity[hand],
+				readcmd->vr_gorilla.velocity[hand]);
+			if (length2 > VR_GORILLA_MAX_HAND_SPEED * VR_GORILLA_MAX_HAND_SPEED)
+			{
+				msg_badread = true;
+				return false;
+			}
+			VectorSubtract (readcmd->vr_gorilla.hand[hand],
+				readcmd->vr_gorilla.head, arm);
+			length2 = DotProduct (arm, arm);
+			if (length2 > VR_GORILLA_MAX_REACH * VR_GORILLA_MAX_REACH)
+			{
+				msg_badread = true;
+				return false;
+			}
+		}
+	}
+
+	if (extbits & MOVEEXT_GORILLA_TRUSTED)
+	{
+		vr_gorilla_motion_t *motion = &readcmd->vr_gorilla_motion;
+		int flags;
+
+		if (net_message.cursize - msg_readcount < 13)
+		{
+			msg_badread = true;
+			return false;
+		}
+		flags = MSG_ReadByte ();
+		motion->flags = flags & VR_GORILLA_MOTION_FLAGS;
+		motion->generation = (unsigned int)MSG_ReadLong ();
+		for (i = 0; i < 2; ++i)
+		{
+			motion->contact[i] = (MSG_ReadShort () & 0xffff) - 1;
+			motion->contact_model[i] = MSG_ReadShort () & 0xffff;
+			if (motion->contact[i] >= MAX_EDICTS ||
+				motion->contact_model[i] >= QSVR_MODEL_LIMIT ||
+				(motion->contact[i] < 0 && motion->contact_model[i]))
+				msg_badread = true;
+		}
+		if ((flags & ~63) || !(flags & VR_GORILLA_MOTION_ACTIVE) ||
+			net_message.cursize - msg_readcount <
+				((flags & 16) ? 12 : 0) + ((flags & 32) ? 12 : 0))
+		{
+			msg_badread = true;
+			return false;
+		}
+		if (flags & 16)
+			for (i = 0; i < 3; ++i)
+				motion->displacement[i] = MSG_ReadFloat ();
+		if (flags & 32)
+			for (i = 0; i < 3; ++i)
+				motion->impulse[i] = MSG_ReadFloat ();
+		for (i = 0; i < 3; ++i)
+			if (!isfinite (motion->displacement[i]) ||
+				!isfinite (motion->impulse[i]) ||
+				fabsf (motion->displacement[i]) > 64 ||
+				fabsf (motion->impulse[i]) > 1024)
+				msg_badread = true;
+	}
+	return !msg_badread;
+}
+
 /*
 ===================
 SV_ReadClientMove

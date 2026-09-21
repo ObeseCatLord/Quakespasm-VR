@@ -123,19 +123,42 @@ entity_t *CL_EntityNum (int num)
 	return &cl.entities[num];
 }
 
-static int MSG_ReadSize16 (sizebuf_t *sb)
+static unsigned int MSG_ReadSize16 (sizebuf_t *sb)
 {
 	unsigned short ssolid = MSG_ReadShort ();
-	if (ssolid == ES_SOLID_BSP)
+	if (ssolid == ES_SOLID_NOT || ssolid == ES_SOLID_BSP)
 		return ssolid;
 	else
 	{
-		int solid = (((ssolid >> 7) & 0x1F8) - 32 + 32768) << 16; /*up can be negative*/
+		unsigned int solid = (unsigned int)(((ssolid >> 7) & 0x1F8) - 32 + 32768) << 16; /*up can be negative*/
 		solid |= ((ssolid & 0x1F) << 3);
 		solid |= ((ssolid & 0x3E0) << 6);
 		return solid;
 	}
 }
+// The tagged solid format belongs to the explicitly admitted private layout.
+// Public FTE bits alone must never select the fork's incompatible dialect.
+static unsigned int CL_ReadSolidSize (void)
+{
+	if (!cl.protocol_qsvr)
+		return MSG_ReadSize16 (&net_message);
+	if (cl.protocol_qsvr != QSVR_PROTOCOL_PINNED)
+		Host_Error ("Unsupported private solid layout %u", cl.protocol_qsvr);
+	const int encoding = MSG_ReadByte ();
+	switch (encoding)
+	{
+	case 0: return ES_SOLID_NOT;
+	case 1: return ES_SOLID_BSP;
+	case 2: return ES_SOLID_HULL1;
+	case 3: return ES_SOLID_HULL2;
+	case 16: return MSG_ReadSize16 (&net_message);
+	case 32: return (unsigned int)MSG_ReadLong ();
+	default:
+		Host_Error ("CLFTE_ReadDelta: unknown solid encoding %i", encoding);
+	}
+	return ES_SOLID_NOT;
+}
+
 static unsigned int CLFTE_ReadDelta (unsigned int entnum, entity_state_t *news, const entity_state_t *olds, const entity_state_t *baseline)
 {
 	unsigned int predbits = 0;
@@ -322,7 +345,7 @@ static unsigned int CLFTE_ReadDelta (unsigned int entnum, entity_state_t *news, 
 		news->colormap = MSG_ReadByte ();
 
 	if (bits & UF_SOLID)
-		/*news->solidsize =*/MSG_ReadSize16 (&net_message);
+		news->solidsize = CL_ReadSolidSize ();
 
 	if (bits & UF_FLAGS)
 		news->eflags = MSG_ReadByte ();
@@ -674,14 +697,16 @@ static void CLFTE_ParseEntitiesUpdate (void)
 					Con_SafePrintf ("%3i:     Reset all\n", msg_readcount);
 				for (newnum = 1; newnum < cl.num_entities; newnum++)
 				{
-					CL_EntityNum (newnum)->netstate.pmovetype = 0;
+					CL_EntityNum (newnum)->netstate = nullentitystate;
 					CL_EntityNum (newnum)->model = NULL;
 					CL_EntityNum (newnum)->update_type = false;
 				}
+				InvalidateTraceLineCache ();
 				cl.requestresend = false; // we got it.
 				continue;
 			}
 			ent->update_type = false; // no longer valid
+			ent->netstate = nullentitystate;
 			ent->model = NULL;
 			InvalidateTraceLineCache ();
 			continue;

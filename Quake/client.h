@@ -258,6 +258,7 @@ typedef struct
 	unsigned protocolflags;
 	unsigned protocol_pext1; // spike -- flag of fte protocol extensions
 	unsigned protocol_pext2; // spike -- flag of fte protocol extensions
+	unsigned protocol_qsvr; // selected private layout; zero until explicit admission, never inferred from FTE bits
 
 	qboolean protocol_particles;
 	struct
@@ -439,5 +440,8 @@ void Chase_Init (void);
 void TraceLine (vec3_t start, vec3_t end, vec3_t impact);
 void Chase_UpdateForClient (void);	// johnfitz
 void Chase_UpdateForDrawing (void); // johnfitz
+
+// Body codec only: caller must admit the private dialect before using this.
+void CL_WritePrivateUsercmd (sizebuf_t *buf, const usercmd_t *cmd, unsigned int protocolflags, unsigned int capabilities);
 
 #endif /* _CLIENT_H_ */

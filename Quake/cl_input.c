@@ -472,6 +472,160 @@ void CL_FinishMove (usercmd_t *cmd)
 	in_impulse = 0;
 }
 
+/* Pinned source codec from 1327f795; the admitted caller supplies a prepared command. */
+void CL_WritePrivateUsercmd (sizebuf_t *buf, const usercmd_t *cmd,
+	unsigned int protocolflags, unsigned int capabilities)
+{
+	int i;
+	int extbits = 0;
+
+	if (cmd->vr_active)
+	{
+		extbits |= MOVEEXT_VR;
+		if (cmd->vr_handpos_relative)
+			extbits |= MOVEEXT_VR_RELATIVE;
+	}
+	if (cmd->vr_akimbo_active && cmd->vr_active && cmd->vr_handpos_relative)
+	{
+		extbits |= MOVEEXT_VR_AKIMBO;
+		if (cmd->vr_akimbo_berserk)
+			extbits |= MOVEEXT_VR_AKIMBO_BERSERK;
+	}
+	if (cmd->weapon || cmd->cursor_screen[0] || cmd->cursor_screen[1] ||
+		cmd->cursor_start[0] || cmd->cursor_start[1] || cmd->cursor_start[2] ||
+		cmd->cursor_impact[0] || cmd->cursor_impact[1] || cmd->cursor_impact[2] ||
+		cmd->cursor_entitynumber)
+		extbits |= MOVEEXT_QCINPUT;
+	if (cmd->vr_contact.flags && cmd->vr_active && cmd->vr_handpos_relative)
+		extbits |= MOVEEXT_VR_CONTACT;
+	if (cmd->vr_gorilla_motion.flags && cmd->vr_active &&
+		cmd->vr_handpos_relative &&
+		(capabilities & QSVR_MOVE_CAP_GORILLA_TRUSTED))
+		extbits |= MOVEEXT_GORILLA_TRUSTED;
+	else if (cmd->vr_gorilla.flags && cmd->vr_active &&
+		cmd->vr_handpos_relative &&
+		(capabilities & QSVR_MOVE_CAP_GORILLA_RAW))
+		extbits |= MOVEEXT_VR_GORILLA;
+
+	MSG_WriteFloat (buf, cmd->servertime);
+	MSG_WriteByte (buf, cmd->msec);
+
+	for (i = 0; i < 3; i++)
+		MSG_WriteAngle16 (buf, cmd->viewangles[i], protocolflags);
+
+	MSG_WriteShort (buf, cmd->forwardmove);
+	MSG_WriteShort (buf, cmd->sidemove);
+	MSG_WriteShort (buf, cmd->upmove);
+	MSG_WriteByte (buf, cmd->buttons);
+	MSG_WriteByte (buf, cmd->impulse);
+	MSG_WriteByte (buf, extbits);
+
+	if (extbits & MOVEEXT_VR)
+	{
+		MSG_WriteFloat (buf, cmd->vr_handpos[0]);
+		MSG_WriteFloat (buf, cmd->vr_handpos[1]);
+		MSG_WriteFloat (buf, cmd->vr_handpos[2]);
+		MSG_WriteFloat (buf, cmd->vr_handrot[0]);
+		MSG_WriteFloat (buf, cmd->vr_handrot[1]);
+		MSG_WriteFloat (buf, cmd->vr_handrot[2]);
+		MSG_WriteFloat (buf, cmd->vr_roomscalemove[0]);
+		MSG_WriteFloat (buf, cmd->vr_roomscalemove[1]);
+		MSG_WriteFloat (buf, cmd->vr_roomscalemove[2]);
+	}
+
+	if (extbits & MOVEEXT_VR_AKIMBO)
+	{
+		for (i = 0; i < 2; i++)
+		{
+			MSG_WriteFloat (buf, cmd->vr_akimbo_muzzle[i][0]);
+			MSG_WriteFloat (buf, cmd->vr_akimbo_muzzle[i][1]);
+			MSG_WriteFloat (buf, cmd->vr_akimbo_muzzle[i][2]);
+		}
+		for (i = 0; i < 2; i++)
+		{
+			MSG_WriteFloat (buf, cmd->vr_akimbo_angles[i][0]);
+			MSG_WriteFloat (buf, cmd->vr_akimbo_angles[i][1]);
+			MSG_WriteFloat (buf, cmd->vr_akimbo_angles[i][2]);
+		}
+	}
+
+	if (extbits & MOVEEXT_QCINPUT)
+	{
+		MSG_WriteLong (buf, cmd->weapon);
+		MSG_WriteShort (buf, cmd->cursor_screen[0] * 32767);
+		MSG_WriteShort (buf, cmd->cursor_screen[1] * 32767);
+		MSG_WriteFloat (buf, cmd->cursor_start[0]);
+		MSG_WriteFloat (buf, cmd->cursor_start[1]);
+		MSG_WriteFloat (buf, cmd->cursor_start[2]);
+		MSG_WriteFloat (buf, cmd->cursor_impact[0]);
+		MSG_WriteFloat (buf, cmd->cursor_impact[1]);
+		MSG_WriteFloat (buf, cmd->cursor_impact[2]);
+		MSG_WriteEntity (buf, cmd->cursor_entitynumber, QSVR_PEXT2_REQUIRED);
+	}
+
+	if (extbits & MOVEEXT_VR_CONTACT)
+	{
+		MSG_WriteByte (buf, cmd->vr_contact.flags);
+		MSG_WriteShort (buf, cmd->vr_contact.modelindex);
+		MSG_WriteFloat (buf, cmd->vr_contact.weapon);
+		for (i = 0; i < 2; i++)
+		{
+			if (!(cmd->vr_contact.flags & (1 << i)))
+				continue;
+			MSG_WriteFloat (buf, cmd->vr_contact.grip[i][0]);
+			MSG_WriteFloat (buf, cmd->vr_contact.grip[i][1]);
+			MSG_WriteFloat (buf, cmd->vr_contact.grip[i][2]);
+			MSG_WriteFloat (buf, cmd->vr_contact.base[i][0]);
+			MSG_WriteFloat (buf, cmd->vr_contact.base[i][1]);
+			MSG_WriteFloat (buf, cmd->vr_contact.base[i][2]);
+			MSG_WriteFloat (buf, cmd->vr_contact.tip[i][0]);
+			MSG_WriteFloat (buf, cmd->vr_contact.tip[i][1]);
+			MSG_WriteFloat (buf, cmd->vr_contact.tip[i][2]);
+			MSG_WriteFloat (buf, cmd->vr_contact.speed[i]);
+		}
+	}
+
+	if (extbits & MOVEEXT_VR_GORILLA)
+	{
+		MSG_WriteByte (buf, cmd->vr_gorilla.flags);
+		for (i = 0; i < 3; i++)
+			MSG_WriteFloat (buf, cmd->vr_gorilla.head[i]);
+		for (i = 0; i < 2; i++)
+		{
+			MSG_WriteFloat (buf, cmd->vr_gorilla.hand[i][0]);
+			MSG_WriteFloat (buf, cmd->vr_gorilla.hand[i][1]);
+			MSG_WriteFloat (buf, cmd->vr_gorilla.hand[i][2]);
+			MSG_WriteFloat (buf, cmd->vr_gorilla.velocity[i][0]);
+			MSG_WriteFloat (buf, cmd->vr_gorilla.velocity[i][1]);
+			MSG_WriteFloat (buf, cmd->vr_gorilla.velocity[i][2]);
+		}
+	}
+	if (extbits & MOVEEXT_GORILLA_TRUSTED)
+	{
+		const vr_gorilla_motion_t *motion = &cmd->vr_gorilla_motion;
+		int flags = motion->flags;
+
+		if (motion->displacement[0] || motion->displacement[1] ||
+			motion->displacement[2])
+			flags |= 16;
+		if (motion->impulse[0] || motion->impulse[1] || motion->impulse[2])
+			flags |= 32;
+		MSG_WriteByte (buf, flags);
+		MSG_WriteLong (buf, motion->generation);
+		for (i = 0; i < 2; ++i)
+		{
+			MSG_WriteShort (buf, motion->contact[i] + 1);
+			MSG_WriteShort (buf, motion->contact_model[i]);
+		}
+		if (flags & 16)
+			for (i = 0; i < 3; ++i)
+				MSG_WriteFloat (buf, motion->displacement[i]);
+		if (flags & 32)
+			for (i = 0; i < 3; ++i)
+				MSG_WriteFloat (buf, motion->impulse[i]);
+	}
+}
+
 /*
 ==============
 CL_SendMove

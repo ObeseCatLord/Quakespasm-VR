@@ -216,3 +216,58 @@ until real command/replay and server/QC owners are integrated. Link-time section
 collection excludes those unimplemented owner calls from this focused fixture;
 no dummy gameplay implementations satisfy them. Its console/error functions and
 unused cvar/session boundary stand-ins are test-only.
+
+## Private snapshot collision bounds
+
+`private_solid_fixture.c` includes the production delta/removal parser and donor
+network collision owner, linked against real message readers and the staged PM
+weapon query. It
+checks public packed bounds, private tags, retained state, following-message
+alignment, unknown/truncated encodings and explicit dialect selection. Received
+bounds must collide with a synthetic entity box through the actual client trace;
+a received non-solid sentinel must remove that collision. Individual and full
+replacement removals must clear same-timestamp bounds and invalidate the trace
+cache. Negative upper-Z boxes must collide only below their top face with both donor
+trace implementations.
+
+```sh
+cc -std=gnu11 -DUSE_SDL3 -D_GNU_SOURCE -Wno-unused-parameter \
+  -ffunction-sections -fdata-sections tests/private_solid_fixture.c \
+  Quake/common.c Quake/mathlib.c Quake/pmove.c -Wl,--gc-sections \
+  $(pkg-config --cflags --libs sdl3) -lm -o /tmp/quakespasm-private-solid
+/tmp/quakespasm-private-solid
+```
+
+For memory/undefined-behavior checks, add
+`-fsanitize=address,undefined -fno-omit-frame-pointer` when compiling and linking.
+Ordinary and sanitized runs are supported. Error/console and unused VM, renderer
+and transport boundaries are fixture-only stand-ins; no message or collision algorithm is
+mocked. Geometry is constructed, and this does not prove transport admission,
+live world gathering or prediction. The donor server currently does not transmit
+these collision bounds, so its loopback path cannot qualify this behavior.
+
+## Staged private user commands
+
+`private_usercmd_fixture.c` links the actual client/server body codecs and shared
+message primitives. Fixed byte arrays check normal and floating-point angles and
+extended entity IDs independently of the writer. Roundtrips cover cursor input,
+tracked hand/roomscale, akimbo, contacts and both Gorilla formats. Capability
+checks preserve the pinned distinction between raw and trusted input, including
+the trusted model limit of 4096. Mutated bytes test NaN and both infinities in
+time, all float angles and all six cursor components. Exact-size allocations
+check every truncated prefix of the complete payloads under sanitizers.
+
+```sh
+cc -std=gnu11 -DUSE_SDL3 -D_GNU_SOURCE -Wno-unused-parameter \
+  -ffunction-sections -fdata-sections tests/private_usercmd_fixture.c \
+  Quake/cl_input.c Quake/sv_user.c Quake/common.c Quake/mathlib.c \
+  -Wl,--gc-sections $(pkg-config --cflags --libs sdl3) -lm \
+  -o /tmp/quakespasm-private-usercmd
+/tmp/quakespasm-private-usercmd
+```
+
+Add `-fsanitize=address,undefined -fno-omit-frame-pointer` for sanitizer coverage.
+Keep assertions enabled. Console/error stand-ins and link-time section collection
+omit unrelated engine owners; the codecs and wire primitives are not mocked.
+These checks do not qualify private admission, clock sampling, redundant command
+history, completed-simulation ACKs, replay or networked gameplay.

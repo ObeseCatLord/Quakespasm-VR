@@ -26,7 +26,7 @@ The [complete-scope feature map](migration-feature-map.md) is the current migrat
 [migration-preservation.csv](migration-preservation.csv) now covers 905 unique paths, extending the original 904-path snapshot with the current master delta. It retains old blob/WIP evidence and adds current-master blobs and feature routing. Exact source anchors and mechanical module routes are labeled separately. [History](migration-history-index.csv) and [public-interface](migration-interface-index.csv) indexes make omissions reviewable. These are scope/audit artifacts, **not proof of completed behavioral integration**. Historical deletions are reviewed rather than restored blindly; preserved WIP is not automatically accepted release behavior.
 
 The sections below record successive checkpoints. The latest implemented slice
-is **Inherited floor, scale and comfort view adapter**; earlier limitations describe their
+is **Private command codecs and collision bounds**; earlier limitations describe their
 respective commits, not the current head. None closes the full P1 gameplay gate.
 
 ## First source checkpoint
@@ -307,6 +307,36 @@ redundancy, authoritative baseline and prediction replay, followed by tracked
 movement/fire against the pinned dedicated server. Local single-player bypasses
 the source prediction policy and cannot prove that path. The new server side
 then reuses that command contract while retaining ordinary donor peers.
+
+## Private command codecs and collision bounds
+
+The pinned fork's command-body serializer and parser now live beside the donor's
+existing input owners. They preserve explicit milliseconds, cursor input, tracked
+hand and roomscale data, akimbo, weapon contacts and raw/trusted Gorilla payloads.
+These are staged codecs: no production caller selects the private connection
+layout yet. Public extension masks do not authorize the incompatible dialect.
+
+Entity deltas now retain received collision bounds, which the donor previously
+read and discarded. Public packed bounds keep their wire format; inherited
+variable-size tags require the explicit private layout. A focused test connects
+the actual snapshot decoder to PM weapon queries and donor collision tracing.
+This corrects client collision data for peers that send it; the current donor
+server does not emit those bounds itself.
+
+The shared float reader now detects truncated packets before accessing bytes,
+and packed solid decoding uses an unsigned shift while preserving the zero
+non-solid sentinel. Replacement removals clear stale collision state, and the
+existing network collision owner handles negative upper bounds and legacy
+tracer metadata correctly. Astra's source comparison
+found no command-layout mismatch and recommended rejecting nonfinite private
+command scalars. See the [implementation review](migration-movement-review.md)
+and [local verification instructions](../tests/README.md) for scope and results.
+The final Linux executable builds; both codec/collision fixtures pass with
+AddressSanitizer and UndefinedBehaviorSanitizer.
+
+Private admission, command pacing/history, completed-simulation acknowledgments,
+authoritative state and replay remain the next coupled integration work. This
+checkpoint does not establish networked movement, controller or headset parity.
 
 ## Next integration gates
 

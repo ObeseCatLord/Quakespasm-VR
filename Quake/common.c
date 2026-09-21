@@ -1467,6 +1467,14 @@ float MSG_ReadFloat (void)
 		int	  l;
 	} dat;
 
+	// Private command headers may end before the diagnostic time or angles.
+	// Keep float reads inside the message just like the integer primitives.
+	if (msg_readcount < 0 || msg_readcount > net_message.cursize || net_message.cursize - msg_readcount < 4)
+	{
+		msg_badread = true;
+		return -1;
+	}
+
 	dat.b[0] = net_message.data[msg_readcount];
 	dat.b[1] = net_message.data[msg_readcount + 1];
 	dat.b[2] = net_message.data[msg_readcount + 2];

@@ -408,6 +408,22 @@ typedef struct entity_state_s
 
 extern entity_state_t nullentitystate; // note: not all null.
 
+/* Pinned Quakespasm VR command layout, separate from public FTE semantics.
+ * These constants do not advertise support or authorize private decoding. */
+#define QSVR_PROTOCOL_PINNED 1u
+#define QSVR_PEXT2_REQUIRED 0x000000e9u
+#define QSVR_MODEL_LIMIT 4096
+#define QSVR_MOVE_CAP_GORILLA_RAW 1u
+#define QSVR_MOVE_CAP_GORILLA_TRUSTED 2u
+#define MOVEEXT_VR 1
+#define MOVEEXT_VR_RELATIVE 2
+#define MOVEEXT_QCINPUT 4
+#define MOVEEXT_VR_AKIMBO 8
+#define MOVEEXT_VR_AKIMBO_BERSERK 16
+#define MOVEEXT_VR_CONTACT 32
+#define MOVEEXT_VR_GORILLA 64
+#define MOVEEXT_GORILLA_TRUSTED 128
+
 // Inherited command data; private transport is admitted separately from FTE bits.
 #define VR_WEAPON_CONTACT_LEFT_VALID 1
 #define VR_WEAPON_CONTACT_CAP_COLLISION 1
