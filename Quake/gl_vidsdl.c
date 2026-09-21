@@ -34,6 +34,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "steam.h"
 #include "vr_openxr.h"
 #include "vr_openxr_vulkan.h"
+#include "vr_openxr_math.h"
 
 #ifdef USE_SDL3
 #include <SDL3/SDL_vulkan.h>
@@ -82,6 +83,13 @@ static uint32_t num_images_acquired = 0;
 static qboolean openxr_vulkan_binding = false;
 static uint32_t openxr_vulkan_api_version;
 static uint32_t openxr_vulkan_minimum_version;
+static qboolean openxr_attach_attempted;
+static qboolean openxr_frame_submitted;
+static vrxr_frame_t openxr_frame;
+static VkImageView *openxr_image_views;
+static uint32_t openxr_image_count;
+static uint32_t openxr_image_index;
+static int openxr_desktop_width, openxr_desktop_height;
 
 static SDL_Window *draw_context;
 
@@ -1532,7 +1540,8 @@ static void GL_InitDevice (void)
 		vkGetPhysicalDeviceFeatures (vulkan_physical_device, &vulkan_globals.device_features);
 
 	vulkan_globals.openxr_max_multiview_view_count = multiview_properties.maxMultiviewViewCount;
-	vulkan_globals.openxr_multiview_available = multiview_features.multiview && multiview_properties.maxMultiviewViewCount >= 2;
+	vulkan_globals.openxr_multiview_available = multiview_features.multiview && multiview_properties.maxMultiviewViewCount >= 2 &&
+		vulkan_globals.device_properties.limits.maxBoundDescriptorSets >= 6;
 	if (openxr_vulkan_binding && !vulkan_globals.openxr_multiview_available)
 		Con_Printf ("OpenXR bootstrap: core multiview with two views is unavailable; session is not attached.\n");
 
@@ -1662,7 +1671,7 @@ static void GL_InitDevice (void)
 			Sys_Error ("OpenXR bootstrap failed to create the Vulkan device");
 		}
 		vulkan_globals.openxr_vulkan_available = true;
-		Con_Printf ("OpenXR bootstrap complete; no OpenXR session or swapchain is attached.\n");
+		Con_Printf ("OpenXR graphics binding ready; stereo attachment follows at the first frame.\n");
 	}
 	else
 	{
@@ -1886,7 +1895,7 @@ static void GL_CreateDepthBuffer (void)
 	image_create_info.extent.height = vid.render_height;
 	image_create_info.extent.depth = 1;
 	image_create_info.mipLevels = 1;
-	image_create_info.arrayLayers = 1;
+	image_create_info.arrayLayers = vulkan_globals.stereo_active ? 2 : 1;
 	image_create_info.samples = vulkan_globals.sample_count;
 	image_create_info.tiling = VK_IMAGE_TILING_OPTIMAL;
 	image_create_info.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT;
@@ -1931,8 +1940,8 @@ static void GL_CreateDepthBuffer (void)
 	image_view_create_info.subresourceRange.baseMipLevel = 0;
 	image_view_create_info.subresourceRange.levelCount = 1;
 	image_view_create_info.subresourceRange.baseArrayLayer = 0;
-	image_view_create_info.subresourceRange.layerCount = 1;
-	image_view_create_info.viewType = VK_IMAGE_VIEW_TYPE_2D;
+	image_view_create_info.subresourceRange.layerCount = vulkan_globals.stereo_active ? 2 : 1;
+	image_view_create_info.viewType = vulkan_globals.stereo_active ? VK_IMAGE_VIEW_TYPE_2D_ARRAY : VK_IMAGE_VIEW_TYPE_2D;
 	image_view_create_info.flags = 0;
 
 	assert (depth_buffer_view == VK_NULL_HANDLE);
@@ -1974,7 +1983,7 @@ static void GL_CreateUIColorBuffer (void)
 	image_create_info.extent.height = vid.height;
 	image_create_info.extent.depth = 1;
 	image_create_info.mipLevels = 1;
-	image_create_info.arrayLayers = 1;
+	image_create_info.arrayLayers = vulkan_globals.stereo_active ? 2 : 1;
 	image_create_info.samples = VK_SAMPLE_COUNT_1_BIT;
 	image_create_info.tiling = VK_IMAGE_TILING_OPTIMAL;
 	image_create_info.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT;
@@ -2017,8 +2026,8 @@ static void GL_CreateUIColorBuffer (void)
 	image_view_create_info.subresourceRange.baseMipLevel = 0;
 	image_view_create_info.subresourceRange.levelCount = 1;
 	image_view_create_info.subresourceRange.baseArrayLayer = 0;
-	image_view_create_info.subresourceRange.layerCount = 1;
-	image_view_create_info.viewType = VK_IMAGE_VIEW_TYPE_2D;
+	image_view_create_info.subresourceRange.layerCount = vulkan_globals.stereo_active ? 2 : 1;
+	image_view_create_info.viewType = vulkan_globals.stereo_active ? VK_IMAGE_VIEW_TYPE_2D_ARRAY : VK_IMAGE_VIEW_TYPE_2D;
 	image_view_create_info.flags = 0;
 
 	assert (ui_color_buffer_view == VK_NULL_HANDLE);
@@ -2045,7 +2054,7 @@ static void GL_CreateColorBuffer (void)
 	image_create_info.extent.height = vid.render_height;
 	image_create_info.extent.depth = 1;
 	image_create_info.mipLevels = 1;
-	image_create_info.arrayLayers = 1;
+	image_create_info.arrayLayers = vulkan_globals.stereo_active ? 2 : 1;
 	image_create_info.samples = VK_SAMPLE_COUNT_1_BIT;
 	image_create_info.tiling = VK_IMAGE_TILING_OPTIMAL;
 	image_create_info.usage =
@@ -2091,8 +2100,8 @@ static void GL_CreateColorBuffer (void)
 		image_view_create_info.subresourceRange.baseMipLevel = 0;
 		image_view_create_info.subresourceRange.levelCount = 1;
 		image_view_create_info.subresourceRange.baseArrayLayer = 0;
-		image_view_create_info.subresourceRange.layerCount = 1;
-		image_view_create_info.viewType = VK_IMAGE_VIEW_TYPE_2D;
+		image_view_create_info.subresourceRange.layerCount = vulkan_globals.stereo_active ? 2 : 1;
+		image_view_create_info.viewType = vulkan_globals.stereo_active ? VK_IMAGE_VIEW_TYPE_2D_ARRAY : VK_IMAGE_VIEW_TYPE_2D;
 		image_view_create_info.flags = 0;
 
 		assert (color_buffers_view[i] == VK_NULL_HANDLE);
@@ -2191,8 +2200,8 @@ static void GL_CreateColorBuffer (void)
 		image_view_create_info.subresourceRange.baseMipLevel = 0;
 		image_view_create_info.subresourceRange.levelCount = 1;
 		image_view_create_info.subresourceRange.baseArrayLayer = 0;
-		image_view_create_info.subresourceRange.layerCount = 1;
-		image_view_create_info.viewType = VK_IMAGE_VIEW_TYPE_2D;
+		image_view_create_info.subresourceRange.layerCount = vulkan_globals.stereo_active ? 2 : 1;
+		image_view_create_info.viewType = vulkan_globals.stereo_active ? VK_IMAGE_VIEW_TYPE_2D_ARRAY : VK_IMAGE_VIEW_TYPE_2D;
 		image_view_create_info.flags = 0;
 
 		assert (msaa_color_buffer_view == VK_NULL_HANDLE);
@@ -2218,7 +2227,7 @@ static void GL_CreateOITImage (VkImage *image, vulkan_memory_t *memory, VkImageV
 	image_create_info.extent.height = vid.render_height;
 	image_create_info.extent.depth = 1;
 	image_create_info.mipLevels = 1;
-	image_create_info.arrayLayers = 1;
+	image_create_info.arrayLayers = vulkan_globals.stereo_active ? 2 : 1;
 	image_create_info.samples = vulkan_globals.sample_count;
 	image_create_info.tiling = VK_IMAGE_TILING_OPTIMAL;
 	image_create_info.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT;
@@ -2264,8 +2273,8 @@ static void GL_CreateOITImage (VkImage *image, vulkan_memory_t *memory, VkImageV
 		image_view_create_info.subresourceRange.baseMipLevel = 0;
 		image_view_create_info.subresourceRange.levelCount = 1;
 		image_view_create_info.subresourceRange.baseArrayLayer = 0;
-		image_view_create_info.subresourceRange.layerCount = 1;
-		image_view_create_info.viewType = VK_IMAGE_VIEW_TYPE_2D;
+		image_view_create_info.subresourceRange.layerCount = vulkan_globals.stereo_active ? 2 : 1;
+		image_view_create_info.viewType = vulkan_globals.stereo_active ? VK_IMAGE_VIEW_TYPE_2D_ARRAY : VK_IMAGE_VIEW_TYPE_2D;
 
 		assert (*view == VK_NULL_HANDLE);
 		err = vkCreateImageView (vulkan_globals.device, &image_view_create_info, NULL, view);
@@ -2291,7 +2300,7 @@ static void GL_CreateOITBuffers (void)
 	image_create_info.extent.height = vid.render_height;
 	image_create_info.extent.depth = 1;
 	image_create_info.mipLevels = 1;
-	image_create_info.arrayLayers = 1;
+	image_create_info.arrayLayers = vulkan_globals.stereo_active ? 2 : 1;
 	image_create_info.samples = vulkan_globals.sample_count;
 	image_create_info.tiling = VK_IMAGE_TILING_OPTIMAL;
 	image_create_info.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT;
@@ -2340,8 +2349,8 @@ static void GL_CreateOITBuffers (void)
 			image_view_create_info.subresourceRange.baseMipLevel = 0;
 			image_view_create_info.subresourceRange.levelCount = 1;
 			image_view_create_info.subresourceRange.baseArrayLayer = 0;
-			image_view_create_info.subresourceRange.layerCount = 1;
-			image_view_create_info.viewType = VK_IMAGE_VIEW_TYPE_2D;
+			image_view_create_info.subresourceRange.layerCount = vulkan_globals.stereo_active ? 2 : 1;
+			image_view_create_info.viewType = vulkan_globals.stereo_active ? VK_IMAGE_VIEW_TYPE_2D_ARRAY : VK_IMAGE_VIEW_TYPE_2D;
 			image_view_create_info.flags = 0;
 
 			assert (oit_accum_buffer_view == VK_NULL_HANDLE);
@@ -2394,8 +2403,8 @@ static void GL_CreateOITBuffers (void)
 			image_view_create_info.subresourceRange.baseMipLevel = 0;
 			image_view_create_info.subresourceRange.levelCount = 1;
 			image_view_create_info.subresourceRange.baseArrayLayer = 0;
-			image_view_create_info.subresourceRange.layerCount = 1;
-			image_view_create_info.viewType = VK_IMAGE_VIEW_TYPE_2D;
+			image_view_create_info.subresourceRange.layerCount = vulkan_globals.stereo_active ? 2 : 1;
+			image_view_create_info.viewType = vulkan_globals.stereo_active ? VK_IMAGE_VIEW_TYPE_2D_ARRAY : VK_IMAGE_VIEW_TYPE_2D;
 			image_view_create_info.flags = 0;
 
 			assert (oit_reveal_buffer_view == VK_NULL_HANDLE);
@@ -2986,6 +2995,46 @@ static qboolean GL_CreateSwapChain (void)
 GL_CreateMainFrameBuffers
 ===============
 */
+static void GL_DestroyXRImageViews (void)
+{
+	for (uint32_t i = 0; i < openxr_image_count; ++i)
+		vkDestroyImageView (vulkan_globals.device, openxr_image_views[i], NULL);
+	free (openxr_image_views);
+	openxr_image_views = NULL;
+	openxr_image_count = 0;
+}
+
+static void GL_CreateXRImageViews (void)
+{
+	if (openxr_image_views)
+		return;
+	openxr_image_count = VRXR_VulkanImageCount (0);
+	if (!openxr_image_count)
+		Sys_Error ("OpenXR has no stereo swapchain images");
+	openxr_image_views = calloc (openxr_image_count, sizeof (*openxr_image_views));
+	if (!openxr_image_views)
+	{
+		openxr_image_count = 0;
+		Sys_Error ("Couldn't allocate OpenXR image views");
+	}
+	for (uint32_t i = 0; i < openxr_image_count; ++i)
+	{
+		vrxr_vulkan_eye_t image;
+		if (!VRXR_GetVulkanImage (0, i, &image) || image.array_layers != 2 || image.array_layer != 0)
+			Sys_Error ("Invalid OpenXR stereo image metadata");
+		const VkImageViewCreateInfo info = {
+			.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+			.image = image.image,
+			.viewType = VK_IMAGE_VIEW_TYPE_2D_ARRAY,
+			.format = image.format,
+			.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 2},
+		};
+		const VkResult result = vkCreateImageView (vulkan_globals.device, &info, NULL, &openxr_image_views[i]);
+		if (result != VK_SUCCESS)
+			Sys_Error ("Couldn't create OpenXR image view: %d", result);
+	}
+}
+
 static void GL_CreateFrameBuffers (void)
 {
 	const render_framebuffer_images_t images = {
@@ -3002,8 +3051,8 @@ static void GL_CreateFrameBuffers (void)
 		.mboit_b0 = mboit_b0_buffer_view,
 		.mboit_moments = mboit_moments0_buffer_view,
 		.mboit_color = mboit_color_buffer_view,
-		.swapchain_count = num_swap_chain_images,
-		.swapchain = swapchain_images_views,
+		.swapchain_count = vulkan_globals.stereo_active ? openxr_image_count : num_swap_chain_images,
+		.swapchain = vulkan_globals.stereo_active ? openxr_image_views : swapchain_images_views,
 	};
 	R_CreateFrameBuffers (&images);
 }
@@ -3017,7 +3066,7 @@ static void VID_GetRenderSize (int *width, int *height)
 {
 	*width = vid.width;
 	*height = vid.height;
-	if (r_width.value > 0 && r_height.value > 0)
+	if (!vulkan_globals.stereo_active && r_width.value > 0 && r_height.value > 0)
 	{
 		*width = (int)CLAMP (q_min (320, vid.width), r_width.value, vid.width);
 		*height = (int)CLAMP (q_min (200, vid.height), r_height.value, vid.height);
@@ -3029,18 +3078,21 @@ static void GL_CreateRenderResources (void)
 	if (sv.active && cls.signon < 1) // server has loaded the map but client hasn't called R_NewMap yet - wait until next frame
 		return;
 
-	if (!GL_CreateSwapChain ())
+	if (!vulkan_globals.stereo_active && !GL_CreateSwapChain ())
 	{
 		render_resources_created = false;
 		return;
 	}
 
+	if (vulkan_globals.stereo_active)
+		GL_CreateXRImageViews ();
 	VID_GetRenderSize (&vid.render_width, &vid.render_height);
 	GL_CreateColorBuffer ();
 	if (vid.render_width != vid.width || vid.render_height != vid.height)
 		GL_CreateUIColorBuffer ();
 	GL_CreateDepthBuffer ();
-	R_CreateSSAO (depth_buffer);
+	if (!vulkan_globals.stereo_active)
+		R_CreateSSAO (depth_buffer);
 	R_CreateRenderPasses ();
 	GL_CreateFrameBuffers ();
 	R_CreatePipelines ();
@@ -3092,6 +3144,7 @@ static void GL_DestroyRenderResources (void)
 	}
 
 	R_DestroyFrameBuffers ();
+	GL_DestroyXRImageViews ();
 
 	if (scene_upscale_descriptor_set != VK_NULL_HANDLE)
 	{
@@ -3163,7 +3216,8 @@ static void GL_DestroyRenderResources (void)
 		draw_complete_semaphores[i] = VK_NULL_HANDLE;
 	}
 
-	fpDestroySwapchainKHR (vulkan_globals.device, vulkan_swapchain, NULL);
+	if (vulkan_swapchain != VK_NULL_HANDLE)
+		fpDestroySwapchainKHR (vulkan_globals.device, vulkan_swapchain, NULL);
 	vulkan_swapchain = VK_NULL_HANDLE;
 
 	R_DestroyRenderPasses ();
@@ -3364,9 +3418,88 @@ void GL_DrawSceneUpscale (cb_context_t *cbx)
 	R_EndDebugUtilsLabel (cbx);
 }
 
+static void GL_OpenXRRetireImages (void *unused)
+{
+	// This callback runs on the main XR owner, outside the queue lock. Retire
+	// donor work and framebuffers before the runtime destroys borrowed images.
+	GL_DestroyRenderResources ();
+	R_RestoreStereoView ();
+	R_InvalidateStereoReference ();
+	openxr_frame_submitted = false;
+	vulkan_globals.stereo_descriptor_set = VK_NULL_HANDLE;
+	if (vulkan_globals.stereo_active)
+	{
+		vid.width = openxr_desktop_width;
+		vid.height = openxr_desktop_height;
+		vid.recalc_refdef = true;
+	}
+	vulkan_globals.stereo_active = false;
+	vulkan_globals.stereo_color_format = VK_FORMAT_UNDEFINED;
+}
+
+static void GL_OpenXRAttach (void)
+{
+	if (!openxr_vulkan_binding || openxr_attach_attempted)
+		return;
+	openxr_attach_attempted = true;
+	if (!vulkan_globals.openxr_multiview_available)
+	{
+		Con_Printf ("OpenXR stereo needs two-view multiview and six descriptor sets; keeping desktop output.\n");
+		return;
+	}
+	GL_SynchronizeEndRenderingTask ();
+	GL_DestroyRenderResources ();
+	openxr_desktop_width = vid.width;
+	openxr_desktop_height = vid.height;
+	if (!VRXR_AttachVulkan (vulkan_globals.gfx_queue_family_index, 0, 0, 2, GL_OpenXRRetireImages, NULL, 0, 0))
+	{
+		Con_Printf ("OpenXR session attachment failed; keeping desktop output.\n");
+		return;
+	}
+	unsigned width, height;
+	if (!VRXR_GetViewSize (0, &width, &height) || !width || !height ||
+		width > vulkan_globals.device_properties.limits.maxFramebufferWidth ||
+		height > vulkan_globals.device_properties.limits.maxFramebufferHeight)
+	{
+		VRXR_DetachVulkan ();
+		Con_Printf ("OpenXR eye dimensions exceed renderer limits; keeping desktop output.\n");
+		return;
+	}
+	vulkan_globals.stereo_active = true;
+	vulkan_globals.stereo_color_format = VRXR_VulkanColorFormat ();
+	vid.width = width;
+	vid.height = height;
+	vid.recalc_refdef = true;
+	Con_Printf ("OpenXR stereo session attached: %ux%u per eye.\n", width, height);
+}
+
+const vrxr_frame_t *GL_OpenXRFrame (void)
+{
+	return vulkan_globals.stereo_active ? &openxr_frame : NULL;
+}
+
+void GL_EndXRFrame (void)
+{
+	if (!vulkan_globals.stereo_active)
+		return;
+	// Recording completion is insufficient: the submission task must have
+	// queued ALL application image accesses before releasing either eye.
+	GL_SynchronizeEndRenderingTask ();
+	if (openxr_frame_submitted)
+	{
+		VRXR_VulkanEyeSubmitted (0);
+		VRXR_VulkanEyeSubmitted (1);
+		VRXR_EndFrame ();
+	}
+	else
+		VRXR_AbortFrame ();
+	openxr_frame_submitted = false;
+}
+
 qboolean GL_BeginRendering (qboolean use_tasks, task_handle_t *begin_rendering_task, int *width, int *height)
 {
-	if (!use_tasks)
+	GL_OpenXRAttach ();
+	if (!use_tasks || vulkan_globals.stereo_active)
 		GL_SynchronizeEndRenderingTask ();
 
 	const int		 requested_oit_value = (int)r_oit.value;
@@ -3395,6 +3528,35 @@ qboolean GL_BeginRendering (qboolean use_tasks, task_handle_t *begin_rendering_t
 		}
 	}
 
+	if (vulkan_globals.stereo_active)
+	{
+		// Clean up an abandoned serial refresh before reusing command buffers.
+		VRXR_AbortFrame ();
+		const int begun = VRXR_BeginFrame (&openxr_frame);
+		if (openxr_frame.reference_changed)
+			R_InvalidateStereoReference ();
+		if (begun <= 0)
+			return false;
+		if (!openxr_frame.should_render)
+		{
+			VRXR_EndFrame ();
+			return false;
+		}
+		if (!VRXR_StereoClip (&openxr_frame, VR_STEREO_UNITS_PER_METRE, 4.f, vulkan_globals.stereo_clip_from_center))
+		{
+			VRXR_AbortFrame ();
+			return false;
+		}
+		vrxr_vulkan_eye_t image;
+		if (!VRXR_GetVulkanEye (0, &image) || image.index >= openxr_image_count)
+		{
+			VRXR_AbortFrame ();
+			return false;
+		}
+		openxr_image_index = image.index;
+		openxr_frame_submitted = false;
+		vulkan_globals.stereo_descriptor_set = VK_NULL_HANDLE;
+	}
 	*width = vid.width;
 	*height = vid.height;
 
@@ -3658,10 +3820,11 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 	}
 #endif
 
-	qboolean swapchain_acquired = parms->swapchain && GL_AcquireNextSwapChainImage ();
+	qboolean swapchain_acquired = !vulkan_globals.stereo_active && parms->swapchain && GL_AcquireNextSwapChainImage ();
+	const qboolean output_acquired = swapchain_acquired || vulkan_globals.stereo_active;
 	if (frame_timing_enabled)
 		rs_gpuwaitaccum_us += (uint32_t)((Sys_DoubleTime () - display_wait_start) * 1000000.0);
-	if (swapchain_acquired == true)
+	if (output_acquired)
 	{
 		cb_context_t *cbx = vulkan_globals.secondary_cb_contexts[SCBX_POST_PROCESS];
 
@@ -3695,8 +3858,8 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 	frame_readback_t readback = {.commands = render_passes_cb};
 	VkCommandBuffer	 submit_cbs[PCBX_NUM];
 	const uint32_t	 submit_count =
-		R_RecordFrame (parms, swapchain_acquired, current_swapchain_buffer, submit_cbs, countof (submit_cbs),
-			take_screenshot ? GL_RecordFrameReadback : NULL, &readback);
+		R_RecordFrame (parms, output_acquired, vulkan_globals.stereo_active ? openxr_image_index : current_swapchain_buffer,
+			submit_cbs, countof (submit_cbs), take_screenshot && swapchain_acquired ? GL_RecordFrameReadback : NULL, &readback);
 
 	if (frame_timing_enabled && (timestamp_query_pool != VK_NULL_HANDLE))
 	{
@@ -3733,6 +3896,7 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 
 	vulkan_globals.device_idle = false;
 	frame_submitted[cb_index] = true;
+	openxr_frame_submitted = vulkan_globals.stereo_active;
 
 	if (take_screenshot && (readback.buffer != VK_NULL_HANDLE))
 	{
@@ -3796,7 +3960,7 @@ GL_EndRendering
 task_handle_t GL_EndRendering (qboolean use_tasks, qboolean swapchain)
 {
 	end_rendering_parms_t parms = {
-		.swapchain = swapchain,
+		.swapchain = swapchain && !vulkan_globals.stereo_active,
 		.use_oit = R_UseOIT (),
 		.use_mboit = R_UseMBOIT (),
 		.render_warp = render_warp,
@@ -3804,7 +3968,7 @@ task_handle_t GL_EndRendering (qboolean use_tasks, qboolean swapchain)
 		.polyblend = gl_polyblend.value != 0,
 		.menu = key_dest == key_menu,
 #if defined(_DEBUG)
-		.ray_debug = r_raydebug.value && (bmodel_tlas != VK_NULL_HANDLE),
+		.ray_debug = !vulkan_globals.stereo_active && r_raydebug.value && (bmodel_tlas != VK_NULL_HANDLE),
 #endif
 		.vid_width = vid.width,
 		.vid_height = vid.height,
@@ -3942,6 +4106,16 @@ void VID_Shutdown (void)
 	if (vid_initialized)
 	{
 		assert (draw_context != NULL);
+		// The end task may still write/free a screenshot after the next host
+		// frame reaches quit. Retire it before SDL can unload the Vulkan driver.
+		GL_SynchronizeEndRenderingTask ();
+		if (vulkan_globals.device && vulkan_globals.queue_mutex)
+		{
+			SDL_LockMutex (vulkan_globals.queue_mutex);
+			vkDeviceWaitIdle (vulkan_globals.device);
+			SDL_UnlockMutex (vulkan_globals.queue_mutex);
+			vulkan_globals.device_idle = true;
+		}
 		if (openxr_vulkan_binding)
 		{
 			VRXR_Shutdown ();
@@ -4369,7 +4543,17 @@ void VID_Restart (qboolean set_mode)
 	// set new mode
 	//
 	if (set_mode)
+	{
+		const int eye_width = vid.width, eye_height = vid.height;
 		VID_SetMode (width, height, refreshrate, fullscreen);
+		if (vulkan_globals.stereo_active)
+		{
+			openxr_desktop_width = vid.width;
+			openxr_desktop_height = vid.height;
+			vid.width = eye_width;
+			vid.height = eye_height;
+		}
+	}
 
 	GL_CreateRenderResources ();
 
@@ -4382,7 +4566,19 @@ void VID_Restart (qboolean set_mode)
 	// keep cvars in line with actual mode
 	//
 	if (set_mode)
-		VID_SyncCvars ();
+	{
+		if (vulkan_globals.stereo_active)
+		{
+			const int eye_width = vid.width, eye_height = vid.height;
+			vid.width = openxr_desktop_width;
+			vid.height = openxr_desktop_height;
+			VID_SyncCvars ();
+			vid.width = eye_width;
+			vid.height = eye_height;
+		}
+		else
+			VID_SyncCvars ();
+	}
 
 	//
 	// update mouse grab

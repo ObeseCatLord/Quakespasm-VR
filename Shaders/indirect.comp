@@ -14,6 +14,7 @@ layout (push_constant) uniform PushConsts
 	float vieworg_y;
 	float vieworg_z;
 	uint  instance_base;
+	float eye_radius;
 }
 push_constants;
 
@@ -79,7 +80,15 @@ void main ()
 	const float dist = surfaces[surf].dist;
 	const float dp = dot (surf_normal, vieworg);
 	const bool	backface = (surfaces[surf].packed_tex_edgecount & 0x8000) != 0;
-	if (backface && dp > dist || !backface && dp < dist)
+	float radius = push_constants.eye_radius;
+	if (radius > 0.0 && submodel != 0)
+	{
+		const vec3 row = bmodel_instances[push_constants.instance_base + submodel].transform[0].xyz;
+		const float scale_squared = dot (row, row);
+		radius = scale_squared > 0.0 ? radius * inversesqrt (scale_squared) : 1e30;
+	}
+	const float margin = radius * dot (abs (surf_normal), vec3 (1.0));
+	if (backface && dp > dist + margin || !backface && dp < dist - margin)
 		return;
 
 	uint	   tex_idx = surfaces[surf].packed_tex_edgecount & 0x7FFF;

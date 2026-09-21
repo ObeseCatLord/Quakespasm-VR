@@ -77,6 +77,11 @@ typedef struct {
   VkImage density_image;
   uint32_t density_width, density_height;
 } vrxr_vulkan_eye_t;
+/* Metadata for creating renderer image views after attachment. These borrowed
+ * handles remain valid until retire_images is called. Enumeration grants no
+ * permission to access image contents; GetVulkanEye still gates frame access. */
+uint32_t VRXR_VulkanImageCount(int eye);
+int VRXR_GetVulkanImage(int eye, uint32_t index, vrxr_vulkan_eye_t *target);
 /* During a renderable begun frame only. In array mode both eyes share the image
  * and acquired index, with distinct array_layer. In separate mode indices are
  * independent. Neither is a renderer frame-slot index. No ownership transfer. */

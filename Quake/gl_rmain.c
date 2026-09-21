@@ -22,6 +22,8 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 // r_main.c
 
 #include "quakedef.h"
+#include "vr_openxr_math.h"
+#include <float.h>
 #include "r_ssao.h"
 #include "tasks.h"
 #include "atomics.h"
@@ -329,26 +331,169 @@ static void GL_FrustumMatrix (float matrix[16], float fovx, float fovy)
 R_SetupMatrices
 =============
 */
+vec3_t r_stereo_origins[2];
+float r_stereo_radius;
+static vec3_t stereo_forward, stereo_right, stereo_up;
+static float stereo_bounds[4];
+static qboolean stereo_frustum_valid;
+static qboolean stereo_view_adjusted;
+static vec3_t stereo_base_origin, stereo_base_angles;
+static qboolean stereo_have_reference;
+static vec3_t stereo_reference_position;
+
+void R_InvalidateStereoReference (void)
+{
+	// Keep invalidation across skipped frames until a valid rendered pose.
+	stereo_have_reference = false;
+}
+
+void R_RestoreStereoView (void)
+{
+	if (!stereo_view_adjusted)
+		return;
+	VectorCopy (stereo_base_origin, r_refdef.vieworg);
+	VectorCopy (stereo_base_angles, r_refdef.viewangles);
+	stereo_view_adjusted = false;
+}
+
+static void R_XRVectorToWorld (const float vector[3], const vec3_t forward, const vec3_t right, const vec3_t up, vec3_t result)
+{
+	for (int i = 0; i < 3; ++i)
+		result[i] = right[i] * vector[0] + up[i] * vector[1] - forward[i] * vector[2];
+}
+
+void R_PrepareStereoFrame (void)
+{
+	const vrxr_frame_t *frame = GL_OpenXRFrame ();
+	if (!frame)
+	{
+		stereo_have_reference = false;
+		r_stereo_radius = 0;
+		return;
+	}
+	VectorCopy (r_refdef.vieworg, stereo_base_origin);
+	VectorCopy (r_refdef.viewangles, stereo_base_angles);
+	stereo_view_adjusted = true;
+	const float (*head)[4] = frame->devices[0].matrix;
+	vec3_t base_forward, base_right, base_up, local, offset;
+	AngleVectors (r_refdef.viewangles, base_forward, base_right, base_up);
+	if (!stereo_have_reference || frame->reference_changed)
+	{
+		for (int i = 0; i < 3; ++i)
+			stereo_reference_position[i] = head[i][3];
+		stereo_have_reference = true;
+	}
+	for (int i = 0; i < 3; ++i)
+		local[i] = (head[i][3] - stereo_reference_position[i]) * VR_STEREO_UNITS_PER_METRE;
+	R_XRVectorToWorld (local, base_forward, base_right, base_up, offset);
+	VectorAdd (r_refdef.vieworg, offset, r_refdef.vieworg);
+	for (int i = 0; i < 3; ++i) local[i] = -head[i][2];
+	R_XRVectorToWorld (local, base_forward, base_right, base_up, stereo_forward);
+	for (int i = 0; i < 3; ++i) local[i] = head[i][0];
+	R_XRVectorToWorld (local, base_forward, base_right, base_up, stereo_right);
+	for (int i = 0; i < 3; ++i) local[i] = head[i][1];
+	R_XRVectorToWorld (local, base_forward, base_right, base_up, stereo_up);
+	VectorAngles (stereo_forward, stereo_up, r_refdef.viewangles);
+	stereo_bounds[0] = stereo_bounds[2] = FLT_MAX;
+	stereo_bounds[1] = stereo_bounds[3] = -FLT_MAX;
+	stereo_frustum_valid = true;
+	r_stereo_radius = 0;
+	for (int eye = 0; eye < 2; ++eye)
+	{
+		const vrxr_view_t *view = &frame->views[eye];
+		for (int i = 0; i < 3; ++i)
+			local[i] = (view->matrix[i][3] - head[i][3]) * VR_STEREO_UNITS_PER_METRE;
+		R_XRVectorToWorld (local, base_forward, base_right, base_up, offset);
+		VectorCopy (offset, vulkan_globals.stereo_eye_offset[eye]);
+		vulkan_globals.stereo_eye_offset[eye][3] = 0;
+		VectorAdd (r_refdef.vieworg, offset, r_stereo_origins[eye]);
+		r_stereo_radius = q_max (r_stereo_radius, VectorLength (offset));
+		for (int corner = 0; corner < 4; ++corner)
+		{
+			const float x = (corner & 1) ? view->right : view->left;
+			const float y = (corner & 2) ? view->up : view->down;
+			vec3_t ray;
+			for (int i = 0; i < 3; ++i)
+				local[i] = view->matrix[i][0] * x + view->matrix[i][1] * y - view->matrix[i][2];
+			for (int i = 0; i < 3; ++i)
+				ray[i] = head[0][i] * local[0] + head[1][i] * local[1] + head[2][i] * local[2];
+			if (ray[2] >= -0.001f)
+				stereo_frustum_valid = false;
+			else
+			{
+				const float tx = ray[0] / -ray[2], ty = ray[1] / -ray[2];
+				stereo_bounds[0] = q_min (stereo_bounds[0], tx);
+				stereo_bounds[1] = q_max (stereo_bounds[1], tx);
+				stereo_bounds[2] = q_min (stereo_bounds[2], ty);
+				stereo_bounds[3] = q_max (stereo_bounds[3], ty);
+			}
+		}
+	}
+	struct { float clip[2][16]; float offset[2][4]; } uniform;
+	memcpy (uniform.clip, vulkan_globals.stereo_clip_from_center, sizeof (uniform.clip));
+	memcpy (uniform.offset, vulkan_globals.stereo_eye_offset, sizeof (uniform.offset));
+	VkBuffer buffer;
+	void *data = R_UniformAllocate (sizeof (uniform), &buffer, &vulkan_globals.stereo_uniform_offset, &vulkan_globals.stereo_descriptor_set);
+	memcpy (data, &uniform, sizeof (uniform));
+}
+
+static void R_SetStereoFrustum (void)
+{
+	float normals[4][3];
+	if (!stereo_frustum_valid || !VRXR_FrustumNormals (stereo_bounds, vpn, vright, vup, normals))
+	{
+		// A canted configuration extending behind the center view cannot be
+		// enclosed by four forward planes. Keep visibility conservative.
+		memset (frustum, 0, sizeof (frustum));
+		for (int i = 0; i < 4; ++i) frustum[i].dist = -1;
+		return;
+	}
+	for (int i = 0; i < 4; ++i)
+	{
+		VectorCopy (normals[i], frustum[i].normal);
+		frustum[i].type = PLANE_ANYZ;
+		frustum[i].dist = q_min (DotProduct (r_stereo_origins[0], normals[i]), DotProduct (r_stereo_origins[1], normals[i])) - DIST_EPSILON;
+		frustum[i].signbits = SignbitsForPlane (&frustum[i]);
+	}
+}
+
 static void R_SetupMatrices ()
 {
 	// Projection matrix
-	GL_FrustumMatrix (vulkan_globals.projection_matrix, DEG2RAD (r_fovx), DEG2RAD (r_fovy));
+	GL_FrustumMatrix (vulkan_globals.projection_matrix, DEG2RAD (vulkan_globals.stereo_active ? 90 : r_fovx),
+		DEG2RAD (vulkan_globals.stereo_active ? 90 : r_fovy));
 
-	// View matrix
-	float rotation_matrix[16];
-	RotationMatrix (vulkan_globals.view_matrix, -M_PI / 2.0f, 1.0f, 0.0f, 0.0f);
-	RotationMatrix (rotation_matrix, M_PI / 2.0f, 0.0f, 0.0f, 1.0f);
-	MatrixMultiply (vulkan_globals.view_matrix, rotation_matrix);
-	RotationMatrix (rotation_matrix, DEG2RAD (-r_refdef.viewangles[2]), 1.0f, 0.0f, 0.0f);
-	MatrixMultiply (vulkan_globals.view_matrix, rotation_matrix);
-	RotationMatrix (rotation_matrix, DEG2RAD (-r_refdef.viewangles[0]), 0.0f, 1.0f, 0.0f);
-	MatrixMultiply (vulkan_globals.view_matrix, rotation_matrix);
-	RotationMatrix (rotation_matrix, DEG2RAD (-r_refdef.viewangles[1]), 0.0f, 0.0f, 1.0f);
-	MatrixMultiply (vulkan_globals.view_matrix, rotation_matrix);
+	if (vulkan_globals.stereo_active)
+	{
+		IdentityMatrix (vulkan_globals.view_matrix);
+		for (int i = 0; i < 3; ++i)
+		{
+			vulkan_globals.view_matrix[i * 4] = stereo_right[i];
+			vulkan_globals.view_matrix[i * 4 + 1] = stereo_up[i];
+			vulkan_globals.view_matrix[i * 4 + 2] = -stereo_forward[i];
+		}
+		vulkan_globals.view_matrix[12] = -DotProduct (stereo_right, r_refdef.vieworg);
+		vulkan_globals.view_matrix[13] = -DotProduct (stereo_up, r_refdef.vieworg);
+		vulkan_globals.view_matrix[14] = DotProduct (stereo_forward, r_refdef.vieworg);
+	}
+	else
+	{
+		// View matrix
+		float rotation_matrix[16];
+		RotationMatrix (vulkan_globals.view_matrix, -M_PI / 2.0f, 1.0f, 0.0f, 0.0f);
+		RotationMatrix (rotation_matrix, M_PI / 2.0f, 0.0f, 0.0f, 1.0f);
+		MatrixMultiply (vulkan_globals.view_matrix, rotation_matrix);
+		RotationMatrix (rotation_matrix, DEG2RAD (-r_refdef.viewangles[2]), 1.0f, 0.0f, 0.0f);
+		MatrixMultiply (vulkan_globals.view_matrix, rotation_matrix);
+		RotationMatrix (rotation_matrix, DEG2RAD (-r_refdef.viewangles[0]), 0.0f, 1.0f, 0.0f);
+		MatrixMultiply (vulkan_globals.view_matrix, rotation_matrix);
+		RotationMatrix (rotation_matrix, DEG2RAD (-r_refdef.viewangles[1]), 0.0f, 0.0f, 1.0f);
+		MatrixMultiply (vulkan_globals.view_matrix, rotation_matrix);
 
-	float translation_matrix[16];
-	TranslationMatrix (translation_matrix, -r_refdef.vieworg[0], -r_refdef.vieworg[1], -r_refdef.vieworg[2]);
-	MatrixMultiply (vulkan_globals.view_matrix, translation_matrix);
+		float translation_matrix[16];
+		TranslationMatrix (translation_matrix, -r_refdef.vieworg[0], -r_refdef.vieworg[1], -r_refdef.vieworg[2]);
+		MatrixMultiply (vulkan_globals.view_matrix, translation_matrix);
+	}
 
 	// View projection matrix
 	memcpy (vulkan_globals.view_projection_matrix, vulkan_globals.projection_matrix, 16 * sizeof (float));
@@ -404,6 +549,13 @@ static void R_SetupViewBeforeMark (void *unused)
 	// build the transformation matrix for the given view angles
 	VectorCopy (r_refdef.vieworg, r_origin);
 	AngleVectors (r_refdef.viewangles, vpn, vright, vup);
+	if (vulkan_globals.stereo_active)
+	{
+		VectorCopy (stereo_forward, vpn);
+		VectorCopy (stereo_right, vright);
+		VectorCopy (stereo_up, vup);
+		r_scene_vrect = (vrect_t){0, 0, vid.render_width, vid.render_height, NULL};
+	}
 
 	// current viewleaf
 	r_oldviewleaf = r_viewleaf;
@@ -435,7 +587,10 @@ static void R_SetupViewBeforeMark (void *unused)
 	}
 	// johnfitz
 
-	R_SetFrustum (r_fovx, r_fovy); // johnfitz -- use r_fov* vars
+	if (vulkan_globals.stereo_active)
+		R_SetStereoFrustum ();
+	else
+		R_SetFrustum (r_fovx, r_fovy); // johnfitz -- use r_fov* vars
 	R_SetupMatrices ();
 	R_PrepareDebugEntityInfo ();
 
@@ -1596,7 +1751,7 @@ void R_RenderView (
 		Task_AddDependency (draw_view_model_task, draw_done_task);
 
 		Atomic_StoreUInt32 (&next_visedict, 0u);
-		if (r_ssao.value > 0)
+		if (r_ssao.value > 0 && !vulkan_globals.stereo_active)
 		{
 			task_handle_t draw_ssao_task = Task_AllocateAndAssignFunc (R_DrawSSAOTask, NULL, 0);
 			Task_AddDependency (before_mark, draw_ssao_task);
@@ -1685,7 +1840,7 @@ void R_RenderView (
 		R_DrawSkyTask (NULL);
 		R_DrawWaterTask (NULL);
 		R_DrawEntitiesTask (0, NULL);
-		if (r_ssao.value > 0)
+		if (r_ssao.value > 0 && !vulkan_globals.stereo_active)
 			R_DrawSSAOTask (NULL);
 		R_SortAlphaEntitiesTask (NULL);
 		R_DrawAlphaEntitiesTask (0, NULL);

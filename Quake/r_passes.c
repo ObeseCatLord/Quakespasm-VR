@@ -89,6 +89,7 @@ typedef struct
 	VkFormat			  swapchain_format;
 	VkSampleCountFlagBits samples;
 	bool				  upscale;
+	bool stereo;
 	frame_desc_t		  variants[MAIN_RENDER_PASS_VARIANT_COUNT];
 } frame_layout_t;
 
@@ -207,14 +208,14 @@ static void R_DescribeFrame (frame_desc_t *desc, main_render_pass_variant_t vari
 
 	R_BeginGraphicsPass (&builder, FRAME_TARGET_SCENE, SUBPASS_MAIN);
 	R_AddGraphicsWork (&builder, DRAW_WORLD, SCBX_WORLD, SCBX_WORLD);
-	if (r_ssao.value > 0)
+	if (r_ssao.value > 0 && !vulkan_globals.stereo_active)
 	{
 		R_EndGraphicsPass (&builder);
 		R_AddRecordWork (&builder, R_PrepareSSAOWorldDepth);
 		R_BeginGraphicsPass (&builder, FRAME_TARGET_SCENE, SUBPASS_MAIN);
 	}
 	R_AddGraphicsWork (&builder, DRAW_ENTITIES, SCBX_ENTITIES, SCBX_ENTITIES);
-	if (r_ssao.value > 0)
+	if (r_ssao.value > 0 && !vulkan_globals.stereo_active)
 	{
 		R_EndGraphicsPass (&builder);
 		R_AddRecordWork (&builder, R_ComputeSSAO);
@@ -273,7 +274,8 @@ bool R_SetupRenderPasses (void)
 	memset (&pending_layout, 0, sizeof (pending_layout));
 	pending_layout.color_format = vulkan_globals.color_format;
 	pending_layout.depth_format = vulkan_globals.depth_format;
-	pending_layout.swapchain_format = vulkan_globals.swap_chain_format;
+	pending_layout.stereo = vulkan_globals.stereo_active;
+	pending_layout.swapchain_format = pending_layout.stereo ? vulkan_globals.stereo_color_format : vulkan_globals.swap_chain_format;
 	pending_layout.samples = vulkan_globals.sample_count;
 	pending_layout.upscale = vid.render_width != vid.width || vid.render_height != vid.height;
 	for (int variant = 0; variant < MAIN_RENDER_PASS_VARIANT_COUNT; ++variant)
@@ -346,7 +348,7 @@ static void R_CreateGraphicsPasses (
 		}
 
 		// Start entity classification with clear stencil, preserving world depth.
-		if (target == FRAME_TARGET_SCENE && r_ssao.value > 0)
+		if (target == FRAME_TARGET_SCENE && r_ssao.value > 0 && !vulkan_globals.stereo_active)
 			for (uint32_t i = 0; i < frame->step_count; ++i)
 				if (frame->steps[i].type == FRAME_GRAPHICS_WORK && frame->steps[i].pass == pass_index && frame->steps[i].draw_stage == DRAW_ENTITIES)
 					pass_attachments[1].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
@@ -394,8 +396,20 @@ static void R_CreateGraphicsPasses (
 		{
 			if (target == FRAME_TARGET_SCENE && !used_before[1] && stencil == MAIN_RENDER_PASS_NO_STENCIL)
 				pass_attachments[1].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+			uint32_t view_masks[MAX_PASS_SUBPASSES];
+			for (uint32_t view = 0; view < desc->subpass_count; ++view)
+				view_masks[view] = 3;
+			const uint32_t correlation_mask = 3;
+			const VkRenderPassMultiviewCreateInfo multiview = {
+				.sType = VK_STRUCTURE_TYPE_RENDER_PASS_MULTIVIEW_CREATE_INFO,
+				.subpassCount = desc->subpass_count,
+				.pViewMasks = view_masks,
+				.correlationMaskCount = 1,
+				.pCorrelationMasks = &correlation_mask,
+			};
 			const VkRenderPassCreateInfo info = {
 				.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO,
+				.pNext = current_layout.stereo ? &multiview : NULL,
 				.attachmentCount = attachment_count,
 				.pAttachments = pass_attachments,
 				.subpassCount = desc->subpass_count,
@@ -570,7 +584,7 @@ static void R_ScreenEffects (cb_context_t *cbx, qboolean enabled, end_rendering_
 		image_barriers[0].subresourceRange.baseMipLevel = 0;
 		image_barriers[0].subresourceRange.levelCount = 1;
 		image_barriers[0].subresourceRange.baseArrayLayer = 0;
-		image_barriers[0].subresourceRange.layerCount = 1;
+		image_barriers[0].subresourceRange.layerCount = current_layout.stereo ? 2 : 1;
 
 		image_barriers[1].sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
 		image_barriers[1].pNext = NULL;
@@ -585,7 +599,7 @@ static void R_ScreenEffects (cb_context_t *cbx, qboolean enabled, end_rendering_
 		image_barriers[1].subresourceRange.baseMipLevel = 0;
 		image_barriers[1].subresourceRange.levelCount = 1;
 		image_barriers[1].subresourceRange.baseArrayLayer = 0;
-		image_barriers[1].subresourceRange.layerCount = 1;
+		image_barriers[1].subresourceRange.layerCount = current_layout.stereo ? 2 : 1;
 
 		vkCmdPipelineBarrier (
 			cbx->cb, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0, NULL, 0, NULL, 2, image_barriers);
@@ -673,7 +687,7 @@ static void R_ScreenEffects (cb_context_t *cbx, qboolean enabled, end_rendering_
 		}
 #endif
 
-		vkCmdDispatch (cbx->cb, (parms->render_width + 7) / 8, (parms->render_height + 7) / 8, 1);
+		vkCmdDispatch (cbx->cb, (parms->render_width + 7) / 8, (parms->render_height + 7) / 8, current_layout.stereo ? 2 : 1);
 
 		image_barriers[0].sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
 		image_barriers[0].pNext = NULL;
@@ -688,7 +702,7 @@ static void R_ScreenEffects (cb_context_t *cbx, qboolean enabled, end_rendering_
 		image_barriers[0].subresourceRange.baseMipLevel = 0;
 		image_barriers[0].subresourceRange.levelCount = 1;
 		image_barriers[0].subresourceRange.baseArrayLayer = 0;
-		image_barriers[0].subresourceRange.layerCount = 1;
+		image_barriers[0].subresourceRange.layerCount = current_layout.stereo ? 2 : 1;
 
 		vkCmdPipelineBarrier (
 			cbx->cb, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, 0, 0, NULL, 0, NULL, 1, image_barriers);
@@ -1081,9 +1095,9 @@ static void R_CreateUIPasses (main_render_pass_variant_t variant)
 	attachment_descriptions[0].storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
 
 	attachment_descriptions[1].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-	attachment_descriptions[1].finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+	attachment_descriptions[1].finalLayout = current_layout.stereo ? VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL : VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
 	attachment_descriptions[1].samples = VK_SAMPLE_COUNT_1_BIT;
-	attachment_descriptions[1].format = vulkan_globals.swap_chain_format;
+	attachment_descriptions[1].format = current_layout.swapchain_format;
 	attachment_descriptions[1].loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
 	attachment_descriptions[1].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
 

@@ -4,11 +4,16 @@
 #extension GL_GOOGLE_include_directive : enable
 
 // USE_10BIT selects the output image format.
+#ifdef STEREO
+#define EFFECT_IMAGE image2DArray
+#else
+#define EFFECT_IMAGE image2D
+#endif
 
 #ifdef USE_10BIT
-layout (set = 0, binding = 2, rgb10_a2) uniform writeonly image2D output_image;
+layout (set = 0, binding = 2, rgb10_a2) uniform writeonly EFFECT_IMAGE output_image;
 #else
-layout (set = 0, binding = 2, rgba8) uniform writeonly image2D output_image;
+layout (set = 0, binding = 2, rgba8) uniform writeonly EFFECT_IMAGE output_image;
 #endif
 
 #include "screen_effects.inc"

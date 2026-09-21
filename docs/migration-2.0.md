@@ -25,6 +25,10 @@ The [complete-scope feature map](migration-feature-map.md) is the current migrat
 
 [migration-preservation.csv](migration-preservation.csv) now covers 905 unique paths, extending the original 904-path snapshot with the current master delta. It retains old blob/WIP evidence and adds current-master blobs and feature routing. Exact source anchors and mechanical module routes are labeled separately. [History](migration-history-index.csv) and [public-interface](migration-interface-index.csv) indexes make omissions reviewable. These are scope/audit artifacts, **not proof of completed behavioral integration**. Historical deletions are reviewed rather than restored blindly; preserved WIP is not automatically accepted release behavior.
 
+The sections below record successive checkpoints. The latest implemented slice
+is **Initial stereo scene integration**; earlier limitations describe their
+respective commits, not the current head. None closes the full P1 gameplay gate.
+
 ## First source checkpoint
 
 The existing standalone OpenXR backend is adapted to the Vulkan-only donor.
@@ -125,6 +129,62 @@ checkpoint removes synchronization and invalid-image prerequisites; it does not
 close the multiview proof or provide headset, gaze, gameplay, or performance
 qualification. Image release must still follow actual application submission,
 and teardown must retire both recording tasks and GPU users.
+
+## Initial stereo scene integration
+
+Explicit `-openxr` now attempts session attachment at the first renderer frame.
+The renderer creates two-layer views of the runtime-owned images and adapts its
+existing color, depth, MSAA and transparency resources to the same two-layer
+layout. Scene and UI render passes use Vulkan multiview; existing tasks and draws
+remain the owners of animation, world preparation, recording and submission.
+Main-thread frame completion joins the actual submission task before releasing
+both eye layers. Desktop startup remains the default; `-novr` takes precedence.
+
+A dynamic uniform supplies relative per-eye clip transforms to the existing
+vertex shaders, preserving donor per-model MVP calculations. Sky uses per-eye
+origins. World visibility combines the center and both eye PVS sets, encloses
+both full-eye frusta, and retains surfaces facing either eye. Existing SIMD and
+indirect GPU culling stay in use; moving/scaled brush backface tests receive a
+conservative eye-separation margin. This favors correctness at eye-only visibility
+boundaries; its CPU/GPU cost still needs measurement.
+
+Array-aware color/palette/underwater effects use the donor internal color format.
+The final XR SRGB target receives the exact inverse transfer before hardware
+encoding, preserving the donor gamma/contrast result. SSAO, ray-debug output and
+reduced internal render dimensions are not yet array-qualified; their stored
+settings are preserved and these paths are ineffective during XR rendering.
+No eye tracking or foveation is activated by this slice.
+
+The senior review caught exceptional-frame buffer-retirement and skipped-frame
+reference-invalidation defects. Abort cleanup now drains existing donor GPU work
+before another begin can rotate dynamic storage without a matching submission;
+reference invalidation persists until a valid camera pose is consumed. Window
+mode changes retain eye-target dimensions. A desktop screenshot-and-quit smoke
+run exposed an additional shutdown race: the render task could still use Vulkan
+while SDL retired its driver. Shutdown now joins that task and retires GPU work.
+
+Local verification after implementation:
+
+- Linux SDL3 `debugoptimized` build, including desktop and stereo shaders, passed.
+- Production-boundary ownership and render-pass/recorder fixtures passed across
+  desktop/stereo, all transparency modes, MSAA off/4x and SSAO requested on/off.
+- Independent projection checks and production camera restoration/reference/
+  abort-boundary checks passed. Wait/creation spies do not establish GPU validity.
+- On this machine's RTX 4090, the stock `start` map rendered with task rendering
+  and 4x MSAA; its screenshot was visually inspected. After the shutdown fix,
+  the same screenshot-and-quit sequence completed with exit status 0. The test
+  used an isolated temporary config and read-only links to existing game packs.
+- Windows and ARM remain deferred until the end. No performance gain, multiview
+  GPU validation, actual headset presentation or gameplay parity is established.
+
+**Experimental renderer integration, not completed VR gameplay.** Current head
+translation uses a temporary initial-pose anchor and the inherited default world
+scale. Tracked locomotion, controller/weapon behavior, options toggles, physical
+VR HUD/menu placement, the desktop mirror and OpenVR compositor support remain
+migration work. Eye-only visibility, moving/scaled models, task-enabled multiview,
+array effects, pause/recenter/restart and real pending-GPU abort recovery still
+need an actual multiview scene test; P1 remains open. See the
+[stereo senior-review disposition](migration-stereo-review.md).
 
 ## Initial checkpoint review
 

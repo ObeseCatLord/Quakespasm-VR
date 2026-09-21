@@ -59,17 +59,17 @@ typedef struct
 	__m128 frustum_py[4];
 	__m128 frustum_pz[4];
 	__m128 frustum_pd[4];
-	__m128 vieworg_px;
-	__m128 vieworg_py;
-	__m128 vieworg_pz;
+	__m128 vieworg_px[2];
+	__m128 vieworg_py[2];
+	__m128 vieworg_pz[2];
 #elif defined(USE_NEON)
 	float32x4_t frustum_px[4];
 	float32x4_t frustum_py[4];
 	float32x4_t frustum_pz[4];
 	float32x4_t frustum_pd[4];
-	float32x4_t vieworg_px;
-	float32x4_t vieworg_py;
-	float32x4_t vieworg_pz;
+	float32x4_t vieworg_px[2];
+	float32x4_t vieworg_py[2];
+	float32x4_t vieworg_pz[2];
 #endif
 	int frustum_ofsx[4];
 	int frustum_ofsy[4];
@@ -127,6 +127,16 @@ R_BackFaceCull -- johnfitz -- returns true if the surface is facing away from vi
 */
 static inline qboolean R_BackFaceCull (msurface_t *surf)
 {
+	if (vulkan_globals.stereo_active)
+	{
+		for (int eye = 0; eye < 2; ++eye)
+		{
+			const float distance = DotProduct (r_stereo_origins[eye], surf->plane->normal) - surf->plane->dist;
+			if (!((distance < 0) ^ !!(surf->flags & SURF_PLANEBACK)))
+				return false;
+		}
+		return true;
+	}
 	double dot;
 
 	if (surf->plane->type < 3)
@@ -207,11 +217,11 @@ R_BackFaceCullSIMD
 Performs backface culling for 32 planes
 ===============
 */
-static FORCE_INLINE uint32_t R_BackFaceCullSIMD (soa_plane_t *planes)
+static FORCE_INLINE uint32_t R_BackFaceCullSIMDForEye (soa_plane_t *planes, int eye)
 {
-	__m128 px = mark_surfaces_state.vieworg_px;
-	__m128 py = mark_surfaces_state.vieworg_py;
-	__m128 pz = mark_surfaces_state.vieworg_pz;
+	__m128 px = mark_surfaces_state.vieworg_px[eye];
+	__m128 py = mark_surfaces_state.vieworg_py[eye];
+	__m128 pz = mark_surfaces_state.vieworg_pz[eye];
 
 	uint32_t activelanes = 0;
 	for (int plane_index = 0; plane_index < 4; ++plane_index)
@@ -234,6 +244,12 @@ static FORCE_INLINE uint32_t R_BackFaceCullSIMD (soa_plane_t *planes)
 		activelanes |= plane_lanes << (plane_index * 8);
 	}
 	return activelanes;
+}
+
+static FORCE_INLINE uint32_t R_BackFaceCullSIMD (soa_plane_t *planes)
+{
+	const uint32_t first = R_BackFaceCullSIMDForEye (planes, 0);
+	return vulkan_globals.stereo_active ? first | R_BackFaceCullSIMDForEye (planes, 1) : first;
 }
 
 /*
@@ -289,11 +305,11 @@ R_BackFaceCullSIMD
 Performs backface culling for 32 planes
 ===============
 */
-static FORCE_INLINE uint32_t R_BackFaceCullSIMD (soa_plane_t *planes)
+static FORCE_INLINE uint32_t R_BackFaceCullSIMDForEye (soa_plane_t *planes, int eye)
 {
-	float32x4_t px = mark_surfaces_state.vieworg_px;
-	float32x4_t py = mark_surfaces_state.vieworg_py;
-	float32x4_t pz = mark_surfaces_state.vieworg_pz;
+	float32x4_t px = mark_surfaces_state.vieworg_px[eye];
+	float32x4_t py = mark_surfaces_state.vieworg_py[eye];
+	float32x4_t pz = mark_surfaces_state.vieworg_pz[eye];
 
 	uint32_t activelanes = 0;
 	for (int plane_index = 0; plane_index < 4; ++plane_index)
@@ -316,6 +332,12 @@ static FORCE_INLINE uint32_t R_BackFaceCullSIMD (soa_plane_t *planes)
 		activelanes |= plane_lanes << (plane_index * 8);
 	}
 	return activelanes;
+}
+
+static FORCE_INLINE uint32_t R_BackFaceCullSIMD (soa_plane_t *planes)
+{
+	const uint32_t first = R_BackFaceCullSIMDForEye (planes, 0);
+	return vulkan_globals.stereo_active ? first | R_BackFaceCullSIMDForEye (planes, 1) : first;
 }
 
 /*
@@ -963,6 +985,21 @@ static void R_MarkSurfacesPrepare (void *unused)
 	else
 		mark_surfaces_state.vis = Mod_LeafPVS (r_viewleaf, cl.worldmodel);
 
+	if (vulkan_globals.stereo_active)
+	{
+		const size_t bytes = ((numleafs + 31) / 32) * sizeof (uint32_t);
+		byte *combined = cl.worldmodel->stereo_vis;
+		memcpy (combined, mark_surfaces_state.vis, bytes);
+		for (int eye = 0; eye < 2; ++eye)
+		{
+			mleaf_t *leaf = Mod_PointInLeaf (r_stereo_origins[eye], cl.worldmodel);
+			const byte *eye_vis = leaf->contents == CONTENTS_SOLID || leaf->contents == CONTENTS_SKY
+				? Mod_NoVisPVS (cl.worldmodel) : SV_FatPVS (r_stereo_origins[eye], cl.worldmodel);
+			for (size_t i = 0; i < bytes; ++i) combined[i] |= eye_vis[i];
+		}
+		mark_surfaces_state.vis = combined;
+	}
+
 	uint32_t *vis = (uint32_t *)mark_surfaces_state.vis;
 	if ((numleafs % 32) != 0)
 		vis[numleafs / 32] &= (1u << (numleafs % 32)) - 1;
@@ -995,10 +1032,13 @@ static void R_MarkSurfacesPrepare (void *unused)
 			mark_surfaces_state.frustum_pz[frustum_index] = _mm_shuffle_ps (vplane, vplane, _MM_SHUFFLE (2, 2, 2, 2));
 			mark_surfaces_state.frustum_pd[frustum_index] = _mm_shuffle_ps (vplane, vplane, _MM_SHUFFLE (3, 3, 3, 3));
 		}
-		__m128 pos = _mm_loadu_ps (r_refdef.vieworg);
-		mark_surfaces_state.vieworg_px = _mm_shuffle_ps (pos, pos, _MM_SHUFFLE (0, 0, 0, 0));
-		mark_surfaces_state.vieworg_py = _mm_shuffle_ps (pos, pos, _MM_SHUFFLE (1, 1, 1, 1));
-		mark_surfaces_state.vieworg_pz = _mm_shuffle_ps (pos, pos, _MM_SHUFFLE (2, 2, 2, 2));
+		for (int eye = 0; eye < (vulkan_globals.stereo_active ? 2 : 1); ++eye)
+		{
+			const float *origin = vulkan_globals.stereo_active ? r_stereo_origins[eye] : r_refdef.vieworg;
+			mark_surfaces_state.vieworg_px[eye] = _mm_set1_ps (origin[0]);
+			mark_surfaces_state.vieworg_py[eye] = _mm_set1_ps (origin[1]);
+			mark_surfaces_state.vieworg_pz[eye] = _mm_set1_ps (origin[2]);
+		}
 #elif defined(USE_NEON)
 		for (int frustum_index = 0; frustum_index < 4; ++frustum_index)
 		{
@@ -1012,9 +1052,13 @@ static void R_MarkSurfacesPrepare (void *unused)
 			mark_surfaces_state.frustum_pz[frustum_index] = vdupq_n_f32 (p->normal[2]);
 			mark_surfaces_state.frustum_pd[frustum_index] = vdupq_n_f32 (p->dist);
 		}
-		mark_surfaces_state.vieworg_px = vdupq_n_f32 (r_refdef.vieworg[0]);
-		mark_surfaces_state.vieworg_py = vdupq_n_f32 (r_refdef.vieworg[1]);
-		mark_surfaces_state.vieworg_pz = vdupq_n_f32 (r_refdef.vieworg[2]);
+		for (int eye = 0; eye < (vulkan_globals.stereo_active ? 2 : 1); ++eye)
+		{
+			const float *origin = vulkan_globals.stereo_active ? r_stereo_origins[eye] : r_refdef.vieworg;
+			mark_surfaces_state.vieworg_px[eye] = vdupq_n_f32 (origin[0]);
+			mark_surfaces_state.vieworg_py[eye] = vdupq_n_f32 (origin[1]);
+			mark_surfaces_state.vieworg_pz[eye] = vdupq_n_f32 (origin[2]);
+		}
 #endif
 	}
 	else

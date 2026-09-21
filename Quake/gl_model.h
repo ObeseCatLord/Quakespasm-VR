@@ -688,6 +688,7 @@ typedef struct qmodel_s
 
 	soa_aabb_t	*soa_leafbounds;
 	byte		*surfvis;
+	byte *stereo_vis; // map-owned union visibility scratch
 	soa_plane_t *soa_surfplanes;
 
 	hull_t hulls[MAX_MAP_HULLS];

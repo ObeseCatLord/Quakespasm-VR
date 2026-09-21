@@ -1027,7 +1027,10 @@ static void _Host_Frame (double time)
 	double		  pass1, pass2, pass3;
 
 	if (setjmp (host_abortserver))
+	{
+		SCR_AbortXRFrame ();
 		return; // something bad happened, or the server disconnected
+	}
 
 	// keep the random time dependent
 	COM_Rand ();

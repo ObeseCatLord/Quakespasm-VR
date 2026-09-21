@@ -457,6 +457,7 @@ static void Mod_FreeModelMemory (qmodel_t *mod)
 		mod->nummarksurfaces = 0;
 		SAFE_FREE (mod->soa_leafbounds);
 		SAFE_FREE (mod->surfvis);
+		SAFE_FREE (mod->stereo_vis);
 		SAFE_FREE (mod->soa_surfplanes);
 		SAFE_FREE (mod->textures);
 		mod->numtextures = 0;

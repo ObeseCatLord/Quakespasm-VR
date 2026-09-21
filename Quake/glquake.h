@@ -42,6 +42,16 @@ task_handle_t GL_EndRendering (qboolean use_tasks, qboolean use_swapchain);
 void		  GL_SynchronizeEndRenderingTask (void);
 void		  GL_UpdateDescriptorSets (void);
 
+#include "vr_openxr.h"
+const vrxr_frame_t *GL_OpenXRFrame (void);
+void GL_EndXRFrame (void);
+void R_PrepareStereoFrame (void);
+void R_RestoreStereoView (void);
+void R_InvalidateStereoReference (void);
+#define VR_STEREO_UNITS_PER_METRE (1.0f / (1.5f * 0.0254f))
+extern vec3_t r_stereo_origins[2];
+extern float r_stereo_radius;
+
 extern int glwidth, glheight;
 
 // r_local.h -- private refresh defs
@@ -358,6 +368,14 @@ typedef struct
 	qboolean						 openxr_vulkan_available;
 	qboolean						 openxr_multiview_available;
 	uint32_t						 openxr_max_multiview_view_count;
+	// Resource mode and one immutable stereo uniform allocation per logical
+	// frame. Runtime handles/lifecycle remain in the OpenXR boundary.
+	qboolean stereo_active;
+	VkFormat stereo_color_format;
+	VkDescriptorSet stereo_descriptor_set;
+	uint32_t stereo_uniform_offset;
+	float stereo_clip_from_center[2][16];
+	float stereo_eye_offset[2][4];
 
 	// Instance extensions
 	qboolean get_surface_capabilities_2;
@@ -853,6 +871,10 @@ static inline void R_BindPipeline (cb_context_t *cbx, VkPipelineBindPoint bind_p
 				&vulkan_globals.mboit_input_attachment_descriptor_set, 0, NULL);
 		}
 	}
+	if (vulkan_globals.stereo_active && vulkan_globals.stereo_descriptor_set && bind_point == VK_PIPELINE_BIND_POINT_GRAPHICS)
+		vulkan_globals.vk_cmd_bind_descriptor_sets (
+			cbx->cb, bind_point, pipeline.layout.handle, 5, 1, &vulkan_globals.stereo_descriptor_set, 1,
+			&vulkan_globals.stereo_uniform_offset);
 }
 
 void		   GL_DrawSceneUpscale (cb_context_t *cbx);

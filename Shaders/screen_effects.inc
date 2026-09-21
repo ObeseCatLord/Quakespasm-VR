@@ -7,7 +7,15 @@ struct OctreeNode
 	uvec4 children[2];
 };
 
+#ifdef STEREO
+layout (set = 0, binding = 0) uniform sampler2DArray input_tex;
+#define EFFECT_TEXCOORD(p) vec3 (p, float (gl_GlobalInvocationID.z))
+#define EFFECT_PIXEL(p) ivec3 (p, int (gl_GlobalInvocationID.z))
+#else
 layout (set = 0, binding = 0) uniform sampler2D input_tex;
+#define EFFECT_TEXCOORD(p) (p)
+#define EFFECT_PIXEL(p) (p)
+#endif
 layout (set = 0, binding = 1) uniform sampler2D blue_noise_tex;
 layout (set = 0, binding = 3) uniform samplerBuffer palette_colors;
 layout (set = 0, binding = 4) uniform PaletteOctree
@@ -60,10 +68,10 @@ void main ()
 		const float tex_x = (pos_x_norm + (sin (pos_y_norm * cycle_x + push_constants.time) * amp_x)) * (1.0f - amp_x * 2.0f) + amp_x;
 		const float tex_y = (pos_y_norm + (sin (pos_x_norm * cycle_y + push_constants.time) * amp_y)) * (1.0f - amp_y * 2.0f) + amp_y;
 
-		color = texture (input_tex, vec2 (tex_x, tex_y));
+		color = texture (input_tex, EFFECT_TEXCOORD (vec2 (tex_x, tex_y)));
 	}
 	else
-		color = texelFetch (input_tex, ivec2 (min (push_constants.clamp_size.x, pos_x), min (push_constants.clamp_size.y, pos_y)), 0);
+		color = texelFetch (input_tex, EFFECT_PIXEL (ivec2 (min (push_constants.clamp_size.x, pos_x), min (push_constants.clamp_size.y, pos_y))), 0);
 
 	[[branch]] if ((push_constants.flags & SCREEN_EFFECT_FLAG_PALETTIZE) != 0)
 	{
@@ -114,7 +122,7 @@ void main ()
 					[[unroll]] for (int x = -1; x <= 1; ++x)
 					{
 						ivec2 sample_pos = clamp (ivec2 (pos_x, pos_y) + ivec2 (x, y), ivec2 (0), ivec2 (push_constants.clamp_size));
-						vec3  rgb = texelFetch (input_tex, sample_pos, 0).rgb;
+						vec3  rgb = texelFetch (input_tex, EFFECT_PIXEL (sample_pos), 0).rgb;
 						luma[x + 1][y + 1] = (rgb.r + rgb.g + rgb.b) / 3.0f;
 					}
 				}
@@ -143,5 +151,5 @@ void main ()
 		color.rgb = mix (color.rgb, vec3 (color.r * 0.3f + color.g * 0.59f + color.b * 0.11f), 0.5f) * 0.6f;
 
 	if ((pos_x <= push_constants.clamp_size.x) && (pos_y <= push_constants.clamp_size.y))
-		imageStore (output_image, ivec2 (pos_x, pos_y), color);
+		imageStore (output_image, EFFECT_PIXEL (ivec2 (pos_x, pos_y)), color);
 }

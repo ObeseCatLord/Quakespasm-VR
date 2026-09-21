@@ -570,8 +570,26 @@ void DrawGLPoly (cb_context_t *cbx, glpoly_t *p, float color[3], float alpha)
 R_RecursiveNode
 ================
 */
+static float R_BrushEyeRadius (entity_t *entity, vec3_t modelorg)
+{
+	if (!vulkan_globals.stereo_active)
+		return 0;
+	const float scale = ENTSCALE_DECODE (entity->netstate.scale);
+	if (scale <= 0)
+		return 1e30f;
+	// Donor mono culling uses an unscaled local origin. Stereo must account
+	// for the actual model scale before expanding the plane for both eyes.
+	VectorScale (modelorg, 1.f / scale, modelorg);
+	return r_stereo_radius / scale;
+}
+
+static float R_BrushPlaneMargin (const mplane_t *plane, float radius)
+{
+	return radius * (fabsf (plane->normal[0]) + fabsf (plane->normal[1]) + fabsf (plane->normal[2]));
+}
+
 static void R_RecursiveNode (
-	mnode_t *node, qmodel_t *model, vec3_t modelorg, int chain, int *brushpolys, int *surfs_visited, int worker_index, qboolean water_transparent_only)
+	mnode_t *node, qmodel_t *model, vec3_t modelorg, int chain, int *brushpolys, int *surfs_visited, int worker_index, qboolean water_transparent_only, float eye_radius)
 {
 	if (node->contents >= 0)
 	{
@@ -579,11 +597,12 @@ static void R_RecursiveNode (
 		float	  dot = (plane->type < 3 ? modelorg[plane->type] : DotProduct (modelorg, plane->normal)) - plane->dist;
 
 		// recurse down the children, front side first (chained surfaces are drawn in reverse order)
-		R_RecursiveNode (node->children[dot < 0], model, modelorg, chain, brushpolys, surfs_visited, worker_index, water_transparent_only);
+		R_RecursiveNode (node->children[dot < 0], model, modelorg, chain, brushpolys, surfs_visited, worker_index, water_transparent_only, eye_radius);
 
+		const float margin = R_BrushPlaneMargin (plane, eye_radius);
 		msurface_t *surf = model->surfaces + node->firstsurface;
 		for (int i = node->numsurfaces; i > 0; --i, surf++)
-			if (((surf->flags & SURF_PLANEBACK && dot < -BACKFACE_EPSILON) || (!(surf->flags & SURF_PLANEBACK) && dot > BACKFACE_EPSILON)) &&
+			if (((surf->flags & SURF_PLANEBACK && dot < -BACKFACE_EPSILON + margin) || (!(surf->flags & SURF_PLANEBACK) && dot > BACKFACE_EPSILON - margin)) &&
 				(!water_transparent_only || (surf->flags & SURF_DRAWTURB && GL_WaterAlphaForSurface (surf) != 1)))
 			{
 				R_ChainSurface (surf, chain);
@@ -595,7 +614,7 @@ static void R_RecursiveNode (
 			}
 		*surfs_visited += node->numsurfaces;
 
-		R_RecursiveNode (node->children[dot >= 0], model, modelorg, chain, brushpolys, surfs_visited, worker_index, water_transparent_only);
+		R_RecursiveNode (node->children[dot >= 0], model, modelorg, chain, brushpolys, surfs_visited, worker_index, water_transparent_only, eye_radius);
 	}
 }
 
@@ -699,6 +718,7 @@ void R_DrawBrushModel (cb_context_t *cbx, entity_t *e, int chain, int *brushpoly
 				modelorg[1] = -DotProduct (temp, right);
 				modelorg[2] = DotProduct (temp, up);
 			}
+			R_BrushEyeRadius (e, modelorg);
 			VectorCopy (modelorg, instance->local_vieworg);
 			instance->local_vieworg[3] = e->is_static;
 		}
@@ -736,6 +756,7 @@ void R_DrawBrushModel (cb_context_t *cbx, entity_t *e, int chain, int *brushpoly
 		modelorg[2] = DotProduct (temp, up);
 	}
 
+	const float eye_radius = R_BrushEyeRadius (e, modelorg);
 	psurf = &clmodel->surfaces[clmodel->firstmodelsurface];
 
 	// calculate dynamic lighting for bmodel if it's not an
@@ -784,7 +805,7 @@ void R_DrawBrushModel (cb_context_t *cbx, entity_t *e, int chain, int *brushpoly
 	{
 		mnode_t *head = &clmodel->nodes[clmodel->hulls[0].firstclipnode];
 		int		 surfs_visited = 0;
-		R_RecursiveNode (head, clmodel, modelorg, chain, brushpolys, &surfs_visited, worker_index, water_transparent_only);
+		R_RecursiveNode (head, clmodel, modelorg, chain, brushpolys, &surfs_visited, worker_index, water_transparent_only, eye_radius);
 		if (surfs_visited != clmodel->nummodelsurfaces)
 		{
 			Con_DPrintf ("model %s nummodelsurfaces %d != node tree numsurfaces sum %d\n", clmodel->name, clmodel->nummodelsurfaces, surfs_visited);
@@ -801,7 +822,8 @@ void R_DrawBrushModel (cb_context_t *cbx, entity_t *e, int chain, int *brushpoly
 				continue;
 			pplane = psurf->plane;
 			dot = DotProduct (modelorg, pplane->normal) - pplane->dist;
-			if (((psurf->flags & SURF_PLANEBACK) && (dot < -BACKFACE_EPSILON)) || (!(psurf->flags & SURF_PLANEBACK) && (dot > BACKFACE_EPSILON)))
+			const float margin = R_BrushPlaneMargin (pplane, eye_radius);
+			if (((psurf->flags & SURF_PLANEBACK) && (dot < -BACKFACE_EPSILON + margin)) || (!(psurf->flags & SURF_PLANEBACK) && (dot > BACKFACE_EPSILON - margin)))
 			{
 				R_ChainSurface (psurf, chain);
 				++(*brushpolys);
@@ -853,6 +875,7 @@ void R_DrawBrushModel_ShowTris (cb_context_t *cbx, entity_t *e)
 		modelorg[2] = DotProduct (temp, up);
 	}
 
+	const float eye_radius = R_BrushEyeRadius (e, modelorg);
 	psurf = &clmodel->surfaces[clmodel->firstmodelsurface];
 
 	e->angles[0] = -e->angles[0]; // stupid quake bug
@@ -878,7 +901,8 @@ void R_DrawBrushModel_ShowTris (cb_context_t *cbx, entity_t *e)
 	{
 		pplane = psurf->plane;
 		dot = DotProduct (modelorg, pplane->normal) - pplane->dist;
-		if (((psurf->flags & SURF_PLANEBACK) && (dot < -BACKFACE_EPSILON)) || (!(psurf->flags & SURF_PLANEBACK) && (dot > BACKFACE_EPSILON)))
+		const float margin = R_BrushPlaneMargin (pplane, eye_radius);
+		if (((psurf->flags & SURF_PLANEBACK) && (dot < -BACKFACE_EPSILON + margin)) || (!(psurf->flags & SURF_PLANEBACK) && (dot > BACKFACE_EPSILON - margin)))
 		{
 			DrawGLPoly (cbx, psurf->polys, color, alpha);
 		}
@@ -3039,6 +3063,7 @@ GL_PrepareSIMDData
 void GL_PrepareSIMDAndParallelData (void)
 {
 	cl.worldmodel->surfvis = Mem_Alloc (((cl.worldmodel->numsurfaces + 31) / 8));
+	cl.worldmodel->stereo_vis = Mem_Alloc (((cl.worldmodel->numleafs + 31) / 32) * 4);
 #ifdef USE_SIMD
 	int i;
 
@@ -3549,7 +3574,7 @@ static void R_IndirectComputeDispatch (cb_context_t *cbx)
 	vkCmdPipelineBarrier (cbx->cb, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1, &memory_barrier, 0, NULL, 0, NULL);
 
 	R_BindPipeline (cbx, VK_PIPELINE_BIND_POINT_COMPUTE, vulkan_globals.indirect_draw_pipeline);
-	char push_constants[7 * 4];
+	char push_constants[8 * 4];
 	memcpy (push_constants, &cl.model_precache[1]->numsurfaces, sizeof (int));
 	memset (push_constants + 4, 0, sizeof (uint32_t));
 	uint32_t offset = current_compute_buffer_index * dyn_visibility_offset / 4;
@@ -3557,7 +3582,9 @@ static void R_IndirectComputeDispatch (cb_context_t *cbx)
 	memcpy (push_constants + 12, r_refdef.vieworg, sizeof (vec3_t));
 	const uint32_t instance_base = (uint32_t)bmodel_instances_index * MAX_MODELS;
 	memcpy (push_constants + 24, &instance_base, sizeof (uint32_t));
-	R_PushConstants (cbx, VK_SHADER_STAGE_COMPUTE_BIT, 0, 7 * 4, push_constants);
+	const float eye_radius = vulkan_globals.stereo_active ? r_stereo_radius : 0;
+	memcpy (push_constants + 28, &eye_radius, sizeof (float));
+	R_PushConstants (cbx, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof (push_constants), push_constants);
 	const uint32_t num_workgroups = (cl.worldmodel->numsurfaces + 63) / 64;
 	const uint32_t max_dispatch = vulkan_globals.device_properties.limits.maxComputeWorkGroupCount[0];
 	uint32_t	   start_workgroup = 0;

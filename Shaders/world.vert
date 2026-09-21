@@ -3,6 +3,7 @@
 #extension GL_ARB_shading_language_420pack : enable
 #extension GL_GOOGLE_include_directive : enable
 
+#include "stereo.inc"
 #include "globals.inc"
 
 layout (push_constant) uniform PushConsts
@@ -53,6 +54,7 @@ void main ()
 		}
 	}
 	gl_Position = push_constants.mvp * vec4 (position, 1.0f);
+	STEREO_APPLY_CLIP_CORRECTION ();
 
 	out_fog_frag_coord = gl_Position.w;
 }

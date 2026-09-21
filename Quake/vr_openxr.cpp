@@ -1430,22 +1430,37 @@ extern "C" int VRXR_UpdateVulkanFoveation(int mode, int qualified_gaze, float ce
 	}
 	return 2;
 }
+static int vulkan_image(int eye, uint32_t index, vrxr_vulkan_eye_t *target) {
+	const Chain &chain=eye_chain(eye);
+	if(index>=chain.vulkanImages.size()) return 0;
+	target->image=chain.vulkanImages[index].image; target->format=g.vk.format;
+	target->index=index; target->width=chain.width; target->height=chain.height;
+	target->array_layers=swapchain_layers(); target->array_layer=target->array_layers==kViews ? eye : 0;
+	target->requested_color_image_flags=g.vk.densityImageFlags;
+	if(g.vk.densityMaps && index<chain.densityImages.size()) {
+		target->density_image=chain.densityImages[index].image;
+		target->density_width=chain.densityImages[index].width;
+		target->density_height=chain.densityImages[index].height;
+	}
+	return target->image!=VK_NULL_HANDLE;
+}
+extern "C" uint32_t VRXR_VulkanImageCount(int eye) {
+	if(!g.useVulkan || !g.initialized || !g.session || g.terminal || eye<0 || eye>=kViews) return 0;
+	return (uint32_t)eye_chain(eye).vulkanImages.size();
+}
+extern "C" int VRXR_GetVulkanImage(int eye, uint32_t index, vrxr_vulkan_eye_t *target) {
+	if(!target) return 0;
+	std::memset(target,0,sizeof(*target));
+	if(index>=VRXR_VulkanImageCount(eye)) return 0;
+	return vulkan_image(eye,index,target);
+}
 extern "C" int VRXR_GetVulkanEye(int eye, vrxr_vulkan_eye_t *target) {
 	if(!target) return 0;
 	std::memset(target,0,sizeof(*target));
 	if(!g.useVulkan || !g.frameBegun || !g.shouldRender || g.terminal || eye<0 || eye>=kViews) return 0;
 	const Chain &chain=eye_chain(eye);
-	if(!chain.acquired || !chain.waited || (chain.copiedMask&(1u<<eye)) || chain.index>=chain.vulkanImages.size()) return 0;
-	target->image=chain.vulkanImages[chain.index].image; target->format=g.vk.format;
-	target->index=chain.index; target->width=chain.width; target->height=chain.height;
-	target->array_layers=swapchain_layers(); target->array_layer=target->array_layers==kViews ? eye : 0;
-	target->requested_color_image_flags=g.vk.densityImageFlags;
-	if(g.vk.densityMaps && chain.index<chain.densityImages.size()) {
-		target->density_image=chain.densityImages[chain.index].image;
-		target->density_width=chain.densityImages[chain.index].width;
-		target->density_height=chain.densityImages[chain.index].height;
-	}
-	return target->image!=VK_NULL_HANDLE;
+	if(!chain.acquired || !chain.waited || (chain.copiedMask&(1u<<eye))) return 0;
+	return vulkan_image(eye,chain.index,target);
 }
 extern "C" int VRXR_VulkanEyeSubmitted(int eye) {
 	vrxr_vulkan_eye_t target;

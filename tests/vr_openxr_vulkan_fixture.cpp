@@ -148,6 +148,17 @@ int main() {
   chain.vulkanImages[chain.index].image=(VkImage)(uintptr_t)(200+eye);
  }
  vrxr_vulkan_eye_t left,right;
+ // Metadata can build views before a frame, but never grants image access.
+ g.initialized=true;g.session=(XrSession)(uintptr_t)9;g.frameBegun=false;
+ assert(VRXR_VulkanImageCount(0)==3 && VRXR_VulkanImageCount(1)==3);
+ assert(!VRXR_VulkanImageCount(-1) && !VRXR_VulkanImageCount(2));
+ assert(VRXR_GetVulkanImage(0,2,&left) && left.image==(VkImage)(uintptr_t)200);
+ assert(!VRXR_GetVulkanEye(0,&left) && !left.image);
+ assert(!VRXR_GetVulkanImage(0,3,&left) && !left.image);
+ assert(!VRXR_GetVulkanImage(-1,0,&left) && !left.image);
+ assert(!VRXR_GetVulkanImage(0,2,nullptr));
+ g.terminal=true;assert(!VRXR_VulkanImageCount(0));g.terminal=false;
+ g.session=XR_NULL_HANDLE;g.initialized=false;g.frameBegun=true;
  assert(VRXR_GetVulkanEye(0,&left)&&VRXR_GetVulkanEye(1,&right));
  assert(left.index==2 && right.index==0 && left.width==20 && right.width==21);
  assert(VRXR_VulkanEyeSubmitted(1));assert(!VRXR_GetVulkanEye(1,&right));assert(!VRXR_VulkanEyeSubmitted(1));
@@ -155,6 +166,7 @@ int main() {
  g.frameBegun=false;g.chain[0].handle=(XrSwapchain)(uintptr_t)11;g.chain[1].handle=(XrSwapchain)(uintptr_t)12;
  g.vk.retireImages=retire;g.vk.owner=&retirement;g.xr.DestroySwapchain=destroy_chain;
  VRXR_Shutdown();assert(retirement==1 && swapchain_destroys==2 && !g.vk.lockQueue && !g.vk.unlockQueue);VRXR_Shutdown();assert(retirement==1);
+ assert(!VRXR_VulkanImageCount(0) && !VRXR_GetVulkanImage(0,0,&left));
  reset();g.log=log_error;g.initialized=g.sessionRunning=true;g.session=(XrSession)(uintptr_t)9;
  assert(VRXR_SetVulkanQueueCallbacks(queue_lock,queue_unlock,&queue_lock_depth)==0);
  g.session=XR_NULL_HANDLE;assert(VRXR_SetVulkanQueueCallbacks(queue_lock,queue_unlock,&queue_lock_depth));g.session=(XrSession)(uintptr_t)9;

@@ -1506,6 +1506,7 @@ static void SCR_SetupFrame (void *unused)
 {
 	SCR_SetUpToDrawConsole ();
 	V_SetupFrame ();
+	R_PrepareStereoFrame ();
 }
 
 /*
@@ -1534,6 +1535,22 @@ WARNING: be very careful calling this from elsewhere, because the refresh
 needs almost the entire 256k of stack space!
 ==================
 */
+/* Host aborts can leave a serial refresh between XR begin and submission.
+ * The recoverable CSQC HUD longjmp stays inside SCR_DrawGUI and does not use
+ * this path. Join submitted donor work before runtime release or camera reset. */
+void SCR_AbortXRFrame (void)
+{
+	if (!vulkan_globals.stereo_active)
+		return;
+	// Begin rotates donor dynamic-buffer and garbage rings before submission.
+	// An abandoned begin must retire the preceding GPU users before another
+	// begin rotates again without advancing the corresponding command slot.
+	GL_WaitForDeviceIdle ();
+	VRXR_AbortFrame ();
+	R_RestoreStereoView ();
+	in_update_screen = false;
+}
+
 void SCR_UpdateScreen (qboolean use_tasks)
 {
 	if (!scr_initialized || !con_initialized || in_update_screen)
@@ -1586,6 +1603,8 @@ void SCR_UpdateScreen (qboolean use_tasks)
 		V_RenderView (use_tasks, begin_rendering_task, setup_frame_task, draw_done_task, draw_gui_task);
 		task_handle_t end_rendering_task = GL_EndRendering (use_tasks, true);
 
+		if (vulkan_globals.stereo_active)
+			Task_AddDependency (begin_rendering_task, setup_frame_task);
 		Task_AddDependency (begin_rendering_task, draw_gui_task);
 		Task_AddDependency (setup_frame_task, draw_gui_task);
 		Task_AddDependency (draw_gui_task, draw_done_task);
@@ -1609,5 +1628,7 @@ void SCR_UpdateScreen (qboolean use_tasks)
 		GL_EndRendering (false, true);
 	}
 
+	GL_EndXRFrame ();
+	R_RestoreStereoView ();
 	in_update_screen = false;
 }

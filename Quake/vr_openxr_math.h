@@ -4,6 +4,52 @@
 #include <string.h>
 #include "vr_openxr.h"
 
+/* Retain donor per-model MVPs. Convert their symmetric 90-degree reversed-Z
+ * center clip coordinates to each asymmetric eye, without subtracting large
+ * world positions. Relative transforms use the runtime's metre-space poses. */
+static inline int VRXR_StereoClip(const vrxr_frame_t *frame, float units_per_metre,
+    float near_plane, float output[2][16]) {
+  if (!frame || !output || !frame->devices[0].valid || !isfinite(units_per_metre) ||
+      units_per_metre<=0 || !isfinite(near_plane) || near_plane<=0) return 0;
+  const float (*head)[4]=frame->devices[0].matrix;
+  float result[2][16];
+  for (int eye=0;eye<2;++eye) {
+    const vrxr_view_t *view=&frame->views[eye];
+    if (!isfinite(view->left) || !isfinite(view->right) ||
+        !isfinite(view->down) || !isfinite(view->up) ||
+        view->left>=view->right || view->down>=view->up) return 0;
+    float relative[16]={0}, projection[16]={0}, temporary[16]={0};
+    for (int row=0;row<3;++row) {
+      for (int col=0;col<3;++col)
+        for (int k=0;k<3;++k)
+          relative[col*4+row]+=view->matrix[k][row]*head[k][col];
+      for (int k=0;k<3;++k)
+        relative[12+row]+=view->matrix[k][row]*(head[k][3]-view->matrix[k][3])*units_per_metre;
+    }
+    relative[15]=1;
+    projection[0]=2.f/(view->right-view->left);
+    projection[5]=-2.f/(view->up-view->down);
+    projection[8]=(view->right+view->left)/(view->right-view->left);
+    projection[9]=-(view->up+view->down)/(view->up-view->down);
+    projection[11]=-1;
+    projection[14]=near_plane;
+    for (int col=0;col<4;++col)
+      for (int row=0;row<4;++row)
+        for (int k=0;k<4;++k)
+          temporary[col*4+row]+=projection[k*4+row]*relative[col*4+k];
+    // inverse(center projection): (x,y,z,w) -> (x,-y,-w,z/near).
+    for (int row=0;row<4;++row) {
+      result[eye][row]=temporary[row];
+      result[eye][4+row]=-temporary[4+row];
+      result[eye][8+row]=temporary[12+row]/near_plane;
+      result[eye][12+row]=-temporary[8+row];
+    }
+    for (int i=0;i<16;++i) if (!isfinite(result[eye][i])) return 0;
+  }
+  memcpy(output,result,sizeof(result));
+  return 1;
+}
+
 /* Tangent-space clip planes, inward normals in the renderer's world basis.
  * The same function serves a full asymmetric eye or a same-pose inset crop. */
 static inline int VRXR_FrustumNormals(const float bounds[4], const float forward[3],

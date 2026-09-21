@@ -3,6 +3,8 @@
 #extension GL_ARB_shading_language_420pack : enable
 #extension GL_GOOGLE_include_directive : enable
 
+#include "stereo.inc"
+
 layout (push_constant) uniform PushConsts
 {
 	mat4  view_projection_matrix;
@@ -68,6 +70,7 @@ void main ()
 		vec4 (mix (in_pose1_position.xyz, in_pose2_position.xyz, ubo.blend_factor) * to_world_coords_factor + to_world_coords_shift, 1.0f);
 	const vec4 model_space_position = ubo.model_matrix * lerped_position;
 	gl_Position = push_constants.view_projection_matrix * model_space_position;
+	STEREO_APPLY_CLIP_CORRECTION ();
 
 	if ((ubo.flags & 0x2) == 0)
 	{
