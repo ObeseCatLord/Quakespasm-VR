@@ -127,3 +127,10 @@ all test clients were stopped afterward. Absolute/relative authority and origin
 rebase are checked by the camera-owner fixture, not by a live peer injection in
 this smoke. Pitched swimming, full VR-specific swim/ladder behavior, physical
 controllers and additional platforms still require later qualification.
+
+The follow-up local Astra/Max review independently matched the native pass record
+to its result JSON and closed both previous findings. It accepted this bounded
+increment with no remaining blocking finding and found no unnecessary new
+production layer: native pending consumption, QSS timing and tracked-view yaw
+remain the owners. This acceptance retains every hardware, platform, live-peer
+and full-P1 limitation above. The implementation checkpoint is `7dcb1b4d`.
