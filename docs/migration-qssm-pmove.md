@@ -6,11 +6,9 @@ Generic player movement in this slice is based on QSS-M commit
 `03a498aabc411e2e739adc815c5536b161b9626e`. The VR wire/command reference is
 quakespasm-openvr commit `1327f795cc2e3a8e4f7c9d68e31d64383930cc00`.
 
-This slice changes only the staged PM implementation and its focused fixture. It
-does not add `pmove.c` to a production build list and does not activate client
-prediction. `World_AddEntsToPmove`, PMCL/PMSV glue, and `CL_TraceWeapon` remain
-where the branch currently stages them; placement alone is not treated as an
-ownership defect.
+The initial solver audit at `6aafc918` covered staged PM code. The subsequent
+client linkage described below puts the shared solver and client adapters in the
+game binary. Client replay and private protocol admission are still pending.
 
 ## QSS-M generic solver baseline
 
@@ -43,8 +41,8 @@ the following command.
 | Safe-origin recovery | Keep the validated `pos` in `PM_TestPlayerPosition`, instead of QSS-M's `pmove.origin`. During nudge fallback those differ; copying the failed candidate would overwrite the valid recovery location. This is a deliberate correctness fix, not merely a hull-signature adaptation. |
 | VR swim/jump adjustments | Retained from the pinned VR source: VR jump input supplies minimum swim upmove and scales the waterjump launch by the admitted VR jump speed. These now require `cmd.vr_active`; a generic mod that merely raises `jumpspeed` no longer enters VR behavior. |
 | `CL_TraceWeapon` | Existing staged read-only weapon scene query; it uses the donor hull adapter and is outside generic locomotion ownership. |
-| `World_AddEntsToPmove`, PMCL/PMSV/PF glue, moveflag packing | Existing branch staging needed by the eventual prediction/server PM closure. The APIs and placement are preserved in this slice as requested. |
-| Header include guard, content-mask guards, `trace_t` spelling, `SV_RunPMoveForEntity` declaration | Donor/build compatibility and the existing public PM surface. |
+| `PMCL_AddEntities` | Existing client branch of the staged collector, using snapshot poses and the shared physent array. The unused server branch and PMSV/PF wrappers were removed during client linkage; exact staging remains at `6aafc918` for the later real server integration. |
+| Header include guard, content-mask guards, `trace_t` spelling | Donor/build compatibility for the shared PM surface. |
 
 ## Generic difference intentionally removed
 
@@ -79,12 +77,57 @@ explicitly at the existing owner boundary; do not set the controller-specific
 wire flag merely to enable swimming, since it also controls ladder/roomscale
 behavior. This slice does not activate either path.
 
-`PM_SetBaseMoveVars`, moveflag packing, extended movevar stats, and the exact
-server-side selection of per-client VR jump speed are retained staged glue, not
-claimed QSS parity. They require the later client-versus-pinned-dedicated-server
-activation proof. Likewise Gorilla generation admission and authoritative replay
-state cannot be established by this unit fixture.
+Server moveflag production, complete authoritative stat receipt and the exact
+server-side selection of per-client VR jump speed remain integration work. They
+require the later client-versus-pinned-dedicated-server activation proof. Likewise
+Gorilla generation admission and authoritative replay state cannot be established
+by this unit fixture.
 
 The next gameplay proof remains a built client against the pinned dedicated peer:
 receive an admitted PM snapshot/stat baseline, replay acknowledged commands, then
 verify reconciliation plus freeze/teleport/discontinuity behavior.
+
+## Production client linkage
+
+`pmove.c` now appears in the Meson, common Make and Visual Studio source lists.
+The Linux SDL3/debugoptimized binary links the shared solver, client snapshot
+collector and weapon query without unresolved server-policy dependencies.
+The disconnected server-only collector branch, PMSV/QC wrappers, local server
+cvar registry and base-variable helper were deleted, not replaced with dummy
+implementations. Their code is preserved at `6aafc918`; eventual server movement
+still needs the real world-area-tree, QC, teleport and Gorilla owners.
+
+Client fallback values now come from QSS-M `03a498aa`'s serverinfo keys/defaults
+(`pr_ext.c:2113` onward), rather than local server settings or tracking state.
+This deliberately changes the former staging defaults: slidefix and bunny
+friction default to zero without server advertisement, jump speed defaults to
+270, and missing unstarred `pm_edgefriction` enables QSS edge-box behavior.
+The starred watersink/fly/edge-friction keys retain QSS-M's existing spelling;
+actual peer publication of those fallback keys is not established here. Boolean
+keys use nonzero semantics, matching the QSS server: a fractional value such as
+`pm_slidefix=0.5` is true. This intentionally differs from the QSS client
+implicit float-to-integer assignment, which would truncate that value to zero.
+
+The donor's full/incremental serverinfo callbacks refresh the PM cache.
+`CL_FreeState` invalidates it. Protocol flags are read at selection time, so
+serverinfo arriving before protocol setup cannot freeze old precision flags.
+Full serverinfo replacement uses bounded string copying instead of reading a
+whole destination-sized block from a potentially short command argument. Command
+argument storage now matches the existing tokenizer limit; incomplete serverinfo
+commands are ignored. The network `svc_stufftext` owner rejects truncated strings
+before command dispatch instead of executing a potentially valid-looking prefix.
+This retains the existing 2,047-byte network-string capacity; it does not add
+support for larger stuffed commands.
+
+Public PREDINFO consumes only shared stats and retains serverinfo-derived extra
+settings. Only the explicitly admitted private version consumes private extended
+stats and packed flags. Malformed/nonfinite fallback numbers use the QSS default;
+unrepresentable integer values are checked before conversion. Invalid used stats
+or unsupported private layouts make `PMCL_SetMoveVars` return false. Its true
+result proves neither receipt of every stat nor ACK/owner coherence: replay must
+establish those separately and honor a false result.
+
+The parameter fixture runs actual client callbacks, Info readers and PM selection
+with the real command tokenizer, including long arguments and overflow. Callback
+dispatch is explicit. Cache reset is tested directly; full engine resource teardown,
+network command dispatch and gameplay are outside that fixture. Windows/ARM remain unverified despite updated build source lists.

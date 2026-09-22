@@ -4,16 +4,9 @@
 #include <stdarg.h>
 #include <assert.h>
 
-cvar_t			sv_accelerate, sv_edgefriction, sv_friction, sv_gravity, sv_maxspeed, sv_stopspeed;
-cvar_t			sv_vr_jump_velocity;
 cvar_t			pr_checkextension;
 extern cvar_t	sv_fte_recursivehullckeck;
 void			Con_DPrintf (const char *fmt, ...) {}
-static qboolean tracked_session;
-qboolean		V_TrackedSessionActive (void)
-{
-	return tracked_session;
-}
 void Sys_Error (const char *fmt, ...)
 {
 	va_list args;

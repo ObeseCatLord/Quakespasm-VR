@@ -280,6 +280,7 @@ srcs = [
     'Quake/net_loop.c',
     'Quake/net_main.c',
     'Quake/palette.c',
+    'Quake/pmove.c',
     'Quake/pr_cmds.c',
     'Quake/pr_edict.c',
     'Quake/pr_exec.c',

@@ -27,7 +27,7 @@ The [complete-scope feature map](migration-feature-map.md) is the current migrat
 [migration-preservation.csv](migration-preservation.csv) now covers 905 unique paths, extending the original 904-path snapshot with the current master delta. It retains old blob/WIP evidence and adds current-master blobs and feature routing. Exact source anchors and mechanical module routes are labeled separately. [History](migration-history-index.csv) and [public-interface](migration-interface-index.csv) indexes make omissions reviewable. These are scope/audit artifacts, **not proof of completed behavioral integration**. Historical deletions are reviewed rather than restored blindly; preserved WIP is not automatically accepted release behavior.
 
 The sections below record successive checkpoints. The latest implemented slice
-is **QSS-M movement baseline correction**; earlier limitations describe their
+is **Production client movement linkage**; earlier limitations describe their
 respective commits, not the current head. None closes the full P1 gameplay gate.
 
 ## First source checkpoint
@@ -402,6 +402,38 @@ including ordinary and explicit-duration movement, VR ladder/swim distinctions,
 touch ordering and valid-position recovery. This is source-level movement
 validation, not live dedicated-peer, QuakeC callback, headset or performance
 qualification. No Windows or ARM check was run in this slice.
+
+## Production client movement linkage
+
+The shared PM solver and client snapshot/weapon-query adapters now compile and
+link in the Linux engine. Meson, common Make and Visual Studio source lists
+include the module. The previously staged server wrappers had no production
+callers and depended on missing authority/co-op functions; they were removed
+following local Astra/max review. Their code remains preserved at `6aafc918`
+for integration with the real donor server owners.
+
+QSS-M serverinfo fallback now supplies client movement settings independently of
+local server cvars or tracking state. Existing serverinfo callbacks refresh that
+cache, client-state destruction invalidates it, and current protocol flags are
+selected at use time. Public QSS-M and explicitly admitted private VR stat
+formats remain distinct. The parameter selector rejects invalid used numeric
+stats; it does not certify complete-stat receipt or authoritative replay state.
+The review also caught command-argument truncation that could change movement
+values. Argument storage now matches the existing tokenizer, incomplete
+serverinfo commands do not change settings, and the network command owner
+rejects truncated text before dispatch.
+
+The full Linux SDL3/debugoptimized build and focused movement-parameter,
+movement/collision and private-solid sanitizer checks pass. An executable-level
+wire-command check also passes for exact-fit, oversized and unterminated strings.
+Windows/ARM source
+lists are updated but have not been verified. The [solver provenance note](migration-qssm-pmove.md#production-client-linkage)
+records fallback differences and fixture limits; the [review disposition](migration-movement-review.md#client-solver-linkage--local-astramax)
+records why this dependency correction was needed.
+
+Client replay, matching owner snapshots/ACKs, private connection admission and
+the real server movement owner are still pending. Linking the solver does not
+enable prediction or complete the first dedicated-peer gameplay proof.
 
 ## Next integration gates
 

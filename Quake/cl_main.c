@@ -23,6 +23,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 
 #include "quakedef.h"
 #include "bgmusic.h"
+#include "pmove.h"
 
 // we need to declare some mouse variables here, because the menu system
 // references them even when on a unix system.
@@ -116,6 +117,7 @@ void CL_FreeState (void)
 		Mem_Free (cl.efrag_allocs[i]);
 	Mem_Free (cl.efrag_allocs);
 	memset (&cl, 0, sizeof (cl));
+	PMCL_ClearMoveVars ();
 }
 
 // Pinned prediction presentation reset; epoch/replay state remains separately owned.
@@ -1183,14 +1185,20 @@ static void CL_Viewpos_Completion_f (const char *partial)
 
 static void CL_ServerExtension_FullServerinfo_f (void)
 {
+	if (Cmd_Argc () != 2)
+		return;
 	const char *newserverinfo = Cmd_Argv (1);
-	memcpy (cl.serverinfo, newserverinfo, sizeof (cl.serverinfo)); // just replace it
+	q_strlcpy (cl.serverinfo, newserverinfo, sizeof (cl.serverinfo));
+	PMCL_ServerinfoUpdated ();
 }
 static void CL_ServerExtension_ServerinfoUpdate_f (void)
 {
+	if (Cmd_Argc () != 3)
+		return;
 	const char *newserverkey = Cmd_Argv (1);
 	const char *newservervalue = Cmd_Argv (2);
 	Info_SetKey (cl.serverinfo, sizeof (cl.serverinfo), newserverkey, newservervalue);
+	PMCL_ServerinfoUpdated ();
 }
 
 static void CL_UserinfoChanged (scoreboard_t *sb)

@@ -1,6 +1,11 @@
 # Networking feature map
 
-The migration needs **donor networking plus narrowly integrated fork behavior**, not a QSS-M transplant. The fork’s private movement dialect is incompatible with ordinary QSS-M despite shared FTE names; donor PREDINFO support does **not** implement player prediction.
+The migration retains **donor networking**, reuses QSS-M `03a498aa` directly for
+generic movement/prediction, and integrates the fork's VR behavior at those
+boundaries. The fork's private movement dialect is incompatible with ordinary
+QSS-M despite shared FTE names; donor PREDINFO support does **not** implement
+player prediction. Older fork prediction symbols below are behavior evidence,
+not authority to copy its generic replay implementation.
 
 Evidence pins: **Q**=QSS-M `03a498aa`; **M**=master `1327f795`; **X**=OpenXR `30808413`; **D**=vkQuake `4bc898f2`; **I**=local Ironwail `08d578136ff43d7d1ef38e636dfbfd3e844be7cd`. These identify the supplied full commits, except I, pinned locally. File stems below mean `Quake/<stem>.c`; `protocol` and `quakedef` mean `.h`. **F** references X’s implementation shared with M unless distinguished.
 
@@ -61,4 +66,3 @@ Important omissions: Q’s synthetic `pq_lag` sender, ProQuake team/ping metadat
 Ironwail’s networking candidate `sv_netsort` is already present in both fork and donor, so it does not qualify as new optional scope.
 
 This is a static behavior map, not exhaustive runtime parity. Bounded follow-ups are dialect/dispatch closure, newer M gameplay fixes missing from X, optional-candidate dependency validation, and eventual acceptance cases above. No edits, builds, tests, agents, remote actions or telemetry access were performed.
-

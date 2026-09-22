@@ -293,6 +293,7 @@ OBJS := strlcat.o \
 	host_cmd.o \
 	mathlib.o \
 	mdfour.o \
+	pmove.o \
 	pr_cmds.o \
 	pr_ext.o \
 	pr_edict.o \

@@ -22,17 +22,10 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "pmove.h"
 #include "vr_gorilla.h"
 #include "vr_gorilla_swim.h"
+#include <limits.h>
 
 movevars_t		movevars;
 playermove_t	pmove;
-extern cvar_t	pm_noround;	//evile.
-extern cvar_t	sv_accelerate;
-extern cvar_t	sv_edgefriction;
-extern cvar_t	sv_friction;
-extern cvar_t	sv_gravity;
-extern cvar_t	sv_maxspeed;
-extern cvar_t	sv_stopspeed;
-extern cvar_t	sv_vr_jump_velocity;
 
 static float		frametime;
 
@@ -52,25 +45,6 @@ static qboolean	clmovevars_valid;
 #define PM_VR_SWIM_JUMP_UPMOVE 200.0f
 #define PM_MAX_SUBSTEP_SECONDS 0.025f
 #define PM_VR_ROOMSCALE_MAX_DELTA 16.0f
-
-static cvar_t pm_bunnyspeedcap = {"pm_bunnyspeedcap", "", CVAR_SERVERINFO};
-static cvar_t pm_bunnyfriction = {"pm_bunnyfriction", "1", CVAR_SERVERINFO};
-static cvar_t pm_ktjump = {"pm_ktjump", "", CVAR_SERVERINFO};
-static cvar_t pm_slidefix = {"pm_slidefix", "1", CVAR_SERVERINFO};
-static cvar_t pm_airstep = {"pm_airstep", "", CVAR_SERVERINFO};
-static cvar_t pm_pground = {"pm_pground", "", CVAR_SERVERINFO};
-static cvar_t pm_stepdown = {"pm_stepdown", "", CVAR_SERVERINFO};
-static cvar_t pm_walljump = {"pm_walljump", "", CVAR_SERVERINFO};
-static cvar_t pm_slidyslopes = {"pm_slidyslopes", "", CVAR_SERVERINFO};
-static cvar_t pm_autobunny = {"pm_autobunny", "", CVAR_SERVERINFO};
-static cvar_t pm_watersinkspeed = {"pm_watersinkspeed", "", CVAR_SERVERINFO};
-static cvar_t pm_flyfriction = {"pm_flyfriction", "", CVAR_SERVERINFO};
-static cvar_t pm_edgefriction = {"pm_edgefriction", "2", CVAR_NONE};
-static cvar_t pm_stepheight = {"pm_stepheight", "", CVAR_NONE};
-static cvar_t sv_airaccelerate = {"sv_airaccelerate", "-1", CVAR_SERVERINFO};
-static cvar_t sv_wateraccelerate = {"sv_wateraccelerate", "-1", CVAR_SERVERINFO};
-static cvar_t sv_waterfriction = {"sv_waterfriction", "4", CVAR_SERVERINFO};
-static cvar_t sv_spectatormaxspeed = {"sv_spectatormaxspeed", "500", CVAR_SERVERINFO};
 
 // Axis vectors come from AngleVectors; this mirrors QSS-M's transform convention.
 #define QAxisTransform(a, v, c) \
@@ -99,11 +73,6 @@ static void PM_EnsureInitialized (void)
 		PM_Init ();
 }
 
-static float PM_CvarOrDefault (const cvar_t *var, float fallback)
-{
-	return var->string[0] ? var->value : fallback;
-}
-
 static qboolean PM_IsVRMove (void)
 {
 	/* Keep VR swim/waterjump policy command-scoped. A generic mod may raise
@@ -129,35 +98,6 @@ static float PM_WaterUpMove (void)
 	return upmove;
 }
 
-static unsigned int PM_PackMoveFlags (const movevars_t *mv)
-{
-	unsigned int flags = mv->flags;
-	int walljump = mv->walljump;
-
-	if (walljump < 0)
-		walljump = 0;
-	if (walljump > 3)
-		walljump = 3;
-
-	if (mv->slidefix)
-		flags |= MOVEFLAG_PM_SLIDEFIX;
-	if (mv->airstep)
-		flags |= MOVEFLAG_PM_AIRSTEP;
-	if (mv->pground)
-		flags |= MOVEFLAG_PM_PGROUND;
-	if (mv->stepdown)
-		flags |= MOVEFLAG_PM_STEPDOWN;
-	if (mv->slidyslopes)
-		flags |= MOVEFLAG_PM_SLIDYSLOPES;
-	if (mv->autobunny)
-		flags |= MOVEFLAG_PM_AUTOBUNNY;
-	if (mv->bunnyfriction)
-		flags |= MOVEFLAG_PM_BUNNYFRICTION;
-	flags &= ~MOVEFLAG_PM_WALLJUMP_MASK;
-	flags |= (unsigned int)walljump << MOVEFLAG_PM_WALLJUMP_SHIFT;
-	return flags;
-}
-
 static void PM_UnpackMoveFlags (movevars_t *mv)
 {
 	mv->slidefix = !!(mv->flags & MOVEFLAG_PM_SLIDEFIX);
@@ -168,48 +108,6 @@ static void PM_UnpackMoveFlags (movevars_t *mv)
 	mv->autobunny = !!(mv->flags & MOVEFLAG_PM_AUTOBUNNY);
 	mv->bunnyfriction = !!(mv->flags & MOVEFLAG_PM_BUNNYFRICTION);
 	mv->walljump = (mv->flags & MOVEFLAG_PM_WALLJUMP_MASK) >> MOVEFLAG_PM_WALLJUMP_SHIFT;
-}
-
-static void PM_SetBaseMoveVars (movevars_t *mv, unsigned int protocolflags, qboolean server_side)
-{
-	float jump_velocity;
-
-	memset (mv, 0, sizeof(*mv));
-	mv->gravity = sv_gravity.value;
-	mv->stopspeed = sv_stopspeed.value;
-	mv->maxspeed = sv_maxspeed.value;
-	mv->spectatormaxspeed = sv_spectatormaxspeed.value;
-	mv->maxairspeed = 30;
-	mv->accelerate = sv_accelerate.value;
-	mv->airaccelerate = (sv_airaccelerate.value < 0) ?
-		sv_accelerate.value : sv_airaccelerate.value;
-	mv->wateraccelerate = (sv_wateraccelerate.value < 0) ?
-		sv_accelerate.value : sv_wateraccelerate.value;
-	mv->friction = sv_friction.value;
-	mv->waterfriction = sv_waterfriction.value;
-	mv->flyfriction = PM_CvarOrDefault (&pm_flyfriction, sv_friction.value);
-	mv->entgravity = 1.0f;
-	mv->bunnyspeedcap = pm_bunnyspeedcap.value;
-	mv->ktjump = pm_ktjump.value;
-	mv->airstep = pm_airstep.value != 0;
-	mv->stepheight = PM_CvarOrDefault (&pm_stepheight, 18);
-	mv->stepdown = pm_stepdown.value != 0;
-	mv->walljump = pm_walljump.value;
-	mv->slidefix = pm_slidefix.value != 0;
-	mv->pground = pm_pground.value != 0;
-	mv->slidyslopes = pm_slidyslopes.value != 0;
-	mv->autobunny = pm_autobunny.value != 0;
-	mv->bunnyfriction = pm_bunnyfriction.value != 0;
-	mv->watersinkspeed = PM_CvarOrDefault (&pm_watersinkspeed, 60);
-	mv->edgefriction = PM_CvarOrDefault (&pm_edgefriction, sv_edgefriction.value);
-	jump_velocity = (!server_side && V_TrackedSessionActive () &&
-		sv_vr_jump_velocity.value > PM_VANILLA_JUMP_VELOCITY) ?
-		sv_vr_jump_velocity.value : PM_VANILLA_JUMP_VELOCITY;
-	mv->jumpspeed = jump_velocity;
-	mv->protocolflags = protocolflags;
-	mv->flags = MOVEFLAG_VALID | MOVEFLAG_NOGRAVITYONGROUND |
-		(pm_edgefriction.string[0] ? 0 : MOVEFLAG_QWEDGEBOX);
-	mv->flags = PM_PackMoveFlags (mv);
 }
 
 void PM_InitBoxHull (void)
@@ -2349,7 +2247,7 @@ static qboolean PM_BoundsOverlap (const vec3_t mins1, const vec3_t maxs1,
 	return true;
 }
 
-void World_AddEntsToPmove (edict_t *ignore, vec3_t boxminmax[2])
+void PMCL_AddEntities (vec3_t boxminmax[2])
 {
 	entity_t	*touch;
 	physent_t	*phys;
@@ -2357,101 +2255,6 @@ void World_AddEntsToPmove (edict_t *ignore, vec3_t boxminmax[2])
 	int			i;
 
 	PM_EnsureInitialized ();
-
-	if (ignore)
-	{
-		edict_t *other;
-
-		if (!qcvm)
-			Sys_Error ("World_AddEntsToPmove: server edict without active VM");
-		pmove.skipent = NUM_FOR_EDICT(ignore);
-		memset (pmove.physents, 0, sizeof(pmove.physents));
-		pmove.physents[0].model = qcvm->worldmodel;
-		VectorClear (pmove.physents[0].origin);
-		VectorClear (pmove.physents[0].angles);
-		pmove.physents[0].forcecontentsmask = 0;
-		pmove.physents[0].info = 0;
-		pmove.numphysent = 1;
-
-		if (!qcvm->worldmodel)
-			return;
-
-		for (i = 1, other = NEXT_EDICT(qcvm->edicts);
-			 i < qcvm->num_edicts;
-			 i++, other = NEXT_EDICT(other))
-		{
-			int solid;
-
-			if (other->free || other == ignore)
-				continue;
-			if (coop.value &&
-				SV_CoopFeatureEnabled(&sv_coop_noplayerclip, true) &&
-				SV_IsActiveClientEdict(ignore) &&
-				SV_IsActiveClientEdict(other))
-				continue;
-			solid = (int)other->v.solid;
-			if (solid != SOLID_BBOX && solid != SOLID_SLIDEBOX && solid != SOLID_BSP)
-				continue;
-			if (boxminmax &&
-				(boxminmax[0][0] > other->v.absmax[0] ||
-				 boxminmax[0][1] > other->v.absmax[1] ||
-				 boxminmax[0][2] > other->v.absmax[2] ||
-				 boxminmax[1][0] < other->v.absmin[0] ||
-				 boxminmax[1][1] < other->v.absmin[1] ||
-				 boxminmax[1][2] < other->v.absmin[2]))
-				continue;
-			if (PROG_TO_EDICT(other->v.owner) == ignore)
-				continue;
-			if (PROG_TO_EDICT(ignore->v.owner) == other)
-				continue;
-
-			if (pmove.numphysent == countof(pmove.physents))
-				return;
-
-			phys = &pmove.physents[pmove.numphysent];
-			phys->info = i;
-			phys->model = NULL;
-			if (solid == SOLID_BSP)
-			{
-				int modelindex = (int)other->v.modelindex;
-				if (modelindex > 0 && modelindex < MAX_MODELS &&
-					sv.models[modelindex] && sv.models[modelindex]->type == mod_brush) {
-					phys->model = sv.models[modelindex];
-					phys->modelindex = modelindex;
-				}
-			}
-			VectorCopy (other->v.origin, phys->origin);
-			VectorCopy (other->v.mins, phys->mins);
-			VectorCopy (other->v.maxs, phys->maxs);
-			VectorCopy (other->v.angles, phys->angles);
-			phys->forcecontentsmask = 0;
-			switch ((int)other->v.skin)
-			{
-			case CONTENTS_WATER:
-				phys->forcecontentsmask = CONTENTBIT_WATER;
-				break;
-			case CONTENTS_LAVA:
-				phys->forcecontentsmask = CONTENTBIT_LAVA;
-				break;
-			case CONTENTS_SLIME:
-				phys->forcecontentsmask = CONTENTBIT_SLIME;
-				break;
-			case CONTENTS_SKY:
-				phys->forcecontentsmask = CONTENTBIT_SKY;
-				break;
-			case CONTENTS_CLIP:
-				phys->forcecontentsmask = CONTENTBIT_CLIP;
-				break;
-			case CONTENTS_LADDER:
-				phys->forcecontentsmask = CONTENTBIT_LADDER;
-				break;
-			default:
-				break;
-			}
-			pmove.numphysent++;
-		}
-		return;
-	}
 
 	memset (pmove.physents, 0, sizeof(pmove.physents));
 	pmove.physents[0].model = cl.worldmodel;
@@ -2541,21 +2344,106 @@ void World_AddEntsToPmove (edict_t *ignore, vec3_t boxminmax[2])
 	}
 }
 
+static float PMCL_GetKeyValue (const char *key, float fallback)
+{
+	char buf[sizeof(cl.serverinfo)];
+	char *end;
+	const char *value;
+	float parsed;
+
+	value = Info_GetKey (cl.serverinfo, key, buf, sizeof(buf));
+	if (!*value)
+		return fallback;
+	parsed = strtof (value, &end);
+	if (end == value || *end || !isfinite(parsed))
+		return fallback;
+	return parsed;
+}
+
+static int PMCL_GetKeyInteger (const char *key, int fallback)
+{
+	float value = PMCL_GetKeyValue (key, fallback);
+	if ((double)value < INT_MIN || (double)value > INT_MAX)
+		return fallback;
+	return (int)value;
+}
+
 void PMCL_ServerinfoUpdated (void)
 {
 	PM_EnsureInitialized ();
-	PM_SetBaseMoveVars (&clmovevars, cl.protocolflags, false);
+	memset (&clmovevars, 0, sizeof(clmovevars));
+	clmovevars.accelerate = PMCL_GetKeyValue ("sv_accelerate", 10);
+	clmovevars.airaccelerate = PMCL_GetKeyValue ("sv_airaccelerate", 10);
+	clmovevars.friction = PMCL_GetKeyValue ("sv_friction", 4);
+	clmovevars.gravity = PMCL_GetKeyValue ("sv_gravity", 800);
+	clmovevars.stopspeed = PMCL_GetKeyValue ("sv_stopspeed", 100);
+	clmovevars.wateraccelerate = PMCL_GetKeyValue ("sv_wateraccelerate", 10);
+	clmovevars.waterfriction = PMCL_GetKeyValue ("sv_waterfriction", 4);
+	clmovevars.entgravity = 1.0f;
+	clmovevars.maxspeed = PMCL_GetKeyValue ("sv_maxspeed", 320);
+	clmovevars.spectatormaxspeed = PMCL_GetKeyValue ("sv_spectatormaxspeed", 500);
+	clmovevars.bunnyspeedcap = PMCL_GetKeyValue ("pm_bunnyspeedcap", 0);
+	clmovevars.ktjump = PMCL_GetKeyValue ("pm_ktjump", 0);
+	clmovevars.airstep = PMCL_GetKeyValue ("pm_airstep", 0) != 0;
+	clmovevars.stepheight = PMCL_GetKeyInteger ("pm_stepheight", 18);
+	clmovevars.stepdown = PMCL_GetKeyValue ("pm_stepdown", 0) != 0;
+	clmovevars.walljump = PMCL_GetKeyInteger ("pm_walljump", 0);
+	clmovevars.slidefix = PMCL_GetKeyValue ("pm_slidefix", 0) != 0;
+	clmovevars.pground = PMCL_GetKeyValue ("pm_pground", 0) != 0;
+	clmovevars.slidyslopes = PMCL_GetKeyValue ("pm_slidyslopes", 0) != 0;
+	clmovevars.autobunny = PMCL_GetKeyValue ("pm_autobunny", 0) != 0;
+	clmovevars.bunnyfriction = PMCL_GetKeyValue ("pm_bunnyfriction", 0) != 0;
+	clmovevars.watersinkspeed = PMCL_GetKeyValue ("*pm_watersinkspeed", 60);
+	clmovevars.flyfriction = PMCL_GetKeyValue ("*pm_flyfriction", 4);
+	clmovevars.edgefriction = PMCL_GetKeyValue ("*pm_edgefriction", 2);
+	clmovevars.protocolflags = cl.protocolflags;
+	clmovevars.flags = MOVEFLAG_VALID | MOVEFLAG_NOGRAVITYONGROUND |
+		(PMCL_GetKeyValue ("pm_edgefriction", -1000) != -1000 ? 0 : MOVEFLAG_QWEDGEBOX);
+	clmovevars.jumpspeed = PM_VANILLA_JUMP_VELOCITY;
+	clmovevars.maxairspeed = 30;
 	clmovevars_valid = true;
 }
 
-void PMCL_SetMoveVars (void)
+void PMCL_ClearMoveVars (void)
 {
+	clmovevars_valid = false;
+}
+
+qboolean PMCL_SetMoveVars (void)
+{
+	static const int shared_stats[] = {
+		STAT_MOVEVARS_STEPHEIGHT, STAT_MOVEVARS_GRAVITY, STAT_MOVEVARS_STOPSPEED,
+		STAT_MOVEVARS_MAXSPEED, STAT_MOVEVARS_SPECTATORMAXSPEED, STAT_MOVEVARS_ACCELERATE,
+		STAT_MOVEVARS_AIRACCELERATE, STAT_MOVEVARS_WATERACCELERATE, STAT_MOVEVARS_FRICTION,
+		STAT_MOVEVARS_WATERFRICTION, STAT_MOVEVARS_EDGEFRICTION, STAT_MOVEVARS_ENTGRAVITY,
+		STAT_MOVEVARS_JUMPVELOCITY, STAT_MOVEVARS_MAXAIRSPEED};
+	static const int private_stats[] = {
+		STAT_MOVEVARS_WATERSINKSPEED, STAT_MOVEVARS_FLYFRICTION,
+		STAT_MOVEVARS_BUNNYSPEEDCAP, STAT_MOVEVARS_KTJUMP};
+	qboolean private_move = cl.protocol_qsvr == QSVR_PROTOCOL_PINNED;
+	unsigned int i;
+
 	PM_EnsureInitialized ();
 	if (!clmovevars_valid)
 		PMCL_ServerinfoUpdated ();
 	movevars = clmovevars;
-	if (cl.stats[STAT_MOVEFLAGS] & MOVEFLAG_VALID)
+	movevars.protocolflags = cl.protocolflags;
+	if (cl.protocol_qsvr && (!private_move ||
+		(cl.protocol_pext2 & QSVR_PEXT2_REQUIRED) != QSVR_PEXT2_REQUIRED))
+		return false;
+	if ((cl.protocol_pext2 & PEXT2_PREDINFO) && (cl.stats[STAT_MOVEFLAGS] & MOVEFLAG_VALID))
 	{
+		for (i = 0; i < countof(shared_stats); i++)
+			if (!isfinite(cl.statsf[shared_stats[i]]))
+				return false;
+		if ((double)cl.statsf[STAT_MOVEVARS_STEPHEIGHT] < INT_MIN ||
+			(double)cl.statsf[STAT_MOVEVARS_STEPHEIGHT] > INT_MAX)
+			return false;
+		if (private_move)
+			for (i = 0; i < countof(private_stats); i++)
+				if (!isfinite(cl.statsf[private_stats[i]]))
+					return false;
+
 		movevars.stepheight = cl.statsf[STAT_MOVEVARS_STEPHEIGHT];
 		movevars.flags = cl.stats[STAT_MOVEFLAGS];
 		movevars.gravity = cl.statsf[STAT_MOVEVARS_GRAVITY];
@@ -2571,122 +2459,16 @@ void PMCL_SetMoveVars (void)
 		movevars.entgravity = cl.statsf[STAT_MOVEVARS_ENTGRAVITY];
 		movevars.jumpspeed = cl.statsf[STAT_MOVEVARS_JUMPVELOCITY];
 		movevars.maxairspeed = cl.statsf[STAT_MOVEVARS_MAXAIRSPEED];
-		movevars.watersinkspeed = cl.statsf[STAT_MOVEVARS_WATERSINKSPEED];
-		movevars.flyfriction = cl.statsf[STAT_MOVEVARS_FLYFRICTION];
-		movevars.bunnyspeedcap = cl.statsf[STAT_MOVEVARS_BUNNYSPEEDCAP];
-		movevars.ktjump = cl.statsf[STAT_MOVEVARS_KTJUMP];
-		PM_UnpackMoveFlags (&movevars);
-		if (!(movevars.flags & MOVEFLAG_VALID))
-			movevars.flags = MOVEFLAG_VALID | MOVEFLAG_NOGRAVITYONGROUND;
-		if (movevars.entgravity <= 0)
-			movevars.entgravity = 1.0f;
+		if (private_move)
+		{
+			movevars.watersinkspeed = cl.statsf[STAT_MOVEVARS_WATERSINKSPEED];
+			movevars.flyfriction = cl.statsf[STAT_MOVEVARS_FLYFRICTION];
+			movevars.bunnyspeedcap = cl.statsf[STAT_MOVEVARS_BUNNYSPEEDCAP];
+			movevars.ktjump = cl.statsf[STAT_MOVEVARS_KTJUMP];
+			PM_UnpackMoveFlags (&movevars);
+			if (movevars.entgravity <= 0)
+				movevars.entgravity = 1.0f;
+		}
 	}
-}
-
-void PMSV_UpdateMovevars (void)
-{
-	PM_EnsureInitialized ();
-	PM_SetBaseMoveVars (&movevars, sv.protocolflags, true);
-}
-
-void PMSV_SetMoveStats (edict_t *plent, float *fstat, int *istat)
-{
-	eval_t *entgrav;
-	float entgravity;
-	float jumpspeed;
-	int clientnum;
-
-	PMSV_UpdateMovevars ();
-	clientnum = plent ? NUM_FOR_EDICT(plent) : 0;
-	jumpspeed = movevars.jumpspeed;
-	if (SV_IsVRClientSlot(clientnum) &&
-		sv_vr_jump_velocity.value > PM_VANILLA_JUMP_VELOCITY)
-		jumpspeed = sv_vr_jump_velocity.value;
-	fstat[STAT_MOVEVARS_STEPHEIGHT] = movevars.stepheight;
-	istat[STAT_MOVEFLAGS] = PM_PackMoveFlags (&movevars);
-	fstat[STAT_MOVEVARS_GRAVITY] = movevars.gravity;
-	fstat[STAT_MOVEVARS_STOPSPEED] = movevars.stopspeed;
-	fstat[STAT_MOVEVARS_MAXSPEED] = movevars.maxspeed;
-	fstat[STAT_MOVEVARS_SPECTATORMAXSPEED] = movevars.spectatormaxspeed;
-	fstat[STAT_MOVEVARS_ACCELERATE] = movevars.accelerate;
-	fstat[STAT_MOVEVARS_AIRACCELERATE] = movevars.airaccelerate;
-	fstat[STAT_MOVEVARS_WATERACCELERATE] = movevars.wateraccelerate;
-	fstat[STAT_MOVEVARS_FRICTION] = movevars.friction;
-	fstat[STAT_MOVEVARS_WATERFRICTION] = movevars.waterfriction;
-	fstat[STAT_MOVEVARS_EDGEFRICTION] = movevars.edgefriction;
-	entgrav = plent ? GetEdictFieldValue(plent, qcvm->extfields.gravity) : NULL;
-	entgravity = (entgrav && entgrav->_float) ? entgrav->_float : 1.0f;
-	fstat[STAT_MOVEVARS_ENTGRAVITY] = entgravity;
-	fstat[STAT_MOVEVARS_TIMESCALE] = 1;
-	fstat[STAT_MOVEVARS_JUMPVELOCITY] = jumpspeed;
-	fstat[STAT_MOVEVARS_MAXAIRSPEED] = movevars.maxairspeed;
-	fstat[STAT_MOVEVARS_WATERSINKSPEED] = movevars.watersinkspeed;
-	fstat[STAT_MOVEVARS_FLYFRICTION] = movevars.flyfriction;
-	fstat[STAT_MOVEVARS_BUNNYSPEEDCAP] = movevars.bunnyspeedcap;
-	fstat[STAT_MOVEVARS_KTJUMP] = movevars.ktjump;
-}
-
-void PF_sv_pmove (void)
-{
-	edict_t *ent = G_EDICT(OFS_PARM0);
-	usercmd_t cmd;
-
-	memset(&cmd, 0, sizeof(cmd));
-	if (host_client && host_client->edict == ent)
-		cmd = host_client->cmd;
-
-	if (qcvm->extglobals.input_sequence)
-		cmd.sequence = *qcvm->extglobals.input_sequence;
-	if (qcvm->extglobals.input_servertime)
-		cmd.servertime = *qcvm->extglobals.input_servertime;
-	if (qcvm->extglobals.input_timelength)
-		cmd.seconds = *qcvm->extglobals.input_timelength;
-	if (qcvm->extglobals.input_movevalues) {
-		cmd.forwardmove = qcvm->extglobals.input_movevalues[0];
-		cmd.sidemove = qcvm->extglobals.input_movevalues[1];
-		cmd.upmove = qcvm->extglobals.input_movevalues[2];
-	}
-	if (qcvm->extglobals.input_angles)
-		VectorCopy(qcvm->extglobals.input_angles, cmd.viewangles);
-	if (qcvm->extglobals.input_buttons)
-		cmd.buttons = *qcvm->extglobals.input_buttons;
-	if (qcvm->extglobals.input_impulse)
-		cmd.impulse = *qcvm->extglobals.input_impulse;
-	if (qcvm->extglobals.input_weapon)
-		cmd.weapon = *qcvm->extglobals.input_weapon;
-	if (qcvm->extglobals.input_cursor_screen) {
-		cmd.cursor_screen[0] = qcvm->extglobals.input_cursor_screen[0];
-		cmd.cursor_screen[1] = qcvm->extglobals.input_cursor_screen[1];
-	}
-	if (qcvm->extglobals.input_cursor_trace_start)
-		VectorCopy(qcvm->extglobals.input_cursor_trace_start, cmd.cursor_start);
-	if (qcvm->extglobals.input_cursor_trace_endpos)
-		VectorCopy(qcvm->extglobals.input_cursor_trace_endpos, cmd.cursor_impact);
-	if (qcvm->extglobals.input_cursor_entitynumber)
-		cmd.cursor_entitynumber = *qcvm->extglobals.input_cursor_entitynumber;
-
-	SV_RunPMoveForEntity(ent, &cmd);
-}
-
-void PM_Register (void)
-{
-	PM_EnsureInitialized ();
-	Cvar_RegisterVariable (&pm_bunnyspeedcap);
-	Cvar_RegisterVariable (&pm_bunnyfriction);
-	Cvar_RegisterVariable (&pm_ktjump);
-	Cvar_RegisterVariable (&pm_slidefix);
-	Cvar_RegisterVariable (&pm_airstep);
-	Cvar_RegisterVariable (&pm_pground);
-	Cvar_RegisterVariable (&pm_stepdown);
-	Cvar_RegisterVariable (&pm_walljump);
-	Cvar_RegisterVariable (&pm_slidyslopes);
-	Cvar_RegisterVariable (&pm_autobunny);
-	Cvar_RegisterVariable (&pm_watersinkspeed);
-	Cvar_RegisterVariable (&pm_flyfriction);
-	Cvar_RegisterVariable (&pm_edgefriction);
-	Cvar_RegisterVariable (&pm_stepheight);
-	Cvar_RegisterVariable (&sv_airaccelerate);
-	Cvar_RegisterVariable (&sv_wateraccelerate);
-	Cvar_RegisterVariable (&sv_waterfriction);
-	Cvar_RegisterVariable (&sv_spectatormaxspeed);
+	return true;
 }

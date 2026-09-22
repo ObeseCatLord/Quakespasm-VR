@@ -2138,7 +2138,13 @@ void CL_ParseServerMessage (void)
 			break;
 
 		case svc_stufftext:
+		{
+			int command_start = msg_readcount;
 			str = MSG_ReadString ();
+			// Never execute a valid-looking prefix of a truncated command. The
+			// string reader consumes excess bytes even when its buffer fills.
+			if (msg_badread || msg_readcount - command_start != (int)strlen (str) + 1)
+				Host_Error ("CL_ParseServerMessage: truncated server command");
 			// handle special commands
 			if (strlen (str) > 2 && str[0] == '/' && str[1] == '/')
 			{
@@ -2148,6 +2154,7 @@ void CL_ParseServerMessage (void)
 			else
 				Cbuf_AddText (str);
 			break;
+		}
 
 		case svc_damage:
 			V_ParseDamage ();

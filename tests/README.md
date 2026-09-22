@@ -224,11 +224,54 @@ For the sanitizer check, add `-fsanitize=address,undefined
 
 The collision geometry is constructed by the fixture. Traces and movement are
 production code; this is not a dedicated-server, network, tracked-controller or
-full reference-parity test. The solver is intentionally not linked into the game
-until real command/replay and server/QC owners are integrated. Link-time section
-collection excludes those unimplemented owner calls from this focused fixture;
-no dummy gameplay implementations satisfy them. Its console/error functions and
-unused cvar/session boundary stand-ins are test-only.
+full reference-parity test. The shared solver is now linked into the game; replay
+and server command/QC authority remain separate integration work. Link-time
+section collection limits this fixture to movement/collision, while the full
+engine build verifies actual module linkage. Console/error stand-ins are
+test-only.
+
+## Client movement parameters and production linkage
+
+`pmove_movevars_fixture.c` exercises real full/incremental serverinfo callbacks,
+Info readers and PM variable selection. It covers QSS defaults, changed server
+values, starred-key behavior, cache invalidation/current protocol flags, public
+versus private stat precedence, and nonfinite/out-of-range numeric rejection.
+The real command tokenizer covers the former 1,023-byte argument truncation,
+rejected oversized tokens, and preservation of settings after missing arguments.
+Fractional booleans follow QSS server nonzero semantics. Callback dispatch and
+warning output are fixture boundaries; full resource teardown, complete-stat
+receipt, network command dispatch and replay are not covered.
+
+```sh
+cc -std=gnu11 -DUSE_SDL3 -D_GNU_SOURCE -Wall -Wextra -Werror \
+  -Wno-unused-parameter -Wno-sign-compare -Wno-missing-field-initializers \
+  -ffunction-sections -fdata-sections \
+  -fsanitize=address,undefined,float-cast-overflow -fno-sanitize-recover=all \
+  -fno-omit-frame-pointer tests/pmove_movevars_fixture.c \
+  Quake/pmove.c Quake/cmd.c Quake/common.c Quake/strlcpy.c -Wl,--gc-sections \
+  $(pkg-config --cflags --libs sdl3) -lm -o /tmp/qsvr-pmove-movevars-asan
+/tmp/qsvr-pmove-movevars-asan
+```
+
+`serverinfo_command_smoke.gdb` runs the actual Linux executable before engine
+initialization. It registers the real serverinfo callback, injects one wire
+message, and calls `CL_ParseServerMessage`. It checks a 2,047-byte command through
+to PM gravity selection, and stops at the real `Host_Error` for oversized and
+unterminated commands before any callback. It needs GDB and debug symbols, but
+no game assets. It does not exercise a socket, normal startup, or error teardown.
+
+```sh
+for case_name in fit oversized unterminated; do
+  QSVR_SERVERINFO_CASE="$case_name" gdb -nx --batch \
+    -x tests/serverinfo_command_smoke.gdb \
+    /tmp/quakespasm-2.0-bootstrap-build/vkquake || exit 1
+done
+```
+
+The consolidated Linux SDL3/debugoptimized build links `pmove.c` through the
+ordinary Meson source list. No unresolved server functions are hidden by this
+fixture's section collection: disconnected server staging has been removed from
+the production module. The existing shared solver and client adapter remain.
 
 ## Private snapshot collision bounds
 

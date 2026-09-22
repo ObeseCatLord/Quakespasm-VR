@@ -457,7 +457,8 @@ void Cmd_Unaliasall_f (void)
 #define MAX_ARGS 80
 
 static int		   cmd_argc;
-static char		   cmd_argv[MAX_ARGS][1024];
+// Preserve every token accepted by COM_Parse, including serverinfo values.
+static char		   cmd_argv[MAX_ARGS][COM_PARSE_MAX_TOKEN_SIZE];
 static char		   cmd_null_string[] = "";
 static const char *cmd_args = NULL;
 

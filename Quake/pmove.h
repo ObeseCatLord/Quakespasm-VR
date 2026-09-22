@@ -196,18 +196,13 @@ qboolean PM_TestPlayerPosition (vec3_t point);
 trace_t PM_PlayerTrace (vec3_t start, vec3_t stop, unsigned int solidmask);
 #endif
 
-//stuff that should be elsewhere...
-int SV_HullPointContents (hull_t *hull, int num, vec3_t p);
-void SV_Impact (edict_t *e1, edict_t *e2);
-void World_AddEntsToPmove(edict_t *ignore, vec3_t boxminmax[2]);
+// Client snapshot adapter; server movement remains owned by world/QC integration.
+void PMCL_AddEntities(vec3_t boxminmax[2]);
+void PMCL_ClearMoveVars(void);
 void PMCL_ServerinfoUpdated(void);
-void PMCL_SetMoveVars(void);
-void PMSV_SetMoveStats(edict_t *plent, float *fstat, int *istat);	//so client has the right movevars as stats.
-void PMSV_UpdateMovevars(void);
-void PF_sv_pmove(void);
-void SV_RunPMoveForEntity(edict_t *ent, const usercmd_t *cmd);
-void PMSV_UpdateMovevars(void);
-void PM_Register(void);
+// False rejects unsupported dialects or invalid numeric stats. This does not
+// establish complete-stat receipt or an authoritative replay snapshot.
+qboolean PMCL_SetMoveVars(void);
 #define VectorClear(v) ((v)[0] = (v)[1] = (v)[2] = 0)
 #define VectorSet(r,x,y,z) do{(r)[0] = x; (r)[1] = y;(r)[2] = z;}while(0)
 #define Length VectorLength

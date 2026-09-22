@@ -298,3 +298,52 @@ modes, including the added touch/recovery and explicit-duration cases; the main
 agent had independently run the preceding ladder/swim fixture and reviewed the
 final additions. Astra reviewed source and documentation only. No full gameplay
 or exact-equivalence claim follows from these checks.
+
+### Client solver linkage — local Astra/max
+
+The next implementation needs the shared PM code in the game binary. Compiling
+`6aafc918`'s staged `pmove.c` and inspecting its undefined symbols demonstrated
+dependencies on absent co-op, VR-client classification and server command-owner
+functions. No production consumer used those staged wrappers. This is a concrete
+linkage incompatibility, distinct from the earlier rejected proposal to move
+helpers merely to match QSS-M's file layout.
+
+| Recommendation | Disposition |
+| --- | --- |
+| Delete unused server staging rather than adding placeholder implementations | Adopted. Remove the server branch of the mixed collector and disconnected PMSV/QC wrappers. Their exact code remains at `6aafc918`; server authority remains a required migration item using the real donor world/QC owners and pinned VR behavior. |
+| Retain the existing snapshot-pose client collector | Adopted as `PMCL_AddEntities`. Donor network traces use rendered poses, whereas replay requires snapshot poses. This adapter shares the existing solver/hull functions and adds no persistent collision cache. |
+| Source fallback movement parameters from serverinfo | Adopted from QSS-M `03a498aa` `pr_ext.c:2113` onward, replacing local server cvars/tracking-derived settings. Preserve the private extended-stat override and distinguish its format from public QSS-M. |
+| Refresh fallback at existing serverinfo owners and clear it with client state | Adopted. Use the full-replacement and incremental callbacks already in `cl_main.c`, invalidate the PM cache on client-state destruction, and select current protocol flags when setting movevars. |
+| Avoid a new registry, inactive module or linker-dependent unresolved-code workaround | Adopted. Existing lazy PM initialization suffices for the client module. Future server cvars belong with their actual server owner. |
+
+Local Astra ran with verified `gpt-6-astra` / `max` settings and reviewed the
+actual references before making these recommendations. The smallest remaining
+gameplay proof is a built client against the pinned dedicated peer under delayed
+delivery, with movement reconciliation, authoritative setting changes and a
+reconnect to different server settings. Linkage and parameter fixtures establish
+only their respective prerequisites. Owner-snapshot/ACK coherence, complete
+stat admission, local head/mouse VR swimming policy and live replay remain
+separate integration requirements.
+
+
+#### Final local code review disposition
+
+| Finding | Disposition |
+| --- | --- |
+| Command arguments truncated accepted tokens to 1,023 bytes, potentially changing `sv_gravity=800` into `8` | Adopted: align existing argument storage with `COM_PARSE_MAX_TOKEN_SIZE`; test the real tokenizer and callbacks against this exact boundary. Require the complete argument count before either serverinfo callback mutates state. |
+| Numeric boolean conversion differs from QSS's client for fractional values | Retain and document: nonzero semantics match QSS's authoritative server. The parameter fixture checks `0.5`. |
+| Earlier network-string reading can also truncate command text | Main integration finding: check consumed bytes and read status at the existing `svc_stufftext` owner before dispatch. Reject oversized/unterminated strings; retain the existing network-string capacity. The executable-level GDB check confirms exactly fitting, oversized and unterminated wire messages at the real parser; socket delivery and error teardown remain outside that check. |
+| Production dependency closure and public/private selection | Confirmed by Astra source review and the Linux build; no additional movement authority or missing-dependency stubs are introduced. |
+
+The parameter fixture now links the real tokenizer rather than substituting
+`Cmd_Argv`. The shared solver and private collision fixtures also pass with
+ASan/UBSan. These checks still do not establish live replay or gameplay parity.
+
+
+Astra's bounded follow-up found the original truncation issue addressed and no
+new blocker. It emphasized that legitimate QSS fullserverinfo commands can
+exceed the inherited 2,047-byte network-string limit. The new explicit rejection
+is a compatibility restriction, not full-capacity support. The requested wire
+boundary checks then passed in the built Linux executable: exact fit updates
+serverinfo and selects gravity; oversized and unterminated messages stop at
+`Host_Error` before the callback. No socket or live gameplay claim follows.
