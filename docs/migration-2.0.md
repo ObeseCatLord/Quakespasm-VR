@@ -556,6 +556,13 @@ Hand/muzzle and roomscale producers, weapon presentation/wheel, menu pointers,
 haptics, full binding/default migration and VR-specific swimming/ladder behavior
 remain open. This increment does not close the full P1 gameplay gate.
 
+The [tracked command and weapon-use gate](migration-vr-command-producer.md)
+compares the narrow adapter with a subsystem transplant and records the missing
+server weapon consumer. A command-lifetime roomscale adapter is staged and
+locally build/fixture checked, but cannot yet activate private VR movement.
+The first vertical proof must follow a calibrated muzzle and roomscale command
+through actual movement and QuakeC weapon use.
+
 ## Next integration gates
 
 Follow the [reviewed architecture plan](vkquake-base-migration-plan.md).

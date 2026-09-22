@@ -292,21 +292,32 @@ qboolean V_TrackedSessionActive (void)
 
 /* Read the same completed tracking sample used by the input adapter. The
  * mapping belongs to this view owner; callers must not maintain another yaw. */
+qboolean V_TrackedMappingYaw (float *yaw)
+{
+	const vrxr_frame_t *frame = GL_OpenXRFrame ();
+	if (!yaw || !frame || !frame->focused || !tracked_aim_ready || tracked_reference_pending ||
+		!frame->devices[0].valid || cls.signon != SIGNONS || cls.demoplayback || cl.intermission ||
+		!isfinite (tracked_yaw + tracked_local_yaw))
+		return false;
+	*yaw = tracked_yaw + tracked_local_yaw;
+	return true;
+}
+
 qboolean V_TrackedMovementAngles (int mode, int physical_offhand, vec3_t angles)
 {
 	const vrxr_frame_t *frame = GL_OpenXRFrame ();
-	if (!frame || !frame->focused || !tracked_aim_ready || tracked_reference_pending ||
-		!frame->devices[0].valid || cls.signon != SIGNONS || cls.demoplayback || cl.intermission)
+	float tracking_yaw;
+	if (!V_TrackedMappingYaw (&tracking_yaw))
 		return false;
 	if (mode == VR_MOVEMENT_MODE_FOLLOW_HEAD)
-		return VR_AimPoseAngles (frame->devices[0].matrix, tracked_yaw + tracked_local_yaw, angles);
+		return VR_AimPoseAngles (frame->devices[0].matrix, tracking_yaw, angles);
 	if ((mode != VR_MOVEMENT_MODE_FOLLOW_HAND && mode != VR_MOVEMENT_MODE_RAW_INPUT) ||
 		physical_offhand < 0 || physical_offhand > 1)
 		return false;
 	const vrxr_device_t *hand = &frame->devices[physical_offhand + 1];
 	if (!hand->valid || hand->kind != VRXR_DEVICE_HAND || hand->hand != physical_offhand)
 		return false;
-	return VR_LocomotionHandAngles (hand->matrix, tracked_yaw + tracked_local_yaw,
+	return VR_LocomotionHandAngles (hand->matrix, tracking_yaw,
 		isfinite (vr_gunangle.value) ? vr_gunangle.value : 32.f, angles);
 }
 

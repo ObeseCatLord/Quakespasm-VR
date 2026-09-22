@@ -34,6 +34,7 @@ static const vrxr_frame_t *fixture_frame;
 static vec3_t fixture_head_angles;
 static vec3_t fixture_hand_angles[2];
 static float fixture_turn_yaw;
+static float fixture_units_per_metre = 10.0f;
 static int fixture_turn_calls;
 
 static recorded_event_t events[256];
@@ -93,6 +94,24 @@ static void set_cvar (const char *name, float value)
 const vrxr_frame_t *GL_OpenXRFrame (void)
 {
 	return fixture_frame;
+}
+
+float V_VRUnitsPerMetre (void)
+{
+	return fixture_units_per_metre;
+}
+
+qboolean V_TrackedMappingYaw (float *yaw)
+{
+	if (!yaw || !fixture_frame || !fixture_frame->focused || !fixture_frame->devices[0].valid)
+		return false;
+	*yaw = fixture_turn_yaw;
+	return true;
+}
+
+void Con_DPrintf (const char *fmt, ...)
+{
+	(void)fmt;
 }
 
 qboolean CL_AngleLocked (void)
@@ -843,6 +862,57 @@ static void test_motion_ownership_and_tracking_loss (void)
 	fixture_frame = NULL;
 }
 
+static void test_roomscale_command_accumulator (void)
+{
+	vrxr_frame_t frame = neutral_frame ();
+	usercmd_t preview = {0};
+	key_dest = key_game;
+	input_grab_active = waiting_for_binding = angle_locked = false;
+	cls.state = ca_connected;
+	cls.signon = SIGNONS;
+	cl.intermission = cl.paused = cls.demoplayback = false;
+	vr_aimmode.value = 7;
+	fixture_turn_yaw = 0;
+	frame.devices[0].valid = true;
+	VR_InputClear ();
+	motion_sample (&frame); /* establish the raw HMD baseline */
+	frame.devices[0].matrix[2][3] = -0.1f; /* forward in OpenXR */
+	motion_sample (&frame);
+	near_motion (cl.pendingcmd.vr_roomscalemove[0], 1.0f);
+	motion_sample (&frame); /* reused completed frame cannot double count */
+	near_motion (cl.pendingcmd.vr_roomscalemove[0], 1.0f);
+	fixture_turn_yaw = 90.0f;
+	frame.devices[0].matrix[0][3] = 0.2f; /* physical right, rotated into game forward */
+	motion_sample (&frame);
+	near_motion (cl.pendingcmd.vr_roomscalemove[0], 3.0f);
+	near_motion (cl.pendingcmd.vr_roomscalemove[1], 0.0f);
+	for (int i = 0; i < 3; ++i)
+	{
+		preview = (usercmd_t){0};
+		VR_InputApplyPending (&preview);
+		near_motion (preview.vr_roomscalemove[0], 3.0f);
+		near_motion (cl.pendingcmd.vr_roomscalemove[0], 3.0f);
+		assert (!preview.vr_active);
+	}
+	frame.focused = false;
+	motion_sample (&frame);
+	near_motion (cl.pendingcmd.vr_roomscalemove[0], 0.0f);
+	frame.focused = true;
+	motion_sample (&frame); /* recenter/focus recovery takes a new baseline */
+	near_motion (cl.pendingcmd.vr_roomscalemove[0], 0.0f);
+	frame.devices[0].matrix[2][3] -= 2.0f; /* outlier is dropped whole */
+	motion_sample (&frame);
+	near_motion (cl.pendingcmd.vr_roomscalemove[0], 0.0f);
+	frame.devices[0].matrix[2][3] -= 0.1f;
+	motion_sample (&frame);
+	near_motion (cl.pendingcmd.vr_roomscalemove[1], 1.0f);
+	angle_locked = true;
+	motion_sample (&frame);
+	near_motion (cl.pendingcmd.vr_roomscalemove[1], 0.0f);
+	angle_locked = false;
+	fixture_frame = NULL;
+}
+
 int main (void)
 {
 	test_init_and_no_vr ();
@@ -859,7 +929,9 @@ int main (void)
 	test_modal_cancel_wins_over_confirm ();
 	test_input_hands_are_snapshotted_before_release_callbacks ();
 	test_motion_ownership_and_tracking_loss ();
+	test_roomscale_command_accumulator ();
 	puts ("VR input adapter preserves native key ownership, menu dispatch, gating and re-entry safety");
 	puts ("VR movement: modes, preview immutability, tracking/authority rearm, wire bounds and snap/smooth/queued turning passed");
+	puts ("VR roomscale preparation: mapped horizontal delta, deduplication, preview, focus and outlier gates passed");
 	return 0;
 }

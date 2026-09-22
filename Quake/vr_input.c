@@ -88,9 +88,13 @@ static qboolean vr_input_move_wait_neutral;
 static qboolean vr_input_turn_wait_neutral;
 static int vr_input_last_snap;
 static qboolean vr_input_turn180_queued;
+static vec3_t vr_input_roomscale_last_position;
+static qboolean vr_input_roomscale_position_valid;
 
 #define VR_INPUT_WIRE_MIN (-32768.0f)
 #define VR_INPUT_WIRE_MAX 32767.0f
+/* Keep producer samples within PM_VR_ROOMSCALE_MAX_DELTA in pmove.c. */
+#define VR_INPUT_ROOM_SCALE_MAX_DELTA_UNITS 16.0f
 
 static vr_input_context_t VR_InputCurrentContext (void)
 {
@@ -277,6 +281,90 @@ static qboolean VR_InputWireVec (const float value[3])
 		value[0] >= VR_INPUT_WIRE_MIN && value[0] <= VR_INPUT_WIRE_MAX &&
 		value[1] >= VR_INPUT_WIRE_MIN && value[1] <= VR_INPUT_WIRE_MAX &&
 		value[2] >= VR_INPUT_WIRE_MIN && value[2] <= VR_INPUT_WIRE_MAX;
+}
+
+static void VR_InputAccumulateRoomscaleMove (const vrxr_frame_t *frame, usercmd_t *pending)
+{
+	const float *position;
+	vec3_t delta, tracking_move, accumulated;
+	float tracking_yaw, units_per_metre, yaw_radians, cosine, sine;
+	float horizontal_length;
+
+	if (!pending)
+		return;
+
+	if (!VR_InputMotionContextAccepted (frame) || CL_AngleLocked ())
+	{
+		vr_input_roomscale_position_valid = false;
+		VectorCopy (vec3_origin, pending->vr_roomscalemove);
+		return;
+	}
+
+	position = frame->devices[0].matrix[0] + 3;
+	if (!isfinite (position[0]) || !isfinite (frame->devices[0].matrix[1][3]) ||
+		!isfinite (frame->devices[0].matrix[2][3]))
+	{
+		vr_input_roomscale_position_valid = false;
+		return;
+	}
+
+	if (frame->reference_changed || !vr_input_roomscale_position_valid)
+	{
+		vr_input_roomscale_last_position[0] = position[0];
+		vr_input_roomscale_last_position[1] = frame->devices[0].matrix[1][3];
+		vr_input_roomscale_last_position[2] = frame->devices[0].matrix[2][3];
+		vr_input_roomscale_position_valid = true;
+		return;
+	}
+
+	delta[0] = position[0] - vr_input_roomscale_last_position[0];
+	delta[1] = frame->devices[0].matrix[1][3] - vr_input_roomscale_last_position[1];
+	delta[2] = frame->devices[0].matrix[2][3] - vr_input_roomscale_last_position[2];
+	vr_input_roomscale_last_position[0] = position[0];
+	vr_input_roomscale_last_position[1] = frame->devices[0].matrix[1][3];
+	vr_input_roomscale_last_position[2] = frame->devices[0].matrix[2][3];
+
+	if (!VR_InputControllerAim ())
+		return;
+
+	units_per_metre = V_VRUnitsPerMetre ();
+	if (!isfinite (units_per_metre) || units_per_metre <= 0.0f ||
+		!V_TrackedMappingYaw (&tracking_yaw) || !isfinite (tracking_yaw))
+		return;
+
+	/* OpenXR position is right/up/backward; inherit the donor's horizontal
+	 * mapping, then rotate it by the view owner's mapped tracking yaw. */
+	tracking_move[0] = -delta[2] * units_per_metre;
+	tracking_move[1] = -delta[0] * units_per_metre;
+	tracking_move[2] = 0.0f;
+	yaw_radians = tracking_yaw * 0.01745329251994329577f;
+	cosine = cosf (yaw_radians);
+	sine = sinf (yaw_radians);
+	accumulated[0] = tracking_move[0] * cosine - tracking_move[1] * sine;
+	accumulated[1] = tracking_move[0] * sine + tracking_move[1] * cosine;
+	accumulated[2] = 0.0f;
+	horizontal_length = sqrtf (accumulated[0] * accumulated[0] + accumulated[1] * accumulated[1]);
+	if (!VR_InputWireVec (accumulated) || !isfinite (horizontal_length) ||
+		horizontal_length > VR_INPUT_ROOM_SCALE_MAX_DELTA_UNITS)
+	{
+		Con_DPrintf ("VR input: ignored room-scale tracking sample outside PMove range\n");
+		return;
+	}
+
+	accumulated[0] += pending->vr_roomscalemove[0];
+	accumulated[1] += pending->vr_roomscalemove[1];
+	accumulated[2] += pending->vr_roomscalemove[2];
+	horizontal_length = sqrtf (accumulated[0] * accumulated[0] + accumulated[1] * accumulated[1]);
+	/* pendingcmd survives previews and frames without a send. If adding this
+	 * sample would exceed PMove's per-command limit, drop this whole sample and
+	 * keep the prior total; never clamp it into a different physical movement. */
+	if (!VR_InputWireVec (accumulated) || !isfinite (horizontal_length) ||
+		horizontal_length > VR_INPUT_ROOM_SCALE_MAX_DELTA_UNITS)
+	{
+		Con_DPrintf ("VR input: ignored room-scale sample exceeding pending PMove range\n");
+		return;
+	}
+	VectorCopy (accumulated, pending->vr_roomscalemove);
 }
 
 static void VR_InputTurn180_f (void)
@@ -537,6 +625,8 @@ void VR_InputCommands (const vrxr_frame_t *frame)
 	qboolean desired[2][MAX_KEYS] = {{false}};
 	vrxr_input_t input_hands[2];
 	vr_input_context_t context;
+	if (!VR_InputMotionContextAccepted (frame) || frame->reference_changed)
+		vr_input_roomscale_position_valid = false;
 	if (frame)
 		memcpy (input_hands, frame->hands, sizeof (input_hands));
 	context = VR_InputCurrentContext ();
@@ -654,6 +744,7 @@ void VR_InputMove (usercmd_t *pending)
 	VR_InputClearPendingRecord (pending);
 	if (!pending)
 		return;
+	VR_InputAccumulateRoomscaleMove (frame, pending);
 
 	if (!VR_InputMotionContextAccepted (frame) || CL_AngleLocked ())
 	{
@@ -796,6 +887,8 @@ void VR_InputApplyPending (usercmd_t *cmd)
 
 	if (!cmd || CL_AngleLocked () || !VR_InputMotionContextAccepted (GL_OpenXRFrame ()))
 		return;
+	if (VR_InputControllerAim () && VR_InputWireVec (cl.pendingcmd.vr_roomscalemove))
+		VectorCopy (cl.pendingcmd.vr_roomscalemove, cmd->vr_roomscalemove);
 	if (cl.pendingcmd.vr_pending_angles_valid &&
 		isfinite (cl.pendingcmd.vr_pending_angles[PITCH]) &&
 		isfinite (cl.pendingcmd.vr_pending_angles[YAW]) &&
@@ -817,6 +910,8 @@ void VR_InputApplyPending (usercmd_t *cmd)
 void VR_InputInvalidateMotion (void)
 {
 	VR_InputClearPendingRecord (&cl.pendingcmd);
+	VectorCopy (vec3_origin, cl.pendingcmd.vr_roomscalemove);
+	vr_input_roomscale_position_valid = false;
 	vr_input_move_wait_neutral = true;
 	vr_input_turn_wait_neutral = true;
 	vr_input_last_snap = 0;
@@ -826,6 +921,7 @@ void VR_InputInvalidateMotion (void)
 void VR_InputClear (void)
 {
 	++vr_input_reset_generation;
+	vr_input_roomscale_position_valid = false;
 	memset (vr_input_emitted, 0, sizeof (vr_input_emitted));
 	for (int hand = 0; hand < 2; ++hand)
 	{

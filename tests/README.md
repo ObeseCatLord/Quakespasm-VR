@@ -599,6 +599,9 @@ cc -std=gnu11 -DUSE_SDL3 -D_GNU_SOURCE -Wall -Wextra -Werror \
 profile mappings, shared Index-pad ownership, trigger hysteresis, role/focus
 changes, neutral rearming, menu activation versus binding capture, native modal
 grabs, callback invalidation, finite-axis handling, and zero/excessive deadzones.
+It also checks prepared roomscale deltas, repeated-frame deduplication,
+nonconsuming preview, focus loss, outlier rejection and angle locks; this remains
+a command-adapter check until `vr_active` and server weapon use are integrated.
 Its frames intentionally have `should_render == false`: focused actions remain
 usable independently of visibility. The key sink does not qualify native binding
 execution or a physical controller.
