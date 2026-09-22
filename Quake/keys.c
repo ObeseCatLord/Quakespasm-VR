@@ -23,6 +23,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 
 #include "quakedef.h"
 #include "arch_def.h"
+#include "vr_input.h"
 
 /* key up events are sent even if in console mode */
 
@@ -164,6 +165,10 @@ keyname_t keynames[] = {
 	{"PADDLE3_ALT", K_PADDLE3_ALT},
 	{"PADDLE4_ALT", K_PADDLE4_ALT},
 	{"TOUCHPAD_ALT", K_TOUCHPAD_ALT},
+
+	{"VR_RIGHT_STICK_UP", K_VR_RIGHT_STICK_UP},
+	{"VR_RIGHT_STICK_DOWN", K_VR_RIGHT_STICK_DOWN},
+	{"VR_ALTFIRE", K_VR_ALTFIRE},
 
 	{NULL, 0}};
 
@@ -681,8 +686,20 @@ Key_SetBinding
 */
 void Key_SetBinding (int keynum, const char *binding)
 {
-	if (keynum == -1)
+	if (keynum < 0 || keynum >= MAX_KEYS)
 		return;
+	if (binding && keybindings[keynum] && !strcmp (binding, keybindings[keynum]))
+		return;
+
+	// Release the action named by the old binding before replacing it.
+	// Key-up otherwise consults the new binding and can strand +attack, etc.
+	// A logical ALT key is already resolved: do not route it a second time.
+	if (keydown[keynum] && keybindings[keynum] && keybindings[keynum][0] == '+')
+	{
+		char cmd[1024];
+		q_snprintf (cmd, sizeof (cmd), "-%s %i\n", keybindings[keynum] + 1, keynum);
+		Cbuf_AddText (cmd);
+	}
 
 	// free old bindings
 	if (keybindings[keynum])
@@ -976,6 +993,11 @@ static struct
 	int		 lastchar;
 } key_inputgrab = {false, -1, -1};
 
+qboolean Key_InputGrabActive (void)
+{
+	return key_inputgrab.active;
+}
+
 /*
 ===================
 Key_BeginInputGrab
@@ -1057,7 +1079,7 @@ void Key_EventWithKeycode (int key, qboolean down, int keycode)
 			key = gamepad_active_key[physical_key];
 		else if (down && gamepad_active_key[physical_key])
 			key = gamepad_active_key[physical_key];
-		else if (down && joy_altmodifier_pressed && (!keybindings[key] || strcmp (keybindings[key], "+altmodifier")))
+		else if (down && !key_inputgrab.active && joy_altmodifier_pressed && (!keybindings[key] || strcmp (keybindings[key], "+altmodifier")))
 		{
 			const int altkey = key + (K_LTHUMB_ALT - K_LTHUMB);
 			if (keybindings[altkey] || !keybindings[key])
@@ -1325,6 +1347,7 @@ void Key_ClearStates (void)
 			Key_Event (i, false);
 	}
 	memset (gamepad_active_key, 0, sizeof (gamepad_active_key));
+	VR_InputClear ();
 }
 
 /*

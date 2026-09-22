@@ -589,3 +589,90 @@ cc -std=gnu11 -DUSE_SDL3 -D_GNU_SOURCE -Wall -Wextra -Werror \
   $(pkg-config --cflags --libs sdl3) -lm -o /tmp/qsvr-client-public-preview-asan
 /tmp/qsvr-client-public-preview-asan
 ```
+
+## OpenXR controller button input
+
+`vr_input_fixture.c` exercises the production adapter with a recording key sink:
+profile mappings, shared Index-pad ownership, trigger hysteresis, role/focus
+changes, neutral rearming, menu activation versus binding capture, native modal
+grabs, callback invalidation, finite-axis handling, and zero/excessive deadzones.
+Its frames intentionally have `should_render == false`: focused actions remain
+usable independently of visibility. The key sink does not qualify native binding
+execution or a physical controller.
+
+```sh
+cc -std=gnu11 -DUSE_SDL3 -Wall -Wextra -Werror \
+  -Wno-missing-field-initializers -Wno-unused-parameter \
+  -fsanitize=address,undefined -fno-omit-frame-pointer \
+  tests/vr_input_fixture.c $(pkg-config --cflags --libs sdl3) -lm \
+  -o /tmp/qsvr-controller-input-asan
+/tmp/qsvr-controller-input-asan
+```
+
+`vr_input_keys_fixture.c` links the production key-name converters and checks
+that existing gamepad/alternate key codes remain unchanged and the three VR
+names round-trip within the native table capacity:
+
+```sh
+for source in keys common; do
+  cc -std=gnu11 -DUSE_SDL3 -D_GNU_SOURCE \
+    -ffunction-sections -fdata-sections -Wno-unused-parameter \
+    -c "Quake/$source.c" $(pkg-config --cflags sdl3) \
+    -o "/tmp/qsvr-controller-$source.o" || exit 1
+done
+cc -std=gnu11 -Wall -Wextra -Werror -ffunction-sections -fdata-sections \
+  tests/vr_input_keys_fixture.c /tmp/qsvr-controller-keys.o \
+  /tmp/qsvr-controller-common.o -Wl,--gc-sections -o /tmp/qsvr-controller-keys
+/tmp/qsvr-controller-keys
+```
+
+The initialized native tests need GDB with Python and a diagnostic Linux binary.
+Set `INPUT_TEST_ROOT` to a disposable basedir containing `id1/pak0.pak` (and
+`pak1.pak` if using split stock archives), linked from licensed game data. Never
+point these probes at the deployed game profile; initialization can write logs.
+Set `INPUT_TEST_BINARY` to the built executable. Both desktop probes inject only
+OpenXR action fields; native keys, binding commands, usercmd construction and
+server gameplay remain the actual engine implementations.
+
+```sh
+QSVR_INPUT_RESULT="$INPUT_TEST_ROOT/gameplay-result.json" \
+  timeout --signal=TERM 75s gdb -nx --batch \
+  -x tests/vr_input_gameplay_smoke.gdb --args "$INPUT_TEST_BINARY" \
+  -novr -nosound -window -width 640 -height 480 -basedir "$INPUT_TEST_ROOT" \
+  +vid_vsync 0 +host_maxfps 144 +map e1m1
+
+QSVR_INPUT_BASEDIR="$INPUT_TEST_ROOT" \
+QSVR_INPUT_LIFECYCLE_RESULT="$INPUT_TEST_ROOT/lifecycle-result.json" \
+  timeout --signal=TERM 120s gdb -nx --batch \
+  -x tests/vr_input_lifecycle_smoke.gdb "$INPUT_TEST_BINARY"
+```
+
+Require the `QSVR_INPUT_GAMEPLAY_PASSED` and `QSVR_INPUT_LIFECYCLE_PASSED`
+markers and successful JSON assertions. Gameplay must move the authoritative
+player and consume ammunition; focus loss releases the actions, restoring focus
+while held does not resume them, and a fresh press fires again. The lifecycle
+probe exercises native alternate bindings, combined hands, role/focus changes,
+held-key rebinding, clears, actual menu binding capture, submenu boundaries
+and modal input-grab transitions. It kills its owned
+inferior after checking rather than saving a probe configuration.
+
+`vr_input_modal_smoke.gdb` additionally requires the isolated simulated Monado
+setup described under **Local OpenXR GPU smoke**, with matching private
+`XDG_RUNTIME_DIR`, configuration/data paths and `XR_RUNTIME_JSON`. It uses the
+actual XR frame owner and native blocking dialog, while injecting controller
+actions at the adapter boundary. It verifies confirm/cancel/timeout, held-entry
+suppression, simultaneous unrelated controls, cancellation precedence, active
+native ALT modifiers, fresh XR frames without host-frame advancement, and the
+actual loading-screen input invalidation path. It is not physical-input, headset,
+performance, or Vulkan-validation qualification.
+
+```sh
+SDL_VIDEODRIVER=x11 QSVR_MODAL_RESULT="$INPUT_TEST_ROOT/modal-result.json" \
+  timeout --signal=TERM 90s gdb -nx --batch \
+  -x tests/vr_input_modal_smoke.gdb --args "$INPUT_TEST_BINARY" \
+  -openxr -nosound -window -width 640 -height 480 -basedir "$INPUT_TEST_ROOT" \
+  +vid_vsync 0 +host_maxfps 144 +map e1m1
+```
+
+Require `QSVR_INPUT_MODAL_PASSED` and all JSON assertions. Stop only the isolated
+Monado service created for the probe. No headset runtime settings are changed.

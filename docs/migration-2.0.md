@@ -27,7 +27,7 @@ The [complete-scope feature map](migration-feature-map.md) is the current migrat
 [migration-preservation.csv](migration-preservation.csv) now covers 905 unique paths, extending the original 904-path snapshot with the current master delta. It retains old blob/WIP evidence and adds current-master blobs and feature routing. Exact source anchors and mechanical module routes are labeled separately. [History](migration-history-index.csv) and [public-interface](migration-interface-index.csv) indexes make omissions reviewable. These are scope/audit artifacts, **not proof of completed behavioral integration**. Historical deletions are reviewed rather than restored blindly; preserved WIP is not automatically accepted release behavior.
 
 The sections below record successive checkpoints. The latest implemented slice
-is **Private owner/ACK association**; earlier limitations describe their
+is **OpenXR controller button input**; earlier limitations describe their
 respective commits, not the current head. None closes the full P1 gameplay gate.
 
 ## First source checkpoint
@@ -493,6 +493,38 @@ device axes. Its focused production-owner host-order regression passes under ASa
 covering held/released joystick input, alternating sends and repeated previews. The server authority port, tracked command producers,
 physical VR behavior, delayed/lost delivery, stair/swim qualification and
 private-demo parity remain open. This is not completion of the coupled VR proof.
+
+## OpenXR controller button input
+
+Completed OpenXR action samples now feed the donor's native key-binding and
+command path before `Cbuf_Execute`. The adapter composes the existing OpenXR
+profile mapping with inherited controller behavior, including handedness,
+trigger hysteresis, menu navigation and Index pad/stick distinctions. It adds
+the three VR bind names without changing existing key numbers or user bindings.
+Focus, role/profile, destination, capture and native-clear transitions release
+owned keys and require neutral input before rearming.
+
+Fresh right-trigger presses activate selected menu items through Enter; binding
+capture receives the actual trigger key. Blocking confirmation dialogs refresh
+through the existing serial XR frame owner and accept controller confirmation
+without advancing the host simulation. Failed or skipped sampling invalidates
+input. Native held-key rebinding now releases the old action before replacing
+its binding. The [input review and evidence](migration-input-review.md) records
+source mapping, local Astra design dispositions and verification limits.
+
+The Linux build, adapter sanitizer checks, native key-name checks, action-driven
+stock-map movement/firing/focus proof and isolated simulated-Monado modal checks
+pass. The 55-checkpoint native lifecycle probe and expanded modal checks cover
+real alternate bindings, held-key rebinding, menu capture, submenu boundaries,
+unrelated simultaneous controls and ALT-active confirmation. Local Astra review
+findings were addressed in the existing owners. These checks do not qualify
+physical controllers or a headset; the linked review records their limits.
+
+Analog locomotion and turning, hand/muzzle and roomscale command production,
+weapon presentation/wheel, menu pointers, haptics and the complete inherited
+binding/default migration remain open. This increment does not close P1 or the
+full VR input feature rows. Windows/ARM64 and device/eye-tracking qualification
+remain deferred; no performance gain is claimed.
 
 ## Next integration gates
 

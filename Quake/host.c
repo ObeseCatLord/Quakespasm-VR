@@ -26,6 +26,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "bgmusic.h"
 #include "steam.h"
 #include "tasks.h"
+#include "vr_input.h"
 #include <setjmp.h>
 #ifdef _DEBUG
 #include "gl_heap.h"
@@ -1052,6 +1053,9 @@ static void _Host_Frame (double time)
 
 		// allow mice or other external controllers to add commands
 		IN_Commands ();
+		// Consume the last completed XR action sample before native bindings
+		// are executed. Keep runtime waits and pose location on the XR owner.
+		VR_InputCommands (GL_OpenXRFrame ());
 
 		// handle mouse interaction with the console (selection, links)
 		Con_UpdateMouseState ();
@@ -1283,6 +1287,7 @@ void Host_Init (void)
 		SaveList_Init ();
 		VID_Init ();
 		IN_Init ();
+		VR_InputInit ();
 		TexMgr_Init (); // johnfitz
 		Draw_Init ();
 		SCR_Init ();

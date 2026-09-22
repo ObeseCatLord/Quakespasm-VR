@@ -3450,6 +3450,7 @@ static void GL_OpenXRRetireImages (void *unused)
 		vid.recalc_refdef = true;
 	}
 	vulkan_globals.stereo_active = false;
+	memset (&openxr_frame, 0, sizeof (openxr_frame));
 	vulkan_globals.stereo_color_format = VK_FORMAT_UNDEFINED;
 }
 
@@ -3492,6 +3493,13 @@ static void GL_OpenXRAttach (void)
 const vrxr_frame_t *GL_OpenXRFrame (void)
 {
 	return vulkan_globals.stereo_active ? &openxr_frame : NULL;
+}
+
+void GL_InvalidateXRInput (void)
+{
+	// Do not disturb render/view metadata owned by in-flight tasks.
+	openxr_frame.focused = false;
+	memset (openxr_frame.hands, 0, sizeof (openxr_frame.hands));
 }
 
 void GL_EndXRFrame (void)
@@ -3540,6 +3548,7 @@ qboolean GL_BeginRendering (qboolean use_tasks, task_handle_t *begin_rendering_t
 
 		if (!render_resources_created)
 		{
+			GL_InvalidateXRInput ();
 			return false;
 		}
 	}
@@ -3552,7 +3561,12 @@ qboolean GL_BeginRendering (qboolean use_tasks, task_handle_t *begin_rendering_t
 		if (openxr_frame.reference_changed)
 			R_InvalidateStereoReference ();
 		if (begun <= 0)
+		{
+			// A failure after action sync can leave a partially populated
+			// frame. Never replay its held buttons on the next host iteration.
+			memset (&openxr_frame, 0, sizeof (openxr_frame));
 			return false;
+		}
 		if (!openxr_frame.should_render)
 		{
 			VRXR_EndFrame ();

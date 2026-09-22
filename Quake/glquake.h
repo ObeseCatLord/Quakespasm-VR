@@ -44,6 +44,7 @@ void		  GL_UpdateDescriptorSets (void);
 
 #include "vr_openxr.h"
 const vrxr_frame_t *GL_OpenXRFrame (void);
+void GL_InvalidateXRInput (void);
 void GL_EndXRFrame (void);
 void R_PrepareStereoFrame (void);
 void R_RestoreStereoView (void);

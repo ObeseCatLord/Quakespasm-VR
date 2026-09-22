@@ -26,6 +26,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "quakedef.h"
 
 #include "cfgfile.h"
+#include "vr_input.h"
 
 #include <setjmp.h>
 
@@ -1353,6 +1354,12 @@ Displays a text string in the center of the screen and waits for a Y or N
 keypress.
 ==================
 */
+static qboolean SCR_ModalInputDone (int key, int character)
+{
+	return character == 'y' || character == 'Y' || character == 'n' || character == 'N' ||
+		key == K_ESCAPE || key == K_ABUTTON || key == K_BBUTTON || key == K_MOUSE2;
+}
+
 int SCR_ModalMessage (const char *text, float timeout) // johnfitz -- timeout
 {
 	double time1, time2; // johnfitz -- timeout
@@ -1378,11 +1385,20 @@ int SCR_ModalMessage (const char *text, float timeout) // johnfitz -- timeout
 	{
 		Sys_SendKeyEvents ();
 		Key_GetGrabbedInput (&lastkey, &lastchar);
+		if (!SCR_ModalInputDone (lastkey, lastchar) && V_TrackedSessionActive ())
+		{
+			// The normal host loop is blocked here. Refresh through the same
+			// serial XR frame owner so both the dialog and its input stay live.
+			scr_drawdialog = true;
+			SCR_UpdateScreen (false);
+			scr_drawdialog = false;
+			VR_InputCommands (GL_OpenXRFrame ());
+			Key_GetGrabbedInput (&lastkey, &lastchar);
+		}
 		Sys_Sleep (16);
 		if (timeout)
 			time2 = Sys_DoubleTime (); // johnfitz -- zero timeout means wait forever.
-	} while (lastchar != 'y' && lastchar != 'Y' && lastchar != 'n' && lastchar != 'N' && lastkey != K_ESCAPE && lastkey != K_ABUTTON && lastkey != K_BBUTTON &&
-			 lastkey != K_MOUSE2 && time2 <= time1);
+	} while (!SCR_ModalInputDone (lastkey, lastchar) && time2 <= time1);
 	Key_EndInputGrab ();
 
 	//	SCR_UpdateScreen (); //johnfitz -- commented out
@@ -1571,6 +1587,7 @@ void SCR_UpdateScreen (qboolean use_tasks)
 		}
 		else
 		{
+			GL_InvalidateXRInput ();
 			in_update_screen = false;
 			return;
 		}

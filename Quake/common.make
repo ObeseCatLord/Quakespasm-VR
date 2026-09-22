@@ -281,6 +281,7 @@ OBJS := strlcat.o \
 	menu.o \
 	sbar.o \
 	view.o \
+	vr_input.o \
 	wad.o \
 	cmd.o \
 	common.o \

@@ -148,6 +148,9 @@ typedef enum keycode_t
 	K_TOUCHPAD_ALT,
 
 	K_PAUSE,
+	K_VR_RIGHT_STICK_UP,
+	K_VR_RIGHT_STICK_DOWN,
+	K_VR_ALTFIRE,
 
 	NUM_KEYCODES,
 } keycode_t;
@@ -188,6 +191,7 @@ void Key_UpdateForDest (void);
 void Key_BeginInputGrab (void);
 void Key_EndInputGrab (void);
 void Key_GetGrabbedInput (int *lastkey, int *lastchar);
+qboolean Key_InputGrabActive (void);
 
 void	 Key_Event (int key, qboolean down);
 void	 Key_EventWithKeycode (int key, qboolean down, int keycode);
