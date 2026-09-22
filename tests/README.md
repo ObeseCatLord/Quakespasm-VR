@@ -92,6 +92,13 @@ A paused new client prepares a fresh base once. Modes 3/4/7 drive the real chase
 orientation while paused. These checks do not establish controller, roomscale,
 full camera or QSS-M networking parity.
 
+The camera fixture also checks the command-owned roomscale anchor: pending and
+last-sent private VR commands suppress duplicate horizontal HMD translation
+while vertical tracking and IPD remain live. It covers blocked/accepted body
+steps and reference changes. Public peers and chase views retain their prior
+camera policy. The VR command producer is still dormant on the wire, so these
+checks do not establish live roomscale gameplay.
+
 ```sh
 cc -std=gnu11 -DUSE_SDL3 -D_GNU_SOURCE -Wno-unused-parameter \
   -ffunction-sections -fdata-sections tests/vr_stereo_camera_fixture.c \

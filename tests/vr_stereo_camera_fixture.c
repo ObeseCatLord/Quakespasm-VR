@@ -8,6 +8,7 @@
 vulkanglobals_t		 vulkan_globals;
 client_state_t cl;
 client_static_t cls;
+server_t sv;
 double host_frametime;
 qboolean noclip_anglehack;
 qboolean con_forcedup;
@@ -84,6 +85,96 @@ static void restore (void)
 	near_value (r_refdef.vieworg[2], 300);
 	for (int i = 0; i < 3; ++i)
 		near_value (r_refdef.viewangles[i], 0);
+}
+static void test_roomscale_eye_anchor (void)
+{
+	const float units = V_VRUnitsPerMetre ();
+	float base_y, anchored_z;
+	cls.signon = SIGNONS;
+	cl.protocol_qsvr = QSVR_PROTOCOL_PINNED;
+	cls.demoplayback = false;
+	cl.paused = false;
+	cl.intermission = 0;
+	cl.fixangle_time = -1;
+	cl.stats[STAT_HEALTH] = 100;
+	cl.cmd.vr_active = cl.pendingcmd.vr_active = false;
+	chase_active.value = 0;
+	vr_aimmode.value = VR_AIMMODE_CONTROLLER;
+	test_frame.focused = test_frame.should_render = test_frame.floor_referenced = 1;
+	test_frame.devices[0].valid = 1;
+	test_frame.devices[0].matrix[0][3] = 0;
+	test_frame.devices[0].matrix[1][3] = 1.7f;
+	test_frame.devices[0].matrix[2][3] = 0;
+	head_yaw (0);
+	VectorCopy (vec3_origin, cl.viewangles);
+	V_ResetTrackedAim ();
+	R_InvalidateStereoReference ();
+	V_UpdateTrackedAim ();
+	V_CalcRefdef ();
+	assert (base_player_view && tracked_aim_ready);
+	base_y = r_refdef.vieworg[1];
+	R_PrepareStereoFrame ();
+	R_RestoreStereoView ();
+	// Before command activation, the existing camera remains positional.
+	test_frame.devices[0].matrix[0][3] = .2f;
+	head_yaw (0);
+	V_UpdateTrackedAim ();
+	assert (!V_TrackedBodyOwnsRoomscale ());
+	R_PrepareStereoFrame ();
+	near_value (r_refdef.vieworg[1], base_y - .2f * units);
+	R_RestoreStereoView ();
+	// A preview can own the body step before the first tagged command is sent.
+	cl.pendingcmd.vr_active = true;
+	assert (V_TrackedBodyOwnsRoomscale ());
+	R_PrepareStereoFrame ();
+	near_value (r_refdef.vieworg[1], base_y);
+	anchored_z = r_refdef.vieworg[2];
+	R_RestoreStereoView ();
+	// After send clears pending, the last private command retains the anchor.
+	cl.pendingcmd.vr_active = false;
+	cl.cmd.vr_active = true;
+	test_frame.devices[0].matrix[0][3] = .3f; // blocked step: body stays put
+	test_frame.devices[0].matrix[1][3] = 1.8f;
+	head_yaw (0);
+	V_UpdateTrackedAim ();
+	R_PrepareStereoFrame ();
+	near_value (r_refdef.vieworg[1], base_y);
+	near_value (r_refdef.vieworg[2], anchored_z + .1f * units);
+	R_RestoreStereoView ();
+	// An accepted body step moves the eye with the player, without adding the
+	// same raw HMD displacement a second time.
+	cl.entities[cl.viewentity].origin[1] += 5;
+	V_CalcRefdef ();
+	base_y = r_refdef.vieworg[1];
+	R_PrepareStereoFrame ();
+	near_value (r_refdef.vieworg[1], base_y);
+	R_RestoreStereoView ();
+	R_InvalidateStereoReference ();
+	V_UpdateTrackedAim ();
+	test_frame.devices[0].matrix[0][3] = .4f;
+	head_yaw (0);
+	V_UpdateTrackedAim ();
+	R_PrepareStereoFrame ();
+	near_value (r_refdef.vieworg[1], base_y);
+	R_RestoreStereoView ();
+	// Public peers never acquire a body-motion anchor from a stale private cmd.
+	test_frame.devices[0].matrix[0][3] = .5f;
+	head_yaw (0);
+	V_UpdateTrackedAim ();
+	cl.protocol_qsvr = 0;
+	assert (!V_TrackedBodyOwnsRoomscale ());
+	R_PrepareStereoFrame ();
+	near_value (r_refdef.vieworg[1], base_y - .1f * units);
+	R_RestoreStereoView ();
+	cl.protocol_qsvr = QSVR_PROTOCOL_PINNED;
+	vr_aimmode.value = VR_AIMMODE_HEAD_MYAW;
+	assert (!V_TrackedBodyOwnsRoomscale ());
+	vr_aimmode.value = VR_AIMMODE_CONTROLLER;
+	chase_active.value = 1;
+	V_CalcRefdef ();
+	assert (!V_TrackedBodyOwnsRoomscale ());
+	chase_active.value = 0;
+	cl.cmd.vr_active = false;
 }
 int main (void)
 {
@@ -539,9 +630,11 @@ int main (void)
 	cl.fixangle_time = -1;
 	test_frame.focused = 0;
 	assert (!V_TurnTrackedYaw (-45));
+	test_roomscale_eye_anchor ();
 	puts ("Production stereo camera: eye separation, pause restoration, skipped reference invalidation and abort GPU-drain boundary passed");
 	puts ("Inherited floor/scale/comfort: floor height, crouch, pitched basis, paused viewheight, LOCAL fallback and desktop gates passed");
 	puts ("Head aiming: actual command angles and paused visual view contain one head rotation");
 	puts ("Aim transitions: reference loss, mode changes, authoritative angles, centerview, pending cancellation/priority, locked accumulation, real chase and client clear passed");
 	puts ("Local turning: effective command basis, all-mode rebase retention, single commit and authority precedence passed");
+	puts ("Roomscale camera anchor: pending/sent private body motion removes duplicate horizontal HMD offset; public and vertical paths remain distinct");
 }

@@ -401,6 +401,13 @@ void R_PrepareStereoFrame (void)
 	}
 	for (int i = 0; i < 3; ++i)
 		local[i] = (head[i][3] - stereo_reference_position[i]) * units_per_metre;
+	if (V_TrackedBodyOwnsRoomscale ())
+	{
+		/* The command/prediction path now moves the player by this HMD step.
+		 * Keep the inherited player eye at that collision-resolved body origin,
+		 * including when a wall prevents the requested roomscale move. */
+		local[0] = local[2] = 0;
+	}
 	float viewheight;
 	if (V_TrackedPlayerBase (&viewheight))
 	{

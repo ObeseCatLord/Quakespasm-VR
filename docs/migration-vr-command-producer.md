@@ -36,14 +36,25 @@ SDL3 Meson build and the native adapter's ASan/UBSan fixture pass its mapped
 delta, repeat-frame, preview, focus, outlier and lock checks. They do not prove
 physical roomscale movement or weapon behavior yet.
 
-The camera currently adds horizontal HMD displacement from a retained reference
+The camera normally adds horizontal HMD displacement from a retained reference
 to the player origin (`gl_rmain.c:396–422`). Once roomscale moves the body,
-leaving that offset intact would count the same physical step twice. The next
-adapter must share one head/body anchor among movement, eye placement and
-relative muzzle construction, including newer render samples and collision-
-blocked movement. The pinned eye path removes current horizontal HMD translation
+leaving that offset intact would count the same physical step twice. The shared
+head/body contract must also cover relative muzzle construction, newer render
+samples and collision-blocked movement. The pinned eye path removes current horizontal HMD translation
 from the rendered eye (`vr.c:10090–10100`). Do not enable `vr_active` until this
 camera relation and the server gameplay proof are correct.
+
+The player-eye camera now has the narrow roomscale side of that anchor: when an
+admitted private peer (or the eventual local VR server) has a pending or last
+sent VR command in controller aim mode, the existing stereo preparation omits
+horizontal HMD offset and retains floor-height and per-eye IPD placement. The
+view owner decides this from existing command/view state; no independent camera
+or movement state was added. Before activation, public peers, desktop and
+other aim modes keep their previous camera behavior. The production camera
+fixture checks a blocked body step, an accepted body step, pending/send
+transition, reference change, vertical tracking, and public/chase guards.
+This does **not** yet settle the muzzle's shared origin or validate actual
+movement through a private server.
 
 ## Local Astra senior-review disposition
 

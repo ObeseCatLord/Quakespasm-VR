@@ -303,6 +303,20 @@ qboolean V_TrackedMappingYaw (float *yaw)
 	return true;
 }
 
+/* Once the private/local movement command owns horizontal HMD displacement,
+ * the player-eye camera must not add the same displacement from its retained
+ * tracking reference. Pending covers a no-send preview before the first send;
+ * cmd covers the interval after pending consumption. Other aim modes and
+ * public peers keep their existing tracked camera placement. */
+qboolean V_TrackedBodyOwnsRoomscale (void)
+{
+	float yaw, viewheight;
+	return (cl.protocol_qsvr == QSVR_PROTOCOL_PINNED || sv.active) &&
+		V_TrackedAimMode () == VR_AIMMODE_CONTROLLER &&
+		V_TrackedMappingYaw (&yaw) && V_TrackedPlayerBase (&viewheight) &&
+		(cl.pendingcmd.vr_active || cl.cmd.vr_active);
+}
+
 qboolean V_TrackedMovementAngles (int mode, int physical_offhand, vec3_t angles)
 {
 	const vrxr_frame_t *frame = GL_OpenXRFrame ();
