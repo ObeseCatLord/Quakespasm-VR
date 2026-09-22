@@ -632,6 +632,37 @@ void SV_ExpireVRIKPoses(void)
 	}
 }
 
+/* A reconnect clears the client's sender state, including its VRIK sequence.
+ * Capability remains connection-scoped, but accepted poses and recipient
+ * delivery cursors belong to the old world and must not reject the restarted
+ * sequence or suppress its first relay in the new one. */
+static void SV_ResetVRIKMapState(void)
+{
+	int i;
+
+	for (i = 0; i < svs.maxclients; ++i)
+	{
+		client_t *client = &svs.clients[i];
+
+		client->vrik_sequence_valid = false;
+		client->vrik_inactive_sent = false;
+		client->vrik_last_sequence = 0;
+		client->vrik_generation = 0;
+		client->vrik_pose_time = 0;
+		client->vrik_next_accept_time = 0;
+		client->vrik_v2_body_valid = false;
+		Q_memset(&client->vrik_pose, 0, sizeof(client->vrik_pose));
+		Q_memset(&client->vrik_pose_v3, 0, sizeof(client->vrik_pose_v3));
+		Q_memset(client->vrik_v2_body, 0, sizeof(client->vrik_v2_body));
+		Q_memset(client->vrik_relay_sequence_valid, 0,
+			sizeof(client->vrik_relay_sequence_valid));
+		Q_memset(client->vrik_relay_sequence, 0,
+			sizeof(client->vrik_relay_sequence));
+		Q_memset(client->vrik_relay_generation, 0,
+			sizeof(client->vrik_relay_generation));
+	}
+}
+
 static qboolean SV_IsLocalClient (client_t *client)
 {
 	return client && client->netconnection &&
@@ -5261,6 +5292,7 @@ void SV_SpawnServer (const char *server)
 
 	/* File-static coop/VR state must never outlive the edicts for this map. */
 	SV_ResetTransientClientState();
+	SV_ResetVRIKMapState();
 	SV_CoopSharedResetState();
 
 //
