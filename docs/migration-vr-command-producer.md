@@ -93,6 +93,23 @@ The production stereo-camera fixture checks a hand query before camera
 preparation and a LOCAL rebase. The calibrated muzzle and command producer
 still need to consume this raw grip; no synthetic floor height is introduced.
 
+For the first relative-muzzle command, let `G` be the accepted dominant raw
+grip offset from the current player body, `O` the selected weapon's scaled
+and handed muzzle offset, and `D` the **whole-command range-accepted**
+roomscale request (zero when rejected). The inherited send rule reduces to
+`vr_handpos = G + O - D`, with `vr_handpos_relative = true`: the donor first
+forms `player_origin + G + O` and subtracts
+`player_origin + D` (`cl_input.c:1004–1018`). Collision may change the server's
+final body position, so using a collision-accepted delta on the client would
+be a different protocol. The command must snapshot `G`, hand rotation, weapon
+profile and `D` together before send and nonconsuming preview; recomputing
+one piece from a newer render frame would mix tracking times.
+The muzzle/hand rotation must use the dominant controller's full composed
+pitch, yaw and roll (`V_TrackedMovementAngles` in follow-hand mode), even when
+the movement command's view angles follow the head or offhand. The current
+movement-angle path deliberately zeros roll for wire movement; using that
+value for model-space muzzle reflection would lose wrist-roll calibration.
+
 The read-only game installation currently has 37 `vr_weapons.txt` files. A
 first-token inventory found 646 `viewmodel` entries, 622 `muzzle_offset`, 41
 `enhanced_muzzle_offset`, 47 `bitmask`/`impulse` pairs, 7
