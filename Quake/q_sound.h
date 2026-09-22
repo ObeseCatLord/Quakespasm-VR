@@ -112,7 +112,7 @@ void S_PaintChannels (int endtime);
 void S_InitPaintChannels (void);
 
 /* picks a channel based on priorities, empty slots, number of channels */
-channel_t *SND_PickChannel (int entnum, int entchannel);
+channel_t *SND_PickChannel (int entnum, int entchannel, qboolean audible);
 
 /* spatializes a channel */
 void SND_Spatialize (channel_t *ch);

@@ -1,6 +1,7 @@
 #ifndef QUAKE_VR_WEAPON_CATALOG_H
 #define QUAKE_VR_WEAPON_CATALOG_H
 
+#include <ctype.h>
 #include <string.h>
 
 /*
@@ -53,6 +54,51 @@ static inline int VR_WeaponCatalog_Observe(vr_weapon_catalog_t *catalog,
   catalog->observations[catalog->num_observations].model_index = model_index;
   ++catalog->num_observations;
   return 1;
+}
+
+/* The wheel renders an absent pickup model by swapping its g_ basename for
+ * the corresponding v_ viewmodel. Treat that same pair as one catalogue
+ * identity so runtime viewmodel discovery does not add a second wheel slot. */
+static inline int VR_WeaponCatalog_ModelPathsMatch(const char *a,
+                                                   const char *b) {
+  const char *a_marker;
+  const char *b_marker;
+  size_t prefix_len;
+  size_t i;
+
+  if (!a || !a[0] || !b || !b[0])
+    return 0;
+  for (i = 0; a[i] && b[i]; ++i) {
+    if (tolower((unsigned char)a[i]) != tolower((unsigned char)b[i]))
+      break;
+  }
+  if (!a[i] && !b[i])
+    return 1;
+
+  a_marker = strrchr(a, '/');
+  b_marker = strrchr(b, '/');
+  if (!a_marker || !b_marker || a_marker[1] == '\0' || b_marker[1] == '\0' ||
+      a_marker[2] != '_' || b_marker[2] != '_')
+    return 0;
+  if (!((tolower((unsigned char)a_marker[1]) == 'g' &&
+         tolower((unsigned char)b_marker[1]) == 'v') ||
+        (tolower((unsigned char)a_marker[1]) == 'v' &&
+         tolower((unsigned char)b_marker[1]) == 'g')))
+    return 0;
+
+  prefix_len = (size_t)(a_marker - a) + 1;
+  if ((size_t)(b_marker - b) + 1 != prefix_len)
+    return 0;
+  for (i = 0; i < prefix_len; ++i) {
+    if (tolower((unsigned char)a[i]) != tolower((unsigned char)b[i]))
+      return 0;
+  }
+  for (i = 2; a_marker[i] && b_marker[i]; ++i) {
+    if (tolower((unsigned char)a_marker[i]) !=
+        tolower((unsigned char)b_marker[i]))
+      return 0;
+  }
+  return !a_marker[i] && !b_marker[i];
 }
 
 /*

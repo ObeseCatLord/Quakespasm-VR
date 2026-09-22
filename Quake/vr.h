@@ -139,6 +139,7 @@ void VR_SelectRespawnFromMenu(void);
 void VR_SelectQuickSaveFromMenu(void);
 void VR_SelectQuickLoadFromMenu(void);
 void VR_DrawSbar();
+qboolean VR_DrawingSbar(void);
 void VR_AddOrientationToViewAngles(vec3_t angles);
 void VR_SetAngles(vec3_t angles);
 void VR_ResetOrientation();

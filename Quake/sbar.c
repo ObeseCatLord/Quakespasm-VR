@@ -23,6 +23,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 
 #include "quakedef.h"
 #include "voice.h"
+#include "vr.h"
 
 extern cvar_t vr_enabled;
 
@@ -74,6 +75,13 @@ static qboolean Sbar_IsMG3 (void)
 	const char *game = COM_SkipPath (com_gamedir);
 
 	return game && !q_strcasecmp (game, "mg3");
+}
+
+static qboolean Sbar_IsArcaneDimensions (void)
+{
+	const char *game = COM_SkipPath (com_gamedir);
+
+	return game && !q_strcasecmp (game, "ad");
 }
 
 void Sbar_MiniDeathmatchOverlay (void);
@@ -1294,6 +1302,54 @@ static float Sbar_CSQCScale (void)
 	return CLAMP (1.0, scr_sbarscale.value, (float)glwidth / 320.0);
 }
 
+/* AD layout 4 uses scratch1 and assumes at least a 960-pixel-wide screen to
+ * split its two 96-unit health/ammo bars.  The VR wrist callback is otherwise
+ * 320x200.  Widen and centre only this known AD layout; keep its art/text at
+ * their established world-space size rather than scaling every CSQC HUD. */
+static qboolean Sbar_IsADWideCSQCHud (void)
+{
+	int layout;
+
+	if (!VR_DrawingSbar () || !Sbar_IsArcaneDimensions ())
+		return false;
+
+	layout = (int)Cvar_VariableValue ("scratch1");
+	return layout == 4 || layout == 104;
+}
+
+static qboolean Sbar_CSQCDisplay (float *width, float *height)
+{
+	float s = Sbar_CSQCScale ();
+
+	*width = glwidth / s;
+	*height = glheight / s;
+	if (Sbar_IsADWideCSQCHud ())
+	{
+		float ad_width = 960.0f / q_max (1.0f, scr_sbarscale.value);
+
+		*width = q_max (*width, ad_width);
+		return true;
+	}
+
+	return false;
+}
+
+static qboolean Sbar_BeginCSQCDisplay (qboolean ad_wide_hud, float width)
+{
+	if (!ad_wide_hud)
+		return false;
+
+	glPushMatrix ();
+	glTranslatef ((glwidth - width) * 0.5f, 0, 0);
+	return true;
+}
+
+static void Sbar_EndCSQCDisplay (qboolean pushed)
+{
+	if (pushed)
+		glPopMatrix ();
+}
+
 void Sbar_DrawVoiceStatus(void)
 {
 	char text[64];
@@ -1341,11 +1397,13 @@ void Sbar_Draw (void)
 	if (cl.qcvm.extfuncs.CSQC_DrawHud && !qcvm)
 	{
 		qboolean deathmatchoverlay = false;
-		float s = Sbar_CSQCScale ();
-		float csqc_w = glwidth / s;
-		float csqc_h = glheight / s;
+		qboolean ad_wide_hud;
+		qboolean csqc_display_pushed;
+		float csqc_w, csqc_h;
+		ad_wide_hud = Sbar_CSQCDisplay (&csqc_w, &csqc_h);
 		sb_updates++;
 		GL_SetCanvas (CANVAS_CSQC); //johnfitz
+		csqc_display_pushed = Sbar_BeginCSQCDisplay (ad_wide_hud, csqc_w);
 		PR_SwitchQCVM(&cl.qcvm);
 		pr_global_struct->frametime = host_frametime;
 		if (qcvm->extglobals.cltime)
@@ -1373,6 +1431,7 @@ void Sbar_Draw (void)
 		else
 			deathmatchoverlay = (sb_showscores || cl.stats[STAT_HEALTH] <= 0);
 		PR_SwitchQCVM(NULL);
+		Sbar_EndCSQCDisplay (csqc_display_pushed);
 
 		if (deathmatchoverlay && cl.gametype == GAME_DEATHMATCH)
 		{
@@ -1429,8 +1488,12 @@ void Sbar_Draw (void)
 	{
 		if (cl.qcvm.extfuncs.CSQC_DrawScores && !cl.qcvm.extfuncs.CSQC_DrawHud && !qcvm)
 		{
-			float s = Sbar_CSQCScale ();
+			qboolean ad_wide_hud;
+			qboolean csqc_display_pushed;
+			float csqc_w, csqc_h;
+			ad_wide_hud = Sbar_CSQCDisplay (&csqc_w, &csqc_h);
 			GL_SetCanvas (CANVAS_CSQC);
+			csqc_display_pushed = Sbar_BeginCSQCDisplay (ad_wide_hud, csqc_w);
 			PR_SwitchQCVM(&cl.qcvm);
 			pr_global_struct->frametime = host_frametime;
 			if (qcvm->extglobals.cltime)
@@ -1441,11 +1504,12 @@ void Sbar_Draw (void)
 				*qcvm->extglobals.player_localentnum = cl.viewentity;
 			pr_global_struct->time = cl.time;
 			Sbar_SortFrags ();
-			G_VECTORSET(OFS_PARM0, glwidth/s, glheight/s, 0);
+			G_VECTORSET(OFS_PARM0, csqc_w, csqc_h, 0);
 			G_FLOAT(OFS_PARM1) = sb_showscores;
 			if (key_dest != key_menu)
 				PR_ExecuteProgram(cl.qcvm.extfuncs.CSQC_DrawScores);
 			PR_SwitchQCVM(NULL);
+			Sbar_EndCSQCDisplay (csqc_display_pushed);
 			return;
 		}
 

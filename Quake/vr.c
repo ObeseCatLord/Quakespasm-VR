@@ -1242,7 +1242,7 @@ static qboolean VR_DynWeaponModelMatches(const vr_dyn_weapon_t *w,
   if (!query_has_model || !VR_DynWeaponHasModelDiscriminator(w))
     return true;
   if (model_path && model_path[0] && w->model_path && w->model_path[0] &&
-      !q_strcasecmp(model_path, w->model_path))
+      VR_WeaponCatalog_ModelPathsMatch(model_path, w->model_path))
     return true;
   if (model_index > 0 && w->model_index == model_index)
     return true;
@@ -1257,7 +1257,7 @@ static qboolean VR_ModelIndexMatchesPath(int model_index, const char *path) {
   model = cl.model_precache[model_index];
   if (!model || !model->name[0])
     return false;
-  return !q_strcasecmp(model->name, path);
+  return VR_WeaponCatalog_ModelPathsMatch(model->name, path);
 }
 
 static const char *VR_ModelPathForIndex(int model_index) {
@@ -10523,6 +10523,13 @@ static double VR_Lerp(double a, double b, double f) {
   return (a * (1.0 - f)) + (b * f);
 }
 
+/* Sbar uses this narrow scope to distinguish its wrist canvas from the
+ * 320x200 menu/intermission panel, which intentionally keeps its legacy
+ * virtual dimensions. */
+static qboolean vr_drawing_sbar;
+
+qboolean VR_DrawingSbar(void) { return vr_drawing_sbar; }
+
 void vec3lerp(vec3_t out, vec3_t start, vec3_t end, double f) {
   out[0] = VR_Lerp(start[0], end[0], f);
   out[1] = VR_Lerp(start[1], end[1], f);
@@ -10762,7 +10769,9 @@ void VR_DrawSbar() {
   Sbar_DrawVoiceStatus();
   glPopMatrix();
 
+  vr_drawing_sbar = true;
   Sbar_Draw();
+  vr_drawing_sbar = false;
 
   glEnable(GL_DEPTH_TEST);
   glPopMatrix();
