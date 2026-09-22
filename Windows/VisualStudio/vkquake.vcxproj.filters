@@ -295,6 +295,9 @@
     <ClCompile Include="..\..\Quake\vr_input.c">
       <Filter>Main</Filter>
     </ClCompile>
+    <ClCompile Include="..\..\Quake\vr_locomotion.c">
+      <Filter>Main</Filter>
+    </ClCompile>
     <ClCompile Include="..\..\Quake\view.c">
       <Filter>Main</Filter>
     </ClCompile>
@@ -1018,6 +1021,9 @@
       <Filter>Main</Filter>
     </ClInclude>
     <ClInclude Include="..\..\Quake\vr_input.h">
+      <Filter>Main</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\Quake\vr_locomotion.h">
       <Filter>Main</Filter>
     </ClInclude>
     <ClInclude Include="..\..\Quake\vr_openxr.h">

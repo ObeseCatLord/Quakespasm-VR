@@ -14,6 +14,11 @@ qboolean con_forcedup;
 int r_trace_line_cache_counter;
 cvar_t lookspring;
 static int chase_traces;
+/* Camera-owner fixture: controller assembly is covered by the native input
+ * probe. Observe invalidation without introducing a duplicate input policy. */
+static int motion_invalidations;
+void VR_InputInvalidateMotion (void) { ++motion_invalidations; }
+void VR_InputApplyPending (usercmd_t *cmd) { (void)cmd; }
 qboolean SV_RecursiveHullCheck (hull_t *hull, vec3_t p1, vec3_t p2, trace_t *trace, unsigned int hitcontents)
 {
 	// Run the real chase calculation with a known collision point, followed
@@ -485,8 +490,58 @@ int main (void)
 	V_UpdateTrackedAim ();
 	near_value (cl.viewangles[YAW], 77);
 	cls.demoplayback = false;
+	// Local turns use one effective basis before submission and are committed
+	// once after origin rebasing, in every inherited aim resolver mode.
+	test_frame.focused = 1;
+	cl.fixangle_time = -1;
+	cl.intermission = 0;
+	for (int mode = 1; mode <= 7; ++mode)
+	{
+		vr_aimmode.value = mode;
+		VectorCopy (vec3_origin, cl.viewangles);
+		head_yaw (0);
+		V_ResetTrackedAim ();
+		V_UpdateTrackedAim ();
+		assert (V_TurnTrackedYaw (-45));
+		vec3_t mapped;
+		assert (V_TrackedMovementAngles (VR_MOVEMENT_MODE_FOLLOW_HEAD, 0, mapped));
+		near_value (mapped[YAW], -45);
+		near_value (tracked_previous_orientation[YAW], 0);
+		V_RebaseTrackedAim ();
+		head_yaw (70);
+		assert (!V_TrackedMovementAngles (VR_MOVEMENT_MODE_FOLLOW_HEAD, 0, mapped));
+		V_UpdateTrackedAim ();
+		near_value (tracked_local_yaw, 0);
+		near_value (tracked_view_angles[YAW], -45);
+		V_UpdateTrackedAim ();
+		near_value (tracked_view_angles[YAW], -45);
+	}
+	// Relative authority composes with an uncommitted turn; absolute authority
+	// discards it. Neither path leaves a sampled movement record eligible.
+	int old_invalidations = motion_invalidations;
+	assert (V_TurnTrackedYaw (-15));
+	vec3_t relative = {0, 30, 0};
+	V_TrackedAngleDelta (relative);
+	near_value (tracked_local_yaw, -15);
+	assert (motion_invalidations > old_invalidations);
+	V_UpdateTrackedAim ();
+	near_value (tracked_view_angles[YAW], -30);
+	assert (V_TurnTrackedYaw (-45));
+	cl.viewangles[YAW] = 90;
+	V_SetTrackedAngles (cl.viewangles);
+	cl.stats[STAT_WEAPON] = 1;
+	V_RequestTrackedServerYaw (90);
+	near_value (tracked_local_yaw, 0);
+	cl.fixangle_time = cl.mtime[0];
+	assert (!V_TurnTrackedYaw (-45));
+	V_UpdateTrackedAim ();
+	near_value (tracked_view_angles[YAW], 90);
+	cl.fixangle_time = -1;
+	test_frame.focused = 0;
+	assert (!V_TurnTrackedYaw (-45));
 	puts ("Production stereo camera: eye separation, pause restoration, skipped reference invalidation and abort GPU-drain boundary passed");
 	puts ("Inherited floor/scale/comfort: floor height, crouch, pitched basis, paused viewheight, LOCAL fallback and desktop gates passed");
 	puts ("Head aiming: actual command angles and paused visual view contain one head rotation");
 	puts ("Aim transitions: reference loss, mode changes, authoritative angles, centerview, pending cancellation/priority, locked accumulation, real chase and client clear passed");
+	puts ("Local turning: effective command basis, all-mode rebase retention, single commit and authority precedence passed");
 }

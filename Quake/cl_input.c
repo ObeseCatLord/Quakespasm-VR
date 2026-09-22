@@ -25,6 +25,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 // rights reserved.
 
 #include "quakedef.h"
+#include "vr_input.h"
 
 extern cvar_t cl_maxpitch; // johnfitz -- variable pitch clamping
 extern cvar_t cl_minpitch; // johnfitz -- variable pitch clamping
@@ -328,6 +329,8 @@ float CL_KeyState (kbutton_t *key)
 
 cvar_t cl_upspeed = {"cl_upspeed", "200", CVAR_NONE};
 cvar_t cl_forwardspeed = {"cl_forwardspeed", "200", CVAR_ARCHIVE_GAME};
+// Preserve the inherited configuration control and its stock-speed mapping.
+cvar_t cl_desktop_vanilla_run = {"cl_desktop_vanilla_run", "1", CVAR_ARCHIVE};
 cvar_t cl_backspeed = {"cl_backspeed", "200", CVAR_ARCHIVE_GAME};
 cvar_t cl_sidespeed = {"cl_sidespeed", "350", CVAR_NONE};
 
@@ -416,12 +419,20 @@ Send the intended movement message to the server
 */
 static void CL_BaseMoveInternal (usercmd_t *cmd, qboolean isfinal)
 {
+	float forwardspeed = cl_forwardspeed.value, backspeed = cl_backspeed.value;
 	memset (cmd, 0, sizeof (*cmd));
 
 	VectorCopy (cl.viewangles, cmd->viewangles);
 
 	if (cls.signon != SIGNONS)
 		return;
+	if (cl_desktop_vanilla_run.value && !cl_alwaysrun.value && !V_TrackedSessionActive ())
+	{
+		if (forwardspeed == 200.f)
+			forwardspeed *= cl_movespeedkey.value;
+		if (backspeed == 200.f)
+			backspeed *= cl_movespeedkey.value;
+	}
 
 	if (in_strafe.state & 1)
 	{
@@ -437,8 +448,8 @@ static void CL_BaseMoveInternal (usercmd_t *cmd, qboolean isfinal)
 
 	if (!(in_klook.state & 1))
 	{
-		cmd->forwardmove += cl_forwardspeed.value * CL_KeyStateInternal (&in_forward, isfinal);
-		cmd->forwardmove -= cl_backspeed.value * CL_KeyStateInternal (&in_back, isfinal);
+		cmd->forwardmove += forwardspeed * CL_KeyStateInternal (&in_forward, isfinal);
+		cmd->forwardmove -= backspeed * CL_KeyStateInternal (&in_back, isfinal);
 	}
 
 	//
@@ -499,6 +510,7 @@ void CL_PreviewMove (usercmd_t *cmd)
 	cmd->forwardmove += cl.pendingcmd.forwardmove + cl.pendingcmd.forwardmove_accumulator;
 	cmd->sidemove += cl.pendingcmd.sidemove + cl.pendingcmd.sidemove_accumulator;
 	cmd->upmove += cl.pendingcmd.upmove + cl.pendingcmd.upmove_accumulator;
+	VR_InputApplyPending (cmd);
 
 	CL_FinishMoveInternal (cmd, false);
 }

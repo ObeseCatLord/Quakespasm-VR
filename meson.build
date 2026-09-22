@@ -311,6 +311,7 @@ srcs = [
     'Quake/tasks.c',
     'Quake/view.c',
     'Quake/vr_input.c',
+    'Quake/vr_locomotion.c',
     'Quake/vr_openxr.cpp',
     'Quake/wad.c',
     'Quake/world.c',

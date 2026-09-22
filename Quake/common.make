@@ -282,6 +282,7 @@ OBJS := strlcat.o \
 	sbar.o \
 	view.o \
 	vr_input.o \
+	vr_locomotion.o \
 	wad.o \
 	cmd.o \
 	common.o \

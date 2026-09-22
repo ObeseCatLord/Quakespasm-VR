@@ -23,10 +23,14 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #ifndef QUAKE_VR_INPUT_H
 #define QUAKE_VR_INPUT_H
 
+#include "protocol.h"
 #include "vr_openxr.h"
 
 void VR_InputInit (void);
 void VR_InputCommands (const vrxr_frame_t *frame);
+void VR_InputMove (usercmd_t *pending);
+void VR_InputApplyPending (usercmd_t *cmd);
+void VR_InputInvalidateMotion (void);
 void VR_InputClear (void);
 
 #endif /* QUAKE_VR_INPUT_H */

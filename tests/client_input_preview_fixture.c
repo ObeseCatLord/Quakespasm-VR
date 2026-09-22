@@ -5,6 +5,11 @@
 client_state_t cl;
 client_static_t cls;
 
+/* This fixture isolates native desktop command ownership. The separate XR
+ * input/native gameplay probes exercise the production VR adapter. */
+qboolean V_TrackedSessionActive (void) { return false; }
+void VR_InputApplyPending (usercmd_t *cmd) { (void)cmd; }
+
 static kbutton_t *const tracked_keys[] = {
 	&in_mlook, &in_klook,
 	&in_left, &in_right, &in_forward, &in_back,

@@ -258,6 +258,7 @@ copy "$(SolutionDir)\..\SDL3\lib64\*.dll" "$(TargetDir)"</Command>
       <LanguageStandard>stdcpp14</LanguageStandard>
     </ClCompile>
     <ClCompile Include="..\..\Quake\vr_input.c" />
+    <ClCompile Include="..\..\Quake\vr_locomotion.c" />
     <ClCompile Include="..\..\Quake\view.c" />
     <ClCompile Include="..\..\Quake\wad.c" />
     <ClCompile Include="..\..\Quake\world.c" />
@@ -1247,6 +1248,7 @@ copy "$(SolutionDir)\..\SDL3\lib64\*.dll" "$(TargetDir)"</Command>
     <ClInclude Include="..\..\Quake\tasks.h" />
     <ClInclude Include="..\..\Quake\vid.h" />
     <ClInclude Include="..\..\Quake\vr_input.h" />
+    <ClInclude Include="..\..\Quake\vr_locomotion.h" />
     <ClInclude Include="..\..\Quake\vr_openxr.h" />
     <ClInclude Include="..\..\Quake\vr_openxr_vulkan.h" />
     <ClInclude Include="..\..\Quake\vr_openxr_math.h" />

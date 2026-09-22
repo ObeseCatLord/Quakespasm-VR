@@ -1,6 +1,8 @@
 /* Exercise the production XR input adapter with native Key_Event recorded. */
-#include "../Quake/vr_input.c"
+#include "../Quake/quakedef.h"
 #include "../Quake/menu.h"
+#include "../Quake/vr_input.h"
+#include "../Quake/vr_locomotion.h"
 
 #include <assert.h>
 #include <stdio.h>
@@ -14,12 +16,32 @@ typedef struct
 
 keydest_t key_dest = key_game;
 enum m_state_e m_state = m_none;
+client_static_t cls;
+client_state_t cl;
+double host_frametime;
+kbutton_t in_speed;
+cvar_t cl_upspeed = {"cl_upspeed", "200", CVAR_NONE};
+cvar_t cl_forwardspeed = {"cl_forwardspeed", "200", CVAR_ARCHIVE_GAME};
+cvar_t cl_desktop_vanilla_run = {"cl_desktop_vanilla_run", "1", CVAR_ARCHIVE};
+cvar_t cl_movespeedkey = {"cl_movespeedkey", "2", CVAR_NONE};
+cvar_t cl_alwaysrun = {"cl_alwaysrun", "1", CVAR_ARCHIVE_GAME};
+cvar_t vr_aimmode = {"vr_aimmode", "7", CVAR_ARCHIVE};
+
 static qboolean waiting_for_binding;
 static qboolean input_grab_active;
+static qboolean angle_locked;
+static const vrxr_frame_t *fixture_frame;
+static vec3_t fixture_head_angles;
+static vec3_t fixture_hand_angles[2];
+static float fixture_turn_yaw;
+static int fixture_turn_calls;
 
 static recorded_event_t events[256];
 static int event_count;
 static int registered_cvars;
+static cvar_t *registered_cvar[32];
+static xcommand_t turn180_command;
+static cmd_function_t registered_command;
 static int escape_changes_context;
 static int escape_reenters_clear;
 static int start_binding_on_abutton;
@@ -29,7 +51,83 @@ static vrxr_frame_t *mutate_frame_on_release;
 void Cvar_RegisterVariable (cvar_t *var)
 {
 	var->value = strtof (var->string, NULL);
+	assert (registered_cvars < (int)(sizeof (registered_cvar) / sizeof (registered_cvar[0])));
+	registered_cvar[registered_cvars] = var;
 	++registered_cvars;
+}
+
+void Cvar_SetCallback (cvar_t *var, cvarcallback_t callback)
+{
+	var->callback = callback;
+}
+
+cmd_function_t *Cmd_AddCommand2 (const char *name, xcommand_t function, cmd_source_t source, qboolean qcinterceptable)
+{
+	assert (!strcmp (name, "vr_turn180"));
+	assert (source == src_command && !qcinterceptable);
+	turn180_command = function;
+	memset (&registered_command, 0, sizeof (registered_command));
+	registered_command.name = name;
+	registered_command.function = function;
+	registered_command.srctype = source;
+	return &registered_command;
+}
+
+static cvar_t *fixture_cvar (const char *name)
+{
+	for (int i = 0; i < registered_cvars; ++i)
+		if (!strcmp (registered_cvar[i]->name, name))
+			return registered_cvar[i];
+	assert (!"fixture cvar not registered");
+	return NULL;
+}
+
+static void set_cvar (const char *name, float value)
+{
+	cvar_t *var = fixture_cvar (name);
+	var->value = value;
+	if (var->callback)
+		var->callback (var);
+}
+
+const vrxr_frame_t *GL_OpenXRFrame (void)
+{
+	return fixture_frame;
+}
+
+qboolean CL_AngleLocked (void)
+{
+	return angle_locked;
+}
+
+qboolean V_TrackedMovementAngles (int mode, int physical_offhand, vec3_t angles)
+{
+	const vec3_t *source;
+
+	if (!fixture_frame || !fixture_frame->focused || !fixture_frame->devices[0].valid)
+		return false;
+	if (mode == VR_MOVEMENT_MODE_FOLLOW_HEAD)
+		source = &fixture_head_angles;
+	else
+	{
+		if (physical_offhand < 0 || physical_offhand > 1 ||
+			!fixture_frame->devices[physical_offhand + 1].valid)
+			return false;
+		source = &fixture_hand_angles[physical_offhand];
+	}
+	VectorCopy (*source, angles);
+	angles[YAW] += fixture_turn_yaw;
+	return true;
+}
+
+qboolean V_TurnTrackedYaw (float delta)
+{
+	if (!fixture_frame || !fixture_frame->focused || !fixture_frame->devices[0].valid ||
+		angle_locked || !isfinite (delta) || !isfinite (fixture_turn_yaw + delta))
+		return false;
+	fixture_turn_yaw += delta;
+	++fixture_turn_calls;
+	return true;
 }
 
 void Key_Event (int key, qboolean down)
@@ -117,13 +215,22 @@ static void native_clear_then_neutral (vrxr_frame_t *frame)
 static void test_init_and_no_vr (void)
 {
 	registered_cvars = 0;
+	memset (registered_cvar, 0, sizeof (registered_cvar));
+	turn180_command = NULL;
 	VR_InputInit ();
-	assert (registered_cvars == 5);
-	assert (!strcmp (vr_lefthanded.name, "vr_lefthanded") && vr_lefthanded.value == 0.0f);
-	assert (!strcmp (vr_joystick_axis_deadzone.name, "vr_joystick_axis_deadzone") && vr_joystick_axis_deadzone.value == 0.25f);
-	assert (!strcmp (vr_joystick_axis_menu_deadzone_extra.name, "vr_joystick_axis_menu_deadzone_extra") && vr_joystick_axis_menu_deadzone_extra.value == 0.25f);
-	assert (!strcmp (vr_joystick_axis_exponent.name, "vr_joystick_axis_exponent") && vr_joystick_axis_exponent.value == 1.0f);
-	assert (!strcmp (vr_joystick_deadzone_trunc.name, "vr_joystick_deadzone_trunc") && vr_joystick_deadzone_trunc.value == 1.0f);
+	assert (registered_cvars == 11);
+	assert (fixture_cvar ("vr_lefthanded")->value == 0.0f);
+	assert (fixture_cvar ("vr_joystick_axis_deadzone")->value == 0.25f);
+	assert (fixture_cvar ("vr_joystick_axis_menu_deadzone_extra")->value == 0.25f);
+	assert (fixture_cvar ("vr_joystick_axis_exponent")->value == 1.0f);
+	assert (fixture_cvar ("vr_joystick_deadzone_trunc")->value == 1.0f);
+	assert (fixture_cvar ("vr_movement_mode")->value == 0.0f);
+	assert (fixture_cvar ("vr_movement_speed")->value == 1.0f);
+	assert (fixture_cvar ("vr_snap_turn")->value == 0.0f);
+	assert (fixture_cvar ("vr_180_snap_turn")->value == 1.0f);
+	assert (fixture_cvar ("vr_turn_speed")->value == 2.0f);
+	assert (fixture_cvar ("vr_joystick_yaw_multi")->value == 1.0f);
+	assert (turn180_command != NULL);
 	reset_events ();
 	VR_InputCommands (NULL);
 	assert (event_count == 0);
@@ -133,7 +240,7 @@ static void test_lifecycle_and_hysteresis (void)
 {
 	vrxr_frame_t frame = neutral_frame ();
 	key_dest = key_game;
-	vr_lefthanded.value = 0.0f;
+	set_cvar ("vr_lefthanded", 0.0f);
 	native_clear_then_neutral (&frame);
 
 	frame.hands[0].pressed = VRXR_BUTTON_PRIMARY;
@@ -186,7 +293,7 @@ static void test_role_profile_and_duplicate_mapping (void)
 {
 	vrxr_frame_t frame = neutral_frame ();
 	key_dest = key_game;
-	vr_lefthanded.value = 0.0f;
+	set_cvar ("vr_lefthanded", 0.0f);
 	native_clear_then_neutral (&frame);
 
 	/* Migration provenance: Touch/Index STICK is the donor legacy touchpad;
@@ -221,7 +328,7 @@ static void test_role_profile_and_duplicate_mapping (void)
 	expect_event (1, K_VR_ALTFIRE, 1);
 
 	reset_events ();
-	vr_lefthanded.value = 1.0f;
+	set_cvar ("vr_lefthanded", 1.0f);
 	VR_InputCommands (&frame);
 	assert (event_count == 1);
 	expect_event (0, K_VR_ALTFIRE, 0);
@@ -260,7 +367,7 @@ static void test_role_profile_and_duplicate_mapping (void)
 static void test_button_profiles_and_menu_axes (void)
 {
 	vrxr_frame_t frame = neutral_frame ();
-	vr_lefthanded.value = 0.0f;
+	set_cvar ("vr_lefthanded", 0.0f);
 	key_dest = key_game;
 	native_clear_then_neutral (&frame);
 
@@ -320,7 +427,7 @@ static void test_context_reentry_clear_and_nan (void)
 {
 	vrxr_frame_t frame = neutral_frame ();
 	key_dest = key_game;
-	vr_lefthanded.value = 0.0f;
+	set_cvar ("vr_lefthanded", 0.0f);
 	native_clear_then_neutral (&frame);
 
 	frame.hands[0].pressed = VRXR_BUTTON_MENU;
@@ -376,21 +483,21 @@ static void test_axis_threshold_edges_and_console_escape (void)
 {
 	vrxr_frame_t frame = neutral_frame ();
 	key_dest = key_game;
-	vr_lefthanded.value = 0;
-	vr_joystick_axis_deadzone.value = 0;
-	vr_joystick_axis_menu_deadzone_extra.value = 0;
-	vr_joystick_axis_exponent.value = 0;
+	set_cvar ("vr_lefthanded", 0);
+	set_cvar ("vr_joystick_axis_deadzone", 0);
+	set_cvar ("vr_joystick_axis_menu_deadzone_extra", 0);
+	set_cvar ("vr_joystick_axis_exponent", 0);
 	native_clear_then_neutral (&frame);
 	VR_InputCommands (&frame);
 	assert (event_count == 0); /* pow(0,0) must not manufacture a direction. */
-	vr_joystick_axis_deadzone.value = .75f;
-	vr_joystick_axis_menu_deadzone_extra.value = .5f;
-	vr_joystick_axis_exponent.value = 1;
+	set_cvar ("vr_joystick_axis_deadzone", .75f);
+	set_cvar ("vr_joystick_axis_menu_deadzone_extra", .5f);
+	set_cvar ("vr_joystick_axis_exponent", 1);
 	frame.hands[1].stick[1] = 1;
 	VR_InputCommands (&frame);
 	assert (event_count == 0); /* Configured combined threshold exceeds full scale. */
-	vr_joystick_axis_deadzone.value = .25f;
-	vr_joystick_axis_menu_deadzone_extra.value = .25f;
+	set_cvar ("vr_joystick_axis_deadzone", .25f);
+	set_cvar ("vr_joystick_axis_menu_deadzone_extra", .25f);
 	frame = neutral_frame ();
 	key_dest = key_console;
 	native_clear_then_neutral (&frame);
@@ -575,6 +682,167 @@ static void test_input_hands_are_snapshotted_before_release_callbacks (void)
 	assert (frame.hands[1].pressed == 0); /* callback mutation did not alter this sample */
 }
 
+static void motion_sample (vrxr_frame_t *frame)
+{
+	fixture_frame = frame;
+	VR_InputCommands (frame);
+	VR_InputMove (&cl.pendingcmd);
+}
+
+static void near_motion (float actual, float expected)
+{
+	assert (fabsf (actual - expected) < .002f);
+}
+
+static void test_motion_ownership_and_tracking_loss (void)
+{
+	vrxr_frame_t frame = neutral_frame ();
+	usercmd_t cmd = {0};
+	key_dest = key_game;
+	input_grab_active = waiting_for_binding = angle_locked = false;
+	cls.state = ca_connected;
+	cls.signon = SIGNONS;
+	cl.intermission = cl.paused = cls.demoplayback = false;
+	vr_aimmode.value = 7;
+	cl_forwardspeed.value = cl_upspeed.value = 200;
+	cl_movespeedkey.value = 2;
+	cl_desktop_vanilla_run.value = cl_alwaysrun.value = 0;
+	host_frametime = .01;
+	fixture_turn_yaw = 0;
+	fixture_turn_calls = 0;
+	for (int i = 0; i < 3; ++i)
+		frame.devices[i].valid = true;
+	fixture_head_angles[YAW] = 30;
+	fixture_hand_angles[0][YAW] = 90;
+	fixture_hand_angles[1][YAW] = 150;
+	set_cvar ("vr_lefthanded", 0);
+	set_cvar ("vr_movement_mode", 0);
+	set_cvar ("vr_movement_speed", 1);
+	set_cvar ("vr_joystick_axis_deadzone", .25f);
+	set_cvar ("vr_joystick_axis_exponent", 1);
+	set_cvar ("vr_joystick_deadzone_trunc", 1);
+	VR_InputClear ();
+	reset_events ();
+	for (int mode = 0; mode < 3; ++mode)
+	{
+		set_cvar ("vr_movement_mode", mode);
+		frame.hands[0].stick[1] = 0;
+		motion_sample (&frame);
+		motion_sample (&frame);
+		frame.hands[0].stick[1] = 1;
+		motion_sample (&frame);
+		assert (cl.pendingcmd.vr_pending_move_valid && cl.pendingcmd.vr_pending_angles_valid);
+		near_motion (cl.pendingcmd.vr_pending_move[0], 200);
+		near_motion (cl.pendingcmd.vr_pending_angles[YAW], 30 + 60 * mode);
+		cmd = (usercmd_t){0};
+		cmd.forwardmove = 17;
+		VR_InputApplyPending (&cmd);
+		near_motion (cmd.forwardmove, 217);
+		usercmd_t before = cl.pendingcmd;
+		int turns_before = fixture_turn_calls;
+		for (int i = 0; i < 8; ++i)
+		{
+			usercmd_t preview = {0};
+			VR_InputApplyPending (&preview);
+			near_motion (preview.forwardmove, 200);
+		}
+		assert (!memcmp (&before, &cl.pendingcmd, sizeof before));
+		assert (turns_before == fixture_turn_calls);
+	}
+	// RAW's command basis depends on the dominant pose. Neutral while that
+	// pose is unavailable must not rearm a held stick on pose restoration.
+	frame.devices[2].valid = false;
+	frame.hands[0].stick[1] = 0;
+	motion_sample (&frame);
+	motion_sample (&frame);
+	assert (!cl.pendingcmd.vr_pending_move_valid);
+	frame.devices[2].valid = true;
+	frame.hands[0].stick[1] = 1;
+	motion_sample (&frame);
+	assert (!cl.pendingcmd.vr_pending_move_valid);
+	frame.hands[0].stick[1] = 0;
+	motion_sample (&frame);
+	frame.hands[0].stick[1] = 1;
+	motion_sample (&frame);
+	assert (cl.pendingcmd.vr_pending_move_valid);
+	// A later authority lock suppresses the complete VR contribution while
+	// retaining native input, without mutating the pending record on preview.
+	angle_locked = true;
+	cmd = (usercmd_t){0};
+	cmd.forwardmove = 17;
+	cmd.viewangles[YAW] = 11;
+	VR_InputApplyPending (&cmd);
+	near_motion (cmd.forwardmove, 17);
+	near_motion (cmd.viewangles[YAW], 11);
+	motion_sample (&frame);
+	angle_locked = false;
+	motion_sample (&frame);
+	assert (!cl.pendingcmd.vr_pending_move_valid);
+	frame.hands[0].stick[1] = 0;
+	motion_sample (&frame);
+	frame.hands[0].stick[1] = 1;
+	motion_sample (&frame);
+	cmd = (usercmd_t){0};
+	cmd.forwardmove = 32760;
+	VR_InputApplyPending (&cmd);
+	near_motion (cmd.forwardmove, 32760);
+	set_cvar ("vr_movement_mode", 1e30f); // bounds checked before integer conversion
+	frame.hands[0].stick[1] = 0;
+	motion_sample (&frame);
+	motion_sample (&frame);
+	near_motion (cl.pendingcmd.vr_pending_angles[YAW], 30);
+	set_cvar ("vr_snap_turn", 45);
+	motion_sample (&frame);
+	frame.hands[1].stick[0] = 1;
+	motion_sample (&frame);
+	near_motion (fixture_turn_yaw, -45);
+	motion_sample (&frame);
+	near_motion (fixture_turn_yaw, -45);
+	frame.hands[1].stick[0] = -1;
+	motion_sample (&frame);
+	near_motion (fixture_turn_yaw, 0);
+	frame.hands[1].stick[0] = 0;
+	turn180_command ();
+	near_motion (fixture_turn_yaw, 0);
+	motion_sample (&frame);
+	near_motion (fixture_turn_yaw, -180);
+	set_cvar ("vr_snap_turn", 0);
+	motion_sample (&frame);
+	frame.hands[1].stick[0] = 1;
+	motion_sample (&frame);
+	near_motion (fixture_turn_yaw, -182);
+	frame.focused = false;
+	motion_sample (&frame);
+	frame.focused = true;
+	motion_sample (&frame);
+	near_motion (fixture_turn_yaw, -182);
+	cls.state = ca_disconnected;
+	turn180_command ();
+	cls.state = ca_connected;
+	frame.hands[1].stick[0] = 0;
+	motion_sample (&frame);
+	motion_sample (&frame);
+	near_motion (fixture_turn_yaw, -182);
+	// A profile-only change gates that hand's dependencies, not unrelated
+	// locomotion/turn channels that remain held and valid.
+	frame.hands[0].stick[1] = 1;
+	motion_sample (&frame);
+	assert (cl.pendingcmd.vr_pending_move_valid);
+	frame.hands[1].profile = VRXR_PROFILE_INDEX;
+	motion_sample (&frame);
+	assert (cl.pendingcmd.vr_pending_move_valid);
+	near_motion (cl.pendingcmd.vr_pending_move[0], 200);
+	frame.hands[1].stick[0] = 0;
+	motion_sample (&frame);
+	frame.hands[1].stick[0] = 1;
+	motion_sample (&frame);
+	float prior_turn = fixture_turn_yaw;
+	frame.hands[0].profile = VRXR_PROFILE_INDEX;
+	motion_sample (&frame);
+	near_motion (fixture_turn_yaw, prior_turn - 2);
+	fixture_frame = NULL;
+}
+
 int main (void)
 {
 	test_init_and_no_vr ();
@@ -590,6 +858,8 @@ int main (void)
 	test_modal_grab_only_emits_decision_keys ();
 	test_modal_cancel_wins_over_confirm ();
 	test_input_hands_are_snapshotted_before_release_callbacks ();
+	test_motion_ownership_and_tracking_loss ();
 	puts ("VR input adapter preserves native key ownership, menu dispatch, gating and re-entry safety");
+	puts ("VR movement: modes, preview immutability, tracking/authority rearm, wire bounds and snap/smooth/queued turning passed");
 	return 0;
 }

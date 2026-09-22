@@ -27,7 +27,7 @@ The [complete-scope feature map](migration-feature-map.md) is the current migrat
 [migration-preservation.csv](migration-preservation.csv) now covers 905 unique paths, extending the original 904-path snapshot with the current master delta. It retains old blob/WIP evidence and adds current-master blobs and feature routing. Exact source anchors and mechanical module routes are labeled separately. [History](migration-history-index.csv) and [public-interface](migration-interface-index.csv) indexes make omissions reviewable. These are scope/audit artifacts, **not proof of completed behavioral integration**. Historical deletions are reviewed rather than restored blindly; preserved WIP is not automatically accepted release behavior.
 
 The sections below record successive checkpoints. The latest implemented slice
-is **OpenXR controller button input**; earlier limitations describe their
+is **OpenXR analog locomotion and local turning**; earlier limitations describe their
 respective commits, not the current head. None closes the full P1 gameplay gate.
 
 ## First source checkpoint
@@ -525,6 +525,36 @@ weapon presentation/wheel, menu pointers, haptics and the complete inherited
 binding/default migration remain open. This increment does not close P1 or the
 full VR input feature rows. Windows/ARM64 and device/eye-tracking qualification
 remain deferred; no performance gain is claimed.
+
+## OpenXR analog locomotion and local turning
+
+Head-relative, offhand-relative and raw stick movement now use the inherited
+calculations through the existing OpenXR input adapter. Snap, smooth and queued
+180-degree turns use the tracked-view yaw owner. The controller gun-angle
+transform is reused for movement/RAW command orientation; this does not provide
+complete muzzle, weapon or roomscale data. Eye-tracking/foveation policy is
+independent of this increment.
+
+The native pending command retains the derived VR movement and angle basis.
+Send and prediction preview share nonconsuming assembly; server corrections can
+discard VR motion without deleting desktop input. Public packets now serialize
+prepared command angles, matching private command handling (`36bfa39e`). Native
+keyboard run scaling is applied once, alongside the inherited vanilla-run
+compatibility control. Pose, focus, authority and controller-profile changes
+apply neutral gates only to the channels that depend on them.
+
+The Linux build, affected sanitizer checks, actual codecs and seven-mode camera
+checks pass. The initialized simulated-Monado smoke passes actual server movement
+in all three modes and both handedness choices, adjusted-camera turning,
+focus/rearm, mixed inputs, repeated previews and real native no-send/catch-up
+schedules. The runtime supplies an HMD; controller poses/actions are injected at
+the completed-frame boundary. These results do not qualify physical devices or
+performance. The [locomotion review](migration-locomotion-review.md) records
+source reuse, adaptations, senior-review findings and exact proof limits.
+
+Hand/muzzle and roomscale producers, weapon presentation/wheel, menu pointers,
+haptics, full binding/default migration and VR-specific swimming/ladder behavior
+remain open. This increment does not close the full P1 gameplay gate.
 
 ## Next integration gates
 

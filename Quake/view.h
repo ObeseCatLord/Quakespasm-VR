@@ -44,6 +44,8 @@ void V_RequestTrackedServerYaw (float yaw);
 void V_ValidateTrackedServerYaw (void);
 const float *V_TrackedViewAngles (void);
 void V_TrackedAngleDelta (const vec3_t delta);
+qboolean V_TrackedMovementAngles (int mode, int physical_offhand, vec3_t angles);
+qboolean V_TurnTrackedYaw (float delta);
 qboolean V_ApplyTrackedView (vec3_t angles, float *tracking_yaw);
 void V_ResetBlend (void);
 void V_RenderView (

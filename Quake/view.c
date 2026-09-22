@@ -23,6 +23,8 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 
 #include "quakedef.h"
 #include "vr_aim.h"
+#include "vr_locomotion.h"
+#include "vr_input.h"
 
 /*
 
@@ -80,6 +82,7 @@ cvar_t vr_floor_offset = {"vr_floor_offset", "-16", CVAR_ARCHIVE};
 cvar_t vr_viewkick = {"vr_viewkick", "0", CVAR_NONE};
 cvar_t vr_aimmode = {"vr_aimmode", "7", CVAR_ARCHIVE};
 cvar_t vr_deadzone = {"vr_deadzone", "30", CVAR_ARCHIVE};
+static cvar_t vr_gunangle = {"vr_gunangle", "32", CVAR_ARCHIVE};
 
 // These describe the saved V_CalcRefdef base, including when paused. Do not
 // subtract a newly received viewheight from a base prepared with an older one.
@@ -92,6 +95,7 @@ static vec3_t base_aim_angles;
 static vec3_t tracked_view_angles, tracked_previous_aim, tracked_previous_orientation;
 static vec3_t tracked_raw_angles, tracked_withheld_aim;
 static float tracked_yaw;
+static float tracked_local_yaw;
 static qboolean tracked_aim_ready;
 static qboolean tracked_reference_pending, tracked_readback_yaw, tracked_server_yaw_pending;
 static float tracked_server_yaw;
@@ -104,6 +108,7 @@ static int V_TrackedAimMode (void)
 
 static void V_TrackedAimModeChanged (cvar_t *var)
 {
+	VR_InputInvalidateMotion ();
 	// Source VR_AimMode_f clears mode-specific requests, not pose history.
 	tracked_readback_yaw = tracked_server_yaw_pending = false;
 	if (V_TrackedAimMode () == VR_AIMMODE_CONTROLLER)
@@ -115,6 +120,8 @@ static void V_TrackedAimModeChanged (cvar_t *var)
 
 void V_ResetTrackedAim (void)
 {
+	tracked_local_yaw = 0;
+	VR_InputInvalidateMotion ();
 	tracked_aim_ready = false;
 	base_player_view = base_angles_valid = false;
 	VectorCopy (vec3_origin, tracked_withheld_aim);
@@ -126,10 +133,14 @@ void V_RebaseTrackedAim (void)
 	// A runtime origin change is not a new game. Retain mapped head and aim
 	// histories until a valid pose can establish the replacement yaw basis.
 	tracked_reference_pending = true;
+	VR_InputInvalidateMotion ();
 }
 
 void V_SetTrackedAngles (const vec3_t angles)
 {
+	// An authoritative absolute angle supersedes uncommitted local turning.
+	tracked_local_yaw = 0;
+	VR_InputInvalidateMotion ();
 	VectorCopy (angles, tracked_view_angles);
 	VectorCopy (angles, tracked_previous_aim);
 	VectorCopy (vec3_origin, tracked_withheld_aim);
@@ -139,6 +150,8 @@ void V_PushTrackedYaw (void)
 {
 	if (!vulkan_globals.stereo_active)
 		return;
+	tracked_local_yaw = 0;
+	VR_InputInvalidateMotion ();
 	if (V_TrackedAimMode () == VR_AIMMODE_CONTROLLER)
 	{
 		tracked_server_yaw = tracked_aim_ready ? tracked_view_angles[YAW] : cl.viewangles[YAW];
@@ -169,6 +182,7 @@ void V_ValidateTrackedServerYaw (void)
 
 void V_TrackedAngleDelta (const vec3_t delta)
 {
+	VR_InputInvalidateMotion ();
 	for (int i = 0; i < 3; ++i)
 	{
 		tracked_view_angles[i] += delta[i];
@@ -227,11 +241,16 @@ void V_UpdateTrackedAim (void)
 		tracked_yaw = tracked_view_angles[YAW] - (orientation[YAW] - tracked_yaw);
 		tracked_readback_yaw = false;
 	}
+	// Apply local turning after any reference-space alignment. Retaining this
+	// delta until here prevents a rebase from silently cancelling a snap turn.
+	tracked_yaw += tracked_local_yaw;
+	orientation[YAW] += tracked_local_yaw;
+	tracked_local_yaw = 0;
 	VectorAdd (cl.viewangles, tracked_withheld_aim, aim);
 	const float deadzone = isfinite (vr_deadzone.value) ? vr_deadzone.value : 30.f;
 	VR_AimResolve (mode, deadzone, orientation, tracked_previous_orientation, tracked_previous_aim, NULL, aim, tracked_view_angles);
-	// Controller shooting/movement require the inherited hand-pose command
-	// path. Do not silently substitute head aim or put hand aim in move angles.
+	// Controller muzzle/weapon aim remains independent of movement command
+	// angles. The input adapter prepares those without overwriting native aim.
 	if (mode != VR_AIMMODE_CONTROLLER)
 	{
 		if (CL_AngleLocked ())
@@ -269,6 +288,43 @@ qboolean V_ApplyTrackedView (vec3_t angles, float *tracking_yaw)
 qboolean V_TrackedSessionActive (void)
 {
 	return GL_OpenXRFrame () != NULL;
+}
+
+/* Read the same completed tracking sample used by the input adapter. The
+ * mapping belongs to this view owner; callers must not maintain another yaw. */
+qboolean V_TrackedMovementAngles (int mode, int physical_offhand, vec3_t angles)
+{
+	const vrxr_frame_t *frame = GL_OpenXRFrame ();
+	if (!frame || !frame->focused || !tracked_aim_ready || tracked_reference_pending ||
+		!frame->devices[0].valid || cls.signon != SIGNONS || cls.demoplayback || cl.intermission)
+		return false;
+	if (mode == VR_MOVEMENT_MODE_FOLLOW_HEAD)
+		return VR_AimPoseAngles (frame->devices[0].matrix, tracked_yaw + tracked_local_yaw, angles);
+	if ((mode != VR_MOVEMENT_MODE_FOLLOW_HAND && mode != VR_MOVEMENT_MODE_RAW_INPUT) ||
+		physical_offhand < 0 || physical_offhand > 1)
+		return false;
+	const vrxr_device_t *hand = &frame->devices[physical_offhand + 1];
+	if (!hand->valid || hand->kind != VRXR_DEVICE_HAND || hand->hand != physical_offhand)
+		return false;
+	return VR_LocomotionHandAngles (hand->matrix, tracked_yaw + tracked_local_yaw,
+		isfinite (vr_gunangle.value) ? vr_gunangle.value : 32.f, angles);
+}
+
+qboolean V_TurnTrackedYaw (float delta)
+{
+	const vrxr_frame_t *frame = GL_OpenXRFrame ();
+	// Already received authoritative alignment takes priority. A later origin
+	// rebase preserves this delta until the ordinary view resolver commits it.
+	if (!frame || !frame->focused || !frame->devices[0].valid || !tracked_aim_ready ||
+		tracked_reference_pending || tracked_server_yaw_pending || tracked_readback_yaw ||
+		CL_AngleLocked () || cls.signon != SIGNONS || cls.demoplayback || cl.intermission ||
+		!isfinite (delta) || !isfinite (tracked_local_yaw + delta) ||
+		!isfinite (tracked_yaw + tracked_local_yaw + delta))
+		return false;
+	tracked_local_yaw += delta;
+	// Retain the previous orientation: the next ordinary resolver must observe
+	// this yaw delta, including in the inherited head/mouse and blended modes.
+	return true;
 }
 
 qboolean V_UseTrackedView (void)
@@ -1203,6 +1259,7 @@ void V_Init (void)
 	Cvar_RegisterVariable (&vr_viewkick);
 	Cvar_RegisterVariable (&vr_aimmode);
 	Cvar_RegisterVariable (&vr_deadzone);
+	Cvar_RegisterVariable (&vr_gunangle);
 	Cvar_SetCallback (&vr_aimmode, V_TrackedAimModeChanged);
 	Cmd_AddCommand ("v_cshift", V_cshift_f);
 	Cmd_AddCommand ("bf", V_BonusFlash_f);

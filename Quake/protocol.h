@@ -507,6 +507,12 @@ typedef struct
 	float sidemove_accumulator;
 	float upmove_accumulator;
 
+	/* Client pending-command data only. The explicit wire codecs never send
+	 * these fields. Keep the sampled VR delta separate so an authority change
+	 * can discard it without discarding native mouse/keyboard movement. */
+	vec3_t vr_pending_move, vr_pending_angles;
+	qboolean vr_pending_move_valid, vr_pending_angles_valid;
+
 	unsigned int buttons;
 	unsigned int impulse;
 

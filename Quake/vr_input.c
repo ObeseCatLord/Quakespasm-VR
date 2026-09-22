@@ -34,7 +34,9 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 
 #include "quakedef.h"
 #include "menu.h"
+#include "vr_aim.h"
 #include "vr_input.h"
+#include "vr_locomotion.h"
 
 #include <math.h>
 #include <string.h>
@@ -68,12 +70,27 @@ static cvar_t vr_joystick_axis_deadzone = {"vr_joystick_axis_deadzone", "0.25", 
 static cvar_t vr_joystick_axis_menu_deadzone_extra = {"vr_joystick_axis_menu_deadzone_extra", "0.25", CVAR_ARCHIVE};
 static cvar_t vr_joystick_axis_exponent = {"vr_joystick_axis_exponent", "1", CVAR_ARCHIVE};
 static cvar_t vr_joystick_deadzone_trunc = {"vr_joystick_deadzone_trunc", "1", CVAR_ARCHIVE};
+static cvar_t vr_movement_mode = {"vr_movement_mode", "0", CVAR_ARCHIVE};
+static cvar_t vr_movement_speed = {"vr_movement_speed", "1", CVAR_ARCHIVE};
+static cvar_t vr_snap_turn = {"vr_snap_turn", "0", CVAR_ARCHIVE};
+static cvar_t vr_180_snap_turn = {"vr_180_snap_turn", "1", CVAR_ARCHIVE};
+static cvar_t vr_turn_speed = {"vr_turn_speed", "2", CVAR_ARCHIVE};
+static cvar_t vr_joystick_yaw_multi = {"vr_joystick_yaw_multi", "1", CVAR_ARCHIVE};
+
+extern cvar_t vr_aimmode;
 
 static vr_input_hand_state_t vr_input_hands[2];
 static qboolean vr_input_emitted[MAX_KEYS];
 static qboolean vr_input_context_valid;
 static vr_input_context_t vr_input_context;
 static unsigned int vr_input_reset_generation;
+static qboolean vr_input_move_wait_neutral;
+static qboolean vr_input_turn_wait_neutral;
+static int vr_input_last_snap;
+static qboolean vr_input_turn180_queued;
+
+#define VR_INPUT_WIRE_MIN (-32768.0f)
+#define VR_INPUT_WIRE_MAX 32767.0f
 
 static vr_input_context_t VR_InputCurrentContext (void)
 {
@@ -182,6 +199,94 @@ static int VR_InputRoleForPhysicalHand (int physical_hand)
 	return lefthanded ? 1 - physical_hand : physical_hand;
 }
 
+static int VR_InputPhysicalHandForRole (int role)
+{
+	return VR_InputRoleForPhysicalHand (0) == role ? 0 : 1;
+}
+
+static int VR_InputMovementMode (void)
+{
+	const float value = VR_InputFiniteCvar (&vr_movement_mode, 0.f);
+	return value >= VR_MOVEMENT_MODE_FOLLOW_HEAD && value <= VR_MOVEMENT_MODE_RAW_INPUT ?
+		(int)value : VR_MOVEMENT_MODE_FOLLOW_HEAD;
+}
+
+static qboolean VR_InputControllerAim (void)
+{
+	return vr_aimmode.value == VR_AIMMODE_CONTROLLER;
+}
+
+static void VR_InputMotionSettingsChanged (cvar_t *var)
+{
+	(void)var;
+	VR_InputInvalidateMotion ();
+}
+
+static qboolean VR_InputHandAccepted (const vrxr_frame_t *frame, int hand)
+{
+	const vr_input_hand_state_t *state;
+	const vrxr_input_t *input;
+
+	if (!frame || hand < 0 || hand > 1)
+		return false;
+	state = &vr_input_hands[hand];
+	input = &frame->hands[hand];
+	return state->identity_valid && !state->wait_neutral && input->active &&
+		state->role == VR_InputRoleForPhysicalHand (hand) && state->profile == input->profile;
+}
+
+static void VR_InputClearPendingRecord (usercmd_t *pending)
+{
+	if (!pending)
+		return;
+	pending->vr_pending_move[0] = pending->vr_pending_move[1] = pending->vr_pending_move[2] = 0.0f;
+	pending->vr_pending_angles[0] = pending->vr_pending_angles[1] = pending->vr_pending_angles[2] = 0.0f;
+	pending->vr_pending_move_valid = false;
+	pending->vr_pending_angles_valid = false;
+}
+
+static void VR_InputGateMovement (usercmd_t *pending)
+{
+	vr_input_move_wait_neutral = true;
+	if (pending)
+	{
+		pending->vr_pending_move[0] = pending->vr_pending_move[1] = pending->vr_pending_move[2] = 0.0f;
+		pending->vr_pending_move_valid = false;
+	}
+}
+
+static void VR_InputGateTurn (void)
+{
+	vr_input_turn_wait_neutral = true;
+	vr_input_last_snap = 0;
+}
+
+static qboolean VR_InputMotionContextAccepted (const vrxr_frame_t *frame)
+{
+	if (!frame || !frame->focused || !frame->devices[0].valid ||
+		cls.state != ca_connected || cls.signon != SIGNONS || cls.demoplayback ||
+		cl.intermission || cl.paused || key_dest != key_game || Key_InputGrabActive () ||
+		!vr_input_context_valid || !VR_InputContextMatchesCurrent (&vr_input_context))
+		return false;
+	return true;
+}
+
+static qboolean VR_InputWireVec (const float value[3])
+{
+	return value && isfinite (value[0]) && isfinite (value[1]) && isfinite (value[2]) &&
+		value[0] >= VR_INPUT_WIRE_MIN && value[0] <= VR_INPUT_WIRE_MAX &&
+		value[1] >= VR_INPUT_WIRE_MIN && value[1] <= VR_INPUT_WIRE_MAX &&
+		value[2] >= VR_INPUT_WIRE_MIN && value[2] <= VR_INPUT_WIRE_MAX;
+}
+
+static void VR_InputTurn180_f (void)
+{
+	// Ignore commands issued while no gameplay accumulation will run; never
+	// retain a console/menu request to execute after a later connection.
+	vr_input_turn180_queued = VR_InputMotionContextAccepted (GL_OpenXRFrame ()) &&
+		!CL_AngleLocked () && VR_InputFiniteCvar (&vr_180_snap_turn, 1.f) != 0.f;
+}
+
 static qboolean VR_InputKeyOwnedByOtherHand (int hand, int key)
 {
 	return vr_input_hands[1 - hand].owned[key];
@@ -219,6 +324,20 @@ static void VR_InputGateHand (int hand)
 {
 	vr_input_hands[hand].wait_neutral = true;
 	vr_input_hands[hand].trigger_down = false;
+	if (VR_InputRoleForPhysicalHand (hand) == VR_ROLE_LEFT)
+	{
+		VR_InputGateMovement (&cl.pendingcmd);
+		cl.pendingcmd.vr_pending_angles_valid = false;
+	}
+	else
+	{
+		VR_InputGateTurn ();
+		if (VR_InputControllerAim () && VR_InputMovementMode () == VR_MOVEMENT_MODE_RAW_INPUT)
+		{
+			VR_InputGateMovement (&cl.pendingcmd);
+			cl.pendingcmd.vr_pending_angles_valid = false;
+		}
+	}
 }
 
 static qboolean VR_InputGateAndReleaseHand (int hand)
@@ -400,6 +519,16 @@ void VR_InputInit (void)
 	Cvar_RegisterVariable (&vr_joystick_axis_menu_deadzone_extra);
 	Cvar_RegisterVariable (&vr_joystick_axis_exponent);
 	Cvar_RegisterVariable (&vr_joystick_deadzone_trunc);
+	Cvar_RegisterVariable (&vr_movement_mode);
+	Cvar_RegisterVariable (&vr_movement_speed);
+	Cvar_RegisterVariable (&vr_snap_turn);
+	Cvar_RegisterVariable (&vr_180_snap_turn);
+	Cvar_RegisterVariable (&vr_turn_speed);
+	Cvar_RegisterVariable (&vr_joystick_yaw_multi);
+	Cvar_SetCallback (&vr_lefthanded, VR_InputMotionSettingsChanged);
+	Cvar_SetCallback (&vr_movement_mode, VR_InputMotionSettingsChanged);
+	Cvar_SetCallback (&vr_snap_turn, VR_InputMotionSettingsChanged);
+	Cmd_AddCommand ("vr_turn180", VR_InputTurn180_f);
 	VR_InputClear ();
 }
 
@@ -421,6 +550,7 @@ void VR_InputCommands (const vrxr_frame_t *frame)
 	}
 	else if (!VR_InputSameContext (&vr_input_context, &context))
 	{
+		VR_InputInvalidateMotion ();
 		vr_input_context = context;
 		if (!VR_InputGateAndReleaseAll ())
 			return;
@@ -434,6 +564,7 @@ void VR_InputCommands (const vrxr_frame_t *frame)
 
 	if (!frame || !frame->focused)
 	{
+		VR_InputInvalidateMotion ();
 		VR_InputGateAndReleaseAll ();
 		return;
 	}
@@ -453,6 +584,8 @@ void VR_InputCommands (const vrxr_frame_t *frame)
 		}
 		else if (state->role != role || state->profile != input->profile)
 		{
+			if (state->role != role)
+				VR_InputInvalidateMotion ();
 			state->role = role;
 			state->profile = input->profile;
 			if (!VR_InputGateAndReleaseHand (hand))
@@ -503,6 +636,193 @@ void VR_InputCommands (const vrxr_frame_t *frame)
 	VR_InputEmitDesired (desired, &context);
 }
 
+void VR_InputMove (usercmd_t *pending)
+{
+	const vrxr_frame_t *frame = GL_OpenXRFrame ();
+	const qboolean turn180 = vr_input_turn180_queued;
+	const int mode = VR_InputMovementMode ();
+	const int offhand = VR_InputPhysicalHandForRole (VR_ROLE_LEFT);
+	const int dominant = 1 - offhand;
+	vrxr_input_t offhand_input, dominant_input;
+	vec3_t selected_angles, command_angles, contribution;
+	qboolean offhand_accepted, dominant_accepted, selected_valid = false;
+	qboolean move_armed, turn_armed, mapping_valid, command_valid;
+	const qboolean controller_aim = VR_InputControllerAim ();
+	vec3_t mapped_head;
+
+	vr_input_turn180_queued = false;
+	VR_InputClearPendingRecord (pending);
+	if (!pending)
+		return;
+
+	if (!VR_InputMotionContextAccepted (frame) || CL_AngleLocked ())
+	{
+		VR_InputGateMovement (pending);
+		VR_InputGateTurn ();
+		return;
+	}
+
+	memcpy (&offhand_input, &frame->hands[offhand], sizeof (offhand_input));
+	memcpy (&dominant_input, &frame->hands[dominant], sizeof (dominant_input));
+	offhand_accepted = VR_InputHandAccepted (frame, offhand) && VR_InputAxesFinite (&offhand_input);
+	dominant_accepted = VR_InputHandAccepted (frame, dominant) && VR_InputAxesFinite (&dominant_input);
+
+	// Tracking must be usable before neutral can rearm a motion channel.
+	// Button navigation remains independent of grip/head pose loss.
+	mapping_valid = V_TrackedMovementAngles (VR_MOVEMENT_MODE_FOLLOW_HEAD, offhand, mapped_head);
+	selected_valid = mapping_valid && V_TrackedMovementAngles (mode, offhand, selected_angles);
+	command_valid = selected_valid;
+	if (controller_aim && mode == VR_MOVEMENT_MODE_RAW_INPUT)
+		command_valid = mapping_valid && V_TrackedMovementAngles (VR_MOVEMENT_MODE_FOLLOW_HAND, dominant, command_angles);
+	if (!offhand_accepted || !selected_valid || (controller_aim && !command_valid))
+		VR_InputGateMovement (pending);
+	if (!dominant_accepted || !mapping_valid)
+		VR_InputGateTurn ();
+
+	move_armed = offhand_accepted && selected_valid && (!controller_aim || command_valid) && !vr_input_move_wait_neutral;
+	if (offhand_accepted && selected_valid && (!controller_aim || command_valid) &&
+		vr_input_move_wait_neutral && VR_InputNeutral (&offhand_input))
+		vr_input_move_wait_neutral = false;
+
+	turn_armed = dominant_accepted && mapping_valid && !vr_input_turn_wait_neutral;
+	if (dominant_accepted && mapping_valid && vr_input_turn_wait_neutral && VR_InputNeutral (&dominant_input))
+		vr_input_turn_wait_neutral = false;
+
+	// A fresh native command may come from a keyboard binding; unlike stick
+	// turning it does not require a controller axis to be available.
+	if (turn180 && mapping_valid && VR_InputFiniteCvar (&vr_180_snap_turn, 1.0f) != 0.0f)
+		if (!V_TurnTrackedYaw (-180.0f))
+		{
+			VR_InputGateTurn ();
+			turn_armed = false;
+		}
+
+	if (turn_armed)
+	{
+		const float yaw_move = VR_InputFilteredAxis (&dominant_input, 0, 0.0f);
+		const float snap_turn = VR_InputFiniteCvar (&vr_snap_turn, 0.0f);
+
+		if (snap_turn != 0.0f)
+		{
+			const int snap = yaw_move > 0.0f ? 1 : yaw_move < 0.0f ? -1 : 0;
+			if (snap != vr_input_last_snap)
+			{
+				if (snap && !V_TurnTrackedYaw (-snap * snap_turn))
+				{
+					VR_InputGateTurn ();
+					turn_armed = false;
+				}
+				else
+					vr_input_last_snap = snap;
+			}
+		}
+		else if (yaw_move != 0.0f)
+		{
+			const double delta = -(double)yaw_move * host_frametime * 100.0 *
+				(double)VR_InputFiniteCvar (&vr_joystick_yaw_multi, 1.0f) *
+				(double)VR_InputFiniteCvar (&vr_turn_speed, 2.0f);
+			if (!isfinite (delta) || !V_TurnTrackedYaw ((float)delta))
+			{
+				VR_InputGateTurn ();
+				turn_armed = false;
+			}
+		}
+	}
+
+	/* Capture mapped movement/command orientation only after local turning so
+	 * this prepared command has one consistent post-turn basis. */
+	selected_valid = mapping_valid && V_TrackedMovementAngles (mode, offhand, selected_angles);
+	if (!selected_valid)
+	{
+		VR_InputGateMovement (pending);
+		move_armed = false;
+	}
+
+	if (move_armed && selected_valid)
+	{
+		const float forward_axis = VR_InputFilteredAxis (&offhand_input, 1, 0.0f);
+		const float side_axis = VR_InputFilteredAxis (&offhand_input, 0, 0.0f);
+		float forward_speed = VR_InputFiniteCvar (&cl_forwardspeed, 200.0f);
+		const float up_speed = VR_InputFiniteCvar (&cl_upspeed, 200.0f);
+		const float movement_speed = VR_InputFiniteCvar (&vr_movement_speed, 1.0f);
+
+		if (VR_InputFiniteCvar (&cl_desktop_vanilla_run, 1.0f) != 0.0f &&
+			VR_InputFiniteCvar (&cl_alwaysrun, 1.0f) == 0.0f && forward_speed == 200.0f)
+			forward_speed *= VR_InputFiniteCvar (&cl_movespeedkey, 2.0f);
+
+		if (VR_LocomotionMove (mode, selected_angles, selected_angles,
+			forward_axis, side_axis, forward_speed, up_speed, contribution))
+		{
+			for (int component = 0; component < 3; ++component)
+				contribution[component] *= movement_speed;
+			if ((in_speed.state & 1) ^ (VR_InputFiniteCvar (&cl_alwaysrun, 1.0f) != 0.0f))
+				for (int component = 0; component < 3; ++component)
+					contribution[component] *= VR_InputFiniteCvar (&cl_movespeedkey, 2.0f);
+			if (VR_InputWireVec (contribution))
+			{
+				VectorCopy (contribution, pending->vr_pending_move);
+				pending->vr_pending_move_valid = true;
+			}
+		}
+	}
+
+	if (controller_aim)
+	{
+		command_valid = false;
+		if (mode == VR_MOVEMENT_MODE_RAW_INPUT)
+		{
+			command_valid = mapping_valid && V_TrackedMovementAngles (VR_MOVEMENT_MODE_FOLLOW_HAND, dominant, command_angles);
+		}
+		else if (selected_valid)
+		{
+			VectorCopy (selected_angles, command_angles);
+			command_valid = true;
+		}
+
+		if (command_valid && isfinite (command_angles[PITCH]) && isfinite (command_angles[YAW]))
+		{
+			command_angles[PITCH] = fmodf (command_angles[PITCH], 360.f);
+			command_angles[YAW] = fmodf (command_angles[YAW], 360.f);
+			command_angles[ROLL] = 0.0f;
+			VectorCopy (command_angles, pending->vr_pending_angles);
+			pending->vr_pending_angles_valid = true;
+		}
+	}
+}
+
+void VR_InputApplyPending (usercmd_t *cmd)
+{
+	vec3_t merged;
+
+	if (!cmd || CL_AngleLocked () || !VR_InputMotionContextAccepted (GL_OpenXRFrame ()))
+		return;
+	if (cl.pendingcmd.vr_pending_angles_valid &&
+		isfinite (cl.pendingcmd.vr_pending_angles[PITCH]) &&
+		isfinite (cl.pendingcmd.vr_pending_angles[YAW]) &&
+		isfinite (cl.pendingcmd.vr_pending_angles[ROLL]))
+		VectorCopy (cl.pendingcmd.vr_pending_angles, cmd->viewangles);
+
+	if (!cl.pendingcmd.vr_pending_move_valid || !VR_InputWireVec (cl.pendingcmd.vr_pending_move))
+		return;
+	merged[0] = cmd->forwardmove + cl.pendingcmd.vr_pending_move[0];
+	merged[1] = cmd->sidemove + cl.pendingcmd.vr_pending_move[1];
+	merged[2] = cmd->upmove + cl.pendingcmd.vr_pending_move[2];
+	if (!VR_InputWireVec (merged))
+		return;
+	cmd->forwardmove = merged[0];
+	cmd->sidemove = merged[1];
+	cmd->upmove = merged[2];
+}
+
+void VR_InputInvalidateMotion (void)
+{
+	VR_InputClearPendingRecord (&cl.pendingcmd);
+	vr_input_move_wait_neutral = true;
+	vr_input_turn_wait_neutral = true;
+	vr_input_last_snap = 0;
+	vr_input_turn180_queued = false;
+}
+
 void VR_InputClear (void)
 {
 	++vr_input_reset_generation;
@@ -514,4 +834,5 @@ void VR_InputClear (void)
 		vr_input_hands[hand].wait_neutral = true;
 	}
 	vr_input_context_valid = false;
+	VR_InputInvalidateMotion ();
 }

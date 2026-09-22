@@ -10,6 +10,11 @@ double realtime;
 server_t sv;
 server_static_t svs;
 
+/* External XR device boundary is absent in this desktop timing fixture. */
+qboolean V_TrackedSessionActive (void) { return false; }
+void VR_InputMove (usercmd_t *cmd) { (void)cmd; }
+void VR_InputApplyPending (usercmd_t *cmd) { (void)cmd; }
+
 extern kbutton_t in_mlook, in_klook;
 extern kbutton_t in_left, in_right, in_forward, in_back;
 extern kbutton_t in_lookup, in_lookdown, in_moveleft, in_moveright;

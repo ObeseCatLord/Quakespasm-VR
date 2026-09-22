@@ -24,6 +24,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "quakedef.h"
 #include "bgmusic.h"
 #include "pmove.h"
+#include "vr_input.h"
 
 // we need to declare some mouse variables here, because the menu system
 // references them even when on a unix system.
@@ -1409,6 +1410,7 @@ void CL_AccumulateCmd (void)
 
 		// accumulate movement from other devices
 		IN_Move (&cl.pendingcmd);
+		VR_InputMove (&cl.pendingcmd);
 	}
 
 	cl.pendingcmd.seconds = cl.time - cl.pendingcmd.servertime;
@@ -1433,6 +1435,7 @@ void CL_SendCmd (void)
 	cmd.forwardmove += cl.pendingcmd.forwardmove + cl.pendingcmd.forwardmove_accumulator;
 	cmd.sidemove += cl.pendingcmd.sidemove + cl.pendingcmd.sidemove_accumulator;
 	cmd.upmove += cl.pendingcmd.upmove + cl.pendingcmd.upmove_accumulator;
+	VR_InputApplyPending (&cmd);
 	cmd.sequence = cl.movemessages;
 	cmd.servertime = cl.time;
 	cmd.seconds = cmd.servertime - cl.pendingcmd.servertime;
@@ -1443,7 +1446,14 @@ void CL_SendCmd (void)
 		CL_SendMove (&cmd); // send the unreliable message
 	else
 		CL_SendMove (NULL);
+	// Native consumption clears the sampled VR velocity along with other
+	// pending movement. Same-frame catch-up retains its prepared angle basis.
+	vec3_t pending_vr_angles;
+	VectorCopy (cl.pendingcmd.vr_pending_angles, pending_vr_angles);
+	qboolean pending_vr_angles_valid = cl.pendingcmd.vr_pending_angles_valid;
 	memset (&cl.pendingcmd, 0, sizeof (cl.pendingcmd));
+	VectorCopy (pending_vr_angles, cl.pendingcmd.vr_pending_angles);
+	cl.pendingcmd.vr_pending_angles_valid = pending_vr_angles_valid;
 	cl.pendingcmd.servertime = cmd.servertime;
 
 	if (cls.demoplayback)
@@ -1739,6 +1749,7 @@ void CL_Init (void)
 	Cmd_AddCommand ("_cl_color", CL_LegacyColor_f); // for loading vanilla configs (we have separate qw-style topcolor/bottomcolor userinfo cvars instead)
 	Cvar_RegisterVariable (&cl_upspeed);
 	Cvar_RegisterVariable (&cl_forwardspeed);
+	Cvar_RegisterVariable (&cl_desktop_vanilla_run);
 	Cvar_RegisterVariable (&cl_backspeed);
 	Cvar_RegisterVariable (&cl_sidespeed);
 	Cvar_RegisterVariable (&cl_movespeedkey);

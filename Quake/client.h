@@ -333,6 +333,7 @@ extern cvar_t cl_topcolor, cl_bottomcolor;
 
 extern cvar_t cl_upspeed;
 extern cvar_t cl_forwardspeed;
+extern cvar_t cl_desktop_vanilla_run;
 extern cvar_t cl_backspeed;
 extern cvar_t cl_sidespeed;
 

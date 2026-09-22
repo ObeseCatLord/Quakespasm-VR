@@ -95,7 +95,7 @@ full camera or QSS-M networking parity.
 ```sh
 cc -std=gnu11 -DUSE_SDL3 -D_GNU_SOURCE -Wno-unused-parameter \
   -ffunction-sections -fdata-sections tests/vr_stereo_camera_fixture.c \
-  Quake/mathlib.c Quake/cl_input.c -Wl,--gc-sections $(pkg-config --cflags --libs sdl3) -lm \
+  Quake/mathlib.c Quake/vr_locomotion.c Quake/cl_input.c -Wl,--gc-sections $(pkg-config --cflags --libs sdl3) -lm \
   -o /tmp/quakespasm-stereo-camera
 /tmp/quakespasm-stereo-camera
 ```
@@ -342,7 +342,10 @@ fire/impulse events, monotonic duration and fractional carry, capped long hitche
 16-bit sequence wrapping and a full three-command VR payload within the MTU.
 Transport ACKs must remain ordered and queued when the bundle leaves insufficient
 space. It also checks public framing despite the colliding extension mask,
-demo suppression and send-error disconnect handling.
+demo suppression and send-error disconnect handling. Public 8-bit/16-bit, public
+predinfo and private packet cases deliberately use prepared command angles that
+differ from global view angles; they verify encoding precision, journal agreement,
+packet widths and complete payload consumption.
 
 ```sh
 cc -std=gnu11 -DUSE_SDL3 -D_GNU_SOURCE -Wno-unused-parameter \
@@ -604,7 +607,9 @@ execution or a physical controller.
 cc -std=gnu11 -DUSE_SDL3 -Wall -Wextra -Werror \
   -Wno-missing-field-initializers -Wno-unused-parameter \
   -fsanitize=address,undefined -fno-omit-frame-pointer \
-  tests/vr_input_fixture.c $(pkg-config --cflags --libs sdl3) -lm \
+  -ffunction-sections -fdata-sections tests/vr_input_fixture.c \
+  Quake/vr_input.c Quake/vr_locomotion.c Quake/mathlib.c -Wl,--gc-sections \
+  $(pkg-config --cflags --libs sdl3) -lm \
   -o /tmp/qsvr-controller-input-asan
 /tmp/qsvr-controller-input-asan
 ```
@@ -676,3 +681,52 @@ SDL_VIDEODRIVER=x11 QSVR_MODAL_RESULT="$INPUT_TEST_ROOT/modal-result.json" \
 
 Require `QSVR_INPUT_MODAL_PASSED` and all JSON assertions. Stop only the isolated
 Monado service created for the probe. No headset runtime settings are changed.
+
+
+## OpenXR analog locomotion and turning
+
+`vr_locomotion_fixture.c` links the ported arithmetic with actual native math.
+It checks head/offhand projection, near-vertical pitch and roll, RAW vertical
+movement, singular/invalid inputs and controller gun-angle matrix composition.
+
+```sh
+cc -std=gnu11 -DUSE_SDL3 -D_GNU_SOURCE -Wno-unused-parameter \
+  -ffunction-sections -fdata-sections tests/vr_locomotion_fixture.c \
+  Quake/vr_locomotion.c Quake/mathlib.c -Wl,--gc-sections \
+  $(pkg-config --cflags --libs sdl3) -lm -o /tmp/qsvr-locomotion-math
+/tmp/qsvr-locomotion-math
+```
+
+The existing controller fixture also checks the production adapter's derived
+pending-command ownership, all three movement modes, nonconsuming assembly,
+pose/authority loss and neutral rearm, merged wire limits, snap hold/reversal,
+smooth timing and queued 180 turning. Its mapped-pose and turn functions are
+fixture boundaries; it does not qualify actual view/runtime or server behavior.
+The camera fixture separately exercises the actual view owner across all seven
+aim modes, an origin rebase between turn acceptance and view resolution,
+single-commit turning and absolute/relative authority precedence. Its motion
+invalidation hook is observed, not a substitute for native input integration.
+
+
+`vr_locomotion_smoke.gdb` runs an initialized stock-map client through actual
+OpenXR frame handling, native commands and server movement. The isolated runtime
+must expose a focused HMD. Synthetic controller poses/actions are supplied at the
+completed-frame boundary; no physical controllers are required for this probe.
+The probe reads the adjusted stereo camera before native restoration. It checks
+all movement modes/handedness, focus rearm, run scaling, snap/smooth/180 turning,
+repeated previews and actual no-send/catch-up schedules using native cvars.
+It does not inject live peer authority/rebase messages or qualify hardware.
+
+With the same private runtime/manifest/XDG environment as the modal probe:
+
+```sh
+QSVR_LOCOMOTION_RESULT="$INPUT_TEST_ROOT/locomotion-result.json" \
+  timeout --signal=TERM 180s gdb -nx --batch \
+  -x tests/vr_locomotion_smoke.gdb --args "$INPUT_TEST_BINARY" \
+  -openxr -nosound -window -width 640 -height 480 \
+  -basedir "$INPUT_TEST_ROOT" +map e1m1
+```
+
+Use only a disposable profile linked to the licensed Straight assets. This probe
+changes ordinary cvars/bindings in that isolated process and stops its client on
+exit. The caller owns starting/stopping the separate simulated runtime service.
