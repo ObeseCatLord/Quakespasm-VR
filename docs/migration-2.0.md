@@ -435,9 +435,9 @@ lists are updated but have not been verified. The [solver provenance note](migra
 records fallback differences and fixture limits; the [review disposition](migration-movement-review.md#client-solver-linkage--local-astramax)
 records why this dependency correction was needed.
 
-Client replay, matching owner snapshots/ACKs, private connection admission and
-the real server movement owner are still pending. Linking the solver does not
-enable prediction or complete the first dedicated-peer gameplay proof.
+At that linkage checkpoint, client replay, matching owner snapshots/ACKs,
+private admission and the real server movement owner were pending. Linkage alone
+did not enable prediction; the following checkpoints record subsequent work.
 
 ## Private owner/ACK association
 
@@ -451,8 +451,48 @@ state remains authoritative; the added fields are metadata, not another snapshot
 The Linux build, focused sanitizer checks and actual whole-message parser probe
 pass. [Local Astra/max review](migration-movement-review.md#private-ownerack-association--local-astramax)
 found the local ACK invalidation gap, which is fixed and covered by the sender
-fixture. Association is separate from permission to predict. Private connection
-admission, replay and the dedicated-peer gameplay proof are still pending.
+fixture. Association is separate from permission to predict; admission and
+replay were still pending at that association checkpoint.
+
+## First live pinned-peer desktop connection
+
+The current integration work adds explicit `connect <server> qsvr1` admission
+for unchanged `1327f795`, while ordinary `connect` retains public behavior and
+server discovery. The connection-owned selector survives changelevel but resets
+on disconnect, failed connection, local startup and public demo playback. The
+header must match the entire pinned RMQ/extension/coordinate tuple; public bits
+alone never select private framing. The live signon test exposed a further
+private `svc_time` difference, now isolated at the existing reader.
+
+Direct QSS-M command replay uses the existing journal, collision collector and
+shared solver. Private prediction additionally requires matching owner/ACK
+association, permission and movement authority. The QSS archived `cl_nopred`
+control is restored. Settings remain incremental and are selected once per pass;
+invalid settings suppress replay without blocking network recovery.
+
+Basic local desktop gameplay against the unchanged pinned dedicated peer now
+passes: signon, authoritative movement, firing (25 to 21 shells), position
+settling, and `e1m1` to `e1m2` changelevel/re-signon with renewed prediction
+permission. Separate lifecycle checks pass public rejection of the private
+header, error teardown, failed private connection cleanup, private reconnect,
+local-map startup and public demo playback. They use isolated profiles with
+canonical Straight archives and debugger-injected held keyboard state.
+
+The Linux build, ten full-capacity server-info checks, seven time/version
+checks and nine initialized header cases pass. Server-info capacity is committed
+in `de89a115`. The [replay senior review](migration-movement-review.md#replay-presentation--second-local-astramax)
+found partial-command categorization/smoothness and attachment/trail problems.
+The follow-up now uses non-consuming input previews, a disposable partial solver
+step and one shared viewentity pose per relink. Input immutability, actual PM
+underwater categorization and attachment ordering checks pass. The rebuilt
+client also passed a live higher-render/lower-send-rate check, with 21 observed
+position updates between unchanged command/authoritative states. Final local
+Astra review found a public send-frame timing issue: the preview now uses the
+pending duration cleared by sending, avoiding positive-time simulation of cleared
+device axes. Its focused production-owner host-order regression passes under ASan/UBSan,
+covering held/released joystick input, alternating sends and repeated previews. The server authority port, tracked command producers,
+physical VR behavior, delayed/lost delivery, stair/swim qualification and
+private-demo parity remain open. This is not completion of the coupled VR proof.
 
 ## Next integration gates
 

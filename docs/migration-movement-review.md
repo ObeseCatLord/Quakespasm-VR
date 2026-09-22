@@ -439,3 +439,71 @@ changelevel/re-signon, and reset isolation across failed/private/public/local
 connections and public demos. Malformed header and post-admission version
 checks complement that proof. Neither the review nor packet fixtures establish
 physical VR gameplay, private-demo parity, or live prediction correctness.
+
+### Replay presentation — second local Astra/max review
+
+The replay patch now uses the existing command journal, snapshot collision
+collector and shared solver. The first local peer run completed signon,
+authoritative movement/firing and settling, followed by successful `e1m1` to
+`e1m2` changelevel/re-signon. This is desktop loopback evidence with debugger-
+injected held key state; it is not a headset, physical tracking, network-loss
+or complete gameplay-parity result.
+
+A fresh local Astra review ran at effective `max`, verified independently by
+main from turn metadata. The reviewer did not perform that separate metadata
+check itself. Main verified its input/presentation findings in the actual
+QSS, donor and pinned sources.
+
+| Finding | Disposition |
+| --- | --- |
+| Sequenced-command-only replay steps between sends and skips water categorization when history is empty | Adopted for the next implementation slice: simulate a disposable partial command, including a zero-duration categorization pass, through the existing solver. |
+| Literal QSS input accumulation would lose keyboard movement because donor `IN_Move` clears movement axes | Adapted: reuse QSS non-consuming key/base/finish semantics, keep donor device sampling once per frame, and combine its existing axes/accumulators in a small preview helper. No new command queue or simulation owner. |
+| Attachments can use a different player origin, with entity-order dependence | Adopted for the next slice: compute one predicted viewentity pose per relink and share it with attachment resolution. Main additionally found that the donor calculates `porg` but uses `parent->origin` in the transform; the fix must use the selected pose. |
+| Prediction sets the donor teleport flag and resets trails every frame | Adopted: retain genuine interpolation/teleport results instead of manufacturing a teleport on successful prediction. |
+| Missing archived `cl_nopred` opt-out | Implemented with QSS default zero; focused tests confirm disable/re-enable without invoking prediction work. Added an explicit public PREDINFO guard as hardening. |
+| Private header and full-capacity serverinfo adapter | Retained. The live signon proof separately exposed private `svc_time` lacking the public PREDINFO sequence short; the reader now distinguishes that layout. Executable packet checks cover adjacent-service alignment and private/public version handling. |
+| Raw Gorilla may first appear after a non-raw history command | Requires transition coverage in the follow-up; no Gorilla/tracking producer parity claim until the missing input owners are integrated. |
+
+The input-preview and presentation corrections remain in progress at this
+checkpoint. Required follow-up includes non-consuming preview checks, actual
+solver empty-history/underwater behavior, attachment ordering, different
+render/send rates, delayed/lost delivery, stairs, swimming and reset isolation.
+
+The initialized header matrix subsequently passed all nine cases, and the live
+connection-lifecycle probe passed public rejection/error teardown, failed private
+connect cleanup, private reconnect, local map startup and public demo playback.
+The full-size server-info reader is committed in `de89a115`; its ten executable
+checks pass. Neither result closes the pending presentation/input corrections.
+
+The two WebGPT follow-up patches are integrated. Input-preview immutability,
+actual zero-duration underwater categorization and replay/attachment sanitizer
+checks pass, as does the consolidated Linux build. The live peer probe using
+`host_maxfps 144` and `host_phys_max_ticrate 20` observed 21 predicted position
+updates between unchanged command and authoritative states, alongside movement,
+firing and settling. These are behavioral observations, not measured FPS or
+latency improvements. The final Astra/max disposition below records the remaining timing correction.
+
+### Final replay review disposition
+
+A fresh local Astra/max source review confirmed the narrow input/solver/relink
+architecture and found one remaining public timing bug. Main verified the
+relevant host order and applied the prescribed correction. Effective review
+settings were independently checked; source review is separate from the runtime
+results above.
+
+| Finding | Disposition |
+| --- | --- |
+| Public preview recomputed positive elapsed time after sending had cleared device axes | Fixed: use `pendingcmd.seconds`, calculated during accumulation and cleared together with input by the native sender. Preserve finite/range checks. The production-owner host-order regression passes ASan/UBSan for held/released joystick input and alternating send/no-send frames. |
+| Attachment helper coverage is narrower than final visible model parity | Accepted limitation: translation and entity ordering are covered. Camera/player angle overrides and inherited exterior-model draw exclusion remain renderer/VR qualification work; no blanket interpolation bypass or renderer rewrite. |
+| Zero-duration solver execution also performs jump logic | Retain the shared solver semantics. The underwater fixture proves categorization with an empty preview, not held-jump/release/water-exit parity. Keep those gameplay cases open. |
+| Unused `viewpose_predicted` member and inherited dead attachment branch | Removed. Keep only the frame-local pose and validity/teleport data used by production. |
+| Private duration bounds, epochs, admission, opt-out and Gorilla provenance | Retained after source verification. No missing tracking producer is invented to expand this checkpoint's claims. |
+
+The final public host-order fixture passes using actual accumulation, preview,
+command construction, serialization and journal owners. A wrapper captures the
+constructed command and forwards to the real sender; demo suppression prevents
+socket delivery. The two read-time assignments are reproduced directly rather
+than linking the full reader/render path. This complements the private live-peer
+proof and does not claim live public-server or physical joystick qualification.
+All identified must-fix findings in this bounded review are addressed; the wider
+VR migration and the explicitly listed gameplay/render qualifications remain open.

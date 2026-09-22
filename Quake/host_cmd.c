@@ -1632,6 +1632,18 @@ User command to connect to server
 static void Host_Connect_f (void)
 {
 	char name[MAX_QPATH];
+	unsigned int legacy_qsvr = 0;
+	int host_arg = 1;
+
+	if (Cmd_Argc () == 3 && !strcmp (Cmd_Argv (2), "qsvr1"))
+	{
+		legacy_qsvr = QSVR_PROTOCOL_PINNED;
+	}
+	else if (Cmd_Argc () > 2)
+	{
+		Con_Printf ("connect [server [qsvr1]]\n");
+		return;
+	}
 
 	cls.demonum = -1; // stop demo loop in case this fails
 	if (cls.demoplayback)
@@ -1639,9 +1651,9 @@ static void Host_Connect_f (void)
 		CL_StopPlayback ();
 		CL_Disconnect ();
 	}
-	q_strlcpy (name, Cmd_Argv (1), sizeof (name));
+	q_strlcpy (name, Cmd_Argv (host_arg), sizeof (name));
 	SCR_BeginLoadingPlaque ();
-	CL_EstablishConnection (name);
+	CL_EstablishConnection (name, legacy_qsvr);
 	Host_Reconnect_f ();
 }
 
@@ -2333,7 +2345,7 @@ static void Host_Loadgame_f (void)
 
 	if (cls.state != ca_dedicated && !fastload)
 	{
-		CL_EstablishConnection ("local");
+		CL_EstablishConnection ("local", 0);
 		Host_Reconnect_f ();
 	}
 	else

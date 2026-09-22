@@ -36,6 +36,7 @@ cvar_t cl_bottomcolor = {"bottomcolor", "0", CVAR_ARCHIVE_GAME | CVAR_USERINFO};
 
 cvar_t cl_shownet = {"cl_shownet", "0", CVAR_NONE}; // can be 0, 1, or 2
 cvar_t cl_nolerp = {"cl_nolerp", "0", CVAR_NONE};
+cvar_t cl_nopred = {"cl_nopred", "0", CVAR_ARCHIVE};
 
 cvar_t cfg_unbindall = {"cfg_unbindall", "1", CVAR_ARCHIVE_GAME};
 
@@ -173,6 +174,9 @@ This is also called on Host_Error, so it shouldn't cause any errors
 */
 void CL_Disconnect (void)
 {
+	cls.legacy_qsvr = 0;
+	cl.protocol_qsvr = 0;
+	cl.move_snapshot_valid = false;
 	V_ResetTrackedAim ();
 	if (key_dest == key_message)
 		Key_EndChat (); // don't get stuck in chat mode
@@ -227,7 +231,7 @@ CL_EstablishConnection
 Host should be either "local" or a net address to be passed on
 =====================
 */
-void CL_EstablishConnection (const char *host)
+void CL_EstablishConnection (const char *host, unsigned int legacy_qsvr)
 {
 	if (cls.state == ca_dedicated)
 		return;
@@ -236,6 +240,9 @@ void CL_EstablishConnection (const char *host)
 		return;
 
 	CL_Disconnect ();
+	if (legacy_qsvr && legacy_qsvr != QSVR_PROTOCOL_PINNED)
+		Host_Error ("Unsupported legacy Quakespasm VR layout %u", legacy_qsvr);
+	cls.legacy_qsvr = legacy_qsvr;
 
 	cls.netcon = NET_Connect (host);
 	if (!cls.netcon)
@@ -491,6 +498,321 @@ float CL_LerpPoint (void)
 	return frac;
 }
 
+/*
+===============
+CL_ReplayPlayerMovement
+
+QSS-M 03a498aa client replay, adapted at the existing vkQuake owners.
+Complete commands come from the inherited command journal; collision, movevar
+selection and simulation stay with PMCL_AddEntities/PMCL_SetMoveVars/PM_PlayerMove.
+After the journal, a disposable input preview supplies QSS-M's partial command
+without consuming device state or advancing command clocks.
+===============
+*/
+static void CL_ResetReplayPropagation (void)
+{
+	memset (cl.move_replay_propagate_sequence, 0, sizeof(cl.move_replay_propagate_sequence));
+	memset (cl.move_replay_propagate_waterjumptime, 0, sizeof(cl.move_replay_propagate_waterjumptime));
+}
+
+static void CL_ObservePrivateReplayMetadata (void)
+{
+	if (!cl.move_replay_private_metadata_valid ||
+		cl.move_replay_private_prediction_allowed != cl.move_ack_prediction_allowed ||
+		cl.move_replay_private_authority != cl.move_ack_authority ||
+		cl.move_replay_private_mode_epoch != cl.move_ack_mode_epoch ||
+		cl.move_replay_private_discontinuity_epoch != cl.move_ack_discontinuity_epoch)
+	{
+		CL_ResetReplayPropagation ();
+		cl.move_replay_private_metadata_valid = true;
+		cl.move_replay_private_prediction_allowed = cl.move_ack_prediction_allowed;
+		cl.move_replay_private_authority = cl.move_ack_authority;
+		cl.move_replay_private_mode_epoch = cl.move_ack_mode_epoch;
+		cl.move_replay_private_discontinuity_epoch = cl.move_ack_discontinuity_epoch;
+	}
+}
+
+static int CL_ReplayPMoveType (int movetype)
+{
+	switch (movetype & 63)
+	{
+	case MOVETYPE_WALK:
+		return PM_NORMAL;
+	case MOVETYPE_TOSS:
+	case MOVETYPE_BOUNCE:
+	case MOVETYPE_GIB:
+		/* QSS-M's bare MOVETYPE_TOSS break can retain a stale pm_type.
+		 * The pinned VR server treats these gravity/dead-body modes as dead. */
+		return PM_DEAD;
+	case MOVETYPE_FLY:
+		return PM_FLY;
+	case MOVETYPE_NOCLIP:
+		return PM_SPECTATOR;
+	default:
+		return PM_NONE;
+	}
+}
+
+static qboolean CL_ReplayHistoryAvailable (int *startseq)
+{
+	int seq;
+	int first = cl.ackedmovemessages + 1;
+	int oldest = cl.movemessages - countof(cl.movecmds);
+
+	if (first < 2)
+		first = 2;
+	if (oldest < 2)
+		oldest = 2;
+	/* Match QSS-M's "lost is lost" policy: if the ACK fell out of the
+	 * journal, resume at the oldest retained command instead of reading an
+	 * overwritten slot.  The retained range still has to match by sequence. */
+	if (first < oldest)
+		first = oldest;
+	if (first > cl.movemessages)
+		return false;
+
+	for (seq = first; seq < cl.movemessages; seq++)
+		if (cl.movecmds[seq & MOVECMDS_MASK].sequence != (unsigned int)seq)
+			return false;
+
+	*startseq = first;
+	return true;
+}
+
+static qboolean CL_ReplayCanTrustGorilla (void)
+{
+	return cl.protocol_qsvr == QSVR_PROTOCOL_PINNED &&
+		cl.vr_gorilla_motion_generation_valid && cl.vr_gorilla_trusted_cap_sent &&
+		cl.vr_gorilla_allowed && cl.move_ack_prediction_allowed &&
+		cl.move_ack_authority == MOVE_AUTHORITY_PMOVE_ENGINE_COMPAT;
+}
+
+static qboolean CL_SetupReplayGorilla (int startseq)
+{
+	const usercmd_t *cmd;
+	qboolean raw_replay = false;
+	int seq;
+	int hand;
+
+	if (CL_ReplayCanTrustGorilla ())
+	{
+		pmove.gorilla_allowed = true;
+		return true;
+	}
+	if (!cl.vr_gorilla_supported || !cl.vr_gorilla_allowed || !cl.vr_gorilla_state_valid)
+		return true;
+	if (!cl.vr_gorilla_state.initialized)
+		return true;
+	/* The pinned client additionally gates raw-state restoration on
+	 * VR_GorillaActive().  That tracked producer/activity owner is not present
+	 * in this slice.  A journaled raw Gorilla command is sufficient provenance
+	 * for replay; protocol permission alone is deliberately not. */
+	for (seq = startseq; seq < cl.movemessages; seq++)
+	{
+		cmd = &cl.movecmds[seq & MOVECMDS_MASK];
+		if (cmd->vr_active && cmd->vr_handpos_relative && cmd->vr_gorilla.flags)
+		{
+			raw_replay = true;
+			break;
+		}
+	}
+	if (!raw_replay)
+		return true;
+	if (cl.vr_gorilla_state.initialized &&
+		cl.vr_gorilla_state_sequence != cl.ackedmovemessages)
+		return false;
+	if (cl.vr_gorilla_state_sequence != cl.ackedmovemessages)
+		return true;
+
+	pmove.gorilla = cl.vr_gorilla_state;
+	pmove.gorilla_allowed = cl.vr_gorilla_state.initialized != 0;
+	for (hand = 0; hand < 2; hand++)
+	{
+		int surface = pmove.gorilla.surface[hand];
+		if (surface > 0 && (surface >= cl.num_entities ||
+			cl.entities[surface].forcelink ||
+			cl.entities[surface].netstate.solidsize != ES_SOLID_BSP ||
+			cl.entities[surface].netstate.modelindex != pmove.gorilla.surface_model[hand]))
+		{
+			memset (&pmove.gorilla, 0, sizeof(pmove.gorilla));
+			break;
+		}
+	}
+	return true;
+}
+
+static void CL_PrepareReplayCommand (usercmd_t *dst, const usercmd_t *src, qboolean private_replay)
+{
+	*dst = *src;
+	if (!private_replay)
+	{
+		/* Public PREDINFO does not serialize these private movement fields. */
+		dst->msec = 0;
+		dst->vr_active = false;
+		VectorClear (dst->vr_roomscalemove);
+		memset (&dst->vr_gorilla, 0, sizeof(dst->vr_gorilla));
+		memset (&dst->vr_gorilla_motion, 0, sizeof(dst->vr_gorilla_motion));
+		return;
+	}
+
+	if (dst->vr_gorilla_motion.flags &&
+		(!CL_ReplayCanTrustGorilla () ||
+		 dst->vr_gorilla_motion.generation != cl.vr_gorilla_motion_generation))
+	{
+		/* Authored motion is generation-bound; stale authored motion must not
+		 * silently become a raw-palm fallback. */
+		memset (&dst->vr_gorilla_motion, 0, sizeof(dst->vr_gorilla_motion));
+		memset (&dst->vr_gorilla, 0, sizeof(dst->vr_gorilla));
+	}
+}
+
+static void CL_PrepareReplayPreview (usercmd_t *cmd, qboolean private_replay)
+{
+	double elapsed;
+
+	CL_PreviewMove (cmd);
+	cmd->seconds = 0;
+	cmd->msec = 0;
+
+	if (private_replay)
+	{
+		if (!cl.move_msec_sample_valid)
+			return;
+		elapsed = realtime - cl.move_msec_sample_time;
+		if (!isfinite (elapsed) || elapsed < 0)
+			elapsed = 0;
+		if (elapsed > 0.125)
+			elapsed = 0.125;
+		cmd->seconds = (float)elapsed;
+		if (elapsed > 0)
+			cmd->msec = (unsigned char)CLAMP (1, (int)(elapsed * 1000.0 + 0.5), 125);
+		return;
+	}
+
+	// Sending clears this duration together with device input. Recomputing it
+	// after server-time advancement would replay cleared axes for positive time.
+	elapsed = cl.pendingcmd.seconds;
+	if (!isfinite (elapsed) || elapsed < 0)
+		elapsed = 0;
+	if (elapsed > 0.5)
+		elapsed = 0.5;
+	cmd->seconds = (float)elapsed;
+}
+
+qboolean CL_ReplayPlayerMovement (entity_t *ent, vec3_t origin)
+{
+	qboolean private_replay;
+	usercmd_t preview;
+	vec3_t bounds[2];
+	vec3_t baseline_origin;
+	unsigned int solidsize;
+	int i, seq, startseq;
+	int pm_type;
+
+	if (cl_nopred.value || cls.state != ca_connected || cls.signon != SIGNONS || cls.demoplayback ||
+		cl.paused || !cl.worldmodel || !cl.entities ||
+		cl.viewentity <= 0 || cl.viewentity >= cl.num_entities ||
+		ent != &cl.entities[cl.viewentity] || cl.stats[STAT_HEALTH] <= 0 ||
+		cl.ackedmovemessages <= 0 || !ent->netstate.pmovetype)
+		return false;
+
+	private_replay = cl.protocol_qsvr == QSVR_PROTOCOL_PINNED;
+	if (cl.protocol_qsvr && !private_replay)
+		return false;
+	if (!private_replay && !(cl.protocol_pext2 & PEXT2_PREDINFO))
+		return false;
+	if (private_replay)
+	{
+		/* The owner snapshot establishes ACK/state coherence only.  Permission,
+		 * authority and epochs remain independent accepted metadata. */
+		if (!cl.move_snapshot_valid ||
+			cl.move_snapshot_ack != cl.ackedmovemessages ||
+			cl.move_snapshot_owner != cl.viewentity)
+			return false;
+		CL_ObservePrivateReplayMetadata ();
+		if (!cl.move_ack_prediction_allowed ||
+			(cl.move_ack_authority != MOVE_AUTHORITY_PMOVE_ENGINE_COMPAT &&
+			 cl.move_ack_authority != MOVE_AUTHORITY_PMOVE_QC_COMMAND))
+			return false;
+	}
+	else if (cl.move_replay_private_metadata_valid)
+	{
+		CL_ResetReplayPropagation ();
+		cl.move_replay_private_metadata_valid = false;
+	}
+
+	pm_type = CL_ReplayPMoveType (ent->netstate.pmovetype);
+	if (pm_type == PM_NONE || !CL_ReplayHistoryAvailable (&startseq))
+		return false;
+
+	/* Select the current incremental stat/serverinfo accumulator exactly once
+	 * for this pass.  A rejected numeric/dialect selection suppresses replay
+	 * only; networking owners continue independently. */
+	if (!PMCL_SetMoveVars ())
+		return false;
+
+	memset (&pmove, 0, sizeof(pmove));
+	if (private_replay)
+		VectorCopy (ent->netstate.origin, baseline_origin);
+	else
+		VectorCopy (ent->msg_origins[0], baseline_origin);
+	for (i = 0; i < 3; i++)
+		if (!isfinite (baseline_origin[i]))
+			return false;
+	VectorCopy (baseline_origin, pmove.origin);
+
+	solidsize = ent->netstate.solidsize;
+	if (solidsize && solidsize != ES_SOLID_BSP)
+	{
+		pmove.player_maxs[0] = pmove.player_maxs[1] = solidsize & 255;
+		pmove.player_mins[0] = pmove.player_mins[1] = -pmove.player_maxs[0];
+		pmove.player_mins[2] = -(int)((solidsize >> 8) & 255);
+		pmove.player_maxs[2] = (int)((solidsize >> 16) & 65535) - 32768;
+	}
+	for (i = 0; i < 3; i++)
+	{
+		pmove.velocity[i] = ent->netstate.velocity[i] * (1.0f / 8.0f);
+		bounds[0][i] = pmove.origin[i] + pmove.player_mins[i] - 256;
+		bounds[1][i] = pmove.origin[i] + pmove.player_maxs[i] + 256;
+	}
+	VectorClear (pmove.gravitydir);
+	pmove.pm_type = pm_type;
+	pmove.safeorigin_known = false;
+	pmove.waterjumptime = 0;
+	pmove.jump_held = (ent->netstate.pmovetype & 0x40) != 0;
+	pmove.onladder = false;
+	pmove.jump_secs = 0;
+	pmove.onground = (ent->netstate.pmovetype & 0x80) != 0;
+	pmove.skipent = -cl.viewentity;
+	if (private_replay && !CL_SetupReplayGorilla (startseq))
+		return false;
+	PMCL_AddEntities (bounds);
+
+	if (cl.move_replay_propagate_sequence[startseq & MOVECMDS_MASK] == startseq)
+		pmove.waterjumptime =
+			cl.move_replay_propagate_waterjumptime[startseq & MOVECMDS_MASK];
+
+	for (seq = startseq; seq < cl.movemessages; seq++)
+	{
+		const usercmd_t *histcmd = &cl.movecmds[seq & MOVECMDS_MASK];
+		CL_PrepareReplayCommand (&pmove.cmd, histcmd, private_replay);
+		PM_PlayerMove (1);
+		cl.move_replay_propagate_sequence[(seq + 1) & MOVECMDS_MASK] = seq + 1;
+		cl.move_replay_propagate_waterjumptime[(seq + 1) & MOVECMDS_MASK] =
+			pmove.waterjumptime;
+	}
+
+	CL_PrepareReplayPreview (&preview, private_replay);
+	CL_PrepareReplayCommand (&pmove.cmd, &preview, private_replay);
+	PM_PlayerMove (1);
+
+	VectorCopy (pmove.origin, origin);
+	VectorCopy (pmove.velocity, cl.velocity);
+	cl.onground = pmove.onground;
+	cl.inwater = pmove.waterlevel >= 2;
+	return true;
+}
+
 static qboolean CL_LerpEntity (entity_t *ent, vec3_t org, vec3_t ang, float frac)
 {
 	float	 f, d, a;
@@ -546,7 +868,33 @@ static qboolean CL_LerpEntity (entity_t *ent, vec3_t org, vec3_t ang, float frac
 	return teleported;
 }
 
-static qboolean CL_AttachEntity (entity_t *ent, float frac)
+typedef struct
+{
+	qboolean viewpose_valid;
+	qboolean viewpose_teleported;
+	vec3_t vieworigin;
+	vec3_t viewangles;
+} cl_relink_frame_t;
+
+static void CL_PrepareRelinkViewPose (cl_relink_frame_t *frame, float frac)
+{
+	entity_t *viewent;
+
+	memset (frame, 0, sizeof(*frame));
+	if (!cl.entities || cl.viewentity <= 0 || cl.viewentity >= cl.num_entities)
+		return;
+	viewent = &cl.entities[cl.viewentity];
+	if (!viewent->model || viewent->msgtime != cl.mtime[0])
+		return;
+
+	frame->viewpose_teleported =
+		CL_LerpEntity (viewent, frame->vieworigin, frame->viewangles, frac);
+	frame->viewpose_valid = true;
+	CL_ReplayPlayerMovement (viewent, frame->vieworigin);
+}
+
+static qboolean CL_AttachEntity (entity_t *ent, float frac,
+	const cl_relink_frame_t *frame)
 {
 	entity_t	*parent;
 	vec3_t		 porg, pang;
@@ -568,11 +916,11 @@ static qboolean CL_AttachEntity (entity_t *ent, float frac)
 
 		if (!parent->model)
 			return false;
-		if (0) // tagent < ent-cl_entities)
+		if (frame && tagent == (unsigned int)cl.viewentity && frame->viewpose_valid)
 		{
 			tagent = parent->netstate.tagentity;
-			VectorCopy (parent->origin, porg);
-			VectorCopy (parent->angles, pang);
+			VectorCopy (frame->vieworigin, porg);
+			VectorCopy (frame->viewangles, pang);
 		}
 		else
 		{
@@ -598,7 +946,7 @@ static qboolean CL_AttachEntity (entity_t *ent, float frac)
 		AngleVectors (ent->angles, fwd, tmp, up);
 
 		// transform the origin
-		VectorMA (parent->origin, ent->origin[0], paxis[0], tmp);
+		VectorMA (porg, ent->origin[0], paxis[0], tmp);
 		VectorMA (tmp, -ent->origin[1], paxis[1], tmp);
 		VectorMA (tmp, ent->origin[2], paxis[2], ent->origin);
 
@@ -664,6 +1012,7 @@ void CL_RelinkEntities (void)
 	float	  frametime;
 	int		  modelflags;
 	qboolean  teleported;
+	cl_relink_frame_t frame;
 
 	// determine partial update time
 	frac = CL_LerpPoint ();
@@ -705,6 +1054,7 @@ void CL_RelinkEntities (void)
 	}
 
 	bobjrotate = anglemod (100 * cl.time);
+	CL_PrepareRelinkViewPose (&frame, frac);
 
 	// start on the entity after the world
 	ent = (cl.entities != NULL) ? (cl.entities + 1) : NULL;
@@ -732,7 +1082,14 @@ void CL_RelinkEntities (void)
 
 		VectorCopy (ent->origin, oldorg);
 
-		teleported = CL_LerpEntity (ent, ent->origin, ent->angles, frac);
+		if (i == cl.viewentity && frame.viewpose_valid)
+		{
+			VectorCopy (frame.vieworigin, ent->origin);
+			VectorCopy (frame.viewangles, ent->angles);
+			teleported = frame.viewpose_teleported;
+		}
+		else
+			teleported = CL_LerpEntity (ent, ent->origin, ent->angles, frac);
 
 		if (cl.time < cl.oldtime)
 		{
@@ -746,7 +1103,7 @@ void CL_RelinkEntities (void)
 		}
 
 		if (ent->netstate.tagentity)
-			if (!CL_AttachEntity (ent, frac))
+			if (!CL_AttachEntity (ent, frac, &frame))
 			{
 				// can't draw it if we don't know where its parent is.
 				continue;
@@ -1054,7 +1411,7 @@ void CL_AccumulateCmd (void)
 		IN_Move (&cl.pendingcmd);
 	}
 
-	cl.pendingcmd.seconds = cl.mtime[0] - cl.pendingcmd.servertime;
+	cl.pendingcmd.seconds = cl.time - cl.pendingcmd.servertime;
 }
 
 /*
@@ -1390,6 +1747,7 @@ void CL_Init (void)
 	Cvar_RegisterVariable (&cl_anglespeedkey);
 	Cvar_RegisterVariable (&cl_shownet);
 	Cvar_RegisterVariable (&cl_nolerp);
+	Cvar_RegisterVariable (&cl_nopred);
 	Cvar_RegisterVariable (&lookspring);
 	Cvar_RegisterVariable (&lookstrafe);
 	Cvar_RegisterVariable (&sensitivity);

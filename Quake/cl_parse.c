@@ -1130,6 +1130,8 @@ CL_ParseServerInfo
 static void CL_ParseServerInfo (void)
 {
 	const char *str;
+	const unsigned int accepted_pext2 = cls.legacy_qsvr == QSVR_PROTOCOL_PINNED ?
+		QSVR_PEXT2_REQUIRED : PEXT2_ACCEPTED_CLIENT;
 	int			i;
 	qboolean	gamedirswitchwarning = false;
 	int			nummodels, numsounds;
@@ -1173,8 +1175,8 @@ static void CL_ParseServerInfo (void)
 		if (i == PROTOCOL_FTE_PEXT2)
 		{
 			cl.protocol_pext2 = MSG_ReadLong ();
-			if (cl.protocol_pext2 & ~PEXT2_ACCEPTED_CLIENT)
-				Host_Error ("Server returned FTE2 protocol extensions that are not supported (%#x)", cl.protocol_pext2 & ~PEXT2_SUPPORTED_CLIENT);
+			if (cl.protocol_pext2 & ~accepted_pext2)
+				Host_Error ("Server returned FTE2 protocol extensions that are not supported (%#x)", cl.protocol_pext2 & ~accepted_pext2);
 			continue;
 		}
 		break;
@@ -1203,6 +1205,18 @@ static void CL_ParseServerInfo (void)
 	}
 	else
 		cl.protocolflags = 0;
+
+	// Only an explicit connection opt-in admits the unmarked pinned layout.
+	// The colliding public extension bits alone can never select it.
+	if (cls.legacy_qsvr)
+	{
+		if (msg_badread || cls.legacy_qsvr != QSVR_PROTOCOL_PINNED ||
+			cl.protocol != PROTOCOL_RMQ || cl.protocol_pext1 != 0 ||
+			cl.protocol_pext2 != QSVR_PEXT2_REQUIRED ||
+			cl.protocolflags != (PRFL_FLOATCOORD | PRFL_SHORTANGLE))
+			Host_Error ("Server does not match the selected legacy Quakespasm VR layout");
+		cl.protocol_qsvr = cls.legacy_qsvr;
+	}
 
 	*gamedir = 0;
 	if (cl.protocol_pext2 & PEXT2_PREDINFO)
@@ -2211,7 +2225,9 @@ void CL_ParseServerMessage (void)
 		case svc_time:
 			cl.mtime[1] = cl.mtime[0];
 			cl.mtime[0] = MSG_ReadFloat ();
-			if (cl.protocol_pext2 & PEXT2_PREDINFO)
+			// The pinned private dialect carries move ACKs separately. Its
+			// signon svc_time is only a float, despite sharing the PREDINFO bit.
+			if (!cl.protocol_qsvr && (cl.protocol_pext2 & PEXT2_PREDINFO))
 				MSG_ReadShort (); // input sequence ack.
 			break;
 
@@ -2221,6 +2237,8 @@ void CL_ParseServerMessage (void)
 
 		case svc_version:
 			i = MSG_ReadLong ();
+			if (cl.protocol_qsvr && (msg_badread || i != PROTOCOL_RMQ))
+				Host_Error ("Legacy Quakespasm VR requires RMQ throughout the connection");
 			// johnfitz -- support multiple protocols
 			if (i != PROTOCOL_NETQUAKE && i != PROTOCOL_FITZQUAKE && i != PROTOCOL_RMQ)
 				Host_Error ("Server returned version %i, not %i or %i or %i", i, PROTOCOL_NETQUAKE, PROTOCOL_FITZQUAKE, PROTOCOL_RMQ);

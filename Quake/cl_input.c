@@ -274,7 +274,7 @@ Returns 0.25 if a key was pressed and released during the frame,
 1.0 if held for the entire time
 ===============
 */
-float CL_KeyState (kbutton_t *key)
+static float CL_KeyStateInternal (kbutton_t *key, qboolean isfinal)
 {
 	float	 val;
 	qboolean impulsedown, impulseup, down;
@@ -313,9 +313,15 @@ float CL_KeyState (kbutton_t *key)
 			val = 0.25; // pressed and released this frame
 	}
 
-	key->state &= 1; // clear impulses
+	if (isfinal)
+		key->state &= 1; // clear impulses
 
 	return val;
+}
+
+float CL_KeyState (kbutton_t *key)
+{
+	return CL_KeyStateInternal (key, true);
 }
 
 //==========================================================================
@@ -408,7 +414,7 @@ CL_BaseMove
 Send the intended movement message to the server
 ================
 */
-void CL_BaseMove (usercmd_t *cmd)
+static void CL_BaseMoveInternal (usercmd_t *cmd, qboolean isfinal)
 {
 	memset (cmd, 0, sizeof (*cmd));
 
@@ -419,20 +425,20 @@ void CL_BaseMove (usercmd_t *cmd)
 
 	if (in_strafe.state & 1)
 	{
-		cmd->sidemove += cl_sidespeed.value * CL_KeyState (&in_right);
-		cmd->sidemove -= cl_sidespeed.value * CL_KeyState (&in_left);
+		cmd->sidemove += cl_sidespeed.value * CL_KeyStateInternal (&in_right, isfinal);
+		cmd->sidemove -= cl_sidespeed.value * CL_KeyStateInternal (&in_left, isfinal);
 	}
 
-	cmd->sidemove += cl_sidespeed.value * CL_KeyState (&in_moveright);
-	cmd->sidemove -= cl_sidespeed.value * CL_KeyState (&in_moveleft);
+	cmd->sidemove += cl_sidespeed.value * CL_KeyStateInternal (&in_moveright, isfinal);
+	cmd->sidemove -= cl_sidespeed.value * CL_KeyStateInternal (&in_moveleft, isfinal);
 
-	cmd->upmove += cl_upspeed.value * CL_KeyState (&in_up);
-	cmd->upmove -= cl_upspeed.value * CL_KeyState (&in_down);
+	cmd->upmove += cl_upspeed.value * CL_KeyStateInternal (&in_up, isfinal);
+	cmd->upmove -= cl_upspeed.value * CL_KeyStateInternal (&in_down, isfinal);
 
 	if (!(in_klook.state & 1))
 	{
-		cmd->forwardmove += cl_forwardspeed.value * CL_KeyState (&in_forward);
-		cmd->forwardmove -= cl_backspeed.value * CL_KeyState (&in_back);
+		cmd->forwardmove += cl_forwardspeed.value * CL_KeyStateInternal (&in_forward, isfinal);
+		cmd->forwardmove -= cl_backspeed.value * CL_KeyStateInternal (&in_back, isfinal);
 	}
 
 	//
@@ -446,7 +452,12 @@ void CL_BaseMove (usercmd_t *cmd)
 	}
 }
 
-void CL_FinishMove (usercmd_t *cmd)
+void CL_BaseMove (usercmd_t *cmd)
+{
+	CL_BaseMoveInternal (cmd, true);
+}
+
+static void CL_FinishMoveInternal (usercmd_t *cmd, qboolean isfinal)
 {
 	unsigned int bits;
 	//
@@ -456,20 +467,40 @@ void CL_FinishMove (usercmd_t *cmd)
 
 	if (in_attack.state & 3)
 		bits |= 1;
-	in_attack.state &= ~2;
+	if (isfinal)
+		in_attack.state &= ~2;
 
 	if (in_jump.state & 3)
 		bits |= 2;
-	in_jump.state &= ~2;
+	if (isfinal)
+		in_jump.state &= ~2;
 
 	if (in_use.state & 3)
 		bits |= 4;
-	in_use.state &= ~2;
+	if (isfinal)
+		in_use.state &= ~2;
 
 	cmd->buttons = bits;
 	cmd->impulse = in_impulse;
 
-	in_impulse = 0;
+	if (isfinal)
+		in_impulse = 0;
+}
+
+void CL_FinishMove (usercmd_t *cmd)
+{
+	CL_FinishMoveInternal (cmd, true);
+}
+
+void CL_PreviewMove (usercmd_t *cmd)
+{
+	CL_BaseMoveInternal (cmd, false);
+
+	cmd->forwardmove += cl.pendingcmd.forwardmove + cl.pendingcmd.forwardmove_accumulator;
+	cmd->sidemove += cl.pendingcmd.sidemove + cl.pendingcmd.sidemove_accumulator;
+	cmd->upmove += cl.pendingcmd.upmove + cl.pendingcmd.upmove_accumulator;
+
+	CL_FinishMoveInternal (cmd, false);
 }
 
 /* Pinned source codec from 1327f795; the admitted caller supplies a prepared command. */

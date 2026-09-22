@@ -484,3 +484,108 @@ The check seeds client/entity state and bypasses startup and sockets. It proves
 whole-message dispatch behavior, not connection admission, prediction/replay,
 gameplay, or error teardown. A matched owner baseline does not itself grant
 prediction permission; that remains the consumer's policy decision.
+
+## Pinned-peer admission and desktop gameplay
+
+`private_time_version_smoke.gdb` checks actual complete-message parsing without
+assets. Private `svc_time` has no sequence short; public PREDINFO retains it.
+Adjacent stat updates prove alignment. Private non-RMQ `svc_version` is rejected
+before changing the base protocol, while ordinary public versions remain valid.
+
+```sh
+for case_name in public_predinfo_time public_plain_time private_time \
+  private_nonrmq_version private_rmq_version public_netquake_version public_fitz_version; do
+  QSVR_TIME_VERSION_CASE="$case_name" gdb -nx --batch \
+    -x tests/private_time_version_smoke.gdb /tmp/quakespasm-2.0-bootstrap-build/vkquake || exit 1
+done
+```
+
+`private_header_admission_smoke.gdb` requires normal engine initialization and
+an isolated asset profile. Its cases are `valid`, `missing_bit`, `extra_bit`,
+`nonzero_pext1`, `wrong_flags`, `more_flags`, `truncated`, `no_extensions`, and
+`public_private_header`, selected with `QSVR_HEADER_CASE`. The valid tuple ends
+with an intentionally invalid maxclients sentinel: it checks admission without
+loading a world. All malformed tuples must fail before private admission.
+Pass the profile through ordinary `--args vkquake -basedir <profile> -novr ...`.
+
+The live probes use a separately running unchanged `1327f795` dedicated peer,
+the canonical Straight `id1/pak0.pak` linked into temporary profiles for reading,
+and the migrated diagnostic Linux binary. Do not run them in the deployed game
+folder: lifecycle testing records a demo and local startup writes configuration.
+The pinned peer accepts `-dedicated 4 -ip 127.0.0.1 -port 28771 +coop 1 +map e1m1`;
+use a real terminal with `TERM=xterm` when issuing `changelevel` interactively.
+Both processes need their own isolated `-basedir`.
+
+`pinned_peer_gameplay_smoke.gdb` takes `QSVR_PEER_RESULT=<output.json>` and normal
+client launch arguments, including `+connect 127.0.0.1:28771 qsvr1`. It injects
+held key state, exercises real input/transport/simulation, and checks signon,
+authoritative movement, shell consumption, prediction and settling. Setting
+`QSVR_PEER_CHANGELEVEL=<ready.json>` writes a readiness file after settling;
+issue `changelevel e1m2` to the dedicated peer, and the probe also requires
+completed signon and prediction permission in the new world.
+
+`pinned_peer_lifecycle_smoke.gdb` uses the same client launch and accepts
+`QSVR_LIFECYCLE_RESULT=<output.json>`, with optional `QSVR_PEER_ADDRESS` overriding
+the local peer address. It checks public rejection of the private header,
+real error teardown, a failed private connection to a bound silent local UDP
+socket, private reconnection, local-map startup and public demo playback.
+It handles the diagnostic build's intentional `Host_Error` debug trap before
+checking native teardown. These are desktop loopback checks, not physical
+tracking, private-demo parity, packet-loss tolerance or performance benchmarks.
+
+For partial-command presentation, set `QSVR_PEER_EXPECT_PARTIAL=1` and use
+`+host_maxfps 144 +host_phys_max_ticrate 20`. The gameplay probe then requires
+multiple rendered position changes while both the sent command number and
+authoritative owner state remain unchanged. This checks between-send prediction,
+not frame-rate or latency performance.
+
+## Non-consuming input and replay presentation
+
+`client_input_preview_fixture.c` verifies that zero, one and repeated previews
+preserve key/button edges, impulses, pending device input, history, sequence and
+sampler state, and produce identical subsequent final command bytes. It uses
+the production input builders.
+
+`client_replay_fixture.c` exercises the production replay/presentation helpers
+with PM probes: partial timing, empty history, prediction opt-out, protocol and
+owner/ACK gates, history loss, epochs, Gorilla provenance, and attachment parent
+order. `client_replay_solver_fixture.c` instead uses the actual shared PM solver
+and donor collision functions to check empty-history, zero-duration underwater
+categorization. Its input preview and world-entity collection are fixture seams;
+it does not replace the separate live gameplay check.
+
+```sh
+set -e
+for fixture in client_input_preview client_replay client_replay_solver; do
+  sources='Quake/mathlib.c'
+  if [ "$fixture" = client_replay_solver ]; then
+    sources="$sources Quake/world.c"
+  fi
+  cc -std=gnu11 -DUSE_SDL3 -D_GNU_SOURCE -Wall -Wextra -Werror \
+    -Wno-unused-parameter -Wno-sign-compare -Wno-missing-field-initializers \
+    -ffunction-sections -fdata-sections -fsanitize=address,undefined \
+    -fno-sanitize-recover=all -fno-omit-frame-pointer \
+    "tests/${fixture}_fixture.c" $sources -Wl,--gc-sections \
+    $(pkg-config --cflags --libs sdl3) -lm -o "/tmp/qsvr-${fixture}-asan"
+  "/tmp/qsvr-${fixture}-asan" || exit 1
+done
+```
+
+`client_public_preview_fixture.c` covers the public send/read/relink ordering
+behind the final timing correction. It uses actual accumulation, final command,
+preview, serialization and journal functions. A wrapper captures commands and
+forwards to the real sender; demo suppression avoids socket output. Its external
+device sampler supplies held/released joystick and mouse input. It reproduces
+the reader's two clock assignments rather than linking the whole renderer, so
+this is not live public-server or physical joystick qualification.
+
+```sh
+cc -std=gnu11 -DUSE_SDL3 -D_GNU_SOURCE -Wall -Wextra -Werror \
+  -Wno-unused-parameter -Wno-sign-compare -Wno-missing-field-initializers \
+  -ffunction-sections -fdata-sections -fsanitize=address,undefined \
+  -fno-sanitize-recover=all -fno-omit-frame-pointer \
+  tests/client_public_preview_fixture.c Quake/cl_input.c Quake/common.c Quake/mathlib.c \
+  -Wl,--gc-sections -Wl,--wrap=CL_SendMove -Wl,--wrap=CL_Disconnect \
+  $(pkg-config --cflags --libs sdl3) -lm -o /tmp/qsvr-client-public-preview-asan
+/tmp/qsvr-client-public-preview-asan
+```

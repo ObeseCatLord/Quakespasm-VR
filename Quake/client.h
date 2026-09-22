@@ -141,6 +141,9 @@ typedef struct
 	int		 td_startframe; // host_framecount at start
 	float	 td_starttime;	// realtime at second frame of timedemo
 
+	// Explicit legacy layout selection survives map clears, not disconnects.
+	unsigned int legacy_qsvr;
+
 	// connection information
 	int				  signon; // 0 to SIGNONS
 	struct qsocket_s *netcon;
@@ -191,6 +194,13 @@ typedef struct
 	unsigned int vr_gorilla_motion_generation;
 	usercmd_t movecmds[64];		 // ringbuffer of previous movement commands (journal for prediction)
 #define MOVECMDS_MASK (countof (cl.movecmds) - 1)
+	/* QSS-M replay propagation belongs to the command journal lifetime. */
+	int move_replay_propagate_sequence[64];
+	float move_replay_propagate_waterjumptime[64];
+	qboolean move_replay_private_metadata_valid;
+	qboolean move_replay_private_prediction_allowed;
+	move_authority_t move_replay_private_authority;
+	unsigned short move_replay_private_mode_epoch, move_replay_private_discontinuity_epoch;
 	usercmd_t cmd; // last private command sent, with sampled duration and tracking
 	usercmd_t pendingcmd; // accumulated state from mice+joysticks.
 
@@ -379,10 +389,11 @@ dlight_t *CL_AllocDlight (int key);
 void	  CL_DecayLights (void);
 
 void CL_RelinkEntities (void);
+qboolean CL_ReplayPlayerMovement (entity_t *ent, vec3_t origin);
 
 void CL_Init (void);
 
-void CL_EstablishConnection (const char *host);
+void CL_EstablishConnection (const char *host, unsigned int legacy_qsvr);
 void CL_Signon1 (void);
 void CL_Signon2 (void);
 void CL_Signon3 (void);
@@ -416,6 +427,8 @@ qboolean CL_AngleLocked (void);
 void	 CL_AdjustAngles (void);
 void	 CL_BaseMove (usercmd_t *cmd);
 void	 CL_FinishMove (usercmd_t *cmd);
+// Disposable keyboard/device preview; never consumes input or command clocks.
+void	 CL_PreviewMove (usercmd_t *cmd);
 
 void CL_UpdateBeam (struct qmodel_s *m, const char *trailname, const char *impactname, int ent, float *start, float *end);
 void CL_ParseTEnt (void);
