@@ -345,6 +345,35 @@ qboolean V_TrackedMovementAngles (int mode, int physical_offhand, vec3_t angles)
 		isfinite (vr_gunangle.value) ? vr_gunangle.value : 32.f, angles);
 }
 
+qboolean V_TrackedHandBodyOffset (int physical_hand, vec3_t out)
+{
+	const vrxr_frame_t *frame = GL_OpenXRFrame ();
+	const vrxr_device_t *hand;
+	float tracking_yaw, base_viewheight, head_eye_height;
+	vec3_t head_position, hand_position;
+
+	if (out)
+		VectorCopy (vec3_origin, out);
+	if (!out || physical_hand < 0 || physical_hand > 1 || !frame ||
+		!frame->should_render || !frame->devices[0].valid ||
+		!V_TrackedMappingYaw (&tracking_yaw) || !V_TrackedPlayerBase (&base_viewheight))
+		return false;
+	hand = &frame->devices[physical_hand + 1];
+	if (!hand->valid || hand->kind != VRXR_DEVICE_HAND || hand->hand != physical_hand)
+		return false;
+	for (int i = 0; i < 3; ++i)
+	{
+		head_position[i] = frame->devices[0].matrix[i][3];
+		hand_position[i] = hand->matrix[i][3];
+		if (!isfinite (head_position[i]) || !isfinite (hand_position[i]))
+			return false;
+	}
+	if (!R_TrackedHeadEyeHeight (base_viewheight, &head_eye_height))
+		return false;
+	return VR_LocomotionHandBodyOffset (head_position, hand_position, tracking_yaw,
+		V_VRUnitsPerMetre (), head_eye_height, out);
+}
+
 qboolean V_TurnTrackedYaw (float delta)
 {
 	const vrxr_frame_t *frame = GL_OpenXRFrame ();

@@ -86,6 +86,118 @@ static void restore (void)
 	for (int i = 0; i < 3; ++i)
 		near_value (r_refdef.viewangles[i], 0);
 }
+
+static void test_hand_body_offset (void)
+{
+	const float units = V_VRUnitsPerMetre ();
+	float base_viewheight, eye_height, prepared_eye_height;
+	vec3_t grip = {1, 2, 3};
+	vrxr_device_t *head = &test_frame.devices[0];
+	vrxr_device_t *hand = &test_frame.devices[1];
+
+	cls.signon = SIGNONS;
+	cls.demoplayback = false;
+	cl.intermission = 0;
+	cl.paused = false;
+	cl.fixangle_time = -1;
+	cl.protocol_qsvr = 0;
+	cl.cmd.vr_active = cl.pendingcmd.vr_active = false;
+	cl.stats[STAT_VIEWHEIGHT] = 22;
+	chase_active.value = 0;
+	vr_aimmode.value = VR_AIMMODE_HEAD_MYAW;
+	vr_world_scale.value = 1;
+	vr_floor_offset.value = -10;
+	test_frame.should_render = test_frame.focused = test_frame.floor_referenced = 1;
+	test_frame.reference_changed = 0;
+	memset (head, 0, sizeof (*head));
+	memset (hand, 0, sizeof (*hand));
+	for (int i = 0; i < 3; ++i)
+	{
+		head->matrix[i][i] = hand->matrix[i][i] = 1;
+	}
+	head->valid = 1;
+	head->kind = VRXR_DEVICE_HEAD;
+	head->hand = -1;
+	head->matrix[0][3] = 1;
+	head->matrix[1][3] = 1.5f;
+	head->matrix[2][3] = 2;
+	hand->valid = 1;
+	hand->kind = VRXR_DEVICE_HAND;
+	hand->hand = 0;
+	hand->matrix[0][3] = .75f;
+	hand->matrix[1][3] = 1.2f;
+	hand->matrix[2][3] = 2.5f;
+	head_yaw (0);
+	V_ResetTrackedAim ();
+	R_InvalidateStereoReference ();
+	V_UpdateTrackedAim ();
+	V_CalcRefdef ();
+	assert (V_TrackedPlayerBase (&base_viewheight));
+	assert (R_TrackedHeadEyeHeight (base_viewheight, &eye_height));
+	near_value (eye_height, -10 + 1.5f * units);
+	assert (V_TrackedHandBodyOffset (0, grip));
+	near_value (grip[0], -.5f * units);
+	near_value (grip[1], .25f * units);
+	near_value (grip[2], eye_height - .3f * units);
+	// The hand query may establish the renderer reference before preparation.
+	R_PrepareStereoFrame ();
+	assert (R_TrackedHeadEyeHeight (base_viewheight, &prepared_eye_height));
+	near_value (prepared_eye_height, eye_height);
+	R_RestoreStereoView ();
+	assert (V_TurnTrackedYaw (90));
+	assert (V_TrackedHandBodyOffset (0, grip));
+	near_value (grip[0], -.25f * units);
+	near_value (grip[1], -.5f * units);
+	near_value (grip[2], eye_height - .3f * units);
+
+	V_ResetTrackedAim ();
+	R_InvalidateStereoReference ();
+	V_UpdateTrackedAim ();
+	V_CalcRefdef ();
+	assert (V_TrackedPlayerBase (&base_viewheight));
+	test_frame.floor_referenced = 0;
+	assert (R_TrackedHeadEyeHeight (base_viewheight, &eye_height));
+	near_value (eye_height, base_viewheight + 6);
+	assert (V_TrackedHandBodyOffset (0, grip));
+	near_value (grip[2], eye_height - .3f * units);
+	head->matrix[1][3] = 1.7f;
+	hand->matrix[1][3] = 1.4f;
+	assert (R_TrackedHeadEyeHeight (base_viewheight, &eye_height));
+	near_value (eye_height, base_viewheight + 6 + .2f * units);
+	assert (V_TrackedHandBodyOffset (0, grip));
+	near_value (grip[2], eye_height - .3f * units);
+	// The runtime notification rebases the same renderer-owned reference.
+	head->matrix[1][3] = 2.3f;
+	hand->matrix[1][3] = 2.0f;
+	test_frame.reference_changed = 1;
+	assert (V_TrackedHandBodyOffset (0, grip));
+	near_value (grip[2], base_viewheight + 6 - .3f * units);
+	test_frame.reference_changed = 0;
+
+	hand->hand = 1;
+	assert (!V_TrackedHandBodyOffset (0, grip));
+	near_value (grip[0], 0);
+	near_value (grip[1], 0);
+	near_value (grip[2], 0);
+	hand->hand = 0;
+	hand->matrix[0][3] = NAN;
+	assert (!V_TrackedHandBodyOffset (0, grip));
+	near_value (grip[0], 0);
+	near_value (grip[1], 0);
+	near_value (grip[2], 0);
+	hand->matrix[0][3] = .75f;
+	head->matrix[1][3] = NAN;
+	eye_height = 1;
+	assert (!R_TrackedHeadEyeHeight (base_viewheight, &eye_height));
+	near_value (eye_height, 0);
+	assert (!V_TrackedHandBodyOffset (0, grip));
+	near_value (grip[0], 0);
+	near_value (grip[1], 0);
+	near_value (grip[2], 0);
+	head->matrix[1][3] = 2.3f;
+	assert (!cl.cmd.vr_active && !cl.pendingcmd.vr_active);
+	vr_floor_offset.value = -16;
+}
 static void test_roomscale_eye_anchor (void)
 {
 	const float units = V_VRUnitsPerMetre ();
@@ -654,11 +766,13 @@ int main (void)
 	cl.fixangle_time = -1;
 	test_frame.focused = 0;
 	assert (!V_TurnTrackedYaw (-45));
+	test_hand_body_offset ();
 	test_roomscale_eye_anchor ();
 	puts ("Production stereo camera: eye separation, pause restoration, skipped reference invalidation and abort GPU-drain boundary passed");
 	puts ("Inherited floor/scale/comfort: floor height, crouch, pitched basis, paused viewheight, LOCAL fallback and desktop gates passed");
 	puts ("Head aiming: actual command angles and paused visual view contain one head rotation");
 	puts ("Aim transitions: reference loss, mode changes, authoritative angles, centerview, pending cancellation/priority, locked accumulation, real chase and client clear passed");
 	puts ("Local turning: effective command basis, all-mode rebase retention, single commit and authority precedence passed");
+	puts ("Hand body offsets: shared eye height, LOCAL/reference rebases, axis yaw, invalid poses and pre-camera reference passed");
 	puts ("Roomscale camera anchor: pending/sent private body motion removes duplicate horizontal HMD offset; public and vertical paths remain distinct");
 }

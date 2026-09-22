@@ -99,6 +99,10 @@ steps, reference changes, focus loss, mode changes, public/local guards and
 chase views. The VR command producer is still dormant on the wire, so these
 checks do not establish live roomscale gameplay.
 
+It also checks the shared renderer head-height reference used by raw
+body-relative hand grips: floor and LOCAL height formulas, yaw/axis signs,
+reference rebases, invalid poses, and a hand query before camera preparation.
+
 ```sh
 cc -std=gnu11 -DUSE_SDL3 -D_GNU_SOURCE -Wno-unused-parameter \
   -ffunction-sections -fdata-sections tests/vr_stereo_camera_fixture.c \

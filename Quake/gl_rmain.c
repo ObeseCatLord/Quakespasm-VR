@@ -341,6 +341,17 @@ static vec3_t stereo_base_origin, stereo_base_angles;
 static qboolean stereo_have_reference;
 static vec3_t stereo_reference_position;
 
+static void R_InitializeStereoReference (const vrxr_frame_t *frame)
+{
+	const float (*head)[4] = frame->devices[0].matrix;
+	if (!stereo_have_reference || frame->reference_changed)
+	{
+		for (int i = 0; i < 3; ++i)
+			stereo_reference_position[i] = head[i][3];
+		stereo_have_reference = true;
+	}
+}
+
 void R_InvalidateStereoReference (void)
 {
 	// Keep invalidation across skipped frames until a valid rendered pose.
@@ -361,6 +372,35 @@ static void R_XRVectorToWorld (const float vector[3], const vec3_t forward, cons
 {
 	for (int i = 0; i < 3; ++i)
 		result[i] = right[i] * vector[0] + up[i] * vector[1] - forward[i] * vector[2];
+}
+
+qboolean R_TrackedHeadEyeHeight (float base_viewheight, float *out_height)
+{
+	const vrxr_frame_t *frame = GL_OpenXRFrame ();
+	float units_per_metre, height;
+	const float (*head)[4];
+
+	if (out_height)
+		*out_height = 0;
+	if (!out_height || !frame || !frame->should_render || !frame->devices[0].valid || !isfinite (base_viewheight))
+		return false;
+	head = frame->devices[0].matrix;
+	for (int i = 0; i < 3; ++i)
+		if (!isfinite (head[i][3]))
+			return false;
+	units_per_metre = V_VRUnitsPerMetre ();
+	if (!isfinite (units_per_metre) || units_per_metre <= 0)
+		return false;
+	R_InitializeStereoReference (frame);
+	if (frame->floor_referenced)
+		height = V_VRFloorOffset () + head[1][3] * units_per_metre;
+	else
+		height = base_viewheight + V_VRFloorOffset () + 16.f +
+			(head[1][3] - stereo_reference_position[1]) * units_per_metre;
+	if (!isfinite (height))
+		return false;
+	*out_height = height;
+	return true;
 }
 
 void R_PrepareStereoFrame (void)
@@ -393,12 +433,7 @@ void R_PrepareStereoFrame (void)
 		VectorCopy (columns[1], base_up);
 		VectorScale (columns[2], -1, base_forward);
 	}
-	if (!stereo_have_reference || frame->reference_changed)
-	{
-		for (int i = 0; i < 3; ++i)
-			stereo_reference_position[i] = head[i][3];
-		stereo_have_reference = true;
-	}
+	R_InitializeStereoReference (frame);
 	for (int i = 0; i < 3; ++i)
 		local[i] = (head[i][3] - stereo_reference_position[i]) * units_per_metre;
 	if (V_TrackedBodyOwnsRoomscale ())
