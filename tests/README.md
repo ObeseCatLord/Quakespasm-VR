@@ -419,3 +419,27 @@ These checks do not establish private admission, a matching authoritative owner
 snapshot, replay, live Gorilla production, host scheduling parity or dedicated
 server movement/fire. See the staged transport findings in
 [`migration-movement-review.md`](../docs/migration-movement-review.md).
+
+
+## Pinned dedicated-peer preparation
+
+The movement reference is product commit
+`1327f795cc2e3a8e4f7c9d68e31d64383930cc00`. A native Linux debug build from an
+untouched `git archive` of that commit succeeds with `make -C Quake -f
+Makefile.linux -j12 DEBUG=1`. Build the archive in a temporary directory so no
+source branch or installed executable changes. This host build is diagnostic,
+not a GLIBC-qualified release artifact.
+
+Use the canonical `quakespasm_straight` installation specified by the product
+`AGENTS.md` for game assets. Create separate temporary reference/client `id1`
+directories and link only its numbered `pak*.pak` archives. Do not assume an
+`id1/pak1.pak` exists: the current canonical installation has a combined
+`pak0.pak` with 1,121 entries, including `progs.dat` and `maps/e1m1.bsp`.
+Keep generated configurations, saves and logs in the temporary profiles.
+The same installation also has loose `mjolnir/maps/mj4m1.bsp` and `.lit` assets
+for the later large-map benchmark; their presence is not a performance result.
+
+The reference binary and profiles have been prepared locally. They have **not**
+yet established a successful migrated-client connection or predicted gameplay.
+Connection admission, coherent owner/ACK selection and replay must be integrated
+before using them for the dedicated-peer movement/fire acceptance proof.

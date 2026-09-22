@@ -321,8 +321,8 @@ actual references before making these recommendations. The smallest remaining
 gameplay proof is a built client against the pinned dedicated peer under delayed
 delivery, with movement reconciliation, authoritative setting changes and a
 reconnect to different server settings. Linkage and parameter fixtures establish
-only their respective prerequisites. Owner-snapshot/ACK coherence, complete
-stat admission, local head/mouse VR swimming policy and live replay remain
+only their respective prerequisites. Owner-snapshot/ACK coherence, numeric
+movevar selection, local head/mouse VR swimming policy and live replay remain
 separate integration requirements.
 
 
@@ -347,3 +347,32 @@ is a compatibility restriction, not full-capacity support. The requested wire
 boundary checks then passed in the built Linux executable: exact fit updates
 serverinfo and selects gravity; oversized and unterminated messages stop at
 `Host_Error` before the callback. No socket or live gameplay claim follows.
+
+
+### Incremental movement settings — corrected activation contract
+
+Local Astra/max reviewed whether "complete-stat admission" is achievable with
+unchanged QSS-M and the pinned private peer. It is not. At pinned `1327f795`,
+`SVFTE_SetupFrames` (`sv_main.c:2184`) zeroes old stats and resend bits;
+`SVFTE_WriteStatsToClient` (`sv_main.c:2690`) queues changed values only. Valid
+initial zeros may never be explicitly sent. MOVEFLAGS at index 225 precedes
+most movement settings at 238–253, and the writer may stop for packet space.
+Its caller (`sv_main.c:4283`) still emits owner/ACK data; continuation entity
+packets skip the stats writer. The movement-mode epoch describes authority
+transitions, not a movement-configuration version. Main independently checked
+these writer/caller and permission paths after the review.
+
+| Recommendation | Disposition |
+| --- | --- |
+| Require explicit receipt of every movement stat | Rejected: legitimate zero defaults can prevent activation forever. No receipt bitmap is added. |
+| Treat MOVEFLAG_VALID, owner presence or a later ACK as a configuration fence | Rejected: packet splitting and loss invalidate that inference. No timer or synthetic configuration epoch is added. |
+| Preserve QSS's incremental accumulator and select settings once per replay pass | Adopted. Keep the normal zero baseline, select fallback or accumulated stats through `PMCL_SetMoveVars`, and retain those settings throughout that replay pass. |
+| Numeric/dialect rejection should stop transport | Rejected. A false selector result suppresses that prediction pass; command transmission and snapshot ACKs must continue so recovery can proceed. |
+| Promise atomic movement-setting changes against unchanged peers | Deferred. The wire cannot distinguish an omitted zero from a deferred nonzero stat or attach a setting change to a specific input command. Document transient mixed settings and reconciliation. |
+
+This supersedes earlier "complete-stat admission" wording as a prerequisite.
+Owner/ACK coherence, connection admission and valid numerical settings remain
+required. Acceptance must cover legitimate zero defaults without deadlock,
+initial loss/split delivery followed by recovery, eventual adoption of live
+setting changes, and reset isolation. It cannot assert zero transient prediction
+error or atomic configuration delivery. No gameplay proof has yet run.

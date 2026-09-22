@@ -417,7 +417,11 @@ local server cvars or tracking state. Existing serverinfo callbacks refresh that
 cache, client-state destruction invalidates it, and current protocol flags are
 selected at use time. Public QSS-M and explicitly admitted private VR stat
 formats remain distinct. The parameter selector rejects invalid used numeric
-stats; it does not certify complete-stat receipt or authoritative replay state.
+stats; it does not certify authoritative replay state or atomic configuration
+delivery. The [local Astra stat review](migration-movement-review.md#incremental-movement-settings--corrected-activation-contract)
+confirmed that explicit receipt of every stat is an invalid activation gate:
+unchanged zero defaults may never be transmitted. Replay will retain QSS-M
+incremental-stat semantics and select settings once per pass.
 The review also caught command-argument truncation that could change movement
 values. Argument storage now matches the existing tokenizer, incomplete
 serverinfo commands do not change settings, and the network command owner

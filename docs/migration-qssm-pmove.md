@@ -124,8 +124,12 @@ settings. Only the explicitly admitted private version consumes private extended
 stats and packed flags. Malformed/nonfinite fallback numbers use the QSS default;
 unrepresentable integer values are checked before conversion. Invalid used stats
 or unsupported private layouts make `PMCL_SetMoveVars` return false. Its true
-result proves neither receipt of every stat nor ACK/owner coherence: replay must
-establish those separately and honor a false result.
+result proves neither receipt of every stat nor ACK/owner coherence. Replay must
+establish owner coherence and honor a false result. Explicit receipt of every
+stat is not a valid gate: unchanged initial zeros may never be transmitted.
+Select settings once per replay pass from the existing incremental accumulator;
+see the [reviewed stat contract](migration-movement-review.md#incremental-movement-settings--corrected-activation-contract)
+for packet-loss and live-update limits.
 
 The parameter fixture runs actual client callbacks, Info readers and PM selection
 with the real command tokenizer, including long arguments and overflow. Callback
