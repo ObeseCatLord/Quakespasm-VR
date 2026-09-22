@@ -112,6 +112,67 @@ static void test_aim_offset_to_world (void)
 	expect_zero (out);
 }
 
+static float vec3_length (const float value[3])
+{
+	return sqrtf (value[0] * value[0] + value[1] * value[1] +
+		value[2] * value[2]);
+}
+
+static void test_muzzle_offset_to_world (void)
+{
+	const float yaw_zero[3] = {0.0f, 0.0f, 0.0f};
+	const float right_offset[3] = {2.0f, 0.0f, 0.0f};
+	const float forward_offset[3] = {0.0f, 0.0f, 10.0f};
+	const float offset[3] = {2.0f, -3.0f, 5.0f};
+	const float wrist_angles[3] = {31.0f, 47.0f, -29.0f};
+	const float invalid[3] = {NAN, 0.0f, 0.0f};
+	const float overflow_offset[3] = {0.0f, 0.0f, 2.0f};
+	float right[3], left[3], naive_reflection[3];
+	float out[3] = {7.0f, 8.0f, 9.0f};
+	float aliased_local[3] = {2.0f, 0.0f, 0.0f};
+	float aliased_angles[3] = {0.0f, 0.0f, 0.0f};
+
+	assert (VR_LocomotionMuzzleOffsetToWorld (right_offset, yaw_zero, 1.0f,
+		0.0f, false, out));
+	near_vec3 (out, (float[3]){0.0f, -2.0f, 0.0f});
+	assert (VR_LocomotionMuzzleOffsetToWorld (right_offset, yaw_zero, 1.0f,
+		0.0f, true, out));
+	near_vec3 (out, (float[3]){0.0f, 2.0f, 0.0f});
+
+	assert (VR_LocomotionMuzzleOffsetToWorld (forward_offset, yaw_zero, 1.0f,
+		0.0f, false, out));
+	near_vec3 (out, (float[3]){10.0f, 0.0f, 0.0f});
+	assert (VR_LocomotionMuzzleOffsetToWorld (forward_offset, yaw_zero, 1.0f,
+		0.0f, true, out));
+	near_vec3 (out, (float[3]){10.0f, 0.0f, 0.0f});
+
+	assert (VR_LocomotionMuzzleOffsetToWorld (offset, wrist_angles, 1.5f,
+		21.0f, false, right));
+	assert (VR_LocomotionMuzzleOffsetToWorld (offset, wrist_angles, 1.5f,
+		21.0f, true, left));
+	near_value (vec3_length (left), vec3_length (right));
+	naive_reflection[0] = right[0];
+	naive_reflection[1] = -right[1];
+	naive_reflection[2] = right[2];
+	assert (vec3_length ((float[3]){left[0] - naive_reflection[0],
+		left[1] - naive_reflection[1], left[2] - naive_reflection[2]}) > 0.2f);
+
+	assert (VR_LocomotionMuzzleOffsetToWorld (aliased_local, yaw_zero, 1.0f,
+		0.0f, false, aliased_local));
+	near_vec3 (aliased_local, (float[3]){0.0f, -2.0f, 0.0f});
+	assert (VR_LocomotionMuzzleOffsetToWorld (right_offset, aliased_angles, 1.0f,
+		0.0f, false, aliased_angles));
+	near_vec3 (aliased_angles, (float[3]){0.0f, -2.0f, 0.0f});
+
+	assert (!VR_LocomotionMuzzleOffsetToWorld (invalid, yaw_zero, 1.0f,
+		0.0f, false, out));
+	expect_zero (out);
+	out[0] = out[1] = out[2] = 7.0f;
+	assert (!VR_LocomotionMuzzleOffsetToWorld (overflow_offset, yaw_zero,
+		FLT_MAX, 0.0f, false, out));
+	expect_zero (out);
+}
+
 static void test_hand_body_offset (void)
 {
 	const float head[3] = {1.0f, 1.6f, -2.0f};
@@ -209,6 +270,7 @@ int main (void)
 	test_raw_uses_offhand_for_vertical ();
 	test_zero_and_invalid_moves ();
 	test_aim_offset_to_world ();
+	test_muzzle_offset_to_world ();
 	test_hand_body_offset ();
 	test_gun_angle_composition ();
 	test_invalid_hand_angles ();

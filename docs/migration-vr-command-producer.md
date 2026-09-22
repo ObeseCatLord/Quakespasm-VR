@@ -73,8 +73,9 @@ selected viewmodel's calibrated `muzzle_offset`, multiplied by
 the donor's `right * local.x + up * local.y + forward * local.z` arithmetic,
 and a pure OpenXR hand/head helper preserves its body-relative grip geometry.
 The latter takes eye height from the caller so floor and LOCAL frames can use
-the same vertical reference as the camera. Neither helper selects the weapon,
-reflects the muzzle, or enables private commands.
+the same vertical reference as the camera. A third pure helper ports the donor's
+model-space muzzle reflection, including wrist roll and `vr_gunmodelpitch`.
+These helpers do not select the weapon or enable private commands.
 
 The canonical `vr_weapons.txt` has a `viewmodel` keyed entry and
 `muzzle_offset` for the vanilla shotgun, and mod files can override the same
@@ -85,9 +86,23 @@ has multiplayer and enhanced-model offsets, adjustment commands, and QuakeC
 source compensation; each needs its existing selection rule before general
 weapon activation. For a floor-referenced OpenXR frame, hand height follows
 the same floor offset as the player eye. For a LOCAL frame, eye height currently
-uses the stereo camera's retained vertical reference; hand height must share
-that reference before private VR commands are enabled there. No synthetic
-floor height should be introduced in the input adapter.
+uses the stereo camera's retained vertical reference. `R_TrackedHeadEyeHeight`
+now exposes that existing reference to `V_TrackedHandBodyOffset`, so a raw grip
+can share the camera's floor or LOCAL height without a second reference owner.
+The production stereo-camera fixture checks a hand query before camera
+preparation and a LOCAL rebase. The calibrated muzzle and command producer
+still need to consume this raw grip; no synthetic floor height is introduced.
+
+The read-only game installation currently has 37 `vr_weapons.txt` files. A
+first-token inventory found 646 `viewmodel` entries, 622 `muzzle_offset`, 41
+`enhanced_muzzle_offset`, 47 `bitmask`/`impulse` pairs, 7
+`muzzle_source_offset` and 6 `mp_muzzle_offset` entries. This makes full key
+vocabulary and game-directory reload behavior material to real mod parity;
+a hardcoded vanilla table cannot be the final calibration owner. vkQuake's
+renderer already selects the active MDL/MD3/MD5 alias header through
+`Mod_Extradata_CheckSkin` (`gl_model.c:199–250`, `r_alias.c:523`), so the
+profile adapter should read that selection rather than make a second model
+priority rule.
 
 There is also a timing boundary to measure before any head-motion prediction:
 `CL_AccumulateCmd` consumes the last completed OpenXR frame in `host.c`, while

@@ -703,7 +703,9 @@ Monado service created for the probe. No headset runtime settings are changed.
 It checks head/offhand projection, near-vertical pitch and roll, RAW vertical
 movement, singular/invalid inputs, controller gun-angle matrix composition,
 aim-space calibration rotation, and body-relative hand grip geometry including
-yaw, height, overflow and output aliasing.
+yaw, height, overflow and output aliasing. Muzzle tests cover donor model-space
+left-hand reflection, including a pitched/rolled wrist that cannot be reduced
+to a world-axis sign change.
 
 ```sh
 cc -std=gnu11 -DUSE_SDL3 -D_GNU_SOURCE -Wno-unused-parameter \

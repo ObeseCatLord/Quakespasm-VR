@@ -141,6 +141,121 @@ qboolean VR_LocomotionAimOffsetToWorld (const float local[3],
 	return true;
 }
 
+static void VR_LocomotionHandRotToViewmodelAngles (const float handrot[3],
+	float viewmodel_angles[3], float gunmodelpitch)
+{
+	viewmodel_angles[VR_AIM_YAW] = handrot[VR_AIM_YAW];
+	viewmodel_angles[VR_AIM_PITCH] = -handrot[VR_AIM_PITCH] + gunmodelpitch;
+	viewmodel_angles[VR_AIM_ROLL] = handrot[VR_AIM_ROLL];
+}
+
+static void VR_LocomotionModelOffsetToWorld (const float local[3],
+	const float viewmodel_angles[3], float scale, qboolean mirrored,
+	float world[3])
+{
+	float yaw = viewmodel_angles[VR_AIM_YAW] * M_PI_DIV_180;
+	float pitch = viewmodel_angles[VR_AIM_PITCH] * M_PI_DIV_180;
+	float roll = viewmodel_angles[VR_AIM_ROLL] * M_PI_DIV_180;
+	float sy = sin (yaw), cy = cos (yaw);
+	float sp = sin (pitch), cp = cos (pitch);
+	float sr = sin (roll), cr = cos (roll);
+	float x1, y1, z1, x2, y2, z2;
+	float lateral = mirrored ? -local[1] : local[1];
+
+	/* Match the held draw: entity rotation * local Y reflection * header offset. */
+	x1 = local[0];
+	y1 = lateral * cr - local[2] * sr;
+	z1 = lateral * sr + local[2] * cr;
+
+	x2 = x1 * cp - z1 * sp;
+	y2 = y1;
+	z2 = x1 * sp + z1 * cp;
+
+	world[0] = (x2 * cy - y2 * sy) * scale;
+	world[1] = (x2 * sy + y2 * cy) * scale;
+	world[2] = z2 * scale;
+}
+
+static void VR_LocomotionWorldToModelOffset (const float world[3],
+	const float viewmodel_angles[3], float scale, qboolean mirrored,
+	float local[3])
+{
+	float yaw = viewmodel_angles[VR_AIM_YAW] * M_PI_DIV_180;
+	float pitch = viewmodel_angles[VR_AIM_PITCH] * M_PI_DIV_180;
+	float roll = viewmodel_angles[VR_AIM_ROLL] * M_PI_DIV_180;
+	float sy = sin (yaw), cy = cos (yaw);
+	float sp = sin (pitch), cp = cos (pitch);
+	float sr = sin (roll), cr = cos (roll);
+	float x, y, z, x1, y1, z1, x2, y2, z2;
+
+	if (scale == 0.0f)
+		scale = 1.0f;
+
+	x = world[0] / scale;
+	y = world[1] / scale;
+	z = world[2] / scale;
+
+	/* Inverse of R_RotateForEntity's yaw, -pitch, roll sequence. */
+	x1 = x * cy + y * sy;
+	y1 = -x * sy + y * cy;
+	z1 = z;
+
+	x2 = x1 * cp + z1 * sp;
+	y2 = y1;
+	z2 = -x1 * sp + z1 * cp;
+
+	local[0] = x2;
+	local[1] = y2 * cr + z2 * sr;
+	local[2] = -y2 * sr + z2 * cr;
+	if (mirrored)
+		local[1] = -local[1];
+}
+
+qboolean VR_LocomotionMuzzleOffsetToWorld (const float local[3],
+	const float hand_angles[3], float gunmodelscale, float gunmodelpitch,
+	qboolean left_handed, float world[3])
+{
+	vec3_t local_copy, hand_angles_copy, model_angles;
+	vec3_t aim_world, model_offset, result;
+
+	if (!world)
+		return false;
+	if (local)
+		VectorCopy (local, local_copy);
+	if (hand_angles)
+		VectorCopy (hand_angles, hand_angles_copy);
+	VR_LocomotionZero (world);
+	if (!local || !hand_angles || !VR_LocomotionFiniteVec3 (local_copy) ||
+		!VR_LocomotionFiniteVec3 (hand_angles_copy) ||
+		!isfinite (gunmodelscale) || !isfinite (gunmodelpitch))
+		return false;
+
+	if (!VR_LocomotionAimOffsetToWorld (local_copy, hand_angles_copy,
+		gunmodelscale, aim_world))
+		return false;
+	VectorCopy (aim_world, result);
+
+	if (left_handed)
+	{
+		VR_LocomotionHandRotToViewmodelAngles (hand_angles_copy, model_angles,
+			gunmodelpitch);
+		if (!VR_LocomotionFiniteVec3 (model_angles))
+			return false;
+
+		VR_LocomotionWorldToModelOffset (aim_world, model_angles, 1.0f,
+			false, model_offset);
+		if (!VR_LocomotionFiniteVec3 (model_offset))
+			return false;
+		VR_LocomotionModelOffsetToWorld (model_offset, model_angles, 1.0f,
+			true, result);
+	}
+
+	if (!VR_LocomotionFiniteVec3 (result))
+		return false;
+	VectorCopy (result, world);
+	return true;
+}
+
 qboolean VR_LocomotionHandBodyOffset (const float head[3], const float hand[3],
 	float tracking_yaw, float units_per_metre, float head_eye_height, float out[3])
 {
