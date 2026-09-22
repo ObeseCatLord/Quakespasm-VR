@@ -93,6 +93,24 @@ static void test_zero_and_invalid_moves (void)
 	expect_zero (out);
 }
 
+static void test_aim_offset_to_world (void)
+{
+	const float yaw_zero[3] = {0.0f, 0.0f, 0.0f};
+	const float forward_offset[3] = {0.0f, 0.0f, 10.0f};
+	const float right_offset[3] = {2.0f, 0.0f, 0.0f};
+	const float invalid[3] = {NAN, 0.0f, 0.0f};
+	float out[3] = {7.0f, 8.0f, 9.0f};
+
+	assert (VR_LocomotionAimOffsetToWorld (forward_offset, yaw_zero, 1.0f, out));
+	near_vec3 (out, (float[3]){10.0f, 0.0f, 0.0f});
+
+	assert (VR_LocomotionAimOffsetToWorld (right_offset, yaw_zero, 1.0f, out));
+	near_vec3 (out, (float[3]){0.0f, -2.0f, 0.0f});
+
+	assert (!VR_LocomotionAimOffsetToWorld (invalid, yaw_zero, 1.0f, out));
+	expect_zero (out);
+}
+
 static void test_gun_angle_composition (void)
 {
 	const float identity[3][4] = {
@@ -141,6 +159,7 @@ int main (void)
 	test_pitch_roll_and_near_vertical ();
 	test_raw_uses_offhand_for_vertical ();
 	test_zero_and_invalid_moves ();
+	test_aim_offset_to_world ();
 	test_gun_angle_composition ();
 	test_invalid_hand_angles ();
 	puts ("Inherited VR locomotion and gun-angle arithmetic preserves source geometry");

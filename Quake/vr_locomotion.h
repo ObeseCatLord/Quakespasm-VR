@@ -35,6 +35,10 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 qboolean VR_LocomotionHandAngles (const float matrix[3][4], float tracking_yaw,
 	float gun_angle, float out[3]);
 
+/* Rotate and scale a local aim offset using inherited Quake angle vectors. */
+qboolean VR_LocomotionAimOffsetToWorld (const float local[3],
+	const float angles[3], float scale, float world[3]);
+
 /* Produce forward/side/up command contributions before vr_movement_speed and
  * the run multiplier. forward_speed intentionally scales both horizontal
  * command axes, matching the inherited VR movement path. */

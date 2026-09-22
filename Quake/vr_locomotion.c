@@ -107,6 +107,40 @@ fail:
 	return false;
 }
 
+qboolean VR_LocomotionAimOffsetToWorld (const float local[3],
+	const float angles[3], float scale, float world[3])
+{
+	vec3_t local_copy, angles_copy;
+	vec3_t forward, right, up;
+	vec3_t mutable_angles;
+	vec3_t result;
+
+	if (!world)
+		return false;
+	if (local)
+		VectorCopy (local, local_copy);
+	if (angles)
+		VectorCopy (angles, angles_copy);
+	VR_LocomotionZero (world);
+	if (!local || !angles || !VR_LocomotionFiniteVec3 (local_copy) ||
+		!VR_LocomotionFiniteVec3 (angles_copy) || !isfinite (scale))
+		return false;
+
+	VectorCopy (angles_copy, mutable_angles);
+	AngleVectors (mutable_angles, forward, right, up);
+	result[0] = (right[0] * local_copy[0] + up[0] * local_copy[1] +
+		forward[0] * local_copy[2]) * scale;
+	result[1] = (right[1] * local_copy[0] + up[1] * local_copy[1] +
+		forward[1] * local_copy[2]) * scale;
+	result[2] = (right[2] * local_copy[0] + up[2] * local_copy[1] +
+		forward[2] * local_copy[2]) * scale;
+	if (!VR_LocomotionFiniteVec3 (result))
+		return false;
+
+	VectorCopy (result, world);
+	return true;
+}
+
 qboolean VR_LocomotionMove (int mode, const float head[3], const float offhand[3],
 	float forward_axis, float side_axis, float forward_speed, float up_speed,
 	float out[3])
