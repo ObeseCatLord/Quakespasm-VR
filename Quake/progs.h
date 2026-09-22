@@ -280,6 +280,7 @@ struct pr_extglobals_s
 	QCEXTGLOBAL_FLOAT (physics_mode)               \
 	// end
 #define QCEXTGLOBALS_CSQC                  \
+	QCEXTGLOBAL_FLOAT (servercommandframe) \
 	QCEXTGLOBAL_FLOAT (cltime)             \
 	QCEXTGLOBAL_FLOAT (clframetime)        \
 	QCEXTGLOBAL_FLOAT (maxclients)         \

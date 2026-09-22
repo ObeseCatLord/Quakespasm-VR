@@ -626,6 +626,146 @@ void CL_WritePrivateUsercmd (sizebuf_t *buf, const usercmd_t *cmd,
 	}
 }
 
+/* Pinned source ACK drain and paced command sender (1327f795).
+ * The runtime/weapon owner supplies the prepared command; this code owns only
+ * its duration, history and transport. Private admission is still separate. */
+static void CL_WriteAckFrames (sizebuf_t *buf)
+{
+	unsigned int i, count = 0;
+	while (count < cl.ackframes_count && buf->cursize + 5 <= buf->maxsize)
+	{
+		MSG_WriteByte (buf, clcdp_ackframe);
+		MSG_WriteLong (buf, cl.ackframes[count]);
+		cl.net_snapshot_acks_sent++;
+		count++;
+	}
+	for (i = count; i < cl.ackframes_count; i++)
+		cl.ackframes[i - count] = cl.ackframes[i];
+	cl.ackframes_count -= count;
+}
+
+void CL_FlushAckFrames (void)
+{
+	byte data[DATAGRAM_MTU];
+	sizebuf_t buf = {0};
+	if (cl.protocol_qsvr != QSVR_PROTOCOL_PINNED || !cl.ackframes_count || cls.demoplayback || !cls.netcon)
+		return;
+	buf.data = data;
+	buf.maxsize = sizeof data;
+	CL_WriteAckFrames (&buf);
+	if (buf.cursize && NET_SendUnreliableMessage (cls.netcon, &buf) == -1)
+	{
+		Con_Printf ("CL_FlushAckFrames: lost server connection\n");
+		CL_Disconnect ();
+	}
+}
+
+static unsigned char CL_SampleMoveMsec (void)
+{
+	double elapsed, milliseconds;
+	int msec;
+	if (!cl.move_msec_sample_valid)
+	{
+		cl.move_msec_sample_valid = true;
+		cl.move_msec_sample_time = realtime;
+		cl.move_msec_fractional_carry = 0;
+		elapsed = host_frametime;
+	}
+	else
+	{
+		elapsed = realtime - cl.move_msec_sample_time;
+		cl.move_msec_sample_time = realtime;
+	}
+	if (elapsed < 0)
+	{
+		elapsed = 0;
+		cl.move_msec_fractional_carry = 0;
+	}
+	milliseconds = elapsed * 1000.0 + cl.move_msec_fractional_carry;
+	// Clamp before converting: a long suspend can exceed the range of int.
+	if (!isfinite (milliseconds) || milliseconds >= 126)
+	{
+		cl.move_msec_fractional_carry = 0;
+		return 125;
+	}
+	msec = (int)milliseconds;
+	if (msec < 1)
+		msec = 1;
+	cl.move_msec_fractional_carry = milliseconds - msec;
+	return (unsigned char)msec;
+}
+
+static void CL_SendPrivateMove (const usercmd_t *cmd)
+{
+	byte data[DATAGRAM_MTU];
+	sizebuf_t buf = {0};
+	usercmd_t sendcmd;
+	int seq, first_seq, packet_cmds = 0;
+	unsigned capabilities = 0;
+	if (cls.demoplayback)
+		return;
+	if (!cmd)
+	{
+		CL_FlushAckFrames ();
+		return;
+	}
+	buf.data = data;
+	buf.maxsize = sizeof data;
+	sendcmd = *cmd;
+	if (sendcmd.servertime <= 0)
+		sendcmd.servertime = cl.time;
+	sendcmd.msec = CL_SampleMoveMsec ();
+	sendcmd.seconds = sendcmd.msec * 0.001f;
+	seq = cl.movemessages;
+	sendcmd.sequence = seq;
+	cl.movemessages++;
+	cl.net_move_msec_generated += sendcmd.msec;
+	cl.movecmds[seq & MOVECMDS_MASK] = sendcmd;
+	cl.cmd = sendcmd;
+
+	if (sv.active && svs.maxclients <= 1)
+	{
+		cl.ackedmovemessages = seq;
+		if (cl.qcvm.extglobals.servercommandframe)
+			*cl.qcvm.extglobals.servercommandframe = seq;
+	}
+	else if (seq < 2)
+	{
+		cl.movecmds[seq & MOVECMDS_MASK].seconds = 0;
+		CL_FlushAckFrames ();
+		return;
+	}
+	if (cl.vr_gorilla_supported && cl.vr_gorilla_allowed)
+		capabilities |= QSVR_MOVE_CAP_GORILLA_RAW;
+	if (cl.vr_gorilla_trusted_supported && cl.vr_gorilla_trusted_cap_sent)
+		capabilities |= QSVR_MOVE_CAP_GORILLA_TRUSTED;
+
+	first_seq = q_max (2, seq - 2);
+	for (int previous = first_seq; previous <= seq; ++previous)
+	{
+		const usercmd_t *packetcmd = &cl.movecmds[previous & MOVECMDS_MASK];
+		if (packetcmd->sequence != (unsigned)previous)
+			continue;
+		MSG_WriteByte (&buf, clc_move);
+		MSG_WriteShort (&buf, packetcmd->sequence & 0xffff);
+		CL_WritePrivateUsercmd (&buf, packetcmd, cl.protocolflags, capabilities);
+		packet_cmds++;
+	}
+	// Movement precedes transport ACKs; retain any ACKs that do not fit.
+	CL_WriteAckFrames (&buf);
+	if (!buf.cursize)
+		return;
+	if (NET_SendUnreliableMessage (cls.netcon, &buf) == -1)
+	{
+		Con_Printf ("CL_SendMove: lost server connection\n");
+		CL_Disconnect ();
+		return;
+	}
+	cl.net_move_packets_sent++;
+	cl.net_move_cmds_sent += packet_cmds;
+	cl.net_move_last_packet_cmds = packet_cmds;
+}
+
 /*
 ==============
 CL_SendMove
@@ -633,6 +773,11 @@ CL_SendMove
 */
 void CL_SendMove (const usercmd_t *cmd)
 {
+	if (cl.protocol_qsvr == QSVR_PROTOCOL_PINNED)
+	{
+		CL_SendPrivateMove (cmd);
+		return;
+	}
 	unsigned int i;
 	sizebuf_t	 buf;
 	byte		 data[1024];

@@ -147,9 +147,10 @@ FTE mask without explicit private selection. It also passes decoded bounds to
 the inherited weapon query and actual donor hull tracing against a synthetic
 entity box. This is a parser-to-collision check, not a networked movement proof.
 
-Private activation still requires connection admission, duration sampling and
-pacing, command history/redundancy, complete authoritative ACK/snapshot parsing,
-replay and the inherited movement/weapon producers. In particular, no new
+At this codec checkpoint, private activation still required connection admission,
+duration sampling and pacing, command history/redundancy, complete authoritative
+ACK/snapshot parsing, replay and the inherited movement/weapon producers. The
+later staged transport checkpoint below records partial progress. No new
 `connect` mode is exposed that would claim this unfinished support.
 
 ### Command codec review disposition
@@ -193,3 +194,70 @@ corrections. It verified the source/fixture logic and independently checked the
 three golden command layouts against the pinned source; build and sanitizer
 execution evidence comes from main/Terra. Approval covers the staged groundwork,
 not private gameplay activation.
+
+## Staged transport and ACK checkpoint (2026-09-22)
+
+The existing `cl_input.c` owner now contains the pinned duration sampler,
+current-plus-two command history and bounded transport ACK writer/flush. The
+existing `cl_parse.c` owner receives extended movement ACK metadata and Gorilla
+state only when `cl.protocol_qsvr == QSVR_PROTOCOL_PINNED`. The extended payload
+is mandatory for that selection; PEXT bits cannot admit or downgrade it.
+Full-payload validation precedes accepted-baseline changes. Stale ACKs cannot
+restore old authority/epochs; equal ACKs still carry metadata changes and can
+reset presentation smoothing. No production admission setter or connect mode
+enables this staged path.
+
+### Senior findings carried into the activation gate
+
+| Finding | Disposition |
+| --- | --- |
+| Enlarging the ACK array must not silently change public queue policy. | Public replacement frames still admit at most eight queued ACKs. The private queue holds 128, flushes at eight, suppresses adjacent duplicates and preserves the existing tail on overflow. |
+| ACK metadata is not proof of an authoritative replay baseline. | Accepted command/epoch/Gorilla metadata is staged. Matching recoverable owner snapshots, movement-stat import and replay remain required before prediction is activated. |
+| Trusted Gorilla motion depends on the final command duration and sequence. | Wire fields and synthetic sender fixtures do not constitute a live producer. Integrate the real Gorilla author after duration and sequence assignment, before history storage, so redundant commands retain their original authored result. |
+| Client pacing changes must preserve the donor server schedule. | The host guard limits private `CL_SendCmd` to once per host/render frame while retaining the donor server catch-up loop. This is a staging measure; local-server scheduling and movement parity remain unproven. |
+
+The diagnostic follow-up found that `svc_strings` has 128 slots but only entries
+0–56 are populated. A valid private svc 57 followed by an unknown command passed
+a null previous-name pointer to `%s`; existing extension opcodes also lacked
+names in shownet/error diagnostics. A single bounded lookup now supplies a
+non-null fallback, retains known names and includes the previous numeric opcode
+in the error. There is no wire or dispatch change in this follow-up. The focused
+production-lookup regression covers svc 57 followed by malformed opcode 127,
+other high IDs, null entries and negative/out-of-range inputs; it does not run
+the entire server-message dispatcher.
+
+### Verification and remaining reference work
+
+The sender, move-ACK and solid fixtures pass AddressSanitizer and
+UndefinedBehaviorSanitizer with real MSG, codec and collision sources and
+`--gc-sections`. Their declared diagnostic/network/presentation stand-ins do not
+prove gameplay or actual smoothing behavior. Exact commands, source lists and
+fixture limitations are in [tests/README.md](../tests/README.md#staged-transport-checkpoint-reproducible-checks).
+
+The requested Ninja directory was recreated with Meson, SDL3 enabled and
+`debugoptimized`. The first build exposed a source-only `VectorClear` call in
+the real smoothing reset. A WebGPT worker replaced it with the donor's existing
+`VectorCopy(vec3_origin, ...)`; the orchestrator independently confirmed the
+consolidated Ninja build exits 0. No compatibility macro layer was introduced.
+Astra's final bounded source review found no remaining actionable findings in
+the ACK parser and guarded diagnostic lookup. It did not execute the tests.
+
+The movement wire reference remains
+`1327f795cc2e3a8e4f7c9d68e31d64383930cc00`. Newer source-master changes
+`c1b5f2ab` (spatial ambience, weapon identity and VR HUD spacing) and `2857e8b9`
+(VRIK pose reset across map transitions) are pending HUD/audio/weapons/VRIK
+migration work. They do not redefine this pinned movement-wire comparison.
+No live dedicated-peer movement/fire, controller/headset, Windows or ARM
+qualification is claimed by this checkpoint.
+
+### Prediction reference correction (user direction, 2026-09-22)
+
+Use QSS-M `03a498aabc411e2e739adc815c5536b161b9626e` directly for the generic
+prediction/replay and movement baseline. Earlier sections record how groundwork
+was staged; they do not authorize treating the fork's earlier generic prediction
+port as the reference for the next implementation. Compare the staged PM solver
+with QSS-M, reusing QSS-M code and retaining only justified VR changes.
+The fork remains the behavior reference for VR wire data, explicit duration and
+authority/epoch rules, roomscale, tracked weapon poses and Gorilla state/authoring.
+Source provenance and actual dedicated-peer behavior must distinguish these
+layers. The existing admission/owner-state activation gates still apply.

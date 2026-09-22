@@ -1081,6 +1081,7 @@ static void _Host_Frame (double time)
 	M_UpdateMouse ();
 
 	// Run the server+networking (client->server->client), at a different rate from everyt
+	qboolean private_move_sent = false;
 	while ((host_netinterval == 0) || (accumtime >= host_netinterval))
 	{
 		double realframetime = host_frametime;
@@ -1109,7 +1110,13 @@ static void _Host_Frame (double time)
 				host_frametime = host_framerate.value;
 		}
 
-		CL_SendCmd ();
+		// Preserve donor server catch-up, but sample private client duration only
+		// once per rendered frame, matching the inherited paced sender.
+		if (cl.protocol_qsvr != QSVR_PROTOCOL_PINNED || !private_move_sent)
+		{
+			CL_SendCmd ();
+			private_move_sent = true;
+		}
 		if (sv.active)
 		{
 			PR_SwitchQCVM (&sv.qcvm);

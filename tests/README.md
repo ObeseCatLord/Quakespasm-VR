@@ -271,3 +271,95 @@ Keep assertions enabled. Console/error stand-ins and link-time section collectio
 omit unrelated engine owners; the codecs and wire primitives are not mocked.
 These checks do not qualify private admission, clock sampling, redundant command
 history, completed-simulation ACKs, replay or networked gameplay.
+
+## Private command history and packet delivery
+
+`private_send_fixture.c` executes the real sender, command writer/reader and
+message primitives, capturing only the socket send and disconnect boundaries.
+It checks initial command suppression, current-plus-two history, retained
+fire/impulse events, monotonic duration and fractional carry, capped long hitches,
+16-bit sequence wrapping and a full three-command VR payload within the MTU.
+Transport ACKs must remain ordered and queued when the bundle leaves insufficient
+space. It also checks public framing despite the colliding extension mask,
+demo suppression and send-error disconnect handling.
+
+```sh
+cc -std=gnu11 -DUSE_SDL3 -D_GNU_SOURCE -Wno-unused-parameter \
+  -ffunction-sections -fdata-sections tests/private_send_fixture.c \
+  Quake/sv_user.c Quake/common.c Quake/mathlib.c -Wl,--gc-sections \
+  $(pkg-config --cflags --libs sdl3) -lm -o /tmp/quakespasm-private-send
+/tmp/quakespasm-private-send
+```
+
+Add `-fsanitize=address,undefined -fno-omit-frame-pointer` for sanitizer checks.
+This does not prove packet-loss behavior against a real server, private host-loop
+pacing, actual tracking producers or prediction. Those remain integration gates.
+
+## Private movement ACKs and command diagnostics
+
+`private_moveack_fixture.c` includes the production ACK parser and links real
+MSG readers. It checks accepted/stale/equal ACKs, 16-bit expansion, the QuakeC
+command frame, epoch-triggered smoothing reset calls, Gorilla capability gates,
+state sequence/generation, the pinned 4096-model limit, nonfinite state rejection,
+every declared truncated prefix of the extended Gorilla payload, and queue
+duplicate/overflow handling. Smoothing reset and flush calls are fixture spies;
+the fixture does not execute the actual smoothing reset or network flush.
+Truncated prefixes retain a larger backing array, so they check logical message
+bounds rather than physically truncated allocations.
+
+The command-name regression feeds literal svc 57/ACK bytes followed by opcode
+127 through the real MSG/ACK owners, then calls the production diagnostic lookup.
+It also covers existing extension IDs, null table entries, negative IDs and
+out-of-range IDs. Both shownet and the malformed-command branch use this lookup.
+This is a focused lookup/ACK regression, not a full `CL_ParseServerMessage`
+dispatcher integration test. The 128-slot table has names only through 56:
+the original svc 57 failure was a null `%s` argument, not an out-of-bounds table
+read on that path. The lookup guards both cases and preserves known names.
+
+## Staged transport checkpoint: reproducible checks
+
+Run from the `quakespasm-2.0` worktree on branch `2.0`, with assertions enabled.
+On 2026-09-22 the sender, move-ACK and solid fixtures all passed ASan/UBSan with
+the following commands. Section collection omits unrelated engine owners;
+parsing, packet codecs and collision code remain production implementations.
+
+```sh
+set -e
+for fixture in send moveack solid; do
+  case "$fixture" in
+    send) sources='Quake/sv_user.c Quake/common.c Quake/mathlib.c' ;;
+    moveack) sources='Quake/common.c' ;;
+    solid) sources='Quake/common.c Quake/mathlib.c Quake/pmove.c' ;;
+  esac
+  cc -std=gnu11 -DUSE_SDL3 -D_GNU_SOURCE -Wno-unused-parameter \
+    -ffunction-sections -fdata-sections -fsanitize=address,undefined \
+    -fno-sanitize-recover=all -fno-omit-frame-pointer \
+    "tests/private_${fixture}_fixture.c" $sources -Wl,--gc-sections \
+    $(pkg-config --cflags --libs sdl3) -lm -o "/tmp/quakespasm-private-${fixture}-asan"
+  "/tmp/quakespasm-private-${fixture}-asan"
+done
+```
+
+The previous temporary build directory was absent at this checkpoint. Recreate
+it if absent, then run the requested consolidated build:
+
+```sh
+if [ ! -f /tmp/quakespasm-2.0-bootstrap-build/build.ninja ]; then
+  meson setup /tmp/quakespasm-2.0-bootstrap-build . \
+    -Duse_sdl3=enabled --buildtype=debugoptimized \
+    > /tmp/qsvr-ack-final-setup.log 2>&1
+fi
+ninja -C /tmp/quakespasm-2.0-bootstrap-build -j12 \
+  > /tmp/qsvr-ack-final-build.log 2>&1
+```
+
+Result on 2026-09-22: the sender, move-ACK and solid sanitizer fixtures passed.
+The consolidated Linux build also passes after the real smoothing reset was
+adapted to the donor's `VectorCopy(vec3_origin, ...)` operation. The orchestrator
+confirmed Ninja exit 0. The move-ACK fixture spies on smoothing reset calls;
+its pass alone does not validate actual smoothing presentation.
+
+These checks do not establish private admission, a matching authoritative owner
+snapshot, replay, live Gorilla production, host scheduling parity or dedicated
+server movement/fire. See the staged transport findings in
+[`migration-movement-review.md`](../docs/migration-movement-review.md).

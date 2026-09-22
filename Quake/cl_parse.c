@@ -88,6 +88,13 @@ const char *svc_strings[128] = {
 };
 #define NUM_SVC_STRINGS countof (svc_strings)
 
+static const char *CL_ServerCommandName (int cmd)
+{
+	if ((unsigned int)cmd < NUM_SVC_STRINGS && svc_strings[cmd])
+		return svc_strings[cmd];
+	return "unknown";
+}
+
 static qboolean warn_about_nehahra_protocol; // johnfitz
 
 extern vec3_t v_punchangles[2];		  // johnfitz
@@ -645,6 +652,57 @@ static void CL_EntitiesDeltaed (void)
 	}
 }
 
+static int CL_ExpandMoveAck16 (int ack16)
+{
+	int ack;
+
+	ack = (cl.movemessages & ~0xffff) | (ack16 & 0xffff);
+	if (ack > cl.movemessages)
+		ack -= 0x10000;
+	return ack;
+}
+
+static qboolean CL_UpdateMoveAck (int ack)
+{
+	if (ack < cl.ackedmovemessages)
+	{
+		cl.net_move_stale_acks++;
+		return false;
+	}
+	if (ack == cl.ackedmovemessages)
+		return true;
+
+	if (ack > cl.ackedmovemessages)
+		cl.net_move_acks++;
+	cl.ackedmovemessages = ack;
+	if (cl.qcvm.extglobals.servercommandframe)
+		*cl.qcvm.extglobals.servercommandframe = cl.ackedmovemessages;
+	return true;
+}
+
+static qboolean CL_ParseMoveAckPayload (void);
+
+static void CLFTE_QueueAckFrame (int sequence)
+{
+	if (!cls.netcon || sequence < 0)
+		return;
+	if (cl.ackframes_count > 0 && cl.ackframes[cl.ackframes_count - 1] == sequence)
+		return;
+	if (cl.ackframes_count < countof (cl.ackframes))
+	{
+		cl.ackframes[cl.ackframes_count++] = sequence;
+		if (cl.ackframes_count >= CL_ACKFRAME_FLUSH_THRESHOLD)
+			CL_FlushAckFrames ();
+		return;
+	}
+
+	// Keep queued ACKs contiguous: replacing the tail invents packet loss.
+	cl.net_snapshot_ack_queue_overflows++;
+	if (cl.net_snapshot_ack_queue_overflows <= 4)
+		Con_DPrintf ("replacement ack queue full; preserving %u queued contiguous acks, dropping ack %d\n",
+			cl.ackframes_count, sequence);
+}
+
 static void CLFTE_ParseEntitiesUpdate (void)
 {
 	int		  newnum;
@@ -652,16 +710,41 @@ static void CLFTE_ParseEntitiesUpdate (void)
 	entity_t *ent;
 	float	  newtime;
 
-	// so the server can know when we got it, and guess which frames we didn't get
-	if (cls.netcon && cl.ackframes_count < countof (cl.ackframes))
-		cl.ackframes[cl.ackframes_count++] = NET_QSocketGetSequenceIn (cls.netcon);
-
-	if (cl.protocol_pext2 & PEXT2_PREDINFO)
+	if (cl.protocol_qsvr == QSVR_PROTOCOL_PINNED)
 	{
-		int seq = (cl.movemessages & 0xffff0000) | (unsigned short)MSG_ReadShort (); // an ack from our input sequences. strictly ascending-or-equal
-		if (seq > cl.movemessages)
-			seq -= 0x10000; // check for cl.movemessages overflowing the low 16 bits, and compensate.
-		cl.ackedmovemessages = seq;
+		const int frame_sequence = cls.netcon ? NET_QSocketGetSequenceIn (cls.netcon) : -1;
+
+		CLFTE_QueueAckFrame (frame_sequence);
+		if (frame_sequence >= 0 && cl.net_snapshot_have && frame_sequence > cl.net_snapshot_sequence + 1)
+		{
+			cl.net_snapshot_drops += frame_sequence - cl.net_snapshot_sequence - 1;
+			Con_DPrintf ("replacement frame gap old=%d new=%d missing=%d\n",
+				cl.net_snapshot_sequence, frame_sequence,
+				frame_sequence - cl.net_snapshot_sequence - 1);
+		}
+		cl.net_snapshot_have = true;
+		if (frame_sequence >= 0)
+			cl.net_snapshot_sequence = frame_sequence;
+		cl.net_snapshot_packets++;
+
+		if (!CL_ParseMoveAckPayload ())
+			return;
+	}
+	else
+	{
+		if (cl.protocol_qsvr)
+			Host_Error ("Unsupported private replacement layout %u", cl.protocol_qsvr);
+
+		// Public replacement deltas retain the donor's short ACK and eight-frame queue policy.
+		if (cls.netcon && cl.ackframes_count < CL_ACKFRAME_FLUSH_THRESHOLD)
+			cl.ackframes[cl.ackframes_count++] = NET_QSocketGetSequenceIn (cls.netcon);
+		if (cl.protocol_pext2 & PEXT2_PREDINFO)
+		{
+			int seq = (cl.movemessages & 0xffff0000) | (unsigned short)MSG_ReadShort ();
+			if (seq > cl.movemessages)
+				seq -= 0x10000;
+			cl.ackedmovemessages = seq;
+		}
 	}
 
 	newtime = MSG_ReadFloat ();
@@ -1797,6 +1880,150 @@ static void CL_ParseStatString (int stat, const char *str)
 	// hud doesn't know/care about any of these strings so don't bother invalidating anything.
 }
 
+static qboolean CL_ParseMoveAckPayload (void)
+{
+	int ack16, flags, authority, mode_epoch, discontinuity_epoch, reason;
+	int state_sequence = -1;
+	unsigned int motion_generation = 0;
+	int hand, axis;
+	vr_gorilla_state_t gorilla_state;
+
+	if (cl.protocol_qsvr != QSVR_PROTOCOL_PINNED ||
+		net_message.cursize - msg_readcount < 2)
+	{
+		msg_badread = true;
+		return false;
+	}
+	ack16 = MSG_ReadShort () & 0xffff;
+	if (net_message.cursize - msg_readcount < 7)
+	{
+		msg_badread = true;
+		return false;
+	}
+
+	flags = MSG_ReadByte ();
+	authority = MSG_ReadByte ();
+	mode_epoch = MSG_ReadShort () & 0xffff;
+	discontinuity_epoch = MSG_ReadShort () & 0xffff;
+	reason = MSG_ReadByte ();
+	if (flags & ~(MOVEACK_FLAG_AUTHORITATIVE | MOVEACK_FLAG_PREDICTION_ALLOWED |
+		MOVEACK_FLAG_DISCONTINUITY | MOVEACK_FLAG_VR_GORILLA | MOVEACK_FLAG_GORILLA_TRUSTED) ||
+		authority < MOVE_AUTHORITY_UNKNOWN || authority > MOVE_AUTHORITY_PMOVE_QC_COMMAND)
+	{
+		msg_badread = true;
+		return false;
+	}
+	if (flags & MOVEACK_FLAG_GORILLA_TRUSTED)
+	{
+		if (!cl.vr_gorilla_trusted_cap_sent || net_message.cursize - msg_readcount < 4)
+		{
+			msg_badread = true;
+			return false;
+		}
+		motion_generation = (unsigned int)MSG_ReadLong ();
+	}
+	memset (&gorilla_state, 0, sizeof (gorilla_state));
+	if (flags & MOVEACK_FLAG_VR_GORILLA)
+	{
+		if (!cl.vr_gorilla_supported || net_message.cursize - msg_readcount < 4 + 3 + 18 * 4 + 16)
+		{
+			msg_badread = true;
+			return false;
+		}
+		state_sequence = MSG_ReadLong ();
+		gorilla_state.initialized = (unsigned char)MSG_ReadByte ();
+		gorilla_state.touching = (unsigned char)MSG_ReadByte ();
+		gorilla_state.recovering = (unsigned char)MSG_ReadByte ();
+		for (hand = 0; hand < 2; hand++)
+			for (axis = 0; axis < 3; axis++)
+				gorilla_state.anchor[hand][axis] = MSG_ReadFloat ();
+		for (hand = 0; hand < 2; hand++)
+			for (axis = 0; axis < 3; axis++)
+				gorilla_state.recovery_offset[hand][axis] = MSG_ReadFloat ();
+		for (axis = 0; axis < 3; axis++)
+			gorilla_state.velocity[axis] = MSG_ReadFloat ();
+		for (axis = 0; axis < 3; axis++)
+			gorilla_state.origin[axis] = MSG_ReadFloat ();
+		for (hand = 0; hand < 2; hand++)
+			gorilla_state.surface[hand] = MSG_ReadLong ();
+		for (hand = 0; hand < 2; hand++)
+			gorilla_state.surface_model[hand] = (unsigned int)MSG_ReadLong ();
+		if (state_sequence < 0 || gorilla_state.initialized > 1 ||
+			(gorilla_state.touching & ~VR_GORILLA_HANDS) ||
+			(gorilla_state.recovering & ~VR_GORILLA_HANDS))
+		{
+			msg_badread = true;
+			return false;
+		}
+		for (hand = 0; hand < 2; hand++)
+			if (gorilla_state.surface[hand] < 0 || gorilla_state.surface[hand] >= MAX_EDICTS ||
+				gorilla_state.surface_model[hand] >= QSVR_MODEL_LIMIT ||
+				(!gorilla_state.surface[hand] && gorilla_state.surface_model[hand]) ||
+				(gorilla_state.surface[hand] && !gorilla_state.surface_model[hand]))
+			{
+				msg_badread = true;
+				return false;
+			}
+		for (hand = 0; hand < 2; hand++)
+			for (axis = 0; axis < 3; axis++)
+				if (!isfinite (gorilla_state.anchor[hand][axis]) ||
+					!isfinite (gorilla_state.recovery_offset[hand][axis]))
+				{
+					msg_badread = true;
+					return false;
+				}
+		for (hand = 0; hand < 2; hand++)
+			if (DotProduct (gorilla_state.recovery_offset[hand], gorilla_state.recovery_offset[hand]) >
+				VR_GORILLA_MAX_REACH * VR_GORILLA_MAX_REACH)
+			{
+				msg_badread = true;
+				return false;
+			}
+		for (axis = 0; axis < 3; axis++)
+			if (!isfinite (gorilla_state.velocity[axis]) || !isfinite (gorilla_state.origin[axis]))
+			{
+				msg_badread = true;
+				return false;
+			}
+	}
+
+	/* Validate the whole payload before moving the accepted replay baseline.
+	 * Stale ACKs must not restore metadata from before a mode change. */
+	if (!CL_UpdateMoveAck (CL_ExpandMoveAck16 (ack16)))
+		return true;
+	/* Equal ACKs still carry authority and epoch changes. Reset only the
+	 * presentation smoothing; replay retains the new baseline epochs. */
+	if (!(flags & MOVEACK_FLAG_PREDICTION_ALLOWED) || (move_authority_t)authority != cl.move_ack_authority ||
+		mode_epoch != cl.move_ack_mode_epoch || discontinuity_epoch != cl.move_ack_discontinuity_epoch)
+		CL_ResetPredictionSmoothing ();
+
+	cl.move_ack_authority = (move_authority_t)authority;
+	cl.move_ack_prediction_allowed = (flags & MOVEACK_FLAG_PREDICTION_ALLOWED) != 0;
+	cl.move_ack_mode_epoch = (unsigned short)mode_epoch;
+	cl.move_ack_discontinuity_epoch = (unsigned short)discontinuity_epoch;
+	cl.move_ack_discontinuity_reason = (unsigned char)reason;
+	cl.vr_gorilla_motion_generation_valid = (flags & MOVEACK_FLAG_GORILLA_TRUSTED) != 0;
+	cl.vr_gorilla_motion_generation = motion_generation;
+	if (flags & MOVEACK_FLAG_VR_GORILLA)
+	{
+		cl.vr_gorilla_state = gorilla_state;
+		cl.vr_gorilla_state_sequence = state_sequence;
+		cl.vr_gorilla_state_valid = true;
+	}
+	else
+	{
+		memset (&cl.vr_gorilla_state, 0, sizeof (cl.vr_gorilla_state));
+		cl.vr_gorilla_state_sequence = -1;
+		cl.vr_gorilla_state_valid = false;
+	}
+	return !msg_badread;
+}
+
+static void CL_ParseMoveAck (void)
+{
+	CL_ParseMoveAckPayload ();
+}
+
 /*
 =====================
 CL_ParseServerMessage
@@ -1860,16 +2087,13 @@ void CL_ParseServerMessage (void)
 			continue;
 		}
 
-		if (cmd < (int)NUM_SVC_STRINGS)
-		{
-			SHOWNET (svc_strings[cmd]);
-		}
+		SHOWNET (CL_ServerCommandName (cmd));
 
 		// other commands
 		switch (cmd)
 		{
 		default:
-			Host_Error ("Illegible server message %d, previous was %s", cmd, svc_strings[lastcmd]); // johnfitz -- added svc_strings[lastcmd]
+			Host_Error ("Illegible server message %d, previous was %s (%d)", cmd, CL_ServerCommandName (lastcmd), lastcmd);
 			break;
 
 		case svc_nop:
@@ -2166,6 +2390,11 @@ void CL_ParseServerMessage (void)
 			break;
 		case svc_localsound:
 			CL_ParseLocalSound ();
+			break;
+		case QSVR_SVC_MOVEACK:
+			if (cl.protocol_qsvr != QSVR_PROTOCOL_PINNED)
+				Host_Error ("Received private move ACK without the pinned private layout");
+			CL_ParseMoveAck ();
 			break;
 		case svcdp_trailparticles:
 			if (!cl.protocol_particles)

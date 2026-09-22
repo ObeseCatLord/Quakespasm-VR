@@ -34,6 +34,9 @@ void CL_SignonReply (void)
 {
 	abort ();
 }
+// This fixture exercises public removal packets, not private ACK traffic.
+void CL_ResetPredictionSmoothing (void) { abort (); }
+void CL_FlushAckFrames (void) { abort (); }
 static jmp_buf	parse_error;
 static qboolean expect_error;
 void			Host_Error (const char *fmt, ...)

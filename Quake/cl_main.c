@@ -118,6 +118,14 @@ void CL_FreeState (void)
 	memset (&cl, 0, sizeof (cl));
 }
 
+// Pinned prediction presentation reset; epoch/replay state remains separately owned.
+void CL_ResetPredictionSmoothing (void)
+{
+	VectorCopy (vec3_origin, cl.prediction_error);
+	cl.prediction_error_time = 0;
+	cl.prediction_error_sequence = -1;
+}
+
 /*
 =====================
 CL_ClearState
@@ -132,6 +140,8 @@ void CL_ClearState (void)
 
 	// wipe the entire cl structure
 	CL_FreeState ();
+	CL_ResetPredictionSmoothing ();
+	cl.vr_gorilla_state_sequence = -1;
 
 	SZ_Clear (&cls.message);
 

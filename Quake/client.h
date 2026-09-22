@@ -162,8 +162,32 @@ typedef struct
 								 // doesn't accidentally do something the
 								 // first frame
 	int		  ackedmovemessages; // echo of movemessages from the server.
+	// Pinned private movement state; public protocol still uses its donor path.
+	move_authority_t move_ack_authority;
+	qboolean move_ack_prediction_allowed;
+	unsigned short move_ack_mode_epoch, move_ack_discontinuity_epoch;
+	unsigned char move_ack_discontinuity_reason;
+	double move_msec_sample_time, move_msec_fractional_carry;
+	qboolean move_msec_sample_valid;
+	vec3_t prediction_error;
+	double prediction_error_time;
+	int prediction_error_sequence;
+	int net_move_acks, net_move_stale_acks;
+	int net_move_packets_sent, net_move_cmds_sent, net_move_last_packet_cmds;
+	unsigned long long net_move_msec_generated;
+	int net_snapshot_sequence, net_snapshot_packets, net_snapshot_drops;
+	int net_snapshot_acks_sent, net_snapshot_ack_queue_overflows;
+	qboolean net_snapshot_have;
+	qboolean vr_gorilla_supported, vr_gorilla_allowed, vr_gorilla_cap_sent;
+	qboolean vr_gorilla_trusted_supported, vr_gorilla_trusted_cap_sent;
+	qboolean vr_gorilla_state_valid;
+	int vr_gorilla_state_sequence;
+	vr_gorilla_state_t vr_gorilla_state;
+	qboolean vr_gorilla_motion_generation_valid;
+	unsigned int vr_gorilla_motion_generation;
 	usercmd_t movecmds[64];		 // ringbuffer of previous movement commands (journal for prediction)
 #define MOVECMDS_MASK (countof (cl.movecmds) - 1)
+	usercmd_t cmd; // last private command sent, with sampled duration and tracking
 	usercmd_t pendingcmd; // accumulated state from mice+joysticks.
 
 	// information for local display
@@ -271,7 +295,9 @@ typedef struct
 		const char *name;
 		int			index;
 	} local_particle_precache[MAX_PARTICLETYPES];
-	int			 ackframes[8]; // big enough to cover burst
+#define CL_ACKFRAME_HISTORY 128
+#define CL_ACKFRAME_FLUSH_THRESHOLD 8
+	int ackframes[CL_ACKFRAME_HISTORY]; // private split-snapshot bursts; public admission remains eight
 	unsigned int ackframes_count;
 	qboolean	 requestresend;
 	qboolean	 sendprespawn;
@@ -440,6 +466,9 @@ void Chase_Init (void);
 void TraceLine (vec3_t start, vec3_t end, vec3_t impact);
 void Chase_UpdateForClient (void);	// johnfitz
 void Chase_UpdateForDrawing (void); // johnfitz
+
+void CL_ResetPredictionSmoothing (void);
+void CL_FlushAckFrames (void);
 
 // Body codec only: caller must admit the private dialect before using this.
 void CL_WritePrivateUsercmd (sizebuf_t *buf, const usercmd_t *cmd, unsigned int protocolflags, unsigned int capabilities);

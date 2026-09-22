@@ -14,7 +14,8 @@ Behavioral references:
 
 - Inherited base: `8c5a6007a60098b6a5b5c5b552def70e1238a852`.
 - Original product snapshot: `7bc466b594e7a7e584dc47879eb6c00f971b01b1`.
-- Current product authority: `1327f795cc2e3a8e4f7c9d68e31d64383930cc00`; includes four newer fixes/package/license commits missing from the OpenXR pin.
+- Pinned movement-wire authority: `1327f795cc2e3a8e4f7c9d68e31d64383930cc00`; includes four fixes/package/license commits missing from the OpenXR pin.
+- Newer product-master changes `c1b5f2ab` (spatial ambience, weapon identity and VR HUD spacing) and `2857e8b9` (VRIK map-transition reset) remain pending HUD/audio/weapons/VRIK migration. The movement-wire pin is unchanged.
 - Migration source: `3080841333fa94000df7e1fb9e549c7158685dd6`.
 - The original worktree's 13 uncommitted files were copied with a binary patch
   and SHA-256 manifest into the shared Git directory's local-only
@@ -26,7 +27,7 @@ The [complete-scope feature map](migration-feature-map.md) is the current migrat
 [migration-preservation.csv](migration-preservation.csv) now covers 905 unique paths, extending the original 904-path snapshot with the current master delta. It retains old blob/WIP evidence and adds current-master blobs and feature routing. Exact source anchors and mechanical module routes are labeled separately. [History](migration-history-index.csv) and [public-interface](migration-interface-index.csv) indexes make omissions reviewable. These are scope/audit artifacts, **not proof of completed behavioral integration**. Historical deletions are reviewed rather than restored blindly; preserved WIP is not automatically accepted release behavior.
 
 The sections below record successive checkpoints. The latest implemented slice
-is **Private command codecs and collision bounds**; earlier limitations describe their
+is **Staged private transport and ACKs**; earlier limitations describe their
 respective commits, not the current head. None closes the full P1 gameplay gate.
 
 ## First source checkpoint
@@ -334,9 +335,51 @@ and [local verification instructions](../tests/README.md) for scope and results.
 The final Linux executable builds; both codec/collision fixtures pass with
 AddressSanitizer and UndefinedBehaviorSanitizer.
 
-Private admission, command pacing/history, completed-simulation acknowledgments,
-authoritative state and replay remain the next coupled integration work. This
+At this codec checkpoint, private admission, command pacing/history,
+completed-simulation acknowledgments, authoritative state and replay remained
+the next coupled integration work. The staged transport checkpoint below adds
+partial implementations. This
 checkpoint does not establish networked movement, controller or headset parity.
+
+## Staged private transport and ACKs
+
+The existing input/parser owners now stage pinned command duration and redundant
+history, ordered transport ACK drain, and atomic movement-ACK metadata/Gorilla
+state parsing. Public replacement ACK admission remains eight entries; private
+capacity is 128 with an eight-entry flush threshold. Explicit pinned selection
+is required; neither FTE bits nor svc 57 alone admits the private layout. No
+production admission setter or new connection mode is enabled.
+
+The host guard preserves donor server catch-up while sampling private client
+commands once per host/render frame. Local-server parity remains unproven. Real
+Gorilla authoring must run after duration and sequence assignment and before
+history storage; synthetic wire payloads do not qualify that producer. Received
+ACK metadata likewise does not prove a matching recoverable owner snapshot or
+prediction replay. Those remain coupled activation requirements.
+
+On 2026-09-22 the sender, move-ACK and solid production-source fixtures passed
+ASan/UBSan. A narrow diagnostic fix prevents null command names above svc 56
+from reaching shownet/error `%s` formatting, with bounded fallback for invalid
+indices and a focused production-lookup regression. This is not a full service
+dispatcher or live-peer test. The [movement review](migration-movement-review.md#staged-transport-and-ack-checkpoint-2026-09-22)
+records the senior findings and the [test instructions](../tests/README.md#staged-transport-checkpoint-reproducible-checks)
+contain exact reproducible build/sanitizer commands and fixture limitations.
+
+The consolidated Linux build passes after replacing the source-only
+`VectorClear` with the donor's `VectorCopy(vec3_origin, ...)` in the real
+smoothing reset. The orchestrator confirmed Ninja exit 0. The WebGPT worker
+applied the code fix but disconnected before returning its report; build status
+was verified independently. The sender/ACK/collision sanitizer results above
+remain focused checks, not a live gameplay qualification.
+
+For the next implementation, QSS-M commit
+`03a498aabc411e2e739adc815c5536b161b9626e` is the primary reference for generic
+predictive movement, the movement solver and replay. The user identified the
+fork's generic prediction as an earlier weaker-model port; it is not the
+implementation authority. The fork remains the reference for VR networking,
+explicit command durations/authority epochs, roomscale, tracked weapons and
+Gorilla behavior. Audit the staged solver against QSS-M and preserve justified
+VR additions instead of copying the fork's generic prediction wholesale.
 
 ## Next integration gates
 
