@@ -97,6 +97,9 @@ static vec3_t tracked_raw_angles, tracked_withheld_aim;
 static float tracked_yaw;
 static float tracked_local_yaw;
 static qboolean tracked_aim_ready;
+/* View-owner lifetime for the body-relative eye. Command samples can stop
+ * temporarily on focus loss without returning the eye to positional tracking. */
+static qboolean tracked_body_anchor;
 static qboolean tracked_reference_pending, tracked_readback_yaw, tracked_server_yaw_pending;
 static float tracked_server_yaw;
 static qboolean tracked_server_yaw_from_setangle;
@@ -121,6 +124,7 @@ static void V_TrackedAimModeChanged (cvar_t *var)
 void V_ResetTrackedAim (void)
 {
 	tracked_local_yaw = 0;
+	tracked_body_anchor = false;
 	VR_InputInvalidateMotion ();
 	tracked_aim_ready = false;
 	base_player_view = base_angles_valid = false;
@@ -303,18 +307,24 @@ qboolean V_TrackedMappingYaw (float *yaw)
 	return true;
 }
 
-/* Once the private/local movement command owns horizontal HMD displacement,
- * the player-eye camera must not add the same displacement from its retained
- * tracking reference. Pending covers a no-send preview before the first send;
- * cmd covers the interval after pending consumption. Other aim modes and
- * public peers keep their existing tracked camera placement. */
+/* Once the admitted private movement path has begun body-relative tracking,
+ * temporary focus/pose loss or a mode switch must not reapply the historical
+ * horizontal HMD displacement. Command tags only start this view ownership;
+ * they are not receipts for server movement or prediction. */
 qboolean V_TrackedBodyOwnsRoomscale (void)
 {
-	float yaw, viewheight;
-	return (cl.protocol_qsvr == QSVR_PROTOCOL_PINNED || sv.active) &&
+	float viewheight;
+	if (cl.protocol_qsvr != QSVR_PROTOCOL_PINNED)
+	{
+		tracked_body_anchor = false;
+		return false;
+	}
+	if (!cls.demoplayback && !cl.intermission &&
 		V_TrackedAimMode () == VR_AIMMODE_CONTROLLER &&
-		V_TrackedMappingYaw (&yaw) && V_TrackedPlayerBase (&viewheight) &&
-		(cl.pendingcmd.vr_active || cl.cmd.vr_active);
+		(cl.pendingcmd.vr_active || cl.cmd.vr_active))
+		tracked_body_anchor = true;
+	return tracked_body_anchor && !cls.demoplayback && !cl.intermission &&
+		V_TrackedPlayerBase (&viewheight);
 }
 
 qboolean V_TrackedMovementAngles (int mode, int physical_offhand, vec3_t angles)

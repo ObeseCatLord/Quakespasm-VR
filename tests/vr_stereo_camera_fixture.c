@@ -157,6 +157,23 @@ static void test_roomscale_eye_anchor (void)
 	R_PrepareStereoFrame ();
 	near_value (r_refdef.vieworg[1], base_y);
 	R_RestoreStereoView ();
+	// A lost input focus can clear fresh command tags while the runtime still
+	// renders a valid head pose. Never restore the historical translation.
+	cl.cmd.vr_active = false;
+	test_frame.focused = 0;
+	test_frame.devices[0].matrix[0][3] = .45f;
+	head_yaw (0);
+	assert (V_TrackedBodyOwnsRoomscale ());
+	R_PrepareStereoFrame ();
+	near_value (r_refdef.vieworg[1], base_y);
+	R_RestoreStereoView ();
+	test_frame.focused = 1;
+	vr_aimmode.value = VR_AIMMODE_HEAD_MYAW;
+	assert (V_TrackedBodyOwnsRoomscale ());
+	R_PrepareStereoFrame ();
+	near_value (r_refdef.vieworg[1], base_y);
+	R_RestoreStereoView ();
+	vr_aimmode.value = VR_AIMMODE_CONTROLLER;
 	// Public peers never acquire a body-motion anchor from a stale private cmd.
 	test_frame.devices[0].matrix[0][3] = .5f;
 	head_yaw (0);
@@ -170,6 +187,13 @@ static void test_roomscale_eye_anchor (void)
 	vr_aimmode.value = VR_AIMMODE_HEAD_MYAW;
 	assert (!V_TrackedBodyOwnsRoomscale ());
 	vr_aimmode.value = VR_AIMMODE_CONTROLLER;
+	cl.cmd.vr_active = true;
+	sv.active = true;
+	cl.protocol_qsvr = 0;
+	assert (!V_TrackedBodyOwnsRoomscale ()); // local server is not private-ready
+	sv.active = false;
+	cl.protocol_qsvr = QSVR_PROTOCOL_PINNED;
+	assert (V_TrackedBodyOwnsRoomscale ());
 	chase_active.value = 1;
 	V_CalcRefdef ();
 	assert (!V_TrackedBodyOwnsRoomscale ());

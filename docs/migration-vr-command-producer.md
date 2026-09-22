@@ -44,17 +44,47 @@ samples and collision-blocked movement. The pinned eye path removes current hori
 from the rendered eye (`vr.c:10090–10100`). Do not enable `vr_active` until this
 camera relation and the server gameplay proof are correct.
 
-The player-eye camera now has the narrow roomscale side of that anchor: when an
-admitted private peer (or the eventual local VR server) has a pending or last
-sent VR command in controller aim mode, the existing stereo preparation omits
-horizontal HMD offset and retains floor-height and per-eye IPD placement. The
-view owner decides this from existing command/view state; no independent camera
-or movement state was added. Before activation, public peers, desktop and
-other aim modes keep their previous camera behavior. The production camera
-fixture checks a blocked body step, an accepted body step, pending/send
-transition, reference change, vertical tracking, and public/chase guards.
+The player-eye camera now has the narrow roomscale side of that anchor: an
+admitted private peer can establish body-relative view ownership from a
+prepared controller-mode VR command. The view owner retains that ownership
+across temporary focus loss, missing command samples, recentering and mode
+changes, so the camera never reapplies historical horizontal HMD displacement.
+The existing stereo preparation then omits horizontal HMD offset and retains
+floor-height and per-eye IPD placement. The latch resets on client/view reset
+or loss of private admission; it does not claim the server accepted movement.
+The local `2.0` server is excluded because its private move receiver is not
+connected yet. Before activation, public peers and desktop keep their previous
+camera behavior. The production camera fixture checks blocked and accepted
+body steps, pending/send transition, focus loss, mode change, reference change,
+vertical tracking, public/local and chase guards.
 This does **not** yet settle the muzzle's shared origin or validate actual
 movement through a private server.
+
+The next producer slice must preserve the inherited grip-to-muzzle path. In
+the donor, `SetHandPos` subtracts the current head's horizontal tracking
+position from each controller before the mapped yaw rotation, then adds the
+player body and floor offset (`vr.c:9397–9410,10148–10156`). In OpenXR's
+right/up/back coordinate system, a hand one metre ahead of the head therefore
+has positive Quake forward displacement at zero mapped yaw; its horizontal
+displacement rotates with the same yaw used for roomscale. The donor adds the
+selected viewmodel's calibrated `muzzle_offset`, multiplied by
+`vr_gunmodelscale` and reflected in model space for left-handed play
+(`vr.c:6163–6168,6191–6229`). The new pure aim-offset rotation helper preserves
+the donor's `right * local.x + up * local.y + forward * local.z` arithmetic,
+but it does not itself select the weapon, reflect the muzzle, or place the hand.
+
+The canonical `vr_weapons.txt` has a `viewmodel` keyed entry and
+`muzzle_offset` for the vanilla shotgun, and mod files can override the same
+schema. Reuse the donor's parser/profile precedence through native
+`COM_LoadFile`/`Mem_Free` and `cl.viewent.model->name` adapters, rather than
+shipping a shotgun-only offset or a second weapon registry. The donor also
+has multiplayer and enhanced-model offsets, adjustment commands, and QuakeC
+source compensation; each needs its existing selection rule before general
+weapon activation. For a floor-referenced OpenXR frame, hand height follows
+the same floor offset as the player eye. For a LOCAL frame, eye height currently
+uses the stereo camera's retained vertical reference; hand height must share
+that reference before private VR commands are enabled there. No synthetic
+floor height should be introduced in the input adapter.
 
 ## Local Astra senior-review disposition
 
@@ -64,3 +94,6 @@ movement through a private server.
 | Roomscale plus retained camera translation would double-count HMD steps | Adopted as an activation gate. Keep this command preparation dormant while one shared head/body anchor is implemented and checked. |
 | Per-sample pending-total rejection invents net movement on a return step | Fixed. Preserve signed accumulation and qualify the whole command at preview/send; fixture covers `+10,+10,-10,-10`. |
 | Muzzle contract needs requested origin, projectile-source compensation and both QuakeC firing scopes | Adopted in the pinned-server proof and later `2.0` server port. Start with one calibrated vanilla weapon; do not claim general weapon parity from a packet fixture. |
+| Command-tag guard could restore old head translation during focus loss or a mode switch | Fixed within the existing view owner: body-relative ownership persists across transient input loss and mode changes; private-admission loss or client reset clears it. |
+| Local-server exception claimed body authority before the private decoder was wired | Removed from the camera guard. Local VR remains a later server-port gate. |
+| Camera fixture did not connect movement, prediction and both eyes | Adopted as an end-to-end proof gate against the unchanged pinned dedicated server once calibrated command production is wired. |
