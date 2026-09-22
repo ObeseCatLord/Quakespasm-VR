@@ -409,3 +409,33 @@ The probe covers later same-message ACKs, view changes, omission and malformed
 trailing payloads. These establish parser/association behavior, not live socket
 loss, command replay or gameplay parity. Private admission and replay remain
 in progress, and the migration goal remains open.
+
+### Pinned-peer connection admission — local Astra/max
+
+The prepared adapter extends the existing `connect` command with an explicit
+`connect <server> qsvr1` selection. A bare `connect` retains donor server
+autodiscovery. Selection belongs to `cls`, survives map-level `cl` clearing,
+and is cleared by disconnect before every new connection. The header must
+revalidate the exact pinned tuple before assigning `cl.protocol_qsvr`.
+This is the adapter design; runtime activation and gameplay verification are
+still pending at this checkpoint.
+
+A fresh local `gpt-6-astra` review ran with effective `max` effort independently
+verified from turn metadata. Main checked the load-bearing source claims
+against the donor command collector, connection discovery, service parser and
+pinned server writer.
+
+| Finding | Disposition |
+| --- | --- |
+| A later `svc_version` could retain the private discriminator while switching the base protocol | Adopted: require RMQ for that service while the private dialect is active; leave public handling intact. |
+| The proposed header predicate allowed unsupported RMQ flags | Adopted: require the fixed peer's full tuple—PEXT1 zero, PEXT2 `0xe9`, RMQ, and `PRFL_FLOATCOORD | PRFL_SHORTANGLE`—before admission. |
+| A `-qsvr1` argument is swallowed by the existing startup command collector | Adapted: use a trailing `qsvr1` selector, so both console and `+connect <server> qsvr1` use the same native command path. No command-line parser rewrite. |
+| Requiring a hostname removed bare `connect` discovery | Adopted: retain zero-argument public discovery and validate only the new optional selector. |
+| Connection lifetime and pre-admission header ordering | Confirmed: existing disconnect, map reset, demo startup and local map owners suffice; no additional connection state machine. |
+
+Acceptance requires an isolated migrated client and unchanged pinned dedicated
+peer using canonical game assets: signon, authoritative movement and firing,
+changelevel/re-signon, and reset isolation across failed/private/public/local
+connections and public demos. Malformed header and post-admission version
+checks complement that proof. Neither the review nor packet fixtures establish
+physical VR gameplay, private-demo parity, or live prediction correctness.
