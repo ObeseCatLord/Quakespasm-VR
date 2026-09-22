@@ -261,3 +261,40 @@ The fork remains the behavior reference for VR wire data, explicit duration and
 authority/epoch rules, roomscale, tracked weapon poses and Gorilla state/authoring.
 Source provenance and actual dedicated-peer behavior must distinguish these
 layers. The existing admission/owner-state activation gates still apply.
+
+### QSS-M solver audit — local Astra/max, 2026-09-22
+
+The final reviewer ran locally with verified `gpt-6-astra` / `max` settings.
+WebGPT implemented the bounded correction and fixtures; the orchestrator checked
+the review against pinned QSS-M and VR sources. Review scope was the staged
+solver and its adapters, not live replay or complete networking compatibility.
+
+| Recommendation | Disposition |
+| --- | --- |
+| Preserve the explicit VR ladder branch | Adopted. The proposed deletion was rejected during integration: non-VR ladder logic already matched QSS-M, while the pinned VR branch deliberately flattens pitch and converts forward input to climbing. |
+| Stop inferring VR from elevated jump speed | Adopted for the staged predicate. A mod's jump speed is not evidence of a VR command. Preserve the local-player exception as a blocking activation condition below. |
+| Restore QSS-M nonconsecutive touch behavior | Adopted: legacy single-step commands must preserve A→B→A impacts; explicit-duration commands retain the private once-per-command impact policy. |
+| Keep the safe-origin correctness fix and identify it separately | Adopted. QSS-M's position validator stores `pmove.origin`, but the fallback caller validates a different saved position. Retaining the validated `pos` avoids destroying that recovery location. |
+| Retain donor collision ownership and current helper placement | Adopted. No existing duplicate owner or incompatibility justifies a helper relocation, parallel solver authority or broader server rewrite. |
+
+Load-bearing evidence: QSS-M `03a498aa` `pmove.c:48` only suppresses adjacent
+touches; `pr_ext.c:1992` dispatches touches as impacts. Its `pmovetst.c:323`
+stores `pmove.origin` after validating `pos`. Pinned VR `1327f795`
+`cl_input.c:1003` tags controller-aim commands, whereas `sv_phys.c:5557` also
+recognizes the local VR player regardless of aim mode. The latter may receive
+VR jump speed with no controller wire flag. Before local prediction is enabled,
+carry that swimming policy through the real movement owner without fabricating
+controller tracking or changing wire semantics. Remote admission derives the
+VR-client identity from the accepted command (`sv_user.c:1236`).
+
+The retained adaptations and remaining scope are documented in
+[the solver provenance note](migration-qssm-pmove.md). These findings prohibit a
+blanket QSS-M parity claim. Waterjump launch scaling, replay/authoritative state,
+Gorilla authority and local-server behavior still need dedicated coverage.
+
+The final bounded Astra follow-up found no unresolved blocker for this staged
+patch. The implementation worker's final ASan/UBSan fixture run passed both hull
+modes, including the added touch/recovery and explicit-duration cases; the main
+agent had independently run the preceding ladder/swim fixture and reviewed the
+final additions. Astra reviewed source and documentation only. No full gameplay
+or exact-equivalence claim follows from these checks.

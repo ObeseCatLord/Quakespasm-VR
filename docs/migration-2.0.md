@@ -15,7 +15,7 @@ Behavioral references:
 - Inherited base: `8c5a6007a60098b6a5b5c5b552def70e1238a852`.
 - Original product snapshot: `7bc466b594e7a7e584dc47879eb6c00f971b01b1`.
 - Pinned movement-wire authority: `1327f795cc2e3a8e4f7c9d68e31d64383930cc00`; includes four fixes/package/license commits missing from the OpenXR pin.
-- Newer product-master changes `c1b5f2ab` (spatial ambience, weapon identity and VR HUD spacing) and `2857e8b9` (VRIK map-transition reset) remain pending HUD/audio/weapons/VRIK migration. The movement-wire pin is unchanged.
+- Newer product-master changes `c1b5f2ab` (spatial ambience, weapon identity and VR HUD spacing) and `2857e8b9` (VRIK map-transition reset) are now [inventoried with exact source anchors](migration-source-updates.md) and remain pending HUD/audio/weapons/VRIK migration. The movement-wire pin is unchanged.
 - Migration source: `3080841333fa94000df7e1fb9e549c7158685dd6`.
 - The original worktree's 13 uncommitted files were copied with a binary patch
   and SHA-256 manifest into the shared Git directory's local-only
@@ -27,7 +27,7 @@ The [complete-scope feature map](migration-feature-map.md) is the current migrat
 [migration-preservation.csv](migration-preservation.csv) now covers 905 unique paths, extending the original 904-path snapshot with the current master delta. It retains old blob/WIP evidence and adds current-master blobs and feature routing. Exact source anchors and mechanical module routes are labeled separately. [History](migration-history-index.csv) and [public-interface](migration-interface-index.csv) indexes make omissions reviewable. These are scope/audit artifacts, **not proof of completed behavioral integration**. Historical deletions are reviewed rather than restored blindly; preserved WIP is not automatically accepted release behavior.
 
 The sections below record successive checkpoints. The latest implemented slice
-is **Staged private transport and ACKs**; earlier limitations describe their
+is **QSS-M movement baseline correction**; earlier limitations describe their
 respective commits, not the current head. None closes the full P1 gameplay gate.
 
 ## First source checkpoint
@@ -380,6 +380,28 @@ implementation authority. The fork remains the reference for VR networking,
 explicit command durations/authority epochs, roomscale, tracked weapons and
 Gorilla behavior. Audit the staged solver against QSS-M and preserve justified
 VR additions instead of copying the fork's generic prediction wholesale.
+
+## QSS-M movement baseline correction
+
+The staged solver has been compared directly with QSS-M `03a498aa`, retaining
+the donor collision adapter and justified VR specializations. VR ladder movement
+still ignores head pitch for climbing. Elevated mod jump speed no longer serves
+as a proxy for a VR command. Legacy touch processing follows QSS-M's adjacent
+repeat rule, while private explicit-duration commands retain one impact per
+entity across substeps. The valid-position recovery fix remains intentional.
+
+The [provenance note](migration-qssm-pmove.md) inventories retained differences;
+the [local Astra/max review](migration-movement-review.md#qss-m-solver-audit--local-astramax-2026-09-22)
+records their disposition. The solver is still not linked into the game and
+prediction is not enabled. Local VR using head/mouse aim needs an explicit
+swimming policy before activation: the pinned local server recognizes those VR
+players even when their commands lack the controller-specific VR wire flag.
+
+The focused solver fixture passes ASan/UBSan with both donor hull implementations,
+including ordinary and explicit-duration movement, VR ladder/swim distinctions,
+touch ordering and valid-position recovery. This is source-level movement
+validation, not live dedicated-peer, QuakeC callback, headset or performance
+qualification. No Windows or ARM check was run in this slice.
 
 ## Next integration gates
 

@@ -196,9 +196,19 @@ you started when done. Keep raw logs local; they can contain device identifiers.
 real vkQuake hull functions in `world.c`. It covers walking/floor contact, jumping,
 frozen commands, once-per-command roomscale across substeps, outlier rejection,
 entity boxes, rotated brush normals, stationary/startsolid, water contents and source-equivalent raw clip leaves.
+It also checks inherited VR ladder pitch independence against the ordinary QSS-M
+ladder path, and raised-jump-speed non-VR swimming against explicit VR swimming.
+Both touch policies are checked through the production helper, including impact
+velocities; real collision and nudging exercise fallback to a distinct saved
+valid position. The fixture does not run QuakeC touch callbacks or waterjump
+launch scaling.
 Both slow and optimized hull implementations are selected explicitly; this
 fixture does not run cvar registration, so initializer strings alone do not
 activate the optimized path.
+
+The generic walking/jumping cases use the QSS-M `03a498aa` single-step path
+(`msec == 0`); private explicit-duration cases set `msec` separately. This keeps
+the upstream movement reference distinct from the VR wire's substep contract.
 
 ```sh
 cc -std=gnu11 -DUSE_SDL3 -D_GNU_SOURCE -Wall -Wextra -Werror \
@@ -208,6 +218,9 @@ cc -std=gnu11 -DUSE_SDL3 -D_GNU_SOURCE -Wall -Wextra -Werror \
   $(pkg-config --cflags --libs sdl3) -lm -o /tmp/quakespasm-pmove-fixture
 /tmp/quakespasm-pmove-fixture
 ```
+
+For the sanitizer check, add `-fsanitize=address,undefined
+-fno-sanitize-recover=all -fno-omit-frame-pointer` to that compile/link command.
 
 The collision geometry is constructed by the fixture. Traces and movement are
 production code; this is not a dedicated-server, network, tracked-controller or

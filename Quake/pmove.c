@@ -106,7 +106,9 @@ static float PM_CvarOrDefault (const cvar_t *var, float fallback)
 
 static qboolean PM_IsVRMove (void)
 {
-	return pmove.cmd.vr_active || movevars.jumpspeed > PM_VANILLA_JUMP_VELOCITY;
+	/* Keep VR swim/waterjump policy command-scoped. A generic mod may raise
+	 * jumpspeed without becoming a VR movement mode. */
+	return pmove.cmd.vr_active;
 }
 
 static float PM_VRJumpScale (void)
@@ -628,11 +630,20 @@ static void PM_AddTouchedEnt (int num)
 	if (pmove.numtouch == MAX_PHYSENTS)
 		return;
 
-	/* A move can now contain several deterministic substeps plus a room-scale
-	 * sweep.  Do not report the same impact once per substep. */
-	for (i = 0; i < pmove.numtouch; i++)
-		if (pmove.touchindex[i] == num)
+	/* Preserve QSS-M's adjacent-only touch filtering for inherited single-step
+	 * commands. Private duration commands span deterministic substeps and a
+	 * room-scale sweep, so suppress repeated impacts across the whole command. */
+	if (!pmove.cmd.msec)
+	{
+		if (pmove.numtouch && pmove.touchindex[pmove.numtouch - 1] == num)
 			return;
+	}
+	else
+	{
+		for (i = 0; i < pmove.numtouch; i++)
+			if (pmove.touchindex[i] == num)
+				return;
+	}
 
 	pmove.touchindex[pmove.numtouch] = num;
 	VectorCopy(pmove.velocity, pmove.touchvel[pmove.numtouch]);

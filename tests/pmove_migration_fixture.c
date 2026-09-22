@@ -58,9 +58,102 @@ static void prepare (void)
 	pmove.numphysent = 1;
 	pmove.physents[0].model = &floor_model;
 	pmove.physents[0].info = 0;
-	pmove.cmd.msec = 100;
+	/* msec == 0 selects the inherited QSS-M single-step path. Tests that
+	 * exercise negotiated explicit timing opt into msec below. */
+	pmove.cmd.msec = 0;
 	pmove.cmd.seconds = .1f;
 }
+
+static void ladder_velocity (float pitch, qboolean vr_active, vec3_t velocity)
+{
+	prepare ();
+	pmove.origin[2] = 128;
+	VectorSet (pmove.gravitydir, 0, 0, -1);
+	pmove.angles[PITCH] = pitch;
+	pmove.cmd.forwardmove = 200;
+	pmove.cmd.sidemove = 100;
+	pmove.cmd.vr_active = vr_active;
+	frametime = .1f;
+	AngleVectors (pmove.angles, forward, right, up);
+	PM_EnsureInitialized ();
+	PM_LadderMove ();
+	VectorCopy (pmove.velocity, velocity);
+}
+
+static void water_velocity (qboolean vr_active, vec3_t velocity)
+{
+	prepare ();
+	pmove.origin[2] = 128;
+	VectorSet (pmove.gravitydir, 0, 0, -1);
+	movevars.jumpspeed = 400;
+	movevars.watersinkspeed = 60;
+	pmove.cmd.buttons = BUTTON_JUMP;
+	pmove.cmd.vr_active = vr_active;
+	frametime = .1f;
+	AngleVectors (pmove.angles, forward, right, up);
+	PM_EnsureInitialized ();
+	PM_WaterMove ();
+	VectorCopy (pmove.velocity, velocity);
+}
+
+static void check_touch_policy (int msec)
+{
+	prepare ();
+	pmove.cmd.msec = msec;
+
+	VectorSet (pmove.velocity, 1, 2, 3);
+	PM_AddTouchedEnt (1);
+	VectorSet (pmove.velocity, 10, 20, 30);
+	PM_AddTouchedEnt (1);
+	VectorSet (pmove.velocity, 4, 5, 6);
+	PM_AddTouchedEnt (2);
+	VectorSet (pmove.velocity, 7, 8, 9);
+	PM_AddTouchedEnt (1);
+
+	assert (pmove.touchindex[0] == 1);
+	near_value (pmove.touchvel[0][0], 1, .001f);
+	near_value (pmove.touchvel[0][1], 2, .001f);
+	near_value (pmove.touchvel[0][2], 3, .001f);
+	assert (pmove.touchindex[1] == 2);
+	near_value (pmove.touchvel[1][0], 4, .001f);
+	near_value (pmove.touchvel[1][1], 5, .001f);
+	near_value (pmove.touchvel[1][2], 6, .001f);
+
+	if (!msec)
+	{
+		assert (pmove.numtouch == 3 && pmove.touchindex[2] == 1);
+		near_value (pmove.touchvel[2][0], 7, .001f);
+		near_value (pmove.touchvel[2][1], 8, .001f);
+		near_value (pmove.touchvel[2][2], 9, .001f);
+	}
+	else
+	{
+		assert (pmove.numtouch == 2);
+	}
+}
+
+static void check_safeorigin_recovery (void)
+{
+	vec3_t safe = {160, 0, 24};
+
+	prepare ();
+	pmove.numphysent = 2;
+	pmove.physents[1].info = 1;
+	VectorSet (pmove.physents[1].mins, -64, -64, 0);
+	VectorSet (pmove.physents[1].maxs, 64, 64, 64);
+	assert (PM_TestPlayerPosition (safe));
+	near_value (pmove.safeorigin[0], safe[0], .001f);
+	near_value (pmove.safeorigin[1], safe[1], .001f);
+	near_value (pmove.safeorigin[2], safe[2], .001f);
+
+	VectorSet (pmove.origin, 0, 0, 24);
+	assert (!PM_TestPlayerPosition (pmove.origin));
+	PM_NudgePosition ();
+	near_value (pmove.origin[0], safe[0], .001f);
+	near_value (pmove.origin[1], safe[1], .001f);
+	near_value (pmove.origin[2], safe[2], .001f);
+}
+
 int main (void)
 {
 	floor_model.type = mod_brush;
@@ -86,13 +179,56 @@ int main (void)
 		pmove.cmd.forwardmove = 320;
 		for (int i = 0; i < 10; ++i)
 			PM_PlayerMove (1);
-		assert (pmove.origin[0] > 200 && pmove.origin[0] < 320);
+		/* Pinned QSS-M 03a498aa reaches maxspeed at x=320 after these ten
+		 * single-step commands with the same movevars and floor hull. */
+		near_value (pmove.origin[0], 320, .01f);
 		near_value (pmove.origin[2], 24, .04f);
 		assert (pmove.onground);
 		near_value (pmove.velocity[0], 320, .01f);
 
+		/* Negotiated 100 ms commands retain the private deterministic-substep
+		 * behavior that predates the QSS-M single-step compatibility path. */
+		prepare ();
+		pmove.cmd.msec = 100;
+		pmove.cmd.forwardmove = 320;
+		for (int i = 0; i < 10; ++i)
+			PM_PlayerMove (1);
+		assert (pmove.origin[0] > 200 && pmove.origin[0] < 320);
+		near_value (pmove.origin[2], 24, .04f);
+		assert (pmove.onground);
+		near_value (pmove.velocity[0], 320, .01f);
+		assert (pmove.cmd.msec == 100);
+
+		/* Pinned OpenVR 1327f795 flattens pitch for VR ladders, while pinned
+		 * QSS-M 03a498aa keeps its ordinary pitch-sensitive ladder wishvel. */
+		vec3_t vr_ladder_flat, vr_ladder_pitched, qss_ladder_flat, qss_ladder_pitched;
+		ladder_velocity (0, true, vr_ladder_flat);
+		ladder_velocity (60, true, vr_ladder_pitched);
+		for (int axis = 0; axis < 3; ++axis)
+			near_value (vr_ladder_pitched[axis], vr_ladder_flat[axis], .01f);
+		near_value (vr_ladder_flat[0], 70, .01f);
+		near_value (vr_ladder_flat[1], -35, .01f);
+		near_value (vr_ladder_flat[2], 70, .01f);
+		ladder_velocity (0, false, qss_ladder_flat);
+		near_value (qss_ladder_flat[0], 200, .01f);
+		near_value (qss_ladder_flat[1], -100, .01f);
+		near_value (qss_ladder_flat[2], 0, .01f);
+		ladder_velocity (60, false, qss_ladder_pitched);
+		near_value (qss_ladder_pitched[0], 18.4139f, .02f);
+		near_value (qss_ladder_pitched[1], -18.4139f, .02f);
+		near_value (qss_ladder_pitched[2], -318.9386f, .02f);
+
+		/* A raised generic jump speed must not opt into OpenVR's jump-to-swim
+		 * upmove. Exercise the production PM_WaterMove path for both cases. */
+		vec3_t generic_water, vr_water;
+		water_velocity (false, generic_water);
+		water_velocity (true, vr_water);
+		near_value (generic_water[2], -42, .01f);
+		near_value (vr_water[2], 140, .01f);
+
 		// Four duration substeps must apply physical displacement only once.
 		prepare ();
+		pmove.cmd.msec = 100;
 		pmove.cmd.vr_active = pmove.cmd.vr_handpos_relative = true;
 		pmove.cmd.vr_roomscalemove[0] = 8;
 		PM_PlayerMove (1);
@@ -101,6 +237,7 @@ int main (void)
 		assert (pmove.cmd.msec == 100);
 		// An outlier is rejected rather than clamped into artificial movement.
 		prepare ();
+		pmove.cmd.msec = 100;
 		pmove.cmd.vr_active = true;
 		pmove.cmd.vr_roomscalemove[0] = 1000;
 		PM_PlayerMove (1);
@@ -108,6 +245,7 @@ int main (void)
 		// Frozen commands cannot turn, walk or apply roomscale displacement.
 		prepare ();
 		pmove.pm_type = PM_FREEZE;
+		pmove.cmd.msec = 100;
 		pmove.cmd.forwardmove = 320;
 		pmove.cmd.viewangles[1] = 90;
 		pmove.cmd.vr_active = true;
@@ -119,12 +257,32 @@ int main (void)
 		prepare ();
 		pmove.cmd.buttons = BUTTON_JUMP;
 		PM_PlayerMove (1);
-		assert (pmove.origin[2] > 24 && pmove.velocity[2] > 0);
+		/* QSS-M authors the 270 upswing on the jump command; translation starts
+		 * on the following command. */
+		near_value (pmove.origin[2], 24, .04f);
+		near_value (pmove.velocity[2], 270, .01f);
+		assert (!pmove.onground);
 		pmove.cmd.buttons = 0;
 		for (int i = 0; i < 20; ++i)
 			PM_PlayerMove (1);
 		near_value (pmove.origin[2], 24, .04f);
 		assert (pmove.onground);
+
+		prepare ();
+		pmove.cmd.msec = 100;
+		pmove.cmd.buttons = BUTTON_JUMP;
+		PM_PlayerMove (1);
+		assert (pmove.origin[2] > 24 && pmove.velocity[2] > 0);
+		assert (pmove.cmd.msec == 100);
+		pmove.cmd.buttons = 0;
+		for (int i = 0; i < 20; ++i)
+			PM_PlayerMove (1);
+		near_value (pmove.origin[2], 24, .04f);
+		assert (pmove.onground);
+
+		check_touch_policy (0);
+		check_touch_policy (100);
+		check_safeorigin_recovery ();
 		// A received entity box collides at its expanded player boundary.
 		prepare ();
 		pmove.numphysent = 2;
@@ -167,5 +325,5 @@ int main (void)
 		near_value (trace.fraction, 1, .001f);
 		assert (!trace.allsolid && !trace.startsolid);
 	}
-	puts ("Inherited PMove with donor hulls: walk, jump, freeze, once-only roomscale, box/rotated brush, stationary and water passed");
+	puts ("QSS-M generic PMove with donor hulls plus explicit VR deltas: walk, jump, ladders, swim gating, freeze, once-only roomscale, box/rotated brush, stationary and water passed");
 }
