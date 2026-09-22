@@ -172,12 +172,29 @@ static unsigned int CLFTE_ReadDelta (unsigned int entnum, entity_state_t *news, 
 	unsigned int bits;
 
 	bits = MSG_ReadByte ();
+	if (msg_badread)
+		return 0;
 	if (bits & UF_EXTEND1)
-		bits |= MSG_ReadByte () << 8;
+	{
+		int extension = MSG_ReadByte ();
+		if (msg_badread)
+			return bits;
+		bits |= (unsigned int)extension << 8;
+	}
 	if (bits & UF_EXTEND2)
-		bits |= MSG_ReadByte () << 16;
+	{
+		int extension = MSG_ReadByte ();
+		if (msg_badread)
+			return bits;
+		bits |= (unsigned int)extension << 16;
+	}
 	if (bits & UF_EXTEND3)
-		bits |= MSG_ReadByte () << 24;
+	{
+		int extension = MSG_ReadByte ();
+		if (msg_badread)
+			return bits;
+		bits |= (unsigned int)extension << 24;
+	}
 
 	if (cl_shownet.value >= 3)
 		Con_SafePrintf ("%3i:     Update %4i 0x%x\n", msg_readcount, entnum, bits);
@@ -680,7 +697,7 @@ static qboolean CL_UpdateMoveAck (int ack)
 	return true;
 }
 
-static qboolean CL_ParseMoveAckPayload (void);
+static qboolean CL_ParseMoveAckPayload (qboolean *ack_accepted);
 
 static void CLFTE_QueueAckFrame (int sequence)
 {
@@ -703,14 +720,67 @@ static void CLFTE_QueueAckFrame (int sequence)
 			cl.ackframes_count, sequence);
 }
 
+static qboolean cl_move_snapshot_pending;
+static int cl_move_snapshot_pending_ack, cl_move_snapshot_pending_owner;
+
+static void CL_InvalidateMoveSnapshot (void)
+{
+	cl.move_snapshot_valid = false;
+	cl.move_snapshot_ack = -1;
+	cl.move_snapshot_owner = 0;
+	cl_move_snapshot_pending = false;
+}
+
+static qboolean CL_MoveSnapshotStateIsFinite (const entity_state_t *state)
+{
+	int axis;
+
+	for (axis = 0; axis < 3; axis++)
+		if (!isfinite (state->origin[axis]) || !isfinite (state->angles[axis]))
+			return false;
+	return true;
+}
+
+/* Called only at the real end of a server message, after all services have
+ * had a chance to replace the ACK or change the current view entity. */
+static void CLFTE_CommitMoveSnapshot (void)
+{
+	entity_t *owner;
+
+	if (!cl_move_snapshot_pending)
+		return;
+	cl_move_snapshot_pending = false;
+	if (cl.protocol_qsvr != QSVR_PROTOCOL_PINNED ||
+		cl_move_snapshot_pending_ack != cl.ackedmovemessages ||
+		cl_move_snapshot_pending_owner != cl.viewentity ||
+		cl_move_snapshot_pending_owner <= 0 ||
+		cl_move_snapshot_pending_owner >= cl.num_entities || !cl.entities)
+		return;
+
+	owner = &cl.entities[cl_move_snapshot_pending_owner];
+	if (!owner->update_type || !CL_MoveSnapshotStateIsFinite (&owner->netstate))
+		return;
+
+	cl.move_snapshot_valid = true;
+	cl.move_snapshot_ack = cl_move_snapshot_pending_ack;
+	cl.move_snapshot_owner = cl_move_snapshot_pending_owner;
+}
+
 static void CLFTE_ParseEntitiesUpdate (void)
 {
 	int		  newnum;
+	int		  highbits;
 	qboolean  removeflag;
 	entity_t *ent;
 	float	  newtime;
+	int		  snapshot_owner = cl.viewentity;
+	qboolean  move_ack_accepted = false;
+	qboolean  owner_reset_decoded = false;
+	qboolean  snapshot_time_finite = true;
+	qboolean  private_snapshot = cl.protocol_qsvr == QSVR_PROTOCOL_PINNED;
 
-	if (cl.protocol_qsvr == QSVR_PROTOCOL_PINNED)
+	CL_InvalidateMoveSnapshot ();
+	if (private_snapshot)
 	{
 		const int frame_sequence = cls.netcon ? NET_QSocketGetSequenceIn (cls.netcon) : -1;
 
@@ -727,7 +797,7 @@ static void CLFTE_ParseEntitiesUpdate (void)
 			cl.net_snapshot_sequence = frame_sequence;
 		cl.net_snapshot_packets++;
 
-		if (!CL_ParseMoveAckPayload ())
+		if (!CL_ParseMoveAckPayload (&move_ack_accepted))
 			return;
 	}
 	else
@@ -748,7 +818,9 @@ static void CLFTE_ParseEntitiesUpdate (void)
 	}
 
 	newtime = MSG_ReadFloat ();
-	if (newtime != cl.mtime[0])
+	if (private_snapshot && !isfinite (newtime))
+		snapshot_time_finite = false;
+	if ((!private_snapshot || snapshot_time_finite) && newtime != cl.mtime[0])
 	{ // don't mess up lerps if the server is splitting entities into multiple packets.
 		cl.mtime[1] = cl.mtime[0];
 		cl.mtime[0] = newtime;
@@ -756,10 +828,18 @@ static void CLFTE_ParseEntitiesUpdate (void)
 
 	for (;;)
 	{
-		newnum = (unsigned short)(short)MSG_ReadShort ();
+		newnum = MSG_ReadShort ();
+		if (msg_badread)
+			break;
+		newnum = (unsigned short)(short)newnum;
 		removeflag = !!(newnum & 0x8000);
 		if (newnum & 0x4000)
-			newnum = (newnum & 0x3fff) | (MSG_ReadByte () << 14);
+		{
+			highbits = MSG_ReadByte ();
+			if (msg_badread)
+				break;
+			newnum = (newnum & 0x3fff) | ((unsigned int)highbits << 14);
+		}
 		else
 			newnum &= ~0x8000;
 
@@ -786,8 +866,11 @@ static void CLFTE_ParseEntitiesUpdate (void)
 				}
 				InvalidateTraceLineCache ();
 				cl.requestresend = false; // we got it.
+				owner_reset_decoded = false;
 				continue;
 			}
+			if (private_snapshot && newnum == snapshot_owner)
+				owner_reset_decoded = false;
 			ent->update_type = false; // no longer valid
 			ent->netstate = nullentitystate;
 			ent->model = NULL;
@@ -796,7 +879,10 @@ static void CLFTE_ParseEntitiesUpdate (void)
 		}
 		else if (ent->update_type)
 		{ // simple update
-			CLFTE_ReadDelta (newnum, &ent->netstate, &ent->netstate, &ent->baseline);
+			unsigned int delta_bits = CLFTE_ReadDelta (newnum, &ent->netstate, &ent->netstate, &ent->baseline);
+			if (private_snapshot && newnum == snapshot_owner)
+				owner_reset_decoded = (delta_bits & UF_RESET) && !msg_badread &&
+					CL_MoveSnapshotStateIsFinite (&ent->netstate);
 			if (ent->msgtime == cl.mtime[0])
 				// we did get an update for this entity, force processing by CL_EntitiesDeltaed
 				// even if qcvm time is frozen (sv_freezenonclients support)
@@ -805,7 +891,10 @@ static void CLFTE_ParseEntitiesUpdate (void)
 		else
 		{ // we had no previous copy of this entity...
 			ent->update_type = true;
-			CLFTE_ReadDelta (newnum, &ent->netstate, NULL, &ent->baseline);
+			unsigned int delta_bits = CLFTE_ReadDelta (newnum, &ent->netstate, NULL, &ent->baseline);
+			if (private_snapshot && newnum == snapshot_owner)
+				owner_reset_decoded = (delta_bits & UF_RESET) && !msg_badread &&
+					CL_MoveSnapshotStateIsFinite (&ent->netstate);
 			ent->msgtime = 0; // the slot's stale msgtime must not defeat the forcelink check in CL_EntitiesDeltaed
 		}
 	}
@@ -834,7 +923,9 @@ static void CLFTE_ParseEntitiesUpdate (void)
 			cl.punchangle[1] = cl.statsf[STAT_PUNCHANGLE_Y];
 			cl.punchangle[2] = cl.statsf[STAT_PUNCHANGLE_Z];
 		}
-		if (v_punchangles[0][0] != cl.punchangle[0] || v_punchangles[0][1] != cl.punchangle[1] || v_punchangles[0][2] != cl.punchangle[2])
+		if ((!private_snapshot || snapshot_time_finite) &&
+			(v_punchangles[0][0] != cl.punchangle[0] || v_punchangles[0][1] != cl.punchangle[1] ||
+				v_punchangles[0][2] != cl.punchangle[2]))
 		{
 			v_punchangles_times[1] = v_punchangles_times[0];
 			v_punchangles_times[0] = newtime;
@@ -851,6 +942,14 @@ static void CLFTE_ParseEntitiesUpdate (void)
 			cls.signon = SIGNONS;
 			CL_SignonReply ();
 		}
+	}
+
+	if (private_snapshot && move_ack_accepted && snapshot_time_finite &&
+		owner_reset_decoded && !msg_badread && snapshot_owner > 0)
+	{
+		cl_move_snapshot_pending = true;
+		cl_move_snapshot_pending_ack = cl.ackedmovemessages;
+		cl_move_snapshot_pending_owner = snapshot_owner;
 	}
 }
 
@@ -1287,6 +1386,8 @@ static void CL_ParseUpdate (int bits)
 		num = MSG_ReadShort ();
 	else
 		num = MSG_ReadByte ();
+	if (cl.protocol_qsvr == QSVR_PROTOCOL_PINNED && num == cl.viewentity)
+		CL_InvalidateMoveSnapshot ();
 
 	ent = CL_EntityNum (num);
 	oldframe = ent->frame;
@@ -1880,13 +1981,15 @@ static void CL_ParseStatString (int stat, const char *str)
 	// hud doesn't know/care about any of these strings so don't bother invalidating anything.
 }
 
-static qboolean CL_ParseMoveAckPayload (void)
+static qboolean CL_ParseMoveAckPayload (qboolean *ack_accepted)
 {
 	int ack16, flags, authority, mode_epoch, discontinuity_epoch, reason;
 	int state_sequence = -1;
 	unsigned int motion_generation = 0;
 	int hand, axis;
 	vr_gorilla_state_t gorilla_state;
+	if (ack_accepted)
+		*ack_accepted = false;
 
 	if (cl.protocol_qsvr != QSVR_PROTOCOL_PINNED ||
 		net_message.cursize - msg_readcount < 2)
@@ -1991,6 +2094,9 @@ static qboolean CL_ParseMoveAckPayload (void)
 	 * Stale ACKs must not restore metadata from before a mode change. */
 	if (!CL_UpdateMoveAck (CL_ExpandMoveAck16 (ack16)))
 		return true;
+	CL_InvalidateMoveSnapshot ();
+	if (ack_accepted)
+		*ack_accepted = true;
 	/* Equal ACKs still carry authority and epoch changes. Reset only the
 	 * presentation smoothing; replay retains the new baseline epochs. */
 	if (!(flags & MOVEACK_FLAG_PREDICTION_ALLOWED) || (move_authority_t)authority != cl.move_ack_authority ||
@@ -2021,7 +2127,7 @@ static qboolean CL_ParseMoveAckPayload (void)
 
 static void CL_ParseMoveAck (void)
 {
-	CL_ParseMoveAckPayload ();
+	CL_ParseMoveAckPayload (NULL);
 }
 
 /*
@@ -2050,6 +2156,7 @@ void CL_ParseServerMessage (void)
 	// parse the message
 	//
 	MSG_BeginReading ();
+	cl_move_snapshot_pending = false;
 
 	lastcmd = 0;
 	while (1)
@@ -2061,6 +2168,7 @@ void CL_ParseServerMessage (void)
 
 		if (cmd == -1)
 		{
+			CLFTE_CommitMoveSnapshot ();
 			SHOWNET ("END OF MESSAGE");
 			if (received_setangle)
 				V_RequestTrackedServerYaw (server_yaw);
@@ -2189,7 +2297,10 @@ void CL_ParseServerMessage (void)
 		}
 
 		case svc_setview:
-			cl.viewentity = MSG_ReadShort ();
+			i = MSG_ReadShort ();
+			if (i != cl.viewentity)
+				CL_InvalidateMoveSnapshot ();
+			cl.viewentity = i;
 			V_PushTrackedYaw ();
 			break;
 

@@ -443,3 +443,39 @@ The reference binary and profiles have been prepared locally. They have **not**
 yet established a successful migrated-client connection or predicted gameplay.
 Connection admission, coherent owner/ACK selection and replay must be integrated
 before using them for the dedicated-peer movement/fire acceptance proof.
+
+
+## Private owner association: complete-message boundary
+
+`private_owner_snapshot_fixture.c` uses production ACK/update readers and the
+message-end commit helper. It covers accepted/stale/equal ACKs, epoch changes,
+standalone invalidation, repeated owner resets, removal/world reset, owner
+changes, nonfinite state and logical truncation prefixes. Its packet-loss case
+seeds stale prior state and applies a repeated reset; it does not simulate a
+socket or loss scheduling. Rendering/network/QC boundaries are test-only stand-ins.
+
+```sh
+cc -std=gnu11 -DUSE_SDL3 -D_GNU_SOURCE -Wno-unused-parameter \
+  -ffunction-sections -fdata-sections -fsanitize=address,undefined \
+  -fno-sanitize-recover=all -fno-omit-frame-pointer \
+  tests/private_owner_snapshot_fixture.c Quake/common.c -Wl,--gc-sections \
+  $(pkg-config --cflags --libs sdl3) -lm -o /tmp/qsvr-private-owner-asan
+/tmp/qsvr-private-owner-asan
+```
+
+`private_owner_snapshot_smoke.gdb` calls the actual `CL_ParseServerMessage`
+inside the Linux debug executable with injected wire bytes before engine
+initialization. It verifies matching owner/ACK publication only at message end,
+a later accepted standalone ACK, an ignored stale ACK, actual `svc_setview`
+changes away and back, later owner omission, and a truncated trailing ACK.
+The malformed case stops at the real `Host_Error` before any candidate commit.
+
+```sh
+gdb -nx --batch -x tests/private_owner_snapshot_smoke.gdb \
+  /tmp/quakespasm-2.0-bootstrap-build/vkquake
+```
+
+The check seeds client/entity state and bypasses startup and sockets. It proves
+whole-message dispatch behavior, not connection admission, prediction/replay,
+gameplay, or error teardown. A matched owner baseline does not itself grant
+prediction permission; that remains the consumer's policy decision.

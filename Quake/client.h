@@ -167,6 +167,10 @@ typedef struct
 	qboolean move_ack_prediction_allowed;
 	unsigned short move_ack_mode_epoch, move_ack_discontinuity_epoch;
 	unsigned char move_ack_discontinuity_reason;
+	// Coherent owner/ACK association only; replay must also check ACK policy.
+	// The authoritative owner remains in entities[owner].netstate.
+	qboolean move_snapshot_valid;
+	int move_snapshot_ack, move_snapshot_owner;
 	double move_msec_sample_time, move_msec_fractional_carry;
 	qboolean move_msec_sample_valid;
 	vec3_t prediction_error;

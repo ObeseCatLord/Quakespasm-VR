@@ -176,6 +176,24 @@ static void test_full_bundle_and_wrap (void)
 	assert (!cl.ackframes_count);
 }
 
+static void test_local_ack_invalidates_snapshot (void)
+{
+	setup ();
+	usercmd_t cmd = {0};
+	float servercommandframe = -1;
+	sv.active = true;
+	svs.maxclients = 1;
+	cl.movemessages = 12;
+	cl.ackedmovemessages = 10;
+	cl.move_snapshot_valid = true;
+	cl.move_snapshot_ack = 10;
+	cl.move_snapshot_owner = 1;
+	cl.qcvm.extglobals.servercommandframe = &servercommandframe;
+	CL_SendMove (&cmd);
+	assert (cl.ackedmovemessages == 12 && servercommandframe == 12);
+	assert (!cl.move_snapshot_valid);
+}
+
 static void test_public_and_demo (void)
 {
 	setup ();
@@ -202,6 +220,7 @@ int main (void)
 	test_clock ();
 	test_ack_queue ();
 	test_full_bundle_and_wrap ();
+	test_local_ack_invalidates_snapshot ();
 	test_public_and_demo ();
 	puts ("Private sender: redundant commands, duration, ACK retention, public framing and demo/error checks passed");
 }

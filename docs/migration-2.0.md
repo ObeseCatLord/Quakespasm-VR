@@ -27,7 +27,7 @@ The [complete-scope feature map](migration-feature-map.md) is the current migrat
 [migration-preservation.csv](migration-preservation.csv) now covers 905 unique paths, extending the original 904-path snapshot with the current master delta. It retains old blob/WIP evidence and adds current-master blobs and feature routing. Exact source anchors and mechanical module routes are labeled separately. [History](migration-history-index.csv) and [public-interface](migration-interface-index.csv) indexes make omissions reviewable. These are scope/audit artifacts, **not proof of completed behavioral integration**. Historical deletions are reviewed rather than restored blindly; preserved WIP is not automatically accepted release behavior.
 
 The sections below record successive checkpoints. The latest implemented slice
-is **Production client movement linkage**; earlier limitations describe their
+is **Private owner/ACK association**; earlier limitations describe their
 respective commits, not the current head. None closes the full P1 gameplay gate.
 
 ## First source checkpoint
@@ -438,6 +438,21 @@ records why this dependency correction was needed.
 Client replay, matching owner snapshots/ACKs, private connection admission and
 the real server movement owner are still pending. Linking the solver does not
 enable prediction or complete the first dedicated-peer gameplay proof.
+
+## Private owner/ACK association
+
+The receive path now pairs accepted private movement acknowledgments with the
+matching self-contained player update, publishing that association only after
+the complete server message has been parsed. Later ACKs, view changes, removals,
+missing owners and malformed trailing data cannot reuse an earlier candidate.
+Synthetic local ACKs also invalidate a previous association. The existing entity
+state remains authoritative; the added fields are metadata, not another snapshot.
+
+The Linux build, focused sanitizer checks and actual whole-message parser probe
+pass. [Local Astra/max review](migration-movement-review.md#private-ownerack-association--local-astramax)
+found the local ACK invalidation gap, which is fixed and covered by the sender
+fixture. Association is separate from permission to predict. Private connection
+admission, replay and the dedicated-peer gameplay proof are still pending.
 
 ## Next integration gates
 

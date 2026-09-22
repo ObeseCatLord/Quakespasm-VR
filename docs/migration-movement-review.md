@@ -376,3 +376,36 @@ required. Acceptance must cover legitimate zero defaults without deadlock,
 initial loss/split delivery followed by recovery, eventual adoption of live
 setting changes, and reset isolation. It cannot assert zero transient prediction
 error or atomic configuration delivery. No gameplay proof has yet run.
+
+
+### Private owner/ACK association — local Astra/max
+
+The client now records only an association-valid flag, the acknowledged command
+number and the owner entity number. The authoritative state remains in the
+existing entity `netstate`. A private replacement update proposes a candidate
+only after an accepted (not merely parseable) ACK and a finite, self-contained
+owner reset. The real server-message end publishes it after all later services
+have been parsed. This follows the pinned writer's repeated signon-baseline
+owner reset without adding a second snapshot store or a new protocol.
+
+| Review finding | Disposition |
+| --- | --- |
+| Keep state in the existing entity owner | Adopted: only association metadata persists; no copied player/world snapshot. |
+| Stale ACK parse success must not mean acceptance | Adopted: a separate acceptance output controls candidate creation. Equal ACKs may still update epochs; accepted standalone ACKs invalidate any candidate. |
+| Owner removal, world reset, omission or later view changes can break pairing | Adopted: invalidate through the existing parsing owners; publish only at the actual complete-message boundary. |
+| Association alone must not grant permission to predict | Adopted: ACK authority/permission remain independent consumer policy, along with connection, signon, world and numeric validity. |
+| Synthetic local ACK in `CL_SendPrivateMove` could leave a previous association marked valid | Fixed after Astra's P2 finding: clear association validity at that existing assignment. The sender fixture verifies both the ACK/QC command-frame update and invalidation. |
+| Truncated entity/extension headers could shift negative reads before noticing failure | Fixed at the existing readers: check read status before assembling unsigned bit fields. Normal public/private decoding remains covered. |
+
+The final review used a freshly spawned local `gpt-6-astra` with effective
+`max` reasoning verified independently from turn metadata. A resumed reviewer
+had fallen back to `high`; the fresh review rechecked both this association patch
+and the preceding incremental-stat decision, so the final senior conclusions do
+not rely on the lower-setting continuation.
+
+The consolidated Linux build, worker-run owner/ACK sanitizer fixtures, main-run
+sender/collision sanitizer checks and executable whole-message GDB probe pass.
+The probe covers later same-message ACKs, view changes, omission and malformed
+trailing payloads. These establish parser/association behavior, not live socket
+loss, command replay or gameplay parity. Private admission and replay remain
+in progress, and the migration goal remains open.

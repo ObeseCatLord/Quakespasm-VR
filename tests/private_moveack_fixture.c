@@ -18,6 +18,7 @@ struct qsocket_s { int unused; };
 static struct qsocket_s socket_stub;
 static int smoothing_resets;
 static int flushes;
+static qboolean parse_ack_accepted;
 int NET_QSocketGetSequenceIn (const struct qsocket_s *sock) { return 77; }
 void CL_ResetPredictionSmoothing (void) { smoothing_resets++; }
 void CL_FlushAckFrames (void) { flushes++; }
@@ -96,6 +97,7 @@ static void reset_client (void)
 	cl.vr_gorilla_state_sequence = -1;
 	smoothing_resets = 0;
 	flushes = 0;
+	parse_ack_accepted = false;
 }
 
 static qboolean parse (const byte *bytes, int length)
@@ -103,7 +105,7 @@ static qboolean parse (const byte *bytes, int length)
 	net_message.data = (byte *)bytes;
 	net_message.cursize = length;
 	MSG_BeginReading ();
-	return CL_ParseMoveAckPayload ();
+	return CL_ParseMoveAckPayload (&parse_ack_accepted);
 }
 
 static void assert_rejected_unchanged (const byte *bytes, int length)
@@ -156,7 +158,8 @@ int main (void)
 	length = moveack (packet, 1, MOVEACK_FLAG_AUTHORITATIVE | MOVEACK_FLAG_PREDICTION_ALLOWED,
 		MOVE_AUTHORITY_PMOVE_ENGINE_COMPAT, 2, 3, MOVEACK_DISCONTINUITY_NONE, false, false, 0);
 	assert (parse (packet, length));
-	assert (!msg_badread && msg_readcount == length && cl.ackedmovemessages == 0x10001 && cl.net_move_acks == 1);
+	assert (!msg_badread && msg_readcount == length && parse_ack_accepted &&
+		cl.ackedmovemessages == 0x10001 && cl.net_move_acks == 1);
 	assert (servercommandframe == 0x10001);
 	assert (cl.move_ack_mode_epoch == 2 && cl.move_ack_discontinuity_epoch == 3);
 	assert (smoothing_resets == 1);
@@ -165,7 +168,7 @@ int main (void)
 	client_state_t accepted = cl;
 	length = moveack (packet, 0xffff, 0, MOVE_AUTHORITY_UNKNOWN, 99, 99, 9, false, false, 0);
 	assert (parse (packet, length));
-	assert (!msg_badread && cl.net_move_stale_acks == 1);
+	assert (!msg_badread && !parse_ack_accepted && cl.net_move_stale_acks == 1);
 	assert (!memcmp (&cl.move_ack_authority, &accepted.move_ack_authority,
 		offsetof (client_state_t, move_msec_sample_time) - offsetof (client_state_t, move_ack_authority)));
 
@@ -173,7 +176,7 @@ int main (void)
 	length = moveack (packet, 1, MOVEACK_FLAG_AUTHORITATIVE | MOVEACK_FLAG_PREDICTION_ALLOWED,
 		MOVE_AUTHORITY_PMOVE_ENGINE_COMPAT, 4, 3, MOVEACK_DISCONTINUITY_GAP, false, false, 0);
 	assert (parse (packet, length));
-	assert (cl.ackedmovemessages == 0x10001 && cl.net_move_acks == 1);
+	assert (parse_ack_accepted && cl.ackedmovemessages == 0x10001 && cl.net_move_acks == 1);
 	assert (cl.move_ack_mode_epoch == 4 && cl.move_ack_discontinuity_reason == MOVEACK_DISCONTINUITY_GAP);
 	assert (smoothing_resets == 2);
 
