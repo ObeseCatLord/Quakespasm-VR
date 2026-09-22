@@ -141,6 +141,40 @@ qboolean VR_LocomotionAimOffsetToWorld (const float local[3],
 	return true;
 }
 
+qboolean VR_LocomotionHandBodyOffset (const float head[3], const float hand[3],
+	float tracking_yaw, float units_per_metre, float head_eye_height, float out[3])
+{
+	vec3_t head_copy, hand_copy, result;
+	float local_forward, local_side, yaw_radians, yaw_sin, yaw_cos;
+
+	if (!out)
+		return false;
+	if (head)
+		VectorCopy (head, head_copy);
+	if (hand)
+		VectorCopy (hand, hand_copy);
+	VR_LocomotionZero (out);
+	if (!head || !hand || !VR_LocomotionFiniteVec3 (head_copy) ||
+		!VR_LocomotionFiniteVec3 (hand_copy) || !isfinite (tracking_yaw) ||
+		!isfinite (units_per_metre) || units_per_metre <= 0.0f ||
+		!isfinite (head_eye_height))
+		return false;
+
+	local_forward = -(hand_copy[2] - head_copy[2]) * units_per_metre;
+	local_side = -(hand_copy[0] - head_copy[0]) * units_per_metre;
+	yaw_radians = tracking_yaw * M_PI_DIV_180;
+	yaw_sin = sinf (yaw_radians);
+	yaw_cos = cosf (yaw_radians);
+	result[0] = local_forward * yaw_cos - local_side * yaw_sin;
+	result[1] = local_forward * yaw_sin + local_side * yaw_cos;
+	result[2] = head_eye_height + (hand_copy[1] - head_copy[1]) * units_per_metre;
+	if (!VR_LocomotionFiniteVec3 (result))
+		return false;
+
+	VectorCopy (result, out);
+	return true;
+}
+
 qboolean VR_LocomotionMove (int mode, const float head[3], const float offhand[3],
 	float forward_axis, float side_axis, float forward_speed, float up_speed,
 	float out[3])

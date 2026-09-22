@@ -2,6 +2,7 @@
 #include "../Quake/vr_locomotion.h"
 
 #include <assert.h>
+#include <float.h>
 #include <math.h>
 #include <stdio.h>
 
@@ -111,6 +112,54 @@ static void test_aim_offset_to_world (void)
 	expect_zero (out);
 }
 
+static void test_hand_body_offset (void)
+{
+	const float head[3] = {1.0f, 1.6f, -2.0f};
+	const float hand_forward[3] = {1.0f, 1.6f, -2.5f};
+	const float hand_right[3] = {1.2f, 1.6f, -2.0f};
+	const float hand_lower[3] = {1.0f, 1.4f, -2.0f};
+	const float overflow_head[3] = {FLT_MAX, 1.6f, -2.0f};
+	const float overflow_hand[3] = {-FLT_MAX, 1.6f, -2.0f};
+	float out[3] = {7.0f, 8.0f, 9.0f};
+	float aliased_head[3] = {1.0f, 1.6f, -2.0f};
+	float aliased_hand[3] = {1.0f, 1.6f, -2.5f};
+
+	assert (VR_LocomotionHandBodyOffset (head, hand_forward, 0.0f, 40.0f,
+		64.0f, out));
+	near_vec3 (out, (float[3]){20.0f, 0.0f, 64.0f});
+
+	assert (VR_LocomotionHandBodyOffset (head, hand_right, 0.0f, 40.0f,
+		64.0f, out));
+	near_vec3 (out, (float[3]){0.0f, -8.0f, 64.0f});
+
+	assert (VR_LocomotionHandBodyOffset (head, hand_forward, 90.0f, 40.0f,
+		64.0f, out));
+	near_vec3 (out, (float[3]){0.0f, 20.0f, 64.0f});
+
+	assert (VR_LocomotionHandBodyOffset (head, hand_lower, 0.0f, 40.0f,
+		64.0f, out));
+	near_vec3 (out, (float[3]){0.0f, 0.0f, 56.0f});
+
+	assert (VR_LocomotionHandBodyOffset (aliased_head, hand_forward, 0.0f, 40.0f,
+		64.0f, aliased_head));
+	near_vec3 (aliased_head, (float[3]){20.0f, 0.0f, 64.0f});
+	assert (VR_LocomotionHandBodyOffset (head, aliased_hand, 0.0f, 40.0f,
+		64.0f, aliased_hand));
+	near_vec3 (aliased_hand, (float[3]){20.0f, 0.0f, 64.0f});
+
+	assert (!VR_LocomotionHandBodyOffset (head, hand_forward, NAN, 40.0f,
+		64.0f, out));
+	expect_zero (out);
+	out[0] = out[1] = out[2] = 7.0f;
+	assert (!VR_LocomotionHandBodyOffset (head, hand_forward, 0.0f, 0.0f,
+		64.0f, out));
+	expect_zero (out);
+	out[0] = out[1] = out[2] = 7.0f;
+	assert (!VR_LocomotionHandBodyOffset (overflow_head, overflow_hand, 0.0f,
+		1.0f, 64.0f, out));
+	expect_zero (out);
+}
+
 static void test_gun_angle_composition (void)
 {
 	const float identity[3][4] = {
@@ -160,6 +209,7 @@ int main (void)
 	test_raw_uses_offhand_for_vertical ();
 	test_zero_and_invalid_moves ();
 	test_aim_offset_to_world ();
+	test_hand_body_offset ();
 	test_gun_angle_composition ();
 	test_invalid_hand_angles ();
 	puts ("Inherited VR locomotion and gun-angle arithmetic preserves source geometry");

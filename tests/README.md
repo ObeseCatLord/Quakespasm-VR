@@ -697,7 +697,9 @@ Monado service created for the probe. No headset runtime settings are changed.
 
 `vr_locomotion_fixture.c` links the ported arithmetic with actual native math.
 It checks head/offhand projection, near-vertical pitch and roll, RAW vertical
-movement, singular/invalid inputs and controller gun-angle matrix composition.
+movement, singular/invalid inputs, controller gun-angle matrix composition,
+aim-space calibration rotation, and body-relative hand grip geometry including
+yaw, height, overflow and output aliasing.
 
 ```sh
 cc -std=gnu11 -DUSE_SDL3 -D_GNU_SOURCE -Wno-unused-parameter \

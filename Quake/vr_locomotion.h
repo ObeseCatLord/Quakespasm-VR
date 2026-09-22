@@ -39,6 +39,11 @@ qboolean VR_LocomotionHandAngles (const float matrix[3][4], float tracking_yaw,
 qboolean VR_LocomotionAimOffsetToWorld (const float local[3],
 	const float angles[3], float scale, float world[3]);
 
+/* Convert OpenXR right/up/back tracking positions in metres to the inherited
+ * body-relative Quake grip offset. tracking_yaw is a Quake yaw in degrees. */
+qboolean VR_LocomotionHandBodyOffset (const float head[3], const float hand[3],
+	float tracking_yaw, float units_per_metre, float head_eye_height, float out[3]);
+
 /* Produce forward/side/up command contributions before vr_movement_speed and
  * the run multiplier. forward_speed intentionally scales both horizontal
  * command axes, matching the inherited VR movement path. */

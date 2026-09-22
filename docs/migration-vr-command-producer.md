@@ -71,7 +71,10 @@ selected viewmodel's calibrated `muzzle_offset`, multiplied by
 `vr_gunmodelscale` and reflected in model space for left-handed play
 (`vr.c:6163–6168,6191–6229`). The new pure aim-offset rotation helper preserves
 the donor's `right * local.x + up * local.y + forward * local.z` arithmetic,
-but it does not itself select the weapon, reflect the muzzle, or place the hand.
+and a pure OpenXR hand/head helper preserves its body-relative grip geometry.
+The latter takes eye height from the caller so floor and LOCAL frames can use
+the same vertical reference as the camera. Neither helper selects the weapon,
+reflects the muzzle, or enables private commands.
 
 The canonical `vr_weapons.txt` has a `viewmodel` keyed entry and
 `muzzle_offset` for the vanilla shotgun, and mod files can override the same
@@ -85,6 +88,15 @@ the same floor offset as the player eye. For a LOCAL frame, eye height currently
 uses the stereo camera's retained vertical reference; hand height must share
 that reference before private VR commands are enabled there. No synthetic
 floor height should be introduced in the input adapter.
+
+There is also a timing boundary to measure before any head-motion prediction:
+`CL_AccumulateCmd` consumes the last completed OpenXR frame in `host.c`, while
+`VRXR_BeginFrame` acquires the next rendered pose later in `gl_vidsdl.c`.
+This can leave the body/command one sample behind the newest displayed head
+pose. The pinned-server proof should timestamp or sequence the input pose,
+predicted body, authoritative body and both rendered eyes, including a blocked
+step. Any render-only residual motion would need collision-safe evidence first;
+adding it merely to hide latency could let an eye move through a wall.
 
 ## Local Astra senior-review disposition
 
