@@ -910,6 +910,26 @@ static void test_roomscale_command_accumulator (void)
 	motion_sample (&frame);
 	near_motion (cl.pendingcmd.vr_roomscalemove[1], 0.0f);
 	angle_locked = false;
+	VR_InputClear ();
+	fixture_turn_yaw = 0;
+	frame.devices[0].matrix[0][3] = 0;
+	frame.devices[0].matrix[2][3] = 0;
+	motion_sample (&frame);
+	frame.devices[0].matrix[2][3] = -1.0f;
+	motion_sample (&frame);
+	near_motion (cl.pendingcmd.vr_roomscalemove[0], 10.0f);
+	frame.devices[0].matrix[2][3] = -2.0f;
+	motion_sample (&frame);
+	near_motion (cl.pendingcmd.vr_roomscalemove[0], 20.0f);
+	preview = (usercmd_t){0};
+	VR_InputApplyPending (&preview);
+	near_motion (preview.vr_roomscalemove[0], 0.0f); /* whole command exceeds PMove limit */
+	frame.devices[0].matrix[2][3] = -1.0f;
+	motion_sample (&frame);
+	near_motion (cl.pendingcmd.vr_roomscalemove[0], 10.0f);
+	frame.devices[0].matrix[2][3] = 0;
+	motion_sample (&frame);
+	near_motion (cl.pendingcmd.vr_roomscalemove[0], 0.0f); /* no invented return displacement */
 	fixture_frame = NULL;
 }
 

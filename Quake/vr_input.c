@@ -354,17 +354,24 @@ static void VR_InputAccumulateRoomscaleMove (const vrxr_frame_t *frame, usercmd_
 	accumulated[0] += pending->vr_roomscalemove[0];
 	accumulated[1] += pending->vr_roomscalemove[1];
 	accumulated[2] += pending->vr_roomscalemove[2];
-	horizontal_length = sqrtf (accumulated[0] * accumulated[0] + accumulated[1] * accumulated[1]);
-	/* pendingcmd survives previews and frames without a send. If adding this
-	 * sample would exceed PMove's per-command limit, drop this whole sample and
-	 * keep the prior total; never clamp it into a different physical movement. */
-	if (!VR_InputWireVec (accumulated) || !isfinite (horizontal_length) ||
-		horizontal_length > VR_INPUT_ROOM_SCALE_MAX_DELTA_UNITS)
+	/* Preserve the signed sum across no-send frames. Rejecting just the step
+	 * that crosses the PMove limit would invent motion if the player returns. */
+	if (!VR_InputWireVec (accumulated))
 	{
-		Con_DPrintf ("VR input: ignored room-scale sample exceeding pending PMove range\n");
+		Con_DPrintf ("VR input: ignored room-scale sample exceeding command encoding range\n");
 		return;
 	}
 	VectorCopy (accumulated, pending->vr_roomscalemove);
+}
+
+static qboolean VR_InputRoomscaleCommandAccepted (const vec3_t move)
+{
+	float horizontal_length;
+	if (!VR_InputWireVec (move))
+		return false;
+	horizontal_length = sqrtf (move[0] * move[0] + move[1] * move[1]);
+	return isfinite (horizontal_length) && horizontal_length <= VR_INPUT_ROOM_SCALE_MAX_DELTA_UNITS &&
+		fabsf (move[2]) <= VR_INPUT_ROOM_SCALE_MAX_DELTA_UNITS;
 }
 
 static void VR_InputTurn180_f (void)
@@ -887,7 +894,7 @@ void VR_InputApplyPending (usercmd_t *cmd)
 
 	if (!cmd || CL_AngleLocked () || !VR_InputMotionContextAccepted (GL_OpenXRFrame ()))
 		return;
-	if (VR_InputControllerAim () && VR_InputWireVec (cl.pendingcmd.vr_roomscalemove))
+	if (VR_InputControllerAim () && VR_InputRoomscaleCommandAccepted (cl.pendingcmd.vr_roomscalemove))
 		VectorCopy (cl.pendingcmd.vr_roomscalemove, cmd->vr_roomscalemove);
 	if (cl.pendingcmd.vr_pending_angles_valid &&
 		isfinite (cl.pendingcmd.vr_pending_angles[PITCH]) &&
