@@ -1502,11 +1502,13 @@ float MSG_ReadDouble (void)
 	return dat.f;
 }
 
-const char *MSG_ReadString (void)
+const char *MSG_ReadStringBuffer (char *string, size_t string_size)
 {
-	static char string[2048];
 	int			c;
 	size_t		l;
+
+	if (!string || !string_size)
+		Sys_Error ("MSG_ReadStringBuffer: invalid buffer");
 
 	l = 0;
 	do
@@ -1514,13 +1516,20 @@ const char *MSG_ReadString (void)
 		c = MSG_ReadByte ();
 		if (c == -1 || c == 0)
 			break;
-		if (l < sizeof (string) - 1)
+		if (l < string_size - 1)
 			string[l++] = c;
 	} while (1);
 
 	string[l] = 0;
 
 	return string;
+}
+
+const char *MSG_ReadString (void)
+{
+	static char string[MSG_READSTRING_SIZE];
+
+	return MSG_ReadStringBuffer (string, sizeof (string));
 }
 
 // johnfitz -- original behavior, 13.3 fixed point coords, max range +-4096
@@ -1829,22 +1838,28 @@ void COM_AddExtension (char *path, const char *extension, size_t len)
 
 /*
 ==============
-COM_ParseEx
+COM_ParseExBuffer
 
-Parse a token out of a string
+Parse a token out of a string into a caller-provided bounded buffer.
+If supplied, parse_error distinguishes overflow/invalid storage from normal
+end-of-input (including trailing comments), which also returns NULL.
 
 The mode argument controls how overflow is handled:
 - CPE_NOTRUNC:		return NULL (abort parsing)
-- CPE_ALLOWTRUNC:	truncate com_token (ignore the extra characters in this token)
+- CPE_ALLOWTRUNC:	truncate token (ignore the extra characters in this token)
 ==============
 */
-const char *COM_ParseEx (const char *data, cpe_mode mode)
+const char *COM_ParseExBuffer (const char *data, cpe_mode mode, char *token, size_t token_size, qboolean *parse_error)
 {
 	int c;
-	int len;
+	size_t len;
 
 	len = 0;
-	com_token[0] = 0;
+	if (parse_error)
+		*parse_error = false;
+	if (!token || !token_size)
+		goto parseerror;
+	token[0] = 0;
 
 	if (!data)
 		return NULL;
@@ -1887,34 +1902,34 @@ skipwhite:
 				++data;
 			if (c == '\"' || !c)
 			{
-				com_token[len] = 0;
+				token[len] = 0;
 				return data;
 			}
-			if (len < countof (com_token) - 1)
-				com_token[len++] = c;
+			if (len < token_size - 1)
+				token[len++] = c;
 			else if (mode == CPE_NOTRUNC)
-				return NULL;
+				goto parseerror;
 		}
 	}
 
 	// parse single characters
 	if (c == '{' || c == '}' || c == '(' || c == ')' || c == '\'' || c == ':')
 	{
-		if (len < countof (com_token) - 1)
-			com_token[len++] = c;
+		if (len < token_size - 1)
+			token[len++] = c;
 		else if (mode == CPE_NOTRUNC)
-			return NULL;
-		com_token[len] = 0;
+			goto parseerror;
+		token[len] = 0;
 		return data + 1;
 	}
 
 	// parse a regular word
 	do
 	{
-		if (len < countof (com_token) - 1)
-			com_token[len++] = c;
+		if (len < token_size - 1)
+			token[len++] = c;
 		else if (mode == CPE_NOTRUNC)
-			return NULL;
+			goto parseerror;
 		data++;
 		c = *data;
 		/* commented out the check for ':' so that ip:port works */
@@ -1922,8 +1937,19 @@ skipwhite:
 			break;
 	} while (c > 32);
 
-	com_token[len] = 0;
+	token[len] = 0;
 	return data;
+
+parseerror:
+	if (parse_error)
+		*parse_error = true;
+	return NULL;
+}
+
+const char *COM_ParseEx (const char *data, cpe_mode mode)
+{
+	// Preserve the historical global token capacity for existing callers.
+	return COM_ParseExBuffer (data, mode, com_token, countof (com_token), NULL);
 }
 
 /*

@@ -455,10 +455,12 @@ void Cmd_Unaliasall_f (void)
 */
 
 #define MAX_ARGS 80
+#define CMD_MAX_TOKEN_SIZE SERVER_INFO_STRING_SIZE
 
 static int		   cmd_argc;
-// Preserve every token accepted by COM_Parse, including serverinfo values.
-static char		   cmd_argv[MAX_ARGS][COM_PARSE_MAX_TOKEN_SIZE];
+// Server fullserverinfo may use the entire info-string capacity. The public
+// tokenizer below keeps the legacy COM_Parse token limit for other callers.
+static char		   cmd_argv[MAX_ARGS][CMD_MAX_TOKEN_SIZE];
 static char		   cmd_null_string[] = "";
 static const char *cmd_args = NULL;
 
@@ -633,9 +635,10 @@ Cmd_TokenizeString
 Parses the given string into command line tokens.
 ============
 */
-void Cmd_TokenizeString (const char *text)
+static qboolean Cmd_TokenizeStringBuffer (const char *text, char *token, size_t token_size)
 {
 	int i;
+	qboolean parse_error;
 
 	// clear the args from the last string
 	for (i = 0; i < cmd_argc; i++)
@@ -659,17 +662,25 @@ void Cmd_TokenizeString (const char *text)
 		}
 
 		if (!*text)
-			return;
+			return true;
 
 		if (cmd_argc == 1)
 			cmd_args = text;
 
-		text = COM_Parse (text);
+		text = COM_ParseExBuffer (text, CPE_NOTRUNC, token, token_size, &parse_error);
 		if (!text)
-			return;
+			return !parse_error;
 
-		Cmd_AddArg (com_token);
+		Cmd_AddArg (token);
 	}
+
+	return true;
+}
+
+void Cmd_TokenizeString (const char *text)
+{
+	// Keep the public tokenizer's historical com_token side effects.
+	(void)Cmd_TokenizeStringBuffer (text, com_token, sizeof (com_token));
 }
 
 /*
@@ -856,7 +867,14 @@ qboolean Cmd_ExecuteString (const char *text, cmd_source_t src)
 	cmdalias_t	   *a;
 
 	cmd_source = src;
-	Cmd_TokenizeString (text);
+	if (src == src_server)
+	{
+		static char token[CMD_MAX_TOKEN_SIZE];
+		if (!Cmd_TokenizeStringBuffer (text, token, sizeof (token)))
+			return false;
+	}
+	else
+		Cmd_TokenizeString (text);
 
 	// execute the command line
 	if (!Cmd_Argc ())

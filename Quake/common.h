@@ -211,6 +211,8 @@ void MSG_WriteStaticOrBaseLine (
 extern int		msg_readcount;
 extern qboolean msg_badread; // set if a read goes beyond end of message
 
+#define MSG_READSTRING_SIZE 2048
+
 void			   MSG_BeginReading (void);
 int				   MSG_ReadChar (void);
 int				   MSG_ReadByte (void);
@@ -221,6 +223,7 @@ long long		   MSG_ReadInt64 (void);
 float			   MSG_ReadFloat (void);
 float			   MSG_ReadDouble (void);
 const char		  *MSG_ReadString (void);
+const char		  *MSG_ReadStringBuffer (char *buffer, size_t buffer_size);
 
 float		 MSG_ReadCoord (unsigned int flags);
 float		 MSG_ReadAngle (unsigned int flags);
@@ -312,6 +315,7 @@ typedef enum
 
 const char *COM_Parse (const char *data);
 const char *COM_ParseEx (const char *data, cpe_mode mode);
+const char *COM_ParseExBuffer (const char *data, cpe_mode mode, char *token, size_t token_size, qboolean *parse_error);
 
 typedef struct
 {

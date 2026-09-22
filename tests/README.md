@@ -255,13 +255,18 @@ cc -std=gnu11 -DUSE_SDL3 -D_GNU_SOURCE -Wall -Wextra -Werror \
 
 `serverinfo_command_smoke.gdb` runs the actual Linux executable before engine
 initialization. It registers the real serverinfo callback, injects one wire
-message, and calls `CL_ParseServerMessage`. It checks a 2,047-byte command through
-to PM gravity selection, and stops at the real `Host_Error` for oversized and
-unterminated commands before any callback. It needs GDB and debug symbols, but
+message, and calls `CL_ParseServerMessage`. It checks the old 2,047-byte command
+boundary, a 4,096-byte info string and the full 8,191-byte info capacity through
+to PM gravity selection. Oversized/unterminated wire strings and oversized
+ordinary commands stop at the real `Host_Error` before callbacks. Trailing
+comments remain valid. Separate direct server-command dispatch cases reject
+quoted/unquoted token overflow before a valid prefix can execute; public
+tokenizer side effects are also checked. It needs GDB and debug symbols, but
 no game assets. It does not exercise a socket, normal startup, or error teardown.
 
 ```sh
-for case_name in fit oversized unterminated; do
+for case_name in fit beyond2k capacity oversized unterminated \
+  comment_line comment_block token_overflow token_overflow_quoted ordinary_oversized; do
   QSVR_SERVERINFO_CASE="$case_name" gdb -nx --batch \
     -x tests/serverinfo_command_smoke.gdb \
     /tmp/quakespasm-2.0-bootstrap-build/vkquake || exit 1

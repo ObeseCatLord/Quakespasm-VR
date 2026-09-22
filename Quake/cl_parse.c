@@ -2247,14 +2247,23 @@ void CL_ParseServerMessage (void)
 
 		case svc_stufftext:
 		{
+			static const char fullserverinfo_prefix[] = "//fullserverinfo \"";
+			static char server_command[sizeof (fullserverinfo_prefix) - 1 + (SERVER_INFO_STRING_SIZE - 1) + sizeof ("\"\n")];
 			int command_start = msg_readcount;
-			str = MSG_ReadString ();
+			size_t command_length;
+
+			str = MSG_ReadStringBuffer (server_command, sizeof (server_command));
+			command_length = strlen (str);
 			// Never execute a valid-looking prefix of a truncated command. The
 			// string reader consumes excess bytes even when its buffer fills.
-			if (msg_badread || msg_readcount - command_start != (int)strlen (str) + 1)
+			if (msg_badread || msg_readcount - command_start != (int)command_length + 1)
+				Host_Error ("CL_ParseServerMessage: truncated server command");
+			// Preserve the old 2047-byte limit for every other stuffed command.
+			if (command_length >= MSG_READSTRING_SIZE &&
+				strncmp (str, fullserverinfo_prefix, sizeof (fullserverinfo_prefix) - 1))
 				Host_Error ("CL_ParseServerMessage: truncated server command");
 			// handle special commands
-			if (strlen (str) > 2 && str[0] == '/' && str[1] == '/')
+			if (command_length > 2 && str[0] == '/' && str[1] == '/')
 			{
 				if (!Cmd_ExecuteString (str + 2, src_server))
 					Con_DPrintf ("Server sent unknown command %s\n", Cmd_Argv (0));
