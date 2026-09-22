@@ -176,6 +176,120 @@ static void test_full_bundle_and_wrap (void)
 	assert (!cl.ackframes_count);
 }
 
+static const vec3_t prepared_angles = { 1.42f, 77.31f, 130.73f };
+static const vec3_t global_angles = { 40.70f, 123.40f, 170.20f };
+
+static float expected_angle8 (float angle)
+{
+	int encoded = Q_rint (angle * 256.0 / 360.0) & 255;
+	if (encoded >= 128)
+		encoded -= 256;
+	return encoded * (360.0 / 256);
+}
+
+static float expected_angle16 (float angle)
+{
+	return (Q_rint (angle * 65536.0 / 360.0) & 65535) * (360.0 / 65536);
+}
+
+static void assert_prepared_journal_angles (const usercmd_t *cmd)
+{
+	for (int i = 0; i < 3; ++i)
+	{
+		assert (cmd->viewangles[i] == prepared_angles[i]);
+		assert (cl.movecmds[2 & MOVECMDS_MASK].viewangles[i] == prepared_angles[i]);
+	}
+}
+
+static void test_public_angle_case (int protocol, qboolean predinfo,
+	int angle_bits, int expected_size)
+{
+	setup ();
+	usercmd_t cmd = {0};
+	cl.protocol_qsvr = 0;
+	cl.protocol = protocol;
+	cl.protocol_pext2 = predinfo ? PEXT2_PREDINFO : 0;
+	cl.movemessages = 2;
+	cl.mtime[0] = 101.5;
+	memcpy (cl.viewangles, global_angles, sizeof global_angles);
+	memcpy (cmd.viewangles, prepared_angles, sizeof prepared_angles);
+	cmd.servertime = 123.25;
+	cmd.forwardmove = 123;
+	cmd.sidemove = -45;
+	cmd.upmove = 6;
+	cmd.buttons = 5;
+	cmd.impulse = 9;
+
+	CL_SendMove (&cmd);
+	assert (packet_count == 1 && packet_size == expected_size);
+	assert (cl.movemessages == 3);
+	assert_prepared_journal_angles (&cmd);
+
+	begin_packet ();
+	assert (MSG_ReadByte () == clc_move);
+	if (predinfo)
+	{
+		assert ((unsigned short)MSG_ReadShort () == 2);
+		assert (MSG_ReadFloat () == cmd.servertime);
+	}
+	else
+		assert (MSG_ReadFloat () == cl.mtime[0]);
+	for (int i = 0; i < 3; ++i)
+	{
+		float decoded = angle_bits == 8 ? MSG_ReadAngle (cl.protocolflags) : MSG_ReadAngle16 (cl.protocolflags);
+		float expected = angle_bits == 8 ? expected_angle8 (prepared_angles[i]) : expected_angle16 (prepared_angles[i]);
+		float global = angle_bits == 8 ? expected_angle8 (global_angles[i]) : expected_angle16 (global_angles[i]);
+		assert (decoded == expected && decoded != global);
+	}
+	assert (MSG_ReadShort () == cmd.forwardmove);
+	assert (MSG_ReadShort () == cmd.sidemove);
+	assert (MSG_ReadShort () == cmd.upmove);
+	assert (MSG_ReadByte () == cmd.buttons);
+	assert (MSG_ReadByte () == cmd.impulse);
+	assert (!msg_badread && msg_readcount == packet_size);
+}
+
+static void test_private_angles (void)
+{
+	setup ();
+	usercmd_t cmd = {0}, decoded;
+	cl.movemessages = 2;
+	memcpy (cl.viewangles, global_angles, sizeof global_angles);
+	memcpy (cmd.viewangles, prepared_angles, sizeof prepared_angles);
+	cmd.servertime = 123.25;
+	cmd.forwardmove = 123;
+	cmd.sidemove = -45;
+	cmd.upmove = 6;
+	cmd.buttons = 5;
+	cmd.impulse = 9;
+
+	CL_SendMove (&cmd);
+	assert (packet_count == 1 && packet_size == 23);
+	assert_prepared_journal_angles (&cmd);
+	for (int i = 0; i < 3; ++i)
+		assert (cl.cmd.viewangles[i] == prepared_angles[i]);
+	begin_packet ();
+	assert (MSG_ReadByte () == clc_move);
+	assert ((unsigned short)MSG_ReadShort () == 2);
+	assert (SV_ReadPrivateUsercmd (&decoded, 2, cl.protocolflags, 0));
+	for (int i = 0; i < 3; ++i)
+	{
+		assert (decoded.viewangles[i] == expected_angle16 (prepared_angles[i]));
+		assert (decoded.viewangles[i] != expected_angle16 (global_angles[i]));
+	}
+	assert (decoded.forwardmove == cmd.forwardmove && decoded.sidemove == cmd.sidemove);
+	assert (decoded.upmove == cmd.upmove && decoded.buttons == cmd.buttons && decoded.impulse == cmd.impulse);
+	assert (!msg_badread && msg_readcount == packet_size);
+}
+
+static void test_packet_angles (void)
+{
+	test_public_angle_case (PROTOCOL_NETQUAKE, false, 8, 16);
+	test_public_angle_case (PROTOCOL_FITZQUAKE, false, 16, 19);
+	test_public_angle_case (PROTOCOL_NETQUAKE, true, 16, 21);
+	test_private_angles ();
+}
+
 static void test_local_ack_invalidates_snapshot (void)
 {
 	setup ();
@@ -220,7 +334,8 @@ int main (void)
 	test_clock ();
 	test_ack_queue ();
 	test_full_bundle_and_wrap ();
+	test_packet_angles ();
 	test_local_ack_invalidates_snapshot ();
 	test_public_and_demo ();
-	puts ("Private sender: redundant commands, duration, ACK retention, public framing and demo/error checks passed");
+	puts ("Private sender: packet angle precision, redundant commands, ACK retention, public framing and demo/error checks passed");
 }

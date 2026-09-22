@@ -851,9 +851,9 @@ void CL_SendMove (const usercmd_t *cmd)
 			// it, and because it never actually gets recorded into demos anyway. spike -- predinfo also always means 16bit angles, even if for some reason the
 			// server doesn't advertise proquake (like dp).
 			if (cl.protocol == PROTOCOL_NETQUAKE && !NET_QSocketGetProQuakeAngleHack (cls.netcon) && !(cl.protocol_pext2 & PEXT2_PREDINFO))
-				MSG_WriteAngle (&buf, cl.viewangles[i], cl.protocolflags);
+				MSG_WriteAngle (&buf, cmd->viewangles[i], cl.protocolflags);
 			else
-				MSG_WriteAngle16 (&buf, cl.viewangles[i], cl.protocolflags);
+				MSG_WriteAngle16 (&buf, cmd->viewangles[i], cl.protocolflags);
 		// johnfitz
 
 		MSG_WriteShort (&buf, cmd->forwardmove);
