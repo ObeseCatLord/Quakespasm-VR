@@ -230,3 +230,19 @@ no-send movement, handedness/roll, and weapon switching. It observes both eyes,
 body, reconstructed muzzle, shot direction, ammo and damage. A temporary muzzle
 marker can help diagnose command geometry, but held-weapon parity requires the
 actual viewmodel adapter.
+
+The donor's `Mod_Weapon` applies held offsets and scale to an alias header
+(`vr.c:3100–3200`), while vkQuake's `R_AliasModelMatrix` composes each alias
+instance's header scale and origin into its draw matrix (`r_alias.c:483–510`).
+The latter is the narrow Vulkan presentation seam: query the existing
+calibration owner for the active classic/enhanced held profile, snapshot the
+result with the tracked viewmodel pose, then apply its per-instance transform
+without mutating a shared model header or adding another model manager. The
+same matrix helper is used by normal and diagnostic alias draws; shadow and
+stereo consistency still need live qualification. The command's muzzle offset
+remains governed by `vr_gunmodelscale`, not the display-only `held_scale`.
+`VR_WeaponCalibrationLookupHeld` now exposes the existing slot's classic live
+cvars or enhanced held offsets and the matching multiplayer overlay. It keeps
+the donor's enhanced neutral scale independent of classic `held_scale`; an
+enhanced slot with no held offset resolves to zero. It is data access only: the
+tracked viewmodel pose and draw-matrix adapter have not yet been added.

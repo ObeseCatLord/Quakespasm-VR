@@ -18,6 +18,11 @@ void VR_WeaponCalibrationReset(void);
 qboolean VR_WeaponCalibrationReloadGame(void);
 qboolean VR_WeaponCalibrationApplySchema(
 	const vr_weapon_schema_entry_t *entries, size_t count);
+qboolean VR_WeaponCalibrationLookupHeld(const char *model_name,
+										qboolean enhanced_format,
+										qboolean multiplayer,
+										vec3_t out_offset,
+										float *out_scale);
 qboolean VR_WeaponCalibrationLookupMuzzle(const char *model_name,
 										  qboolean enhanced_format,
 										  qboolean multiplayer, vec3_t out);

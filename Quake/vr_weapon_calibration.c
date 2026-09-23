@@ -514,6 +514,62 @@ qboolean VR_WeaponCalibrationReloadGame(void)
 	return true;
 }
 
+qboolean VR_WeaponCalibrationLookupHeld(const char *model_name,
+										qboolean enhanced_format,
+										qboolean multiplayer,
+										vec3_t out_offset,
+										float *out_scale)
+{
+	const vr_weapon_calibration_slot_t *calibration;
+	vec3_t offset = {0.0f, 0.0f, 0.0f};
+	float scale = 1.0f;
+	int slot;
+	int component;
+
+	if (out_offset)
+		memset(out_offset, 0, sizeof(vec3_t));
+	if (out_scale)
+		*out_scale = 1.0f;
+	if (!vr_weapon_calibration_initialized || !model_name || !model_name[0] ||
+		!out_offset || !out_scale)
+		return false;
+
+	slot = VR_FindCalibrationSlot(model_name);
+	if (slot < 0)
+		return false;
+	calibration = &vr_weapon_calibration_slots[slot];
+
+	if (enhanced_format)
+	{
+		/* The donor's neutral MD5 viewmodel has a zero held offset when
+		 * no enhanced offset was authored for an existing slot. */
+		if (calibration->has_enhanced_held_offset)
+			memcpy(offset, calibration->enhanced_held_offset, sizeof(offset));
+		if (multiplayer && calibration->has_enhanced_mp_held_offset)
+			for (component = 0; component < 3; ++component)
+				offset[component] +=
+					calibration->enhanced_mp_held_offset[component];
+	}
+	else
+	{
+		offset[0] = VR_WeaponOffsetCvar(slot, VR_WOFS_X).value;
+		offset[1] = VR_WeaponOffsetCvar(slot, VR_WOFS_Y).value;
+		offset[2] = VR_WeaponOffsetCvar(slot, VR_WOFS_Z).value;
+		scale = VR_WeaponOffsetCvar(slot, VR_WOFS_SCALE).value;
+		if (!isfinite(scale) || scale <= 0.0f)
+			return false;
+		if (multiplayer && calibration->has_mp_held_offset)
+			for (component = 0; component < 3; ++component)
+				offset[component] += calibration->mp_held_offset[component];
+	}
+
+	if (!VR_CalibrationVectorIsFinite(offset))
+		return false;
+	memcpy(out_offset, offset, sizeof(vec3_t));
+	*out_scale = scale;
+	return true;
+}
+
 qboolean VR_WeaponCalibrationLookupMuzzle(const char *model_name,
 										  qboolean enhanced_format,
 										  qboolean multiplayer, vec3_t out)
