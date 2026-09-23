@@ -292,10 +292,18 @@ migrated. This code compiles on Linux; visual headset proof remains open.
 During a connected in-game menu, the supported classic or modern HUD now draws
 once on its own inherited anchor after the menu panel. A confirmation dialog
 draws the supported HUD before its modal fade, using the same panel helper as
-normal gameplay. The early menu draw does not execute a CSQC callback because
-its recoverable error boundary is below that branch; CSQC menu-time HUD and
-loading-time HUD remain parity work. Desktop drawing remains on its existing
-path, and neither new state has headset visual proof yet.
+normal gameplay. Desktop drawing remains on its existing path, and neither
+new state has headset visual proof yet.
+
+The tracked menu now runs inside that same GUI recovery boundary. It retains
+the original menu draw order and skips scene tile clearing, then draws a CSQC
+HUD at the separate inherited anchor when the callback is available. A failed
+callback clears the CSQC panel and QuakeC state before drawing the flat classic
+fallback; the already recorded menu is not drawn twice. During a connected
+loading screen, the supported HUD draws after the loading art on its own
+anchor when the console is not forced up, matching the inherited VR draw
+order. A disconnected loading screen remains loading art only. Headset visual
+proof remains open.
 
 ## CSQC error-boundary senior review
 

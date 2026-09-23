@@ -509,7 +509,7 @@ static void SCR_SizeDown_f (void)
 /* All HUD styles use one tracked pose and one set of live-game restrictions. */
 static qboolean SCR_VRHUDFrameEligible (const vrxr_frame_t *frame)
 {
-	const qboolean loading = scr_drawloading || (scr_drawstartuploading && cls.state == ca_disconnected);
+	const qboolean disconnected_loading = scr_drawstartuploading && cls.state == ca_disconnected;
 	const qboolean in_game_menu = key_dest == key_menu && m_state != m_none;
 	const qboolean live_game = key_dest == key_game && m_state == m_none && !scr_drawdialog;
 	vec3_t angles;
@@ -518,7 +518,7 @@ static qboolean SCR_VRHUDFrameEligible (const vrxr_frame_t *frame)
 	if (!vulkan_globals.stereo_active || !frame || !frame->should_render || !frame->focused ||
 		!frame->devices[0].valid || !frame->devices[0].tracked || frame->devices[0].kind != VRXR_DEVICE_HEAD ||
 		frame->devices[0].hand != -1 || cls.signon != SIGNONS || !cl.worldmodel || con_forcedup ||
-		(!live_game && !in_game_menu && !scr_drawdialog) || scr_con_current > 0 || loading ||
+		(!live_game && !in_game_menu && !scr_drawdialog) || scr_con_current > 0 || disconnected_loading ||
 		cl.intermission ||
 		cl.maxclients != 1 || cl.gametype != GAME_COOP || sb_showscores || cl.stats[STAT_HEALTH] <= 0 ||
 		!isfinite (vr_aimmode.value) || !isfinite (vr_hud_scale.value) || vr_hud_scale.value <= 0)
@@ -1907,18 +1907,14 @@ static void SCR_VRModernSbarPrepare (void)
 	vr_modern_sbar_panel.valid = true;
 }
 
-/* Draw the live status bar through its prepared VR transform when available;
- * callers above the CSQC recovery boundary must suppress that callback. */
-static void SCR_DrawVRHUDPanel (cb_context_t *cbx, qboolean allow_csqc, qboolean flat_fallback)
+/* Draw the live status bar through its prepared VR transform when available. */
+static void SCR_DrawVRHUDPanel (cb_context_t *cbx, qboolean flat_fallback)
 {
 	const qboolean modern_panel = vulkan_globals.stereo_active && vr_modern_sbar_panel.valid;
 	const qboolean classic_panel = vulkan_globals.stereo_active && vr_classic_sbar_panel.valid;
-	const qboolean csqc_hud = scr_style.value < 1.0f && cl.qcvm.extfuncs.CSQC_DrawHud && !qcvm;
 	const qboolean draw_panel = modern_panel || classic_panel;
 	const qboolean panel_csqc = classic_panel && vr_classic_sbar_panel.csqc_hud;
 
-	if (!allow_csqc && (csqc_hud || panel_csqc))
-		return;
 	if (!draw_panel)
 	{
 		if (flat_fallback)
@@ -1950,6 +1946,8 @@ static void SCR_DrawGUI (void *unused)
 	cb_context_t *cbx = vulkan_globals.secondary_cb_contexts[SCBX_GUI];
 	const qboolean console_panel_valid = vulkan_globals.stereo_active &&
 		vr_menu_panel_mode == VR_PANEL_CONSOLE && vr_menu_panel.valid;
+	const qboolean menu_panel_valid = vulkan_globals.stereo_active &&
+		vr_menu_panel_mode == VR_PANEL_MENU && vr_menu_panel.valid;
 	const qboolean modal_panel_valid = vulkan_globals.stereo_active &&
 		vr_menu_panel_mode == VR_PANEL_MODAL && vr_menu_panel.valid;
 	const qboolean loading_panel_valid = vulkan_globals.stereo_active &&
@@ -1961,31 +1959,13 @@ static void SCR_DrawGUI (void *unused)
 	if (vulkan_globals.stereo_active && key_dest == key_menu)
 		M_SetVRPointerPixelPosition (vr_menu_panel.pointer_x, vr_menu_panel.pointer_y,
 			vr_menu_panel_mode == VR_PANEL_MENU && vr_menu_panel.valid && vr_menu_panel.pointer_valid);
-	if (vr_menu_panel.valid && vulkan_globals.stereo_active && vr_menu_panel_mode == VR_PANEL_MENU)
-	{
-		GL_BeginUIPanel (cbx, vr_menu_panel.world_from_ndc);
-		SDL_LockMutex (draw_qcvm_mutex);
-		scr_draw_gui_owns_qc_mutex = true;
-		M_Draw (cbx);
-		if (vr_menu_panel.pointer_valid)
-		{
-			GL_SetCanvas (cbx, CANVAS_DEFAULT);
-			Draw_Fill (cbx, vr_menu_panel.pointer_x - 4, vr_menu_panel.pointer_y - 1, 9, 3, 15, 1.0f);
-			Draw_Fill (cbx, vr_menu_panel.pointer_x - 1, vr_menu_panel.pointer_y - 4, 3, 9, 15, 1.0f);
-		}
-		GL_EndUIPanel (cbx);
-		SCR_DrawVRHUDPanel (cbx, false, !con_forcedup);
-		scr_draw_gui_owns_qc_mutex = false;
-		SDL_UnlockMutex (draw_qcvm_mutex);
-		return;
-	}
-
 	GL_SetCanvas (cbx, CANVAS_DEFAULT);
 	R_BindGraphicsPipeline (cbx, PIPELINE_BASIC_BLEND);
 
 	// FIXME: only call this when needed
 	R_BeginDebugUtilsLabel (cbx, "2D");
-	SCR_TileClear (cbx);
+	if (!menu_panel_valid)
+		SCR_TileClear (cbx);
 
 	const int csqc_items_before = cl.stats[STAT_ITEMS];
 
@@ -2016,9 +1996,27 @@ static void SCR_DrawGUI (void *unused)
 	if (!recovered_csqc_error)
 		scr_csqc_error_phase = SCR_CSQC_ERROR_ARMED;
 
-	if (scr_drawdialog) // new game confirm
+	if (menu_panel_valid)
 	{
-		SCR_DrawVRHUDPanel (cbx, true, !con_forcedup);
+		/* The menu and HUD keep separate physical anchors. On a recovered
+		 * CSQC failure the menu is already recorded, so redraw only the HUD. */
+		if (!recovered_csqc_error)
+		{
+			GL_BeginUIPanel (cbx, vr_menu_panel.world_from_ndc);
+			M_Draw (cbx);
+			if (vr_menu_panel.pointer_valid)
+			{
+				GL_SetCanvas (cbx, CANVAS_DEFAULT);
+				Draw_Fill (cbx, vr_menu_panel.pointer_x - 4, vr_menu_panel.pointer_y - 1, 9, 3, 15, 1.0f);
+				Draw_Fill (cbx, vr_menu_panel.pointer_x - 1, vr_menu_panel.pointer_y - 4, 3, 9, 15, 1.0f);
+			}
+			GL_EndUIPanel (cbx);
+		}
+		SCR_DrawVRHUDPanel (cbx, !con_forcedup);
+	}
+	else if (scr_drawdialog) // new game confirm
+	{
+		SCR_DrawVRHUDPanel (cbx, !con_forcedup);
 		if (modal_panel_valid)
 		{
 			GL_BeginUIPanel (cbx, vr_menu_panel.world_from_ndc);
@@ -2038,14 +2036,16 @@ static void SCR_DrawGUI (void *unused)
 	}
 	else if (scr_drawloading || (scr_drawstartuploading && cls.state == ca_disconnected)) // loading
 	{
-		if (loading_panel_valid)
+		if (!recovered_csqc_error && loading_panel_valid)
 		{
 			GL_BeginUIPanel (cbx, vr_menu_panel.world_from_ndc);
 			SCR_DrawMenuLoading (cbx, scr_drawstartuploading);
 			GL_EndUIPanel (cbx);
 		}
-		else
+		else if (!recovered_csqc_error)
 			SCR_DrawMenuLoading (cbx, scr_drawstartuploading);
+		if (vulkan_globals.stereo_active && !con_forcedup)
+			SCR_DrawVRHUDPanel (cbx, false);
 	}
 	else if (cl.intermission == 1 && key_dest == key_game) // end of level
 	{
@@ -2063,7 +2063,7 @@ static void SCR_DrawGUI (void *unused)
 		SCR_DrawTurtle (cbx);
 		SCR_DrawPause (cbx);
 		SCR_CheckDrawCenterString (cbx);
-		SCR_DrawVRHUDPanel (cbx, true, true);
+		SCR_DrawVRHUDPanel (cbx, true);
 		SCR_DrawDevStats (cbx); // johnfitz
 		SCR_DrawFPS (cbx);		// johnfitz
 		SCR_DrawSpeeds (cbx);
