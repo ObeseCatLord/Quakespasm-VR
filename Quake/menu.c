@@ -3025,6 +3025,7 @@ static const menukeybind_t default_keybinds[] = {
 	{"*", ""}, // insertion point for bindlist.lst entries
 	{"", ""},
 	{"+attack", "Attack"},
+	{"+vr_weaponmenu", "Weapon Wheel"},
 	{"impulse 10", "Next weapon"},
 	{"impulse 12", "Previous weapon"},
 	{"impulse 1", "Axe"},
