@@ -2411,14 +2411,15 @@ static qboolean SV_PrivateWalkTrialStockHull (edict_t *ent)
 		VectorCompare (ent->v.mins, mins) && VectorCompare (ent->v.maxs, maxs);
 }
 
-static const char *SV_PrivateWalkTrialStateError (edict_t *ent, client_t *client,
+const char *SV_PrivateWalkTrialStateError (edict_t *ent, client_t *client,
 	const usercmd_t *cmd)
 {
 	eval_t *customphysics;
-	int groundprog, groundnum;
+	int groundprog, groundnum, i;
 	edict_t *ground;
 
-	if (!client->active || !client->spawned || client->edict != ent || ent->free)
+	if (!client || !ent || !client->active || !client->spawned ||
+		client->edict != ent || ent->free)
 		return "client owner is no longer live";
 	if (sv.paused)
 		return "server paused";
@@ -2432,6 +2433,13 @@ static const char *SV_PrivateWalkTrialStateError (edict_t *ent, client_t *client
 		return "Gorilla input is outside the trial";
 	if ((int)ent->v.flags & FL_WATERJUMP)
 		return "waterjump state is outside the dry trial";
+	for (i = 0; i < 3; i++)
+	{
+		if (!isfinite (ent->v.origin[i]))
+			return "owner has a non-finite origin";
+		if (!isfinite (ent->v.velocity[i]))
+			return "owner has a non-finite velocity";
+	}
 	SV_CheckWater (ent);
 	if (ent->v.waterlevel != 0)
 		return "owner is not dry";

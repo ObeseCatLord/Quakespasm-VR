@@ -914,7 +914,8 @@ static qboolean SVFTE_WriteEntitiesToClient (client_t *client, sizebuf_t *msg,
 	if (client->protocol_qsvr == QSVR_PROTOCOL_PINNED)
 	{
 		MSG_WriteShort (msg, (client->private_completed_move & 0xffff));
-		MSG_WriteByte (msg, 0); // prediction remains disabled during the server-owner trial
+		MSG_WriteByte (msg, selected && !sv.paused ? (MOVEACK_FLAG_AUTHORITATIVE |
+			MOVEACK_FLAG_PREDICTION_ALLOWED) : 0);
 		MSG_WriteByte (msg, SV_PrivateWalkTrialSelected (client) ?
 			MOVE_AUTHORITY_PMOVE_ENGINE_COMPAT : MOVE_AUTHORITY_LEGACY_FRAME);
 		MSG_WriteShort (msg, 0); // mode epoch
@@ -2874,6 +2875,7 @@ qboolean SV_SendClientDatagram (client_t *client)
 	// fine as a temporary because only called from the main thread.
 	static byte buf[MAX_DATAGRAM + 1000];
 	sizebuf_t	msg;
+	const char *trial_failure;
 
 	if (!client->netconnection)
 	{
@@ -2891,6 +2893,23 @@ qboolean SV_SendClientDatagram (client_t *client)
 	if (client->spawned)
 	{
 		sv_player = client->edict;
+		if (SV_PrivateWalkTrialSelected (client))
+		{
+			/* Always validate admission first so the owner is live before any
+			 * selected data is serialized. Paused frames send without physics;
+			 * their ACK permission stays off until an active-frame state check. */
+			trial_failure = SV_PrivateWalkTrialAdmissionFailure (client);
+			if (!trial_failure && !sv.paused)
+				trial_failure = SV_PrivateWalkTrialStateError (client->edict, client,
+					&client->cmd);
+			if (trial_failure)
+			{
+				Con_Printf ("%s: dropping selected private WALK client: eligibility changed before snapshot: %s\n",
+					client->name, trial_failure);
+				SV_DropClient (false);
+				return false;
+			}
+		}
 
 		if (client->protocol_pext2 & PEXT2_REPLACEMENTDELTAS)
 		{

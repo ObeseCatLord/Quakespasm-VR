@@ -896,10 +896,10 @@ exit. The caller owns starting/stopping the separate simulated runtime service.
 
 `local_private_legacy_peer_smoke.gdb` observes an initialized client connected
 to an isolated loopback dedicated server. It checks signon, private or public
-protocol authority, disabled prediction permission, settled authoritative
-movement, shell consumption and advancing bounded move ACKs. It has no
-intermediate-frame movement assertion and does not claim prediction, VR input
-or physical damage.
+protocol authority, prediction permission, settled authoritative movement,
+shell consumption and advancing bounded move ACKs. The ordinary cases expect
+prediction permission off; the selected-private opt-in case below also checks
+between-send replay and settling. This is not a VR-input or physical-damage test.
 
 Give the client and server separate disposable basedirs. In each, link the
 canonical Straight `id1/pak0.pak` and the read-only `id1/vr_weapons.txt`:
@@ -937,6 +937,52 @@ QSVR_LOCAL_RESULT="$CLIENT_PROFILE/private-result.json" \
   +vid_vsync 0 +host_maxfps 144 +connect 127.0.0.1:28790
 ```
 
+## Selected private WALK prediction opt-in
+
+`sv_private_pmove_walk` is a default-off, server-side cvar. With the pinned
+private profile enabled, it selects only eligible stock-QC WALK owners for the
+private movement trial; only that selected owner can receive prediction
+permission while the server is active. Public peers and unsupported or
+ineligible owners receive no permission from this opt-in. Keep the cvar off for
+ordinary private/public checks above.
+
+For this focused Linux loopback probe, use fresh client/server profiles, the
+debug-symbol Linux binary, GDB with Python support, and stock `e1m1` assets. The
+owner must qualify as a live, dry stock WALK/SLIDEBOX player with the pinned
+stock `progs.dat`; Gorilla input, custom physics and riding a pusher are outside
+the trial. Start a fresh selected private server:
+
+```sh
+"$QSVR_BINARY" -dedicated 4 -ip 127.0.0.1 -port 28792 \
+  -basedir "$SERVER_PROFILE" +sv_qsvr_private 1 \
+  +sv_private_pmove_walk 1 +coop 1 +map e1m1
+```
+
+From the repository root, run the selected prediction expectation (set
+`SDL_VIDEODRIVER=x11` in this command environment if SDL cannot use Wayland):
+
+```sh
+QSVR_LOCAL_EXPECT_PRIVATE=1 \
+QSVR_LOCAL_EXPECT_PREDICTION=1 \
+QSVR_LOCAL_RESULT="$CLIENT_PROFILE/private-prediction-result.json" \
+  timeout --signal=TERM 150s gdb -nx --batch \
+  -x tests/local_private_legacy_peer_smoke.gdb --args "$QSVR_BINARY" \
+  -novr -nosound -window -width 640 -height 480 -basedir "$CLIENT_PROFILE" \
+  +vid_vsync 0 +host_maxfps 144 +connect 127.0.0.1:28792
+```
+
+The probe drives forward and attack, requires selected-private permission,
+observes successful production replay across rendered frames while ACK, sent
+sequence and authoritative origin stay fixed, then requires the displayed owner
+to settle within 16 units. This is a narrow loopback behavior check; it does not
+establish general movement parity, packet-loss robustness, VR tracking or
+physical damage. A failed selection or unsupported state is not a public
+prediction fallback.
+
+Whenever this GDB harness is run against a server started with
+`+sv_private_pmove_walk 1`, set `QSVR_LOCAL_EXPECT_PREDICTION=1` on the client
+command. Without it, the harness expects the default-off permission state.
+
 For public mode, start a fresh dedicated server with its default-off
 `sv_qsvr_private` and use `QSVR_LOCAL_EXPECT_PRIVATE=0` with a separate result
 path. The client still offers the versioned private profile during `pext`
@@ -972,7 +1018,8 @@ weapon pose, or packet-loss case. Run a fresh selected server with
 Add `QSVR_LOCAL_ASSERT_MOVE_STATS=1` for the stock selected-owner stat probe:
 it checks the received valid movement flags plus gravity, max speed, jump speed
 and step height against the stock server defaults. It does not enable or prove
-client prediction or stat/ACK epoch association.
+client replay; use the selected prediction probe above to check that behavior.
+It does not check stat/ACK epoch association.
 Gravity defaults to `800.0`; set `QSVR_LOCAL_EXPECT_GRAVITY` to a finite,
 nonnegative float to match a live server `sv_gravity` change. For example, after
 changing `sv_gravity` to `600` in the running private server console, add
@@ -983,7 +1030,8 @@ Add `QSVR_LOCAL_ASSERT_NONZERO_JUMP_TIMER=1` on a fresh selected `e1m1`
 client run to hold jump during the movement phase and require a nonzero
 received `STAT_PRIVATE_JUMP_SECS` value. The passed JSON includes
 `max_jump_seen`. This checks transport of one real jump timer; it does not
-establish replay parity or authorize prediction.
+establish replay parity; use the selected prediction probe above to check
+between-send replay and settling.
 For the same selected `e1m1` probe with zero gravity, use
 `tests/private_selected_zero_gravity_server.gdb` and set
 `QSVR_LOCAL_EXPECT_GRAVITY=0` on the client command; the harness accepts finite
@@ -1000,12 +1048,15 @@ Add `QSVR_LOCAL_ASSERT_COHERENT_OWNER=1` to check that the selected client's
 message-end candidate names the current owner and completed ACK after receiving
 the full movement-stat group. This verifies one loopback snapshot boundary;
 loss, split-packet recovery and eventual replay parity still need separate
-checks. Prediction permission remains off.
+checks. This assertion alone does not require prediction; use a default-off
+server for it. Against a selected server, set
+`QSVR_LOCAL_EXPECT_PREDICTION=1` as described above.
 Add `QSVR_LOCAL_ASSERT_PMOVE_TYPE=1` for a selected WALK server to require the
 received owner `pmovetype` to be WALK (3), with its grounded bit matching the
-owner's existing `EFLAGS_ONGROUND`. The ordinary authority check still requires
-prediction permission to remain off. This validates the owner projection only,
-not the safety of replaying movement. Combine it with
+owner's existing `EFLAGS_ONGROUND`. The default-off run expects prediction
+permission off; against a selected server, set
+`QSVR_LOCAL_EXPECT_PREDICTION=1` as described above. The owner projection
+assertion alone does not test replay safety. Combine it with
 `QSVR_LOCAL_ASSERT_NONZERO_JUMP_TIMER=1` to require that the received jump-held
 bit appears during the held jump and clears after release.
 
@@ -1078,7 +1129,8 @@ The result requires a changed world, completed signon and public authority.
 The debugger may terminate before the server clears the old client slot, so
 use a fresh dedicated server for each run or allow enough client slots for
 stranded slots to expire. These are local client/server checks only; they do
-not establish headset behavior, physical damage or prediction correctness.
+not establish headset behavior, physical damage or general prediction
+correctness.
 
 ## Selected-private shadow replay comparison
 

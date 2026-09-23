@@ -409,6 +409,7 @@ void SV_ResetPrivateCommandQueue (client_t *client);
 void SV_FinishPrivateUsercmds (void);
 qboolean SV_PrivateWalkTrialSelected (client_t *client);
 void SV_PrivateWalkTrialSelectAtBegin (client_t *client);
+const char *SV_PrivateWalkTrialStateError (edict_t *ent, client_t *client, const usercmd_t *cmd);
 void SV_ClientUpdateAnglesForClient (client_t *client);
 void SV_ClearVRWeaponPoseScope (void);
 void SV_VRWeaponPoseSetOrigin (edict_t *ent);
