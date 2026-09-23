@@ -2273,6 +2273,15 @@ retry:
 		truncated = true;
 		goto retry;
 	}
+	/* An optional offer must never make a serverinfo that fits the actual
+	 * reliable limit fail after precache truncation has reached its floor. */
+	if (client->message.overflowed && reserve_vrik_offer && cantruncate)
+	{
+		SZ_Clear (&client->message);
+		client->message.maxsize = serverinfo_maxsize;
+		reserve_vrik_offer = false;
+		goto retry;
+	}
 	client->message.maxsize = serverinfo_maxsize;
 
 	/* Keep negotiation inside the serverinfo reliable message. The donor
