@@ -45,6 +45,8 @@ BINTOC_EXE = ../Shaders/bintoc
 # ---------------------------
 include common.make
 
+OBJS += vrik_codec.o
+
 # ---------------------------
 # libraries
 # --------------------------- 

@@ -319,6 +319,7 @@ srcs = [
 	'Quake/sys_sdl.c',
     'Quake/tasks.c',
     'Quake/view.c',
+    'Quake/vrik_codec.c',
     'Quake/vr_input.c',
     'Quake/vr_locomotion.c',
     'Quake/vr_weapon_schema.c',
