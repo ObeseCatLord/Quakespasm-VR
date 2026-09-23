@@ -172,6 +172,8 @@ static int				num_desc_set_garbage[GARBAGE_FRAME_COUNT];
 static vulkan_memory_t *device_memory_garbage[GARBAGE_FRAME_COUNT];
 static VkDescriptorSet *descriptor_set_garbage[GARBAGE_FRAME_COUNT];
 static VkBuffer		   *buffer_garbage[GARBAGE_FRAME_COUNT];
+static vulkan_memory_t *dyn_memory_garbage_to_flush;
+static int				num_dyn_memory_garbage_to_flush;
 
 void R_VulkanMemStats_f (void);
 
@@ -1126,7 +1128,26 @@ void R_FlushDynamicBuffers (void)
 		ranges[num_ranges].memory = dyn_storage_buffer_memory.handle;
 		ranges[num_ranges++].size = VK_WHOLE_SIZE;
 	}
+	// EndRenderingTask runs after the frame's allocation and draw tasks have
+	// completed, so retired dynamic mappings are no longer being written here.
+	// Keep their flushes inside the same pre-submit point as the current buffers.
+	SDL_LockMutex (garbage_mutex);
 	vkFlushMappedMemoryRanges (vulkan_globals.device, num_ranges, ranges);
+	for (int i = 0; i < num_dyn_memory_garbage_to_flush; ++i)
+	{
+		ZEROED_STRUCT (VkMappedMemoryRange, range);
+		range.sType = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE;
+		range.memory = dyn_memory_garbage_to_flush[i].handle;
+		range.size = VK_WHOLE_SIZE;
+		vkFlushMappedMemoryRanges (vulkan_globals.device, 1, &range);
+	}
+	if (num_dyn_memory_garbage_to_flush > 0)
+	{
+		Mem_Free (dyn_memory_garbage_to_flush);
+		dyn_memory_garbage_to_flush = NULL;
+		num_dyn_memory_garbage_to_flush = 0;
+	}
+	SDL_UnlockMutex (garbage_mutex);
 }
 
 /*
@@ -1148,6 +1169,18 @@ void R_AddDynamicBufferGarbage (vulkan_memory_t memory, dynbuffer_t *buffers, in
 			device_memory_garbage[current_garbage_index] =
 				Mem_Realloc (device_memory_garbage[current_garbage_index], sizeof (vulkan_memory_t) * (*num_garbage));
 		device_memory_garbage[current_garbage_index][old_num_memory_garbage] = memory;
+		if ((buffers == dyn_vertex_buffers || buffers == dyn_index_buffers ||
+				buffers == dyn_uniform_buffers || buffers == dyn_storage_buffers) &&
+			memory.handle != VK_NULL_HANDLE)
+		{
+			const int old_num_memory_to_flush = num_dyn_memory_garbage_to_flush++;
+			if (dyn_memory_garbage_to_flush == NULL)
+				dyn_memory_garbage_to_flush = Mem_Alloc (sizeof (vulkan_memory_t) * num_dyn_memory_garbage_to_flush);
+			else
+				dyn_memory_garbage_to_flush =
+					Mem_Realloc (dyn_memory_garbage_to_flush, sizeof (vulkan_memory_t) * num_dyn_memory_garbage_to_flush);
+			dyn_memory_garbage_to_flush[old_num_memory_to_flush] = memory;
+		}
 	}
 
 	{
