@@ -226,16 +226,6 @@ void SV_CalcStats (client_t *client, int *statsi, float *statsf, const char **st
 		}
 	}
 
-	if (client->protocol_qsvr == QSVR_PROTOCOL_PINNED && SV_PrivateWalkTrialSelected (client))
-	{
-		movevars_t movevars;
-		if (!PMSV_BuildMoveVars (&movevars, ent, sv.protocolflags) ||
-			!PMSV_ExportMoveStats (&movevars, statsf, statsi))
-		{
-			statsi[STAT_MOVEFLAGS] = 0;
-			statsf[STAT_MOVEFLAGS] = 0;
-		}
-	}
 }
 
 /*server-side-only flags that re-use encoding bits*/
@@ -674,6 +664,54 @@ void SVFTE_Ack (client_t *client, int sequence)
 		host_client->num_pings++;
 	}
 }
+
+static const int sv_private_move_float_stats[] = {
+	STAT_MOVEVARS_WATERSINKSPEED, STAT_MOVEVARS_FLYFRICTION,
+	STAT_MOVEVARS_BUNNYSPEEDCAP, STAT_MOVEVARS_KTJUMP,
+	STAT_MOVEVARS_FRICTION, STAT_MOVEVARS_WATERFRICTION,
+	STAT_MOVEVARS_TIMESCALE, STAT_MOVEVARS_GRAVITY, STAT_MOVEVARS_STOPSPEED,
+	STAT_MOVEVARS_MAXSPEED, STAT_MOVEVARS_SPECTATORMAXSPEED,
+	STAT_MOVEVARS_ACCELERATE, STAT_MOVEVARS_AIRACCELERATE,
+	STAT_MOVEVARS_WATERACCELERATE, STAT_MOVEVARS_ENTGRAVITY,
+	STAT_MOVEVARS_JUMPVELOCITY, STAT_MOVEVARS_EDGEFRICTION,
+	STAT_MOVEVARS_MAXAIRSPEED, STAT_MOVEVARS_STEPHEIGHT};
+
+static qboolean SV_IsPrivateMoveStat (int stat)
+{
+	return stat == STAT_MOVEFLAGS ||
+		(stat >= STAT_MOVEVARS_WATERSINKSPEED && stat <= STAT_MOVEVARS_KTJUMP) ||
+		(stat >= STAT_MOVEVARS_FRICTION && stat <= STAT_MOVEVARS_WATERFRICTION) ||
+		(stat >= STAT_MOVEVARS_TIMESCALE && stat <= STAT_MOVEVARS_STEPHEIGHT);
+}
+
+static qboolean SVFTE_WritePrivateMoveStats (client_t *client, sizebuf_t *msg)
+{
+	movevars_t movevars;
+	int statsi[MAX_CL_STATS] = {0};
+	float statsf[MAX_CL_STATS] = {0};
+	size_t required = 1 + 1 + 4 + countof (sv_private_move_float_stats) * (1 + 1 + 4);
+	size_t i;
+
+	if (!PMSV_BuildMoveVars (&movevars, client->edict, sv.protocolflags) ||
+		!PMSV_ExportMoveStats (&movevars, statsf, statsi))
+		return false;
+	if (msg->cursize < 0 || msg->maxsize < 0 || msg->cursize > msg->maxsize ||
+		required > (size_t)(msg->maxsize - msg->cursize))
+		return false;
+
+	MSG_WriteByte (msg, svc_updatestat);
+	MSG_WriteByte (msg, STAT_MOVEFLAGS);
+	MSG_WriteLong (msg, statsi[STAT_MOVEFLAGS]);
+	for (i = 0; i < countof (sv_private_move_float_stats); i++)
+	{
+		int stat = sv_private_move_float_stats[i];
+		MSG_WriteByte (msg, svcfte_updatestatfloat);
+		MSG_WriteByte (msg, stat);
+		MSG_WriteFloat (msg, statsf[stat]);
+	}
+	return true;
+}
+
 static void SVFTE_WriteStats (client_t *client, sizebuf_t *msg)
 {
 	int					 statsi[MAX_CL_STATS];
@@ -699,6 +737,10 @@ static void SVFTE_WriteStats (client_t *client, sizebuf_t *msg)
 
 	for (i = 0; i < maxstats; i++)
 	{
+		if (client->protocol_qsvr == QSVR_PROTOCOL_PINNED &&
+			SV_PrivateWalkTrialSelected (client) && SV_IsPrivateMoveStat (i))
+			continue;
+
 		// small cleanup
 		if (!statsi[i])
 			statsi[i] = statsf[i];
@@ -840,11 +882,15 @@ static void SVFTE_CalcEntityDeltas (client_t *client)
 	snapshot_numents = 0;
 	snapshot_maxents = (olds != NULL) ? (oldstop - olds) : 0;
 }
-static void SVFTE_WriteEntitiesToClient (client_t *client, sizebuf_t *msg, size_t overflowsize)
+static qboolean SVFTE_WriteEntitiesToClient (client_t *client, sizebuf_t *msg,
+	size_t overflowsize, qboolean continuation)
 {
 	struct entity_num_state_s *state, *stateend;
+	struct entity_num_state_s *ownerstate = NULL;
 	unsigned int			   entbits, logbits, netbits;
-	size_t					   entnum;
+	size_t					   entnum, ownernum = 0, i;
+	qboolean				   selected = client->protocol_qsvr == QSVR_PROTOCOL_PINNED && SV_PrivateWalkTrialSelected (client);
+	qboolean				   worldreset = false, wrote_optional = false;
 	int						   sequence = NET_QSocketGetSequenceOut (client->netconnection);
 	size_t					   origmaxsize = msg->maxsize;
 	size_t					   rollbacksize; // I'm too lazy to figure out sizes (especially if someone updates this for bone states or whatever)
@@ -873,8 +919,63 @@ static void SVFTE_WriteEntitiesToClient (client_t *client, sizebuf_t *msg, size_
 	else if (client->protocol_pext2 & PEXT2_PREDINFO)
 		MSG_WriteShort (msg, (client->lastmovemessage & 0xffff));
 	MSG_WriteFloat (msg, frame->timestamp); // should be the time the last physics frame was run.
+	if (selected)
+	{
+		/* The ACK, complete move stats (written immediately before this
+		 * service), and a baseline-relative owner must survive as one datagram.
+		 * Prioritize the owner over optional PVS entities on every continuation. */
+		ownernum = NUM_FOR_EDICT (client->edict);
+		for (i = 0; i < client->numpreviousentities; i++)
+			if (client->previousentities[i].num == ownernum)
+			{
+				ownerstate = &client->previousentities[i];
+				break;
+			}
+		if (!ownerstate || ownernum >= client->numpendingentities)
+		{
+			msg->maxsize = origmaxsize;
+			return false;
+		}
+		worldreset = (client->pendingentities_bits[0] & UF_REMOVE) != 0;
+		if (worldreset)
+			MSG_WriteShort (msg, 0x8000); // world removal precedes owner reset
+		if (ownernum >= 0x4000)
+		{
+			MSG_WriteShort (msg, 0x4000 | (ownernum & 0x3fff));
+			MSG_WriteByte (msg, (ownernum >> 14) & 0xff);
+		}
+		else
+			MSG_WriteShort (msg, ownernum);
+		netbits = UF_RESET | MSGFTE_DeltaCalcBits (&client->edict->baseline,
+			&ownerstate->state, true);
+		MSGFTE_WriteEntityUpdate (netbits, &ownerstate->state, msg,
+			client->protocol_pext2, sv.protocolflags, true);
+		if ((size_t)msg->cursize + 2 > origmaxsize)
+		{
+			msg->maxsize = origmaxsize;
+			return false;
+		}
+		/* Owner resets are repeated rather than depending on frame resends.
+		 * The world reset still needs the existing lost-frame bookkeeping. */
+		client->pendingentities_bits[ownernum] = 0;
+		if (worldreset)
+		{
+			client->pendingentities_bits[0] = 0;
+			if (frame->numents == frame->maxents)
+			{
+				frame->maxents += 64;
+				frame->ents = Mem_Realloc (frame->ents, sizeof (*frame->ents) * frame->maxents);
+			}
+			frame->ents[frame->numents].num = 0;
+			frame->ents[frame->numents].ebits = UF_REMOVE;
+			frame->ents[frame->numents].csqcbits = 0;
+			frame->numents++;
+		}
+	}
 	for (entnum = client->snapshotresume; entnum < client->numpendingentities; entnum++)
 	{
+		if (selected && (entnum == ownernum || (entnum == 0 && worldreset)))
+			continue;
 		entbits = client->pendingentities_bits[entnum];
 		if (!(entbits & ~UF_RESET2))
 			continue; // nothing to send (if reset2 is still set, then leave it pending until there's more data
@@ -936,6 +1037,8 @@ static void SVFTE_WriteEntitiesToClient (client_t *client, sizebuf_t *msg, size_
 			client->pendingentities_bits[entnum] = entbits; // make sure those bits get re-applied later.
 			break;
 		}
+		if (selected && msg->cursize > rollbacksize)
+			wrote_optional = true;
 		if (frame->numents == frame->maxents)
 		{
 			frame->maxents += 64;
@@ -947,6 +1050,8 @@ static void SVFTE_WriteEntitiesToClient (client_t *client, sizebuf_t *msg, size_
 		frame->numents++;
 	}
 	msg->maxsize = origmaxsize;
+	if (selected && continuation && entnum < client->numpendingentities && !wrote_optional)
+		return false; // even a clean continuation cannot fit the optional entity
 	MSG_WriteShort (msg, 0); // eom
 
 	// remember how far we got, so we can keep things flushed, instead of only updating the first N entities.
@@ -956,6 +1061,7 @@ static void SVFTE_WriteEntitiesToClient (client_t *client, sizebuf_t *msg, size_
 		Con_DWarning ("%i byte packet exceeds standard limit of 1024.\n", msg->cursize);
 	dev_stats.packetsize = msg->cursize;
 	dev_peakstats.packetsize = q_max (msg->cursize, dev_peakstats.packetsize);
+	return true;
 }
 
 /*
@@ -2776,7 +2882,20 @@ qboolean SV_SendClientDatagram (client_t *client)
 				SV_WriteClientdataToMessage (client, &msg);
 			else
 				SVFTE_WriteStats (client, &msg);
-			SVFTE_WriteEntitiesToClient (client, &msg, sizeof (buf)); // must always write some data, or the stats will break
+			if (client->protocol_qsvr == QSVR_PROTOCOL_PINNED &&
+				SV_PrivateWalkTrialSelected (client) &&
+				!SVFTE_WritePrivateMoveStats (client, &msg))
+			{
+				Con_Printf ("%s: dropping selected private WALK client: movement stats could not be built or fit in the datagram\n", client->name);
+				SV_DropClient (false);
+				return false;
+			}
+			if (!SVFTE_WriteEntitiesToClient (client, &msg, sizeof (buf), false))
+			{
+				Con_Printf ("%s: dropping selected private WALK client: mandatory owner snapshot cannot fit\n", client->name);
+				SV_DropClient (false);
+				return false;
+			}
 
 			// this delta protocol doesn't wipe old state just because there's a new packet.
 			// the server isn't required to sync with the client frames either
@@ -2785,7 +2904,20 @@ qboolean SV_SendClientDatagram (client_t *client)
 			{
 				NET_SendUnreliableMessage (client->netconnection, &msg);
 				SZ_Clear (&msg);
-				SVFTE_WriteEntitiesToClient (client, &msg, sizeof (buf));
+				if (client->protocol_qsvr == QSVR_PROTOCOL_PINNED &&
+					SV_PrivateWalkTrialSelected (client) &&
+					!SVFTE_WritePrivateMoveStats (client, &msg))
+				{
+					Con_Printf ("%s: dropping selected private WALK client: movement stats could not be built or fit in the datagram\n", client->name);
+					SV_DropClient (false);
+					return false;
+				}
+				if (!SVFTE_WriteEntitiesToClient (client, &msg, sizeof (buf), true))
+				{
+					Con_Printf ("%s: dropping selected private WALK client: mandatory owner snapshot cannot fit or optional update cannot advance\n", client->name);
+					SV_DropClient (false);
+					return false;
+				}
 			}
 		}
 		else

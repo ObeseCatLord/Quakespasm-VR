@@ -488,3 +488,47 @@ The immediate proof must preserve completed-only ACK retirement and keep the
 prediction flag false. Later permission requires semantic discontinuity
 handling, jump debounce parity, collision/VR command replay and broader
 gameplay validation; repeated bytes alone do not authorize it.
+
+## Selected-private snapshot coherence checkpoint
+
+The selected stock-QC sender now uses the existing stat opcodes to put all 20
+movement settings, including unchanged and zero values, ahead of each entity
+update datagram. It skips those slots in the ordinary stat-delta loop. Each
+selected datagram also carries the completed ACK and a baseline-relative owner
+reset; optional entities follow, with the world's pending removal emitted
+first. The sender reserves room for the mandatory owner group and disconnects
+the selected trial if it cannot fit or an optional continuation cannot make
+progress. Public and default-off peer writers retain their prior path.
+
+The client accepts a replay candidate only when the same complete server
+message carried every movement stat, an accepted completed ACK and a matching
+reset-decoded owner. A later movement-stat update invalidates the earlier
+candidate. This reuses the existing parser and message-end commit point; the
+private prediction permission and owner `pmovetype` remain disabled.
+
+The strict Linux build, sanitizer-backed owner parser fixture and whole-message
+GDB probe pass. A selected `e1m1` dedicated-server loopback moved about 267
+units, fired four shells, received valid stock movement settings and a matching
+owner/ACK candidate (ACK 284), while prediction stayed off. A fresh public
+loopback moved/fired normally and retained zero private movement stats. The
+parser probe also rejects an owner update without that message's complete stat
+group. Forced snapshot splitting, packet-loss recovery, changed movement cvars,
+VR poses, jump debounce and semantic teleport resets still need proof before
+prediction can be enabled. The repeated group adds 120 bytes per selected
+datagram before the owner update; measure its traffic and frame cost on large
+maps before optimizing it.
+
+The implementation received a second local `gpt-6-astra`/`max` code review.
+It found no confirmed P0/P1 defect, but caught two continuation-specific
+behavior regressions before commit:
+
+| Finding | Disposition |
+| --- | --- |
+| Repeating an identical owner reset at the same snapshot time forces vkQuake's interpolation endpoints to collapse. | **Fixed.** The private parser still decodes the owner and establishes the ACK candidate, but leaves presentation history intact if origin and angles are unchanged. Changed owner state at frozen server time still follows the existing processing path. The owner fixture covers an identical same-time repeat. |
+| Failing when no optional entity fits in the first packet can disconnect a peer even though a clean continuation would fit it. | **Fixed.** The no-progress failure now applies only to a clean continuation. The first packet can carry its mandatory group and retry optional entities after dropping its ordinary stat/damage prefix. |
+
+The `e1m1` low-budget probes did not create an actual continuation: only four
+entities were visible in the sampled stock spawn. A larger visibility case or
+controlled pending-entity fixture is still needed to validate packet splitting,
+resend, interpolation and bounded progress end to end. Packet loss and changed
+server movement settings also remain untested.

@@ -41,7 +41,16 @@ def snapshot(sequence=10, epoch=1, owner=True):
     entities = struct.pack('<HBB', 1, 0x80, 0x01) if owner else b''
     return bytes([86]) + ack(sequence, epoch) + struct.pack('<f', 3.0) + entities + b'\0\0'
 
-def parse(packet):
+def movement_stats():
+    # Complete movement settings in this one message, including zero values.
+    packet = struct.pack('<BBI', 3, 225, 0x80000000)
+    for stat in list(range(226, 230)) + list(range(238, 240)) + list(range(241, 254)):
+        packet += struct.pack('<BBf', 79, stat, 0.0)
+    return packet
+
+def parse(packet, include_stats=True):
+    if include_stats:
+        packet = movement_stats() + packet
     assert len(packet) <= 8192
     gdb.selected_inferior().write_memory(integer('$packet'), packet)
     execute('set net_message.cursize = %d' % len(packet))
@@ -51,11 +60,20 @@ def valid(expected):
     assert bool(integer('cl.move_snapshot_valid')) == expected
 
 reset()
+parse(snapshot(), include_stats=False)
+valid(False)
+
+reset()
 parse(snapshot())
 valid(True)
 assert integer('cl.move_snapshot_owner') == 1
 assert integer('cl.move_snapshot_ack') == 10
 assert float(gdb.parse_and_eval('cl.entities[1].netstate.origin[0]')) == 12
+
+# A later owner reset without its own complete stat group cannot keep or
+# re-establish eligibility from the preceding datagram.
+parse(snapshot(), include_stats=False)
+valid(False)
 
 # A later accepted standalone ACK in the SAME message breaks the association.
 reset()

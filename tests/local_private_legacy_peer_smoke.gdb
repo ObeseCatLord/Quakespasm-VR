@@ -15,6 +15,7 @@ result_path = os.environ.get('QSVR_LOCAL_RESULT')
 ready_path = os.environ.get('QSVR_LOCAL_MAP_READY') or None
 assert_action_ack = os.environ.get('QSVR_LOCAL_ASSERT_ACTION_ACK') == '1'
 assert_move_stats = os.environ.get('QSVR_LOCAL_ASSERT_MOVE_STATS') == '1'
+assert_coherent_owner = os.environ.get('QSVR_LOCAL_ASSERT_COHERENT_OWNER') == '1'
 assert_public_move_stats_off = \
     os.environ.get('QSVR_LOCAL_ASSERT_PUBLIC_MOVE_STATS_OFF') == '1'
 if expect_text not in ('0', '1') or not result_path:
@@ -28,6 +29,8 @@ if assert_action_ack and not expect_private:
     raise RuntimeError('action/ACK probe requires a private peer')
 if assert_move_stats and not expect_private:
     raise RuntimeError('movement-stat probe requires a private peer')
+if assert_coherent_owner and not expect_private:
+    raise RuntimeError('coherent-owner probe requires a private peer')
 if assert_public_move_stats_off and expect_private:
     raise RuntimeError('public movement-stat probe requires public mode')
 
@@ -166,6 +169,14 @@ try:
                 require(math.isfinite(exported_move[key]) and
                         abs(exported_move[key] - expected) < 0.01,
                         'missing_or_wrong_' + key)
+        if assert_coherent_owner:
+            coherent_owner = dict(valid=bool(integer('cl.move_snapshot_valid')),
+                                  ack=integer('cl.move_snapshot_ack'),
+                                  owner=integer('cl.move_snapshot_owner'))
+            require(coherent_owner['valid'] and
+                    coherent_owner['ack'] == samples[1]['ack'] and
+                    coherent_owner['owner'] == integer('cl.viewentity'),
+                    'missing_coherent_owner_snapshot')
         if assert_public_move_stats_off:
             public_move_stats = movement_stats()
             require(not (public_move_stats['flags'] & 0x80000000),
@@ -200,6 +211,8 @@ else:
         result['first_shell_effect_ack'] = first_shell_ack
     if assert_move_stats:
         result['movement_stats'] = exported_move
+    if assert_coherent_owner:
+        result['coherent_owner_snapshot'] = coherent_owner
     if assert_public_move_stats_off:
         result['public_movement_stats'] = public_move_stats
 temporary = result_path + '.tmp.' + str(os.getpid())

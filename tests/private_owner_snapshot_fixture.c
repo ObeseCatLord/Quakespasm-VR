@@ -2,6 +2,7 @@
  * The fixture calls the real message-end commit helper directly; the main
  * parser's outer CL_ParseServerMessage dispatch is covered by a separate probe. */
 #include "../Quake/cl_parse.c"
+#include "../Quake/pmove.h"
 #include <assert.h>
 #include <math.h>
 #include <stdio.h>
@@ -14,6 +15,7 @@ qcvm_t *qcvm;
 sizebuf_t net_message;
 cvar_t cl_shownet;
 cvar_t v_gunkick;
+viddef_t vid;
 int r_trace_line_cache_counter;
 vec3_t v_punchangles[2];
 double v_punchangles_times[2];
@@ -30,6 +32,7 @@ int VectorCompare (const vec3_t first, const vec3_t second)
 }
 void CL_SignonReply (void) { assert (!"unexpected signon reply"); }
 void Con_DPrintf (const char *fmt, ...) {}
+void Con_DWarning (const char *fmt, ...) {}
 void Con_Printf (const char *fmt, ...) {}
 void Con_SafePrintf (const char *fmt, ...) {}
 void Host_Error (const char *fmt, ...) { assert (!"unexpected Host_Error"); }
@@ -126,6 +129,17 @@ static void reset_client (void)
 
 static void parse_private_update (const byte *bytes, int length)
 {
+	/* Model the complete movement-stat group preceding each private owner
+	 * update. This fixture calls the entity reader directly, so it supplies
+	 * the stat receipts through the production numeric parser. */
+	cl_move_stat_receipts = 0;
+	CL_ParseStatInt (STAT_MOVEFLAGS, MOVEFLAG_VALID);
+	for (int stat = STAT_MOVEVARS_WATERSINKSPEED; stat <= STAT_MOVEVARS_KTJUMP; stat++)
+		CL_ParseStatFloat (stat, 0);
+	for (int stat = STAT_MOVEVARS_FRICTION; stat <= STAT_MOVEVARS_WATERFRICTION; stat++)
+		CL_ParseStatFloat (stat, 0);
+	for (int stat = STAT_MOVEVARS_TIMESCALE; stat <= STAT_MOVEVARS_STEPHEIGHT; stat++)
+		CL_ParseStatFloat (stat, 0);
 	net_message.data = (byte *)bytes;
 	net_message.cursize = length;
 	MSG_BeginReading ();
@@ -157,6 +171,15 @@ int main (void)
 
 	reset_client ();
 	length = private_snapshot (packet, 10, 4, 1, true, false, 3.0f);
+	net_message.data = packet;
+	net_message.cursize = length;
+	MSG_BeginReading ();
+	CLFTE_ParseEntitiesUpdate ();
+	finish_message_if_complete (length);
+	assert (!cl.move_snapshot_valid); // owner/ACK without this message's settings is not eligible
+
+	reset_client ();
+	length = private_snapshot (packet, 10, 4, 1, true, false, 3.0f);
 	parse_private_update (packet, length);
 	assert (!msg_badread && msg_readcount == length);
 	assert (!cl.move_snapshot_valid); // candidate is private until message end
@@ -172,6 +195,13 @@ int main (void)
 	assert (!cl.move_snapshot_valid);
 	finish_message_if_complete (length);
 	assert (cl.move_snapshot_valid && entities[1].netstate.origin[0] == 12);
+	/* A continuation of that same snapshot must not collapse interpolation
+	 * history when it repeats an otherwise unchanged owner reset. */
+	float prior_origin = entities[1].msg_origins[1][0];
+	length = private_snapshot (packet, 10, 4, 1, true, false, 3.1f);
+	parse_private_update (packet, length);
+	finish_message_if_complete (length);
+	assert (cl.move_snapshot_valid && entities[1].msg_origins[1][0] == prior_origin);
 
 	/* A stale but syntactically valid ACK is not an accepted owner association. */
 	reset_client ();

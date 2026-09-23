@@ -544,9 +544,12 @@ before using them for the dedicated-peer movement/fire acceptance proof.
 ## Private owner association: complete-message boundary
 
 `private_owner_snapshot_fixture.c` uses production ACK/update readers and the
-message-end commit helper. It covers accepted/stale/equal ACKs, epoch changes,
-standalone invalidation, repeated owner resets, removal/world reset, owner
-changes, nonfinite state and logical truncation prefixes. Its packet-loss case
+message-end commit helper. It requires a complete per-message movement-stat
+receipt group and rejects a matching owner/ACK without one. It covers
+accepted/stale/equal ACKs, epoch changes, standalone invalidation, repeated
+owner resets including same-time interpolation preservation, removal/world
+reset, owner changes, nonfinite state and logical
+truncation prefixes. Its packet-loss case
 seeds stale prior state and applies a repeated reset; it does not simulate a
 socket or loss scheduling. Rendering/network/QC boundaries are test-only stand-ins.
 
@@ -561,7 +564,8 @@ cc -std=gnu11 -DUSE_SDL3 -D_GNU_SOURCE -Wno-unused-parameter \
 
 `private_owner_snapshot_smoke.gdb` calls the actual `CL_ParseServerMessage`
 inside the Linux debug executable with injected wire bytes before engine
-initialization. It verifies matching owner/ACK publication only at message end,
+initialization. It verifies matching owner/ACK and complete movement-stat
+publication only at message end, including rejection when the stats are absent,
 a later accepted standalone ACK, an ignored stale ACK, actual `svc_setview`
 changes away and back, later owner omission, and a truncated trailing ACK.
 The malformed case stops at the real `Host_Error` before any candidate commit.
@@ -941,6 +945,11 @@ Add `QSVR_LOCAL_ASSERT_MOVE_STATS=1` for the stock selected-owner stat probe:
 it checks the received valid movement flags plus gravity, max speed, jump speed
 and step height against the stock server defaults. It does not enable or prove
 client prediction or stat/ACK epoch association.
+Add `QSVR_LOCAL_ASSERT_COHERENT_OWNER=1` to check that the selected client's
+message-end candidate names the current owner and completed ACK after receiving
+the full movement-stat group. This verifies one loopback snapshot boundary;
+loss, split-packet recovery and eventual replay parity still need separate
+checks. Prediction permission remains off.
 
 For the private-to-public map-switch case, remove any stale readiness file,
 then add `QSVR_LOCAL_MAP_READY="$CLIENT_PROFILE/map-ready"` to the private

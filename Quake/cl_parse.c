@@ -24,6 +24,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 // cl_parse.c  -- parse a message received from the server
 
 #include "quakedef.h"
+#include "pmove.h"
 #include "bgmusic.h"
 #include "steam.h"
 #include "vr_input.h"
@@ -723,6 +724,23 @@ static void CLFTE_QueueAckFrame (int sequence)
 
 static qboolean cl_move_snapshot_pending;
 static int cl_move_snapshot_pending_ack, cl_move_snapshot_pending_owner;
+static unsigned int cl_move_stat_receipts;
+
+#define CL_MOVE_STAT_RECEIPT_COUNT 20
+#define CL_MOVE_STAT_RECEIPTS_COMPLETE ((1u << CL_MOVE_STAT_RECEIPT_COUNT) - 1u)
+
+static int CL_MoveStatReceiptBit (int stat)
+{
+	if (stat == STAT_MOVEFLAGS)
+		return 0;
+	if (stat >= STAT_MOVEVARS_WATERSINKSPEED && stat <= STAT_MOVEVARS_KTJUMP)
+		return 1 + stat - STAT_MOVEVARS_WATERSINKSPEED;
+	if (stat >= STAT_MOVEVARS_FRICTION && stat <= STAT_MOVEVARS_WATERFRICTION)
+		return 5 + stat - STAT_MOVEVARS_FRICTION;
+	if (stat >= STAT_MOVEVARS_TIMESCALE && stat <= STAT_MOVEVARS_STEPHEIGHT)
+		return 7 + stat - STAT_MOVEVARS_TIMESCALE;
+	return -1;
+}
 
 static void CL_InvalidateMoveSnapshot (void)
 {
@@ -730,6 +748,35 @@ static void CL_InvalidateMoveSnapshot (void)
 	cl.move_snapshot_ack = -1;
 	cl.move_snapshot_owner = 0;
 	cl_move_snapshot_pending = false;
+}
+
+static void CL_RecordMoveStatReceipt (int stat)
+{
+	int bit;
+
+	if (cl.protocol_qsvr != QSVR_PROTOCOL_PINNED || (bit = CL_MoveStatReceiptBit (stat)) < 0)
+		return;
+
+	CL_InvalidateMoveSnapshot ();
+	cl_move_stat_receipts |= 1u << bit;
+}
+
+static qboolean CL_ReceivedMoveStatsUsable (void)
+{
+	int stat;
+
+	if (!(cl.stats[STAT_MOVEFLAGS] & MOVEFLAG_VALID))
+		return false;
+	for (stat = STAT_MOVEVARS_WATERSINKSPEED; stat <= STAT_MOVEVARS_KTJUMP; stat++)
+		if (!isfinite (cl.statsf[stat]))
+			return false;
+	for (stat = STAT_MOVEVARS_FRICTION; stat <= STAT_MOVEVARS_WATERFRICTION; stat++)
+		if (!isfinite (cl.statsf[stat]))
+			return false;
+	for (stat = STAT_MOVEVARS_TIMESCALE; stat <= STAT_MOVEVARS_STEPHEIGHT; stat++)
+		if (!isfinite (cl.statsf[stat]))
+			return false;
+	return true;
 }
 
 static qboolean CL_MoveSnapshotStateIsFinite (const entity_state_t *state)
@@ -752,6 +799,8 @@ static void CLFTE_CommitMoveSnapshot (void)
 		return;
 	cl_move_snapshot_pending = false;
 	if (cl.protocol_qsvr != QSVR_PROTOCOL_PINNED ||
+		cl_move_stat_receipts != CL_MOVE_STAT_RECEIPTS_COMPLETE ||
+		!CL_ReceivedMoveStatsUsable () ||
 		cl_move_snapshot_pending_ack != cl.ackedmovemessages ||
 		cl_move_snapshot_pending_owner != cl.viewentity ||
 		cl_move_snapshot_pending_owner <= 0 ||
@@ -878,16 +927,27 @@ static void CLFTE_ParseEntitiesUpdate (void)
 			InvalidateTraceLineCache ();
 			continue;
 		}
-		else if (ent->update_type)
-		{ // simple update
-			unsigned int delta_bits = CLFTE_ReadDelta (newnum, &ent->netstate, &ent->netstate, &ent->baseline);
+	else if (ent->update_type)
+	{ // simple update
+		qboolean same_time_private_owner = private_snapshot && newnum == snapshot_owner &&
+			ent->msgtime == cl.mtime[0];
+		vec3_t oldorigin, oldangles;
+		if (same_time_private_owner)
+		{
+			VectorCopy (ent->netstate.origin, oldorigin);
+			VectorCopy (ent->netstate.angles, oldangles);
+		}
+		unsigned int delta_bits = CLFTE_ReadDelta (newnum, &ent->netstate, &ent->netstate, &ent->baseline);
 			if (private_snapshot && newnum == snapshot_owner)
 				owner_reset_decoded = (delta_bits & UF_RESET) && !msg_badread &&
 					CL_MoveSnapshotStateIsFinite (&ent->netstate);
-			if (ent->msgtime == cl.mtime[0])
-				// we did get an update for this entity, force processing by CL_EntitiesDeltaed
-				// even if qcvm time is frozen (sv_freezenonclients support)
-				ent->msgtime = cl.mtime[1];
+		if (ent->msgtime == cl.mtime[0] &&
+			!(same_time_private_owner && VectorCompare (oldorigin, ent->netstate.origin) &&
+				VectorCompare (oldangles, ent->netstate.angles)))
+			// we did get an update for this entity, force processing by CL_EntitiesDeltaed
+			// if server time is frozen; an identical private owner continuation
+			// must not collapse the two existing interpolation endpoints.
+			ent->msgtime = cl.mtime[1];
 		}
 		else
 		{ // we had no previous copy of this entity...
@@ -2036,6 +2096,7 @@ static void CL_ParseStatNumeric (int stat, int ival, float fval)
 		Con_DWarning ("svc_updatestat: %i is invalid\n", stat);
 		return;
 	}
+	CL_RecordMoveStatReceipt (stat);
 	cl.stats[stat] = ival;
 	cl.statsf[stat] = fval;
 	if (stat == STAT_VIEWZOOM)
@@ -2237,6 +2298,7 @@ void CL_ParseServerMessage (void)
 	//
 	MSG_BeginReading ();
 	cl_move_snapshot_pending = false;
+	cl_move_stat_receipts = 0;
 
 	lastcmd = 0;
 	while (1)
