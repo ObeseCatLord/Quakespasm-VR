@@ -482,13 +482,15 @@ static void SCR_SizeDown_f (void)
 static qboolean SCR_VRHUDFrameEligible (const vrxr_frame_t *frame)
 {
 	const qboolean loading = scr_drawloading || (scr_drawstartuploading && cls.state == ca_disconnected);
+	const qboolean in_game_menu = key_dest == key_menu && m_state != m_none;
+	const qboolean live_game = key_dest == key_game && m_state == m_none && !scr_drawdialog;
 	vec3_t angles;
 	int dominant;
 
 	if (!vulkan_globals.stereo_active || !frame || !frame->should_render || !frame->focused ||
 		!frame->devices[0].valid || !frame->devices[0].tracked || frame->devices[0].kind != VRXR_DEVICE_HEAD ||
 		frame->devices[0].hand != -1 || cls.signon != SIGNONS || !cl.worldmodel || con_forcedup ||
-		key_dest != key_game || m_state != m_none || scr_con_current > 0 || scr_drawdialog || loading ||
+		(!live_game && !in_game_menu && !scr_drawdialog) || scr_con_current > 0 || loading ||
 		cl.intermission ||
 		cl.maxclients != 1 || cl.gametype != GAME_COOP || sb_showscores || cl.stats[STAT_HEALTH] <= 0 ||
 		!isfinite (vr_aimmode.value) || !isfinite (vr_hud_scale.value) || vr_hud_scale.value <= 0)
@@ -1877,6 +1879,39 @@ static void SCR_VRModernSbarPrepare (void)
 	vr_modern_sbar_panel.valid = true;
 }
 
+/* Draw the live status bar through its prepared VR transform when available;
+ * callers above the CSQC recovery boundary must suppress that callback. */
+static void SCR_DrawVRHUDPanel (cb_context_t *cbx, qboolean allow_csqc, qboolean flat_fallback)
+{
+	const qboolean modern_panel = vulkan_globals.stereo_active && vr_modern_sbar_panel.valid;
+	const qboolean classic_panel = vulkan_globals.stereo_active && vr_classic_sbar_panel.valid;
+	const qboolean csqc_hud = scr_style.value < 1.0f && cl.qcvm.extfuncs.CSQC_DrawHud && !qcvm;
+	const qboolean draw_panel = modern_panel || classic_panel;
+	const qboolean panel_csqc = classic_panel && vr_classic_sbar_panel.csqc_hud;
+
+	if (!allow_csqc && (csqc_hud || panel_csqc))
+		return;
+	if (!draw_panel)
+	{
+		if (flat_fallback)
+			Sbar_Draw (cbx);
+		return;
+	}
+
+	if (modern_panel)
+	{
+		GL_BeginUIPanel (cbx, vr_modern_sbar_panel.world_from_ndc);
+		cbx->ui_panel_modern_hud = true;
+	}
+	else
+		GL_BeginUIPanel (cbx, vr_classic_sbar_panel.world_from_ndc);
+	if (panel_csqc)
+		SCR_SetCSQCDisplayOverride (&vr_classic_sbar_panel.csqc_display);
+	Sbar_Draw (cbx);
+	SCR_SetCSQCDisplayOverride (NULL);
+	GL_EndUIPanel (cbx);
+}
+
 /*
 ==================
 SCR_DrawGUI
@@ -1907,8 +1942,9 @@ static void SCR_DrawGUI (void *unused)
 			Draw_Fill (cbx, vr_menu_panel.pointer_x - 4, vr_menu_panel.pointer_y - 1, 9, 3, 15, 1.0f);
 			Draw_Fill (cbx, vr_menu_panel.pointer_x - 1, vr_menu_panel.pointer_y - 4, 3, 9, 15, 1.0f);
 		}
-		SDL_UnlockMutex (draw_qcvm_mutex);
 		GL_EndUIPanel (cbx);
+		SCR_DrawVRHUDPanel (cbx, false, !con_forcedup);
+		SDL_UnlockMutex (draw_qcvm_mutex);
 		return;
 	}
 
@@ -1947,12 +1983,9 @@ static void SCR_DrawGUI (void *unused)
 
 	if (scr_drawdialog) // new game confirm
 	{
+		SCR_DrawVRHUDPanel (cbx, true, !con_forcedup);
 		if (modal_panel_valid)
 		{
-			/* Keep the status bar in its existing flat location until wrist UI
-			 * is migrated. The modal backdrop and text share the anchored panel. */
-			if (!con_forcedup)
-				Sbar_Draw (cbx);
 			GL_BeginUIPanel (cbx, vr_menu_panel.world_from_ndc);
 			if (con_forcedup)
 				Draw_ConsoleBackground (cbx);
@@ -1964,8 +1997,6 @@ static void SCR_DrawGUI (void *unused)
 		{
 			if (con_forcedup)
 				Draw_ConsoleBackground (cbx);
-			else
-				Sbar_Draw (cbx);
 			Draw_FadeScreen (cbx);
 			SCR_DrawNotifyString (cbx);
 		}
@@ -1997,19 +2028,7 @@ static void SCR_DrawGUI (void *unused)
 		SCR_DrawTurtle (cbx);
 		SCR_DrawPause (cbx);
 		SCR_CheckDrawCenterString (cbx);
-		if (vr_modern_sbar_panel.valid)
-		{
-			GL_BeginUIPanel (cbx, vr_modern_sbar_panel.world_from_ndc);
-			cbx->ui_panel_modern_hud = true;
-		}
-		else if (vr_classic_sbar_panel.valid)
-			GL_BeginUIPanel (cbx, vr_classic_sbar_panel.world_from_ndc);
-		if (vr_classic_sbar_panel.valid && vr_classic_sbar_panel.csqc_hud)
-			SCR_SetCSQCDisplayOverride (&vr_classic_sbar_panel.csqc_display);
-		Sbar_Draw (cbx);
-		SCR_SetCSQCDisplayOverride (NULL);
-		if (vr_classic_sbar_panel.valid || vr_modern_sbar_panel.valid)
-			GL_EndUIPanel (cbx);
+		SCR_DrawVRHUDPanel (cbx, true, true);
 		SCR_DrawDevStats (cbx); // johnfitz
 		SCR_DrawFPS (cbx);		// johnfitz
 		SCR_DrawSpeeds (cbx);

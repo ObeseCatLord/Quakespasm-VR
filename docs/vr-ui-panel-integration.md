@@ -288,3 +288,11 @@ target is canceled by the panel transform, so artwork retains the physical
 The normal desktop canvas path is unchanged. Scores, death, multiplayer, and
 other excluded states still draw flat until their own canvas contracts are
 migrated. This code compiles on Linux; visual headset proof remains open.
+
+During a connected in-game menu, the supported classic or modern HUD now draws
+once on its own inherited anchor after the menu panel. A confirmation dialog
+draws the supported HUD before its modal fade, using the same panel helper as
+normal gameplay. The early menu draw does not execute a CSQC callback because
+its recoverable error boundary is below that branch; CSQC menu-time HUD and
+loading-time HUD remain parity work. Desktop drawing remains on its existing
+path, and neither new state has headset visual proof yet.
