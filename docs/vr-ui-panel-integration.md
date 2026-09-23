@@ -181,3 +181,33 @@ After these corrections, the Linux DEBUG build and diff checks pass. A local
 requested Khronos validation layer (`VK_ERROR_LAYER_NOT_PRESENT`); a
 validation-clean run remains open. The Monado runtime and headset checks above
 remain open as well.
+
+## Wrist HUD senior design review, 2026-09-23
+
+Astra Max reviewed the next HUD boundary against vkQuake, the inherited OpenVR
+renderer, and the AD HUD spacing update. Main-thread source checks confirmed
+that modern `Sbar_Draw` uses four corner canvases, CSQC clipping writes Vulkan
+scissors in framebuffer coordinates, and CSQC errors can leave a panel scope
+through `longjmp`. A single transform around the entire `Sbar_Draw` call would
+therefore retain the desktop layout's wide corner spacing and can leave clip
+state behind. The existing adapter is still the preferred rendering boundary;
+HUD presentation needs explicit, stable bounds by style.
+
+| Review recommendation | Disposition |
+| --- | --- |
+| Merge canvas layout and physical placement into one presentation contract, preserving vkQuake styles. | **Adopt.** Define source bounds per classic, modern, and CSQC presentation. Do not infer HUD width from changing inventory contents or copy the donor draw calls. Reflow content within the inherited HUD placement if needed for readability. |
+| Wrap the full `Sbar_Draw` call on a wrist transform. | **Adapt.** Keep one existing draw execution, but route its canvases through explicit bounds, suppress relocated margin clears and desktop scene reservation, and restore panel/scissor state after all paths. |
+| Apply framebuffer scissors unchanged to rotated CSQC content. | **Reject.** Use logical source-coordinate clipping within the panel and restore the ordinary scissor afterward; handle the recoverable CSQC error path. |
+| Extract world hand pose independently of existing tracking conversion. | **Reject.** Reuse the checked OpenXR-to-Quake basis and handedness mapping; publish one pose for both eyes and preserve the donor's yaw/pitch placement rather than adding roll. |
+| Prove only a classic status strip first. | **Adapt.** A classic strip may be a local geometry check, but the first meaningful mod proof is AD layouts `4` and `104`, including the inherited centered, separated bars at unchanged artwork size. |
+| Add an offscreen UI target or OpenXR composition layer now. | **Reject.** No demonstrated incompatibility yet justifies another render target or presentation state machine. Reopen only if logical clipping, stable size, eye agreement, or readability fails with the direct adapter. |
+
+The next proof must compare one AD scene against the inherited behavior, then
+cover modern corners, scoreboard, forced console, loading, tracking loss, and
+handedness before `VR-012` is considered complete. None of those checks is a
+release pass yet. The inherited `vr_hud_scale` default and menu range are
+being restored; its control must drive physical size before that UI is treated
+as functional. The user confirmed the inherited Quakespasm VR placement:
+controller-relative in controller-aim mode, aim/view-relative otherwise.
+Canvas adaptation may change layout within that surface, but not the default
+physical anchor policy.
