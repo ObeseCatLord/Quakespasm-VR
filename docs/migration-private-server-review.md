@@ -113,8 +113,9 @@ authoritative edict bounds and uses the pinned donor's tagged solid encoding.
 The explicit `QSVR` profile gates both the delta bit and the tagged payload;
 public vkQuake snapshots and baselines retain their existing layout. Owned
 entities are non-solid to their owner, as in the donor. This supplies the
-client collision collector with an eventual server source, but the profile
-is still inactive and no live writer/decoder roundtrip has been qualified.
+client collision collector with a server source. The profile is now admitted
+only on opt-in servers, but moving-solid writer/decoder roundtrips have not
+been qualified.
 Before enabling prediction, verify moving and changing solid boxes, BSPs,
 owner exclusion, packet loss and reset baselines through a live private
 snapshot, alongside the accepted-command owner and ACK association.
