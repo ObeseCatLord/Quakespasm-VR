@@ -23,7 +23,12 @@ roomscale must use the same command-time body origin.
 
 The first vertical proof should use one ordinary vanilla weapon and the **unchanged pinned dedicated server**. The `2.0` client already admits a pinned peer explicitly; using its existing VR movement and weapon consumers narrows this proof before porting those server owners. A known tracked HMD step must reach the command once through no-send/preview/catch-up, remain horizontal, obey world scale and mapped turning, and collide/step on the server. A known dominant grip and its weapon-specific muzzle offset must yield a finite body-relative command pose; the server must restore the muzzle at its authoritative player origin and preserve normal QuakeC fire, ammo, sound, damage and effects. Check an unobstructed step and a wall-blocked step while observing body, eye, reconstructed muzzle, shot direction, ammo and damage together. Repeat with left-handed mapping, reference rebase, focus/pose loss, simultaneous turning, public server, desktop, and an outlier. Preview must not consume or duplicate samples. Packet bytes and counters alone do not prove this behavior. Port the `2.0` server's private dispatch, authority movement and weapon hooks only after this first proof defines the behavior to preserve.
 
-Until the calibrated muzzle and server weapon path are present and proven, the OpenXR adapter must leave `vr_active` unset. Roomscale preparation alone is not a gameplay completion claim. The inherited akimbo, contact, Gorilla, weapon wheel and mod-specific paths are later gates on the same command/weapon owners, not reasons to build a replacement service.
+The producer now sets `vr_active` only for an admitted pinned peer with a
+complete calibrated hand pose. The unchanged pinned-server gameplay proof is
+still a release gate; roomscale preparation and a private packet alone are not
+gameplay completion. The inherited akimbo, contact, Gorilla, weapon wheel and
+mod-specific paths are later gates on the same command/weapon owners, not
+reasons to build a replacement service.
 
 The first roomscale adapter now reads the existing completed HMD frame and the
 view owner's effective yaw, accumulates a horizontal delta in the existing
@@ -31,7 +36,8 @@ pending command, and supplies it to both send and nonconsuming preview. It
 rejects tracker jumps above 16 units, but preserves the signed sum of valid
 samples across no-send frames. Send and preview accept only a *whole command*
 within PMove's 16-unit bound. A tracking baseline resets on focus/context/reference
-loss and angle locks. This is dormant on the wire while `vr_active` is false. Linux
+loss and angle locks. It reaches the private wire only with a complete calibrated
+VR command. Linux
 SDL3 Meson build and the native adapter's ASan/UBSan fixture pass its mapped
 delta, repeat-frame, preview, focus, outlier and lock checks. They do not prove
 physical roomscale movement or weapon behavior yet.
@@ -41,8 +47,8 @@ to the player origin (`gl_rmain.c:396–422`). Once roomscale moves the body,
 leaving that offset intact would count the same physical step twice. The shared
 head/body contract must also cover relative muzzle construction, newer render
 samples and collision-blocked movement. The pinned eye path removes current horizontal HMD translation
-from the rendered eye (`vr.c:10090–10100`). Do not enable `vr_active` until this
-camera relation and the server gameplay proof are correct.
+from the rendered eye (`vr.c:10090–10100`). The camera fixture covers its local
+anchor relation; the server gameplay proof remains open.
 
 The player-eye camera now has the narrow roomscale side of that anchor: an
 admitted private peer can establish body-relative view ownership from a
@@ -91,8 +97,8 @@ uses the stereo camera's retained vertical reference. `R_TrackedHeadEyeHeight`
 now exposes that existing reference to `V_TrackedHandBodyOffset`, so a raw grip
 can share the camera's floor or LOCAL height without a second reference owner.
 The production stereo-camera fixture checks a hand query before camera
-preparation and a LOCAL rebase. The calibrated muzzle and command producer
-still need to consume this raw grip; no synthetic floor height is introduced.
+preparation and a LOCAL rebase. The calibrated muzzle and command producer now
+consume this raw grip; no synthetic floor height is introduced.
 
 For the first relative-muzzle command, let `G` be the accepted dominant raw
 grip offset from the current player body, `O` the selected weapon's scaled
@@ -145,7 +151,23 @@ reloads after `COM_SwitchGame`. Eight source-calibrated enhanced model defaults
 precede authored file fields. Missing files keep those defaults; invalid files
 are rejected without publishing partial schema fields. The classic and
 enhanced muzzle lookups remain separate, and the focused reload fixture passes.
-Command-time model selection and `vr_active` are still pending.
+Command-time model selection now reads the bounded `STAT_WEAPON` precache entry
+and uses `Mod_Extradata_CheckSkin` to classify the active MDL/MD3/MD5 format,
+including the MD5 8-influence path. A focused fixture covers a weapon switch
+before `viewent.model` refresh. The producer prepares the calibrated relative
+muzzle and full hand rotation in the existing pending command, then copies
+that record to send and preview on an admitted private peer. Its sanitizer
+fixture covers accepted roomscale subtraction, left/right hands, repeated
+previews, public-peer exclusion and invalid pose/profile gates. The unchanged
+pinned-server gameplay proof remains open; these fixtures alone do not prove
+weapon effects, body movement, or collision behavior.
+
+The inherited muzzle adds a weapon collision correction only when its
+weapon-contact collision capability is negotiated (`vr.c:6230–6240,
+7181–7188`). The migrated client currently has the read-only `CL_TraceWeapon`
+query but does not negotiate that contact capability. The first pinned-peer
+proof must record the negotiated flags and distinguish that baseline from
+later contact/collision parity; it cannot claim full weapon-wall behavior.
 
 There is also a timing boundary to measure before any head-motion prediction:
 `CL_AccumulateCmd` consumes the last completed OpenXR frame in `host.c`, while

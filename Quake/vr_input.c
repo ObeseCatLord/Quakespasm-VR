@@ -37,6 +37,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "vr_aim.h"
 #include "vr_input.h"
 #include "vr_locomotion.h"
+#include "vr_weapon_calibration.h"
 
 #include <math.h>
 #include <string.h>
@@ -243,6 +244,10 @@ static void VR_InputClearPendingRecord (usercmd_t *pending)
 {
 	if (!pending)
 		return;
+	VectorCopy (vec3_origin, pending->vr_handpos);
+	VectorCopy (vec3_origin, pending->vr_handrot);
+	pending->vr_handpos_relative = false;
+	pending->vr_active = false;
 	pending->vr_pending_move[0] = pending->vr_pending_move[1] = pending->vr_pending_move[2] = 0.0f;
 	pending->vr_pending_angles[0] = pending->vr_pending_angles[1] = pending->vr_pending_angles[2] = 0.0f;
 	pending->vr_pending_move_valid = false;
@@ -733,6 +738,37 @@ void VR_InputCommands (const vrxr_frame_t *frame)
 	VR_InputEmitDesired (desired, &context);
 }
 
+static void VR_InputPreparePrivatePose (usercmd_t *pending, int dominant,
+	qboolean dominant_accepted)
+{
+	vec3_t grip, hand_angles, local_muzzle, world_muzzle, relative;
+	const qboolean roomscale_accepted =
+		VR_InputRoomscaleCommandAccepted (pending->vr_roomscalemove);
+
+	if (cl.protocol_qsvr != QSVR_PROTOCOL_PINNED || !VR_InputControllerAim () ||
+		!dominant_accepted ||
+		!V_TrackedHandBodyOffset (dominant, grip) ||
+		!V_TrackedMovementAngles (VR_MOVEMENT_MODE_FOLLOW_HAND, dominant, hand_angles) ||
+		!VR_WeaponCalibrationCurrentMuzzle (local_muzzle) ||
+		!VR_LocomotionMuzzleOffsetToWorld (local_muzzle, hand_angles,
+			vr_gunmodelscale.value, vr_gunmodelpitch.value,
+			dominant == 0, world_muzzle))
+		return;
+
+	for (int i = 0; i < 3; ++i)
+		relative[i] = grip[i] + world_muzzle[i] -
+			(roomscale_accepted ? pending->vr_roomscalemove[i] : 0.0f);
+	if (!VR_InputWireVec (relative) ||
+		!isfinite (hand_angles[0]) || !isfinite (hand_angles[1]) ||
+		!isfinite (hand_angles[2]))
+		return;
+
+	VectorCopy (relative, pending->vr_handpos);
+	VectorCopy (hand_angles, pending->vr_handrot);
+	pending->vr_handpos_relative = true;
+	pending->vr_active = true;
+}
+
 void VR_InputMove (usercmd_t *pending)
 {
 	const vrxr_frame_t *frame = GL_OpenXRFrame ();
@@ -886,6 +922,7 @@ void VR_InputMove (usercmd_t *pending)
 			pending->vr_pending_angles_valid = true;
 		}
 	}
+	VR_InputPreparePrivatePose (pending, dominant, dominant_accepted);
 }
 
 void VR_InputApplyPending (usercmd_t *cmd)
@@ -896,6 +933,18 @@ void VR_InputApplyPending (usercmd_t *cmd)
 		return;
 	if (VR_InputControllerAim () && VR_InputRoomscaleCommandAccepted (cl.pendingcmd.vr_roomscalemove))
 		VectorCopy (cl.pendingcmd.vr_roomscalemove, cmd->vr_roomscalemove);
+	if (cl.protocol_qsvr == QSVR_PROTOCOL_PINNED && cl.pendingcmd.vr_active &&
+		cl.pendingcmd.vr_handpos_relative &&
+		VR_InputWireVec (cl.pendingcmd.vr_handpos) &&
+		isfinite (cl.pendingcmd.vr_handrot[0]) &&
+		isfinite (cl.pendingcmd.vr_handrot[1]) &&
+		isfinite (cl.pendingcmd.vr_handrot[2]))
+	{
+		VectorCopy (cl.pendingcmd.vr_handpos, cmd->vr_handpos);
+		VectorCopy (cl.pendingcmd.vr_handrot, cmd->vr_handrot);
+		cmd->vr_handpos_relative = true;
+		cmd->vr_active = true;
+	}
 	if (cl.pendingcmd.vr_pending_angles_valid &&
 		isfinite (cl.pendingcmd.vr_pending_angles[PITCH]) &&
 		isfinite (cl.pendingcmd.vr_pending_angles[YAW]) &&

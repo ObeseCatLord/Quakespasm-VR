@@ -3,6 +3,8 @@
 #include "../Quake/menu.h"
 #include "../Quake/vr_input.h"
 #include "../Quake/vr_locomotion.h"
+#include "../Quake/vr_weapon_calibration.h"
+#include "../Quake/view.h"
 
 #include <assert.h>
 #include <stdio.h>
@@ -26,6 +28,8 @@ cvar_t cl_desktop_vanilla_run = {"cl_desktop_vanilla_run", "1", CVAR_ARCHIVE};
 cvar_t cl_movespeedkey = {"cl_movespeedkey", "2", CVAR_NONE};
 cvar_t cl_alwaysrun = {"cl_alwaysrun", "1", CVAR_ARCHIVE_GAME};
 cvar_t vr_aimmode = {"vr_aimmode", "7", CVAR_ARCHIVE};
+cvar_t vr_gunmodelpitch = {"vr_gunmodelpitch", "19", CVAR_ARCHIVE};
+cvar_t vr_gunmodelscale = {"vr_gunmodelscale", "1.35", CVAR_ARCHIVE};
 
 static qboolean waiting_for_binding;
 static qboolean input_grab_active;
@@ -33,9 +37,17 @@ static qboolean angle_locked;
 static const vrxr_frame_t *fixture_frame;
 static vec3_t fixture_head_angles;
 static vec3_t fixture_hand_angles[2];
+static vec3_t fixture_raw_grip = {3.25f, -4.5f, 6.75f};
+static vec3_t fixture_local_muzzle = {2.0f, -1.25f, 0.8f};
 static float fixture_turn_yaw;
 static float fixture_units_per_metre = 10.0f;
 static int fixture_turn_calls;
+static qboolean fixture_require_pose_identity;
+static qboolean fixture_body_offset_available;
+static qboolean fixture_muzzle_available;
+static int fixture_body_offset_calls;
+static int fixture_last_body_hand = -1;
+static int fixture_muzzle_calls;
 
 static recorded_event_t events[256];
 static int event_count;
@@ -132,10 +144,47 @@ qboolean V_TrackedMovementAngles (int mode, int physical_offhand, vec3_t angles)
 		if (physical_offhand < 0 || physical_offhand > 1 ||
 			!fixture_frame->devices[physical_offhand + 1].valid)
 			return false;
+		if (fixture_require_pose_identity &&
+			(!fixture_frame->should_render ||
+			 fixture_frame->devices[physical_offhand + 1].kind != VRXR_DEVICE_HAND ||
+			 fixture_frame->devices[physical_offhand + 1].hand != physical_offhand))
+			return false;
 		source = &fixture_hand_angles[physical_offhand];
 	}
 	VectorCopy (*source, angles);
 	angles[YAW] += fixture_turn_yaw;
+	return true;
+}
+
+qboolean V_TrackedHandBodyOffset (int physical_hand, vec3_t out)
+{
+	const vrxr_device_t *hand;
+
+	if (out)
+		out[0] = out[1] = out[2] = 0.0f;
+	if (!out || !fixture_body_offset_available || !fixture_frame ||
+		!fixture_frame->focused || !fixture_frame->should_render ||
+		!fixture_frame->devices[0].valid || physical_hand < 0 || physical_hand > 1)
+		return false;
+	hand = &fixture_frame->devices[physical_hand + 1];
+	if (!hand->valid || hand->kind != VRXR_DEVICE_HAND || hand->hand != physical_hand)
+		return false;
+
+	VectorCopy (fixture_raw_grip, out);
+	++fixture_body_offset_calls;
+	fixture_last_body_hand = physical_hand;
+	return true;
+}
+
+qboolean VR_WeaponCalibrationCurrentMuzzle (vec3_t out)
+{
+	if (!out)
+		return false;
+	out[0] = out[1] = out[2] = 0.0f;
+	++fixture_muzzle_calls;
+	if (!fixture_muzzle_available)
+		return false;
+	VectorCopy (fixture_local_muzzle, out);
 	return true;
 }
 
@@ -933,6 +982,175 @@ static void test_roomscale_command_accumulator (void)
 	fixture_frame = NULL;
 }
 
+static void expect_no_private_pose (void)
+{
+	usercmd_t applied = {0};
+
+	assert (!cl.pendingcmd.vr_active);
+	assert (!cl.pendingcmd.vr_handpos_relative);
+	VR_InputApplyPending (&applied);
+	assert (!applied.vr_active);
+	assert (!applied.vr_handpos_relative);
+}
+
+static void test_private_pose_for_handedness (qboolean lefthanded)
+{
+	vrxr_frame_t frame = neutral_frame ();
+	usercmd_t applied = {0};
+	usercmd_t pending_snapshot;
+	vec3_t expected_angles, world_muzzle, expected_handpos;
+	const int dominant = lefthanded ? 0 : 1;
+	int body_calls, muzzle_calls;
+
+	key_dest = key_game;
+	input_grab_active = waiting_for_binding = angle_locked = false;
+	cls.state = ca_connected;
+	cls.signon = SIGNONS;
+	cl.intermission = cl.paused = cls.demoplayback = false;
+	cl.protocol_qsvr = QSVR_PROTOCOL_PINNED;
+	vr_aimmode.value = 7;
+	vr_gunmodelpitch.value = 19.0f;
+	vr_gunmodelscale.value = 1.35f;
+	fixture_units_per_metre = 10.0f;
+	fixture_turn_yaw = 0.0f;
+	fixture_turn_calls = 0;
+	fixture_head_angles[PITCH] = -8.0f;
+	fixture_head_angles[YAW] = 27.0f;
+	fixture_head_angles[ROLL] = 3.0f;
+	fixture_hand_angles[dominant][PITCH] = 16.0f;
+	fixture_hand_angles[dominant][YAW] = 43.0f;
+	fixture_hand_angles[dominant][ROLL] = -21.0f;
+	fixture_body_offset_available = true;
+	fixture_muzzle_available = true;
+	fixture_require_pose_identity = true;
+	fixture_last_body_hand = -1;
+	fixture_body_offset_calls = 0;
+	fixture_muzzle_calls = 0;
+	set_cvar ("vr_lefthanded", lefthanded ? 1.0f : 0.0f);
+	set_cvar ("vr_movement_mode", VR_MOVEMENT_MODE_FOLLOW_HEAD);
+	set_cvar ("vr_movement_speed", 1.0f);
+	set_cvar ("vr_joystick_axis_deadzone", 0.25f);
+	set_cvar ("vr_joystick_axis_exponent", 1.0f);
+	set_cvar ("vr_joystick_deadzone_trunc", 1.0f);
+
+	frame.should_render = 1;
+	for (int device = 0; device < 3; ++device)
+		frame.devices[device].valid = true;
+	frame.devices[0].kind = VRXR_DEVICE_HEAD;
+	for (int hand = 0; hand < 2; ++hand)
+	{
+		frame.devices[hand + 1].kind = VRXR_DEVICE_HAND;
+		frame.devices[hand + 1].hand = hand;
+	}
+	assert (frame.focused && frame.should_render && frame.devices[0].valid);
+	assert (frame.devices[dominant + 1].valid &&
+		frame.devices[dominant + 1].kind == VRXR_DEVICE_HAND &&
+		frame.devices[dominant + 1].hand == dominant);
+	fixture_frame = &frame;
+
+	VR_InputClear ();
+	reset_events ();
+	VR_InputCommands (&frame); /* establish the same active profile/role identity */
+	VR_InputCommands (&frame); /* neutral sample rearms the stable identity */
+	assert (event_count == 0);
+	motion_sample (&frame); /* establish the cumulative roomscale baseline */
+	assert (cl.pendingcmd.vr_roomscalemove[0] == 0.0f);
+	frame.devices[0].matrix[0][3] = 0.05f;
+	frame.devices[0].matrix[2][3] = -0.10f;
+	motion_sample (&frame);
+	near_motion (cl.pendingcmd.vr_roomscalemove[0], 1.0f);
+	near_motion (cl.pendingcmd.vr_roomscalemove[1], -0.5f);
+	frame.devices[0].matrix[0][3] = 0.10f;
+	frame.devices[0].matrix[2][3] = -0.20f;
+	motion_sample (&frame);
+	near_motion (cl.pendingcmd.vr_roomscalemove[0], 2.0f);
+	near_motion (cl.pendingcmd.vr_roomscalemove[1], -1.0f);
+	assert (fixture_last_body_hand == dominant);
+	assert (fixture_body_offset_calls > 0 && fixture_muzzle_calls > 0);
+	assert (cl.pendingcmd.vr_active && cl.pendingcmd.vr_handpos_relative);
+
+	VectorCopy (fixture_hand_angles[dominant], expected_angles);
+	expected_angles[YAW] += fixture_turn_yaw;
+	assert (VR_LocomotionMuzzleOffsetToWorld (fixture_local_muzzle,
+		expected_angles, vr_gunmodelscale.value, vr_gunmodelpitch.value,
+		lefthanded, world_muzzle));
+	for (int axis = 0; axis < 3; ++axis)
+		expected_handpos[axis] = fixture_raw_grip[axis] + world_muzzle[axis] -
+			cl.pendingcmd.vr_roomscalemove[axis];
+	for (int axis = 0; axis < 3; ++axis)
+	{
+		near_motion (cl.pendingcmd.vr_handpos[axis], expected_handpos[axis]);
+		near_motion (cl.pendingcmd.vr_handrot[axis], expected_angles[axis]);
+	}
+
+	applied.forwardmove = 13.0f;
+	VR_InputApplyPending (&applied);
+	assert (applied.vr_active && applied.vr_handpos_relative);
+	for (int axis = 0; axis < 3; ++axis)
+	{
+		near_motion (applied.vr_handpos[axis], expected_handpos[axis]);
+		near_motion (applied.vr_handrot[axis], expected_angles[axis]);
+		near_motion (applied.vr_roomscalemove[axis], cl.pendingcmd.vr_roomscalemove[axis]);
+	}
+	pending_snapshot = cl.pendingcmd;
+	for (int preview_index = 0; preview_index < 5; ++preview_index)
+	{
+		usercmd_t preview = {0};
+		VR_InputApplyPending (&preview);
+		assert (preview.vr_active && preview.vr_handpos_relative);
+		for (int axis = 0; axis < 3; ++axis)
+		{
+			near_motion (preview.vr_handpos[axis], expected_handpos[axis]);
+			near_motion (preview.vr_handrot[axis], expected_angles[axis]);
+		}
+		assert (!memcmp (&pending_snapshot, &cl.pendingcmd, sizeof pending_snapshot));
+	}
+
+	/* Missing body grip pose, calibration muzzle, or matching tracked hand must
+	 * leave the cleared private fields inactive through both production calls. */
+	fixture_body_offset_available = false;
+	motion_sample (&frame);
+	expect_no_private_pose ();
+	fixture_body_offset_available = true;
+	fixture_muzzle_available = false;
+	motion_sample (&frame);
+	expect_no_private_pose ();
+	fixture_muzzle_available = true;
+	fixture_local_muzzle[0] = NAN;
+	motion_sample (&frame);
+	expect_no_private_pose ();
+	fixture_local_muzzle[0] = 2.0f;
+	fixture_hand_angles[dominant][ROLL] = NAN;
+	motion_sample (&frame);
+	expect_no_private_pose ();
+	fixture_hand_angles[dominant][ROLL] = -21.0f;
+	frame.devices[dominant + 1].valid = false;
+	motion_sample (&frame);
+	expect_no_private_pose ();
+	frame.devices[dominant + 1].valid = true;
+
+	/* A public connection may use the same focused inputs, but has no private
+	 * server pose admission and must not receive the prepared hand record. */
+	cl.protocol_qsvr = 0;
+	body_calls = fixture_body_offset_calls;
+	muzzle_calls = fixture_muzzle_calls;
+	motion_sample (&frame);
+	expect_no_private_pose ();
+	assert (fixture_body_offset_calls == body_calls);
+	assert (fixture_muzzle_calls == muzzle_calls);
+
+	cl.protocol_qsvr = 0;
+	fixture_require_pose_identity = false;
+	fixture_frame = NULL;
+}
+
+static void test_private_pose_preparation (void)
+{
+	test_private_pose_for_handedness (false);
+	test_private_pose_for_handedness (true);
+	puts ("VR private controller pose: pinned admission, grip+muzzle-roomscale composition, previews, invalid inputs and handedness passed");
+}
+
 int main (void)
 {
 	test_init_and_no_vr ();
@@ -950,6 +1168,7 @@ int main (void)
 	test_input_hands_are_snapshotted_before_release_callbacks ();
 	test_motion_ownership_and_tracking_loss ();
 	test_roomscale_command_accumulator ();
+	test_private_pose_preparation ();
 	puts ("VR input adapter preserves native key ownership, menu dispatch, gating and re-entry safety");
 	puts ("VR movement: modes, preview immutability, tracking/authority rearm, wire bounds and snap/smooth/queued turning passed");
 	puts ("VR roomscale preparation: mapped horizontal delta, deduplication, preview, focus and outlier gates passed");
