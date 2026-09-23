@@ -1875,7 +1875,8 @@ static void Send_Spawn_Info (client_t *c, qboolean loadgame)
 	// send time of update
 	MSG_WriteByte (&c->message, svc_time);
 	MSG_WriteFloat (&c->message, qcvm->time);
-	if (c->protocol_pext2 & PEXT2_PREDINFO)
+	if (c->protocol_qsvr != QSVR_PROTOCOL_PINNED &&
+		(c->protocol_pext2 & PEXT2_PREDINFO))
 		MSG_WriteShort (&c->message, (c->lastmovemessage & 0xffff));
 
 	for (i = 0, client = svs.clients; i < svs.maxclients; i++, client++)

@@ -727,7 +727,16 @@ static void SVFTE_WriteEntitiesToClient (client_t *client, sizebuf_t *msg, size_
 	MSG_WriteByte (msg, svcfte_updateentities);
 
 	frame->numents = 0;
-	if (client->protocol_pext2 & PEXT2_PREDINFO)
+	if (client->protocol_qsvr == QSVR_PROTOCOL_PINNED)
+	{
+		MSG_WriteShort (msg, (client->lastmovemessage & 0xffff));
+		MSG_WriteByte (msg, 0); // flags
+		MSG_WriteByte (msg, MOVE_AUTHORITY_LEGACY_FRAME);
+		MSG_WriteShort (msg, 0); // mode epoch
+		MSG_WriteShort (msg, 0); // discontinuity epoch
+		MSG_WriteByte (msg, MOVEACK_DISCONTINUITY_NONE);
+	}
+	else if (client->protocol_pext2 & PEXT2_PREDINFO)
 		MSG_WriteShort (msg, (client->lastmovemessage & 0xffff));
 	MSG_WriteFloat (msg, frame->timestamp); // should be the time the last physics frame was run.
 	for (entnum = client->snapshotresume; entnum < client->numpendingentities; entnum++)
@@ -2585,7 +2594,8 @@ qboolean SV_SendClientDatagram (client_t *client)
 		{
 			MSG_WriteByte (&msg, svc_time);
 			MSG_WriteFloat (&msg, qcvm->time);
-			if (client->protocol_pext2 & PEXT2_PREDINFO)
+			if (client->protocol_qsvr != QSVR_PROTOCOL_PINNED &&
+				(client->protocol_pext2 & PEXT2_PREDINFO))
 				MSG_WriteShort (&msg, (client->lastmovemessage & 0xffff));
 
 			SV_WriteEntitiesToClient (client, &msg, sizeof (buf));
