@@ -571,6 +571,7 @@ void SV_DropClient (qboolean crash)
 	host_client->netconnection = NULL;
 
 	SVFTE_DestroyFrames (host_client); // release any delta state
+	SV_ClearPendingVRIKRetirements (host_client);
 
 	// free the client (the body stays around)
 	host_client->active = false;
@@ -587,28 +588,6 @@ void SV_DropClient (qboolean crash)
 		MSG_WriteByte (&client->message, svc_updatename);
 		MSG_WriteByte (&client->message, retired_slot);
 		MSG_WriteString (&client->message, "");
-		/* A reliable retirement marker carries the generation explicitly.
-		 * The empty-name update above still handles peers that cannot receive it. */
-		if (client != host_client && client->vrik_protocol_version &&
-			retired_generation)
-		{
-			char command[64];
-			int command_length = q_snprintf (command, sizeof (command),
-				"//vrik_retire %d %u\n", retired_slot, retired_generation);
-
-			/* Reserve the marker and the seven bytes of colors/frags that
-			 * follow it; optional metadata cannot crowd out gameplay state. */
-			if (command_length > 0 && (size_t)command_length < sizeof (command) &&
-				!client->message.overflowed && client->message.cursize >= 0 &&
-				client->message.maxsize >= 0 &&
-				client->message.cursize <= client->message.maxsize &&
-				(size_t)(client->message.maxsize - client->message.cursize) >=
-				(size_t)command_length + 2 + 7)
-			{
-				MSG_WriteByte (&client->message, svc_stufftext);
-				MSG_WriteString (&client->message, command);
-			}
-		}
 		MSG_WriteByte (&client->message, svc_updatecolors);
 		MSG_WriteByte (&client->message, retired_slot);
 		MSG_WriteByte (&client->message, 0);
@@ -616,6 +595,11 @@ void SV_DropClient (qboolean crash)
 		MSG_WriteByte (&client->message, svc_updatefrags);
 		MSG_WriteByte (&client->message, retired_slot);
 		MSG_WriteShort (&client->message, 0);
+
+		/* Queue retirement only after the required scoreboard updates. */
+		if (client != host_client && client->vrik_protocol_version &&
+			retired_generation)
+			SV_QueueVRIKRetirement (client, retired_slot, retired_generation);
 	}
 }
 

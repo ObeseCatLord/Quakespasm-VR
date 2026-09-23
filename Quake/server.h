@@ -211,6 +211,12 @@ typedef struct client_s
 	qboolean vrik_relay_sequence_valid[MAX_SCOREBOARD];
 	unsigned short vrik_relay_sequence[MAX_SCOREBOARD];
 	unsigned int vrik_relay_generation[MAX_SCOREBOARD];
+	/* Per-recipient reliable retirement commands waiting for message space. */
+	unsigned int vrik_retire_pending[MAX_SCOREBOARD];
+	/* Byte boundary between older reliable data and later data when a marker
+	 * could not be appended inline. The later suffix waits for retirement. */
+	int vrik_retire_barrier_size;
+	qboolean vrik_retire_barrier_active;
 	unsigned int resendstatsnum[MAX_CL_STATS / 32]; // the stats which need to be resent.
 	unsigned int resendstatsstr[MAX_CL_STATS / 32]; // the stats which need to be resent.
 	int			 oldstats_i[MAX_CL_STATS];			// previous values of stats. if these differ from the current values, reflag resendstats.
@@ -392,6 +398,9 @@ void SV_StartSound (edict_t *entity, float *origin, int channel, const char *sam
 void SV_LocalSound (client_t *client, const char *sample); // for 2021 rerelease
 
 void SV_DropClient (qboolean crash);
+void SV_QueueVRIKRetirement (client_t *client, int slot, unsigned int generation);
+qboolean SV_FlushPendingVRIKRetirements (client_t *client);
+void SV_ClearPendingVRIKRetirements (client_t *client);
 
 void SVFTE_Ack (client_t *client, int sequence);
 void SVFTE_DestroyFrames (client_t *client);
