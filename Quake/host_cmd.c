@@ -2757,7 +2757,11 @@ static void Host_Begin_f (void)
 		return;
 	}
 
-	host_client->spawned = true;
+	if (!host_client->spawned)
+	{
+		SV_PrivateWalkTrialSelectAtBegin (host_client);
+		host_client->spawned = true;
+	}
 }
 
 //===========================================================================

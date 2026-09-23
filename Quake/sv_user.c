@@ -247,6 +247,36 @@ void DropPunchAngle (void)
 	VectorScale (sv_player->v.punchangle, len, sv_player->v.punchangle);
 }
 
+void SV_ClientUpdateAnglesForClient (client_t *client)
+{
+	edict_t *saved_player;
+	edict_t *ent;
+	vec3_t v_angle;
+
+	if (!client || !client->edict)
+		return;
+	ent = client->edict;
+	if (ent->v.movetype == MOVETYPE_NONE)
+		return;
+
+	saved_player = sv_player;
+	sv_player = ent;
+	DropPunchAngle ();
+	if (!(ent->v.health <= 0))
+	{
+		// show 1/3 the pitch angle and all the roll angle
+		angles = ent->v.angles;
+		VectorAdd (ent->v.v_angle, ent->v.punchangle, v_angle);
+		angles[ROLL] = V_CalcRoll (ent->v.angles, ent->v.velocity) * 4;
+		if (!ent->v.fixangle)
+		{
+			angles[PITCH] = -v_angle[PITCH] / 3;
+			angles[YAW] = v_angle[YAW];
+		}
+	}
+	sv_player = saved_player;
+}
+
 /*
 ===================
 SV_WaterMove
@@ -416,8 +446,6 @@ the angle fields specify an exact angular motion in degrees
 */
 void SV_ClientThink (void)
 {
-	vec3_t v_angle;
-
 	if (sv_player->v.movetype == MOVETYPE_NONE)
 		return;
 
@@ -426,27 +454,10 @@ void SV_ClientThink (void)
 	origin = sv_player->v.origin;
 	velocity = sv_player->v.velocity;
 
-	DropPunchAngle ();
-
-	//
-	// if dead, behave differently
-	//
+	SV_ClientUpdateAnglesForClient (host_client);
 	if (sv_player->v.health <= 0)
 		return;
-
-	//
-	// angles
-	// show 1/3 the pitch angle and all the roll angle
 	cmd = host_client->cmd;
-	angles = sv_player->v.angles;
-
-	VectorAdd (sv_player->v.v_angle, sv_player->v.punchangle, v_angle);
-	angles[ROLL] = V_CalcRoll (sv_player->v.angles, sv_player->v.velocity) * 4;
-	if (!sv_player->v.fixangle)
-	{
-		angles[PITCH] = -v_angle[PITCH] / 3;
-		angles[YAW] = v_angle[YAW];
-	}
 
 	if ((int)sv_player->v.flags & FL_WATERJUMP)
 	{
@@ -912,9 +923,13 @@ void SV_ResetPrivateCommandQueue (client_t *client)
 	client->private_cmd_queue_msec = 0;
 	client->private_retired_move = 0;
 	client->private_discarded_move = 0;
+	client->private_pmove_walk_selected = false;
+	client->private_pmove_credit_msec = 0.0;
+	memset (&client->private_pmove_last_cmd, 0, sizeof (client->private_pmove_last_cmd));
+	client->private_pmove_last_cmd_valid = false;
 }
 
-static void SV_QueuePrivateCommand (client_t *client, const usercmd_t *command,
+static qboolean SV_QueuePrivateCommand (client_t *client, const usercmd_t *command,
 	double received_at)
 {
 	unsigned int duration = command->msec;
@@ -925,9 +940,15 @@ static void SV_QueuePrivateCommand (client_t *client, const usercmd_t *command,
 		client->private_cmd_queue_count >= SV_PRIVATE_CMD_QUEUE_SIZE ||
 		client->private_cmd_queue_msec + duration > SV_PRIVATE_CMD_QUEUE_MAX_MSEC)
 	{
+		if (SV_PrivateWalkTrialSelected (client))
+		{
+			Sys_Printf ("%s: private WALK trial command queue overflow/discontinuity\n",
+				client->name);
+			return false;
+		}
 		/* A queue gap is safer than replaying stale input after falling behind. */
 		SV_DiscardPrivateCommandQueue (client, command->sequence);
-		return;
+		return true;
 	}
 
 	tail = (client->private_cmd_queue_head + client->private_cmd_queue_count) %
@@ -938,6 +959,7 @@ static void SV_QueuePrivateCommand (client_t *client, const usercmd_t *command,
 	queued->vr_contact_received = received_at;
 	client->private_cmd_queue_count++;
 	client->private_cmd_queue_msec += duration;
+	return true;
 }
 
 static void SV_RetirePrivateCommandsThrough (client_t *client, int completed_sequence)
@@ -964,6 +986,47 @@ static void SV_RetirePrivateCommandsThrough (client_t *client, int completed_seq
 	client->private_retired_move = completed_sequence;
 }
 
+static qboolean SV_PrivateWalkTrialFail (client_t *client, const char *reason)
+{
+	Sys_Printf ("%s: private WALK trial failed: %s\n", client->name, reason);
+	return false;
+}
+
+static qboolean SV_PrivateWalkTrialStateValid (client_t *client)
+{
+	int groundentity;
+	edict_t *ground;
+	eval_t *customphysics;
+
+	if (qcvm != &sv.qcvm)
+		return SV_PrivateWalkTrialFail (client, "server QC VM changed");
+	if (sv.paused)
+		return SV_PrivateWalkTrialFail (client, "server paused");
+	if (!client->active || !client->edict || client->edict->free ||
+		client->edict->v.movetype != MOVETYPE_WALK ||
+		client->edict->v.solid != SOLID_SLIDEBOX ||
+		client->edict->v.waterlevel != 0)
+		return SV_PrivateWalkTrialFail (client, "owner left dry WALK/SOLID_SLIDEBOX state");
+
+	customphysics = GetEdictFieldValue (client->edict, qcvm->extfields.customphysics);
+	if (customphysics && customphysics->function)
+		return SV_PrivateWalkTrialFail (client, "customphysics became active");
+
+	groundentity = client->edict->v.groundentity;
+	if (groundentity)
+	{
+		if (groundentity < 0 || qcvm->edict_size <= 0 ||
+			groundentity > (qcvm->num_edicts - 1) * qcvm->edict_size ||
+			groundentity % qcvm->edict_size)
+			return SV_PrivateWalkTrialFail (client, "invalid groundentity offset");
+		ground = PROG_TO_EDICT (groundentity);
+		if (!ground->free && ground->v.movetype == MOVETYPE_PUSH &&
+			ground->v.solid == SOLID_BSP)
+			return SV_PrivateWalkTrialFail (client, "owner contacted a pusher");
+	}
+	return true;
+}
+
 static qboolean SV_ReadPrivateClientMove (void)
 {
 	usercmd_t readcmd;
@@ -983,10 +1046,20 @@ static qboolean SV_ReadPrivateClientMove (void)
 		return false;
 	if (sequence <= last)
 		return true;
+	if (SV_PrivateWalkTrialSelected (host_client))
+	{
+		if (!SV_PrivateWalkTrialStateValid (host_client))
+			return false;
+		if (host_client->lastmovetime > 0 && realtime - host_client->lastmovetime > 1.0)
+			return SV_PrivateWalkTrialFail (host_client, "more than one second between accepted commands");
+		if (readcmd.vr_gorilla.flags || readcmd.vr_gorilla_motion.flags)
+			return SV_PrivateWalkTrialFail (host_client, "Gorilla input is outside the trial");
+	}
 
 	/* A long arrival gap starts a new queue epoch, then this fresh command may
 	 * begin the new queue. The legacy latest-command path remains unchanged. */
-	if (host_client->lastmovetime > 0 && realtime - host_client->lastmovetime > 1.0)
+	if (!SV_PrivateWalkTrialSelected (host_client) && host_client->lastmovetime > 0 &&
+		realtime - host_client->lastmovetime > 1.0)
 		SV_DiscardPrivateCommandQueue (host_client, last);
 
 	/* Validate each sample, not the total accumulated across a server frame. */
@@ -995,6 +1068,19 @@ static qboolean SV_ReadPrivateClientMove (void)
 	if (!isfinite (horizontal) || horizontal > 16.0f ||
 		fabsf (readcmd.vr_roomscalemove[2]) > 16.0f)
 		memset (readcmd.vr_roomscalemove, 0, sizeof (readcmd.vr_roomscalemove));
+	if (SV_PrivateWalkTrialSelected (host_client))
+	{
+		if (!readcmd.vr_active)
+			memset (readcmd.vr_roomscalemove, 0, sizeof (readcmd.vr_roomscalemove));
+		if (!SV_QueuePrivateCommand (host_client, &readcmd, realtime))
+			return false;
+		host_client->lastmovemessage = sequence;
+		host_client->lastmovetime = realtime;
+		host_client->ping_times[host_client->num_pings % NUM_PING_TIMES] =
+			qcvm->time - readcmd.servertime;
+		host_client->num_pings++;
+		return true;
+	}
 	/* Tracking received while gameplay is suspended must not become motion
 	 * debt when the next physics frame eventually runs. */
 	if (!readcmd.vr_active || sv.paused || (svs.maxclients <= 1 && key_dest != key_game) ||
@@ -1007,8 +1093,8 @@ static qboolean SV_ReadPrivateClientMove (void)
 	if (sv.paused || (svs.maxclients <= 1 && key_dest != key_game) ||
 		host_client->edict->v.movetype == MOVETYPE_NONE)
 		SV_DiscardPrivateCommandQueue (host_client, sequence);
-	else
-		SV_QueuePrivateCommand (host_client, &readcmd, realtime);
+	else if (!SV_QueuePrivateCommand (host_client, &readcmd, realtime))
+		return false;
 	VectorAdd (host_client->cmd.vr_roomscalemove, readcmd.vr_roomscalemove, roomscale);
 	VectorCopy (roomscale, readcmd.vr_roomscalemove);
 	readcmd.seconds = 0; // latest-command mode uses the normal server frame clock
@@ -1035,8 +1121,11 @@ static qboolean SV_ReadPrivateClientMove (void)
 	return true;
 }
 
-static void SV_ClearPrivateInput (client_t *client)
+static qboolean SV_ClearPrivateInput (client_t *client)
 {
+	if (SV_PrivateWalkTrialSelected (client))
+		return SV_PrivateWalkTrialFail (client, "selected input cannot be silently cleared");
+
 	SV_DiscardPrivateCommandQueue (client, client->lastmovemessage);
 	client->private_latest_buttons = 0;
 	client->private_latched_buttons = 0;
@@ -1050,6 +1139,7 @@ static void SV_ClearPrivateInput (client_t *client)
 	client->edict->v.button0 = 0;
 	client->edict->v.button2 = 0;
 	client->edict->v.impulse = 0;
+	return true;
 }
 
 /* Called after SV_Physics: retire only through each owner's completed cursor,
@@ -1064,6 +1154,17 @@ void SV_FinishPrivateUsercmds (void)
 			client->protocol_qsvr != QSVR_PROTOCOL_PINNED)
 			continue;
 		SV_RetirePrivateCommandsThrough (client, client->private_completed_move);
+		if (SV_PrivateWalkTrialSelected (client))
+		{
+			if (client->private_pmove_last_cmd_valid)
+			{
+				client->cmd = client->private_pmove_last_cmd;
+				client->cmd.impulse = 0;
+				memset (client->cmd.vr_roomscalemove, 0,
+					sizeof (client->cmd.vr_roomscalemove));
+			}
+			continue;
+		}
 		client->private_latched_buttons = 0;
 		client->private_latched_impulse = 0;
 		client->cmd.buttons = client->private_latest_buttons;
@@ -1207,8 +1308,12 @@ void SV_RunClients (void)
 		{
 			// clear client movement until a new packet is received
 			memset (&host_client->cmd, 0, sizeof (host_client->cmd));
-			if (host_client->protocol_qsvr == QSVR_PROTOCOL_PINNED)
-				SV_ClearPrivateInput (host_client);
+			if (host_client->protocol_qsvr == QSVR_PROTOCOL_PINNED &&
+				!SV_ClearPrivateInput (host_client))
+			{
+				SV_DropClient (false);
+				continue;
+			}
 			continue;
 		}
 
@@ -1221,7 +1326,16 @@ void SV_RunClients (void)
 		if (host_client->protocol_qsvr == QSVR_PROTOCOL_PINNED &&
 			(sv.paused || (svs.maxclients <= 1 && key_dest != key_game) ||
 			 (host_client->lastmovetime > 0 && realtime - host_client->lastmovetime > 1.0)))
-			SV_ClearPrivateInput (host_client);
+		{
+			if (!SV_ClearPrivateInput (host_client))
+			{
+				SV_DropClient (false);
+				continue;
+			}
+		}
+
+		if (SV_PrivateWalkTrialSelected (host_client))
+			continue;
 
 		// always pause in single player if in console or menus
 		if (!sv.paused && (svs.maxclients > 1 || key_dest == key_game))

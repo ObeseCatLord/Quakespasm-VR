@@ -22,6 +22,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 // sv_phys.c
 
 #include "quakedef.h"
+#include "pmove.h"
 #include "vr_weapon_calibration.h"
 
 /*
@@ -2400,6 +2401,509 @@ static qboolean SV_RunPrivateVRWeaponThink (edict_t *ent, client_t *client)
 	return alive;
 }
 
+/* PMove's short jump debounce spans accepted commands, while the authoritative
+ * jump-held level itself lives in the stock QC FL_JUMPRELEASED flag. */
+static client_t *sv_private_pmove_jump_owner[MAX_SCOREBOARD];
+static float sv_private_pmove_jump_secs[MAX_SCOREBOARD];
+
+/* The private trial is deliberately narrower than the ordinary client owner:
+ * stock hull, dry WALK, and no pusher/Gorilla authority. */
+static qboolean SV_PrivateWalkTrialStockHull (edict_t *ent)
+{
+	vec3_t mins = {-16, -16, -24};
+	vec3_t maxs = {16, 16, 32};
+	return (int)ent->v.solid == SOLID_SLIDEBOX &&
+		VectorCompare (ent->v.mins, mins) && VectorCompare (ent->v.maxs, maxs);
+}
+
+static const char *SV_PrivateWalkTrialStateError (edict_t *ent, client_t *client,
+	const usercmd_t *cmd)
+{
+	eval_t *customphysics;
+	int groundprog, groundnum;
+	edict_t *ground;
+
+	if (!client->active || !client->spawned || client->edict != ent || ent->free)
+		return "client owner is no longer live";
+	if (sv.paused)
+		return "server paused";
+	if (client->protocol_qsvr != QSVR_PROTOCOL_PINNED ||
+		!SV_PrivateWalkTrialSelected (client))
+		return "private profile selection changed";
+	if ((int)ent->v.movetype != MOVETYPE_WALK ||
+		!SV_PrivateWalkTrialStockHull (ent))
+		return "owner left stock WALK hull";
+	if (cmd && (cmd->vr_gorilla.flags || cmd->vr_gorilla_motion.flags))
+		return "Gorilla input is outside the trial";
+	if ((int)ent->v.flags & FL_WATERJUMP)
+		return "waterjump state is outside the dry trial";
+	SV_CheckWater (ent);
+	if (ent->v.waterlevel != 0)
+		return "owner is not dry";
+
+	customphysics = GetEdictFieldValue (ent, qcvm->extfields.customphysics);
+	if (customphysics && customphysics->function)
+		return "customphysics became active";
+
+	groundprog = (int)ent->v.groundentity;
+	if (qcvm->edict_size <= 0 || groundprog < 0 || (groundprog &&
+		(groundprog % qcvm->edict_size || groundprog / qcvm->edict_size >= qcvm->num_edicts)))
+		return "invalid ground entity";
+	if (groundprog)
+	{
+		groundnum = groundprog / qcvm->edict_size;
+		ground = EDICT_NUM (groundnum);
+		if (ground->free)
+			return "stale ground entity";
+		if (ground->v.movetype == MOVETYPE_PUSH && ground->v.solid == SOLID_BSP)
+			return "owner is riding a pusher";
+	}
+	return NULL;
+}
+
+static qboolean SV_PrivateWalkTrialBuildBounds (edict_t *ent,
+	const movevars_t *vars, float seconds, vec3_t bounds[2])
+{
+	float speed, reach, acceleration;
+	int i;
+
+	if (!isfinite (seconds) || seconds <= 0 || seconds > 0.1251f)
+		return false;
+	speed = 0;
+	for (i = 0; i < 3; i++)
+	{
+		if (!isfinite (ent->v.origin[i]) || !isfinite (ent->v.velocity[i]) ||
+			!isfinite (ent->v.mins[i]) || !isfinite (ent->v.maxs[i]))
+			return false;
+		speed = fmaxf (speed, fabsf (ent->v.velocity[i]));
+	}
+	acceleration = fmaxf (fabsf (vars->accelerate), fabsf (vars->airaccelerate)) *
+		fabsf (vars->maxspeed);
+	reach = (speed + fabsf (vars->maxspeed)) * seconds +
+		0.5f * (fabsf (vars->gravity * vars->entgravity) + acceleration) * seconds * seconds +
+	fabsf (vars->jumpspeed) * seconds + (float)vars->stepheight + 16.0f;
+	if (!isfinite (reach))
+		return false;
+	for (i = 0; i < 3; i++)
+	{
+		bounds[0][i] = ent->v.origin[i] + ent->v.mins[i] - reach;
+		bounds[1][i] = ent->v.origin[i] + ent->v.maxs[i] + reach;
+		if (!isfinite (bounds[0][i]) || !isfinite (bounds[1][i]))
+			return false;
+	}
+	return true;
+}
+
+static qboolean SV_PrivateWalkTrialCollect (edict_t *ent,
+	const movevars_t *vars, float seconds, vec3_t bounds[2])
+{
+	int i;
+
+	if (!SV_PrivateWalkTrialBuildBounds (ent, vars, seconds, bounds) ||
+		!SV_CollectPMovePhysents (ent, bounds))
+		return false;
+	/* The bounds intentionally cover the maximum reachable command sweep, not
+	 * just current overlap. A pusher anywhere in that envelope stays under the
+	 * legacy owner until moving-pusher contact parity is qualified. */
+	for (i = 1; i < pmove.numphysent; i++)
+	{
+		int number = pmove.physents[i].info;
+		edict_t *other;
+		if (number <= 0 || number >= qcvm->num_edicts)
+			return false;
+		other = EDICT_NUM (number);
+		if (other->free)
+			return false;
+	}
+	return true;
+}
+
+static void SV_PrivateWalkTrialDrop (client_t *client, const char *reason)
+{
+	Sys_Printf ("%s: private WALK trial disconnected: %s\n",
+		client->name[0] ? client->name : "client", reason);
+	if (client->active)
+		SV_DropClient (false);
+}
+
+/* This owner runs only for explicitly selected private peers. Queue retirement
+ * remains in SV_FinishPrivateUsercmds, after this function reports completion. */
+static void SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *client)
+{
+	playermove_t saved_pmove = pmove;
+	movevars_t saved_movevars = movevars, trial_movevars;
+	client_t *saved_host_client = host_client;
+	edict_t *saved_sv_player = sv_player;
+	usercmd_t command, *queued = NULL;
+	double saved_host_frametime = host_frametime;
+	float saved_qc_frametime = pr_global_struct->frametime;
+	vec3_t bounds[2], prethink_velocity;
+	float seconds, prethink_flags, prethink_teleport_time;
+	int prethink_groundentity;
+	qboolean run_command = false, was_grounded = false, weapon_alive;
+	const char *failure = NULL;
+	float result_jump_secs = 0;
+	int client_index, i;
+
+	ED_Retain (ent);
+	host_client = client;
+	sv_player = ent;
+	client_index = (int)(client - svs.clients);
+	if (client_index < 0 || client_index >= MAX_SCOREBOARD)
+	{
+		failure = "client slot is outside the PMove state table";
+		goto cleanup;
+	}
+	if (sv_private_pmove_jump_owner[client_index] != client ||
+		!client->private_pmove_last_cmd_valid)
+	{
+		sv_private_pmove_jump_owner[client_index] = client;
+		sv_private_pmove_jump_secs[client_index] = 0;
+	}
+
+	if (!isfinite (client->private_pmove_credit_msec) ||
+		client->private_pmove_credit_msec < 0.0)
+	{
+		failure = "invalid command-time credit";
+		goto cleanup;
+	}
+	if (!isfinite (host_frametime) || host_frametime < 0.0)
+	{
+		failure = "invalid host frame time";
+		goto cleanup;
+	}
+	if (!sv.paused)
+		client->private_pmove_credit_msec = fmin (250.0,
+			client->private_pmove_credit_msec + host_frametime * 1000.0);
+	if (client->private_pmove_credit_msec > 250.0)
+		client->private_pmove_credit_msec = 250.0;
+
+	if (client->private_cmd_queue_count > SV_PRIVATE_CMD_QUEUE_SIZE ||
+		client->private_cmd_queue_head >= SV_PRIVATE_CMD_QUEUE_SIZE ||
+		client->private_cmd_queue_msec > SV_PRIVATE_CMD_QUEUE_MAX_MSEC)
+	{
+		failure = "invalid accepted-command queue state";
+		goto cleanup;
+	}
+	if (client->private_cmd_queue_count)
+		queued = &client->private_cmd_queue[client->private_cmd_queue_head];
+	if (queued && (queued->msec < 1 || queued->msec > 125 ||
+		(int)queued->sequence <= client->private_completed_move))
+	{
+		failure = "invalid accepted queue head";
+		goto cleanup;
+	}
+	run_command = queued && client->private_pmove_credit_msec >= queued->msec;
+	seconds = queued ? queued->msec * 0.001f : 0.125f;
+	if (queued)
+		command = *queued;
+	else if (client->private_pmove_last_cmd_valid)
+		command = client->private_pmove_last_cmd;
+	else
+	{
+		memset (&command, 0, sizeof (command));
+		VectorCopy (ent->v.v_angle, command.viewangles);
+	}
+	if ((failure = SV_PrivateWalkTrialStateError (ent, client, &command)) != NULL)
+		goto cleanup;
+	if (run_command && (!PMSV_BuildMoveVars (&trial_movevars, ent, sv.protocolflags) ||
+		!SV_PrivateWalkTrialCollect (ent, &trial_movevars, seconds, bounds)))
+	{
+		failure = "PMove preflight failed";
+		goto cleanup;
+	}
+
+	if (!run_command)
+	{
+		/* Keep only the last completed levels and pose during a zero-time QC
+		 * maintenance pass. An uncompleted queue head never leaks into callbacks. */
+		if (!client->private_pmove_last_cmd_valid)
+		{
+			memset (&command, 0, sizeof (command));
+			VectorCopy (ent->v.v_angle, command.viewangles);
+		}
+		command.impulse = 0;
+		command.seconds = 0;
+		command.msec = 0;
+		VectorClear (command.vr_roomscalemove);
+		client->cmd = command;
+		VectorCopy (command.viewangles, ent->v.v_angle);
+		ent->v.button0 = (command.buttons & 1) != 0;
+		ent->v.button2 = (command.buttons & 2) != 0;
+		ent->v.impulse = 0;
+		host_frametime = 0;
+		pr_global_struct->frametime = 0;
+		SV_ClientUpdateAnglesForClient (client);
+		pr_global_struct->time = qcvm->time;
+		pr_global_struct->self = EDICT_TO_PROG (ent);
+		PR_ExecuteProgram (pr_global_struct->PlayerPreThink);
+		if (!client->active || ent->free)
+		{
+			failure = "player removed during maintenance PreThink";
+			goto cleanup;
+		}
+		if ((failure = SV_PrivateWalkTrialStateError (ent, client, &command)) != NULL)
+			goto cleanup;
+		if (!SV_RunPrivateVRWeaponThink (ent, client))
+		{
+			failure = "player removed during maintenance weapon Think";
+			goto cleanup;
+		}
+		if ((failure = SV_PrivateWalkTrialStateError (ent, client, &command)) != NULL)
+			goto cleanup;
+		SV_LinkEdict (ent, true);
+		if (!client->active || ent->free)
+		{
+			failure = "player removed during maintenance trigger callbacks";
+			goto cleanup;
+		}
+		pr_global_struct->time = qcvm->time;
+		pr_global_struct->frametime = 0;
+		pr_global_struct->self = EDICT_TO_PROG (ent);
+		{
+			sv_vr_weapon_pose_scope_t weapon_scope;
+			SV_BeginPrivateVRWeaponPose (ent, client, &weapon_scope);
+			PR_ExecuteProgram (pr_global_struct->PlayerPostThink);
+			SV_EndPrivateVRWeaponPose (ent, &weapon_scope);
+		}
+		if (!client->active || ent->free)
+		{
+			failure = "player removed during maintenance PostThink";
+			goto cleanup;
+		}
+		ent->v.impulse = 0;
+		client->cmd.impulse = 0;
+		goto cleanup;
+	}
+
+	/* A complete head is staged exactly once; room-scale is consumed before QC
+	 * and the shared PMove command below cannot apply it a second time. */
+	command.seconds = seconds;
+	client->cmd = command;
+	VectorCopy (command.viewangles, ent->v.v_angle);
+	ent->v.button0 = (command.buttons & 1) != 0;
+	ent->v.button2 = (command.buttons & 2) != 0;
+	ent->v.impulse = command.impulse;
+	host_frametime = seconds;
+	pr_global_struct->frametime = seconds;
+	SV_ClientUpdateAnglesForClient (client);
+	SV_ApplyPrivateRoomScaleMove (ent, client);
+
+	VectorCopy (ent->v.velocity, prethink_velocity);
+	prethink_flags = ent->v.flags;
+	prethink_groundentity = (int)ent->v.groundentity;
+	prethink_teleport_time = ent->v.teleport_time;
+	was_grounded = ((int)prethink_flags & FL_ONGROUND) != 0;
+	pr_global_struct->time = qcvm->time;
+	pr_global_struct->frametime = seconds;
+	pr_global_struct->self = EDICT_TO_PROG (ent);
+	PR_ExecuteProgram (pr_global_struct->PlayerPreThink);
+	if (!client->active || ent->free)
+	{
+		failure = "player removed during PreThink";
+		goto cleanup;
+	}
+	/* Stock QC owns jump sounds and flags; PMove owns the actual dry jump
+	 * impulse. Preserve a teleporter's deliberate pause at zero velocity. */
+	if (was_grounded && (command.buttons & 2) && ent->v.teleport_time <= qcvm->time &&
+		(prethink_teleport_time <= qcvm->time || ent->v.teleport_time == prethink_teleport_time) &&
+		!(VectorCompare (ent->v.velocity, vec3_origin) &&
+			!VectorCompare (prethink_velocity, vec3_origin)))
+		VectorCopy (prethink_velocity, ent->v.velocity);
+	SV_CheckVelocity (ent);
+	if ((failure = SV_PrivateWalkTrialStateError (ent, client, &command)) != NULL)
+		goto cleanup;
+	weapon_alive = SV_RunPrivateVRWeaponThink (ent, client);
+	if (!weapon_alive || !client->active || ent->free)
+	{
+		failure = "player removed during weapon Think";
+		goto cleanup;
+	}
+	if ((failure = SV_PrivateWalkTrialStateError (ent, client, &command)) != NULL)
+		goto cleanup;
+	if (!PMSV_BuildMoveVars (&trial_movevars, ent, sv.protocolflags) ||
+		!SV_PrivateWalkTrialCollect (ent, &trial_movevars, seconds, bounds))
+	{
+		failure = "post-QC physent collection failed";
+		goto cleanup;
+	}
+
+	movevars = trial_movevars;
+	pmove.pm_type = PM_NORMAL;
+	pmove.cmd = client->cmd;
+	pmove.cmd.seconds = seconds;
+	pmove.cmd.msec = command.msec;
+	pmove.cmd.impulse = command.impulse;
+	VectorClear (pmove.cmd.vr_roomscalemove);
+	VectorCopy (ent->v.origin, pmove.origin);
+	VectorCopy (ent->v.velocity, pmove.velocity);
+	VectorCopy (command.viewangles, pmove.angles);
+	VectorSet (pmove.gravitydir, 0, 0, -1);
+	VectorCopy (ent->v.mins, pmove.player_mins);
+	VectorCopy (ent->v.maxs, pmove.player_maxs);
+	/* QC may clear FL_JUMPRELEASED when it emits the stock jump sound. PMove
+	 * must use the release state that existed before that PreThink callback. */
+	pmove.jump_held = (((int)prethink_flags & FL_JUMPRELEASED) == 0);
+	pmove.jump_secs = sv_private_pmove_jump_secs[client_index];
+	pmove.waterjumptime = 0;
+	pmove.waterlevel = 0;
+	pmove.watertype = CONTENTBIT_EMPTY;
+	pmove.onladder = false;
+	pmove.safeorigin_known = false;
+	pmove.gorilla_allowed = false;
+	pmove.gorilla_prepared = false;
+	pmove.gorilla_authoring = false;
+	memset (&pmove.gorilla, 0, sizeof (pmove.gorilla));
+	pmove.numtouch = 0;
+	pmove.onground = false;
+	pmove.groundent = 0;
+	if (was_grounded || ((int)ent->v.flags & FL_ONGROUND))
+	{
+		int groundprog = (int)ent->v.groundentity;
+		if (!groundprog && was_grounded)
+			groundprog = prethink_groundentity;
+		if (!groundprog)
+			pmove.onground = true; /* world */
+		else if (groundprog > 0 && groundprog % qcvm->edict_size == 0)
+		{
+			int groundnum = groundprog / qcvm->edict_size;
+			for (i = 0; i < pmove.numphysent; i++)
+				if (pmove.physents[i].info == groundnum)
+				{
+					pmove.onground = true;
+					pmove.groundent = i;
+					break;
+				}
+		}
+	}
+	PM_PlayerMove (1.0f);
+	result_jump_secs = pmove.jump_secs;
+	if (pmove.onground && (pmove.groundent < 0 || pmove.groundent >= pmove.numphysent))
+	{
+		failure = "PMove returned an invalid ground entity";
+		goto cleanup;
+	}
+	for (i = 0; i < pmove.numtouch; i++)
+		if (pmove.touchindex[i] < 0 || pmove.touchindex[i] >= pmove.numphysent)
+		{
+			failure = "PMove returned an invalid solid touch";
+			goto cleanup;
+		}
+	for (i = 0; i < pmove.numtouch; i++)
+	{
+		int number = pmove.physents[pmove.touchindex[i]].info;
+		if (number > 0 && number < qcvm->num_edicts)
+		{
+			edict_t *other = EDICT_NUM (number);
+			if (!other->free && other->v.movetype == MOVETYPE_PUSH &&
+				other->v.solid == SOLID_BSP)
+			{
+				failure = "PMove contacted a moving pusher";
+				goto cleanup;
+			}
+		}
+	}
+
+	VectorCopy (pmove.origin, ent->v.origin);
+	VectorCopy (pmove.velocity, ent->v.velocity);
+	if (pmove.onground)
+	{
+		ent->v.flags = (int)ent->v.flags | FL_ONGROUND;
+		ent->v.groundentity = EDICT_TO_PROG (EDICT_NUM (pmove.physents[pmove.groundent].info));
+	}
+	else
+	{
+		ent->v.flags = (int)ent->v.flags & ~FL_ONGROUND;
+		ent->v.groundentity = 0;
+	}
+	if (pmove.jump_held)
+		ent->v.flags = (int)ent->v.flags & ~FL_JUMPRELEASED;
+	else
+		ent->v.flags = (int)ent->v.flags | FL_JUMPRELEASED;
+	ent->v.waterlevel = pmove.waterlevel;
+	ent->v.watertype = CONTENTS_EMPTY;
+	if (pmove.watertype & CONTENTBIT_LAVA)
+		ent->v.watertype = CONTENTS_LAVA;
+	else if (pmove.watertype & CONTENTBIT_SLIME)
+		ent->v.watertype = CONTENTS_SLIME;
+	else if (pmove.watertype & CONTENTBIT_WATER)
+		ent->v.watertype = CONTENTS_WATER;
+
+	/* Link for QC contact queries, dispatch solid impacts, then let the normal
+	 * trigger owner run once. SV_Impact callback velocity edits remain final. */
+	SV_LinkEdict (ent, false);
+	for (i = 0; i < pmove.numtouch && !ent->free; i++)
+	{
+		int number = pmove.physents[pmove.touchindex[i]].info;
+		edict_t *other;
+		if (number < 0 || number >= qcvm->num_edicts)
+		{
+			failure = "PMove touch entity is outside the server world";
+			goto cleanup;
+		}
+		other = EDICT_NUM (number);
+		if (!other->free && other != ent)
+			SV_Impact (ent, other);
+	}
+	if (ent->free || !client->active)
+	{
+		failure = "player removed during solid impact callbacks";
+		goto cleanup;
+	}
+	SV_LinkEdict (ent, true);
+	if (!client->active || ent->free)
+	{
+		failure = "player removed during trigger callbacks";
+		goto cleanup;
+	}
+	pr_global_struct->time = qcvm->time;
+	pr_global_struct->frametime = seconds;
+	pr_global_struct->self = EDICT_TO_PROG (ent);
+	{
+		sv_vr_weapon_pose_scope_t weapon_scope;
+		SV_BeginPrivateVRWeaponPose (ent, client, &weapon_scope);
+		PR_ExecuteProgram (pr_global_struct->PlayerPostThink);
+		SV_EndPrivateVRWeaponPose (ent, &weapon_scope);
+	}
+	if (!client->active || ent->free)
+	{
+		failure = "player removed during PostThink";
+		goto cleanup;
+	}
+	if ((failure = SV_PrivateWalkTrialStateError (ent, client, &command)) != NULL)
+		goto cleanup;
+	if (client->private_pmove_credit_msec < command.msec)
+	{
+		failure = "command-time credit changed during callbacks";
+		goto cleanup;
+	}
+	client->private_completed_move = (int)command.sequence;
+	client->private_pmove_last_cmd = command;
+	client->private_pmove_last_cmd_valid = true;
+	sv_private_pmove_jump_secs[client_index] = result_jump_secs;
+	client->private_pmove_credit_msec -= command.msec;
+	if (client->private_pmove_credit_msec < 0.000001)
+		client->private_pmove_credit_msec = 0;
+	client->cmd = command;
+	client->cmd.impulse = 0;
+	VectorClear (client->cmd.vr_roomscalemove);
+	ent->v.impulse = 0;
+
+cleanup:
+	if (failure)
+		SV_PrivateWalkTrialDrop (client, failure);
+	/* Impulses are one-shot even when maintenance has no accepted movement. */
+	if (client->active)
+		ent->v.impulse = 0;
+	pmove = saved_pmove;
+	movevars = saved_movevars;
+	host_frametime = saved_host_frametime;
+	pr_global_struct->frametime = saved_qc_frametime;
+	host_client = saved_host_client;
+	sv_player = saved_sv_player;
+	ED_Release (ent);
+}
+
 static void SV_Physics_Client (edict_t *ent, int num)
 {
 	sv_client_move_frame_t move_frame;
@@ -2414,6 +2918,12 @@ static void SV_Physics_Client (edict_t *ent, int num)
 
 	if (!svs.clients[num - 1].knowntoqc && sv_gameplayfix_spawnbeforethinks.value)
 		return; // don't spam prethinks before we called putclientinserver.
+
+	if (SV_PrivateWalkTrialSelected (client))
+	{
+		SV_Physics_ClientPrivateWalkTrial (ent, client);
+		return;
+	}
 
 	completed_move = client->lastmovemessage;
 	ED_Retain (ent);

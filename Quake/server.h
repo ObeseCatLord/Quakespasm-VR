@@ -236,6 +236,10 @@ typedef struct client_s
 	int		 private_completed_move;
 	int		 private_retired_move; // queued records retired through owner physics completion
 	int		 private_discarded_move; // explicit cutoff for commands dropped without queue consumption
+	qboolean	 private_pmove_walk_selected; // latched until command-queue/serverinfo reset
+	double	 private_pmove_credit_msec; // fractional milliseconds; physics accrual/cap lives in sv_phys.c
+	usercmd_t	 private_pmove_last_cmd; // last command completed through its QC callbacks
+	qboolean	 private_pmove_last_cmd_valid; // distinguishes no completion from a zero-input command
 	usercmd_t private_cmd_queue[SV_PRIVATE_CMD_QUEUE_SIZE];
 	unsigned int private_cmd_queue_head;
 	unsigned int private_cmd_queue_count;
@@ -402,6 +406,9 @@ void SV_CheckForNewClients (void);
 void SV_RunClients (void);
 void SV_ResetPrivateCommandQueue (client_t *client);
 void SV_FinishPrivateUsercmds (void);
+qboolean SV_PrivateWalkTrialSelected (client_t *client);
+void SV_PrivateWalkTrialSelectAtBegin (client_t *client);
+void SV_ClientUpdateAnglesForClient (client_t *client);
 void SV_ClearVRWeaponPoseScope (void);
 void SV_VRWeaponPoseSetOrigin (edict_t *ent);
 void SV_VRWeaponPoseLinked (edict_t *ent);

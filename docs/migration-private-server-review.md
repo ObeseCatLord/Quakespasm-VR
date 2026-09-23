@@ -325,3 +325,36 @@ idle weapon Think and once-only blocked room-scale translation. Keep pusher,
 water, custom-physics and Gorilla states under the legacy owner until they have
 their own parity evidence. A server-owner failure after activation must be an
 explicit error/discontinuity, never a silent whole-frame legacy replay.
+
+## Default-off stock-QC WALK trial checkpoint
+
+`sv_private_pmove_walk 1` now selects a remote, pinned-private, stock-progs,
+dry-WALK owner at `begin`. Selection is latched for that client and never
+silently falls back to native acceleration. It stages received commands in the
+existing private queue, grants at most 250 ms of command-time credit, and runs
+at most one complete command in each server frame. An idle or insufficient-credit
+frame runs a zero-time QuakeC maintenance pass using only the last completed
+levels and pose. The command path reuses the existing native room-scale sweep
+before PreThink, then the shared PMove solver for ordinary movement; it keeps
+prediction disabled and retires only after callbacks complete. The selector
+defaults off and is not archived.
+
+On this Linux host, the exact rebuilt binary passed a dedicated-server/desktop
+loopback smoke on stock `e1m1` with a 100 Hz server tick and 72 FPS client:
+the server reported trial selection, authoritative movement advanced about
+267 units, shells decreased from 25 to 21, and move ACKs advanced from 69 to
+285 without prediction permission. The same rebuilt binary passed the
+default-off private-peer smoke with the ordinary 40 Hz server tick and 144 FPS
+client. Both checks used disposable profiles linked to the configured Straight
+game data. These are movement/firing/ACK smoke checks, not proof of weapon-pose
+damage, queued-command action isolation, VR room-scale, or jump/trigger parity.
+
+The selected path still rejects water, pusher contact, custom physics, Gorilla
+input, pause, and unsupported owner changes by disconnecting rather than
+replaying legacy movement after an action. It also cannot sustain a client
+sending more than one command per server frame: 144 FPS client input overloaded
+the default 40 Hz server and hit the bounded queue. Near a stock-map door, a
+broader pusher-proximity gate disconnected at spawn; the current gate checks
+actual PMove pusher contact instead. The next architecture step must resolve
+rate mismatch and qualify QuakeC callback/weapon timing before this selector
+can become a general private owner or prediction can be enabled.

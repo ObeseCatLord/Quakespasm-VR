@@ -38,8 +38,76 @@ unsigned int sv_protocol_pext2 = PEXT2_SUPPORTED_SERVER; // spike
 static cvar_t sv_netsort = {"sv_netsort", "1", CVAR_NONE};
 static cvar_t sv_smoothplatformlerps = {"sv_smoothplatformlerps", "1", CVAR_NONE};
 static cvar_t sv_qsvr_private = {"sv_qsvr_private", "0", CVAR_NONE};
+static cvar_t sv_private_pmove_walk = {"sv_private_pmove_walk", "0", CVAR_SERVERINFO};
 
 extern cvar_t nomonsters;
+
+qboolean SV_PrivateWalkTrialSelected (client_t *client)
+{
+	return client && client->private_pmove_walk_selected;
+}
+
+static const char *SV_PrivateWalkTrialAdmissionFailure (client_t *client)
+{
+	edict_t *ground;
+	eval_t *customphysics;
+	int groundentity;
+
+	if (!client || !client->active || !client->knowntoqc || !client->edict || client->edict->free)
+		return "client is not a live spawned owner";
+	if (svs.maxclients <= 1 || !client->netconnection)
+		return "requires a remote client on a server with multiple client slots";
+	if (sv.loadgame)
+		return "loadgame state is outside the trial";
+	if (client->protocol_qsvr != QSVR_PROTOCOL_PINNED)
+		return "requires the pinned private profile";
+	if (qcvm != &sv.qcvm || qcvm->progssize != 340014 || qcvm->progscrc != 0x0bf8 ||
+		qcvm->progshash != 0xcf69c3e2)
+		return "requires the pinned stock progs identity";
+	if (client->edict->v.movetype != MOVETYPE_WALK ||
+		client->edict->v.solid != SOLID_SLIDEBOX || client->edict->v.waterlevel != 0)
+		return "requires a dry WALK/SOLID_SLIDEBOX owner";
+	if (client->cmd.vr_gorilla.flags || client->cmd.vr_gorilla_motion.flags)
+		return "Gorilla input is outside the trial";
+	customphysics = GetEdictFieldValue (client->edict, qcvm->extfields.customphysics);
+	if (customphysics && customphysics->function)
+		return "customphysics is active";
+	groundentity = client->edict->v.groundentity;
+	if (groundentity)
+	{
+		if (groundentity < 0 || qcvm->edict_size <= 0 ||
+			groundentity > (qcvm->num_edicts - 1) * qcvm->edict_size ||
+			groundentity % qcvm->edict_size)
+			return "owner has an invalid groundentity offset";
+		ground = PROG_TO_EDICT (groundentity);
+		if (!ground->free && ground->v.movetype == MOVETYPE_PUSH && ground->v.solid == SOLID_BSP)
+			return "owner is riding a pusher";
+	}
+	return NULL;
+}
+
+void SV_PrivateWalkTrialSelectAtBegin (client_t *client)
+{
+	const char *reason;
+
+	if (!client || client->spawned || client->private_pmove_walk_selected ||
+		!sv_private_pmove_walk.value)
+		return;
+	reason = SV_PrivateWalkTrialAdmissionFailure (client);
+	if (reason)
+	{
+		Sys_Printf ("%s: private WALK trial not selected: %s\n", client->name, reason);
+		return;
+	}
+
+	SV_ResetPrivateCommandQueue (client);
+	client->private_latest_buttons = 0;
+	client->private_latched_buttons = 0;
+	client->private_latched_impulse = 0;
+	client->lastmovetime = 0;
+	client->private_pmove_walk_selected = true;
+	Sys_Printf ("%s: selected private stock-QC WALK trial\n", client->name);
+}
 
 /*
 =============
@@ -781,8 +849,9 @@ static void SVFTE_WriteEntitiesToClient (client_t *client, sizebuf_t *msg, size_
 	if (client->protocol_qsvr == QSVR_PROTOCOL_PINNED)
 	{
 		MSG_WriteShort (msg, (client->private_completed_move & 0xffff));
-		MSG_WriteByte (msg, 0); // flags
-		MSG_WriteByte (msg, MOVE_AUTHORITY_LEGACY_FRAME);
+		MSG_WriteByte (msg, 0); // prediction remains disabled during the server-owner trial
+		MSG_WriteByte (msg, SV_PrivateWalkTrialSelected (client) ?
+			MOVE_AUTHORITY_PMOVE_ENGINE_COMPAT : MOVE_AUTHORITY_LEGACY_FRAME);
 		MSG_WriteShort (msg, 0); // mode epoch
 		MSG_WriteShort (msg, 0); // discontinuity epoch
 		MSG_WriteByte (msg, MOVEACK_DISCONTINUITY_NONE);
@@ -1260,6 +1329,7 @@ void SV_Init (void)
 	Cvar_RegisterVariable (&sv_netsort);
 	Cvar_RegisterVariable (&sv_smoothplatformlerps);
 	Cvar_RegisterVariable (&sv_qsvr_private);
+	Cvar_RegisterVariable (&sv_private_pmove_walk);
 
 	Cvar_RegisterVariable (&sv_fte_recursivehullckeck);
 	Cvar_RegisterVariable (&sv_fte_createareanode);
