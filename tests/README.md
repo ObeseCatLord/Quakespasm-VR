@@ -35,6 +35,22 @@ cc -std=gnu11 -DUSE_SDL3 -D_GNU_SOURCE -Wall -Wextra -Werror \
 /tmp/quakespasm-vr-weapon-calibration-fixture
 ```
 
+`vr_weapon_model_selector_fixture.c` calls the production command-time muzzle
+selector with a stub for native `Mod_Extradata_CheckSkin`. It covers weapon
+switches before `viewent.model` refresh, invalid indices/models/headers, all
+four supported pose formats, skin forwarding, classic and enhanced multiplayer
+overlays, missing profiles, and nonfinite calibration values.
+
+```sh
+cc -std=gnu11 -DUSE_SDL3 -D_GNU_SOURCE -Wall -Wextra -Werror \
+  -Wno-unused-parameter -Wno-sign-compare -Wno-missing-field-initializers \
+  -ffunction-sections -fdata-sections -IQuake \
+  tests/vr_weapon_model_selector_fixture.c Quake/vr_weapon_calibration.c \
+  -Wl,--gc-sections $(pkg-config --cflags --libs sdl3) -lm \
+  -o /tmp/quakespasm-vr-weapon-model-selector-fixture
+/tmp/quakespasm-vr-weapon-model-selector-fixture
+```
+
 `vr_weapon_calibration_reload_fixture.c` exercises active-game reload with the
 real schema parser, including all eight enhanced muzzle fallbacks, missing-file
 behavior, field-wise file overrides, profile replacement on a later reload,

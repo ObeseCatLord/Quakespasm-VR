@@ -21,5 +21,6 @@ qboolean VR_WeaponCalibrationApplySchema(
 qboolean VR_WeaponCalibrationLookupMuzzle(const char *model_name,
 										  qboolean enhanced_format,
 										  qboolean multiplayer, vec3_t out);
+qboolean VR_WeaponCalibrationCurrentMuzzle(vec3_t out);
 
 #endif

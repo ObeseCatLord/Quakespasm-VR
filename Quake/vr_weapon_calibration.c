@@ -564,3 +564,52 @@ qboolean VR_WeaponCalibrationLookupMuzzle(const char *model_name,
 		out[component] = base[component];
 	return true;
 }
+
+qboolean VR_WeaponCalibrationCurrentMuzzle(vec3_t out)
+{
+	qmodel_t *model;
+	aliashdr_t *alias_header;
+	qboolean enhanced_format;
+	int model_index;
+
+	if (!out)
+		return false;
+	memset(out, 0, sizeof(vec3_t));
+
+	model_index = cl.stats[STAT_WEAPON];
+	if (model_index < 1 || model_index >= MAX_MODELS)
+		return false;
+
+	model = cl.model_precache[model_index];
+	if (!model || model->needload || model->type != mod_alias)
+		return false;
+
+	alias_header = (aliashdr_t *)Mod_Extradata_CheckSkin(
+		model, cl.viewent.skinnum);
+	if (!alias_header)
+		return false;
+
+	switch (alias_header->poseverttype)
+	{
+	case PV_MD5:
+	case PV_MD5_8:
+		enhanced_format = true;
+		break;
+	case PV_QUAKE1:
+	case PV_QUAKE3:
+		enhanced_format = false;
+		break;
+	default:
+		return false;
+	}
+
+	if (!VR_WeaponCalibrationLookupMuzzle(model->name, enhanced_format,
+										  cl.maxclients > 1, out) ||
+		!VR_CalibrationVectorIsFinite(out))
+	{
+		memset(out, 0, sizeof(vec3_t));
+		return false;
+	}
+
+	return true;
+}
