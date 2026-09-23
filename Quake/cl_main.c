@@ -703,7 +703,15 @@ static void CL_PrepareReplayPreview (usercmd_t *cmd, qboolean private_replay)
 	cmd->seconds = (float)elapsed;
 }
 
-qboolean CL_ReplayPlayerMovement (entity_t *ent, vec3_t origin)
+typedef struct
+{
+	vec3_t origin;
+	vec3_t velocity;
+	qboolean onground;
+	qboolean inwater;
+} cl_replay_result_t;
+
+static qboolean CL_ComputeReplayPlayerMovement (entity_t *ent, cl_replay_result_t *result)
 {
 	qboolean private_replay;
 	usercmd_t preview;
@@ -810,10 +818,24 @@ qboolean CL_ReplayPlayerMovement (entity_t *ent, vec3_t origin)
 	CL_PrepareReplayCommand (&pmove.cmd, &preview, private_replay);
 	PM_PlayerMove (1);
 
-	VectorCopy (pmove.origin, origin);
-	VectorCopy (pmove.velocity, cl.velocity);
-	cl.onground = pmove.onground;
-	cl.inwater = pmove.waterlevel >= 2;
+	VectorCopy (pmove.origin, result->origin);
+	VectorCopy (pmove.velocity, result->velocity);
+	result->onground = pmove.onground;
+	result->inwater = pmove.waterlevel >= 2;
+	return true;
+}
+
+qboolean CL_ReplayPlayerMovement (entity_t *ent, vec3_t origin)
+{
+	cl_replay_result_t result;
+
+	if (!CL_ComputeReplayPlayerMovement (ent, &result))
+		return false;
+
+	VectorCopy (result.origin, origin);
+	VectorCopy (result.velocity, cl.velocity);
+	cl.onground = result.onground;
+	cl.inwater = result.inwater;
 	return true;
 }
 
