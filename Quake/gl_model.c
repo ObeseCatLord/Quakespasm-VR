@@ -43,6 +43,54 @@ cvar_t wad_external_textures = {"wad_external_textures", "1", CVAR_NONE};
 // mdl_external_textures = 1 enable loading of external MDL textures, 0 to forbid it for debug purposes.
 cvar_t mdl_external_textures = {"mdl_external_textures", "1", CVAR_NONE};
 
+struct md5_skeleton_data_s
+{
+	size_t allocation_size;
+	size_t joint_count;
+	size_t pose_count;
+	size_t poses_offset;
+	md5_skeleton_joint_t joints[];
+};
+
+qboolean Mod_GetMD5Skeleton (const qmodel_t *mod, md5_skeleton_view_t *out)
+{
+	const md5_skeleton_data_t *data;
+	size_t					joints_offset, joints_bytes, matrix_count, matrix_bytes;
+	md5_skeleton_view_t	view;
+
+	if (!out)
+		return false;
+	memset (out, 0, sizeof (*out));
+	if (!mod || !mod->extradata[PV_MD5] || !mod->md5_skeleton)
+		return false;
+
+	data = mod->md5_skeleton;
+	joints_offset = offsetof (md5_skeleton_data_t, joints);
+	if (!data->joint_count || data->allocation_size < joints_offset ||
+		data->joint_count > (SIZE_MAX - joints_offset) / sizeof (data->joints[0]))
+		return false;
+	joints_bytes = data->joint_count * sizeof (data->joints[0]);
+	if (data->poses_offset != joints_offset + joints_bytes ||
+		data->poses_offset > data->allocation_size ||
+		(data->pose_count && data->joint_count > SIZE_MAX / data->pose_count))
+		return false;
+	matrix_count = data->joint_count * data->pose_count;
+	if (matrix_count > SIZE_MAX / sizeof (float[12]))
+		return false;
+	matrix_bytes = matrix_count * sizeof (float[12]);
+	if (matrix_bytes != data->allocation_size - data->poses_offset)
+		return false;
+
+	view.joints = data->joints;
+	view.absolute_poses = data->pose_count
+		? (const float (*)[12])((const byte *)data + data->poses_offset)
+		: NULL;
+	view.joint_count = data->joint_count;
+	view.pose_count = data->pose_count;
+	*out = view;
+	return true;
+}
+
 // r_allow_replacement_md5models = 1 allow loading of MD5 replacement models if available, 0 to forbid it for debug purposes.
 cvar_t r_allow_replacement_md5models = {"r_allow_replacement_md5models", "1", CVAR_NONE};
 
@@ -466,6 +514,7 @@ static void Mod_FreeModelMemory (qmodel_t *mod)
 		SAFE_FREE (mod->entities);
 		for (int i = 0; i < PV_SIZE; ++i)
 			SAFE_FREE (mod->extradata[i]);
+		SAFE_FREE (mod->md5_skeleton);
 		SAFE_FREE (mod->water_surfs);
 		mod->used_water_surfs = 0;
 		mod->water_surfs_specials = 0;
@@ -5394,7 +5443,10 @@ static qboolean Mod_LoadMD5MeshModelData (qmodel_t *mod, const void *buffer, siz
 	const char *fname = mod->name;
 
 	aliashdr_t *outhdr = NULL, *surf;
+	md5_skeleton_data_t *retained_skeleton = NULL;
 	size_t		hdrsize = 0;
+	size_t		retained_joints_offset, retained_joint_bytes, retained_matrix_count;
+	size_t		retained_pose_bytes, retained_allocation_size;
 
 	md5animctx_t anim = {NULL};
 	float		 dist, radius = 0, yawradius = 0;
@@ -5403,22 +5455,48 @@ static qboolean Mod_LoadMD5MeshModelData (qmodel_t *mod, const void *buffer, siz
 	TEMP_ALLOC_DECL (unsigned short, poutindexes);
 	TEMP_ALLOC_DECL (unsigned short, skeleton_indexes);
 	TEMP_ALLOC_DECL (md5weightinfo_t, weight);
+	TEMP_ALLOC_DECL (jointinfo_t, joint_infos);
+	TEMP_ALLOC_DECL (jointpose_t, joint_poses);
+	TEMP_ALLOC_DECL (jointpose_t, skinning_joints);
+	TEMP_ALLOC_DECL (jointpose_t, concat_joints);
 
 	if (!MD5Anim_Begin (&anim, fname))
 		return false;
 	buffer = COM_Parse (buffer);
+	if (numjoints > (size_t)INT_MAX / 2 || nummeshes > INT_MAX ||
+		anim.numposes > INT_MAX || anim.numjoints > INT_MAX ||
+		numjoints > SIZE_MAX / sizeof (jointinfo_t) || numjoints > SIZE_MAX / sizeof (jointpose_t))
+		MD5ERROR ("%s: MD5 skeleton dimensions are too large\n", fname);
 
-	hdrsize = sizeof (*outhdr) - sizeof (outhdr->frames);
-	hdrsize += sizeof (outhdr->frames) * anim.numposes;
+	if (anim.numposes > (SIZE_MAX - (sizeof (*outhdr) - sizeof (outhdr->frames))) / sizeof (outhdr->frames))
+		MD5ERROR ("%s: MD5 frame data is too large\n", fname);
+	hdrsize = sizeof (*outhdr) - sizeof (outhdr->frames) + sizeof (outhdr->frames) * anim.numposes;
+	if (nummeshes > SIZE_MAX / hdrsize)
+		MD5ERROR ("%s: MD5 mesh data is too large\n", fname);
+
+	if (anim.numposes && numjoints > SIZE_MAX / anim.numposes)
+		MD5ERROR ("%s: MD5 pose matrix count overflows\n", fname);
+	retained_matrix_count = numjoints * anim.numposes;
+	if (retained_matrix_count > SIZE_MAX / sizeof (jointpose_t))
+		MD5ERROR ("%s: MD5 pose matrices are too large\n", fname);
+	retained_pose_bytes = retained_matrix_count * sizeof (jointpose_t);
+	retained_joints_offset = offsetof (md5_skeleton_data_t, joints);
+	if (numjoints > (SIZE_MAX - retained_joints_offset) / sizeof (md5_skeleton_joint_t))
+		MD5ERROR ("%s: MD5 retained skeleton is too large\n", fname);
+	retained_joint_bytes = numjoints * sizeof (md5_skeleton_joint_t);
+	if (retained_joint_bytes > SIZE_MAX - retained_joints_offset ||
+		retained_pose_bytes > SIZE_MAX - retained_joints_offset - retained_joint_bytes)
+		MD5ERROR ("%s: MD5 retained skeleton is too large\n", fname);
+	retained_allocation_size = retained_joints_offset + retained_joint_bytes + retained_pose_bytes;
 
 	// alloc all aliashdr_t and their chained nextsurface, a.k.a nummeshes, in one array
 	// all aliashdr_t are zero-initialized by Mem_Alloc
 	outhdr = (aliashdr_t *)Mem_Alloc (hdrsize * nummeshes);
 
-	TEMP_ALLOC_ZEROED (jointinfo_t, joint_infos, numjoints);
-	TEMP_ALLOC_ZEROED (jointpose_t, joint_poses, numjoints);
-	TEMP_ALLOC_ZEROED (jointpose_t, skinning_joints, numjoints * anim.numposes);
-	TEMP_ALLOC_ZEROED (jointpose_t, concat_joints, numjoints);
+	TEMP_ALLOC_ASSIGN_ZEROED (joint_infos, numjoints);
+	TEMP_ALLOC_ASSIGN_ZEROED (joint_poses, numjoints);
+	TEMP_ALLOC_ASSIGN_ZEROED (skinning_joints, retained_matrix_count);
+	TEMP_ALLOC_ASSIGN_ZEROED (concat_joints, numjoints);
 
 	for (size_t j = 0; j < 3; j++)
 	{
@@ -5653,12 +5731,34 @@ static qboolean Mod_LoadMD5MeshModelData (qmodel_t *mod, const void *buffer, siz
 
 	} // end foreach mesh
 
+	if (!isDedicated)
+	{
+		if (!(retained_skeleton = Mem_Alloc (retained_allocation_size)))
+			MD5ERROR ("%s: couldn't allocate retained MD5 skeleton\n", fname);
+		retained_skeleton->allocation_size = retained_allocation_size;
+		retained_skeleton->joint_count = numjoints;
+		retained_skeleton->pose_count = anim.numposes;
+		retained_skeleton->poses_offset = retained_joints_offset + retained_joint_bytes;
+		for (size_t joint = 0; joint < numjoints; ++joint)
+		{
+			md5_skeleton_joint_t *out_joint = &retained_skeleton->joints[joint];
+			q_strlcpy (out_joint->name, joint_infos[joint].name, sizeof (out_joint->name));
+			out_joint->parent = (int)joint_infos[joint].parent;
+			out_joint->poseparent = (int)joint_infos[joint].poseparent;
+			memcpy (out_joint->bind, joint_poses[joint].mat, sizeof (out_joint->bind));
+		}
+		if (retained_pose_bytes)
+			memcpy ((byte *)retained_skeleton + retained_skeleton->poses_offset, skinning_joints, retained_pose_bytes);
+	}
+
 	// the MD5 format does not have its own modelflags, yet we still need to know about trails and rotating etc
 	mod->flags = MD5_HackyModelFlags (mod->name);
 
 	mod->synctype = ST_FRAMETIME; // keep MD5 animations synced to when .frame is changed. framegroups are otherwise not very useful.
 	mod->type = mod_alias;
 	mod->extradata[PV_MD5] = (byte *)outhdr;
+	mod->md5_skeleton = retained_skeleton;
+	retained_skeleton = NULL;
 
 	radius = sqrtf (radius);
 	mod->rmins[0] = mod->rmins[1] = mod->rmins[2] = -radius;
@@ -5687,7 +5787,9 @@ error:
 	TEMP_FREE (poutvertexes);
 	TEMP_FREE (poutindexes);
 	TEMP_FREE (skeleton_indexes);
+	SAFE_FREE (retained_skeleton);
 	SAFE_FREE (anim.posedata);
+	SAFE_FREE (anim.animfile);
 	if (outhdr)
 	{
 		for (size_t surface_index = 0; surface_index < nummeshes; surface_index++)

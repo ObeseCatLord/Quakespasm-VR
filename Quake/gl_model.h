@@ -472,6 +472,27 @@ typedef struct jointpose_s
 	float mat[12];
 } jointpose_t; // pose data for a single joint.
 
+/* Model-owned CPU skeleton metadata retained from an MD5 load. */
+#define MD5_SKELETON_NAME_LENGTH 32
+typedef struct md5_skeleton_joint_s
+{
+	char  name[MD5_SKELETON_NAME_LENGTH];
+	int   parent;
+	int   poseparent;
+	float bind[12];
+} md5_skeleton_joint_t;
+
+typedef struct md5_skeleton_view_s
+{
+	const md5_skeleton_joint_t *joints;
+	/* Frame-major: absolute_poses[pose * joint_count + joint][matrix element]. */
+	const float (*absolute_poses)[12];
+	size_t joint_count;
+	size_t pose_count;
+} md5_skeleton_view_t;
+
+typedef struct md5_skeleton_data_s md5_skeleton_data_t;
+
 /*
 ==============================================================================
 MD3 MODELS
@@ -720,6 +741,7 @@ typedef struct qmodel_s
 	// additional model data
 	//
 	byte *extradata[PV_SIZE]; // only access through Mod_Extradata
+	md5_skeleton_data_t *md5_skeleton; // retained CPU data for MD5 models
 
 	// Ray tracing
 	VkAccelerationStructureKHR blas;
@@ -737,6 +759,7 @@ void	 *Mod_Extradata_CheckSkin (qmodel_t *mod, int skinnum);
 void	 *Mod_Extradata (qmodel_t *mod);
 void	  Mod_TouchModel (const char *name);
 void	  Mod_RefreshSkins_f (cvar_t *var);
+qboolean  Mod_GetMD5Skeleton (const qmodel_t *mod, md5_skeleton_view_t *out);
 
 mleaf_t *Mod_PointInLeaf (float *p, qmodel_t *model);
 byte	*Mod_LeafPVS (mleaf_t *leaf, qmodel_t *model);
