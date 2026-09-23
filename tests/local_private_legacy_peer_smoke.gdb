@@ -15,6 +15,7 @@ result_path = os.environ.get('QSVR_LOCAL_RESULT')
 ready_path = os.environ.get('QSVR_LOCAL_MAP_READY') or None
 assert_action_ack = os.environ.get('QSVR_LOCAL_ASSERT_ACTION_ACK') == '1'
 assert_move_stats = os.environ.get('QSVR_LOCAL_ASSERT_MOVE_STATS') == '1'
+assert_nonzero_jump_timer = os.environ.get('QSVR_LOCAL_ASSERT_NONZERO_JUMP_TIMER') == '1'
 expected_gravity_text = os.environ.get('QSVR_LOCAL_EXPECT_GRAVITY', '800.0')
 try:
     expected_gravity = float(expected_gravity_text)
@@ -36,6 +37,8 @@ if assert_action_ack and not expect_private:
     raise RuntimeError('action/ACK probe requires a private peer')
 if assert_move_stats and not expect_private:
     raise RuntimeError('movement-stat probe requires a private peer')
+if assert_nonzero_jump_timer and not expect_private:
+    raise RuntimeError('jump-timer probe requires a private peer')
 if assert_coherent_owner and not expect_private:
     raise RuntimeError('coherent-owner probe requires a private peer')
 if assert_public_move_stats_off and expect_private:
@@ -49,6 +52,7 @@ failure = None
 first_attack_seq = None
 first_attack_shells = None
 first_shell_ack = None
+max_jump_seen = 0.0
 
 def integer(expr):
     return int(gdb.parse_and_eval(expr))
@@ -101,8 +105,11 @@ def movement_stats():
 
 class HostFrame(gdb.Breakpoint):
     def stop(self):
-        global phase, phase_time, failure, first_attack_seq, first_attack_shells, first_shell_ack
+        global phase, phase_time, failure, first_attack_seq, first_attack_shells, first_shell_ack, max_jump_seen
         now = time.monotonic()
+        if assert_nonzero_jump_timer and integer('cls.signon') == 4:
+            max_jump_seen = max(max_jump_seen,
+                                float(gdb.parse_and_eval('cl.statsf[254]')))
         if now - started > 120:
             failure = 'timeout'
             return True
@@ -122,10 +129,14 @@ class HostFrame(gdb.Breakpoint):
                     first_attack_shells = samples[-1]['shells']
                 gdb.execute('set in_forward.state = 1', to_string=True)
                 gdb.execute('set in_attack.state = 1', to_string=True)
+                if assert_nonzero_jump_timer:
+                    gdb.execute('set in_jump.state = 1', to_string=True)
                 phase, phase_time = 'movement', now
             elif phase == 'movement' and now - phase_time >= 2:
                 gdb.execute('set in_forward.state = 0', to_string=True)
                 gdb.execute('set in_attack.state = 0', to_string=True)
+                if assert_nonzero_jump_timer:
+                    gdb.execute('set in_jump.state = 0', to_string=True)
                 phase, phase_time = 'settling', now
             elif phase == 'settling' and now - phase_time >= 1:
                 samples.append(sample('settled'))
@@ -176,6 +187,9 @@ try:
                 require(math.isfinite(exported_move[key]) and
                         abs(exported_move[key] - expected) < 0.01,
                         'missing_or_wrong_' + key)
+        if assert_nonzero_jump_timer:
+            require(max_jump_seen > 0.0 and math.isfinite(max_jump_seen),
+                    'missing_nonzero_jump_timer')
         if assert_coherent_owner:
             coherent_owner = dict(valid=bool(integer('cl.move_snapshot_valid')),
                                   ack=integer('cl.move_snapshot_ack'),
@@ -222,6 +236,8 @@ else:
         result['coherent_owner_snapshot'] = coherent_owner
     if assert_public_move_stats_off:
         result['public_movement_stats'] = public_move_stats
+    if assert_nonzero_jump_timer:
+        result['max_jump_seen'] = max_jump_seen
 temporary = result_path + '.tmp.' + str(os.getpid())
 with open(temporary, 'w') as output:
     json.dump(result, output, indent=2, sort_keys=True)

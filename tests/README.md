@@ -951,6 +951,11 @@ changing `sv_gravity` to `600` in the running private server console, add
 `QSVR_LOCAL_EXPECT_GRAVITY=600` alongside `QSVR_LOCAL_ASSERT_MOVE_STATS=1`
 on the client probe command. This setting only changes the gravity comparison;
 the other expected movement stats remain at their stock values.
+Add `QSVR_LOCAL_ASSERT_NONZERO_JUMP_TIMER=1` on a fresh selected `e1m1`
+client run to hold jump during the movement phase and require a nonzero
+received `STAT_PRIVATE_JUMP_SECS` value. The passed JSON includes
+`max_jump_seen`. This checks transport of one real jump timer; it does not
+establish replay parity or authorize prediction.
 For the same selected `e1m1` probe with zero gravity, use
 `tests/private_selected_zero_gravity_server.gdb` and set
 `QSVR_LOCAL_EXPECT_GRAVITY=0` on the client command; the harness accepts finite

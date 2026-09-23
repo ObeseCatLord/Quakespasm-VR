@@ -127,7 +127,8 @@ static void reset_client (void)
 	CL_InvalidateMoveSnapshot ();
 }
 
-static void parse_private_update (const byte *bytes, int length)
+static void parse_private_update_with_jump_secs (const byte *bytes, int length,
+	qboolean include_jump_secs, float jump_secs)
 {
 	/* Model the complete movement-stat group preceding each private owner
 	 * update. This fixture calls the entity reader directly, so it supplies
@@ -140,10 +141,17 @@ static void parse_private_update (const byte *bytes, int length)
 		CL_ParseStatFloat (stat, 0);
 	for (int stat = STAT_MOVEVARS_TIMESCALE; stat <= STAT_MOVEVARS_STEPHEIGHT; stat++)
 		CL_ParseStatFloat (stat, 0);
+	if (include_jump_secs)
+		CL_ParseStatFloat (STAT_PRIVATE_JUMP_SECS, jump_secs);
 	net_message.data = (byte *)bytes;
 	net_message.cursize = length;
 	MSG_BeginReading ();
 	CLFTE_ParseEntitiesUpdate ();
+}
+
+static void parse_private_update (const byte *bytes, int length)
+{
+	parse_private_update_with_jump_secs (bytes, length, true, 0.0f);
 }
 
 static void finish_message_if_complete (int length)
@@ -180,12 +188,36 @@ int main (void)
 
 	reset_client ();
 	length = private_snapshot (packet, 10, 4, 1, true, false, 3.0f);
+	parse_private_update_with_jump_secs (packet, length, false, 0.0f);
+	finish_message_if_complete (length);
+	assert (!cl.move_snapshot_valid); // the timer stat is required even when its value is zero
+
+	reset_client ();
+	length = private_snapshot (packet, 10, 4, 1, true, false, 3.0f);
+	parse_private_update_with_jump_secs (packet, length, true, -0.25f);
+	finish_message_if_complete (length);
+	assert (!cl.move_snapshot_valid); // negative debounce state is unusable
+
+	reset_client ();
+	length = private_snapshot (packet, 10, 4, 1, true, false, 3.0f);
+	parse_private_update_with_jump_secs (packet, length, true, NAN);
+	finish_message_if_complete (length);
+	assert (!cl.move_snapshot_valid); // nonfinite debounce state is unusable
+
+	reset_client ();
+	length = private_snapshot (packet, 10, 4, 1, true, false, 3.0f);
 	parse_private_update (packet, length);
 	assert (!msg_badread && msg_readcount == length);
 	assert (!cl.move_snapshot_valid); // candidate is private until message end
 	finish_message_if_complete (length);
 	assert (cl.move_snapshot_valid && cl.move_snapshot_ack == 10 && cl.move_snapshot_owner == 1);
+	assert (cl.statsf[STAT_PRIVATE_JUMP_SECS] == 0.0f); // receipt does not depend on a nonzero value
 	assert (entities[1].netstate.origin[0] == 12 && entities[1].netstate.velocity[0] == 64);
+	reset_client ();
+	length = private_snapshot (packet, 10, 4, 1, true, false, 3.0f);
+	parse_private_update_with_jump_secs (packet, length, true, 0.125f);
+	finish_message_if_complete (length);
+	assert (cl.move_snapshot_valid && cl.statsf[STAT_PRIVATE_JUMP_SECS] == 0.125f);
 
 	/* An omitted unreliable fragment cannot poison the next self-contained
 	 * repeated owner reset: deliberately seed the previous decoded state stale. */
@@ -281,6 +313,9 @@ int main (void)
 	reset_client ();
 	cl.protocol_qsvr = 0;
 	cl.protocol_pext2 = PEXT2_REPLACEMENTDELTAS;
+	CL_ParseStatFloat (STAT_PRIVATE_JUMP_SECS, 2.5f);
+	assert (cl.stats[STAT_PRIVATE_JUMP_SECS] == 2 &&
+		cl.statsf[STAT_PRIVATE_JUMP_SECS] == 2.5f); // public stat 254 keeps donor parsing
 	int public_length = 0;
 	put_float (packet, &public_length, 3.0f);
 	put_short (packet, &public_length, 1);

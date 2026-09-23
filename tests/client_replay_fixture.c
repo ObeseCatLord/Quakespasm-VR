@@ -248,6 +248,15 @@ static void check_history_loss_and_selector_failure (void)
 	assert (observed_cmds[0].sequence == 6 && observed_cmds[63].sequence == 69);
 
 	reset_client ();
+	cl.ackedmovemessages = 1;
+	cl.movemessages = 70;
+	for (int seq = 6; seq < cl.movemessages; seq++)
+		cl.movecmds[seq & MOVECMDS_MASK].sequence = seq;
+	admit_private_snapshot ();
+	assert (!CL_ReplayPlayerMovement (&entities[1], origin));
+	assert (!selector_calls && !collector_calls && !move_calls);
+
+	reset_client ();
 	selector_result = false;
 	assert (!CL_ReplayPlayerMovement (&entities[1], origin));
 	assert (selector_calls == 1 && !collector_calls && !move_calls);

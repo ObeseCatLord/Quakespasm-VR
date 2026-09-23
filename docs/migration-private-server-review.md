@@ -514,8 +514,9 @@ loopback moved/fired normally and retained zero private movement stats. The
 parser probe also rejects an owner update without that message's complete stat
 group. Packet-loss recovery, changed movement cvars, VR poses, jump debounce
 and semantic teleport resets still need proof before
-prediction can be enabled. The repeated group adds 120 bytes per selected
-datagram before the owner update; measure its traffic and frame cost on large
+prediction can be enabled. The repeated group initially added 120 bytes per
+selected datagram before the owner update; the later jump-seed float raises
+this to 126 bytes. Measure its traffic and frame cost on large
 maps before optimizing it.
 
 The implementation received a second local `gpt-6-astra`/`max` code review.
@@ -557,6 +558,19 @@ client probe now permits zero as an expected gravity; negative and non-finite
 expectations remain invalid. This still does not validate all zero-valued stat
 slots or replay permission.
 
+The existing selected-private stat group now also carries the server's
+persisted `private_pmove_jump_secs` in reserved stat slot 254. The client
+requires that float, including zero, in the same message as settings, ACK and
+owner. Invalid negative/nonfinite values reject the candidate. The replay
+seed reads it, but server permission and owner `pmovetype` remain disabled.
+The Linux build and sanitizer-backed owner/replay fixtures pass. A fresh
+selected stock `e1m1` loopback moved/fired normally and kept a valid owner
+candidate at ACK 285. An opt-in live jump run observed server timer 0.017
+seconds and client maximum timer about 0.045 seconds, with movement, action ACK
+and owner checks passing. This proves nonzero timer transport, not that the
+client/server timer values align at a replay boundary; that requires the
+shadow comparison designed below.
+
 A third selected `e1m1` loopback used
 `tests/private_selected_lost_settings_server.gdb` to suppress the first
 nonempty unreliable send after changing gravity to 600. The server marked a
@@ -572,16 +586,17 @@ remaining VR/collision gates.
 
 A local `gpt-6-astra`/`max` senior design review checked whether the selected
 private PMove trial can safely advertise client replay now. It cannot. The
-server sends `pmovetype=0` and no prediction permission by design; the existing
-client replay initializes `jump_secs=0` while the server persists a nonzero
-timer. More fundamentally, maintenance callbacks and later world physics can
+server sends `pmovetype=0` and no prediction permission by design. At review
+time the client replay initialized `jump_secs=0` while the server persisted a
+nonzero timer; the stat-254 seed above addresses that specific gap. More
+fundamentally, maintenance callbacks and later world physics can
 change owner state without advancing the completed move ACK. An ACK alone is
 therefore not a complete replay-baseline identity.
 
 | Recommendation | Disposition |
 | --- | --- |
 | Treat owner, settings, persisted PMove state, completed ACK and snapshot identity as one baseline contract. | **Adopt.** Reuse the existing selected datagram and message-end commit. Add only the metadata a measured replay proof needs; do not create another protocol or simulation clock. |
-| Send the authoritative jump timer rather than infer successful jumps from command history. | **Adopt for the shadow slice.** Its exact wire slot/capability and post-callback capture boundary still require verification. Do not enable permission from the timer alone. |
+| Send the authoritative jump timer rather than infer successful jumps from command history. | **Adopted as selected stat 254.** The post-callback capture boundary and replay parity still require verification. Do not enable permission from the timer alone. |
 | Reject missing command history for selected-private replay while retaining QSS-M/donor public behavior. | **Adopt now.** The current helper can start at the oldest retained command even when commands after the ACK were overwritten, which would apply an incomplete replay to an older origin. |
 | Factor shadow replay from publication and exclude the unacknowledged input preview from parity comparison. | **Adopt in stages.** Ignoring a returned origin is insufficient because replay also writes velocity, ground/water state and propagation caches. Compare a captured prediction against later authoritative command outcome and separately qualify the final snapshot seed. |
 | Assume owner packet coherence implies current collider state or VR roomscale parity. | **Reject.** Optional collider updates may follow in another datagram. Server roomscale runs before QC as a native sweep, while client PMove applies it inside movement. Static-world WALK is the first proof, then roomscale at that existing boundary. |

@@ -785,7 +785,7 @@ qboolean CL_ReplayPlayerMovement (entity_t *ent, vec3_t origin)
 	pmove.waterjumptime = 0;
 	pmove.jump_held = (ent->netstate.pmovetype & 0x40) != 0;
 	pmove.onladder = false;
-	pmove.jump_secs = 0;
+	pmove.jump_secs = private_replay ? cl.statsf[STAT_PRIVATE_JUMP_SECS] : 0;
 	pmove.onground = (ent->netstate.pmovetype & 0x80) != 0;
 	pmove.skipent = -cl.viewentity;
 	if (private_replay && !CL_SetupReplayGorilla (startseq))

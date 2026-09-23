@@ -674,11 +674,13 @@ static const int sv_private_move_float_stats[] = {
 	STAT_MOVEVARS_ACCELERATE, STAT_MOVEVARS_AIRACCELERATE,
 	STAT_MOVEVARS_WATERACCELERATE, STAT_MOVEVARS_ENTGRAVITY,
 	STAT_MOVEVARS_JUMPVELOCITY, STAT_MOVEVARS_EDGEFRICTION,
-	STAT_MOVEVARS_MAXAIRSPEED, STAT_MOVEVARS_STEPHEIGHT};
+	STAT_MOVEVARS_MAXAIRSPEED, STAT_MOVEVARS_STEPHEIGHT,
+	STAT_PRIVATE_JUMP_SECS};
 
 static qboolean SV_IsPrivateMoveStat (int stat)
 {
 	return stat == STAT_MOVEFLAGS ||
+		stat == STAT_PRIVATE_JUMP_SECS ||
 		(stat >= STAT_MOVEVARS_WATERSINKSPEED && stat <= STAT_MOVEVARS_KTJUMP) ||
 		(stat >= STAT_MOVEVARS_FRICTION && stat <= STAT_MOVEVARS_WATERFRICTION) ||
 		(stat >= STAT_MOVEVARS_TIMESCALE && stat <= STAT_MOVEVARS_STEPHEIGHT);
@@ -692,9 +694,12 @@ static qboolean SVFTE_WritePrivateMoveStats (client_t *client, sizebuf_t *msg)
 	size_t required = 1 + 1 + 4 + countof (sv_private_move_float_stats) * (1 + 1 + 4);
 	size_t i;
 
+	if (!isfinite (client->private_pmove_jump_secs) || client->private_pmove_jump_secs < 0.0f)
+		return false;
 	if (!PMSV_BuildMoveVars (&movevars, client->edict, sv.protocolflags) ||
 		!PMSV_ExportMoveStats (&movevars, statsf, statsi))
 		return false;
+	statsf[STAT_PRIVATE_JUMP_SECS] = client->private_pmove_jump_secs;
 	if (msg->cursize < 0 || msg->maxsize < 0 || msg->cursize > msg->maxsize ||
 		required > (size_t)(msg->maxsize - msg->cursize))
 		return false;
