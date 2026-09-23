@@ -1241,6 +1241,7 @@ void VR_WeaponMenu_SetVRPointer (qboolean tracking_valid, qboolean pointer_valid
 {
 	vr_weapon_menu_visible_t visible[VR_WEAPON_MENU_MAX_ENTRIES];
 	int count, selected = -1;
+	int previous_hover_id;
 	const float radius = q_min (glwidth, glheight) * 0.32f;
 	const float scale = CLAMP (0.85f, q_min (glwidth, glheight) / 720.0f, 1.5f);
 
@@ -1255,6 +1256,7 @@ void VR_WeaponMenu_SetVRPointer (qboolean tracking_valid, qboolean pointer_valid
 	vr_weapon_menu_pointer_valid = pointer_valid;
 	vr_weapon_menu_pointer_x = pointer_valid ? pointer_x : -1;
 	vr_weapon_menu_pointer_y = pointer_valid ? pointer_y : -1;
+	previous_hover_id = vr_weapon_menu_hover_id;
 	vr_weapon_menu_hover_id = -1;
 	if (!pointer_valid)
 		return;
@@ -1264,7 +1266,11 @@ void VR_WeaponMenu_SetVRPointer (qboolean tracking_valid, qboolean pointer_valid
 	VR_WeaponMenu_Layout (visible, count, radius, scale);
 	selected = VR_WeaponMenu_Hit (visible, count, pointer_x, pointer_y, radius);
 	if (selected >= 0 && visible[selected].selectable)
+	{
 		vr_weapon_menu_hover_id = visible[selected].entry->id;
+		if (vr_weapon_menu_hover_id != previous_hover_id)
+			VR_InputTriggerHaptic (VR_INPUT_ROLE_RIGHT, 0.05f, 0.5f);
+	}
 }
 
 int VR_WeaponMenu_ReleaseCatalog (const vr_weapon_menu_catalog_t *catalog,
