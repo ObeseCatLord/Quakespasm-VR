@@ -35,10 +35,12 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "quakedef.h"
 #include "menu.h"
 #include "vr_aim.h"
+#include "vr_fbt.h"
 #include "vr_input.h"
 #include "vr_locomotion.h"
 #include "vr_weapon_calibration.h"
 
+#include <limits.h>
 #include <math.h>
 #include <string.h>
 
@@ -74,6 +76,7 @@ static cvar_t vr_180_snap_turn = {"vr_180_snap_turn", "1", CVAR_ARCHIVE};
 static cvar_t vr_turn_speed = {"vr_turn_speed", "2", CVAR_ARCHIVE};
 static cvar_t vr_joystick_yaw_multi = {"vr_joystick_yaw_multi", "1", CVAR_ARCHIVE};
 static cvar_t vr_vrik = {"vr_vrik", "1", CVAR_ARCHIVE};
+cvar_t vr_fbt_enabled = {"vr_fbt_enabled", "0", CVAR_ARCHIVE};
 
 extern cvar_t vr_aimmode;
 
@@ -91,6 +94,19 @@ static int vr_input_last_snap;
 static qboolean vr_input_turn180_queued;
 static vec3_t vr_input_roomscale_last_position;
 static qboolean vr_input_roomscale_position_valid;
+
+static vr_fbt_manager_t vr_input_fbt_manager;
+static qboolean vr_input_fbt_initialized;
+static uint64_t vr_input_fbt_snapshot_id;
+static uint64_t vr_input_fbt_last_seen_sample_id;
+static uint64_t vr_input_fbt_next_ephemeral_identity = 1;
+static double vr_input_fbt_snapshot_time;
+static qboolean vr_input_fbt_have_snapshot_time;
+static struct
+{
+	uint64_t identity;
+	qboolean connected;
+} vr_input_fbt_slots[VRXR_MAX_DEVICES];
 
 #define VR_INPUT_WIRE_MIN (-32768.0f)
 #define VR_INPUT_WIRE_MAX 32767.0f
@@ -242,6 +258,443 @@ static void VR_InputMotionSettingsChanged (cvar_t *var)
 {
 	(void)var;
 	VR_InputInvalidateMotion ();
+}
+
+static const char *VR_InputFBTRoleName (vr_fbt_role_t role)
+{
+	switch (role)
+	{
+	case VR_FBT_ROLE_HIP: return "hip";
+	case VR_FBT_ROLE_LEFT_FOOT: return "left_foot";
+	case VR_FBT_ROLE_RIGHT_FOOT: return "right_foot";
+	default: return "unknown";
+	}
+}
+
+static qboolean VR_InputFBTParseRole (const char *text, vr_fbt_role_t *role)
+{
+	if (!text || !role)
+		return false;
+	if (!strcmp (text, "hip"))
+		*role = VR_FBT_ROLE_HIP;
+	else if (!strcmp (text, "left_foot"))
+		*role = VR_FBT_ROLE_LEFT_FOOT;
+	else if (!strcmp (text, "right_foot"))
+		*role = VR_FBT_ROLE_RIGHT_FOOT;
+	else
+		return false;
+	return true;
+}
+
+/* A reference-space or input reset invalidates samples and session-only IDs.
+ * Keep only explicit safe-serial bindings, which are independent of tracking
+ * origin and can be reconciled against the next OpenXR snapshot. */
+static void VR_InputFBTReset (void)
+{
+	char serials[VR_FBT_ROLE_COUNT][VR_FBT_SERIAL_MAX];
+	qboolean bound[VR_FBT_ROLE_COUNT] = {false};
+
+	memset (serials, 0, sizeof (serials));
+	if (vr_input_fbt_initialized)
+	{
+		for (int role = 0; role < VR_FBT_ROLE_COUNT; ++role)
+		{
+			vr_fbt_role_status_t status;
+			if (VR_FBT_GetRoleStatus (&vr_input_fbt_manager, (vr_fbt_role_t)role, &status) &&
+				status.identity_kind == VR_FBT_IDENTITY_SERIAL &&
+				VR_FBT_SerialIsSafe (status.serial))
+			{
+				memcpy (serials[role], status.serial, sizeof (serials[role]));
+				bound[role] = true;
+			}
+		}
+	}
+
+	VR_FBT_Init (&vr_input_fbt_manager);
+	vr_input_fbt_initialized = true;
+	for (int role = 0; role < VR_FBT_ROLE_COUNT; ++role)
+		if (bound[role])
+			VR_FBT_BindSerial (&vr_input_fbt_manager, (vr_fbt_role_t)role,
+				serials[role]);
+	vr_input_fbt_snapshot_id = 0;
+	vr_input_fbt_last_seen_sample_id = 0;
+	vr_input_fbt_next_ephemeral_identity = 1;
+	vr_input_fbt_snapshot_time = 0.0;
+	vr_input_fbt_have_snapshot_time = false;
+	memset (vr_input_fbt_slots, 0, sizeof (vr_input_fbt_slots));
+}
+
+static void VR_InputFBTEnabledChanged (cvar_t *var)
+{
+	(void)var;
+	VR_InputFBTReset ();
+}
+
+static qboolean VR_InputFBTMatrixFinite (const float matrix[3][4])
+{
+	for (int row = 0; row < 3; ++row)
+		for (int column = 0; column < 4; ++column)
+			if (!isfinite (matrix[row][column]))
+				return false;
+	return true;
+}
+
+static qboolean VR_InputFBTVectorFinite (const float vector[3])
+{
+	return isfinite (vector[0]) && isfinite (vector[1]) && isfinite (vector[2]);
+}
+
+static uint64_t VR_InputFBTNewEphemeralIdentity (void)
+{
+	uint64_t identity = vr_input_fbt_next_ephemeral_identity++;
+	if (!identity)
+		identity = vr_input_fbt_next_ephemeral_identity++;
+	return identity;
+}
+
+static void VR_InputFBTCopySafeSerial (char destination[VR_FBT_SERIAL_MAX],
+	const char source[256])
+{
+	size_t length = 0;
+	memset (destination, 0, VR_FBT_SERIAL_MAX);
+	while (length < 256 && source[length])
+		++length;
+	if (length == 0 || length >= VR_FBT_SERIAL_MAX)
+		return;
+	memcpy (destination, source, length);
+	destination[length] = '\0';
+	if (!VR_FBT_SerialIsSafe (destination))
+		destination[0] = '\0';
+}
+
+/* Build candidates from one completed, immutable OpenXR frame. Device slots
+ * 0..2 belong to the head and hands; tracker identity is never inferred from
+ * slot order and remains session-scoped when no safe runtime serial exists. */
+static void VR_InputFBTReconcile (const vrxr_frame_t *frame)
+{
+	vr_fbt_candidate_t candidates[VR_FBT_MAX_CANDIDATES];
+	unsigned int candidate_count = 0;
+	double snapshot_time;
+	uint64_t snapshot_id;
+
+	if (!vr_fbt_enabled.value || !frame || !vr_input_fbt_initialized ||
+		!frame->sample_id || frame->sample_id == vr_input_fbt_last_seen_sample_id)
+		return;
+
+	/* sample_id, not this adapter call's timestamp or frame address, is the
+	 * freshness boundary. The manager time is local monotonic observation time. */
+	snapshot_time = Sys_DoubleTime ();
+	if (!isfinite (snapshot_time))
+		snapshot_time = vr_input_fbt_have_snapshot_time ? vr_input_fbt_snapshot_time : 0.0;
+	if (vr_input_fbt_have_snapshot_time && snapshot_time < vr_input_fbt_snapshot_time)
+		snapshot_time = vr_input_fbt_snapshot_time;
+	snapshot_id = vr_input_fbt_snapshot_id + 1;
+	if (!snapshot_id)
+		snapshot_id = 1;
+
+	for (unsigned int device_index = 3; device_index < VRXR_MAX_DEVICES; ++device_index)
+	{
+		const vrxr_device_t *device = &frame->devices[device_index];
+		vr_fbt_candidate_t *candidate;
+		qboolean connected;
+		qboolean pose_valid;
+
+		if (device->kind != VRXR_DEVICE_TRACKER)
+		{
+			vr_input_fbt_slots[device_index].identity = 0;
+			vr_input_fbt_slots[device_index].connected = false;
+			continue;
+		}
+		if (candidate_count >= VR_FBT_MAX_CANDIDATES)
+			break;
+
+		candidate = &candidates[candidate_count++];
+		memset (candidate, 0, sizeof (*candidate));
+		candidate->device_index = device_index;
+		candidate->snapshot_id = snapshot_id;
+		candidate->snapshot_time = snapshot_time;
+		connected = device->connected != 0;
+		pose_valid = connected && device->valid && device->tracked &&
+			VR_InputFBTMatrixFinite (device->matrix);
+		candidate->connected = connected;
+		candidate->pose_valid = pose_valid;
+		candidate->tracking_result = pose_valid ? VR_FBT_TRACKING_RESULT_RUNNING_OK : 0;
+
+		VR_InputFBTCopySafeSerial (candidate->serial, device->serial);
+		if (connected)
+		{
+			if (!vr_input_fbt_slots[device_index].connected ||
+				!vr_input_fbt_slots[device_index].identity)
+				vr_input_fbt_slots[device_index].identity = VR_InputFBTNewEphemeralIdentity ();
+			vr_input_fbt_slots[device_index].connected = true;
+			if (!candidate->serial[0])
+				candidate->ephemeral_identity = vr_input_fbt_slots[device_index].identity;
+		}
+		else
+		{
+			vr_input_fbt_slots[device_index].identity = 0;
+			vr_input_fbt_slots[device_index].connected = false;
+		}
+
+		if (pose_valid)
+		{
+			memcpy (candidate->device_to_absolute_tracking, device->matrix,
+				sizeof (candidate->device_to_absolute_tracking));
+			if (device->velocity_valid && VR_InputFBTVectorFinite (device->velocity))
+				memcpy (candidate->velocity, device->velocity, sizeof (candidate->velocity));
+			if (device->angular_velocity_valid && VR_InputFBTVectorFinite (device->angular_velocity))
+				memcpy (candidate->angular_velocity, device->angular_velocity,
+					sizeof (candidate->angular_velocity));
+		}
+	}
+
+	if (VR_FBT_Reconcile (&vr_input_fbt_manager, snapshot_id, snapshot_time,
+		candidates, candidate_count))
+	{
+		vr_input_fbt_snapshot_id = snapshot_id;
+		vr_input_fbt_last_seen_sample_id = frame->sample_id;
+		vr_input_fbt_snapshot_time = snapshot_time;
+		vr_input_fbt_have_snapshot_time = true;
+	}
+}
+
+static const char *VR_InputFBTStateName (vr_fbt_state_t state)
+{
+	switch (state)
+	{
+	case VR_FBT_STATE_UNASSIGNED: return "unassigned";
+	case VR_FBT_STATE_CONNECTED_INVALID: return "connected-invalid";
+	case VR_FBT_STATE_TRACKING: return "tracking";
+	case VR_FBT_STATE_PREDICTING: return "predicting";
+	case VR_FBT_STATE_LOST: return "lost";
+	default: return "unknown";
+	}
+}
+
+static void VR_InputFBTIdentityLabel (const vr_fbt_role_status_t *role,
+	const vr_fbt_candidate_status_t *candidate, char *label, size_t label_size)
+{
+	const char *serial = role ? role->serial : candidate->serial;
+	const qboolean safe = role ? role->identity_kind == VR_FBT_IDENTITY_SERIAL :
+		candidate->has_safe_serial;
+	uint32_t hash = 2166136261u;
+	const unsigned char *cursor = (const unsigned char *)serial;
+
+	if (!safe)
+	{
+		q_snprintf (label, label_size, "session-only");
+		return;
+	}
+	while (*cursor)
+	{
+		hash ^= *cursor++;
+		hash *= 16777619u;
+	}
+	q_snprintf (label, label_size, "serial#%08x", (unsigned int)hash);
+}
+
+static double VR_InputFBTAge (double then, double now)
+{
+	return isfinite (then) && isfinite (now) && then > 0.0 && now >= then ? now - then : 0.0;
+}
+
+static void VR_InputFBTList_f (void)
+{
+	double now;
+	if (Cmd_Argc () != 1)
+	{
+		Con_Printf ("usage: vr_fbt_list\n");
+		return;
+	}
+	now = Sys_DoubleTime ();
+	if (!isfinite (now))
+		now = vr_input_fbt_snapshot_time;
+	Con_Printf ("FBT: %s, %u tracker candidate%s, snapshot %llu age %.3fs\n",
+		vr_fbt_enabled.value ? "enabled" : "disabled",
+		VR_FBT_GetCandidateCount (&vr_input_fbt_manager),
+		VR_FBT_GetCandidateCount (&vr_input_fbt_manager) == 1 ? "" : "s",
+		(unsigned long long)vr_input_fbt_manager.last_snapshot_id,
+		VR_InputFBTAge (vr_input_fbt_manager.last_snapshot_time, now));
+	for (int role = 0; role < VR_FBT_ROLE_COUNT; ++role)
+	{
+		vr_fbt_role_status_t status;
+		char identity[20];
+		if (!VR_FBT_GetRoleStatus (&vr_input_fbt_manager, (vr_fbt_role_t)role, &status))
+			continue;
+		if (status.identity_kind == VR_FBT_IDENTITY_NONE)
+		{
+			Con_Printf ("  role %s: unassigned\n", VR_InputFBTRoleName ((vr_fbt_role_t)role));
+			continue;
+		}
+		VR_InputFBTIdentityLabel (&status, NULL, identity, sizeof (identity));
+		if (status.device_index == UINT_MAX)
+			Con_Printf ("  role %s: %s offline %s tracking %d snapshot %llu age %.3fs\n",
+				VR_InputFBTRoleName ((vr_fbt_role_t)role), VR_InputFBTStateName (status.state),
+				identity, status.tracking_result,
+				(unsigned long long)vr_input_fbt_manager.last_snapshot_id,
+				VR_InputFBTAge (status.last_reconciled_time, now));
+		else
+			Con_Printf ("  role %s: %s index %u %s tracking %d snapshot %llu age %.3fs\n",
+				VR_InputFBTRoleName ((vr_fbt_role_t)role), VR_InputFBTStateName (status.state),
+				status.device_index, identity, status.tracking_result,
+				(unsigned long long)vr_input_fbt_manager.last_snapshot_id,
+				VR_InputFBTAge (status.last_reconciled_time, now));
+	}
+	for (unsigned int index = 0; index < VR_FBT_GetCandidateCount (&vr_input_fbt_manager); ++index)
+	{
+		vr_fbt_candidate_status_t status;
+		char identity[20];
+		const char *state;
+		if (!VR_FBT_GetCandidate (&vr_input_fbt_manager, index, &status))
+			continue;
+		state = !status.connected ? "disconnected" : !status.pose_valid ? "connected-invalid" :
+			status.tracking_result == VR_FBT_TRACKING_RESULT_RUNNING_OK ? "tracking" : "predicting";
+		VR_InputFBTIdentityLabel (NULL, &status, identity, sizeof (identity));
+		Con_Printf ("  candidate %u: %s index %u %s tracking %d snapshot %llu age %.3fs\n",
+			index, state, status.device_index, identity, status.tracking_result,
+			(unsigned long long)status.snapshot_id,
+			VR_InputFBTAge (status.snapshot_time, now));
+	}
+}
+
+static qboolean VR_InputFBTParseDecimal (const char *text, unsigned int *value)
+{
+	unsigned int parsed = 0;
+	const unsigned char *cursor = (const unsigned char *)text;
+	if (!text || !*text || !value)
+		return false;
+	while (*cursor)
+	{
+		unsigned int digit;
+		if (*cursor < '0' || *cursor > '9')
+			return false;
+		digit = *cursor++ - '0';
+		if (parsed > (UINT_MAX - digit) / 10)
+			return false;
+		parsed = parsed * 10 + digit;
+	}
+	*value = parsed;
+	return true;
+}
+
+static int VR_InputFBTFindConnectedDevice (unsigned int device_index)
+{
+	for (unsigned int index = 0; index < VR_FBT_GetCandidateCount (&vr_input_fbt_manager); ++index)
+	{
+		vr_fbt_candidate_status_t status;
+		if (VR_FBT_GetCandidate (&vr_input_fbt_manager, index, &status) &&
+			status.device_index == device_index && status.connected)
+			return (int)index;
+	}
+	return -1;
+}
+
+static void VR_InputFBTAssign_f (void)
+{
+	const char *selector;
+	const char *serial = NULL;
+	vr_fbt_role_t role;
+	unsigned int device_index;
+	int candidate = -1;
+	qboolean explicit_index = false;
+
+	if (Cmd_Argc () != 3 || !VR_InputFBTParseRole (Cmd_Argv (2), &role))
+	{
+		Con_Printf ("usage: vr_fbt_assign <index:<decimal>|serial:<safe>|device-index|safe-serial> <hip|left_foot|right_foot>\n");
+		return;
+	}
+	selector = Cmd_Argv (1);
+	if (!strncmp (selector, "index:", 6))
+	{
+		explicit_index = true;
+		selector += 6;
+	}
+	else if (!strncmp (selector, "serial:", 7))
+		serial = selector + 7;
+
+	if (!serial && VR_InputFBTParseDecimal (selector, &device_index))
+	{
+		candidate = VR_InputFBTFindConnectedDevice (device_index);
+		if (candidate >= 0)
+		{
+			if (!VR_FBT_AssignCandidate (&vr_input_fbt_manager, role, (unsigned int)candidate))
+			{
+				Con_Printf ("FBT: tracker is ambiguous or already assigned to another role\n");
+				return;
+			}
+		}
+		else if (explicit_index)
+		{
+			Con_Printf ("FBT: device index %u is not a connected tracker candidate\n", device_index);
+			return;
+		}
+		else
+			serial = selector;
+	}
+	else if (!serial)
+	{
+		if (explicit_index)
+		{
+			Con_Printf ("FBT: index selector requires a full decimal device index\n");
+			return;
+		}
+		serial = selector;
+	}
+
+	if (serial)
+	{
+		unsigned int matches = 0;
+		if (!VR_FBT_SerialIsSafe (serial))
+		{
+			Con_Printf ("FBT: serial selector must contain a safe serial\n");
+			return;
+		}
+		for (unsigned int index = 0; index < VR_FBT_GetCandidateCount (&vr_input_fbt_manager); ++index)
+		{
+			vr_fbt_candidate_status_t status;
+			if (VR_FBT_GetCandidate (&vr_input_fbt_manager, index, &status) &&
+				status.has_safe_serial && !strcmp (status.serial, serial))
+			{
+				candidate = (int)index;
+				++matches;
+			}
+		}
+		if (matches > 1)
+		{
+			Con_Printf ("FBT: safe serial is ambiguous among current tracker candidates\n");
+			return;
+		}
+		if (matches == 1)
+		{
+			if (!VR_FBT_AssignCandidate (&vr_input_fbt_manager, role, (unsigned int)candidate))
+			{
+				Con_Printf ("FBT: tracker is ambiguous or already assigned to another role\n");
+				return;
+			}
+		}
+		else if (!VR_FBT_BindSerial (&vr_input_fbt_manager, role, serial))
+		{
+			Con_Printf ("FBT: safe serial is already assigned to another role\n");
+			return;
+		}
+	}
+	Con_Printf ("FBT: assigned %s\n", VR_InputFBTRoleName (role));
+}
+
+static void VR_InputFBTUnassign_f (void)
+{
+	vr_fbt_role_t role;
+	if (Cmd_Argc () != 2 || !VR_InputFBTParseRole (Cmd_Argv (1), &role))
+	{
+		Con_Printf ("usage: vr_fbt_unassign <hip|left_foot|right_foot>\n");
+		return;
+	}
+	if (!VR_FBT_UnassignRole (&vr_input_fbt_manager, role))
+	{
+		Con_Printf ("FBT: unable to unassign role\n");
+		return;
+	}
+	Con_Printf ("FBT: unassigned %s\n", VR_InputFBTRoleName (role));
 }
 
 static qboolean VR_InputHandAccepted (const vrxr_frame_t *frame, int hand)
@@ -825,6 +1278,7 @@ static qboolean VR_InputEmitDesired (qboolean desired[2][MAX_KEYS],
 
 void VR_InputInit (void)
 {
+	VR_InputFBTReset ();
 	Cvar_RegisterVariable (&vr_lefthanded);
 	Cvar_RegisterVariable (&vr_haptic);
 	Cvar_RegisterVariable (&vr_joystick_axis_deadzone);
@@ -838,10 +1292,15 @@ void VR_InputInit (void)
 	Cvar_RegisterVariable (&vr_turn_speed);
 	Cvar_RegisterVariable (&vr_joystick_yaw_multi);
 	Cvar_RegisterVariable (&vr_vrik);
+	Cvar_RegisterVariable (&vr_fbt_enabled);
 	Cvar_SetCallback (&vr_lefthanded, VR_InputMotionSettingsChanged);
 	Cvar_SetCallback (&vr_movement_mode, VR_InputMotionSettingsChanged);
 	Cvar_SetCallback (&vr_snap_turn, VR_InputMotionSettingsChanged);
+	Cvar_SetCallback (&vr_fbt_enabled, VR_InputFBTEnabledChanged);
 	Cmd_AddCommand ("vr_turn180", VR_InputTurn180_f);
+	Cmd_AddCommand ("vr_fbt_list", VR_InputFBTList_f);
+	Cmd_AddCommand ("vr_fbt_assign", VR_InputFBTAssign_f);
+	Cmd_AddCommand ("vr_fbt_unassign", VR_InputFBTUnassign_f);
 	VR_InputClear ();
 }
 
@@ -851,6 +1310,10 @@ void VR_InputCommands (const vrxr_frame_t *frame)
 	qboolean desired[2][MAX_KEYS] = {{false}};
 	vrxr_input_t input_hands[2];
 	vr_input_context_t context;
+	if (vr_fbt_enabled.value && frame && frame->reference_changed && frame->sample_id &&
+		frame->sample_id != vr_input_fbt_last_seen_sample_id)
+		VR_InputFBTReset ();
+	VR_InputFBTReconcile (frame);
 	if (cls.state != ca_connected)
 	{
 		cl.vrik_next_sequence = 0;
@@ -1297,6 +1760,7 @@ void VR_InputInvalidateMotion (void)
 
 void VR_InputClear (void)
 {
+	VR_InputFBTReset ();
 	++vr_input_reset_generation;
 	vr_input_roomscale_position_valid = false;
 	memset (vr_input_emitted, 0, sizeof (vr_input_emitted));

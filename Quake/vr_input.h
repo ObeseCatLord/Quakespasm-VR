@@ -24,6 +24,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #define QUAKE_VR_INPUT_H
 
 #include "protocol.h"
+#include "cvar.h"
 #include "vr_openxr.h"
 #include "vrik_codec.h"
 
@@ -34,6 +35,7 @@ enum
 };
 
 void VR_InputInit (void);
+extern cvar_t vr_fbt_enabled;
 void VR_InputCommands (const vrxr_frame_t *frame);
 void VR_InputMenuPanelTrigger (const vrxr_frame_t *frame, qboolean panel_drawn);
 void VR_InputMove (usercmd_t *pending);

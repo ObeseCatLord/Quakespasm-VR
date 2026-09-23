@@ -40,6 +40,7 @@ typedef struct {
 } vrxr_gaze_t;
 typedef struct {
   int should_render, focused, reference_changed;
+  uint64_t sample_id; /* nonzero identity of one completed xrWaitFrame sample */
   /* App reference space has runtime floor semantics (STAGE or LOCAL_FLOOR), never LOCAL. */
   int floor_referenced;
   vrxr_device_t devices[VRXR_MAX_DEVICES];

@@ -36,6 +36,9 @@ typedef void *LoaderHandle;
 #endif
 enum { kHands = 2, kViews = 2, kTrackerFirst = 3,
        kWaitNs = 100000000, kImageWaitAttempts = 50 };
+/* Kept across runtime teardown so retained engine consumers can distinguish
+ * a fresh pose sample from another read of the previous completed frame. */
+static uint64_t g_sample_id;
 enum ActionId {
 	ACT_GRIP_POSE, ACT_HAPTIC, ACT_TRIGGER, ACT_GRIP, ACT_STICK, ACT_PAD,
 	ACT_TRIGGER_CLICK, ACT_GRIP_CLICK, ACT_STICK_CLICK, ACT_PAD_CLICK,
@@ -1162,6 +1165,8 @@ extern "C" int VRXR_BeginFrame(vrxr_frame_t *frame) {
 	g.referenceChanged=false;
 	if(!locate_frame(frame)) { VRXR_AbortFrame(); return -1; }
 	if(g.shouldRender && !begin_images()) { VRXR_AbortFrame(); return -1; }
+	if(++g_sample_id == 0) ++g_sample_id;
+	frame->sample_id=g_sample_id;
 	return 1;
 }
 
