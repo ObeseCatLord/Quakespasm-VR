@@ -275,3 +275,7 @@ The later proof should compare a dense Hipnotic inventory across desktop and
 VR, vary eye resolution and console scale, and check scores/death, both eyes,
 handedness, and headset readability. The source establishes geometry only;
 it does not prove that a 16×10-unit modern surface is comfortable.
+For noncontroller aim modes, the current `V_UpdateTrackedAim` publishes the
+resolved aim to `cl.viewangles` and keeps the independently resolved view in
+`tracked_view_angles`, so the panel's `cl.viewangles` anchor corresponds to the
+donor's `cl.aimangles` in those modes. Headset placement remains unverified.
