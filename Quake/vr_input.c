@@ -80,6 +80,7 @@ static qboolean vr_input_emitted[MAX_KEYS];
 static qboolean vr_input_context_valid;
 static vr_input_context_t vr_input_context;
 static unsigned int vr_input_reset_generation;
+static unsigned int vr_input_dispatch_epoch;
 static qboolean vr_input_move_wait_neutral;
 static qboolean vr_input_turn_wait_neutral;
 static int vr_input_last_snap;
@@ -412,7 +413,7 @@ static qboolean VR_InputMenuHapticKey (int key)
 		key == K_ABUTTON || key == K_BBUTTON;
 }
 
-static qboolean VR_InputReleaseHand (int hand)
+static qboolean VR_InputReleaseHand (int hand, unsigned int dispatch_epoch)
 {
 	vr_input_hand_state_t *state = &vr_input_hands[hand];
 
@@ -429,15 +430,17 @@ static qboolean VR_InputReleaseHand (int hand)
 		vr_input_emitted[key] = false;
 		generation = vr_input_reset_generation;
 		Key_Event (key, false);
-		if (generation != vr_input_reset_generation)
+		if (generation != vr_input_reset_generation ||
+			dispatch_epoch != vr_input_dispatch_epoch)
 			return false;
 	}
 	return true;
 }
 
-static qboolean VR_InputReleaseAll (void)
+static qboolean VR_InputReleaseAll (unsigned int dispatch_epoch)
 {
-	return VR_InputReleaseHand (0) && VR_InputReleaseHand (1);
+	return VR_InputReleaseHand (0, dispatch_epoch) &&
+		VR_InputReleaseHand (1, dispatch_epoch);
 }
 
 static void VR_InputGateHand (int hand)
@@ -460,27 +463,27 @@ static void VR_InputGateHand (int hand)
 	}
 }
 
-static qboolean VR_InputGateAndReleaseHand (int hand)
+static qboolean VR_InputGateAndReleaseHand (int hand, unsigned int dispatch_epoch)
 {
 	VR_InputGateHand (hand);
-	return VR_InputReleaseHand (hand);
+	return VR_InputReleaseHand (hand, dispatch_epoch);
 }
 
-static qboolean VR_InputGateAndReleaseAll (void)
+static qboolean VR_InputGateAndReleaseAll (unsigned int dispatch_epoch)
 {
 	VR_InputGateHand (0);
 	VR_InputGateHand (1);
-	return VR_InputReleaseAll ();
+	return VR_InputReleaseAll (dispatch_epoch);
 }
 
 /* A native callback can change the destination, binding-capture mode, or
  * modal grab while a batch is being dispatched. Release every key already
  * emitted in that batch and leave both hands neutral-gated. */
-static qboolean VR_InputAbortForContextChange (void)
+static qboolean VR_InputAbortForContextChange (unsigned int dispatch_epoch)
 {
 	vr_input_context = VR_InputCurrentContext ();
 	vr_input_context_valid = true;
-	if (!VR_InputGateAndReleaseAll ())
+	if (!VR_InputGateAndReleaseAll (dispatch_epoch))
 		return false;
 	/* Key-up callbacks can also alter native input state. Record the final
 	 * context; the neutral gate remains in force for the next sample. */
@@ -595,7 +598,7 @@ static void VR_InputBuildHandDesired (qboolean desired[2][MAX_KEYS], int hand,
 }
 
 static qboolean VR_InputEmitDesired (qboolean desired[2][MAX_KEYS],
-	const vr_input_context_t *expected_context)
+	const vr_input_context_t *expected_context, unsigned int dispatch_epoch)
 {
 	for (int phase = 0; phase < 2; ++phase)
 	{
@@ -603,7 +606,7 @@ static qboolean VR_InputEmitDesired (qboolean desired[2][MAX_KEYS],
 		{
 			const qboolean desired_aggregate = desired[0][key] || desired[1][key];
 			const qboolean current_aggregate = vr_input_emitted[key];
-			unsigned int generation;
+			const unsigned int generation = vr_input_reset_generation;
 
 			if ((phase == 0 && (desired_aggregate || !current_aggregate)) ||
 				(phase == 1 && (!desired_aggregate || current_aggregate)))
@@ -612,7 +615,6 @@ static qboolean VR_InputEmitDesired (qboolean desired[2][MAX_KEYS],
 			vr_input_hands[0].owned[key] = desired[0][key];
 			vr_input_hands[1].owned[key] = desired[1][key];
 			vr_input_emitted[key] = desired_aggregate;
-			generation = vr_input_reset_generation;
 			if (desired_aggregate && !current_aggregate &&
 				((expected_context->destination == key_menu &&
 					VR_InputMenuHapticKey (key)) ||
@@ -621,13 +623,17 @@ static qboolean VR_InputEmitDesired (qboolean desired[2][MAX_KEYS],
 			{
 				const int hand = desired[0][key] ? 0 : 1;
 				VR_InputTriggerHaptic (vr_input_hands[hand].role, 0.1f, 0.5f);
+				if (generation != vr_input_reset_generation ||
+					dispatch_epoch != vr_input_dispatch_epoch)
+					return false;
 			}
 			Key_Event (key, desired_aggregate);
 
-			if (generation != vr_input_reset_generation)
+			if (generation != vr_input_reset_generation ||
+				dispatch_epoch != vr_input_dispatch_epoch)
 				return false;
 			if (!VR_InputContextMatchesCurrent (expected_context))
-				return VR_InputAbortForContextChange ();
+				return VR_InputAbortForContextChange (dispatch_epoch);
 		}
 	}
 
@@ -664,6 +670,7 @@ void VR_InputInit (void)
 
 void VR_InputCommands (const vrxr_frame_t *frame)
 {
+	const unsigned int dispatch_epoch = ++vr_input_dispatch_epoch;
 	qboolean desired[2][MAX_KEYS] = {{false}};
 	vrxr_input_t input_hands[2];
 	vr_input_context_t context;
@@ -684,12 +691,12 @@ void VR_InputCommands (const vrxr_frame_t *frame)
 	{
 		VR_InputInvalidateMotion ();
 		vr_input_context = context;
-		if (!VR_InputGateAndReleaseAll ())
+		if (!VR_InputGateAndReleaseAll (dispatch_epoch))
 			return;
 		context = VR_InputCurrentContext ();
 		if (!VR_InputSameContext (&vr_input_context, &context))
 		{
-			VR_InputAbortForContextChange ();
+			VR_InputAbortForContextChange (dispatch_epoch);
 			return;
 		}
 	}
@@ -697,7 +704,7 @@ void VR_InputCommands (const vrxr_frame_t *frame)
 	if (!frame || !frame->focused)
 	{
 		VR_InputInvalidateMotion ();
-		VR_InputGateAndReleaseAll ();
+		VR_InputGateAndReleaseAll (dispatch_epoch);
 		return;
 	}
 
@@ -720,22 +727,22 @@ void VR_InputCommands (const vrxr_frame_t *frame)
 				VR_InputInvalidateMotion ();
 			state->role = role;
 			state->profile = input->profile;
-			if (!VR_InputGateAndReleaseHand (hand))
+			if (!VR_InputGateAndReleaseHand (hand, dispatch_epoch))
 				return;
 			if (!VR_InputContextMatchesCurrent (&context))
 			{
-				VR_InputAbortForContextChange ();
+				VR_InputAbortForContextChange (dispatch_epoch);
 				return;
 			}
 		}
 
 		if (!input->active)
 		{
-			if (!VR_InputGateAndReleaseHand (hand))
+			if (!VR_InputGateAndReleaseHand (hand, dispatch_epoch))
 				return;
 			if (!VR_InputContextMatchesCurrent (&context))
 			{
-				VR_InputAbortForContextChange ();
+				VR_InputAbortForContextChange (dispatch_epoch);
 				return;
 			}
 			continue;
@@ -765,7 +772,7 @@ void VR_InputCommands (const vrxr_frame_t *frame)
 			desired[0][K_ABUTTON] = desired[1][K_ABUTTON] = false;
 	}
 
-	VR_InputEmitDesired (desired, &context);
+	VR_InputEmitDesired (desired, &context, dispatch_epoch);
 }
 
 static void VR_InputPreparePrivatePose (usercmd_t *pending, int dominant,
