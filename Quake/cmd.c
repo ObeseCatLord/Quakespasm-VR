@@ -960,13 +960,23 @@ void Cmd_ForwardToServer (void)
 		}
 		if (!strcmp (Cmd_Args (), "pext") && !cl_nopext.value)
 		{ // server asked us for a key+value list of the extensions+attributes we support
-			SZ_Print (
-				&cls.message, va ("pext"
-								  " %#x %#x"
-								  " %#x %#x",
-								  PROTOCOL_FTE_PEXT1, PEXT1_SUPPORTED_CLIENT, PROTOCOL_FTE_PEXT2, PEXT2_SUPPORTED_CLIENT));
+			cls.offered_qsvr = 0;
+			if (!cls.legacy_qsvr)
+			{
+				cls.offered_qsvr = QSVR_PROTOCOL_PINNED;
+				SZ_Print (&cls.message, va ("pext %#x %#x %#x %#x %#x %#x",
+					PROTOCOL_FTE_PEXT1, PEXT1_SUPPORTED_CLIENT,
+					PROTOCOL_FTE_PEXT2, PEXT2_SUPPORTED_CLIENT,
+					PROTOCOL_QSVR_PROFILE, cls.offered_qsvr));
+			}
+			else
+				SZ_Print (&cls.message, va ("pext %#x %#x %#x %#x",
+					PROTOCOL_FTE_PEXT1, PEXT1_SUPPORTED_CLIENT,
+					PROTOCOL_FTE_PEXT2, PEXT2_SUPPORTED_CLIENT));
 			return;
 		}
+		if (!strcmp (Cmd_Args (), "pext"))
+			cls.offered_qsvr = 0;
 	}
 	if (Cmd_Argc () > 1)
 		SZ_Print (&cls.message, Cmd_Args ());

@@ -411,6 +411,9 @@ extern entity_state_t nullentitystate; // note: not all null.
 /* Pinned Quakespasm VR command layout, separate from public FTE semantics.
  * These constants do not advertise support or authorize private decoding. */
 #define QSVR_PROTOCOL_PINNED 1u
+/* A separate pext key, never an FTE bit: 0x52565351 ("QSVR" on the wire). */
+#define PROTOCOL_QSVR_PROFILE \
+	(('Q' << 0) + ('S' << 8) + ('V' << 16) + ('R' << 24))
 #define QSVR_PEXT2_REQUIRED 0x000000e9u
 #define QSVR_MODEL_LIMIT 4096
 #define QSVR_SVC_MOVEACK 57

@@ -176,6 +176,7 @@ This is also called on Host_Error, so it shouldn't cause any errors
 void CL_Disconnect (void)
 {
 	cls.legacy_qsvr = 0;
+	cls.offered_qsvr = 0;
 	cl.protocol_qsvr = 0;
 	cl.move_snapshot_valid = false;
 	V_ResetTrackedAim ();

@@ -1447,6 +1447,7 @@ void SV_SendServerinfo (client_t *client)
 	{ // server disabled pext completely, don't bother trying.
 		// make sure we try reenabling it again on the next map though.
 		client->pextknown = false;
+		client->offered_qsvr = 0;
 	}
 	else if (!client->pextknown)
 	{
@@ -1675,6 +1676,8 @@ void SV_Pext_f (void)
 
 			if (key == PROTOCOL_FTE_PEXT2)
 				host_client->protocol_pext2 = value & PEXT2_SUPPORTED_SERVER;
+			else if (key == PROTOCOL_QSVR_PROFILE && value == QSVR_PROTOCOL_PINNED)
+				host_client->offered_qsvr = value;
 			// else some other extension that we don't know
 		}
 
@@ -1733,6 +1736,8 @@ void SV_ConnectClient (int clientnum)
 	client->datagram.allowoverflow = true; // simply ignored on overflow
 
 	client->pextknown = false;
+	client->offered_qsvr = 0;
+	client->protocol_qsvr = 0;
 	client->protocol_pext2 = 0;
 
 	if (sv.loadgame)

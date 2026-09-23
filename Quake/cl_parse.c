@@ -1130,7 +1130,7 @@ CL_ParseServerInfo
 static void CL_ParseServerInfo (void)
 {
 	const char *str;
-	const unsigned int accepted_pext2 = cls.legacy_qsvr == QSVR_PROTOCOL_PINNED ?
+	unsigned int accepted_pext2 = cls.legacy_qsvr == QSVR_PROTOCOL_PINNED ?
 		QSVR_PEXT2_REQUIRED : PEXT2_ACCEPTED_CLIENT;
 	int			i;
 	qboolean	gamedirswitchwarning = false;
@@ -1165,6 +1165,16 @@ static void CL_ParseServerInfo (void)
 	for (;;)
 	{
 		i = MSG_ReadLong ();
+		if (i == PROTOCOL_QSVR_PROFILE)
+		{
+			const unsigned int selected = (unsigned int)MSG_ReadLong ();
+			if (msg_badread || cls.legacy_qsvr || !cls.offered_qsvr ||
+				selected != cls.offered_qsvr || cl.protocol_qsvr || cl.protocol_pext2)
+				Host_Error ("Server selected an unoffered or misplaced private profile");
+			cl.protocol_qsvr = selected;
+			accepted_pext2 = QSVR_PEXT2_REQUIRED;
+			continue;
+		}
 		if (i == PROTOCOL_FTE_PEXT1)
 		{
 			cl.protocol_pext1 = MSG_ReadLong ();
@@ -1217,6 +1227,11 @@ static void CL_ParseServerInfo (void)
 			Host_Error ("Server does not match the selected legacy Quakespasm VR layout");
 		cl.protocol_qsvr = cls.legacy_qsvr;
 	}
+	else if (cl.protocol_qsvr &&
+		(msg_badread || cl.protocol != PROTOCOL_RMQ || cl.protocol_pext1 != 0 ||
+		 cl.protocol_pext2 != QSVR_PEXT2_REQUIRED ||
+		 cl.protocolflags != (PRFL_FLOATCOORD | PRFL_SHORTANGLE)))
+		Host_Error ("Server selected an incompatible private Quakespasm VR layout");
 
 	*gamedir = 0;
 	if (cl.protocol_pext2 & PEXT2_PREDINFO)

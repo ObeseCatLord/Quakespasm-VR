@@ -143,6 +143,7 @@ typedef struct
 
 	// Explicit legacy layout selection survives map clears, not disconnects.
 	unsigned int legacy_qsvr;
+	unsigned int offered_qsvr; // profile offered on this connection; survives map signon clears
 
 	// connection information
 	int				  signon; // 0 to SIGNONS

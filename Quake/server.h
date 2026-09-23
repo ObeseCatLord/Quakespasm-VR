@@ -186,6 +186,8 @@ typedef struct client_s
 	unsigned int limit_models;	   //
 	unsigned int limit_sounds;	   //
 	qboolean	 pextknown;
+	unsigned int offered_qsvr; // capability received under PROTOCOL_QSVR_PROFILE
+	unsigned int protocol_qsvr; // selected private wire profile; zero is public
 	unsigned int protocol_pext1;
 	unsigned int protocol_pext2;
 	unsigned int resendstatsnum[MAX_CL_STATS / 32]; // the stats which need to be resent.

@@ -40,3 +40,13 @@ reason for explicit identity, not for changing vkQuake's public PEXT2 meanings.
 No user choice blocks implementation. Supporting an unmodified inherited
 client on a new `2.0` server is a separate compatibility expansion; current
 `connect … qsvr1` support targets the unchanged pinned server.
+
+## Negotiation checkpoint
+
+The `2.0` client now offers a separate `QSVR` key/version in the ordinary
+`cmd pext` response. The server records that offer per connection, and the
+client parser accepts a matching serverinfo marker before private PEXT2 bits.
+Public PEXT2 support and the default server response remain unchanged. The
+server does **not yet select** the profile: outbound private ACK/signon framing,
+private move receipt, collision and QC authority still need the coupled
+vertical proof above. The extra client offer is ignored by public servers.
