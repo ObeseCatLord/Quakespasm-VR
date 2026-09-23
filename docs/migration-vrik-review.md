@@ -109,3 +109,10 @@ never see an unknown opcode. A VR player losing tracking must return to ordinary
 animation without affecting either player's gameplay. Check both the public
 server profile and the private profile with mixed clients; packet fixtures and
 successful builds alone are insufficient for release acceptance.
+
+| Mixed session | Required observable result |
+| --- | --- |
+| Target desktop plus target OpenXR on the public server profile | Both complete signon, movement, combat, and map transition; desktop sees tracked avatar only while valid pose data arrives. |
+| Legacy desktop plus target OpenXR on the public server profile | Both share gameplay; legacy peer receives ordinary entity updates only, with no VRIK opcode. |
+| Target desktop plus target OpenXR when the server permits a private predictive peer | Each client's selected movement dialect remains independent; the target desktop receiver may still opt in to VRIK, and neither packet path drops movement or ACKs to make room for poses. |
+| Target desktop with OpenXR absent or unavailable | Desktop startup, menus, rendering, local play, and public network play work without creating an XR instance. |
