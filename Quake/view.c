@@ -295,16 +295,11 @@ qboolean V_TrackedPresentationYaw (float *yaw)
 	if (!yaw || !tracked_aim_ready || !base_angles_valid || !V_UseTrackedView () ||
 		cls.demoplayback || cl.intermission)
 		return false;
-	*yaw = tracked_view_angles[YAW] - tracked_raw_angles[YAW];
+	/* CL_SendCmd precedes the screen update that consumes a local turn.
+	 * Every VR_AimResolve mode adds that delta to visible yaw, so include it
+	 * in a pose sent now without suppressing continuous-turn tracking. */
+	*yaw = tracked_view_angles[YAW] - tracked_raw_angles[YAW] + tracked_local_yaw;
 	return isfinite (*yaw);
-}
-
-/* CL_SendCmd runs before the next screen update resolves a queued snap turn.
- * Let the optional pose sender defer that one sample without reporting loss
- * of tracking to remote players. */
-qboolean V_TrackedPresentationTurnPending (void)
-{
-	return tracked_local_yaw != 0.0f;
 }
 
 qboolean V_ApplyTrackedView (vec3_t angles, float *tracking_yaw)

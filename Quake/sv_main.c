@@ -2041,8 +2041,6 @@ void SV_SendServerinfo (client_t *client)
 	unsigned int previous_qsvr = client->protocol_qsvr;
 	qboolean	 cantruncate;
 	qboolean	 truncated = false;
-	qboolean	 reserve_vrik_offer;
-	int			 serverinfo_maxsize;
 
 	client->spawned = false; // need prespawn, spawn, etc
 
@@ -2176,13 +2174,6 @@ void SV_SendServerinfo (client_t *client)
 	}
 
 	cantruncate = client->message.cursize == 0;
-	serverinfo_maxsize = client->message.maxsize;
-	/* Reserve both commands while building an empty serverinfo so the retry
-	 * path accounts for their bytes before deciding how much to precache. */
-	reserve_vrik_offer = client->netconnection != NULL && cantruncate &&
-		serverinfo_maxsize >= (int)vrik_offer_bytes;
-	if (reserve_vrik_offer)
-		client->message.maxsize -= (int)vrik_offer_bytes;
 retry:
 	MSG_WriteByte (&client->message, svc_print);
 	//	q_snprintf (message, "%c\nFITZQUAKE %1.2f SERVER (%i CRC)\n", 2, FITZQUAKE_VERSION, pr_crc); //johnfitz -- include fitzquake version
@@ -2273,22 +2264,13 @@ retry:
 		truncated = true;
 		goto retry;
 	}
-	/* An optional offer must never make a serverinfo that fits the actual
-	 * reliable limit fail after precache truncation has reached its floor. */
-	if (client->message.overflowed && reserve_vrik_offer && cantruncate)
-	{
-		SZ_Clear (&client->message);
-		client->message.maxsize = serverinfo_maxsize;
-		reserve_vrik_offer = false;
-		goto retry;
-	}
-	client->message.maxsize = serverinfo_maxsize;
-
 	/* Keep negotiation inside the serverinfo reliable message. The donor
 	 * client disconnects if a separate reliable command arrives while it is
-	 * loading model and sound precaches. */
+	 * loading. Optional offers must not reduce gameplay precaches. */
 	if (client->netconnection && !client->message.overflowed &&
-		client->message.cursize <= serverinfo_maxsize - (int)vrik_offer_bytes)
+		client->message.cursize >= 0 && client->message.maxsize >= 0 &&
+		client->message.cursize <= client->message.maxsize &&
+		vrik_offer_bytes <= (size_t)(client->message.maxsize - client->message.cursize))
 	{
 		MSG_WriteByte (&client->message, svc_stufftext);
 		MSG_WriteString (&client->message, offer_v3);
