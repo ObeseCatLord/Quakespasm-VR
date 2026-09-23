@@ -665,6 +665,22 @@ result and prints
 `QSVR_PINNED_VR_PASSED`. This does not establish muzzle world origin, damage,
 or visible weapon alignment.
 
+For the **2.0 selected private WALK** path, start this branch's dedicated binary
+with `+sv_qsvr_private 1 +sv_private_pmove_walk 1 +coop 1 +map e1m1` and a
+separate isolated basedir. Connect without the trailing `qsvr1` selector, which
+requires the inherited server layout. Use the same simulated Monado environment
+and client probe above, adding
+`QSVR_PINNED_VR_EXPECT_SELECTED_PREDICTION=1` and client arguments
+`+host_maxfps 144 +host_phys_max_ticrate 30`. The 30 Hz send/physics rate leaves
+rendered frames between sends under GDB. The opt-in probe binds a synthetic
+OpenXR left-primary action to `+forward` during firing and requires a VR-active
+serialized command, coherent selected owner/ACK, successful production replay,
+displayed-owner movement while the authoritative state and command count stay
+fixed, and subsequent settling. An optional
+`QSVR_PINNED_VR_HEAD_RAMP_METERS_PER_ACTION=0.005` also exercises a controlled
+roomscale delta. These simulated input checks do not qualify a physical
+controller, headset, network loss, or general movement parity.
+
 For the donor server's **pre-clamp** muzzle relation, run the server under
 `tests/pinned_vr_server_muzzle_smoke.gdb` with
 `QSVR_PINNED_SERVER_RESULT=<output.json>` and its own disposable basedir/port.

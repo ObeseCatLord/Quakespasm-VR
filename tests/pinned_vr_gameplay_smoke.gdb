@@ -29,6 +29,10 @@ result = {'status':'running', 'scope':'focused XR admission, private VR command,
           'follow_up':['body/eye/muzzle geometry', 'roomscale movement and collision',
                        'weapon damage/effects and physical headset/controller qualification']}
 result_path = os.environ.get('QSVR_PINNED_VR_RESULT')
+expect_prediction_text = os.environ.get('QSVR_PINNED_VR_EXPECT_SELECTED_PREDICTION', '0')
+if expect_prediction_text not in ('0', '1'):
+    raise RuntimeError('QSVR_PINNED_VR_EXPECT_SELECTED_PREDICTION must be 0 or 1')
+expect_selected_prediction = expect_prediction_text == '1'
 ramp_text = os.environ.get('QSVR_PINNED_VR_HEAD_RAMP_METERS_PER_ACTION', '0')
 try:
     head_ramp_rate = float(ramp_text)
@@ -39,6 +43,18 @@ try:
     head_z_ramp_rate = float(head_z_ramp_text) if head_z_ramp_text is not None else None
 except ValueError:
     head_z_ramp_rate = None
+prediction_previous = None
+prediction_between_send = None
+prediction_probe = dict(replay_returns=0, replay_success=0, return_capture_errors=0,
+                        call_probe_errors=0, rendered_frames=0,
+                        frames_with_matching_return=0, matching_successful_returns=0,
+                        matching_owner_returns=0, unchanged_ack_sent_authority_pairs=0,
+                        replay_proven_stable_pairs=0,
+                        max_stable_candidate_displacement=0.0,
+                        max_replay_proven_stable_displacement=0.0)
+last_replay_result = None
+last_render_framecount = None
+fire_prediction_command = None
 
 def float32(value): return struct.unpack('f', struct.pack('f', value))[0]
 
@@ -46,6 +62,7 @@ def iv(expr): return int(gdb.parse_and_eval(expr))
 def fv(expr): return float(gdb.parse_and_eval(expr))
 def vec(expr): return [fv('%s[%d]' % (expr, i)) for i in range(3)]
 def finite3(v): return len(v) == 3 and all(math.isfinite(x) for x in v)
+def distance3(a, b): return math.sqrt(sum((x - y) ** 2 for x, y in zip(a, b)))
 def cbuf(text):
     gdb.execute('call (void)Cbuf_AddText(' + json.dumps(text) + ')', to_string=True)
     gdb.execute('call (void)Cbuf_Execute()', to_string=True)
@@ -87,7 +104,9 @@ def inject():
                 'set openxr_frame.devices[%d].hand = %d' % (dev, hand),
                 'set openxr_frame.hands[%d].active = 1' % hand,
                 'set openxr_frame.hands[%d].profile = VRXR_PROFILE_INDEX' % hand,
-                'set openxr_frame.hands[%d].pressed = 0' % hand,
+                'set openxr_frame.hands[%d].pressed = %s' %
+                    (hand, 'VRXR_BUTTON_PRIMARY' if expect_selected_prediction and
+                     phase == 'fire' and hand == 0 else '0'),
                 'set openxr_frame.hands[%d].trigger = %s' % (hand, '0.90' if phase == 'fire' and hand == 1 else '0'),
                 'set openxr_frame.hands[%d].grip = 0' % hand]
             for r in range(3):
@@ -142,15 +161,146 @@ class Ready(gdb.Breakpoint):
 
 class Frame(gdb.Breakpoint):
     def stop(self):
+        global last_render_framecount
         if time.monotonic() - started > 105:
             result['error'] = '105-second overall deadline expired'
+            return True
+        if expect_selected_prediction:
+            try:
+                framecount = iv('host_framecount')
+                render_completed = (last_render_framecount is None or
+                                    framecount != last_render_framecount)
+                completed_framecount = framecount - 1 if render_completed else None
+                last_render_framecount = framecount
+                if phase == 'fire' and render_completed:
+                    observe_prediction_frame(completed_framecount)
+            except Exception as exc:
+                result['error'] = 'selected prediction frame: ' + str(exc)
+                return True
         return True
+
+class ReplayFinish(gdb.FinishBreakpoint):
+    def __init__(self, frame, framecount, owner):
+        super(ReplayFinish, self).__init__(frame, internal=True)
+        self.framecount = framecount
+        self.owner = owner
+
+    def stop(self):
+        global last_replay_result
+        record = dict(framecount=self.framecount, owner=self.owner, success=False)
+        prediction_probe['replay_returns'] += 1
+        try:
+            returned = self.return_value
+            record['success'] = returned is not None and int(returned) != 0
+            if record['success']:
+                prediction_probe['replay_success'] += 1
+        except Exception as exc:
+            record['capture_error'] = str(exc)
+            prediction_probe['return_capture_errors'] += 1
+        last_replay_result = record
+        return False
+
+class ReplayCall(gdb.Breakpoint):
+    def stop(self):
+        global last_replay_result
+        if phase != 'fire':
+            return False
+        framecount = None
+        try:
+            frame = gdb.newest_frame()
+            framecount = iv('host_framecount')
+            owner = iv('cl.viewentity')
+            ReplayFinish(frame, framecount, owner)
+        except Exception as exc:
+            last_replay_result = dict(framecount=framecount, capture_error=str(exc))
+            prediction_probe['call_probe_errors'] += 1
+        return False
+
+def prediction_sample():
+    owner = iv('cl.viewentity')
+    return dict(owner=owner,
+        origin=vec('cl.entities[%d].netstate.origin' % owner),
+        displayed=vec('cl.entities[%d].origin' % owner),
+        ack=iv('cl.ackedmovemessages'), sent=iv('cl.movemessages'),
+        permission=bool(iv('cl.move_ack_prediction_allowed')),
+        authority=iv('cl.move_ack_authority'),
+        snapshot_valid=bool(iv('cl.move_snapshot_valid')),
+        snapshot_ack=iv('cl.move_snapshot_ack'),
+        snapshot_owner=iv('cl.move_snapshot_owner'))
+
+def require_selected_prediction_state(state):
+    if state['owner'] <= 0 or not (finite3(state['origin']) and finite3(state['displayed'])):
+        raise RuntimeError('nonfinite selected owner pose')
+    if not state['permission']:
+        raise RuntimeError('selected prediction permission is disabled')
+    if state['authority'] != 2:
+        raise RuntimeError('selected prediction authority is not engine PMove (2)')
+    if not state['snapshot_valid'] or state['snapshot_ack'] != state['ack'] or \
+            state['snapshot_owner'] != state['owner']:
+        raise RuntimeError('selected owner snapshot is not coherent with ACK/viewentity')
+
+def observe_prediction_frame(completed_framecount):
+    global prediction_previous, prediction_between_send
+    current = prediction_sample()
+    require_selected_prediction_state(current)
+    prediction_probe['rendered_frames'] += 1
+    replay = last_replay_result
+    if replay is not None and replay.get('framecount') == completed_framecount:
+        prediction_probe['frames_with_matching_return'] += 1
+        if not replay.get('capture_error') and replay.get('success'):
+            prediction_probe['matching_successful_returns'] += 1
+            replay_proven = replay.get('owner') == current['owner']
+            if replay_proven:
+                prediction_probe['matching_owner_returns'] += 1
+        else:
+            replay_proven = False
+    else:
+        replay_proven = False
+    current['replay_proven'] = replay_proven
+    if prediction_previous is not None and prediction_between_send is None:
+        unchanged = (current['ack'] == prediction_previous['ack'] and
+                     current['origin'] == prediction_previous['origin'] and
+                     current['sent'] == prediction_previous['sent'] and
+                     current['owner'] == prediction_previous['owner'] and
+                     current['permission'] and prediction_previous['permission'] and
+                     current['authority'] == prediction_previous['authority'])
+        if unchanged:
+            prediction_probe['unchanged_ack_sent_authority_pairs'] += 1
+            displacement = distance3(prediction_previous['displayed'], current['displayed'])
+            if not math.isfinite(displacement):
+                raise RuntimeError('nonfinite displayed-owner displacement')
+            prediction_probe['max_stable_candidate_displacement'] = round(max(
+                prediction_probe['max_stable_candidate_displacement'], displacement), 3)
+            replay_pair_proven = current['replay_proven'] and prediction_previous['replay_proven']
+            if replay_pair_proven:
+                prediction_probe['replay_proven_stable_pairs'] += 1
+                prediction_probe['max_replay_proven_stable_displacement'] = round(max(
+                    prediction_probe['max_replay_proven_stable_displacement'], displacement), 3)
+            if replay_pair_proven and displacement >= 0.25:
+                prediction_between_send = dict(
+                    ack=current['ack'], sent=current['sent'],
+                    authoritative_origin=current['origin'],
+                    from_displayed=prediction_previous['displayed'],
+                    to_displayed=current['displayed'], displacement=round(displacement, 3))
+    prediction_previous = current
+
+def prediction_failure_cause():
+    if not prediction_probe['replay_returns']:
+        return 'no_production_replay_returns_observed'
+    if not prediction_probe['frames_with_matching_return']:
+        return 'no_replay_return_matched_a_rendered_frame'
+    if not prediction_probe['unchanged_ack_sent_authority_pairs']:
+        return 'no_unchanged_ack_sent_authority_frames'
+    if not prediction_probe['replay_proven_stable_pairs']:
+        return 'stable_frames_lacked_two_successful_owner_matched_replays'
+    return 'replay_proven_displacement_below_0.25'
 
 class Actions(gdb.Breakpoint):
     def stop(self): return inject()
 
 class PrivateWire(gdb.Breakpoint):
     def stop(self):
+        global fire_prediction_command
         try:
             if not iv('cmd') or not iv('cmd->vr_active') or not iv('cmd->vr_handpos_relative'):
                 return False
@@ -160,7 +310,13 @@ class PrivateWire(gdb.Breakpoint):
                    'relative_muzzle':vec('cmd->vr_handpos'),
                    'hand_angles':vec('cmd->vr_handrot'),
                    'roomscale':vec('cmd->vr_roomscalemove')}
+            if expect_selected_prediction:
+                rec['forwardmove'] = iv('cmd->forwardmove')
             rec['finite'] = all(finite3(rec[k]) for k in ('relative_muzzle','hand_angles','roomscale'))
+            if (expect_selected_prediction and fire_prediction_command is None and
+                    phase == 'fire' and rec['attack'] and rec['forwardmove'] > 0 and
+                    rec['finite']):
+                fire_prediction_command = rec
             wire[seq] = rec
         except Exception as exc:
             result['wire_error'] = str(exc)
@@ -217,8 +373,13 @@ try:
     Frame('Host_Frame', internal=True)
     Actions('VR_InputCommands', internal=True)
     PrivateWire('CL_WritePrivateUsercmd', internal=True)
+    if expect_selected_prediction:
+        ReplayCall('CL_ComputeReplayPlayerMovement', internal=True)
     fatal = [gdb.Breakpoint('Host_Error', internal=True), gdb.Breakpoint('Sys_Error', internal=True)]
-    cbuf('bind RTRIGGER +attack\nvr_aimmode 7\nvr_lefthanded 0\nvr_movement_mode 0\nimpulse 2\n')
+    bindings = 'bind RTRIGGER +attack\n'
+    if expect_selected_prediction:
+        bindings += 'bind ABUTTON +forward\n'
+    cbuf(bindings + 'vr_aimmode 7\nvr_lefthanded 0\nvr_movement_mode 0\nimpulse 2\n')
     if abs(fv('Cvar_VariableValue("vr_aimmode")') - 7.0) > 0.01:
         raise RuntimeError('controller aim mode did not activate')
 
@@ -266,6 +427,33 @@ try:
         raise RuntimeError('client transport did not report a successfully sent movement packet')
     if shells_after >= shells_before:
         raise RuntimeError('server shell count did not decrease while the XR trigger was held')
+    prediction_evidence = None
+    if expect_selected_prediction:
+        movement_command = fire_prediction_command
+        if movement_command is None:
+            raise RuntimeError('no firing-phase serialized VR command carried +forward movement')
+        if prediction_between_send is None:
+            prediction_probe['failure_cause'] = prediction_failure_cause()
+            raise RuntimeError('no replay-proven displayed-owner movement between server sends')
+        prediction_final = prediction_sample()
+        require_selected_prediction_state(prediction_final)
+        if prediction_final['ack'] < movement_command['sequence']:
+            raise RuntimeError('selected VR movement command was not acknowledged')
+        settled_error = distance3(prediction_final['displayed'], prediction_final['origin'])
+        if not math.isfinite(settled_error) or settled_error > 16.0:
+            raise RuntimeError('displayed selected owner did not converge to authority')
+        prediction_evidence = dict(
+            permission=prediction_final['permission'], authority=prediction_final['authority'],
+            owner=prediction_final['owner'], snapshot_ack=prediction_final['snapshot_ack'],
+            snapshot_owner=prediction_final['snapshot_owner'],
+            synthetic_input='OpenXR left primary -> ABUTTON +forward during fire',
+            serialized_vr_forward_attack=dict(sequence=movement_command['sequence'],
+                forwardmove=movement_command['forwardmove'], attack=movement_command['attack'],
+                vr_active=movement_command['vr_active'],
+                handpos_relative=movement_command['handpos_relative']),
+            replay_probe=prediction_probe, between_send=prediction_between_send,
+            settled=dict(ack=prediction_final['ack'], sent=prediction_final['sent'],
+                         owner_error=round(settled_error, 3)))
     seq = max(acknowledged_attacks)
     result.update({'status':'passed', 'input':{'samples':actions, 'neutral_samples':18,
         'right_hand_rearmed':armed, 'native_trigger':'right OpenXR action value 0.90'},
@@ -275,11 +463,17 @@ try:
         'acknowledged_private_attack_sequence':seq},
         'firing':{'shells_before':shells_before, 'shells_after':shells_after,
                   'shells_consumed':shells_before-shells_after}})
+    if prediction_evidence is not None:
+        result['selected_prediction'] = prediction_evidence
 except Exception as exc:
     result['status'] = 'failed'
     result['error'] = str(exc)
     result['actions_seen'] = actions
     result['serialized_private_commands'] = list(wire.values())[-12:]
+    if expect_selected_prediction:
+        if prediction_between_send is None and 'failure_cause' not in prediction_probe:
+            prediction_probe['failure_cause'] = prediction_failure_cause()
+        result['prediction_probe'] = prediction_probe
 finally:
     try: save()
     except Exception as exc: gdb.write('QSVR_PINNED_VR_RESULT_WRITE_FAILED: %s\n' % exc)
