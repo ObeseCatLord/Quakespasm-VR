@@ -888,6 +888,82 @@ void SV_ReadClientMove (usercmd_t *move)
 /* The explicit private profile uses complete, redundant commands in each
  * datagram. Decode even stale records so the following command starts at the
  * right byte; only fresh records may mutate accepted gameplay state. */
+static void SV_DiscardPrivateCommandQueue (client_t *client, int through_sequence)
+{
+	while (client->private_cmd_queue_count)
+	{
+		memset (&client->private_cmd_queue[client->private_cmd_queue_head], 0,
+			sizeof (client->private_cmd_queue[client->private_cmd_queue_head]));
+		client->private_cmd_queue_head = (client->private_cmd_queue_head + 1) %
+			SV_PRIVATE_CMD_QUEUE_SIZE;
+		client->private_cmd_queue_count--;
+	}
+	if (through_sequence > client->private_discarded_move)
+		client->private_discarded_move = through_sequence;
+	client->private_cmd_queue_head = 0;
+	client->private_cmd_queue_msec = 0;
+}
+
+void SV_ResetPrivateCommandQueue (client_t *client)
+{
+	memset (client->private_cmd_queue, 0, sizeof (client->private_cmd_queue));
+	client->private_cmd_queue_head = 0;
+	client->private_cmd_queue_count = 0;
+	client->private_cmd_queue_msec = 0;
+	client->private_retired_move = 0;
+	client->private_discarded_move = 0;
+}
+
+static void SV_QueuePrivateCommand (client_t *client, const usercmd_t *command,
+	double received_at)
+{
+	unsigned int duration = command->msec;
+	unsigned int tail;
+	usercmd_t *queued;
+
+	if (duration < 1 || duration > 125 ||
+		client->private_cmd_queue_count >= SV_PRIVATE_CMD_QUEUE_SIZE ||
+		client->private_cmd_queue_msec + duration > SV_PRIVATE_CMD_QUEUE_MAX_MSEC)
+	{
+		/* A queue gap is safer than replaying stale input after falling behind. */
+		SV_DiscardPrivateCommandQueue (client, command->sequence);
+		return;
+	}
+
+	tail = (client->private_cmd_queue_head + client->private_cmd_queue_count) %
+		SV_PRIVATE_CMD_QUEUE_SIZE;
+	queued = &client->private_cmd_queue[tail];
+	*queued = *command;
+	queued->seconds = duration * 0.001f;
+	queued->vr_contact_received = received_at;
+	client->private_cmd_queue_count++;
+	client->private_cmd_queue_msec += duration;
+}
+
+static void SV_RetirePrivateCommandsThrough (client_t *client, int completed_sequence)
+{
+	if (completed_sequence <= client->private_retired_move)
+		return;
+
+	while (client->private_cmd_queue_count)
+	{
+		usercmd_t *command = &client->private_cmd_queue[client->private_cmd_queue_head];
+		if ((int)command->sequence > completed_sequence)
+			break;
+		if (client->private_cmd_queue_msec >= command->msec)
+			client->private_cmd_queue_msec -= command->msec;
+		else
+			client->private_cmd_queue_msec = 0;
+		memset (command, 0, sizeof (*command));
+		client->private_cmd_queue_head = (client->private_cmd_queue_head + 1) %
+			SV_PRIVATE_CMD_QUEUE_SIZE;
+		client->private_cmd_queue_count--;
+	}
+	if (!client->private_cmd_queue_count)
+		client->private_cmd_queue_head = 0;
+	client->private_retired_move = completed_sequence;
+}
+
 static qboolean SV_ReadPrivateClientMove (void)
 {
 	usercmd_t readcmd;
@@ -908,6 +984,11 @@ static qboolean SV_ReadPrivateClientMove (void)
 	if (sequence <= last)
 		return true;
 
+	/* A long arrival gap starts a new queue epoch, then this fresh command may
+	 * begin the new queue. The legacy latest-command path remains unchanged. */
+	if (host_client->lastmovetime > 0 && realtime - host_client->lastmovetime > 1.0)
+		SV_DiscardPrivateCommandQueue (host_client, last);
+
 	/* Validate each sample, not the total accumulated across a server frame. */
 	horizontal = sqrtf (readcmd.vr_roomscalemove[0] * readcmd.vr_roomscalemove[0] +
 		readcmd.vr_roomscalemove[1] * readcmd.vr_roomscalemove[1]);
@@ -923,6 +1004,11 @@ static qboolean SV_ReadPrivateClientMove (void)
 			sizeof (host_client->cmd.vr_roomscalemove));
 		memset (readcmd.vr_roomscalemove, 0, sizeof (readcmd.vr_roomscalemove));
 	}
+	if (sv.paused || (svs.maxclients <= 1 && key_dest != key_game) ||
+		host_client->edict->v.movetype == MOVETYPE_NONE)
+		SV_DiscardPrivateCommandQueue (host_client, sequence);
+	else
+		SV_QueuePrivateCommand (host_client, &readcmd, realtime);
 	VectorAdd (host_client->cmd.vr_roomscalemove, readcmd.vr_roomscalemove, roomscale);
 	VectorCopy (roomscale, readcmd.vr_roomscalemove);
 	readcmd.seconds = 0; // latest-command mode uses the normal server frame clock
@@ -951,6 +1037,7 @@ static qboolean SV_ReadPrivateClientMove (void)
 
 static void SV_ClearPrivateInput (client_t *client)
 {
+	SV_DiscardPrivateCommandQueue (client, client->lastmovemessage);
 	client->private_latest_buttons = 0;
 	client->private_latched_buttons = 0;
 	client->private_latched_impulse = 0;
@@ -965,8 +1052,8 @@ static void SV_ClearPrivateInput (client_t *client)
 	client->edict->v.impulse = 0;
 }
 
-/* Release one-frame action/roomscale latches only after the real physics and
- * QuakeC pass. Public vkQuake clients retain their existing command lifetime. */
+/* Called after SV_Physics: retire only through each owner's completed cursor,
+ * then release one-frame latches. Public clients keep their existing lifetime. */
 void SV_FinishPrivateUsercmds (void)
 {
 	int i;
@@ -976,6 +1063,7 @@ void SV_FinishPrivateUsercmds (void)
 		if (!client->active || !client->spawned ||
 			client->protocol_qsvr != QSVR_PROTOCOL_PINNED)
 			continue;
+		SV_RetirePrivateCommandsThrough (client, client->private_completed_move);
 		client->private_latched_buttons = 0;
 		client->private_latched_impulse = 0;
 		client->cmd.buttons = client->private_latest_buttons;

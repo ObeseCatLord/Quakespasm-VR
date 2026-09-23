@@ -1553,6 +1553,7 @@ void SV_SendServerinfo (client_t *client)
 	if (previous_qsvr == QSVR_PROTOCOL_PINNED || client->protocol_qsvr == QSVR_PROTOCOL_PINNED)
 	{
 		// A new serverinfo starts a new command sequence and input lifetime.
+		SV_ResetPrivateCommandQueue (client);
 		client->lastmovemessage = 0;
 		client->private_completed_move = 0;
 		client->lastmovetime = 0;
@@ -1835,6 +1836,7 @@ void SV_ConnectClient (int clientnum)
 	if (sv.loadgame)
 		memcpy (spawn_parms, client->spawn_parms, sizeof (spawn_parms));
 	memset (client, 0, sizeof (*client));
+	SV_ResetPrivateCommandQueue (client);
 	client->netconnection = netconnection;
 
 	strcpy (client->name, "unconnected");
@@ -3436,6 +3438,9 @@ void SV_SpawnServer (const char *server)
 	//
 	if (sv.active)
 		SV_SendReconnect ();
+	/* Commands from the previous level must never survive into its successor. */
+	for (i = 0; i < svs.maxclients; i++)
+		SV_ResetPrivateCommandQueue (&svs.clients[i]);
 
 	//
 	// make cvars consistant

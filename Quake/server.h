@@ -130,6 +130,8 @@ typedef struct
 #define NUM_PING_TIMES		  16
 #define NUM_BASIC_SPAWN_PARMS 16
 #define NUM_TOTAL_SPAWN_PARMS 64
+#define SV_PRIVATE_CMD_QUEUE_SIZE 32
+#define SV_PRIVATE_CMD_QUEUE_MAX_MSEC 250 // bound pending command history to a quarter second
 
 typedef struct client_s
 {
@@ -230,8 +232,14 @@ typedef struct client_s
 	}		*frames;
 	size_t	 numframes; // preallocated power-of-two
 	int		 lastacksequence;
-	int		 lastmovemessage;
+	int		 lastmovemessage; // accepted/received cursor; private commands are also retained below
 	int		 private_completed_move;
+	int		 private_retired_move; // queued records retired through owner physics completion
+	int		 private_discarded_move; // explicit cutoff for commands dropped without queue consumption
+	usercmd_t private_cmd_queue[SV_PRIVATE_CMD_QUEUE_SIZE];
+	unsigned int private_cmd_queue_head;
+	unsigned int private_cmd_queue_count;
+	unsigned int private_cmd_queue_msec;
 	double	 lastmovetime;
 	unsigned int private_latest_buttons;
 	unsigned int private_latched_buttons;
@@ -392,6 +400,7 @@ void SV_MoveToGoal (void);
 void SV_ConnectClient (int clientnum); // called from the netcode to add new clients. also called from pr_ext to spawn new botclients.
 void SV_CheckForNewClients (void);
 void SV_RunClients (void);
+void SV_ResetPrivateCommandQueue (client_t *client);
 void SV_FinishPrivateUsercmds (void);
 void SV_ClearVRWeaponPoseScope (void);
 void SV_VRWeaponPoseSetOrigin (edict_t *ent);

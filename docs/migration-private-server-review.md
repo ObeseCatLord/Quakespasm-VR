@@ -182,3 +182,22 @@ runtime stall probe remains to be run. A fresh private-profile loopback run
 after this change reached signon, moved 267 units, consumed four shells and
 advanced the bounded ACK from 69 to 284 while prediction stayed disabled.
 That observes normal frame retirement, not the no-physics stall case.
+
+## Bounded accepted-command journal checkpoint
+
+The explicit private receiver now retains each fresh validated `usercmd_t` in
+a 32-entry, 250 ms per-client journal, preserving its sequence, action, VR pose,
+roomscale delta and server receipt time. A separate receive cursor still owns
+wire deduplication. Long arrival gaps, suspended gameplay, non-moving owners,
+overflow and level/connection resets discard pending journal entries at an
+explicit cutoff. After a legacy player physics pass, the journal retires
+records through the completed cursor and releases their storage. This is
+bookkeeping under latest-command authority: one frame may retire multiple
+records even though they were not each individually simulated. The PMove
+consumer must replace that retirement rule before granting prediction.
+
+The strict Linux `vkquake` build and a fresh private-profile loopback smoke
+passed after the journal change: signon, settled movement, four consumed
+shells and a bounded advancing ACK with prediction permission off. Queue
+overflow/discontinuity and per-command PMove behavior still need focused
+qualification; this is not a prediction or headset-parity claim.
