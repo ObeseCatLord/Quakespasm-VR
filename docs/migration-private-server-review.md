@@ -464,3 +464,27 @@ world clock or receipt-time movement owner based on the current evidence.
 This acceptance is not a parity claim. Delayed weapon damage and pose, held
 queue-head actions, jump/idle gaps, non-world ground, triggers, packet loss,
 unsupported-state recovery, and representative CPU cost remain unverified.
+
+## Astra owner/settings/ACK review disposition
+
+A local `gpt-6-astra`/`max` review checked the post-stat-export private owner
+path. The selected Linux loopback receives valid movement stats, but the
+replacement writer sends stat deltas only in the first unreliable datagram of
+a snapshot burst. A later owner ACK can arrive with stale yet valid
+settings if a changed-settings packet is lost. The client now rejects absent
+movement stats, but that guard does not solve stale settings. Prediction remains
+disabled.
+
+| Recommendation | Disposition |
+| --- | --- |
+| Treat owner reset, completed ACK and complete movement settings as one eligibility proof, using the existing codecs. | **Adopt for the next vertical slice.** Repeat the full movement-stat set and a baseline-relative selected owner reset in every selected-private entity datagram, including continuations. Reserve room for the mandatory group before optional entities; fail boundedly if it cannot fit. Leave public snapshots untouched. Measure the bandwidth before choosing a cached/versioned alternative. |
+| Account for ownerless continuations invalidating the client's candidate snapshot. | **Adopt.** Keep the existing conservative invalidation and require each selected continuation to re-establish eligibility at the message-end boundary. Track complete movement-stat receipt per message, including zero-valued settings. |
+| Keep semantic discontinuity separate from decoding resets and replay completeness. | **Adopt.** `UF_RESET` is a decoding baseline, not a semantic transition. Keep prediction permission off while proving packet coherence and while the server's persisted jump timer is not represented in the client replay seed. |
+| Exercise changed settings, split/lost packets, pause and recovery. | **Adapt.** Test changed and zero-valued settings, split/lost packets, complete burst and following-frame eligibility. Selected clients currently disconnect when input is cleared on pause; seamless pause recovery would be a separate behavior expansion. |
+
+This is a narrow adaptation of vkQuake's replacement stat/entity writer and
+client end-of-message candidate gate, not a second protocol or snapshot owner.
+The immediate proof must preserve completed-only ACK retirement and keep the
+prediction flag false. Later permission requires semantic discontinuity
+handling, jump debounce parity, collision/VR command replay and broader
+gameplay validation; repeated bytes alone do not authorize it.
