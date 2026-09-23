@@ -131,6 +131,8 @@ extern qboolean sb_showscores;
 extern qboolean scr_drawdialog;
 
 static qboolean scr_vr_classic_sbar_refdef_active;
+static THREAD_LOCAL qboolean scr_csqc_display_override_active;
+static THREAD_LOCAL csqc_display_t scr_csqc_display_override;
 
 extern cvar_t	 crosshair;
 extern cvar_t	 crosshair_def;
@@ -476,9 +478,8 @@ static void SCR_SizeDown_f (void)
 	Cvar_SetValueQuick (&scr_viewsize, new_value);
 }
 
-/* This bounded panel proof applies only to the original single-player
- * status bar. Keep the desktop reservation unless the current XR frame and
- * game state can use the tracked panel; the caller rechecks after BeginFrame. */
+/* Keep the desktop reservation unless the current XR frame and supported
+ * classic/CSQC HUD state can use the tracked panel. */
 static qboolean SCR_VRClassicSbarFrameEligible (const vrxr_frame_t *frame)
 {
 	const qboolean loading = scr_drawloading || (scr_drawstartuploading && cls.state == ca_disconnected);
@@ -489,7 +490,8 @@ static qboolean SCR_VRClassicSbarFrameEligible (const vrxr_frame_t *frame)
 		!frame->devices[0].valid || !frame->devices[0].tracked || frame->devices[0].kind != VRXR_DEVICE_HEAD ||
 		frame->devices[0].hand != -1 || cls.signon != SIGNONS || !cl.worldmodel || con_forcedup ||
 		key_dest != key_game || m_state != m_none || scr_con_current > 0 || scr_drawdialog || loading ||
-		cl.intermission || scr_style.value >= 2.0f || cl.qcvm.extfuncs.CSQC_DrawHud ||
+		cl.intermission || scr_style.value >= 2.0f ||
+		(scr_style.value < 1.0f && cl.qcvm.extfuncs.CSQC_DrawHud && qcvm) ||
 		cl.maxclients != 1 || cl.gametype != GAME_COOP || sb_showscores || cl.stats[STAT_HEALTH] <= 0 ||
 		!isfinite (vr_aimmode.value) || !isfinite (vr_hud_scale.value) || vr_hud_scale.value <= 0)
 		return false;
@@ -553,6 +555,8 @@ SCR_GetCSQCDisplay
 csqc_display_t SCR_GetCSQCDisplay (void)
 {
 	csqc_display_t display;
+	if (scr_csqc_display_override_active)
+		return scr_csqc_display_override;
 	if (scr_relativescale.value && vid.width > 0 && vid.height > 0)
 	{
 		// Some mods' HUDs assume resolutions around 1080p and lay out incorrectly at higher resolutions.
@@ -574,6 +578,22 @@ csqc_display_t SCR_GetCSQCDisplay (void)
 		display.pixel_scale[0] = display.pixel_scale[1] = display.scale;
 	}
 	return display;
+}
+
+void SCR_SetCSQCDisplayOverride (const csqc_display_t *display)
+{
+	if (display)
+	{
+		scr_csqc_display_override = *display;
+		scr_csqc_display_override_active = true;
+	}
+	else
+		scr_csqc_display_override_active = false;
+}
+
+qboolean SCR_CSQCDisplayOverrideActive (void)
+{
+	return scr_csqc_display_override_active;
 }
 
 /*
@@ -1540,6 +1560,8 @@ static int vr_menu_connection;
 typedef struct
 {
 	qboolean valid;
+	qboolean csqc_hud;
+	csqc_display_t csqc_display;
 	float world_from_ndc[16];
 } vr_classic_sbar_panel_t;
 
@@ -1683,14 +1705,23 @@ static void SCR_VRClassicSbarPrepare (void)
 	vec3_t aim_angles, panel_angles, target, forward, right, up, normal, down;
 	vec3_t hand_origin, hand_direction;
 	float scale, bar_scale, viewport_x, viewport_y, x_step, y_step, x_base, y_base;
+	float canvas_width = 320.0f, canvas_height = 48.0f;
+	qboolean csqc_hud;
 	int dominant;
 
 	vr_classic_sbar_panel.valid = false;
 	if (!SCR_VRClassicSbarFrameEligible (frame))
 		return;
+	csqc_hud = scr_style.value < 1.0f && cl.qcvm.extfuncs.CSQC_DrawHud && !qcvm;
+	if (csqc_hud)
+	{
+		canvas_height = 200.0f;
+		if (Sbar_IsADWideCSQCHud ())
+			canvas_width = q_max (320.0f, 960.0f / q_max (1.0f, scr_sbarscale.value));
+	}
 
 	scale = vr_hud_scale.value;
-	if (!isfinite (scale) || scale <= 0 || vid.width <= 0 || vid.height <= 0 || glwidth <= 0)
+	if (!isfinite (scale) || scale <= 0 || vid.width <= 0 || vid.height <= 0 || glwidth <= 0 || glheight <= 0)
 		return;
 
 	if (vr_aimmode.value == VR_AIMMODE_CONTROLLER)
@@ -1724,15 +1755,34 @@ static void SCR_VRClassicSbarPrepare (void)
 	VectorScale (up, -1.0f, down);
 	VectorMA (target, 10.0f, normal, target);
 
-	bar_scale = CLAMP (1.0f, scr_sbarscale.value, (float)glwidth / 320.0f);
-	if (!isfinite (bar_scale) || bar_scale <= 0)
-		return;
-	viewport_x = (glwidth - 320.0f * bar_scale) * 0.5f;
-	viewport_y = vid.height - 48.0f * bar_scale;
-	x_step = 2.0f * bar_scale / vid.width;
-	y_step = 2.0f * bar_scale / vid.height;
-	x_base = 2.0f * viewport_x / vid.width - 1.0f;
-	y_base = 2.0f * viewport_y / vid.height - 1.0f;
+	if (csqc_hud)
+	{
+		/* CANVAS_CSQC fills the render viewport. Include its framebuffer scale
+		 * here so the panel matrix keeps each source unit at vr_hud_scale. */
+		viewport_x = 0.0f;
+		viewport_y = vid.height - glheight;
+		x_step = 2.0f * glwidth / (canvas_width * vid.width);
+		y_step = 2.0f * glheight / (canvas_height * vid.height);
+		x_base = -1.0f;
+		y_base = 2.0f * viewport_y / vid.height - 1.0f;
+		vr_classic_sbar_panel.csqc_display.width = canvas_width;
+		vr_classic_sbar_panel.csqc_display.height = canvas_height;
+		vr_classic_sbar_panel.csqc_display.scale = 1.0f;
+		vr_classic_sbar_panel.csqc_display.pixel_scale[0] = glwidth / canvas_width;
+		vr_classic_sbar_panel.csqc_display.pixel_scale[1] = glheight / canvas_height;
+	}
+	else
+	{
+		bar_scale = CLAMP (1.0f, scr_sbarscale.value, (float)glwidth / 320.0f);
+		if (!isfinite (bar_scale) || bar_scale <= 0)
+			return;
+		viewport_x = (glwidth - 320.0f * bar_scale) * 0.5f;
+		viewport_y = vid.height - 48.0f * bar_scale;
+		x_step = 2.0f * bar_scale / vid.width;
+		y_step = 2.0f * bar_scale / vid.height;
+		x_base = 2.0f * viewport_x / vid.width - 1.0f;
+		y_base = 2.0f * viewport_y / vid.height - 1.0f;
+	}
 	if (!isfinite (x_step) || !isfinite (y_step) || x_step <= 0 || y_step <= 0 ||
 		!isfinite (x_base) || !isfinite (y_base))
 		return;
@@ -1744,12 +1794,14 @@ static void SCR_VRClassicSbarPrepare (void)
 		matrix[i] = right[i] * (scale / x_step);
 		matrix[4 + i] = down[i] * (scale / y_step);
 		matrix[8 + i] = normal[i] * scale;
-		matrix[12 + i] = target[i] - matrix[i] * (x_base + x_step * 160.0f) - matrix[4 + i] * y_base;
+		const float center_x = csqc_hud ? x_base + x_step * canvas_width * 0.5f : x_base + x_step * 160.0f;
+		matrix[12 + i] = target[i] - matrix[i] * center_x - matrix[4 + i] * y_base;
 		if (!isfinite (matrix[i]) || !isfinite (matrix[4 + i]) || !isfinite (matrix[8 + i]) ||
 			!isfinite (matrix[12 + i]))
 			return;
 	}
 	vr_classic_sbar_panel.world_from_ndc[15] = 1.0f;
+	vr_classic_sbar_panel.csqc_hud = csqc_hud;
 	vr_classic_sbar_panel.valid = true;
 }
 
@@ -1796,14 +1848,20 @@ static void SCR_DrawGUI (void *unused)
 	SCR_TileClear (cbx);
 
 	const qboolean cscqhud = (scr_style.value < 1.0f) && cl.qcvm.extfuncs.CSQC_DrawHud;
+	const int csqc_items_before = cl.stats[STAT_ITEMS];
 
 	if (cscqhud && setjmp (screen_error))
 	{
 		/* Host_Error jumps out of CSQC_DrawHud without unwinding this draw.
 		 * Restore the UI command state and release the GUI lock before clearing
 		 * the failing QCVM, or the next draw will deadlock on the same mutex. */
+		SCR_SetCSQCDisplayOverride (NULL);
 		if (cbx->ui_panel_active)
 			GL_EndUIPanel (cbx);
+		/* Clearing the failed QCVM changes Sbar_Draw back to classic; its
+		 * canvas must not reuse the CSQC-sized panel transform below. */
+		vr_classic_sbar_panel.valid = false;
+		cl.stats[STAT_ITEMS] = csqc_items_before;
 		if (gui_mutex_held)
 		{
 			SDL_UnlockMutex (draw_qcvm_mutex);
@@ -1869,7 +1927,10 @@ static void SCR_DrawGUI (void *unused)
 		SCR_CheckDrawCenterString (cbx);
 		if (vr_classic_sbar_panel.valid)
 			GL_BeginUIPanel (cbx, vr_classic_sbar_panel.world_from_ndc);
+		if (vr_classic_sbar_panel.valid && vr_classic_sbar_panel.csqc_hud)
+			SCR_SetCSQCDisplayOverride (&vr_classic_sbar_panel.csqc_display);
 		Sbar_Draw (cbx);
+		SCR_SetCSQCDisplayOverride (NULL);
 		if (vr_classic_sbar_panel.valid)
 			GL_EndUIPanel (cbx);
 		SCR_DrawDevStats (cbx); // johnfitz

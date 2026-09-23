@@ -45,12 +45,14 @@ void SCR_UpdateRelativeScale ();
 
 typedef struct
 {
-	int	  width, height;  // Display pixels reported to client QC.
+	float width, height;  // Display pixels reported to client QC.
 	float scale;		  // Display pixels per HUD coordinate.
 	float pixel_scale[2]; // Framebuffer pixels per HUD coordinate.
 } csqc_display_t;
 
 csqc_display_t SCR_GetCSQCDisplay (void);
+void SCR_SetCSQCDisplayOverride (const csqc_display_t *display);
+qboolean SCR_CSQCDisplayOverrideActive (void);
 
 extern float scr_con_current;
 extern float scr_conlines; // lines of console to display

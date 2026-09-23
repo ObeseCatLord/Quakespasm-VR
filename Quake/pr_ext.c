@@ -38,7 +38,7 @@ qboolean PR_GetCSQCCvarValue (const cvar_t *var, float *value)
 {
 	// Keep client HUD queries consistent with its virtual display. Server QC and
 	// console/config values continue to describe the actual display.
-	if (!var || qcvm != &cl.qcvm || !scr_relativescale.value)
+	if (!var || qcvm != &cl.qcvm || (!scr_relativescale.value && !SCR_CSQCDisplayOverrideActive ()))
 		return false;
 	if (var != &scr_sbarscale && strcmp (var->name, "vid_width") && strcmp (var->name, "vid_height"))
 		return false;
