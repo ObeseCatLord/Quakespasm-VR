@@ -1,7 +1,8 @@
 # Weapon-wheel migration seam
 
-The inherited wheel is still a required 2.0 behavior, not an implemented
-feature. The source of truth is `quakespasm-openvr/Quake/vr.c` at the pinned MAIN
+The inherited wheel is still a required 2.0 behavior. A stock-weapon desktop
+Vulkan slice is implemented; VR presentation, mod catalogues, and co-op actions
+remain to be ported. The source of truth is `quakespasm-openvr/Quake/vr.c` at the pinned MAIN
 commit in [migration-feature-map.md](migration-feature-map.md), particularly
 its catalog and selection policy (`VR_WeaponIsOwned`,
 `VR_UpdateWeaponMenuSelection`, `VR_ResolveWeaponMenuSelection`), session
