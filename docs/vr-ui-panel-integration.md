@@ -259,9 +259,9 @@ Astra Max xhigh checked the proposed modern HUD presentation against
 review found that corner placement alone is insufficient: each corner has its
 own source clip, console scaling changes its art size, and score/death paths
 switch to other canvases. I spot-checked those paths in `sbar.c` and
-`gl_draw.c`. The chosen next slice is a fixed logical 640×400 surface for the
-live single-player modern HUD, still using one `Sbar_Draw` call and the donor
-pose. Its physical footprint is provisional until headset viewing.
+`gl_draw.c`. The modern HUD uses a fixed logical 640×400 surface and the donor
+pose, still through one `Sbar_Draw` call. Its physical footprint is provisional
+until headset viewing.
 
 | Review recommendation | Disposition |
 | --- | --- |
@@ -271,6 +271,15 @@ pose. Its physical footprint is provisional until headset viewing.
 | Treat 640×400 as the final preferred size. | **Adapt.** Use it as the first stable proof; adjust only after inspecting readability and dense weapon inventory. |
 | Include score/death and multiplayer canvases in this first modern slice. | **Defer.** Keep those explicit flat fallbacks until their canvas contracts are mapped; they remain parity work. |
 | Introduce compact reflow or an offscreen layer. | **Reject for now.** No observed failure of the direct adapter justifies another renderer or target. |
+
+### Subsequent solo score/death adapter
+
+After this review, source tracing confirmed the solo modern score/death overlay
+already uses `CANVAS_SBAR`, whose solo source extent is 320×48. A follow-up
+adapter maps it to the centered bottom strip at (160, 352) in the 640×400 panel,
+preserving that source clip and the existing `Sbar_Draw` call. This later change
+implements the solo portion of the deferred work; CSQC and multiplayer score
+canvases remain outside the adapter.
 
 The later proof should compare a dense Hipnotic inventory across desktop and
 VR, vary eye resolution and console scale, and check scores/death, both eyes,
@@ -282,14 +291,20 @@ resolved aim to `cl.viewangles` and keeps the independently resolved view in
 donor's `cl.aimangles` in those modes. Headset placement remains unverified.
 
 The live single-player modern HUD now uses the same donor pose and one
-`Sbar_Draw` call. Its existing corner canvases map to four clipped 320×200
-quadrants of the provisional 640×400 surface. The fit into the eye render
-target is canceled by the panel transform, so artwork retains the physical
-`vr_hud_scale` per source unit when eye resolution or console scale changes.
-The normal desktop canvas path is unchanged. Modern-style score/death states,
-multiplayer, and other excluded states still draw flat until their canvas
-contracts are migrated. This code compiles on Linux; visual headset proof
-remains open.
+`Sbar_Draw` call. Its four corner canvases map to clipped 320×200 quadrants of
+the provisional 640×400 surface. When `ui_panel_modern_hud` is active,
+`CANVAS_SBAR` maps to the centered 320×48 strip at panel coordinates (160, 352),
+with both the source ortho clip and viewport limited to that strip. The existing
+panel transform cancels the target-fit scale, so all five canvases retain the
+configured `vr_hud_scale` per source unit regardless of eye resolution or
+desktop bar scaling. The normal desktop canvas path remains untouched because
+the adapter is gated by the panel flag. The smallest compatible change is this
+canvas mapping: `Sbar_DrawModern` already emits score/death through
+`CANVAS_SBAR`, so rewriting its draw routine would duplicate working layout and
+scoreboard policy without resolving an incompatibility. Modern score/death now
+use the panel for the solo eligibility contract; CSQC and multiplayer score
+canvases remain excluded. The Linux `vkquake` target builds successfully;
+visual headset proof remains open.
 
 ## Solo classic score and death status bar
 
@@ -306,15 +321,14 @@ renderer or new canvas is needed.
 
 The eligibility change admits `sb_showscores` and nonpositive health only to
 the classic solo path; it also removes desktop status-bar scene reservation
-through the same `SCR_CalcRefdef` predicate. Modern style explicitly retains
-its flat score/death path. CSQC-owned HUD score/death remains flat because
-`Sbar_DrawCSCQ` switches to the independently sized `CANVAS_CSQC`, and
-multiplayer remains excluded because its deathmatch overlay is drawn on
-`CANVAS_MENU` rather than the solo 320×48 strip. This is the minimal adapter:
-the source canvases are compatible for solo classic states, while those
-CSQC/modern/multiplayer canvases are the concrete incompatibilities that make
-extending the same transform to them incorrect. Linux compilation is checked;
-the placement still needs headset visual verification.
+through the same `SCR_CalcRefdef` predicate. Modern solo score/death uses the
+separate 640×400 panel adapter described above. CSQC-owned HUD score/death
+remains flat because `Sbar_DrawCSCQ` switches to the independently sized
+`CANVAS_CSQC`, and multiplayer remains excluded because its deathmatch overlay
+is drawn on `CANVAS_MENU` rather than the solo 320×48 strip. These are the
+concrete canvas incompatibilities that keep those paths outside the adapter.
+Linux compilation is checked; placement still needs headset visual
+verification.
 
 During a connected in-game menu, the supported classic or modern HUD now draws
 once on its own inherited anchor after the menu panel. A confirmation dialog

@@ -564,8 +564,8 @@ static qboolean SCR_VRClassicSbarFrameEligible (const vrxr_frame_t *frame)
 
 static qboolean SCR_VRModernSbarFrameEligible (const vrxr_frame_t *frame)
 {
+	/* Solo modern score/death uses CANVAS_SBAR inside Sbar_DrawModern. */
 	return SCR_VRHUDFrameEligible (frame) && isfinite (scr_style.value) && scr_style.value >= 2.0f &&
-		!sb_showscores && cl.stats[STAT_HEALTH] > 0 &&
 		isfinite (scr_viewsize.value) && scr_viewsize.value < 120.0f;
 }
 

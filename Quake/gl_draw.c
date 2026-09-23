@@ -1365,6 +1365,7 @@ static qboolean GL_SetModernHUDCanvas (cb_context_t *cbx, canvastype canvas)
 {
 	float fitting_scale;
 	float origin_x, origin_y, canvas_x, canvas_y;
+	float canvas_height = 200.0f;
 
 	if (!cbx->ui_panel_modern_hud)
 		return false;
@@ -1389,6 +1390,12 @@ static qboolean GL_SetModernHUDCanvas (cb_context_t *cbx, canvastype canvas)
 		canvas_x = 320.0f;
 		canvas_y = 200.0f;
 		break;
+	case CANVAS_SBAR:
+		/* Modern solo score/death is a centered 320x48 strip at the panel base. */
+		canvas_x = 160.0f;
+		canvas_y = 352.0f;
+		canvas_height = 48.0f;
+		break;
 	case CANVAS_TOPRIGHT:
 		canvas_x = 320.0f;
 		canvas_y = 0.0f;
@@ -1397,10 +1404,10 @@ static qboolean GL_SetModernHUDCanvas (cb_context_t *cbx, canvastype canvas)
 		return false;
 	}
 
-	GL_OrthoMatrix (cbx, 0, 320, 200, 0, -99999, 99999);
+	GL_OrthoMatrix (cbx, 0, 320, canvas_height, 0, -99999, 99999);
 	GL_Viewport (cbx, origin_x + canvas_x * fitting_scale,
-		glheight - (origin_y + (canvas_y + 200.0f) * fitting_scale),
-		320.0f * fitting_scale, 200.0f * fitting_scale, 0.0f, 1.0f);
+		glheight - (origin_y + (canvas_y + canvas_height) * fitting_scale),
+		320.0f * fitting_scale, canvas_height * fitting_scale, 0.0f, 1.0f);
 	return true;
 }
 
@@ -1450,16 +1457,19 @@ void GL_SetCanvas (cb_context_t *cbx, canvastype newcanvas)
 		break;
 	}
 	case CANVAS_SBAR:
-		s = CLAMP (1.0, scr_sbarscale.value, (float)glwidth / 320.0);
-		if (cl.gametype == GAME_DEATHMATCH && scr_style.value < 2.0f)
+		if (!GL_SetModernHUDCanvas (cbx, newcanvas))
 		{
-			GL_OrthoMatrix (cbx, 0, glwidth / s, 48, 0, -99999, 99999);
-			GL_Viewport (cbx, 0, 0, glwidth, 48 * s, 0.0f, 1.0f);
-		}
-		else
-		{
-			GL_OrthoMatrix (cbx, 0, 320, 48, 0, -99999, 99999);
-			GL_Viewport (cbx, (glwidth - 320 * s) / 2, 0, 320 * s, 48 * s, 0.0f, 1.0f);
+			s = CLAMP (1.0, scr_sbarscale.value, (float)glwidth / 320.0);
+			if (cl.gametype == GAME_DEATHMATCH && scr_style.value < 2.0f)
+			{
+				GL_OrthoMatrix (cbx, 0, glwidth / s, 48, 0, -99999, 99999);
+				GL_Viewport (cbx, 0, 0, glwidth, 48 * s, 0.0f, 1.0f);
+			}
+			else
+			{
+				GL_OrthoMatrix (cbx, 0, 320, 48, 0, -99999, 99999);
+				GL_Viewport (cbx, (glwidth - 320 * s) / 2, 0, 320 * s, 48 * s, 0.0f, 1.0f);
+			}
 		}
 		break;
 	case CANVAS_WARPIMAGE:
