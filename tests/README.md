@@ -951,6 +951,26 @@ the full movement-stat group. This verifies one loopback snapshot boundary;
 loss, split-packet recovery and eventual replay parity still need separate
 checks. Prediction permission remains off.
 
+To exercise an actual selected-private continuation, start a fresh server on
+stock `start` through `tests/private_selected_split_server.gdb` (interactive
+GDB, debug symbols required):
+
+```sh
+gdb -nx -q -x tests/private_selected_split_server.gdb --args \
+  "$QSVR_BINARY" -dedicated 4 -ip 127.0.0.1 -port 28798 \
+  -basedir "$SERVER_PROFILE" +sv_qsvr_private 1 \
+  +sv_private_pmove_walk 1 +coop 1 +map start
+```
+
+The wrapper limits only the selected client's datagram to 220 bytes and marks
+its visible non-owner entities for one reset. Require both
+`QSVR_FORCED_PENDING` and `QSVR_CONTINUATION_SEEN` in the server terminal. Run
+the private client command above against port 28798 with
+`QSVR_LOCAL_ASSERT_MOVE_STATS=1` and
+`QSVR_LOCAL_ASSERT_COHERENT_OWNER=1`; require a passed result, a valid matching
+owner/ACK candidate, movement and shell consumption. This exercises one
+controlled split without injecting packet loss or changing production policy.
+
 For the private-to-public map-switch case, remove any stale readiness file,
 then add `QSVR_LOCAL_MAP_READY="$CLIENT_PROFILE/map-ready"` to the private
 client command above. Only after that file appears, enter these as two separate

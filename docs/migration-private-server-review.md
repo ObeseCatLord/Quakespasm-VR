@@ -512,8 +512,8 @@ units, fired four shells, received valid stock movement settings and a matching
 owner/ACK candidate (ACK 284), while prediction stayed off. A fresh public
 loopback moved/fired normally and retained zero private movement stats. The
 parser probe also rejects an owner update without that message's complete stat
-group. Forced snapshot splitting, packet-loss recovery, changed movement cvars,
-VR poses, jump debounce and semantic teleport resets still need proof before
+group. Packet-loss recovery, changed movement cvars, VR poses, jump debounce
+and semantic teleport resets still need proof before
 prediction can be enabled. The repeated group adds 120 bytes per selected
 datagram before the owner update; measure its traffic and frame cost on large
 maps before optimizing it.
@@ -528,7 +528,13 @@ behavior regressions before commit:
 | Failing when no optional entity fits in the first packet can disconnect a peer even though a clean continuation would fit it. | **Fixed.** The no-progress failure now applies only to a clean continuation. The first packet can carry its mandatory group and retry optional entities after dropping its ordinary stat/damage prefix. |
 
 The `e1m1` low-budget probes did not create an actual continuation: only four
-entities were visible in the sampled stock spawn. A larger visibility case or
-controlled pending-entity fixture is still needed to validate packet splitting,
-resend, interpolation and bounded progress end to end. Packet loss and changed
-server movement settings also remain untested.
+entities were visible in the sampled stock spawn. A controlled `start` run then
+limited the selected peer to 220-byte datagrams and marked its five visible
+non-owner entities for one reset. The production writer entered a continuation
+at `snapshotresume=34`. The Linux client remained connected, moved about 654
+units, consumed four shells and ended with complete stock movement settings and
+a valid owner candidate matching completed ACK 285; prediction stayed off.
+The reproducible GDB wrapper is `tests/private_selected_split_server.gdb`.
+This proves one real split path, not visual interpolation quality, general
+large-map behavior, resend under packet loss, or changing server movement
+settings. Those remain acceptance gates.
