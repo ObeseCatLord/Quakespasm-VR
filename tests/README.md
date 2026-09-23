@@ -35,6 +35,26 @@ cc -std=gnu11 -DUSE_SDL3 -D_GNU_SOURCE -Wall -Wextra -Werror \
 /tmp/quakespasm-vr-weapon-calibration-fixture
 ```
 
+`vr_weapon_calibration_reload_fixture.c` exercises active-game reload with the
+real schema parser, including all eight enhanced muzzle fallbacks, missing-file
+behavior, field-wise file overrides, profile replacement on a later reload,
+file freeing, and safe built-in retention after malformed input. The file
+loader is a fixture boundary; native `COM_LoadFile` supplies active search-path
+behavior in the game.
+
+```sh
+cc -std=gnu11 -DUSE_SDL3 -D_GNU_SOURCE -Wall -Wextra -Werror \
+  -Wno-unused-parameter -Wno-sign-compare -Wno-missing-field-initializers \
+  -ffunction-sections -fdata-sections -fsanitize=address,undefined \
+  -fno-sanitize-recover=all -fno-omit-frame-pointer -IQuake \
+  tests/vr_weapon_calibration_reload_fixture.c \
+  Quake/vr_weapon_calibration.c Quake/vr_weapon_schema.c Quake/common.c \
+  -Wl,--gc-sections -Wl,--wrap=COM_LoadFile \
+  $(pkg-config --cflags --libs sdl3) -lm \
+  -o /tmp/quakespasm-vr-weapon-calibration-reload-fixture
+/tmp/quakespasm-vr-weapon-calibration-reload-fixture
+```
+
 `vr_openxr_vulkan_fixture.cpp` is reused from the product OpenXR branch at
 `3080841333fa94000df7e1fb9e549c7158685dd6`, adapted to the Vulkan-only 2.0 backend.
 It checks creation-result ownership, instance/device provenance, version

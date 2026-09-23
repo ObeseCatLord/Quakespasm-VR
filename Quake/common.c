@@ -29,6 +29,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "unicode_translit.h"
 #include "filenames.h"
 #include "steam.h"
+#include "vr_weapon_calibration.h"
 #include <errno.h>
 
 // Plug our allocators into miniz:
@@ -3107,6 +3108,8 @@ void COM_SwitchGame (const char *paths)
 		Draw_NewGame ();
 		R_NewGame ();
 		M_NewGame ();
+		if (!VR_WeaponCalibrationReloadGame ())
+			Con_Warning ("VR: invalid weapon calibration schema for active game\n");
 	}
 	ExtraMaps_NewGame ();
 	Host_Resetdemos ();

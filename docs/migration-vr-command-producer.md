@@ -138,8 +138,14 @@ The bounded `VR_WeaponSchemaParse` stage now uses vkQuake's native
 sequential global inheritance, and 64-block limit. It rejects incomplete or
 nonfinite values and does not publish a second live weapon registry. A focused
 Linux fixture passes, and all 37 installed read-only schemas parse to 670
-staged entries. Game-path loading, live cvars, model-format selection, and
-command activation remain separate integration steps.
+staged entries. The parser itself has no game-path or live cvar ownership.
+The single calibration slot owner now registers the inherited live cvar names
+once, reads the active game's `vr_weapons.txt` through `COM_LoadFile`, and
+reloads after `COM_SwitchGame`. Eight source-calibrated enhanced model defaults
+precede authored file fields. Missing files keep those defaults; invalid files
+are rejected without publishing partial schema fields. The classic and
+enhanced muzzle lookups remain separate, and the focused reload fixture passes.
+Command-time model selection and `vr_active` are still pending.
 
 There is also a timing boundary to measure before any head-motion prediction:
 `CL_AccumulateCmd` consumes the last completed OpenXR frame in `host.c`, while

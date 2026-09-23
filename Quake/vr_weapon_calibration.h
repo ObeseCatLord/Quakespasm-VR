@@ -15,6 +15,7 @@ extern cvar_t vr_weapon_muzzle_offset[VR_WEAPON_CALIBRATION_MAX_SLOTS *
 
 void VR_WeaponCalibrationInit(void);
 void VR_WeaponCalibrationReset(void);
+qboolean VR_WeaponCalibrationReloadGame(void);
 qboolean VR_WeaponCalibrationApplySchema(
 	const vr_weapon_schema_entry_t *entries, size_t count);
 qboolean VR_WeaponCalibrationLookupMuzzle(const char *model_name,

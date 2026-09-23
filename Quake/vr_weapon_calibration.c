@@ -61,6 +61,66 @@ static char vr_weapon_calibration_cvar_names[VR_WEAPON_CALIBRATION_MAX_SLOTS]
 													[24];
 static qboolean vr_weapon_calibration_initialized;
 
+/* Enhanced viewmodel fallbacks from the 2021 rerelease calibration. */
+static const vr_weapon_schema_entry_t vr_enhanced_weapon_fallbacks[] = {
+	{
+		.viewmodel_path = "progs/v_axe.mdl",
+		.enhanced_held_offset = {-19.72028f, 12.02455f, 23.92703f},
+		.has_enhanced_held_offset = true,
+		.enhanced_muzzle_offset = {0.0f, 0.0f, 37.0f},
+		.has_enhanced_muzzle_offset = true,
+	},
+	{
+		.viewmodel_path = "progs/v_shot.mdl",
+		.enhanced_held_offset = {-5.718559f, 0.381319f, 7.430882f},
+		.has_enhanced_held_offset = true,
+		.enhanced_muzzle_offset = {0.0f, 0.0f, 10.0f},
+		.has_enhanced_muzzle_offset = true,
+	},
+	{
+		.viewmodel_path = "progs/v_shot2.mdl",
+		.enhanced_held_offset = {-7.427664f, 0.3130722f, 6.934306f},
+		.has_enhanced_held_offset = true,
+		.enhanced_muzzle_offset = {0.0f, 0.0f, 8.5f},
+		.has_enhanced_muzzle_offset = true,
+	},
+	{
+		.viewmodel_path = "progs/v_nail.mdl",
+		.enhanced_held_offset = {-12.55625f, 0.4279174f, 13.18545f},
+		.has_enhanced_held_offset = true,
+		.enhanced_muzzle_offset = {0.0f, 0.0f, 15.0f},
+		.has_enhanced_muzzle_offset = true,
+	},
+	{
+		.viewmodel_path = "progs/v_nail2.mdl",
+		.enhanced_held_offset = {-18.29596f, 0.3225229f, 14.23901f},
+		.has_enhanced_held_offset = true,
+		.enhanced_muzzle_offset = {0.0f, 0.0f, 19.0f},
+		.has_enhanced_muzzle_offset = true,
+	},
+	{
+		.viewmodel_path = "progs/v_rock.mdl",
+		.enhanced_held_offset = {-10.28861f, -0.03083239f, 10.17257f},
+		.has_enhanced_held_offset = true,
+		.enhanced_muzzle_offset = {0.0f, 0.0f, 13.0f},
+		.has_enhanced_muzzle_offset = true,
+	},
+	{
+		.viewmodel_path = "progs/v_rock2.mdl",
+		.enhanced_held_offset = {-16.54977f, -0.157425f, 11.40173f},
+		.has_enhanced_held_offset = true,
+		.enhanced_muzzle_offset = {0.0f, 0.0f, 19.0f},
+		.has_enhanced_muzzle_offset = true,
+	},
+	{
+		.viewmodel_path = "progs/v_light.mdl",
+		.enhanced_held_offset = {-8.610199f, -0.4010587f, 10.71593f},
+		.has_enhanced_held_offset = true,
+		.enhanced_muzzle_offset = {0.0f, 0.0f, 13.0f},
+		.has_enhanced_muzzle_offset = true,
+	},
+};
+
 #define VR_WeaponOffsetCvar(slot, field) \
 	vr_weapon_offset[(slot) * VR_WEAPON_CALIBRATION_VARS_PER_WEAPON + (field)]
 #define VR_WeaponMuzzleCvar(slot, field) \
@@ -405,6 +465,52 @@ qboolean VR_WeaponCalibrationApplySchema(
 				entry->spawn_at_self_origin;
 			calibration->has_spawn_at_self_origin = true;
 		}
+	}
+
+	return true;
+}
+
+static qboolean VR_WeaponCalibrationApplyEnhancedFallbacks(void)
+{
+	return VR_WeaponCalibrationApplySchema(
+		vr_enhanced_weapon_fallbacks,
+		sizeof(vr_enhanced_weapon_fallbacks) /
+		sizeof(vr_enhanced_weapon_fallbacks[0]));
+}
+
+qboolean VR_WeaponCalibrationReloadGame(void)
+{
+	vr_weapon_schema_entry_t entries[VR_WEAPON_SCHEMA_MAX_ENTRIES];
+	byte *file;
+	size_t count = 0;
+	qboolean parsed;
+	qboolean applied;
+
+	VR_WeaponCalibrationInit();
+	VR_WeaponCalibrationReset();
+	if (!VR_WeaponCalibrationApplyEnhancedFallbacks())
+	{
+		VR_WeaponCalibrationReset();
+		return false;
+	}
+
+	file = COM_LoadFile("vr_weapons.txt", NULL);
+	if (!file)
+		return true;
+
+	parsed = VR_WeaponSchemaParse((const char *)file, entries,
+								  VR_WEAPON_SCHEMA_MAX_ENTRIES, &count);
+	Mem_Free(file);
+	if (!parsed)
+		return false;
+
+	applied = VR_WeaponCalibrationApplySchema(entries, count);
+	if (!applied)
+	{
+		VR_WeaponCalibrationReset();
+		if (!VR_WeaponCalibrationApplyEnhancedFallbacks())
+			VR_WeaponCalibrationReset();
+		return false;
 	}
 
 	return true;
