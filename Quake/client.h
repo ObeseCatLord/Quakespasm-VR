@@ -298,6 +298,11 @@ typedef struct
 	unsigned protocol_pext1; // spike -- flag of fte protocol extensions
 	unsigned protocol_pext2; // spike -- flag of fte protocol extensions
 	unsigned protocol_qsvr; // selected private layout; zero until explicit admission, never inferred from FTE bits
+	/* Optional inherited VRIK receive capability, independent of the QSVR
+	 * movement profile and local VR/OpenXR initialization. */
+	qboolean vrik_protocol_offered;
+	qboolean vrik_cap_sent;
+	unsigned char vrik_protocol_version;
 
 	qboolean protocol_particles;
 	struct
@@ -403,6 +408,8 @@ void CL_Signon4 (void);
 
 void CL_Disconnect (void);
 void CL_Disconnect_f (void);
+void CL_ResetVRIKState (void);
+void CL_ExpireStaleVRIKPoses (void);
 void CL_NextDemo (void);
 
 void SV_UpdateInfo (int edict, const char *keyname, const char *value);

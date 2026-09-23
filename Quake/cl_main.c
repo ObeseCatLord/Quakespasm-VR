@@ -143,12 +143,21 @@ CL_ClearState
 */
 void CL_ClearState (void)
 {
+	qboolean vrik_protocol_offered = cl.vrik_protocol_offered;
+	qboolean vrik_cap_sent = cl.vrik_cap_sent;
+	unsigned char vrik_protocol_version = cl.vrik_protocol_version;
+
 	V_ResetTrackedAim ();
 	if (!sv.active)
 		Host_ClearMemory ();
 
 	// wipe the entire cl structure
 	CL_FreeState ();
+	/* Serverinfo starts a new map on the same connection. Its entity cache is
+	 * fresh, while the server retains the already negotiated capability. */
+	cl.vrik_protocol_offered = vrik_protocol_offered;
+	cl.vrik_cap_sent = vrik_cap_sent;
+	cl.vrik_protocol_version = vrik_protocol_version;
 	CL_ResetPredictionSmoothing ();
 	cl.vr_gorilla_state_sequence = -1;
 
@@ -180,6 +189,7 @@ This is also called on Host_Error, so it shouldn't cause any errors
 */
 void CL_Disconnect (void)
 {
+	CL_ResetVRIKState ();
 	cls.legacy_qsvr = 0;
 	cls.offered_qsvr = 0;
 	cl.protocol_qsvr = 0;
@@ -1258,6 +1268,8 @@ void CL_RelinkEntities (void)
 	int		  modelflags;
 	qboolean  teleported;
 	cl_relink_frame_t frame;
+
+	CL_ExpireStaleVRIKPoses ();
 
 	// determine partial update time
 	frac = CL_LerpPoint ();

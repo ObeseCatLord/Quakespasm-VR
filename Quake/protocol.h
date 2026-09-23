@@ -35,6 +35,44 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #define PROTOCOL_FTE_PEXT2 \
 	(('F' << 0) + ('T' << 8) + ('E' << 16) + ('2' << 24)) // fte extensions, provides extensions to the underlying base protocol (like 666 or even 15).
 
+/* Optional VRIK pose transport.  This capability is independent of FTE PEXT
+ * and the server's private QSVR movement profile. */
+#define VRIK_PROTOCOL_LEGACY_VERSION 2
+#define VRIK_PROTOCOL_VERSION 3
+#define VRIK_MAX_ROOT_LOCAL_OFFSET 256.0f
+#define VRIK_SERVER_MIN_INTERVAL 0.025
+#define VRIK_POSE_STALE_TIME 1.0
+#define VRIK_FLAG_ACTIVE 0x01
+#define VRIK_FLAG_HEAD_TRACKED 0x02
+#define VRIK_FLAG_LEFT_HAND_TRACKED 0x04
+#define VRIK_FLAG_RIGHT_HAND_TRACKED 0x08
+#define VRIK_FLAG_DOMINANT_LEFT 0x10
+#define VRIK_FLAG_KNOWN (VRIK_FLAG_ACTIVE | VRIK_FLAG_HEAD_TRACKED | \
+	VRIK_FLAG_LEFT_HAND_TRACKED | VRIK_FLAG_RIGHT_HAND_TRACKED | \
+	VRIK_FLAG_DOMINANT_LEFT)
+
+typedef enum
+{
+	VRIK_TRACKER_HEAD = 0,
+	VRIK_TRACKER_LEFT_HAND,
+	VRIK_TRACKER_RIGHT_HAND,
+	VRIK_TRACKER_COUNT
+} vrik_tracker_t;
+
+typedef struct
+{
+	unsigned short sequence;
+	unsigned char flags;
+	float body_yaw;
+	vec3_t position[VRIK_TRACKER_COUNT];
+	vec3_t orientation[VRIK_TRACKER_COUNT];
+	vec3_t aim_orientation;
+} vrik_pose_t;
+
+#define VRIK_POSE_WIRE_BYTES (2 + 1 + 2 + (VRIK_TRACKER_COUNT * 3 * 2) + \
+	(VRIK_TRACKER_COUNT * 3 * 2) + (3 * 2))
+#define VRIK_V3_MAX_BODY_BYTES 85
+
 // PROTOCOL_RMQ protocol flags
 #define PRFL_SHORTANGLE			(1 << 1)
 #define PRFL_FLOATANGLE			(1 << 2)
@@ -305,6 +343,8 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #define svc_levelcompleted 54
 #define svc_backtolobby	   55
 #define svc_localsound	   56
+/* [short entity][long generation][v2 fixed pose or v3 framed pose] */
+#define svc_vrikpose	   87
 
 // spike -- some extensions for particles.
 // some extra stuff for fte's pext2_replacementdeltas, including stats
@@ -343,6 +383,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #define clc_disconnect	2
 #define clc_move		3  // [usercmd_t]
 #define clc_stringcmd	4  // [string] message
+#define clc_vrikpose	5  // v2 [fixed pose], v3 [byte bodylen][codec body]
 #define clcdp_ackframe	50 // [long] frame sequence. reused by fte replacement deltas
 //
 // temp entity events

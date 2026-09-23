@@ -25,6 +25,8 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 
 // server.h
 
+#include "vrik_codec.h"
+
 #define SERVER_INFO_STRING_SIZE 8192
 
 typedef struct
@@ -193,6 +195,23 @@ typedef struct client_s
 	unsigned int protocol_qsvr; // selected private wire profile; zero is public
 	unsigned int protocol_pext1;
 	unsigned int protocol_pext2;
+	/* Optional VRIK pose transport state; unrelated to QSVR movement admission. */
+	qboolean vrik_capable;
+	qboolean vrik_offer_pending;
+	unsigned char vrik_protocol_version;
+	qboolean vrik_sequence_valid;
+	qboolean vrik_inactive_sent;
+	unsigned short vrik_last_sequence;
+	unsigned int vrik_generation;
+	double vrik_pose_time;
+	double vrik_next_accept_time;
+	vrik_pose_t vrik_pose;
+	vrik_codec_pose_t vrik_pose_v3;
+	qboolean vrik_v2_body_valid;
+	unsigned char vrik_v2_body[VRIK_V2_BODY_BYTES];
+	qboolean vrik_relay_sequence_valid[MAX_SCOREBOARD];
+	unsigned short vrik_relay_sequence[MAX_SCOREBOARD];
+	unsigned int vrik_relay_generation[MAX_SCOREBOARD];
 	unsigned int resendstatsnum[MAX_CL_STATS / 32]; // the stats which need to be resent.
 	unsigned int resendstatsstr[MAX_CL_STATS / 32]; // the stats which need to be resent.
 	int			 oldstats_i[MAX_CL_STATS];			// previous values of stats. if these differ from the current values, reflag resendstats.
@@ -406,6 +425,10 @@ void SV_ConnectClient (int clientnum); // called from the netcode to add new cli
 void SV_CheckForNewClients (void);
 void SV_RunClients (void);
 void SV_ResetPrivateCommandQueue (client_t *client);
+void SV_ReceiveVRIKPoseV2 (client_t *client, const vrik_v2_pose_t *pose,
+	const unsigned char body[VRIK_V2_BODY_BYTES]);
+void SV_ReceiveVRIKPoseV3 (client_t *client, const vrik_codec_pose_t *pose);
+void SV_ExpireVRIKPoses (void);
 void SV_FinishPrivateUsercmds (void);
 qboolean SV_PrivateWalkTrialSelected (client_t *client);
 void SV_PrivateWalkTrialSelectAtBegin (client_t *client);

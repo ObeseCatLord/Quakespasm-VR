@@ -28,6 +28,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "bgmusic.h"
 #include "steam.h"
 #include "vr_input.h"
+#include "vrik_codec.h"
 
 const char *svc_strings[128] = {
 	"svc_bad", "svc_nop", "svc_disconnect", "svc_updatestat",
@@ -92,9 +93,276 @@ const char *svc_strings[128] = {
 
 static const char *CL_ServerCommandName (int cmd)
 {
+	if (cmd == svc_vrikpose)
+		return "svc_vrikpose";
 	if ((unsigned int)cmd < NUM_SVC_STRINGS && svc_strings[cmd])
 		return svc_strings[cmd];
 	return "unknown";
+}
+
+static void CL_ClearEntityVRIKSamples (entity_t *ent)
+{
+	memset (ent->vrik_poses, 0, sizeof (ent->vrik_poses));
+	memset (ent->vrik_v3_poses, 0, sizeof (ent->vrik_v3_poses));
+	memset (ent->vrik_pose_times, 0, sizeof (ent->vrik_pose_times));
+	ent->vrik_pose_count = 0;
+}
+
+static void CL_ClearEntityVRIKCache (entity_t *ent)
+{
+	CL_ClearEntityVRIKSamples (ent);
+	ent->vrik_last_sequence = 0;
+	ent->vrik_generation = 0;
+	ent->vrik_sequence_valid = false;
+}
+
+void CL_ResetVRIKState (void)
+{
+	int i;
+
+	cl.vrik_protocol_offered = false;
+	cl.vrik_cap_sent = false;
+	cl.vrik_protocol_version = 0;
+	if (!cl.entities)
+		return;
+	for (i = 0; i < cl.max_edicts; ++i)
+		CL_ClearEntityVRIKCache (&cl.entities[i]);
+}
+
+static qboolean CL_OfferVRIKProtocol (const char *command)
+{
+	static const char command_name[] = "vrik_protocol";
+	const char *version;
+	int offered_version, latched_version;
+	uint8_t version_byte;
+
+	if (strncmp (command, command_name, sizeof (command_name) - 1) ||
+		(command[sizeof (command_name) - 1] != ' ' &&
+		 command[sizeof (command_name) - 1] != '\t'))
+		return false;
+
+	version = command + sizeof (command_name) - 1;
+	while (*version == ' ' || *version == '\t')
+		version++;
+	if (*version == '2')
+		offered_version = VRIK_PROTOCOL_LEGACY_VERSION;
+	else if (*version == '3')
+		offered_version = VRIK_PROTOCOL_VERSION;
+	else
+		return true; /* Recognized offer name, unsupported version. */
+	version++;
+	while (*version == ' ' || *version == '\t' || *version == '\r' ||
+		*version == '\n')
+		version++;
+	if (*version || cl.vrik_cap_sent)
+		return true;
+
+	/* Include the opcode and terminating NUL in the reliable-buffer check. */
+	if (cls.message.cursize < 0 || cls.message.maxsize < 0 ||
+		(size_t)cls.message.cursize + 1 + sizeof ("vrik_cap 3") >
+		(size_t)cls.message.maxsize)
+		return true;
+	latched_version = cl.vrik_cap_sent;
+	version_byte = cl.vrik_protocol_version;
+	if (vrik_latch_protocol_version ((uint8_t)offered_version,
+		&latched_version, &version_byte) != VRIK_CODEC_OK)
+		return true;
+	cl.vrik_cap_sent = latched_version;
+	cl.vrik_protocol_version = version_byte;
+	cl.vrik_protocol_offered = true;
+	MSG_WriteByte (&cls.message, clc_stringcmd);
+	MSG_WriteString (&cls.message, offered_version == VRIK_PROTOCOL_VERSION ?
+		"vrik_cap 3" : "vrik_cap 2");
+	Con_DPrintf ("VRIK: negotiated protocol %d with server\n", offered_version);
+	return true;
+}
+
+static qboolean CL_VRIKPoseWithinRootLocalLimit (const vrik_codec_pose_t *pose)
+{
+	int target;
+	double max_squared = (double)VRIK_MAX_ROOT_LOCAL_OFFSET *
+		(double)VRIK_MAX_ROOT_LOCAL_OFFSET;
+
+	for (target = 0; target < VRIK_TARGET_COUNT; ++target)
+		if (pose->present_mask & VRIK_TARGET_BIT (target))
+		{
+			double x = pose->targets[target].position[0];
+			double y = pose->targets[target].position[1];
+			double z = pose->targets[target].position[2];
+			if (x * x + y * y + z * z > max_squared)
+				return false;
+		}
+	return true;
+}
+
+static void CL_VRIKV2ToLegacyPose (const vrik_v2_pose_t *source,
+	vrik_pose_t *destination)
+{
+	int target;
+
+	memset (destination, 0, sizeof (*destination));
+	destination->sequence = source->sequence;
+	if (!(source->flags & VRIK_V2_FLAG_ACTIVE))
+		return;
+	destination->flags = source->flags;
+	destination->body_yaw = source->body_yaw;
+	for (target = 0; target < VRIK_TRACKER_COUNT; ++target)
+	{
+		VectorCopy (source->targets[target].position, destination->position[target]);
+		VectorCopy (source->targets[target].orientation, destination->orientation[target]);
+	}
+	VectorCopy (source->aim_orientation, destination->aim_orientation);
+}
+
+static void CL_VRIKV3ToLegacyPose (const vrik_codec_pose_t *source,
+	vrik_pose_t *destination)
+{
+	int target;
+
+	memset (destination, 0, sizeof (*destination));
+	destination->sequence = source->sequence;
+	if (!(source->flags & VRIK_V3_FLAG_ACTIVE) ||
+		!(source->tracked_mask & VRIK_TARGET_BIT (VRIK_TARGET_HEAD)))
+		return;
+	destination->flags = VRIK_FLAG_ACTIVE | VRIK_FLAG_HEAD_TRACKED;
+	if (source->flags & VRIK_V3_FLAG_DOMINANT_LEFT)
+		destination->flags |= VRIK_FLAG_DOMINANT_LEFT;
+	for (target = 0; target < VRIK_TRACKER_COUNT; ++target)
+	{
+		if (source->tracked_mask & VRIK_TARGET_BIT (target))
+			destination->flags |= (unsigned char)(VRIK_FLAG_HEAD_TRACKED << target);
+		VectorCopy (source->targets[target].position, destination->position[target]);
+		VectorCopy (source->targets[target].orientation, destination->orientation[target]);
+	}
+	destination->body_yaw = source->body_yaw;
+	VectorCopy (source->aim_orientation, destination->aim_orientation);
+}
+
+static qboolean CL_ParseVRIKPose (void)
+{
+	vrik_v2_pose_t pose_v2;
+	vrik_codec_pose_t pose_v3;
+	vrik_pose_t legacy_pose;
+	entity_t *ent;
+	qboolean newstream, old_active;
+	int entitynum, body_bytes;
+	unsigned int generation;
+	size_t consumed;
+	vrik_codec_status_t status;
+
+	if (net_message.cursize - msg_readcount < 2 + 4)
+	{
+		msg_badread = true;
+		return false;
+	}
+	entitynum = (unsigned short)MSG_ReadShort ();
+	generation = (unsigned int)MSG_ReadLong ();
+	if (msg_badread || !cl.vrik_protocol_offered || !generation ||
+		entitynum < 1 || entitynum > cl.maxclients || entitynum >= cl.max_edicts)
+	{
+		msg_badread = true;
+		return false;
+	}
+
+	memset (&pose_v3, 0, sizeof (pose_v3));
+	if (cl.vrik_protocol_version >= VRIK_PROTOCOL_VERSION)
+	{
+		body_bytes = MSG_ReadByte ();
+		if (msg_badread || body_bytes < (int)VRIK_V3_HEADER_BYTES ||
+			body_bytes > VRIK_V3_MAX_BODY_BYTES ||
+			net_message.cursize - msg_readcount < body_bytes)
+		{
+			msg_badread = true;
+			return false;
+		}
+		status = vrik_v3_decode (net_message.data + msg_readcount,
+			(size_t)body_bytes, &pose_v3, &consumed);
+		/* The byte length frames this sample even when its payload is invalid. */
+		msg_readcount += body_bytes;
+		if (status != VRIK_CODEC_OK || consumed != (size_t)body_bytes ||
+			!CL_VRIKPoseWithinRootLocalLimit (&pose_v3))
+			return true;
+		CL_VRIKV3ToLegacyPose (&pose_v3, &legacy_pose);
+	}
+	else if (cl.vrik_protocol_version == VRIK_PROTOCOL_LEGACY_VERSION)
+	{
+		if (net_message.cursize - msg_readcount < (int)VRIK_V2_BODY_BYTES)
+		{
+			msg_badread = true;
+			return false;
+		}
+		status = vrik_v2_decode (net_message.data + msg_readcount,
+			VRIK_V2_BODY_BYTES, &pose_v2, &consumed);
+		msg_readcount += VRIK_V2_BODY_BYTES;
+		if (status != VRIK_CODEC_OK || consumed != VRIK_V2_BODY_BYTES ||
+			vrik_v2_validate_legacy_pose (&pose_v2) != VRIK_CODEC_OK ||
+			vrik_v2_to_normalized (&pose_v2, &pose_v3) != VRIK_CODEC_OK)
+			return true;
+		CL_VRIKV2ToLegacyPose (&pose_v2, &legacy_pose);
+	}
+	else
+	{
+		msg_badread = true;
+		return false;
+	}
+
+	/* An unreliable pose can overtake the entity update that introduces this
+	 * player slot. Consume its framed body but wait for the entity baseline. */
+	if (!cl.entities || entitynum >= cl.num_entities)
+		return true;
+	ent = &cl.entities[entitynum];
+	if (ent->vrik_pose_count &&
+		realtime - ent->vrik_pose_times[0] > VRIK_POSE_STALE_TIME)
+		CL_ClearEntityVRIKSamples (ent);
+	newstream = !ent->vrik_sequence_valid || ent->vrik_generation != generation;
+	if (newstream)
+	{
+		if (ent->vrik_sequence_valid &&
+			(uint32_t)(generation - ent->vrik_generation) >= UINT32_C(0x80000000))
+			return true; /* Ignore delayed samples from a previous entity life. */
+		CL_ClearEntityVRIKSamples (ent);
+		ent->vrik_sequence_valid = false;
+		ent->vrik_generation = generation;
+	}
+	else if (!vrik_sequence_is_newer (pose_v3.sequence, ent->vrik_last_sequence))
+		return true;
+
+	old_active = ent->vrik_pose_count &&
+		(ent->vrik_v3_poses[0].flags & VRIK_V3_FLAG_ACTIVE);
+	if (!(pose_v3.flags & VRIK_V3_FLAG_ACTIVE) || !old_active)
+	{
+		/* Don't blend across inactive/stale fallback. */
+		CL_ClearEntityVRIKSamples (ent);
+	}
+	if (ent->vrik_pose_count)
+	{
+		ent->vrik_poses[1] = ent->vrik_poses[0];
+		ent->vrik_v3_poses[1] = ent->vrik_v3_poses[0];
+		ent->vrik_pose_times[1] = ent->vrik_pose_times[0];
+	}
+	ent->vrik_poses[0] = legacy_pose;
+	ent->vrik_v3_poses[0] = pose_v3;
+	ent->vrik_pose_times[0] = realtime;
+	ent->vrik_last_sequence = pose_v3.sequence;
+	ent->vrik_sequence_valid = true;
+	if (ent->vrik_pose_count < 2)
+		ent->vrik_pose_count++;
+	return true;
+}
+
+void CL_ExpireStaleVRIKPoses (void)
+{
+	int i, limit = q_min (cl.maxclients, cl.num_entities - 1);
+
+	if (!cl.entities || limit < 1)
+		return;
+	for (i = 1; i <= limit; ++i)
+	{
+		entity_t *ent = &cl.entities[i];
+		if (ent->vrik_pose_count &&
+			realtime - ent->vrik_pose_times[0] > VRIK_POSE_STALE_TIME)
+			CL_ClearEntityVRIKSamples (ent);
+	}
 }
 
 static qboolean warn_about_nehahra_protocol; // johnfitz
@@ -2377,6 +2645,11 @@ void CL_ParseServerMessage (void)
 			CL_ParseClientdata (); // johnfitz -- removed bits parameter, we will read this inside CL_ParseClientdata()
 			break;
 
+		case svc_vrikpose:
+			if (!CL_ParseVRIKPose ())
+				Host_Error ("CL_ParseServerMessage: malformed VRIK pose");
+			break;
+
 		case svc_version:
 			i = MSG_ReadLong ();
 			if (cl.protocol_qsvr && (msg_badread || i != PROTOCOL_RMQ))
@@ -2425,6 +2698,8 @@ void CL_ParseServerMessage (void)
 			// handle special commands
 			if (command_length > 2 && str[0] == '/' && str[1] == '/')
 			{
+				if (CL_OfferVRIKProtocol (str + 2))
+					break;
 				if (!Cmd_ExecuteString (str + 2, src_server))
 					Con_DPrintf ("Server sent unknown command %s\n", Cmd_Argv (0));
 			}

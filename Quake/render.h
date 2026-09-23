@@ -24,6 +24,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #define _QUAKE_RENDER_H
 
 #include "tasks.h"
+#include "vrik_codec.h"
 
 // refresh.h -- public interface to refresh functions
 
@@ -105,6 +106,16 @@ typedef struct entity_s
 
 	int dlightframe; // dynamic lighting
 	int dlightbits;
+
+	/* Latest root-local VRIK samples. A zero count or inactive newest sample
+	 * leaves ordinary entity animation as the presentation fallback. */
+	vrik_pose_t			 vrik_poses[2];
+	vrik_codec_pose_t	 vrik_v3_poses[2];
+	double				 vrik_pose_times[2];
+	unsigned short		 vrik_last_sequence;
+	unsigned int		 vrik_generation;
+	unsigned char		 vrik_pose_count;
+	qboolean			 vrik_sequence_valid;
 
 	// FIXME: could turn these into a union
 	struct mnode_s *topnode; // for bmodels, first world node

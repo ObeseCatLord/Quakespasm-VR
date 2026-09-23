@@ -43,6 +43,336 @@ static cvar_t sv_private_pmove_walk = {"sv_private_pmove_walk", "0", CVAR_SERVER
 
 extern cvar_t nomonsters;
 
+#define VRIK_SVC_V2_MESSAGE_BYTES (1 + 2 + 4 + VRIK_POSE_WIRE_BYTES)
+static unsigned int sv_vrik_next_generation;
+
+static qboolean SV_QueueVRIKProtocolOffers(client_t *client)
+{
+	static const char offer_v3[] = "//vrik_protocol 3\n";
+	static const char offer_v2[] = "//vrik_protocol 2\n";
+	const size_t required = 2 + sizeof(offer_v3) + sizeof(offer_v2);
+
+	if (!client->vrik_offer_pending || client->message.overflowed ||
+		(!client->spawned &&
+		 (client->sendsignon != PRESPAWN_DONE || client->message.cursize != 0)) ||
+		client->message.cursize < 0 || client->message.maxsize < 0 ||
+		(size_t)client->message.cursize > (size_t)client->message.maxsize ||
+		required > (size_t)(client->message.maxsize - client->message.cursize))
+		return false;
+
+	MSG_WriteByte(&client->message, svc_stufftext);
+	MSG_WriteString(&client->message, offer_v3);
+	MSG_WriteByte(&client->message, svc_stufftext);
+	MSG_WriteString(&client->message, offer_v2);
+	client->vrik_offer_pending = false;
+	return true;
+}
+
+static void SV_ResetVRIKClientState(client_t *client, qboolean keep_capability)
+{
+	qboolean capable;
+	unsigned char version;
+
+	if (!client)
+		return;
+	capable = keep_capability ? client->vrik_capable : false;
+	version = keep_capability ? client->vrik_protocol_version : 0;
+	client->vrik_capable = false;
+	client->vrik_offer_pending = false;
+	client->vrik_protocol_version = 0;
+	client->vrik_sequence_valid = false;
+	client->vrik_inactive_sent = false;
+	client->vrik_last_sequence = 0;
+	client->vrik_generation = 0;
+	client->vrik_pose_time = 0;
+	client->vrik_next_accept_time = 0;
+	client->vrik_v2_body_valid = false;
+	memset(&client->vrik_pose, 0, sizeof(client->vrik_pose));
+	memset(&client->vrik_pose_v3, 0, sizeof(client->vrik_pose_v3));
+	memset(client->vrik_v2_body, 0, sizeof(client->vrik_v2_body));
+	memset(client->vrik_relay_sequence_valid, 0,
+		sizeof(client->vrik_relay_sequence_valid));
+	memset(client->vrik_relay_sequence, 0,
+		sizeof(client->vrik_relay_sequence));
+	memset(client->vrik_relay_generation, 0,
+		sizeof(client->vrik_relay_generation));
+	client->vrik_capable = capable;
+	client->vrik_protocol_version = version;
+}
+
+static void SV_ResetVRIKMapState(void)
+{
+	int i;
+
+	for (i = 0; i < svs.maxclients; ++i)
+		SV_ResetVRIKClientState(&svs.clients[i], svs.clients[i].active);
+}
+
+static qboolean SV_VRIKPoseV3IsValid(const vrik_codec_pose_t *pose)
+{
+	int target;
+	const double max_squared = (double)VRIK_MAX_ROOT_LOCAL_OFFSET *
+		(double)VRIK_MAX_ROOT_LOCAL_OFFSET;
+
+	if (!pose)
+		return false;
+	for (target = 0; target < VRIK_TARGET_COUNT; ++target)
+	{
+		double x, y, z;
+		if (!(pose->present_mask & VRIK_TARGET_BIT(target)))
+			continue;
+		x = pose->targets[target].position[0];
+		y = pose->targets[target].position[1];
+		z = pose->targets[target].position[2];
+		if (x * x + y * y + z * z > max_squared)
+			return false;
+	}
+	return true;
+}
+
+static void SV_VRIKV3ToLegacyPose(const vrik_codec_pose_t *source,
+	vrik_pose_t *destination)
+{
+	int target;
+
+	memset(destination, 0, sizeof(*destination));
+	destination->sequence = source->sequence;
+	if (!(source->flags & VRIK_V3_FLAG_ACTIVE) ||
+		!(source->tracked_mask & VRIK_TARGET_BIT(VRIK_TARGET_HEAD)))
+		return;
+
+	destination->flags = VRIK_FLAG_ACTIVE | VRIK_FLAG_HEAD_TRACKED;
+	if (source->flags & VRIK_V3_FLAG_DOMINANT_LEFT)
+		destination->flags |= VRIK_FLAG_DOMINANT_LEFT;
+	for (target = 0; target < VRIK_TRACKER_COUNT; ++target)
+	{
+		if (source->tracked_mask & VRIK_TARGET_BIT(target))
+			destination->flags |= (unsigned char)(VRIK_FLAG_HEAD_TRACKED << target);
+		if (source->present_mask & VRIK_TARGET_BIT(target))
+		{
+			VectorCopy(source->targets[target].position, destination->position[target]);
+			VectorCopy(source->targets[target].orientation, destination->orientation[target]);
+		}
+	}
+	destination->body_yaw = source->body_yaw;
+	VectorCopy(source->aim_orientation, destination->aim_orientation);
+}
+
+static qboolean SV_LegacyPoseToV2(const vrik_pose_t *source,
+	vrik_v2_pose_t *destination)
+{
+	int target;
+
+	if (!source || !destination)
+		return false;
+	memset(destination, 0, sizeof(*destination));
+	destination->sequence = source->sequence;
+	destination->flags = source->flags;
+	destination->body_yaw = source->body_yaw;
+	for (target = 0; target < VRIK_TRACKER_COUNT; ++target)
+	{
+		VectorCopy(source->position[target], destination->targets[target].position);
+		VectorCopy(source->orientation[target], destination->targets[target].orientation);
+	}
+	VectorCopy(source->aim_orientation, destination->aim_orientation);
+	return vrik_v2_validate_legacy_pose(destination) == VRIK_CODEC_OK;
+}
+
+static qboolean SV_WriteVRIKPoseV2(sizebuf_t *msg, int entitynum,
+	unsigned int generation, const vrik_codec_pose_t *pose,
+	const unsigned char raw_body[VRIK_V2_BODY_BYTES])
+{
+	vrik_pose_t legacy;
+	vrik_v2_pose_t encoded_pose;
+	uint8_t body[VRIK_V2_BODY_BYTES];
+	const uint8_t *wire_body = raw_body;
+	size_t written;
+	int i;
+
+	if (!wire_body)
+	{
+		SV_VRIKV3ToLegacyPose(pose, &legacy);
+		if (!SV_LegacyPoseToV2(&legacy, &encoded_pose) ||
+			vrik_v2_encode(&encoded_pose, body, sizeof(body), &written) != VRIK_CODEC_OK ||
+			written != VRIK_V2_BODY_BYTES)
+			return false;
+		wire_body = body;
+	}
+	MSG_WriteByte(msg, svc_vrikpose);
+	MSG_WriteShort(msg, entitynum);
+	MSG_WriteLong(msg, (int)generation);
+	for (i = 0; i < (int)VRIK_V2_BODY_BYTES; ++i)
+		MSG_WriteByte(msg, wire_body[i]);
+	return true;
+}
+
+static qboolean SV_WriteVRIKPoseV3(sizebuf_t *msg, int entitynum,
+	unsigned int generation, const vrik_codec_pose_t *pose)
+{
+	uint8_t body[VRIK_V3_MAX_BODY_BYTES];
+	size_t written;
+	int i;
+
+	if (vrik_v3_encode(pose, body, sizeof(body), &written) != VRIK_CODEC_OK ||
+		written > VRIK_V3_MAX_BODY_BYTES)
+		return false;
+	MSG_WriteByte(msg, svc_vrikpose);
+	MSG_WriteShort(msg, entitynum);
+	MSG_WriteLong(msg, (int)generation);
+	MSG_WriteByte(msg, (int)written);
+	for (i = 0; i < (int)written; ++i)
+		MSG_WriteByte(msg, body[i]);
+	return true;
+}
+
+static void SV_ReceiveVRIKPoseInternal(client_t *client,
+	const vrik_codec_pose_t *pose,
+	const unsigned char raw_v2_body[VRIK_V2_BODY_BYTES])
+{
+	if (!client || !pose || !client->active || !client->spawned ||
+		!client->edict || !client->vrik_capable ||
+		!SV_VRIKPoseV3IsValid(pose))
+		return;
+	if (client->vrik_sequence_valid &&
+		!vrik_sequence_is_newer(pose->sequence, client->vrik_last_sequence))
+		return;
+	if (!(pose->flags & VRIK_V3_FLAG_ACTIVE) && client->vrik_inactive_sent)
+		return;
+
+	if (!client->vrik_generation)
+	{
+		client->vrik_generation = ++sv_vrik_next_generation;
+		if (!client->vrik_generation)
+			client->vrik_generation = ++sv_vrik_next_generation;
+		Con_DPrintf("VRIK: accepted pose stream from %s generation %u\n",
+			client->name, client->vrik_generation);
+	}
+	client->vrik_pose_v3 = *pose;
+	client->vrik_v2_body_valid = raw_v2_body != NULL;
+	if (raw_v2_body)
+		memcpy(client->vrik_v2_body, raw_v2_body, VRIK_V2_BODY_BYTES);
+	SV_VRIKV3ToLegacyPose(pose, &client->vrik_pose);
+	client->vrik_last_sequence = pose->sequence;
+	client->vrik_sequence_valid = true;
+	client->vrik_pose_time = realtime;
+	client->vrik_inactive_sent = !(pose->flags & VRIK_V3_FLAG_ACTIVE);
+}
+
+void SV_ReceiveVRIKPoseV2(client_t *client, const vrik_v2_pose_t *pose,
+	const unsigned char body[VRIK_V2_BODY_BYTES])
+{
+	vrik_codec_pose_t normalized;
+
+	if (!pose || !body ||
+		vrik_v2_validate_legacy_pose(pose) != VRIK_CODEC_OK ||
+		vrik_v2_to_normalized(pose, &normalized) != VRIK_CODEC_OK)
+		return;
+	SV_ReceiveVRIKPoseInternal(client, &normalized, body);
+}
+
+void SV_ReceiveVRIKPoseV3(client_t *client, const vrik_codec_pose_t *pose)
+{
+	SV_ReceiveVRIKPoseInternal(client, pose, NULL);
+}
+
+void SV_ExpireVRIKPoses(void)
+{
+	int i;
+
+	for (i = 0; i < svs.maxclients; ++i)
+	{
+		client_t *client = &svs.clients[i];
+		vrik_codec_pose_t inactive;
+
+		/* Dropped slots cannot relay, but clear optional state before reuse. */
+		if (!client->active)
+		{
+			if (client->vrik_capable || client->vrik_offer_pending ||
+				client->vrik_sequence_valid || client->vrik_generation)
+				SV_ResetVRIKClientState(client, false);
+			continue;
+		}
+
+		if (!client->vrik_capable ||
+			!client->vrik_sequence_valid || client->vrik_inactive_sent ||
+			!(client->vrik_pose_v3.flags & VRIK_V3_FLAG_ACTIVE) ||
+			realtime - client->vrik_pose_time <= VRIK_POSE_STALE_TIME)
+			continue;
+
+		memset(&inactive, 0, sizeof(inactive));
+		inactive.sequence = client->vrik_last_sequence + 1;
+		client->vrik_pose_v3 = inactive;
+		client->vrik_v2_body_valid = false;
+		SV_VRIKV3ToLegacyPose(&inactive, &client->vrik_pose);
+		client->vrik_last_sequence = inactive.sequence;
+		client->vrik_pose_time = realtime;
+		client->vrik_inactive_sent = true;
+	}
+}
+
+static qboolean SV_AppendPendingVRIK(client_t *recipient, sizebuf_t *msg)
+{
+	int i;
+
+	if (!recipient->vrik_capable || !recipient->spawned)
+		return true;
+	for (i = 0; i < svs.maxclients && i < MAX_SCOREBOARD; ++i)
+	{
+		client_t *source = &svs.clients[i];
+		int required_bytes;
+		size_t v3_body_bytes;
+		qboolean written;
+
+		if (source == recipient || !source->active || !source->spawned ||
+			!source->vrik_capable || !source->vrik_sequence_valid ||
+			!source->vrik_generation)
+			continue;
+		if (recipient->vrik_relay_sequence_valid[i] &&
+			recipient->vrik_relay_generation[i] == source->vrik_generation &&
+			recipient->vrik_relay_sequence[i] == source->vrik_last_sequence)
+			continue;
+
+		if (recipient->vrik_protocol_version >= VRIK_PROTOCOL_VERSION)
+		{
+			if (vrik_v3_body_size(source->vrik_pose_v3.present_mask,
+					&v3_body_bytes) != VRIK_CODEC_OK)
+				continue;
+			required_bytes = 1 + 2 + 4 + 1 + (int)v3_body_bytes;
+		}
+		else
+			required_bytes = VRIK_SVC_V2_MESSAGE_BYTES;
+		if (required_bytes > msg->maxsize)
+			continue;
+
+		if (msg->cursize + required_bytes > msg->maxsize)
+		{
+			if (msg->cursize &&
+				NET_SendUnreliableMessage(recipient->netconnection, msg) == -1)
+			{
+				host_client = recipient;
+				SV_DropClient(false);
+				return false;
+			}
+			SZ_Clear(msg);
+		}
+
+		if (recipient->vrik_protocol_version >= VRIK_PROTOCOL_VERSION)
+			written = SV_WriteVRIKPoseV3(msg, i + 1, source->vrik_generation,
+				&source->vrik_pose_v3);
+		else
+			written = SV_WriteVRIKPoseV2(msg, i + 1, source->vrik_generation,
+				&source->vrik_pose_v3,
+				source->vrik_v2_body_valid ? source->vrik_v2_body : NULL);
+		if (!written)
+			continue;
+
+		recipient->vrik_relay_sequence_valid[i] = true;
+		recipient->vrik_relay_generation[i] = source->vrik_generation;
+		recipient->vrik_relay_sequence[i] = source->vrik_last_sequence;
+	}
+	return true;
+}
+
 qboolean SV_PrivateWalkTrialSelected (client_t *client)
 {
 	return client && client->private_pmove_walk_selected;
@@ -1859,6 +2189,8 @@ void SV_SendServerinfo (client_t *client)
 	}
 
 	cantruncate = client->message.cursize == 0;
+	/* Queue VRIK offers separately so they cannot affect serverinfo capacity. */
+	client->vrik_offer_pending = client->netconnection != NULL;
 retry:
 	MSG_WriteByte (&client->message, svc_print);
 	//	q_snprintf (message, "%c\nFITZQUAKE %1.2f SERVER (%i CRC)\n", 2, FITZQUAKE_VERSION, pr_crc); //johnfitz -- include fitzquake version
@@ -3029,6 +3361,11 @@ qboolean SV_SendClientDatagram (client_t *client)
 			SZ_Write (&msg, client->datagram.data, client->datagram.cursize);
 			SZ_Clear (&client->datagram);
 		}
+
+		/* Keep the ordinary snapshot intact.  If it used the available packet
+		 * budget, the VRIK relay starts in a separate unreliable packet. */
+		if (client->spawned && !SV_AppendPendingVRIK (client, &msg))
+			return false;
 	}
 
 	// send the datagram
@@ -3234,6 +3571,8 @@ void SV_SendClientMessages (void)
 {
 	int i;
 
+	SV_ExpireVRIKPoses ();
+
 	// update frags, names, etc
 	SV_UpdateToReliableMessages ();
 
@@ -3250,6 +3589,10 @@ void SV_SendClientMessages (void)
 	{
 		if (!host_client->active)
 			continue;
+
+		if (SV_QueueVRIKProtocolOffers (host_client) &&
+			!host_client->spawned && !host_client->sendsignon)
+			host_client->sendsignon = PRESPAWN_FLUSH;
 
 		if (!SV_SendClientDatagram (host_client))
 			continue;
@@ -3694,6 +4037,9 @@ void SV_SpawnServer (const char *server)
 	//
 	if (sv.active)
 		SV_SendReconnect ();
+	/* Keep negotiated capabilities across a map, but restart pose sequence,
+	 * generation and per-recipient relay lifetimes for the new world. */
+	SV_ResetVRIKMapState ();
 	/* Commands from the previous level must never survive into its successor. */
 	for (i = 0; i < svs.maxclients; i++)
 		SV_ResetPrivateCommandQueue (&svs.clients[i]);

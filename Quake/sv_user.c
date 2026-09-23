@@ -1185,10 +1185,118 @@ SV_ReadClientMessage
 Returns false if the client should be killed
 ===================
 */
+static qboolean SV_HandleVRIKCapability(const char *s)
+{
+    const char *value = s;
+    int version;
+
+    while (*value == ' ' || *value == '\t')
+        value++;
+    if (q_strncasecmp(value, "vrik_cap", 8) ||
+        (value[8] && value[8] != ' ' && value[8] != '\t'))
+        return false;
+    value += 8;
+    while (*value == ' ' || *value == '\t')
+        value++;
+    if (*value == '3')
+        version = VRIK_PROTOCOL_VERSION;
+    else if (*value == '2')
+        version = VRIK_PROTOCOL_LEGACY_VERSION;
+    else
+        return true;
+    value++;
+    while (*value == ' ' || *value == '\t' || *value == '\r' || *value == '\n')
+        value++;
+    if (*value || host_client->vrik_capable)
+        return true;
+    {
+        int latched = host_client->vrik_capable;
+        uint8_t latched_version = host_client->vrik_protocol_version;
+        if (vrik_latch_protocol_version((uint8_t)version, &latched,
+            &latched_version) != VRIK_CODEC_OK)
+            return true;
+        host_client->vrik_capable = latched;
+        host_client->vrik_protocol_version = latched_version;
+    }
+    host_client->vrik_sequence_valid = false;
+    host_client->vrik_inactive_sent = false;
+    host_client->vrik_last_sequence = 0;
+    host_client->vrik_generation = 0;
+    host_client->vrik_pose_time = 0;
+    host_client->vrik_next_accept_time = 0;
+    Con_DPrintf("VRIK: client %s negotiated protocol %d\n", host_client->name,
+        version);
+    return true;
+}
+
+static qboolean SV_ReadVRIKPose(qboolean accept)
+{
+    vrik_v2_pose_t pose_v2;
+    vrik_codec_pose_t pose_v3;
+    vrik_codec_status_t status;
+    size_t consumed;
+    int body_bytes;
+
+    if (!host_client->vrik_capable)
+        return false;
+    if (host_client->vrik_protocol_version >= VRIK_PROTOCOL_VERSION)
+    {
+        body_bytes = MSG_ReadByte();
+        if (msg_badread || body_bytes < 0 ||
+            body_bytes > VRIK_V3_MAX_BODY_BYTES ||
+            net_message.cursize - msg_readcount < body_bytes)
+        {
+            msg_badread = true;
+            return false;
+        }
+        if (!accept || !host_client->spawned ||
+            realtime < host_client->vrik_next_accept_time)
+        {
+            msg_readcount += body_bytes;
+            return true;
+        }
+        host_client->vrik_next_accept_time = realtime + VRIK_SERVER_MIN_INTERVAL;
+        status = vrik_v3_decode(net_message.data + msg_readcount,
+            (size_t)body_bytes, &pose_v3, &consumed);
+        msg_readcount += body_bytes;
+        if (status != VRIK_CODEC_OK || consumed != (size_t)body_bytes)
+            return true;
+        if (accept && host_client->spawned)
+            SV_ReceiveVRIKPoseV3(host_client, &pose_v3);
+        return true;
+    }
+
+    if (host_client->vrik_protocol_version != VRIK_PROTOCOL_LEGACY_VERSION)
+        return false;
+    if (net_message.cursize - msg_readcount < VRIK_POSE_WIRE_BYTES)
+    {
+        msg_badread = true;
+        return false;
+    }
+    if (!accept || !host_client->spawned ||
+        realtime < host_client->vrik_next_accept_time)
+    {
+        msg_readcount += VRIK_POSE_WIRE_BYTES;
+        return true;
+    }
+    host_client->vrik_next_accept_time = realtime + VRIK_SERVER_MIN_INTERVAL;
+    status = vrik_v2_decode(net_message.data + msg_readcount,
+        VRIK_POSE_WIRE_BYTES, &pose_v2, &consumed);
+    msg_readcount += VRIK_POSE_WIRE_BYTES;
+    if (status != VRIK_CODEC_OK || consumed != VRIK_POSE_WIRE_BYTES ||
+        vrik_v2_validate_legacy_pose(&pose_v2) != VRIK_CODEC_OK)
+        return true;
+    if (accept && host_client->spawned)
+        SV_ReceiveVRIKPoseV2(host_client, &pose_v2,
+            net_message.data + msg_readcount - VRIK_POSE_WIRE_BYTES);
+    return true;
+}
+
 qboolean SV_ReadClientMessage (void)
 {
 	int			ccmd;
-	const char *s;
+    const char *s;
+    int vrikcommands = 0;
 
 	MSG_BeginReading ();
 
@@ -1220,6 +1328,8 @@ qboolean SV_ReadClientMessage (void)
 
 		case clc_stringcmd: {
 			s = MSG_ReadString ();
+			if (SV_HandleVRIKCapability (s))
+				break;
 			// The engine must see its protocol offer before a mod's client-command
 			// hook can consume it. Keep other client strings on their existing path.
 			const qboolean pext_offer = !q_strncasecmp (s, "pext", 4) &&
@@ -1256,6 +1366,14 @@ qboolean SV_ReadClientMessage (void)
 			else
 				SV_ReadClientMove (&host_client->cmd);
 			break;
+
+		case clc_vrikpose:
+			/* Consume extra bodies to preserve packet alignment, but accept at
+			 * most one pose from any one datagram. */
+			if (!SV_ReadVRIKPose (vrikcommands++ == 0))
+				return false;
+			break;
+
 		case clcdp_ackframe:
 			SVFTE_Ack (host_client, MSG_ReadLong ());
 			break;
