@@ -44,10 +44,11 @@ qboolean render_warp;
 // johnfitz -- rendering statistics
 atomic_uint32_t rs_brushpolys, rs_aliaspolys, rs_skypolys, rs_particles, rs_fogpolys;
 atomic_uint32_t rs_dynamiclightmaps, rs_brushpasses, rs_aliaspasses;
+atomic_uint32_t rs_blas_builds, rs_blas_refits, rs_blas_pose_reuses;
 uint32_t		rs_cputime_us, rs_gputime_us;
 uint32_t		rs_gpuwaittime_us, rs_gpuwaitaccum_us;
 double			rs_frame_starttime;
-char			rs_display_lines[3][40];
+char			rs_display_lines[4][40];
 int				rs_display_numlines;
 
 //
@@ -2150,7 +2151,9 @@ static void R_PrintStats (qboolean draw_stats_ready)
 				q_snprintf (
 					rs_display_lines[1], sizeof (rs_display_lines[1]), "%4u/%u wpoly %4u/%u epoly", rs_brushpolys, rs_brushpasses, rs_aliaspolys, rs_aliaspasses);
 				q_snprintf (rs_display_lines[2], sizeof (rs_display_lines[2]), "%5.3g lmap %4u skypoly", lms, rs_skypolys);
-				rs_display_numlines = 3;
+				q_snprintf (rs_display_lines[3], sizeof (rs_display_lines[3]), "BLAS %u build %u refit %u reuse",
+					Atomic_LoadUInt32 (&rs_blas_builds), Atomic_LoadUInt32 (&rs_blas_refits), Atomic_LoadUInt32 (&rs_blas_pose_reuses));
+				rs_display_numlines = 4;
 			}
 			else
 			{
@@ -2195,6 +2198,9 @@ void R_RenderView (
 		Atomic_StoreUInt32 (&rs_dynamiclightmaps, 0u);
 		Atomic_StoreUInt32 (&rs_aliaspasses, 0u);
 		Atomic_StoreUInt32 (&rs_brushpasses, 0u);
+		Atomic_StoreUInt32 (&rs_blas_builds, 0u);
+		Atomic_StoreUInt32 (&rs_blas_refits, 0u);
+		Atomic_StoreUInt32 (&rs_blas_pose_reuses, 0u);
 	}
 	stats_ready = scr_speeds.value != 0;
 	draw_stats_ready = scr_speeds.value != 0 && scr_speeds.value != 3;

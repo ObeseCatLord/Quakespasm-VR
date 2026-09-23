@@ -1366,7 +1366,11 @@ void R_UpdateAnimatedBLASes (cb_context_t *cbx)
 				continue;
 			}
 			if (R_EntityBLASPoseCacheMatches (e, hdr, pose1, pose2, blend, tracked_palette))
+			{
+				if (scr_speeds.value == 2)
+					Atomic_AddUInt32 (&rs_blas_pose_reuses, 1u);
 				continue;
+			}
 
 			// Always use refit after first build. We trace few rays and full updates are expensive.
 			qboolean use_update = !e->blas_data->needs_initial_build;
@@ -1474,6 +1478,8 @@ void R_UpdateAnimatedBLASes (cb_context_t *cbx)
 				.blend = blend,
 				.cacheable = !tracked_palette && isfinite (blend),
 			};
+			if (scr_speeds.value == 2)
+				Atomic_AddUInt32 (use_update ? &rs_blas_refits : &rs_blas_builds, 1u);
 
 			++num_pending;
 
