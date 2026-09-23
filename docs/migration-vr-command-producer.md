@@ -231,6 +231,17 @@ body, reconstructed muzzle, shot direction, ammo and damage. A temporary muzzle
 marker can help diagnose command geometry, but held-weapon parity requires the
 actual viewmodel adapter.
 
+The first local live slice now passes against the unchanged pinned dedicated
+server using private simulated Monado and an isolated stock `id1` profile.
+The client reached focused two-eye OpenXR and private signon, selected the
+canonical shotgun muzzle `(0, 0, 10)`, serialized a finite relative VR attack
+command from a rearmed synthetic right controller, received a covering server
+ACK, and observed authoritative shells fall from 25 to 22. This is real
+wire-to-gameplay evidence for basic firing, not a shot-origin or collision
+proof. The input/result harness is `tests/pinned_vr_gameplay_smoke.gdb`;
+the remaining geometry, movement, weapon effects and viewmodel gates above
+remain open.
+
 The donor's `Mod_Weapon` applies held offsets and scale to an alias header
 (`vr.c:3100–3200`), while vkQuake's `R_AliasModelMatrix` composes each alias
 instance's header scale and origin into its draw matrix (`r_alias.c:483–510`).

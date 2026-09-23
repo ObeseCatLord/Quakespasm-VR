@@ -609,6 +609,24 @@ authoritative movement, shell consumption, prediction and settling. Setting
 issue `changelevel e1m2` to the dedicated peer, and the probe also requires
 completed signon and prediction permission in the new world.
 
+`pinned_vr_gameplay_smoke.gdb` is the focused OpenXR controller extension of
+that peer proof. Start an isolated simulated Monado service and the unchanged
+pinned dedicated server as above, with separate disposable `-basedir` profiles.
+The migrated profile must also expose the active game's `vr_weapons.txt` (the
+canonical Straight `id1` file is read-only). Supply the private runtime's
+matching `XR_RUNTIME_JSON`, private XDG directories, and
+`QSVR_PINNED_VR_RESULT=<output.json>`, then run the migrated debug binary with
+`-openxr -nosound -window -width 640 -height 480 -basedir <migrated-profile>
++connect 127.0.0.1:<port> qsvr1` under `timeout --signal=TERM 130s gdb -nx
+--batch -x tests/pinned_vr_gameplay_smoke.gdb --args ...`. The probe injects
+only controller pose/actions into the completed OpenXR frame; the runtime HMD,
+native bindings, command builder, transport and dedicated server remain live.
+It requires focused stereo/private signon, the active shotgun's ten-unit muzzle
+calibration, a finite relative VR attack command, a covering server ACK and
+authoritative shell consumption. It writes a compact JSON result and prints
+`QSVR_PINNED_VR_PASSED`. This does not establish muzzle world origin, damage,
+roomscale collision or visible weapon alignment.
+
 `pinned_peer_lifecycle_smoke.gdb` uses the same client launch and accepts
 `QSVR_LIFECYCLE_RESULT=<output.json>`, with optional `QSVR_PEER_ADDRESS` overriding
 the local peer address. It checks public rejection of the private header,

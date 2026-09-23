@@ -575,6 +575,14 @@ Linux build/fixture checked. The tracked visible weapon adapter and unchanged
 pinned-server gameplay proof remain open, so these checks do not establish live
 VR firing parity.
 
+A first private OpenXR firing slice now passes with a simulated HMD and
+synthetic controller against the unchanged pinned dedicated peer. It checked
+focused stereo/private signon, the active stock shotgun calibration, a finite
+relative VR attack command, a covering server ACK and authoritative shell
+consumption. This narrows the remaining proof: shot origin/direction, damage,
+body/eye/hand alignment, blocked roomscale movement, visible weapon placement
+and physical device behavior are still unqualified.
+
 ## Next integration gates
 
 Follow the [reviewed architecture plan](vkquake-base-migration-plan.md).
