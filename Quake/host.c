@@ -806,7 +806,10 @@ void Host_ServerFrame (void)
 	// move things around and think
 	// always pause in single player if in console or menus
 	if (!sv.paused && (svs.maxclients > 1 || key_dest == key_game))
+	{
 		SV_Physics ();
+		SV_FinishPrivateUsercmds ();
+	}
 
 	if (sv_speeds.value)
 		t2 = Sys_DoubleTime ();

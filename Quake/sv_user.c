@@ -885,6 +885,108 @@ void SV_ReadClientMove (usercmd_t *move)
 		host_client->edict->v.impulse = newimpulse;
 }
 
+/* The explicit private profile uses complete, redundant commands in each
+ * datagram. Decode even stale records so the following command starts at the
+ * right byte; only fresh records may mutate accepted gameplay state. */
+static qboolean SV_ReadPrivateClientMove (void)
+{
+	usercmd_t readcmd;
+	int sequence16 = MSG_ReadShort () & 0xffff;
+	int last = host_client->lastmovemessage;
+	int sequence = (last & ~0xffff) | sequence16;
+	vec3_t roomscale;
+	float horizontal;
+
+	if (msg_badread)
+		return false;
+	if (sequence - last > 0x8000)
+		sequence -= 0x10000;
+	else if (last - sequence > 0x8000)
+		sequence += 0x10000;
+	if (!SV_ReadPrivateUsercmd (&readcmd, sequence, sv.protocolflags, 0))
+		return false;
+	if (sequence <= last)
+		return true;
+
+	/* Validate each sample, not the total accumulated across a server frame. */
+	horizontal = sqrtf (readcmd.vr_roomscalemove[0] * readcmd.vr_roomscalemove[0] +
+		readcmd.vr_roomscalemove[1] * readcmd.vr_roomscalemove[1]);
+	if (!isfinite (horizontal) || horizontal > 16.0f ||
+		fabsf (readcmd.vr_roomscalemove[2]) > 16.0f)
+		memset (readcmd.vr_roomscalemove, 0, sizeof (readcmd.vr_roomscalemove));
+	/* Tracking received while gameplay is suspended must not become motion
+	 * debt when the next physics frame eventually runs. */
+	if (sv.paused || (svs.maxclients <= 1 && key_dest != key_game) ||
+		host_client->edict->v.movetype == MOVETYPE_NONE)
+	{
+		memset (host_client->cmd.vr_roomscalemove, 0,
+			sizeof (host_client->cmd.vr_roomscalemove));
+		memset (readcmd.vr_roomscalemove, 0, sizeof (readcmd.vr_roomscalemove));
+	}
+	VectorAdd (host_client->cmd.vr_roomscalemove, readcmd.vr_roomscalemove, roomscale);
+	VectorCopy (roomscale, readcmd.vr_roomscalemove);
+	readcmd.seconds = 0; // latest-command mode uses the normal server frame clock
+	readcmd.vr_contact_received = realtime;
+	host_client->private_latest_buttons = readcmd.buttons;
+	host_client->private_latched_buttons |= readcmd.buttons & 3; // attack and jump
+	if (readcmd.impulse)
+		host_client->private_latched_impulse = readcmd.impulse;
+	readcmd.buttons |= host_client->private_latched_buttons;
+	if (!readcmd.impulse)
+		readcmd.impulse = host_client->private_latched_impulse;
+
+	host_client->lastmovemessage = sequence;
+	host_client->lastmovetime = realtime;
+	host_client->ping_times[host_client->num_pings % NUM_PING_TIMES] =
+		qcvm->time - readcmd.servertime;
+	host_client->num_pings++;
+	host_client->cmd = readcmd;
+	VectorCopy (readcmd.viewangles, host_client->edict->v.v_angle);
+	host_client->edict->v.button0 = (readcmd.buttons & 1) != 0;
+	host_client->edict->v.button2 = (readcmd.buttons & 2) != 0;
+	if (readcmd.impulse)
+		host_client->edict->v.impulse = readcmd.impulse;
+	return true;
+}
+
+static void SV_ClearPrivateInput (client_t *client)
+{
+	client->private_latest_buttons = 0;
+	client->private_latched_buttons = 0;
+	client->private_latched_impulse = 0;
+	client->cmd.forwardmove = 0;
+	client->cmd.sidemove = 0;
+	client->cmd.upmove = 0;
+	client->cmd.buttons = 0;
+	client->cmd.impulse = 0;
+	memset (client->cmd.vr_roomscalemove, 0, sizeof (client->cmd.vr_roomscalemove));
+	client->edict->v.button0 = 0;
+	client->edict->v.button2 = 0;
+	client->edict->v.impulse = 0;
+}
+
+/* Release one-frame action/roomscale latches only after the real physics and
+ * QuakeC pass. Public vkQuake clients retain their existing command lifetime. */
+void SV_FinishPrivateUsercmds (void)
+{
+	int i;
+	client_t *client;
+	for (i = 0, client = svs.clients; i < svs.maxclients; i++, client++)
+	{
+		if (!client->active || !client->spawned ||
+			client->protocol_qsvr != QSVR_PROTOCOL_PINNED)
+			continue;
+		client->private_latched_buttons = 0;
+		client->private_latched_impulse = 0;
+		client->cmd.buttons = client->private_latest_buttons;
+		client->cmd.impulse = 0;
+		memset (client->cmd.vr_roomscalemove, 0, sizeof (client->cmd.vr_roomscalemove));
+		client->edict->v.button0 = (client->cmd.buttons & 1) != 0;
+		client->edict->v.button2 = (client->cmd.buttons & 2) != 0;
+		client->edict->v.impulse = 0;
+	}
+}
+
 /*
 ===================
 SV_ReadClientMessage
@@ -955,7 +1057,13 @@ qboolean SV_ReadClientMessage (void)
 			if (!host_client->spawned)
 				return true; // this is to suck up any stale moves on map changes, so we don't get confused (quite so easily) when protocols are changed
 							 // between maps
-			SV_ReadClientMove (&host_client->cmd);
+			if (host_client->protocol_qsvr == QSVR_PROTOCOL_PINNED)
+			{
+				if (!SV_ReadPrivateClientMove ())
+					return false;
+			}
+			else
+				SV_ReadClientMove (&host_client->cmd);
 			break;
 		case clcdp_ackframe:
 			SVFTE_Ack (host_client, MSG_ReadLong ());
@@ -1011,6 +1119,8 @@ void SV_RunClients (void)
 		{
 			// clear client movement until a new packet is received
 			memset (&host_client->cmd, 0, sizeof (host_client->cmd));
+			if (host_client->protocol_qsvr == QSVR_PROTOCOL_PINNED)
+				SV_ClearPrivateInput (host_client);
 			continue;
 		}
 
@@ -1020,6 +1130,10 @@ void SV_RunClients (void)
 			host_client->cmd.viewangles[1] = host_client->edict->v.v_angle[1];
 			host_client->cmd.viewangles[2] = host_client->edict->v.v_angle[2];
 		}
+		if (host_client->protocol_qsvr == QSVR_PROTOCOL_PINNED &&
+			(sv.paused || (svs.maxclients <= 1 && key_dest != key_game) ||
+			 (host_client->lastmovetime > 0 && realtime - host_client->lastmovetime > 1.0)))
+			SV_ClearPrivateInput (host_client);
 
 		// always pause in single player if in console or menus
 		if (!sv.paused && (svs.maxclients > 1 || key_dest == key_game))

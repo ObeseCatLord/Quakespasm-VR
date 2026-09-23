@@ -231,6 +231,9 @@ typedef struct client_s
 	int		 lastacksequence;
 	int		 lastmovemessage;
 	double	 lastmovetime;
+	unsigned int private_latest_buttons;
+	unsigned int private_latched_buttons;
+	unsigned int private_latched_impulse;
 	qboolean knowntoqc; // putclientinserver was called
 
 	char userinfo[SERVER_INFO_STRING_SIZE]; // spike -- for csqc to (ab)use.
@@ -387,6 +390,7 @@ void SV_MoveToGoal (void);
 void SV_ConnectClient (int clientnum); // called from the netcode to add new clients. also called from pr_ext to spawn new botclients.
 void SV_CheckForNewClients (void);
 void SV_RunClients (void);
+void SV_FinishPrivateUsercmds (void);
 void SV_SaveSpawnparms ();
 void SV_SpawnServer (const char *server);
 

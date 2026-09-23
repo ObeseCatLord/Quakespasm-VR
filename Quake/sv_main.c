@@ -1444,6 +1444,16 @@ void SV_SendServerinfo (client_t *client)
 	qboolean	 truncated = false;
 
 	client->spawned = false; // need prespawn, spawn, etc
+	if (client->protocol_qsvr == QSVR_PROTOCOL_PINNED)
+	{
+		// A new serverinfo starts a new command sequence and input lifetime.
+		client->lastmovemessage = 0;
+		client->lastmovetime = 0;
+		client->private_latest_buttons = 0;
+		client->private_latched_buttons = 0;
+		client->private_latched_impulse = 0;
+		memset (&client->cmd, 0, sizeof (client->cmd));
+	}
 
 	// assume some safe defaults if we early out.
 	client->limit_unreliable = 1024;

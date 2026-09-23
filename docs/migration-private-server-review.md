@@ -48,9 +48,11 @@ The `2.0` client now offers a separate `QSVR` key/version in the ordinary
 client parser accepts a matching serverinfo marker before private PEXT2 bits.
 Public PEXT2 support and the default server response remain unchanged. The
 server does **not yet select** the profile. Private outbound ACK/signon framing
-is staged, while private move receipt, collision and QC authority still need
-the coupled vertical proof above. The extra client offer is ignored by public
-servers.
+and a latest-command receiver are staged, while collision and QC authority
+still need the coupled vertical proof above. The extra client offer is ignored
+by public servers. This receiver is the first compatibility step, not the
+requested QSS-M-style predictive netcode: command replay, owner snapshot
+coherence, loss recovery and VR-aware prediction remain required.
 
 The inherited `0x40` private extension names a tagged `UF_SOLID` encoding.
 vkQuake currently does not emit `UF_SOLID`, so selecting the private profile
