@@ -231,8 +231,9 @@ in VR Options. The relocated draw no longer clears desktop margin tiles or
 reserves scene rows. If tracking or transform construction fails, the existing
 flat draw remains visible. Desktop console updates keep their original task
 ordering. This first proof excluded CSQC, which the following slice attaches.
-Modern HUD corners, multiplayer, scoreboards, and menu-time HUD remain explicit
-parity work, and headset appearance is not yet verified.
+That initial proof covered only the live solo classic bar. Modern presentation
+and multiplayer or CSQC scoreboard canvases remained separate work; headset
+appearance was not yet verified.
 The Meson shader list now builds the existing UI panel variants already listed
 by the Makefile; the Linux Meson target links with the panel pipeline enabled.
 
@@ -285,9 +286,35 @@ The live single-player modern HUD now uses the same donor pose and one
 quadrants of the provisional 640×400 surface. The fit into the eye render
 target is canceled by the panel transform, so artwork retains the physical
 `vr_hud_scale` per source unit when eye resolution or console scale changes.
-The normal desktop canvas path is unchanged. Scores, death, multiplayer, and
-other excluded states still draw flat until their own canvas contracts are
-migrated. This code compiles on Linux; visual headset proof remains open.
+The normal desktop canvas path is unchanged. Modern-style score/death states,
+multiplayer, and other excluded states still draw flat until their canvas
+contracts are migrated. This code compiles on Linux; visual headset proof
+remains open.
+
+## Solo classic score and death status bar
+
+The solo classic score/death state now uses the existing `SCR_VRClassicSbarPrepare`
+transform and exactly one `Sbar_Draw` call. The OpenVR donor selects the status
+bar for normal gameplay when the console is not forced (`vr.c:10682-10683`),
+then draws it with a centered 320-unit width and the inherited HUD pose
+(`vr.c:10725-10773`). Its Quake `CANVAS_SBAR` is 320×48 for solo games
+(`gl_draw.c:1452-1467`). In vkQuake, `Sbar_DrawClassic` uses that canvas for
+both the live strip and the solo score/death display; `Sbar_SoloScoreboard`
+places its text at y=4 and y=12 (`sbar.c:503-552, 907-919`). Thus the existing
+adapter bounds already contain the requested state, and no second scoreboard
+renderer or new canvas is needed.
+
+The eligibility change admits `sb_showscores` and nonpositive health only to
+the classic solo path; it also removes desktop status-bar scene reservation
+through the same `SCR_CalcRefdef` predicate. Modern style explicitly retains
+its flat score/death path. CSQC-owned HUD score/death remains flat because
+`Sbar_DrawCSCQ` switches to the independently sized `CANVAS_CSQC`, and
+multiplayer remains excluded because its deathmatch overlay is drawn on
+`CANVAS_MENU` rather than the solo 320×48 strip. This is the minimal adapter:
+the source canvases are compatible for solo classic states, while those
+CSQC/modern/multiplayer canvases are the concrete incompatibilities that make
+extending the same transform to them incorrect. Linux compilation is checked;
+the placement still needs headset visual verification.
 
 During a connected in-game menu, the supported classic or modern HUD now draws
 once on its own inherited anchor after the menu panel. A confirmation dialog

@@ -519,8 +519,7 @@ static qboolean SCR_VRHUDFrameEligible (const vrxr_frame_t *frame)
 		!frame->devices[0].valid || !frame->devices[0].tracked || frame->devices[0].kind != VRXR_DEVICE_HEAD ||
 		frame->devices[0].hand != -1 || cls.signon != SIGNONS || !cl.worldmodel || con_forcedup ||
 		(!live_game && !in_game_menu && !scr_drawdialog) || scr_con_current > 0 || disconnected_loading ||
-		cl.intermission ||
-		cl.maxclients != 1 || cl.gametype != GAME_COOP || sb_showscores || cl.stats[STAT_HEALTH] <= 0 ||
+		cl.intermission || cl.maxclients != 1 || cl.gametype != GAME_COOP ||
 		!isfinite (vr_aimmode.value) || !isfinite (vr_hud_scale.value) || vr_hud_scale.value <= 0)
 		return false;
 	for (int row = 0; row < 3; ++row)
@@ -554,13 +553,19 @@ static qboolean SCR_VRHUDFrameEligible (const vrxr_frame_t *frame)
 /* Only the classic/CSQC panel replaces status-bar scene reservation. */
 static qboolean SCR_VRClassicSbarFrameEligible (const vrxr_frame_t *frame)
 {
+	const qboolean score_or_death = sb_showscores || cl.stats[STAT_HEALTH] <= 0;
+	const qboolean csqc_hud = scr_style.value < 1.0f && cl.qcvm.extfuncs.CSQC_DrawHud;
+
+	/* Native solo score/death stays on CANVAS_SBAR. A CSQC-owned scoreboard
+	 * uses its own virtual canvas and is deliberately left on the flat path. */
 	return SCR_VRHUDFrameEligible (frame) && isfinite (scr_style.value) && scr_style.value < 2.0f &&
-		!(scr_style.value < 1.0f && cl.qcvm.extfuncs.CSQC_DrawHud && qcvm);
+		!(csqc_hud && (qcvm || score_or_death));
 }
 
 static qboolean SCR_VRModernSbarFrameEligible (const vrxr_frame_t *frame)
 {
 	return SCR_VRHUDFrameEligible (frame) && isfinite (scr_style.value) && scr_style.value >= 2.0f &&
+		!sb_showscores && cl.stats[STAT_HEALTH] > 0 &&
 		isfinite (scr_viewsize.value) && scr_viewsize.value < 120.0f;
 }
 
