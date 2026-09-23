@@ -44,6 +44,75 @@ ALIAS MODEL DISPLAY LIST GENERATION
 extern cvar_t r_lerpmodels;
 extern cvar_t r_rtshadows;
 
+typedef struct entity_blas_surface_s
+{
+	aliashdr_t		 *geometry;
+	VkDeviceAddress vertex_buffer_address;
+	VkDeviceAddress index_buffer_address;
+	VkDeviceAddress joints_buffer_address;
+	int			  numverts_vbo;
+	int			  numtris;
+	int			  numindexes;
+	int			  numposes;
+	int			  numframes;
+	int			  numjoints;
+	int			  poseverttype;
+} entity_blas_surface_t;
+
+static qboolean R_EntityBLASCollectSurfaces (
+	aliashdr_t *root, const r_vrik_prepared_palette_t *tracked_palette, entity_blas_surface_t *surfaces, uint32_t *surface_count)
+{
+	if (!root || !surfaces || !surface_count)
+		return false;
+
+	const qboolean root_is_md5 = root->poseverttype == PV_MD5 || root->poseverttype == PV_MD5_8;
+	if ((root_is_md5 && root->numjoints <= 0) ||
+		(tracked_palette && (!root_is_md5 || tracked_palette->joint_count != (uint32_t)root->numjoints)))
+		return false;
+
+	const VkPhysicalDeviceAccelerationStructurePropertiesKHR *as_properties = &vulkan_globals.physical_device_acceleration_structure_properties;
+	uint32_t count = 0;
+	uint64_t total_primitives = 0;
+	for (aliashdr_t *hdr = root; hdr; hdr = hdr->nextsurface)
+	{
+		if (count >= MAX_SURFACES || count >= as_properties->maxGeometryCount || hdr->numverts_vbo <= 0 || hdr->numtris <= 0 ||
+			(uint64_t)hdr->numtris > as_properties->maxPrimitiveCount - total_primitives || hdr->numindexes <= 0 ||
+			(int64_t)hdr->numtris * 3 != hdr->numindexes || hdr->numframes <= 0 || hdr->numposes <= 0 ||
+			!hdr->vertex_buffer_address || !hdr->index_buffer_address)
+			return false;
+		total_primitives += (uint64_t)hdr->numtris;
+
+		const qboolean is_md5 = hdr->poseverttype == PV_MD5 || hdr->poseverttype == PV_MD5_8;
+		if (root_is_md5)
+		{
+			if (!is_md5 || hdr->numjoints != root->numjoints || hdr->numframes != root->numframes || hdr->numposes != root->numposes ||
+				(!tracked_palette && !hdr->joints_buffer_address))
+				return false;
+		}
+		else if (is_md5 || hdr->poseverttype != root->poseverttype || hdr->numframes != root->numframes || hdr->numposes != root->numposes)
+			return false;
+
+		entity_blas_surface_t *surface = &surfaces[count++];
+		memset (surface, 0, sizeof (*surface));
+		surface->geometry = hdr;
+		surface->vertex_buffer_address = hdr->vertex_buffer_address;
+		surface->index_buffer_address = hdr->index_buffer_address;
+		surface->joints_buffer_address = hdr->joints_buffer_address;
+		surface->numverts_vbo = hdr->numverts_vbo;
+		surface->numtris = hdr->numtris;
+		surface->numindexes = hdr->numindexes;
+		surface->numposes = hdr->numposes;
+		surface->numframes = hdr->numframes;
+		surface->numjoints = hdr->numjoints;
+		surface->poseverttype = hdr->poseverttype;
+	}
+
+	if (count == 0)
+		return false;
+	*surface_count = count;
+	return true;
+}
+
 static const r_vrik_prepared_palette_t *R_EntityBLASPalette (const entity_t *e, const aliashdr_t *geometry)
 {
 	const r_vrik_prepared_palette_t *prepared = R_VRIKRenderLookup (e);
@@ -59,22 +128,24 @@ static const r_vrik_prepared_palette_t *R_EntityBLASPalette (const entity_t *e, 
 static aliashdr_t *R_EntityBLASGeometry (entity_t *e, qboolean allow_tracked_palette)
 {
 	const r_vrik_prepared_palette_t *prepared;
-	aliashdr_t *selected;
+	aliashdr_t *selected = (aliashdr_t *)Mod_Extradata_CheckSkin (e->model, e->skinnum);
 
 	if (!allow_tracked_palette)
-		return (aliashdr_t *)Mod_Extradata (e->model);
+		return selected;
 
 	prepared = R_VRIKRenderLookup (e);
 	if (!prepared)
-		return (aliashdr_t *)Mod_Extradata (e->model);
+		return selected;
 
-	selected = (aliashdr_t *)Mod_Extradata_CheckSkin (e->model, e->skinnum);
-	if (prepared->model != e->model || prepared->geometry != selected || !selected || selected->numjoints <= 0 ||
-		prepared->joint_count != (uint32_t)selected->numjoints || prepared->descriptor_set == VK_NULL_HANDLE)
-		return (aliashdr_t *)Mod_Extradata (e->model);
+	if (prepared->model != e->model || prepared->geometry != selected || !selected || prepared->descriptor_set == VK_NULL_HANDLE)
+		return NULL;
 
 	/* This palette would be visible; never substitute skin-zero shadow geometry. */
-	return R_EntityBLASPalette (e, selected) ? selected : NULL;
+	entity_blas_surface_t surfaces[MAX_SURFACES];
+	uint32_t surface_count;
+	return R_EntityBLASPalette (e, selected) &&
+			R_EntityBLASCollectSurfaces (selected, prepared, surfaces, &surface_count) ?
+			selected : NULL;
 }
 
 static glheap_t	 *mesh_buffer_heap;
@@ -801,6 +872,28 @@ Allocate acceleration structure for an animated entity model.
 Handles MDL (PV_QUAKE1), MD3 (PV_QUAKE3), and MD5 (PV_MD5) models.
 ================
 */
+static void R_EntityBLASSetVkGeometry (
+	VkAccelerationStructureGeometryKHR *geometry, const entity_blas_surface_t *surface, VkDeviceAddress vertex_address)
+{
+	memset (geometry, 0, sizeof (*geometry));
+	geometry->sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
+	geometry->geometryType = VK_GEOMETRY_TYPE_TRIANGLES_KHR;
+	geometry->geometry.triangles.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR;
+	geometry->geometry.triangles.vertexFormat = VK_FORMAT_R32G32B32_SFLOAT;
+	geometry->geometry.triangles.vertexData.deviceAddress = vertex_address;
+	geometry->geometry.triangles.vertexStride = sizeof (float) * 3;
+	geometry->geometry.triangles.maxVertex = surface->numverts_vbo - 1;
+	geometry->geometry.triangles.indexType = VK_INDEX_TYPE_UINT16;
+	geometry->geometry.triangles.indexData.deviceAddress = surface->index_buffer_address;
+}
+
+static qboolean R_EntityBLASLayoutMatches (
+	const entity_blas_t *blas, const qmodel_t *model, const aliashdr_t *geometry, const entity_blas_surface_t *surfaces, uint32_t surface_count)
+{
+	return blas && blas->model == model && blas->geometry == geometry && blas->surface_count == surface_count && blas->surfaces &&
+		   memcmp (blas->surfaces, surfaces, surface_count * sizeof (*surfaces)) == 0;
+}
+
 static void R_AllocateEntityBLASInternal (entity_t *e, qboolean allow_tracked_palette)
 {
 	if (!vulkan_globals.ray_query || r_rtshadows.value <= 0)
@@ -823,24 +916,20 @@ static void R_AllocateEntityBLASInternal (entity_t *e, qboolean allow_tracked_pa
 		R_FreeEntityBLAS (e);
 		return;
 	}
-	if (hdr->numverts_vbo <= 0)
+
+	entity_blas_surface_t surface_layout[MAX_SURFACES];
+	uint32_t surface_count = 0;
+	const r_vrik_prepared_palette_t *tracked_palette = R_EntityBLASPalette (e, hdr);
+	if (!R_EntityBLASCollectSurfaces (hdr, tracked_palette, surface_layout, &surface_count))
 	{
 		R_FreeEntityBLAS (e);
 		return;
 	}
 
-	// TODO: handle multi-surface models (nextsurface chain)
-	const uint32_t num_triangles = hdr->numtris;
-	if (num_triangles == 0)
-	{
+	/* Recreate storage whenever any surface/count/input identity changes. UPDATE
+	 * requires the same geometry count and per-geometry primitive counts. */
+	if (e->blas_data && !R_EntityBLASLayoutMatches (e->blas_data, e->model, hdr, surface_layout, surface_count))
 		R_FreeEntityBLAS (e);
-		return;
-	}
-
-	// Check if the entity switched models; enhanced model reloads free all entity BLASes explicitly.
-	if (e->blas_data && (e->blas_data->model != e->model || e->blas_data->geometry != hdr))
-		R_FreeEntityBLAS (e);
-
 	if (e->blas_data)
 		return;
 
@@ -848,31 +937,32 @@ static void R_AllocateEntityBLASInternal (entity_t *e, qboolean allow_tracked_pa
 	e->blas_data = Mem_Alloc (sizeof (entity_blas_t));
 	memset (e->blas_data, 0, sizeof (entity_blas_t));
 	e->blas_data->needs_initial_build = true;
+	e->blas_data->surface_count = surface_count;
+	e->blas_data->surfaces = Mem_Alloc (surface_count * sizeof (*e->blas_data->surfaces));
+	memcpy (e->blas_data->surfaces, surface_layout, surface_count * sizeof (*surface_layout));
 
-	// Set up geometry info for size query
-	// Vertex positions will be computed into scratch memory as vec3 floats
-	ZEROED_STRUCT (VkAccelerationStructureGeometryKHR, blas_geometry);
-	blas_geometry.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
-	blas_geometry.geometryType = VK_GEOMETRY_TYPE_TRIANGLES_KHR;
-	blas_geometry.geometry.triangles.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR;
-	blas_geometry.geometry.triangles.vertexFormat = VK_FORMAT_R32G32B32_SFLOAT;
-	blas_geometry.geometry.triangles.vertexStride = sizeof (float) * 3;
-	blas_geometry.geometry.triangles.maxVertex = hdr->numverts_vbo - 1;
-	blas_geometry.geometry.triangles.indexType = VK_INDEX_TYPE_UINT16;
+	// Size the one entity-owned BLAS against every chained surface.
+	VkAccelerationStructureGeometryKHR blas_geometries[MAX_SURFACES];
+	uint32_t primitive_counts[MAX_SURFACES];
+	for (uint32_t i = 0; i < surface_count; ++i)
+	{
+		R_EntityBLASSetVkGeometry (&blas_geometries[i], &surface_layout[i], 0);
+		primitive_counts[i] = (uint32_t)surface_layout[i].numtris;
+	}
 
 	ZEROED_STRUCT (VkAccelerationStructureBuildGeometryInfoKHR, blas_geometry_info);
 	blas_geometry_info.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR;
 	blas_geometry_info.type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
 	blas_geometry_info.flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_BUILD_BIT_KHR | VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_UPDATE_BIT_KHR;
 	blas_geometry_info.mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
-	blas_geometry_info.geometryCount = 1;
-	blas_geometry_info.pGeometries = &blas_geometry;
+	blas_geometry_info.geometryCount = surface_count;
+	blas_geometry_info.pGeometries = blas_geometries;
 
 	// Query acceleration structure size
 	ZEROED_STRUCT (VkAccelerationStructureBuildSizesInfoKHR, blas_sizes_info);
 	blas_sizes_info.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_SIZES_INFO_KHR;
 	vulkan_globals.vk_get_acceleration_structure_build_sizes (
-		vulkan_globals.device, VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR, &blas_geometry_info, &num_triangles, &blas_sizes_info);
+		vulkan_globals.device, VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR, &blas_geometry_info, primitive_counts, &blas_sizes_info);
 
 	// Create buffer for BLAS
 	ZEROED_STRUCT (VkBufferCreateInfo, buffer_create_info);
@@ -951,6 +1041,7 @@ void R_FreeEntityBLAS (entity_t *e)
 	if (e->blas_data->blas != VK_NULL_HANDLE)
 		AddBLASGarbage (e->blas_data->blas, e->blas_data->buffer, e->blas_data->allocation);
 
+	SAFE_FREE (e->blas_data->surfaces);
 	Mem_Free (e->blas_data);
 	e->blas_data = NULL;
 }
@@ -985,9 +1076,9 @@ scratch buffer, then builds/updates the BLASes.
 */
 #define MAX_PENDING_BLAS_BUILDS 256
 
-static VkAccelerationStructureGeometryKHR			   pending_geometries[MAX_PENDING_BLAS_BUILDS];
+static VkAccelerationStructureGeometryKHR			   pending_geometries[MAX_PENDING_BLAS_BUILDS][MAX_SURFACES];
 static VkAccelerationStructureBuildGeometryInfoKHR	   pending_build_infos[MAX_PENDING_BLAS_BUILDS];
-static VkAccelerationStructureBuildRangeInfoKHR		   pending_range_infos[MAX_PENDING_BLAS_BUILDS];
+static VkAccelerationStructureBuildRangeInfoKHR		   pending_range_infos[MAX_PENDING_BLAS_BUILDS][MAX_SURFACES];
 static const VkAccelerationStructureBuildRangeInfoKHR *pending_range_info_ptrs[MAX_PENDING_BLAS_BUILDS];
 
 typedef struct
@@ -1012,6 +1103,55 @@ static qboolean R_EntityBLASPoseCacheMatches (
 
 	return blas->cached_model == e->model && blas->cached_geometry == hdr && blas->cached_pose1 == pose1 && blas->cached_pose2 == pose2 &&
 		   memcmp (&blas->cached_blend, &blend, sizeof (blend)) == 0;
+}
+
+static qboolean R_EntityBLASComputeScratchLayout (
+	const entity_blas_t *blas, VkDeviceAddress base_address, VkDeviceSize start_offset, VkDeviceSize buffer_alignment, VkDeviceSize scratch_alignment, VkDeviceSize as_scratch_size,
+	VkDeviceSize *vertex_offsets, VkDeviceSize *as_scratch_offset, VkDeviceSize *end_offset)
+{
+	if (!blas || !blas->surfaces || !blas->surface_count || !buffer_alignment || !scratch_alignment || !as_scratch_offset || !end_offset)
+		return false;
+
+	VkDeviceSize cursor = start_offset;
+	for (uint32_t i = 0; i < blas->surface_count; ++i)
+	{
+		const entity_blas_surface_t *surface = &blas->surfaces[i];
+		if (surface->numverts_vbo <= 0 || cursor > UINT64_MAX - base_address || base_address + cursor > UINT64_MAX - (buffer_alignment - 1))
+			return false;
+		const VkDeviceSize aligned_address = q_align (base_address + cursor, buffer_alignment);
+		cursor = aligned_address - base_address;
+		if (vertex_offsets)
+			vertex_offsets[i] = cursor;
+		const VkDeviceSize vertex_size = (VkDeviceSize)surface->numverts_vbo * sizeof (float) * 3;
+		if (vertex_size > UINT64_MAX - cursor)
+			return false;
+		cursor += vertex_size;
+	}
+
+	if (cursor > UINT64_MAX - base_address || base_address + cursor > UINT64_MAX - (scratch_alignment - 1))
+		return false;
+	*as_scratch_offset = q_align (base_address + cursor, scratch_alignment) - base_address;
+	if (as_scratch_size > UINT64_MAX - *as_scratch_offset)
+		return false;
+	*end_offset = *as_scratch_offset + as_scratch_size;
+	return true;
+}
+
+static qboolean R_EntityBLASPosesFit (const entity_blas_t *blas, int pose1, int pose2)
+{
+	if (!blas || !blas->surfaces || pose1 < 0 || pose2 < 0)
+		return false;
+	for (uint32_t i = 0; i < blas->surface_count; ++i)
+	{
+		const entity_blas_surface_t *surface = &blas->surfaces[i];
+		const int pose_count = (surface->poseverttype == PV_QUAKE1) ? surface->numposes : surface->numframes;
+		const uint32_t elements_per_pose = (surface->poseverttype == PV_MD5 || surface->poseverttype == PV_MD5_8) ?
+			(uint32_t)surface->numjoints : (uint32_t)surface->numverts_vbo;
+		if (pose1 >= pose_count || pose2 >= pose_count || !elements_per_pose ||
+			(uint64_t)pose1 * elements_per_pose > UINT32_MAX || (uint64_t)pose2 * elements_per_pose > UINT32_MAX)
+			return false;
+	}
+	return true;
 }
 
 /*
@@ -1090,9 +1230,10 @@ void R_UpdateAnimatedBLASes (cb_context_t *cbx)
 	if (as_scratch_buffer.buffer == VK_NULL_HANDLE)
 		return;
 
-	const VkDeviceSize scratch_alignment = vulkan_globals.physical_device_acceleration_structure_properties.minAccelerationStructureScratchOffsetAlignment;
+	const VkDeviceSize scratch_alignment = q_max (
+	(VkDeviceSize)vulkan_globals.physical_device_acceleration_structure_properties.minAccelerationStructureScratchOffsetAlignment, (VkDeviceSize)1);
 	// 16 bytes because of device address default buffer_reference_align
-	const VkDeviceSize buffer_alignment = q_max (vulkan_globals.device_properties.limits.minStorageBufferOffsetAlignment, 16);
+	const VkDeviceSize buffer_alignment = q_max ((VkDeviceSize)vulkan_globals.device_properties.limits.minStorageBufferOffsetAlignment, (VkDeviceSize)16);
 	const int		   total_entities = cl.num_entities + cl.num_statics;
 
 	// Pre-pass: find max scratch size needed across all entities and resize if necessary
@@ -1101,18 +1242,18 @@ void R_UpdateAnimatedBLASes (cb_context_t *cbx)
 		for (int i = 0; i < total_entities; ++i)
 		{
 			entity_t *e = (i < cl.num_entities) ? &cl.entities[i] : cl.static_entities[i - cl.num_entities];
-			if (!e->model || e->model->needload || e->model->type != mod_alias || !e->blas_data || e->blas_data->blas == VK_NULL_HANDLE)
+			if (!e->model || e->model->needload || e->model->type != mod_alias)
 				continue;
 			if ((e->alpha != ENTALPHA_DEFAULT) && (ENTALPHA_DECODE (e->alpha) < 1.0f))
 				continue;
 			const r_vrik_prepared_palette_t *prepared =
 				(i > 0 && i <= cl.maxclients) ? R_VRIKRenderLookup (e) : NULL;
-			if (prepared || e->blas_data->model != e->model || e->blas_data->geometry != (aliashdr_t *)Mod_Extradata (e->model))
+			if (e->blas_data || prepared)
 				R_AllocateEntityBLASForVRIK (e);
 			if (!e->blas_data || e->blas_data->blas == VK_NULL_HANDLE)
 				continue;
 			aliashdr_t *hdr = (aliashdr_t *)e->blas_data->geometry;
-			if (!hdr || hdr->numverts_vbo == 0)
+			if (!hdr || !e->blas_data->surface_count)
 				continue;
 			if (e->blas_data->model != e->model || !e->blas_data->geometry)
 				continue;
@@ -1122,13 +1263,57 @@ void R_UpdateAnimatedBLASes (cb_context_t *cbx)
 			if (R_EntityBLASPoseCacheMatches (e, hdr, lerpdata.pose1, lerpdata.pose2, lerpdata.blend, R_EntityBLASPalette (e, hdr)))
 				continue;
 
-			const VkDeviceSize vertex_size = hdr->numverts_vbo * sizeof (float) * 3;
 			const VkDeviceSize as_scratch_size = e->blas_data->needs_initial_build ? e->blas_data->build_scratch_size : e->blas_data->update_scratch_size;
-			const VkDeviceSize total_needed = q_align (vertex_size, scratch_alignment) + as_scratch_size;
+			VkDeviceSize vertex_bytes = 0;
+			qboolean layout_fits = true;
+			for (uint32_t surface = 0; surface < e->blas_data->surface_count; ++surface)
+			{
+				const VkDeviceSize vertex_size = (VkDeviceSize)e->blas_data->surfaces[surface].numverts_vbo * sizeof (float) * 3;
+				if (vertex_size > UINT64_MAX - vertex_bytes)
+				{
+					layout_fits = false;
+					break;
+				}
+				vertex_bytes += vertex_size;
+			}
+			const VkDeviceSize per_surface_padding = buffer_alignment - 1;
+			if (e->blas_data->surface_count > (UINT64_MAX - vertex_bytes) / per_surface_padding)
+				layout_fits = false;
+			VkDeviceSize total_needed = 0;
+			if (layout_fits)
+			{
+				const VkDeviceSize vertex_padding = (VkDeviceSize)e->blas_data->surface_count * per_surface_padding;
+				if (vertex_padding > UINT64_MAX - vertex_bytes || scratch_alignment - 1 > UINT64_MAX - vertex_bytes - vertex_padding)
+					layout_fits = false;
+				else
+				{
+					total_needed = vertex_bytes + vertex_padding + scratch_alignment - 1;
+					if (as_scratch_size > UINT64_MAX - total_needed)
+						layout_fits = false;
+					else
+						total_needed += as_scratch_size;
+				}
+			}
+			if (!layout_fits)
+				continue;
 			max_scratch_needed = q_max (max_scratch_needed, total_needed);
 		}
 
-		R_EnsureASScratchBufferSize (max_scratch_needed);
+		if (max_scratch_needed > (((VkDeviceSize)UINT32_MAX + 1) / 2))
+		{
+			/* R_EnsureASScratchBufferSize rounds to a uint32 power of two. */
+			for (int i = 0; i < total_entities; ++i)
+			{
+				entity_t *e = (i < cl.num_entities) ? &cl.entities[i] : cl.static_entities[i - cl.num_entities];
+				if (e->blas_data)
+				{
+					e->blas_data->needs_initial_build = true;
+					e->blas_data->pose_cache_valid = false;
+				}
+			}
+			return;
+		}
+		R_EnsureASScratchBufferSize ((uint32_t)max_scratch_needed);
 	}
 
 	const VkDeviceSize scratch_buffer_size = as_scratch_buffer_size;
@@ -1173,80 +1358,94 @@ void R_UpdateAnimatedBLASes (cb_context_t *cbx)
 				pose1 = pose2 = 0;
 				blend = 0.0f;
 			}
+			if (!R_EntityBLASPosesFit (e->blas_data, pose1, pose2))
+			{
+				/* A changed/invalid animation layout cannot safely refit this BLAS. */
+				e->blas_data->needs_initial_build = true;
+				e->blas_data->pose_cache_valid = false;
+				continue;
+			}
 			if (R_EntityBLASPoseCacheMatches (e, hdr, pose1, pose2, blend, tracked_palette))
 				continue;
 
 			// Always use refit after first build. We trace few rays and full updates are expensive.
 			qboolean use_update = !e->blas_data->needs_initial_build;
-
-			const VkDeviceSize vertex_size = hdr->numverts_vbo * sizeof (float) * 3;
 			const VkDeviceSize as_scratch_size = use_update ? e->blas_data->update_scratch_size : e->blas_data->build_scratch_size;
+			VkDeviceSize vertex_offsets[MAX_SURFACES];
+			VkDeviceSize as_scratch_offset, end_offset;
+			if (!R_EntityBLASComputeScratchLayout (
+				e->blas_data, as_scratch_buffer.device_address, scratch_offset, buffer_alignment, scratch_alignment, as_scratch_size, vertex_offsets,
+				&as_scratch_offset, &end_offset))
+			{
+				e->blas_data->needs_initial_build = true;
+				e->blas_data->pose_cache_valid = false;
+				continue;
+			}
 
 			// Check if we have space; if not, flush current batch and reset
-			const VkDeviceSize vertex_offset = q_align (scratch_offset, buffer_alignment);
-			const VkDeviceSize as_scratch_offset = q_align (vertex_offset + vertex_size, scratch_alignment);
-			const VkDeviceSize total_needed = as_scratch_offset - scratch_offset + as_scratch_size;
-			if (scratch_offset + total_needed > scratch_buffer_size)
+			if (scratch_offset > scratch_buffer_size || end_offset > scratch_buffer_size)
 			{
+				if (num_pending == 0)
+				{
+					/* The conservative pre-pass should make this unreachable; do not
+					 * retry forever if a device/address limit still makes it impossible. */
+					e->blas_data->needs_initial_build = true;
+					e->blas_data->pose_cache_valid = false;
+					continue;
+				}
 				// Need to flush - back up entity_index to retry this entity after flush
 				--entity_index;
 				break;
 			}
 
-			VkDeviceAddress vertex_output_address = as_scratch_buffer.device_address + vertex_offset;
-			VkDeviceAddress scratch_address = as_scratch_buffer.device_address + as_scratch_offset;
-
-			// Dispatch compute shader with push constants containing buffer addresses
-			if (hdr->poseverttype == PV_MD5 || hdr->poseverttype == PV_MD5_8)
+			VkAccelerationStructureGeometryKHR *geometries = pending_geometries[num_pending];
+			VkAccelerationStructureBuildRangeInfoKHR *ranges = pending_range_infos[num_pending];
+			for (uint32_t surface_index = 0; surface_index < e->blas_data->surface_count; ++surface_index)
 			{
-				// MD5 skinning
-				skinning_push_constants_t pc = {
-					.input_address = hdr->vertex_buffer_address,
-					.joints_address = tracked_palette ? tracked_palette->palette_address : hdr->joints_buffer_address,
-					.output_address = vertex_output_address,
-					.joints_offset0 = tracked_palette ? 0 : pose1 * hdr->numjoints,
-					.joints_offset1 = tracked_palette ? 0 : pose2 * hdr->numjoints,
-					.output_offset = 0, // output starts at output_address
-					.num_verts = hdr->numverts_vbo,
-					.blend_factor = blend,
-				};
-				R_BindPipeline (
-					cbx, VK_PIPELINE_BIND_POINT_COMPUTE,
-					(hdr->poseverttype == PV_MD5_8) ? vulkan_globals.skinning_8_pipeline : vulkan_globals.skinning_pipeline);
-				R_PushConstants (cbx, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof (pc), &pc);
-			}
-			else
-			{
-				// MDL/MD3 interpolation
-				mesh_interpolate_push_constants_t pc = {
-					.input_address = hdr->vertex_buffer_address,
-					.output_address = vertex_output_address,
-					.pose1_offset = pose1 * hdr->numverts_vbo,
-					.pose2_offset = pose2 * hdr->numverts_vbo,
-					.output_offset = 0, // output starts at output_address
-					.num_verts = hdr->numverts_vbo,
-					.blend_factor = blend,
-					.flags = (hdr->poseverttype == PV_QUAKE3) ? 0x4 : 0,
-				};
-				R_BindPipeline (cbx, VK_PIPELINE_BIND_POINT_COMPUTE, vulkan_globals.mesh_interpolate_pipeline);
-				R_PushConstants (cbx, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof (pc), &pc);
-			}
+				const entity_blas_surface_t *surface = &e->blas_data->surfaces[surface_index];
+				const VkDeviceAddress vertex_output_address = as_scratch_buffer.device_address + vertex_offsets[surface_index];
 
-			uint32_t num_groups = (hdr->numverts_vbo + 63) / 64;
-			vulkan_globals.vk_cmd_dispatch (cbx->cb, num_groups, 1, 1);
+				/* Each chained mesh owns vertex/index/joint buffers, but compatible
+				 * MD5 surfaces all consume the same tracked palette. */
+				if (surface->poseverttype == PV_MD5 || surface->poseverttype == PV_MD5_8)
+				{
+					skinning_push_constants_t pc = {
+						.input_address = surface->vertex_buffer_address,
+						.joints_address = tracked_palette ? tracked_palette->palette_address : surface->joints_buffer_address,
+						.output_address = vertex_output_address,
+						.joints_offset0 = tracked_palette ? 0 : (uint32_t)((uint64_t)pose1 * surface->numjoints),
+						.joints_offset1 = tracked_palette ? 0 : (uint32_t)((uint64_t)pose2 * surface->numjoints),
+						.output_offset = 0,
+						.num_verts = surface->numverts_vbo,
+						.blend_factor = blend,
+					};
+					R_BindPipeline (
+						cbx, VK_PIPELINE_BIND_POINT_COMPUTE,
+						(surface->poseverttype == PV_MD5_8) ? vulkan_globals.skinning_8_pipeline : vulkan_globals.skinning_pipeline);
+					R_PushConstants (cbx, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof (pc), &pc);
+				}
+				else
+				{
+					mesh_interpolate_push_constants_t pc = {
+						.input_address = surface->vertex_buffer_address,
+						.output_address = vertex_output_address,
+						.pose1_offset = (uint32_t)((uint64_t)pose1 * surface->numverts_vbo),
+						.pose2_offset = (uint32_t)((uint64_t)pose2 * surface->numverts_vbo),
+						.output_offset = 0,
+						.num_verts = surface->numverts_vbo,
+						.blend_factor = blend,
+						.flags = (surface->poseverttype == PV_QUAKE3) ? 0x4 : 0,
+					};
+					R_BindPipeline (cbx, VK_PIPELINE_BIND_POINT_COMPUTE, vulkan_globals.mesh_interpolate_pipeline);
+					R_PushConstants (cbx, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof (pc), &pc);
+				}
 
-			// Store build info for later
-			VkAccelerationStructureGeometryKHR *geom = &pending_geometries[num_pending];
-			memset (geom, 0, sizeof (*geom));
-			geom->sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
-			geom->geometryType = VK_GEOMETRY_TYPE_TRIANGLES_KHR;
-			geom->geometry.triangles.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR;
-			geom->geometry.triangles.vertexFormat = VK_FORMAT_R32G32B32_SFLOAT;
-			geom->geometry.triangles.vertexData.deviceAddress = vertex_output_address;
-			geom->geometry.triangles.vertexStride = sizeof (float) * 3;
-			geom->geometry.triangles.maxVertex = hdr->numverts_vbo - 1;
-			geom->geometry.triangles.indexType = VK_INDEX_TYPE_UINT16;
-			geom->geometry.triangles.indexData.deviceAddress = hdr->index_buffer_address;
+				const uint32_t num_groups = (uint32_t)(((uint64_t)surface->numverts_vbo + 63) / 64);
+				vulkan_globals.vk_cmd_dispatch (cbx->cb, num_groups, 1, 1);
+				R_EntityBLASSetVkGeometry (&geometries[surface_index], surface, vertex_output_address);
+				memset (&ranges[surface_index], 0, sizeof (ranges[surface_index]));
+				ranges[surface_index].primitiveCount = (uint32_t)surface->numtris;
+			}
 
 			VkAccelerationStructureBuildGeometryInfoKHR *build = &pending_build_infos[num_pending];
 			memset (build, 0, sizeof (*build));
@@ -1263,14 +1462,10 @@ void R_UpdateAnimatedBLASes (cb_context_t *cbx)
 				build->mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
 			}
 			build->dstAccelerationStructure = e->blas_data->blas;
-			build->geometryCount = 1;
-			build->pGeometries = geom;
-			build->scratchData.deviceAddress = scratch_address;
-
-			VkAccelerationStructureBuildRangeInfoKHR *range = &pending_range_infos[num_pending];
-			memset (range, 0, sizeof (*range));
-			range->primitiveCount = hdr->numtris;
-			pending_range_info_ptrs[num_pending] = range;
+			build->geometryCount = e->blas_data->surface_count;
+			build->pGeometries = geometries;
+			build->scratchData.deviceAddress = as_scratch_buffer.device_address + as_scratch_offset;
+			pending_range_info_ptrs[num_pending] = ranges;
 			pending_blas_poses[num_pending] = (pending_blas_pose_t) {
 				.entity = e,
 				.blas_data = e->blas_data,
@@ -1282,7 +1477,7 @@ void R_UpdateAnimatedBLASes (cb_context_t *cbx)
 
 			++num_pending;
 
-			scratch_offset += total_needed;
+			scratch_offset = end_offset;
 		}
 
 		// Phase 2: Build - flush pending builds

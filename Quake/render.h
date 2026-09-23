@@ -60,6 +60,8 @@ typedef struct entity_blas_s
 	VkDeviceSize			   update_scratch_size;
 	struct qmodel_s			  *model;
 	struct aliashdr_s		  *geometry;
+	uint32_t				   surface_count;
+	struct entity_blas_surface_s *surfaces;
 	qboolean				   needs_initial_build;
 	struct qmodel_s		  *cached_model;
 	struct aliashdr_s		  *cached_geometry;
