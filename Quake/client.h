@@ -412,6 +412,7 @@ void CL_Signon4 (void);
 
 void CL_Disconnect (void);
 void CL_Disconnect_f (void);
+void CL_ResetVRIKPoseCaches (void);
 void CL_ResetVRIKState (void);
 void CL_ExpireStaleVRIKPoses (void);
 void CL_NextDemo (void);

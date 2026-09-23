@@ -114,19 +114,35 @@ static void CL_ClearEntityVRIKCache (entity_t *ent)
 	ent->vrik_last_sequence = 0;
 	ent->vrik_generation = 0;
 	ent->vrik_sequence_valid = false;
+	ent->vrik_slot_retired = false;
 }
 
-void CL_ResetVRIKState (void)
+static void CL_RetireEntityVRIKCache (entity_t *ent)
+{
+	const unsigned int generation = ent->vrik_generation;
+	CL_ClearEntityVRIKCache (ent);
+	/* Keep a generation floor so a late packet from the old occupant cannot
+	 * animate the next player assigned to this scoreboard slot. */
+	ent->vrik_generation = generation;
+	ent->vrik_slot_retired = generation != 0;
+}
+
+void CL_ResetVRIKPoseCaches (void)
 {
 	int i;
 
-	cl.vrik_protocol_offered = false;
-	cl.vrik_cap_sent = false;
-	cl.vrik_protocol_version = 0;
 	if (!cl.entities)
 		return;
 	for (i = 0; i < cl.max_edicts; ++i)
 		CL_ClearEntityVRIKCache (&cl.entities[i]);
+}
+
+void CL_ResetVRIKState (void)
+{
+	cl.vrik_protocol_offered = false;
+	cl.vrik_cap_sent = false;
+	cl.vrik_protocol_version = 0;
+	CL_ResetVRIKPoseCaches ();
 }
 
 static qboolean CL_OfferVRIKProtocol (const char *command)
@@ -158,9 +174,10 @@ static qboolean CL_OfferVRIKProtocol (const char *command)
 		return true;
 
 	/* Include the opcode and terminating NUL in the reliable-buffer check. */
-	if (cls.message.cursize < 0 || cls.message.maxsize < 0 ||
-		(size_t)cls.message.cursize + 1 + sizeof ("vrik_cap 3") >
-		(size_t)cls.message.maxsize)
+	if (!cls.demoplayback &&
+		(cls.message.cursize < 0 || cls.message.maxsize < 0 ||
+		 (size_t)cls.message.cursize + 1 + sizeof ("vrik_cap 3") >
+		 (size_t)cls.message.maxsize))
 		return true;
 	latched_version = cl.vrik_cap_sent;
 	version_byte = cl.vrik_protocol_version;
@@ -170,9 +187,12 @@ static qboolean CL_OfferVRIKProtocol (const char *command)
 	cl.vrik_cap_sent = latched_version;
 	cl.vrik_protocol_version = version_byte;
 	cl.vrik_protocol_offered = true;
-	MSG_WriteByte (&cls.message, clc_stringcmd);
-	MSG_WriteString (&cls.message, offered_version == VRIK_PROTOCOL_VERSION ?
-		"vrik_cap 3" : "vrik_cap 2");
+	if (!cls.demoplayback)
+	{
+		MSG_WriteByte (&cls.message, clc_stringcmd);
+		MSG_WriteString (&cls.message, offered_version == VRIK_PROTOCOL_VERSION ?
+			"vrik_cap 3" : "vrik_cap 2");
+	}
 	Con_DPrintf ("VRIK: negotiated protocol %d with server\n", offered_version);
 	return true;
 }
@@ -311,18 +331,21 @@ static qboolean CL_ParseVRIKPose (void)
 	if (!cl.entities || entitynum >= cl.num_entities)
 		return true;
 	ent = &cl.entities[entitynum];
+	if (ent->vrik_slot_retired && generation == ent->vrik_generation)
+		return true;
+	if (ent->vrik_generation && generation != ent->vrik_generation &&
+		(uint32_t)(generation - ent->vrik_generation) >= UINT32_C(0x80000000))
+		return true; /* Delayed packet from a predecessor generation. */
 	if (ent->vrik_pose_count &&
 		realtime - ent->vrik_pose_times[0] > VRIK_POSE_STALE_TIME)
 		CL_ClearEntityVRIKSamples (ent);
 	newstream = !ent->vrik_sequence_valid || ent->vrik_generation != generation;
 	if (newstream)
 	{
-		if (ent->vrik_sequence_valid &&
-			(uint32_t)(generation - ent->vrik_generation) >= UINT32_C(0x80000000))
-			return true; /* Ignore delayed samples from a previous entity life. */
 		CL_ClearEntityVRIKSamples (ent);
 		ent->vrik_sequence_valid = false;
 		ent->vrik_generation = generation;
+		ent->vrik_slot_retired = false;
 	}
 	else if (!vrik_sequence_is_newer (pose_v3.sequence, ent->vrik_last_sequence))
 		return true;
@@ -354,7 +377,7 @@ void CL_ExpireStaleVRIKPoses (void)
 {
 	int i, limit = q_min (cl.maxclients, cl.num_entities - 1);
 
-	if (!cl.entities || limit < 1)
+	if (!cl.vrik_protocol_offered || !cl.entities || limit < 1)
 		return;
 	for (i = 1; i <= limit; ++i)
 	{
@@ -1183,9 +1206,11 @@ static void CLFTE_ParseEntitiesUpdate (void)
 					Con_SafePrintf ("%3i:     Reset all\n", msg_readcount);
 				for (newnum = 1; newnum < cl.num_entities; newnum++)
 				{
-					CL_EntityNum (newnum)->netstate = nullentitystate;
-					CL_EntityNum (newnum)->model = NULL;
-					CL_EntityNum (newnum)->update_type = false;
+					entity_t *reset_ent = CL_EntityNum (newnum);
+					reset_ent->netstate = nullentitystate;
+					reset_ent->model = NULL;
+					reset_ent->update_type = false;
+					CL_ClearEntityVRIKSamples (reset_ent);
 				}
 				InvalidateTraceLineCache ();
 				cl.requestresend = false; // we got it.
@@ -1197,6 +1222,7 @@ static void CLFTE_ParseEntitiesUpdate (void)
 			ent->update_type = false; // no longer valid
 			ent->netstate = nullentitystate;
 			ent->model = NULL;
+			CL_ClearEntityVRIKSamples (ent);
 			InvalidateTraceLineCache ();
 			continue;
 		}
@@ -2786,6 +2812,8 @@ void CL_ParseServerMessage (void)
 				Host_Error ("CL_ParseServerMessage: svc_updatename > MAX_SCOREBOARD");
 			q_strlcpy (cl.scores[i].name, MSG_ReadString (), MAX_SCOREBOARDNAME);
 			Info_SetKey (cl.scores[i].userinfo, sizeof (cl.scores[i].userinfo), "name", cl.scores[i].name);
+			if (!cl.scores[i].name[0] && cl.entities && i + 1 < cl.num_entities)
+				CL_RetireEntityVRIKCache (&cl.entities[i + 1]);
 			break;
 
 		case svc_updatefrags:

@@ -208,6 +208,9 @@ void		 CL_Seek_f (void)
 		Sys_fseek (cls.demofile, cls.demo_prespawn_end, SEEK_SET);
 		cl.mtime[0] = cl.time = 0;
 		cls.demoseeking = true;
+		/* Replayed earlier VRIK sequences must not be compared with samples
+		 * from the future; keep the demo's negotiated wire version. */
+		CL_ResetVRIKPoseCaches ();
 
 		memset (cl_dlights, 0, sizeof (cl_dlights));
 		memset (cl_temp_entities, 0, sizeof (cl_temp_entities));
@@ -330,6 +333,43 @@ static void CL_Record_Serverdata (void)
 	// FIXME: initial view entity (for clients that don't want to mess up scoreboards)
 	MSG_WriteByte (&net_message, svc_signonnum);
 	MSG_WriteByte (&net_message, 1);
+	CL_WriteDemoMessage ();
+	SZ_Clear (&net_message);
+}
+
+static void CL_Record_VRIKProtocolOffer (void)
+{
+	const char *offer;
+	size_t required;
+
+	if (!cl.vrik_protocol_offered)
+		return;
+
+	switch (cl.vrik_protocol_version)
+	{
+	case VRIK_PROTOCOL_LEGACY_VERSION:
+		offer = "//vrik_protocol 2\n";
+		break;
+	case VRIK_PROTOCOL_VERSION:
+		offer = "//vrik_protocol 3\n";
+		break;
+	default:
+		return;
+	}
+
+	// Keep the offer in its own message after serverinfo, before prespawn data
+	// and any live messages recorded after the synthetic signon.
+	required = 1 + strlen (offer) + 1; // svc_stufftext, string, NUL
+	if (net_message.maxsize <= 0 || net_message.cursize < 0 ||
+		net_message.cursize > net_message.maxsize ||
+		required > (size_t)(net_message.maxsize - net_message.cursize))
+	{
+		Con_Printf ("Can't record VRIK protocol offer: demo message buffer is too small.\n");
+		return;
+	}
+
+	MSG_WriteByte (&net_message, svc_stufftext);
+	MSG_WriteString (&net_message, offer);
 	CL_WriteDemoMessage ();
 	SZ_Clear (&net_message);
 }
@@ -542,6 +582,7 @@ static void CL_Record_Signons (void)
 	SZ_Clear (&net_message);
 
 	CL_Record_Serverdata ();
+	CL_Record_VRIKProtocolOffer ();
 	CL_Record_Prespawn ();
 	CL_Record_Spawn ();
 

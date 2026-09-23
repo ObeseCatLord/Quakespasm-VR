@@ -116,6 +116,7 @@ typedef struct entity_s
 	unsigned int		 vrik_generation;
 	unsigned char		 vrik_pose_count;
 	qboolean			 vrik_sequence_valid;
+	qboolean			 vrik_slot_retired;
 
 	// FIXME: could turn these into a union
 	struct mnode_s *topnode; // for bmodels, first world node

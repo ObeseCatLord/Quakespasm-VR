@@ -1368,6 +1368,11 @@ qboolean SV_ReadClientMessage (void)
 			break;
 
 		case clc_vrikpose:
+			/* A client may send its first unreliable pose before the reliable
+			 * vrik_cap reply arrives. Its framing is unknown until admission:
+			 * discard the remainder of this datagram, not the connection. */
+			if (!host_client->vrik_capable)
+				return true;
 			/* Consume extra bodies to preserve packet alignment, but accept at
 			 * most one pose from any one datagram. */
 			if (!SV_ReadVRIKPose (vrikcommands++ == 0))

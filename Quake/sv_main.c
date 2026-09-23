@@ -65,6 +65,8 @@ static qboolean SV_QueueVRIKProtocolOffers(client_t *client)
 	MSG_WriteByte(&client->message, svc_stufftext);
 	MSG_WriteString(&client->message, offer_v2);
 	client->vrik_offer_pending = false;
+	if (!client->spawned)
+		client->sendsignon = PRESPAWN_FLUSH;
 	return true;
 }
 
@@ -105,7 +107,13 @@ static void SV_ResetVRIKMapState(void)
 	int i;
 
 	for (i = 0; i < svs.maxclients; ++i)
-		SV_ResetVRIKClientState(&svs.clients[i], svs.clients[i].active);
+	{
+		client_t *client = &svs.clients[i];
+		SV_ResetVRIKClientState(client, false);
+		/* A map is a new pose stream. Both inherited and target clients
+		 * negotiate again before either side may exchange poses. */
+		client->vrik_offer_pending = client->active && client->netconnection != NULL;
+	}
 }
 
 static qboolean SV_VRIKPoseV3IsValid(const vrik_codec_pose_t *pose)
@@ -2290,6 +2298,9 @@ retry:
 			SZ_Clear (&client->message);
 			client->last_message = realtime;
 			client->sendsignon = PRESPAWN_DONE;
+			/* Queue the offer immediately behind serverinfo in the reliable
+			 * stream, before the client can advance its prespawn stages. */
+			SV_QueueVRIKProtocolOffers (client);
 		}
 	}
 
@@ -3590,9 +3601,7 @@ void SV_SendClientMessages (void)
 		if (!host_client->active)
 			continue;
 
-		if (SV_QueueVRIKProtocolOffers (host_client) &&
-			!host_client->spawned && !host_client->sendsignon)
-			host_client->sendsignon = PRESPAWN_FLUSH;
+		SV_QueueVRIKProtocolOffers (host_client);
 
 		if (!SV_SendClientDatagram (host_client))
 			continue;
@@ -3695,12 +3704,16 @@ void SV_SendClientMessages (void)
 				SV_DropClient (false); // went to another level
 			else
 			{
-				if (NET_SendMessage (host_client->netconnection, &host_client->message) == -1)
+				const qboolean sent = NET_SendMessage (host_client->netconnection, &host_client->message) != -1;
+				if (!sent)
 					SV_DropClient (false); // if the message couldn't send, kick off
 				SZ_Clear (&host_client->message);
 				host_client->last_message = realtime;
 				if (host_client->sendsignon == PRESPAWN_FLUSH)
 					host_client->sendsignon = PRESPAWN_DONE;
+				/* Also cover serverinfo delayed by a busy reliable channel. */
+				if (sent)
+					SV_QueueVRIKProtocolOffers (host_client);
 			}
 		}
 	}
