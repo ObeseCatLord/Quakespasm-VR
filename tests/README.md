@@ -946,11 +946,15 @@ it checks the received valid movement flags plus gravity, max speed, jump speed
 and step height against the stock server defaults. It does not enable or prove
 client prediction or stat/ACK epoch association.
 Gravity defaults to `800.0`; set `QSVR_LOCAL_EXPECT_GRAVITY` to a finite,
-positive float to match a live server `sv_gravity` change. For example, after
+nonnegative float to match a live server `sv_gravity` change. For example, after
 changing `sv_gravity` to `600` in the running private server console, add
 `QSVR_LOCAL_EXPECT_GRAVITY=600` alongside `QSVR_LOCAL_ASSERT_MOVE_STATS=1`
 on the client probe command. This setting only changes the gravity comparison;
 the other expected movement stats remain at their stock values.
+For the same selected `e1m1` probe with zero gravity, use
+`tests/private_selected_zero_gravity_server.gdb` and set
+`QSVR_LOCAL_EXPECT_GRAVITY=0` on the client command; the harness accepts finite
+nonnegative gravity values.
 For a reproducible one-time change after the selected client's completed move
 100, start a fresh `e1m1` server through
 `tests/private_selected_gravity_server.gdb` with the selected-server arguments
@@ -964,6 +968,41 @@ message-end candidate names the current owner and completed ACK after receiving
 the full movement-stat group. This verifies one loopback snapshot boundary;
 loss, split-packet recovery and eventual replay parity still need separate
 checks. Prediction permission remains off.
+
+To omit exactly the first nonempty unreliable server datagram sent to the
+selected client after that gravity change, start a fresh selected server through
+`tests/private_selected_lost_settings_server.gdb`:
+
+```sh
+gdb -nx -q -x tests/private_selected_lost_settings_server.gdb --args \
+  "$QSVR_BINARY" -dedicated 4 -ip 127.0.0.1 -port 28791 \
+  -basedir "$SERVER_PROFILE" +sv_qsvr_private 1 \
+  +sv_private_pmove_walk 1 +coop 1 +map e1m1
+```
+
+Run the existing selected client harness against that port:
+
+```sh
+QSVR_LOCAL_EXPECT_PRIVATE=1 \
+QSVR_LOCAL_RESULT="$CLIENT_PROFILE/private-lost-settings-result.json" \
+QSVR_LOCAL_EXPECT_GRAVITY=600 \
+QSVR_LOCAL_ASSERT_MOVE_STATS=1 \
+QSVR_LOCAL_ASSERT_COHERENT_OWNER=1 \
+QSVR_LOCAL_ASSERT_ACTION_ACK=1 \
+  timeout --signal=TERM 150s gdb -nx --batch \
+  -x tests/local_private_legacy_peer_smoke.gdb --args "$QSVR_BINARY" \
+  -novr -nosound -window -width 640 -height 480 -basedir "$CLIENT_PROFILE" \
+  +vid_vsync 0 +host_maxfps 144 +connect 127.0.0.1:28791
+```
+
+Require both server markers `QSVR_GRAVITY_CHANGED` and
+`QSVR_DROPPED_FIRST_UNRELIABLE`, plus `QSVR_LOCAL_PRIVATE_PASSED` and the
+passed JSON result. The client checks the post-drop settled movement settings,
+a coherent owner/ACK snapshot, and attack-effect ACK ordering. This shows the
+state is received after one deliberately omitted datagram. The GDB hook skips
+the call to the transport driver, so it does not model loss after transport
+sequence allocation. It does not count multiple repeated settings packets,
+test arbitrary loss patterns, or prove prediction/replay parity.
 
 To exercise an actual selected-private continuation, start a fresh server on
 stock `start` through `tests/private_selected_split_server.gdb` (interactive

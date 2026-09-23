@@ -545,5 +545,25 @@ physics at completed move 101 using
 valid movement flags, stock speed/jump/step values and a matching owner/ACK
 candidate at ACK 284. It moved about 267 units, consumed four shells and kept
 prediction permission off. The result passed the action/ACK check. This
-closes the live changed-cvar reception probe; packet loss during that change,
-zero-valued settings and replay eligibility still need independent proof.
+closes the live changed-cvar reception probe; general packet loss during that
+change and replay eligibility still need independent proof.
+
+A separate `tests/private_selected_zero_gravity_server.gdb` wrapper changed
+gravity to zero at the same server boundary. The client again passed with valid
+flags, gravity 0, the same stock speed/jump/step values and a matching
+owner/ACK candidate at ACK 284. It moved about 267 units and consumed four
+shells. This exercises a zero-valued movement stat end to end. The committed
+client probe now permits zero as an expected gravity; negative and non-finite
+expectations remain invalid. This still does not validate all zero-valued stat
+slots or replay permission.
+
+A third selected `e1m1` loopback used
+`tests/private_selected_lost_settings_server.gdb` to suppress the first
+nonempty unreliable send after changing gravity to 600. The server marked a
+164-byte omission at completed move 103. The client still received gravity
+600, a matching owner/ACK candidate at ACK 284, valid stock movement flags,
+about 267 units of movement, four consumed shells and a passing action/ACK
+check. The hook skips the transport call before it allocates a network
+sequence; this is one controlled omission, not general packet-loss or
+retransmission coverage. Prediction stays off pending replay parity and the
+remaining VR/collision gates.

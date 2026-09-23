@@ -19,9 +19,9 @@ expected_gravity_text = os.environ.get('QSVR_LOCAL_EXPECT_GRAVITY', '800.0')
 try:
     expected_gravity = float(expected_gravity_text)
 except ValueError:
-    raise RuntimeError('QSVR_LOCAL_EXPECT_GRAVITY must be a finite positive float')
-if not math.isfinite(expected_gravity) or expected_gravity <= 0.0:
-    raise RuntimeError('QSVR_LOCAL_EXPECT_GRAVITY must be a finite positive float')
+    raise RuntimeError('QSVR_LOCAL_EXPECT_GRAVITY must be a finite nonnegative float')
+if not math.isfinite(expected_gravity) or expected_gravity < 0.0:
+    raise RuntimeError('QSVR_LOCAL_EXPECT_GRAVITY must be a finite nonnegative float')
 assert_coherent_owner = os.environ.get('QSVR_LOCAL_ASSERT_COHERENT_OWNER') == '1'
 assert_public_move_stats_off = \
     os.environ.get('QSVR_LOCAL_ASSERT_PUBLIC_MOVE_STATS_OFF') == '1'
