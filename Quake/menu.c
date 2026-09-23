@@ -24,6 +24,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "bgmusic.h"
 #include "in_sdl.h"
 #include "r_ssao.h"
+#include "view.h"
 
 void (*vid_menucmdfn) (void); // johnfitz
 void (*vid_menukeyfn) (int key);
@@ -111,6 +112,13 @@ static int			  m_mouse_x = -1;
 static int			  m_mouse_y = -1;
 static int			  m_mouse_x_pixels = -1;
 static int			  m_mouse_y_pixels = -1;
+static qboolean		  m_vr_pointer_override;
+static qboolean		  m_vr_pointer_valid;
+static qboolean		  m_vr_pointer_moved;
+static qboolean		  m_vr_pointer_update_pending;
+static int			  m_vr_pointer_x = -1;
+static int			  m_vr_pointer_y = -1;
+static enum m_state_e m_vr_pointer_state = m_none;
 
 static int scrollbar_x;
 static int scrollbar_y;
@@ -5311,20 +5319,45 @@ void M_NewGame (void)
 
 void M_UpdateMouse (void)
 {
-	// IN_GetMousePos scales window coordinates to drawable pixels, which is what
-	// M_PixelToMenuCanvasCoord expects; the two differ on high pixel density displays
-	int new_mouse_x;
-	int new_mouse_y;
-	IN_GetMousePos (&new_mouse_x, &new_mouse_y);
+	if (V_TrackedSessionActive () && m_vr_pointer_override)
+	{
+		if (m_vr_pointer_valid)
+		{
+			m_mouse_x = m_vr_pointer_x;
+			m_mouse_y = m_vr_pointer_y;
+		}
+		else
+		{
+			m_mouse_x = -1;
+			m_mouse_y = -1;
+		}
 
-	m_mouse_moved = !menu_changed && ((m_mouse_x_pixels != new_mouse_x) || (m_mouse_y_pixels != new_mouse_y));
-	m_mouse_x_pixels = new_mouse_x;
-	m_mouse_y_pixels = new_mouse_y;
-	menu_changed = false;
+		m_mouse_moved = !menu_changed && m_vr_pointer_update_pending && m_vr_pointer_moved;
+		m_vr_pointer_update_pending = false;
+		menu_changed = false;
+	}
+	else
+	{
+		// IN_GetMousePos scales window coordinates to drawable pixels, which is what
+		// M_PixelToMenuCanvasCoord expects; the two differ on high pixel density displays
+		int new_mouse_x;
+		int new_mouse_y;
+		IN_GetMousePos (&new_mouse_x, &new_mouse_y);
 
-	m_mouse_x = new_mouse_x;
-	m_mouse_y = new_mouse_y;
-	M_PixelToMenuCanvasCoord (&m_mouse_x, &m_mouse_y);
+		m_mouse_moved = !menu_changed && ((m_mouse_x_pixels != new_mouse_x) || (m_mouse_y_pixels != new_mouse_y));
+		m_mouse_x_pixels = new_mouse_x;
+		m_mouse_y_pixels = new_mouse_y;
+		menu_changed = false;
+
+		m_mouse_x = new_mouse_x;
+		m_mouse_y = new_mouse_y;
+		M_PixelToMenuCanvasCoord (&m_mouse_x, &m_mouse_y);
+
+		m_vr_pointer_valid = false;
+		m_vr_pointer_state = m_none;
+		m_vr_pointer_update_pending = false;
+		m_vr_pointer_override = false;
+	}
 
 	if (scrollbar_grab)
 	{
@@ -5352,6 +5385,42 @@ void M_UpdateMouse (void)
 	}
 
 	scrollbar_size = 0;
+}
+
+void M_SetVRPointerPosition (int x, int y, qboolean valid)
+{
+	if (!V_TrackedSessionActive ())
+	{
+		m_vr_pointer_override = false;
+		m_vr_pointer_valid = false;
+		m_vr_pointer_state = m_none;
+		m_vr_pointer_update_pending = false;
+		return;
+	}
+
+	m_vr_pointer_override = true;
+	valid = valid && x >= 0 && x < 320 && y >= 0 && y < 200;
+	m_vr_pointer_moved = valid && (!m_vr_pointer_valid || m_vr_pointer_x != x || m_vr_pointer_y != y);
+	m_vr_pointer_update_pending = true;
+	m_mouse_moved = m_vr_pointer_moved;
+	m_vr_pointer_valid = valid;
+
+	if (valid)
+	{
+		m_vr_pointer_x = x;
+		m_vr_pointer_y = y;
+		m_vr_pointer_state = m_state;
+		m_mouse_x = x;
+		m_mouse_y = y;
+	}
+	else
+	{
+		m_vr_pointer_state = m_none;
+		m_mouse_x = -1;
+		m_mouse_y = -1;
+		m_mouse_hover_state = m_none;
+		m_mouse_hover_cursor = NULL;
+	}
 }
 
 void M_Draw (cb_context_t *cbx)
@@ -5501,6 +5570,17 @@ void M_Draw (cb_context_t *cbx)
 static qboolean M_Mouse_ClickValid (void)
 {
 	return bind_grab || m_state == m_help || m_mouse_hover_state == m_state || M_InScrollbar ();
+}
+
+qboolean M_VRPointerCanClick (void)
+{
+	return V_TrackedSessionActive () && m_vr_pointer_valid && m_vr_pointer_state == m_state && key_dest == key_menu &&
+		   m_state != m_none && M_Mouse_ClickValid ();
+}
+
+qboolean M_VRPointerBindingGrab (void)
+{
+	return bind_grab;
 }
 
 void M_Keydown (int key, qboolean repeat)

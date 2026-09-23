@@ -72,6 +72,9 @@ void	 M_ToggleMenu_f (void);
 float	 M_GetScale ();
 void	 M_UpdateMouse ();
 void	 M_MenuChanged ();
+void	 M_SetVRPointerPosition (int x, int y, qboolean valid);
+qboolean M_VRPointerCanClick (void);
+qboolean M_VRPointerBindingGrab (void);
 
 void M_Menu_Main_f (void);
 void M_Menu_Options_f (void);
