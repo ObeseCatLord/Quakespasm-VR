@@ -2,8 +2,9 @@
 
 Status: the v2/v3 codec, optional server/client transport, OpenXR head/hand
 sender, and transport review fixes are committed in `f8ed9a69`, `e182a773`,
-`bb8ca4c5`, and `275b94c2`. Avatar rendering and live cross-play remain
-unfinished. Focused local Astra reviews cover sender, Vulkan avatar
+`bb8ca4c5`, and `275b94c2`. The first Vulkan Ranger draw adapter is
+committed in `7580b1c0` and `54e9b3c3`; matching ray shadows, conservative
+tracked bounds, and live cross-play remain unfinished. Focused local Astra reviews cover sender, Vulkan avatar
 architecture, and transport. The
 release goal is a single vkQuake-based Windows/Linux/ARM desktop and OpenXR
 engine where desktop and VR peers share gameplay and can see the VR peer's
@@ -15,12 +16,12 @@ platform.
 
 | Claim | Status and source |
 | --- | --- |
-| `2.0` has the donor VRIK codec, negotiated transport, and OpenXR head/hand sender, but no avatar renderer. | **Verified:** `f8ed9a69` imports `Quake/vrik_codec.[ch]`; `e182a773` adds opcodes, server relay and client receive cache; `bb8ca4c5` adds the independent sender. Rendering remains a separate pending slice. |
+| `2.0` has the donor VRIK codec, negotiated transport, OpenXR head/hand sender, and a first visible Vulkan Ranger draw adapter. | **Verified:** `f8ed9a69` imports `Quake/vrik_codec.[ch]`; `e182a773` adds transport; `bb8ca4c5` adds the sender; `7580b1c0` binds frame-owned MD5 palettes. Ray shadows and live behavior remain unverified. |
 | Inherited transport uses v2/v3 bodies and explicit per-peer capability. | **Verified:** donor `Quake/vrik_codec.[ch]`; `protocol.h` defines `clc_vrikpose=5`, `svc_vrikpose=87`; `cl_parse.c:CL_OfferVRIKProtocol`, `sv_user.c:SV_ReadVRIKPose`, `sv_main.c:SVFTE_AppendPendingVRIK`. Donor server advertises through comment stufftext, relays only to capable recipients, and records sequence/generation. |
 | Target opcode numbers 5 and 87 are reserved for negotiated VRIK messages. | **Verified:** `Quake/protocol.h` declares `clc_vrikpose=5` and `svc_vrikpose=87` in `e182a773`. This does not establish compatibility with arbitrary external protocol dialects. |
-| A VR muzzle pose reaches the authoritative server, and tracked head/hand poses now have a VRIK sender and relay; no remote avatar is rendered yet. | **Verified:** `Quake/vr_input.c:VR_InputPreparePrivatePose`, `Quake/sv_phys.c:SV_BeginPrivateVRWeaponPose`, `e182a773` transport and `bb8ca4c5` sender. The private QSVR profile remains per client and server-default off (`Quake/sv_main.c:SV_SendServerinfo`). |
+| A VR muzzle pose reaches the authoritative server, and tracked head/hand poses have a VRIK sender, relay, and visible MD5 draw adapter; live appearance is unverified. | **Verified:** `Quake/vr_input.c:VR_InputPreparePrivatePose`, `Quake/sv_phys.c:SV_BeginPrivateVRWeaponPose`, `e182a773` transport, `bb8ca4c5` sender, and `7580b1c0` draw adapter. The private QSVR profile remains per client and server-default off (`Quake/sv_main.c:SV_SendServerinfo`). |
 | Donor reusable CPU code exists beyond the wire codec. | **Verified:** donor `r_vrik.c` is rig/skinning math and cache logic (~940 lines); `player_avatar.c` is identity parsing (~374 lines). Its actual render/skin integration is in donor `r_alias.c` and `r_avatar.c`, while target `Quake/r_alias.c` already owns vkQuake MD5 GPU skinning and draw calls. |
-| Target MD5 skinning currently reads static joint matrices from the model's descriptor. | **Verified:** `Quake/r_alias.c:GL_DrawAliasFrame` binds `paliashdr->joints_set` with two animation-frame offsets; `Shaders/md5.vert` reads set-3 `joint_mats[]`. A live per-entity pose needs a transient joint-matrix binding or another proven adapter; changing frame numbers alone cannot supply it. |
+| Normal MD5 skinning reads static model matrices; compatible tracked players bind a frame-owned palette through the same set-3 shader slot. | **Verified:** `Quake/r_alias.c:GL_DrawAliasFrame` selects the prepared descriptor and zero blend only for a matching tracked entity; otherwise it retains `paliashdr->joints_set` and ordinary animation. `Shaders/md5.vert` reads set-3 `joint_mats[]`. |
 | Animated ray-shadow geometry has a separate pose consumer. | **Verified:** `Quake/r_brush.c:R_BuildTopLevelAccelerationStructure` calls `Quake/gl_mesh.c:R_UpdateAnimatedBLASes`, which recomputes per-entity skinned vertices for ray-query BLAS. A visible VRIK palette alone would leave shadow geometry stale. |
 | Visible entity draw and BLAS build can run as separate tasks. | **Verified:** `Quake/gl_rmain.c:V_RenderView` submits `R_DrawEntitiesTask` and `R_BuildTopLevelAccelerationStructure` after frame/efrag prerequisites, without an edge between them. A live avatar palette must be prepared once before both consumers or otherwise synchronized; lazy mutation from either worker would race. |
 | A descriptor bound for a pending draw cannot be overwritten or freed at will. | **Verified from [Khronos Vulkan descriptor-set specification](https://docs.vulkan.org/spec/latest/chapters/descriptorsets.html):** descriptor contents must remain valid through their GPU use. Target `R_AllocateDescriptorSet` uses the shared persistent pool, so per-draw allocation without a retirement owner would leak; updating one in-flight set would be invalid. |
@@ -101,12 +102,27 @@ presentation, not packet size.
 | Follow-up finding | Disposition |
 | --- | --- |
 | **P1:** A separate reliable offer immediately after serverinfo may arrive while an inherited client is still precaching; its keepalive parser treats that as fatal. | **Addressed in `f7b6a603` and `ffc03c83`, runtime pending:** build ordinary serverinfo at full capacity, then append both offers in the same message only when they fit. Optional negotiation never reduces model/sound precaches or sends a separate loading-time message. Keep early-pose discard. |
-| **P2:** On a slot departure, the client used to mark whichever unreliable generation was most recently cached as retired. If replacement B arrived ahead of departure A, this permanently rejected B. | **Addressed in `8a4f19f4`, runtime pending:** clear displayed samples at departure, then retire A by explicit generation in a negotiated reliable comment. A newer B generation survives delayed retirement. If the reliable buffer lacks room, omit the optional marker without blocking B. |
+| **P2:** On a slot departure, the client used to mark whichever unreliable generation was most recently cached as retired. If replacement B arrived ahead of departure A, this permanently rejected B. | **Provisional in `8a4f19f4` and `533ba400`, runtime pending:** a generation-specific retirement avoids clearing B, but the new reliable-buffer barrier can delay ordinary state and is being replaced by admission confined to VRIK. Do not treat the barrier as final transport parity. |
 | **P2:** The sender mapped head/hands with tracking yaw while stereo presentation resolved view yaw separately in mouse-yaw mode; its public hand origin also included HMD translation omitted by the local viewmodel and muzzle. | **Addressed in `f445318c` and `ffc03c83`, runtime pending:** the view owner exposes resolved presentation yaw and hand origin to sender, stereo head offset, viewmodel, and crosshair muzzle; private body-owned roomscale movement keeps its gameplay mapping. Pending local yaw is included in the resolved presentation transform so a held smooth turn continues transmitting poses. |
 
 The static review also identified the write-only server legacy pose mirror and
 the always-false `keep_capability` reset argument as later deletion candidates.
 No live mixed-peer or transform parity test has been run.
+
+## Retirement architecture correction
+
+A focused source review of `533ba400` identified two risks in the provisional
+full-buffer retirement barrier. Its runtime did not expose a verifiable Astra
+model/effort setting, so this is a source-backed review finding rather than a
+completed Astra sign-off. Runtime behavior still needs the deferred mixed-peer
+tests.
+
+| Finding | Disposition |
+| --- | --- |
+| A separate retirement-only reliable send adds an acknowledgment wait before ordinary suffix updates. Continued routine writes can overflow the client buffer and cause a gameplay disconnect. | **Adopt:** remove the byte boundary and retire-only send. Optional VRIK admission should wait for ordinary reliable capacity, while ordinary state continues to drain. |
+| `Send_Spawn_Info` can clear/rebuild a reliable buffer while the saved byte boundary still refers to old contents. | **Adopt:** delete byte-offset ownership rather than patching each buffer-replacement call site. |
+| Clearing samples on an empty player name is enough to reject delayed old poses. | **Reject:** an old pose may arrive after a replacement name, and a player with no previously received pose gives the client no old generation to lock. |
+| Reliable generation admission for a negotiated VRIK version can gate optional datagrams independently of gameplay. | **Adopt as the next transport design:** announce the exact slot/generation only when it fits after ordinary state; until then the client discards optional poses. Revoke admission on empty-name updates. Preserve v2/v3 wire-body compatibility without silently changing their semantics. |
 
 ## Focused Astra Vulkan avatar review disposition
 
@@ -119,7 +135,7 @@ the avatar adapter, not evidence that an avatar currently renders.
 | Visible alias drawing uses its own matrix and skin-selected model data, while the TLAS path negates pitch and can select skin-zero geometry. Palette sharing alone could produce a body/shadow mismatch. | **Adopt:** prepare one immutable per-entity render record for this submission: chosen model geometry, presentation transform, and optional palette. Use the visible entity as the transform reference and consume the same record from drawing and ray-query shadow building. Preserve the current TLAS owner. |
 | `Shaders/md5.vert` and `Shaders/skinning.comp` read the same 12-float joint matrix layout; visible draw binds set 3, while animated BLAS consumes a device address. | **Adopt:** pack one live palette and expose it through both existing bindings, with identical pose offsets and zero blend for both consumers. Keep vkQuake shaders, multiview, weighted-skinning variants, and normal-animation fallback. Do not mutate shared model headers. |
 | Draw and TLAS tasks have no dependency edge between them; donor rig state is mutable. | **Adopt:** solve and upload tracked poses once after entity collection and before both consumers; mirror this in the serial path. Include offscreen players whose shadows can remain visible. Key records by entity/model generation and frame submission, then freeze them until the frame-slot fence. |
-| Donor CPU rig solving is reusable, but the target MD5 loader used to free joint metadata after building static GPU data. | **First adapter committed in `1b3cae61`, renderer pending:** `Mod_GetMD5Skeleton` retains the model-owned joint names, hierarchy, authored bind matrices, and frame-major absolute poses without changing vkQuake's GPU upload or model selection. Extract the donor solve path with explicit inputs; leave donor CPU vertex caches and OpenGL draw code behind. Check donor post-skin presentation and normal regeneration before claiming visual parity. |
+| Donor CPU rig solving is reusable, but the target MD5 loader used to free joint metadata after building static GPU data. | **First visible adapter committed in `1b3cae61`, `c7c98dbb`, `7580b1c0`, and `54e9b3c3`:** `Mod_GetMD5Skeleton` retains model-owned joints and poses; the donor-derived CPU solver writes a frame-owned Vulkan palette. Ray-shadow use and visual parity remain pending. |
 | Dynamic storage growth retires the old allocation, while `R_FlushDynamicBuffers` flushed only the current one. A later allocation could strand written palette bytes in noncoherent memory. | **Addressed in `a0b09f45`:** flush retired mapped dynamic allocations at the pre-submit point, after writer tasks finish, as required for host writes by the [Khronos Vulkan memory specification](https://docs.vulkan.org/spec/latest/chapters/memory.html). Review any transient descriptor ownership against [Khronos descriptor lifetime rules](https://docs.vulkan.org/spec/latest/chapters/descriptorsets.html). Pack palettes in one storage slice per submission, subject to storage alignment and `maxStorageBufferRange`. |
 
 The first renderer proof is one compatible Ranger with inherited head/hand
@@ -130,17 +146,15 @@ growth, and frame-slot reuse. Canonical avatar presentation identity, donor
 normal parity, multisurface coverage, and conservative IK culling bounds need
 more evidence before claiming parity.
 
-The target's concrete scheduling seam is after `R_MarkSurfaces` has stored
-efrag entities and before either `R_DrawEntitiesTask` or
-`R_BuildTopLevelAccelerationStructure` runs (`Quake/gl_rmain.c`). The tracked
-palette preparation task must depend on `store_efrags`; both consumers must
-depend on preparation. In the serial path, prepare immediately after
-`R_MarkSurfaces`, before entity drawing. The shadow path traverses all dynamic
+The scheduling seam is implemented after `R_MarkSurfaces` stores efrag entities
+and after the frame-slot fence/buffer swap; visible entity draws and TLAS build
+depend on palette preparation (`Quake/gl_rmain.c`). The serial path prepares
+immediately after `R_MarkSurfaces`, before entity drawing. The shadow path traverses all dynamic
 entities, including offscreen players, so preparation cannot be limited to
 visible draw chains. A prepared record is immutable for the submission and
 keyed by entity identity, model identity, and the current frame slot; a frame
-slot may be reused only after its existing fence. This is a planned task edge,
-not an implemented renderer or a measured performance result.
+slot may be reused only after its existing fence. This is an implemented task
+edge, not a measured performance result.
 
 The first proof also needs a real compatible player MD5 asset. This tree does
 not ship a Ranger `.md5mesh`; vkQuake's replacement loading currently depends
