@@ -2470,6 +2470,8 @@ qboolean PMCL_SetMoveVars (void)
 	if (cl.protocol_qsvr && (!private_move ||
 		(cl.protocol_pext2 & QSVR_PEXT2_REQUIRED) != QSVR_PEXT2_REQUIRED))
 		return false;
+	if (private_move && !(cl.stats[STAT_MOVEFLAGS] & MOVEFLAG_VALID))
+		return false;
 	if ((cl.protocol_pext2 & PEXT2_PREDINFO) && (cl.stats[STAT_MOVEFLAGS] & MOVEFLAG_VALID))
 	{
 		for (i = 0; i < countof(shared_stats); i++)

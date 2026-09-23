@@ -119,6 +119,9 @@ int main (void)
 	cl.protocol_qsvr = QSVR_PROTOCOL_PINNED;
 	assert (!PMCL_SetMoveVars ()); // Missing the private prerequisites.
 	cl.protocol_pext2 = QSVR_PEXT2_REQUIRED;
+	cl.stats[STAT_MOVEFLAGS] &= ~MOVEFLAG_VALID;
+	assert (!PMCL_SetMoveVars ()); // Private replay cannot use serverinfo before movement stats arrive.
+	cl.stats[STAT_MOVEFLAGS] |= MOVEFLAG_VALID;
 	assert (PMCL_SetMoveVars ());
 	near_value (movevars.ktjump, 99);
 	near_value (movevars.entgravity, 1);
