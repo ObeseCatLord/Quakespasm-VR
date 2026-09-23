@@ -20,6 +20,7 @@ create a second menu implementation.
 | Task ownership | `Quake/gl_screen.c:1570-1645` runs screen update on the main owner but setup and GUI may be tasks. | Task dependencies order rendering, not key/menu callbacks. |
 | XR sample timing | `Quake/host.c:1051-1064` calls `VR_InputCommands` before rendering; `Quake/gl_vidsdl.c:4075` obtains a new XR frame in `GL_BeginRendering`. | Menu trigger handling must not consume both old and new samples or emit two edges. |
 | Current trigger policy | `Quake/vr_input.c:552-645` maintains a per-hand trigger hysteresis and maps the right menu trigger to `K_ENTER`, except binding capture. | Extend this owner for pointer activation; do not introduce another trigger latch. |
+| Existing menu hit regions | `Quake/menu.c:651-688` and `:5356-5537` derive hover, cursor changes, click validity and slider behavior from `m_mouse_x/y`; `M_UpdateMouse` is called from `Quake/host.c:1091`. | Feed VR ray coordinates into this menu owner. Do not copy the donor's per-menu hit geometry. |
 | Donor behavior | `../quakespasm-openvr/Quake/vr.c:10539-10713` shares a first-eye panel, omits flat crosshair, and draws a separate aim/hand-relative status surface. `:11088-11190` implements trigger/pointer behavior. | Menu/console is the first proof; the HUD needs a later surface using the same adapter before parity is claimed. |
 | Startup | `Quake/view.c:1379-1396` skips world rendering when the console is forced; the donor sets menu camera matrices explicitly. | Prepare eye cameras without depending on a world draw from the same or prior frame. |
 
@@ -55,6 +56,31 @@ ownership.
 | Prepare camera matrices even without a world render. | Adopt by extracting/reusing vkQuake's existing matrix construction, not by implementing a second camera. |
 | Start with menu/console, then wrist HUD. | Adopt as implementation order. **Full release parity still requires the inherited HUD presentation and interaction semantics.** |
 
+A second, narrow Astra xhigh review resolved the task/input ordering after
+checking `tasks.h`, the screen refresh guard, the menu hit path, and the host
+input loop:
+
+| Scheduling recommendation | Disposition |
+| --- | --- |
+| Prepare the view on the main thread before creating tasks. | Reject. Stereo setup allocates renderer resources after the begin task, so the existing begin-to-setup order is required. |
+| Split submissions and join setup on main before menu activation. | Keep as a fallback. The task API permits it, but it adds a join and still does not know the menu's current hit regions until `M_Draw` runs. |
+| Prepare the panel/ray in existing setup, let GUI build the hover hit, then activate on main after XR teardown. | **Adopt.** It preserves task parallelism and validates a click against the panel and menu actually drawn from that sample. The resulting menu transition is displayed in the next submission. |
+| Use the prior completed XR frame's pointer hit in the host input pass. | Reject for pointer activation because the ray and moving panel could disagree with the newly displayed frame. Preserve that path for existing gameplay input. |
+
+The UI path needs one frame/sample identity and one trigger hysteresis owner.
+The host input pass must not also emit `K_ENTER` for the menu trigger that the
+render-tail path owns. A held press that begins off a hit target must not
+activate merely because the ray later moves onto one. Record consumption before
+callbacks; a callback can open a blocking modal or change input context and
+must not replay the same edge. The GUI may update pointer coordinates and hover
+on its worker because those steps do not dispatch keys. Main-thread activation
+must occur after `GL_EndXRFrame`, stereo restoration, and clearing
+`in_update_screen`, so a modal's nested refresh can acquire new XR frames.
+When the menu is not drawn, invalidate its hit rather than reusing the prior
+frame's hover. Modal confirmation and binding capture stay in the same input
+owner; nested input must invalidate a suspended dispatch batch even if it
+returns to the original context.
+
 ## Smallest end-to-end proof and stop conditions
 
 1. Preserve and fixture the donor anchor policy as a pure helper. Establish a
@@ -65,7 +91,9 @@ ownership.
    existing `VR_InputCommands` ownership/hysteresis and preserve binding grab,
    held attack suppression, and off-panel keyboard-selection fallback. Publish
    hover before activation. If callbacks change destination/layout, revalidate
-   without advancing the anchor or consuming the trigger again.
+   without advancing the anchor or consuming the trigger again. Keep
+   `M_UpdateMouse` from replacing a tracked VR pointer with desktop mouse
+   coordinates, and reuse vkQuake's `K_MOUSE1` hit/click path where it applies.
 3. In the existing UI pass, transform only menu/console draw calls from vkQuake
    canvas coordinates into the frozen physical panel. Account for both ortho
    constants and source viewport. Clip in panel-local coordinates; preserve
