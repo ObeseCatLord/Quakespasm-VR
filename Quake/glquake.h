@@ -47,6 +47,7 @@ const vrxr_frame_t *GL_OpenXRFrame (void);
 void GL_InvalidateXRInput (void);
 void GL_EndXRFrame (void);
 void R_PrepareStereoFrame (void);
+qboolean R_TrackedControllerRay (int physical_hand, vec3_t origin, vec3_t direction);
 qboolean R_TrackedHeadEyeHeight (float base_viewheight, float *out_height);
 void R_RestoreStereoView (void);
 void R_InvalidateStereoReference (void);
