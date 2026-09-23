@@ -2458,6 +2458,7 @@ static void M_SoundOptions_Draw (cb_context_t *cbx)
 /* VR OPTIONS MENU */
 
 extern cvar_t vr_hud_scale, vr_menu_scale, vr_menu_follow;
+extern cvar_t vr_crosshair, vr_crosshair_depth, vr_crosshair_size, vr_crosshair_alpha, vr_crosshairy;
 
 enum
 {
@@ -2466,10 +2467,31 @@ enum
 	VR_OPT_MENU_SCALE,
 	VR_OPT_HUD_SCALE,
 	VR_OPT_MENU_FOLLOW,
+	VR_OPT_CROSSHAIR_MODE,
+	VR_OPT_CROSSHAIR_DEPTH,
+	VR_OPT_CROSSHAIR_SIZE,
+	VR_OPT_CROSSHAIR_OPACITY,
+	VR_OPT_CROSSHAIR_OFFSET,
 	VR_OPTIONS_ITEMS
 };
 
 static int vr_options_cursor;
+
+static float M_VROptions_ClampFinite (float value, float fallback, float low, float high)
+{
+	return CLAMP (low, isfinite (value) ? value : fallback, high);
+}
+
+static int M_VROptions_CrosshairMode (void)
+{
+	if (!isfinite (vr_crosshair.value))
+		return 0;
+	if (vr_crosshair.value == 1.0f)
+		return 1;
+	if (vr_crosshair.value == 2.0f)
+		return 2;
+	return 0;
+}
 
 static void M_Menu_VROptions_f (void)
 {
@@ -2514,6 +2536,36 @@ static void M_VROptions_Adjust (int dir)
 		const int mode = isfinite (vr_menu_follow.value) && vr_menu_follow.value >= 0 &&
 			vr_menu_follow.value <= 2 ? (int)vr_menu_follow.value : 1;
 		Cvar_SetValueQuick (&vr_menu_follow, (float)((mode + (dir > 0 ? 1 : 2)) % 3));
+		break;
+	}
+	case VR_OPT_CROSSHAIR_MODE:
+	{
+		const int mode = M_VROptions_CrosshairMode ();
+		Cvar_SetValueQuick (&vr_crosshair, (float)((mode + (dir > 0 ? 1 : 2)) % 3));
+		break;
+	}
+	case VR_OPT_CROSSHAIR_DEPTH:
+	{
+		const float current = M_VROptions_ClampFinite (vr_crosshair_depth.value, 0.0f, 0.0f, 4096.0f);
+		Cvar_SetValueQuick (&vr_crosshair_depth, CLAMP (0.0f, roundf ((current + dir * 0.5f) * 2.0f) / 2.0f, 4096.0f));
+		break;
+	}
+	case VR_OPT_CROSSHAIR_SIZE:
+	{
+		const float current = M_VROptions_ClampFinite (vr_crosshair_size.value, 3.0f, 0.0f, 32.0f);
+		Cvar_SetValueQuick (&vr_crosshair_size, CLAMP (0.0f, current + dir, 32.0f));
+		break;
+	}
+	case VR_OPT_CROSSHAIR_OPACITY:
+	{
+		const float current = M_VROptions_ClampFinite (vr_crosshair_alpha.value, 0.25f, 0.0f, 1.0f);
+		Cvar_SetValueQuick (&vr_crosshair_alpha, CLAMP (0.0f, roundf ((current + dir * 0.05f) * 20.0f) / 20.0f, 1.0f));
+		break;
+	}
+	case VR_OPT_CROSSHAIR_OFFSET:
+	{
+		const float current = M_VROptions_ClampFinite (vr_crosshairy.value, 0.0f, -10.0f, 10.0f);
+		Cvar_SetValueQuick (&vr_crosshairy, CLAMP (-10.0f, roundf ((current + dir * 0.05f) * 20.0f) / 20.0f, 10.0f));
 		break;
 	}
 	}
@@ -2561,11 +2613,16 @@ static void M_VROptions_Draw (cb_context_t *cbx)
 {
 	static const char *const foveation_modes[] = {"off", "fixed", "eye tracked"};
 	static const char *const follow_modes[] = {"fixed", "follow", "head locked"};
+	static const char *const crosshair_modes[] = {"off", "point", "line"};
 	qpic_t *p;
 	const int top = MENU_TOP;
 	const int foveation = CLAMP (0, (int)vr_foveation.value, 2);
 	const int follow = isfinite (vr_menu_follow.value) && vr_menu_follow.value >= 0 &&
 		vr_menu_follow.value <= 2 ? (int)vr_menu_follow.value : 1;
+	const float crosshair_depth = M_VROptions_ClampFinite (vr_crosshair_depth.value, 0.0f, 0.0f, 4096.0f);
+	const float crosshair_size = M_VROptions_ClampFinite (vr_crosshair_size.value, 3.0f, 0.0f, 32.0f);
+	const float crosshair_opacity = M_VROptions_ClampFinite (vr_crosshair_alpha.value, 0.25f, 0.0f, 1.0f);
+	const float crosshair_offset = M_VROptions_ClampFinite (vr_crosshairy.value, 0.0f, -10.0f, 10.0f);
 
 	M_DrawTransPic (cbx, 16, 4, Draw_CachePic ("gfx/qplaque.lmp"));
 	p = Draw_CachePic ("gfx/p_option.lmp");
@@ -2585,6 +2642,22 @@ static void M_VROptions_Draw (cb_context_t *cbx)
 
 	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * VR_OPT_MENU_FOLLOW, "Menu Follow");
 	M_Print (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * VR_OPT_MENU_FOLLOW, follow_modes[follow]);
+
+	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * VR_OPT_CROSSHAIR_MODE, "Crosshair Mode");
+	M_Print (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * VR_OPT_CROSSHAIR_MODE, crosshair_modes[M_VROptions_CrosshairMode ()]);
+
+	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * VR_OPT_CROSSHAIR_DEPTH, "Crosshair Depth");
+	M_Print (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * VR_OPT_CROSSHAIR_DEPTH,
+		crosshair_depth == 0.0f ? "wall trace" : va ("%.1f m", crosshair_depth));
+
+	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * VR_OPT_CROSSHAIR_SIZE, "Crosshair Size");
+	M_Print (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * VR_OPT_CROSSHAIR_SIZE, va ("%.1f px", crosshair_size));
+
+	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * VR_OPT_CROSSHAIR_OPACITY, "Crosshair Opacity");
+	M_Print (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * VR_OPT_CROSSHAIR_OPACITY, va ("%.2f", crosshair_opacity));
+
+	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * VR_OPT_CROSSHAIR_OFFSET, "Crosshair Offset");
+	M_Print (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * VR_OPT_CROSSHAIR_OFFSET, va ("%.2f", crosshair_offset));
 
 	M_Mouse_UpdateListCursor (&vr_options_cursor, MENU_CURSOR_X, 320, top, CHARACTER_SIZE, VR_OPTIONS_ITEMS, 0);
 	Draw_Character (cbx, MENU_CURSOR_X, top + vr_options_cursor * CHARACTER_SIZE, 12 + ((int)(realtime * 4) & 1));
