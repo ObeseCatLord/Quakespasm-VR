@@ -793,16 +793,12 @@ uint32_t R_RecordFrame (
 	for (uint32_t i = 0; i < frame->step_count; ++i)
 	{
 		const frame_step_t *step = &frame->steps[i];
-		if (!swapchain_acquired)
-		{
-			// The compiled UI pass owns the WSI attachment even when its postprocess
-			// secondary command buffer is empty. Skip the whole pass on a failed
-			// acquire; a stale index is not permission to access a presented image.
-			const bool graphics = step->type == FRAME_BEGIN_GRAPHICS || step->type == FRAME_NEXT_SUBPASS ||
-				step->type == FRAME_GRAPHICS_WORK || step->type == FRAME_END_GRAPHICS;
-			if ((graphics && frame->passes[step->pass].target == FRAME_TARGET_UI) || step->type == FRAME_READBACK)
-				continue;
-		}
+		if (step->pass >= frame->pass_count)
+			Sys_Error ("Invalid render pass in frame step");
+		// The UI pass includes the swapchain attachment even without a postprocess draw.
+		// Skip the entire pass and its readback unless we own an acquired image.
+		if (!swapchain_acquired && (step->type == FRAME_READBACK || frame->passes[step->pass].target == FRAME_TARGET_UI))
+			continue;
 		if (step->type == FRAME_PREPARED_COMMANDS || !recording_started)
 		{
 			if (submit_count == submit_capacity)
