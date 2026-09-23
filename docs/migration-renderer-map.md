@@ -53,16 +53,14 @@ refits their BLAS during each update. The corresponding TLAS in
 separately. This is a candidate for large-map savings, including `mj4m1`,
 not a measured speedup.
 
-After tracked-avatar shadow parity is correct, evaluate skipping local BLAS
-skinning/refits when the selected geometry and local pose are unchanged. Static
-alias props are the first proof: moving only the entity transform still needs
-a current TLAS transform, but does not change local skinned vertices. A safe
-cache key must include model/skin geometry, initial-build state, animation
-frames and blend (or the exact resulting local palette), and any tracked VRIK
-palette; a model reload, slot reuse, tracking loss, or skin change invalidates
-it. Do not use visibility alone to skip a caster whose shadow reaches the
-view. Instrument dispatch/refit counts and CPU/GPU frame time on an identical
-`mj4m1` route with ray shadows on and off before keeping the optimization.
+`885f8aa2` now skips local BLAS skinning/refits when the selected model/geometry,
+animation poses and exact finite blend match the last built local vertices.
+The first build is always recorded; tracked VRIK palettes and invalid blends
+always refit. A moved entity still gets a current TLAS transform, and the
+optimization does not rely on caster visibility. The Linux build passed, but
+there is no measured speedup or runtime shadow-parity result yet. Capture
+dispatch/refit counts and CPU/GPU frame time on an identical `mj4m1` route
+with ray shadows on and off before judging the gain.
 
 Two additional Ironwail candidates qualify as **proposed optional scope**:
 
