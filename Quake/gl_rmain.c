@@ -2156,6 +2156,12 @@ void R_RenderView (
 		task_handle_t cull_surfaces = INVALID_TASK_HANDLE;
 		task_handle_t chain_surfaces = INVALID_TASK_HANDLE;
 		R_MarkSurfaces (use_tasks, before_mark, &store_efrags, &cull_surfaces, &chain_surfaces);
+		/* Model/BLAS setup in efrag collection may touch the same player models.
+		 * Prepare one immutable tracked palette after that work and the frame-slot
+		 * fence, before either visible or ray-shadow consumers record commands. */
+		task_handle_t prepare_vrik_palettes_task = Task_AllocateAndAssignFunc (GL_PrepareVRIKRenderTask, NULL, 0);
+		Task_AddDependency (store_efrags, prepare_vrik_palettes_task);
+		Task_AddDependency (begin_rendering_task, prepare_vrik_palettes_task);
 
 		task_handle_t update_warp_textures = Task_AllocateAndAssignFunc ((task_func_t)R_UpdateWarpTextures, NULL, 0);
 		Task_AddDependency (cull_surfaces, update_warp_textures);
@@ -2202,10 +2208,12 @@ void R_RenderView (
 		task_handle_t draw_entities_task = Task_AllocateAndAssignIndexedFunc (R_DrawEntitiesTask, NUM_ENTITIES_CBX, &use_tasks, sizeof (use_tasks));
 		Task_AddDependency (store_efrags, draw_entities_task);
 		Task_AddDependency (begin_rendering_task, draw_entities_task);
+		Task_AddDependency (prepare_vrik_palettes_task, draw_entities_task);
 
 		task_handle_t draw_alpha_entities_task = Task_AllocateAndAssignIndexedFunc (R_DrawAlphaEntitiesTask, 2, &use_tasks, sizeof (use_tasks));
 		Task_AddDependency (sort_transparents, draw_alpha_entities_task);
 		Task_AddDependency (begin_rendering_task, draw_alpha_entities_task);
+		Task_AddDependency (prepare_vrik_palettes_task, draw_alpha_entities_task);
 
 		// dlights queued by last frame's deferred effect spawns; must run before
 		// anything reads cl_dlights and before layout refills the queues
@@ -2239,6 +2247,7 @@ void R_RenderView (
 		task_handle_t build_tlas_task = Task_AllocateAndAssignFunc (R_BuildTopLevelAccelerationStructure, NULL, 0);
 		Task_AddDependency (store_efrags, build_tlas_task);
 		Task_AddDependency (begin_rendering_task, build_tlas_task);
+		Task_AddDependency (prepare_vrik_palettes_task, build_tlas_task);
 		Task_AddDependency (build_tlas_task, draw_done_task);
 
 		task_handle_t update_lightmaps_task = Task_AllocateAndAssignFunc (R_UpdateLightmapsAndIndirect, NULL, 0);
@@ -2260,7 +2269,7 @@ void R_RenderView (
 		}
 
 		task_handle_t tasks[] = {
-			before_mark,		   store_efrags,		  update_warp_textures, draw_world_task,		  sort_transparents,  draw_sky_task,
+			before_mark,		   store_efrags,		  prepare_vrik_palettes_task, update_warp_textures, draw_world_task,		  sort_transparents,  draw_sky_task,
 			draw_water_task,	   draw_view_model_task,  draw_entities_task,	draw_alpha_entities_task, flush_dlights_task, update_particles_setup_task,
 			update_particles_task, layout_particles_task, emit_particles_task,	draw_particles_task,	  build_tlas_task,	  update_lightmaps_task};
 		Tasks_Submit ((sizeof (tasks) / sizeof (task_handle_t)), tasks);
@@ -2274,6 +2283,7 @@ void R_RenderView (
 	{
 		R_SetupViewBeforeMark (NULL);
 		R_MarkSurfaces (use_tasks, INVALID_TASK_HANDLE, NULL, NULL, NULL); // johnfitz -- create texture chains from PVS
+		GL_PrepareVRIKRenderTask (NULL);
 		R_UpdateWarpTextures (NULL);
 		R_DrawWorldTask (0, NULL);
 		R_DrawSkyTask (NULL);

@@ -34,6 +34,7 @@ void		  VID_Restart (qboolean set_mode);
 // Prepares the frame. With use_tasks, creates a task for the caller to submit,
 // which runs after the previous frame's end task and before drawing starts.
 qboolean	  GL_BeginRendering (qboolean use_tasks, task_handle_t *begin_rendering_task, int *width, int *height);
+void		  GL_PrepareVRIKRenderTask (void *unused);
 qboolean	  GL_AcquireNextSwapChainImage (void);
 // Sends the frame to the GPU. With use_tasks, creates a task for the caller to
 // submit, which runs after drawing commands are recorded. Otherwise runs here.

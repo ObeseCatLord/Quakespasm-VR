@@ -3796,6 +3796,10 @@ void GL_BeginRenderingTask (void *unused)
 	}
 
 	R_SwapDynamicBuffers ();
+}
+
+void GL_PrepareVRIKRenderTask (void *unused)
+{
 	R_VRIKRenderPrepareFrame (current_cb_index);
 }
 
