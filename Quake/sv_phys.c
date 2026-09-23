@@ -2406,6 +2406,8 @@ static void SV_Physics_Client (edict_t *ent, int num)
 	sv_vr_weapon_pose_scope_t weapon_scope;
 	client_t *client = &svs.clients[num - 1];
 	edict_t				  *retained_pusher;
+	int completed_move;
+	qboolean frame_completed = false;
 
 	if (!svs.clients[num - 1].active)
 		return; // unconnected slot
@@ -2413,6 +2415,7 @@ static void SV_Physics_Client (edict_t *ent, int num)
 	if (!svs.clients[num - 1].knowntoqc && sv_gameplayfix_spawnbeforethinks.value)
 		return; // don't spam prethinks before we called putclientinserver.
 
+	completed_move = client->lastmovemessage;
 	ED_Retain (ent);
 	if (svs.clients[num - 1].protocol_qsvr == QSVR_PROTOCOL_PINNED)
 		SV_ApplyPrivateRoomScaleMove (ent, &svs.clients[num - 1]);
@@ -2489,8 +2492,12 @@ static void SV_Physics_Client (edict_t *ent, int num)
 	SV_BeginPrivateVRWeaponPose (ent, client, &weapon_scope);
 	PR_ExecuteProgram (pr_global_struct->PlayerPostThink);
 	SV_EndPrivateVRWeaponPose (ent, &weapon_scope);
+	frame_completed = true;
 
 done:
+	if (frame_completed && client->active && client->spawned && client->edict == ent && !ent->free &&
+		client->protocol_qsvr == QSVR_PROTOCOL_PINNED)
+		client->private_completed_move = completed_move;
 	if (retained_pusher)
 		ED_Release (retained_pusher);
 	ED_Release (ent);

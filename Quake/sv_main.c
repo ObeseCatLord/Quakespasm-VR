@@ -524,6 +524,7 @@ static void SVFTE_SetupFrames (client_t *client)
 	memset (client->oldstats_i, 0, sizeof (client->oldstats_i));
 	memset (client->oldstats_f, 0, sizeof (client->oldstats_f));
 	client->lastmovemessage = 0; // it'll clear this too
+	client->private_completed_move = 0;
 
 	if (!client->protocol_pext2)
 	{
@@ -779,7 +780,7 @@ static void SVFTE_WriteEntitiesToClient (client_t *client, sizebuf_t *msg, size_
 	frame->numents = 0;
 	if (client->protocol_qsvr == QSVR_PROTOCOL_PINNED)
 	{
-		MSG_WriteShort (msg, (client->lastmovemessage & 0xffff));
+		MSG_WriteShort (msg, (client->private_completed_move & 0xffff));
 		MSG_WriteByte (msg, 0); // flags
 		MSG_WriteByte (msg, MOVE_AUTHORITY_LEGACY_FRAME);
 		MSG_WriteShort (msg, 0); // mode epoch
@@ -1553,6 +1554,7 @@ void SV_SendServerinfo (client_t *client)
 	{
 		// A new serverinfo starts a new command sequence and input lifetime.
 		client->lastmovemessage = 0;
+		client->private_completed_move = 0;
 		client->lastmovetime = 0;
 		client->private_latest_buttons = 0;
 		client->private_latched_buttons = 0;
@@ -1852,6 +1854,8 @@ void SV_ConnectClient (int clientnum)
 	client->offered_pext2 = 0;
 	client->protocol_qsvr = 0;
 	client->protocol_pext2 = 0;
+	client->lastmovemessage = 0;
+	client->private_completed_move = 0;
 
 	if (sv.loadgame)
 		memcpy (client->spawn_parms, spawn_parms, sizeof (spawn_parms));

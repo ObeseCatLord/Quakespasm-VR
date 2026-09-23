@@ -166,3 +166,16 @@ profile. The focused calibration fixture passed ASan/UBSan and the strict
 Linux Ninja build passed. These checks do not prove target damage, roomscale
 collision, ordered PMove prediction, mixed simultaneous peers, packet loss,
 headset input, Windows or ARM behavior.
+
+## Private legacy ACK retirement checkpoint
+
+The private replacement-snapshot ACK now reports a separate completed-move
+cursor. The player physics owner captures the latest accepted sequence at
+entry and publishes it only after its QuakeC PostThink returns for a live,
+spawned owner. Receive-time `lastmovemessage` remains the deduplication cursor;
+public PREDINFO ACK framing is unchanged. Both cursors reset on new signon,
+replacement-frame setup and client connection. This closes the known case
+where a received command was acknowledged before a player physics pass, but
+it does not associate a queued command with a predictive PMove step. Prediction
+permission remains off. The strict Linux `vkquake` target builds; a focused
+runtime completion/stall probe remains to be run.

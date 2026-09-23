@@ -231,6 +231,7 @@ typedef struct client_s
 	size_t	 numframes; // preallocated power-of-two
 	int		 lastacksequence;
 	int		 lastmovemessage;
+	int		 private_completed_move;
 	double	 lastmovetime;
 	unsigned int private_latest_buttons;
 	unsigned int private_latched_buttons;
