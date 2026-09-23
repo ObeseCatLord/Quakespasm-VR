@@ -132,13 +132,21 @@ check could not start because this machine's `monado-service` currently lacks
 the `libuvc.so.0` shared library. These checks do not establish that the
 panel looks correct in a headset.
 
-The menu slice does not yet provide the inherited VR presentation for console,
-loading screens, confirmation dialogs, intermission overlays, or wrist/aim
-HUD. Those are subsequent uses of the same canvas adapter. Real headset
+The menu slice does not yet provide the inherited VR presentation for loading
+screens, confirmation dialogs, intermission overlays, or wrist/aim HUD. Those
+are subsequent uses of the same canvas adapter. Real headset
 proof must check both eyes, pointer alignment at varied head angles and menu
 scales, startup without a world, and validation-clean pipeline changes before
 this slice is called release-ready. The broader migration also retains its
 separate Windows, Linux ARM and eye-tracking qualification gates.
+
+A following console slice uses the same anchored panel when the normal console
+is visibly open. It draws the console once after the existing HUD calls, skips
+menu-only ray input, and preserves the ordinary flat console/notify behavior
+when no valid XR panel exists. A console-to-menu transition resets the menu
+anchor so its first-open placement is preserved. Console presentation still
+needs headset inspection, especially during opening/closing animation and
+with nondefault console scale; the HUD remains on the existing flat path.
 
 ## Implementation senior review
 
@@ -154,9 +162,9 @@ the normal vkQuake render path remains the behavioral reference.
 | Hover during key binding capture could move the selected action while the trigger edge was dispatched. | Freeze hover selection while `bind_grab` is active. |
 
 The review otherwise supported the direct canvas adapter and existing trigger
-owner. Its concerns are confined to the first menu slice; console, loading,
-modal presentation, and HUD parity still need separate implementation and
-user-observable verification.
+owner. It covered the first menu slice; the later console slice still needs
+runtime inspection. Modal/loading presentation and HUD parity still need
+implementation and user-observable verification.
 
 After these corrections, the Linux DEBUG build and diff checks pass. A local
 `-novr` X11 smoke run entered a map and advanced gameplay with the original

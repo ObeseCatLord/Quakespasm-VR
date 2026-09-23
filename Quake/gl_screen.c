@@ -1459,11 +1459,18 @@ typedef struct
 	float world_from_ndc[16];
 } vr_menu_panel_t;
 
+typedef enum
+{
+	VR_PANEL_NONE,
+	VR_PANEL_MENU,
+	VR_PANEL_CONSOLE
+} vr_panel_mode_t;
+
 /* SCR_SetupFrame publishes one immutable pose for both eye GUI draws. The
  * anchor is presentation state only; it never changes gameplay aim. */
 static vr_menu_panel_t vr_menu_panel;
 static vr_menu_anchor_t vr_menu_anchor;
-static qboolean vr_menu_was_open;
+static vr_panel_mode_t vr_menu_panel_mode;
 static const struct qmodel_s *vr_menu_world;
 static int vr_menu_connection;
 
@@ -1495,9 +1502,12 @@ static qboolean SCR_VRMenuRayHit (const vec3_t origin, const vec3_t direction,
 static void SCR_VRMenuPrepare (void)
 {
 	const vrxr_frame_t *frame = GL_OpenXRFrame ();
-	const qboolean open = vulkan_globals.stereo_active && frame && frame->should_render &&
-		key_dest == key_menu && m_state != m_none && !scr_drawdialog && !scr_drawloading &&
+	const qboolean frame_available = vulkan_globals.stereo_active && frame && frame->should_render &&
+		!scr_drawdialog && !scr_drawloading &&
 		!(scr_drawstartuploading && cls.state == ca_disconnected);
+	const vr_panel_mode_t requested_mode = !frame_available ? VR_PANEL_NONE :
+		key_dest == key_menu ? (m_state != m_none ? VR_PANEL_MENU : VR_PANEL_NONE) :
+		scr_con_current > 0 ? VR_PANEL_CONSOLE : VR_PANEL_NONE;
 	vec3_t ray_origin, ray_direction, forward, right, up, down, normal;
 	vec3_t head_angles;
 	int pointer_x = 0, pointer_y = 0;
@@ -1507,17 +1517,21 @@ static void SCR_VRMenuPrepare (void)
 	const float previous_scale = vr_menu_panel.world_per_eye_pixel;
 	float scale = vr_menu_scale.value;
 	float canvas_scale;
-	qboolean ray_valid, pointing = false;
+	qboolean ray_valid = false, pointing = false;
 
 	vr_menu_panel.valid = false;
 	vr_menu_panel.pointer_valid = false;
-	if (!open)
+	if (requested_mode == VR_PANEL_NONE)
 	{
-		vr_menu_was_open = false;
+		vr_menu_panel_mode = VR_PANEL_NONE;
 		vr_menu_anchor.valid = 0;
 		return;
 	}
-	if (m_state == m_mods)
+	if (vr_menu_panel_mode != requested_mode || frame->reference_changed ||
+		vr_menu_world != cl.worldmodel || vr_menu_connection != cls.state)
+		vr_menu_anchor.valid = 0;
+	vr_menu_panel_mode = requested_mode;
+	if (requested_mode == VR_PANEL_MENU && m_state == m_mods)
 		scale *= 1.35f;
 	canvas_scale = M_MenuCanvasScale ();
 	if (!isfinite (canvas_scale) || canvas_scale <= 0)
@@ -1536,20 +1550,19 @@ static void SCR_VRMenuPrepare (void)
 		vr_menu_anchor.valid = 0;
 		return;
 	}
-	if (!vr_menu_was_open || frame->reference_changed ||
-		vr_menu_world != cl.worldmodel || vr_menu_connection != cls.state)
-		vr_menu_anchor.valid = 0;
-	vr_menu_was_open = true;
 	vr_menu_world = cl.worldmodel;
 	vr_menu_connection = cls.state;
 
-	ray_valid = frame->focused && R_TrackedControllerRay (VR_InputDominantPhysicalHand (), ray_origin, ray_direction);
-	if (ray_valid && vr_menu_anchor.valid && previous_panel_valid)
+	if (requested_mode == VR_PANEL_MENU)
 	{
-		AngleVectors (vr_menu_anchor.angles, normal, right, up);
-		VectorScale (up, -1, down);
-		pointing = SCR_VRMenuRayHit (ray_origin, ray_direction, vr_menu_anchor.center,
-			right, down, normal, previous_scale, &pointer_x, &pointer_y);
+		ray_valid = frame->focused && R_TrackedControllerRay (VR_InputDominantPhysicalHand (), ray_origin, ray_direction);
+		if (ray_valid && vr_menu_anchor.valid && previous_panel_valid)
+		{
+			AngleVectors (vr_menu_anchor.angles, normal, right, up);
+			VectorScale (up, -1, down);
+			pointing = SCR_VRMenuRayHit (ray_origin, ray_direction, vr_menu_anchor.center,
+				right, down, normal, previous_scale, &pointer_x, &pointer_y);
+		}
 	}
 	VectorCopy (r_refdef.viewangles, head_angles);
 	head_angles[ROLL] = 0;
@@ -1589,11 +1602,13 @@ SCR_DrawGUI
 static void SCR_DrawGUI (void *unused)
 {
 	cb_context_t *cbx = vulkan_globals.secondary_cb_contexts[SCBX_GUI];
+	const qboolean console_panel_valid = vulkan_globals.stereo_active &&
+		vr_menu_panel_mode == VR_PANEL_CONSOLE && vr_menu_panel.valid;
 	GL_DrawSceneUpscale (cbx);
 	if (vulkan_globals.stereo_active && key_dest == key_menu)
 		M_SetVRPointerPixelPosition (vr_menu_panel.pointer_x, vr_menu_panel.pointer_y,
-			vr_menu_panel.valid && vr_menu_panel.pointer_valid);
-	if (vr_menu_panel.valid && vulkan_globals.stereo_active && key_dest == key_menu)
+			vr_menu_panel_mode == VR_PANEL_MENU && vr_menu_panel.valid && vr_menu_panel.pointer_valid);
+	if (vr_menu_panel.valid && vulkan_globals.stereo_active && vr_menu_panel_mode == VR_PANEL_MENU)
 	{
 		GL_BeginUIPanel (cbx, vr_menu_panel.world_from_ndc);
 		SDL_LockMutex (draw_qcvm_mutex);
@@ -1658,8 +1673,15 @@ static void SCR_DrawGUI (void *unused)
 		SCR_DrawSpeeds (cbx);
 		SCR_DrawClock (cbx); // johnfitz
 		SCR_DrawEdictInfo (cbx);
-		SCR_DrawConsole (cbx);
+		if (!console_panel_valid)
+			SCR_DrawConsole (cbx);
 		M_Draw (cbx);
+		if (console_panel_valid)
+		{
+			GL_BeginUIPanel (cbx, vr_menu_panel.world_from_ndc);
+			SCR_DrawConsole (cbx);
+			GL_EndUIPanel (cbx);
+		}
 	}
 
 	SDL_UnlockMutex (draw_qcvm_mutex);
