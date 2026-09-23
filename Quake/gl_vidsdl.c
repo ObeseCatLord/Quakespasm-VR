@@ -36,6 +36,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "vr_openxr_vulkan.h"
 #include "vr_openxr_math.h"
 #include "vr_foveation_rate_map.h"
+#include "r_vrik_render.h"
 
 #ifdef USE_SDL3
 #include <SDL3/SDL_vulkan.h>
@@ -3541,6 +3542,7 @@ static void GL_DestroyRenderResources (void)
 	render_resources_created = false;
 
 	GL_WaitForDeviceIdle ();
+	R_VRIKRenderShutdown ();
 
 	R_DestroyPipelines ();
 
@@ -3794,6 +3796,7 @@ void GL_BeginRenderingTask (void *unused)
 	}
 
 	R_SwapDynamicBuffers ();
+	R_VRIKRenderPrepareFrame (current_cb_index);
 }
 
 /*
@@ -4680,6 +4683,7 @@ void VID_Shutdown (void)
 		}
 		if (vulkan_globals.device)
 		{
+			R_VRIKRenderShutdown ();
 			if (render_resources_created)
 			{
 				R_DestroyPipelines ();

@@ -1,0 +1,28 @@
+/* Frame-owned Vulkan palette records for tracked player rendering. */
+#ifndef R_VRIK_RENDER_H
+#define R_VRIK_RENDER_H
+
+#include "quakedef.h"
+
+typedef struct r_vrik_prepared_palette_s
+{
+	const entity_t *entity;
+	const qmodel_t *model;
+	VkDescriptorSet descriptor_set;
+	/* Joint index relative to descriptor_set's aggregate palette slice. */
+	uint32_t joint_offset;
+	uint32_t joint_count;
+	/* Exact start of this palette in the same allocation; already includes joint_offset. */
+	VkDeviceAddress palette_address;
+} r_vrik_prepared_palette_t;
+
+/* Prepare after the matching frame-slot fence and dynamic-buffer swap. */
+void R_VRIKRenderPrepareFrame (uint32_t frame_slot);
+
+/* Read-only until this frame slot's fence is waited before reuse. */
+const r_vrik_prepared_palette_t *R_VRIKRenderLookup (const entity_t *entity);
+
+/* Called after device idle before renderer resources or the device are destroyed. */
+void R_VRIKRenderShutdown (void);
+
+#endif /* R_VRIK_RENDER_H */

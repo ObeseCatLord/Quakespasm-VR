@@ -26,6 +26,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "quakedef.h"
 #include "vr_input.h"
 #include "vr_weapon_calibration.h"
+#include "r_vrik_render.h"
 #include <float.h>
 
 extern cvar_t r_drawflat, gl_fullbrights, r_lerpmodels, r_lerpmove, r_showtris; // johnfitz
@@ -112,6 +113,7 @@ static void GL_DrawAliasFrame (
 	qboolean alphatest, vec3_t shadevector, vec3_t lightcolor, int showtris, qboolean opposite_front_face)
 {
 	vulkan_pipeline_t pipeline;
+	const r_vrik_prepared_palette_t *tracked_palette = NULL;
 
 	// only enable alpha management if entity have alpha or the surface texture has effective
 	// non-opaque pixels:
@@ -203,6 +205,11 @@ static void GL_DrawAliasFrame (
 	case PV_MD5:
 	case PV_MD5_8:
 	{
+		const r_vrik_prepared_palette_t *prepared = R_VRIKRenderLookup (e);
+		if (prepared && prepared->model == e->model && prepared->joint_count == (uint32_t)paliashdr->numjoints &&
+			prepared->descriptor_set != VK_NULL_HANDLE)
+			tracked_palette = prepared;
+
 		VkBuffer		uniform_buffer;
 		uint32_t		uniform_offset;
 		VkDescriptorSet ubo_set;
@@ -210,16 +217,18 @@ static void GL_DrawAliasFrame (
 
 		memcpy (ubo->model_matrix, model_matrix, 16 * sizeof (float));
 		memcpy (ubo->shade_vector, shadevector, 3 * sizeof (float));
-		ubo->blend_factor = blend;
+		ubo->blend_factor = tracked_palette ? 0.0f : blend;
 		memcpy (ubo->light_color, lightcolor, 3 * sizeof (float));
 		ubo->flags = (fb != NULL) ? 0x1 : 0x0;
 		if (r_fullbright_cheatsafe || (r_lightmap_cheatsafe && r_fullbright.value))
 			ubo->flags |= 0x2;
 		ubo->entalpha = entity_alpha;
-		ubo->joints_offsets[0] = lerpdata.pose1 * paliashdr->numjoints;
-		ubo->joints_offsets[1] = lerpdata.pose2 * paliashdr->numjoints;
+		ubo->joints_offsets[0] = tracked_palette ? tracked_palette->joint_offset : lerpdata.pose1 * paliashdr->numjoints;
+		ubo->joints_offsets[1] = tracked_palette ? tracked_palette->joint_offset : lerpdata.pose2 * paliashdr->numjoints;
 
-		VkDescriptorSet descriptor_sets[4] = {tx->descriptor_set, (fb != NULL) ? fb->descriptor_set : tx->descriptor_set, ubo_set, paliashdr->joints_set};
+		VkDescriptorSet descriptor_sets[4] = {
+			tx->descriptor_set, (fb != NULL) ? fb->descriptor_set : tx->descriptor_set, ubo_set,
+			tracked_palette ? tracked_palette->descriptor_set : paliashdr->joints_set};
 		vulkan_globals.vk_cmd_bind_descriptor_sets (
 			cbx->cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.layout.handle, 0, 4, descriptor_sets, 1, &uniform_offset);
 
@@ -848,6 +857,7 @@ void R_DrawAliasModel_ShowSkel (cb_context_t *cbx, entity_t *e)
 {
 	aliashdr_t *paliashdr;
 	lerpdata_t	lerpdata;
+	const r_vrik_prepared_palette_t *tracked_palette;
 
 	paliashdr = (aliashdr_t *)Mod_Extradata_CheckSkin (e->model, e->skinnum);
 	if ((paliashdr->poseverttype != PV_MD5 && paliashdr->poseverttype != PV_MD5_8) || paliashdr->skeleton_index_buffer == VK_NULL_HANDLE ||
@@ -856,6 +866,10 @@ void R_DrawAliasModel_ShowSkel (cb_context_t *cbx, entity_t *e)
 
 	R_SetupAliasFrame (e, paliashdr, &lerpdata);
 	R_GetEntityLerpedTransform (e, lerpdata.origin, lerpdata.angles);
+	tracked_palette = R_VRIKRenderLookup (e);
+	if (!tracked_palette || tracked_palette->model != e->model || tracked_palette->joint_count != (uint32_t)paliashdr->numjoints ||
+		tracked_palette->descriptor_set == VK_NULL_HANDLE)
+		tracked_palette = NULL;
 
 	if (!R_IsVRViewmodel (e) && R_CullModelForEntity (e))
 		return;
@@ -865,7 +879,7 @@ void R_DrawAliasModel_ShowSkel (cb_context_t *cbx, entity_t *e)
 		return;
 
 	float blend = 0.0f;
-	if (lerpdata.pose1 != lerpdata.pose2)
+	if (!tracked_palette && lerpdata.pose1 != lerpdata.pose2)
 		blend = lerpdata.blend;
 
 	VkBuffer		uniform_buffer;
@@ -883,13 +897,13 @@ void R_DrawAliasModel_ShowSkel (cb_context_t *cbx, entity_t *e)
 	ubo->light_color[2] = 0.0f;
 	ubo->entalpha = 1.0f;
 	ubo->flags = 0;
-	ubo->joints_offsets[0] = lerpdata.pose1 * paliashdr->numjoints;
-	ubo->joints_offsets[1] = lerpdata.pose2 * paliashdr->numjoints;
+	ubo->joints_offsets[0] = tracked_palette ? tracked_palette->joint_offset : lerpdata.pose1 * paliashdr->numjoints;
+	ubo->joints_offsets[1] = tracked_palette ? tracked_palette->joint_offset : lerpdata.pose2 * paliashdr->numjoints;
 
 	vulkan_pipeline_t pipeline = vulkan_globals.md5_debug_pipeline[cbx->pipeline_variant];
 	R_BindPipeline (cbx, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
 
-	VkDescriptorSet descriptor_sets[2] = {ubo_set, paliashdr->joints_set};
+	VkDescriptorSet descriptor_sets[2] = {ubo_set, tracked_palette ? tracked_palette->descriptor_set : paliashdr->joints_set};
 	vulkan_globals.vk_cmd_bind_descriptor_sets (cbx->cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.layout.handle, 2, 2, descriptor_sets, 1, &uniform_offset);
 	vulkan_globals.vk_cmd_bind_index_buffer (cbx->cb, paliashdr->skeleton_index_buffer, 0, VK_INDEX_TYPE_UINT16);
 	vulkan_globals.vk_cmd_draw_indexed (cbx->cb, paliashdr->num_skeleton_indexes, 1, 0, 0, 0);
