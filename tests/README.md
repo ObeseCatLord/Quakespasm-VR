@@ -297,6 +297,9 @@ activate the optimized path.
 The generic walking/jumping cases use the QSS-M `03a498aa` single-step path
 (`msec == 0`); private explicit-duration cases set `msec` separately. This keeps
 the upstream movement reference distinct from the VR wire's substep contract.
+The roomscale wall case also distinguishes a 125 ms command from a 25 ms
+command using the same small tangential displacement: clipping must use the
+full command duration even when PMove subdivides the command.
 
 ```sh
 cc -std=gnu11 -DUSE_SDL3 -D_GNU_SOURCE -Wall -Wextra -Werror \

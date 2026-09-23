@@ -147,6 +147,46 @@ static void check_safeorigin_recovery (void)
 	near_value (pmove.origin[2], safe[2], .001f);
 }
 
+static void check_roomscale_wall_duration (int msec, float seconds,
+	float expected_y)
+{
+	prepare ();
+	pmove.numphysent = 2;
+	pmove.physents[1].info = 1;
+	VectorSet (pmove.physents[1].mins, 24, -64, 0);
+	VectorSet (pmove.physents[1].maxs, 40, 64, 64);
+	pmove.cmd.msec = msec;
+	pmove.cmd.seconds = seconds;
+	pmove.cmd.vr_active = true;
+	VectorSet (pmove.cmd.vr_roomscalemove, 15, .006f, 0);
+
+	PM_PlayerMove (1);
+	near_value (pmove.origin[0], 8, .2f);
+	near_value (pmove.origin[1], expected_y, .0005f);
+	near_value (pmove.origin[2], 24, .04f);
+	near_value (pmove.velocity[0], 0, .01f);
+	near_value (pmove.velocity[1], 0, .01f);
+	near_value (pmove.velocity[2], 0, .01f);
+	assert (pmove.numtouch > 0 && pmove.touchindex[0] == 1);
+}
+
+static void check_roomscale_invalid_duration (float seconds)
+{
+	prepare ();
+	pmove.cmd.msec = 100;
+	pmove.cmd.seconds = seconds;
+	pmove.cmd.vr_active = true;
+	pmove.cmd.vr_roomscalemove[0] = 8;
+
+	PM_ApplyPreThinkRoomScale ();
+	near_value (pmove.origin[0], 0, .01f);
+	near_value (pmove.origin[1], 0, .01f);
+	near_value (pmove.origin[2], 24, .04f);
+	near_value (pmove.velocity[0], 0, .01f);
+	near_value (pmove.velocity[1], 0, .01f);
+	near_value (pmove.velocity[2], 0, .01f);
+}
+
 int main (void)
 {
 	floor_model.type = mod_brush;
@@ -226,8 +266,22 @@ int main (void)
 		pmove.cmd.vr_roomscalemove[0] = 8;
 		PM_PlayerMove (1);
 		near_value (pmove.origin[0], 8, .01f);
+		near_value (pmove.origin[1], 0, .01f);
+		near_value (pmove.velocity[0], 0, .01f);
+		near_value (pmove.velocity[1], 0, .01f);
+		near_value (pmove.velocity[2], 0, .01f);
 		near_value (pmove.cmd.seconds, .1f, .00001f);
 		assert (pmove.cmd.msec == 100);
+
+		/* The 125 ms roomscale delta is applied during the first movement
+		 * substep, but clipping uses the full command duration: .006/.125 is
+		 * below STOP_EPSILON. A 25 ms command makes it .24 units/s, so the same
+		 * tangential sweep survives the wall clip. */
+		check_roomscale_wall_duration (125, .125f, 0);
+		check_roomscale_wall_duration (25, .025f, .006f);
+		check_roomscale_invalid_duration (0);
+		check_roomscale_invalid_duration (NAN);
+
 		// An outlier is rejected rather than clamped into artificial movement.
 		prepare ();
 		pmove.cmd.msec = 100;
