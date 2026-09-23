@@ -1,8 +1,9 @@
 # Focused live OpenXR/private-peer smoke. Caller supplies runtime environment,
 # basedir, and client arguments (including +connect <address:port> qsvr1).
-# Only synthetic controller poses/actions are injected; the real HMD/runtime,
-# input/key binding, command builder, transport, pinned server, and PMove run.
-# No usercmd or server state is written. Geometry and roomscale qualification
+# Synthetic controller poses/actions are injected. An optional controlled ramp
+# adjusts completed-frame HMD x; the physical runtime remains live. Input/key
+# binding, command builder, transport, pinned server, and PMove run normally.
+# No usercmd or server state is injected. Geometry and roomscale qualification
 # are follow-up work.
 #
 # QSVR_PINNED_VR_RESULT=/caller/path/result.json timeout 120s gdb -nx --batch \
@@ -15,7 +16,7 @@ set debuginfod enabled off
 set print thread-events off
 
 python
-import gdb, json, math, os, time
+import gdb, json, math, os, struct, time
 
 started = time.monotonic()
 phase = 'neutral'
@@ -27,6 +28,13 @@ result = {'status':'running', 'scope':'focused XR admission, private VR command,
           'follow_up':['body/eye/muzzle geometry', 'roomscale movement and collision',
                        'weapon damage/effects and physical headset/controller qualification']}
 result_path = os.environ.get('QSVR_PINNED_VR_RESULT')
+ramp_text = os.environ.get('QSVR_PINNED_VR_HEAD_RAMP_METERS_PER_ACTION', '0')
+try:
+    head_ramp_rate = float(ramp_text)
+except ValueError:
+    head_ramp_rate = None
+
+def float32(value): return struct.unpack('f', struct.pack('f', value))[0]
 
 def iv(expr): return int(gdb.parse_and_eval(expr))
 def fv(expr): return float(gdb.parse_and_eval(expr))
@@ -45,7 +53,15 @@ def inject():
                 iv('openxr_frame.focused') and iv('openxr_frame.devices[0].valid')):
             raise RuntimeError('focused stereo/HMD admission was lost')
         hmd = [[fv('openxr_frame.devices[0].matrix[%d][%d]' % (r,c)) for c in range(4)] for r in range(3)]
-        head = [hmd[r][3] for r in range(3)]
+        action_sample = actions + 1
+        ramp_steps = max(0, action_sample - 25)
+        ramp_offset = ramp_steps * head_ramp_rate
+        expected_hmd = [row[:] for row in hmd]
+        if ramp_offset:
+            expected_hmd[0][3] = float32(hmd[0][3] + ramp_offset)
+            gdb.execute('set openxr_frame.devices[0].matrix[0][3] = %.9g' % expected_hmd[0][3],
+                        to_string=True)
+        head = [expected_hmd[r][3] for r in range(3)]
         lines = []
         for hand in range(2):
             dev = hand + 1
@@ -69,9 +85,17 @@ def inject():
                 lines += ['set openxr_frame.hands[%d].stick[%d] = 0' % (hand,axis),
                           'set openxr_frame.hands[%d].pad[%d] = 0' % (hand,axis)]
         gdb.execute('\n'.join(lines), to_string=True)
-        if hmd != [[fv('openxr_frame.devices[0].matrix[%d][%d]' % (r,c)) for c in range(4)] for r in range(3)]:
-            raise RuntimeError('controller injection changed the runtime HMD pose')
+        observed_hmd = [[fv('openxr_frame.devices[0].matrix[%d][%d]' % (r,c)) for c in range(4)] for r in range(3)]
+        if observed_hmd != expected_hmd:
+            if head_ramp_rate == 0:
+                raise RuntimeError('controller injection changed the runtime HMD pose')
+            raise RuntimeError('HMD x ramp did not match its float32 written value')
         actions += 1
+        if ramp_steps:
+            result['head_ramp']['injected_action_samples'] += 1
+            result['head_ramp']['last_action_sample'] = action_sample
+            result['head_ramp']['last_offset_m'] = ramp_offset
+            result['head_ramp']['last_written_hmd_x_m'] = expected_hmd[0][3]
         if phase == 'neutral':
             neutral_actions += 1
         else:
@@ -144,6 +168,12 @@ def run_actions(count):
 
 try:
     if not result_path: raise RuntimeError('QSVR_PINNED_VR_RESULT is required')
+    if (head_ramp_rate is None or not math.isfinite(head_ramp_rate) or
+            head_ramp_rate < 0.0 or head_ramp_rate > 0.1):
+        raise RuntimeError('QSVR_PINNED_VR_HEAD_RAMP_METERS_PER_ACTION must be 0 or a finite positive value at most 0.1')
+    result['head_ramp'] = {'enabled':head_ramp_rate > 0.0,
+        'meters_per_action':head_ramp_rate, 'starts_after_action_samples':25,
+        'injected_action_samples':0}
     gdb.execute('run')
     if gdb.newest_frame().name() != 'Host_Frame' or not (
         iv('cls.signon') == 4 and iv('cl.protocol_qsvr') == 1 and
@@ -153,7 +183,9 @@ try:
     result['admission'] = {'signon':iv('cls.signon'), 'private_protocol':iv('cl.protocol_qsvr'),
         'stereo':bool(iv('vulkan_globals.stereo_active')), 'focused':bool(iv('openxr_frame.focused')),
         'runtime_hmd_valid':bool(iv('openxr_frame.devices[0].valid')),
-        'hmd_injection':'none; runtime-owned device 0 is checked unchanged at every action sample'}
+        'hmd_injection':('none; runtime-owned device 0 is checked unchanged at every action sample'
+            if head_ramp_rate == 0.0 else
+            'controlled x ramp; completed-frame HMD x is checked against its float32 written value')}
     gdb.execute('delete breakpoints', to_string=True)
     Frame('Host_Frame', internal=True)
     Actions('VR_InputCommands', internal=True)

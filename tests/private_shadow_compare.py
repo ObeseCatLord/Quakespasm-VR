@@ -102,7 +102,8 @@ def distance(a, b):
     return d
 
 
-def compare(client, server, ptol, vtol, jtol, ground_bit, require_jump):
+def compare(client, server, ptol, vtol, jtol, ground_bit, require_jump,
+            min_moving=30):
     stats = {"pairs": 0, "moving": 0, "ground_bad": [], "missing": [],
              "jump_pairs": 0, "pos_bad": 0, "vel_bad": 0, "jump_bad": 0}
     stats["pos"] = [0.0, None]
@@ -136,8 +137,9 @@ def compare(client, server, ptol, vtol, jtol, ground_bit, require_jump):
             len(stats["missing"]), stats["missing"][:8]))
     if stats["pairs"] < 100:
         errors.append("{} matched pairs; need at least 100".format(stats["pairs"]))
-    if stats["moving"] < 30:
-        errors.append("{} movement pairs; need at least 30".format(stats["moving"]))
+    if stats["moving"] < min_moving:
+        errors.append("{} movement pairs; need at least {}".format(
+            stats["moving"], min_moving))
     for key, label in (("pos_bad", "position"), ("vel_bad", "velocity"),
                        ("jump_bad", "jump")):
         if stats[key]:
@@ -199,6 +201,7 @@ def main():
     p.add_argument("--jump-tolerance", type=float, default=.001, metavar="SECONDS")
     p.add_argument("--onground-bit", type=lambda s: int(s, 0), default=512, metavar="MASK")
     p.add_argument("--require-jump", action="store_true")
+    p.add_argument("--min-moving", type=int, default=30, metavar="PAIRS")
     p.add_argument("--self-test", action="store_true")
     a = p.parse_args()
     if a.self_test:
@@ -206,14 +209,14 @@ def main():
         return 0
     if not a.client_jsonl or not a.server_gdb_log:
         p.error("client_jsonl and server_gdb_log are required")
-    if a.onground_bit <= 0 or any(not math.isfinite(t) or t < 0 for t in
+    if a.onground_bit <= 0 or a.min_moving < 1 or any(not math.isfinite(t) or t < 0 for t in
                                   (a.position_tolerance, a.velocity_tolerance,
                                    a.jump_tolerance)):
         p.error("bit mask must be positive and tolerances finite/nonnegative")
     try:
         stats, errors = compare(read_client(a.client_jsonl), read_server(a.server_gdb_log),
             a.position_tolerance, a.velocity_tolerance, a.jump_tolerance,
-            a.onground_bit, a.require_jump)
+            a.onground_bit, a.require_jump, a.min_moving)
     except (OSError, ValueError) as e:
         print("ERROR: {}".format(e), file=sys.stderr)
         return 2

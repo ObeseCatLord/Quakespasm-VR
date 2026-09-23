@@ -720,6 +720,7 @@ typedef struct
 
 #ifdef QSVR_SHADOW_TRACE
 #define CL_SHADOW_TRACE_MAX_RECORDS 4096
+#define CL_SHADOW_TRACE_MAX_ROOMSCALE 16.0f
 
 static int cl_shadow_trace_last_target = -1;
 static unsigned int cl_shadow_trace_records;
@@ -730,6 +731,24 @@ static qboolean CL_ShadowTraceEnabled (const char **path)
 {
 	*path = getenv ("QSVR_SHADOW_TRACE_FILE");
 	return *path && **path;
+}
+
+static qboolean CL_ShadowTraceCommandEligible (const usercmd_t *cmd)
+{
+	float horizontal;
+	int axis;
+
+	if (cmd->vr_gorilla.flags || cmd->vr_gorilla_motion.flags)
+		return false;
+	if (!cmd->vr_active)
+		return true;
+	for (axis = 0; axis < 3; axis++)
+		if (!isfinite (cmd->vr_roomscalemove[axis]))
+			return false;
+	horizontal = sqrtf (cmd->vr_roomscalemove[0] * cmd->vr_roomscalemove[0] +
+		cmd->vr_roomscalemove[1] * cmd->vr_roomscalemove[1]);
+	return isfinite (horizontal) && horizontal <= CL_SHADOW_TRACE_MAX_ROOMSCALE &&
+		fabsf (cmd->vr_roomscalemove[2]) <= CL_SHADOW_TRACE_MAX_ROOMSCALE;
 }
 
 static qboolean CL_ShadowTraceClaimTarget (int target)
@@ -883,8 +902,16 @@ static qboolean CL_ComputeReplayPlayerMovement (entity_t *ent, cl_replay_result_
 		if (target_sequence < startseq || target_sequence >= cl.movemessages)
 			return false;
 		for (seq = startseq; seq <= target_sequence; seq++)
-			if (cl.movecmds[seq & MOVECMDS_MASK].vr_active)
+		{
+			const usercmd_t *cmd = &cl.movecmds[seq & MOVECMDS_MASK];
+#ifdef QSVR_SHADOW_TRACE
+			if (!CL_ShadowTraceCommandEligible (cmd))
 				return false;
+#else
+			if (cmd->vr_active)
+				return false;
+#endif
+		}
 		endseq = target_sequence + 1;
 		saved_pmove = pmove;
 		saved_movevars = movevars;

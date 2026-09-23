@@ -629,13 +629,21 @@ matching `XR_RUNTIME_JSON`, private XDG directories, and
 `-openxr -nosound -window -width 640 -height 480 -basedir <migrated-profile>
 +connect 127.0.0.1:<port> qsvr1` under `timeout --signal=TERM 130s gdb -nx
 --batch -x tests/pinned_vr_gameplay_smoke.gdb --args ...`. The probe injects
-only controller pose/actions into the completed OpenXR frame; the runtime HMD,
-native bindings, command builder, transport and dedicated server remain live.
-It requires focused stereo/private signon, the active shotgun's ten-unit muzzle
+only controller pose/actions by default; the runtime HMD, native bindings,
+command builder, transport and dedicated server remain live. For an optional
+roomscale parity diagnostic, set
+`QSVR_PINNED_VR_HEAD_RAMP_METERS_PER_ACTION` to a finite value in `(0, 0.1]`
+(for example `0.005`). It adds that many metres to completed-frame HMD x on
+each action sample after the first 25; the default `0` leaves the runtime HMD
+unchanged. The JSON result records the ramp and verifies the written HMD x at
+float precision. This changes the app's completed XR frame for the diagnostic;
+it does not move the physical headset or inject usercmd/server state, and does
+not establish real roomscale collision or geometry parity. The probe requires
+focused stereo/private signon, the active shotgun's ten-unit muzzle
 calibration, a finite relative VR attack command, a covering server ACK and
 authoritative shell consumption. It writes a compact JSON result and prints
 `QSVR_PINNED_VR_PASSED`. This does not establish muzzle world origin, damage,
-roomscale collision or visible weapon alignment.
+or visible weapon alignment.
 
 For the donor server's **pre-clamp** muzzle relation, run the server under
 `tests/pinned_vr_server_muzzle_smoke.gdb` with
