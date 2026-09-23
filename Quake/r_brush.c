@@ -24,8 +24,21 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 // r_brush.c: brush model rendering. renamed from r_surf.c
 
 #include "quakedef.h"
+#include "r_vrik_render.h"
 
 extern cvar_t gl_fullbrights, r_drawflat, r_gpulightmapupdate, r_rtshadows;
+
+static const r_vrik_prepared_palette_t *R_TLASVRIKPalette (const entity_t *e)
+{
+	const r_vrik_prepared_palette_t *prepared = R_VRIKRenderLookup (e);
+	const aliashdr_t *geometry = (e && e->blas_data) ? e->blas_data->geometry : NULL;
+	if (!prepared || !e || !e->model || !geometry || prepared->model != e->model || prepared->geometry != geometry ||
+		prepared->descriptor_set == VK_NULL_HANDLE || !prepared->palette_address ||
+		(geometry->poseverttype != PV_MD5 && geometry->poseverttype != PV_MD5_8) ||
+		geometry->numjoints <= 0 || prepared->joint_count != (uint32_t)geometry->numjoints)
+		return NULL;
+	return prepared;
+}
 
 int gl_lightmap_format;
 
@@ -2855,6 +2868,15 @@ void R_BuildTopLevelAccelerationStructure (void *unused)
 
 	cb_context_t *cbx = &vulkan_globals.primary_cb_contexts[PCBX_BUILD_ACCELERATION_STRUCTURES];
 
+	// Tracked players need ray-query geometry even when their efrags are offscreen.
+	if (cl.entities)
+	{
+		const int maxclients = q_min (q_max (0, cl.maxclients), cl.num_entities - 1);
+		for (int player = 1; player <= maxclients; ++player)
+			if (!cl.entities[player].blas_data && R_VRIKRenderLookup (&cl.entities[player]))
+				R_AllocateEntityBLASForVRIK (&cl.entities[player]);
+	}
+
 	// Update animated entity BLASes first
 	R_UpdateAnimatedBLASes (cbx);
 
@@ -2910,34 +2932,47 @@ void R_BuildTopLevelAccelerationStructure (void *unused)
 			continue;
 		}
 
-		vec3_t lerped_origin, lerped_angles;
-		if (is_alias)
-			R_GetEntityLerpedTransform (e, lerped_origin, lerped_angles);
+		float model_matrix[16];
+		const r_vrik_prepared_palette_t *tracked_palette = is_alias ? R_TLASVRIKPalette (e) : NULL;
+		if (tracked_palette)
+		{
+			aliashdr_t *hdr = e->blas_data->geometry;
+			lerpdata_t lerpdata;
+			R_SetupAliasFrame (e, hdr, &lerpdata);
+			R_GetEntityLerpedTransform (e, lerpdata.origin, lerpdata.angles);
+			if (R_AliasModelMatrix (e, hdr, &lerpdata, model_matrix) < 0)
+				continue;
+		}
 		else
 		{
-			VectorCopy (e->origin, lerped_origin);
-			VectorCopy (e->angles, lerped_angles);
-		}
-		lerped_angles[0] = -lerped_angles[0]; // quake bug
-
-		float model_matrix[16];
-		IdentityMatrix (model_matrix);
-		if (e->model != cl.worldmodel)
-			R_RotateForEntity (model_matrix, lerped_origin, lerped_angles, e->netstate.scale);
-
-		// For alias models, apply scale_origin translation and scale
-		if (is_alias)
-		{
-			aliashdr_t *hdr = (aliashdr_t *)Mod_Extradata (e->model);
-			if (hdr)
+			vec3_t lerped_origin, lerped_angles;
+			if (is_alias)
+				R_GetEntityLerpedTransform (e, lerped_origin, lerped_angles);
+			else
 			{
-				float translation_matrix[16];
-				TranslationMatrix (translation_matrix, hdr->scale_origin[0], hdr->scale_origin[1], hdr->scale_origin[2]);
-				MatrixMultiply (model_matrix, translation_matrix);
+				VectorCopy (e->origin, lerped_origin);
+				VectorCopy (e->angles, lerped_angles);
+			}
+			lerped_angles[0] = -lerped_angles[0]; // quake bug
 
-				float scale_matrix[16];
-				ScaleMatrix (scale_matrix, hdr->scale[0], hdr->scale[1], hdr->scale[2]);
-				MatrixMultiply (model_matrix, scale_matrix);
+			IdentityMatrix (model_matrix);
+			if (e->model != cl.worldmodel)
+				R_RotateForEntity (model_matrix, lerped_origin, lerped_angles, e->netstate.scale);
+
+			// For alias models, apply the skin-zero scale_origin translation and scale.
+			if (is_alias)
+			{
+				aliashdr_t *hdr = e->blas_data->geometry;
+				if (hdr)
+				{
+					float translation_matrix[16];
+					TranslationMatrix (translation_matrix, hdr->scale_origin[0], hdr->scale_origin[1], hdr->scale_origin[2]);
+					MatrixMultiply (model_matrix, translation_matrix);
+
+					float scale_matrix[16];
+					ScaleMatrix (scale_matrix, hdr->scale[0], hdr->scale[1], hdr->scale[2]);
+					MatrixMultiply (model_matrix, scale_matrix);
+				}
 			}
 		}
 

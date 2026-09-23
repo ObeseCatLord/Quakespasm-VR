@@ -24,6 +24,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 
 #include "quakedef.h"
 #include "gl_heap.h"
+#include "r_vrik_render.h"
 
 /*
 =================================================================
@@ -40,6 +41,39 @@ ALIAS MODEL DISPLAY LIST GENERATION
 
 extern cvar_t r_lerpmodels;
 extern cvar_t r_rtshadows;
+
+static const r_vrik_prepared_palette_t *R_EntityBLASPalette (const entity_t *e, const aliashdr_t *geometry)
+{
+	const r_vrik_prepared_palette_t *prepared = R_VRIKRenderLookup (e);
+	if (!prepared || !e || !e->model || !geometry || prepared->model != e->model || prepared->geometry != geometry ||
+		prepared->descriptor_set == VK_NULL_HANDLE || !prepared->palette_address ||
+		(geometry->poseverttype != PV_MD5 && geometry->poseverttype != PV_MD5_8) ||
+		geometry->numjoints <= 0 || prepared->joint_count != (uint32_t)geometry->numjoints ||
+		geometry->numverts_vbo <= 0 || geometry->numtris <= 0 || !geometry->vertex_buffer_address || !geometry->index_buffer_address)
+		return NULL;
+	return prepared;
+}
+
+static aliashdr_t *R_EntityBLASGeometry (entity_t *e, qboolean allow_tracked_palette)
+{
+	const r_vrik_prepared_palette_t *prepared;
+	aliashdr_t *selected;
+
+	if (!allow_tracked_palette)
+		return (aliashdr_t *)Mod_Extradata (e->model);
+
+	prepared = R_VRIKRenderLookup (e);
+	if (!prepared)
+		return (aliashdr_t *)Mod_Extradata (e->model);
+
+	selected = (aliashdr_t *)Mod_Extradata_CheckSkin (e->model, e->skinnum);
+	if (prepared->model != e->model || prepared->geometry != selected || !selected || selected->numjoints <= 0 ||
+		prepared->joint_count != (uint32_t)selected->numjoints || prepared->descriptor_set == VK_NULL_HANDLE)
+		return (aliashdr_t *)Mod_Extradata (e->model);
+
+	/* This palette would be visible; never substitute skin-zero shadow geometry. */
+	return R_EntityBLASPalette (e, selected) ? selected : NULL;
+}
 
 static glheap_t	 *mesh_buffer_heap;
 static SDL_Mutex *mesh_mutex;
@@ -720,7 +754,7 @@ Allocate acceleration structure for an animated entity model.
 Handles MDL (PV_QUAKE1), MD3 (PV_QUAKE3), and MD5 (PV_MD5) models.
 ================
 */
-void R_AllocateEntityBLAS (entity_t *e)
+static void R_AllocateEntityBLASInternal (entity_t *e, qboolean allow_tracked_palette)
 {
 	if (!vulkan_globals.ray_query || r_rtshadows.value <= 0)
 		return;
@@ -731,17 +765,33 @@ void R_AllocateEntityBLAS (entity_t *e)
 	if (modelflags & (EF_ROCKET | EF_GRENADE | EF_TRACER | EF_TRACER2 | EF_TRACER3))
 		return;
 
-	aliashdr_t *hdr = (aliashdr_t *)Mod_Extradata (e->model);
-	if (!hdr || hdr->numverts_vbo <= 0)
+	// Efrag collection precedes this frame's palette preparation. Keep an existing
+	// same-model BLAS until the post-preparation reconciliation pass.
+	if (!allow_tracked_palette && e->blas_data && e->blas_data->model == e->model)
 		return;
+
+	aliashdr_t *hdr = R_EntityBLASGeometry (e, allow_tracked_palette);
+	if (!hdr)
+	{
+		R_FreeEntityBLAS (e);
+		return;
+	}
+	if (hdr->numverts_vbo <= 0)
+	{
+		R_FreeEntityBLAS (e);
+		return;
+	}
 
 	// TODO: handle multi-surface models (nextsurface chain)
 	const uint32_t num_triangles = hdr->numtris;
 	if (num_triangles == 0)
+	{
+		R_FreeEntityBLAS (e);
 		return;
+	}
 
 	// Check if the entity switched models; enhanced model reloads free all entity BLASes explicitly.
-	if (e->blas_data && (e->blas_data->model != e->model))
+	if (e->blas_data && (e->blas_data->model != e->model || e->blas_data->geometry != hdr))
 		R_FreeEntityBLAS (e);
 
 	if (e->blas_data)
@@ -823,6 +873,19 @@ void R_AllocateEntityBLAS (entity_t *e)
 
 	// Track which model this BLAS was allocated for
 	e->blas_data->model = e->model;
+	e->blas_data->geometry = hdr;
+}
+
+void R_AllocateEntityBLAS (entity_t *e)
+{
+	/* Efrag collection runs before this frame's palette has been prepared. */
+	R_AllocateEntityBLASInternal (e, false);
+}
+
+void R_AllocateEntityBLASForVRIK (entity_t *e)
+{
+	/* Called only after GL_PrepareVRIKRenderTask in the frame graph. */
+	R_AllocateEntityBLASInternal (e, true);
 }
 
 /*
@@ -949,10 +1012,16 @@ void R_UpdateAnimatedBLASes (cb_context_t *cbx)
 				continue;
 			if ((e->alpha != ENTALPHA_DEFAULT) && (ENTALPHA_DECODE (e->alpha) < 1.0f))
 				continue;
-			aliashdr_t *hdr = (aliashdr_t *)Mod_Extradata (e->model);
+			const r_vrik_prepared_palette_t *prepared =
+				(i > 0 && i <= cl.maxclients) ? R_VRIKRenderLookup (e) : NULL;
+			if (prepared || e->blas_data->model != e->model || e->blas_data->geometry != (aliashdr_t *)Mod_Extradata (e->model))
+				R_AllocateEntityBLASForVRIK (e);
+			if (!e->blas_data || e->blas_data->blas == VK_NULL_HANDLE)
+				continue;
+			aliashdr_t *hdr = (aliashdr_t *)e->blas_data->geometry;
 			if (!hdr || hdr->numverts_vbo == 0)
 				continue;
-			if (e->blas_data->model != e->model)
+			if (e->blas_data->model != e->model || !e->blas_data->geometry)
 				continue;
 
 			const VkDeviceSize vertex_size = hdr->numverts_vbo * sizeof (float) * 3;
@@ -986,7 +1055,7 @@ void R_UpdateAnimatedBLASes (cb_context_t *cbx)
 			if ((e->alpha != ENTALPHA_DEFAULT) && (ENTALPHA_DECODE (e->alpha) < 1.0f))
 				continue;
 
-			aliashdr_t *hdr = (aliashdr_t *)Mod_Extradata (e->model);
+			aliashdr_t *hdr = (aliashdr_t *)e->blas_data->geometry;
 			if (!hdr || hdr->numverts_vbo == 0)
 				continue;
 
@@ -1000,6 +1069,12 @@ void R_UpdateAnimatedBLASes (cb_context_t *cbx)
 			int	  pose1 = lerpdata.pose1;
 			int	  pose2 = lerpdata.pose2;
 			float blend = lerpdata.blend;
+			const r_vrik_prepared_palette_t *tracked_palette = R_EntityBLASPalette (e, hdr);
+			if (tracked_palette)
+			{
+				pose1 = pose2 = 0;
+				blend = 0.0f;
+			}
 
 			// Always use refit after first build. We trace few rays and full updates are expensive.
 			qboolean use_update = !e->blas_data->needs_initial_build;
@@ -1029,10 +1104,10 @@ void R_UpdateAnimatedBLASes (cb_context_t *cbx)
 				// MD5 skinning
 				skinning_push_constants_t pc = {
 					.input_address = hdr->vertex_buffer_address,
-					.joints_address = hdr->joints_buffer_address,
+					.joints_address = tracked_palette ? tracked_palette->palette_address : hdr->joints_buffer_address,
 					.output_address = vertex_output_address,
-					.joints_offset0 = pose1 * hdr->numjoints,
-					.joints_offset1 = pose2 * hdr->numjoints,
+					.joints_offset0 = tracked_palette ? 0 : pose1 * hdr->numjoints,
+					.joints_offset1 = tracked_palette ? 0 : pose2 * hdr->numjoints,
 					.output_offset = 0, // output starts at output_address
 					.num_verts = hdr->numverts_vbo,
 					.blend_factor = blend,

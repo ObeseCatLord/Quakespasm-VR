@@ -11,6 +11,7 @@ typedef struct r_vrik_candidate_s
 {
 	const entity_t *entity;
 	const qmodel_t *model;
+	const aliashdr_t *geometry;
 	md5_skeleton_view_t skeleton;
 	lerpdata_t lerpdata;
 	vrik_pose_t pose;
@@ -67,6 +68,7 @@ static qboolean R_VRIKRenderCandidate (const entity_t *entity, r_vrik_candidate_
 
 	candidate->entity = entity;
 	candidate->model = entity->model;
+	candidate->geometry = header;
 	candidate->joint_count = (uint32_t)output.joint_count;
 	return candidate->joint_count != 0;
 }
@@ -162,6 +164,7 @@ void R_VRIKRenderPrepareFrame (uint32_t frame_slot)
 		r_vrik_prepared_palette_t *record = &prepared[frame_slot][prepared_count[frame_slot]++];
 		record->entity = candidate->entity;
 		record->model = candidate->model;
+		record->geometry = candidate->geometry;
 		record->descriptor_set = palette_descriptor_sets[frame_slot];
 		record->joint_offset = (uint32_t)joint_cursor;
 		record->joint_count = candidate->joint_count;

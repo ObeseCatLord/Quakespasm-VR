@@ -59,6 +59,7 @@ typedef struct entity_blas_s
 	VkDeviceSize			   build_scratch_size;
 	VkDeviceSize			   update_scratch_size;
 	struct qmodel_s			  *model;
+	struct aliashdr_s		  *geometry;
 	qboolean				   needs_initial_build;
 } entity_blas_t;
 

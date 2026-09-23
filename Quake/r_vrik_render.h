@@ -8,6 +8,8 @@ typedef struct r_vrik_prepared_palette_s
 {
 	const entity_t *entity;
 	const qmodel_t *model;
+	/* Root geometry selected by Mod_Extradata_CheckSkin for this frame. */
+	const aliashdr_t *geometry;
 	VkDescriptorSet descriptor_set;
 	/* Joint index relative to descriptor_set's aggregate palette slice. */
 	uint32_t joint_offset;

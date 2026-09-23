@@ -109,7 +109,8 @@ Based on code by MH from RMQEngine
 =============
 */
 static void GL_DrawAliasFrame (
-	cb_context_t *cbx, entity_t *e, aliashdr_t *paliashdr, lerpdata_t lerpdata, gltexture_t *tx, gltexture_t *fb, float model_matrix[16], float entity_alpha,
+	cb_context_t *cbx, entity_t *e, aliashdr_t *paliashdr, const aliashdr_t *selected_geometry, lerpdata_t lerpdata, gltexture_t *tx, gltexture_t *fb,
+	float model_matrix[16], float entity_alpha,
 	qboolean alphatest, vec3_t shadevector, vec3_t lightcolor, int showtris, qboolean opposite_front_face)
 {
 	vulkan_pipeline_t pipeline;
@@ -206,7 +207,8 @@ static void GL_DrawAliasFrame (
 	case PV_MD5_8:
 	{
 		const r_vrik_prepared_palette_t *prepared = R_VRIKRenderLookup (e);
-		if (prepared && prepared->model == e->model && prepared->joint_count == (uint32_t)paliashdr->numjoints &&
+		if (prepared && prepared->model == e->model && prepared->geometry == selected_geometry &&
+			prepared->joint_count == (uint32_t)paliashdr->numjoints &&
 			prepared->descriptor_set != VK_NULL_HANDLE)
 			tracked_palette = prepared;
 
@@ -577,7 +579,7 @@ R_DrawAliasModel -- johnfitz -- almost completely rewritten
 =================
 */
 /* -1 suppresses an invalid transform; 0/1 select the front-face winding. */
-static int R_AliasModelMatrix (entity_t *e, const aliashdr_t *paliashdr, lerpdata_t *lerpdata, float model_matrix[16])
+int R_AliasModelMatrix (entity_t *e, const aliashdr_t *paliashdr, lerpdata_t *lerpdata, float model_matrix[16])
 {
 	if (R_IsVRViewmodel (e))
 	{
@@ -791,7 +793,7 @@ void R_DrawAliasModel (cb_context_t *cbx, entity_t *e, int *aliaspolys)
 		//
 		// draw it
 		//
-		GL_DrawAliasFrame (cbx, e, hdr, lerpdata, tx, fb, model_matrix, entalpha, alphatest, shadevector, lightcolor, false, opposite_front_face);
+		GL_DrawAliasFrame (cbx, e, hdr, paliashdr, lerpdata, tx, fb, model_matrix, entalpha, alphatest, shadevector, lightcolor, false, opposite_front_face);
 
 		// update polycounts
 		*aliaspolys += hdr->numtris;
@@ -844,7 +846,8 @@ void R_DrawAliasModel_ShowTris (cb_context_t *cbx, entity_t *e)
 	for (aliashdr_t *hdr = paliashdr; hdr != NULL; hdr = hdr->nextsurface)
 	{
 		GL_DrawAliasFrame (
-			cbx, e, hdr, lerpdata, nulltexture, nulltexture, model_matrix, 0.0f, false, shadevector, lightcolor, r_showtris.value, opposite_front_face);
+			cbx, e, hdr, paliashdr, lerpdata, nulltexture, nulltexture, model_matrix, 0.0f, false, shadevector, lightcolor, r_showtris.value,
+			opposite_front_face);
 	}
 }
 
@@ -867,7 +870,8 @@ void R_DrawAliasModel_ShowSkel (cb_context_t *cbx, entity_t *e)
 	R_SetupAliasFrame (e, paliashdr, &lerpdata);
 	R_GetEntityLerpedTransform (e, lerpdata.origin, lerpdata.angles);
 	tracked_palette = R_VRIKRenderLookup (e);
-	if (!tracked_palette || tracked_palette->model != e->model || tracked_palette->joint_count != (uint32_t)paliashdr->numjoints ||
+	if (!tracked_palette || tracked_palette->model != e->model || tracked_palette->geometry != paliashdr ||
+		tracked_palette->joint_count != (uint32_t)paliashdr->numjoints ||
 		tracked_palette->descriptor_set == VK_NULL_HANDLE)
 		tracked_palette = NULL;
 
