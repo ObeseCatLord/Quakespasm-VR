@@ -178,17 +178,18 @@ stereo-union culling and evaluate cheap per-joint influence bounds before
 considering CPU vertex skinning or disabling culling. These are implementation
 constraints, not completed behavior or measured speedups.
 
-One candidate bound avoids skinning every vertex on the CPU: retain joint-local
-influence extents at MD5 load time, transform them by the solved palette, and
-union them for stereo culling and ray-shadow eligibility. The current shader
-uses weighted local positions from the loader but separately normalized,
-quantized byte weights for translation (`MD5_BakeInfluences`,
-`Shaders/skinning.inc`). A plain convex-hull argument for unweighted joint
-points is therefore insufficient. The implementation must include a proven
-quantization/error margin or bound the shader's exact weighted contribution
-formula before it may reject an entity. Measure tightness on large maps; if
-the bound is too loose, keep the ordinary visible/shadow paths conservative
-while a tighter grouped-influence bound is developed.
+A candidate bound avoids CPU skinning every vertex each frame. The shader sums
+per-influence `R_j * q + t_j * w`, where `q` is the loader's stored weighted
+local position and `w` is its separately normalized quantized byte weight
+(`MD5_BakeInfluences`, `Shaders/skinning.inc`). At load time, group vertices
+and bound each group's **total** `q` and `w` contribution per joint (including
+zero when a vertex does not use that joint). Each frame, transform those
+per-joint intervals by the solved palette, add their AABBs by interval sum,
+then union the group AABBs. That construction encloses the shader's weighted
+sum in real arithmetic; add a conservative floating-point margin before using
+it to reject a visible entity or shadow caster. A simple union of individual
+joint boxes is insufficient. Measure bound tightness and CPU cost on large
+maps before keeping it; if it is too loose, preserve conservative rendering.
 
 ## Desktop and VR cross-play gate
 
