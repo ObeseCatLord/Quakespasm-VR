@@ -59,3 +59,24 @@ vkQuake currently does not emit `UF_SOLID`, so selecting the private profile
 must not be treated as proof of predicted collision parity. Keep prediction
 disabled in the first proof and add a scoped solid writer only if the owner
 snapshot or later prediction path actually needs it.
+
+## Roomscale collision: Astra senior disposition
+
+A second local `gpt-6-astra`/`max` review verified the inherited auxiliary
+roomscale call and vkQuake's walk/step/pusher path before critiquing the
+adapter. This is a design decision, not a collision-parity claim.
+
+| Recommendation | Disposition |
+| --- | --- |
+| Reuse vkQuake's walk/fly solver with an explicit callback policy through its step, unstick and push calls. | **Adopted for implementation.** Ordinary calls retain their current impact/trigger behavior. The auxiliary call suppresses QC callbacks but retains intermediate `SV_LinkEdict(false)` spatial updates. No copied solver or global suppression mode. |
+| Apply roomscale before the normal move-frame capture. | **Adopted.** Use a temporary auxiliary pusher frame, restore velocity/flags/groundentity, relink without triggers, then capture the normal frame at the new origin. Reusing the old frame after leaving a platform risks stale support. |
+| Use one accepted-command authority for remote and listen clients initially. | **Adopted with a parity caveat.** The donor's local direct tracking move runs later and has different callbacks/downward velocity. Measure local latency and behavior; a distinct local path needs evidence before addition. |
+| Require one impact/trigger event globally. | **Rejected.** Native vkQuake stepping, unsticking and force-retouch can legitimately call more than once. The invariant is zero **auxiliary** QC callbacks while preserving the normal pass. |
+| Fix the walk waterjump check's use of the last global `sv_player`. | **Adopted and implemented.** Read `ent->v.flags` for the entity being moved; otherwise another client's waterjump could affect stepping. |
+
+The next adapter proof covers floor and wall movement, accepted/rejected steps,
+startsolid, platform departure/boarding and fast pushers; frozen/inactive input
+must leave no tracking debt. Compare dedicated and listen sessions with donor
+remote/latest behavior, and count auxiliary versus normal QC callbacks.
+Auxiliary-only solid impacts and thin crossed triggers are explicit caveats to
+test, not reasons to add a new contact queue before evidence.

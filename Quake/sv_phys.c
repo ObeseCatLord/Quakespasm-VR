@@ -2126,7 +2126,7 @@ static void SV_WalkMove (edict_t *ent, const sv_client_move_frame_t *move_frame,
 	if (sv_nostep.value)
 		return;
 
-	if ((int)sv_player->v.flags & FL_WATERJUMP)
+	if ((int)ent->v.flags & FL_WATERJUMP)
 		return;
 
 	VectorCopy (ent->v.origin, nosteporg);
