@@ -89,6 +89,7 @@ typedef struct
 	VkImageView		   depth, msaa_color;
 	VkImageView		   oit_accum, oit_reveal;
 	VkImageView		   mboit_b0, mboit_moments, mboit_color;
+	VkImageView		   fragment_shading_rate;
 	uint32_t		   swapchain_count;
 	const VkImageView *swapchain;
 } render_framebuffer_images_t;

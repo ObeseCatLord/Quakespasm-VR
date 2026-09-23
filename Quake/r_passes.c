@@ -90,6 +90,7 @@ typedef struct
 	VkSampleCountFlagBits samples;
 	bool				  upscale;
 	bool stereo;
+	bool fragment_shading_rate;
 	frame_desc_t		  variants[MAIN_RENDER_PASS_VARIANT_COUNT];
 } frame_layout_t;
 
@@ -275,6 +276,7 @@ bool R_SetupRenderPasses (void)
 	pending_layout.color_format = vulkan_globals.color_format;
 	pending_layout.depth_format = vulkan_globals.depth_format;
 	pending_layout.stereo = vulkan_globals.stereo_active;
+	pending_layout.fragment_shading_rate = pending_layout.stereo && vulkan_globals.openxr_fragment_shading_rate_active;
 	pending_layout.swapchain_format = pending_layout.stereo ? vulkan_globals.stereo_color_format : vulkan_globals.swap_chain_format;
 	pending_layout.samples = vulkan_globals.sample_count;
 	pending_layout.upscale = vid.render_width != vid.width || vid.render_height != vid.height;
@@ -302,6 +304,128 @@ static void R_MarkAttachments (const VkSubpassDescription *subpass, bool *used)
 		used[subpass->pDepthStencilAttachment->attachment] = true;
 }
 
+static bool R_UseFragmentShadingRate (void)
+{
+	return current_layout.fragment_shading_rate;
+}
+
+static VkAttachmentReference2 R_CreateAttachmentReference2 (const VkAttachmentReference *reference, VkImageAspectFlags aspect_mask)
+{
+	return (VkAttachmentReference2){
+		.sType = VK_STRUCTURE_TYPE_ATTACHMENT_REFERENCE_2,
+		.attachment = reference->attachment,
+		.layout = reference->layout,
+		.aspectMask = reference->attachment == VK_ATTACHMENT_UNUSED ? 0
+										  : aspect_mask,
+	};
+}
+
+// Adapt the pass compiler's existing descriptions for the KHR render-pass2
+// path. Topology, attachment policy, references and dependencies stay shared.
+static VkResult R_CreateFragmentShadingRateRenderPass (
+	const VkAttachmentDescription *attachments, uint32_t attachment_count, const VkSubpassDescription *subpasses, uint32_t subpass_count,
+	const VkSubpassDependency *dependencies, uint32_t dependency_count, VkRenderPass *render_pass)
+{
+	VkAttachmentDescription2 attachment_descriptions2[MAX_PASS_ATTACHMENTS];
+	VkAttachmentReference2	 input_references2[MAX_PASS_SUBPASSES][MAX_PASS_ATTACHMENTS];
+	VkAttachmentReference2	 color_references2[MAX_PASS_SUBPASSES][MAX_PASS_ATTACHMENTS];
+	VkAttachmentReference2	 resolve_references2[MAX_PASS_SUBPASSES][MAX_PASS_ATTACHMENTS];
+	VkAttachmentReference2	 depth_references2[MAX_PASS_SUBPASSES];
+	VkAttachmentReference2	 shading_rate_references2[MAX_PASS_SUBPASSES];
+	VkFragmentShadingRateAttachmentInfoKHR shading_rate_infos[MAX_PASS_SUBPASSES];
+	VkSubpassDescription2	 subpasses2[MAX_PASS_SUBPASSES];
+	VkSubpassDependency2	 dependencies2[MAX_PASS_SUBPASSES * (MAX_PASS_SUBPASSES + 1) / 2];
+
+	if (!vulkan_globals.vk_create_render_pass2)
+		return VK_ERROR_EXTENSION_NOT_PRESENT;
+
+	for (uint32_t i = 0; i < attachment_count; ++i)
+	{
+		attachment_descriptions2[i] = (VkAttachmentDescription2){
+			.sType = VK_STRUCTURE_TYPE_ATTACHMENT_DESCRIPTION_2,
+			.flags = attachments[i].flags,
+			.format = attachments[i].format,
+			.samples = attachments[i].samples,
+			.loadOp = attachments[i].loadOp,
+			.storeOp = attachments[i].storeOp,
+			.stencilLoadOp = attachments[i].stencilLoadOp,
+			.stencilStoreOp = attachments[i].stencilStoreOp,
+			.initialLayout = attachments[i].initialLayout,
+			.finalLayout = attachments[i].finalLayout,
+		};
+	}
+
+	for (uint32_t i = 0; i < subpass_count; ++i)
+	{
+		for (uint32_t j = 0; j < subpasses[i].inputAttachmentCount; ++j)
+			input_references2[i][j] = R_CreateAttachmentReference2 (
+				&subpasses[i].pInputAttachments[j],
+				subpasses[i].pInputAttachments[j].layout == VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL ? VK_IMAGE_ASPECT_DEPTH_BIT
+																							 : VK_IMAGE_ASPECT_COLOR_BIT);
+		for (uint32_t j = 0; j < subpasses[i].colorAttachmentCount; ++j)
+			color_references2[i][j] = R_CreateAttachmentReference2 (&subpasses[i].pColorAttachments[j], VK_IMAGE_ASPECT_COLOR_BIT);
+		if (subpasses[i].pResolveAttachments)
+			for (uint32_t j = 0; j < subpasses[i].colorAttachmentCount; ++j)
+				resolve_references2[i][j] = R_CreateAttachmentReference2 (&subpasses[i].pResolveAttachments[j], VK_IMAGE_ASPECT_COLOR_BIT);
+		if (subpasses[i].pDepthStencilAttachment)
+			depth_references2[i] = R_CreateAttachmentReference2 (
+				subpasses[i].pDepthStencilAttachment, VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT);
+
+		shading_rate_references2[i] = (VkAttachmentReference2){
+			.sType = VK_STRUCTURE_TYPE_ATTACHMENT_REFERENCE_2,
+			.attachment = attachment_count - 1,
+			.layout = VK_IMAGE_LAYOUT_FRAGMENT_SHADING_RATE_ATTACHMENT_OPTIMAL_KHR,
+			.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+		};
+		shading_rate_infos[i] = (VkFragmentShadingRateAttachmentInfoKHR){
+			.sType = VK_STRUCTURE_TYPE_FRAGMENT_SHADING_RATE_ATTACHMENT_INFO_KHR,
+			.pFragmentShadingRateAttachment = &shading_rate_references2[i],
+			.shadingRateAttachmentTexelSize = vulkan_globals.openxr_fragment_shading_rate_texel_size,
+		};
+		subpasses2[i] = (VkSubpassDescription2){
+			.sType = VK_STRUCTURE_TYPE_SUBPASS_DESCRIPTION_2,
+			.pNext = &shading_rate_infos[i],
+			.flags = subpasses[i].flags,
+			.pipelineBindPoint = subpasses[i].pipelineBindPoint,
+			.viewMask = 3,
+			.inputAttachmentCount = subpasses[i].inputAttachmentCount,
+			.pInputAttachments = subpasses[i].inputAttachmentCount ? input_references2[i] : NULL,
+			.colorAttachmentCount = subpasses[i].colorAttachmentCount,
+			.pColorAttachments = subpasses[i].colorAttachmentCount ? color_references2[i] : NULL,
+			.pResolveAttachments = subpasses[i].pResolveAttachments ? resolve_references2[i] : NULL,
+			.pDepthStencilAttachment = subpasses[i].pDepthStencilAttachment ? &depth_references2[i] : NULL,
+			.preserveAttachmentCount = subpasses[i].preserveAttachmentCount,
+			.pPreserveAttachments = subpasses[i].pPreserveAttachments,
+		};
+	}
+
+	for (uint32_t i = 0; i < dependency_count; ++i)
+		dependencies2[i] = (VkSubpassDependency2){
+			.sType = VK_STRUCTURE_TYPE_SUBPASS_DEPENDENCY_2,
+			.srcSubpass = dependencies[i].srcSubpass,
+			.dstSubpass = dependencies[i].dstSubpass,
+			.srcStageMask = dependencies[i].srcStageMask,
+			.dstStageMask = dependencies[i].dstStageMask,
+			.srcAccessMask = dependencies[i].srcAccessMask,
+			.dstAccessMask = dependencies[i].dstAccessMask,
+			.dependencyFlags = dependencies[i].dependencyFlags,
+		};
+
+	const uint32_t correlated_view_mask = 3;
+	const VkRenderPassCreateInfo2 info = {
+		.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO_2,
+		.attachmentCount = attachment_count,
+		.pAttachments = attachment_descriptions2,
+		.subpassCount = subpass_count,
+		.pSubpasses = subpasses2,
+		.dependencyCount = dependency_count,
+		.pDependencies = dependencies2,
+		.correlatedViewMaskCount = 1,
+		.pCorrelatedViewMasks = &correlated_view_mask,
+	};
+	return vulkan_globals.vk_create_render_pass2 (vulkan_globals.device, &info, NULL, render_pass);
+}
+
 // Subpass types describe attachment use, not draw-stage identity or grouping.
 static void R_CreateGraphicsPasses (
 	main_render_pass_variant_t variant, frame_target_t target, const VkAttachmentDescription *attachments, uint32_t attachment_count,
@@ -309,7 +433,11 @@ static void R_CreateGraphicsPasses (
 {
 	const frame_desc_t *frame = &current_layout.variants[variant];
 	bool				used_before[MAX_PASS_ATTACHMENTS] = {0};
-	assert (attachment_count <= MAX_PASS_ATTACHMENTS);
+	const bool			use_fragment_shading_rate = target == FRAME_TARGET_SCENE && R_UseFragmentShadingRate ();
+	if (attachment_count > MAX_PASS_ATTACHMENTS)
+		Sys_Error ("Too many render pass attachments (%u)", attachment_count);
+	if (use_fragment_shading_rate && attachment_count == 0)
+		Sys_Error ("Fragment shading rate attachment is missing");
 
 	for (uint32_t pass_index = 0; pass_index < frame->pass_count; ++pass_index)
 	{
@@ -321,7 +449,7 @@ static void R_CreateGraphicsPasses (
 
 		VkAttachmentDescription pass_attachments[MAX_PASS_ATTACHMENTS];
 		memcpy (pass_attachments, attachments, attachment_count * sizeof (*attachments));
-		VkSubpassDescription subpasses[MAX_PASS_SUBPASSES];
+		VkSubpassDescription subpasses[MAX_PASS_SUBPASSES] = {0};
 		bool				 used_here[MAX_PASS_ATTACHMENTS] = {0};
 		bool				 continues = false;
 		for (uint32_t later = pass_index + 1; later < frame->pass_count; ++later)
@@ -340,7 +468,7 @@ static void R_CreateGraphicsPasses (
 				pass_attachments[i].loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
 				pass_attachments[i].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
 			}
-			if (continues)
+			if (continues && !(use_fragment_shading_rate && i == attachment_count - 1))
 			{
 				pass_attachments[i].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
 				pass_attachments[i].stencilStoreOp = VK_ATTACHMENT_STORE_OP_STORE;
@@ -369,25 +497,29 @@ static void R_CreateGraphicsPasses (
 		const VkAccessFlags graphics_access = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT |
 											  VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT |
 											  VK_ACCESS_INPUT_ATTACHMENT_READ_BIT | VK_ACCESS_SHADER_READ_BIT;
+		const VkPipelineStageFlags pass_stages = graphics_stages |
+			(use_fragment_shading_rate ? VK_PIPELINE_STAGE_FRAGMENT_SHADING_RATE_ATTACHMENT_BIT_KHR : 0);
+		const VkAccessFlags pass_access = graphics_access |
+			(use_fragment_shading_rate ? VK_ACCESS_FRAGMENT_SHADING_RATE_ATTACHMENT_READ_BIT_KHR : 0);
 		for (uint32_t dst = 0; dst < desc->subpass_count; ++dst)
 		{
 			dependencies[dependency_count++] = (VkSubpassDependency){
 				.srcSubpass = VK_SUBPASS_EXTERNAL,
 				.dstSubpass = dst,
 				.srcStageMask = VK_PIPELINE_STAGE_ALL_GRAPHICS_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT,
-				.dstStageMask = graphics_stages,
+				.dstStageMask = pass_stages,
 				.srcAccessMask = VK_ACCESS_MEMORY_WRITE_BIT,
-				.dstAccessMask = graphics_access,
+				.dstAccessMask = pass_access,
 			};
 			for (uint32_t src = 0; src < dst; ++src)
 			{
 				dependencies[dependency_count++] = (VkSubpassDependency){
 					.srcSubpass = src,
 					.dstSubpass = dst,
-					.srcStageMask = graphics_stages,
-					.dstStageMask = graphics_stages,
+					.srcStageMask = pass_stages,
+					.dstStageMask = pass_stages,
 					.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
-					.dstAccessMask = graphics_access,
+					.dstAccessMask = pass_access,
 					.dependencyFlags = VK_DEPENDENCY_BY_REGION_BIT,
 				};
 			}
@@ -407,17 +539,25 @@ static void R_CreateGraphicsPasses (
 				.correlationMaskCount = 1,
 				.pCorrelationMasks = &correlation_mask,
 			};
-			const VkRenderPassCreateInfo info = {
-				.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO,
-				.pNext = current_layout.stereo ? &multiview : NULL,
-				.attachmentCount = attachment_count,
-				.pAttachments = pass_attachments,
-				.subpassCount = desc->subpass_count,
-				.pSubpasses = subpasses,
-				.dependencyCount = dependency_count,
-				.pDependencies = dependencies,
-			};
-			const VkResult result = vkCreateRenderPass (vulkan_globals.device, &info, NULL, &physical->handles[stencil]);
+			VkResult result;
+			if (use_fragment_shading_rate)
+				result = R_CreateFragmentShadingRateRenderPass (
+					pass_attachments, attachment_count, subpasses, desc->subpass_count, dependencies, dependency_count,
+					&physical->handles[stencil]);
+			else
+			{
+				const VkRenderPassCreateInfo info = {
+					.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO,
+					.pNext = current_layout.stereo ? &multiview : NULL,
+					.attachmentCount = attachment_count,
+					.pAttachments = pass_attachments,
+					.subpassCount = desc->subpass_count,
+					.pSubpasses = subpasses,
+					.dependencyCount = dependency_count,
+					.pDependencies = dependencies,
+				};
+				result = vkCreateRenderPass (vulkan_globals.device, &info, NULL, &physical->handles[stencil]);
+			}
 			if (result != VK_SUCCESS)
 				Sys_Error ("Couldn't create render pass: %d", result);
 			GL_SetObjectName ((uint64_t)physical->handles[stencil], VK_OBJECT_TYPE_RENDER_PASS, target == FRAME_TARGET_UI ? "ui" : "scene");
@@ -504,6 +644,14 @@ void R_CreateFrameBuffers (const render_framebuffer_images_t *images)
 					attachments[next++] = images->mboit_moments;
 					attachments[next++] = images->mboit_color;
 				}
+				if (R_UseFragmentShadingRate ())
+				{
+					if (!images->fragment_shading_rate || next >= MAX_PASS_ATTACHMENTS)
+						Sys_Error ("Fragment shading rate framebuffer attachment is missing");
+					attachments[next++] = images->fragment_shading_rate;
+				}
+				if (next != physical->attachment_count)
+					Sys_Error ("Render pass framebuffer attachment count mismatch (%u != %u)", next, physical->attachment_count);
 			}
 			const VkFramebufferCreateInfo info = {
 				.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
@@ -874,10 +1022,11 @@ uint32_t R_RecordFrame (
 static void R_CreateScenePasses (main_render_pass_variant_t variant)
 {
 	const bool resolve = current_layout.samples != VK_SAMPLE_COUNT_1_BIT;
-	ZEROED_STRUCT_ARRAY (VkAttachmentDescription, attachment_descriptions, 8);
+	ZEROED_STRUCT_ARRAY (VkAttachmentDescription, attachment_descriptions, MAX_PASS_ATTACHMENTS);
 	const qboolean use_wboit = (variant == MAIN_RENDER_PASS_OIT);
 	const qboolean use_mboit = (variant == MAIN_RENDER_PASS_MBOIT);
 	const qboolean use_oit = use_wboit || use_mboit;
+	const bool use_fragment_shading_rate = R_UseFragmentShadingRate ();
 	const uint32_t scene_attachment_index = resolve ? 2 : 0;
 	const uint32_t accum_attachment_index = resolve ? 3 : 2;
 	const uint32_t reveal_attachment_index = resolve ? 4 : 3;
@@ -942,6 +1091,22 @@ static void R_CreateScenePasses (main_render_pass_variant_t variant)
 
 		attachment_descriptions[mboit_color_attachment_index] = attachment_descriptions[mboit_moments0_attachment_index];
 		attachment_descriptions[mboit_color_attachment_index].format = VK_FORMAT_R16G16B16A16_SFLOAT;
+	}
+
+	uint32_t attachment_count = use_mboit ? (resolve ? 6 : 5) : use_wboit ? (resolve ? 5 : 4) : (resolve ? 3 : 2);
+	if (use_fragment_shading_rate)
+	{
+		if (attachment_count >= MAX_PASS_ATTACHMENTS)
+			Sys_Error ("Too many scene render pass attachments for fragment shading rate");
+		VkAttachmentDescription *shading_rate = &attachment_descriptions[attachment_count++];
+		shading_rate->initialLayout = VK_IMAGE_LAYOUT_FRAGMENT_SHADING_RATE_ATTACHMENT_OPTIMAL_KHR;
+		shading_rate->finalLayout = VK_IMAGE_LAYOUT_FRAGMENT_SHADING_RATE_ATTACHMENT_OPTIMAL_KHR;
+		shading_rate->samples = VK_SAMPLE_COUNT_1_BIT;
+		shading_rate->format = VK_FORMAT_R8_UINT;
+		shading_rate->loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+		shading_rate->storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+		shading_rate->stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+		shading_rate->stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
 	}
 
 	VkAttachmentReference scene_color_attachment_reference = {
@@ -1069,12 +1234,7 @@ static void R_CreateScenePasses (main_render_pass_variant_t variant)
 	if (resolve)
 		subpass_descriptions[SUBPASS_FTE_PARTICLES].pResolveAttachments = &resolve_attachment_reference;
 
-	R_CreateGraphicsPasses (
-		variant, FRAME_TARGET_SCENE, attachment_descriptions,
-		use_mboit	? (resolve ? 6 : 5)
-		: use_wboit ? (resolve ? 5 : 4)
-					: (resolve ? 3 : 2),
-		subpass_descriptions);
+	R_CreateGraphicsPasses (variant, FRAME_TARGET_SCENE, attachment_descriptions, attachment_count, subpass_descriptions);
 }
 
 static void R_CreateUIPasses (main_render_pass_variant_t variant)
