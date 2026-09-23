@@ -15,7 +15,7 @@ Packet, transport, command, and prediction behavior:
 
 | ID | Behavior and reference evidence | Donor evidence | Disposition → destination owner | Acceptance case |
 |---|---|---|---|---|
-| NET-001 | NQ15/Fitz666/RMQ999 selection, extension intersection, per-peer limits: Q `sv_main:SV_Protocol_f/SV_SendServerinfo`. F deliberately fixes RMQ and bypasses negotiation. | `sv_main:1045,1437` retains selectable protocols and `cmd pext`. | **A** → `protocol/sv_main/cl_parse` | Ordinary donor peers retain their dialect; private peers use explicitly identified framing. |
+| NET-001 | NQ15/Fitz666/RMQ999 selection, extension intersection, per-peer limits: Q `sv_main:SV_Protocol_f/SV_SendServerinfo`. F deliberately fixes RMQ and bypasses negotiation. | `sv_main:1045,1437` retains selectable protocols and `cmd pext`. | **A** → `protocol/sv_main/cl_parse` | On one server, a desktop vkQuake client and an OpenXR VR client connect simultaneously, move, aim, fire, observe each other, change maps, and reconnect. Each peer keeps its negotiated public/private framing and optional VR fields. Desktop startup and play require no XR runtime. |
 | NET-002 | Private mandatory extensions: F `protocol:53–72`, `cl_parse:701`, `sv_main:1439`. **0x80 means EXPLICITCMDMSEC in F, INFOBLOBS in Q**; private svc57 also collides with DP entities. | `protocol:50–57` advertises replacement/PREDINFO only. | **A** → protocol negotiation/dispatch | A public QSS peer cannot accidentally enter private move/ACK decoding. |
 | NET-003 | Replacement deltas: baseline resets, removals, extended entity numbers, changed fields, visibility/customization and resend history. Q/F `SVFTE_CalcEntityDeltas`, `CLFTE_ReadDelta`. | Same named implementations in `sv_main/cl_parse`. | **D** → `sv_main/cl_parse` | Entity disappearance, reappearance and lost reset recover correctly. |
 | NET-004 | Split snapshots with transport-sequence ACKs and stat/entity retransmission. F additionally repeats a self-contained owner and movement state, preserves contiguous ACKs and bounds packet progress: `sv_main:2795,4191`; `cl_parse:1610`. | `SVFTE_WriteEntitiesToClient`, `SVFTE_Ack` provide baseline machinery, not F’s owner guarantee. | **A** → snapshot writer/parser | Losing one split packet does not orphan player state or stall pending entities. |
@@ -65,4 +65,16 @@ Important omissions: Q’s synthetic `pq_lag` sender, ProQuake team/ping metadat
 
 Ironwail’s networking candidate `sv_netsort` is already present in both fork and donor, so it does not qualify as new optional scope.
 
-This is a static behavior map, not exhaustive runtime parity. Bounded follow-ups are dialect/dispatch closure, newer M gameplay fixes missing from X, optional-candidate dependency validation, and eventual acceptance cases above. No edits, builds, tests, agents, remote actions or telemetry access were performed.
+This is a static behavior map, not exhaustive runtime parity. Bounded follow-ups are dialect/dispatch closure, newer M gameplay fixes missing from X, optional-candidate dependency validation, and eventual acceptance cases above.
+
+For the `2.0` mixed-client gate, `SV_SendServerinfo` selects the private QSVR
+profile per client only after its explicit offer and matching server settings;
+`SV_ReadClientMessage` dispatches private and ordinary movement per client.
+Those branches are architectural evidence, not a cross-play result. The gate
+requires one live session with desktop and VR peers together, including a
+public peer beside a private VR peer where the server permits both, then two
+private peers with only one sending VR samples. Check that desktop input and
+prediction remain ordinary, that the VR peer's hand/room-scale data reaches
+the same authoritative world, and that both see consistent damage, pickups,
+death/rejoin and map transitions. Neither a desktop-only private loopback nor
+a separate single-headset run proves this mixed case.
