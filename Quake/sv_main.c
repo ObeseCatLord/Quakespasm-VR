@@ -187,7 +187,7 @@ static unsigned int SVFTE_DeltaPredCalcBits (entity_state_t *from, entity_state_
 	return bits;
 }
 
-static unsigned int MSGFTE_DeltaCalcBits (entity_state_t *from, entity_state_t *to)
+static unsigned int MSGFTE_DeltaCalcBits (entity_state_t *from, entity_state_t *to, qboolean private_qsvr)
 {
 	unsigned int bits = 0;
 
@@ -231,6 +231,8 @@ static unsigned int MSGFTE_DeltaCalcBits (entity_state_t *from, entity_state_t *
 		bits |= UF_EFFECTS;
 	if (to->eflags != from->eflags)
 		bits |= UF_FLAGS;
+	if (private_qsvr && to->solidsize != from->solidsize)
+		bits |= UF_SOLID;
 	if (to->scale != from->scale)
 		bits |= UF_SCALE;
 	if (to->alpha != from->alpha)
@@ -249,7 +251,27 @@ static unsigned int MSGFTE_DeltaCalcBits (entity_state_t *from, entity_state_t *
 	return bits;
 }
 
-static void MSGFTE_WriteEntityUpdate (unsigned int bits, entity_state_t *state, sizebuf_t *msg, unsigned int pext2, unsigned int protocolflags)
+static void MSG_WriteSize16 (sizebuf_t *msg, unsigned int solid)
+{
+	if (solid == ES_SOLID_BSP)
+		MSG_WriteShort (msg, ES_SOLID_BSP);
+	else if (solid)
+	{
+		int x = solid & 255;
+		int zd = (solid >> 8) & 255;
+		int zu = ((solid >> 16) & 65535) - 32768;
+		MSG_WriteShort (msg, ((x >> 3) << 0) | (zd >> 3) << 5 | (((zu + 32) >> 3) << 10));
+	}
+	else
+		MSG_WriteShort (msg, 0);
+}
+
+static qboolean MSG_SolidSizeHasExtraBits (unsigned int solid)
+{
+	return (solid & 0x0707) || (((solid >> 16) - 32768 + 32) & 7);
+}
+
+static void MSGFTE_WriteEntityUpdate (unsigned int bits, entity_state_t *state, sizebuf_t *msg, unsigned int pext2, unsigned int protocolflags, qboolean private_qsvr)
 {
 	unsigned int predbits = 0;
 	if (bits & UF_MOVETYPE)
@@ -392,6 +414,32 @@ static void MSGFTE_WriteEntityUpdate (unsigned int bits, entity_state_t *state, 
 	}
 	if (bits & UF_COLORMAP)
 		MSG_WriteByte (msg, state->colormap & 0xff);
+	if (bits & UF_SOLID)
+	{
+		if (private_qsvr)
+		{
+			if (!state->solidsize)
+				MSG_WriteByte (msg, 0);
+			else if (state->solidsize == ES_SOLID_BSP)
+				MSG_WriteByte (msg, 1);
+			else if (state->solidsize == ES_SOLID_HULL1)
+				MSG_WriteByte (msg, 2);
+			else if (state->solidsize == ES_SOLID_HULL2)
+				MSG_WriteByte (msg, 3);
+			else if (!MSG_SolidSizeHasExtraBits (state->solidsize))
+			{
+				MSG_WriteByte (msg, 16);
+				MSG_WriteSize16 (msg, state->solidsize);
+			}
+			else
+			{
+				MSG_WriteByte (msg, 32);
+				MSG_WriteLong (msg, state->solidsize);
+			}
+		}
+		else
+			MSG_WriteSize16 (msg, state->solidsize);
+	}
 	if (bits & UF_FLAGS)
 		MSG_WriteByte (msg, state->eflags);
 
@@ -688,7 +736,7 @@ static void SVFTE_CalcEntityDeltas (client_t *client)
 			// its flagged for removing, that's weird... must be some killer packetloss. turn that back into a reset or something
 			if (client->pendingentities_bits[news->num] & UF_REMOVE)
 				client->pendingentities_bits[news->num] = (client->pendingentities_bits[news->num] & ~UF_REMOVE) | UF_RESET2;
-			client->pendingentities_bits[news->num] |= MSGFTE_DeltaCalcBits (&olds->state, &news->state);
+			client->pendingentities_bits[news->num] |= MSGFTE_DeltaCalcBits (&olds->state, &news->state, client->protocol_qsvr == QSVR_PROTOCOL_PINNED);
 			news++;
 			olds++;
 		}
@@ -770,7 +818,7 @@ static void SVFTE_WriteEntitiesToClient (client_t *client, sizebuf_t *msg, size_
 				{
 					/*if reset2, then this is the second packet sent to the client and should have a forced reset (but which isn't tracked)*/
 					logbits = entbits & ~(UF_RESET | UF_RESET2);
-					netbits = UF_RESET | MSGFTE_DeltaCalcBits (&EDICT_NUM (entnum)->baseline, &state->state);
+					netbits = UF_RESET | MSGFTE_DeltaCalcBits (&EDICT_NUM (entnum)->baseline, &state->state, client->protocol_qsvr == QSVR_PROTOCOL_PINNED);
 					//					Con_Printf("RESET2 %u @ %i\n", (int)entnum, sequence);
 				}
 				else if (entbits & UF_RESET)
@@ -778,7 +826,7 @@ static void SVFTE_WriteEntitiesToClient (client_t *client, sizebuf_t *msg, size_
 					/*flag the entity for the next packet, so we always get two resets when it appears, to reduce the effects of packetloss on seeing rockets
 					 * etc*/
 					client->pendingentities_bits[entnum] = UF_RESET2;
-					netbits = UF_RESET | MSGFTE_DeltaCalcBits (&EDICT_NUM (entnum)->baseline, &state->state);
+					netbits = UF_RESET | MSGFTE_DeltaCalcBits (&EDICT_NUM (entnum)->baseline, &state->state, client->protocol_qsvr == QSVR_PROTOCOL_PINNED);
 					logbits = UF_RESET;
 					//					Con_Printf("RESET %u @ %i\n", (int)entnum, sequence);
 				}
@@ -793,7 +841,7 @@ static void SVFTE_WriteEntitiesToClient (client_t *client, sizebuf_t *msg, size_
 				else
 					MSG_WriteShort (msg, entnum);
 				//				SV_EmitDeltaEntIndex(msg, j, false, true);
-				MSGFTE_WriteEntityUpdate (netbits, &state->state, msg, client->protocol_pext2, sv.protocolflags);
+				MSGFTE_WriteEntityUpdate (netbits, &state->state, msg, client->protocol_pext2, sv.protocolflags, client->protocol_qsvr == QSVR_PROTOCOL_PINNED);
 			}
 		}
 
@@ -870,6 +918,7 @@ void SV_BuildEntityState (edict_t *ent, entity_state_t *state)
 	else
 		state->tagindex = 0;
 	state->effects = (int)ent->v.effects & sv.effectsmask;
+	state->solidsize = ES_SOLID_NOT;
 	if ((val = GetEdictFieldValue (ent, qcvm->extfields.modelflags)))
 		state->effects |= ((unsigned int)val->_float) << 24;
 	if (ent->v.movetype == MOVETYPE_STEP)
@@ -957,6 +1006,21 @@ static void SVFTE_BuildSnapshotForClient (client_t *client)
 
 		ents[numents].num = e;
 		SV_BuildEntityState (ent, &ents[numents].state);
+		if (client->protocol_qsvr == QSVR_PROTOCOL_PINNED)
+		{
+			if (client->edict && ent->v.owner == EDICT_TO_PROG (client->edict))
+				ents[numents].state.solidsize = ES_SOLID_NOT;
+			else if (ent->v.solid == SOLID_BSP || (ent->v.skin < 0 && ent->v.modelindex))
+				ents[numents].state.solidsize = ES_SOLID_BSP;
+			else if (ent->v.solid == SOLID_BBOX || ent->v.solid == SOLID_SLIDEBOX || ent->v.skin < 0)
+			{
+				ents[numents].state.solidsize = CLAMP (0, (int)-ent->v.mins[0], 255);
+				ents[numents].state.solidsize |= CLAMP (0, (int)-ent->v.mins[2], 255) << 8;
+				ents[numents].state.solidsize |= CLAMP (0, (int)(ent->v.maxs[2] + 32768), 65535) << 16;
+				if (ents[numents].state.solidsize == 0x80000000u)
+					ents[numents].state.solidsize = ES_SOLID_NOT;
+			}
+		}
 		if ((unsigned int)ents[numents].state.modelindex >= client->limit_models)
 			ents[numents].state.modelindex = 0;
 		if (ent == clent) // add velocity, but we only care for the local player (should add prediction for other entities some time too).
@@ -993,7 +1057,7 @@ void MSG_WriteStaticOrBaseLine (sizebuf_t *buf, int idx, entity_state_t *state, 
 		}
 		else
 			MSG_WriteByte (buf, svcfte_spawnstatic2);
-		MSGFTE_WriteEntityUpdate (MSGFTE_DeltaCalcBits (&nullentitystate, state), state, buf, protocol_pext2, protocolflags);
+		MSGFTE_WriteEntityUpdate (MSGFTE_DeltaCalcBits (&nullentitystate, state, false), state, buf, protocol_pext2, protocolflags, false);
 	}
 	else
 	{

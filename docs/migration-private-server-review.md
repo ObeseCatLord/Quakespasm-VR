@@ -105,3 +105,16 @@ Think and PostThink. Also change player size/model during a displaced PostThink
 and immediately verify collision bounds, area membership and visibility leaves
 without extra trigger callbacks. These checks should run against the pinned
 donor where its behavior is the reference.
+
+## Private snapshot collision bounds checkpoint
+
+The private replacement-snapshot writer now derives `UF_SOLID` from the
+authoritative edict bounds and uses the pinned donor's tagged solid encoding.
+The explicit `QSVR` profile gates both the delta bit and the tagged payload;
+public vkQuake snapshots and baselines retain their existing layout. Owned
+entities are non-solid to their owner, as in the donor. This supplies the
+client collision collector with an eventual server source, but the profile
+is still inactive and no live writer/decoder roundtrip has been qualified.
+Before enabling prediction, verify moving and changing solid boxes, BSPs,
+owner exclusion, packet loss and reset baselines through a live private
+snapshot, alongside the accepted-command owner and ACK association.
