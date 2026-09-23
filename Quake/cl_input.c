@@ -26,6 +26,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 
 #include "quakedef.h"
 #include "vr_input.h"
+#include "vrik_codec.h"
 
 extern cvar_t cl_maxpitch; // johnfitz -- variable pitch clamping
 extern cvar_t cl_minpitch; // johnfitz -- variable pitch clamping
@@ -740,6 +741,80 @@ static unsigned char CL_SampleMoveMsec (void)
 	return (unsigned char)msec;
 }
 
+/* VRIK is a newest-pose message, independent of QSVR movement admission and
+ * command history. Encode and reserve the whole framed body before touching
+ * the packet or advancing sender state. */
+static void CL_AppendVRIKPose (sizebuf_t *buf)
+{
+	vrik_codec_pose_t pose;
+	vrik_v2_pose_t pose_v2;
+	uint8_t encoded[VRIK_V3_MAX_BODY_BYTES];
+	size_t encoded_bytes = 0, available;
+	qboolean v3, active;
+	uint16_t sequence;
+	int start;
+
+	if (!buf || !buf->data || !cl.vrik_protocol_offered || !cl.vrik_cap_sent ||
+		(cls.state != ca_connected) || cls.demoplayback || cls.signon != SIGNONS ||
+		realtime < cl.vrik_next_send_time ||
+		(cl.vrik_protocol_version != VRIK_PROTOCOL_LEGACY_VERSION &&
+		 cl.vrik_protocol_version != VRIK_PROTOCOL_VERSION))
+		return;
+
+	if (!VR_InputBuildVRIKPose (&pose))
+	{
+		if (!cl.vrik_last_sent_active)
+			return;
+		/* Publish one canonical clear after tracking or its context is lost. */
+		memset (&pose, 0, sizeof (pose));
+	}
+	active = (pose.flags & VRIK_V3_FLAG_ACTIVE) != 0;
+	if (!active && !cl.vrik_last_sent_active)
+		return;
+
+	sequence = cl.vrik_next_sequence;
+	pose.sequence = sequence;
+	if (vrik_normalized_to_v2 (&pose, &pose_v2) != VRIK_CODEC_OK ||
+		vrik_v2_validate_legacy_pose (&pose_v2) != VRIK_CODEC_OK)
+		return;
+
+	v3 = cl.vrik_protocol_version == VRIK_PROTOCOL_VERSION;
+	if (v3)
+	{
+		if (vrik_v3_encode (&pose, encoded, sizeof (encoded), &encoded_bytes) != VRIK_CODEC_OK ||
+			encoded_bytes > VRIK_V3_MAX_BODY_BYTES)
+			return;
+		available = 2 + encoded_bytes;
+	}
+	else
+	{
+		if (vrik_v2_encode (&pose_v2, encoded, sizeof (encoded), &encoded_bytes) != VRIK_CODEC_OK ||
+			encoded_bytes != VRIK_V2_BODY_BYTES)
+			return;
+		available = 1 + encoded_bytes;
+	}
+
+	if (buf->cursize < 0 || buf->maxsize < 0 || buf->cursize > buf->maxsize ||
+		available > (size_t)(buf->maxsize - buf->cursize))
+		return;
+
+	start = buf->cursize;
+	buf->data[buf->cursize++] = clc_vrikpose;
+	if (v3)
+		buf->data[buf->cursize++] = (byte)encoded_bytes;
+	memcpy (buf->data + buf->cursize, encoded, encoded_bytes);
+	buf->cursize += (int)encoded_bytes;
+	if ((size_t)(buf->cursize - start) != available)
+	{
+		buf->cursize = start;
+		return;
+	}
+
+	cl.vrik_next_sequence++;
+	cl.vrik_next_send_time = realtime + 0.05;
+	cl.vrik_last_sent_active = active;
+}
+
 static void CL_SendPrivateMove (const usercmd_t *cmd)
 {
 	byte data[DATAGRAM_MTU];
@@ -780,6 +855,12 @@ static void CL_SendPrivateMove (const usercmd_t *cmd)
 	{
 		cl.movecmds[seq & MOVECMDS_MASK].seconds = 0;
 		CL_FlushAckFrames ();
+		CL_AppendVRIKPose (&buf);
+		if (buf.cursize && NET_SendUnreliableMessage (cls.netcon, &buf) == -1)
+		{
+			Con_Printf ("CL_SendMove: lost server connection\n");
+			CL_Disconnect ();
+		}
 		return;
 	}
 	if (cl.vr_gorilla_supported && cl.vr_gorilla_allowed)
@@ -800,6 +881,7 @@ static void CL_SendPrivateMove (const usercmd_t *cmd)
 	}
 	// Movement precedes transport ACKs; retain any ACKs that do not fit.
 	CL_WriteAckFrames (&buf);
+	CL_AppendVRIKPose (&buf);
 	if (!buf.cursize)
 		return;
 	if (NET_SendUnreliableMessage (cls.netcon, &buf) == -1)
@@ -889,6 +971,7 @@ void CL_SendMove (const usercmd_t *cmd)
 		if (++cl.movemessages <= 2)
 			buf.cursize = dump;
 	}
+	CL_AppendVRIKPose (&buf);
 
 	// fixme: nops if we're still connecting, or something.
 

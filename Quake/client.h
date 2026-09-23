@@ -303,6 +303,10 @@ typedef struct
 	qboolean vrik_protocol_offered;
 	qboolean vrik_cap_sent;
 	unsigned char vrik_protocol_version;
+	/* Newest-pose sender state shares the current client-state lifetime. */
+	unsigned short vrik_next_sequence;
+	double vrik_next_send_time;
+	qboolean vrik_last_sent_active;
 
 	qboolean protocol_particles;
 	struct

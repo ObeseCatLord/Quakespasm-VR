@@ -507,6 +507,56 @@ qboolean R_TrackedHeadEyeHeight (float base_viewheight, float *out_height)
 	return true;
 }
 
+/* Return the renderer's canonical horizontal HMD offset from the player
+ * body, in Quake world axes. CL_SendMove consumes the retained completed XR
+ * frame before the next render starts, so initialize/rebase from that same
+ * sample just as R_PrepareStereoFrame does. */
+qboolean R_TrackedHeadBodyOffset (vec3_t world_offset)
+{
+	const vrxr_frame_t *frame = GL_OpenXRFrame ();
+	const vrxr_device_t *head;
+	const float (*matrix)[4];
+	float tracking_yaw, units_per_metre;
+	vec3_t local, forward, right, up, result;
+
+	if (world_offset)
+		VectorCopy (vec3_origin, world_offset);
+	if (!world_offset || !frame || !frame->should_render || !frame->focused)
+		return false;
+
+	head = &frame->devices[0];
+	if (!head->valid || !head->tracked || head->kind != VRXR_DEVICE_HEAD ||
+		head->hand != -1 || !R_XRPoseIsFinite (head->matrix))
+		return false;
+
+	/* This is the same lazy reference initialization used by stereo rendering;
+	 * frame->reference_changed rebases both paths from this retained sample. */
+	R_InitializeStereoReference (frame);
+	if (!stereo_have_reference || !V_TrackedMappingYaw (&tracking_yaw) ||
+		!isfinite (tracking_yaw))
+		return false;
+	units_per_metre = V_VRUnitsPerMetre ();
+	if (!isfinite (units_per_metre) || units_per_metre <= 0.0f)
+		return false;
+
+	matrix = head->matrix;
+	for (int axis = 0; axis < 3; ++axis)
+		local[axis] = (matrix[axis][3] - stereo_reference_position[axis]) * units_per_metre;
+	if (V_TrackedBodyOwnsRoomscale ())
+		local[0] = local[2] = 0.0f;
+
+	{
+		vec3_t yaw_angles = {0.0f, tracking_yaw, 0.0f};
+		AngleVectors (yaw_angles, forward, right, up);
+	}
+	R_XRVectorToWorld (local, forward, right, up, result);
+	if (!R_VectorIsFinite (result))
+		return false;
+	result[2] = 0.0f;
+	VectorCopy (result, world_offset);
+	return true;
+}
+
 void R_PrepareStereoFrame (void)
 {
 	const vrxr_frame_t *frame = GL_OpenXRFrame ();

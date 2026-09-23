@@ -25,6 +25,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 
 #include "protocol.h"
 #include "vr_openxr.h"
+#include "vrik_codec.h"
 
 enum
 {
@@ -43,5 +44,6 @@ void VR_InputTriggerHaptic (int logical_role, float duration_seconds, float ampl
 qboolean VR_InputSuppressUncalibratedAttack (const usercmd_t *cmd);
 void VR_InputInvalidateMotion (void);
 void VR_InputClear (void);
+qboolean VR_InputBuildVRIKPose (vrik_codec_pose_t *pose);
 
 #endif /* QUAKE_VR_INPUT_H */

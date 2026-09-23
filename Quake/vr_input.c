@@ -73,6 +73,7 @@ static cvar_t vr_snap_turn = {"vr_snap_turn", "0", CVAR_ARCHIVE};
 static cvar_t vr_180_snap_turn = {"vr_180_snap_turn", "1", CVAR_ARCHIVE};
 static cvar_t vr_turn_speed = {"vr_turn_speed", "2", CVAR_ARCHIVE};
 static cvar_t vr_joystick_yaw_multi = {"vr_joystick_yaw_multi", "1", CVAR_ARCHIVE};
+static cvar_t vr_vrik = {"vr_vrik", "1", CVAR_ARCHIVE};
 
 extern cvar_t vr_aimmode;
 
@@ -302,6 +303,177 @@ static qboolean VR_InputWireVec (const float value[3])
 		value[0] >= VR_INPUT_WIRE_MIN && value[0] <= VR_INPUT_WIRE_MAX &&
 		value[1] >= VR_INPUT_WIRE_MIN && value[1] <= VR_INPUT_WIRE_MAX &&
 		value[2] >= VR_INPUT_WIRE_MIN && value[2] <= VR_INPUT_WIRE_MAX;
+}
+
+static qboolean VR_InputVRIKMatrixFinite (const float matrix[3][4])
+{
+	for (int row = 0; row < 3; ++row)
+		for (int column = 0; column < 4; ++column)
+			if (!isfinite (matrix[row][column]))
+				return false;
+	return true;
+}
+
+static void VR_InputVRIKRotMatFromAngles (const vec3_t angles, float matrix[3][3])
+{
+	vec3_t mutable_angles;
+
+	VectorCopy (angles, mutable_angles);
+	AngleVectors (mutable_angles, matrix[0], matrix[1], matrix[2]);
+	/* Match the donor matrix convention: zero angles produce identity. */
+	for (int axis = 0; axis < 3; ++axis)
+		matrix[1][axis] = -matrix[1][axis];
+}
+
+static qboolean VR_InputVRIKAnglesFromRotMat (float matrix[3][3], vec3_t angles)
+{
+	vec3_t unrolled_angles;
+	float unrolled_matrix[3][3];
+
+	for (int row = 0; row < 3; ++row)
+		for (int column = 0; column < 3; ++column)
+			if (!isfinite (matrix[row][column]))
+				return false;
+	angles[YAW] = (float)(-atan2 (matrix[0][0], matrix[0][1]) / M_PI_DIV_180 + 90.0);
+	angles[PITCH] = (float)(atan2 (sqrt (matrix[0][0] * matrix[0][0] +
+		matrix[0][1] * matrix[0][1]), matrix[0][2]) / M_PI_DIV_180 - 90.0);
+	angles[ROLL] = 0.0f;
+	VectorCopy (angles, unrolled_angles);
+	VR_InputVRIKRotMatFromAngles (unrolled_angles, unrolled_matrix);
+	angles[ROLL] = (float)(-atan2 (DotProduct (unrolled_matrix[1], matrix[1]),
+		DotProduct (unrolled_matrix[2], matrix[1])) / M_PI_DIV_180 + 90.0);
+	return isfinite (angles[PITCH]) && isfinite (angles[YAW]) && isfinite (angles[ROLL]);
+}
+
+static qboolean VR_InputVRIKRootLocalAngles (const vec3_t world_angles,
+	float body_yaw, vec3_t out)
+{
+	float world_matrix[3][3], inverse_body_yaw[3][3], local_matrix[3][3];
+	vec3_t inverse_angles = {0.0f, -body_yaw, 0.0f}, angles;
+
+	VR_InputVRIKRotMatFromAngles (world_angles, world_matrix);
+	VR_InputVRIKRotMatFromAngles (inverse_angles, inverse_body_yaw);
+	R_ConcatRotations (world_matrix, inverse_body_yaw, local_matrix);
+	if (!VR_InputVRIKAnglesFromRotMat (local_matrix, angles))
+		return false;
+	for (int axis = 0; axis < 3; ++axis)
+	{
+		while (angles[axis] > 180.0f)
+			angles[axis] -= 360.0f;
+		while (angles[axis] < -180.0f)
+			angles[axis] += 360.0f;
+	}
+	VectorCopy (angles, out);
+	return true;
+}
+
+/* Build from the retained completed OpenXR frame. The renderer owns the
+ * canonical head-to-body offset; tracking_yaw maps device space to world,
+ * while player yaw independently defines the VRIK root-local frame. */
+qboolean VR_InputBuildVRIKPose (vrik_codec_pose_t *pose)
+{
+	const vrxr_frame_t *frame = GL_OpenXRFrame ();
+	const vrxr_device_t *head;
+	entity_t *player;
+	float body_yaw, tracking_yaw, base_viewheight, head_eye_height;
+	float yaw_radians, cosine, sine;
+	vec3_t head_world_angles, mapped_hand_angles, head_world_offset, local_position;
+	int dominant;
+
+	if (!pose)
+		return false;
+	memset (pose, 0, sizeof (*pose));
+	if (!frame || !frame->should_render || !frame->focused ||
+		cls.state != ca_connected || cls.signon != SIGNONS || cls.demoplayback ||
+		cl.intermission || !cl.worldmodel || !cl.entities || cl.viewentity <= 0 ||
+		cl.viewentity >= cl.num_entities || cl.stats[STAT_HEALTH] <= 0 ||
+		!V_TrackedPlayerBase (&base_viewheight) ||
+		!V_TrackedMappingYaw (&tracking_yaw) || !isfinite (tracking_yaw))
+		return false;
+
+	head = &frame->devices[0];
+	player = &cl.entities[cl.viewentity];
+	if (!player->model || !head->valid || !head->tracked ||
+		head->kind != VRXR_DEVICE_HEAD || head->hand != -1 ||
+		!VR_InputVRIKMatrixFinite (head->matrix))
+		return false;
+
+	if (!isfinite (base_viewheight) ||
+		!R_TrackedHeadBodyOffset (head_world_offset) ||
+		!R_TrackedHeadEyeHeight (base_viewheight, &head_eye_height))
+		return false;
+
+	/* A disabled sender emits one inactive sample after its last active pose. */
+	if (vr_vrik.value == 0.0f)
+		return true;
+
+	body_yaw = player->angles[YAW];
+	if (!isfinite (body_yaw))
+		body_yaw = cl.viewangles[YAW];
+	if (!isfinite (body_yaw))
+		return false;
+
+	pose->sequence = cl.vrik_next_sequence;
+	pose->flags = VRIK_V3_FLAG_ACTIVE;
+	pose->present_mask = VRIK_TARGET_BIT (VRIK_TARGET_HEAD);
+	pose->tracked_mask = VRIK_TARGET_BIT (VRIK_TARGET_HEAD);
+	pose->body_yaw = body_yaw;
+	if (!V_TrackedMovementAngles (VR_MOVEMENT_MODE_FOLLOW_HEAD,
+		VR_InputDominantPhysicalHand (), head_world_angles))
+		return false;
+	if (!VR_InputVRIKRootLocalAngles (head_world_angles, body_yaw,
+		pose->targets[VRIK_TARGET_HEAD].orientation))
+		return false;
+
+	yaw_radians = body_yaw * M_PI_DIV_180;
+	cosine = cosf (yaw_radians);
+	sine = sinf (yaw_radians);
+	local_position[0] = head_world_offset[0] * cosine + head_world_offset[1] * sine;
+	local_position[1] = -head_world_offset[0] * sine + head_world_offset[1] * cosine;
+	local_position[2] = head_eye_height;
+	VectorCopy (local_position, pose->targets[VRIK_TARGET_HEAD].position);
+
+	dominant = VR_InputDominantPhysicalHand ();
+	if (dominant == VR_INPUT_ROLE_LEFT)
+		pose->flags |= VRIK_V3_FLAG_DOMINANT_LEFT;
+	for (int hand = 0; hand < 2; ++hand)
+	{
+		const vrxr_device_t *device = &frame->devices[hand + 1];
+		const int target = hand == VR_INPUT_ROLE_LEFT ?
+			VRIK_TARGET_LEFT_HAND : VRIK_TARGET_RIGHT_HAND;
+		if (!device->valid || !device->tracked || device->kind != VRXR_DEVICE_HAND ||
+			device->hand != hand || !VR_InputVRIKMatrixFinite (device->matrix))
+			continue;
+		if (!V_TrackedHandBodyOffset (hand, local_position))
+			return false;
+		local_position[0] += head_world_offset[0];
+		local_position[1] += head_world_offset[1];
+		{
+			const float world_x = local_position[0];
+			const float world_y = local_position[1];
+			local_position[0] = world_x * cosine + world_y * sine;
+			local_position[1] = -world_x * sine + world_y * cosine;
+		}
+		VectorCopy (local_position, pose->targets[target].position);
+		if (!VR_AimPoseAngles (device->matrix, tracking_yaw, mapped_hand_angles))
+			return false;
+		if (!VR_InputVRIKRootLocalAngles (mapped_hand_angles, body_yaw,
+			pose->targets[target].orientation))
+			return false;
+		pose->present_mask |= VRIK_TARGET_BIT (target);
+		pose->tracked_mask |= VRIK_TARGET_BIT (target);
+	}
+
+	if (frame->devices[dominant + 1].valid && frame->devices[dominant + 1].tracked &&
+		V_TrackedMovementAngles (VR_MOVEMENT_MODE_FOLLOW_HAND, dominant,
+			mapped_hand_angles))
+		if (!VR_InputVRIKRootLocalAngles (mapped_hand_angles, body_yaw,
+			pose->aim_orientation))
+			return false;
+
+	if (!isfinite (head_eye_height))
+		return false;
+	return true;
 }
 
 static void VR_InputAccumulateRoomscaleMove (const vrxr_frame_t *frame, usercmd_t *pending)
@@ -669,6 +841,7 @@ void VR_InputInit (void)
 	Cvar_RegisterVariable (&vr_180_snap_turn);
 	Cvar_RegisterVariable (&vr_turn_speed);
 	Cvar_RegisterVariable (&vr_joystick_yaw_multi);
+	Cvar_RegisterVariable (&vr_vrik);
 	Cvar_SetCallback (&vr_lefthanded, VR_InputMotionSettingsChanged);
 	Cvar_SetCallback (&vr_movement_mode, VR_InputMotionSettingsChanged);
 	Cvar_SetCallback (&vr_snap_turn, VR_InputMotionSettingsChanged);
@@ -682,6 +855,12 @@ void VR_InputCommands (const vrxr_frame_t *frame)
 	qboolean desired[2][MAX_KEYS] = {{false}};
 	vrxr_input_t input_hands[2];
 	vr_input_context_t context;
+	if (cls.state != ca_connected)
+	{
+		cl.vrik_next_sequence = 0;
+		cl.vrik_next_send_time = 0.0;
+		cl.vrik_last_sent_active = false;
+	}
 	++vr_input_commands_depth;
 	if (!VR_InputMotionContextAccepted (frame) || frame->reference_changed)
 		vr_input_roomscale_position_valid = false;
