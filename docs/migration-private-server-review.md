@@ -118,3 +118,31 @@ is still inactive and no live writer/decoder roundtrip has been qualified.
 Before enabling prediction, verify moving and changing solid boxes, BSPs,
 owner exclusion, packet loss and reset baselines through a live private
 snapshot, alongside the accepted-command owner and ACK association.
+
+## Predictive server movement: Astra senior disposition
+
+A local `gpt-6-astra`/`max` review checked the proposed QSS-M-style private
+server adapter against pinned QSS-M `03a498aa`, inherited OpenVR `1327f795`
+and the current `2.0` owners. Prediction must be defined by executed commands
+and coherent owner snapshots, not by matching either donor's wire bytes.
+
+| Recommendation | Disposition |
+| --- | --- |
+| Keep public vkQuake physics, transport and QC cadence; add a private movement adapter at the existing player owner. | **Adopt.** QSS-M's solver is already linked for client replay. A wholesale inherited server transplant would import unrelated co-op/Gorilla/mod policy and duplicate working public state. Reopen if the narrow adapter begins reproducing most donor policy. |
+| Preserve ordered accepted commands separately from completed or explicitly discarded commands. | **Adopt.** The current latest-command receiver advances `lastmovemessage` on reception and is only a legacy-frame path. PMove cannot acknowledge that sequence as simulated until its physics pass has actually retired it. Bound queue count and total duration; clear it on map, reconnect, pause/discontinuity and overflow without replay debt. |
+| Keep both frame roomscale sweep and PMove roomscale movement. | **Reject.** Only the selected movement owner may consume each accepted tracking delta. Likewise, `SV_ClientThink` must not apply native acceleration before PMove. |
+| Treat an ACK and arbitrary owner delta as sufficient to permit client replay. | **Reject.** The current client gate requires a matching reset-decoded owner update, accepted authority/epochs/settings and prediction permission. Reserve snapshot space and associate the ACK with completed commands; local listen prediction needs a real server completion rather than a synthetic local ACK. |
+| Preserve attack/jump/impulse as bits only while replacing pose with the latest command. | **Reject for PMove.** Retain the originating accepted command so QuakeC weapon callbacks use its hand pose. Legacy latest-command latches remain limited to the legacy owner. |
+| Select the private profile for an opt-in legacy-frame proof before enabling PMove prediction. | **Adopt as an explicit qualification checkpoint.** Prediction remains disabled. Profile selection still requires exact marker/layout, private sender/receiver, weapon and collision behavior, signon and snapshot proof with public observers. |
+
+The first implementation slice is a bounded private accepted-command queue in
+`server.h`/`sv_user.c`, with separate receive and retirement cursors, exact
+duration/action/pose/roomscale records and explicit discard cutoff. It must not
+activate prediction by itself. The execution consumer then adapts vkQuake's
+player physics/QC owner, followed by matching movement stats, reset owner
+snapshots and ACK/epoch publication. Empty queues must remain under the chosen
+PMove owner instead of silently switching back to legacy physics. Validate the
+whole path locally with jump/swim/platform/contact, earliest-pose weapon damage,
+once-only roomscale, packet loss, pause/teleport, listen and remote peers, and
+mixed public/private clients. Custom-physics mods are a separate compatibility
+gate with prediction disabled until their authority can be stated exactly.
