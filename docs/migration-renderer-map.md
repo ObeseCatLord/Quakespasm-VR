@@ -39,7 +39,7 @@ Evidence is from pinned Git objects: **I** = Ironwail `08d578136ff43d7d1ef38e636
 | ASSET-006 | Truecolor static models | V `gl_model.c:3671` external MDL skins; brush textures use `Mod_LoadTextureTask:979`; static entities enter via `r_world.c:927` | P | Use existing format loaders for static entities. | Same model placed statically/dynamically has matching materials. |
 | ASSET-007 | External WAD3/per-texture palettes | V `gl_model.c:817` `Mod_LoadWadTexture`, palette flag `:852`; `gl_texmgr.c:1452` `TexMgr_LoadImage8Valve`; F WAD path `:1620` | P | Retain WAD/texture owners; preserve source validation requirements. | Two textures sharing indices but different palettes render distinct correct colors. |
 | ASSET-008 | Lightmapped liquids | I `gl_model.c:1382`; V `:1941` distinguishes lit/unlit liquids; V `r_world.c:1326` binds liquid lightmap; F `gl_model.c:2638` already detects lit water | P | Retain V surface flags and water draw path. | Lit liquid shows baked lighting; classic unlit liquid remains correct. |
-| ASSET-009 | Lightstyle interpolation | I `gl_rlight.c:49`; F `:48`; V `R_AnimateLight:41`, GPU-update gate `:67` | A, donor difference | Keep V lighting owner and modes 0/1/2; reconcile GPU gate so inherited CPU-path interpolation remains available. | With r_dynamic=1, smooth and abrupt styles (including ad_tears) follow modes 0/1/2 on both CPU and GPU lightmap update paths; mode 1 retains abrupt flicker. |
+| ASSET-009 | Lightstyle interpolation | I `gl_rlight.c:49`; F `:48`; V `R_AnimateLight:41`, former GPU-update gate `:67` | A, adapter added; runtime parity pending | V lighting owner now applies modes 0/1/2 on both CPU and GPU lightmap update paths; retain its existing `r_dynamic` policy. | With r_dynamic=1, smooth and abrupt styles (including ad_tears) follow modes 0/1/2 on both CPU and GPU lightmap update paths; mode 1 retains abrupt flicker. |
 
 The asset evidence establishes implemented formats and lookup behavior, not complete QSS compatibility. Keep original file attribution and established subsystem ownership.
 
@@ -53,4 +53,3 @@ Two additional Ironwail candidates qualify as **proposed optional scope**:
 Absence searches covered **103 V renderer/shader files and 34 files at each F/X pin**: `Quake/gl_*`, `r_*`, renderer/model/image families, and V `Shaders/`. **A:** `TextureDither|ScreenDither|DITHER_NOISE|lmsize|whitenoise01`; **B:** `LightClusters|lightcluster|cluster_lights|LIGHT_TILES_[XYZ]`; zero matches. These are bounded absence findings, supported by inspecting the alternative lighting/dithering paths.
 
 Generic alias instancing was excluded from optional extras because F and X already implement it. No performance benefit is claimed for either optional candidate.
-
