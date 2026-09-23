@@ -404,6 +404,14 @@ static qboolean VR_InputKeyOwnedByOtherHand (int hand, int key)
 	return vr_input_hands[1 - hand].owned[key];
 }
 
+static qboolean VR_InputMenuHapticKey (int key)
+{
+	/* The native menu accepts A/B as its select/back aliases for Enter/Escape. */
+	return key == K_ENTER || key == K_ESCAPE || key == K_LEFTARROW ||
+		key == K_RIGHTARROW || key == K_UPARROW || key == K_DOWNARROW ||
+		key == K_ABUTTON || key == K_BBUTTON;
+}
+
 static qboolean VR_InputReleaseHand (int hand)
 {
 	vr_input_hand_state_t *state = &vr_input_hands[hand];
@@ -605,6 +613,15 @@ static qboolean VR_InputEmitDesired (qboolean desired[2][MAX_KEYS],
 			vr_input_hands[1].owned[key] = desired[1][key];
 			vr_input_emitted[key] = desired_aggregate;
 			generation = vr_input_reset_generation;
+			if (desired_aggregate && !current_aggregate &&
+				((expected_context->destination == key_menu &&
+					VR_InputMenuHapticKey (key)) ||
+				 (expected_context->destination == key_game && key == K_ESCAPE)) &&
+				!expected_context->binding_capture && !expected_context->input_grab)
+			{
+				const int hand = desired[0][key] ? 0 : 1;
+				VR_InputTriggerHaptic (vr_input_hands[hand].role, 0.1f, 0.5f);
+			}
 			Key_Event (key, desired_aggregate);
 
 			if (generation != vr_input_reset_generation)

@@ -122,3 +122,15 @@ Paired akimbo off-hand pulses, weapon-wheel/menu feedback and a VR-menu toggle
 remain with their respective presentation ports. The strict Linux Meson and
 Makefile `vkquake` builds pass after adding the already-used weapon schema and
 calibration objects to the Makefile. No device haptic behavior is claimed yet.
+
+## Menu haptic checkpoint
+
+The OpenXR key bridge now emits the inherited short menu pulse on rising
+navigation/select/back input, including Escape opening the menu from gameplay.
+It uses the contributing hand's logical role through the existing handedness
+adapter and `vr_haptic` master toggle. Repeated held keys, releases, shared-key
+contributions from a second hand, binding capture and native modal grabs do not
+request a pulse. The haptic request precedes the corresponding native
+`Key_Event`, preserving the donor's event order and the bridge's context-change
+invalidation. This is controller-feedback parity only; it does not add a VR
+menu option for the toggle or establish device output on Monado or other runtimes.

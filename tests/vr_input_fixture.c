@@ -16,6 +16,13 @@ typedef struct
 	int down;
 } recorded_event_t;
 
+typedef struct
+{
+	int physical_hand;
+	float duration_seconds;
+	float amplitude;
+} recorded_haptic_t;
+
 keydest_t key_dest = key_game;
 enum m_state_e m_state = m_none;
 client_static_t cls;
@@ -51,6 +58,8 @@ static int fixture_muzzle_calls;
 
 static recorded_event_t events[256];
 static int event_count;
+static recorded_haptic_t haptics[32];
+static int haptic_count;
 static int registered_cvars;
 static cvar_t *registered_cvar[32];
 static xcommand_t turn180_command;
@@ -111,6 +120,12 @@ const vrxr_frame_t *GL_OpenXRFrame (void)
 qboolean V_TrackedSessionActive (void)
 {
 	return fixture_frame != NULL;
+}
+
+void VRXR_Haptic (int physical_hand, float duration_seconds, float amplitude)
+{
+	assert (haptic_count < (int)(sizeof (haptics) / sizeof (haptics[0])));
+	haptics[haptic_count++] = (recorded_haptic_t){physical_hand, duration_seconds, amplitude};
 }
 
 float V_VRUnitsPerMetre (void)
@@ -243,6 +258,7 @@ qboolean Key_InputGrabActive (void)
 static void reset_events (void)
 {
 	event_count = 0;
+	haptic_count = 0;
 	escape_changes_context = 0;
 	escape_reenters_clear = 0;
 	start_binding_on_abutton = 0;
@@ -258,6 +274,14 @@ static void expect_event (int index, int key, int down)
 			index, key, down, events[index].key, events[index].down, event_count);
 	assert (events[index].key == key);
 	assert (events[index].down == down);
+}
+
+static void expect_haptic (int index, int physical_hand)
+{
+	assert (index < haptic_count);
+	assert (haptics[index].physical_hand == physical_hand);
+	assert (haptics[index].duration_seconds == 0.1f);
+	assert (haptics[index].amplitude == 0.5f);
 }
 
 static vrxr_frame_t neutral_frame (void)
@@ -291,8 +315,9 @@ static void test_init_and_no_vr (void)
 	memset (registered_cvar, 0, sizeof (registered_cvar));
 	turn180_command = NULL;
 	VR_InputInit ();
-	assert (registered_cvars == 11);
+	assert (registered_cvars == 12);
 	assert (fixture_cvar ("vr_lefthanded")->value == 0.0f);
+	assert (fixture_cvar ("vr_haptic")->value == 1.0f);
 	assert (fixture_cvar ("vr_joystick_axis_deadzone")->value == 0.25f);
 	assert (fixture_cvar ("vr_joystick_axis_menu_deadzone_extra")->value == 0.25f);
 	assert (fixture_cvar ("vr_joystick_axis_exponent")->value == 1.0f);
@@ -500,6 +525,8 @@ static void test_context_reentry_clear_and_nan (void)
 {
 	vrxr_frame_t frame = neutral_frame ();
 	key_dest = key_game;
+	fixture_frame = &frame;
+	set_cvar ("vr_haptic", 1.0f);
 	set_cvar ("vr_lefthanded", 0.0f);
 	native_clear_then_neutral (&frame);
 
@@ -510,6 +537,8 @@ static void test_context_reentry_clear_and_nan (void)
 	VR_InputCommands (&frame);
 	assert (event_count == 1);
 	expect_event (0, K_ESCAPE, 1);
+	assert (haptic_count == 1);
+	expect_haptic (0, 0);
 	assert (key_dest == key_menu);
 
 	reset_events ();
@@ -550,6 +579,7 @@ static void test_context_reentry_clear_and_nan (void)
 	key_dest = key_message;
 	VR_InputCommands (&frame);
 	assert (event_count == 0);
+	fixture_frame = NULL;
 }
 
 static void test_axis_threshold_edges_and_console_escape (void)
@@ -588,6 +618,8 @@ static void test_menu_trigger_dispatch_and_capture_transition (void)
 {
 	vrxr_frame_t frame = neutral_frame ();
 	key_dest = key_menu;
+	fixture_frame = &frame;
+	set_cvar ("vr_haptic", 1.0f);
 	waiting_for_binding = false;
 	input_grab_active = false;
 	native_clear_then_neutral (&frame);
@@ -596,7 +628,12 @@ static void test_menu_trigger_dispatch_and_capture_transition (void)
 	VR_InputCommands (&frame);
 	assert (event_count == 1);
 	expect_event (0, K_ENTER, 1);
+	assert (haptic_count == 1);
+	expect_haptic (0, 1);
 	reset_events ();
+	VR_InputCommands (&frame); /* a held select is not another rising edge */
+	assert (event_count == 0);
+	assert (haptic_count == 0);
 	frame.hands[1].trigger = 0.0f;
 	VR_InputCommands (&frame);
 	assert (event_count == 1);
@@ -610,6 +647,47 @@ static void test_menu_trigger_dispatch_and_capture_transition (void)
 	VR_InputCommands (&frame);
 	assert (event_count == 1);
 	expect_event (0, K_RTRIGGER, 1);
+	assert (haptic_count == 0); /* capture input never fires menu feedback */
+	fixture_frame = NULL;
+}
+
+static void test_menu_haptic_handedness_and_toggle (void)
+{
+	vrxr_frame_t frame = neutral_frame ();
+	key_dest = key_menu;
+	waiting_for_binding = false;
+	input_grab_active = false;
+	fixture_frame = &frame;
+	set_cvar ("vr_haptic", 1.0f);
+	set_cvar ("vr_lefthanded", 1.0f);
+	native_clear_then_neutral (&frame);
+
+	/* With reversed roles, physical hand zero owns the logical-right trigger. */
+	frame.hands[0].trigger = 0.60f;
+	VR_InputCommands (&frame);
+	assert (event_count == 1);
+	expect_event (0, K_ENTER, 1);
+	assert (haptic_count == 1);
+	expect_haptic (0, 0);
+
+	reset_events ();
+	frame.hands[0].trigger = 0.0f;
+	VR_InputCommands (&frame);
+	assert (event_count == 1);
+	expect_event (0, K_ENTER, 0);
+	assert (haptic_count == 0); /* release has no pulse */
+
+	reset_events ();
+	set_cvar ("vr_haptic", 0.0f);
+	frame.hands[0].trigger = 0.60f;
+	VR_InputCommands (&frame);
+	assert (event_count == 1);
+	expect_event (0, K_ENTER, 1);
+	assert (haptic_count == 0); /* disabling feedback leaves key input intact */
+
+	set_cvar ("vr_haptic", 1.0f);
+	set_cvar ("vr_lefthanded", 0.0f);
+	fixture_frame = NULL;
 }
 
 static void test_capture_change_stops_same_batch_presses (void)
@@ -634,6 +712,8 @@ static void test_modal_grab_overrides_destination_and_rearms (void)
 {
 	vrxr_frame_t frame = neutral_frame ();
 	key_dest = key_console;
+	fixture_frame = &frame;
+	set_cvar ("vr_haptic", 1.0f);
 	waiting_for_binding = false;
 	input_grab_active = true;
 	native_clear_then_neutral (&frame);
@@ -643,6 +723,7 @@ static void test_modal_grab_overrides_destination_and_rearms (void)
 	VR_InputCommands (&frame);
 	assert (event_count == 1);
 	expect_event (0, K_BBUTTON, 1);
+	assert (haptic_count == 0);
 
 	key_dest = key_game;
 	frame = neutral_frame ();
@@ -652,6 +733,7 @@ static void test_modal_grab_overrides_destination_and_rearms (void)
 	VR_InputCommands (&frame);
 	assert (event_count == 1);
 	expect_event (0, K_ABUTTON, 1);
+	assert (haptic_count == 0); /* modal-grab decisions suppress haptics */
 
 	reset_events ();
 	input_grab_active = false;
@@ -666,6 +748,8 @@ static void test_modal_grab_overrides_destination_and_rearms (void)
 	VR_InputCommands (&frame);
 	assert (event_count == 1);
 	expect_event (0, K_RTRIGGER, 1);
+	assert (haptic_count == 0);
+	fixture_frame = NULL;
 }
 
 static void test_menu_state_change_stops_same_batch_presses (void)
@@ -1172,6 +1256,7 @@ int main (void)
 	test_context_reentry_clear_and_nan ();
 	test_axis_threshold_edges_and_console_escape ();
 	test_menu_trigger_dispatch_and_capture_transition ();
+	test_menu_haptic_handedness_and_toggle ();
 	test_capture_change_stops_same_batch_presses ();
 	test_modal_grab_overrides_destination_and_rearms ();
 	test_menu_state_change_stops_same_batch_presses ();
