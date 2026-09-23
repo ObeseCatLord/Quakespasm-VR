@@ -341,6 +341,8 @@ static vec3_t stereo_base_origin, stereo_base_angles;
 static qboolean stereo_have_reference;
 static vec3_t stereo_reference_position;
 
+static void R_SetupMatrices (void);
+
 static void R_InitializeStereoReference (const vrxr_frame_t *frame)
 {
 	const float (*head)[4] = frame->devices[0].matrix;
@@ -510,6 +512,10 @@ void R_PrepareStereoFrame (void)
 	VkBuffer buffer;
 	void *data = R_UniformAllocate (sizeof (uniform), &buffer, &vulkan_globals.stereo_uniform_offset, &vulkan_globals.stereo_descriptor_set);
 	memcpy (data, &uniform, sizeof (uniform));
+
+	// Worldless stereo frames skip R_SetupViewBeforeMark, which normally prepares these.
+	if (con_forcedup)
+		R_SetupMatrices ();
 }
 
 static void R_SetStereoFrustum (void)
@@ -532,7 +538,7 @@ static void R_SetStereoFrustum (void)
 	}
 }
 
-static void R_SetupMatrices ()
+static void R_SetupMatrices (void)
 {
 	// Projection matrix
 	GL_FrustumMatrix (vulkan_globals.projection_matrix, DEG2RAD (vulkan_globals.stereo_active ? 90 : r_fovx),
