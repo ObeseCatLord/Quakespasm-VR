@@ -6,7 +6,9 @@
 #include "quakedef.h"
 #include "vr_input.h"
 #include "vr_weapon_menu.h"
+#include "vr_weapon_schema.h"
 
+#include <ctype.h>
 #include <errno.h>
 #include <limits.h>
 #include <stdlib.h>
@@ -71,10 +73,13 @@ static const vr_weapon_menu_catalog_t vr_weapon_menu_stock_catalog = {
 
 static vr_weapon_menu_entry_t vr_weapon_menu_wwheel_entries[VR_WEAPON_MENU_MAX_ENTRIES];
 static char vr_weapon_menu_wwheel_labels[VR_WEAPON_MENU_MAX_ENTRIES][32];
+static char vr_weapon_menu_schema_models[VR_WEAPON_MENU_MAX_ENTRIES][64];
+static int vr_weapon_menu_schema_bitmasks[VR_WEAPON_MENU_MAX_ENTRIES];
 static vr_weapon_menu_catalog_t vr_weapon_menu_wwheel_catalog = {
 	vr_weapon_menu_wwheel_entries, 0, 1
 };
 static qboolean vr_weapon_menu_has_wwheel;
+static qboolean vr_weapon_menu_has_schema;
 
 static qboolean vr_weapon_menu_open;
 static qboolean vr_weapon_menu_open_vr;
@@ -89,7 +94,8 @@ static char vr_weapon_menu_mapname[sizeof (cl.mapname)];
 
 static const vr_weapon_menu_catalog_t *VR_WeaponMenu_CurrentCatalog (void)
 {
-	return vr_weapon_menu_has_wwheel ? &vr_weapon_menu_wwheel_catalog :
+	return (vr_weapon_menu_has_wwheel || vr_weapon_menu_has_schema) ?
+		&vr_weapon_menu_wwheel_catalog :
 		&vr_weapon_menu_stock_catalog;
 }
 
@@ -217,6 +223,236 @@ static qboolean VR_WeaponMenu_AddWWheelSlot (int weaponnum, int impulse,
 	return true;
 }
 
+static qboolean VR_WeaponMenu_SchemaMatchesEntry (
+	const vr_weapon_schema_entry_t *schema, const vr_weapon_menu_entry_t *entry)
+{
+	/* One ownership bit can describe several mod weapon variants. Do not
+	 * apply a different impulse's model/ammo metadata to this roster slot. */
+	if (schema->impulse > 0 && entry->impulse > 0 &&
+		schema->impulse != entry->impulse)
+		return false;
+	if (schema->active_stat >= 0 && schema->active_mask &&
+		entry->active_stat == schema->active_stat &&
+		entry->active_mask == schema->active_mask)
+		return true;
+	if (schema->owned_stat >= 0 && schema->owned_mask &&
+		entry->owned_stat == schema->owned_stat &&
+		entry->owned_mask == schema->owned_mask)
+		return true;
+	return schema->bitmask != 0 &&
+		entry->active_stat == STAT_ACTIVEWEAPON &&
+		entry->active_mask == schema->bitmask;
+}
+
+static int VR_WeaponMenu_SchemaStockSelector (
+	const vr_weapon_schema_entry_t *schema)
+{
+	if (schema->bitmask)
+		return schema->bitmask;
+	if (schema->active_stat == STAT_ACTIVEWEAPON && schema->active_mask)
+		return schema->active_mask;
+	if (schema->owned_stat == STAT_ITEMS && schema->owned_mask)
+		return schema->owned_mask;
+	return 0;
+}
+
+static void VR_WeaponMenu_SchemaLabel (char *label, size_t label_size,
+	const char *model_path, int fallback_id)
+{
+	const char *base, *end;
+	size_t length = 0;
+
+	base = strrchr (model_path, '/');
+	base = base ? base + 1 : model_path;
+	if ((tolower ((unsigned char)base[0]) == 'g' ||
+		tolower ((unsigned char)base[0]) == 'v') && base[1] == '_')
+		base += 2;
+	end = strchr (base, '.');
+	if (!end)
+		end = base + strlen (base);
+	while (base < end && length + 1 < label_size)
+	{
+		const unsigned char c = (unsigned char)*base++;
+		if (isalnum (c))
+			label[length++] = (char)toupper (c);
+		else if (length && label[length - 1] != ' ')
+			label[length++] = ' ';
+	}
+	while (length && label[length - 1] == ' ')
+		--length;
+	label[length] = '\0';
+	if (!length)
+		q_snprintf (label, label_size, "WEAPON %d", fallback_id);
+}
+
+static void VR_WeaponMenu_ApplySchemaMetadata (
+	vr_weapon_menu_entry_t *entry, size_t index,
+	const vr_weapon_schema_entry_t *schema, qboolean preserve_roster)
+{
+	const char *model_path = schema->model_path[0] ? schema->model_path :
+		schema->viewmodel_path;
+
+	if (model_path[0])
+	{
+		q_strlcpy (vr_weapon_menu_schema_models[index], model_path,
+			sizeof (vr_weapon_menu_schema_models[index]));
+		entry->model_path = vr_weapon_menu_schema_models[index];
+		if (entry->label == vr_weapon_menu_wwheel_labels[index])
+			VR_WeaponMenu_SchemaLabel (vr_weapon_menu_wwheel_labels[index],
+				sizeof (vr_weapon_menu_wwheel_labels[index]), model_path,
+				entry->id);
+	}
+	if (isfinite (schema->scale) && schema->scale > 0.0f)
+		entry->model_scale = schema->scale;
+	VectorCopy (schema->offset, entry->model_offset);
+	if (schema->owned_stat >= 0)
+	{
+		entry->owned_stat = schema->owned_stat;
+		entry->owned_mask = schema->owned_mask;
+	}
+	else if (!preserve_roster && schema->bitmask)
+	{
+		/* Legacy schemas use bitmask for STAT_VR_WEAPONS ownership and
+		 * STAT_ACTIVEWEAPON equality when no explicit masks are supplied. */
+		entry->owned_stat = STAT_VR_WEAPONS;
+		entry->owned_mask = schema->bitmask;
+		vr_weapon_menu_schema_bitmasks[index] = schema->bitmask;
+	}
+	if (schema->active_stat >= 0)
+	{
+		entry->active_stat = schema->active_stat;
+		entry->active_mask = schema->active_mask;
+	}
+	else if (!preserve_roster && schema->bitmask)
+	{
+		entry->active_stat = -1;
+		entry->active_mask = 0;
+		entry->selector = schema->bitmask;
+	}
+	if (schema->ammo_stat >= 0)
+	{
+		entry->ammo_stat = schema->ammo_stat;
+		entry->ammo_max = schema->ammo_max;
+	}
+	else if (schema->ammo_max > 0)
+		entry->ammo_max = schema->ammo_max;
+}
+
+static qboolean VR_WeaponMenu_AddSchemaEntry (
+	const vr_weapon_schema_entry_t *schema)
+{
+	const int stock_selector = VR_WeaponMenu_SchemaStockSelector (schema);
+	const int stock_index = stock_selector ?
+		VR_WeaponMenu_FindStockSelector (stock_selector, schema->impulse) : -1;
+	const size_t index = vr_weapon_menu_wwheel_catalog.count;
+	vr_weapon_menu_entry_t *entry;
+
+	if (schema->impulse <= 0 || schema->impulse > 255 ||
+		(!schema->bitmask && schema->owned_stat < 0 && schema->active_stat < 0) ||
+		index >= VR_WEAPON_MENU_MAX_ENTRIES)
+		return false;
+	for (size_t i = 0; i < index; ++i)
+	{
+		vr_weapon_menu_entry_t *existing = &vr_weapon_menu_wwheel_entries[i];
+		if (existing->source == VR_WEAPON_CATALOG_SOURCE_SCHEMA &&
+			existing->impulse == schema->impulse &&
+			((schema->bitmask &&
+			  (vr_weapon_menu_schema_bitmasks[i] == schema->bitmask ||
+			   existing->selector == schema->bitmask)) ||
+			 VR_WeaponMenu_SchemaMatchesEntry (schema, existing)))
+		{
+			VR_WeaponMenu_ApplySchemaMetadata (existing, i, schema, false);
+			return true;
+		}
+	}
+	entry = &vr_weapon_menu_wwheel_entries[index];
+	if (stock_index >= 0)
+		*entry = vr_weapon_menu_stock_entries[stock_index];
+	else
+		memset (entry, 0, sizeof (*entry));
+	entry->id = (int)index + 1;
+	entry->kind = VR_WEAPON_MENU_WEAPON;
+	entry->source = VR_WEAPON_CATALOG_SOURCE_SCHEMA;
+	entry->label = stock_index >= 0 ?
+		vr_weapon_menu_stock_entries[stock_index].label :
+		vr_weapon_menu_wwheel_labels[index];
+	entry->selector = stock_index >= 0 ?
+		vr_weapon_menu_stock_entries[stock_index].selector :
+		(schema->active_stat < 0 ? schema->bitmask : 0);
+	entry->impulse = schema->impulse;
+	if (schema->owned_stat < 0 && !schema->bitmask)
+	{
+		entry->owned_stat = -1;
+		entry->owned_mask = 0;
+	}
+	if (schema->active_stat < 0 && !schema->bitmask && stock_index < 0)
+	{
+		entry->active_stat = -1;
+		entry->active_mask = 0;
+	}
+	if (stock_index < 0)
+		q_snprintf (vr_weapon_menu_wwheel_labels[index],
+			sizeof (vr_weapon_menu_wwheel_labels[index]), "WEAPON %d",
+			(int)index + 1);
+	VR_WeaponMenu_ApplySchemaMetadata (entry, index, schema, false);
+	vr_weapon_menu_wwheel_catalog.count++;
+	return true;
+}
+
+static qboolean VR_WeaponMenu_LoadSchema (
+	vr_weapon_schema_entry_t *entries, size_t *count)
+{
+	byte *data;
+	unsigned int path_id = 0;
+	qboolean parsed;
+
+	*count = 0;
+	data = COM_LoadFile ("vr_weapons.txt", &path_id);
+	if (!data)
+		return false;
+	if (!com_searchpaths || path_id != com_searchpaths->path_id)
+	{
+		Con_DPrintf ("VR: ignoring inherited vr_weapons.txt for %s\n",
+			com_gamedir);
+		Mem_Free (data);
+		return false;
+	}
+	parsed = VR_WeaponSchemaParse ((const char *)data, entries,
+		VR_WEAPON_SCHEMA_MAX_ENTRIES, count);
+	Mem_Free (data);
+	if (!parsed || !*count)
+	{
+		*count = 0;
+		Con_DPrintf ("VR: ignoring invalid or empty vr_weapons.txt for %s\n",
+			com_gamedir);
+		return false;
+	}
+	return true;
+}
+
+static void VR_WeaponMenu_ApplySchema (
+	const vr_weapon_schema_entry_t *schemas, size_t schema_count)
+{
+	if (vr_weapon_menu_has_wwheel)
+	{
+		for (size_t s = 0; s < schema_count; ++s)
+		{
+			for (size_t i = 0; i < vr_weapon_menu_wwheel_catalog.count; ++i)
+			{
+				vr_weapon_menu_entry_t *entry =
+					&vr_weapon_menu_wwheel_entries[i];
+				if (VR_WeaponMenu_SchemaMatchesEntry (&schemas[s], entry))
+					VR_WeaponMenu_ApplySchemaMetadata (entry, i, &schemas[s], true);
+			}
+		}
+		return;
+	}
+
+	for (size_t s = 0; s < schema_count; ++s)
+		if (VR_WeaponMenu_AddSchemaEntry (&schemas[s]))
+			vr_weapon_menu_has_schema = true;
+}
+
 static qboolean VR_WeaponMenu_ParseWWheel (const char *data)
 {
 	const char *cursor = data;
@@ -309,32 +545,36 @@ void VR_WeaponMenu_ReloadGame (void)
 {
 	byte *data;
 	unsigned int path_id = 0;
+	vr_weapon_schema_entry_t schema_entries[VR_WEAPON_SCHEMA_MAX_ENTRIES];
+	size_t schema_count = 0;
 
 	VR_WeaponMenu_Cancel ();
 	memset (vr_weapon_menu_wwheel_entries, 0,
 		sizeof (vr_weapon_menu_wwheel_entries));
 	memset (vr_weapon_menu_wwheel_labels, 0,
 		sizeof (vr_weapon_menu_wwheel_labels));
+	memset (vr_weapon_menu_schema_models, 0,
+		sizeof (vr_weapon_menu_schema_models));
+	memset (vr_weapon_menu_schema_bitmasks, 0,
+		sizeof (vr_weapon_menu_schema_bitmasks));
 	vr_weapon_menu_wwheel_catalog.count = 0;
 	vr_weapon_menu_has_wwheel = false;
+	vr_weapon_menu_has_schema = false;
 
 	data = COM_LoadFile ("wwheel.txt", &path_id);
-	if (!data)
-		return;
-	if (!com_searchpaths || path_id != com_searchpaths->path_id)
+	if (data && (!com_searchpaths || path_id != com_searchpaths->path_id))
 	{
 		Con_DPrintf ("VR: ignoring inherited wwheel.txt for %s\n", com_gamedir);
 		Mem_Free (data);
-		return;
+		data = NULL;
 	}
-
-	if (VR_WeaponMenu_ParseWWheel ((const char *)data))
+	if (data && VR_WeaponMenu_ParseWWheel ((const char *)data))
 	{
 		vr_weapon_menu_has_wwheel = true;
 		Con_DPrintf ("VR: loaded %d weapon slots from wwheel.txt\n",
 			(int)vr_weapon_menu_wwheel_catalog.count);
 	}
-	else
+	else if (data)
 	{
 		memset (vr_weapon_menu_wwheel_entries, 0,
 			sizeof (vr_weapon_menu_wwheel_entries));
@@ -344,7 +584,11 @@ void VR_WeaponMenu_ReloadGame (void)
 		Con_DPrintf ("VR: ignoring invalid or empty wwheel.txt for %s\n",
 			com_gamedir);
 	}
-	Mem_Free (data);
+	if (data)
+		Mem_Free (data);
+
+	if (VR_WeaponMenu_LoadSchema (schema_entries, &schema_count))
+		VR_WeaponMenu_ApplySchema (schema_entries, schema_count);
 }
 
 static qboolean VR_WeaponMenu_GameContextValid (void)
@@ -455,7 +699,21 @@ static int VR_WeaponMenu_BuildVisible (const vr_weapon_menu_catalog_t *catalog,
 	{
 		const vr_weapon_menu_entry_t *entry = &catalog->entries[i];
 		const qboolean active = VR_WeaponMenu_EntryActive (entry, stats, num_stats);
-		const qboolean owned = VR_WeaponMenu_EntryOwned (entry, stats, num_stats, client_items, active);
+		qboolean owned = VR_WeaponMenu_EntryOwned (entry, stats, num_stats, client_items, active);
+		if (catalog == &vr_weapon_menu_wwheel_catalog &&
+			i < VR_WEAPON_MENU_MAX_ENTRIES && vr_weapon_menu_schema_bitmasks[i])
+		{
+			const int mask = vr_weapon_menu_schema_bitmasks[i];
+			int ownership = VR_WeaponMenu_Stat (stats, num_stats, STAT_VR_WEAPONS);
+			int stock_item_bits = 0;
+			for (size_t stock = 0; stock < sizeof (vr_weapon_menu_stock_entries) /
+				sizeof (vr_weapon_menu_stock_entries[0]); ++stock)
+				stock_item_bits |= vr_weapon_menu_stock_entries[stock].selector;
+			if ((mask & stock_item_bits) == mask)
+				ownership |= client_items |
+					VR_WeaponMenu_Stat (stats, num_stats, STAT_ITEMS);
+			owned = owned || (ownership & mask) != 0;
+		}
 		if (!VR_WeaponCatalog_ShouldExpose (entry->source, catalog->authoritative_schema,
 			entry->has_schema_peer, entry->has_profile_peer, owned, active))
 			continue;
