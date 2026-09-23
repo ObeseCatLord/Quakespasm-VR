@@ -3,8 +3,9 @@
 Status: the v2/v3 pose codec, optional v2/v3/v4 server/client transport, OpenXR head/hand
 sender, and transport review fixes are committed in `f8ed9a69`, `e182a773`,
 `bb8ca4c5`, and `275b94c2`. The first Vulkan Ranger draw adapter is
-committed in `7580b1c0` and `54e9b3c3`; matching ray shadows, conservative
-tracked bounds, and live cross-play remain unfinished. Focused local Astra reviews cover sender, Vulkan avatar
+committed in `7580b1c0` and `54e9b3c3`; the matching first-surface ray-shadow
+adapter is committed in `70b25526`. Conservative tracked bounds and live
+cross-play remain unfinished. Focused local Astra reviews cover sender, Vulkan avatar
 architecture, and transport. The
 release goal is a single vkQuake-based Windows/Linux/ARM desktop and OpenXR
 engine where desktop and VR peers share gameplay and can see the VR peer's
@@ -22,7 +23,7 @@ platform.
 | A VR muzzle pose reaches the authoritative server, and tracked head/hand poses have a VRIK sender, relay, and visible MD5 draw adapter; live appearance is unverified. | **Verified:** `Quake/vr_input.c:VR_InputPreparePrivatePose`, `Quake/sv_phys.c:SV_BeginPrivateVRWeaponPose`, `e182a773` transport, `bb8ca4c5` sender, and `7580b1c0` draw adapter. The private QSVR profile remains per client and server-default off (`Quake/sv_main.c:SV_SendServerinfo`). |
 | Donor reusable CPU code exists beyond the wire codec. | **Verified:** donor `r_vrik.c` is rig/skinning math and cache logic (~940 lines); `player_avatar.c` is identity parsing (~374 lines). Its actual render/skin integration is in donor `r_alias.c` and `r_avatar.c`, while target `Quake/r_alias.c` already owns vkQuake MD5 GPU skinning and draw calls. |
 | Normal MD5 skinning reads static model matrices; compatible tracked players bind a frame-owned palette through the same set-3 shader slot. | **Verified:** `Quake/r_alias.c:GL_DrawAliasFrame` selects the prepared descriptor and zero blend only for a matching tracked entity; otherwise it retains `paliashdr->joints_set` and ordinary animation. `Shaders/md5.vert` reads set-3 `joint_mats[]`. |
-| Animated ray-shadow geometry has a separate pose consumer. | **Verified:** `Quake/r_brush.c:R_BuildTopLevelAccelerationStructure` calls `Quake/gl_mesh.c:R_UpdateAnimatedBLASes`, which recomputes per-entity skinned vertices for ray-query BLAS. A visible VRIK palette alone would leave shadow geometry stale. |
+| Animated ray-shadow geometry has a separate pose consumer. | **Verified:** `Quake/r_brush.c:R_BuildTopLevelAccelerationStructure` calls `Quake/gl_mesh.c:R_UpdateAnimatedBLASes`. `70b25526` binds the prepared palette and matches selected root geometry and visible transform for tracked players; multisurface shadows and live appearance remain unverified. |
 | Visible entity draw and BLAS build can run as separate tasks. | **Verified:** `Quake/gl_rmain.c:V_RenderView` submits `R_DrawEntitiesTask` and `R_BuildTopLevelAccelerationStructure` after frame/efrag prerequisites, without an edge between them. A live avatar palette must be prepared once before both consumers or otherwise synchronized; lazy mutation from either worker would race. |
 | A descriptor bound for a pending draw cannot be overwritten or freed at will. | **Verified from [Khronos Vulkan descriptor-set specification](https://docs.vulkan.org/spec/latest/chapters/descriptorsets.html):** descriptor contents must remain valid through their GPU use. Target `R_AllocateDescriptorSet` uses the shared persistent pool, so per-draw allocation without a retirement owner would leak; updating one in-flight set would be invalid. |
 | OpenXR tracker enumeration already exists in the target runtime boundary. | **Verified:** target `Quake/vr_openxr.cpp` discovers HTCX/MNDX tracker devices and publishes them in `vrxr_frame_t`; mapping them to VRIK hip/feet and avatar state remains unimplemented. |
@@ -88,7 +89,7 @@ movement protocol is needed. Compilation is not a live cross-play result.
 | Ranked finding | Disposition |
 | --- | --- |
 | **P1:** Delayed post-signon offers could allow a donor to send an unreliable pose before the reliable capability reply, causing a disconnect; a donor also clears capability on map change while the target server retained it. | **Addressed in `275b94c2` and `f7b6a603`, runtime pending:** include capacity-checked offers in serverinfo and renegotiate on every map. While version is unknown, discard the rest of an early pose datagram without admitting its body or dropping the peer. |
-| **P1:** Target mid-session demo recording reconstructs signon without the selected VRIK version, so playback would reject later recorded poses. | **Addressed in `275b94c2`, runtime pending:** reconstruct the selected v2/v3 offer before any pose; demo playback latches the version without sending a network capability reply. |
+| **P1:** Target mid-session demo recording reconstructs signon without the selected VRIK version, so playback would reject later recorded poses. | **Addressed in `275b94c2` and `484a8673`, runtime pending:** reconstruct the selected v2/v3/v4 offer before any pose; v4 also reconstructs already admitted slot generations after player names. Demo playback latches without sending a network capability reply. |
 | **P2:** Backward demo seek keeps future VRIK sequence/generation cursors and rejects earlier replayed poses. | **Addressed in `275b94c2`, runtime pending:** reset entity pose caches on backward seek while keeping the recorded protocol version. |
 | **P2:** Disconnect or player-slot reuse can leave a previous occupant's tracked pose in the recipient cache until timeout. | **Addressed in `275b94c2` for a known predecessor, runtime pending:** clear on scoreboard departure and entity removal; retain the last stream generation so delayed predecessor datagrams cannot revive it. A predecessor with no previously received pose has no generation floor. |
 | Replace the transport with a new reliability layer. | **Reject:** the reviewed packet framing and per-peer capability adapter remain the narrowest fit. |
@@ -142,7 +143,8 @@ The first renderer proof is one compatible Ranger with inherited head/hand
 solving, visible from desktop and both eyes with matching ray-query shadow,
 including nonzero pitch and differing body yaw. Then verify tracking loss,
 two simultaneous poses sharing one model, offscreen shadowing, allocation
-growth, and frame-slot reuse. Canonical avatar presentation identity, donor
+growth, and frame-slot reuse. The visible and first-surface shadow adapters now
+build, but no live proof has run. Canonical avatar presentation identity, donor
 normal parity, multisurface coverage, and conservative IK culling bounds need
 more evidence before claiming parity.
 
