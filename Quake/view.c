@@ -86,6 +86,7 @@ cvar_t vr_deadzone = {"vr_deadzone", "30", CVAR_ARCHIVE};
 static cvar_t vr_gunangle = {"vr_gunangle", "32", CVAR_ARCHIVE};
 cvar_t vr_gunmodelpitch = {"vr_gunmodelpitch", "0", CVAR_ARCHIVE};
 cvar_t vr_gunmodelscale = {"vr_gunmodelscale", "1.0", CVAR_ARCHIVE};
+cvar_t vr_gunmodely = {"vr_gunmodely", "0", CVAR_ARCHIVE};
 
 // These describe the saved V_CalcRefdef base, including when paused. Do not
 // subtract a newly received viewheight from a base prepared with an older one.
@@ -1329,6 +1330,7 @@ void V_Init (void)
 	Cvar_RegisterVariable (&vr_gunangle);
 	Cvar_RegisterVariable (&vr_gunmodelpitch);
 	Cvar_RegisterVariable (&vr_gunmodelscale);
+	Cvar_RegisterVariable (&vr_gunmodely);
 	VR_WeaponCalibrationInit ();
 	if (!VR_WeaponCalibrationReloadGame ())
 		Con_Warning ("VR: invalid weapon calibration schema for active game\n");

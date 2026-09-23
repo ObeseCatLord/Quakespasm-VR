@@ -27,6 +27,7 @@ extern cvar_t vid_gamma;
 extern cvar_t vid_contrast;
 extern cvar_t vr_gunmodelpitch;
 extern cvar_t vr_gunmodelscale;
+extern cvar_t vr_gunmodely;
 
 extern uint8_t v_blend[4];
 
