@@ -56,8 +56,9 @@ state. The first is the working choice. Reopen this decision if it requires a
 second task graph, persistent duplicate inventory state, or changes to desktop
 vkQuake drawing outside the wheel's own opt-in UI.
 
-Completion needs observed stock and mod weapon selection, closing/reopening
+Implementation completion needs stock and mod selection paths, closing/reopening
 without stale hover, controller ray and mouse/stick selection, save/reconnect
-behavior, and a mixed desktop/VR session. Source-level reuse or a catalog-only
-unit check does not prove wheel behavior. Run those acceptance checks in the
-consolidated test phase requested by the user.
+behavior, and mixed desktop/VR compatibility. Build and software checks remain
+implementation work. The user will perform live headset, eye-tracking and
+gameplay validation after implementation; source-level reuse or a catalog-only
+unit check alone does not prove wheel behavior.
