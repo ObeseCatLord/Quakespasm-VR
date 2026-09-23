@@ -1,4 +1,5 @@
 #include "quakedef.h"
+#include "vr_locomotion.h"
 #include "vr_weapon_calibration.h"
 
 #include <math.h>
@@ -758,4 +759,69 @@ qboolean VR_WeaponCalibrationCurrentMuzzle(vec3_t out)
 	}
 
 	return true;
+}
+
+void VR_WeaponCalibrationProjectileSourceOffset(const char *viewmodel,
+	int weapon_bit, const vec3_t angles, float viewheight, vec3_t out)
+{
+	static const vec3_t default_angles = {0.0f, 0.0f, 0.0f};
+	static const vec3_t default_forward_offset = {0.0f, 0.0f, 8.0f};
+	const vr_weapon_calibration_slot_t *calibration = NULL;
+	const float *safe_angles = angles;
+	vec3_t source_world;
+	int slot;
+	int component;
+	qboolean spawn_at_self_origin = weapon_bit == IT_GRENADE_LAUNCHER;
+
+	if (!out)
+		return;
+	memset(out, 0, sizeof(vec3_t));
+
+	if (!angles || !VR_CalibrationVectorIsFinite(angles))
+		safe_angles = default_angles;
+
+	if (vr_weapon_calibration_initialized && viewmodel && viewmodel[0])
+	{
+		slot = VR_FindCalibrationSlot(viewmodel);
+		if (slot >= 0)
+			calibration = &vr_weapon_calibration_slots[slot];
+	}
+
+	if (calibration && calibration->has_spawn_at_self_origin)
+		spawn_at_self_origin = calibration->spawn_at_self_origin;
+
+	if (!spawn_at_self_origin)
+	{
+		if (!VR_LocomotionAimOffsetToWorld(default_forward_offset,
+											  safe_angles, 1.0f, source_world))
+		{
+			source_world[0] = 8.0f;
+			source_world[1] = 0.0f;
+			source_world[2] = 0.0f;
+		}
+		for (component = 0; component < 3; ++component)
+			out[component] = source_world[component];
+		out[2] += 16.0f;
+	}
+
+	if (calibration && calibration->has_muzzle_source_viewofs &&
+		calibration->muzzle_source_viewofs && isfinite(viewheight))
+	{
+		float view_z = out[2] + viewheight;
+		if (isfinite(view_z))
+			out[2] = view_z;
+	}
+
+	if (calibration && calibration->has_muzzle_source_offset &&
+		VR_CalibrationVectorIsFinite(calibration->muzzle_source_offset) &&
+		VR_LocomotionAimOffsetToWorld(calibration->muzzle_source_offset,
+										  safe_angles, 1.0f, source_world) &&
+		VR_CalibrationVectorIsFinite(source_world))
+	{
+		vec3_t result;
+		for (component = 0; component < 3; ++component)
+			result[component] = out[component] + source_world[component];
+		if (VR_CalibrationVectorIsFinite(result))
+			memcpy(out, result, sizeof(vec3_t));
+	}
 }

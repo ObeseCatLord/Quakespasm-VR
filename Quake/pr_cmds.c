@@ -172,6 +172,8 @@ static void PF_setorigin (void)
 
 	e = G_EDICT (OFS_PARM0);
 	org = G_VECTOR (OFS_PARM1);
+	if (qcvm == &sv.qcvm)
+		SV_VRWeaponPoseSetOrigin (e);
 	VectorCopy (org, e->v.origin);
 	SV_LinkEdict (e, false);
 }

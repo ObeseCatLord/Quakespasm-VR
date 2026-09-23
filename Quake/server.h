@@ -391,6 +391,9 @@ void SV_ConnectClient (int clientnum); // called from the netcode to add new cli
 void SV_CheckForNewClients (void);
 void SV_RunClients (void);
 void SV_FinishPrivateUsercmds (void);
+void SV_ClearVRWeaponPoseScope (void);
+void SV_VRWeaponPoseSetOrigin (edict_t *ent);
+void SV_VRWeaponPoseLinked (edict_t *ent);
 void SV_SaveSpawnparms ();
 void SV_SpawnServer (const char *server);
 

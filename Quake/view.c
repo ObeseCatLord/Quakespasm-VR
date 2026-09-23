@@ -1419,9 +1419,6 @@ void V_Init (void)
 	Cvar_RegisterVariable (&vr_gunmodelpitch);
 	Cvar_RegisterVariable (&vr_gunmodelscale);
 	Cvar_RegisterVariable (&vr_gunmodely);
-	VR_WeaponCalibrationInit ();
-	if (!VR_WeaponCalibrationReloadGame ())
-		Con_Warning ("VR: invalid weapon calibration schema for active game\n");
 	Cvar_SetCallback (&vr_aimmode, V_TrackedAimModeChanged);
 	Cmd_AddCommand ("v_cshift", V_cshift_f);
 	Cmd_AddCommand ("bf", V_BonusFlash_f);

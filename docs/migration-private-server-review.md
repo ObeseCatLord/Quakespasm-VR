@@ -81,3 +81,27 @@ must leave no tracking debt. Compare dedicated and listen sessions with donor
 remote/latest behavior, and count auxiliary versus normal QC callbacks.
 Auxiliary-only solid impacts and thin crossed triggers are explicit caveats to
 test, not reasons to add a new contact queue before evidence.
+
+## Weapon pose scope: Astra senior disposition
+
+A local `gpt-6-astra`/`xhigh` review compared the staged generic weapon scope
+with the pinned OpenVR donor and vkQuake's QuakeC and spatial-link owners. It
+found two correctness issues before private-profile activation. The review was
+static; a successful build is not gameplay proof.
+
+| Finding / recommendation | Disposition |
+| --- | --- |
+| An equality guard on `setorigin` can erase a QC teleport after `self.origin` was assigned first. Preserve every explicit `setorigin`, as the donor does. | **Fixed.** `PF_setorigin` marks relocation for the scoped player regardless of its current mutable origin. Other entities do not alter that scope. |
+| `setsize`, `setmodel` or another scoped relink can index the temporary hand origin; restoring the body alone leaves stale absolute bounds, area links and PVS leaves. | **Fixed at the shared link owner.** `SV_LinkEdict` records a relink only for a scoped entity. Scope exit re-links the restored body without trigger callbacks, while retaining QC's size/model changes. It does not re-link when an explicit `setorigin` must be preserved. |
+| Replace vkQuake physics/QC cadence or add a second local weapon policy. | **Rejected.** The accepted command supplies both local and remote VR pose. vkQuake movement and QuakeC callbacks remain the behavioral owners. |
+| Reuse donor source compensation and load weapon calibration on dedicated servers. | **Adopted, still unqualified at runtime.** The helper uses the single weapon schema and the donor's default 8-forward/16-world-up source, grenade self-origin and schema overrides. |
+| Activate the private profile now. | **Deferred.** The coupled receiver, collision, weapon, snapshot/ACK and prediction proof remains incomplete. |
+
+Before activation, exercise a shotgun shot against a target and verify trace,
+damage, ammo, cadence and restored body state. Cover scheduled continuous fire,
+grenades, schema pitch/roll, wall-clamped muzzle, dedicated game switching,
+callback-error unwind, and QC `setorigin` after direct assignment in both
+Think and PostThink. Also change player size/model during a displaced PostThink
+and immediately verify collision bounds, area membership and visibility leaves
+without extra trigger callbacks. These checks should run against the pinned
+donor where its behavior is the reference.

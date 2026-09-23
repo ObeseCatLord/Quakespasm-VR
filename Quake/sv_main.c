@@ -23,6 +23,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 // sv_main.c -- server main program
 
 #include "quakedef.h"
+#include "vr_weapon_calibration.h"
 
 server_t		sv;
 server_static_t svs;
@@ -1191,6 +1192,9 @@ void SV_Init (void)
 
 	Cvar_RegisterVariable (&sv_fte_recursivehullckeck);
 	Cvar_RegisterVariable (&sv_fte_createareanode);
+	VR_WeaponCalibrationInit ();
+	if (!VR_WeaponCalibrationReloadGame ())
+		Con_Warning ("VR: invalid weapon calibration schema for active game\n");
 
 	Cmd_AddCommand ("pext", SV_Pext_f);
 	Cmd_AddCommand ("sv_protocol", &SV_Protocol_f); // johnfitz

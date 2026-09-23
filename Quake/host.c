@@ -190,6 +190,7 @@ void Host_EndGame (const char *message, ...)
 	q_vsnprintf (string, sizeof (string), message, argptr);
 	va_end (argptr);
 	Con_DPrintf ("Host_EndGame: %s\n", string);
+	SV_ClearVRWeaponPoseScope ();
 
 	PR_SwitchQCVM (NULL);
 
@@ -223,6 +224,7 @@ void Host_Error (const char *error, ...)
 	if (inerror)
 		Sys_Error ("Host_Error: recursively entered");
 	inerror = true;
+	SV_ClearVRWeaponPoseScope ();
 
 	va_start (argptr, error);
 	q_vsnprintf (string, sizeof (string), error, argptr);
@@ -671,6 +673,7 @@ not reinitialize anything.
 */
 void Host_ClearMemory (void)
 {
+	SV_ClearVRWeaponPoseScope ();
 	if (cl.qcvm.extfuncs.CSQC_Shutdown)
 	{
 		PR_SwitchQCVM (&cl.qcvm);

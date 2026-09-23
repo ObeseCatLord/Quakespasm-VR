@@ -22,6 +22,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 // sv_phys.c
 
 #include "quakedef.h"
+#include "vr_weapon_calibration.h"
 
 /*
 
@@ -2267,9 +2268,143 @@ static void SV_ApplyPrivateRoomScaleMove (edict_t *ent, client_t *client)
 	SV_LinkEdict (ent, false);
 }
 
+typedef struct sv_vr_weapon_pose_scope_s
+{
+	struct sv_vr_weapon_pose_scope_s *previous;
+	edict_t *ent;
+	qboolean applied, origin_relocated, linked;
+	vec3_t origin, v_angle, forward, right, up;
+} sv_vr_weapon_pose_scope_t;
+
+static sv_vr_weapon_pose_scope_t *sv_vr_weapon_pose_scope;
+
+void SV_ClearVRWeaponPoseScope (void)
+{
+	/* Host_Error/EndGame can unwind a QC callback past its normal restore. */
+	sv_vr_weapon_pose_scope = NULL;
+}
+
+void SV_VRWeaponPoseSetOrigin (edict_t *ent)
+{
+	sv_vr_weapon_pose_scope_t *scope;
+	if (qcvm != &sv.qcvm)
+		return;
+	for (scope = sv_vr_weapon_pose_scope; scope; scope = scope->previous)
+		if (scope->ent == ent)
+			scope->origin_relocated = true;
+}
+
+void SV_VRWeaponPoseLinked (edict_t *ent)
+{
+	sv_vr_weapon_pose_scope_t *scope;
+	for (scope = sv_vr_weapon_pose_scope; scope; scope = scope->previous)
+		if (scope->ent == ent)
+			scope->linked = true;
+}
+
+static void SV_ClampVRMuzzleToWorld (edict_t *ent, vec3_t muzzle)
+{
+	vec3_t start, delta;
+	trace_t trace;
+	int i;
+	VectorAdd (ent->v.origin, ent->v.view_ofs, start);
+	for (i = 0; i < 3; i++)
+		if (!isfinite (muzzle[i]))
+		{
+			VectorCopy (start, muzzle);
+			return;
+		}
+	VectorSubtract (muzzle, start, delta);
+	if (VectorLength (delta) > 512.0f)
+	{
+		VectorCopy (start, muzzle);
+		return;
+	}
+	trace = SV_Move (start, vec3_origin, vec3_origin, muzzle,
+		MOVE_NOMONSTERS, ent);
+	if (trace.startsolid || trace.allsolid)
+		VectorCopy (start, muzzle);
+	else if (trace.fraction < 1.0f)
+	{
+		VectorCopy (trace.endpos, muzzle);
+		if (VectorNormalize (delta) > 0.0f)
+			VectorMA (muzzle, -1.0f, delta, muzzle);
+	}
+}
+
+static void SV_BeginPrivateVRWeaponPose (edict_t *ent, client_t *client,
+	sv_vr_weapon_pose_scope_t *scope)
+{
+	vec3_t muzzle, source_offset;
+	const usercmd_t *cmd = &client->cmd;
+	memset (scope, 0, sizeof (*scope));
+	if (client->protocol_qsvr != QSVR_PROTOCOL_PINNED ||
+		!cmd->vr_active || !cmd->vr_handpos_relative ||
+		client->lastmovetime <= 0 || realtime - client->lastmovetime > 1.0)
+		return;
+
+	scope->applied = true;
+	scope->ent = ent;
+	scope->previous = sv_vr_weapon_pose_scope;
+	sv_vr_weapon_pose_scope = scope;
+	VectorCopy (ent->v.origin, scope->origin);
+	VectorCopy (ent->v.v_angle, scope->v_angle);
+	VectorCopy (pr_global_struct->v_forward, scope->forward);
+	VectorCopy (pr_global_struct->v_right, scope->right);
+	VectorCopy (pr_global_struct->v_up, scope->up);
+
+	VectorAdd (scope->origin, cmd->vr_handpos, muzzle);
+	VectorCopy (cmd->vr_handrot, ent->v.v_angle);
+	/* QC roll is camera tilt, while wrist roll belongs to the weapon model. */
+	ent->v.v_angle[ROLL] = 0;
+	AngleVectors (ent->v.v_angle, pr_global_struct->v_forward,
+		pr_global_struct->v_right, pr_global_struct->v_up);
+	SV_ClampVRMuzzleToWorld (ent, muzzle);
+	VR_WeaponCalibrationProjectileSourceOffset (
+		PR_GetString (ent->v.weaponmodel), (int)ent->v.weapon,
+		ent->v.v_angle, ent->v.view_ofs[2], source_offset);
+	VectorSubtract (muzzle, source_offset, ent->v.origin);
+}
+
+static void SV_EndPrivateVRWeaponPose (edict_t *ent,
+	const sv_vr_weapon_pose_scope_t *scope)
+{
+	if (!scope->applied)
+		return;
+	sv_vr_weapon_pose_scope = scope->previous;
+	if (!ent->free)
+	{
+		if (!scope->origin_relocated)
+		{
+			VectorCopy (scope->origin, ent->v.origin);
+			/* A QC size/model/link operation may have indexed the hand origin. */
+			if (scope->linked)
+				SV_LinkEdict (ent, false);
+		}
+		VectorCopy (scope->v_angle, ent->v.v_angle);
+	}
+	VectorCopy (scope->forward, pr_global_struct->v_forward);
+	VectorCopy (scope->right, pr_global_struct->v_right);
+	VectorCopy (scope->up, pr_global_struct->v_up);
+}
+
+static qboolean SV_RunPrivateVRWeaponThink (edict_t *ent, client_t *client)
+{
+	sv_vr_weapon_pose_scope_t scope;
+	qboolean alive;
+	if (ent->v.nextthink <= 0 || ent->v.nextthink > qcvm->time + host_frametime)
+		return true;
+	SV_BeginPrivateVRWeaponPose (ent, client, &scope);
+	alive = SV_RunThink (ent);
+	SV_EndPrivateVRWeaponPose (ent, &scope);
+	return alive;
+}
+
 static void SV_Physics_Client (edict_t *ent, int num)
 {
 	sv_client_move_frame_t move_frame;
+	sv_vr_weapon_pose_scope_t weapon_scope;
+	client_t *client = &svs.clients[num - 1];
 	edict_t				  *retained_pusher;
 
 	if (!svs.clients[num - 1].active)
@@ -2308,12 +2443,12 @@ static void SV_Physics_Client (edict_t *ent, int num)
 	switch ((int)ent->v.movetype)
 	{
 	case MOVETYPE_NONE:
-		if (!SV_RunThink (ent))
+		if (!SV_RunPrivateVRWeaponThink (ent, client))
 			goto done;
 		break;
 
 	case MOVETYPE_WALK:
-		if (!SV_RunThink (ent))
+		if (!SV_RunPrivateVRWeaponThink (ent, client))
 			goto done;
 		SV_Physics_ClientWalk (ent, &move_frame);
 		break;
@@ -2325,13 +2460,13 @@ static void SV_Physics_Client (edict_t *ent, int num)
 		break;
 
 	case MOVETYPE_FLY:
-		if (!SV_RunThink (ent))
+		if (!SV_RunPrivateVRWeaponThink (ent, client))
 			goto done;
 		SV_FlyMove (ent, host_frametime, NULL, NULL, true);
 		break;
 
 	case MOVETYPE_NOCLIP:
-		if (!SV_RunThink (ent))
+		if (!SV_RunPrivateVRWeaponThink (ent, client))
 			goto done;
 		VectorMA (ent->v.origin, host_frametime, ent->v.velocity, ent->v.origin);
 		if (!SV_TestEntityPosition (ent))
@@ -2351,7 +2486,9 @@ static void SV_Physics_Client (edict_t *ent, int num)
 
 	pr_global_struct->time = qcvm->time;
 	pr_global_struct->self = EDICT_TO_PROG (ent);
+	SV_BeginPrivateVRWeaponPose (ent, client, &weapon_scope);
 	PR_ExecuteProgram (pr_global_struct->PlayerPostThink);
+	SV_EndPrivateVRWeaponPose (ent, &weapon_scope);
 
 done:
 	if (retained_pusher)

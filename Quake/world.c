@@ -504,6 +504,7 @@ SV_LinkEdict
 void SV_LinkEdict (edict_t *ent, qboolean touch_triggers)
 {
 	areanode_t *node;
+	SV_VRWeaponPoseLinked (ent);
 
 	if (ent->area.prev)
 		SV_UnlinkEdict (ent); // unlink from old position

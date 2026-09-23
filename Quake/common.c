@@ -3102,14 +3102,14 @@ void COM_SwitchGame (const char *paths)
 	// clear out and reload appropriate data
 	Mod_ResetAll ();
 	Sky_ClearAll ();
+	if (!VR_WeaponCalibrationReloadGame ())
+		Con_Warning ("VR: invalid weapon calibration schema for active game\n");
 	if (!isDedicated)
 	{
 		TexMgr_NewGame ();
 		Draw_NewGame ();
 		R_NewGame ();
 		M_NewGame ();
-		if (!VR_WeaponCalibrationReloadGame ())
-			Con_Warning ("VR: invalid weapon calibration schema for active game\n");
 	}
 	ExtraMaps_NewGame ();
 	Host_Resetdemos ();
