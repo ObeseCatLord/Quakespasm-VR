@@ -137,11 +137,12 @@ either returns a pointer to Mem_Alloc allocated RGBA data
 or returns NULL if not loaded, either because not found OR if name
 is ignored because from a gamedir with lower priority than min_path_id.
 Use min_path_id = 0 if gamedir priority is N/A.
-Search order:  png tga jpg pcx lmp
+Search order:  tga png jpg jpeg pcx lmp
 Note : makes a thread-safe copy of 'name' so we can use va() as inuput.
 ============
 */
-// image formats supported, ordered by priority
+// Image formats supported, ordered by priority. The highest path_id still wins;
+// this order breaks ties when formats are found at the same path_id.
 typedef enum
 {
 	STB_IMAGE_LOADER,
@@ -153,7 +154,7 @@ static struct
 {
 	const char	  *file_extension;
 	image_loader_t loader;
-} supported_image_formats[] = {{"png", STB_IMAGE_LOADER}, {"tga", STB_IMAGE_LOADER}, {"jpg", STB_IMAGE_LOADER}, {"pcx", PCX_LOADER}, {"lmp", LMP_LOADER}};
+} supported_image_formats[] = {{"tga", STB_IMAGE_LOADER}, {"png", STB_IMAGE_LOADER}, {"jpg", STB_IMAGE_LOADER}, {"jpeg", STB_IMAGE_LOADER}, {"pcx", PCX_LOADER}, {"lmp", LMP_LOADER}};
 
 const int num_supported_image_formats = countof (supported_image_formats);
 
