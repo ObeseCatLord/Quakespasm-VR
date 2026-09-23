@@ -433,14 +433,17 @@ typedef struct
 	vulkan_pipeline_t		 sky_cube_pipeline[MAIN_RENDER_PASS_VARIANT_COUNT][2];
 	vulkan_pipeline_t		 sky_layer_pipeline[MAIN_RENDER_PASS_VARIANT_COUNT][2];
 	vulkan_pipeline_t		 alias_pipelines[MAIN_RENDER_PASS_VARIANT_COUNT][MODEL_PIPELINE_COUNT];
+	vulkan_pipeline_t		 alias_opposite_front_face_pipelines[MAIN_RENDER_PASS_VARIANT_COUNT][MODEL_PIPELINE_SHOWTRIS];
 	vulkan_pipeline_t		 alias_wboit_pipelines[MODEL_PIPELINE_COUNT];
 	vulkan_pipeline_t		 alias_mboit_moment_pipelines[MODEL_PIPELINE_COUNT];
 	vulkan_pipeline_t		 alias_mboit_composite_pipelines[MODEL_PIPELINE_COUNT];
 	vulkan_pipeline_t		 md5_pipelines[MAIN_RENDER_PASS_VARIANT_COUNT][MODEL_PIPELINE_COUNT];
+	vulkan_pipeline_t		 md5_opposite_front_face_pipelines[MAIN_RENDER_PASS_VARIANT_COUNT][MODEL_PIPELINE_SHOWTRIS];
 	vulkan_pipeline_t		 md5_wboit_pipelines[MODEL_PIPELINE_COUNT];
 	vulkan_pipeline_t		 md5_mboit_moment_pipelines[MODEL_PIPELINE_COUNT];
 	vulkan_pipeline_t		 md5_mboit_composite_pipelines[MODEL_PIPELINE_COUNT];
 	vulkan_pipeline_t		 md5_8_pipelines[MAIN_RENDER_PASS_VARIANT_COUNT][MODEL_PIPELINE_COUNT];
+	vulkan_pipeline_t		 md5_8_opposite_front_face_pipelines[MAIN_RENDER_PASS_VARIANT_COUNT][MODEL_PIPELINE_SHOWTRIS];
 	vulkan_pipeline_t		 md5_8_wboit_pipelines[MODEL_PIPELINE_COUNT];
 	vulkan_pipeline_t		 md5_8_mboit_moment_pipelines[MODEL_PIPELINE_COUNT];
 	vulkan_pipeline_t		 md5_8_mboit_composite_pipelines[MODEL_PIPELINE_COUNT];

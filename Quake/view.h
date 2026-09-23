@@ -51,6 +51,8 @@ qboolean V_TrackedMovementAngles (int mode, int physical_offhand, vec3_t angles)
 qboolean V_TrackedMappingYaw (float *yaw);
 qboolean V_TrackedHandBodyOffset (int physical_hand, vec3_t out);
 qboolean V_TrackedBodyOwnsRoomscale (void);
+qboolean V_TrackedViewmodelActive (void);
+qboolean V_TrackedViewmodelShouldHide (void);
 qboolean V_TurnTrackedYaw (float delta);
 qboolean V_ApplyTrackedView (vec3_t angles, float *tracking_yaw);
 void V_ResetBlend (void);

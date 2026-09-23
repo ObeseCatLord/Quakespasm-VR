@@ -3909,6 +3909,11 @@ static void R_CreateAliasPipelines ()
 			infos.depth_stencil_state.depthWriteEnable = alpha_blend ? VK_FALSE : VK_TRUE;
 			R_CreateGraphicsPipeline (
 				&vulkan_globals.alias_pipelines[variant][pipeline_index], &infos, layout, va (variant ? "alias_main_oit %d" : "alias %d", pipeline_index));
+
+			infos.rasterization_state.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+			R_CreateGraphicsPipeline (
+				&vulkan_globals.alias_opposite_front_face_pipelines[variant][pipeline_index], &infos, layout,
+				va (variant ? "alias_opposite_front_face_main_oit %d" : "alias_opposite_front_face %d", pipeline_index));
 		}
 
 		if (alpha_blend)
@@ -3974,7 +3979,9 @@ R_CreateMD5Pipelines
 ===============
 */
 static void R_CreateMD5PipelineSet (
-	vulkan_pipeline_t pipelines[MAIN_RENDER_PASS_VARIANT_COUNT][MODEL_PIPELINE_COUNT], vulkan_pipeline_t wboit_pipelines[MODEL_PIPELINE_COUNT],
+	vulkan_pipeline_t pipelines[MAIN_RENDER_PASS_VARIANT_COUNT][MODEL_PIPELINE_COUNT],
+	vulkan_pipeline_t opposite_front_face_pipelines[MAIN_RENDER_PASS_VARIANT_COUNT][MODEL_PIPELINE_SHOWTRIS],
+	vulkan_pipeline_t wboit_pipelines[MODEL_PIPELINE_COUNT],
 	vulkan_pipeline_t mboit_moment_pipelines[MODEL_PIPELINE_COUNT], vulkan_pipeline_t mboit_composite_pipelines[MODEL_PIPELINE_COUNT],
 	VkVertexInputAttributeDescription *vertex_attributes, uint32_t vertex_attribute_count, VkVertexInputBindingDescription *vertex_binding,
 	VkShaderModule vertex_module, const char *name)
@@ -4009,6 +4016,11 @@ static void R_CreateMD5PipelineSet (
 			infos.multisample_state.sampleShadingEnable = (!alpha_blend && vulkan_globals.supersampling) ? VK_TRUE : VK_FALSE;
 			infos.depth_stencil_state.depthWriteEnable = alpha_blend ? VK_FALSE : VK_TRUE;
 			R_CreateGraphicsPipeline (&pipelines[variant][pipeline_index], &infos, layout, va (variant ? "%s_main_oit %d" : "%s %d", name, pipeline_index));
+
+			infos.rasterization_state.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+			R_CreateGraphicsPipeline (
+				&opposite_front_face_pipelines[variant][pipeline_index], &infos, layout,
+				va (variant ? "%s_opposite_front_face_main_oit %d" : "%s_opposite_front_face %d", name, pipeline_index));
 		}
 
 		if (alpha_blend)
@@ -4070,11 +4082,11 @@ static void R_CreateMD5PipelineSet (
 static void R_CreateMD5Pipelines ()
 {
 	R_CreateMD5PipelineSet (
-		vulkan_globals.md5_pipelines, vulkan_globals.md5_wboit_pipelines, vulkan_globals.md5_mboit_moment_pipelines,
+		vulkan_globals.md5_pipelines, vulkan_globals.md5_opposite_front_face_pipelines, vulkan_globals.md5_wboit_pipelines, vulkan_globals.md5_mboit_moment_pipelines,
 		vulkan_globals.md5_mboit_composite_pipelines, md5_vertex_input_attribute_descriptions, countof (md5_vertex_input_attribute_descriptions),
 		&md5_vertex_binding_description, md5_vert_module, "md5");
 	R_CreateMD5PipelineSet (
-		vulkan_globals.md5_8_pipelines, vulkan_globals.md5_8_wboit_pipelines, vulkan_globals.md5_8_mboit_moment_pipelines,
+		vulkan_globals.md5_8_pipelines, vulkan_globals.md5_8_opposite_front_face_pipelines, vulkan_globals.md5_8_wboit_pipelines, vulkan_globals.md5_8_mboit_moment_pipelines,
 		vulkan_globals.md5_8_mboit_composite_pipelines, md5_8_vertex_input_attribute_descriptions, countof (md5_8_vertex_input_attribute_descriptions),
 		&md5_8_vertex_binding_description, md5_8_vert_module, "md5_8");
 }
@@ -4594,10 +4606,25 @@ void R_DestroyPipelines (void)
 		{
 			vkDestroyPipeline (vulkan_globals.device, vulkan_globals.alias_pipelines[variant][i].handle, NULL);
 			vulkan_globals.alias_pipelines[variant][i].handle = VK_NULL_HANDLE;
+			if (i < MODEL_PIPELINE_SHOWTRIS)
+			{
+				vkDestroyPipeline (vulkan_globals.device, vulkan_globals.alias_opposite_front_face_pipelines[variant][i].handle, NULL);
+				vulkan_globals.alias_opposite_front_face_pipelines[variant][i].handle = VK_NULL_HANDLE;
+			}
 			vkDestroyPipeline (vulkan_globals.device, vulkan_globals.md5_pipelines[variant][i].handle, NULL);
 			vulkan_globals.md5_pipelines[variant][i].handle = VK_NULL_HANDLE;
+			if (i < MODEL_PIPELINE_SHOWTRIS)
+			{
+				vkDestroyPipeline (vulkan_globals.device, vulkan_globals.md5_opposite_front_face_pipelines[variant][i].handle, NULL);
+				vulkan_globals.md5_opposite_front_face_pipelines[variant][i].handle = VK_NULL_HANDLE;
+			}
 			vkDestroyPipeline (vulkan_globals.device, vulkan_globals.md5_8_pipelines[variant][i].handle, NULL);
 			vulkan_globals.md5_8_pipelines[variant][i].handle = VK_NULL_HANDLE;
+			if (i < MODEL_PIPELINE_SHOWTRIS)
+			{
+				vkDestroyPipeline (vulkan_globals.device, vulkan_globals.md5_8_opposite_front_face_pipelines[variant][i].handle, NULL);
+				vulkan_globals.md5_8_opposite_front_face_pipelines[variant][i].handle = VK_NULL_HANDLE;
+			}
 		}
 		vkDestroyPipeline (vulkan_globals.device, vulkan_globals.alias_wboit_pipelines[i].handle, NULL);
 		vulkan_globals.alias_wboit_pipelines[i].handle = VK_NULL_HANDLE;

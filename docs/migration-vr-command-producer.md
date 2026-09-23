@@ -277,3 +277,40 @@ received an ACK and lost three shotgun shells. This proves the basic private
 pose reached the server's muzzle reconstruction path. It does not prove the
 post-clamp muzzle, actual pellet origin/direction or damage, nor roomscale
 collision and visible viewmodel alignment.
+
+## Tracked Vulkan viewmodel Astra disposition
+
+The local Astra review ran at effective `gpt-6-astra` / `max`. It confirmed
+that the native `cl.viewent` and alias draw remain the right owners, while
+catching a winding and paused-frame failure that a simple pose assignment
+would miss. The main-thread screen path waits for `draw_done_task` after the
+viewmodel draw (`gl_screen.c:1619–1640`), so the next frame cannot mutate
+calibration while that worker is still reading it. This is a CPU task ordering
+claim, not a GPU completion claim.
+
+| Recommendation | Disposition |
+| --- | --- |
+| Reuse `cl.viewent`, selected alias format and the existing calibration owner | Adopted. Apply held scale/offset per draw matrix; never mutate a shared alias header or create another model registry. |
+| Merge held calibration and mirror into one local transform | Adopted. Compose entity pose, optional model-Y reflection, translated header origin plus held offset/`vr_gunmodely`, then geometry scale. The held scale must not multiply translation; the muzzle offset remains a separate calibrated command input. |
+| Opposite winding for mirrored viewmodel | Adopted for normal viewmodel passes. Extend existing alias/MD5 pipeline generators with reversed-front-face variants instead of disabling culling globally. Qualify alpha and format paths before general parity claims. |
+| Native CPU frustum culling can reject a calibrated gun | Adopted. Exempt only the active tracked viewmodel, including diagnostic draws; ordinary entities retain native culling. |
+| A paused frame skips `V_CalcRefdef` | Adopted. Refresh the tracked presentation in `V_SetupFrame`, retain stair displacement once, and suppress stale gun pose on tracking loss. Force desktop restoration when XR exits while paused. |
+| Blindly normalize every MD5 replacement as a rerelease model | Rejected. The donor applies axe/shotgun factors only to recognized rerelease replacements; vkQuake's native MD5 selection needs a provenance check before those factors can be ported safely. |
+| New global snapshot for render-thread safety | Rejected for this path after checking `gl_screen.c`'s draw-task join. Keep the existing task lifetime; revisit only if frame scheduling changes. |
+
+The first visible proof is a classic shotgun in both eyes and hands, with a
+moving wrist and peripheral pose compared to the accepted command muzzle.
+Stairs, pause, focus/pose loss and desktop return are part of that proof.
+MD3, MD5/MD5_8, rerelease scaling, model switches and alpha render modes are
+later format gates. The donor renders VR weapons without the desktop depth
+compression or view-size cutoff; `2.0` now uses physical world depth for an
+active tracked view, but weapon-wall collision still needs its own port.
+
+The local simulated-Monado probe reached the native Vulkan viewmodel draw
+132 times with a tracked classic shotgun pose, while a pinned peer received
+the same finite private attack and consumed three shells. Simulated Monado
+supplies no controllers, so the probe injected hand poses at both input and
+view setup while leaving the runtime's head pose untouched. This proves the
+draw path is reached under a coherent synthetic sample, not image alignment
+or real-device tracking. The viewmodel pose deliberately has no private-wire
+protocol gate: single-player and ordinary servers need the same held gun.

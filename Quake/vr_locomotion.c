@@ -141,12 +141,26 @@ qboolean VR_LocomotionAimOffsetToWorld (const float local[3],
 	return true;
 }
 
-static void VR_LocomotionHandRotToViewmodelAngles (const float handrot[3],
+qboolean VR_LocomotionHandRotToViewmodelAngles (const float handrot[3],
 	float viewmodel_angles[3], float gunmodelpitch)
 {
-	viewmodel_angles[VR_AIM_YAW] = handrot[VR_AIM_YAW];
-	viewmodel_angles[VR_AIM_PITCH] = -handrot[VR_AIM_PITCH] + gunmodelpitch;
-	viewmodel_angles[VR_AIM_ROLL] = handrot[VR_AIM_ROLL];
+	vec3_t handrot_copy, result;
+
+	if (handrot)
+		VectorCopy (handrot, handrot_copy);
+	if (viewmodel_angles)
+		VR_LocomotionZero (viewmodel_angles);
+	if (!handrot || !viewmodel_angles || !VR_LocomotionFiniteVec3 (handrot_copy) ||
+		!isfinite (gunmodelpitch))
+		return false;
+
+	result[VR_AIM_YAW] = handrot_copy[VR_AIM_YAW];
+	result[VR_AIM_PITCH] = -handrot_copy[VR_AIM_PITCH] + gunmodelpitch;
+	result[VR_AIM_ROLL] = handrot_copy[VR_AIM_ROLL];
+	if (!VR_LocomotionFiniteVec3 (result))
+		return false;
+	VectorCopy (result, viewmodel_angles);
+	return true;
 }
 
 static void VR_LocomotionModelOffsetToWorld (const float local[3],
@@ -237,9 +251,8 @@ qboolean VR_LocomotionMuzzleOffsetToWorld (const float local[3],
 
 	if (left_handed)
 	{
-		VR_LocomotionHandRotToViewmodelAngles (hand_angles_copy, model_angles,
-			gunmodelpitch);
-		if (!VR_LocomotionFiniteVec3 (model_angles))
+		if (!VR_LocomotionHandRotToViewmodelAngles (hand_angles_copy,
+			model_angles, gunmodelpitch))
 			return false;
 
 		VR_LocomotionWorldToModelOffset (aim_world, model_angles, 1.0f,

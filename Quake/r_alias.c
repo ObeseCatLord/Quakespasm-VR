@@ -24,10 +24,15 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 // r_alias.c -- alias model rendering
 
 #include "quakedef.h"
+#include "vr_input.h"
+#include "vr_weapon_calibration.h"
+#include <float.h>
 
 extern cvar_t r_drawflat, gl_fullbrights, r_lerpmodels, r_lerpmove, r_showtris; // johnfitz
 extern cvar_t r_lerpturn;
 extern cvar_t cl_gun_fovscale, cl_gun_x, cl_gun_y, cl_gun_z;
+extern cvar_t vr_world_scale;
+extern qboolean V_TrackedViewmodelActive (void);
 
 // up to 16 color translated skins
 gltexture_t *playertextures[MAX_SCOREBOARD]; // johnfitz -- changed to an array of pointers
@@ -76,6 +81,19 @@ static VkDeviceSize GLARB_GetXYZOffset (entity_t *e, aliashdr_t *hdr, int pose)
 	return hdr->numverts_vbo * pose * sizeof (meshxyz_t) + xyzoffs;
 }
 
+static qboolean R_IsTrackedViewmodel (entity_t *e)
+{
+	return e == &cl.viewent && V_TrackedViewmodelActive ();
+}
+
+static qboolean R_AliasMatrixIsFinite (const float model_matrix[16])
+{
+	for (int i = 0; i < 16; ++i)
+		if (!isfinite (model_matrix[i]))
+			return false;
+	return true;
+}
+
 /*
 =============
 GL_DrawAliasFrame -- ericw
@@ -91,7 +109,7 @@ Based on code by MH from RMQEngine
 */
 static void GL_DrawAliasFrame (
 	cb_context_t *cbx, entity_t *e, aliashdr_t *paliashdr, lerpdata_t lerpdata, gltexture_t *tx, gltexture_t *fb, float model_matrix[16], float entity_alpha,
-	qboolean alphatest, vec3_t shadevector, vec3_t lightcolor, int showtris)
+	qboolean alphatest, vec3_t shadevector, vec3_t lightcolor, int showtris, qboolean opposite_front_face)
 {
 	vulkan_pipeline_t pipeline;
 
@@ -108,21 +126,29 @@ static void GL_DrawAliasFrame (
 	const qboolean oit_pass = cbx->subpass_type == SUBPASS_WBOIT || cbx->subpass_type == SUBPASS_MBOIT_MOMENTS || cbx->subpass_type == SUBPASS_MBOIT_COMPOSITE;
 	if (oit_pass && (showtris != 0 || !has_alpha))
 		return;
+	const qboolean use_opposite_front_face = opposite_front_face && cbx->subpass_type == SUBPASS_MAIN && pipeline_index < MODEL_PIPELINE_SHOWTRIS;
 
 	if (paliashdr->poseverttype == PV_MD5 || paliashdr->poseverttype == PV_MD5_8)
 	{
 		vulkan_pipeline_t (*pipelines)[MODEL_PIPELINE_COUNT] =
 			(paliashdr->poseverttype == PV_MD5_8) ? vulkan_globals.md5_8_pipelines : vulkan_globals.md5_pipelines;
+		vulkan_pipeline_t (*opposite_front_face_pipelines)[MODEL_PIPELINE_SHOWTRIS] =
+			(paliashdr->poseverttype == PV_MD5_8) ? vulkan_globals.md5_8_opposite_front_face_pipelines : vulkan_globals.md5_opposite_front_face_pipelines;
 		vulkan_pipeline_t *wboit_pipelines = (paliashdr->poseverttype == PV_MD5_8) ? vulkan_globals.md5_8_wboit_pipelines : vulkan_globals.md5_wboit_pipelines;
 		vulkan_pipeline_t *mboit_moment_pipelines =
 			(paliashdr->poseverttype == PV_MD5_8) ? vulkan_globals.md5_8_mboit_moment_pipelines : vulkan_globals.md5_mboit_moment_pipelines;
 		vulkan_pipeline_t *mboit_composite_pipelines =
 			(paliashdr->poseverttype == PV_MD5_8) ? vulkan_globals.md5_8_mboit_composite_pipelines : vulkan_globals.md5_mboit_composite_pipelines;
 
-		pipeline = R_PipelineForSubpassType (
-			cbx->subpass_type, pipelines[cbx->pipeline_variant][pipeline_index], wboit_pipelines[pipeline_index], mboit_moment_pipelines[pipeline_index],
-			mboit_composite_pipelines[pipeline_index]);
+		if (use_opposite_front_face)
+			pipeline = opposite_front_face_pipelines[cbx->pipeline_variant][pipeline_index];
+		else
+			pipeline = R_PipelineForSubpassType (
+				cbx->subpass_type, pipelines[cbx->pipeline_variant][pipeline_index], wboit_pipelines[pipeline_index], mboit_moment_pipelines[pipeline_index],
+				mboit_composite_pipelines[pipeline_index]);
 	}
+	else if (use_opposite_front_face)
+		pipeline = vulkan_globals.alias_opposite_front_face_pipelines[cbx->pipeline_variant][pipeline_index];
 	else
 		pipeline = R_PipelineForSubpassType (
 			cbx->subpass_type, vulkan_globals.alias_pipelines[cbx->pipeline_variant][pipeline_index], vulkan_globals.alias_wboit_pipelines[pipeline_index],
@@ -480,8 +506,92 @@ static void R_SetupAliasLighting (entity_t *e, vec3_t *shadevector, vec3_t *ligh
 R_DrawAliasModel -- johnfitz -- almost completely rewritten
 =================
 */
-static void R_AliasModelMatrix (entity_t *e, const aliashdr_t *paliashdr, lerpdata_t *lerpdata, float model_matrix[16])
+/* -1 suppresses an invalid transform; 0/1 select the front-face winding. */
+static int R_AliasModelMatrix (entity_t *e, const aliashdr_t *paliashdr, lerpdata_t *lerpdata, float model_matrix[16])
 {
+	if (R_IsTrackedViewmodel (e))
+	{
+		vec3_t origin, angles, header_origin, held_offset = {0.0f, 0.0f, 0.0f};
+		float header_scale[3], geometry_scale[3];
+		float held_scale = 1.0f;
+		const qboolean enhanced_format = paliashdr->poseverttype == PV_MD5 || paliashdr->poseverttype == PV_MD5_8;
+		const qboolean multiplayer = cl.maxclients > 1;
+		const qboolean has_calibration = VR_WeaponCalibrationLookupHeld (e->model->name, enhanced_format, multiplayer, held_offset, &held_scale);
+
+		if (!has_calibration)
+		{
+			held_offset[0] = held_offset[1] = held_offset[2] = 0.0f;
+			held_scale = 1.0f;
+		}
+		if (!isfinite (held_scale) || held_scale == 0.0f)
+			return -1;
+
+		for (int axis = 0; axis < 3; ++axis)
+		{
+			if (!isfinite (lerpdata->origin[axis]) ||
+				!isfinite (lerpdata->angles[axis]) ||
+				!isfinite (paliashdr->scale[axis]) ||
+				!isfinite (paliashdr->scale_origin[axis]))
+				return -1;
+			origin[axis] = lerpdata->origin[axis];
+			angles[axis] = fmodf (lerpdata->angles[axis], 360.0f);
+			header_scale[axis] = paliashdr->scale[axis];
+			header_origin[axis] = paliashdr->scale_origin[axis];
+		}
+
+		const double c_value = ((double)vr_world_scale.value / 0.75) * (double)vr_gunmodelscale.value;
+		if (!isfinite (c_value) || c_value == 0.0 || fabs (c_value) > FLT_MAX ||
+			!isfinite (vr_gunmodely.value))
+			return -1;
+		const float c = (float)c_value;
+		const float gunmodel_y = vr_gunmodely.value;
+		float local_translation[3];
+		for (int axis = 0; axis < 3; ++axis)
+		{
+			double local_offset = (double)header_origin[axis] + (double)held_offset[axis];
+			if (axis == 2)
+				local_offset += (double)gunmodel_y;
+			double scaled_offset = (double)c * local_offset;
+			if (!isfinite (scaled_offset) || fabs (scaled_offset) > FLT_MAX)
+				return -1;
+			local_translation[axis] = (float)scaled_offset;
+
+			double scale_value = (double)c * (double)held_scale * (double)header_scale[axis];
+			if (!isfinite (scale_value) || fabs (scale_value) > FLT_MAX)
+				return -1;
+			geometry_scale[axis] = (float)scale_value;
+		}
+
+		const qboolean mirror_model_y = VR_InputDominantPhysicalHand () == 0;
+		if (mirror_model_y)
+		{
+			/* E * MirrorY * T * S: reflect the held offset with the mesh. */
+			local_translation[1] = -local_translation[1];
+			geometry_scale[1] = -geometry_scale[1];
+		}
+
+		const float entity_scale = ENTSCALE_DECODE (e->netstate.scale);
+		if (!isfinite (entity_scale) || entity_scale == 0.0f ||
+			geometry_scale[0] == 0.0f || geometry_scale[1] == 0.0f ||
+			geometry_scale[2] == 0.0f)
+			return -1;
+		const qboolean negative_determinant =
+			((entity_scale < 0.0f) ^ (geometry_scale[0] < 0.0f) ^ (geometry_scale[1] < 0.0f) ^ (geometry_scale[2] < 0.0f));
+
+		IdentityMatrix (model_matrix);
+		R_RotateForEntity (model_matrix, origin, angles, e->netstate.scale);
+		float translation_matrix[16];
+		TranslationMatrix (translation_matrix, local_translation[0], local_translation[1], local_translation[2]);
+		MatrixMultiply (model_matrix, translation_matrix);
+		float scale_matrix[16];
+		ScaleMatrix (scale_matrix, geometry_scale[0], geometry_scale[1], geometry_scale[2]);
+		MatrixMultiply (model_matrix, scale_matrix);
+
+		if (!R_AliasMatrixIsFinite (model_matrix))
+			return -1;
+		return negative_determinant;
+	}
+
 	IdentityMatrix (model_matrix);
 
 	float fovscale = 1.0f;
@@ -508,6 +618,7 @@ static void R_AliasModelMatrix (entity_t *e, const aliashdr_t *paliashdr, lerpda
 	float scale_matrix[16];
 	ScaleMatrix (scale_matrix, paliashdr->scale[0], paliashdr->scale[1] * fovscale, paliashdr->scale[2] * fovscale);
 	MatrixMultiply (model_matrix, scale_matrix);
+	return false;
 }
 
 void R_DrawAliasModel (cb_context_t *cbx, entity_t *e, int *aliaspolys)
@@ -530,14 +641,17 @@ void R_DrawAliasModel (cb_context_t *cbx, entity_t *e, int *aliaspolys)
 	//
 	// cull it
 	//
-	if (R_CullModelForEntity (e))
+	if (!R_IsTrackedViewmodel (e) && R_CullModelForEntity (e))
 		return;
 
 	//
 	// transform it
 	//
 	float model_matrix[16];
-	R_AliasModelMatrix (e, paliashdr, &lerpdata, model_matrix);
+	const int matrix_result = R_AliasModelMatrix (e, paliashdr, &lerpdata, model_matrix);
+	if (matrix_result < 0)
+		return;
+	const qboolean opposite_front_face = matrix_result > 0;
 
 	//
 	// set up for alpha blending
@@ -607,7 +721,7 @@ void R_DrawAliasModel (cb_context_t *cbx, entity_t *e, int *aliaspolys)
 		//
 		// draw it
 		//
-		GL_DrawAliasFrame (cbx, e, hdr, lerpdata, tx, fb, model_matrix, entalpha, alphatest, shadevector, lightcolor, false);
+		GL_DrawAliasFrame (cbx, e, hdr, lerpdata, tx, fb, model_matrix, entalpha, alphatest, shadevector, lightcolor, false, opposite_front_face);
 
 		// update polycounts
 		*aliaspolys += hdr->numtris;
@@ -642,21 +756,25 @@ void R_DrawAliasModel_ShowTris (cb_context_t *cbx, entity_t *e)
 	//
 	// cull it
 	//
-	if (R_CullModelForEntity (e))
+	if (!R_IsTrackedViewmodel (e) && R_CullModelForEntity (e))
 		return;
 
 	//
 	// transform it
 	//
 	float model_matrix[16];
-	R_AliasModelMatrix (e, paliashdr, &lerpdata, model_matrix);
+	const int matrix_result = R_AliasModelMatrix (e, paliashdr, &lerpdata, model_matrix);
+	if (matrix_result < 0)
+		return;
+	const qboolean opposite_front_face = matrix_result > 0;
 
 	vec3_t shadevector = {0.0f, 0.0f, 0.0f};
 	vec3_t lightcolor = {0.0f, 0.0f, 0.0f};
 	// Draw each surface of the model independently:
 	for (aliashdr_t *hdr = paliashdr; hdr != NULL; hdr = hdr->nextsurface)
 	{
-		GL_DrawAliasFrame (cbx, e, hdr, lerpdata, nulltexture, nulltexture, model_matrix, 0.0f, false, shadevector, lightcolor, r_showtris.value);
+		GL_DrawAliasFrame (
+			cbx, e, hdr, lerpdata, nulltexture, nulltexture, model_matrix, 0.0f, false, shadevector, lightcolor, r_showtris.value, opposite_front_face);
 	}
 }
 
@@ -678,11 +796,12 @@ void R_DrawAliasModel_ShowSkel (cb_context_t *cbx, entity_t *e)
 	R_SetupAliasFrame (e, paliashdr, &lerpdata);
 	R_GetEntityLerpedTransform (e, lerpdata.origin, lerpdata.angles);
 
-	if (R_CullModelForEntity (e))
+	if (!R_IsTrackedViewmodel (e) && R_CullModelForEntity (e))
 		return;
 
 	float model_matrix[16];
-	R_AliasModelMatrix (e, paliashdr, &lerpdata, model_matrix);
+	if (R_AliasModelMatrix (e, paliashdr, &lerpdata, model_matrix) < 0)
+		return;
 
 	float blend = 0.0f;
 	if (lerpdata.pose1 != lerpdata.pose2)

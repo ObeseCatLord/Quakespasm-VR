@@ -209,6 +209,11 @@ static int VR_InputPhysicalHandForRole (int role)
 	return VR_InputRoleForPhysicalHand (0) == role ? 0 : 1;
 }
 
+int VR_InputDominantPhysicalHand (void)
+{
+	return VR_InputPhysicalHandForRole (VR_ROLE_RIGHT);
+}
+
 static int VR_InputMovementMode (void)
 {
 	const float value = VR_InputFiniteCvar (&vr_movement_mode, 0.f);

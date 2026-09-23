@@ -805,7 +805,8 @@ void R_DrawViewModel (cb_context_t *cbx)
 	if (scr_viewsize.value >= 130 && !tracked_view)
 		return;
 
-	if (cl.items & IT_INVISIBILITY || cl.stats[STAT_HEALTH] <= 0)
+	if (cl.items & IT_INVISIBILITY || cl.stats[STAT_HEALTH] <= 0 ||
+		V_TrackedViewmodelShouldHide ())
 		return;
 
 	entity_t *currententity = &cl.viewent;

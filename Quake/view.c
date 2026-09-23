@@ -104,6 +104,9 @@ static qboolean tracked_aim_ready;
 /* View-owner lifetime for the body-relative eye. Command samples can stop
  * temporarily on focus loss without returning the eye to positional tracking. */
 static qboolean tracked_body_anchor;
+static qboolean tracked_viewmodel_active;
+static qboolean tracked_viewmodel_pose_applied;
+static float view_stair_delta;
 static qboolean tracked_reference_pending, tracked_readback_yaw, tracked_server_yaw_pending;
 static float tracked_server_yaw;
 static qboolean tracked_server_yaw_from_setangle;
@@ -129,6 +132,9 @@ void V_ResetTrackedAim (void)
 {
 	tracked_local_yaw = 0;
 	tracked_body_anchor = false;
+	tracked_viewmodel_active = false;
+	tracked_viewmodel_pose_applied = false;
+	view_stair_delta = 0;
 	VR_InputInvalidateMotion ();
 	tracked_aim_ready = false;
 	base_player_view = base_angles_valid = false;
@@ -378,6 +384,57 @@ qboolean V_TrackedHandBodyOffset (int physical_hand, vec3_t out)
 		V_VRUnitsPerMetre (), head_eye_height, out);
 }
 
+static void V_UpdateTrackedViewmodel (qboolean refdef_updated)
+{
+	const vrxr_frame_t *frame = GL_OpenXRFrame ();
+	const qboolean controller_vr = frame &&
+		V_TrackedAimMode () == VR_AIMMODE_CONTROLLER && cls.signon == SIGNONS &&
+		!cls.demoplayback && !cl.intermission && !con_forcedup &&
+		cl.entities && cl.viewentity > 0 && cl.viewentity < cl.num_entities;
+
+	tracked_viewmodel_active = false;
+	if (controller_vr)
+	{
+		const int dominant = VR_InputDominantPhysicalHand ();
+		vec3_t body_offset, hand_angles, model_angles, origin;
+		if (V_TrackedHandBodyOffset (dominant, body_offset) &&
+			V_TrackedMovementAngles (VR_MOVEMENT_MODE_FOLLOW_HAND, dominant, hand_angles) &&
+			VR_LocomotionHandRotToViewmodelAngles (hand_angles, model_angles,
+			vr_gunmodelpitch.value))
+		{
+			entity_t *ent = &cl.entities[cl.viewentity];
+			qboolean origin_valid = true;
+			for (int i = 0; i < 3; ++i)
+			{
+				origin[i] = ent->origin[i] + body_offset[i];
+				if (i == 2)
+					origin[i] += view_stair_delta;
+				if (!isfinite (origin[i]))
+				{
+					origin_valid = false;
+					break;
+				}
+			}
+			if (origin_valid)
+			{
+				VectorCopy (origin, cl.viewent.origin);
+				VectorCopy (model_angles, cl.viewent.angles);
+				tracked_viewmodel_active = true;
+				tracked_viewmodel_pose_applied = true;
+				return;
+			}
+		}
+		// Once a tracked pose has reached the entity, do not render that stale
+		// transform during transient focus or controller-pose loss.
+		return;
+	}
+
+	// A desktop refdef restores the native gun transform. Retain ownership
+	// through forced-up/loading frames until that restoration actually occurs.
+	if (refdef_updated)
+		tracked_viewmodel_pose_applied = false;
+}
+
 qboolean V_TurnTrackedYaw (float delta)
 {
 	const vrxr_frame_t *frame = GL_OpenXRFrame ();
@@ -399,6 +456,20 @@ qboolean V_UseTrackedView (void)
 {
 	const vrxr_frame_t *frame = GL_OpenXRFrame ();
 	return frame && frame->should_render && frame->devices[0].valid;
+}
+
+qboolean V_TrackedViewmodelActive (void)
+{
+	return tracked_viewmodel_active;
+}
+
+qboolean V_TrackedViewmodelShouldHide (void)
+{
+	const vrxr_frame_t *frame = GL_OpenXRFrame ();
+	return frame &&
+		V_TrackedAimMode () == VR_AIMMODE_CONTROLLER && cls.signon == SIGNONS &&
+		!cls.demoplayback && !cl.intermission && !con_forcedup &&
+		!tracked_viewmodel_active;
 }
 
 float V_VRUnitsPerMetre (void)
@@ -1229,11 +1300,15 @@ void V_CalcRefdef (void)
 			oldz = ent->origin[2];
 		if (ent->origin[2] - oldz > 12)
 			oldz = ent->origin[2] - 12;
-		r_refdef.vieworg[2] += oldz - ent->origin[2];
-		view->origin[2] += oldz - ent->origin[2];
+		view_stair_delta = oldz - ent->origin[2];
+		r_refdef.vieworg[2] += view_stair_delta;
+		view->origin[2] += view_stair_delta;
 	}
 	else
+	{
 		oldz = ent->origin[2];
+		view_stair_delta = 0;
+	}
 
 	if (chase_active.value)
 	{
@@ -1264,16 +1339,29 @@ V_SetupFrame
 */
 void V_SetupFrame (void)
 {
+	qboolean refdef_updated = false;
+	const qboolean restore_desktop_viewmodel = cl.paused &&
+		tracked_viewmodel_pose_applied && (!V_TrackedSessionActive () ||
+		V_TrackedAimMode () != VR_AIMMODE_CONTROLLER);
+
 	V_UpdateBlend ();
 	if (con_forcedup)
 		base_player_view = base_angles_valid = false;
 	if (!con_forcedup)
 	{
 		if (cl.intermission)
+		{
 			V_CalcIntermissionRefdef ();
-		else if (!cl.paused || (V_UseTrackedView () && !base_angles_valid))
+			refdef_updated = true;
+		}
+		else if (!cl.paused || (V_UseTrackedView () && !base_angles_valid) ||
+			restore_desktop_viewmodel)
+		{
 			V_CalcRefdef ();
+			refdef_updated = true;
+		}
 	}
+	V_UpdateTrackedViewmodel (refdef_updated);
 }
 
 /*

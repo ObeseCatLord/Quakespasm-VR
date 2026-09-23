@@ -30,6 +30,7 @@ void VR_InputInit (void);
 void VR_InputCommands (const vrxr_frame_t *frame);
 void VR_InputMove (usercmd_t *pending);
 void VR_InputApplyPending (usercmd_t *cmd);
+int VR_InputDominantPhysicalHand (void);
 qboolean VR_InputSuppressUncalibratedAttack (const usercmd_t *cmd);
 void VR_InputInvalidateMotion (void);
 void VR_InputClear (void);
