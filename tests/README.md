@@ -912,6 +912,24 @@ negotiation; the check requires public authority. The positional `qsvr1`
 argument is reserved for a server using the unmarked inherited legacy layout
 and must not be supplied to this test.
 
+To assert that private PMove stats stay absent for a public peer, set
+`QSVR_LOCAL_ASSERT_PUBLIC_MOVE_STATS_OFF=1` on that public client run. After the
+settled movement pair, it requires the valid bit in `cl.stats[225]` to be clear
+and the gravity, max speed, jump speed and step height slots to remain zero. The
+JSON result records those flags and float values under
+`public_movement_stats`; success prints `QSVR_LOCAL_PUBLIC_MOVE_STATS_OFF_PASSED`.
+For example, with the fresh default-off public server running:
+
+```sh
+QSVR_LOCAL_EXPECT_PRIVATE=0 \
+QSVR_LOCAL_ASSERT_PUBLIC_MOVE_STATS_OFF=1 \
+QSVR_LOCAL_RESULT="$CLIENT_PROFILE/public-move-stats-result.json" \
+  timeout --signal=TERM 150s gdb -nx --batch \
+  -x tests/local_private_legacy_peer_smoke.gdb --args "$QSVR_BINARY" \
+  -novr -nosound -window -width 640 -height 480 -basedir "$CLIENT_PROFILE" \
+  +vid_vsync 0 +host_maxfps 144 +connect 127.0.0.1:28790
+```
+
 For an opt-in private PMove server trial, set
 `QSVR_LOCAL_ASSERT_ACTION_ACK=1` on the private client command. It records the
 first attack command sequence and fails if authoritative shell consumption

@@ -15,6 +15,8 @@ result_path = os.environ.get('QSVR_LOCAL_RESULT')
 ready_path = os.environ.get('QSVR_LOCAL_MAP_READY') or None
 assert_action_ack = os.environ.get('QSVR_LOCAL_ASSERT_ACTION_ACK') == '1'
 assert_move_stats = os.environ.get('QSVR_LOCAL_ASSERT_MOVE_STATS') == '1'
+assert_public_move_stats_off = \
+    os.environ.get('QSVR_LOCAL_ASSERT_PUBLIC_MOVE_STATS_OFF') == '1'
 if expect_text not in ('0', '1') or not result_path:
     raise RuntimeError('QSVR_LOCAL_EXPECT_PRIVATE and QSVR_LOCAL_RESULT are required')
 expect_private = expect_text == '1'
@@ -26,6 +28,8 @@ if assert_action_ack and not expect_private:
     raise RuntimeError('action/ACK probe requires a private peer')
 if assert_move_stats and not expect_private:
     raise RuntimeError('movement-stat probe requires a private peer')
+if assert_public_move_stats_off and expect_private:
+    raise RuntimeError('public movement-stat probe requires public mode')
 
 started = time.monotonic()
 phase = 'signon'
@@ -162,6 +166,14 @@ try:
                 require(math.isfinite(exported_move[key]) and
                         abs(exported_move[key] - expected) < 0.01,
                         'missing_or_wrong_' + key)
+        if assert_public_move_stats_off:
+            public_move_stats = movement_stats()
+            require(not (public_move_stats['flags'] & 0x80000000),
+                    'public_moveflags_valid')
+            for key in ('gravity', 'maxspeed', 'jumpspeed', 'stepheight'):
+                require(math.isfinite(public_move_stats[key]) and
+                        public_move_stats[key] == 0.0,
+                        'public_move_stats_nonzero_' + key)
         if assert_action_ack:
             require(first_shell_ack is not None, 'no_attack_effect_ack_pair')
         if ready_path:
@@ -188,6 +200,8 @@ else:
         result['first_shell_effect_ack'] = first_shell_ack
     if assert_move_stats:
         result['movement_stats'] = exported_move
+    if assert_public_move_stats_off:
+        result['public_movement_stats'] = public_move_stats
 temporary = result_path + '.tmp.' + str(os.getpid())
 with open(temporary, 'w') as output:
     json.dump(result, output, indent=2, sort_keys=True)
@@ -198,6 +212,8 @@ if failure:
     gdb.execute('quit 1')
 marker = 'QSVR_LOCAL_MAP_SWITCH_PASSED' if ready_path else (
     'QSVR_LOCAL_PRIVATE_PASSED' if expect_private else 'QSVR_LOCAL_PUBLIC_PASSED')
+if assert_public_move_stats_off:
+    marker = 'QSVR_LOCAL_PUBLIC_MOVE_STATS_OFF_PASSED'
 gdb.write(marker + '\n')
 end
 quit 0
