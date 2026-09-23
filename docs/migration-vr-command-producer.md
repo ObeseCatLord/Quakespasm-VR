@@ -257,3 +257,16 @@ cvars or enhanced held offsets and the matching multiplayer overlay. It keeps
 the donor's enhanced neutral scale independent of classic `held_scale`; an
 enhanced slot with no held offset resolves to zero. It is data access only: the
 tracked viewmodel pose and draw-matrix adapter have not yet been added.
+The donor's `vr_gunmodely` height adjustment is registered with its zero
+default for that adapter; registration alone does not alter rendering.
+
+A second local proof observed the unchanged server's weapon-use boundary under
+GDB while the same private OpenXR firing probe ran. Across 60 remote-attack
+samples, the server's stored relative hand position equaled the accepted
+command, its temporary weapon-use pitch/yaw equaled the stored hand aim, and
+the pre-clamp muzzle equaled authoritative body origin plus the relative hand
+position (maximum component error about 0.00003 Quake units). The client again
+received an ACK and lost three shotgun shells. This proves the basic private
+pose reached the server's muzzle reconstruction path. It does not prove the
+post-clamp muzzle, actual pellet origin/direction or damage, nor roomscale
+collision and visible viewmodel alignment.

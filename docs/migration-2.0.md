@@ -582,6 +582,11 @@ relative VR attack command, a covering server ACK and authoritative shell
 consumption. This narrows the remaining proof: shot origin/direction, damage,
 body/eye/hand alignment, blocked roomscale movement, visible weapon placement
 and physical device behavior are still unqualified.
+The same firing slice was repeated with a read-only observer on the unchanged
+server. Its weapon-use boundary confirmed that the accepted command's relative
+hand pose is restored at the authoritative body and used for the pre-clamp
+muzzle and hand pitch/yaw. Post-clamp shots/damage and the remaining movement
+and presentation gates are still open.
 
 ## Next integration gates
 

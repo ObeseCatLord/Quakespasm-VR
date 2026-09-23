@@ -627,6 +627,18 @@ authoritative shell consumption. It writes a compact JSON result and prints
 `QSVR_PINNED_VR_PASSED`. This does not establish muzzle world origin, damage,
 roomscale collision or visible weapon alignment.
 
+For the donor server's **pre-clamp** muzzle relation, run the server under
+`tests/pinned_vr_server_muzzle_smoke.gdb` with
+`QSVR_PINNED_SERVER_RESULT=<output.json>` and its own disposable basedir/port.
+The script observes remote client 0 at `SV_ClampVRMuzzleToWorld` and writes an
+atomic, bounded JSON result after each matching attack sample. Run the client
+probe above against that port, then stop the owned GDB server. Require client
+success and server `status: passed`, at least three valid samples and no
+observer error. The server checks stored pose against accepted command,
+weapon-use pitch/yaw against stored hand aim, and pre-clamp muzzle against
+authoritative origin plus relative hand pose. It does not inspect the
+post-clamp muzzle or QuakeC projectile/damage effects.
+
 `pinned_peer_lifecycle_smoke.gdb` uses the same client launch and accepts
 `QSVR_LIFECYCLE_RESULT=<output.json>`, with optional `QSVR_PEER_ADDRESS` overriding
 the local peer address. It checks public rejection of the private header,
