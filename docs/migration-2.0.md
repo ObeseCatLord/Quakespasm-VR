@@ -27,8 +27,8 @@ The [complete-scope feature map](migration-feature-map.md) is the current migrat
 [migration-preservation.csv](migration-preservation.csv) now covers 905 unique paths, extending the original 904-path snapshot with the current master delta. It retains old blob/WIP evidence and adds current-master blobs and feature routing. Exact source anchors and mechanical module routes are labeled separately. [History](migration-history-index.csv) and [public-interface](migration-interface-index.csv) indexes make omissions reviewable. These are scope/audit artifacts, **not proof of completed behavioral integration**. Historical deletions are reviewed rather than restored blindly; preserved WIP is not automatically accepted release behavior.
 
 The sections below record successive checkpoints. The latest implemented slice
-is **OpenXR analog locomotion and local turning**; earlier limitations describe their
-respective commits, not the current head. None closes the full P1 gameplay gate.
+is **calibrated private hand-command preparation**; earlier limitations describe
+their respective commits, not the current head. None closes the full P1 gameplay gate.
 
 ## First source checkpoint
 
@@ -570,8 +570,10 @@ An Astra review caught a focus-loss camera jump; the view owner now retains
 the body-relative eye anchor through temporary input loss and mode changes,
 while the local server remains excluded until its private receiver is wired.
 The Linux build and focused stereo-camera/locomotion fixtures pass. The active
-viewmodel's schema profile, muzzle command producer and server gameplay proof
-remain open, so these geometry checks do not establish live VR firing parity.
+viewmodel's schema profile and relative muzzle command producer are staged and
+Linux build/fixture checked. The tracked visible weapon adapter and unchanged
+pinned-server gameplay proof remain open, so these checks do not establish live
+VR firing parity.
 
 ## Next integration gates
 

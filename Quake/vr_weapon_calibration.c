@@ -349,7 +349,6 @@ qboolean VR_WeaponCalibrationApplySchema(
 	{
 		const vr_weapon_schema_entry_t *entry = &entries[index];
 		vr_weapon_calibration_slot_t *calibration;
-		qboolean newly_initialized = false;
 
 		if (!VR_CalibrationEntryHasFields(entry) ||
 			!entry->viewmodel_path[0])
@@ -362,12 +361,11 @@ qboolean VR_WeaponCalibrationApplySchema(
 			if (slot < 0)
 				return false; /* Preflight above makes this unreachable. */
 			VR_ActivateCalibrationSlot(slot, entry->viewmodel_path);
-			newly_initialized = true;
 		}
 		calibration = &vr_weapon_calibration_slots[slot];
 
-		if (newly_initialized && VR_CalibrationEntryHasHeldFields(entry) &&
-			!entry->has_muzzle_offset)
+		if (VR_CalibrationEntryHasHeldFields(entry) &&
+			!entry->has_muzzle_offset && !calibration->has_muzzle_offset)
 		{
 			/* InitWeaponCVars seeds classic muzzle Z from held Z. */
 			Cvar_SetValueQuick(&VR_WeaponMuzzleCvar(slot, VR_WMUZZLE_Z),

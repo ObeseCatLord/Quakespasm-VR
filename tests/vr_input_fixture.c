@@ -108,6 +108,11 @@ const vrxr_frame_t *GL_OpenXRFrame (void)
 	return fixture_frame;
 }
 
+qboolean V_TrackedSessionActive (void)
+{
+	return fixture_frame != NULL;
+}
+
 float V_VRUnitsPerMetre (void)
 {
 	return fixture_units_per_metre;
@@ -1086,6 +1091,8 @@ static void test_private_pose_for_handedness (qboolean lefthanded)
 	applied.forwardmove = 13.0f;
 	VR_InputApplyPending (&applied);
 	assert (applied.vr_active && applied.vr_handpos_relative);
+	cl.stats[STAT_HEALTH] = 100;
+	assert (!VR_InputSuppressUncalibratedAttack (&applied));
 	for (int axis = 0; axis < 3; ++axis)
 	{
 		near_motion (applied.vr_handpos[axis], expected_handpos[axis]);
@@ -1111,6 +1118,10 @@ static void test_private_pose_for_handedness (qboolean lefthanded)
 	fixture_body_offset_available = false;
 	motion_sample (&frame);
 	expect_no_private_pose ();
+	assert (VR_InputSuppressUncalibratedAttack (&(usercmd_t){0}));
+	cl.stats[STAT_HEALTH] = 0;
+	assert (!VR_InputSuppressUncalibratedAttack (&(usercmd_t){0}));
+	cl.stats[STAT_HEALTH] = 100;
 	fixture_body_offset_available = true;
 	fixture_muzzle_available = false;
 	motion_sample (&frame);
@@ -1136,6 +1147,7 @@ static void test_private_pose_for_handedness (qboolean lefthanded)
 	muzzle_calls = fixture_muzzle_calls;
 	motion_sample (&frame);
 	expect_no_private_pose ();
+	assert (!VR_InputSuppressUncalibratedAttack (&(usercmd_t){0}));
 	assert (fixture_body_offset_calls == body_calls);
 	assert (fixture_muzzle_calls == muzzle_calls);
 

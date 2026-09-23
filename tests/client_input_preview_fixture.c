@@ -9,6 +9,12 @@ client_static_t cls;
  * input/native gameplay probes exercise the production VR adapter. */
 qboolean V_TrackedSessionActive (void) { return false; }
 void VR_InputApplyPending (usercmd_t *cmd) { (void)cmd; }
+static qboolean suppress_uncalibrated_attack;
+qboolean VR_InputSuppressUncalibratedAttack (const usercmd_t *cmd)
+{
+	(void)cmd;
+	return suppress_uncalibrated_attack;
+}
 
 static kbutton_t *const tracked_keys[] = {
 	&in_mlook, &in_klook,
@@ -91,6 +97,7 @@ static void assert_persistent_equal (const persistent_snapshot_t *snapshot)
 
 static void setup (void)
 {
+	suppress_uncalibrated_attack = false;
 	memset (&cl, 0, sizeof cl);
 	memset (&cls, 0, sizeof cls);
 	for (unsigned int i = 0; i < countof (tracked_keys); ++i)
@@ -232,6 +239,21 @@ int main (void)
 	assert (memcmp (&zero_preview_final, &one_preview_final, sizeof zero_preview_final) == 0);
 	assert (memcmp (&zero_preview_final, &repeated_preview_final, sizeof zero_preview_final) == 0);
 	assert (memcmp (&one_preview, &repeated_preview, sizeof one_preview) == 0);
+
+	/* The shared finish boundary suppresses firing in preview and send,
+	 * without swallowing the held attack edge or respawn button owner. */
+	setup ();
+	suppress_uncalibrated_attack = true;
+	usercmd_t denied_preview = {0};
+	CL_PreviewMove (&denied_preview);
+	assert (!(denied_preview.buttons & 1));
+	assert (in_attack.state == 3);
+	usercmd_t denied_final = build_final_command ();
+	assert (!(denied_final.buttons & 1));
+	assert (in_attack.state == 1);
+	suppress_uncalibrated_attack = false;
+	usercmd_t recovered_final = build_final_command ();
+	assert (recovered_final.buttons & 1);
 
 	puts ("Client input preview: repeated previews preserve owners/history/clocks and final command bytes");
 }

@@ -142,11 +142,23 @@ int main(void)
 		"progs/custom.mdl", false, false, muzzle));
 	AssertVector(muzzle, 4.0f, 5.0f, 6.0f);
 
+	/* Held-only schema data seeds classic muzzle Z on enhanced fallback slots. */
+	fixture_file_contents =
+		"{ model progs/v_shot.mdl held_offset 1 2 11 }";
+	assert(VR_WeaponCalibrationReloadGame());
+	assert(file_load_count == 3 && file_free_count == 2);
+	assert(VR_WeaponCalibrationLookupMuzzle(
+		"progs/v_shot.mdl", false, false, muzzle));
+	AssertVector(muzzle, 0.0f, 0.0f, 11.0f);
+	assert(VR_WeaponCalibrationLookupMuzzle(
+		"progs/v_shot.mdl", true, false, muzzle));
+	AssertVector(muzzle, 0.0f, 0.0f, 10.0f);
+
 	/* A later reload replaces the prior file and applies authored enhanced data. */
 	fixture_file_contents =
 		"{ model progs/v_shot.mdl enhanced_muzzle_offset 7 8 9 }";
 	assert(VR_WeaponCalibrationReloadGame());
-	assert(file_load_count == 3 && file_free_count == 2);
+	assert(file_load_count == 4 && file_free_count == 3);
 	assert(!VR_WeaponCalibrationLookupMuzzle(
 		"progs/custom.mdl", false, false, muzzle));
 	assert(!VR_WeaponCalibrationLookupMuzzle(
@@ -162,7 +174,7 @@ int main(void)
 	fixture_file_contents =
 		"{ model progs/v_shot.mdl muzzle_offset 1 2 not-a-number }";
 	assert(!VR_WeaponCalibrationReloadGame());
-	assert(file_load_count == 4 && file_free_count == 3);
+	assert(file_load_count == 5 && file_free_count == 4);
 	AssertFallbackMuzzles();
 	assert(!VR_WeaponCalibrationLookupMuzzle(
 		"progs/custom.mdl", false, false, muzzle));
@@ -171,7 +183,7 @@ int main(void)
 	/* Missing-file reload discards the old game profile and restores defaults. */
 	fixture_file_contents = NULL;
 	assert(VR_WeaponCalibrationReloadGame());
-	assert(file_load_count == 5 && file_free_count == 3);
+	assert(file_load_count == 6 && file_free_count == 4);
 	AssertFallbackMuzzles();
 
 	puts("VR weapon calibration reload fixture passed");

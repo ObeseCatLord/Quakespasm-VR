@@ -963,6 +963,17 @@ void VR_InputApplyPending (usercmd_t *cmd)
 	cmd->upmove = merged[2];
 }
 
+qboolean VR_InputSuppressUncalibratedAttack (const usercmd_t *cmd)
+{
+	/* A missing grip or weapon profile must not turn controller-aim firing
+	 * into an ordinary body-origin shot. Dead players still need attack to
+	 * request respawn through the normal button path. */
+	return cmd && cl.protocol_qsvr == QSVR_PROTOCOL_PINNED &&
+		V_TrackedSessionActive () && VR_InputControllerAim () &&
+		cl.stats[STAT_HEALTH] > 0 &&
+		(!cmd->vr_active || !cmd->vr_handpos_relative);
+}
+
 void VR_InputInvalidateMotion (void)
 {
 	VR_InputClearPendingRecord (&cl.pendingcmd);

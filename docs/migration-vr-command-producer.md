@@ -163,11 +163,15 @@ pinned-server gameplay proof remains open; these fixtures alone do not prove
 weapon effects, body movement, or collision behavior.
 
 The inherited muzzle adds a weapon collision correction only when its
-weapon-contact collision capability is negotiated (`vr.c:6230–6240,
-7181–7188`). The migrated client currently has the read-only `CL_TraceWeapon`
-query but does not negotiate that contact capability. The first pinned-peer
-proof must record the negotiated flags and distinguish that baseline from
-later contact/collision parity; it cannot claim full weapon-wall behavior.
+weapon-contact collision capability is enabled (`vr.c:6230–6240,
+7181–7188`). The donor server advertises this capability at sign-on and can
+enable it explicitly for network play; its default automatic enablement is
+local singleplayer only. The migrated client has the read-only
+`CL_TraceWeapon` query but no active contact producer. The first pinned-peer
+proof must record the server setting and actual advertisement, and qualify
+contact-enabled behavior separately. The donor server also clamps the
+reconstructed muzzle against world geometry, independent of client contact
+presentation.
 
 There is also a timing boundary to measure before any head-motion prediction:
 `CL_AccumulateCmd` consumes the last completed OpenXR frame in `host.c`, while
@@ -208,3 +212,21 @@ before view refresh, normal and wall-blocked roomscale steps, and left-handed
 pitch/roll against the pinned dedicated server. Observe body, both eyes,
 reconstructed muzzle, firing direction, ammo, damage, sound and effects. A
 packet fixture alone is insufficient. No human decision blocks this slice.
+
+## Private producer Astra senior-review disposition
+
+| Finding | Disposition |
+| --- | --- |
+| A private command can send attack without a valid VR muzzle, causing body-origin firing under controller aim | Adopted. The shared command-finalization path suppresses attack for a living, tracked pinned-peer controller-aim player when the prepared relative pose is absent. Dead-player attack remains available for respawn; focused command/preview fixtures cover the gate. |
+| Enhanced fallback slot allocation could prevent classic held-only muzzle initialization | Adopted. Classic calibration availability is independent of prior enhanced slot allocation; the reload fixture includes the held-only vanilla model case. |
+| The visible weapon still follows vkQuake's ordinary view transform | Adopted as a separate presentation gate. Place the tracked/calibrated weapon through the existing view-entity boundary before claiming visible gun/shot parity. A server shot alone proves only the command and weapon-use path. |
+| Command displacement and reconstructed muzzle may disagree with displayed eyes during motion | Measure in the pinned-peer proof. Both donor and migrated client subtract the command's range-accepted displacement; keep that relation until simultaneous body/eye/muzzle evidence shows a correction is needed. |
+| Weapon contact is advertised by the server, and default policy differs from explicit network enablement | Corrected above. Record the negotiated state and separate collision-off initial proof from contact-enabled parity. |
+| Additional command clocks or model-header caches | Rejected. Existing pending command and already-loaded model selector cover the demonstrated needs. |
+
+The next proof uses the unchanged pinned dedicated server, a confirmed classic
+profile, stationary and translated firing, wall-blocked movement, accumulated
+no-send movement, handedness/roll, and weapon switching. It observes both eyes,
+body, reconstructed muzzle, shot direction, ammo and damage. A temporary muzzle
+marker can help diagnose command geometry, but held-weapon parity requires the
+actual viewmodel adapter.
