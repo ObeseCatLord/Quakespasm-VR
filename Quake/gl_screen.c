@@ -1767,6 +1767,7 @@ static void SCR_DrawGUI (void *unused)
 		vr_menu_panel_mode == VR_PANEL_MODAL && vr_menu_panel.valid;
 	const qboolean loading_panel_valid = vulkan_globals.stereo_active &&
 		vr_menu_panel_mode == VR_PANEL_LOADING && vr_menu_panel.valid;
+	volatile qboolean gui_mutex_held = false;
 	GL_DrawSceneUpscale (cbx);
 	if (vulkan_globals.stereo_active && key_dest == key_menu)
 		M_SetVRPointerPixelPosition (vr_menu_panel.pointer_x, vr_menu_panel.pointer_y,
@@ -1797,9 +1798,22 @@ static void SCR_DrawGUI (void *unused)
 	const qboolean cscqhud = (scr_style.value < 1.0f) && cl.qcvm.extfuncs.CSQC_DrawHud;
 
 	if (cscqhud && setjmp (screen_error))
+	{
+		/* Host_Error jumps out of CSQC_DrawHud without unwinding this draw.
+		 * Restore the UI command state and release the GUI lock before clearing
+		 * the failing QCVM, or the next draw will deadlock on the same mutex. */
+		if (cbx->ui_panel_active)
+			GL_EndUIPanel (cbx);
+		if (gui_mutex_held)
+		{
+			SDL_UnlockMutex (draw_qcvm_mutex);
+			gui_mutex_held = false;
+		}
 		PR_ClearProgs (&cl.qcvm);
+	}
 
 	SDL_LockMutex (draw_qcvm_mutex);
+	gui_mutex_held = true;
 
 	if (scr_drawdialog) // new game confirm
 	{
@@ -1875,6 +1889,7 @@ static void SCR_DrawGUI (void *unused)
 	}
 
 	SDL_UnlockMutex (draw_qcvm_mutex);
+	gui_mutex_held = false;
 	R_EndDebugUtilsLabel (cbx);
 }
 

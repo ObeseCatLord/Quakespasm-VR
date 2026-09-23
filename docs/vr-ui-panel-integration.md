@@ -235,3 +235,8 @@ scoreboards, and menu-time HUD; those remain explicit parity work, and headset
 appearance is not yet verified.
 The Meson shader list now builds the existing UI panel variants already listed
 by the Makefile; the Linux Meson target links with the panel pipeline enabled.
+
+The ordinary HUD branch's recoverable CSQC `Host_Error` jump now releases the
+draw mutex and ends any active panel before clearing the failed QCVM. This preserves the
+existing flat fallback and is required before executing mod HUD callbacks
+inside the HUD panel; the AD layouts still need their own presentation proof.
