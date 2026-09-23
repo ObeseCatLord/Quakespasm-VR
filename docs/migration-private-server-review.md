@@ -585,9 +585,9 @@ remaining VR/collision gates.
 ## Astra prediction-baseline review disposition
 
 A local `gpt-6-astra`/`max` senior design review checked whether the selected
-private PMove trial can safely advertise client replay now. It cannot. The
-server sends `pmovetype=0` and no prediction permission by design. At review
-time the client replay initialized `jump_secs=0` while the server persisted a
+private PMove trial can safely advertise client replay now. It cannot. At
+review time the server sent `pmovetype=0` and no prediction permission, and the
+client replay initialized `jump_secs=0` while the server persisted a
 nonzero timer; the stat-254 seed above addresses that specific gap. More
 fundamentally, maintenance callbacks and later world physics can
 change owner state without advancing the completed move ACK. An ACK alone is
@@ -611,3 +611,13 @@ run under latency must show immediate movement, stable correction and blocked
 walls before permission can be enabled. VR roomscale, collision and physical
 device behavior follow as separate gates. The current pre-transport omitted
 datagram probe is not a transport-sequence loss test.
+
+The selected stock-WALK server now projects `MOVETYPE_WALK`, grounded and
+jump-held bits through the existing owner delta while still sending no
+prediction permission. Public and unselected private owners continue to send
+`pmovetype=0`. A fresh selected `e1m1` Linux loopback decoded owner type 131
+(WALK plus grounded), moved about 267 units, fired four shells and kept a valid
+owner/ACK candidate with permission false. A held-jump run observed the
+jump-held bit during movement, its release by the settled snapshot, and a
+nonzero received jump timer. This qualifies the owner seed's basic wire path;
+it does not establish replay parity, collider freshness or safe presentation.

@@ -24,6 +24,7 @@ except ValueError:
 if not math.isfinite(expected_gravity) or expected_gravity < 0.0:
     raise RuntimeError('QSVR_LOCAL_EXPECT_GRAVITY must be a finite nonnegative float')
 assert_coherent_owner = os.environ.get('QSVR_LOCAL_ASSERT_COHERENT_OWNER') == '1'
+assert_pmove_type = os.environ.get('QSVR_LOCAL_ASSERT_PMOVE_TYPE') == '1'
 assert_public_move_stats_off = \
     os.environ.get('QSVR_LOCAL_ASSERT_PUBLIC_MOVE_STATS_OFF') == '1'
 if expect_text not in ('0', '1') or not result_path:
@@ -41,6 +42,8 @@ if assert_nonzero_jump_timer and not expect_private:
     raise RuntimeError('jump-timer probe requires a private peer')
 if assert_coherent_owner and not expect_private:
     raise RuntimeError('coherent-owner probe requires a private peer')
+if assert_pmove_type and not expect_private:
+    raise RuntimeError('PMove-type probe requires a private peer')
 if assert_public_move_stats_off and expect_private:
     raise RuntimeError('public movement-stat probe requires public mode')
 
@@ -53,6 +56,7 @@ first_attack_seq = None
 first_attack_shells = None
 first_shell_ack = None
 max_jump_seen = 0.0
+saw_jump_held = False
 
 def integer(expr):
     return int(gdb.parse_and_eval(expr))
@@ -70,6 +74,8 @@ def sample(label):
                 permission=bool(integer('cl.move_ack_prediction_allowed')),
                 origin=origin, shells=integer('cl.stats[6]'),
                 ack=integer('cl.ackedmovemessages'),
+                owner_pmovetype=integer('cl.entities[%d].netstate.pmovetype' % owner),
+                owner_eflags=integer('cl.entities[%d].netstate.eflags' % owner),
                 sent=integer('cl.movemessages'), world=world_name())
 
 class CheckFailure(Exception):
@@ -105,8 +111,11 @@ def movement_stats():
 
 class HostFrame(gdb.Breakpoint):
     def stop(self):
-        global phase, phase_time, failure, first_attack_seq, first_attack_shells, first_shell_ack, max_jump_seen
+        global phase, phase_time, failure, first_attack_seq, first_attack_shells, first_shell_ack, max_jump_seen, saw_jump_held
         now = time.monotonic()
+        if assert_pmove_type and assert_nonzero_jump_timer and phase == 'movement':
+            owner = integer('cl.viewentity')
+            saw_jump_held |= bool(integer('cl.entities[%d].netstate.pmovetype' % owner) & 0x40)
         if assert_nonzero_jump_timer and integer('cls.signon') == 4:
             max_jump_seen = max(max_jump_seen,
                                 float(gdb.parse_and_eval('cl.statsf[254]')))
@@ -198,6 +207,15 @@ try:
                     coherent_owner['ack'] == samples[1]['ack'] and
                     coherent_owner['owner'] == integer('cl.viewentity'),
                     'missing_coherent_owner_snapshot')
+        if assert_pmove_type:
+            owner_type = samples[1]['owner_pmovetype']
+            require(owner_type & 63 == 3, 'missing_selected_walk_type')
+            require(bool(owner_type & 0x80) ==
+                    bool(samples[1]['owner_eflags'] & 0x80),
+                    'owner_ground_bit_mismatch')
+            if assert_nonzero_jump_timer:
+                require(saw_jump_held and not (owner_type & 0x40),
+                        'jump_held_bit_not_released')
         if assert_public_move_stats_off:
             public_move_stats = movement_stats()
             require(not (public_move_stats['flags'] & 0x80000000),
@@ -238,6 +256,8 @@ else:
         result['public_movement_stats'] = public_move_stats
     if assert_nonzero_jump_timer:
         result['max_jump_seen'] = max_jump_seen
+    if assert_pmove_type and assert_nonzero_jump_timer:
+        result['saw_jump_held'] = saw_jump_held
 temporary = result_path + '.tmp.' + str(os.getpid())
 with open(temporary, 'w') as output:
     json.dump(result, output, indent=2, sort_keys=True)

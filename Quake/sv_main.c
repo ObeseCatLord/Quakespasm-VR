@@ -1225,7 +1225,19 @@ static void SVFTE_BuildSnapshotForClient (client_t *client)
 			ents[numents].state.modelindex = 0;
 		if (ent == clent) // add velocity, but we only care for the local player (should add prediction for other entities some time too).
 		{
-			ents[numents].state.pmovetype = 0; // ent->v.movetype;	//fixme: we don't do prediction, so don't tell the client that it can try
+			/* The selected PMove owner reports its movement seed, but the ACK
+			 * permission bit still prevents client prediction. */
+			ents[numents].state.pmovetype = 0;
+			if (client->protocol_qsvr == QSVR_PROTOCOL_PINNED &&
+				SV_PrivateWalkTrialSelected (client) &&
+				(int)ent->v.movetype == MOVETYPE_WALK)
+			{
+				ents[numents].state.pmovetype = MOVETYPE_WALK;
+				if ((int)ent->v.flags & FL_ONGROUND)
+					ents[numents].state.pmovetype |= 0x80;
+				if (!((int)ent->v.flags & FL_JUMPRELEASED))
+					ents[numents].state.pmovetype |= 0x40;
+			}
 			if ((int)ent->v.flags & FL_ONGROUND)
 				eflags |= EFLAGS_ONGROUND;
 			ents[numents].state.velocity[0] = ent->v.velocity[0] * 8;

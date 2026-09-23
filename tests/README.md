@@ -973,6 +973,13 @@ message-end candidate names the current owner and completed ACK after receiving
 the full movement-stat group. This verifies one loopback snapshot boundary;
 loss, split-packet recovery and eventual replay parity still need separate
 checks. Prediction permission remains off.
+Add `QSVR_LOCAL_ASSERT_PMOVE_TYPE=1` for a selected WALK server to require the
+received owner `pmovetype` to be WALK (3), with its grounded bit matching the
+owner's existing `EFLAGS_ONGROUND`. The ordinary authority check still requires
+prediction permission to remain off. This validates the owner projection only,
+not the safety of replaying movement. Combine it with
+`QSVR_LOCAL_ASSERT_NONZERO_JUMP_TIMER=1` to require that the received jump-held
+bit appears during the held jump and clears after release.
 
 To omit exactly the first nonempty unreliable server datagram sent to the
 selected client after that gravity change, start a fresh selected server through
