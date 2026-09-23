@@ -38,6 +38,7 @@ int main(void) {
   assert(VRF_SelectMode(&state, 2, 1, &frame) == VRF_MODE_OFF);
   frame.focused = 0;
   assert(VRF_SelectMode(&state, 2, 1, &frame) == VRF_MODE_OFF);
+  assert(VRF_SelectMode(&state, 1, 0, &frame) == VRF_MODE_OFF);
   assert(state.stable_frames == 0);
   frame.focused = 1;
   frame.gaze = usable_gaze();
@@ -65,6 +66,7 @@ int main(void) {
   frame.gaze = usable_gaze();
   frame.should_render = 0;
   assert(VRF_SelectMode(&state, 2, 1, &frame) == VRF_MODE_OFF);
+  assert(VRF_SelectMode(&state, 1, 0, &frame) == VRF_MODE_OFF);
   assert(state.stable_frames == 0);
   frame.should_render = 1;
   assert(VRF_SelectMode(&state, 1, 0, &frame) == VRF_MODE_FIXED);

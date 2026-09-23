@@ -53,7 +53,9 @@ static inline int VRF_SelectMode(vrf_policy_state_t *state,
     state->stable_frames = 0;
 
   if (mode == VRF_MODE_OFF) return VRF_MODE_OFF;
-  if (mode == VRF_MODE_FIXED) return VRF_MODE_FIXED;
+  if (mode == VRF_MODE_FIXED)
+    return frame && frame->should_render == 1 && frame->focused == 1
+               ? VRF_MODE_FIXED : VRF_MODE_OFF;
   if (!eye_frame_ready) return VRF_MODE_OFF;
 
   if (state->stable_frames < VRF_EYE_STABLE_FRAMES_REQUIRED)
