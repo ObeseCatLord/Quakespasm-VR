@@ -351,13 +351,13 @@ damage, queued-command action isolation, VR room-scale, or jump/trigger parity.
 
 The selected path still rejects water, pusher contact, custom physics, Gorilla
 input, pause, and unsupported owner changes by disconnecting rather than
-replaying legacy movement after an action. It also cannot sustain a client
-sending more than one command per server frame: 144 FPS client input overloaded
-the default 40 Hz server and hit the bounded queue. Near a stock-map door, a
-broader pusher-proximity gate disconnected at spawn; the current gate checks
-actual PMove pusher contact instead. The next architecture step must resolve
-rate mismatch and qualify QuakeC callback/weapon timing before this selector
-can become a general private owner or prediction can be enabled.
+replaying legacy movement after an action. In the first one-command-per-frame
+trial, 144 FPS client input overloaded a default 40 Hz server and hit the bounded
+queue; the later batching checkpoint below addresses this narrow rate mismatch.
+Near a stock-map door, a broader pusher-proximity gate disconnected at spawn;
+the current gate checks actual PMove pusher contact instead. QuakeC callback
+and weapon timing still need qualification before this selector can become a
+general private owner or prediction can be enabled.
 
 ## Senior review of the selected owner
 
@@ -370,13 +370,91 @@ Weapon Think was also scheduled against packet duration while `qcvm->time`
 remained on the host clock; its eligibility and QuakeC frametime now use the
 saved host frame in both command and maintenance passes.
 
-The command-rate defect remains: one complete command per host frame cannot
-sustain a faster sender, and a larger queue would only delay disconnection.
-The selected path is therefore an explicitly restricted proof, not the release
-owner. Before broadening it, define QuakeC/weapon clock semantics, then process
-a bounded number of credited commands per host frame with a local queue cursor
-and once-only callbacks. Reuse the native player lifecycle where possible;
+At review time, the command-rate defect remained: one complete command per host
+frame could not sustain a faster sender, and a larger queue would only delay
+disconnection. The selected path was an explicitly restricted proof, not the
+release owner. The batching checkpoint below follows the review's recommendation
+to process bounded credited commands with a local queue cursor and once-only
+callbacks. Reuse the native player lifecycle where possible;
 the current command and maintenance copies should be consolidated rather than
 grown into parallel policy. The review did not establish jump hold/release,
 weapon target damage and delayed pose, packet-loss idle behavior, non-world
 ground, or impact callbacks that mutate collision state.
+
+## Command-rate architecture decision
+
+The next selected-owner increment should consume a bounded sequence of whole
+queued commands in the existing `SV_Physics_Client` slot. A local offset walks
+the immutable queue; `SV_FinishPrivateUsercmds` still retires only through the
+last successfully completed sequence after server physics. Add host-frame
+credit once, cap both the number of commands (initially eight) and accumulated
+time, and run the zero-time maintenance lifecycle only if no command completes.
+This is the smallest adapter over the current queue and PMove owner. Moving
+QuakeC actions back to packet receipt, introducing another physics loop, or
+coalescing commands would duplicate ownership or lose per-command pose, impulse
+and button edges. Merely enlarging the queue does not solve a sustained rate
+mismatch.
+
+The selected stock-QC dry-WALK proof keeps `qcvm->time` on the vkQuake host
+clock throughout one physics frame; `SV_Physics` advances it once after all
+entities. This matches QSS-M's independent command path, which can execute
+multiple received commands while the server frame time is unchanged. Movement
+and the native room-scale sweep use each command's duration; scheduled weapon
+Think retains host-frame eligibility. Stock dry `PlayerPreThink` has no
+`frametime`-scaled movement rule; its water drag is outside this trial. The
+release owner still needs a separate review of mods, water, death, pushers and
+the exact temporal behavior of weapon actions before widening admission.
+
+The first observable batching proof is a stock-map remote peer at the default
+40 Hz dedicated tick and a 144 FPS client: selected authority stays connected,
+movement/fire and bounded ACKs advance, and no queued action appears before its
+own completion. The existing 100 Hz/72 FPS proof and default-off legacy smoke
+remain references; a passing build or a larger queue alone is insufficient.
+
+## Bounded command batching checkpoint
+
+The selected owner now adds host-frame credit once and walks up to eight queued
+commands through the existing client physics slot, preserving each command's
+input and pose. It records completion after each successful callback sequence;
+the existing end-of-physics queue retirement then removes only completed heads.
+If no command fits, it runs one maintenance lifecycle, while a frame that has
+completed a command does not run an extra maintenance pass. PMove's jump debounce
+is now stored in `client_t` alongside the other selected-owner state instead of
+a separate static slot table.
+
+The exact rebuilt Linux binary passed the previously failing stock `e1m1`
+loopback: a default 40 Hz dedicated server explicitly selected the trial with
+a 144 FPS private desktop client. The client stayed connected through the
+movement/firing interval; displacement was about 267 units, shells fell from
+25 to 21, and completed ACK advanced from 69 to 283 of 286 sent. Prediction
+remained disabled. This demonstrates that the sampled rate no longer saturates
+the 250 ms queue in this route. It does not yet prove per-command VR pose/damage,
+action isolation on deliberately held queue heads, complex collision parity,
+or arbitrary jitter/packet-loss behavior. Those remain release gates, as does
+the wider QuakeC clock and unsupported-state review.
+
+A focused repeat of the same selected peer run observed the first attack
+command at sequence 72 and the first authoritative shell decrease with a
+completed ACK of 73. The visible ammo effect therefore did not precede its
+attack command's ACK in that run. This narrows the action-ordering gap but does
+not cover impulses, rapid alternating poses, or a deliberately credit-starved
+queue head.
+
+## Astra batching review disposition
+
+The local Astra senior review conditionally accepted the eight-command cursor
+for the restricted, default-off trial. It found no actionable defect in the
+queue indexing, once-per-frame credit, completed-only retirement, idle gating,
+or move of jump debounce into `client_t`. It also found no need for a separate
+world clock or receipt-time movement owner based on the current evidence.
+
+| Review point | Disposition |
+| --- | --- |
+| Preserve the bounded cursor and host clock | **Adopt.** Stock dry-WALK batching follows the existing physics slot and QSS-M's same-frame command precedent. |
+| Enlarge the queue or move movement to packet receipt | **Reject.** Neither is required to fix sustained rate mismatch, and receipt-time execution would duplicate ownership. |
+| Consolidate copied native/maintenance/command lifecycles | **Adapt later.** Delete only demonstrably identical sequences; do not add a new state framework. |
+| Optimize repeated PMove copies and physent collection immediately | **Defer.** Up to sixteen collections per selected client frame are possible, but no representative frame cost has been measured; callback mutations require a fresh post-QC list. |
+
+This acceptance is not a parity claim. Delayed weapon damage and pose, held
+queue-head actions, jump/idle gaps, non-world ground, triggers, packet loss,
+unsupported-state recovery, and representative CPU cost remain unverified.

@@ -717,6 +717,8 @@ cc -std=gnu11 -DUSE_SDL3 -D_GNU_SOURCE -Wall -Wextra -Werror \
 profile mappings, shared Index-pad ownership, trigger hysteresis, role/focus
 changes, neutral rearming, menu activation versus binding capture, native modal
 grabs, callback invalidation, finite-axis handling, and zero/excessive deadzones.
+It records OpenXR menu haptics for rising input, release/repeat suppression,
+Escape opening the menu, handedness, the master toggle, capture and modal grabs.
 It also checks prepared roomscale deltas, repeated-frame deduplication,
 nonconsuming preview, focus loss, outlier rejection and angle locks. A focused
 render-frame case checks pinned private muzzle/hand preparation, roomscale
@@ -909,6 +911,14 @@ path. The client still offers the versioned private profile during `pext`
 negotiation; the check requires public authority. The positional `qsvr1`
 argument is reserved for a server using the unmarked inherited legacy layout
 and must not be supplied to this test.
+
+For an opt-in private PMove server trial, set
+`QSVR_LOCAL_ASSERT_ACTION_ACK=1` on the private client command. It records the
+first attack command sequence and fails if authoritative shell consumption
+appears before the completed move ACK reaches that sequence. This checks one
+visible action/ACK ordering path; it does not prove every queued action, VR
+weapon pose, or packet-loss case. Run a fresh selected server with
+`+sv_private_pmove_walk 1` and keep the default-off server result separate.
 
 For the private-to-public map-switch case, remove any stale readiness file,
 then add `QSVR_LOCAL_MAP_READY="$CLIENT_PROFILE/map-ready"` to the private

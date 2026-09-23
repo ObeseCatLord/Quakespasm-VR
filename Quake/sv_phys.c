@@ -2401,11 +2401,6 @@ static qboolean SV_RunPrivateVRWeaponThink (edict_t *ent, client_t *client)
 	return alive;
 }
 
-/* PMove's short jump debounce spans accepted commands, while the authoritative
- * jump-held level itself lives in the stock QC FL_JUMPRELEASED flag. */
-static client_t *sv_private_pmove_jump_owner[MAX_SCOREBOARD];
-static float sv_private_pmove_jump_secs[MAX_SCOREBOARD];
-
 /* The private trial is deliberately narrower than the ordinary client owner:
  * stock hull, dry WALK, and no pusher/Gorilla authority. */
 static qboolean SV_PrivateWalkTrialStockHull (edict_t *ent)
@@ -2528,7 +2523,8 @@ static void SV_PrivateWalkTrialDrop (client_t *client, const char *reason)
 
 /* This owner runs only for explicitly selected private peers. Queue retirement
  * remains in SV_FinishPrivateUsercmds, after this function reports completion. */
-static void SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *client)
+static qboolean SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *client,
+	unsigned queue_offset, qboolean accrue_credit)
 {
 	playermove_t saved_pmove = pmove;
 	movevars_t saved_movevars = movevars, trial_movevars;
@@ -2541,25 +2537,16 @@ static void SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *client)
 	float seconds, prethink_flags, prethink_teleport_time;
 	int prethink_groundentity;
 	qboolean run_command = false, was_grounded = false, weapon_alive;
+	qboolean command_completed = false;
 	const char *failure = NULL;
 	float result_jump_secs = 0;
-	int client_index, i;
+	int i;
 
 	ED_Retain (ent);
 	host_client = client;
 	sv_player = ent;
-	client_index = (int)(client - svs.clients);
-	if (client_index < 0 || client_index >= MAX_SCOREBOARD)
-	{
-		failure = "client slot is outside the PMove state table";
-		goto cleanup;
-	}
-	if (sv_private_pmove_jump_owner[client_index] != client ||
-		!client->private_pmove_last_cmd_valid)
-	{
-		sv_private_pmove_jump_owner[client_index] = client;
-		sv_private_pmove_jump_secs[client_index] = 0;
-	}
+	if (!client->private_pmove_last_cmd_valid)
+		client->private_pmove_jump_secs = 0.0f;
 
 	if (!isfinite (client->private_pmove_credit_msec) ||
 		client->private_pmove_credit_msec < 0.0)
@@ -2572,7 +2559,7 @@ static void SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *client)
 		failure = "invalid host frame time";
 		goto cleanup;
 	}
-	if (!sv.paused)
+	if (accrue_credit && !sv.paused)
 		client->private_pmove_credit_msec = fmin (250.0,
 			client->private_pmove_credit_msec + host_frametime * 1000.0);
 	if (client->private_pmove_credit_msec > 250.0)
@@ -2585,8 +2572,9 @@ static void SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *client)
 		failure = "invalid accepted-command queue state";
 		goto cleanup;
 	}
-	if (client->private_cmd_queue_count)
-		queued = &client->private_cmd_queue[client->private_cmd_queue_head];
+	if (queue_offset < client->private_cmd_queue_count)
+		queued = &client->private_cmd_queue[(client->private_cmd_queue_head +
+			queue_offset) % SV_PRIVATE_CMD_QUEUE_SIZE];
 	if (queued && (queued->msec < 1 || queued->msec > 125 ||
 		(int)queued->sequence <= client->private_completed_move))
 	{
@@ -2615,6 +2603,9 @@ static void SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *client)
 
 	if (!run_command)
 	{
+		/* Maintenance runs only before any command has completed this frame. */
+		if (queue_offset != 0)
+			goto cleanup;
 		/* Keep only the last completed levels and pose during a zero-time QC
 		 * maintenance pass. An uncompleted queue head never leaks into callbacks. */
 		if (client->private_pmove_last_cmd_valid)
@@ -2757,7 +2748,7 @@ static void SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *client)
 	/* QC may clear FL_JUMPRELEASED when it emits the stock jump sound. PMove
 	 * must use the release state that existed before that PreThink callback. */
 	pmove.jump_held = (((int)prethink_flags & FL_JUMPRELEASED) == 0);
-	pmove.jump_secs = sv_private_pmove_jump_secs[client_index];
+	pmove.jump_secs = client->private_pmove_jump_secs;
 	pmove.waterjumptime = 0;
 	pmove.waterlevel = 0;
 	pmove.watertype = CONTENTBIT_EMPTY;
@@ -2893,7 +2884,7 @@ static void SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *client)
 	client->private_completed_move = (int)command.sequence;
 	client->private_pmove_last_cmd = command;
 	client->private_pmove_last_cmd_valid = true;
-	sv_private_pmove_jump_secs[client_index] = result_jump_secs;
+	client->private_pmove_jump_secs = result_jump_secs;
 	client->private_pmove_credit_msec -= command.msec;
 	if (client->private_pmove_credit_msec < 0.000001)
 		client->private_pmove_credit_msec = 0;
@@ -2901,6 +2892,7 @@ static void SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *client)
 	client->cmd.impulse = 0;
 	VectorClear (client->cmd.vr_roomscalemove);
 	ent->v.impulse = 0;
+	command_completed = true;
 
 cleanup:
 	if (failure)
@@ -2915,6 +2907,7 @@ cleanup:
 	host_client = saved_host_client;
 	sv_player = saved_sv_player;
 	ED_Release (ent);
+	return command_completed;
 }
 
 static void SV_Physics_Client (edict_t *ent, int num)
@@ -2924,6 +2917,7 @@ static void SV_Physics_Client (edict_t *ent, int num)
 	client_t *client = &svs.clients[num - 1];
 	edict_t				  *retained_pusher;
 	int completed_move;
+	unsigned queue_offset;
 	qboolean frame_completed = false;
 
 	if (!svs.clients[num - 1].active)
@@ -2934,7 +2928,14 @@ static void SV_Physics_Client (edict_t *ent, int num)
 
 	if (SV_PrivateWalkTrialSelected (client))
 	{
-		SV_Physics_ClientPrivateWalkTrial (ent, client);
+		/* Bound catch-up work while preserving each command's QC lifecycle. */
+		for (queue_offset = 0; queue_offset < 8; queue_offset++)
+		{
+			if (!client->active || !SV_PrivateWalkTrialSelected (client) ||
+				!SV_Physics_ClientPrivateWalkTrial (ent, client,
+					queue_offset, queue_offset == 0))
+				break;
+		}
 		return;
 	}
 

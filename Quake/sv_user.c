@@ -925,6 +925,7 @@ void SV_ResetPrivateCommandQueue (client_t *client)
 	client->private_discarded_move = 0;
 	client->private_pmove_walk_selected = false;
 	client->private_pmove_credit_msec = 0.0;
+	client->private_pmove_jump_secs = 0.0f;
 	memset (&client->private_pmove_last_cmd, 0, sizeof (client->private_pmove_last_cmd));
 	client->private_pmove_last_cmd_valid = false;
 }

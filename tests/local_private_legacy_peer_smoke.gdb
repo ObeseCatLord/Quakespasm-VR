@@ -13,6 +13,7 @@ import gdb, json, math, os, time
 expect_text = os.environ.get('QSVR_LOCAL_EXPECT_PRIVATE')
 result_path = os.environ.get('QSVR_LOCAL_RESULT')
 ready_path = os.environ.get('QSVR_LOCAL_MAP_READY') or None
+assert_action_ack = os.environ.get('QSVR_LOCAL_ASSERT_ACTION_ACK') == '1'
 if expect_text not in ('0', '1') or not result_path:
     raise RuntimeError('QSVR_LOCAL_EXPECT_PRIVATE and QSVR_LOCAL_RESULT are required')
 expect_private = expect_text == '1'
@@ -20,12 +21,17 @@ if ready_path and not expect_private:
     raise RuntimeError('map-switch mode requires a private initial profile')
 if ready_path and os.path.exists(ready_path):
     raise RuntimeError('remove the old map readiness file before starting')
+if assert_action_ack and not expect_private:
+    raise RuntimeError('action/ACK probe requires a private peer')
 
 started = time.monotonic()
 phase = 'signon'
 phase_time = started
 samples = []
 failure = None
+first_attack_seq = None
+first_attack_shells = None
+first_shell_ack = None
 
 def integer(expr):
     return int(gdb.parse_and_eval(expr))
@@ -71,17 +77,25 @@ def check_settled_pair(before, settled, private):
 
 class HostFrame(gdb.Breakpoint):
     def stop(self):
-        global phase, phase_time, failure
+        global phase, phase_time, failure, first_attack_seq, first_attack_shells, first_shell_ack
         now = time.monotonic()
         if now - started > 120:
             failure = 'timeout'
             return True
         try:
+            if first_attack_seq is not None and first_shell_ack is None and \
+                    integer('cl.stats[6]') < first_attack_shells:
+                first_shell_ack = integer('cl.ackedmovemessages')
+                require(first_shell_ack >= first_attack_seq,
+                        'attack_effect_before_completed_ack')
             if phase == 'signon':
                 if integer('cls.signon') == 4:
                     phase, phase_time = 'baseline_wait', now
             elif phase == 'baseline_wait' and now - phase_time >= 1:
                 samples.append(sample('before'))
+                if assert_action_ack:
+                    first_attack_seq = integer('cl.movemessages')
+                    first_attack_shells = samples[-1]['shells']
                 gdb.execute('set in_forward.state = 1', to_string=True)
                 gdb.execute('set in_attack.state = 1', to_string=True)
                 phase, phase_time = 'movement', now
@@ -130,6 +144,8 @@ try:
     if failure is None:
         require(len(samples) == (3 if ready_path else 2), 'sample_count')
         movement = check_settled_pair(samples[0], samples[1], expect_private)
+        if assert_action_ack:
+            require(first_shell_ack is not None, 'no_attack_effect_ack_pair')
         if ready_path:
             after = samples[2]
             check_authority(after, False)
@@ -149,6 +165,9 @@ if failure:
     result['failure'] = failure
 else:
     result['settled_displacement'] = movement
+    if assert_action_ack:
+        result['first_attack_sequence'] = first_attack_seq
+        result['first_shell_effect_ack'] = first_shell_ack
 temporary = result_path + '.tmp.' + str(os.getpid())
 with open(temporary, 'w') as output:
     json.dump(result, output, indent=2, sort_keys=True)
