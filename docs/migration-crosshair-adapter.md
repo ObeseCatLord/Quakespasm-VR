@@ -7,7 +7,8 @@ reticle does not preserve the inherited pointer depth or alignment. Desktop
 `crosshair` and `crosshair_size` remain separate from the inherited VR
 `vr_crosshair`, `vr_crosshair_depth`, `vr_crosshair_size`, `vr_crosshair_alpha`
 and vertical offset (`../quakespasm-openvr/Quake/vr.c:1913-1916, 1925,
-10407-10516`). This is a mapped gap, not a completed port.
+10407-10516`). The Vulkan adapter is implemented below; headset alignment
+and full parity remain unverified.
 
 The donor resolves up to two rays before changing render state. Controller aim
 starts at the calibrated muzzle and follows hand rotation, including akimbo;
@@ -44,3 +45,21 @@ crosshair unchanged. Then cover fixed depth, line mode, noncontroller aim,
 tracking loss, wrong/absent weapon model, handedness, akimbo, occlusion,
 multiview and public-versus-private server behavior. Neither shader
 compilation nor a point drawn at arbitrary depth establishes alignment.
+
+## Implemented slice
+
+`R_PrepareVRCrosshair` now resolves one controller-calibrated or ordinary aim
+ray and performs the inherited world trace on the main frame owner before
+render tasks. The viewmodel scene context draws the resulting red point quad
+or line ribbon through vkQuake's existing untextured blended pipeline. VR
+crosshair mode, depth, size, alpha and vertical offset have their inherited
+cvars; `vr_crosshair 0` disables the VR reticle. The flat GUI reticle stays
+desktop-only even when VR tracking is unavailable. No remote avatar or akimbo
+ray is implied by this slice.
+
+The Vulkan primitive uses the current center field of view to estimate pixel
+size. OpenXR's asymmetric per-eye projections can change its apparent size,
+and the viewmodel's stair-smoothing offset is applied later in scene setup.
+Both-eye wall alignment, barrel alignment, controller loss, and stairs need
+headset verification before claiming visual parity. Linux compilation alone
+does not close that gate.

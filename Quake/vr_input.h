@@ -38,6 +38,7 @@ void VR_InputMenuPanelTrigger (const vrxr_frame_t *frame, qboolean panel_drawn);
 void VR_InputMove (usercmd_t *pending);
 void VR_InputApplyPending (usercmd_t *cmd);
 int VR_InputDominantPhysicalHand (void);
+qboolean VR_InputCrosshairAimRay (vec3_t start, vec3_t forward);
 void VR_InputTriggerHaptic (int logical_role, float duration_seconds, float amplitude);
 qboolean VR_InputSuppressUncalibratedAttack (const usercmd_t *cmd);
 void VR_InputInvalidateMotion (void);

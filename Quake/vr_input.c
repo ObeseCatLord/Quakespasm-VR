@@ -875,6 +875,35 @@ static void VR_InputPreparePrivatePose (usercmd_t *pending, int dominant,
 	pending->vr_active = true;
 }
 
+qboolean VR_InputCrosshairAimRay (vec3_t start, vec3_t forward)
+{
+	const vrxr_frame_t *frame = GL_OpenXRFrame ();
+	const int dominant = VR_InputDominantPhysicalHand ();
+	vec3_t body_offset, hand_angles, local_muzzle, world_muzzle, right, up;
+	entity_t *view_player;
+
+	if (!start || !forward || !frame || !frame->should_render ||
+		!VR_InputControllerAim () || cls.state != ca_connected ||
+		cls.signon != SIGNONS || cls.demoplayback || cl.intermission ||
+		!cl.entities || cl.viewentity <= 0 || cl.viewentity >= cl.num_entities ||
+		!V_TrackedHandBodyOffset (dominant, body_offset) ||
+		!V_TrackedMovementAngles (VR_MOVEMENT_MODE_FOLLOW_HAND, dominant, hand_angles) ||
+		!VR_WeaponCalibrationCurrentMuzzle (local_muzzle) ||
+		!VR_LocomotionMuzzleOffsetToWorld (local_muzzle, hand_angles,
+			vr_gunmodelscale.value, vr_gunmodelpitch.value, dominant == 0,
+			world_muzzle))
+		return false;
+
+	view_player = &cl.entities[cl.viewentity];
+	VectorAdd (view_player->origin, body_offset, start);
+	VectorAdd (start, world_muzzle, start);
+	AngleVectors (hand_angles, forward, right, up);
+	for (int i = 0; i < 3; ++i)
+		if (!isfinite (start[i]) || !isfinite (forward[i]))
+			return false;
+	return true;
+}
+
 void VR_InputMove (usercmd_t *pending)
 {
 	const vrxr_frame_t *frame = GL_OpenXRFrame ();

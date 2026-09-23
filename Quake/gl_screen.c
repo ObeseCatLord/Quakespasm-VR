@@ -99,6 +99,11 @@ cvar_t scr_usekfont = {"scr_usekfont", "0", CVAR_NONE}; // 2021 re-release
 cvar_t scr_style = {"scr_style", "0", CVAR_ARCHIVE_GAME};
 cvar_t vr_menu_scale = {"vr_menu_scale", "0.13", CVAR_ARCHIVE};
 cvar_t vr_menu_follow = {"vr_menu_follow", "1", CVAR_ARCHIVE};
+cvar_t vr_crosshair = {"vr_crosshair", "1", CVAR_ARCHIVE};
+cvar_t vr_crosshair_depth = {"vr_crosshair_depth", "0", CVAR_ARCHIVE};
+cvar_t vr_crosshair_size = {"vr_crosshair_size", "3", CVAR_ARCHIVE};
+cvar_t vr_crosshair_alpha = {"vr_crosshair_alpha", "0.25", CVAR_ARCHIVE};
+cvar_t vr_crosshairy = {"vr_crosshairy", "0", CVAR_ARCHIVE};
 
 cvar_t scr_viewsize = {"viewsize", "100", CVAR_ARCHIVE_GAME};
 cvar_t scr_viewsize_allow_shrinking = {"viewsize_allow_shrinking", "0", CVAR_ARCHIVE_GAME};
@@ -127,6 +132,7 @@ cvar_t scr_relconscale = {"scr_relconscale", "1", CVAR_ARCHIVE};
 
 extern cvar_t vr_aimmode;
 extern cvar_t vr_hud_scale;
+extern void R_PrepareVRCrosshair (void);
 extern qboolean sb_showscores;
 extern qboolean scr_drawdialog;
 
@@ -750,6 +756,11 @@ void SCR_Init (void)
 	Cvar_RegisterVariable (&scr_style);
 	Cvar_RegisterVariable (&vr_menu_scale);
 	Cvar_RegisterVariable (&vr_menu_follow);
+	Cvar_RegisterVariable (&vr_crosshair);
+	Cvar_RegisterVariable (&vr_crosshair_depth);
+	Cvar_RegisterVariable (&vr_crosshair_size);
+	Cvar_RegisterVariable (&vr_crosshair_alpha);
+	Cvar_RegisterVariable (&vr_crosshairy);
 	Cvar_RegisterVariable (&cl_gun_fovscale);
 	Cvar_RegisterVariable (&cl_gun_x);
 	Cvar_RegisterVariable (&cl_gun_y);
@@ -1300,6 +1311,8 @@ SCR_DrawCrosshair -- johnfitz
 */
 static void SCR_DrawCrosshair (cb_context_t *cbx)
 {
+	if (vulkan_globals.stereo_active)
+		return;
 	if (!crosshair.value || scr_viewsize.value >= 130)
 		return;
 
@@ -2228,6 +2241,7 @@ void SCR_UpdateScreen (qboolean use_tasks)
 	V_UpdateTrackedAim ();
 	if (vid.recalc_refdef || SCR_VRClassicSbarFrameEligible (GL_OpenXRFrame ()) != scr_vr_classic_sbar_refdef_active)
 		SCR_CalcRefdef ();
+	R_PrepareVRCrosshair ();
 
 	if (use_tasks)
 	{
