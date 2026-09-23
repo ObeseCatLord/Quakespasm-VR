@@ -24,6 +24,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "quakedef.h"
 #include "q_ctype.h"
 #include "json.h"
+#include "savegame_dialect.h"
 #include <sys/stat.h>
 #ifndef _WIN32
 #include <dirent.h>
@@ -1961,6 +1962,8 @@ static void Host_Loadgame_f (void)
 	edict_t	   *ent;
 	int			entnum;
 	int			version;
+	long		start_length;
+	savegame_dialect_t dialect;
 	float		spawn_parms[NUM_TOTAL_SPAWN_PARMS];
 	qboolean	was_recording = cls.demorecording;
 	int			old_skill = current_skill;
@@ -1983,26 +1986,21 @@ static void Host_Loadgame_f (void)
 
 	q_strlcpy (savename, Cmd_Argv (1), sizeof (savename));
 
-	if (nomonsters.value)
-	{
-		Con_Warning ("\"%s\" disabled automatically.\n", nomonsters.name);
-		Cvar_SetValueQuick (&nomonsters, 0.f);
-	}
-
-	cls.demonum = -1; // stop demo loop in case this fails
-
 	// avoid leaking if the previous Host_Loadgame_f failed with a Host_Error
 	if (start != NULL)
+	{
 		Mem_Free (start);
+		start = NULL;
+	}
 
 	q_snprintf (name, sizeof (name), "%s/%s", com_gamedir, savename);
 	COM_AddExtension (name, ".sav", sizeof (name));
-	start = (char *)COM_LoadMallocFile_TextMode_OSPath (name, NULL);
+	start = (char *)COM_LoadMallocFile_TextMode_OSPath (name, &start_length);
 	if (!start && COM_GetLegacySaveDir (legacy_dir, sizeof (legacy_dir)))
 	{
 		q_snprintf (name, sizeof (name), "%s/%s", legacy_dir, savename);
 		COM_AddExtension (name, ".sav", sizeof (name));
-		start = (char *)COM_LoadMallocFile_TextMode_OSPath (name, NULL);
+		start = (char *)COM_LoadMallocFile_TextMode_OSPath (name, &start_length);
 	}
 	if (!start)
 	{
@@ -2011,11 +2009,38 @@ static void Host_Loadgame_f (void)
 		return;
 	}
 
+	version = -1;
+	dialect = start_length < 0 ? SAVEGAME_DIALECT_MALFORMED : Savegame_ClassifyHeader (start, (size_t)start_length, &version);
+	if (dialect == SAVEGAME_DIALECT_INHERITED6 || dialect == SAVEGAME_DIALECT_INHERITED7)
+	{
+		Mem_Free (start);
+		start = NULL;
+		Con_Printf ("ERROR: inherited multiplayer save version %d is not supported by this loader.\n", version);
+		return;
+	}
+	if (dialect != SAVEGAME_DIALECT_LEGACY5 && dialect != SAVEGAME_DIALECT_KEX6)
+	{
+		Mem_Free (start);
+		start = NULL;
+		if (dialect == SAVEGAME_DIALECT_AMBIGUOUS)
+			Con_Printf ("ERROR: ambiguous version 6 savegame header.\n");
+		else
+			Con_Printf ("ERROR: unsupported or malformed savegame header (version %d).\n", version);
+		return;
+	}
+
 	Con_Printf ("Loading game from %s...\n", name);
 
-	data = start;
-	data = COM_ParseIntNewline (data, &version);
-	if (version == SAVEGAME_VERSION_KEX)
+	if (nomonsters.value)
+	{
+		Con_Warning ("\"%s\" disabled automatically.\n", nomonsters.name);
+		Cvar_SetValueQuick (&nomonsters, 0.f);
+	}
+
+	cls.demonum = -1; // stop demo loop in case this fails
+
+	data = COM_ParseIntNewline (start, &version);
+	if (dialect == SAVEGAME_DIALECT_KEX6)
 	{
 		char game[MAX_QPATH], paths[1024];
 		data = COM_ParseStringNewline (data);
@@ -2054,16 +2079,18 @@ static void Host_Loadgame_f (void)
 			was_recording = false;
 
 			Mem_Free (start);
-			start = (char *)COM_LoadMallocFile_TextMode_OSPath (name, NULL);
+			start = NULL;
+			start = (char *)COM_LoadMallocFile_TextMode_OSPath (name, &start_length);
 			if (!start)
 			{
 				SCR_EndLoadingPlaque ();
 				Con_Printf ("ERROR: couldn't reopen %s.\n", name);
 				return;
 			}
+			dialect = start_length < 0 ? SAVEGAME_DIALECT_MALFORMED : Savegame_ClassifyHeader (start, (size_t)start_length, &version);
 			data = COM_ParseIntNewline (start, &version);
 			data = COM_ParseStringNewline (data);
-			if (version != SAVEGAME_VERSION_KEX || strcmp (com_token, game))
+			if (dialect != SAVEGAME_DIALECT_KEX6 || version != SAVEGAME_VERSION_KEX || strcmp (com_token, game))
 			{
 				Mem_Free (start);
 				start = NULL;
@@ -2072,7 +2099,7 @@ static void Host_Loadgame_f (void)
 			}
 		}
 	}
-	else if (version != SAVEGAME_VERSION)
+	else if (dialect != SAVEGAME_DIALECT_LEGACY5 || version != SAVEGAME_VERSION)
 	{
 		Mem_Free (start);
 		start = NULL;
