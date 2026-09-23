@@ -59,7 +59,6 @@ int minimum_memory;
 client_t *host_client; // current client
 
 jmp_buf host_abortserver;
-jmp_buf screen_error;
 
 byte  *host_colormap;
 float  host_netinterval = 1.0 / HOST_NETITERVAL_FREQ;
@@ -219,16 +218,22 @@ void Host_Error (const char *error, ...)
 {
 	va_list			argptr;
 	char			string[1024];
-	static qboolean inerror = false;
+	static THREAD_LOCAL qboolean inerror = false;
+	qboolean recover_client_qc;
 
 	if (inerror)
 		Sys_Error ("Host_Error: recursively entered");
-	inerror = true;
-	SV_ClearVRWeaponPoseScope ();
 
 	va_start (argptr, error);
 	q_vsnprintf (string, sizeof (string), error, argptr);
 	va_end (argptr);
+	/* Only this GUI task's armed CSQC draw owns a live screen jump target.
+	 * An unrelated worker cannot jump to the main thread's host frame. */
+	recover_client_qc = SCR_CSQCErrorRecoveryArmed () && qcvm == &cl.qcvm;
+	if (Tasks_IsWorker () && !recover_client_qc)
+		Sys_Error ("Host_Error outside CSQC draw on worker: %s", string);
+	inerror = true;
+	SV_ClearVRWeaponPoseScope ();
 
 	Sys_DebugBreak ();
 
@@ -259,10 +264,10 @@ void Host_Error (const char *error, ...)
 
 	Con_Printf ("Host_Error: %s\n", string);
 
-	if (cl.qcvm.extfuncs.CSQC_DrawHud && in_update_screen)
+	if (recover_client_qc)
 	{
 		inerror = false;
-		longjmp (screen_error, 1);
+		SCR_JumpToCSQCErrorRecovery ();
 	}
 
 	if (sv.active)

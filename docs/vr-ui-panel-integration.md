@@ -296,3 +296,28 @@ normal gameplay. The early menu draw does not execute a CSQC callback because
 its recoverable error boundary is below that branch; CSQC menu-time HUD and
 loading-time HUD remain parity work. Desktop drawing remains on its existing
 path, and neither new state has headset visual proof yet.
+
+## CSQC error-boundary senior review
+
+Astra Max xhigh reviewed the recoverable `Host_Error` path against the GUI task,
+host-frame jump target, and QuakeC picture builtins. The old condition used a
+frame-global `in_update_screen` flag even when the GUI's `setjmp` had not run;
+an unrelated worker could also fall through to the main thread's host jump.
+The review also found that picture builtins could recursively acquire the GUI
+mutex and leak the inner acquisition when QuakeC failed. The original
+`cscqhud && setjmp(...)` expression was outside the permitted `setjmp` contexts
+in the [C working draft](https://www.open-std.org/jtc1/sc22/wg14/www/docs/n3220.pdf).
+
+| Review recommendation | Disposition |
+| --- | --- |
+| Use a thread-local jump target with idle, armed, and cleanup phases. | **Adopt.** Only the current GUI task can arm its target; cleanup and fallback redraw cannot reenter recovery. |
+| Capture client-QuakeC identity before clearing the active VM. | **Adopt.** `Host_Error` allows a GUI recovery only for that VM while the current task is armed. |
+| Route unrelated worker errors to a same-thread failure path before host state mutation. | **Adopt.** They use `Sys_Error`; they cannot jump to `_Host_Frame` on another thread. |
+| Set the jump target in a standalone, unconditional `if (setjmp(...))`. | **Adopt.** This also covers a scores-only QuakeC callback in the ordinary GUI branch. |
+| Keep recursive picture-builtin locks inside the already locked GUI draw. | **Reject.** Skip those inner acquisitions when this thread owns the outer GUI mutex; retain locks for standalone calls. |
+| Add a callback stack or synchronization rewrite. | **Reject.** The existing task ordering does not demonstrate a need for another owner or state machine. |
+
+The Linux build and diff checks pass after this boundary change. Error
+injection across serial/task rendering, scores-only callbacks, missing-string
+pictures, cleanup reentry, and menu/modal transitions remains a later runtime
+qualification gate, along with headset visual checks.

@@ -161,8 +161,36 @@ static qboolean scr_drawstartuploading = true;
 float			scr_disabled_time;
 
 qboolean	   in_update_screen;
-extern jmp_buf screen_error;
 SDL_Mutex	  *draw_qcvm_mutex;
+
+typedef enum
+{
+	SCR_CSQC_ERROR_IDLE,
+	SCR_CSQC_ERROR_ARMED,
+	SCR_CSQC_ERROR_CLEANUP
+} scr_csqc_error_phase_t;
+
+static THREAD_LOCAL jmp_buf screen_error;
+static THREAD_LOCAL scr_csqc_error_phase_t scr_csqc_error_phase;
+static THREAD_LOCAL qboolean scr_draw_gui_owns_qc_mutex;
+
+qboolean SCR_CSQCErrorRecoveryArmed (void)
+{
+	return scr_csqc_error_phase == SCR_CSQC_ERROR_ARMED;
+}
+
+void SCR_JumpToCSQCErrorRecovery (void)
+{
+	if (!SCR_CSQCErrorRecoveryArmed ())
+		Sys_Error ("CSQC screen recovery is not armed");
+	scr_csqc_error_phase = SCR_CSQC_ERROR_CLEANUP;
+	longjmp (screen_error, 1);
+}
+
+qboolean SCR_DrawGUIOwnsQCMutex (void)
+{
+	return scr_draw_gui_owns_qc_mutex;
+}
 
 void SCR_ScreenShot_f (void);
 
@@ -1926,7 +1954,9 @@ static void SCR_DrawGUI (void *unused)
 		vr_menu_panel_mode == VR_PANEL_MODAL && vr_menu_panel.valid;
 	const qboolean loading_panel_valid = vulkan_globals.stereo_active &&
 		vr_menu_panel_mode == VR_PANEL_LOADING && vr_menu_panel.valid;
-	volatile qboolean gui_mutex_held = false;
+	volatile qboolean recovered_csqc_error = false;
+	scr_csqc_error_phase = SCR_CSQC_ERROR_IDLE;
+	scr_draw_gui_owns_qc_mutex = false;
 	GL_DrawSceneUpscale (cbx);
 	if (vulkan_globals.stereo_active && key_dest == key_menu)
 		M_SetVRPointerPixelPosition (vr_menu_panel.pointer_x, vr_menu_panel.pointer_y,
@@ -1935,6 +1965,7 @@ static void SCR_DrawGUI (void *unused)
 	{
 		GL_BeginUIPanel (cbx, vr_menu_panel.world_from_ndc);
 		SDL_LockMutex (draw_qcvm_mutex);
+		scr_draw_gui_owns_qc_mutex = true;
 		M_Draw (cbx);
 		if (vr_menu_panel.pointer_valid)
 		{
@@ -1944,6 +1975,7 @@ static void SCR_DrawGUI (void *unused)
 		}
 		GL_EndUIPanel (cbx);
 		SCR_DrawVRHUDPanel (cbx, false, !con_forcedup);
+		scr_draw_gui_owns_qc_mutex = false;
 		SDL_UnlockMutex (draw_qcvm_mutex);
 		return;
 	}
@@ -1955,14 +1987,14 @@ static void SCR_DrawGUI (void *unused)
 	R_BeginDebugUtilsLabel (cbx, "2D");
 	SCR_TileClear (cbx);
 
-	const qboolean cscqhud = (scr_style.value < 1.0f) && cl.qcvm.extfuncs.CSQC_DrawHud;
 	const int csqc_items_before = cl.stats[STAT_ITEMS];
 
-	if (cscqhud && setjmp (screen_error))
+	if (setjmp (screen_error))
 	{
 		/* Host_Error jumps out of CSQC_DrawHud without unwinding this draw.
 		 * Restore the UI command state and release the GUI lock before clearing
 		 * the failing QCVM, or the next draw will deadlock on the same mutex. */
+		scr_csqc_error_phase = SCR_CSQC_ERROR_CLEANUP;
 		SCR_SetCSQCDisplayOverride (NULL);
 		if (cbx->ui_panel_active)
 			GL_EndUIPanel (cbx);
@@ -1970,16 +2002,19 @@ static void SCR_DrawGUI (void *unused)
 		 * canvas must not reuse the CSQC-sized panel transform below. */
 		vr_classic_sbar_panel.valid = false;
 		cl.stats[STAT_ITEMS] = csqc_items_before;
-		if (gui_mutex_held)
+		if (scr_draw_gui_owns_qc_mutex)
 		{
+			scr_draw_gui_owns_qc_mutex = false;
 			SDL_UnlockMutex (draw_qcvm_mutex);
-			gui_mutex_held = false;
 		}
 		PR_ClearProgs (&cl.qcvm);
+		recovered_csqc_error = true;
 	}
 
 	SDL_LockMutex (draw_qcvm_mutex);
-	gui_mutex_held = true;
+	scr_draw_gui_owns_qc_mutex = true;
+	if (!recovered_csqc_error)
+		scr_csqc_error_phase = SCR_CSQC_ERROR_ARMED;
 
 	if (scr_drawdialog) // new game confirm
 	{
@@ -2045,8 +2080,9 @@ static void SCR_DrawGUI (void *unused)
 		}
 	}
 
+	scr_csqc_error_phase = SCR_CSQC_ERROR_IDLE;
+	scr_draw_gui_owns_qc_mutex = false;
 	SDL_UnlockMutex (draw_qcvm_mutex);
-	gui_mutex_held = false;
 	R_EndDebugUtilsLabel (cbx);
 }
 

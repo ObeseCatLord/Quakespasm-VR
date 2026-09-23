@@ -74,6 +74,17 @@ extern qpic_t *pic_nul;
 // draw_qcvm_mutex also protects q_cachepics  / scrap updates
 extern SDL_Mutex *draw_qcvm_mutex;
 
+static void PR_DrawQCVM_Mutex (qboolean lock)
+{
+	if (SCR_DrawGUIOwnsQCMutex ())
+		return;
+
+	if (lock)
+		SDL_LockMutex (draw_qcvm_mutex);
+	else
+		SDL_UnlockMutex (draw_qcvm_mutex);
+}
+
 static void *PR_FindExtGlobal (int type, const char *name);
 void		 SV_CheckVelocity (edict_t *ent);
 
@@ -4989,32 +5000,32 @@ static void PF_cl_precachepic (void)
 
 	G_INT (OFS_RETURN) = G_INT (OFS_PARM0); // return input string, for convienience
 
-	SDL_LockMutex (draw_qcvm_mutex);
+	PR_DrawQCVM_Mutex (true);
 
 	if (!DrawQC_CachePic (name, flags))
 		// failure to load because the pic 'name" was not found.
 		G_INT (OFS_RETURN) = 0; // return input string, for convienience
 
-	SDL_UnlockMutex (draw_qcvm_mutex);
+	PR_DrawQCVM_Mutex (false);
 }
 static void PF_cl_iscachedpic (void)
 {
-	SDL_LockMutex (draw_qcvm_mutex);
 	const char *name = G_STRING (OFS_PARM0);
+	PR_DrawQCVM_Mutex (true);
 	if (DrawQC_CachePic (name, PICFLAG_NOLOAD))
 		G_FLOAT (OFS_RETURN) = true;
 	else
 		G_FLOAT (OFS_RETURN) = false;
 
-	SDL_UnlockMutex (draw_qcvm_mutex);
+	PR_DrawQCVM_Mutex (false);
 }
 
 static void PF_cl_drawpic (void)
 {
-	SDL_LockMutex (draw_qcvm_mutex);
-
+	const char *name = G_STRING (OFS_PARM1);
+	PR_DrawQCVM_Mutex (true);
 	float  *pos = G_VECTOR (OFS_PARM0);
-	qpic_t *pic = DrawQC_CachePic (G_STRING (OFS_PARM1), PICFLAG_AUTO);
+	qpic_t *pic = DrawQC_CachePic (name, PICFLAG_AUTO);
 	float  *size = G_VECTOR (OFS_PARM2);
 	float  *rgb = G_VECTOR (OFS_PARM3);
 	float	alpha = G_FLOAT (OFS_PARM4);
@@ -5022,29 +5033,29 @@ static void PF_cl_drawpic (void)
 	if (pic)
 		Draw_SubPic (vulkan_globals.secondary_cb_contexts[SCBX_GUI], pos[0], pos[1], size[0], size[1], pic, 0, 0, 1, 1, rgb, alpha);
 
-	SDL_UnlockMutex (draw_qcvm_mutex);
+	PR_DrawQCVM_Mutex (false);
 }
 
 static void PF_cl_getimagesize (void)
 {
-	SDL_LockMutex (draw_qcvm_mutex);
-
-	qpic_t *pic = DrawQC_CachePic (G_STRING (OFS_PARM0), PICFLAG_AUTO);
+	const char *name = G_STRING (OFS_PARM0);
+	PR_DrawQCVM_Mutex (true);
+	qpic_t *pic = DrawQC_CachePic (name, PICFLAG_AUTO);
 	if (pic)
 		G_VECTORSET (OFS_RETURN, pic->width, pic->height, 0);
 	else
 		G_VECTORSET (OFS_RETURN, 0, 0, 0);
 
-	SDL_UnlockMutex (draw_qcvm_mutex);
+	PR_DrawQCVM_Mutex (false);
 }
 
 static void PF_cl_drawsubpic (void)
 {
-	SDL_LockMutex (draw_qcvm_mutex);
-
+	const char *name = G_STRING (OFS_PARM2);
+	PR_DrawQCVM_Mutex (true);
 	float  *pos = G_VECTOR (OFS_PARM0);
 	float  *size = G_VECTOR (OFS_PARM1);
-	qpic_t *pic = DrawQC_CachePic (G_STRING (OFS_PARM2), PICFLAG_AUTO);
+	qpic_t *pic = DrawQC_CachePic (name, PICFLAG_AUTO);
 	float  *srcpos = G_VECTOR (OFS_PARM3);
 	float  *srcsize = G_VECTOR (OFS_PARM4);
 	float  *rgb = G_VECTOR (OFS_PARM5);
@@ -5054,7 +5065,7 @@ static void PF_cl_drawsubpic (void)
 		Draw_SubPic (
 			vulkan_globals.secondary_cb_contexts[SCBX_GUI], pos[0], pos[1], size[0], size[1], pic, srcpos[0], srcpos[1], srcsize[0], srcsize[1], rgb, alpha);
 
-	SDL_UnlockMutex (draw_qcvm_mutex);
+	PR_DrawQCVM_Mutex (false);
 }
 
 static void PF_cl_drawfill (void)

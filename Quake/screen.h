@@ -31,6 +31,9 @@ void SCR_LoadPics (void);
 void SCR_UpdateScreen (qboolean use_tasks);
 void SCR_AbortXRFrame (void);
 void SCR_UpdateZoom (void);
+qboolean SCR_CSQCErrorRecoveryArmed (void);
+FUNC_NORETURN void SCR_JumpToCSQCErrorRecovery (void);
+qboolean SCR_DrawGUIOwnsQCMutex (void);
 
 void SCR_CenterPrintClear (void);
 void SCR_CenterPrint (const char *str);
