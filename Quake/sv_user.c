@@ -916,7 +916,7 @@ static qboolean SV_ReadPrivateClientMove (void)
 		memset (readcmd.vr_roomscalemove, 0, sizeof (readcmd.vr_roomscalemove));
 	/* Tracking received while gameplay is suspended must not become motion
 	 * debt when the next physics frame eventually runs. */
-	if (sv.paused || (svs.maxclients <= 1 && key_dest != key_game) ||
+	if (!readcmd.vr_active || sv.paused || (svs.maxclients <= 1 && key_dest != key_game) ||
 		host_client->edict->v.movetype == MOVETYPE_NONE)
 	{
 		memset (host_client->cmd.vr_roomscalemove, 0,
