@@ -1,0 +1,685 @@
+/*
+ * CPU-only port of the canonical Ranger upper-body VRIK palette math from
+ * QuakeSpasm OpenVR's r_alias.c.  Matrices remain absolute, row-major 3x4
+ * transforms throughout, matching MD5 animation poses and Vulkan skinning.
+ */
+#include "quakedef.h"
+#include "r_vrik.h"
+
+#include <float.h>
+#include <math.h>
+#include <string.h>
+
+#define R_VRIK_MAX_JOINTS 256
+#define VRIK_ARM_MAX_STRETCH 1.10f
+#define VRIK_GUN_MUZZLE_OFFSET 20.0f
+
+typedef enum r_vrik_joint_e
+{
+	R_VRIK_HIP,
+	R_VRIK_SPINE1,
+	R_VRIK_SPINE2,
+	R_VRIK_NECK,
+	R_VRIK_HEAD,
+	R_VRIK_SHOULDER_L,
+	R_VRIK_UPPERARM_L,
+	R_VRIK_LOWERARM_L,
+	R_VRIK_HAND_L,
+	R_VRIK_SHOULDER_R,
+	R_VRIK_UPPERARM_R,
+	R_VRIK_LOWERARM_R,
+	R_VRIK_HAND_R,
+	R_VRIK_GUN,
+	R_VRIK_AXE,
+	R_VRIK_SMALL_FLAME,
+	R_VRIK_BIG_FLAME,
+	R_VRIK_JOINT_COUNT
+} r_vrik_joint_t;
+
+static const char *const r_vrik_joint_names[R_VRIK_JOINT_COUNT] = {
+	"Hip", "Spine1", "Spine2", "Neck", "Head",
+	"Shoulder_L", "UpperArm_L", "LowerArm_L", "Hand_L",
+	"Shoulder_R", "UpperArm_R", "LowerArm_R", "Hand_R",
+	"Gun", "Axe", "small_flame", "big_flame"
+};
+
+static void R_VRIKMatrixOrigin (const float matrix[12], vec3_t origin)
+{
+	origin[0] = matrix[3];
+	origin[1] = matrix[7];
+	origin[2] = matrix[11];
+}
+
+static void R_VRIKSetMatrixOrigin (float matrix[12], const vec3_t origin)
+{
+	matrix[3] = origin[0];
+	matrix[7] = origin[1];
+	matrix[11] = origin[2];
+}
+
+static void R_VRIKMatrixMultiply (const float first[12], const float second[12],
+	float out[12])
+{
+	float result[12];
+	R_ConcatTransforms ((float (*)[4])first, (float (*)[4])second,
+		(float (*)[4])result);
+	memcpy (out, result, sizeof (result));
+}
+
+static void R_VRIKMatrixInverseRigid (const float matrix[12], float inverse[12])
+{
+	int row, column;
+
+	for (row = 0; row < 3; row++)
+		for (column = 0; column < 3; column++)
+			inverse[row * 4 + column] = matrix[column * 4 + row];
+	for (row = 0; row < 3; row++)
+		inverse[row * 4 + 3] = -(inverse[row * 4 + 0] * matrix[3] +
+			inverse[row * 4 + 1] * matrix[7] +
+			inverse[row * 4 + 2] * matrix[11]);
+}
+
+static void R_VRIKOrthonormalize (float matrix[12])
+{
+	vec3_t x = { matrix[0], matrix[4], matrix[8] };
+	vec3_t y = { matrix[1], matrix[5], matrix[9] };
+	vec3_t z;
+	float projection;
+
+	if (!VectorNormalize (x))
+		x[0] = 1, x[1] = 0, x[2] = 0;
+	projection = DotProduct (x, y);
+	VectorMA (y, -projection, x, y);
+	if (!VectorNormalize (y))
+	{
+		y[0] = 0, y[1] = 1, y[2] = 0;
+		projection = DotProduct (x, y);
+		VectorMA (y, -projection, x, y);
+		VectorNormalize (y);
+	}
+	CrossProduct (x, y, z);
+	VectorNormalize (z);
+	matrix[0] = x[0]; matrix[4] = x[1]; matrix[8] = x[2];
+	matrix[1] = y[0]; matrix[5] = y[1]; matrix[9] = y[2];
+	matrix[2] = z[0]; matrix[6] = z[1]; matrix[10] = z[2];
+}
+
+static void R_VRIKLerpPalette (const md5_skeleton_view_t *skeleton,
+	const lerpdata_t *lerpdata, float (*palette)[12])
+{
+	const float (*first)[12] = skeleton->absolute_poses +
+		(size_t)lerpdata->pose1 * skeleton->joint_count;
+	const float (*second)[12] = skeleton->absolute_poses +
+		(size_t)lerpdata->pose2 * skeleton->joint_count;
+	size_t joint;
+	int component;
+
+	for (joint = 0; joint < skeleton->joint_count; joint++)
+	{
+		for (component = 0; component < 12; component++)
+			palette[joint][component] = first[joint][component] +
+				(second[joint][component] - first[joint][component]) *
+				lerpdata->blend;
+		R_VRIKOrthonormalize (palette[joint]);
+	}
+}
+
+static int R_VRIKNameEqual (const char *a, const char *b)
+{
+	while (*a && *b)
+	{
+		unsigned char ca = (unsigned char)*a++;
+		unsigned char cb = (unsigned char)*b++;
+		if (ca >= 'A' && ca <= 'Z') ca = (unsigned char)(ca + ('a' - 'A'));
+		if (cb >= 'A' && cb <= 'Z') cb = (unsigned char)(cb + ('a' - 'A'));
+		if (ca != cb)
+			return 0;
+	}
+	return *a == *b;
+}
+
+static qboolean R_VRIKResolveJoints (const md5_skeleton_view_t *skeleton,
+	int indexes[R_VRIK_JOINT_COUNT])
+{
+	size_t joint;
+	int semantic;
+
+	for (semantic = 0; semantic < R_VRIK_JOINT_COUNT; semantic++)
+		indexes[semantic] = -1;
+	for (joint = 0; joint < skeleton->joint_count; joint++)
+	{
+		const md5_skeleton_joint_t *source = &skeleton->joints[joint];
+		if (!memchr (source->name, '\0', sizeof (source->name)))
+			return false;
+		for (semantic = 0; semantic < R_VRIK_JOINT_COUNT; semantic++)
+			if (R_VRIKNameEqual (source->name, r_vrik_joint_names[semantic]))
+			{
+				if (indexes[semantic] >= 0)
+					return false;
+				indexes[semantic] = (int)joint;
+				break;
+			}
+	}
+	/* These named links define the donor's Ranger upper-body solve.  Ancestor
+	 * checks permit harmless intermediary authored joints while rejecting
+	 * similarly named but unrelated bones. */
+	{
+		static const struct { int child, ancestor; } links[] = {
+			{ R_VRIK_SPINE1, R_VRIK_HIP },
+			{ R_VRIK_SPINE2, R_VRIK_SPINE1 },
+			{ R_VRIK_NECK, R_VRIK_SPINE2 },
+			{ R_VRIK_HEAD, R_VRIK_NECK },
+			{ R_VRIK_SHOULDER_L, R_VRIK_SPINE2 },
+			{ R_VRIK_SHOULDER_R, R_VRIK_SPINE2 },
+			{ R_VRIK_UPPERARM_L, R_VRIK_SHOULDER_L },
+			{ R_VRIK_LOWERARM_L, R_VRIK_UPPERARM_L },
+			{ R_VRIK_HAND_L, R_VRIK_LOWERARM_L },
+			{ R_VRIK_UPPERARM_R, R_VRIK_SHOULDER_R },
+			{ R_VRIK_LOWERARM_R, R_VRIK_UPPERARM_R },
+			{ R_VRIK_HAND_R, R_VRIK_LOWERARM_R }
+		};
+		size_t link;
+		for (semantic = R_VRIK_HIP; semantic <= R_VRIK_HAND_R; semantic++)
+			if (indexes[semantic] < 0)
+				return false;
+		for (link = 0; link < sizeof (links) / sizeof (links[0]); link++)
+		{
+			int child = indexes[links[link].child];
+			int ancestor = indexes[links[link].ancestor];
+			int parent = skeleton->joints[child].parent;
+			int steps = 0;
+			if (child == ancestor)
+				return false;
+			while (parent >= 0 && (size_t)parent < skeleton->joint_count &&
+				steps++ < (int)skeleton->joint_count)
+			{
+				if (parent == ancestor)
+					break;
+				parent = skeleton->joints[parent].parent;
+			}
+			if (parent != ancestor)
+				return false;
+		}
+	}
+	return true;
+}
+
+static qboolean R_VRIKBuildBodyBasis (const int *jointindex,
+	const float (*palette)[12], vec3_t lateral, vec3_t forward, vec3_t up)
+{
+	vec3_t leftshoulder, rightshoulder, hip, head;
+	int left = jointindex[R_VRIK_SHOULDER_L];
+	int right = jointindex[R_VRIK_SHOULDER_R];
+	int leftupper = jointindex[R_VRIK_UPPERARM_L];
+	int rightupper = jointindex[R_VRIK_UPPERARM_R];
+	int hipjoint = jointindex[R_VRIK_HIP];
+	int headjoint = jointindex[R_VRIK_HEAD];
+
+	R_VRIKMatrixOrigin (palette[left], leftshoulder);
+	R_VRIKMatrixOrigin (palette[right], rightshoulder);
+	R_VRIKMatrixOrigin (palette[hipjoint], hip);
+	R_VRIKMatrixOrigin (palette[headjoint], head);
+	VectorSubtract (rightshoulder, leftshoulder, lateral);
+	if (!VectorNormalize (lateral))
+	{
+		R_VRIKMatrixOrigin (palette[leftupper], leftshoulder);
+		R_VRIKMatrixOrigin (palette[rightupper], rightshoulder);
+		VectorSubtract (rightshoulder, leftshoulder, lateral);
+		if (!VectorNormalize (lateral))
+			return false;
+	}
+	VectorSubtract (head, hip, up);
+	if (!VectorNormalize (up))
+		return false;
+	/* Network root-local coordinates are forward/left/up. */
+	CrossProduct (up, lateral, forward);
+	if (!VectorNormalize (forward))
+		return false;
+	CrossProduct (lateral, forward, up);
+	return VectorNormalize (up) != 0.0f;
+}
+
+static void R_VRIKLocalVectorToModel (const vec3_t local,
+	const vec3_t lateral, const vec3_t forward, const vec3_t up, vec3_t model)
+{
+	model[0] = forward[0] * local[0] - lateral[0] * local[1] + up[0] * local[2];
+	model[1] = forward[1] * local[0] - lateral[1] * local[1] + up[1] * local[2];
+	model[2] = forward[2] * local[0] - lateral[2] * local[1] + up[2] * local[2];
+}
+
+static void R_VRIKCanonicalMatrix (const vec3_t direction,
+	const vec3_t preferred_up, const vec3_t origin, float matrix[12])
+{
+	vec3_t x, y, z;
+	VectorCopy (direction, x);
+	if (!VectorNormalize (x))
+		x[0] = 1, x[1] = 0, x[2] = 0;
+	CrossProduct (preferred_up, x, y);
+	if (!VectorNormalize (y))
+	{
+		vec3_t fallback = { 0, 0, 1 };
+		CrossProduct (fallback, x, y);
+		if (!VectorNormalize (y))
+			y[0] = 0, y[1] = 1, y[2] = 0;
+	}
+	CrossProduct (x, y, z);
+	VectorNormalize (z);
+	matrix[0] = x[0]; matrix[1] = y[0]; matrix[2] = z[0]; matrix[3] = origin[0];
+	matrix[4] = x[1]; matrix[5] = y[1]; matrix[6] = z[1]; matrix[7] = origin[1];
+	matrix[8] = x[2]; matrix[9] = y[2]; matrix[10] = z[2]; matrix[11] = origin[2];
+}
+
+static void R_VRIKAnglesToModelMatrix (const vec3_t angles,
+	const vec3_t lateral, const vec3_t forward, const vec3_t up,
+	const vec3_t origin, float matrix[12])
+{
+	vec3_t mutable_angles, quakeforward, quakeright, quakeup;
+	vec3_t x, y, z, quakeleft;
+	VectorCopy (angles, mutable_angles);
+	AngleVectors (mutable_angles, quakeforward, quakeright, quakeup);
+	quakeleft[0] = -quakeright[0];
+	quakeleft[1] = -quakeright[1];
+	quakeleft[2] = -quakeright[2];
+	R_VRIKLocalVectorToModel (quakeforward, lateral, forward, up, x);
+	R_VRIKLocalVectorToModel (quakeleft, lateral, forward, up, y);
+	R_VRIKLocalVectorToModel (quakeup, lateral, forward, up, z);
+	VectorNormalize (x); VectorNormalize (y); VectorNormalize (z);
+	matrix[0] = x[0]; matrix[1] = y[0]; matrix[2] = z[0]; matrix[3] = origin[0];
+	matrix[4] = x[1]; matrix[5] = y[1]; matrix[6] = z[1]; matrix[7] = origin[1];
+	matrix[8] = x[2]; matrix[9] = y[2]; matrix[10] = z[2]; matrix[11] = origin[2];
+}
+
+static void R_VRIKTrackedItemMatrix (const float tracked[12],
+	const vec3_t origin, float item[12])
+{
+	item[0] = -tracked[1]; item[1] = tracked[0]; item[2] = tracked[2];
+	item[4] = -tracked[5]; item[5] = tracked[4]; item[6] = tracked[6];
+	item[8] = -tracked[9]; item[9] = tracked[8]; item[10] = tracked[10];
+	R_VRIKSetMatrixOrigin (item, origin);
+}
+
+static void R_VRIKTrackedAxeMatrix (const float tracked[12],
+	const vec3_t origin, float item[12])
+{
+	item[0] = -tracked[1]; item[1] = tracked[2]; item[2] = -tracked[0];
+	item[4] = -tracked[5]; item[5] = tracked[6]; item[6] = -tracked[4];
+	item[8] = -tracked[9]; item[9] = tracked[10]; item[10] = -tracked[8];
+	R_VRIKSetMatrixOrigin (item, origin);
+}
+
+static void R_VRIKRotateToward (float matrix[12], const vec3_t from,
+	const vec3_t to)
+{
+	vec3_t a, b, axis, origin;
+	float cosine, sine, one;
+	float delta[12] = { 0 }, result[12];
+	VectorCopy (from, a); VectorCopy (to, b);
+	if (!VectorNormalize (a) || !VectorNormalize (b))
+		return;
+	cosine = CLAMP (-1.0f, DotProduct (a, b), 1.0f);
+	CrossProduct (a, b, axis);
+	sine = VectorNormalize (axis);
+	if (sine < 0.0001f)
+	{
+		if (cosine > 0.0f)
+			return;
+		axis[0] = 0, axis[1] = 0, axis[2] = 1;
+		if (fabsf (DotProduct (axis, a)) > 0.9f)
+			axis[0] = 0, axis[1] = 1, axis[2] = 0;
+		CrossProduct (a, axis, axis);
+		VectorNormalize (axis);
+		sine = 0.0f;
+	}
+	one = 1.0f - cosine;
+	delta[0] = cosine + axis[0] * axis[0] * one;
+	delta[1] = axis[0] * axis[1] * one - axis[2] * sine;
+	delta[2] = axis[0] * axis[2] * one + axis[1] * sine;
+	delta[4] = axis[1] * axis[0] * one + axis[2] * sine;
+	delta[5] = cosine + axis[1] * axis[1] * one;
+	delta[6] = axis[1] * axis[2] * one - axis[0] * sine;
+	delta[8] = axis[2] * axis[0] * one - axis[1] * sine;
+	delta[9] = axis[2] * axis[1] * one + axis[0] * sine;
+	delta[10] = cosine + axis[2] * axis[2] * one;
+	R_VRIKMatrixOrigin (matrix, origin);
+	R_VRIKMatrixMultiply (delta, matrix, result);
+	memcpy (matrix, result, sizeof (result));
+	R_VRIKSetMatrixOrigin (matrix, origin);
+}
+
+static void R_VRIKSolveArm (const int *jointindex, float (*palette)[12],
+	qboolean rightside, const vec3_t target, const vec3_t targetangles,
+	const vec3_t lateral, const vec3_t forward, const vec3_t up)
+{
+	int upperindex = jointindex[rightside ? R_VRIK_UPPERARM_R : R_VRIK_UPPERARM_L];
+	int lowerindex = jointindex[rightside ? R_VRIK_LOWERARM_R : R_VRIK_LOWERARM_L];
+	int handindex = jointindex[rightside ? R_VRIK_HAND_R : R_VRIK_HAND_L];
+	float *upper = palette[upperindex];
+	float *lower = palette[lowerindex];
+	float *hand = palette[handindex];
+	float tracked[12], desiredhand[12];
+	vec3_t wrist, shoulder, oldelbow, oldhand, toward, pole, bendnormal, bendaxis;
+	vec3_t elbow, oldupperdir, oldlowerdir, newupperdir, newlowerdir;
+	float upperlength, lowerlength, distance, restreach, stretch;
+	float solveupper, solvelower, cosine, anglecos, anglesin;
+
+	VectorCopy (target, wrist);
+	R_VRIKMatrixOrigin (upper, shoulder);
+	R_VRIKMatrixOrigin (lower, oldelbow);
+	R_VRIKMatrixOrigin (hand, oldhand);
+	VectorSubtract (oldelbow, shoulder, oldupperdir);
+	VectorSubtract (oldhand, oldelbow, oldlowerdir);
+	upperlength = VectorLength (oldupperdir);
+	lowerlength = VectorLength (oldlowerdir);
+	if (upperlength < 0.01f || lowerlength < 0.01f)
+		return;
+	VectorSubtract (wrist, shoulder, toward);
+	distance = VectorLength (toward);
+	if (distance < 0.001f)
+		return;
+	VectorScale (toward, 1.0f / distance, toward);
+	restreach = upperlength + lowerlength;
+	distance = CLAMP (fabsf (upperlength - lowerlength) + 0.01f, distance,
+		restreach * VRIK_ARM_MAX_STRETCH);
+	VectorMA (shoulder, distance, toward, wrist);
+	stretch = distance > restreach ? distance / restreach : 1.0f;
+	solveupper = upperlength * stretch;
+	solvelower = lowerlength * stretch;
+	VectorScale (lateral, rightside ? 1.0f : -1.0f, pole);
+	VectorMA (pole, -0.35f, forward, pole);
+	CrossProduct (toward, pole, bendnormal);
+	if (!VectorNormalize (bendnormal))
+		VectorCopy (up, bendnormal);
+	CrossProduct (bendnormal, toward, bendaxis);
+	VectorNormalize (bendaxis);
+	cosine = CLAMP (-1.0f,
+		(solveupper * solveupper + distance * distance - solvelower * solvelower) /
+		(2.0f * solveupper * distance), 1.0f);
+	anglecos = cosine * solveupper;
+	anglesin = sqrtf (q_max (0.0f, 1.0f - cosine * cosine)) * solveupper;
+	VectorMA (shoulder, anglecos, toward, elbow);
+	VectorMA (elbow, anglesin, bendaxis, elbow);
+	VectorSubtract (elbow, shoulder, newupperdir);
+	VectorSubtract (wrist, elbow, newlowerdir);
+	R_VRIKRotateToward (upper, oldupperdir, newupperdir);
+	R_VRIKRotateToward (lower, oldlowerdir, newlowerdir);
+	R_VRIKSetMatrixOrigin (lower, elbow);
+	R_VRIKAnglesToModelMatrix (targetangles, lateral, forward, up, wrist, tracked);
+	R_VRIKTrackedItemMatrix (tracked, wrist, desiredhand);
+	memcpy (hand, desiredhand, sizeof (desiredhand));
+}
+
+static void R_VRIKMoveJoint (const int *jointindex, float (*palette)[12],
+	int semantic, const vec3_t delta, float scale)
+{
+	int index = jointindex[semantic];
+	vec3_t origin;
+	R_VRIKMatrixOrigin (palette[index], origin);
+	VectorMA (origin, scale, delta, origin);
+	R_VRIKSetMatrixOrigin (palette[index], origin);
+}
+
+static qboolean R_VRIKSolvePalette (const int *jointindex, const vrik_pose_t *pose,
+	qboolean muzzleflash, float (*palette)[12], qboolean *muzzle_valid,
+	vec3_t muzzle_origin, vec3_t muzzle_forward)
+{
+	vec3_t lateral, forward, up, hip, oldhead, targethead, headdelta, torso;
+	vec3_t lefttarget, righttarget, weaponhandlocal = { 0, 0, 0 };
+	float weaponhand[12], inverse[12], attached[12];
+	int headindex = jointindex[R_VRIK_HEAD];
+	int hipindex = jointindex[R_VRIK_HIP];
+	int handright = jointindex[R_VRIK_HAND_R];
+	int handleft = jointindex[R_VRIK_HAND_L];
+	int gun = jointindex[R_VRIK_GUN];
+	int axe = jointindex[R_VRIK_AXE];
+	int flames[2] = { jointindex[R_VRIK_SMALL_FLAME],
+		jointindex[R_VRIK_BIG_FLAME] };
+	int weapon = -1;
+	qboolean dominantleft = (pose->flags & VRIK_FLAG_DOMINANT_LEFT) != 0;
+
+	*muzzle_valid = false;
+	muzzle_origin[0] = muzzle_origin[1] = muzzle_origin[2] = 0.0f;
+	muzzle_forward[0] = muzzle_forward[1] = muzzle_forward[2] = 0.0f;
+	if (!R_VRIKBuildBodyBasis (jointindex, (const float (*)[12])palette,
+		lateral, forward, up))
+		return false;
+	if (handright >= 0 && (gun >= 0 || axe >= 0))
+	{
+		vec3_t handorigin, gunorigin, axeorigin;
+		float gundistance = FLT_MAX, axedistance = FLT_MAX;
+		R_VRIKMatrixOrigin (palette[handright], handorigin);
+		if (gun >= 0)
+		{
+			R_VRIKMatrixOrigin (palette[gun], gunorigin);
+			VectorSubtract (gunorigin, handorigin, gunorigin);
+			gundistance = VectorLength (gunorigin);
+		}
+		if (axe >= 0)
+		{
+			R_VRIKMatrixOrigin (palette[axe], axeorigin);
+			VectorSubtract (axeorigin, handorigin, axeorigin);
+			axedistance = VectorLength (axeorigin);
+		}
+		weapon = gundistance <= axedistance ? gun : axe;
+		if (q_min (gundistance, axedistance) > 64.0f)
+			weapon = -1;
+		if (weapon >= 0)
+		{
+			R_VRIKMatrixInverseRigid (palette[weapon], inverse);
+			R_VRIKMatrixMultiply (inverse, palette[handright], weaponhand);
+			R_VRIKMatrixOrigin (weaponhand, weaponhandlocal);
+		}
+	}
+
+	R_VRIKMatrixOrigin (palette[hipindex], hip);
+	R_VRIKMatrixOrigin (palette[headindex], oldhead);
+	R_VRIKLocalVectorToModel (pose->position[VRIK_TRACKER_HEAD], lateral,
+		forward, up, targethead);
+	VectorSubtract (oldhead, hip, torso);
+	{
+		float restreach = VectorLength (torso);
+		float targetreach;
+		VectorSubtract (targethead, hip, torso);
+		targetreach = VectorLength (torso);
+		if (restreach > 0.01f && targetreach > restreach * VRIK_ARM_MAX_STRETCH)
+		{
+			VectorScale (torso, 1.0f / targetreach, torso);
+			VectorMA (hip, restreach * VRIK_ARM_MAX_STRETCH, torso, targethead);
+		}
+	}
+	VectorSubtract (targethead, oldhead, headdelta);
+	if (VectorLength (headdelta) > 24.0f)
+	{
+		VectorNormalize (headdelta);
+		VectorScale (headdelta, 24.0f, headdelta);
+		VectorAdd (oldhead, headdelta, targethead);
+	}
+	R_VRIKMoveJoint (jointindex, palette, R_VRIK_SPINE1, headdelta, 0.12f);
+	R_VRIKMoveJoint (jointindex, palette, R_VRIK_SPINE2, headdelta, 0.32f);
+	R_VRIKMoveJoint (jointindex, palette, R_VRIK_NECK, headdelta, 0.68f);
+	R_VRIKMoveJoint (jointindex, palette, R_VRIK_HEAD, headdelta, 1.0f);
+	R_VRIKMoveJoint (jointindex, palette, R_VRIK_SHOULDER_L, headdelta, 0.32f);
+	R_VRIKMoveJoint (jointindex, palette, R_VRIK_SHOULDER_R, headdelta, 0.32f);
+	R_VRIKMoveJoint (jointindex, palette, R_VRIK_UPPERARM_L, headdelta, 0.32f);
+	R_VRIKMoveJoint (jointindex, palette, R_VRIK_UPPERARM_R, headdelta, 0.32f);
+	{
+		float body[12], target[12], correction[12], result[12];
+		vec3_t bodyforward, headorigin;
+		VectorCopy (forward, bodyforward);
+		R_VRIKCanonicalMatrix (bodyforward, up, oldhead, body);
+		R_VRIKMatrixInverseRigid (body, inverse);
+		R_VRIKMatrixMultiply (inverse, palette[headindex], correction);
+		R_VRIKMatrixOrigin (palette[headindex], headorigin);
+		R_VRIKAnglesToModelMatrix (pose->orientation[VRIK_TRACKER_HEAD],
+			lateral, forward, up, headorigin, target);
+		R_VRIKMatrixMultiply (target, correction, result);
+		R_VRIKSetMatrixOrigin (result, headorigin);
+		memcpy (palette[headindex], result, sizeof (result));
+	}
+	if (pose->flags & VRIK_FLAG_LEFT_HAND_TRACKED)
+	{
+		R_VRIKLocalVectorToModel (pose->position[VRIK_TRACKER_LEFT_HAND], lateral,
+			forward, up, lefttarget);
+		R_VRIKSolveArm (jointindex, palette, false, lefttarget,
+			pose->orientation[VRIK_TRACKER_LEFT_HAND], lateral, forward, up);
+	}
+	if (pose->flags & VRIK_FLAG_RIGHT_HAND_TRACKED)
+	{
+		R_VRIKLocalVectorToModel (pose->position[VRIK_TRACKER_RIGHT_HAND], lateral,
+			forward, up, righttarget);
+		R_VRIKSolveArm (jointindex, palette, true, righttarget,
+			pose->orientation[VRIK_TRACKER_RIGHT_HAND], lateral, forward, up);
+	}
+	if (weapon >= 0)
+	{
+		int destination = dominantleft ? handleft : handright;
+		if (destination >= 0 &&
+			((dominantleft && (pose->flags & VRIK_FLAG_LEFT_HAND_TRACKED)) ||
+			 (!dominantleft && (pose->flags & VRIK_FLAG_RIGHT_HAND_TRACKED))))
+		{
+			float tracked[12];
+			vec3_t handorigin, weaponorigin;
+			if (weapon == axe)
+			{
+				int tracker = dominantleft ? VRIK_TRACKER_LEFT_HAND :
+					VRIK_TRACKER_RIGHT_HAND;
+				R_VRIKAnglesToModelMatrix (pose->orientation[tracker], lateral,
+					forward, up, vec3_origin, tracked);
+				R_VRIKTrackedAxeMatrix (tracked, vec3_origin, attached);
+			}
+			else
+			{
+				R_VRIKAnglesToModelMatrix (pose->aim_orientation, lateral, forward,
+					up, vec3_origin, tracked);
+				R_VRIKTrackedItemMatrix (tracked, vec3_origin, attached);
+			}
+			R_VRIKMatrixOrigin (palette[destination], handorigin);
+			weaponorigin[0] = handorigin[0] -
+				(attached[0] * weaponhandlocal[0] + attached[1] * weaponhandlocal[1] +
+				 attached[2] * weaponhandlocal[2]);
+			weaponorigin[1] = handorigin[1] -
+				(attached[4] * weaponhandlocal[0] + attached[5] * weaponhandlocal[1] +
+				 attached[6] * weaponhandlocal[2]);
+			weaponorigin[2] = handorigin[2] -
+				(attached[8] * weaponhandlocal[0] + attached[9] * weaponhandlocal[1] +
+				 attached[10] * weaponhandlocal[2]);
+			R_VRIKSetMatrixOrigin (attached, weaponorigin);
+			if (!dominantleft)
+			{
+				float correctedhand[12];
+				R_VRIKMatrixMultiply (attached, weaponhand, correctedhand);
+				R_VRIKSetMatrixOrigin (correctedhand, handorigin);
+				memcpy (palette[destination], correctedhand, sizeof (correctedhand));
+			}
+			memcpy (palette[weapon], attached, sizeof (attached));
+			if (weapon == gun)
+			{
+				vec3_t gunorigin;
+				int flame;
+				R_VRIKMatrixOrigin (attached, gunorigin);
+				muzzle_forward[0] = attached[1];
+				muzzle_forward[1] = attached[5];
+				muzzle_forward[2] = attached[9];
+				*muzzle_valid = VectorNormalize (muzzle_forward) != 0.0f;
+				VectorMA (gunorigin, VRIK_GUN_MUZZLE_OFFSET,
+					muzzle_forward, muzzle_origin);
+				if (muzzleflash)
+					for (flame = 0; flame < 2; flame++)
+						if (flames[flame] >= 0)
+						{
+							memcpy (palette[flames[flame]], attached, sizeof (attached));
+							R_VRIKSetMatrixOrigin (palette[flames[flame]], muzzle_origin);
+						}
+			}
+		}
+	}
+	return true;
+}
+
+static qboolean R_VRIKFinite3 (const vec3_t vector)
+{
+	return isfinite (vector[0]) && isfinite (vector[1]) && isfinite (vector[2]);
+}
+
+static qboolean R_VRIKPoseValid (const vrik_pose_t *pose)
+{
+	int tracker;
+	if (!(pose->flags & VRIK_FLAG_ACTIVE) ||
+		!(pose->flags & VRIK_FLAG_HEAD_TRACKED) ||
+		(pose->flags & (unsigned char)~VRIK_FLAG_KNOWN))
+		return false;
+	if (!R_VRIKFinite3 (pose->position[VRIK_TRACKER_HEAD]) ||
+		!R_VRIKFinite3 (pose->orientation[VRIK_TRACKER_HEAD]))
+		return false;
+	for (tracker = VRIK_TRACKER_LEFT_HAND; tracker <= VRIK_TRACKER_RIGHT_HAND;
+		tracker++)
+	{
+		unsigned char flag = tracker == VRIK_TRACKER_LEFT_HAND ?
+			VRIK_FLAG_LEFT_HAND_TRACKED : VRIK_FLAG_RIGHT_HAND_TRACKED;
+		if ((pose->flags & flag) &&
+			(!R_VRIKFinite3 (pose->position[tracker]) ||
+			 !R_VRIKFinite3 (pose->orientation[tracker])))
+			return false;
+	}
+	if (!R_VRIKFinite3 (pose->aim_orientation))
+		return false;
+	return true;
+}
+
+r_vrik_palette_result_t R_VRIKBuildRangerPalette (
+	const md5_skeleton_view_t *skeleton, const lerpdata_t *lerpdata,
+	const vrik_pose_t *pose, qboolean muzzleflash,
+	r_vrik_palette_output_t *out)
+{
+	int jointindex[R_VRIK_JOINT_COUNT];
+	float palette[R_VRIK_MAX_JOINTS][12];
+	size_t joint, component;
+	qboolean muzzle_valid;
+	vec3_t muzzle_origin, muzzle_forward;
+
+	if (!skeleton || !lerpdata || !pose || !out || !out->matrices)
+		return R_VRIK_PALETTE_INVALID_ARGUMENT;
+	if (!skeleton->joints || !skeleton->absolute_poses ||
+		!skeleton->joint_count || !skeleton->pose_count ||
+		skeleton->joint_count > R_VRIK_MAX_JOINTS ||
+		skeleton->joint_count > SIZE_MAX / skeleton->pose_count ||
+		lerpdata->pose1 < 0 || lerpdata->pose2 < 0 ||
+		(size_t)lerpdata->pose1 >= skeleton->pose_count ||
+		(size_t)lerpdata->pose2 >= skeleton->pose_count ||
+		!isfinite (lerpdata->blend) || lerpdata->blend < 0.0f ||
+		lerpdata->blend > 1.0f)
+		return R_VRIK_PALETTE_INVALID_SKELETON;
+	if (out->capacity < skeleton->joint_count)
+		return R_VRIK_PALETTE_INSUFFICIENT_CAPACITY;
+	if (!R_VRIKPoseValid (pose))
+		return R_VRIK_PALETTE_INVALID_POSE;
+	if (!R_VRIKResolveJoints (skeleton, jointindex))
+		return R_VRIK_PALETTE_INVALID_SKELETON;
+	for (joint = 0; joint < skeleton->joint_count; joint++)
+	{
+		const md5_skeleton_joint_t *info = &skeleton->joints[joint];
+		if (info->parent < -1 || info->poseparent < -1 ||
+			(info->parent >= 0 && (size_t)info->parent >= skeleton->joint_count) ||
+			(info->poseparent >= 0 && (size_t)info->poseparent >= joint))
+			return R_VRIK_PALETTE_INVALID_SKELETON;
+		for (component = 0; component < 12; component++)
+			if (!isfinite (skeleton->absolute_poses[(size_t)lerpdata->pose1 *
+				skeleton->joint_count + joint][component]) ||
+				!isfinite (skeleton->absolute_poses[(size_t)lerpdata->pose2 *
+				skeleton->joint_count + joint][component]))
+				return R_VRIK_PALETTE_INVALID_SKELETON;
+	}
+	R_VRIKLerpPalette (skeleton, lerpdata, palette);
+	if (!R_VRIKSolvePalette (jointindex, pose, muzzleflash, palette,
+		&muzzle_valid, muzzle_origin, muzzle_forward))
+		return R_VRIK_PALETTE_INVALID_SKELETON;
+	for (joint = 0; joint < skeleton->joint_count; joint++)
+		for (component = 0; component < 12; component++)
+			if (!isfinite (palette[joint][component]))
+				return R_VRIK_PALETTE_INVALID_POSE;
+	memcpy (out->matrices, palette, skeleton->joint_count * sizeof (*palette));
+	out->joint_count = skeleton->joint_count;
+	out->muzzle_valid = muzzle_valid;
+	VectorCopy (muzzle_origin, out->muzzle_origin);
+	VectorCopy (muzzle_forward, out->muzzle_forward);
+	return R_VRIK_PALETTE_OK;
+}
