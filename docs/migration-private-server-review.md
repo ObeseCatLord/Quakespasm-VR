@@ -285,17 +285,43 @@ switch yet. The strict Linux `vkquake` target builds.
 A draft stock-QC, default-off WALK owner was removed before commit. It repeated
 the queue head within a frame rather than advancing a local accepted-command
 cursor, which would duplicate attacks and impulses. It also let
-`PM_PlayerMove` clear touches from the pre-PreThink room-scale sweep, overwrote
-QuakeC velocity changes from impacts, and skipped the normal PreThink/PostThink
+`PM_PlayerMove` clear touches from its new pre-PreThink room-scale sweep,
+overwrote QuakeC velocity changes from impacts, and skipped the normal PreThink/PostThink
 lifecycle whenever the accepted queue was empty. Hard-closing the selector while
 retaining unused state was rejected as dead scaffolding. The existing private
 latest-command physics path remains the only live server owner.
 
 The next patch should be smaller: first make a single accepted command run from
 the existing `SV_Physics_Client` slot, with one local queue cursor and completion
-only after its callbacks. It must dispatch room-scale contacts before ordinary
-PMove resets the touch list, define the empty-queue callback path, and fall
+only after its callbacks. It must define the empty-queue callback path and fall
 back before callbacks if physent collection fails. A second command in the
 same host frame then proves ordering and time allowance. Keep the trial off and
 prediction disabled until this behavior is observable against the legacy
 reference; do not add another server loop or protocol layer.
+
+## Single-command owner: Astra senior disposition
+
+A local `gpt-6-astra`/`max` review checked the failed trial against the active
+server paths and QSS-M donor. The reviewer corrected the room-scale premise:
+`SV_ApplyPrivateRoomScaleMove` deliberately disables impact callbacks, so a
+new pre-PreThink PMove touch dispatcher is not needed for reference parity.
+The stock `progs.dat` was independently found in the configured `id1/pak0.pak`
+and its 340014-byte MD4-XOR hash was verified as `cf69c3e2`.
+
+| Recommendation | Disposition |
+| --- | --- |
+| Select the owner before `SV_ClientThink`, stage immutable command input, and keep one `SV_Physics_Client` lifecycle. | **Adopt.** Selecting inside physics after native acceleration would double movement. |
+| Transplant QSS-M's receipt-time command owner. | **Reject.** Its `usingpmove` branch correctly skips native acceleration, but moving callbacks into receipt would duplicate vkQuake's host/physics ownership. |
+| Dispatch touches from the new PMove room-scale helper. | **Reject for the first proof.** Reuse the native no-callback room-scale sweep, clear its delta before ordinary PMove, and preserve the current trigger/impact policy. The helper remains available for a later deliberate solver change. |
+| Retire the queue head on receipt or run legacy physics when no new command fits the time allowance. | **Reject.** Keep an owner-local cursor and retire only successful commands after callbacks. Idle/insufficient-credit frames need a maintenance QuakeC lifecycle under the selected owner; its exact button/weapon cadence must be qualified. |
+| Enable prediction with the first executed command. | **Reject.** Owner snapshots, ACK association, movement settings and reset epoch remain incomplete. |
+
+The next observable proof is a restricted, default-off stock-QC dry-WALK owner
+running one accepted command while a different second command remains queued.
+Use a remote connection to avoid the current single-player synthetic ACK. Verify
+the first command's movement, weapon pose/damage and completed ACK, and absence
+of effects from the second; then check duplicate receipt, insufficient credit,
+idle weapon Think and once-only blocked room-scale translation. Keep pusher,
+water, custom-physics and Gorilla states under the legacy owner until they have
+their own parity evidence. A server-owner failure after activation must be an
+explicit error/discontinuity, never a silent whole-frame legacy replay.
