@@ -230,13 +230,48 @@ eye resolution or desktop status-bar scale. Its setting is archived and exposed
 in VR Options. The relocated draw no longer clears desktop margin tiles or
 reserves scene rows. If tracking or transform construction fails, the existing
 flat draw remains visible. Desktop console updates keep their original task
-ordering. This proof excludes CSQC, modern HUD corners, multiplayer,
-scoreboards, and menu-time HUD; those remain explicit parity work, and headset
-appearance is not yet verified.
+ordering. This first proof excluded CSQC, which the following slice attaches.
+Modern HUD corners, multiplayer, scoreboards, and menu-time HUD remain explicit
+parity work, and headset appearance is not yet verified.
 The Meson shader list now builds the existing UI panel variants already listed
 by the Makefile; the Linux Meson target links with the panel pipeline enabled.
 
 The ordinary HUD branch's recoverable CSQC `Host_Error` jump now releases the
 draw mutex and ends any active panel before clearing the failed QCVM. This preserves the
 existing flat fallback and is required before executing mod HUD callbacks
-inside the HUD panel; the AD layouts still need their own presentation proof.
+inside the HUD panel; the AD layouts still need visual proof.
+
+The existing CSQC draw now uses the same tracked HUD anchor in the supported
+single-player state. Its GUI-task-local display is 320×200 for ordinary CSQC,
+or the inherited AD 4/104 width (up to 960) with unchanged art scale. The top
+edge stays at the donor anchor while width is centered around it. QuakeC's
+reported display size, canvas transform, and source clipping use that same
+display; the override is cleared on normal exit and recoverable `Host_Error`.
+The classic style remains selectable when a mod exposes CSQC. A failed CSQC
+callback falls back to flat classic drawing for that frame. This compiles on
+Linux, but neither AD layout has been visually verified on a headset yet.
+
+## Modern HUD senior design review
+
+Astra Max xhigh checked the proposed modern HUD presentation against
+`Sbar_DrawModern`, the four corner canvases, and the inherited anchor. The
+review found that corner placement alone is insufficient: each corner has its
+own source clip, console scaling changes its art size, and score/death paths
+switch to other canvases. I spot-checked those paths in `sbar.c` and
+`gl_draw.c`. The chosen next slice is a fixed logical 640×400 surface for the
+live single-player modern HUD, still using one `Sbar_Draw` call and the donor
+pose. Its physical footprint is provisional until headset viewing.
+
+| Review recommendation | Disposition |
+| --- | --- |
+| Preserve the existing HUD dispatcher and canvas adapter. | **Adopt.** Route existing corner canvases through the panel; do not copy modern draw calls. |
+| Preserve each 320×200 corner's source clipping. | **Adopt.** Remap placement without expanding source clip bounds to the whole panel. |
+| Define physical size per source unit, independent of console scale and eye resolution. | **Adopt.** Cancel the corner canvas scale in the panel transform so one source unit equals `vr_hud_scale`. |
+| Treat 640×400 as the final preferred size. | **Adapt.** Use it as the first stable proof; adjust only after inspecting readability and dense weapon inventory. |
+| Include score/death and multiplayer canvases in this first modern slice. | **Defer.** Keep those explicit flat fallbacks until their canvas contracts are mapped; they remain parity work. |
+| Introduce compact reflow or an offscreen layer. | **Reject for now.** No observed failure of the direct adapter justifies another renderer or target. |
+
+The later proof should compare a dense Hipnotic inventory across desktop and
+VR, vary eye resolution and console scale, and check scores/death, both eyes,
+handedness, and headset readability. The source establishes geometry only;
+it does not prove that a 16×10-unit modern surface is comfortable.
