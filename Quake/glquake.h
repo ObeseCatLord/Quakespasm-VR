@@ -327,10 +327,20 @@ static const int SECONDARY_CB_MULTIPLICITY[SCBX_NUM] = {
 
 // A command buffer and its current drawing state. Only one task uses a context
 // at a time; parallel draw tasks use separate contexts.
+#define UI_PANEL_CLIP_PUSH_CONSTANT_OFFSET (20 * sizeof (float))
+#define UI_PANEL_FLAG_PUSH_CONSTANT_OFFSET (24 * sizeof (float))
+
 typedef struct cb_context_s
 {
 	VkCommandBuffer			   cb;
 	canvastype				   current_canvas;
+	qboolean				   ui_panel_active;
+	qboolean				   ui_panel_mvp_valid;
+	float					   ui_panel_world_from_ndc[16];
+	float					   canvas_ortho_matrix[16];
+	float					   canvas_ortho_clip_rect[4];
+	VkViewport				   canvas_viewport;
+	float					   ui_panel_mvp[16];
 	VkRenderPass			   render_pass;
 	subpass_type_t			   subpass_type;
 	main_render_pass_variant_t pipeline_variant;
@@ -890,6 +900,8 @@ static inline void R_BindPipeline (cb_context_t *cbx, VkPipelineBindPoint bind_p
 }
 
 void		   GL_DrawSceneUpscale (cb_context_t *cbx);
+void		   GL_BeginUIPanel (cb_context_t *cbx, const float world_from_ndc[16]);
+void		   GL_EndUIPanel (cb_context_t *cbx);
 extern vrect_t r_scene_vrect;
 void		   R_BindGraphicsPipeline (cb_context_t *cbx, graphics_pipeline_t pipeline);
 bool		   R_HasGraphicsPipeline (const cb_context_t *cbx, graphics_pipeline_t pipeline);

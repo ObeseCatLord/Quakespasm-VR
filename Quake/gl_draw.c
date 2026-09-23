@@ -1182,7 +1182,14 @@ static void GL_OrthoMatrix (cb_context_t *cbx, float left, float right, float bo
 	matrix[3 * 4 + 2] = tz;
 	matrix[3 * 4 + 3] = 1.0f;
 
-	R_PushConstants (cbx, VK_SHADER_STAGE_ALL_GRAPHICS, 0, 16 * sizeof (float), matrix);
+	memcpy (cbx->canvas_ortho_matrix, matrix, sizeof (matrix));
+	cbx->canvas_ortho_clip_rect[0] = q_min (left, right);
+	cbx->canvas_ortho_clip_rect[1] = q_min (bottom, top);
+	cbx->canvas_ortho_clip_rect[2] = q_max (left, right);
+	cbx->canvas_ortho_clip_rect[3] = q_max (bottom, top);
+
+	if (!cbx->ui_panel_active)
+		R_PushConstants (cbx, VK_SHADER_STAGE_ALL_GRAPHICS, 0, sizeof (matrix), matrix);
 }
 
 /*
@@ -1200,7 +1207,74 @@ void GL_Viewport (cb_context_t *cbx, float x, float y, float width, float height
 	viewport.minDepth = min_depth;
 	viewport.maxDepth = max_depth;
 
+	cbx->canvas_viewport = viewport;
 	vkCmdSetViewport (cbx->cb, 0, 1, &viewport);
+}
+
+static void GL_SetUIPanelCanvasTransform (cb_context_t *cbx)
+{
+	float viewport_matrix[16];
+	memset (viewport_matrix, 0, sizeof (viewport_matrix));
+
+	const float sx = cbx->canvas_viewport.width / (float)vid.width;
+	const float tx = 2.0f * cbx->canvas_viewport.x / (float)vid.width + sx - 1.0f;
+	const float sy = cbx->canvas_viewport.height / (float)vid.height;
+	const float ty = 2.0f * cbx->canvas_viewport.y / (float)vid.height + sy - 1.0f;
+	viewport_matrix[0] = sx;
+	viewport_matrix[5] = sy;
+	viewport_matrix[10] = 1.0f;
+	viewport_matrix[12] = tx;
+	viewport_matrix[13] = ty;
+	viewport_matrix[15] = 1.0f;
+
+	memcpy (cbx->ui_panel_mvp, vulkan_globals.view_projection_matrix, sizeof (cbx->ui_panel_mvp));
+	MatrixMultiply (cbx->ui_panel_mvp, cbx->ui_panel_world_from_ndc);
+	MatrixMultiply (cbx->ui_panel_mvp, viewport_matrix);
+	MatrixMultiply (cbx->ui_panel_mvp, cbx->canvas_ortho_matrix);
+	cbx->ui_panel_mvp_valid = true;
+
+	// A layout switch can clear these values, so R_BindGraphicsPipeline reapplies
+	// them after binding each UI pipeline. Push now as well when a compatible UI
+	// layout is already active.
+	if (cbx->subpass_type == SUBPASS_UI && cbx->current_pipeline.handle != VK_NULL_HANDLE &&
+		cbx->current_pipeline.layout.push_constant_range.size >= UI_PANEL_FLAG_PUSH_CONSTANT_OFFSET + sizeof (float))
+	{
+		R_PushConstants (cbx, VK_SHADER_STAGE_ALL_GRAPHICS, 0, sizeof (cbx->ui_panel_mvp), cbx->ui_panel_mvp);
+		R_PushConstants (
+			cbx, VK_SHADER_STAGE_FRAGMENT_BIT, UI_PANEL_CLIP_PUSH_CONSTANT_OFFSET, sizeof (cbx->canvas_ortho_clip_rect), cbx->canvas_ortho_clip_rect);
+		const float enabled = 1.0f;
+		R_PushConstants (cbx, VK_SHADER_STAGE_ALL_GRAPHICS, UI_PANEL_FLAG_PUSH_CONSTANT_OFFSET, sizeof (enabled), &enabled);
+	}
+
+	const VkViewport full_viewport = {0.0f, 0.0f, (float)vid.width, (float)vid.height, 0.0f, 1.0f};
+	vkCmdSetViewport (cbx->cb, 0, 1, &full_viewport);
+}
+
+void GL_BeginUIPanel (cb_context_t *cbx, const float world_from_ndc[16])
+{
+	memcpy (cbx->ui_panel_world_from_ndc, world_from_ndc, sizeof (cbx->ui_panel_world_from_ndc));
+	cbx->ui_panel_active = true;
+	cbx->ui_panel_mvp_valid = false;
+	cbx->current_canvas = CANVAS_INVALID;
+	// The post-upscale or prior UI pipeline may still be bound; defer panel pushes until a compatible UI pipeline is active.
+}
+
+void GL_EndUIPanel (cb_context_t *cbx)
+{
+	cbx->ui_panel_active = false;
+	cbx->ui_panel_mvp_valid = false;
+	cbx->current_canvas = CANVAS_INVALID;
+
+	// Use the bound layout (including the basic-layout upscaler) only when it covers the panel flag.
+	if (cbx->subpass_type == SUBPASS_UI && cbx->current_pipeline.handle != VK_NULL_HANDLE &&
+		cbx->current_pipeline.layout.push_constant_range.size >= UI_PANEL_FLAG_PUSH_CONSTANT_OFFSET + sizeof (float))
+	{
+		const float disabled = 0.0f;
+		R_PushConstants (cbx, VK_SHADER_STAGE_ALL_GRAPHICS, UI_PANEL_FLAG_PUSH_CONSTANT_OFFSET, sizeof (disabled), &disabled);
+	}
+
+	const VkViewport full_viewport = {0.0f, 0.0f, (float)vid.width, (float)vid.height, 0.0f, 1.0f};
+	vkCmdSetViewport (cbx->cb, 0, 1, &full_viewport);
 }
 
 /*
@@ -1292,6 +1366,11 @@ void GL_SetCanvas (cb_context_t *cbx, canvastype newcanvas)
 	default:
 		Sys_Error ("GL_SetCanvas: bad canvas type");
 	}
+
+	if (cbx->ui_panel_active && newcanvas != CANVAS_NONE)
+		GL_SetUIPanelCanvasTransform (cbx);
+	else if (newcanvas == CANVAS_NONE)
+		cbx->ui_panel_mvp_valid = false;
 }
 
 //==============================================================================

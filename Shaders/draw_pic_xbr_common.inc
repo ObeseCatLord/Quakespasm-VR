@@ -24,11 +24,14 @@
    The filter is evaluated at the centers of a virtual 2x image. This keeps
    its result independent of the framebuffer resolution and menu scale.
 */
+#include "ui_panel_clip.inc"
+
 layout (push_constant) uniform PushConsts
 {
 	mat4  mvp;
 	vec3  fog_color;
 	float fog_density;
+	UI_PANEL_PUSH_CONSTANT_MEMBERS
 }
 push_constants;
 layout (set = 0, binding = 0) uniform texture2D tex;
@@ -169,6 +172,7 @@ vec4 xbr_level2 (ivec2 p, ivec2 subpixel_index, ivec2 origin, ivec2 size, bool c
 
 void main ()
 {
+	UI_PANEL_DISCARD ();
 	ivec2 texture_size = textureSize (sampler2D (tex, tex_sampler), 0);
 	ivec2 region_origin = ivec2 (round (in_texture_region.xy * vec2 (texture_size)));
 	ivec2 region_size = max (ivec2 (round ((in_texture_region.zw - in_texture_region.xy) * vec2 (texture_size))), ivec2 (1));

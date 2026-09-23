@@ -3711,6 +3711,8 @@ void GL_BeginRenderingTask (void *unused)
 		cb_context_t *cbx = &vulkan_globals.primary_cb_contexts[pcbx_index];
 		cbx->cb = primary_command_buffers[pcbx_index][current_cb_index];
 		cbx->current_canvas = CANVAS_INVALID;
+		cbx->ui_panel_active = false;
+		cbx->ui_panel_mvp_valid = false;
 		memset (&cbx->current_pipeline, 0, sizeof (cbx->current_pipeline));
 
 		ZEROED_STRUCT (VkCommandBufferBeginInfo, command_buffer_begin_info);
@@ -3738,6 +3740,8 @@ void GL_BeginRenderingTask (void *unused)
 			cb_context_t *cbx = &vulkan_globals.secondary_cb_contexts[scbx_index][i];
 			cbx->cb = secondary_command_buffers[scbx_index][current_cb_index][i];
 			cbx->current_canvas = CANVAS_INVALID;
+			cbx->ui_panel_active = false;
+			cbx->ui_panel_mvp_valid = false;
 			memset (&cbx->current_pipeline, 0, sizeof (cbx->current_pipeline));
 
 			{

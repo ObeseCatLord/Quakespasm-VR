@@ -1778,7 +1778,7 @@ void R_CreatePipelineLayouts ()
 
 		ZEROED_STRUCT (VkPushConstantRange, push_constant_range);
 		push_constant_range.offset = 0;
-		push_constant_range.size = 22 * sizeof (float);
+		push_constant_range.size = 25 * sizeof (float);
 		push_constant_range.stageFlags = VK_SHADER_STAGE_ALL_GRAPHICS;
 
 		ZEROED_STRUCT (VkPipelineLayoutCreateInfo, pipeline_layout_create_info);
@@ -1811,7 +1811,7 @@ void R_CreatePipelineLayouts ()
 
 		ZEROED_STRUCT (VkPushConstantRange, push_constant_range);
 		push_constant_range.offset = 0;
-		push_constant_range.size = 22 * sizeof (float);
+		push_constant_range.size = 25 * sizeof (float);
 		push_constant_range.stageFlags = VK_SHADER_STAGE_ALL_GRAPHICS;
 
 		ZEROED_STRUCT (VkPipelineLayoutCreateInfo, pipeline_layout_create_info);
@@ -2550,7 +2550,9 @@ static VkVertexInputBindingDescription	 md5_8_vertex_binding_description;
 
 DECLARE_SHADER_MODULE (basic_vert);
 DECLARE_SHADER_MODULE (basic_stereo_vert);
+DECLARE_SHADER_MODULE (basic_ui_stereo_vert);
 DECLARE_SHADER_MODULE (basic_frag);
+DECLARE_SHADER_MODULE (basic_ui_frag);
 DECLARE_SHADER_MODULE (fte_particles_frag);
 DECLARE_SHADER_MODULE (fte_particles_msaa_frag);
 DECLARE_SHADER_MODULE (basic_oit_frag);
@@ -2558,12 +2560,19 @@ DECLARE_SHADER_MODULE (basic_mboit_moment_frag);
 DECLARE_SHADER_MODULE (basic_mboit_composite_frag);
 DECLARE_SHADER_MODULE (basic_mboit_composite_msaa_frag);
 DECLARE_SHADER_MODULE (basic_alphatest_frag);
+DECLARE_SHADER_MODULE (basic_alphatest_ui_frag);
 DECLARE_SHADER_MODULE (basic_notex_frag);
+DECLARE_SHADER_MODULE (basic_notex_ui_frag);
 DECLARE_SHADER_MODULE (draw_pic_frag);
+DECLARE_SHADER_MODULE (draw_pic_ui_frag);
 DECLARE_SHADER_MODULE (draw_pic_alphatest_frag);
+DECLARE_SHADER_MODULE (draw_pic_alphatest_ui_frag);
 DECLARE_SHADER_MODULE (draw_pic_xbr_frag);
+DECLARE_SHADER_MODULE (draw_pic_xbr_ui_frag);
 DECLARE_SHADER_MODULE (draw_pic_xbr_alphatest_frag);
+DECLARE_SHADER_MODULE (draw_pic_xbr_alphatest_ui_frag);
 DECLARE_SHADER_MODULE (draw_pic_xbr_vert);
+DECLARE_SHADER_MODULE (draw_pic_xbr_ui_stereo_vert);
 DECLARE_SHADER_MODULE (world_vert);
 DECLARE_SHADER_MODULE (world_stereo_vert);
 DECLARE_SHADER_MODULE (world_frag);
@@ -3186,6 +3195,16 @@ bool R_HasGraphicsPipeline (const cb_context_t *cbx, graphics_pipeline_t pipelin
 void R_BindGraphicsPipeline (cb_context_t *cbx, graphics_pipeline_t pipeline)
 {
 	R_BindPipeline (cbx, VK_PIPELINE_BIND_POINT_GRAPHICS, R_ResolveGraphicsPipeline (cbx, pipeline));
+
+	if (pipeline != PIPELINE_SCENE_UPSCALE && cbx->subpass_type == SUBPASS_UI && cbx->ui_panel_active && cbx->ui_panel_mvp_valid &&
+		cbx->current_pipeline.layout.push_constant_range.size >= UI_PANEL_FLAG_PUSH_CONSTANT_OFFSET + sizeof (float))
+	{
+		R_PushConstants (cbx, VK_SHADER_STAGE_ALL_GRAPHICS, 0, sizeof (cbx->ui_panel_mvp), cbx->ui_panel_mvp);
+		R_PushConstants (
+			cbx, VK_SHADER_STAGE_FRAGMENT_BIT, UI_PANEL_CLIP_PUSH_CONSTANT_OFFSET, sizeof (cbx->canvas_ortho_clip_rect), cbx->canvas_ortho_clip_rect);
+		const float enabled = 1.0f;
+		R_PushConstants (cbx, VK_SHADER_STAGE_ALL_GRAPHICS, UI_PANEL_FLAG_PUSH_CONSTANT_OFFSET, sizeof (enabled), &enabled);
+	}
 }
 
 static void R_CreateBasicPipelines ()
@@ -3218,28 +3237,30 @@ static void R_CreateBasicPipelines ()
 	{
 		const subpass_type_t			 stage = pipeline_variants[entry].stage;
 		const main_render_pass_variant_t variant = pipeline_variants[entry].variant;
+		const qboolean					 ui_panel_variant = stage == SUBPASS_UI && vulkan_globals.stereo_active;
 		R_CopyPipelineCreateInfos (&infos, &base);
 		R_SetPipelineRenderPassVariant (&infos, stage, variant);
 		infos.multisample_state.rasterizationSamples = pipeline_variants[entry].rasterization_samples;
 		infos.color_blend_state.attachmentCount = pipeline_variants[entry].attachment_count;
-		infos.shader_stages[1].module = basic_alphatest_frag_module;
+		infos.shader_stages[0].module = ui_panel_variant ? basic_ui_stereo_vert_module : basic_vert_module;
+		infos.shader_stages[1].module = ui_panel_variant ? basic_alphatest_ui_frag_module : basic_alphatest_frag_module;
 		R_CreateGraphicsPipeline (
 			&graphics_pipelines[PIPELINE_BASIC_ALPHATEST][stage][variant], &infos, vulkan_globals.basic_pipeline_layout, "basic_alphatest");
 
-		infos.shader_stages[1].module = draw_pic_alphatest_frag_module;
+		infos.shader_stages[1].module = ui_panel_variant ? draw_pic_alphatest_ui_frag_module : draw_pic_alphatest_frag_module;
 		infos.vertex_input_state.pVertexBindingDescriptions = &draw_pic_vertex_binding_description;
 		R_CreateGraphicsPipeline (&graphics_pipelines[PIPELINE_GUI][stage][variant], &infos, vulkan_globals.gui_pipeline_layout, "draw_pic_alphatest");
-		infos.shader_stages[1].module = draw_pic_frag_module;
+		infos.shader_stages[1].module = ui_panel_variant ? draw_pic_ui_frag_module : draw_pic_frag_module;
 		infos.blend_attachment_states[0].blendEnable = VK_TRUE;
 		R_CreateGraphicsPipeline (&graphics_pipelines[PIPELINE_GUI_BLEND][stage][variant], &infos, vulkan_globals.gui_pipeline_layout, "draw_pic");
 
-		infos.shader_stages[0].module = draw_pic_xbr_vert_module;
-		infos.shader_stages[1].module = draw_pic_xbr_alphatest_frag_module;
+		infos.shader_stages[0].module = ui_panel_variant ? draw_pic_xbr_ui_stereo_vert_module : draw_pic_xbr_vert_module;
+		infos.shader_stages[1].module = ui_panel_variant ? draw_pic_xbr_alphatest_ui_frag_module : draw_pic_xbr_alphatest_frag_module;
 		infos.vertex_input_state.vertexAttributeDescriptionCount = countof (draw_pic_vertex_input_attribute_descriptions);
 		infos.vertex_input_state.pVertexAttributeDescriptions = draw_pic_vertex_input_attribute_descriptions;
 		infos.blend_attachment_states[0].blendEnable = VK_FALSE;
 		R_CreateGraphicsPipeline (&graphics_pipelines[PIPELINE_MENU_XBR][stage][variant], &infos, vulkan_globals.gui_pipeline_layout, "draw_pic_xbr_alphatest");
-		infos.shader_stages[1].module = draw_pic_xbr_frag_module;
+		infos.shader_stages[1].module = ui_panel_variant ? draw_pic_xbr_ui_frag_module : draw_pic_xbr_frag_module;
 		infos.blend_attachment_states[0].blendEnable = VK_TRUE;
 		R_CreateGraphicsPipeline (&graphics_pipelines[PIPELINE_MENU_XBR_BLEND][stage][variant], &infos, vulkan_globals.gui_pipeline_layout, "draw_pic_xbr");
 	}
@@ -3248,11 +3269,13 @@ static void R_CreateBasicPipelines ()
 	{
 		const subpass_type_t			 stage = pipeline_variants[entry].stage;
 		const main_render_pass_variant_t variant = pipeline_variants[entry].variant;
+		const qboolean					 ui_panel_variant = stage == SUBPASS_UI && vulkan_globals.stereo_active;
 		R_CopyPipelineCreateInfos (&infos, &base);
 		R_SetPipelineRenderPassVariant (&infos, stage, variant);
 		infos.multisample_state.rasterizationSamples = pipeline_variants[entry].rasterization_samples;
 		infos.color_blend_state.attachmentCount = pipeline_variants[entry].attachment_count;
-		infos.shader_stages[1].module = basic_notex_frag_module;
+		infos.shader_stages[0].module = ui_panel_variant ? basic_ui_stereo_vert_module : basic_vert_module;
+		infos.shader_stages[1].module = ui_panel_variant ? basic_notex_ui_frag_module : basic_notex_frag_module;
 		infos.blend_attachment_states[0].blendEnable = VK_TRUE;
 		R_CreateGraphicsPipeline (
 			&graphics_pipelines[PIPELINE_BASIC_NOTEX_BLEND][stage][variant], &infos, vulkan_globals.basic_pipeline_layout, "basic_notex_blend");
@@ -3265,12 +3288,15 @@ static void R_CreateBasicPipelines ()
 		const qboolean					 wboit_pass = (stage == SUBPASS_WBOIT);
 		const qboolean					 mboit_moment_pass = (stage == SUBPASS_MBOIT_MOMENTS);
 		const qboolean					 mboit_composite_pass = (stage == SUBPASS_MBOIT_COMPOSITE);
+		const qboolean					 ui_panel_variant = stage == SUBPASS_UI && vulkan_globals.stereo_active;
 		R_CopyPipelineCreateInfos (&infos, &base);
 		R_SetPipelineRenderPassVariant (&infos, stage, variant);
 		infos.multisample_state.rasterizationSamples = pipeline_variants[entry].rasterization_samples;
 		infos.color_blend_state.attachmentCount = pipeline_variants[entry].attachment_count;
+		infos.shader_stages[0].module = ui_panel_variant ? basic_ui_stereo_vert_module : basic_vert_module;
 		infos.shader_stages[1].module =
-			wboit_pass			? basic_oit_frag_module
+			ui_panel_variant	? basic_ui_frag_module
+			: wboit_pass			? basic_oit_frag_module
 			: mboit_moment_pass ? basic_mboit_moment_frag_module
 			: mboit_composite_pass
 				? ((vulkan_globals.sample_count == VK_SAMPLE_COUNT_1_BIT) ? basic_mboit_composite_frag_module : basic_mboit_composite_msaa_frag_module)
@@ -4281,7 +4307,9 @@ static void R_CreateShaderModules ()
 {
 	CREATE_SHADER_MODULE (basic_vert);
 	CREATE_SHADER_MODULE_COND (basic_stereo_vert, vulkan_globals.stereo_active);
+	CREATE_SHADER_MODULE_COND (basic_ui_stereo_vert, vulkan_globals.stereo_active);
 	CREATE_SHADER_MODULE (basic_frag);
+	CREATE_SHADER_MODULE_COND (basic_ui_frag, vulkan_globals.stereo_active);
 	CREATE_SHADER_MODULE (fte_particles_frag);
 	CREATE_SHADER_MODULE (fte_particles_msaa_frag);
 	CREATE_SHADER_MODULE (basic_oit_frag);
@@ -4289,12 +4317,19 @@ static void R_CreateShaderModules ()
 	CREATE_SHADER_MODULE (basic_mboit_composite_frag);
 	CREATE_SHADER_MODULE_COND (basic_mboit_composite_msaa_frag, vulkan_globals.sample_count != VK_SAMPLE_COUNT_1_BIT);
 	CREATE_SHADER_MODULE (basic_alphatest_frag);
+	CREATE_SHADER_MODULE_COND (basic_alphatest_ui_frag, vulkan_globals.stereo_active);
 	CREATE_SHADER_MODULE (basic_notex_frag);
+	CREATE_SHADER_MODULE_COND (basic_notex_ui_frag, vulkan_globals.stereo_active);
 	CREATE_SHADER_MODULE (draw_pic_frag);
+	CREATE_SHADER_MODULE_COND (draw_pic_ui_frag, vulkan_globals.stereo_active);
 	CREATE_SHADER_MODULE (draw_pic_alphatest_frag);
+	CREATE_SHADER_MODULE_COND (draw_pic_alphatest_ui_frag, vulkan_globals.stereo_active);
 	CREATE_SHADER_MODULE (draw_pic_xbr_frag);
+	CREATE_SHADER_MODULE_COND (draw_pic_xbr_ui_frag, vulkan_globals.stereo_active);
 	CREATE_SHADER_MODULE (draw_pic_xbr_alphatest_frag);
+	CREATE_SHADER_MODULE_COND (draw_pic_xbr_alphatest_ui_frag, vulkan_globals.stereo_active);
 	CREATE_SHADER_MODULE (draw_pic_xbr_vert);
+	CREATE_SHADER_MODULE_COND (draw_pic_xbr_ui_stereo_vert, vulkan_globals.stereo_active);
 	CREATE_SHADER_MODULE (world_vert);
 	CREATE_SHADER_MODULE_COND (world_stereo_vert, vulkan_globals.stereo_active);
 	CREATE_SHADER_MODULE (world_frag);
@@ -4393,7 +4428,9 @@ static void R_DestroyShaderModules ()
 {
 	DESTROY_SHADER_MODULE (basic_vert);
 	DESTROY_SHADER_MODULE (basic_stereo_vert);
+	DESTROY_SHADER_MODULE (basic_ui_stereo_vert);
 	DESTROY_SHADER_MODULE (basic_frag);
+	DESTROY_SHADER_MODULE (basic_ui_frag);
 	DESTROY_SHADER_MODULE (fte_particles_frag);
 	DESTROY_SHADER_MODULE (fte_particles_msaa_frag);
 	DESTROY_SHADER_MODULE (basic_oit_frag);
@@ -4401,12 +4438,19 @@ static void R_DestroyShaderModules ()
 	DESTROY_SHADER_MODULE (basic_mboit_composite_frag);
 	DESTROY_SHADER_MODULE (basic_mboit_composite_msaa_frag);
 	DESTROY_SHADER_MODULE (basic_alphatest_frag);
+	DESTROY_SHADER_MODULE (basic_alphatest_ui_frag);
 	DESTROY_SHADER_MODULE (basic_notex_frag);
+	DESTROY_SHADER_MODULE (basic_notex_ui_frag);
 	DESTROY_SHADER_MODULE (draw_pic_frag);
+	DESTROY_SHADER_MODULE (draw_pic_ui_frag);
 	DESTROY_SHADER_MODULE (draw_pic_alphatest_frag);
+	DESTROY_SHADER_MODULE (draw_pic_alphatest_ui_frag);
 	DESTROY_SHADER_MODULE (draw_pic_xbr_frag);
+	DESTROY_SHADER_MODULE (draw_pic_xbr_ui_frag);
 	DESTROY_SHADER_MODULE (draw_pic_xbr_alphatest_frag);
+	DESTROY_SHADER_MODULE (draw_pic_xbr_alphatest_ui_frag);
 	DESTROY_SHADER_MODULE (draw_pic_xbr_vert);
+	DESTROY_SHADER_MODULE (draw_pic_xbr_ui_stereo_vert);
 	DESTROY_SHADER_MODULE (world_vert);
 	DESTROY_SHADER_MODULE (world_stereo_vert);
 	DESTROY_SHADER_MODULE (world_frag);

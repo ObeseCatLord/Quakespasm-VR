@@ -110,3 +110,32 @@ Reopen this decision if the direct approach starts duplicating UI draw calls,
 adds a parallel menu state machine, cannot preserve source-canvas clipping
 without many per-call branches, or requires a second camera. At that point,
 compare measured complexity with an offscreen composition target.
+
+## Implementation checkpoint, 2026-09-23
+
+The first menu-only vertical slice is in the `2.0` worktree. `SCR_SetupFrame`
+advances the inherited anchor once, maps the dominant hand ray onto the same
+physical plane, and publishes one pose for both eyes. A scoped transform in the
+existing Vulkan UI pass reuses vkQuake's menu draw calls and canvas layout;
+the panel variants clip in source coordinates and the scene-upscale pipeline
+remains flat. `M_Draw` substitutes the donor's compact backdrop while the
+panel scope is active. The existing VR input owner handles a postdraw click
+against the hover just rendered, with one key held per trigger press and the
+off-target Enter fallback. Eye tracking and foveation remain optional controls;
+opening the menu suppresses foveation for UI readability.
+
+The Linux DEBUG build and all panel shader variants compile. The menu anchor
+fixture and the VR input adapter's ASan/UBSan fixture pass; the latter covers
+click/fallback selection, holds, focus, binding capture and modal input.
+Desktop Vulkan initialized and rendered locally. A simulated Monado visual
+check could not start because this machine's `monado-service` currently lacks
+the `libuvc.so.0` shared library. These checks do not establish that the
+panel looks correct in a headset.
+
+The menu slice does not yet provide the inherited VR presentation for console,
+loading screens, confirmation dialogs, intermission overlays, or wrist/aim
+HUD. Those are subsequent uses of the same canvas adapter. Real headset
+proof must check both eyes, pointer alignment at varied head angles and menu
+scales, startup without a world, and validation-clean pipeline changes before
+this slice is called release-ready. The broader migration also retains its
+separate Windows, Linux ARM and eye-tracking qualification gates.

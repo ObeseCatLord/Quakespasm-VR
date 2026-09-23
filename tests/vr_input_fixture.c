@@ -40,6 +40,7 @@ cvar_t vr_gunmodelscale = {"vr_gunmodelscale", "1.35", CVAR_ARCHIVE};
 
 static qboolean waiting_for_binding;
 static qboolean input_grab_active;
+static qboolean pointer_can_click;
 static qboolean angle_locked;
 static const vrxr_frame_t *fixture_frame;
 static vec3_t fixture_head_angles;
@@ -253,6 +254,11 @@ qboolean M_WaitingForKeyBinding (void)
 qboolean Key_InputGrabActive (void)
 {
 	return input_grab_active;
+}
+
+qboolean M_VRPointerCanClick (void)
+{
+	return pointer_can_click;
 }
 
 static void reset_events (void)
@@ -501,12 +507,14 @@ static void test_button_profiles_and_menu_axes (void)
 	frame.hands[1].stick[1] = -0.80f;
 	frame.hands[0].trigger = 0.60f;
 	frame.hands[1].trigger = 0.90f;
+	pointer_can_click = false;
 	VR_InputCommands (&frame);
+	VR_InputMenuPanelTrigger (&frame, true);
 	assert (event_count == 4);
-	expect_event (0, K_ENTER, 1);
-	expect_event (1, K_RIGHTARROW, 1);
-	expect_event (2, K_LTRIGGER, 1);
-	expect_event (3, K_VR_RIGHT_STICK_DOWN, 1);
+	expect_event (0, K_RIGHTARROW, 1);
+	expect_event (1, K_LTRIGGER, 1);
+	expect_event (2, K_VR_RIGHT_STICK_DOWN, 1);
+	expect_event (3, K_ENTER, 1);
 
 	reset_events ();
 	frame.hands[0].pad[0] = 0.40f;
@@ -514,6 +522,7 @@ static void test_button_profiles_and_menu_axes (void)
 	frame.hands[0].trigger = 0.0f;
 	frame.hands[1].trigger = 0.0f;
 	VR_InputCommands (&frame);
+	VR_InputMenuPanelTrigger (&frame, true);
 	assert (event_count == 4);
 	expect_event (0, K_ENTER, 0);
 	expect_event (1, K_RIGHTARROW, 0);
@@ -622,18 +631,60 @@ static void test_menu_trigger_dispatch_and_capture_transition (void)
 	set_cvar ("vr_haptic", 1.0f);
 	waiting_for_binding = false;
 	input_grab_active = false;
+	pointer_can_click = true;
 	native_clear_then_neutral (&frame);
 
 	frame.hands[1].trigger = 0.60f;
 	VR_InputCommands (&frame);
+	assert (event_count == 0); /* menu choice waits for the panel's postdraw hit test */
+	VR_InputMenuPanelTrigger (&frame, true);
+	assert (event_count == 1);
+	expect_event (0, K_MOUSE1, 1);
+	assert (haptic_count == 1);
+	expect_haptic (0, 1);
+	reset_events ();
+	pointer_can_click = false; /* hover changes cannot retarget a held trigger */
+	VR_InputCommands (&frame);
+	VR_InputMenuPanelTrigger (&frame, true);
+	assert (event_count == 0);
+	assert (haptic_count == 0);
+	frame.hands[1].trigger = 0.0f;
+	VR_InputCommands (&frame);
+	assert (event_count == 1);
+	expect_event (0, K_MOUSE1, 0);
+	VR_InputMenuPanelTrigger (&frame, true);
+	assert (event_count == 1);
+	assert (haptic_count == 0);
+
+	/* A drawn panel without a clickable target selects Enter. */
+	native_clear_then_neutral (&frame);
+	frame.hands[1].trigger = 0.60f;
+	pointer_can_click = false;
+	VR_InputCommands (&frame);
+	VR_InputMenuPanelTrigger (&frame, true);
 	assert (event_count == 1);
 	expect_event (0, K_ENTER, 1);
 	assert (haptic_count == 1);
 	expect_haptic (0, 1);
 	reset_events ();
-	VR_InputCommands (&frame); /* a held select is not another rising edge */
-	assert (event_count == 0);
-	assert (haptic_count == 0);
+	frame.hands[1].trigger = 0.0f;
+	VR_InputCommands (&frame);
+	assert (event_count == 1);
+	expect_event (0, K_ENTER, 0);
+
+	/* If no menu panel was drawn, even a stale pointer hit falls back to Enter. */
+	native_clear_then_neutral (&frame);
+	frame.hands[1].trigger = 0.60f;
+	pointer_can_click = true;
+	VR_InputCommands (&frame);
+	VR_InputMenuPanelTrigger (&frame, false);
+	assert (event_count == 1);
+	expect_event (0, K_ENTER, 1);
+	reset_events ();
+	pointer_can_click = false;
+	VR_InputCommands (&frame);
+	VR_InputMenuPanelTrigger (&frame, true);
+	assert (event_count == 0); /* later hover changes do not reactivate the press */
 	frame.hands[1].trigger = 0.0f;
 	VR_InputCommands (&frame);
 	assert (event_count == 1);
@@ -648,6 +699,63 @@ static void test_menu_trigger_dispatch_and_capture_transition (void)
 	assert (event_count == 1);
 	expect_event (0, K_RTRIGGER, 1);
 	assert (haptic_count == 0); /* capture input never fires menu feedback */
+	VR_InputMenuPanelTrigger (&frame, true);
+	assert (event_count == 1); /* binding capture keeps the physical trigger mapping */
+	assert (haptic_count == 0);
+	fixture_frame = NULL;
+}
+
+static void test_deferred_menu_trigger_context_and_focus_gates (void)
+{
+	vrxr_frame_t frame = neutral_frame ();
+	key_dest = key_menu;
+	waiting_for_binding = false;
+	input_grab_active = false;
+	pointer_can_click = true;
+	fixture_frame = &frame;
+	native_clear_then_neutral (&frame);
+
+	frame.hands[1].trigger = 0.60f;
+	VR_InputCommands (&frame);
+	key_dest = key_game; /* destination changed before the postdraw callback */
+	VR_InputMenuPanelTrigger (&frame, true);
+	assert (event_count == 0);
+	assert (haptic_count == 0);
+
+	key_dest = key_menu;
+	VR_InputCommands (&frame); /* held input stays gated after context loss */
+	VR_InputMenuPanelTrigger (&frame, true);
+	assert (event_count == 0);
+	frame.hands[1].trigger = 0.0f;
+	VR_InputCommands (&frame);
+	VR_InputMenuPanelTrigger (&frame, true);
+	frame.hands[1].trigger = 0.60f;
+	VR_InputCommands (&frame);
+	VR_InputMenuPanelTrigger (&frame, true);
+	assert (event_count == 1);
+	expect_event (0, K_MOUSE1, 1);
+	assert (haptic_count == 1);
+
+	reset_events ();
+	frame.focused = false;
+	VR_InputCommands (&frame);
+	VR_InputMenuPanelTrigger (&frame, true);
+	assert (event_count == 1);
+	expect_event (0, K_MOUSE1, 0);
+	assert (haptic_count == 0);
+	reset_events ();
+	frame.focused = true;
+	VR_InputCommands (&frame); /* focus restoration does not revive held input */
+	VR_InputMenuPanelTrigger (&frame, true);
+	assert (event_count == 0);
+	frame.hands[1].trigger = 0.0f;
+	VR_InputCommands (&frame);
+	VR_InputMenuPanelTrigger (&frame, true);
+	frame.hands[1].trigger = 0.60f;
+	VR_InputCommands (&frame);
+	VR_InputMenuPanelTrigger (&frame, true);
+	assert (event_count == 1);
+	expect_event (0, K_MOUSE1, 1);
 	fixture_frame = NULL;
 }
 
@@ -665,6 +773,7 @@ static void test_menu_haptic_handedness_and_toggle (void)
 	/* With reversed roles, physical hand zero owns the logical-right trigger. */
 	frame.hands[0].trigger = 0.60f;
 	VR_InputCommands (&frame);
+	VR_InputMenuPanelTrigger (&frame, false);
 	assert (event_count == 1);
 	expect_event (0, K_ENTER, 1);
 	assert (haptic_count == 1);
@@ -673,6 +782,7 @@ static void test_menu_haptic_handedness_and_toggle (void)
 	reset_events ();
 	frame.hands[0].trigger = 0.0f;
 	VR_InputCommands (&frame);
+	VR_InputMenuPanelTrigger (&frame, true);
 	assert (event_count == 1);
 	expect_event (0, K_ENTER, 0);
 	assert (haptic_count == 0); /* release has no pulse */
@@ -681,6 +791,7 @@ static void test_menu_haptic_handedness_and_toggle (void)
 	set_cvar ("vr_haptic", 0.0f);
 	frame.hands[0].trigger = 0.60f;
 	VR_InputCommands (&frame);
+	VR_InputMenuPanelTrigger (&frame, false);
 	assert (event_count == 1);
 	expect_event (0, K_ENTER, 1);
 	assert (haptic_count == 0); /* disabling feedback leaves key input intact */
@@ -721,6 +832,7 @@ static void test_modal_grab_overrides_destination_and_rearms (void)
 	frame.hands[1].pressed = VRXR_BUTTON_SECONDARY;
 	frame.hands[1].trigger = 0.60f;
 	VR_InputCommands (&frame);
+	VR_InputMenuPanelTrigger (&frame, true);
 	assert (event_count == 1);
 	expect_event (0, K_BBUTTON, 1);
 	assert (haptic_count == 0);
@@ -731,6 +843,7 @@ static void test_modal_grab_overrides_destination_and_rearms (void)
 	native_clear_then_neutral (&frame);
 	frame.hands[1].trigger = 0.60f;
 	VR_InputCommands (&frame);
+	VR_InputMenuPanelTrigger (&frame, true);
 	assert (event_count == 1);
 	expect_event (0, K_ABUTTON, 1);
 	assert (haptic_count == 0); /* modal-grab decisions suppress haptics */
@@ -738,14 +851,17 @@ static void test_modal_grab_overrides_destination_and_rearms (void)
 	reset_events ();
 	input_grab_active = false;
 	VR_InputCommands (&frame);
+	VR_InputMenuPanelTrigger (&frame, true);
 	assert (event_count == 1); /* modal release, no stale RTRIGGER press */
 	expect_event (0, K_ABUTTON, 0);
 	reset_events ();
 	frame.hands[1].trigger = 0.0f;
 	VR_InputCommands (&frame);
+	VR_InputMenuPanelTrigger (&frame, true);
 	assert (event_count == 0);
 	frame.hands[1].trigger = 0.60f;
 	VR_InputCommands (&frame);
+	VR_InputMenuPanelTrigger (&frame, true);
 	assert (event_count == 1);
 	expect_event (0, K_RTRIGGER, 1);
 	assert (haptic_count == 0);
@@ -765,9 +881,13 @@ static void test_menu_state_change_stops_same_batch_presses (void)
 	frame.hands[1].trigger = 0.60f;
 	change_menu_state_on_enter = 1;
 	VR_InputCommands (&frame);
-	assert (event_count == 2);
-	expect_event (0, K_ENTER, 1);
-	expect_event (1, K_ENTER, 0);
+	assert (event_count == 1);
+	expect_event (0, K_ABUTTON, 1);
+	VR_InputMenuPanelTrigger (&frame, false);
+	assert (event_count == 4);
+	expect_event (1, K_ENTER, 1);
+	expect_event (2, K_ABUTTON, 0);
+	expect_event (3, K_ENTER, 0);
 	assert (m_state == m_singleplayer);
 }
 
@@ -782,6 +902,7 @@ static void test_modal_grab_only_emits_decision_keys (void)
 
 	frame.hands[1].pressed = VRXR_BUTTON_PRIMARY;
 	VR_InputCommands (&frame);
+	VR_InputMenuPanelTrigger (&frame, true);
 	assert (event_count == 0); /* right primary is unrelated during a modal grab */
 
 	frame.hands[0].stick[0] = 0.9f;
@@ -789,10 +910,12 @@ static void test_modal_grab_only_emits_decision_keys (void)
 	frame.hands[1].pressed |= VRXR_BUTTON_GRIP | VRXR_BUTTON_STICK | VRXR_BUTTON_PAD;
 	frame.hands[1].stick[1] = 0.9f;
 	VR_InputCommands (&frame);
+	VR_InputMenuPanelTrigger (&frame, true);
 	assert (event_count == 0); /* unrelated buttons and axes are ignored */
 
 	frame.hands[1].trigger = 0.60f;
 	VR_InputCommands (&frame);
+	VR_InputMenuPanelTrigger (&frame, true);
 	assert (event_count == 1);
 	expect_event (0, K_ABUTTON, 1);
 }
@@ -810,6 +933,7 @@ static void test_modal_cancel_wins_over_confirm (void)
 	frame.hands[1].pressed = VRXR_BUTTON_GRIP | VRXR_BUTTON_STICK;
 	frame.hands[1].trigger = 0.60f;
 	VR_InputCommands (&frame);
+	VR_InputMenuPanelTrigger (&frame, true);
 	assert (event_count == 1);
 	expect_event (0, K_ESCAPE, 1);
 }
@@ -1256,6 +1380,7 @@ int main (void)
 	test_context_reentry_clear_and_nan ();
 	test_axis_threshold_edges_and_console_escape ();
 	test_menu_trigger_dispatch_and_capture_transition ();
+	test_deferred_menu_trigger_context_and_focus_gates ();
 	test_menu_haptic_handedness_and_toggle ();
 	test_capture_change_stops_same_batch_presses ();
 	test_modal_grab_overrides_destination_and_rearms ();

@@ -7,11 +7,14 @@
 // MBOIT writes power moments, MBOIT + MBOIT_COMPOSITE reconstructs transmittance
 // from them and MSAA reads multisampled moment buffers
 
+#include "ui_panel_clip.inc"
+
 layout (push_constant) uniform PushConsts
 {
 	mat4  mvp;
 	vec3  fog_color;
 	float fog_density;
+	UI_PANEL_PUSH_CONSTANT_MEMBERS
 }
 push_constants;
 
@@ -34,6 +37,7 @@ layout (location = 0) out vec4 out_frag_color;
 
 void main ()
 {
+	UI_PANEL_DISCARD ();
 #if MBOIT
 	MBOITWrite (BasicFragmentColor ());
 #elif WBOIT

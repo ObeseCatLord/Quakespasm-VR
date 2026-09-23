@@ -248,12 +248,19 @@ float M_GetScale ()
 M_PixelToMenuCanvasCoord
 ================
 */
-static void M_PixelToMenuCanvasCoord (int *x, int *y)
+static qboolean M_PixelToMenuCanvasCoord (int *x, int *y)
 {
 	float s = q_min ((float)glwidth / 320.0, (float)glheight / 200.0);
+	float local_x, local_y;
+	/* CANVAS_MENU may deliberately use its letterboxed margins. Its source
+	 * ortho spans the whole displayed eye, not just the central 320x200. */
+	const qboolean within_display = *x >= 0 && *x < glwidth && *y >= 0 && *y < glheight;
 	s = CLAMP (1.0, M_GetScale (), s);
-	*x = (*x - (glwidth - 320 * s) / 2) / s;
-	*y = (*y - (glheight - 200 * s) / 2) / s;
+	local_x = (*x - (glwidth - 320 * s) / 2) / s;
+	local_y = (*y - (glheight - 200 * s) / 2) / s;
+	*x = local_x;
+	*y = local_y;
+	return within_display;
 }
 
 #define MENU_OPTION_STRING (str)
@@ -2445,10 +2452,14 @@ static void M_SoundOptions_Draw (cb_context_t *cbx)
 //=============================================================================
 /* VR OPTIONS MENU */
 
+extern cvar_t vr_menu_scale, vr_menu_follow;
+
 enum
 {
 	VR_OPT_EYE_TRACKING,
 	VR_OPT_FOVEATION,
+	VR_OPT_MENU_SCALE,
+	VR_OPT_MENU_FOLLOW,
 	VR_OPTIONS_ITEMS
 };
 
@@ -2478,6 +2489,19 @@ static void M_VROptions_Adjust (int dir)
 		int mode = CLAMP (0, (int)vr_foveation.value, 2);
 		mode = (mode + (dir > 0 ? 1 : 2)) % 3;
 		Cvar_SetValueQuick (&vr_foveation, (float)mode);
+		break;
+	}
+	case VR_OPT_MENU_SCALE:
+	{
+		const float current = isfinite (vr_menu_scale.value) ? vr_menu_scale.value : 0.13f;
+		Cvar_SetValueQuick (&vr_menu_scale, CLAMP (0.05f, roundf ((current + dir * 0.01f) * 100.0f) / 100.0f, 0.30f));
+		break;
+	}
+	case VR_OPT_MENU_FOLLOW:
+	{
+		const int mode = isfinite (vr_menu_follow.value) && vr_menu_follow.value >= 0 &&
+			vr_menu_follow.value <= 2 ? (int)vr_menu_follow.value : 1;
+		Cvar_SetValueQuick (&vr_menu_follow, (float)((mode + (dir > 0 ? 1 : 2)) % 3));
 		break;
 	}
 	}
@@ -2524,9 +2548,12 @@ static void M_VROptions_Key (int key)
 static void M_VROptions_Draw (cb_context_t *cbx)
 {
 	static const char *const foveation_modes[] = {"off", "fixed", "eye tracked"};
+	static const char *const follow_modes[] = {"fixed", "follow", "head locked"};
 	qpic_t *p;
 	const int top = MENU_TOP;
 	const int foveation = CLAMP (0, (int)vr_foveation.value, 2);
+	const int follow = isfinite (vr_menu_follow.value) && vr_menu_follow.value >= 0 &&
+		vr_menu_follow.value <= 2 ? (int)vr_menu_follow.value : 1;
 
 	M_DrawTransPic (cbx, 16, 4, Draw_CachePic ("gfx/qplaque.lmp"));
 	p = Draw_CachePic ("gfx/p_option.lmp");
@@ -2537,6 +2564,12 @@ static void M_VROptions_Draw (cb_context_t *cbx)
 
 	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * VR_OPT_FOVEATION, "Foveation");
 	M_Print (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * VR_OPT_FOVEATION, foveation_modes[foveation]);
+
+	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * VR_OPT_MENU_SCALE, "Menu Scale");
+	M_Print (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * VR_OPT_MENU_SCALE, va ("%.2f", vr_menu_scale.value));
+
+	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * VR_OPT_MENU_FOLLOW, "Menu Follow");
+	M_Print (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * VR_OPT_MENU_FOLLOW, follow_modes[follow]);
 
 	M_Mouse_UpdateListCursor (&vr_options_cursor, MENU_CURSOR_X, 320, top, CHARACTER_SIZE, VR_OPTIONS_ITEMS, 0);
 	Draw_Character (cbx, MENU_CURSOR_X, top + vr_options_cursor * CHARACTER_SIZE, 12 + ((int)(realtime * 4) & 1));
@@ -5424,8 +5457,21 @@ void M_SetVRPointerPosition (int x, int y, qboolean valid)
 	}
 }
 
+void M_SetVRPointerPixelPosition (int x, int y, qboolean valid)
+{
+	if (valid)
+		valid = M_PixelToMenuCanvasCoord (&x, &y);
+	M_SetVRPointerPosition (x, y, valid);
+}
+
+qboolean M_VRPointerPixelInMenuCanvas (int x, int y)
+{
+	return M_PixelToMenuCanvasCoord (&x, &y);
+}
+
 void M_Draw (cb_context_t *cbx)
 {
+	const qboolean recursive = m_recursiveDraw;
 	m_mouse_hover_state = m_none;
 	m_mouse_hover_cursor = NULL;
 
@@ -5434,13 +5480,14 @@ void M_Draw (cb_context_t *cbx)
 
 	if (!m_recursiveDraw)
 	{
-		if (scr_con_current)
+		if (scr_con_current && !cbx->ui_panel_active)
 		{
 			Draw_ConsoleBackground (cbx);
 			S_ExtraUpdate ();
 		}
 
-		Draw_FadeScreen (cbx); // johnfitz -- fade even if console fills screen
+		if (!cbx->ui_panel_active)
+			Draw_FadeScreen (cbx); // johnfitz -- fade even if console fills screen
 	}
 	else
 	{
@@ -5448,6 +5495,8 @@ void M_Draw (cb_context_t *cbx)
 	}
 
 	GL_SetCanvas (cbx, CANVAS_MENU); // johnfitz
+	if (cbx->ui_panel_active && !recursive)
+		Draw_Fill (cbx, 0, 0, 320, 200, 0, 0.72f);
 
 	switch (m_state)
 	{

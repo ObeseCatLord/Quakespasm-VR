@@ -48,6 +48,7 @@ typedef struct
 	qboolean wait_neutral;
 	qboolean trigger_down;
 	qboolean identity_valid;
+	int menu_trigger_key;
 	int	 role;
 	int	 profile;
 } vr_input_hand_state_t;
@@ -81,6 +82,8 @@ static qboolean vr_input_context_valid;
 static vr_input_context_t vr_input_context;
 static unsigned int vr_input_reset_generation;
 static unsigned int vr_input_dispatch_epoch;
+static unsigned int vr_input_menu_panel_dispatch_epoch;
+static unsigned int vr_input_commands_depth;
 static qboolean vr_input_move_wait_neutral;
 static qboolean vr_input_turn_wait_neutral;
 static int vr_input_last_snap;
@@ -408,7 +411,7 @@ static qboolean VR_InputKeyOwnedByOtherHand (int hand, int key)
 static qboolean VR_InputMenuHapticKey (int key)
 {
 	/* The native menu accepts A/B as its select/back aliases for Enter/Escape. */
-	return key == K_ENTER || key == K_ESCAPE || key == K_LEFTARROW ||
+	return key == K_ENTER || key == K_MOUSE1 || key == K_ESCAPE || key == K_LEFTARROW ||
 		key == K_RIGHTARROW || key == K_UPARROW || key == K_DOWNARROW ||
 		key == K_ABUTTON || key == K_BBUTTON;
 }
@@ -447,6 +450,7 @@ static void VR_InputGateHand (int hand)
 {
 	vr_input_hands[hand].wait_neutral = true;
 	vr_input_hands[hand].trigger_down = false;
+	vr_input_hands[hand].menu_trigger_key = 0;
 	if (VR_InputRoleForPhysicalHand (hand) == VR_INPUT_ROLE_LEFT)
 	{
 		VR_InputGateMovement (&cl.pendingcmd);
@@ -529,7 +533,10 @@ static void VR_InputUpdateTrigger (vr_input_hand_state_t *state, const vrxr_inpu
 	if (!state->trigger_down && value > 0.55f)
 		state->trigger_down = true;
 	else if (state->trigger_down && value < 0.45f)
+	{
 		state->trigger_down = false;
+		state->menu_trigger_key = 0;
+	}
 }
 
 static void VR_InputBuildHandDesired (qboolean desired[2][MAX_KEYS], int hand,
@@ -581,8 +588,9 @@ static void VR_InputBuildHandDesired (qboolean desired[2][MAX_KEYS], int hand,
 	{
 		int trigger_key = logical_left ? K_LTRIGGER : K_RTRIGGER;
 		if (!logical_left && context->destination == key_menu)
-			trigger_key = context->binding_capture ? K_RTRIGGER : K_ENTER;
-		VR_InputAddKey (desired, hand, trigger_key);
+			trigger_key = context->binding_capture ? K_RTRIGGER : state->menu_trigger_key;
+		if (trigger_key)
+			VR_InputAddKey (desired, hand, trigger_key);
 	}
 
 	if (context->destination == key_menu && logical_left)
@@ -674,6 +682,7 @@ void VR_InputCommands (const vrxr_frame_t *frame)
 	qboolean desired[2][MAX_KEYS] = {{false}};
 	vrxr_input_t input_hands[2];
 	vr_input_context_t context;
+	++vr_input_commands_depth;
 	if (!VR_InputMotionContextAccepted (frame) || frame->reference_changed)
 		vr_input_roomscale_position_valid = false;
 	if (frame)
@@ -692,12 +701,12 @@ void VR_InputCommands (const vrxr_frame_t *frame)
 		VR_InputInvalidateMotion ();
 		vr_input_context = context;
 		if (!VR_InputGateAndReleaseAll (dispatch_epoch))
-			return;
+			goto done;
 		context = VR_InputCurrentContext ();
 		if (!VR_InputSameContext (&vr_input_context, &context))
 		{
 			VR_InputAbortForContextChange (dispatch_epoch);
-			return;
+			goto done;
 		}
 	}
 
@@ -705,7 +714,7 @@ void VR_InputCommands (const vrxr_frame_t *frame)
 	{
 		VR_InputInvalidateMotion ();
 		VR_InputGateAndReleaseAll (dispatch_epoch);
-		return;
+		goto done;
 	}
 
 	for (int hand = 0; hand < 2; ++hand)
@@ -728,22 +737,22 @@ void VR_InputCommands (const vrxr_frame_t *frame)
 			state->role = role;
 			state->profile = input->profile;
 			if (!VR_InputGateAndReleaseHand (hand, dispatch_epoch))
-				return;
+				goto done;
 			if (!VR_InputContextMatchesCurrent (&context))
 			{
 				VR_InputAbortForContextChange (dispatch_epoch);
-				return;
+				goto done;
 			}
 		}
 
 		if (!input->active)
 		{
 			if (!VR_InputGateAndReleaseHand (hand, dispatch_epoch))
-				return;
+				goto done;
 			if (!VR_InputContextMatchesCurrent (&context))
 			{
 				VR_InputAbortForContextChange (dispatch_epoch);
-				return;
+				goto done;
 			}
 			continue;
 		}
@@ -772,6 +781,66 @@ void VR_InputCommands (const vrxr_frame_t *frame)
 			desired[0][K_ABUTTON] = desired[1][K_ABUTTON] = false;
 	}
 
+	VR_InputEmitDesired (desired, &context, dispatch_epoch);
+
+done:
+	--vr_input_commands_depth;
+}
+
+void VR_InputMenuPanelTrigger (const vrxr_frame_t *frame, qboolean panel_drawn)
+{
+	const unsigned int dispatch_epoch = vr_input_dispatch_epoch;
+	qboolean desired[2][MAX_KEYS] = {{false}};
+	vr_input_context_t context;
+	vr_input_hand_state_t *state;
+	const int dominant = VR_InputDominantPhysicalHand ();
+	int hand;
+
+	/* A menu action can enter SCR_ModalMessage, which redraws recursively from
+	 * inside Key_Event. Only handle the post-draw phase after its command owner
+	 * returns, and at most once for that input dispatch. */
+	if (!dispatch_epoch || vr_input_commands_depth ||
+		vr_input_menu_panel_dispatch_epoch == dispatch_epoch)
+		return;
+	vr_input_menu_panel_dispatch_epoch = dispatch_epoch;
+
+	context = VR_InputCurrentContext ();
+	if (!vr_input_context_valid)
+	{
+		VR_InputGateAndReleaseAll (dispatch_epoch);
+		return;
+	}
+	if (!VR_InputSameContext (&vr_input_context, &context))
+	{
+		VR_InputAbortForContextChange (dispatch_epoch);
+		return;
+	}
+	if (!frame || !frame->focused)
+	{
+		VR_InputInvalidateMotion ();
+		VR_InputGateAndReleaseAll (dispatch_epoch);
+		return;
+	}
+	if (context.destination != key_menu || context.binding_capture || context.input_grab)
+		return;
+
+	if (!VR_InputHandAccepted (frame, dominant))
+	{
+		VR_InputGateAndReleaseHand (dominant, dispatch_epoch);
+		return;
+	}
+
+	state = &vr_input_hands[dominant];
+	if (!state->trigger_down)
+		return;
+	if (!state->menu_trigger_key)
+		state->menu_trigger_key = panel_drawn && M_VRPointerCanClick () ? K_MOUSE1 : K_ENTER;
+
+	/* Carry the full pre-render ownership snapshot forward. The selected menu
+	 * key remains held across frames and hover changes until trigger release. */
+	for (hand = 0; hand < 2; ++hand)
+		memcpy (desired[hand], vr_input_hands[hand].owned, sizeof (desired[hand]));
+	VR_InputAddKey (desired, dominant, state->menu_trigger_key);
 	VR_InputEmitDesired (desired, &context, dispatch_epoch);
 }
 
@@ -1031,8 +1100,10 @@ void VR_InputClear (void)
 	{
 		memset (vr_input_hands[hand].owned, 0, sizeof (vr_input_hands[hand].owned));
 		vr_input_hands[hand].trigger_down = false;
+		vr_input_hands[hand].menu_trigger_key = 0;
 		vr_input_hands[hand].wait_neutral = true;
 	}
+	vr_input_menu_panel_dispatch_epoch = vr_input_dispatch_epoch;
 	vr_input_context_valid = false;
 	VR_InputInvalidateMotion ();
 }

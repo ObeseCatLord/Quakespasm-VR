@@ -159,6 +159,8 @@ SHADER_OBJS = \
 	md5_vert.o \
 	md5_8_vert.o \
 	basic_stereo_vert.o \
+	basic_ui_stereo_vert.o \
+	draw_pic_xbr_ui_stereo_vert.o \
 	world_stereo_vert.o \
 	alias_stereo_vert.o \
 	md5_stereo_vert.o \
@@ -168,6 +170,13 @@ SHADER_OBJS = \
 	sky_cube_stereo_vert.o \
 	sky_layer_stereo_vert.o \
 	basic_alphatest_frag.o \
+	basic_ui_frag.o \
+	basic_notex_ui_frag.o \
+	basic_alphatest_ui_frag.o \
+	draw_pic_ui_frag.o \
+	draw_pic_alphatest_ui_frag.o \
+	draw_pic_xbr_ui_frag.o \
+	draw_pic_xbr_alphatest_ui_frag.o \
 	screen_effects_8bit_comp.o \
 	screen_effects_10bit_comp.o \
 	screen_effects_stereo_8bit_comp.o \
@@ -393,6 +402,15 @@ $(eval $(call SHADER_VARIANT,md5_mboit_composite_msaa_frag,alias.frag,-DMBOIT=1 
 $(eval $(call SHADER_VARIANT,md5_alphatest_mboit_composite_msaa_frag,alias.frag,-DALIAS_ALPHA_TEST=1 -DMBOIT=1 -DMBOIT_COMPOSITE=1 -DMSAA=1 -DMBOIT_INPUT_SET=4))
 $(eval $(call SHADER_VARIANT,md5_8_vert,md5.vert,-DEIGHT_WEIGHT_SKINNING))
 $(eval $(call SHADER_VARIANT,basic_stereo_vert,basic.vert,-DSTEREO=1 --target-env vulkan1.1))
+$(eval $(call SHADER_VARIANT,basic_ui_stereo_vert,basic.vert,-DSTEREO=1 -DUI_PANEL=1 --target-env vulkan1.1))
+$(eval $(call SHADER_VARIANT,draw_pic_xbr_ui_stereo_vert,draw_pic_xbr.vert,-DSTEREO=1 -DUI_PANEL=1 --target-env vulkan1.1))
+$(eval $(call SHADER_VARIANT,basic_ui_frag,basic.frag,-DUI_PANEL=1))
+$(eval $(call SHADER_VARIANT,basic_notex_ui_frag,basic_notex.frag,-DUI_PANEL=1))
+$(eval $(call SHADER_VARIANT,basic_alphatest_ui_frag,basic_alphatest.frag,-DUI_PANEL=1))
+$(eval $(call SHADER_VARIANT,draw_pic_ui_frag,draw_pic.frag,-DUI_PANEL=1))
+$(eval $(call SHADER_VARIANT,draw_pic_alphatest_ui_frag,draw_pic_alphatest.frag,-DUI_PANEL=1))
+$(eval $(call SHADER_VARIANT,draw_pic_xbr_ui_frag,draw_pic_xbr.frag,-DUI_PANEL=1))
+$(eval $(call SHADER_VARIANT,draw_pic_xbr_alphatest_ui_frag,draw_pic_xbr_alphatest.frag,-DUI_PANEL=1))
 $(eval $(call SHADER_VARIANT,world_stereo_vert,world.vert,-DSTEREO=1 --target-env vulkan1.1))
 $(eval $(call SHADER_VARIANT,alias_stereo_vert,alias.vert,-DSTEREO=1 --target-env vulkan1.1))
 $(eval $(call SHADER_VARIANT,md5_stereo_vert,md5.vert,-DSTEREO=1 --target-env vulkan1.1))

@@ -1,12 +1,16 @@
 #version 460
 #extension GL_ARB_separate_shader_objects : enable
 #extension GL_ARB_shading_language_420pack : enable
+#extension GL_GOOGLE_include_directive : enable
+
+#include "ui_panel_clip.inc"
 
 layout (push_constant) uniform PushConsts
 {
 	mat4  mvp;
 	vec3  fog_color;
 	float fog_density;
+	UI_PANEL_PUSH_CONSTANT_MEMBERS
 }
 push_constants;
 
@@ -18,6 +22,7 @@ layout (location = 0) out vec4 out_frag_color;
 
 void main ()
 {
+	UI_PANEL_DISCARD ();
 	out_frag_color = in_color;
 
 	float fog = exp (-push_constants.fog_density * push_constants.fog_density * in_fog_frag_coord * in_fog_frag_coord);

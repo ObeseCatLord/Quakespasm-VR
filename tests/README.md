@@ -763,12 +763,15 @@ cc -std=gnu11 -DUSE_SDL3 -D_GNU_SOURCE -Wall -Wextra -Werror \
 
 `vr_input_fixture.c` exercises the production adapter with a recording key sink:
 profile mappings, shared Index-pad ownership, trigger hysteresis, role/focus
-changes, neutral rearming, menu activation versus binding capture, native modal
-grabs, callback invalidation, finite-axis handling, and zero/excessive deadzones.
-It records OpenXR menu haptics for rising input, release/repeat suppression,
-Escape opening the menu, handedness, the master toggle, capture and modal grabs.
-It also checks prepared roomscale deltas, repeated-frame deduplication,
-nonconsuming preview, focus loss, outlier rejection and angle locks. A focused
+changes, neutral rearming, deferred postdraw menu-panel hit testing, binding
+capture, native modal grabs, callback invalidation, finite-axis handling, and
+zero/excessive deadzones. It checks clickable-panel mouse selection, Enter
+fallback, held-trigger stability across hover changes, matching release events,
+and OpenXR menu haptics. It also covers Escape opening the menu, handedness, the
+master toggle, capture and modal-grab mappings, and context/focus loss gates.
+Motion coverage includes prepared roomscale deltas, repeated-frame
+deduplication, nonconsuming preview, focus loss, outlier rejection and angle
+locks. A focused
 render-frame case checks pinned private muzzle/hand preparation, roomscale
 subtraction, both handedness mappings, repeated previews, and missing-pose
 gates; it does not qualify server weapon use. The other input cases intentionally
