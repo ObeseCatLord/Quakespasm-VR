@@ -462,6 +462,24 @@ static qboolean R_VectorIsFinite (const vec3_t vector)
 	return isfinite (vector[0]) && isfinite (vector[1]) && isfinite (vector[2]);
 }
 
+static qboolean R_NormalizeFiniteVector (vec3_t vector)
+{
+	double length;
+	if (!R_VectorIsFinite (vector))
+		return false;
+	length = sqrt ((double)vector[0] * vector[0] + (double)vector[1] * vector[1] +
+		(double)vector[2] * vector[2]);
+	if (!isfinite (length) || length <= 0.0)
+		return false;
+	for (int i = 0; i < 3; ++i)
+	{
+		vector[i] = (float)(vector[i] / length);
+		if (!isfinite (vector[i]))
+			return false;
+	}
+	return true;
+}
+
 static qboolean R_XRPoseIsFinite (const float matrix[3][4])
 {
 	for (int row = 0; row < 3; ++row)
@@ -471,19 +489,23 @@ static qboolean R_XRPoseIsFinite (const float matrix[3][4])
 	return true;
 }
 
-qboolean R_TrackedControllerRay (int physical_hand, vec3_t origin, vec3_t direction)
+qboolean R_TrackedControllerBasis (int physical_hand, vec3_t origin, vec3_t right,
+	vec3_t up, vec3_t forward)
 {
 	const vrxr_frame_t *frame = GL_OpenXRFrame ();
 	const vrxr_device_t *head, *hand;
 	float units_per_metre;
-	vec3_t local, offset, ray_origin, ray_direction;
-	double direction_length;
+	vec3_t local, offset, pose_origin, pose_right, pose_up, pose_forward;
 
 	if (origin)
 		VectorCopy (vec3_origin, origin);
-	if (direction)
-		VectorCopy (vec3_origin, direction);
-	if (!origin || !direction || physical_hand < 0 || physical_hand > 1 ||
+	if (right)
+		VectorCopy (vec3_origin, right);
+	if (up)
+		VectorCopy (vec3_origin, up);
+	if (forward)
+		VectorCopy (vec3_origin, forward);
+	if (!origin || !right || !up || !forward || physical_hand < 0 || physical_hand > 1 ||
 		!stereo_tracking_basis_valid || !stereo_view_adjusted || !frame || !frame->should_render)
 		return false;
 
@@ -510,27 +532,38 @@ qboolean R_TrackedControllerRay (int physical_hand, vec3_t origin, vec3_t direct
 	R_XRVectorToWorld (local, stereo_tracking_forward, stereo_tracking_right, stereo_tracking_up, offset);
 	for (int i = 0; i < 3; ++i)
 	{
-		ray_origin[i] = r_refdef.vieworg[i] + offset[i];
-		local[i] = -hand->matrix[i][2];
-		if (!isfinite (offset[i]) || !isfinite (ray_origin[i]) || !isfinite (local[i]))
+		pose_origin[i] = r_refdef.vieworg[i] + offset[i];
+		local[i] = hand->matrix[i][0];
+		if (!isfinite (offset[i]) || !isfinite (pose_origin[i]) || !isfinite (local[i]))
 			return false;
 	}
-	R_XRVectorToWorld (local, stereo_tracking_forward, stereo_tracking_right, stereo_tracking_up, ray_direction);
-	if (!R_VectorIsFinite (ray_direction))
-		return false;
-	direction_length = sqrt ((double)ray_direction[0] * ray_direction[0] +
-		(double)ray_direction[1] * ray_direction[1] + (double)ray_direction[2] * ray_direction[2]);
-	if (!isfinite (direction_length) || direction_length <= 0)
-		return false;
+	R_XRVectorToWorld (local, stereo_tracking_forward, stereo_tracking_right, stereo_tracking_up, pose_right);
 	for (int i = 0; i < 3; ++i)
-	{
-		ray_direction[i] = (float)(ray_direction[i] / direction_length);
-		if (!isfinite (ray_direction[i]))
-			return false;
-	}
-	VectorCopy (ray_origin, origin);
-	VectorCopy (ray_direction, direction);
+		local[i] = hand->matrix[i][1];
+	R_XRVectorToWorld (local, stereo_tracking_forward, stereo_tracking_right, stereo_tracking_up, pose_up);
+	for (int i = 0; i < 3; ++i)
+		local[i] = -hand->matrix[i][2];
+	R_XRVectorToWorld (local, stereo_tracking_forward, stereo_tracking_right, stereo_tracking_up, pose_forward);
+	if (!R_NormalizeFiniteVector (pose_right) || !R_NormalizeFiniteVector (pose_up) ||
+		!R_NormalizeFiniteVector (pose_forward))
+		return false;
+	VectorCopy (pose_origin, origin);
+	VectorCopy (pose_right, right);
+	VectorCopy (pose_up, up);
+	VectorCopy (pose_forward, forward);
 	return true;
+}
+
+qboolean R_TrackedControllerRay (int physical_hand, vec3_t origin, vec3_t direction)
+{
+	vec3_t right, up;
+	if (origin)
+		VectorCopy (vec3_origin, origin);
+	if (direction)
+		VectorCopy (vec3_origin, direction);
+	if (!origin || !direction)
+		return false;
+	return R_TrackedControllerBasis (physical_hand, origin, right, up, direction);
 }
 
 qboolean R_TrackedHeadEyeHeight (float base_viewheight, float *out_height)

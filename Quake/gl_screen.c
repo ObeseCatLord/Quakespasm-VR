@@ -100,6 +100,7 @@ cvar_t scr_usekfont = {"scr_usekfont", "0", CVAR_NONE}; // 2021 re-release
 cvar_t scr_style = {"scr_style", "0", CVAR_ARCHIVE_GAME};
 cvar_t vr_menu_scale = {"vr_menu_scale", "0.13", CVAR_ARCHIVE};
 cvar_t vr_menu_follow = {"vr_menu_follow", "1", CVAR_ARCHIVE};
+cvar_t vr_weaponmenu_mode = {"vr_weaponmenu_mode", "0", CVAR_ARCHIVE};
 cvar_t vr_crosshair = {"vr_crosshair", "1", CVAR_ARCHIVE};
 cvar_t vr_crosshair_depth = {"vr_crosshair_depth", "0", CVAR_ARCHIVE};
 cvar_t vr_crosshair_size = {"vr_crosshair_size", "3", CVAR_ARCHIVE};
@@ -757,6 +758,7 @@ void SCR_Init (void)
 	Cvar_RegisterVariable (&scr_style);
 	Cvar_RegisterVariable (&vr_menu_scale);
 	Cvar_RegisterVariable (&vr_menu_follow);
+	Cvar_RegisterVariable (&vr_weaponmenu_mode);
 	Cvar_RegisterVariable (&vr_crosshair);
 	Cvar_RegisterVariable (&vr_crosshair_depth);
 	Cvar_RegisterVariable (&vr_crosshair_size);
@@ -1627,6 +1629,8 @@ typedef struct
 static vr_weapon_menu_panel_t vr_weapon_menu_panel;
 static vr_menu_anchor_t vr_weapon_menu_anchor;
 static unsigned int vr_weapon_menu_anchor_generation;
+static int vr_weapon_menu_anchor_mode;
+static vec3_t vr_weapon_menu_anchor_right, vr_weapon_menu_anchor_up, vr_weapon_menu_anchor_forward;
 
 typedef struct
 {
@@ -1802,7 +1806,7 @@ static void SCR_VRMenuPrepare (void)
 static void SCR_VRWeaponMenuPrepare (void)
 {
 	const vrxr_frame_t *frame = GL_OpenXRFrame ();
-	vec3_t ray_origin, ray_direction, forward, right, up, down, normal, view_angles;
+	vec3_t ray_origin, ray_direction, hand_origin, forward, right, up, down, normal, view_angles;
 	int pointer_x = -1, pointer_y = -1;
 	int dominant;
 	qboolean pointer_valid;
@@ -1820,6 +1824,9 @@ static void SCR_VRWeaponMenuPrepare (void)
 	{
 		vr_weapon_menu_anchor.valid = 0;
 		vr_weapon_menu_anchor_generation = generation;
+		vr_weapon_menu_anchor_mode = isfinite (vr_weaponmenu_mode.value) &&
+			vr_weaponmenu_mode.value >= 0.0f && vr_weaponmenu_mode.value < 2.0f ?
+			(int)vr_weaponmenu_mode.value : 0;
 	}
 	if (!frame || !frame->should_render || !frame->focused || frame->reference_changed ||
 		glwidth <= 0 || glheight <= 0)
@@ -1832,34 +1839,65 @@ static void SCR_VRWeaponMenuPrepare (void)
 	if (dominant < 0 || dominant > 1 ||
 		!R_TrackedControllerRay (dominant, ray_origin, ray_direction))
 	{
-		VR_WeaponMenu_SetVRPointer (false, false, -1, -1);
+		VR_WeaponMenu_Cancel ();
 		vr_weapon_menu_anchor.valid = 0;
 		return;
 	}
 	if (!vr_weapon_menu_anchor.valid)
 	{
-		const int follow_mode = isfinite (vr_menu_follow.value) && vr_menu_follow.value >= 0 &&
-			vr_menu_follow.value <= 2 ? (int)vr_menu_follow.value : 1;
-		VectorCopy (r_refdef.viewangles, view_angles);
-		view_angles[ROLL] = 0;
-		if (!VR_MenuAnchorUpdate (&vr_weapon_menu_anchor, r_refdef.vieworg, view_angles,
-			Sys_DoubleTime (), true, follow_mode, 48.0f, true))
+		if (vr_weapon_menu_anchor_mode == 0)
 		{
-			VR_WeaponMenu_Cancel ();
-			return;
+			if (!R_TrackedControllerBasis (dominant, hand_origin, vr_weapon_menu_anchor_right,
+				vr_weapon_menu_anchor_up, vr_weapon_menu_anchor_forward))
+			{
+				VR_WeaponMenu_Cancel ();
+				return;
+			}
+			VectorCopy (hand_origin, vr_weapon_menu_anchor.base);
+			VectorMA (hand_origin, 10.5f, vr_weapon_menu_anchor_forward, vr_weapon_menu_anchor.center);
+			vr_weapon_menu_anchor.valid = 1;
+		}
+		else
+		{
+			const int follow_mode = isfinite (vr_menu_follow.value) && vr_menu_follow.value >= 0 &&
+				vr_menu_follow.value <= 2 ? (int)vr_menu_follow.value : 1;
+			VectorCopy (r_refdef.viewangles, view_angles);
+			view_angles[ROLL] = 0;
+			if (!VR_MenuAnchorUpdate (&vr_weapon_menu_anchor, r_refdef.vieworg, view_angles,
+				Sys_DoubleTime (), true, follow_mode, 48.0f, true))
+			{
+				VR_WeaponMenu_Cancel ();
+				return;
+			}
 		}
 	}
-	AngleVectors (vr_weapon_menu_anchor.angles, forward, right, up);
+	if (vr_weapon_menu_anchor_mode == 0)
+	{
+		VectorCopy (vr_weapon_menu_anchor_right, right);
+		VectorCopy (vr_weapon_menu_anchor_up, up);
+		VectorCopy (vr_weapon_menu_anchor_forward, forward);
+	}
+	else
+		AngleVectors (vr_weapon_menu_anchor.angles, forward, right, up);
 	VectorScale (up, -1.0f, down);
 	VectorCopy (forward, normal);
 	min_dimension = q_min ((float)glwidth, (float)glheight);
-	scale = vr_menu_scale.value;
-	if (!isfinite (scale) || scale <= 0.0f)
-		scale = 0.13f;
-	/* The wheel uses the full-resolution default canvas. Convert the menu's
-	 * 320-pixel physical scale to that canvas so headset resolution does not
-	 * make the panel grow. */
-	scale *= 320.0f / min_dimension;
+	if (vr_weapon_menu_anchor_mode == 0)
+	{
+		/* Match the source playspace ring radius while retaining the current
+		 * Vulkan screen-space wheel layout: its outer edge is 32% of min_dimension. */
+		scale = 5.0f / (0.32f * min_dimension);
+	}
+	else
+	{
+		scale = vr_menu_scale.value;
+		if (!isfinite (scale) || scale <= 0.0f)
+			scale = 0.13f;
+		/* The wheel uses the full-resolution default canvas. Convert the menu's
+		 * 320-pixel physical scale to that canvas so headset resolution does not
+		 * make the panel grow. */
+		scale *= 320.0f / min_dimension;
+	}
 	if (!isfinite (scale) || scale <= 0.0f)
 	{
 		VR_WeaponMenu_Cancel ();

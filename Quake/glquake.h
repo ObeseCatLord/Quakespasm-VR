@@ -49,6 +49,7 @@ void GL_InvalidateXRInput (void);
 void GL_EndXRFrame (void);
 void R_PrepareStereoFrame (void);
 qboolean R_TrackedControllerRay (int physical_hand, vec3_t origin, vec3_t direction);
+qboolean R_TrackedControllerBasis (int physical_hand, vec3_t origin, vec3_t right, vec3_t up, vec3_t forward);
 qboolean R_TrackedHeadEyeHeight (float base_viewheight, float *out_height);
 qboolean R_TrackedHeadBodyOffset (vec3_t world_offset);
 void R_RestoreStereoView (void);

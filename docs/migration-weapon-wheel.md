@@ -1,9 +1,11 @@
 # Weapon-wheel migration seam
 
 The inherited wheel is still a required 2.0 behavior. A stock-weapon desktop
-Vulkan slice and a view-anchored OpenXR panel with controller-ray selection are
-implemented. The inherited playspace layout, 3D weapon presentation, mod
-catalogues, and co-op actions remain to be ported. The source of truth is
+Vulkan slice and an OpenXR panel with controller-ray selection are
+implemented. The OpenXR panel now defaults to a hand-pose-anchored playspace
+placement, with the earlier view placement retained as a VR option. Its flat
+Vulkan presentation is still short of the inherited 3D weapon layout. The
+full mod catalogue and co-op actions remain to be ported. The source of truth is
 `quakespasm-openvr/Quake/vr.c` at the pinned MAIN
 commit in [migration-feature-map.md](migration-feature-map.md), particularly
 its catalog and selection policy (`VR_WeaponIsOwned`,
@@ -40,8 +42,8 @@ The packaged defaults bind `VR_RIGHT_STICK_UP` for VR; desktop players may bind
 the command in the key-binding menu without changing vkQuake's keyboard defaults.
 Next, use the same catalog owner for Hipnotic/Rogue and mod profiles, schema
 precedence, ammo/readiness, dynamic discovery, and co-op player actions.
-Playspace placement, model icons, text hitboxes, outlines, and occlusion must
-match the inherited wheel; an unanchored flat panel alone does not close VR
+3D model icons, text hitboxes, outlines, and occlusion must
+match the inherited wheel; a hand-anchored flat panel alone does not close VR
 parity. Reuse the existing VR panel/view transforms where they fit, and add a
 narrow Vulkan model/icon draw adapter only for the remaining 3D presentation.
 Keep catalog, hitbox, and drawing state owned once per logical frame so

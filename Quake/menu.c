@@ -2458,6 +2458,7 @@ static void M_SoundOptions_Draw (cb_context_t *cbx)
 /* VR OPTIONS MENU */
 
 extern cvar_t vr_hud_scale, vr_menu_scale, vr_menu_follow;
+extern cvar_t vr_weaponmenu_mode;
 extern cvar_t vr_crosshair, vr_crosshair_depth, vr_crosshair_size, vr_crosshair_alpha, vr_crosshairy;
 extern cvar_t vr_haptic;
 
@@ -2469,6 +2470,7 @@ enum
 	VR_OPT_MENU_SCALE,
 	VR_OPT_HUD_SCALE,
 	VR_OPT_MENU_FOLLOW,
+	VR_OPT_WEAPON_MENU_MODE,
 	VR_OPT_CROSSHAIR_MODE,
 	VR_OPT_CROSSHAIR_DEPTH,
 	VR_OPT_CROSSHAIR_SIZE,
@@ -2541,6 +2543,14 @@ static void M_VROptions_Adjust (int dir)
 		const int mode = isfinite (vr_menu_follow.value) && vr_menu_follow.value >= 0 &&
 			vr_menu_follow.value <= 2 ? (int)vr_menu_follow.value : 1;
 		Cvar_SetValueQuick (&vr_menu_follow, (float)((mode + (dir > 0 ? 1 : 2)) % 3));
+		break;
+	}
+	case VR_OPT_WEAPON_MENU_MODE:
+	{
+		const int mode = isfinite (vr_weaponmenu_mode.value) &&
+			vr_weaponmenu_mode.value >= 0.0f && vr_weaponmenu_mode.value < 2.0f ?
+			(int)vr_weaponmenu_mode.value : 0;
+		Cvar_SetValueQuick (&vr_weaponmenu_mode, (float)(mode == 0 ? 1 : 0));
 		break;
 	}
 	case VR_OPT_CROSSHAIR_MODE:
@@ -2624,6 +2634,9 @@ static void M_VROptions_Draw (cb_context_t *cbx)
 	const int foveation = CLAMP (0, (int)vr_foveation.value, 2);
 	const int follow = isfinite (vr_menu_follow.value) && vr_menu_follow.value >= 0 &&
 		vr_menu_follow.value <= 2 ? (int)vr_menu_follow.value : 1;
+	const int weapon_menu_mode = isfinite (vr_weaponmenu_mode.value) &&
+		vr_weaponmenu_mode.value >= 0.0f && vr_weaponmenu_mode.value < 2.0f ?
+		(int)vr_weaponmenu_mode.value : 0;
 	const float crosshair_depth = M_VROptions_ClampFinite (vr_crosshair_depth.value, 0.0f, 0.0f, 4096.0f);
 	const float crosshair_size = M_VROptions_ClampFinite (vr_crosshair_size.value, 3.0f, 0.0f, 32.0f);
 	const float crosshair_opacity = M_VROptions_ClampFinite (vr_crosshair_alpha.value, 0.25f, 0.0f, 1.0f);
@@ -2650,6 +2663,10 @@ static void M_VROptions_Draw (cb_context_t *cbx)
 
 	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * VR_OPT_MENU_FOLLOW, "Menu Follow");
 	M_Print (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * VR_OPT_MENU_FOLLOW, follow_modes[follow]);
+
+	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * VR_OPT_WEAPON_MENU_MODE, "Weapon Wheel Mode");
+	M_Print (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * VR_OPT_WEAPON_MENU_MODE,
+		weapon_menu_mode == 0 ? "Playspace" : "View");
 
 	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * VR_OPT_CROSSHAIR_MODE, "Crosshair Mode");
 	M_Print (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * VR_OPT_CROSSHAIR_MODE, crosshair_modes[M_VROptions_CrosshairMode ()]);

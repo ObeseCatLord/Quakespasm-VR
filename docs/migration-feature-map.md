@@ -96,7 +96,7 @@ Disposition meanings: REUSE/ADAPT keep the source behavior at existing owners; K
 
 | ID / behavior | Pinned source evidence | Destination / treatment | Acceptance |
 |---|---|---|---|
-| WPN-001 — Desktop screen-space and VR playspace weapon wheels | MAIN:Quake/vr.c:1956 (vr_weaponmenu_mode); MAIN:Quake/vr_weaponmenu_hit.h:1 (VR_) | Quake/vr.c;Quake/sbar.c;donor draw contexts; **ADAPT**, P3 | Mouse/stick and controller-ray selection work in their respective modes with accurate hover hitboxes. |
+| WPN-001 — Desktop screen-space and VR playspace weapon wheels | MAIN:Quake/vr.c:1956 (vr_weaponmenu_mode); MAIN:Quake/vr_weaponmenu_hit.h:1 (VR_) | Quake/vr_weapon_menu.c;Quake/gl_screen.c;Quake/sbar.c;donor draw contexts; **ADAPT**, P3 | Mouse/stick and controller-ray selection work in their respective modes with accurate hover hitboxes. |
 | WPN-002 — Stable hover, retained known weapons and selection across transient model/stat changes | MAIN:Quake/vr.c:1849 (VR_ResetDynWeaponsToBase); MAIN:Quake/vr.c:1714 (VR_WeaponIsActive) | Quake/vr.c;Quake/vr_weapon_catalog.h; **REUSE**, P3 | Weapon swaps do not clear a valid hover; mod changes clear only stale catalog entries. |
 | WPN-003 — Explicit ownership stats/custom bitmasks and unschematized weapon discovery | MAIN:Quake/vr.c:1089 (VR_DynWeaponCanUseItemOwnership); MAIN:Quake/vr.c:1735 (VR_WeaponIsOwned) | Quake/vr.c;Quake/vr_weapon_catalog.h; **REUSE**, P3 | Custom high bits and unknown weapons use validated ownership; unowned or arbitrary models do not become selectable. |
 | WPN-004 — Dynamic ammo quantities, maxima and weapon readiness display | MAIN:Quake/vr.c:1766 (VR_GetWeaponAmmo); MAIN:Quake/vr.c:1003 (VR_ParseStatName) | Quake/vr.c;Quake/sbar.c; **REUSE**, P3 | Mod-defined ammo limits and alternate pools display correctly without assuming vanilla caps. |
@@ -164,9 +164,10 @@ Disposition meanings: REUSE/ADAPT keep the source behavior at existing owners; K
 | FBT-005 — Optional tracker-less operation and independently negotiated lower-body pose relay | MAIN:Quake/vr.c:1958 (vr_fbt_enabled); MAIN:Quake/vrik_codec.h:2 (VRIK); MAIN:tests/vrik_lowerbody_fixture.c:412 (main) | Quake/vr.c;Quake/vrik_codec.c;Quake/r_vrik.c; **ADAPT**, P3 | Normal HMD/controller VR works without trackers; remote lower body activates only with valid negotiated inputs. |
 
 The `2.0` branch now directly reuses the source's hardware-independent FBT
-identity manager and pose filter. OpenXR tracker snapshots, calibration,
-profile storage, menu controls and lower-body pose relay are still separate
-integration work; compiling the pure modules does not satisfy FBT parity.
+identity manager, pose filter, profile parser and persistent storage. OpenXR
+tracker snapshots, calibration and profile selection, menu controls and
+lower-body pose relay are still separate integration work; compiling the pure
+modules does not satisfy FBT parity.
 
 ### QuakeC and mod compatibility
 
