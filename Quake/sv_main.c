@@ -37,6 +37,7 @@ unsigned int sv_protocol_pext2 = PEXT2_SUPPORTED_SERVER; // spike
 
 static cvar_t sv_netsort = {"sv_netsort", "1", CVAR_NONE};
 static cvar_t sv_smoothplatformlerps = {"sv_smoothplatformlerps", "1", CVAR_NONE};
+static cvar_t sv_qsvr_private = {"sv_qsvr_private", "0", CVAR_NONE};
 
 extern cvar_t nomonsters;
 
@@ -1253,6 +1254,7 @@ void SV_Init (void)
 	Cvar_RegisterVariable (&sv_altnoclip); // johnfitz
 	Cvar_RegisterVariable (&sv_netsort);
 	Cvar_RegisterVariable (&sv_smoothplatformlerps);
+	Cvar_RegisterVariable (&sv_qsvr_private);
 
 	Cvar_RegisterVariable (&sv_fte_recursivehullckeck);
 	Cvar_RegisterVariable (&sv_fte_createareanode);
@@ -1508,11 +1510,46 @@ void SV_SendServerinfo (client_t *client)
 	const char **s;
 	char		 message[2048];
 	unsigned int i; // johnfitz
+	unsigned int previous_qsvr = client->protocol_qsvr;
 	qboolean	 cantruncate;
 	qboolean	 truncated = false;
 
 	client->spawned = false; // need prespawn, spawn, etc
-	if (client->protocol_qsvr == QSVR_PROTOCOL_PINNED)
+
+	// assume some safe defaults if we early out.
+	client->limit_unreliable = 1024;
+	client->limit_reliable = 8192;
+	client->limit_entities = 0;
+	client->limit_models = 0;
+	client->limit_sounds = 0;
+
+	client->protocol_qsvr = 0;
+	client->protocol_pext2 = 0;
+	if (!sv_protocol_pext2)
+	{ // server disabled pext completely, don't bother trying.
+		// make sure we try reenabling it again on the next map though.
+		client->pextknown = false;
+		client->offered_qsvr = 0;
+		client->offered_pext2 = 0;
+	}
+	else if (client->pextknown)
+	{
+		client->protocol_pext2 = client->offered_pext2 & sv_protocol_pext2;
+		if (!(client->protocol_pext2 & PEXT2_REPLACEMENTDELTAS))
+			client->protocol_pext2 &= ~PEXT2_PREDINFO; // stats can't be deltaed if there's no deltas, so just pretend its not supported on its own.
+
+		if (sv_qsvr_private.value && client->netconnection &&
+			client->offered_qsvr == QSVR_PROTOCOL_PINNED &&
+			(client->offered_pext2 & PEXT2_SUPPORTED_CLIENT) == PEXT2_SUPPORTED_CLIENT &&
+			(sv_protocol_pext2 & PEXT2_SUPPORTED_SERVER) == PEXT2_SUPPORTED_SERVER &&
+			sv.protocol == PROTOCOL_RMQ && sv.protocolflags == (PRFL_FLOATCOORD | PRFL_SHORTANGLE))
+		{
+			client->protocol_qsvr = QSVR_PROTOCOL_PINNED;
+			client->protocol_pext2 = QSVR_PEXT2_REQUIRED;
+		}
+	}
+
+	if (previous_qsvr == QSVR_PROTOCOL_PINNED || client->protocol_qsvr == QSVR_PROTOCOL_PINNED)
 	{
 		// A new serverinfo starts a new command sequence and input lifetime.
 		client->lastmovemessage = 0;
@@ -1523,30 +1560,13 @@ void SV_SendServerinfo (client_t *client)
 		memset (&client->cmd, 0, sizeof (client->cmd));
 	}
 
-	// assume some safe defaults if we early out.
-	client->limit_unreliable = 1024;
-	client->limit_reliable = 8192;
-	client->limit_entities = 0;
-	client->limit_models = 0;
-	client->limit_sounds = 0;
-
-	if (!sv_protocol_pext2)
-	{ // server disabled pext completely, don't bother trying.
-		// make sure we try reenabling it again on the next map though.
-		client->pextknown = false;
-		client->offered_qsvr = 0;
-	}
-	else if (!client->pextknown)
+	if (sv_protocol_pext2 && !client->pextknown)
 	{
 		MSG_WriteByte (&client->message, svc_stufftext);
 		MSG_WriteString (&client->message, "cmd pext\n");
 		client->sendsignon = PRESPAWN_FLUSH;
 		return;
 	}
-	client->protocol_pext2 &= sv_protocol_pext2;
-
-	if (!(client->protocol_pext2 & PEXT2_REPLACEMENTDELTAS))
-		client->protocol_pext2 &= ~PEXT2_PREDINFO; // stats can't be deltaed if there's no deltas, so just pretend its not supported on its own.
 
 	// now we know their protocol, pick some real defaults that match the limits of the engine that most defines that protocol's limits.
 	switch (client->protocol_pext2 ? PROTOCOL_FTE_PEXT2 : sv.protocol)
@@ -1633,6 +1653,11 @@ retry:
 	MSG_WriteString (&client->message, message);
 
 	MSG_WriteByte (&client->message, svc_serverinfo);
+	if (client->protocol_qsvr == QSVR_PROTOCOL_PINNED)
+	{
+		MSG_WriteLong (&client->message, PROTOCOL_QSVR_PROFILE);
+		MSG_WriteLong (&client->message, QSVR_PROTOCOL_PINNED);
+	}
 	if (client->protocol_pext2)
 	{ // pext stuff takes the form of modifiers to an underlaying protocol
 		MSG_WriteLong (&client->message, PROTOCOL_FTE_PEXT2);
@@ -1762,7 +1787,7 @@ void SV_Pext_f (void)
 			value = strtoul (Cmd_Argv (i + 1), NULL, 0);
 
 			if (key == PROTOCOL_FTE_PEXT2)
-				host_client->protocol_pext2 = value & PEXT2_SUPPORTED_SERVER;
+				host_client->offered_pext2 = value;
 			else if (key == PROTOCOL_QSVR_PROFILE && value == QSVR_PROTOCOL_PINNED)
 				host_client->offered_qsvr = value;
 			// else some other extension that we don't know
@@ -1824,6 +1849,7 @@ void SV_ConnectClient (int clientnum)
 
 	client->pextknown = false;
 	client->offered_qsvr = 0;
+	client->offered_pext2 = 0;
 	client->protocol_qsvr = 0;
 	client->protocol_pext2 = 0;
 

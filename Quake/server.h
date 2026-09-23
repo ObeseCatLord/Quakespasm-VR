@@ -187,6 +187,7 @@ typedef struct client_s
 	unsigned int limit_sounds;	   //
 	qboolean	 pextknown;
 	unsigned int offered_qsvr; // capability received under PROTOCOL_QSVR_PROFILE
+	unsigned int offered_pext2; // original public FTE offer, retained across map sign-ons
 	unsigned int protocol_qsvr; // selected private wire profile; zero is public
 	unsigned int protocol_pext1;
 	unsigned int protocol_pext2;

@@ -146,3 +146,23 @@ whole path locally with jump/swim/platform/contact, earliest-pose weapon damage,
 once-only roomscale, packet loss, pause/teleport, listen and remote peers, and
 mixed public/private clients. Custom-physics mods are a separate compatibility
 gate with prediction disabled until their authority can be stated exactly.
+
+## Explicit legacy-profile admission checkpoint
+
+The server now has a default-off `sv_qsvr_private` opt-in. It selects the
+private profile only after an explicit version-1 `QSVR` offer and matching
+replacement/PREDINFO capability on an RMQ float-coordinate/short-angle map.
+The selected private mask is separate from the retained public offer, so a
+later map can return to public framing. Public-only and default-off peers keep
+vkQuake's original profile. No predictive authority is advertised.
+
+An isolated Linux loopback test with the `2.0` client and dedicated server
+using disposable Straight asset profiles reached signon and observed
+authoritative movement, shell consumption and advancing ACK with prediction
+permission off. The same client reached public signon and moved/fired when the
+server cvar was off. A connected private client also completed `e1m1` to
+`e1m2` changelevel after the cvar switched off and parsed the new public
+profile. The focused calibration fixture passed ASan/UBSan and the strict
+Linux Ninja build passed. These checks do not prove target damage, roomscale
+collision, ordered PMove prediction, mixed simultaneous peers, packet loss,
+headset input, Windows or ARM behavior.
