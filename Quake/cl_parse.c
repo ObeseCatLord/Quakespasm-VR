@@ -404,7 +404,8 @@ static qboolean CL_ParseVRIKPose (void)
 
 	/* An unreliable pose can overtake the entity update that introduces this
 	 * player slot. Consume its framed body but wait for the entity baseline. */
-	if (!cl.entities || entitynum >= cl.num_entities)
+	if (!cl.entities || entitynum >= cl.num_entities || !cl.scores ||
+		!cl.scores[entitynum - 1].name[0])
 		return true;
 	ent = &cl.entities[entitynum];
 	if (ent->vrik_slot_retired && generation == ent->vrik_generation)
