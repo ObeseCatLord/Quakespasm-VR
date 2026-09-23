@@ -279,3 +279,23 @@ room-scale input alone. The caller still owns collecting physents, copying the
 result back to the entity, relinking/touch dispatch, and clearing the room-scale
 delta before its later `PM_PlayerMove`. There is no live call site or authority
 switch yet. The strict Linux `vkquake` target builds.
+
+## Rejected broad server-owner trial
+
+A draft stock-QC, default-off WALK owner was removed before commit. It repeated
+the queue head within a frame rather than advancing a local accepted-command
+cursor, which would duplicate attacks and impulses. It also let
+`PM_PlayerMove` clear touches from the pre-PreThink room-scale sweep, overwrote
+QuakeC velocity changes from impacts, and skipped the normal PreThink/PostThink
+lifecycle whenever the accepted queue was empty. Hard-closing the selector while
+retaining unused state was rejected as dead scaffolding. The existing private
+latest-command physics path remains the only live server owner.
+
+The next patch should be smaller: first make a single accepted command run from
+the existing `SV_Physics_Client` slot, with one local queue cursor and completion
+only after its callbacks. It must dispatch room-scale contacts before ordinary
+PMove resets the touch list, define the empty-queue callback path, and fall
+back before callbacks if physent collection fails. A second command in the
+same host frame then proves ordering and time allowance. Keep the trial off and
+prediction disabled until this behavior is observable against the legacy
+reference; do not add another server loop or protocol layer.
