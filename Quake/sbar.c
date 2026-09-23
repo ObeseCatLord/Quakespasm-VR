@@ -291,6 +291,21 @@ void Sbar_LoadPics (void)
 	}
 }
 
+/* Share the stock inventory art with the desktop weapon wheel. The axe has
+ * no inventory icon in the base game, so the wheel presents it by name. */
+qpic_t *Sbar_WeaponMenuIcon (int item_bit)
+{
+	int i;
+	if (item_bit == IT_AXE)
+		return NULL;
+	for (i = 0; i < 7; ++i)
+	{
+		if (item_bit == (IT_SHOTGUN << i))
+			return sb_weapons[0][i];
+	}
+	return NULL;
+}
+
 /*
 ===============
 Sbar_Init -- johnfitz -- rewritten

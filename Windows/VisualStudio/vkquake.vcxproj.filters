@@ -316,6 +316,9 @@
     <ClCompile Include="..\..\Quake\cl_input.c">
       <Filter>Client</Filter>
     </ClCompile>
+    <ClCompile Include="..\..\Quake\vr_weapon_menu.c">
+      <Filter>Client</Filter>
+    </ClCompile>
     <ClCompile Include="..\..\Quake\cl_main.c">
       <Filter>Client</Filter>
     </ClCompile>
@@ -1024,6 +1027,12 @@
       <Filter>Main</Filter>
     </ClInclude>
     <ClInclude Include="..\..\Quake\vr_locomotion.h">
+      <Filter>Main</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\Quake\vr_weapon_catalog.h">
+      <Filter>Main</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\Quake\vr_weapon_menu.h">
       <Filter>Main</Filter>
     </ClInclude>
     <ClInclude Include="..\..\Quake\vr_openxr.h">

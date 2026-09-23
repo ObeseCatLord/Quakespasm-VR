@@ -30,6 +30,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "vr_aim.h"
 #include "vr_locomotion.h"
 #include "vr_menu_anchor.h"
+#include "vr_weapon_menu.h"
 
 #include <setjmp.h>
 
@@ -2128,6 +2129,7 @@ static void SCR_DrawGUI (void *unused)
 			SCR_DrawConsole (cbx);
 			GL_EndUIPanel (cbx);
 		}
+		VR_WeaponMenu_Draw (cbx);
 	}
 
 	scr_csqc_error_phase = SCR_CSQC_ERROR_IDLE;

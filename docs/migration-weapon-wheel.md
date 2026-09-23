@@ -24,7 +24,7 @@ source's separate single-player and multiplayer offset tables. Whether legacy
 MP schema values can become one held/muzzle offset is a separate transform
 parity check, not a reason to duplicate wheel calibration state.
 
-The smallest end-to-end proof is one stock weapon selected with `q` on desktop
+The smallest end-to-end proof is one stock weapon selected with a bound `+vr_weaponmenu` key on desktop
 and with the bound OpenXR hand on VR, from a wheel whose hover region agrees
 with the rendered item. The desktop wheel must work when no XR runtime exists.
 Next, use the same catalog owner for Hipnotic/Rogue and mod profiles, schema

@@ -27,6 +27,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "quakedef.h"
 #include "vr_input.h"
 #include "vrik_codec.h"
+#include "vr_weapon_menu.h"
 
 extern cvar_t cl_maxpitch; // johnfitz -- variable pitch clamping
 extern cvar_t cl_minpitch; // johnfitz -- variable pitch clamping
@@ -59,6 +60,49 @@ kbutton_t in_strafe, in_speed, in_use, in_jump, in_attack;
 kbutton_t in_up, in_down;
 
 int in_impulse;
+static kbutton_t in_vr_weaponmenu;
+
+void KeyDown (kbutton_t *b);
+void KeyUp (kbutton_t *b);
+
+static void IN_VRWeaponMenuDown (void)
+{
+	const qboolean already_down = (in_vr_weaponmenu.state & 1) != 0;
+	if (!already_down && !VR_WeaponMenu_CanOpen ())
+		return;
+
+	KeyDown (&in_vr_weaponmenu);
+	if (!already_down && (in_vr_weaponmenu.state & 1))
+	{
+		/* The command owner hands the desktop cursor to the screen-space UI.
+		 * It is returned to relative game look when the hold command releases. */
+		IN_Deactivate (true);
+		VR_WeaponMenu_Open ();
+	}
+}
+
+static void IN_VRWeaponMenuUp (void)
+{
+	int impulse;
+	char command[32];
+	const qboolean was_open = VR_WeaponMenu_IsOpen ();
+
+	KeyUp (&in_vr_weaponmenu);
+	if (!was_open || (in_vr_weaponmenu.state & 1))
+		return;
+
+	impulse = VR_WeaponMenu_Release ();
+	in_vr_weaponmenu.state = 0;
+	/* Restore desktop capture on selection and no-selection releases alike.
+	 * A menu or console that took focus keeps its absolute cursor. */
+	if (!vulkan_globals.stereo_active && key_dest == key_game && !con_forcedup)
+		IN_Activate ();
+	if (impulse > 0)
+	{
+		q_snprintf (command, sizeof (command), "impulse %d\n", impulse);
+		Cbuf_AddText (command);
+	}
+}
 
 void KeyDown (kbutton_t *b)
 {
@@ -995,6 +1039,8 @@ CL_InitInput
 */
 void CL_InitInput (void)
 {
+	Cmd_AddCommand ("+vr_weaponmenu", IN_VRWeaponMenuDown);
+	Cmd_AddCommand ("-vr_weaponmenu", IN_VRWeaponMenuUp);
 	Cmd_AddCommand ("+moveup", IN_UpDown);
 	Cmd_AddCommand ("-moveup", IN_UpUp);
 	Cmd_AddCommand ("+movedown", IN_DownDown);

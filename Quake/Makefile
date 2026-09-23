@@ -54,6 +54,7 @@ include common.make
 # Keep donor sources in C; only the standalone OpenXR backend needs C++.
 OBJS += vr_openxr.o
 OBJS += vrik_codec.o
+OBJS += vr_weapon_menu.o
 LINKER = $(CXX)
 
 vr_openxr.o: vr_openxr.cpp
