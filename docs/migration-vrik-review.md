@@ -145,8 +145,9 @@ including nonzero pitch and differing body yaw. Then verify tracking loss,
 two simultaneous poses sharing one model, offscreen shadowing, allocation
 growth, and frame-slot reuse. The visible and first-surface shadow adapters now
 build, but no live proof has run. Canonical avatar presentation identity, donor
-normal parity, multisurface coverage, and conservative IK culling bounds need
-more evidence before claiming parity.
+normal parity, and multisurface ray-shadow coverage need more evidence before
+claiming parity. `d358511a` adds a conservative tracked-pose culling bound;
+its visual safety and useful rejection rate still need runtime evidence.
 
 The scheduling seam is implemented after `R_MarkSurfaces` stores efrag entities
 and after the frame-slot fence/buffer swap; visible entity draws and TLAS build
@@ -175,10 +176,13 @@ This reuses the existing dynamic storage allocator and the vkQuake shaders.
 First gate multisurface and skin selection against the actual visible and
 BLAS geometry, since skin-zero shadow selection can differ from a visible
 player skin. A tracked player's culling bounds must include the solved pose;
-static MD5 animation bounds alone can drop raised or extended hands. Retain
-stereo-union culling and evaluate cheap per-joint influence bounds before
-considering CPU vertex skinning or disabling culling. These are implementation
-constraints, not completed behavior or measured speedups.
+static MD5 animation bounds alone can drop raised or extended hands. The first
+bound computes each surface's maximum sum of stored influence-position lengths
+at upload, then combines it with the solved palette's maximum matrix Frobenius
+norm and translation length once per frame. The resulting sphere includes every
+selected surface, expands for float rounding, and uses the existing stereo-union
+frustum. Invalid inputs fail open. This is an implemented safety bound, not a
+measured speedup or a substitute for live visual verification.
 
 A candidate bound avoids CPU skinning every vertex each frame. The shader sums
 per-influence `R_j * q + t_j * w`, where `q` is the loader's stored weighted
