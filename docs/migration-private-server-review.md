@@ -567,3 +567,32 @@ check. The hook skips the transport call before it allocates a network
 sequence; this is one controlled omission, not general packet-loss or
 retransmission coverage. Prediction stays off pending replay parity and the
 remaining VR/collision gates.
+
+## Astra prediction-baseline review disposition
+
+A local `gpt-6-astra`/`max` senior design review checked whether the selected
+private PMove trial can safely advertise client replay now. It cannot. The
+server sends `pmovetype=0` and no prediction permission by design; the existing
+client replay initializes `jump_secs=0` while the server persists a nonzero
+timer. More fundamentally, maintenance callbacks and later world physics can
+change owner state without advancing the completed move ACK. An ACK alone is
+therefore not a complete replay-baseline identity.
+
+| Recommendation | Disposition |
+| --- | --- |
+| Treat owner, settings, persisted PMove state, completed ACK and snapshot identity as one baseline contract. | **Adopt.** Reuse the existing selected datagram and message-end commit. Add only the metadata a measured replay proof needs; do not create another protocol or simulation clock. |
+| Send the authoritative jump timer rather than infer successful jumps from command history. | **Adopt for the shadow slice.** Its exact wire slot/capability and post-callback capture boundary still require verification. Do not enable permission from the timer alone. |
+| Reject missing command history for selected-private replay while retaining QSS-M/donor public behavior. | **Adopt now.** The current helper can start at the oldest retained command even when commands after the ACK were overwritten, which would apply an incomplete replay to an older origin. |
+| Factor shadow replay from publication and exclude the unacknowledged input preview from parity comparison. | **Adopt in stages.** Ignoring a returned origin is insufficient because replay also writes velocity, ground/water state and propagation caches. Compare a captured prediction against later authoritative command outcome and separately qualify the final snapshot seed. |
+| Assume owner packet coherence implies current collider state or VR roomscale parity. | **Reject.** Optional collider updates may follow in another datagram. Server roomscale runs before QC as a native sweep, while client PMove applies it inside movement. Static-world WALK is the first proof, then roomscale at that existing boundary. |
+
+The smallest end-to-end proof remains a stock-QC desktop private client and
+dedicated server: static floor/wall/step movement, held and released jumps near
+the 50 ms debounce boundary with early regrounding, equal-ACK maintenance, and
+lost history. Capture command-C prediction from an earlier baseline before its
+correction arrives, then compare to the authoritative post-callback outcome at
+the same command sequence with wire-aware tolerances. A separate presentation
+run under latency must show immediate movement, stable correction and blocked
+walls before permission can be enabled. VR roomscale, collision and physical
+device behavior follow as separate gates. The current pre-transport omitted
+datagram probe is not a transport-sequence loss test.

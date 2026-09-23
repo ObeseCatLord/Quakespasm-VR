@@ -565,9 +565,11 @@ static qboolean CL_ReplayHistoryAvailable (int *startseq)
 		first = 2;
 	if (oldest < 2)
 		oldest = 2;
-	/* Match QSS-M's "lost is lost" policy: if the ACK fell out of the
-	 * journal, resume at the oldest retained command instead of reading an
-	 * overwritten slot.  The retained range still has to match by sequence. */
+	if (cl.protocol_qsvr == QSVR_PROTOCOL_PINNED && first < oldest)
+		return false;
+	/* Preserve QSS-M's public "lost is lost" policy: resume at the oldest
+	 * retained command rather than reading an overwritten slot. Private replay
+	 * must retain every command after its authoritative baseline ACK. */
 	if (first < oldest)
 		first = oldest;
 	if (first > cl.movemessages)
