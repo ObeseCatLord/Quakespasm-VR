@@ -35,6 +35,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "vr_openxr.h"
 #include "vr_openxr_vulkan.h"
 #include "vr_openxr_math.h"
+#include "vr_foveation_rate_map.h"
 
 #ifdef USE_SDL3
 #include <SDL3/SDL_vulkan.h>
@@ -52,6 +53,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #endif
 
 #include <float.h>
+#include <limits.h>
 #include <time.h>
 
 #define MAX_MODE_LIST  600 // johnfitz -- was 30
@@ -86,6 +88,7 @@ static uint32_t openxr_vulkan_minimum_version;
 static qboolean openxr_attach_attempted;
 static qboolean openxr_frame_submitted;
 static vrxr_frame_t openxr_frame;
+static vrf_policy_state_t openxr_foveation_policy;
 static VkImageView *openxr_image_views;
 static uint32_t openxr_image_count;
 static uint32_t openxr_image_index;
@@ -108,6 +111,8 @@ static void GL_CreateFrameBuffers (void);
 static void GL_CreateOITBuffers (void);
 static void GL_DestroyOITBuffers (void);
 static void GL_DestroyRenderResources (void);
+static qboolean GL_CreateFragmentShadingRateImage (void);
+static void GL_DestroyFragmentShadingRateImage (void);
 
 viddef_t		vid; // global video state
 modestate_t		modestate = MS_UNINIT;
@@ -179,6 +184,14 @@ static vulkan_memory_t	mboit_color_buffer_memory;
 static VkImageView		mboit_b0_buffer_view;
 static VkImageView		mboit_moments0_buffer_view;
 static VkImageView		mboit_color_buffer_view;
+static VkImage			fragment_shading_rate_image;
+static vulkan_memory_t	fragment_shading_rate_image_memory;
+static VkImageView		fragment_shading_rate_image_view;
+static VkExtent2D		fragment_shading_rate_image_extent;
+static uint32_t			fragment_shading_rate_image_layers;
+static byte				*fragment_shading_rate_map;
+static size_t			fragment_shading_rate_map_size;
+static qboolean		fragment_shading_rate_image_initialized;
 static VkImage			msaa_color_buffer;
 static vulkan_memory_t	msaa_color_buffer_memory;
 static VkImageView		msaa_color_buffer_view;
@@ -213,6 +226,15 @@ static qboolean					swapchain_present_wait;
 static PFN_vkEnumerateInstanceVersion	  fpEnumerateInstanceVersion;
 static PFN_vkGetPhysicalDeviceFeatures2	  fpGetPhysicalDeviceFeatures2;
 static PFN_vkGetPhysicalDeviceProperties2 fpGetPhysicalDeviceProperties2;
+#if defined(VK_KHR_fragment_shading_rate) && defined(VK_KHR_create_renderpass2)
+static PFN_vkGetPhysicalDeviceFragmentShadingRatesKHR fpGetPhysicalDeviceFragmentShadingRatesKHR;
+static VkImageFormatProperties fragment_shading_rate_image_format_properties;
+static VkSampleCountFlagBits fragment_shading_rate_sample_count;
+static qboolean fragment_shading_rate_sample_query_known;
+static qboolean fragment_shading_rate_1x1_supported;
+static qboolean fragment_shading_rate_2x2_supported;
+static qboolean fragment_shading_rate_4x4_supported;
+#endif
 #if defined(VK_EXT_full_screen_exclusive)
 static PFN_vkAcquireFullScreenExclusiveModeEXT fpAcquireFullScreenExclusiveModeEXT;
 static PFN_vkReleaseFullScreenExclusiveModeEXT fpReleaseFullScreenExclusiveModeEXT;
@@ -901,6 +923,16 @@ static void GL_ClearOpenXRFragmentShadingRate (void)
 	vulkan_globals.openxr_layered_shading_rate_attachments = false;
 	vulkan_globals.vk_create_render_pass2 = NULL;
 	vulkan_globals.vk_cmd_set_fragment_shading_rate = NULL;
+#if defined(VK_KHR_fragment_shading_rate) && defined(VK_KHR_create_renderpass2)
+	fpGetPhysicalDeviceFragmentShadingRatesKHR = NULL;
+	memset (&fragment_shading_rate_image_format_properties, 0, sizeof (fragment_shading_rate_image_format_properties));
+	fragment_shading_rate_sample_count = 0;
+	fragment_shading_rate_sample_query_known = false;
+	fragment_shading_rate_1x1_supported = false;
+	fragment_shading_rate_2x2_supported = false;
+	fragment_shading_rate_4x4_supported = false;
+#endif
+	VRF_ResetPolicy (&openxr_foveation_policy);
 }
 
 static uint32_t GL_FragmentShadingRateLog2 (uint32_t value)
@@ -952,6 +984,86 @@ static qboolean GL_SelectFragmentShadingRateTexelSize (const VkPhysicalDeviceFra
 		width *= 2;
 	}
 	return found;
+}
+
+static qboolean GL_QueryFragmentShadingRatesForSamples (VkSampleCountFlagBits samples)
+{
+#if defined(VK_KHR_fragment_shading_rate) && defined(VK_KHR_create_renderpass2)
+	fragment_shading_rate_sample_count = samples;
+	fragment_shading_rate_sample_query_known = true;
+	fragment_shading_rate_1x1_supported = false;
+	fragment_shading_rate_2x2_supported = false;
+	fragment_shading_rate_4x4_supported = false;
+	if (!fpGetPhysicalDeviceFragmentShadingRatesKHR || !vulkan_globals.openxr_fragment_shading_rate_available)
+		return false;
+
+	uint32_t rate_count = 0;
+	if (fpGetPhysicalDeviceFragmentShadingRatesKHR (vulkan_physical_device, &rate_count, NULL) != VK_SUCCESS || !rate_count || rate_count > 256)
+		return false;
+	VkPhysicalDeviceFragmentShadingRateKHR *rates = Mem_Alloc (sizeof (*rates) * rate_count);
+	for (uint32_t i = 0; i < rate_count; ++i)
+	{
+		rates[i].sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FRAGMENT_SHADING_RATE_KHR;
+		rates[i].pNext = NULL;
+	}
+	const VkResult result = fpGetPhysicalDeviceFragmentShadingRatesKHR (vulkan_physical_device, &rate_count, rates);
+	if (result == VK_SUCCESS)
+	{
+		for (uint32_t i = 0; i < rate_count; ++i)
+		{
+			if (!(rates[i].sampleCounts & samples))
+				continue;
+			if (rates[i].fragmentSize.width == 1 && rates[i].fragmentSize.height == 1)
+				fragment_shading_rate_1x1_supported = true;
+			else if (rates[i].fragmentSize.width == 2 && rates[i].fragmentSize.height == 2)
+				fragment_shading_rate_2x2_supported = true;
+			else if (rates[i].fragmentSize.width == 4 && rates[i].fragmentSize.height == 4)
+				fragment_shading_rate_4x4_supported = true;
+		}
+	}
+	Mem_Free (rates);
+	return result == VK_SUCCESS && fragment_shading_rate_1x1_supported &&
+		(fragment_shading_rate_2x2_supported || fragment_shading_rate_4x4_supported);
+#else
+	(void)samples;
+	return false;
+#endif
+}
+
+static qboolean GL_FoveationRequestedActive (int render_width, int render_height)
+{
+	const int mode = VRF_RequestedMode (vr_foveation.value);
+	const qboolean requested = mode == VRF_MODE_FIXED ||
+		(mode == VRF_MODE_EYE_TRACKED && VRF_EyeTrackingEnabled (vr_eye_tracking.value) && VRXR_GazeSupported ());
+	if (!vulkan_globals.stereo_active || !vulkan_globals.openxr_fragment_shading_rate_available || vulkan_globals.supersampling || !requested)
+		return false;
+
+#if defined(VK_KHR_fragment_shading_rate) && defined(VK_KHR_create_renderpass2)
+	if (fragment_shading_rate_sample_query_known && fragment_shading_rate_sample_count == vulkan_globals.sample_count &&
+		(!fragment_shading_rate_1x1_supported || (!fragment_shading_rate_2x2_supported && !fragment_shading_rate_4x4_supported)))
+		return false;
+	unsigned int width, height;
+	const VkExtent2D texel_size = vulkan_globals.openxr_fragment_shading_rate_texel_size;
+	if (render_width <= 0 || render_height <= 0 || !fragment_shading_rate_image_format_properties.maxExtent.width ||
+		!fragment_shading_rate_image_format_properties.maxExtent.height ||
+		!VRF_RateMapExtent (render_width, texel_size.width, &width) || !VRF_RateMapExtent (render_height, texel_size.height, &height) ||
+		width > fragment_shading_rate_image_format_properties.maxExtent.width ||
+		height > fragment_shading_rate_image_format_properties.maxExtent.height ||
+		fragment_shading_rate_image_format_properties.maxArrayLayers <
+			(vulkan_globals.openxr_layered_shading_rate_attachments ? 2u : 1u))
+		return false;
+	const uint32_t layers = vulkan_globals.openxr_layered_shading_rate_attachments ? 2u : 1u;
+	if ((size_t)width > SIZE_MAX / height)
+		return false;
+	const size_t tile_count = (size_t)width * height;
+	if (tile_count > SIZE_MAX / layers || tile_count * layers > INT_MAX)
+		return false;
+#else
+	(void)render_width;
+	(void)render_height;
+	return false;
+#endif
+	return true;
 }
 
 static void GL_OpenXRCreationFailed (void)
@@ -1478,8 +1590,17 @@ static void GL_InitDevice (void)
 
 		Mem_Free (device_extensions);
 	}
+#if defined(VK_KHR_fragment_shading_rate) && defined(VK_KHR_create_renderpass2)
+	if (openxr_vulkan_binding && fragment_shading_rate_extension)
+		fpGetPhysicalDeviceFragmentShadingRatesKHR =
+			(PFN_vkGetPhysicalDeviceFragmentShadingRatesKHR)fpGetInstanceProcAddr (vulkan_instance, "vkGetPhysicalDeviceFragmentShadingRatesKHR");
+#endif
 	fragment_shading_rate_usable = openxr_vulkan_binding && fragment_shading_rate_extension &&
-		(create_renderpass2_core || create_renderpass2_extension);
+		(create_renderpass2_core || create_renderpass2_extension)
+#if defined(VK_KHR_fragment_shading_rate) && defined(VK_KHR_create_renderpass2)
+		&& fpGetPhysicalDeviceFragmentShadingRatesKHR != NULL
+#endif
+		;
 
 	const char *vendor = NULL;
 	ZEROED_STRUCT (VkPhysicalDeviceDriverProperties, driver_properties);
@@ -1669,6 +1790,7 @@ static void GL_InitDevice (void)
 			(shading_rate_image_properties.sampleCounts & VK_SAMPLE_COUNT_1_BIT) != 0)
 		{
 			fragment_shading_rate_feature_enabled = true;
+			fragment_shading_rate_image_format_properties = shading_rate_image_properties;
 			fragment_shading_rate_layered = fragment_shading_rate_properties.layeredShadingRateAttachments &&
 				shading_rate_image_properties.maxArrayLayers >= 2;
 		}
@@ -2323,6 +2445,7 @@ static void GL_CreateColorBuffer (void)
 			break;
 		}
 	}
+	GL_QueryFragmentShadingRatesForSamples (vulkan_globals.sample_count);
 
 	if (vulkan_globals.sample_count != VK_SAMPLE_COUNT_1_BIT)
 	{
@@ -2386,6 +2509,129 @@ static void GL_CreateColorBuffer (void)
 
 	if (R_UseOIT ())
 		GL_CreateOITBuffers ();
+}
+
+static qboolean GL_CreateFragmentShadingRateImage (void)
+{
+#if defined(VK_KHR_fragment_shading_rate) && defined(VK_KHR_create_renderpass2)
+	if (!vulkan_globals.openxr_fragment_shading_rate_active || !vulkan_globals.stereo_active)
+		return false;
+	if (vulkan_globals.supersampling)
+	{
+		vulkan_globals.openxr_fragment_shading_rate_active = false;
+		Con_Printf ("OpenXR shading-rate map disabled while supersampling is active.\n");
+		return false;
+	}
+	if (!fragment_shading_rate_sample_query_known || fragment_shading_rate_sample_count != vulkan_globals.sample_count)
+		GL_QueryFragmentShadingRatesForSamples (vulkan_globals.sample_count);
+	if (!fragment_shading_rate_sample_query_known || fragment_shading_rate_sample_count != vulkan_globals.sample_count ||
+		!fragment_shading_rate_1x1_supported || (!fragment_shading_rate_2x2_supported && !fragment_shading_rate_4x4_supported))
+	{
+		vulkan_globals.openxr_fragment_shading_rate_active = false;
+		Con_Printf ("OpenXR shading-rate map disabled: no coarse rate supports the scene sample count.\n");
+		return false;
+	}
+
+	const VkExtent2D texel_size = vulkan_globals.openxr_fragment_shading_rate_texel_size;
+	unsigned int rate_width, rate_height;
+	if (vid.render_width <= 0 || vid.render_height <= 0 || !VRF_RateMapExtent (vid.render_width, texel_size.width, &rate_width) ||
+		!VRF_RateMapExtent (vid.render_height, texel_size.height, &rate_height))
+	{
+		vulkan_globals.openxr_fragment_shading_rate_active = false;
+		Con_Printf ("OpenXR shading-rate map disabled: invalid scene extent or texel size.\n");
+		return false;
+	}
+	const uint32_t layers = vulkan_globals.openxr_layered_shading_rate_attachments ? 2 : 1;
+	if (rate_width > fragment_shading_rate_image_format_properties.maxExtent.width ||
+		rate_height > fragment_shading_rate_image_format_properties.maxExtent.height ||
+		layers > fragment_shading_rate_image_format_properties.maxArrayLayers)
+	{
+		vulkan_globals.openxr_fragment_shading_rate_active = false;
+		Con_Printf ("OpenXR shading-rate map disabled: scene map exceeds Vulkan image limits.\n");
+		return false;
+	}
+	const size_t tile_count = (size_t)rate_width * rate_height;
+	if (tile_count > SIZE_MAX / layers || tile_count * layers > INT_MAX)
+	{
+		vulkan_globals.openxr_fragment_shading_rate_active = false;
+		Con_Printf ("OpenXR shading-rate map disabled: scene map is too large.\n");
+		return false;
+	}
+	fragment_shading_rate_map_size = tile_count * layers;
+	fragment_shading_rate_map = Mem_Alloc (fragment_shading_rate_map_size);
+	memset (fragment_shading_rate_map, 0, fragment_shading_rate_map_size);
+	fragment_shading_rate_image_extent = (VkExtent2D){rate_width, rate_height};
+	fragment_shading_rate_image_layers = layers;
+
+	ZEROED_STRUCT (VkImageCreateInfo, image_create_info);
+	image_create_info.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+	image_create_info.imageType = VK_IMAGE_TYPE_2D;
+	image_create_info.format = VK_FORMAT_R8_UINT;
+	image_create_info.extent.width = rate_width;
+	image_create_info.extent.height = rate_height;
+	image_create_info.extent.depth = 1;
+	image_create_info.mipLevels = 1;
+	image_create_info.arrayLayers = layers;
+	image_create_info.samples = VK_SAMPLE_COUNT_1_BIT;
+	image_create_info.tiling = VK_IMAGE_TILING_OPTIMAL;
+	image_create_info.usage = VK_IMAGE_USAGE_FRAGMENT_SHADING_RATE_ATTACHMENT_BIT_KHR | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+	VkResult result = vkCreateImage (vulkan_globals.device, &image_create_info, NULL, &fragment_shading_rate_image);
+	if (result != VK_SUCCESS)
+		Sys_Error ("Couldn't create OpenXR shading-rate image: %d", result);
+	GL_SetObjectName ((uint64_t)fragment_shading_rate_image, VK_OBJECT_TYPE_IMAGE, "OpenXR Shading Rate Map");
+
+	VkMemoryRequirements memory_requirements;
+	vkGetImageMemoryRequirements (vulkan_globals.device, fragment_shading_rate_image, &memory_requirements);
+	ZEROED_STRUCT (VkMemoryDedicatedAllocateInfoKHR, dedicated_allocation_info);
+	dedicated_allocation_info.sType = VK_STRUCTURE_TYPE_MEMORY_DEDICATED_ALLOCATE_INFO_KHR;
+	dedicated_allocation_info.image = fragment_shading_rate_image;
+	ZEROED_STRUCT (VkMemoryAllocateInfo, memory_allocate_info);
+	memory_allocate_info.allocationSize = memory_requirements.size;
+	memory_allocate_info.memoryTypeIndex = GL_MemoryTypeFromProperties (memory_requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, 0);
+	if (vulkan_globals.dedicated_allocation)
+		memory_allocate_info.pNext = &dedicated_allocation_info;
+	R_AllocateVulkanMemory (&fragment_shading_rate_image_memory, &memory_allocate_info, VULKAN_MEMORY_TYPE_DEVICE, &num_vulkan_misc_allocations);
+	result = vkBindImageMemory (vulkan_globals.device, fragment_shading_rate_image, fragment_shading_rate_image_memory.handle, 0);
+	if (result != VK_SUCCESS)
+		Sys_Error ("Couldn't bind OpenXR shading-rate image memory: %d", result);
+	GL_SetObjectName ((uint64_t)fragment_shading_rate_image_memory.handle, VK_OBJECT_TYPE_DEVICE_MEMORY, "OpenXR Shading Rate Map");
+
+	ZEROED_STRUCT (VkImageViewCreateInfo, image_view_create_info);
+	image_view_create_info.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+	image_view_create_info.image = fragment_shading_rate_image;
+	image_view_create_info.viewType = layers == 2 ? VK_IMAGE_VIEW_TYPE_2D_ARRAY : VK_IMAGE_VIEW_TYPE_2D;
+	image_view_create_info.format = VK_FORMAT_R8_UINT;
+	image_view_create_info.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+	image_view_create_info.subresourceRange.levelCount = 1;
+	image_view_create_info.subresourceRange.layerCount = layers;
+	result = vkCreateImageView (vulkan_globals.device, &image_view_create_info, NULL, &fragment_shading_rate_image_view);
+	if (result != VK_SUCCESS)
+		Sys_Error ("Couldn't create OpenXR shading-rate image view: %d", result);
+	GL_SetObjectName ((uint64_t)fragment_shading_rate_image_view, VK_OBJECT_TYPE_IMAGE_VIEW, "OpenXR Shading Rate Map View");
+	fragment_shading_rate_image_initialized = false;
+	return true;
+#else
+	return false;
+#endif
+}
+
+static void GL_DestroyFragmentShadingRateImage (void)
+{
+	if (fragment_shading_rate_image_view != VK_NULL_HANDLE)
+		vkDestroyImageView (vulkan_globals.device, fragment_shading_rate_image_view, NULL);
+	if (fragment_shading_rate_image != VK_NULL_HANDLE)
+		vkDestroyImage (vulkan_globals.device, fragment_shading_rate_image, NULL);
+	if (fragment_shading_rate_image_memory.handle != VK_NULL_HANDLE)
+		R_FreeVulkanMemory (&fragment_shading_rate_image_memory, &num_vulkan_misc_allocations);
+	if (fragment_shading_rate_map)
+		Mem_Free (fragment_shading_rate_map);
+	fragment_shading_rate_image = VK_NULL_HANDLE;
+	fragment_shading_rate_image_view = VK_NULL_HANDLE;
+	fragment_shading_rate_image_extent = (VkExtent2D){0, 0};
+	fragment_shading_rate_image_layers = 0;
+	fragment_shading_rate_map = NULL;
+	fragment_shading_rate_map_size = 0;
+	fragment_shading_rate_image_initialized = false;
 }
 
 static void GL_CreateOITImage (VkImage *image, vulkan_memory_t *memory, VkImageView *view, VkFormat format, const char *name)
@@ -3223,6 +3469,7 @@ static void GL_CreateFrameBuffers (void)
 		.mboit_b0 = mboit_b0_buffer_view,
 		.mboit_moments = mboit_moments0_buffer_view,
 		.mboit_color = mboit_color_buffer_view,
+		.fragment_shading_rate = fragment_shading_rate_image_view,
 		.swapchain_count = vulkan_globals.stereo_active ? openxr_image_count : num_swap_chain_images,
 		.swapchain = vulkan_globals.stereo_active ? openxr_image_views : swapchain_images_views,
 	};
@@ -3265,6 +3512,9 @@ static void GL_CreateRenderResources (void)
 	GL_CreateDepthBuffer ();
 	if (!vulkan_globals.stereo_active)
 		R_CreateSSAO (depth_buffer);
+	if (vulkan_globals.openxr_fragment_shading_rate_active && !GL_CreateFragmentShadingRateImage ())
+		vulkan_globals.openxr_fragment_shading_rate_active = false;
+	R_SetupRenderPasses ();
 	R_CreateRenderPasses ();
 	GL_CreateFrameBuffers ();
 	R_CreatePipelines ();
@@ -3317,6 +3567,7 @@ static void GL_DestroyRenderResources (void)
 
 	R_DestroyFrameBuffers ();
 	GL_DestroyXRImageViews ();
+	GL_DestroyFragmentShadingRateImage ();
 
 	if (scene_upscale_descriptor_set != VK_NULL_HANDLE)
 	{
@@ -3692,6 +3943,89 @@ void GL_EndXRFrame (void)
 	openxr_frame_submitted = false;
 }
 
+static void GL_PrepareFragmentShadingRateMap (void)
+{
+	if (!vulkan_globals.openxr_fragment_shading_rate_active || !fragment_shading_rate_map ||
+		fragment_shading_rate_image == VK_NULL_HANDLE)
+	{
+		VRF_ResetPolicy (&openxr_foveation_policy);
+		return;
+	}
+
+	const double requested_mode = key_dest == key_menu ? VRF_MODE_OFF : vr_foveation.value;
+	int mode = VRF_SelectMode (&openxr_foveation_policy, requested_mode, vr_eye_tracking.value, &openxr_frame);
+	if (!VRF_BuildRateMap (
+			fragment_shading_rate_map, fragment_shading_rate_map_size, vid.render_width, vid.render_height,
+			vulkan_globals.openxr_fragment_shading_rate_texel_size.width, vulkan_globals.openxr_fragment_shading_rate_texel_size.height,
+			fragment_shading_rate_image_extent.width, fragment_shading_rate_image_extent.height, fragment_shading_rate_image_layers,
+			mode, openxr_frame.views, &openxr_frame.gaze, fragment_shading_rate_2x2_supported, fragment_shading_rate_4x4_supported))
+	{
+		VRF_ResetPolicy (&openxr_foveation_policy);
+		mode = VRF_MODE_OFF;
+		VRF_BuildRateMap (
+			fragment_shading_rate_map, fragment_shading_rate_map_size, vid.render_width, vid.render_height,
+			vulkan_globals.openxr_fragment_shading_rate_texel_size.width, vulkan_globals.openxr_fragment_shading_rate_texel_size.height,
+			fragment_shading_rate_image_extent.width, fragment_shading_rate_image_extent.height, fragment_shading_rate_image_layers,
+			VRF_MODE_OFF, NULL, NULL, fragment_shading_rate_2x2_supported, fragment_shading_rate_4x4_supported);
+	}
+}
+
+static void GL_UploadFragmentShadingRateMap (void)
+{
+#if defined(VK_KHR_fragment_shading_rate) && defined(VK_KHR_create_renderpass2)
+	if (!vulkan_globals.openxr_fragment_shading_rate_active || fragment_shading_rate_image == VK_NULL_HANDLE ||
+		!fragment_shading_rate_map || !fragment_shading_rate_map_size)
+		return;
+
+	VkCommandBuffer command_buffer;
+	VkBuffer staging_buffer;
+	int staging_offset;
+	byte *staging_memory = R_StagingAllocate ((int)fragment_shading_rate_map_size, 1, &command_buffer, &staging_buffer, &staging_offset);
+	const VkImageSubresourceRange range = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, fragment_shading_rate_image_layers};
+	const VkImageMemoryBarrier before_copy = {
+		.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+		.srcAccessMask = fragment_shading_rate_image_initialized ? VK_ACCESS_FRAGMENT_SHADING_RATE_ATTACHMENT_READ_BIT_KHR : 0,
+		.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
+		.oldLayout = fragment_shading_rate_image_initialized ? VK_IMAGE_LAYOUT_FRAGMENT_SHADING_RATE_ATTACHMENT_OPTIMAL_KHR : VK_IMAGE_LAYOUT_UNDEFINED,
+		.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+		.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+		.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+		.image = fragment_shading_rate_image,
+		.subresourceRange = range,
+	};
+	const VkPipelineStageFlags before_stage = fragment_shading_rate_image_initialized
+		? VK_PIPELINE_STAGE_FRAGMENT_SHADING_RATE_ATTACHMENT_BIT_KHR : VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+	vkCmdPipelineBarrier (command_buffer, before_stage, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, NULL, 0, NULL, 1, &before_copy);
+
+	const VkBufferImageCopy copy = {
+		.bufferOffset = (VkDeviceSize)staging_offset,
+		.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, fragment_shading_rate_image_layers},
+		.imageExtent = {fragment_shading_rate_image_extent.width, fragment_shading_rate_image_extent.height, 1},
+	};
+	vkCmdCopyBufferToImage (command_buffer, staging_buffer, fragment_shading_rate_image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy);
+	const VkImageMemoryBarrier after_copy = {
+		.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+		.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
+		.dstAccessMask = VK_ACCESS_FRAGMENT_SHADING_RATE_ATTACHMENT_READ_BIT_KHR,
+		.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+		.newLayout = VK_IMAGE_LAYOUT_FRAGMENT_SHADING_RATE_ATTACHMENT_OPTIMAL_KHR,
+		.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+		.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+		.image = fragment_shading_rate_image,
+		.subresourceRange = range,
+	};
+	vkCmdPipelineBarrier (
+		command_buffer, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADING_RATE_ATTACHMENT_BIT_KHR,
+		0, 0, NULL, 0, NULL, 1, &after_copy);
+
+	R_StagingBeginCopy ();
+	memcpy (staging_memory, fragment_shading_rate_map, fragment_shading_rate_map_size);
+	R_StagingEndCopy ();
+	R_SubmitStagingBuffers ();
+	fragment_shading_rate_image_initialized = true;
+#endif
+}
+
 qboolean GL_BeginRendering (qboolean use_tasks, task_handle_t *begin_rendering_task, int *width, int *height)
 {
 	GL_OpenXRAttach ();
@@ -3702,12 +4036,16 @@ qboolean GL_BeginRendering (qboolean use_tasks, task_handle_t *begin_rendering_t
 	const oit_mode_t requested_oit_mode = GL_FrameOITModeForCvarValue (requested_oit_value);
 	const qboolean	 oit_mode_changed = (requested_oit_mode != frame_oit_mode);
 	frame_oit_mode = requested_oit_mode;
-	const qboolean render_pass_setup_changed = R_SetupRenderPasses ();
 
 	int render_width, render_height;
 	VID_GetRenderSize (&render_width, &render_height);
 	const qboolean render_size_changed = render_width != vid.render_width || render_height != vid.render_height;
-	if (vid.restart_next_frame || (render_resources_created && (oit_mode_changed || render_pass_setup_changed || render_size_changed)))
+	const qboolean foveation_active = GL_FoveationRequestedActive (render_width, render_height);
+	const qboolean foveation_active_changed = foveation_active != vulkan_globals.openxr_fragment_shading_rate_active;
+	vulkan_globals.openxr_fragment_shading_rate_active = foveation_active;
+	const qboolean render_pass_setup_changed = R_SetupRenderPasses ();
+	if (vid.restart_next_frame || foveation_active_changed ||
+		(render_resources_created && (oit_mode_changed || render_pass_setup_changed || render_size_changed)))
 	{
 		VID_Restart (false);
 		vid.restart_next_frame = false;
@@ -3729,6 +4067,10 @@ qboolean GL_BeginRendering (qboolean use_tasks, task_handle_t *begin_rendering_t
 	{
 		// Clean up an abandoned serial refresh before reusing command buffers.
 		VRXR_AbortFrame ();
+		const int requested_mode = VRF_RequestedMode (vr_foveation.value);
+		const int gaze_enabled = vulkan_globals.openxr_fragment_shading_rate_active && requested_mode == VRF_MODE_EYE_TRACKED &&
+			VRF_EyeTrackingEnabled (vr_eye_tracking.value) && VRXR_GazeSupported ();
+		VRXR_SetGazeEnabled (gaze_enabled);
 		const int begun = VRXR_BeginFrame (&openxr_frame);
 		if (openxr_frame.reference_changed)
 			R_InvalidateStereoReference ();
@@ -3737,31 +4079,40 @@ qboolean GL_BeginRendering (qboolean use_tasks, task_handle_t *begin_rendering_t
 			// A failure after action sync can leave a partially populated
 			// frame. Never replay its held buttons on the next host iteration.
 			memset (&openxr_frame, 0, sizeof (openxr_frame));
+			VRF_ResetPolicy (&openxr_foveation_policy);
 			return false;
 		}
 		if (!openxr_frame.should_render)
 		{
+			VRF_ResetPolicy (&openxr_foveation_policy);
 			VRXR_EndFrame ();
 			return false;
 		}
 		if (!VRXR_StereoClip (&openxr_frame, V_VRUnitsPerMetre (), 4.f, vulkan_globals.stereo_clip_from_center))
 		{
+			VRF_ResetPolicy (&openxr_foveation_policy);
 			VRXR_AbortFrame ();
 			return false;
 		}
 		vrxr_vulkan_eye_t image;
 		if (!VRXR_GetVulkanEye (0, &image) || image.index >= openxr_image_count)
 		{
+			VRF_ResetPolicy (&openxr_foveation_policy);
 			VRXR_AbortFrame ();
 			return false;
 		}
 		openxr_image_index = image.index;
 		openxr_frame_submitted = false;
 		vulkan_globals.stereo_descriptor_set = VK_NULL_HANDLE;
+		GL_PrepareFragmentShadingRateMap ();
 	}
 	*width = vid.width;
 	*height = vid.height;
 
+	// Submit the full map before a recording task can begin. Same-queue
+	// barriers order this rewrite after last frame's FSR reads and before this
+	// frame's scene pass.
+	GL_UploadFragmentShadingRateMap ();
 	if (use_tasks)
 		*begin_rendering_task = Task_AllocateAndAssignFunc (GL_BeginRenderingTask, NULL, 0);
 	else
