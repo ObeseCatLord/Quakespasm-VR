@@ -32,7 +32,7 @@ extern cvar_t r_drawflat, gl_fullbrights, r_lerpmodels, r_lerpmove, r_showtris; 
 extern cvar_t r_lerpturn;
 extern cvar_t cl_gun_fovscale, cl_gun_x, cl_gun_y, cl_gun_z;
 extern cvar_t vr_world_scale;
-extern qboolean V_TrackedViewmodelActive (void);
+extern qboolean V_UseTrackedView (void);
 
 // up to 16 color translated skins
 gltexture_t *playertextures[MAX_SCOREBOARD]; // johnfitz -- changed to an array of pointers
@@ -81,9 +81,9 @@ static VkDeviceSize GLARB_GetXYZOffset (entity_t *e, aliashdr_t *hdr, int pose)
 	return hdr->numverts_vbo * pose * sizeof (meshxyz_t) + xyzoffs;
 }
 
-static qboolean R_IsTrackedViewmodel (entity_t *e)
+static qboolean R_IsVRViewmodel (entity_t *e)
 {
-	return e == &cl.viewent && V_TrackedViewmodelActive ();
+	return e == &cl.viewent && V_UseTrackedView ();
 }
 
 static qboolean R_AliasMatrixIsFinite (const float model_matrix[16])
@@ -509,7 +509,7 @@ R_DrawAliasModel -- johnfitz -- almost completely rewritten
 /* -1 suppresses an invalid transform; 0/1 select the front-face winding. */
 static int R_AliasModelMatrix (entity_t *e, const aliashdr_t *paliashdr, lerpdata_t *lerpdata, float model_matrix[16])
 {
-	if (R_IsTrackedViewmodel (e))
+	if (R_IsVRViewmodel (e))
 	{
 		vec3_t origin, angles, header_origin, held_offset = {0.0f, 0.0f, 0.0f};
 		float header_scale[3], geometry_scale[3];
@@ -641,7 +641,7 @@ void R_DrawAliasModel (cb_context_t *cbx, entity_t *e, int *aliaspolys)
 	//
 	// cull it
 	//
-	if (!R_IsTrackedViewmodel (e) && R_CullModelForEntity (e))
+	if (!R_IsVRViewmodel (e) && R_CullModelForEntity (e))
 		return;
 
 	//
@@ -756,7 +756,7 @@ void R_DrawAliasModel_ShowTris (cb_context_t *cbx, entity_t *e)
 	//
 	// cull it
 	//
-	if (!R_IsTrackedViewmodel (e) && R_CullModelForEntity (e))
+	if (!R_IsVRViewmodel (e) && R_CullModelForEntity (e))
 		return;
 
 	//
@@ -796,7 +796,7 @@ void R_DrawAliasModel_ShowSkel (cb_context_t *cbx, entity_t *e)
 	R_SetupAliasFrame (e, paliashdr, &lerpdata);
 	R_GetEntityLerpedTransform (e, lerpdata.origin, lerpdata.angles);
 
-	if (!R_IsTrackedViewmodel (e) && R_CullModelForEntity (e))
+	if (!R_IsVRViewmodel (e) && R_CullModelForEntity (e))
 		return;
 
 	float model_matrix[16];

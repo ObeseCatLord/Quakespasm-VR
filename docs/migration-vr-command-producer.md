@@ -255,10 +255,12 @@ remains governed by `vr_gunmodelscale`, not the display-only `held_scale`.
 `VR_WeaponCalibrationLookupHeld` now exposes the existing slot's classic live
 cvars or enhanced held offsets and the matching multiplayer overlay. It keeps
 the donor's enhanced neutral scale independent of classic `held_scale`; an
-enhanced slot with no held offset resolves to zero. It is data access only: the
-tracked viewmodel pose and draw-matrix adapter have not yet been added.
-The donor's `vr_gunmodely` height adjustment is registered with its zero
-default for that adapter; registration alone does not alter rendering.
+enhanced slot with no held offset resolves to zero. The Vulkan alias draw now
+uses this lookup per instance, including `vr_gunmodely`, without changing the
+shared model header. Controller aim supplies a tracked hand pose; other VR aim
+modes retain the donor's native gun pose while using the same calibrated VR
+scale, offset, handedness and culling policy. The muzzle remains a separate
+command-side calibration.
 
 The [single calibration migration](migration-weapon-calibration-unification.md)
 records the target of one held and muzzle offset per weapon across solo and
@@ -314,3 +316,8 @@ view setup while leaving the runtime's head pose untouched. This proves the
 draw path is reached under a coherent synthetic sample, not image alignment
 or real-device tracking. The viewmodel pose deliberately has no private-wire
 protocol gate: single-player and ordinary servers need the same held gun.
+After broadening the render adapter to every VR aim mode, a separate focused
+head-aim/left-hand probe reached the calibrated classic shotgun alias matrix
+on 30 frames with `vr_aimmode 0`; `tracked_viewmodel_active` stayed false and
+the ordinary head-aim gun origin was retained. This checks the old aiming
+mode's draw path, not final image alignment or left-hand visual correctness.
