@@ -1,5 +1,23 @@
 # Migration boundary fixtures
 
+## VR weapon schema parser
+
+`vr_weapon_schema_fixture.c` exercises the bounded staging parser against the
+native `COM_ParseExBuffer` tokenizer from `common.c`. It covers installed id1
+and qbj3/ad-style entries, sequential global inheritance, donor aliases,
+ownership/stat mapping, enhanced offsets, malformed input and the 64-entry
+limit. Run it on Linux with:
+
+```sh
+cc -std=gnu11 -DUSE_SDL3 -D_GNU_SOURCE -Wall -Wextra -Werror \
+  -Wno-unused-parameter -Wno-sign-compare -Wno-missing-field-initializers \
+  -ffunction-sections -fdata-sections \
+  -IQuake tests/vr_weapon_schema_fixture.c Quake/vr_weapon_schema.c \
+  Quake/common.c -Wl,--gc-sections $(pkg-config --cflags --libs sdl3) -lm \
+  -o /tmp/quakespasm-vr-weapon-schema-fixture
+/tmp/quakespasm-vr-weapon-schema-fixture
+```
+
 `vr_openxr_vulkan_fixture.cpp` is reused from the product OpenXR branch at
 `3080841333fa94000df7e1fb9e549c7158685dd6`, adapted to the Vulkan-only 2.0 backend.
 It checks creation-result ownership, instance/device provenance, version

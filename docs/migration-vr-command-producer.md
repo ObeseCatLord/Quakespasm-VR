@@ -80,7 +80,8 @@ These helpers do not select the weapon or enable private commands.
 The canonical `vr_weapons.txt` has a `viewmodel` keyed entry and
 `muzzle_offset` for the vanilla shotgun, and mod files can override the same
 schema. Reuse the donor's parser/profile precedence through native
-`COM_LoadFile`/`Mem_Free` and `cl.viewent.model->name` adapters, rather than
+`COM_LoadFile`/`Mem_Free` and a command-time `STAT_WEAPON`/model-precache
+adapter, rather than
 shipping a shotgun-only offset or a second weapon registry. The donor also
 has multiplayer and enhanced-model offsets, adjustment commands, and QuakeC
 source compensation; each needs its existing selection rule before general
