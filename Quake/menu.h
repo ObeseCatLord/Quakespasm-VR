@@ -34,6 +34,7 @@ enum m_state_e
 	m_setup,
 	m_net,
 	m_options,
+	m_vroptions,
 	m_controller,
 	m_game,
 	m_sound,

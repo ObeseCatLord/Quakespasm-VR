@@ -80,6 +80,8 @@ cvar_t r_viewmodel_quake = {"r_viewmodel_quake", "0", CVAR_ARCHIVE_GAME};
 // Inherited Quakespasm VR scale/floor/comfort settings; keep their names and flags.
 cvar_t vr_world_scale = {"vr_world_scale", "1.0", CVAR_ARCHIVE};
 cvar_t vr_floor_offset = {"vr_floor_offset", "-16", CVAR_ARCHIVE};
+cvar_t vr_eye_tracking = {"vr_eye_tracking", "0", CVAR_ARCHIVE};
+cvar_t vr_foveation = {"vr_foveation", "0", CVAR_ARCHIVE};
 cvar_t vr_viewkick = {"vr_viewkick", "0", CVAR_NONE};
 cvar_t vr_aimmode = {"vr_aimmode", "7", CVAR_ARCHIVE};
 cvar_t vr_deadzone = {"vr_deadzone", "30", CVAR_ARCHIVE};
@@ -1412,6 +1414,8 @@ void V_Init (void)
 {
 	Cvar_RegisterVariable (&vr_world_scale);
 	Cvar_RegisterVariable (&vr_floor_offset);
+	Cvar_RegisterVariable (&vr_eye_tracking);
+	Cvar_RegisterVariable (&vr_foveation);
 	Cvar_RegisterVariable (&vr_viewkick);
 	Cvar_RegisterVariable (&vr_aimmode);
 	Cvar_RegisterVariable (&vr_deadzone);

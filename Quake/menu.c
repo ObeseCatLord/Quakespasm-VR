@@ -58,6 +58,7 @@ static void M_MPGameOptions_Draw (cb_context_t *cbx);
 static void M_Search_Draw (cb_context_t *cbx);
 static void M_ServerList_Draw (cb_context_t *cbx);
 static void M_Options_Draw (cb_context_t *cbx);
+static void M_VROptions_Draw (cb_context_t *cbx);
 static void M_Mods_Draw (cb_context_t *cbx);
 static void M_Maps_Draw (cb_context_t *cbx);
 static void M_Skill_Draw (cb_context_t *cbx);
@@ -77,6 +78,7 @@ static void M_MPGameOptions_Key (int key);
 static void M_Search_Key (int key);
 static void M_ServerList_Key (int key);
 static void M_Options_Key (int key);
+static void M_VROptions_Key (int key);
 static void M_Keys_Key (int key);
 static void M_Help_Key (int key);
 static void M_Mods_Key (int key);
@@ -2433,6 +2435,106 @@ static void M_SoundOptions_Draw (cb_context_t *cbx)
 }
 
 //=============================================================================
+/* VR OPTIONS MENU */
+
+enum
+{
+	VR_OPT_EYE_TRACKING,
+	VR_OPT_FOVEATION,
+	VR_OPTIONS_ITEMS
+};
+
+static int vr_options_cursor;
+
+static void M_Menu_VROptions_f (void)
+{
+	M_MenuChanged ();
+	IN_Deactivate (true);
+	key_dest = key_menu;
+	m_state = m_vroptions;
+	m_entersound = true;
+}
+
+static void M_VROptions_Adjust (int dir)
+{
+	if (dir)
+		S_LocalSound ("misc/menu3.wav");
+
+	switch (vr_options_cursor)
+	{
+	case VR_OPT_EYE_TRACKING:
+		Cvar_SetValueQuick (&vr_eye_tracking, vr_eye_tracking.value == 0 ? 1 : 0);
+		break;
+	case VR_OPT_FOVEATION:
+	{
+		int mode = CLAMP (0, (int)vr_foveation.value, 2);
+		mode = (mode + (dir > 0 ? 1 : 2)) % 3;
+		Cvar_SetValueQuick (&vr_foveation, (float)mode);
+		break;
+	}
+	}
+}
+
+static void M_VROptions_Key (int key)
+{
+	switch (key)
+	{
+	case K_MOUSE2:
+	case K_ESCAPE:
+	case K_BBUTTON:
+		M_Menu_Options_f ();
+		break;
+
+	case K_MOUSE1:
+	case K_ENTER:
+	case K_KP_ENTER:
+	case K_ABUTTON:
+		m_entersound = true;
+		M_VROptions_Adjust (1);
+		break;
+
+	case K_UPARROW:
+		S_LocalSound ("misc/menu1.wav");
+		vr_options_cursor = (vr_options_cursor + VR_OPTIONS_ITEMS - 1) % VR_OPTIONS_ITEMS;
+		break;
+
+	case K_DOWNARROW:
+		S_LocalSound ("misc/menu1.wav");
+		vr_options_cursor = (vr_options_cursor + 1) % VR_OPTIONS_ITEMS;
+		break;
+
+	case K_LEFTARROW:
+		M_VROptions_Adjust (-1);
+		break;
+
+	case K_RIGHTARROW:
+		M_VROptions_Adjust (1);
+		break;
+	}
+}
+
+static void M_VROptions_Draw (cb_context_t *cbx)
+{
+	static const char *const foveation_modes[] = {"off", "fixed", "eye tracked"};
+	qpic_t *p;
+	const int top = MENU_TOP;
+	const int foveation = CLAMP (0, (int)vr_foveation.value, 2);
+
+	M_DrawTransPic (cbx, 16, 4, Draw_CachePic ("gfx/qplaque.lmp"));
+	p = Draw_CachePic ("gfx/p_option.lmp");
+	M_DrawPic (cbx, (320 - p->width) / 2, 4, p);
+
+	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * VR_OPT_EYE_TRACKING, "Eye Tracking");
+	M_DrawCheckbox (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * VR_OPT_EYE_TRACKING, vr_eye_tracking.value != 0);
+
+	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * VR_OPT_FOVEATION, "Foveation");
+	M_Print (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * VR_OPT_FOVEATION, foveation_modes[foveation]);
+
+	M_Mouse_UpdateListCursor (&vr_options_cursor, MENU_CURSOR_X, 320, top, CHARACTER_SIZE, VR_OPTIONS_ITEMS, 0);
+	Draw_Character (cbx, MENU_CURSOR_X, top + vr_options_cursor * CHARACTER_SIZE, 12 + ((int)(realtime * 4) & 1));
+}
+
+//=============================================================================
 /* OPTIONS MENU */
 
 enum
@@ -2648,6 +2750,7 @@ enum
 	OPT_GAME = 0,
 	OPT_CONTROLS,
 	OPT_CONTROLLER,
+	OPT_VR,
 	OPT_VIDEO,
 	OPT_GRAPHICS,
 	OPT_SOUND,
@@ -2679,6 +2782,7 @@ static void M_Options_Draw (cb_context_t *cbx)
 	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * OPT_GAME, "Game");
 	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * OPT_CONTROLS, "Key Bindings");
 	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * OPT_CONTROLLER, "Controller");
+	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * OPT_VR, "VR Options");
 	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * OPT_VIDEO, "Video");
 	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * OPT_GRAPHICS, "Graphics");
 	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * OPT_SOUND, "Sound");
@@ -2718,6 +2822,9 @@ void M_Options_Key (int k)
 			break;
 		case OPT_CONTROLLER:
 			M_Menu_ControllerOptions_f ();
+			break;
+		case OPT_VR:
+			M_Menu_VROptions_f ();
 			break;
 		case OPT_DEFAULTS:
 			if (SCR_ModalMessage (
@@ -5309,6 +5416,10 @@ void M_Draw (cb_context_t *cbx)
 		M_Options_Draw (cbx);
 		break;
 
+	case m_vroptions:
+		M_VROptions_Draw (cbx);
+		break;
+
 	case m_controller:
 		M_ControllerOptions_Draw (cbx);
 		break;
@@ -5459,6 +5570,10 @@ void M_Keydown (int key, qboolean repeat)
 
 	case m_options:
 		M_Options_Key (key);
+		return;
+
+	case m_vroptions:
+		M_VROptions_Key (key);
 		return;
 
 	case m_controller:
