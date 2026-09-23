@@ -5399,7 +5399,8 @@ void M_SetVRPointerPosition (int x, int y, qboolean valid)
 	}
 
 	m_vr_pointer_override = true;
-	valid = valid && x >= 0 && x < 320 && y >= 0 && y < 200;
+	/* The menu canvas can extend beyond 320x200 when scaled or letterboxed.
+	 * The panel/ray owner supplies validity using the displayed canvas bounds. */
 	m_vr_pointer_moved = valid && (!m_vr_pointer_valid || m_vr_pointer_x != x || m_vr_pointer_y != y);
 	m_vr_pointer_update_pending = true;
 	m_mouse_moved = m_vr_pointer_moved;
