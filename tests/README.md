@@ -22,7 +22,11 @@ cc -std=gnu11 -DUSE_SDL3 -D_GNU_SOURCE -Wall -Wextra -Werror \
 classic cvar names and lifetimes, field-wise schema merging, live classic
 muzzle edits, classic/enhanced multiplayer overlays, invalid and missing
 profiles, reset behavior, and all 99 cvar slots. A full-slot insertion failure
-must leave the existing calibration and all free slots unchanged.
+must leave the existing calibration and all free slots unchanged. It also calls
+the production projectile source helper to check the pitched 8-unit forward
+and 16-unit world-up default, grenade origin, schema right/up/forward offsets,
+optional view height, self-origin overrides, and independence from MP muzzle
+overlays.
 
 ```sh
 cc -std=gnu11 -DUSE_SDL3 -D_GNU_SOURCE -Wall -Wextra -Werror \
@@ -30,6 +34,7 @@ cc -std=gnu11 -DUSE_SDL3 -D_GNU_SOURCE -Wall -Wextra -Werror \
   -ffunction-sections -fdata-sections -fsanitize=address,undefined \
   -fno-sanitize-recover=all -fno-omit-frame-pointer -IQuake \
   tests/vr_weapon_calibration_fixture.c Quake/vr_weapon_calibration.c \
+  Quake/vr_locomotion.c Quake/mathlib.c \
   -Wl,--gc-sections $(pkg-config --cflags --libs sdl3) -lm \
   -o /tmp/quakespasm-vr-weapon-calibration-fixture
 /tmp/quakespasm-vr-weapon-calibration-fixture

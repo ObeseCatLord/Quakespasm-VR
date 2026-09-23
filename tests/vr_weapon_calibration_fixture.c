@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 
 #define CALIBRATION_CVAR_COUNT \
 	(VR_WEAPON_CALIBRATION_MAX_SLOTS * \
@@ -26,6 +27,19 @@ byte *COM_LoadFile(const char *path, unsigned int *path_id)
 void Mem_Free(const void *ptr)
 {
 	(void)ptr;
+}
+
+char com_gamedir[MAX_OSPATH];
+
+const char *COM_SkipPath(const char *pathname)
+{
+	const char *slash = strrchr(pathname, '/');
+	return slash ? slash + 1 : pathname;
+}
+
+int q_strcasecmp(const char *left, const char *right)
+{
+	return strcasecmp(left, right);
 }
 
 qboolean VR_WeaponSchemaParse(const char *text,
@@ -120,11 +134,22 @@ int main(void)
 	vr_weapon_schema_entry_t too_many[VR_WEAPON_CALIBRATION_MAX_SLOTS + 1];
 	vec3_t muzzle;
 	vec3_t held;
+	vec3_t projectile_source;
+	vec3_t aim_angles;
 	float held_scale;
 	size_t index;
 
 	VR_WeaponCalibrationInit();
 	assert(registered_cvar_count == CALIBRATION_CVAR_COUNT);
+	aim_angles[0] = 30.0f;
+	aim_angles[1] = 0.0f;
+	aim_angles[2] = 0.0f;
+	VR_WeaponCalibrationProjectileSourceOffset(NULL, IT_ROCKET_LAUNCHER,
+											   aim_angles, 24.0f, projectile_source);
+	AssertVector(projectile_source, 6.928203f, 0.0f, 12.0f);
+	VR_WeaponCalibrationProjectileSourceOffset(NULL, IT_GRENADE_LAUNCHER,
+											   aim_angles, 24.0f, projectile_source);
+	AssertVector(projectile_source, 0.0f, 0.0f, 0.0f);
 	assert(!strcmp(vr_weapon_offset[0].name, "vr_wofs_x_01"));
 	assert(!strcmp(vr_weapon_offset[4].name, "vr_wofs_id_01"));
 	assert(!strcmp(vr_weapon_muzzle_offset[0].name, "vr_wmuzzle_x_01"));
@@ -180,6 +205,12 @@ int main(void)
 	entry.enhanced_mp_muzzle_offset[0] = 1.0f;
 	entry.enhanced_mp_muzzle_offset[1] = 2.0f;
 	entry.enhanced_mp_muzzle_offset[2] = 3.0f;
+	entry.has_muzzle_source_offset = true;
+	entry.muzzle_source_offset[0] = 2.0f;
+	entry.muzzle_source_offset[1] = 3.0f;
+	entry.muzzle_source_offset[2] = 4.0f;
+	entry.has_muzzle_source_viewofs = true;
+	entry.muzzle_source_viewofs = true;
 	assert(VR_WeaponCalibrationApplySchema(&entry, 1));
 	assert(VR_WeaponCalibrationLookupHeld("progs/v_shot.mdl", false, false,
 										  held, &held_scale));
@@ -209,6 +240,46 @@ int main(void)
 	assert(VR_WeaponCalibrationLookupMuzzle("progs/v_shot.mdl", true, true,
 										 muzzle));
 	AssertVector(muzzle, 1.0f, 2.0f, 23.0f);
+
+	/* The schema source offset is right/up/forward. MP muzzle overlays remain
+	 * independent: this profile has both classic and enhanced MP overlay data. */
+	aim_angles[0] = 0.0f;
+	aim_angles[1] = 90.0f;
+	aim_angles[2] = 0.0f;
+	VR_WeaponCalibrationProjectileSourceOffset("progs/v_shot.mdl",
+		IT_ROCKET_LAUNCHER, aim_angles, 10.0f, projectile_source);
+	AssertVector(projectile_source, 2.0f, 12.0f, 29.0f);
+
+	memset(&update, 0, sizeof(update));
+	SetPath(&update, "progs/v_shot.mdl");
+	update.has_muzzle_source_viewofs = true;
+	update.muzzle_source_viewofs = false;
+	assert(VR_WeaponCalibrationApplySchema(&update, 1));
+	VR_WeaponCalibrationProjectileSourceOffset("progs/v_shot.mdl",
+		IT_ROCKET_LAUNCHER, aim_angles, 10.0f, projectile_source);
+	AssertVector(projectile_source, 2.0f, 12.0f, 19.0f);
+
+	/* An explicit schema true overrides the ordinary weapon default; explicit
+	 * false can in turn override the grenade's self-origin default. */
+	memset(&update, 0, sizeof(update));
+	SetPath(&update, "progs/v_shot.mdl");
+	update.has_spawn_at_self_origin = true;
+	update.spawn_at_self_origin = true;
+	assert(VR_WeaponCalibrationApplySchema(&update, 1));
+	VR_WeaponCalibrationProjectileSourceOffset("progs/v_shot.mdl",
+		IT_ROCKET_LAUNCHER, aim_angles, 10.0f, projectile_source);
+	AssertVector(projectile_source, 2.0f, 4.0f, 3.0f);
+
+	memset(&update, 0, sizeof(update));
+	SetPath(&update, "progs/v_shot.mdl");
+	update.has_spawn_at_self_origin = true;
+	update.spawn_at_self_origin = false;
+	update.has_muzzle_source_viewofs = true;
+	update.muzzle_source_viewofs = true;
+	assert(VR_WeaponCalibrationApplySchema(&update, 1));
+	VR_WeaponCalibrationProjectileSourceOffset("progs/v_shot.mdl",
+		IT_GRENADE_LAUNCHER, aim_angles, 10.0f, projectile_source);
+	AssertVector(projectile_source, 2.0f, 12.0f, 29.0f);
 
 	Cvar_SetQuick(&vr_weapon_muzzle_offset[0], "9");
 	Cvar_SetQuick(&vr_weapon_offset[0], "-4.25");
