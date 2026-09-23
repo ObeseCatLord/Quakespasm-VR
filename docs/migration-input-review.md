@@ -109,3 +109,16 @@ verifying the actual native and simulated-Monado result files. All three P2
 findings above were closed with no remaining blocking findings in that fix
 scope. This acceptance does not expand the device, platform, performance or
 full-migration claims.
+
+## Local-player sound haptic checkpoint
+
+The inherited local-player interaction-sound filter now drives the existing
+OpenXR haptic output from a fully decoded sound packet. It keeps footsteps and
+player damage sounds out, excludes remote/world entities, and maps the logical
+weapon hand through the existing left-handed setting. The archived `vr_haptic`
+setting defaults on and suppresses this path when off; desktop and unattached
+OpenXR sessions remain inert. The pulse is the inherited five milliseconds.
+Paired akimbo off-hand pulses, weapon-wheel/menu feedback and a VR-menu toggle
+remain with their respective presentation ports. The strict Linux Meson and
+Makefile `vkquake` builds pass after adding the already-used weapon schema and
+calibration objects to the Makefile. No device haptic behavior is claimed yet.

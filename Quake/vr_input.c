@@ -42,12 +42,6 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include <math.h>
 #include <string.h>
 
-enum
-{
-	VR_ROLE_LEFT,
-	VR_ROLE_RIGHT
-};
-
 typedef struct
 {
 	qboolean owned[MAX_KEYS];
@@ -67,6 +61,7 @@ typedef struct
 } vr_input_context_t;
 
 static cvar_t vr_lefthanded = {"vr_lefthanded", "0", CVAR_ARCHIVE};
+static cvar_t vr_haptic = {"vr_haptic", "1", CVAR_ARCHIVE};
 static cvar_t vr_joystick_axis_deadzone = {"vr_joystick_axis_deadzone", "0.25", CVAR_ARCHIVE};
 static cvar_t vr_joystick_axis_menu_deadzone_extra = {"vr_joystick_axis_menu_deadzone_extra", "0.25", CVAR_ARCHIVE};
 static cvar_t vr_joystick_axis_exponent = {"vr_joystick_axis_exponent", "1", CVAR_ARCHIVE};
@@ -211,7 +206,19 @@ static int VR_InputPhysicalHandForRole (int role)
 
 int VR_InputDominantPhysicalHand (void)
 {
-	return VR_InputPhysicalHandForRole (VR_ROLE_RIGHT);
+	return VR_InputPhysicalHandForRole (VR_INPUT_ROLE_RIGHT);
+}
+
+void VR_InputTriggerHaptic (int logical_role, float duration_seconds, float amplitude)
+{
+	if (!vr_haptic.value ||
+		(logical_role != VR_INPUT_ROLE_LEFT && logical_role != VR_INPUT_ROLE_RIGHT) ||
+		!GL_OpenXRFrame ())
+		return;
+
+	/* GL_OpenXRFrame gates desktop and unattached sessions. VRXR_Haptic also
+	 * checks that the active OpenXR session is running and focused. */
+	VRXR_Haptic (VR_InputPhysicalHandForRole (logical_role), duration_seconds, amplitude);
 }
 
 static int VR_InputMovementMode (void)
@@ -429,7 +436,7 @@ static void VR_InputGateHand (int hand)
 {
 	vr_input_hands[hand].wait_neutral = true;
 	vr_input_hands[hand].trigger_down = false;
-	if (VR_InputRoleForPhysicalHand (hand) == VR_ROLE_LEFT)
+	if (VR_InputRoleForPhysicalHand (hand) == VR_INPUT_ROLE_LEFT)
 	{
 		VR_InputGateMovement (&cl.pendingcmd);
 		cl.pendingcmd.vr_pending_angles_valid = false;
@@ -518,7 +525,7 @@ static void VR_InputBuildHandDesired (qboolean desired[2][MAX_KEYS], int hand,
 	const vrxr_input_t *input, const vr_input_context_t *context)
 {
 	vr_input_hand_state_t *state = &vr_input_hands[hand];
-	const qboolean logical_left = state->role == VR_ROLE_LEFT;
+	const qboolean logical_left = state->role == VR_INPUT_ROLE_LEFT;
 	const uint32_t pressed = input->pressed;
 	const uint32_t selected_click = state->profile == VRXR_PROFILE_VIVE ? VRXR_BUTTON_PAD : VRXR_BUTTON_STICK;
 	const float axis_extra = VR_InputFiniteCvar (&vr_joystick_axis_menu_deadzone_extra, 0.25f);
@@ -620,6 +627,7 @@ static qboolean VR_InputEmitDesired (qboolean desired[2][MAX_KEYS],
 void VR_InputInit (void)
 {
 	Cvar_RegisterVariable (&vr_lefthanded);
+	Cvar_RegisterVariable (&vr_haptic);
 	Cvar_RegisterVariable (&vr_joystick_axis_deadzone);
 	Cvar_RegisterVariable (&vr_joystick_axis_menu_deadzone_extra);
 	Cvar_RegisterVariable (&vr_joystick_axis_exponent);
@@ -725,7 +733,7 @@ void VR_InputCommands (const vrxr_frame_t *frame)
 
 		if (context.input_grab || context.destination == key_game || context.destination == key_menu)
 			VR_InputBuildHandDesired (desired, hand, input, &context);
-		else if (role == VR_ROLE_LEFT && (input->pressed & (VRXR_BUTTON_SECONDARY | VRXR_BUTTON_MENU)))
+		else if (role == VR_INPUT_ROLE_LEFT && (input->pressed & (VRXR_BUTTON_SECONDARY | VRXR_BUTTON_MENU)))
 			// Preserve native Escape navigation from the startup console/chat
 			// without dispatching gameplay bindings into those destinations.
 			VR_InputAddKey (desired, hand, K_ESCAPE);
@@ -779,7 +787,7 @@ void VR_InputMove (usercmd_t *pending)
 	const vrxr_frame_t *frame = GL_OpenXRFrame ();
 	const qboolean turn180 = vr_input_turn180_queued;
 	const int mode = VR_InputMovementMode ();
-	const int offhand = VR_InputPhysicalHandForRole (VR_ROLE_LEFT);
+	const int offhand = VR_InputPhysicalHandForRole (VR_INPUT_ROLE_LEFT);
 	const int dominant = 1 - offhand;
 	vrxr_input_t offhand_input, dominant_input;
 	vec3_t selected_angles, command_angles, contribution;

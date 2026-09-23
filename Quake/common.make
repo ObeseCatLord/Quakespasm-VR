@@ -283,6 +283,8 @@ OBJS := strlcat.o \
 	view.o \
 	vr_input.o \
 	vr_locomotion.o \
+	vr_weapon_schema.o \
+	vr_weapon_calibration.o \
 	wad.o \
 	cmd.o \
 	common.o \

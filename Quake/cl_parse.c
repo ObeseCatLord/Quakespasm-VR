@@ -26,6 +26,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "quakedef.h"
 #include "bgmusic.h"
 #include "steam.h"
+#include "vr_input.h"
 
 const char *svc_strings[128] = {
 	"svc_bad", "svc_nop", "svc_disconnect", "svc_updatestat",
@@ -958,6 +959,51 @@ static void CLFTE_ParseEntitiesUpdate (void)
 CL_ParseStartSoundPacket
 ==================
 */
+enum { CL_SOUND_CHANNEL_VOICE = 2 };
+
+static qboolean CL_IsExcludedLocalHapticSample (int channel, const char *sample)
+{
+	const char *basename;
+	qboolean player_sample;
+
+	if (!sample || !sample[0])
+		return false;
+	basename = strrchr (sample, '/');
+	basename = basename ? basename + 1 : sample;
+	player_sample = q_strcasestr (sample, "player/") != NULL ||
+		q_strcasestr (sample, "players/") != NULL;
+
+	/* Keep locomotion and player-damage sounds out of interaction feedback.
+	 * Channel numbers are mod conventions, so classify these by sample name. */
+	return q_strcasestr (sample, "footstep") != NULL ||
+		q_strcasestr (sample, "waterstep") != NULL ||
+		q_strcasestr (sample, "steps/") != NULL ||
+		!q_strncasecmp (basename, "foot", 4) ||
+		!q_strncasecmp (basename, "walk", 4) ||
+		((channel == CL_SOUND_CHANNEL_VOICE || player_sample) &&
+		 (q_strcasestr (basename, "pain") != NULL ||
+		  q_strcasestr (basename, "drown") != NULL ||
+		  q_strcasestr (basename, "burn") != NULL));
+}
+
+static qboolean CL_IsLocalPlayerHapticSound (int ent, int channel,
+	const char *sample)
+{
+	return ent == cl.viewentity &&
+		!CL_IsExcludedLocalHapticSample (channel, sample);
+}
+
+static void CL_TriggerLocalPlayerSoundHaptic (int ent, int channel,
+	const char *sample)
+{
+	if (!CL_IsLocalPlayerHapticSound (ent, channel, sample))
+		return;
+
+	/* The paired viewmodel query has not been migrated; retain only the
+	 * inherited dominant-hand interaction pulse. */
+	VR_InputTriggerHaptic (VR_INPUT_ROLE_RIGHT, 0.005f, 1.0f);
+}
+
 static void CL_ParseStartSoundPacket (void)
 {
 	vec3_t pos;
@@ -1036,6 +1082,11 @@ static void CL_ParseStartSoundPacket (void)
 
 	for (i = 0; i < 3; i++)
 		pos[i] = MSG_ReadCoord (cl.protocolflags);
+
+	if (!msg_badread && sound_num > 0 && sound_num < MAX_SOUNDS &&
+		cl.sound_precache[sound_num] && cl.sound_precache[sound_num]->name[0])
+		CL_TriggerLocalPlayerSoundHaptic (ent, channel,
+			cl.sound_precache[sound_num]->name);
 
 	S_StartSound (ent, channel, cl.sound_precache[sound_num], pos, volume / 255.0, attenuation);
 }

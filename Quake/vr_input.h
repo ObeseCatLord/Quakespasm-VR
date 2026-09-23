@@ -26,11 +26,18 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "protocol.h"
 #include "vr_openxr.h"
 
+enum
+{
+	VR_INPUT_ROLE_LEFT,
+	VR_INPUT_ROLE_RIGHT
+};
+
 void VR_InputInit (void);
 void VR_InputCommands (const vrxr_frame_t *frame);
 void VR_InputMove (usercmd_t *pending);
 void VR_InputApplyPending (usercmd_t *cmd);
 int VR_InputDominantPhysicalHand (void);
+void VR_InputTriggerHaptic (int logical_role, float duration_seconds, float amplitude);
 qboolean VR_InputSuppressUncalibratedAttack (const usercmd_t *cmd);
 void VR_InputInvalidateMotion (void);
 void VR_InputClear (void);
