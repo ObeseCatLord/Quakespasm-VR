@@ -332,6 +332,50 @@ anchor when the console is not forced up, matching the inherited VR draw
 order. A disconnected loading screen remains loading art only. Headset visual
 proof remains open.
 
+## Native solo intermission and finale overlays
+
+The inherited `VR_Draw2D` sets its logical surface to 320×200 and selects
+`Sbar_IntermissionOverlay` for `cl.intermission == 1 && key_dest == key_game`,
+then `Sbar_FinaleOverlay` for `cl.intermission == 2 && key_dest == key_game`
+(`../quakespasm-openvr/Quake/vr.c:10539-10556, 10670-10676`). Both calls run
+on the donor's centered menu surface. The vkQuake calls remain the layout owner:
+`Sbar_IntermissionOverlay` selects `CANVAS_MENU` for its native solo case and
+`Sbar_FinaleOverlay` selects `CANVAS_MENU` (`Quake/sbar.c:1577-1643,
+1648-1655`).
+
+`SCR_VRMenuPrepare` now requests the existing tracked UI panel for only the
+connected, fully signed-on native solo `GAME_COOP` intermission/finale state. Modal and loading selection
+still precede it. The existing `vr_menu_panel.world_from_ndc` transform wraps
+the original `Sbar_*Overlay` calls in `SCR_DrawGUI`; the finale center string
+stays in that same scope. `CANVAS_MENU` continues to set its centered
+320×200 ortho and viewport (`Quake/gl_draw.c:1438-1443`), while the scoped
+panel matrix supplies the tracked pose and physical scale. No pointer ray or
+trigger path is enabled because pointer mapping requires `VR_PANEL_MENU` and
+trigger dispatch requires `key_dest == key_menu` (`Quake/gl_screen.c:1712,
+2273-2275`). When stereo or a valid tracked panel is unavailable, the original
+unwrapped draw call remains the fallback.
+
+This adapter is stereo-only: `SCR_VRMenuPrepare` selects any tracked mode only
+after `stereo_active`, a current OpenXR frame, and `should_render` pass; the
+draw scope also checks `stereo_active` and a valid intermission panel
+(`Quake/gl_screen.c:1670-1678, 1981-1982, 2078-2093`). On desktop the new panel
+flag is false, the existing tile-clear call still runs, and both Sbar calls
+execute directly on their original canvas. This UI-only edit does not change
+network or gameplay code, so the existing cross-play protocol behavior is
+unchanged by this patch.
+
+The eligibility guard excludes multiplayer/deathmatch and excludes the
+intermission `CSQC_DrawScores` route when that callback is selected; those
+independent canvas contracts retain their existing flat draw path. The finale
+path is panelized only for single-player cooperative mode.
+
+| Approach | Reuse and cost | Decision |
+| --- | --- | --- |
+| Wrap the existing overlay calls in the tracked panel | Reuses the menu anchor, `GL_BeginUIPanel`, `CANVAS_MENU` transform/clipping, and vkQuake overlay layout. | **Adopt.** |
+| Add an intermission renderer or another panel policy | Duplicates overlay layout, canvas placement, and tracking state without resolving an incompatibility in the native solo `CANVAS_MENU` path. | **Reject.** |
+
+Headset placement and clipping still need visual verification.
+
 ## CSQC error-boundary senior review
 
 Astra Max xhigh reviewed the recoverable `Host_Error` path against the GUI task,

@@ -1591,7 +1591,8 @@ typedef enum
 	VR_PANEL_MENU,
 	VR_PANEL_CONSOLE,
 	VR_PANEL_MODAL,
-	VR_PANEL_LOADING
+	VR_PANEL_LOADING,
+	VR_PANEL_INTERMISSION
 } vr_panel_mode_t;
 
 /* SCR_SetupFrame publishes one immutable pose for both eye GUI draws. The
@@ -1646,13 +1647,34 @@ static qboolean SCR_VRMenuRayHit (const vec3_t origin, const vec3_t direction,
 	return M_VRPointerPixelInMenuCanvas (*pixel_x, *pixel_y);
 }
 
+/* Sbar_IntermissionOverlay has CSQC and deathmatch canvases in addition to
+ * the native solo menu canvas. Only the native solo intermission/finale
+ * contract fits this tracked 320x200 panel. */
+static qboolean SCR_VRNativeSoloIntermission (void)
+{
+	if (cls.state != ca_connected || cls.signon != SIGNONS || !cl.worldmodel ||
+		key_dest != key_game || cl.maxclients != 1 || cl.gametype != GAME_COOP ||
+		(cl.intermission != 1 && cl.intermission != 2))
+		return false;
+
+	/* Sbar_IntermissionOverlay dispatches CSQC_DrawScores on CANVAS_CSQC for
+	 * this style. Leave that independent canvas on the original flat path. */
+	if (cl.intermission == 1 && scr_style.value < 1.0f && cl.qcvm.extfuncs.CSQC_DrawScores)
+		return false;
+
+	return true;
+}
+
 static void SCR_VRMenuPrepare (void)
 {
 	const vrxr_frame_t *frame = GL_OpenXRFrame ();
 	const qboolean frame_available = vulkan_globals.stereo_active && frame && frame->should_render;
 	const qboolean loading = scr_drawloading || (scr_drawstartuploading && cls.state == ca_disconnected);
+	/* The first selector keeps every tracked panel mode, including this one,
+	 * out of the ordinary desktop GUI path. */
 	const vr_panel_mode_t requested_mode = !frame_available ? VR_PANEL_NONE :
 		scr_drawdialog ? VR_PANEL_MODAL : loading ? VR_PANEL_LOADING :
+		SCR_VRNativeSoloIntermission () ? VR_PANEL_INTERMISSION :
 		key_dest == key_menu ? (m_state != m_none ? VR_PANEL_MENU : VR_PANEL_NONE) :
 		scr_con_current > 0 ? VR_PANEL_CONSOLE : VR_PANEL_NONE;
 	vec3_t ray_origin, ray_direction, forward, right, up, down, normal;
@@ -1957,6 +1979,8 @@ static void SCR_DrawGUI (void *unused)
 		vr_menu_panel_mode == VR_PANEL_MODAL && vr_menu_panel.valid;
 	const qboolean loading_panel_valid = vulkan_globals.stereo_active &&
 		vr_menu_panel_mode == VR_PANEL_LOADING && vr_menu_panel.valid;
+	const qboolean intermission_panel_valid = vulkan_globals.stereo_active &&
+		vr_menu_panel_mode == VR_PANEL_INTERMISSION && vr_menu_panel.valid;
 	volatile qboolean recovered_csqc_error = false;
 	scr_csqc_error_phase = SCR_CSQC_ERROR_IDLE;
 	scr_draw_gui_owns_qc_mutex = false;
@@ -1969,7 +1993,7 @@ static void SCR_DrawGUI (void *unused)
 
 	// FIXME: only call this when needed
 	R_BeginDebugUtilsLabel (cbx, "2D");
-	if (!menu_panel_valid)
+	if (!menu_panel_valid && !intermission_panel_valid)
 		SCR_TileClear (cbx);
 
 	const int csqc_items_before = cl.stats[STAT_ITEMS];
@@ -2054,12 +2078,20 @@ static void SCR_DrawGUI (void *unused)
 	}
 	else if (cl.intermission == 1 && key_dest == key_game) // end of level
 	{
+		if (intermission_panel_valid)
+			GL_BeginUIPanel (cbx, vr_menu_panel.world_from_ndc);
 		Sbar_IntermissionOverlay (cbx);
+		if (intermission_panel_valid)
+			GL_EndUIPanel (cbx);
 	}
 	else if (cl.intermission == 2 && key_dest == key_game) // end of episode
 	{
+		if (intermission_panel_valid)
+			GL_BeginUIPanel (cbx, vr_menu_panel.world_from_ndc);
 		Sbar_FinaleOverlay (cbx);
 		SCR_CheckDrawCenterString (cbx);
+		if (intermission_panel_valid)
+			GL_EndUIPanel (cbx);
 	}
 	else
 	{
