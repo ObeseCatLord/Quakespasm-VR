@@ -260,6 +260,13 @@ tracked viewmodel pose and draw-matrix adapter have not yet been added.
 The donor's `vr_gunmodely` height adjustment is registered with its zero
 default for that adapter; registration alone does not alter rendering.
 
+The [single calibration migration](migration-weapon-calibration-unification.md)
+records the target of one held and muzzle offset per weapon across solo and
+multiplayer, the legacy QBJ3/Enyo MP overlays, and the Astra-reviewed proof
+needed before retiring mode-specific values. The review also found missing
+Enyo built-in base calibration in the current port; mode comparisons require
+that baseline first.
+
 A second local proof observed the unchanged server's weapon-use boundary under
 GDB while the same private OpenXR firing probe ran. Across 60 remote-attack
 samples, the server's stored relative hand position equaled the accepted
