@@ -245,9 +245,10 @@ supply conservative absolute query bounds and must never run PMove on failure.
 This replaces neither the active server player path nor the client collector;
 prediction remains disabled. The strict Linux `vkquake` target builds.
 
-`SOLID_NOT` entities are not linked into the server area tree, but the private
-snapshot writer can currently label some negative-skin `SOLID_NOT` entities as
-solid. Resolve that server/client collision mismatch before predictive replay.
+`SOLID_NOT` and trigger entities are not linked into the server's solid area
+tree. The private snapshot writer now keeps them non-solid even when a negative
+skin encodes contents, matching the server PMove collector. Predictive replay
+still needs a broader server/client collision parity check.
 The later player adapter also needs a deliberate response to collector overflow
 on dense maps and to pusher/rider ignore context; silently dropping colliders
 would sacrifice correctness for apparent performance.

@@ -1012,9 +1012,13 @@ static void SVFTE_BuildSnapshotForClient (client_t *client)
 		{
 			if (client->edict && ent->v.owner == EDICT_TO_PROG (client->edict))
 				ents[numents].state.solidsize = ES_SOLID_NOT;
-			else if (ent->v.solid == SOLID_BSP || (ent->v.skin < 0 && ent->v.modelindex))
+			/* Match the server area tree: SOLID_NOT and triggers are not
+			 * movement colliders even when a negative skin encodes contents. */
+			else if (ent->v.solid == SOLID_NOT || ent->v.solid == SOLID_TRIGGER)
+				ents[numents].state.solidsize = ES_SOLID_NOT;
+			else if (ent->v.solid == SOLID_BSP)
 				ents[numents].state.solidsize = ES_SOLID_BSP;
-			else if (ent->v.solid == SOLID_BBOX || ent->v.solid == SOLID_SLIDEBOX || ent->v.skin < 0)
+			else if (ent->v.solid == SOLID_BBOX || ent->v.solid == SOLID_SLIDEBOX)
 			{
 				ents[numents].state.solidsize = CLAMP (0, (int)-ent->v.mins[0], 255);
 				ents[numents].state.solidsize |= CLAMP (0, (int)-ent->v.mins[2], 255) << 8;
