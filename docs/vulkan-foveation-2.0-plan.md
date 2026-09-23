@@ -48,7 +48,7 @@ weapon, HUD, water, cutout, or transparent rendering.
    dynamic state in each secondary command buffer after binding, including
    direct batches and indirect draws. Other pipeline families retain Vulkan's
    static 1x1 `KEEP/KEEP` default. Supersampling continues to request sample
-   shading, which forces effective 1x1 and may eliminate foveation savings.
+   shading, which forces effective 1x1; the rate-map path is disabled there.
 6. Preserve existing VR culling: eye-union PVS, per-eye visibility, and
    conservative backface tests. Foveation never removes peripheral geometry.
 
@@ -68,13 +68,29 @@ is not established by the KHR path.
 | MSAA, supersampling and non-layered multiview affect savings/correctness | Adopt sample-aware rates, report no benefit under supersampling, merge eye maps to the finer rate when single-layer. |
 | FB/META profile update is separate from KHR shading-rate images | Keep it out of the KHR path; qualify a runtime-density-map backend later. |
 
-The first proof must render a real multiview scene with injected gaze, compare
-both eyes with foveation off, move and invalidate gaze, and show protected
-weapon/UI/water/cutout/transparent content remains full quality. Exercise both
-direct and indirect world paths, MSAA, forced single-layer mapping, and resource
-recreation under Vulkan validation. Only after correctness should `mj4m1` and
-other large maps be compared by total CPU/GPU frame time and visual quality.
-Physical eye tracking, Windows, and ARM verification are deferred as requested.
+## Implementation and qualification status
+
+The opt-in KHR path, VR options, gaze policy, rate-map math, scene-pass adapter,
+world-draw eligibility, image lifecycle, and staging barriers are implemented
+on `2.0`. A forced full Linux debug build and the focused policy/map fixtures
+pass. An isolated simulated-Monado run with `vr_foveation 1` completed all 24
+existing OpenXR scene probes across direct/indirect drawing, 1x/4x MSAA, all
+OIT modes, resize, pause, and teardown. A separate live breakpoint confirmed a
+two-layer 56x63 map at 4x MSAA with full-rate center and coarser outer tiles.
+Khronos standard plus synchronization validation passed the same 24-probe run
+without a VUID or synchronization hazard after the image-allocation `sType`
+fix. The test used a temporary validation-layer extraction and private Monado
+runtime/config directories; it did not change the installed runtime or game.
+
+The next qualification must render a real multiview scene with injected gaze,
+compare both eyes with foveation off, move and invalidate gaze, and check that
+weapon/UI/water/cutout/transparent content remains full quality. The focused
+fixture covers gaze movement and one-layer finer-eye mapping, but there is no
+end-to-end gaze-provider or forced nonlayered-GPU proof yet. Profile CPU/GPU
+frame times and visual quality on `mj4m1` and other large maps before claiming
+a performance gain; the shared-image rewrite barrier may serialize frames.
+Physical Beyond/Steam Frame eye tracking, Windows, and Linux ARM verification
+remain deferred as requested.
 
 Official references: [OpenXR gaze system support](https://registry.khronos.org/OpenXR/specs/1.1/man/html/XrSystemEyeGazeInteractionPropertiesEXT.html),
 [KHR shading-rate attachment and encoding](https://docs.vulkan.org/spec/latest/chapters/primsrast.html#primsrast-fragment-shading-rate-attachment),
