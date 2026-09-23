@@ -563,6 +563,16 @@ locally build/fixture checked, but cannot yet activate private VR movement.
 The first vertical proof must follow a calibrated muzzle and roomscale command
 through actual movement and QuakeC weapon use.
 
+The current `2.0` checkpoint also has the inherited body-relative raw hand
+transform, a shared floor/LOCAL eye-height reference, the pure calibrated
+aim-offset transform, and the donor's model-space left-hand muzzle reflection.
+An Astra review caught a focus-loss camera jump; the view owner now retains
+the body-relative eye anchor through temporary input loss and mode changes,
+while the local server remains excluded until its private receiver is wired.
+The Linux build and focused stereo-camera/locomotion fixtures pass. The active
+viewmodel's schema profile, muzzle command producer and server gameplay proof
+remain open, so these geometry checks do not establish live VR firing parity.
+
 ## Next integration gates
 
 Follow the [reviewed architecture plan](vkquake-base-migration-plan.md).

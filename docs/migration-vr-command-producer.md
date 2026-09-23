@@ -141,3 +141,22 @@ adding it merely to hide latency could let an eye move through a wall.
 | Command-tag guard could restore old head translation during focus loss or a mode switch | Fixed within the existing view owner: body-relative ownership persists across transient input loss and mode changes; private-admission loss or client reset clears it. |
 | Local-server exception claimed body authority before the private decoder was wired | Removed from the camera guard. Local VR remains a later server-port gate. |
 | Camera fixture did not connect movement, prediction and both eyes | Adopted as an end-to-end proof gate against the unchanged pinned dedicated server once calibrated command production is wired. |
+
+## Weapon calibration Astra review disposition
+
+| Finding | Disposition |
+| --- | --- |
+| A donor held-offset registration reinitializes its slot and clears earlier enhanced defaults (`vr.c:3311,3424,6204`) | Adopted as a donor bug fix. Initialize a slot once, then update only authored fields. A file block that omits enhanced calibration must not erase a preexisting enhanced default. Gate private VR commands when the selected model format lacks a valid muzzle profile. |
+| Parsed schema and runtime offset cvars are separate in the donor | Adapted. Parse the full source key vocabulary into short-lived staging records, then publish into one 99-slot mutable calibration authority; command production reads that authority, including live adjustments. No second persistent schema registry. |
+| Global MP offsets can be reapplied after saved per-weapon values are reloaded | Adopted as a save/reload correction. Track authored per-weapon MP corrections separately from the effective sum; later save code must subtract the applicable global correction before writing authored values. |
+| Active MDL/MD3/MD5 model selection differs from the donor | Adapted at vkQuake's `Mod_Extradata_CheckSkin` boundary, with already-loaded model data and no persistent header cache. Both `PV_MD5` and `PV_MD5_8` use the enhanced profile; MD3 retains the donor classic profile. Identify the command-time `STAT_WEAPON` model with bounds checks instead of relying on the last rendered `viewent.model`. |
+| Donor file parser accepts incomplete/nonfinite vectors and overwrites profiles | Adapted. Retain the full valid-file vocabulary and inheritance rules but require complete, finite values and closing braces. Reuse native bounded tokenization. Delay wheel publication, display-model precaching, automatic schema creation, and file rewriting until their own parity slices. |
+| Schema lifetime follows game-directory search paths | Adopted. Initialize after startup paths exist and reload after the existing `COM_SwitchGame` model reset. Invalidate prepared weapon references and calibration sessions on switch. |
+
+The first calibrated proof is a classic shotgun using the canonical
+`vr_weapons.txt`: its `muzzle_offset 0 0 10` is ten aim-forward units at
+`vr_gunmodelscale 1`, independent of `held_scale 0.5`. Compare a weapon switch
+before view refresh, normal and wall-blocked roomscale steps, and left-handed
+pitch/roll against the pinned dedicated server. Observe body, both eyes,
+reconstructed muzzle, firing direction, ammo, damage, sound and effects. A
+packet fixture alone is insufficient. No human decision blocks this slice.
