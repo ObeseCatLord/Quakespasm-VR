@@ -358,3 +358,25 @@ broader pusher-proximity gate disconnected at spawn; the current gate checks
 actual PMove pusher contact instead. The next architecture step must resolve
 rate mismatch and qualify QuakeC callback/weapon timing before this selector
 can become a general private owner or prediction can be enabled.
+
+## Senior review of the selected owner
+
+A local Astra `max` read-only review identified two high-priority defects and
+one weapon timing defect in the first trial commit. The insufficient-credit
+maintenance branch copied the queued head before deciding not to run it, so
+queued buttons and pose could reach QuakeC early. It now explicitly selects
+the last completed command, or neutral input before the first completion.
+Weapon Think was also scheduled against packet duration while `qcvm->time`
+remained on the host clock; its eligibility and QuakeC frametime now use the
+saved host frame in both command and maintenance passes.
+
+The command-rate defect remains: one complete command per host frame cannot
+sustain a faster sender, and a larger queue would only delay disconnection.
+The selected path is therefore an explicitly restricted proof, not the release
+owner. Before broadening it, define QuakeC/weapon clock semantics, then process
+a bounded number of credited commands per host frame with a local queue cursor
+and once-only callbacks. Reuse the native player lifecycle where possible;
+the current command and maintenance copies should be consolidated rather than
+grown into parallel policy. The review did not establish jump hold/release,
+weapon target damage and delayed pose, packet-loss idle behavior, non-world
+ground, or impact callbacks that mutate collision state.

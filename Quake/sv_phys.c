@@ -2617,7 +2617,9 @@ static void SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *client)
 	{
 		/* Keep only the last completed levels and pose during a zero-time QC
 		 * maintenance pass. An uncompleted queue head never leaks into callbacks. */
-		if (!client->private_pmove_last_cmd_valid)
+		if (client->private_pmove_last_cmd_valid)
+			command = client->private_pmove_last_cmd;
+		else
 		{
 			memset (&command, 0, sizeof (command));
 			VectorCopy (ent->v.v_angle, command.viewangles);
@@ -2644,11 +2646,16 @@ static void SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *client)
 		}
 		if ((failure = SV_PrivateWalkTrialStateError (ent, client, &command)) != NULL)
 			goto cleanup;
+		/* Scheduled Think follows the host clock even without a move command. */
+		host_frametime = saved_host_frametime;
+		pr_global_struct->frametime = saved_qc_frametime;
 		if (!SV_RunPrivateVRWeaponThink (ent, client))
 		{
 			failure = "player removed during maintenance weapon Think";
 			goto cleanup;
 		}
+		host_frametime = 0;
+		pr_global_struct->frametime = 0;
 		if ((failure = SV_PrivateWalkTrialStateError (ent, client, &command)) != NULL)
 			goto cleanup;
 		SV_LinkEdict (ent, true);
@@ -2713,7 +2720,13 @@ static void SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *client)
 	SV_CheckVelocity (ent);
 	if ((failure = SV_PrivateWalkTrialStateError (ent, client, &command)) != NULL)
 		goto cleanup;
+	/* Weapon Think is scheduled against the world frame, not the packet's
+	 * duration; ordinary PMove below still consumes the complete command. */
+	host_frametime = saved_host_frametime;
+	pr_global_struct->frametime = saved_qc_frametime;
 	weapon_alive = SV_RunPrivateVRWeaponThink (ent, client);
+	host_frametime = seconds;
+	pr_global_struct->frametime = seconds;
 	if (!weapon_alive || !client->active || ent->free)
 	{
 		failure = "player removed during weapon Think";
