@@ -25,6 +25,7 @@ platform.
 | Exact cost of adapting donor IK to the target MD5 palette and preserving GPU skinning is known. | **Unknown.** Requires targeted layout/task/animation inspection and a vertical proof; no proof from matching MD5 names alone. |
 | An older/noncapable peer can safely receive the private VRIK opcode. | **Contradicted by protocol:** it must never receive that opcode; ordinary entity animation remains the fallback. |
 | Public desktop play and private predictive play are independently selectable per peer. | **Verified:** `Quake/sv_main.c:SV_SendServerinfo` admits `QSVR_PROTOCOL_PINNED` only for a qualifying client when `sv_qsvr_private` is enabled; its default is `0`. `Quake/cl_input.c:CL_SendMove` retains separate public and private send paths. This is a code boundary, not proof of live cross-play. |
+| Donor and target differ at the client stufftext and pose-source boundaries. | **Verified:** donor `cl_parse.c:CL_ParseStuffText` buffers newline-terminated extension commands and donor `vr.c:VR_GetVRIKPose` samples OpenVR. Target `cl_parse.c:CL_ParseServerMessage` dispatches a complete `svc_stufftext` string immediately, and target `vr_input.c` consumes `vrxr_frame_t` from OpenXR. Port the canonical offer parser and pose conversion at these target boundaries rather than copying either donor entry point verbatim. |
 
 ## Architecture choice and open decisions
 
