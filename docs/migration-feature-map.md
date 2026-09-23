@@ -44,7 +44,7 @@ Donor evidence: `Quake/gl_screen.c:1587–1599` joins drawing while the end-rend
 
 **Runtime migration qualification:** Windows, Linux x86-64 and Linux ARM64 OpenXR targets must demonstrate Vulkan eye-image submission, pose/controller input, haptics, map change, focus/reconnect and disable/re-enable. Source `Quake/vr.c:9356–9359` submits an OpenGL texture through OpenVR; the behaviors, rather than the old transport API, are the reference. No OpenVR Vulkan backend is required by the user's OpenXR and desktop release targets.
 
-Phases express dependencies, not a ban on independent work or a promise of performance. Source rows can list an earlier phase for their shared owner and a later phase for qualification. No build/runtime tests were run for this documentation pass; substantive end-to-end checks follow implementation, with targeted experiments when needed to choose a performance change.
+Phases express dependencies, not a ban on independent work or a promise of performance. Source rows can list an earlier phase for their shared owner and a later phase for qualification. No build/runtime tests were run for this documentation pass. The user will perform live headset, multiplayer and eye-tracking testing after implementation; implementation work remains responsible for build/static verification, review, and fixing issues those later tests reveal. Targeted local experiments are allowed when needed to choose a performance change.
 
 Hard design gates:
 
