@@ -132,9 +132,9 @@ check could not start because this machine's `monado-service` currently lacks
 the `libuvc.so.0` shared library. These checks do not establish that the
 panel looks correct in a headset.
 
-The menu slice does not yet provide the inherited VR presentation for loading
-screens, confirmation dialogs, intermission overlays, or wrist/aim HUD. Those
-are subsequent uses of the same canvas adapter. Real headset
+The menu slice does not yet provide the inherited VR presentation for
+intermission overlays or wrist/aim HUD. Those are subsequent uses of the same
+canvas adapter. Real headset
 proof must check both eyes, pointer alignment at varied head angles and menu
 scales, startup without a world, and validation-clean pipeline changes before
 this slice is called release-ready. The broader migration also retains its
@@ -147,6 +147,14 @@ when no valid XR panel exists. A console-to-menu transition resets the menu
 anchor so its first-open placement is preserved. Console presentation still
 needs headset inspection, especially during opening/closing animation and
 with nondefault console scale; the HUD remains on the existing flat path.
+
+The modal and loading branches now use that same panel. A confirmation opened
+from the menu keeps its existing anchor, with menu hover and trigger handling
+disabled while the dialog is active. The existing fade, text, loading art and
+console-background draw calls remain in place, scoped to the panel once; the
+modal status bar stays on the current flat path until the wrist HUD migration.
+These branches compile but have not had a headset visual check. Their flat
+fallback still applies when no valid XR panel is available.
 
 ## Implementation senior review
 
@@ -163,8 +171,9 @@ the normal vkQuake render path remains the behavioral reference.
 
 The review otherwise supported the direct canvas adapter and existing trigger
 owner. It covered the first menu slice; the later console slice still needs
-runtime inspection. Modal/loading presentation and HUD parity still need
-implementation and user-observable verification.
+runtime inspection. Modal/loading panel placement also needs visual
+verification. Intermission and HUD parity still need implementation and
+user-observable verification.
 
 After these corrections, the Linux DEBUG build and diff checks pass. A local
 `-novr` X11 smoke run entered a map and advanced gameplay with the original

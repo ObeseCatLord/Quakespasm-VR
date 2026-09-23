@@ -1463,7 +1463,9 @@ typedef enum
 {
 	VR_PANEL_NONE,
 	VR_PANEL_MENU,
-	VR_PANEL_CONSOLE
+	VR_PANEL_CONSOLE,
+	VR_PANEL_MODAL,
+	VR_PANEL_LOADING
 } vr_panel_mode_t;
 
 /* SCR_SetupFrame publishes one immutable pose for both eye GUI draws. The
@@ -1471,6 +1473,7 @@ typedef enum
 static vr_menu_panel_t vr_menu_panel;
 static vr_menu_anchor_t vr_menu_anchor;
 static vr_panel_mode_t vr_menu_panel_mode;
+static qboolean vr_modal_from_menu;
 static const struct qmodel_s *vr_menu_world;
 static int vr_menu_connection;
 
@@ -1502,10 +1505,10 @@ static qboolean SCR_VRMenuRayHit (const vec3_t origin, const vec3_t direction,
 static void SCR_VRMenuPrepare (void)
 {
 	const vrxr_frame_t *frame = GL_OpenXRFrame ();
-	const qboolean frame_available = vulkan_globals.stereo_active && frame && frame->should_render &&
-		!scr_drawdialog && !scr_drawloading &&
-		!(scr_drawstartuploading && cls.state == ca_disconnected);
+	const qboolean frame_available = vulkan_globals.stereo_active && frame && frame->should_render;
+	const qboolean loading = scr_drawloading || (scr_drawstartuploading && cls.state == ca_disconnected);
 	const vr_panel_mode_t requested_mode = !frame_available ? VR_PANEL_NONE :
+		scr_drawdialog ? VR_PANEL_MODAL : loading ? VR_PANEL_LOADING :
 		key_dest == key_menu ? (m_state != m_none ? VR_PANEL_MENU : VR_PANEL_NONE) :
 		scr_con_current > 0 ? VR_PANEL_CONSOLE : VR_PANEL_NONE;
 	vec3_t ray_origin, ray_direction, forward, right, up, down, normal;
@@ -1524,10 +1527,19 @@ static void SCR_VRMenuPrepare (void)
 	if (requested_mode == VR_PANEL_NONE)
 	{
 		vr_menu_panel_mode = VR_PANEL_NONE;
+		vr_modal_from_menu = false;
 		vr_menu_anchor.valid = 0;
 		return;
 	}
-	if (vr_menu_panel_mode != requested_mode || frame->reference_changed ||
+	/* A confirmation opened from the menu belongs on that same physical panel. */
+	const qboolean keep_menu_anchor =
+		(vr_menu_panel_mode == VR_PANEL_MENU && requested_mode == VR_PANEL_MODAL && key_dest == key_menu) ||
+		(vr_menu_panel_mode == VR_PANEL_MODAL && requested_mode == VR_PANEL_MENU && vr_modal_from_menu);
+	if (requested_mode == VR_PANEL_MODAL && vr_menu_panel_mode != VR_PANEL_MODAL)
+		vr_modal_from_menu = vr_menu_panel_mode == VR_PANEL_MENU && key_dest == key_menu;
+	else if (requested_mode != VR_PANEL_MODAL)
+		vr_modal_from_menu = false;
+	if ((vr_menu_panel_mode != requested_mode && !keep_menu_anchor) || frame->reference_changed ||
 		vr_menu_world != cl.worldmodel || vr_menu_connection != cls.state)
 		vr_menu_anchor.valid = 0;
 	vr_menu_panel_mode = requested_mode;
@@ -1604,6 +1616,10 @@ static void SCR_DrawGUI (void *unused)
 	cb_context_t *cbx = vulkan_globals.secondary_cb_contexts[SCBX_GUI];
 	const qboolean console_panel_valid = vulkan_globals.stereo_active &&
 		vr_menu_panel_mode == VR_PANEL_CONSOLE && vr_menu_panel.valid;
+	const qboolean modal_panel_valid = vulkan_globals.stereo_active &&
+		vr_menu_panel_mode == VR_PANEL_MODAL && vr_menu_panel.valid;
+	const qboolean loading_panel_valid = vulkan_globals.stereo_active &&
+		vr_menu_panel_mode == VR_PANEL_LOADING && vr_menu_panel.valid;
 	GL_DrawSceneUpscale (cbx);
 	if (vulkan_globals.stereo_active && key_dest == key_menu)
 		M_SetVRPointerPixelPosition (vr_menu_panel.pointer_x, vr_menu_panel.pointer_y,
@@ -1640,16 +1656,39 @@ static void SCR_DrawGUI (void *unused)
 
 	if (scr_drawdialog) // new game confirm
 	{
-		if (con_forcedup)
-			Draw_ConsoleBackground (cbx);
+		if (modal_panel_valid)
+		{
+			/* Keep the status bar in its existing flat location until wrist UI
+			 * is migrated. The modal backdrop and text share the anchored panel. */
+			if (!con_forcedup)
+				Sbar_Draw (cbx);
+			GL_BeginUIPanel (cbx, vr_menu_panel.world_from_ndc);
+			if (con_forcedup)
+				Draw_ConsoleBackground (cbx);
+			Draw_FadeScreen (cbx);
+			SCR_DrawNotifyString (cbx);
+			GL_EndUIPanel (cbx);
+		}
 		else
-			Sbar_Draw (cbx);
-		Draw_FadeScreen (cbx);
-		SCR_DrawNotifyString (cbx);
+		{
+			if (con_forcedup)
+				Draw_ConsoleBackground (cbx);
+			else
+				Sbar_Draw (cbx);
+			Draw_FadeScreen (cbx);
+			SCR_DrawNotifyString (cbx);
+		}
 	}
 	else if (scr_drawloading || (scr_drawstartuploading && cls.state == ca_disconnected)) // loading
 	{
-		SCR_DrawMenuLoading (cbx, scr_drawstartuploading);
+		if (loading_panel_valid)
+		{
+			GL_BeginUIPanel (cbx, vr_menu_panel.world_from_ndc);
+			SCR_DrawMenuLoading (cbx, scr_drawstartuploading);
+			GL_EndUIPanel (cbx);
+		}
+		else
+			SCR_DrawMenuLoading (cbx, scr_drawstartuploading);
 	}
 	else if (cl.intermission == 1 && key_dest == key_game) // end of level
 	{
