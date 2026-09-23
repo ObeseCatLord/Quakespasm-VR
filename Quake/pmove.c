@@ -2472,3 +2472,145 @@ qboolean PMCL_SetMoveVars (void)
 	}
 	return true;
 }
+
+extern cvar_t sv_gravity;
+extern cvar_t sv_stopspeed;
+extern cvar_t sv_maxspeed;
+extern cvar_t sv_accelerate;
+extern cvar_t sv_friction;
+extern cvar_t sv_edgefriction;
+
+static unsigned int PM_PackMoveFlags (const movevars_t *mv)
+{
+	unsigned int flags = mv->flags;
+	int walljump = mv->walljump;
+	const unsigned int pmflags = MOVEFLAG_PM_SLIDEFIX | MOVEFLAG_PM_AIRSTEP |
+		MOVEFLAG_PM_PGROUND | MOVEFLAG_PM_STEPDOWN | MOVEFLAG_PM_SLIDYSLOPES |
+		MOVEFLAG_PM_AUTOBUNNY | MOVEFLAG_PM_BUNNYFRICTION |
+		MOVEFLAG_PM_WALLJUMP_MASK;
+
+	if (walljump < 0)
+		walljump = 0;
+	if (walljump > 3)
+		walljump = 3;
+	flags &= ~pmflags;
+
+	if (mv->slidefix)
+		flags |= MOVEFLAG_PM_SLIDEFIX;
+	if (mv->airstep)
+		flags |= MOVEFLAG_PM_AIRSTEP;
+	if (mv->pground)
+		flags |= MOVEFLAG_PM_PGROUND;
+	if (mv->stepdown)
+		flags |= MOVEFLAG_PM_STEPDOWN;
+	if (mv->slidyslopes)
+		flags |= MOVEFLAG_PM_SLIDYSLOPES;
+	if (mv->autobunny)
+		flags |= MOVEFLAG_PM_AUTOBUNNY;
+	if (mv->bunnyfriction)
+		flags |= MOVEFLAG_PM_BUNNYFRICTION;
+	flags |= (unsigned int)walljump << MOVEFLAG_PM_WALLJUMP_SHIFT;
+	return flags;
+}
+
+static qboolean PM_MoveVarsFinite (const movevars_t *mv)
+{
+	return isfinite (mv->gravity) && isfinite (mv->stopspeed) &&
+		isfinite (mv->maxspeed) && isfinite (mv->spectatormaxspeed) &&
+		isfinite (mv->maxairspeed) && isfinite (mv->accelerate) &&
+		isfinite (mv->airaccelerate) && isfinite (mv->wateraccelerate) &&
+		isfinite (mv->friction) && isfinite (mv->waterfriction) &&
+		isfinite (mv->flyfriction) && isfinite (mv->entgravity) &&
+		isfinite (mv->bunnyspeedcap) && isfinite (mv->watersinkspeed) &&
+		isfinite (mv->ktjump) && isfinite (mv->edgefriction) &&
+		isfinite (mv->jumpspeed);
+}
+
+qboolean PMSV_BuildMoveVars (movevars_t *out, edict_t *player, unsigned int protocolflags)
+{
+	movevars_t vars;
+	eval_t *entgravity;
+	float stepheight;
+
+	if (!out)
+		return false;
+
+	memset (&vars, 0, sizeof(vars));
+	vars.gravity = sv_gravity.value;
+	vars.stopspeed = sv_stopspeed.value;
+	vars.maxspeed = sv_maxspeed.value;
+	vars.spectatormaxspeed = 500.0f;
+	vars.maxairspeed = 30.0f;
+	vars.accelerate = sv_accelerate.value;
+	vars.airaccelerate = sv_accelerate.value;
+	vars.wateraccelerate = sv_accelerate.value;
+	vars.friction = sv_friction.value;
+	vars.waterfriction = 4.0f;
+	vars.flyfriction = 4.0f;
+	vars.entgravity = 1.0f;
+	vars.bunnyspeedcap = 0.0f;
+	vars.watersinkspeed = 60.0f;
+	vars.ktjump = 0.0f;
+	vars.edgefriction = sv_edgefriction.value;
+	vars.jumpspeed = PM_VANILLA_JUMP_VELOCITY;
+	vars.stepheight = 18;
+	/* QSS-M's server defaults, supplied to private clients as movement stats. */
+	vars.slidefix = true;
+	vars.bunnyfriction = true;
+	vars.protocolflags = protocolflags;
+	vars.flags = MOVEFLAG_VALID | MOVEFLAG_NOGRAVITYONGROUND;
+
+	if (player && qcvm)
+	{
+		entgravity = GetEdictFieldValue (player, qcvm->extfields.gravity);
+		if (entgravity && entgravity->_float != 0.0f)
+			vars.entgravity = entgravity->_float;
+	}
+	if (vars.entgravity <= 0.0f)
+		vars.entgravity = 1.0f;
+
+	if (!PM_MoveVarsFinite (&vars))
+		return false;
+	stepheight = (float)vars.stepheight;
+	if (!isfinite (stepheight) || (double)stepheight != (double)vars.stepheight)
+		return false;
+
+	*out = vars;
+	return true;
+}
+
+qboolean PMSV_ExportMoveStats (const movevars_t *vars, float *fstat, int *istat)
+{
+	unsigned int flags;
+	float stepheight;
+
+	if (!vars || !fstat || !istat || !(vars->flags & MOVEFLAG_VALID) ||
+		!PM_MoveVarsFinite (vars))
+		return false;
+	stepheight = (float)vars->stepheight;
+	if (!isfinite (stepheight) || (double)stepheight != (double)vars->stepheight)
+		return false;
+
+	flags = PM_PackMoveFlags (vars);
+	fstat[STAT_MOVEVARS_STEPHEIGHT] = stepheight;
+	fstat[STAT_MOVEVARS_GRAVITY] = vars->gravity;
+	fstat[STAT_MOVEVARS_STOPSPEED] = vars->stopspeed;
+	fstat[STAT_MOVEVARS_MAXSPEED] = vars->maxspeed;
+	fstat[STAT_MOVEVARS_SPECTATORMAXSPEED] = vars->spectatormaxspeed;
+	fstat[STAT_MOVEVARS_ACCELERATE] = vars->accelerate;
+	fstat[STAT_MOVEVARS_AIRACCELERATE] = vars->airaccelerate;
+	fstat[STAT_MOVEVARS_WATERACCELERATE] = vars->wateraccelerate;
+	fstat[STAT_MOVEVARS_FRICTION] = vars->friction;
+	fstat[STAT_MOVEVARS_WATERFRICTION] = vars->waterfriction;
+	fstat[STAT_MOVEVARS_EDGEFRICTION] = vars->edgefriction;
+	fstat[STAT_MOVEVARS_ENTGRAVITY] = vars->entgravity;
+	fstat[STAT_MOVEVARS_TIMESCALE] = 1.0f;
+	fstat[STAT_MOVEVARS_JUMPVELOCITY] = vars->jumpspeed;
+	fstat[STAT_MOVEVARS_MAXAIRSPEED] = vars->maxairspeed;
+	fstat[STAT_MOVEVARS_WATERSINKSPEED] = vars->watersinkspeed;
+	fstat[STAT_MOVEVARS_FLYFRICTION] = vars->flyfriction;
+	fstat[STAT_MOVEVARS_BUNNYSPEEDCAP] = vars->bunnyspeedcap;
+	fstat[STAT_MOVEVARS_KTJUMP] = vars->ktjump;
+	memcpy (&istat[STAT_MOVEFLAGS], &flags, sizeof(istat[STAT_MOVEFLAGS]));
+	return true;
+}

@@ -203,6 +203,11 @@ void PMCL_ServerinfoUpdated(void);
 // False rejects unsupported dialects or invalid numeric stats. This does not
 // establish complete-stat receipt or an authoritative replay snapshot.
 qboolean PMCL_SetMoveVars(void);
+
+/* Build and export server movement settings without selecting them globally. */
+qboolean PMSV_BuildMoveVars(movevars_t *out, edict_t *player, unsigned int protocolflags);
+/* fstat and istat must each hold at least MAX_CL_STATS entries. */
+qboolean PMSV_ExportMoveStats(const movevars_t *vars, float *fstat, int *istat);
 #define VectorClear(v) ((v)[0] = (v)[1] = (v)[2] = 0)
 #define VectorSet(r,x,y,z) do{(r)[0] = x; (r)[1] = y;(r)[2] = z;}while(0)
 #define Length VectorLength

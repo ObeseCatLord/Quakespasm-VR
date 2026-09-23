@@ -251,3 +251,19 @@ solid. Resolve that server/client collision mismatch before predictive replay.
 The later player adapter also needs a deliberate response to collector overflow
 on dense maps and to pusher/rider ignore context; silently dropping colliders
 would sacrifice correctness for apparent performance.
+
+## Server movement settings checkpoint
+
+The shared PMove module now builds server `movevars_t` from vkQuake's existing
+gravity, stop speed, max speed, acceleration, friction and edge-friction cvars,
+with QSS-M server defaults for the remaining settings. It also exports the
+same values into QSS-M movement stat slots for a future private snapshot
+writer. The producer leaves the active client/server PMove globals untouched;
+there is no call site or authority switch yet. QSS-M's server defaults enable
+slidefix and bunny friction, while client fallbacks remain zero until a server
+actually advertises those values. The strict Linux `vkquake` target builds.
+
+Before wiring stats into `SV_CalcStats`, detect custom mod stats that overlap
+the private movement indices 226–253. Resolve VR jump-speed policy at the
+selected command owner and export exactly the speed used by the server step.
+Do not enable prediction merely because these settings can be computed.
