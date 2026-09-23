@@ -571,7 +571,6 @@ void SV_DropClient (qboolean crash)
 	host_client->netconnection = NULL;
 
 	SVFTE_DestroyFrames (host_client); // release any delta state
-	SV_ClearPendingVRIKRetirements (host_client);
 
 	// free the client (the body stays around)
 	host_client->active = false;
@@ -582,6 +581,13 @@ void SV_DropClient (qboolean crash)
 	// send notification to all clients
 	for (i = 0, client = svs.clients; i < svs.maxclients; i++, client++)
 	{
+		if (retired_slot >= 0 && retired_slot < MAX_SCOREBOARD)
+		{
+			client->vrik_admitted_generation[retired_slot] = 0;
+			client->vrik_relay_sequence_valid[retired_slot] = false;
+			client->vrik_relay_generation[retired_slot] = 0;
+			client->vrik_relay_sequence[retired_slot] = 0;
+		}
 		if (!client->knowntoqc)
 			continue;
 
@@ -596,10 +602,11 @@ void SV_DropClient (qboolean crash)
 		MSG_WriteByte (&client->message, retired_slot);
 		MSG_WriteShort (&client->message, 0);
 
-		/* Queue retirement only after the required scoreboard updates. */
+		/* Append an optional legacy retirement after required scoreboard updates. */
 		if (client != host_client && client->vrik_protocol_version &&
+			client->vrik_protocol_version < VRIK_ADMISSION_PROTOCOL_VERSION &&
 			retired_generation)
-			SV_QueueVRIKRetirement (client, retired_slot, retired_generation);
+			SV_AppendVRIKRetirement (client, retired_slot, retired_generation);
 	}
 }
 

@@ -30,6 +30,10 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "vr_input.h"
 #include "vrik_codec.h"
 
+/* v4 keeps the existing v3 pose body while adding reliable generation admission. */
+static unsigned char cl_vrik_admission_protocol;
+entity_t *CL_EntityNum (int num);
+
 const char *svc_strings[128] = {
 	"svc_bad", "svc_nop", "svc_disconnect", "svc_updatestat",
 	"svc_version",	 // [long] server version
@@ -147,6 +151,7 @@ void CL_ResetVRIKState (void)
 	cl.vrik_protocol_offered = false;
 	cl.vrik_cap_sent = false;
 	cl.vrik_protocol_version = 0;
+	cl_vrik_admission_protocol = 0;
 	CL_ResetVRIKPoseCaches ();
 }
 
@@ -158,14 +163,19 @@ static qboolean CL_OfferVRIKProtocol (const char *command)
 	uint8_t version_byte;
 
 	if (strncmp (command, command_name, sizeof (command_name) - 1) ||
-		(command[sizeof (command_name) - 1] != ' ' &&
+		(command[sizeof (command_name) - 1] &&
+		 command[sizeof (command_name) - 1] != ' ' &&
 		 command[sizeof (command_name) - 1] != '\t'))
 		return false;
+	if (!command[sizeof (command_name) - 1])
+		return true;
 
 	version = command + sizeof (command_name) - 1;
 	while (*version == ' ' || *version == '\t')
 		version++;
-	if (*version == '2')
+	if (*version == '4')
+		offered_version = VRIK_ADMISSION_PROTOCOL_VERSION;
+	else if (*version == '2')
 		offered_version = VRIK_PROTOCOL_LEGACY_VERSION;
 	else if (*version == '3')
 		offered_version = VRIK_PROTOCOL_VERSION;
@@ -190,19 +200,23 @@ static qboolean CL_OfferVRIKProtocol (const char *command)
 		&latched_version, &version_byte) != VRIK_CODEC_OK)
 		return true;
 	cl.vrik_cap_sent = latched_version;
-	cl.vrik_protocol_version = version_byte;
+	/* Existing input and demo paths use this field for body semantics. */
+	cl.vrik_protocol_version = version_byte == VRIK_ADMISSION_PROTOCOL_VERSION ?
+		VRIK_PROTOCOL_VERSION : version_byte;
+	cl_vrik_admission_protocol = version_byte;
 	cl.vrik_protocol_offered = true;
 	if (!cls.demoplayback)
 	{
 		MSG_WriteByte (&cls.message, clc_stringcmd);
-		MSG_WriteString (&cls.message, offered_version == VRIK_PROTOCOL_VERSION ?
-			"vrik_cap 3" : "vrik_cap 2");
+		MSG_WriteString (&cls.message, version_byte == VRIK_ADMISSION_PROTOCOL_VERSION ?
+			"vrik_cap 4" : (version_byte == VRIK_PROTOCOL_VERSION ?
+			"vrik_cap 3" : "vrik_cap 2"));
 	}
-	Con_DPrintf ("VRIK: negotiated protocol %d with server\n", offered_version);
+	Con_DPrintf ("VRIK: negotiated protocol %d with server\n", version_byte);
 	return true;
 }
 
-static qboolean CL_ParseVRIKRetirementDecimal (const char **cursor,
+static qboolean CL_ParseVRIKDecimal (const char **cursor,
 	uint32_t *value)
 {
 	const char *p = *cursor;
@@ -248,7 +262,7 @@ static qboolean CL_ParseVRIKRetirement (const char *command)
 		return true;
 	while (*p == ' ' || *p == '\t')
 		p++;
-	if (!CL_ParseVRIKRetirementDecimal (&p, &slot))
+	if (!CL_ParseVRIKDecimal (&p, &slot))
 		valid = false;
 	if (*p != ' ' && *p != '\t')
 		valid = false;
@@ -257,7 +271,7 @@ static qboolean CL_ParseVRIKRetirement (const char *command)
 		while (*p == ' ' || *p == '\t')
 			p++;
 	}
-	if (!CL_ParseVRIKRetirementDecimal (&p, &generation) || !generation)
+	if (!CL_ParseVRIKDecimal (&p, &generation) || !generation)
 		valid = false;
 	if (*p == '\r')
 		p++;
@@ -268,8 +282,64 @@ static qboolean CL_ParseVRIKRetirement (const char *command)
 		return true;
 
 	/* Retirements belong only to the negotiated optional VRIK extension. */
-	if (cl.vrik_protocol_version)
+	if (cl.vrik_protocol_version &&
+		cl_vrik_admission_protocol < VRIK_ADMISSION_PROTOCOL_VERSION)
 		CL_RetireEntityVRIKGeneration (&cl.entities[slot + 1], generation);
+	return true;
+}
+
+/* Process reliable generation admission. Every exact token, including a
+ * malformed one, is consumed here so it cannot reach console execution. */
+static qboolean CL_ParseVRIKAdmission (const char *command)
+{
+	static const char command_name[] = "vrik_generation";
+	const char *p;
+	uint32_t slot = 0, generation = 0;
+	qboolean valid = true;
+	entity_t *ent;
+
+	if (strncmp (command, command_name, sizeof (command_name) - 1) ||
+		(command[sizeof (command_name) - 1] &&
+		 command[sizeof (command_name) - 1] != ' ' &&
+		 command[sizeof (command_name) - 1] != '\t'))
+		return false;
+
+	p = command + sizeof (command_name) - 1;
+	if (*p != ' ' && *p != '\t')
+		return true;
+	while (*p == ' ' || *p == '\t')
+		p++;
+	if (!CL_ParseVRIKDecimal (&p, &slot))
+		valid = false;
+	if (*p != ' ' && *p != '\t')
+		valid = false;
+	else
+	{
+		while (*p == ' ' || *p == '\t')
+			p++;
+	}
+	if (!CL_ParseVRIKDecimal (&p, &generation) || !generation)
+		valid = false;
+	if (*p == '\r')
+		p++;
+	if (*p != '\n' || p[1] != '\0')
+		valid = false;
+	if (!valid || cl_vrik_admission_protocol != VRIK_ADMISSION_PROTOCOL_VERSION ||
+		slot >= MAX_SCOREBOARD || slot >= (uint32_t)cl.maxclients ||
+		!cl.entities || slot + 1 >= (uint32_t)cl.max_edicts)
+		return true;
+
+	/* Reliable admission can precede this slot's first entity baseline. */
+	ent = CL_EntityNum ((int)slot + 1);
+	/* Ignore an older reliable marker if a newer generation is already live. */
+	if (ent->vrik_generation && ent->vrik_generation != generation &&
+		(uint32_t)(generation - ent->vrik_generation) >= UINT32_C(0x80000000))
+		return true;
+	CL_ClearEntityVRIKSamples (ent);
+	ent->vrik_last_sequence = 0;
+	ent->vrik_sequence_valid = false;
+	ent->vrik_generation = generation;
+	ent->vrik_slot_retired = false;
 	return true;
 }
 
@@ -408,6 +478,13 @@ static qboolean CL_ParseVRIKPose (void)
 		!cl.scores[entitynum - 1].name[0])
 		return true;
 	ent = &cl.entities[entitynum];
+	if (cl_vrik_admission_protocol == VRIK_ADMISSION_PROTOCOL_VERSION)
+	{
+		/* v4 accepts poses only for a generation admitted on the reliable
+		 * stream. A scoreboard name alone never admits an unreliable pose. */
+		if (ent->vrik_slot_retired || ent->vrik_generation != generation)
+			return true;
+	}
 	if (ent->vrik_slot_retired && generation == ent->vrik_generation)
 		return true;
 	if (ent->vrik_generation && generation != ent->vrik_generation &&
@@ -1641,6 +1718,8 @@ static void CL_ParseServerInfo (void)
 	// wipe the client_state_t struct
 	//
 	CL_ClearState ();
+	/* Serverinfo starts a new map and a fresh VRIK capability negotiation. */
+	CL_ResetVRIKState ();
 
 	if (sv.loadgame)
 		V_StopPitchDrift ();
@@ -2805,6 +2884,8 @@ void CL_ParseServerMessage (void)
 					break;
 				if (CL_ParseVRIKRetirement (str + 2))
 					break;
+				if (CL_ParseVRIKAdmission (str + 2))
+					break;
 				if (!Cmd_ExecuteString (str + 2, src_server))
 					Con_DPrintf ("Server sent unknown command %s\n", Cmd_Argv (0));
 			}
@@ -2892,7 +2973,16 @@ void CL_ParseServerMessage (void)
 			q_strlcpy (cl.scores[i].name, MSG_ReadString (), MAX_SCOREBOARDNAME);
 			Info_SetKey (cl.scores[i].userinfo, sizeof (cl.scores[i].userinfo), "name", cl.scores[i].name);
 			if (!cl.scores[i].name[0] && cl.entities && i + 1 < cl.num_entities)
-				CL_ClearEntityVRIKSamples (&cl.entities[i + 1]);
+			{
+				entity_t *ent = &cl.entities[i + 1];
+				if (cl_vrik_admission_protocol == VRIK_ADMISSION_PROTOCOL_VERSION)
+				{
+					CL_ClearEntityVRIKCache (ent);
+					ent->vrik_slot_retired = true;
+				}
+				else
+					CL_ClearEntityVRIKSamples (ent);
+			}
 			break;
 
 		case svc_updatefrags:

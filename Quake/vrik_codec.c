@@ -482,7 +482,7 @@ vrik_codec_status_t vrik_latch_protocol_version(uint8_t offered_version,
 {
 	if (!latched || !version)
 		return VRIK_CODEC_INVALID_ARGUMENT;
-	if (offered_version != 2u && offered_version != 3u)
+	if (offered_version != 2u && offered_version != 3u && offered_version != 4u)
 		return VRIK_CODEC_MALFORMED;
 	if (*latched)
 		return VRIK_CODEC_OK;

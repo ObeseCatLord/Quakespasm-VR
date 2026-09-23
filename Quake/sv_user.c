@@ -1198,7 +1198,9 @@ static qboolean SV_HandleVRIKCapability(const char *s)
     value += 8;
     while (*value == ' ' || *value == '\t')
         value++;
-    if (*value == '3')
+    if (*value == '4')
+        version = VRIK_ADMISSION_PROTOCOL_VERSION;
+    else if (*value == '3')
         version = VRIK_PROTOCOL_VERSION;
     else if (*value == '2')
         version = VRIK_PROTOCOL_LEGACY_VERSION;

@@ -46,138 +46,32 @@ extern cvar_t nomonsters;
 #define VRIK_SVC_V2_MESSAGE_BYTES (1 + 2 + 4 + VRIK_POSE_WIRE_BYTES)
 static unsigned int sv_vrik_next_generation;
 
-void SV_ClearPendingVRIKRetirements(client_t *client)
-{
-	if (!client)
-		return;
-	memset(client->vrik_retire_pending, 0,
-		sizeof(client->vrik_retire_pending));
-	client->vrik_retire_barrier_size = 0;
-	client->vrik_retire_barrier_active = false;
-}
-
-static qboolean SV_VRIKGenerationIsNewer(unsigned int candidate,
-	unsigned int reference)
-{
-	return candidate != reference &&
-		(uint32_t)(candidate - reference) < UINT32_C(0x80000000);
-}
-
-qboolean SV_FlushPendingVRIKRetirements(client_t *client)
-{
-	byte buffer[MAX_SCOREBOARD * 32];
-	sizebuf_t msg;
-	qboolean have_pending = false;
-	int slot;
-
-	if (!client)
-		return true;
-	if (!client->active || !client->vrik_protocol_version)
-	{
-		SV_ClearPendingVRIKRetirements(client);
-		return true;
-	}
-	for (slot = 0; slot < MAX_SCOREBOARD; ++slot)
-		if (client->vrik_retire_pending[slot])
-		{
-			have_pending = true;
-			break;
-		}
-	if (!have_pending)
-	{
-		client->vrik_retire_barrier_size = 0;
-		client->vrik_retire_barrier_active = false;
-		return true;
-	}
-	if (!client->netconnection || !NET_CanSendMessage(client->netconnection))
-		return false;
-
-	msg.data = buffer;
-	msg.maxsize = sizeof(buffer);
-	msg.cursize = 0;
-	msg.allowoverflow = false;
-	msg.overflowed = false;
-
-	for (slot = 0; slot < MAX_SCOREBOARD; ++slot)
-	{
-		char command[64];
-		unsigned int generation = client->vrik_retire_pending[slot];
-		int command_length;
-
-		if (!generation)
-			continue;
-		command_length = q_snprintf(command, sizeof(command),
-			"//vrik_retire %d %u\n", slot, generation);
-		if (command_length <= 0 || (size_t)command_length >= sizeof(command))
-			return false;
-		MSG_WriteByte(&msg, svc_stufftext);
-		MSG_WriteString(&msg, command);
-	}
-
-	if (msg.overflowed || !msg.cursize)
-		return false;
-	if (NET_SendMessage(client->netconnection, &msg) == -1)
-	{
-		/* Match the ordinary reliable send path on a dead connection. */
-		host_client = client;
-		SV_DropClient(false);
-		return false;
-	}
-
-	/* Clear only after the reliable transport accepted the complete batch. */
-	memset(client->vrik_retire_pending, 0,
-		sizeof(client->vrik_retire_pending));
-	client->vrik_retire_barrier_size = 0;
-	client->vrik_retire_barrier_active = false;
-	client->last_message = realtime;
-	return true;
-}
-
-void SV_QueueVRIKRetirement(client_t *client, int slot,
+void SV_AppendVRIKRetirement(client_t *client, int slot,
 	unsigned int generation)
 {
-	unsigned int pending;
+	char command[64];
+	int command_length;
+	size_t required;
 
 	if (!client || !client->active || !client->netconnection ||
-		!client->vrik_protocol_version ||
-		slot < 0 || slot >= MAX_SCOREBOARD || !generation)
+		client->vrik_protocol_version < VRIK_PROTOCOL_LEGACY_VERSION ||
+		client->vrik_protocol_version >= VRIK_ADMISSION_PROTOCOL_VERSION ||
+		slot < 0 || slot >= MAX_SCOREBOARD || !generation ||
+		client->message.overflowed || client->message.cursize < 0 ||
+		client->message.maxsize < 0 ||
+		client->message.cursize > client->message.maxsize)
+		return;
+	command_length = q_snprintf(command, sizeof(command),
+		"//vrik_retire %d %u\n", slot, generation);
+	if (command_length <= 0 || (size_t)command_length >= sizeof(command))
+		return;
+	required = (size_t)command_length + 2; /* svc_stufftext and NUL */
+	if (required > (size_t)(client->message.maxsize - client->message.cursize))
 		return;
 
-	pending = client->vrik_retire_pending[slot];
-	if (!pending || SV_VRIKGenerationIsNewer(generation, pending))
-		client->vrik_retire_pending[slot] = generation;
-
-	/* Preserve the historical inline ordering when space exists. This is
-	 * called after the departure's required name/colors/frags updates. */
-	if (!client->vrik_retire_barrier_active &&
-		!client->message.overflowed && client->message.cursize >= 0 &&
-		client->message.maxsize >= 0 &&
-		client->message.cursize <= client->message.maxsize)
-	{
-		char command[64];
-		int command_length = q_snprintf(command, sizeof(command),
-			"//vrik_retire %d %u\n", slot,
-			client->vrik_retire_pending[slot]);
-		size_t required;
-		if (command_length > 0 && (size_t)command_length < sizeof(command))
-		{
-			required = (size_t)command_length + 2;
-			if (required <= (size_t)(client->message.maxsize -
-				client->message.cursize))
-			{
-				MSG_WriteByte(&client->message, svc_stufftext);
-				MSG_WriteString(&client->message, command);
-				client->vrik_retire_pending[slot] = 0;
-				return;
-			}
-		}
-	}
-
-	if (!client->vrik_retire_barrier_active)
-	{
-		client->vrik_retire_barrier_size = client->message.cursize;
-		client->vrik_retire_barrier_active = true;
-	}
+	/* Legacy peers get this only inline after required scoreboard updates. */
+	MSG_WriteByte(&client->message, svc_stufftext);
+	MSG_WriteString(&client->message, command);
 }
 
 static void SV_ResetVRIKClientState(client_t *client, qboolean keep_capability)
@@ -187,7 +81,6 @@ static void SV_ResetVRIKClientState(client_t *client, qboolean keep_capability)
 
 	if (!client)
 		return;
-	SV_ClearPendingVRIKRetirements(client);
 	capable = keep_capability ? client->vrik_capable : false;
 	version = keep_capability ? client->vrik_protocol_version : 0;
 	client->vrik_capable = false;
@@ -208,6 +101,8 @@ static void SV_ResetVRIKClientState(client_t *client, qboolean keep_capability)
 		sizeof(client->vrik_relay_sequence));
 	memset(client->vrik_relay_generation, 0,
 		sizeof(client->vrik_relay_generation));
+	memset(client->vrik_admitted_generation, 0,
+		sizeof(client->vrik_admitted_generation));
 	client->vrik_capable = capable;
 	client->vrik_protocol_version = version;
 }
@@ -448,6 +343,30 @@ static qboolean SV_AppendPendingVRIK(client_t *recipient, sizebuf_t *msg)
 			recipient->vrik_relay_generation[i] == source->vrik_generation &&
 			recipient->vrik_relay_sequence[i] == source->vrik_last_sequence)
 			continue;
+		if (recipient->vrik_protocol_version >= VRIK_ADMISSION_PROTOCOL_VERSION &&
+			recipient->vrik_admitted_generation[i] != source->vrik_generation)
+		{
+			char command[64];
+			int command_length = q_snprintf(command, sizeof(command),
+				"//vrik_generation %d %u\n", i, source->vrik_generation);
+			size_t required;
+
+			if (!source->name[0] || command_length <= 0 ||
+				(size_t)command_length >= sizeof(command) ||
+				recipient->message.overflowed ||
+				recipient->message.cursize < 0 ||
+				recipient->message.maxsize < 0 ||
+				recipient->message.cursize > recipient->message.maxsize)
+				continue;
+			required = (size_t)command_length + 2;
+			if (required > (size_t)(recipient->message.maxsize -
+				recipient->message.cursize))
+				continue;
+			MSG_WriteByte(&recipient->message, svc_stufftext);
+			MSG_WriteString(&recipient->message, command);
+			/* Record only an admission appended to the reliable stream. */
+			recipient->vrik_admitted_generation[i] = source->vrik_generation;
+		}
 
 		if (recipient->vrik_protocol_version >= VRIK_PROTOCOL_VERSION)
 		{
@@ -2167,9 +2086,11 @@ This will be sent on the initial connection and upon each server load.
 */
 void SV_SendServerinfo (client_t *client)
 {
-	static const char offer_v3[] = "//vrik_protocol 3\n";
-	static const char offer_v2[] = "//vrik_protocol 2\n";
-	const size_t vrik_offer_bytes = 2 + sizeof (offer_v3) + sizeof (offer_v2);
+	static const char *vrik_offers[] = {
+		"//vrik_protocol 4\n",
+		"//vrik_protocol 3\n",
+		"//vrik_protocol 2\n"
+	};
 	const char **s;
 	char		 message[2048];
 	unsigned int i; // johnfitz
@@ -2399,18 +2320,22 @@ retry:
 		truncated = true;
 		goto retry;
 	}
-	/* Keep negotiation inside the serverinfo reliable message. The donor
-	 * client disconnects if a separate reliable command arrives while it is
-	 * loading. Optional offers must not reduce gameplay precaches. */
+	/* Keep each offer inside serverinfo and after all ordinary precaches. A
+	 * fitting newer offer remains useful even when a later offer cannot fit. */
 	if (client->netconnection && !client->message.overflowed &&
 		client->message.cursize >= 0 && client->message.maxsize >= 0 &&
-		client->message.cursize <= client->message.maxsize &&
-		vrik_offer_bytes <= (size_t)(client->message.maxsize - client->message.cursize))
+		client->message.cursize <= client->message.maxsize)
 	{
-		MSG_WriteByte (&client->message, svc_stufftext);
-		MSG_WriteString (&client->message, offer_v3);
-		MSG_WriteByte (&client->message, svc_stufftext);
-		MSG_WriteString (&client->message, offer_v2);
+		unsigned int offer_index;
+		for (offer_index = 0; offer_index < countof (vrik_offers); ++offer_index)
+		{
+			size_t required = strlen (vrik_offers[offer_index]) + 2;
+			if (required > (size_t)(client->message.maxsize -
+				client->message.cursize))
+				continue;
+			MSG_WriteByte (&client->message, svc_stufftext);
+			MSG_WriteString (&client->message, vrik_offers[offer_index]);
+		}
 	}
 
 	// try and flush the reliable NOW, in case the qc is evil
@@ -3810,45 +3735,6 @@ void SV_SendClientMessages (void)
 			continue;
 		}
 
-		/* When an inline retirement could not fit, send older reliable bytes
-		 * first, then the retirement on this same channel. Keep later bytes in
-		 * the client's buffer until that retirement has been accepted. */
-		if (host_client->vrik_retire_barrier_active)
-		{
-			int prefix_size = host_client->vrik_retire_barrier_size;
-
-			if (prefix_size < 0 || prefix_size > host_client->message.cursize)
-			{
-				/* An invalid boundary cannot be repaired without discarding
-				 * reliable gameplay data; leave the client queue untouched. */
-				continue;
-			}
-			if (prefix_size > 0)
-			{
-				sizebuf_t prefix;
-				if (!NET_CanSendMessage(host_client->netconnection))
-					continue;
-				prefix.data = host_client->message.data;
-				prefix.maxsize = prefix_size;
-				prefix.cursize = prefix_size;
-				prefix.allowoverflow = false;
-				prefix.overflowed = false;
-				if (NET_SendMessage(host_client->netconnection, &prefix) == -1)
-				{
-					SV_DropClient(false);
-					continue;
-				}
-				memmove(host_client->message.data,
-					host_client->message.data + prefix_size,
-					(size_t)(host_client->message.cursize - prefix_size));
-				host_client->message.cursize -= prefix_size;
-				host_client->vrik_retire_barrier_size = 0;
-				host_client->last_message = realtime;
-			}
-			if (!SV_FlushPendingVRIKRetirements(host_client))
-				continue;
-		}
-
 		if (host_client->message.cursize || host_client->dropasap)
 		{
 			if (!NET_CanSendMessage (host_client->netconnection))
@@ -3866,8 +3752,6 @@ void SV_SendClientMessages (void)
 					SV_DropClient (false); // if the message couldn't send, kick off
 				SZ_Clear (&host_client->message);
 				host_client->last_message = realtime;
-				if (sent && host_client->active)
-					SV_FlushPendingVRIKRetirements(host_client);
 				if (host_client->sendsignon == PRESPAWN_FLUSH)
 					host_client->sendsignon = PRESPAWN_DONE;
 			}

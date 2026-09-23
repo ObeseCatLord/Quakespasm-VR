@@ -35,10 +35,12 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #define PROTOCOL_FTE_PEXT2 \
 	(('F' << 0) + ('T' << 8) + ('E' << 16) + ('2' << 24)) // fte extensions, provides extensions to the underlying base protocol (like 666 or even 15).
 
-/* Optional VRIK pose transport.  This capability is independent of FTE PEXT
- * and the server's private QSVR movement profile. */
+/* Optional VRIK pose transport. Protocol 4 adds reliable generation
+ * admission while retaining the protocol 3 pose-body semantics. This
+ * capability is independent of FTE PEXT and the private QSVR profile. */
 #define VRIK_PROTOCOL_LEGACY_VERSION 2
 #define VRIK_PROTOCOL_VERSION 3
+#define VRIK_ADMISSION_PROTOCOL_VERSION 4
 #define VRIK_MAX_ROOT_LOCAL_OFFSET 256.0f
 #define VRIK_SERVER_MIN_INTERVAL 0.025
 #define VRIK_POSE_STALE_TIME 1.0
@@ -343,7 +345,7 @@ typedef struct
 #define svc_levelcompleted 54
 #define svc_backtolobby	   55
 #define svc_localsound	   56
-/* [short entity][long generation][v2 fixed pose or v3 framed pose] */
+/* [short entity][long generation][v2 fixed pose or v3 framed pose; v4 uses v3] */
 #define svc_vrikpose	   87
 
 // spike -- some extensions for particles.
@@ -383,7 +385,7 @@ typedef struct
 #define clc_disconnect	2
 #define clc_move		3  // [usercmd_t]
 #define clc_stringcmd	4  // [string] message
-#define clc_vrikpose	5  // v2 [fixed pose], v3 [byte bodylen][codec body]
+#define clc_vrikpose	5  // v2 [fixed pose], v3/v4 [byte bodylen][codec body]
 #define clcdp_ackframe	50 // [long] frame sequence. reused by fte replacement deltas
 //
 // temp entity events
