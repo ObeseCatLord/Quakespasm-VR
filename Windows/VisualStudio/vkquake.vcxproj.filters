@@ -298,6 +298,12 @@
     <ClCompile Include="..\..\Quake\vr_fbt_filter.c">
       <Filter>Main</Filter>
     </ClCompile>
+    <ClCompile Include="..\..\Quake\vr_fbt_profile.c">
+      <Filter>Main</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Quake\vr_fbt_storage.c">
+      <Filter>Main</Filter>
+    </ClCompile>
     <ClCompile Include="..\..\Quake\vr_input.c">
       <Filter>Main</Filter>
     </ClCompile>
@@ -1054,6 +1060,12 @@
       <Filter>Main</Filter>
     </ClInclude>
     <ClInclude Include="..\..\Quake\vr_fbt_filter.h">
+      <Filter>Main</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\Quake\vr_fbt_profile.h">
+      <Filter>Main</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\Quake\vr_fbt_storage.h">
       <Filter>Main</Filter>
     </ClInclude>
     <ClInclude Include="..\..\Quake\sha256.h">

@@ -56,6 +56,8 @@ OBJS += vr_openxr.o
 OBJS += vrik_codec.o
 OBJS += vr_fbt.o
 OBJS += vr_fbt_filter.o
+OBJS += vr_fbt_profile.o
+OBJS += vr_fbt_storage.o
 OBJS += vr_weapon_menu.o
 LINKER = $(CXX)
 

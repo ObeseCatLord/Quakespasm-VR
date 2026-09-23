@@ -257,6 +257,8 @@ copy "$(SolutionDir)\..\SDL3\lib64\*.dll" "$(TargetDir)"</Command>
     </ClCompile>
     <ClCompile Include="..\..\Quake\vr_fbt.c" />
     <ClCompile Include="..\..\Quake\vr_fbt_filter.c" />
+    <ClCompile Include="..\..\Quake\vr_fbt_profile.c" />
+    <ClCompile Include="..\..\Quake\vr_fbt_storage.c" />
     <ClCompile Include="..\..\Quake\vr_openxr.cpp">
       <CompileAs>CompileAsCpp</CompileAs>
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
@@ -1257,6 +1259,8 @@ copy "$(SolutionDir)\..\SDL3\lib64\*.dll" "$(TargetDir)"</Command>
     <ClInclude Include="..\..\Quake\vrik_codec.h" />
     <ClInclude Include="..\..\Quake\vr_fbt.h" />
     <ClInclude Include="..\..\Quake\vr_fbt_filter.h" />
+    <ClInclude Include="..\..\Quake\vr_fbt_profile.h" />
+    <ClInclude Include="..\..\Quake\vr_fbt_storage.h" />
     <ClInclude Include="..\..\Quake\vr_locomotion.h" />
     <ClInclude Include="..\..\Quake\vr_weapon_catalog.h" />
     <ClInclude Include="..\..\Quake\vr_weapon_menu.h" />
