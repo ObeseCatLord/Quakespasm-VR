@@ -857,3 +857,71 @@ QSVR_LOCOMOTION_RESULT="$INPUT_TEST_ROOT/locomotion-result.json" \
 Use only a disposable profile linked to the licensed Straight assets. This probe
 changes ordinary cvars/bindings in that isolated process and stops its client on
 exit. The caller owns starting/stopping the separate simulated runtime service.
+
+## Local private legacy-profile loopback smoke
+
+`local_private_legacy_peer_smoke.gdb` observes an initialized client connected
+to an isolated loopback dedicated server. It checks signon, private or public
+protocol authority, disabled prediction permission, settled authoritative
+movement, shell consumption and advancing bounded move ACKs. It has no
+intermediate-frame movement assertion and does not claim prediction, VR input
+or physical damage.
+
+Give the client and server separate disposable basedirs. In each, link the
+canonical Straight `id1/pak0.pak` and the read-only `id1/vr_weapons.txt`:
+
+```sh
+STRAIGHT_ID1=/path/to/Straight/id1
+CLIENT_PROFILE=/tmp/qsvr-local-client
+SERVER_PROFILE=/tmp/qsvr-local-server
+for profile in "$CLIENT_PROFILE" "$SERVER_PROFILE"; do
+  mkdir -p "$profile/id1"
+  ln -s "$STRAIGHT_ID1/pak0.pak" "$profile/id1/pak0.pak"
+  ln -s "$STRAIGHT_ID1/vr_weapons.txt" "$profile/id1/vr_weapons.txt"
+done
+QSVR_BINARY=/path/to/debug/vkquake
+```
+
+Start the dedicated server in its own terminal on loopback. Private mode is
+opt-in; omit the cvar command for the default-off public case:
+
+```sh
+"$QSVR_BINARY" -dedicated 4 -ip 127.0.0.1 -port 28790 \
+  -basedir "$SERVER_PROFILE" +sv_qsvr_private 1 +coop 1 +map e1m1
+```
+
+Run the private client case from the repository root with a GDB-enabled Linux
+debug build and GDB Python support. Set `SDL_VIDEODRIVER=x11` in the command
+environment if SDL's Wayland driver reports no displays in the test session:
+
+```sh
+QSVR_LOCAL_EXPECT_PRIVATE=1 \
+QSVR_LOCAL_RESULT="$CLIENT_PROFILE/private-result.json" \
+  timeout --signal=TERM 150s gdb -nx --batch \
+  -x tests/local_private_legacy_peer_smoke.gdb --args "$QSVR_BINARY" \
+  -novr -nosound -window -width 640 -height 480 -basedir "$CLIENT_PROFILE" \
+  +vid_vsync 0 +host_maxfps 144 +connect 127.0.0.1:28790
+```
+
+For public mode, start a fresh dedicated server with its default-off
+`sv_qsvr_private` and use `QSVR_LOCAL_EXPECT_PRIVATE=0` with a separate result
+path. The client still offers the versioned private profile during `pext`
+negotiation; the check requires public authority. The positional `qsvr1`
+argument is reserved for a server using the unmarked inherited legacy layout
+and must not be supplied to this test.
+
+For the private-to-public map-switch case, remove any stale readiness file,
+then add `QSVR_LOCAL_MAP_READY="$CLIENT_PROFILE/map-ready"` to the private
+client command above. Only after that file appears, enter these as two separate
+console inputs in the server terminal, in order:
+
+```text
+sv_qsvr_private 0
+changelevel e1m2
+```
+
+The result requires a changed world, completed signon and public authority.
+The debugger may terminate before the server clears the old client slot, so
+use a fresh dedicated server for each run or allow enough client slots for
+stranded slots to expire. These are local client/server checks only; they do
+not establish headset behavior, physical damage or prediction correctness.
