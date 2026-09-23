@@ -46,6 +46,8 @@ qboolean VR_WeaponMenu_IsOpenVR (void);
 unsigned int VR_WeaponMenu_SessionGeneration (void);
 void VR_WeaponMenu_Open (void);
 void VR_WeaponMenu_Cancel (void);
+/* Reload the optional active-game wwheel.txt catalog at game transitions. */
+void VR_WeaponMenu_ReloadGame (void);
 void VR_WeaponMenu_SetVRPointer (qboolean tracking_valid, qboolean pointer_valid,
 	int pointer_x, int pointer_y);
 int VR_WeaponMenu_Release (void);

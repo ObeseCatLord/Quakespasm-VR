@@ -7,6 +7,10 @@
 #include "vr_input.h"
 #include "vr_weapon_menu.h"
 
+#include <errno.h>
+#include <limits.h>
+#include <stdlib.h>
+
 extern qpic_t *Sbar_WeaponMenuIcon (int item_bit);
 
 #define VR_WEAPON_MENU_MAX_ENTRIES VR_WEAPON_CATALOG_MAX_OBSERVATIONS
@@ -65,6 +69,13 @@ static const vr_weapon_menu_catalog_t vr_weapon_menu_stock_catalog = {
 	0
 };
 
+static vr_weapon_menu_entry_t vr_weapon_menu_wwheel_entries[VR_WEAPON_MENU_MAX_ENTRIES];
+static char vr_weapon_menu_wwheel_labels[VR_WEAPON_MENU_MAX_ENTRIES][32];
+static vr_weapon_menu_catalog_t vr_weapon_menu_wwheel_catalog = {
+	vr_weapon_menu_wwheel_entries, 0, 1
+};
+static qboolean vr_weapon_menu_has_wwheel;
+
 static qboolean vr_weapon_menu_open;
 static qboolean vr_weapon_menu_open_vr;
 static qboolean vr_weapon_menu_pointer_valid;
@@ -75,6 +86,266 @@ static unsigned int vr_weapon_menu_session_generation;
 static qmodel_t *vr_weapon_menu_worldmodel;
 static int vr_weapon_menu_viewentity;
 static char vr_weapon_menu_mapname[sizeof (cl.mapname)];
+
+static const vr_weapon_menu_catalog_t *VR_WeaponMenu_CurrentCatalog (void)
+{
+	return vr_weapon_menu_has_wwheel ? &vr_weapon_menu_wwheel_catalog :
+		&vr_weapon_menu_stock_catalog;
+}
+
+static qboolean VR_WeaponMenu_ParseInteger (const char *text, int minimum,
+	int maximum, int *value)
+{
+	char *end;
+	long parsed;
+
+	if (!text || !*text || !value)
+		return false;
+	errno = 0;
+	parsed = strtol (text, &end, 10);
+	if (errno == ERANGE || end == text || *end || parsed < minimum ||
+		parsed > maximum)
+		return false;
+	*value = (int)parsed;
+	return true;
+}
+
+static qboolean VR_WeaponMenu_NextToken (const char **cursor, char *token,
+	size_t token_size, qboolean *eof)
+{
+	const char *next;
+	qboolean parse_error = false;
+
+	next = COM_ParseExBuffer (*cursor, CPE_NOTRUNC, token, token_size,
+		&parse_error);
+	if (parse_error)
+		return false;
+	if (!next)
+	{
+		*eof = true;
+		return true;
+	}
+	*cursor = next;
+	*eof = false;
+	return true;
+}
+
+static int VR_WeaponMenu_FindStockSelector (int weaponnum, int impulse)
+{
+	for (size_t i = 0; i < sizeof (vr_weapon_menu_stock_entries) /
+		sizeof (vr_weapon_menu_stock_entries[0]); ++i)
+		if (vr_weapon_menu_stock_entries[i].selector == weaponnum &&
+			vr_weapon_menu_stock_entries[i].impulse == impulse)
+			return (int)i;
+	return -1;
+}
+
+static qboolean VR_WeaponMenu_WheelAmmo (int entvaroffs, int *ammo_stat,
+	int *ammo_max)
+{
+	switch (entvaroffs)
+	{
+	case 216:
+		*ammo_stat = STAT_SHELLS;
+		*ammo_max = 100;
+		return true;
+	case 220:
+		*ammo_stat = STAT_NAILS;
+		*ammo_max = 200;
+		return true;
+	case 224:
+		*ammo_stat = STAT_ROCKETS;
+		*ammo_max = 100;
+		return true;
+	case 228:
+		*ammo_stat = STAT_CELLS;
+		*ammo_max = 100;
+		return true;
+	default:
+		return false;
+	}
+}
+
+static qboolean VR_WeaponMenu_AddWWheelSlot (int weaponnum, int impulse,
+	qboolean have_entvaroffs, int entvaroffs)
+{
+	vr_weapon_menu_entry_t *entry;
+	int stock_index, ammo_stat = -1, ammo_max = 0;
+
+	if (weaponnum <= 0 || impulse <= 0 || impulse > 255 ||
+		vr_weapon_menu_wwheel_catalog.count >= VR_WEAPON_MENU_MAX_ENTRIES)
+		return false;
+	for (size_t i = 0; i < vr_weapon_menu_wwheel_catalog.count; ++i)
+		if (vr_weapon_menu_wwheel_entries[i].id == weaponnum)
+			return false;
+
+	entry = &vr_weapon_menu_wwheel_entries[vr_weapon_menu_wwheel_catalog.count];
+	stock_index = VR_WeaponMenu_FindStockSelector (weaponnum, impulse);
+	if (stock_index >= 0)
+		*entry = vr_weapon_menu_stock_entries[stock_index];
+	else
+		memset (entry, 0, sizeof (*entry));
+
+	entry->id = weaponnum;
+	entry->kind = VR_WEAPON_MENU_WEAPON;
+	entry->source = VR_WEAPON_CATALOG_SOURCE_SCHEMA;
+	entry->label = stock_index >= 0 ? vr_weapon_menu_stock_entries[stock_index].label :
+		vr_weapon_menu_wwheel_labels[vr_weapon_menu_wwheel_catalog.count];
+	entry->selector = stock_index >= 0 ?
+		vr_weapon_menu_stock_entries[stock_index].selector : 0;
+	entry->impulse = impulse;
+	entry->owned_stat = STAT_ITEMS;
+	entry->owned_mask = weaponnum;
+	entry->active_stat = STAT_ACTIVEWEAPON;
+	entry->active_mask = weaponnum;
+	entry->ammo_stat = -1;
+	entry->ammo_max = 0;
+	entry->ammo_max_stat = -1;
+	entry->has_schema_peer = 0;
+	entry->has_profile_peer = 0;
+
+	if (have_entvaroffs)
+		VR_WeaponMenu_WheelAmmo (entvaroffs, &ammo_stat, &ammo_max);
+	entry->ammo_stat = ammo_stat;
+	entry->ammo_max = ammo_max;
+	if (stock_index < 0)
+		q_snprintf (vr_weapon_menu_wwheel_labels[
+			vr_weapon_menu_wwheel_catalog.count],
+			sizeof (vr_weapon_menu_wwheel_labels[0]), "WEAPON %d", weaponnum);
+
+	vr_weapon_menu_wwheel_catalog.count++;
+	return true;
+}
+
+static qboolean VR_WeaponMenu_ParseWWheel (const char *data)
+{
+	const char *cursor = data;
+	char token[64];
+	qboolean eof = false;
+
+	while (!eof)
+	{
+		int weaponnum = 0, impulse = 0, entvaroffs = 0;
+		qboolean have_weaponnum = false, have_impulse = false;
+		qboolean have_entvaroffs = false, slot_valid = true;
+
+		if (!VR_WeaponMenu_NextToken (&cursor, token, sizeof (token), &eof))
+			return false;
+		if (eof)
+			break;
+		if (q_strcasecmp (token, "slot"))
+			continue;
+
+		if (!VR_WeaponMenu_NextToken (&cursor, token, sizeof (token), &eof) || eof)
+			return false;
+		if (strcmp (token, "{"))
+		{
+			/* Inherited files commonly spell this as `slot 0 {`; accept a
+			 * direct brace too, but require the identifier to be followed by it. */
+			if (!strcmp (token, "}"))
+				return false;
+			if (!VR_WeaponMenu_NextToken (&cursor, token, sizeof (token), &eof) ||
+				eof || strcmp (token, "{"))
+				return false;
+		}
+
+		for (;;)
+		{
+			if (!VR_WeaponMenu_NextToken (&cursor, token, sizeof (token), &eof))
+				return false;
+			if (eof)
+				return false;
+			if (!strcmp (token, "}"))
+				break;
+			if (!strcmp (token, "{") || !q_strcasecmp (token, "slot"))
+				return false;
+
+			if (!q_strcasecmp (token, "weaponnum") ||
+				!q_strcasecmp (token, "weapon_num"))
+			{
+				if (!VR_WeaponMenu_NextToken (&cursor, token, sizeof (token), &eof) || eof)
+					return false;
+				have_weaponnum = VR_WeaponMenu_ParseInteger (token, 1, INT_MAX,
+					&weaponnum);
+				if (!have_weaponnum)
+					slot_valid = false;
+			}
+			else if (!q_strcasecmp (token, "impulse"))
+			{
+				if (!VR_WeaponMenu_NextToken (&cursor, token, sizeof (token), &eof) || eof)
+					return false;
+				have_impulse = VR_WeaponMenu_ParseInteger (token, 1, 255, &impulse);
+				if (!have_impulse)
+					slot_valid = false;
+			}
+			else if (!q_strcasecmp (token, "entvaroffs"))
+			{
+				if (!VR_WeaponMenu_NextToken (&cursor, token, sizeof (token), &eof) || eof)
+					return false;
+				have_entvaroffs = VR_WeaponMenu_ParseInteger (token, INT_MIN,
+					INT_MAX, &entvaroffs);
+				if (!have_entvaroffs)
+					slot_valid = false;
+			}
+			else
+			{
+				/* The inherited file may carry extra scalar fields. Consume their
+				 * values, but reject a missing value or a structural token. */
+				if (!VR_WeaponMenu_NextToken (&cursor, token, sizeof (token), &eof) ||
+					eof || !strcmp (token, "{") || !strcmp (token, "}"))
+					return false;
+			}
+		}
+
+		if (slot_valid && have_weaponnum && have_impulse)
+			VR_WeaponMenu_AddWWheelSlot (weaponnum, impulse,
+				have_entvaroffs, entvaroffs);
+	}
+
+	return vr_weapon_menu_wwheel_catalog.count > 0;
+}
+
+void VR_WeaponMenu_ReloadGame (void)
+{
+	byte *data;
+	unsigned int path_id = 0;
+
+	VR_WeaponMenu_Cancel ();
+	memset (vr_weapon_menu_wwheel_entries, 0,
+		sizeof (vr_weapon_menu_wwheel_entries));
+	memset (vr_weapon_menu_wwheel_labels, 0,
+		sizeof (vr_weapon_menu_wwheel_labels));
+	vr_weapon_menu_wwheel_catalog.count = 0;
+	vr_weapon_menu_has_wwheel = false;
+
+	data = COM_LoadFile ("wwheel.txt", &path_id);
+	if (!data)
+		return;
+	if (!com_searchpaths || path_id != com_searchpaths->path_id)
+	{
+		Con_DPrintf ("VR: ignoring inherited wwheel.txt for %s\n", com_gamedir);
+		Mem_Free (data);
+		return;
+	}
+
+	if (VR_WeaponMenu_ParseWWheel ((const char *)data))
+	{
+		vr_weapon_menu_has_wwheel = true;
+		Con_DPrintf ("VR: loaded %d weapon slots from wwheel.txt\n",
+			(int)vr_weapon_menu_wwheel_catalog.count);
+	}
+	else
+	{
+		memset (vr_weapon_menu_wwheel_entries, 0,
+			sizeof (vr_weapon_menu_wwheel_entries));
+		memset (vr_weapon_menu_wwheel_labels, 0,
+			sizeof (vr_weapon_menu_wwheel_labels));
+		vr_weapon_menu_wwheel_catalog.count = 0;
+		Con_DPrintf ("VR: ignoring invalid or empty wwheel.txt for %s\n",
+			com_gamedir);
+	}
+	Mem_Free (data);
+}
 
 static qboolean VR_WeaponMenu_GameContextValid (void)
 {
@@ -349,7 +620,7 @@ void VR_WeaponMenu_SetVRPointer (qboolean tracking_valid, qboolean pointer_valid
 	if (!pointer_valid)
 		return;
 
-	count = VR_WeaponMenu_BuildVisible (&vr_weapon_menu_stock_catalog,
+	count = VR_WeaponMenu_BuildVisible (VR_WeaponMenu_CurrentCatalog (),
 		cl.stats, MAX_CL_STATS, cl.items, visible, VR_WEAPON_MENU_MAX_ENTRIES);
 	VR_WeaponMenu_Layout (visible, count, radius, scale);
 	selected = VR_WeaponMenu_Hit (visible, count, pointer_x, pointer_y, radius);
@@ -408,7 +679,7 @@ int VR_WeaponMenu_ReleaseCatalog (const vr_weapon_menu_catalog_t *catalog,
 
 int VR_WeaponMenu_Release (void)
 {
-	return VR_WeaponMenu_ReleaseCatalog (&vr_weapon_menu_stock_catalog,
+	return VR_WeaponMenu_ReleaseCatalog (VR_WeaponMenu_CurrentCatalog (),
 		cl.stats, MAX_CL_STATS, cl.items);
 }
 
@@ -532,6 +803,6 @@ void VR_WeaponMenu_DrawCatalog (struct cb_context_s *context,
 
 void VR_WeaponMenu_Draw (struct cb_context_s *cbx)
 {
-	VR_WeaponMenu_DrawCatalog (cbx, &vr_weapon_menu_stock_catalog,
+	VR_WeaponMenu_DrawCatalog (cbx, VR_WeaponMenu_CurrentCatalog (),
 		cl.stats, MAX_CL_STATS, cl.items);
 }

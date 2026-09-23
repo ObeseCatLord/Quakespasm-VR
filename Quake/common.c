@@ -30,6 +30,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "filenames.h"
 #include "steam.h"
 #include "vr_weapon_calibration.h"
+#include "vr_weapon_menu.h"
 #include <errno.h>
 
 // Plug our allocators into miniz:
@@ -3104,6 +3105,7 @@ void COM_SwitchGame (const char *paths)
 	Sky_ClearAll ();
 	if (!VR_WeaponCalibrationReloadGame ())
 		Con_Warning ("VR: invalid weapon calibration schema for active game\n");
+	VR_WeaponMenu_ReloadGame ();
 	if (!isDedicated)
 	{
 		TexMgr_NewGame ();
