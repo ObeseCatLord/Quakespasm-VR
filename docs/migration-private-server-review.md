@@ -47,9 +47,10 @@ The `2.0` client now offers a separate `QSVR` key/version in the ordinary
 `cmd pext` response. The server records that offer per connection, and the
 client parser accepts a matching serverinfo marker before private PEXT2 bits.
 Public PEXT2 support and the default server response remain unchanged. The
-server does **not yet select** the profile: outbound private ACK/signon framing,
-private move receipt, collision and QC authority still need the coupled
-vertical proof above. The extra client offer is ignored by public servers.
+server does **not yet select** the profile. Private outbound ACK/signon framing
+is staged, while private move receipt, collision and QC authority still need
+the coupled vertical proof above. The extra client offer is ignored by public
+servers.
 
 The inherited `0x40` private extension names a tagged `UF_SOLID` encoding.
 vkQuake currently does not emit `UF_SOLID`, so selecting the private profile
