@@ -86,12 +86,27 @@ movement protocol is needed. Compilation is not a live cross-play result.
 
 | Ranked finding | Disposition |
 | --- | --- |
-| **P1:** Delayed post-signon offers could allow a donor to send an unreliable pose before the reliable capability reply, causing a disconnect; a donor also clears capability on map change while the target server retained it. | **Addressed in `275b94c2`, runtime pending:** queue capacity-checked offers immediately after serverinfo in the reliable signon order; renegotiate on every map. While version is unknown, discard the rest of an early pose datagram without admitting its body or dropping the peer. |
+| **P1:** Delayed post-signon offers could allow a donor to send an unreliable pose before the reliable capability reply, causing a disconnect; a donor also clears capability on map change while the target server retained it. | **Addressed in `275b94c2` and `f7b6a603`, runtime pending:** include capacity-checked offers in serverinfo and renegotiate on every map. While version is unknown, discard the rest of an early pose datagram without admitting its body or dropping the peer. |
 | **P1:** Target mid-session demo recording reconstructs signon without the selected VRIK version, so playback would reject later recorded poses. | **Addressed in `275b94c2`, runtime pending:** reconstruct the selected v2/v3 offer before any pose; demo playback latches the version without sending a network capability reply. |
 | **P2:** Backward demo seek keeps future VRIK sequence/generation cursors and rejects earlier replayed poses. | **Addressed in `275b94c2`, runtime pending:** reset entity pose caches on backward seek while keeping the recorded protocol version. |
 | **P2:** Disconnect or player-slot reuse can leave a previous occupant's tracked pose in the recipient cache until timeout. | **Addressed in `275b94c2` for a known predecessor, runtime pending:** clear on scoreboard departure and entity removal; retain the last stream generation so delayed predecessor datagrams cannot revive it. A predecessor with no previously received pose has no generation floor. |
 | Replace the transport with a new reliability layer. | **Reject:** the reviewed packet framing and per-peer capability adapter remain the narrowest fit. |
 | Server legacy pose mirror duplicates normalized pose state. | **Revisit after behavior is proven:** remove if no consumer requires it; keep raw v2 bytes only where exact v2 relay needs them. |
+
+The follow-up Astra review requested three corrections before transport or
+avatar parity can be claimed. Its static packet-budget check passed for both
+public and private movement paths; the remaining issues are ordering and
+presentation, not packet size.
+
+| Follow-up finding | Disposition |
+| --- | --- |
+| **P1:** A separate reliable offer immediately after serverinfo may arrive while an inherited client is still precaching; its keepalive parser treats that as fatal. | **Addressed in `f7b6a603`, runtime pending:** reserve room in the serverinfo retry path and append both offers in that same reliable message. If even the complete pair cannot fit, omit optional negotiation; never send a separate loading-time offer. Keep early-pose discard. |
+| **P2:** On a slot departure, the client currently marks whichever unreliable generation was most recently cached as retired. If replacement B arrives ahead of departure A, this permanently rejects B. | **Fix in progress:** clear displayed samples at departure, then retire A by explicit generation on the existing reliable channel. A newer B generation must survive the delayed retirement. |
+| **P2:** The sender maps head/hands with tracking yaw while stereo presentation resolves view yaw separately in mouse-yaw mode; its public hand origin also includes HMD translation omitted by the local viewmodel and muzzle. | **Design in progress:** make the existing view owner expose a resolved presentation yaw and hand origin. Use that same transform in sender, head offset, viewmodel, and calibrated muzzle, while retaining body-owned private roomscale movement. |
+
+The static review also identified the write-only server legacy pose mirror and
+the always-false `keep_capability` reset argument as later deletion candidates.
+No live mixed-peer or transform parity test has been run.
 
 ## Focused Astra Vulkan avatar review disposition
 
