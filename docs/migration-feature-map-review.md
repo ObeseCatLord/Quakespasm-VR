@@ -19,6 +19,12 @@ Verdict: keep vkQuake’s existing renderer, tasks, resources, loaders, allocato
 
 The review earned its cost by catching real donor behavior differences and a phase-order conflict that could otherwise permit bulk work around an unproven stereo architecture. Main spot-checked each load-bearing correction in the source before applying it.
 
+Later product preference (2026-09-22) supersedes the ASSET-001 tie-precedence
+disposition above: vkQuake's PNG-before-TGA order remains the visual default.
+The `.jpeg` lookup was added through its existing loader; higher search-path
+priority still wins. The historical review finding is retained for provenance,
+but its proposed TGA-before-PNG change is not the current migration target.
+
 No new user permission is needed to preserve the existing requirements. A proposed reduction in inherited OpenVR/legacy-peer compatibility or adoption of substantial optional scope would require an explicit product decision. No such reduction or scope expansion is made here.
 
 Verification for this checkpoint: pinned source-anchor existence; CSV shape/unique feature IDs and readable-table correspondence; document links; preserved source/worktree state; `git diff --check`. No builds, runtime tests, hardware performance claims, release packaging, pushes or deployment were performed for this documentation pass.
