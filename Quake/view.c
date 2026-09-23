@@ -83,6 +83,8 @@ cvar_t vr_viewkick = {"vr_viewkick", "0", CVAR_NONE};
 cvar_t vr_aimmode = {"vr_aimmode", "7", CVAR_ARCHIVE};
 cvar_t vr_deadzone = {"vr_deadzone", "30", CVAR_ARCHIVE};
 static cvar_t vr_gunangle = {"vr_gunangle", "32", CVAR_ARCHIVE};
+cvar_t vr_gunmodelpitch = {"vr_gunmodelpitch", "0", CVAR_ARCHIVE};
+cvar_t vr_gunmodelscale = {"vr_gunmodelscale", "1.0", CVAR_ARCHIVE};
 
 // These describe the saved V_CalcRefdef base, including when paused. Do not
 // subtract a newly received viewheight from a base prepared with an older one.
@@ -1324,6 +1326,8 @@ void V_Init (void)
 	Cvar_RegisterVariable (&vr_aimmode);
 	Cvar_RegisterVariable (&vr_deadzone);
 	Cvar_RegisterVariable (&vr_gunangle);
+	Cvar_RegisterVariable (&vr_gunmodelpitch);
+	Cvar_RegisterVariable (&vr_gunmodelscale);
 	Cvar_SetCallback (&vr_aimmode, V_TrackedAimModeChanged);
 	Cmd_AddCommand ("v_cshift", V_cshift_f);
 	Cmd_AddCommand ("bf", V_BonusFlash_f);

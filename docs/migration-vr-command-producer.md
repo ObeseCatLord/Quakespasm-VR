@@ -110,6 +110,9 @@ pitch, yaw and roll (`V_TrackedMovementAngles` in follow-hand mode), even when
 the movement command's view angles follow the head or offhand. The current
 movement-angle path deliberately zeros roll for wire movement; using that
 value for model-space muzzle reflection would lose wrist-roll calibration.
+The source `vr_gunmodelpitch` and `vr_gunmodelscale` settings are registered
+with their inherited defaults of 0 and 1; `held_scale` remains a separate
+viewmodel presentation setting and must not alter the muzzle length.
 
 The read-only game installation currently has 37 `vr_weapons.txt` files. A
 first-token inventory found 646 `viewmodel` entries, 622 `muzzle_offset`, 41
@@ -121,6 +124,14 @@ renderer already selects the active MDL/MD3/MD5 alias header through
 `Mod_Extradata_CheckSkin` (`gl_model.c:199–250`, `r_alias.c:523`), so the
 profile adapter should read that selection rather than make a second model
 priority rule.
+
+The bounded `VR_WeaponSchemaParse` stage now uses vkQuake's native
+`COM_ParseExBuffer` tokenizer and retains the donor's full entry vocabulary,
+sequential global inheritance, and 64-block limit. It rejects incomplete or
+nonfinite values and does not publish a second live weapon registry. A focused
+Linux fixture passes, and all 37 installed read-only schemas parse to 670
+staged entries. Game-path loading, live cvars, model-format selection, and
+command activation remain separate integration steps.
 
 There is also a timing boundary to measure before any head-motion prediction:
 `CL_AccumulateCmd` consumes the last completed OpenXR frame in `host.c`, while
