@@ -149,6 +149,21 @@ the inherited rerelease Ranger through the existing model loader when the
 user's game data provides it, and fall back to ordinary MDL animation when it
 does not. Disabling enhanced models must not disable desktop play or gameplay.
 
+For the Vulkan adapter, reserve a contiguous storage slice for all prepared
+tracked-player palettes in a submission, then bind an exact-range descriptor
+to that slice for visible MD5 draws. Ray-query skinning reads the matching
+device address and joint offset. Descriptor sets and any retired storage
+allocation remain alive until the frame-slot fence; a later storage-pool
+growth must not change the descriptor already recorded in a draw command.
+This reuses the existing dynamic storage allocator and the vkQuake shaders.
+First gate multisurface and skin selection against the actual visible and
+BLAS geometry, since skin-zero shadow selection can differ from a visible
+player skin. A tracked player's culling bounds must include the solved pose;
+static MD5 animation bounds alone can drop raised or extended hands. Retain
+stereo-union culling and evaluate cheap per-joint influence bounds before
+considering CPU vertex skinning or disabling culling. These are implementation
+constraints, not completed behavior or measured speedups.
+
 ## Desktop and VR cross-play gate
 
 The shared engine must launch and play desktop vkQuake with no OpenXR runtime or
