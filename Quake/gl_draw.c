@@ -1332,6 +1332,7 @@ void GL_BeginUIPanel (cb_context_t *cbx, const float world_from_ndc[16])
 {
 	memcpy (cbx->ui_panel_world_from_ndc, world_from_ndc, sizeof (cbx->ui_panel_world_from_ndc));
 	cbx->ui_panel_active = true;
+	cbx->ui_panel_modern_hud = false;
 	cbx->ui_panel_mvp_valid = false;
 	GL_ClearUIPanelSourceClip (cbx);
 	cbx->current_canvas = CANVAS_INVALID;
@@ -1343,6 +1344,7 @@ void GL_EndUIPanel (cb_context_t *cbx)
 {
 	GL_ClearUIPanelSourceClip (cbx);
 	cbx->ui_panel_active = false;
+	cbx->ui_panel_modern_hud = false;
 	cbx->ui_panel_mvp_valid = false;
 	cbx->current_canvas = CANVAS_INVALID;
 	GL_SetUIPanelFullScissor (cbx);
@@ -1357,6 +1359,49 @@ void GL_EndUIPanel (cb_context_t *cbx)
 
 	const VkViewport full_viewport = {0.0f, 0.0f, (float)vid.width, (float)vid.height, 0.0f, 1.0f};
 	vkCmdSetViewport (cbx->cb, 0, 1, &full_viewport);
+}
+
+static qboolean GL_SetModernHUDCanvas (cb_context_t *cbx, canvastype canvas)
+{
+	float fitting_scale;
+	float origin_x, origin_y, canvas_x, canvas_y;
+
+	if (!cbx->ui_panel_modern_hud)
+		return false;
+
+	fitting_scale = q_min ((float)glwidth / 640.0f, (float)glheight / 400.0f);
+	if (!isfinite (fitting_scale) || fitting_scale <= 0.0f)
+		return false;
+	origin_x = (glwidth - 640.0f * fitting_scale) * 0.5f;
+	origin_y = (glheight - 400.0f * fitting_scale) * 0.5f;
+
+	switch (canvas)
+	{
+	case CANVAS_BOTTOMLEFT:
+		canvas_x = 0.0f;
+		canvas_y = 200.0f;
+		break;
+	case CANVAS_TOPLEFT:
+		canvas_x = 0.0f;
+		canvas_y = 0.0f;
+		break;
+	case CANVAS_BOTTOMRIGHT:
+		canvas_x = 320.0f;
+		canvas_y = 200.0f;
+		break;
+	case CANVAS_TOPRIGHT:
+		canvas_x = 320.0f;
+		canvas_y = 0.0f;
+		break;
+	default:
+		return false;
+	}
+
+	GL_OrthoMatrix (cbx, 0, 320, 200, 0, -99999, 99999);
+	GL_Viewport (cbx, origin_x + canvas_x * fitting_scale,
+		glheight - (origin_y + (canvas_y + 200.0f) * fitting_scale),
+		320.0f * fitting_scale, 200.0f * fitting_scale, 0.0f, 1.0f);
+	return true;
 }
 
 /*
@@ -1427,24 +1472,36 @@ void GL_SetCanvas (cb_context_t *cbx, canvastype newcanvas)
 		GL_Viewport (cbx, scr_vrect.x, glheight - scr_vrect.y - scr_vrect.height, scr_vrect.width & ~1, scr_vrect.height & ~1, 0.0f, 1.0f);
 		break;
 	case CANVAS_BOTTOMLEFT:				   // used by devstats
-		s = (float)glwidth / vid.conwidth; // use console scale
-		GL_OrthoMatrix (cbx, 0, 320, 200, 0, -99999, 99999);
-		GL_Viewport (cbx, 0, 0, 320 * s, 200 * s, 0.0f, 1.0f);
+		if (!GL_SetModernHUDCanvas (cbx, newcanvas))
+		{
+			s = (float)glwidth / vid.conwidth; // use console scale
+			GL_OrthoMatrix (cbx, 0, 320, 200, 0, -99999, 99999);
+			GL_Viewport (cbx, 0, 0, 320 * s, 200 * s, 0.0f, 1.0f);
+		}
 		break;
 	case CANVAS_TOPLEFT:				   // for modern HUD frag counter
-		s = (float)glwidth / vid.conwidth; // use console scale
-		GL_OrthoMatrix (cbx, 0, 320, 200, 0, -99999, 99999);
-		GL_Viewport (cbx, 0, glheight - 200 * s, 320 * s, 200 * s, 0.0f, 1.0f);
+		if (!GL_SetModernHUDCanvas (cbx, newcanvas))
+		{
+			s = (float)glwidth / vid.conwidth; // use console scale
+			GL_OrthoMatrix (cbx, 0, 320, 200, 0, -99999, 99999);
+			GL_Viewport (cbx, 0, glheight - 200 * s, 320 * s, 200 * s, 0.0f, 1.0f);
+		}
 		break;
 	case CANVAS_BOTTOMRIGHT:			   // used by fps/clock
-		s = (float)glwidth / vid.conwidth; // use console scale
-		GL_OrthoMatrix (cbx, 0, 320, 200, 0, -99999, 99999);
-		GL_Viewport (cbx, glwidth - 320 * s, 0, 320 * s, 200 * s, 0.0f, 1.0f);
+		if (!GL_SetModernHUDCanvas (cbx, newcanvas))
+		{
+			s = (float)glwidth / vid.conwidth; // use console scale
+			GL_OrthoMatrix (cbx, 0, 320, 200, 0, -99999, 99999);
+			GL_Viewport (cbx, glwidth - 320 * s, 0, 320 * s, 200 * s, 0.0f, 1.0f);
+		}
 		break;
 	case CANVAS_TOPRIGHT:				   // for modern HUD weapon icons
-		s = (float)glwidth / vid.conwidth; // use console scale
-		GL_OrthoMatrix (cbx, 0, 320, 200, 0, -99999, 99999);
-		GL_Viewport (cbx, glwidth - 320 * s, glheight - 200 * s, 320 * s, 200 * s, 0.0f, 1.0f);
+		if (!GL_SetModernHUDCanvas (cbx, newcanvas))
+		{
+			s = (float)glwidth / vid.conwidth; // use console scale
+			GL_OrthoMatrix (cbx, 0, 320, 200, 0, -99999, 99999);
+			GL_Viewport (cbx, glwidth - 320 * s, glheight - 200 * s, 320 * s, 200 * s, 0.0f, 1.0f);
+		}
 		break;
 	default:
 		Sys_Error ("GL_SetCanvas: bad canvas type");

@@ -478,9 +478,8 @@ static void SCR_SizeDown_f (void)
 	Cvar_SetValueQuick (&scr_viewsize, new_value);
 }
 
-/* Keep the desktop reservation unless the current XR frame and supported
- * classic/CSQC HUD state can use the tracked panel. */
-static qboolean SCR_VRClassicSbarFrameEligible (const vrxr_frame_t *frame)
+/* All HUD styles use one tracked pose and one set of live-game restrictions. */
+static qboolean SCR_VRHUDFrameEligible (const vrxr_frame_t *frame)
 {
 	const qboolean loading = scr_drawloading || (scr_drawstartuploading && cls.state == ca_disconnected);
 	vec3_t angles;
@@ -490,8 +489,7 @@ static qboolean SCR_VRClassicSbarFrameEligible (const vrxr_frame_t *frame)
 		!frame->devices[0].valid || !frame->devices[0].tracked || frame->devices[0].kind != VRXR_DEVICE_HEAD ||
 		frame->devices[0].hand != -1 || cls.signon != SIGNONS || !cl.worldmodel || con_forcedup ||
 		key_dest != key_game || m_state != m_none || scr_con_current > 0 || scr_drawdialog || loading ||
-		cl.intermission || scr_style.value >= 2.0f ||
-		(scr_style.value < 1.0f && cl.qcvm.extfuncs.CSQC_DrawHud && qcvm) ||
+		cl.intermission ||
 		cl.maxclients != 1 || cl.gametype != GAME_COOP || sb_showscores || cl.stats[STAT_HEALTH] <= 0 ||
 		!isfinite (vr_aimmode.value) || !isfinite (vr_hud_scale.value) || vr_hud_scale.value <= 0)
 		return false;
@@ -521,6 +519,19 @@ static qboolean SCR_VRClassicSbarFrameEligible (const vrxr_frame_t *frame)
 		if (!isfinite (angles[i]))
 			return false;
 	return true;
+}
+
+/* Only the classic/CSQC panel replaces status-bar scene reservation. */
+static qboolean SCR_VRClassicSbarFrameEligible (const vrxr_frame_t *frame)
+{
+	return SCR_VRHUDFrameEligible (frame) && isfinite (scr_style.value) && scr_style.value < 2.0f &&
+		!(scr_style.value < 1.0f && cl.qcvm.extfuncs.CSQC_DrawHud && qcvm);
+}
+
+static qboolean SCR_VRModernSbarFrameEligible (const vrxr_frame_t *frame)
+{
+	return SCR_VRHUDFrameEligible (frame) && isfinite (scr_style.value) && scr_style.value >= 2.0f &&
+		isfinite (scr_viewsize.value) && scr_viewsize.value < 120.0f;
 }
 
 static void SCR_Callback_refdef (cvar_t *var)
@@ -1567,6 +1578,14 @@ typedef struct
 
 static vr_classic_sbar_panel_t vr_classic_sbar_panel;
 
+typedef struct
+{
+	qboolean valid;
+	float world_from_ndc[16];
+} vr_modern_sbar_panel_t;
+
+static vr_modern_sbar_panel_t vr_modern_sbar_panel;
+
 static qboolean SCR_VRMenuRayHit (const vec3_t origin, const vec3_t direction,
 	const vec3_t center, const vec3_t right, const vec3_t down, const vec3_t normal,
 	float scale, int *pixel_x, int *pixel_y)
@@ -1696,18 +1715,56 @@ static void SCR_VRMenuPrepare (void)
 	vr_menu_panel.valid = true;
 }
 
+/* One donor placement rule for classic, CSQC, and modern presentation. */
+static qboolean SCR_VRHUDPose (vec3_t target, vec3_t right, vec3_t down, vec3_t normal)
+{
+	vec3_t aim_angles, panel_angles, forward, up, hand_origin, hand_direction;
+	int dominant;
+
+	if (vr_aimmode.value == VR_AIMMODE_CONTROLLER)
+	{
+		dominant = VR_InputDominantPhysicalHand ();
+		if (!R_TrackedControllerRay (dominant, hand_origin, hand_direction) ||
+			!V_TrackedMovementAngles (VR_MOVEMENT_MODE_FOLLOW_HAND, dominant, aim_angles))
+			return false;
+		/* The hand roll affects the donor's side offset, but not panel tilt. */
+		AngleVectors (aim_angles, forward, right, up);
+		VectorMA (hand_origin, dominant == 0 ? 5.0f : -5.0f, right, target);
+		aim_angles[ROLL] = 0;
+	}
+	else
+	{
+		VectorCopy (cl.viewangles, aim_angles);
+		if (vr_aimmode.value == VR_AIMMODE_HEAD_MYAW ||
+			vr_aimmode.value == VR_AIMMODE_HEAD_MYAW_MPITCH)
+			aim_angles[PITCH] = 0;
+		aim_angles[ROLL] = 0;
+		AngleVectors (aim_angles, forward, right, up);
+		VectorMA (cl.viewent.origin, 1.0f, forward, target);
+	}
+
+	VectorCopy (aim_angles, panel_angles);
+	panel_angles[PITCH] += 45.0f;
+	panel_angles[ROLL] = 0;
+	AngleVectors (panel_angles, normal, right, up);
+	VectorScale (up, -1.0f, down);
+	VectorMA (target, 10.0f, normal, target);
+	for (int i = 0; i < 3; ++i)
+		if (!isfinite (target[i]) || !isfinite (right[i]) || !isfinite (down[i]) || !isfinite (normal[i]))
+			return false;
+	return true;
+}
+
 /* Map the classic 320x48 CANVAS_SBAR coordinates through the same viewport
  * and ortho math as GL_SetCanvas. Inverting that affine keeps each canvas
  * unit at vr_hud_scale world units regardless of render or bar scale. */
 static void SCR_VRClassicSbarPrepare (void)
 {
 	const vrxr_frame_t *frame = GL_OpenXRFrame ();
-	vec3_t aim_angles, panel_angles, target, forward, right, up, normal, down;
-	vec3_t hand_origin, hand_direction;
+	vec3_t target, right, normal, down;
 	float scale, bar_scale, viewport_x, viewport_y, x_step, y_step, x_base, y_base;
 	float canvas_width = 320.0f, canvas_height = 48.0f;
 	qboolean csqc_hud;
-	int dominant;
 
 	vr_classic_sbar_panel.valid = false;
 	if (!SCR_VRClassicSbarFrameEligible (frame))
@@ -1724,36 +1781,8 @@ static void SCR_VRClassicSbarPrepare (void)
 	if (!isfinite (scale) || scale <= 0 || vid.width <= 0 || vid.height <= 0 || glwidth <= 0 || glheight <= 0)
 		return;
 
-	if (vr_aimmode.value == VR_AIMMODE_CONTROLLER)
-	{
-		dominant = VR_InputDominantPhysicalHand ();
-		if (!R_TrackedControllerRay (dominant, hand_origin, hand_direction) ||
-			!V_TrackedMovementAngles (VR_MOVEMENT_MODE_FOLLOW_HAND, dominant, aim_angles))
-			return;
-		/* Match the donor offset: hand roll affects right before panel tilt. */
-		AngleVectors (aim_angles, forward, right, up);
-		VectorMA (hand_origin, dominant == 0 ? 5.0f : -5.0f, right, target);
-		aim_angles[ROLL] = 0;
-	}
-	else
-	{
-		VectorCopy (cl.viewangles, aim_angles);
-		if (vr_aimmode.value == VR_AIMMODE_HEAD_MYAW ||
-			vr_aimmode.value == VR_AIMMODE_HEAD_MYAW_MPITCH)
-			aim_angles[PITCH] = 0;
-		aim_angles[ROLL] = 0;
-		AngleVectors (aim_angles, forward, right, up);
-		VectorMA (cl.viewent.origin, 1.0f, forward, target);
-	}
-
-	/* The donor rotates the panel 45 degrees toward the player around its
-	 * right axis. In Quake's angle basis this is a 45 degree pitch increase. */
-	VectorCopy (aim_angles, panel_angles);
-	panel_angles[PITCH] += 45.0f;
-	panel_angles[ROLL] = 0;
-	AngleVectors (panel_angles, normal, right, up);
-	VectorScale (up, -1.0f, down);
-	VectorMA (target, 10.0f, normal, target);
+	if (!SCR_VRHUDPose (target, right, down, normal))
+		return;
 
 	if (csqc_hud)
 	{
@@ -1803,6 +1832,49 @@ static void SCR_VRClassicSbarPrepare (void)
 	vr_classic_sbar_panel.world_from_ndc[15] = 1.0f;
 	vr_classic_sbar_panel.csqc_hud = csqc_hud;
 	vr_classic_sbar_panel.valid = true;
+}
+
+/* Place the modern 640x400 surface on the same frozen donor pose as the
+ * classic HUD. The viewport fit is inverted here, so each source unit keeps
+ * the configured physical size at every framebuffer resolution. */
+static void SCR_VRModernSbarPrepare (void)
+{
+	const vrxr_frame_t *frame = GL_OpenXRFrame ();
+	vec3_t target, right, normal, down;
+	float scale, fitting_scale, origin_x, origin_y, ndc_center_x, ndc_top_y;
+
+	vr_modern_sbar_panel.valid = false;
+	if (!SCR_VRModernSbarFrameEligible (frame) || vid.width <= 0 || vid.height <= 0 || glwidth <= 0 || glheight <= 0)
+		return;
+
+	scale = vr_hud_scale.value;
+	if (!SCR_VRHUDPose (target, right, down, normal))
+		return;
+
+	fitting_scale = q_min ((float)glwidth / 640.0f, (float)glheight / 400.0f);
+	if (!isfinite (fitting_scale) || fitting_scale <= 0.0f)
+		return;
+	origin_x = (glwidth - 640.0f * fitting_scale) * 0.5f;
+	origin_y = (glheight - 400.0f * fitting_scale) * 0.5f;
+	ndc_center_x = 2.0f * (origin_x + 320.0f * fitting_scale) / vid.width - 1.0f;
+	ndc_top_y = 2.0f * (vid.height - glheight + origin_y) / vid.height - 1.0f;
+	if (!isfinite (ndc_center_x) || !isfinite (ndc_top_y))
+		return;
+
+	memset (vr_modern_sbar_panel.world_from_ndc, 0, sizeof (vr_modern_sbar_panel.world_from_ndc));
+	for (int i = 0; i < 3; ++i)
+	{
+		float *matrix = vr_modern_sbar_panel.world_from_ndc;
+		matrix[i] = right[i] * (scale * vid.width / (2.0f * fitting_scale));
+		matrix[4 + i] = down[i] * (scale * vid.height / (2.0f * fitting_scale));
+		matrix[8 + i] = normal[i] * scale;
+		matrix[12 + i] = target[i] - matrix[i] * ndc_center_x - matrix[4 + i] * ndc_top_y;
+		if (!isfinite (matrix[i]) || !isfinite (matrix[4 + i]) || !isfinite (matrix[8 + i]) ||
+			!isfinite (matrix[12 + i]))
+			return;
+	}
+	vr_modern_sbar_panel.world_from_ndc[15] = 1.0f;
+	vr_modern_sbar_panel.valid = true;
 }
 
 /*
@@ -1925,13 +1997,18 @@ static void SCR_DrawGUI (void *unused)
 		SCR_DrawTurtle (cbx);
 		SCR_DrawPause (cbx);
 		SCR_CheckDrawCenterString (cbx);
-		if (vr_classic_sbar_panel.valid)
+		if (vr_modern_sbar_panel.valid)
+		{
+			GL_BeginUIPanel (cbx, vr_modern_sbar_panel.world_from_ndc);
+			cbx->ui_panel_modern_hud = true;
+		}
+		else if (vr_classic_sbar_panel.valid)
 			GL_BeginUIPanel (cbx, vr_classic_sbar_panel.world_from_ndc);
 		if (vr_classic_sbar_panel.valid && vr_classic_sbar_panel.csqc_hud)
 			SCR_SetCSQCDisplayOverride (&vr_classic_sbar_panel.csqc_display);
 		Sbar_Draw (cbx);
 		SCR_SetCSQCDisplayOverride (NULL);
-		if (vr_classic_sbar_panel.valid)
+		if (vr_classic_sbar_panel.valid || vr_modern_sbar_panel.valid)
 			GL_EndUIPanel (cbx);
 		SCR_DrawDevStats (cbx); // johnfitz
 		SCR_DrawFPS (cbx);		// johnfitz
@@ -1967,6 +2044,7 @@ static void SCR_SetupFrame (void *unused)
 	R_PrepareStereoFrame ();
 	SCR_VRMenuPrepare ();
 	SCR_VRClassicSbarPrepare ();
+	SCR_VRModernSbarPrepare ();
 }
 
 /*

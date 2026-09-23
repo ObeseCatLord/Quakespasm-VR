@@ -279,3 +279,12 @@ For noncontroller aim modes, the current `V_UpdateTrackedAim` publishes the
 resolved aim to `cl.viewangles` and keeps the independently resolved view in
 `tracked_view_angles`, so the panel's `cl.viewangles` anchor corresponds to the
 donor's `cl.aimangles` in those modes. Headset placement remains unverified.
+
+The live single-player modern HUD now uses the same donor pose and one
+`Sbar_Draw` call. Its existing corner canvases map to four clipped 320×200
+quadrants of the provisional 640×400 surface. The fit into the eye render
+target is canceled by the panel transform, so artwork retains the physical
+`vr_hud_scale` per source unit when eye resolution or console scale changes.
+The normal desktop canvas path is unchanged. Scores, death, multiplayer, and
+other excluded states still draw flat until their own canvas contracts are
+migrated. This code compiles on Linux; visual headset proof remains open.
