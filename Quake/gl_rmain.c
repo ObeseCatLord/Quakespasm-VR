@@ -516,7 +516,7 @@ qboolean R_TrackedHeadBodyOffset (vec3_t world_offset)
 	const vrxr_frame_t *frame = GL_OpenXRFrame ();
 	const vrxr_device_t *head;
 	const float (*matrix)[4];
-	float tracking_yaw, units_per_metre;
+	float presentation_yaw, units_per_metre;
 	vec3_t local, forward, right, up, result;
 
 	if (world_offset)
@@ -532,8 +532,7 @@ qboolean R_TrackedHeadBodyOffset (vec3_t world_offset)
 	/* This is the same lazy reference initialization used by stereo rendering;
 	 * frame->reference_changed rebases both paths from this retained sample. */
 	R_InitializeStereoReference (frame);
-	if (!stereo_have_reference || !V_TrackedMappingYaw (&tracking_yaw) ||
-		!isfinite (tracking_yaw))
+	if (!stereo_have_reference || !V_TrackedPresentationYaw (&presentation_yaw))
 		return false;
 	units_per_metre = V_VRUnitsPerMetre ();
 	if (!isfinite (units_per_metre) || units_per_metre <= 0.0f)
@@ -546,7 +545,7 @@ qboolean R_TrackedHeadBodyOffset (vec3_t world_offset)
 		local[0] = local[2] = 0.0f;
 
 	{
-		vec3_t yaw_angles = {0.0f, tracking_yaw, 0.0f};
+		vec3_t yaw_angles = {0.0f, presentation_yaw, 0.0f};
 		AngleVectors (yaw_angles, forward, right, up);
 	}
 	R_XRVectorToWorld (local, forward, right, up, result);

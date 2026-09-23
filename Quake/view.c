@@ -288,9 +288,20 @@ const float *V_TrackedViewAngles (void)
 	return tracked_aim_ready && V_UseTrackedView () && !cls.demoplayback && !cl.intermission ? tracked_view_angles : cl.viewangles;
 }
 
+qboolean V_TrackedPresentationYaw (float *yaw)
+{
+	if (yaw)
+		*yaw = 0.0f;
+	if (!yaw || !tracked_aim_ready || !base_angles_valid || !V_UseTrackedView () ||
+		cls.demoplayback || cl.intermission)
+		return false;
+	*yaw = tracked_view_angles[YAW] - tracked_raw_angles[YAW];
+	return isfinite (*yaw);
+}
+
 qboolean V_ApplyTrackedView (vec3_t angles, float *tracking_yaw)
 {
-	if (!tracked_aim_ready || !base_angles_valid || !V_UseTrackedView () || cls.demoplayback || cl.intermission)
+	if (!angles || !V_TrackedPresentationYaw (tracking_yaw))
 		return false;
 	// Replace only the input-aim contribution of the prepared base. Its kick
 	// and idle contributions survive; a paused base receives the latest head.
@@ -298,7 +309,6 @@ qboolean V_ApplyTrackedView (vec3_t angles, float *tracking_yaw)
 		angles[i] += tracked_view_angles[i] - base_aim_angles[i];
 	// Chase stores the visual input used by its collision-traced base, so
 	// paused tracking refreshes orientation without discarding that result.
-	*tracking_yaw = tracked_view_angles[YAW] - tracked_raw_angles[YAW];
 	return true;
 }
 
@@ -340,36 +350,53 @@ qboolean V_TrackedBodyOwnsRoomscale (void)
 		V_TrackedPlayerBase (&viewheight);
 }
 
+static qboolean V_TrackedHandAnglesForYaw (const vrxr_frame_t *frame,
+	int physical_hand, float yaw, vec3_t angles)
+{
+	const vrxr_device_t *hand;
+	if (!frame || !angles || physical_hand < 0 || physical_hand > 1 || !isfinite (yaw))
+		return false;
+	hand = &frame->devices[physical_hand + 1];
+	if (!hand->valid || hand->kind != VRXR_DEVICE_HAND || hand->hand != physical_hand)
+		return false;
+	return VR_LocomotionHandAngles (hand->matrix, yaw,
+		isfinite (vr_gunangle.value) ? vr_gunangle.value : 32.f, angles);
+}
+
 qboolean V_TrackedMovementAngles (int mode, int physical_offhand, vec3_t angles)
 {
 	const vrxr_frame_t *frame = GL_OpenXRFrame ();
 	float tracking_yaw;
-	if (!V_TrackedMappingYaw (&tracking_yaw))
+	if (!angles || !V_TrackedMappingYaw (&tracking_yaw))
 		return false;
 	if (mode == VR_MOVEMENT_MODE_FOLLOW_HEAD)
 		return VR_AimPoseAngles (frame->devices[0].matrix, tracking_yaw, angles);
 	if ((mode != VR_MOVEMENT_MODE_FOLLOW_HAND && mode != VR_MOVEMENT_MODE_RAW_INPUT) ||
 		physical_offhand < 0 || physical_offhand > 1)
 		return false;
-	const vrxr_device_t *hand = &frame->devices[physical_offhand + 1];
-	if (!hand->valid || hand->kind != VRXR_DEVICE_HAND || hand->hand != physical_offhand)
-		return false;
-	return VR_LocomotionHandAngles (hand->matrix, tracking_yaw,
-		isfinite (vr_gunangle.value) ? vr_gunangle.value : 32.f, angles);
+	return V_TrackedHandAnglesForYaw (frame, physical_offhand, tracking_yaw, angles);
 }
 
-qboolean V_TrackedHandBodyOffset (int physical_hand, vec3_t out)
+qboolean V_TrackedPresentationHandAngles (int physical_hand, vec3_t angles)
+{
+	const vrxr_frame_t *frame = GL_OpenXRFrame ();
+	float presentation_yaw;
+	return angles && frame && frame->focused && V_TrackedPresentationYaw (&presentation_yaw) &&
+		V_TrackedHandAnglesForYaw (frame, physical_hand, presentation_yaw, angles);
+}
+
+static qboolean V_TrackedHandBodyOffsetForYaw (int physical_hand, float yaw, vec3_t out)
 {
 	const vrxr_frame_t *frame = GL_OpenXRFrame ();
 	const vrxr_device_t *hand;
-	float tracking_yaw, base_viewheight, head_eye_height;
+	float base_viewheight, head_eye_height;
 	vec3_t head_position, hand_position;
 
 	if (out)
 		VectorCopy (vec3_origin, out);
 	if (!out || physical_hand < 0 || physical_hand > 1 || !frame ||
 		!frame->should_render || !frame->devices[0].valid ||
-		!V_TrackedMappingYaw (&tracking_yaw) || !V_TrackedPlayerBase (&base_viewheight))
+		!isfinite (yaw) || !V_TrackedPlayerBase (&base_viewheight))
 		return false;
 	hand = &frame->devices[physical_hand + 1];
 	if (!hand->valid || hand->kind != VRXR_DEVICE_HAND || hand->hand != physical_hand)
@@ -383,8 +410,41 @@ qboolean V_TrackedHandBodyOffset (int physical_hand, vec3_t out)
 	}
 	if (!R_TrackedHeadEyeHeight (base_viewheight, &head_eye_height))
 		return false;
-	return VR_LocomotionHandBodyOffset (head_position, hand_position, tracking_yaw,
+	return VR_LocomotionHandBodyOffset (head_position, hand_position, yaw,
 		V_VRUnitsPerMetre (), head_eye_height, out);
+}
+
+qboolean V_TrackedHandBodyOffset (int physical_hand, vec3_t out)
+{
+	float tracking_yaw;
+	if (out)
+		VectorCopy (vec3_origin, out);
+	return out && V_TrackedMappingYaw (&tracking_yaw) &&
+		V_TrackedHandBodyOffsetForYaw (physical_hand, tracking_yaw, out);
+}
+
+qboolean V_TrackedPresentationHandBodyOffset (int physical_hand, vec3_t out)
+{
+	float presentation_yaw;
+	vec3_t head_offset;
+	if (out)
+		VectorCopy (vec3_origin, out);
+	if (!out || !V_TrackedPresentationYaw (&presentation_yaw) ||
+		!R_TrackedHeadBodyOffset (head_offset) ||
+		!V_TrackedHandBodyOffsetForYaw (physical_hand, presentation_yaw, out))
+	{
+		if (out)
+			VectorCopy (vec3_origin, out);
+		return false;
+	}
+	out[0] += head_offset[0];
+	out[1] += head_offset[1];
+	if (!isfinite (out[0]) || !isfinite (out[1]) || !isfinite (out[2]))
+	{
+		VectorCopy (vec3_origin, out);
+		return false;
+	}
+	return true;
 }
 
 static void V_UpdateTrackedViewmodel (qboolean refdef_updated)
@@ -400,8 +460,8 @@ static void V_UpdateTrackedViewmodel (qboolean refdef_updated)
 	{
 		const int dominant = VR_InputDominantPhysicalHand ();
 		vec3_t body_offset, hand_angles, model_angles, origin;
-		if (V_TrackedHandBodyOffset (dominant, body_offset) &&
-			V_TrackedMovementAngles (VR_MOVEMENT_MODE_FOLLOW_HAND, dominant, hand_angles) &&
+		if (V_TrackedPresentationHandBodyOffset (dominant, body_offset) &&
+			V_TrackedPresentationHandAngles (dominant, hand_angles) &&
 			VR_LocomotionHandRotToViewmodelAngles (hand_angles, model_angles,
 			vr_gunmodelpitch.value))
 		{

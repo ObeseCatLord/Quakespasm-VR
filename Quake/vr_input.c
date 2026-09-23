@@ -367,15 +367,15 @@ static qboolean VR_InputVRIKRootLocalAngles (const vec3_t world_angles,
 	return true;
 }
 
-/* Build from the retained completed OpenXR frame. The renderer owns the
- * canonical head-to-body offset; tracking_yaw maps device space to world,
- * while player yaw independently defines the VRIK root-local frame. */
+/* Build from the retained completed OpenXR frame. The view owner supplies
+ * presentation yaw and canonical head/hand body offsets; player yaw defines
+ * the VRIK root-local frame. */
 qboolean VR_InputBuildVRIKPose (vrik_codec_pose_t *pose)
 {
 	const vrxr_frame_t *frame = GL_OpenXRFrame ();
 	const vrxr_device_t *head;
 	entity_t *player;
-	float body_yaw, tracking_yaw, base_viewheight, head_eye_height;
+	float body_yaw, presentation_yaw, base_viewheight, head_eye_height;
 	float yaw_radians, cosine, sine;
 	vec3_t head_world_angles, mapped_hand_angles, head_world_offset, local_position;
 	int dominant;
@@ -388,7 +388,7 @@ qboolean VR_InputBuildVRIKPose (vrik_codec_pose_t *pose)
 		cl.intermission || !cl.worldmodel || !cl.entities || cl.viewentity <= 0 ||
 		cl.viewentity >= cl.num_entities || cl.stats[STAT_HEALTH] <= 0 ||
 		!V_TrackedPlayerBase (&base_viewheight) ||
-		!V_TrackedMappingYaw (&tracking_yaw) || !isfinite (tracking_yaw))
+		!V_TrackedPresentationYaw (&presentation_yaw))
 		return false;
 
 	head = &frame->devices[0];
@@ -418,8 +418,7 @@ qboolean VR_InputBuildVRIKPose (vrik_codec_pose_t *pose)
 	pose->present_mask = VRIK_TARGET_BIT (VRIK_TARGET_HEAD);
 	pose->tracked_mask = VRIK_TARGET_BIT (VRIK_TARGET_HEAD);
 	pose->body_yaw = body_yaw;
-	if (!V_TrackedMovementAngles (VR_MOVEMENT_MODE_FOLLOW_HEAD,
-		VR_InputDominantPhysicalHand (), head_world_angles))
+	if (!VR_AimPoseAngles (head->matrix, presentation_yaw, head_world_angles))
 		return false;
 	if (!VR_InputVRIKRootLocalAngles (head_world_angles, body_yaw,
 		pose->targets[VRIK_TARGET_HEAD].orientation))
@@ -444,10 +443,8 @@ qboolean VR_InputBuildVRIKPose (vrik_codec_pose_t *pose)
 		if (!device->valid || !device->tracked || device->kind != VRXR_DEVICE_HAND ||
 			device->hand != hand || !VR_InputVRIKMatrixFinite (device->matrix))
 			continue;
-		if (!V_TrackedHandBodyOffset (hand, local_position))
+		if (!V_TrackedPresentationHandBodyOffset (hand, local_position))
 			return false;
-		local_position[0] += head_world_offset[0];
-		local_position[1] += head_world_offset[1];
 		{
 			const float world_x = local_position[0];
 			const float world_y = local_position[1];
@@ -455,7 +452,7 @@ qboolean VR_InputBuildVRIKPose (vrik_codec_pose_t *pose)
 			local_position[1] = -world_x * sine + world_y * cosine;
 		}
 		VectorCopy (local_position, pose->targets[target].position);
-		if (!VR_AimPoseAngles (device->matrix, tracking_yaw, mapped_hand_angles))
+		if (!VR_AimPoseAngles (device->matrix, presentation_yaw, mapped_hand_angles))
 			return false;
 		if (!VR_InputVRIKRootLocalAngles (mapped_hand_angles, body_yaw,
 			pose->targets[target].orientation))
@@ -465,8 +462,7 @@ qboolean VR_InputBuildVRIKPose (vrik_codec_pose_t *pose)
 	}
 
 	if (frame->devices[dominant + 1].valid && frame->devices[dominant + 1].tracked &&
-		V_TrackedMovementAngles (VR_MOVEMENT_MODE_FOLLOW_HAND, dominant,
-			mapped_hand_angles))
+		V_TrackedPresentationHandAngles (dominant, mapped_hand_angles))
 		if (!VR_InputVRIKRootLocalAngles (mapped_hand_angles, body_yaw,
 			pose->aim_orientation))
 			return false;
@@ -1065,8 +1061,8 @@ qboolean VR_InputCrosshairAimRay (vec3_t start, vec3_t forward)
 		!VR_InputControllerAim () || cls.state != ca_connected ||
 		cls.signon != SIGNONS || cls.demoplayback || cl.intermission ||
 		!cl.entities || cl.viewentity <= 0 || cl.viewentity >= cl.num_entities ||
-		!V_TrackedHandBodyOffset (dominant, body_offset) ||
-		!V_TrackedMovementAngles (VR_MOVEMENT_MODE_FOLLOW_HAND, dominant, hand_angles) ||
+		!V_TrackedPresentationHandBodyOffset (dominant, body_offset) ||
+		!V_TrackedPresentationHandAngles (dominant, hand_angles) ||
 		!VR_WeaponCalibrationCurrentMuzzle (local_muzzle) ||
 		!VR_LocomotionMuzzleOffsetToWorld (local_muzzle, hand_angles,
 			vr_gunmodelscale.value, vr_gunmodelpitch.value, dominant == 0,
