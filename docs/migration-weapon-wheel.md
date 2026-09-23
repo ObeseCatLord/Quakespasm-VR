@@ -16,11 +16,13 @@ engine-independent helpers that can be copied with attribution. The current
 target already has the shared schema parser and calibration owner in
 `Quake/vr_weapon_schema.[ch]` and `Quake/vr_weapon_calibration.[ch]`.
 
-The shared wheel now loads an active mod's `wwheel.txt` roster through the
-existing search path, with its declared selectors and impulses. It ignores an
-inherited id1 roster when the active mod did not supply one. The separate
-`vr_weapons.txt` profile/schema catalog, runtime discovery, and source's
-special action entries still need adapters.
+The shared wheel loads the active mod's `wwheel.txt` roster and
+`vr_weapons.txt` schema through the existing search path, with declared
+selectors, impulses and ownership metadata. It ignores inherited id1 files
+when the active mod did not supply them. A valid wheel roster remains
+authoritative; matching schema entries enrich its metadata. Without a roster,
+valid schema weapons supply the catalog. Built-in mod profiles, runtime
+discovery and source special action entries still need adapters.
 
 Do not transplant source `vr.c` or its immediate-mode OpenGL drawing. Keep
 vkQuake's `cl_input.c` command owner, OpenXR frame snapshot in `vr_input.c`,

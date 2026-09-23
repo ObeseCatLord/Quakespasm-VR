@@ -165,9 +165,11 @@ Disposition meanings: REUSE/ADAPT keep the source behavior at existing owners; K
 
 The `2.0` branch now directly reuses the source's hardware-independent FBT
 identity manager, pose filter, profile parser and persistent storage. OpenXR
-tracker snapshots, calibration and profile selection, menu controls and
-lower-body pose relay are still separate integration work; compiling the pure
-modules does not satisfy FBT parity.
+tracker snapshots now reach the role manager with explicit list/assign commands
+and one identity per completed frame. Saved profiles can be selected and bind
+roles by safe serial. Calibration, menu controls and lower-body pose relay are
+still separate integration work; tracker enumeration and persistence alone do
+not satisfy FBT parity.
 
 ### QuakeC and mod compatibility
 
