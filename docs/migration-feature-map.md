@@ -109,6 +109,13 @@ Disposition meanings: REUSE/ADAPT keep the source behavior at existing owners; K
 | WPN-011 — Co-op wheel player actions, labels/outlines and exact action hitboxes | MAIN:Quake/vr_weaponmenu_hit.h:1 (VR_); MAIN:Quake/vr.c:1957 (vr_weaponmenu_player_teleport) | Quake/vr.c;Quake/sbar.c;Quake/host_cmd.c; **ADAPT**, P3 | Player selection, teleport and respawn buttons match rendered hitboxes with long names and changing player slots. |
 | WPN-012 — Per-hand akimbo models/attacks and generated split weapon geometry | MAIN:Quake/vr.c:3201 (VR_AkimboModels); MAIN:Quake/vr_mdl_split.h:1 (VR_); MAIN:docs/server.md:23 (VR akimbo) | Quake/vr.c;donor model-loader buffers;Quake/sv_user.c; **ADAPT**, P3 | QBJ3 twin nailgun and supported split models retain independent aim, ammo/attack semantics, left-handed behavior and native fallback. |
 
+The `2.0` wheel now shares desktop/OpenXR selection, playspace/view placement,
+active-mod `wwheel.txt` and `vr_weapons.txt`, and exact-gated built-in profiles.
+The server relays optional QuakeC ownership fields and validated ammo maxima.
+Runtime discovery, source 3D model/hit presentation, co-op actions and weapon
+calibration remain separate work; compiling these catalog paths does not prove
+mod gameplay parity.
+
 ### Co-op and saves
 
 | ID / behavior | Pinned source evidence | Destination / treatment | Acceptance |

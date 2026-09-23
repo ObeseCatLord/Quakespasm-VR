@@ -21,8 +21,11 @@ The shared wheel loads the active mod's `wwheel.txt` roster and
 selectors, impulses and ownership metadata. It ignores inherited id1 files
 when the active mod did not supply them. A valid wheel roster remains
 authoritative; matching schema entries enrich its metadata. Without a roster,
-valid schema weapons supply the catalog. Built-in mod profiles, runtime
-discovery and source special action entries still need adapters.
+valid schema weapons supply the catalog. Exact-gated built-in profiles now
+cover Dwell, Alkaline/Limjam, Enyo, QBJ3, Mjolnir, MG3, Hipnotic and Rogue;
+the server now relays matching optional inventory fields and validated ammo
+capacity stats. Runtime discovery and source special action entries still need
+adapters. These are code paths pending the user's gameplay qualification.
 
 Do not transplant source `vr.c` or its immediate-mode OpenGL drawing. Keep
 vkQuake's `cl_input.c` command owner, OpenXR frame snapshot in `vr_input.c`,
