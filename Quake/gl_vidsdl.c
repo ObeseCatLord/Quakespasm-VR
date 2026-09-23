@@ -4678,6 +4678,15 @@ void VID_Shutdown (void)
 			SDL_UnlockMutex (vulkan_globals.queue_mutex);
 			vulkan_globals.device_idle = true;
 		}
+		if (vulkan_globals.device)
+		{
+			if (render_resources_created)
+			{
+				R_DestroyPipelines ();
+				render_resources_created = false;
+			}
+			R_DestroyStereoUIPipelineLayouts ();
+		}
 		if (openxr_vulkan_binding)
 		{
 			VRXR_Shutdown ();

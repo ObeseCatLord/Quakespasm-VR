@@ -683,7 +683,7 @@ static void Draw_BindPicState (cb_context_t *cbx, gltexture_t *texture, qboolean
 
 	VkDescriptorSet descriptor_sets[2] = {texture->descriptor_set, vulkan_globals.gui_sampler_descriptor_sets[filter == DRAW_FILTER_LINEAR ? 1 : 0]};
 	vkCmdBindDescriptorSets (
-		cbx->cb, VK_PIPELINE_BIND_POINT_GRAPHICS, vulkan_globals.gui_pipeline_layout.handle, 0, countof (descriptor_sets), descriptor_sets, 0, NULL);
+		cbx->cb, VK_PIPELINE_BIND_POINT_GRAPHICS, cbx->current_pipeline.layout.handle, 0, countof (descriptor_sets), descriptor_sets, 0, NULL);
 }
 
 /*
@@ -1052,7 +1052,7 @@ void Draw_TileClear (cb_context_t *cbx, float x, float y, float w, float h)
 
 	R_BindGraphicsPipeline (cbx, PIPELINE_BASIC_BLEND);
 	vkCmdBindDescriptorSets (
-		cbx->cb, VK_PIPELINE_BIND_POINT_GRAPHICS, vulkan_globals.basic_pipeline_layout.handle, 0, 1, &gl.gltexture->descriptor_set, 0, NULL);
+		cbx->cb, VK_PIPELINE_BIND_POINT_GRAPHICS, cbx->current_pipeline.layout.handle, 0, 1, &gl.gltexture->descriptor_set, 0, NULL);
 	vkCmdBindVertexBuffers (cbx->cb, 0, 1, &buffer, &buffer_offset);
 	vkCmdDraw (cbx->cb, 6, 1, 0, 0);
 }
@@ -1241,7 +1241,7 @@ static void GL_SetUIPanelCanvasTransform (cb_context_t *cbx)
 	{
 		R_PushConstants (cbx, VK_SHADER_STAGE_ALL_GRAPHICS, 0, sizeof (cbx->ui_panel_mvp), cbx->ui_panel_mvp);
 		R_PushConstants (
-			cbx, VK_SHADER_STAGE_FRAGMENT_BIT, UI_PANEL_CLIP_PUSH_CONSTANT_OFFSET, sizeof (cbx->canvas_ortho_clip_rect), cbx->canvas_ortho_clip_rect);
+			cbx, VK_SHADER_STAGE_ALL_GRAPHICS, UI_PANEL_CLIP_PUSH_CONSTANT_OFFSET, sizeof (cbx->canvas_ortho_clip_rect), cbx->canvas_ortho_clip_rect);
 		const float enabled = 1.0f;
 		R_PushConstants (cbx, VK_SHADER_STAGE_ALL_GRAPHICS, UI_PANEL_FLAG_PUSH_CONSTANT_OFFSET, sizeof (enabled), &enabled);
 	}
@@ -1307,8 +1307,7 @@ void GL_SetCanvas (cb_context_t *cbx, canvastype newcanvas)
 		GL_Viewport (cbx, 0, 0, glwidth, glheight, 0.0f, 1.0f);
 		break;
 	case CANVAS_MENU:
-		s = q_min ((float)glwidth / 320.0, (float)glheight / 200.0);
-		s = CLAMP (1.0, M_GetScale (), s);
+		s = M_MenuCanvasScale ();
 		u = (glwidth - (320.0f * s)) / (2.0f * s);
 		v = (glheight - (200.0f * s)) / (2.0f * s);
 		GL_OrthoMatrix (cbx, -u, 320.0f + u, 200.0f + v, -v, -99999, 99999);
@@ -1462,6 +1461,6 @@ void Draw_String_3D (cb_context_t *cbx, vec3_t coords, float size, const char *s
 	R_BindGraphicsPipeline (cbx, PIPELINE_BASIC_ALPHATEST);
 	vulkan_globals.vk_cmd_bind_vertex_buffers (cbx->cb, 0, 1, &buffer, &buffer_offset);
 	vulkan_globals.vk_cmd_bind_descriptor_sets (
-		cbx->cb, VK_PIPELINE_BIND_POINT_GRAPHICS, vulkan_globals.basic_pipeline_layout.handle, 0, 1, &char_texture->descriptor_set, 0, NULL);
+		cbx->cb, VK_PIPELINE_BIND_POINT_GRAPHICS, cbx->current_pipeline.layout.handle, 0, 1, &char_texture->descriptor_set, 0, NULL);
 	vulkan_globals.vk_cmd_draw (cbx->cb, num_verts, 1, 0, 0);
 }

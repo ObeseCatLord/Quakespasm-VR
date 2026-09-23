@@ -1455,6 +1455,7 @@ typedef struct
 {
 	qboolean valid, pointer_valid;
 	int pointer_x, pointer_y;
+	float world_per_eye_pixel;
 	float world_from_ndc[16];
 } vr_menu_panel_t;
 
@@ -1502,7 +1503,10 @@ static void SCR_VRMenuPrepare (void)
 	int pointer_x = 0, pointer_y = 0;
 	const int follow_mode = isfinite (vr_menu_follow.value) && vr_menu_follow.value >= 0 &&
 		vr_menu_follow.value <= 2 ? (int)vr_menu_follow.value : 1;
+	const qboolean previous_panel_valid = vr_menu_panel.valid;
+	const float previous_scale = vr_menu_panel.world_per_eye_pixel;
 	float scale = vr_menu_scale.value;
+	float canvas_scale;
 	qboolean ray_valid, pointing = false;
 
 	vr_menu_panel.valid = false;
@@ -1515,6 +1519,15 @@ static void SCR_VRMenuPrepare (void)
 	}
 	if (m_state == m_mods)
 		scale *= 1.35f;
+	canvas_scale = M_MenuCanvasScale ();
+	if (!isfinite (canvas_scale) || canvas_scale <= 0)
+	{
+		vr_menu_anchor.valid = 0;
+		return;
+	}
+	/* CANVAS_MENU applies scr_menuscale in its ortho. Cancel it so one
+	 * source pixel always occupies vr_menu_scale world units on the panel. */
+	scale /= canvas_scale;
 	if (glwidth <= 0 || glheight <= 0 || !isfinite (scale) || scale <= 0 ||
 		!isfinite (scale * glwidth) || !isfinite (scale * glheight) ||
 		!frame->devices[0].valid || !frame->devices[0].tracked ||
@@ -1531,12 +1544,12 @@ static void SCR_VRMenuPrepare (void)
 	vr_menu_connection = cls.state;
 
 	ray_valid = frame->focused && R_TrackedControllerRay (VR_InputDominantPhysicalHand (), ray_origin, ray_direction);
-	if (ray_valid && vr_menu_anchor.valid)
+	if (ray_valid && vr_menu_anchor.valid && previous_panel_valid)
 	{
 		AngleVectors (vr_menu_anchor.angles, normal, right, up);
 		VectorScale (up, -1, down);
 		pointing = SCR_VRMenuRayHit (ray_origin, ray_direction, vr_menu_anchor.center,
-			right, down, normal, scale, &pointer_x, &pointer_y);
+			right, down, normal, previous_scale, &pointer_x, &pointer_y);
 	}
 	VectorCopy (r_refdef.viewangles, head_angles);
 	head_angles[ROLL] = 0;
@@ -1564,6 +1577,7 @@ static void SCR_VRMenuPrepare (void)
 		vr_menu_panel.world_from_ndc[12 + i] = vr_menu_anchor.center[i];
 	}
 	vr_menu_panel.world_from_ndc[15] = 1;
+	vr_menu_panel.world_per_eye_pixel = scale;
 	vr_menu_panel.valid = true;
 }
 

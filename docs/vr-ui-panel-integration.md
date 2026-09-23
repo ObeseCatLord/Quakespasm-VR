@@ -139,3 +139,28 @@ proof must check both eyes, pointer alignment at varied head angles and menu
 scales, startup without a world, and validation-clean pipeline changes before
 this slice is called release-ready. The broader migration also retains its
 separate Windows, Linux ARM and eye-tracking qualification gates.
+
+## Implementation senior review
+
+Astra Max xhigh reviewed the menu slice against the existing vkQuake pipeline
+and the inherited menu input policy. The review found these concrete corrections;
+the normal vkQuake render path remains the behavioral reference.
+
+| Finding | Resolution |
+| --- | --- |
+| Extending the shared basic/GUI push-constant layouts from 88 to 100 bytes makes ordinary basic-to-world pipeline switches hit vkQuake's push-constant reset. | Keep the original 88-byte desktop/scene layouts and confine 100-byte layouts to panel UI pipelines. Use a compatible 100-byte layout for stereo scene-upscale within that UI pass. |
+| Clip constants at bytes 80–95 were pushed with a fragment-only stage mask although their declared range includes all graphics stages. | Push with the declared stage mask, as required by Vulkan. |
+| Panel width inherited the desktop `scr_menuscale` factor, making its physical size and ray hit vary with desktop UI settings. | Use one canonical menu canvas scale for drawing and pointer conversion, and divide that factor out of the panel's physical scale. Preserve the prior panel scale when evaluating prior-anchor pointing. |
+| Hover during key binding capture could move the selected action while the trigger edge was dispatched. | Freeze hover selection while `bind_grab` is active. |
+
+The review otherwise supported the direct canvas adapter and existing trigger
+owner. Its concerns are confined to the first menu slice; console, loading,
+modal presentation, and HUD parity still need separate implementation and
+user-observable verification.
+
+After these corrections, the Linux DEBUG build and diff checks pass. A local
+`-novr` X11 smoke run entered a map and advanced gameplay with the original
+88-byte desktop layouts. The host could not create a Vulkan instance with its
+requested Khronos validation layer (`VK_ERROR_LAYER_NOT_PRESENT`); a
+validation-clean run remains open. The Monado runtime and headset checks above
+remain open as well.

@@ -425,9 +425,11 @@ typedef struct
 
 	// Pipelines
 	vulkan_pipeline_layout_t basic_pipeline_layout;
+	vulkan_pipeline_layout_t basic_stereo_ui_pipeline_layout;
 	vulkan_pipeline_layout_t fte_particle_pipeline_layout;
 	VkDescriptorSet			 particle_depth_descriptor_set;
 	vulkan_pipeline_layout_t gui_pipeline_layout;
+	vulkan_pipeline_layout_t gui_stereo_ui_pipeline_layout;
 	vulkan_pipeline_t		 world_pipelines[MAIN_RENDER_PASS_VARIANT_COUNT][WORLD_PIPELINE_COUNT];
 	vulkan_pipeline_t		 world_wboit_pipelines[WORLD_PIPELINE_COUNT];
 	vulkan_pipeline_t		 world_mboit_moment_pipelines[WORLD_PIPELINE_COUNT];
@@ -864,6 +866,7 @@ void R_InitSamplers ();
 void R_CreatePipelineLayouts ();
 void R_CreatePipelines ();
 void R_DestroyPipelines ();
+void R_DestroyStereoUIPipelineLayouts ();
 
 #define MAX_PUSH_CONSTANT_SIZE 128 // Vulkan guaranteed minimum maxPushConstantsSize
 

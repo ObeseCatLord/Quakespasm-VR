@@ -1778,7 +1778,7 @@ void R_CreatePipelineLayouts ()
 
 		ZEROED_STRUCT (VkPushConstantRange, push_constant_range);
 		push_constant_range.offset = 0;
-		push_constant_range.size = 25 * sizeof (float);
+		push_constant_range.size = 22 * sizeof (float);
 		push_constant_range.stageFlags = VK_SHADER_STAGE_ALL_GRAPHICS;
 
 		ZEROED_STRUCT (VkPipelineLayoutCreateInfo, pipeline_layout_create_info);
@@ -1794,6 +1794,15 @@ void R_CreatePipelineLayouts ()
 		GL_SetObjectName ((uint64_t)vulkan_globals.basic_pipeline_layout.handle, VK_OBJECT_TYPE_PIPELINE_LAYOUT, "basic_pipeline_layout");
 		vulkan_globals.basic_pipeline_layout.push_constant_range = push_constant_range;
 		vulkan_globals.basic_pipeline_layout.mboit_input_attachment_set = 1;
+
+		push_constant_range.size = 25 * sizeof (float);
+		err = R_CreateGraphicsPipelineLayout (&pipeline_layout_create_info, &vulkan_globals.basic_stereo_ui_pipeline_layout.handle);
+		if (err != VK_SUCCESS)
+			Sys_Error ("vkCreatePipelineLayout failed with code %i", (int)err);
+		GL_SetObjectName (
+			(uint64_t)vulkan_globals.basic_stereo_ui_pipeline_layout.handle, VK_OBJECT_TYPE_PIPELINE_LAYOUT, "basic_stereo_ui_pipeline_layout");
+		vulkan_globals.basic_stereo_ui_pipeline_layout.push_constant_range = push_constant_range;
+		vulkan_globals.basic_stereo_ui_pipeline_layout.mboit_input_attachment_set = 1;
 
 		basic_descriptor_set_layouts[1] = vulkan_globals.input_attachment_set_layout.handle;
 		push_constant_range.size = 22 * sizeof (float);
@@ -1811,7 +1820,7 @@ void R_CreatePipelineLayouts ()
 
 		ZEROED_STRUCT (VkPushConstantRange, push_constant_range);
 		push_constant_range.offset = 0;
-		push_constant_range.size = 25 * sizeof (float);
+		push_constant_range.size = 22 * sizeof (float);
 		push_constant_range.stageFlags = VK_SHADER_STAGE_ALL_GRAPHICS;
 
 		ZEROED_STRUCT (VkPipelineLayoutCreateInfo, pipeline_layout_create_info);
@@ -1827,6 +1836,15 @@ void R_CreatePipelineLayouts ()
 		GL_SetObjectName ((uint64_t)vulkan_globals.gui_pipeline_layout.handle, VK_OBJECT_TYPE_PIPELINE_LAYOUT, "gui_pipeline_layout");
 		vulkan_globals.gui_pipeline_layout.push_constant_range = push_constant_range;
 		vulkan_globals.gui_pipeline_layout.mboit_input_attachment_set = -1;
+
+		push_constant_range.size = 25 * sizeof (float);
+		err = R_CreateGraphicsPipelineLayout (&pipeline_layout_create_info, &vulkan_globals.gui_stereo_ui_pipeline_layout.handle);
+		if (err != VK_SUCCESS)
+			Sys_Error ("vkCreatePipelineLayout failed with code %i", (int)err);
+		GL_SetObjectName (
+			(uint64_t)vulkan_globals.gui_stereo_ui_pipeline_layout.handle, VK_OBJECT_TYPE_PIPELINE_LAYOUT, "gui_stereo_ui_pipeline_layout");
+		vulkan_globals.gui_stereo_ui_pipeline_layout.push_constant_range = push_constant_range;
+		vulkan_globals.gui_stereo_ui_pipeline_layout.mboit_input_attachment_set = -1;
 	}
 
 	{
@@ -3201,7 +3219,7 @@ void R_BindGraphicsPipeline (cb_context_t *cbx, graphics_pipeline_t pipeline)
 	{
 		R_PushConstants (cbx, VK_SHADER_STAGE_ALL_GRAPHICS, 0, sizeof (cbx->ui_panel_mvp), cbx->ui_panel_mvp);
 		R_PushConstants (
-			cbx, VK_SHADER_STAGE_FRAGMENT_BIT, UI_PANEL_CLIP_PUSH_CONSTANT_OFFSET, sizeof (cbx->canvas_ortho_clip_rect), cbx->canvas_ortho_clip_rect);
+			cbx, VK_SHADER_STAGE_ALL_GRAPHICS, UI_PANEL_CLIP_PUSH_CONSTANT_OFFSET, sizeof (cbx->canvas_ortho_clip_rect), cbx->canvas_ortho_clip_rect);
 		const float enabled = 1.0f;
 		R_PushConstants (cbx, VK_SHADER_STAGE_ALL_GRAPHICS, UI_PANEL_FLAG_PUSH_CONSTANT_OFFSET, sizeof (enabled), &enabled);
 	}
@@ -3238,6 +3256,8 @@ static void R_CreateBasicPipelines ()
 		const subpass_type_t			 stage = pipeline_variants[entry].stage;
 		const main_render_pass_variant_t variant = pipeline_variants[entry].variant;
 		const qboolean					 ui_panel_variant = stage == SUBPASS_UI && vulkan_globals.stereo_active;
+		const vulkan_pipeline_layout_t basic_layout = ui_panel_variant ? vulkan_globals.basic_stereo_ui_pipeline_layout : vulkan_globals.basic_pipeline_layout;
+		const vulkan_pipeline_layout_t gui_layout = ui_panel_variant ? vulkan_globals.gui_stereo_ui_pipeline_layout : vulkan_globals.gui_pipeline_layout;
 		R_CopyPipelineCreateInfos (&infos, &base);
 		R_SetPipelineRenderPassVariant (&infos, stage, variant);
 		infos.multisample_state.rasterizationSamples = pipeline_variants[entry].rasterization_samples;
@@ -3245,24 +3265,24 @@ static void R_CreateBasicPipelines ()
 		infos.shader_stages[0].module = ui_panel_variant ? basic_ui_stereo_vert_module : basic_vert_module;
 		infos.shader_stages[1].module = ui_panel_variant ? basic_alphatest_ui_frag_module : basic_alphatest_frag_module;
 		R_CreateGraphicsPipeline (
-			&graphics_pipelines[PIPELINE_BASIC_ALPHATEST][stage][variant], &infos, vulkan_globals.basic_pipeline_layout, "basic_alphatest");
+			&graphics_pipelines[PIPELINE_BASIC_ALPHATEST][stage][variant], &infos, basic_layout, "basic_alphatest");
 
 		infos.shader_stages[1].module = ui_panel_variant ? draw_pic_alphatest_ui_frag_module : draw_pic_alphatest_frag_module;
 		infos.vertex_input_state.pVertexBindingDescriptions = &draw_pic_vertex_binding_description;
-		R_CreateGraphicsPipeline (&graphics_pipelines[PIPELINE_GUI][stage][variant], &infos, vulkan_globals.gui_pipeline_layout, "draw_pic_alphatest");
+		R_CreateGraphicsPipeline (&graphics_pipelines[PIPELINE_GUI][stage][variant], &infos, gui_layout, "draw_pic_alphatest");
 		infos.shader_stages[1].module = ui_panel_variant ? draw_pic_ui_frag_module : draw_pic_frag_module;
 		infos.blend_attachment_states[0].blendEnable = VK_TRUE;
-		R_CreateGraphicsPipeline (&graphics_pipelines[PIPELINE_GUI_BLEND][stage][variant], &infos, vulkan_globals.gui_pipeline_layout, "draw_pic");
+		R_CreateGraphicsPipeline (&graphics_pipelines[PIPELINE_GUI_BLEND][stage][variant], &infos, gui_layout, "draw_pic");
 
 		infos.shader_stages[0].module = ui_panel_variant ? draw_pic_xbr_ui_stereo_vert_module : draw_pic_xbr_vert_module;
 		infos.shader_stages[1].module = ui_panel_variant ? draw_pic_xbr_alphatest_ui_frag_module : draw_pic_xbr_alphatest_frag_module;
 		infos.vertex_input_state.vertexAttributeDescriptionCount = countof (draw_pic_vertex_input_attribute_descriptions);
 		infos.vertex_input_state.pVertexAttributeDescriptions = draw_pic_vertex_input_attribute_descriptions;
 		infos.blend_attachment_states[0].blendEnable = VK_FALSE;
-		R_CreateGraphicsPipeline (&graphics_pipelines[PIPELINE_MENU_XBR][stage][variant], &infos, vulkan_globals.gui_pipeline_layout, "draw_pic_xbr_alphatest");
+		R_CreateGraphicsPipeline (&graphics_pipelines[PIPELINE_MENU_XBR][stage][variant], &infos, gui_layout, "draw_pic_xbr_alphatest");
 		infos.shader_stages[1].module = ui_panel_variant ? draw_pic_xbr_ui_frag_module : draw_pic_xbr_frag_module;
 		infos.blend_attachment_states[0].blendEnable = VK_TRUE;
-		R_CreateGraphicsPipeline (&graphics_pipelines[PIPELINE_MENU_XBR_BLEND][stage][variant], &infos, vulkan_globals.gui_pipeline_layout, "draw_pic_xbr");
+		R_CreateGraphicsPipeline (&graphics_pipelines[PIPELINE_MENU_XBR_BLEND][stage][variant], &infos, gui_layout, "draw_pic_xbr");
 	}
 
 	for (int entry = 0; entry < countof (pipeline_variants); ++entry)
@@ -3270,6 +3290,7 @@ static void R_CreateBasicPipelines ()
 		const subpass_type_t			 stage = pipeline_variants[entry].stage;
 		const main_render_pass_variant_t variant = pipeline_variants[entry].variant;
 		const qboolean					 ui_panel_variant = stage == SUBPASS_UI && vulkan_globals.stereo_active;
+		const vulkan_pipeline_layout_t basic_layout = ui_panel_variant ? vulkan_globals.basic_stereo_ui_pipeline_layout : vulkan_globals.basic_pipeline_layout;
 		R_CopyPipelineCreateInfos (&infos, &base);
 		R_SetPipelineRenderPassVariant (&infos, stage, variant);
 		infos.multisample_state.rasterizationSamples = pipeline_variants[entry].rasterization_samples;
@@ -3278,7 +3299,7 @@ static void R_CreateBasicPipelines ()
 		infos.shader_stages[1].module = ui_panel_variant ? basic_notex_ui_frag_module : basic_notex_frag_module;
 		infos.blend_attachment_states[0].blendEnable = VK_TRUE;
 		R_CreateGraphicsPipeline (
-			&graphics_pipelines[PIPELINE_BASIC_NOTEX_BLEND][stage][variant], &infos, vulkan_globals.basic_pipeline_layout, "basic_notex_blend");
+			&graphics_pipelines[PIPELINE_BASIC_NOTEX_BLEND][stage][variant], &infos, basic_layout, "basic_notex_blend");
 	}
 
 	for (int entry = 0; entry < countof (pipeline_variants); ++entry)
@@ -3289,6 +3310,7 @@ static void R_CreateBasicPipelines ()
 		const qboolean					 mboit_moment_pass = (stage == SUBPASS_MBOIT_MOMENTS);
 		const qboolean					 mboit_composite_pass = (stage == SUBPASS_MBOIT_COMPOSITE);
 		const qboolean					 ui_panel_variant = stage == SUBPASS_UI && vulkan_globals.stereo_active;
+		const vulkan_pipeline_layout_t basic_layout = ui_panel_variant ? vulkan_globals.basic_stereo_ui_pipeline_layout : vulkan_globals.basic_pipeline_layout;
 		R_CopyPipelineCreateInfos (&infos, &base);
 		R_SetPipelineRenderPassVariant (&infos, stage, variant);
 		infos.multisample_state.rasterizationSamples = pipeline_variants[entry].rasterization_samples;
@@ -3309,7 +3331,7 @@ static void R_CreateBasicPipelines ()
 			R_SetMBOITCompositeBlend (infos.blend_attachment_states);
 		else
 			infos.blend_attachment_states[0].blendEnable = VK_TRUE;
-		R_CreateGraphicsPipeline (&graphics_pipelines[PIPELINE_BASIC_BLEND][stage][variant], &infos, vulkan_globals.basic_pipeline_layout, "basic_blend");
+		R_CreateGraphicsPipeline (&graphics_pipelines[PIPELINE_BASIC_BLEND][stage][variant], &infos, basic_layout, "basic_blend");
 	}
 }
 
@@ -4194,7 +4216,8 @@ static void R_CreatePostprocessPipelines ()
 		{
 			R_SetPipelineRenderPassVariant (&upscale, SUBPASS_UI, variant);
 			R_CreateGraphicsPipeline (
-				&graphics_pipelines[PIPELINE_SCENE_UPSCALE][SUBPASS_UI][variant], &upscale, vulkan_globals.basic_pipeline_layout, "scene_upscale");
+				&graphics_pipelines[PIPELINE_SCENE_UPSCALE][SUBPASS_UI][variant], &upscale,
+				vulkan_globals.stereo_active ? vulkan_globals.basic_stereo_ui_pipeline_layout : vulkan_globals.basic_pipeline_layout, "scene_upscale");
 		}
 	}
 
@@ -4772,6 +4795,23 @@ void R_DestroyPipelines (void)
 	vulkan_globals.indirect_draw_pipeline.handle = VK_NULL_HANDLE;
 	vkDestroyPipeline (vulkan_globals.device, vulkan_globals.indirect_clear_pipeline.handle, NULL);
 	vulkan_globals.indirect_clear_pipeline.handle = VK_NULL_HANDLE;
+}
+
+void R_DestroyStereoUIPipelineLayouts (void)
+{
+	if (vulkan_globals.device == VK_NULL_HANDLE)
+		return;
+
+	if (vulkan_globals.basic_stereo_ui_pipeline_layout.handle != VK_NULL_HANDLE)
+	{
+		vkDestroyPipelineLayout (vulkan_globals.device, vulkan_globals.basic_stereo_ui_pipeline_layout.handle, NULL);
+		vulkan_globals.basic_stereo_ui_pipeline_layout.handle = VK_NULL_HANDLE;
+	}
+	if (vulkan_globals.gui_stereo_ui_pipeline_layout.handle != VK_NULL_HANDLE)
+	{
+		vkDestroyPipelineLayout (vulkan_globals.device, vulkan_globals.gui_stereo_ui_pipeline_layout.handle, NULL);
+		vulkan_globals.gui_stereo_ui_pipeline_layout.handle = VK_NULL_HANDLE;
+	}
 }
 
 /*

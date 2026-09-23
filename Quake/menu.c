@@ -243,6 +243,12 @@ float M_GetScale ()
 	return latched_menuscale;
 }
 
+float M_MenuCanvasScale (void)
+{
+	const float max_scale = q_min ((float)glwidth / 320.0f, (float)glheight / 200.0f);
+	return CLAMP (1.0f, M_GetScale (), max_scale);
+}
+
 /*
 ================
 M_PixelToMenuCanvasCoord
@@ -250,12 +256,11 @@ M_PixelToMenuCanvasCoord
 */
 static qboolean M_PixelToMenuCanvasCoord (int *x, int *y)
 {
-	float s = q_min ((float)glwidth / 320.0, (float)glheight / 200.0);
+	const float s = M_MenuCanvasScale ();
 	float local_x, local_y;
 	/* CANVAS_MENU may deliberately use its letterboxed margins. Its source
 	 * ortho spans the whole displayed eye, not just the central 320x200. */
 	const qboolean within_display = *x >= 0 && *x < glwidth && *y >= 0 && *y < glheight;
-	s = CLAMP (1.0, M_GetScale (), s);
 	local_x = (*x - (glwidth - 320 * s) / 2) / s;
 	local_y = (*y - (glheight - 200 * s) / 2) / s;
 	*x = local_x;
@@ -3179,7 +3184,8 @@ static void M_Keys_Draw (cb_context_t *cbx)
 		y = 48 + 8 * i;
 
 		M_Print (cbx, 10, y, bindnames[i + first_key].description);
-		if (bindnames[i + first_key].command[0])
+		/* Keep the selected action fixed while its next key is being captured. */
+		if (!bind_grab && bindnames[i + first_key].command[0])
 			M_Mouse_UpdateCursor (&keys_cursor, 12, 400, y, 8, i + first_key);
 
 		M_FindKeysForCommand (bindnames[i + first_key].command, keys);
