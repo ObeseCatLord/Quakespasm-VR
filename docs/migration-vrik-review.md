@@ -1,7 +1,10 @@
 # VRIK transport and Vulkan avatar adapter: senior review brief
 
-Status: verified design brief with focused Astra sender and renderer reviews,
-not a completed transport, avatar implementation, or cross-play result. The
+Status: the v2/v3 codec, optional server/client transport, OpenXR head/hand
+sender, and transport review fixes are committed in `f8ed9a69`, `e182a773`,
+`bb8ca4c5`, and `275b94c2`. Avatar rendering and live cross-play remain
+unfinished. Focused local Astra reviews cover sender, Vulkan avatar
+architecture, and transport. The
 release goal is a single vkQuake-based Windows/Linux/ARM desktop and OpenXR
 engine where desktop and VR peers share gameplay and can see the VR peer's
 tracked avatar when available. A peer without tracking keeps ordinary player
@@ -12,10 +15,10 @@ platform.
 
 | Claim | Status and source |
 | --- | --- |
-| `2.0` has the donor VRIK wire codec, but no VRIK opcode, negotiation, relay, or avatar consumer. | **Verified:** `Quake/vrik_codec.[ch]` was copied unchanged and added to the Linux/Windows builds in `f8ed9a69`; `rg` in `Quake/protocol.h`, `cl_input.c`, `cl_parse.c`, `sv_user.c`, `sv_main.c` still finds no VRIK transport integration. |
+| `2.0` has the donor VRIK codec, negotiated transport, and OpenXR head/hand sender, but no avatar renderer. | **Verified:** `f8ed9a69` imports `Quake/vrik_codec.[ch]`; `e182a773` adds opcodes, server relay and client receive cache; `bb8ca4c5` adds the independent sender. Rendering remains a separate pending slice. |
 | Inherited transport uses v2/v3 bodies and explicit per-peer capability. | **Verified:** donor `Quake/vrik_codec.[ch]`; `protocol.h` defines `clc_vrikpose=5`, `svc_vrikpose=87`; `cl_parse.c:CL_OfferVRIKProtocol`, `sv_user.c:SV_ReadVRIKPose`, `sv_main.c:SVFTE_AppendPendingVRIK`. Donor server advertises through comment stufftext, relays only to capable recipients, and records sequence/generation. |
-| Target opcode numbers 5 and 87 are available in the current target protocol declarations. | **Verified:** `Quake/protocol.h` declares client opcodes 0-4 and `clcdp_ackframe=50`; no target `svc` declaration uses 87. This does not establish compatibility with arbitrary external protocol dialects. |
-| A VR muzzle pose already reaches the authoritative server, but no remote tracked avatar is relayed. | **Verified:** `Quake/vr_input.c:VR_InputPreparePrivatePose`, `Quake/sv_phys.c:SV_BeginPrivateVRWeaponPose`, absence of VRIK target transport. The private QSVR profile is per client and server-default off (`Quake/sv_main.c:SV_SendServerinfo`). |
+| Target opcode numbers 5 and 87 are reserved for negotiated VRIK messages. | **Verified:** `Quake/protocol.h` declares `clc_vrikpose=5` and `svc_vrikpose=87` in `e182a773`. This does not establish compatibility with arbitrary external protocol dialects. |
+| A VR muzzle pose reaches the authoritative server, and tracked head/hand poses now have a VRIK sender and relay; no remote avatar is rendered yet. | **Verified:** `Quake/vr_input.c:VR_InputPreparePrivatePose`, `Quake/sv_phys.c:SV_BeginPrivateVRWeaponPose`, `e182a773` transport and `bb8ca4c5` sender. The private QSVR profile remains per client and server-default off (`Quake/sv_main.c:SV_SendServerinfo`). |
 | Donor reusable CPU code exists beyond the wire codec. | **Verified:** donor `r_vrik.c` is rig/skinning math and cache logic (~940 lines); `player_avatar.c` is identity parsing (~374 lines). Its actual render/skin integration is in donor `r_alias.c` and `r_avatar.c`, while target `Quake/r_alias.c` already owns vkQuake MD5 GPU skinning and draw calls. |
 | Target MD5 skinning currently reads static joint matrices from the model's descriptor. | **Verified:** `Quake/r_alias.c:GL_DrawAliasFrame` binds `paliashdr->joints_set` with two animation-frame offsets; `Shaders/md5.vert` reads set-3 `joint_mats[]`. A live per-entity pose needs a transient joint-matrix binding or another proven adapter; changing frame numbers alone cannot supply it. |
 | Animated ray-shadow geometry has a separate pose consumer. | **Verified:** `Quake/r_brush.c:R_BuildTopLevelAccelerationStructure` calls `Quake/gl_mesh.c:R_UpdateAnimatedBLASes`, which recomputes per-entity skinned vertices for ray-query BLAS. A visible VRIK palette alone would leave shadow geometry stale. |
@@ -74,6 +77,22 @@ backlog, public movement packet, and a pose too large to append. A live
 desktop/VR session and visible-and-shadow pose agreement remain the end-to-end
 proof after implementation.
 
+## Local Astra transport review disposition
+
+The focused Astra transport review requested changes while retaining the
+existing adapter. It confirmed that unnegotiated desktop peers receive no VRIK
+opcode, v2/v3 service size checks cover complete bodies, and no second
+movement protocol is needed. Compilation is not a live cross-play result.
+
+| Ranked finding | Disposition |
+| --- | --- |
+| **P1:** Delayed post-signon offers could allow a donor to send an unreliable pose before the reliable capability reply, causing a disconnect; a donor also clears capability on map change while the target server retained it. | **Addressed in `275b94c2`, runtime pending:** queue capacity-checked offers immediately after serverinfo in the reliable signon order; renegotiate on every map. While version is unknown, discard the rest of an early pose datagram without admitting its body or dropping the peer. |
+| **P1:** Target mid-session demo recording reconstructs signon without the selected VRIK version, so playback would reject later recorded poses. | **Addressed in `275b94c2`, runtime pending:** reconstruct the selected v2/v3 offer before any pose; demo playback latches the version without sending a network capability reply. |
+| **P2:** Backward demo seek keeps future VRIK sequence/generation cursors and rejects earlier replayed poses. | **Addressed in `275b94c2`, runtime pending:** reset entity pose caches on backward seek while keeping the recorded protocol version. |
+| **P2:** Disconnect or player-slot reuse can leave a previous occupant's tracked pose in the recipient cache until timeout. | **Addressed in `275b94c2` for a known predecessor, runtime pending:** clear on scoreboard departure and entity removal; retain the last stream generation so delayed predecessor datagrams cannot revive it. A predecessor with no previously received pose has no generation floor. |
+| Replace the transport with a new reliability layer. | **Reject:** the reviewed packet framing and per-peer capability adapter remain the narrowest fit. |
+| Server legacy pose mirror duplicates normalized pose state. | **Revisit after behavior is proven:** remove if no consumer requires it; keep raw v2 bytes only where exact v2 relay needs them. |
+
 ## Focused Astra Vulkan avatar review disposition
 
 The second local Astra review inspected the existing MD5 visible draw, ray-query
@@ -117,8 +136,8 @@ successful builds alone are insufficient for release acceptance.
 | Target desktop plus target OpenXR when the server permits a private predictive peer | Each client's selected movement dialect remains independent; the target desktop receiver may still opt in to VRIK, and neither packet path drops movement or ACKs to make room for poses. |
 | Target desktop with OpenXR absent or unavailable | Desktop startup, menus, rendering, local play, and public network play work without creating an XR instance. |
 
-Implementation order is server capability/relay, client capability/receive
-cache, OpenXR-to-root-local sender, then the shared visible/shadow MD5 adapter.
-Keep each phase independently buildable, but judge completion by the mixed
-session and rendered-avatar gates above. A client may advertise receive
-capability while in desktop mode; pose transmission requires valid VR tracking.
+The server capability/relay, client receive cache, and OpenXR-to-root-local
+sender now build. Next is the shared visible/shadow MD5 avatar adapter. Judge
+completion by the mixed session and rendered-avatar gates above: a client may
+advertise receive capability while in desktop mode, but pose transmission
+requires valid VR tracking.
