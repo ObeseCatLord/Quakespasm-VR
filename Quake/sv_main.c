@@ -46,30 +46,6 @@ extern cvar_t nomonsters;
 #define VRIK_SVC_V2_MESSAGE_BYTES (1 + 2 + 4 + VRIK_POSE_WIRE_BYTES)
 static unsigned int sv_vrik_next_generation;
 
-static qboolean SV_QueueVRIKProtocolOffers(client_t *client)
-{
-	static const char offer_v3[] = "//vrik_protocol 3\n";
-	static const char offer_v2[] = "//vrik_protocol 2\n";
-	const size_t required = 2 + sizeof(offer_v3) + sizeof(offer_v2);
-
-	if (!client->vrik_offer_pending || client->message.overflowed ||
-		(!client->spawned &&
-		 (client->sendsignon != PRESPAWN_DONE || client->message.cursize != 0)) ||
-		client->message.cursize < 0 || client->message.maxsize < 0 ||
-		(size_t)client->message.cursize > (size_t)client->message.maxsize ||
-		required > (size_t)(client->message.maxsize - client->message.cursize))
-		return false;
-
-	MSG_WriteByte(&client->message, svc_stufftext);
-	MSG_WriteString(&client->message, offer_v3);
-	MSG_WriteByte(&client->message, svc_stufftext);
-	MSG_WriteString(&client->message, offer_v2);
-	client->vrik_offer_pending = false;
-	if (!client->spawned)
-		client->sendsignon = PRESPAWN_FLUSH;
-	return true;
-}
-
 static void SV_ResetVRIKClientState(client_t *client, qboolean keep_capability)
 {
 	qboolean capable;
@@ -80,7 +56,6 @@ static void SV_ResetVRIKClientState(client_t *client, qboolean keep_capability)
 	capable = keep_capability ? client->vrik_capable : false;
 	version = keep_capability ? client->vrik_protocol_version : 0;
 	client->vrik_capable = false;
-	client->vrik_offer_pending = false;
 	client->vrik_protocol_version = 0;
 	client->vrik_sequence_valid = false;
 	client->vrik_inactive_sent = false;
@@ -110,9 +85,8 @@ static void SV_ResetVRIKMapState(void)
 	{
 		client_t *client = &svs.clients[i];
 		SV_ResetVRIKClientState(client, false);
-		/* A map is a new pose stream. Both inherited and target clients
-		 * negotiate again before either side may exchange poses. */
-		client->vrik_offer_pending = client->active && client->netconnection != NULL;
+		/* A map is a new pose stream. SV_SendServerinfo sends the new offer
+		 * in the same reliable message as the new signon. */
 	}
 }
 
@@ -295,8 +269,8 @@ void SV_ExpireVRIKPoses(void)
 		/* Dropped slots cannot relay, but clear optional state before reuse. */
 		if (!client->active)
 		{
-			if (client->vrik_capable || client->vrik_offer_pending ||
-				client->vrik_sequence_valid || client->vrik_generation)
+			if (client->vrik_capable || client->vrik_sequence_valid ||
+				client->vrik_generation)
 				SV_ResetVRIKClientState(client, false);
 			continue;
 		}
@@ -2058,12 +2032,17 @@ This will be sent on the initial connection and upon each server load.
 */
 void SV_SendServerinfo (client_t *client)
 {
+	static const char offer_v3[] = "//vrik_protocol 3\n";
+	static const char offer_v2[] = "//vrik_protocol 2\n";
+	const size_t vrik_offer_bytes = 2 + sizeof (offer_v3) + sizeof (offer_v2);
 	const char **s;
 	char		 message[2048];
 	unsigned int i; // johnfitz
 	unsigned int previous_qsvr = client->protocol_qsvr;
 	qboolean	 cantruncate;
 	qboolean	 truncated = false;
+	qboolean	 reserve_vrik_offer;
+	int			 serverinfo_maxsize;
 
 	client->spawned = false; // need prespawn, spawn, etc
 
@@ -2197,8 +2176,13 @@ void SV_SendServerinfo (client_t *client)
 	}
 
 	cantruncate = client->message.cursize == 0;
-	/* Queue VRIK offers separately so they cannot affect serverinfo capacity. */
-	client->vrik_offer_pending = client->netconnection != NULL;
+	serverinfo_maxsize = client->message.maxsize;
+	/* Reserve both commands while building an empty serverinfo so the retry
+	 * path accounts for their bytes before deciding how much to precache. */
+	reserve_vrik_offer = client->netconnection != NULL && cantruncate &&
+		serverinfo_maxsize >= (int)vrik_offer_bytes;
+	if (reserve_vrik_offer)
+		client->message.maxsize -= (int)vrik_offer_bytes;
 retry:
 	MSG_WriteByte (&client->message, svc_print);
 	//	q_snprintf (message, "%c\nFITZQUAKE %1.2f SERVER (%i CRC)\n", 2, FITZQUAKE_VERSION, pr_crc); //johnfitz -- include fitzquake version
@@ -2289,6 +2273,19 @@ retry:
 		truncated = true;
 		goto retry;
 	}
+	client->message.maxsize = serverinfo_maxsize;
+
+	/* Keep negotiation inside the serverinfo reliable message. The donor
+	 * client disconnects if a separate reliable command arrives while it is
+	 * loading model and sound precaches. */
+	if (client->netconnection && !client->message.overflowed &&
+		client->message.cursize <= serverinfo_maxsize - (int)vrik_offer_bytes)
+	{
+		MSG_WriteByte (&client->message, svc_stufftext);
+		MSG_WriteString (&client->message, offer_v3);
+		MSG_WriteByte (&client->message, svc_stufftext);
+		MSG_WriteString (&client->message, offer_v2);
+	}
 
 	// try and flush the reliable NOW, in case the qc is evil
 	if (NET_CanSendMessage (client->netconnection))
@@ -2298,9 +2295,6 @@ retry:
 			SZ_Clear (&client->message);
 			client->last_message = realtime;
 			client->sendsignon = PRESPAWN_DONE;
-			/* Queue the offer immediately behind serverinfo in the reliable
-			 * stream, before the client can advance its prespawn stages. */
-			SV_QueueVRIKProtocolOffers (client);
 		}
 	}
 
@@ -3601,8 +3595,6 @@ void SV_SendClientMessages (void)
 		if (!host_client->active)
 			continue;
 
-		SV_QueueVRIKProtocolOffers (host_client);
-
 		if (!SV_SendClientDatagram (host_client))
 			continue;
 		if (!host_client->spawned)
@@ -3711,9 +3703,6 @@ void SV_SendClientMessages (void)
 				host_client->last_message = realtime;
 				if (host_client->sendsignon == PRESPAWN_FLUSH)
 					host_client->sendsignon = PRESPAWN_DONE;
-				/* Also cover serverinfo delayed by a busy reliable channel. */
-				if (sent)
-					SV_QueueVRIKProtocolOffers (host_client);
 			}
 		}
 	}

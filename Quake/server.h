@@ -197,7 +197,6 @@ typedef struct client_s
 	unsigned int protocol_pext2;
 	/* Optional VRIK pose transport state; unrelated to QSVR movement admission. */
 	qboolean vrik_capable;
-	qboolean vrik_offer_pending;
 	unsigned char vrik_protocol_version;
 	qboolean vrik_sequence_valid;
 	qboolean vrik_inactive_sent;
