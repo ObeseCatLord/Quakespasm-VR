@@ -47,11 +47,12 @@ The `2.0` client now offers a separate `QSVR` key/version in the ordinary
 `cmd pext` response. The server records that offer per connection, and the
 client parser accepts a matching serverinfo marker before private PEXT2 bits.
 Public PEXT2 support and the default server response remain unchanged. The
-server does **not yet select** the profile. Private outbound ACK/signon framing
-and a latest-command receiver are staged, while collision and QC authority
-still need the coupled vertical proof above. The extra client offer is ignored
-by public servers. This receiver is the first compatibility step, not the
-requested QSS-M-style predictive netcode: command replay, owner snapshot
+server does **not yet select** the profile. Private outbound ACK/signon framing,
+a latest-command receiver and a collision-solver roomscale adapter are staged;
+their actual gameplay behavior still needs the coupled vertical proof above.
+The extra client offer is ignored by public servers. This receiver is the
+first compatibility step, not the requested QSS-M-style predictive netcode:
+command replay, owner snapshot
 coherence, loss recovery and VR-aware prediction remain required.
 
 The inherited `0x40` private extension names a tagged `UF_SOLID` encoding.
@@ -68,8 +69,8 @@ adapter. This is a design decision, not a collision-parity claim.
 
 | Recommendation | Disposition |
 | --- | --- |
-| Reuse vkQuake's walk/fly solver with an explicit callback policy through its step, unstick and push calls. | **Adopted for implementation.** Ordinary calls retain their current impact/trigger behavior. The auxiliary call suppresses QC callbacks but retains intermediate `SV_LinkEdict(false)` spatial updates. No copied solver or global suppression mode. |
-| Apply roomscale before the normal move-frame capture. | **Adopted.** Use a temporary auxiliary pusher frame, restore velocity/flags/groundentity, relink without triggers, then capture the normal frame at the new origin. Reusing the old frame after leaving a platform risks stale support. |
+| Reuse vkQuake's walk/fly solver with an explicit callback policy through its step, unstick and push calls. | **Implemented, unqualified.** Ordinary calls retain their current impact/trigger behavior. The auxiliary call suppresses QC callbacks but retains intermediate `SV_LinkEdict(false)` spatial updates. No copied solver or global suppression mode. |
+| Apply roomscale before the normal move-frame capture. | **Implemented, unqualified.** A temporary auxiliary pusher frame is used, then velocity/flags/groundentity are restored and the entity relinked without triggers before normal capture. Reusing the old frame after leaving a platform risks stale support. |
 | Use one accepted-command authority for remote and listen clients initially. | **Adopted with a parity caveat.** The donor's local direct tracking move runs later and has different callbacks/downward velocity. Measure local latency and behavior; a distinct local path needs evidence before addition. |
 | Require one impact/trigger event globally. | **Rejected.** Native vkQuake stepping, unsticking and force-retouch can legitimately call more than once. The invariant is zero **auxiliary** QC callbacks while preserving the normal pass. |
 | Fix the walk waterjump check's use of the last global `sv_player`. | **Adopted and implemented.** Read `ent->v.flags` for the entity being moved; otherwise another client's waterjump could affect stepping. |
