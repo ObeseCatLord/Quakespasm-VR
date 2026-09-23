@@ -61,6 +61,12 @@ typedef struct entity_blas_s
 	struct qmodel_s			  *model;
 	struct aliashdr_s		  *geometry;
 	qboolean				   needs_initial_build;
+	struct qmodel_s		  *cached_model;
+	struct aliashdr_s		  *cached_geometry;
+	int					   cached_pose1;
+	int					   cached_pose2;
+	float				   cached_blend;
+	qboolean				   pose_cache_valid;
 } entity_blas_t;
 
 // Entity interpolation state. Written only by the parse layer (view.c for the

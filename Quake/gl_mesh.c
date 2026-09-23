@@ -990,6 +990,30 @@ static VkAccelerationStructureBuildGeometryInfoKHR	   pending_build_infos[MAX_PE
 static VkAccelerationStructureBuildRangeInfoKHR		   pending_range_infos[MAX_PENDING_BLAS_BUILDS];
 static const VkAccelerationStructureBuildRangeInfoKHR *pending_range_info_ptrs[MAX_PENDING_BLAS_BUILDS];
 
+typedef struct
+{
+	entity_t		 *entity;
+	entity_blas_t	 *blas_data;
+	int			  pose1;
+	int			  pose2;
+	float			  blend;
+	qboolean		  cacheable;
+} pending_blas_pose_t;
+
+static pending_blas_pose_t pending_blas_poses[MAX_PENDING_BLAS_BUILDS];
+
+static qboolean R_EntityBLASPoseCacheMatches (
+	const entity_t *e, const aliashdr_t *hdr, int pose1, int pose2, float blend, const r_vrik_prepared_palette_t *tracked_palette)
+{
+	const entity_blas_t *blas = e ? e->blas_data : NULL;
+	if (!blas || !hdr || tracked_palette || !isfinite (blend) || blas->needs_initial_build || !blas->pose_cache_valid || blas->model != e->model ||
+		blas->geometry != hdr)
+		return false;
+
+	return blas->cached_model == e->model && blas->cached_geometry == hdr && blas->cached_pose1 == pose1 && blas->cached_pose2 == pose2 &&
+		   memcmp (&blas->cached_blend, &blend, sizeof (blend)) == 0;
+}
+
 /*
 ================
 R_FlushPendingBLASBuilds
@@ -1013,6 +1037,28 @@ static void R_FlushPendingBLASBuilds (cb_context_t *cbx, int num_pending, qboole
 
 	// Single batched AS build call
 	vulkan_globals.vk_cmd_build_acceleration_structures (cbx->cb, num_pending, pending_build_infos, pending_range_info_ptrs);
+
+	// Cache only after both the compute dispatches and BLAS builds are recorded.
+	// A tracked palette or invalid blend must invalidate any earlier local pose.
+	for (int i = 0; i < num_pending; ++i)
+	{
+		pending_blas_pose_t *pending = &pending_blas_poses[i];
+		entity_blas_t	   *blas = pending->blas_data;
+		if (!pending->entity || pending->entity->blas_data != blas)
+			continue;
+
+		blas->needs_initial_build = false;
+		blas->pose_cache_valid = false;
+		if (!pending->cacheable)
+			continue;
+
+		blas->cached_model = blas->model;
+		blas->cached_geometry = blas->geometry;
+		blas->cached_pose1 = pending->pose1;
+		blas->cached_pose2 = pending->pose2;
+		memcpy (&blas->cached_blend, &pending->blend, sizeof (blas->cached_blend));
+		blas->pose_cache_valid = true;
+	}
 
 	// Barrier for next phase
 	ZEROED_STRUCT (VkMemoryBarrier, as_barrier);
@@ -1071,6 +1117,11 @@ void R_UpdateAnimatedBLASes (cb_context_t *cbx)
 			if (e->blas_data->model != e->model || !e->blas_data->geometry)
 				continue;
 
+			lerpdata_t lerpdata;
+			R_SetupAliasFrame (e, hdr, &lerpdata);
+			if (R_EntityBLASPoseCacheMatches (e, hdr, lerpdata.pose1, lerpdata.pose2, lerpdata.blend, R_EntityBLASPalette (e, hdr)))
+				continue;
+
 			const VkDeviceSize vertex_size = hdr->numverts_vbo * sizeof (float) * 3;
 			const VkDeviceSize as_scratch_size = e->blas_data->needs_initial_build ? e->blas_data->build_scratch_size : e->blas_data->update_scratch_size;
 			const VkDeviceSize total_needed = q_align (vertex_size, scratch_alignment) + as_scratch_size;
@@ -1122,6 +1173,8 @@ void R_UpdateAnimatedBLASes (cb_context_t *cbx)
 				pose1 = pose2 = 0;
 				blend = 0.0f;
 			}
+			if (R_EntityBLASPoseCacheMatches (e, hdr, pose1, pose2, blend, tracked_palette))
+				continue;
 
 			// Always use refit after first build. We trace few rays and full updates are expensive.
 			qboolean use_update = !e->blas_data->needs_initial_build;
@@ -1139,8 +1192,6 @@ void R_UpdateAnimatedBLASes (cb_context_t *cbx)
 				--entity_index;
 				break;
 			}
-
-			e->blas_data->needs_initial_build = false;
 
 			VkDeviceAddress vertex_output_address = as_scratch_buffer.device_address + vertex_offset;
 			VkDeviceAddress scratch_address = as_scratch_buffer.device_address + as_scratch_offset;
@@ -1220,6 +1271,14 @@ void R_UpdateAnimatedBLASes (cb_context_t *cbx)
 			memset (range, 0, sizeof (*range));
 			range->primitiveCount = hdr->numtris;
 			pending_range_info_ptrs[num_pending] = range;
+			pending_blas_poses[num_pending] = (pending_blas_pose_t) {
+				.entity = e,
+				.blas_data = e->blas_data,
+				.pose1 = pose1,
+				.pose2 = pose2,
+				.blend = blend,
+				.cacheable = !tracked_palette && isfinite (blend),
+			};
 
 			++num_pending;
 
