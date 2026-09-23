@@ -2176,7 +2176,7 @@ static void SV_WalkMove (edict_t *ent, const sv_client_move_frame_t *move_frame,
 		{
 			ent->v.flags = (int)ent->v.flags | FL_ONGROUND;
 
-			// SV_PushEntityTo() calls SV_LinkEdict (true) that could free downtrace.ent
+			// Native pushes can touch triggers and free downtrace.ent.
 			if (downtrace.ent && !downtrace.ent->free)
 				ent->v.groundentity = EDICT_TO_PROG (downtrace.ent);
 		}
@@ -2228,6 +2228,45 @@ static void SV_Physics_ClientWalk (edict_t *ent, sv_client_move_frame_t *move_fr
 	SV_WalkMove (ent, move_frame, move_velocity, true);
 }
 
+/* Physical head movement is an auxiliary translation, not a second player
+ * think. Use the same collision/step solver, but let the normal physics pass
+ * own velocity, ground state and QuakeC callbacks. */
+static void SV_ApplyPrivateRoomScaleMove (edict_t *ent, client_t *client)
+{
+	sv_client_move_frame_t auxiliary_frame;
+	vec3_t move, sweep_velocity, saved_velocity;
+	float saved_flags;
+	int saved_groundentity;
+
+	VectorCopy (client->cmd.vr_roomscalemove, move);
+	VectorCopy (vec3_origin, client->cmd.vr_roomscalemove);
+	if (!client->cmd.vr_active || ent->v.movetype == MOVETYPE_NONE ||
+		host_frametime <= 0)
+		return;
+	move[2] = 0; // head height does not raise the player's collision hull
+	if (!move[0] && !move[1])
+		return;
+
+	VectorCopy (ent->v.velocity, saved_velocity);
+	saved_flags = ent->v.flags;
+	saved_groundentity = ent->v.groundentity;
+	VectorScale (move, 1.0f / host_frametime, sweep_velocity);
+	VectorCopy (sweep_velocity, ent->v.velocity);
+	if (ent->v.movetype == MOVETYPE_NOCLIP)
+		VectorAdd (ent->v.origin, move, ent->v.origin);
+	else if (ent->v.movetype == MOVETYPE_WALK)
+	{
+		SV_CaptureClientMoveFrameBeforeQC (ent, &auxiliary_frame);
+		SV_WalkMove (ent, &auxiliary_frame, sweep_velocity, false);
+	}
+	else
+		SV_FlyMove (ent, host_frametime, NULL, NULL, false);
+	VectorCopy (saved_velocity, ent->v.velocity);
+	ent->v.flags = saved_flags;
+	ent->v.groundentity = saved_groundentity;
+	SV_LinkEdict (ent, false);
+}
+
 static void SV_Physics_Client (edict_t *ent, int num)
 {
 	sv_client_move_frame_t move_frame;
@@ -2240,6 +2279,8 @@ static void SV_Physics_Client (edict_t *ent, int num)
 		return; // don't spam prethinks before we called putclientinserver.
 
 	ED_Retain (ent);
+	if (svs.clients[num - 1].protocol_qsvr == QSVR_PROTOCOL_PINNED)
+		SV_ApplyPrivateRoomScaleMove (ent, &svs.clients[num - 1]);
 	SV_CaptureClientMoveFrameBeforeQC (ent, &move_frame);
 	retained_pusher = move_frame.pusher;
 	if (retained_pusher)
