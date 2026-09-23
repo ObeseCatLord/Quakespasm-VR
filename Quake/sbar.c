@@ -68,6 +68,22 @@ static int hudtype;
 
 extern cvar_t scr_style;
 
+/* The inherited VR callback widens only AD's split-bar CSQC layouts. Keep
+ * detection separate from presentation so the Vulkan HUD can reuse it. */
+qboolean Sbar_IsADWideCSQCHud (void)
+{
+	const char *game = COM_SkipPath (com_gamedir);
+	float layout;
+
+	if (!(scr_style.value < 1.0f) || !cl.qcvm.extfuncs.CSQC_DrawHud || qcvm || q_strcasecmp (game, "ad"))
+		return false;
+
+	layout = Cvar_VariableValue ("scratch1");
+	/* The inherited AD selector interprets scratch1 as an integer. */
+	return isfinite (layout) && ((layout >= 4.0f && layout < 5.0f) ||
+		(layout >= 104.0f && layout < 105.0f));
+}
+
 void Sbar_MiniDeathmatchOverlay (cb_context_t *cbx);
 void Sbar_DeathmatchOverlay (cb_context_t *cbx);
 void M_DrawPic (cb_context_t *cbx, int x, int y, qpic_t *pic);
