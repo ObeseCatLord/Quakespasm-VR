@@ -78,3 +78,17 @@ prediction remain ordinary, that the VR peer's hand/room-scale data reaches
 the same authoritative world, and that both see consistent damage, pickups,
 death/rejoin and map transitions. Neither a desktop-only private loopback nor
 a separate single-headset run proves this mixed case.
+
+### Mixed-peer senior review disposition
+
+A local Astra Max review verified the per-client negotiation and private-only
+VR payload boundaries, then returned its highest-priority findings before the
+full network critique was complete. Treat this as a focused disposition, not
+final cross-play sign-off.
+
+| Review finding | Disposition |
+| --- | --- |
+| Separate desktop and VR connections do not prove simultaneous cross-play. | **Adopt.** Qualify one dedicated server with an ordinary public vkQuake desktop peer and private OpenXR VR peer, then repeat with two `2.0` peers and only one in VR. Observe movement, aim/damage, pickups, death/rejoin and map transition from both clients and the server. |
+| `sv_qsvr_private` defaults off and public movement omits VR hand/room-scale data. | **Adopt.** Keep the development gate until VR and mixed-peer gameplay qualify; report public connectivity separately from full VR behavior. |
+| Desktop `2.0` also offers QSVR, so a desktop-plus-VR run may exercise two private clients. | **Adopt.** Include both public/private and private/private pairings; do not infer public compatibility from the latter. |
+| Add a desktop-versus-VR network dialect or duplicate movement owner now. | **Reject.** Current negotiation and movement dispatch are per client; no verified incompatibility requires another layer. Reopen only for a demonstrated mixed-peer failure. |
