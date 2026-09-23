@@ -215,6 +215,13 @@ cc -std=gnu11 -DUSE_SDL3 -D_GNU_SOURCE -Wno-unused-parameter \
 /tmp/quakespasm-window-size-fixture
 ```
 
+## Renderer timing overlay
+
+Set `scr_speeds 3` to show CPU, GPU and wait times while keeping indirect
+rendering eligible under its usual conditions. This mode displays no draw
+counts. GPU time is delayed until its Vulkan fence slot is reused, so it is not
+a matched-frame pair with the CPU and wait measurements.
+
 ## Local OpenXR GPU smoke
 
 This optional integration check needs a debug-symbol Linux build, GDB with

@@ -1717,12 +1717,9 @@ static void R_DrawViewModelTask (void *unused)
 R_PrintStats
 ================
 */
-static void R_PrintStats (void)
+static void R_PrintStats (qboolean draw_stats_ready)
 {
 	// johnfitz -- modified scr_speeds output
-	double		 lms = r_gpulightmapupdate.value
-						   ? (double)Atomic_LoadUInt32 (&rs_dynamiclightmaps) / (LMBLOCK_HEIGHT / LM_CULL_BLOCK_H * LMBLOCK_WIDTH / LM_CULL_BLOCK_W)
-						   : Atomic_LoadUInt32 (&rs_dynamiclightmaps);
 	const double cpu_ms = (double)rs_cputime_us / 1000.0;
 	const double gpu_ms = (double)rs_gputime_us / 1000.0;
 	const double gpu_wait_ms = (double)rs_gpuwaittime_us / 1000.0;
@@ -1734,17 +1731,25 @@ static void R_PrintStats (void)
 	else if (scr_speeds.value)
 	{
 		q_snprintf (rs_display_lines[0], sizeof (rs_display_lines[0]), "cpu%6.2f gpu%6.2f wait%6.2f ms", cpu_ms, gpu_ms, gpu_wait_ms);
-		if (scr_speeds.value == 2)
-		{
-			q_snprintf (
-				rs_display_lines[1], sizeof (rs_display_lines[1]), "%4u/%u wpoly %4u/%u epoly", rs_brushpolys, rs_brushpasses, rs_aliaspolys, rs_aliaspasses);
-			q_snprintf (rs_display_lines[2], sizeof (rs_display_lines[2]), "%5.3g lmap %4u skypoly", lms, rs_skypolys);
-			rs_display_numlines = 3;
-		}
+		if (scr_speeds.value == 3 || !draw_stats_ready)
+			rs_display_numlines = 1;
 		else
 		{
-			q_snprintf (rs_display_lines[1], sizeof (rs_display_lines[1]), "%4u wpoly %4u epoly %5.3g lmap", rs_brushpolys, rs_aliaspolys, lms);
-			rs_display_numlines = 2;
+			double lms = r_gpulightmapupdate.value
+						 ? (double)Atomic_LoadUInt32 (&rs_dynamiclightmaps) / (LMBLOCK_HEIGHT / LM_CULL_BLOCK_H * LMBLOCK_WIDTH / LM_CULL_BLOCK_W)
+						 : Atomic_LoadUInt32 (&rs_dynamiclightmaps);
+			if (scr_speeds.value == 2)
+			{
+				q_snprintf (
+					rs_display_lines[1], sizeof (rs_display_lines[1]), "%4u/%u wpoly %4u/%u epoly", rs_brushpolys, rs_brushpasses, rs_aliaspolys, rs_aliaspasses);
+				q_snprintf (rs_display_lines[2], sizeof (rs_display_lines[2]), "%5.3g lmap %4u skypoly", lms, rs_skypolys);
+				rs_display_numlines = 3;
+			}
+			else
+			{
+				q_snprintf (rs_display_lines[1], sizeof (rs_display_lines[1]), "%4u wpoly %4u epoly %5.3g lmap", rs_brushpolys, rs_aliaspolys, lms);
+				rs_display_numlines = 2;
+			}
 		}
 	}
 	// johnfitz
@@ -1759,8 +1764,9 @@ void R_RenderView (
 	qboolean use_tasks, task_handle_t begin_rendering_task, task_handle_t setup_frame_task, task_handle_t draw_done_task, task_handle_t draw_gui_task)
 {
 	static qboolean stats_ready;
+	static qboolean draw_stats_ready;
 
-	indirect = r_indirect.value && indirect_ready && r_gpulightmapupdate.value && !scr_speeds.value;
+	indirect = r_indirect.value && indirect_ready && r_gpulightmapupdate.value && (!scr_speeds.value || scr_speeds.value == 3);
 
 	if (!cl.worldmodel)
 		Sys_Error ("R_RenderView: NULL worldmodel");
@@ -1769,9 +1775,9 @@ void R_RenderView (
 		rs_frame_starttime = Sys_DoubleTime ();
 
 	if (use_tasks && (r_pos.value || stats_ready))
-		R_PrintStats (); // stats and frame times of the last completed frame
+		R_PrintStats (draw_stats_ready); // stats and frame times of the last completed frame
 
-	if (scr_speeds.value)
+	if (scr_speeds.value && scr_speeds.value != 3)
 	{
 		// johnfitz -- rendering statistics
 		Atomic_StoreUInt32 (&rs_brushpolys, 0u);
@@ -1782,10 +1788,9 @@ void R_RenderView (
 		Atomic_StoreUInt32 (&rs_dynamiclightmaps, 0u);
 		Atomic_StoreUInt32 (&rs_aliaspasses, 0u);
 		Atomic_StoreUInt32 (&rs_brushpasses, 0u);
-		stats_ready = true;
 	}
-	else
-		stats_ready = false;
+	stats_ready = scr_speeds.value != 0;
+	draw_stats_ready = scr_speeds.value != 0 && scr_speeds.value != 3;
 
 	if (use_tasks)
 	{
@@ -1939,6 +1944,6 @@ void R_RenderView (
 			R_BuildTopLevelAccelerationStructure (NULL);
 			R_UpdateLightmapsAndIndirect (NULL);
 		}
-		R_PrintStats ();
+		R_PrintStats (draw_stats_ready);
 	}
 }
