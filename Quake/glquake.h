@@ -369,6 +369,12 @@ typedef struct
 	qboolean						 openxr_vulkan_available;
 	qboolean						 openxr_multiview_available;
 	uint32_t						 openxr_max_multiview_view_count;
+	qboolean						 openxr_fragment_shading_rate_available;
+	qboolean						 openxr_fragment_shading_rate_active;
+	VkExtent2D						 openxr_fragment_shading_rate_texel_size;
+	qboolean						 openxr_layered_shading_rate_attachments;
+	PFN_vkCreateRenderPass2KHR		 vk_create_render_pass2;
+	PFN_vkCmdSetFragmentShadingRateKHR vk_cmd_set_fragment_shading_rate;
 	// Resource mode and one immutable stereo uniform allocation per logical
 	// frame. Runtime handles/lifecycle remain in the OpenXR boundary.
 	qboolean stereo_active;

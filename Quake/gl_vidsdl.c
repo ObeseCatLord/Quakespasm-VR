@@ -892,8 +892,71 @@ static void GL_OpenXRPrepareVulkan (uint32_t loader_api_version)
 		VK_API_VERSION_MINOR (openxr_vulkan_api_version));
 }
 
+static void GL_ClearOpenXRFragmentShadingRate (void)
+{
+	vulkan_globals.openxr_fragment_shading_rate_available = false;
+	vulkan_globals.openxr_fragment_shading_rate_active = false;
+	vulkan_globals.openxr_fragment_shading_rate_texel_size.width = 0;
+	vulkan_globals.openxr_fragment_shading_rate_texel_size.height = 0;
+	vulkan_globals.openxr_layered_shading_rate_attachments = false;
+	vulkan_globals.vk_create_render_pass2 = NULL;
+	vulkan_globals.vk_cmd_set_fragment_shading_rate = NULL;
+}
+
+static uint32_t GL_FragmentShadingRateLog2 (uint32_t value)
+{
+	uint32_t result = 0;
+	while (value > 1)
+	{
+		value >>= 1;
+		++result;
+	}
+	return result;
+}
+
+static qboolean GL_SelectFragmentShadingRateTexelSize (const VkPhysicalDeviceFragmentShadingRatePropertiesKHR *properties, VkExtent2D *texel_size)
+{
+	const VkExtent2D min_size = properties->minFragmentShadingRateAttachmentTexelSize;
+	const VkExtent2D max_size = properties->maxFragmentShadingRateAttachmentTexelSize;
+	uint32_t best_score = UINT32_MAX;
+	uint32_t best_aspect = UINT32_MAX;
+	qboolean found = false;
+	if (!min_size.width || !min_size.height || !max_size.width || !max_size.height || !properties->maxFragmentShadingRateAttachmentTexelSizeAspectRatio)
+		return false;
+
+	for (uint32_t width = min_size.width; width <= max_size.width;)
+	{
+		for (uint32_t height = min_size.height; height <= max_size.height;)
+		{
+			const uint32_t aspect = width > height ? width / height : height / width;
+			if (aspect <= properties->maxFragmentShadingRateAttachmentTexelSizeAspectRatio)
+			{
+				const uint32_t width_log = GL_FragmentShadingRateLog2 (width);
+				const uint32_t height_log = GL_FragmentShadingRateLog2 (height);
+				const uint32_t score = (width_log > 4 ? width_log - 4 : 4 - width_log) + (height_log > 4 ? height_log - 4 : 4 - height_log);
+				if (!found || score < best_score || (score == best_score && aspect < best_aspect))
+				{
+					texel_size->width = width;
+					texel_size->height = height;
+					best_score = score;
+					best_aspect = aspect;
+					found = true;
+				}
+			}
+			if (height > max_size.height / 2)
+				break;
+			height *= 2;
+		}
+		if (width > max_size.width / 2)
+			break;
+		width *= 2;
+	}
+	return found;
+}
+
 static void GL_OpenXRCreationFailed (void)
 {
+	GL_ClearOpenXRFragmentShadingRate ();
 	VRXR_Shutdown ();
 	if (vulkan_globals.device != VK_NULL_HANDLE)
 	{
@@ -1280,6 +1343,7 @@ static void GL_InitDevice (void)
 	uint32_t i;
 	int		 arg_index;
 	int		 device_index = 0;
+	GL_ClearOpenXRFragmentShadingRate ();
 
 	qboolean subgroup_size_control = false;
 
@@ -1358,7 +1422,19 @@ static void GL_InitDevice (void)
 	qboolean driver_properties_available = false;
 	qboolean present_id = false;
 	qboolean present_wait = false;
+	qboolean fragment_shading_rate_extension = false;
+	qboolean create_renderpass2_extension = false;
+	qboolean create_renderpass2_core = false;
+	qboolean fragment_shading_rate_usable = false;
+	qboolean fragment_shading_rate_feature_enabled = false;
+	qboolean fragment_shading_rate_layered = false;
+	VkExtent2D fragment_shading_rate_texel_size = {0, 0};
 	uint32_t device_extension_count;
+	if (openxr_vulkan_binding)
+	{
+		create_renderpass2_core = GL_CompareVulkanApiVersions (openxr_vulkan_api_version, VK_API_VERSION_1_2) >= 0 &&
+			GL_CompareVulkanApiVersions (vulkan_globals.device_properties.apiVersion, VK_API_VERSION_1_2) >= 0;
+	}
 	err = vkEnumerateDeviceExtensionProperties (vulkan_physical_device, NULL, &device_extension_count, NULL);
 
 	if (err == VK_SUCCESS || device_extension_count > 0)
@@ -1386,6 +1462,12 @@ static void GL_InitDevice (void)
 				push_descriptor = true;
 			if (strcmp (VK_KHR_RAY_QUERY_EXTENSION_NAME, device_extensions[i].extensionName) == 0)
 				vulkan_globals.ray_query = true;
+#if defined(VK_KHR_fragment_shading_rate) && defined(VK_KHR_create_renderpass2)
+			if (openxr_vulkan_binding && strcmp (VK_KHR_FRAGMENT_SHADING_RATE_EXTENSION_NAME, device_extensions[i].extensionName) == 0)
+				fragment_shading_rate_extension = true;
+			if (openxr_vulkan_binding && strcmp (VK_KHR_CREATE_RENDERPASS_2_EXTENSION_NAME, device_extensions[i].extensionName) == 0)
+				create_renderpass2_extension = true;
+#endif
 #if defined(VK_KHR_present_wait2)
 			if (strcmp (VK_KHR_PRESENT_ID_2_EXTENSION_NAME, device_extensions[i].extensionName) == 0)
 				present_id = true;
@@ -1396,6 +1478,8 @@ static void GL_InitDevice (void)
 
 		Mem_Free (device_extensions);
 	}
+	fragment_shading_rate_usable = openxr_vulkan_binding && fragment_shading_rate_extension &&
+		(create_renderpass2_core || create_renderpass2_extension);
 
 	const char *vendor = NULL;
 	ZEROED_STRUCT (VkPhysicalDeviceDriverProperties, driver_properties);
@@ -1476,6 +1560,10 @@ static void GL_InitDevice (void)
 	ZEROED_STRUCT (VkPhysicalDeviceShaderFloat16Int8Features, shader_float16_features);
 	ZEROED_STRUCT (VkPhysicalDeviceMultiviewProperties, multiview_properties);
 	ZEROED_STRUCT (VkPhysicalDeviceMultiviewFeatures, multiview_features);
+#if defined(VK_KHR_fragment_shading_rate) && defined(VK_KHR_create_renderpass2)
+	ZEROED_STRUCT (VkPhysicalDeviceFragmentShadingRatePropertiesKHR, fragment_shading_rate_properties);
+	ZEROED_STRUCT (VkPhysicalDeviceFragmentShadingRateFeaturesKHR, fragment_shading_rate_features);
+#endif
 #if defined(VK_KHR_present_wait2)
 	ZEROED_STRUCT (VkPhysicalDevicePresentId2FeaturesKHR, present_id_features);
 	ZEROED_STRUCT (VkPhysicalDevicePresentWait2FeaturesKHR, present_wait_features);
@@ -1504,6 +1592,13 @@ static void GL_InitDevice (void)
 			multiview_properties.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MULTIVIEW_PROPERTIES;
 			CHAIN_PNEXT (device_properties_next, multiview_properties);
 		}
+#if defined(VK_KHR_fragment_shading_rate) && defined(VK_KHR_create_renderpass2)
+		if (fragment_shading_rate_usable)
+		{
+			fragment_shading_rate_properties.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FRAGMENT_SHADING_RATE_PROPERTIES_KHR;
+			CHAIN_PNEXT (device_properties_next, fragment_shading_rate_properties);
+		}
+#endif
 
 		fpGetPhysicalDeviceProperties2 (vulkan_physical_device, &physical_device_properties_2);
 
@@ -1536,6 +1631,13 @@ static void GL_InitDevice (void)
 			multiview_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MULTIVIEW_FEATURES;
 			CHAIN_PNEXT (device_features_next, multiview_features);
 		}
+#if defined(VK_KHR_fragment_shading_rate) && defined(VK_KHR_create_renderpass2)
+		if (fragment_shading_rate_usable)
+		{
+			fragment_shading_rate_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FRAGMENT_SHADING_RATE_FEATURES_KHR;
+			CHAIN_PNEXT (device_features_next, fragment_shading_rate_features);
+		}
+#endif
 #if defined(VK_KHR_present_wait2)
 		if (present_id && present_wait)
 		{
@@ -1551,6 +1653,27 @@ static void GL_InitDevice (void)
 	}
 	else
 		vkGetPhysicalDeviceFeatures (vulkan_physical_device, &vulkan_globals.device_features);
+
+#if defined(VK_KHR_fragment_shading_rate) && defined(VK_KHR_create_renderpass2)
+	if (fragment_shading_rate_usable && fragment_shading_rate_features.attachmentFragmentShadingRate &&
+		GL_SelectFragmentShadingRateTexelSize (&fragment_shading_rate_properties, &fragment_shading_rate_texel_size))
+	{
+		VkFormatProperties shading_rate_format_properties;
+		VkImageFormatProperties shading_rate_image_properties;
+		vkGetPhysicalDeviceFormatProperties (vulkan_physical_device, VK_FORMAT_R8_UINT, &shading_rate_format_properties);
+		if ((shading_rate_format_properties.optimalTilingFeatures &
+				(VK_FORMAT_FEATURE_FRAGMENT_SHADING_RATE_ATTACHMENT_BIT_KHR | VK_FORMAT_FEATURE_TRANSFER_DST_BIT)) ==
+				(VK_FORMAT_FEATURE_FRAGMENT_SHADING_RATE_ATTACHMENT_BIT_KHR | VK_FORMAT_FEATURE_TRANSFER_DST_BIT) &&
+			vkGetPhysicalDeviceImageFormatProperties (vulkan_physical_device, VK_FORMAT_R8_UINT, VK_IMAGE_TYPE_2D, VK_IMAGE_TILING_OPTIMAL,
+				VK_IMAGE_USAGE_FRAGMENT_SHADING_RATE_ATTACHMENT_BIT_KHR | VK_IMAGE_USAGE_TRANSFER_DST_BIT, 0, &shading_rate_image_properties) == VK_SUCCESS &&
+			(shading_rate_image_properties.sampleCounts & VK_SAMPLE_COUNT_1_BIT) != 0)
+		{
+			fragment_shading_rate_feature_enabled = true;
+			fragment_shading_rate_layered = fragment_shading_rate_properties.layeredShadingRateAttachments &&
+				shading_rate_image_properties.maxArrayLayers >= 2;
+		}
+	}
+#endif
 
 	vulkan_globals.openxr_max_multiview_view_count = multiview_properties.maxMultiviewViewCount;
 	vulkan_globals.openxr_multiview_available = multiview_features.multiview && multiview_properties.maxMultiviewViewCount >= 2 &&
@@ -1600,6 +1723,14 @@ static void GL_InitDevice (void)
 	}
 	if (vulkan_globals.screen_effects_sops)
 		device_extensions[numEnabledExtensions++] = VK_EXT_SUBGROUP_SIZE_CONTROL_EXTENSION_NAME;
+#if defined(VK_KHR_fragment_shading_rate) && defined(VK_KHR_create_renderpass2)
+	if (fragment_shading_rate_feature_enabled)
+	{
+		device_extensions[numEnabledExtensions++] = VK_KHR_FRAGMENT_SHADING_RATE_EXTENSION_NAME;
+		if (!create_renderpass2_core)
+			device_extensions[numEnabledExtensions++] = VK_KHR_CREATE_RENDERPASS_2_EXTENSION_NAME;
+	}
+#endif
 #if defined(VK_EXT_full_screen_exclusive)
 	if (vulkan_globals.full_screen_exclusive)
 		device_extensions[numEnabledExtensions++] = VK_EXT_FULL_SCREEN_EXCLUSIVE_EXTENSION_NAME;
@@ -1661,8 +1792,20 @@ static void GL_InitDevice (void)
 		multiview_features.multiview = VK_TRUE;
 		multiview_features.multiviewGeometryShader = VK_FALSE;
 		multiview_features.multiviewTessellationShader = VK_FALSE;
+		multiview_features.pNext = NULL;
 		CHAIN_PNEXT (device_create_info_next, multiview_features);
 	}
+#if defined(VK_KHR_fragment_shading_rate) && defined(VK_KHR_create_renderpass2)
+	fragment_shading_rate_features.pNext = NULL;
+	if (fragment_shading_rate_feature_enabled)
+	{
+		/* With a 1x1 pipeline rate, attachmentFragmentShadingRate permits a static attachment combiner. */
+		fragment_shading_rate_features.pipelineFragmentShadingRate = VK_FALSE;
+		fragment_shading_rate_features.primitiveFragmentShadingRate = VK_FALSE;
+		fragment_shading_rate_features.attachmentFragmentShadingRate = VK_TRUE;
+		CHAIN_PNEXT (device_create_info_next, fragment_shading_rate_features);
+	}
+#endif
 #if defined(VK_KHR_present_wait)
 	if (vulkan_globals.present_wait)
 	{
@@ -1698,6 +1841,22 @@ static void GL_InitDevice (void)
 	GET_DEVICE_PROC_ADDR (GetSwapchainImagesKHR);
 	GET_DEVICE_PROC_ADDR (AcquireNextImageKHR);
 	GET_DEVICE_PROC_ADDR (QueuePresentKHR);
+	if (fragment_shading_rate_feature_enabled)
+	{
+		const char *create_renderpass2_name = create_renderpass2_core ? "vkCreateRenderPass2" : "vkCreateRenderPass2KHR";
+		vulkan_globals.vk_create_render_pass2 = (PFN_vkCreateRenderPass2KHR)fpGetDeviceProcAddr (vulkan_globals.device, create_renderpass2_name);
+		vulkan_globals.vk_cmd_set_fragment_shading_rate =
+			(PFN_vkCmdSetFragmentShadingRateKHR)fpGetDeviceProcAddr (vulkan_globals.device, "vkCmdSetFragmentShadingRateKHR");
+		if (vulkan_globals.vk_create_render_pass2 && vulkan_globals.vk_cmd_set_fragment_shading_rate)
+		{
+			vulkan_globals.openxr_fragment_shading_rate_available = true;
+			vulkan_globals.openxr_fragment_shading_rate_texel_size = fragment_shading_rate_texel_size;
+			vulkan_globals.openxr_layered_shading_rate_attachments = fragment_shading_rate_layered;
+			Con_Printf ("OpenXR attachment fragment shading rate capability enabled (%ux%u texels; layered %s).\n",
+				fragment_shading_rate_texel_size.width, fragment_shading_rate_texel_size.height,
+				fragment_shading_rate_layered ? "available" : "unavailable");
+		}
+	}
 
 	Con_Printf ("Device extensions:\n");
 	for (i = 0; i < numEnabledExtensions; ++i)
@@ -4173,6 +4332,7 @@ void VID_Shutdown (void)
 			vulkan_globals.openxr_multiview_available = false;
 			vulkan_globals.openxr_max_multiview_view_count = 0;
 		}
+		GL_ClearOpenXRFragmentShadingRate ();
 		VID_DestroyCursors ();
 		SDL_DestroyWindow (draw_context);
 		draw_context = NULL;
