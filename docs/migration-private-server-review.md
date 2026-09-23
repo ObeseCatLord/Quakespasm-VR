@@ -632,3 +632,20 @@ off. An attempted paired GDB command trace stalled while evaluating the client
 helper, so it supplied no client/server parity measurement. Repeat that proof
 with a nonblocking capture method before admitting shadow output as a baseline
 or enabling presentation.
+
+A compile-time `QSVR_SHADOW_TRACE` diagnostic now captures the shadow result
+inside the client, avoiding GDB inferior calls. In a fresh selected `e1m1`
+loopback, 283 command targets matched the dedicated server's post-command
+trace; each client capture used an earlier ACK, none rejected replay, and the
+largest measured origin/velocity differences were about 0.002 units and
+0.094 units/s. A second run held jump through movement and then released it:
+281 targets matched, including three nonzero jump-timer targets. Its largest
+origin/velocity/timer differences were about 0.0038 units, 0.128 units/s and
+0.000000002 seconds. Both runs passed movement, shell-consumption and coherent
+owner checks; permission stayed false. The second run rose, fell, and reached a
+forward collision at command 171, then remained at the same position through
+command 215 while forward input was still held. These are stock-QC, desktop, loopback,
+static-world samples. The trace comparison is evidence for this narrow solver
+path; it does not qualify moving colliders, equal-ACK maintenance, latency
+correction, VR roomscale or general QuakeC callbacks. Keep presentation and
+prediction permission gated until those checks are addressed.

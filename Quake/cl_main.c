@@ -26,6 +26,11 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "pmove.h"
 #include "vr_input.h"
 
+#ifdef QSVR_SHADOW_TRACE
+#include <stdio.h>
+#include <stdlib.h>
+#endif
+
 // we need to declare some mouse variables here, because the menu system
 // references them even when on a unix system.
 
@@ -713,6 +718,104 @@ typedef struct
 	float jump_secs;
 } cl_replay_result_t;
 
+#ifdef QSVR_SHADOW_TRACE
+#define CL_SHADOW_TRACE_MAX_RECORDS 4096
+
+static int cl_shadow_trace_last_target = -1;
+static unsigned int cl_shadow_trace_records;
+static unsigned int cl_shadow_trace_failures;
+static qboolean cl_shadow_trace_io_failed;
+
+static qboolean CL_ShadowTraceEnabled (const char **path)
+{
+	*path = getenv ("QSVR_SHADOW_TRACE_FILE");
+	return *path && **path;
+}
+
+static qboolean CL_ShadowTraceClaimTarget (int target)
+{
+	if (target < cl_shadow_trace_last_target)
+		cl_shadow_trace_last_target = -1;
+	if (target == cl_shadow_trace_last_target ||
+		cl_shadow_trace_records >= CL_SHADOW_TRACE_MAX_RECORDS)
+		return false;
+	cl_shadow_trace_last_target = target;
+	cl_shadow_trace_records++;
+	return true;
+}
+
+static void CL_ShadowTraceWriteFloat (FILE *file, float value)
+{
+	if (isfinite (value))
+		fprintf (file, "%.7g", value);
+	else
+		fputs ("null", file);
+}
+
+static void CL_ShadowTraceWriteVector (FILE *file, const vec3_t value)
+{
+	fputc ('[', file);
+	CL_ShadowTraceWriteFloat (file, value[0]);
+	fputc (',', file);
+	CL_ShadowTraceWriteFloat (file, value[1]);
+	fputc (',', file);
+	CL_ShadowTraceWriteFloat (file, value[2]);
+	fputc (']', file);
+}
+
+static void CL_ShadowTraceAppend (const char *path, int target,
+	const vec3_t baseline_origin, const vec3_t baseline_velocity,
+	const usercmd_t *command, const cl_replay_result_t *result, qboolean success)
+{
+	FILE *file;
+
+	if (cl_shadow_trace_io_failed)
+		return;
+	file = fopen (path, "a");
+	if (!file)
+	{
+		cl_shadow_trace_io_failed = true;
+		Con_DPrintf ("QSVR shadow trace: cannot append to configured file\n");
+		return;
+	}
+
+	if (!success)
+		cl_shadow_trace_failures++;
+	fprintf (file, "{\"ack\":%d,\"target\":%d,\"base_o\":",
+		cl.ackedmovemessages, target);
+	CL_ShadowTraceWriteVector (file, baseline_origin);
+	fputs (",\"base_v\":", file);
+	CL_ShadowTraceWriteVector (file, baseline_velocity);
+	if (success)
+	{
+		fputs (",\"result_o\":", file);
+		CL_ShadowTraceWriteVector (file, result->origin);
+		fputs (",\"result_v\":", file);
+		CL_ShadowTraceWriteVector (file, result->velocity);
+		fputs (",\"jump_secs\":", file);
+		CL_ShadowTraceWriteFloat (file, result->jump_secs);
+		fprintf (file, ",\"onground\":%d", result->onground ? 1 : 0);
+	}
+	else
+		fprintf (file, ",\"failure\":\"compute_rejected\",\"failures\":%u",
+			cl_shadow_trace_failures);
+	if (command && command->sequence == (unsigned int)target)
+	{
+		fputs (",\"cmd_seconds\":", file);
+		CL_ShadowTraceWriteFloat (file, command->seconds);
+		fprintf (file, ",\"cmd_msec\":%u", command->msec);
+	}
+	else
+		fputs (",\"cmd_seconds\":null,\"cmd_msec\":null", file);
+	fputs (success ? ",\"ok\":true}\n" : ",\"ok\":false}\n", file);
+	if (fclose (file) != 0)
+	{
+		cl_shadow_trace_io_failed = true;
+		Con_DPrintf ("QSVR shadow trace: append failed; tracing disabled\n");
+	}
+}
+#endif
+
 static qboolean CL_ComputeReplayPlayerMovement (entity_t *ent, cl_replay_result_t *result,
 	qboolean shadow, int target_sequence)
 {
@@ -886,6 +989,37 @@ shadow_failed:
 qboolean CL_ReplayPlayerMovement (entity_t *ent, vec3_t origin)
 {
 	cl_replay_result_t result;
+
+#ifdef QSVR_SHADOW_TRACE
+	{
+		const char *trace_path;
+		int target = cl.movemessages - 1;
+		if (CL_ShadowTraceEnabled (&trace_path) && cl.ackedmovemessages > 0 &&
+			target >= 0 && target > cl.ackedmovemessages &&
+			cl.protocol_qsvr == QSVR_PROTOCOL_PINNED && cl.move_snapshot_valid &&
+			cl.move_snapshot_ack == cl.ackedmovemessages &&
+			cl.move_snapshot_owner == cl.viewentity &&
+			cl.move_ack_authority == MOVE_AUTHORITY_PMOVE_ENGINE_COMPAT &&
+			cl.viewentity > 0 && cl.viewentity < cl.num_entities && cl.entities &&
+			ent == &cl.entities[cl.viewentity] &&
+			(ent->netstate.pmovetype & 63) == MOVETYPE_WALK &&
+			CL_ShadowTraceClaimTarget (target))
+		{
+			cl_replay_result_t shadow_result;
+			vec3_t baseline_origin, baseline_velocity;
+			const usercmd_t *command = &cl.movecmds[target & MOVECMDS_MASK];
+			qboolean shadow_ok;
+			int axis;
+
+			VectorCopy (ent->netstate.origin, baseline_origin);
+			for (axis = 0; axis < 3; axis++)
+				baseline_velocity[axis] = ent->netstate.velocity[axis] * (1.0f / 8.0f);
+			shadow_ok = CL_ComputeReplayPlayerMovement (ent, &shadow_result, true, target);
+			CL_ShadowTraceAppend (trace_path, target, baseline_origin, baseline_velocity,
+				command, &shadow_result, shadow_ok);
+		}
+	}
+#endif
 
 	if (!CL_ComputeReplayPlayerMovement (ent, &result, false, -1))
 		return false;

@@ -1051,3 +1051,61 @@ The debugger may terminate before the server clears the old client slot, so
 use a fresh dedicated server for each run or allow enough client slots for
 stranded slots to expire. These are local client/server checks only; they do
 not establish headset behavior, physical damage or prediction correctness.
+
+## Selected-private shadow replay comparison
+
+Use the separate client and server profiles prepared above. Build the trace
+variant from the repository root; the macro adds diagnostic output only when
+`QSVR_SHADOW_TRACE_FILE` is set. Use fresh capture paths for each run.
+
+```sh
+meson setup /tmp/qsvr-shadow-build -Dbuildtype=debugoptimized \
+  -Dc_args=-DQSVR_SHADOW_TRACE
+ninja -C /tmp/qsvr-shadow-build vkquake
+QSVR_BINARY=/tmp/qsvr-shadow-build/vkquake
+```
+
+Save this dedicated-server GDB script as `/tmp/qsvr-shadow-server.gdb`:
+
+```gdb
+set pagination off
+set confirm off
+set debuginfod enabled off
+set breakpoint pending on
+set logging file /tmp/qsvr-shadow-server.log
+set logging enabled on
+break Quake/sv_phys.c:2888 if client->private_pmove_walk_selected && client->private_completed_move >= 2 && client->private_completed_move <= 300
+commands
+ silent
+ printf "AUTH seq=%d x=%.9g y=%.9g z=%.9g vx=%.9g vy=%.9g vz=%.9g flags=%d jump=%.9g\n", client->private_completed_move, ent->v.origin[0], ent->v.origin[1], ent->v.origin[2], ent->v.velocity[0], ent->v.velocity[1], ent->v.velocity[2], (int)ent->v.flags, client->private_pmove_jump_secs
+ continue
+end
+run
+```
+
+Run the server in one terminal and the client in another:
+
+```sh
+gdb -nx -q -x /tmp/qsvr-shadow-server.gdb --args "$QSVR_BINARY" \
+  -dedicated 4 -ip 127.0.0.1 -port 28799 -basedir "$SERVER_PROFILE" \
+  +sv_qsvr_private 1 +sv_private_pmove_walk 1 +coop 1 +map e1m1
+```
+
+```sh
+SDL_VIDEODRIVER=x11 QSVR_SHADOW_TRACE_FILE=/tmp/qsvr-shadow-client.jsonl \
+QSVR_LOCAL_EXPECT_PRIVATE=1 QSVR_LOCAL_RESULT=/tmp/qsvr-shadow-result.json \
+QSVR_LOCAL_ASSERT_COHERENT_OWNER=1 QSVR_LOCAL_ASSERT_PMOVE_TYPE=1 \
+QSVR_LOCAL_ASSERT_NONZERO_JUMP_TIMER=1 \
+  timeout --signal=TERM 150s gdb -nx --batch \
+  -x tests/local_private_legacy_peer_smoke.gdb --args "$QSVR_BINARY" \
+  -novr -nosound -window -width 640 -height 480 -basedir "$CLIENT_PROFILE" \
+  +vid_vsync 0 +host_maxfps 144 +connect 127.0.0.1:28799
+python3 tests/private_shadow_compare.py --require-jump \
+  /tmp/qsvr-shadow-client.jsonl /tmp/qsvr-shadow-server.log
+```
+
+The comparator requires at least 100 command-matched pairs, 30 moving pairs,
+successful shadow results, finite values, matching ground state and an earlier
+ACK for each target. Default limits are 0.05 units for position, 0.25 units/s
+for velocity and 0.001 seconds for the jump timer. A stock-WALK desktop
+loopback does not qualify latency correction, moving colliders or VR roomscale.
