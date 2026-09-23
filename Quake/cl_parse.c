@@ -31,7 +31,6 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "vrik_codec.h"
 
 /* v4 keeps the existing v3 pose body while adding reliable generation admission. */
-static unsigned char cl_vrik_admission_protocol;
 entity_t *CL_EntityNum (int num);
 
 const char *svc_strings[128] = {
@@ -151,7 +150,6 @@ void CL_ResetVRIKState (void)
 	cl.vrik_protocol_offered = false;
 	cl.vrik_cap_sent = false;
 	cl.vrik_protocol_version = 0;
-	cl_vrik_admission_protocol = 0;
 	CL_ResetVRIKPoseCaches ();
 }
 
@@ -200,10 +198,7 @@ static qboolean CL_OfferVRIKProtocol (const char *command)
 		&latched_version, &version_byte) != VRIK_CODEC_OK)
 		return true;
 	cl.vrik_cap_sent = latched_version;
-	/* Existing input and demo paths use this field for body semantics. */
-	cl.vrik_protocol_version = version_byte == VRIK_ADMISSION_PROTOCOL_VERSION ?
-		VRIK_PROTOCOL_VERSION : version_byte;
-	cl_vrik_admission_protocol = version_byte;
+	cl.vrik_protocol_version = version_byte;
 	cl.vrik_protocol_offered = true;
 	if (!cls.demoplayback)
 	{
@@ -283,7 +278,7 @@ static qboolean CL_ParseVRIKRetirement (const char *command)
 
 	/* Retirements belong only to the negotiated optional VRIK extension. */
 	if (cl.vrik_protocol_version &&
-		cl_vrik_admission_protocol < VRIK_ADMISSION_PROTOCOL_VERSION)
+		cl.vrik_protocol_version < VRIK_ADMISSION_PROTOCOL_VERSION)
 		CL_RetireEntityVRIKGeneration (&cl.entities[slot + 1], generation);
 	return true;
 }
@@ -324,7 +319,7 @@ static qboolean CL_ParseVRIKAdmission (const char *command)
 		p++;
 	if (*p != '\n' || p[1] != '\0')
 		valid = false;
-	if (!valid || cl_vrik_admission_protocol != VRIK_ADMISSION_PROTOCOL_VERSION ||
+	if (!valid || cl.vrik_protocol_version != VRIK_ADMISSION_PROTOCOL_VERSION ||
 		slot >= MAX_SCOREBOARD || slot >= (uint32_t)cl.maxclients ||
 		!cl.entities || slot + 1 >= (uint32_t)cl.max_edicts)
 		return true;
@@ -478,7 +473,7 @@ static qboolean CL_ParseVRIKPose (void)
 		!cl.scores[entitynum - 1].name[0])
 		return true;
 	ent = &cl.entities[entitynum];
-	if (cl_vrik_admission_protocol == VRIK_ADMISSION_PROTOCOL_VERSION)
+	if (cl.vrik_protocol_version == VRIK_ADMISSION_PROTOCOL_VERSION)
 	{
 		/* v4 accepts poses only for a generation admitted on the reliable
 		 * stream. A scoreboard name alone never admits an unreliable pose. */
@@ -2975,7 +2970,7 @@ void CL_ParseServerMessage (void)
 			if (!cl.scores[i].name[0] && cl.entities && i + 1 < cl.num_entities)
 			{
 				entity_t *ent = &cl.entities[i + 1];
-				if (cl_vrik_admission_protocol == VRIK_ADMISSION_PROTOCOL_VERSION)
+				if (cl.vrik_protocol_version == VRIK_ADMISSION_PROTOCOL_VERSION)
 				{
 					CL_ClearEntityVRIKCache (ent);
 					ent->vrik_slot_retired = true;

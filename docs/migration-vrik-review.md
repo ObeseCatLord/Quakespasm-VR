@@ -1,6 +1,6 @@
 # VRIK transport and Vulkan avatar adapter: senior review brief
 
-Status: the v2/v3 codec, optional server/client transport, OpenXR head/hand
+Status: the v2/v3 pose codec, optional v2/v3/v4 server/client transport, OpenXR head/hand
 sender, and transport review fixes are committed in `f8ed9a69`, `e182a773`,
 `bb8ca4c5`, and `275b94c2`. The first Vulkan Ranger draw adapter is
 committed in `7580b1c0` and `54e9b3c3`; matching ray shadows, conservative
@@ -102,7 +102,7 @@ presentation, not packet size.
 | Follow-up finding | Disposition |
 | --- | --- |
 | **P1:** A separate reliable offer immediately after serverinfo may arrive while an inherited client is still precaching; its keepalive parser treats that as fatal. | **Addressed in `f7b6a603` and `ffc03c83`, runtime pending:** build ordinary serverinfo at full capacity, then append both offers in the same message only when they fit. Optional negotiation never reduces model/sound precaches or sends a separate loading-time message. Keep early-pose discard. |
-| **P2:** On a slot departure, the client used to mark whichever unreliable generation was most recently cached as retired. If replacement B arrived ahead of departure A, this permanently rejected B. | **Provisional in `8a4f19f4` and `533ba400`, runtime pending:** a generation-specific retirement avoids clearing B, but the new reliable-buffer barrier can delay ordinary state and is being replaced by admission confined to VRIK. Do not treat the barrier as final transport parity. |
+| **P2:** On a slot departure, the client used to mark whichever unreliable generation was most recently cached as retired. If replacement B arrived ahead of departure A, this permanently rejected B. | **Addressed for negotiated v4 in `df22fe86`, runtime pending:** reliable slot/generation admission gates optional poses and an empty-name update revokes it. The provisional `533ba400` byte barrier was removed. Legacy v2/v3 retirement remains opportunistic under full-buffer pressure. |
 | **P2:** The sender mapped head/hands with tracking yaw while stereo presentation resolved view yaw separately in mouse-yaw mode; its public hand origin also included HMD translation omitted by the local viewmodel and muzzle. | **Addressed in `f445318c` and `ffc03c83`, runtime pending:** the view owner exposes resolved presentation yaw and hand origin to sender, stereo head offset, viewmodel, and crosshair muzzle; private body-owned roomscale movement keeps its gameplay mapping. Pending local yaw is included in the resolved presentation transform so a held smooth turn continues transmitting poses. |
 
 The static review also identified the write-only server legacy pose mirror and
@@ -122,7 +122,7 @@ tests.
 | A separate retirement-only reliable send adds an acknowledgment wait before ordinary suffix updates. Continued routine writes can overflow the client buffer and cause a gameplay disconnect. | **Adopt:** remove the byte boundary and retire-only send. Optional VRIK admission should wait for ordinary reliable capacity, while ordinary state continues to drain. |
 | `Send_Spawn_Info` can clear/rebuild a reliable buffer while the saved byte boundary still refers to old contents. | **Adopt:** delete byte-offset ownership rather than patching each buffer-replacement call site. |
 | Clearing samples on an empty player name is enough to reject delayed old poses. | **Reject:** an old pose may arrive after a replacement name, and a player with no previously received pose gives the client no old generation to lock. |
-| Reliable generation admission for a negotiated VRIK version can gate optional datagrams independently of gameplay. | **Adopt as the next transport design:** announce the exact slot/generation only when it fits after ordinary state; until then the client discards optional poses. Revoke admission on empty-name updates. Preserve v2/v3 wire-body compatibility without silently changing their semantics. |
+| Reliable generation admission for a negotiated VRIK version can gate optional datagrams independently of gameplay. | **Implemented in `df22fe86`, runtime pending:** v4 announces the exact slot/generation only when it fits after ordinary state; until then the client discards optional poses. Empty-name updates revoke admission. V2/v3 keep their original pose bodies and legacy retirement behavior. |
 
 ## Focused Astra Vulkan avatar review disposition
 

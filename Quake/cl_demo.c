@@ -353,6 +353,9 @@ static void CL_Record_VRIKProtocolOffer (void)
 	case VRIK_PROTOCOL_VERSION:
 		offer = "//vrik_protocol 3\n";
 		break;
+	case VRIK_ADMISSION_PROTOCOL_VERSION:
+		offer = "//vrik_protocol 4\n";
+		break;
 	default:
 		return;
 	}
@@ -482,6 +485,33 @@ static void CL_Record_Spawn (void)
 		MSG_WriteByte (&net_message, svc_updatecolors);
 		MSG_WriteByte (&net_message, i);
 		MSG_WriteByte (&net_message, cl.scores[i].colors);
+	}
+
+	/* A mid-session recording reconstructs signon. Reconstruct admissions
+	 * after player names as well, or v4 playback would discard every existing
+	 * tracked stream until the server happened to announce a new generation. */
+	if (cl.vrik_protocol_version == VRIK_ADMISSION_PROTOCOL_VERSION && cl.entities)
+	{
+		for (i = 0; i < cl.maxclients && i < MAX_SCOREBOARD && i + 1 < cl.num_entities; i++)
+		{
+			const entity_t *ent = &cl.entities[i + 1];
+			char command[64];
+			int length;
+			if (!cl.scores[i].name[0] || !ent->vrik_generation || ent->vrik_slot_retired)
+				continue;
+			length = q_snprintf (command, sizeof (command), "//vrik_generation %d %u\n", i, ent->vrik_generation);
+			if (length <= 0 || (size_t)length >= sizeof (command))
+				continue;
+			if ((size_t)net_message.cursize + (size_t)length + 2 > (size_t)net_message.maxsize)
+			{
+				CL_WriteDemoMessage ();
+				SZ_Clear (&net_message);
+			}
+			if ((size_t)length + 2 > (size_t)net_message.maxsize)
+				continue;
+			MSG_WriteByte (&net_message, svc_stufftext);
+			MSG_WriteString (&net_message, command);
+		}
 	}
 
 	// send all current light styles

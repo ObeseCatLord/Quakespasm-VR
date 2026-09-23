@@ -758,7 +758,8 @@ static void CL_AppendVRIKPose (sizebuf_t *buf)
 		(cls.state != ca_connected) || cls.demoplayback || cls.signon != SIGNONS ||
 		realtime < cl.vrik_next_send_time ||
 		(cl.vrik_protocol_version != VRIK_PROTOCOL_LEGACY_VERSION &&
-		 cl.vrik_protocol_version != VRIK_PROTOCOL_VERSION))
+		 cl.vrik_protocol_version != VRIK_PROTOCOL_VERSION &&
+		 cl.vrik_protocol_version != VRIK_ADMISSION_PROTOCOL_VERSION))
 		return;
 	if (!VR_InputBuildVRIKPose (&pose))
 	{
@@ -777,7 +778,7 @@ static void CL_AppendVRIKPose (sizebuf_t *buf)
 		vrik_v2_validate_legacy_pose (&pose_v2) != VRIK_CODEC_OK)
 		return;
 
-	v3 = cl.vrik_protocol_version == VRIK_PROTOCOL_VERSION;
+	v3 = cl.vrik_protocol_version >= VRIK_PROTOCOL_VERSION;
 	if (v3)
 	{
 		if (vrik_v3_encode (&pose, encoded, sizeof (encoded), &encoded_bytes) != VRIK_CODEC_OK ||
