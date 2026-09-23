@@ -19,6 +19,10 @@ OpenXR hand/head pose and map identity when it opens, preserve the source's
 retained selection while inventory/model stats lag, and cancel on map/viewentity
 change or tracking loss. Selection remains local UI policy; only the final
 validated weapon impulse or co-op action crosses into existing game commands.
+The wheel must consume the existing calibration owner; it must not copy the
+source's separate single-player and multiplayer offset tables. Whether legacy
+MP schema values can become one held/muzzle offset is a separate transform
+parity check, not a reason to duplicate wheel calibration state.
 
 The smallest end-to-end proof is one stock weapon selected with `q` on desktop
 and with the bound OpenXR hand on VR, from a wheel whose hover region agrees
