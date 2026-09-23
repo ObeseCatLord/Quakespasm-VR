@@ -264,10 +264,16 @@ there is no call site or authority switch yet. QSS-M's server defaults enable
 slidefix and bunny friction, while client fallbacks remain zero until a server
 actually advertises those values. The strict Linux `vkquake` target builds.
 
-Before wiring stats into `SV_CalcStats`, detect custom mod stats that overlap
-the private movement indices 226–253. Resolve VR jump-speed policy at the
-selected command owner and export exactly the speed used by the server step.
-Do not enable prediction merely because these settings can be computed.
+The selected stock-QC trial now exports these values from `SV_CalcStats` through
+vkQuake's existing replacement-stat delta writer. Its admission rejects custom
+stats, avoiding collisions with movement slots 225–253 while the trial remains
+stock-only. A Linux selected-peer loopback received valid movement flags,
+gravity 800, maximum speed 320, jump speed 270 and step height 18; it also
+retained movement, firing, advancing completed ACKs and prediction disabled.
+Before admitting mods, resolve custom-stat slot ownership. Before enabling
+prediction, resolve VR jump-speed policy at the selected command owner and
+export exactly the speed used by the server step. Stat receipt alone is not
+owner/ACK epoch association or predicted collision parity.
 
 ## PreThink room-scale adapter checkpoint
 

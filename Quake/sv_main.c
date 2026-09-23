@@ -23,6 +23,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 // sv_main.c -- server main program
 
 #include "quakedef.h"
+#include "pmove.h"
 #include "vr_weapon_calibration.h"
 
 server_t		sv;
@@ -64,6 +65,8 @@ static const char *SV_PrivateWalkTrialAdmissionFailure (client_t *client)
 	if (qcvm != &sv.qcvm || qcvm->progssize != 340014 || qcvm->progscrc != 0x0bf8 ||
 		qcvm->progshash != 0xcf69c3e2)
 		return "requires the pinned stock progs identity";
+	if (sv.numcustomstats)
+		return "custom stats are outside the stock movement-stat trial";
 	if (client->edict->v.movetype != MOVETYPE_WALK ||
 		client->edict->v.solid != SOLID_SLIDEBOX || client->edict->v.waterlevel != 0)
 		return "requires a dry WALK/SOLID_SLIDEBOX owner";
@@ -220,6 +223,17 @@ void SV_CalcStats (client_t *client, int *statsi, float *statsf, const char **st
 		case ev_pointer:  // doesn't make sense
 		default:
 			break;
+		}
+	}
+
+	if (client->protocol_qsvr == QSVR_PROTOCOL_PINNED && SV_PrivateWalkTrialSelected (client))
+	{
+		movevars_t movevars;
+		if (!PMSV_BuildMoveVars (&movevars, ent, sv.protocolflags) ||
+			!PMSV_ExportMoveStats (&movevars, statsf, statsi))
+		{
+			statsi[STAT_MOVEFLAGS] = 0;
+			statsf[STAT_MOVEFLAGS] = 0;
 		}
 	}
 }

@@ -919,6 +919,10 @@ appears before the completed move ACK reaches that sequence. This checks one
 visible action/ACK ordering path; it does not prove every queued action, VR
 weapon pose, or packet-loss case. Run a fresh selected server with
 `+sv_private_pmove_walk 1` and keep the default-off server result separate.
+Add `QSVR_LOCAL_ASSERT_MOVE_STATS=1` for the stock selected-owner stat probe:
+it checks the received valid movement flags plus gravity, max speed, jump speed
+and step height against the stock server defaults. It does not enable or prove
+client prediction or stat/ACK epoch association.
 
 For the private-to-public map-switch case, remove any stale readiness file,
 then add `QSVR_LOCAL_MAP_READY="$CLIENT_PROFILE/map-ready"` to the private

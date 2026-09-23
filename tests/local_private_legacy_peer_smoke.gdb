@@ -14,6 +14,7 @@ expect_text = os.environ.get('QSVR_LOCAL_EXPECT_PRIVATE')
 result_path = os.environ.get('QSVR_LOCAL_RESULT')
 ready_path = os.environ.get('QSVR_LOCAL_MAP_READY') or None
 assert_action_ack = os.environ.get('QSVR_LOCAL_ASSERT_ACTION_ACK') == '1'
+assert_move_stats = os.environ.get('QSVR_LOCAL_ASSERT_MOVE_STATS') == '1'
 if expect_text not in ('0', '1') or not result_path:
     raise RuntimeError('QSVR_LOCAL_EXPECT_PRIVATE and QSVR_LOCAL_RESULT are required')
 expect_private = expect_text == '1'
@@ -23,6 +24,8 @@ if ready_path and os.path.exists(ready_path):
     raise RuntimeError('remove the old map readiness file before starting')
 if assert_action_ack and not expect_private:
     raise RuntimeError('action/ACK probe requires a private peer')
+if assert_move_stats and not expect_private:
+    raise RuntimeError('movement-stat probe requires a private peer')
 
 started = time.monotonic()
 phase = 'signon'
@@ -74,6 +77,13 @@ def check_settled_pair(before, settled, private):
     require(settled['ack'] > before['ack'] and settled['ack'] <= settled['sent'],
             'move_ack')
     return round(distance, 3)
+
+def movement_stats():
+    return dict(flags=integer('cl.stats[225]'),
+                gravity=float(gdb.parse_and_eval('cl.statsf[242]')),
+                maxspeed=float(gdb.parse_and_eval('cl.statsf[244]')),
+                jumpspeed=float(gdb.parse_and_eval('cl.statsf[250]')),
+                stepheight=float(gdb.parse_and_eval('cl.statsf[253]')))
 
 class HostFrame(gdb.Breakpoint):
     def stop(self):
@@ -144,6 +154,14 @@ try:
     if failure is None:
         require(len(samples) == (3 if ready_path else 2), 'sample_count')
         movement = check_settled_pair(samples[0], samples[1], expect_private)
+        if assert_move_stats:
+            exported_move = movement_stats()
+            require(exported_move['flags'] & 0x80000000, 'missing_moveflags_valid')
+            for key, expected in [('gravity', 800.0), ('maxspeed', 320.0),
+                                  ('jumpspeed', 270.0), ('stepheight', 18.0)]:
+                require(math.isfinite(exported_move[key]) and
+                        abs(exported_move[key] - expected) < 0.01,
+                        'missing_or_wrong_' + key)
         if assert_action_ack:
             require(first_shell_ack is not None, 'no_attack_effect_ack_pair')
         if ready_path:
@@ -168,6 +186,8 @@ else:
     if assert_action_ack:
         result['first_attack_sequence'] = first_attack_seq
         result['first_shell_effect_ack'] = first_shell_ack
+    if assert_move_stats:
+        result['movement_stats'] = exported_move
 temporary = result_path + '.tmp.' + str(os.getpid())
 with open(temporary, 'w') as output:
     json.dump(result, output, indent=2, sort_keys=True)
