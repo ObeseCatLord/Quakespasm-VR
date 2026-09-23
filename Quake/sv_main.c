@@ -501,6 +501,96 @@ static qboolean SV_UsePredThinkPos (edict_t *ent)
 
 //============================================================================
 
+static qboolean SV_AmmoCapacityValuesValid (const float values[4],
+	const edict_t *ent)
+{
+	const float current[4] = {
+		ent->v.ammo_shells, ent->v.ammo_nails,
+		ent->v.ammo_rockets, ent->v.ammo_cells
+	};
+	int i;
+
+	for (i = 0; i < 4; ++i)
+		if (!isfinite (values[i]) || values[i] <= 0.0f ||
+		    floorf (values[i]) != values[i] || values[i] > 1000000.0f ||
+		    values[i] < current[i])
+			return false;
+	return true;
+}
+
+static qboolean SV_ReadAmmoCapacityFields (edict_t *ent, float values[4])
+{
+	static const char *names[4] = {
+		"maxshells", "maxnails", "maxrockets", "maxcells"
+	};
+	int i;
+
+	for (i = 0; i < 4; ++i)
+	{
+		ddef_t *def = ED_FindField (names[i]);
+		eval_t *value;
+
+		if (!def || (def->type & ~DEF_SAVEGLOBAL) != ev_float)
+			return false;
+		value = GetEdictFieldValue (ent, def->ofs);
+		if (!value)
+			return false;
+		values[i] = value->_float;
+	}
+	return SV_AmmoCapacityValuesValid (values, ent);
+}
+
+static qboolean SV_ReadAmmoCapacityGlobals (edict_t *ent,
+	const char *const names[4], qboolean require_saveglobal, float values[4])
+{
+	int i;
+
+	for (i = 0; i < 4; ++i)
+	{
+		ddef_t *def = ED_FindGlobal (names[i]);
+
+		if (!def || (def->type & ~DEF_SAVEGLOBAL) != ev_float ||
+		    def->ofs >= qcvm->progs->numglobals ||
+		    (require_saveglobal && !(def->type & DEF_SAVEGLOBAL)))
+			return false;
+		values[i] = G_FLOAT (def->ofs);
+	}
+	return SV_AmmoCapacityValuesValid (values, ent);
+}
+
+static void SV_WriteAmmoCapacityStats (edict_t *ent, int *statsi)
+{
+	static const char *const saveglobal_names[4] = {
+		"ammo_shells_max", "ammo_nails_max", "ammo_rockets_max",
+		"ammo_cells_max"
+	};
+	static const char *const max_ammo_names[4] = {
+		"MAX_AMMO_SHELLS", "MAX_AMMO_NAILS", "MAX_AMMO_ROCKETS",
+		"MAX_AMMO_CELLS"
+	};
+	static const char *const ammo_max_names[4] = {
+		"AMMO_MAXSHELLS", "AMMO_MAXNAILS", "AMMO_MAXROCKETS",
+		"AMMO_MAXCELLS"
+	};
+	static const int stats[4] = {
+		STAT_VR_MAX_SHELLS, STAT_VR_MAX_NAILS,
+		STAT_VR_MAX_ROCKETS, STAT_VR_MAX_CELLS
+	};
+	float values[4];
+	int i;
+
+	/* Prefer per-player fields, then coherent dynamic/static global families.
+	 * Never combine names from different conventions. */
+	if (!SV_ReadAmmoCapacityFields (ent, values) &&
+	    !SV_ReadAmmoCapacityGlobals (ent, saveglobal_names, true, values) &&
+	    !SV_ReadAmmoCapacityGlobals (ent, max_ammo_names, false, values) &&
+	    !SV_ReadAmmoCapacityGlobals (ent, ammo_max_names, false, values))
+		return;
+
+	for (i = 0; i < 4; ++i)
+		statsi[stats[i]] = (int)values[i];
+}
+
 void SV_CalcStats (client_t *client, int *statsi, float *statsf, const char **statss)
 {
 	size_t	 i;
@@ -547,18 +637,19 @@ void SV_CalcStats (client_t *client, int *statsi, float *statsf, const char **st
 
 	/* Preserve mod-owned inventory channels for the shared desktop/VR wheel.
 	 * These are optional QuakeC fields; absent fields leave their stats zero. */
-	if ((val = GetEdictFieldValueByName (ent, "weapons")))
+	if ((val = GetEdictFieldValue (ent, ED_FindFieldOffset ("weapons"))))
 		statsi[STAT_VR_WEAPONS] = (int)val->_float;
-	if ((val = GetEdictFieldValueByName (ent, "items2")))
+	if ((val = GetEdictFieldValue (ent, ED_FindFieldOffset ("items2"))))
 		statsi[STAT_VR_ITEMS2] = (int)val->_float;
-	if ((val = GetEdictFieldValueByName (ent, "moditems")))
+	if ((val = GetEdictFieldValue (ent, ED_FindFieldOffset ("moditems"))))
 		statsi[STAT_VR_MODITEMS] = (int)val->_float;
-	else if ((val = GetEdictFieldValueByName (ent, "items_dwell")))
+	else if ((val = GetEdictFieldValue (ent, ED_FindFieldOffset ("items_dwell"))))
 		statsi[STAT_VR_MODITEMS] = (int)val->_float;
-	if ((val = GetEdictFieldValueByName (ent, "weapon2")))
+	if ((val = GetEdictFieldValue (ent, ED_FindFieldOffset ("weapon2"))))
 		statsi[STAT_VR_WEAPON2] = (int)val->_float;
-	if ((val = GetEdictFieldValueByName (ent, "weapons2")))
+	if ((val = GetEdictFieldValue (ent, ED_FindFieldOffset ("weapons2"))))
 		statsi[STAT_VR_WEAPONS2] = (int)val->_float;
+	SV_WriteAmmoCapacityStats (ent, statsi);
 
 	for (i = 0; i < sv.numcustomstats; i++)
 	{
