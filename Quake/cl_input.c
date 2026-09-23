@@ -61,6 +61,7 @@ kbutton_t in_up, in_down;
 
 int in_impulse;
 static kbutton_t in_vr_weaponmenu;
+static qboolean in_vr_weaponmenu_desktop_capture;
 
 void KeyDown (kbutton_t *b);
 void KeyUp (kbutton_t *b);
@@ -74,10 +75,17 @@ static void IN_VRWeaponMenuDown (void)
 	KeyDown (&in_vr_weaponmenu);
 	if (!already_down && (in_vr_weaponmenu.state & 1))
 	{
-		/* The command owner hands the desktop cursor to the screen-space UI.
-		 * It is returned to relative game look when the hold command releases. */
-		IN_Deactivate (true);
+		/* Desktop uses the absolute cursor; VR keeps mouse capture untouched. */
+		in_vr_weaponmenu_desktop_capture = !vulkan_globals.stereo_active;
+		if (in_vr_weaponmenu_desktop_capture)
+			IN_Deactivate (true);
 		VR_WeaponMenu_Open ();
+		if (!VR_WeaponMenu_IsOpen ())
+		{
+			if (in_vr_weaponmenu_desktop_capture)
+				IN_Activate ();
+			in_vr_weaponmenu_desktop_capture = false;
+		}
 	}
 }
 
@@ -88,15 +96,15 @@ static void IN_VRWeaponMenuUp (void)
 	const qboolean was_open = VR_WeaponMenu_IsOpen ();
 
 	KeyUp (&in_vr_weaponmenu);
-	if (!was_open || (in_vr_weaponmenu.state & 1))
+	if (in_vr_weaponmenu.state & 1)
 		return;
 
-	impulse = VR_WeaponMenu_Release ();
+	impulse = was_open ? VR_WeaponMenu_Release () : 0;
 	in_vr_weaponmenu.state = 0;
-	/* Restore desktop capture on selection and no-selection releases alike.
-	 * A menu or console that took focus keeps its absolute cursor. */
-	if (!vulkan_globals.stereo_active && key_dest == key_game && !con_forcedup)
+	/* Restore capture after desktop release or cancellation. */
+	if (in_vr_weaponmenu_desktop_capture && key_dest == key_game && !con_forcedup)
 		IN_Activate ();
+	in_vr_weaponmenu_desktop_capture = false;
 	if (impulse > 0)
 	{
 		q_snprintf (command, sizeof (command), "impulse %d\n", impulse);

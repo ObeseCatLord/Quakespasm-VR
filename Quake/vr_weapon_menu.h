@@ -42,7 +42,12 @@ typedef struct {
 
 qboolean VR_WeaponMenu_CanOpen (void);
 qboolean VR_WeaponMenu_IsOpen (void);
+qboolean VR_WeaponMenu_IsOpenVR (void);
+unsigned int VR_WeaponMenu_SessionGeneration (void);
 void VR_WeaponMenu_Open (void);
+void VR_WeaponMenu_Cancel (void);
+void VR_WeaponMenu_SetVRPointer (qboolean tracking_valid, qboolean pointer_valid,
+	int pointer_x, int pointer_y);
 int VR_WeaponMenu_Release (void);
 void VR_WeaponMenu_Draw (struct cb_context_s *cbx);
 

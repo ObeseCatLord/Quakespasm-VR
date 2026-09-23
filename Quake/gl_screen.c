@@ -1621,6 +1621,16 @@ static int vr_menu_connection;
 typedef struct
 {
 	qboolean valid;
+	float world_from_ndc[16];
+} vr_weapon_menu_panel_t;
+
+static vr_weapon_menu_panel_t vr_weapon_menu_panel;
+static vr_menu_anchor_t vr_weapon_menu_anchor;
+static unsigned int vr_weapon_menu_anchor_generation;
+
+typedef struct
+{
+	qboolean valid;
 	qboolean csqc_hud;
 	csqc_display_t csqc_display;
 	float world_from_ndc[16];
@@ -1638,7 +1648,7 @@ static vr_modern_sbar_panel_t vr_modern_sbar_panel;
 
 static qboolean SCR_VRMenuRayHit (const vec3_t origin, const vec3_t direction,
 	const vec3_t center, const vec3_t right, const vec3_t down, const vec3_t normal,
-	float scale, int *pixel_x, int *pixel_y)
+	float scale, qboolean menu_canvas, int *pixel_x, int *pixel_y)
 {
 	vec3_t relative;
 	float ndc_x, ndc_y;
@@ -1658,7 +1668,7 @@ static qboolean SCR_VRMenuRayHit (const vec3_t origin, const vec3_t direction,
 		return false;
 	*pixel_x = (int)((ndc_x + 1.0f) * 0.5f * glwidth);
 	*pixel_y = (int)((ndc_y + 1.0f) * 0.5f * glheight);
-	return M_VRPointerPixelInMenuCanvas (*pixel_x, *pixel_y);
+	return !menu_canvas || M_VRPointerPixelInMenuCanvas (*pixel_x, *pixel_y);
 }
 
 /* Sbar_IntermissionOverlay has CSQC and deathmatch canvases in addition to
@@ -1753,7 +1763,7 @@ static void SCR_VRMenuPrepare (void)
 			AngleVectors (vr_menu_anchor.angles, normal, right, up);
 			VectorScale (up, -1, down);
 			pointing = SCR_VRMenuRayHit (ray_origin, ray_direction, vr_menu_anchor.center,
-				right, down, normal, previous_scale, &pointer_x, &pointer_y);
+				right, down, normal, previous_scale, true, &pointer_x, &pointer_y);
 		}
 	}
 	VectorCopy (r_refdef.viewangles, head_angles);
@@ -1766,7 +1776,7 @@ static void SCR_VRMenuPrepare (void)
 	VectorScale (up, -1, down);
 	VectorCopy (forward, normal);
 	vr_menu_panel.pointer_valid = ray_valid && SCR_VRMenuRayHit (ray_origin, ray_direction,
-		vr_menu_anchor.center, right, down, normal, scale, &pointer_x, &pointer_y);
+		vr_menu_anchor.center, right, down, normal, scale, true, &pointer_x, &pointer_y);
 	if (vr_menu_panel.pointer_valid)
 	{
 		vr_menu_panel.pointer_x = pointer_x;
@@ -1784,6 +1794,105 @@ static void SCR_VRMenuPrepare (void)
 	vr_menu_panel.world_from_ndc[15] = 1;
 	vr_menu_panel.world_per_eye_pixel = scale;
 	vr_menu_panel.valid = true;
+}
+
+/* Prepare the held weapon wheel once for the stereo pair. Its anchor is
+ * captured at open and remains fixed until release/cancel; only the controller
+ * ray pointer changes on subsequent setup frames. */
+static void SCR_VRWeaponMenuPrepare (void)
+{
+	const vrxr_frame_t *frame = GL_OpenXRFrame ();
+	vec3_t ray_origin, ray_direction, forward, right, up, down, normal, view_angles;
+	int pointer_x = -1, pointer_y = -1;
+	int dominant;
+	qboolean pointer_valid;
+	float scale, min_dimension;
+	const unsigned int generation = VR_WeaponMenu_SessionGeneration ();
+
+	vr_weapon_menu_panel.valid = false;
+	if (!VR_WeaponMenu_IsOpenVR ())
+	{
+		vr_weapon_menu_anchor.valid = 0;
+		vr_weapon_menu_anchor_generation = generation;
+		return;
+	}
+	if (generation != vr_weapon_menu_anchor_generation)
+	{
+		vr_weapon_menu_anchor.valid = 0;
+		vr_weapon_menu_anchor_generation = generation;
+	}
+	if (!frame || !frame->should_render || !frame->focused || frame->reference_changed ||
+		glwidth <= 0 || glheight <= 0)
+	{
+		VR_WeaponMenu_Cancel ();
+		vr_weapon_menu_anchor.valid = 0;
+		return;
+	}
+	dominant = VR_InputDominantPhysicalHand ();
+	if (dominant < 0 || dominant > 1 ||
+		!R_TrackedControllerRay (dominant, ray_origin, ray_direction))
+	{
+		VR_WeaponMenu_SetVRPointer (false, false, -1, -1);
+		vr_weapon_menu_anchor.valid = 0;
+		return;
+	}
+	if (!vr_weapon_menu_anchor.valid)
+	{
+		const int follow_mode = isfinite (vr_menu_follow.value) && vr_menu_follow.value >= 0 &&
+			vr_menu_follow.value <= 2 ? (int)vr_menu_follow.value : 1;
+		VectorCopy (r_refdef.viewangles, view_angles);
+		view_angles[ROLL] = 0;
+		if (!VR_MenuAnchorUpdate (&vr_weapon_menu_anchor, r_refdef.vieworg, view_angles,
+			Sys_DoubleTime (), true, follow_mode, 48.0f, true))
+		{
+			VR_WeaponMenu_Cancel ();
+			return;
+		}
+	}
+	AngleVectors (vr_weapon_menu_anchor.angles, forward, right, up);
+	VectorScale (up, -1.0f, down);
+	VectorCopy (forward, normal);
+	min_dimension = q_min ((float)glwidth, (float)glheight);
+	scale = vr_menu_scale.value;
+	if (!isfinite (scale) || scale <= 0.0f)
+		scale = 0.13f;
+	/* The wheel uses the full-resolution default canvas. Convert the menu's
+	 * 320-pixel physical scale to that canvas so headset resolution does not
+	 * make the panel grow. */
+	scale *= 320.0f / min_dimension;
+	if (!isfinite (scale) || scale <= 0.0f)
+	{
+		VR_WeaponMenu_Cancel ();
+		vr_weapon_menu_anchor.valid = 0;
+		return;
+	}
+	pointer_valid = SCR_VRMenuRayHit (ray_origin, ray_direction,
+		vr_weapon_menu_anchor.center, right, down, normal, scale, false,
+		&pointer_x, &pointer_y);
+	VR_WeaponMenu_SetVRPointer (true, pointer_valid, pointer_x, pointer_y);
+	if (!VR_WeaponMenu_IsOpenVR ())
+	{
+		vr_weapon_menu_anchor.valid = 0;
+		return;
+	}
+	memset (vr_weapon_menu_panel.world_from_ndc, 0, sizeof (vr_weapon_menu_panel.world_from_ndc));
+	for (int i = 0; i < 3; ++i)
+	{
+		float *matrix = vr_weapon_menu_panel.world_from_ndc;
+		matrix[i] = right[i] * (scale * glwidth * 0.5f);
+		matrix[4 + i] = down[i] * (scale * glheight * 0.5f);
+		matrix[8 + i] = normal[i] * scale;
+		matrix[12 + i] = vr_weapon_menu_anchor.center[i];
+		if (!isfinite (matrix[i]) || !isfinite (matrix[4 + i]) || !isfinite (matrix[8 + i]) ||
+			!isfinite (matrix[12 + i]))
+		{
+			VR_WeaponMenu_Cancel ();
+			vr_weapon_menu_anchor.valid = 0;
+			return;
+		}
+	}
+	vr_weapon_menu_panel.world_from_ndc[15] = 1.0f;
+	vr_weapon_menu_panel.valid = true;
 }
 
 /* One donor placement rule for classic, CSQC, and modern presentation. */
@@ -2129,7 +2238,17 @@ static void SCR_DrawGUI (void *unused)
 			SCR_DrawConsole (cbx);
 			GL_EndUIPanel (cbx);
 		}
-		VR_WeaponMenu_Draw (cbx);
+		if (VR_WeaponMenu_IsOpenVR ())
+		{
+			if (vr_weapon_menu_panel.valid)
+			{
+				GL_BeginUIPanel (cbx, vr_weapon_menu_panel.world_from_ndc);
+				VR_WeaponMenu_Draw (cbx);
+				GL_EndUIPanel (cbx);
+			}
+		}
+		else
+			VR_WeaponMenu_Draw (cbx);
 	}
 
 	scr_csqc_error_phase = SCR_CSQC_ERROR_IDLE;
@@ -2150,6 +2269,7 @@ static void SCR_SetupFrame (void *unused)
 	V_SetupFrame ();
 	R_PrepareStereoFrame ();
 	SCR_VRMenuPrepare ();
+	SCR_VRWeaponMenuPrepare ();
 	SCR_VRClassicSbarPrepare ();
 	SCR_VRModernSbarPrepare ();
 }

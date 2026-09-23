@@ -1,8 +1,10 @@
 # Weapon-wheel migration seam
 
 The inherited wheel is still a required 2.0 behavior. A stock-weapon desktop
-Vulkan slice is implemented; VR presentation, mod catalogues, and co-op actions
-remain to be ported. The source of truth is `quakespasm-openvr/Quake/vr.c` at the pinned MAIN
+Vulkan slice and a view-anchored OpenXR panel with controller-ray selection are
+implemented. The inherited playspace layout, 3D weapon presentation, mod
+catalogues, and co-op actions remain to be ported. The source of truth is
+`quakespasm-openvr/Quake/vr.c` at the pinned MAIN
 commit in [migration-feature-map.md](migration-feature-map.md), particularly
 its catalog and selection policy (`VR_WeaponIsOwned`,
 `VR_UpdateWeaponMenuSelection`, `VR_ResolveWeaponMenuSelection`), session
@@ -28,6 +30,8 @@ parity check, not a reason to duplicate wheel calibration state.
 The smallest end-to-end proof is one stock weapon selected with a bound `+vr_weaponmenu` key on desktop
 and with the bound OpenXR hand on VR, from a wheel whose hover region agrees
 with the rendered item. The desktop wheel must work when no XR runtime exists.
+The packaged defaults bind `VR_RIGHT_STICK_UP` for VR; desktop players may bind
+the command in the key-binding menu without changing vkQuake's keyboard defaults.
 Next, use the same catalog owner for Hipnotic/Rogue and mod profiles, schema
 precedence, ammo/readiness, dynamic discovery, and co-op player actions.
 Playspace placement, model icons, text hitboxes, outlines, and occlusion must

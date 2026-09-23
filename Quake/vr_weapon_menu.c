@@ -4,6 +4,7 @@
  * existing client stats and records only transient UI hover identity.
  */
 #include "quakedef.h"
+#include "vr_input.h"
 #include "vr_weapon_menu.h"
 
 extern qpic_t *Sbar_WeaponMenuIcon (int item_bit);
@@ -65,21 +66,44 @@ static const vr_weapon_menu_catalog_t vr_weapon_menu_stock_catalog = {
 };
 
 static qboolean vr_weapon_menu_open;
+static qboolean vr_weapon_menu_open_vr;
+static qboolean vr_weapon_menu_pointer_valid;
+static qboolean vr_weapon_menu_tracking_valid;
+static int vr_weapon_menu_pointer_x, vr_weapon_menu_pointer_y;
+static int vr_weapon_menu_hover_id = -1;
+static unsigned int vr_weapon_menu_session_generation;
 static qmodel_t *vr_weapon_menu_worldmodel;
 static int vr_weapon_menu_viewentity;
 static char vr_weapon_menu_mapname[sizeof (cl.mapname)];
 
-static qboolean VR_WeaponMenu_ContextValid (void)
+static qboolean VR_WeaponMenu_GameContextValid (void)
 {
-	return !vulkan_globals.stereo_active && key_dest == key_game &&
+	return key_dest == key_game &&
 		!con_forcedup && cls.state == ca_connected && cl.intermission == 0 &&
 		cl.worldmodel != NULL && vid.width > 0 && vid.height > 0 &&
 		glwidth > 0 && glheight > 0;
 }
 
+static qboolean VR_WeaponMenu_XRContextValid (void)
+{
+	const vrxr_frame_t *frame = GL_OpenXRFrame ();
+	const int dominant = VR_InputDominantPhysicalHand ();
+	const vrxr_device_t *head, *hand;
+	if (!vulkan_globals.stereo_active || !frame || !frame->should_render ||
+		!frame->focused || frame->reference_changed || dominant < 0 || dominant > 1)
+		return false;
+	head = &frame->devices[0];
+	hand = &frame->devices[dominant + 1];
+	return head->valid && head->tracked && head->kind == VRXR_DEVICE_HEAD && head->hand == -1 &&
+		hand->valid && hand->tracked && hand->kind == VRXR_DEVICE_HAND && hand->hand == dominant;
+}
+
 static qboolean VR_WeaponMenu_SessionValid (void)
 {
-	return VR_WeaponMenu_ContextValid () && vr_weapon_menu_worldmodel == cl.worldmodel &&
+	if (!VR_WeaponMenu_GameContextValid () ||
+		(vr_weapon_menu_open_vr ? !VR_WeaponMenu_XRContextValid () : vulkan_globals.stereo_active))
+		return false;
+	return vr_weapon_menu_worldmodel == cl.worldmodel &&
 		vr_weapon_menu_viewentity == cl.viewentity &&
 		q_strcasecmp (vr_weapon_menu_mapname, cl.mapname) == 0;
 }
@@ -87,6 +111,11 @@ static qboolean VR_WeaponMenu_SessionValid (void)
 static void VR_WeaponMenu_ClearSession (void)
 {
 	vr_weapon_menu_open = false;
+	vr_weapon_menu_open_vr = false;
+	vr_weapon_menu_pointer_valid = false;
+	vr_weapon_menu_tracking_valid = false;
+	vr_weapon_menu_pointer_x = vr_weapon_menu_pointer_y = -1;
+	vr_weapon_menu_hover_id = -1;
 	vr_weapon_menu_worldmodel = NULL;
 	vr_weapon_menu_viewentity = 0;
 	vr_weapon_menu_mapname[0] = '\0';
@@ -259,7 +288,9 @@ static void VR_WeaponMenu_Layout (vr_weapon_menu_visible_t *visible, int count,
 
 qboolean VR_WeaponMenu_CanOpen (void)
 {
-	return !vr_weapon_menu_open && VR_WeaponMenu_ContextValid ();
+	if (vr_weapon_menu_open || !VR_WeaponMenu_GameContextValid ())
+		return false;
+	return vulkan_globals.stereo_active ? VR_WeaponMenu_XRContextValid () : true;
 }
 
 qboolean VR_WeaponMenu_IsOpen (void)
@@ -267,21 +298,70 @@ qboolean VR_WeaponMenu_IsOpen (void)
 	return vr_weapon_menu_open;
 }
 
+qboolean VR_WeaponMenu_IsOpenVR (void)
+{
+	return vr_weapon_menu_open && vr_weapon_menu_open_vr;
+}
+
+unsigned int VR_WeaponMenu_SessionGeneration (void)
+{
+	return vr_weapon_menu_session_generation;
+}
+
 void VR_WeaponMenu_Open (void)
 {
 	if (!VR_WeaponMenu_CanOpen ())
 		return;
 	vr_weapon_menu_open = true;
+	vr_weapon_menu_open_vr = vulkan_globals.stereo_active;
+	if (++vr_weapon_menu_session_generation == 0)
+		++vr_weapon_menu_session_generation;
 	vr_weapon_menu_worldmodel = cl.worldmodel;
 	vr_weapon_menu_viewentity = cl.viewentity;
 	q_strlcpy (vr_weapon_menu_mapname, cl.mapname, sizeof (vr_weapon_menu_mapname));
+}
+
+void VR_WeaponMenu_Cancel (void)
+{
+	VR_WeaponMenu_ClearSession ();
+}
+
+void VR_WeaponMenu_SetVRPointer (qboolean tracking_valid, qboolean pointer_valid,
+	int pointer_x, int pointer_y)
+{
+	vr_weapon_menu_visible_t visible[VR_WEAPON_MENU_MAX_ENTRIES];
+	int count, selected = -1;
+	const float radius = q_min (glwidth, glheight) * 0.32f;
+	const float scale = CLAMP (0.85f, q_min (glwidth, glheight) / 720.0f, 1.5f);
+
+	if (!VR_WeaponMenu_IsOpenVR ())
+		return;
+	if (!tracking_valid || !VR_WeaponMenu_SessionValid ())
+	{
+		VR_WeaponMenu_ClearSession ();
+		return;
+	}
+	vr_weapon_menu_tracking_valid = true;
+	vr_weapon_menu_pointer_valid = pointer_valid;
+	vr_weapon_menu_pointer_x = pointer_valid ? pointer_x : -1;
+	vr_weapon_menu_pointer_y = pointer_valid ? pointer_y : -1;
+	vr_weapon_menu_hover_id = -1;
+	if (!pointer_valid)
+		return;
+
+	count = VR_WeaponMenu_BuildVisible (&vr_weapon_menu_stock_catalog,
+		cl.stats, MAX_CL_STATS, cl.items, visible, VR_WEAPON_MENU_MAX_ENTRIES);
+	VR_WeaponMenu_Layout (visible, count, radius, scale);
+	selected = VR_WeaponMenu_Hit (visible, count, pointer_x, pointer_y, radius);
+	if (selected >= 0 && visible[selected].selectable)
+		vr_weapon_menu_hover_id = visible[selected].entry->id;
 }
 
 int VR_WeaponMenu_ReleaseCatalog (const vr_weapon_menu_catalog_t *catalog,
 	const int *stats, size_t num_stats, int client_items)
 {
 	vr_weapon_menu_visible_t visible[VR_WEAPON_MENU_MAX_ENTRIES];
-	int count, pointer_x, pointer_y, selected = -1, impulse = 0;
+	int count, pointer_x = -1, pointer_y = -1, selected = -1, impulse = 0;
 	const float radius = q_min (glwidth, glheight) * 0.32f;
 	const float scale = CLAMP (0.85f, q_min (glwidth, glheight) / 720.0f, 1.5f);
 
@@ -292,11 +372,29 @@ int VR_WeaponMenu_ReleaseCatalog (const vr_weapon_menu_catalog_t *catalog,
 		VR_WeaponMenu_ClearSession ();
 		return 0;
 	}
+	if (vr_weapon_menu_open_vr &&
+		(!vr_weapon_menu_tracking_valid || !vr_weapon_menu_pointer_valid || vr_weapon_menu_hover_id < 0))
+	{
+		VR_WeaponMenu_ClearSession ();
+		return 0;
+	}
 	count = VR_WeaponMenu_BuildVisible (catalog, stats, num_stats, client_items,
 		visible, VR_WEAPON_MENU_MAX_ENTRIES);
 	VR_WeaponMenu_Layout (visible, count, radius, scale);
-	VR_WeaponMenu_Pointer (&pointer_x, &pointer_y);
-	selected = VR_WeaponMenu_Hit (visible, count, pointer_x, pointer_y, radius);
+	if (vr_weapon_menu_open_vr)
+	{
+		for (int i = 0; i < count; ++i)
+			if (visible[i].entry->id == vr_weapon_menu_hover_id)
+			{
+				selected = i;
+				break;
+			}
+	}
+	else
+	{
+		VR_WeaponMenu_Pointer (&pointer_x, &pointer_y);
+		selected = VR_WeaponMenu_Hit (visible, count, pointer_x, pointer_y, radius);
+	}
 	if (selected >= 0)
 	{
 		const vr_weapon_menu_entry_t *entry = visible[selected].entry;
@@ -333,8 +431,24 @@ void VR_WeaponMenu_DrawCatalog (struct cb_context_s *context,
 	count = VR_WeaponMenu_BuildVisible (catalog, stats, num_stats, client_items,
 		visible, VR_WEAPON_MENU_MAX_ENTRIES);
 	VR_WeaponMenu_Layout (visible, count, outer_radius, scale);
-	VR_WeaponMenu_Pointer (&pointer_x, &pointer_y);
-	selected = VR_WeaponMenu_Hit (visible, count, pointer_x, pointer_y, outer_radius);
+	if (vr_weapon_menu_open_vr)
+	{
+		pointer_x = vr_weapon_menu_pointer_x;
+		pointer_y = vr_weapon_menu_pointer_y;
+		selected = -1;
+		if (vr_weapon_menu_tracking_valid && vr_weapon_menu_pointer_valid)
+			for (int i = 0; i < count; ++i)
+				if (visible[i].entry->id == vr_weapon_menu_hover_id)
+				{
+					selected = i;
+					break;
+				}
+	}
+	else
+	{
+		VR_WeaponMenu_Pointer (&pointer_x, &pointer_y);
+		selected = VR_WeaponMenu_Hit (visible, count, pointer_x, pointer_y, outer_radius);
+	}
 
 	GL_SetCanvas (cbx, CANVAS_DEFAULT);
 	R_BindGraphicsPipeline (cbx, PIPELINE_BASIC_BLEND);
@@ -406,10 +520,13 @@ void VR_WeaponMenu_DrawCatalog (struct cb_context_s *context,
 	Draw_String_Scaled (cbx, glwidth * 0.5f - 64.0f * scale,
 		glheight * 0.5f + outer_radius + 10.0f * scale,
 		"RELEASE TO SELECT", scale);
-	Draw_Fill (cbx, pointer_x - 5.0f * scale, pointer_y - scale,
-		11.0f * scale, 2.0f * scale, 15, 0.95f);
-	Draw_Fill (cbx, pointer_x - scale, pointer_y - 5.0f * scale,
-		2.0f * scale, 11.0f * scale, 15, 0.95f);
+	if (!vr_weapon_menu_open_vr || vr_weapon_menu_pointer_valid)
+	{
+		Draw_Fill (cbx, pointer_x - 5.0f * scale, pointer_y - scale,
+			11.0f * scale, 2.0f * scale, 15, 0.95f);
+		Draw_Fill (cbx, pointer_x - scale, pointer_y - 5.0f * scale,
+			2.0f * scale, 11.0f * scale, 15, 0.95f);
+	}
 	GL_SetCanvasColor (1.0f, 1.0f, 1.0f, 1.0f);
 }
 
