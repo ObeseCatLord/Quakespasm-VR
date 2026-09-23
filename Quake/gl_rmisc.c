@@ -2504,7 +2504,7 @@ typedef struct pipeline_create_infos_s
 	subpass_type_t					   subpass_type;
 	VkPipelineShaderStageCreateInfo		   shader_stages[2];
 	VkPipelineDynamicStateCreateInfo	   dynamic_state;
-	VkDynamicState						   dynamic_states[3];
+	VkDynamicState						   dynamic_states[4];
 	VkPipelineVertexInputStateCreateInfo   vertex_input_state;
 	VkPipelineInputAssemblyStateCreateInfo input_assembly_state;
 	VkPipelineViewportStateCreateInfo	   viewport_state;
@@ -3822,6 +3822,8 @@ static void R_CreateWorldPipelines ()
 					for (int variant = 0; variant < MAIN_RENDER_PASS_VARIANT_COUNT; ++variant)
 					{
 						R_CopyPipelineCreateInfos (&infos, &base);
+						if (vulkan_globals.openxr_fragment_shading_rate_active && !alpha_test && !alpha_blend)
+							infos.dynamic_states[infos.dynamic_state.dynamicStateCount++] = VK_DYNAMIC_STATE_FRAGMENT_SHADING_RATE_KHR;
 						R_SetPipelineRenderPassVariant (&infos, SUBPASS_MAIN, variant);
 						infos.shader_stages[1].module = world_frag_module;
 						infos.blend_attachment_states[0].blendEnable = alpha_blend ? VK_TRUE : VK_FALSE;
@@ -3869,6 +3871,18 @@ static void R_CreateWorldPipelines ()
 			}
 		}
 	}
+}
+
+void R_SetWorldFragmentShadingRate (cb_context_t *cbx, qboolean eligible)
+{
+	if (!vulkan_globals.openxr_fragment_shading_rate_active)
+		return;
+
+	const VkExtent2D fragment_size = {1, 1};
+	const VkFragmentShadingRateCombinerOpKHR combiner_ops[2] = {
+		VK_FRAGMENT_SHADING_RATE_COMBINER_OP_KEEP_KHR,
+		eligible ? VK_FRAGMENT_SHADING_RATE_COMBINER_OP_REPLACE_KHR : VK_FRAGMENT_SHADING_RATE_COMBINER_OP_KEEP_KHR};
+	vulkan_globals.vk_cmd_set_fragment_shading_rate (cbx->cb, &fragment_size, combiner_ops);
 }
 
 /*

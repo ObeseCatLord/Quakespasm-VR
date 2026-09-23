@@ -1197,7 +1197,8 @@ Draw the current batch if non-empty and clears it, ready for more R_BatchSurface
 ================
 */
 static void R_FlushBatch (
-	cb_context_t *cbx, qboolean fullbright_enabled, qboolean alpha_test, qboolean alpha_blend, qboolean use_zbias, gltexture_t *lightmap_texture,
+	cb_context_t *cbx, qboolean fullbright_enabled, qboolean alpha_test, qboolean alpha_blend, qboolean use_zbias, qboolean shading_rate_eligible,
+	gltexture_t *lightmap_texture,
 	uint32_t *brushpasses)
 {
 	if (cbx->num_vbo_indices > 0)
@@ -1208,6 +1209,8 @@ static void R_FlushBatch (
 			cbx->subpass_type, vulkan_globals.world_pipelines[cbx->pipeline_variant][pipeline_index], vulkan_globals.world_wboit_pipelines[pipeline_index],
 			vulkan_globals.world_mboit_moment_pipelines[pipeline_index], vulkan_globals.world_mboit_composite_pipelines[pipeline_index]);
 		R_BindPipeline (cbx, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+		if (!alpha_test && !alpha_blend)
+			R_SetWorldFragmentShadingRate (cbx, shading_rate_eligible);
 
 		float constant_factor = 0.0f, slope_factor = 0.0f;
 		if (use_zbias)
@@ -1254,7 +1257,8 @@ using VBOs.
 ================
 */
 static void R_BatchSurface (
-	cb_context_t *cbx, msurface_t *s, qboolean fullbright_enabled, qboolean alpha_test, qboolean alpha_blend, qboolean use_zbias, gltexture_t *lightmap_texture,
+	cb_context_t *cbx, msurface_t *s, qboolean fullbright_enabled, qboolean alpha_test, qboolean alpha_blend, qboolean use_zbias,
+	qboolean shading_rate_eligible, gltexture_t *lightmap_texture,
 	uint32_t *brushpasses)
 {
 	int num_surf_indices;
@@ -1262,7 +1266,7 @@ static void R_BatchSurface (
 	num_surf_indices = R_NumTriangleIndicesForSurf (s);
 
 	if (cbx->num_vbo_indices + num_surf_indices > MAX_BATCH_SIZE)
-		R_FlushBatch (cbx, fullbright_enabled, alpha_test, alpha_blend, use_zbias, lightmap_texture, brushpasses);
+		R_FlushBatch (cbx, fullbright_enabled, alpha_test, alpha_blend, use_zbias, shading_rate_eligible, lightmap_texture, brushpasses);
 
 	R_TriangleIndicesForSurf (s, &cbx->vbo_indices[cbx->num_vbo_indices]);
 	cbx->num_vbo_indices += num_surf_indices;
@@ -1366,16 +1370,16 @@ void R_DrawTextureChains_Water (cb_context_t *cbx, qmodel_t *model, entity_t *en
 				{
 					if (alpha_blend)
 						R_PushConstants (cbx, VK_SHADER_STAGE_ALL_GRAPHICS, 20 * sizeof (float), 1 * sizeof (float), &alpha);
-					R_FlushBatch (cbx, false, false, alpha_blend, false, lightmap_texture, &brushpasses);
+					R_FlushBatch (cbx, false, false, alpha_blend, false, false, lightmap_texture, &brushpasses);
 					lightmap_texture = (s->lightmaptexturenum >= 0) ? lightmaps[s->lightmaptexturenum].texture : greylightmap;
 					lastlightmap = s->lightmaptexturenum;
 				}
-				R_BatchSurface (cbx, s, false, false, alpha_blend, false, lightmap_texture, &brushpasses);
+				R_BatchSurface (cbx, s, false, false, alpha_blend, false, false, lightmap_texture, &brushpasses);
 			}
 
 			if (alpha_blend)
 				R_PushConstants (cbx, VK_SHADER_STAGE_ALL_GRAPHICS, 20 * sizeof (float), 1 * sizeof (float), &alpha);
-			R_FlushBatch (cbx, false, false, alpha_blend, false, lightmap_texture, &brushpasses);
+			R_FlushBatch (cbx, false, false, alpha_blend, false, false, lightmap_texture, &brushpasses);
 		}
 	}
 
@@ -1397,6 +1401,7 @@ void R_DrawTextureChains_Multitexture (cb_context_t *cbx, qmodel_t *model, entit
 	qboolean	 alpha_blend = alpha < 1.0f;
 	qboolean	 use_zbias = (gl_zfix.value && model != cl.worldmodel);
 	qboolean	 is_static = ent != NULL && ent->is_static;
+	qboolean	 static_world_eligible = model == cl.worldmodel && ent == NULL;
 	int			 lastlightmap;
 	int			 ent_frame = ent != NULL ? ent->frame : 0;
 	gltexture_t *fullbright = NULL;
@@ -1443,6 +1448,8 @@ void R_DrawTextureChains_Multitexture (cb_context_t *cbx, qmodel_t *model, entit
 		alpha_test = t->type == TEXTYPE_CUTOUT;
 		const qboolean is_decal = is_static && alpha_test;
 		const qboolean texture_zbias = use_zbias && !is_decal;
+		const qboolean shading_rate_eligible = static_world_eligible && !alpha_test && !alpha_blend && !is_decal &&
+			!(t->texturechains[chain]->flags & SURF_DRAWTILED);
 
 		texture_t	*texture = R_TextureAnimation (t, ent_frame);
 		gltexture_t *gl_texture = texture->gltexture;
@@ -1454,15 +1461,17 @@ void R_DrawTextureChains_Multitexture (cb_context_t *cbx, qmodel_t *model, entit
 		{
 			if (s->lightmaptexturenum != lastlightmap)
 			{
-				R_FlushBatch (cbx, fullbright_enabled, alpha_test, alpha_blend, texture_zbias, lightmap_texture, &brushpasses);
+				R_FlushBatch (
+					cbx, fullbright_enabled, alpha_test, alpha_blend, texture_zbias, shading_rate_eligible, lightmap_texture, &brushpasses);
 				lightmap_texture = lightmaps[s->lightmaptexturenum].texture;
 			}
 
 			lastlightmap = s->lightmaptexturenum;
-			R_BatchSurface (cbx, s, fullbright_enabled, alpha_test, alpha_blend, texture_zbias, lightmap_texture, &brushpasses);
+			R_BatchSurface (
+				cbx, s, fullbright_enabled, alpha_test, alpha_blend, texture_zbias, shading_rate_eligible, lightmap_texture, &brushpasses);
 		}
 
-		R_FlushBatch (cbx, fullbright_enabled, alpha_test, alpha_blend, texture_zbias, lightmap_texture, &brushpasses);
+		R_FlushBatch (cbx, fullbright_enabled, alpha_test, alpha_blend, texture_zbias, shading_rate_eligible, lightmap_texture, &brushpasses);
 	}
 
 	Atomic_AddUInt32 (&rs_brushpasses, brushpasses);

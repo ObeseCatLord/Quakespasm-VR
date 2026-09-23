@@ -1009,6 +1009,9 @@ void R_DrawIndirectBrushes (cb_context_t *cbx, qboolean draw_water, qboolean tra
 			R_BindPipeline (cbx, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
 
 			const qboolean is_decal = indirect_draws[i].is_decal;
+			const qboolean shading_rate_eligible = !indirect_draws[i].is_bmodel && !is_decal && !draw_water && !draw_sky && !alpha_test && !alpha_blend;
+			if (!alpha_test && !alpha_blend)
+				R_SetWorldFragmentShadingRate (cbx, shading_rate_eligible);
 			qboolean	   use_zbias = INDIRECT_ZBIAS && gl_zfix.value && indirect_draws[i].is_bmodel && !is_decal;
 			float		   constant_factor = 0.0f, slope_factor = 0.0f;
 			if (use_zbias)

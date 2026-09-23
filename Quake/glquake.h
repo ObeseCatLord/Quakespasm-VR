@@ -762,6 +762,7 @@ qboolean R_IndirectBrush (entity_t *e);
 void	 R_ClearBModelInstanceClaims (void);
 
 void R_DrawWorld (cb_context_t *cbx, int index);
+void R_SetWorldFragmentShadingRate (cb_context_t *cbx, qboolean eligible);
 
 // johnfitz -- struct for passing lerp information to drawing functions
 typedef struct
