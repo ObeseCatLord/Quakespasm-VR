@@ -43,6 +43,27 @@ Evidence is from pinned Git objects: **I** = Ironwail `08d578136ff43d7d1ef38e636
 
 The asset evidence establishes implemented formats and lookup behavior, not complete QSS compatibility. Keep original file attribution and established subsystem ownership.
 
+## Current-branch large-map performance hypothesis
+
+`2.0` still inherits vkQuake's ray-shadow path in
+`Quake/gl_mesh.c:R_UpdateAnimatedBLASes`: when ray queries are enabled it walks
+dynamic and static alias entities, skins their local vertices, and rebuilds or
+refits their BLAS during each update. The corresponding TLAS in
+`Quake/r_brush.c:R_BuildTopLevelAccelerationStructure` applies entity transforms
+separately. This is a candidate for large-map savings, including `mj4m1`,
+not a measured speedup.
+
+After tracked-avatar shadow parity is correct, evaluate skipping local BLAS
+skinning/refits when the selected geometry and local pose are unchanged. Static
+alias props are the first proof: moving only the entity transform still needs
+a current TLAS transform, but does not change local skinned vertices. A safe
+cache key must include model/skin geometry, initial-build state, animation
+frames and blend (or the exact resulting local palette), and any tracked VRIK
+palette; a model reload, slot reuse, tracking loss, or skin change invalidates
+it. Do not use visibility alone to skip a caster whose shadow reaches the
+view. Instrument dispatch/refit counts and CPU/GPU frame time on an identical
+`mj4m1` route with ray shadows on and off before keeping the optimization.
+
 Two additional Ironwail candidates qualify as **proposed optional scope**:
 
 | ID | Behavior and implementation evidence | Bounded absence evidence | Disposition / smallest change | Acceptance case |
