@@ -4944,6 +4944,13 @@ static void PF_cl_stringwidth (void)
 
 static void PF_cl_drawsetclip (void)
 {
+	cb_context_t *cbx = vulkan_globals.secondary_cb_contexts[SCBX_GUI];
+	if (cbx->ui_panel_active)
+	{
+		GL_SetUIPanelSourceClip (cbx, G_FLOAT (OFS_PARM0), G_FLOAT (OFS_PARM1), G_FLOAT (OFS_PARM2), G_FLOAT (OFS_PARM3));
+		return;
+	}
+
 	csqc_display_t display = SCR_GetCSQCDisplay ();
 
 	float x = G_FLOAT (OFS_PARM0) * display.pixel_scale[0];
@@ -4960,6 +4967,13 @@ static void PF_cl_drawsetclip (void)
 }
 static void PF_cl_drawresetclip (void)
 {
+	cb_context_t *cbx = vulkan_globals.secondary_cb_contexts[SCBX_GUI];
+	if (cbx->ui_panel_active)
+	{
+		GL_ClearUIPanelSourceClip (cbx);
+		return;
+	}
+
 	VkRect2D render_area;
 	render_area.offset.x = 0;
 	render_area.offset.y = 0;

@@ -211,3 +211,11 @@ as functional. The user confirmed the inherited Quakespasm VR placement:
 controller-relative in controller-aim mode, aim/view-relative otherwise.
 Canvas adaptation may change layout within that surface, but not the default
 physical anchor policy.
+
+The CSQC panel boundary now translates `drawsetclip` from virtual canvas
+coordinates into the panel shader's source clip. It intersects the requested
+rectangle with the canvas bounds, clears it on `drawresetclip` or panel exit,
+and keeps the existing framebuffer scissor path for flat drawing. This is a
+prerequisite for an attached HUD, not evidence that AD layouts render correctly
+in stereo. The recoverable CSQC error path still needs explicit panel cleanup
+when the HUD draw is moved into this scope.

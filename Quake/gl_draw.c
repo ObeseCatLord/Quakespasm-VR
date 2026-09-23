@@ -1158,6 +1158,8 @@ void Draw_FadeScreen (cb_context_t *cbx)
 GL_OrthoMatrix
 ================
 */
+static void GL_UpdateUIPanelSourceClip (cb_context_t *cbx);
+
 static void GL_OrthoMatrix (cb_context_t *cbx, float left, float right, float bottom, float top, float n, float f)
 {
 	float tx = -(right + left) / (right - left);
@@ -1183,13 +1185,89 @@ static void GL_OrthoMatrix (cb_context_t *cbx, float left, float right, float bo
 	matrix[3 * 4 + 3] = 1.0f;
 
 	memcpy (cbx->canvas_ortho_matrix, matrix, sizeof (matrix));
-	cbx->canvas_ortho_clip_rect[0] = q_min (left, right);
-	cbx->canvas_ortho_clip_rect[1] = q_min (bottom, top);
-	cbx->canvas_ortho_clip_rect[2] = q_max (left, right);
-	cbx->canvas_ortho_clip_rect[3] = q_max (bottom, top);
+	cbx->canvas_ortho_base_clip_rect[0] = q_min (left, right);
+	cbx->canvas_ortho_base_clip_rect[1] = q_min (bottom, top);
+	cbx->canvas_ortho_base_clip_rect[2] = q_max (left, right);
+	cbx->canvas_ortho_base_clip_rect[3] = q_max (bottom, top);
+	GL_UpdateUIPanelSourceClip (cbx);
 
 	if (!cbx->ui_panel_active)
 		R_PushConstants (cbx, VK_SHADER_STAGE_ALL_GRAPHICS, 0, sizeof (matrix), matrix);
+}
+
+static void GL_SetUIPanelEmptyClip (float rect[4])
+{
+	// Keep one axis inverted so the shader's inclusive bounds test rejects
+	// every finite source coordinate, including a zero-area requested clip.
+	rect[0] = 1.0f;
+	rect[1] = 0.0f;
+	rect[2] = 0.0f;
+	rect[3] = 1.0f;
+}
+
+static void GL_UpdateUIPanelSourceClip (cb_context_t *cbx)
+{
+	memcpy (cbx->canvas_ortho_clip_rect, cbx->canvas_ortho_base_clip_rect, sizeof (cbx->canvas_ortho_clip_rect));
+	if (!cbx->ui_panel_active || !cbx->ui_panel_source_clip_active)
+		return;
+
+	if (cbx->ui_panel_source_clip_empty)
+	{
+		GL_SetUIPanelEmptyClip (cbx->canvas_ortho_clip_rect);
+		return;
+	}
+
+	const double left = q_max ((double)cbx->canvas_ortho_base_clip_rect[0], cbx->ui_panel_source_clip_rect[0]);
+	const double top = q_max ((double)cbx->canvas_ortho_base_clip_rect[1], cbx->ui_panel_source_clip_rect[1]);
+	const double right = q_min ((double)cbx->canvas_ortho_base_clip_rect[2], cbx->ui_panel_source_clip_rect[2]);
+	const double bottom = q_min ((double)cbx->canvas_ortho_base_clip_rect[3], cbx->ui_panel_source_clip_rect[3]);
+	if (!(right > left) || !(bottom > top))
+	{
+		GL_SetUIPanelEmptyClip (cbx->canvas_ortho_clip_rect);
+		return;
+	}
+
+	cbx->canvas_ortho_clip_rect[0] = (float)left;
+	cbx->canvas_ortho_clip_rect[1] = (float)top;
+	cbx->canvas_ortho_clip_rect[2] = (float)right;
+	cbx->canvas_ortho_clip_rect[3] = (float)bottom;
+}
+
+void GL_SetUIPanelSourceClip (cb_context_t *cbx, float x, float y, float width, float height)
+{
+	if (!cbx || !cbx->ui_panel_active)
+		return;
+
+	cbx->ui_panel_source_clip_active = true;
+	cbx->ui_panel_source_clip_empty = !isfinite (x) || !isfinite (y) || !isfinite (width) || !isfinite (height) || width <= 0.0f || height <= 0.0f;
+	if (cbx->ui_panel_source_clip_empty)
+	{
+		memset (cbx->ui_panel_source_clip_rect, 0, sizeof (cbx->ui_panel_source_clip_rect));
+	}
+	else
+	{
+		cbx->ui_panel_source_clip_rect[0] = (double)x;
+		cbx->ui_panel_source_clip_rect[1] = (double)y;
+		cbx->ui_panel_source_clip_rect[2] = (double)x + (double)width;
+		cbx->ui_panel_source_clip_rect[3] = (double)y + (double)height;
+	}
+	GL_UpdateUIPanelSourceClip (cbx);
+}
+
+void GL_ClearUIPanelSourceClip (cb_context_t *cbx)
+{
+	if (!cbx)
+		return;
+	cbx->ui_panel_source_clip_active = false;
+	cbx->ui_panel_source_clip_empty = false;
+	memset (cbx->ui_panel_source_clip_rect, 0, sizeof (cbx->ui_panel_source_clip_rect));
+	GL_UpdateUIPanelSourceClip (cbx);
+}
+
+static void GL_SetUIPanelFullScissor (cb_context_t *cbx)
+{
+	const VkRect2D full_scissor = {{0, 0}, {(uint32_t)vid.width, (uint32_t)vid.height}};
+	vkCmdSetScissor (cbx->cb, 0, 1, &full_scissor);
 }
 
 /*
@@ -1255,15 +1333,19 @@ void GL_BeginUIPanel (cb_context_t *cbx, const float world_from_ndc[16])
 	memcpy (cbx->ui_panel_world_from_ndc, world_from_ndc, sizeof (cbx->ui_panel_world_from_ndc));
 	cbx->ui_panel_active = true;
 	cbx->ui_panel_mvp_valid = false;
+	GL_ClearUIPanelSourceClip (cbx);
 	cbx->current_canvas = CANVAS_INVALID;
+	GL_SetUIPanelFullScissor (cbx);
 	// The post-upscale or prior UI pipeline may still be bound; defer panel pushes until a compatible UI pipeline is active.
 }
 
 void GL_EndUIPanel (cb_context_t *cbx)
 {
+	GL_ClearUIPanelSourceClip (cbx);
 	cbx->ui_panel_active = false;
 	cbx->ui_panel_mvp_valid = false;
 	cbx->current_canvas = CANVAS_INVALID;
+	GL_SetUIPanelFullScissor (cbx);
 
 	// Use the bound layout (including the basic-layout upscaler) only when it covers the panel flag.
 	if (cbx->subpass_type == SUBPASS_UI && cbx->current_pipeline.handle != VK_NULL_HANDLE &&
@@ -1286,6 +1368,8 @@ void GL_SetCanvas (cb_context_t *cbx, canvastype newcanvas)
 {
 	if (newcanvas == cbx->current_canvas)
 		return;
+	if (cbx->ui_panel_active && cbx->current_canvas == CANVAS_CSQC && newcanvas != CANVAS_CSQC)
+		GL_ClearUIPanelSourceClip (cbx);
 
 	extern vrect_t scr_vrect;
 	float		   s, u, v;

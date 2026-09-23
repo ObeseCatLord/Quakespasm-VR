@@ -338,7 +338,12 @@ typedef struct cb_context_s
 	qboolean				   ui_panel_mvp_valid;
 	float					   ui_panel_world_from_ndc[16];
 	float					   canvas_ortho_matrix[16];
+	float					   canvas_ortho_base_clip_rect[4];
 	float					   canvas_ortho_clip_rect[4];
+	// CSQC clip coordinates stay in the virtual canvas coordinate system.
+	double					   ui_panel_source_clip_rect[4];
+	qboolean				   ui_panel_source_clip_active;
+	qboolean				   ui_panel_source_clip_empty;
 	VkViewport				   canvas_viewport;
 	float					   ui_panel_mvp[16];
 	VkRenderPass			   render_pass;
@@ -905,6 +910,8 @@ static inline void R_BindPipeline (cb_context_t *cbx, VkPipelineBindPoint bind_p
 void		   GL_DrawSceneUpscale (cb_context_t *cbx);
 void		   GL_BeginUIPanel (cb_context_t *cbx, const float world_from_ndc[16]);
 void		   GL_EndUIPanel (cb_context_t *cbx);
+void		   GL_SetUIPanelSourceClip (cb_context_t *cbx, float x, float y, float width, float height);
+void		   GL_ClearUIPanelSourceClip (cb_context_t *cbx);
 extern vrect_t r_scene_vrect;
 void		   R_BindGraphicsPipeline (cb_context_t *cbx, graphics_pipeline_t pipeline);
 bool		   R_HasGraphicsPipeline (const cb_context_t *cbx, graphics_pipeline_t pipeline);
