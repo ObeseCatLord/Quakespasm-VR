@@ -760,6 +760,8 @@ static void CL_AppendVRIKPose (sizebuf_t *buf)
 		(cl.vrik_protocol_version != VRIK_PROTOCOL_LEGACY_VERSION &&
 		 cl.vrik_protocol_version != VRIK_PROTOCOL_VERSION))
 		return;
+	if (V_TrackedPresentationTurnPending ())
+		return;
 
 	if (!VR_InputBuildVRIKPose (&pose))
 	{

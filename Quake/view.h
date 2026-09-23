@@ -52,6 +52,7 @@ void V_TrackedAngleDelta (const vec3_t delta);
 qboolean V_TrackedMovementAngles (int mode, int physical_offhand, vec3_t angles);
 qboolean V_TrackedMappingYaw (float *yaw);
 qboolean V_TrackedPresentationYaw (float *yaw);
+qboolean V_TrackedPresentationTurnPending (void);
 qboolean V_TrackedHandBodyOffset (int physical_hand, vec3_t out);
 qboolean V_TrackedPresentationHandAngles (int physical_hand, vec3_t angles);
 qboolean V_TrackedPresentationHandBodyOffset (int physical_hand, vec3_t out);

@@ -299,6 +299,14 @@ qboolean V_TrackedPresentationYaw (float *yaw)
 	return isfinite (*yaw);
 }
 
+/* CL_SendCmd runs before the next screen update resolves a queued snap turn.
+ * Let the optional pose sender defer that one sample without reporting loss
+ * of tracking to remote players. */
+qboolean V_TrackedPresentationTurnPending (void)
+{
+	return tracked_local_yaw != 0.0f;
+}
+
 qboolean V_ApplyTrackedView (vec3_t angles, float *tracking_yaw)
 {
 	if (!angles || !V_TrackedPresentationYaw (tracking_yaw))
