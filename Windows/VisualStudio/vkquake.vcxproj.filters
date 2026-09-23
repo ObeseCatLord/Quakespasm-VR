@@ -292,6 +292,12 @@
     <ClCompile Include="..\..\Quake\vr_openxr.cpp">
       <Filter>Main</Filter>
     </ClCompile>
+    <ClCompile Include="..\..\Quake\vr_fbt.c">
+      <Filter>Main</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Quake\vr_fbt_filter.c">
+      <Filter>Main</Filter>
+    </ClCompile>
     <ClCompile Include="..\..\Quake\vr_input.c">
       <Filter>Main</Filter>
     </ClCompile>
@@ -1042,6 +1048,12 @@
       <Filter>Main</Filter>
     </ClInclude>
     <ClInclude Include="..\..\Quake\vr_openxr_math.h">
+      <Filter>Main</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\Quake\vr_fbt.h">
+      <Filter>Main</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\Quake\vr_fbt_filter.h">
       <Filter>Main</Filter>
     </ClInclude>
     <ClInclude Include="..\..\Quake\sha256.h">

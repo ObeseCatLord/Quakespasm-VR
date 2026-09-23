@@ -322,6 +322,8 @@ srcs = [
     'Quake/tasks.c',
     'Quake/view.c',
     'Quake/vrik_codec.c',
+    'Quake/vr_fbt.c',
+    'Quake/vr_fbt_filter.c',
     'Quake/vr_input.c',
     'Quake/vr_locomotion.c',
     'Quake/vr_weapon_schema.c',
