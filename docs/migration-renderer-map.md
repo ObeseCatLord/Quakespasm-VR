@@ -58,8 +58,9 @@ animation poses and exact finite blend match the last built local vertices.
 The first build is always recorded; tracked VRIK palettes and invalid blends
 always refit. A moved entity still gets a current TLAS transform, and the
 optimization does not rely on caster visibility. The Linux build passed, but
-there is no measured speedup or runtime shadow-parity result yet. Capture
-dispatch/refit counts and CPU/GPU frame time on an identical `mj4m1` route
+there is no measured speedup or runtime shadow-parity result yet. `scr_speeds 2`
+now reports animated BLAS builds, refits and unchanged-pose reuses. Capture
+these counts and CPU/GPU frame time on an identical `mj4m1` route
 with ray shadows on and off before judging the gain.
 
 Two additional Ironwail candidates qualify as **proposed optional scope**:
