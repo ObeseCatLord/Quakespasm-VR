@@ -532,7 +532,7 @@ The stored entity velocity must already include the full gravity update.
 ============
 */
 #define MAX_CLIP_PLANES 5
-static int SV_FlyMove (edict_t *ent, float time, const vec3_t move_velocity, trace_t *steptrace)
+static int SV_FlyMove (edict_t *ent, float time, const vec3_t move_velocity, trace_t *steptrace, qboolean callbacks)
 {
 	int					bumpcount, numbumps;
 	vec3_t				dir;
@@ -614,7 +614,8 @@ static int SV_FlyMove (edict_t *ent, float time, const vec3_t move_velocity, tra
 		assert_always (!ent->free);
 
 		VectorCopy (ent->v.velocity, impact_velocity);
-		SV_Impact (ent, trace.ent);
+		if (callbacks)
+			SV_Impact (ent, trace.ent);
 		if (ent->free)
 			break; // removed by the impact function
 
@@ -1147,12 +1148,12 @@ static void SV_ClearWalkSupportClipContext (void)
 }
 
 static int
-SV_FlyMoveWithMoveFrameClipContext (edict_t *ent, float time, const sv_client_move_frame_t *move_frame, const vec3_t move_velocity, trace_t *steptrace)
+SV_FlyMoveWithMoveFrameClipContext (edict_t *ent, float time, const sv_client_move_frame_t *move_frame, const vec3_t move_velocity, trace_t *steptrace, qboolean callbacks)
 {
 	int clip;
 
 	SV_SetWalkMoveFrameClipContext (move_frame);
-	clip = SV_FlyMove (ent, time, move_velocity, steptrace);
+	clip = SV_FlyMove (ent, time, move_velocity, steptrace, callbacks);
 	SV_ClearWalkSupportClipContext ();
 	return clip;
 }
@@ -1393,7 +1394,7 @@ SV_PushEntityTo
 Does not change the entities velocity at all
 ============
 */
-static trace_t SV_PushEntityToWithIgnoreMask (edict_t *ent, vec3_t end, const sv_ignore_edicts_t *ignore_mask)
+static trace_t SV_PushEntityToWithIgnoreMask (edict_t *ent, vec3_t end, const sv_ignore_edicts_t *ignore_mask, qboolean callbacks)
 {
 	trace_t trace;
 
@@ -1432,10 +1433,10 @@ static trace_t SV_PushEntityToWithIgnoreMask (edict_t *ent, vec3_t end, const sv
 	if (trace.ent)
 		ED_Retain (trace.ent);
 
-	SV_LinkEdict (ent, true);
+	SV_LinkEdict (ent, callbacks);
 
 	// Run the impact only while both collision participants still exist.
-	if (!ent->free && trace.ent && !trace.ent->free)
+	if (callbacks && !ent->free && trace.ent && !trace.ent->free)
 		SV_Impact (ent, trace.ent);
 
 	if (trace.ent)
@@ -1445,9 +1446,9 @@ static trace_t SV_PushEntityToWithIgnoreMask (edict_t *ent, vec3_t end, const sv
 	return trace;
 }
 
-static trace_t SV_PushEntityTo (edict_t *ent, vec3_t end)
+static trace_t SV_PushEntityTo (edict_t *ent, vec3_t end, qboolean callbacks)
 {
-	return SV_PushEntityToWithIgnoreMask (ent, end, NULL);
+	return SV_PushEntityToWithIgnoreMask (ent, end, NULL, callbacks);
 }
 
 // Appends in the caller's order, which for pusher candidates is already sorted.
@@ -1690,7 +1691,7 @@ static void SV_PushMove (edict_t *pusher, float movetime)
 				VectorAdd (entorig, move, dest);
 
 			// try moving the contacted entity
-			SV_PushEntityToWithIgnoreMask (check, dest, move_ignore_mask);
+			SV_PushEntityToWithIgnoreMask (check, dest, move_ignore_mask, true);
 			if (pusher->free)
 				break;
 			if (check->free)
@@ -2011,7 +2012,7 @@ Try fixing by pushing one pixel in each direction.
 This is a hack, but in the interest of good gameplay...
 ======================
 */
-static int SV_TryUnstick (edict_t *ent, vec3_t oldvel)
+static int SV_TryUnstick (edict_t *ent, vec3_t oldvel, qboolean callbacks)
 {
 	int		i;
 	vec3_t	oldorg;
@@ -2062,13 +2063,13 @@ static int SV_TryUnstick (edict_t *ent, vec3_t oldvel)
 		}
 
 		VectorAdd (ent->v.origin, dir, dest);
-		SV_PushEntityTo (ent, dest);
+		SV_PushEntityTo (ent, dest, callbacks);
 
 		// retry the original move
 		ent->v.velocity[0] = oldvel[0];
 		ent->v.velocity[1] = oldvel[1];
 		ent->v.velocity[2] = 0;
-		clip = SV_FlyMove (ent, 0.1, NULL, &steptrace);
+		clip = SV_FlyMove (ent, 0.1, NULL, &steptrace, callbacks);
 
 		if (fabs (oldorg[1] - ent->v.origin[1]) > 4 || fabs (oldorg[0] - ent->v.origin[0]) > 4)
 		{
@@ -2091,7 +2092,7 @@ SV_WalkMove
 Only used by players
 ======================
 */
-static void SV_WalkMove (edict_t *ent, const sv_client_move_frame_t *move_frame, const vec3_t move_velocity)
+static void SV_WalkMove (edict_t *ent, const sv_client_move_frame_t *move_frame, const vec3_t move_velocity, qboolean callbacks)
 {
 	vec3_t	upmove, downmove;
 	vec3_t	oldorg, oldvel;
@@ -2109,7 +2110,7 @@ static void SV_WalkMove (edict_t *ent, const sv_client_move_frame_t *move_frame,
 	VectorCopy (ent->v.origin, oldorg);
 	VectorCopy (ent->v.velocity, oldvel);
 
-	clip = SV_FlyMoveWithMoveFrameClipContext (ent, host_frametime, move_frame, move_velocity, &steptrace);
+	clip = SV_FlyMoveWithMoveFrameClipContext (ent, host_frametime, move_frame, move_velocity, &steptrace, callbacks);
 
 	if (!(clip & 2))
 	{
@@ -2141,13 +2142,13 @@ static void SV_WalkMove (edict_t *ent, const sv_client_move_frame_t *move_frame,
 	upmove[2] += STEPSIZE;
 
 	// move up
-	SV_PushEntityTo (ent, upmove); // FIXME: don't link?
+	SV_PushEntityTo (ent, upmove, callbacks); // FIXME: don't link?
 
 	// move forward
 	ent->v.velocity[0] = oldvel[0];
 	ent->v.velocity[1] = oldvel[1];
 	ent->v.velocity[2] = 0;
-	clip = SV_FlyMoveWithMoveFrameClipContext (ent, host_frametime, move_frame, NULL, &steptrace);
+	clip = SV_FlyMoveWithMoveFrameClipContext (ent, host_frametime, move_frame, NULL, &steptrace, callbacks);
 
 	// check for stuckness, possibly due to the limited precision of floats
 	// in the clipping hulls. Disable when using pr_checkextension to avoid
@@ -2156,7 +2157,7 @@ static void SV_WalkMove (edict_t *ent, const sv_client_move_frame_t *move_frame,
 	{
 		if (fabs (oldorg[1] - ent->v.origin[1]) < 0.03125 && fabs (oldorg[0] - ent->v.origin[0]) < 0.03125)
 		{ // stepping up didn't make any progress
-			clip = SV_TryUnstick (ent, oldvel);
+			clip = SV_TryUnstick (ent, oldvel, callbacks);
 		}
 	}
 
@@ -2167,7 +2168,7 @@ static void SV_WalkMove (edict_t *ent, const sv_client_move_frame_t *move_frame,
 	// move down
 	VectorCopy (ent->v.origin, downmove);
 	downmove[2] += -STEPSIZE + move_velocity[2] * host_frametime;
-	downtrace = SV_PushEntityTo (ent, downmove); // FIXME: don't link?
+	downtrace = SV_PushEntityTo (ent, downmove, callbacks); // FIXME: don't link?
 
 	if (downtrace.plane.normal[2] > MIN_WALK_NORMAL)
 	{
@@ -2224,7 +2225,7 @@ static void SV_Physics_ClientWalk (edict_t *ent, sv_client_move_frame_t *move_fr
 	// Unsticking can touch a trigger that replaces the velocity.
 	if (!VectorCompare (ent->v.velocity, old_velocity))
 		VectorCopy (ent->v.velocity, move_velocity);
-	SV_WalkMove (ent, move_frame, move_velocity);
+	SV_WalkMove (ent, move_frame, move_velocity, true);
 }
 
 static void SV_Physics_Client (edict_t *ent, int num)
@@ -2285,7 +2286,7 @@ static void SV_Physics_Client (edict_t *ent, int num)
 	case MOVETYPE_FLY:
 		if (!SV_RunThink (ent))
 			goto done;
-		SV_FlyMove (ent, host_frametime, NULL, NULL);
+		SV_FlyMove (ent, host_frametime, NULL, NULL, true);
 		break;
 
 	case MOVETYPE_NOCLIP:
@@ -2436,7 +2437,7 @@ static void SV_Physics_Toss (edict_t *ent)
 
 	// move origin
 	VectorMA (ent->v.origin, host_frametime, move_velocity, end);
-	trace = SV_PushEntityTo (ent, end);
+	trace = SV_PushEntityTo (ent, end, true);
 
 	if (ent->free)
 		return;
@@ -2516,7 +2517,7 @@ static void SV_Physics_Step (edict_t *ent)
 			else if (move_velocity[i] < -sv_maxvelocity.value)
 				move_velocity[i] = -sv_maxvelocity.value;
 		}
-		SV_FlyMove (ent, host_frametime, move_velocity, NULL);
+		SV_FlyMove (ent, host_frametime, move_velocity, NULL, true);
 		SV_LinkEdict (ent, true);
 
 		if (ent->free)
