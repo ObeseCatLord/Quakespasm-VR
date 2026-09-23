@@ -394,6 +394,67 @@ void R_GetEntityLerpedTransform (const entity_t *e, vec3_t out_origin, vec3_t ou
 	}
 }
 
+static float R_VRIKLerpAngle (float from, float to, float blend)
+{
+	float delta = to - from;
+
+	while (delta > 180.0f) delta -= 360.0f;
+	while (delta < -180.0f) delta += 360.0f;
+	return from + delta * blend;
+}
+
+/* Sample the newest usable head/hand pose without changing the entity cache. */
+qboolean R_VRIKSampleEntityPose (const entity_t *entity, vrik_pose_t *out)
+{
+	const vrik_pose_t *newest, *older;
+	double newesttime, oldertime, sampletime;
+	float blend;
+	int tracker, axis;
+
+	if (!entity || !out || entity->vrik_pose_count < 1)
+		return false;
+	newest = &entity->vrik_poses[0];
+	newesttime = entity->vrik_pose_times[0];
+	if (!(newest->flags & VRIK_FLAG_ACTIVE) ||
+		!(newest->flags & VRIK_FLAG_HEAD_TRACKED) ||
+		realtime - newesttime > VRIK_POSE_STALE_TIME)
+		return false;
+
+	*out = *newest;
+	if (entity->vrik_pose_count < 2)
+		return true;
+	older = &entity->vrik_poses[1];
+	oldertime = entity->vrik_pose_times[1];
+	if (!(older->flags & VRIK_FLAG_ACTIVE) || newesttime <= oldertime)
+		return true;
+
+	/* Delay by 75 ms to absorb the natural 20 Hz pose cadence. */
+	sampletime = realtime - 0.075;
+	blend = (float)((sampletime - oldertime) / (newesttime - oldertime));
+	blend = CLAMP (0.0f, blend, 1.0f);
+	for (tracker = 0; tracker < VRIK_TRACKER_COUNT; tracker++)
+		for (axis = 0; axis < 3; axis++)
+		{
+			out->position[tracker][axis] = older->position[tracker][axis] +
+				(newest->position[tracker][axis] - older->position[tracker][axis]) * blend;
+			out->orientation[tracker][axis] = R_VRIKLerpAngle (
+				older->orientation[tracker][axis], newest->orientation[tracker][axis], blend);
+		}
+	{
+		unsigned char dominanttracked =
+			(newest->flags & VRIK_FLAG_DOMINANT_LEFT) ?
+			VRIK_FLAG_LEFT_HAND_TRACKED : VRIK_FLAG_RIGHT_HAND_TRACKED;
+		if (!((older->flags ^ newest->flags) & VRIK_FLAG_DOMINANT_LEFT) &&
+			(older->flags & dominanttracked) &&
+			(newest->flags & dominanttracked))
+			for (axis = 0; axis < 3; axis++)
+				out->aim_orientation[axis] = R_VRIKLerpAngle (
+					older->aim_orientation[axis], newest->aim_orientation[axis], blend);
+	}
+	out->body_yaw = R_VRIKLerpAngle (older->body_yaw, newest->body_yaw, blend);
+	return true;
+}
+
 /*
 =================
 R_SetupAliasLighting -- johnfitz -- broken out from R_DrawAliasModel and rewritten

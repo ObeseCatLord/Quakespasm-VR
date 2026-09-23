@@ -796,6 +796,7 @@ typedef struct
 // johnfitz
 
 void R_GetEntityLerpedTransform (const entity_t *e, vec3_t out_origin, vec3_t out_angles);
+qboolean R_VRIKSampleEntityPose (const entity_t *entity, vrik_pose_t *out);
 void R_SetupAliasFrame (const entity_t *e, aliashdr_t *paliashdr, lerpdata_t *lerpdata);
 void R_DrawAliasModel (cb_context_t *cbx, entity_t *e, int *aliaspolys);
 void R_DrawBrushModel (cb_context_t *cbx, entity_t *e, int chain, int *brushpolys, qboolean sort, qboolean water_opaque_only, qboolean water_transparent_only);
