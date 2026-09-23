@@ -798,7 +798,11 @@ R_DrawViewModel -- johnfitz -- gutted
 */
 void R_DrawViewModel (cb_context_t *cbx)
 {
-	if (!r_drawviewmodel.value || !r_drawentities.value || chase_active.value || scr_viewsize.value >= 130)
+	if (!r_drawviewmodel.value || !r_drawentities.value || chase_active.value)
+		return;
+
+	const qboolean tracked_view = V_UseTrackedView ();
+	if (scr_viewsize.value >= 130 && !tracked_view)
 		return;
 
 	if (cl.items & IT_INVISIBILITY || cl.stats[STAT_HEALTH] <= 0)
@@ -816,7 +820,8 @@ void R_DrawViewModel (cb_context_t *cbx)
 	R_BeginDebugUtilsLabel (cbx, "View Model");
 
 	// hack the depth range to prevent view model from poking into walls
-	R_SceneViewport (cbx, 0.7f);
+	if (!tracked_view)
+		R_SceneViewport (cbx, 0.7f);
 
 	int aliaspolys = 0;
 	R_DrawAliasModel (cbx, currententity, &aliaspolys);
