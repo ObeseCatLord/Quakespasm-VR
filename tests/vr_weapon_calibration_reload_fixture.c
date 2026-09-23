@@ -115,9 +115,52 @@ static void AssertFallbackMuzzles(void)
 	}
 }
 
+static void AssertEnyoFallbacks(void)
+{
+	static const struct
+	{
+		const char *path;
+		float x;
+		float y;
+		float z;
+		float scale;
+	} expected[] = {
+		{"progs/ee_v_sword.mdl", 25.0f, 49.0f, 60.0f, 0.2f},
+		{"progs/ee_v_pistol.mdl", 12.0f, 24.0f, 29.0f, 0.2f},
+		{"progs/ee_v_sgun.mdl", -2.3f, 21.3f, 35.3f, 0.2f},
+		{"progs/ee_v_smgs.mdl", 3.5f, 24.6f, 29.8f, 0.2f},
+		{"progs/ee_v_plasma.mdl", -1.5f, 21.8f, 36.0f, 0.2f},
+		{"progs/ee_v_glaunch.mdl", -3.8f, 24.0f, 35.5f, 0.2f},
+		{"progs/ee_v_rlaunch.mdl", 4.0f, 28.5f, 40.5f, 0.2f},
+		{"progs/ee_v_railgun.mdl", -1.0f, 22.5f, 34.5f, 0.2f},
+		{"progs/ee_v_av72.mdl", 0.5f, 24.0f, 38.5f, 0.2f},
+		{"progs/ee_v_legal.mdl", 0.0f, 55.0f, 29.0f, 0.2f},
+	};
+	vec3_t held;
+	vec3_t muzzle;
+	float scale;
+	size_t index;
+
+	for (index = 0; index < sizeof(expected) / sizeof(expected[0]); ++index)
+	{
+		assert(VR_WeaponCalibrationLookupHeld(expected[index].path, false,
+											 false, held, &scale));
+		AssertVector(held, expected[index].x, expected[index].y,
+				 expected[index].z);
+		assert(fabsf(scale - expected[index].scale) < 0.0001f);
+		assert(VR_WeaponCalibrationLookupMuzzle(expected[index].path, false,
+												 false, muzzle));
+		AssertVector(muzzle, 0.0f, 0.0f, expected[index].z);
+	}
+}
+
 int main(void)
 {
 	vec3_t muzzle;
+	vec3_t held;
+	float held_scale;
+
+	strcpy(com_gamedir, "/fixtures/id1");
 
 	/* A missing file still publishes the eight enhanced fallback profiles. */
 	fixture_file_contents = NULL;
@@ -125,6 +168,8 @@ int main(void)
 	assert(file_load_count == 1 && file_free_count == 0);
 	assert(registered_cvar_count == CALIBRATION_CVAR_COUNT);
 	AssertFallbackMuzzles();
+	assert(!VR_WeaponCalibrationLookupHeld(
+		"progs/ee_v_sword.mdl", false, false, held, &held_scale));
 
 	/* Authored classic fields override only themselves; enhanced fallback stays. */
 	fixture_file_contents =
@@ -185,6 +230,41 @@ int main(void)
 	assert(VR_WeaponCalibrationReloadGame());
 	assert(file_load_count == 6 && file_free_count == 4);
 	AssertFallbackMuzzles();
+
+	/* Enyo classic defaults precede identity-only schema entries and MP overlay. */
+	strcpy(com_gamedir, "/fixtures/enyo");
+	fixture_file_contents = NULL;
+	assert(VR_WeaponCalibrationReloadGame());
+	assert(file_load_count == 7 && file_free_count == 4);
+	AssertEnyoFallbacks();
+
+	fixture_file_contents =
+		"global_mp_muzzle_offset 1 2 3 "
+		"{ bitmask 4096 viewmodel progs/ee_v_sword.mdl } "
+		"{ bitmask 1 viewmodel progs/ee_v_pistol.mdl "
+		"held_offset 1 2 3 held_scale 0.5 muzzle_offset 9 10 11 }";
+	assert(VR_WeaponCalibrationReloadGame());
+	assert(file_load_count == 8 && file_free_count == 5);
+	assert(VR_WeaponCalibrationLookupHeld(
+		"progs/ee_v_sword.mdl", false, false, held, &held_scale));
+	AssertVector(held, 25.0f, 49.0f, 60.0f);
+	assert(fabsf(held_scale - 0.2f) < 0.0001f);
+	assert(VR_WeaponCalibrationLookupMuzzle(
+		"progs/ee_v_sword.mdl", false, false, muzzle));
+	AssertVector(muzzle, 0.0f, 0.0f, 60.0f);
+	assert(VR_WeaponCalibrationLookupMuzzle(
+		"progs/ee_v_sword.mdl", false, true, muzzle));
+	AssertVector(muzzle, 1.0f, 2.0f, 63.0f);
+	assert(VR_WeaponCalibrationLookupHeld(
+		"progs/ee_v_pistol.mdl", false, false, held, &held_scale));
+	AssertVector(held, 1.0f, 2.0f, 3.0f);
+	assert(fabsf(held_scale - 0.5f) < 0.0001f);
+	assert(VR_WeaponCalibrationLookupMuzzle(
+		"progs/ee_v_pistol.mdl", false, false, muzzle));
+	AssertVector(muzzle, 9.0f, 10.0f, 11.0f);
+	assert(VR_WeaponCalibrationLookupMuzzle(
+		"progs/ee_v_pistol.mdl", false, true, muzzle));
+	AssertVector(muzzle, 10.0f, 12.0f, 14.0f);
 
 	puts("VR weapon calibration reload fixture passed");
 	return 0;

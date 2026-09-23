@@ -54,7 +54,8 @@ cc -std=gnu11 -DUSE_SDL3 -D_GNU_SOURCE -Wall -Wextra -Werror \
 `vr_weapon_calibration_reload_fixture.c` exercises active-game reload with the
 real schema parser, including all eight enhanced muzzle fallbacks, missing-file
 behavior, field-wise file overrides, profile replacement on a later reload,
-file freeing, and safe built-in retention after malformed input. The file
+all ten Enyo classic held/muzzle defaults, Enyo identity-only schema plus
+global MP overlay, file freeing, and safe built-in retention after malformed input. The file
 loader is a fixture boundary; native `COM_LoadFile` supplies active search-path
 behavior in the game.
 

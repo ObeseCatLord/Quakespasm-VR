@@ -121,6 +121,80 @@ static const vr_weapon_schema_entry_t vr_enhanced_weapon_fallbacks[] = {
 	},
 };
 
+/* Classic viewmodel calibration from the donor's Enyo InitWeaponCVars. */
+static const vr_weapon_schema_entry_t vr_enyo_weapon_fallbacks[] = {
+	{
+		.viewmodel_path = "progs/ee_v_sword.mdl",
+		.held_offset = {25.0f, 49.0f, 60.0f},
+		.has_held_offset = true,
+		.held_scale = 0.2f,
+		.has_held_scale = true,
+	},
+	{
+		.viewmodel_path = "progs/ee_v_pistol.mdl",
+		.held_offset = {12.0f, 24.0f, 29.0f},
+		.has_held_offset = true,
+		.held_scale = 0.2f,
+		.has_held_scale = true,
+	},
+	{
+		.viewmodel_path = "progs/ee_v_sgun.mdl",
+		.held_offset = {-2.3f, 21.3f, 35.3f},
+		.has_held_offset = true,
+		.held_scale = 0.2f,
+		.has_held_scale = true,
+	},
+	{
+		.viewmodel_path = "progs/ee_v_smgs.mdl",
+		.held_offset = {3.5f, 24.6f, 29.8f},
+		.has_held_offset = true,
+		.held_scale = 0.2f,
+		.has_held_scale = true,
+	},
+	{
+		.viewmodel_path = "progs/ee_v_plasma.mdl",
+		.held_offset = {-1.5f, 21.8f, 36.0f},
+		.has_held_offset = true,
+		.held_scale = 0.2f,
+		.has_held_scale = true,
+	},
+	{
+		.viewmodel_path = "progs/ee_v_glaunch.mdl",
+		.held_offset = {-3.8f, 24.0f, 35.5f},
+		.has_held_offset = true,
+		.held_scale = 0.2f,
+		.has_held_scale = true,
+	},
+	{
+		.viewmodel_path = "progs/ee_v_rlaunch.mdl",
+		.held_offset = {4.0f, 28.5f, 40.5f},
+		.has_held_offset = true,
+		.held_scale = 0.2f,
+		.has_held_scale = true,
+	},
+	{
+		.viewmodel_path = "progs/ee_v_railgun.mdl",
+		.held_offset = {-1.0f, 22.5f, 34.5f},
+		.has_held_offset = true,
+		.held_scale = 0.2f,
+		.has_held_scale = true,
+	},
+	{
+		.viewmodel_path = "progs/ee_v_av72.mdl",
+		.held_offset = {0.5f, 24.0f, 38.5f},
+		.has_held_offset = true,
+		.held_scale = 0.2f,
+		.has_held_scale = true,
+	},
+	{
+		.viewmodel_path = "progs/ee_v_legal.mdl",
+		.held_offset = {0.0f, 55.0f, 29.0f},
+		.has_held_offset = true,
+		.held_scale = 0.2f,
+		.has_held_scale = true,
+	},
+};
+
 #define VR_WeaponOffsetCvar(slot, field) \
 	vr_weapon_offset[(slot) * VR_WEAPON_CALIBRATION_VARS_PER_WEAPON + (field)]
 #define VR_WeaponMuzzleCvar(slot, field) \
@@ -476,6 +550,24 @@ static qboolean VR_WeaponCalibrationApplyEnhancedFallbacks(void)
 		sizeof(vr_enhanced_weapon_fallbacks[0]));
 }
 
+static qboolean VR_WeaponCalibrationApplyEnyoFallbacks(void)
+{
+	const char *game = COM_SkipPath(com_gamedir);
+
+	if (!game || q_strcasecmp(game, "enyo"))
+		return true;
+	return VR_WeaponCalibrationApplySchema(
+		vr_enyo_weapon_fallbacks,
+		sizeof(vr_enyo_weapon_fallbacks) /
+		sizeof(vr_enyo_weapon_fallbacks[0]));
+}
+
+static qboolean VR_WeaponCalibrationApplyBuiltinFallbacks(void)
+{
+	return VR_WeaponCalibrationApplyEnhancedFallbacks() &&
+		VR_WeaponCalibrationApplyEnyoFallbacks();
+}
+
 qboolean VR_WeaponCalibrationReloadGame(void)
 {
 	vr_weapon_schema_entry_t entries[VR_WEAPON_SCHEMA_MAX_ENTRIES];
@@ -486,7 +578,7 @@ qboolean VR_WeaponCalibrationReloadGame(void)
 
 	VR_WeaponCalibrationInit();
 	VR_WeaponCalibrationReset();
-	if (!VR_WeaponCalibrationApplyEnhancedFallbacks())
+	if (!VR_WeaponCalibrationApplyBuiltinFallbacks())
 	{
 		VR_WeaponCalibrationReset();
 		return false;
@@ -506,7 +598,7 @@ qboolean VR_WeaponCalibrationReloadGame(void)
 	if (!applied)
 	{
 		VR_WeaponCalibrationReset();
-		if (!VR_WeaponCalibrationApplyEnhancedFallbacks())
+		if (!VR_WeaponCalibrationApplyBuiltinFallbacks())
 			VR_WeaponCalibrationReset();
 		return false;
 	}
