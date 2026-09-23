@@ -117,14 +117,19 @@ static void CL_ClearEntityVRIKCache (entity_t *ent)
 	ent->vrik_slot_retired = false;
 }
 
-static void CL_RetireEntityVRIKCache (entity_t *ent)
+static void CL_RetireEntityVRIKGeneration (entity_t *ent, uint32_t generation)
 {
-	const unsigned int generation = ent->vrik_generation;
-	CL_ClearEntityVRIKCache (ent);
-	/* Keep a generation floor so a late packet from the old occupant cannot
-	 * animate the next player assigned to this scoreboard slot. */
+	/* Reliable retirements can arrive after a pose from the replacement
+	 * occupant. Never let an older retirement erase or suppress that stream. */
+	if (ent->vrik_generation && ent->vrik_generation != generation &&
+		(uint32_t)(ent->vrik_generation - generation) < UINT32_C(0x80000000))
+		return;
+
+	CL_ClearEntityVRIKSamples (ent);
+	ent->vrik_last_sequence = 0;
+	ent->vrik_sequence_valid = false;
 	ent->vrik_generation = generation;
-	ent->vrik_slot_retired = generation != 0;
+	ent->vrik_slot_retired = true;
 }
 
 void CL_ResetVRIKPoseCaches (void)
@@ -194,6 +199,77 @@ static qboolean CL_OfferVRIKProtocol (const char *command)
 			"vrik_cap 3" : "vrik_cap 2");
 	}
 	Con_DPrintf ("VRIK: negotiated protocol %d with server\n", offered_version);
+	return true;
+}
+
+static qboolean CL_ParseVRIKRetirementDecimal (const char **cursor,
+	uint32_t *value)
+{
+	const char *p = *cursor;
+	uint32_t parsed = 0;
+	qboolean valid = true;
+	qboolean have_digit = false;
+
+	while (*p >= '0' && *p <= '9')
+	{
+		uint32_t digit = (uint32_t)(*p - '0');
+		have_digit = true;
+		if (parsed > (UINT32_MAX - digit) / 10)
+			valid = false;
+		else if (valid)
+			parsed = parsed * 10 + digit;
+		p++;
+	}
+	*cursor = p;
+	if (!have_digit || !valid)
+		return false;
+	*value = parsed;
+	return true;
+}
+
+/* Return true for every exact vrik_retire command token, including malformed
+ * forms, so an untrusted comment can never fall through to console execution. */
+static qboolean CL_ParseVRIKRetirement (const char *command)
+{
+	static const char command_name[] = "vrik_retire";
+	const char *p;
+	uint32_t slot = 0, generation = 0;
+	qboolean valid;
+
+	if (strncmp (command, command_name, sizeof (command_name) - 1) ||
+		(command[sizeof (command_name) - 1] &&
+		 command[sizeof (command_name) - 1] != ' ' &&
+		 command[sizeof (command_name) - 1] != '\t'))
+		return false;
+
+	valid = true;
+	p = command + sizeof (command_name) - 1;
+	if (*p != ' ' && *p != '\t')
+		return true;
+	while (*p == ' ' || *p == '\t')
+		p++;
+	if (!CL_ParseVRIKRetirementDecimal (&p, &slot))
+		valid = false;
+	if (*p != ' ' && *p != '\t')
+		valid = false;
+	else
+	{
+		while (*p == ' ' || *p == '\t')
+			p++;
+	}
+	if (!CL_ParseVRIKRetirementDecimal (&p, &generation) || !generation)
+		valid = false;
+	if (*p == '\r')
+		p++;
+	if (*p != '\n' || p[1] != '\0')
+		valid = false;
+	if (!valid || slot >= MAX_SCOREBOARD || slot >= (uint32_t)cl.maxclients ||
+		!cl.entities || slot + 1 >= (uint32_t)cl.num_entities)
+		return true;
+
+	/* Retirements belong only to the negotiated optional VRIK extension. */
+	if (cl.vrik_protocol_version)
+		CL_RetireEntityVRIKGeneration (&cl.entities[slot + 1], generation);
 	return true;
 }
 
@@ -2726,6 +2802,8 @@ void CL_ParseServerMessage (void)
 			{
 				if (CL_OfferVRIKProtocol (str + 2))
 					break;
+				if (CL_ParseVRIKRetirement (str + 2))
+					break;
 				if (!Cmd_ExecuteString (str + 2, src_server))
 					Con_DPrintf ("Server sent unknown command %s\n", Cmd_Argv (0));
 			}
@@ -2813,7 +2891,7 @@ void CL_ParseServerMessage (void)
 			q_strlcpy (cl.scores[i].name, MSG_ReadString (), MAX_SCOREBOARDNAME);
 			Info_SetKey (cl.scores[i].userinfo, sizeof (cl.scores[i].userinfo), "name", cl.scores[i].name);
 			if (!cl.scores[i].name[0] && cl.entities && i + 1 < cl.num_entities)
-				CL_RetireEntityVRIKCache (&cl.entities[i + 1]);
+				CL_ClearEntityVRIKSamples (&cl.entities[i + 1]);
 			break;
 
 		case svc_updatefrags:
