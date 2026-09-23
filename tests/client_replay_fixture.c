@@ -12,6 +12,7 @@ cvar_t r_lerpmove = {"r_lerpmove", "1", CVAR_NONE};
 cvar_t r_lerpturn = {"r_lerpturn", "1", CVAR_NONE};
 
 static qboolean selector_result = true;
+static qboolean selector_mutates_movevars;
 static int selector_calls, collector_calls, move_calls, preview_calls;
 static usercmd_t preview_cmd;
 static usercmd_t observed_cmds[66];
@@ -30,6 +31,8 @@ void CL_PreviewMove (usercmd_t *cmd)
 qboolean PMCL_SetMoveVars (void)
 {
 	selector_calls++;
+	if (selector_mutates_movevars)
+		movevars.gravity = 1234;
 	return selector_result;
 }
 
@@ -59,6 +62,7 @@ static entity_t entities[5];
 static void reset_probes (void)
 {
 	selector_result = true;
+	selector_mutates_movevars = false;
 	selector_calls = collector_calls = move_calls = preview_calls = 0;
 	memset (&preview_cmd, 0, sizeof(preview_cmd));
 	memset (observed_cmds, 0, sizeof(observed_cmds));
@@ -72,6 +76,7 @@ static void reset_client (void)
 	memset (&cl, 0, sizeof(cl));
 	memset (&cls, 0, sizeof(cls));
 	memset (&pmove, 0, sizeof(pmove));
+	memset (&movevars, 0, sizeof(movevars));
 	memset (entities, 0, sizeof(entities));
 	memset (&worldmodel, 0, sizeof(worldmodel));
 	reset_probes ();
@@ -193,6 +198,129 @@ static void check_private_snapshot_and_metadata_gates (void)
 	assert (observed_cmds[0].msec == 100);
 	assert (observed_cmds[0].vr_active);
 	assert (observed_cmds[0].vr_roomscalemove[0] == 8);
+}
+
+static void check_private_walk_shadow (void)
+{
+	cl_replay_result_t result;
+	playermove_t saved_pmove;
+	movevars_t saved_movevars;
+	int saved_propagate_sequence[countof(cl.move_replay_propagate_sequence)];
+	float saved_propagate_waterjumptime[countof(cl.move_replay_propagate_waterjumptime)];
+	vec3_t saved_velocity;
+	qboolean saved_onground, saved_inwater;
+	int i;
+
+	reset_client ();
+	admit_private_snapshot ();
+	cl.move_ack_prediction_allowed = false;
+	cl_nopred.value = 1;
+	cl.statsf[STAT_PRIVATE_JUMP_SECS] = 1.25f;
+	cl.movecmds[3 & MOVECMDS_MASK].vr_active = false;
+	cl.movemessages = 5;
+	cl.movecmds[4 & MOVECMDS_MASK].sequence = 99; /* target 3 must not read past itself */
+	cl.move_replay_private_metadata_valid = true;
+	cl.move_replay_private_prediction_allowed = true;
+	cl.move_replay_private_authority = MOVE_AUTHORITY_LEGACY_FRAME;
+	cl.move_replay_private_mode_epoch = cl.move_ack_mode_epoch + 1;
+	cl.move_replay_private_discontinuity_epoch = cl.move_ack_discontinuity_epoch + 1;
+	for (i = 0; i < (int)countof(cl.move_replay_propagate_sequence); i++)
+	{
+		cl.move_replay_propagate_sequence[i] = -100 - i;
+		cl.move_replay_propagate_waterjumptime[i] = (float)i + .25f;
+	}
+	cl.move_replay_propagate_sequence[3 & MOVECMDS_MASK] = 3;
+	cl.move_replay_propagate_waterjumptime[3 & MOVECMDS_MASK] = 42;
+	memcpy (saved_propagate_sequence, cl.move_replay_propagate_sequence,
+		sizeof(saved_propagate_sequence));
+	memcpy (saved_propagate_waterjumptime, cl.move_replay_propagate_waterjumptime,
+		sizeof(saved_propagate_waterjumptime));
+	VectorSet (cl.velocity, 7, 8, 9);
+	VectorCopy (cl.velocity, saved_velocity);
+	saved_onground = cl.onground = false;
+	saved_inwater = cl.inwater = true;
+	pmove.origin[0] = 77;
+	pmove.cmd.sequence = 66;
+	pmove.pm_type = PM_DEAD;
+	movevars.gravity = 654;
+	saved_pmove = pmove;
+	saved_movevars = movevars;
+	selector_mutates_movevars = true;
+
+	assert (CL_ComputeReplayPlayerMovement (&entities[1], &result, true, 3));
+	assert (!cl.move_ack_prediction_allowed);
+	assert (selector_calls == 1 && collector_calls == 1 && move_calls == 1);
+	assert (preview_calls == 0);
+	assert (observed_cmds[0].sequence == 3 && observed_cmds[0].msec == 100);
+	assert (!observed_cmds[0].vr_active);
+	assert (observed_waterjump_before[0] == 0); /* shadow ignores stale propagation seed */
+	assert (result.origin[0] == 101 && result.velocity[0] == 10);
+	assert (result.onground && !result.inwater);
+	assert (result.target_sequence == 3 && result.jump_secs == 1.25f);
+	assert (memcmp (&pmove, &saved_pmove, sizeof(pmove)) == 0);
+	assert (memcmp (&movevars, &saved_movevars, sizeof(movevars)) == 0);
+	assert (memcmp (cl.move_replay_propagate_sequence, saved_propagate_sequence,
+		sizeof(saved_propagate_sequence)) == 0);
+	assert (memcmp (cl.move_replay_propagate_waterjumptime, saved_propagate_waterjumptime,
+		sizeof(saved_propagate_waterjumptime)) == 0);
+	assert (VectorCompare (cl.velocity, saved_velocity));
+	assert (cl.onground == saved_onground && cl.inwater == saved_inwater);
+
+	/* A selector failure can mutate movevars before rejecting; shadow restores
+	 * both solver globals on that path too. */
+	reset_probes ();
+	selector_result = false;
+	movevars.gravity = 321;
+	saved_movevars = movevars;
+	pmove.origin[0] = 88;
+	saved_pmove = pmove;
+	assert (!CL_ComputeReplayPlayerMovement (&entities[1], &result, true, 3));
+	assert (memcmp (&pmove, &saved_pmove, sizeof(pmove)) == 0);
+	assert (memcmp (&movevars, &saved_movevars, sizeof(movevars)) == 0);
+	assert (!collector_calls && !move_calls && !preview_calls);
+
+	/* A bad owner baseline fails after pmove has been cleared and must restore
+	 * both globals along with the earlier selector-failure path. */
+	reset_probes ();
+	selector_mutates_movevars = true;
+	movevars.gravity = 222;
+	saved_movevars = movevars;
+	pmove.origin[0] = 99;
+	saved_pmove = pmove;
+	entities[1].netstate.origin[1] = NAN;
+	assert (!CL_ComputeReplayPlayerMovement (&entities[1], &result, true, 3));
+	entities[1].netstate.origin[1] = 0;
+	assert (memcmp (&pmove, &saved_pmove, sizeof(pmove)) == 0);
+	assert (memcmp (&movevars, &saved_movevars, sizeof(movevars)) == 0);
+	assert (selector_calls == 1 && !collector_calls && !move_calls && !preview_calls);
+
+	selector_result = true;
+	reset_probes ();
+	cl.move_snapshot_ack--;
+	assert (!CL_ComputeReplayPlayerMovement (&entities[1], &result, true, 3));
+	cl.move_snapshot_ack = cl.ackedmovemessages;
+	cl.move_snapshot_owner = 2;
+	assert (!CL_ComputeReplayPlayerMovement (&entities[1], &result, true, 3));
+	cl.move_snapshot_owner = cl.viewentity;
+	cl.move_ack_authority = MOVE_AUTHORITY_PMOVE_QC_COMMAND;
+	assert (!CL_ComputeReplayPlayerMovement (&entities[1], &result, true, 3));
+	cl.move_ack_authority = MOVE_AUTHORITY_PMOVE_ENGINE_COMPAT;
+	entities[1].netstate.pmovetype = MOVETYPE_TOSS;
+	assert (!CL_ComputeReplayPlayerMovement (&entities[1], &result, true, 3));
+	entities[1].netstate.pmovetype = MOVETYPE_WALK | 0x80;
+	cl.protocol_qsvr = 0;
+	assert (!CL_ComputeReplayPlayerMovement (&entities[1], &result, true, 3));
+	cl.protocol_qsvr = QSVR_PROTOCOL_PINNED;
+	cl.movecmds[3 & MOVECMDS_MASK].vr_active = true;
+	assert (!CL_ComputeReplayPlayerMovement (&entities[1], &result, true, 3));
+	cl.movecmds[3 & MOVECMDS_MASK].vr_active = false;
+	cl.movecmds[3 & MOVECMDS_MASK].sequence = 99;
+	assert (!CL_ComputeReplayPlayerMovement (&entities[1], &result, true, 3));
+	cl.movecmds[3 & MOVECMDS_MASK].sequence = 3;
+	assert (!CL_ComputeReplayPlayerMovement (&entities[1], &result, true, 2));
+	assert (!CL_ComputeReplayPlayerMovement (&entities[1], &result, true, 4));
+	assert (!CL_ComputeReplayPlayerMovement (&entities[1], &result, true, 5));
+	assert (!selector_calls && !collector_calls && !move_calls && !preview_calls);
 }
 
 static void check_partial_preview_timing_and_empty_history (void)
@@ -436,6 +564,7 @@ int main (void)
 	check_public_replay_strips_private_fields ();
 	check_prediction_optout_and_public_protocol_gate ();
 	check_private_snapshot_and_metadata_gates ();
+	check_private_walk_shadow ();
 	check_partial_preview_timing_and_empty_history ();
 	check_history_loss_and_selector_failure ();
 	check_pause_death_and_move_modes ();
@@ -443,6 +572,6 @@ int main (void)
 	check_trusted_gorilla_generation ();
 	check_raw_gorilla_state_provenance ();
 	check_relink_prediction_and_attachment_pose ();
-	puts ("QSS-M client replay: partial preview timing, gating/history/epochs, Gorilla provenance and shared attachment pose passed");
+	puts ("QSS-M client replay: shadow WALK, partial preview timing, gating/history/epochs, Gorilla provenance and shared attachment pose passed");
 	return 0;
 }

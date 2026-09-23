@@ -621,3 +621,14 @@ owner/ACK candidate with permission false. A held-jump run observed the
 jump-held bit during movement, its release by the settled snapshot, and a
 nonzero received jump timer. This qualifies the owner seed's basic wire path;
 it does not establish replay parity, collider freshness or safe presentation.
+
+The client now has an internal shadow WALK replay entry point built on the
+existing PMove helper. It replays journaled commands only through an explicit
+target sequence, omits the unsent input preview, rejects VR commands and an
+incoherent owner/ACK, and does not publish origin, velocity, ground/water state
+or propagation-cache updates. The sanitizer fixture checks its target bound,
+gates and restoration of the solver globals. Live prediction permission remains
+off. An attempted paired GDB command trace stalled while evaluating the client
+helper, so it supplied no client/server parity measurement. Repeat that proof
+with a nonblocking capture method before admitting shadow output as a baseline
+or enabling presentation.

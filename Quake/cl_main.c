@@ -555,7 +555,7 @@ static int CL_ReplayPMoveType (int movetype)
 	}
 }
 
-static qboolean CL_ReplayHistoryAvailable (int *startseq)
+static qboolean CL_ReplayHistoryAvailable (int *startseq, int endseq)
 {
 	int seq;
 	int first = cl.ackedmovemessages + 1;
@@ -569,13 +569,13 @@ static qboolean CL_ReplayHistoryAvailable (int *startseq)
 		return false;
 	/* Preserve QSS-M's public "lost is lost" policy: resume at the oldest
 	 * retained command rather than reading an overwritten slot. Private replay
-	 * must retain every command after its authoritative baseline ACK. */
+	 * must retain every requested command after its authoritative baseline ACK. */
 	if (first < oldest)
 		first = oldest;
 	if (first > cl.movemessages)
 		return false;
 
-	for (seq = first; seq < cl.movemessages; seq++)
+	for (seq = first; seq < endseq; seq++)
 		if (cl.movecmds[seq & MOVECMDS_MASK].sequence != (unsigned int)seq)
 			return false;
 
@@ -709,19 +709,24 @@ typedef struct
 	vec3_t velocity;
 	qboolean onground;
 	qboolean inwater;
+	int target_sequence;
+	float jump_secs;
 } cl_replay_result_t;
 
-static qboolean CL_ComputeReplayPlayerMovement (entity_t *ent, cl_replay_result_t *result)
+static qboolean CL_ComputeReplayPlayerMovement (entity_t *ent, cl_replay_result_t *result,
+	qboolean shadow, int target_sequence)
 {
 	qboolean private_replay;
+	playermove_t saved_pmove;
+	movevars_t saved_movevars;
 	usercmd_t preview;
 	vec3_t bounds[2];
 	vec3_t baseline_origin;
 	unsigned int solidsize;
-	int i, seq, startseq;
+	int i, seq, startseq, endseq;
 	int pm_type;
 
-	if (cl_nopred.value || cls.state != ca_connected || cls.signon != SIGNONS || cls.demoplayback ||
+	if ((!shadow && cl_nopred.value) || cls.state != ca_connected || cls.signon != SIGNONS || cls.demoplayback ||
 		cl.paused || !cl.worldmodel || !cl.entities ||
 		cl.viewentity <= 0 || cl.viewentity >= cl.num_entities ||
 		ent != &cl.entities[cl.viewentity] || cl.stats[STAT_HEALTH] <= 0 ||
@@ -733,7 +738,18 @@ static qboolean CL_ComputeReplayPlayerMovement (entity_t *ent, cl_replay_result_
 		return false;
 	if (!private_replay && !(cl.protocol_pext2 & PEXT2_PREDINFO))
 		return false;
-	if (private_replay)
+	if (shadow)
+	{
+		/* A shadow is only an explicit diagnostic of a coherent selected owner.
+		 * Prediction permission remains an independent live-policy decision. */
+		if (!private_replay || !cl.move_snapshot_valid ||
+			cl.move_snapshot_ack != cl.ackedmovemessages ||
+			cl.move_snapshot_owner != cl.viewentity ||
+			cl.move_ack_authority != MOVE_AUTHORITY_PMOVE_ENGINE_COMPAT ||
+			(ent->netstate.pmovetype & 63) != MOVETYPE_WALK)
+			return false;
+	}
+	else if (private_replay)
 	{
 		/* The owner snapshot establishes ACK/state coherence only.  Permission,
 		 * authority and epochs remain independent accepted metadata. */
@@ -753,15 +769,35 @@ static qboolean CL_ComputeReplayPlayerMovement (entity_t *ent, cl_replay_result_
 		cl.move_replay_private_metadata_valid = false;
 	}
 
-	pm_type = CL_ReplayPMoveType (ent->netstate.pmovetype);
-	if (pm_type == PM_NONE || !CL_ReplayHistoryAvailable (&startseq))
+	if (shadow && target_sequence >= cl.movemessages)
 		return false;
+	pm_type = CL_ReplayPMoveType (ent->netstate.pmovetype);
+	if (pm_type == PM_NONE || !CL_ReplayHistoryAvailable (&startseq,
+		shadow ? target_sequence + 1 : cl.movemessages))
+		return false;
+	if (shadow)
+	{
+		if (target_sequence < startseq || target_sequence >= cl.movemessages)
+			return false;
+		for (seq = startseq; seq <= target_sequence; seq++)
+			if (cl.movecmds[seq & MOVECMDS_MASK].vr_active)
+				return false;
+		endseq = target_sequence + 1;
+		saved_pmove = pmove;
+		saved_movevars = movevars;
+	}
+	else
+		endseq = cl.movemessages;
 
 	/* Select the current incremental stat/serverinfo accumulator exactly once
 	 * for this pass.  A rejected numeric/dialect selection suppresses replay
 	 * only; networking owners continue independently. */
 	if (!PMCL_SetMoveVars ())
+	{
+		if (shadow)
+			goto shadow_failed;
 		return false;
+	}
 
 	memset (&pmove, 0, sizeof(pmove));
 	if (private_replay)
@@ -770,7 +806,11 @@ static qboolean CL_ComputeReplayPlayerMovement (entity_t *ent, cl_replay_result_
 		VectorCopy (ent->msg_origins[0], baseline_origin);
 	for (i = 0; i < 3; i++)
 		if (!isfinite (baseline_origin[i]))
+		{
+			if (shadow)
+				goto shadow_failed;
 			return false;
+		}
 	VectorCopy (baseline_origin, pmove.origin);
 
 	solidsize = ent->netstate.solidsize;
@@ -796,40 +836,58 @@ static qboolean CL_ComputeReplayPlayerMovement (entity_t *ent, cl_replay_result_
 	pmove.jump_secs = private_replay ? cl.statsf[STAT_PRIVATE_JUMP_SECS] : 0;
 	pmove.onground = (ent->netstate.pmovetype & 0x80) != 0;
 	pmove.skipent = -cl.viewentity;
-	if (private_replay && !CL_SetupReplayGorilla (startseq))
+	if (!shadow && private_replay && !CL_SetupReplayGorilla (startseq))
 		return false;
 	PMCL_AddEntities (bounds);
 
-	if (cl.move_replay_propagate_sequence[startseq & MOVECMDS_MASK] == startseq)
+	if (!shadow && cl.move_replay_propagate_sequence[startseq & MOVECMDS_MASK] == startseq)
 		pmove.waterjumptime =
 			cl.move_replay_propagate_waterjumptime[startseq & MOVECMDS_MASK];
 
-	for (seq = startseq; seq < cl.movemessages; seq++)
+	for (seq = startseq; seq < endseq; seq++)
 	{
 		const usercmd_t *histcmd = &cl.movecmds[seq & MOVECMDS_MASK];
 		CL_PrepareReplayCommand (&pmove.cmd, histcmd, private_replay);
 		PM_PlayerMove (1);
-		cl.move_replay_propagate_sequence[(seq + 1) & MOVECMDS_MASK] = seq + 1;
-		cl.move_replay_propagate_waterjumptime[(seq + 1) & MOVECMDS_MASK] =
-			pmove.waterjumptime;
+		if (!shadow)
+		{
+			cl.move_replay_propagate_sequence[(seq + 1) & MOVECMDS_MASK] = seq + 1;
+			cl.move_replay_propagate_waterjumptime[(seq + 1) & MOVECMDS_MASK] =
+				pmove.waterjumptime;
+		}
 	}
 
-	CL_PrepareReplayPreview (&preview, private_replay);
-	CL_PrepareReplayCommand (&pmove.cmd, &preview, private_replay);
-	PM_PlayerMove (1);
+	if (!shadow)
+	{
+		CL_PrepareReplayPreview (&preview, private_replay);
+		CL_PrepareReplayCommand (&pmove.cmd, &preview, private_replay);
+		PM_PlayerMove (1);
+	}
 
 	VectorCopy (pmove.origin, result->origin);
 	VectorCopy (pmove.velocity, result->velocity);
 	result->onground = pmove.onground;
 	result->inwater = pmove.waterlevel >= 2;
+	result->target_sequence = target_sequence;
+	result->jump_secs = pmove.jump_secs;
+	if (shadow)
+	{
+		pmove = saved_pmove;
+		movevars = saved_movevars;
+	}
 	return true;
+
+shadow_failed:
+	pmove = saved_pmove;
+	movevars = saved_movevars;
+	return false;
 }
 
 qboolean CL_ReplayPlayerMovement (entity_t *ent, vec3_t origin)
 {
 	cl_replay_result_t result;
 
-	if (!CL_ComputeReplayPlayerMovement (ent, &result))
+	if (!CL_ComputeReplayPlayerMovement (ent, &result, false, -1))
 		return false;
 
 	VectorCopy (result.origin, origin);
