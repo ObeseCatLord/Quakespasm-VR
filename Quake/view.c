@@ -24,6 +24,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "quakedef.h"
 #include "vr_aim.h"
 #include "vr_locomotion.h"
+#include "vr_weapon_calibration.h"
 #include "vr_input.h"
 
 /*
@@ -1328,6 +1329,7 @@ void V_Init (void)
 	Cvar_RegisterVariable (&vr_gunangle);
 	Cvar_RegisterVariable (&vr_gunmodelpitch);
 	Cvar_RegisterVariable (&vr_gunmodelscale);
+	VR_WeaponCalibrationInit ();
 	Cvar_SetCallback (&vr_aimmode, V_TrackedAimModeChanged);
 	Cmd_AddCommand ("v_cshift", V_cshift_f);
 	Cmd_AddCommand ("bf", V_BonusFlash_f);

@@ -18,6 +18,23 @@ cc -std=gnu11 -DUSE_SDL3 -D_GNU_SOURCE -Wall -Wextra -Werror \
 /tmp/quakespasm-vr-weapon-schema-fixture
 ```
 
+`vr_weapon_calibration_fixture.c` checks the live calibration authority's
+classic cvar names and lifetimes, field-wise schema merging, live classic
+muzzle edits, classic/enhanced multiplayer overlays, invalid and missing
+profiles, reset behavior, and all 99 cvar slots. A full-slot insertion failure
+must leave the existing calibration and all free slots unchanged.
+
+```sh
+cc -std=gnu11 -DUSE_SDL3 -D_GNU_SOURCE -Wall -Wextra -Werror \
+  -Wno-unused-parameter -Wno-sign-compare -Wno-missing-field-initializers \
+  -ffunction-sections -fdata-sections -fsanitize=address,undefined \
+  -fno-sanitize-recover=all -fno-omit-frame-pointer -IQuake \
+  tests/vr_weapon_calibration_fixture.c Quake/vr_weapon_calibration.c \
+  -Wl,--gc-sections $(pkg-config --cflags --libs sdl3) -lm \
+  -o /tmp/quakespasm-vr-weapon-calibration-fixture
+/tmp/quakespasm-vr-weapon-calibration-fixture
+```
+
 `vr_openxr_vulkan_fixture.cpp` is reused from the product OpenXR branch at
 `3080841333fa94000df7e1fb9e549c7158685dd6`, adapted to the Vulkan-only 2.0 backend.
 It checks creation-result ownership, instance/device provenance, version

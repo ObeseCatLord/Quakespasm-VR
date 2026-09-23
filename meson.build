@@ -313,6 +313,7 @@ srcs = [
     'Quake/vr_input.c',
     'Quake/vr_locomotion.c',
     'Quake/vr_weapon_schema.c',
+    'Quake/vr_weapon_calibration.c',
     'Quake/vr_openxr.cpp',
     'Quake/wad.c',
     'Quake/world.c',

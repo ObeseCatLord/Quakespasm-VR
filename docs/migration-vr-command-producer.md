@@ -105,6 +105,14 @@ final body position, so using a collision-accepted delta on the client would
 be a different protocol. The command must snapshot `G`, hand rotation, weapon
 profile and `D` together before send and nonconsuming preview; recomputing
 one piece from a newer render frame would mix tracking times.
+The smallest producer uses the existing `usercmd_t` pending record: prepare
+`vr_handpos`, `vr_handrot`, `vr_handpos_relative`, and `vr_active` from one
+completed frame in `VR_InputMove`, then copy those prepared values in
+`VR_InputApplyPending` for both send and preview. Clear that pending pose on
+each preparation and context/pose loss. The normal send reset consumes the
+pending record, while preview does not. A later accumulation may replace the
+pose and whole-command roomscale sum before send; each preparation must
+recompute the relative muzzle against that sum.
 The muzzle/hand rotation must use the dominant controller's full composed
 pitch, yaw and roll (`V_TrackedMovementAngles` in follow-hand mode), even when
 the movement command's view angles follow the head or offhand. The current
