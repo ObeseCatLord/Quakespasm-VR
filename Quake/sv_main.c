@@ -545,6 +545,21 @@ void SV_CalcStats (client_t *client, int *statsi, float *statsf, const char **st
 		statsf[STAT_PUNCHANGLE_Z] = ent->v.punchangle[2];
 	}
 
+	/* Preserve mod-owned inventory channels for the shared desktop/VR wheel.
+	 * These are optional QuakeC fields; absent fields leave their stats zero. */
+	if ((val = GetEdictFieldValueByName (ent, "weapons")))
+		statsi[STAT_VR_WEAPONS] = (int)val->_float;
+	if ((val = GetEdictFieldValueByName (ent, "items2")))
+		statsi[STAT_VR_ITEMS2] = (int)val->_float;
+	if ((val = GetEdictFieldValueByName (ent, "moditems")))
+		statsi[STAT_VR_MODITEMS] = (int)val->_float;
+	else if ((val = GetEdictFieldValueByName (ent, "items_dwell")))
+		statsi[STAT_VR_MODITEMS] = (int)val->_float;
+	if ((val = GetEdictFieldValueByName (ent, "weapon2")))
+		statsi[STAT_VR_WEAPON2] = (int)val->_float;
+	if ((val = GetEdictFieldValueByName (ent, "weapons2")))
+		statsi[STAT_VR_WEAPONS2] = (int)val->_float;
+
 	for (i = 0; i < sv.numcustomstats; i++)
 	{
 		eval_t *eval = sv.customstats[i].ptr;

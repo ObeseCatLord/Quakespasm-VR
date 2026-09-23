@@ -467,6 +467,86 @@ static void VR_InputFBTProfileReset_f (void)
 	Con_Printf ("FBT: cleared runtime profile and bindings; saved files were not removed\n");
 }
 
+static void VR_InputFBTProfileList_f (void)
+{
+	/* Bound raw directory entries as well as the number of names sent to the
+	 * console. Sys_FindFirst/Next use native OS iteration on each platform. */
+	enum { ENTRY_LIMIT = 4096, OUTPUT_LIMIT = 128 };
+	char directory[MAX_OSPATH];
+	const char *write_root;
+	findfile_t *find;
+	int path_length;
+	int count = 0;
+	int examined = 0;
+	qboolean truncated = false;
+
+	if (Cmd_Argc () != 1)
+	{
+		Con_Printf ("usage: vr_fbt_profile_list\n");
+		return;
+	}
+
+	if (vr_input_fbt_profile_valid)
+	{
+		unsigned int roles = 0;
+		for (int role = 0; role < VR_FBT_ROLE_COUNT; ++role)
+			roles += vr_input_fbt_profile.roles[role].present != 0;
+		Con_Printf ("FBT: selected profile %s (%u calibrated role%s)\n",
+			vr_input_fbt_profile.name, roles, roles == 1 ? "" : "s");
+	}
+	else
+		Con_Printf ("FBT: no selected calibration profile\n");
+
+	write_root = COM_GetWriteRoot ();
+	if (!write_root || !write_root[0])
+	{
+		Con_Printf ("FBT: could not enumerate saved profiles\n");
+		return;
+	}
+	path_length = q_snprintf (directory, sizeof (directory), "%s/vrik/profiles",
+		write_root);
+	if (path_length < 0 || (size_t)path_length >= sizeof (directory))
+	{
+		Con_Printf ("FBT: could not enumerate saved profiles\n");
+		return;
+	}
+
+	Con_Printf ("FBT: saved profiles:");
+	find = Sys_FindFirst (directory, NULL);
+	while (find && examined < ENTRY_LIMIT)
+	{
+		const size_t length = strlen (find->name);
+		if (!(find->attribs & FA_DIRECTORY) && length > 4 &&
+			!q_strcasecmp (find->name + length - 4, ".cfg") &&
+			length - 4 < VR_FBT_PROFILE_NAME_MAX)
+		{
+			char name[VR_FBT_PROFILE_NAME_MAX];
+			memcpy (name, find->name, length - 4);
+			name[length - 4] = '\0';
+			if (VR_FBT_StorageNameIsSafe (name))
+			{
+				if (count < OUTPUT_LIMIT)
+					Con_Printf (" %s", name);
+				else
+					truncated = true;
+				++count;
+			}
+		}
+		++examined;
+		find = Sys_FindNext (find);
+	}
+	if (find)
+	{
+		/* Sys_FindNext closes the handle at end-of-directory; close it here
+		 * when the raw-entry limit stopped iteration early. */
+		Sys_FindClose (find);
+		truncated = true;
+	}
+	Con_Printf ("%s%s\n", count ? "" : " none",
+		truncated ? " (listing truncated)" : "");
+	Con_Printf ("FBT: use vr_fbt_profile_select <name> to load one\n");
+}
+
 static qboolean VR_InputFBTMatrixFinite (const float matrix[3][4])
 {
 	for (int row = 0; row < 3; ++row)
@@ -1440,6 +1520,7 @@ void VR_InputInit (void)
 	Cmd_AddCommand ("vr_fbt_unassign", VR_InputFBTUnassign_f);
 	Cmd_AddCommand ("vr_fbt_profile_select", VR_InputFBTProfileSelect_f);
 	Cmd_AddCommand ("vr_fbt_profile_reset", VR_InputFBTProfileReset_f);
+	Cmd_AddCommand ("vr_fbt_profile_list", VR_InputFBTProfileList_f);
 	VR_InputClear ();
 	VR_InputFBTLoadSelectedProfile ();
 }
