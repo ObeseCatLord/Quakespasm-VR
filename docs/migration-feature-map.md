@@ -163,6 +163,11 @@ Disposition meanings: REUSE/ADAPT keep the source behavior at existing owners; K
 | FBT-004 — Persistent named profiles, strict storage, selection/save/reset and menu role cycling | MAIN:Quake/vr_fbt_storage.c:2 (VR_FBT); MAIN:Quake/vr_fbt_profile.c:1 (VR_FBT); MAIN:Quake/vr_menu.c:206 (VR_MenuCycleFBTRole) | Quake/vr_fbt*.c;Quake/vr_menu.c; **REUSE**, P3 | Save/reload named profiles across sessions; malformed profile and missing serial never silently reassign roles. |
 | FBT-005 — Optional tracker-less operation and independently negotiated lower-body pose relay | MAIN:Quake/vr.c:1958 (vr_fbt_enabled); MAIN:Quake/vrik_codec.h:2 (VRIK); MAIN:tests/vrik_lowerbody_fixture.c:412 (main) | Quake/vr.c;Quake/vrik_codec.c;Quake/r_vrik.c; **ADAPT**, P3 | Normal HMD/controller VR works without trackers; remote lower body activates only with valid negotiated inputs. |
 
+The `2.0` branch now directly reuses the source's hardware-independent FBT
+identity manager and pose filter. OpenXR tracker snapshots, calibration,
+profile storage, menu controls and lower-body pose relay are still separate
+integration work; compiling the pure modules does not satisfy FBT parity.
+
 ### QuakeC and mod compatibility
 
 | ID / behavior | Pinned source evidence | Destination / treatment | Acceptance |
