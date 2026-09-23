@@ -79,6 +79,14 @@ the same authoritative world, and that both see consistent damage, pickups,
 death/rejoin and map transitions. Neither a desktop-only private loopback nor
 a separate single-headset run proves this mixed case.
 
+The current private command carries the VR hand and muzzle pose to the server,
+where `SV_BeginPrivateVRWeaponPose` temporarily applies it while the player's
+weapon think runs. That is enough source evidence for an intended shared
+damage/projectile world; it does not distribute a remote tracked avatar to
+other clients. NET-026's VRIK pose transport and avatar rendering remain a
+separate parity gate. A desktop peer must still see and interact with the VR
+player correctly when remote hand tracking is absent or unavailable.
+
 ### Mixed-peer senior review disposition
 
 A local Astra Max review verified the per-client negotiation and private-only
