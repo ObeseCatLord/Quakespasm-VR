@@ -26,6 +26,8 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "gl_heap.h"
 #include "r_vrik_render.h"
 
+#include <math.h>
+
 /*
 =================================================================
 
@@ -77,6 +79,47 @@ static aliashdr_t *R_EntityBLASGeometry (entity_t *e, qboolean allow_tracked_pal
 
 static glheap_t	 *mesh_buffer_heap;
 static SDL_Mutex *mesh_mutex;
+
+static qboolean GLMesh_ComputeTrackedCullQmax (const aliashdr_t *hdr, const byte *vertexes, double *out_qmax)
+{
+	if (!hdr || !vertexes || !out_qmax || hdr->numverts_vbo <= 0 ||
+		(hdr->poseverttype != PV_MD5 && hdr->poseverttype != PV_MD5_8))
+		return false;
+
+	const int influences = hdr->poseverttype == PV_MD5 ? NUM_JOINT_INFLUENCES_4_WEIGHT : NUM_JOINT_INFLUENCES_8_WEIGHT;
+	double max_qsum = 0.0;
+	for (int vertex = 0; vertex < hdr->numverts_vbo; ++vertex)
+	{
+		double qsum = 0.0;
+		for (int influence = 0; influence < influences; ++influence)
+		{
+			double x, y, z;
+			if (hdr->poseverttype == PV_MD5)
+			{
+				const md5vert_t *v = (const md5vert_t *)vertexes + vertex;
+				x = v->joint_position_x[influence];
+				y = v->joint_position_y[influence];
+				z = v->joint_position_z[influence];
+			}
+			else
+			{
+				const md5vert8_t *v = (const md5vert8_t *)vertexes + vertex;
+				x = v->joint_position_x[influence];
+				y = v->joint_position_y[influence];
+				z = v->joint_position_z[influence];
+			}
+			if (!isfinite (x) || !isfinite (y) || !isfinite (z))
+				return false;
+			qsum += sqrt (x * x + y * y + z * z);
+			if (!isfinite (qsum))
+				return false;
+		}
+		if (max_qsum < qsum)
+			max_qsum = qsum;
+	}
+	*out_qmax = max_qsum;
+	return true;
+}
 
 typedef struct
 {
@@ -400,6 +443,8 @@ void GLMesh_UploadBuffers (
 	VkResult err;
 	if (!hdr)
 		return;
+	hdr->tracked_cull_qmax = 0.0;
+	hdr->tracked_cull_qmax_valid = false;
 
 	// count how much space we're going to need.
 	int totalvbosize = 0;
@@ -439,6 +484,8 @@ void GLMesh_UploadBuffers (
 	default:
 		assert (false);
 	}
+	if (GLMesh_ComputeTrackedCullQmax (hdr, vertexes, &hdr->tracked_cull_qmax))
+		hdr->tracked_cull_qmax_valid = true;
 
 	const size_t totaljointssize = hdr->numframes * hdr->numjoints * sizeof (jointpose_t);
 

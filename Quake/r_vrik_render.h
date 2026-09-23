@@ -16,6 +16,10 @@ typedef struct r_vrik_prepared_palette_s
 	uint32_t joint_count;
 	/* Exact start of this palette in the same allocation; already includes joint_offset. */
 	VkDeviceAddress palette_address;
+	/* Prepared from this solved palette and every surface in geometry's selected chain. */
+	double tracked_cull_local_bound;
+	vec3_t tracked_cull_origin;
+	qboolean tracked_cull_valid;
 } r_vrik_prepared_palette_t;
 
 /* Prepare after the matching frame-slot fence and dynamic-buffer swap. */

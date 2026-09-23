@@ -376,6 +376,9 @@ typedef struct aliashdr_s
 	aliashdr_t		   *nextsurface; // spike
 	int					numjoints;	 // spike -- for md5
 	poseverttype_t		poseverttype;
+	/* Valid only after GLMesh_UploadBuffers inspects the exact uploaded MD5 vertices. */
+	double				tracked_cull_qmax;
+	qboolean			tracked_cull_qmax_valid;
 	struct gltexture_s *gltextures[MAX_SKINS][MAX_FRAMEGROUPS]; // johnfitz
 	struct gltexture_s *fbtextures[MAX_SKINS][MAX_FRAMEGROUPS]; // johnfitz
 	byte			   *texels[MAX_SKINS];						// only for player skins

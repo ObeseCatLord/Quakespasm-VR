@@ -3,7 +3,9 @@
 #include "r_vrik.h"
 #include "r_vrik_render.h"
 
+#include <float.h>
 #include <limits.h>
+#include <math.h>
 
 #define R_VRIK_RENDER_MAX_JOINTS 256
 
@@ -17,6 +19,9 @@ typedef struct r_vrik_candidate_s
 	vrik_pose_t pose;
 	uint32_t joint_count;
 	qboolean muzzleflash;
+	double tracked_cull_local_bound;
+	vec3_t tracked_cull_origin;
+	qboolean tracked_cull_valid;
 } r_vrik_candidate_t;
 
 static r_vrik_candidate_t candidates[MAX_SCOREBOARD];
@@ -66,10 +71,82 @@ static qboolean R_VRIKRenderCandidate (const entity_t *entity, r_vrik_candidate_
 		output.joint_count > UINT32_MAX)
 		return false;
 
+	/* Inspect the selected surface chain and the actual solved affine matrices. */
+	double max_qmax = 0.0;
+	qboolean tracked_cull_valid = true;
+	int surface_count = 0;
+	for (aliashdr_t *surface = header; surface; surface = surface->nextsurface)
+	{
+		if (++surface_count > MAX_SURFACES ||
+			(surface->poseverttype != PV_MD5 && surface->poseverttype != PV_MD5_8) ||
+			surface->numjoints != (int)output.joint_count || !surface->tracked_cull_qmax_valid ||
+			!isfinite (surface->tracked_cull_qmax) || surface->tracked_cull_qmax < 0.0)
+		{
+			tracked_cull_valid = false;
+			break;
+		}
+		if (max_qmax < surface->tracked_cull_qmax)
+			max_qmax = surface->tracked_cull_qmax;
+	}
+	if (surface_count > MAX_SURFACES)
+		tracked_cull_valid = false;
+	double max_rotation_norm = 0.0;
+	double max_translation_norm = 0.0;
+	for (size_t joint = 0; tracked_cull_valid && joint < output.joint_count; ++joint)
+	{
+		const float *matrix = palette[joint];
+		double rotation_sum = 0.0;
+		double translation_sum = 0.0;
+		for (int row = 0; row < 3; ++row)
+		{
+			for (int column = 0; column < 3; ++column)
+			{
+				const double value = matrix[row * 4 + column];
+				if (!isfinite (value))
+				{
+					tracked_cull_valid = false;
+					break;
+				}
+				rotation_sum += value * value;
+			}
+			const double translation = matrix[row * 4 + 3];
+			if (!isfinite (translation))
+			{
+				tracked_cull_valid = false;
+				break;
+			}
+			translation_sum += translation * translation;
+		}
+		if (!tracked_cull_valid)
+			break;
+		const double rotation_norm = sqrt (rotation_sum);
+		const double translation_norm = sqrt (translation_sum);
+		if (!isfinite (rotation_norm) || !isfinite (translation_norm))
+		{
+			tracked_cull_valid = false;
+			break;
+		}
+		if (max_rotation_norm < rotation_norm)
+			max_rotation_norm = rotation_norm;
+		if (max_translation_norm < translation_norm)
+			max_translation_norm = translation_norm;
+	}
+	double local_bound = max_qmax * max_rotation_norm + max_translation_norm;
+	if (!isfinite (local_bound) || local_bound < 0.0)
+		tracked_cull_valid = false;
+
+	vec3_t cull_angles;
+	R_GetEntityLerpedTransform (entity, candidate->tracked_cull_origin, cull_angles);
+	for (int axis = 0; axis < 3; ++axis)
+		if (!isfinite (candidate->tracked_cull_origin[axis]) || !isfinite (cull_angles[axis]))
+			tracked_cull_valid = false;
+
 	candidate->entity = entity;
 	candidate->model = entity->model;
 	candidate->geometry = header;
 	candidate->joint_count = (uint32_t)output.joint_count;
+	candidate->tracked_cull_local_bound = local_bound;
+	candidate->tracked_cull_valid = tracked_cull_valid;
 	return candidate->joint_count != 0;
 }
 
@@ -169,6 +246,9 @@ void R_VRIKRenderPrepareFrame (uint32_t frame_slot)
 		record->joint_offset = (uint32_t)joint_cursor;
 		record->joint_count = candidate->joint_count;
 		record->palette_address = vulkan_globals.ray_query ? allocation_address + joint_cursor * sizeof (float[12]) : 0;
+		record->tracked_cull_local_bound = candidate->tracked_cull_local_bound;
+		VectorCopy (candidate->tracked_cull_origin, record->tracked_cull_origin);
+		record->tracked_cull_valid = candidate->tracked_cull_valid;
 		joint_cursor += candidate->joint_count;
 	}
 

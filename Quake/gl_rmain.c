@@ -29,6 +29,10 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "atomics.h"
 #include "vr_aim.h"
 #include "vr_input.h"
+#include "r_vrik_render.h"
+
+#include <float.h>
+#include <math.h>
 
 int r_visframecount; // bumped when going to a new PVS
 int r_framecount;	 // used for dlight push checking
@@ -191,6 +195,56 @@ qboolean R_CullModelForEntity (entity_t *e)
 {
 	vec3_t mins, maxs;
 	vec_t  scalefactor, *minbounds, *maxbounds;
+	const r_vrik_prepared_palette_t *tracked = R_VRIKRenderLookup (e);
+	if (tracked && tracked->model == e->model && e->model && e->model->type == mod_alias &&
+		tracked->geometry == (aliashdr_t *)Mod_Extradata_CheckSkin (e->model, e->skinnum))
+	{
+		const aliashdr_t *header = tracked->geometry;
+		if (!tracked->tracked_cull_valid || !header || !isfinite (tracked->tracked_cull_local_bound) ||
+			tracked->tracked_cull_local_bound < 0.0)
+			return false;
+		double origin_radius_squared = 0.0;
+		double max_header_scale = 0.0;
+		for (int axis = 0; axis < 3; ++axis)
+		{
+			const double scale_origin = header->scale_origin[axis];
+			const double header_scale = header->scale[axis];
+			if (!isfinite (tracked->tracked_cull_origin[axis]) || !isfinite (scale_origin) || !isfinite (header_scale))
+				return false;
+			origin_radius_squared += scale_origin * scale_origin;
+			if (max_header_scale < fabs (header_scale))
+				max_header_scale = fabs (header_scale);
+		}
+		const double entity_scale = fabs ((double)ENTSCALE_DECODE (e->netstate.scale));
+		if (!isfinite (entity_scale) || !isfinite (origin_radius_squared))
+			return false;
+		const double world_radius = entity_scale *
+			(sqrt (origin_radius_squared) + max_header_scale * tracked->tracked_cull_local_bound);
+		if (!isfinite (world_radius) || world_radius < 0.0)
+			return false;
+		/* Cover float rounding in GPU skinning, model transforms, and large BSP2 coordinates. */
+		double origin_magnitude_squared = 0.0;
+		for (int axis = 0; axis < 3; ++axis)
+			origin_magnitude_squared += (double)tracked->tracked_cull_origin[axis] * tracked->tracked_cull_origin[axis];
+		if (!isfinite (origin_magnitude_squared))
+			return false;
+		const double outward_radius = world_radius +
+			64.0 * FLT_EPSILON * (1.0 + sqrt (origin_magnitude_squared) + world_radius);
+		if (!isfinite (outward_radius) || outward_radius < 0.0 || outward_radius > FLT_MAX)
+			return false;
+		for (int axis = 0; axis < 3; ++axis)
+		{
+			const double lower = (double)tracked->tracked_cull_origin[axis] - outward_radius;
+			const double upper = (double)tracked->tracked_cull_origin[axis] + outward_radius;
+			if (!isfinite (lower) || !isfinite (upper) || lower < -FLT_MAX || upper > FLT_MAX)
+				return false;
+			mins[axis] = nextafterf ((float)lower, -INFINITY);
+			maxs[axis] = nextafterf ((float)upper, INFINITY);
+			if (!isfinite (mins[axis]) || !isfinite (maxs[axis]))
+				return false;
+		}
+		return R_CullBox (mins, maxs);
+	}
 
 	if (e->angles[0] || e->angles[2]) // pitch or roll
 	{
