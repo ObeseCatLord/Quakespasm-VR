@@ -36,6 +36,8 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "menu.h"
 #include "vr_aim.h"
 #include "vr_fbt.h"
+#include "vr_fbt_profile.h"
+#include "vr_fbt_storage.h"
 #include "vr_input.h"
 #include "vr_locomotion.h"
 #include "vr_weapon_calibration.h"
@@ -97,6 +99,8 @@ static qboolean vr_input_roomscale_position_valid;
 
 static vr_fbt_manager_t vr_input_fbt_manager;
 static qboolean vr_input_fbt_initialized;
+static vr_fbt_profile_t vr_input_fbt_profile;
+static qboolean vr_input_fbt_profile_valid;
 static uint64_t vr_input_fbt_snapshot_id;
 static uint64_t vr_input_fbt_last_seen_sample_id;
 static uint64_t vr_input_fbt_next_ephemeral_identity = 1;
@@ -328,6 +332,139 @@ static void VR_InputFBTEnabledChanged (cvar_t *var)
 {
 	(void)var;
 	VR_InputFBTReset ();
+}
+
+static qboolean VR_InputFBTApplyProfileBindings (const vr_fbt_profile_t *profile,
+	vr_fbt_manager_t *staged)
+{
+	if (!profile || !staged || !vr_input_fbt_initialized)
+		return false;
+
+	/* Build the complete assignment on a copy. A rejected serial must leave the
+	 * live roles and profile selection untouched. Manager roles are keyed only
+	 * by safe serials; tracker indexes and enumeration order are never used. */
+	*staged = vr_input_fbt_manager;
+	for (int role = 0; role < VR_FBT_ROLE_COUNT; ++role)
+		if (!VR_FBT_UnassignRole (staged, (vr_fbt_role_t)role))
+			return false;
+
+	for (int role = 0; role < VR_FBT_ROLE_COUNT; ++role)
+	{
+		const vr_fbt_profile_role_entry_t *entry = &profile->roles[role];
+		if (entry->present &&
+			(!VR_FBT_SerialIsSafe (entry->serial) ||
+			 !VR_FBT_BindSerial (staged, (vr_fbt_role_t)role, entry->serial)))
+			return false;
+	}
+	return true;
+}
+
+static qboolean VR_InputFBTSelectProfile (const vr_fbt_profile_t *profile,
+	qboolean persist_selection)
+{
+	vr_fbt_manager_t staged;
+	vr_fbt_storage_error_t storage_error = VR_FBT_STORAGE_OK;
+	qboolean selection_not_durable = false;
+
+	if (!profile || !vr_input_fbt_initialized ||
+		!VR_FBT_StorageNameIsSafe (profile->name) ||
+		profile->schema_version != VR_FBT_PROFILE_SCHEMA_VERSION ||
+		profile->calibration_algorithm != VR_FBT_PROFILE_CALIBRATION_ALGORITHM ||
+		strcmp (profile->avatar_fingerprint,
+			VR_FBT_PROFILE_AVATAR_FINGERPRINT))
+		return false;
+
+	if (!VR_InputFBTApplyProfileBindings (profile, &staged))
+	{
+		Con_Printf ("FBT: profile bindings were rejected; current profile kept\n");
+		return false;
+	}
+
+	/* Persist only after compatibility and every role binding have succeeded.
+	 * A visible but non-durable replacement still selects this profile now. */
+	if (persist_selection &&
+		!VR_FBT_StorageSaveSelected (profile->name, &storage_error))
+	{
+		if (storage_error != VR_FBT_STORAGE_ERR_COMMITTED_NOT_DURABLE)
+		{
+			Con_Printf ("FBT: could not select profile (%d); current profile kept\n",
+				(int)storage_error);
+			return false;
+		}
+		selection_not_durable = true;
+	}
+
+	vr_input_fbt_manager = staged;
+	vr_input_fbt_profile = *profile;
+	vr_input_fbt_profile_valid = true;
+	if (selection_not_durable)
+		Con_Warning ("FBT: selected profile is visible but not crash-durable\n");
+	return true;
+}
+
+static void VR_InputFBTLoadSelectedProfile (void)
+{
+	char selected[VR_FBT_PROFILE_NAME_MAX];
+	vr_fbt_profile_t loaded;
+	vr_fbt_storage_error_t storage_error;
+	vr_fbt_profile_error_t profile_error;
+
+	if (!VR_FBT_StorageLoadSelected (selected, sizeof (selected), &storage_error))
+		return;
+	if (!VR_FBT_StorageLoadProfile (selected, &loaded, &profile_error,
+		&storage_error))
+	{
+		Con_Printf ("FBT: saved profile %s could not be loaded (%d)\n",
+			selected, (int)storage_error);
+		return;
+	}
+	if (!VR_InputFBTSelectProfile (&loaded, false))
+		Con_Printf ("FBT: saved profile %s is incompatible; current bindings kept\n",
+			selected);
+}
+
+static void VR_InputFBTProfileSelect_f (void)
+{
+	vr_fbt_profile_t loaded;
+	vr_fbt_storage_error_t storage_error;
+	vr_fbt_profile_error_t profile_error;
+	const char *name;
+
+	if (Cmd_Argc () != 2 || !VR_FBT_StorageNameIsSafe (Cmd_Argv (1)))
+	{
+		Con_Printf ("usage: vr_fbt_profile_select <[A-Za-z0-9_-]{1,32}>\n");
+		return;
+	}
+	name = Cmd_Argv (1);
+	if (!VR_FBT_StorageLoadProfile (name, &loaded, &profile_error,
+		&storage_error))
+	{
+		Con_Printf ("FBT: could not load profile %s (%d); current profile kept\n",
+			name, (int)storage_error);
+		return;
+	}
+	if (VR_InputFBTSelectProfile (&loaded, true))
+		Con_Printf ("FBT: selected profile %s\n", loaded.name);
+}
+
+static void VR_InputFBTProfileReset_f (void)
+{
+	vr_fbt_manager_t staged;
+
+	if (Cmd_Argc () != 1)
+	{
+		Con_Printf ("usage: vr_fbt_profile_reset\n");
+		return;
+	}
+	if (!vr_input_fbt_initialized)
+		return;
+	staged = vr_input_fbt_manager;
+	for (int role = 0; role < VR_FBT_ROLE_COUNT; ++role)
+		VR_FBT_UnassignRole (&staged, (vr_fbt_role_t)role);
+	vr_input_fbt_manager = staged;
+	memset (&vr_input_fbt_profile, 0, sizeof (vr_input_fbt_profile));
+	vr_input_fbt_profile_valid = false;
+	Con_Printf ("FBT: cleared runtime profile and bindings; saved files were not removed\n");
 }
 
 static qboolean VR_InputFBTMatrixFinite (const float matrix[3][4])
@@ -1301,7 +1438,10 @@ void VR_InputInit (void)
 	Cmd_AddCommand ("vr_fbt_list", VR_InputFBTList_f);
 	Cmd_AddCommand ("vr_fbt_assign", VR_InputFBTAssign_f);
 	Cmd_AddCommand ("vr_fbt_unassign", VR_InputFBTUnassign_f);
+	Cmd_AddCommand ("vr_fbt_profile_select", VR_InputFBTProfileSelect_f);
+	Cmd_AddCommand ("vr_fbt_profile_reset", VR_InputFBTProfileReset_f);
 	VR_InputClear ();
+	VR_InputFBTLoadSelectedProfile ();
 }
 
 void VR_InputCommands (const vrxr_frame_t *frame)
