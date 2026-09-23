@@ -66,6 +66,12 @@ vertical tracking, public/local and chase guards.
 This does **not** yet settle the muzzle's shared origin or validate actual
 movement through a private server.
 
+The later [private-server senior disposition](migration-private-server-review.md)
+narrows the next integration to an explicit per-connection wire profile and
+the existing server owners. It also identifies outbound signon/snapshot
+framing and post-physics command latches as prerequisites; switching the
+`clc_move` parser alone would misalign packets and drop gameplay input.
+
 The next producer slice must preserve the inherited grip-to-muzzle path. In
 the donor, `SetHandPos` subtracts the current head's horizontal tracking
 position from each controller before the mapped yaw rotation, then adds the

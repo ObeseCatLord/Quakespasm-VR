@@ -925,9 +925,13 @@ qboolean SV_ReadClientMessage (void)
 			//			Sys_Printf ("clc_nop\n");
 			break;
 
-		case clc_stringcmd:
+		case clc_stringcmd: {
 			s = MSG_ReadString ();
-			if (q_strncasecmp (s, "spawn", 5) && q_strncasecmp (s, "begin", 5) && q_strncasecmp (s, "prespawn", 8) && qcvm->extfuncs.SV_ParseClientCommand)
+			// The engine must see its protocol offer before a mod's client-command
+			// hook can consume it. Keep other client strings on their existing path.
+			const qboolean pext_offer = !q_strncasecmp (s, "pext", 4) &&
+				(s[4] == '\0' || s[4] == ' ' || s[4] == '\t');
+			if (!pext_offer && q_strncasecmp (s, "spawn", 5) && q_strncasecmp (s, "begin", 5) && q_strncasecmp (s, "prespawn", 8) && qcvm->extfuncs.SV_ParseClientCommand)
 			{ // the spawn/begin/prespawn are because of numerous mods that disobey the rules.
 				// at a minimum, we must be able to join the server, so that we can see any sprints/bprints (because dprint sucks, yes there's proper ways
 				// to deal with this, but moders don't always know them).
@@ -941,6 +945,7 @@ qboolean SV_ReadClientMessage (void)
 			else
 				Cmd_ExecuteString (s, src_client);
 			break;
+		}
 
 		case clc_disconnect:
 			//			Sys_Printf ("SV_ReadClientMessage: client disconnected\n");
