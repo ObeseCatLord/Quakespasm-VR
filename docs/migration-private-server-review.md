@@ -202,3 +202,34 @@ passed after the journal change: signon, settled movement, four consumed
 shells and a bounded advancing ACK with prediction permission off. Queue
 overflow/discontinuity and per-command PMove behavior still need focused
 qualification; this is not a prediction or headset-parity claim.
+
+## Server PMove owner: Astra senior disposition
+
+A local `gpt-6-astra`/`max` review checked the current `2.0` server owner,
+QSS-M's command callback path and the staged shared solver. Its key finding is
+that suppressing native acceleration alone would still duplicate stock QuakeC
+jump/water velocity changes. The choice of movement owner, command action pose,
+QuakeC callbacks and completion is therefore one decision, not independent
+switches.
+
+| Recommendation | Disposition |
+| --- | --- |
+| Keep vkQuake's player slot, host loop, world physics and pusher ownership; run PMove only for explicitly selected private clients. | **Adopt.** A second server loop would duplicate working policy. |
+| Run one PreThink/PostThink around a whole queued batch. | **Reject.** Distinct accepted attacks and impulses need their own command context and weapon pose. |
+| Assume skipping `SV_ClientThink` prevents all duplicate movement. | **Reject.** Stock QuakeC PreThink also changes velocity. Reconcile only for an explicit stock-compatible path; generic mods must not lose legitimate velocity changes. |
+| Treat 32 entries/250 ms of queued input as a simulation-rate limit. | **Reject.** Add a separate allowance funded by unpaused server time before activating per-command movement. Complete commands must not be silently truncated. |
+| Copy the staged all-edicts server physent collector or silently stop at 64 entries. | **Reject.** Reuse vkQuake's area tree, include supported negative-skin collision volumes and fail explicitly if the shared PMove physent capacity is exceeded. |
+| Enable prediction as soon as PMove runs. | **Reject.** The owner snapshot still has `pmovetype=0`; it needs a matching reset, movement settings, completed ACK and epoch before advertising replay. |
+| Run an idle synthetic zero-duration QuakeC lifecycle when no commands are queued. | **Defer.** Idle callback behavior needs comparison with the pinned reference before selection. |
+
+The next implementation proof is a default-off, stock-compatible walk path
+that handles two ordered accepted commands with separate QuakeC action/pose
+contexts, one bounded duration owner and one PMove collision owner. It must
+preserve pusher/trigger/impact behavior, consume roomscale once, and retire only
+after successful callbacks. Start by restoring the server physent collector as
+a narrow area-tree adapter; it must report overflow rather than omit nearby
+collision. This adapter does not authorize prediction or switch the live player
+path by itself. Later live acceptance must include walking/jumping, two poses
+with target damage, ordered impulses, blocked roomscale, triggers, elevators,
+pause/reset and owner snapshot coherence. Delayed scheduled weapon Think pose
+and the exact idle callback policy remain unresolved compatibility questions.
