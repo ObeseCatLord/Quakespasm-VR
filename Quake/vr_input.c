@@ -62,7 +62,7 @@ typedef struct
 } vr_input_context_t;
 
 static cvar_t vr_lefthanded = {"vr_lefthanded", "0", CVAR_ARCHIVE};
-static cvar_t vr_haptic = {"vr_haptic", "1", CVAR_ARCHIVE};
+cvar_t vr_haptic = {"vr_haptic", "1", CVAR_ARCHIVE};
 static cvar_t vr_joystick_axis_deadzone = {"vr_joystick_axis_deadzone", "0.25", CVAR_ARCHIVE};
 static cvar_t vr_joystick_axis_menu_deadzone_extra = {"vr_joystick_axis_menu_deadzone_extra", "0.25", CVAR_ARCHIVE};
 static cvar_t vr_joystick_axis_exponent = {"vr_joystick_axis_exponent", "1", CVAR_ARCHIVE};
