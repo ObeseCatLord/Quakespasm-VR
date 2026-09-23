@@ -115,6 +115,25 @@ growth, and frame-slot reuse. Canonical avatar presentation identity, donor
 normal parity, multisurface coverage, and conservative IK culling bounds need
 more evidence before claiming parity.
 
+The target's concrete scheduling seam is after `R_MarkSurfaces` has stored
+efrag entities and before either `R_DrawEntitiesTask` or
+`R_BuildTopLevelAccelerationStructure` runs (`Quake/gl_rmain.c`). The tracked
+palette preparation task must depend on `store_efrags`; both consumers must
+depend on preparation. In the serial path, prepare immediately after
+`R_MarkSurfaces`, before entity drawing. The shadow path traverses all dynamic
+entities, including offscreen players, so preparation cannot be limited to
+visible draw chains. A prepared record is immutable for the submission and
+keyed by entity identity, model identity, and the current frame slot; a frame
+slot may be reused only after its existing fence. This is a planned task edge,
+not an implemented renderer or a measured performance result.
+
+The first proof also needs a real compatible player MD5 asset. This tree does
+not ship a Ranger `.md5mesh`; vkQuake's replacement loading currently depends
+on `r_enhancedmodels` (`Quake/gl_model.c`). The tracked-avatar path must obtain
+the inherited rerelease Ranger through the existing model loader when the
+user's game data provides it, and fall back to ordinary MDL animation when it
+does not. Disabling enhanced models must not disable desktop play or gameplay.
+
 ## Desktop and VR cross-play gate
 
 The shared engine must launch and play desktop vkQuake with no OpenXR runtime or
