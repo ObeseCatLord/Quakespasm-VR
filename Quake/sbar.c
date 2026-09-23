@@ -1280,7 +1280,7 @@ void Sbar_Draw (cb_context_t *cbx)
 
 	// johnfitz -- don't waste fillrate by clearing the area behind the sbar
 	w = CLAMP (320.0f, scr_sbarscale.value * 320.0f, (float)glwidth);
-	if (sb_lines && glwidth > w)
+	if (!cbx->ui_panel_active && sb_lines && glwidth > w)
 	{
 		if (scr_sbaralpha.value < 1)
 			Draw_TileClear (cbx, 0, glheight - sb_lines, glwidth, sb_lines);

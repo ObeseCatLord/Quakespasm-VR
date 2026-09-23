@@ -27,6 +27,8 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 
 #include "cfgfile.h"
 #include "vr_input.h"
+#include "vr_aim.h"
+#include "vr_locomotion.h"
 #include "vr_menu_anchor.h"
 
 #include <setjmp.h>
@@ -122,6 +124,13 @@ cvar_t scr_relmenuscale = {"scr_relmenuscale", "1", CVAR_ARCHIVE};
 cvar_t scr_relsbarscale = {"scr_relsbarscale", "1", CVAR_ARCHIVE};
 cvar_t scr_relcrosshairscale = {"scr_relcrosshairscale", "1", CVAR_ARCHIVE};
 cvar_t scr_relconscale = {"scr_relconscale", "1", CVAR_ARCHIVE};
+
+extern cvar_t vr_aimmode;
+extern cvar_t vr_hud_scale;
+extern qboolean sb_showscores;
+extern qboolean scr_drawdialog;
+
+static qboolean scr_vr_classic_sbar_refdef_active;
 
 extern cvar_t	 crosshair;
 extern cvar_t	 crosshair_def;
@@ -380,10 +389,13 @@ Must be called whenever vid changes
 Internal use only
 =================
 */
+static qboolean SCR_VRClassicSbarFrameEligible (const vrxr_frame_t *frame);
+
 static void SCR_CalcRefdef (void)
 {
 	float size, scale; // johnfitz -- scale
 	float zoom;
+	const qboolean vr_classic_sbar_panel = SCR_VRClassicSbarFrameEligible (GL_OpenXRFrame ());
 
 	// bound viewsize
 	if (scr_viewsize.value < 30)
@@ -414,6 +426,9 @@ static void SCR_CalcRefdef (void)
 		sb_lines = 24 * scale;
 	else
 		sb_lines = 48 * scale;
+	if (vr_classic_sbar_panel)
+		sb_lines = 0;
+	scr_vr_classic_sbar_refdef_active = vr_classic_sbar_panel;
 
 	size = q_min (scr_viewsize.value, 100.f) / 100;
 	// johnfitz
@@ -459,6 +474,51 @@ static void SCR_SizeDown_f (void)
 	if (!scr_viewsize_allow_shrinking.value)
 		new_value = q_max (new_value, 100);
 	Cvar_SetValueQuick (&scr_viewsize, new_value);
+}
+
+/* This bounded panel proof applies only to the original single-player
+ * status bar. Keep the desktop reservation unless the current XR frame and
+ * game state can use the tracked panel; the caller rechecks after BeginFrame. */
+static qboolean SCR_VRClassicSbarFrameEligible (const vrxr_frame_t *frame)
+{
+	const qboolean loading = scr_drawloading || (scr_drawstartuploading && cls.state == ca_disconnected);
+	vec3_t angles;
+	int dominant;
+
+	if (!vulkan_globals.stereo_active || !frame || !frame->should_render || !frame->focused ||
+		!frame->devices[0].valid || !frame->devices[0].tracked || frame->devices[0].kind != VRXR_DEVICE_HEAD ||
+		frame->devices[0].hand != -1 || cls.signon != SIGNONS || !cl.worldmodel || con_forcedup ||
+		key_dest != key_game || m_state != m_none || scr_con_current > 0 || scr_drawdialog || loading ||
+		cl.intermission || scr_style.value >= 2.0f || cl.qcvm.extfuncs.CSQC_DrawHud ||
+		cl.maxclients != 1 || cl.gametype != GAME_COOP || sb_showscores || cl.stats[STAT_HEALTH] <= 0 ||
+		!isfinite (vr_aimmode.value) || !isfinite (vr_hud_scale.value) || vr_hud_scale.value <= 0)
+		return false;
+	for (int row = 0; row < 3; ++row)
+		for (int column = 0; column < 4; ++column)
+			if (!isfinite (frame->devices[0].matrix[row][column]))
+				return false;
+
+	if (vr_aimmode.value == VR_AIMMODE_CONTROLLER)
+	{
+		dominant = VR_InputDominantPhysicalHand ();
+		if (dominant < 0 || dominant > 1 || !frame->devices[dominant + 1].valid ||
+			!frame->devices[dominant + 1].tracked || frame->devices[dominant + 1].kind != VRXR_DEVICE_HAND ||
+			frame->devices[dominant + 1].hand != dominant ||
+			!V_TrackedMovementAngles (VR_MOVEMENT_MODE_FOLLOW_HAND, dominant, angles))
+			return false;
+	}
+	else
+	{
+		VectorCopy (cl.viewangles, angles);
+		for (int i = 0; i < 3; ++i)
+			if (!isfinite (cl.viewent.origin[i]))
+				return false;
+	}
+
+	for (int i = 0; i < 3; ++i)
+		if (!isfinite (angles[i]))
+			return false;
+	return true;
 }
 
 static void SCR_Callback_refdef (cvar_t *var)
@@ -1477,6 +1537,14 @@ static qboolean vr_modal_from_menu;
 static const struct qmodel_s *vr_menu_world;
 static int vr_menu_connection;
 
+typedef struct
+{
+	qboolean valid;
+	float world_from_ndc[16];
+} vr_classic_sbar_panel_t;
+
+static vr_classic_sbar_panel_t vr_classic_sbar_panel;
+
 static qboolean SCR_VRMenuRayHit (const vec3_t origin, const vec3_t direction,
 	const vec3_t center, const vec3_t right, const vec3_t down, const vec3_t normal,
 	float scale, int *pixel_x, int *pixel_y)
@@ -1606,6 +1674,85 @@ static void SCR_VRMenuPrepare (void)
 	vr_menu_panel.valid = true;
 }
 
+/* Map the classic 320x48 CANVAS_SBAR coordinates through the same viewport
+ * and ortho math as GL_SetCanvas. Inverting that affine keeps each canvas
+ * unit at vr_hud_scale world units regardless of render or bar scale. */
+static void SCR_VRClassicSbarPrepare (void)
+{
+	const vrxr_frame_t *frame = GL_OpenXRFrame ();
+	vec3_t aim_angles, panel_angles, target, forward, right, up, normal, down;
+	vec3_t hand_origin, hand_direction;
+	float scale, bar_scale, viewport_x, viewport_y, x_step, y_step, x_base, y_base;
+	int dominant;
+
+	vr_classic_sbar_panel.valid = false;
+	if (!SCR_VRClassicSbarFrameEligible (frame))
+		return;
+
+	scale = vr_hud_scale.value;
+	if (!isfinite (scale) || scale <= 0 || vid.width <= 0 || vid.height <= 0 || glwidth <= 0)
+		return;
+
+	if (vr_aimmode.value == VR_AIMMODE_CONTROLLER)
+	{
+		dominant = VR_InputDominantPhysicalHand ();
+		if (!R_TrackedControllerRay (dominant, hand_origin, hand_direction) ||
+			!V_TrackedMovementAngles (VR_MOVEMENT_MODE_FOLLOW_HAND, dominant, aim_angles))
+			return;
+		/* Match the donor offset: hand roll affects right before panel tilt. */
+		AngleVectors (aim_angles, forward, right, up);
+		VectorMA (hand_origin, dominant == 0 ? 5.0f : -5.0f, right, target);
+		aim_angles[ROLL] = 0;
+	}
+	else
+	{
+		VectorCopy (cl.viewangles, aim_angles);
+		if (vr_aimmode.value == VR_AIMMODE_HEAD_MYAW ||
+			vr_aimmode.value == VR_AIMMODE_HEAD_MYAW_MPITCH)
+			aim_angles[PITCH] = 0;
+		aim_angles[ROLL] = 0;
+		AngleVectors (aim_angles, forward, right, up);
+		VectorMA (cl.viewent.origin, 1.0f, forward, target);
+	}
+
+	/* The donor rotates the panel 45 degrees toward the player around its
+	 * right axis. In Quake's angle basis this is a 45 degree pitch increase. */
+	VectorCopy (aim_angles, panel_angles);
+	panel_angles[PITCH] += 45.0f;
+	panel_angles[ROLL] = 0;
+	AngleVectors (panel_angles, normal, right, up);
+	VectorScale (up, -1.0f, down);
+	VectorMA (target, 10.0f, normal, target);
+
+	bar_scale = CLAMP (1.0f, scr_sbarscale.value, (float)glwidth / 320.0f);
+	if (!isfinite (bar_scale) || bar_scale <= 0)
+		return;
+	viewport_x = (glwidth - 320.0f * bar_scale) * 0.5f;
+	viewport_y = vid.height - 48.0f * bar_scale;
+	x_step = 2.0f * bar_scale / vid.width;
+	y_step = 2.0f * bar_scale / vid.height;
+	x_base = 2.0f * viewport_x / vid.width - 1.0f;
+	y_base = 2.0f * viewport_y / vid.height - 1.0f;
+	if (!isfinite (x_step) || !isfinite (y_step) || x_step <= 0 || y_step <= 0 ||
+		!isfinite (x_base) || !isfinite (y_base))
+		return;
+
+	memset (vr_classic_sbar_panel.world_from_ndc, 0, sizeof (vr_classic_sbar_panel.world_from_ndc));
+	for (int i = 0; i < 3; ++i)
+	{
+		float *matrix = vr_classic_sbar_panel.world_from_ndc;
+		matrix[i] = right[i] * (scale / x_step);
+		matrix[4 + i] = down[i] * (scale / y_step);
+		matrix[8 + i] = normal[i] * scale;
+		matrix[12 + i] = target[i] - matrix[i] * (x_base + x_step * 160.0f) - matrix[4 + i] * y_base;
+		if (!isfinite (matrix[i]) || !isfinite (matrix[4 + i]) || !isfinite (matrix[8 + i]) ||
+			!isfinite (matrix[12 + i]))
+			return;
+	}
+	vr_classic_sbar_panel.world_from_ndc[15] = 1.0f;
+	vr_classic_sbar_panel.valid = true;
+}
+
 /*
 ==================
 SCR_DrawGUI
@@ -1706,7 +1853,11 @@ static void SCR_DrawGUI (void *unused)
 		SCR_DrawTurtle (cbx);
 		SCR_DrawPause (cbx);
 		SCR_CheckDrawCenterString (cbx);
+		if (vr_classic_sbar_panel.valid)
+			GL_BeginUIPanel (cbx, vr_classic_sbar_panel.world_from_ndc);
 		Sbar_Draw (cbx);
+		if (vr_classic_sbar_panel.valid)
+			GL_EndUIPanel (cbx);
 		SCR_DrawDevStats (cbx); // johnfitz
 		SCR_DrawFPS (cbx);		// johnfitz
 		SCR_DrawSpeeds (cbx);
@@ -1734,10 +1885,12 @@ SCR_SetupFrame
 */
 static void SCR_SetupFrame (void *unused)
 {
-	SCR_SetUpToDrawConsole ();
+	if (!vulkan_globals.stereo_active)
+		SCR_SetUpToDrawConsole ();
 	V_SetupFrame ();
 	R_PrepareStereoFrame ();
 	SCR_VRMenuPrepare ();
+	SCR_VRClassicSbarPrepare ();
 }
 
 /*
@@ -1820,8 +1973,15 @@ void SCR_UpdateScreen (qboolean use_tasks)
 		in_update_screen = false;
 		return;
 	}
+	/* XR synchronizes the previous GUI task in GL_BeginRendering. Sample the
+	 * current console animation before deciding whether its HUD reserves rows;
+	 * keep desktop console updates in the original setup task. */
+	if (vulkan_globals.stereo_active)
+		SCR_SetUpToDrawConsole ();
 	// Publish gameplay aim once on the main owner, before view/draw tasks.
 	V_UpdateTrackedAim ();
+	if (vid.recalc_refdef || SCR_VRClassicSbarFrameEligible (GL_OpenXRFrame ()) != scr_vr_classic_sbar_refdef_active)
+		SCR_CalcRefdef ();
 
 	if (use_tasks)
 	{

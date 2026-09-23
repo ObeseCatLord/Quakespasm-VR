@@ -219,3 +219,19 @@ and keeps the existing framebuffer scissor path for flat drawing. This is a
 prerequisite for an attached HUD, not evidence that AD layouts render correctly
 in stereo. The recoverable CSQC error path still needs explicit panel cleanup
 when the HUD draw is moved into this scope.
+
+A first classic single-player status-bar proof now reuses `Sbar_Draw` on a
+separate HUD panel. One transform is frozen after stereo setup. In controller
+aim mode it uses the dominant tracked hand, the donor's handed side offset,
+and a 45-degree tilt; other aim modes use the current aim and viewmodel origin,
+with the donor's level pitch in the two head-myaw modes.
+The 320×48 canvas maps to the inherited physical `vr_hud_scale` regardless of
+eye resolution or desktop status-bar scale. Its setting is archived and exposed
+in VR Options. The relocated draw no longer clears desktop margin tiles or
+reserves scene rows. If tracking or transform construction fails, the existing
+flat draw remains visible. Desktop console updates keep their original task
+ordering. This proof excludes CSQC, modern HUD corners, multiplayer,
+scoreboards, and menu-time HUD; those remain explicit parity work, and headset
+appearance is not yet verified.
+The Meson shader list now builds the existing UI panel variants already listed
+by the Makefile; the Linux Meson target links with the panel pipeline enabled.

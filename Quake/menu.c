@@ -2457,13 +2457,14 @@ static void M_SoundOptions_Draw (cb_context_t *cbx)
 //=============================================================================
 /* VR OPTIONS MENU */
 
-extern cvar_t vr_menu_scale, vr_menu_follow;
+extern cvar_t vr_hud_scale, vr_menu_scale, vr_menu_follow;
 
 enum
 {
 	VR_OPT_EYE_TRACKING,
 	VR_OPT_FOVEATION,
 	VR_OPT_MENU_SCALE,
+	VR_OPT_HUD_SCALE,
 	VR_OPT_MENU_FOLLOW,
 	VR_OPTIONS_ITEMS
 };
@@ -2500,6 +2501,12 @@ static void M_VROptions_Adjust (int dir)
 	{
 		const float current = isfinite (vr_menu_scale.value) ? vr_menu_scale.value : 0.13f;
 		Cvar_SetValueQuick (&vr_menu_scale, CLAMP (0.05f, roundf ((current + dir * 0.01f) * 100.0f) / 100.0f, 0.30f));
+		break;
+	}
+	case VR_OPT_HUD_SCALE:
+	{
+		const float current = isfinite (vr_hud_scale.value) ? vr_hud_scale.value : 0.025f;
+		Cvar_SetValueQuick (&vr_hud_scale, CLAMP (0.01f, roundf ((current + dir * 0.005f) * 200.0f) / 200.0f, 0.1f));
 		break;
 	}
 	case VR_OPT_MENU_FOLLOW:
@@ -2572,6 +2579,9 @@ static void M_VROptions_Draw (cb_context_t *cbx)
 
 	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * VR_OPT_MENU_SCALE, "Menu Scale");
 	M_Print (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * VR_OPT_MENU_SCALE, va ("%.2f", vr_menu_scale.value));
+
+	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * VR_OPT_HUD_SCALE, "HUD Scale");
+	M_Print (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * VR_OPT_HUD_SCALE, va ("%.3f", vr_hud_scale.value));
 
 	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * VR_OPT_MENU_FOLLOW, "Menu Follow");
 	M_Print (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * VR_OPT_MENU_FOLLOW, follow_modes[follow]);
