@@ -71,6 +71,105 @@ static const vr_weapon_menu_catalog_t vr_weapon_menu_stock_catalog = {
 	0
 };
 
+typedef struct {
+	int selector;
+	int replace_selector;
+	int impulse;
+	const char *label;
+	const char *model_path;
+	int owned_stat;
+	int owned_mask;
+	int active_stat;
+	int active_mask;
+	int ammo_stat;
+	int ammo_max;
+} vr_weapon_menu_profile_entry_t;
+
+#define VR_PROFILE(selector, impulse, label, model, ammo, max) \
+	{selector, 0, impulse, label, model, -1, 0, -1, 0, ammo, max}
+
+static const vr_weapon_menu_profile_entry_t vr_weapon_menu_dwell_profile[] = {
+	VR_PROFILE(IT_SHOTGUN, 2, "SHOTGUN", "progs/g_shotgn.mdl", STAT_SHELLS, 100),
+	VR_PROFILE(IT_SUPER_SHOTGUN, 23, "DOUBLE SHOTGUN", "progs/g_shot.mdl", STAT_SHELLS, 100),
+	VR_PROFILE(IT_NAILGUN, 4, "NAILGUN", "progs/g_nail.mdl", STAT_NAILS, 200),
+	VR_PROFILE(IT_SUPER_NAILGUN, 5, "SUPER NAILGUN", "progs/g_nail2.mdl", STAT_NAILS, 200),
+	VR_PROFILE(IT_GRENADE_LAUNCHER, 6, "GRENADE", "progs/g_rock.mdl", STAT_ROCKETS, 100),
+	VR_PROFILE(IT_ROCKET_LAUNCHER, 7, "ROCKET", "progs/g_rock2.mdl", STAT_ROCKETS, 100),
+	VR_PROFILE(IT_LIGHTNING, 28, "LIGHTNING", "progs/g_light.mdl", STAT_CELLS, 100),
+	{128, 0, 33, "ROTARY SHOTGUN", "progs/g_shot3.mdl", STAT_VR_MODITEMS, 4, -1, 0, STAT_SHELLS, 100},
+	{256, 0, 38, "CRYSTAL LANCE", "progs/g_rail.mdl", STAT_VR_MODITEMS, 8, -1, 0, STAT_CELLS, 100},
+	{512, 0, 2, "RIFLE", "progs/g_rifle.mdl", STAT_VR_MODITEMS, 32, -1, 0, STAT_SHELLS, 100}
+};
+
+static const vr_weapon_menu_profile_entry_t vr_weapon_menu_alkaline_profile[] = {
+	VR_PROFILE(4096, 1, "AXE", "progs/g_axe_alk.mdl", -1, 0),
+	VR_PROFILE(1, 2, "SHOTGUN", "progs/g_shotgn.mdl", STAT_SHELLS, 100),
+	VR_PROFILE(2, 3, "DOUBLE SHOTGUN", "progs/g_shot.mdl", STAT_SHELLS, 100),
+	VR_PROFILE(4, 4, "NAILGUN", "progs/g_nail.mdl", STAT_NAILS, 200),
+	VR_PROFILE(8, 5, "SUPER NAILGUN", "progs/g_nail2.mdl", STAT_NAILS, 200),
+	VR_PROFILE(16, 6, "GRENADE", "progs/g_rock.mdl", STAT_ROCKETS, 100),
+	VR_PROFILE(32, 7, "ROCKET", "progs/g_rock2.mdl", STAT_ROCKETS, 100),
+	VR_PROFILE(64, 228, "LIGHTNING", "progs/g_light.mdl", STAT_CELLS, 100),
+	VR_PROFILE(256, 224, "SAW", "progs/g_saw.mdl", -1, 0),
+	VR_PROFILE(512, 227, "PLASMA", "progs/g_plasma.mdl", STAT_CELLS, 100),
+	VR_PROFILE(1024, 225, "LASER", "progs/g_laserg.mdl", STAT_CELLS, 100),
+	VR_PROFILE(8192, 226, "MINE", "progs/g_mine.mdl", STAT_ROCKETS, 100)
+};
+
+static const vr_weapon_menu_profile_entry_t vr_weapon_menu_enyo_profile[] = {
+	VR_PROFILE(4096, 1, "SWORD", "progs/ee_g_sword.mdl", -1, 0),
+	VR_PROFILE(1, 2, "PISTOL", "progs/ee_g_pistol.mdl", STAT_NAILS, 200),
+	VR_PROFILE(2, 3, "SHOTGUN", "progs/ee_g_sgun.mdl", STAT_SHELLS, 100),
+	VR_PROFILE(4, 4, "SMG", "progs/ee_g_smgs.mdl", STAT_NAILS, 200),
+	VR_PROFILE(1024, 5, "AV72", "progs/ee_g_av72.mdl", STAT_NAILS, 200),
+	VR_PROFILE(8, 5, "PLASMA", "progs/ee_g_plasma.mdl", STAT_CELLS, 100),
+	VR_PROFILE(16, 6, "GRENADE", "progs/ee_g_glaunch.mdl", STAT_ROCKETS, 100),
+	VR_PROFILE(32, 7, "ROCKET", "progs/ee_g_rlaunch.mdl", STAT_ROCKETS, 100),
+	VR_PROFILE(64, 8, "RAILGUN", "progs/ee_g_railgun.mdl", STAT_CELLS, 100)
+};
+
+static const vr_weapon_menu_profile_entry_t vr_weapon_menu_qbj3_profile[] = {
+	VR_PROFILE(4096, 1, "WRENCH", "progs/v_wrench.mdl", -1, 0),
+	VR_PROFILE(1, 2, "PISTOL", "progs/v_pistol.mdl", STAT_AMMO, 0),
+	VR_PROFILE(2, 3, "FLAK SHOTGUN", "progs/v_flakshotgun.mdl", STAT_SHELLS, 100),
+	VR_PROFILE(4, 4, "T NAILGUN", "progs/v_tnailgun.mdl", STAT_NAILS, 300),
+	VR_PROFILE(8, 5, "REBAR", "progs/v_rebar.mdl", STAT_NAILS, 300),
+	VR_PROFILE(16, 6, "GRENADE", "progs/v_grenlauncher.mdl", STAT_ROCKETS, 100),
+	VR_PROFILE(32, 7, "MMML", "progs/v_mmml.mdl", STAT_ROCKETS, 100),
+	VR_PROFILE(64, 8, "INVOKER", "progs/v_invoker.mdl", STAT_CELLS, 10)
+};
+
+static const vr_weapon_menu_profile_entry_t vr_weapon_menu_mjolnir_profile[] = {
+	{128, 0, 81, "LIGHTNING", "progs/drake/g_light2.mdl", 42, 128, STAT_ACTIVEWEAPON, 128, STAT_CELLS, 100},
+	{131072, 0, 76, "PROXIMITY", "progs/hipnotic/g_prox.mdl", 42, 131072, STAT_ACTIVEWEAPON, 131072, STAT_ROCKETS, 100},
+	{262144, 0, 77, "HAMMER", "progs/violentrumble/g_hammer.mdl", 42, 262144, STAT_ACTIVEWEAPON, 262144, STAT_CELLS, 100},
+	{524288, 0, 75, "LASER", "progs/hipnotic/g_laserg.mdl", 42, 524288, STAT_ACTIVEWEAPON, 524288, STAT_CELLS, 100},
+	{1048576, 0, 80, "GRAPPLE", "progs/drake/g_grpple.mdl", 42, 1048576, STAT_ACTIVEWEAPON, 1048576, -1, 0},
+	{4194304, 0, 79, "WAND", "progs/drake/g_wand.mdl", 42, 4194304, STAT_ACTIVEWEAPON, 4194304, -1, 0}
+};
+
+static const vr_weapon_menu_profile_entry_t vr_weapon_menu_mg3_profile[] = {
+	{128, 0, 1, "HAMMER", "progs/g_hammer.mdl", STAT_ITEMS, 128, STAT_ACTIVEWEAPON, 128, -1, 0},
+	VR_PROFILE(8388608, 225, "LASER", "progs/g_laserg.mdl", STAT_CELLS, 100)
+};
+
+static const vr_weapon_menu_profile_entry_t vr_weapon_menu_hipnotic_profile[] = {
+	VR_PROFILE(HIT_MJOLNIR, 1, "MJOLNIR", "progs/g_hammer.mdl", -1, 0),
+	VR_PROFILE(HIT_LASER_CANNON, 8, "LASER CANNON", "progs/g_laserg.mdl", STAT_CELLS, 100),
+	VR_PROFILE(HIT_PROXIMITY_GUN, 6, "PROXIMITY", "progs/g_prox.mdl", STAT_ROCKETS, 100)
+};
+
+static const vr_weapon_menu_profile_entry_t vr_weapon_menu_rogue_profile[] = {
+	{RIT_AXE, IT_AXE, 1, "AXE", "progs/g_axe.mdl", -1, 0, -1, 0, -1, 0},
+	VR_PROFILE(RIT_LAVA_NAILGUN, 4, "LAVA NAILGUN", "progs/g_nail.mdl", STAT_NAILS, 200),
+	VR_PROFILE(RIT_LAVA_SUPER_NAILGUN, 5, "LAVA SUPER NAILGUN", "progs/g_nail2.mdl", STAT_NAILS, 200),
+	VR_PROFILE(RIT_MULTI_GRENADE, 6, "MULTI GRENADE", "progs/g_rock.mdl", STAT_ROCKETS, 100),
+	VR_PROFILE(RIT_MULTI_ROCKET, 7, "MULTI ROCKET", "progs/g_rock2.mdl", STAT_ROCKETS, 100),
+	VR_PROFILE(RIT_PLASMA_GUN, 8, "PLASMA", "progs/g_light.mdl", STAT_CELLS, 100)
+};
+
+#undef VR_PROFILE
+
 static vr_weapon_menu_entry_t vr_weapon_menu_wwheel_entries[VR_WEAPON_MENU_MAX_ENTRIES];
 static char vr_weapon_menu_wwheel_labels[VR_WEAPON_MENU_MAX_ENTRIES][32];
 static char vr_weapon_menu_schema_models[VR_WEAPON_MENU_MAX_ENTRIES][64];
@@ -80,6 +179,7 @@ static vr_weapon_menu_catalog_t vr_weapon_menu_wwheel_catalog = {
 };
 static qboolean vr_weapon_menu_has_wwheel;
 static qboolean vr_weapon_menu_has_schema;
+static qboolean vr_weapon_menu_has_profile;
 
 static qboolean vr_weapon_menu_open;
 static qboolean vr_weapon_menu_open_vr;
@@ -94,7 +194,8 @@ static char vr_weapon_menu_mapname[sizeof (cl.mapname)];
 
 static const vr_weapon_menu_catalog_t *VR_WeaponMenu_CurrentCatalog (void)
 {
-	return (vr_weapon_menu_has_wwheel || vr_weapon_menu_has_schema) ?
+	return (vr_weapon_menu_has_wwheel || vr_weapon_menu_has_schema ||
+		vr_weapon_menu_has_profile) ?
 		&vr_weapon_menu_wwheel_catalog :
 		&vr_weapon_menu_stock_catalog;
 }
@@ -453,6 +554,255 @@ static void VR_WeaponMenu_ApplySchema (
 			vr_weapon_menu_has_schema = true;
 }
 
+static qboolean VR_WeaponMenu_GameDirIs (const char *name)
+{
+	const char *game = COM_SkipPath (com_gamedir);
+	return game && name && !q_strcasecmp (game, name);
+}
+
+static qboolean VR_WeaponMenu_IsStockModelPath (const char *model_path)
+{
+	if (!model_path || !model_path[0])
+		return false;
+	for (size_t i = 0; i < vr_weapon_menu_stock_catalog.count; ++i)
+		if (vr_weapon_menu_stock_entries[i].model_path &&
+			!q_strcasecmp (model_path,
+				vr_weapon_menu_stock_entries[i].model_path))
+			return true;
+	return false;
+}
+
+static qboolean VR_WeaponMenu_ProfileMatchesEntry (
+	const vr_weapon_menu_profile_entry_t *profile,
+	const vr_weapon_menu_entry_t *entry, size_t index)
+{
+	const char *model_path = entry->model_path;
+	qboolean selector_match = entry->selector == profile->selector;
+
+	if (!selector_match && entry->active_stat == STAT_ACTIVEWEAPON &&
+		entry->active_mask == profile->selector)
+		selector_match = true;
+	if (!selector_match && profile->owned_stat >= 0 &&
+		entry->owned_stat == profile->owned_stat &&
+		entry->owned_mask == profile->owned_mask)
+		selector_match = true;
+	if (!selector_match && profile->owned_stat < 0 &&
+		entry->owned_stat == STAT_VR_WEAPONS &&
+		entry->owned_mask == profile->selector)
+		selector_match = true;
+	if (!selector_match || (entry->impulse > 0 && profile->impulse > 0 &&
+		entry->impulse != profile->impulse))
+		return false;
+
+	/* A wwheel row may carry a stock fallback model supplied by this adapter.
+	 * Only a model explicitly stored by vr_weapons.txt discriminates that row;
+	 * for other rows, compare actual model paths when both are known. */
+	if (entry->source == VR_WEAPON_CATALOG_SOURCE_SCHEMA && index <
+		VR_WEAPON_MENU_MAX_ENTRIES && vr_weapon_menu_schema_models[index][0])
+		model_path = vr_weapon_menu_schema_models[index];
+	else if (entry->source == VR_WEAPON_CATALOG_SOURCE_SCHEMA &&
+		VR_WeaponMenu_IsStockModelPath (model_path))
+		model_path = NULL;
+	if (model_path && model_path[0] && profile->model_path &&
+		profile->model_path[0] &&
+		!VR_WeaponCatalog_ModelPathsMatch (model_path, profile->model_path))
+		return false;
+	return true;
+}
+
+static int VR_WeaponMenu_ProfileAmmoMaxStat (int ammo_stat)
+{
+	switch (ammo_stat)
+	{
+	case STAT_SHELLS: return STAT_VR_MAX_SHELLS;
+	case STAT_NAILS: return STAT_VR_MAX_NAILS;
+	case STAT_ROCKETS: return STAT_VR_MAX_ROCKETS;
+	case STAT_CELLS: return STAT_VR_MAX_CELLS;
+	default: return -1;
+	}
+}
+
+static int VR_WeaponMenu_ProfileId (void)
+{
+	int candidate = 0x40000000 + (int)vr_weapon_menu_wwheel_catalog.count;
+	for (int attempt = 0; attempt < VR_WEAPON_MENU_MAX_ENTRIES; ++attempt, ++candidate)
+	{
+		qboolean used = false;
+		for (size_t i = 0; i < vr_weapon_menu_wwheel_catalog.count; ++i)
+			if (vr_weapon_menu_wwheel_entries[i].id == candidate)
+			{
+				used = true;
+				break;
+			}
+		if (!used)
+			return candidate;
+	}
+	return -1;
+}
+
+static qboolean VR_WeaponMenu_AddProfileEntry (
+	const vr_weapon_menu_profile_entry_t *profile)
+{
+	vr_weapon_menu_entry_t *entry = NULL;
+	int profile_id;
+
+	if (!profile || profile->selector <= 0 || profile->impulse <= 0 ||
+		profile->impulse > 255)
+		return false;
+
+	/* A profile-only catalog starts with the ordinary weapons, then replaces
+	 * only slots whose selector is explicitly represented by that profile. */
+	if (!vr_weapon_menu_wwheel_catalog.count &&
+		!vr_weapon_menu_has_wwheel && !vr_weapon_menu_has_schema)
+	{
+		for (size_t i = 0; i < vr_weapon_menu_stock_catalog.count; ++i)
+		{
+			if (vr_weapon_menu_wwheel_catalog.count >= VR_WEAPON_MENU_MAX_ENTRIES)
+				return false;
+			vr_weapon_menu_wwheel_entries[vr_weapon_menu_wwheel_catalog.count++] =
+				vr_weapon_menu_stock_entries[i];
+		}
+		vr_weapon_menu_wwheel_catalog.authoritative_schema = 0;
+	}
+
+	for (size_t i = 0; i < vr_weapon_menu_wwheel_catalog.count; ++i)
+	{
+		vr_weapon_menu_entry_t *existing = &vr_weapon_menu_wwheel_entries[i];
+		const int replace_selector = profile->replace_selector ?
+			profile->replace_selector : profile->selector;
+		const qboolean selector_match =
+			(existing->selector == profile->selector ||
+			 existing->selector == replace_selector ||
+			 (existing->active_stat == STAT_ACTIVEWEAPON &&
+			  existing->active_mask == profile->selector) ||
+			 (profile->owned_stat >= 0 &&
+			  existing->owned_stat == profile->owned_stat &&
+			  existing->owned_mask == profile->owned_mask) ||
+			 (profile->owned_stat < 0 &&
+			  existing->owned_stat == STAT_VR_WEAPONS &&
+			  existing->owned_mask == profile->selector));
+
+		if (!selector_match)
+			continue;
+		if (existing->source == VR_WEAPON_CATALOG_SOURCE_SCHEMA)
+		{
+			if (VR_WeaponMenu_ProfileMatchesEntry (profile, existing, i))
+			{
+				/* Keep the roster's impulse and ownership. Supply the known
+				 * profile model only when no file model was authored. */
+				if (i < VR_WEAPON_MENU_MAX_ENTRIES &&
+					!vr_weapon_menu_schema_models[i][0] &&
+					(!existing->model_path || !existing->model_path[0] ||
+					 VR_WeaponMenu_IsStockModelPath (existing->model_path)))
+					existing->model_path = profile->model_path;
+				vr_weapon_menu_has_profile = true;
+				return true;
+			}
+			continue;
+		}
+		if (existing->source == VR_WEAPON_CATALOG_SOURCE_PROFILE)
+		{
+			if (VR_WeaponMenu_ProfileMatchesEntry (profile, existing, i))
+				return true;
+			continue;
+		}
+		if (existing->source == VR_WEAPON_CATALOG_SOURCE_STOCK)
+		{
+			/* Exact-gated built-ins intentionally replace vanilla fallback
+			 * rows even when the mod changes their impulse/model. */
+			if (existing->selector != profile->selector &&
+				existing->selector != replace_selector)
+				continue;
+			entry = existing;
+			break;
+		}
+	}
+
+	if (!entry)
+	{
+		if (vr_weapon_menu_wwheel_catalog.count >= VR_WEAPON_MENU_MAX_ENTRIES)
+			return false;
+		profile_id = VR_WeaponMenu_ProfileId ();
+		if (profile_id < 0)
+			return false;
+		entry = &vr_weapon_menu_wwheel_entries[
+			vr_weapon_menu_wwheel_catalog.count++];
+		memset (entry, 0, sizeof (*entry));
+		entry->id = profile_id;
+	}
+	else
+	{
+		const int stock_id = entry->id;
+		memset (entry, 0, sizeof (*entry));
+		entry->id = stock_id;
+	}
+
+	entry->kind = VR_WEAPON_MENU_WEAPON;
+	entry->source = VR_WEAPON_CATALOG_SOURCE_PROFILE;
+	entry->label = profile->label;
+	entry->model_path = profile->model_path;
+	entry->model_scale = 1.0f;
+	entry->selector = profile->selector;
+	entry->impulse = profile->impulse;
+	entry->owned_stat = profile->owned_stat;
+	entry->owned_mask = profile->owned_mask;
+	entry->active_stat = profile->active_stat;
+	entry->active_mask = profile->active_mask;
+	entry->ammo_stat = profile->ammo_stat;
+	entry->ammo_max = profile->ammo_max;
+	entry->ammo_max_stat = VR_WeaponMenu_ProfileAmmoMaxStat (
+		profile->ammo_stat);
+	entry->has_schema_peer = 0;
+	entry->has_profile_peer = 0;
+	vr_weapon_menu_has_profile = true;
+	return true;
+}
+
+static void VR_WeaponMenu_AddProfile (
+	const vr_weapon_menu_profile_entry_t *profile, size_t count)
+{
+	for (size_t i = 0; i < count; ++i)
+		VR_WeaponMenu_AddProfileEntry (&profile[i]);
+}
+
+static void VR_WeaponMenu_LoadBuiltinProfiles (void)
+{
+	if (VR_WeaponMenu_GameDirIs ("dwell") ||
+		VR_WeaponMenu_GameDirIs ("dwellv2p2"))
+		VR_WeaponMenu_AddProfile (vr_weapon_menu_dwell_profile,
+			sizeof (vr_weapon_menu_dwell_profile) /
+			sizeof (vr_weapon_menu_dwell_profile[0]));
+	if (VR_WeaponMenu_GameDirIs ("alk") || VR_WeaponMenu_GameDirIs ("limjam"))
+		VR_WeaponMenu_AddProfile (vr_weapon_menu_alkaline_profile,
+			sizeof (vr_weapon_menu_alkaline_profile) /
+			sizeof (vr_weapon_menu_alkaline_profile[0]));
+	if (VR_WeaponMenu_GameDirIs ("enyo"))
+		VR_WeaponMenu_AddProfile (vr_weapon_menu_enyo_profile,
+			sizeof (vr_weapon_menu_enyo_profile) /
+			sizeof (vr_weapon_menu_enyo_profile[0]));
+	if (VR_WeaponMenu_GameDirIs ("qbj3"))
+		VR_WeaponMenu_AddProfile (vr_weapon_menu_qbj3_profile,
+			sizeof (vr_weapon_menu_qbj3_profile) /
+			sizeof (vr_weapon_menu_qbj3_profile[0]));
+	if (VR_WeaponMenu_GameDirIs ("mjolnir") ||
+		VR_WeaponMenu_GameDirIs ("mjolnir1.0"))
+		VR_WeaponMenu_AddProfile (vr_weapon_menu_mjolnir_profile,
+			sizeof (vr_weapon_menu_mjolnir_profile) /
+			sizeof (vr_weapon_menu_mjolnir_profile[0]));
+	if (VR_WeaponMenu_GameDirIs ("mg3"))
+		VR_WeaponMenu_AddProfile (vr_weapon_menu_mg3_profile,
+			sizeof (vr_weapon_menu_mg3_profile) /
+			sizeof (vr_weapon_menu_mg3_profile[0]));
+	if (hipnotic)
+		VR_WeaponMenu_AddProfile (vr_weapon_menu_hipnotic_profile,
+			sizeof (vr_weapon_menu_hipnotic_profile) /
+			sizeof (vr_weapon_menu_hipnotic_profile[0]));
+	if (rogue)
+		VR_WeaponMenu_AddProfile (vr_weapon_menu_rogue_profile,
+			sizeof (vr_weapon_menu_rogue_profile) /
+			sizeof (vr_weapon_menu_rogue_profile[0]));
+}
+
 static qboolean VR_WeaponMenu_ParseWWheel (const char *data)
 {
 	const char *cursor = data;
@@ -558,8 +908,10 @@ void VR_WeaponMenu_ReloadGame (void)
 	memset (vr_weapon_menu_schema_bitmasks, 0,
 		sizeof (vr_weapon_menu_schema_bitmasks));
 	vr_weapon_menu_wwheel_catalog.count = 0;
+	vr_weapon_menu_wwheel_catalog.authoritative_schema = 1;
 	vr_weapon_menu_has_wwheel = false;
 	vr_weapon_menu_has_schema = false;
+	vr_weapon_menu_has_profile = false;
 
 	data = COM_LoadFile ("wwheel.txt", &path_id);
 	if (data && (!com_searchpaths || path_id != com_searchpaths->path_id))
@@ -589,6 +941,7 @@ void VR_WeaponMenu_ReloadGame (void)
 
 	if (VR_WeaponMenu_LoadSchema (schema_entries, &schema_count))
 		VR_WeaponMenu_ApplySchema (schema_entries, schema_count);
+	VR_WeaponMenu_LoadBuiltinProfiles ();
 }
 
 static qboolean VR_WeaponMenu_GameContextValid (void)
@@ -643,6 +996,25 @@ static int VR_WeaponMenu_Stat (const int *stats, size_t num_stats, int stat)
 	return stats[stat];
 }
 
+static qboolean VR_WeaponMenu_ProfileUsesItemOwnership (int selector)
+{
+	if (selector == IT_SHOTGUN || selector == IT_SUPER_SHOTGUN ||
+		selector == IT_NAILGUN || selector == IT_SUPER_NAILGUN ||
+		selector == IT_GRENADE_LAUNCHER || selector == IT_ROCKET_LAUNCHER ||
+		selector == IT_LIGHTNING)
+		return true;
+	if (!rogue && selector == IT_AXE)
+		return true;
+	if (rogue && (selector == RIT_AXE || selector == RIT_LAVA_NAILGUN ||
+		selector == RIT_LAVA_SUPER_NAILGUN || selector == RIT_MULTI_GRENADE ||
+		selector == RIT_MULTI_ROCKET || selector == RIT_PLASMA_GUN))
+		return true;
+	if (hipnotic && (selector == HIT_MJOLNIR || selector == HIT_LASER_CANNON ||
+		selector == HIT_PROXIMITY_GUN))
+		return true;
+	return false;
+}
+
 static qboolean VR_WeaponMenu_EntryActive (const vr_weapon_menu_entry_t *entry,
 	const int *stats, size_t num_stats)
 {
@@ -669,7 +1041,16 @@ static qboolean VR_WeaponMenu_EntryOwned (const vr_weapon_menu_entry_t *entry,
 		owned = entry->owned_mask ? (stat & entry->owned_mask) != 0 : stat != 0;
 	}
 	else if (entry->selector)
-		owned = (client_items | VR_WeaponMenu_Stat (stats, num_stats, STAT_ITEMS)) & entry->selector;
+	{
+		if (entry->source == VR_WEAPON_CATALOG_SOURCE_PROFILE)
+			owned = (VR_WeaponMenu_Stat (stats, num_stats, STAT_VR_WEAPONS) &
+				entry->selector) != 0;
+		if (entry->source != VR_WEAPON_CATALOG_SOURCE_PROFILE ||
+			VR_WeaponMenu_ProfileUsesItemOwnership (entry->selector))
+			owned = owned || ((client_items |
+				VR_WeaponMenu_Stat (stats, num_stats, STAT_ITEMS)) &
+				entry->selector) != 0;
+	}
 	return owned || active;
 }
 
