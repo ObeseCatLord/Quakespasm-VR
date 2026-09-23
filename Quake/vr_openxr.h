@@ -64,6 +64,9 @@ int VRXR_BeginFrame(vrxr_frame_t *frame);
 void VRXR_EndFrame(void);
 /* Safe from engine Host_Error/longjmp and nested refresh paths. */
 void VRXR_AbortFrame(void);
+/* Generic tracker poses are optional and disabled until the engine's archived
+ * FBT preference enables them; the setting applies at the next frame locate. */
+void VRXR_SetTrackerEnabled(int enabled);
 void VRXR_Haptic(int physical_hand, float duration_seconds, float amplitude);
 int VRXR_GetViewSize(int eye, unsigned int *width, unsigned int *height);
 const char *VRXR_RuntimeName(void);

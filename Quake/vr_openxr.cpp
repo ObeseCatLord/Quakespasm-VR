@@ -182,7 +182,7 @@ struct State {
 	bool vulkanSwapchainImageFlagsSupported;
 	bool foveationFixedAvailable, foveationEyeAvailable;
 	XrFoveationProfileFB foveationOff, foveationFixed, foveationEye;
-	bool gazeSupported, gazeEnabled, xdevSupported, frameSupported, maskSupported, referenceChanged, referencePending;
+	bool gazeSupported, gazeEnabled, trackerEnabled, xdevSupported, frameSupported, maskSupported, referenceChanged, referencePending;
 	char runtime[XR_MAX_RUNTIME_NAME_SIZE];
 	char systemName[XR_MAX_SYSTEM_NAME_SIZE];
 	State() : loader(0), log(0), xr(), useVulkan(false), localFloorSupported(false), instance(XR_NULL_HANDLE), system(0), session(XR_NULL_HANDLE),
@@ -190,7 +190,7 @@ struct State {
 		handPath(), chain(), trackers(), trackerSources(), trackerVersion(0), htcxSupported(false), trackersDirty(false), xdevList(XR_NULL_HANDLE), views(), frameState(),
 		sessionState(XR_SESSION_STATE_IDLE), appSpaceType(XR_REFERENCE_SPACE_TYPE_LOCAL), pendingReferenceType(XR_REFERENCE_SPACE_TYPE_LOCAL),
 		pendingReferenceTime(0), blend(XR_ENVIRONMENT_BLEND_MODE_OPAQUE), initialized(false), sessionRunning(false), terminal(false),
-		frameBegun(false), shouldRender(false), stopReason(VRXR_STOP_NONE), discoveredGaze(false), discoveredHtcx(false), discoveredXdev(false), foveationSupported(false), foveationEyeSupported(false), vulkanSwapchainImageFlagsSupported(false), foveationFixedAvailable(false), foveationEyeAvailable(false), foveationOff(XR_NULL_HANDLE), foveationFixed(XR_NULL_HANDLE), foveationEye(XR_NULL_HANDLE), gazeSupported(false), gazeEnabled(false), xdevSupported(false), frameSupported(false), maskSupported(false),
+		frameBegun(false), shouldRender(false), stopReason(VRXR_STOP_NONE), discoveredGaze(false), discoveredHtcx(false), discoveredXdev(false), foveationSupported(false), foveationEyeSupported(false), vulkanSwapchainImageFlagsSupported(false), foveationFixedAvailable(false), foveationEyeAvailable(false), foveationOff(XR_NULL_HANDLE), foveationFixed(XR_NULL_HANDLE), foveationEye(XR_NULL_HANDLE), gazeSupported(false), gazeEnabled(false), trackerEnabled(false), xdevSupported(false), frameSupported(false), maskSupported(false),
 		referenceChanged(false), referencePending(false), runtime(), systemName() {}
 };
 static State g;
@@ -491,6 +491,7 @@ static bool create_htcx_actions() {
 	return ok("xrSuggestInteractionProfileBindings tracker",g.xr.SuggestBindings(g.instance,&suggestion));
 }
 static void locate_trackers(vrxr_frame_t *frame, bool focused) {
+	if(!g.trackerEnabled) return;
 	if(g.htcxSupported && g.trackersDirty) refresh_htcx_trackers();
 	for(size_t i=0;i<g.trackers.size();++i) {
 		const Tracker &tracker=g.trackers[i]; vrxr_device_t *device=&frame->devices[kTrackerFirst+i];
@@ -980,6 +981,8 @@ static void destroy_session_resources() {
 	g.gazeSupported=g.discoveredGaze;
 	g.htcxSupported=g.discoveredHtcx;
 	g.xdevSupported=g.discoveredXdev;
+	/* Engine input reapplies the archived setting on its next pass. */
+	g.trackerEnabled=false;
 	g.vk.format=VK_FORMAT_UNDEFINED; g.vk.extraUsage=0;
 	g.vk.arrayLayers=1; g.vk.densityMaps=false; g.vk.densityImageFlags=0; g.vk.retireImages=0; g.vk.owner=0;
 }
@@ -1136,6 +1139,7 @@ static bool finish_session() {
 
 extern "C" void VRXR_Shutdown(void) { destroy_resources(); }
 extern "C" vrxr_stop_reason_t VRXR_StopReason(void) { return g.stopReason; }
+extern "C" void VRXR_SetTrackerEnabled(int enabled) { g.trackerEnabled=enabled!=0; }
 
 extern "C" int VRXR_BeginFrame(vrxr_frame_t *frame) {
 	if(!frame) return -1;

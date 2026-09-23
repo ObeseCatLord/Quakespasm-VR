@@ -1450,6 +1450,9 @@ void VR_InputCommands (const vrxr_frame_t *frame)
 	qboolean desired[2][MAX_KEYS] = {{false}};
 	vrxr_input_t input_hands[2];
 	vr_input_context_t context;
+	/* Reapply the archived preference each input pass: OpenXR teardown resets
+	 * runtime state, while this also lets users enable tracking mid-session. */
+	VRXR_SetTrackerEnabled (vr_fbt_enabled.value != 0.0f);
 	if (vr_fbt_enabled.value && frame && frame->reference_changed && frame->sample_id &&
 		frame->sample_id != vr_input_fbt_last_seen_sample_id)
 		VR_InputFBTReset ();
