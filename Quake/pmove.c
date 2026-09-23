@@ -1816,16 +1816,33 @@ entirety rather than clipped to the maximum, which avoids turning a bad sample
 into an apparent player movement.
 ====================
 */
-static void PM_ApplyVRRoomScaleMove (void)
+static void PM_ApplyVRRoomScaleMove (float command_seconds)
 {
 	vec3_t	move;
 	vec3_t	velocity;
 	float	saved_frametime;
 	float	horizontal_length;
+	float	sweep_seconds = 1.0f;
+	float	velocity_scale = 1.0f;
+	float	saved_jump_secs;
+	float	saved_waterjumptime;
+	qboolean saved_jump_held;
 
 	if (!pmove.cmd.vr_active || pmove.pm_type == PM_DEAD ||
 		pmove.pm_type == PM_NONE || pmove.pm_type == PM_FREEZE)
 		return;
+	/* Private commands carry an explicit accepted duration. Keep the legacy
+	 * displacement-as-velocity behavior for callers without that duration. */
+	if (pmove.cmd.msec)
+	{
+		if (pmove.cmd.msec > 125 || !isfinite(command_seconds) ||
+			command_seconds <= 0)
+			return;
+		sweep_seconds = command_seconds;
+		velocity_scale = 1.0f / sweep_seconds;
+		if (!isfinite(velocity_scale))
+			return;
+	}
 
 	VectorCopy (pmove.cmd.vr_roomscalemove, move);
 	horizontal_length = sqrtf(move[0]*move[0] + move[1]*move[1]);
@@ -1845,8 +1862,11 @@ static void PM_ApplyVRRoomScaleMove (void)
 
 	VectorCopy (pmove.velocity, velocity);
 	saved_frametime = frametime;
-	frametime = 1.0f;
-	VectorCopy (move, pmove.velocity);
+	saved_jump_secs = pmove.jump_secs;
+	saved_waterjumptime = pmove.waterjumptime;
+	saved_jump_held = pmove.jump_held;
+	frametime = sweep_seconds;
+	VectorScale (move, velocity_scale, pmove.velocity);
 	/* Tracking must obey the same airborne step policy as locomotion. */
 	if (pmove.onground || pmove.waterlevel >= 2 || pmove.pm_type == PM_FLY ||
 		pmove.pm_type == PM_6DOF || pmove.onladder || pmove.waterjumptime ||
@@ -1857,6 +1877,9 @@ static void PM_ApplyVRRoomScaleMove (void)
 	else
 		PM_SlideMove ();
 	VectorCopy (velocity, pmove.velocity);
+	pmove.jump_secs = saved_jump_secs;
+	pmove.waterjumptime = saved_waterjumptime;
+	pmove.jump_held = saved_jump_held;
 	frametime = saved_frametime;
 }
 
@@ -1869,7 +1892,7 @@ static void PM_GorillaCheckLift (const vec3_t previous_origin)
 }
 
 static void PM_PlayerMoveStep (float gamespeed, qboolean apply_roomscale,
-	qboolean prepare_gorilla, float gorilla_seconds)
+	qboolean prepare_gorilla, float command_seconds)
 {
 //	int i;
 //	int tmp;	//for rounding
@@ -1891,7 +1914,7 @@ static void PM_PlayerMoveStep (float gamespeed, qboolean apply_roomscale,
 		if (apply_roomscale && pmove.cmd.vr_active)
 		{
 			PM_CategorizePosition ();
-			PM_ApplyVRRoomScaleMove ();
+			PM_ApplyVRRoomScaleMove (command_seconds);
 		}
 		PM_SpectatorMove ();
 		pmove.onground = false;
@@ -1904,7 +1927,7 @@ static void PM_PlayerMoveStep (float gamespeed, qboolean apply_roomscale,
 	PM_CategorizePosition ();
 	if (apply_roomscale)
 	{
-		PM_ApplyVRRoomScaleMove ();
+		PM_ApplyVRRoomScaleMove (command_seconds);
 		PM_CategorizePosition ();
 	}
 
@@ -1956,7 +1979,7 @@ static void PM_PlayerMoveStep (float gamespeed, qboolean apply_roomscale,
 			VectorCopy(pmove.velocity, native_velocity);
 			vr_gorilla_result_t result = VRG_Step(&pmove.gorilla,
 				&pmove.cmd.vr_gorilla, pmove.origin, pmove.velocity,
-				gorilla_seconds * gamespeed,
+				command_seconds * gamespeed,
 				movevars.gravity * movevars.entgravity, NULL, PM_GorillaTrace,
 				PM_GorillaSurface);
 			if (pmove.waterjumptime || (pmove.waterlevel >= 2 && !result.launched)) {
@@ -1980,7 +2003,7 @@ static void PM_PlayerMoveStep (float gamespeed, qboolean apply_roomscale,
 						solid |= 1u << hand;
 				}
 				pmove.gorilla_swim_stroke = VRG_SwimImpulse(&pmove.cmd.vr_gorilla,
-					liquid, solid, gorilla_seconds * gamespeed,
+					liquid, solid, command_seconds * gamespeed,
 					movevars.maxspeed * .7f, pmove.velocity);
 			}
 		}
@@ -2097,13 +2120,13 @@ void PM_ApplyPreThinkRoomScale (void)
 	if (pmove.pm_type == PM_SPECTATOR || pmove.pm_type == PM_OLD_SPECTATOR)
 	{
 		PM_CategorizePosition ();
-		PM_ApplyVRRoomScaleMove ();
+		PM_ApplyVRRoomScaleMove (pmove.cmd.seconds);
 		goto done;
 	}
 
 	PM_NudgePosition ();
 	PM_CategorizePosition ();
-	PM_ApplyVRRoomScaleMove ();
+	PM_ApplyVRRoomScaleMove (pmove.cmd.seconds);
 	PM_CategorizePosition ();
 
 done:

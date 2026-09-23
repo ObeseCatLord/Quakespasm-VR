@@ -635,13 +635,23 @@ roomscale parity diagnostic, set
 `QSVR_PINNED_VR_HEAD_RAMP_METERS_PER_ACTION` to a finite value in `(0, 0.1]`
 (for example `0.005`). It adds that many metres to completed-frame HMD x on
 each action sample after the first 25; the default `0` leaves the runtime HMD
-unchanged. The JSON result records the ramp and verifies the written HMD x at
-float precision. This changes the app's completed XR frame for the diagnostic;
-it does not move the physical headset or inject usercmd/server state, and does
-not establish real roomscale collision or geometry parity. The probe requires
-focused stereo/private signon, the active shotgun's ten-unit muzzle
-calibration, a finite relative VR attack command, a covering server ACK and
-authoritative shell consumption. It writes a compact JSON result and prints
+unchanged. To reproduce a small horizontal slide along the other OpenXR
+horizontal axis, optionally set
+`QSVR_PINNED_VR_HEAD_Z_METERS_PER_ACTION` to a finite signed value with
+magnitude at most `0.1` (for example `-0.005`). The script anchors completed-
+frame HMD Z at its first action sample, holds it there through sample 25, then
+sets it to `anchor + rate * (sample - 25)`. When set to `0`, Z stays frozen at
+the anchor; when unset, runtime Z is left unchanged. OpenXR X and Z are the
+horizontal axes used by roomscale input, while HMD Y is vertical and is never
+edited by this diagnostic. The JSON reports whether Z is synthetic and records
+the anchor/ramp; the script checks every HMD matrix component against its exact
+float32 value. This changes the app's completed XR frame synthetically for the
+diagnostic; it does not move the physical headset or inject usercmd/server
+state, and does not establish real roomscale collision or geometry parity.
+The probe requires focused stereo/private signon, the active shotgun's
+ten-unit muzzle calibration, a finite relative VR attack command, a covering
+server ACK and authoritative shell consumption. It writes a compact JSON
+result and prints
 `QSVR_PINNED_VR_PASSED`. This does not establish muzzle world origin, damage,
 or visible weapon alignment.
 

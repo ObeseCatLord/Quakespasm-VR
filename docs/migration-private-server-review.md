@@ -649,3 +649,43 @@ static-world samples. The trace comparison is evidence for this narrow solver
 path; it does not qualify moving colliders, equal-ACK maintenance, latency
 correction, VR roomscale or general QuakeC callbacks. Keep presentation and
 prediction permission gated until those checks are addressed.
+
+## Astra review: VR roomscale wall replay
+
+A trace-only extension admitted bounded VR-active commands to the existing
+shadow replay without publishing prediction or changing the server. A focused
+simulated Monado run with natural HMD drift matched 129 earlier-ACK command
+targets (maximum position difference 0.000064 units). A controlled completed-
+frame HMD ramp exposed a wall-slide gap: 127 targets matched, but 31 position
+differences exceeded 0.05 units, reaching 0.085823 units. The server continued
+sliding along the wall while the client replay often did not. Controller input,
+private transport and shell consumption still passed. These are synthetic
+tracking samples, not physical-headset qualification.
+
+The local Astra Max senior review verified a likely units error: the client
+PMove roomscale helper supplied displacement as velocity over one second,
+whereas the authoritative server supplied displacement divided by the command
+duration. PMove's 0.1 units/s clip threshold can therefore erase a small
+tangential displacement that survives the server sweep. The precise runtime
+clip branch was not captured, so the wall trace must be repeated after the
+correction.
+
+| Senior recommendation | Disposition |
+| --- | --- |
+| Correct the units inside the existing PMove roomscale helper, using the full accepted command duration rather than a movement substep. | **Adopt.** Preserve the native server collision/QC order and once-only roomscale application. |
+| Instrument the collision stack before any correction. | **Adapt.** First rerun the discriminating wall trace; capture clip/nudge/unstick state only if a gap remains. |
+| Enable VR prediction once that wall run matches. | **Reject.** Step contact, callback ordering, equal-ACK baseline, collider freshness and latency correction remain unqualified. |
+
+Check velocity-dependent side effects, including touch velocities and optional
+walljump, when broader VR movement modes are qualified. A passing simulated
+wall replay alone does not authorize presentation or server permission.
+
+The corrected client roomscale sweep now uses the original private command
+duration for velocity and frame time, then restores the locomotion state. A
+fresh simulated Monado run with controlled horizontal HMD X/Z motion reached
+the same wall with a small tangential component (about 0.035 units in a sampled
+command). Its 129 earlier-ACK replay/server pairs matched within 0.000071
+units of position and zero reported velocity/timer difference; the private
+controller/firing smoke passed and consumed three shells. This is a new
+trajectory, not a byte-for-byte replay of the original failing run. The
+prediction gate remains closed pending the other cases above.
