@@ -143,10 +143,12 @@ The first renderer proof is one compatible Ranger with inherited head/hand
 solving, visible from desktop and both eyes with matching ray-query shadow,
 including nonzero pitch and differing body yaw. Then verify tracking loss,
 two simultaneous poses sharing one model, offscreen shadowing, allocation
-growth, and frame-slot reuse. The visible and first-surface shadow adapters now
-build, but no live proof has run. Canonical avatar presentation identity, donor
-normal parity, and multisurface ray-shadow coverage need more evidence before
-claiming parity. `d358511a` adds a conservative tracked-pose culling bound;
+growth, and frame-slot reuse. The visible and multi-surface shadow adapters now
+build, but no live proof has run. Canonical avatar presentation identity and
+donor normal parity need more evidence before claiming parity. `d470cfe8`
+extends the existing entity-owned BLAS to all valid selected surface-chain
+geometries and shares the tracked palette across compatible MD5 surfaces;
+skin changes recreate the BLAS. `d358511a` adds a conservative tracked-pose culling bound;
 its visual safety and useful rejection rate still need runtime evidence.
 
 The scheduling seam is implemented after `R_MarkSurfaces` stores efrag entities
@@ -173,9 +175,11 @@ device address and joint offset. Descriptor sets and any retired storage
 allocation remain alive until the frame-slot fence; a later storage-pool
 growth must not change the descriptor already recorded in a draw command.
 This reuses the existing dynamic storage allocator and the vkQuake shaders.
-First gate multisurface and skin selection against the actual visible and
-BLAS geometry, since skin-zero shadow selection can differ from a visible
-player skin. A tracked player's culling bounds must include the solved pose;
+The BLAS now uses the visible model's selected skin and all valid surfaces in
+its chain. Its build-size and update inputs retain matching geometry counts
+and per-surface primitive counts, as required by the [Vulkan acceleration
+structure specification](https://docs.vulkan.org/spec/latest/chapters/accelstructures.html).
+A tracked player's culling bounds must include the solved pose;
 static MD5 animation bounds alone can drop raised or extended hands. The first
 bound computes each surface's maximum sum of stored influence-position lengths
 at upload, then combines it with the solved palette's maximum matrix Frobenius
