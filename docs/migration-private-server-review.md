@@ -267,3 +267,14 @@ Before wiring stats into `SV_CalcStats`, detect custom mod stats that overlap
 the private movement indices 226–253. Resolve VR jump-speed policy at the
 selected command owner and export exactly the speed used by the server step.
 Do not enable prediction merely because these settings can be computed.
+
+## PreThink room-scale adapter checkpoint
+
+The shared PMove module now exposes a room-scale-only collision sweep for the
+future server command owner. It reuses PMove's nudge, ground categorization and
+step/slide path before QuakeC PreThink, without running ordinary locomotion or
+Gorilla preparation. It preserves the solver's angle state and leaves zero
+room-scale input alone. The caller still owns collecting physents, copying the
+result back to the entity, relinking/touch dispatch, and clearing the room-scale
+delta before its later `PM_PlayerMove`. There is no live call site or authority
+switch yet. The strict Linux `vkquake` target builds.

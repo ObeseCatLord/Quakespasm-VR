@@ -2074,6 +2074,45 @@ static void PM_PlayerMoveStep (float gamespeed, qboolean apply_roomscale,
 	}
 }
 
+/* Apply the existing PMove room-scale sweep without running a movement step.
+ * The command owner handles entity save/link and touch dispatch around QC. */
+void PM_ApplyPreThinkRoomScale (void)
+{
+	vec3_t saved_forward, saved_right, saved_up, saved_angles;
+
+	PM_EnsureInitialized ();
+	if (!pmove.cmd.vr_active ||
+		(!pmove.cmd.vr_roomscalemove[0] && !pmove.cmd.vr_roomscalemove[1]) ||
+		pmove.pm_type == PM_NONE || pmove.pm_type == PM_FREEZE ||
+		pmove.pm_type == PM_DEAD)
+		return;
+
+	VectorCopy (forward, saved_forward);
+	VectorCopy (right, saved_right);
+	VectorCopy (up, saved_up);
+	VectorCopy (pmove.angles, saved_angles);
+	VectorCopy (pmove.cmd.viewangles, pmove.angles);
+	AngleVectors (pmove.angles, forward, right, up);
+
+	if (pmove.pm_type == PM_SPECTATOR || pmove.pm_type == PM_OLD_SPECTATOR)
+	{
+		PM_CategorizePosition ();
+		PM_ApplyVRRoomScaleMove ();
+		goto done;
+	}
+
+	PM_NudgePosition ();
+	PM_CategorizePosition ();
+	PM_ApplyVRRoomScaleMove ();
+	PM_CategorizePosition ();
+
+done:
+	VectorCopy (saved_angles, pmove.angles);
+	VectorCopy (saved_forward, forward);
+	VectorCopy (saved_right, right);
+	VectorCopy (saved_up, up);
+}
+
 void PM_PlayerMove (float gamespeed)
 {
 	usercmd_t	cmd;

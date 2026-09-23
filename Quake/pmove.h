@@ -183,6 +183,12 @@ extern	movevars_t		movevars;
 extern	playermove_t	pmove;
 
 void PM_PlayerMove (float gamespeed);
+/* Apply only the active command's room-scale displacement before QuakeC.
+ * The caller must save/relink player state and dispatch touches outside this
+ * helper, and clear pmove.cmd.vr_roomscalemove before a later PM_PlayerMove
+ * so the same displacement is not applied twice. For movable types, command
+ * angles are used during the sweep and the previous pmove.angles are restored. */
+void PM_ApplyPreThinkRoomScale (void);
 void PM_Init (void);
 void PM_InitBoxHull (void);
 
