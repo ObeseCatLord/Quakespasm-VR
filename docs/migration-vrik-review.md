@@ -100,9 +100,9 @@ presentation, not packet size.
 
 | Follow-up finding | Disposition |
 | --- | --- |
-| **P1:** A separate reliable offer immediately after serverinfo may arrive while an inherited client is still precaching; its keepalive parser treats that as fatal. | **Addressed in `f7b6a603`, runtime pending:** reserve room in the serverinfo retry path and append both offers in that same reliable message. If even the complete pair cannot fit, omit optional negotiation; never send a separate loading-time offer. Keep early-pose discard. |
+| **P1:** A separate reliable offer immediately after serverinfo may arrive while an inherited client is still precaching; its keepalive parser treats that as fatal. | **Addressed in `f7b6a603` and `ffc03c83`, runtime pending:** build ordinary serverinfo at full capacity, then append both offers in the same message only when they fit. Optional negotiation never reduces model/sound precaches or sends a separate loading-time message. Keep early-pose discard. |
 | **P2:** On a slot departure, the client used to mark whichever unreliable generation was most recently cached as retired. If replacement B arrived ahead of departure A, this permanently rejected B. | **Addressed in `8a4f19f4`, runtime pending:** clear displayed samples at departure, then retire A by explicit generation in a negotiated reliable comment. A newer B generation survives delayed retirement. If the reliable buffer lacks room, omit the optional marker without blocking B. |
-| **P2:** The sender mapped head/hands with tracking yaw while stereo presentation resolved view yaw separately in mouse-yaw mode; its public hand origin also included HMD translation omitted by the local viewmodel and muzzle. | **Addressed in `f445318c` and `f3a977de`, runtime pending:** the view owner exposes resolved presentation yaw and hand origin to sender, stereo head offset, viewmodel, and crosshair muzzle; private body-owned roomscale movement keeps its gameplay mapping. A snap turn queued before the next screen update defers one optional pose sample rather than transmitting stale yaw or an inactive pose. |
+| **P2:** The sender mapped head/hands with tracking yaw while stereo presentation resolved view yaw separately in mouse-yaw mode; its public hand origin also included HMD translation omitted by the local viewmodel and muzzle. | **Addressed in `f445318c` and `ffc03c83`, runtime pending:** the view owner exposes resolved presentation yaw and hand origin to sender, stereo head offset, viewmodel, and crosshair muzzle; private body-owned roomscale movement keeps its gameplay mapping. Pending local yaw is included in the resolved presentation transform so a held smooth turn continues transmitting poses. |
 
 The static review also identified the write-only server legacy pose mirror and
 the always-false `keep_capability` reset argument as later deletion candidates.
@@ -163,6 +163,16 @@ static MD5 animation bounds alone can drop raised or extended hands. Retain
 stereo-union culling and evaluate cheap per-joint influence bounds before
 considering CPU vertex skinning or disabling culling. These are implementation
 constraints, not completed behavior or measured speedups.
+
+One conservative bound can be built without skinning every vertex on the CPU:
+at MD5 load time, collect the joint-local positions of all nonzero vertex
+influences into a small AABB per joint. Each frame, transform those AABBs by
+the solved palette and union them. The shader's nonnegative normalized joint
+weights make every skinned vertex a convex combination of those transformed
+influence points, so the union contains the rendered mesh. This costs work per
+joint rather than per vertex and can feed both stereo culling and ray-shadow
+eligibility. Verify the bound against the actual 4/8-weight quantization and
+the selected surface before using it in production.
 
 ## Desktop and VR cross-play gate
 
