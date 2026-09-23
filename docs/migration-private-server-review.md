@@ -233,3 +233,21 @@ path by itself. Later live acceptance must include walking/jumping, two poses
 with target damage, ordered impulses, blocked roomscale, triggers, elevators,
 pause/reset and owner snapshot coherence. Delayed scheduled weapon Think pose
 and the exact idle callback policy remain unresolved compatibility questions.
+
+## Server physent collector checkpoint
+
+The shared PMove world now has a callable server collector built over vkQuake's
+existing area tree. It gathers linked nearby solids, preserves owner and point
+entity exclusions from `SV_ClipToLinks`, maps supported contents skins and BSP
+model identity, and reports invalid world/model data or the 64-physent overflow
+as failure. It clears the partially gathered list on failure. Its caller must
+supply conservative absolute query bounds and must never run PMove on failure.
+This replaces neither the active server player path nor the client collector;
+prediction remains disabled. The strict Linux `vkquake` target builds.
+
+`SOLID_NOT` entities are not linked into the server area tree, but the private
+snapshot writer can currently label some negative-skin `SOLID_NOT` entities as
+solid. Resolve that server/client collision mismatch before predictive replay.
+The later player adapter also needs a deliberate response to collector overflow
+on dense maps and to pusher/rider ignore context; silently dropping colliders
+would sacrifice correctness for apparent performance.

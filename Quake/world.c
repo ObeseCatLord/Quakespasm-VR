@@ -23,6 +23,9 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 // world.c -- world query functions
 
 #include "quakedef.h"
+#include "pmove.h"
+/* world.c defines its own legacy VectorNegate macro below. */
+#undef VectorNegate
 
 // FTE-opimized world queries
 
@@ -598,6 +601,147 @@ void SV_LinkEdict (edict_t *ent, qboolean touch_triggers)
 	// if touch_triggers, touch all entities at this node and decend for more
 	if (touch_triggers)
 		SV_TouchLinks (ent);
+}
+
+static unsigned int SV_PMoveContentsMaskFromSkin (float skin)
+{
+	if (skin == CONTENTS_WATER)
+		return CONTENTBIT_WATER;
+	if (skin == CONTENTS_LAVA)
+		return CONTENTBIT_LAVA;
+	if (skin == CONTENTS_SLIME)
+		return CONTENTBIT_SLIME;
+	if (skin == CONTENTS_SKY)
+		return CONTENTBIT_SKY;
+	if (skin == CONTENTS_CLIP)
+		return CONTENTBIT_CLIP;
+	if (skin == CONTENTS_LADDER)
+		return CONTENTBIT_LADDER;
+	return 0;
+}
+
+static qboolean SV_AreaAddPMovePhysents (edict_t *ignore, areanode_t *node,
+	const vec3_t boxminmax[2])
+{
+	link_t *link, *next;
+	int axis;
+
+	if (!node || (node->axis < -1 || node->axis > 2))
+		return false;
+
+	for (link = node->solid_edicts.next; link != &node->solid_edicts; link = next)
+	{
+		edict_t *other = EDICT_FROM_AREA (link);
+		physent_t *phys;
+		int modelindex;
+		qmodel_t *model = NULL;
+
+		next = link->next;
+		/* SOLID_NOT (including negative-skin snapshot-only solids) is not linked. */
+		if (other == ignore || other->v.solid == SOLID_NOT ||
+			other->v.solid == SOLID_TRIGGER)
+			continue;
+
+		/* Linked BSP abs bounds already include vkQuake's rotated-BSP expansion. */
+		if (boxminmax[0][0] > other->v.absmax[0] ||
+			boxminmax[0][1] > other->v.absmax[1] ||
+			boxminmax[0][2] > other->v.absmax[2] ||
+			boxminmax[1][0] < other->v.absmin[0] ||
+			boxminmax[1][1] < other->v.absmin[1] ||
+			boxminmax[1][2] < other->v.absmin[2])
+			continue;
+
+		if (ignore && ignore->v.size[0] && !other->v.size[0])
+			continue; // match SV_ClipToLinks: points never interact
+
+		if (ignore && (PROG_TO_EDICT (other->v.owner) == ignore ||
+			PROG_TO_EDICT (ignore->v.owner) == other))
+			continue;
+
+		if (pmove.numphysent >= MAX_PHYSENTS)
+			return false;
+
+		if (other->v.solid == SOLID_BSP)
+		{
+			if (!isfinite (other->v.modelindex) || other->v.modelindex < 1 ||
+				other->v.modelindex >= MAX_MODELS ||
+				other->v.modelindex != (int)other->v.modelindex || !qcvm->GetModel)
+				return false;
+
+			modelindex = (int)other->v.modelindex;
+			model = qcvm->GetModel (modelindex);
+			if (!model || model->needload || model->type != mod_brush)
+				return false;
+		}
+
+		phys = &pmove.physents[pmove.numphysent];
+		phys->info = NUM_FOR_EDICT (other);
+		phys->model = model;
+		phys->modelindex = model ? (unsigned int)modelindex : 0;
+		VectorCopy (other->v.origin, phys->origin);
+		VectorCopy (other->v.mins, phys->mins);
+		VectorCopy (other->v.maxs, phys->maxs);
+		VectorCopy (other->v.angles, phys->angles);
+		phys->forcecontentsmask = SV_PMoveContentsMaskFromSkin (other->v.skin);
+		pmove.numphysent++;
+	}
+
+	axis = node->axis;
+	if (axis == -1)
+		return true;
+
+	/* Include split-plane equality so touching bounds remain candidates. */
+	if (boxminmax[1][axis] >= node->dist &&
+		(!node->children[0] ||
+		 !SV_AreaAddPMovePhysents (ignore, node->children[0], boxminmax)))
+		return false;
+	if (boxminmax[0][axis] <= node->dist &&
+		(!node->children[1] ||
+		 !SV_AreaAddPMovePhysents (ignore, node->children[1], boxminmax)))
+		return false;
+
+	return true;
+}
+
+qboolean SV_CollectPMovePhysents (edict_t *ignore, vec3_t boxminmax[2])
+{
+	int i, ignore_index = -1;
+
+	memset (pmove.physents, 0, sizeof (pmove.physents));
+	pmove.numphysent = 0;
+	pmove.skipent = -1;
+
+	if (!qcvm || qcvm != &sv.qcvm || !qcvm->edicts || qcvm->edict_size <= 0 ||
+		qcvm->num_edicts <= 0 || !qcvm->worldmodel || qcvm->worldmodel->needload ||
+		qcvm->worldmodel->type != mod_brush || !qcvm->GetModel ||
+		qcvm->numareanodes <= 0 || qcvm->numareanodes > AREA_NODES || !boxminmax)
+		return false;
+
+	for (i = 0; i < 3; i++)
+		if (!isfinite (boxminmax[0][i]) || !isfinite (boxminmax[1][i]) ||
+			boxminmax[0][i] > boxminmax[1][i])
+			return false;
+
+	if (ignore)
+	{
+		ignore_index = NUM_FOR_EDICT (ignore);
+		if (ignore_index <= 0 || ignore_index >= qcvm->num_edicts || ignore->free)
+			return false;
+	}
+
+	pmove.skipent = ignore_index;
+	pmove.physents[0].model = qcvm->worldmodel;
+	pmove.physents[0].info = 0;
+	pmove.numphysent = 1;
+
+	if (!SV_AreaAddPMovePhysents (ignore, qcvm->areanodes, boxminmax))
+	{
+		memset (pmove.physents, 0, sizeof (pmove.physents));
+		pmove.numphysent = 0;
+		return false;
+	}
+
+	return true;
 }
 
 /*

@@ -74,6 +74,10 @@ void SV_LinkEdict (edict_t *ent, qboolean touch_triggers);
 // sets ent->v.absmin and ent->v.absmax
 // if touchtriggers, calls prog functions for the intersected triggers
 
+/* Collect the world and linked server solids overlapping inclusive world bounds.
+ * Returns false for an invalid server world/model or physent overflow. */
+qboolean SV_CollectPMovePhysents (edict_t *ignore, vec3_t boxminmax[2]);
+
 void SV_PushGridEntityLinked (edict_t *ent);
 // sv_phys.c: keeps the SV_PushMove spatial grid in sync with entities that move mid-tick
 
