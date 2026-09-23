@@ -945,6 +945,20 @@ Add `QSVR_LOCAL_ASSERT_MOVE_STATS=1` for the stock selected-owner stat probe:
 it checks the received valid movement flags plus gravity, max speed, jump speed
 and step height against the stock server defaults. It does not enable or prove
 client prediction or stat/ACK epoch association.
+Gravity defaults to `800.0`; set `QSVR_LOCAL_EXPECT_GRAVITY` to a finite,
+positive float to match a live server `sv_gravity` change. For example, after
+changing `sv_gravity` to `600` in the running private server console, add
+`QSVR_LOCAL_EXPECT_GRAVITY=600` alongside `QSVR_LOCAL_ASSERT_MOVE_STATS=1`
+on the client probe command. This setting only changes the gravity comparison;
+the other expected movement stats remain at their stock values.
+For a reproducible one-time change after the selected client's completed move
+100, start a fresh `e1m1` server through
+`tests/private_selected_gravity_server.gdb` with the selected-server arguments
+above, then run the client with `QSVR_LOCAL_EXPECT_GRAVITY=600`,
+`QSVR_LOCAL_ASSERT_MOVE_STATS=1`, `QSVR_LOCAL_ASSERT_COHERENT_OWNER=1` and
+`QSVR_LOCAL_ASSERT_ACTION_ACK=1`. Require the server's
+`QSVR_GRAVITY_CHANGED` marker and a passed client result. This checks a live
+change and one coherent received state; it does not simulate a lost update.
 Add `QSVR_LOCAL_ASSERT_COHERENT_OWNER=1` to check that the selected client's
 message-end candidate names the current owner and completed ACK after receiving
 the full movement-stat group. This verifies one loopback snapshot boundary;

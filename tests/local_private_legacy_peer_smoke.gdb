@@ -15,6 +15,13 @@ result_path = os.environ.get('QSVR_LOCAL_RESULT')
 ready_path = os.environ.get('QSVR_LOCAL_MAP_READY') or None
 assert_action_ack = os.environ.get('QSVR_LOCAL_ASSERT_ACTION_ACK') == '1'
 assert_move_stats = os.environ.get('QSVR_LOCAL_ASSERT_MOVE_STATS') == '1'
+expected_gravity_text = os.environ.get('QSVR_LOCAL_EXPECT_GRAVITY', '800.0')
+try:
+    expected_gravity = float(expected_gravity_text)
+except ValueError:
+    raise RuntimeError('QSVR_LOCAL_EXPECT_GRAVITY must be a finite positive float')
+if not math.isfinite(expected_gravity) or expected_gravity <= 0.0:
+    raise RuntimeError('QSVR_LOCAL_EXPECT_GRAVITY must be a finite positive float')
 assert_coherent_owner = os.environ.get('QSVR_LOCAL_ASSERT_COHERENT_OWNER') == '1'
 assert_public_move_stats_off = \
     os.environ.get('QSVR_LOCAL_ASSERT_PUBLIC_MOVE_STATS_OFF') == '1'
@@ -164,7 +171,7 @@ try:
         if assert_move_stats:
             exported_move = movement_stats()
             require(exported_move['flags'] & 0x80000000, 'missing_moveflags_valid')
-            for key, expected in [('gravity', 800.0), ('maxspeed', 320.0),
+            for key, expected in [('gravity', expected_gravity), ('maxspeed', 320.0),
                                   ('jumpspeed', 270.0), ('stepheight', 18.0)]:
                 require(math.isfinite(exported_move[key]) and
                         abs(exported_move[key] - expected) < 0.01,

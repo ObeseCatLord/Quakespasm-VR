@@ -538,3 +538,12 @@ The reproducible GDB wrapper is `tests/private_selected_split_server.gdb`.
 This proves one real split path, not visual interpolation quality, general
 large-map behavior, resend under packet loss, or changing server movement
 settings. Those remain acceptance gates.
+
+A second selected `e1m1` loopback changed `sv_gravity` from 800 to 600 before
+physics at completed move 101 using
+`tests/private_selected_gravity_server.gdb`. The client received gravity 600,
+valid movement flags, stock speed/jump/step values and a matching owner/ACK
+candidate at ACK 284. It moved about 267 units, consumed four shells and kept
+prediction permission off. The result passed the action/ACK check. This
+closes the live changed-cvar reception probe; packet loss during that change,
+zero-valued settings and replay eligibility still need independent proof.
