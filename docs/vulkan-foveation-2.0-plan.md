@@ -92,6 +92,13 @@ a performance gain; the shared-image rewrite barrier may serialize frames.
 Physical Beyond/Steam Frame eye tracking, Windows, and Linux ARM verification
 remain deferred as requested.
 
+Astra Max's final read-only code review through `45de8d0a` found no remaining
+high- or medium-severity defect. It independently checked map synchronization
+and retirement, protected draw paths, default-off and gaze-loss behavior, and
+the multiview one-layer rule. Real gaze alignment/reacquisition, single-layer
+hardware execution, and measured net performance remain qualification gates,
+not demonstrated failures.
+
 Official references: [OpenXR gaze system support](https://registry.khronos.org/OpenXR/specs/1.1/man/html/XrSystemEyeGazeInteractionPropertiesEXT.html),
 [KHR shading-rate attachment and encoding](https://docs.vulkan.org/spec/latest/chapters/primsrast.html#primsrast-fragment-shading-rate-attachment),
 [RenderPass2 attachment](https://docs.vulkan.org/refpages/latest/refpages/source/VkFragmentShadingRateAttachmentInfoKHR.html),
