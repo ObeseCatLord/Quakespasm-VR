@@ -400,6 +400,153 @@ static qboolean SV_IsActiveClientEdict (edict_t *ent)
 	return ((int)ent->v.flags & FL_CLIENT) != 0;
 }
 
+typedef struct
+{
+	edict_t		*trigger;
+	float		until;
+	qboolean	instant_occupancy;
+} sv_recent_teleport_trigger_t;
+
+/* Track one source per client: instant triggers may omit teleport_time, while
+ * ordinary teleports keep the QC cooldown that their touch function set. */
+static sv_recent_teleport_trigger_t sv_recent_teleport_triggers[MAX_SCOREBOARD];
+
+static qboolean SV_IsTeleportTrigger (edict_t *touch)
+{
+	static dprograms_t *cached_progs;
+	static unsigned short cached_crc;
+	static func_t teleport_touch;
+	dfunction_t *func;
+	const char *classname;
+
+	if (!touch || touch->free)
+		return false;
+	if (touch->v.classname)
+	{
+		classname = PR_GetString (touch->v.classname);
+		if (classname &&
+			(!q_strcasecmp (classname, "trigger_teleport") ||
+			 !q_strcasecmp (classname, "trigger_instateleport")))
+			return true;
+	}
+
+	if (cached_progs != qcvm->progs || cached_crc != qcvm->progscrc)
+	{
+		cached_progs = qcvm->progs;
+		cached_crc = qcvm->progscrc;
+		func = ED_FindFunction ("teleport_touch");
+		teleport_touch = func ? (func_t)(func - qcvm->functions) : 0;
+	}
+
+	return teleport_touch && touch->v.touch == teleport_touch;
+}
+
+static qboolean SV_IsInstantTeleportTrigger (edict_t *touch)
+{
+	const char *classname;
+
+	if (!touch || touch->free || !touch->v.classname)
+		return false;
+	classname = PR_GetString (touch->v.classname);
+	return classname && !q_strcasecmp (classname, "trigger_instateleport");
+}
+
+static qboolean SV_ShouldSkipRecentTeleportTrigger (edict_t *touch, edict_t *ent)
+{
+	sv_recent_teleport_trigger_t *recent;
+	int clientnum;
+
+	if (!SV_IsActiveClientEdict (ent))
+		return false;
+	clientnum = NUM_FOR_EDICT (ent) - 1;
+	if (clientnum < 0 || clientnum >= MAX_SCOREBOARD)
+		return false;
+	recent = &sv_recent_teleport_triggers[clientnum];
+	if (!recent->trigger || recent->trigger->free)
+	{
+		memset (recent, 0, sizeof (*recent));
+		return false;
+	}
+	if (recent->trigger != touch)
+		return false;
+	if (recent->instant_occupancy)
+	{
+		if (ent->v.health <= 0 || ent->v.deadflag != DEAD_NO)
+		{
+			memset (recent, 0, sizeof (*recent));
+			return false;
+		}
+		return true;
+	}
+	if (recent->until <= qcvm->time || ent->v.teleport_time != recent->until)
+	{
+		memset (recent, 0, sizeof (*recent));
+		return false;
+	}
+	return true;
+}
+
+static void SV_RecordRecentTeleportTrigger (edict_t *touch, edict_t *ent,
+	const vec3_t origin_before)
+{
+	sv_recent_teleport_trigger_t *recent;
+	int clientnum;
+
+	if (!SV_IsTeleportTrigger (touch) || !SV_IsActiveClientEdict (ent) ||
+		VectorCompare (ent->v.origin, origin_before))
+		return;
+
+	clientnum = NUM_FOR_EDICT (ent) - 1;
+	if (clientnum < 0 || clientnum >= MAX_SCOREBOARD)
+		return;
+	recent = &sv_recent_teleport_triggers[clientnum];
+	recent->trigger = touch;
+	if (SV_IsInstantTeleportTrigger (touch))
+	{
+		/* Some mods transport corpses; do not latch their source. */
+		if (ent->v.health <= 0 || ent->v.deadflag != DEAD_NO)
+		{
+			memset (recent, 0, sizeof (*recent));
+			return;
+		}
+		recent->until = 0;
+		recent->instant_occupancy = true;
+	}
+	else if (ent->v.teleport_time > qcvm->time)
+	{
+		recent->until = ent->v.teleport_time;
+		recent->instant_occupancy = false;
+	}
+	else
+		memset (recent, 0, sizeof (*recent));
+}
+
+static void SV_ClearRecentTeleportTriggerIfExited (edict_t *ent,
+	const uint16_t *list, int listcount)
+{
+	sv_recent_teleport_trigger_t *recent;
+	int clientnum, i;
+
+	if (!SV_IsActiveClientEdict (ent))
+		return;
+	clientnum = NUM_FOR_EDICT (ent) - 1;
+	if (clientnum < 0 || clientnum >= MAX_SCOREBOARD)
+		return;
+	recent = &sv_recent_teleport_triggers[clientnum];
+	if (!recent->instant_occupancy)
+		return;
+	if (!recent->trigger || recent->trigger->free || ent->v.health <= 0 ||
+		ent->v.deadflag != DEAD_NO)
+	{
+		memset (recent, 0, sizeof (*recent));
+		return;
+	}
+	for (i = 0; i < listcount; ++i)
+		if (EDICT_NUM (list[i]) == recent->trigger)
+			return;
+	memset (recent, 0, sizeof (*recent));
+}
+
 static qboolean SV_IsTelefragClient (edict_t *ent)
 {
 	int num;
@@ -660,10 +807,33 @@ int SV_DeclaredWeaponBits (void)
 	return cached_bits;
 }
 
+void SV_ClearRecentInstantTeleportTriggerForClientSlot (int slot)
+{
+	if (slot < 0 || slot >= MAX_SCOREBOARD)
+		return;
+	if (sv_recent_teleport_triggers[slot].instant_occupancy)
+		memset (&sv_recent_teleport_triggers[slot], 0,
+			sizeof (sv_recent_teleport_triggers[slot]));
+}
+
+void SV_InvalidateRecentTeleportTrigger (edict_t *trigger)
+{
+	int i;
+
+	if (qcvm != &sv.qcvm || !trigger)
+		return;
+	for (i = 0; i < MAX_SCOREBOARD; ++i)
+		if (sv_recent_teleport_triggers[i].trigger == trigger)
+			memset (&sv_recent_teleport_triggers[i], 0,
+				sizeof (sv_recent_teleport_triggers[i]));
+}
+
 void SV_CoopSharedResetClientSlot (int slot)
 {
 	if (slot < 0 || slot >= MAX_SCOREBOARD)
 		return;
+	memset (&sv_recent_teleport_triggers[slot], 0,
+		sizeof (sv_recent_teleport_triggers[slot]));
 	memset(&sv_coop_shared_touch_before[slot], 0,
 		sizeof(sv_coop_shared_touch_before[slot]));
 	sv_coop_shared_touch_valid[slot] = false;
@@ -2212,6 +2382,7 @@ static void SV_TouchLinks (edict_t *ent)
 
 	listcount = 0;
 	SV_AreaTriggerEdicts (ent, qcvm->areanodes, list, &listcount, qcvm->num_edicts);
+	SV_ClearRecentTeleportTriggerIfExited (ent, list, listcount);
 	ED_Retain (ent);
 
 	retainedcount = 0;
@@ -2243,6 +2414,8 @@ static void SV_TouchLinks (edict_t *ent)
 		if (ent->v.absmin[0] > touch->v.absmax[0] || ent->v.absmin[1] > touch->v.absmax[1] || ent->v.absmin[2] > touch->v.absmax[2] ||
 			ent->v.absmax[0] < touch->v.absmin[0] || ent->v.absmax[1] < touch->v.absmin[1] || ent->v.absmax[2] < touch->v.absmin[2])
 			continue;
+		if (SV_ShouldSkipRecentTeleportTrigger (touch, ent))
+			continue;
 		if (SV_ShouldSuppressCoopTelefrag (touch, ent))
 			continue;
 
@@ -2262,7 +2435,10 @@ static void SV_TouchLinks (edict_t *ent)
 		pr_global_struct->self = EDICT_TO_PROG (touch);
 		pr_global_struct->other = EDICT_TO_PROG (ent);
 		pr_global_struct->time = qcvm->time;
+		vec3_t origin_before;
+		VectorCopy (ent->v.origin, origin_before);
 		PR_ExecuteProgram (touch->v.touch);
+		SV_RecordRecentTeleportTrigger (touch, ent, origin_before);
 
 		if (shared_pickup)
 		{

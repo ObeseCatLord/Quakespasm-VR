@@ -5442,6 +5442,8 @@ static void SV_Physics_Client (edict_t *ent, int num)
 
 	if (!svs.clients[num - 1].active)
 		return; // unconnected slot
+	if (ent->free || ent->v.health <= 0 || ent->v.deadflag != DEAD_NO)
+		SV_ClearRecentInstantTeleportTriggerForClientSlot (num - 1);
 	SV_VRContactObserveSpawn (client);
 
 	if (!svs.clients[num - 1].knowntoqc && sv_gameplayfix_spawnbeforethinks.value)

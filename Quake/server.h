@@ -504,6 +504,8 @@ qboolean SV_CoopSharedBeginClientTouch (edict_t *client);
 void SV_CoopSharedEndClientTouch (edict_t *client);
 void SV_CoopSharedResetState (void);
 void SV_CoopSharedResetClientSlot (int slot);
+void SV_ClearRecentInstantTeleportTriggerForClientSlot (int slot);
+void SV_InvalidateRecentTeleportTrigger (edict_t *trigger);
 
 void SVFTE_Ack (client_t *client, int sequence);
 void SVFTE_DestroyFrames (client_t *client);

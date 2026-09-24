@@ -163,6 +163,7 @@ void ED_Free (edict_t *ed)
 	}
 
 	SV_GorillaInvalidateSurface (ed);
+	SV_InvalidateRecentTeleportTrigger (ed);
 	SV_UnlinkEdict (ed); // unlink from world bsp
 
 	ed->free = true;
