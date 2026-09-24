@@ -364,24 +364,42 @@ sfx_t *S_PrecacheSound (const char *name)
 
 //=============================================================================
 
+/* Match the spatial renderer's distance cutoff without relying on stereo
+ * volumes left over from the last listener update. */
+static qboolean SND_ChannelAudible (const channel_t *ch)
+{
+	vec3_t delta;
+
+	if (ch->master_vol <= 0)
+		return false;
+	if (ch->entnum == cl.viewentity || ch->dist_mult <= 0)
+		return true;
+	VectorSubtract (ch->origin, listener_origin, delta);
+	return DotProduct (delta, delta) * ch->dist_mult * ch->dist_mult < 1;
+}
+
 /*
 =================
-SND_PickChannel
+SND_PickChannelForSound
 
 picks a channel based on priorities, empty slots, number of channels
 =================
 */
-channel_t *SND_PickChannel (int entnum, int entchannel)
+static channel_t *SND_PickChannelForSound (int entnum, int entchannel, qboolean audible)
 {
 	int ch_idx;
 	int first_to_die;
 	int life_left;
+	qboolean spatial = Spatial_Active ();
+	int best_rank = spatial ? 3 : 0;
 
 	// Check for replacement sound, or find the best one to replace
 	first_to_die = -1;
 	life_left = 0x7fffffff;
 	for (ch_idx = NUM_AMBIENTS; ch_idx < NUM_AMBIENTS + MAX_DYNAMIC_CHANNELS; ch_idx++)
 	{
+		int rank = 0;
+
 		if (entchannel != 0 // channel 0 never overrides
 			&& snd_channels[ch_idx].entnum == entnum && (snd_channels[ch_idx].entchannel == entchannel || entchannel == -1))
 		{ // always override sound from same entity
@@ -393,8 +411,18 @@ channel_t *SND_PickChannel (int entnum, int entchannel)
 		if (snd_channels[ch_idx].entnum == cl.viewentity && entnum != cl.viewentity && snd_channels[ch_idx].sfx)
 			continue;
 
-		if (snd_channels[ch_idx].end - paintedtime < life_left)
+		if (spatial && snd_channels[ch_idx].sfx)
 		{
+			// Virtual sources must not steal audible channels when capacity is tight.
+			rank = SND_ChannelAudible (&snd_channels[ch_idx]) ? 2 : 1;
+			if (!audible && rank == 2)
+				continue;
+		}
+
+		if (rank < best_rank ||
+			(rank == best_rank && snd_channels[ch_idx].end - paintedtime < life_left))
+		{
+			best_rank = rank;
 			life_left = snd_channels[ch_idx].end - paintedtime;
 			first_to_die = ch_idx;
 		}
@@ -407,6 +435,13 @@ channel_t *SND_PickChannel (int entnum, int entchannel)
 		snd_channels[first_to_die].sfx = NULL;
 
 	return &snd_channels[first_to_die];
+}
+
+/* Retain the existing public entry point for callers without an incoming
+ * source to classify. */
+channel_t *SND_PickChannel (int entnum, int entchannel)
+{
+	return SND_PickChannelForSound (entnum, entchannel, true);
 }
 
 /*
@@ -468,6 +503,7 @@ fvol is in 0.0-1.0f
 void S_StartSound (int entnum, int entchannel, sfx_t *sfx, vec3_t origin, float fvol, float attenuation)
 {
 	channel_t  *target_chan, *check;
+	channel_t  incoming;
 	sfxcache_t *sc;
 	int			ch_idx;
 	int			skip;
@@ -476,21 +512,25 @@ void S_StartSound (int entnum, int entchannel, sfx_t *sfx, vec3_t origin, float 
 	if (!sound_started || !sfx || nosound.value)
 		goto unlock_mutex;
 
+	// Classify the incoming source before channel selection so an inaudible
+	// virtual source cannot evict an audible one on a busy map.
+	memset (&incoming, 0, sizeof (incoming));
+	VectorCopy (origin, incoming.origin);
+	incoming.dist_mult = attenuation / sound_nominal_clip_dist;
+	incoming.master_vol = (int)(fvol * 255);
+	incoming.entnum = entnum;
+	incoming.entchannel = entchannel;
+	SND_Spatialize (&incoming);
+
 	// pick a channel to play on
-	target_chan = SND_PickChannel (entnum, entchannel);
+	target_chan = SND_PickChannelForSound (entnum, entchannel,
+		Spatial_Active () ? SND_ChannelAudible (&incoming) : true);
 	if (!target_chan)
 		goto unlock_mutex;
 
-	// spatialize
-	memset (target_chan, 0, sizeof (*target_chan));
-	VectorCopy (origin, target_chan->origin);
-	target_chan->dist_mult = attenuation / sound_nominal_clip_dist;
-	target_chan->master_vol = (int)(fvol * 255);
-	target_chan->entnum = entnum;
-	target_chan->entchannel = entchannel;
-	SND_Spatialize (target_chan);
+	*target_chan = incoming;
 
-	if (!target_chan->leftvol && !target_chan->rightvol)
+	if (!Spatial_Active () && !target_chan->leftvol && !target_chan->rightvol)
 		goto unlock_mutex;
 
 	// new channel
