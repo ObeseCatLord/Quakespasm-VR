@@ -398,6 +398,8 @@ extern cvar_t coop;
 extern cvar_t sv_coop_classic;
 extern cvar_t sv_coop_noplayerclip;
 extern cvar_t sv_coop_notelefrag;
+extern cvar_t sv_coop_shared_pickups;
+extern cvar_t sv_coop_respawn_keep_weapons_ammo;
 extern cvar_t fraglimit;
 extern cvar_t timelimit;
 
@@ -420,6 +422,31 @@ void SV_LocalSound (client_t *client, const char *sample); // for 2021 rerelease
 
 void SV_DropClient (qboolean crash);
 void SV_AppendVRIKRetirement (client_t *client, int slot, unsigned int generation);
+
+void SV_CoopRespawnRefreshClientInventory (edict_t *ent);
+void SV_CoopRespawnSaveClientEdict (edict_t *ent, edict_t *snapshot);
+void SV_CoopRespawnRestoreSavedInventory (edict_t *ent, edict_t *snapshot);
+void SV_CoopRespawnInventoryResetClientSlot (int slot);
+void SV_CoopRespawnInventoryResetState (void);
+void SV_CoopRespawnSyncSharedKeys (edict_t *source);
+
+#define SV_COOP_GIVEKEYS_SILVER 1
+#define SV_COOP_GIVEKEYS_GOLD 2
+#define SV_COOP_GIVEKEYS_CUSTOM 4
+#define SV_COOP_GIVEKEYS_ALL \
+	(SV_COOP_GIVEKEYS_SILVER | SV_COOP_GIVEKEYS_GOLD | \
+	 SV_COOP_GIVEKEYS_CUSTOM)
+qboolean SV_CoopGiveKeys (edict_t *player, int key_flags);
+int SV_DeclaredWeaponBits (void);
+qboolean SV_CoopUsesCountedKeys (void);
+void SV_CoopSharedApplyToJoiningClient (edict_t *player);
+void SV_CoopSharedMergeRestoredClient (edict_t *source);
+void SV_CoopSharedRebuildGrantedKeys (edict_t *source);
+void SV_CoopSharedReconcileClientDeath (edict_t *player);
+qboolean SV_CoopSharedBeginClientTouch (edict_t *client);
+void SV_CoopSharedEndClientTouch (edict_t *client);
+void SV_CoopSharedResetState (void);
+void SV_CoopSharedResetClientSlot (int slot);
 
 void SVFTE_Ack (client_t *client, int sequence);
 void SVFTE_DestroyFrames (client_t *client);

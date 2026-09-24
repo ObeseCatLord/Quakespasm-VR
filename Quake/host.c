@@ -577,6 +577,7 @@ void SV_DropClient (qboolean crash)
 			saveSelf = pr_global_struct->self;
 			pr_global_struct->self = EDICT_TO_PROG (host_client->edict);
 			PR_ExecuteProgram (pr_global_struct->ClientDisconnect);
+			SV_CoopSharedReconcileClientDeath (host_client->edict);
 			pr_global_struct->self = saveSelf;
 			PR_SwitchQCVM (NULL);
 			PR_SwitchQCVM (oldvm);
@@ -595,6 +596,8 @@ void SV_DropClient (qboolean crash)
 	host_client->active = false;
 	host_client->name[0] = 0;
 	host_client->old_frags = -999999;
+	SV_CoopSharedResetClientSlot (retired_slot);
+	SV_CoopRespawnInventoryResetClientSlot (retired_slot);
 	net_activeconnections--;
 
 	// send notification to all clients

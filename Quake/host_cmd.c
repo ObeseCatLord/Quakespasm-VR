@@ -2762,6 +2762,9 @@ static void Host_Spawn_f (void)
 			Sys_Printf ("%s entered the game\n", host_client->name);
 
 		PR_ExecuteProgram (pr_global_struct->PutClientInServer);
+		/* A new co-op player inherits accepted team progression after QuakeC
+		 * initializes its own inventory.  Saved clients take a separate path. */
+		SV_CoopSharedApplyToJoiningClient (ent);
 	}
 
 	Send_Spawn_Info (host_client, sv.loadgame);

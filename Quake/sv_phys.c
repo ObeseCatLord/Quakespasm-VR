@@ -56,6 +56,663 @@ cvar_t sv_analyticphysics = {"sv_analyticphysics", "1", CVAR_NONE}; // gravity/f
 
 qboolean sv_analyticphysics_frame = true; // sv_analyticphysics latched per SV_Physics, QC can flip the cvar mid-tick
 
+/*
+ * Co-op dead-player save inventory projection.
+ *
+ * Cache only typed inventory fields while a player is alive.  A corpse may
+ * have had its inventory cleared by mod QC before the save path runs, so the
+ * save projection merges the cache with any inventory still present on the
+ * corpse.  The serialized edict is a copy; the live corpse is never changed.
+ */
+#define COOP_RESPAWN_ALL_ITEM_BITS (-1)
+#define COOP_RESPAWN_DRAKE_CUSTOM_KEYS (8192 | 16384 | 32768 | 65536)
+#define COOP_RESPAWN_DWELL_WEAPON_BITS (4 | 8 | 32)
+#define COOP_RESPAWN_STOCK_KEY_BITS \
+	(IT_KEY1 | IT_KEY2 | IT_SIGIL1 | IT_SIGIL2 | IT_SIGIL3 | IT_SIGIL4)
+#define COOP_RESPAWN_ITEMS2_KEY_BITS 65536
+#define COOP_RESPAWN_WORLDTYPE_KEY_MASK 255
+#define COOP_RESPAWN_AD_KEEP_MODITEMS                                           \
+	(2 | 64 | 128 | 4096 | 131072 | 262144 | 524288 | 1048576 | 2097152 |        \
+	 4194304 | COOP_RESPAWN_DRAKE_CUSTOM_KEYS)
+
+typedef enum
+{
+	COOP_RESPAWN_EXTRA_ITEMS2,
+	COOP_RESPAWN_EXTRA_ITEMS3,
+	COOP_RESPAWN_EXTRA_MODITEMS,
+	COOP_RESPAWN_EXTRA_PERMITEMS,
+	COOP_RESPAWN_EXTRA_PERMS,
+	COOP_RESPAWN_EXTRA_CUSTOMKEYS,
+	COOP_RESPAWN_EXTRA_WEAPONS,
+	COOP_RESPAWN_EXTRA_WEAPON2,
+	COOP_RESPAWN_EXTRA_WEAPONS2,
+	COOP_RESPAWN_EXTRA_ITEMS_DWELL,
+	COOP_RESPAWN_EXTRA_ITEMS_MOVEMOD,
+	COOP_RESPAWN_EXTRA_RUNESHARD_COU,
+	COOP_RESPAWN_EXTRA_CURRENTWEAPON,
+	COOP_RESPAWN_EXTRA_WORLDTYPE,
+	COOP_RESPAWN_EXTRA_KEY_COUNT_SILVER,
+	COOP_RESPAWN_EXTRA_KEY_COUNT_GOLD,
+	COOP_RESPAWN_EXTRA_AMMO_SHELLS1,
+	COOP_RESPAWN_EXTRA_AMMO_NAILS1,
+	COOP_RESPAWN_EXTRA_AMMO_LAVA_NAILS,
+	COOP_RESPAWN_EXTRA_AMMO_ROCKETS1,
+	COOP_RESPAWN_EXTRA_AMMO_MULTI_ROCKETS,
+	COOP_RESPAWN_EXTRA_AMMO_CELLS1,
+	COOP_RESPAWN_EXTRA_AMMO_PLASMA,
+	COOP_RESPAWN_EXTRA_CAN_ROCKET,
+	COOP_RESPAWN_EXTRA_ROCKET_LAUNCHER_MODE,
+	COOP_RESPAWN_EXTRA_JBOOTS_GOT,
+	COOP_RESPAWN_EXTRA_JBOOTS_PREVLIMIT,
+	COOP_RESPAWN_EXTRA_JBOOTS_RECHARGELIMIT,
+	COOP_RESPAWN_EXTRA_JBOOTS_SFX,
+	COOP_RESPAWN_EXTRA_JBOOTS_AMMO,
+	COOP_RESPAWN_EXTRA_JBOOTS_ONGROUND,
+	COOP_RESPAWN_EXTRA_JBOOTS_FINISHED,
+	COOP_RESPAWN_EXTRA_JBOOTS_TIME,
+	COOP_RESPAWN_EXTRA_JUMPBOOTS_FINISHED,
+	COOP_RESPAWN_EXTRA_JUMPBOOTS_TIME,
+	COOP_RESPAWN_EXTRA_JUMPBOOTS_AIRLVL,
+	COOP_RESPAWN_EXTRA_JUMPBOOTS_AIRMAX,
+	COOP_RESPAWN_EXTRA_JUMPBOOTS_HEIGHT,
+	COOP_RESPAWN_EXTRA_JUMPBOOTS_FORWARD,
+	COOP_RESPAWN_EXTRA_KEYNAME,
+	COOP_RESPAWN_EXTRA_CKEYNAME1,
+	COOP_RESPAWN_EXTRA_CKEYNAME2,
+	COOP_RESPAWN_EXTRA_CKEYNAME3,
+	COOP_RESPAWN_EXTRA_CKEYNAME4,
+	COOP_RESPAWN_EXTRA_CKEYSKIN1,
+	COOP_RESPAWN_EXTRA_CKEYSKIN2,
+	COOP_RESPAWN_EXTRA_CKEYSKIN3,
+	COOP_RESPAWN_EXTRA_CKEYSKIN4,
+	COOP_RESPAWN_EXTRA_COUNT
+} coop_respawn_extra_field_id_t;
+
+typedef enum
+{
+	COOP_RESPAWN_EXTRA_BITMASK,
+	COOP_RESPAWN_EXTRA_MAXFLOAT,
+	COOP_RESPAWN_EXTRA_RESTORE_FLOAT,
+	COOP_RESPAWN_EXTRA_STRING
+} coop_respawn_extra_policy_t;
+
+typedef struct
+{
+	const char *name;
+	coop_respawn_extra_policy_t policy;
+	int mask;
+} coop_respawn_extra_field_t;
+
+typedef struct
+{
+	int items;
+	float weapon;
+	string_t weaponmodel;
+	float currentammo;
+	float ammo_shells;
+	float ammo_nails;
+	float ammo_rockets;
+	float ammo_cells;
+	qboolean extra_valid[COOP_RESPAWN_EXTRA_COUNT];
+	int extra_bits[COOP_RESPAWN_EXTRA_COUNT];
+	float extra_value[COOP_RESPAWN_EXTRA_COUNT];
+	string_t extra_string[COOP_RESPAWN_EXTRA_COUNT];
+} coop_respawn_inventory_t;
+
+static const coop_respawn_extra_field_t coop_respawn_extra_fields[] = {
+	{"items2", COOP_RESPAWN_EXTRA_BITMASK, COOP_RESPAWN_ALL_ITEM_BITS},
+	{"items3", COOP_RESPAWN_EXTRA_BITMASK, COOP_RESPAWN_ALL_ITEM_BITS},
+	{"moditems", COOP_RESPAWN_EXTRA_BITMASK, COOP_RESPAWN_AD_KEEP_MODITEMS},
+	{"permitems", COOP_RESPAWN_EXTRA_BITMASK, COOP_RESPAWN_ALL_ITEM_BITS},
+	{"perms", COOP_RESPAWN_EXTRA_BITMASK, COOP_RESPAWN_ALL_ITEM_BITS},
+	{"customkeys", COOP_RESPAWN_EXTRA_BITMASK, COOP_RESPAWN_ALL_ITEM_BITS},
+	{"weapons", COOP_RESPAWN_EXTRA_BITMASK, COOP_RESPAWN_ALL_ITEM_BITS},
+	{"weapon2", COOP_RESPAWN_EXTRA_BITMASK, COOP_RESPAWN_ALL_ITEM_BITS},
+	{"weapons2", COOP_RESPAWN_EXTRA_BITMASK, COOP_RESPAWN_ALL_ITEM_BITS},
+	{"items_dwell", COOP_RESPAWN_EXTRA_BITMASK, COOP_RESPAWN_DWELL_WEAPON_BITS},
+	{"items_movemod", COOP_RESPAWN_EXTRA_BITMASK, COOP_RESPAWN_ALL_ITEM_BITS},
+	{"runeshard_cou", COOP_RESPAWN_EXTRA_MAXFLOAT, 0},
+	{"currentweapon", COOP_RESPAWN_EXTRA_RESTORE_FLOAT, 0},
+	{"worldtype", COOP_RESPAWN_EXTRA_RESTORE_FLOAT, 0},
+	{"key_count_silver", COOP_RESPAWN_EXTRA_MAXFLOAT, 0},
+	{"key_count_gold", COOP_RESPAWN_EXTRA_MAXFLOAT, 0},
+	{"ammo_shells1", COOP_RESPAWN_EXTRA_MAXFLOAT, 0},
+	{"ammo_nails1", COOP_RESPAWN_EXTRA_MAXFLOAT, 0},
+	{"ammo_lava_nails", COOP_RESPAWN_EXTRA_MAXFLOAT, 0},
+	{"ammo_rockets1", COOP_RESPAWN_EXTRA_MAXFLOAT, 0},
+	{"ammo_multi_rockets", COOP_RESPAWN_EXTRA_MAXFLOAT, 0},
+	{"ammo_cells1", COOP_RESPAWN_EXTRA_MAXFLOAT, 0},
+	{"ammo_plasma", COOP_RESPAWN_EXTRA_MAXFLOAT, 0},
+	{"can_rocket", COOP_RESPAWN_EXTRA_MAXFLOAT, 0},
+	{"rocket_launcher_mode", COOP_RESPAWN_EXTRA_MAXFLOAT, 0},
+	{"jboots_got", COOP_RESPAWN_EXTRA_RESTORE_FLOAT, 0},
+	{"jboots_prevlimit", COOP_RESPAWN_EXTRA_RESTORE_FLOAT, 0},
+	{"jboots_rechargelimit", COOP_RESPAWN_EXTRA_RESTORE_FLOAT, 0},
+	{"jboots_sfx", COOP_RESPAWN_EXTRA_RESTORE_FLOAT, 0},
+	{"jboots_ammo", COOP_RESPAWN_EXTRA_RESTORE_FLOAT, 0},
+	{"jboots_onground", COOP_RESPAWN_EXTRA_RESTORE_FLOAT, 0},
+	{"jboots_finished", COOP_RESPAWN_EXTRA_RESTORE_FLOAT, 0},
+	{"jboots_time", COOP_RESPAWN_EXTRA_RESTORE_FLOAT, 0},
+	{"jumpboots_finished", COOP_RESPAWN_EXTRA_MAXFLOAT, 0},
+	{"jumpboots_time", COOP_RESPAWN_EXTRA_MAXFLOAT, 0},
+	{"jumpboots_airlvl", COOP_RESPAWN_EXTRA_MAXFLOAT, 0},
+	{"jumpboots_airmax", COOP_RESPAWN_EXTRA_MAXFLOAT, 0},
+	{"jumpboots_height", COOP_RESPAWN_EXTRA_MAXFLOAT, 0},
+	{"jumpboots_forward", COOP_RESPAWN_EXTRA_MAXFLOAT, 0},
+	{"keyname", COOP_RESPAWN_EXTRA_STRING, 0},
+	{"ckeyname1", COOP_RESPAWN_EXTRA_STRING, 0},
+	{"ckeyname2", COOP_RESPAWN_EXTRA_STRING, 0},
+	{"ckeyname3", COOP_RESPAWN_EXTRA_STRING, 0},
+	{"ckeyname4", COOP_RESPAWN_EXTRA_STRING, 0},
+	{"ckeyskin1", COOP_RESPAWN_EXTRA_RESTORE_FLOAT, 0},
+	{"ckeyskin2", COOP_RESPAWN_EXTRA_RESTORE_FLOAT, 0},
+	{"ckeyskin3", COOP_RESPAWN_EXTRA_RESTORE_FLOAT, 0},
+	{"ckeyskin4", COOP_RESPAWN_EXTRA_RESTORE_FLOAT, 0},
+};
+
+static coop_respawn_inventory_t coop_respawn_last_inventory[MAX_SCOREBOARD];
+static qboolean coop_respawn_last_inventory_valid[MAX_SCOREBOARD];
+static qboolean coop_shared_frame_started_alive[MAX_SCOREBOARD];
+static qboolean coop_shared_frame_death_handled[MAX_SCOREBOARD];
+
+void SV_CoopRespawnInventoryResetClientSlot (int slot)
+{
+	if (slot < 0 || slot >= MAX_SCOREBOARD)
+		return;
+	memset (&coop_respawn_last_inventory[slot], 0,
+		sizeof (coop_respawn_last_inventory[slot]));
+	coop_respawn_last_inventory_valid[slot] = false;
+	coop_shared_frame_started_alive[slot] = false;
+	coop_shared_frame_death_handled[slot] = false;
+}
+
+void SV_CoopRespawnInventoryResetState (void)
+{
+	int i;
+	for (i = 0; i < MAX_SCOREBOARD; i++)
+		SV_CoopRespawnInventoryResetClientSlot (i);
+}
+
+static qboolean SV_CoopIsActiveClient (edict_t *ent)
+{
+	int entnum;
+	if (!ent || ent->free)
+		return false;
+	entnum = NUM_FOR_EDICT (ent);
+	return entnum >= 1 && entnum <= svs.maxclients &&
+		svs.clients[entnum - 1].active && svs.clients[entnum - 1].spawned;
+}
+
+static qboolean SV_CoopIsDeadClient (edict_t *ent)
+{
+	return SV_CoopIsActiveClient (ent) &&
+		(ent->v.health <= 0 || ent->v.deadflag >= DEAD_DYING);
+}
+
+static qboolean SV_CoopRespawnIsAliveClient (edict_t *ent)
+{
+	return SV_CoopIsActiveClient (ent) && ent->v.health > 0 &&
+		ent->v.deadflag == DEAD_NO && ent->v.solid != SOLID_NOT;
+}
+
+static float SV_CoopRespawnMaxFloat (float a, float b)
+{
+	return a > b ? a : b;
+}
+
+static float SV_CoopRespawnCurrentAmmoForWeapon (edict_t *ent, float weapon,
+	float fallback)
+{
+	int weapon_item = (int)weapon;
+	if (weapon_item == IT_SHOTGUN || weapon_item == IT_SUPER_SHOTGUN)
+		return ent->v.ammo_shells;
+	if (weapon_item == IT_NAILGUN || weapon_item == IT_SUPER_NAILGUN ||
+		(rogue && (weapon_item == RIT_LAVA_NAILGUN ||
+		RIT_LAVA_SUPER_NAILGUN == weapon_item)))
+		return ent->v.ammo_nails;
+	if (weapon_item == IT_GRENADE_LAUNCHER ||
+		weapon_item == IT_ROCKET_LAUNCHER ||
+		(rogue && (weapon_item == RIT_MULTI_GRENADE ||
+		weapon_item == RIT_MULTI_ROCKET)) ||
+		(hipnotic && weapon_item == HIT_PROXIMITY_GUN))
+		return ent->v.ammo_rockets;
+	if (weapon_item == IT_LIGHTNING ||
+		(hipnotic && (weapon_item == HIT_LASER_CANNON ||
+		weapon_item == HIT_MJOLNIR)) ||
+		(rogue && weapon_item == RIT_PLASMA_GUN))
+		return ent->v.ammo_cells;
+	return fallback;
+}
+
+static int SV_CoopRespawnKeepItemMask (void)
+{
+	int mask;
+	mask = IT_SHOTGUN | IT_SUPER_SHOTGUN | IT_NAILGUN | IT_SUPER_NAILGUN |
+		IT_GRENADE_LAUNCHER | IT_ROCKET_LAUNCHER | IT_LIGHTNING |
+		IT_SUPER_LIGHTNING | IT_AXE | IT_SHELLS | IT_NAILS | IT_ROCKETS |
+		IT_CELLS | IT_KEY1 | IT_KEY2 | IT_SIGIL1 | IT_SIGIL2 |
+		IT_SIGIL3 | IT_SIGIL4;
+	mask |= SV_DeclaredWeaponBits ();
+	if (rogue)
+		mask |= RIT_AXE | RIT_LAVA_NAILGUN | RIT_LAVA_SUPER_NAILGUN |
+			RIT_MULTI_GRENADE | RIT_MULTI_ROCKET | RIT_PLASMA_GUN |
+			RIT_SHELLS | RIT_NAILS | RIT_ROCKETS | RIT_CELLS |
+			RIT_LAVA_NAILS | RIT_PLASMA_AMMO | RIT_MULTI_ROCKETS;
+	if (hipnotic)
+		mask |= HIT_PROXIMITY_GUN | HIT_MJOLNIR | HIT_LASER_CANNON;
+	return mask;
+}
+
+static eval_t *SV_CoopRespawnGetExtraField (edict_t *ent, int index,
+	int *type_out)
+{
+	const coop_respawn_extra_field_t *field;
+	ddef_t *def;
+	int type;
+	if (!ent || ent->free || index < 0 || index >= COOP_RESPAWN_EXTRA_COUNT)
+		return NULL;
+	field = &coop_respawn_extra_fields[index];
+	def = ED_FindField (field->name);
+	if (!def)
+		return NULL;
+	type = def->type & ~DEF_SAVEGLOBAL;
+	if (field->policy == COOP_RESPAWN_EXTRA_STRING)
+	{
+		if (type != ev_string)
+			return NULL;
+	}
+	else if (field->policy == COOP_RESPAWN_EXTRA_BITMASK)
+	{
+		if (type != ev_float && type != ev_ext_integer)
+			return NULL;
+	}
+	else if (type != ev_float)
+		return NULL;
+	if (type_out)
+		*type_out = type;
+	return GetEdictFieldValue (ent, def->ofs);
+}
+
+static int SV_CoopRespawnExtraSharedKeyMask (const char *name)
+{
+	if (!name)
+		return 0;
+	if (!q_strcasecmp (name, "customkeys"))
+		return COOP_RESPAWN_ALL_ITEM_BITS;
+	if (!q_strcasecmp (name, "moditems"))
+		return COOP_RESPAWN_DRAKE_CUSTOM_KEYS;
+	if (!q_strcasecmp (name, "items2"))
+		return COOP_RESPAWN_ITEMS2_KEY_BITS;
+	return 0;
+}
+
+static qboolean SV_CoopRespawnExtraIsSharedKeyCount (const char *name)
+{
+	return name && (!q_strcasecmp (name, "key_count_silver") ||
+		!q_strcasecmp (name, "key_count_gold"));
+}
+
+static qboolean SV_CoopRespawnExtraIsKeyMetadata (const char *name)
+{
+	return name && (!q_strncasecmp (name, "ckeyname", 8) ||
+		!q_strncasecmp (name, "ckeyskin", 8));
+}
+
+void SV_CoopRespawnSyncSharedKeys (edict_t *source)
+{
+	int i, j;
+	int source_items;
+	qboolean counted_keys;
+	if (!coop.value || !source || source->free)
+		return;
+	source_items = (int)source->v.items & COOP_RESPAWN_STOCK_KEY_BITS;
+	counted_keys = SV_CoopUsesCountedKeys ();
+	for (i = 0; i < MAX_SCOREBOARD; i++)
+	{
+		coop_respawn_inventory_t *inventory;
+		if (!coop_respawn_last_inventory_valid[i])
+			continue;
+		inventory = &coop_respawn_last_inventory[i];
+		inventory->items = (inventory->items & ~COOP_RESPAWN_STOCK_KEY_BITS) |
+			source_items;
+		for (j = 0; j < COOP_RESPAWN_EXTRA_COUNT; j++)
+		{
+			const coop_respawn_extra_field_t *field =
+				&coop_respawn_extra_fields[j];
+			eval_t *val;
+			int type;
+			val = SV_CoopRespawnGetExtraField (source, j, &type);
+			if (!val)
+				continue;
+			if (SV_CoopRespawnExtraIsKeyMetadata (field->name))
+			{
+				inventory->extra_valid[j] = true;
+				if (field->policy == COOP_RESPAWN_EXTRA_STRING)
+					inventory->extra_string[j] = val->string;
+				else
+					inventory->extra_value[j] = val->_float;
+			}
+			else if (field->policy == COOP_RESPAWN_EXTRA_BITMASK)
+			{
+				int key_mask = SV_CoopRespawnExtraSharedKeyMask (field->name);
+				int source_bits;
+				if (!key_mask)
+					continue;
+				source_bits = type == ev_ext_integer ? val->_int :
+					(int)val->_float;
+				inventory->extra_valid[j] = true;
+				inventory->extra_bits[j] =
+					(inventory->extra_bits[j] & ~key_mask) |
+					(source_bits & key_mask);
+			}
+			else if (counted_keys &&
+				SV_CoopRespawnExtraIsSharedKeyCount (field->name))
+			{
+				inventory->extra_valid[j] = true;
+				inventory->extra_value[j] = val->_float;
+			}
+			else if (counted_keys && !q_strcasecmp (field->name, "worldtype"))
+			{
+				int source_bits = type == ev_ext_integer ? val->_int :
+					(int)val->_float;
+				int existing_bits = inventory->extra_valid[j] ?
+					(int)inventory->extra_value[j] : 0;
+				inventory->extra_valid[j] = true;
+				inventory->extra_value[j] = (float)((existing_bits &
+					~COOP_RESPAWN_WORLDTYPE_KEY_MASK) |
+					(source_bits & COOP_RESPAWN_WORLDTYPE_KEY_MASK));
+			}
+		}
+	}
+}
+
+static void SV_CoopRespawnSaveInventory (edict_t *ent,
+	coop_respawn_inventory_t *inventory)
+{
+	int i, type;
+	eval_t *val;
+	memset (inventory, 0, sizeof (*inventory));
+	inventory->items = (int)ent->v.items & SV_CoopRespawnKeepItemMask ();
+	inventory->weapon = ent->v.weapon;
+	inventory->weaponmodel = ent->v.weaponmodel;
+	inventory->currentammo = ent->v.currentammo;
+	inventory->ammo_shells = ent->v.ammo_shells;
+	inventory->ammo_nails = ent->v.ammo_nails;
+	inventory->ammo_rockets = ent->v.ammo_rockets;
+	inventory->ammo_cells = ent->v.ammo_cells;
+	for (i = 0; i < COOP_RESPAWN_EXTRA_COUNT; i++)
+	{
+		val = SV_CoopRespawnGetExtraField (ent, i, &type);
+		if (!val)
+			continue;
+		if (coop_respawn_extra_fields[i].policy == COOP_RESPAWN_EXTRA_STRING)
+		{
+			if (val->string && PR_GetString (val->string)[0])
+			{
+				inventory->extra_valid[i] = true;
+				inventory->extra_string[i] = val->string;
+			}
+		}
+		else
+		{
+			inventory->extra_valid[i] = true;
+			if (coop_respawn_extra_fields[i].policy == COOP_RESPAWN_EXTRA_BITMASK)
+			{
+				if (type == ev_ext_integer)
+					inventory->extra_bits[i] = val->_int & coop_respawn_extra_fields[i].mask;
+				else
+					inventory->extra_bits[i] = (int)val->_float &
+						coop_respawn_extra_fields[i].mask;
+			}
+			else
+				inventory->extra_value[i] = val->_float;
+		}
+	}
+}
+
+static void SV_CoopRespawnMergeInventory (coop_respawn_inventory_t *dst,
+	const coop_respawn_inventory_t *src)
+{
+	int i;
+	dst->items |= src->items;
+	dst->ammo_shells = SV_CoopRespawnMaxFloat (dst->ammo_shells, src->ammo_shells);
+	dst->ammo_nails = SV_CoopRespawnMaxFloat (dst->ammo_nails, src->ammo_nails);
+	dst->ammo_rockets = SV_CoopRespawnMaxFloat (dst->ammo_rockets, src->ammo_rockets);
+	dst->ammo_cells = SV_CoopRespawnMaxFloat (dst->ammo_cells, src->ammo_cells);
+	dst->currentammo = SV_CoopRespawnMaxFloat (dst->currentammo, src->currentammo);
+	if (dst->weapon <= 0 && src->weapon > 0)
+		dst->weapon = src->weapon;
+	if (!dst->weaponmodel && src->weaponmodel)
+		dst->weaponmodel = src->weaponmodel;
+	for (i = 0; i < COOP_RESPAWN_EXTRA_COUNT; i++)
+	{
+		if (!src->extra_valid[i])
+			continue;
+		if (!dst->extra_valid[i])
+		{
+			dst->extra_valid[i] = true;
+			dst->extra_bits[i] = src->extra_bits[i];
+			dst->extra_value[i] = src->extra_value[i];
+			dst->extra_string[i] = src->extra_string[i];
+			continue;
+		}
+		if (coop_respawn_extra_fields[i].policy == COOP_RESPAWN_EXTRA_BITMASK)
+			dst->extra_bits[i] |= src->extra_bits[i];
+		else if (coop_respawn_extra_fields[i].policy == COOP_RESPAWN_EXTRA_STRING)
+		{
+			if (!dst->extra_string[i] && src->extra_string[i])
+				dst->extra_string[i] = src->extra_string[i];
+		}
+		else if (coop_respawn_extra_fields[i].policy != COOP_RESPAWN_EXTRA_RESTORE_FLOAT)
+			dst->extra_value[i] = SV_CoopRespawnMaxFloat (dst->extra_value[i],
+				src->extra_value[i]);
+	}
+}
+
+static void SV_CoopRespawnRestoreInventory (edict_t *ent,
+	const coop_respawn_inventory_t *inventory)
+{
+	int i, type;
+	eval_t *val;
+	ent->v.items = (int)ent->v.items | inventory->items;
+	ent->v.ammo_shells = SV_CoopRespawnMaxFloat (ent->v.ammo_shells,
+		inventory->ammo_shells);
+	ent->v.ammo_nails = SV_CoopRespawnMaxFloat (ent->v.ammo_nails,
+		inventory->ammo_nails);
+	ent->v.ammo_rockets = SV_CoopRespawnMaxFloat (ent->v.ammo_rockets,
+		inventory->ammo_rockets);
+	ent->v.ammo_cells = SV_CoopRespawnMaxFloat (ent->v.ammo_cells,
+		inventory->ammo_cells);
+	if (inventory->weapon > 0)
+		ent->v.weapon = inventory->weapon;
+	if (inventory->weaponmodel)
+		ent->v.weaponmodel = inventory->weaponmodel;
+	for (i = 0; i < COOP_RESPAWN_EXTRA_COUNT; i++)
+	{
+		if (!inventory->extra_valid[i])
+			continue;
+		val = SV_CoopRespawnGetExtraField (ent, i, &type);
+		if (!val)
+			continue;
+		if (coop_respawn_extra_fields[i].policy == COOP_RESPAWN_EXTRA_STRING)
+			val->string = inventory->extra_string[i];
+		else if (coop_respawn_extra_fields[i].policy == COOP_RESPAWN_EXTRA_BITMASK)
+		{
+			if (type == ev_ext_integer)
+				val->_int |= inventory->extra_bits[i];
+			else
+				val->_float = (int)val->_float | inventory->extra_bits[i];
+		}
+		else if (coop_respawn_extra_fields[i].policy == COOP_RESPAWN_EXTRA_RESTORE_FLOAT)
+			val->_float = inventory->extra_value[i];
+		else
+			val->_float = SV_CoopRespawnMaxFloat (val->_float,
+				inventory->extra_value[i]);
+	}
+	if (inventory->weapon > 0)
+		ent->v.currentammo = SV_CoopRespawnCurrentAmmoForWeapon (ent,
+			inventory->weapon, inventory->currentammo);
+	else
+		ent->v.currentammo = SV_CoopRespawnMaxFloat (ent->v.currentammo,
+			inventory->currentammo);
+}
+
+/* Restore the serialized typed inventory over the fresh QC player state.
+ * Exact assignment preserves saved zero ammo and leaves unrelated fresh QC
+ * fields, callbacks, health, movement, and references intact. */
+static void SV_CoopRespawnRestoreSavedInventoryExact (edict_t *ent,
+	const coop_respawn_inventory_t *inventory)
+{
+	int i, type, mask;
+	eval_t *val;
+	float fresh_weapon = ent->v.weapon;
+	string_t fresh_weaponmodel = ent->v.weaponmodel;
+	string_t weaponmodel = inventory->weaponmodel;
+
+	/* A legacy projection may have a selected owned weapon but no model. Reuse
+	 * the new spawn model only when it belongs to that same selected weapon. */
+	if (inventory->weapon > 0 && (inventory->items & (int)inventory->weapon) &&
+		!weaponmodel && fresh_weapon == inventory->weapon && fresh_weaponmodel)
+		weaponmodel = fresh_weaponmodel;
+
+	mask = SV_CoopRespawnKeepItemMask ();
+	ent->v.items = ((int)ent->v.items & ~mask) | (inventory->items & mask);
+	ent->v.ammo_shells = inventory->ammo_shells;
+	ent->v.ammo_nails = inventory->ammo_nails;
+	ent->v.ammo_rockets = inventory->ammo_rockets;
+	ent->v.ammo_cells = inventory->ammo_cells;
+	ent->v.currentammo = inventory->currentammo;
+	ent->v.weapon = inventory->weapon;
+	ent->v.weaponmodel = weaponmodel;
+	for (i = 0; i < COOP_RESPAWN_EXTRA_COUNT; i++)
+	{
+		if (!inventory->extra_valid[i])
+			continue;
+		val = SV_CoopRespawnGetExtraField (ent, i, &type);
+		if (!val)
+			continue;
+		if (coop_respawn_extra_fields[i].policy == COOP_RESPAWN_EXTRA_STRING)
+			val->string = inventory->extra_string[i];
+		else if (coop_respawn_extra_fields[i].policy == COOP_RESPAWN_EXTRA_BITMASK)
+		{
+			mask = coop_respawn_extra_fields[i].mask;
+			if (type == ev_ext_integer)
+				val->_int = (val->_int & ~mask) | (inventory->extra_bits[i] & mask);
+			else
+				val->_float = ((int)val->_float & ~mask) |
+					(inventory->extra_bits[i] & mask);
+		}
+		else
+			val->_float = inventory->extra_value[i];
+	}
+}
+
+static void SV_CoopRespawnRememberAliveInventory (edict_t *ent, int num)
+{
+	int index;
+	if (!coop.value || !SV_CoopRespawnIsAliveClient (ent))
+		return;
+	index = num - 1;
+	if (index < 0 || index >= MAX_SCOREBOARD)
+		return;
+	SV_CoopRespawnSaveInventory (ent, &coop_respawn_last_inventory[index]);
+	coop_respawn_last_inventory_valid[index] = true;
+}
+
+void SV_CoopRespawnRefreshClientInventory (edict_t *ent)
+{
+	int num;
+	if (!ent || ent->free)
+		return;
+	num = NUM_FOR_EDICT (ent);
+	if (num < 1 || num > svs.maxclients)
+		return;
+	SV_CoopRespawnRememberAliveInventory (ent, num);
+}
+
+static void SV_CoopSharedBeginFrameDeathTracking (void)
+{
+	int i;
+
+	if (qcvm != &sv.qcvm)
+		return;
+	memset (coop_shared_frame_started_alive, 0,
+		sizeof (coop_shared_frame_started_alive));
+	memset (coop_shared_frame_death_handled, 0,
+		sizeof (coop_shared_frame_death_handled));
+	if (!coop.value)
+		return;
+
+	for (i = 1; i <= svs.maxclients && i <= MAX_SCOREBOARD; i++)
+		if (SV_CoopRespawnIsAliveClient (EDICT_NUM (i)))
+			coop_shared_frame_started_alive[i - 1] = true;
+}
+
+static void SV_CoopSharedObserveClientDeath (edict_t *ent, int num)
+{
+	int index = num - 1;
+
+	if (qcvm != &sv.qcvm || !coop.value || !ent || ent->free ||
+		index < 0 || index >= MAX_SCOREBOARD ||
+		!coop_shared_frame_started_alive[index] ||
+		coop_shared_frame_death_handled[index] || !SV_CoopIsDeadClient (ent))
+		return;
+
+	/* Mark first so nested QC or later frame scans cannot reconcile twice. */
+	coop_shared_frame_death_handled[index] = true;
+	SV_CoopSharedReconcileClientDeath (ent);
+}
+
+static void SV_CoopSharedEndFrameDeathTracking (void)
+{
+	int i;
+
+	if (qcvm != &sv.qcvm || !coop.value)
+		return;
+	for (i = 1; i <= svs.maxclients && i <= MAX_SCOREBOARD; i++)
+		if (coop_shared_frame_started_alive[i - 1] &&
+			!coop_shared_frame_death_handled[i - 1])
+			SV_CoopSharedObserveClientDeath (EDICT_NUM (i), i);
+}
+
+void SV_CoopRespawnSaveClientEdict (edict_t *ent, edict_t *snapshot)
+{
+	int index;
+	coop_respawn_inventory_t inventory, current;
+	if (!ent || !snapshot || ent->free || !qcvm)
+		return;
+	/* Projection is serialization-only: never revive or mutate the corpse. */
+	memcpy (snapshot, ent, qcvm->edict_size);
+	index = NUM_FOR_EDICT (ent) - 1;
+	if (!coop.value ||
+		!SV_CoopFeatureEnabled (&sv_coop_respawn_keep_weapons_ammo, true) ||
+		!SV_CoopIsDeadClient (ent) || index < 0 || index >= MAX_SCOREBOARD ||
+		!coop_respawn_last_inventory_valid[index])
+		return;
+	inventory = coop_respawn_last_inventory[index];
+	SV_CoopRespawnSaveInventory (ent, &current);
+	SV_CoopRespawnMergeInventory (&inventory, &current);
+	SV_CoopRespawnRestoreInventory (snapshot, &inventory);
+	/* The respawn helper maps currentammo to reserve ammo; serialization keeps
+	 * the cached magazine value exactly. */
+	snapshot->v.currentammo = inventory.currentammo;
+}
+
+void SV_CoopRespawnRestoreSavedInventory (edict_t *ent, edict_t *snapshot)
+{
+	coop_respawn_inventory_t inventory;
+	if (!ent || ent->free || !snapshot || snapshot->free)
+		return;
+	if (coop.value &&
+		SV_CoopFeatureEnabled (&sv_coop_respawn_keep_weapons_ammo, true))
+	{
+		SV_CoopRespawnSaveInventory (snapshot, &inventory);
+		SV_CoopRespawnRestoreSavedInventoryExact (ent, &inventory);
+	}
+	/* Team keys are restored even when optional weapon retention is disabled. */
+	SV_CoopSharedApplyToJoiningClient (ent);
+}
+
 #define MOVE_EPSILON 0.01
 
 // max depth float rounding can embed an entity into the surface it rests on, anything deeper is a real overlap
@@ -420,6 +1077,7 @@ static void SV_Impact (edict_t *e1, edict_t *e2)
 	assert (!e1->free && !e2->free);
 
 	int old_self, old_other, e1_prog, e2_prog;
+	qboolean coop_touch_sync;
 
 	old_self = pr_global_struct->self;
 	old_other = pr_global_struct->other;
@@ -432,17 +1090,23 @@ static void SV_Impact (edict_t *e1, edict_t *e2)
 
 	if (e1->v.touch && e1->v.solid != SOLID_NOT)
 	{
+		coop_touch_sync = SV_CoopSharedBeginClientTouch (e2);
 		pr_global_struct->self = e1_prog;
 		pr_global_struct->other = e2_prog;
 		PR_ExecuteProgram (e1->v.touch);
+		if (coop_touch_sync && !e2->free)
+			SV_CoopSharedEndClientTouch (e2);
 	}
 
 	// Run e2's touch function if e2 survives e1's callback.
 	if (!e2->free && e2->v.touch && e2->v.solid != SOLID_NOT)
 	{
+		coop_touch_sync = SV_CoopSharedBeginClientTouch (e1);
 		pr_global_struct->self = e2_prog;
 		pr_global_struct->other = e1_prog;
 		PR_ExecuteProgram (e2->v.touch);
+		if (coop_touch_sync && !e1->free)
+			SV_CoopSharedEndClientTouch (e1);
 	}
 
 	ED_Release (e2);
@@ -2637,6 +3301,7 @@ static qboolean SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *clien
 		SV_ClientUpdateAnglesForClient (client);
 		pr_global_struct->time = qcvm->time;
 		pr_global_struct->self = EDICT_TO_PROG (ent);
+		SV_CoopRespawnRefreshClientInventory (ent);
 		PR_ExecuteProgram (pr_global_struct->PlayerPreThink);
 		if (!client->active || ent->free)
 		{
@@ -2677,6 +3342,9 @@ static qboolean SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *clien
 			failure = "player removed during maintenance PostThink";
 			goto cleanup;
 		}
+		SV_CoopSharedObserveClientDeath (ent, NUM_FOR_EDICT (ent));
+		if (client->spawned && client->edict == ent)
+			SV_CoopRespawnRefreshClientInventory (ent);
 		ent->v.impulse = 0;
 		client->cmd.impulse = 0;
 		goto cleanup;
@@ -2703,6 +3371,7 @@ static qboolean SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *clien
 	pr_global_struct->time = qcvm->time;
 	pr_global_struct->frametime = seconds;
 	pr_global_struct->self = EDICT_TO_PROG (ent);
+	SV_CoopRespawnRefreshClientInventory (ent);
 	PR_ExecuteProgram (pr_global_struct->PlayerPreThink);
 	if (!client->active || ent->free)
 	{
@@ -2882,6 +3551,7 @@ static qboolean SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *clien
 		failure = "player removed during PostThink";
 		goto cleanup;
 	}
+	SV_CoopSharedObserveClientDeath (ent, NUM_FOR_EDICT (ent));
 	if ((failure = SV_PrivateWalkTrialStateError (ent, client, &command)) != NULL)
 		goto cleanup;
 	if (client->private_pmove_credit_msec < command.msec)
@@ -2903,6 +3573,11 @@ static qboolean SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *clien
 	command_completed = true;
 
 cleanup:
+	/* Only accepted commands refresh the pre-death snapshot.  The refresh
+	 * helper also requires an active, spawned, living client. */
+	if (command_completed && client->active && client->spawned &&
+		client->edict == ent && !ent->free)
+		SV_CoopRespawnRefreshClientInventory (ent);
 	if (failure)
 		SV_PrivateWalkTrialDrop (client, failure);
 	/* Impulses are one-shot even when maintenance has no accepted movement. */
@@ -2961,6 +3636,7 @@ static void SV_Physics_Client (edict_t *ent, int num)
 	//
 	pr_global_struct->time = qcvm->time;
 	pr_global_struct->self = EDICT_TO_PROG (ent);
+	SV_CoopRespawnRefreshClientInventory (ent);
 	PR_ExecuteProgram (pr_global_struct->PlayerPreThink);
 
 	assert_always (!ent->free);
@@ -3024,9 +3700,14 @@ static void SV_Physics_Client (edict_t *ent, int num)
 	SV_BeginPrivateVRWeaponPose (ent, client, &weapon_scope);
 	PR_ExecuteProgram (pr_global_struct->PlayerPostThink);
 	SV_EndPrivateVRWeaponPose (ent, &weapon_scope);
+	SV_CoopSharedObserveClientDeath (ent, num);
 	frame_completed = true;
 
 done:
+	/* PlayerPostThink and the weapon think above may both update inventory. */
+	if (frame_completed && client->active && client->spawned &&
+		client->edict == ent && !ent->free)
+		SV_CoopRespawnRefreshClientInventory (ent);
 	if (frame_completed && client->active && client->spawned && client->edict == ent && !ent->free &&
 		client->protocol_qsvr == QSVR_PROTOCOL_PINNED)
 		client->private_completed_move = completed_move;
@@ -3277,6 +3958,7 @@ void SV_Physics (void)
 	ED_AllocHook_func previous_alloc_hook = NULL;
 
 	int physics_mode;
+	SV_CoopSharedBeginFrameDeathTracking ();
 	if (qcvm->extglobals.physics_mode)
 		physics_mode = *qcvm->extglobals.physics_mode;
 	else
@@ -3288,6 +3970,7 @@ void SV_Physics (void)
 
 	if (!physics_mode)
 	{
+		SV_CoopSharedEndFrameDeathTracking ();
 		qcvm->time += host_frametime;
 		return;
 	}
@@ -3299,6 +3982,7 @@ void SV_Physics (void)
 				continue;
 			SV_RunThink (ent);
 		}
+		SV_CoopSharedEndFrameDeathTracking ();
 		qcvm->time += host_frametime;
 		return;
 	}
@@ -3401,6 +4085,9 @@ void SV_Physics (void)
 		else
 			Host_EndGame ("SV_Physics: bad movetype %i", (int)ent->v.movetype);
 
+		if (i > 0 && i <= svs.maxclients && qcvm == &sv.qcvm)
+			SV_CoopSharedObserveClientDeath (ent, i);
+
 		// johnfitz -- PROTOCOL_FITZQUAKE
 		// capture interval to nextthink here and send it to client for better
 		// lerp timing; ~0.1 intervals match what the client assumes but thinks
@@ -3419,6 +4106,9 @@ void SV_Physics (void)
 		}
 		// johnfitz
 	}
+
+	/* Later projectiles and entity thinks can kill a client after its pass. */
+	SV_CoopSharedEndFrameDeathTracking ();
 
 	if (pr_global_struct->force_retouch)
 		pr_global_struct->force_retouch--;

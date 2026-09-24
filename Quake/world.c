@@ -24,6 +24,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 
 #include "quakedef.h"
 #include "pmove.h"
+#include "coop_inventory_policy.h"
 /* world.c defines its own legacy VectorNegate macro below. */
 #undef VectorNegate
 
@@ -450,6 +451,1743 @@ static qboolean SV_ShouldSkipCoopPlayerClip (moveclip_t *clip, edict_t *touch)
 		SV_IsActiveClientEdict (touch);
 }
 
+
+/* Co-op shared inventory and progression policy. */
+static qboolean SV_IsCoopInventoryClient (edict_t *ent)
+{
+	int num;
+	client_t *client;
+
+	if (!ent || ent->free || !((int)ent->v.flags & FL_CLIENT))
+		return false;
+	num = NUM_FOR_EDICT(ent);
+	if (num < 1 || num > svs.maxclients)
+		return false;
+	client = &svs.clients[num - 1];
+	/* QC and trigger physics already run after spawn, before network begin.
+	 * Track their accepted inventory transactions during that interval too;
+	 * otherwise begin can overwrite a real pickup with an older team cache.
+	 * Do not broaden the separate movement/teleport eligibility checks. */
+	return client->active && client->edict == ent &&
+		(client->spawned || client->knowntoqc);
+}
+
+static qboolean SV_IsDirectWeaponTouch (func_t touchfunc)
+{
+	static dprograms_t	*cached_progs;
+	static unsigned short	cached_crc;
+	static func_t		weapon_touch;
+	dfunction_t			*func;
+
+	if (cached_progs != qcvm->progs || cached_crc != qcvm->progscrc)
+	{
+		cached_progs = qcvm->progs;
+		cached_crc = qcvm->progscrc;
+		func = ED_FindFunction("weapon_touch");
+		weapon_touch = func ? (func_t)(func - qcvm->functions) : 0;
+	}
+
+	return weapon_touch && touchfunc == weapon_touch;
+}
+
+#define SV_COOP_SHARED_ALL_BITS (-1)
+#define SV_COOP_SHARED_DWELL_WEAPON_BITS (4 | 8 | 32)
+
+typedef enum
+{
+	SV_COOP_SHARED_BITMASK,
+	SV_COOP_SHARED_MAXFLOAT,
+	SV_COOP_SHARED_PROGRESS_MAX
+} sv_coop_shared_policy_t;
+
+typedef struct
+{
+	const char	*name;
+	sv_coop_shared_policy_t	policy;
+	int		mask;
+} sv_coop_shared_field_t;
+
+typedef struct
+{
+	qboolean	valid;
+	int		bits;
+	float		value;
+} sv_coop_shared_value_t;
+
+#define SV_COOP_SHARED_FIELD_COUNT 21
+
+static const sv_coop_shared_field_t sv_coop_shared_fields[SV_COOP_SHARED_FIELD_COUNT] =
+{
+	{"items2", SV_COOP_SHARED_BITMASK, SV_COOP_SHARED_ALL_BITS},
+	{"items3", SV_COOP_SHARED_BITMASK, SV_COOP_SHARED_ALL_BITS},
+	{"moditems", SV_COOP_SHARED_BITMASK, SV_COOP_SHARED_ALL_BITS},
+	{"permitems", SV_COOP_SHARED_BITMASK, SV_COOP_SHARED_ALL_BITS},
+	{"perms", SV_COOP_SHARED_BITMASK, SV_COOP_SHARED_ALL_BITS},
+	{"customkeys", SV_COOP_SHARED_BITMASK, SV_COOP_SHARED_ALL_BITS},
+	{"weapons", SV_COOP_SHARED_BITMASK, SV_COOP_SHARED_ALL_BITS},
+	{"weapon2", SV_COOP_SHARED_BITMASK, SV_COOP_SHARED_ALL_BITS},
+	{"weapons2", SV_COOP_SHARED_BITMASK, SV_COOP_SHARED_ALL_BITS},
+	{"items_dwell", SV_COOP_SHARED_BITMASK, SV_COOP_SHARED_DWELL_WEAPON_BITS},
+	{"items_movemod", SV_COOP_SHARED_BITMASK, SV_COOP_SHARED_ALL_BITS},
+	{"runeshard_cou", SV_COOP_SHARED_PROGRESS_MAX, 0},
+	{"key_count_silver", SV_COOP_SHARED_MAXFLOAT, 0},
+	{"key_count_gold", SV_COOP_SHARED_MAXFLOAT, 0},
+	{"ammo_shells1", SV_COOP_SHARED_MAXFLOAT, 0},
+	{"ammo_nails1", SV_COOP_SHARED_MAXFLOAT, 0},
+	{"ammo_lava_nails", SV_COOP_SHARED_MAXFLOAT, 0},
+	{"ammo_rockets1", SV_COOP_SHARED_MAXFLOAT, 0},
+	{"ammo_multi_rockets", SV_COOP_SHARED_MAXFLOAT, 0},
+	{"ammo_cells1", SV_COOP_SHARED_MAXFLOAT, 0},
+	{"ammo_plasma", SV_COOP_SHARED_MAXFLOAT, 0}
+};
+
+typedef struct
+{
+	int		items;
+	float		ammo_shells;
+	float		ammo_nails;
+	float		ammo_rockets;
+	float		ammo_cells;
+	qboolean	worldtype_valid;
+	float		worldtype;
+	sv_coop_shared_value_t	extra[SV_COOP_SHARED_FIELD_COUNT];
+} sv_coop_shared_inventory_t;
+
+#define SV_COOP_SHARED_STOCK_KEY_BITS (IT_KEY1 | IT_KEY2 | IT_SIGIL1 | IT_SIGIL2 | IT_SIGIL3 | IT_SIGIL4)
+#define SV_COOP_SHARED_DRAKE_CUSTOM_KEYS (8192 | 16384 | 32768 | 65536)
+#define SV_COOP_SHARED_ITEMS2_KEY_BITS 65536
+#define SV_COOP_SHARED_WORLD_SILVER_MASK 15
+#define SV_COOP_SHARED_WORLD_GOLD_MASK 240
+#define SV_COOP_SHARED_WORLD_KEY_MASK (SV_COOP_SHARED_WORLD_SILVER_MASK | SV_COOP_SHARED_WORLD_GOLD_MASK)
+
+static sv_coop_shared_inventory_t sv_coop_shared_touch_before[MAX_SCOREBOARD];
+static qboolean sv_coop_shared_touch_valid[MAX_SCOREBOARD];
+static int sv_coop_shared_touch_depth[MAX_SCOREBOARD];
+static sv_coop_shared_inventory_t sv_coop_shared_level_progress;
+static qboolean sv_coop_shared_level_progress_valid;
+static string_t sv_coop_shared_ckey_names[4];
+static float sv_coop_shared_ckey_skins[4];
+
+/* wwheel.txt is a declarative weapon-ownership list supplied by modern mods.
+ * Keep one server-side interpretation beside the coop inventory bridge so
+ * respawn preservation, shared pickups and admin give-all agree with the VR
+ * wheel instead of each carrying an incomplete stock-only mask. */
+int SV_DeclaredWeaponBits (void)
+{
+	static dprograms_t *cached_progs;
+	static unsigned short cached_crc;
+	static char cached_gamedir[MAX_OSPATH];
+	static int cached_bits;
+	char *data, *cursor;
+	const char *gamedir = COM_SkipPath(com_gamedir);
+	unsigned int path_id = 0;
+	int weaponnum = 0;
+	qboolean in_slot = false;
+	qboolean have_weaponnum = false;
+	qboolean have_impulse = false;
+
+	if (cached_progs == qcvm->progs && cached_crc == qcvm->progscrc &&
+		!q_strcasecmp(cached_gamedir, gamedir ? gamedir : ""))
+		return cached_bits;
+
+	cached_progs = qcvm->progs;
+	cached_crc = qcvm->progscrc;
+	q_strlcpy(cached_gamedir, gamedir ? gamedir : "", sizeof(cached_gamedir));
+	cached_bits = 0;
+
+	data = (char *)COM_LoadFile ("wwheel.txt", &path_id);
+	/* Do not make an inherited id1 wheel authoritative for a mod which has no
+	 * roster of its own.  Active-game directories and PAKs use the highest
+	 * mounted path id. */
+	if (data && (!com_searchpaths || path_id != com_searchpaths->path_id))
+	{
+		Mem_Free(data);
+		data = NULL;
+	}
+	for (cursor = data; cursor; )
+	{
+		cursor = (char *)COM_Parse(cursor);
+		if (!cursor || !com_token[0])
+			break;
+		if (!q_strcasecmp(com_token, "slot"))
+		{
+			if (in_slot && have_weaponnum && have_impulse)
+				cached_bits |= weaponnum;
+			in_slot = true;
+			weaponnum = 0;
+			have_weaponnum = false;
+			have_impulse = false;
+			continue;
+		}
+		if (!in_slot)
+			continue;
+		if (!q_strcasecmp(com_token, "}"))
+		{
+			if (have_weaponnum && have_impulse)
+				cached_bits |= weaponnum;
+			in_slot = false;
+			continue;
+		}
+		if (!q_strcasecmp(com_token, "weaponnum") ||
+			!q_strcasecmp(com_token, "weapon_num"))
+		{
+			cursor = (char *)COM_Parse(cursor);
+			if (!cursor || !com_token[0])
+				break;
+			weaponnum = atoi(com_token);
+			have_weaponnum = weaponnum > 0;
+		}
+		else if (!q_strcasecmp(com_token, "impulse"))
+		{
+			cursor = (char *)COM_Parse(cursor);
+			if (!cursor || !com_token[0])
+				break;
+			have_impulse = atoi(com_token) > 0;
+		}
+	}
+	if (in_slot && have_weaponnum && have_impulse)
+		cached_bits |= weaponnum;
+	if (data)
+		Mem_Free(data);
+
+	/* MG3 normally carries wwheel.txt in its PAK.  Retain its two distinctive
+	 * bonus-hammer/axe/laser bits if a repack omits that optional text file, identified by
+	 * the mod's upgrade and laser APIs rather than by a user-created config. */
+	if (ED_FindFunction("UpgradeTouch") &&
+		ED_FindFunction("weapon_laser_gun"))
+		cached_bits |= 128 | 4096 | 8388608;
+
+	return cached_bits;
+}
+
+void SV_CoopSharedResetClientSlot (int slot)
+{
+	if (slot < 0 || slot >= MAX_SCOREBOARD)
+		return;
+	memset(&sv_coop_shared_touch_before[slot], 0,
+		sizeof(sv_coop_shared_touch_before[slot]));
+	sv_coop_shared_touch_valid[slot] = false;
+	sv_coop_shared_touch_depth[slot] = 0;
+}
+
+void SV_CoopSharedResetState (void)
+{
+	int i;
+	for (i = 0; i < MAX_SCOREBOARD; ++i)
+		SV_CoopSharedResetClientSlot(i);
+	memset(&sv_coop_shared_level_progress, 0,
+		sizeof(sv_coop_shared_level_progress));
+	memset(sv_coop_shared_ckey_names, 0,
+		sizeof(sv_coop_shared_ckey_names));
+	memset(sv_coop_shared_ckey_skins, 0,
+		sizeof(sv_coop_shared_ckey_skins));
+	sv_coop_shared_level_progress_valid = false;
+}
+
+static int SV_CoopSharedItemMask (void)
+{
+	int	mask;
+
+	/* Only persistent ownership lives in the generic items word.  Armor,
+	 * ammo-presence flags and timed powerups are deliberately excluded: their
+	 * numeric/timer state belongs to the individual player. */
+	mask = IT_SHOTGUN | IT_SUPER_SHOTGUN | IT_NAILGUN | IT_SUPER_NAILGUN |
+		IT_GRENADE_LAUNCHER | IT_ROCKET_LAUNCHER | IT_LIGHTNING |
+		IT_SUPER_LIGHTNING | IT_AXE | IT_KEY1 | IT_KEY2 |
+		IT_SIGIL1 | IT_SIGIL2 | IT_SIGIL3 | IT_SIGIL4;
+	mask |= SV_DeclaredWeaponBits();
+
+	if (rogue)
+		mask |= RIT_AXE | RIT_LAVA_NAILGUN | RIT_LAVA_SUPER_NAILGUN |
+			RIT_MULTI_GRENADE | RIT_MULTI_ROCKET | RIT_PLASMA_GUN;
+
+	if (hipnotic)
+		mask |= HIT_PROXIMITY_GUN | HIT_MJOLNIR | HIT_LASER_CANNON;
+
+	return mask;
+}
+
+static int SV_CoopSharedStockKeyMask (void)
+{
+	return SV_COOP_SHARED_STOCK_KEY_BITS;
+}
+
+static int SV_CoopSharedExtraKeyMask (const char *name)
+{
+	if (!name)
+		return 0;
+	if (!q_strcasecmp(name, "customkeys"))
+		return SV_COOP_SHARED_ALL_BITS;
+	if (!q_strcasecmp(name, "moditems"))
+		return SV_COOP_SHARED_DRAKE_CUSTOM_KEYS;
+	if (!q_strcasecmp(name, "items2"))
+		return SV_COOP_SHARED_ITEMS2_KEY_BITS;
+	return 0;
+}
+
+static qboolean SV_CoopSharedIsKeyCountField (const char *name)
+{
+	return name && (!q_strcasecmp(name, "key_count_silver") ||
+		!q_strcasecmp(name, "key_count_gold"));
+}
+
+static int SV_CoopSharedClampWorldKeyCount (int count)
+{
+	if (count < 0)
+		return 0;
+	if (count > 15)
+		return 15;
+	return count;
+}
+
+static int SV_CoopSharedWorldSilverCount (float worldtype)
+{
+	return ((int)worldtype) & SV_COOP_SHARED_WORLD_SILVER_MASK;
+}
+
+static int SV_CoopSharedWorldGoldCount (float worldtype)
+{
+	return (((int)worldtype) & SV_COOP_SHARED_WORLD_GOLD_MASK) >> 4;
+}
+
+static int SV_CoopSharedWorldWithSilverCount (float worldtype, int count)
+{
+	int	bits;
+
+	bits = (int)worldtype;
+	count = SV_CoopSharedClampWorldKeyCount(count);
+	return (bits & ~SV_COOP_SHARED_WORLD_SILVER_MASK) | count;
+}
+
+static int SV_CoopSharedWorldWithGoldCount (float worldtype, int count)
+{
+	int	bits;
+
+	bits = (int)worldtype;
+	count = SV_CoopSharedClampWorldKeyCount(count);
+	return (bits & ~SV_COOP_SHARED_WORLD_GOLD_MASK) | (count << 4);
+}
+
+static qboolean SV_CoopSharedGetWorldType (edict_t *ent, eval_t **val_out, int *type_out)
+{
+	static dprograms_t	*cached_progs;
+	static unsigned short	cached_crc;
+	static ddef_t		*cached_def;
+	ddef_t	*def;
+	int	type;
+	eval_t	*val;
+
+	if (!ent || ent->free)
+		return false;
+
+	if (cached_progs != qcvm->progs || cached_crc != qcvm->progscrc)
+	{
+		cached_progs = qcvm->progs;
+		cached_crc = qcvm->progscrc;
+		cached_def = ED_FindField("worldtype");
+	}
+	def = cached_def;
+	if (!def)
+		return false;
+
+	type = def->type & ~DEF_SAVEGLOBAL;
+	if (type != ev_float && type != ev_ext_integer)
+		return false;
+
+	val = GetEdictFieldValue(ent, def->ofs);
+	if (!val)
+		return false;
+
+	if (val_out)
+		*val_out = val;
+	if (type_out)
+		*type_out = type;
+	return true;
+}
+
+static void SV_CoopSharedSetWorldTypeValue (eval_t *val, int type, int worldtype)
+{
+	if (!val)
+		return;
+	if (type == ev_ext_integer)
+		val->_int = worldtype;
+	else
+		val->_float = (float)worldtype;
+}
+
+static void SV_CoopSharedSetWorldKeyCount (edict_t *player, qboolean gold, int count)
+{
+	eval_t	*val;
+	int	type;
+	int	worldtype;
+
+	if (!SV_CoopSharedGetWorldType(player, &val, &type))
+		return;
+
+	worldtype = gold ? SV_CoopSharedWorldWithGoldCount(type == ev_ext_integer ? (float)val->_int : val->_float, count)
+			 : SV_CoopSharedWorldWithSilverCount(type == ev_ext_integer ? (float)val->_int : val->_float, count);
+	SV_CoopSharedSetWorldTypeValue(val, type, worldtype);
+}
+
+/*
+ * QBJ3 stores only the keys *after* the first one in worldtype; the normal
+ * IT_KEY bit owns the first key.  Treat worldtype as a counter only for mods
+ * which advertise that convention, and never infer key ownership from the
+ * extra-count nibble.
+ */
+qboolean SV_CoopUsesCountedKeys (void)
+{
+	static dprograms_t	*cached_progs;
+	static unsigned short	cached_crc;
+	static qboolean		cached_result;
+
+	if (cached_progs != qcvm->progs || cached_crc != qcvm->progscrc)
+	{
+		cached_progs = qcvm->progs;
+		cached_crc = qcvm->progscrc;
+		cached_result = ED_FindFunction("key_count_silver") != NULL &&
+			ED_FindFunction("key_count_gold") != NULL;
+	}
+	return cached_result;
+}
+
+static void SV_CoopSharedSetExtraBitMask (eval_t *val, int type, int bits);
+static int SV_CoopSharedGetExtraBitMask (eval_t *val, int type);
+static qboolean SV_CoopSharedGetField (edict_t *ent, int index,
+	eval_t **val_out, int *type_out);
+static void SV_CaptureCoopSharedInventory (edict_t *player,
+	sv_coop_shared_inventory_t *inventory);
+
+static qboolean SV_CoopCallKeyFunction (edict_t *player, const char *name,
+	int numparms)
+{
+	dfunction_t *func = ED_FindFunction(name);
+	int old_self, old_other;
+	int old_parm[3], old_return[3];
+	float old_time;
+
+	if (!func || func->numparms != numparms)
+		return false;
+
+	old_self = pr_global_struct->self;
+	old_other = pr_global_struct->other;
+	old_time = pr_global_struct->time;
+	memcpy(old_parm, &qcvm->globals[OFS_PARM0], sizeof(old_parm));
+	memcpy(old_return, &qcvm->globals[OFS_RETURN], sizeof(old_return));
+
+	pr_global_struct->self = EDICT_TO_PROG(player);
+	pr_global_struct->other = EDICT_TO_PROG(qcvm->edicts);
+	pr_global_struct->time = qcvm->time;
+	if (numparms == 1)
+		G_INT(OFS_PARM0) = EDICT_TO_PROG(player);
+	PR_ExecuteProgram(func - qcvm->functions);
+
+	pr_global_struct->self = old_self;
+	pr_global_struct->other = old_other;
+	pr_global_struct->time = old_time;
+	memcpy(&qcvm->globals[OFS_PARM0], old_parm, sizeof(old_parm));
+	memcpy(&qcvm->globals[OFS_RETURN], old_return, sizeof(old_return));
+	return true;
+}
+
+static int SV_CoopDeclaredFieldBits (int field_index)
+{
+	int i, type, bits = 0;
+	eval_t *val;
+
+	for (i = 0; i < qcvm->num_edicts; ++i)
+	{
+		edict_t *ent = EDICT_NUM(i);
+		if (ent->free || !SV_CoopSharedGetField(ent, field_index, &val, &type))
+			continue;
+		bits |= type == ev_ext_integer ? val->_int : (int)val->_float;
+	}
+	return bits;
+}
+
+static void SV_CoopGiveDeclaredCustomKeyMetadata (edict_t *player,
+	int moditems_index, int key_mask)
+{
+	static const int key_bits[4] = {8192, 16384, 32768, 65536};
+	static const char *name_fields[4] = {
+		"ckeyname1", "ckeyname2", "ckeyname3", "ckeyname4"};
+	static const char *skin_fields[4] = {
+		"ckeyskin1", "ckeyskin2", "ckeyskin3", "ckeyskin4"};
+	ddef_t *hudskin_def = ED_FindField("ckeyhudskin");
+	int i, j, type;
+
+	for (j = 0; j < 4; ++j)
+	{
+		ddef_t *name_def, *skin_def;
+		eval_t *dst_name, *dst_skin;
+
+		if (!(key_mask & key_bits[j]))
+			continue;
+		name_def = ED_FindField(name_fields[j]);
+		skin_def = ED_FindField(skin_fields[j]);
+		dst_name = name_def && ((name_def->type & ~DEF_SAVEGLOBAL) == ev_string)
+			? GetEdictFieldValue(player, name_def->ofs) : NULL;
+		dst_skin = skin_def && ((skin_def->type & ~DEF_SAVEGLOBAL) == ev_float)
+			? GetEdictFieldValue(player, skin_def->ofs) : NULL;
+
+		for (i = 0; i < qcvm->num_edicts; ++i)
+		{
+			edict_t *source = EDICT_NUM(i);
+			eval_t *bits, *src_name, *src_skin;
+			int source_bits;
+			qboolean copied = false;
+
+			if (source->free ||
+			    !SV_CoopSharedGetField(source, moditems_index, &bits, &type))
+				continue;
+			source_bits = type == ev_ext_integer ? bits->_int : (int)bits->_float;
+			if (!(source_bits & key_bits[j]))
+				continue;
+
+			/* A player already carrying the key has authoritative metadata.
+			 * Otherwise derive it from the map key entity's netname/skin. */
+			src_name = name_def ? GetEdictFieldValue(source, name_def->ofs) : NULL;
+			if (dst_name && src_name && src_name->string)
+			{
+				dst_name->string = src_name->string;
+				copied = true;
+			}
+			else if (dst_name && !SV_IsCoopInventoryClient(source) &&
+				 source->v.netname)
+			{
+				dst_name->string = source->v.netname;
+				copied = true;
+			}
+			if (!copied)
+				continue;
+
+			src_skin = src_name && src_name->string && skin_def
+				? GetEdictFieldValue(source, skin_def->ofs) : NULL;
+			if (!src_skin)
+				src_skin = hudskin_def &&
+				((hudskin_def->type & ~DEF_SAVEGLOBAL) == ev_float)
+				? GetEdictFieldValue(source, hudskin_def->ofs) : NULL;
+			if (dst_skin && src_skin)
+				dst_skin->_float = src_skin->_float;
+			break;
+		}
+	}
+}
+
+/*
+ * Grant every key representation currently understood by the co-op inventory
+ * bridge.  Stock Quake uses IT_KEY1/IT_KEY2.  QBJ3 stores additional copies
+ * in the low/high nibbles of worldtype, while Drake-family mods use moditems
+ * and other mods use customkeys/items2.  Keeping this schema beside pickup
+ * sharing prevents the admin command and normal touches from drifting apart.
+ */
+qboolean SV_CoopGiveKeys (edict_t *player, int key_flags)
+{
+	int	i, type;
+	eval_t	*val;
+	qboolean native_all;
+	qboolean counted_keys;
+
+	if (!player || player->free || !(key_flags & SV_COOP_GIVEKEYS_ALL))
+		return false;
+
+	/* Prefer a mod's explicit all-keys helper when present (progs_dump family).
+	 * Counted-key Copper descendants expose one-argument helpers instead. Calling
+	 * them grants exactly one key and lets the mod maintain worldtype itself. */
+	native_all = key_flags == SV_COOP_GIVEKEYS_ALL &&
+		SV_CoopCallKeyFunction(player, "GiveAllKeys", 0);
+	counted_keys = SV_CoopUsesCountedKeys();
+	if ((key_flags & SV_COOP_GIVEKEYS_SILVER) &&
+	    (!native_all || !((int)player->v.items & IT_KEY1)) &&
+	    (!counted_keys ||
+	     !SV_CoopCallKeyFunction(player, "key_give_silver", 1)))
+		player->v.items = (int)player->v.items | IT_KEY1;
+
+	if ((key_flags & SV_COOP_GIVEKEYS_GOLD) &&
+	    (!native_all || !((int)player->v.items & IT_KEY2)) &&
+	    (!counted_keys ||
+	     !SV_CoopCallKeyFunction(player, "key_give_gold", 1)))
+		player->v.items = (int)player->v.items | IT_KEY2;
+
+	for (i = 0; i < SV_COOP_SHARED_FIELD_COUNT; ++i)
+	{
+		const char *name = sv_coop_shared_fields[i].name;
+
+		if (!SV_CoopSharedGetField(player, i, &val, &type))
+			continue;
+
+		if (!q_strcasecmp(name, "key_count_silver") &&
+		    (key_flags & SV_COOP_GIVEKEYS_SILVER))
+		{
+			val->_float = q_max(val->_float, 1.0f);
+		}
+		else if (!q_strcasecmp(name, "key_count_gold") &&
+			 (key_flags & SV_COOP_GIVEKEYS_GOLD))
+		{
+			val->_float = q_max(val->_float, 1.0f);
+		}
+		else if (key_flags & SV_COOP_GIVEKEYS_CUSTOM)
+		{
+			int key_mask = SV_CoopSharedExtraKeyMask(name);
+			/* customkeys is key-only but its bit allocation is mod-defined.
+			 * Grant only bits declared by entities in the current map instead
+			 * of manufacturing undefined ownership with an all-bits value. */
+			if (!q_strcasecmp(name, "customkeys"))
+				key_mask = SV_CoopDeclaredFieldBits(i);
+			else if (!q_strcasecmp(name, "moditems"))
+				key_mask &= SV_CoopDeclaredFieldBits(i);
+			else if (!q_strcasecmp(name, "items2"))
+			{
+				if (!ED_FindFunction("item_key_skeleton"))
+					key_mask = 0;
+				else
+					key_mask &= SV_CoopDeclaredFieldBits(i);
+			}
+			if (key_mask)
+			{
+				SV_CoopSharedSetExtraBitMask(val, type,
+					SV_CoopSharedGetExtraBitMask(val, type) | key_mask);
+				if (!q_strcasecmp(name, "moditems"))
+					SV_CoopGiveDeclaredCustomKeyMetadata(player, i, key_mask);
+			}
+		}
+	}
+
+	return true;
+}
+
+static void SV_CoopSharedSetExtraBitMask (eval_t *val, int type, int bits)
+{
+	if (!val)
+		return;
+	if (type == ev_ext_integer)
+		val->_int = bits;
+	else
+		val->_float = (float)bits;
+}
+
+static int SV_CoopSharedGetExtraBitMask (eval_t *val, int type)
+{
+	if (!val)
+		return 0;
+	return type == ev_ext_integer ? val->_int : (int)val->_float;
+}
+
+static qboolean SV_CoopSharedGetField (edict_t *ent, int index, eval_t **val_out, int *type_out)
+{
+	static dprograms_t	*cached_progs;
+	static unsigned short	cached_crc;
+	static ddef_t		*cached_defs[SV_COOP_SHARED_FIELD_COUNT];
+	const sv_coop_shared_field_t	*field;
+	ddef_t				*def;
+	int				i, type;
+
+	if (!ent || ent->free || index < 0 || index >= SV_COOP_SHARED_FIELD_COUNT)
+		return false;
+
+	field = &sv_coop_shared_fields[index];
+	if (cached_progs != qcvm->progs || cached_crc != qcvm->progscrc)
+	{
+		cached_progs = qcvm->progs;
+		cached_crc = qcvm->progscrc;
+		for (i = 0; i < SV_COOP_SHARED_FIELD_COUNT; ++i)
+			cached_defs[i] = ED_FindField(sv_coop_shared_fields[i].name);
+	}
+	def = cached_defs[index];
+	if (!def)
+		return false;
+
+	type = def->type & ~DEF_SAVEGLOBAL;
+	if (field->policy == SV_COOP_SHARED_BITMASK)
+	{
+		if (type != ev_float && type != ev_ext_integer)
+			return false;
+	}
+	else if (type != ev_float)
+	{
+		return false;
+	}
+
+	if (val_out)
+		*val_out = GetEdictFieldValue(ent, def->ofs);
+	if (type_out)
+		*type_out = type;
+	return val_out && *val_out;
+}
+
+static void SV_CoopSharedCopyNamedField (edict_t *source, edict_t *target,
+	const char *name, int expected_type)
+{
+	ddef_t *def;
+	eval_t *src, *dst;
+	int type;
+
+	def = ED_FindField(name);
+	if (!def)
+		return;
+	type = def->type & ~DEF_SAVEGLOBAL;
+	if (type != expected_type)
+		return;
+	src = GetEdictFieldValue(source, def->ofs);
+	dst = GetEdictFieldValue(target, def->ofs);
+	if (!src || !dst)
+		return;
+	if (type == ev_string)
+		dst->string = src->string;
+	else if (type == ev_float)
+		dst->_float = src->_float;
+}
+
+static void SV_CoopSharedCopyCustomKeyMetadata (
+	edict_t *source, edict_t *target,
+	const sv_coop_shared_inventory_t *before,
+	const sv_coop_shared_inventory_t *after)
+{
+	static const int key_bits[4] = {8192, 16384, 32768, 65536};
+	static const char *name_fields[4] = {
+		"ckeyname1", "ckeyname2", "ckeyname3", "ckeyname4"};
+	static const char *skin_fields[4] = {
+		"ckeyskin1", "ckeyskin2", "ckeyskin3", "ckeyskin4"};
+	int i, index = -1, before_bits, gained;
+
+	if (!source || !target)
+		return;
+	for (i = 0; i < SV_COOP_SHARED_FIELD_COUNT; ++i)
+		if (!q_strcasecmp(sv_coop_shared_fields[i].name, "moditems"))
+		{
+			index = i;
+			break;
+		}
+	if (index < 0 || !after->extra[index].valid)
+		return;
+	before_bits = before->extra[index].valid ? before->extra[index].bits : 0;
+	gained = CoopInventoryPolicy_AddedBits(before_bits,
+		after->extra[index].bits) & SV_COOP_SHARED_DRAKE_CUSTOM_KEYS;
+	for (i = 0; i < 4; ++i)
+	{
+		if (!(gained & key_bits[i]))
+			continue;
+		SV_CoopSharedCopyNamedField(source, target, name_fields[i], ev_string);
+		SV_CoopSharedCopyNamedField(source, target, skin_fields[i], ev_float);
+	}
+}
+
+static qboolean SV_CoopSharedHasPersistentProgressGain (
+	const sv_coop_shared_inventory_t *before,
+	const sv_coop_shared_inventory_t *after)
+{
+	int i;
+
+	for (i = 0; i < SV_COOP_SHARED_FIELD_COUNT; ++i)
+	{
+		if (!after->extra[i].valid)
+			continue;
+		if (sv_coop_shared_fields[i].policy == SV_COOP_SHARED_PROGRESS_MAX &&
+		    CoopInventoryPolicy_HasValueGain(before->extra[i].valid,
+			before->extra[i].value, after->extra[i].valid,
+			after->extra[i].value))
+			return true;
+		if (!q_strcasecmp(sv_coop_shared_fields[i].name, "items_movemod") &&
+		    CoopInventoryPolicy_AddedBits(
+			before->extra[i].valid ? before->extra[i].bits : 0,
+			after->extra[i].bits))
+			return true;
+	}
+	return false;
+}
+
+static void SV_CoopSharedRememberLevelProgress (
+	edict_t *source, const sv_coop_shared_inventory_t *after)
+{
+	static const char *name_fields[4] = {
+		"ckeyname1", "ckeyname2", "ckeyname3", "ckeyname4"};
+	static const char *skin_fields[4] = {
+		"ckeyskin1", "ckeyskin2", "ckeyskin3", "ckeyskin4"};
+	int i;
+
+	if (!source || !after)
+		return;
+	sv_coop_shared_level_progress.items =
+		after->items & SV_CoopSharedStockKeyMask();
+	if (SV_CoopUsesCountedKeys() && after->worldtype_valid)
+	{
+		sv_coop_shared_level_progress.worldtype_valid = true;
+		sv_coop_shared_level_progress.worldtype = after->worldtype;
+	}
+	for (i = 0; i < SV_COOP_SHARED_FIELD_COUNT; ++i)
+	{
+		int key_mask = SV_CoopSharedExtraKeyMask(sv_coop_shared_fields[i].name);
+		if (!after->extra[i].valid)
+			continue;
+		if (key_mask)
+		{
+			sv_coop_shared_level_progress.extra[i].valid = true;
+			sv_coop_shared_level_progress.extra[i].bits =
+				after->extra[i].bits & key_mask;
+		}
+		else if (!q_strcasecmp(sv_coop_shared_fields[i].name, "items_movemod"))
+		{
+			sv_coop_shared_level_progress.extra[i].valid = true;
+			sv_coop_shared_level_progress.extra[i].bits = after->extra[i].bits;
+		}
+		else if (sv_coop_shared_fields[i].policy == SV_COOP_SHARED_PROGRESS_MAX)
+		{
+			sv_coop_shared_level_progress.extra[i].valid = true;
+			sv_coop_shared_level_progress.extra[i].value = q_max(
+				sv_coop_shared_level_progress.extra[i].value,
+				after->extra[i].value);
+		}
+		else if (SV_CoopUsesCountedKeys() &&
+			 SV_CoopSharedIsKeyCountField(sv_coop_shared_fields[i].name))
+		{
+			sv_coop_shared_level_progress.extra[i].valid = true;
+			sv_coop_shared_level_progress.extra[i].value = after->extra[i].value;
+		}
+	}
+
+	for (i = 0; i < 4; ++i)
+	{
+		ddef_t *def = ED_FindField(name_fields[i]);
+		eval_t *val;
+		if (def && ((def->type & ~DEF_SAVEGLOBAL) == ev_string) &&
+		    (val = GetEdictFieldValue(source, def->ofs)) && val->string)
+			sv_coop_shared_ckey_names[i] = val->string;
+		def = ED_FindField(skin_fields[i]);
+		if (def && ((def->type & ~DEF_SAVEGLOBAL) == ev_float) &&
+		    (val = GetEdictFieldValue(source, def->ofs)))
+			sv_coop_shared_ckey_skins[i] = val->_float;
+	}
+	sv_coop_shared_level_progress_valid = true;
+}
+
+static qboolean SV_CoopSharedIsLivingPlayer (edict_t *player)
+{
+	return SV_IsCoopInventoryClient(player) && player->v.health > 0 &&
+		player->v.deadflag == DEAD_NO;
+}
+
+/*
+ * Apply only the canonical shared-key subset.  Weapons, ammo, powerups, and
+ * map-specific non-key fields remain owned by the player's normal inventory.
+ * Exact replacement matters here: a door consumption must clear a key just as
+ * reliably as a pickup grants one.
+ */
+static void SV_CoopSharedApplyCanonicalKeys (edict_t *player)
+{
+	int	i, type;
+	eval_t	*val;
+
+	if (!player || player->free || !sv_coop_shared_level_progress_valid)
+		return;
+
+	player->v.items = ((int)player->v.items & ~SV_CoopSharedStockKeyMask()) |
+		(sv_coop_shared_level_progress.items & SV_CoopSharedStockKeyMask());
+	if (SV_CoopUsesCountedKeys() &&
+	    sv_coop_shared_level_progress.worldtype_valid)
+	{
+		SV_CoopSharedSetWorldKeyCount(player, false,
+			SV_CoopSharedWorldSilverCount(
+				sv_coop_shared_level_progress.worldtype));
+		SV_CoopSharedSetWorldKeyCount(player, true,
+			SV_CoopSharedWorldGoldCount(
+				sv_coop_shared_level_progress.worldtype));
+	}
+
+	for (i = 0; i < SV_COOP_SHARED_FIELD_COUNT; ++i)
+	{
+		const sv_coop_shared_value_t *saved =
+			&sv_coop_shared_level_progress.extra[i];
+		int key_mask =
+			SV_CoopSharedExtraKeyMask(sv_coop_shared_fields[i].name);
+
+		if (!SV_CoopSharedGetField(player, i, &val, &type))
+			continue;
+		if (key_mask)
+		{
+			int current = SV_CoopSharedGetExtraBitMask(val, type);
+			int bits = saved->valid ? saved->bits : 0;
+			SV_CoopSharedSetExtraBitMask(val, type,
+				(current & ~key_mask) | (bits & key_mask));
+		}
+		else if (SV_CoopUsesCountedKeys() &&
+			 SV_CoopSharedIsKeyCountField(sv_coop_shared_fields[i].name))
+		{
+			val->_float = saved->valid ? saved->value : 0.0f;
+		}
+	}
+}
+
+static void SV_CoopSharedApplyCanonicalTeamKeys (void)
+{
+	edict_t	*authority = NULL;
+	int	i;
+
+	for (i = 0; i < svs.maxclients; ++i)
+	{
+		edict_t *player;
+
+		player = svs.clients[i].edict;
+		if (!SV_IsCoopInventoryClient(player))
+			continue;
+		SV_CoopSharedApplyCanonicalKeys(player);
+		if (SV_CoopSharedIsLivingPlayer(player))
+		{
+			SV_CoopRespawnRefreshClientInventory(player);
+			if (!authority)
+				authority = player;
+		}
+		else if (!authority)
+		{
+			authority = player;
+		}
+	}
+
+	/* Update only key fields in every existing respawn cache.  Refreshing a
+	 * dead player's complete inventory here would discard its pre-death weapons. */
+	if (authority)
+		SV_CoopRespawnSyncSharedKeys(authority);
+}
+
+/*
+ * A shared inventory is a team union, not the inventory of whichever player
+ * touched the most recent pickup.  Rebuild its key portion after every
+ * confirmed gain/loss so keys collected by different players cannot replace
+ * one another in late-join and respawn state.
+ */
+static void SV_CoopSharedRebuildTeamKeys (edict_t *source)
+{
+	sv_coop_shared_inventory_t	current;
+	int	items = 0;
+	int	silver = 0, gold = 0;
+	int	extra_bits[SV_COOP_SHARED_FIELD_COUNT] = {0};
+	float	extra_counts[SV_COOP_SHARED_FIELD_COUNT] = {0};
+	qboolean extra_valid[SV_COOP_SHARED_FIELD_COUNT] = {false};
+	qboolean worldtype_valid = false;
+	int	i, j;
+
+	if (!source || source->free)
+		return;
+
+	/* Preserve progression maxima and custom-key presentation metadata from
+	 * the accepted transaction, then replace only key ownership below. */
+	SV_CaptureCoopSharedInventory(source, &current);
+	SV_CoopSharedRememberLevelProgress(source, &current);
+
+	for (i = 0; i < svs.maxclients; ++i)
+	{
+		edict_t *player = svs.clients[i].edict;
+
+		if (!SV_CoopSharedIsLivingPlayer(player))
+			continue;
+		SV_CaptureCoopSharedInventory(player, &current);
+		items |= current.items & SV_CoopSharedStockKeyMask();
+		if (SV_CoopUsesCountedKeys() && current.worldtype_valid)
+		{
+			worldtype_valid = true;
+			silver = q_max(silver,
+				SV_CoopSharedWorldSilverCount(current.worldtype));
+			gold = q_max(gold,
+				SV_CoopSharedWorldGoldCount(current.worldtype));
+		}
+		for (j = 0; j < SV_COOP_SHARED_FIELD_COUNT; ++j)
+		{
+			int key_mask =
+				SV_CoopSharedExtraKeyMask(sv_coop_shared_fields[j].name);
+
+			if (!current.extra[j].valid)
+				continue;
+			if (key_mask)
+			{
+				extra_valid[j] = true;
+				extra_bits[j] |= current.extra[j].bits & key_mask;
+			}
+			else if (SV_CoopUsesCountedKeys() &&
+				 SV_CoopSharedIsKeyCountField(
+					sv_coop_shared_fields[j].name))
+			{
+				extra_valid[j] = true;
+				extra_counts[j] = q_max(extra_counts[j],
+					current.extra[j].value);
+			}
+		}
+	}
+
+	sv_coop_shared_level_progress.items = items;
+	if (SV_CoopUsesCountedKeys() && worldtype_valid)
+	{
+		int worldtype = sv_coop_shared_level_progress.worldtype_valid ?
+			(int)sv_coop_shared_level_progress.worldtype : 0;
+		worldtype = SV_CoopSharedWorldWithSilverCount(worldtype, silver);
+		worldtype = SV_CoopSharedWorldWithGoldCount(worldtype, gold);
+		sv_coop_shared_level_progress.worldtype_valid = true;
+		sv_coop_shared_level_progress.worldtype = (float)worldtype;
+	}
+	for (i = 0; i < SV_COOP_SHARED_FIELD_COUNT; ++i)
+	{
+		int key_mask =
+			SV_CoopSharedExtraKeyMask(sv_coop_shared_fields[i].name);
+
+		if (key_mask)
+		{
+			sv_coop_shared_level_progress.extra[i].valid = extra_valid[i];
+			sv_coop_shared_level_progress.extra[i].bits = extra_bits[i];
+		}
+		else if (SV_CoopUsesCountedKeys() &&
+			 SV_CoopSharedIsKeyCountField(sv_coop_shared_fields[i].name))
+		{
+			sv_coop_shared_level_progress.extra[i].valid = extra_valid[i];
+			sv_coop_shared_level_progress.extra[i].value = extra_counts[i];
+		}
+	}
+	sv_coop_shared_level_progress_valid = true;
+	SV_CoopSharedApplyCanonicalTeamKeys();
+}
+
+void SV_CoopSharedRebuildGrantedKeys (edict_t *source)
+{
+	if (!coop.value || !SV_CoopFeatureEnabled(&sv_coop_shared_pickups, true) ||
+	    !source || source->free)
+		return;
+
+	/* Admin grants enter through host_cmd.c rather than a pickup touch.  Fold
+	 * them into the same canonical team state so peers, respawns, and late
+	 * joiners see the grant exactly as they would a collected key. */
+	SV_CoopSharedRebuildTeamKeys(source);
+}
+
+void SV_CoopSharedReconcileClientDeath (edict_t *player)
+{
+	if (!coop.value || !SV_CoopFeatureEnabled(&sv_coop_shared_pickups, true) ||
+	    !player || player->free ||
+	    !sv_coop_shared_level_progress_valid)
+		return;
+
+	/* Mods may clear, drop, or transfer keys inside PlayerDie.  Copper-family
+	 * TransferKeys can additionally duplicate an engine-shared counted key on a
+	 * recipient.  The snapshot reflects the last accepted pickup/door
+	 * transaction, so restore that exact recognized key state after QuakeC
+	 * finishes the death transition.  Classic co-op disables this policy via
+	 * sv_coop_shared_pickups/SV_CoopFeatureEnabled above. */
+	SV_CoopSharedApplyCanonicalTeamKeys();
+}
+
+void SV_CoopSharedApplyToJoiningClient (edict_t *player)
+{
+	static const char *name_fields[4] = {
+		"ckeyname1", "ckeyname2", "ckeyname3", "ckeyname4"};
+	static const char *skin_fields[4] = {
+		"ckeyskin1", "ckeyskin2", "ckeyskin3", "ckeyskin4"};
+	int i, type;
+	eval_t *val;
+
+	if (!coop.value || !SV_CoopFeatureEnabled(&sv_coop_shared_pickups, true) ||
+	    !player || player->free)
+		return;
+	if (!sv_coop_shared_level_progress_valid)
+	{
+		sv_coop_shared_inventory_t current;
+		/* The first Begin after a savegame load seeds the level snapshot from
+		 * the restored player; on a fresh map this simply records empty keys. */
+		SV_CaptureCoopSharedInventory(player, &current);
+		SV_CoopSharedRememberLevelProgress(player, &current);
+		SV_CoopRespawnRefreshClientInventory(player);
+		return;
+	}
+	player->v.items = (int)player->v.items |
+		sv_coop_shared_level_progress.items;
+	if (SV_CoopUsesCountedKeys() &&
+	    sv_coop_shared_level_progress.worldtype_valid)
+	{
+		SV_CoopSharedSetWorldKeyCount(player, false,
+			SV_CoopSharedWorldSilverCount(
+				sv_coop_shared_level_progress.worldtype));
+		SV_CoopSharedSetWorldKeyCount(player, true,
+			SV_CoopSharedWorldGoldCount(
+				sv_coop_shared_level_progress.worldtype));
+	}
+
+	for (i = 0; i < SV_COOP_SHARED_FIELD_COUNT; ++i)
+	{
+		const sv_coop_shared_value_t *saved =
+			&sv_coop_shared_level_progress.extra[i];
+		int key_mask;
+		if (!saved->valid || !SV_CoopSharedGetField(player, i, &val, &type))
+			continue;
+		key_mask = SV_CoopSharedExtraKeyMask(sv_coop_shared_fields[i].name);
+		if (key_mask ||
+		    !q_strcasecmp(sv_coop_shared_fields[i].name, "items_movemod"))
+		{
+			SV_CoopSharedSetExtraBitMask(val, type,
+				SV_CoopSharedGetExtraBitMask(val, type) | saved->bits);
+		}
+		else if (sv_coop_shared_fields[i].policy == SV_COOP_SHARED_PROGRESS_MAX ||
+			 (SV_CoopUsesCountedKeys() &&
+			  SV_CoopSharedIsKeyCountField(sv_coop_shared_fields[i].name)))
+		{
+			val->_float = q_max(val->_float, saved->value);
+		}
+	}
+
+	for (i = 0; i < 4; ++i)
+	{
+		ddef_t *def;
+		if (sv_coop_shared_ckey_names[i] &&
+		    (def = ED_FindField(name_fields[i])) &&
+		    ((def->type & ~DEF_SAVEGLOBAL) == ev_string))
+		{
+			val = GetEdictFieldValue(player, def->ofs);
+			if (val)
+				val->string = sv_coop_shared_ckey_names[i];
+		}
+		def = ED_FindField(skin_fields[i]);
+		if (def && ((def->type & ~DEF_SAVEGLOBAL) == ev_float))
+		{
+			val = GetEdictFieldValue(player, def->ofs);
+			if (val)
+				val->_float = sv_coop_shared_ckey_skins[i];
+		}
+	}
+	/* A saved player may reconnect after the team spent a key.  Their old
+	 * snapshot is not a new pickup: use today's exact team key state, while
+	 * retaining the additive handling above for non-key progression. */
+	SV_CoopSharedApplyCanonicalKeys(player);
+	SV_CoopRespawnRefreshClientInventory(player);
+}
+
+static void SV_CaptureCoopSharedInventory (edict_t *player, sv_coop_shared_inventory_t *inventory)
+{
+	int	i, type;
+	eval_t	*val;
+
+	memset(inventory, 0, sizeof(*inventory));
+	if (!player || player->free)
+		return;
+
+	inventory->items = (int)player->v.items & SV_CoopSharedItemMask();
+	inventory->ammo_shells = player->v.ammo_shells;
+	inventory->ammo_nails = player->v.ammo_nails;
+	inventory->ammo_rockets = player->v.ammo_rockets;
+	inventory->ammo_cells = player->v.ammo_cells;
+	if (SV_CoopSharedGetWorldType(player, &val, &type))
+	{
+		inventory->worldtype_valid = true;
+		inventory->worldtype = type == ev_ext_integer ? (float)val->_int : val->_float;
+	}
+
+	for (i = 0; i < SV_COOP_SHARED_FIELD_COUNT; i++)
+	{
+		if (!SV_CoopSharedGetField(player, i, &val, &type))
+			continue;
+
+		inventory->extra[i].valid = true;
+		if (sv_coop_shared_fields[i].policy == SV_COOP_SHARED_BITMASK)
+		{
+			if (type == ev_ext_integer)
+				inventory->extra[i].bits = val->_int & sv_coop_shared_fields[i].mask;
+			else
+				inventory->extra[i].bits = (int)val->_float & sv_coop_shared_fields[i].mask;
+		}
+		else
+		{
+			inventory->extra[i].value = val->_float;
+		}
+	}
+}
+
+void SV_CoopSharedMergeRestoredClient (edict_t *source)
+{
+	static const char *name_fields[4] = {
+		"ckeyname1", "ckeyname2", "ckeyname3", "ckeyname4"};
+	static const char *skin_fields[4] = {
+		"ckeyskin1", "ckeyskin2", "ckeyskin3", "ckeyskin4"};
+	sv_coop_shared_inventory_t current;
+	int i;
+
+	if (!coop.value || !SV_CoopFeatureEnabled(&sv_coop_shared_pickups, true) ||
+	    !source || source->free)
+		return;
+	SV_CaptureCoopSharedInventory(source, &current);
+	if (!sv_coop_shared_level_progress_valid)
+	{
+		SV_CoopSharedRememberLevelProgress(source, &current);
+	}
+	else
+	{
+		sv_coop_shared_level_progress.items = CoopInventoryPolicy_UnionBits(
+			sv_coop_shared_level_progress.items,
+			current.items & SV_CoopSharedStockKeyMask());
+		if (SV_CoopUsesCountedKeys() && current.worldtype_valid)
+		{
+			int saved_world = sv_coop_shared_level_progress.worldtype_valid
+				? (int)sv_coop_shared_level_progress.worldtype : 0;
+			saved_world = SV_CoopSharedWorldWithSilverCount(saved_world,
+				q_max(SV_CoopSharedWorldSilverCount(saved_world),
+				      SV_CoopSharedWorldSilverCount(current.worldtype)));
+			saved_world = SV_CoopSharedWorldWithGoldCount(saved_world,
+				q_max(SV_CoopSharedWorldGoldCount(saved_world),
+				      SV_CoopSharedWorldGoldCount(current.worldtype)));
+			sv_coop_shared_level_progress.worldtype_valid = true;
+			sv_coop_shared_level_progress.worldtype = (float)saved_world;
+		}
+		for (i = 0; i < SV_COOP_SHARED_FIELD_COUNT; ++i)
+		{
+			sv_coop_shared_value_t *saved =
+				&sv_coop_shared_level_progress.extra[i];
+			int key_mask =
+				SV_CoopSharedExtraKeyMask(sv_coop_shared_fields[i].name);
+			if (!current.extra[i].valid)
+				continue;
+			if (key_mask ||
+			    !q_strcasecmp(sv_coop_shared_fields[i].name, "items_movemod"))
+			{
+				saved->valid = true;
+				saved->bits = CoopInventoryPolicy_UnionBits(saved->bits,
+					current.extra[i].bits & (key_mask ? key_mask :
+					SV_COOP_SHARED_ALL_BITS));
+			}
+			else if (sv_coop_shared_fields[i].policy ==
+				 SV_COOP_SHARED_PROGRESS_MAX ||
+				 (SV_CoopUsesCountedKeys() &&
+				  SV_CoopSharedIsKeyCountField(
+					sv_coop_shared_fields[i].name)))
+			{
+				saved->valid = true;
+				saved->value = q_max(saved->value, current.extra[i].value);
+			}
+		}
+		for (i = 0; i < 4; ++i)
+		{
+			ddef_t *def = ED_FindField(name_fields[i]);
+			eval_t *val;
+			if (def && ((def->type & ~DEF_SAVEGLOBAL) == ev_string) &&
+			    (val = GetEdictFieldValue(source, def->ofs)) && val->string)
+				sv_coop_shared_ckey_names[i] = val->string;
+			def = ED_FindField(skin_fields[i]);
+			if (def && ((def->type & ~DEF_SAVEGLOBAL) == ev_float) &&
+			    (val = GetEdictFieldValue(source, def->ofs)))
+				sv_coop_shared_ckey_skins[i] = val->_float;
+		}
+	}
+
+	/* A restored player may arrive after an unmatched client seeded an empty
+	 * snapshot. Bring every QC-initialized client up to the merged state. */
+	for (i = 0; i < svs.maxclients; ++i)
+		if (SV_IsCoopInventoryClient(svs.clients[i].edict))
+			SV_CoopSharedApplyToJoiningClient(svs.clients[i].edict);
+}
+
+static qboolean SV_IsCoopSharedPickupCandidate (edict_t *pickup, edict_t *player)
+{
+	if (!coop.value || !SV_CoopFeatureEnabled(&sv_coop_shared_pickups, true))
+		return false;
+	if (!SV_IsCoopInventoryClient(player))
+		return false;
+	if (!pickup || pickup->free || pickup->v.solid != SOLID_TRIGGER)
+		return false;
+
+	/* Classnames are mod-defined and cannot reliably identify progression.
+	 * Snapshot every player-trigger touch and share only a verified inventory
+	 * delta after QuakeC accepts it. */
+	return true;
+}
+
+static qboolean SV_CoopSharedInventoryHasAmmoGain (
+	const sv_coop_shared_inventory_t *before,
+	const sv_coop_shared_inventory_t *after)
+{
+	int	i;
+	const float before_ammo[] = {
+		before->ammo_shells, before->ammo_nails, before->ammo_rockets,
+		before->ammo_cells};
+	const float after_ammo[] = {
+		after->ammo_shells, after->ammo_nails, after->ammo_rockets,
+		after->ammo_cells};
+
+	if (CoopInventoryPolicy_HasFloatGain(before_ammo, after_ammo,
+		sizeof(before_ammo) / sizeof(before_ammo[0])))
+		return true;
+
+	for (i = 0; i < SV_COOP_SHARED_FIELD_COUNT; ++i)
+	{
+		if (sv_coop_shared_fields[i].policy != SV_COOP_SHARED_MAXFLOAT ||
+		    SV_CoopSharedIsKeyCountField(sv_coop_shared_fields[i].name) ||
+		    !after->extra[i].valid)
+			continue;
+		if (CoopInventoryPolicy_HasValueGain(before->extra[i].valid,
+			before->extra[i].value, after->extra[i].valid,
+			after->extra[i].value))
+			return true;
+	}
+
+	return false;
+}
+
+static qboolean SV_CoopSharedInventoryHasAcceptedGain (
+	const sv_coop_shared_inventory_t *before,
+	const sv_coop_shared_inventory_t *after,
+	qboolean counted_keys)
+{
+	int	i;
+	const float before_ammo[] = {
+		before->ammo_shells, before->ammo_nails, before->ammo_rockets,
+		before->ammo_cells};
+	const float after_ammo[] = {
+		after->ammo_shells, after->ammo_nails, after->ammo_rockets,
+		after->ammo_cells};
+
+	if (CoopInventoryPolicy_HasAcceptedBaseGain(before->items, after->items,
+		before_ammo, after_ammo,
+		sizeof(before_ammo) / sizeof(before_ammo[0])) ||
+	    SV_CoopSharedInventoryHasAmmoGain(before, after))
+		return true;
+	if (counted_keys && after->worldtype_valid)
+	{
+		int	before_silver = before->worldtype_valid ? SV_CoopSharedWorldSilverCount(before->worldtype) : 0;
+		int	before_gold = before->worldtype_valid ? SV_CoopSharedWorldGoldCount(before->worldtype) : 0;
+		if (SV_CoopSharedWorldSilverCount(after->worldtype) > before_silver ||
+		    SV_CoopSharedWorldGoldCount(after->worldtype) > before_gold)
+			return true;
+	}
+
+	for (i = 0; i < SV_COOP_SHARED_FIELD_COUNT; i++)
+	{
+		if (!after->extra[i].valid)
+			continue;
+		if (sv_coop_shared_fields[i].policy == SV_COOP_SHARED_BITMASK)
+		{
+			int	before_bits = before->extra[i].valid ? before->extra[i].bits : 0;
+			if (CoopInventoryPolicy_AddedBits(before_bits,
+				after->extra[i].bits) != 0)
+				return true;
+		}
+		else if ((!SV_CoopSharedIsKeyCountField(sv_coop_shared_fields[i].name) ||
+			  counted_keys) &&
+			 CoopInventoryPolicy_HasValueGain(before->extra[i].valid,
+				before->extra[i].value, after->extra[i].valid,
+				after->extra[i].value))
+		{
+			/* Extra ammo proves that a duplicate mod weapon was accepted;
+			 * counted-key fields prove a quantity pickup.  Neither value is
+			 * copied unless its policy below explicitly permits it. */
+			return true;
+		}
+	}
+
+	return false;
+}
+
+static qboolean SV_CoopSharedInventoryHasKeyGain (
+	const sv_coop_shared_inventory_t *before,
+	const sv_coop_shared_inventory_t *after,
+	qboolean counted_keys)
+{
+	int	i;
+	int	before_items = before->items;
+	int	after_items = after->items;
+
+	if ((CoopInventoryPolicy_AddedBits(before_items, after_items) &
+		SV_CoopSharedStockKeyMask()) != 0)
+		return true;
+	if (counted_keys && after->worldtype_valid)
+	{
+		int	before_silver = before->worldtype_valid ? SV_CoopSharedWorldSilverCount(before->worldtype) : 0;
+		int	before_gold = before->worldtype_valid ? SV_CoopSharedWorldGoldCount(before->worldtype) : 0;
+
+		if (SV_CoopSharedWorldSilverCount(after->worldtype) > before_silver ||
+		    SV_CoopSharedWorldGoldCount(after->worldtype) > before_gold)
+			return true;
+	}
+
+	for (i = 0; i < SV_COOP_SHARED_FIELD_COUNT; ++i)
+	{
+		int	key_mask = SV_CoopSharedExtraKeyMask(sv_coop_shared_fields[i].name);
+		int	before_bits;
+		int	gain;
+
+		if (counted_keys &&
+		    SV_CoopSharedIsKeyCountField(sv_coop_shared_fields[i].name) &&
+		    after->extra[i].valid &&
+		    after->extra[i].value >
+			(before->extra[i].valid ? before->extra[i].value : 0.0f))
+			return true;
+		if (!key_mask || !after->extra[i].valid)
+			continue;
+		before_bits = before->extra[i].valid ? before->extra[i].bits : 0;
+		gain = CoopInventoryPolicy_AddedBits(before_bits,
+			after->extra[i].bits);
+		if (gain & key_mask)
+			return true;
+	}
+
+	return false;
+}
+
+static void SV_CoopSharedApplyInventoryGain (
+	edict_t *player,
+	const sv_coop_shared_inventory_t *before,
+	const sv_coop_shared_inventory_t *after,
+	const sv_coop_shared_inventory_t *declared,
+	int declared_weapon_bits,
+	qboolean share_key_counts,
+	qboolean key_gain,
+	qboolean direct_weapon_touch)
+{
+	int	i, type, gain;
+	eval_t	*val;
+	qboolean	ammo_gain;
+
+	if (!SV_IsCoopInventoryClient(player))
+		return;
+
+	ammo_gain = SV_CoopSharedInventoryHasAmmoGain(before, after);
+
+	/* Exact QuakeC deltas are authoritative.  A pickup declaration is used
+	 * only in a matching accepted domain: ammo growth through the progs'
+	 * direct weapon_touch confirms a duplicate weapon, while a key delta/count
+	 * confirms a counted key.  This avoids treating unrelated SOLID_TRIGGER
+	 * mapper fields as inventory. */
+	gain = CoopInventoryPolicy_AddedBits(before->items, after->items);
+	if (ammo_gain && direct_weapon_touch)
+	{
+		gain |= CoopInventoryPolicy_ConfirmedDeclaredBits(after->items,
+			declared->items, SV_CoopSharedItemMask() &
+			~SV_CoopSharedStockKeyMask());
+		/* AD-style pickups declare the granted stock weapon in self.weapon
+		 * instead of self.items.  Only trust it after the progs' exact
+		 * weapon_touch accepted the pickup and changed ammo, and intersect it
+		 * with ownership the source player actually has after the touch. */
+		gain |= CoopInventoryPolicy_ConfirmedDeclaredBits(after->items,
+			declared_weapon_bits, SV_CoopSharedItemMask() &
+			~SV_CoopSharedStockKeyMask());
+	}
+	if (key_gain)
+		gain |= CoopInventoryPolicy_ConfirmedDeclaredBits(after->items,
+			declared->items, SV_CoopSharedStockKeyMask());
+	if (gain)
+		player->v.items = CoopInventoryPolicy_UnionBits(
+			(int)player->v.items, gain);
+
+	if (share_key_counts && after->worldtype_valid)
+	{
+		int	before_silver = before->worldtype_valid ? SV_CoopSharedWorldSilverCount(before->worldtype) : 0;
+		int	before_gold = before->worldtype_valid ? SV_CoopSharedWorldGoldCount(before->worldtype) : 0;
+		int	after_silver = SV_CoopSharedWorldSilverCount(after->worldtype);
+		int	after_gold = SV_CoopSharedWorldGoldCount(after->worldtype);
+
+		if (after_silver > before_silver)
+		{
+			eval_t	*world_val;
+			int	world_type;
+			int	current_silver = 0;
+
+			if (SV_CoopSharedGetWorldType(player, &world_val, &world_type))
+				current_silver = SV_CoopSharedWorldSilverCount(world_type == ev_ext_integer ? (float)world_val->_int : world_val->_float);
+			SV_CoopSharedSetWorldKeyCount(player, false, q_max(current_silver, after_silver));
+		}
+		if (after_gold > before_gold)
+		{
+			eval_t	*world_val;
+			int	world_type;
+			int	current_gold = 0;
+
+			if (SV_CoopSharedGetWorldType(player, &world_val, &world_type))
+				current_gold = SV_CoopSharedWorldGoldCount(world_type == ev_ext_integer ? (float)world_val->_int : world_val->_float);
+			SV_CoopSharedSetWorldKeyCount(player, true, q_max(current_gold, after_gold));
+		}
+	}
+
+	for (i = 0; i < SV_COOP_SHARED_FIELD_COUNT; i++)
+	{
+		if (!SV_CoopSharedGetField(player, i, &val, &type))
+			continue;
+
+		if (sv_coop_shared_fields[i].policy == SV_COOP_SHARED_BITMASK)
+		{
+			int	before_bits = before->extra[i].valid ? before->extra[i].bits : 0;
+
+			gain = after->extra[i].valid ?
+				CoopInventoryPolicy_AddedBits(before_bits,
+					after->extra[i].bits) : 0;
+			if (ammo_gain && direct_weapon_touch && declared->extra[i].valid &&
+			    after->extra[i].valid)
+				gain |= CoopInventoryPolicy_ConfirmedDeclaredBits(
+					after->extra[i].bits, declared->extra[i].bits,
+					SV_COOP_SHARED_ALL_BITS);
+			if (key_gain && declared->extra[i].valid && after->extra[i].valid)
+				gain |= CoopInventoryPolicy_ConfirmedDeclaredBits(
+					after->extra[i].bits, declared->extra[i].bits,
+					SV_CoopSharedExtraKeyMask(sv_coop_shared_fields[i].name));
+			if (!gain)
+				continue;
+
+			if (type == ev_ext_integer)
+				val->_int = CoopInventoryPolicy_UnionBits(val->_int, gain);
+			else
+				val->_float = (float)CoopInventoryPolicy_UnionBits(
+					(int)val->_float, gain);
+		}
+		else
+		{
+			float	before_value = before->extra[i].valid ? before->extra[i].value : 0.0f;
+
+			if (!after->extra[i].valid || after->extra[i].value <= before_value)
+				continue;
+			if (sv_coop_shared_fields[i].policy == SV_COOP_SHARED_PROGRESS_MAX)
+			{
+				val->_float = q_max(val->_float, after->extra[i].value);
+				continue;
+			}
+			if (SV_CoopSharedIsKeyCountField(sv_coop_shared_fields[i].name) && !share_key_counts)
+				continue;
+			if (!SV_CoopSharedIsKeyCountField(sv_coop_shared_fields[i].name))
+				continue;
+
+			val->_float = q_max(val->_float, after->extra[i].value);
+		}
+	}
+}
+
+static qboolean SV_CoopSharedInventoryHasKeyLoss (
+	const sv_coop_shared_inventory_t *before,
+	const sv_coop_shared_inventory_t *after)
+{
+	int	i;
+
+	if ((CoopInventoryPolicy_RemovedBits(before->items, after->items) &
+		SV_CoopSharedStockKeyMask()) != 0)
+		return true;
+	if (SV_CoopUsesCountedKeys() && after->worldtype_valid)
+	{
+		int	before_silver = before->worldtype_valid ? SV_CoopSharedWorldSilverCount(before->worldtype) : 0;
+		int	before_gold = before->worldtype_valid ? SV_CoopSharedWorldGoldCount(before->worldtype) : 0;
+		if (SV_CoopSharedWorldSilverCount(after->worldtype) < before_silver ||
+		    SV_CoopSharedWorldGoldCount(after->worldtype) < before_gold)
+			return true;
+	}
+
+	for (i = 0; i < SV_COOP_SHARED_FIELD_COUNT; i++)
+	{
+		if (!before->extra[i].valid || !after->extra[i].valid)
+			continue;
+		if (sv_coop_shared_fields[i].policy == SV_COOP_SHARED_BITMASK)
+		{
+			int	key_mask = SV_CoopSharedExtraKeyMask(sv_coop_shared_fields[i].name);
+			if (key_mask && (CoopInventoryPolicy_RemovedBits(
+				before->extra[i].bits, after->extra[i].bits) & key_mask) != 0)
+				return true;
+		}
+		else if (SV_CoopUsesCountedKeys() &&
+			 SV_CoopSharedIsKeyCountField(sv_coop_shared_fields[i].name) &&
+			 after->extra[i].value < before->extra[i].value)
+		{
+			return true;
+		}
+	}
+
+	return false;
+}
+
+static void SV_CoopSharedApplyKeyLoss (
+	edict_t *player,
+	const sv_coop_shared_inventory_t *before,
+	const sv_coop_shared_inventory_t *after)
+{
+	int	i, type;
+	int	lost_items;
+	eval_t	*val;
+
+	if (!SV_IsCoopInventoryClient(player))
+		return;
+
+	lost_items = CoopInventoryPolicy_RemovedBits(before->items, after->items) &
+		SV_CoopSharedStockKeyMask();
+	if (lost_items)
+		player->v.items = (int)player->v.items & ~lost_items;
+
+	if (SV_CoopUsesCountedKeys() && after->worldtype_valid)
+	{
+		int	before_silver = before->worldtype_valid ? SV_CoopSharedWorldSilverCount(before->worldtype) : 0;
+		int	before_gold = before->worldtype_valid ? SV_CoopSharedWorldGoldCount(before->worldtype) : 0;
+		int	after_silver = SV_CoopSharedWorldSilverCount(after->worldtype);
+		int	after_gold = SV_CoopSharedWorldGoldCount(after->worldtype);
+
+		if (after_silver < before_silver)
+			SV_CoopSharedSetWorldKeyCount(player, false, after_silver);
+		if (after_gold < before_gold)
+			SV_CoopSharedSetWorldKeyCount(player, true, after_gold);
+	}
+
+	for (i = 0; i < SV_COOP_SHARED_FIELD_COUNT; i++)
+	{
+		if (!before->extra[i].valid || !after->extra[i].valid)
+			continue;
+		if (!SV_CoopSharedGetField(player, i, &val, &type))
+			continue;
+
+		if (sv_coop_shared_fields[i].policy == SV_COOP_SHARED_BITMASK)
+		{
+			int	key_mask = SV_CoopSharedExtraKeyMask(sv_coop_shared_fields[i].name);
+			int	lost_bits;
+			int	current_bits;
+
+			if (!key_mask)
+				continue;
+			lost_bits = CoopInventoryPolicy_RemovedBits(before->extra[i].bits,
+				after->extra[i].bits) & key_mask;
+			if (!lost_bits)
+				continue;
+
+			current_bits = SV_CoopSharedGetExtraBitMask(val, type);
+			SV_CoopSharedSetExtraBitMask(val, type, current_bits & ~lost_bits);
+		}
+		else if (SV_CoopUsesCountedKeys() &&
+			 SV_CoopSharedIsKeyCountField(sv_coop_shared_fields[i].name) &&
+			 after->extra[i].value < before->extra[i].value)
+		{
+			val->_float = after->extra[i].value;
+		}
+	}
+}
+
+static void SV_SyncCoopSharedKeyLoss (
+	edict_t *source,
+	const sv_coop_shared_inventory_t *before,
+	const sv_coop_shared_inventory_t *after)
+{
+	int	i;
+
+	if (!coop.value || !SV_IsCoopInventoryClient(source))
+		return;
+	if (!SV_CoopSharedInventoryHasKeyLoss(before, after))
+		return;
+
+	for (i = 1; i <= svs.maxclients; i++)
+	{
+		edict_t	*client = EDICT_NUM(i);
+		SV_CoopSharedApplyKeyLoss(client, before, after);
+	}
+
+	SV_CoopSharedRebuildTeamKeys(source);
+}
+
+static int SV_CoopSharedClientIndex (edict_t *client)
+{
+	int	num;
+
+	if (!SV_IsCoopInventoryClient(client))
+		return -1;
+
+	num = NUM_FOR_EDICT(client);
+	if (num < 1 || num > svs.maxclients || num > MAX_SCOREBOARD)
+		return -1;
+	return num - 1;
+}
+
+qboolean SV_CoopSharedBeginClientTouch (edict_t *client)
+{
+	int	index;
+
+	if (!coop.value || !SV_CoopFeatureEnabled(&sv_coop_shared_pickups, true))
+		return false;
+	/* A dead client has no consumable inventory.  In particular, do not let a
+	 * corpse touching another trigger establish the "before" side of a key
+	 * consumption transaction. */
+	if (!client || client->v.health <= 0 || client->v.deadflag != DEAD_NO)
+		return false;
+
+	index = SV_CoopSharedClientIndex(client);
+	if (index < 0)
+		return false;
+
+	if (sv_coop_shared_touch_depth[index] == 0)
+	{
+		SV_CaptureCoopSharedInventory(client, &sv_coop_shared_touch_before[index]);
+		sv_coop_shared_touch_valid[index] = true;
+	}
+	sv_coop_shared_touch_depth[index]++;
+	return true;
+}
+
+void SV_CoopSharedEndClientTouch (edict_t *client)
+{
+	int	index;
+	sv_coop_shared_inventory_t	after;
+
+	index = SV_CoopSharedClientIndex(client);
+	if (index < 0)
+		return;
+	if (!sv_coop_shared_touch_valid[index])
+		return;
+	if (sv_coop_shared_touch_depth[index] <= 0)
+	{
+		sv_coop_shared_touch_valid[index] = false;
+		return;
+	}
+	sv_coop_shared_touch_depth[index]--;
+	if (sv_coop_shared_touch_depth[index] > 0)
+		return;
+
+	/* Door/trigger scripts legitimately remove shared keys, but lethal touches
+	 * also commonly clear the player's whole inventory.  The latter is death
+	 * state, not progression: propagating it makes every player lose keys and
+	 * overwrites the remembered level inventory before respawn can restore it. */
+	if (client->v.health <= 0 || client->v.deadflag != DEAD_NO)
+	{
+		sv_coop_shared_touch_valid[index] = false;
+		return;
+	}
+
+	SV_CaptureCoopSharedInventory(client, &after);
+	SV_SyncCoopSharedKeyLoss(client, &sv_coop_shared_touch_before[index], &after);
+	sv_coop_shared_touch_valid[index] = false;
+}
+
+static void SV_ShareCoopPickupInventory (
+	edict_t *pickup,
+	edict_t *source,
+	const sv_coop_shared_inventory_t *before,
+	const sv_coop_shared_inventory_t *after,
+	const sv_coop_shared_inventory_t *declared,
+	int declared_weapon_bits,
+	qboolean direct_weapon_touch)
+{
+	int		i;
+	const char	*classname;
+	qboolean	share_key_counts;
+	qboolean	key_gain;
+
+	if (!pickup || !declared)
+		return;
+
+	classname = pickup->v.classname ? PR_GetString(pickup->v.classname) : "trigger";
+	share_key_counts = SV_CoopUsesCountedKeys();
+
+	if (!SV_CoopSharedInventoryHasAcceptedGain(before, after, share_key_counts))
+		return;
+	key_gain = SV_CoopSharedInventoryHasKeyGain(before, after,
+		share_key_counts);
+
+	for (i = 1; i <= svs.maxclients; i++)
+	{
+		edict_t	*client = EDICT_NUM(i);
+
+		SV_CoopSharedApplyInventoryGain(client, before, after, declared,
+			declared_weapon_bits, share_key_counts, key_gain,
+			direct_weapon_touch);
+		if (key_gain)
+			SV_CoopSharedCopyCustomKeyMetadata(source, client, before, after);
+	}
+
+	if (key_gain)
+		SV_CoopSharedRebuildTeamKeys(source);
+	else if (SV_CoopSharedHasPersistentProgressGain(before, after))
+		SV_CoopSharedRememberLevelProgress(source, after);
+
+	Con_DPrintf("coop pickup share: %s from %s\n",
+		classname,
+		source && source->v.netname ? PR_GetString(source->v.netname) : "client");
+}
+
 /*
 ====================
 SV_TouchLinks
@@ -493,6 +2231,10 @@ static void SV_TouchLinks (edict_t *ent)
 	for (int i = 0; i < retainedcount; i++)
 	{
 		edict_t *touch = EDICT_NUM (list[i]);
+		qboolean shared_pickup, shared_touch_sync, direct_weapon_touch;
+		int declared_weapon_bits;
+		sv_coop_shared_inventory_t shared_before, shared_after, shared_declared;
+
 		// Touch only live triggers that still overlap the entity.
 		if (touch->free || touch == ent)
 			continue;
@@ -504,10 +2246,33 @@ static void SV_TouchLinks (edict_t *ent)
 		if (SV_ShouldSuppressCoopTelefrag (touch, ent))
 			continue;
 
+		shared_pickup = SV_IsCoopSharedPickupCandidate (touch, ent);
+		shared_touch_sync = SV_CoopSharedBeginClientTouch (ent);
+		direct_weapon_touch = shared_pickup &&
+			SV_IsDirectWeaponTouch (touch->v.touch);
+		declared_weapon_bits = 0;
+		if (shared_pickup)
+		{
+			SV_CaptureCoopSharedInventory (ent, &shared_before);
+			SV_CaptureCoopSharedInventory (touch, &shared_declared);
+			declared_weapon_bits = (int)touch->v.weapon &
+				(SV_CoopSharedItemMask() & ~SV_CoopSharedStockKeyMask());
+		}
+
 		pr_global_struct->self = EDICT_TO_PROG (touch);
 		pr_global_struct->other = EDICT_TO_PROG (ent);
 		pr_global_struct->time = qcvm->time;
 		PR_ExecuteProgram (touch->v.touch);
+
+		if (shared_pickup)
+		{
+			SV_CaptureCoopSharedInventory (ent, &shared_after);
+			SV_ShareCoopPickupInventory (touch, ent, &shared_before,
+				&shared_after, &shared_declared, declared_weapon_bits,
+				direct_weapon_touch);
+		}
+		if (shared_touch_sync)
+			SV_CoopSharedEndClientTouch (ent);
 
 		// Stop after the moving entity is removed.
 		if (ent->free)

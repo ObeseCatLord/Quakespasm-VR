@@ -42,6 +42,8 @@ static cvar_t sv_smoothplatformlerps = {"sv_smoothplatformlerps", "1", CVAR_NONE
 static cvar_t sv_qsvr_private = {"sv_qsvr_private", "0", CVAR_NONE};
 static cvar_t sv_private_pmove_walk = {"sv_private_pmove_walk", "0", CVAR_SERVERINFO};
 cvar_t sv_voice = {"sv_voice", "1", CVAR_SERVERINFO};
+cvar_t sv_coop_shared_pickups = {"sv_coop_shared_pickups", "-1", CVAR_ARCHIVE | CVAR_NOTIFY | CVAR_SERVERINFO};
+cvar_t sv_coop_respawn_keep_weapons_ammo = {"sv_coop_respawn_keep_weapons_ammo", "-1", CVAR_ARCHIVE | CVAR_NOTIFY | CVAR_SERVERINFO};
 
 extern cvar_t nomonsters;
 
@@ -2184,6 +2186,10 @@ void SV_Init (void)
 	Cvar_RegisterVariable (&sv_qsvr_private);
 	Cvar_RegisterVariable (&sv_private_pmove_walk);
 	Cvar_RegisterVariable (&sv_voice);
+	Cvar_RegisterVariable (&sv_coop_shared_pickups);
+	Cvar_RegisterVariable (&sv_coop_respawn_keep_weapons_ammo);
+	Cvar_SetCallback (&sv_coop_shared_pickups, Host_Callback_Notify);
+	Cvar_SetCallback (&sv_coop_respawn_keep_weapons_ammo, Host_Callback_Notify);
 
 	Cvar_RegisterVariable (&sv_fte_recursivehullckeck);
 	Cvar_RegisterVariable (&sv_fte_createareanode);
@@ -4460,6 +4466,8 @@ void SV_SpawnServer (const char *server)
 	/* A map starts fresh optional pose and voice capability generations. */
 	SV_ResetVRIKMapState ();
 	SV_ResetVoiceMapState ();
+	SV_CoopSharedResetState ();
+	SV_CoopRespawnInventoryResetState ();
 	/* Commands from the previous level must never survive into its successor. */
 	for (i = 0; i < svs.maxclients; i++)
 		SV_ResetPrivateCommandQueue (&svs.clients[i]);
