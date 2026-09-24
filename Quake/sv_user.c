@@ -924,6 +924,8 @@ void SV_ResetPrivateCommandQueue (client_t *client)
 	client->private_cmd_queue_msec = 0;
 	client->private_retired_move = 0;
 	client->private_discarded_move = 0;
+	client->private_move_discontinuity_epoch = 0;
+	client->private_move_discontinuity_reason = MOVEACK_DISCONTINUITY_NONE;
 	client->private_pmove_walk_selected = false;
 	client->private_pmove_credit_msec = 0.0;
 	client->private_pmove_jump_secs = 0.0f;

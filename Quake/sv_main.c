@@ -48,6 +48,7 @@ static cvar_t sv_immersive_melee = {"sv_immersive_melee", "0", CVAR_NOTIFY | CVA
 cvar_t sv_voice = {"sv_voice", "1", CVAR_SERVERINFO};
 cvar_t sv_coop_shared_pickups = {"sv_coop_shared_pickups", "-1", CVAR_ARCHIVE | CVAR_NOTIFY | CVAR_SERVERINFO};
 cvar_t sv_coop_respawn_keep_weapons_ammo = {"sv_coop_respawn_keep_weapons_ammo", "-1", CVAR_ARCHIVE | CVAR_NOTIFY | CVAR_SERVERINFO};
+cvar_t sv_coop_player_teleport_fallback = {"sv_coop_player_teleport_fallback", "-1", CVAR_ARCHIVE | CVAR_NOTIFY | CVAR_SERVERINFO};
 
 qboolean SV_VRWeaponCollisionEnabled (void)
 {
@@ -1656,13 +1657,15 @@ static qboolean SVFTE_WriteEntitiesToClient (client_t *client, sizebuf_t *msg,
 	if (client->protocol_qsvr == QSVR_PROTOCOL_PINNED)
 	{
 		MSG_WriteShort (msg, (client->private_completed_move & 0xffff));
-		MSG_WriteByte (msg, selected && !sv.paused ? (MOVEACK_FLAG_AUTHORITATIVE |
-			MOVEACK_FLAG_PREDICTION_ALLOWED) : 0);
+		MSG_WriteByte (msg, (selected && !sv.paused ?
+			(MOVEACK_FLAG_AUTHORITATIVE | MOVEACK_FLAG_PREDICTION_ALLOWED) : 0) |
+			(client->private_move_discontinuity_reason != MOVEACK_DISCONTINUITY_NONE ?
+			 MOVEACK_FLAG_DISCONTINUITY : 0));
 		MSG_WriteByte (msg, SV_PrivateWalkTrialSelected (client) ?
 			MOVE_AUTHORITY_PMOVE_ENGINE_COMPAT : MOVE_AUTHORITY_LEGACY_FRAME);
 		MSG_WriteShort (msg, 0); // mode epoch
-		MSG_WriteShort (msg, 0); // discontinuity epoch
-		MSG_WriteByte (msg, MOVEACK_DISCONTINUITY_NONE);
+		MSG_WriteShort (msg, client->private_move_discontinuity_epoch);
+		MSG_WriteByte (msg, client->private_move_discontinuity_reason);
 	}
 	else if (client->protocol_pext2 & PEXT2_PREDINFO)
 		MSG_WriteShort (msg, (client->lastmovemessage & 0xffff));
@@ -2215,8 +2218,10 @@ void SV_Init (void)
 	Cvar_RegisterVariable (&sv_voice);
 	Cvar_RegisterVariable (&sv_coop_shared_pickups);
 	Cvar_RegisterVariable (&sv_coop_respawn_keep_weapons_ammo);
+	Cvar_RegisterVariable (&sv_coop_player_teleport_fallback);
 	Cvar_SetCallback (&sv_coop_shared_pickups, Host_Callback_Notify);
 	Cvar_SetCallback (&sv_coop_respawn_keep_weapons_ammo, Host_Callback_Notify);
+	Cvar_SetCallback (&sv_coop_player_teleport_fallback, Host_Callback_Notify);
 
 	Cvar_RegisterVariable (&sv_fte_recursivehullckeck);
 	Cvar_RegisterVariable (&sv_fte_createareanode);

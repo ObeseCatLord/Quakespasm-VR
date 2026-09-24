@@ -112,9 +112,11 @@ Disposition meanings: REUSE/ADAPT keep the source behavior at existing owners; K
 The `2.0` wheel now shares desktop/OpenXR selection, playspace/view placement,
 active-mod `wwheel.txt` and `vr_weapons.txt`, and exact-gated built-in profiles.
 The server relays optional QuakeC ownership fields and validated ammo maxima.
-Runtime discovery, source 3D model/hit presentation, co-op actions and weapon
-calibration remain separate work; compiling these catalog paths does not prove
-mod gameplay parity.
+Co-op player/spawn action commands and hit rows are now source/build integrated;
+their remote gameplay and relocation continuity remain unqualified. Runtime
+discovery, source 3D model/hit presentation, player outlines and weapon
+calibration remain separate work; compiling these paths does not prove mod
+gameplay parity.
 
 ### Co-op and saves
 

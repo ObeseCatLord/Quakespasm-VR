@@ -3176,14 +3176,24 @@ void SV_VRContactPlayerRelocated (edict_t *ent)
 		slot = NUM_FOR_EDICT (ent);
 		if (slot >= 1 && slot <= svs.maxclients &&
 			svs.clients[slot - 1].edict == ent)
-			SV_VRContactInvalidateAccepted (&svs.clients[slot - 1]);
+		{
+			client_t *client = &svs.clients[slot - 1];
+			SV_VRContactInvalidateAccepted (client);
+			client->private_move_discontinuity_epoch++;
+			client->private_move_discontinuity_reason =
+				MOVEACK_DISCONTINUITY_RESET_TELEPORT;
+		}
 		return;
 	}
 	/* Host commands can place a player without an active server VM. */
 	for (slot = 0; slot < svs.maxclients; slot++)
 		if (svs.clients[slot].edict == ent)
 		{
-			SV_VRContactInvalidateAccepted (&svs.clients[slot]);
+			client_t *client = &svs.clients[slot];
+			SV_VRContactInvalidateAccepted (client);
+			client->private_move_discontinuity_epoch++;
+			client->private_move_discontinuity_reason =
+				MOVEACK_DISCONTINUITY_RESET_TELEPORT;
 			return;
 		}
 }
@@ -3196,6 +3206,258 @@ void SV_VRContactPlayerSetOrigin (edict_t *ent, const vec3_t origin)
 	VectorSubtract (ent->v.origin, origin, delta);
 	if (VectorLength (delta) > 0.01f)
 		SV_VRContactPlayerRelocated (ent);
+}
+
+static qboolean SV_CoopRespawnPointContentsOK (vec3_t origin,
+	edict_t *ent, qboolean allow_water)
+{
+	int i, cont;
+	vec3_t point;
+	float checks[3];
+
+	checks[0] = ent->v.mins[2] + 1.0f;
+	checks[1] = 0.0f;
+	checks[2] = ent->v.maxs[2] - 1.0f;
+	for (i = 0; i < countof (checks); i++)
+	{
+		VectorCopy (origin, point);
+		point[2] += checks[i];
+		cont = SV_PointContents (point);
+		if (cont == CONTENTS_SOLID || cont == CONTENTS_LAVA ||
+			cont == CONTENTS_SLIME || (!allow_water && cont == CONTENTS_WATER))
+			return false;
+	}
+	return true;
+}
+
+static qboolean SV_CoopRespawnTriggerLooksHazard (edict_t *touch)
+{
+	const char *classname;
+
+	if (!touch || touch->free || touch->v.solid != SOLID_TRIGGER ||
+		!touch->v.touch || !touch->v.classname)
+		return false;
+	classname = PR_GetString (touch->v.classname);
+	if (!classname || !classname[0])
+		return false;
+	return q_strcasestr (classname, "hurt") ||
+		q_strcasestr (classname, "kill") ||
+		q_strcasestr (classname, "void") ||
+		q_strcasestr (classname, "death") ||
+		q_strcasestr (classname, "lava") ||
+		q_strcasestr (classname, "slime");
+}
+
+static qboolean SV_CoopRespawnTouchesHazardTrigger (edict_t *ent,
+	vec3_t origin)
+{
+	int i;
+	vec3_t mins, maxs;
+
+	VectorAdd (origin, ent->v.mins, mins);
+	VectorAdd (origin, ent->v.maxs, maxs);
+	for (i = svs.maxclients + 1; i < qcvm->num_edicts; i++)
+	{
+		edict_t *touch = EDICT_NUM (i);
+		if (!SV_CoopRespawnTriggerLooksHazard (touch))
+			continue;
+		if (mins[0] > touch->v.absmax[0] || mins[1] > touch->v.absmax[1] ||
+			mins[2] > touch->v.absmax[2] || maxs[0] < touch->v.absmin[0] ||
+			maxs[1] < touch->v.absmin[1] || maxs[2] < touch->v.absmin[2])
+			continue;
+		return true;
+	}
+	return false;
+}
+
+static qboolean SV_CoopRespawnCanPlaceAt (edict_t *ent,
+	vec3_t origin, qboolean allow_water)
+{
+	qboolean bottom;
+	trace_t trace;
+	vec3_t old_origin;
+
+	if (!SV_CoopRespawnPointContentsOK (origin, ent, allow_water))
+		return false;
+	trace = SV_Move (origin, ent->v.mins, ent->v.maxs, origin, MOVE_NORMAL, ent);
+	if (trace.allsolid || trace.startsolid ||
+		SV_CoopRespawnTouchesHazardTrigger (ent, origin))
+		return false;
+	VectorCopy (ent->v.origin, old_origin);
+	VectorCopy (origin, ent->v.origin);
+	bottom = SV_CheckBottom (ent);
+	VectorCopy (old_origin, ent->v.origin);
+	return bottom;
+}
+
+static qboolean SV_CoopRespawnDropToFloor (edict_t *ent,
+	vec3_t origin, float max_drop, qboolean allow_water,
+	vec3_t floor_origin)
+{
+	int i;
+	trace_t trace;
+	vec3_t start, end;
+	static const float raises[] = {96.0f, 64.0f, 48.0f, 32.0f, 16.0f, 8.0f};
+
+	for (i = 0; i < countof (raises); i++)
+	{
+		VectorCopy (origin, start);
+		start[2] += raises[i];
+		VectorCopy (start, end);
+		end[2] -= 384.0f;
+		trace = SV_Move (start, ent->v.mins, ent->v.maxs, end,
+			MOVE_NORMAL, ent);
+		if (trace.allsolid || trace.startsolid || trace.fraction == 1.0f)
+			continue;
+		VectorCopy (trace.endpos, floor_origin);
+		if (max_drop > 0.0f && floor_origin[2] < origin[2] - max_drop)
+			continue;
+		if (SV_CoopRespawnCanPlaceAt (ent, floor_origin, allow_water))
+			return true;
+	}
+	return false;
+}
+
+static void SV_CoopRespawnBasis (edict_t *anchor, vec3_t forward,
+	vec3_t right)
+{
+	vec3_t up;
+
+	if (anchor)
+	{
+		AngleVectors (anchor->v.angles, forward, right, up);
+		forward[2] = right[2] = 0.0f;
+		if (VectorNormalize (forward) < 0.01f)
+		{
+			forward[0] = 1.0f;
+			forward[1] = forward[2] = 0.0f;
+		}
+		if (VectorNormalize (right) < 0.01f)
+		{
+			right[0] = 0.0f;
+			right[1] = -1.0f;
+			right[2] = 0.0f;
+		}
+	}
+	else
+	{
+		forward[0] = 1.0f;
+		forward[1] = forward[2] = 0.0f;
+		right[0] = right[2] = 0.0f;
+		right[1] = 1.0f;
+	}
+}
+
+static qboolean SV_CoopRespawnFindNearbySpot (edict_t *ent,
+	vec3_t base, edict_t *anchor, const float *radii, int num_radii,
+	float max_drop, qboolean allow_water, vec3_t spot)
+{
+	int i, j;
+	vec3_t candidate, dropped, forward, right;
+	static const float dirs[][2] = {
+		{0.0f, 0.0f}, {1.0f, 0.0f}, {0.9239f, 0.3827f},
+		{0.7071f, 0.7071f}, {0.3827f, 0.9239f}, {0.0f, 1.0f},
+		{-0.3827f, 0.9239f}, {-0.7071f, 0.7071f}, {-0.9239f, 0.3827f},
+		{-1.0f, 0.0f}, {-0.9239f, -0.3827f}, {-0.7071f, -0.7071f},
+		{-0.3827f, -0.9239f}, {0.0f, -1.0f}, {0.3827f, -0.9239f},
+		{0.7071f, -0.7071f}, {0.9239f, -0.3827f}
+	};
+
+	SV_CoopRespawnBasis (anchor, forward, right);
+	for (i = 0; i < num_radii; i++)
+		for (j = 0; j < countof (dirs); j++)
+		{
+			if (radii[i] > 0.0f && dirs[j][0] == 0.0f && dirs[j][1] == 0.0f)
+				continue;
+			if (radii[i] == 0.0f && j > 0)
+				continue;
+			VectorCopy (base, candidate);
+			candidate[0] += (forward[0] * dirs[j][0] + right[0] * dirs[j][1]) * radii[i];
+			candidate[1] += (forward[1] * dirs[j][0] + right[1] * dirs[j][1]) * radii[i];
+			if (!SV_CoopRespawnDropToFloor (ent, candidate, max_drop,
+				allow_water, dropped))
+				continue;
+			VectorCopy (dropped, spot);
+			return true;
+		}
+	return false;
+}
+
+static void SV_CoopRespawnRemoveSpawnTeledeath (edict_t *owner)
+{
+	int i;
+
+	if (!owner || owner->free || !qcvm || !qcvm->progs)
+		return;
+	for (i = svs.maxclients + 1; i < qcvm->num_edicts; i++)
+	{
+		edict_t *ent = EDICT_NUM (i);
+		const char *classname;
+		if (ent->free || !ent->v.classname)
+			continue;
+		classname = PR_GetString (ent->v.classname);
+		if (!classname || strcmp (classname, "teledeath") ||
+			PROG_TO_EDICT (ent->v.owner) != owner)
+			continue;
+		ED_Free (ent);
+	}
+}
+
+static void SV_CoopRespawnRelocate (edict_t *ent, edict_t *anchor,
+	vec3_t spot)
+{
+	vec3_t angles;
+
+	/* Drop contacts accepted at the old origin before linking the new one. */
+	SV_VRContactPlayerRelocated (ent);
+	SV_CoopRespawnRemoveSpawnTeledeath (ent);
+	VectorCopy (spot, ent->v.origin);
+	VectorClear (ent->v.velocity);
+	angles[0] = angles[2] = 0.0f;
+	angles[1] = anchor->v.angles[1];
+	VectorCopy (angles, ent->v.angles);
+	VectorCopy (angles, ent->v.v_angle);
+	ent->v.fixangle = true;
+	SV_LinkEdict (ent, false);
+}
+
+qboolean SV_CoopRespawnTeleportToPlayer (edict_t *ent, edict_t *target)
+{
+	static const float radii[] = {0.0f, 40.0f, 48.0f, 64.0f, 80.0f, 96.0f, 128.0f};
+	vec3_t spot;
+
+	if (!coop.value || deathmatch.value || !ent || ent->free || !target ||
+		target->free || ent == target || !SV_CoopRespawnIsAliveClient (ent) ||
+		!SV_CoopRespawnIsAliveClient (target))
+		return false;
+	if (!SV_CoopRespawnFindNearbySpot (ent, target->v.origin, target, radii,
+		countof (radii), 384.0f, true, spot))
+	{
+		if (!SV_CoopFeatureEnabled (&sv_coop_player_teleport_fallback, true) ||
+			!SV_CoopFeatureEnabled (&sv_coop_noplayerclip, true) ||
+			!SV_CoopFeatureEnabled (&sv_coop_notelefrag, true))
+			return false;
+		VectorCopy (target->v.origin, spot);
+	}
+	SV_CoopRespawnRelocate (ent, target, spot);
+	return true;
+}
+
+qboolean SV_CoopRespawnTeleportToSpawn (edict_t *ent, edict_t *spawn)
+{
+	static const float radii[] = {0.0f, 32.0f, 48.0f, 64.0f, 80.0f, 96.0f, 128.0f};
+	vec3_t base, spot;
+
+	if (!coop.value || deathmatch.value || !ent || ent->free || !spawn ||
+		spawn->free || !SV_CoopRespawnIsAliveClient (ent))
+		return false;
+	VectorCopy (spawn->v.origin, base);
+	base[2] += 1.0f;
+	if (!SV_CoopRespawnFindNearbySpot (ent, base, spawn, radii,
+		countof (radii), 128.0f, true, spot))
+		return false;
+	SV_CoopRespawnRelocate (ent, spawn, spot);
+	return true;
 }
 
 static float SV_VRContactDistance (const vec3_t a, const vec3_t b)

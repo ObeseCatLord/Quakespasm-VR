@@ -5,7 +5,7 @@ Vulkan slice and an OpenXR panel with controller-ray selection are
 implemented. The OpenXR panel now defaults to a hand-pose-anchored playspace
 placement, with the earlier view placement retained as a VR option. Its flat
 Vulkan presentation is still short of the inherited 3D weapon layout. The
-full mod catalogue and co-op actions remain to be ported. The source of truth is
+full mod catalogue and inherited 3D presentation remain to be ported. The source of truth is
 `quakespasm-openvr/Quake/vr.c` at the pinned MAIN
 commit in [migration-feature-map.md](migration-feature-map.md), particularly
 its catalog and selection policy (`VR_WeaponIsOwned`,
@@ -20,8 +20,16 @@ The inherited Quick Save and Quick Load rows are now available on the shared
 desktop/OpenXR panel only for a local single-client server. Their rendered
 rectangles and pointer hitboxes share one layout, and release rechecks the
 session before queuing the standard delayed save/load commands. Co-op player
-teleport and respawn rows still depend on server teleport commands that have
-not been ported; the 3D weapon layout also remains open.
+and spawn teleport rows now use that same draw/hit layout. The client captures
+a scoreboard slot, rechecks its name and eligibility on release, then queues a
+1-based slot command. The server resolves the live requester and target again,
+uses the donor's safe floor/hazard search through vkQuake collision queries,
+and sets yaw, `fixangle` and zero velocity on relocation. The same-origin
+fallback requires co-op no-player-collision and no-telefrag policies. Accepted
+old-origin VR contacts are invalidated, and private snapshots carry a
+relocation discontinuity epoch for prediction smoothing. Remote co-op gameplay
+qualification remains open, including blocked arrival, slot changes,
+room-scale alignment and replay. The 3D weapon layout also remains open.
 
 The shared wheel loads the active mod's `wwheel.txt` roster and
 `vr_weapons.txt` schema through the existing search path, with declared
@@ -53,7 +61,7 @@ with the rendered item. The desktop wheel must work when no XR runtime exists.
 The packaged defaults bind `VR_RIGHT_STICK_UP` for VR; desktop players may bind
 the command in the key-binding menu without changing vkQuake's keyboard defaults.
 Next, use the same catalog owner for Hipnotic/Rogue and mod profiles, schema
-precedence, ammo/readiness, dynamic discovery, and co-op player actions.
+precedence, ammo/readiness, and dynamic discovery.
 3D model icons, text hitboxes, outlines, and occlusion must
 match the inherited wheel; a hand-anchored flat panel alone does not close VR
 parity. Reuse the existing VR panel/view transforms where they fit, and add a

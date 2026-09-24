@@ -187,6 +187,8 @@ static qboolean vr_weapon_menu_pointer_valid;
 static qboolean vr_weapon_menu_tracking_valid;
 static int vr_weapon_menu_pointer_x, vr_weapon_menu_pointer_y;
 static int vr_weapon_menu_hover_id = -1;
+static int vr_weapon_menu_hover_action_slot = -1;
+static char vr_weapon_menu_hover_action_name[MAX_SCOREBOARDNAME];
 static unsigned int vr_weapon_menu_session_generation;
 static qmodel_t *vr_weapon_menu_worldmodel;
 static int vr_weapon_menu_viewentity;
@@ -984,6 +986,8 @@ static void VR_WeaponMenu_ClearSession (void)
 	vr_weapon_menu_tracking_valid = false;
 	vr_weapon_menu_pointer_x = vr_weapon_menu_pointer_y = -1;
 	vr_weapon_menu_hover_id = -1;
+	vr_weapon_menu_hover_action_slot = -1;
+	vr_weapon_menu_hover_action_name[0] = '\0';
 	vr_weapon_menu_worldmodel = NULL;
 	vr_weapon_menu_viewentity = 0;
 	vr_weapon_menu_mapname[0] = '\0';
@@ -1179,8 +1183,22 @@ enum {
 	VR_WEAPON_MENU_ACTION_COUNT
 };
 
+#define VR_WEAPON_MENU_MAX_ACTIONS \
+	(VR_WEAPON_MENU_ACTION_COUNT + MAX_SCOREBOARD + 1)
+
+typedef enum {
+	VR_WEAPON_MENU_ACTION_QUICK_SAVE,
+	VR_WEAPON_MENU_ACTION_QUICK_LOAD,
+	VR_WEAPON_MENU_ACTION_COOP_PLAYER,
+	VR_WEAPON_MENU_ACTION_COOP_SPAWN
+} vr_weapon_menu_action_kind_t;
+
 typedef struct {
-	const char *label;
+	vr_weapon_menu_action_kind_t kind;
+	int id;
+	int slot;
+	char label[MAX_SCOREBOARDNAME];
+	char player_name[MAX_SCOREBOARDNAME];
 	float left;
 	float top;
 	float width;
@@ -1193,8 +1211,31 @@ static qboolean VR_WeaponMenu_QuickSaveAvailable (void)
 		!cl.intermission;
 }
 
+static qboolean VR_WeaponMenu_CoopPlayersAvailable (void)
+{
+	return cls.state == ca_connected && cls.signon == SIGNONS &&
+		cl.gametype == GAME_COOP && cl.maxclients > 1 && cl.scores != NULL;
+}
+
+static qboolean VR_WeaponMenu_CoopSpawnAvailable (void)
+{
+	return VR_WeaponMenu_CoopPlayersAvailable () && !cl.intermission &&
+		cl.stats[STAT_HEALTH] > 0;
+}
+
+static qboolean VR_WeaponMenu_CatalogHasActionID (
+	const vr_weapon_menu_catalog_t *catalog, int id)
+{
+	if (catalog && catalog->entries)
+		for (size_t i = 0; i < catalog->count; ++i)
+			if (catalog->entries[i].id == id)
+				return true;
+	return false;
+}
+
 static void VR_WeaponMenu_ActionIDs (const vr_weapon_menu_catalog_t *catalog,
-	int ids[VR_WEAPON_MENU_ACTION_COUNT])
+	int ids[VR_WEAPON_MENU_ACTION_COUNT],
+	int stable_ids[MAX_SCOREBOARD + 1])
 {
 	long long candidate = INT_MAX;
 
@@ -1203,14 +1244,7 @@ static void VR_WeaponMenu_ActionIDs (const vr_weapon_menu_catalog_t *catalog,
 		qboolean used;
 		while (candidate > 0)
 		{
-			used = false;
-			if (catalog && catalog->entries)
-				for (size_t i = 0; i < catalog->count; ++i)
-					if (catalog->entries[i].id == candidate)
-					{
-						used = true;
-						break;
-					}
+			used = VR_WeaponMenu_CatalogHasActionID (catalog, (int)candidate);
 			for (int i = 0; !used && i < action; ++i)
 				used = ids[i] == candidate;
 			if (!used)
@@ -1220,49 +1254,168 @@ static void VR_WeaponMenu_ActionIDs (const vr_weapon_menu_catalog_t *catalog,
 		ids[action] = candidate > 0 ? (int)candidate : -1;
 		--candidate;
 	}
+
+	/* Negative identities are reserved for dynamic actions. Player IDs start
+	 * from their scoreboard slot, so row ordering and missing players do not
+	 * change the action identity. Probe around any catalog IDs defensively. */
+	for (int identity = 0; identity <= MAX_SCOREBOARD; ++identity)
+	{
+		long long stable = (long long)INT_MIN + 1 + identity;
+		qboolean used;
+		do
+		{
+			used = stable >= 0 || stable == -1 ||
+				VR_WeaponMenu_CatalogHasActionID (catalog, (int)stable);
+			for (int i = 0; !used && i < VR_WEAPON_MENU_ACTION_COUNT; ++i)
+				used = ids[i] == stable;
+			for (int i = 0; !used && i < identity; ++i)
+				used = stable_ids[i] == stable;
+			if (used)
+				++stable;
+		} while (used && stable <= INT_MAX);
+		stable_ids[identity] = stable <= INT_MAX ? (int)stable : -1;
+	}
 }
 
-/* One geometry and hit-test path keeps the action rectangles aligned with
- * their drawing for both the desktop mouse and the VR pointer. */
-static int VR_WeaponMenu_Actions (struct cb_context_s *context,
-	const vr_weapon_menu_catalog_t *catalog, qboolean available,
-	float outer_radius, float scale, int pointer_x, int pointer_y,
-	int ids[VR_WEAPON_MENU_ACTION_COUNT], qboolean highlight_by_id,
-	int hover_id)
+static void VR_WeaponMenu_FitActionLabel (char *label, size_t label_size,
+	const char *source, float max_width, float scale)
 {
-	static const char *const labels[VR_WEAPON_MENU_ACTION_COUNT] = {
+	int max_chars;
+	size_t source_len = strlen (source);
+	size_t copy_len;
+
+	if (!label_size)
+		return;
+	max_chars = (int)((max_width - 12.0f * scale) /
+		(CHARACTER_SIZE * scale));
+	if (max_chars < 0)
+		max_chars = 0;
+	if (source_len <= (size_t)max_chars)
+	{
+		q_strlcpy (label, source, label_size);
+		return;
+	}
+	if (max_chars >= 3 && label_size >= 4)
+	{
+		copy_len = (size_t)max_chars - 3;
+		if (copy_len > label_size - 4)
+			copy_len = label_size - 4;
+		memcpy (label, source, copy_len);
+		memcpy (label + copy_len, "...", 3);
+		label[copy_len + 3] = '\0';
+	}
+	else
+	{
+		copy_len = (size_t)max_chars;
+		if (copy_len >= label_size)
+			copy_len = label_size - 1;
+		memcpy (label, source, copy_len);
+		label[copy_len] = '\0';
+	}
+}
+
+static int VR_WeaponMenu_BuildActions (const vr_weapon_menu_catalog_t *catalog,
+	qboolean quick_available, float outer_radius, float scale,
+	vr_weapon_menu_action_t actions[VR_WEAPON_MENU_MAX_ACTIONS])
+{
+	static const char *const quick_labels[VR_WEAPON_MENU_ACTION_COUNT] = {
 		"QUICK SAVE", "QUICK LOAD"
 	};
-	vr_weapon_menu_action_t actions[VR_WEAPON_MENU_ACTION_COUNT];
+	int quick_ids[VR_WEAPON_MENU_ACTION_COUNT];
+	int stable_ids[MAX_SCOREBOARD + 1];
 	const float center_x = glwidth * 0.5f;
 	const float center_y = glheight * 0.5f;
+	const float right_left = center_x + outer_radius + 12.0f * scale;
+	const float max_width = q_max (0.0f, glwidth - right_left - 4.0f * scale);
+	int count = 0;
+	int teleport_start;
+	int teleport_count;
+
+	VR_WeaponMenu_ActionIDs (catalog, quick_ids, stable_ids);
+	if (quick_available)
+		for (int i = 0; i < VR_WEAPON_MENU_ACTION_COUNT; ++i)
+		{
+			vr_weapon_menu_action_t *action = &actions[count++];
+			memset (action, 0, sizeof (*action));
+			action->kind = i == VR_WEAPON_MENU_QUICK_SAVE ?
+				VR_WEAPON_MENU_ACTION_QUICK_SAVE : VR_WEAPON_MENU_ACTION_QUICK_LOAD;
+			action->id = quick_ids[i];
+			action->slot = -1;
+			q_strlcpy (action->label, quick_labels[i], sizeof (action->label));
+			action->width = strlen (action->label) * CHARACTER_SIZE * scale +
+				12.0f * scale;
+			action->height = 26.0f * scale;
+			action->left = center_x - outer_radius - 12.0f * scale - action->width;
+			action->top = center_y + (i == VR_WEAPON_MENU_QUICK_SAVE ?
+				-17.0f : 17.0f) * scale - action->height * 0.5f;
+		}
+
+	teleport_start = count;
+	if (VR_WeaponMenu_CoopPlayersAvailable ())
+		for (int slot = 0; slot < cl.maxclients && slot < MAX_SCOREBOARD; ++slot)
+		{
+			vr_weapon_menu_action_t *action;
+			if (!cl.scores[slot].name[0] || slot + 1 == cl.viewentity)
+				continue;
+			action = &actions[count++];
+			memset (action, 0, sizeof (*action));
+			action->kind = VR_WEAPON_MENU_ACTION_COOP_PLAYER;
+			action->id = stable_ids[slot];
+			action->slot = slot;
+			q_strlcpy (action->player_name, cl.scores[slot].name,
+				sizeof (action->player_name));
+		}
+	if (VR_WeaponMenu_CoopSpawnAvailable ())
+	{
+		vr_weapon_menu_action_t *action = &actions[count++];
+		memset (action, 0, sizeof (*action));
+		action->kind = VR_WEAPON_MENU_ACTION_COOP_SPAWN;
+		action->id = stable_ids[MAX_SCOREBOARD];
+		action->slot = -1;
+		q_strlcpy (action->player_name, "RESPAWN AT SPAWN",
+			sizeof (action->player_name));
+	}
+
+	teleport_count = count - teleport_start;
+	for (int i = 0; i < teleport_count; ++i)
+	{
+		vr_weapon_menu_action_t *action = &actions[teleport_start + i];
+		const float row_pitch = q_min (29.0f * scale,
+			q_max (0.0f, glheight - 8.0f * scale) / teleport_count);
+		const float row_height = q_min (26.0f * scale, row_pitch);
+		VR_WeaponMenu_FitActionLabel (action->label, sizeof (action->label),
+			action->player_name, max_width, scale);
+		action->height = row_height;
+			action->width = q_min ((float)strlen (action->label) *
+				CHARACTER_SIZE * scale + 12.0f * scale, max_width);
+			action->left = right_left;
+			action->top = center_y - teleport_count * row_pitch * 0.5f +
+				(row_pitch - row_height) * 0.5f + i * row_pitch;
+	}
+	return count;
+}
+
+/* One geometry and hit-test path keeps every action rectangle aligned with
+ * drawing for both the desktop mouse and the OpenXR pointer. */
+static int VR_WeaponMenu_Actions (struct cb_context_s *context,
+	vr_weapon_menu_action_t actions[VR_WEAPON_MENU_MAX_ACTIONS], int count,
+	float scale, int pointer_x, int pointer_y, qboolean highlight_by_id,
+	int hover_id)
+{
 	int selected = -1;
 
-	VR_WeaponMenu_ActionIDs (catalog, ids);
-	if (!available)
-		return -1;
-
-	for (int i = 0; i < VR_WEAPON_MENU_ACTION_COUNT; ++i)
-	{
-		actions[i].label = labels[i];
-		actions[i].width = strlen (labels[i]) * CHARACTER_SIZE * scale + 12.0f * scale;
-		actions[i].height = 26.0f * scale;
-		actions[i].left = center_x - outer_radius - 12.0f * scale - actions[i].width;
-		actions[i].top = center_y + (i == VR_WEAPON_MENU_QUICK_SAVE ?
-			-17.0f : 17.0f) * scale - actions[i].height * 0.5f;
-		if (pointer_x >= actions[i].left &&
+	for (int i = 0; i < count; ++i)
+		if (actions[i].width > 0.0f && actions[i].height > 0.0f &&
+			pointer_x >= actions[i].left &&
 			pointer_x <= actions[i].left + actions[i].width &&
 			pointer_y >= actions[i].top &&
 			pointer_y <= actions[i].top + actions[i].height)
 			selected = i;
-		if (context)
+	if (context)
+		for (int i = 0; i < count; ++i)
 		{
 			const qboolean is_selected = i == selected &&
-				pointer_x >= actions[i].left &&
-				pointer_x <= actions[i].left + actions[i].width &&
-				pointer_y >= actions[i].top &&
-				pointer_y <= actions[i].top + actions[i].height &&
-				(!highlight_by_id || ids[i] == hover_id);
+				(!highlight_by_id || actions[i].id == hover_id);
 			Draw_Fill ((cb_context_t *)context, actions[i].left, actions[i].top,
 				actions[i].width, actions[i].height,
 				is_selected ? 15 : 0, is_selected ? 0.96f : 0.78f);
@@ -1270,11 +1423,36 @@ static int VR_WeaponMenu_Actions (struct cb_context_s *context,
 				is_selected ? 0.08f : 1.0f, is_selected ? 0.10f : 1.0f, 1.0f);
 			Draw_String_Scaled ((cb_context_t *)context,
 				actions[i].left + 6.0f * scale,
-				actions[i].top + 8.0f * scale, actions[i].label, scale);
+				actions[i].top + (actions[i].kind == VR_WEAPON_MENU_ACTION_COOP_PLAYER ||
+				 actions[i].kind == VR_WEAPON_MENU_ACTION_COOP_SPAWN ?
+				 q_max (0.0f, (actions[i].height - 8.0f * scale) * 0.5f) :
+				 8.0f * scale), actions[i].label, scale);
 			GL_SetCanvasColor (1.0f, 1.0f, 1.0f, 1.0f);
 		}
-	}
 	return selected;
+}
+
+static qboolean VR_WeaponMenu_ActionStillValid (
+	const vr_weapon_menu_action_t *action)
+{
+	if (!action)
+		return false;
+	switch (action->kind)
+	{
+	case VR_WEAPON_MENU_ACTION_QUICK_SAVE:
+	case VR_WEAPON_MENU_ACTION_QUICK_LOAD:
+		return VR_WeaponMenu_QuickSaveAvailable ();
+	case VR_WEAPON_MENU_ACTION_COOP_PLAYER:
+		return VR_WeaponMenu_CoopPlayersAvailable () && action->slot >= 0 &&
+			action->slot < cl.maxclients && action->slot < MAX_SCOREBOARD &&
+			action->slot + 1 != cl.viewentity &&
+			cl.scores[action->slot].name[0] &&
+			!strcmp (cl.scores[action->slot].name, action->player_name);
+	case VR_WEAPON_MENU_ACTION_COOP_SPAWN:
+		return VR_WeaponMenu_CoopSpawnAvailable ();
+	default:
+		return false;
+	}
 }
 
 static void VR_WeaponMenu_Layout (vr_weapon_menu_visible_t *visible, int count,
@@ -1344,7 +1522,8 @@ void VR_WeaponMenu_SetVRPointer (qboolean tracking_valid, qboolean pointer_valid
 	int pointer_x, int pointer_y)
 {
 	vr_weapon_menu_visible_t visible[VR_WEAPON_MENU_MAX_ENTRIES];
-	int count, selected = -1, action, action_ids[VR_WEAPON_MENU_ACTION_COUNT];
+	vr_weapon_menu_action_t actions[VR_WEAPON_MENU_MAX_ACTIONS];
+	int count, selected = -1, action, action_count;
 	int previous_hover_id;
 	const float radius = q_min (glwidth, glheight) * 0.32f;
 	const float scale = CLAMP (0.85f, q_min (glwidth, glheight) / 720.0f, 1.5f);
@@ -1363,6 +1542,8 @@ void VR_WeaponMenu_SetVRPointer (qboolean tracking_valid, qboolean pointer_valid
 	vr_weapon_menu_pointer_y = pointer_valid ? pointer_y : -1;
 	previous_hover_id = vr_weapon_menu_hover_id;
 	vr_weapon_menu_hover_id = -1;
+	vr_weapon_menu_hover_action_slot = -1;
+	vr_weapon_menu_hover_action_name[0] = '\0';
 	if (!pointer_valid)
 		return;
 
@@ -1371,15 +1552,26 @@ void VR_WeaponMenu_SetVRPointer (qboolean tracking_valid, qboolean pointer_valid
 		cl.stats, MAX_CL_STATS, cl.items, visible, VR_WEAPON_MENU_MAX_ENTRIES);
 	VR_WeaponMenu_Layout (visible, count, radius, scale);
 	selected = VR_WeaponMenu_Hit (visible, count, pointer_x, pointer_y, radius);
-	action = VR_WeaponMenu_Actions (NULL, catalog, VR_WeaponMenu_QuickSaveAvailable (),
-		radius, scale, pointer_x, pointer_y, action_ids, false, -1);
+	action_count = VR_WeaponMenu_BuildActions (catalog,
+		VR_WeaponMenu_QuickSaveAvailable (), radius, scale, actions);
+	action = VR_WeaponMenu_Actions (NULL, actions, action_count, scale,
+		pointer_x, pointer_y, false, -1);
 	if (action >= 0)
-		vr_weapon_menu_hover_id = action_ids[action];
+	{
+		vr_weapon_menu_hover_id = actions[action].id;
+		if (actions[action].kind == VR_WEAPON_MENU_ACTION_COOP_PLAYER)
+		{
+			vr_weapon_menu_hover_action_slot = actions[action].slot;
+			q_strlcpy (vr_weapon_menu_hover_action_name,
+				actions[action].player_name,
+				sizeof (vr_weapon_menu_hover_action_name));
+		}
+	}
 	else if (selected >= 0 && visible[selected].selectable)
 	{
 		vr_weapon_menu_hover_id = visible[selected].entry->id;
 	}
-	if (vr_weapon_menu_hover_id >= 0 && vr_weapon_menu_hover_id != previous_hover_id)
+	if (vr_weapon_menu_hover_id != -1 && vr_weapon_menu_hover_id != previous_hover_id)
 		VR_InputTriggerHaptic (VR_INPUT_ROLE_RIGHT, 0.05f, 0.5f);
 }
 
@@ -1399,7 +1591,7 @@ int VR_WeaponMenu_ReleaseCatalog (const vr_weapon_menu_catalog_t *catalog,
 		return 0;
 	}
 	if (vr_weapon_menu_open_vr &&
-		(!vr_weapon_menu_tracking_valid || !vr_weapon_menu_pointer_valid || vr_weapon_menu_hover_id < 0))
+		(!vr_weapon_menu_tracking_valid || !vr_weapon_menu_pointer_valid || vr_weapon_menu_hover_id == -1))
 	{
 		VR_WeaponMenu_ClearSession ();
 		return 0;
@@ -1432,19 +1624,32 @@ int VR_WeaponMenu_ReleaseCatalog (const vr_weapon_menu_catalog_t *catalog,
 	return impulse;
 }
 
+static qboolean VR_WeaponMenu_ActionHoverValid (
+	const vr_weapon_menu_action_t *action)
+{
+	if (!vr_weapon_menu_open_vr)
+		return true;
+	if (!vr_weapon_menu_tracking_valid || !vr_weapon_menu_pointer_valid ||
+		vr_weapon_menu_hover_id != action->id)
+		return false;
+	return action->kind != VR_WEAPON_MENU_ACTION_COOP_PLAYER ||
+		(vr_weapon_menu_hover_action_slot == action->slot &&
+		 !strcmp (vr_weapon_menu_hover_action_name, action->player_name));
+}
+
 int VR_WeaponMenu_Release (void)
 {
 	const vr_weapon_menu_catalog_t *catalog = VR_WeaponMenu_CurrentCatalog ();
+	vr_weapon_menu_action_t actions[VR_WEAPON_MENU_MAX_ACTIONS];
 	int pointer_x = -1, pointer_y = -1;
-	int action_ids[VR_WEAPON_MENU_ACTION_COUNT];
-	int action = -1;
+	int action_count = 0, action = -1;
 	const float radius = q_min (glwidth, glheight) * 0.32f;
 	const float scale = CLAMP (0.85f, q_min (glwidth, glheight) / 720.0f, 1.5f);
 	qboolean session_ready = vr_weapon_menu_open && VR_WeaponMenu_SessionValid () &&
 		(!vr_weapon_menu_open_vr ||
 		 (vr_weapon_menu_tracking_valid && vr_weapon_menu_pointer_valid));
 
-	if (session_ready && VR_WeaponMenu_QuickSaveAvailable ())
+	if (session_ready)
 	{
 		if (vr_weapon_menu_open_vr)
 		{
@@ -1453,21 +1658,42 @@ int VR_WeaponMenu_Release (void)
 		}
 		else
 			VR_WeaponMenu_Pointer (&pointer_x, &pointer_y);
-		action = VR_WeaponMenu_Actions (NULL, catalog, true, radius, scale,
-			pointer_x, pointer_y, action_ids, false, -1);
-		if (action >= 0 && (!vr_weapon_menu_open_vr ||
-			vr_weapon_menu_hover_id == action_ids[action]) &&
-			VR_WeaponMenu_SessionValid () && VR_WeaponMenu_QuickSaveAvailable () &&
-			(!vr_weapon_menu_open_vr ||
-			 (vr_weapon_menu_tracking_valid && vr_weapon_menu_pointer_valid &&
-			  vr_weapon_menu_hover_id == action_ids[action])))
+		action_count = VR_WeaponMenu_BuildActions (catalog,
+			VR_WeaponMenu_QuickSaveAvailable (), radius, scale, actions);
+		action = VR_WeaponMenu_Actions (NULL, actions, action_count, scale,
+			pointer_x, pointer_y, false, -1);
+		if (action >= 0 &&
+			VR_WeaponMenu_ActionHoverValid (&actions[action]) &&
+			VR_WeaponMenu_ActionStillValid (&actions[action]) &&
+			VR_WeaponMenu_SessionValid ())
 		{
-			const char *command = action == VR_WEAPON_MENU_QUICK_SAVE ?
-				"echo Quicksaving...; wait; save quick\n" :
-				"echo Quickloading...; wait; load quick\n";
-			VR_WeaponMenu_ClearSession ();
-			Cbuf_AddText (command);
-			return 0;
+			char player_command[48];
+			const char *command = NULL;
+			switch (actions[action].kind)
+			{
+			case VR_WEAPON_MENU_ACTION_QUICK_SAVE:
+				command = "echo Quicksaving...; wait; save quick\n";
+				break;
+			case VR_WEAPON_MENU_ACTION_QUICK_LOAD:
+				command = "echo Quickloading...; wait; load quick\n";
+				break;
+			case VR_WEAPON_MENU_ACTION_COOP_PLAYER:
+				q_snprintf (player_command, sizeof (player_command),
+					"coop_teleport_player %d\n", actions[action].slot + 1);
+				command = player_command;
+				break;
+			case VR_WEAPON_MENU_ACTION_COOP_SPAWN:
+				command = "coop_teleport_spawn\n";
+				break;
+			default:
+				break;
+			}
+			if (command)
+			{
+				VR_WeaponMenu_ClearSession ();
+				Cbuf_AddText (command);
+				return 0;
+			}
 		}
 	}
 	return VR_WeaponMenu_ReleaseCatalog (catalog, cl.stats, MAX_CL_STATS, cl.items);
@@ -1479,7 +1705,8 @@ void VR_WeaponMenu_DrawCatalog (struct cb_context_s *context,
 {
 	cb_context_t *cbx = (cb_context_t *)context;
 	vr_weapon_menu_visible_t visible[VR_WEAPON_MENU_MAX_ENTRIES];
-	int count, pointer_x, pointer_y, selected, selected_action, action_ids[VR_WEAPON_MENU_ACTION_COUNT];
+	vr_weapon_menu_action_t actions[VR_WEAPON_MENU_MAX_ACTIONS];
+	int count, pointer_x, pointer_y, selected, selected_action, action_count;
 	const float min_dimension = q_min (glwidth, glheight);
 	const float outer_radius = min_dimension * 0.32f;
 	const float hub_radius = outer_radius * 0.22f;
@@ -1492,6 +1719,8 @@ void VR_WeaponMenu_DrawCatalog (struct cb_context_s *context,
 	count = VR_WeaponMenu_BuildVisible (catalog, stats, num_stats, client_items,
 		visible, VR_WEAPON_MENU_MAX_ENTRIES);
 	VR_WeaponMenu_Layout (visible, count, outer_radius, scale);
+	action_count = VR_WeaponMenu_BuildActions (catalog,
+		VR_WeaponMenu_QuickSaveAvailable (), outer_radius, scale, actions);
 	if (vr_weapon_menu_open_vr)
 	{
 		pointer_x = vr_weapon_menu_pointer_x;
@@ -1566,12 +1795,10 @@ void VR_WeaponMenu_DrawCatalog (struct cb_context_s *context,
 				visible[i].top + 22.0f * scale, entry->label, scale);
 		GL_SetCanvasColor (1.0f, 1.0f, 1.0f, 1.0f);
 	}
-	selected_action = VR_WeaponMenu_Actions (cbx, catalog,
-		VR_WeaponMenu_QuickSaveAvailable (), outer_radius, scale,
-		pointer_x, pointer_y, action_ids, vr_weapon_menu_open_vr,
-		vr_weapon_menu_hover_id);
+	selected_action = VR_WeaponMenu_Actions (cbx, actions, action_count, scale,
+		pointer_x, pointer_y, vr_weapon_menu_open_vr, vr_weapon_menu_hover_id);
 	if (vr_weapon_menu_open_vr && (selected_action < 0 ||
-		vr_weapon_menu_hover_id != action_ids[selected_action]))
+		vr_weapon_menu_hover_id != actions[selected_action].id))
 		selected_action = -1;
 	if (selected_action >= 0)
 		selected = -1;
@@ -1579,8 +1806,7 @@ void VR_WeaponMenu_DrawCatalog (struct cb_context_s *context,
 	GL_SetCanvasColor (1.0f, 1.0f, 1.0f, 1.0f);
 	Draw_String_Scaled (cbx, glwidth * 0.5f - 56.0f * scale,
 		glheight * 0.5f - 12.0f * scale,
-		selected_action >= 0 ? (selected_action == VR_WEAPON_MENU_QUICK_SAVE ?
-			"QUICK SAVE" : "QUICK LOAD") :
+		selected_action >= 0 ? actions[selected_action].label :
 		(selected >= 0 && visible[selected].entry->label ?
 		 visible[selected].entry->label : "WEAPON"), scale);
 	if (selected_action < 0 && selected >= 0 && visible[selected].ammo >= 0)

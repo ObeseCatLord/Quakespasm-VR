@@ -25,7 +25,9 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "q_ctype.h"
 #include "json.h"
 #include "savegame_dialect.h"
+#include <errno.h>
 #include <stddef.h>
+#include <stdlib.h>
 #include <sys/stat.h>
 #ifndef _WIN32
 #include <dirent.h>
@@ -3677,6 +3679,115 @@ static void Host_Begin_f (void)
 	}
 }
 
+/* The wheel sends only a slot number. Resolve the live client on the server
+ * at execution time; a scoreboard name is never authority for relocation. */
+static void Host_CoopTeleportPlayer_f (void)
+{
+	client_t *target;
+	char *end;
+	long slot;
+
+	if (cmd_source != src_client)
+	{
+		Cmd_ForwardToServer ();
+		return;
+	}
+	if (!coop.value || pr_global_struct->deathmatch || !host_client ||
+		!host_client->active || !host_client->spawned || !sv_player ||
+		Cmd_Argc () != 2)
+		return;
+	errno = 0;
+	slot = strtol (Cmd_Argv (1), &end, 10);
+	if (errno || !end || *end || slot < 1 || slot > svs.maxclients)
+		return;
+	target = &svs.clients[slot - 1];
+	if (target == host_client || !target->active || !target->spawned ||
+		!target->edict)
+		return;
+	if (!SV_CoopRespawnTeleportToPlayer (sv_player, target->edict))
+		SV_ClientPrintf ("No safe teleport spot near %s\n", target->name);
+}
+
+static edict_t *Host_CoopFindSpawnClass (const char *classname)
+{
+	for (int i = svs.maxclients + 1; i < qcvm->num_edicts; ++i)
+	{
+		edict_t *ent = EDICT_NUM (i);
+		if (!ent->free && ent->v.classname &&
+			!q_strcasecmp (PR_GetString (ent->v.classname), classname))
+			return ent;
+	}
+	return NULL;
+}
+
+/* Preserve the mod's spawn choice. The fallback is used only when QuakeC
+ * supplies no usable spawn, as in the inherited wheel command. */
+static edict_t *Host_CoopSelectSpawnPoint (void)
+{
+	dfunction_t *func = ED_FindFunction ("SelectSpawnPoint");
+	edict_t *spawn = NULL;
+	int saved_self, saved_other, saved_return[3], spawnprog, saved_argc;
+	float saved_time;
+
+	if (func && func->numparms == 0)
+	{
+		saved_self = pr_global_struct->self;
+		saved_other = pr_global_struct->other;
+		saved_time = pr_global_struct->time;
+		saved_argc = qcvm->argc;
+		memcpy (saved_return, &qcvm->globals[OFS_RETURN], sizeof (saved_return));
+		pr_global_struct->self = EDICT_TO_PROG (sv_player);
+		pr_global_struct->other = EDICT_TO_PROG (qcvm->edicts);
+		pr_global_struct->time = qcvm->time;
+		qcvm->argc = 0;
+		G_INT (OFS_RETURN) = 0;
+		PR_ExecuteProgram (func - qcvm->functions);
+		spawnprog = G_INT (OFS_RETURN);
+		pr_global_struct->self = saved_self;
+		pr_global_struct->other = saved_other;
+		pr_global_struct->time = saved_time;
+		qcvm->argc = saved_argc;
+		memcpy (&qcvm->globals[OFS_RETURN], saved_return, sizeof (saved_return));
+		if (spawnprog > svs.maxclients * qcvm->edict_size &&
+			spawnprog < qcvm->num_edicts * qcvm->edict_size &&
+			spawnprog % qcvm->edict_size == 0)
+		{
+			spawn = PROG_TO_EDICT (spawnprog);
+			if (spawn->free)
+				spawn = NULL;
+		}
+	}
+	if (!spawn)
+		spawn = Host_CoopFindSpawnClass ("info_player_coop");
+	if (!spawn)
+		spawn = Host_CoopFindSpawnClass ("info_player_start");
+	return spawn;
+}
+
+static void Host_CoopTeleportSpawn_f (void)
+{
+	edict_t *spawn;
+
+	if (cmd_source != src_client)
+	{
+		Cmd_ForwardToServer ();
+		return;
+	}
+	if (!coop.value || pr_global_struct->deathmatch || !host_client ||
+		!host_client->active || !host_client->spawned || !sv_player ||
+		sv_player->v.health <= 0 || sv_player->v.deadflag != DEAD_NO ||
+		sv_player->v.solid == SOLID_NOT)
+		return;
+	spawn = Host_CoopSelectSpawnPoint ();
+	if (!spawn)
+	{
+		SV_ClientPrintf ("No player spawn point is available\n");
+		return;
+	}
+	if (!SV_CoopRespawnTeleportToSpawn (sv_player, spawn))
+		SV_ClientPrintf ("No safe player spawn position is available\n");
+}
+
 //===========================================================================
 
 /*
@@ -4432,6 +4543,8 @@ void Host_InitCommands (void)
 	Cmd_AddCommand ("pause", Host_Pause_f);
 	Cmd_AddCommand ("spawn", Host_Spawn_f);
 	Cmd_AddCommand ("begin", Host_Begin_f);
+	Cmd_AddCommand_ClientCommand ("coop_teleport_player", Host_CoopTeleportPlayer_f);
+	Cmd_AddCommand_ClientCommand ("coop_teleport_spawn", Host_CoopTeleportSpawn_f);
 	Cmd_AddCommand ("prespawn", Host_PreSpawn_f);
 	Cmd_AddCommand ("kick", Host_Kick_f);
 	Cmd_AddCommand ("ping", Host_Ping_f);

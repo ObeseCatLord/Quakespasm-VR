@@ -299,6 +299,8 @@ typedef struct client_s
 	int		 private_completed_move;
 	int		 private_retired_move; // queued records retired through owner physics completion
 	int		 private_discarded_move; // explicit cutoff for commands dropped without queue consumption
+	unsigned short private_move_discontinuity_epoch;
+	unsigned char private_move_discontinuity_reason;
 	qboolean	 private_pmove_walk_selected; // latched until command-queue/serverinfo reset
 	double	 private_pmove_credit_msec; // fractional milliseconds; physics accrual/cap lives in sv_phys.c
 	float	 private_pmove_jump_secs; // short PMove jump debounce across accepted commands
@@ -439,6 +441,7 @@ extern cvar_t sv_coop_autosave_kill_interval;
 extern cvar_t sv_coop_classic;
 extern cvar_t sv_coop_noplayerclip;
 extern cvar_t sv_coop_notelefrag;
+extern cvar_t sv_coop_player_teleport_fallback;
 extern cvar_t sv_coop_shared_pickups;
 extern cvar_t sv_coop_respawn_keep_weapons_ammo;
 extern cvar_t fraglimit;
@@ -471,6 +474,8 @@ void SV_CoopRespawnRestoreSavedInventory (edict_t *ent, edict_t *snapshot);
 void SV_CoopRespawnInventoryResetClientSlot (int slot);
 void SV_CoopRespawnInventoryResetState (void);
 void SV_CoopRespawnSyncSharedKeys (edict_t *source);
+qboolean SV_CoopRespawnTeleportToPlayer (edict_t *ent, edict_t *target);
+qboolean SV_CoopRespawnTeleportToSpawn (edict_t *ent, edict_t *spawn);
 
 #define SV_COOP_GIVEKEYS_SILVER 1
 #define SV_COOP_GIVEKEYS_GOLD 2
