@@ -25,6 +25,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "q_ctype.h"
 #include "json.h"
 #include "savegame_dialect.h"
+#include <stddef.h>
 #include <sys/stat.h>
 #ifndef _WIN32
 #include <dirent.h>
@@ -1668,6 +1669,7 @@ LOAD / SAVE GAME
 
 #define SAVEGAME_VERSION	 5
 #define SAVEGAME_VERSION_KEX 6
+#define SAVEGAME_VERSION_MULTIPLAYER 7
 
 /*
 ===============
@@ -1706,6 +1708,218 @@ static void Host_SavegameComment (char text[SAVEGAME_COMMENT_LENGTH + 1])
 	}
 }
 
+static void Host_SavegameWriteClientName (FILE *f, const char *name)
+{
+	int i;
+
+	if (!name)
+		name = "";
+
+	for (i = 0; i < MAX_SCOREBOARDNAME - 1 && name[i]; i++)
+		fprintf (f, "%02x", (unsigned char)name[i]);
+	fprintf (f, "\n");
+}
+
+static qboolean Host_SavegameReplaceFile (const char *tempname, const char *name)
+{
+#ifdef _WIN32
+	wchar_t tempname_w[MAX_PATH];
+	wchar_t name_w[MAX_PATH];
+
+	if (!MultiByteToWideChar (CP_UTF8, 0, tempname, -1, tempname_w, (int)countof (tempname_w)) ||
+		!MultiByteToWideChar (CP_UTF8, 0, name, -1, name_w, (int)countof (name_w)))
+		return false;
+	return MoveFileExW (tempname_w, name_w,
+		MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != 0;
+#else
+	return Sys_rename (tempname, name) == 0;
+#endif
+}
+
+static qboolean Host_LoadgameHasPendingClients (void)
+{
+	int i;
+
+	for (i = 0; i < svs.maxclients && i < MAX_SCOREBOARD; i++)
+		if (sv.loadgame_client_saved[i])
+			return true;
+	return false;
+}
+
+static qboolean Host_LoadgameHasPendingSpawnParms (void)
+{
+	int i;
+
+	for (i = 0; i < svs.maxclients; i++)
+		if (svs.clients[i].active && svs.clients[i].spawn_parms_pending)
+			return true;
+	return false;
+}
+
+static int Host_LoadgameHexDigit (char c)
+{
+	if (c >= '0' && c <= '9')
+		return c - '0';
+	if (c >= 'a' && c <= 'f')
+		return c - 'a' + 10;
+	if (c >= 'A' && c <= 'F')
+		return c - 'A' + 10;
+	return 0;
+}
+
+static void Host_LoadgameDecodeClientName (const char *encoded, size_t encoded_length,
+	char *name, size_t namesize)
+{
+	size_t i, bytes;
+
+	if (!namesize)
+		return;
+	bytes = encoded_length / 2;
+	if (bytes >= namesize)
+		bytes = namesize - 1;
+	for (i = 0; i < bytes; i++)
+		name[i] = (char)((Host_LoadgameHexDigit (encoded[i * 2]) << 4) |
+			Host_LoadgameHexDigit (encoded[i * 2 + 1]));
+	name[bytes] = '\0';
+}
+
+static qboolean Host_LoadgameReadInheritedInt (const char *data, size_t length,
+	size_t *offset, int *value)
+{
+	savegame_header_line_t line;
+
+	return Savegame_PreflightReadLine (data, length, offset, &line) &&
+		Savegame_PreflightInteger (line, value);
+}
+
+static qboolean Host_LoadgameReadInheritedFloat (const char *data, size_t length,
+	size_t *offset, float *value)
+{
+	char token[SAVEGAME_PREFLIGHT_NUMBER_LINE_CAPACITY];
+	char *end;
+	float parsed;
+	int saved_errno;
+	savegame_header_line_t line;
+	size_t i;
+
+	if (!Savegame_PreflightReadLine (data, length, offset, &line) ||
+		!line.length || line.length >= sizeof (token))
+		return false;
+	for (i = 0; i < line.length; i++)
+		token[i] = line.data[i];
+	token[line.length] = '\0';
+	saved_errno = errno;
+	errno = 0;
+	parsed = strtof (token, &end);
+	while (*end == ' ' || *end == '\t')
+		end++;
+	if (errno == ERANGE || end == token || *end || !isfinite (parsed))
+	{
+		errno = saved_errno;
+		return false;
+	}
+	errno = saved_errno;
+	*value = parsed;
+	return true;
+}
+
+static qboolean Host_LoadgameParseIntegerToken (const char *token, int *value)
+{
+	char *end;
+	long parsed;
+	int saved_errno;
+
+	saved_errno = errno;
+	errno = 0;
+	parsed = strtol (token, &end, 10);
+	if (errno == ERANGE || end == token || *end || parsed < INT_MIN || parsed > INT_MAX)
+	{
+		errno = saved_errno;
+		return false;
+	}
+	errno = saved_errno;
+	*value = (int)parsed;
+	return true;
+}
+
+static qboolean Host_LoadgameParseFloatToken (const char *token, float *value)
+{
+	char *end;
+	float parsed;
+	int saved_errno;
+
+	saved_errno = errno;
+	errno = 0;
+	parsed = strtof (token, &end);
+	if (errno == ERANGE || end == token || *end || !isfinite (parsed))
+	{
+		errno = saved_errno;
+		return false;
+	}
+	errno = saved_errno;
+	*value = parsed;
+	return true;
+}
+
+static qboolean Host_LoadgameParseInheritedHeader (const char *start, size_t length,
+	const char *after_version, int version, int *maxclients,
+	qboolean saved_active[MAX_SCOREBOARD], qboolean saved_name_required[MAX_SCOREBOARD],
+	char saved_names[MAX_SCOREBOARD][MAX_SCOREBOARDNAME], int saved_colors[MAX_SCOREBOARD],
+	int saved_frags[MAX_SCOREBOARD], float saved_spawn_parms[MAX_SCOREBOARD][NUM_TOTAL_SPAWN_PARMS],
+	float *skill_value, char *mapname, size_t mapname_size, float *time, const char **body)
+{
+	size_t offset = (size_t)(after_version - start);
+	savegame_header_line_t line;
+	int active, i, j;
+
+	if (offset > length || !Savegame_PreflightReadLine (start, length, &offset, &line) ||
+		!Host_LoadgameReadInheritedInt (start, length, &offset, maxclients) ||
+		*maxclients < 1 || *maxclients > MAX_SCOREBOARD)
+		return false;
+
+	memset (saved_active, 0, MAX_SCOREBOARD * sizeof (saved_active[0]));
+	memset (saved_name_required, 0, MAX_SCOREBOARD * sizeof (saved_name_required[0]));
+	memset (saved_names, 0, MAX_SCOREBOARD * sizeof (saved_names[0]));
+	memset (saved_colors, 0, MAX_SCOREBOARD * sizeof (saved_colors[0]));
+	memset (saved_frags, 0, MAX_SCOREBOARD * sizeof (saved_frags[0]));
+	memset (saved_spawn_parms, 0,
+		MAX_SCOREBOARD * sizeof (saved_spawn_parms[0]));
+
+	for (i = 0; i < *maxclients; i++)
+	{
+		if (!Host_LoadgameReadInheritedInt (start, length, &offset, &active) ||
+			(active != 0 && active != 1))
+			return false;
+		saved_active[i] = active != 0;
+		if (version == SAVEGAME_VERSION_MULTIPLAYER)
+		{
+			if (!Savegame_PreflightReadLine (start, length, &offset, &line) ||
+				!Savegame_PreflightHexName (line))
+				return false;
+			Host_LoadgameDecodeClientName (line.data, line.length,
+				saved_names[i], sizeof (saved_names[i]));
+			saved_name_required[i] = *maxclients > 1 && saved_names[i][0] &&
+				q_strcasecmp (saved_names[i], "unconnected");
+		}
+		if (!Host_LoadgameReadInheritedInt (start, length, &offset, &saved_colors[i]) ||
+			!Host_LoadgameReadInheritedInt (start, length, &offset, &saved_frags[i]))
+			return false;
+		for (j = 0; j < NUM_BASIC_SPAWN_PARMS; j++)
+			if (!Host_LoadgameReadInheritedFloat (start, length, &offset, &saved_spawn_parms[i][j]))
+				return false;
+	}
+
+	if (!Host_LoadgameReadInheritedFloat (start, length, &offset, skill_value) ||
+		!Savegame_PreflightReadLine (start, length, &offset, &line) ||
+		!line.length || line.length >= mapname_size ||
+		!Host_LoadgameReadInheritedFloat (start, length, &offset, time))
+		return false;
+	memcpy (mapname, line.data, line.length);
+	mapname[line.length] = '\0';
+	*body = start + offset;
+	return true;
+}
+
 /*
 ===============
 Host_Savegame_f
@@ -1714,16 +1928,32 @@ Host_Savegame_f
 static void Host_Savegame_f (void)
 {
 	char  name[MAX_OSPATH];
+	char  tempname[MAX_OSPATH];
 	FILE *f;
-	int	  i;
+	int	  i, j, path_length;
+	int	  frags;
 	char  comment[SAVEGAME_COMMENT_LENGTH + 1];
+	qboolean multiplayer_save, switched_qcvm;
+	qboolean write_failed;
+	edict_t *client_snapshot;
 
 	if (cmd_source != src_command)
 		return;
+	if (qcvm && qcvm != &sv.qcvm)
+	{
+		Con_Printf ("Can't save while another QuakeC VM is active.\n");
+		return;
+	}
 
 	if (!sv.active)
 	{
 		Con_Printf ("Not playing a local game.\n");
+		return;
+	}
+	if (sv.loadgame_multiplayer &&
+		(Host_LoadgameHasPendingClients () || Host_LoadgameHasPendingSpawnParms ()))
+	{
+		Con_Printf ("Can't save while inherited multiplayer player states are pending.\n");
 		return;
 	}
 
@@ -1739,10 +1969,24 @@ static void Host_Savegame_f (void)
 		return;
 	}
 
-	if (svs.maxclients != 1)
+	multiplayer_save = svs.maxclients > 1;
+	if (multiplayer_save)
 	{
-		Con_Printf ("Can't save multiplayer games.\n");
-		return;
+		if (!sv_save_multiplayer.value)
+		{
+			Con_Printf ("Can't save multiplayer games unless sv_save_multiplayer is 1.\n");
+			return;
+		}
+		if (!coop.value || deathmatch.value)
+		{
+			Con_Printf ("Multiplayer saves are only supported for coop games.\n");
+			return;
+		}
+		if (svs.maxclients > MAX_SCOREBOARD)
+		{
+			Con_Printf ("Can't save multiplayer games with more than %i players.\n", MAX_SCOREBOARD);
+			return;
+		}
 	}
 
 	if (Cmd_Argc () != 2)
@@ -1757,35 +2001,105 @@ static void Host_Savegame_f (void)
 		return;
 	}
 
-	for (i = 0; i < svs.maxclients; i++)
+	if (multiplayer_save)
 	{
-		if (svs.clients[i].active && (svs.clients[i].edict->v.health <= 0))
+		qboolean active_client = false;
+		for (i = 0; i < svs.maxclients; i++)
 		{
-			Con_Printf ("Can't savegame with a dead player\n");
+			if (!svs.clients[i].active)
+				continue;
+			active_client = true;
+			if (!svs.clients[i].spawned || !svs.clients[i].knowntoqc ||
+				!svs.clients[i].edict || svs.clients[i].edict->free)
+			{
+				Con_Printf ("Can't savegame until every active player finishes signon.\n");
+				return;
+			}
+			for (j = NUM_BASIC_SPAWN_PARMS; j < NUM_TOTAL_SPAWN_PARMS; j++)
+			{
+				if (!isfinite (svs.clients[i].spawn_parms[j]))
+				{
+					Con_Printf ("Can't savegame with a non-finite extended spawn parm for player %i.\n", i + 1);
+					return;
+				}
+			}
+		}
+		if (!active_client)
+		{
+			Con_Printf ("Can't save a multiplayer game without active players.\n");
 			return;
 		}
 	}
+	else
+	{
+		for (i = 0; i < svs.maxclients; i++)
+		{
+			if (svs.clients[i].active && svs.clients[i].edict &&
+				svs.clients[i].edict->v.health <= 0)
+			{
+				Con_Printf ("Can't savegame with a dead player\n");
+				return;
+			}
+		}
+	}
 
-	q_snprintf (name, sizeof (name), "%s/%s", com_gamedir, Cmd_Argv (1));
+	path_length = q_snprintf (name, sizeof (name), "%s/%s", com_gamedir, Cmd_Argv (1));
+	if (path_length < 0 || path_length >= (int)sizeof (name))
+	{
+		Con_Printf ("ERROR: savegame path is too long.\n");
+		return;
+	}
+	if ((size_t)path_length + sizeof (".sav") - 1 >= sizeof (name))
+	{
+		Con_Printf ("ERROR: savegame path is too long.\n");
+		return;
+	}
 	COM_AddExtension (name, ".sav", sizeof (name));
+	path_length = q_snprintf (tempname, sizeof (tempname), "%s.tmp", name);
+	if (path_length < 0 || path_length >= (int)sizeof (tempname))
+	{
+		Con_Printf ("ERROR: savegame path is too long.\n");
+		return;
+	}
 
 	Con_SafePrintf ("Saving game to ");
 	Con_LinkPrintf (name, "%s", name);
 	Con_SafePrintf ("...\n");
-	f = Sys_fopen (name, "w");
+	f = Sys_fopen (tempname, "w");
 	if (!f)
 	{
 		Con_Printf ("ERROR: couldn't open.\n");
 		return;
 	}
 
-	PR_SwitchQCVM (&sv.qcvm);
+	switched_qcvm = qcvm == NULL;
+	if (switched_qcvm)
+		PR_SwitchQCVM (&sv.qcvm);
 
-	fprintf (f, "%i\n", SAVEGAME_VERSION);
+	fprintf (f, "%i\n", multiplayer_save ? SAVEGAME_VERSION_MULTIPLAYER : SAVEGAME_VERSION);
 	Host_SavegameComment (comment);
 	fprintf (f, "%s\n", comment);
-	for (i = 0; i < NUM_BASIC_SPAWN_PARMS; i++)
-		fprintf (f, "%f\n", svs.clients->spawn_parms[i]);
+	/* Save the current parms. SetChangeParms is a level-transition callback. */
+	if (multiplayer_save)
+	{
+		fprintf (f, "%i\n", svs.maxclients);
+		for (i = 0; i < svs.maxclients; i++)
+		{
+			client_t *client = &svs.clients[i];
+			frags = client->edict ? (int)client->edict->v.frags : 0;
+			fprintf (f, "%i\n", client->active ? 1 : 0);
+			Host_SavegameWriteClientName (f, client->name);
+			fprintf (f, "%i\n", client->colors);
+			fprintf (f, "%i\n", frags);
+			for (j = 0; j < NUM_BASIC_SPAWN_PARMS; j++)
+				fprintf (f, "%f\n", client->spawn_parms[j]);
+		}
+	}
+	else
+	{
+		for (i = 0; i < NUM_BASIC_SPAWN_PARMS; i++)
+			fprintf (f, "%f\n", svs.clients->spawn_parms[i]);
+	}
 	fprintf (f, "%d\n", current_skill);
 	fprintf (f, "%s\n", sv.name);
 	fprintf (f, "%f\n", qcvm->time);
@@ -1800,10 +2114,24 @@ static void Host_Savegame_f (void)
 	}
 
 	ED_WriteGlobals (f);
+	client_snapshot = multiplayer_save ? (edict_t *)Mem_Alloc (qcvm->edict_size) : NULL;
 	for (i = 0; i < qcvm->num_edicts; i++)
 	{
-		ED_Write (f, EDICT_NUM (i));
+		if (multiplayer_save && i > 0 && i <= svs.maxclients)
+		{
+			if (!svs.clients[i - 1].active)
+				fprintf (f, "{\n}\n");
+			else
+			{
+				SV_CoopRespawnSaveClientEdict (EDICT_NUM (i), client_snapshot);
+				ED_Write (f, client_snapshot);
+			}
+		}
+		else
+			ED_Write (f, EDICT_NUM (i));
 	}
+	if (client_snapshot)
+		Mem_Free (client_snapshot);
 
 	// add extra info (lightstyles, precaches, etc) in a way that's supposed to be compatible with DP.
 	// sidenote - this provides extended lightstyles and support for late precaches
@@ -1833,10 +2161,26 @@ static void Host_Savegame_f (void)
 	}
 
 	fprintf (f, "sv.serverflags %i\n", svs.serverflags);
-	for (i = NUM_BASIC_SPAWN_PARMS; i < NUM_TOTAL_SPAWN_PARMS; i++)
+	if (multiplayer_save)
 	{
-		if (svs.clients->spawn_parms[i])
-			fprintf (f, "spawnparm %i \"%f\"\n", i + 1, svs.clients->spawn_parms[i]);
+		/* v7's fixed header stores only 16 parms per player. These private
+		 * trailer records preserve donor-supported extended parms per client. */
+		for (i = 0; i < svs.maxclients; i++)
+		{
+			if (!svs.clients[i].active)
+				continue;
+			for (j = NUM_BASIC_SPAWN_PARMS; j < NUM_TOTAL_SPAWN_PARMS; j++)
+				fprintf (f, "client_spawnparm %i %i \"%f\"\n",
+					i + 1, j + 1, svs.clients[i].spawn_parms[j]);
+		}
+	}
+	else
+	{
+		for (i = NUM_BASIC_SPAWN_PARMS; i < NUM_TOTAL_SPAWN_PARMS; i++)
+		{
+			if (svs.clients->spawn_parms[i])
+				fprintf (f, "spawnparm %i \"%f\"\n", i + 1, svs.clients->spawn_parms[i]);
+		}
 	}
 
 	const char *fog_cmd = Fog_GetFogCommand (true);
@@ -1849,7 +2193,17 @@ static void Host_Savegame_f (void)
 
 	fprintf (f, "*/\n");
 
-	fclose (f);
+	write_failed = ferror (f) != 0 || fflush (f) != 0;
+	if (fclose (f) != 0)
+		write_failed = true;
+	if (write_failed || !Host_SavegameReplaceFile (tempname, name))
+	{
+		Sys_remove (tempname);
+		if (switched_qcvm)
+			PR_SwitchQCVM (NULL);
+		Con_Printf ("ERROR: couldn't finalize savegame.\n");
+		return;
+	}
 
 	// Take the occasion to check the free-list
 	// this is a long operation anyway.
@@ -1857,7 +2211,8 @@ static void Host_Savegame_f (void)
 
 	Con_Printf ("done.\n");
 
-	PR_SwitchQCVM (NULL);
+	if (switched_qcvm)
+		PR_SwitchQCVM (NULL);
 	SaveList_Rebuild ();
 
 	if (strlen (Cmd_Argv (1)) < sizeof (sv.lastsave) - 1)
@@ -1943,6 +2298,108 @@ static void Send_Spawn_Info (client_t *c, qboolean loadgame)
 		SV_WriteClientdataToMessage (c, &c->message);
 }
 
+static byte *Host_LoadgameClientEdictSnapshot (int clientnum)
+{
+	if (!sv.loadgame_client_edicts || clientnum < 0 || clientnum >= MAX_SCOREBOARD)
+		return NULL;
+	return sv.loadgame_client_edicts + (size_t)clientnum * sv.loadgame_client_edict_size;
+}
+
+static void Host_LoadgameSaveClientEdict (int clientnum, edict_t *ent)
+{
+	byte *snapshot = Host_LoadgameClientEdictSnapshot (clientnum);
+	size_t payload_offset = offsetof (edict_t, v);
+
+	if (!snapshot || !ent || ent->free || sv.loadgame_client_edict_size < payload_offset)
+		return;
+	memcpy (snapshot + payload_offset, &ent->v,
+		sv.loadgame_client_edict_size - payload_offset);
+	sv.loadgame_client_alpha[clientnum] = ent->alpha;
+}
+
+static edict_t *Host_LoadgameSavedClientEdict (int clientnum)
+{
+	return (edict_t *)Host_LoadgameClientEdictSnapshot (clientnum);
+}
+
+static void Host_LoadgameRestoreClientEdict (int clientnum, edict_t *ent)
+{
+	byte *snapshot = Host_LoadgameClientEdictSnapshot (clientnum);
+	size_t payload_offset = offsetof (edict_t, v);
+
+	if (!snapshot || !ent || sv.loadgame_client_edict_size < payload_offset)
+		return;
+	memcpy (&ent->v, snapshot + payload_offset,
+		sv.loadgame_client_edict_size - payload_offset);
+	ent->alpha = sv.loadgame_client_alpha[clientnum];
+	ent->free = false;
+}
+
+static void Host_LoadgameClearSavedClient (int clientnum)
+{
+	byte *snapshot = Host_LoadgameClientEdictSnapshot (clientnum);
+
+	sv.loadgame_client_saved[clientnum] = false;
+	sv.loadgame_client_name_required[clientnum] = false;
+	sv.loadgame_client_names[clientnum][0] = '\0';
+	memset (sv.loadgame_client_spawn_parms[clientnum], 0,
+		sizeof (sv.loadgame_client_spawn_parms[clientnum]));
+	sv.loadgame_client_colors[clientnum] = 0;
+	sv.loadgame_client_old_frags[clientnum] = 0;
+	sv.loadgame_client_alpha[clientnum] = ENTALPHA_DEFAULT;
+	if (snapshot)
+		memset (snapshot, 0, sv.loadgame_client_edict_size);
+}
+
+static void Host_LoadgameMaybeClearLoadedFlag (void)
+{
+	if (Host_LoadgameHasPendingClients ())
+		return;
+	sv.loadgame = false;
+	sv.paused = false;
+	memset (sv.loadgame_client_names, 0, sizeof (sv.loadgame_client_names));
+	memset (sv.loadgame_client_name_required, 0, sizeof (sv.loadgame_client_name_required));
+	memset (sv.loadgame_client_spawn_parms, 0, sizeof (sv.loadgame_client_spawn_parms));
+	memset (sv.loadgame_client_colors, 0, sizeof (sv.loadgame_client_colors));
+	memset (sv.loadgame_client_old_frags, 0, sizeof (sv.loadgame_client_old_frags));
+}
+
+static int Host_LoadgameFindSavedClientForSpawn (int clientnum, const char *client_name)
+{
+	int i;
+
+	if (client_name && client_name[0] &&
+		q_strcasecmp (client_name, "unconnected"))
+	{
+		if (clientnum >= 0 && clientnum < svs.maxclients && clientnum < MAX_SCOREBOARD &&
+			sv.loadgame_client_saved[clientnum] && sv.loadgame_client_names[clientnum][0] &&
+			!q_strcasecmp (sv.loadgame_client_names[clientnum], client_name))
+			return clientnum;
+		for (i = 0; i < svs.maxclients && i < MAX_SCOREBOARD; i++)
+			if (sv.loadgame_client_saved[i] && sv.loadgame_client_names[i][0] &&
+				!q_strcasecmp (sv.loadgame_client_names[i], client_name))
+				return i;
+	}
+
+	if (clientnum >= 0 && clientnum < svs.maxclients && clientnum < MAX_SCOREBOARD &&
+		sv.loadgame_client_saved[clientnum] && !sv.loadgame_client_name_required[clientnum])
+		return clientnum;
+	return -1;
+}
+
+static void Host_LoadgameGetSpawnParms (float spawn_parms[NUM_TOTAL_SPAWN_PARMS])
+{
+	int i;
+
+	for (i = 0; i < NUM_BASIC_SPAWN_PARMS; i++)
+		spawn_parms[i] = (&pr_global_struct->parm1)[i];
+	for (; i < NUM_TOTAL_SPAWN_PARMS; i++)
+	{
+		ddef_t *g = ED_FindGlobal (va ("parm%i", i + 1));
+		spawn_parms[i] = g ? qcvm->globals[g->ofs] : 0;
+	}
+}
+
 /*
 ===============
 Host_Loadgame_f
@@ -1962,9 +2419,23 @@ static void Host_Loadgame_f (void)
 	edict_t	   *ent;
 	int			entnum;
 	int			version;
+	int			saved_maxclients;
+	int			header_version;
 	long		start_length;
+	size_t		inherited_offset;
 	savegame_dialect_t dialect;
+	savegame_header_line_t inherited_line;
+	savegame_preflight_metadata_t preflight;
+	const char *inherited_body = NULL;
 	float		spawn_parms[NUM_TOTAL_SPAWN_PARMS];
+	qboolean	inherited_load = false;
+	qboolean	saved_active[MAX_SCOREBOARD];
+	qboolean	saved_name_required[MAX_SCOREBOARD];
+	char		saved_names[MAX_SCOREBOARD][MAX_SCOREBOARDNAME];
+	int		saved_colors[MAX_SCOREBOARD];
+	int		saved_frags[MAX_SCOREBOARD];
+	float		saved_spawn_parms[MAX_SCOREBOARD][NUM_TOTAL_SPAWN_PARMS];
+	qboolean	saved_extended_spawnparm_seen[MAX_SCOREBOARD][NUM_TOTAL_SPAWN_PARMS - NUM_BASIC_SPAWN_PARMS];
 	qboolean	was_recording = cls.demorecording;
 	int			old_skill = current_skill;
 	qboolean	fastload = !!strstr (Cmd_Argv (0), "fast") || autofastload.value;
@@ -2013,12 +2484,38 @@ static void Host_Loadgame_f (void)
 	dialect = start_length < 0 ? SAVEGAME_DIALECT_MALFORMED : Savegame_ClassifyHeader (start, (size_t)start_length, &version);
 	if (dialect == SAVEGAME_DIALECT_INHERITED6 || dialect == SAVEGAME_DIALECT_INHERITED7)
 	{
-		Mem_Free (start);
-		start = NULL;
-		Con_Printf ("ERROR: inherited multiplayer save version %d is not supported by this loader.\n", version);
-		return;
+		inherited_load = true;
+		if (start_length < 0 || !Savegame_ValidateInheritedHeader (start, (size_t)start_length,
+			MAX_SCOREBOARD, &preflight))
+		{
+			Mem_Free (start);
+			start = NULL;
+			Con_Printf ("ERROR: inherited multiplayer save header is malformed or truncated.\n");
+			return;
+		}
+		if (preflight.saved_maxclients != svs.maxclients)
+		{
+			Mem_Free (start);
+			start = NULL;
+			Con_Printf ("ERROR: savegame was made with maxplayers %i; current maxplayers is %i. Set maxplayers %i before loading.\n",
+				preflight.saved_maxclients, svs.maxclients, preflight.saved_maxclients);
+			return;
+		}
+		inherited_offset = 0;
+		if (!Savegame_PreflightReadLine (start, (size_t)start_length, &inherited_offset, &inherited_line) ||
+			!Savegame_PreflightInteger (inherited_line, &header_version) || header_version != version ||
+			!Host_LoadgameParseInheritedHeader (start, (size_t)start_length, start + inherited_offset,
+				version, &saved_maxclients, saved_active, saved_name_required, saved_names,
+				saved_colors, saved_frags, saved_spawn_parms, &tfloat, mapname, sizeof (mapname),
+				&time, &inherited_body) || saved_maxclients != preflight.saved_maxclients)
+		{
+			Mem_Free (start);
+			start = NULL;
+			Con_Printf ("ERROR: inherited multiplayer save header is malformed or truncated.\n");
+			return;
+		}
 	}
-	if (dialect != SAVEGAME_DIALECT_LEGACY5 && dialect != SAVEGAME_DIALECT_KEX6)
+	else if (dialect != SAVEGAME_DIALECT_LEGACY5 && dialect != SAVEGAME_DIALECT_KEX6)
 	{
 		Mem_Free (start);
 		start = NULL;
@@ -2039,7 +2536,8 @@ static void Host_Loadgame_f (void)
 
 	cls.demonum = -1; // stop demo loop in case this fails
 
-	data = COM_ParseIntNewline (start, &version);
+	if (!inherited_load)
+		data = COM_ParseIntNewline (start, &version);
 	if (dialect == SAVEGAME_DIALECT_KEX6)
 	{
 		char game[MAX_QPATH], paths[1024];
@@ -2099,26 +2597,41 @@ static void Host_Loadgame_f (void)
 			}
 		}
 	}
-	else if (dialect != SAVEGAME_DIALECT_LEGACY5 || version != SAVEGAME_VERSION)
+	else if (!inherited_load && (dialect != SAVEGAME_DIALECT_LEGACY5 || version != SAVEGAME_VERSION))
 	{
 		Mem_Free (start);
 		start = NULL;
 		Host_Error ("Savegame is version %i, not %i or %i", version, SAVEGAME_VERSION, SAVEGAME_VERSION_KEX);
 		return;
 	}
-	data = COM_ParseStringNewline (data);
-	for (i = 0; i < NUM_BASIC_SPAWN_PARMS; i++)
-		data = COM_ParseFloatNewline (data, &spawn_parms[i]);
-	for (; i < NUM_TOTAL_SPAWN_PARMS; i++)
-		spawn_parms[i] = 0;
+	if (inherited_load)
+	{
+		data = inherited_body;
+		memset (spawn_parms, 0, sizeof (spawn_parms));
+		memset (saved_extended_spawnparm_seen, 0, sizeof (saved_extended_spawnparm_seen));
+	}
+	else
+	{
+		data = COM_ParseStringNewline (data);
+		for (i = 0; i < NUM_BASIC_SPAWN_PARMS; i++)
+			data = COM_ParseFloatNewline (data, &spawn_parms[i]);
+		for (; i < NUM_TOTAL_SPAWN_PARMS; i++)
+			spawn_parms[i] = 0;
+	}
 	// this silliness is so we can load 1.06 save files, which have float skill values
-	data = COM_ParseFloatNewline (data, &tfloat);
+	if (!inherited_load)
+		data = COM_ParseFloatNewline (data, &tfloat);
 	current_skill = (int)(tfloat + 0.1);
 	Cvar_SetValue ("skill", (float)current_skill);
 
-	data = COM_ParseStringNewline (data);
-	q_strlcpy (mapname, com_token, sizeof (mapname));
-	data = COM_ParseFloatNewline (data, &time);
+	if (!inherited_load)
+	{
+		data = COM_ParseStringNewline (data);
+		q_strlcpy (mapname, com_token, sizeof (mapname));
+		data = COM_ParseFloatNewline (data, &time);
+	}
+	if (inherited_load)
+		fastload = false;
 
 	if (fastload && (!sv.active || cls.signon != SIGNONS || svs.maxclients != 1))
 	{
@@ -2163,6 +2676,7 @@ static void Host_Loadgame_f (void)
 	{
 		sv.paused = true; // pause until all clients connect
 		sv.loadgame = true;
+		sv.loadgame_multiplayer = inherited_load;
 	}
 	else
 		S_StopAllSounds (true, true); // do this before parsing the edicts, since that may take a while
@@ -2251,7 +2765,7 @@ static void Host_Loadgame_f (void)
 					fl = atoi (com_token);
 					svs.serverflags = fl;
 				}
-				else if (!strcmp (com_token, "spawnparm"))
+				else if (!inherited_load && !strcmp (com_token, "spawnparm"))
 				{
 					int idx;
 					ext = COM_Parse (ext);
@@ -2259,6 +2773,35 @@ static void Host_Loadgame_f (void)
 					ext = COM_Parse (ext);
 					if (idx >= 1 && idx <= NUM_TOTAL_SPAWN_PARMS)
 						spawn_parms[idx - 1] = atof (com_token);
+				}
+				else if (dialect == SAVEGAME_DIALECT_INHERITED7 &&
+					!strcmp (com_token, "client_spawnparm"))
+				{
+					int slot, parm;
+					float value;
+					qboolean valid = true;
+
+					ext = COM_Parse (ext);
+					valid = Host_LoadgameParseIntegerToken (com_token, &slot);
+					ext = COM_Parse (ext);
+					valid = valid && Host_LoadgameParseIntegerToken (com_token, &parm);
+					ext = COM_Parse (ext);
+					valid = valid && Host_LoadgameParseFloatToken (com_token, &value);
+					ext = COM_Parse (ext);
+					valid = valid && !com_token[0] && slot >= 1 && slot <= saved_maxclients &&
+						parm > NUM_BASIC_SPAWN_PARMS && parm <= NUM_TOTAL_SPAWN_PARMS &&
+						saved_active[slot - 1];
+					if (valid && saved_extended_spawnparm_seen[slot - 1][parm - NUM_BASIC_SPAWN_PARMS - 1])
+						valid = false;
+					if (!valid)
+					{
+						Mem_Free (start);
+						start = NULL;
+						Host_Error ("Invalid inherited client_spawnparm trailer record");
+						return;
+					}
+					saved_spawn_parms[slot - 1][parm - 1] = value;
+					saved_extended_spawnparm_seen[slot - 1][parm - NUM_BASIC_SPAWN_PARMS - 1] = true;
 				}
 				else if (!strcmp (com_token, "fog") && fastload)
 				{
@@ -2334,6 +2877,26 @@ static void Host_Loadgame_f (void)
 		entnum++;
 	}
 
+	if (inherited_load && entnum < qcvm->reserved_edicts)
+	{
+		/* Every reserved player slot must have a serialized block before it can
+		 * be queued for reconnect; otherwise SV_ConnectClient could index past
+		 * the parsed edict range. */
+		for (i = 1; i <= svs.maxclients; i++)
+		{
+			ent = EDICT_NUM_NO_CHECK (i);
+			if (!ent->free)
+				ED_Free (ent);
+		}
+		sv.loadgame = false;
+		sv.loadgame_multiplayer = false;
+		sv.paused = false;
+		Mem_Free (start);
+		start = NULL;
+		Host_Error ("Inherited save is missing the world or reserved player edict blocks");
+		return;
+	}
+
 	qcvm->time = time;
 
 	// we finished the edicts loading, free the excess > entnum
@@ -2343,6 +2906,88 @@ static void Host_Loadgame_f (void)
 	}
 	// adjust to the effective nb of edicts
 	qcvm->num_edicts = entnum;
+
+	if (inherited_load)
+	{
+		int invalid_slot = -1;
+
+		/* The header's active flag promises a saved player. Reject a matching
+		 * block that parsed empty instead of silently discarding that state. */
+		for (i = 0; i < saved_maxclients; i++)
+		{
+			ent = EDICT_NUM_NO_CHECK (i + 1);
+			if (saved_active[i] && (ent->free || !ent->v.netname ||
+				!PR_GetString (ent->v.netname)[0]))
+			{
+				invalid_slot = i;
+				break;
+			}
+		}
+		if (invalid_slot >= 0)
+		{
+			for (i = 1; i <= svs.maxclients; i++)
+			{
+				ent = EDICT_NUM_NO_CHECK (i);
+				if (!ent->free)
+					ED_Free (ent);
+			}
+			memset (sv.loadgame_client_saved, 0, sizeof (sv.loadgame_client_saved));
+			sv.loadgame = false;
+			sv.loadgame_multiplayer = false;
+			sv.paused = false;
+			Mem_Free (start);
+			start = NULL;
+			Host_Error ("Inherited save marks player slot %i active but has no player payload", invalid_slot + 1);
+			return;
+		}
+
+		sv.loadgame_client_edict_size = qcvm->edict_size;
+		sv.loadgame_client_edicts = (byte *)Mem_Alloc (MAX_SCOREBOARD * qcvm->edict_size);
+		memset (sv.loadgame_client_edicts, 0, MAX_SCOREBOARD * qcvm->edict_size);
+
+		/* Merge every restored player's progression before reconnect/sign-on can
+		 * expose any one player's state to the rest of the team. */
+		for (i = 0; i < saved_maxclients; i++)
+		{
+			ent = EDICT_NUM_NO_CHECK (i + 1);
+			if (!saved_active[i])
+				continue;
+			if (!saved_names[i][0] && ent->v.netname)
+				q_strlcpy (saved_names[i], PR_GetString (ent->v.netname), sizeof (saved_names[i]));
+			SV_CoopSharedMergeRestoredClient (ent);
+		}
+
+		for (i = 0; i < saved_maxclients; i++)
+		{
+			ent = EDICT_NUM_NO_CHECK (i + 1);
+			if (saved_active[i])
+			{
+				Host_LoadgameSaveClientEdict (i, ent);
+				sv.loadgame_client_saved[i] = true;
+				sv.loadgame_client_name_required[i] = saved_name_required[i];
+				q_strlcpy (sv.loadgame_client_names[i], saved_names[i], sizeof (sv.loadgame_client_names[i]));
+				memcpy (sv.loadgame_client_spawn_parms[i], saved_spawn_parms[i],
+					sizeof (sv.loadgame_client_spawn_parms[i]));
+				sv.loadgame_client_colors[i] = saved_colors[i];
+				sv.loadgame_client_old_frags[i] = saved_frags[i];
+				svs.clients[i].colors = saved_colors[i];
+				svs.clients[i].old_frags = saved_frags[i];
+				memcpy (svs.clients[i].spawn_parms, saved_spawn_parms[i],
+					sizeof (svs.clients[i].spawn_parms));
+			}
+			else
+			{
+				sv.loadgame_client_saved[i] = false;
+				sv.loadgame_client_name_required[i] = false;
+			}
+
+			/* Reserved client edicts stay reserved, but must not remain linked or
+			 * carry the parsed copy while waiting for their owner to reconnect. */
+			if (!ent->free)
+				ED_Free (ent);
+		}
+		Host_LoadgameMaybeClearLoadedFlag ();
+	}
 
 	// The loading process purposefully bypassed the free-list
 	// usage, so rebuild it now
@@ -2366,8 +3011,9 @@ static void Host_Loadgame_f (void)
 	Mem_Free (start);
 	start = NULL;
 
-	for (i = 0; i < NUM_TOTAL_SPAWN_PARMS; i++)
-		svs.clients->spawn_parms[i] = spawn_parms[i];
+	if (!inherited_load)
+		for (i = 0; i < NUM_TOTAL_SPAWN_PARMS; i++)
+			svs.clients->spawn_parms[i] = spawn_parms[i];
 
 	PR_SwitchQCVM (NULL);
 
@@ -2709,7 +3355,13 @@ Host_Spawn_f
 static void Host_Spawn_f (void)
 {
 	int		 i;
+	int		 clientnum;
+	int		 saved_clientnum;
 	edict_t *ent;
+	edict_t *saved_ent;
+	qboolean inherited_spawn;
+	qboolean saved_dead;
+	qboolean restored_living = false;
 
 	if (cmd_source != src_client)
 	{
@@ -2725,10 +3377,93 @@ static void Host_Spawn_f (void)
 
 	host_client->knowntoqc = true;
 	host_client->lastmovetime = qcvm->time;
-	// run the entrance script
-	if (sv.loadgame)
-	{ // loaded games are fully inited already
-		// if this is the last client to be connected, unpause
+	inherited_spawn = host_client->spawn_parms_pending;
+	if (inherited_spawn)
+	{
+		clientnum = (int)(host_client - svs.clients);
+		saved_clientnum = Host_LoadgameFindSavedClientForSpawn (clientnum, host_client->name);
+		saved_ent = saved_clientnum >= 0 ? Host_LoadgameSavedClientEdict (saved_clientnum) : NULL;
+		saved_dead = saved_ent && (saved_ent->v.health <= 0 || saved_ent->v.deadflag != DEAD_NO);
+		host_client->spawn_parms_pending = false;
+
+		if (saved_clientnum >= 0)
+		{
+			memcpy (host_client->spawn_parms, sv.loadgame_client_spawn_parms[saved_clientnum],
+				sizeof (host_client->spawn_parms));
+			host_client->colors = sv.loadgame_client_colors[saved_clientnum];
+			host_client->old_frags = sv.loadgame_client_old_frags[saved_clientnum];
+		}
+
+		ent = host_client->edict;
+		if (saved_clientnum >= 0 && !saved_dead)
+		{
+			/* Restore only the parsed QuakeC payload and saved alpha. Engine
+			 * edict metadata, area links, and retain counts remain map-owned. */
+			Host_LoadgameRestoreClientEdict (saved_clientnum, ent);
+			ent->v.netname = PR_SetEngineString (host_client->name);
+			ent->v.colormap = NUM_FOR_EDICT (ent);
+			ent->v.team = (host_client->colors & 15) + 1;
+			ent->v.frags = (float)host_client->old_frags;
+			SV_CoopSharedApplyToJoiningClient (ent);
+			SV_LinkEdict (ent, false);
+			Host_LoadgameClearSavedClient (saved_clientnum);
+			Host_LoadgameMaybeClearLoadedFlag ();
+			restored_living = true;
+		}
+		else
+		{
+			/* Dead saved clients pass through PutClientInServer before inventory
+			 * restoration. New players get SetNewParms once after identity matching. */
+			ent->free = false;
+			memset (&ent->v, 0, qcvm->progs->entityfields * 4);
+			ent->v.colormap = NUM_FOR_EDICT (ent);
+			ent->v.team = (host_client->colors & 15) + 1;
+			ent->v.netname = PR_SetEngineString (host_client->name);
+
+			if (saved_clientnum < 0)
+			{
+				pr_global_struct->self = EDICT_TO_PROG (ent);
+				PR_ExecuteProgram (pr_global_struct->SetNewParms);
+				Host_LoadgameGetSpawnParms (host_client->spawn_parms);
+			}
+
+			// copy spawn parms out of the client_t
+			for (i = 0; i < NUM_BASIC_SPAWN_PARMS; i++)
+				(&pr_global_struct->parm1)[i] = host_client->spawn_parms[i];
+			if (pr_checkextension.value)
+			{ // extended spawn parms
+				for (; i < NUM_TOTAL_SPAWN_PARMS; i++)
+				{
+					ddef_t *g = ED_FindGlobal (va ("parm%i", i + 1));
+					if (g)
+						qcvm->globals[g->ofs] = host_client->spawn_parms[i];
+				}
+			}
+			// call the spawn function
+			pr_global_struct->time = qcvm->time;
+			pr_global_struct->self = EDICT_TO_PROG (sv_player);
+			PR_ExecuteProgram (pr_global_struct->ClientConnect);
+
+			if ((Sys_DoubleTime () - NET_QSocketGetTime (host_client->netconnection)) <= qcvm->time)
+				Sys_Printf ("%s entered the game\n", host_client->name);
+
+			PR_ExecuteProgram (pr_global_struct->PutClientInServer);
+			if (saved_clientnum >= 0)
+			{
+				SV_CoopRespawnRestoreSavedInventory (ent, saved_ent);
+				ent->alpha = sv.loadgame_client_alpha[saved_clientnum];
+				ent->v.frags = (float)host_client->old_frags;
+				Host_LoadgameClearSavedClient (saved_clientnum);
+				Host_LoadgameMaybeClearLoadedFlag ();
+			}
+			else
+				SV_CoopSharedApplyToJoiningClient (ent);
+		}
+		sv.paused = false; // the first completed spawn resumes the loaded world
+	}
+	else if (sv.loadgame)
+	{
+		// Preserve the stock v5/KEX loaded-edict behavior.
 		sv.paused = false;
 	}
 	else
@@ -2736,6 +3471,7 @@ static void Host_Spawn_f (void)
 		// set up the edict
 		ent = host_client->edict;
 
+		ent->free = false;
 		memset (&ent->v, 0, qcvm->progs->entityfields * 4);
 		ent->v.colormap = NUM_FOR_EDICT (ent);
 		ent->v.team = (host_client->colors & 15) + 1;
@@ -2763,11 +3499,11 @@ static void Host_Spawn_f (void)
 
 		PR_ExecuteProgram (pr_global_struct->PutClientInServer);
 		/* A new co-op player inherits accepted team progression after QuakeC
-		 * initializes its own inventory.  Saved clients take a separate path. */
+		 * initializes its own inventory. Saved clients use the inherited path. */
 		SV_CoopSharedApplyToJoiningClient (ent);
 	}
 
-	Send_Spawn_Info (host_client, sv.loadgame);
+	Send_Spawn_Info (host_client, inherited_spawn ? restored_living : sv.loadgame);
 
 	MSG_WriteByte (&host_client->message, svc_signonnum);
 	MSG_WriteByte (&host_client->message, 3);

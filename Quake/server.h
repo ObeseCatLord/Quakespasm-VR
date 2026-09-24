@@ -56,13 +56,26 @@ typedef enum
 	ss_active
 } server_state_t;
 
+#define NUM_BASIC_SPAWN_PARMS 16
+#define NUM_TOTAL_SPAWN_PARMS 64
+
 typedef struct
 {
 	qboolean active; // false if only a net client
 
 	qboolean paused;
 	qboolean loadgame;	 // handle connections specially
+	qboolean loadgame_multiplayer; // inherited v6/v7 per-client restore state
 	qboolean nomonsters; // server started with 'nomonsters' cvar active
+	qboolean loadgame_client_saved[MAX_SCOREBOARD];
+	qboolean loadgame_client_name_required[MAX_SCOREBOARD];
+	char	 loadgame_client_names[MAX_SCOREBOARD][MAX_SCOREBOARDNAME];
+	float	 loadgame_client_spawn_parms[MAX_SCOREBOARD][NUM_TOTAL_SPAWN_PARMS];
+	int		 loadgame_client_colors[MAX_SCOREBOARD];
+	int		 loadgame_client_old_frags[MAX_SCOREBOARD];
+	byte	 loadgame_client_alpha[MAX_SCOREBOARD];
+	byte	 *loadgame_client_edicts; // QC payload snapshots; excludes live edict metadata
+	size_t	 loadgame_client_edict_size;
 
 	char lastsave[128];
 
@@ -138,8 +151,6 @@ typedef struct
 } server_t;
 
 #define NUM_PING_TIMES		  16
-#define NUM_BASIC_SPAWN_PARMS 16
-#define NUM_TOTAL_SPAWN_PARMS 64
 #define SV_PRIVATE_CMD_QUEUE_SIZE 32
 #define SV_PRIVATE_CMD_QUEUE_MAX_MSEC 250 // bound pending command history to a quarter second
 
@@ -147,6 +158,7 @@ typedef struct client_s
 {
 	qboolean active;   // false = client is free
 	qboolean spawned;  // false = don't send datagrams (set when client acked the first entities)
+	qboolean spawn_parms_pending; // SetNewParms waits until inherited-load identity is known
 	qboolean dropasap; // has been told to go to another level
 	enum
 	{
@@ -395,6 +407,7 @@ extern cvar_t teamplay;
 extern cvar_t skill;
 extern cvar_t deathmatch;
 extern cvar_t coop;
+extern cvar_t sv_save_multiplayer;
 extern cvar_t sv_coop_classic;
 extern cvar_t sv_coop_noplayerclip;
 extern cvar_t sv_coop_notelefrag;

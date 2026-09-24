@@ -85,6 +85,7 @@ cvar_t noexit = {"noexit", "0", CVAR_NOTIFY | CVAR_SERVERINFO};
 cvar_t skill = {"skill", "1", CVAR_NONE};			// 0 - 3
 cvar_t deathmatch = {"deathmatch", "0", CVAR_NONE}; // 0, 1, or 2
 cvar_t coop = {"coop", "0", CVAR_NONE};				// 0 or 1
+cvar_t sv_save_multiplayer = {"sv_save_multiplayer", "1", CVAR_NONE};
 cvar_t sv_coop_classic = {"sv_coop_classic", "0", CVAR_ARCHIVE | CVAR_NOTIFY | CVAR_SERVERINFO};
 cvar_t sv_coop_noplayerclip = {"sv_coop_noplayerclip", "-1", CVAR_ARCHIVE | CVAR_NOTIFY | CVAR_SERVERINFO};
 cvar_t sv_coop_notelefrag = {"sv_coop_notelefrag", "-1", CVAR_ARCHIVE | CVAR_NOTIFY | CVAR_SERVERINFO};
@@ -410,6 +411,7 @@ void Host_InitLocal (void)
 	Cvar_RegisterVariable (&developer);
 	Cvar_RegisterVariable (&map_checks);
 	Cvar_RegisterVariable (&coop);
+	Cvar_RegisterVariable (&sv_save_multiplayer);
 	Cvar_RegisterVariable (&sv_coop_classic);
 	Cvar_SetCallback (&sv_coop_classic, Host_Callback_Notify);
 	Cvar_RegisterVariable (&sv_coop_noplayerclip);
@@ -730,6 +732,8 @@ void Host_ClearMemory (void)
 	if (!isDedicated)
 		S_ClearAll ();
 	cls.signon = 0;
+	if (sv.loadgame_client_edicts)
+		Mem_Free (sv.loadgame_client_edicts);
 	PR_ClearProgs (&sv.qcvm);
 	Mem_Free (sv.static_entities); // spike -- this is dynamic too, now
 	for (int i = 1; i < MAX_PARTICLETYPES; ++i)

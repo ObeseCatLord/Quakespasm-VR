@@ -1388,6 +1388,17 @@ void Con_LinkPrintf (const char *addr, const char *fmt, ...)
 	char	   msg[MAXPRINTMSG];
 	char	  *text;
 
+	va_start (argptr, fmt);
+	q_vsnprintf (msg, sizeof (msg), fmt, argptr);
+	va_end (argptr);
+
+	// Dedicated servers have no screen console to attach clickable links to.
+	if (!con_text || con_totallines <= 0 || con_linewidth <= 0)
+	{
+		Con_SafePrintf ("%s", msg);
+		return;
+	}
+
 	len = strlen (addr);
 	link = (conlink_t *)Mem_Alloc (sizeof (conlink_t) + len + 1);
 
@@ -1398,10 +1409,6 @@ void Con_LinkPrintf (const char *addr, const char *fmt, ...)
 	link->begin.line = con_current;
 	link->begin.col = con_x;
 	link->end = link->begin;
-
-	va_start (argptr, fmt);
-	q_vsnprintf (msg, sizeof (msg), fmt, argptr);
-	va_end (argptr);
 
 	Con_SafePrintf ("\x02%s", msg);
 

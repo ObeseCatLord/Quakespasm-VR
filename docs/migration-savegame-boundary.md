@@ -67,3 +67,30 @@ pass. A disposable three-slot dedicated-server GDB probe freed player slot 2,
 rebuilt the free list, and observed `reserved=4`, `slot_free=1`,
 `queued_slot2=0`. The save loader's inert-slot normalization and the larger
 round trip remain open.
+
+## Manual co-op save/load checkpoint
+
+The existing vkQuake loader now accepts inherited multiplayer v6/v7 after a
+bounded header preflight, while retaining the donor v5 and KEX v6 paths. Player
+QuakeC payload snapshots have server lifetime; reconnect restores only the
+payload and serialized alpha into live reserved edicts. Manual co-op saves use
+inherited v7 headers, checked temporary-file publication, and a trailer for
+vkQuake's extended per-client spawn parameters. An active player must finish
+signon before publication. Automatic save rotation is still pending.
+
+An Astra code review found four P1 cases: late joiners retaining a free edict,
+v6 reverse-order and v7 single-player rename matching, incorrect contiguous
+reads of spawn parameters 17–64, and deferred newcomer defaults stranded by
+`restart noload`. These were corrected in the existing spawn/load owner. The
+review found no reason to replace the donor loader or add another state machine.
+
+A disposable Linux dedicated server and Vulkan desktop client completed a
+three-slot co-op connection, manual v7 save, load, named reconnect, and second
+save. The second file retained the first player's header parameters. The first
+attempt exposed a dedicated-server divide-by-zero in `Con_LinkPrintf`, which
+assumed an initialized graphical console; link printing now falls back to
+ordinary text there. Both Linux curl and no-curl builds pass, as do 51 fixed
+header fixture cases. This proves a one-player round trip, not the full
+two-player/dead-player/late-join matrix described above. A malformed inherited
+save previously reached a rejection followed by an allocator abort during
+graphical shutdown; its root cause and recovery path remain unqualified.

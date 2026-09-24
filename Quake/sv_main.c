@@ -2787,6 +2787,7 @@ void SV_ConnectClient (int clientnum)
 	struct qsocket_s *netconnection;
 	int				  i;
 	float			  spawn_parms[NUM_TOTAL_SPAWN_PARMS];
+	qboolean		  defer_spawn_parms;
 
 	client = svs.clients + clientnum;
 
@@ -2802,6 +2803,7 @@ void SV_ConnectClient (int clientnum)
 	// set up the client_t
 	netconnection = client->netconnection;
 	net_activeconnections++;
+	defer_spawn_parms = sv.loadgame && sv.loadgame_multiplayer;
 
 	if (sv.loadgame)
 		memcpy (spawn_parms, client->spawn_parms, sizeof (spawn_parms));
@@ -2813,6 +2815,7 @@ void SV_ConnectClient (int clientnum)
 	strcpy (client->name, "unconnected");
 	client->active = true;
 	client->spawned = false;
+	client->spawn_parms_pending = defer_spawn_parms;
 	client->edict = ent;
 	client->message.data = client->msgbuf;
 	client->message.maxsize = sizeof (client->msgbuf);
@@ -2832,7 +2835,7 @@ void SV_ConnectClient (int clientnum)
 
 	if (sv.loadgame)
 		memcpy (client->spawn_parms, spawn_parms, sizeof (spawn_parms));
-	else
+	else if (!defer_spawn_parms)
 	{
 		// call the progs to get default spawn parms for the new client
 		PR_ExecuteProgram (pr_global_struct->SetNewParms);
