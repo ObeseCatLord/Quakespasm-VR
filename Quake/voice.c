@@ -52,6 +52,7 @@ typedef struct voice_speaker_s
 	voice_atomic_t pcm_read;
 	voice_atomic_t pcm_write;
 	voice_atomic_t muted_audio;
+	voice_atomic_t talking;
 	float volume;
 	qboolean muted;
 	double talking_until;
@@ -66,6 +67,7 @@ typedef enum voice_pending_action_e
 } voice_pending_action_t;
 
 static cvar_t voice_receive = {"voice_receive", "1", CVAR_ARCHIVE};
+static cvar_t voice_hud = {"voice_hud", "1", CVAR_ARCHIVE};
 static cvar_t voice_input_gain = {"voice_input_gain", "1", CVAR_ARCHIVE};
 static cvar_t voice_vad_sensitivity = {"voice_vad_sensitivity", "55", CVAR_ARCHIVE};
 static cvar_t voice_volume = {"voice_volume", "1", CVAR_ARCHIVE};
@@ -82,6 +84,11 @@ static int16_t voice_raw_capture[16384];
 #endif
 static voice_atomic_t voice_audio_enabled;
 static voice_atomic_t voice_receive_enabled;
+static voice_atomic_t voice_input_level;
+static voice_atomic_t voice_transmitting;
+static voice_atomic_t voice_transmit_enabled;
+static voice_atomic_t voice_capture_ready;
+static voice_atomic_t voice_hud_visible;
 static OpusEncoder *voice_encoder;
 static SDL_AudioDeviceID voice_capture_device;
 #ifdef USE_SDL3
@@ -154,6 +161,13 @@ static qboolean Voice_MultiplayerSessionActive(void)
 		CL_VoiceTransportAvailable();
 }
 
+static qboolean Voice_HUDShouldDisplay(void)
+{
+	return voice_initialized && voice_hud.value != 0 &&
+		!cls.demoplayback && cls.signon == SIGNONS &&
+		Voice_MultiplayerSessionActive();
+}
+
 static void Voice_ClearNetworkQueue(void)
 {
 	cl.voice_outgoing_head = 0;
@@ -194,6 +208,8 @@ static void Voice_StopTransmit(void)
 
 	Voice_ClearNetworkQueue();
 	voice_sending = false;
+	Voice_AtomicSet(&voice_transmitting, 0);
+	Voice_AtomicSet(&voice_input_level, 0);
 	Voice_ClearPTT();
 	voice_preroll_write = voice_preroll_count = 0;
 	Voice_VADReset(&voice_vad);
@@ -251,6 +267,7 @@ static qboolean Voice_OpenCapture(SDL_AudioDeviceID device)
 		voice_capture_device = 0;
 		return false;
 	}
+	Voice_AtomicSet(&voice_capture_ready, 1);
 	return true;
 }
 
@@ -260,6 +277,8 @@ static void Voice_CloseCapture(void)
 		SDL_DestroyAudioStream(voice_capture_stream);
 	voice_capture_stream = NULL;
 	voice_capture_device = 0;
+	Voice_AtomicSet(&voice_capture_ready, 0);
+	Voice_AtomicSet(&voice_input_level, 0);
 }
 
 static int Voice_CaptureAvailable(void)
@@ -328,6 +347,7 @@ static qboolean Voice_OpenCapture(int device_index)
 		return false;
 	}
 	SDL_PauseAudioDevice(voice_capture_device, 0);
+	Voice_AtomicSet(&voice_capture_ready, 1);
 	return true;
 }
 
@@ -339,9 +359,11 @@ static void Voice_CloseCapture(void)
 		SDL_CloseAudioDevice(voice_capture_device);
 	}
 	voice_capture_device = 0;
+	Voice_AtomicSet(&voice_capture_ready, 0);
 	if (voice_capture_convert)
 		SDL_FreeAudioStream(voice_capture_convert);
 	voice_capture_convert = NULL;
+	Voice_AtomicSet(&voice_input_level, 0);
 }
 
 static int Voice_CaptureAvailable(void)
@@ -586,6 +608,8 @@ static void Voice_Mute_f(void)
 	voice_speakers[slot].muted = !voice_speakers[slot].muted;
 	Voice_AtomicSet(&voice_speakers[slot].muted_audio,
 		voice_speakers[slot].muted ? 1 : 0);
+	Voice_AtomicSet(&voice_speakers[slot].talking,
+		!voice_speakers[slot].muted && realtime < voice_speakers[slot].talking_until);
 	Con_Printf("Voice: %s %s.\n", cl.scores[slot].name,
 		voice_speakers[slot].muted ? "muted" : "unmuted");
 }
@@ -692,6 +716,9 @@ static void Voice_EncodeCaptureFrame(int16_t *samples)
 	Voice_VADSetSensitivity(&voice_vad,
 		(int)CLAMP(0.0f, voice_vad_sensitivity.value, 100.0f));
 	Voice_VADProcessFrame(&voice_vad, samples, VOICE_FRAME_SAMPLES, &result);
+	/* Voice_Frame runs this capture/VAD work on the game/audio owner. The HUD
+	 * only reads this atomic snapshot, including during OpenXR stereo drawing. */
+	Voice_AtomicSet(&voice_input_level, CLAMP(0, result.meter, 32768));
 	gate = Voice_MultiplayerSessionActive() && Voice_Profile()->transmit &&
 		voice_capture_device && key_dest == key_game &&
 		(Voice_Profile()->mode ? voice_ptt : result.active);
@@ -710,13 +737,18 @@ static void Voice_EncodeCaptureFrame(int16_t *samples)
 			Voice_QueuePacket(voice_preroll[index], i == count ? VOICE_FLAG_START : 0);
 		}
 		voice_sending = Voice_QueuePacket(samples, count ? 0 : VOICE_FLAG_START);
+		Voice_AtomicSet(&voice_transmitting, voice_sending ? 1 : 0);
 	}
 	else if (gate)
+	{
 		voice_sending = Voice_QueuePacket(samples, 0);
+		Voice_AtomicSet(&voice_transmitting, voice_sending ? 1 : 0);
+	}
 	else if (voice_sending)
 	{
 		Voice_QueuePacket(NULL, VOICE_FLAG_END);
 		voice_sending = false;
+		Voice_AtomicSet(&voice_transmitting, 0);
 	}
 
 	memcpy(voice_preroll[voice_preroll_write], samples, sizeof(voice_preroll[0]));
@@ -736,11 +768,13 @@ static void Voice_ProcessCapture(void)
 	if (available < 0)
 	{
 		Voice_CaptureClear();
+		Voice_AtomicSet(&voice_input_level, 0);
 		return;
 	}
 	if (available > backlog_limit)
 	{
 		Voice_CaptureClear();
+		Voice_AtomicSet(&voice_input_level, 0);
 		return;
 	}
 	while (available >= VOICE_CAPTURE_FRAME_BYTES &&
@@ -810,6 +844,7 @@ void Voice_Init(void)
 	voice_vad_config_t config;
 	int error, i;
 	Cvar_RegisterVariable(&voice_receive);
+	Cvar_RegisterVariable(&voice_hud);
 	Cvar_RegisterVariable(&voice_input_gain);
 	Cvar_RegisterVariable(&voice_vad_sensitivity);
 	Cvar_RegisterVariable(&voice_volume);
@@ -854,9 +889,15 @@ void Voice_Init(void)
 		voice_speakers[i].volume = 1.0f;
 		voice_speakers[i].muted = false;
 		Voice_AtomicSet(&voice_speakers[i].muted_audio, 0);
+		Voice_AtomicSet(&voice_speakers[i].talking, 0);
 		Voice_RefreshSpeakerRing(&voice_speakers[i]);
 	}
 	voice_initialized = true;
+	Voice_AtomicSet(&voice_input_level, 0);
+	Voice_AtomicSet(&voice_transmitting, 0);
+	Voice_AtomicSet(&voice_transmit_enabled, Voice_Profile()->transmit ? 1 : 0);
+	Voice_AtomicSet(&voice_capture_ready, voice_capture_device ? 1 : 0);
+	Voice_AtomicSet(&voice_hud_visible, Voice_HUDShouldDisplay() ? 1 : 0);
 	Voice_AtomicSet(&voice_receive_enabled, voice_receive.value != 0);
 	CL_SetVoiceReceiveCallback(Voice_ReceiveCallback, NULL);
 	if (shm)
@@ -882,6 +923,9 @@ void Voice_Shutdown(void)
 		SNDDMA_LockBuffer();
 	Voice_AtomicSet(&voice_audio_enabled, 0);
 	voice_initialized = false;
+	Voice_AtomicSet(&voice_hud_visible, 0);
+	Voice_AtomicSet(&voice_transmit_enabled, 0);
+	Voice_AtomicSet(&voice_capture_ready, 0);
 	if (shm)
 		SNDDMA_Submit();
 	voice_capture_wanted = false;
@@ -916,6 +960,7 @@ void Voice_ResetConnection(void)
 		voice_speakers[i].have_generation = false;
 		voice_speakers[i].generation = 0;
 		voice_speakers[i].talking_until = 0;
+		Voice_AtomicSet(&voice_speakers[i].talking, 0);
 		voice_speakers[i].muted = false;
 		Voice_AtomicSet(&voice_speakers[i].muted_audio, 0);
 		voice_speakers[i].volume = 1.0f;
@@ -936,6 +981,8 @@ void Voice_Frame(void)
 	Voice_AtomicSet(&voice_receive_enabled, voice_receive.value != 0);
 	Voice_RefreshCapture(false);
 	Voice_ProcessCapture();
+	Voice_AtomicSet(&voice_transmit_enabled, Voice_Profile()->transmit ? 1 : 0);
+	Voice_AtomicSet(&voice_hud_visible, Voice_HUDShouldDisplay() ? 1 : 0);
 	if (!voice_receive.value)
 	{
 		if (voice_receive_was_enabled)
@@ -945,6 +992,8 @@ void Voice_Frame(void)
 			for (slot = 0; slot < MAX_SCOREBOARD; ++slot)
 			{
 				Voice_JitterReset(&voice_speakers[slot].jitter);
+				voice_speakers[slot].talking_until = 0;
+				Voice_AtomicSet(&voice_speakers[slot].talking, 0);
 				voice_speakers[slot].have_generation = false;
 				Voice_RefreshSpeakerRing(&voice_speakers[slot]);
 			}
@@ -960,12 +1009,15 @@ void Voice_Frame(void)
 		voice_speaker_t *speaker = &voice_speakers[slot];
 		voice_jitter_frame_t frame;
 		int frames;
+		if (realtime >= speaker->talking_until)
+			Voice_AtomicSet(&speaker->talking, 0);
 		while (Voice_JitterNextFrame(&speaker->jitter, now, &frame) == VOICE_JITTER_OK &&
 			frame.action != VOICE_JITTER_WAIT)
 		{
 			if (frame.flags & VOICE_FLAG_END)
 			{
 				speaker->talking_until = 0;
+				Voice_AtomicSet(&speaker->talking, 0);
 				Voice_JitterEndTalkspurt(&speaker->jitter);
 				continue;
 			}
@@ -977,6 +1029,7 @@ void Voice_Frame(void)
 			{
 				Voice_WriteSpeakerPCM(speaker, voice_decode_frame, frames, slot);
 				speaker->talking_until = realtime + 0.15;
+				Voice_AtomicSet(&speaker->talking, speaker->muted ? 0 : 1);
 			}
 		}
 	}
@@ -1064,6 +1117,7 @@ void Voice_ReceivePacket(int source_slot, uint32_t generation,
 		speaker->generation = generation;
 		speaker->have_generation = true;
 		speaker->talking_until = 0;
+		Voice_AtomicSet(&speaker->talking, 0);
 		if (shm)
 			SNDDMA_Submit();
 	}
@@ -1079,7 +1133,31 @@ void Voice_ReceivePacket(int source_slot, uint32_t generation,
 
 qboolean Voice_SpeakerTalking(int source_slot)
 {
-	return voice_initialized && voice_receive.value && source_slot >= 0 &&
-		source_slot < MAX_SCOREBOARD && !voice_speakers[source_slot].muted &&
-		realtime < voice_speakers[source_slot].talking_until;
+	return source_slot >= 0 && source_slot < MAX_SCOREBOARD &&
+		Voice_AtomicGet(&voice_speakers[source_slot].talking) != 0;
+}
+
+qboolean Voice_TransmitEnabled(void)
+{
+	return Voice_AtomicGet(&voice_transmit_enabled) != 0;
+}
+
+qboolean Voice_CaptureReady(void)
+{
+	return Voice_AtomicGet(&voice_capture_ready) != 0;
+}
+
+qboolean Voice_IsTransmitting(void)
+{
+	return Voice_AtomicGet(&voice_transmitting) != 0;
+}
+
+float Voice_InputLevel(void)
+{
+	return Voice_AtomicGet(&voice_input_level) / 32768.0f;
+}
+
+qboolean Voice_HUDEnabled(void)
+{
+	return Voice_AtomicGet(&voice_hud_visible) != 0;
 }

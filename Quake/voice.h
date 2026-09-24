@@ -18,6 +18,11 @@ void Voice_ReceivePacket(int source_slot, uint32_t generation,
 qboolean Voice_ConfirmKeyEvent(int key, qboolean down);
 void Voice_PTTKeyEvent(int key, qboolean down);
 qboolean Voice_SpeakerTalking(int source_slot);
+qboolean Voice_TransmitEnabled(void);
+qboolean Voice_CaptureReady(void);
+qboolean Voice_IsTransmitting(void);
+float Voice_InputLevel(void);
+qboolean Voice_HUDEnabled(void);
 
 #else
 
@@ -31,6 +36,11 @@ qboolean Voice_SpeakerTalking(int source_slot);
 #define Voice_ConfirmKeyEvent(key, down) 0
 #define Voice_PTTKeyEvent(key, down) ((void)0)
 #define Voice_SpeakerTalking(source_slot) 0
+#define Voice_TransmitEnabled() 0
+#define Voice_CaptureReady() 0
+#define Voice_IsTransmitting() 0
+#define Voice_InputLevel() 0.0f
+#define Voice_HUDEnabled() 0
 
 #endif /* USE_VOICECHAT */
 

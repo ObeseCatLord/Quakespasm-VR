@@ -22,6 +22,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 // sbar.c -- status bar code
 
 #include "quakedef.h"
+#include "voice.h"
 
 #define STAT_MINUS 10 // num frame for '-' stats digit
 
@@ -1291,6 +1292,49 @@ static void Sbar_DrawModern (cb_context_t *cbx)
 Sbar_Draw
 ===============
 */
+/* Voice_Frame publishes these values on the game/audio owner; this function
+ * only reads snapshots, including when the OpenXR HUD is drawn for stereo. */
+static void Sbar_DrawVoiceStatus (cb_context_t *cbx)
+{
+	char text[64];
+	const char *mic_state;
+	canvastype saved_canvas;
+	int i, y = 4;
+	int x = q_max (8, glwidth - 184);
+	int meter;
+	int meter_x = x + 88;
+
+	if (!Voice_HUDEnabled ())
+		return;
+
+	saved_canvas = cbx->current_canvas;
+	GL_SetCanvas (cbx, CANVAS_DEFAULT);
+	mic_state = !Voice_TransmitEnabled () ? "OFF" :
+		(Voice_IsTransmitting () ? "LIVE" :
+		(Voice_CaptureReady () ? "READY" : "NO DEV"));
+	q_snprintf (text, sizeof (text), "MIC %s", mic_state);
+	Draw_String (cbx, x, y, text);
+	Draw_Fill (cbx, meter_x, y + 1, 80, 6, 0, 0.65f);
+	meter = (int)(CLAMP (0.0f, Voice_InputLevel (), 1.0f) * 80.0f);
+	if (meter > 0)
+		Draw_Fill (cbx, meter_x, y + 1, meter, 6,
+			meter > 68 ? 251 : 112, 0.9f);
+	y += 12;
+	for (i = 0; i < cl.maxclients && i < MAX_SCOREBOARD; ++i)
+	{
+		if (!Voice_SpeakerTalking (i))
+			continue;
+		q_snprintf (text, sizeof (text), "> %s",
+			cl.scores[i].name[0] ? cl.scores[i].name : "player");
+		Draw_String (cbx, x, y, text);
+		y += 10;
+	}
+	if (saved_canvas == CANVAS_INVALID)
+		cbx->current_canvas = saved_canvas;
+	else
+		GL_SetCanvas (cbx, saved_canvas);
+}
+
 void Sbar_Draw (cb_context_t *cbx)
 {
 	float w; // johnfitz
@@ -1298,14 +1342,16 @@ void Sbar_Draw (cb_context_t *cbx)
 	if (scr_con_current == vid.height)
 		return; // console is full screen
 
+	Sbar_DrawVoiceStatus (cbx);
+
+	if (cl.intermission)
+		return; // johnfitz -- never draw sbar during intermission
+
 	if ((scr_style.value < 1.0f) && cl.qcvm.extfuncs.CSQC_DrawHud && !qcvm)
 	{
 		Sbar_DrawCSCQ (cbx);
 		return;
 	}
-
-	if (cl.intermission)
-		return; // johnfitz -- never draw sbar during intermission
 
 	GL_SetCanvas (cbx, CANVAS_DEFAULT); // johnfitz
 
