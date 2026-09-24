@@ -4,7 +4,7 @@ This is the working feature checklist for moving the inherited QuakeSpasm OpenVR
 
 The [11 optional additions](migration-useful-additions.md) are existing Ironwail/QSS-M features absent from both pinned product branches and vkQuake within the audited scopes. They are recommendations to evaluate, not silent additions to the required release. Features already supplied by vkQuake are explicitly retained rather than ported again.
 
-This records the current scope-inventory checkpoint, **not migration or runtime parity certification**. Source anchors demonstrate relevant implementation; they do not prove behavioral equivalence. The source OpenXR/Vulkan experiments are partly integrated or unqualified, and the current 2.0 backend remains dormant. Hardware and final end-to-end tests are pending. Later discovered behavior gets an ID before its source is discarded.
+This records the scope inventory, **not migration or runtime parity certification**. Source anchors demonstrate relevant implementation; they do not prove behavioral equivalence. Branch 2.0 now has an attached OpenXR/Vulkan stereo path, but hardware and final end-to-end qualification remain pending. Later discovered behavior gets an ID before its source is discarded.
 
 ## Sources and coverage
 
@@ -236,9 +236,11 @@ vkQuake's existing network loops. Commit `a173d771` connects opt-in microphone
 consent, SDL2/SDL3 capture, VAD/PTT, Opus coding, jitter playout and stereo
 positional/radio mixing to the existing sound owner. Commit `4f75fe87` bounds
 SDL3 playback refills across DMA-ring wraps. Commit `63c8a77d` adds the shared
-desktop/OpenXR voice HUD, meter and active-speaker indicators. Steam Audio HRTF,
-room acoustics and wet-only local reflections remain open. None of these
-changes has live audio qualification.
+desktop/OpenXR voice HUD, meter and active-speaker indicators. Later commits
+`958ababd` through `2d936f3f` integrate optional Steam Audio HRTF, room
+acoustics, wet-only local reflections, bounded occlusion, channel admission and
+underwater filtering through the existing mixer. SDL2/SDL3 Linux builds with
+and without the SDK link; none of these changes has live audio qualification.
 
 ### OpenXR and stereo goals
 
