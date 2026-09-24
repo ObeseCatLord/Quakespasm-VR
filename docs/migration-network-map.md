@@ -121,3 +121,37 @@ The smallest later software proof covers installed/missing gamedirs, malformed
 and oversized strings, cancellation/superseding connects, failed connect,
 stalled signon, repeated mismatch and packet-tail abandonment. The user's live
 mixed-peer testing remains separate from implementation work.
+
+### Failed-connect frame-time boundary
+
+The current `CL_AutoReconnectFrame` invokes `NET_Connect` once after a game
+switch. `NET_Connect` waits for discovery and `_Datagram_Connect` then polls up
+to three 2.5-second response windows on the calling thread. Thus a missing or
+unreachable server can freeze a VR frame even though repeated frame-driven
+retries were intentionally excluded. A timer around that call would not fix
+the stall; moving it to a worker would race the existing global network state.
+
+The minimal adapter is a cancellable, main-thread datagram handshake advanced
+once per host frame. Reuse the existing `net_dgrm` socket, address-family,
+control-packet, DarkPlaces challenge, ProQuake, response-validation and
+accepted-socket rules. QSS-M's `NET_DatagramConnectStart/Frame/Cancel` is the
+behavioral reference; adapt its phase transitions to vkQuake's network owners.
+The synchronous `Datagram_Connect` entry should use the same handshake steps
+when practical, so there is one packet parser and one socket-retirement policy.
+Keep ordinary loopback and desktop connection behavior intact. `CL_AutoReconnectFrame`
+owns only the operation identity, timeout, game switch and signon; the datagram
+owner owns the pending socket. Explicit connect, disconnect, shutdown and
+runtime failure cancel that socket before replacing the operation.
+
+A broad replacement of `NET_Connect`, network polling or transport is not
+justified: the observed incompatibility is the blocking wait on an unreachable
+datagram endpoint. The one-handshake design avoids duplicate response parsing
+or a second network thread/state machine. Its first vertical proof is an
+installed-mod redirect to a deliberately unanswered local UDP endpoint: VR
+frames and the cancel UI continue while the control request times out, and
+the socket count returns to baseline. Follow with successful redirect,
+DarkPlaces/ProQuake response, IPv4/IPv6, cancel/supersede, and ordinary desktop
+connect checks. DNS resolution remains synchronous initially, matching the
+QSS-M reference; profile it before adding a resolver owner. Reopen the design
+if the shared handshake refactor duplicates transport policy or changes public
+desktop connection results.
