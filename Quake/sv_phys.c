@@ -2942,8 +2942,10 @@ typedef struct sv_vr_weapon_pose_scope_s
 {
 	struct sv_vr_weapon_pose_scope_s *previous;
 	edict_t *ent;
-	qboolean applied, origin_relocated, linked;
-	vec3_t origin, v_angle, forward, right, up;
+	qboolean applied, origin_relocated, linked, akimbo_invalidated;
+	qboolean akimbo_pose_valid;
+	vec3_t origin, body_origin, v_angle, forward, right, up;
+	vec3_t akimbo_muzzle[2], akimbo_angles[2];
 } sv_vr_weapon_pose_scope_t;
 
 static sv_vr_weapon_pose_scope_t *sv_vr_weapon_pose_scope;
@@ -2973,7 +2975,11 @@ void SV_VRWeaponPoseSetOrigin (edict_t *ent)
 		return;
 	for (scope = sv_vr_weapon_pose_scope; scope; scope = scope->previous)
 		if (scope->ent == ent)
+		{
 			scope->origin_relocated = true;
+			scope->akimbo_invalidated = true;
+			scope->akimbo_pose_valid = false;
+		}
 }
 
 void SV_VRWeaponPoseLinked (edict_t *ent)
@@ -3014,19 +3020,83 @@ static void SV_ClampVRMuzzleToWorld (edict_t *ent, vec3_t muzzle)
 	}
 }
 
+#define SV_VR_AKIMBO_MAX_MUZZLE_OFFSET 96.0f
+#define SV_VR_AKIMBO_MAX_ANGLE 3600.0f
+#define SV_VR_AKIMBO_MAX_FRESHNESS 0.25
+
+static qboolean SV_QBJ3TwinNailgunProgramLoaded (void)
+{
+	static const byte expected_sha256[32] = {
+		0xde, 0x2c, 0x6a, 0x60, 0xdf, 0x24, 0xf5, 0xce,
+		0x0c, 0x3f, 0xc4, 0x1b, 0x0f, 0xd6, 0x30, 0x91,
+		0x05, 0xa0, 0xea, 0x7a, 0xe8, 0x95, 0xdf, 0xb4,
+		0xa6, 0x86, 0x79, 0x50, 0xb9, 0xb9, 0x0e, 0x34
+	};
+
+	return qcvm == &sv.qcvm && qcvm->progssize == 905470 &&
+		!memcmp (qcvm->progssha256, expected_sha256, sizeof (expected_sha256)) &&
+		!strcmp (COM_SkipPath (com_gamedir), "qbj3");
+}
+
+static qboolean SV_QBJ3AkimboCommandValid (client_t *client,
+	const usercmd_t *cmd, const vec3_t body_origin)
+{
+	int hand, axis;
+	if (!client || !client->active || !client->spawned ||
+		client->protocol_qsvr != QSVR_PROTOCOL_PINNED || !cmd ||
+		!cmd->vr_active || !cmd->vr_handpos_relative ||
+		!cmd->vr_akimbo_active || cmd->vr_akimbo_berserk ||
+		cmd->sequence <= 0 || cmd->msec < 1 || cmd->msec > 125 ||
+		!isfinite (cmd->vr_contact_received) || cmd->vr_contact_received < 0 ||
+		realtime < cmd->vr_contact_received ||
+		realtime - cmd->vr_contact_received > SV_VR_AKIMBO_MAX_FRESHNESS)
+		return false;
+	for (axis = 0; axis < 3; axis++)
+		if (!isfinite (body_origin[axis]) || fabsf (body_origin[axis]) > 1000000.0f)
+			return false;
+
+	for (hand = 0; hand < 2; hand++)
+	{
+		vec3_t offset;
+		for (axis = 0; axis < 3; axis++)
+		{
+			if (!isfinite (cmd->vr_akimbo_muzzle[hand][axis]) ||
+				!isfinite (cmd->vr_akimbo_angles[hand][axis]) ||
+				fabsf (cmd->vr_akimbo_angles[hand][axis]) >
+					SV_VR_AKIMBO_MAX_ANGLE)
+				return false;
+			offset[axis] = cmd->vr_akimbo_muzzle[hand][axis];
+		}
+		if (VectorLength (offset) > SV_VR_AKIMBO_MAX_MUZZLE_OFFSET)
+			return false;
+	}
+	return true;
+}
+
 static void SV_BeginPrivateVRWeaponPose (edict_t *ent, client_t *client,
 	sv_vr_weapon_pose_scope_t *scope)
 {
 	vec3_t muzzle, source_offset;
 	const usercmd_t *cmd = &client->cmd;
+	sv_vr_weapon_pose_scope_t *previous;
 	memset (scope, 0, sizeof (*scope));
+	scope->ent = ent;
+	VectorCopy (ent->v.origin, scope->body_origin);
+	for (previous = sv_vr_weapon_pose_scope; previous;
+		previous = previous->previous)
+		if (previous->ent == ent)
+		{
+			VectorCopy (previous->body_origin, scope->body_origin);
+			scope->akimbo_invalidated = previous->akimbo_invalidated ||
+				previous->origin_relocated;
+			break;
+		}
 	if (client->protocol_qsvr != QSVR_PROTOCOL_PINNED ||
 		!cmd->vr_active || !cmd->vr_handpos_relative ||
 		client->lastmovetime <= 0 || realtime - client->lastmovetime > 1.0)
 		return;
 
 	scope->applied = true;
-	scope->ent = ent;
 	scope->previous = sv_vr_weapon_pose_scope;
 	sv_vr_weapon_pose_scope = scope;
 	VectorCopy (ent->v.origin, scope->origin);
@@ -3034,6 +3104,21 @@ static void SV_BeginPrivateVRWeaponPose (edict_t *ent, client_t *client,
 	VectorCopy (pr_global_struct->v_forward, scope->forward);
 	VectorCopy (pr_global_struct->v_right, scope->right);
 	VectorCopy (pr_global_struct->v_up, scope->up);
+
+	if (!scope->akimbo_invalidated && SV_QBJ3TwinNailgunProgramLoaded () &&
+		SV_QBJ3AkimboCommandValid (client, cmd, scope->body_origin))
+	{
+		int hand, axis;
+		for (hand = 0; hand < 2; hand++)
+		{
+			for (axis = 0; axis < 3; axis++)
+				scope->akimbo_muzzle[hand][axis] = scope->body_origin[axis] +
+					cmd->vr_akimbo_muzzle[hand][axis];
+			VectorCopy (cmd->vr_akimbo_angles[hand],
+				scope->akimbo_angles[hand]);
+		}
+		scope->akimbo_pose_valid = true;
+	}
 
 	VectorAdd (scope->origin, cmd->vr_handpos, muzzle);
 	VectorCopy (cmd->vr_handrot, ent->v.v_angle);
@@ -3046,6 +3131,50 @@ static void SV_BeginPrivateVRWeaponPose (edict_t *ent, client_t *client,
 		PR_GetString (ent->v.weaponmodel), (int)ent->v.weapon,
 		ent->v.v_angle, ent->v.view_ofs[2], source_offset);
 	VectorSubtract (muzzle, source_offset, ent->v.origin);
+}
+
+qboolean SV_QBJ3AkimboAim (edict_t *ent, vec3_t muzzle)
+{
+	sv_vr_weapon_pose_scope_t *scope;
+	vec3_t temporary_origin, source;
+	int hand, axis;
+	float side_offset;
+
+	if (!ent || !qcvm || qcvm != &sv.qcvm || !qcvm->xfunction ||
+		!SV_QBJ3TwinNailgunProgramLoaded () ||
+		strcmp (PR_GetString (qcvm->xfunction->s_name), "W_FireTwinNailgun") ||
+		strcmp (PR_GetString (ent->v.weaponmodel), "progs/v_tnailgun.mdl") ||
+		ent->v.weapon != 4 ||
+		(ent->v.weaponframe != 11 && ent->v.weaponframe != 15))
+		return false;
+
+	for (scope = sv_vr_weapon_pose_scope; scope; scope = scope->previous)
+		if (scope->ent == ent)
+			break;
+	if (!scope || !scope->applied || !scope->akimbo_pose_valid ||
+		scope->akimbo_invalidated)
+		return false;
+
+	/* QBJ3 frame 11 fires from the anatomical right hand; frame 15 from left. */
+	hand = ent->v.weaponframe == 11 ? 1 : 0;
+	side_offset = hand ? 4.0f : -4.0f;
+	VectorCopy (scope->akimbo_muzzle[hand], muzzle);
+	VectorCopy (ent->v.origin, temporary_origin);
+	VectorCopy (scope->body_origin, ent->v.origin);
+	SV_ClampVRMuzzleToWorld (ent, muzzle);
+	VectorCopy (temporary_origin, ent->v.origin);
+
+	VectorCopy (scope->akimbo_angles[hand], ent->v.v_angle);
+	ent->v.v_angle[ROLL] = 0;
+	AngleVectors (ent->v.v_angle, pr_global_struct->v_forward,
+		pr_global_struct->v_right, pr_global_struct->v_up);
+	for (axis = 0; axis < 3; axis++)
+		source[axis] = ent->v.view_ofs[axis] +
+			11.0f * pr_global_struct->v_forward[axis] +
+			side_offset * pr_global_struct->v_right[axis] -
+			6.0f * pr_global_struct->v_up[axis];
+	VectorSubtract (muzzle, source, ent->v.origin);
+	return true;
 }
 
 static void SV_EndPrivateVRWeaponPose (edict_t *ent,

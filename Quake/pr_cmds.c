@@ -1529,18 +1529,25 @@ cvar_t		sv_aim = {"sv_aim", "1", CVAR_NONE}; // ericw -- turn autoaim off by def
 static void PF_aim (void)
 {
 	edict_t *ent, *check, *bestent;
-	vec3_t	 start, dir, end, bestdir;
+	vec3_t	 start, dir, end, bestdir, physical_muzzle;
 	int		 i, j;
 	trace_t	 tr;
 	float	 dist, bestdist;
 	float	 speed;
+	qboolean akimbo;
 
 	ent = G_EDICT (OFS_PARM0);
 	speed = G_FLOAT (OFS_PARM1);
 	(void)speed; /* variable set but not used */
 
-	VectorCopy (ent->v.origin, start);
-	start[2] += 20;
+	akimbo = SV_QBJ3AkimboAim (ent, physical_muzzle);
+	if (akimbo)
+		VectorCopy (physical_muzzle, start);
+	else
+	{
+		VectorCopy (ent->v.origin, start);
+		start[2] += 20;
+	}
 
 	// try sending a trace straight
 	VectorCopy (pr_global_struct->v_forward, dir);
@@ -1583,7 +1590,17 @@ static void PF_aim (void)
 
 	if (bestent)
 	{
-		VectorSubtract (bestent->v.origin, ent->v.origin, dir);
+		if (akimbo)
+		{
+			/* Autoaim correction must originate at the physical hand muzzle;
+			 * ent->origin is temporarily source-compensated for the QC org. */
+			for (j = 0; j < 3; j++)
+				end[j] = bestent->v.origin[j] +
+					0.5f * (bestent->v.mins[j] + bestent->v.maxs[j]);
+			VectorSubtract (end, start, dir);
+		}
+		else
+			VectorSubtract (bestent->v.origin, ent->v.origin, dir);
 		dist = DotProduct (dir, pr_global_struct->v_forward);
 		VectorScale (pr_global_struct->v_forward, dist, end);
 		end[2] = dir[2];
