@@ -496,6 +496,9 @@ void V_SetContentsColor (int contents);
 void  CL_InitTEnts (void);
 void  CL_SignonReply (void);
 float CL_TraceLine (vec3_t start, vec3_t end, vec3_t impact, vec3_t normal, int *ent);
+/* Read-only world hull trace for game-thread work that must not prepare the
+ * particle system's shared brush-entity list. */
+float CL_TraceWorldLine (vec3_t start, vec3_t end, vec3_t impact, vec3_t normal);
 
 //
 // chase

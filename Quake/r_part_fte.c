@@ -625,6 +625,22 @@ static void CL_PrepareTraceLineEntities (void)
 	}
 }
 
+float CL_TraceWorldLine (vec3_t start, vec3_t end, vec3_t impact, vec3_t normal)
+{
+	trace_t trace;
+	VectorCopy (end, impact);
+	VectorSet (normal, 0, 0, 1);
+	memset (&trace, 0, sizeof (trace));
+	trace.fraction = 1;
+	Q1BSP_RecursiveHullCheck (&cl.worldmodel->hulls[0], cl.worldmodel->hulls[0].firstclipnode, 0, 1, start, end, &trace);
+	if (trace.fraction < 1)
+	{
+		VectorCopy (trace.endpos, impact);
+		VectorCopy (trace.plane.normal, normal);
+	}
+	return trace.fraction;
+}
+
 float CL_TraceLine (vec3_t start, vec3_t end, vec3_t impact, vec3_t normal, int *entnum)
 { // FIXME: not sure what to do about startsolid.
 	int		  i;
@@ -634,8 +650,6 @@ float CL_TraceLine (vec3_t start, vec3_t end, vec3_t impact, vec3_t normal, int 
 	vec3_t	  relstart, relend;
 	vec3_t	  seg_mins, seg_maxs;
 
-	VectorCopy (end, impact);
-	VectorSet (normal, 0, 0, 1);
 	if (entnum)
 		*entnum = 0;
 
@@ -643,17 +657,9 @@ float CL_TraceLine (vec3_t start, vec3_t end, vec3_t impact, vec3_t normal, int 
 
 	// the world usually clips the line the most, trace it first and only test
 	// brush entities whose bounds overlap the remaining segment
-	memset (&trace, 0, sizeof (trace));
-	trace.fraction = 1;
-	Q1BSP_RecursiveHullCheck (&cl.worldmodel->hulls[0], cl.worldmodel->hulls[0].firstclipnode, 0, 1, start, end, &trace);
-	frac = trace.fraction;
-	if (frac < 1)
-	{
-		VectorCopy (trace.endpos, impact);
-		VectorCopy (trace.plane.normal, normal);
-		if (frac <= 0)
-			return frac;
-	}
+	frac = CL_TraceWorldLine (start, end, impact, normal);
+	if (frac <= 0)
+		return frac;
 
 	for (i = 0; i < 3; i++)
 	{
