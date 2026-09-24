@@ -16,6 +16,13 @@ engine-independent helpers that can be copied with attribution. The current
 target already has the shared schema parser and calibration owner in
 `Quake/vr_weapon_schema.[ch]` and `Quake/vr_weapon_calibration.[ch]`.
 
+The inherited Quick Save and Quick Load rows are now available on the shared
+desktop/OpenXR panel only for a local single-client server. Their rendered
+rectangles and pointer hitboxes share one layout, and release rechecks the
+session before queuing the standard delayed save/load commands. Co-op player
+teleport and respawn rows still depend on server teleport commands that have
+not been ported; the 3D weapon layout also remains open.
+
 The shared wheel loads the active mod's `wwheel.txt` roster and
 `vr_weapons.txt` schema through the existing search path, with declared
 selectors, impulses and ownership metadata. It ignores inherited id1 files

@@ -1173,6 +1173,110 @@ static int VR_WeaponMenu_Hit (vr_weapon_menu_visible_t *visible, int count,
 	return -1;
 }
 
+enum {
+	VR_WEAPON_MENU_QUICK_SAVE,
+	VR_WEAPON_MENU_QUICK_LOAD,
+	VR_WEAPON_MENU_ACTION_COUNT
+};
+
+typedef struct {
+	const char *label;
+	float left;
+	float top;
+	float width;
+	float height;
+} vr_weapon_menu_action_t;
+
+static qboolean VR_WeaponMenu_QuickSaveAvailable (void)
+{
+	return sv.active && svs.maxclients == 1 && !cls.demoplayback &&
+		!cl.intermission;
+}
+
+static void VR_WeaponMenu_ActionIDs (const vr_weapon_menu_catalog_t *catalog,
+	int ids[VR_WEAPON_MENU_ACTION_COUNT])
+{
+	long long candidate = INT_MAX;
+
+	for (int action = 0; action < VR_WEAPON_MENU_ACTION_COUNT; ++action)
+	{
+		qboolean used;
+		while (candidate > 0)
+		{
+			used = false;
+			if (catalog && catalog->entries)
+				for (size_t i = 0; i < catalog->count; ++i)
+					if (catalog->entries[i].id == candidate)
+					{
+						used = true;
+						break;
+					}
+			for (int i = 0; !used && i < action; ++i)
+				used = ids[i] == candidate;
+			if (!used)
+				break;
+			--candidate;
+		}
+		ids[action] = candidate > 0 ? (int)candidate : -1;
+		--candidate;
+	}
+}
+
+/* One geometry and hit-test path keeps the action rectangles aligned with
+ * their drawing for both the desktop mouse and the VR pointer. */
+static int VR_WeaponMenu_Actions (struct cb_context_s *context,
+	const vr_weapon_menu_catalog_t *catalog, qboolean available,
+	float outer_radius, float scale, int pointer_x, int pointer_y,
+	int ids[VR_WEAPON_MENU_ACTION_COUNT], qboolean highlight_by_id,
+	int hover_id)
+{
+	static const char *const labels[VR_WEAPON_MENU_ACTION_COUNT] = {
+		"QUICK SAVE", "QUICK LOAD"
+	};
+	vr_weapon_menu_action_t actions[VR_WEAPON_MENU_ACTION_COUNT];
+	const float center_x = glwidth * 0.5f;
+	const float center_y = glheight * 0.5f;
+	int selected = -1;
+
+	VR_WeaponMenu_ActionIDs (catalog, ids);
+	if (!available)
+		return -1;
+
+	for (int i = 0; i < VR_WEAPON_MENU_ACTION_COUNT; ++i)
+	{
+		actions[i].label = labels[i];
+		actions[i].width = strlen (labels[i]) * CHARACTER_SIZE * scale + 12.0f * scale;
+		actions[i].height = 26.0f * scale;
+		actions[i].left = center_x - outer_radius - 12.0f * scale - actions[i].width;
+		actions[i].top = center_y + (i == VR_WEAPON_MENU_QUICK_SAVE ?
+			-17.0f : 17.0f) * scale - actions[i].height * 0.5f;
+		if (pointer_x >= actions[i].left &&
+			pointer_x <= actions[i].left + actions[i].width &&
+			pointer_y >= actions[i].top &&
+			pointer_y <= actions[i].top + actions[i].height)
+			selected = i;
+		if (context)
+		{
+			const qboolean is_selected = i == selected &&
+				pointer_x >= actions[i].left &&
+				pointer_x <= actions[i].left + actions[i].width &&
+				pointer_y >= actions[i].top &&
+				pointer_y <= actions[i].top + actions[i].height &&
+				(!highlight_by_id || ids[i] == hover_id);
+			Draw_Fill ((cb_context_t *)context, actions[i].left, actions[i].top,
+				actions[i].width, actions[i].height,
+				is_selected ? 15 : 0, is_selected ? 0.96f : 0.78f);
+			GL_SetCanvasColor (is_selected ? 0.05f : 1.0f,
+				is_selected ? 0.08f : 1.0f, is_selected ? 0.10f : 1.0f, 1.0f);
+			Draw_String_Scaled ((cb_context_t *)context,
+				actions[i].left + 6.0f * scale,
+				actions[i].top + 8.0f * scale, actions[i].label, scale);
+			GL_SetCanvasColor (1.0f, 1.0f, 1.0f, 1.0f);
+		}
+	}
+	return selected;
+}
+
 static void VR_WeaponMenu_Layout (vr_weapon_menu_visible_t *visible, int count,
 	float outer_radius, float scale)
 {
@@ -1240,10 +1344,11 @@ void VR_WeaponMenu_SetVRPointer (qboolean tracking_valid, qboolean pointer_valid
 	int pointer_x, int pointer_y)
 {
 	vr_weapon_menu_visible_t visible[VR_WEAPON_MENU_MAX_ENTRIES];
-	int count, selected = -1;
+	int count, selected = -1, action, action_ids[VR_WEAPON_MENU_ACTION_COUNT];
 	int previous_hover_id;
 	const float radius = q_min (glwidth, glheight) * 0.32f;
 	const float scale = CLAMP (0.85f, q_min (glwidth, glheight) / 720.0f, 1.5f);
+	const vr_weapon_menu_catalog_t *catalog;
 
 	if (!VR_WeaponMenu_IsOpenVR ())
 		return;
@@ -1261,16 +1366,21 @@ void VR_WeaponMenu_SetVRPointer (qboolean tracking_valid, qboolean pointer_valid
 	if (!pointer_valid)
 		return;
 
-	count = VR_WeaponMenu_BuildVisible (VR_WeaponMenu_CurrentCatalog (),
+	catalog = VR_WeaponMenu_CurrentCatalog ();
+	count = VR_WeaponMenu_BuildVisible (catalog,
 		cl.stats, MAX_CL_STATS, cl.items, visible, VR_WEAPON_MENU_MAX_ENTRIES);
 	VR_WeaponMenu_Layout (visible, count, radius, scale);
 	selected = VR_WeaponMenu_Hit (visible, count, pointer_x, pointer_y, radius);
-	if (selected >= 0 && visible[selected].selectable)
+	action = VR_WeaponMenu_Actions (NULL, catalog, VR_WeaponMenu_QuickSaveAvailable (),
+		radius, scale, pointer_x, pointer_y, action_ids, false, -1);
+	if (action >= 0)
+		vr_weapon_menu_hover_id = action_ids[action];
+	else if (selected >= 0 && visible[selected].selectable)
 	{
 		vr_weapon_menu_hover_id = visible[selected].entry->id;
-		if (vr_weapon_menu_hover_id != previous_hover_id)
-			VR_InputTriggerHaptic (VR_INPUT_ROLE_RIGHT, 0.05f, 0.5f);
 	}
+	if (vr_weapon_menu_hover_id >= 0 && vr_weapon_menu_hover_id != previous_hover_id)
+		VR_InputTriggerHaptic (VR_INPUT_ROLE_RIGHT, 0.05f, 0.5f);
 }
 
 int VR_WeaponMenu_ReleaseCatalog (const vr_weapon_menu_catalog_t *catalog,
@@ -1324,8 +1434,43 @@ int VR_WeaponMenu_ReleaseCatalog (const vr_weapon_menu_catalog_t *catalog,
 
 int VR_WeaponMenu_Release (void)
 {
-	return VR_WeaponMenu_ReleaseCatalog (VR_WeaponMenu_CurrentCatalog (),
-		cl.stats, MAX_CL_STATS, cl.items);
+	const vr_weapon_menu_catalog_t *catalog = VR_WeaponMenu_CurrentCatalog ();
+	int pointer_x = -1, pointer_y = -1;
+	int action_ids[VR_WEAPON_MENU_ACTION_COUNT];
+	int action = -1;
+	const float radius = q_min (glwidth, glheight) * 0.32f;
+	const float scale = CLAMP (0.85f, q_min (glwidth, glheight) / 720.0f, 1.5f);
+	qboolean session_ready = vr_weapon_menu_open && VR_WeaponMenu_SessionValid () &&
+		(!vr_weapon_menu_open_vr ||
+		 (vr_weapon_menu_tracking_valid && vr_weapon_menu_pointer_valid));
+
+	if (session_ready && VR_WeaponMenu_QuickSaveAvailable ())
+	{
+		if (vr_weapon_menu_open_vr)
+		{
+			pointer_x = vr_weapon_menu_pointer_x;
+			pointer_y = vr_weapon_menu_pointer_y;
+		}
+		else
+			VR_WeaponMenu_Pointer (&pointer_x, &pointer_y);
+		action = VR_WeaponMenu_Actions (NULL, catalog, true, radius, scale,
+			pointer_x, pointer_y, action_ids, false, -1);
+		if (action >= 0 && (!vr_weapon_menu_open_vr ||
+			vr_weapon_menu_hover_id == action_ids[action]) &&
+			VR_WeaponMenu_SessionValid () && VR_WeaponMenu_QuickSaveAvailable () &&
+			(!vr_weapon_menu_open_vr ||
+			 (vr_weapon_menu_tracking_valid && vr_weapon_menu_pointer_valid &&
+			  vr_weapon_menu_hover_id == action_ids[action])))
+		{
+			const char *command = action == VR_WEAPON_MENU_QUICK_SAVE ?
+				"echo Quicksaving...; wait; save quick\n" :
+				"echo Quickloading...; wait; load quick\n";
+			VR_WeaponMenu_ClearSession ();
+			Cbuf_AddText (command);
+			return 0;
+		}
+	}
+	return VR_WeaponMenu_ReleaseCatalog (catalog, cl.stats, MAX_CL_STATS, cl.items);
 }
 
 void VR_WeaponMenu_DrawCatalog (struct cb_context_s *context,
@@ -1334,7 +1479,7 @@ void VR_WeaponMenu_DrawCatalog (struct cb_context_s *context,
 {
 	cb_context_t *cbx = (cb_context_t *)context;
 	vr_weapon_menu_visible_t visible[VR_WEAPON_MENU_MAX_ENTRIES];
-	int count, pointer_x, pointer_y, selected;
+	int count, pointer_x, pointer_y, selected, selected_action, action_ids[VR_WEAPON_MENU_ACTION_COUNT];
 	const float min_dimension = q_min (glwidth, glheight);
 	const float outer_radius = min_dimension * 0.32f;
 	const float hub_radius = outer_radius * 0.22f;
@@ -1421,12 +1566,24 @@ void VR_WeaponMenu_DrawCatalog (struct cb_context_s *context,
 				visible[i].top + 22.0f * scale, entry->label, scale);
 		GL_SetCanvasColor (1.0f, 1.0f, 1.0f, 1.0f);
 	}
+	selected_action = VR_WeaponMenu_Actions (cbx, catalog,
+		VR_WeaponMenu_QuickSaveAvailable (), outer_radius, scale,
+		pointer_x, pointer_y, action_ids, vr_weapon_menu_open_vr,
+		vr_weapon_menu_hover_id);
+	if (vr_weapon_menu_open_vr && (selected_action < 0 ||
+		vr_weapon_menu_hover_id != action_ids[selected_action]))
+		selected_action = -1;
+	if (selected_action >= 0)
+		selected = -1;
 
 	GL_SetCanvasColor (1.0f, 1.0f, 1.0f, 1.0f);
 	Draw_String_Scaled (cbx, glwidth * 0.5f - 56.0f * scale,
 		glheight * 0.5f - 12.0f * scale,
-		selected >= 0 && visible[selected].entry->label ? visible[selected].entry->label : "WEAPON", scale);
-	if (selected >= 0 && visible[selected].ammo >= 0)
+		selected_action >= 0 ? (selected_action == VR_WEAPON_MENU_QUICK_SAVE ?
+			"QUICK SAVE" : "QUICK LOAD") :
+		(selected >= 0 && visible[selected].entry->label ?
+		 visible[selected].entry->label : "WEAPON"), scale);
+	if (selected_action < 0 && selected >= 0 && visible[selected].ammo >= 0)
 	{
 		q_snprintf (ammo_text, sizeof (ammo_text), "%d / %d",
 			visible[selected].ammo, visible[selected].ammo_max);
