@@ -27,6 +27,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "vr_input.h"
 #include "vr_fbt_storage.h"
 #include "view.h"
+#include "addon_catalog.h"
 
 void (*vid_menucmdfn) (void); // johnfitz
 void (*vid_menukeyfn) (int key);
@@ -3901,6 +3902,37 @@ static menuticker_t		 m_mods_ticker;
 static filelist_item_t **mods_sorted;
 static filelist_item_t **mods_filtered;
 static char				 mods_search[MODS_SEARCH_MAX + 1];
+static qboolean		 mods_catalogue_view;
+static int				 mods_catalogue_control_hover;
+static int				 mods_catalogue_indices[ADDON_CATALOG_MAX_ENTRIES];
+static int				 mods_catalogue_source_count = -1;
+static qboolean		 mods_catalogue_refresh_pending;
+static addon_catalog_state_t mods_catalogue_last_state = ADDON_CATALOG_IDLE;
+
+static qboolean M_Mods_CatalogueMatches (const addon_catalog_entry_t *item)
+{
+	return item && (!mods_search[0] ||
+		q_strcasestr (item->name, mods_search) ||
+		q_strcasestr (item->gamedir, mods_search) ||
+		q_strcasestr (item->author, mods_search) ||
+		q_strcasestr (item->description, mods_search));
+}
+
+/* AddonCatalog_Entry returns a snapshot replaced by the next lookup. */
+static int M_Mods_CatalogueEntry (int match, addon_catalog_entry_t *copy)
+{
+	const addon_catalog_entry_t *item;
+	int index;
+	if (match < 0 || match >= num_mods)
+		return -1;
+	index = mods_catalogue_indices[match];
+	item = AddonCatalog_Entry (index);
+	if (!item)
+		return -1;
+	if (copy)
+		*copy = *item;
+	return index;
+}
 
 static int M_Mods_Compare (const void *a, const void *b)
 {
@@ -3937,23 +3969,56 @@ static void M_Mods_KeepCursorVisible (void)
 
 static void M_Mods_UpdateFilter (void)
 {
-	VEC_CLEAR (mods_filtered);
-	for (int i = 0; i < VEC_SIZE (mods_sorted); ++i)
+	if (mods_catalogue_view)
 	{
-		filelist_item_t *item = mods_sorted[i];
-		const char		*fullname = Modlist_GetFullName (item);
-
-		if (mods_search[0] && !q_strcasestr (fullname ? fullname : item->name, mods_search) && !q_strcasestr (item->name, mods_search))
-			continue;
-
-		VEC_PUSH (mods_filtered, item);
+		int count = 0;
+		mods_catalogue_source_count = AddonCatalog_Count ();
+		for (int i = 0; i < mods_catalogue_source_count && count < ADDON_CATALOG_MAX_ENTRIES; ++i)
+		{
+			if (M_Mods_CatalogueMatches (AddonCatalog_Entry (i)))
+				mods_catalogue_indices[count++] = i;
+		}
+		num_mods = count;
 	}
+	else
+	{
+		VEC_CLEAR (mods_filtered);
+		for (int i = 0; i < VEC_SIZE (mods_sorted); ++i)
+		{
+			filelist_item_t *item = mods_sorted[i];
+			const char *fullname = Modlist_GetFullName (item);
 
-	num_mods = VEC_SIZE (mods_filtered);
+			if (mods_search[0] && !q_strcasestr (fullname ? fullname : item->name, mods_search) && !q_strcasestr (item->name, mods_search))
+				continue;
+
+			VEC_PUSH (mods_filtered, item);
+		}
+
+		num_mods = VEC_SIZE (mods_filtered);
+	}
 	mods_cursor = 0;
 	first_mod = 0;
 	mods_prev_cursor = -1;
 	M_Mods_KeepCursorVisible ();
+}
+
+static qboolean M_Mods_SetCatalogue (qboolean catalogue)
+{
+	if (mods_catalogue_view == catalogue)
+		return false;
+	mods_catalogue_view = catalogue;
+	mods_catalogue_last_state = AddonCatalog_State ();
+	M_Mods_UpdateFilter ();
+	return true;
+}
+
+static void M_Mods_RefreshCatalogue (void)
+{
+	const addon_catalog_state_t state = AddonCatalog_State ();
+	if (state == ADDON_CATALOG_REFRESHING || state == ADDON_CATALOG_INSTALLING)
+		return;
+	mods_catalogue_refresh_pending = true;
+	AddonCatalog_Refresh ();
 }
 
 static void M_Menu_Mods_f (void)
@@ -3964,6 +4029,7 @@ static void M_Menu_Mods_f (void)
 	m_state = m_mods;
 	m_entersound = true;
 	mods_search[0] = '\0';
+	mods_catalogue_view = false;
 	VEC_CLEAR (mods_sorted);
 	for (filelist_item_t *item = modlist; item; item = item->next)
 		VEC_PUSH (mods_sorted, item);
@@ -3976,6 +4042,19 @@ static void M_Menu_Mods_f (void)
 
 static void M_Mods_Draw (cb_context_t *cbx)
 {
+	if (mods_catalogue_view)
+	{
+		const addon_catalog_state_t state = AddonCatalog_State ();
+		if (AddonCatalog_Count () != mods_catalogue_source_count ||
+			(mods_catalogue_refresh_pending && state != ADDON_CATALOG_REFRESHING) ||
+			(mods_catalogue_last_state == ADDON_CATALOG_REFRESHING && state != ADDON_CATALOG_REFRESHING))
+		{
+			M_Mods_UpdateFilter ();
+			if (state != ADDON_CATALOG_REFRESHING)
+				mods_catalogue_refresh_pending = false;
+		}
+		mods_catalogue_last_state = state;
+	}
 	M_DrawTransPic (cbx, 16, 4, Draw_CachePic ("gfx/qplaque.lmp"));
 	qpic_t *p = Draw_CachePic ("gfx/p_mods.lmp");
 	M_DrawPic (cbx, (320 - p->width) / 2, 4, p);
@@ -3993,19 +4072,55 @@ static void M_Mods_Draw (cb_context_t *cbx)
 	// to trigger scroll faster
 	M_Ticker_Update (&m_mods_ticker);
 
+	if (mods_catalogue_view)
+	{
+		M_PrintWhite (cbx, 16, 144, "Installed: Tab/L3");
+		M_PrintWhite (cbx, 216, 144, "Refresh: X/F1");
+	}
+	else
+		M_PrintWhite (cbx, 16, 144, "Catalogue: Tab/L3");
+
 	for (int i = 0; i < mods_height; ++i)
 	{
-		filelist_item_t *item = mods_filtered[first_mod + i];
-		const char *fullname = Modlist_GetFullName (item);
 		const qboolean selected = (mods_cursor == first_mod + i);
 
-		M_PrintScroll (
-			cbx, MENU_LABEL_X, 32 + i * CHARACTER_SIZE, 32 * CHARACTER_SIZE, fullname ? fullname : item->name,
-			selected ? m_mods_ticker.scroll_time : 0.0, true);
+		if (mods_catalogue_view)
+		{
+			addon_catalog_entry_t item;
+			if (M_Mods_CatalogueEntry (first_mod + i, &item) < 0)
+				continue;
+			M_PrintScroll (cbx, MENU_LABEL_X, 32 + i * CHARACTER_SIZE,
+				20 * CHARACTER_SIZE, item.name,
+				selected ? m_mods_ticker.scroll_time : 0.0, true);
+			M_PrintWhite (cbx, 240, 32 + i * CHARACTER_SIZE,
+				item.installed ? "Installed" : (item.verified ? "Verified" : "Unverified"));
+		}
+		else
+		{
+			filelist_item_t *item = mods_filtered[first_mod + i];
+			const char *fullname = Modlist_GetFullName (item);
+			M_PrintScroll (
+				cbx, MENU_LABEL_X, 32 + i * CHARACTER_SIZE, 32 * CHARACTER_SIZE, fullname ? fullname : item->name,
+				selected ? m_mods_ticker.scroll_time : 0.0, true);
+		}
 	}
 
 	if (num_mods == 0)
-		M_PrintWhite (cbx, MENU_LABEL_X, 32, mods_search[0] ? "No installed mods match." : "No installed mods found.");
+	{
+		if (mods_catalogue_view)
+		{
+			const addon_catalog_state_t state = AddonCatalog_State ();
+			if (mods_search[0])
+				M_PrintWhite (cbx, MENU_LABEL_X, 32, "No catalogue matches.");
+			else if (state == ADDON_CATALOG_REFRESHING || state == ADDON_CATALOG_ERROR || state == ADDON_CATALOG_UNAVAILABLE)
+				M_PrintScroll (cbx, MENU_LABEL_X, 32, 32 * CHARACTER_SIZE,
+					AddonCatalog_Message (), 0.0, true);
+			else
+				M_PrintWhite (cbx, MENU_LABEL_X, 32, "F1 to refresh the catalogue.");
+		}
+		else
+			M_PrintWhite (cbx, MENU_LABEL_X, 32, mods_search[0] ? "No installed mods match." : "No installed mods found.");
+	}
 
 	M_PrintWhite (cbx, 16, 160, "Filter:");
 	M_DrawTextBox (cbx, 72, 152, MODS_SEARCH_WIDTH, 1);
@@ -4019,6 +4134,11 @@ static void M_Mods_Draw (cb_context_t *cbx)
 	}
 
 	M_Mouse_UpdateListCursor (&mods_cursor, 12, 400, 32, CHARACTER_SIZE, mods_height, first_mod);
+	/* Register the labelled controls with the common hover gate so the VR
+	 * pointer can activate them as well as an ordinary mouse click. */
+	M_Mouse_UpdateCursor (&mods_catalogue_control_hover, 12, mods_catalogue_view ? 200 : 208, 144, 7, 0);
+	if (mods_catalogue_view)
+		M_Mouse_UpdateCursor (&mods_catalogue_control_hover, 200, 312, 144, 7, 1);
 	if (num_mods > 0)
 		Draw_Character (cbx, MENU_CURSOR_X, 32 + (mods_cursor - first_mod) * CHARACTER_SIZE, 12 + ((int)(realtime * 4) & 1));
 	if (num_mods > MAX_MODS_ON_SCREEN)
@@ -4027,6 +4147,44 @@ static void M_Mods_Draw (cb_context_t *cbx)
 
 static void M_Mods_Key (int key)
 {
+	if (key == K_MOUSE1 && m_mouse_y >= 144 && m_mouse_y < 152)
+	{
+		if (!mods_catalogue_view && m_mouse_x >= 12 && m_mouse_x < 208)
+		{
+			M_Mods_SetCatalogue (true);
+			S_LocalSound ("misc/menu1.wav");
+			return;
+		}
+		if (mods_catalogue_view && m_mouse_x >= 12 && m_mouse_x < 200)
+		{
+			if (AddonCatalog_State () == ADDON_CATALOG_REFRESHING)
+				AddonCatalog_Cancel ();
+			M_Mods_SetCatalogue (false);
+			S_LocalSound ("misc/menu1.wav");
+			return;
+		}
+		if (mods_catalogue_view && m_mouse_x >= 200 && m_mouse_x <= 312)
+		{
+			M_Mods_RefreshCatalogue ();
+			S_LocalSound ("misc/menu2.wav");
+			return;
+		}
+	}
+
+	if (key == K_TAB || key == K_LTHUMB || key == K_RTHUMB)
+	{
+		M_Mods_SetCatalogue (!mods_catalogue_view);
+		S_LocalSound ("misc/menu1.wav");
+		return;
+	}
+
+	if (mods_catalogue_view && (key == K_F1 || key == K_XBUTTON))
+	{
+		M_Mods_RefreshCatalogue ();
+		S_LocalSound ("misc/menu2.wav");
+		return;
+	}
+
 	if (key == K_BACKSPACE)
 	{
 		const size_t length = strlen (mods_search);
@@ -4057,14 +4215,28 @@ static void M_Mods_Key (int key)
 	case K_MOUSE2:
 	case K_ESCAPE:
 	case K_BBUTTON:
-		M_Menu_Main_f ();
+		if (mods_catalogue_view)
+		{
+			if (AddonCatalog_State () == ADDON_CATALOG_REFRESHING)
+				AddonCatalog_Cancel ();
+			M_Mods_SetCatalogue (false);
+		}
+		else
+			M_Menu_Main_f ();
 		break;
 
 	case K_MOUSE1:
+		if (m_mouse_x < 12 || m_mouse_x > 400 || m_mouse_y < 32 ||
+			m_mouse_y >= 32 + q_min (MAX_MODS_ON_SCREEN, q_max (0, num_mods - first_mod)) * CHARACTER_SIZE)
+			break;
+		if (mods_catalogue_view)
+			break;
+		/* A mouse click activates only a visible mod row. */
+		/* fall through */
 	case K_ENTER:
 	case K_KP_ENTER:
 	case K_ABUTTON:
-		if (num_mods > 0 && mods_cursor >= 0 && mods_cursor < num_mods)
+		if (!mods_catalogue_view && num_mods > 0 && mods_cursor >= 0 && mods_cursor < num_mods)
 		{
 			Cbuf_AddText ("game \"");
 			Cbuf_AddText (mods_filtered[mods_cursor]->name);
