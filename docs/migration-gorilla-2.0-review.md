@@ -190,6 +190,14 @@ The disposable client preview also supplies a raw hand sample when the ACK has
 already covered every sent command, so a live first stroke can use the same
 PMove replay owner before its next packet is committed.
 
+Astra's focused follow-up audit found that preview setup could restore planted
+hands from the ACK after an intervening OFF command. Preview activation now
+keeps the solver state produced by replaying the journal; only an empty journal
+restores the matching ACK snapshot. A raw journal command without a matching
+baseline or its own RESET suppresses prediction for that frame, since a later
+preview RESET cannot recover the omitted body displacement. The focused replay
+fixture checks these state transitions, and the Linux debug build passes.
+
 The trial remains opt-in, exact-stock, dry WALK and remote-only. Ordinary
 server physics remains the default Gorilla authority for local play, mods,
 water and other nontrial cases. This checkpoint establishes code and local

@@ -19,6 +19,8 @@ static usercmd_t observed_cmds[66];
 static int observed_pm_types[66];
 static float observed_waterjump_before[66];
 static qboolean observed_gorilla_allowed[66];
+static int observed_gorilla_touching[66];
+static float observed_gorilla_anchor_x[66];
 
 void CL_PreviewMove (usercmd_t *cmd)
 {
@@ -50,6 +52,10 @@ void PM_PlayerMove (float gamespeed)
 	observed_pm_types[move_calls] = pmove.pm_type;
 	observed_waterjump_before[move_calls] = pmove.waterjumptime;
 	observed_gorilla_allowed[move_calls] = pmove.gorilla_allowed;
+	observed_gorilla_touching[move_calls] = pmove.gorilla.touching;
+	observed_gorilla_anchor_x[move_calls] = pmove.gorilla.anchor[0][0];
+	if (!pmove.cmd.vr_gorilla.flags)
+		memset (&pmove.gorilla, 0, sizeof (pmove.gorilla));
 	pmove.origin[0] += 1;
 	pmove.waterjumptime = 50 + pmove.cmd.sequence;
 	pmove.onground = true;
@@ -69,6 +75,8 @@ static void reset_probes (void)
 	memset (observed_pm_types, 0, sizeof(observed_pm_types));
 	memset (observed_waterjump_before, 0, sizeof(observed_waterjump_before));
 	memset (observed_gorilla_allowed, 0, sizeof(observed_gorilla_allowed));
+	memset (observed_gorilla_touching, 0, sizeof(observed_gorilla_touching));
+	memset (observed_gorilla_anchor_x, 0, sizeof(observed_gorilla_anchor_x));
 }
 
 static void reset_client (void)
@@ -522,17 +530,20 @@ static void check_raw_gorilla_preview_after_ack (void)
 	cl.vr_gorilla_state_valid = true;
 	cl.vr_gorilla_state_sequence = cl.ackedmovemessages;
 	cl.vr_gorilla_state.initialized = true;
+	cl.vr_gorilla_state.touching = VR_GORILLA_HANDS;
+	cl.vr_gorilla_state.anchor[0][0] = 42;
 	preview_cmd.vr_gorilla.flags = VR_GORILLA_HANDS;
 	assert (CL_ReplayPlayerMovement (&entities[1], origin));
 	assert (preview_calls == 1 && move_calls == 2);
 	assert (observed_gorilla_allowed[1]);
 	assert (observed_cmds[1].vr_gorilla.flags == VR_GORILLA_HANDS);
+	assert (!observed_gorilla_touching[1] && !observed_gorilla_anchor_x[1]);
 
 	reset_probes ();
 	cl.vr_gorilla_state_valid = false;
 	preview_cmd.vr_gorilla.flags = VR_GORILLA_HANDS;
 	assert (CL_ReplayPlayerMovement (&entities[1], origin));
-	assert (!observed_gorilla_allowed[1]);
+	assert (observed_gorilla_allowed[1] && !observed_gorilla_touching[1]);
 
 	reset_probes ();
 	preview_cmd.vr_gorilla.flags = VR_GORILLA_HANDS | VR_GORILLA_RESET;
@@ -548,10 +559,23 @@ static void check_raw_gorilla_preview_after_ack (void)
 	cl.vr_gorilla_state_valid = true;
 	cl.vr_gorilla_state_sequence = 3;
 	cl.vr_gorilla_state.initialized = true;
+	cl.vr_gorilla_state.touching = VR_GORILLA_HANDS;
+	cl.vr_gorilla_state.anchor[0][0] = 42;
 	preview_cmd.vr_gorilla.flags = VR_GORILLA_HANDS;
 	assert (CL_ReplayPlayerMovement (&entities[1], origin));
 	assert (preview_calls == 1 && move_calls == 1);
 	assert (observed_gorilla_allowed[0]);
+	assert (observed_gorilla_touching[0] == VR_GORILLA_HANDS);
+	assert (observed_gorilla_anchor_x[0] == 42);
+
+	/* An earlier raw command without a matching baseline cannot be replayed.
+	 * A later preview RESET cannot recover the missed body displacement. */
+	reset_client ();
+	admit_private_snapshot ();
+	cl.vr_gorilla_supported = cl.vr_gorilla_allowed = true;
+	preview_cmd.vr_gorilla.flags = VR_GORILLA_HANDS | VR_GORILLA_RESET;
+	assert (!CL_ReplayPlayerMovement (&entities[1], origin));
+	assert (!preview_calls && !move_calls);
 }
 
 static void check_relink_prediction_and_attachment_pose (void)

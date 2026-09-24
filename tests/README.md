@@ -734,7 +734,10 @@ the production input builders.
 with PM probes: partial timing, empty history, prediction opt-out, protocol and
 owner/ACK gates, history loss, epochs, Gorilla provenance, and attachment parent
 order. The raw-Gorilla replay check includes a first RESET and the disposable
-preview when all sent commands are acknowledged. `client_replay_solver_fixture.c`
+preview when all sent commands are acknowledged. It also checks that an OFF
+journal command clears the old planted-hand snapshot before preview and that a
+raw command with no reconstructible baseline suppresses prediction.
+`client_replay_solver_fixture.c`
 instead uses the actual shared PM solver
 and donor collision functions to check empty-history, zero-duration underwater
 categorization. Its input preview and world-entity collection are fixture seams;

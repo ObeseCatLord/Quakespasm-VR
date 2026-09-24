@@ -1169,13 +1169,36 @@ static qboolean CL_ReplayCanTrustGorilla (void)
 		cl.move_ack_authority == MOVE_AUTHORITY_PMOVE_ENGINE_COMPAT;
 }
 
-static qboolean CL_SetupReplayGorilla (int startseq, const usercmd_t *preview)
+static qboolean CL_RestoreReplayGorillaSnapshot (void)
+{
+	int hand;
+
+	if (!cl.vr_gorilla_state_valid ||
+		cl.vr_gorilla_state_sequence != cl.ackedmovemessages)
+		return false;
+	pmove.gorilla = cl.vr_gorilla_state;
+	pmove.gorilla_allowed = true;
+	for (hand = 0; hand < 2; hand++)
+	{
+		int surface = pmove.gorilla.surface[hand];
+		if (surface > 0 && (surface >= cl.num_entities ||
+			cl.entities[surface].forcelink ||
+			cl.entities[surface].netstate.solidsize != ES_SOLID_BSP ||
+			cl.entities[surface].netstate.modelindex != pmove.gorilla.surface_model[hand]))
+		{
+			memset (&pmove.gorilla, 0, sizeof (pmove.gorilla));
+			break;
+		}
+	}
+	return true;
+}
+
+static qboolean CL_SetupReplayGorilla (int startseq)
 {
 	const usercmd_t *cmd;
 	qboolean raw_replay = false;
 	qboolean fresh_reset = false;
 	int seq;
-	int hand;
 
 	if (CL_ReplayCanTrustGorilla ())
 	{
@@ -1186,8 +1209,8 @@ static qboolean CL_SetupReplayGorilla (int startseq, const usercmd_t *preview)
 		return true;
 	/* The pinned client additionally gates raw-state restoration on
 	 * VR_GorillaActive().  That tracked producer/activity owner is not present
-	 * in this slice. A journaled or disposable preview hand sample is sufficient
-	 * provenance for replay; protocol permission alone is deliberately not. */
+	 * in this slice. A journaled raw hand sample is sufficient provenance for
+	 * journal replay; protocol permission alone is deliberately not. */
 	for (seq = startseq; seq < cl.movemessages; seq++)
 	{
 		cmd = &cl.movecmds[seq & MOVECMDS_MASK];
@@ -1197,11 +1220,6 @@ static qboolean CL_SetupReplayGorilla (int startseq, const usercmd_t *preview)
 			fresh_reset = (cmd->vr_gorilla.flags & VR_GORILLA_RESET) != 0;
 			break;
 		}
-	}
-	if (!raw_replay && preview && preview->vr_gorilla.flags)
-	{
-		raw_replay = true;
-		fresh_reset = (preview->vr_gorilla.flags & VR_GORILLA_RESET) != 0;
 	}
 	if (!raw_replay)
 		return true;
@@ -1218,30 +1236,11 @@ static qboolean CL_SetupReplayGorilla (int startseq, const usercmd_t *preview)
 		return true;
 	}
 	if (!cl.vr_gorilla_state_valid)
-		return true;
+		return false;
 	if (cl.vr_gorilla_state.initialized &&
 		cl.vr_gorilla_state_sequence != cl.ackedmovemessages)
 		return false;
-	if (cl.vr_gorilla_state_sequence != cl.ackedmovemessages)
-		return true;
-
-	pmove.gorilla = cl.vr_gorilla_state;
-	/* An acknowledged OFF state still allows the next raw command to seed
-	 * a fresh controller without borrowing a weapon-pose validity bit. */
-	pmove.gorilla_allowed = true;
-	for (hand = 0; hand < 2; hand++)
-	{
-		int surface = pmove.gorilla.surface[hand];
-		if (surface > 0 && (surface >= cl.num_entities ||
-			cl.entities[surface].forcelink ||
-			cl.entities[surface].netstate.solidsize != ES_SOLID_BSP ||
-			cl.entities[surface].netstate.modelindex != pmove.gorilla.surface_model[hand]))
-		{
-			memset (&pmove.gorilla, 0, sizeof(pmove.gorilla));
-			break;
-		}
-	}
-	return true;
+	return CL_RestoreReplayGorillaSnapshot ();
 }
 
 static void CL_PrepareReplayCommand (usercmd_t *dst, const usercmd_t *src, qboolean private_replay)
@@ -1605,7 +1604,7 @@ static qboolean CL_ComputeReplayPlayerMovement (entity_t *ent, cl_replay_result_
 	pmove.jump_secs = private_replay ? cl.statsf[STAT_PRIVATE_JUMP_SECS] : 0;
 	pmove.onground = (ent->netstate.pmovetype & 0x80) != 0;
 	pmove.skipent = -cl.viewentity;
-	if (!shadow && private_replay && !CL_SetupReplayGorilla (startseq, NULL))
+	if (!shadow && private_replay && !CL_SetupReplayGorilla (startseq))
 		return false;
 	PMCL_AddEntities (bounds);
 
@@ -1645,11 +1644,30 @@ static qboolean CL_ComputeReplayPlayerMovement (entity_t *ent, cl_replay_result_
 		 * contained no raw sample, the disposable preview can still seed the
 		 * existing solver after an ACK or a fresh RESET. */
 		if (private_replay && !pmove.gorilla_allowed &&
-			preview.vr_gorilla.flags &&
-			!CL_SetupReplayGorilla (startseq, &preview))
+			preview.vr_gorilla.flags && cl.vr_gorilla_supported &&
+			cl.vr_gorilla_allowed)
 		{
-			CL_ResetReplayPropagation ();
-			return false;
+			if (cl.move_ack_authority != MOVE_AUTHORITY_PMOVE_ENGINE_COMPAT)
+			{
+				CL_ResetReplayPropagation ();
+				return false;
+			}
+			if (preview.vr_gorilla.flags & VR_GORILLA_RESET)
+			{
+				memset (&pmove.gorilla, 0, sizeof (pmove.gorilla));
+				pmove.gorilla_allowed = true;
+			}
+			else if (startseq < endseq)
+			{
+				/* Earlier OFF commands reset the solver during replay.
+				 * Keep that state instead of resurrecting the ACK's anchors. */
+				pmove.gorilla_allowed = true;
+			}
+			else if (!CL_RestoreReplayGorillaSnapshot ())
+			{
+				CL_ResetReplayPropagation ();
+				return false;
+			}
 		}
 		CL_PrepareReplayCommand (&pmove.cmd, &preview, private_replay);
 		if (!CL_ReplayEnsureCommandPhysents (bounds, &pmove.cmd,
