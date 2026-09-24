@@ -50,9 +50,34 @@ typedef struct r_vrik_lowerbody_targets_s
 	vec3_t orientation[R_VRIK_LOWER_ROLE_COUNT];
 } r_vrik_lowerbody_targets_t;
 
+/* Bind-pose projection used by local FBT calibration. Positions and
+ * quaternions are in the OpenXR floor-reference space, in metres and WXYZ. */
+typedef struct r_vrik_calibration_projection_input_s
+{
+	vec3_t hmd_position;
+	float floor_height;
+	vec3_t forward;
+	vec3_t right;
+	vec3_t up;
+} r_vrik_calibration_projection_input_t;
+
+typedef struct r_vrik_calibration_projection_s
+{
+	float metres_per_bind_unit;
+	vec3_t position[R_VRIK_LOWER_ROLE_COUNT];
+	float orientation_wxyz[R_VRIK_LOWER_ROLE_COUNT][4];
+} r_vrik_calibration_projection_t;
+
 /* Sample only v3 hip/foot roles.  The output is cleared on failure. */
 qboolean R_VRIKSampleEntityLowerTargets (const entity_t *entity,
 	r_vrik_lowerbody_targets_t *out);
+
+/* Requires the byte-verified rerelease Ranger skeleton and both supported
+ * leg chains. Fails closed when that exact calibration reference is absent. */
+qboolean R_VRIKProjectCalibrationReference (qmodel_t *model,
+	const r_vrik_calibration_projection_input_t *input,
+	r_vrik_calibration_projection_t *out);
+qboolean R_VRIKCalibrationReferenceAvailable (qmodel_t *model);
 
 /* Interpolate the two absolute animation poses using lerpdata, then apply the
  * donor Ranger head/arm and held-prop solve from pose.  Optional v3 hip/foot

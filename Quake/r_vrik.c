@@ -1062,3 +1062,205 @@ r_vrik_palette_result_t R_VRIKBuildRangerPalette (
 	VectorCopy (muzzle_forward, out->muzzle_forward);
 	return R_VRIK_PALETTE_OK;
 }
+
+typedef struct r_vrik_calibration_reference_s
+{
+	float transform[R_VRIK_LOWER_ROLE_COUNT][12];
+	float head_transform[12];
+	vec3_t lateral;
+	vec3_t forward;
+	vec3_t up;
+} r_vrik_calibration_reference_t;
+
+static qboolean R_VRIKGetCalibrationReference (qmodel_t *model,
+	r_vrik_calibration_reference_t *out)
+{
+	md5_skeleton_view_t skeleton;
+	r_vrik_leg_rig_t legs[2];
+	r_vrik_calibration_reference_t reference;
+	int jointindex[R_VRIK_JOINT_COUNT];
+	int hip, head, leftshoulder, rightshoulder;
+	vec3_t hiporigin, headorigin, leftorigin, rightorigin;
+
+	if (!out || !Mod_GetMD5Skeleton (model, &skeleton) ||
+		!skeleton.from_rerelease || !R_VRIKResolveJoints (&skeleton, jointindex))
+		return false;
+	hip = jointindex[R_VRIK_HIP];
+	head = jointindex[R_VRIK_HEAD];
+	leftshoulder = jointindex[R_VRIK_SHOULDER_L];
+	rightshoulder = jointindex[R_VRIK_SHOULDER_R];
+	if (!R_VRIKResolveLegRig (&skeleton, hip, 0, &legs[0]) ||
+		!R_VRIKResolveLegRig (&skeleton, hip, 1, &legs[1]))
+		return false;
+	memset (&reference, 0, sizeof (reference));
+	memcpy (reference.transform[R_VRIK_LOWER_HIP],
+		skeleton.joints[hip].bind, sizeof (skeleton.joints[hip].bind));
+	memcpy (reference.transform[R_VRIK_LOWER_LEFT_FOOT],
+		skeleton.joints[legs[0].foot].bind, sizeof (skeleton.joints[legs[0].foot].bind));
+	memcpy (reference.transform[R_VRIK_LOWER_RIGHT_FOOT],
+		skeleton.joints[legs[1].foot].bind, sizeof (skeleton.joints[legs[1].foot].bind));
+	memcpy (reference.head_transform, skeleton.joints[head].bind,
+		sizeof (skeleton.joints[head].bind));
+	R_VRIKMatrixOrigin (skeleton.joints[hip].bind, hiporigin);
+	R_VRIKMatrixOrigin (skeleton.joints[head].bind, headorigin);
+	R_VRIKMatrixOrigin (skeleton.joints[leftshoulder].bind, leftorigin);
+	R_VRIKMatrixOrigin (skeleton.joints[rightshoulder].bind, rightorigin);
+	if (!R_VRIKFinite3 (hiporigin) || !R_VRIKFinite3 (headorigin) ||
+		!R_VRIKFinite3 (leftorigin) || !R_VRIKFinite3 (rightorigin))
+		return false;
+	VectorSubtract (rightorigin, leftorigin, reference.lateral);
+	VectorSubtract (headorigin, hiporigin, reference.up);
+	if (!VectorNormalize (reference.lateral) || !VectorNormalize (reference.up))
+		return false;
+	CrossProduct (reference.up, reference.lateral, reference.forward);
+	if (!VectorNormalize (reference.forward))
+		return false;
+	CrossProduct (reference.lateral, reference.forward, reference.up);
+	if (!VectorNormalize (reference.up))
+		return false;
+	*out = reference;
+	return true;
+}
+
+qboolean R_VRIKCalibrationReferenceAvailable (qmodel_t *model)
+{
+	r_vrik_calibration_reference_t reference;
+	return R_VRIKGetCalibrationReference (model, &reference);
+}
+
+static qboolean R_VRIKCalibrationMatrixQuaternion (const float matrix[12],
+	float quaternion[4])
+{
+	float trace = matrix[0] + matrix[5] + matrix[10];
+	float scale;
+
+	if (trace > 0.0f)
+	{
+		scale = sqrtf (trace + 1.0f) * 2.0f;
+		if (!isfinite (scale) || scale <= 0.0001f) return false;
+		quaternion[0] = 0.25f * scale;
+		quaternion[1] = (matrix[9] - matrix[6]) / scale;
+		quaternion[2] = (matrix[2] - matrix[8]) / scale;
+		quaternion[3] = (matrix[4] - matrix[1]) / scale;
+	}
+	else if (matrix[0] > matrix[5] && matrix[0] > matrix[10])
+	{
+		scale = sqrtf (1.0f + matrix[0] - matrix[5] - matrix[10]) * 2.0f;
+		if (!isfinite (scale) || scale <= 0.0001f) return false;
+		quaternion[0] = (matrix[9] - matrix[6]) / scale;
+		quaternion[1] = 0.25f * scale;
+		quaternion[2] = (matrix[1] + matrix[4]) / scale;
+		quaternion[3] = (matrix[2] + matrix[8]) / scale;
+	}
+	else if (matrix[5] > matrix[10])
+	{
+		scale = sqrtf (1.0f + matrix[5] - matrix[0] - matrix[10]) * 2.0f;
+		if (!isfinite (scale) || scale <= 0.0001f) return false;
+		quaternion[0] = (matrix[2] - matrix[8]) / scale;
+		quaternion[1] = (matrix[1] + matrix[4]) / scale;
+		quaternion[2] = 0.25f * scale;
+		quaternion[3] = (matrix[6] + matrix[9]) / scale;
+	}
+	else
+	{
+		scale = sqrtf (1.0f + matrix[10] - matrix[0] - matrix[5]) * 2.0f;
+		if (!isfinite (scale) || scale <= 0.0001f) return false;
+		quaternion[0] = (matrix[4] - matrix[1]) / scale;
+		quaternion[1] = (matrix[2] + matrix[8]) / scale;
+		quaternion[2] = (matrix[6] + matrix[9]) / scale;
+		quaternion[3] = 0.25f * scale;
+	}
+	if (!isfinite (quaternion[0]) || !isfinite (quaternion[1]) ||
+		!isfinite (quaternion[2]) || !isfinite (quaternion[3]))
+		return false;
+	scale = sqrtf (quaternion[0] * quaternion[0] + quaternion[1] * quaternion[1] +
+		quaternion[2] * quaternion[2] + quaternion[3] * quaternion[3]);
+	if (!isfinite (scale) || scale <= 0.0001f)
+		return false;
+	for (int component = 0; component < 4; ++component)
+		quaternion[component] /= scale;
+	return true;
+}
+
+qboolean R_VRIKProjectCalibrationReference (qmodel_t *model,
+	const r_vrik_calibration_projection_input_t *input,
+	r_vrik_calibration_projection_t *out)
+{
+	r_vrik_calibration_reference_t reference;
+	r_vrik_calibration_projection_t projection;
+	vec3_t forward, right, up, cross, head, leftfoot, rightfoot;
+	float bindfloor, bindheight, hmdheight, scale;
+
+	if (!input || !out || !R_VRIKGetCalibrationReference (model, &reference) ||
+		!R_VRIKFinite3 (input->hmd_position) || !isfinite (input->floor_height) ||
+		!R_VRIKFinite3 (input->forward) || !R_VRIKFinite3 (input->right) ||
+		!R_VRIKFinite3 (input->up))
+		return false;
+	VectorCopy (input->forward, forward);
+	VectorCopy (input->right, right);
+	VectorCopy (input->up, up);
+	if (fabsf (VectorNormalize (forward) - 1.0f) > 0.02f ||
+		fabsf (VectorNormalize (right) - 1.0f) > 0.02f ||
+		fabsf (VectorNormalize (up) - 1.0f) > 0.02f ||
+		fabsf (DotProduct (forward, right)) > 0.02f ||
+		fabsf (DotProduct (forward, up)) > 0.02f ||
+		fabsf (DotProduct (right, up)) > 0.02f)
+		return false;
+	CrossProduct (forward, up, cross);
+	if (!VectorNormalize (cross) || DotProduct (cross, right) < 0.98f)
+		return false;
+	R_VRIKMatrixOrigin (reference.head_transform, head);
+	R_VRIKMatrixOrigin (reference.transform[R_VRIK_LOWER_LEFT_FOOT], leftfoot);
+	R_VRIKMatrixOrigin (reference.transform[R_VRIK_LOWER_RIGHT_FOOT], rightfoot);
+	bindfloor = q_min (DotProduct (leftfoot, reference.up),
+		DotProduct (rightfoot, reference.up));
+	bindheight = DotProduct (head, reference.up) - bindfloor;
+	hmdheight = DotProduct (input->hmd_position, up) - input->floor_height;
+	if (!isfinite (bindheight) || !isfinite (hmdheight) || bindheight < 8.0f ||
+		bindheight > 256.0f || hmdheight < 0.4f || hmdheight > 3.0f)
+		return false;
+	scale = hmdheight / bindheight;
+	if (!isfinite (scale) || scale < 0.002f || scale > 1.0f)
+		return false;
+	memset (&projection, 0, sizeof (projection));
+	projection.metres_per_bind_unit = scale;
+	for (int role = 0; role < R_VRIK_LOWER_ROLE_COUNT; ++role)
+	{
+		float basis[12] = {0}, nativeinverse[12] = {0};
+		float canonical[12], oriented[12];
+		vec3_t roleorigin, offset;
+		float component_forward, component_right, component_up;
+
+		R_VRIKMatrixOrigin (reference.transform[role], roleorigin);
+		VectorSubtract (roleorigin, head, offset);
+		component_forward = DotProduct (offset, reference.forward) * scale;
+		component_right = DotProduct (offset, reference.lateral) * scale;
+		component_up = DotProduct (offset, reference.up) * scale;
+		projection.position[role][0] = input->hmd_position[0] +
+			forward[0] * component_forward + right[0] * component_right + up[0] * component_up;
+		projection.position[role][1] = input->hmd_position[1] +
+			forward[1] * component_forward + right[1] * component_right + up[1] * component_up;
+		projection.position[role][2] = input->hmd_position[2] +
+			forward[2] * component_forward + right[2] * component_right + up[2] * component_up;
+		basis[0] = forward[0]; basis[1] = -right[0]; basis[2] = up[0];
+		basis[4] = forward[1]; basis[5] = -right[1]; basis[6] = up[1];
+		basis[8] = forward[2]; basis[9] = -right[2]; basis[10] = up[2];
+		nativeinverse[0] = reference.forward[0];
+		nativeinverse[1] = reference.forward[1];
+		nativeinverse[2] = reference.forward[2];
+		nativeinverse[4] = -reference.lateral[0];
+		nativeinverse[5] = -reference.lateral[1];
+		nativeinverse[6] = -reference.lateral[2];
+		nativeinverse[8] = reference.up[0];
+		nativeinverse[9] = reference.up[1];
+		nativeinverse[10] = reference.up[2];
+		R_VRIKMatrixMultiply (basis, nativeinverse, canonical);
+		R_VRIKMatrixMultiply (canonical, reference.transform[role], oriented);
+		if (!R_VRIKFinite3 (projection.position[role]) ||
+			!R_VRIKCalibrationMatrixQuaternion (oriented,
+				projection.orientation_wxyz[role]))
+			return false;
+	}
+	*out = projection;
+	return true;
+}

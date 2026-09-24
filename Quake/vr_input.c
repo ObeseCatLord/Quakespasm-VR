@@ -34,13 +34,16 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 
 #include "quakedef.h"
 #include "menu.h"
+#include "r_vrik.h"
 #include "vr_aim.h"
 #include "vr_fbt.h"
+#include "vr_fbt_filter.h"
 #include "vr_fbt_profile.h"
 #include "vr_fbt_storage.h"
 #include "vr_input.h"
 #include "vr_locomotion.h"
 #include "vr_weapon_calibration.h"
+#include "view.h"
 
 #include <limits.h>
 #include <math.h>
@@ -106,6 +109,32 @@ static uint64_t vr_input_fbt_last_seen_sample_id;
 static uint64_t vr_input_fbt_next_ephemeral_identity = 1;
 static double vr_input_fbt_snapshot_time;
 static qboolean vr_input_fbt_have_snapshot_time;
+typedef enum
+{
+	VR_INPUT_FBT_CALIBRATION_IDLE,
+	VR_INPUT_FBT_CALIBRATION_READY,
+	VR_INPUT_FBT_CALIBRATION_CAPTURING,
+	VR_INPUT_FBT_CALIBRATION_PREVIEW
+} vr_input_fbt_calibration_state_t;
+
+typedef struct
+{
+	vr_fbt_filter_output_t output;
+	uint64_t sample_id;
+	double output_time;
+	qboolean present;
+} vr_input_fbt_cached_target_t;
+
+static vr_fbt_filter_t vr_input_fbt_filter;
+static vr_input_fbt_cached_target_t vr_input_fbt_cached_targets[VR_FBT_ROLE_COUNT];
+static uint64_t vr_input_fbt_filter_last_sample_id;
+static qboolean vr_input_fbt_sender_ready;
+static vr_input_fbt_calibration_state_t vr_input_fbt_calibration_state;
+static vr_fbt_profile_capture_t vr_input_fbt_capture;
+static vr_fbt_profile_t vr_input_fbt_preview_profile;
+static qboolean vr_input_fbt_preview_valid;
+static char vr_input_fbt_calibration_name[VR_FBT_PROFILE_NAME_MAX];
+static uint64_t vr_input_fbt_capture_last_sample_id;
 static struct
 {
 	uint64_t identity;
@@ -116,6 +145,26 @@ static struct
 #define VR_INPUT_WIRE_MAX 32767.0f
 /* Keep producer samples within PM_VR_ROOMSCALE_MAX_DELTA in pmove.c. */
 #define VR_INPUT_ROOM_SCALE_MAX_DELTA_UNITS 16.0f
+
+static void VR_InputFBTResetFilterState (void)
+{
+	VR_FBT_FilterInit (&vr_input_fbt_filter);
+	memset (vr_input_fbt_cached_targets, 0, sizeof (vr_input_fbt_cached_targets));
+	/* A profile/reference reset must not make the already-reconciled sample
+	 * eligible for a second filter update. */
+	vr_input_fbt_filter_last_sample_id = vr_input_fbt_last_seen_sample_id;
+	vr_input_fbt_sender_ready = false;
+}
+
+static void VR_InputFBTCancelCalibration (void)
+{
+	memset (&vr_input_fbt_capture, 0, sizeof (vr_input_fbt_capture));
+	memset (&vr_input_fbt_preview_profile, 0, sizeof (vr_input_fbt_preview_profile));
+	vr_input_fbt_preview_valid = false;
+	vr_input_fbt_calibration_state = VR_INPUT_FBT_CALIBRATION_IDLE;
+	vr_input_fbt_calibration_name[0] = '\0';
+	vr_input_fbt_capture_last_sample_id = 0;
+}
 
 static vr_input_context_t VR_InputCurrentContext (void)
 {
@@ -326,6 +375,8 @@ static void VR_InputFBTReset (void)
 	vr_input_fbt_snapshot_time = 0.0;
 	vr_input_fbt_have_snapshot_time = false;
 	memset (vr_input_fbt_slots, 0, sizeof (vr_input_fbt_slots));
+	VR_InputFBTResetFilterState ();
+	VR_InputFBTCancelCalibration ();
 }
 
 static void VR_InputFBTEnabledChanged (cvar_t *var)
@@ -397,9 +448,85 @@ static qboolean VR_InputFBTSelectProfile (const vr_fbt_profile_t *profile,
 	vr_input_fbt_manager = staged;
 	vr_input_fbt_profile = *profile;
 	vr_input_fbt_profile_valid = true;
+	VR_InputFBTResetFilterState ();
+	VR_InputFBTCancelCalibration ();
 	if (selection_not_durable)
 		Con_Warning ("FBT: selected profile is visible but not crash-durable\n");
 	return true;
+}
+
+/* Save the profile before changing selected.cfg. A failed selected-name write
+ * can leave a new profile file visible, but never changes the live selection. */
+static qboolean VR_InputFBTSaveAndSelectProfile (const vr_fbt_profile_t *profile,
+	vr_fbt_profile_error_t *profile_error,
+	vr_fbt_storage_error_t *storage_error, qboolean *not_durable,
+	qboolean *profile_visible)
+{
+	char selected[VR_FBT_PROFILE_NAME_MAX];
+	vr_fbt_manager_t staged;
+	qboolean already_selected = false;
+
+	if (not_durable)
+		*not_durable = false;
+	if (profile_visible)
+		*profile_visible = false;
+	if (profile_error)
+		*profile_error = VR_FBT_PROFILE_OK;
+	if (storage_error)
+		*storage_error = VR_FBT_STORAGE_OK;
+	if (!profile || !profile_error || !storage_error || !not_durable ||
+		!profile_visible || !VR_InputFBTApplyProfileBindings (profile, &staged))
+		return false;
+	if (VR_FBT_StorageLoadSelected (selected, sizeof (selected), storage_error))
+		already_selected = !strcmp (selected, profile->name);
+	if (!VR_FBT_StorageSaveProfile (profile, profile_error, storage_error))
+	{
+		if (*storage_error != VR_FBT_STORAGE_ERR_COMMITTED_NOT_DURABLE)
+			return false;
+		*not_durable = true;
+	}
+	*profile_visible = true;
+	if (!already_selected &&
+		!VR_FBT_StorageSaveSelected (profile->name, storage_error))
+	{
+		if (*storage_error != VR_FBT_STORAGE_ERR_COMMITTED_NOT_DURABLE)
+			return false;
+		*not_durable = true;
+	}
+	vr_input_fbt_manager = staged;
+	vr_input_fbt_profile = *profile;
+	vr_input_fbt_profile_valid = true;
+	VR_InputFBTResetFilterState ();
+	VR_InputFBTCancelCalibration ();
+	return true;
+}
+
+static void VR_InputFBTProfileSave_f (void)
+{
+	vr_fbt_storage_error_t storage_error = VR_FBT_STORAGE_OK;
+	vr_fbt_profile_error_t profile_error = VR_FBT_PROFILE_OK;
+	qboolean not_durable, profile_visible;
+
+	if (Cmd_Argc () != 1)
+	{
+		Con_Printf ("usage: vr_fbt_profile_save\n");
+		return;
+	}
+	if (!vr_input_fbt_profile_valid)
+	{
+		Con_Printf ("FBT: no accepted profile to save; calibrate and accept one first\n");
+		return;
+	}
+	if (!VR_InputFBTSaveAndSelectProfile (&vr_input_fbt_profile,
+		&profile_error, &storage_error, &not_durable, &profile_visible))
+	{
+		Con_Printf ("FBT: profile save failed (%d); current profile kept%s\n",
+			(int)storage_error, profile_visible ? "; saved file remains visible" : "");
+		return;
+	}
+	if (not_durable)
+		Con_Warning ("FBT: saved profile is visible but not crash-durable\n");
+	Con_Printf ("FBT: saved accepted profile %s\n", vr_input_fbt_profile.name);
 }
 
 static void VR_InputFBTLoadSelectedProfile (void)
@@ -464,6 +591,8 @@ static void VR_InputFBTProfileReset_f (void)
 	vr_input_fbt_manager = staged;
 	memset (&vr_input_fbt_profile, 0, sizeof (vr_input_fbt_profile));
 	vr_input_fbt_profile_valid = false;
+	VR_InputFBTResetFilterState ();
+	VR_InputFBTCancelCalibration ();
 	Con_Printf ("FBT: cleared runtime profile and bindings; saved files were not removed\n");
 }
 
@@ -1037,6 +1166,666 @@ static qboolean VR_InputVRIKRootLocalAngles (const vec3_t world_angles,
 	return true;
 }
 
+static qboolean VR_InputFBTMatrixQuaternion (const float matrix[3][4],
+	double quaternion[4])
+{
+	double trace, scale;
+
+	if (!matrix || !quaternion || !VR_InputFBTMatrixFinite (matrix))
+		return false;
+	trace = (double)matrix[0][0] + matrix[1][1] + matrix[2][2];
+	if (trace > 0.0)
+	{
+		scale = sqrt (trace + 1.0) * 2.0;
+		if (!isfinite (scale) || scale <= 0.0001) return false;
+		quaternion[0] = 0.25 * scale;
+		quaternion[1] = (matrix[2][1] - matrix[1][2]) / scale;
+		quaternion[2] = (matrix[0][2] - matrix[2][0]) / scale;
+		quaternion[3] = (matrix[1][0] - matrix[0][1]) / scale;
+	}
+	else if (matrix[0][0] > matrix[1][1] && matrix[0][0] > matrix[2][2])
+	{
+		scale = sqrt (1.0 + matrix[0][0] - matrix[1][1] - matrix[2][2]) * 2.0;
+		if (!isfinite (scale) || scale <= 0.0001) return false;
+		quaternion[0] = (matrix[2][1] - matrix[1][2]) / scale;
+		quaternion[1] = 0.25 * scale;
+		quaternion[2] = (matrix[0][1] + matrix[1][0]) / scale;
+		quaternion[3] = (matrix[0][2] + matrix[2][0]) / scale;
+	}
+	else if (matrix[1][1] > matrix[2][2])
+	{
+		scale = sqrt (1.0 + matrix[1][1] - matrix[0][0] - matrix[2][2]) * 2.0;
+		if (!isfinite (scale) || scale <= 0.0001) return false;
+		quaternion[0] = (matrix[0][2] - matrix[2][0]) / scale;
+		quaternion[1] = (matrix[0][1] + matrix[1][0]) / scale;
+		quaternion[2] = 0.25 * scale;
+		quaternion[3] = (matrix[1][2] + matrix[2][1]) / scale;
+	}
+	else
+	{
+		scale = sqrt (1.0 + matrix[2][2] - matrix[0][0] - matrix[1][1]) * 2.0;
+		if (!isfinite (scale) || scale <= 0.0001) return false;
+		quaternion[0] = (matrix[1][0] - matrix[0][1]) / scale;
+		quaternion[1] = (matrix[0][2] + matrix[2][0]) / scale;
+		quaternion[2] = (matrix[1][2] + matrix[2][1]) / scale;
+		quaternion[3] = 0.25 * scale;
+	}
+	scale = sqrt (quaternion[0] * quaternion[0] + quaternion[1] * quaternion[1] +
+		quaternion[2] * quaternion[2] + quaternion[3] * quaternion[3]);
+	if (!isfinite (scale) || scale <= 0.0001)
+		return false;
+	for (int component = 0; component < 4; ++component)
+	{
+		quaternion[component] /= scale;
+		if (!isfinite (quaternion[component]))
+			return false;
+	}
+	return true;
+}
+
+static void VR_InputFBTQuaternionMatrix (const double quaternion[4],
+	float matrix[3][4])
+{
+	const double w = quaternion[0], x = quaternion[1];
+	const double y = quaternion[2], z = quaternion[3];
+	matrix[0][0] = (float)(1.0 - 2.0 * (y * y + z * z));
+	matrix[0][1] = (float)(2.0 * (x * y - w * z));
+	matrix[0][2] = (float)(2.0 * (x * z + w * y));
+	matrix[1][0] = (float)(2.0 * (x * y + w * z));
+	matrix[1][1] = (float)(1.0 - 2.0 * (x * x + z * z));
+	matrix[1][2] = (float)(2.0 * (y * z - w * x));
+	matrix[2][0] = (float)(2.0 * (x * z - w * y));
+	matrix[2][1] = (float)(2.0 * (y * z + w * x));
+	matrix[2][2] = (float)(1.0 - 2.0 * (x * x + y * y));
+	for (int row = 0; row < 3; ++row)
+		matrix[row][3] = 0.0f;
+}
+
+static uint64_t VR_InputFBTSerialIdentity (const char *serial)
+{
+	uint64_t hash = UINT64_C (1469598103934665603);
+	const unsigned char *cursor = (const unsigned char *)serial;
+	if (!VR_FBT_SerialIsSafe (serial))
+		return 0;
+	while (*cursor)
+	{
+		hash ^= *cursor++;
+		hash *= UINT64_C (1099511628211);
+	}
+	return hash ? hash : 1;
+}
+
+static qboolean VR_InputFBTRawTransform (const vr_fbt_role_status_t *status,
+	vr_fbt_profile_transform_t *transform)
+{
+	double quaternion[4];
+	if (!status || !transform || !status->connected || !status->pose_valid ||
+		status->state != VR_FBT_STATE_TRACKING ||
+		status->tracking_result != VR_FBT_TRACKING_RESULT_RUNNING_OK ||
+		status->identity_kind != VR_FBT_IDENTITY_SERIAL ||
+		!VR_FBT_SerialIsSafe (status->serial) ||
+		!VR_InputFBTMatrixQuaternion (status->device_to_absolute_tracking,
+			quaternion))
+		return false;
+	transform->position[0] = status->device_to_absolute_tracking[0][3];
+	transform->position[1] = status->device_to_absolute_tracking[1][3];
+	transform->position[2] = status->device_to_absolute_tracking[2][3];
+	for (int component = 0; component < 4; ++component)
+		transform->orientation[component] = quaternion[component];
+	return isfinite (transform->position[0]) && isfinite (transform->position[1]) &&
+		isfinite (transform->position[2]);
+}
+
+static qboolean VR_InputFBTProjectionInput (const vrxr_frame_t *frame,
+	entity_t **player_out, r_vrik_calibration_projection_input_t *input)
+{
+	const vrxr_device_t *head;
+	entity_t *player;
+	vec3_t cross;
+	float forward_length;
+	if (!frame || !player_out || !input || !frame->should_render ||
+		!frame->focused || !frame->floor_referenced || !cl.entities ||
+		cl.viewentity <= 0 || cl.viewentity >= cl.num_entities ||
+	cls.state != ca_connected || cls.signon != SIGNONS)
+		return false;
+	head = &frame->devices[0];
+	player = &cl.entities[cl.viewentity];
+	if (!head->valid || !head->tracked || head->kind != VRXR_DEVICE_HEAD ||
+		head->hand != -1 || !VR_InputFBTMatrixFinite (head->matrix) ||
+		!player->model)
+		return false;
+	memset (input, 0, sizeof (*input));
+	for (int axis = 0; axis < 3; ++axis)
+		input->hmd_position[axis] = head->matrix[axis][3];
+	input->forward[0] = -head->matrix[0][2];
+	input->forward[1] = 0.0f;
+	input->forward[2] = -head->matrix[2][2];
+	forward_length = VectorNormalize (input->forward);
+	if (!isfinite (forward_length) || forward_length < 0.01f)
+		return false;
+	input->up[0] = 0.0f; input->up[1] = 1.0f; input->up[2] = 0.0f;
+	CrossProduct (input->forward, input->up, cross);
+	if (!VectorNormalize (cross))
+		return false;
+	VectorCopy (cross, input->right);
+	input->floor_height = 0.0f;
+	*player_out = player;
+	return true;
+}
+
+static qboolean VR_InputFBTProjectReference (const vrxr_frame_t *frame,
+	entity_t **player, r_vrik_calibration_projection_input_t *input,
+	r_vrik_calibration_projection_t *projection)
+{
+	return projection && VR_InputFBTProjectionInput (frame, player, input) &&
+		R_VRIKProjectCalibrationReference ((*player)->model, input, projection);
+}
+
+static qboolean VR_InputFBTCalibrationBindingsReady (
+	char serials[VR_FBT_ROLE_COUNT][VR_FBT_SERIAL_MAX], unsigned int *role_mask)
+{
+	unsigned int mask = 0;
+	if (!serials || !role_mask)
+		return false;
+	memset (serials, 0, sizeof (char) * VR_FBT_ROLE_COUNT * VR_FBT_SERIAL_MAX);
+	for (int role = 0; role < VR_FBT_ROLE_COUNT; ++role)
+	{
+		vr_fbt_role_status_t status;
+		if (!VR_FBT_GetRoleStatus (&vr_input_fbt_manager,
+			(vr_fbt_role_t)role, &status))
+			return false;
+		if (status.identity_kind != VR_FBT_IDENTITY_SERIAL ||
+			status.state != VR_FBT_STATE_TRACKING || !status.connected ||
+			!status.pose_valid ||
+			status.tracking_result != VR_FBT_TRACKING_RESULT_RUNNING_OK)
+			continue;
+		if (!VR_FBT_SerialIsSafe (status.serial))
+			return false;
+		memcpy (serials[role], status.serial, sizeof (serials[role]));
+		mask |= VR_FBT_PROFILE_ROLE_BIT (role);
+	}
+	*role_mask = mask;
+	return mask != 0;
+}
+
+static void VR_InputFBTCalibrateBegin_f (void)
+{
+	char serials[VR_FBT_ROLE_COUNT][VR_FBT_SERIAL_MAX];
+	const char *expected[VR_FBT_ROLE_COUNT];
+	unsigned int role_mask;
+	vr_fbt_profile_capture_t capture;
+	r_vrik_calibration_projection_input_t projection_input;
+	r_vrik_calibration_projection_t projection;
+	entity_t *player;
+	const vrxr_frame_t *frame = GL_OpenXRFrame ();
+
+	if (Cmd_Argc () != 2 || !VR_FBT_StorageNameIsSafe (Cmd_Argv (1)))
+	{
+		Con_Printf ("usage: vr_fbt_calibrate_begin <[A-Za-z0-9_-]{1,32}>\n");
+		return;
+	}
+	if (!vr_fbt_enabled.value)
+	{
+		Con_Printf ("FBT: enable full body tracking before calibration\n");
+		return;
+	}
+	if (!VR_InputFBTCalibrationBindingsReady (serials, &role_mask))
+	{
+		Con_Printf ("FBT: assign at least one tracking safe-serial role before calibration\n");
+		return;
+	}
+	if (!VR_InputFBTProjectReference (frame, &player, &projection_input,
+		&projection))
+	{
+		Con_Printf ("FBT: verified Ranger floor-reference projection is unavailable; capture not started\n");
+		return;
+	}
+	for (int role = 0; role < VR_FBT_ROLE_COUNT; ++role)
+		expected[role] = serials[role];
+	if (!VR_FBT_ProfileCaptureBegin (&capture, role_mask, expected))
+	{
+		Con_Printf ("FBT: calibration setup failed; current profile kept\n");
+		return;
+	}
+	vr_input_fbt_capture = capture;
+	q_strlcpy (vr_input_fbt_calibration_name, Cmd_Argv (1),
+		sizeof (vr_input_fbt_calibration_name));
+	vr_input_fbt_preview_valid = false;
+	vr_input_fbt_calibration_state = VR_INPUT_FBT_CALIBRATION_READY;
+	vr_input_fbt_capture_last_sample_id = frame->sample_id;
+	Con_Printf ("FBT: calibration ready for %s; stand neutral, then use vr_fbt_calibrate_capture\n",
+		vr_input_fbt_calibration_name);
+}
+
+static void VR_InputFBTCalibrateCapture_f (void)
+{
+	if (Cmd_Argc () != 1)
+	{
+		Con_Printf ("usage: vr_fbt_calibrate_capture\n");
+		return;
+	}
+	if (vr_input_fbt_calibration_state != VR_INPUT_FBT_CALIBRATION_READY)
+	{
+		Con_Printf ("FBT: begin calibration first\n");
+		return;
+	}
+	vr_input_fbt_calibration_state = VR_INPUT_FBT_CALIBRATION_CAPTURING;
+	if (GL_OpenXRFrame ())
+		vr_input_fbt_capture_last_sample_id = GL_OpenXRFrame ()->sample_id;
+	Con_Printf ("FBT: capturing one second of neutral tracker poses\n");
+}
+
+static void VR_InputFBTCaptureSnapshot (const vrxr_frame_t *frame)
+{
+	vr_fbt_profile_capture_sample_t samples[VR_FBT_ROLE_COUNT];
+	r_vrik_calibration_projection_input_t projection_input;
+	r_vrik_calibration_projection_t projection;
+	entity_t *player;
+	vr_fbt_profile_capture_metadata_t metadata;
+	vr_fbt_profile_error_t profile_error;
+	if (vr_input_fbt_calibration_state != VR_INPUT_FBT_CALIBRATION_CAPTURING ||
+		!frame || !frame->sample_id || frame->sample_id == vr_input_fbt_capture_last_sample_id ||
+		frame->sample_id != vr_input_fbt_last_seen_sample_id)
+		return;
+	if (!VR_InputFBTProjectReference (frame, &player, &projection_input,
+		&projection))
+	{
+		VR_InputFBTCancelCalibration ();
+		Con_Printf ("FBT: verified Ranger floor-reference was lost; calibration cancelled\n");
+		return;
+	}
+	vr_input_fbt_capture_last_sample_id = frame->sample_id;
+	memset (samples, 0, sizeof (samples));
+	for (int role = 0; role < VR_FBT_ROLE_COUNT; ++role)
+	{
+		vr_fbt_role_status_t status;
+		vr_fbt_profile_capture_sample_t *sample = &samples[role];
+		if (!(vr_input_fbt_capture.required_role_mask & VR_FBT_PROFILE_ROLE_BIT (role)))
+			continue;
+		sample->present = 1;
+		if (!VR_FBT_GetRoleStatus (&vr_input_fbt_manager,
+			(vr_fbt_role_t)role, &status))
+			continue;
+		sample->connected = status.connected;
+		sample->pose_valid = VR_InputFBTRawTransform (&status,
+			&sample->raw_tracker_transform);
+		if (status.identity_kind == VR_FBT_IDENTITY_SERIAL &&
+			VR_FBT_SerialIsSafe (status.serial))
+			memcpy (sample->serial, status.serial, sizeof (sample->serial));
+		for (int axis = 0; axis < 3; ++axis)
+		{
+			sample->reference_target_transform.position[axis] =
+				projection.position[role][axis];
+			sample->linear_velocity_metres_per_second[axis] =
+				isfinite (status.velocity[axis]) ? status.velocity[axis] : 0.0;
+			sample->angular_velocity_radians_per_second[axis] =
+				isfinite (status.angular_velocity[axis]) ? status.angular_velocity[axis] : 0.0;
+		}
+		for (int component = 0; component < 4; ++component)
+			sample->reference_target_transform.orientation[component] =
+				projection.orientation_wxyz[role][component];
+	}
+	if (!VR_FBT_ProfileCaptureAddSnapshot (&vr_input_fbt_capture,
+		vr_input_fbt_snapshot_id, vr_input_fbt_snapshot_time, samples))
+		return;
+	if (!vr_input_fbt_capture.started ||
+		vr_input_fbt_snapshot_time - vr_input_fbt_capture.first_snapshot_time < 1.0)
+		return;
+	memset (&metadata, 0, sizeof (metadata));
+	q_strlcpy (metadata.name, vr_input_fbt_calibration_name, sizeof (metadata.name));
+	VR_InputFBTCopySafeSerial (metadata.hmd_serial, frame->devices[0].serial);
+	metadata.hmd_height_metres = projection_input.hmd_position[1] -
+		projection_input.floor_height;
+	metadata.floor_height_metres = projection_input.floor_height;
+	for (int axis = 0; axis < 3; ++axis)
+		metadata.body_forward[axis] = projection_input.forward[axis];
+	if (!VR_FBT_ProfileCaptureFinalize (&vr_input_fbt_capture, &metadata,
+		&vr_input_fbt_preview_profile, &profile_error))
+	{
+		VR_InputFBTCancelCalibration ();
+		Con_Printf ("FBT: neutral capture was unstable or incomplete; current profile kept (%d)\n",
+			(int)profile_error);
+		return;
+	}
+	vr_input_fbt_preview_valid = true;
+	vr_input_fbt_calibration_state = VR_INPUT_FBT_CALIBRATION_PREVIEW;
+	Con_Printf ("FBT: calibration preview ready; use vr_fbt_calibrate_accept to save\n");
+}
+
+static void VR_InputFBTCalibrateAccept_f (void)
+{
+	vr_fbt_profile_t preview;
+	vr_fbt_storage_error_t storage_error = VR_FBT_STORAGE_OK;
+	vr_fbt_profile_error_t profile_error = VR_FBT_PROFILE_OK;
+	qboolean not_durable, profile_visible;
+	if (Cmd_Argc () != 1)
+	{
+		Con_Printf ("usage: vr_fbt_calibrate_accept\n");
+		return;
+	}
+	if (vr_input_fbt_calibration_state != VR_INPUT_FBT_CALIBRATION_PREVIEW ||
+		!vr_input_fbt_preview_valid)
+	{
+		Con_Printf ("FBT: no completed calibration preview to accept\n");
+		return;
+	}
+	preview = vr_input_fbt_preview_profile;
+	if (!VR_InputFBTSaveAndSelectProfile (&preview, &profile_error,
+		&storage_error, &not_durable, &profile_visible))
+	{
+		Con_Printf ("FBT: accepted calibration was not selected (%d); current profile kept%s\n",
+			(int)storage_error, profile_visible ? "; saved file remains visible" : "");
+		return;
+	}
+	if (not_durable)
+		Con_Warning ("FBT: accepted calibration is visible but not crash-durable\n");
+	Con_Printf ("FBT: accepted and saved calibration %s\n",
+		vr_input_fbt_profile.name);
+}
+
+static void VR_InputFBTCalibrateCancel_f (void)
+{
+	if (Cmd_Argc () != 1)
+	{
+		Con_Printf ("usage: vr_fbt_calibrate_cancel\n");
+		return;
+	}
+	if (vr_input_fbt_calibration_state == VR_INPUT_FBT_CALIBRATION_IDLE)
+	{
+		Con_Printf ("FBT: no calibration is in progress\n");
+		return;
+	}
+	VR_InputFBTCancelCalibration ();
+	Con_Printf ("FBT: calibration cancelled; current profile kept\n");
+}
+
+static qboolean VR_InputFBTMapPointToRoot (const vrxr_frame_t *frame,
+	const vec3_t point, float presentation_yaw, float body_yaw,
+	float units_per_metre, float head_eye_height, vec3_t root_position)
+{
+	const vrxr_device_t *head;
+	vec3_t head_position, head_body_offset, mapped;
+	float radians, cosine, sine;
+	if (!frame || !point || !root_position || !isfinite (presentation_yaw) ||
+		!isfinite (body_yaw) || !isfinite (units_per_metre) ||
+		units_per_metre <= 0.0f || !isfinite (head_eye_height))
+		return false;
+	head = &frame->devices[0];
+	if (!head->valid || !head->tracked || !VR_InputFBTMatrixFinite (head->matrix))
+		return false;
+	for (int axis = 0; axis < 3; ++axis)
+	{
+		head_position[axis] = head->matrix[axis][3];
+		if (!isfinite (point[axis]))
+			return false;
+	}
+	if (!VR_LocomotionHandBodyOffset (head_position, point, presentation_yaw,
+		units_per_metre, head_eye_height, mapped) ||
+		!R_TrackedHeadBodyOffset (head_body_offset))
+		return false;
+	mapped[0] += head_body_offset[0];
+	mapped[1] += head_body_offset[1];
+	radians = body_yaw * M_PI_DIV_180;
+	cosine = cosf (radians);
+	sine = sinf (radians);
+	root_position[0] = mapped[0] * cosine + mapped[1] * sine;
+	root_position[1] = -mapped[0] * sine + mapped[1] * cosine;
+	root_position[2] = mapped[2];
+	return VR_InputWireVec (root_position);
+}
+
+/* Map a direction or velocity through the same OpenXR-to-Quake basis used by
+ * VR_LocomotionHandBodyOffset, then from world yaw into the sender root. */
+static qboolean VR_InputFBTMapTrackingVector (const vec3_t tracking,
+	float presentation_yaw, float body_yaw, vec3_t root)
+{
+	vec3_t angles = {0.0f, presentation_yaw, 0.0f};
+	vec3_t forward, right, up, world;
+	float radians, cosine, sine;
+	if (!tracking || !root || !VR_InputFBTVectorFinite (tracking) ||
+		!isfinite (presentation_yaw) || !isfinite (body_yaw))
+		return false;
+	AngleVectors (angles, forward, right, up);
+	world[0] = right[0] * tracking[0] + up[0] * tracking[1] - forward[0] * tracking[2];
+	world[1] = right[1] * tracking[0] + up[1] * tracking[1] - forward[1] * tracking[2];
+	world[2] = right[2] * tracking[0] + up[2] * tracking[1] - forward[2] * tracking[2];
+	radians = body_yaw * M_PI_DIV_180;
+	cosine = cosf (radians);
+	sine = sinf (radians);
+	root[0] = world[0] * cosine + world[1] * sine;
+	root[1] = -world[0] * sine + world[1] * cosine;
+	root[2] = world[2];
+	return VR_InputFBTVectorFinite (root);
+}
+
+static qboolean VR_InputFBTBuildFilterInput (const vrxr_frame_t *frame,
+	int role, float body_yaw, float presentation_yaw, float units_per_metre,
+	float head_eye_height, vr_fbt_filter_input_t *input)
+{
+	vr_fbt_role_status_t status;
+	vr_fbt_profile_transform_t raw, corrected;
+	const vr_fbt_profile_role_entry_t *binding;
+	vec3_t world_angles, root_angles, mapped, point;
+	float rotation[3][3];
+	uint64_t identity;
+	if (!input || role < 0 || role >= VR_FBT_ROLE_COUNT ||
+		!VR_FBT_GetRoleStatus (&vr_input_fbt_manager, (vr_fbt_role_t)role, &status))
+		return false;
+	binding = &vr_input_fbt_profile.roles[role];
+	if (!binding->present || status.identity_kind != VR_FBT_IDENTITY_SERIAL ||
+		!VR_FBT_SerialIsSafe (status.serial) || strcmp (status.serial, binding->serial))
+	{
+		VR_FBT_FilterResetRole (&vr_input_fbt_filter,
+			(vr_fbt_filter_role_t)role);
+		memset (&vr_input_fbt_cached_targets[role], 0,
+			sizeof (vr_input_fbt_cached_targets[role]));
+		return false;
+	}
+	identity = VR_InputFBTSerialIdentity (status.serial);
+	input->snapshot_id = vr_input_fbt_snapshot_id;
+	input->snapshot_time = vr_input_fbt_snapshot_time;
+	input->identity = identity;
+	input->identity_valid = identity != 0;
+	input->connected = status.connected;
+	input->floor_valid = frame->floor_referenced;
+	input->floor_height = V_VRFloorOffset () / units_per_metre;
+	input->root_yaw_degrees = body_yaw;
+	input->root_yaw_valid = isfinite (body_yaw);
+	if (!VR_InputFBTRawTransform (&status, &raw) ||
+		!VR_FBT_ProfileApplyCorrection (&raw, &binding->device_to_anatomical,
+			&corrected))
+		return true;
+	for (int axis = 0; axis < 3; ++axis)
+	{
+		point[axis] = (float)corrected.position[axis];
+		if (!isfinite (point[axis]))
+			return true;
+	}
+	if (!VR_InputFBTMapPointToRoot (frame, point,
+		presentation_yaw, body_yaw, units_per_metre, head_eye_height, mapped))
+		return true;
+	for (int axis = 0; axis < 3; ++axis)
+		input->position[axis] = mapped[axis] / units_per_metre;
+	{
+		float orientation_matrix[3][4];
+		VR_InputFBTQuaternionMatrix (corrected.orientation, orientation_matrix);
+		if (!VR_AimPoseAngles (orientation_matrix, presentation_yaw, world_angles) ||
+			!VR_InputVRIKRootLocalAngles (world_angles, body_yaw, root_angles))
+			return true;
+		VR_InputVRIKRotMatFromAngles (root_angles, rotation);
+		{
+			float root_matrix[3][4] = {
+				{rotation[0][0], rotation[0][1], rotation[0][2], 0.0f},
+				{rotation[1][0], rotation[1][1], rotation[1][2], 0.0f},
+				{rotation[2][0], rotation[2][1], rotation[2][2], 0.0f}
+			};
+			double quaternion[4];
+			if (!VR_InputFBTMatrixQuaternion (root_matrix, quaternion))
+				return true;
+			for (int component = 0; component < 4; ++component)
+				input->orientation[component] = (float)quaternion[component];
+		}
+	}
+	input->tracking_valid = 1;
+	/* The profile correction is a rigid transform. Its translation offset is
+	 * expressed in tracking metres, so include omega x offset before mapping. */
+	{
+		float corrected_linear[3], point_offset[3];
+		vec3_t velocity_root;
+		for (int axis = 0; axis < 3; ++axis)
+			point_offset[axis] = (float)(corrected.position[axis] - raw.position[axis]);
+		if (VR_FBT_FilterCorrectedPointVelocity (corrected_linear,
+			status.velocity, status.angular_velocity, point_offset) &&
+			VR_InputFBTMapTrackingVector (corrected_linear,
+				presentation_yaw, body_yaw, velocity_root))
+			VectorCopy (velocity_root, input->linear_velocity);
+	}
+	{
+		vec3_t angular_root;
+		if (VR_InputFBTMapTrackingVector (status.angular_velocity,
+			presentation_yaw, body_yaw, angular_root))
+			VectorCopy (angular_root, input->angular_velocity);
+	}
+	return true;
+}
+
+static void VR_InputFBTAppendTargets (const vrxr_frame_t *frame,
+	entity_t *player, vrik_codec_pose_t *pose, float body_yaw,
+	float presentation_yaw, float base_viewheight, float units_per_metre)
+{
+	float head_eye_height;
+	double now;
+	if (!frame || !player || !pose || !vr_fbt_enabled.value ||
+		!vr_input_fbt_profile_valid || !frame->floor_referenced ||
+		!player->model ||
+		!R_VRIKCalibrationReferenceAvailable (player->model) ||
+		!R_TrackedHeadEyeHeight (base_viewheight, &head_eye_height))
+	{
+		if (vr_input_fbt_sender_ready)
+			VR_InputFBTResetFilterState ();
+		if (vr_input_fbt_calibration_state == VR_INPUT_FBT_CALIBRATION_CAPTURING)
+			VR_InputFBTCancelCalibration ();
+		return;
+	}
+	if (!isfinite (units_per_metre) || units_per_metre <= 0.0f ||
+		!isfinite (body_yaw) || !isfinite (presentation_yaw))
+	{
+		if (vr_input_fbt_sender_ready)
+			VR_InputFBTResetFilterState ();
+		return;
+	}
+	vr_input_fbt_sender_ready = true;
+	if (frame->sample_id && frame->sample_id == vr_input_fbt_last_seen_sample_id &&
+		frame->sample_id != vr_input_fbt_filter_last_sample_id)
+	{
+		/* Claim this completed OpenXR sample before visiting roles. Repeated
+		 * pose builds reuse output without advancing any role filter. */
+		vr_input_fbt_filter_last_sample_id = frame->sample_id;
+		for (int role = 0; role < VR_FBT_ROLE_COUNT; ++role)
+		{
+			vr_fbt_filter_input_t input;
+			vr_fbt_filter_output_t output;
+			memset (&input, 0, sizeof (input));
+			if (!VR_InputFBTBuildFilterInput (frame, role, body_yaw,
+				presentation_yaw, units_per_metre, head_eye_height, &input))
+				continue;
+			if (VR_FBT_FilterUpdate (&vr_input_fbt_filter,
+				(vr_fbt_filter_role_t)role, &input, &output))
+			{
+				vr_input_fbt_cached_targets[role].output = output;
+				vr_input_fbt_cached_targets[role].sample_id = frame->sample_id;
+				vr_input_fbt_cached_targets[role].output_time = input.snapshot_time;
+				vr_input_fbt_cached_targets[role].present =
+					output.state != VR_FBT_FILTER_STATE_LOST;
+			}
+		}
+	}
+	now = Sys_DoubleTime ();
+	if (!isfinite (now))
+		now = vr_input_fbt_snapshot_time;
+	for (int role = 0; role < VR_FBT_ROLE_COUNT; ++role)
+	{
+		vr_input_fbt_cached_target_t *cached = &vr_input_fbt_cached_targets[role];
+		const int target = VRIK_TARGET_HIP + role;
+		vec3_t angles;
+		double age;
+		float length_squared;
+		if (!cached->present || !isfinite (cached->output_time) ||
+			now < cached->output_time)
+			continue;
+		age = now - cached->output_time;
+		if (age > VR_FBT_FILTER_HOLD_SECONDS ||
+			cached->output.state == VR_FBT_FILTER_STATE_LOST)
+		{
+			VR_FBT_FilterResetRole (&vr_input_fbt_filter,
+				(vr_fbt_filter_role_t)role);
+			memset (cached, 0, sizeof (*cached));
+			continue;
+		}
+		for (int axis = 0; axis < 3; ++axis)
+			pose->targets[target].position[axis] =
+				cached->output.position[axis] * units_per_metre;
+		length_squared = DotProduct (pose->targets[target].position,
+			pose->targets[target].position);
+		if (!VR_InputWireVec (pose->targets[target].position) ||
+			!isfinite (length_squared) ||
+			length_squared > VRIK_MAX_ROOT_LOCAL_OFFSET * VRIK_MAX_ROOT_LOCAL_OFFSET)
+		{
+			memset (&pose->targets[target], 0, sizeof (pose->targets[target]));
+			VR_FBT_FilterResetRole (&vr_input_fbt_filter,
+				(vr_fbt_filter_role_t)role);
+			memset (cached, 0, sizeof (*cached));
+			continue;
+		}
+		{
+			float quaternion_matrix[3][4];
+			float rotation_matrix[3][3];
+			double norm = 0.0;
+			qboolean quaternion_finite = true;
+			for (int component = 0; component < 4; ++component)
+			{
+				if (!isfinite (cached->output.orientation[component]))
+				{
+					quaternion_finite = false;
+					break;
+				}
+				norm += (double)cached->output.orientation[component] *
+					cached->output.orientation[component];
+			}
+			if (!quaternion_finite || !isfinite (norm) || norm < 0.5 || norm > 1.5)
+			{
+				memset (&pose->targets[target], 0, sizeof (pose->targets[target]));
+				VR_FBT_FilterResetRole (&vr_input_fbt_filter,
+					(vr_fbt_filter_role_t)role);
+				memset (cached, 0, sizeof (*cached));
+				continue;
+			}
+			{
+				double quaternion[4];
+				for (int component = 0; component < 4; ++component)
+					quaternion[component] = cached->output.orientation[component];
+				VR_InputFBTQuaternionMatrix (quaternion, quaternion_matrix);
+			}
+			for (int row = 0; row < 3; ++row)
+				for (int column = 0; column < 3; ++column)
+					rotation_matrix[row][column] = quaternion_matrix[row][column];
+			if (!VR_InputVRIKAnglesFromRotMat (rotation_matrix, angles))
+			{
+				memset (&pose->targets[target], 0, sizeof (pose->targets[target]));
+				VR_FBT_FilterResetRole (&vr_input_fbt_filter,
+					(vr_fbt_filter_role_t)role);
+				memset (cached, 0, sizeof (*cached));
+				continue;
+			}
+		}
+		VectorCopy (angles, pose->targets[target].orientation);
+		pose->present_mask |= VRIK_TARGET_BIT (target);
+		if (cached->output.tracked && cached->sample_id == frame->sample_id &&
+			age <= VR_FBT_FILTER_PREDICT_SECONDS)
+			pose->tracked_mask |= VRIK_TARGET_BIT (target);
+	}
+}
+
 /* Build from the retained completed OpenXR frame. The view owner supplies
  * presentation yaw and canonical head/hand body offsets; player yaw defines
  * the VRIK root-local frame. */
@@ -1139,6 +1928,8 @@ qboolean VR_InputBuildVRIKPose (vrik_codec_pose_t *pose)
 
 	if (!isfinite (head_eye_height))
 		return false;
+	VR_InputFBTAppendTargets (frame, player, pose, body_yaw, presentation_yaw,
+		base_viewheight, V_VRUnitsPerMetre ());
 	return true;
 }
 
@@ -1521,6 +2312,11 @@ void VR_InputInit (void)
 	Cmd_AddCommand ("vr_fbt_profile_select", VR_InputFBTProfileSelect_f);
 	Cmd_AddCommand ("vr_fbt_profile_reset", VR_InputFBTProfileReset_f);
 	Cmd_AddCommand ("vr_fbt_profile_list", VR_InputFBTProfileList_f);
+	Cmd_AddCommand ("vr_fbt_profile_save", VR_InputFBTProfileSave_f);
+	Cmd_AddCommand ("vr_fbt_calibrate_begin", VR_InputFBTCalibrateBegin_f);
+	Cmd_AddCommand ("vr_fbt_calibrate_capture", VR_InputFBTCalibrateCapture_f);
+	Cmd_AddCommand ("vr_fbt_calibrate_accept", VR_InputFBTCalibrateAccept_f);
+	Cmd_AddCommand ("vr_fbt_calibrate_cancel", VR_InputFBTCalibrateCancel_f);
 	VR_InputClear ();
 	VR_InputFBTLoadSelectedProfile ();
 }
@@ -1538,6 +2334,7 @@ void VR_InputCommands (const vrxr_frame_t *frame)
 		frame->sample_id != vr_input_fbt_last_seen_sample_id)
 		VR_InputFBTReset ();
 	VR_InputFBTReconcile (frame);
+	VR_InputFBTCaptureSnapshot (frame);
 	if (cls.state != ca_connected)
 	{
 		cl.vrik_next_sequence = 0;
