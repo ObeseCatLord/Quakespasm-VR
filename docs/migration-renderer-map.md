@@ -119,3 +119,13 @@ reproducible on the donor baseline too, so these runs do not support calling
 it a `2.0` regression. They also do not prove a common root cause. Keep the
 affected runs out of load-speed comparisons and investigate teardown at the
 shared vkQuake/Vulkan boundary.
+
+A detached diagnostic build at `314b2f06` used `USE_CRT_MALLOC` with
+AddressSanitizer and UndefinedBehaviorSanitizer so engine allocations went
+through the intercepted C allocator. Three `mj4m1` load-and-quit runs all
+loaded the map and exited 0; none reported an AddressSanitizer error. They
+did report inherited undefined-behavior diagnostics in image resizing and
+model loading (misaligned access and null arguments to nonnull functions).
+The sanitizer build changes allocation and timing, and these findings do not
+identify the release-only shutdown abort. No diagnostic code was merged into
+`2.0`.
