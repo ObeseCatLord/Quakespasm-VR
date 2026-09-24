@@ -85,6 +85,7 @@ static void M_VROptions_Key (int key);
 static void M_Keys_Key (int key);
 static void M_Help_Key (int key);
 static void M_Mods_Key (int key);
+static void M_Mods_Char (int key);
 static void M_Maps_Key (int key);
 static void M_Skill_Key (int key);
 static void M_Quit_Key (int key);
@@ -3888,6 +3889,8 @@ static void M_Help_Key (int key)
 /* MODS MENU */
 
 #define MAX_MODS_ON_SCREEN MAX_MENU_LINES
+#define MODS_SEARCH_MAX 32
+#define MODS_SEARCH_WIDTH 29
 
 static int				 num_mods = 0;
 static int				 first_mod = 0;
@@ -3896,6 +3899,8 @@ int						 mods_prev_cursor = 0;
 static int				 mod_loaded_from_menu = 0;
 static menuticker_t		 m_mods_ticker;
 static filelist_item_t **mods_sorted;
+static filelist_item_t **mods_filtered;
+static char				 mods_search[MODS_SEARCH_MAX + 1];
 
 static int M_Mods_Compare (const void *a, const void *b)
 {
@@ -3908,6 +3913,49 @@ static int M_Mods_Compare (const void *a, const void *b)
 	return result ? result : q_strcasecmp (left->name, right->name);
 }
 
+static void M_Mods_KeepCursorVisible (void)
+{
+	if (num_mods <= 0)
+	{
+		mods_cursor = 0;
+		first_mod = 0;
+		return;
+	}
+
+	mods_cursor = CLAMP (0, mods_cursor, num_mods - 1);
+	if (num_mods <= MAX_MODS_ON_SCREEN)
+		first_mod = 0;
+	else
+	{
+		first_mod = CLAMP (0, first_mod, num_mods - MAX_MODS_ON_SCREEN);
+		if (mods_cursor < first_mod)
+			first_mod = mods_cursor;
+		else if (mods_cursor >= first_mod + MAX_MODS_ON_SCREEN)
+			first_mod = mods_cursor - MAX_MODS_ON_SCREEN + 1;
+	}
+}
+
+static void M_Mods_UpdateFilter (void)
+{
+	VEC_CLEAR (mods_filtered);
+	for (int i = 0; i < VEC_SIZE (mods_sorted); ++i)
+	{
+		filelist_item_t *item = mods_sorted[i];
+		const char		*fullname = Modlist_GetFullName (item);
+
+		if (mods_search[0] && !q_strcasestr (fullname ? fullname : item->name, mods_search) && !q_strcasestr (item->name, mods_search))
+			continue;
+
+		VEC_PUSH (mods_filtered, item);
+	}
+
+	num_mods = VEC_SIZE (mods_filtered);
+	mods_cursor = 0;
+	first_mod = 0;
+	mods_prev_cursor = -1;
+	M_Mods_KeepCursorVisible ();
+}
+
 static void M_Menu_Mods_f (void)
 {
 	M_MenuChanged ();
@@ -3915,18 +3963,13 @@ static void M_Menu_Mods_f (void)
 	key_dest = key_menu;
 	m_state = m_mods;
 	m_entersound = true;
-	num_mods = 0;
+	mods_search[0] = '\0';
 	VEC_CLEAR (mods_sorted);
 	for (filelist_item_t *item = modlist; item; item = item->next)
-	{
 		VEC_PUSH (mods_sorted, item);
-		++num_mods;
-	}
-	if (num_mods > 1)
-		qsort (mods_sorted, num_mods, sizeof (*mods_sorted), M_Mods_Compare);
-	first_mod = 0;
-	mods_cursor = 0;
-	mods_prev_cursor = 0;
+	if (VEC_SIZE (mods_sorted) > 1)
+		qsort (mods_sorted, VEC_SIZE (mods_sorted), sizeof (*mods_sorted), M_Mods_Compare);
+	M_Mods_UpdateFilter ();
 
 	M_Ticker_Init (&m_mods_ticker);
 }
@@ -3936,8 +3979,8 @@ static void M_Mods_Draw (cb_context_t *cbx)
 	M_DrawTransPic (cbx, 16, 4, Draw_CachePic ("gfx/qplaque.lmp"));
 	qpic_t *p = Draw_CachePic ("gfx/p_mods.lmp");
 	M_DrawPic (cbx, (320 - p->width) / 2, 4, p);
-	int mod_index = -first_mod;
-	int mods_height = q_min (MAX_MODS_ON_SCREEN, num_mods - first_mod);
+	M_Mods_KeepCursorVisible ();
+	int mods_height = q_min (MAX_MODS_ON_SCREEN, q_max (0, num_mods - first_mod));
 
 	if (mods_prev_cursor != mods_cursor)
 	{
@@ -3950,32 +3993,59 @@ static void M_Mods_Draw (cb_context_t *cbx)
 	// to trigger scroll faster
 	M_Ticker_Update (&m_mods_ticker);
 
-	for (int i = 0; i < num_mods; ++i)
+	for (int i = 0; i < mods_height; ++i)
 	{
-		filelist_item_t *item = mods_sorted[i];
-		if (mod_index >= MAX_MODS_ON_SCREEN)
-			break;
-		if (mod_index >= 0)
-		{
-			const char *fullname = Modlist_GetFullName (item);
+		filelist_item_t *item = mods_filtered[first_mod + i];
+		const char *fullname = Modlist_GetFullName (item);
+		const qboolean selected = (mods_cursor == first_mod + i);
 
-			const qboolean selected = (mods_cursor - first_mod == mod_index);
+		M_PrintScroll (
+			cbx, MENU_LABEL_X, 32 + i * CHARACTER_SIZE, 32 * CHARACTER_SIZE, fullname ? fullname : item->name,
+			selected ? m_mods_ticker.scroll_time : 0.0, true);
+	}
 
-			M_PrintScroll (
-				cbx, MENU_LABEL_X, 32 + mod_index * CHARACTER_SIZE, 32 * CHARACTER_SIZE, fullname ? fullname : item->name,
-				selected ? m_mods_ticker.scroll_time : 0.0, true);
-		}
-		++mod_index;
+	if (num_mods == 0)
+		M_PrintWhite (cbx, MENU_LABEL_X, 32, mods_search[0] ? "No installed mods match." : "No installed mods found.");
+
+	M_PrintWhite (cbx, 16, 160, "Filter:");
+	M_DrawTextBox (cbx, 72, 152, MODS_SEARCH_WIDTH, 1);
+	{
+		const int length = (int)strlen (mods_search);
+		const int ofs = q_max (0, length + 1 - MODS_SEARCH_WIDTH);
+		int		 i;
+		for (i = ofs; i < length; ++i)
+			Draw_Character (cbx, 80 + (i - ofs) * CHARACTER_SIZE, 160, mods_search[i]);
+		Draw_Character (cbx, 80 + (i - ofs) * CHARACTER_SIZE, 160, 10 + ((int)(realtime * 4) & 1));
 	}
 
 	M_Mouse_UpdateListCursor (&mods_cursor, 12, 400, 32, CHARACTER_SIZE, mods_height, first_mod);
-	Draw_Character (cbx, MENU_CURSOR_X, 32 + (mods_cursor - first_mod) * CHARACTER_SIZE, 12 + ((int)(realtime * 4) & 1));
+	if (num_mods > 0)
+		Draw_Character (cbx, MENU_CURSOR_X, 32 + (mods_cursor - first_mod) * CHARACTER_SIZE, 12 + ((int)(realtime * 4) & 1));
 	if (num_mods > MAX_MODS_ON_SCREEN)
 		M_DrawScrollbar (cbx, MENU_SCROLLBAR_X, 32 + 8, (float)(first_mod) / (float)(num_mods - MAX_MODS_ON_SCREEN), MAX_MODS_ON_SCREEN - 2);
 }
 
 static void M_Mods_Key (int key)
 {
+	if (key == K_BACKSPACE)
+	{
+		const size_t length = strlen (mods_search);
+		if (length > 0)
+		{
+			mods_search[length - 1] = '\0';
+			M_Mods_UpdateFilter ();
+			S_LocalSound ("misc/menu1.wav");
+		}
+		return;
+	}
+	if (key == K_DEL && mods_search[0])
+	{
+		mods_search[0] = '\0';
+		M_Mods_UpdateFilter ();
+		S_LocalSound ("misc/menu1.wav");
+		return;
+	}
+
 	if (M_Ticker_Key (&m_mods_ticker, key))
 		return;
 
@@ -3994,16 +4064,32 @@ static void M_Mods_Key (int key)
 	case K_ENTER:
 	case K_KP_ENTER:
 	case K_ABUTTON:
-		if (mods_cursor < num_mods)
+		if (num_mods > 0 && mods_cursor >= 0 && mods_cursor < num_mods)
 		{
 			Cbuf_AddText ("game \"");
-			Cbuf_AddText (mods_sorted[mods_cursor]->name);
+			Cbuf_AddText (mods_filtered[mods_cursor]->name);
 			Cbuf_AddText ("\"\n");
 			mod_loaded_from_menu = 1;
 			m_state = m_main;
 		}
 		break;
 	}
+}
+
+static void M_Mods_Char (int key)
+{
+	size_t length;
+
+	if (key < ' ' || key > '~')
+		return;
+
+	length = strlen (mods_search);
+	if (length >= MODS_SEARCH_MAX)
+		return;
+
+	mods_search[length] = (char)key;
+	mods_search[length + 1] = '\0';
+	M_Mods_UpdateFilter ();
 }
 
 //=============================================================================
@@ -6341,6 +6427,9 @@ void M_Charinput (int key)
 	case m_setup:
 		M_Setup_Char (key);
 		return;
+	case m_mods:
+		M_Mods_Char (key);
+		return;
 	case m_maps:
 		M_Maps_Char (key);
 		return;
@@ -6361,6 +6450,8 @@ qboolean M_TextEntry (void)
 	{
 	case m_setup:
 		return M_Setup_TextEntry ();
+	case m_mods:
+		return true;
 	case m_maps:
 		return M_Maps_TextEntry ();
 	case m_quit:
