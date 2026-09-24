@@ -26,6 +26,8 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
  * definition before client translation units include it. */
 extern qboolean SV_VRStockAxeTrace (edict_t *ignore, int nomonsters,
 	const vec3_t start, const vec3_t end, trace_t *trace);
+extern qboolean SV_EnyoAkimboTrace (edict_t *ignore, const vec3_t start,
+	const vec3_t end, int nomonsters, trace_t *trace);
 
 // #define	STRINGTEMP_BUFFERS		16
 // #define	STRINGTEMP_LENGTH		1024
@@ -235,6 +237,8 @@ makevectors(vector)
 */
 static void PF_makevectors (void)
 {
+	if (SV_EnyoAkimboMakevectors ())
+		return;
 	AngleVectors (G_VECTOR (OFS_PARM0), pr_global_struct->v_forward, pr_global_struct->v_right, pr_global_struct->v_up);
 }
 
@@ -798,7 +802,8 @@ static void PF_traceline (void)
 	if (IS_NAN (v2[0]) || IS_NAN (v2[1]) || IS_NAN (v2[2]))
 		v2[0] = v2[1] = v2[2] = 0;
 
-	if (!SV_VRStockAxeTrace (ent, nomonsters, v1, v2, &trace))
+	if (!SV_VRStockAxeTrace (ent, nomonsters, v1, v2, &trace) &&
+		!SV_EnyoAkimboTrace (ent, v1, v2, nomonsters, &trace))
 		trace = SV_Move (v1, vec3_origin, vec3_origin, v2, nomonsters, ent);
 
 	pr_global_struct->trace_allsolid = trace.allsolid;
@@ -1541,6 +1546,8 @@ static void PF_aim (void)
 	(void)speed; /* variable set but not used */
 
 	akimbo = SV_QBJ3AkimboAim (ent, physical_muzzle);
+	if (!akimbo)
+		akimbo = SV_EnyoAkimboAim (ent, physical_muzzle);
 	if (akimbo)
 		VectorCopy (physical_muzzle, start);
 	else

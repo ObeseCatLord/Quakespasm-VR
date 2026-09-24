@@ -2944,8 +2944,12 @@ typedef struct sv_vr_weapon_pose_scope_s
 	edict_t *ent;
 	qboolean applied, origin_relocated, linked, akimbo_invalidated;
 	qboolean akimbo_pose_valid;
+	qboolean enyo_makevectors, enyo_clearance_pending;
 	vec3_t origin, body_origin, v_angle, forward, right, up;
 	vec3_t akimbo_muzzle[2], akimbo_angles[2];
+	vec3_t enyo_clearance_start, enyo_clearance_end;
+	vec3_t enyo_clearance_adjusted_start;
+	float enyo_clearance_t0;
 } sv_vr_weapon_pose_scope_t;
 
 static sv_vr_weapon_pose_scope_t *sv_vr_weapon_pose_scope;
@@ -2979,6 +2983,8 @@ void SV_VRWeaponPoseSetOrigin (edict_t *ent)
 			scope->origin_relocated = true;
 			scope->akimbo_invalidated = true;
 			scope->akimbo_pose_valid = false;
+			scope->enyo_makevectors = false;
+			scope->enyo_clearance_pending = false;
 		}
 }
 
@@ -3038,7 +3044,73 @@ qboolean SV_QBJ3TwinNailgunProgramLoaded (void)
 		!strcmp (COM_SkipPath (com_gamedir), "qbj3");
 }
 
-static qboolean SV_QBJ3AkimboCommandValid (client_t *client,
+#define ENYO_PROGS_SIZE 823998
+#define ENYO_W_FIRESMG_FIRST_STATEMENT 15323
+#define ENYO_W_FIRESMG_PARM_START 7335
+#define ENYO_W_FIRESMG_MAKEVECTORS_STATEMENT 15324
+#define ENYO_W_FIRESMG_AIM_STATEMENT 15344
+#define ENYO_W_FIRESMG_TRACELINE_STATEMENT 15352
+
+static qboolean SV_EnyoSMGFunction (const dfunction_t *function)
+{
+	return function && !strcmp (PR_GetString (function->s_name), "W_FireSMG") &&
+		function->first_statement == ENYO_W_FIRESMG_FIRST_STATEMENT &&
+		function->parm_start == ENYO_W_FIRESMG_PARM_START &&
+		function->locals == 7 && function->numparms == 1 &&
+		function->parm_size[0] == 1;
+}
+
+static qboolean SV_EnyoSMGProgramLoaded (void)
+{
+	static const byte expected_sha256[32] = {
+		0xb0, 0xd3, 0x86, 0x5f, 0x11, 0x92, 0xb3, 0x85,
+		0x8e, 0x74, 0x10, 0xea, 0x31, 0xcb, 0xc8, 0x2d,
+		0x88, 0x13, 0x6e, 0x63, 0x5b, 0x9c, 0x1d, 0x13,
+		0xd0, 0xaf, 0xf9, 0xbb, 0xed, 0xda, 0xeb, 0x1e
+	};
+	dfunction_t *function;
+
+	if (qcvm != &sv.qcvm || q_strcasecmp (COM_SkipPath (com_gamedir), "enyo") ||
+		qcvm->progssize != ENYO_PROGS_SIZE ||
+		memcmp (qcvm->progssha256, expected_sha256, sizeof (expected_sha256)))
+		return false;
+	function = ED_FindFunction ("W_FireSMG");
+	return SV_EnyoSMGFunction (function);
+}
+
+static qboolean SV_EnyoSMGWeapon (edict_t *ent)
+{
+	return ent && !ent->free && SV_EnyoSMGProgramLoaded () &&
+		ent->v.weapon == 4 &&
+		!strcmp (PR_GetString (ent->v.weaponmodel), "progs/ee_v_smgs.mdl");
+}
+
+static qboolean SV_EnyoVectorIsFinite (const vec3_t value)
+{
+	return isfinite (value[0]) && isfinite (value[1]) && isfinite (value[2]);
+}
+
+static qboolean SV_EnyoVectorsNear (const vec3_t a, const vec3_t b)
+{
+	vec3_t delta;
+	VectorSubtract (a, b, delta);
+	return DotProduct (delta, delta) <= 0.015625f;
+}
+
+static edict_t *SV_EnyoAkimboSelf (void)
+{
+	int self;
+	if (qcvm != &sv.qcvm || !qcvm->edicts || qcvm->edict_size <= 0 ||
+		!pr_global_struct)
+		return NULL;
+	self = pr_global_struct->self;
+	if (self < 0 || self % qcvm->edict_size ||
+		self / qcvm->edict_size >= qcvm->num_edicts)
+		return NULL;
+	return PROG_TO_EDICT (self);
+}
+
+static qboolean SV_AkimboCommandValid (client_t *client,
 	const usercmd_t *cmd, const vec3_t body_origin)
 {
 	int hand, axis;
@@ -3106,8 +3178,9 @@ static void SV_BeginPrivateVRWeaponPose (edict_t *ent, client_t *client,
 	VectorCopy (pr_global_struct->v_right, scope->right);
 	VectorCopy (pr_global_struct->v_up, scope->up);
 
-	if (!scope->akimbo_invalidated && SV_QBJ3TwinNailgunProgramLoaded () &&
-		SV_QBJ3AkimboCommandValid (client, cmd, scope->body_origin))
+	if (!scope->akimbo_invalidated &&
+		(SV_QBJ3TwinNailgunProgramLoaded () || SV_EnyoSMGProgramLoaded ()) &&
+		SV_AkimboCommandValid (client, cmd, scope->body_origin))
 	{
 		int hand, axis;
 		for (hand = 0; hand < 2; hand++)
@@ -3178,9 +3251,165 @@ qboolean SV_QBJ3AkimboAim (edict_t *ent, vec3_t muzzle)
 	return true;
 }
 
-static void SV_EndPrivateVRWeaponPose (edict_t *ent,
-	const sv_vr_weapon_pose_scope_t *scope)
+static sv_vr_weapon_pose_scope_t *SV_FindPrivateVRWeaponPose (edict_t *ent)
 {
+	sv_vr_weapon_pose_scope_t *scope;
+	for (scope = sv_vr_weapon_pose_scope; scope; scope = scope->previous)
+		if (scope->ent == ent)
+			return scope; /* The first match masks any older nested pose. */
+	return NULL;
+}
+
+qboolean SV_EnyoAkimboMakevectors (void)
+{
+	sv_vr_weapon_pose_scope_t *scope;
+	dfunction_t *function;
+	edict_t *ent;
+	int hand;
+	float offs, t0;
+	vec3_t muzzle, forward, right, up, angles, origin;
+	vec3_t source_offset, clearance_start, temporary_origin;
+	trace_t reverse;
+
+	ent = SV_EnyoAkimboSelf ();
+	function = qcvm ? qcvm->xfunction : NULL;
+	if (!ent || ent->free || !SV_EnyoSMGWeapon (ent) ||
+		!function || !SV_EnyoSMGFunction (function) ||
+		qcvm->xstatement != ENYO_W_FIRESMG_MAKEVECTORS_STATEMENT)
+		return false;
+	scope = SV_FindPrivateVRWeaponPose (ent);
+	if (!scope || !scope->applied || !scope->akimbo_pose_valid ||
+		scope->akimbo_invalidated)
+		return false;
+
+	/* A new audited call supersedes any unconsumed clearance in this scope. */
+	scope->enyo_makevectors = false;
+	scope->enyo_clearance_pending = false;
+	if (!SV_EnyoVectorIsFinite (scope->body_origin) ||
+		!SV_EnyoVectorIsFinite (ent->v.view_ofs) ||
+		!SV_EnyoVectorIsFinite (scope->akimbo_muzzle[0]) ||
+		!SV_EnyoVectorIsFinite (scope->akimbo_muzzle[1]) ||
+		!SV_EnyoVectorIsFinite (scope->akimbo_angles[0]) ||
+		!SV_EnyoVectorIsFinite (scope->akimbo_angles[1]))
+		return false;
+
+	/* offs lives in W_FireSMG's local frame; OFS_PARM0 now holds angle. */
+	offs = qcvm->globals[function->parm_start];
+	if (offs != 0.0f && offs != 1.0f)
+		return false;
+	hand = offs == 0.0f ? 1 : 0;
+	VectorCopy (scope->akimbo_angles[hand], angles);
+	angles[ROLL] = 0;
+	AngleVectors (angles, forward, right, up);
+	VectorCopy (scope->akimbo_muzzle[hand], muzzle);
+
+	/* Clamp from the saved body eye, then restore the scope's temporary origin. */
+	VectorCopy (ent->v.origin, temporary_origin);
+	VectorCopy (scope->body_origin, ent->v.origin);
+	SV_ClampVRMuzzleToWorld (ent, muzzle);
+	VectorCopy (temporary_origin, ent->v.origin);
+	if (!SV_EnyoVectorIsFinite (muzzle))
+		return false;
+
+	/* Move QC's original 16-unit start forward if it begins in a brush. */
+	VectorMA (muzzle, -16.0f, forward, clearance_start);
+	reverse = SV_Move (muzzle, vec3_origin, vec3_origin, clearance_start,
+		MOVE_NOMONSTERS, ent);
+	if (reverse.startsolid || reverse.allsolid)
+		return false;
+	VectorCopy (clearance_start, scope->enyo_clearance_adjusted_start);
+	if (reverse.fraction < 1.0f)
+	{
+		VectorCopy (reverse.endpos, scope->enyo_clearance_adjusted_start);
+		VectorMA (scope->enyo_clearance_adjusted_start, 1.0f, forward,
+			scope->enyo_clearance_adjusted_start);
+	}
+	VectorSubtract (scope->enyo_clearance_adjusted_start, clearance_start,
+		source_offset);
+	t0 = DotProduct (source_offset, forward) / 16.0f;
+	if (!isfinite (t0) || t0 < 0.0f)
+		return false;
+	if (t0 >= 1.0f)
+	{
+		VectorCopy (muzzle, scope->enyo_clearance_adjusted_start);
+		t0 = 1.0f;
+	}
+
+	/* Reconstruct QC's untouched origin + view_ofs - 6up +/- 7right = B. */
+	VectorCopy (ent->v.view_ofs, source_offset);
+	VectorMA (source_offset, -6.0f, up, source_offset);
+	VectorMA (source_offset, hand ? 7.0f : -7.0f, right, source_offset);
+	VectorSubtract (clearance_start, source_offset, origin);
+	if (!SV_EnyoVectorIsFinite (origin))
+		return false;
+
+	VectorCopy (origin, ent->v.origin);
+	VectorCopy (angles, ent->v.v_angle);
+	VectorCopy (forward, pr_global_struct->v_forward);
+	VectorCopy (right, pr_global_struct->v_right);
+	VectorCopy (up, pr_global_struct->v_up);
+	scope->enyo_makevectors = true;
+	scope->enyo_clearance_pending = true;
+	VectorCopy (clearance_start, scope->enyo_clearance_start);
+	VectorCopy (muzzle, scope->enyo_clearance_end);
+	scope->enyo_clearance_t0 = t0;
+	return true;
+}
+
+qboolean SV_EnyoAkimboAim (edict_t *ent, vec3_t muzzle)
+{
+	sv_vr_weapon_pose_scope_t *scope;
+	if (!ent || ent != SV_EnyoAkimboSelf () || !SV_EnyoSMGWeapon (ent) ||
+		!qcvm->xfunction || !SV_EnyoSMGFunction (qcvm->xfunction) ||
+		qcvm->xstatement != ENYO_W_FIRESMG_AIM_STATEMENT)
+		return false;
+	scope = SV_FindPrivateVRWeaponPose (ent);
+	if (!scope || !scope->applied || !scope->akimbo_pose_valid ||
+		scope->akimbo_invalidated || !scope->enyo_makevectors ||
+		!scope->enyo_clearance_pending ||
+		!SV_EnyoVectorIsFinite (scope->enyo_clearance_end))
+		return false;
+	VectorCopy (scope->enyo_clearance_end, muzzle);
+	return true;
+}
+
+qboolean SV_EnyoAkimboTrace (edict_t *ent, const vec3_t start,
+	const vec3_t end, int nomonsters, trace_t *trace)
+{
+	sv_vr_weapon_pose_scope_t *scope;
+	if (!trace || !ent || ent != SV_EnyoAkimboSelf () ||
+		!SV_EnyoSMGWeapon (ent) || !qcvm->xfunction ||
+		!SV_EnyoSMGFunction (qcvm->xfunction) ||
+		qcvm->xstatement != ENYO_W_FIRESMG_TRACELINE_STATEMENT ||
+		pr_global_struct->self != EDICT_TO_PROG (ent) || nomonsters != 0 ||
+		!SV_EnyoVectorIsFinite (start) || !SV_EnyoVectorIsFinite (end))
+		return false;
+	scope = SV_FindPrivateVRWeaponPose (ent);
+	if (!scope || !scope->applied || !scope->akimbo_pose_valid ||
+		scope->akimbo_invalidated || !scope->enyo_makevectors ||
+		!scope->enyo_clearance_pending ||
+		!SV_EnyoVectorIsFinite (scope->enyo_clearance_start) ||
+		!SV_EnyoVectorIsFinite (scope->enyo_clearance_end) ||
+		!SV_EnyoVectorIsFinite (scope->enyo_clearance_adjusted_start) ||
+		!SV_EnyoVectorsNear (start, scope->enyo_clearance_start) ||
+		!SV_EnyoVectorsNear (end, scope->enyo_clearance_end))
+		return false;
+
+	/* Only this exact QC trace consumes the one-shot. Keep fraction in B..M. */
+	scope->enyo_clearance_pending = false;
+	scope->enyo_makevectors = false;
+	*trace = SV_Move (scope->enyo_clearance_adjusted_start, vec3_origin,
+		vec3_origin, scope->enyo_clearance_end, nomonsters, ent);
+	trace->fraction = scope->enyo_clearance_t0 +
+		(1.0f - scope->enyo_clearance_t0) * trace->fraction;
+	return true;
+}
+
+static void SV_EndPrivateVRWeaponPose (edict_t *ent,
+	sv_vr_weapon_pose_scope_t *scope)
+{
+	scope->enyo_makevectors = false;
+	scope->enyo_clearance_pending = false;
 	sv_vr_weapon_pose_scope = scope->previous;
 	if (!scope->applied)
 		return;
