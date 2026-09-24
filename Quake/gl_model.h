@@ -773,6 +773,18 @@ void	 *Mod_Extradata_CheckSkin (qmodel_t *mod, int skinnum);
 void	 *Mod_Extradata (qmodel_t *mod);
 void	  Mod_TouchModel (const char *name);
 void	  Mod_RefreshSkins_f (cvar_t *var);
+typedef struct
+{
+	const char *game;
+	const char *source;
+	const char *halves[2];
+	int source_frames;
+	int source_vertices;
+	int half_vertices[2];
+	vec3_t source_anchors[2];
+} mod_akimbo_pair_recipe_t;
+/* Returns immutable generated-pair geometry/contact metadata for this game. */
+const mod_akimbo_pair_recipe_t *Mod_GetAkimboPairRecipe (const char *source);
 /* Returns the recipe's private half paths for the current game, if defined.
  * half_paths[0] is the physical left hand; half_paths[1] is the right hand.
  * Returned path strings have static lifetime. */

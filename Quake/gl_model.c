@@ -673,21 +673,31 @@ void Mod_TouchModel (const char *name)
 
 typedef struct
 {
-	const char *game;
-	const char *source;
-	const char *halves[2];
+	mod_akimbo_pair_recipe_t recipe;
 	qbj3_mdl_weapon_t weapon;
 } mod_akimbo_pair_t;
 
 static const mod_akimbo_pair_t mod_akimbo_pairs[] = {
-	{"qbj3", "progs/v_tnailgun.mdl",
-		{"vr/qbj3/progs/v_tnailgun_vr_left.mdl", "vr/qbj3/progs/v_tnailgun_vr_right.mdl"}, QBJ3_MDL_WEAPON_NAIL},
-	{"qbj3", "progs/v_berserk.mdl",
-		{"vr/qbj3/progs/v_berserk_vr_left.mdl", "vr/qbj3/progs/v_berserk_vr_right.mdl"}, QBJ3_MDL_WEAPON_BERSERK},
-	{"enyo", "progs/ee_v_smgs.mdl",
-		{"vr/enyo/progs/ee_v_smgs_vr_left.mdl", "vr/enyo/progs/ee_v_smgs_vr_right.mdl"}, ENYO_MDL_WEAPON_SMG},
-	{"dwell", "progs/v_axeb.mdl",
-		{"vr/dwell/progs/v_axeb_vr_left.mdl", "vr/dwell/progs/v_axeb_vr_right.mdl"}, DWELL_MDL_WEAPON_BERSERK}
+	{{"qbj3", "progs/v_tnailgun.mdl",
+		{"vr/qbj3/progs/v_tnailgun_vr_left.mdl", "vr/qbj3/progs/v_tnailgun_vr_right.mdl"},
+		19, 1968, {988, 980},
+		{{54.75913167f, 10.28241703f, -16.05048694f},
+		 {54.75913167f, -10.49037877f, -16.05048694f}}}, QBJ3_MDL_WEAPON_NAIL},
+	{{"qbj3", "progs/v_berserk.mdl",
+		{"vr/qbj3/progs/v_berserk_vr_left.mdl", "vr/qbj3/progs/v_berserk_vr_right.mdl"},
+		101, 894, {447, 447},
+		{{25.58522001f, 14.90800858f, -4.91985899f},
+		 {25.58522001f, -15.31243134f, -4.91985899f}}}, QBJ3_MDL_WEAPON_BERSERK},
+	{{"enyo", "progs/ee_v_smgs.mdl",
+		{"vr/enyo/progs/ee_v_smgs_vr_left.mdl", "vr/enyo/progs/ee_v_smgs_vr_right.mdl"},
+		17, 984, {492, 492},
+		{{64.10965419f, 19.31388339f, -13.71730390f},
+		 {64.10965419f, -19.51840544f, -13.71730390f}}}, ENYO_MDL_WEAPON_SMG},
+	{{"dwell", "progs/v_axeb.mdl",
+		{"vr/dwell/progs/v_axeb_vr_left.mdl", "vr/dwell/progs/v_axeb_vr_right.mdl"},
+		51, 304, {152, 152},
+		{{33.219191864f, 14.249626011f, -17.862335034f},
+		 {37.226840504f, -13.465485394f, -18.066500630f}}}, DWELL_MDL_WEAPON_BERSERK}
 };
 
 static const mod_akimbo_pair_t *Mod_AkimboPairForHalf (const char *name, int *hand_out)
@@ -696,7 +706,7 @@ static const mod_akimbo_pair_t *Mod_AkimboPairForHalf (const char *name, int *ha
 		return NULL;
 	for (int weapon = 0; weapon < countof (mod_akimbo_pairs); ++weapon)
 		for (int hand = 0; hand < 2; ++hand)
-			if (!strcmp (name, mod_akimbo_pairs[weapon].halves[hand]))
+			if (!strcmp (name, mod_akimbo_pairs[weapon].recipe.halves[hand]))
 			{
 				if (hand_out)
 					*hand_out = hand;
@@ -707,9 +717,22 @@ static const mod_akimbo_pair_t *Mod_AkimboPairForHalf (const char *name, int *ha
 
 static qboolean Mod_AkimboPairGameMatches (const mod_akimbo_pair_t *pair)
 {
-	return !q_strcasecmp (COM_SkipPath (com_gamedir), pair->game) ||
+	return !q_strcasecmp (COM_SkipPath (com_gamedir), pair->recipe.game) ||
 		(pair->weapon == DWELL_MDL_WEAPON_BERSERK &&
 			!q_strcasecmp (COM_SkipPath (com_gamedir), "dwellv2p2"));
+}
+
+const mod_akimbo_pair_recipe_t *Mod_GetAkimboPairRecipe (const char *source)
+{
+	if (!source)
+		return NULL;
+	for (int weapon = 0; weapon < countof (mod_akimbo_pairs); ++weapon)
+	{
+		const mod_akimbo_pair_t *pair = &mod_akimbo_pairs[weapon];
+		if (!strcmp (source, pair->recipe.source) && Mod_AkimboPairGameMatches (pair))
+			return &pair->recipe;
+	}
+	return NULL;
 }
 
 qboolean Mod_GetAkimboPairPaths (const char *source, const char *half_paths[2])
@@ -721,17 +744,12 @@ qboolean Mod_GetAkimboPairPaths (const char *source, const char *half_paths[2])
 	if (!source)
 		return false;
 
-	for (int weapon = 0; weapon < countof (mod_akimbo_pairs); ++weapon)
-	{
-		const mod_akimbo_pair_t *pair = &mod_akimbo_pairs[weapon];
-		if (!strcmp (source, pair->source) && Mod_AkimboPairGameMatches (pair))
-		{
-			half_paths[0] = pair->halves[0];
-			half_paths[1] = pair->halves[1];
-			return true;
-		}
-	}
-	return false;
+	const mod_akimbo_pair_recipe_t *recipe = Mod_GetAkimboPairRecipe (source);
+	if (!recipe)
+		return false;
+	half_paths[0] = recipe->halves[0];
+	half_paths[1] = recipe->halves[1];
+	return true;
 }
 
 qboolean Mod_AkimboPairUsesGeneratedHalves (const char *source)
@@ -782,7 +800,7 @@ static byte *Mod_GenerateAkimboHalf (const char *name,
 	if (COM_FileExists (name, &override_path_id) && override_path_id > 1)
 		return NULL;
 
-	source = COM_LoadFile (pair->source, &selected_source_path_id);
+	source = COM_LoadFile (pair->recipe.source, &selected_source_path_id);
 	if (!source)
 		return NULL;
 	source_file_size = com_filesize;
@@ -803,7 +821,7 @@ static byte *Mod_GenerateAkimboHalf (const char *name,
 
 	*source_path_id = selected_source_path_id;
 	*generated_size = output_size;
-	*skin_source = pair->source;
+	*skin_source = pair->recipe.source;
 	return output;
 }
 

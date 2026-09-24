@@ -63,6 +63,7 @@ qboolean V_TrackedBodyOwnsRoomscale (void);
 qboolean V_TrackedViewmodelActive (void);
 qboolean V_TrackedViewmodelShouldHide (void);
 qboolean V_AkimboPairReady (void);
+qboolean V_AkimboRecipeSupported (const char *source_model);
 qboolean V_AkimboTransformAnchor (int physical_hand,
 	const vec3_t model_angles, vec3_t out_local);
 int V_AkimboViewmodelHand (const entity_t *e);

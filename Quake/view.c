@@ -126,6 +126,7 @@ static qboolean tracked_server_yaw_from_setangle;
 static entity_t akimbo_pair_entities[2];
 static qmodel_t *akimbo_pair_models[2];
 static aliashdr_t *akimbo_pair_geometry[2];
+static const mod_akimbo_pair_recipe_t *akimbo_source_recipe;
 static qmodel_t *akimbo_source_model;
 static aliashdr_t *akimbo_source_geometry;
 static int akimbo_source_modelindex, akimbo_source_frame, akimbo_source_skin;
@@ -531,6 +532,7 @@ static void V_UpdateTrackedViewmodel (qboolean refdef_updated)
 void V_ClearAkimboPair (void)
 {
 	akimbo_pair_prepared = false;
+	akimbo_source_recipe = NULL;
 	akimbo_source_model = NULL;
 	akimbo_source_geometry = NULL;
 	akimbo_source_modelindex = 0;
@@ -567,19 +569,47 @@ static qboolean V_AkimboFrameDevicesValid (const vrxr_frame_t *frame)
 	return true;
 }
 
+qboolean V_AkimboRecipeSupported (const char *source_model)
+{
+	const mod_akimbo_pair_recipe_t *recipe =
+		Mod_GetAkimboPairRecipe (source_model);
+	if (!recipe)
+		return false;
+	if (!strcmp (recipe->game, "qbj3") &&
+		!strcmp (recipe->source, "progs/v_tnailgun.mdl"))
+		return cl.vr_qbj3_akimbo_supported;
+	if (!strcmp (recipe->game, "enyo") &&
+		!strcmp (recipe->source, "progs/ee_v_smgs.mdl"))
+		return cl.vr_enyo_akimbo_supported;
+	return false;
+}
+
+static qboolean V_AkimboRecipeUsesPairedCollision (
+	const mod_akimbo_pair_recipe_t *recipe)
+{
+	return recipe &&
+		((!strcmp (recipe->game, "qbj3") &&
+			!strcmp (recipe->source, "progs/v_tnailgun.mdl")) ||
+		(!strcmp (recipe->game, "enyo") &&
+			!strcmp (recipe->source, "progs/ee_v_smgs.mdl")));
+}
+
 static qboolean V_AkimboSelectionValid (const vrxr_frame_t *frame,
-	qmodel_t **source_out, int *modelindex_out)
+	qmodel_t **source_out, int *modelindex_out,
+	const mod_akimbo_pair_recipe_t **recipe_out)
 {
 	int modelindex = cl.stats[STAT_WEAPON];
 	qmodel_t *source;
+	const mod_akimbo_pair_recipe_t *recipe;
 	if (source_out)
 		*source_out = NULL;
 	if (modelindex_out)
 		*modelindex_out = 0;
+	if (recipe_out)
+		*recipe_out = NULL;
 	if (!vulkan_globals.stereo_active || !V_AkimboFrameDevicesValid (frame) ||
 		!V_TrackedViewmodelActive () || VR_WeaponCalibrationAdjustActive () ||
-		cl.protocol_qsvr != QSVR_PROTOCOL_PINNED || !cl.vr_qbj3_akimbo_supported ||
-		q_strcasecmp (COM_SkipPath (com_gamedir), "qbj3") ||
+		cl.protocol_qsvr != QSVR_PROTOCOL_PINNED ||
 		cls.state != ca_connected || cls.signon != SIGNONS || cls.demoplayback ||
 		cl.intermission || con_forcedup || !cl.worldmodel || cl.worldmodel->needload ||
 		!cl.entities || cl.viewentity <= 0 || cl.viewentity >= cl.num_entities ||
@@ -589,22 +619,31 @@ static qboolean V_AkimboSelectionValid (const vrxr_frame_t *frame,
 		return false;
 	source = cl.model_precache[modelindex];
 	if (!source || source->needload || source->type != mod_alias ||
-		source != cl.viewent.model || strcmp (source->name, "progs/v_tnailgun.mdl"))
+		source != cl.viewent.model)
+		return false;
+	recipe = Mod_GetAkimboPairRecipe (source->name);
+	if (!recipe || !V_AkimboRecipeSupported (source->name))
 		return false;
 	if (source_out)
 		*source_out = source;
 	if (modelindex_out)
 		*modelindex_out = modelindex;
+	if (recipe_out)
+		*recipe_out = recipe;
 	return true;
 }
 
 static qboolean V_AkimboHeaderTopologyMatches (const aliashdr_t *source,
-	const aliashdr_t *half, int expected_vertices)
+	const aliashdr_t *half, const mod_akimbo_pair_recipe_t *recipe,
+	int physical_hand)
 {
-	if (!source || !half || source->poseverttype != PV_QUAKE1 ||
-		half->poseverttype != PV_QUAKE1 || source->numframes != 19 ||
-		half->numframes != source->numframes || source->numverts != 1968 ||
-		half->numverts != expected_vertices || source->numposes != half->numposes ||
+	if (!source || !half || !recipe || physical_hand < 0 || physical_hand > 1 ||
+		source->poseverttype != PV_QUAKE1 || half->poseverttype != PV_QUAKE1 ||
+		source->numframes != recipe->source_frames ||
+		half->numframes != source->numframes ||
+		source->numverts != recipe->source_vertices ||
+		half->numverts != recipe->half_vertices[physical_hand] ||
+		source->numposes != half->numposes ||
 		source->numskins != half->numskins || source->skinwidth != half->skinwidth ||
 		source->skinheight != half->skinheight ||
 		memcmp (source->scale, half->scale, sizeof (source->scale)) ||
@@ -640,29 +679,76 @@ static qboolean V_AkimboEntityMatrixValid (entity_t *entity,
 	return R_AliasModelMatrix (entity, geometry, &lerpdata, matrix) >= 0;
 }
 
+static qboolean V_AkimboTransformAnchorForPair (int physical_hand,
+	const vec3_t model_angles, const mod_akimbo_pair_recipe_t *recipe,
+	const aliashdr_t *source_geometry, entity_t *entity,
+	const aliashdr_t *geometry, vec3_t out_local)
+{
+	lerpdata_t lerpdata;
+	float matrix[16];
+	vec3_t raw_anchor;
+	if (out_local)
+		VectorCopy (vec3_origin, out_local);
+	if (!out_local || !model_angles || !recipe || !source_geometry || !entity ||
+		!geometry || physical_hand < 0 || physical_hand > 1)
+		return false;
+	for (int axis = 0; axis < 3; ++axis)
+	{
+		const float scale = source_geometry->scale[axis];
+		const float origin = source_geometry->scale_origin[axis];
+		if (!isfinite (model_angles[axis]) || !isfinite (scale) ||
+			scale == 0.0f || !isfinite (origin) ||
+			!isfinite (recipe->source_anchors[physical_hand][axis]))
+			return false;
+		/* The recipe anchor uses decoded source MDL coordinates; the alias
+		 * matrix expects the original compressed vertex coordinates. */
+		raw_anchor[axis] =
+			(recipe->source_anchors[physical_hand][axis] - origin) / scale;
+		if (!isfinite (raw_anchor[axis]))
+			return false;
+	}
+	memset (&lerpdata, 0, sizeof (lerpdata));
+	VectorCopy (model_angles, lerpdata.angles);
+	if (R_AliasModelMatrix (entity, geometry, &lerpdata, matrix) < 0)
+		return false;
+	out_local[0] = matrix[0] * raw_anchor[0] + matrix[4] * raw_anchor[1] +
+		matrix[8] * raw_anchor[2] + matrix[12];
+	out_local[1] = matrix[1] * raw_anchor[0] + matrix[5] * raw_anchor[1] +
+		matrix[9] * raw_anchor[2] + matrix[13];
+	out_local[2] = matrix[2] * raw_anchor[0] + matrix[6] * raw_anchor[1] +
+		matrix[10] * raw_anchor[2] + matrix[14];
+	if (!isfinite (out_local[0]) || !isfinite (out_local[1]) ||
+		!isfinite (out_local[2]))
+	{
+		VectorCopy (vec3_origin, out_local);
+		return false;
+	}
+	return true;
+}
+
 void V_PrepareAkimboPair (void)
 {
 	const vrxr_frame_t *frame = GL_OpenXRFrame ();
-	const char *half_paths[2] = {NULL, NULL};
+	const mod_akimbo_pair_recipe_t *recipe;
 	qmodel_t *source;
 	aliashdr_t *source_geometry;
 	int modelindex;
 	vec3_t pair_origins[2], pair_model_angles[2];
 
 	V_ClearAkimboPair ();
-	if (!V_AkimboSelectionValid (frame, &source, &modelindex) ||
-		!Mod_GetAkimboPairPaths (source->name, half_paths) ||
+	if (!V_AkimboSelectionValid (frame, &source, &modelindex, &recipe) ||
 		!Mod_AkimboPairUsesGeneratedHalves (source->name) ||
-		!half_paths[0] || !half_paths[1] || !isfinite (vr_gunmodelpitch.value))
+		!recipe->halves[0] || !recipe->halves[1] ||
+		!isfinite (vr_gunmodelpitch.value))
 		return;
 
 	/* Pair files and any selected geometry are synchronously prepared here,
 	 * before the renderer can distribute its viewmodel work to tasks. */
 	for (int hand = 0; hand < 2; ++hand)
 	{
-		qmodel_t *model = Mod_ForName (half_paths[hand], false);
+		qmodel_t *model = Mod_ForName (recipe->halves[hand], false);
 		if (!model || model->needload || model->type != mod_alias ||
-			strcmp (model->name, half_paths[hand]))
+			strcmp (model->name, recipe->halves[hand]))
 			return;
 		akimbo_pair_models[hand] = model;
 	}
@@ -671,19 +757,19 @@ void V_PrepareAkimboPair (void)
 	 * classic headers only after both synchronous loads have completed. */
 	source_geometry = (aliashdr_t *)source->extradata[PV_QUAKE1];
 	if (!source_geometry || source_geometry->poseverttype != PV_QUAKE1 ||
-		source_geometry->numframes != 19 || source_geometry->numverts != 1968 ||
-		cl.viewent.frame < 0 || cl.viewent.frame >= source_geometry->numframes ||
+		source_geometry->numframes != recipe->source_frames ||
+		source_geometry->numverts != recipe->source_vertices ||
+		cl.viewent.frame < 0 || cl.viewent.frame >= recipe->source_frames ||
 		cl.viewent.skinnum < 0 || cl.viewent.skinnum >= source_geometry->numskins)
 		return;
 	for (int hand = 0; hand < 2; ++hand)
 	{
 		qmodel_t *model = akimbo_pair_models[hand];
 		aliashdr_t *geometry;
-		const int expected_vertices = hand == 0 ? 988 : 980;
 		if (!model || model->needload || model->type != mod_alias)
 			return;
 		geometry = (aliashdr_t *)model->extradata[PV_QUAKE1];
-		if (!V_AkimboHeaderTopologyMatches (source_geometry, geometry, expected_vertices))
+		if (!V_AkimboHeaderTopologyMatches (source_geometry, geometry, recipe, hand))
 			return;
 		akimbo_pair_geometry[hand] = geometry;
 		akimbo_pair_entities[hand] = cl.viewent;
@@ -698,7 +784,7 @@ void V_PrepareAkimboPair (void)
 	}
 
 	const vrxr_frame_t *current_frame = GL_OpenXRFrame ();
-	if (!V_AkimboSelectionValid (current_frame, &source, &modelindex) ||
+	if (!V_AkimboSelectionValid (current_frame, &source, &modelindex, &recipe) ||
 		source != cl.viewent.model || modelindex != cl.stats[STAT_WEAPON] ||
 		!current_frame || frame->sample_id != current_frame->sample_id)
 		return;
@@ -706,6 +792,40 @@ void V_PrepareAkimboPair (void)
 		if (!V_AkimboEntityMatrixValid (&akimbo_pair_entities[hand], akimbo_pair_geometry[hand]))
 			return;
 
+	if (V_AkimboRecipeUsesPairedCollision (recipe) &&
+		VR_WeaponCollisionAuthorized () && key_dest == key_game)
+	{
+		vec3_t torso_offset, torso;
+		float head_height;
+		entity_t *player = &cl.entities[cl.viewentity];
+		if (R_TrackedHeadBodyOffset (torso_offset) &&
+			R_TrackedHeadEyeHeight (cl.stats[STAT_VIEWHEIGHT], &head_height))
+		{
+			VectorAdd (player->origin, torso_offset, torso);
+			torso[2] += head_height + view_stair_delta;
+			for (int hand = 0; hand < 2; ++hand)
+			{
+				vec3_t anchor, base, tip, delta;
+				if (!V_AkimboTransformAnchorForPair (hand, pair_model_angles[hand],
+					recipe, source_geometry, &akimbo_pair_entities[hand],
+					akimbo_pair_geometry[hand], anchor))
+					return;
+				VectorCopy (pair_origins[hand], base);
+				VectorCopy (base, tip);
+				VectorAdd (tip, anchor, tip);
+				if (CL_ResolveWeaponCollision (torso, pair_origins[hand],
+					base, tip, delta))
+					VectorAdd (pair_origins[hand], delta, pair_origins[hand]);
+				VectorCopy (pair_origins[hand], akimbo_pair_entities[hand].origin);
+			}
+		}
+	}
+	for (int hand = 0; hand < 2; ++hand)
+		if (!V_AkimboEntityMatrixValid (&akimbo_pair_entities[hand],
+			akimbo_pair_geometry[hand]))
+			return;
+
+	akimbo_source_recipe = recipe;
 	akimbo_source_model = source;
 	akimbo_source_geometry = source_geometry;
 	akimbo_source_modelindex = modelindex;
@@ -722,12 +842,12 @@ void V_PrepareAkimboPair (void)
 qboolean V_AkimboPairReady (void)
 {
 	const vrxr_frame_t *frame = GL_OpenXRFrame ();
-	const char *half_paths[2] = {NULL, NULL};
+	const mod_akimbo_pair_recipe_t *recipe;
 	qmodel_t *source;
 	int modelindex;
-	if (!akimbo_pair_prepared || !V_AkimboSelectionValid (frame, &source, &modelindex) ||
-		!Mod_GetAkimboPairPaths (source->name, half_paths) ||
+	if (!akimbo_pair_prepared || !V_AkimboSelectionValid (frame, &source, &modelindex, &recipe) ||
 		frame->sample_id != akimbo_sample_id || source != akimbo_source_model ||
+		recipe != akimbo_source_recipe ||
 		source->extradata[PV_QUAKE1] != (byte *)akimbo_source_geometry ||
 		modelindex != akimbo_source_modelindex || cl.viewent.frame != akimbo_source_frame ||
 		cl.viewent.skinnum != akimbo_source_skin ||
@@ -737,9 +857,9 @@ qboolean V_AkimboPairReady (void)
 		cl.viewent.lerp.frame_duration != akimbo_source_frame_duration)
 		return false;
 	for (int hand = 0; hand < 2; ++hand)
-		if (!half_paths[hand] || !akimbo_pair_models[hand] ||
+		if (!recipe->halves[hand] || !akimbo_pair_models[hand] ||
 			akimbo_pair_models[hand]->needload ||
-			strcmp (akimbo_pair_models[hand]->name, half_paths[hand]) ||
+			strcmp (akimbo_pair_models[hand]->name, recipe->halves[hand]) ||
 			akimbo_pair_entities[hand].model != akimbo_pair_models[hand] ||
 			akimbo_pair_entities[hand].frame != cl.viewent.frame ||
 			akimbo_pair_entities[hand].skinnum != cl.viewent.skinnum ||
@@ -771,51 +891,15 @@ entity_t *V_AkimboPairEntity (int physical_hand)
 qboolean V_AkimboTransformAnchor (int physical_hand,
 	const vec3_t model_angles, vec3_t out_local)
 {
-	static const vec3_t source_anchors[2] = {
-		{54.75913167f, 10.28241703f, -16.05048694f},
-		{54.75913167f, -10.49037877f, -16.05048694f}
-	};
-	entity_t *entity;
-	lerpdata_t lerpdata;
-	float matrix[16];
-	vec3_t raw_anchor;
 	if (out_local)
 		VectorCopy (vec3_origin, out_local);
 	if (!out_local || !model_angles || physical_hand < 0 || physical_hand > 1 ||
 		!V_AkimboPairReady ())
 		return false;
-	for (int axis = 0; axis < 3; ++axis)
-	{
-		const float scale = akimbo_source_geometry->scale[axis];
-		const float origin = akimbo_source_geometry->scale_origin[axis];
-		if (!isfinite (model_angles[axis]) || !isfinite (scale) ||
-			scale == 0.0f || !isfinite (origin))
-			return false;
-		/* Contact anchors are decoded source MDL coordinates. The alias
-		 * matrix expects the original compressed vertex coordinates. */
-		raw_anchor[axis] = (source_anchors[physical_hand][axis] - origin) / scale;
-		if (!isfinite (raw_anchor[axis]))
-			return false;
-	}
-	entity = &akimbo_pair_entities[physical_hand];
-	memset (&lerpdata, 0, sizeof (lerpdata));
-	VectorCopy (model_angles, lerpdata.angles);
-	if (R_AliasModelMatrix (entity, akimbo_pair_geometry[physical_hand],
-		&lerpdata, matrix) < 0)
-		return false;
-	out_local[0] = matrix[0] * raw_anchor[0] + matrix[4] * raw_anchor[1] +
-		matrix[8] * raw_anchor[2] + matrix[12];
-	out_local[1] = matrix[1] * raw_anchor[0] + matrix[5] * raw_anchor[1] +
-		matrix[9] * raw_anchor[2] + matrix[13];
-	out_local[2] = matrix[2] * raw_anchor[0] + matrix[6] * raw_anchor[1] +
-		matrix[10] * raw_anchor[2] + matrix[14];
-	if (!isfinite (out_local[0]) || !isfinite (out_local[1]) ||
-		!isfinite (out_local[2]))
-	{
-		VectorCopy (vec3_origin, out_local);
-		return false;
-	}
-	return true;
+	return V_AkimboTransformAnchorForPair (physical_hand, model_angles,
+		akimbo_source_recipe, akimbo_source_geometry,
+		&akimbo_pair_entities[physical_hand], akimbo_pair_geometry[physical_hand],
+		out_local);
 }
 
 void V_ClearWeaponCollisionPresentation (void)

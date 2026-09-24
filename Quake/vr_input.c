@@ -180,6 +180,7 @@ static struct
 {
 	uint64_t sample_id;
 	const qmodel_t *model;
+	const mod_akimbo_pair_recipe_t *recipe;
 	int modelindex;
 	int weapon;
 	unsigned int reset_generation;
@@ -3542,30 +3543,46 @@ void VR_InputMenuPanelTrigger (const vrxr_frame_t *frame, qboolean panel_drawn)
 	VR_InputEmitDesired (desired, &context, dispatch_epoch);
 }
 
-static qboolean VR_InputSelectedTwinNailgun (qmodel_t **model_out,
-	int *modelindex_out)
+static qboolean VR_InputSelectedAkimboModel (qmodel_t **model_out,
+	int *modelindex_out, const mod_akimbo_pair_recipe_t **recipe_out)
 {
 	const int modelindex = cl.stats[STAT_WEAPON];
 	qmodel_t *model;
+	const mod_akimbo_pair_recipe_t *recipe;
 
 	if (modelindex < 1 || modelindex >= MAX_MODELS)
 		return false;
 	model = cl.model_precache[modelindex];
 	if (!model || model != cl.viewent.model ||
-		strcmp (model->name, "progs/v_tnailgun.mdl"))
+		!V_AkimboRecipeSupported (model->name))
+		return false;
+	recipe = Mod_GetAkimboPairRecipe (model->name);
+	if (!recipe)
 		return false;
 	if (model_out)
 		*model_out = model;
 	if (modelindex_out)
 		*modelindex_out = modelindex;
+	if (recipe_out)
+		*recipe_out = recipe;
 	return true;
+}
+
+static qboolean VR_InputAkimboRecipeUsesPairedCollision (
+	const mod_akimbo_pair_recipe_t *recipe)
+{
+	return recipe &&
+		((!strcmp (recipe->game, "qbj3") &&
+			!strcmp (recipe->source, "progs/v_tnailgun.mdl")) ||
+		(!strcmp (recipe->game, "enyo") &&
+			!strcmp (recipe->source, "progs/ee_v_smgs.mdl")));
 }
 
 static qboolean VR_InputAkimboGameplayAccepted (const vrxr_frame_t *frame)
 {
 	return frame && frame->sample_id && frame->focused && frame->should_render &&
 		cl.protocol_qsvr == QSVR_PROTOCOL_PINNED &&
-		cl.vr_qbj3_akimbo_supported && V_AkimboPairReady () &&
+		VR_InputSelectedAkimboModel (NULL, NULL, NULL) && V_AkimboPairReady () &&
 		!VR_WeaponCalibrationAdjustActive () && VR_InputControllerAim () &&
 		V_TrackedSessionActive () && !CL_AngleLocked () &&
 		VR_InputMotionContextAccepted (frame) &&
@@ -3596,16 +3613,40 @@ static void VR_InputPrepareAkimboPair (usercmd_t *pending,
 	const vrxr_frame_t *frame)
 {
 	qmodel_t *model;
+	const mod_akimbo_pair_recipe_t *recipe;
 	vec3_t muzzle[2], physical_angles[2];
 	int modelindex, hand;
+	vec3_t collision_torso;
+	qboolean collision_context, collision_torso_valid = false;
 	const qboolean roomscale_accepted = pending &&
 		VR_InputRoomscaleCommandAccepted (pending->vr_roomscalemove);
 
 	VR_InputClearPendingAkimboRecord (pending);
 	if (!pending || !VR_InputAkimboGameplayAccepted (frame) ||
-		!VR_InputSelectedTwinNailgun (&model, &modelindex) ||
+		!VR_InputSelectedAkimboModel (&model, &modelindex, &recipe) ||
 		!VR_InputAkimboHandDevicesAccepted (frame))
 		return;
+	collision_context = VR_WeaponCollisionAuthorized () &&
+		VR_InputAkimboRecipeUsesPairedCollision (recipe) &&
+		cls.state == ca_connected && cls.signon == SIGNONS && !cls.demoplayback &&
+		!cl.paused && key_dest == key_game && !cl.intermission &&
+		cl.stats[STAT_HEALTH] > 0 && cl.worldmodel && !cl.worldmodel->needload &&
+		cl.entities && cl.viewentity > 0 && cl.viewentity < cl.num_entities &&
+		frame->focused && frame->should_render &&
+		frame->devices[0].valid && frame->devices[0].tracked;
+	if (collision_context)
+	{
+		vec3_t torso_offset;
+		float head_height;
+		if (R_TrackedHeadBodyOffset (torso_offset) &&
+			R_TrackedHeadEyeHeight (cl.stats[STAT_VIEWHEIGHT], &head_height))
+		{
+			VectorAdd (cl.entities[cl.viewentity].origin, torso_offset,
+				collision_torso);
+			collision_torso[2] += head_height;
+			collision_torso_valid = true;
+		}
+	}
 
 	for (hand = 0; hand < 2; ++hand)
 	{
@@ -3621,6 +3662,15 @@ static void VR_InputPrepareAkimboPair (usercmd_t *pending,
 		for (int axis = 0; axis < 3; ++axis)
 			muzzle[hand][axis] = grip[axis] + local_anchor[axis] -
 				(roomscale_accepted ? pending->vr_roomscalemove[axis] : 0.0f);
+		if (collision_context && collision_torso_valid)
+		{
+			vec3_t world_grip, tip, delta;
+			VectorAdd (cl.entities[cl.viewentity].origin, grip, world_grip);
+			VectorAdd (world_grip, local_anchor, tip);
+			if (CL_ResolveWeaponCollision (collision_torso, world_grip,
+				world_grip, tip, delta))
+				VectorAdd (muzzle[hand], delta, muzzle[hand]);
+		}
 		if (!VR_InputWireVec (muzzle[hand]) ||
 			!VR_InputWireVec (physical_angles[hand]))
 			return;
@@ -3630,6 +3680,7 @@ static void VR_InputPrepareAkimboPair (usercmd_t *pending,
 		sizeof (vr_input_pending_akimbo_identity));
 	vr_input_pending_akimbo_identity.sample_id = frame->sample_id;
 	vr_input_pending_akimbo_identity.model = model;
+	vr_input_pending_akimbo_identity.recipe = recipe;
 	vr_input_pending_akimbo_identity.modelindex = modelindex;
 	vr_input_pending_akimbo_identity.weapon = cl.stats[STAT_ACTIVEWEAPON];
 	vr_input_pending_akimbo_identity.reset_generation =
@@ -3657,12 +3708,13 @@ static qboolean VR_InputPendingAkimboAccepted (const usercmd_t *pending,
 	const vrxr_frame_t *frame)
 {
 	qmodel_t *model;
+	const mod_akimbo_pair_recipe_t *recipe;
 	int modelindex, hand;
 
 	if (!pending || !pending->vr_akimbo_active || pending->vr_akimbo_berserk ||
 		!vr_input_pending_akimbo_identity.valid ||
 		!VR_InputAkimboGameplayAccepted (frame) ||
-		!VR_InputSelectedTwinNailgun (&model, &modelindex) ||
+		!VR_InputSelectedAkimboModel (&model, &modelindex, &recipe) ||
 		!pending->vr_active || !pending->vr_handpos_relative ||
 		!VR_InputWireVec (pending->vr_handpos) ||
 		vr_input_pending_akimbo_identity.sample_id != frame->sample_id ||
@@ -3670,6 +3722,7 @@ static qboolean VR_InputPendingAkimboAccepted (const usercmd_t *pending,
 			vr_input_reset_generation ||
 		vr_input_pending_akimbo_identity.modelindex != modelindex ||
 		vr_input_pending_akimbo_identity.model != model ||
+		vr_input_pending_akimbo_identity.recipe != recipe ||
 		vr_input_pending_akimbo_identity.weapon != cl.stats[STAT_ACTIVEWEAPON] ||
 		!VR_InputWireVec (pending->vr_akimbo_muzzle[0]) ||
 		!VR_InputWireVec (pending->vr_akimbo_muzzle[1]) ||
