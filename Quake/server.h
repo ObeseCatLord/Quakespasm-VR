@@ -79,6 +79,15 @@ typedef struct
 
 	char lastsave[128];
 
+	qboolean coop_autosave_initialized;
+	qboolean coop_autosave_mapstart_done;
+	int		 coop_autosave_next_slot;
+	double	 coop_autosave_last_realtime;
+	double	 coop_autosave_retry_realtime;
+	int		 coop_autosave_last_secrets;
+	int		 coop_autosave_last_kill_bucket;
+	int		 coop_autosave_last_serverflags;
+
 	int	   lastcheck; // used by PF_checkclient
 	double lastchecktime;
 
@@ -408,6 +417,10 @@ extern cvar_t skill;
 extern cvar_t deathmatch;
 extern cvar_t coop;
 extern cvar_t sv_save_multiplayer;
+extern cvar_t sv_coop_autosave;
+extern cvar_t sv_coop_autosave_slots;
+extern cvar_t sv_coop_autosave_min_interval;
+extern cvar_t sv_coop_autosave_kill_interval;
 extern cvar_t sv_coop_classic;
 extern cvar_t sv_coop_noplayerclip;
 extern cvar_t sv_coop_notelefrag;
@@ -428,6 +441,7 @@ extern edict_t *sv_player;
 //===========================================================
 
 void SV_Init (void);
+void Host_CoopAutosaveFrame (void);
 
 void SV_StartParticle (vec3_t org, vec3_t dir, int color, int count);
 void SV_StartSound (edict_t *entity, float *origin, int channel, const char *sample, int volume, float attenuation);

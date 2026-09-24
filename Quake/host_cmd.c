@@ -1670,6 +1670,9 @@ LOAD / SAVE GAME
 #define SAVEGAME_VERSION	 5
 #define SAVEGAME_VERSION_KEX 6
 #define SAVEGAME_VERSION_MULTIPLAYER 7
+#define COOP_AUTOSAVE_MAPSTART_DELAY 3.0
+#define COOP_AUTOSAVE_RETRY_DELAY 5.0
+#define COOP_AUTOSAVE_MAX_SLOTS 20
 
 /*
 ===============
@@ -1922,10 +1925,12 @@ static qboolean Host_LoadgameParseInheritedHeader (const char *start, size_t len
 
 /*
 ===============
-Host_Savegame_f
+Host_SavegameWrite
 ===============
 */
-static void Host_Savegame_f (void)
+#define HOST_SAVEGAME_ERROR(...) do { if (!quiet) Con_Printf (__VA_ARGS__); } while (0)
+
+static qboolean Host_SavegameWrite (const char *savename, qboolean quiet)
 {
 	char  name[MAX_OSPATH];
 	char  tempname[MAX_OSPATH];
@@ -1937,36 +1942,34 @@ static void Host_Savegame_f (void)
 	qboolean write_failed;
 	edict_t *client_snapshot;
 
-	if (cmd_source != src_command)
-		return;
 	if (qcvm && qcvm != &sv.qcvm)
 	{
-		Con_Printf ("Can't save while another QuakeC VM is active.\n");
-		return;
+		HOST_SAVEGAME_ERROR ("Can't save while another QuakeC VM is active.\n");
+		return false;
 	}
 
 	if (!sv.active)
 	{
-		Con_Printf ("Not playing a local game.\n");
-		return;
+		HOST_SAVEGAME_ERROR ("Not playing a local game.\n");
+		return false;
 	}
 	if (sv.loadgame_multiplayer &&
 		(Host_LoadgameHasPendingClients () || Host_LoadgameHasPendingSpawnParms ()))
 	{
-		Con_Printf ("Can't save while inherited multiplayer player states are pending.\n");
-		return;
+		HOST_SAVEGAME_ERROR ("Can't save while inherited multiplayer player states are pending.\n");
+		return false;
 	}
 
 	if (sv.nomonsters)
 	{
-		Con_Printf ("Can't save when using \"nomonsters\".\n");
-		return;
+		HOST_SAVEGAME_ERROR ("Can't save when using \"nomonsters\".\n");
+		return false;
 	}
 
 	if (cl.intermission)
 	{
-		Con_Printf ("Can't save in intermission.\n");
-		return;
+		HOST_SAVEGAME_ERROR ("Can't save in intermission.\n");
+		return false;
 	}
 
 	multiplayer_save = svs.maxclients > 1;
@@ -1974,31 +1977,25 @@ static void Host_Savegame_f (void)
 	{
 		if (!sv_save_multiplayer.value)
 		{
-			Con_Printf ("Can't save multiplayer games unless sv_save_multiplayer is 1.\n");
-			return;
+			HOST_SAVEGAME_ERROR ("Can't save multiplayer games unless sv_save_multiplayer is 1.\n");
+			return false;
 		}
 		if (!coop.value || deathmatch.value)
 		{
-			Con_Printf ("Multiplayer saves are only supported for coop games.\n");
-			return;
+			HOST_SAVEGAME_ERROR ("Multiplayer saves are only supported for coop games.\n");
+			return false;
 		}
 		if (svs.maxclients > MAX_SCOREBOARD)
 		{
-			Con_Printf ("Can't save multiplayer games with more than %i players.\n", MAX_SCOREBOARD);
-			return;
+			HOST_SAVEGAME_ERROR ("Can't save multiplayer games with more than %i players.\n", MAX_SCOREBOARD);
+			return false;
 		}
 	}
 
-	if (Cmd_Argc () != 2)
+	if (strstr (savename, ".."))
 	{
-		Con_Printf ("save <savename> : save a game\n");
-		return;
-	}
-
-	if (strstr (Cmd_Argv (1), ".."))
-	{
-		Con_Printf ("Relative pathnames are not allowed.\n");
-		return;
+		HOST_SAVEGAME_ERROR ("Relative pathnames are not allowed.\n");
+		return false;
 	}
 
 	if (multiplayer_save)
@@ -2012,22 +2009,22 @@ static void Host_Savegame_f (void)
 			if (!svs.clients[i].spawned || !svs.clients[i].knowntoqc ||
 				!svs.clients[i].edict || svs.clients[i].edict->free)
 			{
-				Con_Printf ("Can't savegame until every active player finishes signon.\n");
-				return;
+				HOST_SAVEGAME_ERROR ("Can't savegame until every active player finishes signon.\n");
+				return false;
 			}
 			for (j = NUM_BASIC_SPAWN_PARMS; j < NUM_TOTAL_SPAWN_PARMS; j++)
 			{
 				if (!isfinite (svs.clients[i].spawn_parms[j]))
 				{
-					Con_Printf ("Can't savegame with a non-finite extended spawn parm for player %i.\n", i + 1);
-					return;
+					HOST_SAVEGAME_ERROR ("Can't savegame with a non-finite extended spawn parm for player %i.\n", i + 1);
+					return false;
 				}
 			}
 		}
 		if (!active_client)
 		{
-			Con_Printf ("Can't save a multiplayer game without active players.\n");
-			return;
+			HOST_SAVEGAME_ERROR ("Can't save a multiplayer game without active players.\n");
+			return false;
 		}
 	}
 	else
@@ -2037,39 +2034,44 @@ static void Host_Savegame_f (void)
 			if (svs.clients[i].active && svs.clients[i].edict &&
 				svs.clients[i].edict->v.health <= 0)
 			{
-				Con_Printf ("Can't savegame with a dead player\n");
-				return;
+				HOST_SAVEGAME_ERROR ("Can't savegame with a dead player\n");
+				return false;
 			}
 		}
 	}
 
-	path_length = q_snprintf (name, sizeof (name), "%s/%s", com_gamedir, Cmd_Argv (1));
+	path_length = q_snprintf (name, sizeof (name), "%s/%s", com_gamedir, savename);
 	if (path_length < 0 || path_length >= (int)sizeof (name))
 	{
-		Con_Printf ("ERROR: savegame path is too long.\n");
-		return;
+		HOST_SAVEGAME_ERROR ("ERROR: savegame path is too long.\n");
+		return false;
 	}
 	if ((size_t)path_length + sizeof (".sav") - 1 >= sizeof (name))
 	{
-		Con_Printf ("ERROR: savegame path is too long.\n");
-		return;
+		HOST_SAVEGAME_ERROR ("ERROR: savegame path is too long.\n");
+		return false;
 	}
 	COM_AddExtension (name, ".sav", sizeof (name));
 	path_length = q_snprintf (tempname, sizeof (tempname), "%s.tmp", name);
 	if (path_length < 0 || path_length >= (int)sizeof (tempname))
 	{
-		Con_Printf ("ERROR: savegame path is too long.\n");
-		return;
+		HOST_SAVEGAME_ERROR ("ERROR: savegame path is too long.\n");
+		return false;
 	}
 
-	Con_SafePrintf ("Saving game to ");
-	Con_LinkPrintf (name, "%s", name);
-	Con_SafePrintf ("...\n");
+	if (!quiet)
+	{
+		Con_SafePrintf ("Saving game to ");
+		Con_LinkPrintf (name, "%s", name);
+		Con_SafePrintf ("...\n");
+	}
 	f = Sys_fopen (tempname, "w");
 	if (!f)
 	{
-		Con_Printf ("ERROR: couldn't open.\n");
-		return;
+		HOST_SAVEGAME_ERROR ("ERROR: couldn't open.\n");
+		if (quiet)
+			Con_DPrintf ("Coop autosave: couldn't open %s\n", name);
+		return false;
 	}
 
 	switched_qcvm = qcvm == NULL;
@@ -2201,23 +2203,163 @@ static void Host_Savegame_f (void)
 		Sys_remove (tempname);
 		if (switched_qcvm)
 			PR_SwitchQCVM (NULL);
-		Con_Printf ("ERROR: couldn't finalize savegame.\n");
-		return;
+		HOST_SAVEGAME_ERROR ("ERROR: couldn't finalize savegame.\n");
+		if (quiet)
+			Con_DPrintf ("Coop autosave: couldn't finalize %s\n", name);
+		return false;
 	}
 
 	// Take the occasion to check the free-list
 	// this is a long operation anyway.
 	ED_CheckFreeList ();
 
-	Con_Printf ("done.\n");
+	if (!quiet)
+		Con_Printf ("done.\n");
 
 	if (switched_qcvm)
 		PR_SwitchQCVM (NULL);
 	SaveList_Rebuild ();
 
-	if (strlen (Cmd_Argv (1)) < sizeof (sv.lastsave) - 1)
-		strcpy (sv.lastsave, Cmd_Argv (1));
+	if (!quiet && strlen (savename) < sizeof (sv.lastsave) - 1)
+		strcpy (sv.lastsave, savename);
+	return true;
 }
+
+void Host_CoopAutosaveFrame (void)
+{
+	int i;
+	qboolean active_client = false;
+	int found_secrets;
+	int killed_monsters;
+	int kill_interval;
+	int kill_bucket;
+	int serverflags;
+	int slots;
+	float min_interval;
+	const char *reason;
+	char savename[MAX_QPATH];
+
+	/* Keep inherited player restoration intact and leave all autosave state
+	 * untouched until saved client snapshots and deferred parms are consumed. */
+	if (sv.loadgame_multiplayer &&
+		(Host_LoadgameHasPendingClients () || Host_LoadgameHasPendingSpawnParms ()))
+		return;
+
+	if (!sv.active || sv.state != ss_active || sv.paused || svs.maxclients <= 1 ||
+		!coop.value || deathmatch.value || !sv_save_multiplayer.value ||
+		!SV_CoopFeatureEnabled (&sv_coop_autosave, true))
+	{
+		sv.coop_autosave_initialized = false;
+		return;
+	}
+
+	if (!qcvm || qcvm != &sv.qcvm || !pr_global_struct)
+		return;
+
+	for (i = 0; i < svs.maxclients; i++)
+	{
+		if (!svs.clients[i].active)
+			continue;
+		active_client = true;
+		if (!svs.clients[i].knowntoqc || !svs.clients[i].spawned ||
+			!svs.clients[i].edict || svs.clients[i].edict->free)
+			return;
+	}
+	if (!active_client)
+		return;
+
+	/* Dedicated servers do not receive the client-side intermission message. */
+	{
+		ddef_t *intermission = ED_FindGlobal ("intermission");
+		dfunction_t *execute = ED_FindFunction ("execute_changelevel");
+		if (intermission &&
+			(intermission->type & ~DEF_SAVEGLOBAL) == ev_float &&
+			execute && execute->numparms == 0 &&
+			qcvm->globals[intermission->ofs] != 0)
+			return;
+	}
+
+	found_secrets = (int)pr_global_struct->found_secrets;
+	killed_monsters = (int)pr_global_struct->killed_monsters;
+	kill_interval = (int)sv_coop_autosave_kill_interval.value;
+	if (kill_interval < 1)
+		kill_interval = 1;
+	kill_bucket = killed_monsters / kill_interval;
+	serverflags = (int)pr_global_struct->serverflags;
+
+	if (!sv.coop_autosave_initialized)
+	{
+		sv.coop_autosave_initialized = true;
+		sv.coop_autosave_mapstart_done = false;
+		sv.coop_autosave_last_realtime = 0;
+		sv.coop_autosave_retry_realtime = 0;
+		sv.coop_autosave_last_secrets = found_secrets;
+		sv.coop_autosave_last_kill_bucket = kill_bucket;
+		sv.coop_autosave_last_serverflags = serverflags;
+	}
+
+	reason = NULL;
+	if (!sv.coop_autosave_mapstart_done && qcvm->time >= COOP_AUTOSAVE_MAPSTART_DELAY)
+		reason = "map start";
+	else if (found_secrets > sv.coop_autosave_last_secrets)
+		reason = "secret";
+	else if (kill_bucket > sv.coop_autosave_last_kill_bucket)
+		reason = "monster progress";
+	else if (serverflags != sv.coop_autosave_last_serverflags)
+		reason = "serverflags";
+	if (!reason)
+		return;
+
+	if (realtime < sv.coop_autosave_retry_realtime)
+		return;
+
+	min_interval = sv_coop_autosave_min_interval.value;
+	if (min_interval < 0)
+		min_interval = 0;
+	if (sv.coop_autosave_last_realtime > 0 &&
+		realtime - sv.coop_autosave_last_realtime < min_interval)
+		return;
+
+	slots = (int)sv_coop_autosave_slots.value;
+	if (slots < 1)
+		slots = 1;
+	if (slots > COOP_AUTOSAVE_MAX_SLOTS)
+		slots = COOP_AUTOSAVE_MAX_SLOTS;
+	q_snprintf (savename, sizeof (savename), "coop_auto%i",
+		sv.coop_autosave_next_slot % slots);
+
+	if (!Host_SavegameWrite (savename, true))
+	{
+		double retry_delay = min_interval > COOP_AUTOSAVE_RETRY_DELAY ?
+			min_interval : COOP_AUTOSAVE_RETRY_DELAY;
+		sv.coop_autosave_retry_realtime = realtime + retry_delay;
+		return;
+	}
+
+	Con_Printf ("Coop autosaved %s.sav (%s).\n", savename, reason);
+	sv.coop_autosave_next_slot = (sv.coop_autosave_next_slot + 1) % slots;
+	sv.coop_autosave_last_realtime = realtime;
+	sv.coop_autosave_last_secrets = found_secrets;
+	sv.coop_autosave_last_kill_bucket = kill_bucket;
+	sv.coop_autosave_last_serverflags = serverflags;
+	sv.coop_autosave_retry_realtime = 0;
+	if (!strcmp (reason, "map start"))
+		sv.coop_autosave_mapstart_done = true;
+}
+
+static void Host_Savegame_f (void)
+{
+	if (cmd_source != src_command)
+		return;
+	if (Cmd_Argc () != 2)
+	{
+		Con_Printf ("save <savename> : save a game\n");
+		return;
+	}
+	Host_SavegameWrite (Cmd_Argv (1), false);
+}
+
+#undef HOST_SAVEGAME_ERROR
 
 static void Send_Spawn_Info (client_t *c, qboolean loadgame)
 {

@@ -94,9 +94,31 @@ header fixture cases. This proves a one-player round trip, not the full
 two-player/dead-player/late-join matrix described above. A malformed inherited
 save previously reached a rejection followed by an allocator abort during
 graphical shutdown; its root cause and recovery path remain unqualified.
+The same malformed file rejects with the expected `Host_Error` on a headless
+dedicated server and exits without an allocator abort; this narrows the
+unresolved abort to the graphical shutdown path or its interaction with the
+rejection, without proving either cause.
 
 After the reviewed edict fix, a second disposable run loaded that one-player
 save, restored the named player, admitted a new desktop player into slot two,
 and successfully saved both active players. This exercises the late-join live
 edict condition but does not establish movement/collision or reverse-order
 reconnect with two previously saved identities.
+
+## Autosave checkpoint
+
+The inherited map-start, secret, kill-bucket and serverflags triggers now call
+the manual writer. Minimum interval, 1–20 slot rotation and retry timing use
+the inherited policy. Pending restored players and incomplete signon leave the
+scheduler state untouched; failed publication leaves the slot and progress
+baseline unchanged. A disposable three-slot dedicated server with one desktop
+client produced a v7 `coop_auto0.sav` at map start. Linux curl and no-curl
+builds and the 51-case header fixture pass.
+
+An Astra xhigh source review found no P0/P1 issue in the autosave adapter or
+manual-writer extraction. The review retained the shared writer and existing
+server-frame owner. It noted that synchronous save I/O, free-list checking and
+save-list rebuilding may create frame stalls on large maps; `mj4m1` timing is
+needed before choosing an optimization. Secret/kill/serverflags, publication
+failure/retry and full multi-player restoration remain to be exercised in the
+larger behavior matrix.
