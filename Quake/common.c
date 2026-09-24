@@ -65,6 +65,10 @@ static void COM_Path_f (void);
 #define PAK0_COUNT_V091 308	  /* id1/pak0.pak - v0.91/0.92, not supported */
 #define PAK0_CRC_V091	28804 /* id1/pak0.pak - v0.91/0.92, not supported */
 
+#define PAK0_CRC_RERELEASE 20578
+#define PAK0_COUNT_RERELEASE 1121
+#define PAK0_SIZE_RERELEASE 180815252
+
 THREAD_LOCAL char com_token[COM_PARSE_MAX_TOKEN_SIZE];
 int				  com_argc;
 char			**com_argv;
@@ -2467,6 +2471,21 @@ If neither of file or handle is set, this
 can be used for detecting a file's presence.
 ===========
 */
+/* A separately mounted rerelease pack must never supply gameplay files to a
+ * classic installation. Its MD5 meshes, animations and indexed skins are a
+ * lowest-priority replacement-model source only. */
+static qboolean COM_IsRereleaseModelAsset (const char *filename)
+{
+	const char *extension;
+
+	if (q_strncasecmp (filename, "progs/", 6))
+		return false;
+	extension = COM_FileGetExtension (filename);
+	return !q_strcasecmp (extension, "md5mesh") ||
+		!q_strcasecmp (extension, "md5anim") ||
+		!q_strcasecmp (extension, "lmp");
+}
+
 static qfilesize_t COM_FindFile (const char *filename, int *handle, FILE **file, unsigned int *path_id)
 {
 	searchpath_t *search;
@@ -2484,6 +2503,8 @@ static qfilesize_t COM_FindFile (const char *filename, int *handle, FILE **file,
 	//
 	for (search = com_searchpaths; search; search = search->next)
 	{
+		if (search->rerelease_models && !COM_IsRereleaseModelAsset (filename))
+			continue;
 		if (search->pack) /* look through all the pak file elements */
 		{
 			pak = search->pack;
@@ -2837,6 +2858,129 @@ static pack_t *COM_LoadPackFile (const char *packfile, int packhandle)
 
 	// Sys_Printf ("Added packfile %s (%i files)\n", packfile, numpackfiles);
 	return pack;
+}
+
+/* Keep this opt-in source as narrow as the inherited product: the official
+ * rerelease id1 pack supplies model companions, never maps or game code.
+ * Validate the directory and Ranger bytes before handing it to the ordinary
+ * pack loader, whose malformed-pack failures are intentionally fatal. */
+static qboolean COM_VerifyRereleaseModelPack (int handle, qfilesize_t filesize)
+{
+	static const struct { const char *name; int length; mz_ulong crc; } required[] = {
+		{"progs/player.md5mesh", 178658, 0x7911b9b0U},
+		{"progs/player.md5anim", 331510, 0x0561e50aU}
+	};
+	dpackheader_t header;
+	dpackfile_t *directory = NULL;
+	byte buffer[8192];
+	int offset, length;
+	qboolean valid = false;
+
+	if (filesize != PAK0_SIZE_RERELEASE)
+		return false;
+	Sys_FileSeek (handle, 0);
+	if (Sys_FileRead (handle, &header, sizeof (header)) != sizeof (header) ||
+		memcmp (header.id, "PACK", 4))
+		return false;
+	offset = LittleLong (header.dirofs);
+	length = LittleLong (header.dirlen);
+	if (offset < (int)sizeof (header) ||
+		length != PAK0_COUNT_RERELEASE * (int)sizeof (dpackfile_t) ||
+		(qfilesize_t)offset + length > filesize)
+		return false;
+	directory = (dpackfile_t *)Mem_Alloc (length);
+	Sys_FileSeek (handle, offset);
+	if (Sys_FileRead (handle, directory, length) != length ||
+		CRC_Block ((const byte *)directory, length) != PAK0_CRC_RERELEASE)
+		goto done;
+	for (int i = 0; i < PAK0_COUNT_RERELEASE; ++i)
+	{
+		int filepos = LittleLong (directory[i].filepos);
+		int filelen = LittleLong (directory[i].filelen);
+		if (!memchr (directory[i].name, 0, sizeof (directory[i].name)) ||
+			filepos < 0 || filelen < 0 ||
+			(qfilesize_t)filepos + filelen > filesize)
+			goto done;
+	}
+	for (size_t asset = 0; asset < sizeof (required) / sizeof (required[0]); ++asset)
+	{
+		int remaining = -1;
+		mz_ulong crc = MZ_CRC32_INIT;
+		for (int i = 0; i < PAK0_COUNT_RERELEASE; ++i)
+			if (!strcmp (directory[i].name, required[asset].name))
+			{
+				if (LittleLong (directory[i].filelen) != required[asset].length)
+					goto done;
+				remaining = required[asset].length;
+				Sys_FileSeek (handle, LittleLong (directory[i].filepos));
+				break;
+			}
+		if (remaining < 0)
+			goto done;
+		while (remaining > 0)
+		{
+			int count = q_min (remaining, (int)sizeof (buffer));
+			if (Sys_FileRead (handle, buffer, count) != count)
+				goto done;
+			crc = mz_crc32 (crc, buffer, count);
+			remaining -= count;
+		}
+		if (crc != required[asset].crc)
+			goto done;
+	}
+	valid = true;
+done:
+	Mem_Free (directory);
+	Sys_FileSeek (handle, 0);
+	return valid;
+}
+
+static void COM_AddRereleaseModelPack (const char *root)
+{
+	char filename[MAX_OSPATH];
+	int handle;
+	qfilesize_t filesize;
+	pack_t *pak;
+	searchpath_t *search, *tail;
+	qboolean old_modified;
+
+	if (!root || !*root ||
+		(size_t)q_snprintf (filename, sizeof (filename), "%s/id1/pak0.pak", root) >= sizeof (filename))
+	{
+		Con_Warning ("-rerelease needs a path to the rerelease game root\n");
+		return;
+	}
+	filesize = Sys_FileOpenRead (filename, &handle);
+	if (filesize < 0)
+	{
+		Con_Warning ("-rerelease: cannot open %s\n", filename);
+		return;
+	}
+	if (!COM_VerifyRereleaseModelPack (handle, filesize))
+	{
+		Con_Warning ("-rerelease: %s is not the verified model pack\n", filename);
+		Sys_FileClose (handle);
+		return;
+	}
+	old_modified = com_modified;
+	pak = COM_LoadPackFile (filename, handle);
+	com_modified = old_modified;
+	if (!pak)
+		return;
+	search = (searchpath_t *)Mem_Alloc (sizeof (*search));
+	search->path_id = 1;
+	search->pack = pak;
+	search->rerelease_models = true;
+	search->next = NULL;
+	if (!com_searchpaths)
+		com_searchpaths = search;
+	else
+	{
+		for (tail = com_searchpaths; tail->next; tail = tail->next)
+			;
+		tail->next = search;
+	}
+	Con_Printf ("Rerelease MD5 model companions enabled from %s\n", filename);
 }
 
 const char *COM_GetGameNames (qboolean full)
@@ -3828,6 +3972,12 @@ void COM_InitFilesystem (void) // johnfitz -- modified based on topaz's tutorial
 		// start up with GAMENAME by default (id1)
 		COM_AddGameDirectory (GAMENAME);
 	}
+
+	/* An explicit rerelease root contributes only low-priority MD5 model
+	 * companions. It must not replace maps, progs.dat or the active id1 pack. */
+	i = COM_CheckParm ("-rerelease");
+	if (i && i < com_argc - 1)
+		COM_AddRereleaseModelPack (com_argv[i + 1]);
 
 	/* this is the end of our base searchpath:
 	 * any set gamedirs, such as those from -game command line
