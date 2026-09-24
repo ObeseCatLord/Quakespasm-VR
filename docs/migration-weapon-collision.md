@@ -83,3 +83,9 @@ single-player rule: non-dedicated with `maxclients == 1`, regardless of how
 many players happen to be connected. The local `vr_weapon_collision` default
 remains off. The contact capability must never select a wire dialect or imply
 that melee gameplay has been implemented.
+The inherited client defaults `vr_weapon_collision` to on; the current `2.0`
+default of off is a temporary gate while only the Classic Shotgun path exists.
+Before declaring weapon parity, extend collision/contact handling to the
+supported weapons and profiles, then restore the inherited default under the
+server capability policy. Fixed foveation's separate opt-in default is not a
+reason to keep weapon collision off.
