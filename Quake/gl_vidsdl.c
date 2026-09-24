@@ -2194,7 +2194,7 @@ static void GL_CreateDepthBuffer (void)
 	image_create_info.samples = vulkan_globals.sample_count;
 	image_create_info.tiling = VK_IMAGE_TILING_OPTIMAL;
 	image_create_info.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT;
-	if (r_ssao.value > 0)
+	if (R_SSAOEnabled ())
 		image_create_info.usage |= VK_IMAGE_USAGE_SAMPLED_BIT;
 
 	assert (depth_buffer == VK_NULL_HANDLE);
@@ -3512,7 +3512,7 @@ static void GL_CreateRenderResources (void)
 	if (vid.render_width != vid.width || vid.render_height != vid.height)
 		GL_CreateUIColorBuffer ();
 	GL_CreateDepthBuffer ();
-	if (!vulkan_globals.stereo_active)
+	if (R_SSAOEnabled ())
 		R_CreateSSAO (depth_buffer);
 	if (vulkan_globals.openxr_fragment_shading_rate_active && !GL_CreateFragmentShadingRateImage ())
 		vulkan_globals.openxr_fragment_shading_rate_active = false;

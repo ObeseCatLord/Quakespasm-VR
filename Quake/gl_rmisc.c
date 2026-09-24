@@ -2666,10 +2666,14 @@ DECLARE_SHADER_MODULE (scene_upscale_frag);
 DECLARE_SHADER_MODULE (scene_upscale_stereo_frag);
 DECLARE_SHADER_MODULE (ssao_composite_frag);
 DECLARE_SHADER_MODULE (ssao_composite_msaa_frag);
+DECLARE_SHADER_MODULE (ssao_composite_stereo_frag);
+DECLARE_SHADER_MODULE (ssao_composite_msaa_stereo_frag);
 DECLARE_SHADER_MODULE (ssao_prepare_comp);
 DECLARE_SHADER_MODULE (ssao_prepare_msaa_comp);
 DECLARE_SHADER_MODULE (ssao_evaluate_comp);
 DECLARE_SHADER_MODULE (ssao_evaluate_fp16_comp);
+DECLARE_SHADER_MODULE (ssao_evaluate_stereo_comp);
+DECLARE_SHADER_MODULE (ssao_evaluate_fp16_stereo_comp);
 DECLARE_SHADER_MODULE (ssao_filter_comp);
 DECLARE_SHADER_MODULE (ssao_filter_fp16_comp);
 DECLARE_SHADER_MODULE (ssao_mip_comp);
@@ -3157,7 +3161,7 @@ static void R_CreateGraphicsPipeline (vulkan_pipeline_t *pipeline, pipeline_crea
 		infos->shader_stages[0].module = R_StereoVertexShaderModule (infos->shader_stages[0].module);
 	infos->graphics_pipeline.layout = layout.handle;
 	VkPipelineDepthStencilStateCreateInfo depth_stencil = infos->depth_stencil_state;
-	if (r_ssao.value > 0 && !vulkan_globals.stereo_active && depth_stencil.depthTestEnable && depth_stencil.depthWriteEnable && !depth_stencil.stencilTestEnable)
+	if (R_SSAOEnabled () && depth_stencil.depthTestEnable && depth_stencil.depthWriteEnable && !depth_stencil.stencilTestEnable)
 	{
 		// Bit 0 belongs to sky. Bit 1 records surviving opaque samples for SSAO.
 		depth_stencil.stencilTestEnable = VK_TRUE;
@@ -4225,14 +4229,18 @@ static void R_CreatePostprocessPipelines ()
 	base.vertex_input_state.pVertexBindingDescriptions = NULL;
 
 	base.shader_stages[0].module = postprocess_vert_module;
-	if (r_ssao.value > 0 && !vulkan_globals.stereo_active)
+	if (R_SSAOEnabled ())
 	{
 		pipeline_create_infos_t ssao;
 		R_CreateComputePipeline (
 			&ssao_prepare_pipeline, vulkan_globals.sample_count == VK_SAMPLE_COUNT_1_BIT ? ssao_prepare_comp_module : ssao_prepare_msaa_comp_module, 0, NULL,
 			"ssao_prepare");
 		R_CreateComputePipeline (
-			&ssao_evaluate_pipeline, vulkan_globals.shader_float16 ? ssao_evaluate_fp16_comp_module : ssao_evaluate_comp_module, 0, NULL, "ssao_evaluate");
+			&ssao_evaluate_pipeline,
+			vulkan_globals.stereo_active
+				? (vulkan_globals.shader_float16 ? ssao_evaluate_fp16_stereo_comp_module : ssao_evaluate_stereo_comp_module)
+				: (vulkan_globals.shader_float16 ? ssao_evaluate_fp16_comp_module : ssao_evaluate_comp_module),
+			0, NULL, "ssao_evaluate");
 		R_CreateComputePipeline (
 			&ssao_mip_pipeline,
 			vulkan_globals.sample_count == VK_SAMPLE_COUNT_1_BIT ? (vulkan_globals.shader_float16 ? ssao_mip_fp16_comp_module : ssao_mip_comp_module)
@@ -4248,7 +4256,9 @@ static void R_CreatePostprocessPipelines ()
 		ssao.blend_attachment_states[0].srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
 		ssao.blend_attachment_states[0].dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
 		ssao.blend_attachment_states[0].colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT;
-		ssao.shader_stages[1].module = vulkan_globals.sample_count == VK_SAMPLE_COUNT_1_BIT ? ssao_composite_frag_module : ssao_composite_msaa_frag_module;
+		ssao.shader_stages[1].module = vulkan_globals.stereo_active
+			? (vulkan_globals.sample_count == VK_SAMPLE_COUNT_1_BIT ? ssao_composite_stereo_frag_module : ssao_composite_msaa_stereo_frag_module)
+			: (vulkan_globals.sample_count == VK_SAMPLE_COUNT_1_BIT ? ssao_composite_frag_module : ssao_composite_msaa_frag_module);
 		for (int variant = 0; variant < MAIN_RENDER_PASS_VARIANT_COUNT; ++variant)
 		{
 			R_SetPipelineRenderPassVariant (&ssao, SUBPASS_ENTITY_SSAO, variant);
@@ -4447,29 +4457,46 @@ static void R_CreateShaderModules ()
 	CREATE_SHADER_MODULE (scene_upscale_frag);
 	CREATE_SHADER_MODULE_COND (scene_upscale_stereo_frag, vulkan_globals.stereo_active);
 #ifdef _DEBUG
-	if (r_ssao.value > 0)
+	if (R_SSAOEnabled ())
 	{
 		if (vulkan_globals.sample_count == VK_SAMPLE_COUNT_1_BIT)
-			ssao_composite_frag_module = R_CreateShaderModule (ssao_composite_debug_frag_spv, ssao_composite_debug_frag_spv_size, "ssao_composite_debug_frag");
+		{
+			if (vulkan_globals.stereo_active)
+				ssao_composite_stereo_frag_module = R_CreateShaderModule (
+					ssao_composite_stereo_debug_frag_spv, ssao_composite_stereo_debug_frag_spv_size, "ssao_composite_stereo_debug_frag");
+			else
+				ssao_composite_frag_module = R_CreateShaderModule (ssao_composite_debug_frag_spv, ssao_composite_debug_frag_spv_size, "ssao_composite_debug_frag");
+		}
 		else
-			ssao_composite_msaa_frag_module =
-				R_CreateShaderModule (ssao_composite_msaa_debug_frag_spv, ssao_composite_msaa_debug_frag_spv_size, "ssao_composite_msaa_debug_frag");
+		{
+			if (vulkan_globals.stereo_active)
+				ssao_composite_msaa_stereo_frag_module = R_CreateShaderModule (
+					ssao_composite_msaa_stereo_debug_frag_spv, ssao_composite_msaa_stereo_debug_frag_spv_size,
+					"ssao_composite_msaa_stereo_debug_frag");
+			else
+				ssao_composite_msaa_frag_module = R_CreateShaderModule (
+					ssao_composite_msaa_debug_frag_spv, ssao_composite_msaa_debug_frag_spv_size, "ssao_composite_msaa_debug_frag");
+		}
 	}
 #else
-	CREATE_SHADER_MODULE_COND (ssao_composite_frag, r_ssao.value > 0 && vulkan_globals.sample_count == VK_SAMPLE_COUNT_1_BIT);
-	CREATE_SHADER_MODULE_COND (ssao_composite_msaa_frag, r_ssao.value > 0 && vulkan_globals.sample_count != VK_SAMPLE_COUNT_1_BIT);
+	CREATE_SHADER_MODULE_COND (ssao_composite_frag, R_SSAOEnabled () && !vulkan_globals.stereo_active && vulkan_globals.sample_count == VK_SAMPLE_COUNT_1_BIT);
+	CREATE_SHADER_MODULE_COND (ssao_composite_msaa_frag, R_SSAOEnabled () && !vulkan_globals.stereo_active && vulkan_globals.sample_count != VK_SAMPLE_COUNT_1_BIT);
+	CREATE_SHADER_MODULE_COND (ssao_composite_stereo_frag, R_SSAOEnabled () && vulkan_globals.stereo_active && vulkan_globals.sample_count == VK_SAMPLE_COUNT_1_BIT);
+	CREATE_SHADER_MODULE_COND (ssao_composite_msaa_stereo_frag, R_SSAOEnabled () && vulkan_globals.stereo_active && vulkan_globals.sample_count != VK_SAMPLE_COUNT_1_BIT);
 #endif
-	CREATE_SHADER_MODULE_COND (ssao_prepare_comp, r_ssao.value > 0 && vulkan_globals.sample_count == VK_SAMPLE_COUNT_1_BIT);
-	CREATE_SHADER_MODULE_COND (ssao_prepare_msaa_comp, r_ssao.value > 0 && vulkan_globals.sample_count != VK_SAMPLE_COUNT_1_BIT);
-	CREATE_SHADER_MODULE_COND (ssao_evaluate_comp, r_ssao.value > 0 && !vulkan_globals.shader_float16);
-	CREATE_SHADER_MODULE_COND (ssao_evaluate_fp16_comp, r_ssao.value > 0 && vulkan_globals.shader_float16);
-	CREATE_SHADER_MODULE_COND (ssao_mip_comp, r_ssao.value > 0 && vulkan_globals.sample_count == VK_SAMPLE_COUNT_1_BIT && !vulkan_globals.shader_float16);
-	CREATE_SHADER_MODULE_COND (ssao_mip_fp16_comp, r_ssao.value > 0 && vulkan_globals.sample_count == VK_SAMPLE_COUNT_1_BIT && vulkan_globals.shader_float16);
-	CREATE_SHADER_MODULE_COND (ssao_mip_msaa_comp, r_ssao.value > 0 && vulkan_globals.sample_count != VK_SAMPLE_COUNT_1_BIT && !vulkan_globals.shader_float16);
+	CREATE_SHADER_MODULE_COND (ssao_prepare_comp, R_SSAOEnabled () && vulkan_globals.sample_count == VK_SAMPLE_COUNT_1_BIT);
+	CREATE_SHADER_MODULE_COND (ssao_prepare_msaa_comp, R_SSAOEnabled () && vulkan_globals.sample_count != VK_SAMPLE_COUNT_1_BIT);
+	CREATE_SHADER_MODULE_COND (ssao_evaluate_comp, R_SSAOEnabled () && !vulkan_globals.stereo_active && !vulkan_globals.shader_float16);
+	CREATE_SHADER_MODULE_COND (ssao_evaluate_fp16_comp, R_SSAOEnabled () && !vulkan_globals.stereo_active && vulkan_globals.shader_float16);
+	CREATE_SHADER_MODULE_COND (ssao_evaluate_stereo_comp, R_SSAOEnabled () && vulkan_globals.stereo_active && !vulkan_globals.shader_float16);
+	CREATE_SHADER_MODULE_COND (ssao_evaluate_fp16_stereo_comp, R_SSAOEnabled () && vulkan_globals.stereo_active && vulkan_globals.shader_float16);
+	CREATE_SHADER_MODULE_COND (ssao_mip_comp, R_SSAOEnabled () && vulkan_globals.sample_count == VK_SAMPLE_COUNT_1_BIT && !vulkan_globals.shader_float16);
+	CREATE_SHADER_MODULE_COND (ssao_mip_fp16_comp, R_SSAOEnabled () && vulkan_globals.sample_count == VK_SAMPLE_COUNT_1_BIT && vulkan_globals.shader_float16);
+	CREATE_SHADER_MODULE_COND (ssao_mip_msaa_comp, R_SSAOEnabled () && vulkan_globals.sample_count != VK_SAMPLE_COUNT_1_BIT && !vulkan_globals.shader_float16);
 	CREATE_SHADER_MODULE_COND (
-		ssao_mip_msaa_fp16_comp, r_ssao.value > 0 && vulkan_globals.sample_count != VK_SAMPLE_COUNT_1_BIT && vulkan_globals.shader_float16);
-	CREATE_SHADER_MODULE_COND (ssao_filter_comp, r_ssao.value > 0 && !vulkan_globals.shader_float16);
-	CREATE_SHADER_MODULE_COND (ssao_filter_fp16_comp, r_ssao.value > 0 && vulkan_globals.shader_float16);
+		ssao_mip_msaa_fp16_comp, R_SSAOEnabled () && vulkan_globals.sample_count != VK_SAMPLE_COUNT_1_BIT && vulkan_globals.shader_float16);
+	CREATE_SHADER_MODULE_COND (ssao_filter_comp, R_SSAOEnabled () && !vulkan_globals.shader_float16);
+	CREATE_SHADER_MODULE_COND (ssao_filter_fp16_comp, R_SSAOEnabled () && vulkan_globals.shader_float16);
 	CREATE_SHADER_MODULE (wboit_resolve_frag);
 	CREATE_SHADER_MODULE_COND (wboit_resolve_msaa_frag, vulkan_globals.sample_count != VK_SAMPLE_COUNT_1_BIT);
 	CREATE_SHADER_MODULE (mboit_resolve_frag);
@@ -4570,10 +4597,14 @@ static void R_DestroyShaderModules ()
 	DESTROY_SHADER_MODULE (scene_upscale_stereo_frag);
 	DESTROY_SHADER_MODULE (ssao_composite_frag);
 	DESTROY_SHADER_MODULE (ssao_composite_msaa_frag);
+	DESTROY_SHADER_MODULE (ssao_composite_stereo_frag);
+	DESTROY_SHADER_MODULE (ssao_composite_msaa_stereo_frag);
 	DESTROY_SHADER_MODULE (ssao_prepare_comp);
 	DESTROY_SHADER_MODULE (ssao_prepare_msaa_comp);
 	DESTROY_SHADER_MODULE (ssao_evaluate_comp);
 	DESTROY_SHADER_MODULE (ssao_evaluate_fp16_comp);
+	DESTROY_SHADER_MODULE (ssao_evaluate_stereo_comp);
+	DESTROY_SHADER_MODULE (ssao_evaluate_fp16_stereo_comp);
 	DESTROY_SHADER_MODULE (ssao_mip_comp);
 	DESTROY_SHADER_MODULE (ssao_mip_fp16_comp);
 	DESTROY_SHADER_MODULE (ssao_mip_msaa_comp);

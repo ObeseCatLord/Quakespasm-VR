@@ -21,6 +21,15 @@ composite uses array views and `gl_ViewIndex` under one multiview draw. All
 desktop SSAO code paths and cvar behavior must remain unchanged. A separate
 VR policy may leave the effect opt-in until performance has been measured.
 
+Implementation status: the full-resolution reference is present on `2.0`.
+`vr_ssao 1` enables it in OpenXR; `r_ssao` still selects the quality level,
+and desktop SSAO retains its existing default and shader variants. VR SSAO
+defaults off until its frame-time cost and binocular output can be assessed.
+A follow-up Astra xhigh review found no concrete regression in per-eye
+barriers, image views, multiview composite, toggles, or teardown. Local engine
+build and SPIR-V validation pass; these checks do not establish visual or
+performance acceptance.
+
 Next, instrument total-frame and SSAO GPU time and compare AO-off, the
 full-resolution reference, and a VR-only half-width/half-height candidate with
 depth-aware upsampling. Evaluate p95/p99 frame time and missed-frame risk, not

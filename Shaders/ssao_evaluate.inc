@@ -166,6 +166,9 @@ void main ()
 		half2 omega = half2 (cos_phi, -sin_phi);
 
 		omega *= screenspace_radius;
+#ifdef STEREO_SSAO
+		omega.y *= half (abs (c.ndc_to_view_mul_x_pixel_size.x / c.ndc_to_view_mul_x_pixel_size.y));
+#endif
 
 		half3 direction_vec = half3 (cos_phi, sin_phi, half (0.0));
 

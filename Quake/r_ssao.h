@@ -17,6 +17,7 @@ typedef struct
 } ssao_constants_t;
 
 void R_InitSSAO (void);
+qboolean R_SSAOEnabled (void);
 void R_CreateSSAO (VkImage depth);
 void R_DestroySSAO (void);
 void R_PrepareSSAOWorldDepth (cb_context_t *cbx);

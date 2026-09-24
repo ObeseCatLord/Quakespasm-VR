@@ -210,14 +210,14 @@ static void R_DescribeFrame (frame_desc_t *desc, main_render_pass_variant_t vari
 
 	R_BeginGraphicsPass (&builder, FRAME_TARGET_SCENE, SUBPASS_MAIN);
 	R_AddGraphicsWork (&builder, DRAW_WORLD, SCBX_WORLD, SCBX_WORLD);
-	if (r_ssao.value > 0 && !vulkan_globals.stereo_active)
+	if (R_SSAOEnabled ())
 	{
 		R_EndGraphicsPass (&builder);
 		R_AddRecordWork (&builder, R_PrepareSSAOWorldDepth);
 		R_BeginGraphicsPass (&builder, FRAME_TARGET_SCENE, SUBPASS_MAIN);
 	}
 	R_AddGraphicsWork (&builder, DRAW_ENTITIES, SCBX_ENTITIES, SCBX_ENTITIES);
-	if (r_ssao.value > 0 && !vulkan_globals.stereo_active)
+	if (R_SSAOEnabled ())
 	{
 		R_EndGraphicsPass (&builder);
 		R_AddRecordWork (&builder, R_ComputeSSAO);
@@ -482,7 +482,7 @@ static void R_CreateGraphicsPasses (
 		}
 
 		// Start entity classification with clear stencil, preserving world depth.
-		if (target == FRAME_TARGET_SCENE && r_ssao.value > 0 && !vulkan_globals.stereo_active)
+		if (target == FRAME_TARGET_SCENE && R_SSAOEnabled ())
 			for (uint32_t i = 0; i < frame->step_count; ++i)
 				if (frame->steps[i].type == FRAME_GRAPHICS_WORK && frame->steps[i].pass == pass_index && frame->steps[i].draw_stage == DRAW_ENTITIES)
 					pass_attachments[1].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;

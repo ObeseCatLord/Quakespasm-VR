@@ -225,10 +225,16 @@ SHADER_OBJS = \
 	ssao_composite_frag.o \
 	ssao_composite_debug_frag.o \
 	ssao_composite_msaa_debug_frag.o \
+	ssao_composite_stereo_frag.o \
+	ssao_composite_msaa_stereo_frag.o \
+	ssao_composite_stereo_debug_frag.o \
+	ssao_composite_msaa_stereo_debug_frag.o \
 	ssao_prepare_comp.o \
 	ssao_prepare_msaa_comp.o \
 	ssao_evaluate_comp.o \
 	ssao_evaluate_fp16_comp.o \
+	ssao_evaluate_stereo_comp.o \
+	ssao_evaluate_fp16_stereo_comp.o \
 	ssao_mip_comp.o \
 	ssao_mip_fp16_comp.o \
 	ssao_mip_msaa_comp.o \
@@ -422,6 +428,12 @@ $(eval $(call SHADER_VARIANT,basic_stereo_vert,basic.vert,-DSTEREO=1 --target-en
 $(eval $(call SHADER_VARIANT,basic_ui_stereo_vert,basic.vert,-DSTEREO=1 -DUI_PANEL=1 --target-env vulkan1.1))
 $(eval $(call SHADER_VARIANT,draw_pic_xbr_ui_stereo_vert,draw_pic_xbr.vert,-DSTEREO=1 -DUI_PANEL=1 --target-env vulkan1.1))
 $(eval $(call SHADER_VARIANT,scene_upscale_stereo_frag,scene_upscale.frag,-DSTEREO=1 --target-env vulkan1.1))
+$(eval $(call SHADER_VARIANT,ssao_evaluate_stereo_comp,ssao_evaluate.comp,-DSTEREO_SSAO=1 --target-env vulkan1.1))
+$(eval $(call SHADER_VARIANT,ssao_evaluate_fp16_stereo_comp,ssao_evaluate_fp16.comp,-DSTEREO_SSAO=1 --target-env vulkan1.1))
+$(eval $(call SHADER_VARIANT,ssao_composite_stereo_frag,ssao_composite.frag,-DSTEREO=1 --target-env vulkan1.1))
+$(eval $(call SHADER_VARIANT,ssao_composite_msaa_stereo_frag,ssao_composite_msaa.frag,-DSTEREO=1 --target-env vulkan1.1))
+$(eval $(call SHADER_VARIANT,ssao_composite_stereo_debug_frag,ssao_composite_debug.frag,-DSTEREO=1 --target-env vulkan1.1))
+$(eval $(call SHADER_VARIANT,ssao_composite_msaa_stereo_debug_frag,ssao_composite_msaa_debug.frag,-DSTEREO=1 --target-env vulkan1.1))
 $(eval $(call SHADER_VARIANT,basic_ui_frag,basic.frag,-DUI_PANEL=1))
 $(eval $(call SHADER_VARIANT,basic_notex_ui_frag,basic_notex.frag,-DUI_PANEL=1))
 $(eval $(call SHADER_VARIANT,basic_alphatest_ui_frag,basic_alphatest.frag,-DUI_PANEL=1))

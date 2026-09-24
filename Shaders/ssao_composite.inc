@@ -1,8 +1,25 @@
+#ifdef STEREO
+#extension GL_EXT_multiview : require
+#endif
 layout (push_constant) uniform constants
 {
 	vec4 viewport, projection, settings;
 }
 pc;
+#ifdef STEREO
+#ifdef MULTISAMPLED
+layout (set = 0, binding = 0) uniform usampler2DMSArray entity_mask;
+layout (set = 1, binding = 0) uniform sampler2DMSArray scene_depth;
+#define DEPTH(image, p, s) texelFetch (image, ivec3 (p, gl_ViewIndex), s).r
+#else
+layout (set = 0, binding = 0) uniform usampler2DArray entity_mask;
+layout (set = 1, binding = 0) uniform sampler2DArray scene_depth;
+#define DEPTH(image, p, s) texelFetch (image, ivec3 (p, gl_ViewIndex), 0).r
+#endif
+layout (set = 2, binding = 0) uniform sampler2DArray filtered_ao;
+layout (set = 3, binding = 0) uniform sampler2DArray prepared_depth;
+#define FETCH_PIXEL(image, p, s) texelFetch (image, ivec3 (p, gl_ViewIndex), s)
+#else
 #ifdef MULTISAMPLED
 layout (set = 0, binding = 0) uniform usampler2DMS entity_mask;
 layout (set = 1, binding = 0) uniform sampler2DMS scene_depth;
@@ -14,6 +31,8 @@ layout (set = 1, binding = 0) uniform sampler2D scene_depth;
 #endif
 layout (set = 2, binding = 0) uniform sampler2D filtered_ao;
 layout (set = 3, binding = 0) uniform sampler2D prepared_depth;
+#define FETCH_PIXEL(image, p, s) texelFetch (image, p, s)
+#endif
 layout (location = 0) out vec4 out_color;
 
 void main ()
@@ -53,7 +72,7 @@ void main ()
 	}
 	if (pc.settings.w == 3.0)
 	{
-		vec2 depths = texelFetch (prepared_depth, p, 0).xy;
+		vec2 depths = FETCH_PIXEL (prepared_depth, p, 0).xy;
 		out_color = vec4 (vec3 (depths.y < depths.x ? 128.0 / (128.0 + depths.y) : 0.0), 1.0);
 		return;
 	}
@@ -70,7 +89,7 @@ void main ()
 #endif
 #endif
 	float depth = world > 0.0 ? pc.projection.z / world : 1e9;
-	float visibility = texelFetch (filtered_ao, p, 0).x;
+	float visibility = FETCH_PIXEL (filtered_ao, p, 0).x;
 	float occlusion = 1.0 - visibility;
 	// Match world_common.inc: fog uses view-space depth (clip W), not radial distance.
 	float fog_distance = pc.settings.z * depth;
