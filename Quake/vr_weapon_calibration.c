@@ -122,6 +122,21 @@ static const vr_weapon_schema_entry_t vr_enhanced_weapon_fallbacks[] = {
 	},
 };
 
+/* The inherited id1 VR weapon profile supplies this classic axe calibration.
+ * Keep its native-trigger muzzle valid even when no external schema is installed;
+ * a mod's vr_weapons.txt can still replace these values on game reload. */
+static const vr_weapon_schema_entry_t vr_stock_axe_fallback[] = {
+	{
+		.viewmodel_path = "progs/v_axe.mdl",
+		.held_offset = {-4.0f, 24.0f, 37.0f},
+		.has_held_offset = true,
+		.held_scale = 0.33f,
+		.has_held_scale = true,
+		.muzzle_offset = {0.0f, 0.0f, 37.0f},
+		.has_muzzle_offset = true,
+	},
+};
+
 /* Classic viewmodel calibration from the donor's Enyo InitWeaponCVars. */
 static const vr_weapon_schema_entry_t vr_enyo_weapon_fallbacks[] = {
 	{
@@ -566,6 +581,9 @@ static qboolean VR_WeaponCalibrationApplyEnyoFallbacks(void)
 static qboolean VR_WeaponCalibrationApplyBuiltinFallbacks(void)
 {
 	return VR_WeaponCalibrationApplyEnhancedFallbacks() &&
+		VR_WeaponCalibrationApplySchema(vr_stock_axe_fallback,
+			sizeof(vr_stock_axe_fallback) /
+			sizeof(vr_stock_axe_fallback[0])) &&
 		VR_WeaponCalibrationApplyEnyoFallbacks();
 }
 

@@ -82,6 +82,7 @@ static cvar_t vr_180_snap_turn = {"vr_180_snap_turn", "1", CVAR_ARCHIVE};
 static cvar_t vr_turn_speed = {"vr_turn_speed", "2", CVAR_ARCHIVE};
 static cvar_t vr_joystick_yaw_multi = {"vr_joystick_yaw_multi", "1", CVAR_ARCHIVE};
 static cvar_t vr_vrik = {"vr_vrik", "1", CVAR_ARCHIVE};
+static cvar_t vr_immersive_melee = {"vr_immersive_melee", "1", CVAR_ARCHIVE};
 cvar_t vr_fbt_enabled = {"vr_fbt_enabled", "0", CVAR_ARCHIVE};
 cvar_t vr_weapon_collision = {"vr_weapon_collision", "0", CVAR_ARCHIVE};
 
@@ -90,6 +91,14 @@ qboolean VR_WeaponCollisionAuthorized (void)
 	return cl.protocol_qsvr == QSVR_PROTOCOL_PINNED &&
 		(cl.vr_weapon_contact_mode & VR_WEAPON_CONTACT_CAP_COLLISION) != 0 &&
 		vr_weapon_collision.value != 0.0f;
+}
+
+static qboolean VR_InputMeleeAuthorized (void)
+{
+	return cl.protocol_qsvr == QSVR_PROTOCOL_PINNED &&
+		(cl.vr_weapon_contact_mode & VR_WEAPON_CONTACT_CAP_MELEE) != 0 &&
+		cl.vr_weapon_contact_profile == VR_WEAPON_CONTACT_PROFILE_STOCK &&
+		vr_immersive_melee.value != 0.0f;
 }
 
 extern cvar_t vr_aimmode;
@@ -155,11 +164,15 @@ static struct
 	int role;
 	int profile;
 	int device_hand;
+	int skin;
 	unsigned int reset_generation;
+	const aliashdr_t *geometry;
 	char model_name[MAX_QPATH];
 	char serial[256];
 } vr_input_pending_contact_identity;
 static void VR_InputFBTPrepareCalibrationVisualSnapshot (const vrxr_frame_t *frame);
+static qboolean VR_InputFBTMapTrackingVector (const vec3_t tracking,
+	float presentation_yaw, float body_yaw, vec3_t root);
 static struct
 {
 	uint64_t identity;
@@ -1320,22 +1333,102 @@ static qboolean VR_InputWireVec (const float value[3])
 
 static qboolean VR_InputContactIsValid (const vr_weapon_contact_t *contact)
 {
+	const unsigned int hand_flags = contact ? contact->flags &
+		(VR_WEAPON_CONTACT_LEFT_VALID | VR_WEAPON_CONTACT_RIGHT_VALID) : 0;
 	int hand;
 
 	if (!contact ||
-		(contact->flags != VR_WEAPON_CONTACT_LEFT_VALID &&
-		 contact->flags != VR_WEAPON_CONTACT_RIGHT_VALID) ||
+		(hand_flags != VR_WEAPON_CONTACT_LEFT_VALID &&
+		 hand_flags != VR_WEAPON_CONTACT_RIGHT_VALID) ||
+		(contact->flags != hand_flags && contact->flags !=
+		(hand_flags | VR_WEAPON_CONTACT_IMMERSIVE_MELEE)) ||
 		contact->modelindex < 1 || contact->modelindex > 0xffff ||
 		!isfinite (contact->weapon) || contact->weapon < 0.0f ||
 		contact->weapon > VR_INPUT_WIRE_MAX)
 		return false;
 
-	hand = contact->flags == VR_WEAPON_CONTACT_LEFT_VALID ? 0 : 1;
+	hand = hand_flags == VR_WEAPON_CONTACT_LEFT_VALID ? 0 : 1;
 	return VR_InputWireVec (contact->grip[hand]) &&
 		VR_InputWireVec (contact->base[hand]) &&
 		VR_InputWireVec (contact->tip[hand]) &&
 		isfinite (contact->speed[hand]) && contact->speed[hand] >= 0.0f &&
 		contact->speed[hand] <= VR_INPUT_CONTACT_SPEED_MAX;
+}
+
+static qboolean VR_InputSelectedStockAxe (int *modelindex_out,
+	qmodel_t **model_out, int *skin_out, aliashdr_t **geometry_out,
+	stockaxe_edge_t *edge_out)
+{
+	const int modelindex = cl.stats[STAT_WEAPON];
+	qmodel_t *model;
+	aliashdr_t *geometry;
+	stockaxe_edge_t edge;
+	const int skin = cl.viewent.skinnum;
+
+	if (modelindex_out)
+		*modelindex_out = 0;
+	if (model_out)
+		*model_out = NULL;
+	if (skin_out)
+		*skin_out = -1;
+	if (geometry_out)
+		*geometry_out = NULL;
+	if (edge_out)
+		memset (edge_out, 0, sizeof (*edge_out));
+
+	if (!modelindex_out || !model_out || !skin_out || !geometry_out ||
+		!edge_out || modelindex < 1 || modelindex >= MAX_MODELS)
+		return false;
+	model = cl.model_precache[modelindex];
+	if (!model || model->needload || model != cl.viewent.model ||
+		strcmp (model->name, "progs/v_axe.mdl") || skin < 0)
+		return false;
+	geometry = (aliashdr_t *)Mod_Extradata_CheckSkin (model, skin);
+	if (!geometry || geometry->poseverttype != PV_QUAKE1 ||
+		!Mod_GetStockAxeEdge (model, skin, &edge) || !edge.valid)
+		return false;
+
+	*modelindex_out = modelindex;
+	*model_out = model;
+	*skin_out = skin;
+	*geometry_out = geometry;
+	*edge_out = edge;
+	return true;
+}
+
+static qboolean VR_InputAliasTransformPoint (const float model_matrix[16],
+	const vec3_t point, vec3_t transformed)
+{
+	if (!model_matrix || !point || !transformed ||
+		!isfinite (point[0]) || !isfinite (point[1]) || !isfinite (point[2]))
+		return false;
+	transformed[0] = model_matrix[0] * point[0] + model_matrix[4] * point[1] +
+		model_matrix[8] * point[2] + model_matrix[12];
+	transformed[1] = model_matrix[1] * point[0] + model_matrix[5] * point[1] +
+		model_matrix[9] * point[2] + model_matrix[13];
+	transformed[2] = model_matrix[2] * point[0] + model_matrix[6] * point[1] +
+		model_matrix[10] * point[2] + model_matrix[14];
+	return isfinite (transformed[0]) && isfinite (transformed[1]) &&
+		isfinite (transformed[2]);
+}
+
+static qboolean VR_InputRenderOffsetToBody (const vec3_t render_offset,
+	float presentation_yaw, float mapping_yaw, vec3_t body_offset)
+{
+	vec3_t yaw_angles = {0.0f, presentation_yaw, 0.0f};
+	vec3_t forward, right, up, tracking_offset;
+	if (!render_offset || !body_offset || !isfinite (presentation_yaw) ||
+		!isfinite (mapping_yaw) || !VR_InputWireVec (render_offset))
+		return false;
+	AngleVectors (yaw_angles, forward, right, up);
+	/* Undo the visible renderer's yaw basis, then enter the raw command's
+	 * mapping-yaw body frame. Both maps are proper rotations (determinant +1). */
+	tracking_offset[0] = DotProduct (render_offset, right);
+	tracking_offset[1] = DotProduct (render_offset, up);
+	tracking_offset[2] = -DotProduct (render_offset, forward);
+	return VR_InputWireVec (tracking_offset) &&
+		VR_InputFBTMapTrackingVector (tracking_offset, mapping_yaw, 0.0f,
+			body_offset) && VR_InputWireVec (body_offset);
 }
 
 static qboolean VR_InputContactSpeedBound (const vrxr_device_t *device,
@@ -1368,6 +1461,47 @@ static qboolean VR_InputContactSpeedBound (const vrxr_device_t *device,
 	*speed = linear_speed + angular_speed * radius;
 	return isfinite (linear_speed) && isfinite (angular_speed) &&
 		isfinite (radius) && isfinite (*speed) && *speed >= 0.0f &&
+		*speed <= VR_INPUT_CONTACT_SPEED_MAX;
+}
+
+static qboolean VR_InputContactPointSpeed (const vrxr_device_t *device,
+	const vec3_t body_offset, float mapping_yaw,
+	float units_per_metre, float *speed)
+{
+	vec3_t linear_body, angular_body, offset_metres, rotational_velocity;
+	vec3_t point_velocity;
+	if (!device || !body_offset || !speed ||
+		!isfinite (mapping_yaw) || !isfinite (units_per_metre) ||
+		units_per_metre <= 0.0f || !device->velocity_valid ||
+		!device->angular_velocity_valid || !VR_InputWireVec (body_offset) ||
+		!isfinite (device->velocity[0]) || !isfinite (device->velocity[1]) ||
+		!isfinite (device->velocity[2]) ||
+		!isfinite (device->angular_velocity[0]) ||
+		!isfinite (device->angular_velocity[1]) ||
+		!isfinite (device->angular_velocity[2]) ||
+		!VR_InputFBTMapTrackingVector (device->velocity, mapping_yaw,
+			0.0f, linear_body) ||
+		!VR_InputFBTMapTrackingVector (device->angular_velocity,
+			mapping_yaw, 0.0f, angular_body))
+		return false;
+
+	for (int axis = 0; axis < 3; ++axis)
+		offset_metres[axis] = body_offset[axis] / units_per_metre;
+	rotational_velocity[0] = angular_body[1] * offset_metres[2] -
+		angular_body[2] * offset_metres[1];
+	rotational_velocity[1] = angular_body[2] * offset_metres[0] -
+		angular_body[0] * offset_metres[2];
+	rotational_velocity[2] = angular_body[0] * offset_metres[1] -
+		angular_body[1] * offset_metres[0];
+	for (int axis = 0; axis < 3; ++axis)
+		point_velocity[axis] = linear_body[axis] + rotational_velocity[axis];
+	*speed = sqrtf (point_velocity[0] * point_velocity[0] +
+		point_velocity[1] * point_velocity[1] +
+		point_velocity[2] * point_velocity[2]);
+	return isfinite (offset_metres[0]) && isfinite (offset_metres[1]) &&
+		isfinite (offset_metres[2]) && isfinite (rotational_velocity[0]) &&
+		isfinite (rotational_velocity[1]) && isfinite (rotational_velocity[2]) &&
+		VR_InputWireVec (point_velocity) && isfinite (*speed) && *speed >= 0.0f &&
 		*speed <= VR_INPUT_CONTACT_SPEED_MAX;
 }
 
@@ -1451,13 +1585,134 @@ static qboolean VR_InputPrepareCollisionContact (usercmd_t *pending,
 	return true;
 }
 
+static qboolean VR_InputPrepareMeleeContact (usercmd_t *pending,
+	const vrxr_frame_t *frame, int hand, const vec3_t grip, int modelindex,
+	qmodel_t *model, int skin, aliashdr_t *geometry,
+	const stockaxe_edge_t *edge)
+{
+	vr_weapon_contact_t contact;
+	const vrxr_device_t *device;
+	const vr_input_hand_state_t *hand_state;
+	lerpdata_t lerpdata;
+	vec3_t hand_angles, model_angles, raw_base, raw_tip;
+	vec3_t render_base, render_tip, body_base, body_tip;
+	float model_matrix[16], presentation_yaw, mapping_yaw;
+	float units_per_metre, point_speed;
+	int weapon;
+
+	if (!pending || !frame || hand < 0 || hand > 1 || !model || !geometry ||
+		!edge || !edge->valid || !frame->sample_id ||
+		!VR_InputMeleeAuthorized () ||
+		!VR_InputMotionContextAccepted (frame) || CL_AngleLocked () ||
+		!V_TrackedSessionActive () || !VR_InputControllerAim () ||
+		!pending->vr_active || !pending->vr_handpos_relative ||
+		!VR_InputWireVec (pending->vr_handpos) || !VR_InputWireVec (grip) ||
+		!VR_InputHandAccepted (frame, hand) || !frame->focused ||
+		!frame->should_render || !frame->devices[0].valid ||
+		!frame->devices[0].tracked || frame->devices[0].kind != VRXR_DEVICE_HEAD ||
+		frame->devices[0].hand != -1 || !frame->devices[hand + 1].valid ||
+		!frame->devices[hand + 1].tracked ||
+		frame->devices[hand + 1].kind != VRXR_DEVICE_HAND ||
+		frame->devices[hand + 1].hand != hand ||
+		modelindex != cl.stats[STAT_WEAPON] || modelindex < 1 ||
+		modelindex >= MAX_MODELS || cl.model_precache[modelindex] != model ||
+		cl.viewent.model != model || cl.viewent.skinnum != skin ||
+		cl.stats[STAT_HEALTH] <= 0 || !cl.worldmodel ||
+		cl.worldmodel->needload || !cl.entities || cl.viewentity <= 0 ||
+		cl.viewentity >= cl.num_entities || !isfinite (vr_gunmodelpitch.value) ||
+		!V_TrackedPresentationYaw (&presentation_yaw) ||
+		!V_TrackedMappingYaw (&mapping_yaw) ||
+		!V_TrackedPresentationHandAngles (hand, hand_angles) ||
+		!VR_LocomotionHandRotToViewmodelAngles (hand_angles, model_angles,
+			vr_gunmodelpitch.value))
+		return false;
+
+	weapon = cl.stats[STAT_ACTIVEWEAPON];
+	if (weapon < 0 || weapon > (int)VR_INPUT_WIRE_MAX)
+		return false;
+	device = &frame->devices[hand + 1];
+	hand_state = &vr_input_hands[hand];
+	units_per_metre = V_VRUnitsPerMetre ();
+	if (!isfinite (units_per_metre) || units_per_metre <= 0.0f)
+		return false;
+
+	/* Reuse the same held-model matrix the renderer submits. The cached points
+	 * already include hdr->scale and hdr->scale_origin, so recover the raw MDL
+	 * vertices before that matrix applies those header transforms once. */
+	memset (&lerpdata, 0, sizeof (lerpdata));
+	VectorCopy (model_angles, lerpdata.angles);
+	if (R_AliasModelMatrix (&cl.viewent, geometry, &lerpdata, model_matrix) < 0)
+		return false;
+	for (int axis = 0; axis < 3; ++axis)
+	{
+		if (!isfinite (geometry->scale[axis]) || geometry->scale[axis] == 0.0f ||
+			!isfinite (geometry->scale_origin[axis]))
+			return false;
+		raw_base[axis] = (edge->base[axis] - geometry->scale_origin[axis]) /
+			geometry->scale[axis];
+		raw_tip[axis] = (edge->tip[axis] - geometry->scale_origin[axis]) /
+			geometry->scale[axis];
+	}
+	if (!VR_InputAliasTransformPoint (model_matrix, raw_base, render_base) ||
+		!VR_InputAliasTransformPoint (model_matrix, raw_tip, render_tip) ||
+		!VR_InputRenderOffsetToBody (render_base, presentation_yaw,
+			mapping_yaw, body_base) ||
+		!VR_InputRenderOffsetToBody (render_tip, presentation_yaw,
+			mapping_yaw, body_tip) ||
+		!VR_InputContactPointSpeed (device, body_tip, mapping_yaw,
+			units_per_metre, &point_speed))
+		return false;
+
+	memset (&contact, 0, sizeof (contact));
+	contact.flags = (hand == 0 ? VR_WEAPON_CONTACT_LEFT_VALID :
+		VR_WEAPON_CONTACT_RIGHT_VALID) | VR_WEAPON_CONTACT_IMMERSIVE_MELEE;
+	contact.modelindex = modelindex;
+	contact.weapon = (float)weapon;
+	VectorCopy (grip, contact.grip[hand]);
+	VectorAdd (grip, body_base, contact.base[hand]);
+	VectorAdd (grip, body_tip, contact.tip[hand]);
+	contact.speed[hand] = point_speed;
+	if (!VR_InputContactIsValid (&contact))
+		return false;
+
+	pending->vr_contact = contact;
+	vr_input_pending_contact_identity.sample_id = frame->sample_id;
+	vr_input_pending_contact_identity.model = model;
+	vr_input_pending_contact_identity.modelindex = modelindex;
+	vr_input_pending_contact_identity.weapon = weapon;
+	vr_input_pending_contact_identity.hand = hand;
+	vr_input_pending_contact_identity.role = hand_state->role;
+	vr_input_pending_contact_identity.profile = hand_state->profile;
+	vr_input_pending_contact_identity.device_hand = device->hand;
+	vr_input_pending_contact_identity.skin = skin;
+	vr_input_pending_contact_identity.geometry = geometry;
+	vr_input_pending_contact_identity.reset_generation =
+		vr_input_reset_generation;
+	strncpy (vr_input_pending_contact_identity.model_name, model->name,
+		sizeof (vr_input_pending_contact_identity.model_name) - 1);
+	vr_input_pending_contact_identity.model_name[
+		sizeof (vr_input_pending_contact_identity.model_name) - 1] = '\0';
+	memcpy (vr_input_pending_contact_identity.serial, device->serial,
+		sizeof (vr_input_pending_contact_identity.serial));
+	return true;
+}
+
 static qboolean VR_InputPendingContactAccepted (const usercmd_t *pending,
 	const vrxr_frame_t *frame)
 {
 	const int hand = vr_input_pending_contact_identity.hand;
 	const int modelindex = cl.stats[STAT_WEAPON];
+	const unsigned int hand_flag = hand == 0 ?
+		VR_WEAPON_CONTACT_LEFT_VALID : VR_WEAPON_CONTACT_RIGHT_VALID;
+	const unsigned int contact_flags = pending ? pending->vr_contact.flags : 0;
+	const qboolean immersive =
+		(contact_flags & VR_WEAPON_CONTACT_IMMERSIVE_MELEE) != 0;
 	const vrxr_device_t *device;
 	qmodel_t *model;
+	qmodel_t *selected_axe;
+	aliashdr_t *selected_geometry;
+	stockaxe_edge_t selected_edge;
+	int selected_axe_index, selected_skin;
 
 	if (!pending || !frame || !frame->sample_id ||
 		vr_input_pending_contact_identity.sample_id != frame->sample_id ||
@@ -1465,7 +1720,6 @@ static qboolean VR_InputPendingContactAccepted (const usercmd_t *pending,
 			vr_input_reset_generation ||
 		vr_input_pending_contact_identity.modelindex != modelindex ||
 		modelindex < 1 || modelindex >= MAX_MODELS ||
-		!VR_WeaponCollisionAuthorized () ||
 		!VR_InputMotionContextAccepted (frame) || CL_AngleLocked () ||
 		!V_TrackedSessionActive () || !pending->vr_active ||
 		!pending->vr_handpos_relative || hand < 0 || hand > 1 ||
@@ -1483,20 +1737,37 @@ static qboolean VR_InputPendingContactAccepted (const usercmd_t *pending,
 		!frame->focused || !frame->should_render ||
 		!frame->devices[0].valid || !frame->devices[0].tracked ||
 		!frame->devices[hand + 1].valid ||
-		!frame->devices[hand + 1].tracked)
+		!frame->devices[hand + 1].tracked ||
+		frame->devices[hand + 1].kind != VRXR_DEVICE_HAND ||
+		frame->devices[hand + 1].hand != hand ||
+		(contact_flags != hand_flag && contact_flags !=
+		(hand_flag | VR_WEAPON_CONTACT_IMMERSIVE_MELEE)))
 		return false;
 
 	model = cl.model_precache[modelindex];
 	device = &frame->devices[hand + 1];
-	return model && model == vr_input_pending_contact_identity.model &&
-		!strcmp (model->name, vr_input_pending_contact_identity.model_name) &&
-		VR_WeaponCalibrationStockRangedViewmodel (model->name) &&
-		device->hand == vr_input_pending_contact_identity.device_hand &&
-		device->hand == hand &&
+	if (!model || model != vr_input_pending_contact_identity.model ||
+		strcmp (model->name, vr_input_pending_contact_identity.model_name) ||
+		device->hand != vr_input_pending_contact_identity.device_hand ||
+		device->hand != hand ||
 		memcmp (device->serial, vr_input_pending_contact_identity.serial,
-			sizeof (device->serial)) == 0 &&
-		pending->vr_contact.flags == (hand == 0 ?
-			VR_WEAPON_CONTACT_LEFT_VALID : VR_WEAPON_CONTACT_RIGHT_VALID);
+			sizeof (device->serial)) != 0)
+		return false;
+
+	if (immersive)
+		return VR_InputMeleeAuthorized () && VR_InputControllerAim () &&
+			cl.stats[STAT_HEALTH] > 0 &&
+			hand == VR_InputDominantPhysicalHand () &&
+			frame->devices[0].kind == VRXR_DEVICE_HEAD &&
+			frame->devices[0].hand == -1 &&
+			VR_InputSelectedStockAxe (&selected_axe_index, &selected_axe,
+				&selected_skin, &selected_geometry, &selected_edge) &&
+			selected_axe_index == modelindex && selected_axe == model &&
+			selected_skin == vr_input_pending_contact_identity.skin &&
+			selected_geometry == vr_input_pending_contact_identity.geometry;
+
+	return VR_WeaponCollisionAuthorized () &&
+		VR_WeaponCalibrationStockRangedViewmodel (model->name);
 }
 
 static qboolean VR_InputVRIKMatrixFinite (const float matrix[3][4])
@@ -2911,6 +3182,7 @@ void VR_InputInit (void)
 	Cvar_RegisterVariable (&vr_turn_speed);
 	Cvar_RegisterVariable (&vr_joystick_yaw_multi);
 	Cvar_RegisterVariable (&vr_vrik);
+	Cvar_RegisterVariable (&vr_immersive_melee);
 	Cvar_RegisterVariable (&vr_fbt_enabled);
 	Cvar_RegisterVariable (&vr_weapon_collision);
 	Cvar_SetCallback (&vr_lefthanded, VR_InputMotionSettingsChanged);
@@ -3119,14 +3391,20 @@ void VR_InputMenuPanelTrigger (const vrxr_frame_t *frame, qboolean panel_drawn)
 static void VR_InputPreparePrivatePose (usercmd_t *pending, int dominant,
 	qboolean dominant_accepted)
 {
+	const vrxr_frame_t *frame = GL_OpenXRFrame ();
 	vec3_t grip, hand_angles, local_muzzle, world_muzzle, raw_world_muzzle, relative;
 	qmodel_t *contact_model = NULL;
+	qmodel_t *axe_model = NULL;
+	aliashdr_t *axe_geometry = NULL;
+	stockaxe_edge_t axe_edge;
 	int contact_modelindex = 0;
+	int axe_modelindex = 0, axe_skin = -1;
+	qboolean axe_candidate;
 	const qboolean roomscale_accepted =
 		VR_InputRoomscaleCommandAccepted (pending->vr_roomscalemove);
 
 	if (cl.protocol_qsvr != QSVR_PROTOCOL_PINNED || !VR_InputControllerAim () ||
-		!dominant_accepted ||
+		!dominant_accepted || dominant < 0 || dominant > 1 ||
 		!V_TrackedHandBodyOffset (dominant, grip) ||
 		!V_TrackedMovementAngles (VR_MOVEMENT_MODE_FOLLOW_HAND, dominant, hand_angles) ||
 		!VR_WeaponCalibrationCurrentMuzzle (local_muzzle) ||
@@ -3136,11 +3414,17 @@ static void VR_InputPreparePrivatePose (usercmd_t *pending, int dominant,
 		return;
 	VectorCopy (world_muzzle, raw_world_muzzle);
 
-	/* CurrentMuzzle above requires a valid calibration. Restrict the command
-	 * path to stock ranged aliases until custom melee endpoint types are known;
-	 * use STAT_WEAPON before the presentation viewent is refreshed. */
+	/* Exact source admission is separate from the shared calibrated command
+	 * pose. Until a server offers MELEE + STOCK, native trigger firing remains
+	 * on this same private-pose path. */
+	axe_candidate = VR_InputMeleeAuthorized () &&
+		VR_InputSelectedStockAxe (&axe_modelindex, &axe_model, &axe_skin,
+			&axe_geometry, &axe_edge);
+
+	/* Stock ranged aliases may use wall retraction; the exact stock axe keeps
+	 * the raw calibrated muzzle and blade. Use STAT_WEAPON before the
+	 * presentation viewent is refreshed. */
 	{
-		const vrxr_frame_t *frame = GL_OpenXRFrame ();
 		const qboolean collision_context = VR_WeaponCollisionAuthorized () &&
 			cls.state == ca_connected && cls.signon == SIGNONS &&
 			!cls.demoplayback && key_dest == key_game && !cl.intermission &&
@@ -3194,14 +3478,17 @@ static void VR_InputPreparePrivatePose (usercmd_t *pending, int dominant,
 	VectorCopy (hand_angles, pending->vr_handrot);
 	pending->vr_handpos_relative = true;
 	pending->vr_active = true;
-	if (contact_model && vr_input_contact_discontinuity)
+	if ((contact_model || axe_candidate) && vr_input_contact_discontinuity)
 	{
 		/* An inactive contact in this accepted command resets the server's
 		 * previous pose; the next physical sample starts a new sweep. */
 		vr_input_contact_discontinuity = false;
 		return;
 	}
-	if (contact_model)
+	if (axe_candidate)
+		VR_InputPrepareMeleeContact (pending, frame, dominant, grip,
+			axe_modelindex, axe_model, axe_skin, axe_geometry, &axe_edge);
+	else if (contact_model)
 		VR_InputPrepareCollisionContact (pending, GL_OpenXRFrame (), dominant,
 			grip, raw_world_muzzle, contact_modelindex, contact_model);
 }

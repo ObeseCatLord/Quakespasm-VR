@@ -126,7 +126,7 @@ original scale. `Mod_GetStockAxeEdge` also rejects a selected MD3/MD5 skin
 replacement. The record retains only the two model-local points and is cleared
 on model reload/free. This does not yet send a melee sample or enable the
 server's MELEE capability; the client transform and native-QC outcome adapter
-are the next coupled implementation step.
+were the next coupled implementation step at that loader checkpoint.
 
 The installed read-only `quakespasm_straight` packs establish the first stock
 server pins: `id1` has whole-file `progs.dat` CRC16 3064 and 21118 statements,
@@ -146,6 +146,16 @@ donor's six pinned attack/sound/frame/locomotion functions per program,
 including Hipnotic's `player_run` parameter/local layout. The file CRC and
 function checks are both required; the shared QC header CRC alone is 5927 in
 all three files and does not identify their attack bytecode.
+
+The client now produces the exact stock-axe physical edge only after an
+authoritative MELEE/STOCK offer, a selected original MDL skin, focused tracking,
+and a valid calibrated private muzzle. It reuses `R_AliasModelMatrix` for the
+held mesh and maps the edge and OpenXR linear/angular velocities into the
+body-relative command basis before computing point speed. The inherited id1
+classic axe calibration is a built-in fallback so a missing external schema
+cannot turn the private pose into an uncalibrated grip-origin shot. The
+producer is dormant until the server completes and advertises the native-QC
+contact consumer; native trigger behavior is retained meanwhile.
 
 ## Collision-button implementation checkpoint
 
