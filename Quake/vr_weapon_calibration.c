@@ -877,6 +877,7 @@ static qboolean VR_WeaponCalibrationSave(void)
 	qboolean updated = false;
 	qboolean ok = false;
 	qboolean post_write_failed = false;
+	qboolean added_classic_muzzle = false;
 
 	if (!vr_weapon_calibration_initialized || cls.state != ca_connected ||
 		cls.signon != SIGNONS || cls.demoplayback)
@@ -960,6 +961,14 @@ static qboolean VR_WeaponCalibrationSave(void)
 		Con_Printf("VR: cannot save invalid %s calibration values for %s\n",
 			enhanced_format ? "enhanced" : "classic", model->name);
 		return false;
+	}
+	if (!enhanced_format &&
+		!vr_weapon_calibration_slots[slot].has_muzzle_offset)
+	{
+		/* A successful classic save publishes the current muzzle cvars.
+		 * Keep presence consistent with the authored key after a reload. */
+		vr_weapon_calibration_slots[slot].has_muzzle_offset = true;
+		added_classic_muzzle = true;
 	}
 
 	file = COM_LoadFile("vr_weapons.txt", NULL);
@@ -1050,6 +1059,8 @@ static qboolean VR_WeaponCalibrationSave(void)
 	ok = true;
 
 done:
+	if (!ok && added_classic_muzzle)
+		vr_weapon_calibration_slots[slot].has_muzzle_offset = false;
 	if (!ok && output.data && !post_write_failed)
 		Con_Printf("VR: failed to save %s calibration for %s\n",
 			enhanced_format ? "enhanced" : "classic", model->name);
