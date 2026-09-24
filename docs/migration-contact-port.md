@@ -218,3 +218,7 @@ qualified; an explicit server opt-in can offer it on a development session.
 Runtime qualification still needs a late-contact
 swing, held-trigger maintenance, impulse/tracking fallback, wall impact, and
 one native damage/cooldown/quad result in both server physics paths.
+The source-level ownership, whiff, temporal ordering, world-hit, and
+current-shaft fixes are integrated; the complete Linux SDL3 Makefile link
+passes with `-Werror`. Exact calibrated geometry bounds and those in-game
+outcomes remain unverified.
