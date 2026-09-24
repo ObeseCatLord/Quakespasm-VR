@@ -840,21 +840,19 @@ void R_DrawAliasModel (cb_context_t *cbx, entity_t *e, int *aliaspolys)
 	int			 skinnum = e->skinnum;
 	lerpdata_t	 lerpdata;
 
-	//
-	// setup pose/lerp data -- do it first so we don't miss updates due to culling
-	//
-	paliashdr = (aliashdr_t *)Mod_Extradata_CheckSkin (e->model, skinnum);
+	// A pending reload can change the model bounds, so refresh it before culling.
+	// Loaded models can reject offscreen entities without selecting skin/pose data.
+	paliashdr = e->model->needload ? (aliashdr_t *)Mod_Extradata_CheckSkin (e->model, skinnum) : NULL;
+	if (!R_IsVRViewmodel (e) && R_CullModelForEntity (e))
+		return;
+
+	if (!paliashdr)
+		paliashdr = (aliashdr_t *)Mod_Extradata_CheckSkin (e->model, skinnum);
 
 	qboolean alphatest = !!(e->model->flags & MF_HOLEY);
 
 	R_SetupAliasFrame (e, paliashdr, &lerpdata);
 	R_GetEntityLerpedTransform (e, lerpdata.origin, lerpdata.angles);
-
-	//
-	// cull it
-	//
-	if (!R_IsVRViewmodel (e) && R_CullModelForEntity (e))
-		return;
 
 	//
 	// transform it

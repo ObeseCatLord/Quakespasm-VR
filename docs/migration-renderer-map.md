@@ -29,7 +29,7 @@ Evidence is from pinned Git objects: **I** = Ironwail `08d578136ff43d7d1ef38e636
 | PERF-019 | Higher depth precision | I `gl_rmain.c:227` D24S8, `:771` conditional reversed-Z; V `gl_vidsdl.c:1539` prefers D32S8; `gl_rmain.c:302` reversed infinite projection | S | Adapt asymmetric eye projections to V depth convention. | Near/far geometry, weapons, decals, and both-eye depth remain correct. |
 | PERF-020 | Precise original-level z-fighting workaround | I `gl_shaders.h:518` signed clip-space `1/1024` bias; `r_world.c:480` excludes world/decals. V `r_brush.c:987` used raster depth bias; F `r_brush.c:184` shifts origin | A, adapter added; visual parity pending | The current world shader applies I's reversed-Z clip offset through the existing push layout to eligible non-world brushes and liquids; desktop and stereo share it. See [review disposition](migration-zfix-review.md). | Original-level doors/lifts at grazing angles: stable overlap, unchanged geometry, both eyes. |
 | PERF-021 | Single-pass VR | No multiview/view-mask/ViewIndex implementation found in inspected I/V renderer/shader families; V `Shaders/indirect.comp:13` carries one view origin | M | Extend existing V passes/shaders/targets; representative task-enabled opaque multiview is a P1 exit gate before bulk ports. | Eligible opaque geometry uses multiview with distinct eye layers; permitted per-eye transparency/UI remains correct. One queue submission alone is not proof of single-pass rendering. |
-| PERF-022 | mj4m1 culling/batching result | One Linux desktop startup-view probe below: about 1,233 alias candidates, 14 accepted model submissions | U; single-view observation only | Profile the culling/skin-selection cost before choosing an alias optimization; still establish a route baseline. | Repeatable route: correct visibility plus CPU/GPU p50/p95/p99, draws, missed VR frames. |
+| PERF-022 | mj4m1 culling/batching result | One Linux desktop startup-view probe below: about 1,233 alias candidates, 14 accepted model submissions; early alias cull now skips setup for rejected loaded models | U; no measured speedup | Measure the early-cull gain before further alias work; establish a route baseline. | Repeatable route: correct visibility plus CPU/GPU p50/p95/p99, draws, missed VR frames. |
 | PERF-023 | Novel gains in desktop and VR | No measured bottleneck or numeric improvement target supplied | U | Profile existing owners; select one bounded change from evidence. | Demonstrated improvement against pinned baseline, with both modes checked for regressions. |
 | ASSET-001 | PNG/TGA/JPG/JPEG decoding and lookup precedence | V `image.c:156` originally lacked jpeg and prefers PNG over TGA; F/X `image.c:196` includes jpeg and prefers TGA at equal path priority; higher path priority wins in both | A, adapter present; runtime acceptance pending | Current `Quake/image.c` searches PNG, TGA, JPG, JPEG, PCX and LMP in that order, retaining the highest path ID and decoding JPEG through stb_image. Keep this vkQuake loader and tie precedence. | A .jpeg-only replacement loads; competing PNG/TGA files choose PNG at equal path priority and the higher-priority path otherwise. |
 | ASSET-002 | MD3 truecolor skins | V `gl_model.c:5990` shared `Mod_LoadMDXSkinsByIndex`; loader `:6025`; F loader `:4769` | P | Reuse V MD3/material path and retain source-required naming behavior. | Multi-surface MD3 renders correct PNG/TGA/JPG skin selections. |
@@ -57,10 +57,15 @@ two each. `R_DrawAliasSurfaces` can draw multiple surfaces per submission, so
 this is **not** an exact Vulkan draw-call count. The sampled view gives little
 reason to import generic alias instancing as the first large-map optimization.
 
-The alias path currently selects/checks model skin data and computes pose and
-interpolated transform before frustum culling (`Quake/r_alias.c:R_DrawAliasModel`).
-The probe motivates checking the cost and safety of moving that rejection
-earlier. It does **not** establish that culling dominates frame time: the
+The alias path previously selected/checked model skin data and computed pose
+and interpolated transform before frustum culling. `R_DrawAliasModel` now uses
+the same cull before that work for loaded models, while refreshing any model
+marked for reload before testing its bounds. The VR viewmodel still bypasses
+this cull, and the existing stereo frustum still covers both eyes. A Linux
+build and `mj4m1` load passed; a second startup-view probe reached 15 model
+submissions (one extra moving projectile appeared). This is a work-avoidance
+change, **not** a demonstrated frame-time gain. The original probe does
+**not** establish that culling dominates frame time: the
 reported alias-pass count is not a draw-call count, the debugger perturbs
 timing, `scr_speeds 2` disables the indirect path, and this is one desktop view
 without a repeatable route or headset timing. Keep PERF-017 open for scenes
