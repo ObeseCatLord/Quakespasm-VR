@@ -174,9 +174,14 @@ The `2.0` branch now directly reuses the source's hardware-independent FBT
 identity manager, pose filter, profile parser and persistent storage. OpenXR
 tracker snapshots now reach the role manager with explicit list/assign commands
 and one identity per completed frame. Saved profiles can be selected and bind
-roles by safe serial. Calibration, menu controls and lower-body pose relay are
+roles by safe serial. Calibration, menu controls and lower-body pose sending are
 still separate integration work; tracker enumeration and persistence alone do
-not satisfy FBT parity.
+not satisfy FBT parity. Commit `902e58d1` adds the receiving half: v3 hip/foot
+samples feed the existing frame-owned Vulkan Ranger palette, including its
+tracked bounds and shadow poses. The lower-body solve activates only when the
+selected mesh and animation match the donor's verified rerelease fingerprints.
+Local calibration, filtered anatomical output and menu controls are still
+required before FBT is a user-visible feature.
 
 ### QuakeC and mod compatibility
 
@@ -223,6 +228,13 @@ not satisfy FBT parity.
 | AUDIO-009 — Off-thread room acoustics and environmental/game/voice reverb | MAIN:Quake/snd_room.c:3 (Room); MAIN:Quake/snd_spatial.c:21 (snd_reverb_mode); MAIN:Quake/snd_spatial.c:24 (voice_reverb) | Quake/snd_room.c;Quake/snd_spatial.c;existing audio worker; **ADAPT**, P3 | Large room changes and map teardown keep coherent snapshots and bounded callback work; no second game/render task owner. |
 | AUDIO-010 — Opt-in wet-only local microphone reflections independent of transmission | MAIN:Quake/voice.c:51 (voice_self_reverb); MAIN:SPATIAL_AUDIO.md:234 (Local microphone reflections) | Quake/voice.c;Quake/voice_settings.c;Quake/snd_spatial.c; **REUSE**, P3 | Separate local consent enables wet reflections without transmitting or introducing dry sidetone; disable closes the intended capture path. |
 | AUDIO-011 — Music/codec support, volume defaults, underwater and ambient sound behavior | MAIN:Quake/bgmusic.c:28 (BGM); MAIN:Quake/snd_codec.c:46 (S_Codec); MAIN:Quake/snd_dma.c:75 (volume) | Existing donor music/codec/mixer owners; **ADAPT**, P3 | Mission-pack/mod music and supported codec formats play; sample rate/device change and copied volume settings remain correct. |
+
+Commit `43bfc199` adds the optional private voice handshake, bounded Opus
+packet framing, gameplay-first relay budgets and reconnect generations through
+vkQuake's existing network loops. It exposes audio hooks but has no microphone
+capture, codec or playback yet; AUDIO-001 and AUDIO-002 are therefore still
+incomplete. Commit `4f75fe87` bounds SDL3 playback refills across DMA-ring
+wraps. Neither change has live audio qualification.
 
 ### OpenXR and stereo goals
 
