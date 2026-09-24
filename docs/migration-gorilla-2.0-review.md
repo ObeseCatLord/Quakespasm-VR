@@ -142,8 +142,36 @@ donor's default, but trusted mode is **not advertised or active**. The optional
 stock WALK trial advertises Gorilla as disallowed while it still rejects such
 commands. Linux debug compilation passed.
 
-This is not yet functional Gorilla movement: ordinary server physics still
-does not consume the accepted raw samples, and no matching Gorilla state is
-written in ACKs. The next implementation must reuse the existing private
-command FIFO and native collision/QuakeC frame owner, including ordered OFF
-boundaries, state invalidation and coherent client replay.
+At that checkpoint Gorilla movement was not yet functional. Commit `0dd6907d`
+now drains the existing private command FIFO in the ordinary server WALK/FLY
+frame, runs the shared hand solver against the native body hull and brush
+surfaces, and keeps one QuakeC PreThink/PostThink and native physics pass. It
+defers and consumes native stick movement once, carries planted-hand braces
+across empty-input frames, drops pusher support on a launch, and invalidates
+old hand samples on relocation, death, model replacement and edict removal.
+`587ecf0c` separately allows raw hand tracking without a calibrated weapon
+pose. The Linux debug build passes. No headset, real map or multiplayer run
+has qualified the behavior yet.
+
+## Ordinary-physics integration review disposition
+
+A further read-only Astra pass was requested at xhigh, but the reviewer could
+not verify its effective effort setting. Treat its findings as an audit, not a
+certified senior-review pass. The reviewer cited five issues; its stated raw
+ACK cost was also incorrect (the proposed payload was 143 bytes). These are
+the checked dispositions:
+
+| Finding | Disposition |
+| --- | --- |
+| Teleport/death can replay accepted hands | **Adopted.** Reuse the existing contact relocation hook to advance a Gorilla cutoff through `lastmovemessage`; death-before-PreThink and direct QC origin changes also invalidate accepted samples. Keep ordinary command retirement unchanged. |
+| Impact/button QC can change movetype after dispatch | **Adopted.** Run weapon think once, process hand contacts, then select one native movement mode from the resulting entity state. Recheck pusher support after callbacks. |
+| Empty-input frames lose planted-hand brace | **Adopted.** Carry the existing touching/low-velocity state only while current policy and native eligibility hold; do not replay a stroke. |
+| Classname-only button callbacks are too broad | **Adapted.** Reuse the existing stock callback predicate plus exact AD/Ravenkeep/Mjolnir function pins. Special skill/elevator button callbacks still need their own audited adapters. |
+| Raw ACK costs bandwidth without client replay | **Adopted.** Do not emit the raw state payload under legacy-frame authority. Keep prediction gated until a compatible owner and replay baseline exist. |
+
+The next functional proof is a real map wall/brush stroke with a local and a
+remote private peer, an ordinary desktop peer, and ordered ON/OFF, duplicate,
+loss, teleport, water, ladder and moving-platform cases. The user has deferred
+live device testing; implementation remains open for authoritative/replay
+coherence, mod-specific callbacks and local-host latency before claiming
+predictive Gorilla parity.
