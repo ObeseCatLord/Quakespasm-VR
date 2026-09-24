@@ -2298,6 +2298,79 @@ cl_weapon_trace_t CL_TraceWeapon (const vec3_t start, const vec3_t end)
 	return result;
 }
 
+/* Adapted from ../quakespasm-openvr/Quake/vr.c:7196-7253, the donor's
+ * stateless two-stage tracked-weapon resolver.
+ * Stage one retracts the grip and muzzle endpoints from obstructions; stage
+ * two verifies that the translated body, grip, shaft and edge all fit. This
+ * only queries the client scene and never changes player movement state. */
+qboolean CL_ResolveWeaponCollision (const vec3_t torso, const vec3_t grip,
+	const vec3_t base, const vec3_t tip, vec3_t delta)
+{
+	vec3_t resolved_grip, endpoints[2], extra = {0, 0, 0};
+	vec3_t body_to_grip, body_to_resolved_grip;
+	float greatest = 0, original_reach2, resolved_reach2;
+	cl_weapon_trace_t trace;
+
+	VectorCopy (vec3_origin, delta);
+	for (int axis = 0; axis < 3; ++axis)
+		if (!isfinite (torso[axis]) || !isfinite (grip[axis]) ||
+			!isfinite (base[axis]) || !isfinite (tip[axis]))
+			return false;
+
+	trace = CL_TraceWeapon (torso, grip);
+	if (trace.startsolid || trace.allsolid)
+		return false;
+	VectorCopy (trace.endpos, resolved_grip);
+	VectorSubtract (resolved_grip, grip, delta);
+	VectorAdd (base, delta, endpoints[0]);
+	VectorAdd (tip, delta, endpoints[1]);
+
+	for (int point = 0; point < 2; ++point)
+	{
+		vec3_t correction;
+		trace = CL_TraceWeapon (resolved_grip, endpoints[point]);
+		if (trace.startsolid || trace.allsolid)
+			goto unresolved;
+		VectorSubtract (trace.endpos, endpoints[point], correction);
+		const float length2 = DotProduct (correction, correction);
+		if (length2 > greatest)
+		{
+			greatest = length2;
+			VectorCopy (correction, extra);
+		}
+	}
+
+	VectorAdd (delta, extra, delta);
+	VectorAdd (grip, delta, resolved_grip);
+	VectorAdd (base, delta, endpoints[0]);
+	VectorAdd (tip, delta, endpoints[1]);
+	VectorSubtract (grip, torso, body_to_grip);
+	original_reach2 = DotProduct (body_to_grip, body_to_grip);
+	VectorSubtract (resolved_grip, torso, body_to_resolved_grip);
+	resolved_reach2 = DotProduct (body_to_resolved_grip, body_to_resolved_grip);
+	/* A calibrated muzzle may sit behind or below the torso anchor. Never
+	 * retract the held pose farther from that anchor than its raw grip. */
+	if (resolved_reach2 > original_reach2 +
+		1e-5f * fmaxf (1.0f, original_reach2))
+		goto unresolved;
+
+	/* Retraction can push the grip or shaft into a rear wall. Do not slide the
+	 * player or iterate an impossible pose into an apparent clear result. */
+	for (int segment = 0; segment < 4; ++segment)
+	{
+		trace = CL_TraceWeapon (
+			segment == 0 ? torso : segment == 3 ? endpoints[0] : resolved_grip,
+			segment == 0 ? resolved_grip : segment == 1 ? endpoints[0] : endpoints[1]);
+		if (trace.startsolid || trace.allsolid || trace.fraction < 1)
+			goto unresolved;
+	}
+	return true;
+
+unresolved:
+	VectorCopy (vec3_origin, delta);
+	return false;
+}
+
 static qboolean PM_BoundsOverlap (const vec3_t mins1, const vec3_t maxs1,
 	const vec3_t mins2, const vec3_t maxs2)
 {

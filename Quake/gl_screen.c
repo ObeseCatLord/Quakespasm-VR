@@ -2392,8 +2392,10 @@ SCR_SetupFrame
 static void SCR_SetupFrame (void *unused)
 {
 	if (!vulkan_globals.stereo_active)
+	{
 		SCR_SetUpToDrawConsole ();
-	V_SetupFrame ();
+		V_SetupFrame ();
+	}
 	R_PrepareStereoFrame ();
 	SCR_VRMenuPrepare ();
 	SCR_VRWeaponMenuPrepare ();
@@ -2438,6 +2440,8 @@ void SCR_AbortXRFrame (void)
 	// An abandoned begin must retire the preceding GPU users before another
 	// begin rotates again without advancing the corresponding command slot.
 	GL_WaitForDeviceIdle ();
+	/* The wait also joins the end-render task before changing shared view state. */
+	V_ClearWeaponCollisionPresentation ();
 	VRXR_AbortFrame ();
 	R_RestoreStereoView ();
 	in_update_screen = false;
@@ -2478,6 +2482,7 @@ void SCR_UpdateScreen (qboolean use_tasks)
 	task_handle_t begin_rendering_task = INVALID_TASK_HANDLE;
 	if (!GL_BeginRendering (use_tasks, &begin_rendering_task, &glwidth, &glheight))
 	{
+		V_ClearWeaponCollisionPresentation ();
 		in_update_screen = false;
 		return;
 	}
@@ -2490,6 +2495,13 @@ void SCR_UpdateScreen (qboolean use_tasks)
 	V_UpdateTrackedAim ();
 	if (vid.recalc_refdef || SCR_VRClassicSbarFrameEligible (GL_OpenXRFrame ()) != scr_vr_classic_sbar_refdef_active)
 		SCR_CalcRefdef ();
+	if (vulkan_globals.stereo_active)
+	{
+		/* CL_TraceWeapon borrows main-thread PMove hull scratch. Prepare the
+		 * tracked viewmodel and its shared eye/crosshair pose before tasks. */
+		V_SetupFrame ();
+		V_PrepareWeaponCollisionPresentation ();
+	}
 	R_PrepareVRCrosshair ();
 
 	if (use_tasks)

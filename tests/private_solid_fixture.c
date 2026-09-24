@@ -132,6 +132,15 @@ int main (void)
 		cl_weapon_trace_t trace = CL_TraceWeapon (start, end);
 		assert (trace.entity == 1 && isfinite (trace.endpos[0]) && fabsf (trace.endpos[0] - 48) < .04f);
 		assert (!trace.startsolid && !trace.allsolid && trace.fraction < 1);
+		/* Production two-stage resolver must retract a held muzzle from this
+		 * received solid without moving the player body or inventing a clear
+		 * endpoint beyond the near face. */
+		vec3_t torso = {0, 0, 0}, grip = {32, 0, 0};
+		vec3_t tip = {80, 0, 0}, delta;
+		assert (CL_ResolveWeaponCollision (torso, grip, grip, tip, delta));
+		assert (delta[0] < -31.9f && delta[0] > -32.1f);
+		assert (delta[1] == 0 && delta[2] == 0);
+		assert (grip[0] == 32 && tip[0] == 80);
 	}
 	for (int private = 0; private < 2; ++private)
 	{

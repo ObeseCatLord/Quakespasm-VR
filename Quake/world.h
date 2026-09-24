@@ -53,6 +53,9 @@ typedef struct
 } cl_weapon_trace_t;
 
 cl_weapon_trace_t CL_TraceWeapon (const vec3_t start, const vec3_t end);
+/* Stateless tracked-weapon retraction using the client scene query. */
+qboolean CL_ResolveWeaponCollision (const vec3_t torso, const vec3_t grip,
+	const vec3_t base, const vec3_t tip, vec3_t delta);
 
 #define MOVE_NORMAL		0
 #define MOVE_NOMONSTERS 1

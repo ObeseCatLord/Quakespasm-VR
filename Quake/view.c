@@ -22,6 +22,8 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 // view.c -- player eye positioning
 
 #include "quakedef.h"
+#include "view.h"
+#include "world.h"
 #include "vr_aim.h"
 #include "vr_locomotion.h"
 #include "vr_weapon_calibration.h"
@@ -112,6 +114,9 @@ static qboolean tracked_body_anchor;
 static qboolean tracked_viewmodel_active;
 static qboolean tracked_viewmodel_pose_applied;
 static float view_stair_delta;
+/* Valid only between XR view preparation and completion/abort of that frame. */
+static qboolean tracked_weapon_collision_frame_valid;
+static vec3_t tracked_weapon_collision_offset;
 static qboolean tracked_reference_pending, tracked_readback_yaw, tracked_server_yaw_pending;
 static float tracked_server_yaw;
 static qboolean tracked_server_yaw_from_setangle;
@@ -135,6 +140,7 @@ static void V_TrackedAimModeChanged (cvar_t *var)
 
 void V_ResetTrackedAim (void)
 {
+	V_ClearWeaponCollisionPresentation ();
 	tracked_local_yaw = 0;
 	tracked_body_anchor = false;
 	tracked_viewmodel_active = false;
@@ -501,6 +507,98 @@ static void V_UpdateTrackedViewmodel (qboolean refdef_updated)
 	// through forced-up/loading frames until that restoration actually occurs.
 	if (refdef_updated)
 		tracked_viewmodel_pose_applied = false;
+}
+
+void V_ClearWeaponCollisionPresentation (void)
+{
+	/* Remove a prior frame's applied offset before the next refdef/model pose. */
+	if (tracked_weapon_collision_frame_valid)
+		VectorSubtract (cl.viewent.origin, tracked_weapon_collision_offset,
+			cl.viewent.origin);
+	tracked_weapon_collision_frame_valid = false;
+	VectorCopy (vec3_origin, tracked_weapon_collision_offset);
+}
+
+void V_PrepareWeaponCollisionPresentation (void)
+{
+	const vrxr_frame_t *frame = GL_OpenXRFrame ();
+	const int dominant = VR_InputDominantPhysicalHand ();
+	vec3_t torso_offset, torso, grip, muzzle, tip, hand_angles, delta;
+	float head_height;
+	entity_t *player;
+
+	tracked_weapon_collision_frame_valid = false;
+	VectorCopy (vec3_origin, tracked_weapon_collision_offset);
+	if (vr_weapon_collision.value == 0.0f || !frame || !frame->focused ||
+		!frame->should_render || cls.state != ca_connected || cls.signon != SIGNONS ||
+		cls.demoplayback || key_dest != key_game || cl.intermission ||
+		cl.stats[STAT_HEALTH] <= 0 || chase_active.value ||
+		!cl.worldmodel || cl.worldmodel->needload || !cl.entities ||
+		cl.viewentity <= 0 || cl.viewentity >= cl.num_entities ||
+		!cl.viewent.model || strcmp (cl.viewent.model->name, "progs/v_shot.mdl") ||
+		!tracked_viewmodel_active || dominant < 0 || dominant > 1)
+		return;
+
+	for (int device = 0; device < 2; ++device)
+	{
+		const vrxr_device_t *tracked = &frame->devices[device == 0 ? 0 : dominant + 1];
+		if (!tracked->valid || !tracked->tracked ||
+			(device == 0 ? tracked->kind != VRXR_DEVICE_HEAD || tracked->hand != -1 :
+			tracked->kind != VRXR_DEVICE_HAND || tracked->hand != dominant))
+			return;
+		for (int row = 0; row < 3; ++row)
+			for (int column = 0; column < 4; ++column)
+				if (!isfinite (tracked->matrix[row][column]))
+					return;
+	}
+
+	if (!V_TrackedPresentationHandAngles (dominant, hand_angles) ||
+		!VR_WeaponCalibrationCurrentMuzzle (muzzle) ||
+		!VR_LocomotionMuzzleOffsetToWorld (muzzle, hand_angles,
+			vr_gunmodelscale.value, vr_gunmodelpitch.value, dominant == 0, muzzle) ||
+		!R_TrackedHeadBodyOffset (torso_offset) ||
+		!R_TrackedHeadEyeHeight (cl.stats[STAT_VIEWHEIGHT], &head_height))
+		return;
+
+	player = &cl.entities[cl.viewentity];
+	VectorAdd (player->origin, torso_offset, torso);
+	torso[2] += head_height + view_stair_delta;
+	VectorCopy (cl.viewent.origin, grip);
+	VectorCopy (grip, tip);
+	VectorAdd (tip, muzzle, tip);
+	tracked_weapon_collision_frame_valid = true;
+	if (!CL_ResolveWeaponCollision (torso, grip, grip, tip, delta))
+		return; /* Keep the raw pose when the two-stage solve is unresolved. */
+
+	VectorAdd (cl.viewent.origin, delta, cl.viewent.origin);
+	VectorCopy (delta, tracked_weapon_collision_offset);
+}
+
+qboolean V_TrackedWeaponCollisionPresentation (vec3_t origin, vec3_t offset)
+{
+	const vrxr_frame_t *frame = GL_OpenXRFrame ();
+	if (origin)
+		VectorCopy (vec3_origin, origin);
+	if (offset)
+		VectorCopy (vec3_origin, offset);
+	if (!origin || !offset || !tracked_weapon_collision_frame_valid ||
+		vr_weapon_collision.value == 0.0f || !frame || !frame->focused ||
+		!frame->should_render)
+	{
+		if (tracked_weapon_collision_frame_valid)
+			V_ClearWeaponCollisionPresentation ();
+		return false;
+	}
+	for (int axis = 0; axis < 3; ++axis)
+		if (!isfinite (cl.viewent.origin[axis]) ||
+			!isfinite (tracked_weapon_collision_offset[axis]))
+		{
+			V_ClearWeaponCollisionPresentation ();
+			return false;
+		}
+	VectorCopy (cl.viewent.origin, origin);
+	VectorCopy (tracked_weapon_collision_offset, offset);
+	return true;
 }
 
 qboolean V_TurnTrackedYaw (float delta)
@@ -1412,6 +1510,7 @@ void V_SetupFrame (void)
 		tracked_viewmodel_pose_applied && (!V_TrackedSessionActive () ||
 		V_TrackedAimMode () != VR_AIMMODE_CONTROLLER);
 
+	V_ClearWeaponCollisionPresentation ();
 	V_UpdateBlend ();
 	if (con_forcedup)
 		base_player_view = base_angles_valid = false;

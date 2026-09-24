@@ -3,7 +3,8 @@
 The inherited fork retracts a tracked held weapon when its grip or muzzle
 would enter world geometry. The `2.0` client already has a read-only
 `CL_TraceWeapon` scene query, a tracked `cl.viewent`, and a calibrated private
-command muzzle. It does not yet call the collision query for either pose.
+command muzzle. The first opt-in Classic Shotgun slice now calls the collision
+query for both command and presentation poses.
 This feature belongs at those existing boundaries; it does not need another
 model manager, movement solver, or renderer.
 
@@ -44,3 +45,19 @@ The final feature must preserve the inherited server policy, mod/model edges,
 both hands, and shot/barrel alignment. The first enabled path is deliberately
 opt-in while those gates remain. Desktop rendering and ordinary movement must
 keep their vkQuake owners.
+
+## First implementation checkpoint
+
+`vr_weapon_collision` defaults to `0`. When explicitly enabled with a tracked
+Classic Shotgun and an eligible gameplay frame, `CL_ResolveWeaponCollision`
+reuses the existing main-thread `CL_TraceWeapon` scene query. The command
+producer corrects its muzzle before the existing room-scale subtraction;
+the view owner solves its later render pose on the main thread and shares that
+translation with the held model and crosshair. Other weapons and unresolved
+geometry keep their raw pose. Linux normal and no-curl builds pass. This is
+source/build evidence only: actual near-wall firing, all-model collision,
+server policy, moving brush behavior and runtime cost remain unqualified.
+The focused private-solid fixture also exercises a received box obstructing
+the production resolver's muzzle path. A subsequent Astra xhigh read-only
+review found no actionable code defect in the scoped integration, including
+its task and audio call ownership. It did not qualify a live shot or headset.

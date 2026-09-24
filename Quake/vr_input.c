@@ -44,6 +44,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "vr_locomotion.h"
 #include "vr_weapon_calibration.h"
 #include "view.h"
+#include "world.h"
 
 #include <limits.h>
 #include <math.h>
@@ -82,6 +83,7 @@ static cvar_t vr_turn_speed = {"vr_turn_speed", "2", CVAR_ARCHIVE};
 static cvar_t vr_joystick_yaw_multi = {"vr_joystick_yaw_multi", "1", CVAR_ARCHIVE};
 static cvar_t vr_vrik = {"vr_vrik", "1", CVAR_ARCHIVE};
 cvar_t vr_fbt_enabled = {"vr_fbt_enabled", "0", CVAR_ARCHIVE};
+cvar_t vr_weapon_collision = {"vr_weapon_collision", "0", CVAR_ARCHIVE};
 
 extern cvar_t vr_aimmode;
 
@@ -2692,6 +2694,7 @@ void VR_InputInit (void)
 	Cvar_RegisterVariable (&vr_joystick_yaw_multi);
 	Cvar_RegisterVariable (&vr_vrik);
 	Cvar_RegisterVariable (&vr_fbt_enabled);
+	Cvar_RegisterVariable (&vr_weapon_collision);
 	Cvar_SetCallback (&vr_lefthanded, VR_InputMotionSettingsChanged);
 	Cvar_SetCallback (&vr_movement_mode, VR_InputMotionSettingsChanged);
 	Cvar_SetCallback (&vr_snap_turn, VR_InputMotionSettingsChanged);
@@ -2912,6 +2915,45 @@ static void VR_InputPreparePrivatePose (usercmd_t *pending, int dominant,
 			dominant == 0, world_muzzle))
 		return;
 
+	/* First opt-in collision slice: the classic shotgun only. */
+	{
+		const vrxr_frame_t *frame = GL_OpenXRFrame ();
+		const qboolean collision_context = vr_weapon_collision.value != 0.0f &&
+			cls.state == ca_connected && cls.signon == SIGNONS &&
+			!cls.demoplayback && key_dest == key_game && !cl.intermission &&
+			cl.stats[STAT_HEALTH] > 0 && cl.viewent.model &&
+			!strcmp (cl.viewent.model->name, "progs/v_shot.mdl") &&
+			cl.worldmodel && !cl.worldmodel->needload && cl.entities &&
+			cl.viewentity > 0 && cl.viewentity < cl.num_entities && frame &&
+			frame->focused && frame->should_render &&
+			frame->devices[0].valid && frame->devices[0].tracked &&
+			frame->devices[dominant + 1].valid &&
+			frame->devices[dominant + 1].tracked &&
+			VR_InputHandAccepted (frame, dominant);
+		if (collision_context)
+		{
+			vec3_t torso_offset, torso, world_grip, base, tip, delta;
+			vec3_t corrected_muzzle;
+			float head_height;
+			entity_t *player = &cl.entities[cl.viewentity];
+			if (R_TrackedHeadBodyOffset (torso_offset) &&
+				R_TrackedHeadEyeHeight (cl.stats[STAT_VIEWHEIGHT], &head_height))
+			{
+				VectorAdd (player->origin, torso_offset, torso);
+				torso[2] += head_height;
+				VectorAdd (player->origin, grip, world_grip);
+				VectorCopy (world_grip, base);
+				VectorAdd (world_grip, world_muzzle, tip);
+				if (CL_ResolveWeaponCollision (torso, world_grip, base, tip, delta))
+				{
+					/* Correct before applying the existing roomscale offset once. */
+					VectorAdd (world_muzzle, delta, corrected_muzzle);
+					VectorCopy (corrected_muzzle, world_muzzle);
+				}
+			}
+		}
+	}
+
 	for (int i = 0; i < 3; ++i)
 		relative[i] = grip[i] + world_muzzle[i] -
 			(roomscale_accepted ? pending->vr_roomscalemove[i] : 0.0f);
@@ -2931,6 +2973,7 @@ qboolean VR_InputCrosshairAimRay (vec3_t start, vec3_t forward)
 	const vrxr_frame_t *frame = GL_OpenXRFrame ();
 	const int dominant = VR_InputDominantPhysicalHand ();
 	vec3_t body_offset, hand_angles, local_muzzle, world_muzzle, right, up;
+	vec3_t collision_origin, collision_offset;
 	entity_t *view_player;
 
 	if (!start || !forward || !frame || !frame->should_render ||
@@ -2946,7 +2989,14 @@ qboolean VR_InputCrosshairAimRay (vec3_t start, vec3_t forward)
 		return false;
 
 	view_player = &cl.entities[cl.viewentity];
-	VectorAdd (view_player->origin, body_offset, start);
+	if (V_TrackedWeaponCollisionPresentation (collision_origin, collision_offset))
+	{
+		/* Shared with the held model; this origin already includes the stair
+		 * presentation rebase and the single collision translation. */
+		VectorCopy (collision_origin, start);
+	}
+	else
+		VectorAdd (view_player->origin, body_offset, start);
 	VectorAdd (start, world_muzzle, start);
 	AngleVectors (hand_angles, forward, right, up);
 	for (int i = 0; i < 3; ++i)

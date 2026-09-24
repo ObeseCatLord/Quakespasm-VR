@@ -384,7 +384,9 @@ weapon query. It
 checks public packed bounds, private tags, retained state, following-message
 alignment, unknown/truncated encodings and explicit dialect selection. Received
 bounds must collide with a synthetic entity box through the actual client trace;
-a received non-solid sentinel must remove that collision. Individual and full
+a received non-solid sentinel must remove that collision. The same synthetic
+solid also checks the production two-stage weapon resolver's finite muzzle
+retraction without moving its input grip or tip. Individual and full
 replacement removals must clear same-timestamp bounds and invalidate the trace
 cache. Negative upper-Z boxes must collide only below their top face with both donor
 trace implementations.
