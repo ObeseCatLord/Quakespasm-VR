@@ -4031,6 +4031,7 @@ void VR_InputApplyPending (usercmd_t *cmd)
 {
 	const vrxr_frame_t *frame = GL_OpenXRFrame ();
 	qboolean private_pose_accepted = false;
+	qboolean akimbo_pose_accepted = false;
 	vec3_t merged;
 
 	(void)VR_InputCalibrationContactAdjustmentActive ();
@@ -4053,6 +4054,21 @@ void VR_InputApplyPending (usercmd_t *cmd)
 	}
 	if (VR_InputControllerAim () && VR_InputRoomscaleCommandAccepted (cl.pendingcmd.vr_roomscalemove))
 		VectorCopy (cl.pendingcmd.vr_roomscalemove, cmd->vr_roomscalemove);
+	if (cl.pendingcmd.vr_akimbo_active)
+	{
+		akimbo_pose_accepted = VR_InputPendingAkimboAccepted (&cl.pendingcmd, frame);
+		if (!akimbo_pose_accepted)
+		{
+			/* The base private pose came from the dominant split-weapon muzzle.
+			 * If this pair went stale, it is not an ordinary weapon muzzle. Keep
+			 * movement, but suppress firing until a fresh pose is prepared. */
+			cl.pendingcmd.vr_active = false;
+			cl.pendingcmd.vr_handpos_relative = false;
+			VectorCopy (vec3_origin, cl.pendingcmd.vr_handpos);
+			VectorCopy (vec3_origin, cl.pendingcmd.vr_handrot);
+			VR_InputClearPendingAkimboRecord (&cl.pendingcmd);
+		}
+	}
 	if (cl.protocol_qsvr == QSVR_PROTOCOL_PINNED && cl.pendingcmd.vr_active &&
 		cl.pendingcmd.vr_handpos_relative &&
 		VR_InputWireVec (cl.pendingcmd.vr_handpos) &&
@@ -4066,8 +4082,7 @@ void VR_InputApplyPending (usercmd_t *cmd)
 		cmd->vr_active = true;
 		private_pose_accepted = true;
 	}
-	if (private_pose_accepted &&
-		VR_InputPendingAkimboAccepted (&cl.pendingcmd, frame))
+	if (private_pose_accepted && akimbo_pose_accepted)
 	{
 		cmd->vr_akimbo_active = true;
 		cmd->vr_akimbo_berserk = false;
