@@ -6243,6 +6243,8 @@ void PR_EnableExtensions (ddef_t *pr_globaldefs)
 #undef QCEXTGLOBAL_FLOAT
 #undef QCEXTGLOBAL_INT
 #undef QCEXTGLOBAL_VECTOR
+	qcvm->extglobals.input_cursor_entitynumber_integer =
+		PR_FindExtGlobal (ev_ext_integer, "input_cursor_entitynumber");
 
 	// any #0 functions are remapped to their builtins here, so we don't have to tweak the VM in an obscure potentially-breaking way.
 	for (i = 0; i < (unsigned int)qcvm->progs->numfunctions; i++)

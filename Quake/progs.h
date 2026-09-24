@@ -247,7 +247,8 @@ struct pr_extfuncs_s
 	QCEXTFUNC (CSQC_Parse_Event, "void()")                                                                                                \
 	QCEXTFUNC (CSQC_Parse_Damage, "float(float save, float take, vector dir)")                                                            \
 	QCEXTFUNC (CSQC_Parse_CenterPrint, "float(string msg)")                                                                               \
-	QCEXTFUNC (CSQC_Parse_Print, "void(string printmsg, float printlvl)")
+	QCEXTFUNC (CSQC_Parse_Print, "void(string printmsg, float printlvl)") \
+	QCEXTFUNC (CSQC_Input_Frame, "void()")
 
 #define QCEXTFUNC(n, t) func_t n;
 	QCEXTFUNCS_COMMON
@@ -257,6 +258,7 @@ struct pr_extfuncs_s
 #undef QCEXTFUNC
 };
 extern cvar_t pr_checkextension; // if 0, extensions are disabled (unless they'd be fatal, but they're still spammy)
+void PR_GetSetInputs (usercmd_t *cmd, qboolean set);
 
 struct pr_extglobals_s
 {
@@ -298,6 +300,8 @@ struct pr_extglobals_s
 #undef QCEXTGLOBAL_FLOAT
 #undef QCEXTGLOBAL_INT
 #undef QCEXTGLOBAL_VECTOR
+	/* vkQuake's float form and the inherited QSS-M integer form share a name. */
+	int *input_cursor_entitynumber_integer;
 };
 
 struct pr_extfields_s

@@ -2360,6 +2360,7 @@ CL_SendCmd
 void CL_SendCmd (void)
 {
 	usercmd_t cmd;
+	static int csqc_input_frame = -1;
 
 	if (cls.state != ca_connected)
 		return;
@@ -2377,6 +2378,22 @@ void CL_SendCmd (void)
 	cmd.seconds = cmd.servertime - cl.pendingcmd.servertime;
 
 	CL_FinishMove (&cmd);
+
+	/* Host_netinterval may send several commands while catching up in one host
+	 * frame. The inherited hook modifies the prepared command only once; it
+	 * must never run once per eye or repeatedly for catch-up commands. */
+	if (cl.qcvm.extfuncs.CSQC_Input_Frame && csqc_input_frame != host_framecount)
+	{
+		csqc_input_frame = host_framecount;
+		PR_SwitchQCVM (&cl.qcvm);
+		PR_GetSetInputs (&cmd, true);
+		PR_ExecuteProgram (cl.qcvm.extfuncs.CSQC_Input_Frame);
+		PR_GetSetInputs (&cmd, false);
+		PR_SwitchQCVM (NULL);
+		/* QC may have set attack after CL_FinishMove checked calibration. */
+		if (VR_InputSuppressUncalibratedAttack (&cmd))
+			cmd.buttons &= ~1u;
+	}
 
 	if (cls.signon == SIGNONS)
 		CL_SendMove (&cmd); // send the unreliable message
