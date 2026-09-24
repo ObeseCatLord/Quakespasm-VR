@@ -116,9 +116,11 @@ Co-op player/spawn action commands and hit rows are now source/build integrated;
 their remote gameplay and relocation continuity remain unqualified. Runtime
 weapon discovery is integrated into the existing catalog with active-only,
 unselectable unknown rows and copied model paths across map resets; its
-selector-reuse and mod-gameplay cases remain unqualified. Source player outlines
-and weapon calibration remain separate work; compiling the 3D model/hit paths
-does not prove mod gameplay parity.
+selector-reuse and mod-gameplay cases remain unqualified. Co-op player labels
+now use the inherited shirt-color palette and action text has an outlined
+presentation within the shared wheel rectangles; visual/gameplay qualification
+remains open. Interactive weapon calibration remains separate work; compiling
+the 3D model/hit paths does not prove mod gameplay parity.
 
 ### Co-op and saves
 

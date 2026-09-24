@@ -1743,6 +1743,57 @@ static void VR_WeaponMenu_FitActionLabel (char *label, size_t label_size,
 	}
 }
 
+static void VR_WeaponMenu_PlayerLabelColor (int slot, qboolean is_selected,
+	float color[3])
+{
+	const float min_peak = is_selected ? 0.85f : 0.38f;
+	int topcolor;
+	const byte *rgb;
+	float maxc, boost;
+
+	if (!cl.scores || slot < 0 || slot >= cl.maxclients ||
+		slot >= MAX_SCOREBOARD)
+	{
+		color[0] = color[1] = color[2] = 0.82f;
+		return;
+	}
+
+	topcolor = (cl.scores[slot].colors >> 4) & 0xF;
+	rgb = (const byte *)&d_8to24table[topcolor * 16 + 8];
+	color[0] = rgb[0] / 255.0f;
+	color[1] = rgb[1] / 255.0f;
+	color[2] = rgb[2] / 255.0f;
+	maxc = q_max (color[0], q_max (color[1], color[2]));
+	if (maxc <= 0.0f)
+	{
+		color[0] = color[1] = color[2] = min_peak;
+		return;
+	}
+
+	boost = is_selected ? 2.4f : 0.9f;
+	if (maxc * boost < min_peak)
+		boost = min_peak / maxc;
+	color[0] *= boost;
+	color[1] *= boost;
+	color[2] *= boost;
+}
+
+static void VR_WeaponMenu_DrawOutlinedActionText (cb_context_t *context,
+	float x, float y, const char *text, float scale, const float color[3])
+{
+	GL_SetCanvasColor (0.0f, 0.0f, 0.0f, 1.0f);
+	Draw_String_Scaled (context, x - scale, y, text, scale);
+	Draw_String_Scaled (context, x + scale, y, text, scale);
+	Draw_String_Scaled (context, x, y - scale, text, scale);
+	Draw_String_Scaled (context, x, y + scale, text, scale);
+	/* The donor uses overbright floats here. vkQuake packs canvas colors into
+	 * bytes, so values above one must saturate instead of wrapping to dark. */
+	GL_SetCanvasColor (q_min (color[0], 1.0f), q_min (color[1], 1.0f),
+		q_min (color[2], 1.0f), 1.0f);
+	Draw_String_Scaled (context, x, y, text, scale);
+	GL_SetCanvasColor (1.0f, 1.0f, 1.0f, 1.0f);
+}
+
 static int VR_WeaponMenu_BuildActions (const vr_weapon_menu_catalog_t *catalog,
 	qboolean quick_available, float outer_radius, float scale,
 	vr_weapon_menu_action_t actions[VR_WEAPON_MENU_MAX_ACTIONS])
@@ -1845,18 +1896,28 @@ static int VR_WeaponMenu_Actions (struct cb_context_s *context,
 		{
 			const qboolean is_selected = i == selected &&
 				(!highlight_by_id || actions[i].id == hover_id);
+			float text_color[3];
+			if (actions[i].kind == VR_WEAPON_MENU_ACTION_COOP_PLAYER)
+				VR_WeaponMenu_PlayerLabelColor (actions[i].slot, is_selected,
+					text_color);
+			else if (is_selected)
+			{
+				text_color[0] = 0.45f;
+				text_color[1] = 1.85f;
+				text_color[2] = 0.45f;
+			}
+			else
+				text_color[0] = text_color[1] = text_color[2] = 0.82f;
+
 			Draw_Fill ((cb_context_t *)context, actions[i].left, actions[i].top,
 				actions[i].width, actions[i].height,
 				is_selected ? 15 : 0, is_selected ? 0.96f : 0.78f);
-			GL_SetCanvasColor (is_selected ? 0.05f : 1.0f,
-				is_selected ? 0.08f : 1.0f, is_selected ? 0.10f : 1.0f, 1.0f);
-			Draw_String_Scaled ((cb_context_t *)context,
+			VR_WeaponMenu_DrawOutlinedActionText ((cb_context_t *)context,
 				actions[i].left + 6.0f * scale,
 				actions[i].top + (actions[i].kind == VR_WEAPON_MENU_ACTION_COOP_PLAYER ||
 				 actions[i].kind == VR_WEAPON_MENU_ACTION_COOP_SPAWN ?
 				 q_max (0.0f, (actions[i].height - 8.0f * scale) * 0.5f) :
-				 8.0f * scale), actions[i].label, scale);
-			GL_SetCanvasColor (1.0f, 1.0f, 1.0f, 1.0f);
+				 8.0f * scale), actions[i].label, scale, text_color);
 		}
 	return selected;
 }
