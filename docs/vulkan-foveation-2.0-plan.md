@@ -8,10 +8,11 @@ weapon, HUD, water, cutout, or transparent rendering.
 
 ## User contract
 
-- `vr_eye_tracking` and `vr_foveation` are archived and default to `0`.
-  `vr_foveation 1` explicitly selects fixed foveation; `2` requests eye-tracked
-  foveation. No capability, gaze failure, or missing provider selects fixed
-  foveation automatically.
+- `vr_eye_tracking` and `vr_foveation` are archived and now default to `1` and
+  `2` respectively on fresh configurations. That requests eye-tracked
+  foveation only where a working gaze path is available. `vr_foveation 1`
+  explicitly selects fixed foveation. No capability, gaze failure, or missing
+  provider selects fixed foveation automatically.
 - Eye mode requires enabled tracking, a focused rendering frame, a valid and
   tracked gaze with a known fresh expressed-pose time, and three consecutive
   usable frames. Any failure returns full-quality shading immediately.
