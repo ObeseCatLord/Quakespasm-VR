@@ -115,6 +115,30 @@
     <ClCompile Include="..\..\Quake\snd_xmp.c">
       <Filter>Sound</Filter>
     </ClCompile>
+    <ClCompile Include="..\..\Quake\snd_room.c" Condition="'$(SteamAudioSdkDir)' != ''">
+      <Filter>Sound</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Quake\snd_spatial.c" Condition="'$(SteamAudioSdkDir)' != ''">
+      <Filter>Sound</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Quake\snd_spatial_world.c" Condition="'$(SteamAudioSdkDir)' != ''">
+      <Filter>Sound</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Quake\snd_steamaudio.c" Condition="'$(SteamAudioSdkDir)' != ''">
+      <Filter>Sound</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Quake\voice.c">
+      <Filter>Sound</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Quake\voice_jitter.c">
+      <Filter>Sound</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Quake\voice_settings.c">
+      <Filter>Sound</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Quake\voice_vad.c">
+      <Filter>Sound</Filter>
+    </ClCompile>
     <ClCompile Include="..\..\Quake\net_dgrm.c">
       <Filter>Network</Filter>
     </ClCompile>
@@ -200,6 +224,12 @@
       <Filter>Renderer</Filter>
     </ClCompile>
     <ClCompile Include="..\..\Quake\r_world.c">
+      <Filter>Renderer</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Quake\r_vrik.c">
+      <Filter>Renderer</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Quake\r_vrik_render.c">
       <Filter>Renderer</Filter>
     </ClCompile>
     <ClCompile Include="..\..\Quake\cfgfile.c">
@@ -326,6 +356,12 @@
       <Filter>Client</Filter>
     </ClCompile>
     <ClCompile Include="..\..\Quake\cl_input.c">
+      <Filter>Client</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Quake\vr_weapon_calibration.c">
+      <Filter>Client</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Quake\vr_weapon_schema.c">
       <Filter>Client</Filter>
     </ClCompile>
     <ClCompile Include="..\..\Quake\vr_weapon_menu.c">
