@@ -403,6 +403,7 @@ struct qcvm_s
 
 	unsigned short progscrc;  // crc16 of the entire file
 	unsigned int   progshash; // folded file md4
+	byte           progssha256[32]; // original on-disk bytes, before byte swapping
 	unsigned int   progssize; // file size (bytes)
 
 	struct pr_extglobals_s extglobals;

@@ -22,6 +22,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 // sv_edict.c -- entity dictionary
 
 #include "quakedef.h"
+#include "sha256.h"
 
 const int type_size[NUM_TYPE_SIZES] = {
 	1, // ev_void
@@ -2000,6 +2001,7 @@ PR_LoadProgs
 qboolean PR_LoadProgs (const char *filename, qboolean fatal, unsigned int needcrc, const builtin_t *builtins, size_t numbuiltins)
 {
 	int i;
+	qs_sha256_t sha256;
 
 	PR_ClearProgs (qcvm); // just in case.
 
@@ -2012,6 +2014,9 @@ qboolean PR_LoadProgs (const char *filename, qboolean fatal, unsigned int needcr
 	for (i = 0; i < com_filesize; i++)
 		CRC_ProcessByte (&qcvm->progscrc, ((byte *)qcvm->progs)[i]);
 	qcvm->progshash = Com_BlockChecksum (qcvm->progs, com_filesize);
+	QS_SHA256Init (&sha256);
+	QS_SHA256Update (&sha256, qcvm->progs, com_filesize);
+	QS_SHA256Final (&sha256, qcvm->progssha256);
 
 	// byte swap the header
 	for (i = 0; i < (int)sizeof (*qcvm->progs) / 4; i++)
