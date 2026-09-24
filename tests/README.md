@@ -1,5 +1,22 @@
 # Migration boundary fixtures
 
+`vr_akimbo_stale_fixture.c` includes the production input implementation and
+checks stale QBJ3 pair admission in `VR_InputApplyPending`: a pair with the
+default invalid producer identity clears the private pose and akimbo payload,
+suppresses controller-aim attack, and preserves pending movement across repeat
+application. It does not exercise pair production or command codecs.
+
+```sh
+cc -std=gnu11 -DUSE_SDL3 -D_GNU_SOURCE -Wall -Wextra -Werror \
+  -Wno-unused-parameter -Wno-unused-function -Wno-sign-compare \
+  -Wno-missing-field-initializers -ffunction-sections -fdata-sections \
+  -fsanitize=address,undefined -fno-sanitize-recover=all \
+  -fno-omit-frame-pointer -IQuake tests/vr_akimbo_stale_fixture.c \
+  -Wl,--gc-sections $(pkg-config --cflags --libs sdl3) -lm \
+  -o /tmp/quakespasm-vr-akimbo-stale-fixture
+/tmp/quakespasm-vr-akimbo-stale-fixture
+```
+
 ## VR weapon schema parser
 
 `vr_weapon_schema_fixture.c` exercises the bounded staging parser against the
