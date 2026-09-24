@@ -128,6 +128,25 @@ on model reload/free. This does not yet send a melee sample or enable the
 server's MELEE capability; the client transform and native-QC outcome adapter
 are the next coupled implementation step.
 
+The installed read-only `quakespasm_straight` packs establish the first stock
+server pins: `id1` has whole-file `progs.dat` CRC16 3064 and 21118 statements,
+2116 functions, 4171 globals; Hipnotic has CRC16 48616 and 35474/2808/5610;
+Rogue has CRC16 54028 and 38916/3316/6420. These match three donor stock
+descriptor rows in `vr_melee_qc.h`. The target VM stores that whole-file value
+as `qcvm->progscrc` (the header's system-vars CRC is a different value), so the
+stock adapter must key on `progscrc` plus the pinned function layouts, not the
+header CRC. The donor applies Rogue's rune callbacks and cooldown separately;
+flattening that case to the id1 axe would change native behavior.
+The checked Hipnotic and Rogue `pak0.pak` files do not override
+`progs/v_axe.mdl`; their stock axe resolves to the same id1 asset in this
+installation. That is an asset search-path fact, not permission to accept a
+different mod-provided axe without the loader's source pin.
+Direct inspection of those three packed QC function tables also matched the
+donor's six pinned attack/sound/frame/locomotion functions per program,
+including Hipnotic's `player_run` parameter/local layout. The file CRC and
+function checks are both required; the shared QC header CRC alone is 5927 in
+all three files and does not identify their attack bytecode.
+
 ## Collision-button implementation checkpoint
 
 The first contact producer now sends a single anatomical hand's raw grip,

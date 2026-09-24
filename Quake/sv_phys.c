@@ -24,6 +24,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "quakedef.h"
 #include "pmove.h"
 #include "vr_weapon_calibration.h"
+#include "vr_melee_stock_qc.h"
 
 /*
 
@@ -3068,6 +3069,20 @@ static void SV_ResetPrivateVRContactContinuity (client_t *client)
 	client->private_vr_contact_previous_received = 0;
 	memset (client->private_vr_contact_button, 0,
 		sizeof (client->private_vr_contact_button));
+}
+
+/* Identity foundation only. The server does not advertise MELEE until the
+ * authenticated client path can produce and validate immersive stroke data. */
+unsigned int SV_VRStockAxeContactProfile (void)
+{
+	return SV_VRStockAxeDescriptor () ?
+		VR_WEAPON_CONTACT_PROFILE_STOCK : VR_WEAPON_CONTACT_PROFILE_NONE;
+}
+
+int SV_VRStockAxeTraceStatement (void)
+{
+	const sv_vr_stock_axe_descriptor_t *descriptor = SV_VRStockAxeDescriptor ();
+	return descriptor ? descriptor->trace_statement : -1;
 }
 
 void SV_ResetPrivateVRContactState (client_t *client)

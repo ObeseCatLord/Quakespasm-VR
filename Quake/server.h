@@ -535,6 +535,8 @@ void SV_ClientUpdateAnglesForClient (client_t *client);
 void SV_ClearVRWeaponPoseScope (void);
 void SV_VRWeaponPoseSetOrigin (edict_t *ent);
 void SV_VRWeaponPoseLinked (edict_t *ent);
+unsigned int SV_VRStockAxeContactProfile (void);
+int SV_VRStockAxeTraceStatement (void);
 void SV_SaveSpawnparms ();
 void SV_SpawnServer (const char *server);
 
