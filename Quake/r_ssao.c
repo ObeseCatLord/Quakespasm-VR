@@ -20,7 +20,6 @@ enum
 };
 
 cvar_t					 r_ssao = {"r_ssao", "1", CVAR_ARCHIVE};
-cvar_t					 vr_ssao = {"vr_ssao", "0", CVAR_ARCHIVE};
 static cvar_t			 r_ssao_radius = {"r_ssao_radius", "32", CVAR_ARCHIVE};
 static cvar_t			 r_ssao_strength = {"r_ssao_strength", "1.0", CVAR_ARCHIVE};
 vulkan_pipeline_layout_t ssao_layout;
@@ -53,7 +52,6 @@ static VkDescriptorSet mip_descriptors[SSAO_MAX_EYES];
 void R_InitSSAO (void)
 {
 	Cvar_RegisterVariable (&r_ssao);
-	Cvar_RegisterVariable (&vr_ssao);
 	Cvar_RegisterVariable (&r_ssao_radius);
 	Cvar_RegisterVariable (&r_ssao_strength);
 #ifdef _DEBUG
@@ -63,7 +61,7 @@ void R_InitSSAO (void)
 
 qboolean R_SSAOEnabled (void)
 {
-	return vulkan_globals.stereo_active ? vr_ssao.value > 0 : r_ssao.value > 0;
+	return r_ssao.value > 0;
 }
 
 // The spatial noise repeats every 64 pixels; build its index once per resource creation.

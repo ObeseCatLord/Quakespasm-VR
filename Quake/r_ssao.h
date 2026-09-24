@@ -1,7 +1,7 @@
 #ifndef R_SSAO_H
 #define R_SSAO_H
 
-extern cvar_t					r_ssao, vr_ssao;
+extern cvar_t					r_ssao;
 extern vulkan_pipeline_layout_t ssao_layout;
 extern vulkan_pipeline_t		ssao_pipelines[MAIN_RENDER_PASS_VARIANT_COUNT];
 extern vulkan_pipeline_layout_t ssao_compute_layout;

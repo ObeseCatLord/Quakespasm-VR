@@ -18,19 +18,25 @@ world-receiver GTAO pipeline against two-view Vulkan multiview and the
 The first implementation target is a **VR-only full-resolution reference**, not
 a speedup claim. Its per-eye 2D views reuse the current compute shaders. The
 composite uses array views and `gl_ViewIndex` under one multiview draw. All
-desktop SSAO code paths and cvar behavior must remain unchanged. A separate
-VR policy may leave the effect opt-in until performance has been measured.
+desktop SSAO code paths and cvar behavior must remain unchanged. Graphics
+Options uses one quality setting for both rendering modes.
 
 Implementation status: the full-resolution reference is present on `2.0`.
-`vr_ssao 1` enables it in OpenXR independently of desktop `r_ssao`. The
-existing `r_ssao` quality value selects the VR sample count when positive;
-otherwise VR uses the lowest quality. Desktop SSAO retains its existing
-default and shader variants. VR SSAO
-defaults off until its frame-time cost and binocular output can be assessed.
+`r_ssao` selects off, low, medium or high in Graphics Options for both desktop
+and OpenXR. Desktop runs its existing SSAO shader variants; OpenXR runs the
+per-eye adapter and stereo composite at the selected quality. The desktop
+default and algorithm remain unchanged.
 A follow-up Astra xhigh review found no concrete regression in per-eye
 barriers, image views, multiview composite, toggles, or teardown. Local engine
-build and SPIR-V validation pass; these checks do not establish visual or
-performance acceptance.
+build and SPIR-V validation pass. A disposable simulated-Monado Linux run of
+the shared-setting build completed the 24-probe OpenXR renderer matrix with
+stereo SSAO enabled,
+including MSAA, OIT, indirect rendering, resize and pause. A second run with
+explicit fixed foveation confirmed the shading-rate attachment was active
+through the same matrix. Focused desktop and OpenXR runs at default
+`r_ssao 1` confirmed that compute uses the matching
+one-layer or two-layer resource path. These runs did not use Vulkan validation
+layers and do not establish binocular appearance or performance acceptance.
 
 Next, instrument total-frame and SSAO GPU time and compare AO-off, the
 full-resolution reference, and a VR-only half-width/half-height candidate with

@@ -5,6 +5,7 @@ set confirm off
 set print thread-events off
 set $signed_on = 0
 set $tasks_seen = 0
+set $ssao_seen = 0
 set $probes = 0
 break SCR_UpdateScreen if cls.signon == 4 && vulkan_globals.stereo_active && openxr_frame.should_render
 commands 1
@@ -19,6 +20,7 @@ commands 1
  call (void) Cbuf_InsertText("exec openxr-local-smoke.cfg\n")
  disable 1
  enable 2
+ enable 5
  continue
 end
 break GL_EndRendering
@@ -104,10 +106,23 @@ break *Host_Quit_f
 commands 4
  silent
  printf "XR_SMOKE_final target=%dx%d window=%dx%d\n", vid.width, vid.height, openxr_desktop_width, openxr_desktop_height
- if !$signed_on || !$tasks_seen || $probes != 24 || vid.width != openxr_frame.views[0].width || vid.height != openxr_frame.views[0].height || openxr_desktop_width != 800 || openxr_desktop_height != 600
-  printf "XR_SMOKE_FAILED: signon/tasks/mode/resize gate did not complete\n"
+ if !$signed_on || !$tasks_seen || !$ssao_seen || $probes != 24 || vid.width != openxr_frame.views[0].width || vid.height != openxr_frame.views[0].height || openxr_desktop_width != 800 || openxr_desktop_height != 600
+  printf "XR_SMOKE_FAILED: signon/tasks/SSAO/mode/resize gate did not complete\n"
   quit 1
  end
  continue
 end
+break R_ComputeSSAO
+commands 5
+ silent
+ printf "XR_SMOKE_ssao stereo=%d layers=%d quality=%g\n", vulkan_globals.stereo_active, ssao_stereo, r_ssao.value
+ if !vulkan_globals.stereo_active || !ssao_stereo || r_ssao.value != 1
+  printf "XR_SMOKE_FAILED: stereo SSAO is not active at the compute step\n"
+  quit 1
+ end
+ set $ssao_seen = 1
+ disable 5
+ continue
+end
+disable 5
 run

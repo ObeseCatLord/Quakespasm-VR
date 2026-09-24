@@ -271,7 +271,9 @@ Require exit 0, all 24 `XR_SMOKE_probe` records, the final extent check, and no
 Vulkan validation errors or synchronization hazards. A timeout is a failure.
 The script asserts effective OIT, sample count and indirect state for each
 combination rather than accepting unsupported modes as coverage. It also checks
-that task rendering is effective. The final probes change worldscale and floor
+that task rendering is effective and confirms the stereo SSAO compute path runs
+with `r_ssao 1`. This matrix therefore requires the GPU's SSAO subgroup and
+extended storage-image features. The final probes change worldscale and floor
 offset live, including while paused, and recover from an invalid zero scale.
 They also enable the real chase camera at scale 2, then return to first person.
 Head-aim and mouse-aim probes compare the rendered visual yaw with command and
