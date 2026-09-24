@@ -26,6 +26,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "protocol.h"
 #include "cvar.h"
 #include "vr_openxr.h"
+#include "vr_fbt.h"
 #include "vrik_codec.h"
 
 enum
@@ -47,5 +48,21 @@ qboolean VR_InputSuppressUncalibratedAttack (const usercmd_t *cmd);
 void VR_InputInvalidateMotion (void);
 void VR_InputClear (void);
 qboolean VR_InputBuildVRIKPose (vrik_codec_pose_t *pose);
+
+/* Read-only snapshot for the renderer's per-frame debug copy.
+ * Positions are bounded metres in player-root axes; body_yaw_degrees maps
+ * root axes to world, and head_root_metres anchors them to the presentation
+ * head pose. role_mask is all-or-nothing for the active calibration roles. */
+typedef struct vr_input_fbt_visual_snapshot_s
+{
+	unsigned int role_mask;
+	float body_yaw_degrees;
+	vec3_t head_root_metres;
+	vec3_t tracker_root_metres[VR_FBT_ROLE_COUNT];
+	vec3_t target_root_metres[VR_FBT_ROLE_COUNT];
+} vr_input_fbt_visual_snapshot_t;
+
+qboolean VR_InputFBTCalibrationVisualSnapshot (const vrxr_frame_t *frame,
+	vr_input_fbt_visual_snapshot_t *snapshot);
 
 #endif /* QUAKE_VR_INPUT_H */

@@ -137,6 +137,13 @@ static char vr_input_fbt_calibration_name[VR_FBT_PROFILE_NAME_MAX];
 static uint64_t vr_input_fbt_capture_last_sample_id;
 static struct
 {
+	unsigned int role_mask;
+	uint64_t sample_id;
+	vec3_t tracker_tracking[VR_FBT_ROLE_COUNT];
+} vr_input_fbt_visual_raw_snapshot;
+static void VR_InputFBTPrepareCalibrationVisualSnapshot (const vrxr_frame_t *frame);
+static struct
+{
 	uint64_t identity;
 	qboolean connected;
 } vr_input_fbt_slots[VRXR_MAX_DEVICES];
@@ -164,6 +171,8 @@ static void VR_InputFBTCancelCalibration (void)
 	vr_input_fbt_calibration_state = VR_INPUT_FBT_CALIBRATION_IDLE;
 	vr_input_fbt_calibration_name[0] = '\0';
 	vr_input_fbt_capture_last_sample_id = 0;
+	memset (&vr_input_fbt_visual_raw_snapshot, 0,
+		sizeof (vr_input_fbt_visual_raw_snapshot));
 }
 
 static vr_input_context_t VR_InputCurrentContext (void)
@@ -1388,6 +1397,8 @@ static void VR_InputFBTCalibrateBegin_f (void)
 		return;
 	}
 	vr_input_fbt_capture = capture;
+	memset (&vr_input_fbt_visual_raw_snapshot, 0,
+		sizeof (vr_input_fbt_visual_raw_snapshot));
 	q_strlcpy (vr_input_fbt_calibration_name, Cmd_Argv (1),
 		sizeof (vr_input_fbt_calibration_name));
 	vr_input_fbt_preview_valid = false;
@@ -1596,6 +1607,161 @@ static qboolean VR_InputFBTMapTrackingVector (const vec3_t tracking,
 	root[1] = -world[0] * sine + world[1] * cosine;
 	root[2] = world[2];
 	return VR_InputFBTVectorFinite (root);
+}
+
+/* Called only by VR_InputCommands on the input/main owner, after reconciling
+ * this completed XR sample. The render setup task consumes these detached raw
+ * positions; it never reads the mutable tracker manager. */
+static void VR_InputFBTPrepareCalibrationVisualSnapshot (const vrxr_frame_t *frame)
+{
+	const unsigned int valid_role_mask = (1u << VR_FBT_ROLE_COUNT) - 1u;
+	const char (*expected_serials)[VR_FBT_SERIAL_MAX] = NULL;
+	unsigned int role_mask = 0;
+	memset (&vr_input_fbt_visual_raw_snapshot, 0,
+		sizeof (vr_input_fbt_visual_raw_snapshot));
+	if (!vr_fbt_enabled.value || !frame || !frame->sample_id ||
+		!frame->should_render || !frame->focused || !frame->floor_referenced ||
+		frame->reference_changed ||
+		(vr_input_fbt_calibration_state != VR_INPUT_FBT_CALIBRATION_READY &&
+		 vr_input_fbt_calibration_state != VR_INPUT_FBT_CALIBRATION_CAPTURING &&
+		 vr_input_fbt_calibration_state != VR_INPUT_FBT_CALIBRATION_PREVIEW))
+		return;
+	if (vr_input_fbt_calibration_state == VR_INPUT_FBT_CALIBRATION_PREVIEW)
+	{
+		if (!vr_input_fbt_preview_valid)
+			return;
+		for (int role = 0; role < VR_FBT_ROLE_COUNT; ++role)
+			if (vr_input_fbt_preview_profile.roles[role].present)
+				role_mask |= VR_FBT_PROFILE_ROLE_BIT (role);
+	}
+	else
+	{
+		role_mask = vr_input_fbt_capture.required_role_mask;
+		expected_serials = vr_input_fbt_capture.expected_serials;
+	}
+	if (!role_mask || (role_mask & ~valid_role_mask))
+		return;
+	for (int role = 0; role < VR_FBT_ROLE_COUNT; ++role)
+	{
+		vr_fbt_role_status_t status;
+		vr_fbt_profile_transform_t raw;
+		const char *expected;
+		if (!(role_mask & VR_FBT_PROFILE_ROLE_BIT (role)))
+			continue;
+		expected = vr_input_fbt_calibration_state == VR_INPUT_FBT_CALIBRATION_PREVIEW ?
+			vr_input_fbt_preview_profile.roles[role].serial : expected_serials[role];
+		if (!VR_FBT_SerialIsSafe (expected) ||
+			!VR_FBT_GetRoleStatus (&vr_input_fbt_manager,
+				(vr_fbt_role_t)role, &status) ||
+			status.identity_kind != VR_FBT_IDENTITY_SERIAL ||
+			strcmp (status.serial, expected) ||
+			!VR_InputFBTRawTransform (&status, &raw))
+		{
+			memset (&vr_input_fbt_visual_raw_snapshot, 0,
+				sizeof (vr_input_fbt_visual_raw_snapshot));
+			return;
+		}
+		for (int axis = 0; axis < 3; ++axis)
+		{
+			vr_input_fbt_visual_raw_snapshot.tracker_tracking[role][axis] =
+				(float)raw.position[axis];
+			if (!isfinite (vr_input_fbt_visual_raw_snapshot.tracker_tracking[role][axis]))
+			{
+				memset (&vr_input_fbt_visual_raw_snapshot, 0,
+					sizeof (vr_input_fbt_visual_raw_snapshot));
+				return;
+			}
+		}
+	}
+	vr_input_fbt_visual_raw_snapshot.role_mask = role_mask;
+	vr_input_fbt_visual_raw_snapshot.sample_id = frame->sample_id;
+}
+
+qboolean VR_InputFBTCalibrationVisualSnapshot (const vrxr_frame_t *frame,
+	vr_input_fbt_visual_snapshot_t *snapshot)
+{
+	vr_input_fbt_visual_snapshot_t prepared;
+	r_vrik_calibration_projection_input_t projection_input;
+	r_vrik_calibration_projection_t projection;
+	const unsigned int valid_role_mask = (1u << VR_FBT_ROLE_COUNT) - 1u;
+	float body_yaw, presentation_yaw, base_viewheight, head_eye_height;
+	float units_per_metre;
+	uint64_t expected_sample_id;
+	entity_t *player;
+	vec3_t point, root;
+	if (!snapshot)
+		return false;
+	memset (snapshot, 0, sizeof (*snapshot));
+	if (!vr_fbt_enabled.value || !frame || !frame->should_render ||
+		!frame->focused || !frame->floor_referenced || frame->reference_changed ||
+		(vr_input_fbt_calibration_state != VR_INPUT_FBT_CALIBRATION_READY &&
+		 vr_input_fbt_calibration_state != VR_INPUT_FBT_CALIBRATION_CAPTURING &&
+		 vr_input_fbt_calibration_state != VR_INPUT_FBT_CALIBRATION_PREVIEW) ||
+		!vr_input_fbt_visual_raw_snapshot.role_mask ||
+		!vr_input_fbt_visual_raw_snapshot.sample_id ||
+		(vr_input_fbt_visual_raw_snapshot.role_mask & ~valid_role_mask))
+		return false;
+	expected_sample_id = vr_input_fbt_visual_raw_snapshot.sample_id + 1;
+	if (!expected_sample_id)
+		++expected_sample_id;
+	if (frame->sample_id != expected_sample_id)
+		return false;
+	memset (&prepared, 0, sizeof (prepared));
+	if (!VR_InputFBTProjectReference (frame, &player, &projection_input,
+		&projection) ||
+		!V_TrackedPlayerBase (&base_viewheight) ||
+		!V_TrackedPresentationYaw (&presentation_yaw) ||
+		!R_TrackedHeadEyeHeight (base_viewheight, &head_eye_height))
+		return false;
+	body_yaw = player->angles[YAW];
+	if (!isfinite (body_yaw))
+		body_yaw = cl.viewangles[YAW];
+	units_per_metre = V_VRUnitsPerMetre ();
+	for (int axis = 0; axis < 3; ++axis)
+		point[axis] = frame->devices[0].matrix[axis][3];
+	if (!isfinite (body_yaw) || !isfinite (presentation_yaw) ||
+		!isfinite (units_per_metre) || units_per_metre <= 0.0f ||
+		!VR_InputFBTMapPointToRoot (frame, point, presentation_yaw, body_yaw,
+			units_per_metre, head_eye_height, root))
+		return false;
+	for (int axis = 0; axis < 3; ++axis)
+	{
+		prepared.head_root_metres[axis] = root[axis] / units_per_metre;
+		if (!isfinite (prepared.head_root_metres[axis]) ||
+			fabsf (prepared.head_root_metres[axis]) > VR_INPUT_WIRE_MAX)
+			return false;
+	}
+	prepared.body_yaw_degrees = body_yaw;
+	for (int role = 0; role < VR_FBT_ROLE_COUNT; ++role)
+	{
+		if (!(vr_input_fbt_visual_raw_snapshot.role_mask &
+			VR_FBT_PROFILE_ROLE_BIT (role)))
+			continue;
+		VectorCopy (vr_input_fbt_visual_raw_snapshot.tracker_tracking[role], point);
+		if (!VR_InputFBTMapPointToRoot (frame, point, presentation_yaw,
+			body_yaw, units_per_metre, head_eye_height, root))
+			return false;
+		for (int axis = 0; axis < 3; ++axis)
+		{
+			prepared.tracker_root_metres[role][axis] = root[axis] / units_per_metre;
+			point[axis] = projection.position[role][axis];
+		}
+		if (!VR_InputFBTMapPointToRoot (frame, point, presentation_yaw,
+			body_yaw, units_per_metre, head_eye_height, root))
+			return false;
+		for (int axis = 0; axis < 3; ++axis)
+		{
+			prepared.target_root_metres[role][axis] = root[axis] / units_per_metre;
+			if (!isfinite (prepared.tracker_root_metres[role][axis]) ||
+				!isfinite (prepared.target_root_metres[role][axis]) ||
+				fabsf (prepared.tracker_root_metres[role][axis]) > VR_INPUT_WIRE_MAX ||
+				fabsf (prepared.target_root_metres[role][axis]) > VR_INPUT_WIRE_MAX)
+				return false;
+		}
+	}
+	prepared.role_mask = vr_input_fbt_visual_raw_snapshot.role_mask;
+	*snapshot = prepared;
+	return true;
 }
 
 static qboolean VR_InputFBTBuildFilterInput (const vrxr_frame_t *frame,
@@ -2335,6 +2501,7 @@ void VR_InputCommands (const vrxr_frame_t *frame)
 		VR_InputFBTReset ();
 	VR_InputFBTReconcile (frame);
 	VR_InputFBTCaptureSnapshot (frame);
+	VR_InputFBTPrepareCalibrationVisualSnapshot (frame);
 	if (cls.state != ca_connected)
 	{
 		cl.vrik_next_sequence = 0;

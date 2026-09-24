@@ -90,6 +90,15 @@ typedef struct
 /* Prepared by SCR_UpdateScreen on the main owner, then read-only in the scene task. */
 static vr_crosshair_frame_t vr_crosshair_frame;
 
+/* Filled beside the stereo view in frame setup, then read-only from the debug
+ * draw task. These world points are detached from mutable FBT state. */
+static struct
+{
+	unsigned int role_mask;
+	vec3_t tracker_world[VR_FBT_ROLE_COUNT];
+	vec3_t target_world[VR_FBT_ROLE_COUNT];
+} vr_fbt_visual_frame;
+
 cvar_t r_drawentities = {"r_drawentities", "1", CVAR_NONE};
 cvar_t r_drawviewmodel = {"r_drawviewmodel", "1", CVAR_NONE};
 cvar_t scr_speeds = {"scr_speeds", "0", CVAR_NONE};
@@ -421,6 +430,62 @@ static vec3_t stereo_tracking_forward, stereo_tracking_right, stereo_tracking_up
 static qboolean stereo_tracking_basis_valid;
 
 static void R_SetupMatrices (void);
+static qboolean R_VectorIsFinite (const vec3_t vector);
+
+#define R_FBT_VISUAL_WORLD_MIN (-32768.0f)
+#define R_FBT_VISUAL_WORLD_MAX 32767.0f
+
+static qboolean R_FBTVisualWorldPoint (const vec3_t root_point,
+	const vec3_t head_root, float body_yaw, float units_per_metre,
+	vec3_t world_point)
+{
+	const float radians = body_yaw * M_PI_DIV_180;
+	const float cosine = cosf (radians), sine = sinf (radians);
+	vec3_t delta;
+	if (!root_point || !head_root || !world_point || !R_VectorIsFinite (root_point) ||
+		!R_VectorIsFinite (head_root) || !isfinite (body_yaw) ||
+		!isfinite (units_per_metre) || units_per_metre <= 0.0f ||
+		!R_VectorIsFinite (r_refdef.vieworg))
+		return false;
+	for (int axis = 0; axis < 3; ++axis)
+		delta[axis] = (root_point[axis] - head_root[axis]) * units_per_metre;
+	world_point[0] = r_refdef.vieworg[0] + delta[0] * cosine - delta[1] * sine;
+	world_point[1] = r_refdef.vieworg[1] + delta[0] * sine + delta[1] * cosine;
+	world_point[2] = r_refdef.vieworg[2] + delta[2];
+	if (!R_VectorIsFinite (world_point))
+		return false;
+	for (int axis = 0; axis < 3; ++axis)
+		if (world_point[axis] < R_FBT_VISUAL_WORLD_MIN ||
+			world_point[axis] > R_FBT_VISUAL_WORLD_MAX)
+			return false;
+	return true;
+}
+
+static void R_PrepareFBTVisualFrame (const vrxr_frame_t *frame)
+{
+	vr_input_fbt_visual_snapshot_t snapshot;
+	const float units_per_metre = V_VRUnitsPerMetre ();
+	memset (&vr_fbt_visual_frame, 0, sizeof (vr_fbt_visual_frame));
+	if (!vulkan_globals.stereo_active ||
+		!VR_InputFBTCalibrationVisualSnapshot (frame, &snapshot))
+		return;
+	for (int role = 0; role < VR_FBT_ROLE_COUNT; ++role)
+	{
+		if (!(snapshot.role_mask & (1u << (unsigned int)role)))
+			continue;
+		if (!R_FBTVisualWorldPoint (snapshot.tracker_root_metres[role],
+			snapshot.head_root_metres, snapshot.body_yaw_degrees,
+			units_per_metre, vr_fbt_visual_frame.tracker_world[role]) ||
+			!R_FBTVisualWorldPoint (snapshot.target_root_metres[role],
+			snapshot.head_root_metres, snapshot.body_yaw_degrees,
+			units_per_metre, vr_fbt_visual_frame.target_world[role]))
+		{
+			memset (&vr_fbt_visual_frame, 0, sizeof (vr_fbt_visual_frame));
+			return;
+		}
+	}
+	vr_fbt_visual_frame.role_mask = snapshot.role_mask;
+}
 
 static void R_InitializeStereoReference (const vrxr_frame_t *frame)
 {
@@ -650,6 +715,7 @@ void R_PrepareStereoFrame (void)
 	stereo_tracking_basis_valid = false;
 	if (!frame)
 	{
+		memset (&vr_fbt_visual_frame, 0, sizeof (vr_fbt_visual_frame));
 		stereo_have_reference = false;
 		r_stereo_radius = 0;
 		return;
@@ -768,6 +834,7 @@ void R_PrepareStereoFrame (void)
 	// Worldless stereo frames skip R_SetupViewBeforeMark, which normally prepares these.
 	if (con_forcedup)
 		R_SetupMatrices ();
+	R_PrepareFBTVisualFrame (frame);
 }
 
 static void R_SetStereoFrustum (void)
@@ -2137,6 +2204,34 @@ static void R_DrawParticlesTask (void *unused)
 	PScript_DrawParticles (fte_blend_cbx);
 }
 
+static void R_DrawFBTCalibrationVisuals (cb_context_t *cbx)
+{
+	static const char *const labels[VR_FBT_ROLE_COUNT] = {
+		"hip", "L foot", "R foot"
+	};
+	if (!cbx || !vulkan_globals.stereo_active || !vr_fbt_visual_frame.role_mask)
+		return;
+	R_BeginDebugUtilsLabel (cbx, "FBT calibration targets");
+	for (int role = 0; role < VR_FBT_ROLE_COUNT; ++role)
+	{
+		vec3_t label_origin;
+		char label[12];
+		if (!(vr_fbt_visual_frame.role_mask & (1u << (unsigned int)role)))
+			continue;
+		R_EmitWirePoint (cbx, vr_fbt_visual_frame.tracker_world[role], 0xff40dfffu);
+		R_EmitWirePoint (cbx, vr_fbt_visual_frame.target_world[role], 0xffff7f40u);
+		R_EmitArrow (cbx, vr_fbt_visual_frame.tracker_world[role],
+			vr_fbt_visual_frame.target_world[role], 0xffffbf40u);
+		VectorCopy (vr_fbt_visual_frame.target_world[role], label_origin);
+		label_origin[2] += 12.0f;
+		q_strlcpy (label, labels[role], sizeof (label));
+		for (char *character = label; *character; ++character)
+			*character |= 0x80;
+		Draw_String_3D (cbx, label_origin, 8.0f, label);
+	}
+	R_EndDebugUtilsLabel (cbx);
+}
+
 /*
 ================
 R_DrawViewModelTask
@@ -2151,6 +2246,7 @@ static void R_DrawViewModelTask (void *unused)
 	R_ShowSkeletons (cbx);
 	R_ShowBoundingBoxes (cbx); // johnfitz
 	R_ShowPointFile (cbx);
+	R_DrawFBTCalibrationVisuals (cbx);
 }
 
 /*
