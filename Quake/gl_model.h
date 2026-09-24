@@ -492,6 +492,8 @@ typedef struct md5_skeleton_view_s
 	const float (*absolute_poses)[12];
 	size_t joint_count;
 	size_t pose_count;
+	/* True only for the byte-verified official rerelease Ranger mesh+anim. */
+	qboolean from_rerelease;
 } md5_skeleton_view_t;
 
 typedef struct md5_skeleton_data_s md5_skeleton_data_t;

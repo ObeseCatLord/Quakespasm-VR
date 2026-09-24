@@ -321,13 +321,16 @@ static void R_VRIKRotateToward (float matrix[12], const vec3_t from,
 	sine = VectorNormalize (axis);
 	if (sine < 0.0001f)
 	{
+		vec3_t fallbackaxis;
 		if (cosine > 0.0f)
 			return;
 		axis[0] = 0, axis[1] = 0, axis[2] = 1;
 		if (fabsf (DotProduct (axis, a)) > 0.9f)
 			axis[0] = 0, axis[1] = 1, axis[2] = 0;
-		CrossProduct (a, axis, axis);
-		VectorNormalize (axis);
+		CrossProduct (a, axis, fallbackaxis);
+		VectorCopy (fallbackaxis, axis);
+		if (!VectorNormalize (axis))
+			return;
 		sine = 0.0f;
 	}
 	one = 1.0f - cosine;
@@ -344,6 +347,372 @@ static void R_VRIKRotateToward (float matrix[12], const vec3_t from,
 	R_VRIKMatrixMultiply (delta, matrix, result);
 	memcpy (matrix, result, sizeof (result));
 	R_VRIKSetMatrixOrigin (matrix, origin);
+}
+
+/* The Vulkan palette path uses the model-owned skeleton view directly.  Keep
+ * the donor leg solver's hierarchy work local to this one palette build; the
+ * legacy live-skinning rig cache would create a second mutable pose owner. */
+typedef struct r_vrik_leg_rig_s
+{
+	int upper;
+	int lower;
+	int foot;
+	vec3_t bind_knee_vector;
+	vec3_t bind_foot_vector;
+	float bind_upper_length;
+	float bind_lower_length;
+	qboolean valid;
+} r_vrik_leg_rig_t;
+
+static qboolean R_VRIKFinite3 (const vec3_t vector);
+
+static qboolean R_VRIKIsDescendant (const md5_skeleton_view_t *skeleton,
+	int child, int ancestor)
+{
+	int steps;
+
+	if (!skeleton || !skeleton->joints || child < 0 || ancestor < 0 ||
+		(size_t)child >= skeleton->joint_count ||
+		(size_t)ancestor >= skeleton->joint_count)
+		return false;
+	for (steps = 0; steps < (int)skeleton->joint_count; steps++)
+	{
+		int parent;
+		if (child == ancestor)
+			return true;
+		parent = skeleton->joints[child].parent;
+		if (parent == -1)
+			return false;
+		if (parent < 0 || (size_t)parent >= skeleton->joint_count)
+			return false;
+		child = parent;
+	}
+	return false;
+}
+
+/* -1 means absent; -2 means ambiguous or malformed. */
+static int R_VRIKFindNamedJoint (const md5_skeleton_view_t *skeleton,
+	const char *name)
+{
+	int found = -1;
+	size_t joint;
+
+	for (joint = 0; joint < skeleton->joint_count; joint++)
+	{
+		const char *jointname = skeleton->joints[joint].name;
+		if (!memchr (jointname, '\0', sizeof (skeleton->joints[joint].name)))
+			return -2;
+		if (!R_VRIKNameEqual (jointname, name))
+			continue;
+		if (found >= 0)
+			return -2;
+		found = (int)joint;
+	}
+	return found;
+}
+
+static qboolean R_VRIKResolveLegRig (const md5_skeleton_view_t *skeleton,
+	int hip, int side, r_vrik_leg_rig_t *rig)
+{
+	const char *uppername = side ? "UpperLeg_R" : "UpperLeg_L";
+	const char *lowername = side ? "LowerLeg_R" : "LowerLeg_L";
+	const char *footname = side ? "Foot_R" : "Foot_L";
+	vec3_t upperorigin, lowerorigin, footorigin;
+
+	memset (rig, 0, sizeof (*rig));
+	rig->upper = R_VRIKFindNamedJoint (skeleton, uppername);
+	rig->lower = R_VRIKFindNamedJoint (skeleton, lowername);
+	rig->foot = R_VRIKFindNamedJoint (skeleton, footname);
+	if (rig->upper < 0 || rig->lower < 0 || rig->foot < 0 ||
+		!R_VRIKIsDescendant (skeleton, rig->upper, hip) ||
+		!R_VRIKIsDescendant (skeleton, rig->lower, rig->upper) ||
+		!R_VRIKIsDescendant (skeleton, rig->foot, rig->lower))
+		return false;
+	R_VRIKMatrixOrigin (skeleton->joints[rig->upper].bind, upperorigin);
+	R_VRIKMatrixOrigin (skeleton->joints[rig->lower].bind, lowerorigin);
+	R_VRIKMatrixOrigin (skeleton->joints[rig->foot].bind, footorigin);
+	if (!R_VRIKFinite3 (upperorigin) || !R_VRIKFinite3 (lowerorigin) ||
+		!R_VRIKFinite3 (footorigin))
+		return false;
+	VectorSubtract (lowerorigin, upperorigin, rig->bind_knee_vector);
+	VectorSubtract (footorigin, lowerorigin, rig->bind_foot_vector);
+	rig->bind_upper_length = VectorLength (rig->bind_knee_vector);
+	rig->bind_lower_length = VectorLength (rig->bind_foot_vector);
+	if (!isfinite (rig->bind_upper_length) || !isfinite (rig->bind_lower_length) ||
+		rig->bind_upper_length <= 0.01f || rig->bind_lower_length <= 0.01f)
+		return false;
+	rig->valid = true;
+	return true;
+}
+
+static void R_VRIKTranslateSubtree (const md5_skeleton_view_t *skeleton,
+	float (*palette)[12], int root, const vec3_t delta)
+{
+	int joint;
+
+	for (joint = 0; (size_t)joint < skeleton->joint_count; joint++)
+		if (R_VRIKIsDescendant (skeleton, joint, root))
+		{
+			vec3_t origin;
+			R_VRIKMatrixOrigin (palette[joint], origin);
+			VectorAdd (origin, delta, origin);
+			R_VRIKSetMatrixOrigin (palette[joint], origin);
+		}
+}
+
+static void R_VRIKRotationDifference (const float desired[12],
+	const float current[12], float delta[12])
+{
+	int row, column, k;
+
+	memset (delta, 0, sizeof (float) * 12);
+	for (row = 0; row < 3; row++)
+		for (column = 0; column < 3; column++)
+			for (k = 0; k < 3; k++)
+				delta[row * 4 + column] += desired[row * 4 + k] *
+					current[column * 4 + k];
+}
+
+static void R_VRIKRotateSubtree (const md5_skeleton_view_t *skeleton,
+	float (*palette)[12], int root, const vec3_t pivot, const float delta[12])
+{
+	int joint;
+
+	for (joint = 0; (size_t)joint < skeleton->joint_count; joint++)
+		if (R_VRIKIsDescendant (skeleton, joint, root))
+		{
+			float result[12];
+			vec3_t oldorigin, relative, neworigin;
+			R_VRIKMatrixOrigin (palette[joint], oldorigin);
+			VectorSubtract (oldorigin, pivot, relative);
+			neworigin[0] = pivot[0] + delta[0] * relative[0] +
+				delta[1] * relative[1] + delta[2] * relative[2];
+			neworigin[1] = pivot[1] + delta[4] * relative[0] +
+				delta[5] * relative[1] + delta[6] * relative[2];
+			neworigin[2] = pivot[2] + delta[8] * relative[0] +
+				delta[9] * relative[1] + delta[10] * relative[2];
+			R_VRIKMatrixMultiply (delta, palette[joint], result);
+			R_VRIKSetMatrixOrigin (result, neworigin);
+			memcpy (palette[joint], result, sizeof (result));
+		}
+}
+
+static void R_VRIKRotateTowardSubtree (const md5_skeleton_view_t *skeleton,
+	float (*palette)[12], int root, const vec3_t pivot,
+	const vec3_t from, const vec3_t to)
+{
+	vec3_t a, b, axis;
+	float cosine, sine, one, delta[12] = { 0 };
+
+	VectorCopy (from, a);
+	VectorCopy (to, b);
+	if (!VectorNormalize (a) || !VectorNormalize (b))
+		return;
+	cosine = CLAMP (-1.0f, DotProduct (a, b), 1.0f);
+	CrossProduct (a, b, axis);
+	sine = VectorNormalize (axis);
+	if (sine < 0.0001f)
+	{
+		vec3_t fallbackaxis;
+		if (cosine > 0.0f)
+			return;
+		axis[0] = 0.0f; axis[1] = 0.0f; axis[2] = 1.0f;
+		if (fabsf (DotProduct (axis, a)) > 0.9f)
+			axis[0] = 0.0f, axis[1] = 1.0f, axis[2] = 0.0f;
+		CrossProduct (a, axis, fallbackaxis);
+		VectorCopy (fallbackaxis, axis);
+		if (!VectorNormalize (axis))
+			return;
+		sine = 0.0f;
+	}
+	one = 1.0f - cosine;
+	delta[0] = cosine + axis[0] * axis[0] * one;
+	delta[1] = axis[0] * axis[1] * one - axis[2] * sine;
+	delta[2] = axis[0] * axis[2] * one + axis[1] * sine;
+	delta[4] = axis[1] * axis[0] * one + axis[2] * sine;
+	delta[5] = cosine + axis[1] * axis[1] * one;
+	delta[6] = axis[1] * axis[2] * one - axis[0] * sine;
+	delta[8] = axis[2] * axis[0] * one - axis[1] * sine;
+	delta[9] = axis[2] * axis[1] * one + axis[0] * sine;
+	delta[10] = cosine + axis[2] * axis[2] * one;
+	R_VRIKRotateSubtree (skeleton, palette, root, pivot, delta);
+}
+
+static void R_VRIKOrientSubtree (const md5_skeleton_view_t *skeleton,
+	float (*palette)[12], int root, const float desired[12])
+{
+	vec3_t origin;
+	float delta[12];
+
+	R_VRIKMatrixOrigin (palette[root], origin);
+	R_VRIKRotationDifference (desired, palette[root], delta);
+	R_VRIKRotateSubtree (skeleton, palette, root, origin, delta);
+}
+
+/* Donor's bounded two-bone solve, applied to the animation palette for this
+ * frame.  Canonical Ranger calls the donor's ANIMATED pole policy; its mirrored
+ * paired policy is opt-in for avatar-profile leg repair and is not selected by
+ * the Ranger path.  Bind vectors resolve collapsed frames without retained
+ * rig state. */
+static void R_VRIKSolveLeg (const md5_skeleton_view_t *skeleton,
+	float (*palette)[12], const r_vrik_leg_rig_t *rig,
+	const vec3_t supplied_target, float confidence)
+{
+	vec3_t hip, oldknee, oldfoot, target, toward, pole, knee, correction;
+	vec3_t oldupperdir, oldlowerdir, newupperdir, newlowerdir;
+	float upperlength, lowerlength, distance, cosine, anglecos, anglesin;
+
+	if (!rig || !rig->valid || !R_VRIKFinite3 (supplied_target) ||
+		!isfinite (confidence))
+		return;
+	confidence = CLAMP (0.0f, confidence, 1.0f);
+	if (confidence <= 0.0f)
+		return;
+	R_VRIKMatrixOrigin (palette[rig->upper], hip);
+	R_VRIKMatrixOrigin (palette[rig->lower], oldknee);
+	R_VRIKMatrixOrigin (palette[rig->foot], oldfoot);
+	VectorSubtract (oldknee, hip, oldupperdir);
+	VectorSubtract (oldfoot, oldknee, oldlowerdir);
+	upperlength = VectorLength (oldupperdir);
+	lowerlength = VectorLength (oldlowerdir);
+	if (!isfinite (upperlength) || upperlength < 0.01f)
+	{
+		VectorCopy (rig->bind_knee_vector, oldupperdir);
+		upperlength = rig->bind_upper_length;
+	}
+	if (!isfinite (lowerlength) || lowerlength < 0.01f)
+	{
+		VectorCopy (rig->bind_foot_vector, oldlowerdir);
+		lowerlength = rig->bind_lower_length;
+	}
+	if (upperlength < 0.01f || lowerlength < 0.01f)
+		return;
+	VectorSubtract (supplied_target, oldfoot, target);
+	VectorMA (oldfoot, confidence, target, target);
+	VectorSubtract (target, hip, toward);
+	distance = VectorLength (toward);
+	if (!isfinite (distance))
+		return;
+	if (distance < 0.001f)
+	{
+		VectorCopy (oldupperdir, toward);
+		if (!VectorNormalize (toward))
+			return;
+		distance = 0.0f;
+	}
+	else
+		VectorScale (toward, 1.0f / distance, toward);
+	distance = CLAMP (fabsf (upperlength - lowerlength) + 0.01f, distance,
+		q_max (fabsf (upperlength - lowerlength) + 0.01f,
+			upperlength + lowerlength - 0.01f));
+	VectorMA (hip, distance, toward, target);
+	VectorCopy (oldupperdir, pole);
+	VectorMA (pole, -DotProduct (pole, toward), toward, pole);
+	if (!VectorNormalize (pole))
+	{
+		VectorCopy (rig->bind_knee_vector, pole);
+		VectorMA (pole, -DotProduct (pole, toward), toward, pole);
+		if (!VectorNormalize (pole))
+		{
+			pole[0] = 0.0f; pole[1] = 0.0f; pole[2] = 1.0f;
+			if (fabsf (DotProduct (pole, toward)) > 0.9f)
+				pole[0] = 0.0f, pole[1] = 1.0f, pole[2] = 0.0f;
+			VectorMA (pole, -DotProduct (pole, toward), toward, pole);
+			if (!VectorNormalize (pole))
+				return;
+		}
+	}
+	cosine = CLAMP (-1.0f,
+		(upperlength * upperlength + distance * distance - lowerlength * lowerlength) /
+		(2.0f * upperlength * distance), 1.0f);
+	anglecos = cosine * upperlength;
+	anglesin = sqrtf (q_max (0.0f, 1.0f - cosine * cosine)) * upperlength;
+	VectorMA (hip, anglecos, toward, knee);
+	VectorMA (knee, anglesin, pole, knee);
+	VectorSubtract (knee, hip, newupperdir);
+	R_VRIKRotateTowardSubtree (skeleton, palette, rig->upper, hip,
+		oldupperdir, newupperdir);
+	R_VRIKMatrixOrigin (palette[rig->lower], oldknee);
+	VectorSubtract (knee, oldknee, correction);
+	R_VRIKTranslateSubtree (skeleton, palette, rig->lower, correction);
+	R_VRIKMatrixOrigin (palette[rig->lower], oldknee);
+	R_VRIKMatrixOrigin (palette[rig->foot], oldfoot);
+	VectorSubtract (oldfoot, oldknee, oldlowerdir);
+	VectorSubtract (target, oldknee, newlowerdir);
+	R_VRIKRotateTowardSubtree (skeleton, palette, rig->lower, oldknee,
+		oldlowerdir, newlowerdir);
+}
+
+static void R_VRIKApplyLowerTargets (const md5_skeleton_view_t *skeleton,
+	int hipindex, const r_vrik_lowerbody_targets_t *targets,
+	const vec3_t lateral, const vec3_t forward, const vec3_t up,
+	float (*palette)[12])
+{
+	r_vrik_leg_rig_t legs[2];
+	unsigned char usable;
+	int role, side;
+
+	if (!targets)
+		return;
+	usable = targets->present_mask &
+		(targets->tracked_mask | targets->predicted_mask) &
+		((1u << R_VRIK_LOWER_ROLE_COUNT) - 1u);
+	if (usable & R_VRIK_LOWER_BIT (R_VRIK_LOWER_HIP))
+	{
+		vec3_t target, current, delta;
+		float distance, confidence;
+		role = R_VRIK_LOWER_HIP;
+		if (R_VRIKFinite3 (targets->position[role]) &&
+			R_VRIKFinite3 (targets->orientation[role]) &&
+			isfinite (targets->confidence[role]))
+		{
+			confidence = CLAMP (0.0f, targets->confidence[role], 1.0f);
+			R_VRIKLocalVectorToModel (targets->position[role], lateral, forward,
+				up, target);
+			R_VRIKMatrixOrigin (palette[hipindex], current);
+			VectorSubtract (target, current, delta);
+			distance = VectorLength (delta);
+			if (isfinite (distance))
+			{
+				if (distance > 96.0f)
+				{
+					VectorScale (delta, 96.0f / distance, delta);
+				}
+				VectorScale (delta, confidence, delta);
+				R_VRIKTranslateSubtree (skeleton, palette, hipindex, delta);
+				{
+					float desired[12];
+					R_VRIKAnglesToModelMatrix (targets->orientation[role],
+						lateral, forward, up, target, desired);
+					R_VRIKOrientSubtree (skeleton, palette, hipindex, desired);
+				}
+			}
+		}
+	}
+	if (!(usable & (R_VRIK_LOWER_BIT (R_VRIK_LOWER_LEFT_FOOT) |
+		R_VRIK_LOWER_BIT (R_VRIK_LOWER_RIGHT_FOOT))))
+		return;
+	R_VRIKResolveLegRig (skeleton, hipindex, 0, &legs[0]);
+	R_VRIKResolveLegRig (skeleton, hipindex, 1, &legs[1]);
+	for (side = 0; side < 2; side++)
+	{
+		role = side ? R_VRIK_LOWER_RIGHT_FOOT : R_VRIK_LOWER_LEFT_FOOT;
+		if (legs[side].valid && (usable & R_VRIK_LOWER_BIT (role)) &&
+			R_VRIKFinite3 (targets->position[role]) &&
+			R_VRIKFinite3 (targets->orientation[role]) &&
+			isfinite (targets->confidence[role]))
+		{
+			vec3_t target;
+			float desired[12];
+			R_VRIKLocalVectorToModel (targets->position[role], lateral,
+				forward, up, target);
+			R_VRIKSolveLeg (skeleton, palette, &legs[side], target,
+				targets->confidence[role]);
+			R_VRIKAnglesToModelMatrix (targets->orientation[role], lateral,
+				forward, up, target, desired);
+			R_VRIKOrientSubtree (skeleton, palette, legs[side].foot, desired);
+		}
+	}
 }
 
 static void R_VRIKSolveArm (const int *jointindex, float (*palette)[12],
@@ -418,8 +787,10 @@ static void R_VRIKMoveJoint (const int *jointindex, float (*palette)[12],
 	R_VRIKSetMatrixOrigin (palette[index], origin);
 }
 
-static qboolean R_VRIKSolvePalette (const int *jointindex, const vrik_pose_t *pose,
-	qboolean muzzleflash, float (*palette)[12], qboolean *muzzle_valid,
+static qboolean R_VRIKSolvePalette (const md5_skeleton_view_t *skeleton,
+	const int *jointindex, const vrik_pose_t *pose,
+	const r_vrik_lowerbody_targets_t *lower_targets, qboolean muzzleflash,
+	float (*palette)[12], qboolean *muzzle_valid,
 	vec3_t muzzle_origin, vec3_t muzzle_forward)
 {
 	vec3_t lateral, forward, up, hip, oldhead, targethead, headdelta, torso;
@@ -442,6 +813,12 @@ static qboolean R_VRIKSolvePalette (const int *jointindex, const vrik_pose_t *po
 	if (!R_VRIKBuildBodyBasis (jointindex, (const float (*)[12])palette,
 		lateral, forward, up))
 		return false;
+	/* Lower-body network targets are restricted to the donor's byte-verified
+	 * rerelease Ranger rig.  The inherited head/arm solve below still runs for
+	 * ordinary compatible MD5 models. */
+	if (skeleton->from_rerelease)
+		R_VRIKApplyLowerTargets (skeleton, hipindex, lower_targets,
+			lateral, forward, up, palette);
 	if (handright >= 0 && (gun >= 0 || axe >= 0))
 	{
 		vec3_t handorigin, gunorigin, axeorigin;
@@ -627,7 +1004,8 @@ static qboolean R_VRIKPoseValid (const vrik_pose_t *pose)
 
 r_vrik_palette_result_t R_VRIKBuildRangerPalette (
 	const md5_skeleton_view_t *skeleton, const lerpdata_t *lerpdata,
-	const vrik_pose_t *pose, qboolean muzzleflash,
+	const vrik_pose_t *pose, const r_vrik_lowerbody_targets_t *lower_targets,
+	qboolean muzzleflash,
 	r_vrik_palette_output_t *out)
 {
 	int jointindex[R_VRIK_JOINT_COUNT];
@@ -669,7 +1047,8 @@ r_vrik_palette_result_t R_VRIKBuildRangerPalette (
 				return R_VRIK_PALETTE_INVALID_SKELETON;
 	}
 	R_VRIKLerpPalette (skeleton, lerpdata, palette);
-	if (!R_VRIKSolvePalette (jointindex, pose, muzzleflash, palette,
+	if (!R_VRIKSolvePalette (skeleton, jointindex, pose, lower_targets,
+		muzzleflash, palette,
 		&muzzle_valid, muzzle_origin, muzzle_forward))
 		return R_VRIK_PALETTE_INVALID_SKELETON;
 	for (joint = 0; joint < skeleton->joint_count; joint++)

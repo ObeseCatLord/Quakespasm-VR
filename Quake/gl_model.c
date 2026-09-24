@@ -25,11 +25,17 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 // on the same machine.
 
 #include "quakedef.h"
+#include "miniz.h"
+
+/* miniz.h keeps this declaration disabled in the QuakeSpasm amalgamation,
+ * while common.c still links the exported implementation from miniz.c. */
+extern mz_ulong mz_crc32 (mz_ulong crc, const unsigned char *ptr, size_t buf_len);
 
 static void		 Mod_LoadSpriteModel (qmodel_t *mod, void *buffer);
 static void		 Mod_LoadBrushModel (qmodel_t *mod, const char *loadname, void *buffer);
 static void		 Mod_LoadAliasModel (qmodel_t *mod, void *buffer);
-static qboolean	 Mod_LoadMD5MeshModel (qmodel_t *mod, const void *buffer);
+static qboolean	 Mod_LoadMD5MeshModel (qmodel_t *mod, const void *buffer,
+	const char *asset_name, qfilesize_t asset_size);
 static void		 Mod_LoadMD3Model (qmodel_t *mod, const void *buffer);
 static qmodel_t *Mod_LoadModel (qmodel_t *mod, qboolean crash);
 static void		 Mod_FreeModelMemory (qmodel_t *mod);
@@ -49,8 +55,23 @@ struct md5_skeleton_data_s
 	size_t joint_count;
 	size_t pose_count;
 	size_t poses_offset;
+	qboolean from_rerelease;
 	md5_skeleton_joint_t joints[];
 };
+
+/* Donor common.c verifies the official rerelease Ranger mesh and animation
+ * by exact length and CRC32.  Verify the bytes selected by this loader so
+ * same-named custom replacements never inherit lower-body provenance. */
+static qboolean Mod_IsVerifiedRereleaseRangerAsset (const char *asset_name,
+	const char *expected_name, const void *buffer, qfilesize_t asset_size,
+	size_t expected_size, unsigned int expected_crc)
+{
+	if (!asset_name || q_strcasecmp (asset_name, expected_name) || !buffer ||
+		asset_size < 0 || (uint64_t)asset_size != (uint64_t)expected_size)
+		return false;
+	return (unsigned int)mz_crc32 (MZ_CRC32_INIT,
+		(const unsigned char *)buffer, expected_size) == expected_crc;
+}
 
 qboolean Mod_GetMD5Skeleton (const qmodel_t *mod, md5_skeleton_view_t *out)
 {
@@ -87,6 +108,7 @@ qboolean Mod_GetMD5Skeleton (const qmodel_t *mod, md5_skeleton_view_t *out)
 		: NULL;
 	view.joint_count = data->joint_count;
 	view.pose_count = data->pose_count;
+	view.from_rerelease = data->from_rerelease;
 	*out = view;
 	return true;
 }
@@ -650,6 +672,7 @@ static qmodel_t *Mod_LoadModel (qmodel_t *mod, qboolean crash)
 	unsigned int md3_enhanced_path_id = 0;
 
 	byte *buf = NULL;
+	qfilesize_t buf_filesize = -1;
 
 	char md3_name[MAX_QPATH], md5_name[MAX_QPATH];
 
@@ -662,6 +685,7 @@ static qmodel_t *Mod_LoadModel (qmodel_t *mod, qboolean crash)
 			Host_Error ("Mod_LoadModel: %s not found", mod->name); // johnfitz -- was "Mod_NumForName"
 		return NULL;
 	}
+	buf_filesize = com_filesize;
 
 	const bool mod_is_mdl = (strcmp (COM_FileGetExtension (mod->name), "mdl") == 0);
 	const bool load_enhanced_model = mod_is_mdl && r_enhancedmodels.value;
@@ -728,11 +752,12 @@ static qmodel_t *Mod_LoadModel (qmodel_t *mod, qboolean crash)
 	else if (md5_enhanced_path_id)
 	{
 		byte		*md5_buf = COM_LoadFile (md5_name, &md5_enhanced_path_id);
+		qfilesize_t md5_size = com_filesize;
 		// To assure that the external resources associated with MD5
 		// are properly filtered/loaded, we need to set mod->path_id = md5_enhanced_path_id temporarilly
 		unsigned int original_path_id = mod->path_id;
 		mod->path_id = md5_enhanced_path_id;
-		Mod_LoadMD5MeshModel (mod, md5_buf);
+		Mod_LoadMD5MeshModel (mod, md5_buf, md5_name, md5_size);
 		mod->path_id = original_path_id;
 		Mem_Free (md5_buf);
 	}
@@ -756,7 +781,8 @@ static qmodel_t *Mod_LoadModel (qmodel_t *mod, qboolean crash)
 	{
 		// by construction this is a "native" MD5 model, NOT a .mdl replacement so md5_enhanced_path_id = 0 here
 		assert (md5_enhanced_path_id == 0);
-		if (!Mod_LoadMD5MeshModel (mod, (const void *)buf))
+		if (!Mod_LoadMD5MeshModel (mod, (const void *)buf, mod->name,
+			buf_filesize))
 			Sys_Error ("Mod_LoadModel: failed to load %s", mod->name);
 	}
 	break;
@@ -4926,6 +4952,7 @@ typedef struct md5animctx_s
 	void		*animfile;
 	const void	*buffer;
 	char		 fname[MAX_QPATH];
+	qfilesize_t	filesize;
 	size_t		 numposes;
 	size_t		 numjoints;
 	jointpose_t *posedata;
@@ -4944,6 +4971,7 @@ static qboolean MD5Anim_Begin (md5animctx_t *ctx, const char *fname)
 	COM_AddExtension (ctx->fname, ".md5anim", sizeof (ctx->fname));
 	fname = ctx->fname;
 	ctx->animfile = COM_LoadFile (fname, NULL);
+	ctx->filesize = ctx->animfile ? com_filesize : -1;
 	ctx->numposes = 0;
 
 	if (ctx->animfile)
@@ -5438,7 +5466,8 @@ SKIN_PATTERN_FUNC_DEF (MD5_Skin_Name)
 	q_snprintf (output_name, MAX_QPATH, "%s_%02u_%02u", basename, skin_index, framegroup_index);
 }
 
-static qboolean Mod_LoadMD5MeshModelData (qmodel_t *mod, const void *buffer, size_t numjoints, size_t nummeshes)
+static qboolean Mod_LoadMD5MeshModelData (qmodel_t *mod, const void *buffer,
+	size_t numjoints, size_t nummeshes, qboolean verified_rerelease_mesh)
 {
 	const char *fname = mod->name;
 
@@ -5462,6 +5491,10 @@ static qboolean Mod_LoadMD5MeshModelData (qmodel_t *mod, const void *buffer, siz
 
 	if (!MD5Anim_Begin (&anim, fname))
 		return false;
+	verified_rerelease_mesh = verified_rerelease_mesh &&
+		Mod_IsVerifiedRereleaseRangerAsset (anim.fname,
+			"progs/player.md5anim", anim.animfile, anim.filesize,
+			331510, 0x0561e50aU);
 	buffer = COM_Parse (buffer);
 	if (numjoints > (size_t)INT_MAX / 2 || nummeshes > INT_MAX ||
 		anim.numposes > INT_MAX || anim.numjoints > INT_MAX ||
@@ -5739,6 +5772,7 @@ static qboolean Mod_LoadMD5MeshModelData (qmodel_t *mod, const void *buffer, siz
 		retained_skeleton->joint_count = numjoints;
 		retained_skeleton->pose_count = anim.numposes;
 		retained_skeleton->poses_offset = retained_joints_offset + retained_joint_bytes;
+		retained_skeleton->from_rerelease = verified_rerelease_mesh;
 		for (size_t joint = 0; joint < numjoints; ++joint)
 		{
 			md5_skeleton_joint_t *out_joint = &retained_skeleton->joints[joint];
@@ -5808,11 +5842,16 @@ error:
 	return false;
 }
 
-static qboolean Mod_LoadMD5MeshModel (qmodel_t *mod, const void *buffer)
+static qboolean Mod_LoadMD5MeshModel (qmodel_t *mod, const void *buffer,
+	const char *asset_name, qfilesize_t asset_size)
 {
 	const char *fname = mod->name;
 	size_t		numjoints;
 	size_t		nummeshes;
+	qboolean	verified_rerelease_mesh;
+
+	verified_rerelease_mesh = Mod_IsVerifiedRereleaseRangerAsset (asset_name,
+		"progs/player.md5mesh", buffer, asset_size, 178658, 0x7911b9b0U);
 
 	buffer = COM_Parse (buffer);
 
@@ -5833,7 +5872,8 @@ static qboolean Mod_LoadMD5MeshModel (qmodel_t *mod, const void *buffer)
 	if (strcmp (com_token, "joints"))
 		MD5ERROR ("Mod_LoadMD5MeshModel(%s): expected \"%s\", found \"%s\"\n", fname, "joints", com_token);
 
-	return Mod_LoadMD5MeshModelData (mod, buffer, numjoints, nummeshes);
+	return Mod_LoadMD5MeshModelData (mod, buffer, numjoints, nummeshes,
+		verified_rerelease_mesh);
 
 error:
 	return false;

@@ -26,13 +26,43 @@ typedef struct r_vrik_palette_output_s
 	vec3_t muzzle_forward;
 } r_vrik_palette_output_t;
 
+/* Protocol-v3 lower targets sampled from one entity frame.  present_mask
+ * means the payload is currently usable; tracked_mask distinguishes fresh
+ * hardware samples from sender-held predictions.  Predicted values are kept
+ * only from the newest sample and are never interpolated with older poses. */
+typedef enum r_vrik_lower_role_e
+{
+	R_VRIK_LOWER_HIP = 0,
+	R_VRIK_LOWER_LEFT_FOOT,
+	R_VRIK_LOWER_RIGHT_FOOT,
+	R_VRIK_LOWER_ROLE_COUNT
+} r_vrik_lower_role_t;
+
+#define R_VRIK_LOWER_BIT(role) (1u << (unsigned int)(role))
+
+typedef struct r_vrik_lowerbody_targets_s
+{
+	unsigned char present_mask;
+	unsigned char tracked_mask;
+	unsigned char predicted_mask;
+	float confidence[R_VRIK_LOWER_ROLE_COUNT];
+	vec3_t position[R_VRIK_LOWER_ROLE_COUNT];
+	vec3_t orientation[R_VRIK_LOWER_ROLE_COUNT];
+} r_vrik_lowerbody_targets_t;
+
+/* Sample only v3 hip/foot roles.  The output is cleared on failure. */
+qboolean R_VRIKSampleEntityLowerTargets (const entity_t *entity,
+	r_vrik_lowerbody_targets_t *out);
+
 /* Interpolate the two absolute animation poses using lerpdata, then apply the
- * donor Ranger head/arm and held-prop solve from pose.  Lower body, retargeting,
- * CPU vertex skinning, model state, and renderer state are deliberately outside
- * this adapter. */
+ * donor Ranger head/arm and held-prop solve from pose.  Optional v3 hip/foot
+ * roles are mapped through the same animated body basis and solved in this
+ * same frame palette.  Retargeting, CPU vertex skinning, model state, and
+ * renderer state remain outside this adapter. */
 r_vrik_palette_result_t R_VRIKBuildRangerPalette (
 	const md5_skeleton_view_t *skeleton, const lerpdata_t *lerpdata,
-	const vrik_pose_t *pose, qboolean muzzleflash,
+	const vrik_pose_t *pose, const r_vrik_lowerbody_targets_t *lower_targets,
+	qboolean muzzleflash,
 	r_vrik_palette_output_t *out);
 
 #endif /* R_VRIK_H */

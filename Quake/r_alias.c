@@ -26,6 +26,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "quakedef.h"
 #include "vr_input.h"
 #include "vr_weapon_calibration.h"
+#include "r_vrik.h"
 #include "r_vrik_render.h"
 #include <float.h>
 
@@ -464,6 +465,73 @@ qboolean R_VRIKSampleEntityPose (const entity_t *entity, vrik_pose_t *out)
 	}
 	out->body_yaw = R_VRIKLerpAngle (older->body_yaw, newest->body_yaw, blend);
 	return true;
+}
+
+/* Keep v3 lower roles independent from the legacy head/hand compatibility
+ * sample.  A present-but-untracked value is a usable sender prediction, while
+ * only two consecutive tracked values are interpolated. */
+qboolean R_VRIKSampleEntityLowerTargets (const entity_t *entity,
+	r_vrik_lowerbody_targets_t *out)
+{
+	const vrik_codec_pose_t *newest, *older = NULL;
+	double newesttime, oldertime, sampletime;
+	float blend = 1.0f;
+	int role;
+
+	if (!out)
+		return false;
+	memset (out, 0, sizeof (*out));
+	if (!entity || entity->vrik_pose_count < 1)
+		return false;
+	newest = &entity->vrik_v3_poses[0];
+	newesttime = entity->vrik_pose_times[0];
+	if (!(newest->flags & VRIK_V3_FLAG_ACTIVE) ||
+		realtime - newesttime > VRIK_POSE_STALE_TIME)
+		return false;
+	if (entity->vrik_pose_count >= 2)
+	{
+		const vrik_codec_pose_t *candidate = &entity->vrik_v3_poses[1];
+		oldertime = entity->vrik_pose_times[1];
+		if ((candidate->flags & VRIK_V3_FLAG_ACTIVE) && newesttime > oldertime)
+		{
+			older = candidate;
+			sampletime = realtime - 0.075;
+			blend = CLAMP (0.0f,
+				(float)((sampletime - oldertime) / (newesttime - oldertime)), 1.0f);
+		}
+	}
+	for (role = 0; role < R_VRIK_LOWER_ROLE_COUNT; role++)
+	{
+		const int target = VRIK_TARGET_HIP + role;
+		const unsigned char sourcebit = VRIK_TARGET_BIT (target);
+		const unsigned char destinationbit = R_VRIK_LOWER_BIT (role);
+		int axis;
+
+		if (!(newest->present_mask & sourcebit))
+			continue;
+		out->present_mask |= destinationbit;
+		out->confidence[role] = 1.0f;
+		VectorCopy (newest->targets[target].position, out->position[role]);
+		VectorCopy (newest->targets[target].orientation, out->orientation[role]);
+		if (!(newest->tracked_mask & sourcebit))
+		{
+			out->predicted_mask |= destinationbit;
+			continue;
+		}
+		out->tracked_mask |= destinationbit;
+		if (older && (older->present_mask & sourcebit) &&
+			(older->tracked_mask & sourcebit))
+			for (axis = 0; axis < 3; axis++)
+			{
+				out->position[role][axis] = older->targets[target].position[axis] +
+					(newest->targets[target].position[axis] -
+					 older->targets[target].position[axis]) * blend;
+				out->orientation[role][axis] = R_VRIKLerpAngle (
+					older->targets[target].orientation[axis],
+					newest->targets[target].orientation[axis], blend);
+			}
+	}
+	return out->present_mask != 0;
 }
 
 /*

@@ -45,6 +45,8 @@ static qboolean R_VRIKRenderCandidate (const entity_t *entity, r_vrik_candidate_
 {
 	aliashdr_t *header;
 	r_vrik_palette_output_t output;
+	r_vrik_lowerbody_targets_t lower_targets;
+	const r_vrik_lowerbody_targets_t *lower_input = NULL;
 
 	if (!entity || !candidate || !palette)
 		return false;
@@ -62,12 +64,14 @@ static qboolean R_VRIKRenderCandidate (const entity_t *entity, r_vrik_candidate_
 
 	R_SetupAliasFrame (entity, header, &candidate->lerpdata);
 	candidate->muzzleflash = (entity->effects & EF_MUZZLEFLASH) != 0;
+	if (R_VRIKSampleEntityLowerTargets (entity, &lower_targets))
+		lower_input = &lower_targets;
 	output.matrices = palette;
 	output.capacity = R_VRIK_RENDER_MAX_JOINTS;
 	output.joint_count = 0;
 	if (R_VRIKBuildRangerPalette (
 			&candidate->skeleton, &candidate->lerpdata, &candidate->pose,
-			candidate->muzzleflash, &output) != R_VRIK_PALETTE_OK ||
+			lower_input, candidate->muzzleflash, &output) != R_VRIK_PALETTE_OK ||
 		output.joint_count > UINT32_MAX)
 		return false;
 
