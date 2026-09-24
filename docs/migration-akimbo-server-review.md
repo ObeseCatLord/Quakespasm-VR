@@ -1,0 +1,33 @@
+# QBJ3 akimbo server adapter: senior design review
+
+Branch `2.0` already transports two optional akimbo poses in its pinned private
+move command and has one scoped server-side VR weapon pose. The split-model
+loader and strict client capability receiver are present. The missing vertical
+is server-side per-hand firing by QBJ3's own QuakeC. Astra Max reviewed this
+decision against the inherited QBJ3 implementation and the installed QC
+source; the current server must advertise no akimbo capability until the
+vertical is proven.
+
+| Review finding | Disposition |
+| --- | --- |
+| Extend `sv_vr_weapon_pose_scope_t` for the two accepted hand poses rather than porting the donor's second context. | **Adopt.** The existing scope owns callback lifetime, saved origin and basis, nesting, and restoration. A second context would duplicate those policies without a demonstrated incompatibility. |
+| Gate the hook by mod directory, QC function, viewmodel, weapon and animation frame alone. | **Reject.** Those names do not prove the source formula. Both local QBJ3 program revisions have the same header CRC. Pin the loaded program's SHA-256 and size and verify its firing bytecode before advertising support. The installed candidate is 905470 bytes with SHA-256 `de2c6a60df24f5ce0c3fc41b0fd6309105a0ea7ae895dfb4a6867950b9b90e34`; this identifies bytes, but correspondence to the firing source is not yet established. |
+| Restore the player origin and basis at `PF_aim` return. | **Reject.** QBJ3 stores `aim()` in a local vector and computes the projectile origin afterward, from player origin, view offset, forward/right/up and the frame-specific lateral offset. Keep the selected pose until the outer QC callback completes. |
+| Invalidate only the innermost pose on `setorigin`. | **Reject.** Relocation must deactivate the hand pose in every matching nested scope, so a later `aim()` cannot reuse a pre-teleport body anchor. Retain the existing origin restoration/relink policy. |
+| Use the most recent connection move receipt time for hand-pose freshness. | **Reject.** Queued/maintenance commands can outlive that receipt. Use the staged command's existing receipt timestamp so a new packet cannot refresh an old pose. |
+| Port only the donor's `PF_aim` entry hook. | **Revise.** Also use the selected *physical muzzle* for the best-target autoaim correction. The temporarily compensated QC origin is not the ray's physical start. |
+| Replace QBJ3 firing with a C-side weapon simulation or a new protocol. | **Reject.** Native QC must continue to own ammo, cadence, damage, effects and projectile spawning. |
+
+The smallest proof loads one exactly identified QBJ3 `progs.dat`, sends pinned
+private commands with separated left/right muzzles, and observes frame 11 and
+15 native QC shots. Check projectile origin and velocity, ammo, cadence,
+damage, player state after the callback, world-wall clamping, relocation,
+nested scopes and old queued commands. Desktop/public clients and missing or
+invalid poses must use the ordinary weapon path. Moving-platform think code
+also consumes player origin before outer restoration; test that path and adjust
+only if reachable during this weapon callback.
+
+The first implementation may add the narrowly gated hook with advertisement
+disabled. Capability negotiation and client paired rendering/input follow only
+after the QC and end-to-end shot proof. Enyo, berserk and Dwell are separate
+later adapters, not reasons to broaden this one.
