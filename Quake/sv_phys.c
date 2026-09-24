@@ -3380,19 +3380,21 @@ static qboolean SV_VRContactTransitionValid (client_t *client, edict_t *ent,
 static qboolean SV_VRStockAxeSelected (client_t *client, edict_t *ent,
 	const usercmd_t *cmd, int *hand)
 {
+	const sv_vr_stock_axe_descriptor_t *descriptor =
+		SV_VRStockAxeMeleeDescriptor ();
 	const vr_weapon_contact_t *contact = &cmd->vr_contact;
 	unsigned int hands = contact->flags &
 		(VR_WEAPON_CONTACT_LEFT_VALID | VR_WEAPON_CONTACT_RIGHT_VALID);
 	const char *weaponmodel;
 	int active_hand;
 
-	if (!SV_VRStockAxeMeleeEnabled () ||
+	if (!descriptor || !SV_VRStockAxeMeleeEnabled () ||
 		SV_VRStockAxeContactProfile () != VR_WEAPON_CONTACT_PROFILE_STOCK ||
 		!SV_VRContactOwnerLive (client, ent) ||
 		!(contact->flags & VR_WEAPON_CONTACT_IMMERSIVE_MELEE) ||
 		(hands != VR_WEAPON_CONTACT_LEFT_VALID &&
 		 hands != VR_WEAPON_CONTACT_RIGHT_VALID) ||
-		!isfinite (ent->v.weapon) || ent->v.weapon != IT_AXE)
+		!isfinite (ent->v.weapon) || ent->v.weapon != descriptor->weapon_bit)
 		return false;
 	weaponmodel = PR_GetString (ent->v.weaponmodel);
 	if (!weaponmodel || strcmp (weaponmodel, "progs/v_axe.mdl"))
@@ -3645,6 +3647,7 @@ static qboolean SV_VRStockAxeOutcome (client_t *client, edict_t *ent,
 	eval_t *cooldown, *hostile;
 	int saved_argc;
 	vec3_t saved_angles;
+	qboolean rogue;
 	qboolean alive = false;
 
 	if (!descriptor || !SV_VRStockAxeReady (client, ent, cmd) ||
@@ -3657,6 +3660,7 @@ static qboolean SV_VRStockAxeOutcome (client_t *client, edict_t *ent,
 		ED_FindFieldOffset ("show_hostile"));
 	if (!cooldown || !hostile || !isfinite (hostile->_float))
 		return false;
+	rogue = descriptor->progscrc == 54028;
 
 	saved_vm = qcvm;
 	saved_progs = qcvm->progs;
@@ -3675,12 +3679,29 @@ static qboolean SV_VRStockAxeOutcome (client_t *client, edict_t *ent,
 	pr_global_struct->time = qcvm->time;
 	qcvm->argc = 0;
 
-	/* W_Attack normally owns these id1 side effects before entering its leaf.
-	 * Keep the stock cooldown and cues while replacing only physical targeting. */
+	/* W_Attack normally owns these side effects before entering its leaf.
+	 * Keep the native cues and timing while replacing only physical targeting. */
 	hostile->_float = qcvm->time + 1.0f;
-	cooldown->_float = qcvm->time + 0.5f;
+	if (!rogue)
+		cooldown->_float = qcvm->time + 0.5f;
 	PR_ExecuteProgram (descriptor->sound_index);
+	if (rogue)
+	{
+		G_INT (OFS_PARM0) = EDICT_TO_PROG (ent);
+		qcvm->argc = 1;
+		PR_ExecuteProgram (122); /* RuneApplyBlackNoise(self) */
+		qcvm->argc = 0;
+	}
 	SV_StartSound (ent, ent->v.origin, 1, "weapons/ax1.wav", 255, 1);
+	if (rogue)
+	{
+		G_FLOAT (OFS_PARM0) = 0.5f;
+		G_INT (OFS_PARM1) = EDICT_TO_PROG (ent);
+		qcvm->argc = 2;
+		PR_ExecuteProgram (124); /* RuneApplyHell(.5, self) */
+		cooldown->_float = qcvm->time + G_FLOAT (OFS_RETURN);
+		qcvm->argc = 0;
+	}
 	if (contact && !ent->free && ent->v.health > 0 && !ent->v.deadflag)
 	{
 		sv_vr_stock_axe_trace_scope.client = client;

@@ -215,12 +215,30 @@ not substitutes for physical swing and native combat outcomes in game.
 The independent `sv_immersive_melee` policy and exact id1-only offer are kept.
 The new server policy defaults off while this stock-axe adapter is being
 qualified; an explicit server opt-in can offer it on a development session.
-The same native leaf adapter now admits the exact packed Hipnotic stock axe
-program through its loader-cached SHA-256 and existing function/statement
-pins. Rogue remains closed because its axe selector and rune prelude differ.
+The same native leaf adapter now admits exact packed id1, Hipnotic and Rogue
+stock axe programs through loader-cached SHA-256 and function/statement pins.
+Rogue uses its distinct axe weapon bit and replays the native BlackNoise/Hell
+rune prelude before the shared damage leaf; its cooldown takes the Hell return
+value. The server option remains off by default.
+
+An Astra xhigh senior review checked the exact packed programs and found that
+the trace call-site pin used `OP_CALL3` even though all three stock programs
+encode `OP_CALL4`. That error prevented every stock program from passing the
+melee identity gate. The integration pass verified the opcode against the local
+VM enum and packed statement, then corrected the pin. The review also checked
+the Rogue-specific selector and rune helper layouts. Its decisions were:
+
+| Finding | Decision |
+| --- | --- |
+| Trace-site opcode pin rejected the three exact stock programs. | **Adopt:** require the verified `OP_CALL4` opcode. |
+| Rogue axe selector differs from id1/Hipnotic. | **Adopt:** carry the exact weapon bit in the stock descriptor. |
+| Rogue attack prelude invokes rune helpers with observable sound/timer effects. | **Adopt:** replay the pinned helpers in native order and use the returned cooldown; continue to call only the native `W_FireAxe` leaf for damage. |
+| Source and compilation alone cannot establish gameplay equivalence. | **Open:** qualify real outcomes and rejection paths before enabling the policy by default. |
+
 Runtime qualification still needs a late-contact
 swing, held-trigger maintenance, impulse/tracking fallback, wall impact, and
-one native damage/cooldown/quad result in both server physics paths.
+one native damage/cooldown/quad result in both server physics paths, including
+Rogue rune effects and modified-`progs.dat` rejection.
 The source-level ownership, whiff, temporal ordering, world-hit, and
 current-shaft fixes are integrated; the complete Linux SDL3 Makefile link
 passes with `-Werror`. Exact calibrated geometry bounds and those in-game

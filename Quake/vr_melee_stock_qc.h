@@ -17,6 +17,7 @@ typedef struct
 	int trace_statement;
 	int stand_index, stand_statement;
 	int run_index, run_statement, run_parm_start, run_locals;
+	int weapon_bit;
 } sv_vr_stock_axe_descriptor_t;
 
 /* Verified against the packed progs.dat identities. Rogue is accepted only
@@ -24,13 +25,13 @@ typedef struct
 static const sv_vr_stock_axe_descriptor_t sv_vr_stock_axe_descriptors[] = {
 	{3064, 21118, 2116, 4171,
 		182, 3428, 3714, 227, 5009, 218, 4538, 3828, 226, 4997,
-		3438, 268, 7605, 269, 7643, 0, 0},
+		3438, 268, 7605, 269, 7643, 0, 0, 4096},
 	{48616, 35474, 2808, 5610,
 		199, 4818, 4725, 256, 7035, 240, 6271, 4847, 255, 7025,
-		4828, 298, 10028, 299, 10079, 4899, 2},
+		4828, 298, 10028, 299, 10079, 4899, 2, 4096},
 	{54028, 38916, 3316, 6420,
 		239, 7793, 5625, 284, 10018, 275, 9046, 5739, 283, 9992,
-		7803, 326, 13158, 327, 13196, 0, 0}
+		7803, 326, 13158, 327, 13196, 0, 0, 2048}
 };
 
 static qboolean SV_VRStockAxeFunctionPin(int index, const char *name,
@@ -92,7 +93,7 @@ static qboolean SV_VRStockAxeFunctionStatementPin(
 		return false;
 	leaf = &qcvm->functions[descriptor->leaf_index];
 	trace_statement = &qcvm->statements[descriptor->trace_statement];
-	if (trace_statement->op != OP_CALL3)
+	if (trace_statement->op != OP_CALL4)
 		return false;
 	function_global_index = (unsigned short)trace_statement->a;
 	if (function_global_index >= (unsigned int)qcvm->progs->numglobals)
@@ -128,9 +129,7 @@ static const sv_vr_stock_axe_descriptor_t *SV_VRStockAxeDescriptor(void)
 	return NULL;
 }
 
-/* Only audited id1 and Hipnotic program images grant a negotiated melee
- * profile. Rogue remains closed: its axe uses a different weapon bit and its
- * attack prelude has rune side effects. */
+/* Only exact, audited program images grant a negotiated melee profile. */
 static const sv_vr_stock_axe_descriptor_t *SV_VRStockAxeMeleeDescriptor(void)
 {
 	/* Compare the loader-cached SHA-256 values. The CRC, descriptor, and
@@ -147,6 +146,12 @@ static const sv_vr_stock_axe_descriptor_t *SV_VRStockAxeMeleeDescriptor(void)
 		0x20, 0xc0, 0xb1, 0x0b, 0xa4, 0x0c, 0xe7, 0x43,
 		0x33, 0xde, 0x42, 0x77, 0x14, 0x4d, 0xcb, 0x16
 	};
+	static const byte rogue_sha256[32] = {
+		0xb8, 0x28, 0xd7, 0xdd, 0x71, 0x50, 0x68, 0x8e,
+		0x5b, 0x56, 0x2c, 0xb4, 0xab, 0x65, 0xf0, 0xec,
+		0x20, 0x8c, 0xeb, 0xe9, 0x78, 0x04, 0xd3, 0x9f,
+		0x18, 0xfd, 0x69, 0xb7, 0x66, 0x46, 0x27, 0xac
+	};
 	const sv_vr_stock_axe_descriptor_t *descriptor = SV_VRStockAxeDescriptor();
 	if (!descriptor)
 		return NULL;
@@ -156,6 +161,9 @@ static const sv_vr_stock_axe_descriptor_t *SV_VRStockAxeMeleeDescriptor(void)
 	if (descriptor->progscrc == 48616 && qcvm->progssize == 511042 &&
 		!memcmp (qcvm->progssha256, hipnotic_sha256,
 			sizeof (hipnotic_sha256)))
+		return descriptor;
+	if (descriptor->progscrc == 54028 && qcvm->progssize == 577846 &&
+		!memcmp (qcvm->progssha256, rogue_sha256, sizeof (rogue_sha256)))
 		return descriptor;
 	return NULL;
 }
