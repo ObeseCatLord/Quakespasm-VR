@@ -235,7 +235,8 @@ packet framing, gameplay-first relay budgets and reconnect generations through
 vkQuake's existing network loops. Commit `a173d771` connects opt-in microphone
 consent, SDL2/SDL3 capture, VAD/PTT, Opus coding, jitter playout and stereo
 positional/radio mixing to the existing sound owner. Commit `4f75fe87` bounds
-SDL3 playback refills across DMA-ring wraps. The HUD/meter, Steam Audio HRTF,
+SDL3 playback refills across DMA-ring wraps. Commit `63c8a77d` adds the shared
+desktop/OpenXR voice HUD, meter and active-speaker indicators. Steam Audio HRTF,
 room acoustics and wet-only local reflections remain open. None of these
 changes has live audio qualification.
 
@@ -255,6 +256,12 @@ changes has live audio qualification.
 | XR-010 — Shared stereo scene preparation and conservative two-eye visibility | XR:Quake/gl_rmain.c:179 (R_Prepare); XR:docs/vulkan-stereo-preparation-review.md:1 (stereo); XR:docs/vulkan-stereo-scene-review.md:1 (stereo) | Quake/gl_rmain.c;Quake/r_world.c;donor task/pass/camera data; **GOAL**, P1 | PVS water boundaries, moving brushes, avatars and transparent objects remain visible to either eye; simulation/lighting/particles update once. |
 | XR-011 — Single-pass opaque world/models and per-eye transparency/UI exceptions | XR:docs/vulkan-multiview-review.md:19 (multiview); XR:docs/vulkan-stereo-scene-review.md:1 (stereo) | Existing donor shaders/passes/material eligibility; **GOAL**, P1 proof / P4 completion | P1 proves representative task-enabled opaque multiview; P4 completes eligible passes. Distinct eye layers share valid work; transparency/UI exceptions preserve sorting. |
 | XR-012 — Pipeline caching/warmup and camera descriptor reuse | XR:Quake/vk_renderer.cpp:2 (pipeline); XR:docs/renderer-performance-priorities.md:33 (pipeline) | Donor pipeline cache/descriptor/frame owners; **DONOR-ADAPT**, P4 | Avoid duplicate cache systems; cache keys include formats/sample counts/view masks; compare cold/warm frame-time spikes. |
+
+Fresh configurations request eye-tracked foveation when the runtime supports
+gaze. `VRF_SelectMode` keeps full-rate shading until gaze is focused, valid,
+fresh and stable for three frames; unavailable/lost gaze never selects fixed
+foveation. Users can disable eye tracking or foveation independently in VR
+options, and fixed mode is only selected explicitly.
 
 ### Platforms and delivery
 

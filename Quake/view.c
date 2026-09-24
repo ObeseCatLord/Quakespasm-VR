@@ -81,8 +81,10 @@ cvar_t r_viewmodel_quake = {"r_viewmodel_quake", "0", CVAR_ARCHIVE_GAME};
 cvar_t vr_world_scale = {"vr_world_scale", "1.0", CVAR_ARCHIVE};
 cvar_t vr_floor_offset = {"vr_floor_offset", "-16", CVAR_ARCHIVE};
 cvar_t vr_hud_scale = {"vr_hud_scale", "0.025", CVAR_ARCHIVE};
-cvar_t vr_eye_tracking = {"vr_eye_tracking", "0", CVAR_ARCHIVE};
-cvar_t vr_foveation = {"vr_foveation", "0", CVAR_ARCHIVE};
+/* Request eye mode on capable runtimes; policy keeps full-rate shading until
+ * gaze is valid and stable. Fixed foveation remains an explicit menu choice. */
+cvar_t vr_eye_tracking = {"vr_eye_tracking", "1", CVAR_ARCHIVE};
+cvar_t vr_foveation = {"vr_foveation", "2", CVAR_ARCHIVE};
 cvar_t vr_viewkick = {"vr_viewkick", "0", CVAR_NONE};
 cvar_t vr_aimmode = {"vr_aimmode", "7", CVAR_ARCHIVE};
 cvar_t vr_deadzone = {"vr_deadzone", "30", CVAR_ARCHIVE};
