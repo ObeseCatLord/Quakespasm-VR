@@ -165,8 +165,6 @@ extern cvar_t crosshair_def;
 extern cvar_t crosshair_size;
 extern cvar_t crosshair_color;
 extern cvar_t crosshair_alpha;
-extern cvar_t vr_enabled;
-qboolean VR_IsLeftHanded (void);
 
 static qboolean slider_grab;
 static qboolean scrollbar_grab;
@@ -4663,8 +4661,8 @@ static void M_ServerModDownload_Draw (cb_context_t *cbx)
 		Draw_Character (cbx, 32, action_y, 12 + ((int)(realtime * 4) & 1));
 	}
 
-	if (vr_enabled.value)
-		M_Print (cbx, 8, 192, VR_IsLeftHanded () ?
+	if (V_TrackedSessionActive ())
+		M_Print (cbx, 8, 192, VR_InputDominantPhysicalHand () == 0 ?
 			"L-Trigger/R-A: select L-B: cancel" :
 			"R-Trigger/L-A: select R-B: cancel");
 	else
