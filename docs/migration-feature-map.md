@@ -174,14 +174,15 @@ The `2.0` branch now directly reuses the source's hardware-independent FBT
 identity manager, pose filter, profile parser and persistent storage. OpenXR
 tracker snapshots now reach the role manager with explicit list/assign commands
 and one identity per completed frame. Saved profiles can be selected and bind
-roles by safe serial. Calibration, menu controls and lower-body pose sending are
-still separate integration work; tracker enumeration and persistence alone do
-not satisfy FBT parity. Commit `902e58d1` adds the receiving half: v3 hip/foot
+roles by safe serial. Commit `902e58d1` adds the receiving half: v3 hip/foot
 samples feed the existing frame-owned Vulkan Ranger palette, including its
 tracked bounds and shadow poses. The lower-body solve activates only when the
 selected mesh and animation match the donor's verified rerelease fingerprints.
-Local calibration, filtered anatomical output and menu controls are still
-required before FBT is a user-visible feature.
+Commit `242d6dbb` adds serial-bound local calibration, persisted acceptance and
+filtered anatomical hip/foot sending. Commit `a0ca86b3` provides an explicit,
+verified rerelease model-only fallback without replacing classic game content.
+Calibration visuals and menu role controls remain open; hardware behavior is
+not qualified by the local build.
 
 ### QuakeC and mod compatibility
 
@@ -231,10 +232,12 @@ required before FBT is a user-visible feature.
 
 Commit `43bfc199` adds the optional private voice handshake, bounded Opus
 packet framing, gameplay-first relay budgets and reconnect generations through
-vkQuake's existing network loops. It exposes audio hooks but has no microphone
-capture, codec or playback yet; AUDIO-001 and AUDIO-002 are therefore still
-incomplete. Commit `4f75fe87` bounds SDL3 playback refills across DMA-ring
-wraps. Neither change has live audio qualification.
+vkQuake's existing network loops. Commit `a173d771` connects opt-in microphone
+consent, SDL2/SDL3 capture, VAD/PTT, Opus coding, jitter playout and stereo
+positional/radio mixing to the existing sound owner. Commit `4f75fe87` bounds
+SDL3 playback refills across DMA-ring wraps. The HUD/meter, Steam Audio HRTF,
+room acoustics and wet-only local reflections remain open. None of these
+changes has live audio qualification.
 
 ### OpenXR and stereo goals
 
