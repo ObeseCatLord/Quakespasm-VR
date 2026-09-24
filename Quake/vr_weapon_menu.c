@@ -16,6 +16,7 @@
 extern qpic_t *Sbar_WeaponMenuIcon (int item_bit);
 
 #define VR_WEAPON_MENU_MAX_ENTRIES VR_WEAPON_CATALOG_MAX_OBSERVATIONS
+#define VR_WEAPON_MENU_PLAYSPACE_MESH_SCALE 0.28f
 
 typedef enum {
 	VR_WEAPON_MENU_MODEL_NONE,
@@ -2049,6 +2050,12 @@ void VR_WeaponMenu_Cancel (void)
 	VR_WeaponMenu_ClearSession ();
 }
 
+static float VR_WeaponMenu_ModelYaw (const float world_from_ndc[16])
+{
+	return atan2f (world_from_ndc[9], world_from_ndc[8]) *
+		(180.0f / (float)M_PI) + 180.0f + (float)cl.time * 30.0f;
+}
+
 static void VR_WeaponMenu_PrepareFrame (const vr_weapon_menu_catalog_t *catalog,
 	float radius, float scale, const float world_from_ndc[16],
 	qboolean playspace)
@@ -2111,9 +2118,7 @@ void VR_WeaponMenu_SetVRPanel (const float world_from_ndc[16], qboolean playspac
 		return;
 	memcpy (vr_weapon_menu_frame.world_from_ndc, world_from_ndc,
 		sizeof (vr_weapon_menu_frame.world_from_ndc));
-	vr_weapon_menu_frame.model_yaw = atan2f (world_from_ndc[9],
-		world_from_ndc[8]) * (180.0f / (float)M_PI) + 180.0f +
-		(float)cl.time * 30.0f;
+	vr_weapon_menu_frame.model_yaw = VR_WeaponMenu_ModelYaw (world_from_ndc);
 	vr_weapon_menu_frame.playspace = playspace;
 	vr_weapon_menu_frame.panel_valid = true;
 }
@@ -2146,13 +2151,59 @@ static qboolean VR_WeaponMenu_PanelBasis (const float world_from_ndc[16],
 		VectorNormalize (forward) > 0.0f;
 }
 
+static qboolean VR_WeaponMenu_RayBounds (const vec3_t mins, const vec3_t maxs,
+	const vec3_t ray_origin, const vec3_t ray_direction, float *distance)
+{
+	float near_distance = 0.0f;
+	float far_distance = FLT_MAX;
+
+	for (int axis = 0; axis < 3; ++axis)
+	{
+		float first, second;
+		if (!isfinite (mins[axis]) || !isfinite (maxs[axis]) ||
+			mins[axis] > maxs[axis] || !isfinite (ray_origin[axis]) ||
+			!isfinite (ray_direction[axis]))
+			return false;
+		if (fabsf (ray_direction[axis]) < 1.0e-8f)
+		{
+			if (ray_origin[axis] < mins[axis] || ray_origin[axis] > maxs[axis])
+				return false;
+			continue;
+		}
+		first = (mins[axis] - ray_origin[axis]) / ray_direction[axis];
+		second = (maxs[axis] - ray_origin[axis]) / ray_direction[axis];
+		if (first > second)
+		{
+			const float swap = first;
+			first = second;
+			second = swap;
+		}
+		near_distance = q_max (near_distance, first);
+		far_distance = q_min (far_distance, second);
+		if (near_distance > far_distance)
+			return false;
+	}
+	if (!isfinite (near_distance) || far_distance < 0.0f)
+		return false;
+	*distance = near_distance;
+	return true;
+}
+
 static int VR_WeaponMenu_HitWorld (const vr_weapon_menu_frame_t *frame,
-	const float world_from_ndc[16], const vec3_t ray_origin, const vec3_t ray_direction)
+	const float world_from_ndc[16], const vec3_t ray_origin,
+	const vec3_t ray_direction)
 {
 	vec3_t right, down, forward, direction, trace_start;
-	float best_distance_sq = 2.75f * 2.75f;
+	float best_distance = FLT_MAX;
+	const float model_yaw = world_from_ndc ?
+		VR_WeaponMenu_ModelYaw (world_from_ndc) : 0.0f;
+	const float yaw_radians = DEG2RAD (model_yaw);
+	const float yaw_cos = cosf (yaw_radians);
+	const float yaw_sin = sinf (yaw_radians);
+	const float mesh_scale = VR_WEAPON_MENU_PLAYSPACE_MESH_SCALE;
 	int best = -1;
 	if (!world_from_ndc || !ray_origin || !ray_direction ||
+		!isfinite (model_yaw) ||
 		!VR_WeaponMenu_PanelBasis (world_from_ndc, right, down, forward))
 		return -1;
 	VectorCopy (ray_direction, direction);
@@ -2161,33 +2212,79 @@ static int VR_WeaponMenu_HitWorld (const vr_weapon_menu_frame_t *frame,
 		return -1;
 	for (int i = 0; i < frame->count; ++i)
 	{
-		vec3_t target, to_target, closest, remaining, impact, hit_normal;
-		float along, distance_sq;
-		if (!frame->visible[i].selectable)
+		const qmodel_t *model = frame->model[i];
+		const vr_weapon_menu_entry_t *entry = frame->visible[i].entry;
+		vec3_t target, local_origin, local_direction, contact, remaining;
+		vec3_t impact, hit_normal;
+		float schema_scale, scale_value, layout_scale, entity_scale, world_scale, along;
+		float delta_x, delta_y;
+		if (!frame->visible[i].selectable || !model || !frame->geometry[i])
+			continue;
+		schema_scale = isfinite (entry->model_scale) && entry->model_scale > 0.0f ?
+			entry->model_scale : 1.0f;
+		/* A hit immediately draws this candidate at the selected model scale. */
+		scale_value = 0.40f * schema_scale;
+		layout_scale = 0.25f * schema_scale * mesh_scale;
+		entity_scale = ENTSCALE_DECODE (ENTSCALE_ENCODE (scale_value));
+		world_scale = entity_scale * mesh_scale;
+		if (!isfinite (layout_scale) || !isfinite (world_scale) || world_scale <= 0.0f)
 			continue;
 		VR_WeaponMenu_SlotWorldOrigin (&frame->visible[i], world_from_ndc,
-			right, down, forward, 0.28f, target);
-		VectorMA (target, 3.0f * 0.28f, right, target);
+			right, down, forward, mesh_scale, target);
+		VectorMA (target, 0.5f * (model->mins[2] + model->maxs[2]) *
+			layout_scale, down, target);
 		if (!isfinite (target[0]) || !isfinite (target[1]) || !isfinite (target[2]))
 			continue;
-		VectorSubtract (target, ray_origin, to_target);
-		along = DotProduct (to_target, direction);
-		if (!isfinite (along) || along <= 0.0f || along >= 128.0f)
+		delta_x = ray_origin[0] - target[0];
+		delta_y = ray_origin[1] - target[1];
+		local_origin[0] = (yaw_cos * delta_x + yaw_sin * delta_y) / world_scale;
+		local_origin[1] = (-yaw_sin * delta_x + yaw_cos * delta_y) / world_scale;
+		local_origin[2] = (ray_origin[2] - target[2]) / world_scale;
+		delta_x = direction[0];
+		delta_y = direction[1];
+		local_direction[0] = (yaw_cos * delta_x + yaw_sin * delta_y) / world_scale;
+		local_direction[1] = (-yaw_sin * delta_x + yaw_cos * delta_y) / world_scale;
+		local_direction[2] = direction[2] / world_scale;
+		if (!VR_WeaponMenu_RayBounds (model->mins, model->maxs,
+			local_origin, local_direction, &along) || along > 128.0f ||
+			along >= best_distance)
 			continue;
-		VectorMA (ray_origin, along, direction, closest);
-		VectorSubtract (target, closest, remaining);
-		distance_sq = DotProduct (remaining, remaining);
-		if (!isfinite (distance_sq) || distance_sq >= best_distance_sq)
-			continue;
+		VectorMA (ray_origin, along, direction, contact);
 		if (cl.worldmodel && !cl.worldmodel->needload)
 		{
-			CL_TraceWorldLine (trace_start, target, impact, hit_normal);
-			VectorSubtract (target, impact, remaining);
+			CL_TraceWorldLine (trace_start, contact, impact, hit_normal);
+			VectorSubtract (contact, impact, remaining);
 			if (VectorLength (remaining) >= 1.0f)
 				continue;
 		}
-		best_distance_sq = distance_sq;
+		best_distance = along;
 		best = i;
+	}
+	return best;
+}
+
+static int VR_WeaponMenu_HitWorldFallback (const vr_weapon_menu_frame_t *frame,
+	int pointer_x, int pointer_y)
+{
+	int best = -1;
+	float best_distance = FLT_MAX;
+	for (int i = 0; i < frame->count; ++i)
+	{
+		const vr_weapon_menu_visible_t *visible = &frame->visible[i];
+		float dx, dy, distance;
+		if (!visible->selectable ||
+			(frame->model[i] && frame->geometry[i]) ||
+			pointer_x < visible->left || pointer_x > visible->left + visible->width ||
+			pointer_y < visible->top || pointer_y > visible->top + visible->height)
+			continue;
+		dx = pointer_x - visible->center_x;
+		dy = pointer_y - visible->center_y;
+		distance = dx * dx + dy * dy;
+		if (distance < best_distance)
+		{
+			best_distance = distance;
+			best = i;
+		}
 	}
 	return best;
 }
@@ -2198,7 +2295,8 @@ int VR_WeaponMenu_DrawModels (struct cb_context_s *context)
 	const vr_weapon_menu_frame_t *frame = &vr_weapon_menu_frame;
 	const float *m = frame->world_from_ndc;
 	vec3_t right, down, forward;
-	const float mesh_scale = frame->playspace ? 0.28f : 1.0f;
+	const float mesh_scale = frame->playspace ?
+		VR_WEAPON_MENU_PLAYSPACE_MESH_SCALE : 1.0f;
 	int aliaspolys = 0;
 
 	if (!cbx || !VR_WeaponMenu_IsOpenVR () || !vr_weapon_menu_frame_valid ||
@@ -2316,6 +2414,9 @@ void VR_WeaponMenu_SetVRPointer (qboolean tracking_valid, qboolean pointer_valid
 		world_from_ndc, ray_origin, ray_direction) :
 		VR_WeaponMenu_Hit (vr_weapon_menu_frame.visible,
 			vr_weapon_menu_frame.count, pointer_x, pointer_y, radius);
+	if (playspace && selected < 0)
+		selected = VR_WeaponMenu_HitWorldFallback (&vr_weapon_menu_frame,
+			pointer_x, pointer_y);
 	action = VR_WeaponMenu_Actions (NULL, vr_weapon_menu_frame.actions,
 		vr_weapon_menu_frame.action_count, scale,
 		pointer_x, pointer_y, false, -1);
