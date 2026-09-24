@@ -811,7 +811,6 @@ void R_DrawBrushModel (cb_context_t *cbx, entity_t *e, int chain, int *brushpoly
 	memcpy (mvp, vulkan_globals.view_projection_matrix, 16 * sizeof (float));
 	MatrixMultiply (mvp, model_matrix);
 
-	R_PushConstants (cbx, VK_SHADER_STAGE_ALL_GRAPHICS, 0, 16 * sizeof (float), mvp);
 	R_ClearTextureChains (clmodel, chain);
 	const int worker_index = Tasks_GetWorkerIndex ();
 	if (sort && !clmodel->bogus_tree)
@@ -848,9 +847,9 @@ void R_DrawBrushModel (cb_context_t *cbx, entity_t *e, int chain, int *brushpoly
 		}
 
 	if (!water_transparent_only)
-		R_DrawTextureChains (cbx, clmodel, e, chain);
+		R_DrawTextureChains (cbx, clmodel, e, chain, mvp);
 	if (clmodel->used_specials & SURF_DRAWTURB)
-		R_DrawTextureChains_Water (cbx, clmodel, e, chain, water_opaque_only, water_transparent_only);
+		R_DrawTextureChains_Water (cbx, clmodel, e, chain, water_opaque_only, water_transparent_only, mvp);
 	R_PushConstants (cbx, VK_SHADER_STAGE_ALL_GRAPHICS, 0, 16 * sizeof (float), vulkan_globals.view_projection_matrix);
 }
 
@@ -1011,6 +1010,7 @@ void R_DrawIndirectBrushes (cb_context_t *cbx, qboolean draw_water, qboolean tra
 				cbx->subpass_type, vulkan_globals.world_pipelines[cbx->pipeline_variant][pipeline_index], vulkan_globals.world_wboit_pipelines[pipeline_index],
 				vulkan_globals.world_mboit_moment_pipelines[pipeline_index], vulkan_globals.world_mboit_composite_pipelines[pipeline_index]);
 			R_BindPipeline (cbx, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+			R_PushConstants (cbx, VK_SHADER_STAGE_ALL_GRAPHICS, 0, 16 * sizeof (float), vulkan_globals.view_projection_matrix);
 			if (draw_water)
 				R_PushConstants (cbx, VK_SHADER_STAGE_ALL_GRAPHICS, 20 * sizeof (float), sizeof (alpha), &alpha);
 			const uint32_t instance_base = ((uint32_t)bmodel_instances_index * MAX_MODELS) + 1;
@@ -1051,6 +1051,7 @@ void R_DrawIndirectBrushes_ShowTris (cb_context_t *cbx)
 		cbx, VK_PIPELINE_BIND_POINT_GRAPHICS,
 		r_showtris.value == 1 ? vulkan_globals.showtris_indirect_pipeline[cbx->pipeline_variant]
 							  : vulkan_globals.showtris_indirect_depth_test_pipeline[cbx->pipeline_variant]);
+	R_PushConstants (cbx, VK_SHADER_STAGE_ALL_GRAPHICS, 0, 16 * sizeof (float), vulkan_globals.view_projection_matrix);
 
 	vulkan_globals.vk_cmd_bind_descriptor_sets (
 		cbx->cb, VK_PIPELINE_BIND_POINT_GRAPHICS, vulkan_globals.world_pipeline_layout.handle, 4, 1, &vulkan_globals.bmodel_instances_desc_set, 0, NULL);

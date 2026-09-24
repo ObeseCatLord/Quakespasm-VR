@@ -1199,7 +1199,7 @@ Draw the current batch if non-empty and clears it, ready for more R_BatchSurface
 static void R_FlushBatch (
 	cb_context_t *cbx, qboolean fullbright_enabled, qboolean alpha_test, qboolean alpha_blend, float alpha, qboolean use_zbias, qboolean shading_rate_eligible,
 	gltexture_t *lightmap_texture,
-	uint32_t *brushpasses)
+	uint32_t *brushpasses, const float *mvp)
 {
 	if (cbx->num_vbo_indices > 0)
 	{
@@ -1209,6 +1209,9 @@ static void R_FlushBatch (
 			cbx->subpass_type, vulkan_globals.world_pipelines[cbx->pipeline_variant][pipeline_index], vulkan_globals.world_wboit_pipelines[pipeline_index],
 			vulkan_globals.world_mboit_moment_pipelines[pipeline_index], vulkan_globals.world_mboit_composite_pipelines[pipeline_index]);
 		R_BindPipeline (cbx, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+		// A pipeline-layout change clears push constants, so publish the MVP
+		// at the draw that consumes it rather than before texture chaining.
+		R_PushConstants (cbx, VK_SHADER_STAGE_ALL_GRAPHICS, 0, 16 * sizeof (float), mvp);
 		if (alpha_blend)
 			R_PushConstants (cbx, VK_SHADER_STAGE_ALL_GRAPHICS, 20 * sizeof (float), sizeof (alpha), &alpha);
 		if (!alpha_test && !alpha_blend)
@@ -1250,14 +1253,14 @@ using VBOs.
 static void R_BatchSurface (
 	cb_context_t *cbx, msurface_t *s, qboolean fullbright_enabled, qboolean alpha_test, qboolean alpha_blend, float alpha, qboolean use_zbias,
 	qboolean shading_rate_eligible, gltexture_t *lightmap_texture,
-	uint32_t *brushpasses)
+	uint32_t *brushpasses, const float *mvp)
 {
 	int num_surf_indices;
 
 	num_surf_indices = R_NumTriangleIndicesForSurf (s);
 
 	if (cbx->num_vbo_indices + num_surf_indices > MAX_BATCH_SIZE)
-		R_FlushBatch (cbx, fullbright_enabled, alpha_test, alpha_blend, alpha, use_zbias, shading_rate_eligible, lightmap_texture, brushpasses);
+		R_FlushBatch (cbx, fullbright_enabled, alpha_test, alpha_blend, alpha, use_zbias, shading_rate_eligible, lightmap_texture, brushpasses, mvp);
 
 	R_TriangleIndicesForSurf (s, &cbx->vbo_indices[cbx->num_vbo_indices]);
 	cbx->num_vbo_indices += num_surf_indices;
@@ -1304,7 +1307,7 @@ void R_DrawTextureChains_ShowTris (cb_context_t *cbx, qmodel_t *model, texchain_
 R_DrawTextureChains_Water -- johnfitz
 ================
 */
-void R_DrawTextureChains_Water (cb_context_t *cbx, qmodel_t *model, entity_t *ent, texchain_t chain, qboolean opaque_only, qboolean transparent_only)
+void R_DrawTextureChains_Water (cb_context_t *cbx, qmodel_t *model, entity_t *ent, texchain_t chain, qboolean opaque_only, qboolean transparent_only, const float *mvp)
 {
 	int			i, type;
 	msurface_t *s;
@@ -1357,14 +1360,14 @@ void R_DrawTextureChains_Water (cb_context_t *cbx, qmodel_t *model, entity_t *en
 			{
 				if (s->lightmaptexturenum != lastlightmap)
 				{
-					R_FlushBatch (cbx, false, false, alpha_blend, alpha, use_zbias, false, lightmap_texture, &brushpasses);
+					R_FlushBatch (cbx, false, false, alpha_blend, alpha, use_zbias, false, lightmap_texture, &brushpasses, mvp);
 					lightmap_texture = (s->lightmaptexturenum >= 0) ? lightmaps[s->lightmaptexturenum].texture : greylightmap;
 					lastlightmap = s->lightmaptexturenum;
 				}
-				R_BatchSurface (cbx, s, false, false, alpha_blend, alpha, use_zbias, false, lightmap_texture, &brushpasses);
+				R_BatchSurface (cbx, s, false, false, alpha_blend, alpha, use_zbias, false, lightmap_texture, &brushpasses, mvp);
 			}
 
-			R_FlushBatch (cbx, false, false, alpha_blend, alpha, use_zbias, false, lightmap_texture, &brushpasses);
+			R_FlushBatch (cbx, false, false, alpha_blend, alpha, use_zbias, false, lightmap_texture, &brushpasses, mvp);
 		}
 	}
 
@@ -1376,7 +1379,7 @@ void R_DrawTextureChains_Water (cb_context_t *cbx, qmodel_t *model, entity_t *en
 R_DrawTextureChains_Multitexture
 ================
 */
-void R_DrawTextureChains_Multitexture (cb_context_t *cbx, qmodel_t *model, entity_t *ent, texchain_t chain, const float alpha, int texstart, int texend)
+void R_DrawTextureChains_Multitexture (cb_context_t *cbx, qmodel_t *model, entity_t *ent, texchain_t chain, const float alpha, int texstart, int texend, const float *mvp)
 {
 	int			 i;
 	msurface_t	*s;
@@ -1439,16 +1442,16 @@ void R_DrawTextureChains_Multitexture (cb_context_t *cbx, qmodel_t *model, entit
 			if (s->lightmaptexturenum != lastlightmap)
 			{
 				R_FlushBatch (
-					cbx, fullbright_enabled, alpha_test, alpha_blend, alpha, texture_zbias, shading_rate_eligible, lightmap_texture, &brushpasses);
+					cbx, fullbright_enabled, alpha_test, alpha_blend, alpha, texture_zbias, shading_rate_eligible, lightmap_texture, &brushpasses, mvp);
 				lightmap_texture = lightmaps[s->lightmaptexturenum].texture;
 			}
 
 			lastlightmap = s->lightmaptexturenum;
 			R_BatchSurface (
-				cbx, s, fullbright_enabled, alpha_test, alpha_blend, alpha, texture_zbias, shading_rate_eligible, lightmap_texture, &brushpasses);
+				cbx, s, fullbright_enabled, alpha_test, alpha_blend, alpha, texture_zbias, shading_rate_eligible, lightmap_texture, &brushpasses, mvp);
 		}
 
-		R_FlushBatch (cbx, fullbright_enabled, alpha_test, alpha_blend, alpha, texture_zbias, shading_rate_eligible, lightmap_texture, &brushpasses);
+		R_FlushBatch (cbx, fullbright_enabled, alpha_test, alpha_blend, alpha, texture_zbias, shading_rate_eligible, lightmap_texture, &brushpasses, mvp);
 	}
 
 	Atomic_AddUInt32 (&rs_brushpasses, brushpasses);
@@ -1459,7 +1462,7 @@ void R_DrawTextureChains_Multitexture (cb_context_t *cbx, qmodel_t *model, entit
 R_DrawWorld -- johnfitz -- rewritten
 =============
 */
-void R_DrawTextureChains (cb_context_t *cbx, qmodel_t *model, entity_t *ent, texchain_t chain)
+void R_DrawTextureChains (cb_context_t *cbx, qmodel_t *model, entity_t *ent, texchain_t chain, const float *mvp)
 {
 	float entalpha;
 
@@ -1470,7 +1473,7 @@ void R_DrawTextureChains (cb_context_t *cbx, qmodel_t *model, entity_t *ent, tex
 
 	if (!r_gpulightmapupdate.value)
 		R_UploadLightmaps ();
-	R_DrawTextureChains_Multitexture (cbx, model, ent, chain, entalpha, 0, model->texofs[TEXTYPE_SKY]);
+	R_DrawTextureChains_Multitexture (cbx, model, ent, chain, entalpha, 0, model->texofs[TEXTYPE_SKY], mvp);
 }
 
 /*
@@ -1486,7 +1489,7 @@ void R_DrawWorld (cb_context_t *cbx, int index)
 	R_BeginDebugUtilsLabel (cbx, "World");
 	if (!r_gpulightmapupdate.value)
 		R_UploadLightmaps ();
-	R_DrawTextureChains_Multitexture (cbx, cl.worldmodel, NULL, chain_world, 1, world_texstart[index], world_texend[index]);
+	R_DrawTextureChains_Multitexture (cbx, cl.worldmodel, NULL, chain_world, 1, world_texstart[index], world_texend[index], vulkan_globals.view_projection_matrix);
 	R_EndDebugUtilsLabel (cbx);
 }
 
@@ -1508,11 +1511,11 @@ void R_DrawWorld_Water (cb_context_t *cbx, qboolean transparent)
 		else
 		{
 			R_ChainVisSurfaces_TransparentWater ();
-			R_DrawTextureChains_Water (cbx, cl.worldmodel, NULL, chain_world, false, true);
+			R_DrawTextureChains_Water (cbx, cl.worldmodel, NULL, chain_world, false, true, vulkan_globals.view_projection_matrix);
 		}
 	}
 	else
-		R_DrawTextureChains_Water (cbx, cl.worldmodel, NULL, chain_world, !transparent, transparent);
+		R_DrawTextureChains_Water (cbx, cl.worldmodel, NULL, chain_world, !transparent, transparent, vulkan_globals.view_projection_matrix);
 	R_EndDebugUtilsLabel (cbx);
 }
 
