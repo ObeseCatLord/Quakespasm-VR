@@ -1,6 +1,6 @@
 # Gorilla locomotion integration: verified design brief
 
-Status: Astra senior review complete; implementation still pending. This is a solo-operator engine port;
+Status: Astra senior review complete; implementation underway. This is a solo-operator engine port;
 the aim is the smallest end-to-end adapter, not a new movement architecture.
 
 ## Goal and behavioral reference
@@ -19,7 +19,7 @@ must keep their current owners. Reference: the pinned QuakeSpasm OpenVR
 | Branch and worktree | [verified: `git status --short --branch`] `2.0` in `quakespasm-2.0`; `docs/migration-2.0.md` is user-dirty and must not be edited/staged. `main` must remain untouched. |
 | Shared solver already present | [verified: `rg 'VRG_Step' Quake/pmove.c`; inspect `Quake/vr_gorilla.h`, `vr_gorilla_swim.h`, `vr_gorilla_types.h`] The fork's pure hand trace, anchor, launch and swim helpers are already present. `pmove.c:1936–2032` can consume raw or authored motion and emit authored motion. Re-copying the solver would duplicate policy. |
 | Prediction and wire substrate present | [verified: `Quake/pmove.h:91–99`, `cl_main.c:1163–1247`, `cl_input.c:620–732`, `sv_user.c:729–812`, `cl_parse.c:2795–2928`] The command structures, raw/trusted encoding, decode, replay gates and ACK state parser exist. These are not evidence that Gorilla can be enabled. |
-| Producer and negotiation missing | [verified: search for Gorilla in `Quake/vr_input.c`, `vr_openxr.cpp` finds no producer; search for assignments to `cl.vr_gorilla_supported/allowed/trusted_supported/cap_sent` finds none outside reset/ACK] The opt-in `vr_gorilla` menu preference now exists, but no OpenXR hand sample fills the command and no server permission offer makes it usable. |
+| Producer and negotiation missing at review | [verified against the pre-`56f38f80` tree] The opt-in `vr_gorilla` preference existed, but no OpenXR hand sample filled the command and no server permission offer was available. See the implementation checkpoint below for the newer state. |
 | Server authority blocked | [verified: `sv_main.c:683–724`, `sv_user.c:1073–1081`, `sv_phys.c:4485–4504,4863–4866`, `server.h:166–325`] The current stock-only private WALK trial explicitly rejects Gorilla, and its PMove invocation sets `gorilla_allowed=false`. `client_t` has contact state but no Gorilla authority/queue state. Ordinary nontrial physics still exists; there is no completed Gorilla state owner there. |
 | Trial is not the default server path | [verified: `sv_main.c:43,678–731`] `sv_private_pmove_walk` defaults to `0`; when enabled, admission requires a remote spawned owner, exact stock progs identity, dry WALK, no custom stats/physics or pusher. Treating that trial as the sole Gorilla owner would fail the inherited default-on server permission and local/legacy/mod paths. |
 | Donor's tracking shape | [verified: `../quakespasm-openvr/Quake/vr.c:7395–7426`] `VR_GetGorillaSample` needs both tracked hands, head, body origin, a reset latch, and velocity in Quake units; it suppresses sampling in menus/adjustment. It uses an opt-in cvar and a server permission gate. |
@@ -129,3 +129,21 @@ unverified. The legacy proof does not establish native PMove replay parity.
 Reopen this architecture decision if a second movement state machine, new
 command clock or repeated cross-layer repairs become necessary. No human
 choice is needed for the stated parity goal.
+
+## Implementation checkpoint after review
+
+Commit `56f38f80` connects a bounded two-palm OpenXR sample to the existing
+private command journal, independently of weapon calibration. Preview copies
+the pending reset without consuming it; the final sequenced command commits
+the latch. The server advertises raw protocol-1 permission on the reliable
+stream only to spawned pinned peers, and accepts an exact capability reply.
+`sv_gorilla` defaults on and `sv_gorilla_trustclient` is registered with the
+donor's default, but trusted mode is **not advertised or active**. The optional
+stock WALK trial advertises Gorilla as disallowed while it still rejects such
+commands. Linux debug compilation passed.
+
+This is not yet functional Gorilla movement: ordinary server physics still
+does not consume the accepted raw samples, and no matching Gorilla state is
+written in ACKs. The next implementation must reuse the existing private
+command FIFO and native collision/QuakeC frame owner, including ordered OFF
+boundaries, state invalidation and coherent client replay.
