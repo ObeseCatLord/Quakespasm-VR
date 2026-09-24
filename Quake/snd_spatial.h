@@ -67,6 +67,10 @@ void Spatial_VoiceSource(int slot, int active, const float *origin,
 	int position_valid, float gain, float room_send);
 int Spatial_VoicePCM(int slot, const int16_t *pcm, int frames);
 void Spatial_ResetVoice(int slot);
+/* Local microphone monitor; reset excludes the audio callback. */
+void Spatial_SelfGain(float gain);
+int Spatial_SelfPCM(const int16_t *pcm, int frames);
+void Spatial_ResetSelf(void);
 
 /* geometry ownership transfers to this call; simulation starts on its worker. */
 int Spatial_ReplaceRoom(sa_geometry_t *geometry);
@@ -101,6 +105,9 @@ void Spatial_RoomStats(sa_room_stats_t *stats);
 #define Spatial_VoiceSource(slot, active, origin, valid, gain, send) ((void)0)
 #define Spatial_VoicePCM(slot, pcm, frames) 0
 #define Spatial_ResetVoice(slot) ((void)0)
+#define Spatial_SelfGain(gain) ((void)0)
+#define Spatial_SelfPCM(pcm, frames) 0
+#define Spatial_ResetSelf() ((void)0)
 #define Spatial_ReplaceRoom(geometry) 0
 #define Spatial_ClearWorld() ((void)0)
 #define Spatial_RoomStats(stats) ((void)0)

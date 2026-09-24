@@ -12,6 +12,10 @@
 
 #define SPATIAL_MUSIC_MAX_INPUT_FRAMES 32768
 #define SPATIAL_MUSIC_CONVERTER_CAPACITY SA_BLOCK
+#define SPATIAL_OCCLUSION_TRACE_BUDGET 8
+#define SPATIAL_OCCLUSION_REFRESH_SECONDS 0.2
+#define SPATIAL_OCCLUSION_MOVE_DISTANCE 12.0f
+#define SPATIAL_SOURCE_COUNT (MAX_CHANNELS + MAX_SCOREBOARD)
 
 #ifdef USE_SDL3
 #include <SDL3/SDL.h>
@@ -33,15 +37,28 @@ typedef struct spatial_sample_s {
 	struct spatial_sample_s *next;
 } spatial_sample_t;
 
+typedef struct spatial_occlusion_s {
+	unsigned generation;
+	qmodel_t *worldmodel;
+	uint64_t timestamp;
+	float listener[3], source[3], amount;
+	int valid;
+} spatial_occlusion_t;
+
 static sa_renderer_t *spatial_renderer;
 static spatial_sample_t *spatial_samples;
 /* The only adapter-side source state: one published snapshot per renderer slot. */
-static sa_source_t spatial_sources[MAX_CHANNELS + MAX_SCOREBOARD];
+static sa_source_t spatial_sources[SPATIAL_SOURCE_COUNT];
+static spatial_occlusion_t spatial_occlusion[SPATIAL_SOURCE_COUNT];
+static int spatial_occlusion_cursor;
+static uint64_t spatial_occlusion_traces;
 static sa_settings_t spatial_settings = {
 	.hrtf = 1,
 	.radio_gain = 0.45f,
 	.voice_distance = 768.0f,
 	.radio_filter = 1.0f,
+	.radio_compression = 0.0f,
+	.radio_drive = 0.0f,
 	.occlusion = 1.0f,
 	.reverb = 0.25f,
 	.voice_reverb = 0.12f,
@@ -55,11 +72,135 @@ static cvar_t snd_hrtf = {
 	.flags = CVAR_ARCHIVE
 };
 static cvar_t snd_spatial_weapons = {"snd_spatial_weapons", "1", CVAR_ARCHIVE};
+static cvar_t snd_spatial_room_mode = {"snd_spatial_room_mode", "2", CVAR_ARCHIVE};
+static cvar_t snd_spatial_room_rays = {"snd_spatial_room_rays", "2048", CVAR_ARCHIVE};
+static cvar_t snd_spatial_room_bounces = {"snd_spatial_room_bounces", "16", CVAR_ARCHIVE};
+static cvar_t snd_spatial_reverb = {"snd_spatial_reverb", "0.25", CVAR_ARCHIVE};
+static cvar_t snd_spatial_occlusion = {"snd_spatial_occlusion", "1", CVAR_ARCHIVE};
+static cvar_t snd_spatial_radio_filter = {"snd_spatial_radio_filter", "1", CVAR_ARCHIVE};
+static cvar_t snd_spatial_radio_compression = {"snd_spatial_radio_compression", "0", CVAR_ARCHIVE};
+static cvar_t snd_spatial_radio_drive = {"snd_spatial_radio_drive", "0", CVAR_ARCHIVE};
+static cvar_t snd_spatial_voice_reverb = {"snd_spatial_voice_reverb", "0.12", CVAR_ARCHIVE};
 static SDL_AudioStream *music_converter;
 static int music_rate, music_width, music_channels;
 static float music_gain = 0.5f;
 static int music_rejection_reported;
 static void Spatial_PumpMusic(void);
+
+static float Spatial_ClampCvar(const cvar_t *var, float fallback, float min_value,
+	float max_value)
+{
+	float value = var->value;
+	if (!isfinite(value))
+		return fallback;
+	if (value < min_value)
+		return min_value;
+	if (value > max_value)
+		return max_value;
+	return value;
+}
+
+static void Spatial_ApplyCvars(void)
+{
+	spatial_settings.hrtf = snd_hrtf.value != 0;
+	spatial_settings.room_mode = (int)Spatial_ClampCvar(&snd_spatial_room_mode, 2, 0, 2);
+	spatial_settings.room_rays = (int)Spatial_ClampCvar(&snd_spatial_room_rays, 2048, 256, 4096);
+	spatial_settings.room_bounces = (int)Spatial_ClampCvar(&snd_spatial_room_bounces, 16, 2, 32);
+	spatial_settings.reverb = Spatial_ClampCvar(&snd_spatial_reverb, 0.25f, 0, 1);
+	spatial_settings.occlusion = Spatial_ClampCvar(&snd_spatial_occlusion, 1, 0, 1);
+	spatial_settings.radio_filter = Spatial_ClampCvar(&snd_spatial_radio_filter, 1, 0, 1);
+	spatial_settings.radio_compression = Spatial_ClampCvar(&snd_spatial_radio_compression, 0, 0, 1);
+	spatial_settings.radio_drive = Spatial_ClampCvar(&snd_spatial_radio_drive, 0, 0, 4);
+	spatial_settings.voice_reverb = Spatial_ClampCvar(&snd_spatial_voice_reverb, 0.12f, 0, 1);
+}
+
+static void Spatial_ResetOcclusion(void)
+{
+	memset(spatial_occlusion, 0, sizeof(spatial_occlusion));
+	spatial_occlusion_cursor = 0;
+	for (int i = 0; i < SPATIAL_SOURCE_COUNT; ++i)
+		spatial_sources[i].obstruction = 0;
+}
+
+static float Spatial_CachedOcclusion(int channel, const sa_source_t *source)
+{
+	spatial_occlusion_t *cache = &spatial_occlusion[channel];
+	if (spatial_settings.occlusion <= 0 || !cl.worldmodel || cl.worldmodel->needload || !cache->valid ||
+		cache->generation != source->generation || cache->worldmodel != cl.worldmodel)
+		return 0;
+	return cache->amount;
+}
+
+static qboolean Spatial_OcclusionMoved(const float *a, const float *b)
+{
+	float distance_squared = 0;
+	for (int i = 0; i < 3; ++i) {
+		float delta = a[i] - b[i];
+		distance_squared += delta * delta;
+	}
+	return distance_squared > SPATIAL_OCCLUSION_MOVE_DISTANCE * SPATIAL_OCCLUSION_MOVE_DISTANCE;
+}
+
+static void Spatial_UpdateOcclusion(void)
+{
+	uint64_t now, refresh_ticks;
+	int start, last_traced = -1, traced = 0;
+	/* S_Update follows the draw_done join; the world-only trace does not touch particle entity state. */
+	if (spatial_settings.occlusion <= 0 || !cl.worldmodel || cl.worldmodel->needload) {
+		for (int i = 0; i < SPATIAL_SOURCE_COUNT; ++i) {
+			spatial_occlusion[i].valid = 0;
+			spatial_sources[i].obstruction = 0;
+		}
+		return;
+	}
+
+	now = SDL_GetPerformanceCounter();
+	refresh_ticks = (uint64_t)((double)SDL_GetPerformanceFrequency() *
+		SPATIAL_OCCLUSION_REFRESH_SECONDS);
+	start = spatial_occlusion_cursor;
+	for (int scanned = 0; scanned < SPATIAL_SOURCE_COUNT && traced < SPATIAL_OCCLUSION_TRACE_BUDGET; ++scanned) {
+		int i = (start + scanned) % SPATIAL_SOURCE_COUNT;
+		spatial_occlusion_t *cache = &spatial_occlusion[i];
+		sa_source_t *source = &spatial_sources[i];
+		qboolean due;
+		vec3_t startpos, endpos, impact, normal;
+		float fraction;
+
+		if (!source->active || (source->kind != SA_POSITIONAL && source->kind != SA_VOICE) ||
+			!source->position_valid) {
+			cache->valid = 0;
+			source->obstruction = 0;
+			continue;
+		}
+		due = !cache->valid || cache->generation != source->generation ||
+			cache->worldmodel != cl.worldmodel || now < cache->timestamp ||
+			now - cache->timestamp >= refresh_ticks ||
+			Spatial_OcclusionMoved(cache->listener, listener_origin) ||
+			Spatial_OcclusionMoved(cache->source, source->origin);
+		if (!due) {
+			source->obstruction = cache->amount;
+			continue;
+		}
+
+		VectorCopy(listener_origin, startpos);
+		VectorCopy(source->origin, endpos);
+		fraction = CL_TraceWorldLine(startpos, endpos, impact, normal);
+		cache->generation = source->generation;
+		cache->worldmodel = cl.worldmodel;
+		cache->timestamp = now;
+		VectorCopy(listener_origin, cache->listener);
+		VectorCopy(source->origin, cache->source);
+		cache->amount = fraction > 0.0f && fraction < 0.999f ? 1.0f : 0.0f;
+		cache->valid = 1;
+		source->obstruction = cache->amount;
+		SA_SetSource(spatial_renderer, i, source);
+		++spatial_occlusion_traces;
+		++traced;
+		last_traced = i;
+	}
+	spatial_occlusion_cursor = last_traced >= 0 ?
+		(last_traced + 1) % SPATIAL_SOURCE_COUNT : (start + 1) % SPATIAL_SOURCE_COUNT;
+}
 
 static void Spatial_ReportMusicRejection(const char *reason)
 {
@@ -230,6 +371,8 @@ void Spatial_Start(int channel, sfxcache_t *cache, int offset)
 	source->position_valid = 0;
 	source->gain = 0.0f;
 	source->room_send = 1.0f;
+	source->obstruction = 0.0f;
+	spatial_occlusion[channel].valid = 0;
 	SA_SetSource(spatial_renderer, channel, source);
 }
 
@@ -242,6 +385,8 @@ void Spatial_Stop(int channel)
 	source->generation = Spatial_NextGeneration(source->generation);
 	source->active = 0;
 	source->sample = NULL;
+	source->obstruction = 0.0f;
+	spatial_occlusion[channel].valid = 0;
 	SA_SetSource(spatial_renderer, channel, source);
 }
 
@@ -268,6 +413,8 @@ void Spatial_ForgetCache(sfxcache_t *cache)
 			spatial_sources[i].generation = Spatial_NextGeneration(spatial_sources[i].generation);
 			spatial_sources[i].active = 0;
 			spatial_sources[i].sample = NULL;
+			spatial_sources[i].obstruction = 0.0f;
+			spatial_occlusion[i].valid = 0;
 			if (spatial_renderer)
 				SA_SetSource(spatial_renderer, i, &spatial_sources[i]);
 		}
@@ -292,6 +439,8 @@ void Spatial_ClearCache(void)
 			spatial_sources[i].generation = Spatial_NextGeneration(spatial_sources[i].generation);
 			spatial_sources[i].active = 0;
 			spatial_sources[i].sample = NULL;
+			spatial_sources[i].obstruction = 0.0f;
+			spatial_occlusion[i].valid = 0;
 			if (spatial_renderer)
 				SA_SetSource(spatial_renderer, i, &spatial_sources[i]);
 		}
@@ -306,10 +455,56 @@ void Spatial_ClearCache(void)
 	spatial_samples = NULL;
 }
 
+static void Spatial_Status_f(void)
+{
+	sa_stats_t stats = {0};
+	sa_room_stats_t room = {0};
+	int room_mode = (int)Spatial_ClampCvar(&snd_spatial_room_mode, 2, 0, 2);
+	int room_rays = (int)Spatial_ClampCvar(&snd_spatial_room_rays, 2048, 256, 4096);
+	int room_bounces = (int)Spatial_ClampCvar(&snd_spatial_room_bounces, 16, 2, 32);
+	float reverb = Spatial_ClampCvar(&snd_spatial_reverb, 0.25f, 0, 1);
+	float occlusion = Spatial_ClampCvar(&snd_spatial_occlusion, 1, 0, 1);
+	float radio_filter = Spatial_ClampCvar(&snd_spatial_radio_filter, 1, 0, 1);
+	float radio_compression = Spatial_ClampCvar(&snd_spatial_radio_compression, 0, 0, 1);
+	float radio_drive = Spatial_ClampCvar(&snd_spatial_radio_drive, 0, 0, 4);
+	float voice_reverb = Spatial_ClampCvar(&snd_spatial_voice_reverb, 0.12f, 0, 1);
+	const char *room_modes[] = {"off", "parametric", "hybrid"};
+
+	Con_Printf("Steam Audio: %s; HRTF %s; room %s, rays %d, bounces %d; reverb %.2f; occlusion %.2f\n",
+		spatial_renderer ? "active" : "inactive", snd_hrtf.value != 0 ? "on" : "off",
+		room_modes[room_mode], room_rays, room_bounces, reverb, occlusion);
+	Con_Printf("Voice processing: filter %.2f, compression %.2f, drive %.2f, reverb %.2f\n",
+		radio_filter, radio_compression, radio_drive, voice_reverb);
+	if (!spatial_renderer)
+		return;
+
+	SNDDMA_LockBuffer();
+	SA_GetStats(spatial_renderer, &stats);
+	SNDDMA_Submit();
+	Spatial_RoomStats(&room);
+	Con_Printf("Room: %s%s, %d triangles, %llu runs; occlusion traces: %llu (max %d per update)\n",
+		room.ready ? "ready" : "waiting",
+		room.failed ? ", simulation failed" : "", room.triangles,
+		(unsigned long long)room.runs,
+		(unsigned long long)spatial_occlusion_traces, SPATIAL_OCCLUSION_TRACE_BUDGET);
+	Con_Printf("Audio: %d active sources, %llu underrun frames, peak %.3f\n",
+		stats.active, (unsigned long long)stats.underrun_frames, stats.output_peak);
+}
+
 void Spatial_Register(void)
 {
 	Cvar_RegisterVariable(&snd_hrtf);
 	Cvar_RegisterVariable(&snd_spatial_weapons);
+	Cvar_RegisterVariable(&snd_spatial_room_mode);
+	Cvar_RegisterVariable(&snd_spatial_room_rays);
+	Cvar_RegisterVariable(&snd_spatial_room_bounces);
+	Cvar_RegisterVariable(&snd_spatial_reverb);
+	Cvar_RegisterVariable(&snd_spatial_occlusion);
+	Cvar_RegisterVariable(&snd_spatial_radio_filter);
+	Cvar_RegisterVariable(&snd_spatial_radio_compression);
+	Cvar_RegisterVariable(&snd_spatial_radio_drive);
+	Cvar_RegisterVariable(&snd_spatial_voice_reverb);
+	Cmd_AddCommand("spatial_status", Spatial_Status_f);
 }
 
 int Spatial_Init(void)
@@ -321,7 +516,7 @@ int Spatial_Init(void)
 	spatial_renderer = SA_Create(MAX_CHANNELS + MAX_SCOREBOARD, MAX_SCOREBOARD);
 	if (!spatial_renderer)
 		return 0;
-	spatial_settings.hrtf = snd_hrtf.value != 0;
+	Spatial_ApplyCvars();
 	SA_SetSettings(spatial_renderer, &spatial_settings);
 	return 1;
 }
@@ -349,6 +544,7 @@ void Spatial_Shutdown(void)
 	}
 	spatial_samples = NULL;
 	memset(spatial_sources, 0, sizeof(spatial_sources));
+	Spatial_ResetOcclusion();
 	Spatial_FreeStream(music_converter);
 	music_converter = NULL;
 	music_rate = music_width = music_channels = 0;
@@ -362,6 +558,7 @@ void Spatial_Reset(void)
 	SA_Reset(spatial_renderer);
 	SNDDMA_Submit();
 	memset(spatial_sources, 0, sizeof(spatial_sources));
+	Spatial_ResetOcclusion();
 	Spatial_ClearStream(music_converter);
 }
 
@@ -370,7 +567,7 @@ void Spatial_SetSettings(const sa_settings_t *settings)
 	if (!spatial_renderer || !settings)
 		return;
 	spatial_settings = *settings;
-	spatial_settings.hrtf = snd_hrtf.value != 0;
+	Spatial_ApplyCvars();
 	SA_SetSettings(spatial_renderer, &spatial_settings);
 }
 
@@ -395,7 +592,7 @@ void Spatial_Update(void)
 		return;
 	Spatial_PumpMusic();
 	Spatial_Listener(listener_origin, listener_forward, listener_right, listener_up);
-	spatial_settings.hrtf = snd_hrtf.value != 0;
+	Spatial_ApplyCvars();
 	SA_SetSettings(spatial_renderer, &spatial_settings);
 	count = total_channels;
 	if (count < 0) count = 0;
@@ -410,10 +607,12 @@ void Spatial_Update(void)
 		if (cache && !entry && Spatial_CacheSound(cache))
 			entry = Spatial_FindSample(cache);
 		if (!cache || !entry) {
-			if (source->active || source->sample) {
+			spatial_occlusion[i].valid = 0;
+			if (source->active || source->sample || source->obstruction != 0) {
 				source->generation = Spatial_NextGeneration(source->generation);
 				source->active = 0;
 				source->sample = NULL;
+				source->obstruction = 0.0f;
 				SA_SetSource(spatial_renderer, i, source);
 			}
 			continue;
@@ -447,8 +646,14 @@ void Spatial_Update(void)
 			memcpy(source->origin, channel->origin, sizeof(source->origin));
 			source->position_valid = source->kind == SA_POSITIONAL;
 		}
+		source->obstruction = Spatial_CachedOcclusion(i, source);
 		SA_SetSource(spatial_renderer, i, source);
 	}
+	for (i = MAX_CHANNELS; i < SPATIAL_SOURCE_COUNT; ++i) {
+		spatial_sources[i].obstruction = Spatial_CachedOcclusion(i, &spatial_sources[i]);
+		SA_SetSource(spatial_renderer, i, &spatial_sources[i]);
+	}
+	Spatial_UpdateOcclusion();
 }
 
 int Spatial_Clock(void)
@@ -629,6 +834,28 @@ void Spatial_ClearMusic(void)
 	music_rejection_reported = 0;
 }
 
+void Spatial_SelfGain(float gain)
+{
+	if (spatial_renderer)
+		SA_SetSelf(spatial_renderer, gain);
+}
+
+int Spatial_SelfPCM(const int16_t *pcm, int frames)
+{
+	if (!spatial_renderer || !pcm || frames <= 0)
+		return 0;
+	return SA_WriteSelf(spatial_renderer, pcm, frames);
+}
+
+void Spatial_ResetSelf(void)
+{
+	if (!spatial_renderer)
+		return;
+	SNDDMA_LockBuffer();
+	SA_ResetSelf(spatial_renderer);
+	SNDDMA_Submit();
+}
+
 void Spatial_VoiceSettings(float radio_gain, float distance, int pure_voice)
 {
 	spatial_settings.radio_gain = radio_gain;
@@ -652,6 +879,8 @@ void Spatial_VoiceSource(int slot, int active, const float *origin,
 	source->gain = gain;
 	source->room_send = room_send;
 	source->position_valid = position_valid && origin;
+	source->obstruction = source->active && source->position_valid ?
+		Spatial_CachedOcclusion(MAX_CHANNELS + slot, source) : 0.0f;
 	if (source->position_valid)
 		memcpy(source->origin, origin, sizeof(source->origin));
 	SA_SetSource(spatial_renderer, MAX_CHANNELS + slot, source);
@@ -671,6 +900,8 @@ void Spatial_ResetVoice(int slot)
 		spatial_sources[MAX_CHANNELS + slot].generation =
 			Spatial_NextGeneration(spatial_sources[MAX_CHANNELS + slot].generation);
 		spatial_sources[MAX_CHANNELS + slot].active = 0;
+		spatial_sources[MAX_CHANNELS + slot].obstruction = 0;
+		spatial_occlusion[MAX_CHANNELS + slot].valid = 0;
 	}
 }
 
@@ -703,7 +934,11 @@ void Spatial_ClearWorld(void)
 	sa_room_t *detached;
 	if (!spatial_renderer)
 		return;
+	Spatial_ResetOcclusion();
 	SNDDMA_LockBuffer();
+	for (int i = 0; i < SPATIAL_SOURCE_COUNT; ++i)
+		if (spatial_sources[i].active)
+			SA_SetSource(spatial_renderer, i, &spatial_sources[i]);
 	detached = SA_DetachRoom(spatial_renderer);
 	SNDDMA_Submit();
 	SA_DestroyRoom(detached);

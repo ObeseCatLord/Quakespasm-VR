@@ -67,7 +67,8 @@ typedef enum voice_pending_action_e
 	VOICE_PENDING_NONE,
 	VOICE_PENDING_CONSENT,
 	VOICE_PENDING_DEVICE,
-	VOICE_PENDING_MODE
+	VOICE_PENDING_MODE,
+	VOICE_PENDING_SELF_REVERB
 } voice_pending_action_t;
 
 static cvar_t voice_receive = {"voice_receive", "1", CVAR_ARCHIVE};
@@ -283,6 +284,7 @@ static void Voice_CloseCapture(void)
 {
 	if (voice_capture_stream)
 		SDL_DestroyAudioStream(voice_capture_stream);
+	Spatial_ResetSelf();
 	voice_capture_stream = NULL;
 	voice_capture_device = 0;
 	Voice_AtomicSet(&voice_capture_ready, 0);
@@ -366,6 +368,7 @@ static void Voice_CloseCapture(void)
 		SDL_PauseAudioDevice(voice_capture_device, 1);
 		SDL_CloseAudioDevice(voice_capture_device);
 	}
+	Spatial_ResetSelf();
 	voice_capture_device = 0;
 	Voice_AtomicSet(&voice_capture_ready, 0);
 	if (voice_capture_convert)
@@ -452,6 +455,9 @@ static void Voice_RefreshCapture(qboolean force)
 #endif
 	}
 	route = Voice_CaptureRoute(unique_device, profile->transmit, session);
+	/* Wet-only local monitoring has its own locally confirmed permission and
+	 * does not require a network session or authorize transmission. */
+	route.capture |= unique_device && profile->self_reverb && Spatial_Active();
 	if (force || stopped || route.capture != voice_capture_wanted)
 	{
 		if (voice_sending || stopped || route.capture != voice_capture_wanted)
@@ -504,9 +510,10 @@ static void Voice_ListDevices_f(void)
 static void Voice_Status_f(void)
 {
 	voice_settings_profile_t *profile = Voice_Profile();
-	Con_Printf("Voice receive %s; microphone consent %s; capture %s; mode %s.\n",
+	Con_Printf("Voice receive %s; microphone consent %s; local reflections %s; capture %s; mode %s.\n",
 		voice_receive.value ? "on" : "off",
 		profile->transmit ? "saved" : "off",
+		profile->self_reverb ? "on" : "off",
 		voice_capture_device ? "active" : "inactive",
 		profile->mode ? "push-to-talk" : "VAD");
 	Con_Printf("Voice input: %s\n", profile->device[0] ? profile->device : "(none selected)");
@@ -562,11 +569,52 @@ static void Voice_Revoke_f(void)
 {
 	voice_pending_action = VOICE_PENDING_NONE;
 	Voice_Profile()->transmit = 0;
+	Voice_Profile()->self_reverb = 0;
 	Voice_StopTransmit();
 	Voice_CloseCapture();
 	voice_capture_wanted = false;
 	Voice_SaveSettings();
 	Con_Printf("Voice: microphone consent revoked; capture stopped.\n");
+}
+
+static void Voice_SelfReverb_f(void)
+{
+	voice_settings_profile_t *profile = Voice_Profile();
+	const char *value;
+	if (Cmd_Argc() != 2)
+	{
+		Con_Printf("usage: voice_self_reverb on|off\n");
+		return;
+	}
+	value = Cmd_Argv(1);
+	if (!q_strcasecmp(value, "off"))
+	{
+		voice_pending_action = VOICE_PENDING_NONE;
+		profile->self_reverb = 0;
+		Spatial_ResetSelf();
+		Voice_SaveSettings();
+		Voice_RefreshCapture(true);
+		Con_Printf("Voice: local microphone reflections off.\n");
+		return;
+	}
+	if (q_strcasecmp(value, "on"))
+	{
+		Con_Printf("usage: voice_self_reverb on|off\n");
+		return;
+	}
+	if (!Spatial_Active())
+	{
+		Con_Printf("Voice: local reflections require the active Steam Audio renderer.\n");
+		return;
+	}
+	if (!profile->device[0] || !Voice_DeviceIsUnique(profile->device))
+	{
+		Con_Printf("Voice: select one unique recording device first with voice_select_device.\n");
+		return;
+	}
+	voice_pending_action = VOICE_PENDING_SELF_REVERB;
+	voice_pending_deadline = realtime + VOICE_CONFIRM_SECONDS;
+	Con_Printf("Voice: press physical Y in the console within 15 seconds to authorize local wet-only microphone reflections.\n");
 }
 
 static void Voice_Mode_f(void)
@@ -693,6 +741,18 @@ qboolean Voice_ConfirmKeyEvent(int key, qboolean down)
 		profile->mode = (unsigned char)voice_pending_mode;
 		Con_Printf("Voice: mode set to %s.\n", profile->mode ? "push-to-talk" : "VAD");
 	}
+	else if (voice_pending_action == VOICE_PENDING_SELF_REVERB)
+	{
+		if (!Spatial_Active() || !profile->device[0] ||
+			!Voice_DeviceIsUnique(profile->device))
+		{
+			voice_pending_action = VOICE_PENDING_NONE;
+			Con_Printf("Voice: local reflections need Steam Audio and a unique selected device.\n");
+			return true;
+		}
+		profile->self_reverb = 1;
+		Con_Printf("Voice: local wet-only microphone reflections enabled.\n");
+	}
 	voice_pending_action = VOICE_PENDING_NONE;
 	Voice_SaveSettings();
 	Voice_RefreshCapture(true);
@@ -724,6 +784,8 @@ static void Voice_EncodeCaptureFrame(int16_t *samples)
 		int sample = (int)(samples[i] * gain);
 		samples[i] = (int16_t)CLAMP(-32768, sample, 32767);
 	}
+	if (Voice_Profile()->self_reverb)
+		(void)Spatial_SelfPCM(samples, VOICE_FRAME_SAMPLES);
 	Voice_VADSetSensitivity(&voice_vad,
 		(int)CLAMP(0.0f, voice_vad_sensitivity.value, 100.0f));
 	Voice_VADProcessFrame(&voice_vad, samples, VOICE_FRAME_SAMPLES, &result);
@@ -933,6 +995,7 @@ void Voice_Init(void)
 	Cmd_AddCommand("voice_select_device", Voice_SelectDevice_f);
 	Cmd_AddCommand("voice_consent", Voice_Consent_f);
 	Cmd_AddCommand("voice_revoke", Voice_Revoke_f);
+	Cmd_AddCommand("voice_self_reverb", Voice_SelfReverb_f);
 	Cmd_AddCommand("voice_mode", Voice_Mode_f);
 	Cmd_AddCommand("voice_status", Voice_Status_f);
 	Cmd_AddCommand("voice_mute", Voice_Mute_f);
@@ -1061,6 +1124,7 @@ void Voice_Frame(void)
 		return;
 	Voice_AtomicSet(&voice_receive_enabled, voice_receive.value != 0);
 	Voice_RefreshCapture(false);
+	Spatial_SelfGain(Voice_Profile()->self_reverb && voice_capture_device ? 1.0f : 0.0f);
 	Voice_ProcessCapture();
 	Voice_AtomicSet(&voice_transmit_enabled, Voice_Profile()->transmit ? 1 : 0);
 	Voice_AtomicSet(&voice_hud_visible, Voice_HUDShouldDisplay() ? 1 : 0);

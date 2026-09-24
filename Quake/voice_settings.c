@@ -196,7 +196,10 @@ static int VoiceSettings_Deserialize(const unsigned char *wire, size_t bytes,
 	/* Older files could contain the old default-on value. Require fresh local
 	 * confirmation before trusting a persisted capture permission. */
 	if (version < VOICE_SETTINGS_VERSION)
+	{
 		loaded.desktop.transmit = loaded.vr.transmit = 0;
+		loaded.desktop.self_reverb = loaded.vr.self_reverb = 0;
+	}
 	if (!VoiceSettings_Valid(&loaded) ||
 		!VoiceSettings_ProfileCanonical(&loaded.desktop) ||
 		!VoiceSettings_ProfileCanonical(&loaded.vr))
