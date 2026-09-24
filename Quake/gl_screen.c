@@ -119,6 +119,7 @@ cvar_t scr_centertime = {"scr_centertime", "2", CVAR_NONE};
 cvar_t scr_showturtle = {"showturtle", "0", CVAR_NONE};
 cvar_t scr_showpause = {"showpause", "1", CVAR_NONE};
 cvar_t scr_printspeed = {"scr_printspeed", "8", CVAR_NONE};
+cvar_t scr_centerprintbg = {"scr_centerprintbg", "0", CVAR_ARCHIVE}; // 0=off; 1=classic box; 2=compact box; 3=full-width strip
 
 cvar_t cl_gun_fovscale = {"cl_gun_fovscale", "1", CVAR_ARCHIVE_GAME}; // Qrack
 cvar_t cl_gun_x = {"cl_gun_x", "0", CVAR_ARCHIVE_GAME};
@@ -217,6 +218,7 @@ float scr_clock_off;
 int	  scr_center_lines;
 int	  scr_erase_lines;
 int	  scr_erase_center;
+static int scr_center_maxcols;
 
 void SCR_CenterPrintClear (void)
 {
@@ -234,19 +236,103 @@ for a few moments
 */
 void SCR_CenterPrint (const char *str) // update centerprint data
 {
-	//	strncpy (scr_centerstring, str, sizeof (scr_centerstring) - 1);
-	COM_WordWrap (scr_centerstring, str, sizeof (scr_centerstring), scr_usekfont.value ? 40 : 0);
+	COM_WordWrap (scr_centerstring, str, sizeof (scr_centerstring), 40);
 	scr_centertime_off = cl.time + scr_centertime.value;
 	scr_centertime_start = cl.time;
 
 	// count the number of lines for centering
 	scr_center_lines = 1;
+	scr_center_maxcols = 0;
 	str = scr_centerstring;
+	int linecols = 0;
 	while (*str)
 	{
 		if (*str == '\n')
+		{
 			scr_center_lines++;
+			scr_center_maxcols = q_max (scr_center_maxcols, linecols);
+			linecols = 0;
+		}
+		else
+			linecols++;
 		str++;
+	}
+	scr_center_maxcols = q_max (scr_center_maxcols, linecols);
+}
+
+static void SCR_DrawCenterStringTextBox (cb_context_t *cbx, int x, int y, int width, int lines)
+{
+	qpic_t *box_tl = Draw_CachePic ("gfx/box_tl.lmp");
+	qpic_t *box_ml = Draw_CachePic ("gfx/box_ml.lmp");
+	qpic_t *box_bl = Draw_CachePic ("gfx/box_bl.lmp");
+	qpic_t *box_tm = Draw_CachePic ("gfx/box_tm.lmp");
+	qpic_t *box_mm = Draw_CachePic ("gfx/box_mm.lmp");
+	qpic_t *box_mm2 = Draw_CachePic ("gfx/box_mm2.lmp");
+	qpic_t *box_bm = Draw_CachePic ("gfx/box_bm.lmp");
+	qpic_t *box_tr = Draw_CachePic ("gfx/box_tr.lmp");
+	qpic_t *box_mr = Draw_CachePic ("gfx/box_mr.lmp");
+	qpic_t *box_br = Draw_CachePic ("gfx/box_br.lmp");
+	int cx = x;
+	int cy = y;
+	int n;
+
+	Draw_Pic (cbx, cx, cy, box_tl, 0.7f, true);
+	for (n = 0; n < lines; n++)
+	{
+		cy += CHARACTER_SIZE;
+		Draw_Pic (cbx, cx, cy, box_ml, 0.7f, true);
+	}
+	Draw_Pic (cbx, cx, cy + CHARACTER_SIZE, box_bl, 0.7f, true);
+
+	cx += CHARACTER_SIZE;
+	while (width > 0)
+	{
+		cy = y;
+		Draw_Pic (cbx, cx, cy, box_tm, 0.7f, true);
+		for (n = 0; n < lines; n++)
+		{
+			cy += CHARACTER_SIZE;
+			Draw_Pic (cbx, cx, cy, n == 1 ? box_mm2 : box_mm, 0.7f, true);
+		}
+		Draw_Pic (cbx, cx, cy + CHARACTER_SIZE, box_bm, 0.7f, true);
+		width -= 2;
+		cx += 2 * CHARACTER_SIZE;
+	}
+
+	cy = y;
+	Draw_Pic (cbx, cx, cy, box_tr, 0.7f, true);
+	for (n = 0; n < lines; n++)
+	{
+		cy += CHARACTER_SIZE;
+		Draw_Pic (cbx, cx, cy, box_mr, 0.7f, true);
+	}
+	Draw_Pic (cbx, cx, cy + CHARACTER_SIZE, box_br, 0.7f, true);
+}
+
+static void SCR_DrawCenterStringBackground (cb_context_t *cbx, int y)
+{
+	int width, x;
+
+	if (cl.intermission || scr_center_lines <= 0 || scr_center_maxcols <= 0)
+		return;
+
+	switch ((int)scr_centerprintbg.value)
+	{
+	case 1:
+		width = (scr_center_maxcols + 3) & ~1;
+		x = (320 - width * CHARACTER_SIZE) / 2;
+		SCR_DrawCenterStringTextBox (cbx, x - CHARACTER_SIZE, y - 12, width, scr_center_lines + 1);
+		break;
+	case 2:
+		width = q_min (scr_center_maxcols, 40) + 2;
+		x = (320 - width * CHARACTER_SIZE) / 2;
+		Draw_Fill (cbx, x, y - 4, width * CHARACTER_SIZE, scr_center_lines * CHARACTER_SIZE + 8, 0, 0.7f);
+		break;
+	case 3:
+		Draw_Fill (cbx, 0, y - 4, 320, scr_center_lines * CHARACTER_SIZE + 8, 0, 0.7f);
+		break;
+	default:
+		break;
 	}
 }
 
@@ -275,6 +361,8 @@ static void SCR_DrawCenterString (cb_context_t *cbx) // actually do the drawing
 		y = 48;
 	if (crosshair.value)
 		y -= CHARACTER_SIZE;
+
+	SCR_DrawCenterStringBackground (cbx, y);
 
 	do
 	{
@@ -755,6 +843,7 @@ void SCR_Init (void)
 	Cvar_RegisterVariable (&scr_showpause);
 	Cvar_RegisterVariable (&scr_centertime);
 	Cvar_RegisterVariable (&scr_printspeed);
+	Cvar_RegisterVariable (&scr_centerprintbg);
 	Cvar_RegisterVariable (&scr_style);
 	Cvar_RegisterVariable (&vr_menu_scale);
 	Cvar_RegisterVariable (&vr_menu_follow);
