@@ -94,3 +94,9 @@ header fixture cases. This proves a one-player round trip, not the full
 two-player/dead-player/late-join matrix described above. A malformed inherited
 save previously reached a rejection followed by an allocator abort during
 graphical shutdown; its root cause and recovery path remain unqualified.
+
+After the reviewed edict fix, a second disposable run loaded that one-player
+save, restored the named player, admitted a new desktop player into slot two,
+and successfully saved both active players. This exercises the late-join live
+edict condition but does not establish movement/collision or reverse-order
+reconnect with two previously saved identities.
