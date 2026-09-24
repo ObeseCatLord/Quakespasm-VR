@@ -31,39 +31,30 @@ static SDL_AudioStream *audio_stream = NULL;
 
 static void SDLCALL paint_audio (void *userdata, SDL_AudioStream *stream, int additional_amount, int total_amount)
 {
-	int pos, len1, len2, tobufend;
+	int pos, remaining, spans;
 
-	if (!shm || additional_amount <= 0)
+	if (!shm || !shm->buffer || buffersize <= 0 || additional_amount <= 0)
 		return;
 
 	pos = (shm->samplepos * (shm->samplebits / 8));
 	if (pos >= buffersize)
 		shm->samplepos = pos = 0;
 
-	tobufend = buffersize - pos;
-	len1 = additional_amount;
-	len2 = 0;
-
-	if (len1 > tobufend)
+	/* SDL can request more than one ring's worth after an underrun.  Copy
+	 * each span separately so neither the first nor a later wrap reads past
+	 * the DMA allocation. */
+	remaining = additional_amount;
+	for (spans = 0; remaining > 0 && spans < 4; ++spans)
 	{
-		len1 = tobufend;
-		len2 = additional_amount - len1;
+		int len = q_min (remaining, buffersize - pos);
+		if (!SDL_PutAudioStreamData (stream, shm->buffer + pos, len))
+			break;
+		remaining -= len;
+		pos += len;
+		if (pos >= buffersize)
+			pos = 0;
 	}
-
-	SDL_PutAudioStreamData (stream, shm->buffer + pos, len1);
-
-	if (len2 > 0)
-	{
-		SDL_PutAudioStreamData (stream, shm->buffer, len2);
-		shm->samplepos = (len2 / (shm->samplebits / 8));
-	}
-	else
-	{
-		shm->samplepos += (len1 / (shm->samplebits / 8));
-	}
-
-	if (shm->samplepos >= shm->samples)
-		shm->samplepos = 0;
+	shm->samplepos = pos / (shm->samplebits / 8);
 }
 
 qboolean SNDDMA_Init (dma_t *dma)
