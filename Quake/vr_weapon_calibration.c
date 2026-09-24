@@ -2,8 +2,10 @@
 #include "vr_locomotion.h"
 #include "vr_weapon_calibration.h"
 
+#include <limits.h>
 #include <math.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 enum
@@ -293,6 +295,637 @@ static int VR_FindCalibrationSlot(const char *viewmodel_path)
 	return -1;
 }
 
+typedef struct
+{
+	char *data;
+	size_t len;
+	size_t cap;
+} vr_calibration_textbuf_t;
+
+static qboolean VR_CalibrationTextReserve(vr_calibration_textbuf_t *buf,
+										  size_t extra)
+{
+	size_t needed;
+	size_t newcap;
+	char *newdata;
+
+	if (extra > (size_t)-1 - buf->len - 1)
+		return false;
+	needed = buf->len + extra + 1;
+	if (needed <= buf->cap)
+		return true;
+
+	newcap = buf->cap ? buf->cap : 1024;
+	while (newcap < needed)
+	{
+		if (newcap > (size_t)-1 / 2)
+		{
+			newcap = needed;
+			break;
+		}
+		newcap *= 2;
+	}
+	newdata = (char *)realloc(buf->data, newcap);
+	if (!newdata)
+		return false;
+	buf->data = newdata;
+	buf->cap = newcap;
+	return true;
+}
+
+static qboolean VR_CalibrationTextAppendN(vr_calibration_textbuf_t *buf,
+										  const char *text, size_t len)
+{
+	if (!VR_CalibrationTextReserve(buf, len))
+		return false;
+	if (len)
+		memcpy(buf->data + buf->len, text, len);
+	buf->len += len;
+	buf->data[buf->len] = '\0';
+	return true;
+}
+
+static qboolean VR_CalibrationTextAppend(vr_calibration_textbuf_t *buf,
+										 const char *text)
+{
+	return VR_CalibrationTextAppendN(buf, text, strlen(text));
+}
+
+static qboolean VR_CalibrationTextAppendLine(vr_calibration_textbuf_t *buf,
+										 const char *line)
+{
+	return VR_CalibrationTextAppend(buf, line) &&
+		VR_CalibrationTextAppend(buf, "\n");
+}
+
+static qboolean VR_CalibrationIsTokenBreak(char c)
+{
+	return c == '\0' || c == ' ' || c == '\t' || c == '\r' || c == '\n';
+}
+
+static qboolean VR_CalibrationLineStartsWithKey(const char *line,
+											 size_t len, const char *key)
+{
+	size_t keylen = strlen(key);
+
+	while (len && (*line == ' ' || *line == '\t' || *line == '\r'))
+	{
+		++line;
+		--len;
+	}
+	return len >= keylen && !strncmp(line, key, keylen) &&
+		(len == keylen || VR_CalibrationIsTokenBreak(line[keylen]));
+}
+
+static qboolean VR_CalibrationLineIsClassicKey(const char *line, size_t len)
+{
+	return VR_CalibrationLineStartsWithKey(line, len, "held_scale") ||
+		VR_CalibrationLineStartsWithKey(line, len, "held_offset") ||
+		VR_CalibrationLineStartsWithKey(line, len, "mp_held_offset") ||
+		VR_CalibrationLineStartsWithKey(line, len, "muzzle_offset") ||
+		VR_CalibrationLineStartsWithKey(line, len, "mp_muzzle_offset");
+}
+
+static qboolean VR_CalibrationFindLineKey(const char *line, size_t len,
+										  qboolean *in_block_comment,
+										  size_t *key_offset,
+										  size_t *key_len)
+{
+	size_t i;
+
+	for (i = 0; i < len; )
+	{
+		if (*in_block_comment)
+		{
+			while (i + 1 < len && !(line[i] == '*' && line[i + 1] == '/'))
+				++i;
+			if (i + 1 >= len)
+				return false;
+			*in_block_comment = false;
+			i += 2;
+			continue;
+		}
+		if (line[i] == ' ' || line[i] == '\t' || line[i] == '\r')
+		{
+			++i;
+			continue;
+		}
+		if (line[i] == '/' && i + 1 < len && line[i + 1] == '/')
+			return false;
+		if (line[i] == '/' && i + 1 < len && line[i + 1] == '*')
+		{
+			*in_block_comment = true;
+			i += 2;
+			continue;
+		}
+		*key_offset = i;
+		*key_len = len - i;
+		return true;
+	}
+	return false;
+}
+
+static void VR_CalibrationUpdateBlockCommentState(const char *line,
+											  size_t start, size_t len,
+											  qboolean *in_block_comment)
+{
+	size_t i = start;
+
+	while (i < len)
+	{
+		if (*in_block_comment)
+		{
+			while (i + 1 < len && !(line[i] == '*' && line[i + 1] == '/'))
+				++i;
+			if (i + 1 >= len)
+				return;
+			*in_block_comment = false;
+			i += 2;
+			continue;
+		}
+		if (line[i] == '"')
+		{
+			++i;
+			while (i < len && line[i] != '"')
+				++i;
+			if (i < len)
+				++i;
+			continue;
+		}
+		if (line[i] == '/' && i + 1 < len && line[i + 1] == '/')
+			return;
+		if (line[i] == '/' && i + 1 < len && line[i + 1] == '*')
+		{
+			*in_block_comment = true;
+			i += 2;
+			continue;
+		}
+		++i;
+	}
+}
+
+static size_t VR_CalibrationFindComment(const char *line, size_t len,
+										 size_t start)
+{
+	qboolean in_block_comment = false;
+	size_t i;
+
+	for (i = start; i + 1 < len; ++i)
+	{
+		if (line[i] == '"')
+		{
+			for (++i; i < len && line[i] != '"'; ++i)
+				;
+			continue;
+		}
+		if (line[i] == '/' &&
+			(line[i + 1] == '/' || line[i + 1] == '*'))
+			return i;
+	}
+	(void)in_block_comment;
+	return len;
+}
+
+static const char *VR_CalibrationFindBrace(const char *text,
+										   const char *end, char brace)
+{
+	const char *p;
+
+	for (p = text; p < end; )
+	{
+		if (*p == '"')
+		{
+			++p;
+			while (p < end && *p != '"')
+				++p;
+			if (p == end)
+				return NULL;
+			++p;
+			continue;
+		}
+		if (*p == '/' && p + 1 < end && p[1] == '/')
+		{
+			p += 2;
+			while (p < end && *p != '\n')
+				++p;
+			continue;
+		}
+		if (*p == '/' && p + 1 < end && p[1] == '*')
+		{
+			p += 2;
+			while (p + 1 < end && !(p[0] == '*' && p[1] == '/'))
+				++p;
+			if (p + 1 >= end)
+				return NULL;
+			p += 2;
+			continue;
+		}
+		if (*p == brace)
+			return p;
+		++p;
+	}
+	return NULL;
+}
+
+static qboolean VR_CalibrationBlockMatchesViewmodel(const char *block,
+												 size_t len,
+												 const char *model)
+{
+	char explicit_viewmodel[MAX_QPATH] = {0};
+	char model_fallback[MAX_QPATH] = {0};
+	char *copy;
+	char *parse;
+	const char *selected_viewmodel;
+
+	copy = (char *)malloc(len + 1);
+	if (!copy)
+		return false;
+	memcpy(copy, block, len);
+	copy[len] = '\0';
+	parse = copy;
+	while ((parse = (char *)COM_Parse(parse)) && com_token[0])
+	{
+		if (!strcmp(com_token, "viewmodel") ||
+			!strcmp(com_token, "held_model") || !strcmp(com_token, "model"))
+		{
+			qboolean explicit_key = !strcmp(com_token, "viewmodel") ||
+				!strcmp(com_token, "held_model");
+			char *destination = explicit_key ? explicit_viewmodel : model_fallback;
+			size_t destination_size = explicit_key ?
+				sizeof(explicit_viewmodel) : sizeof(model_fallback);
+
+			parse = (char *)COM_Parse(parse);
+			if (!parse || !com_token[0])
+				break;
+			q_strlcpy(destination, com_token, destination_size);
+		}
+	}
+	free(copy);
+	/* VR_WeaponSchemaParse uses model only when no non-empty explicit
+	 * viewmodel/held_model path was supplied. */
+	selected_viewmodel = explicit_viewmodel[0] ? explicit_viewmodel :
+		model_fallback;
+	return selected_viewmodel[0] && !strcmp(selected_viewmodel, model);
+}
+
+static qboolean VR_CalibrationAppendAdjustmentLines(
+	vr_calibration_textbuf_t *buf, int slot)
+{
+	char line[192];
+	float held_scale = VR_WeaponOffsetCvar(slot, VR_WOFS_SCALE).value;
+
+	q_snprintf(line, sizeof(line), "held_scale %.7g", held_scale);
+	if (!VR_CalibrationTextAppendLine(buf, line))
+		return false;
+	q_snprintf(line, sizeof(line), "held_offset %.7g %.7g %.7g",
+		VR_WeaponOffsetCvar(slot, VR_WOFS_X).value,
+		VR_WeaponOffsetCvar(slot, VR_WOFS_Y).value,
+		VR_WeaponOffsetCvar(slot, VR_WOFS_Z).value);
+	if (!VR_CalibrationTextAppendLine(buf, line))
+		return false;
+	q_snprintf(line, sizeof(line), "muzzle_offset %.7g %.7g %.7g",
+		VR_WeaponMuzzleCvar(slot, VR_WMUZZLE_X).value,
+		VR_WeaponMuzzleCvar(slot, VR_WMUZZLE_Y).value,
+		VR_WeaponMuzzleCvar(slot, VR_WMUZZLE_Z).value);
+	if (!VR_CalibrationTextAppendLine(buf, line))
+		return false;
+
+	if (vr_weapon_calibration_slots[slot].has_schema_mp_held_offset)
+	{
+		const vec3_t *offset = &vr_weapon_calibration_slots[slot].schema_mp_held_offset;
+		q_snprintf(line, sizeof(line), "mp_held_offset %.7g %.7g %.7g",
+			(*offset)[0], (*offset)[1], (*offset)[2]);
+		if (!VR_CalibrationTextAppendLine(buf, line))
+			return false;
+	}
+	if (vr_weapon_calibration_slots[slot].has_schema_mp_muzzle_offset)
+	{
+		const vec3_t *offset = &vr_weapon_calibration_slots[slot].schema_mp_muzzle_offset;
+		q_snprintf(line, sizeof(line), "mp_muzzle_offset %.7g %.7g %.7g",
+			(*offset)[0], (*offset)[1], (*offset)[2]);
+		if (!VR_CalibrationTextAppendLine(buf, line))
+			return false;
+	}
+	return true;
+}
+
+static qboolean VR_CalibrationWriteUpdatedBlock(
+	vr_calibration_textbuf_t *buf, const char *block, size_t len, int slot)
+{
+	const char *p = block;
+	const char *end = block + len;
+	qboolean in_block_comment = false;
+	qboolean inserted = false;
+
+	while (p < end)
+	{
+		const char *line_end = p;
+		size_t line_len;
+		size_t full_len;
+		size_t key_offset = 0;
+		size_t key_len = 0;
+		qboolean has_key;
+
+		while (line_end < end && *line_end != '\n')
+			++line_end;
+		line_len = (size_t)(line_end - p);
+		full_len = line_len + (line_end < end ? 1 : 0);
+		has_key = VR_CalibrationFindLineKey(p, line_len,
+			&in_block_comment, &key_offset, &key_len);
+
+		if (has_key && VR_CalibrationLineIsClassicKey(p + key_offset,
+			key_len))
+		{
+			size_t comment = VR_CalibrationFindComment(p, line_len,
+				key_offset);
+			if (!VR_CalibrationTextAppendN(buf, p, key_offset) ||
+				(comment < line_len &&
+				 !VR_CalibrationTextAppendN(buf, p + comment,
+					line_len - comment)))
+				return false;
+			if (line_end < end && !VR_CalibrationTextAppend(buf, "\n"))
+				return false;
+			VR_CalibrationUpdateBlockCommentState(p, key_offset, line_len,
+				&in_block_comment);
+			p += full_len;
+			continue;
+		}
+
+		if (!inserted && has_key &&
+			VR_CalibrationLineStartsWithKey(p + key_offset, key_len, "}"))
+		{
+			if (!VR_CalibrationAppendAdjustmentLines(buf, slot))
+				return false;
+			inserted = true;
+		}
+		if (!VR_CalibrationTextAppendN(buf, p, full_len))
+			return false;
+		if (has_key)
+			VR_CalibrationUpdateBlockCommentState(p, key_offset, line_len,
+				&in_block_comment);
+		p += full_len;
+	}
+
+	if (!inserted && !VR_CalibrationAppendAdjustmentLines(buf, slot))
+		return false;
+	return true;
+}
+
+static qboolean VR_CalibrationSafeModelToken(const char *path)
+{
+	const char *p;
+	const char *segment;
+	const char *terminator;
+
+	if (!path || !(terminator = (const char *)memchr(path, '\0', MAX_QPATH)) ||
+		terminator == path || path[0] == '/')
+		return false;
+	segment = path;
+	for (p = path; p <= terminator; ++p)
+	{
+		unsigned char c = (unsigned char)*p;
+		if (c == '/' || c == '\0')
+		{
+			size_t segment_len = (size_t)(p - segment);
+			if (!segment_len ||
+				(segment_len == 1 && segment[0] == '.') ||
+				(segment_len == 2 && segment[0] == '.' && segment[1] == '.'))
+				return false;
+			if (!c)
+				break;
+			segment = p + 1;
+			continue;
+		}
+		if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+			  (c >= '0' && c <= '9') || c == '_' || c == '-' || c == '.'))
+			return false;
+	}
+	return true;
+}
+
+static qboolean VR_CalibrationActiveFileMatches(const char *expected,
+												 size_t expected_len)
+{
+	char path[MAX_OSPATH];
+	byte *actual;
+	int handle = -1;
+	int path_len;
+	int bytes_read;
+	qfilesize_t file_len;
+	qboolean matches;
+
+	path_len = q_snprintf(path, sizeof(path), "%s/%s", com_gamedir,
+		"vr_weapons.txt");
+	if (path_len < 0 || (size_t)path_len >= sizeof(path))
+		return false;
+	file_len = Sys_FileOpenRead(path, &handle);
+	if (handle < 0 || file_len < 0 || (qfilesize_t)expected_len != file_len)
+	{
+		if (handle >= 0)
+			Sys_FileClose(handle);
+		return false;
+	}
+	actual = (byte *)malloc(expected_len ? expected_len : 1);
+	if (!actual)
+	{
+		Sys_FileClose(handle);
+		return false;
+	}
+	bytes_read = Sys_FileRead(handle, actual, (int)expected_len);
+	Sys_FileClose(handle);
+	matches = bytes_read == (int)expected_len &&
+		(!expected_len || !memcmp(actual, expected, expected_len));
+	free(actual);
+	return matches;
+}
+
+static qboolean VR_CalibrationSchemaTextIsValid(const char *text)
+{
+	vr_weapon_schema_entry_t entries[VR_WEAPON_SCHEMA_MAX_ENTRIES];
+	size_t count;
+	return VR_WeaponSchemaParse(text, entries,
+		VR_WEAPON_SCHEMA_MAX_ENTRIES, &count);
+}
+
+static qboolean VR_CalibrationAppendNewBlock(vr_calibration_textbuf_t *buf,
+											 const char *model, int slot)
+{
+	char line[MAX_QPATH + 16];
+
+	if (buf->len && buf->data[buf->len - 1] != '\n' &&
+		!VR_CalibrationTextAppend(buf, "\n"))
+		return false;
+	if (!VR_CalibrationTextAppendLine(buf, "{"))
+		return false;
+	q_snprintf(line, sizeof(line), "viewmodel %s", model);
+	return VR_CalibrationTextAppendLine(buf, line) &&
+		VR_CalibrationAppendAdjustmentLines(buf, slot) &&
+		VR_CalibrationTextAppendLine(buf, "}");
+}
+
+static void VR_WeaponCalibrationSave_f(void)
+{
+	vr_calibration_textbuf_t output = {0};
+	vr_weapon_schema_entry_t parsed[VR_WEAPON_SCHEMA_MAX_ENTRIES];
+	qmodel_t *model;
+	aliashdr_t *alias_header;
+	byte *file = NULL;
+	const char *source;
+	const char *p;
+	const char *end;
+	int model_index;
+	int slot;
+	size_t parsed_count;
+	qboolean updated = false;
+	qboolean ok = false;
+	qboolean post_write_failed = false;
+
+	if (!vr_weapon_calibration_initialized || cls.state != ca_connected ||
+		cls.signon != SIGNONS || cls.demoplayback)
+	{
+		Con_Printf("VR: vrweaponsave requires a connected, fully signed-on game\n");
+		return;
+	}
+	model_index = cl.stats[STAT_WEAPON];
+	if (model_index < 1 || model_index >= MAX_MODELS ||
+		!cl.viewent.model || !cl.model_precache[model_index] ||
+		cl.viewent.model != cl.model_precache[model_index] ||
+		cl.viewent.model->needload || cl.viewent.model->type != mod_alias ||
+		!cl.viewent.model->name[0])
+	{
+		Con_Printf("VR: vrweaponsave requires a valid current alias viewmodel\n");
+		return;
+	}
+	model = cl.viewent.model;
+	if (!VR_CalibrationSafeModelToken(model->name))
+	{
+		Con_Printf("VR: cannot save an unsafe or unterminated viewmodel path token\n");
+		return;
+	}
+	alias_header = (aliashdr_t *)Mod_Extradata_CheckSkin(model,
+		cl.viewent.skinnum);
+	if (!alias_header)
+	{
+		Con_Printf("VR: vrweaponsave cannot read the active viewmodel alias header\n");
+		return;
+	}
+	if (alias_header->poseverttype == PV_MD5 ||
+		alias_header->poseverttype == PV_MD5_8)
+	{
+		Con_Printf("VR: vrweaponsave is classic-only; active viewmodel '%s' uses enhanced MD5 geometry\n",
+			model->name);
+		return;
+	}
+	if (alias_header->poseverttype != PV_QUAKE1 &&
+		alias_header->poseverttype != PV_QUAKE3)
+	{
+		Con_Printf("VR: vrweaponsave cannot save this viewmodel geometry format\n");
+		return;
+	}
+	slot = VR_FindCalibrationSlot(model->name);
+	if (slot < 0)
+	{
+		Con_Printf("VR: no classic calibration slot exists for %s\n", model->name);
+		return;
+	}
+	if (!isfinite(VR_WeaponOffsetCvar(slot, VR_WOFS_X).value) ||
+		!isfinite(VR_WeaponOffsetCvar(slot, VR_WOFS_Y).value) ||
+		!isfinite(VR_WeaponOffsetCvar(slot, VR_WOFS_Z).value) ||
+		!isfinite(VR_WeaponOffsetCvar(slot, VR_WOFS_SCALE).value) ||
+		VR_WeaponOffsetCvar(slot, VR_WOFS_SCALE).value <= 0.0f ||
+		!isfinite(VR_WeaponMuzzleCvar(slot, VR_WMUZZLE_X).value) ||
+		!isfinite(VR_WeaponMuzzleCvar(slot, VR_WMUZZLE_Y).value) ||
+		!isfinite(VR_WeaponMuzzleCvar(slot, VR_WMUZZLE_Z).value) ||
+		(vr_weapon_calibration_slots[slot].has_schema_mp_held_offset &&
+		 !VR_CalibrationVectorIsFinite(
+			 vr_weapon_calibration_slots[slot].schema_mp_held_offset)) ||
+		(vr_weapon_calibration_slots[slot].has_schema_mp_muzzle_offset &&
+		 !VR_CalibrationVectorIsFinite(
+			 vr_weapon_calibration_slots[slot].schema_mp_muzzle_offset)))
+	{
+		Con_Printf("VR: cannot save non-finite calibration values or a non-positive held scale for %s\n",
+			model->name);
+		return;
+	}
+
+	file = COM_LoadFile("vr_weapons.txt", NULL);
+	source = file ? (const char *)file : "";
+	if (!VR_WeaponSchemaParse(source, parsed,
+		VR_WEAPON_SCHEMA_MAX_ENTRIES, &parsed_count))
+	{
+		Con_Printf("VR: refusing to save; existing vr_weapons.txt is invalid\n");
+		goto done;
+	}
+	p = source;
+	end = source + strlen(source);
+	while (p < end)
+	{
+		const char *open = VR_CalibrationFindBrace(p, end, '{');
+		const char *close;
+
+		if (!open)
+		{
+			if (!VR_CalibrationTextAppendN(&output, p, (size_t)(end - p)))
+				goto done;
+			break;
+		}
+		if (!VR_CalibrationTextAppendN(&output, p, (size_t)(open - p)))
+			goto done;
+		close = VR_CalibrationFindBrace(open + 1, end, '}');
+		if (!close)
+			goto done; /* The schema preflight should make this unreachable. */
+		++close;
+		if (VR_CalibrationBlockMatchesViewmodel(open,
+			(size_t)(close - open), model->name))
+		{
+			if (!VR_CalibrationWriteUpdatedBlock(&output, open,
+				(size_t)(close - open), slot))
+				goto done;
+			updated = true;
+		}
+		else if (!VR_CalibrationTextAppendN(&output, open,
+			(size_t)(close - open)))
+			goto done;
+		p = close;
+	}
+
+	if (!updated)
+	{
+		if (!VR_CalibrationAppendNewBlock(&output, model->name, slot))
+			goto done;
+	}
+	if (output.len > INT_MAX)
+	{
+		Con_Printf("VR: refusing to save; vr_weapons.txt is too large\n");
+		goto done;
+	}
+	if (!VR_CalibrationSchemaTextIsValid(output.data ? output.data : ""))
+	{
+		Con_Printf("VR: refusing to save; updated vr_weapons.txt is invalid\n");
+		goto done;
+	}
+	COM_WriteFile("vr_weapons.txt", output.data ? output.data : "",
+		(int)output.len);
+	if (!VR_CalibrationActiveFileMatches(output.data ? output.data : "",
+		output.len))
+	{
+		Con_Printf("VR: COM_WriteFile returned, but the active-game vr_weapons.txt did not match the requested save; save status is uncertain\n");
+		post_write_failed = true;
+		goto done;
+	}
+	Con_Printf("VR: saved classic calibration for %s to %s/vr_weapons.txt\n",
+		model->name, com_gamedir);
+	ok = true;
+
+done:
+	if (!ok && output.data && !post_write_failed)
+		Con_Printf("VR: failed to save classic calibration for %s\n",
+			model->name);
+	free(output.data);
+	if (file)
+		Mem_Free(file);
+}
+
 static int VR_FindFreeCalibrationSlot(void)
 {
 	int slot;
@@ -371,6 +1004,7 @@ void VR_WeaponCalibrationInit(void)
 		}
 	}
 	vr_weapon_calibration_initialized = true;
+	Cmd_AddCommand("vrweaponsave", VR_WeaponCalibrationSave_f);
 }
 
 void VR_WeaponCalibrationReset(void)
