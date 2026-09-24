@@ -526,6 +526,7 @@ void SV_ConnectClient (int clientnum); // called from the netcode to add new cli
 void SV_CheckForNewClients (void);
 void SV_RunClients (void);
 void SV_ResetPrivateCommandQueue (client_t *client);
+void SV_PrivatePlayerTeleported (edict_t *ent);
 void SV_ResetPrivateVRContactState (client_t *client);
 void SV_VRContactPlayerSetOrigin (edict_t *ent, const vec3_t origin);
 void SV_VRContactPlayerRelocated (edict_t *ent);

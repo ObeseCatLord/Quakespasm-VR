@@ -1210,6 +1210,8 @@ static void Host_Noclip_Off (void)
 	}
 
 	sv_player->v.movetype = MOVETYPE_WALK;
+	if (found)
+		SV_PrivatePlayerTeleported (sv_player);
 	SV_ClientPrintf ("noclip OFF\n");
 }
 
@@ -1319,6 +1321,7 @@ static void Host_SetPos_f (void)
 	}
 
 	SV_LinkEdict (sv_player, false);
+	SV_PrivatePlayerTeleported (sv_player);
 }
 
 /*

@@ -173,6 +173,9 @@ typedef struct
 	qboolean move_ack_prediction_allowed;
 	unsigned short move_ack_mode_epoch, move_ack_discontinuity_epoch;
 	unsigned char move_ack_discontinuity_reason;
+	/* A semantic teleport is consumed only with its complete owner snapshot. */
+	qboolean move_teleport_epoch_valid;
+	unsigned short move_teleport_epoch_consumed;
 	// Coherent owner/ACK association only; replay must also check ACK policy.
 	// The authoritative owner remains in entities[owner].netstate.
 	qboolean move_snapshot_valid;

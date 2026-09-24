@@ -31,6 +31,20 @@ relocation discontinuity epoch for prediction smoothing. Remote co-op gameplay
 qualification remains open, including blocked arrival, slot changes,
 room-scale alignment and replay. The 3D weapon layout also remains open.
 
+An Astra senior review (`gpt-6-astra`, effective `max`) checked this
+relocation boundary after the first Linux build. Its source findings and the
+integration decisions are:
+
+| Finding | Disposition |
+| --- | --- |
+| A movement epoch alone does not snap sub-100-unit interpolation or invalidate pending VR motion if `svc_setangle` is lost. | **Adopt:** consume a new teleport epoch only after an accepted, finite, updated owner position; snap both owner interpolation endpoints and invalidate pending VR motion once per epoch. A repeated/equal ACK remains eligible, while incomplete updates cannot consume it. The existing `svc_setangle` path remains the yaw owner. |
+| A selected dry-WALK client can be sent into water by donor placement and then fail its movement contract. | **Adopt:** use dry candidate search for selected clients and validate their exact-origin fallback; retain donor water and fallback policy for ordinary clients. |
+| QC `setorigin` can make small routine corrections; treating every contact invalidation as a semantic teleport creates needless resets. | **Adopt:** keep contact invalidation broad, but raise the movement epoch only from explicit server relocation owners. QC-authored teleports beyond those owners still need an identified semantic hook. |
+| Clearing the private movement queue at relocation risks breaking ACK/replay ownership without proof of duplicate application. | **Adopt:** leave the movement queue with its existing owner. |
+
+These source/build checks do not certify player/spawn arrival, short teleports,
+lossy `svc_setangle`, queued room-scale commands, or mod-authored QC teleports.
+
 The shared wheel loads the active mod's `wwheel.txt` roster and
 `vr_weapons.txt` schema through the existing search path, with declared
 selectors, impulses and ownership metadata. It ignores inherited id1 files

@@ -933,6 +933,26 @@ void SV_ResetPrivateCommandQueue (client_t *client)
 	client->private_pmove_last_cmd_valid = false;
 }
 
+/* Semantic relocation is narrower than contact invalidation: QuakeC may
+ * adjust a player with setorigin without intending a teleport. The explicit
+ * server relocation owners call this after committing a new location. */
+void SV_PrivatePlayerTeleported (edict_t *ent)
+{
+	if (!ent)
+		return;
+	for (int slot = 0; slot < svs.maxclients; ++slot)
+	{
+		client_t *client = &svs.clients[slot];
+		if (client->edict != ent || !client->active ||
+			client->protocol_qsvr != QSVR_PROTOCOL_PINNED)
+			continue;
+		client->private_move_discontinuity_epoch++;
+		client->private_move_discontinuity_reason =
+			MOVEACK_DISCONTINUITY_RESET_TELEPORT;
+		return;
+	}
+}
+
 static qboolean SV_QueuePrivateCommand (client_t *client, const usercmd_t *command,
 	double received_at)
 {

@@ -1250,6 +1250,7 @@ static void CLFTE_QueueAckFrame (int sequence)
 }
 
 static qboolean cl_move_snapshot_pending;
+static qboolean cl_move_snapshot_pending_owner_reset;
 static int cl_move_snapshot_pending_ack, cl_move_snapshot_pending_owner;
 static unsigned int cl_move_stat_receipts;
 
@@ -1277,6 +1278,7 @@ static void CL_InvalidateMoveSnapshot (void)
 	cl.move_snapshot_ack = -1;
 	cl.move_snapshot_owner = 0;
 	cl_move_snapshot_pending = false;
+	cl_move_snapshot_pending_owner_reset = false;
 }
 
 static void CL_RecordMoveStatReceipt (int stat)
@@ -1331,8 +1333,6 @@ static void CLFTE_CommitMoveSnapshot (void)
 		return;
 	cl_move_snapshot_pending = false;
 	if (cl.protocol_qsvr != QSVR_PROTOCOL_PINNED ||
-		cl_move_stat_receipts != CL_MOVE_STAT_RECEIPTS_COMPLETE ||
-		!CL_ReceivedMoveStatsUsable () ||
 		cl_move_snapshot_pending_ack != cl.ackedmovemessages ||
 		cl_move_snapshot_pending_owner != cl.viewentity ||
 		cl_move_snapshot_pending_owner <= 0 ||
@@ -1340,9 +1340,38 @@ static void CLFTE_CommitMoveSnapshot (void)
 		return;
 
 	owner = &cl.entities[cl_move_snapshot_pending_owner];
-	if (!owner->update_type || !CL_MoveSnapshotStateIsFinite (&owner->netstate))
+	if (!owner->update_type || owner->msgtime != cl.mtime[0] ||
+		!CL_MoveSnapshotStateIsFinite (&owner->netstate))
 		return;
 
+	if (cl.move_ack_discontinuity_reason == MOVEACK_DISCONTINUITY_RESET_TELEPORT &&
+		(!cl.move_teleport_epoch_valid ||
+		 cl.move_teleport_epoch_consumed != cl.move_ack_discontinuity_epoch))
+	{
+		/* Consume only with an accepted owner reset. A repeated epoch or an
+		 * incomplete packet must not rearm the VR input or lerp from the old
+		 * location; svc_setangle is not reliable on its own. */
+		VectorCopy (owner->netstate.origin, owner->msg_origins[0]);
+		VectorCopy (owner->netstate.origin, owner->msg_origins[1]);
+		VectorCopy (owner->netstate.origin, owner->origin);
+		VectorCopy (owner->netstate.origin, owner->lerp.prev_origin);
+		VectorCopy (owner->netstate.angles, owner->msg_angles[0]);
+		VectorCopy (owner->netstate.angles, owner->msg_angles[1]);
+		VectorCopy (owner->netstate.angles, owner->angles);
+		VectorCopy (owner->netstate.angles, owner->lerp.prev_angles);
+		owner->lerp.move_change_time = 0;
+		owner->forcelink = true;
+		CL_ResetPredictionSmoothing ();
+		VR_InputInvalidateMotion ();
+		cl.move_teleport_epoch_consumed = cl.move_ack_discontinuity_epoch;
+		cl.move_teleport_epoch_valid = true;
+	}
+	/* A private legacy owner can still need the semantic teleport snap while
+	 * lacking the full dry-WALK stat set required for PMove replay. */
+	if (!cl_move_snapshot_pending_owner_reset ||
+		cl_move_stat_receipts != CL_MOVE_STAT_RECEIPTS_COMPLETE ||
+		!CL_ReceivedMoveStatsUsable ())
+		return;
 	cl.move_snapshot_valid = true;
 	cl.move_snapshot_ack = cl_move_snapshot_pending_ack;
 	cl.move_snapshot_owner = cl_move_snapshot_pending_owner;
@@ -1358,6 +1387,7 @@ static void CLFTE_ParseEntitiesUpdate (void)
 	int		  snapshot_owner = cl.viewentity;
 	qboolean  move_ack_accepted = false;
 	qboolean  owner_reset_decoded = false;
+	qboolean  owner_updated_decoded = false;
 	qboolean  snapshot_time_finite = true;
 	qboolean  private_snapshot = cl.protocol_qsvr == QSVR_PROTOCOL_PINNED;
 
@@ -1451,10 +1481,14 @@ static void CLFTE_ParseEntitiesUpdate (void)
 				InvalidateTraceLineCache ();
 				cl.requestresend = false; // we got it.
 				owner_reset_decoded = false;
+				owner_updated_decoded = false;
 				continue;
 			}
 			if (private_snapshot && newnum == snapshot_owner)
+			{
 				owner_reset_decoded = false;
+				owner_updated_decoded = false;
+			}
 			ent->update_type = false; // no longer valid
 			ent->netstate = nullentitystate;
 			ent->model = NULL;
@@ -1474,8 +1508,11 @@ static void CLFTE_ParseEntitiesUpdate (void)
 		}
 		unsigned int delta_bits = CLFTE_ReadDelta (newnum, &ent->netstate, &ent->netstate, &ent->baseline);
 			if (private_snapshot && newnum == snapshot_owner)
-				owner_reset_decoded = (delta_bits & UF_RESET) && !msg_badread &&
+			{
+				owner_updated_decoded = !msg_badread &&
 					CL_MoveSnapshotStateIsFinite (&ent->netstate);
+				owner_reset_decoded = owner_updated_decoded && (delta_bits & UF_RESET);
+			}
 		if (ent->msgtime == cl.mtime[0] &&
 			!(same_time_private_owner && VectorCompare (oldorigin, ent->netstate.origin) &&
 				VectorCompare (oldangles, ent->netstate.angles)))
@@ -1489,8 +1526,11 @@ static void CLFTE_ParseEntitiesUpdate (void)
 			ent->update_type = true;
 			unsigned int delta_bits = CLFTE_ReadDelta (newnum, &ent->netstate, NULL, &ent->baseline);
 			if (private_snapshot && newnum == snapshot_owner)
-				owner_reset_decoded = (delta_bits & UF_RESET) && !msg_badread &&
+			{
+				owner_updated_decoded = !msg_badread &&
 					CL_MoveSnapshotStateIsFinite (&ent->netstate);
+				owner_reset_decoded = owner_updated_decoded && (delta_bits & UF_RESET);
+			}
 			ent->msgtime = 0; // the slot's stale msgtime must not defeat the forcelink check in CL_EntitiesDeltaed
 		}
 	}
@@ -1541,9 +1581,10 @@ static void CLFTE_ParseEntitiesUpdate (void)
 	}
 
 	if (private_snapshot && move_ack_accepted && snapshot_time_finite &&
-		owner_reset_decoded && !msg_badread && snapshot_owner > 0)
+		owner_updated_decoded && !msg_badread && snapshot_owner > 0)
 	{
 		cl_move_snapshot_pending = true;
+		cl_move_snapshot_pending_owner_reset = owner_reset_decoded;
 		cl_move_snapshot_pending_ack = cl.ackedmovemessages;
 		cl_move_snapshot_pending_owner = snapshot_owner;
 	}

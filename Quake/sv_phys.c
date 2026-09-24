@@ -3176,24 +3176,14 @@ void SV_VRContactPlayerRelocated (edict_t *ent)
 		slot = NUM_FOR_EDICT (ent);
 		if (slot >= 1 && slot <= svs.maxclients &&
 			svs.clients[slot - 1].edict == ent)
-		{
-			client_t *client = &svs.clients[slot - 1];
-			SV_VRContactInvalidateAccepted (client);
-			client->private_move_discontinuity_epoch++;
-			client->private_move_discontinuity_reason =
-				MOVEACK_DISCONTINUITY_RESET_TELEPORT;
-		}
+			SV_VRContactInvalidateAccepted (&svs.clients[slot - 1]);
 		return;
 	}
 	/* Host commands can place a player without an active server VM. */
 	for (slot = 0; slot < svs.maxclients; slot++)
 		if (svs.clients[slot].edict == ent)
 		{
-			client_t *client = &svs.clients[slot];
-			SV_VRContactInvalidateAccepted (client);
-			client->private_move_discontinuity_epoch++;
-			client->private_move_discontinuity_reason =
-				MOVEACK_DISCONTINUITY_RESET_TELEPORT;
+			SV_VRContactInvalidateAccepted (&svs.clients[slot]);
 			return;
 		}
 }
@@ -3288,6 +3278,20 @@ static qboolean SV_CoopRespawnCanPlaceAt (edict_t *ent,
 	bottom = SV_CheckBottom (ent);
 	VectorCopy (old_origin, ent->v.origin);
 	return bottom;
+}
+
+static qboolean SV_CoopRespawnAllowWater (edict_t *ent)
+{
+	int entnum;
+	client_t *client;
+
+	if (!ent || ent->free)
+		return true;
+	entnum = NUM_FOR_EDICT (ent);
+	if (entnum < 1 || entnum > svs.maxclients)
+		return true;
+	client = &svs.clients[entnum - 1];
+	return client->edict != ent || !SV_PrivateWalkTrialSelected (client);
 }
 
 static qboolean SV_CoopRespawnDropToFloor (edict_t *ent,
@@ -3419,23 +3423,29 @@ static void SV_CoopRespawnRelocate (edict_t *ent, edict_t *anchor,
 	VectorCopy (angles, ent->v.v_angle);
 	ent->v.fixangle = true;
 	SV_LinkEdict (ent, false);
+	SV_PrivatePlayerTeleported (ent);
 }
 
 qboolean SV_CoopRespawnTeleportToPlayer (edict_t *ent, edict_t *target)
 {
 	static const float radii[] = {0.0f, 40.0f, 48.0f, 64.0f, 80.0f, 96.0f, 128.0f};
 	vec3_t spot;
+	qboolean allow_water;
 
 	if (!coop.value || deathmatch.value || !ent || ent->free || !target ||
 		target->free || ent == target || !SV_CoopRespawnIsAliveClient (ent) ||
 		!SV_CoopRespawnIsAliveClient (target))
 		return false;
+	allow_water = SV_CoopRespawnAllowWater (ent);
 	if (!SV_CoopRespawnFindNearbySpot (ent, target->v.origin, target, radii,
-		countof (radii), 384.0f, true, spot))
+		countof (radii), 384.0f, allow_water, spot))
 	{
 		if (!SV_CoopFeatureEnabled (&sv_coop_player_teleport_fallback, true) ||
 			!SV_CoopFeatureEnabled (&sv_coop_noplayerclip, true) ||
 			!SV_CoopFeatureEnabled (&sv_coop_notelefrag, true))
+			return false;
+		if (!allow_water && !SV_CoopRespawnCanPlaceAt (ent, target->v.origin,
+			false))
 			return false;
 		VectorCopy (target->v.origin, spot);
 	}
@@ -3447,14 +3457,16 @@ qboolean SV_CoopRespawnTeleportToSpawn (edict_t *ent, edict_t *spawn)
 {
 	static const float radii[] = {0.0f, 32.0f, 48.0f, 64.0f, 80.0f, 96.0f, 128.0f};
 	vec3_t base, spot;
+	qboolean allow_water;
 
 	if (!coop.value || deathmatch.value || !ent || ent->free || !spawn ||
 		spawn->free || !SV_CoopRespawnIsAliveClient (ent))
 		return false;
+	allow_water = SV_CoopRespawnAllowWater (ent);
 	VectorCopy (spawn->v.origin, base);
 	base[2] += 1.0f;
 	if (!SV_CoopRespawnFindNearbySpot (ent, base, spawn, radii,
-		countof (radii), 128.0f, true, spot))
+		countof (radii), 128.0f, allow_water, spot))
 		return false;
 	SV_CoopRespawnRelocate (ent, spawn, spot);
 	return true;
