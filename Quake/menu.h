@@ -50,6 +50,7 @@ enum m_state_e
 	m_mods,
 	m_maps,
 	m_skill,
+	m_servermod,
 };
 
 extern enum m_state_e m_state;
@@ -82,6 +83,8 @@ qboolean M_VRPointerBindingGrab (void);
 void M_Menu_Main_f (void);
 void M_Menu_Options_f (void);
 void M_Menu_Quit_f (void);
+void M_Menu_ServerModDownload_f (void);
+void M_ServerModDownload_Close (void);
 
 void M_Print (cb_context_t *cbx, int cx, int cy, const char *str);
 

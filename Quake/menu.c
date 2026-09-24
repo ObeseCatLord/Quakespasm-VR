@@ -49,6 +49,8 @@ static void M_Menu_Help_f (void);
 static void M_Menu_Mods_f (void);
 static void M_Menu_Maps_f (void);
 static void M_Menu_Skill_f (void);
+static void M_ServerModDownload_Draw (cb_context_t *cbx);
+static void M_ServerModDownload_Key (int key);
 
 static void M_Main_Draw (cb_context_t *cbx);
 static void M_SinglePlayer_Draw (cb_context_t *cbx);
@@ -163,6 +165,8 @@ extern cvar_t crosshair_def;
 extern cvar_t crosshair_size;
 extern cvar_t crosshair_color;
 extern cvar_t crosshair_alpha;
+extern cvar_t vr_enabled;
+qboolean VR_IsLeftHanded (void);
 
 static qboolean slider_grab;
 static qboolean scrollbar_grab;
@@ -721,6 +725,9 @@ void M_Mouse_UpdateCursor (int *cursor, int left, int right, int top, int item_h
 
 void M_Menu_Main_f (void)
 {
+	/* Returning to the main menu dismisses and cancels a server add-on request. */
+	if (m_state == m_servermod)
+		CL_ServerModDownload_Cancel ();
 	M_MenuChanged ();
 	if (key_dest != key_menu)
 	{
@@ -3913,6 +3920,10 @@ static qboolean mods_catalogue_details, mods_catalogue_install_active;
 static addon_catalog_entry_t mods_catalogue_approved;
 static char mods_catalogue_feedback[160];
 
+/* Server-requested add-ons require an explicit user decision. */
+static int m_servermod_cursor;
+static qboolean m_servermod_accept_sent;
+
 static qboolean M_Mods_CatalogueMatches (const addon_catalog_entry_t *item)
 {
 	return item && (!mods_search[0] ||
@@ -4481,6 +4492,241 @@ static void M_Mods_Char (int key)
 	mods_search[length] = (char)key;
 	mods_search[length + 1] = '\0';
 	M_Mods_UpdateFilter ();
+}
+
+//=============================================================================
+/* SERVER-REQUESTED ADD-ON DOWNLOAD */
+
+static int M_ServerMod_PrintWrapped (cb_context_t *cbx, int x, int y, const char *text)
+{
+	const int columns = 36;
+	const char *start = text ? text : "";
+
+	while (*start)
+	{
+		const char *end, *space = NULL;
+		char line[37];
+		int length;
+
+		while (*start == ' ')
+			++start;
+		if (!*start)
+			break;
+
+		end = start;
+		while (*end && end - start < columns)
+		{
+			if (*end == ' ')
+				space = end;
+			++end;
+		}
+		if (*end && space)
+			end = space;
+		length = q_min ((int)sizeof (line) - 1, (int)(end - start));
+		memcpy (line, start, length);
+		line[length] = '\0';
+		M_PrintWhite (cbx, x, y, line);
+		y += CHARACTER_SIZE;
+		start = end;
+	}
+	return y;
+}
+
+static int M_ServerMod_PrintField (cb_context_t *cbx, int x, int y,
+	const char *label, const char *value)
+{
+	char field[256];
+	q_snprintf (field, sizeof (field), "%s: %s", label,
+		value && value[0] ? value : "(not provided)");
+	return M_ServerMod_PrintWrapped (cbx, x, y, field);
+}
+
+void M_Menu_ServerModDownload_f (void)
+{
+	M_MenuChanged ();
+	IN_Deactivate (modestate == MS_WINDOWED);
+	key_dest = key_menu;
+	m_state = m_servermod;
+	m_servermod_cursor = 0;
+	m_servermod_accept_sent = false;
+	m_entersound = true;
+}
+
+void M_ServerModDownload_Close (void)
+{
+	if (m_state != m_servermod)
+		return;
+	IN_Activate ();
+	key_dest = key_game;
+	m_state = m_none;
+}
+
+static void M_ServerModDownload_Draw (cb_context_t *cbx)
+{
+	cl_servermod_info_t info;
+	char detail[64];
+	int y, action_y;
+	qboolean prompt;
+
+	if (!CL_ServerModDownload_GetInfo (&info))
+	{
+		M_Menu_Main_f ();
+		return;
+	}
+
+	prompt = info.phase == CL_SERVERMOD_PROMPT && !m_servermod_accept_sent;
+	M_DrawTransPic (cbx, 16, 4, Draw_CachePic ("gfx/qplaque.lmp"));
+	M_PrintWhite (cbx, 112, 8, "SERVER ADD-ON");
+	M_DrawTextBox (cbx, 8, 24, 38, 20);
+
+	y = 32;
+	if (prompt)
+	{
+		M_PrintWhite (cbx, 24, y, "The server requires this add-on:");
+		y += CHARACTER_SIZE;
+		y = M_ServerMod_PrintField (cbx, 24, y, "Name", info.name);
+		y = M_ServerMod_PrintField (cbx, 24, y, "Gamedir", info.game);
+		y = M_ServerMod_PrintField (cbx, 24, y, "Author", info.author);
+		y = M_ServerMod_PrintField (cbx, 24, y, "Description", info.description);
+		q_snprintf (detail, sizeof (detail), "Package size: %d bytes", info.size);
+		y = M_ServerMod_PrintWrapped (cbx, 24, y, detail);
+		if (info.verified)
+			y = M_ServerMod_PrintWrapped (cbx, 24, y, "Package marked verified by catalogue.");
+		else
+		{
+			y = M_ServerMod_PrintWrapped (cbx, 24, y,
+				"UNVERIFIED: no digest or checksum.");
+			y = M_ServerMod_PrintWrapped (cbx, 24, y,
+				"Download only if you trust this server.");
+		}
+
+		action_y = q_max (132, y + 4);
+		M_Print (cbx, 48, action_y, "Download & Connect");
+		M_Print (cbx, 48, action_y + 12, "Cancel");
+		M_Mouse_UpdateCursor (&m_servermod_cursor, 24, 296, action_y, 12, 0);
+		M_Mouse_UpdateCursor (&m_servermod_cursor, 24, 296, action_y + 12, 12, 1);
+		Draw_Character (cbx, 32, action_y + m_servermod_cursor * 12,
+			12 + ((int)(realtime * 4) & 1));
+	}
+	else
+	{
+		if (info.name[0])
+			y = M_ServerMod_PrintField (cbx, 24, y, "Name", info.name);
+		y = M_ServerMod_PrintField (cbx, 24, y, "Gamedir", info.game);
+
+		switch (info.phase)
+		{
+		case CL_SERVERMOD_CHECKING:
+			M_PrintWhite (cbx, 24, y, "Checking the add-on catalogue...");
+			y += CHARACTER_SIZE;
+			break;
+		case CL_SERVERMOD_INSTALLING:
+			M_PrintWhite (cbx, 24, y, "Downloading and installing...");
+			y += CHARACTER_SIZE;
+			break;
+		case CL_SERVERMOD_ERROR:
+			M_PrintWhite (cbx, 24, y, "Unable to prepare the server add-on:");
+			y += CHARACTER_SIZE;
+			break;
+		case CL_SERVERMOD_PROMPT:
+			M_PrintWhite (cbx, 24, y, "Starting the requested download...");
+			y += CHARACTER_SIZE;
+			break;
+		}
+		if (info.message[0])
+			y = M_ServerMod_PrintField (cbx, 24, y, "Status", info.message);
+		if (!info.verified && info.phase != CL_SERVERMOD_CHECKING &&
+			info.phase != CL_SERVERMOD_ERROR)
+			y = M_ServerMod_PrintWrapped (cbx, 24, y,
+				"UNVERIFIED: no digest/checksum.");
+		if (info.phase == CL_SERVERMOD_INSTALLING && info.size > 0)
+		{
+			double progress = (double)AddonCatalog_Progress ();
+			const double total = (double)info.size;
+			int percent;
+
+			if (!isfinite (progress) || progress < 0.0)
+				progress = 0.0;
+			if (progress > total)
+				progress = total;
+			/* Keep multiplication out of integer arithmetic: package sizes can
+			 * reach 512 MiB, while the displayed percentage remains 0..100. */
+			percent = (int)(progress * 100.0 / total);
+			q_snprintf (detail, sizeof (detail), "Download: %d%% (%.0f/%.0f bytes)",
+				percent, progress, total);
+			y = M_ServerMod_PrintWrapped (cbx, 24, y, detail);
+		}
+
+		action_y = 160;
+		M_Print (cbx, 48, action_y, "Cancel and Return to Menu");
+		M_Mouse_UpdateCursor (&m_servermod_cursor, 24, 296, action_y, 12, 0);
+		Draw_Character (cbx, 32, action_y, 12 + ((int)(realtime * 4) & 1));
+	}
+
+	if (vr_enabled.value)
+		M_Print (cbx, 8, 192, VR_IsLeftHanded () ?
+			"L-Trigger/R-A: select L-B: cancel" :
+			"R-Trigger/L-A: select R-B: cancel");
+	else
+		M_Print (cbx, 48, 192, "Enter/A: select  Esc/B: cancel");
+}
+
+static void M_ServerModDownload_ReturnToMain (void)
+{
+	M_Menu_Main_f ();
+}
+
+static void M_ServerModDownload_Key (int key)
+{
+	cl_servermod_info_t info;
+
+	if (!CL_ServerModDownload_GetInfo (&info))
+	{
+		M_Menu_Main_f ();
+		return;
+	}
+
+	switch (key)
+	{
+	case K_MOUSE2:
+	case K_ESCAPE:
+	case K_BBUTTON:
+		M_ServerModDownload_ReturnToMain ();
+		return;
+
+	case K_UPARROW:
+	case K_DOWNARROW:
+	case K_LEFTARROW:
+	case K_RIGHTARROW:
+	case K_MWHEELUP:
+	case K_MWHEELDOWN:
+		if (info.phase == CL_SERVERMOD_PROMPT && !m_servermod_accept_sent)
+		{
+			m_servermod_cursor ^= 1;
+			S_LocalSound ("misc/menu1.wav");
+		}
+		return;
+
+	case K_MOUSE1:
+	case K_ENTER:
+	case K_KP_ENTER:
+	case K_ABUTTON:
+		if (info.phase == CL_SERVERMOD_PROMPT && !m_servermod_accept_sent)
+		{
+			if (m_servermod_cursor == 0)
+			{
+				/* Latch before calling the backend in case it updates asynchronously. */
+				m_servermod_accept_sent = true;
+				S_LocalSound ("misc/menu2.wav");
+				CL_ServerModDownload_Accept ();
+			}
+			else
+				M_ServerModDownload_ReturnToMain ();
+		}
+		else
+			M_ServerModDownload_ReturnToMain ();
+		return;
+	}
 }
 
 //=============================================================================
@@ -6614,6 +6860,10 @@ void M_Draw (cb_context_t *cbx)
 		M_Mods_Draw (cbx);
 		break;
 
+	case m_servermod:
+		M_ServerModDownload_Draw (cbx);
+		break;
+
 	case m_maps:
 		M_Maps_Draw (cbx);
 		break;
@@ -6764,6 +7014,10 @@ void M_Keydown (int key, qboolean repeat)
 	case m_mods:
 		M_Mods_Key (key);
 		break;
+
+	case m_servermod:
+		M_ServerModDownload_Key (key);
+		return;
 
 	case m_maps:
 		M_Maps_Key (key);
