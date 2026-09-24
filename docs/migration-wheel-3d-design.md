@@ -88,3 +88,16 @@ verify hover/release alignment, world-depth rejection of hidden slots,
 source-equivalent multi-ring layout, depth-tested labels, all model formats or
 runtime focus/reconnect behavior. Those remain open before 3D wheel parity can
 be claimed.
+
+## Post-implementation Astra review
+
+Astra's read-only review found no concrete model-load, frame-lifetime, alias
+matrix or MD5-palette regression in this slice. It identified four presentation
+gaps. Selected mesh labels were nearly black after their contrast cards were
+removed; they now use a bright green tint. Playspace pointer hits now trace the
+world from controller to panel and reject a blocked ray before hover/haptic or
+release selection. This closes the obvious fully occluded-panel case, but
+per-model target visibility and model-offset-aware 3D hit geometry remain open.
+The legacy view-anchored mode still needs its foreground depth rule; current
+scene emission uses playspace world depth in both modes. These gaps remain
+explicit parity work, not completed behavior.

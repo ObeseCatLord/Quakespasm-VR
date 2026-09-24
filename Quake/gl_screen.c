@@ -1996,6 +1996,19 @@ static void SCR_VRWeaponMenuPrepare (void)
 	pointer_valid = SCR_VRMenuRayHit (ray_origin, ray_direction,
 		vr_weapon_menu_anchor.center, right, down, normal, scale, false,
 		&pointer_x, &pointer_y);
+	if (pointer_valid && vr_weapon_menu_anchor_mode == 0 && cl.worldmodel &&
+		!cl.worldmodel->needload)
+	{
+		vec3_t target, impact, hit_normal, remaining;
+		for (int axis = 0; axis < 3; ++axis)
+			target[axis] = vr_weapon_menu_anchor.center[axis] +
+				(pointer_x - glwidth * 0.5f) * scale * right[axis] +
+				(pointer_y - glheight * 0.5f) * scale * down[axis];
+		CL_TraceWorldLine (ray_origin, target, impact, hit_normal);
+		VectorSubtract (target, impact, remaining);
+		if (VectorLength (remaining) >= 1.0f)
+			pointer_valid = false;
+	}
 	VR_WeaponMenu_SetVRPointer (true, pointer_valid, pointer_x, pointer_y);
 	if (!VR_WeaponMenu_IsOpenVR ())
 	{

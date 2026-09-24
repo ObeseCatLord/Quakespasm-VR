@@ -2025,9 +2025,12 @@ void VR_WeaponMenu_DrawCatalog (struct cb_context_s *context,
 					visible[i].top + 2.0f * scale, icon_width, icon_height, icon,
 					0.0f, 0.0f, 1.0f, 1.0f, NULL, 1.0f);
 		}
-		GL_SetCanvasColor (is_selected ? 0.05f : (visible[i].selectable ? 1.0f : 0.55f),
-			is_selected ? 0.08f : (visible[i].selectable ? 1.0f : 0.55f),
-			is_selected ? 0.10f : (visible[i].selectable ? 1.0f : 0.55f), 1.0f);
+		GL_SetCanvasColor (is_selected ? (has_vr_model ? 0.55f : 0.05f) :
+			(visible[i].selectable ? 1.0f : 0.55f),
+			is_selected ? (has_vr_model ? 1.0f : 0.08f) :
+			(visible[i].selectable ? 1.0f : 0.55f),
+			is_selected ? (has_vr_model ? 0.55f : 0.10f) :
+			(visible[i].selectable ? 1.0f : 0.55f), 1.0f);
 		if (entry->label)
 			Draw_String_Scaled (cbx, visible[i].center_x - label_width * 0.5f,
 				has_vr_model ? visible[i].center_y + 24.0f * scale :
