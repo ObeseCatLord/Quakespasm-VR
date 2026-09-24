@@ -236,7 +236,7 @@ typedef struct client_s
 	int vr_gorilla_last_advertised; // -1 means the current policy has not been queued
 	int weapon_contact_last_mode; // last mode appended to the reliable stream; -1 means not queued
 	int weapon_contact_last_profile; // profile paired with weapon_contact_last_mode
-	int qbj3_akimbo_last_advertised; // -1 means the exact-QC offer has not been queued
+	signed char qbj3_akimbo_last_advertised_mask; // -1 unsent; bits 0..3 are the queued offer tuple
 	/* Optional VRIK pose transport state; unrelated to QSVR movement admission. */
 	qboolean vrik_capable;
 	unsigned char vrik_protocol_version;
