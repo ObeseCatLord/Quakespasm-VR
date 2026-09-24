@@ -87,3 +87,15 @@ shutdown; it is **not** a map-only loading benchmark, VR frame-time result, or
 comparison against vkQuake/OpenGL/Ironwail. Repeatable warm/cold runs and an
 in-map route with CPU/GPU frame distributions are still needed before choosing
 or claiming a performance optimization.
+
+An isolated build of the exact vkQuake donor commit `4bc898f2` and a frozen
+`2.0` binary were then alternated on the same disposable asset shadow. Both
+loaded `mj4m1`: donor runs took 6.70 and 6.65 seconds; `2.0` runs took 7.37
+and 10.47 seconds. The latter `2.0` run aborted after `Shutting down SDL
+sound` with glibc `corrupted size vs. prev_size`; it must not enter a speed
+comparison. A debugger run and three address/undefined-sanitizer runs of the
+same committed `2.0` code loaded and exited normally, without a sanitizer
+finding. The cause remains unresolved, including whether the Vulkan driver,
+shutdown ordering, or earlier application memory corruption is responsible.
+The old screenshot-task teardown race was already addressed; this evidence
+does not identify a recurrence of that same race.
