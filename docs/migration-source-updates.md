@@ -52,3 +52,18 @@ interface rows. The minimum update is to move the four existing MAIN command
 line pins shifted by these insertions: `+showscores`/`-showscores` to 297/298
 and `vr_migrate_movement_defaults`/`netdiag` to 1182/1185. No broad interface
 regeneration is required.
+
+## 2.0 reconciliation checkpoint
+
+The four deltas above now have implementation anchors on branch `2.0`:
+
+- `SND_ChannelAudible` and ranked spatial channel selection in
+  `Quake/snd_dma.c` (`6092a1eb`).
+- `VR_WeaponCatalog_ModelPathsMatch` in `Quake/vr_weapon_catalog.h`, used by
+  `Quake/vr_weapon_menu.c`.
+- AD CSQC layout 4/104 handling in `Quake/sbar.c`.
+- `SV_ResetVRIKMapState` on map spawn in `Quake/sv_main.c`.
+
+These anchors close the source-delta routing gap, not runtime parity. Linux
+builds cover the audio channel change; headset/gameplay qualification is left
+to the user after implementation.
