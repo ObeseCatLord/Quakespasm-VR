@@ -24,12 +24,12 @@ Evidence is from pinned Git objects: **I** = Ironwail `08d578136ff43d7d1ef38e636
 | PERF-014 | Brush batching | I `r_world.c:231` `R_FlushBModelCalls`, bindless multidraw `:263`; V `r_brush.c:1019` indirect draw per material group | S | Reuse V groups/descriptors; preserve material and transparency boundaries. | Equal scene content; capture draw counts and CPU/GPU costs. |
 | PERF-015 | GPU lightmap updates | V `r_brush.c:3590` `R_UpdateLightmapsAndIndirect`; I `gl_shaders.h:641` instead combines style samples while shading | S | Retain V updater; share lighting work using visibility from both eyes. | Animated/dynamic lighting agrees between eyes, including moving brush models. |
 | PERF-016 | Existing no-VIS optimization | F `r_world.c:712` `R_EnsureNoVisSurfaceCache`; `:1062` GPU path has no-VIS and lighting restrictions | P, source | Preserve observable no-VIS behavior through V visibility machinery; avoid duplicating caches. | No-VIS map retains sky, liquids, dynamic lights, and fallback correctness. |
-| PERF-017 | Alias instancing | I `r_alias.c:296` `R_FlushAliasInstances`; F `:415` `GL_AliasInstanced_Flush`; V `:174` draws one instance | S | Adapt existing batching eligibility within V alias drawing. | Repeated models retain skins, poses, colors, fullbrights; capture submissions. |
+| PERF-017 | Alias instancing | I `r_alias.c:296` `R_FlushAliasInstances`; F `:415` `GL_AliasInstanced_Flush`; V `:174` draws one instance | S; lower priority for the sampled `mj4m1` view | Adapt existing batching eligibility within V alias drawing only when captures show enough actual repeated draws to amortize it. | Repeated models retain skins, poses, colors, fullbrights; capture submissions and frame time. |
 | PERF-018 | Higher color precision | I `gl_rmain.c:226` RGB10_A2; V `gl_vidsdl.c:1518` RGBA8 fallback, A2B10G10R10 selection | S | Preserve V format negotiation through stereo intermediates/presentation. | Dark gradients match intended precision; record actual attachment formats. |
 | PERF-019 | Higher depth precision | I `gl_rmain.c:227` D24S8, `:771` conditional reversed-Z; V `gl_vidsdl.c:1539` prefers D32S8; `gl_rmain.c:302` reversed infinite projection | S | Adapt asymmetric eye projections to V depth convention. | Near/far geometry, weapons, decals, and both-eye depth remain correct. |
 | PERF-020 | Precise original-level z-fighting workaround | I `gl_shaders.h:518` signed clip-space `1/1024` bias; `r_world.c:480` excludes world/decals. V `r_brush.c:987` used raster depth bias; F `r_brush.c:184` shifts origin | A, adapter added; visual parity pending | The current world shader applies I's reversed-Z clip offset through the existing push layout to eligible non-world brushes and liquids; desktop and stereo share it. See [review disposition](migration-zfix-review.md). | Original-level doors/lifts at grazing angles: stable overlap, unchanged geometry, both eyes. |
 | PERF-021 | Single-pass VR | No multiview/view-mask/ViewIndex implementation found in inspected I/V renderer/shader families; V `Shaders/indirect.comp:13` carries one view origin | M | Extend existing V passes/shaders/targets; representative task-enabled opaque multiview is a P1 exit gate before bulk ports. | Eligible opaque geometry uses multiview with distinct eye layers; permitted per-eye transparency/UI remains correct. One queue submission alone is not proof of single-pass rendering. |
-| PERF-022 | mj4m1 culling/batching result | Mechanisms PERF-013–017 exist; no mj4m1 measurements inspected | U | Establish baseline before modifying those mechanisms. | Repeatable route: correct visibility plus CPU/GPU p50/p95/p99, draws, missed VR frames. |
+| PERF-022 | mj4m1 culling/batching result | One Linux desktop startup-view probe below: about 1,233 alias candidates, 14 accepted model submissions | U; single-view observation only | Profile the culling/skin-selection cost before choosing an alias optimization; still establish a route baseline. | Repeatable route: correct visibility plus CPU/GPU p50/p95/p99, draws, missed VR frames. |
 | PERF-023 | Novel gains in desktop and VR | No measured bottleneck or numeric improvement target supplied | U | Profile existing owners; select one bounded change from evidence. | Demonstrated improvement against pinned baseline, with both modes checked for regressions. |
 | ASSET-001 | PNG/TGA/JPG/JPEG decoding and lookup precedence | V `image.c:156` originally lacked jpeg and prefers PNG over TGA; F/X `image.c:196` includes jpeg and prefers TGA at equal path priority; higher path priority wins in both | A, adapter present; runtime acceptance pending | Current `Quake/image.c` searches PNG, TGA, JPG, JPEG, PCX and LMP in that order, retaining the highest path ID and decoding JPEG through stb_image. Keep this vkQuake loader and tie precedence. | A .jpeg-only replacement loads; competing PNG/TGA files choose PNG at equal path priority and the higher-priority path otherwise. |
 | ASSET-002 | MD3 truecolor skins | V `gl_model.c:5990` shared `Mod_LoadMDXSkinsByIndex`; loader `:6025`; F loader `:4769` | P | Reuse V MD3/material path and retain source-required naming behavior. | Multi-surface MD3 renders correct PNG/TGA/JPG skin selections. |
@@ -42,6 +42,30 @@ Evidence is from pinned Git objects: **I** = Ironwail `08d578136ff43d7d1ef38e636
 | ASSET-009 | Lightstyle interpolation | I `gl_rlight.c:49`; F `:48`; V `R_AnimateLight:41`, former GPU-update gate `:67` | A, adapter added; runtime parity pending | V lighting owner now applies modes 0/1/2 on both CPU and GPU lightmap update paths; retain its existing `r_dynamic` policy. | With r_dynamic=1, smooth and abrupt styles (including ad_tears) follow modes 0/1/2 on both CPU and GPU lightmap update paths; mode 1 retains abrupt flicker. |
 
 The asset evidence establishes implemented formats and lookup behavior, not complete QSS compatibility. Keep original file attribution and established subsystem ownership.
+
+## `mj4m1` alias culling probe
+
+A local Linux desktop probe loaded the installed `mjolnir/mj4m1` assets in a
+disposable game-data shadow, held the startup view, and sampled frames near
+frame 81. `scr_speeds 2` reported about 1,233 alias passes per frame over ten
+frames. That counter is incremented for each alias entity *attempted* by
+`R_DrawEntitiesOnList`, even if `R_DrawAliasModel` subsequently culls it. A
+separate debugger count at `R_DrawAliasSurfaces` in the corresponding startup
+view found **14 accepted alias model submissions** across six unique model
+names. Six submissions were one rope model; the other five models had one or
+two each. `R_DrawAliasSurfaces` can draw multiple surfaces per submission, so
+this is **not** an exact Vulkan draw-call count. The sampled view gives little
+reason to import generic alias instancing as the first large-map optimization.
+
+The alias path currently selects/checks model skin data and computes pose and
+interpolated transform before frustum culling (`Quake/r_alias.c:R_DrawAliasModel`).
+The probe motivates checking the cost and safety of moving that rejection
+earlier. It does **not** establish that culling dominates frame time: the
+reported alias-pass count is not a draw-call count, the debugger perturbs
+timing, `scr_speeds 2` disables the indirect path, and this is one desktop view
+without a repeatable route or headset timing. Keep PERF-017 open for scenes
+with genuinely repeated visible models and measure any proposed cull against
+frame time and both-eye visibility before claiming a gain.
 
 ## Current-branch two-eye indirect culling
 
