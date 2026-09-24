@@ -36,14 +36,20 @@ void AddonCatalog_Shutdown (void);
 void AddonCatalog_Poll (void);
 void AddonCatalog_Refresh (void);
 void AddonCatalog_Cancel (void);
+unsigned int AddonCatalog_OperationId (void);
+void AddonCatalog_CancelOperation (unsigned int id);
 addon_catalog_state_t AddonCatalog_State (void);
 const char *AddonCatalog_Message (void);
 int AddonCatalog_Count (void);
 const addon_catalog_entry_t *AddonCatalog_Entry (int index);
+qboolean AddonCatalog_EntryMatchesApproved (const addon_catalog_entry_t *current,
+	const addon_catalog_entry_t *expected);
 /* Returns the raw catalogue index and copies the matching entry atomically. */
 int AddonCatalog_FindGameDir (const char *gamedir,
 	addon_catalog_entry_t *entry);
 qboolean AddonCatalog_StartInstall (int index, qboolean allow_unverified);
+qboolean AddonCatalog_StartInstallApproved (int index,
+	const addon_catalog_entry_t *expected, qboolean allow_unverified);
 float AddonCatalog_Progress (void);
 
 #endif /* _ADDON_CATALOG_H_ */

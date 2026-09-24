@@ -71,11 +71,13 @@ typedef enum
 {
 	cl_autoreconnect_idle,
 	cl_autoreconnect_wait_config,
+	cl_autoreconnect_connecting,
 	cl_autoreconnect_wait_signon
 } cl_autoreconnect_state_t;
 
 /* Allow frame-synchronized configs and slow map/signon loads, but remain bounded. */
 #define CL_AUTO_RECONNECT_CONFIG_TIMEOUT 90.0
+#define CL_AUTO_RECONNECT_CONNECT_TIMEOUT 30.0
 #define CL_AUTO_RECONNECT_SIGNON_TIMEOUT 90.0
 #define CL_SERVERMOD_OPERATION_TIMEOUT 180.0
 
@@ -99,7 +101,7 @@ typedef struct
 {
 	qboolean active;
 	qboolean refresh_attempted;
-	qboolean owns_catalogue_operation;
+	unsigned int catalogue_operation_id;
 	double deadline;
 	char endpoint[MAX_OSPATH];
 	unsigned int legacy_qsvr;
@@ -232,6 +234,7 @@ This is also called on Host_Error, so it shouldn't cause any errors
 */
 void CL_Disconnect (void)
 {
+	NET_DatagramConnectCancel ();
 	SpatialWorld_Clear ();
 	CL_ResetVRIKState ();
 	CL_ResetVoiceTransportState ();
@@ -328,6 +331,7 @@ void CL_Disconnect_f (void)
 
 void CL_CancelAutoReconnect (void)
 {
+	NET_DatagramConnectCancel ();
 	CL_ServerModDownload_Cancel ();
 	if (++cl_autoreconnect_next_identity == 0)
 		++cl_autoreconnect_next_identity;
@@ -338,31 +342,45 @@ void CL_CancelAutoReconnect (void)
 static void CL_AutoReconnectFinish (qboolean failed)
 {
 	if (failed)
+	{
 		SCR_EndStartupLoadingPlaque ();
+		SCR_EndLoadingPlaque ();
+		if (cls.state != ca_connected)
+			cls.legacy_qsvr = 0;
+	}
 	CL_CancelAutoReconnect ();
 }
 
-static qboolean CL_TryEstablishConnection (const char *host, unsigned int legacy_qsvr)
+static void CL_AttachConnection (const char *host, unsigned int legacy_qsvr,
+	struct qsocket_s *netcon)
 {
-	if (cls.state == ca_dedicated || cls.demoplayback ||
-		(legacy_qsvr && legacy_qsvr != QSVR_PROTOCOL_PINNED))
-		return false;
-
-	CL_Disconnect ();
 	cls.legacy_qsvr = legacy_qsvr;
-	cls.netcon = NET_Connect (host);
-	if (!cls.netcon)
-	{
-		cls.legacy_qsvr = 0;
-		return false;
-	}
-
+	cls.netcon = netcon;
 	Con_DPrintf ("CL_EstablishConnection: connected to %s\n", host);
 	cls.demonum = -1;
 	cls.state = ca_connected;
 	cls.signon = 0;
 	SZ_Clear (&cls.message);
 	MSG_WriteByte (&cls.message, clc_nop); // NAT Fix from ProQuake
+}
+
+static qboolean CL_TryEstablishConnection (const char *host, unsigned int legacy_qsvr)
+{
+	struct qsocket_s *netcon;
+
+	if (cls.state == ca_dedicated || cls.demoplayback ||
+		(legacy_qsvr && legacy_qsvr != QSVR_PROTOCOL_PINNED))
+		return false;
+
+	CL_Disconnect ();
+	cls.legacy_qsvr = legacy_qsvr;
+	netcon = NET_Connect (host);
+	if (!netcon)
+	{
+		cls.legacy_qsvr = 0;
+		return false;
+	}
+	CL_AttachConnection (host, legacy_qsvr, netcon);
 	return true;
 }
 
@@ -386,14 +404,56 @@ void CL_AutoReconnectFrame (void)
 		if (cmd_text.cursize)
 			return;
 
-		SCR_BeginLoadingPlaque ();
-		if (!CL_TryEstablishConnection (cl_autoreconnect.endpoint, cl_autoreconnect.legacy_qsvr))
+		if (!q_strcasecmp (cl_autoreconnect.endpoint, "local"))
 		{
-			Con_Warning ("Server gamedir switched to %s, but reconnect to %s failed.\n",
-				cl_autoreconnect.modname, cl_autoreconnect.endpoint);
+			if (!CL_TryEstablishConnection ("local", cl_autoreconnect.legacy_qsvr))
+			{
+				Con_Warning ("Server gamedir switched to %s, but local reconnect failed.\n",
+					cl_autoreconnect.modname);
+				CL_AutoReconnectFinish (true);
+				return;
+			}
+			cl_autoreconnect.state = cl_autoreconnect_wait_signon;
+			cl_autoreconnect.deadline = realtime + CL_AUTO_RECONNECT_SIGNON_TIMEOUT;
+			return;
+		}
+		CL_Disconnect ();
+		cls.legacy_qsvr = cl_autoreconnect.legacy_qsvr;
+		if (!NET_DatagramConnectStart (cl_autoreconnect.endpoint))
+		{
+			Con_Warning ("Could not start reconnect to %s.\n",
+				cl_autoreconnect.endpoint);
 			CL_AutoReconnectFinish (true);
 			return;
 		}
+		cl_autoreconnect.state = cl_autoreconnect_connecting;
+		cl_autoreconnect.deadline = realtime + CL_AUTO_RECONNECT_CONNECT_TIMEOUT;
+		return;
+	}
+	if (cl_autoreconnect.state == cl_autoreconnect_connecting)
+	{
+		net_connect_result_t result;
+		struct qsocket_s *netcon = NULL;
+		const char *reason = NULL;
+
+		if (realtime >= cl_autoreconnect.deadline)
+		{
+			Con_Warning ("Reconnect to %s timed out.\n", cl_autoreconnect.endpoint);
+			CL_AutoReconnectFinish (true);
+			return;
+		}
+		result = NET_DatagramConnectFrame (&netcon, &reason);
+		if (result == NET_CONNECT_PENDING)
+			return;
+		if (result != NET_CONNECT_COMPLETE || !netcon)
+		{
+			Con_Warning ("Reconnect to %s failed: %s.\n",
+				cl_autoreconnect.endpoint, reason && *reason ? reason : "no response");
+			CL_AutoReconnectFinish (true);
+			return;
+		}
+		CL_AttachConnection (cl_autoreconnect.endpoint,
+			cl_autoreconnect.legacy_qsvr, netcon);
 		cl_autoreconnect.state = cl_autoreconnect_wait_signon;
 		cl_autoreconnect.deadline = realtime + CL_AUTO_RECONNECT_SIGNON_TIMEOUT;
 		return;
@@ -440,6 +500,9 @@ static qboolean CL_StartAutoReconnect (const char *modname,
 		q_snprintf (paths, sizeof (paths), "%s;%s", GAMENAME, modname);
 	Con_Printf ("Server requires game %s; switching and reconnecting to %s.\n",
 		modname, cl_autoreconnect.endpoint);
+	/* The original connect command may have frozen screen updates for loading.
+	 * A frame-driven reconnect must keep rendering and input responsive. */
+	SCR_EndLoadingPlaque ();
 	COM_SwitchGame (paths);
 	return true;
 }
@@ -461,22 +524,14 @@ qboolean CL_MaybeSwitchServerGame (const char *modname)
 		cl_last_connect_legacy_qsvr);
 }
 
-static qboolean CL_ServerModEntryMatches (const addon_catalog_entry_t *a,
-	const addon_catalog_entry_t *b)
-{
-	return !strcmp (a->gamedir, b->gamedir) && !strcmp (a->name, b->name) &&
-		!strcmp (a->author, b->author) && !strcmp (a->description, b->description) &&
-		!strcmp (a->download, b->download) && a->size == b->size &&
-		a->verified == b->verified;
-}
-
 static void CL_ServerModDownload_Error (const char *message)
 {
+	SCR_EndLoadingPlaque ();
 	cl_servermod_download.info.phase = CL_SERVERMOD_ERROR;
 	q_strlcpy (cl_servermod_download.info.message,
 		message && *message ? message : "Add-on operation failed",
 		sizeof (cl_servermod_download.info.message));
-	cl_servermod_download.owns_catalogue_operation = false;
+	cl_servermod_download.catalogue_operation_id = 0;
 	Con_Warning ("Server add-on: %s\n", cl_servermod_download.info.message);
 }
 
@@ -495,7 +550,7 @@ static void CL_ServerModDownload_Resume (const char *game)
 		return;
 	}
 	cl_servermod_download.active = false;
-	cl_servermod_download.owns_catalogue_operation = false;
+	cl_servermod_download.catalogue_operation_id = 0;
 	M_ServerModDownload_Close ();
 }
 
@@ -521,6 +576,7 @@ qboolean CL_ServerModDownload_Begin (const char *gamedir)
 	if (cls.state != ca_connected || cls.demoplayback || !cl_last_connect_valid)
 	{
 		CL_Disconnect ();
+		SCR_EndLoadingPlaque ();
 		Con_Warning ("Cannot check the missing server add-on without a saved connection endpoint.\n");
 		return true;
 	}
@@ -549,6 +605,7 @@ qboolean CL_ServerModDownload_Begin (const char *gamedir)
 	cl_servermod_download.legacy_qsvr = cl_last_connect_legacy_qsvr;
 	cl_servermod_download.deadline = realtime + CL_SERVERMOD_OPERATION_TIMEOUT;
 	CL_Disconnect ();
+	SCR_EndLoadingPlaque ();
 	M_Menu_ServerModDownload_f ();
 	return true;
 }
@@ -566,12 +623,10 @@ void CL_ServerModDownload_Cancel (void)
 {
 	if (!cl_servermod_download.active)
 		return;
-	if (cl_servermod_download.owns_catalogue_operation &&
-		(AddonCatalog_State () == ADDON_CATALOG_REFRESHING ||
-		 AddonCatalog_State () == ADDON_CATALOG_INSTALLING))
-		AddonCatalog_Cancel ();
+	if (cl_servermod_download.catalogue_operation_id)
+		AddonCatalog_CancelOperation (cl_servermod_download.catalogue_operation_id);
 	cl_servermod_download.active = false;
-	cl_servermod_download.owns_catalogue_operation = false;
+	cl_servermod_download.catalogue_operation_id = 0;
 	M_ServerModDownload_Close ();
 }
 
@@ -584,9 +639,14 @@ void CL_ServerModDownload_Accept (void)
 	if (!cl_servermod_download.active ||
 		cl_servermod_download.info.phase != CL_SERVERMOD_PROMPT)
 		return;
+	if (AddonCatalog_State () != ADDON_CATALOG_READY)
+	{
+		CL_ServerModDownload_Error ("The add-on catalogue is being updated; review the new details before installing");
+		return;
+	}
 	index = AddonCatalog_FindGameDir (cl_servermod_download.approved.gamedir,
 		&entry);
-	if (index < 0 || !CL_ServerModEntryMatches (&entry,
+	if (index < 0 || !AddonCatalog_EntryMatchesApproved (&entry,
 		&cl_servermod_download.approved))
 	{
 		CL_ServerModDownload_Error ("The approved add-on details have changed");
@@ -603,13 +663,14 @@ void CL_ServerModDownload_Accept (void)
 		CL_ServerModDownload_Resume (cl_servermod_download.info.game);
 		return;
 	}
-	if (!AddonCatalog_StartInstall (index, true))
+	if (!AddonCatalog_StartInstallApproved (index,
+		&cl_servermod_download.approved, true))
 	{
 		CL_ServerModDownload_Error (AddonCatalog_Message ());
 		return;
 	}
 	cl_servermod_download.info.phase = CL_SERVERMOD_INSTALLING;
-	cl_servermod_download.owns_catalogue_operation = true;
+	cl_servermod_download.catalogue_operation_id = AddonCatalog_OperationId ();
 	q_strlcpy (cl_servermod_download.info.message, "Downloading add-on...",
 		sizeof (cl_servermod_download.info.message));
 }
@@ -634,23 +695,22 @@ void CL_ServerModDownload_Frame (void)
 				sizeof (cl_servermod_download.info.message));
 			return;
 		}
-		cl_servermod_download.owns_catalogue_operation = false;
-		if (state != ADDON_CATALOG_READY)
+		cl_servermod_download.catalogue_operation_id = 0;
+		Modlist_Init ();
+		installed = CL_FindInstalledServerGame (
+			cl_servermod_download.approved.gamedir);
+		if (!installed)
 		{
-			CL_ServerModDownload_Error (AddonCatalog_Message ());
+			CL_ServerModDownload_Error (state == ADDON_CATALOG_ERROR ?
+				AddonCatalog_Message () :
+				"The downloaded add-on was not installed correctly");
 			return;
 		}
-		index = AddonCatalog_FindGameDir (cl_servermod_download.approved.gamedir,
-			&entry);
-		if (index < 0 || !entry.installed)
-		{
-			CL_ServerModDownload_Error ("The downloaded add-on was not installed correctly");
-			return;
-		}
-		/* The manifest's canonical case matches the installed directory. */
-		q_strlcpy (cl_servermod_download.info.game, entry.gamedir,
+		/* The installed directory is authoritative even if another catalogue
+		 * refresh began after this operation completed. */
+		q_strlcpy (cl_servermod_download.info.game, installed,
 			sizeof (cl_servermod_download.info.game));
-		CL_ServerModDownload_Resume (entry.gamedir);
+		CL_ServerModDownload_Resume (cl_servermod_download.info.game);
 		return;
 	}
 
@@ -658,9 +718,8 @@ void CL_ServerModDownload_Frame (void)
 		return;
 	if (realtime >= cl_servermod_download.deadline)
 	{
-		if (cl_servermod_download.owns_catalogue_operation &&
-			state == ADDON_CATALOG_REFRESHING)
-			AddonCatalog_Cancel ();
+		if (cl_servermod_download.catalogue_operation_id)
+			AddonCatalog_CancelOperation (cl_servermod_download.catalogue_operation_id);
 		CL_ServerModDownload_Error ("Add-on catalogue lookup timed out");
 		return;
 	}
@@ -684,8 +743,9 @@ void CL_ServerModDownload_Frame (void)
 		}
 		cl_servermod_download.refresh_attempted = true;
 		AddonCatalog_Refresh ();
-		cl_servermod_download.owns_catalogue_operation =
-			AddonCatalog_State () == ADDON_CATALOG_REFRESHING;
+		cl_servermod_download.catalogue_operation_id =
+			AddonCatalog_State () == ADDON_CATALOG_REFRESHING ?
+			AddonCatalog_OperationId () : 0;
 		q_strlcpy (cl_servermod_download.info.message, AddonCatalog_Message (),
 			sizeof (cl_servermod_download.info.message));
 		return;
@@ -693,7 +753,7 @@ void CL_ServerModDownload_Frame (void)
 	if (state != ADDON_CATALOG_READY)
 		return;
 
-	cl_servermod_download.owns_catalogue_operation = false;
+	cl_servermod_download.catalogue_operation_id = 0;
 	Modlist_Init ();
 	installed = CL_FindInstalledServerGame (cl_servermod_download.info.game);
 	if (installed)
@@ -710,8 +770,9 @@ void CL_ServerModDownload_Frame (void)
 		{
 			cl_servermod_download.refresh_attempted = true;
 			AddonCatalog_Refresh ();
-			cl_servermod_download.owns_catalogue_operation =
-				AddonCatalog_State () == ADDON_CATALOG_REFRESHING;
+			cl_servermod_download.catalogue_operation_id =
+				AddonCatalog_State () == ADDON_CATALOG_REFRESHING ?
+				AddonCatalog_OperationId () : 0;
 			q_strlcpy (cl_servermod_download.info.message, AddonCatalog_Message (),
 				sizeof (cl_servermod_download.info.message));
 			return;
@@ -766,8 +827,12 @@ void CL_EstablishConnection (const char *host, unsigned int legacy_qsvr)
 	cl_last_connect_valid = false;
 	if (!CL_TryEstablishConnection (host, legacy_qsvr))
 		Host_Error ("CL_Connect: connect failed");
-	if (!cl_last_connect_endpoint[0])
-		q_strlcpy (cl_last_connect_endpoint, NET_QSocketGetTrueAddressString (cls.netcon), sizeof (cl_last_connect_endpoint));
+	/* Keep the actual successful target for a direct frame-driven reconnect;
+	 * a server-list display name may not be a resolvable hostname. */
+	if (q_strcasecmp (cl_last_connect_endpoint, "local"))
+		q_strlcpy (cl_last_connect_endpoint,
+			NET_QSocketGetTrueAddressString (cls.netcon),
+			sizeof (cl_last_connect_endpoint));
 	cl_last_connect_valid = cl_last_connect_endpoint[0] != '\0';
 }
 

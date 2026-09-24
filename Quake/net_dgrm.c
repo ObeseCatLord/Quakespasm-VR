@@ -1054,6 +1054,7 @@ void Datagram_Shutdown (void)
 {
 	int i;
 
+	NET_DatagramConnectCancel ();
 	Datagram_Listen (false);
 
 	//
@@ -2004,289 +2005,472 @@ qboolean Datagram_SearchForHosts (qboolean xmit)
 	return ret;
 }
 
-static qsocket_t *_Datagram_Connect (struct qsockaddr *serveraddr)
+typedef enum
 {
-	struct qsockaddr readaddr;
-	qsocket_t		*sock;
-	sys_socket_t	 newsock;
-	int				 ret;
-	int				 reps;
-	double			 start_time;
-	int				 control;
-	const char		*reason;
+	DATAGRAM_CONNECT_PHASE_IDLE = 0,
+	DATAGRAM_CONNECT_PHASE_RESOLVE,
+	DATAGRAM_CONNECT_PHASE_OPEN_SOCKET,
+	DATAGRAM_CONNECT_PHASE_SEND_REQUEST,
+	DATAGRAM_CONNECT_PHASE_WAIT_RESPONSE
+} datagram_connect_phase_t;
 
-	newsock = dfunc.Open_Socket (0);
-	if (newsock == INVALID_SOCKET)
-		return NULL;
+typedef struct
+{
+	qboolean active;
+	qboolean synchronous;
+	qboolean resolved_any;
+	qboolean legacy_menu_on_failure;
+	qboolean legacy_reason_on_failure;
+	datagram_connect_phase_t phase;
+	char *host;
+	int landriver;
+	struct qsockaddr serveraddr;
+	sys_socket_t newsock;
+	qsocket_t *sock;
+	int attempt;
+	double attempt_start_time;
+	char reason[64];
+} datagram_connect_ctx_t;
 
-	sock = NET_NewQSocket ();
-	if (sock == NULL)
-		goto ErrorReturn2;
-	sock->socket = newsock;
-	sock->landriver = net_landriverlevel;
+#define DATAGRAM_CONNECT_ATTEMPTS 3
 
-	// connect to the host
-	if (dfunc.Connect (newsock, serveraddr) == -1)
-		goto ErrorReturn;
+static datagram_connect_ctx_t datagram_connect_ctx = {
+	false, false, false, false, false, DATAGRAM_CONNECT_PHASE_IDLE, NULL, -1, {0}, INVALID_SOCKET, NULL, 0, 0.0, {0}
+};
 
-	sock->proquake_angle_hack = true;
+static void Datagram_ConnectAsyncSetReason (const char *reason)
+{
+	if (!reason || !*reason)
+		reason = "connect failed";
+	q_strlcpy (datagram_connect_ctx.reason, reason, sizeof (datagram_connect_ctx.reason));
+}
 
-	// send the connection request
-	Con_SafePrintf ("trying...\n");
-	SCR_UpdateScreen (false);
-	start_time = net_time;
+static void Datagram_ConnectAsyncSetLegacyFailure (const char *reason)
+{
+	Datagram_ConnectAsyncSetReason (reason);
+	datagram_connect_ctx.legacy_menu_on_failure = true;
+	datagram_connect_ctx.legacy_reason_on_failure = true;
+}
 
-	for (reps = 0; reps < 3; reps++)
+static void Datagram_ConnectAsyncReleaseSocket (void)
+{
+	if (datagram_connect_ctx.sock)
 	{
-		SZ_Clear (&net_message);
-		// save space for the header, filled in later
-		MSG_WriteLong (&net_message, 0);
-		MSG_WriteByte (&net_message, CCREQ_CONNECT);
-		MSG_WriteString (&net_message, "QUAKE");
-		MSG_WriteByte (&net_message, NET_PROTOCOL_VERSION);
-		if (sock->proquake_angle_hack)
-		{ /*Spike -- proquake compat. if both engines claim to be using mod==1 then 16bit client->server angles can be used. server->client angles remain
-			 16bit*/
-			Con_DWarning ("Attempting to use ProQuake angle hack\n");
-			MSG_WriteByte (&net_message, 1);  /*'mod', 1=proquake*/
-			MSG_WriteByte (&net_message, 34); /*'mod' version*/
-			MSG_WriteByte (&net_message, 0);  /*flags*/
-			MSG_WriteLong (&net_message, 0);  // strtoul(password.string, NULL, 0)); /*password*/
-		}
-		*((int *)net_message.data) = BigLong (NETFLAG_CTL | (net_message.cursize & NETFLAG_LENGTH_MASK));
-		dfunc.Write (newsock, net_message.data, net_message.cursize, serveraddr);
-		SZ_Clear (&net_message);
+		NET_FreeQSocket (datagram_connect_ctx.sock);
+		datagram_connect_ctx.sock = NULL;
+	}
 
-// for dp compat. DP sends these in addition to the above packet.
-// if the (DP) server is running using vanilla protocols, it replies to the above, otherwise to the following, requiring both to be sent.
-//(challenges hinder a DOS issue known as smurfing, in that the client must prove that it owns the IP that it might be spoofing before any serious resources are
-// used)
-#define DPGETCHALLENGE "\xff\xff\xff\xffgetchallenge\n"
-		dfunc.Write (newsock, (byte *)DPGETCHALLENGE, strlen (DPGETCHALLENGE), serveraddr);
-
-		do
+	if (datagram_connect_ctx.newsock != INVALID_SOCKET)
+	{
+		if (datagram_connect_ctx.landriver >= 0 &&
+			datagram_connect_ctx.landriver < net_numlandrivers &&
+			net_landrivers[datagram_connect_ctx.landriver].Close_Socket)
 		{
-			ret = dfunc.Read (newsock, net_message.data, net_message.maxsize, &readaddr);
-			// if we got something, validate it
-			if (ret > 0)
-			{
-				// is it from the right place?
-				if (dfunc.AddrCompare (&readaddr, serveraddr) != 0)
-				{
-					Con_SafePrintf ("wrong reply address\n");
-					Con_SafePrintf ("Expected: %s | %s\n", dfunc.AddrToString (serveraddr, false), StrAddr (serveraddr));
-					Con_SafePrintf ("Received: %s | %s\n", dfunc.AddrToString (&readaddr, false), StrAddr (&readaddr));
-					SCR_UpdateScreen (false);
-					ret = 0;
-					continue;
-				}
-
-				if (ret < (int)sizeof (int))
-				{
-					ret = 0;
-					continue;
-				}
-
-				net_message.cursize = ret;
-				MSG_BeginReading ();
-
-				control = BigLong (*((int *)net_message.data));
-				MSG_ReadLong ();
-				if (control == -1)
-				{
-					const char *s = MSG_ReadString ();
-					if (!strncmp (s, "challenge ", 10))
-					{ // either a q2 or dp server...
-						char buf[1024];
-						q_snprintf (
-							buf, sizeof (buf), "%c%c%c%cconnect\\protocol\\darkplaces 3\\protocols\\RMQ FITZ DP7 NEHAHRABJP3 QUAKE\\challenge\\%s", 255, 255,
-							255, 255, s + 10);
-						dfunc.Write (newsock, (byte *)buf, strlen (buf), serveraddr);
-					}
-					else if (!strcmp (s, "accept"))
-					{
-						memcpy (&sock->addr, serveraddr, sizeof (struct qsockaddr));
-						sock->proquake_angle_hack = false;
-						goto dpserveraccepted;
-					}
-					/*else if (!strcmp(s, "reject"))
-					{
-						reason = MSG_ReadString();
-						Con_Printf("%s\n", reason);
-						q_strlcpy(m_return_reason, reason, sizeof(m_return_reason));
-						goto ErrorReturn;
-					}*/
-
-					ret = 0;
-					continue;
-				}
-				if ((control & (~NETFLAG_LENGTH_MASK)) != (int)NETFLAG_CTL)
-				{
-					ret = 0;
-					continue;
-				}
-				if ((control & NETFLAG_LENGTH_MASK) != ret)
-				{
-					ret = 0;
-					continue;
-				}
-			}
-		} while (ret == 0 && (SetNetTime () - start_time) < 2.5);
-
-		if (ret)
-			break;
-
-		Con_SafePrintf ("still trying...\n");
-		SCR_UpdateScreen (false);
-		start_time = SetNetTime ();
-	}
-
-	if (ret == 0)
-	{
-		reason = "No Response";
-		Con_Printf ("%s\n", reason);
-		strcpy (m_return_reason, reason);
-		goto ErrorReturn;
-	}
-
-	if (ret == -1)
-	{
-		reason = "Network Error";
-		Con_Printf ("%s\n", reason);
-		strcpy (m_return_reason, reason);
-		goto ErrorReturn;
-	}
-
-	ret = MSG_ReadByte ();
-	if (ret == CCREP_REJECT)
-	{
-		reason = MSG_ReadString ();
-		Con_Printf ("%s\n", reason);
-		q_strlcpy (m_return_reason, reason, sizeof (m_return_reason));
-		goto ErrorReturn;
-	}
-
-	if (ret == CCREP_ACCEPT)
-	{
-		int port;
-		memcpy (&sock->addr, serveraddr, sizeof (struct qsockaddr));
-		port = MSG_ReadLong ();
-		if (port) // spike --- don't change the remote port if the server doesn't want us to. this allows servers to use port forwarding with less issues,
-				  // assuming the server uses the same port for all clients.
-			dfunc.SetSocketPort (&sock->addr, port);
-	}
-	else
-	{
-		reason = "Bad Response";
-		Con_Printf ("%s\n", reason);
-		strcpy (m_return_reason, reason);
-		goto ErrorReturn;
-	}
-
-	if (sock->proquake_angle_hack)
-	{
-		byte mod = (msg_readcount < net_message.cursize) ? MSG_ReadByte () : 0;
-		byte ver = (msg_readcount < net_message.cursize) ? MSG_ReadByte () : 0;
-		byte flags = (msg_readcount < net_message.cursize) ? MSG_ReadByte () : 0;
-		(void)ver;
-
-		if (mod == 1 /*MOD_PROQUAKE*/)
-		{
-			if (flags & 1 /*CHEATFREE*/)
-			{
-				reason = "Server is incompatible";
-				Con_Printf ("%s\n", reason);
-				strcpy (m_return_reason, reason);
-				goto ErrorReturn;
-			}
-			sock->proquake_angle_hack = true;
+			net_landrivers[datagram_connect_ctx.landriver].Close_Socket (datagram_connect_ctx.newsock);
 		}
-		else
-			sock->proquake_angle_hack = false;
+		datagram_connect_ctx.newsock = INVALID_SOCKET;
 	}
+}
 
-dpserveraccepted:
-
-	dfunc.GetNameFromAddr (serveraddr, sock->trueaddress);
-	dfunc.GetNameFromAddr (serveraddr, sock->maskedaddress);
-
-	Con_Printf ("Connection accepted\n");
-	sock->lastMessageTime = SetNetTime ();
-
-	// switch the connection to the specified address
-	if (dfunc.Connect (newsock, &sock->addr) == -1)
+static void Datagram_ConnectAsyncFreeHost (void)
+{
+	if (datagram_connect_ctx.host)
 	{
-		reason = "Connect to Game failed";
-		Con_Printf ("%s\n", reason);
-		strcpy (m_return_reason, reason);
-		goto ErrorReturn;
+		Mem_Free (datagram_connect_ctx.host);
+		datagram_connect_ctx.host = NULL;
 	}
+}
 
-	/*Spike's rant about NATs:
-	We sent a packet to the server's control port.
-	The server replied from that control port. all is well so far.
-	The server is now about(or already did, yay resends) to send us a packet from its data port to our address.
-	The nat will (correctly) see a packet from a different remote address:port.
-	The local nat has two options here. 1) assume that the wrong port is fine. 2) drop it. Dropping it is far more likely.
-	The NQ code will not send any unreliables until we have received the serverinfo. There are no reliables that need to be sent either.
-	Normally we won't send ANYTHING until we get that packet.
-	Which will never happen because the NAT will never let it through.
-	So, if we want to get away without fixing everyone else's server (which is also quite messy),
-		the easy way around this dilema is to just send some (small) useless packet to what we believe to be the server's data port.
-	A single unreliable clc_nop should do it. There's unlikely to be much packetloss on our local lan (so long as our host buffers outgoing packets on a
-	per-socket basis or something), so we don't normally need to resend. We don't really care if the server can even read it properly, but its best to avoid
-	warning prints. With that small outgoing packet, our local nat will think we initiated the request. HOPEFULLY it'll reuse the same public port+address. Most
-	home routers will, but not all, most hole-punching techniques depend upon such behaviour. Note that proquake 3.4+ will actually wait for a packet from the
-	new client, which solves that (but makes the nop mandatory, so needs to be reliable).
+static net_connect_result_t Datagram_ConnectAsyncFinalizeFailure (const char **outreason)
+{
+	if (!*datagram_connect_ctx.reason)
+		Datagram_ConnectAsyncSetReason ("connect failed");
 
-	the nop is actually sent inside CL_EstablishConnection where it has cleaner access to the client's pending reliable message.
+	Datagram_ConnectAsyncReleaseSocket ();
+	if (datagram_connect_ctx.legacy_reason_on_failure)
+		q_strlcpy (m_return_reason, datagram_connect_ctx.reason, sizeof (m_return_reason));
 
-	Note that we do fix our own server. This means that we can easily run on a home nat. the heartbeats to the master will open up a public port with most
-	routers. And if that doesn't work, then its easy enough to port-forward a single known port instead of having to DMZ the entire network. I don't really
-	expect that many people will use this, but it'll be nice for the occasional coop game. (note that this makes the nop redundant, but that's a different can
-	of worms)
-	*/
-
-	m_return_onerror = false;
-	return sock;
-
-ErrorReturn:
-	NET_FreeQSocket (sock);
-ErrorReturn2:
-	dfunc.Close_Socket (newsock);
-	if (m_return_onerror)
+	if (datagram_connect_ctx.legacy_menu_on_failure && m_return_onerror)
 	{
 		key_dest = key_menu;
 		m_state = m_return_state;
 		m_return_onerror = false;
 	}
-	return NULL;
+
+	datagram_connect_ctx.active = false;
+	datagram_connect_ctx.phase = DATAGRAM_CONNECT_PHASE_IDLE;
+	datagram_connect_ctx.landriver = -1;
+	Datagram_ConnectAsyncFreeHost ();
+	if (outreason)
+		*outreason = datagram_connect_ctx.reason;
+	return NET_CONNECT_FAILED;
+}
+
+static void Datagram_ConnectAsyncStepToNextDriver (void)
+{
+	Datagram_ConnectAsyncReleaseSocket ();
+	datagram_connect_ctx.landriver++;
+	datagram_connect_ctx.phase = DATAGRAM_CONNECT_PHASE_RESOLVE;
+	datagram_connect_ctx.attempt = 0;
+	datagram_connect_ctx.attempt_start_time = 0;
+}
+
+static void Datagram_ConnectAsyncSendRequest (void)
+{
+	net_landriverlevel = datagram_connect_ctx.landriver;
+
+	if (datagram_connect_ctx.attempt == 0)
+	{
+		Con_SafePrintf ("trying...\n");
+		if (datagram_connect_ctx.synchronous)
+			SCR_UpdateScreen (false);
+	}
+
+	SZ_Clear (&net_message);
+	MSG_WriteLong (&net_message, 0);
+	MSG_WriteByte (&net_message, CCREQ_CONNECT);
+	MSG_WriteString (&net_message, "QUAKE");
+	MSG_WriteByte (&net_message, NET_PROTOCOL_VERSION);
+	if (datagram_connect_ctx.sock->proquake_angle_hack)
+	{
+		Con_DWarning ("Attempting to use ProQuake angle hack\n");
+		MSG_WriteByte (&net_message, 1);
+		MSG_WriteByte (&net_message, 34);
+		MSG_WriteByte (&net_message, 0);
+		MSG_WriteLong (&net_message, 0);
+	}
+	*((int *)net_message.data) = BigLong (NETFLAG_CTL | (net_message.cursize & NETFLAG_LENGTH_MASK));
+	dfunc.Write (datagram_connect_ctx.newsock, net_message.data, net_message.cursize, &datagram_connect_ctx.serveraddr);
+	SZ_Clear (&net_message);
+
+#define DPGETCHALLENGE "\xff\xff\xff\xffgetchallenge\n"
+	dfunc.Write (datagram_connect_ctx.newsock, (byte *)DPGETCHALLENGE, strlen (DPGETCHALLENGE), &datagram_connect_ctx.serveraddr);
+#undef DPGETCHALLENGE
+
+	datagram_connect_ctx.attempt_start_time = SetNetTime ();
+}
+
+qboolean NET_DatagramConnectPending (void)
+{
+	return datagram_connect_ctx.active;
+}
+
+void NET_DatagramConnectCancel (void)
+{
+	Datagram_ConnectAsyncReleaseSocket ();
+	Datagram_ConnectAsyncFreeHost ();
+	datagram_connect_ctx.active = false;
+	datagram_connect_ctx.synchronous = false;
+	datagram_connect_ctx.phase = DATAGRAM_CONNECT_PHASE_IDLE;
+	datagram_connect_ctx.landriver = -1;
+}
+
+qboolean NET_DatagramConnectStart (const char *host)
+{
+	NET_DatagramConnectCancel ();
+
+	if (!host || !*host)
+		return false;
+
+	host = Strip_Port (host);
+	memset (&datagram_connect_ctx, 0, sizeof (datagram_connect_ctx));
+	datagram_connect_ctx.host = q_strdup (host);
+	datagram_connect_ctx.active = true;
+	datagram_connect_ctx.phase = DATAGRAM_CONNECT_PHASE_RESOLVE;
+	datagram_connect_ctx.landriver = 0;
+	datagram_connect_ctx.newsock = INVALID_SOCKET;
+
+	return true;
+}
+
+net_connect_result_t NET_DatagramConnectFrame (qsocket_t **outsock, const char **outreason)
+{
+	struct qsockaddr readaddr;
+	int ret;
+	int control;
+	int port;
+
+	if (outsock)
+		*outsock = NULL;
+	if (outreason)
+		*outreason = NULL;
+
+	if (!datagram_connect_ctx.active)
+		return NET_CONNECT_FAILED;
+	if (!outsock)
+	{
+		Datagram_ConnectAsyncSetReason ("connect failed");
+		return Datagram_ConnectAsyncFinalizeFailure (outreason);
+	}
+
+	SetNetTime ();
+
+	while (datagram_connect_ctx.active)
+	{
+		switch (datagram_connect_ctx.phase)
+		{
+		case DATAGRAM_CONNECT_PHASE_RESOLVE:
+			for (; datagram_connect_ctx.landriver < net_numlandrivers; datagram_connect_ctx.landriver++)
+			{
+				if (!net_landrivers[datagram_connect_ctx.landriver].initialized)
+					continue;
+
+				net_landriverlevel = datagram_connect_ctx.landriver;
+				if (dfunc.GetAddrFromName (datagram_connect_ctx.host, &datagram_connect_ctx.serveraddr) != -1)
+				{
+					datagram_connect_ctx.resolved_any = true;
+					datagram_connect_ctx.phase = DATAGRAM_CONNECT_PHASE_OPEN_SOCKET;
+					break;
+				}
+			}
+
+			if (datagram_connect_ctx.phase != DATAGRAM_CONNECT_PHASE_OPEN_SOCKET)
+			{
+				if (!datagram_connect_ctx.resolved_any)
+				{
+					Datagram_ConnectAsyncSetReason ("Could not resolve");
+					Con_SafePrintf ("Could not resolve %s\n", datagram_connect_ctx.host);
+				}
+				return Datagram_ConnectAsyncFinalizeFailure (outreason);
+			}
+			break;
+
+		case DATAGRAM_CONNECT_PHASE_OPEN_SOCKET:
+			net_landriverlevel = datagram_connect_ctx.landriver;
+			datagram_connect_ctx.newsock = dfunc.Open_Socket (0);
+			if (datagram_connect_ctx.newsock == INVALID_SOCKET)
+			{
+				Datagram_ConnectAsyncSetReason ("Open socket failed");
+				Datagram_ConnectAsyncStepToNextDriver ();
+				break;
+			}
+
+			net_driverlevel = myDriverLevel;
+			datagram_connect_ctx.sock = NET_NewQSocket ();
+			if (!datagram_connect_ctx.sock)
+			{
+				Datagram_ConnectAsyncSetReason ("No qsocket available");
+				Datagram_ConnectAsyncStepToNextDriver ();
+				break;
+			}
+
+			datagram_connect_ctx.sock->driver = myDriverLevel;
+			datagram_connect_ctx.sock->socket = datagram_connect_ctx.newsock;
+			datagram_connect_ctx.sock->landriver = datagram_connect_ctx.landriver;
+			datagram_connect_ctx.sock->proquake_angle_hack = true;
+
+			if (dfunc.Connect (datagram_connect_ctx.newsock, &datagram_connect_ctx.serveraddr) == -1)
+			{
+				Datagram_ConnectAsyncSetReason ("Connect request failed");
+				datagram_connect_ctx.legacy_menu_on_failure = true;
+				Datagram_ConnectAsyncStepToNextDriver ();
+				break;
+			}
+
+			datagram_connect_ctx.attempt = 0;
+			datagram_connect_ctx.phase = DATAGRAM_CONNECT_PHASE_SEND_REQUEST;
+			break;
+
+		case DATAGRAM_CONNECT_PHASE_SEND_REQUEST:
+			Datagram_ConnectAsyncSendRequest ();
+			datagram_connect_ctx.phase = DATAGRAM_CONNECT_PHASE_WAIT_RESPONSE;
+			return NET_CONNECT_PENDING;
+
+		case DATAGRAM_CONNECT_PHASE_WAIT_RESPONSE:
+			net_landriverlevel = datagram_connect_ctx.landriver;
+			/* Check the deadline before reading: a stream of unrelated or
+			 * malformed packets must not keep the synchronous caller spinning. */
+			if ((SetNetTime () - datagram_connect_ctx.attempt_start_time) >= 2.5)
+			{
+				if (datagram_connect_ctx.attempt + 1 < DATAGRAM_CONNECT_ATTEMPTS)
+				{
+					datagram_connect_ctx.attempt++;
+					Con_SafePrintf ("still trying...\n");
+					if (datagram_connect_ctx.synchronous)
+						SCR_UpdateScreen (false);
+					datagram_connect_ctx.phase = DATAGRAM_CONNECT_PHASE_SEND_REQUEST;
+					return NET_CONNECT_PENDING;
+				}
+
+				Datagram_ConnectAsyncSetLegacyFailure ("No Response");
+				Con_Printf ("%s\n", datagram_connect_ctx.reason);
+				Datagram_ConnectAsyncStepToNextDriver ();
+				break;
+			}
+			ret = dfunc.Read (datagram_connect_ctx.newsock, net_message.data, net_message.maxsize, &readaddr);
+
+			if (ret > 0)
+			{
+				if (dfunc.AddrCompare (&readaddr, &datagram_connect_ctx.serveraddr) != 0)
+				{
+					Con_SafePrintf ("wrong reply address\n");
+					Con_SafePrintf ("Expected: %s | %s\n", dfunc.AddrToString (&datagram_connect_ctx.serveraddr, false), StrAddr (&datagram_connect_ctx.serveraddr));
+					Con_SafePrintf ("Received: %s | %s\n", dfunc.AddrToString (&readaddr, false), StrAddr (&readaddr));
+					if (datagram_connect_ctx.synchronous)
+						SCR_UpdateScreen (false);
+					return NET_CONNECT_PENDING;
+				}
+
+				if (ret < (int)sizeof (int))
+					return NET_CONNECT_PENDING;
+
+				net_message.cursize = ret;
+				MSG_BeginReading ();
+				control = BigLong (*((int *)net_message.data));
+				MSG_ReadLong ();
+
+				if (control == -1)
+				{
+					const char *s = MSG_ReadString ();
+					if (!strncmp (s, "challenge ", 10))
+					{
+						char buf[1024];
+						q_snprintf (buf, sizeof (buf), "%c%c%c%cconnect\\protocol\\darkplaces 3\\protocols\\RMQ FITZ DP7 NEHAHRABJP3 QUAKE\\challenge\\%s",
+							255, 255, 255, 255, s + 10);
+						dfunc.Write (datagram_connect_ctx.newsock, (byte *)buf, strlen (buf), &datagram_connect_ctx.serveraddr);
+						return NET_CONNECT_PENDING;
+					}
+					if (!strcmp (s, "accept"))
+					{
+						memcpy (&datagram_connect_ctx.sock->addr, &datagram_connect_ctx.serveraddr, sizeof (struct qsockaddr));
+						datagram_connect_ctx.sock->proquake_angle_hack = false;
+						port = 0;
+						goto datagram_connect_accepted;
+					}
+					return NET_CONNECT_PENDING;
+				}
+
+				if ((control & (~NETFLAG_LENGTH_MASK)) != (int)NETFLAG_CTL)
+					return NET_CONNECT_PENDING;
+				if ((control & NETFLAG_LENGTH_MASK) != ret)
+					return NET_CONNECT_PENDING;
+
+				ret = MSG_ReadByte ();
+				if (ret == CCREP_REJECT)
+				{
+					const char *reason = MSG_ReadString ();
+					Datagram_ConnectAsyncSetLegacyFailure (reason);
+					Con_Printf ("%s\n", datagram_connect_ctx.reason);
+					Datagram_ConnectAsyncStepToNextDriver ();
+					break;
+				}
+
+				if (ret != CCREP_ACCEPT)
+				{
+					Datagram_ConnectAsyncSetLegacyFailure ("Bad Response");
+					Con_Printf ("%s\n", datagram_connect_ctx.reason);
+					Datagram_ConnectAsyncStepToNextDriver ();
+					break;
+				}
+
+				memcpy (&datagram_connect_ctx.sock->addr, &datagram_connect_ctx.serveraddr, sizeof (struct qsockaddr));
+				port = MSG_ReadLong ();
+				if (msg_badread)
+				{
+					Datagram_ConnectAsyncSetLegacyFailure ("Bad Response");
+					Datagram_ConnectAsyncStepToNextDriver ();
+					break;
+				}
+				if (datagram_connect_ctx.sock->proquake_angle_hack)
+				{
+					byte mod = (msg_readcount < net_message.cursize) ? MSG_ReadByte () : 0;
+					byte ver = (msg_readcount < net_message.cursize) ? MSG_ReadByte () : 0;
+					byte flags = (msg_readcount < net_message.cursize) ? MSG_ReadByte () : 0;
+					(void)ver;
+
+					if (mod == 1)
+					{
+						if (flags & 1)
+						{
+							Datagram_ConnectAsyncSetLegacyFailure ("Server is incompatible");
+							Con_Printf ("%s\n", datagram_connect_ctx.reason);
+							Datagram_ConnectAsyncStepToNextDriver ();
+							break;
+						}
+						datagram_connect_ctx.sock->proquake_angle_hack = true;
+					}
+					else
+						datagram_connect_ctx.sock->proquake_angle_hack = false;
+				}
+
+datagram_connect_accepted:
+				if (port)
+					dfunc.SetSocketPort (&datagram_connect_ctx.sock->addr, port);
+
+				if (datagram_connect_ctx.synchronous)
+				{
+					dfunc.GetNameFromAddr (&datagram_connect_ctx.serveraddr, datagram_connect_ctx.sock->trueaddress);
+					dfunc.GetNameFromAddr (&datagram_connect_ctx.serveraddr, datagram_connect_ctx.sock->maskedaddress);
+				}
+				else
+				{
+					/* Reverse DNS can stall a VR frame after the reply arrives. */
+					q_strlcpy (datagram_connect_ctx.sock->trueaddress,
+						dfunc.AddrToString (&datagram_connect_ctx.serveraddr, false),
+						sizeof (datagram_connect_ctx.sock->trueaddress));
+					q_strlcpy (datagram_connect_ctx.sock->maskedaddress,
+						dfunc.AddrToString (&datagram_connect_ctx.serveraddr, true),
+						sizeof (datagram_connect_ctx.sock->maskedaddress));
+				}
+				datagram_connect_ctx.sock->lastMessageTime = SetNetTime ();
+
+				if (dfunc.Connect (datagram_connect_ctx.newsock, &datagram_connect_ctx.sock->addr) == -1)
+				{
+					Datagram_ConnectAsyncSetLegacyFailure ("Connect to Game failed");
+					Con_Printf ("%s\n", datagram_connect_ctx.reason);
+					Datagram_ConnectAsyncStepToNextDriver ();
+					break;
+				}
+
+				Con_Printf ("Connection accepted\n");
+				m_return_onerror = false;
+				*outsock = datagram_connect_ctx.sock;
+				datagram_connect_ctx.sock = NULL;
+				datagram_connect_ctx.newsock = INVALID_SOCKET;
+				datagram_connect_ctx.active = false;
+				datagram_connect_ctx.phase = DATAGRAM_CONNECT_PHASE_IDLE;
+				datagram_connect_ctx.landriver = -1;
+				Datagram_ConnectAsyncFreeHost ();
+				return NET_CONNECT_COMPLETE;
+			}
+
+			if (ret == -1)
+			{
+				Datagram_ConnectAsyncSetLegacyFailure ("Network Error");
+				Con_Printf ("%s\n", datagram_connect_ctx.reason);
+				Datagram_ConnectAsyncStepToNextDriver ();
+				break;
+			}
+
+			return NET_CONNECT_PENDING;
+
+		default:
+			Datagram_ConnectAsyncSetReason ("connect failed");
+			return Datagram_ConnectAsyncFinalizeFailure (outreason);
+		}
+	}
+
+	return Datagram_ConnectAsyncFinalizeFailure (outreason);
 }
 
 qsocket_t *Datagram_Connect (const char *host)
 {
-	qsocket_t		*ret = NULL;
-	qboolean		 resolved = false;
-	struct qsockaddr addr;
+	qsocket_t *ret = NULL;
+	const char *reason = NULL;
+	net_connect_result_t result;
 
-	host = Strip_Port (host);
-	for (net_landriverlevel = 0; net_landriverlevel < net_numlandrivers; net_landriverlevel++)
+	if (!NET_DatagramConnectStart (host))
+		return NULL;
+
+	datagram_connect_ctx.synchronous = true;
+	do
 	{
-		if (net_landrivers[net_landriverlevel].initialized)
-		{
-			// see if we can resolve the host name
-			// Spike -- moved name resolution to here to avoid extraneous 'could not resolves' when using other address families
-			if (dfunc.GetAddrFromName (host, &addr) != -1)
-			{
-				resolved = true;
-				if ((ret = _Datagram_Connect (&addr)) != NULL)
-					break;
-			}
-		}
-	}
-	if (!resolved)
-		Con_SafePrintf ("Could not resolve %s\n", host);
-	return ret;
+		result = NET_DatagramConnectFrame (&ret, &reason);
+	} while (result == NET_CONNECT_PENDING);
+
+	datagram_connect_ctx.synchronous = false;
+	(void)reason;
+	return result == NET_CONNECT_COMPLETE ? ret : NULL;
 }
 
 /*

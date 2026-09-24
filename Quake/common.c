@@ -32,6 +32,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "vr_weapon_calibration.h"
 #include "vr_weapon_menu.h"
 #include <errno.h>
+#include <stdlib.h>
 
 // Plug our allocators into miniz:
 #define MZ_MALLOC(x)	 Mem_Alloc (x)
@@ -2374,6 +2375,27 @@ typedef struct
 
 #define MAX_FILES_IN_PACK 2048
 
+static qboolean COM_ValidatePackDirectoryEntries (const dpackfile_t *directory,
+	int count, qfilesize_t filesize)
+{
+	int i;
+
+	for (i = 0; i < count; i++)
+	{
+		int filepos, filelen;
+
+		if (!memchr (directory[i].name, '\0', sizeof (directory[i].name)))
+			return false;
+		filepos = LittleLong (directory[i].filepos);
+		filelen = LittleLong (directory[i].filelen);
+		if (filepos < 0 || filelen < 0 ||
+			(qfilesize_t)filepos > filesize ||
+			(qfilesize_t)filelen > filesize - (qfilesize_t)filepos)
+			return false;
+	}
+	return true;
+}
+
 char			 com_gamenames[1024]; // eg: "hipnotic;quoth;warp" ... no id1
 char			 com_gamedir[MAX_OSPATH];
 char			 com_basedir[MAX_OSPATH];
@@ -2792,7 +2814,7 @@ Loads the header and directory, adding the files at the beginning
 of the list so they override previous pack files.
 =================
 */
-static pack_t *COM_LoadPackFile (const char *packfile, int packhandle)
+static pack_t *COM_LoadPackFile (const char *packfile, int packhandle, qfilesize_t filesize)
 {
 	dpackheader_t  header;
 	int			   i;
@@ -2805,35 +2827,36 @@ static pack_t *COM_LoadPackFile (const char *packfile, int packhandle)
 	// fine because this is only called from the main loop.
 	static dpackfile_t info[MAX_FILES_IN_PACK];
 
-	Sys_FileRead (packhandle, (void *)&header, sizeof (header));
+	if (filesize < (qfilesize_t)sizeof (header) || Sys_FileSeek (packhandle, 0) != 0 ||
+		Sys_FileRead (packhandle, (void *)&header, (int)sizeof (header)) != (int)sizeof (header))
+		Sys_Error ("Could not read packfile header from %s", packfile);
 	if (header.id[0] != 'P' || header.id[1] != 'A' || header.id[2] != 'C' || header.id[3] != 'K')
 		Sys_Error ("%s is not a packfile", packfile);
 
 	header.dirofs = LittleLong (header.dirofs);
 	header.dirlen = LittleLong (header.dirlen);
 
-	numpackfiles = header.dirlen / sizeof (dpackfile_t);
-
-	if (header.dirlen < 0 || header.dirofs < 0)
+	if (header.dirlen < 0 || header.dirofs < (int)sizeof (header) ||
+		header.dirlen % (int)sizeof (dpackfile_t) != 0 ||
+		header.dirlen > (int)sizeof (info) ||
+		(qfilesize_t)header.dirofs > filesize ||
+		(qfilesize_t)header.dirlen > filesize - (qfilesize_t)header.dirofs)
 	{
 		Sys_Error ("Invalid packfile %s (dirlen: %i, dirofs: %i)", packfile, header.dirlen, header.dirofs);
 	}
+
+	numpackfiles = header.dirlen / (int)sizeof (dpackfile_t);
+	if (numpackfiles > MAX_FILES_IN_PACK)
+		Sys_Error ("%s has %i files", packfile, numpackfiles);
 	if (!numpackfiles)
 	{
 		Sys_Printf ("WARNING: %s has no files, ignored\n", packfile);
 		Sys_FileClose (packhandle);
 		return NULL;
 	}
-	if (numpackfiles > MAX_FILES_IN_PACK)
-		Sys_Error ("%s has %i files", packfile, numpackfiles);
-
-	if (numpackfiles != PAK0_COUNT)
-		com_modified = true; // not the original file
-
-	newfiles = (packfile_t *)Mem_Alloc (numpackfiles * sizeof (packfile_t));
-
-	Sys_FileSeek (packhandle, header.dirofs);
-	Sys_FileRead (packhandle, (void *)info, header.dirlen);
+	if (Sys_FileSeek (packhandle, header.dirofs) != 0 ||
+		Sys_FileRead (packhandle, (void *)info, header.dirlen) != header.dirlen)
+		Sys_Error ("Could not read packfile directory from %s", packfile);
 
 	// crc the directory to check for modifications
 	CRC_Init (&crc);
@@ -2843,6 +2866,13 @@ static pack_t *COM_LoadPackFile (const char *packfile, int packhandle)
 		com_modified = true;
 
 	// parse the directory
+	if (!COM_ValidatePackDirectoryEntries (info, numpackfiles, filesize))
+		Sys_Error ("Invalid packfile %s (bad directory entry)", packfile);
+
+	if (numpackfiles != PAK0_COUNT)
+		com_modified = true; // not the original file
+
+	newfiles = (packfile_t *)Mem_Alloc (numpackfiles * sizeof (packfile_t));
 	for (i = 0; i < numpackfiles; i++)
 	{
 		q_strlcpy (newfiles[i].name, info[i].name, sizeof (newfiles[i].name));
@@ -2858,6 +2888,55 @@ static pack_t *COM_LoadPackFile (const char *packfile, int packhandle)
 
 	// Sys_Printf ("Added packfile %s (%i files)\n", packfile, numpackfiles);
 	return pack;
+}
+
+/* Validate downloaded add-on archives using the same on-disk PACK structures
+ * as the mount path, without adding the file to the search path. */
+qboolean COM_ValidateAddonPackFile (const char *path, int expected_size)
+{
+	dpackheader_t header;
+	dpackfile_t *directory = NULL;
+	FILE *file = NULL;
+	qfilesize_t filesize;
+	int dirofs, dirlen, count;
+	qboolean valid = false;
+
+	if (!path || expected_size <= 0)
+		return false;
+	file = Sys_fopen (path, "rb");
+	if (!file)
+		return false;
+	filesize = Sys_filelength (file);
+	if (filesize != expected_size || filesize < (qfilesize_t)sizeof (header) ||
+		Sys_fseek (file, 0, SEEK_SET) != 0 ||
+		fread (&header, 1, sizeof (header), file) != sizeof (header) ||
+		memcmp (header.id, "PACK", 4))
+		goto done;
+
+	dirofs = LittleLong (header.dirofs);
+	dirlen = LittleLong (header.dirlen);
+	if (dirofs < (int)sizeof (header) || dirlen <= 0 ||
+		dirlen % (int)sizeof (dpackfile_t) != 0)
+		goto done;
+	count = dirlen / (int)sizeof (dpackfile_t);
+	if (count <= 0 || count > MAX_FILES_IN_PACK ||
+		dirlen > MAX_FILES_IN_PACK * (int)sizeof (dpackfile_t) ||
+		(qfilesize_t)dirofs > filesize ||
+		(qfilesize_t)dirlen > filesize - (qfilesize_t)dirofs)
+		goto done;
+
+	directory = (dpackfile_t *)malloc ((size_t)dirlen);
+	if (!directory || Sys_fseek (file, dirofs, SEEK_SET) != 0 ||
+		fread (directory, 1, (size_t)dirlen, file) != (size_t)dirlen)
+		goto done;
+	if (!COM_ValidatePackDirectoryEntries (directory, count, filesize))
+		goto done;
+	valid = true;
+
+done:
+	free (directory);
+	fclose (file);
+	return valid;
 }
 
 /* Keep this opt-in source as narrow as the inherited product: the official
@@ -2963,7 +3042,7 @@ static void COM_AddRereleaseModelPack (const char *root)
 		return;
 	}
 	old_modified = com_modified;
-	pak = COM_LoadPackFile (filename, handle);
+	pak = COM_LoadPackFile (filename, handle, filesize);
 	com_modified = old_modified;
 	if (!pak)
 		return;
@@ -3043,6 +3122,7 @@ COM_AddGameDirectory -- johnfitz -- modified based on topaz's tutorial
 static void COM_AddGameDirectoryRoot (const char *base, const char *dir, unsigned int path_id, qboolean add_embedded)
 {
 	int			  i, packhandle;
+	qfilesize_t	  packfilesize;
 	searchpath_t *search;
 	pack_t		 *pak;
 	char		  pakfile[MAX_OSPATH];
@@ -3062,9 +3142,10 @@ static void COM_AddGameDirectoryRoot (const char *base, const char *dir, unsigne
 	for (i = 0;; i++)
 	{
 		q_snprintf (pakfile, sizeof (pakfile), "%s/pak%i.pak", com_gamedir, i);
-		if (Sys_FileOpenRead (pakfile, &packhandle) == -1)
+		packfilesize = Sys_FileOpenRead (pakfile, &packhandle);
+		if (packfilesize < 0)
 			break;
-		pak = COM_LoadPackFile (pakfile, packhandle);
+		pak = COM_LoadPackFile (pakfile, packhandle, packfilesize);
 		if (pak)
 		{
 			search = (searchpath_t *)Mem_Alloc (sizeof (searchpath_t));
@@ -3093,7 +3174,8 @@ static void COM_AddGameDirectoryRoot (const char *base, const char *dir, unsigne
 			}
 			qboolean pak0_modified = com_modified;
 			Sys_MemFileOpenRead (vkquake_pak_extracted, vkquake_pak_size_extracted, &packhandle);
-			pak = COM_LoadPackFile ("vkquake.pak", packhandle);
+			pak = COM_LoadPackFile ("vkquake.pak", packhandle,
+				(qfilesize_t)vkquake_pak_size_extracted);
 			search = (searchpath_t *)Mem_Alloc (sizeof (searchpath_t));
 			search->path_id = path_id;
 			search->pack = pak;

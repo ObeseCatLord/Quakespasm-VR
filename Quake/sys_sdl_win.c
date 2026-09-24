@@ -126,6 +126,22 @@ FILE *Sys_fopen (const char *path, const char *mode)
 	return _wfopen (wpath, wmode);
 }
 
+int Sys_remove (const char *path)
+{
+	wchar_t wpath[MAX_PATH];
+	UTF8ToWideString (path, wpath, countof (wpath));
+	return _wremove (wpath);
+}
+
+int Sys_rename (const char *oldname, const char *newname)
+{
+	wchar_t oldnamew[MAX_PATH];
+	wchar_t newnamew[MAX_PATH];
+	UTF8ToWideString (oldname, oldnamew, countof (oldnamew));
+	UTF8ToWideString (newname, newnamew, countof (newnamew));
+	return _wrename (oldnamew, newnamew);
+}
+
 static void WideStringToUTF8 (const wchar_t *src, char *dst, size_t maxbytes)
 {
 	if (!WideCharToMultiByte (CP_UTF8, 0, src, -1, dst, (int)maxbytes, NULL, NULL))

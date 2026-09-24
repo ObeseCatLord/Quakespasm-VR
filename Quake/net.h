@@ -56,6 +56,18 @@ struct qsocket_s *NET_CheckNewConnections (void);
 struct qsocket_s *NET_Connect (const char *host);
 // called by client to connect to a host.  Returns -1 if not able to
 
+typedef enum
+{
+	NET_CONNECT_PENDING,
+	NET_CONNECT_COMPLETE,
+	NET_CONNECT_FAILED
+} net_connect_result_t;
+
+qboolean NET_DatagramConnectStart (const char *host);
+net_connect_result_t NET_DatagramConnectFrame (struct qsocket_s **outsock, const char **outreason);
+void NET_DatagramConnectCancel (void);
+qboolean NET_DatagramConnectPending (void);
+
 double		NET_QSocketGetTime (const struct qsocket_s *sock);
 const char *NET_QSocketGetTrueAddressString (const struct qsocket_s *sock);
 const char *NET_QSocketGetMaskedAddressString (const struct qsocket_s *sock);

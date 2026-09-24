@@ -19,3 +19,29 @@ cancel. A passing Linux build alone cannot close these behavior checks.
 
 The separate failed-connect frame-time boundary is recorded in
 [the network map](migration-network-map.md#failed-connect-frame-time-boundary).
+
+## Integrated disposition
+
+The installer now validates the temporary PACK with the same on-disk entry
+checks used by the mount path. The mount path also rejects directory lengths
+that are misaligned, exceed its fixed array, or point outside the file before
+reading; both paths check complete reads and bounded entry ranges. The
+catalogue owns exact approved-entry comparison at job creation and identifies
+refresh/install operations by a generation token, so a stale server operation
+cannot cancel a successor. Temporary-file rename/removal use the small
+UTF-8-aware `Sys_rename`/`Sys_remove` adapters copied from Ironwail's system
+boundary. The client leaves the frozen loading plaque before showing the
+consent prompt or advancing a frame-driven reconnect.
+
+Linux SDL2, SDL3 and no-curl full links passed after integration. A
+real-binary GDB call accepted a valid synthetic PACK and rejected wrong magic,
+misaligned and capacity-plus-one directories, out-of-range entry data, an
+unterminated name and a truncated directory. Mounting the capacity-plus-one
+fixture in a disposable basedir produced the expected early `Sys_Error`
+without reading the oversized directory. Against a disposable loopback
+dedicated server, the shared datagram handshake returned an accepted socket
+through both frame-driven and ordinary synchronous entry points. An
+unanswered local endpoint returned promptly from two frame calls and cancel
+released its pending socket. These checks do not prove the complete
+server-directed install/reconnect UI flow, packet loss, headset presentation,
+or Windows/ARM behavior.
