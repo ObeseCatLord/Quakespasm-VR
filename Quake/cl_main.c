@@ -2738,6 +2738,36 @@ void CL_QueueGorillaCapability (void)
 	cl.vr_gorilla_cap_sent = true;
 }
 
+static void CL_ServerExtension_AkimboProtocol_f (void)
+{
+	unsigned int qbj3_akimbo, qbj3_berserk_akimbo, enyo_akimbo,
+		dwell_berserk_akimbo;
+
+	if (cmd_source != src_server)
+		return;
+
+	/* A malformed or unsupported replacement offer revokes every prior flag. */
+	cl.vr_qbj3_akimbo_supported = false;
+	cl.vr_qbj3_berserk_akimbo_supported = false;
+	cl.vr_enyo_akimbo_supported = false;
+	cl.vr_dwell_berserk_akimbo_supported = false;
+	if (cl.protocol_qsvr != QSVR_PROTOCOL_PINNED || Cmd_Argc () != 5 ||
+		!CL_ServerNumericOfferSyntaxValid (Cmd_Args (), 4) ||
+		!CL_ParseBoundedDecimal (Cmd_Argv (1), 1, &qbj3_akimbo) ||
+		!CL_ParseBoundedDecimal (Cmd_Argv (2), 1, &qbj3_berserk_akimbo) ||
+		!CL_ParseBoundedDecimal (Cmd_Argv (3), 1, &enyo_akimbo) ||
+		!CL_ParseBoundedDecimal (Cmd_Argv (4), 1, &dwell_berserk_akimbo))
+	{
+		Con_DPrintf2 ("Ignoring malformed akimbo capability offer.\n");
+		return;
+	}
+
+	cl.vr_qbj3_akimbo_supported = (qboolean)qbj3_akimbo;
+	cl.vr_qbj3_berserk_akimbo_supported = (qboolean)qbj3_berserk_akimbo;
+	cl.vr_enyo_akimbo_supported = (qboolean)enyo_akimbo;
+	cl.vr_dwell_berserk_akimbo_supported = (qboolean)dwell_berserk_akimbo;
+}
+
 static void CL_ServerExtension_GorillaProtocol_f (void)
 {
 	unsigned int version, allowed;
@@ -2876,6 +2906,8 @@ void CL_Init (void)
 	// spike -- userinfo stuff
 	Cmd_AddCommand_ServerCommand ("fui", CL_ServerExtension_FullUserinfo_f);
 	Cmd_AddCommand_ServerCommand ("ui", CL_ServerExtension_UserinfoUpdate_f);
+	Cmd_AddCommand_ServerCommand ("vr_qbj3_akimbo_protocol",
+		CL_ServerExtension_AkimboProtocol_f);
 	Cmd_AddCommand_ServerCommand ("vr_weapon_contact_protocol",
 		CL_ServerExtension_WeaponContactProtocol_f);
 	Cmd_AddCommand_ServerCommand ("vr_gorilla_protocol",

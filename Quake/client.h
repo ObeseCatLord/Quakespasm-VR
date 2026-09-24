@@ -191,6 +191,10 @@ typedef struct
 	int net_snapshot_sequence, net_snapshot_packets, net_snapshot_drops;
 	int net_snapshot_acks_sent, net_snapshot_ack_queue_overflows;
 	qboolean net_snapshot_have;
+	qboolean vr_qbj3_akimbo_supported;
+	qboolean vr_qbj3_berserk_akimbo_supported;
+	qboolean vr_enyo_akimbo_supported;
+	qboolean vr_dwell_berserk_akimbo_supported;
 	qboolean vr_gorilla_supported, vr_gorilla_allowed, vr_gorilla_cap_sent;
 	qboolean vr_gorilla_trusted_supported, vr_gorilla_trusted_cap_sent;
 	qboolean vr_gorilla_state_valid;
