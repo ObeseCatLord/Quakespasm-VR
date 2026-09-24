@@ -2663,6 +2663,7 @@ DECLARE_SHADER_MODULE (sky_cube_frag);
 DECLARE_SHADER_MODULE (postprocess_vert);
 DECLARE_SHADER_MODULE (postprocess_frag);
 DECLARE_SHADER_MODULE (scene_upscale_frag);
+DECLARE_SHADER_MODULE (scene_upscale_stereo_frag);
 DECLARE_SHADER_MODULE (ssao_composite_frag);
 DECLARE_SHADER_MODULE (ssao_composite_msaa_frag);
 DECLARE_SHADER_MODULE (ssao_prepare_comp);
@@ -4244,7 +4245,7 @@ static void R_CreatePostprocessPipelines ()
 		upscale.depth_stencil_state.depthTestEnable = VK_FALSE;
 		upscale.depth_stencil_state.depthWriteEnable = VK_FALSE;
 		upscale.blend_attachment_states[0].blendEnable = VK_FALSE;
-		upscale.shader_stages[1].module = scene_upscale_frag_module;
+		upscale.shader_stages[1].module = vulkan_globals.stereo_active ? scene_upscale_stereo_frag_module : scene_upscale_frag_module;
 		for (int variant = 0; variant < MAIN_RENDER_PASS_VARIANT_COUNT; ++variant)
 		{
 			R_SetPipelineRenderPassVariant (&upscale, SUBPASS_UI, variant);
@@ -4425,6 +4426,7 @@ static void R_CreateShaderModules ()
 	CREATE_SHADER_MODULE (postprocess_vert);
 	CREATE_SHADER_MODULE (postprocess_frag);
 	CREATE_SHADER_MODULE (scene_upscale_frag);
+	CREATE_SHADER_MODULE_COND (scene_upscale_stereo_frag, vulkan_globals.stereo_active);
 #ifdef _DEBUG
 	if (r_ssao.value > 0)
 	{
@@ -4546,6 +4548,7 @@ static void R_DestroyShaderModules ()
 	DESTROY_SHADER_MODULE (postprocess_vert);
 	DESTROY_SHADER_MODULE (postprocess_frag);
 	DESTROY_SHADER_MODULE (scene_upscale_frag);
+	DESTROY_SHADER_MODULE (scene_upscale_stereo_frag);
 	DESTROY_SHADER_MODULE (ssao_composite_frag);
 	DESTROY_SHADER_MODULE (ssao_composite_msaa_frag);
 	DESTROY_SHADER_MODULE (ssao_prepare_comp);

@@ -1,6 +1,32 @@
 #version 460
 
+#ifdef STEREO
+#extension GL_EXT_multiview : require
+layout (set = 0, binding = 0) uniform sampler2DArray scene_color;
+
+vec2 SceneSize ()
+{
+	return vec2 (textureSize (scene_color, 0).xy);
+}
+
+vec3 SampleScene (vec2 uv)
+{
+	return textureLod (scene_color, vec3 (uv, float (gl_ViewIndex)), 0.0).rgb;
+}
+#else
 layout (set = 0, binding = 0) uniform sampler2D scene_color;
+
+vec2 SceneSize ()
+{
+	return vec2 (textureSize (scene_color, 0));
+}
+
+vec3 SampleScene (vec2 uv)
+{
+	return textureLod (scene_color, uv, 0.0).rgb;
+}
+#endif
+
 layout (push_constant) uniform PushConstants
 {
 	vec2 output_size_rcp;
@@ -21,7 +47,7 @@ vec3 SampleClassic (vec2 source_size)
 	// Bilinear filtering at these adjusted coordinates applies the four rectangle
 	// overlap weights in one sample. Integer scales reproduce solid source pixels.
 	const vec2 uv = (first_pixel + 0.5 + next_weight) / source_size;
-	return textureLod (scene_color, uv, 0.0).rgb;
+	return SampleScene (uv);
 }
 
 // Catmull-Rom reconstruction. The two positive middle weights can share a
@@ -47,13 +73,13 @@ vec3 SampleBicubic (vec2 uv, vec2 source_size)
 	vec3 color = vec3 (0.0);
 	for (int j = 0; j < 3; ++j)
 		for (int i = 0; i < 3; ++i)
-			color += textureLod (scene_color, vec2 (x[i], y[j]), 0.0).rgb * wx[i] * wy[j];
+			color += SampleScene (vec2 (x[i], y[j])) * wx[i] * wy[j];
 	return color;
 }
 
 void main ()
 {
-	const vec2 source_size = vec2 (textureSize (scene_color, 0));
+	const vec2 source_size = SceneSize ();
 	if (upscale_filter == 0)
 		out_color = vec4 (SampleClassic (source_size), 1.0);
 	else

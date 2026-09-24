@@ -172,6 +172,7 @@ shader_variants = [
     ['Shaders/basic.vert', 'basic_stereo.vert', ['-DSTEREO=1', '--target-env', 'vulkan1.1']],
     ['Shaders/basic.vert', 'basic_ui_stereo.vert', ['-DSTEREO=1', '-DUI_PANEL=1', '--target-env', 'vulkan1.1']],
     ['Shaders/draw_pic_xbr.vert', 'draw_pic_xbr_ui_stereo.vert', ['-DSTEREO=1', '-DUI_PANEL=1', '--target-env', 'vulkan1.1']],
+    ['Shaders/scene_upscale.frag', 'scene_upscale_stereo.frag', ['-DSTEREO=1', '--target-env', 'vulkan1.1']],
     ['Shaders/basic.frag', 'basic_ui.frag', ['-DUI_PANEL=1']],
     ['Shaders/basic_notex.frag', 'basic_notex_ui.frag', ['-DUI_PANEL=1']],
     ['Shaders/basic_alphatest.frag', 'basic_alphatest_ui.frag', ['-DUI_PANEL=1']],

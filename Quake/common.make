@@ -221,6 +221,7 @@ SHADER_OBJS = \
 	sky_cube_vert.o \
 	postprocess_frag.o \
 	scene_upscale_frag.o \
+	scene_upscale_stereo_frag.o \
 	ssao_composite_frag.o \
 	ssao_composite_debug_frag.o \
 	ssao_composite_msaa_debug_frag.o \
@@ -420,6 +421,7 @@ $(eval $(call SHADER_VARIANT,md5_8_vert,md5.vert,-DEIGHT_WEIGHT_SKINNING))
 $(eval $(call SHADER_VARIANT,basic_stereo_vert,basic.vert,-DSTEREO=1 --target-env vulkan1.1))
 $(eval $(call SHADER_VARIANT,basic_ui_stereo_vert,basic.vert,-DSTEREO=1 -DUI_PANEL=1 --target-env vulkan1.1))
 $(eval $(call SHADER_VARIANT,draw_pic_xbr_ui_stereo_vert,draw_pic_xbr.vert,-DSTEREO=1 -DUI_PANEL=1 --target-env vulkan1.1))
+$(eval $(call SHADER_VARIANT,scene_upscale_stereo_frag,scene_upscale.frag,-DSTEREO=1 --target-env vulkan1.1))
 $(eval $(call SHADER_VARIANT,basic_ui_frag,basic.frag,-DUI_PANEL=1))
 $(eval $(call SHADER_VARIANT,basic_notex_ui_frag,basic_notex.frag,-DUI_PANEL=1))
 $(eval $(call SHADER_VARIANT,basic_alphatest_ui_frag,basic_alphatest.frag,-DUI_PANEL=1))

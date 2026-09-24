@@ -978,7 +978,7 @@ uint32_t R_RecordFrame (
 					.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
 					.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
 					.image = vulkan_globals.color_buffers[0],
-					.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1}};
+					.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, current_layout.stereo ? 2u : 1u}};
 				vkCmdPipelineBarrier (
 					command_buffer, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
 					0, 0, NULL, 0, NULL, 1, &barrier);
