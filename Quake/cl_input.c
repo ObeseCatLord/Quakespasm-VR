@@ -112,6 +112,30 @@ static void IN_VRWeaponMenuUp (void)
 	}
 }
 
+static void CL_VRWeaponContactHaptic_f (void)
+{
+	const char *hand_arg;
+	int physical_hand, logical_role;
+
+	if (cmd_source != src_server || Cmd_Argc () != 2 ||
+		cls.state != ca_connected || cls.signon != SIGNONS || cls.demoplayback ||
+		cl.protocol_qsvr != QSVR_PROTOCOL_PINNED ||
+		!cl.vr_weapon_contact_mode)
+		return;
+
+	hand_arg = Cmd_Argv (1);
+	if (!strcmp (hand_arg, "0"))
+		physical_hand = 0;
+	else if (!strcmp (hand_arg, "1"))
+		physical_hand = 1;
+	else
+		return;
+
+	logical_role = physical_hand == VR_InputDominantPhysicalHand () ?
+		VR_INPUT_ROLE_RIGHT : VR_INPUT_ROLE_LEFT;
+	VR_InputTriggerHaptic (logical_role, 0.004f, 1.0f);
+}
+
 void KeyDown (kbutton_t *b)
 {
 	int			k;
@@ -1114,6 +1138,8 @@ CL_InitInput
 */
 void CL_InitInput (void)
 {
+	Cmd_AddCommand_ServerCommand ("vr_weapon_contact_haptic",
+		CL_VRWeaponContactHaptic_f);
 	Cmd_AddCommand ("+vr_weaponmenu", IN_VRWeaponMenuDown);
 	Cmd_AddCommand ("-vr_weaponmenu", IN_VRWeaponMenuUp);
 	Cmd_AddCommand ("+moveup", IN_UpDown);

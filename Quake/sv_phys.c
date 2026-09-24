@@ -3479,6 +3479,26 @@ static float SV_VRContactDistance (const vec3_t a, const vec3_t b)
 	return VectorLength (delta);
 }
 
+static void SV_VRContactFeedback (client_t *client, int hand)
+{
+	char command[48];
+	int command_size;
+
+	if (!client || (hand != 0 && hand != 1) || !client->message.data ||
+		client->message.overflowed ||
+		client->message.cursize < 0 || client->message.maxsize < 0 ||
+		client->message.cursize > client->message.maxsize)
+		return;
+	command_size = q_snprintf (command, sizeof (command),
+		"//vr_weapon_contact_haptic %d\n", hand);
+	if (command_size < 0 || (size_t)command_size >= sizeof (command) ||
+		command_size + 2 > client->message.maxsize - client->message.cursize)
+		return;
+
+	MSG_WriteByte (&client->message, svc_stufftext);
+	MSG_WriteString (&client->message, command);
+}
+
 static qboolean SV_VRContactOwnerLive (client_t *client, edict_t *ent)
 {
 	return client && ent && client->active && client->spawned &&
@@ -4090,7 +4110,8 @@ static void SV_VRContactProcessMelee (client_t *client, edict_t *ent,
 	if (blocked || !hit)
 		return;
 	client->private_vr_melee_consumed[hand] = true;
-	SV_VRStockAxeOutcome (client, ent, cmd, &contact);
+	if (SV_VRStockAxeOutcome (client, ent, cmd, &contact))
+		SV_VRContactFeedback (client, hand);
 }
 
 static qboolean SV_VRContactButtonTouchAllowed (edict_t *button,
@@ -4322,6 +4343,7 @@ static qboolean SV_VRContactProcessCommand (client_t *client, edict_t *ent,
 			SV_VRContactInvalidateAccepted (client);
 			return true;
 		}
+		SV_VRContactFeedback (client, hand);
 	}
 
 	if (sample.flags & VR_WEAPON_CONTACT_IMMERSIVE_MELEE)
