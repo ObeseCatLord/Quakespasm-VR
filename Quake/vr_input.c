@@ -76,6 +76,7 @@ static cvar_t vr_joystick_axis_menu_deadzone_extra = {"vr_joystick_axis_menu_dea
 static cvar_t vr_joystick_axis_exponent = {"vr_joystick_axis_exponent", "1", CVAR_ARCHIVE};
 static cvar_t vr_joystick_deadzone_trunc = {"vr_joystick_deadzone_trunc", "1", CVAR_ARCHIVE};
 static cvar_t vr_movement_mode = {"vr_movement_mode", "0", CVAR_ARCHIVE};
+cvar_t vr_gorilla = {"vr_gorilla", "0", CVAR_ARCHIVE};
 static cvar_t vr_movement_speed = {"vr_movement_speed", "1", CVAR_ARCHIVE};
 static cvar_t vr_snap_turn = {"vr_snap_turn", "0", CVAR_ARCHIVE};
 static cvar_t vr_180_snap_turn = {"vr_180_snap_turn", "1", CVAR_ARCHIVE};
@@ -3176,6 +3177,7 @@ void VR_InputInit (void)
 	Cvar_RegisterVariable (&vr_joystick_axis_exponent);
 	Cvar_RegisterVariable (&vr_joystick_deadzone_trunc);
 	Cvar_RegisterVariable (&vr_movement_mode);
+	Cvar_RegisterVariable (&vr_gorilla);
 	Cvar_RegisterVariable (&vr_movement_speed);
 	Cvar_RegisterVariable (&vr_snap_turn);
 	Cvar_RegisterVariable (&vr_180_snap_turn);
