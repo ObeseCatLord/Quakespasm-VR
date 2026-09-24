@@ -57,6 +57,7 @@ void	Draw_FadeScreen (cb_context_t *cbx);
 void	Draw_String (cb_context_t *cbx, float x, float y, const char *str);
 void	Draw_String_Scaled (cb_context_t *cbx, float x, float y, const char *str, float scale);
 void	Draw_String_3D (cb_context_t *cbx, vec3_t coords, float size, const char *str);
+void Draw_String_3DDepth (cb_context_t *cbx, const vec3_t origin, const vec3_t right, const vec3_t up, float size, const char *str, const vec3_t color);
 qpic_t *Draw_PicFromWad2 (const char *name, unsigned int texflags, int picflags);
 qpic_t *Draw_PicFromWad (const char *name);
 qpic_t *Draw_CachePic (const char *path);

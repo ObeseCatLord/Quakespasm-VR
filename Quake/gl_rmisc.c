@@ -3367,6 +3367,22 @@ static void R_CreateBasicPipelines ()
 			infos.blend_attachment_states[0].blendEnable = VK_TRUE;
 		R_CreateGraphicsPipeline (&graphics_pipelines[PIPELINE_BASIC_BLEND][stage][variant], &infos, basic_layout, "basic_blend");
 	}
+
+	for (int variant = 0; variant < MAIN_RENDER_PASS_VARIANT_COUNT; ++variant)
+	{
+		R_CopyPipelineCreateInfos (&infos, &base);
+		R_SetPipelineRenderPassVariant (&infos, SUBPASS_MAIN, variant);
+		infos.depth_stencil_state.depthTestEnable = VK_TRUE;
+		infos.depth_stencil_state.depthWriteEnable = VK_FALSE;
+		infos.depth_stencil_state.depthCompareOp = VK_COMPARE_OP_GREATER_OR_EQUAL;
+		infos.rasterization_state.cullMode = VK_CULL_MODE_NONE;
+		infos.shader_stages[0].module = basic_vert_module;
+		infos.shader_stages[1].module = basic_alphatest_frag_module;
+		const char *pass_suffix = (variant == MAIN_RENDER_PASS_MBOIT) ? "_main_mboit" : ((variant == MAIN_RENDER_PASS_OIT) ? "_main_oit" : "");
+		R_CreateGraphicsPipeline (
+			&graphics_pipelines[PIPELINE_BASIC_ALPHATEST_DEPTH][SUBPASS_MAIN][variant], &infos, vulkan_globals.basic_pipeline_layout,
+			va ("basic_alphatest_depth%s", pass_suffix));
+	}
 }
 
 /*

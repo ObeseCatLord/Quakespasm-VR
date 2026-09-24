@@ -298,6 +298,7 @@ static inline vulkan_pipeline_t R_PipelineForSubpassType (
 typedef enum
 {
 	PIPELINE_BASIC_ALPHATEST,
+	PIPELINE_BASIC_ALPHATEST_DEPTH,
 	PIPELINE_BASIC_BLEND,
 	PIPELINE_SCENE_UPSCALE,
 	PIPELINE_GUI,

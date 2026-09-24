@@ -1881,6 +1881,31 @@ int VR_WeaponMenu_DrawModels (struct cb_context_s *context)
 			tint[0] = tint[1] = tint[2] = 1.5f;
 		R_DrawPreparedWheelAliasModel (cbx, &entity, frame->geometry[i],
 			tint, mesh_scale, &aliaspolys);
+		if (frame->playspace && frame->visible[i].ammo >= 0)
+		{
+			/* The source puts ammo above each mesh in the world. Keep the
+			 * draw on the scene path so walls can occlude its glyphs too. */
+			char ammo_text[32];
+			vec3_t text_origin, up, color = {1.0f, 1.0f, 1.0f};
+			const float text_scale = (selected ? 0.20f : 0.15f) * 0.60f;
+			const float model_center = 0.5f * (model->mins[2] + model->maxs[2]);
+			const float model_top = (model->maxs[2] - model_center) *
+				entity_scale * mesh_scale;
+			if (frame->visible[i].ammo_max > 0)
+				q_snprintf (ammo_text, sizeof (ammo_text), "%d/%d",
+					frame->visible[i].ammo, frame->visible[i].ammo_max);
+			else
+				q_snprintf (ammo_text, sizeof (ammo_text), "%d",
+					frame->visible[i].ammo);
+			if (frame->visible[i].ammo == 0)
+				color[1] = color[2] = 0.0f;
+			VectorScale (down, -1.0f, up);
+			VectorCopy (entity.origin, text_origin);
+			VectorMA (text_origin, -2.0f * 0.60f, forward, text_origin);
+			VectorMA (text_origin, model_top + 1.5f * 0.60f, up, text_origin);
+			Draw_String_3DDepth (cbx, text_origin, right, up,
+				8.0f * text_scale, ammo_text, color);
+		}
 	}
 	return aliaspolys;
 }
