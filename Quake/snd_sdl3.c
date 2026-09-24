@@ -23,6 +23,7 @@
  */
 
 #include "quakedef.h"
+#include "snd_spatial.h"
 #include "voice.h"
 
 #ifdef USE_SDL3
@@ -37,6 +38,31 @@ static void SDLCALL paint_audio (void *userdata, SDL_AudioStream *stream, int ad
 
 	if (!shm || !shm->buffer || buffersize <= 0 || additional_amount <= 0)
 		return;
+
+#ifdef USE_STEAMAUDIO
+	if (Spatial_Active ())
+	{
+		float spatial[SA_BLOCK * 2];
+		int16_t mixed[SA_BLOCK * 2];
+		int remaining_frames = additional_amount / (2 * (int)sizeof (int16_t));
+		/* Bound one callback after a long device stall; SDL will request the
+		 * remaining frames on its next stream refill. */
+		for (int block = 0; remaining_frames > 0 && block < 16; ++block)
+		{
+			const int frames = q_min (remaining_frames, SA_BLOCK);
+			Spatial_Render (spatial, frames);
+			for (int sample = 0; sample < frames * 2; ++sample)
+				mixed[sample] = (int16_t)(CLAMP (-1.0f, spatial[sample], 1.0f) * 32767.0f);
+			Voice_MixAudio ((unsigned char *)mixed, frames * 2 * sizeof (int16_t),
+				16, 2, SA_RATE, false);
+			if (!SDL_PutAudioStreamData (stream, mixed, frames * 2 * sizeof (int16_t)))
+				break;
+			remaining_frames -= frames;
+		}
+		shm->samplepos = (Spatial_Clock () * shm->channels) % shm->samples;
+		return;
+	}
+#endif
 
 	pos = (shm->samplepos * (shm->samplebits / 8));
 	if (pos >= buffersize)
@@ -90,8 +116,14 @@ qboolean SNDDMA_Init (dma_t *dma)
 	}
 
 	/* Set up the desired format */
+#ifdef USE_STEAMAUDIO
+	spec.freq = Spatial_Active () ? SA_RATE : snd_mixspeed.value;
+	spec.format = Spatial_Active () ? SDL_AUDIO_S16 :
+		(loadas8bit.value ? SDL_AUDIO_U8 : SDL_AUDIO_S16);
+#else
 	spec.freq = snd_mixspeed.value;
-	spec.format = (loadas8bit.value) ? SDL_AUDIO_U8 : SDL_AUDIO_S16;
+	spec.format = loadas8bit.value ? SDL_AUDIO_U8 : SDL_AUDIO_S16;
+#endif
 	spec.channels = 2;
 
 	/* Open the audio device with callback */

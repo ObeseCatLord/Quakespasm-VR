@@ -23,6 +23,7 @@
  */
 
 #include "quakedef.h"
+#include "snd_spatial.h"
 #include "voice.h"
 
 #ifndef USE_SDL3
@@ -39,6 +40,32 @@ static void SDLCALL paint_audio (void *unused, Uint8 *stream, int len)
 		memset (stream, 0, len);
 		return;
 	}
+
+#ifdef USE_STEAMAUDIO
+	if (Spatial_Active ())
+	{
+		float spatial[SA_BLOCK * 2];
+		int16_t mixed[SA_BLOCK * 2];
+		int frames_left = len / (2 * (int)sizeof (int16_t));
+		int offset = 0;
+		while (frames_left > 0)
+		{
+			const int frames = q_min (frames_left, SA_BLOCK);
+			Spatial_Render (spatial, frames);
+			for (int sample = 0; sample < frames * 2; ++sample)
+				mixed[sample] = (int16_t)(CLAMP (-1.0f, spatial[sample], 1.0f) * 32767.0f);
+			Voice_MixAudio ((unsigned char *)mixed, frames * 2 * sizeof (int16_t),
+				16, 2, SA_RATE, false);
+			memcpy (stream + offset, mixed, frames * 2 * sizeof (int16_t));
+			offset += frames * 2 * sizeof (int16_t);
+			frames_left -= frames;
+		}
+		if (offset < len)
+			memset (stream + offset, 0, len - offset);
+		shm->samplepos = (Spatial_Clock () * shm->channels) % shm->samples;
+		return;
+	}
+#endif
 
 	pos = (shm->samplepos * (shm->samplebits / 8));
 	if (pos >= buffersize)
@@ -86,8 +113,14 @@ qboolean SNDDMA_Init (dma_t *dma)
 	}
 
 	/* Set up the desired format */
+#ifdef USE_STEAMAUDIO
+	desired.freq = Spatial_Active () ? SA_RATE : snd_mixspeed.value;
+	desired.format = Spatial_Active () ? AUDIO_S16SYS :
+		(loadas8bit.value ? AUDIO_U8 : AUDIO_S16SYS);
+#else
 	desired.freq = snd_mixspeed.value;
-	desired.format = (loadas8bit.value) ? AUDIO_U8 : AUDIO_S16SYS;
+	desired.format = loadas8bit.value ? AUDIO_U8 : AUDIO_S16SYS;
+#endif
 	desired.channels = 2; /* = desired_channels; */
 	if (desired.freq <= 11025)
 		desired.samples = 256;
