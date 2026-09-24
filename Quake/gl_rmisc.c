@@ -3845,8 +3845,6 @@ static void R_CreateWorldPipelines ()
 
 	base.depth_stencil_state.depthTestEnable = VK_TRUE;
 	base.depth_stencil_state.depthWriteEnable = VK_TRUE;
-	base.rasterization_state.depthBiasEnable = VK_TRUE;
-	base.dynamic_states[base.dynamic_state.dynamicStateCount++] = VK_DYNAMIC_STATE_DEPTH_BIAS;
 
 	base.vertex_input_state.vertexAttributeDescriptionCount = 3;
 	base.vertex_input_state.pVertexAttributeDescriptions = world_vertex_input_attribute_descriptions;

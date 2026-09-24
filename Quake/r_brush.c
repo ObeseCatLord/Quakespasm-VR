@@ -948,15 +948,11 @@ void R_DrawIndirectBrushes (cb_context_t *cbx, qboolean draw_water, qboolean tra
 				cbx->cb, VK_PIPELINE_BIND_POINT_GRAPHICS, vulkan_globals.world_pipeline_layout.handle, 0, 1, &greytexture->descriptor_set, 0, NULL);
 		vulkan_globals.vk_cmd_bind_descriptor_sets (
 			cbx->cb, VK_PIPELINE_BIND_POINT_GRAPHICS, vulkan_globals.world_pipeline_layout.handle, 4, 1, &vulkan_globals.bmodel_instances_desc_set, 0, NULL);
-		const uint32_t instance_base = ((uint32_t)bmodel_instances_index * MAX_MODELS) + 1;
-		R_PushConstants (cbx, VK_SHADER_STAGE_ALL_GRAPHICS, 21 * sizeof (float), sizeof (uint32_t), &instance_base);
 	}
 
 	gltexture_t *lastfullbright = NULL;
 	gltexture_t *lastlightmap = NULL;
 	gltexture_t *lasttexture = NULL;
-	float		 last_alpha = FLT_MAX;
-	float		 last_constant_factor = FLT_MAX;
 
 	int part_size = (used_indirect_draws + NUM_WORLD_CBX - 1) / NUM_WORLD_CBX;
 	int start = index < 0 ? 0 : part_size * index;
@@ -990,11 +986,6 @@ void R_DrawIndirectBrushes (cb_context_t *cbx, qboolean draw_water, qboolean tra
 			if ((alpha < 1.0f) != transparent_water)
 				continue;
 
-			if (alpha != last_alpha)
-			{
-				R_PushConstants (cbx, VK_SHADER_STAGE_ALL_GRAPHICS, 20 * sizeof (float), 1 * sizeof (float), &alpha);
-				last_alpha = alpha;
-			}
 		}
 
 		qboolean	 fullbright_enabled = false;
@@ -1020,31 +1011,18 @@ void R_DrawIndirectBrushes (cb_context_t *cbx, qboolean draw_water, qboolean tra
 				cbx->subpass_type, vulkan_globals.world_pipelines[cbx->pipeline_variant][pipeline_index], vulkan_globals.world_wboit_pipelines[pipeline_index],
 				vulkan_globals.world_mboit_moment_pipelines[pipeline_index], vulkan_globals.world_mboit_composite_pipelines[pipeline_index]);
 			R_BindPipeline (cbx, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+			if (draw_water)
+				R_PushConstants (cbx, VK_SHADER_STAGE_ALL_GRAPHICS, 20 * sizeof (float), sizeof (alpha), &alpha);
+			const uint32_t instance_base = ((uint32_t)bmodel_instances_index * MAX_MODELS) + 1;
+			assert ((instance_base & 0x80000000u) == 0);
 
 			const qboolean is_decal = indirect_draws[i].is_decal;
 			const qboolean shading_rate_eligible = !indirect_draws[i].is_bmodel && !is_decal && !draw_water && !draw_sky && !alpha_test && !alpha_blend;
 			if (!alpha_test && !alpha_blend)
 				R_SetWorldFragmentShadingRate (cbx, shading_rate_eligible);
-			qboolean	   use_zbias = INDIRECT_ZBIAS && gl_zfix.value && indirect_draws[i].is_bmodel && !is_decal;
-			float		   constant_factor = 0.0f, slope_factor = 0.0f;
-			if (use_zbias)
-			{
-				if (vulkan_globals.depth_format == VK_FORMAT_D32_SFLOAT_S8_UINT || vulkan_globals.depth_format == VK_FORMAT_D32_SFLOAT)
-				{
-					constant_factor = -4.f;
-					slope_factor = -0.125f;
-				}
-				else
-				{
-					constant_factor = -1.f;
-					slope_factor = -0.25f;
-				}
-			}
-			if (last_constant_factor != constant_factor)
-			{
-				vkCmdSetDepthBias (cbx->cb, constant_factor, 0.0f, slope_factor);
-				last_constant_factor = constant_factor;
-			}
+			const qboolean use_zbias = INDIRECT_ZBIAS && gl_zfix.value && !map_checks.value && indirect_draws[i].is_bmodel && !is_decal;
+			const uint32_t instance_flags = instance_base | (use_zbias ? 0x80000000u : 0u);
+			R_PushConstants (cbx, VK_SHADER_STAGE_ALL_GRAPHICS, 21 * sizeof (float), sizeof (instance_flags), &instance_flags);
 
 			const int	 lm_idx = indirect_draws[i].lightmap_idx;
 			gltexture_t *lightmap_texture = (r_fullbright_cheatsafe || lm_idx < 0) ? greylightmap : lightmaps[lm_idx].texture;

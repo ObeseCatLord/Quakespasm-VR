@@ -1197,7 +1197,7 @@ Draw the current batch if non-empty and clears it, ready for more R_BatchSurface
 ================
 */
 static void R_FlushBatch (
-	cb_context_t *cbx, qboolean fullbright_enabled, qboolean alpha_test, qboolean alpha_blend, qboolean use_zbias, qboolean shading_rate_eligible,
+	cb_context_t *cbx, qboolean fullbright_enabled, qboolean alpha_test, qboolean alpha_blend, float alpha, qboolean use_zbias, qboolean shading_rate_eligible,
 	gltexture_t *lightmap_texture,
 	uint32_t *brushpasses)
 {
@@ -1209,24 +1209,15 @@ static void R_FlushBatch (
 			cbx->subpass_type, vulkan_globals.world_pipelines[cbx->pipeline_variant][pipeline_index], vulkan_globals.world_wboit_pipelines[pipeline_index],
 			vulkan_globals.world_mboit_moment_pipelines[pipeline_index], vulkan_globals.world_mboit_composite_pipelines[pipeline_index]);
 		R_BindPipeline (cbx, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+		if (alpha_blend)
+			R_PushConstants (cbx, VK_SHADER_STAGE_ALL_GRAPHICS, 20 * sizeof (float), sizeof (alpha), &alpha);
 		if (!alpha_test && !alpha_blend)
 			R_SetWorldFragmentShadingRate (cbx, shading_rate_eligible);
-
-		float constant_factor = 0.0f, slope_factor = 0.0f;
-		if (use_zbias)
-		{
-			if (vulkan_globals.depth_format == VK_FORMAT_D32_SFLOAT_S8_UINT || vulkan_globals.depth_format == VK_FORMAT_D32_SFLOAT)
-			{
-				constant_factor = -4.f;
-				slope_factor = -0.125f;
-			}
-			else
-			{
-				constant_factor = -1.f;
-				slope_factor = -0.25f;
-			}
-		}
-		vkCmdSetDepthBias (cbx->cb, constant_factor, 0.0f, slope_factor);
+		// Texture-chain draws bake the entity transform into their MVP. The
+		// reserved bit selects Ironwail's clip-space brush offset without
+		// changing the shared world push-constant layout.
+		const uint32_t instance_flags = use_zbias ? 0x80000000u : 0u;
+		R_PushConstants (cbx, VK_SHADER_STAGE_ALL_GRAPHICS, 21 * sizeof (float), sizeof (instance_flags), &instance_flags);
 
 		if (!r_fullbright_cheatsafe)
 			vulkan_globals.vk_cmd_bind_descriptor_sets (
@@ -1257,7 +1248,7 @@ using VBOs.
 ================
 */
 static void R_BatchSurface (
-	cb_context_t *cbx, msurface_t *s, qboolean fullbright_enabled, qboolean alpha_test, qboolean alpha_blend, qboolean use_zbias,
+	cb_context_t *cbx, msurface_t *s, qboolean fullbright_enabled, qboolean alpha_test, qboolean alpha_blend, float alpha, qboolean use_zbias,
 	qboolean shading_rate_eligible, gltexture_t *lightmap_texture,
 	uint32_t *brushpasses)
 {
@@ -1266,7 +1257,7 @@ static void R_BatchSurface (
 	num_surf_indices = R_NumTriangleIndicesForSurf (s);
 
 	if (cbx->num_vbo_indices + num_surf_indices > MAX_BATCH_SIZE)
-		R_FlushBatch (cbx, fullbright_enabled, alpha_test, alpha_blend, use_zbias, shading_rate_eligible, lightmap_texture, brushpasses);
+		R_FlushBatch (cbx, fullbright_enabled, alpha_test, alpha_blend, alpha, use_zbias, shading_rate_eligible, lightmap_texture, brushpasses);
 
 	R_TriangleIndicesForSurf (s, &cbx->vbo_indices[cbx->num_vbo_indices]);
 	cbx->num_vbo_indices += num_surf_indices;
@@ -1318,6 +1309,7 @@ void R_DrawTextureChains_Water (cb_context_t *cbx, qmodel_t *model, entity_t *en
 	int			i, type;
 	msurface_t *s;
 	texture_t  *t;
+	const qboolean use_zbias = gl_zfix.value && !map_checks.value && model != cl.worldmodel;
 
 	VkDeviceSize offset = 0;
 	vulkan_globals.vk_cmd_bind_vertex_buffers (cbx->cb, 0, 1, &bmodel_vertex_buffer, &offset);
@@ -1329,9 +1321,6 @@ void R_DrawTextureChains_Water (cb_context_t *cbx, qmodel_t *model, entity_t *en
 			cbx->cb, VK_PIPELINE_BIND_POINT_GRAPHICS, vulkan_globals.world_pipeline_layout.handle, 0, 1, &greytexture->descriptor_set, 0, NULL);
 	vulkan_globals.vk_cmd_bind_descriptor_sets (
 		cbx->cb, VK_PIPELINE_BIND_POINT_GRAPHICS, vulkan_globals.world_pipeline_layout.handle, 4, 1, &vulkan_globals.bmodel_instances_desc_set, 0, NULL);
-	const uint32_t instance_base = 0; // texture chain draws bake the entity transform into the mvp push constant
-	R_PushConstants (cbx, VK_SHADER_STAGE_ALL_GRAPHICS, 21 * sizeof (float), sizeof (uint32_t), &instance_base);
-
 	uint32_t brushpasses = 0;
 	for (type = TEXTYPE_FIRSTLIQUID; type <= TEXTYPE_LASTLIQUID; ++type)
 	{
@@ -1368,18 +1357,14 @@ void R_DrawTextureChains_Water (cb_context_t *cbx, qmodel_t *model, entity_t *en
 			{
 				if (s->lightmaptexturenum != lastlightmap)
 				{
-					if (alpha_blend)
-						R_PushConstants (cbx, VK_SHADER_STAGE_ALL_GRAPHICS, 20 * sizeof (float), 1 * sizeof (float), &alpha);
-					R_FlushBatch (cbx, false, false, alpha_blend, false, false, lightmap_texture, &brushpasses);
+					R_FlushBatch (cbx, false, false, alpha_blend, alpha, use_zbias, false, lightmap_texture, &brushpasses);
 					lightmap_texture = (s->lightmaptexturenum >= 0) ? lightmaps[s->lightmaptexturenum].texture : greylightmap;
 					lastlightmap = s->lightmaptexturenum;
 				}
-				R_BatchSurface (cbx, s, false, false, alpha_blend, false, false, lightmap_texture, &brushpasses);
+				R_BatchSurface (cbx, s, false, false, alpha_blend, alpha, use_zbias, false, lightmap_texture, &brushpasses);
 			}
 
-			if (alpha_blend)
-				R_PushConstants (cbx, VK_SHADER_STAGE_ALL_GRAPHICS, 20 * sizeof (float), 1 * sizeof (float), &alpha);
-			R_FlushBatch (cbx, false, false, alpha_blend, false, false, lightmap_texture, &brushpasses);
+			R_FlushBatch (cbx, false, false, alpha_blend, alpha, use_zbias, false, lightmap_texture, &brushpasses);
 		}
 	}
 
@@ -1399,7 +1384,7 @@ void R_DrawTextureChains_Multitexture (cb_context_t *cbx, qmodel_t *model, entit
 	qboolean	 fullbright_enabled = false;
 	qboolean	 alpha_test = false;
 	qboolean	 alpha_blend = alpha < 1.0f;
-	qboolean	 use_zbias = (gl_zfix.value && model != cl.worldmodel);
+	qboolean	 use_zbias = (gl_zfix.value && !map_checks.value && model != cl.worldmodel);
 	qboolean	 is_static = ent != NULL && ent->is_static;
 	qboolean	 static_world_eligible = model == cl.worldmodel && ent == NULL;
 	int			 lastlightmap;
@@ -1416,14 +1401,6 @@ void R_DrawTextureChains_Multitexture (cb_context_t *cbx, qmodel_t *model, entit
 			cbx->cb, VK_PIPELINE_BIND_POINT_GRAPHICS, vulkan_globals.world_pipeline_layout.handle, 0, 1, &greytexture->descriptor_set, 0, NULL);
 	vulkan_globals.vk_cmd_bind_descriptor_sets (
 		cbx->cb, VK_PIPELINE_BIND_POINT_GRAPHICS, vulkan_globals.world_pipeline_layout.handle, 4, 1, &vulkan_globals.bmodel_instances_desc_set, 0, NULL);
-	const uint32_t instance_base = 0; // texture chain draws bake the entity transform into the mvp push constant
-	R_PushConstants (cbx, VK_SHADER_STAGE_ALL_GRAPHICS, 21 * sizeof (float), sizeof (uint32_t), &instance_base);
-
-	if (alpha_blend)
-	{
-		R_PushConstants (cbx, VK_SHADER_STAGE_ALL_GRAPHICS, 20 * sizeof (float), 1 * sizeof (float), &alpha);
-	}
-
 	uint32_t brushpasses = 0;
 	for (i = texstart; i < texend; ++i)
 	{
@@ -1462,16 +1439,16 @@ void R_DrawTextureChains_Multitexture (cb_context_t *cbx, qmodel_t *model, entit
 			if (s->lightmaptexturenum != lastlightmap)
 			{
 				R_FlushBatch (
-					cbx, fullbright_enabled, alpha_test, alpha_blend, texture_zbias, shading_rate_eligible, lightmap_texture, &brushpasses);
+					cbx, fullbright_enabled, alpha_test, alpha_blend, alpha, texture_zbias, shading_rate_eligible, lightmap_texture, &brushpasses);
 				lightmap_texture = lightmaps[s->lightmaptexturenum].texture;
 			}
 
 			lastlightmap = s->lightmaptexturenum;
 			R_BatchSurface (
-				cbx, s, fullbright_enabled, alpha_test, alpha_blend, texture_zbias, shading_rate_eligible, lightmap_texture, &brushpasses);
+				cbx, s, fullbright_enabled, alpha_test, alpha_blend, alpha, texture_zbias, shading_rate_eligible, lightmap_texture, &brushpasses);
 		}
 
-		R_FlushBatch (cbx, fullbright_enabled, alpha_test, alpha_blend, texture_zbias, shading_rate_eligible, lightmap_texture, &brushpasses);
+		R_FlushBatch (cbx, fullbright_enabled, alpha_test, alpha_blend, alpha, texture_zbias, shading_rate_eligible, lightmap_texture, &brushpasses);
 	}
 
 	Atomic_AddUInt32 (&rs_brushpasses, brushpasses);

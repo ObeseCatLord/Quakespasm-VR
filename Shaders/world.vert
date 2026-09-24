@@ -12,7 +12,7 @@ layout (push_constant) uniform PushConsts
 	vec3  fog_color;
 	float fog_density;
 	float alpha;
-	uint  instance_base; // 0: identity transforms, else buffer base offset + 1
+	uint  instance_base; // high bit: z-fix; low 31 bits: 0 for identity, else buffer base offset + 1
 }
 push_constants;
 
@@ -43,18 +43,21 @@ void main ()
 	out_texcoords.zw = in_texcoord2.xy;
 
 	vec3 position = in_position;
-	if (push_constants.instance_base != 0)
+	const uint instance_base = push_constants.instance_base & 0x7fffffffu;
+	if (instance_base != 0)
 	{
 		const uint instance_index = vertex_instances[gl_VertexIndex];
 		if (instance_index != 0)
 		{
-			const bmodel_instance_t instance = bmodel_instances[push_constants.instance_base - 1 + instance_index];
+			const bmodel_instance_t instance = bmodel_instances[instance_base - 1 + instance_index];
 			const vec4				model_pos = vec4 (in_position, 1.0f);
 			position = vec3 (dot (instance.transform[0], model_pos), dot (instance.transform[1], model_pos), dot (instance.transform[2], model_pos));
 		}
 	}
 	gl_Position = push_constants.mvp * vec4 (position, 1.0f);
 	STEREO_APPLY_CLIP_CORRECTION ();
+	if ((push_constants.instance_base & 0x80000000u) != 0)
+		gl_Position.z -= 1.0f / 1024.0f;
 
 	out_fog_frag_coord = gl_Position.w;
 }
