@@ -10,8 +10,12 @@
 #include "voice_vad.h"
 #include "voice_settings.h"
 #include "voice_capture.h"
+#include "snd_spatial.h"
 #include "cmd.h"
 #include "client.h"
+#ifdef USE_STEAMAUDIO
+#include "glquake.h"
+#endif
 
 #include <opus/opus.h>
 #ifdef USE_SDL3
@@ -73,6 +77,7 @@ static cvar_t voice_vad_sensitivity = {"voice_vad_sensitivity", "55", CVAR_ARCHI
 static cvar_t voice_volume = {"voice_volume", "1", CVAR_ARCHIVE};
 static cvar_t voice_radio_volume = {"voice_radio_volume", "0.45", CVAR_ARCHIVE};
 static cvar_t voice_spatial_distance = {"voice_spatial_distance", "768", CVAR_ARCHIVE};
+static cvar_t voice_positional_only = {"voice_positional_only", "0", CVAR_ARCHIVE};
 
 static voice_speaker_t voice_speakers[MAX_SCOREBOARD];
 static voice_vad_t voice_vad;
@@ -118,6 +123,9 @@ static char voice_pending_device[VOICE_SETTINGS_DEVICE_BYTES];
 static char voice_settings_path[MAX_OSPATH];
 static vec3_t voice_listener_origin;
 static vec3_t voice_listener_right;
+
+static void Voice_PublishSpatialVoiceSource(int slot);
+static void Voice_ResetSpatialStreams(void);
 
 static voice_settings_profile_t *Voice_Profile(void)
 {
@@ -610,6 +618,8 @@ static void Voice_Mute_f(void)
 		voice_speakers[slot].muted ? 1 : 0);
 	Voice_AtomicSet(&voice_speakers[slot].talking,
 		!voice_speakers[slot].muted && realtime < voice_speakers[slot].talking_until);
+	Spatial_ResetVoice(slot);
+	Voice_PublishSpatialVoiceSource(slot);
 	Con_Printf("Voice: %s %s.\n", cl.scores[slot].name,
 		voice_speakers[slot].muted ? "muted" : "unmuted");
 }
@@ -624,6 +634,7 @@ static void Voice_PlayerVolume_f(void)
 	}
 	voice_speakers[slot].volume = CLAMP(0.0f,
 		strtof(Cmd_Argv(2), NULL), 2.0f);
+	Voice_PublishSpatialVoiceSource(slot);
 	Con_Printf("Voice: %s volume %.2f.\n", cl.scores[slot].name,
 		voice_speakers[slot].volume);
 }
@@ -792,13 +803,20 @@ static void Voice_ProcessCapture(void)
 static void Voice_WriteSpeakerPCM(voice_speaker_t *speaker,
 	const int16_t *mono, int frames, int slot)
 {
-	int read = Voice_AtomicGet(&speaker->pcm_read);
-	int write = Voice_AtomicGet(&speaker->pcm_write);
-	int outframes = frames * shm->speed / VOICE_SAMPLE_RATE;
-	float left = voice_radio_volume.value, right = voice_radio_volume.value;
+	int read, write, outframes;
+	float left, right;
 	int i;
 	if (speaker->muted)
 		return;
+	if (Spatial_Active())
+	{
+		(void)Spatial_VoicePCM(slot, mono, frames);
+		return;
+	}
+	read = Voice_AtomicGet(&speaker->pcm_read);
+	write = Voice_AtomicGet(&speaker->pcm_write);
+	outframes = frames * shm->speed / VOICE_SAMPLE_RATE;
+	left = right = voice_radio_volume.value;
 	if (slot >= 0 && slot + 1 < cl.num_entities &&
 		cl.entities[slot + 1].model && cl.entities[slot + 1].msgtime == cl.mtime[0])
 	{
@@ -832,6 +850,65 @@ static void Voice_WriteSpeakerPCM(voice_speaker_t *speaker,
 	Voice_AtomicSet(&speaker->pcm_write, write);
 }
 
+static void Voice_PublishSpatialVoiceSource(int slot)
+{
+#ifdef USE_STEAMAUDIO
+	voice_speaker_t *speaker;
+	entity_t *entity = NULL;
+	vrik_pose_t pose;
+	vec3_t origin;
+	qboolean active, position_valid = false;
+	float gain;
+
+	if (slot < 0 || slot >= MAX_SCOREBOARD)
+		return;
+	speaker = &voice_speakers[slot];
+	active = voice_initialized && voice_receive.value != 0 &&
+		slot < cl.maxclients && cl.scores && cl.scores[slot].name[0] &&
+		speaker->have_generation && !speaker->muted;
+	gain = VOICE_PLAYBACK_GAIN * speaker->volume * voice_volume.value;
+
+	if (cl.entities && slot + 1 < cl.num_entities)
+	{
+		entity = &cl.entities[slot + 1];
+		if (entity->model && entity->msgtime == cl.mtime[0])
+		{
+			VectorCopy(entity->origin, origin);
+			origin[2] += 18.0f;
+			position_valid = true;
+			if (R_VRIKSampleEntityPose(entity, &pose))
+			{
+				vec3_t forward, right, up, mouth;
+				float yaw = DEG2RAD(pose.body_yaw);
+				float cy = cosf(yaw), sy = sinf(yaw);
+
+				AngleVectors(pose.orientation[VRIK_TRACKER_HEAD],
+					forward, right, up);
+				VectorMA(pose.position[VRIK_TRACKER_HEAD], 2.0f, forward, mouth);
+				VectorMA(mouth, -2.0f, up, mouth);
+				origin[0] = entity->origin[0] + cy * mouth[0] - sy * mouth[1];
+				origin[1] = entity->origin[1] + sy * mouth[0] + cy * mouth[1];
+				origin[2] = entity->origin[2] + mouth[2];
+			}
+		}
+	}
+	Spatial_VoiceSource(slot, active, position_valid ? origin : NULL,
+		position_valid, gain, 0.0f);
+#else
+	(void)slot;
+#endif
+}
+
+static void Voice_ResetSpatialStreams(void)
+{
+	int slot;
+	for (slot = 0; slot < MAX_SCOREBOARD; ++slot)
+	{
+		Spatial_ResetVoice(slot);
+		Voice_PublishSpatialVoiceSource(slot);
+	}
+}
+
 static void Voice_ReceiveCallback(int source_slot, uint32_t generation,
 	const voice_packet_t *packet, void *opaque)
 {
@@ -850,6 +927,7 @@ void Voice_Init(void)
 	Cvar_RegisterVariable(&voice_volume);
 	Cvar_RegisterVariable(&voice_radio_volume);
 	Cvar_RegisterVariable(&voice_spatial_distance);
+	Cvar_RegisterVariable(&voice_positional_only);
 	Voice_LoadSettings();
 	Cmd_AddCommand("voice_devices", Voice_ListDevices_f);
 	Cmd_AddCommand("voice_select_device", Voice_SelectDevice_f);
@@ -905,6 +983,7 @@ void Voice_Init(void)
 	Voice_AtomicSet(&voice_audio_enabled, 1);
 	if (shm)
 		SNDDMA_Submit();
+	Voice_ResetSpatialStreams();
 	Voice_RefreshCapture(true);
 	Con_Printf("Voice ready. Microphone capture is %s; use voice_devices, voice_select_device, and voice_consent to opt in.\n",
 		Voice_Profile()->transmit ? "consented" : "off");
@@ -928,6 +1007,7 @@ void Voice_Shutdown(void)
 	Voice_AtomicSet(&voice_capture_ready, 0);
 	if (shm)
 		SNDDMA_Submit();
+	Voice_ResetSpatialStreams();
 	voice_capture_wanted = false;
 	voice_pending_action = VOICE_PENDING_NONE;
 	for (i = 0; i < MAX_SCOREBOARD; ++i)
@@ -970,6 +1050,7 @@ void Voice_ResetConnection(void)
 	}
 	if (shm)
 		SNDDMA_Submit();
+	Voice_ResetSpatialStreams();
 }
 
 void Voice_Frame(void)
@@ -983,6 +1064,11 @@ void Voice_Frame(void)
 	Voice_ProcessCapture();
 	Voice_AtomicSet(&voice_transmit_enabled, Voice_Profile()->transmit ? 1 : 0);
 	Voice_AtomicSet(&voice_hud_visible, Voice_HUDShouldDisplay() ? 1 : 0);
+	Spatial_VoiceSettings(voice_radio_volume.value,
+		q_max(1.0f, voice_spatial_distance.value),
+		voice_positional_only.value != 0);
+	for (slot = 0; slot < MAX_SCOREBOARD; ++slot)
+		Voice_PublishSpatialVoiceSource(slot);
 	if (!voice_receive.value)
 	{
 		if (voice_receive_was_enabled)
@@ -999,6 +1085,7 @@ void Voice_Frame(void)
 			}
 			if (shm)
 				SNDDMA_Submit();
+			Voice_ResetSpatialStreams();
 		}
 		voice_receive_was_enabled = false;
 		return;
@@ -1052,6 +1139,16 @@ void Voice_MixAudio(unsigned char *stream, int bytes, int samplebits,
 		!Voice_AtomicGet(&voice_receive_enabled) || channels != 2 ||
 		(samplebits != 8 && samplebits != 16))
 		return;
+	if (Spatial_Active())
+	{
+		for (slot = 0; slot < MAX_SCOREBOARD; ++slot)
+		{
+			voice_speaker_t *speaker = &voice_speakers[slot];
+			Voice_AtomicSet(&speaker->pcm_read,
+				Voice_AtomicGet(&speaker->pcm_write));
+		}
+		return;
+	}
 	frames = bytes / (channels * (samplebits / 8));
 	for (slot = 0; slot < MAX_SCOREBOARD; ++slot)
 	{
@@ -1120,6 +1217,7 @@ void Voice_ReceivePacket(int source_slot, uint32_t generation,
 		Voice_AtomicSet(&speaker->talking, 0);
 		if (shm)
 			SNDDMA_Submit();
+		Spatial_ResetVoice(source_slot);
 	}
 	incoming.sequence = packet->sequence;
 	incoming.timestamp = packet->timestamp;
