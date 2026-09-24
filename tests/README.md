@@ -318,6 +318,61 @@ The test does not validate moving/scaled avatars, eye-only visibility, inherited
 tracked weapons/controller input, headset behavior or performance. Stop only the isolated service
 you started when done. Keep raw logs local; they can contain device identifiers.
 
+## QBJ3 client pair pipeline
+
+`vr_qbj3_client_pipeline.gdb` runs the client through pair preparation, both
+generated alias draws on the source frame, private-usercmd writing, server pose
+acceptance, and the frame-15 `SV_QBJ3AkimboAim` hook. It grants nailgun ammo to
+the local server in GDB and holds attack after pair preparation. A timeout or
+any failed assertion is a failure. This needs a debug-symbol `build-debug/vkquake`,
+GDB, a display, licensed Quake/QBJ3 data, and an isolated Monado QWERTY service.
+
+In a service terminal, set `QBJ3_ASSET_SOURCE` to the licensed game root and
+choose a fresh `XR_TEST_ROOT` (use the same root in the client terminal):
+
+```sh
+export QBJ3_ASSET_SOURCE=/path/to/licensed/game-root
+export XR_TEST_ROOT=/tmp/qbj3-client-pipeline
+test -f "$QBJ3_ASSET_SOURCE/id1/pak0.pak"
+test -f "$QBJ3_ASSET_SOURCE/qbj3/progs.dat"
+test -f "$QBJ3_ASSET_SOURCE/qbj3/maps/start.bsp"
+test -f "$QBJ3_ASSET_SOURCE/qbj3/progs/v_tnailgun.mdl"
+mkdir -p "$XR_TEST_ROOT"/{run,config,data,game/id1,game/qbj3/progs}
+chmod 700 "$XR_TEST_ROOT/run"
+for f in "$QBJ3_ASSET_SOURCE"/id1/pak*.pak; do
+  [[ -f "$f" ]] && ln -s "$f" "$XR_TEST_ROOT/game/id1/${f##*/}"
+done
+for name in progs.dat maps sound gfx textures; do
+  [[ ! -e "$QBJ3_ASSET_SOURCE/qbj3/$name" ]] || ln -s "$QBJ3_ASSET_SOURCE/qbj3/$name" "$XR_TEST_ROOT/game/qbj3/$name"
+done
+for f in "$QBJ3_ASSET_SOURCE"/qbj3/progs/*; do
+  [[ -e "$f" ]] && ln -s "$f" "$XR_TEST_ROOT/game/qbj3/progs/${f##*/}"
+done
+XDG_RUNTIME_DIR="$XR_TEST_ROOT/run" XDG_CONFIG_HOME="$XR_TEST_ROOT/config" \
+XDG_DATA_HOME="$XR_TEST_ROOT/data" QWERTY_ENABLE=1 XRT_DEBUG_GUI=1 \
+XRT_COMPOSITOR_FORCE_XCB=1 monado-service
+```
+
+The QWERTY driver uses Monado's debug GUI; its `Qwerty System #1` Help panel
+documents keyboard/mouse controls. In another terminal, use the same isolated
+XDG paths and runtime manifest:
+
+```sh
+export XR_TEST_ROOT=/tmp/qbj3-client-pipeline
+XR_TEST_BINARY=${XR_TEST_BINARY:-build-debug/vkquake} \
+XR_RUNTIME_JSON=/usr/share/openxr/1/openxr_monado.json \
+XDG_RUNTIME_DIR="$XR_TEST_ROOT/run" XDG_CONFIG_HOME="$XR_TEST_ROOT/config" \
+XDG_DATA_HOME="$XR_TEST_ROOT/data" SDL_VIDEODRIVER=x11 \
+  timeout --signal=TERM 120s gdb -nx --return-child-result --batch \
+  -x tests/vr_qbj3_client_pipeline.gdb --args "$XR_TEST_BINARY" \
+  -basedir "$XR_TEST_ROOT/game" -game qbj3 -openxr -nosound -window \
+  -width 640 -height 480 +vid_vsync 0 +host_maxfps 144 \
+  +sv_qsvr_private 1 +sv_coop_autosave 0 +coop 1 +map start
+```
+
+Require exit 0 and `QBJ3_PIPELINE_PASSED`. The final breakpoint verifies
+one accepted physical-hand shot path; it does not require both hands to fire.
+
 ## Staged shared movement solver
 
 `pmove_migration_fixture.c` runs the transplanted PMove algorithm against the
