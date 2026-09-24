@@ -1788,7 +1788,7 @@ static qboolean CL_ValidServerGameDir (const char *gamedir)
 	return true;
 }
 
-static const char *CL_FindInstalledServerGame (const char *gamedir)
+const char *CL_FindInstalledServerGame (const char *gamedir)
 {
 	filelist_item_t *item;
 
@@ -1933,26 +1933,33 @@ static qboolean CL_ParseServerInfo (void)
 		/* An empty PREDINFO gamedir denotes the base game. */
 		if (gamedir[0] && !CL_ValidServerGameDir (gamedir))
 		{
-			if (private_qsvr)
-				Host_Error ("CL_ParseServerInfo: invalid private gamedir");
-			gamedirswitchwarning = true;
-			gamedirinvalid = true;
+			/* Unsafe names only get the exact-match exemption; never switch them. */
+			if (!COM_GameDirMatches (gamedir))
+			{
+				gamedirswitchwarning = true;
+				gamedirinvalid = true;
+			}
 		}
 		else
 		{
-			const char *installed = NULL;
 			const qboolean base_game = !gamedir[0] || !q_strcasecmp (gamedir, GAMENAME);
+			const char *installed = NULL;
 
 			if (!COM_GameDirMatches (gamedir))
 				gamedirswitchwarning = true;
 			if (private_qsvr)
-				installed = base_game ? GAMENAME : CL_FindInstalledServerGame (gamedir);
-			if (private_qsvr)
 			{
-				if (CL_CurrentServerGameMatches (base_game ? "" : gamedir))
+				if (CL_CurrentServerGameMatches (base_game ? "" : gamedir) ||
+					COM_GameDirMatches (gamedir))
 					gamedirswitchwarning = false;
-				else if (CL_MaybeSwitchServerGame (installed))
-					return true;
+				else
+				{
+					installed = base_game ? GAMENAME : CL_FindInstalledServerGame (gamedir);
+					if (CL_MaybeSwitchServerGame (installed))
+						return true;
+					if (!base_game && !installed && CL_ServerModDownload_Begin (gamedir))
+						return true;
+				}
 			}
 		}
 	}

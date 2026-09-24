@@ -1094,6 +1094,7 @@ static void _Host_Frame (double time)
 
 	// process console commands
 	Cbuf_Execute ();
+	CL_ServerModDownload_Frame ();
 	CL_AutoReconnectFrame ();
 	if (host_framecount == 0)
 		SCR_EndStartupLoadingPlaque ();

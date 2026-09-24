@@ -22,6 +22,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 // cl_main.c  -- client main loop
 
 #include "quakedef.h"
+#include "addon_catalog.h"
 #include "snd_spatial_world.h"
 #include "bgmusic.h"
 #include "voice.h"
@@ -76,6 +77,7 @@ typedef enum
 /* Allow frame-synchronized configs and slow map/signon loads, but remain bounded. */
 #define CL_AUTO_RECONNECT_CONFIG_TIMEOUT 90.0
 #define CL_AUTO_RECONNECT_SIGNON_TIMEOUT 90.0
+#define CL_SERVERMOD_OPERATION_TIMEOUT 180.0
 
 typedef struct
 {
@@ -92,6 +94,24 @@ static unsigned int cl_autoreconnect_next_identity;
 static char cl_last_connect_endpoint[MAX_OSPATH];
 static unsigned int cl_last_connect_legacy_qsvr;
 static qboolean cl_last_connect_valid;
+
+typedef struct
+{
+	qboolean active;
+	qboolean refresh_attempted;
+	qboolean owns_catalogue_operation;
+	double deadline;
+	char endpoint[MAX_OSPATH];
+	unsigned int legacy_qsvr;
+	cl_servermod_info_t info;
+	addon_catalog_entry_t approved;
+} cl_servermod_download_t;
+
+static cl_servermod_download_t cl_servermod_download;
+
+/* Implemented by the server-mod prompt UI, which is being added separately. */
+void M_Menu_ServerModDownload_f (void);
+void M_ServerModDownload_Close (void);
 
 // FIXME: put these on hunk?
 lightstyle_t	cl_lightstyle[MAX_LIGHTSTYLES];
@@ -308,6 +328,7 @@ void CL_Disconnect_f (void)
 
 void CL_CancelAutoReconnect (void)
 {
+	CL_ServerModDownload_Cancel ();
 	if (++cl_autoreconnect_next_identity == 0)
 		++cl_autoreconnect_next_identity;
 	cl_autoreconnect.state = cl_autoreconnect_idle;
@@ -394,10 +415,37 @@ void CL_AutoReconnectFrame (void)
 	CL_AutoReconnectFinish (true);
 }
 
-qboolean CL_MaybeSwitchServerGame (const char *modname)
+static qboolean CL_StartAutoReconnect (const char *modname,
+	const char *endpoint, unsigned int legacy_qsvr)
 {
 	char paths[MAX_QPATH + sizeof (GAMENAME) + 2];
 
+	if (!modname || !*modname || !endpoint || !*endpoint ||
+		(legacy_qsvr && legacy_qsvr != QSVR_PROTOCOL_PINNED) ||
+		cl_autoreconnect.state != cl_autoreconnect_idle)
+		return false;
+
+	if (++cl_autoreconnect_next_identity == 0)
+		++cl_autoreconnect_next_identity;
+	cl_autoreconnect.identity = cl_autoreconnect_next_identity;
+	cl_autoreconnect.state = cl_autoreconnect_wait_config;
+	q_strlcpy (cl_autoreconnect.endpoint, endpoint, sizeof (cl_autoreconnect.endpoint));
+	q_strlcpy (cl_autoreconnect.modname, modname, sizeof (cl_autoreconnect.modname));
+	cl_autoreconnect.legacy_qsvr = legacy_qsvr;
+	cl_autoreconnect.deadline = realtime + CL_AUTO_RECONNECT_CONFIG_TIMEOUT;
+
+	if (!q_strcasecmp (modname, GAMENAME))
+		q_strlcpy (paths, GAMENAME, sizeof (paths));
+	else
+		q_snprintf (paths, sizeof (paths), "%s;%s", GAMENAME, modname);
+	Con_Printf ("Server requires game %s; switching and reconnecting to %s.\n",
+		modname, cl_autoreconnect.endpoint);
+	COM_SwitchGame (paths);
+	return true;
+}
+
+qboolean CL_MaybeSwitchServerGame (const char *modname)
+{
 	if (cl_autoreconnect.state != cl_autoreconnect_idle)
 	{
 		Con_Warning ("Server gamedir changed again during reconnect; stopping.\n");
@@ -409,24 +457,290 @@ qboolean CL_MaybeSwitchServerGame (const char *modname)
 		return false;
 	if (cls.state != ca_connected || cls.demoplayback || !cl_last_connect_valid)
 		return false;
+	return CL_StartAutoReconnect (modname, cl_last_connect_endpoint,
+		cl_last_connect_legacy_qsvr);
+}
 
-	if (++cl_autoreconnect_next_identity == 0)
-		++cl_autoreconnect_next_identity;
-	cl_autoreconnect.identity = cl_autoreconnect_next_identity;
-	cl_autoreconnect.state = cl_autoreconnect_wait_config;
-	q_strlcpy (cl_autoreconnect.endpoint, cl_last_connect_endpoint, sizeof (cl_autoreconnect.endpoint));
-	q_strlcpy (cl_autoreconnect.modname, modname, sizeof (cl_autoreconnect.modname));
-	cl_autoreconnect.legacy_qsvr = cl_last_connect_legacy_qsvr;
-	cl_autoreconnect.deadline = realtime + CL_AUTO_RECONNECT_CONFIG_TIMEOUT;
+static qboolean CL_ServerModEntryMatches (const addon_catalog_entry_t *a,
+	const addon_catalog_entry_t *b)
+{
+	return !strcmp (a->gamedir, b->gamedir) && !strcmp (a->name, b->name) &&
+		!strcmp (a->author, b->author) && !strcmp (a->description, b->description) &&
+		!strcmp (a->download, b->download) && a->size == b->size &&
+		a->verified == b->verified;
+}
 
-	if (!q_strcasecmp (modname, GAMENAME))
-		q_strlcpy (paths, GAMENAME, sizeof (paths));
-	else
-		q_snprintf (paths, sizeof (paths), "%s;%s", GAMENAME, modname);
-	Con_Printf ("Server requires game %s; switching and reconnecting to %s.\n",
-		modname, cl_autoreconnect.endpoint);
-	COM_SwitchGame (paths);
+static void CL_ServerModDownload_Error (const char *message)
+{
+	cl_servermod_download.info.phase = CL_SERVERMOD_ERROR;
+	q_strlcpy (cl_servermod_download.info.message,
+		message && *message ? message : "Add-on operation failed",
+		sizeof (cl_servermod_download.info.message));
+	cl_servermod_download.owns_catalogue_operation = false;
+	Con_Warning ("Server add-on: %s\n", cl_servermod_download.info.message);
+}
+
+static void CL_ServerModDownload_Resume (const char *game)
+{
+	Modlist_Init ();
+	if (!CL_FindInstalledServerGame (game))
+	{
+		CL_ServerModDownload_Error ("The downloaded add-on was not installed correctly");
+		return;
+	}
+	if (!CL_StartAutoReconnect (game, cl_servermod_download.endpoint,
+		cl_servermod_download.legacy_qsvr))
+	{
+		CL_ServerModDownload_Error ("Could not resume the connection to the server");
+		return;
+	}
+	cl_servermod_download.active = false;
+	cl_servermod_download.owns_catalogue_operation = false;
+	M_ServerModDownload_Close ();
+}
+
+qboolean CL_ServerModDownload_Begin (const char *gamedir)
+{
+	const char *installed;
+
+	if (!gamedir || !*gamedir || strlen (gamedir) >= MAX_QPATH ||
+		COM_ModForbiddenChars (gamedir))
+		return false;
+	if (cl_servermod_download.active)
+	{
+		CL_Disconnect ();
+		return true;
+	}
+	if (cl_autoreconnect.state != cl_autoreconnect_idle)
+	{
+		Con_Warning ("Server gamedir changed again during reconnect; stopping.\n");
+		CL_Disconnect ();
+		CL_AutoReconnectFinish (true);
+		return true;
+	}
+	if (cls.state != ca_connected || cls.demoplayback || !cl_last_connect_valid)
+	{
+		CL_Disconnect ();
+		Con_Warning ("Cannot check the missing server add-on without a saved connection endpoint.\n");
+		return true;
+	}
+
+	/* Modlist includes pak and loose-file mods; keep it the installation authority. */
+	Modlist_Init ();
+	installed = CL_FindInstalledServerGame (gamedir);
+	if (installed)
+	{
+		if (!CL_StartAutoReconnect (installed, cl_last_connect_endpoint,
+			cl_last_connect_legacy_qsvr))
+			CL_Disconnect ();
+		return true;
+	}
+
+	memset (&cl_servermod_download, 0, sizeof (cl_servermod_download));
+	cl_servermod_download.active = true;
+	cl_servermod_download.info.phase = CL_SERVERMOD_CHECKING;
+	q_strlcpy (cl_servermod_download.info.game, gamedir,
+		sizeof (cl_servermod_download.info.game));
+	q_strlcpy (cl_servermod_download.info.message,
+		"Checking the add-on catalogue...",
+		sizeof (cl_servermod_download.info.message));
+	q_strlcpy (cl_servermod_download.endpoint, cl_last_connect_endpoint,
+		sizeof (cl_servermod_download.endpoint));
+	cl_servermod_download.legacy_qsvr = cl_last_connect_legacy_qsvr;
+	cl_servermod_download.deadline = realtime + CL_SERVERMOD_OPERATION_TIMEOUT;
+	CL_Disconnect ();
+	M_Menu_ServerModDownload_f ();
 	return true;
+}
+
+qboolean CL_ServerModDownload_GetInfo (cl_servermod_info_t *info)
+{
+	if (!cl_servermod_download.active)
+		return false;
+	if (info)
+		*info = cl_servermod_download.info;
+	return true;
+}
+
+void CL_ServerModDownload_Cancel (void)
+{
+	if (!cl_servermod_download.active)
+		return;
+	if (cl_servermod_download.owns_catalogue_operation &&
+		(AddonCatalog_State () == ADDON_CATALOG_REFRESHING ||
+		 AddonCatalog_State () == ADDON_CATALOG_INSTALLING))
+		AddonCatalog_Cancel ();
+	cl_servermod_download.active = false;
+	cl_servermod_download.owns_catalogue_operation = false;
+	M_ServerModDownload_Close ();
+}
+
+void CL_ServerModDownload_Accept (void)
+{
+	addon_catalog_entry_t entry;
+	const char *installed;
+	int index;
+
+	if (!cl_servermod_download.active ||
+		cl_servermod_download.info.phase != CL_SERVERMOD_PROMPT)
+		return;
+	index = AddonCatalog_FindGameDir (cl_servermod_download.approved.gamedir,
+		&entry);
+	if (index < 0 || !CL_ServerModEntryMatches (&entry,
+		&cl_servermod_download.approved))
+	{
+		CL_ServerModDownload_Error ("The approved add-on details have changed");
+		return;
+	}
+
+	Modlist_Init ();
+	installed = CL_FindInstalledServerGame (entry.gamedir);
+	if (installed || entry.installed)
+	{
+		q_strlcpy (cl_servermod_download.info.game,
+			installed ? installed : entry.gamedir,
+			sizeof (cl_servermod_download.info.game));
+		CL_ServerModDownload_Resume (cl_servermod_download.info.game);
+		return;
+	}
+	if (!AddonCatalog_StartInstall (index, true))
+	{
+		CL_ServerModDownload_Error (AddonCatalog_Message ());
+		return;
+	}
+	cl_servermod_download.info.phase = CL_SERVERMOD_INSTALLING;
+	cl_servermod_download.owns_catalogue_operation = true;
+	q_strlcpy (cl_servermod_download.info.message, "Downloading add-on...",
+		sizeof (cl_servermod_download.info.message));
+}
+
+void CL_ServerModDownload_Frame (void)
+{
+	addon_catalog_entry_t entry;
+	addon_catalog_state_t state;
+	const char *installed;
+	int index;
+
+	if (!cl_servermod_download.active)
+		return;
+	AddonCatalog_Poll ();
+	state = AddonCatalog_State ();
+
+	if (cl_servermod_download.info.phase == CL_SERVERMOD_INSTALLING)
+	{
+		if (state == ADDON_CATALOG_INSTALLING)
+		{
+			q_strlcpy (cl_servermod_download.info.message, AddonCatalog_Message (),
+				sizeof (cl_servermod_download.info.message));
+			return;
+		}
+		cl_servermod_download.owns_catalogue_operation = false;
+		if (state != ADDON_CATALOG_READY)
+		{
+			CL_ServerModDownload_Error (AddonCatalog_Message ());
+			return;
+		}
+		index = AddonCatalog_FindGameDir (cl_servermod_download.approved.gamedir,
+			&entry);
+		if (index < 0 || !entry.installed)
+		{
+			CL_ServerModDownload_Error ("The downloaded add-on was not installed correctly");
+			return;
+		}
+		/* The manifest's canonical case matches the installed directory. */
+		q_strlcpy (cl_servermod_download.info.game, entry.gamedir,
+			sizeof (cl_servermod_download.info.game));
+		CL_ServerModDownload_Resume (entry.gamedir);
+		return;
+	}
+
+	if (cl_servermod_download.info.phase != CL_SERVERMOD_CHECKING)
+		return;
+	if (realtime >= cl_servermod_download.deadline)
+	{
+		if (cl_servermod_download.owns_catalogue_operation &&
+			state == ADDON_CATALOG_REFRESHING)
+			AddonCatalog_Cancel ();
+		CL_ServerModDownload_Error ("Add-on catalogue lookup timed out");
+		return;
+	}
+	if (state == ADDON_CATALOG_UNAVAILABLE)
+	{
+		CL_ServerModDownload_Error (AddonCatalog_Message ());
+		return;
+	}
+	if (state == ADDON_CATALOG_REFRESHING || state == ADDON_CATALOG_INSTALLING)
+	{
+		q_strlcpy (cl_servermod_download.info.message, AddonCatalog_Message (),
+			sizeof (cl_servermod_download.info.message));
+		return;
+	}
+	if (state == ADDON_CATALOG_IDLE || state == ADDON_CATALOG_ERROR)
+	{
+		if (cl_servermod_download.refresh_attempted)
+		{
+			CL_ServerModDownload_Error (AddonCatalog_Message ());
+			return;
+		}
+		cl_servermod_download.refresh_attempted = true;
+		AddonCatalog_Refresh ();
+		cl_servermod_download.owns_catalogue_operation =
+			AddonCatalog_State () == ADDON_CATALOG_REFRESHING;
+		q_strlcpy (cl_servermod_download.info.message, AddonCatalog_Message (),
+			sizeof (cl_servermod_download.info.message));
+		return;
+	}
+	if (state != ADDON_CATALOG_READY)
+		return;
+
+	cl_servermod_download.owns_catalogue_operation = false;
+	Modlist_Init ();
+	installed = CL_FindInstalledServerGame (cl_servermod_download.info.game);
+	if (installed)
+	{
+		q_strlcpy (cl_servermod_download.info.game, installed,
+			sizeof (cl_servermod_download.info.game));
+		CL_ServerModDownload_Resume (installed);
+		return;
+	}
+	index = AddonCatalog_FindGameDir (cl_servermod_download.info.game, &entry);
+	if (index < 0)
+	{
+		if (!cl_servermod_download.refresh_attempted)
+		{
+			cl_servermod_download.refresh_attempted = true;
+			AddonCatalog_Refresh ();
+			cl_servermod_download.owns_catalogue_operation =
+				AddonCatalog_State () == ADDON_CATALOG_REFRESHING;
+			q_strlcpy (cl_servermod_download.info.message, AddonCatalog_Message (),
+				sizeof (cl_servermod_download.info.message));
+			return;
+		}
+		CL_ServerModDownload_Error ("This server add-on is not in the catalogue");
+		return;
+	}
+	if (entry.installed)
+	{
+		q_strlcpy (cl_servermod_download.info.game, entry.gamedir,
+			sizeof (cl_servermod_download.info.game));
+		CL_ServerModDownload_Resume (entry.gamedir);
+		return;
+	}
+	cl_servermod_download.approved = entry;
+	q_strlcpy (cl_servermod_download.info.game, entry.gamedir,
+		sizeof (cl_servermod_download.info.game));
+	q_strlcpy (cl_servermod_download.info.name, entry.name,
+		sizeof (cl_servermod_download.info.name));
+	q_strlcpy (cl_servermod_download.info.author, entry.author,
+		sizeof (cl_servermod_download.info.author));
+	q_strlcpy (cl_servermod_download.info.description, entry.description,
+		sizeof (cl_servermod_download.info.description));
+	cl_servermod_download.info.size = entry.size;
+	cl_servermod_download.info.verified = entry.verified;
+	cl_servermod_download.info.message[0] = '\0';
+	cl_servermod_download.info.phase = CL_SERVERMOD_PROMPT;
+	Con_Printf ("Server add-on \"%s\" (%s) is available in the catalogue.\n",
+		entry.name, entry.gamedir);
 }
 
 /*
