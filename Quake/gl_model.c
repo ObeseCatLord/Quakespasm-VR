@@ -5137,7 +5137,7 @@ static qboolean MD5Anim_Load (md5animctx_t *ctx, jointinfo_t *joints, jointpose_
 	rawcount = MD5UINT ();
 
 	TEMP_ALLOC_ASSIGN_ZEROED (raw, rawcount + 6);
-	TEMP_ALLOC_ASSIGN_ZEROED (ab, animjoints);
+	TEMP_ALLOC_ASSIGN_ZEROED_COND (ab, animjoints, animjoints > 0);
 	TEMP_ALLOC_ASSIGN (mesh_to_anim, numjoints);
 	TEMP_ALLOC_ASSIGN (mapped_mesh_parent, numjoints);
 	TEMP_ALLOC_ASSIGN_ZEROED (mapped_mesh_parent_state, numjoints);
