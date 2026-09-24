@@ -2510,6 +2510,9 @@ void SCR_UpdateScreen (qboolean use_tasks)
 		in_update_screen = false;
 		return;
 	}
+	/* Observe the equipped viewmodel before preparing wheel assets or starting
+	 * draw tasks. Runtime discoveries share the existing catalog. */
+	VR_WeaponMenu_ObserveActive ();
 	VR_WeaponMenu_PrepareModels ();
 	/* XR synchronizes the previous GUI task in GL_BeginRendering. Sample the
 	 * current console animation before deciding whether its HUD reserves rows;

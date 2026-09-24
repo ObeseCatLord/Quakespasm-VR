@@ -28,6 +28,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "voice.h"
 #include "pmove.h"
 #include "vr_input.h"
+#include "vr_weapon_menu.h"
 
 #ifdef QSVR_SHADOW_TRACE
 #include <stdio.h>
@@ -199,6 +200,9 @@ CL_ClearState
 */
 void CL_ClearState (void)
 {
+	/* The wheel borrows precached client models; drop those references before
+	 * serverinfo tears down the old client state, including same-map restarts. */
+	VR_WeaponMenu_ClientReset ();
 	SpatialWorld_Clear ();
 	V_ResetTrackedAim ();
 	if (!sv.active)
@@ -238,6 +242,7 @@ This is also called on Host_Error, so it shouldn't cause any errors
 */
 void CL_Disconnect (void)
 {
+	VR_WeaponMenu_ClientReset ();
 	NET_DatagramConnectCancel ();
 	SpatialWorld_Clear ();
 	CL_ResetVRIKState ();

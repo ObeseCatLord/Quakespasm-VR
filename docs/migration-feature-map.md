@@ -114,9 +114,11 @@ active-mod `wwheel.txt` and `vr_weapons.txt`, and exact-gated built-in profiles.
 The server relays optional QuakeC ownership fields and validated ammo maxima.
 Co-op player/spawn action commands and hit rows are now source/build integrated;
 their remote gameplay and relocation continuity remain unqualified. Runtime
-discovery, source 3D model/hit presentation, player outlines and weapon
-calibration remain separate work; compiling these paths does not prove mod
-gameplay parity.
+weapon discovery is integrated into the existing catalog with active-only,
+unselectable unknown rows and copied model paths across map resets; its
+selector-reuse and mod-gameplay cases remain unqualified. Source player outlines
+and weapon calibration remain separate work; compiling the 3D model/hit paths
+does not prove mod gameplay parity.
 
 ### Co-op and saves
 

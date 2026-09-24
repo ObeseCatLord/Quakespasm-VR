@@ -48,6 +48,11 @@ void VR_WeaponMenu_Open (void);
 void VR_WeaponMenu_Cancel (void);
 /* Reload the optional active-game wwheel.txt catalog at game transitions. */
 void VR_WeaponMenu_ReloadGame (void);
+/* Runtime weapon discovery is called on the main thread before draw tasks.
+ * Client reset drops borrowed precache/frame pointers while keeping copied
+ * learned paths and discovered catalog rows until the next game reload. */
+void VR_WeaponMenu_ObserveActive (void);
+void VR_WeaponMenu_ClientReset (void);
 void VR_WeaponMenu_SetVRPointer (qboolean tracking_valid, qboolean pointer_valid,
 	int pointer_x, int pointer_y, const float world_from_ndc[16],
 	const float ray_origin[3], const float ray_direction[3], qboolean playspace);

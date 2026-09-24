@@ -17,6 +17,15 @@ extern qpic_t *Sbar_WeaponMenuIcon (int item_bit);
 
 #define VR_WEAPON_MENU_MAX_ENTRIES VR_WEAPON_CATALOG_MAX_OBSERVATIONS
 
+typedef enum {
+	VR_WEAPON_MENU_MODEL_NONE,
+	VR_WEAPON_MENU_MODEL_FALLBACK,
+	VR_WEAPON_MENU_MODEL_FILE,
+	VR_WEAPON_MENU_MODEL_PROFILE,
+	VR_WEAPON_MENU_MODEL_LEARNED,
+	VR_WEAPON_MENU_MODEL_DISCOVERED
+} vr_weapon_menu_model_provenance_t;
+
 typedef struct {
 	const vr_weapon_menu_entry_t *entry;
 	qboolean active;
@@ -172,7 +181,10 @@ static const vr_weapon_menu_profile_entry_t vr_weapon_menu_rogue_profile[] = {
 
 static vr_weapon_menu_entry_t vr_weapon_menu_wwheel_entries[VR_WEAPON_MENU_MAX_ENTRIES];
 static char vr_weapon_menu_wwheel_labels[VR_WEAPON_MENU_MAX_ENTRIES][32];
-static char vr_weapon_menu_schema_models[VR_WEAPON_MENU_MAX_ENTRIES][64];
+static char vr_weapon_menu_schema_models[VR_WEAPON_MENU_MAX_ENTRIES][MAX_QPATH];
+static char vr_weapon_menu_runtime_models[VR_WEAPON_MENU_MAX_ENTRIES][MAX_QPATH];
+static vr_weapon_menu_model_provenance_t
+	vr_weapon_menu_model_provenance[VR_WEAPON_MENU_MAX_ENTRIES];
 static int vr_weapon_menu_schema_bitmasks[VR_WEAPON_MENU_MAX_ENTRIES];
 static vr_weapon_menu_catalog_t vr_weapon_menu_wwheel_catalog = {
 	vr_weapon_menu_wwheel_entries, 0, 1
@@ -180,6 +192,7 @@ static vr_weapon_menu_catalog_t vr_weapon_menu_wwheel_catalog = {
 static qboolean vr_weapon_menu_has_wwheel;
 static qboolean vr_weapon_menu_has_schema;
 static qboolean vr_weapon_menu_has_profile;
+static qboolean vr_weapon_menu_has_discoveries;
 
 static qboolean vr_weapon_menu_open;
 static qboolean vr_weapon_menu_open_vr;
@@ -198,9 +211,37 @@ static char vr_weapon_menu_mapname[sizeof (cl.mapname)];
 static const vr_weapon_menu_catalog_t *VR_WeaponMenu_CurrentCatalog (void)
 {
 	return (vr_weapon_menu_has_wwheel || vr_weapon_menu_has_schema ||
-		vr_weapon_menu_has_profile) ?
+		vr_weapon_menu_has_profile || vr_weapon_menu_has_discoveries) ?
 		&vr_weapon_menu_wwheel_catalog :
 		&vr_weapon_menu_stock_catalog;
+}
+
+static qboolean VR_WeaponMenu_CatalogHasID (
+	const vr_weapon_menu_catalog_t *catalog, int id)
+{
+	if (catalog && catalog->entries)
+		for (size_t i = 0; i < catalog->count; ++i)
+			if (catalog->entries[i].id == id)
+				return true;
+	return false;
+}
+
+static int VR_WeaponMenu_AllocateStableID (
+	const vr_weapon_menu_catalog_t *catalog, int preferred)
+{
+	long long candidate = preferred;
+
+	if (candidate < 0x40000000LL || candidate > INT_MAX)
+		candidate = 0x40000000LL;
+	for (int attempt = 0; attempt <= VR_WEAPON_MENU_MAX_ENTRIES; ++attempt)
+	{
+		if (candidate > INT_MAX)
+			candidate = 0x40000000LL;
+		if (!VR_WeaponMenu_CatalogHasID (catalog, (int)candidate))
+			return (int)candidate;
+		++candidate;
+	}
+	return -1;
 }
 
 static qboolean VR_WeaponMenu_ParseInteger (const char *text, int minimum,
@@ -280,6 +321,7 @@ static qboolean VR_WeaponMenu_AddWWheelSlot (int weaponnum, int impulse,
 	qboolean have_entvaroffs, int entvaroffs)
 {
 	vr_weapon_menu_entry_t *entry;
+	const size_t index = vr_weapon_menu_wwheel_catalog.count;
 	int stock_index, ammo_stat = -1, ammo_max = 0;
 
 	if (weaponnum <= 0 || impulse <= 0 || impulse > 255 ||
@@ -289,7 +331,7 @@ static qboolean VR_WeaponMenu_AddWWheelSlot (int weaponnum, int impulse,
 		if (vr_weapon_menu_wwheel_entries[i].id == weaponnum)
 			return false;
 
-	entry = &vr_weapon_menu_wwheel_entries[vr_weapon_menu_wwheel_catalog.count];
+	entry = &vr_weapon_menu_wwheel_entries[index];
 	stock_index = VR_WeaponMenu_FindStockSelector (weaponnum, impulse);
 	if (stock_index >= 0)
 		*entry = vr_weapon_menu_stock_entries[stock_index];
@@ -300,7 +342,7 @@ static qboolean VR_WeaponMenu_AddWWheelSlot (int weaponnum, int impulse,
 	entry->kind = VR_WEAPON_MENU_WEAPON;
 	entry->source = VR_WEAPON_CATALOG_SOURCE_SCHEMA;
 	entry->label = stock_index >= 0 ? vr_weapon_menu_stock_entries[stock_index].label :
-		vr_weapon_menu_wwheel_labels[vr_weapon_menu_wwheel_catalog.count];
+		vr_weapon_menu_wwheel_labels[index];
 	entry->selector = stock_index >= 0 ?
 		vr_weapon_menu_stock_entries[stock_index].selector : 0;
 	entry->impulse = impulse;
@@ -319,9 +361,10 @@ static qboolean VR_WeaponMenu_AddWWheelSlot (int weaponnum, int impulse,
 	entry->ammo_stat = ammo_stat;
 	entry->ammo_max = ammo_max;
 	if (stock_index < 0)
-		q_snprintf (vr_weapon_menu_wwheel_labels[
-			vr_weapon_menu_wwheel_catalog.count],
+		q_snprintf (vr_weapon_menu_wwheel_labels[index],
 			sizeof (vr_weapon_menu_wwheel_labels[0]), "WEAPON %d", weaponnum);
+	vr_weapon_menu_model_provenance[index] = entry->model_path ?
+		VR_WEAPON_MENU_MODEL_FALLBACK : VR_WEAPON_MENU_MODEL_NONE;
 
 	vr_weapon_menu_wwheel_catalog.count++;
 	return true;
@@ -401,6 +444,7 @@ static void VR_WeaponMenu_ApplySchemaMetadata (
 		q_strlcpy (vr_weapon_menu_schema_models[index], model_path,
 			sizeof (vr_weapon_menu_schema_models[index]));
 		entry->model_path = vr_weapon_menu_schema_models[index];
+		vr_weapon_menu_model_provenance[index] = VR_WEAPON_MENU_MODEL_FILE;
 		if (entry->label == vr_weapon_menu_wwheel_labels[index])
 			VR_WeaponMenu_SchemaLabel (vr_weapon_menu_wwheel_labels[index],
 				sizeof (vr_weapon_menu_wwheel_labels[index]), model_path,
@@ -477,6 +521,8 @@ static qboolean VR_WeaponMenu_AddSchemaEntry (
 	entry->id = (int)index + 1;
 	entry->kind = VR_WEAPON_MENU_WEAPON;
 	entry->source = VR_WEAPON_CATALOG_SOURCE_SCHEMA;
+	vr_weapon_menu_model_provenance[index] = entry->model_path ?
+		VR_WEAPON_MENU_MODEL_FALLBACK : VR_WEAPON_MENU_MODEL_NONE;
 	entry->label = stock_index >= 0 ?
 		vr_weapon_menu_stock_entries[stock_index].label :
 		vr_weapon_menu_wwheel_labels[index];
@@ -627,20 +673,10 @@ static int VR_WeaponMenu_ProfileAmmoMaxStat (int ammo_stat)
 
 static int VR_WeaponMenu_ProfileId (void)
 {
-	int candidate = 0x40000000 + (int)vr_weapon_menu_wwheel_catalog.count;
-	for (int attempt = 0; attempt < VR_WEAPON_MENU_MAX_ENTRIES; ++attempt, ++candidate)
-	{
-		qboolean used = false;
-		for (size_t i = 0; i < vr_weapon_menu_wwheel_catalog.count; ++i)
-			if (vr_weapon_menu_wwheel_entries[i].id == candidate)
-			{
-				used = true;
-				break;
-			}
-		if (!used)
-			return candidate;
-	}
-	return -1;
+	const int preferred = 0x40000000 +
+		(int)vr_weapon_menu_wwheel_catalog.count;
+	return VR_WeaponMenu_AllocateStableID (&vr_weapon_menu_wwheel_catalog,
+		preferred);
 }
 
 static qboolean VR_WeaponMenu_AddProfileEntry (
@@ -662,8 +698,10 @@ static qboolean VR_WeaponMenu_AddProfileEntry (
 		{
 			if (vr_weapon_menu_wwheel_catalog.count >= VR_WEAPON_MENU_MAX_ENTRIES)
 				return false;
-			vr_weapon_menu_wwheel_entries[vr_weapon_menu_wwheel_catalog.count++] =
-				vr_weapon_menu_stock_entries[i];
+			const size_t index = vr_weapon_menu_wwheel_catalog.count++;
+			vr_weapon_menu_wwheel_entries[index] = vr_weapon_menu_stock_entries[i];
+			vr_weapon_menu_model_provenance[index] =
+				VR_WEAPON_MENU_MODEL_FALLBACK;
 		}
 		vr_weapon_menu_wwheel_catalog.authoritative_schema = 0;
 	}
@@ -697,7 +735,11 @@ static qboolean VR_WeaponMenu_AddProfileEntry (
 					!vr_weapon_menu_schema_models[i][0] &&
 					(!existing->model_path || !existing->model_path[0] ||
 					 VR_WeaponMenu_IsStockModelPath (existing->model_path)))
+				{
 					existing->model_path = profile->model_path;
+					vr_weapon_menu_model_provenance[i] =
+						VR_WEAPON_MENU_MODEL_PROFILE;
+				}
 				vr_weapon_menu_has_profile = true;
 				return true;
 			}
@@ -757,6 +799,9 @@ static qboolean VR_WeaponMenu_AddProfileEntry (
 		profile->ammo_stat);
 	entry->has_schema_peer = 0;
 	entry->has_profile_peer = 0;
+	vr_weapon_menu_model_provenance[
+		(size_t)(entry - vr_weapon_menu_wwheel_entries)] =
+		VR_WEAPON_MENU_MODEL_PROFILE;
 	vr_weapon_menu_has_profile = true;
 	return true;
 }
@@ -901,13 +946,17 @@ void VR_WeaponMenu_ReloadGame (void)
 	vr_weapon_schema_entry_t schema_entries[VR_WEAPON_SCHEMA_MAX_ENTRIES];
 	size_t schema_count = 0;
 
-	VR_WeaponMenu_Cancel ();
+	VR_WeaponMenu_ClientReset ();
 	memset (vr_weapon_menu_wwheel_entries, 0,
 		sizeof (vr_weapon_menu_wwheel_entries));
 	memset (vr_weapon_menu_wwheel_labels, 0,
 		sizeof (vr_weapon_menu_wwheel_labels));
 	memset (vr_weapon_menu_schema_models, 0,
 		sizeof (vr_weapon_menu_schema_models));
+	memset (vr_weapon_menu_runtime_models, 0,
+		sizeof (vr_weapon_menu_runtime_models));
+	memset (vr_weapon_menu_model_provenance, 0,
+		sizeof (vr_weapon_menu_model_provenance));
 	memset (vr_weapon_menu_schema_bitmasks, 0,
 		sizeof (vr_weapon_menu_schema_bitmasks));
 	vr_weapon_menu_wwheel_catalog.count = 0;
@@ -915,6 +964,7 @@ void VR_WeaponMenu_ReloadGame (void)
 	vr_weapon_menu_has_wwheel = false;
 	vr_weapon_menu_has_schema = false;
 	vr_weapon_menu_has_profile = false;
+	vr_weapon_menu_has_discoveries = false;
 
 	data = COM_LoadFile ("wwheel.txt", &path_id);
 	if (data && (!com_searchpaths || path_id != com_searchpaths->path_id))
@@ -1002,6 +1052,60 @@ static int VR_WeaponMenu_Stat (const int *stats, size_t num_stats, int stat)
 	return stats[stat];
 }
 
+static qboolean VR_WeaponMenu_ModelPathLooksWeapon (const char *path)
+{
+	const char *base;
+	static const char *const blocked[] = {
+		"player", "rune", "sigil", "key", "armor", "health",
+		"backpack", "gib", "head", "corpse", NULL
+	};
+	static const char *const projectile_blocked[] = {
+		"spike", "vore", "lavaball", "fireball", "proj", "zgrenade",
+		"trsh", NULL
+	};
+
+	if (!path || !path[0])
+		return false;
+	base = COM_SkipPath (path);
+	for (int i = 0; blocked[i]; ++i)
+		if (q_strcasestr (base, blocked[i]))
+			return false;
+	for (int i = 0; projectile_blocked[i]; ++i)
+		if (q_strcasestr (base, projectile_blocked[i]))
+			return false;
+	if ((tolower ((unsigned char)base[0]) == 'v' ||
+		tolower ((unsigned char)base[0]) == 'g') && base[1] == '_')
+		return true;
+	return q_strcasestr (base, "weapon") || q_strcasestr (base, "gun") ||
+		q_strcasestr (base, "shot") || q_strcasestr (base, "rifle") ||
+		q_strcasestr (base, "pistol") || q_strcasestr (base, "launcher") ||
+		q_strcasestr (base, "wrench") || q_strcasestr (base, "hammer");
+}
+
+static const char *VR_WeaponMenu_CurrentModelPath (
+	const int *stats, size_t num_stats)
+{
+	const int model_index = VR_WeaponMenu_Stat (stats, num_stats, STAT_WEAPON);
+	qmodel_t *model;
+
+	if (cls.state != ca_connected || model_index <= 0 ||
+		model_index >= MAX_MODELS)
+		return NULL;
+	model = cl.model_precache[model_index];
+	if (!model || !model->name[0])
+		return NULL;
+	return model->name;
+}
+
+static qboolean VR_WeaponMenu_EntryMatchesSelector (
+	const vr_weapon_menu_entry_t *entry, int selector)
+{
+	return selector != 0 &&
+		(entry->selector == selector ||
+		 (entry->active_stat == STAT_ACTIVEWEAPON &&
+		  entry->active_mask == selector));
+}
+
 static qboolean VR_WeaponMenu_ProfileUsesItemOwnership (int selector)
 {
 	if (selector == IT_SHOTGUN || selector == IT_SUPER_SHOTGUN ||
@@ -1025,13 +1129,30 @@ static qboolean VR_WeaponMenu_EntryActive (const vr_weapon_menu_entry_t *entry,
 	const int *stats, size_t num_stats)
 {
 	int stat;
+	qboolean active;
 	if (entry->active_stat >= 0)
 	{
 		stat = VR_WeaponMenu_Stat (stats, num_stats, entry->active_stat);
-		return entry->active_mask ? (stat & entry->active_mask) != 0 : stat != 0;
+		active = entry->active_mask ? (stat & entry->active_mask) != 0 : stat != 0;
 	}
-	return entry->selector != 0 &&
-		VR_WeaponMenu_Stat (stats, num_stats, STAT_ACTIVEWEAPON) == entry->selector;
+	else
+		active = entry->selector != 0 &&
+			VR_WeaponMenu_Stat (stats, num_stats, STAT_ACTIVEWEAPON) == entry->selector;
+
+	if (active && stats == cl.stats && entry->model_path &&
+		entry->model_path[0] &&
+		(entry->source == VR_WEAPON_CATALOG_SOURCE_STOCK ||
+		 entry->source == VR_WEAPON_CATALOG_SOURCE_PROFILE ||
+		 entry->source == VR_WEAPON_CATALOG_SOURCE_DISCOVERED ||
+		 entry->active_stat == STAT_ACTIVEWEAPON))
+	{
+		const char *observed_path = VR_WeaponMenu_CurrentModelPath (stats,
+			num_stats);
+		if (observed_path && !VR_WeaponCatalog_ModelPathsMatch (
+			observed_path, entry->model_path))
+			return false;
+	}
+	return active;
 }
 
 static qboolean VR_WeaponMenu_EntryOwned (const vr_weapon_menu_entry_t *entry,
@@ -1039,6 +1160,8 @@ static qboolean VR_WeaponMenu_EntryOwned (const vr_weapon_menu_entry_t *entry,
 {
 	int stat;
 	qboolean owned = false;
+	if (entry->source == VR_WEAPON_CATALOG_SOURCE_DISCOVERED)
+		return active;
 	if (entry->owned_stat >= 0)
 	{
 		stat = entry->owned_stat == STAT_ITEMS ?
@@ -1064,7 +1187,9 @@ static qboolean VR_WeaponMenu_EntrySelectable (const vr_weapon_menu_entry_t *ent
 	qboolean active, const int *stats, size_t num_stats)
 {
 	int ammo;
-	if (entry->kind != VR_WEAPON_MENU_WEAPON || entry->impulse <= 0)
+	if (entry->kind != VR_WEAPON_MENU_WEAPON ||
+		entry->source == VR_WEAPON_CATALOG_SOURCE_DISCOVERED ||
+		entry->impulse <= 0)
 		return false;
 	if (active || entry->ammo_stat < 0 || entry->ammo_stat == STAT_AMMO)
 		return true;
@@ -1239,6 +1364,196 @@ static struct {
 	qboolean missing[VR_WEAPON_MENU_MAX_ENTRIES];
 } vr_weapon_menu_assets;
 
+static void VR_WeaponMenu_InvalidateFrameModels (void)
+{
+	vr_weapon_menu_frame_valid = false;
+	vr_weapon_menu_frame.panel_valid = false;
+	for (int i = 0; i < VR_WEAPON_MENU_MAX_ENTRIES; ++i)
+	{
+		vr_weapon_menu_frame.model[i] = NULL;
+		vr_weapon_menu_frame.geometry[i] = NULL;
+	}
+}
+
+static void VR_WeaponMenu_InvalidateModelSlot (
+	const vr_weapon_menu_catalog_t *catalog, size_t index)
+{
+	if (vr_weapon_menu_assets.catalog == catalog &&
+		index < VR_WEAPON_MENU_MAX_ENTRIES)
+	{
+		vr_weapon_menu_assets.model[index] = NULL;
+		vr_weapon_menu_assets.geometry[index] = NULL;
+		vr_weapon_menu_assets.missing[index] = false;
+	}
+	VR_WeaponMenu_InvalidateFrameModels ();
+}
+
+void VR_WeaponMenu_ClientReset (void)
+{
+	VR_WeaponMenu_ClearSession ();
+	if (++vr_weapon_menu_session_generation == 0)
+		++vr_weapon_menu_session_generation;
+	memset (&vr_weapon_menu_frame, 0, sizeof (vr_weapon_menu_frame));
+	memset (&vr_weapon_menu_assets, 0, sizeof (vr_weapon_menu_assets));
+}
+
+static qboolean VR_WeaponMenu_EnsureMutableCatalogForDiscovery (void)
+{
+	if (VR_WeaponMenu_CurrentCatalog () != &vr_weapon_menu_stock_catalog)
+		return true;
+	if (vr_weapon_menu_stock_catalog.count > VR_WEAPON_MENU_MAX_ENTRIES)
+		return false;
+	for (size_t i = 0; i < vr_weapon_menu_stock_catalog.count; ++i)
+	{
+		vr_weapon_menu_wwheel_entries[i] = vr_weapon_menu_stock_entries[i];
+		vr_weapon_menu_model_provenance[i] = VR_WEAPON_MENU_MODEL_FALLBACK;
+	}
+	vr_weapon_menu_wwheel_catalog.count = vr_weapon_menu_stock_catalog.count;
+	vr_weapon_menu_wwheel_catalog.authoritative_schema = 0;
+	vr_weapon_menu_has_discoveries = true;
+	return true;
+}
+
+static void VR_WeaponMenu_LearnSchemaModel (size_t index,
+	const char *model_path)
+{
+	vr_weapon_menu_entry_t *entry = &vr_weapon_menu_wwheel_entries[index];
+	if (!model_path || !model_path[0] ||
+		vr_weapon_menu_model_provenance[index] == VR_WEAPON_MENU_MODEL_FILE ||
+		vr_weapon_menu_model_provenance[index] == VR_WEAPON_MENU_MODEL_PROFILE ||
+		vr_weapon_menu_model_provenance[index] == VR_WEAPON_MENU_MODEL_LEARNED ||
+		!strcmp (vr_weapon_menu_runtime_models[index], model_path))
+		return;
+	q_strlcpy (vr_weapon_menu_runtime_models[index], model_path,
+		sizeof (vr_weapon_menu_runtime_models[index]));
+	entry->model_path = vr_weapon_menu_runtime_models[index];
+	vr_weapon_menu_model_provenance[index] = VR_WEAPON_MENU_MODEL_LEARNED;
+	VR_WeaponMenu_InvalidateModelSlot (&vr_weapon_menu_wwheel_catalog, index);
+}
+
+static int VR_WeaponMenu_FindDiscoveredModel (
+	const vr_weapon_menu_catalog_t *catalog, int selector,
+	const char *model_path)
+{
+	if (!catalog || !catalog->entries || !model_path)
+		return -1;
+	for (size_t i = 0; i < catalog->count; ++i)
+	{
+		const vr_weapon_menu_entry_t *entry = &catalog->entries[i];
+		if (entry->kind == VR_WEAPON_MENU_WEAPON &&
+			VR_WeaponMenu_EntryMatchesSelector (entry, selector) &&
+			entry->model_path && entry->model_path[0] &&
+			VR_WeaponCatalog_ModelPathsMatch (entry->model_path, model_path))
+			return (int)i;
+	}
+	return -1;
+}
+
+static int VR_WeaponMenu_FindLearnableSchemaSlot (
+	const vr_weapon_menu_catalog_t *catalog, int selector)
+{
+	int candidate = -1;
+	if (!catalog || catalog != &vr_weapon_menu_wwheel_catalog)
+		return -1;
+	for (size_t i = 0; i < catalog->count; ++i)
+	{
+		const vr_weapon_menu_entry_t *entry = &catalog->entries[i];
+		const vr_weapon_menu_model_provenance_t provenance =
+			vr_weapon_menu_model_provenance[i];
+		if (entry->kind != VR_WEAPON_MENU_WEAPON ||
+			entry->source != VR_WEAPON_CATALOG_SOURCE_SCHEMA ||
+			entry->impulse <= 0 ||
+			!VR_WeaponMenu_EntryMatchesSelector (entry, selector) ||
+			(provenance != VR_WEAPON_MENU_MODEL_NONE &&
+			 provenance != VR_WEAPON_MENU_MODEL_FALLBACK))
+			continue;
+		if (candidate >= 0)
+			return -1;
+		candidate = (int)i;
+	}
+	return candidate;
+}
+
+static int VR_WeaponMenu_AddDiscoveredEntry (int selector,
+	const char *model_path)
+{
+	const vr_weapon_menu_catalog_t *catalog;
+	vr_weapon_menu_entry_t *entry;
+	char model_label[32];
+	size_t index;
+	int id;
+
+	if (!VR_WeaponMenu_EnsureMutableCatalogForDiscovery ())
+		return -1;
+	catalog = &vr_weapon_menu_wwheel_catalog;
+	if (catalog->count >= VR_WEAPON_MENU_MAX_ENTRIES)
+		return -1;
+	id = VR_WeaponMenu_AllocateStableID (catalog,
+		0x40000000 + (selector & 0x1fffffff));
+	if (id < 0)
+		return -1;
+	index = catalog->count;
+	entry = &vr_weapon_menu_wwheel_entries[index];
+	memset (entry, 0, sizeof (*entry));
+	q_strlcpy (vr_weapon_menu_runtime_models[index], model_path,
+		sizeof (vr_weapon_menu_runtime_models[index]));
+	VR_WeaponMenu_SchemaLabel (model_label, sizeof (model_label), model_path,
+		selector);
+	q_snprintf (vr_weapon_menu_wwheel_labels[index],
+		sizeof (vr_weapon_menu_wwheel_labels[index]), "DISCOVERED %.20s",
+		model_label);
+	entry->id = id;
+	entry->kind = VR_WEAPON_MENU_WEAPON;
+	entry->source = VR_WEAPON_CATALOG_SOURCE_DISCOVERED;
+	entry->label = vr_weapon_menu_wwheel_labels[index];
+	entry->model_path = vr_weapon_menu_runtime_models[index];
+	entry->model_scale = 1.0f;
+	entry->selector = selector;
+	entry->impulse = 0;
+	entry->owned_stat = -1;
+	entry->owned_mask = 0;
+	/* The fallback EntryActive path compares STAT_ACTIVEWEAPON exactly;
+	 * discovered selectors must never inherit bit-mask semantics. */
+	entry->active_stat = -1;
+	entry->active_mask = 0;
+	entry->ammo_stat = -1;
+	entry->ammo_max_stat = -1;
+	vr_weapon_menu_model_provenance[index] = VR_WEAPON_MENU_MODEL_DISCOVERED;
+	vr_weapon_menu_wwheel_catalog.count++;
+	vr_weapon_menu_has_discoveries = true;
+	VR_WeaponMenu_InvalidateModelSlot (catalog, index);
+	return (int)index;
+}
+
+void VR_WeaponMenu_ObserveActive (void)
+{
+	const int selector = cl.stats[STAT_ACTIVEWEAPON];
+	const char *model_path;
+	const vr_weapon_menu_catalog_t *catalog;
+	int learnable;
+
+	if (cls.state != ca_connected || cls.signon != SIGNONS || selector == 0)
+		return;
+	model_path = VR_WeaponMenu_CurrentModelPath (cl.stats, MAX_CL_STATS);
+	if (!VR_WeaponMenu_ModelPathLooksWeapon (model_path))
+		return;
+	catalog = VR_WeaponMenu_CurrentCatalog ();
+	if (VR_WeaponMenu_FindDiscoveredModel (catalog, selector, model_path) >= 0)
+		return;
+	learnable = VR_WeaponMenu_FindLearnableSchemaSlot (catalog, selector);
+	if (learnable >= 0)
+	{
+		VR_WeaponMenu_LearnSchemaModel ((size_t)learnable, model_path);
+		return;
+	}
+	if (!VR_WeaponMenu_EnsureMutableCatalogForDiscovery ())
+		return;
+	catalog = VR_WeaponMenu_CurrentCatalog ();
+	if (VR_WeaponMenu_FindDiscoveredModel (catalog, selector, model_path) >= 0)
+		return;
+	VR_WeaponMenu_AddDiscoveredEntry (selector, model_path);
+}
+
 void VR_WeaponMenu_PrepareModels (void)
 {
 	const vr_weapon_menu_catalog_t *catalog;
@@ -1344,11 +1659,7 @@ static qboolean VR_WeaponMenu_CoopSpawnAvailable (void)
 static qboolean VR_WeaponMenu_CatalogHasActionID (
 	const vr_weapon_menu_catalog_t *catalog, int id)
 {
-	if (catalog && catalog->entries)
-		for (size_t i = 0; i < catalog->count; ++i)
-			if (catalog->entries[i].id == id)
-				return true;
-	return false;
+	return VR_WeaponMenu_CatalogHasID (catalog, id);
 }
 
 static void VR_WeaponMenu_ActionIDs (const vr_weapon_menu_catalog_t *catalog,
