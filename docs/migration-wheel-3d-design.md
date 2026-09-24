@@ -115,8 +115,27 @@ labels no longer cover available meshes. Desktop and legacy wheel layout keep
 their existing path. The Linux debug build and whitespace check passed for this
 slice; the new ring interaction has not yet been exercised on a headset.
 
-Remaining wheel parity includes depth-tested 3D ammo labels, the legacy
-view-anchored foreground depth treatment and source-scale layout, representative
-mod model formats and missing-asset cases, and hover/release interaction under
+At that checkpoint, remaining wheel parity included depth-tested 3D ammo
+labels, the legacy view-anchored foreground depth treatment and source-scale
+layout, representative mod model formats and missing-asset cases, and
+hover/release interaction under
 a live tracked controller. The current scene mesh adapter still skips model
 frustum culling until conservative stereo bounds account for wheel mesh scale.
+
+## World-space ammo-label checkpoint
+
+The playspace mesh path now emits each available weapon's ammo above its model,
+using the source's model-top, forward offset, selected size and empty-ammo red.
+A narrow scene-only basic glyph pipeline reuses vkQuake's character atlas and
+3D glyph builder, reads the depth buffer without writing it, and accepts the
+wheel's explicit right/up basis. It is created only for stereo sessions. The
+central UI ammo readout remains as an additional status aid.
+
+The Linux Make and Meson debug builds pass. A disposable desktop stock-map
+boot/quit passed after the stereo-only pipeline gate. Before that gate, the
+Make debug build reproducibly aborted during ray-traced-shadow driver teardown
+after an extra unused desktop pipeline was created; the older Make baseline,
+current Meson build, and an AddressSanitizer build did not reproduce it.
+This establishes desktop startup compatibility, not OpenXR glyph visibility or
+occlusion. Verify glyph appearance, eye agreement, wall hiding, OIT/MSAA
+variants and VR teardown in a later simulated-runtime integration pass.
