@@ -3568,16 +3568,6 @@ static qboolean VR_InputSelectedAkimboModel (qmodel_t **model_out,
 	return true;
 }
 
-static qboolean VR_InputAkimboRecipeUsesPairedCollision (
-	const mod_akimbo_pair_recipe_t *recipe)
-{
-	return recipe &&
-		((!strcmp (recipe->game, "qbj3") &&
-			!strcmp (recipe->source, "progs/v_tnailgun.mdl")) ||
-		(!strcmp (recipe->game, "enyo") &&
-			!strcmp (recipe->source, "progs/ee_v_smgs.mdl")));
-}
-
 static qboolean VR_InputAkimboGameplayAccepted (const vrxr_frame_t *frame)
 {
 	return frame && frame->sample_id && frame->focused && frame->should_render &&
@@ -3627,7 +3617,7 @@ static void VR_InputPrepareAkimboPair (usercmd_t *pending,
 		!VR_InputAkimboHandDevicesAccepted (frame))
 		return;
 	collision_context = VR_WeaponCollisionAuthorized () &&
-		VR_InputAkimboRecipeUsesPairedCollision (recipe) &&
+		V_AkimboRecipeUsesPairedCollision (recipe->source) &&
 		cls.state == ca_connected && cls.signon == SIGNONS && !cls.demoplayback &&
 		!cl.paused && key_dest == key_game && !cl.intermission &&
 		cl.stats[STAT_HEALTH] > 0 && cl.worldmodel && !cl.worldmodel->needload &&
@@ -3667,9 +3657,10 @@ static void VR_InputPrepareAkimboPair (usercmd_t *pending,
 			vec3_t world_grip, tip, delta;
 			VectorAdd (cl.entities[cl.viewentity].origin, grip, world_grip);
 			VectorAdd (world_grip, local_anchor, tip);
-			if (CL_ResolveWeaponCollision (collision_torso, world_grip,
-				world_grip, tip, delta))
-				VectorAdd (muzzle[hand], delta, muzzle[hand]);
+			if (!CL_ResolveWeaponCollision (collision_torso, world_grip,
+					world_grip, tip, delta))
+				return; /* Do not send an unresolved off-hand muzzle. */
+			VectorAdd (muzzle[hand], delta, muzzle[hand]);
 		}
 		if (!VR_InputWireVec (muzzle[hand]) ||
 			!VR_InputWireVec (physical_angles[hand]))

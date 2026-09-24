@@ -41,6 +41,8 @@ static qboolean	 Mod_LoadMD5MeshModel (qmodel_t *mod, const void *buffer,
 static void		 Mod_LoadMD3Model (qmodel_t *mod, const void *buffer);
 static qmodel_t *Mod_LoadModel (qmodel_t *mod, qboolean crash);
 static void		 Mod_FreeModelMemory (qmodel_t *mod);
+static qboolean	 Mod_CheckedSizeMul (size_t a, size_t b, size_t *result);
+static qboolean	 Mod_CheckedSizeAdd (size_t a, size_t b, size_t *result);
 
 cvar_t external_ents = {"external_ents", "1", CVAR_ARCHIVE_GAME};
 cvar_t external_vis = {"external_vis", "1", CVAR_ARCHIVE_GAME};
@@ -3917,6 +3919,17 @@ typedef struct load_skin_task_args_s
 	const char *skin_source;
 } load_skin_task_args_t;
 
+static int Mod_AliasSkinSize (const aliashdr_t *pheader, const char *model_name)
+{
+	size_t size;
+
+	if (pheader->skinwidth <= 0 || pheader->skinheight <= 0 ||
+		!Mod_CheckedSizeMul ((size_t)pheader->skinwidth, (size_t)pheader->skinheight, &size) || size > INT_MAX)
+		Sys_Error ("model %s has invalid skin dimensions (%d x %d)", model_name, pheader->skinwidth, pheader->skinheight);
+
+	return (int)size;
+}
+
 static void Mod_LoadSkinTask (int i, load_skin_task_args_t *args)
 {
 	int			 j, k, size, groupskins;
@@ -3933,7 +3946,7 @@ static void Mod_LoadSkinTask (int i, load_skin_task_args_t *args)
 	aliashdr_t	*pheader = args->pheader;
 	const char	*skin_source = args->skin_source ? args->skin_source : mod->name;
 
-	size = pheader->skinwidth * pheader->skinheight;
+	size = Mod_AliasSkinSize (pheader, mod->name);
 
 	if (mod->flags & MF_HOLEY)
 		texflags |= TEXPREF_ALPHA;
@@ -4089,7 +4102,7 @@ void *Mod_LoadAllSkins (aliashdr_t *pheader, qmodel_t *mod, byte *mod_base,
 		Sys_Error ("Mod_LoadAliasModel: Invalid # of skins: %d", numskins);
 
 	TEMP_ALLOC (byte *, ppskintypes, numskins);
-	int size = pheader->skinwidth * pheader->skinheight;
+	int size = Mod_AliasSkinSize (pheader, mod->name);
 	for (int i = 0; i < numskins; i++)
 	{
 		ppskintypes[i] = pskintype;
@@ -4413,21 +4426,29 @@ static void Mod_LoadAliasModel (qmodel_t *mod, void *buffer,
 	byte *pinstverts;
 	byte *pintriangles;
 	int	  version, numframes;
-	int	  size;
+	size_t header_size, frame_desc_bytes;
 	byte *pframetype;
 	byte *pskintype;
 	byte *mod_base = (byte *)buffer; // johnfitz
 
+	if (source_size < (qfilesize_t)sizeof (mdl_t))
+		Sys_Error ("model %s is shorter than an MDL header", mod->name);
+
 	version = ReadLongUnaligned (mod_base + offsetof (mdl_t, version));
 	if (version != ALIAS_VERSION)
 		Sys_Error ("%s has wrong version number (%i should be %i)", mod->name, version, ALIAS_VERSION);
+	numframes = ReadLongUnaligned (mod_base + offsetof (mdl_t, numframes));
+	if (numframes < 1 || numframes > MAXALIASFRAMES)
+		Sys_Error ("Mod_LoadAliasModel: Invalid # of frames: %d", numframes);
 
 	//
 	// allocate space for a working header, plus all the data except the frames,
 	// skin and group info
 	//
-	size = sizeof (aliashdr_t) + (ReadLongUnaligned (mod_base + offsetof (mdl_t, numframes)) - 1) * sizeof (maliasframedesc_t);
-	aliashdr_t *pheader = (aliashdr_t *)Mem_Alloc (size);
+	if (!Mod_CheckedSizeMul ((size_t)(numframes - 1), sizeof (maliasframedesc_t), &frame_desc_bytes) ||
+		!Mod_CheckedSizeAdd (sizeof (aliashdr_t), frame_desc_bytes, &header_size))
+		Sys_Error ("Mod_LoadAliasModel: Header allocation is too large for %s", mod->name);
+	aliashdr_t *pheader = (aliashdr_t *)Mem_Alloc (header_size);
 	pheader->poseverttype = PV_QUAKE1;
 
 	mod->flags = ReadLongUnaligned (mod_base + offsetof (mdl_t, flags));
@@ -4464,10 +4485,7 @@ static void Mod_LoadAliasModel (qmodel_t *mod, void *buffer,
 
 	check_tris_size (pheader->numtris);
 
-	pheader->numframes = ReadLongUnaligned (mod_base + offsetof (mdl_t, numframes));
-	numframes = pheader->numframes;
-	if (numframes < 1)
-		Sys_Error ("Mod_LoadAliasModel: Invalid # of frames: %d", numframes);
+	pheader->numframes = numframes;
 
 	pheader->size = ReadFloatUnaligned (mod_base + offsetof (mdl_t, size)) * ALIAS_BASE_SIZE_RATIO;
 	mod->synctype = (synctype_t)ReadLongUnaligned (mod_base + offsetof (mdl_t, synctype));
@@ -5045,7 +5063,7 @@ static qboolean MD5_BakeInfluences (
 		vert->st[0] = vinfo->st[0];
 		vert->st[1] = vinfo->st[1];
 
-		if (vinfo->firstweight + vinfo->count > numweights)
+		if (vinfo->firstweight > numweights || (size_t)vinfo->count > numweights - vinfo->firstweight)
 		{
 			Con_Warning ("%s: weight index out of bounds\n", fname);
 			return false;
@@ -6057,6 +6075,8 @@ static qboolean Mod_LoadMD5MeshModelData (qmodel_t *mod, const void *buffer,
 		// md5 is a gpu-unfriendly interchange format. :(
 		MD5EXPECT ("numweights");
 		size_t numweights = MD5UINT ();
+		if (numweights > SIZE_MAX / sizeof (*weight))
+			MD5ERROR ("%s: weight count is too large\n", fname);
 		TEMP_ALLOC_ASSIGN_ZEROED (weight, numweights);
 
 		while (MD5CHECK ("weight"))

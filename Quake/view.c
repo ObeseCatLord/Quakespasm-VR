@@ -584,9 +584,9 @@ qboolean V_AkimboRecipeSupported (const char *source_model)
 	return false;
 }
 
-static qboolean V_AkimboRecipeUsesPairedCollision (
-	const mod_akimbo_pair_recipe_t *recipe)
+qboolean V_AkimboRecipeUsesPairedCollision (const char *source_model)
 {
+	const mod_akimbo_pair_recipe_t *recipe = Mod_GetAkimboPairRecipe (source_model);
 	return recipe &&
 		((!strcmp (recipe->game, "qbj3") &&
 			!strcmp (recipe->source, "progs/v_tnailgun.mdl")) ||
@@ -792,7 +792,7 @@ void V_PrepareAkimboPair (void)
 		if (!V_AkimboEntityMatrixValid (&akimbo_pair_entities[hand], akimbo_pair_geometry[hand]))
 			return;
 
-	if (V_AkimboRecipeUsesPairedCollision (recipe) &&
+	if (V_AkimboRecipeUsesPairedCollision (recipe->source) &&
 		VR_WeaponCollisionAuthorized () && key_dest == key_game)
 	{
 		vec3_t torso_offset, torso;
@@ -813,9 +813,12 @@ void V_PrepareAkimboPair (void)
 				VectorCopy (pair_origins[hand], base);
 				VectorCopy (base, tip);
 				VectorAdd (tip, anchor, tip);
-				if (CL_ResolveWeaponCollision (torso, pair_origins[hand],
+				/* A pair cannot keep an obstructed raw hand when the solve fails.
+				 * The ordinary dominant-hand path remains available this frame. */
+				if (!CL_ResolveWeaponCollision (torso, pair_origins[hand],
 					base, tip, delta))
-					VectorAdd (pair_origins[hand], delta, pair_origins[hand]);
+					return;
+				VectorAdd (pair_origins[hand], delta, pair_origins[hand]);
 				VectorCopy (pair_origins[hand], akimbo_pair_entities[hand].origin);
 			}
 		}

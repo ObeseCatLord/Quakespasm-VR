@@ -2944,7 +2944,7 @@ typedef struct sv_vr_weapon_pose_scope_s
 	edict_t *ent;
 	qboolean applied, origin_relocated, linked, akimbo_invalidated;
 	qboolean akimbo_pose_valid;
-	qboolean enyo_makevectors, enyo_clearance_pending;
+	qboolean enyo_clearance_pending;
 	vec3_t origin, body_origin, v_angle, forward, right, up;
 	vec3_t akimbo_muzzle[2], akimbo_angles[2];
 	vec3_t enyo_clearance_start, enyo_clearance_end;
@@ -2983,7 +2983,6 @@ void SV_VRWeaponPoseSetOrigin (edict_t *ent)
 			scope->origin_relocated = true;
 			scope->akimbo_invalidated = true;
 			scope->akimbo_pose_valid = false;
-			scope->enyo_makevectors = false;
 			scope->enyo_clearance_pending = false;
 		}
 }
@@ -3283,7 +3282,6 @@ qboolean SV_EnyoAkimboMakevectors (void)
 		return false;
 
 	/* A new audited call supersedes any unconsumed clearance in this scope. */
-	scope->enyo_makevectors = false;
 	scope->enyo_clearance_pending = false;
 	if (!SV_EnyoVectorIsFinite (scope->body_origin) ||
 		!SV_EnyoVectorIsFinite (ent->v.view_ofs) ||
@@ -3348,7 +3346,6 @@ qboolean SV_EnyoAkimboMakevectors (void)
 	VectorCopy (forward, pr_global_struct->v_forward);
 	VectorCopy (right, pr_global_struct->v_right);
 	VectorCopy (up, pr_global_struct->v_up);
-	scope->enyo_makevectors = true;
 	scope->enyo_clearance_pending = true;
 	VectorCopy (clearance_start, scope->enyo_clearance_start);
 	VectorCopy (muzzle, scope->enyo_clearance_end);
@@ -3365,8 +3362,7 @@ qboolean SV_EnyoAkimboAim (edict_t *ent, vec3_t muzzle)
 		return false;
 	scope = SV_FindPrivateVRWeaponPose (ent);
 	if (!scope || !scope->applied || !scope->akimbo_pose_valid ||
-		scope->akimbo_invalidated || !scope->enyo_makevectors ||
-		!scope->enyo_clearance_pending ||
+		scope->akimbo_invalidated || !scope->enyo_clearance_pending ||
 		!SV_EnyoVectorIsFinite (scope->enyo_clearance_end))
 		return false;
 	VectorCopy (scope->enyo_clearance_end, muzzle);
@@ -3386,8 +3382,7 @@ qboolean SV_EnyoAkimboTrace (edict_t *ent, const vec3_t start,
 		return false;
 	scope = SV_FindPrivateVRWeaponPose (ent);
 	if (!scope || !scope->applied || !scope->akimbo_pose_valid ||
-		scope->akimbo_invalidated || !scope->enyo_makevectors ||
-		!scope->enyo_clearance_pending ||
+		scope->akimbo_invalidated || !scope->enyo_clearance_pending ||
 		!SV_EnyoVectorIsFinite (scope->enyo_clearance_start) ||
 		!SV_EnyoVectorIsFinite (scope->enyo_clearance_end) ||
 		!SV_EnyoVectorIsFinite (scope->enyo_clearance_adjusted_start) ||
@@ -3397,7 +3392,6 @@ qboolean SV_EnyoAkimboTrace (edict_t *ent, const vec3_t start,
 
 	/* Only this exact QC trace consumes the one-shot. Keep fraction in B..M. */
 	scope->enyo_clearance_pending = false;
-	scope->enyo_makevectors = false;
 	*trace = SV_Move (scope->enyo_clearance_adjusted_start, vec3_origin,
 		vec3_origin, scope->enyo_clearance_end, nomonsters, ent);
 	trace->fraction = scope->enyo_clearance_t0 +
@@ -3408,7 +3402,6 @@ qboolean SV_EnyoAkimboTrace (edict_t *ent, const vec3_t start,
 static void SV_EndPrivateVRWeaponPose (edict_t *ent,
 	sv_vr_weapon_pose_scope_t *scope)
 {
-	scope->enyo_makevectors = false;
 	scope->enyo_clearance_pending = false;
 	sv_vr_weapon_pose_scope = scope->previous;
 	if (!scope->applied)
