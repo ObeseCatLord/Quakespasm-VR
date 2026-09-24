@@ -92,6 +92,16 @@ endif
 ifeq ($(USE_CODEC_OPUS),1)
 CFLAGS += -DUSE_CODEC_OPUS
 endif
+
+# Voice uses libopus alone. Enable it automatically where pkg-config can find
+# Opus, or follow the explicit bundled codec choice on Windows.
+USE_VOICECHAT ?= $(if $(filter 1,$(USE_CODEC_OPUS)),1,$(shell pkg-config --exists opus && echo 1 || echo 0))
+ifeq ($(USE_VOICECHAT),1)
+CFLAGS += -DUSE_VOICECHAT $(shell pkg-config --cflags opus 2>/dev/null)
+ifneq ($(USE_CODEC_OPUS),1)
+CODECLIBS += $(shell pkg-config --libs opus 2>/dev/null)
+endif
+endif
 ifeq ($(USE_CODEC_VORBIS),1)
 CFLAGS += -DUSE_CODEC_VORBIS $(CPP_VORBISDEC)
 CODECLIBS += $(LIB_VORBISDEC)
@@ -134,6 +144,9 @@ MUSIC_OBJS:= bgmusic.o \
 	snd_xmp.o \
 	snd_umx.o
 COMOBJ_SND := snd_dma.o snd_mix.o snd_mem.o $(MUSIC_OBJS)
+ifeq ($(USE_VOICECHAT),1)
+COMOBJ_SND += voice.o voice_jitter.o voice_vad.o voice_settings.o
+endif
 SYSOBJ_SND := snd_sdl.o snd_sdl3.o
 SYSOBJ_CDA := cd_sdl.o
 SYSOBJ_INPUT := in_sdl.o in_sdl2.o in_sdl3.o

@@ -23,6 +23,7 @@
  */
 
 #include "quakedef.h"
+#include "voice.h"
 
 #ifndef USE_SDL3
 
@@ -67,6 +68,9 @@ static void SDLCALL paint_audio (void *unused, Uint8 *stream, int len)
 
 	if (shm->samplepos >= buffersize)
 		shm->samplepos = 0;
+
+	Voice_MixAudio(stream, len, shm->samplebits, shm->channels,
+		shm->speed, shm->signed8);
 }
 
 qboolean SNDDMA_Init (dma_t *dma)

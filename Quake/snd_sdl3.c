@@ -23,6 +23,7 @@
  */
 
 #include "quakedef.h"
+#include "voice.h"
 
 #ifdef USE_SDL3
 
@@ -32,6 +33,7 @@ static SDL_AudioStream *audio_stream = NULL;
 static void SDLCALL paint_audio (void *userdata, SDL_AudioStream *stream, int additional_amount, int total_amount)
 {
 	int pos, remaining, spans;
+	Uint8 mixed[8192];
 
 	if (!shm || !shm->buffer || buffersize <= 0 || additional_amount <= 0)
 		return;
@@ -47,10 +49,29 @@ static void SDLCALL paint_audio (void *userdata, SDL_AudioStream *stream, int ad
 	for (spans = 0; remaining > 0 && spans < 4; ++spans)
 	{
 		int len = q_min (remaining, buffersize - pos);
-		if (!SDL_PutAudioStreamData (stream, shm->buffer + pos, len))
+		int span_remaining = len;
+		while (span_remaining > 0)
+		{
+			int chunk = q_min (span_remaining, (int)sizeof (mixed));
+			int frame_bytes = shm->channels * (shm->samplebits / 8);
+			if (frame_bytes > 0)
+				chunk -= chunk % frame_bytes;
+			if (chunk <= 0)
+				break;
+			memcpy (mixed, shm->buffer + pos, chunk);
+			Voice_MixAudio (mixed, chunk, shm->samplebits, shm->channels,
+				shm->speed, shm->signed8);
+			if (!SDL_PutAudioStreamData (stream, mixed, chunk))
+			{
+				shm->samplepos = pos / (shm->samplebits / 8);
+				return;
+			}
+			remaining -= chunk;
+			span_remaining -= chunk;
+			pos += chunk;
+		}
+		if (span_remaining > 0)
 			break;
-		remaining -= len;
-		pos += len;
 		if (pos >= buffersize)
 			pos = 0;
 	}

@@ -23,6 +23,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 
 #include "quakedef.h"
 #include "bgmusic.h"
+#include "voice.h"
 #include "pmove.h"
 #include "vr_input.h"
 
@@ -183,6 +184,7 @@ void CL_Disconnect (void)
 {
 	CL_ResetVRIKState ();
 	CL_ResetVoiceTransportState ();
+	Voice_ResetConnection ();
 	cls.legacy_qsvr = 0;
 	cls.offered_qsvr = 0;
 	cl.protocol_qsvr = 0;

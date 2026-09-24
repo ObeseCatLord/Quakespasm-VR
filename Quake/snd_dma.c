@@ -27,6 +27,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "quakedef.h"
 #include "snd_codec.h"
 #include "bgmusic.h"
+#include "voice.h"
 
 static void S_Play (void);
 static void S_PlayVol (void);
@@ -231,6 +232,7 @@ void S_Init (void)
 	ambient_sfx[AMBIENT_SKY] = S_PrecacheSound ("ambience/wind2.wav");
 
 	S_CodecInit ();
+	Voice_Init ();
 
 	S_StopAllSounds (true, false);
 }
@@ -242,6 +244,8 @@ void S_Shutdown (void)
 {
 	if (!sound_started)
 		return;
+
+	Voice_Shutdown ();
 
 	sound_started = 0;
 	snd_blocked = 0;
@@ -836,6 +840,9 @@ void S_Update (vec3_t origin, vec3_t forward, vec3_t right, vec3_t up)
 	int		   total;
 	channel_t *ch;
 	channel_t *combine;
+
+	Voice_UpdateSpatialization (origin, right);
+	Voice_Frame ();
 
 	SDL_LockMutex (snd_mutex);
 	if (!sound_started || (snd_blocked > 0))

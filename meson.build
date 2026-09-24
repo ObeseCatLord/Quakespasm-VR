@@ -479,9 +479,20 @@ else
     endif
 endif
 
+if opus_dep.found()
+	srcs += [
+		'Quake/voice.c',
+		'Quake/voice_jitter.c',
+		'Quake/voice_vad.c',
+		'Quake/voice_settings.c',
+	]
+	deps += opus_dep
+	cflags += '-DUSE_VOICECHAT'
+endif
+
 if opus_dep.found() and opusfile_dep.found()
     srcs += 'Quake/snd_opus.c'
-    deps += [ opus_dep, opusfile_dep ]
+    deps += opusfile_dep
     cflags += '-DUSE_CODEC_OPUS'
 endif
 
