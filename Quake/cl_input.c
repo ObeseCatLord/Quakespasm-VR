@@ -951,6 +951,9 @@ static void CL_SendPrivateMove (const usercmd_t *cmd)
 	unsigned capabilities = 0;
 	if (cls.demoplayback)
 		return;
+	/* A full reliable buffer at offer time defers the capability reply until
+	 * the next command, without making the unreliable pose claim admission. */
+	CL_QueueGorillaCapability ();
 	if (!cmd)
 	{
 		CL_FlushAckFrames ();
@@ -965,6 +968,7 @@ static void CL_SendPrivateMove (const usercmd_t *cmd)
 	sendcmd.seconds = sendcmd.msec * 0.001f;
 	seq = cl.movemessages;
 	sendcmd.sequence = seq;
+	VR_InputCommitGorillaCommand (&sendcmd);
 	cl.movemessages++;
 	cl.net_move_msec_generated += sendcmd.msec;
 	cl.movecmds[seq & MOVECMDS_MASK] = sendcmd;

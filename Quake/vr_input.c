@@ -118,6 +118,7 @@ static int vr_input_last_snap;
 static qboolean vr_input_turn180_queued;
 /* Explicit tracking-yaw rebases must break physical contact history. */
 static qboolean vr_input_contact_discontinuity;
+static qboolean vr_input_gorilla_discontinuity = true;
 static vec3_t vr_input_roomscale_last_position;
 static qboolean vr_input_roomscale_position_valid;
 
@@ -1295,6 +1296,7 @@ static void VR_InputClearPendingRecord (usercmd_t *pending)
 	pending->vr_pending_angles[0] = pending->vr_pending_angles[1] = pending->vr_pending_angles[2] = 0.0f;
 	pending->vr_pending_move_valid = false;
 	pending->vr_pending_angles_valid = false;
+	memset (&pending->vr_gorilla, 0, sizeof (pending->vr_gorilla));
 	VR_InputClearPendingContactRecord (pending);
 }
 
@@ -1330,6 +1332,69 @@ static qboolean VR_InputWireVec (const float value[3])
 		value[0] >= VR_INPUT_WIRE_MIN && value[0] <= VR_INPUT_WIRE_MAX &&
 		value[1] >= VR_INPUT_WIRE_MIN && value[1] <= VR_INPUT_WIRE_MAX &&
 		value[2] >= VR_INPUT_WIRE_MIN && value[2] <= VR_INPUT_WIRE_MAX;
+}
+
+/* One completed XR sample, in the same world/body basis as the ordinary
+ * private hand command. The movement solver owns contact; input only samples. */
+static void VR_InputPrepareGorillaSample (usercmd_t *pending,
+	const vrxr_frame_t *frame)
+{
+	vr_gorilla_input_t sample = {0};
+	vec3_t head_horizontal, velocity;
+	float viewheight, head_height, mapping_yaw, units_per_metre;
+
+	if (!pending || !frame || !vr_gorilla.value ||
+		!cl.vr_gorilla_supported || !cl.vr_gorilla_allowed ||
+		cl.protocol_qsvr != QSVR_PROTOCOL_PINNED ||
+		!VR_InputControllerAim () || !VR_InputMotionContextAccepted (frame) ||
+		CL_AngleLocked () || cl.stats[STAT_HEALTH] <= 0 ||
+		!V_TrackedPlayerBase (&viewheight) ||
+		!R_TrackedHeadBodyOffset (head_horizontal) ||
+		!R_TrackedHeadEyeHeight (viewheight, &head_height) ||
+		!V_TrackedMappingYaw (&mapping_yaw))
+		goto unavailable;
+	units_per_metre = V_VRUnitsPerMetre ();
+	if (!isfinite (units_per_metre) || units_per_metre <= 0.0f)
+		goto unavailable;
+	VectorCopy (head_horizontal, sample.head);
+	sample.head[2] = head_height;
+	for (int hand = 0; hand < 2; ++hand)
+	{
+		const vrxr_device_t *device = &frame->devices[hand + 1];
+		if (!VR_InputHandAccepted (frame, hand) || !device->valid ||
+			!device->tracked || !device->velocity_valid ||
+			!V_TrackedHandBodyOffset (hand, sample.hand[hand]) ||
+			!VR_InputFBTMapTrackingVector (device->velocity,
+				mapping_yaw, 0.0f, velocity))
+			goto unavailable;
+		/* V_TrackedHandBodyOffset is head-relative horizontally; restore
+		 * the same body-to-head offset carried by the sample's head. */
+		VectorAdd (sample.hand[hand], head_horizontal, sample.hand[hand]);
+		VectorScale (velocity, units_per_metre, sample.velocity[hand]);
+		if (!VR_InputWireVec (sample.hand[hand]) ||
+			!VR_InputWireVec (sample.velocity[hand]) ||
+			DotProduct (sample.velocity[hand], sample.velocity[hand]) >
+				VR_GORILLA_MAX_HAND_SPEED * VR_GORILLA_MAX_HAND_SPEED)
+			goto unavailable;
+		{
+			vec3_t reach;
+			VectorSubtract (sample.hand[hand], sample.head, reach);
+			if (DotProduct (reach, reach) >
+				VR_GORILLA_MAX_REACH * VR_GORILLA_MAX_REACH)
+				goto unavailable;
+		}
+	}
+	if (!VR_InputWireVec (sample.head) ||
+		DotProduct (sample.head, sample.head) > 160.0f * 160.0f)
+		goto unavailable;
+	if (frame->reference_changed)
+		vr_input_gorilla_discontinuity = true;
+	sample.flags = VR_GORILLA_HANDS;
+	pending->vr_gorilla = sample;
+	return;
+
+unavailable:
+	vr_input_gorilla_discontinuity = true;
 }
 
 static qboolean VR_InputContactIsValid (const vr_weapon_contact_t *contact)
@@ -3556,6 +3621,7 @@ void VR_InputMove (usercmd_t *pending)
 	{
 		VR_InputGateMovement (pending);
 		VR_InputGateTurn ();
+		vr_input_gorilla_discontinuity = true;
 		return;
 	}
 
@@ -3595,7 +3661,10 @@ void VR_InputMove (usercmd_t *pending)
 			turn_armed = false;
 		}
 		else
+		{
 			vr_input_contact_discontinuity = true;
+			vr_input_gorilla_discontinuity = true;
+		}
 	}
 
 	if (turn_armed)
@@ -3616,7 +3685,10 @@ void VR_InputMove (usercmd_t *pending)
 				else
 				{
 					if (snap)
+					{
 						vr_input_contact_discontinuity = true;
+						vr_input_gorilla_discontinuity = true;
+					}
 					vr_input_last_snap = snap;
 				}
 			}
@@ -3693,6 +3765,7 @@ void VR_InputMove (usercmd_t *pending)
 			pending->vr_pending_angles_valid = true;
 		}
 	}
+	VR_InputPrepareGorillaSample (pending, frame);
 	VR_InputPreparePrivatePose (pending, dominant, dominant_accepted);
 }
 
@@ -3733,6 +3806,23 @@ void VR_InputApplyPending (usercmd_t *cmd)
 		cmd->vr_contact = cl.pendingcmd.vr_contact;
 	else
 		VR_InputClearPendingContactRecord (&cl.pendingcmd);
+	if (cl.pendingcmd.vr_gorilla.flags == VR_GORILLA_HANDS &&
+		vr_gorilla.value && cl.vr_gorilla_supported && cl.vr_gorilla_allowed)
+	{
+		cmd->vr_gorilla = cl.pendingcmd.vr_gorilla;
+		if (vr_input_gorilla_discontinuity)
+			cmd->vr_gorilla.flags |= VR_GORILLA_RESET;
+		/* Gorilla sampling does not depend on weapon calibration. The
+		 * bounded grip is only a neutral wire pose when no muzzle exists. */
+		if (!private_pose_accepted)
+		{
+			VectorCopy (cl.pendingcmd.vr_gorilla.hand[VR_InputDominantPhysicalHand ()],
+				cmd->vr_handpos);
+			VectorCopy (vec3_origin, cmd->vr_handrot);
+			cmd->vr_active = true;
+			cmd->vr_handpos_relative = true;
+		}
+	}
 	if (cl.pendingcmd.vr_pending_angles_valid &&
 		isfinite (cl.pendingcmd.vr_pending_angles[PITCH]) &&
 		isfinite (cl.pendingcmd.vr_pending_angles[YAW]) &&
@@ -3759,13 +3849,21 @@ qboolean VR_InputSuppressUncalibratedAttack (const usercmd_t *cmd)
 	return cmd && cl.protocol_qsvr == QSVR_PROTOCOL_PINNED &&
 		V_TrackedSessionActive () && VR_InputControllerAim () &&
 		cl.stats[STAT_HEALTH] > 0 &&
-		(!cmd->vr_active || !cmd->vr_handpos_relative);
+		(!cmd->vr_active || !cmd->vr_handpos_relative ||
+		 !cl.pendingcmd.vr_active || !cl.pendingcmd.vr_handpos_relative);
+}
+
+void VR_InputCommitGorillaCommand (const usercmd_t *cmd)
+{
+	if (cmd && (cmd->vr_gorilla.flags & VR_GORILLA_RESET))
+		vr_input_gorilla_discontinuity = false;
 }
 
 void VR_InputInvalidateMotion (void)
 {
 	VR_InputClearPendingRecord (&cl.pendingcmd);
 	vr_input_contact_discontinuity = true;
+	vr_input_gorilla_discontinuity = true;
 	VectorCopy (vec3_origin, cl.pendingcmd.vr_roomscalemove);
 	vr_input_roomscale_position_valid = false;
 	vr_input_move_wait_neutral = true;

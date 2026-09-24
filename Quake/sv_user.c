@@ -1253,6 +1253,37 @@ static qboolean SV_HandleVRIKCapability(const char *s)
     return true;
 }
 
+static qboolean SV_HandleGorillaCapability (const char *s)
+{
+	static const char command[] = "vr_gorilla_cap";
+	const char *value = s;
+
+	while (*value == ' ' || *value == '\t' || *value == '\r' || *value == '\n')
+		value++;
+	if (q_strncasecmp (value, command, sizeof (command) - 1) ||
+		(value[sizeof (command) - 1] &&
+		 value[sizeof (command) - 1] != ' ' &&
+		 value[sizeof (command) - 1] != '\t' &&
+		 value[sizeof (command) - 1] != '\r' &&
+		 value[sizeof (command) - 1] != '\n'))
+		return false;
+
+	value += sizeof (command) - 1;
+	while (*value == ' ' || *value == '\t' || *value == '\r' || *value == '\n')
+		value++;
+	if (*value != '1')
+		return true;
+	value++;
+	while (*value == ' ' || *value == '\t' || *value == '\r' || *value == '\n')
+		value++;
+	if (*value || !host_client->spawned ||
+		host_client->protocol_qsvr != QSVR_PROTOCOL_PINNED)
+		return true;
+
+	host_client->vr_gorilla_capable = true;
+	return true;
+}
+
 static qboolean SV_HandleVoiceCapability (const char *s)
 {
 	const char *value = s;
@@ -1419,6 +1450,8 @@ qboolean SV_ReadClientMessage (void)
 
 		case clc_stringcmd: {
 			s = MSG_ReadString ();
+			if (SV_HandleGorillaCapability (s))
+				break;
 			if (SV_HandleVoiceCapability (s))
 				break;
 			if (SV_HandleVRIKCapability (s))

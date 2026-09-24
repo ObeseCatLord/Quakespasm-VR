@@ -2561,13 +2561,13 @@ static qboolean CL_ParseBoundedDecimal (const char *text, unsigned int maximum,
 	return true;
 }
 
-static qboolean CL_WeaponContactOfferSyntaxValid (const char *raw)
+static qboolean CL_ServerNumericOfferSyntaxValid (const char *raw, int fields)
 {
 	const unsigned char *cursor = (const unsigned char *)raw;
 
 	/* Cmd_Argv has already tokenized this text. Check the original spelling
 	 * too: the shared tokenizer accepts incomplete quotes and comments. */
-	for (int field = 0; field < 3; ++field)
+	for (int field = 0; field < fields; ++field)
 	{
 		while (*cursor == ' ' || *cursor == '\t')
 			cursor++;
@@ -2576,13 +2576,67 @@ static qboolean CL_WeaponContactOfferSyntaxValid (const char *raw)
 		do
 			cursor++;
 		while (*cursor >= '0' && *cursor <= '9');
-		if (field < 2 && *cursor != ' ' && *cursor != '\t')
+		if (field + 1 < fields && *cursor != ' ' && *cursor != '\t')
 			return false;
 	}
 	while (*cursor == ' ' || *cursor == '\t' || *cursor == '\r' ||
 		*cursor == '\n')
 		cursor++;
 	return *cursor == 0;
+}
+
+void CL_QueueGorillaCapability (void)
+{
+	const size_t required = 1 + sizeof ("vr_gorilla_cap 1");
+
+	if (!cl.vr_gorilla_supported || cl.vr_gorilla_cap_sent ||
+		cl.protocol_qsvr != QSVR_PROTOCOL_PINNED || cls.state != ca_connected ||
+		cls.demoplayback ||
+		cls.message.overflowed || cls.message.cursize < 0 ||
+		cls.message.maxsize < 0 ||
+		cls.message.cursize > cls.message.maxsize ||
+		required > (size_t)(cls.message.maxsize - cls.message.cursize))
+		return;
+	MSG_WriteByte (&cls.message, clc_stringcmd);
+	MSG_WriteString (&cls.message, "vr_gorilla_cap 1");
+	cl.vr_gorilla_cap_sent = true;
+}
+
+static void CL_ServerExtension_GorillaProtocol_f (void)
+{
+	unsigned int version, allowed;
+
+	if (cmd_source != src_server)
+		return;
+	/* A malformed replacement offer cannot leave prior permission active. */
+	if (Cmd_Argc () != 3 ||
+		!CL_ServerNumericOfferSyntaxValid (Cmd_Args (), 2) ||
+		!CL_ParseBoundedDecimal (Cmd_Argv (1), 1, &version) || version != 1 ||
+		!CL_ParseBoundedDecimal (Cmd_Argv (2), 1, &allowed) ||
+		cl.protocol_qsvr != QSVR_PROTOCOL_PINNED)
+	{
+		cl.vr_gorilla_supported = false;
+		cl.vr_gorilla_allowed = false;
+		cl.vr_gorilla_cap_sent = false;
+		cl.vr_gorilla_trusted_supported = false;
+		cl.vr_gorilla_trusted_cap_sent = false;
+		cl.vr_gorilla_motion_generation_valid = false;
+		cl.vr_gorilla_state_valid = false;
+		cl.vr_gorilla_state_sequence = -1;
+		memset (&cl.vr_gorilla_state, 0, sizeof (cl.vr_gorilla_state));
+		Con_DPrintf2 ("Ignoring malformed Gorilla capability offer.\n");
+		return;
+	}
+	if (!cl.vr_gorilla_supported || cl.vr_gorilla_allowed != (qboolean)allowed)
+	{
+		cl.vr_gorilla_state_valid = false;
+		cl.vr_gorilla_state_sequence = -1;
+		cl.vr_gorilla_motion_generation_valid = false;
+		memset (&cl.vr_gorilla_state, 0, sizeof (cl.vr_gorilla_state));
+	}
+	cl.vr_gorilla_supported = true;
+	cl.vr_gorilla_allowed = (qboolean)allowed;
+	CL_QueueGorillaCapability ();
 }
 
 static void CL_ServerExtension_WeaponContactProtocol_f (void)
@@ -2594,7 +2648,7 @@ static void CL_ServerExtension_WeaponContactProtocol_f (void)
 
 	/* Every server update is authoritative, including a malformed revocation. */
 	CL_ResetWeaponContactState ();
-	if (Cmd_Argc () != 4 || !CL_WeaponContactOfferSyntaxValid (Cmd_Args ()) ||
+	if (Cmd_Argc () != 4 || !CL_ServerNumericOfferSyntaxValid (Cmd_Args (), 3) ||
 		!CL_ParseBoundedDecimal (Cmd_Argv (1), VR_WEAPON_CONTACT_PROTOCOL_VERSION,
 			&version) || version != VR_WEAPON_CONTACT_PROTOCOL_VERSION ||
 		!CL_ParseBoundedDecimal (Cmd_Argv (2), VR_WEAPON_CONTACT_CAP_KNOWN,
@@ -2688,6 +2742,8 @@ void CL_Init (void)
 	Cmd_AddCommand_ServerCommand ("ui", CL_ServerExtension_UserinfoUpdate_f);
 	Cmd_AddCommand_ServerCommand ("vr_weapon_contact_protocol",
 		CL_ServerExtension_WeaponContactProtocol_f);
+	Cmd_AddCommand_ServerCommand ("vr_gorilla_protocol",
+		CL_ServerExtension_GorillaProtocol_f);
 
 	Cmd_AddCommand_ServerCommand ("paknames", CL_ServerExtension_Ignore_f);		 // package names in use by the server (including gamedir+extension)
 	Cmd_AddCommand_ServerCommand ("paks", CL_ServerExtension_Ignore_f);			 // provides hashes to go with the paknames list

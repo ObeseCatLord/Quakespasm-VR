@@ -224,6 +224,8 @@ typedef struct client_s
 	unsigned int protocol_qsvr; // selected private wire profile; zero is public
 	unsigned int protocol_pext1;
 	unsigned int protocol_pext2;
+	qboolean vr_gorilla_capable;
+	int vr_gorilla_last_advertised; // -1 means the current policy has not been queued
 	int weapon_contact_last_mode; // last mode appended to the reliable stream; -1 means not queued
 	int weapon_contact_last_profile; // profile paired with weapon_contact_last_mode
 	/* Optional VRIK pose transport state; unrelated to QSVR movement admission. */
@@ -537,6 +539,8 @@ void SV_ReceiveVRIKPoseV2 (client_t *client, const vrik_v2_pose_t *pose,
 void SV_ReceiveVRIKPoseV3 (client_t *client, const vrik_codec_pose_t *pose);
 void SV_ExpireVRIKPoses (void);
 void SV_ReceiveVoicePacket (client_t *client, const voice_packet_t *packet);
+extern cvar_t sv_gorilla;
+extern cvar_t sv_gorilla_trustclient;
 extern cvar_t sv_voice;
 void SV_FinishPrivateUsercmds (void);
 qboolean SV_PrivateWalkTrialSelected (client_t *client);
