@@ -2150,11 +2150,6 @@ static void Datagram_ConnectAsyncSendRequest (void)
 	datagram_connect_ctx.attempt_start_time = SetNetTime ();
 }
 
-qboolean NET_DatagramConnectPending (void)
-{
-	return datagram_connect_ctx.active;
-}
-
 void NET_DatagramConnectCancel (void)
 {
 	Datagram_ConnectAsyncReleaseSocket ();
@@ -2396,6 +2391,11 @@ net_connect_result_t NET_DatagramConnectFrame (qsocket_t **outsock, const char *
 datagram_connect_accepted:
 				if (port)
 					dfunc.SetSocketPort (&datagram_connect_ctx.sock->addr, port);
+				/* Reconnect to the numeric control endpoint. The accepted game
+				 * socket may use another port, and trueaddress may be reverse DNS. */
+				q_strlcpy (datagram_connect_ctx.sock->connectaddress,
+					dfunc.AddrToString (&datagram_connect_ctx.serveraddr, false),
+					sizeof (datagram_connect_ctx.sock->connectaddress));
 
 				if (datagram_connect_ctx.synchronous)
 				{

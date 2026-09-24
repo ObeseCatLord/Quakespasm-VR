@@ -170,6 +170,7 @@ typedef struct qsocket_s
 	byte		 receiveMessage[NET_MAXMESSAGE * NET_LOOPBACKBUFFERS + NET_LOOPBACKHEADERSIZE];
 
 	struct qsockaddr addr;
+	char             connectaddress[NET_NAMELEN]; // numeric control endpoint, including its port
 	char			 trueaddress[NET_NAMELEN];	 // lazy address string
 	char			 maskedaddress[NET_NAMELEN]; // addresses for this player that may be displayed publically
 

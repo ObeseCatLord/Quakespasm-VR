@@ -84,7 +84,6 @@ typedef enum
 typedef struct
 {
 	cl_autoreconnect_state_t state;
-	unsigned int identity;
 	char endpoint[MAX_OSPATH];
 	char modname[MAX_QPATH];
 	unsigned int legacy_qsvr;
@@ -92,7 +91,6 @@ typedef struct
 } cl_autoreconnect_t;
 
 static cl_autoreconnect_t cl_autoreconnect;
-static unsigned int cl_autoreconnect_next_identity;
 static char cl_last_connect_endpoint[MAX_OSPATH];
 static unsigned int cl_last_connect_legacy_qsvr;
 static qboolean cl_last_connect_valid;
@@ -333,10 +331,7 @@ void CL_CancelAutoReconnect (void)
 {
 	NET_DatagramConnectCancel ();
 	CL_ServerModDownload_Cancel ();
-	if (++cl_autoreconnect_next_identity == 0)
-		++cl_autoreconnect_next_identity;
 	cl_autoreconnect.state = cl_autoreconnect_idle;
-	cl_autoreconnect.identity = cl_autoreconnect_next_identity;
 }
 
 static void CL_AutoReconnectFinish (qboolean failed)
@@ -388,11 +383,6 @@ void CL_AutoReconnectFrame (void)
 {
 	if (cl_autoreconnect.state == cl_autoreconnect_idle)
 		return;
-	if (cl_autoreconnect.identity != cl_autoreconnect_next_identity)
-	{
-		CL_AutoReconnectFinish (true);
-		return;
-	}
 	if (cl_autoreconnect.state == cl_autoreconnect_wait_config)
 	{
 		if (realtime >= cl_autoreconnect.deadline)
@@ -406,6 +396,9 @@ void CL_AutoReconnectFrame (void)
 
 		if (!q_strcasecmp (cl_autoreconnect.endpoint, "local"))
 		{
+			/* The game config can start a demo and freeze loading again. */
+			CL_Disconnect ();
+			SCR_EndLoadingPlaque ();
 			if (!CL_TryEstablishConnection ("local", cl_autoreconnect.legacy_qsvr))
 			{
 				Con_Warning ("Server gamedir switched to %s, but local reconnect failed.\n",
@@ -418,6 +411,7 @@ void CL_AutoReconnectFrame (void)
 			return;
 		}
 		CL_Disconnect ();
+		SCR_EndLoadingPlaque ();
 		cls.legacy_qsvr = cl_autoreconnect.legacy_qsvr;
 		if (!NET_DatagramConnectStart (cl_autoreconnect.endpoint))
 		{
@@ -485,9 +479,6 @@ static qboolean CL_StartAutoReconnect (const char *modname,
 		cl_autoreconnect.state != cl_autoreconnect_idle)
 		return false;
 
-	if (++cl_autoreconnect_next_identity == 0)
-		++cl_autoreconnect_next_identity;
-	cl_autoreconnect.identity = cl_autoreconnect_next_identity;
 	cl_autoreconnect.state = cl_autoreconnect_wait_config;
 	q_strlcpy (cl_autoreconnect.endpoint, endpoint, sizeof (cl_autoreconnect.endpoint));
 	q_strlcpy (cl_autoreconnect.modname, modname, sizeof (cl_autoreconnect.modname));
@@ -827,11 +818,12 @@ void CL_EstablishConnection (const char *host, unsigned int legacy_qsvr)
 	cl_last_connect_valid = false;
 	if (!CL_TryEstablishConnection (host, legacy_qsvr))
 		Host_Error ("CL_Connect: connect failed");
-	/* Keep the actual successful target for a direct frame-driven reconnect;
-	 * a server-list display name may not be a resolvable hostname. */
-	if (q_strcasecmp (cl_last_connect_endpoint, "local"))
+	/* Keep the numeric control endpoint, including its port. Reverse DNS is
+	 * only a display name, and the accepted game socket may use another port. */
+	if (q_strcasecmp (cl_last_connect_endpoint, "local") &&
+		NET_QSocketGetConnectAddressString (cls.netcon)[0])
 		q_strlcpy (cl_last_connect_endpoint,
-			NET_QSocketGetTrueAddressString (cls.netcon),
+			NET_QSocketGetConnectAddressString (cls.netcon),
 			sizeof (cl_last_connect_endpoint));
 	cl_last_connect_valid = cl_last_connect_endpoint[0] != '\0';
 }

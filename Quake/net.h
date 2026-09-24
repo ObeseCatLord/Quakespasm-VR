@@ -66,9 +66,9 @@ typedef enum
 qboolean NET_DatagramConnectStart (const char *host);
 net_connect_result_t NET_DatagramConnectFrame (struct qsocket_s **outsock, const char **outreason);
 void NET_DatagramConnectCancel (void);
-qboolean NET_DatagramConnectPending (void);
 
 double		NET_QSocketGetTime (const struct qsocket_s *sock);
+const char *NET_QSocketGetConnectAddressString (const struct qsocket_s *sock);
 const char *NET_QSocketGetTrueAddressString (const struct qsocket_s *sock);
 const char *NET_QSocketGetMaskedAddressString (const struct qsocket_s *sock);
 qboolean	NET_QSocketGetProQuakeAngleHack (const struct qsocket_s *sock);

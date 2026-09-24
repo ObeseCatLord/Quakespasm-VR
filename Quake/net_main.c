@@ -109,6 +109,7 @@ qsocket_t *NET_NewQSocket (void)
 	sock->isvirtual = false;
 	sock->disconnected = false;
 	sock->connecttime = net_time;
+	sock->connectaddress[0] = '\0';
 	strcpy (sock->trueaddress, "UNSET ADDRESS");
 	strcpy (sock->maskedaddress, "UNSET ADDRESS");
 	sock->driver = net_driverlevel;
@@ -169,6 +170,11 @@ int NET_QSocketGetSequenceOut (const qsocket_t *s)
 double NET_QSocketGetTime (const qsocket_t *s)
 {
 	return s->connecttime;
+}
+
+const char *NET_QSocketGetConnectAddressString (const qsocket_t *s)
+{
+	return s->connectaddress;
 }
 
 const char *NET_QSocketGetTrueAddressString (const qsocket_t *s)
