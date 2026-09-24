@@ -1829,11 +1829,12 @@ typedef struct
 
 static int prepare_3d_interleave (int x) // bin x..xabcdefghij --> 0000a00b00c00d00e00f00g00h00i00j
 {
-	x = (x | (x << 16)) & 0x030000FF;
-	x = (x | (x << 8)) & 0x0300F00F;
-	x = (x | (x << 4)) & 0x030C30C3;
-	x = (x | (x << 2)) & 0x09249249;
-	return x;
+	uint32_t bits = (uint32_t)x;
+	bits = (bits | (bits << 16)) & 0x030000FFu;
+	bits = (bits | (bits << 8)) & 0x0300F00Fu;
+	bits = (bits | (bits << 4)) & 0x030C30C3u;
+	bits = (bits | (bits << 2)) & 0x09249249u;
+	return (int)bits;
 }
 
 static void GL_SortSurfaces (void)
