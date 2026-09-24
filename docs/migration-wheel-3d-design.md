@@ -101,3 +101,22 @@ per-model target visibility and model-offset-aware 3D hit geometry remain open.
 The legacy view-anchored mode still needs its foreground depth rule; current
 scene emission uses playspace world depth in both modes. These gaps remain
 explicit parity work, not completed behavior.
+
+## Playspace ring and picking checkpoint
+
+The playspace wheel now places the first visible weapon at the center and
+subsequent weapons on five-unit rings. A partially filled ring distributes its
+weapons evenly, as in the pinned source. The frozen hand basis is retained while
+the panel moves farther forward for additional rings. Quick and co-op actions
+reserve at least the source's first-ring spacing, including an action-only
+wheel. Scene meshes and pointer targets use the same slot positions and schema
+offsets; the controller ray rejects world-blocked model targets. Per-slot flat
+labels no longer cover available meshes. Desktop and legacy wheel layout keep
+their existing path. The Linux debug build and whitespace check passed for this
+slice; the new ring interaction has not yet been exercised on a headset.
+
+Remaining wheel parity includes depth-tested 3D ammo labels, the legacy
+view-anchored foreground depth treatment and source-scale layout, representative
+mod model formats and missing-asset cases, and hover/release interaction under
+a live tracked controller. The current scene mesh adapter still skips model
+frustum culling until conservative stereo bounds account for wheel mesh scale.
