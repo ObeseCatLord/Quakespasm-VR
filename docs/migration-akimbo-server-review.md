@@ -49,5 +49,15 @@ older pose visible to `PF_aim`; the scope now pushes a masking frame even when
 admission fails and pops it without restoring entity state. The review also
 noted that zero-duration maintenance commands would fail the akimbo freshness
 gate, but that maintenance owner currently admits only a stock program, not
-QBJ3. That path remains deferred until QBJ3 can enter it. Native QC shot
-behavior still requires the focused runtime test before advertisement.
+QBJ3. That path remains deferred until QBJ3 can enter it.
+
+`tests/vr_qbj3_akimbo_runtime.sh` passes against the installed, SHA-pinned
+QBJ3 program after that hardening. Both authored firing frames produced one
+nail at the selected hand muzzle, with opposite 1996-unit/s directions, one
+ammo consumed, damage 9, original 0.08/0.09-second scheduling, and restored
+player origin, angles and QC basis. The ordinary-client stock shot also
+passed. This fixture drives a fresh private command directly into the
+production weapon-think scope; it does not prove wire admission, wall
+clamping, relocation, nested-call behavior or client paired presentation.
+Server advertisement remains disabled until those end-to-end boundaries are
+qualified and a paired client producer/render path is ready.
