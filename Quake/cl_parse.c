@@ -1885,7 +1885,13 @@ static void CL_ParseServerInfo (void)
 	*gamedir = 0;
 	if (cl.protocol_pext2 & PEXT2_PREDINFO)
 	{
-		q_strlcpy (gamedir, MSG_ReadString (), sizeof (gamedir));
+		int gamedir_start = msg_readcount;
+		size_t gamedir_length;
+
+		MSG_ReadStringBuffer (gamedir, sizeof (gamedir));
+		gamedir_length = strlen (gamedir);
+		if (msg_badread || msg_readcount - gamedir_start != (int)gamedir_length + 1)
+			Host_Error ("CL_ParseServerInfo: truncated gamedir string");
 		if (!COM_GameDirMatches (gamedir))
 		{
 			gamedirswitchwarning = true;
