@@ -129,3 +129,11 @@ model loading (misaligned access and null arguments to nonnull functions).
 The sanitizer build changes allocation and timing, and these findings do not
 identify the release-only shutdown abort. No diagnostic code was merged into
 `2.0`.
+
+The alignment findings prompted a narrow portability fix: packed sprite
+headers/intervals now load through aligned copies, and the image-resizer's
+scalar coefficient moves use byte-preserving `memcpy`. A full sanitizer build
+with only those two production-file changes loaded `mj4m1` and exited 0;
+neither prior alignment diagnostic recurred. Fifteen remaining UBSan nonnull
+argument diagnostics in the MD5 animation parser are a separate investigation.
+This does not establish an ARM runtime result or resolve the shutdown abort.

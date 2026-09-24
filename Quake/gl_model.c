@@ -4287,16 +4287,17 @@ Mod_LoadSpriteFrame
 */
 static void *Mod_LoadSpriteFrame (qmodel_t *mod, byte *mod_base, void *pin, mspriteframe_t **ppframe, int framenum)
 {
-	dspriteframe_t *pinframe;
+	dspriteframe_t inframe;
 	mspriteframe_t *pspriteframe;
+	byte			*frame_data;
 	int				width, height, size, origin[2];
 	char			name[64];
 	src_offset_t	offset; // johnfitz
 
-	pinframe = (dspriteframe_t *)pin;
+	memcpy (&inframe, pin, sizeof (inframe));
 
-	width = LittleLong (pinframe->width);
-	height = LittleLong (pinframe->height);
+	width = LittleLong (inframe.width);
+	height = LittleLong (inframe.height);
 	size = width * height;
 
 	pspriteframe = (mspriteframe_t *)Mem_Alloc (sizeof (mspriteframe_t));
@@ -4304,8 +4305,8 @@ static void *Mod_LoadSpriteFrame (qmodel_t *mod, byte *mod_base, void *pin, mspr
 
 	pspriteframe->width = width;
 	pspriteframe->height = height;
-	origin[0] = LittleLong (pinframe->origin[0]);
-	origin[1] = LittleLong (pinframe->origin[1]);
+	origin[0] = LittleLong (inframe.origin[0]);
+	origin[1] = LittleLong (inframe.origin[1]);
 
 	pspriteframe->up = origin[1];
 	pspriteframe->down = origin[1] - height;
@@ -4316,12 +4317,13 @@ static void *Mod_LoadSpriteFrame (qmodel_t *mod, byte *mod_base, void *pin, mspr
 	pspriteframe->tmax = 1;
 
 	q_snprintf (name, sizeof (name), "%s:frame%i", mod->name, framenum);
-	offset = (src_offset_t)(pinframe + 1) - (src_offset_t)mod_base; // johnfitz
+	frame_data = (byte *)pin + sizeof (inframe);
+	offset = (src_offset_t)frame_data - (src_offset_t)mod_base; // johnfitz
 	pspriteframe->gltexture = TexMgr_LoadImage (
-		mod, name, width, height, SRC_INDEXED, (byte *)(pinframe + 1), mod->name, offset,
+		mod, name, width, height, SRC_INDEXED, frame_data, mod->name, offset,
 		TEXPREF_PAD | TEXPREF_ALPHA | TEXPREF_NOPICMIP); // johnfitz -- TexMgr
 
-	return (void *)((byte *)pinframe + sizeof (dspriteframe_t) + size);
+	return frame_data + size;
 }
 
 /*
@@ -4331,16 +4333,16 @@ Mod_LoadSpriteGroup
 */
 static void *Mod_LoadSpriteGroup (qmodel_t *mod, byte *mod_base, void *pin, mspriteframe_t **ppframe, int framenum, spriteframetype_t type)
 {
-	dspritegroup_t	  *pingroup;
+	dspritegroup_t	  ingroup;
 	mspritegroup_t	  *pspritegroup;
 	int				   i, numframes;
-	dspriteinterval_t *pin_intervals;
+	byte			  *cursor;
 	float			  *poutintervals;
 	void			  *ptemp;
 
-	pingroup = (dspritegroup_t *)pin;
+	memcpy (&ingroup, pin, sizeof (ingroup));
 
-	numframes = LittleLong (pingroup->numframes);
+	numframes = LittleLong (ingroup.numframes);
 	if (type == SPR_ANGLED && numframes != 8)
 		Sys_Error ("Mod_LoadSpriteGroup: Bad # of frames: %d", numframes);
 
@@ -4350,7 +4352,7 @@ static void *Mod_LoadSpriteGroup (qmodel_t *mod, byte *mod_base, void *pin, mspr
 
 	*ppframe = (mspriteframe_t *)pspritegroup;
 
-	pin_intervals = (dspriteinterval_t *)(pingroup + 1);
+	cursor = (byte *)pin + sizeof (ingroup);
 
 	poutintervals = (float *)Mem_Alloc (numframes * sizeof (float));
 
@@ -4358,15 +4360,18 @@ static void *Mod_LoadSpriteGroup (qmodel_t *mod, byte *mod_base, void *pin, mspr
 
 	for (i = 0; i < numframes; i++)
 	{
-		*poutintervals = LittleFloat (pin_intervals->interval);
+		dspriteinterval_t ininterval;
+
+		memcpy (&ininterval, cursor, sizeof (ininterval));
+		*poutintervals = LittleFloat (ininterval.interval);
 		if (*poutintervals <= 0.0)
 			Sys_Error ("Mod_LoadSpriteGroup: interval<=0");
 
 		poutintervals++;
-		pin_intervals++;
+		cursor += sizeof (ininterval);
 	}
 
-	ptemp = (void *)pin_intervals;
+	ptemp = cursor;
 
 	for (i = 0; i < numframes; i++)
 	{
@@ -4385,23 +4390,23 @@ static void Mod_LoadSpriteModel (qmodel_t *mod, void *buffer)
 {
 	int					i;
 	int					version;
-	dsprite_t		   *pin;
+	dsprite_t			inheader;
 	msprite_t		   *psprite;
 	int					numframes;
 	int					size;
-	dspriteframetype_t *pframetype;
+	byte				*cursor;
 
-	pin = (dsprite_t *)buffer;
+	memcpy (&inheader, buffer, sizeof (inheader));
 	byte *mod_base = (byte *)buffer; // johnfitz
 
-	version = LittleLong (pin->version);
+	version = LittleLong (inheader.version);
 	if (version != SPRITE_VERSION)
 		Sys_Error (
 			"%s has wrong version number "
 			"(%i should be %i)",
 			mod->name, version, SPRITE_VERSION);
 
-	numframes = LittleLong (pin->numframes);
+	numframes = LittleLong (inheader.numframes);
 	if (numframes < 1)
 		Sys_Error ("Mod_LoadSpriteModel: Invalid # of frames: %d", numframes);
 
@@ -4411,10 +4416,10 @@ static void Mod_LoadSpriteModel (qmodel_t *mod, void *buffer)
 
 	mod->extradata[PV_QUAKE1] = (byte *)psprite;
 
-	psprite->type = LittleLong (pin->type);
-	psprite->maxwidth = LittleLong (pin->width);
-	psprite->maxheight = LittleLong (pin->height);
-	mod->synctype = (synctype_t)LittleLong (pin->synctype);
+	psprite->type = LittleLong (inheader.type);
+	psprite->maxwidth = LittleLong (inheader.width);
+	psprite->maxheight = LittleLong (inheader.height);
+	mod->synctype = (synctype_t)LittleLong (inheader.synctype);
 	psprite->numframes = numframes;
 
 	mod->mins[0] = mod->mins[1] = -psprite->maxwidth / 2;
@@ -4427,22 +4432,25 @@ static void Mod_LoadSpriteModel (qmodel_t *mod, void *buffer)
 	//
 	mod->numframes = numframes;
 
-	pframetype = (dspriteframetype_t *)(pin + 1);
+	cursor = (byte *)buffer + sizeof (inheader);
 
 	for (i = 0; i < numframes; i++)
 	{
+		dspriteframetype_t inframetype;
 		spriteframetype_t frametype;
 
-		frametype = (spriteframetype_t)LittleLong (pframetype->type);
+		memcpy (&inframetype, cursor, sizeof (inframetype));
+		frametype = (spriteframetype_t)LittleLong (inframetype.type);
+		cursor += sizeof (inframetype);
 		psprite->frames[i].type = frametype;
 
 		if (frametype == SPR_SINGLE)
 		{
-			pframetype = (dspriteframetype_t *)Mod_LoadSpriteFrame (mod, mod_base, pframetype + 1, &psprite->frames[i].frameptr, i);
+			cursor = (byte *)Mod_LoadSpriteFrame (mod, mod_base, cursor, &psprite->frames[i].frameptr, i);
 		}
 		else
 		{
-			pframetype = (dspriteframetype_t *)Mod_LoadSpriteGroup (mod, mod_base, pframetype + 1, &psprite->frames[i].frameptr, i, frametype);
+			cursor = (byte *)Mod_LoadSpriteGroup (mod, mod_base, cursor, &psprite->frames[i].frameptr, i, frametype);
 		}
 	}
 
