@@ -24,6 +24,7 @@
 
 #include "quakedef.h"
 #include "snd_codec.h"
+#include "snd_spatial.h"
 #include "bgmusic.h"
 
 #define MUSIC_DIRNAME "music"
@@ -343,6 +344,7 @@ void BGM_PlayCDtrack (byte track, qboolean looping)
 
 void BGM_Stop (void)
 {
+	Spatial_ClearMusic ();
 	if (bgmstream)
 	{
 		bgmstream->status = STREAM_NONE;
@@ -392,10 +394,16 @@ static void BGM_UpdateStream (void)
 
 	while (s_rawend < paintedtime + MAX_RAW_SAMPLES)
 	{
-		bufferSamples = MAX_RAW_SAMPLES - (s_rawend - paintedtime);
+		bufferSamples = Spatial_Active () ?
+			Spatial_MusicSpace (bgmstream->info.rate, bgmstream->info.width,
+				bgmstream->info.channels) :
+			MAX_RAW_SAMPLES - (s_rawend - paintedtime);
+		if (bufferSamples <= 0)
+			return;
 
 		/* decide how much data needs to be read from the file */
-		fileSamples = bufferSamples * bgmstream->info.rate / shm->speed;
+		fileSamples = Spatial_Active () ? bufferSamples :
+			bufferSamples * bgmstream->info.rate / shm->speed;
 		if (!fileSamples)
 			return;
 
@@ -417,7 +425,19 @@ static void BGM_UpdateStream (void)
 
 		if (res > 0) /* data: add to raw buffer */
 		{
-			S_RawSamples (fileSamples, bgmstream->info.rate, bgmstream->info.width, bgmstream->info.channels, raw, bgmvolume.value);
+			if (Spatial_Active ())
+			{
+				if (!Spatial_RawSamples (fileSamples, bgmstream->info.rate,
+					bgmstream->info.width, bgmstream->info.channels, raw, bgmvolume.value))
+				{
+					Con_Printf ("Steam Audio music queue failed; stopping stream\n");
+					BGM_Stop ();
+					return;
+				}
+			}
+			else
+				S_RawSamples (fileSamples, bgmstream->info.rate, bgmstream->info.width,
+					bgmstream->info.channels, raw, bgmvolume.value);
 			did_rewind = false;
 		}
 		else if (res == 0) /* EOF */
@@ -442,7 +462,18 @@ static void BGM_UpdateStream (void)
 			}
 			else
 			{
-				BGM_Stop ();
+				if (Spatial_Active ())
+				{
+					/* Normal EOF should drain queued music and the resampler
+					 * tail. Explicit stop/track change still clears both. */
+					Spatial_FinishMusic ();
+					bgmstream->status = STREAM_NONE;
+					S_CodecCloseStream (bgmstream);
+					bgmstream = NULL;
+					s_rawend = 0;
+				}
+				else
+					BGM_Stop ();
 				return;
 			}
 		}

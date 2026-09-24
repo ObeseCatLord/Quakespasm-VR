@@ -24,6 +24,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 // cl_parse.c  -- parse a message received from the server
 
 #include "quakedef.h"
+#include "snd_spatial_world.h"
 #include "pmove.h"
 #include "bgmusic.h"
 #include "steam.h"
@@ -1991,6 +1992,7 @@ static void CL_ParseServerInfo (void)
 	cl.entities[0].model = cl.worldmodel = cl.model_precache[1];
 
 	R_NewMap ();
+	SpatialWorld_NewMap ();
 
 	// johnfitz -- clear out string; we don't consider identical
 	// messages to be duplicates if the map has changed in between

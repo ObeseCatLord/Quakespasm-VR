@@ -26,6 +26,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 
 #include "quakedef.h"
 #include "snd_codec.h"
+#include "snd_spatial.h"
 #include "bgmusic.h"
 #include "voice.h"
 
@@ -188,6 +189,7 @@ void S_Init (void)
 	Cvar_RegisterVariable (&snd_filterquality);
 	Cvar_RegisterVariable (&snd_waterfx);
 	Cvar_RegisterVariable (&snd_pauselooping);
+	Spatial_Register ();
 
 	if (safemode || COM_CheckParm ("-nosound"))
 		return;
@@ -219,10 +221,14 @@ void S_Init (void)
 	num_sfx = 0;
 
 	snd_initialized = true;
+	(void)Spatial_Init ();
 
 	S_Startup ();
 	if (sound_started == 0)
+	{
+		Spatial_Shutdown ();
 		return;
+	}
 
 	// provides a tick sound until washed clean
 	//	if (shm->buffer)
@@ -243,7 +249,10 @@ void S_Init (void)
 void S_Shutdown (void)
 {
 	if (!sound_started)
+	{
+		Spatial_Shutdown ();
 		return;
+	}
 
 	Voice_Shutdown ();
 
@@ -254,6 +263,7 @@ void S_Shutdown (void)
 
 	SNDDMA_Shutdown ();
 	shm = NULL;
+	Spatial_Shutdown ();
 }
 
 // =======================================================================
@@ -266,6 +276,7 @@ static void S_FlushOldestSounds (void)
 
 	for (int i = 0; i < MAX_SOUNDS; ++i)
 	{
+		Spatial_ForgetCache (known_sfx[i].cache);
 		SAFE_FREE (known_sfx[i].cache);
 	}
 
@@ -519,6 +530,8 @@ void S_StartSound (int entnum, int entchannel, sfx_t *sfx, vec3_t origin, float 
 			break;
 		}
 	}
+	if (Spatial_Active ())
+		Spatial_Start ((int)(target_chan - snd_channels), sc, target_chan->pos);
 
 unlock_mutex:
 	SDL_UnlockMutex (snd_mutex);
@@ -530,12 +543,13 @@ void S_StopSound (int entnum, int entchannel)
 
 	SDL_LockMutex (snd_mutex);
 
-	for (i = 0; i < MAX_DYNAMIC_CHANNELS; i++)
+	for (i = NUM_AMBIENTS; i < NUM_AMBIENTS + MAX_DYNAMIC_CHANNELS; i++)
 	{
 		if (snd_channels[i].entnum == entnum && snd_channels[i].entchannel == entchannel)
 		{
 			snd_channels[i].end = 0;
 			snd_channels[i].sfx = NULL;
+			Spatial_Stop (i);
 			goto unlock_mutex;
 		}
 	}
@@ -562,7 +576,10 @@ void S_StopAllSounds (qboolean clear, qboolean keep_statics)
 	{
 		if (!keep_statics || snd_channels[i].entnum || !snd_channels[i].sfx || !S_LoadSound (snd_channels[i].sfx) ||
 			S_LoadSound (snd_channels[i].sfx)->loopstart == -1)
+		{
 			memset (&snd_channels[i], 0, sizeof (channel_t));
+			Spatial_Stop (i);
+		}
 		else
 		{
 			snd_channels[i].pos = 0;
@@ -592,6 +609,12 @@ void S_ClearBuffer (void)
 		goto unlock_mutex;
 
 	S_ClearFilteredLevels ();
+	if (Spatial_Active ())
+	{
+		Spatial_Reset ();
+		paintedtime = soundtime = s_rawend = 0;
+		goto unlock_mutex;
+	}
 
 	SNDDMA_LockBuffer ();
 	if (!shm->buffer)
@@ -654,6 +677,8 @@ void S_StaticSound (sfx_t *sfx, vec3_t origin, int vol, float attenuation)
 	ss->end = paintedtime + sc->length;
 
 	SND_Spatialize (ss);
+	if (Spatial_Active ())
+		Spatial_Start ((int)(ss - snd_channels), sc, 0);
 
 unlock_mutex:
 	SDL_UnlockMutex (snd_mutex);
@@ -758,6 +783,11 @@ void S_RawSamples (int samples, int rate, int width, int channels, byte *data, f
 	int	  src, dst;
 	float scale;
 	int	  intVolume;
+	if (Spatial_Active ())
+	{
+		(void)Spatial_RawSamples (samples, rate, width, channels, data, volume);
+		return;
+	}
 
 	if (s_rawend < paintedtime)
 		s_rawend = paintedtime;
@@ -840,6 +870,7 @@ void S_Update (vec3_t origin, vec3_t forward, vec3_t right, vec3_t up)
 	int		   total;
 	channel_t *ch;
 	channel_t *combine;
+	qboolean publish_spatial = false;
 
 	Voice_UpdateSpatialization (origin, right);
 	Voice_Frame ();
@@ -847,6 +878,15 @@ void S_Update (vec3_t origin, vec3_t forward, vec3_t right, vec3_t up)
 	SDL_LockMutex (snd_mutex);
 	if (!sound_started || (snd_blocked > 0))
 		goto unlock_mutex;
+	if (Spatial_Active ())
+	{
+		paintedtime = soundtime = Spatial_Clock ();
+		if (paintedtime > 0x40000000)
+		{
+			S_StopAllSounds (true, true);
+			paintedtime = soundtime = Spatial_Clock ();
+		}
+	}
 
 	VectorCopy (origin, listener_origin);
 	VectorCopy (forward, listener_forward);
@@ -871,7 +911,7 @@ void S_Update (vec3_t origin, vec3_t forward, vec3_t right, vec3_t up)
 		// try to combine static sounds with a previous channel of the same
 		// sound effect so we don't mix five torches every frame
 
-		if (i >= MAX_DYNAMIC_CHANNELS + NUM_AMBIENTS)
+		if (!Spatial_Active () && i >= MAX_DYNAMIC_CHANNELS + NUM_AMBIENTS)
 		{
 			// see if it can just use the last one
 			if (combine && combine->sfx == ch->sfx)
@@ -929,10 +969,43 @@ void S_Update (vec3_t origin, vec3_t forward, vec3_t right, vec3_t up)
 	//	BGM_Update();	// moved to the main loop just before S_Update ()
 
 	// mix some sound
-	S_Update_ ();
+#ifdef USE_STEAMAUDIO
+	if (Spatial_Active ())
+	{
+		for (i = NUM_AMBIENTS; i < total_channels; ++i)
+		{
+			sa_progress_t progress;
+			sfxcache_t *cache;
+			ch = &snd_channels[i];
+			if (!ch->sfx)
+				continue;
+			Spatial_GetProgress (i, &progress);
+			if (!progress.generation ||
+				progress.generation != Spatial_ChannelGeneration (i))
+				continue;
+			if (Spatial_Finished (i) == progress.generation)
+			{
+				ch->sfx = NULL;
+				Spatial_Stop (i);
+				continue;
+			}
+			cache = ch->sfx->cache;
+			if (cache)
+			{
+				ch->pos = CLAMP (0, progress.position, cache->length);
+				ch->end = paintedtime + q_max (0, cache->length - ch->pos);
+			}
+		}
+		publish_spatial = true;
+	}
+	else
+#endif
+		S_Update_ ();
 
 unlock_mutex:
 	SDL_UnlockMutex (snd_mutex);
+	if (publish_spatial)
+		Spatial_Update ();
 }
 
 static void GetSoundtime (void)
@@ -966,7 +1039,7 @@ static void GetSoundtime (void)
 
 void S_ExtraUpdate (void)
 {
-	if (snd_noextraupdate.value)
+	if (snd_noextraupdate.value || Spatial_Active ())
 		return; // don't pollute timings
 	S_Update_ ();
 }
@@ -977,6 +1050,8 @@ static void S_Update_ (void)
 	int			 samps;
 
 	if (!snd_initialized)
+		return;
+	if (Spatial_Active ())
 		return;
 
 	SDL_LockMutex (snd_mutex);
@@ -1052,6 +1127,7 @@ S_ClearAll
 void S_ClearAll (void)
 {
 	SDL_LockMutex (snd_mutex);
+	Spatial_ClearCache ();
 
 	for (int i = 0; i < num_sfx; ++i)
 	{

@@ -22,6 +22,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 // cl_main.c  -- client main loop
 
 #include "quakedef.h"
+#include "snd_spatial_world.h"
 #include "bgmusic.h"
 #include "voice.h"
 #include "pmove.h"
@@ -144,6 +145,7 @@ CL_ClearState
 */
 void CL_ClearState (void)
 {
+	SpatialWorld_Clear ();
 	V_ResetTrackedAim ();
 	if (!sv.active)
 		Host_ClearMemory ();
@@ -182,6 +184,7 @@ This is also called on Host_Error, so it shouldn't cause any errors
 */
 void CL_Disconnect (void)
 {
+	SpatialWorld_Clear ();
 	CL_ResetVRIKState ();
 	CL_ResetVoiceTransportState ();
 	Voice_ResetConnection ();

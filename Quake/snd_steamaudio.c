@@ -491,7 +491,12 @@ static void render_block(sa_renderer_t *r)
         r->last_self_gain = r->render_self_gain;
         sa_atomic_set(&q->read, read);
     }
-    /* Room simulation and rendering remain a separate stage for later integration. */
+    /* World geometry and simulation are owned by the room worker. The audio
+     * callback consumes only its latest bounded effect parameters. Music is
+     * added afterward so it remains dry, matching the source mixer. */
+    if (r->room)
+        SAR_Render(r->room, r->room_send, r->voice_send, r->mixed,
+            &r->render_listener, &r->render_settings);
     {
         sa_ring_t *q = &r->music;
         int read = sa_atomic_get(&q->read), write = sa_atomic_get(&q->write);

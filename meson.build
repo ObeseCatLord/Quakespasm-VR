@@ -392,6 +392,7 @@ if steam_audio_opt.enabled() or (steam_audio_opt.auto() and steam_audio_paths_se
         'Quake/snd_steamaudio.c',
         'Quake/snd_room.c',
         'Quake/snd_spatial.c',
+        'Quake/snd_spatial_world.c',
     ]
     cflags += [
         '-DUSE_STEAMAUDIO',
