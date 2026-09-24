@@ -3927,7 +3927,8 @@ static int M_Mods_CatalogueEntry (int match, addon_catalog_entry_t *copy)
 {
 	if (match < 0 || match >= num_mods)
 		return -1;
-	if (copy) *copy = mods_catalogue_entries[match];
+	if (copy)
+		*copy = mods_catalogue_entries[match];
 	return mods_catalogue_indices[match];
 }
 
@@ -3975,7 +3976,8 @@ static void M_Mods_UpdateFilter (void)
 			const addon_catalog_entry_t *item = AddonCatalog_Entry (i);
 			if (M_Mods_CatalogueMatches (item))
 			{
-			mods_catalogue_indices[count] = i; mods_catalogue_entries[count++] = *item;
+				mods_catalogue_indices[count] = i;
+				mods_catalogue_entries[count++] = *item;
 			}
 		}
 		num_mods = count;
@@ -4024,7 +4026,8 @@ static void M_Mods_RebuildInstalled (void)
 static qboolean M_Mods_IsInstalledGameDir (const char *gamedir)
 {
 	for (filelist_item_t *item = modlist; item; item = item->next)
-		if (!q_strcasecmp (item->name, gamedir)) return true;
+		if (!q_strcasecmp (item->name, gamedir))
+			return true;
 	return false;
 }
 
@@ -4032,13 +4035,17 @@ static void M_Mods_SelectInstalled (const char *gamedir)
 {
 	int i;
 	M_Mods_SetCatalogue (false);
-	for (i = 0; i < num_mods && q_strcasecmp (mods_filtered[i]->name, gamedir); ++i) { /* search */ }
+	for (i = 0; i < num_mods; ++i)
+		if (!q_strcasecmp (mods_filtered[i]->name, gamedir))
+			break;
 	if (i == num_mods)
 	{
 		/* Catalogue filters may match author or description instead of the mod. */
 		mods_search[0] = '\0';
 		M_Mods_UpdateFilter ();
-		for (i = 0; i < num_mods && q_strcasecmp (mods_filtered[i]->name, gamedir); ++i) { /* search */ }
+		for (i = 0; i < num_mods; ++i)
+			if (!q_strcasecmp (mods_filtered[i]->name, gamedir))
+				break;
 	}
 	if (i < num_mods)
 	{
@@ -4118,8 +4125,10 @@ static void M_Mods_FinishCatalogueInstall (void)
 		M_Mods_UpdateFilter ();
 		if (mods_catalogue_view)
 		{
-			for (i = 0; i < num_mods && q_strcasecmp (mods_catalogue_entries[i].gamedir,
-				mods_catalogue_approved.gamedir); ++i) { /* locate the newly installed row */ }
+			for (i = 0; i < num_mods; ++i)
+				if (!q_strcasecmp (mods_catalogue_entries[i].gamedir,
+					mods_catalogue_approved.gamedir))
+					break;
 			if (i < num_mods)
 				mods_cursor = i;
 		}
