@@ -99,3 +99,16 @@ finding. The cause remains unresolved, including whether the Vulkan driver,
 shutdown ordering, or earlier application memory corruption is responsible.
 The old screenshot-task teardown race was already addressed; this evidence
 does not identify a recurrence of that same race.
+
+A debugger inspection of the failed run's core placed detection in NVIDIA
+process-exit cleanup **after** engine shutdown returned. A diagnostic binary
+from the frozen `2.0` commit skipped only final pipeline/stereo-layout
+destruction: three of four runs still aborted, versus two of four unchanged
+control runs. That rules out those calls as necessary triggers; the diagnostic
+binary is not part of branch `2.0`. Four additional `-nosound` runs produced
+three aborts, so active SDL sound is not necessary either. These small samples
+do not identify the earlier corrupting operation. The three sanitizer runs
+cannot exclude mimalloc-managed engine corruption because this build did not
+enable mimalloc's ASan allocation tracking. A surviving Vulkan instance,
+device, surface and swapchain at process exit make final driver cleanup a
+priority boundary for further investigation, but the donor also retains them.
