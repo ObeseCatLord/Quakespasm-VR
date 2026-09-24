@@ -112,3 +112,10 @@ cannot exclude mimalloc-managed engine corruption because this build did not
 enable mimalloc's ASan allocation tracking. A surviving Vulkan instance,
 device, surface and swapchain at process exit make final driver cleanup a
 priority boundary for further investigation, but the donor also retains them.
+Four further runs of the unmodified vkQuake donor on the same disposable
+`mj4m1` fixture exited 0, 134, 134, and 134; all loaded the map, and all
+nonzero exits showed the same glibc corruption abort. The failure is therefore
+reproducible on the donor baseline too, so these runs do not support calling
+it a `2.0` regression. They also do not prove a common root cause. Keep the
+affected runs out of load-speed comparisons and investigate teardown at the
+shared vkQuake/Vulkan boundary.
