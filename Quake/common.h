@@ -352,6 +352,7 @@ const char *COM_GetWriteRoot (void);
 /* True when pak0.pak exists for a game directory in any mounted content root. */
 qboolean COM_GameDirHasPak0 (const char *dir);
 qboolean COM_ValidateAddonPackFile (const char *path, int expected_size);
+qboolean COM_ValidateAddonPackSequence (const char *dir);
 qboolean	COM_GetLegacySaveDir (char *dst, size_t dstsize);
 
 // opens a file in the per-user preferences dir (%APPDATA%\vkQuake on Windows)

@@ -2890,9 +2890,9 @@ static pack_t *COM_LoadPackFile (const char *packfile, int packhandle, qfilesize
 	return pack;
 }
 
-/* Validate downloaded add-on archives using the same on-disk PACK structures
- * as the mount path, without adding the file to the search path. */
-qboolean COM_ValidateAddonPackFile (const char *path, int expected_size)
+/* Validate on-disk PACK files without adding them to the search path. */
+static qboolean COM_ValidatePackFile (const char *path, qfilesize_t expected_size,
+	qboolean require_files)
 {
 	dpackheader_t header;
 	dpackfile_t *directory = NULL;
@@ -2901,7 +2901,7 @@ qboolean COM_ValidateAddonPackFile (const char *path, int expected_size)
 	int dirofs, dirlen, count;
 	qboolean valid = false;
 
-	if (!path || expected_size <= 0)
+	if (!path || expected_size < 0)
 		return false;
 	file = Sys_fopen (path, "rb");
 	if (!file)
@@ -2915,20 +2915,24 @@ qboolean COM_ValidateAddonPackFile (const char *path, int expected_size)
 
 	dirofs = LittleLong (header.dirofs);
 	dirlen = LittleLong (header.dirlen);
-	if (dirofs < (int)sizeof (header) || dirlen <= 0 ||
+	if (dirofs < (int)sizeof (header) || dirlen < 0 ||
+		(require_files && dirlen == 0) ||
 		dirlen % (int)sizeof (dpackfile_t) != 0)
 		goto done;
 	count = dirlen / (int)sizeof (dpackfile_t);
-	if (count <= 0 || count > MAX_FILES_IN_PACK ||
+	if ((require_files && count == 0) || count > MAX_FILES_IN_PACK ||
 		dirlen > MAX_FILES_IN_PACK * (int)sizeof (dpackfile_t) ||
 		(qfilesize_t)dirofs > filesize ||
 		(qfilesize_t)dirlen > filesize - (qfilesize_t)dirofs)
 		goto done;
 
-	directory = (dpackfile_t *)malloc ((size_t)dirlen);
-	if (!directory || Sys_fseek (file, dirofs, SEEK_SET) != 0 ||
-		fread (directory, 1, (size_t)dirlen, file) != (size_t)dirlen)
-		goto done;
+	if (dirlen)
+	{
+		directory = (dpackfile_t *)malloc ((size_t)dirlen);
+		if (!directory || Sys_fseek (file, dirofs, SEEK_SET) != 0 ||
+			fread (directory, 1, (size_t)dirlen, file) != (size_t)dirlen)
+			goto done;
+	}
 	if (!COM_ValidatePackDirectoryEntries (directory, count, filesize))
 		goto done;
 	valid = true;
@@ -2937,6 +2941,40 @@ done:
 	free (directory);
 	fclose (file);
 	return valid;
+}
+
+qboolean COM_ValidateAddonPackFile (const char *path, int expected_size)
+{
+	/* Downloads must match the catalogue byte count and contain at least one
+	 * file; existing numbered packs may validly contain an empty directory. */
+	return expected_size > 0 &&
+		COM_ValidatePackFile (path, (qfilesize_t)expected_size, true);
+}
+
+qboolean COM_ValidateAddonPackSequence (const char *dir)
+{
+	int i, handle;
+	int path_length;
+	char path[MAX_OSPATH];
+	qfilesize_t filesize;
+
+	if (!dir || !*dir)
+		return false;
+
+	/* pak0 is the validated temporary download that will be published next.
+	 * Match COM_AddGameDirectoryRoot's consecutive pak1, pak2, ... walk. */
+	for (i = 1; ; i++)
+	{
+		path_length = q_snprintf (path, sizeof (path), "%s/pak%i.pak", dir, i);
+		if (path_length < 0 || (size_t)path_length >= sizeof (path))
+			return false;
+		filesize = Sys_FileOpenRead (path, &handle);
+		if (filesize < 0)
+			return true;
+		Sys_FileClose (handle);
+		if (!COM_ValidatePackFile (path, filesize, false) || i == INT_MAX)
+			return false;
+	}
 }
 
 /* Keep this opt-in source as narrow as the inherited product: the official

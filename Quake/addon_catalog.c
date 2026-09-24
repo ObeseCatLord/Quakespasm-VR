@@ -483,6 +483,14 @@ static int AddonCatalog_InstallThread (void *userdata)
 		return 1;
 	}
 	final_exists = (Sys_FileType (final) & FS_ENT_FILE) != 0;
+	if (!final_exists && !COM_ValidateAddonPackSequence (dir))
+	{
+		Sys_remove (tmp);
+		AddonCatalog_FinishOperation (job->operation_id, ADDON_CATALOG_ERROR,
+			"An existing add-on pack is invalid", "Add-on download cancelled");
+		free(job);
+		return 1;
+	}
 
 	/* Commit point: after this marker, CancelOperation ignores this operation.
 	 * Complete cleanup or rename outside the UI mutex before publishing a result.

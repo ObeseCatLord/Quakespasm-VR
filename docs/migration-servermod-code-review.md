@@ -57,9 +57,13 @@ their dispositions are:
 | Reverse DNS display name can replace the reconnect target and lose the original control port; resolving that name in the frame callback can stall VR. | **Adopted:** keep the accepted socket's numeric control endpoint with port separately from its display address. A real-binary local connection returned `control=127.0.0.1:28998` while its display address was `localhost`. |
 | Catalogue finalization performs filesystem work while holding its UI mutex and can publish completion before cleanup. | **Adopted:** move filesystem work outside that mutex and publish terminal status after cleanup, while retaining an explicit cancellation commit point. |
 
-The review also identified an older gap: valid downloaded `pak0.pak` can expose
-an already-present malformed `pak1.pak` when the mod is mounted. Preflight
-existing numbered packages through the filesystem owner before automatic
-mounting. This is separate from validation of the new download and remains
-open in this checkpoint. No headset, Windows or ARM claim follows from this
-review.
+The review also identified an older gap: valid downloaded `pak0.pak` could
+expose an already-present malformed `pak1.pak` when the mod mounted. The
+installer now preflights the consecutive existing `pak1+` sequence before
+publishing `pak0`, using the mount path's PACK structures and entry checks.
+The downloaded `pak0` remains size-bound and nonempty; an empty existing pack
+remains valid, as it is for the mount path. A disposable fixture rejected bad
+`pak1` and `pak2`, accepted an empty `pak1`, stopped at the first numbering
+gap, and rejected an empty download. Linux curl and no-curl builds pass. This
+does not prevent another process from changing a file after preflight, and
+does not qualify headset, Windows or ARM behavior.
