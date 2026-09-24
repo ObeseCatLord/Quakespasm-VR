@@ -128,24 +128,36 @@ static const sv_vr_stock_axe_descriptor_t *SV_VRStockAxeDescriptor(void)
 	return NULL;
 }
 
-/* id1 is the only stock program whose immersive attack path is enabled in
- * this vertical. The other identities remain useful for rejecting a familiar
- * function layout, but do not grant a negotiated melee profile. */
+/* Only audited id1 and Hipnotic program images grant a negotiated melee
+ * profile. Rogue remains closed: its axe uses a different weapon bit and its
+ * attack prelude has rune side effects. */
 static const sv_vr_stock_axe_descriptor_t *SV_VRStockAxeMeleeDescriptor(void)
 {
-	/* id1/pak0.pak progs.dat: 340014 original bytes. A CRC16 and a few
-	 * function pins are not enough to authorize borrowed QuakeC side effects. */
+	/* Compare the loader-cached SHA-256 values. The CRC, descriptor, and
+	 * function/statement pins alone do not authorize borrowed QC side effects. */
 	static const byte id1_sha256[32] = {
 		0xf9, 0xa2, 0xd6, 0x4e, 0x84, 0xa6, 0x53, 0x02,
 		0x81, 0xc0, 0x16, 0xf1, 0xa5, 0x55, 0x79, 0x24,
 		0x37, 0x0f, 0xdd, 0x9a, 0x1a, 0x10, 0xeb, 0x6e,
 		0x78, 0x5d, 0x49, 0x13, 0x52, 0xff, 0xac, 0xf0
 	};
+	static const byte hipnotic_sha256[32] = {
+		0x39, 0x41, 0x8a, 0xa9, 0xa7, 0xcf, 0xcc, 0xcb,
+		0xc3, 0xc1, 0x95, 0xcd, 0x75, 0x7c, 0x9f, 0x6a,
+		0x20, 0xc0, 0xb1, 0x0b, 0xa4, 0x0c, 0xe7, 0x43,
+		0x33, 0xde, 0x42, 0x77, 0x14, 0x4d, 0xcb, 0x16
+	};
 	const sv_vr_stock_axe_descriptor_t *descriptor = SV_VRStockAxeDescriptor();
-	return descriptor && descriptor->progscrc == 3064 &&
-		qcvm->progssize == 340014 &&
-		!memcmp (qcvm->progssha256, id1_sha256, sizeof (id1_sha256)) ?
-		descriptor : NULL;
+	if (!descriptor)
+		return NULL;
+	if (descriptor->progscrc == 3064 && qcvm->progssize == 340014 &&
+		!memcmp (qcvm->progssha256, id1_sha256, sizeof (id1_sha256)))
+		return descriptor;
+	if (descriptor->progscrc == 48616 && qcvm->progssize == 511042 &&
+		!memcmp (qcvm->progssha256, hipnotic_sha256,
+			sizeof (hipnotic_sha256)))
+		return descriptor;
+	return NULL;
 }
 
 #endif /* QS_VR_MELEE_STOCK_QC_H */

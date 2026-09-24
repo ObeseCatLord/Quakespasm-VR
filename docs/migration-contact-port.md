@@ -215,6 +215,9 @@ not substitutes for physical swing and native combat outcomes in game.
 The independent `sv_immersive_melee` policy and exact id1-only offer are kept.
 The new server policy defaults off while this stock-axe adapter is being
 qualified; an explicit server opt-in can offer it on a development session.
+The same native leaf adapter now admits the exact packed Hipnotic stock axe
+program through its loader-cached SHA-256 and existing function/statement
+pins. Rogue remains closed because its axe selector and rune prelude differ.
 Runtime qualification still needs a late-contact
 swing, held-trigger maintenance, impulse/tracking fallback, wall impact, and
 one native damage/cooldown/quad result in both server physics paths.
