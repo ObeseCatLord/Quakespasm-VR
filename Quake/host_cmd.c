@@ -1204,6 +1204,7 @@ static void Host_Noclip_Off (void)
 	{
 		VectorCopy (origin, sv_player->v.origin);
 		VectorCopy (origin, sv_player->v.oldorigin);
+		SV_VRContactPlayerRelocated (sv_player);
 	}
 
 	sv_player->v.movetype = MOVETYPE_WALK;
@@ -1305,6 +1306,7 @@ static void Host_SetPos_f (void)
 	sv_player->v.origin[0] = atof (Cmd_Argv (1));
 	sv_player->v.origin[1] = atof (Cmd_Argv (2));
 	sv_player->v.origin[2] = atof (Cmd_Argv (3));
+	SV_VRContactPlayerRelocated (sv_player);
 
 	if (Cmd_Argc () == 7)
 	{

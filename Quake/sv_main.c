@@ -46,6 +46,13 @@ cvar_t sv_voice = {"sv_voice", "1", CVAR_SERVERINFO};
 cvar_t sv_coop_shared_pickups = {"sv_coop_shared_pickups", "-1", CVAR_ARCHIVE | CVAR_NOTIFY | CVAR_SERVERINFO};
 cvar_t sv_coop_respawn_keep_weapons_ammo = {"sv_coop_respawn_keep_weapons_ammo", "-1", CVAR_ARCHIVE | CVAR_NOTIFY | CVAR_SERVERINFO};
 
+qboolean SV_VRWeaponCollisionEnabled (void)
+{
+	return sv_weapon_collision.value < 0.0f ?
+		(cls.state != ca_dedicated && svs.maxclients == 1) :
+		(sv_weapon_collision.value > 0.0f);
+}
+
 extern cvar_t nomonsters;
 
 #define VRIK_SVC_V2_MESSAGE_BYTES (1 + 2 + 4 + VRIK_POSE_WIRE_BYTES)
@@ -712,6 +719,7 @@ void SV_PrivateWalkTrialSelectAtBegin (client_t *client)
 	}
 
 	SV_ResetPrivateCommandQueue (client);
+	SV_ResetPrivateVRContactState (client);
 	client->private_latest_buttons = 0;
 	client->private_latched_buttons = 0;
 	client->private_latched_impulse = 0;
@@ -2457,6 +2465,7 @@ void SV_SendServerinfo (client_t *client)
 	qboolean	 cantruncate;
 	qboolean	 truncated = false;
 
+	SV_ResetPrivateVRContactState (client);
 	client->weapon_contact_last_mode = -1;
 	client->spawned = false; // need prespawn, spawn, etc
 	client->voice_protocol_offered = false;
@@ -2812,6 +2821,7 @@ void SV_ConnectClient (int clientnum)
 		memcpy (spawn_parms, client->spawn_parms, sizeof (spawn_parms));
 	memset (client, 0, sizeof (*client));
 	SV_ResetPrivateCommandQueue (client);
+	SV_ResetPrivateVRContactState (client);
 	client->netconnection = netconnection;
 	client->voice_generation = SV_NextVoiceGeneration ();
 
@@ -4019,11 +4029,8 @@ static void SV_AppendWeaponContactProtocol (client_t *client)
 		!client->spawned || client->protocol_qsvr != QSVR_PROTOCOL_PINNED)
 		return;
 
-	mode = sv_weapon_collision.value < 0.0f ?
-		(cls.state != ca_dedicated && svs.maxclients == 1 ?
-		VR_WEAPON_CONTACT_CAP_COLLISION : 0u) :
-		(sv_weapon_collision.value > 0.0f ?
-		VR_WEAPON_CONTACT_CAP_COLLISION : 0u);
+	mode = SV_VRWeaponCollisionEnabled () ?
+		VR_WEAPON_CONTACT_CAP_COLLISION : 0u;
 	if (client->weapon_contact_last_mode == (int)mode ||
 		client->message.overflowed || client->message.cursize < 0 ||
 		client->message.maxsize <= 0 ||
@@ -4524,7 +4531,10 @@ void SV_SpawnServer (const char *server)
 	SV_CoopRespawnInventoryResetState ();
 	/* Commands from the previous level must never survive into its successor. */
 	for (i = 0; i < svs.maxclients; i++)
+	{
 		SV_ResetPrivateCommandQueue (&svs.clients[i]);
+		SV_ResetPrivateVRContactState (&svs.clients[i]);
+	}
 
 	//
 	// make cvars consistant

@@ -307,6 +307,16 @@ typedef struct client_s
 	unsigned int private_cmd_queue_head;
 	unsigned int private_cmd_queue_count;
 	unsigned int private_cmd_queue_msec;
+	/* Authoritative physical button contact follows queued command ownership;
+	 * this cursor and one previous pose are only continuity state. */
+	int private_vr_contact_last_sequence;
+	qboolean private_vr_contact_cursor_valid;
+	qboolean private_vr_contact_spawn_seen;
+	qboolean private_vr_contact_previous_valid;
+	vr_weapon_contact_t private_vr_contact_previous;
+	vec3_t private_vr_contact_body_origin;
+	double private_vr_contact_previous_received;
+	int private_vr_contact_button[2];
 	double	 lastmovetime;
 	unsigned int private_latest_buttons;
 	unsigned int private_latched_buttons;
@@ -507,6 +517,10 @@ void SV_ConnectClient (int clientnum); // called from the netcode to add new cli
 void SV_CheckForNewClients (void);
 void SV_RunClients (void);
 void SV_ResetPrivateCommandQueue (client_t *client);
+void SV_ResetPrivateVRContactState (client_t *client);
+void SV_VRContactPlayerSetOrigin (edict_t *ent, const vec3_t origin);
+void SV_VRContactPlayerRelocated (edict_t *ent);
+qboolean SV_VRWeaponCollisionEnabled (void);
 void SV_ReceiveVRIKPoseV2 (client_t *client, const vrik_v2_pose_t *pose,
 	const unsigned char body[VRIK_V2_BODY_BYTES]);
 void SV_ReceiveVRIKPoseV3 (client_t *client, const vrik_codec_pose_t *pose);

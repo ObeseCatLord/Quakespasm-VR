@@ -91,3 +91,57 @@ descriptor and the target trace-builtin seam checked before coding. The narrow
 proof exercises damage, whiff, recovery, button guards, redundant/batched input,
 tracking loss, relocation, left-handedness and movement-independent speed.
 Physical headset equivalence and all mod profiles remain later gates.
+
+## Model-data seam found during implementation
+
+The donor's edge producer reads two vertices from the verified ready pose of
+the original held model (`vr.c:VR_GetRawWeaponEdge`) and checks exact source
+size/CRC and alias topology before doing so. The target still loads the original
+MDL before optional MD3/MD5 replacements (`gl_model.c:Mod_LoadModel`), but its
+retained `aliashdr_t` has no CPU `vertexes` stream or source-file identity
+fields (`gl_model.h:aliashdr_t`); `Mod_CalcAliasBounds` consumes the classic
+`poseverts` while loading. A pathname or current Vulkan vertex buffer is not
+an equivalent identity/edge proof. The narrow adapter should validate the
+original loaded bytes once at that loader boundary and retain only the verified
+profile's two ready-pose edge coordinates and identity alongside the model's
+lifetime. This avoids a second model loader or retaining whole pose streams.
+Enhanced replacements need separate geometry/animation pinning before melee
+admission; until then they retain native trigger behavior.
+
+## Collision-button implementation checkpoint
+
+The first contact producer now sends a single anatomical hand's raw grip,
+base and calibrated muzzle tip for stock ranged viewmodels when the private
+server offers COLLISION and the local option is enabled. The existing private
+codec transfers those body-relative fields. It uses a conservative physical
+speed bound from OpenXR velocities; that bound is **not** an immersive-melee
+strike speed. An explicit snap/180 turn or input reset sends an inactive
+contact sample to break server history. No MELEE capability is advertised.
+
+The server uses its accepted private-command queue, with one contact cursor
+separate from movement retirement. Default frame physics drains through the
+captured completed sequence after PostThink; the restricted WALK trial consumes
+only a real command after impacts/triggers and before its PostThink. Two
+consecutive valid samples are required. Bounded point traces cover the weapon
+shaft, and both eye-to-grip and grip-to-button visibility are checked. Only a
+`func_button` whose original zero-parameter `button_touch` is installed can
+receive the native QC callback, once per entry. The callback runs outside the
+borrowed muzzle-origin scope and restores QC `self`, `other` and `time`.
+
+An Astra xhigh read-only code review found four defects in the first patch;
+the integration pass checked its source claims and applied these dispositions:
+
+| Finding | Disposition |
+| --- | --- |
+| A teleport callback cleared history but allowed already-accepted later contacts to rearm. | **Adopt.** Invalidate contact through the accepted-command cursor, retaining the movement queue; hook player `setorigin` and direct host placement. A callback that moves/kills the player stops further contact while the ordinary death observer can still run. Direct QC writes to player origin outside these hooks remain a qualification gap. |
+| Snap turning can create an artificial physical sweep. | **Adopt.** Suppress one outgoing contact after explicit snap/180 turns and input resets; smooth turning remains continuous. |
+| Endpoint traces miss a small button crossed by the shaft. | **Adopt.** Use bounded 3-unit-spaced point sweeps plus a current-shaft trace, sharing the donor's point-hull policy. |
+| A two-unit reach tolerance could accept a wall instead of the target button. | **Adopt.** Require any reach blocker to be the same button; do not accept a different intervening entity. |
+| Rechecking button function identity immediately after `ED_Retain` adds no protection. | **Adopt.** Remove that duplicate check. |
+
+The complete Linux SDL3 Makefile link passes with `-Werror` after these fixes;
+`git diff --check` is clean. This is source/build evidence, not a verified
+in-game button activation or melee parity result. Real target/button behavior,
+body relocation paths beyond the explicit hooks, haptics, all other supported
+weapon models, model-exact stock axe, mod QC families, akimbo and parry remain
+open. Keep the current local opt-in and server policy until those gates close.

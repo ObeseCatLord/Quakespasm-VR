@@ -2942,6 +2942,7 @@ typedef struct sv_vr_weapon_pose_scope_s
 } sv_vr_weapon_pose_scope_t;
 
 static sv_vr_weapon_pose_scope_t *sv_vr_weapon_pose_scope;
+static void SV_VRContactInvalidateAccepted (client_t *client);
 
 void SV_ClearVRWeaponPoseScope (void)
 {
@@ -3051,6 +3052,506 @@ static void SV_EndPrivateVRWeaponPose (edict_t *ent,
 	VectorCopy (scope->forward, pr_global_struct->v_forward);
 	VectorCopy (scope->right, pr_global_struct->v_right);
 	VectorCopy (scope->up, pr_global_struct->v_up);
+}
+
+#define SV_VR_CONTACT_MAX_OFFSET 96.0f
+#define SV_VR_CONTACT_MAX_SPEED 20.0f
+#define SV_VR_CONTACT_MAX_FRESHNESS 0.25
+#define SV_VR_CONTACT_MAX_PLAYER_AGE 1.0
+
+static void SV_ResetPrivateVRContactContinuity (client_t *client)
+{
+	client->private_vr_contact_previous_valid = false;
+	memset (&client->private_vr_contact_previous, 0,
+		sizeof (client->private_vr_contact_previous));
+	VectorClear (client->private_vr_contact_body_origin);
+	client->private_vr_contact_previous_received = 0;
+	memset (client->private_vr_contact_button, 0,
+		sizeof (client->private_vr_contact_button));
+}
+
+void SV_ResetPrivateVRContactState (client_t *client)
+{
+	if (!client)
+		return;
+	client->private_vr_contact_last_sequence = 0;
+	client->private_vr_contact_cursor_valid = false;
+	client->private_vr_contact_spawn_seen = false;
+	SV_ResetPrivateVRContactContinuity (client);
+}
+
+/* A relocation invalidates every contact sample already accepted before it.
+ * Movement still owns and retires those commands; only the contact cursor
+ * advances. Resetting history alone would let a later queued pair rearm at the
+ * new origin in the same frame. */
+static void SV_VRContactInvalidateAccepted (client_t *client)
+{
+	if (!client)
+		return;
+	SV_ResetPrivateVRContactContinuity (client);
+	if (!client->private_vr_contact_cursor_valid ||
+		client->lastmovemessage > client->private_vr_contact_last_sequence)
+		client->private_vr_contact_last_sequence = client->lastmovemessage;
+	client->private_vr_contact_cursor_valid = true;
+}
+
+void SV_VRContactPlayerRelocated (edict_t *ent)
+{
+	int slot;
+	if (!ent)
+		return;
+	if (qcvm == &sv.qcvm)
+	{
+		slot = NUM_FOR_EDICT (ent);
+		if (slot >= 1 && slot <= svs.maxclients &&
+			svs.clients[slot - 1].edict == ent)
+			SV_VRContactInvalidateAccepted (&svs.clients[slot - 1]);
+		return;
+	}
+	/* Host commands can place a player without an active server VM. */
+	for (slot = 0; slot < svs.maxclients; slot++)
+		if (svs.clients[slot].edict == ent)
+		{
+			SV_VRContactInvalidateAccepted (&svs.clients[slot]);
+			return;
+		}
+}
+
+void SV_VRContactPlayerSetOrigin (edict_t *ent, const vec3_t origin)
+{
+	vec3_t delta;
+	if (!ent || !origin)
+		return;
+	VectorSubtract (ent->v.origin, origin, delta);
+	if (VectorLength (delta) > 0.01f)
+		SV_VRContactPlayerRelocated (ent);
+}
+
+static float SV_VRContactDistance (const vec3_t a, const vec3_t b)
+{
+	vec3_t delta;
+	VectorSubtract (a, b, delta);
+	return VectorLength (delta);
+}
+
+static qboolean SV_VRContactOwnerLive (client_t *client, edict_t *ent)
+{
+	return client && ent && client->active && client->spawned &&
+		client->protocol_qsvr == QSVR_PROTOCOL_PINNED &&
+		client->edict == ent && !ent->free && isfinite (ent->v.health) &&
+		ent->v.health > 0 && !ent->v.deadflag;
+}
+
+static qboolean SV_VRContactWeaponIdentity (edict_t *ent,
+	const vr_weapon_contact_t *contact)
+{
+	const char *weaponmodel;
+	int axis;
+
+	if (!ent || ent->free || !contact || contact->modelindex <= 0 ||
+		contact->modelindex >= MAX_MODELS || !sv.model_precache[contact->modelindex] ||
+		!isfinite (ent->v.weapon) || ent->v.weapon < 0 || ent->v.weapon > 4096 ||
+		!isfinite (contact->weapon) || contact->weapon < 0 ||
+		contact->weapon > 4096 || floorf (contact->weapon) != contact->weapon ||
+		contact->weapon != ent->v.weapon)
+		return false;
+	weaponmodel = PR_GetString (ent->v.weaponmodel);
+	if (!weaponmodel || !weaponmodel[0] ||
+		strcmp (sv.model_precache[contact->modelindex], weaponmodel))
+		return false;
+	for (axis = 0; axis < 3; axis++)
+		if (!isfinite (ent->v.origin[axis]) || fabsf (ent->v.origin[axis]) > 1000000.0f ||
+			!isfinite (ent->v.view_ofs[axis]) || fabsf (ent->v.view_ofs[axis]) > 128.0f)
+			return false;
+	return true;
+}
+
+static qboolean SV_VRContactSampleValid (client_t *client, edict_t *ent,
+	const usercmd_t *cmd)
+{
+	const vr_weapon_contact_t *contact = &cmd->vr_contact;
+	unsigned int hand_flags = VR_WEAPON_CONTACT_LEFT_VALID |
+		VR_WEAPON_CONTACT_RIGHT_VALID;
+	int hand, axis;
+
+	if (!SV_VRWeaponCollisionEnabled () || !SV_VRContactOwnerLive (client, ent) ||
+		sv.paused || !cmd->vr_active || !cmd->vr_handpos_relative ||
+		cmd->msec < 1 || cmd->msec > 125 || cmd->sequence <= 0 ||
+		!isfinite (client->lastmovetime) || client->lastmovetime <= 0 ||
+		realtime < client->lastmovetime ||
+		realtime - client->lastmovetime > SV_VR_CONTACT_MAX_PLAYER_AGE ||
+		!isfinite (cmd->vr_contact_received) || cmd->vr_contact_received < 0 ||
+		realtime < cmd->vr_contact_received ||
+		realtime - cmd->vr_contact_received > SV_VR_CONTACT_MAX_FRESHNESS ||
+		(contact->flags & ~hand_flags) || !(contact->flags & hand_flags) ||
+		!SV_VRContactWeaponIdentity (ent, contact))
+		return false;
+
+	/* IMMERSIVE_MELEE and every other non-hand flag are unsupported here. */
+	for (hand = 0; hand < 2; hand++)
+	{
+		if (!(contact->flags & (1u << hand)))
+			continue;
+		if (!isfinite (contact->speed[hand]) || contact->speed[hand] < 0 ||
+			contact->speed[hand] > SV_VR_CONTACT_MAX_SPEED)
+			return false;
+		for (axis = 0; axis < 3; axis++)
+			if (!isfinite (contact->grip[hand][axis]) ||
+				!isfinite (contact->base[hand][axis]) ||
+				!isfinite (contact->tip[hand][axis]) ||
+				fabsf (contact->grip[hand][axis]) > SV_VR_CONTACT_MAX_OFFSET ||
+				fabsf (contact->base[hand][axis]) > SV_VR_CONTACT_MAX_OFFSET ||
+				fabsf (contact->tip[hand][axis]) > SV_VR_CONTACT_MAX_OFFSET)
+				return false;
+		if (SV_VRContactDistance (contact->grip[hand], vec3_origin) > SV_VR_CONTACT_MAX_OFFSET ||
+			SV_VRContactDistance (contact->base[hand], contact->grip[hand]) > SV_VR_CONTACT_MAX_OFFSET ||
+			SV_VRContactDistance (contact->tip[hand], contact->grip[hand]) > SV_VR_CONTACT_MAX_OFFSET ||
+			SV_VRContactDistance (contact->base[hand], contact->tip[hand]) > SV_VR_CONTACT_MAX_OFFSET)
+			return false;
+	}
+	return true;
+}
+
+static qboolean SV_VRContactButtonTouchAllowed (edict_t *button,
+	int *touch_index)
+{
+	const char *classname, *function_name;
+	dfunction_t *touch;
+	int index;
+
+	if (!button || button->free || button->v.solid != SOLID_BSP ||
+		!button->v.touch || !isfinite (button->v.health) ||
+		button->v.health > 0 || !qcvm->progs ||
+		!qcvm->functions)
+		return false;
+	classname = PR_GetString (button->v.classname);
+	if (!classname || strcmp (classname, "func_button"))
+		return false;
+	touch = ED_FindFunction ("button_touch");
+	if (!touch || touch->numparms || touch->first_statement <= 0)
+		return false;
+	index = (int)(touch - qcvm->functions);
+	if (index <= 0 || index >= qcvm->progs->numfunctions ||
+		button->v.touch != index)
+		return false;
+	function_name = PR_GetString (touch->s_name);
+	if (!function_name || strcmp (function_name, "button_touch"))
+		return false;
+	if (touch_index)
+		*touch_index = index;
+	return true;
+}
+
+typedef struct sv_vr_contact_button_hit_s
+{
+	edict_t *button;
+	float distance;
+} sv_vr_contact_button_hit_t;
+
+static void SV_VRContactConsiderButtonTrace (edict_t *player,
+	const vec3_t grip, const vec3_t start, const vec3_t end,
+	sv_vr_contact_button_hit_t *best)
+{
+	trace_t trace, reach;
+	vec3_t trace_start, trace_end, trace_point, grip_point;
+	float distance;
+
+	VectorCopy (start, trace_start);
+	VectorCopy (end, trace_end);
+	trace = SV_Move (trace_start, vec3_origin, vec3_origin,
+		trace_end, MOVE_NORMAL, player);
+	if (trace.startsolid || trace.allsolid || trace.fraction >= 1.0f ||
+		!trace.ent || !SV_VRContactButtonTouchAllowed (trace.ent, NULL))
+		return;
+	VectorCopy (grip, grip_point);
+	VectorCopy (trace.endpos, trace_point);
+	reach = SV_Move (grip_point, vec3_origin, vec3_origin, trace_point,
+		MOVE_NOMONSTERS, player);
+	if (reach.startsolid || reach.allsolid ||
+		(reach.fraction < 1.0f &&
+		(reach.ent != trace.ent ||
+		 SV_VRContactDistance (reach.endpos, trace.endpos) > 2.0f)))
+		return;
+	distance = SV_VRContactDistance (start, trace.endpos);
+	if (!best->button || distance < best->distance)
+	{
+		best->button = trace.ent;
+		best->distance = distance;
+	}
+}
+
+static edict_t *SV_VRContactTraceButton (edict_t *player,
+	const vr_weapon_contact_t *previous, const vr_weapon_contact_t *current,
+	int hand)
+{
+	vec3_t eye, grip, start, end, shaft;
+	trace_t reach;
+	sv_vr_contact_button_hit_t best;
+	int axis, point, steps;
+
+	memset (&best, 0, sizeof (best));
+	best.distance = FLT_MAX;
+	VectorAdd (player->v.origin, player->v.view_ofs, eye);
+	VectorAdd (player->v.origin, current->grip[hand], grip);
+	/* A blocked eye-to-grip point trace vetoes the hand for this sample. */
+	reach = SV_Move (eye, vec3_origin, vec3_origin, grip,
+		MOVE_NOMONSTERS, player);
+	if (reach.startsolid || reach.allsolid || reach.fraction < 1.0f)
+		return NULL;
+
+	/* The shaft can cross a small button while its endpoints miss. Use
+	 * bounded point sweeps along it, in the current body frame so ordinary
+	 * locomotion does not become weapon motion. The current shaft is a
+	 * stationary-contact fallback, matching the donor's point-trace policy. */
+	VectorSubtract (current->tip[hand], current->base[hand], shaft);
+	steps = CLAMP (1, (int)ceilf (VectorLength (shaft) / 3.0f), 32);
+	for (point = -1; point <= steps; point++)
+	{
+		const float t = point < 0 ? 0.0f : (float)point / steps;
+		for (axis = 0; axis < 3; axis++)
+		{
+			start[axis] = player->v.origin[axis] + (point < 0 ?
+				current->base[hand][axis] :
+				previous->base[hand][axis] + t *
+				(previous->tip[hand][axis] - previous->base[hand][axis]));
+			end[axis] = player->v.origin[axis] + (point < 0 ?
+				current->tip[hand][axis] :
+				current->base[hand][axis] + t * shaft[axis]);
+		}
+		SV_VRContactConsiderButtonTrace (player, grip, start, end, &best);
+	}
+	return best.button;
+}
+
+static void SV_VRContactRemember (client_t *client, edict_t *ent,
+	const vr_weapon_contact_t *sample, double received_at)
+{
+	client->private_vr_contact_previous = *sample;
+	VectorCopy (ent->v.origin, client->private_vr_contact_body_origin);
+	client->private_vr_contact_previous_received = received_at;
+	client->private_vr_contact_previous_valid = true;
+}
+
+/* Returns false only when a callback invalidated the player owner. */
+static qboolean SV_VRContactProcessCommand (client_t *client, edict_t *ent,
+	const usercmd_t *queued_command)
+{
+	usercmd_t command = *queued_command;
+	vr_weapon_contact_t sample = command.vr_contact;
+	vr_weapon_contact_t previous;
+	vec3_t body_origin;
+	float seconds;
+	int hand;
+
+	if (client->private_vr_contact_cursor_valid &&
+		(int)command.sequence <= client->private_vr_contact_last_sequence)
+		return true;
+	if (client->private_vr_contact_cursor_valid &&
+		(int)command.sequence != client->private_vr_contact_last_sequence + 1)
+		SV_ResetPrivateVRContactContinuity (client);
+	client->private_vr_contact_last_sequence = (int)command.sequence;
+	client->private_vr_contact_cursor_valid = true;
+
+	if ((int)command.sequence <= client->private_discarded_move ||
+		command.impulse ||
+		!SV_VRContactSampleValid (client, ent, &command))
+	{
+		SV_ResetPrivateVRContactContinuity (client);
+		return true;
+	}
+
+	seconds = command.msec * 0.001f;
+	if (!client->private_vr_contact_previous_valid)
+	{
+		SV_VRContactRemember (client, ent, &sample,
+			command.vr_contact_received);
+		return true;
+	}
+	previous = client->private_vr_contact_previous;
+	VectorCopy (client->private_vr_contact_body_origin, body_origin);
+	if (!isfinite (client->private_vr_contact_previous_received) ||
+		command.vr_contact_received < client->private_vr_contact_previous_received ||
+		command.vr_contact_received - client->private_vr_contact_previous_received >
+			SV_VR_CONTACT_MAX_FRESHNESS ||
+		sample.modelindex != previous.modelindex || sample.weapon != previous.weapon ||
+		sample.flags != previous.flags ||
+		SV_VRContactDistance (ent->v.origin, body_origin) > 64.0f)
+	{
+		SV_ResetPrivateVRContactContinuity (client);
+		SV_VRContactRemember (client, ent, &sample,
+			command.vr_contact_received);
+		return true;
+	}
+	for (hand = 0; hand < 2; hand++)
+	{
+		float point_motion;
+		vec3_t old_point, new_point;
+		if (!(sample.flags & (1u << hand)))
+			continue;
+		VectorCopy (previous.grip[hand], old_point);
+		VectorCopy (sample.grip[hand], new_point);
+		point_motion = SV_VRContactDistance (old_point, new_point);
+		VectorCopy (previous.base[hand], old_point);
+		VectorCopy (sample.base[hand], new_point);
+		point_motion = fmaxf (point_motion,
+			SV_VRContactDistance (old_point, new_point));
+		VectorCopy (previous.tip[hand], old_point);
+		VectorCopy (sample.tip[hand], new_point);
+		point_motion = fmaxf (point_motion,
+			SV_VRContactDistance (old_point, new_point));
+		if (point_motion > 32.0f ||
+			point_motion > sample.speed[hand] * seconds * 80.0f + 3.0f)
+		{
+			SV_ResetPrivateVRContactContinuity (client);
+			SV_VRContactRemember (client, ent, &sample,
+				command.vr_contact_received);
+			return true;
+		}
+	}
+
+	for (hand = 0; hand < 2; hand++)
+	{
+		edict_t *button;
+		int button_number;
+		int touch_index;
+		int saved_self, saved_other;
+		float saved_time;
+		vec3_t callback_origin;
+
+		if (!(sample.flags & (1u << hand)))
+		{
+			client->private_vr_contact_button[hand] = 0;
+			continue;
+		}
+		button = SV_VRContactTraceButton (ent, &previous, &sample, hand);
+		button_number = button ? NUM_FOR_EDICT (button) : 0;
+		if (button_number <= 0 || button_number >= qcvm->num_edicts)
+			button_number = 0;
+		if (!button_number || button_number == client->private_vr_contact_button[hand])
+		{
+			client->private_vr_contact_button[hand] = button_number;
+			continue;
+		}
+		if (!SV_VRContactButtonTouchAllowed (button, &touch_index))
+		{
+			client->private_vr_contact_button[hand] = 0;
+			continue;
+		}
+
+		/* The queued pose is a local copy before QC can mutate client state. */
+		ED_Retain (button);
+		client->private_vr_contact_button[hand] = button_number;
+		VectorCopy (ent->v.origin, callback_origin);
+		saved_self = pr_global_struct->self;
+		saved_other = pr_global_struct->other;
+		saved_time = pr_global_struct->time;
+		pr_global_struct->self = EDICT_TO_PROG (button);
+		pr_global_struct->other = EDICT_TO_PROG (ent);
+		pr_global_struct->time = qcvm->time;
+		PR_ExecuteProgram (touch_index);
+		pr_global_struct->self = saved_self;
+		pr_global_struct->other = saved_other;
+		pr_global_struct->time = saved_time;
+		ED_Release (button);
+
+		if (!SV_VRContactOwnerLive (client, ent))
+		{
+			SV_VRContactInvalidateAccepted (client);
+			/* Death is a valid QC outcome: let the frame's ordinary death
+			 * observer run when the player entity and connection still exist. */
+			return client->active && client->spawned &&
+				client->edict == ent && !ent->free;
+		}
+		if (!client->private_vr_contact_cursor_valid)
+			return false; /* serverinfo/reset began during the callback */
+		if (client->private_vr_contact_last_sequence != (int)command.sequence)
+			return true; /* relocation consumed all previously accepted contacts */
+		if (!SV_VRContactSampleValid (client, ent, &command) ||
+			SV_VRContactDistance (ent->v.origin, callback_origin) > 0.01f)
+		{
+			SV_VRContactInvalidateAccepted (client);
+			return true;
+		}
+	}
+
+	if (!SV_VRContactSampleValid (client, ent, &command))
+		SV_ResetPrivateVRContactContinuity (client);
+	else
+		SV_VRContactRemember (client, ent, &sample,
+			command.vr_contact_received);
+	return true;
+}
+
+static void SV_VRContactObserveSpawn (client_t *client)
+{
+	if (!client->spawned)
+	{
+		SV_ResetPrivateVRContactContinuity (client);
+		client->private_vr_contact_spawn_seen = false;
+		return;
+	}
+	if (!client->edict || client->edict->free ||
+		!isfinite (client->edict->v.health) || client->edict->v.health <= 0 ||
+		client->edict->v.deadflag)
+	{
+		/* A death observed at the frame boundary breaks pose continuity before
+		 * QC can respawn this player during the same command. */
+		SV_ResetPrivateVRContactContinuity (client);
+		return;
+	}
+	if (!client->private_vr_contact_spawn_seen)
+	{
+		SV_ResetPrivateVRContactContinuity (client);
+		client->private_vr_contact_cursor_valid = false;
+		client->private_vr_contact_last_sequence = 0;
+		client->private_vr_contact_spawn_seen = true;
+	}
+}
+
+static qboolean SV_VRContactDrainQueued (edict_t *ent, client_t *client,
+	int completed_move)
+{
+	unsigned int head, count, offset;
+
+	if (client->private_cmd_queue_count > SV_PRIVATE_CMD_QUEUE_SIZE ||
+		client->private_cmd_queue_head >= SV_PRIVATE_CMD_QUEUE_SIZE)
+	{
+		SV_ResetPrivateVRContactContinuity (client);
+		client->private_vr_contact_cursor_valid = false;
+		return true;
+	}
+	if (!client->private_vr_contact_cursor_valid ||
+		client->private_discarded_move > client->private_vr_contact_last_sequence ||
+		client->private_retired_move > client->private_vr_contact_last_sequence)
+	{
+		int cutoff = q_max (client->private_discarded_move,
+			client->private_retired_move);
+		SV_ResetPrivateVRContactContinuity (client);
+		if (cutoff > 0)
+		{
+			client->private_vr_contact_last_sequence = cutoff;
+			client->private_vr_contact_cursor_valid = true;
+		}
+	}
+
+	head = client->private_cmd_queue_head;
+	count = client->private_cmd_queue_count;
+	for (offset = 0; offset < count; offset++)
+	{
+		usercmd_t command = client->private_cmd_queue[(head + offset) %
+			SV_PRIVATE_CMD_QUEUE_SIZE];
+		if ((int)command.sequence > completed_move)
+			break;
+		if (client->private_vr_contact_cursor_valid &&
+			(int)command.sequence <= client->private_vr_contact_last_sequence)
+			continue;
+		if (!SV_VRContactProcessCommand (client, ent, &command))
+			return false;
+		if (client->private_cmd_queue_head != head ||
+			client->private_cmd_queue_count != count)
+			return false;
+	}
+	return true;
 }
 
 static qboolean SV_RunPrivateVRWeaponThink (edict_t *ent, client_t *client)
@@ -3537,6 +4038,13 @@ static qboolean SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *clien
 		failure = "player removed during trigger callbacks";
 		goto cleanup;
 	}
+	if (!SV_VRContactProcessCommand (client, ent, &command))
+	{
+		failure = "player invalidated during physical button callback";
+		goto cleanup;
+	}
+	if ((failure = SV_PrivateWalkTrialStateError (ent, client, &command)) != NULL)
+		goto cleanup;
 	pr_global_struct->time = qcvm->time;
 	pr_global_struct->frametime = seconds;
 	pr_global_struct->self = EDICT_TO_PROG (ent);
@@ -3605,6 +4113,7 @@ static void SV_Physics_Client (edict_t *ent, int num)
 
 	if (!svs.clients[num - 1].active)
 		return; // unconnected slot
+	SV_VRContactObserveSpawn (client);
 
 	if (!svs.clients[num - 1].knowntoqc && sv_gameplayfix_spawnbeforethinks.value)
 		return; // don't spam prethinks before we called putclientinserver.
@@ -3700,6 +4209,9 @@ static void SV_Physics_Client (edict_t *ent, int num)
 	SV_BeginPrivateVRWeaponPose (ent, client, &weapon_scope);
 	PR_ExecuteProgram (pr_global_struct->PlayerPostThink);
 	SV_EndPrivateVRWeaponPose (ent, &weapon_scope);
+	if (client->protocol_qsvr == QSVR_PROTOCOL_PINNED &&
+		!SV_VRContactDrainQueued (ent, client, completed_move))
+		goto done;
 	SV_CoopSharedObserveClientDeath (ent, num);
 	frame_completed = true;
 
