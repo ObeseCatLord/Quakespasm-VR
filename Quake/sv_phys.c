@@ -3024,7 +3024,7 @@ static void SV_ClampVRMuzzleToWorld (edict_t *ent, vec3_t muzzle)
 #define SV_VR_AKIMBO_MAX_ANGLE 3600.0f
 #define SV_VR_AKIMBO_MAX_FRESHNESS 0.25
 
-static qboolean SV_QBJ3TwinNailgunProgramLoaded (void)
+qboolean SV_QBJ3TwinNailgunProgramLoaded (void)
 {
 	static const byte expected_sha256[32] = {
 		0xde, 0x2c, 0x6a, 0x60, 0xdf, 0x24, 0xf5, 0xce,

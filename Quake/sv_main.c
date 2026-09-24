@@ -2574,6 +2574,7 @@ void SV_SendServerinfo (client_t *client)
 	client->vr_gorilla_last_advertised = -1;
 	client->weapon_contact_last_mode = -1;
 	client->weapon_contact_last_profile = -1;
+	client->qbj3_akimbo_last_advertised = -1;
 	client->spawned = false; // need prespawn, spawn, etc
 	client->voice_protocol_offered = false;
 
@@ -4173,6 +4174,41 @@ static void SV_AppendWeaponContactProtocol (client_t *client)
 	}
 }
 
+/* Offer only the client vertical backed by the exact QBJ3 QC program that
+ * the command-time hook recognizes. Other recipe slots remain unavailable. */
+static void SV_AppendQBJ3AkimboProtocol (client_t *client)
+{
+	char command[64];
+	int command_length, enabled, previous_size;
+	size_t required;
+
+	if (!client || !client->active || !client->netconnection ||
+		!client->spawned || client->protocol_qsvr != QSVR_PROTOCOL_PINNED)
+		return;
+
+	enabled = SV_QBJ3TwinNailgunProgramLoaded () ? 1 : 0;
+	if (client->qbj3_akimbo_last_advertised == enabled ||
+		client->message.overflowed || client->message.cursize < 0 ||
+		client->message.maxsize <= 0 ||
+		client->message.cursize > client->message.maxsize)
+		return;
+
+	command_length = q_snprintf (command, sizeof (command),
+		"//vr_qbj3_akimbo_protocol %d 0 0 0\n", enabled);
+	if (command_length <= 0 || (size_t)command_length >= sizeof (command))
+		return;
+	required = (size_t)command_length + 2;
+	if (required > (size_t)(client->message.maxsize - client->message.cursize))
+		return;
+
+	previous_size = client->message.cursize;
+	MSG_WriteByte (&client->message, svc_stufftext);
+	MSG_WriteString (&client->message, command);
+	if (!client->message.overflowed &&
+		client->message.cursize == previous_size + (int)required)
+		client->qbj3_akimbo_last_advertised = enabled;
+}
+
 static void SV_AppendGorillaProtocol (client_t *client)
 {
 	int enabled;
@@ -4237,6 +4273,7 @@ void SV_SendClientMessages (void)
 		if (!SV_SendClientDatagram (host_client))
 			continue;
 		SV_AppendWeaponContactProtocol (host_client);
+		SV_AppendQBJ3AkimboProtocol (host_client);
 		SV_AppendGorillaProtocol (host_client);
 		if (!host_client->spawned)
 		{
@@ -4692,6 +4729,7 @@ void SV_SpawnServer (const char *server)
 		SV_ResetPrivateVRContactState (&svs.clients[i]);
 		svs.clients[i].vr_gorilla_capable = false;
 		svs.clients[i].vr_gorilla_last_advertised = -1;
+		svs.clients[i].qbj3_akimbo_last_advertised = -1;
 	}
 
 	//

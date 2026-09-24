@@ -75,6 +75,8 @@ void VR_InputMove (usercmd_t *pending);
 void VR_InputApplyPending (usercmd_t *cmd);
 void VR_InputCommitGorillaCommand (const usercmd_t *cmd);
 int VR_InputDominantPhysicalHand (void);
+/* The input owner's identity/profile/neutral gate for a physical XR hand. */
+qboolean VR_InputPhysicalHandAccepted (const vrxr_frame_t *frame, int physical_hand);
 extern cvar_t vr_weapon_collision;
 qboolean VR_WeaponCollisionAuthorized (void);
 qboolean VR_InputCrosshairAimRay (vec3_t start, vec3_t forward);

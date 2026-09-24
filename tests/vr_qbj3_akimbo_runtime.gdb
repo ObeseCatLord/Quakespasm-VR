@@ -25,6 +25,19 @@ set $client->message.maxsize = sizeof($client->msgbuf)
 set $client->datagram.data = $client->datagram_buf
 set $client->datagram.maxsize = sizeof($client->datagram_buf)
 
+# The advertised capability and the shot hook share this exact-QC gate.
+set $recognized = SV_QBJ3TwinNailgunProgramLoaded()
+if !$recognized
+  error Exact QBJ3 program was not recognized for the server offer
+end
+set qcvm->progssha256[0] = 0
+set $recognized = SV_QBJ3TwinNailgunProgramLoaded()
+if $recognized
+  error Modified QC hash incorrectly enabled akimbo
+end
+set qcvm->progssha256[0] = 0xde
+printf "QBJ3_AKIMBO_SERVER_GATE_PASS exact QC and hash rejection\n"
+
 set $animcontroller = GetEdictFieldValueByName($p,"animcontroller")
 set $controller = ED_Alloc()
 set $controller->v.owner = (int)((char *)$p - (char *)qcvm->edicts)

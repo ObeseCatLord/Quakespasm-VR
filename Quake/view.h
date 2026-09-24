@@ -62,6 +62,12 @@ qboolean V_TrackedPresentationHandWorldPose (int physical_hand,
 qboolean V_TrackedBodyOwnsRoomscale (void);
 qboolean V_TrackedViewmodelActive (void);
 qboolean V_TrackedViewmodelShouldHide (void);
+qboolean V_AkimboPairReady (void);
+qboolean V_AkimboTransformAnchor (int physical_hand,
+	const vec3_t model_angles, vec3_t out_local);
+int V_AkimboViewmodelHand (const entity_t *e);
+entity_t *V_AkimboPairEntity (int physical_hand);
+void V_PrepareAkimboPair (void);
 void V_PrepareWeaponCollisionPresentation (void);
 void V_ClearWeaponCollisionPresentation (void);
 qboolean V_TrackedWeaponCollisionPresentation (vec3_t origin, vec3_t offset);

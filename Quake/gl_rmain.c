@@ -1207,6 +1207,32 @@ void R_PrepareVRCrosshair (void)
 	vr_crosshair_frame = prepared;
 }
 
+static qboolean R_AkimboPairDrawReady (void)
+{
+	/* The main-thread frame setup publishes a complete immutable pair before
+	 * draw tasks start. Do not consult mutable input admission from a worker. */
+	if (!V_AkimboPairEntity (0) || !V_AkimboPairEntity (1))
+		return false;
+	for (int hand = 0; hand < 2; ++hand)
+	{
+		entity_t *entity = V_AkimboPairEntity (hand);
+		aliashdr_t *geometry;
+		lerpdata_t lerpdata;
+		float matrix[16];
+		if (!entity || !entity->model || entity->model->type != mod_alias ||
+			entity->model->needload)
+			return false;
+		geometry = (aliashdr_t *)entity->model->extradata[PV_QUAKE1];
+		if (!geometry || geometry->poseverttype != PV_QUAKE1)
+			return false;
+		R_SetupAliasFrame (entity, geometry, &lerpdata);
+		R_GetEntityLerpedTransform (entity, lerpdata.origin, lerpdata.angles);
+		if (R_AliasModelMatrix (entity, geometry, &lerpdata, matrix) < 0)
+			return false;
+	}
+	return true;
+}
+
 void R_DrawViewModel (cb_context_t *cbx)
 {
 	if (!r_drawviewmodel.value || !r_drawentities.value || chase_active.value)
@@ -1238,9 +1264,20 @@ void R_DrawViewModel (cb_context_t *cbx)
 		R_SceneViewport (cbx, 0.7f);
 
 	int aliaspolys = 0;
-	R_DrawAliasModel (cbx, currententity, &aliaspolys);
+	if (R_AkimboPairDrawReady ())
+	{
+		for (int hand = 0; hand < 2; ++hand)
+		{
+			R_DrawAliasModel (cbx, V_AkimboPairEntity (hand), &aliaspolys);
+			Atomic_IncrementUInt32 (&rs_aliaspasses);
+		}
+	}
+	else
+	{
+		R_DrawAliasModel (cbx, currententity, &aliaspolys);
+		Atomic_IncrementUInt32 (&rs_aliaspasses);
+	}
 	Atomic_AddUInt32 (&rs_aliaspolys, aliaspolys);
-	Atomic_IncrementUInt32 (&rs_aliaspasses);
 
 	R_SceneViewport (cbx, 0.0f);
 
@@ -1933,9 +1970,13 @@ static void R_ShowViewModelTris (cb_context_t *cbx)
 {
 	entity_t *currententity = &cl.viewent;
 	if (r_drawentities.value && r_drawviewmodel.value && !chase_active.value && cl.stats[STAT_HEALTH] > 0 && !(cl.items & IT_INVISIBILITY) && currententity->model &&
-		currententity->model->type == mod_alias && scr_viewsize.value < 130)
+		currententity->model->type == mod_alias && (V_UseTrackedView () || scr_viewsize.value < 130))
 	{
-		R_DrawAliasModel_ShowTris (cbx, currententity);
+		if (R_AkimboPairDrawReady ())
+			for (int hand = 0; hand < 2; ++hand)
+				R_DrawAliasModel_ShowTris (cbx, V_AkimboPairEntity (hand));
+		else
+			R_DrawAliasModel_ShowTris (cbx, currententity);
 	}
 }
 

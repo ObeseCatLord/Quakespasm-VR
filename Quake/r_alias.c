@@ -85,7 +85,8 @@ static VkDeviceSize GLARB_GetXYZOffset (entity_t *e, aliashdr_t *hdr, int pose)
 
 static qboolean R_IsVRViewmodel (entity_t *e)
 {
-	return e == &cl.viewent && V_UseTrackedView ();
+	return V_UseTrackedView () &&
+		(e == &cl.viewent || V_AkimboViewmodelHand (e) >= 0);
 }
 
 static qboolean R_AliasMatrixIsFinite (const float model_matrix[16])
@@ -367,7 +368,8 @@ only exist on the entity itself.
 */
 void R_GetEntityLerpedTransform (const entity_t *e, vec3_t out_origin, vec3_t out_angles)
 {
-	if (r_lerpmove.value && e != &cl.viewent && e->lerp.movestep && !e->netstate.tagentity && e->lerp.move_change_time > 0)
+	if (r_lerpmove.value && e != &cl.viewent && V_AkimboViewmodelHand (e) < 0 &&
+		e->lerp.movestep && !e->netstate.tagentity && e->lerp.move_change_time > 0)
 	{
 		double change_time = e->lerp.move_change_time;
 		double duration = (e->lerp.move_duration > 0) ? e->lerp.move_duration : 0.1;
@@ -600,7 +602,7 @@ static void R_SetupAliasLighting (entity_t *e, vec3_t *shadevector, vec3_t *ligh
 	}
 
 	// minimum light value on gun (24)
-	if (e == &cl.viewent)
+	if (e == &cl.viewent || V_AkimboViewmodelHand (e) >= 0)
 	{
 		add = 72.0f - ((*lightcolor)[0] + (*lightcolor)[1] + (*lightcolor)[2]);
 		if (add > 0.0f)
@@ -656,9 +658,13 @@ static int R_AliasModelMatrixInternal (
 		vec3_t origin, angles, header_origin, held_offset = {0.0f, 0.0f, 0.0f};
 		float header_scale[3], geometry_scale[3];
 		float held_scale = 1.0f;
+		const int pair_hand = V_AkimboViewmodelHand (e);
+		const qboolean paired_half = pair_hand >= 0;
+		const char *calibration_name = paired_half && cl.viewent.model ?
+			cl.viewent.model->name : e->model->name;
 		const qboolean enhanced_format = paliashdr->poseverttype == PV_MD5 || paliashdr->poseverttype == PV_MD5_8;
 		const qboolean multiplayer = cl.maxclients > 1;
-		const qboolean has_calibration = VR_WeaponCalibrationLookupHeld (e->model->name, enhanced_format, multiplayer, held_offset, &held_scale);
+		const qboolean has_calibration = VR_WeaponCalibrationLookupHeld (calibration_name, enhanced_format, multiplayer, held_offset, &held_scale);
 
 		if (!has_calibration)
 		{
@@ -690,7 +696,10 @@ static int R_AliasModelMatrixInternal (
 		float local_translation[3];
 		for (int axis = 0; axis < 3; ++axis)
 		{
-			double local_offset = (double)header_origin[axis] + (double)held_offset[axis];
+			double grip_residual = held_offset[axis];
+			if (paired_half && pair_hand == 0 && axis == 1)
+				grip_residual = -grip_residual;
+			double local_offset = (double)header_origin[axis] + grip_residual;
 			if (axis == 2)
 				local_offset += (double)gunmodel_y;
 			double scaled_offset = (double)c * local_offset;
@@ -704,7 +713,7 @@ static int R_AliasModelMatrixInternal (
 			geometry_scale[axis] = (float)scale_value;
 		}
 
-		const qboolean mirror_model_y = VR_InputDominantPhysicalHand () == 0;
+		const qboolean mirror_model_y = !paired_half && VR_InputDominantPhysicalHand () == 0;
 		if (mirror_model_y)
 		{
 			/* E * MirrorY * T * S: reflect the held offset with the mesh. */
@@ -839,15 +848,25 @@ void R_DrawAliasModel (cb_context_t *cbx, entity_t *e, int *aliaspolys)
 	aliashdr_t	*paliashdr;
 	int			 skinnum = e->skinnum;
 	lerpdata_t	 lerpdata;
+	const qboolean paired_half = V_AkimboViewmodelHand (e) >= 0;
 
 	// A pending reload can change the model bounds, so refresh it before culling.
 	// Loaded models can reject offscreen entities without selecting skin/pose data.
-	paliashdr = e->model->needload ? (aliashdr_t *)Mod_Extradata_CheckSkin (e->model, skinnum) : NULL;
-	if (!R_IsVRViewmodel (e) && R_CullModelForEntity (e))
+	if (paired_half)
+	{
+		if (e->model->needload)
+			return;
+		paliashdr = (aliashdr_t *)e->model->extradata[PV_QUAKE1];
+	}
+	else
+		paliashdr = e->model->needload ? (aliashdr_t *)Mod_Extradata_CheckSkin (e->model, skinnum) : NULL;
+	if (!paired_half && !R_IsVRViewmodel (e) && R_CullModelForEntity (e))
 		return;
 
-	if (!paliashdr)
+	if (!paliashdr && !paired_half)
 		paliashdr = (aliashdr_t *)Mod_Extradata_CheckSkin (e->model, skinnum);
+	if (!paliashdr)
+		return;
 
 	qboolean alphatest = !!(e->model->flags & MF_HOLEY);
 
@@ -948,11 +967,21 @@ void R_DrawAliasModel_ShowTris (cb_context_t *cbx, entity_t *e)
 {
 	aliashdr_t *paliashdr;
 	lerpdata_t	lerpdata;
+	const qboolean paired_half = V_AkimboViewmodelHand (e) >= 0;
 
 	//
 	// setup pose/lerp data -- do it first so we don't miss updates due to culling
 	//
-	paliashdr = (aliashdr_t *)Mod_Extradata_CheckSkin (e->model, e->skinnum);
+	if (paired_half)
+	{
+		if (e->model->needload)
+			return;
+		paliashdr = (aliashdr_t *)e->model->extradata[PV_QUAKE1];
+	}
+	else
+		paliashdr = (aliashdr_t *)Mod_Extradata_CheckSkin (e->model, e->skinnum);
+	if (!paliashdr)
+		return;
 
 	R_SetupAliasFrame (e, paliashdr, &lerpdata);
 	R_GetEntityLerpedTransform (e, lerpdata.origin, lerpdata.angles);

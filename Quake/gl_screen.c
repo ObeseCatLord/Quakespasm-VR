@@ -2529,6 +2529,7 @@ void SCR_UpdateScreen (qboolean use_tasks)
 		 * tracked viewmodel and its shared eye/crosshair pose before tasks. */
 		V_SetupFrame ();
 		V_PrepareWeaponCollisionPresentation ();
+		V_PrepareAkimboPair ();
 	}
 	R_PrepareVRCrosshair ();
 

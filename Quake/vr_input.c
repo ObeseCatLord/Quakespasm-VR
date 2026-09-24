@@ -176,6 +176,22 @@ static struct
 	char model_name[MAX_QPATH];
 	char serial[256];
 } vr_input_pending_contact_identity;
+static struct
+{
+	uint64_t sample_id;
+	const qmodel_t *model;
+	int modelindex;
+	int weapon;
+	unsigned int reset_generation;
+	struct
+	{
+		int role;
+		int profile;
+		int device_hand;
+		char serial[256];
+	} hands[2];
+	qboolean valid;
+} vr_input_pending_akimbo_identity;
 static void VR_InputFBTPrepareCalibrationVisualSnapshot (const vrxr_frame_t *frame);
 static qboolean VR_InputFBTMapTrackingVector (const vec3_t tracking,
 	float presentation_yaw, float body_yaw, vec3_t root);
@@ -1277,12 +1293,33 @@ static qboolean VR_InputHandAccepted (const vrxr_frame_t *frame, int hand)
 		state->role == VR_InputRoleForPhysicalHand (hand) && state->profile == input->profile;
 }
 
+qboolean VR_InputPhysicalHandAccepted (const vrxr_frame_t *frame,
+	int physical_hand)
+{
+	return VR_InputHandAccepted (frame, physical_hand);
+}
+
 static void VR_InputClearPendingContactRecord (usercmd_t *pending)
 {
 	if (pending)
 		memset (&pending->vr_contact, 0, sizeof (pending->vr_contact));
 	memset (&vr_input_pending_contact_identity, 0,
 		sizeof (vr_input_pending_contact_identity));
+}
+
+static void VR_InputClearPendingAkimboRecord (usercmd_t *pending)
+{
+	if (pending)
+	{
+		pending->vr_akimbo_active = false;
+		pending->vr_akimbo_berserk = false;
+		memset (pending->vr_akimbo_muzzle, 0,
+			sizeof (pending->vr_akimbo_muzzle));
+		memset (pending->vr_akimbo_angles, 0,
+			sizeof (pending->vr_akimbo_angles));
+	}
+	memset (&vr_input_pending_akimbo_identity, 0,
+		sizeof (vr_input_pending_akimbo_identity));
 }
 
 static qboolean VR_InputCalibrationContactAdjustmentActive (void)
@@ -1303,18 +1340,14 @@ static void VR_InputClearPendingRecord (usercmd_t *pending)
 	if (!pending)
 	{
 		VR_InputClearPendingContactRecord (NULL);
+		VR_InputClearPendingAkimboRecord (NULL);
 		return;
 	}
 	VectorCopy (vec3_origin, pending->vr_handpos);
 	VectorCopy (vec3_origin, pending->vr_handrot);
 	pending->vr_handpos_relative = false;
 	pending->vr_active = false;
-	pending->vr_akimbo_active = false;
-	pending->vr_akimbo_berserk = false;
-	memset (pending->vr_akimbo_muzzle, 0,
-		sizeof (pending->vr_akimbo_muzzle));
-	memset (pending->vr_akimbo_angles, 0,
-		sizeof (pending->vr_akimbo_angles));
+	VR_InputClearPendingAkimboRecord (pending);
 	pending->vr_pending_move[0] = pending->vr_pending_move[1] = pending->vr_pending_move[2] = 0.0f;
 	pending->vr_pending_angles[0] = pending->vr_pending_angles[1] = pending->vr_pending_angles[2] = 0.0f;
 	pending->vr_pending_move_valid = false;
@@ -3509,6 +3542,160 @@ void VR_InputMenuPanelTrigger (const vrxr_frame_t *frame, qboolean panel_drawn)
 	VR_InputEmitDesired (desired, &context, dispatch_epoch);
 }
 
+static qboolean VR_InputSelectedTwinNailgun (qmodel_t **model_out,
+	int *modelindex_out)
+{
+	const int modelindex = cl.stats[STAT_WEAPON];
+	qmodel_t *model;
+
+	if (modelindex < 1 || modelindex >= MAX_MODELS)
+		return false;
+	model = cl.model_precache[modelindex];
+	if (!model || model != cl.viewent.model ||
+		strcmp (model->name, "progs/v_tnailgun.mdl"))
+		return false;
+	if (model_out)
+		*model_out = model;
+	if (modelindex_out)
+		*modelindex_out = modelindex;
+	return true;
+}
+
+static qboolean VR_InputAkimboGameplayAccepted (const vrxr_frame_t *frame)
+{
+	return frame && frame->sample_id && frame->focused && frame->should_render &&
+		cl.protocol_qsvr == QSVR_PROTOCOL_PINNED &&
+		cl.vr_qbj3_akimbo_supported && V_AkimboPairReady () &&
+		!VR_WeaponCalibrationAdjustActive () && VR_InputControllerAim () &&
+		V_TrackedSessionActive () && !CL_AngleLocked () &&
+		VR_InputMotionContextAccepted (frame) &&
+		cls.state == ca_connected && cls.signon == SIGNONS &&
+		!cls.demoplayback && !cl.intermission && !cl.paused &&
+		key_dest == key_game && cl.stats[STAT_HEALTH] > 0 &&
+		cl.worldmodel && !cl.worldmodel->needload && cl.entities &&
+		cl.viewentity > 0 && cl.viewentity < cl.num_entities;
+}
+
+static qboolean VR_InputAkimboHandDevicesAccepted (
+	const vrxr_frame_t *frame)
+{
+	int hand;
+
+	for (hand = 0; hand < 2; ++hand)
+	{
+		const vrxr_device_t *device = &frame->devices[hand + 1];
+		if (!VR_InputHandAccepted (frame, hand) || !device->valid ||
+			!device->tracked || device->kind != VRXR_DEVICE_HAND ||
+			device->hand != hand)
+			return false;
+	}
+	return true;
+}
+
+static void VR_InputPrepareAkimboPair (usercmd_t *pending,
+	const vrxr_frame_t *frame)
+{
+	qmodel_t *model;
+	vec3_t muzzle[2], physical_angles[2];
+	int modelindex, hand;
+	const qboolean roomscale_accepted = pending &&
+		VR_InputRoomscaleCommandAccepted (pending->vr_roomscalemove);
+
+	VR_InputClearPendingAkimboRecord (pending);
+	if (!pending || !pending->vr_active || !pending->vr_handpos_relative ||
+		!VR_InputWireVec (pending->vr_handpos) ||
+		!VR_InputAkimboGameplayAccepted (frame) ||
+		!VR_InputSelectedTwinNailgun (&model, &modelindex) ||
+		!VR_InputAkimboHandDevicesAccepted (frame))
+		return;
+
+	for (hand = 0; hand < 2; ++hand)
+	{
+		vec3_t grip, model_angles, local_anchor;
+		if (!V_TrackedHandBodyOffset (hand, grip) ||
+			!V_TrackedMovementAngles (VR_MOVEMENT_MODE_FOLLOW_HAND, hand,
+				physical_angles[hand]) ||
+			!VR_LocomotionHandRotToViewmodelAngles (physical_angles[hand],
+				model_angles, vr_gunmodelpitch.value) ||
+			!V_AkimboTransformAnchor (hand, model_angles, local_anchor))
+			return;
+
+		for (int axis = 0; axis < 3; ++axis)
+			muzzle[hand][axis] = grip[axis] + local_anchor[axis] -
+				(roomscale_accepted ? pending->vr_roomscalemove[axis] : 0.0f);
+		if (!VR_InputWireVec (muzzle[hand]) ||
+			!VR_InputWireVec (physical_angles[hand]))
+			return;
+	}
+
+	memset (&vr_input_pending_akimbo_identity, 0,
+		sizeof (vr_input_pending_akimbo_identity));
+	vr_input_pending_akimbo_identity.sample_id = frame->sample_id;
+	vr_input_pending_akimbo_identity.model = model;
+	vr_input_pending_akimbo_identity.modelindex = modelindex;
+	vr_input_pending_akimbo_identity.weapon = cl.stats[STAT_ACTIVEWEAPON];
+	vr_input_pending_akimbo_identity.reset_generation =
+		vr_input_reset_generation;
+	for (hand = 0; hand < 2; ++hand)
+	{
+		const vrxr_device_t *device = &frame->devices[hand + 1];
+		vr_input_pending_akimbo_identity.hands[hand].role =
+			vr_input_hands[hand].role;
+		vr_input_pending_akimbo_identity.hands[hand].profile =
+			vr_input_hands[hand].profile;
+		vr_input_pending_akimbo_identity.hands[hand].device_hand =
+			device->hand;
+		memcpy (vr_input_pending_akimbo_identity.hands[hand].serial,
+			device->serial, sizeof (device->serial));
+		VectorCopy (muzzle[hand], pending->vr_akimbo_muzzle[hand]);
+		VectorCopy (physical_angles[hand], pending->vr_akimbo_angles[hand]);
+	}
+	pending->vr_akimbo_berserk = false;
+	vr_input_pending_akimbo_identity.valid = true;
+	pending->vr_akimbo_active = true;
+}
+
+static qboolean VR_InputPendingAkimboAccepted (const usercmd_t *pending,
+	const vrxr_frame_t *frame)
+{
+	qmodel_t *model;
+	int modelindex, hand;
+
+	if (!pending || !pending->vr_akimbo_active || pending->vr_akimbo_berserk ||
+		!vr_input_pending_akimbo_identity.valid ||
+		!VR_InputAkimboGameplayAccepted (frame) ||
+		!VR_InputSelectedTwinNailgun (&model, &modelindex) ||
+		!pending->vr_active || !pending->vr_handpos_relative ||
+		!VR_InputWireVec (pending->vr_handpos) ||
+		vr_input_pending_akimbo_identity.sample_id != frame->sample_id ||
+		vr_input_pending_akimbo_identity.reset_generation !=
+			vr_input_reset_generation ||
+		vr_input_pending_akimbo_identity.modelindex != modelindex ||
+		vr_input_pending_akimbo_identity.model != model ||
+		vr_input_pending_akimbo_identity.weapon != cl.stats[STAT_ACTIVEWEAPON] ||
+		!VR_InputWireVec (pending->vr_akimbo_muzzle[0]) ||
+		!VR_InputWireVec (pending->vr_akimbo_muzzle[1]) ||
+		!VR_InputWireVec (pending->vr_akimbo_angles[0]) ||
+		!VR_InputWireVec (pending->vr_akimbo_angles[1]) ||
+		!VR_InputAkimboHandDevicesAccepted (frame))
+		return false;
+
+	for (hand = 0; hand < 2; ++hand)
+	{
+		const vrxr_device_t *device = &frame->devices[hand + 1];
+		if (vr_input_pending_akimbo_identity.hands[hand].role !=
+				vr_input_hands[hand].role ||
+			vr_input_pending_akimbo_identity.hands[hand].profile !=
+				vr_input_hands[hand].profile ||
+			vr_input_pending_akimbo_identity.hands[hand].device_hand !=
+				device->hand ||
+			memcmp (vr_input_pending_akimbo_identity.hands[hand].serial,
+				device->serial, sizeof (device->serial)) != 0)
+			return false;
+	}
+	return true;
+}
+
 static void VR_InputPreparePrivatePose (usercmd_t *pending, int dominant,
 	qboolean dominant_accepted)
 {
@@ -3604,6 +3791,7 @@ static void VR_InputPreparePrivatePose (usercmd_t *pending, int dominant,
 		VR_InputClearPendingContactRecord (pending);
 		return;
 	}
+	VR_InputPrepareAkimboPair (pending, frame);
 	if ((contact_model || axe_candidate) && vr_input_contact_discontinuity)
 	{
 		/* An inactive contact in this accepted command resets the server's
@@ -3839,6 +4027,7 @@ void VR_InputApplyPending (usercmd_t *cmd)
 	if (!cmd)
 	{
 		VR_InputClearPendingContactRecord (&cl.pendingcmd);
+		VR_InputClearPendingAkimboRecord (&cl.pendingcmd);
 		return;
 	}
 	memset (&cmd->vr_contact, 0, sizeof (cmd->vr_contact));
@@ -3849,6 +4038,7 @@ void VR_InputApplyPending (usercmd_t *cmd)
 	if (CL_AngleLocked () || !VR_InputMotionContextAccepted (frame))
 	{
 		VR_InputClearPendingContactRecord (&cl.pendingcmd);
+		VR_InputClearPendingAkimboRecord (&cl.pendingcmd);
 		return;
 	}
 	if (VR_InputControllerAim () && VR_InputRoomscaleCommandAccepted (cl.pendingcmd.vr_roomscalemove))
@@ -3866,19 +4056,18 @@ void VR_InputApplyPending (usercmd_t *cmd)
 		cmd->vr_active = true;
 		private_pose_accepted = true;
 	}
-	if (private_pose_accepted && cl.pendingcmd.vr_akimbo_active &&
-		VR_InputWireVec (cl.pendingcmd.vr_akimbo_muzzle[0]) &&
-		VR_InputWireVec (cl.pendingcmd.vr_akimbo_muzzle[1]) &&
-		VR_InputWireVec (cl.pendingcmd.vr_akimbo_angles[0]) &&
-		VR_InputWireVec (cl.pendingcmd.vr_akimbo_angles[1]))
+	if (private_pose_accepted &&
+		VR_InputPendingAkimboAccepted (&cl.pendingcmd, frame))
 	{
 		cmd->vr_akimbo_active = true;
-		cmd->vr_akimbo_berserk = cl.pendingcmd.vr_akimbo_berserk;
+		cmd->vr_akimbo_berserk = false;
 		memcpy (cmd->vr_akimbo_muzzle, cl.pendingcmd.vr_akimbo_muzzle,
 			sizeof (cmd->vr_akimbo_muzzle));
 		memcpy (cmd->vr_akimbo_angles, cl.pendingcmd.vr_akimbo_angles,
 			sizeof (cmd->vr_akimbo_angles));
 	}
+	else
+		VR_InputClearPendingAkimboRecord (&cl.pendingcmd);
 	if (private_pose_accepted &&
 		VR_InputPendingContactAccepted (&cl.pendingcmd, frame))
 		cmd->vr_contact = cl.pendingcmd.vr_contact;

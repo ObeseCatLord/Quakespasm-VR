@@ -2376,9 +2376,10 @@ static void Send_Spawn_Info (client_t *c, qboolean loadgame)
 
 	// send all current names, colors, and frag counts
 	SZ_Clear (&c->message);
-	/* Fastload can discard an unsent collision-policy update without a new
-	 * serverinfo. Queue the current mode again after this spawn completes. */
+	/* Fastload can discard unsent optional VR offers without a new
+	 * serverinfo. Queue them again after this spawn completes. */
 	c->weapon_contact_last_mode = -1;
+	c->qbj3_akimbo_last_advertised = -1;
 
 	// send time of update
 	MSG_WriteByte (&c->message, svc_time);
