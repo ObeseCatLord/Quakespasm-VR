@@ -3616,7 +3616,7 @@ static void R_IndirectComputeDispatch (cb_context_t *cbx)
 	vkCmdPipelineBarrier (cbx->cb, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1, &memory_barrier, 0, NULL, 0, NULL);
 
 	R_BindPipeline (cbx, VK_PIPELINE_BIND_POINT_COMPUTE, vulkan_globals.indirect_draw_pipeline);
-	char push_constants[8 * 4];
+	char push_constants[14 * 4];
 	memcpy (push_constants, &cl.model_precache[1]->numsurfaces, sizeof (int));
 	memset (push_constants + 4, 0, sizeof (uint32_t));
 	uint32_t offset = current_compute_buffer_index * dyn_visibility_offset / 4;
@@ -3626,6 +3626,13 @@ static void R_IndirectComputeDispatch (cb_context_t *cbx)
 	memcpy (push_constants + 24, &instance_base, sizeof (uint32_t));
 	const float eye_radius = vulkan_globals.stereo_active ? r_stereo_radius : 0;
 	memcpy (push_constants + 28, &eye_radius, sizeof (float));
+	if (vulkan_globals.stereo_active)
+		memcpy (push_constants + 32, r_stereo_origins, sizeof (r_stereo_origins));
+	else
+	{
+		memcpy (push_constants + 32, r_refdef.vieworg, sizeof (vec3_t));
+		memcpy (push_constants + 44, r_refdef.vieworg, sizeof (vec3_t));
+	}
 	R_PushConstants (cbx, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof (push_constants), push_constants);
 	const uint32_t num_workgroups = (cl.worldmodel->numsurfaces + 63) / 64;
 	const uint32_t max_dispatch = vulkan_globals.device_properties.limits.maxComputeWorkGroupCount[0];

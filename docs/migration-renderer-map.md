@@ -43,6 +43,18 @@ Evidence is from pinned Git objects: **I** = Ironwail `08d578136ff43d7d1ef38e636
 
 The asset evidence establishes implemented formats and lookup behavior, not complete QSS compatibility. Keep original file attribution and established subsystem ownership.
 
+## Current-branch two-eye indirect culling
+
+The indirect compute pass now tests world-surface backfaces against both actual
+eye origins. It rejects a world surface only when neither eye can see its front
+side; desktop keeps the vkQuake center-origin test. This reuses the existing
+PVS/frustum union and indirect draw pipeline. Transformed brush models retain
+their conservative model-space radius until their per-eye origins can be
+qualified without changing the shared instance-buffer layout. The shader's
+56-byte push-constant block remains under Vulkan's guaranteed 128-byte limit.
+The Linux shader and executable build passed. Eye-boundary image checks and
+`mj4m1` draw/frame-time comparisons remain open; no speedup is claimed.
+
 ## Current-branch large-map performance hypothesis
 
 `2.0` still inherits vkQuake's ray-shadow path in

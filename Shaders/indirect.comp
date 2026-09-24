@@ -15,6 +15,12 @@ layout (push_constant) uniform PushConsts
 	float vieworg_z;
 	uint  instance_base;
 	float eye_radius;
+	float eye0_x;
+	float eye0_y;
+	float eye0_z;
+	float eye1_x;
+	float eye1_y;
+	float eye1_z;
 }
 push_constants;
 
@@ -78,18 +84,31 @@ void main ()
 	const vec3	vieworg = (submodel != 0) ? bmodel_instances[push_constants.instance_base + submodel].local_vieworg.xyz
 										  : vec3 (push_constants.vieworg_x, push_constants.vieworg_y, push_constants.vieworg_z);
 	const float dist = surfaces[surf].dist;
-	const float dp = dot (surf_normal, vieworg);
 	const bool	backface = (surfaces[surf].packed_tex_edgecount & 0x8000) != 0;
-	float radius = push_constants.eye_radius;
-	if (radius > 0.0 && submodel != 0)
+	if (submodel == 0 && push_constants.eye_radius > 0.0)
 	{
-		const vec3 row = bmodel_instances[push_constants.instance_base + submodel].transform[0].xyz;
-		const float scale_squared = dot (row, row);
-		radius = scale_squared > 0.0 ? radius * inversesqrt (scale_squared) : 1e30;
+		// World surfaces use the actual two eye origins. A surrounding sphere
+		// admits extra backfaces, especially when the gaze plane is tangential.
+		const float dp0 = dot (surf_normal, vec3 (push_constants.eye0_x, push_constants.eye0_y, push_constants.eye0_z));
+		const float dp1 = dot (surf_normal, vec3 (push_constants.eye1_x, push_constants.eye1_y, push_constants.eye1_z));
+		if ((backface && dp0 > dist && dp1 > dist) || (!backface && dp0 < dist && dp1 < dist))
+			return;
 	}
-	const float margin = radius * dot (abs (surf_normal), vec3 (1.0));
-	if (backface && dp > dist + margin || !backface && dp < dist - margin)
-		return;
+	else
+	{
+		// Moved/scaled submodels retain the conservative local-space bound.
+		float radius = push_constants.eye_radius;
+		if (radius > 0.0 && submodel != 0)
+		{
+			const vec3 row = bmodel_instances[push_constants.instance_base + submodel].transform[0].xyz;
+			const float scale_squared = dot (row, row);
+			radius = scale_squared > 0.0 ? radius * inversesqrt (scale_squared) : 1e30;
+		}
+		const float dp = dot (surf_normal, vieworg);
+		const float margin = radius * dot (abs (surf_normal), vec3 (1.0));
+		if ((backface && dp > dist + margin) || (!backface && dp < dist - margin))
+			return;
+	}
 
 	uint	   tex_idx = surfaces[surf].packed_tex_edgecount & 0x7FFF;
 	const bool is_decal =
