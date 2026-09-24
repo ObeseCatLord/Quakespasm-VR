@@ -177,6 +177,12 @@ void CL_FreeState (void)
 	PMCL_ClearMoveVars ();
 }
 
+void CL_ResetWeaponContactState (void)
+{
+	cl.vr_weapon_contact_mode = 0;
+	cl.vr_weapon_contact_profile = VR_WEAPON_CONTACT_PROFILE_NONE;
+}
+
 // Pinned prediction presentation reset; epoch/replay state remains separately owned.
 void CL_ResetPredictionSmoothing (void)
 {
@@ -235,6 +241,7 @@ void CL_Disconnect (void)
 	NET_DatagramConnectCancel ();
 	SpatialWorld_Clear ();
 	CL_ResetVRIKState ();
+	CL_ResetWeaponContactState ();
 	CL_ResetVoiceTransportState ();
 	Voice_ResetConnection ();
 	cls.legacy_qsvr = 0;
@@ -2532,6 +2539,76 @@ static void CL_ServerExtension_Ignore_f (void)
 	Con_DPrintf2 ("Ignoring stufftext: %s\n", Cmd_Argv (0));
 }
 
+static qboolean CL_ParseBoundedDecimal (const char *text, unsigned int maximum,
+	unsigned int *value)
+{
+	unsigned int parsed = 0;
+	const unsigned char *cursor = (const unsigned char *)text;
+
+	if (!cursor || !*cursor || !value)
+		return false;
+	for (; *cursor; ++cursor)
+	{
+		unsigned int digit;
+		if (*cursor < '0' || *cursor > '9')
+			return false;
+		digit = (unsigned int)(*cursor - '0');
+		if (digit > maximum || parsed > (maximum - digit) / 10)
+			return false;
+		parsed = parsed * 10 + digit;
+	}
+	*value = parsed;
+	return true;
+}
+
+static qboolean CL_WeaponContactOfferSyntaxValid (const char *raw)
+{
+	const unsigned char *cursor = (const unsigned char *)raw;
+
+	/* Cmd_Argv has already tokenized this text. Check the original spelling
+	 * too: the shared tokenizer accepts incomplete quotes and comments. */
+	for (int field = 0; field < 3; ++field)
+	{
+		while (*cursor == ' ' || *cursor == '\t')
+			cursor++;
+		if (*cursor < '0' || *cursor > '9')
+			return false;
+		do
+			cursor++;
+		while (*cursor >= '0' && *cursor <= '9');
+		if (field < 2 && *cursor != ' ' && *cursor != '\t')
+			return false;
+	}
+	while (*cursor == ' ' || *cursor == '\t' || *cursor == '\r' ||
+		*cursor == '\n')
+		cursor++;
+	return *cursor == 0;
+}
+
+static void CL_ServerExtension_WeaponContactProtocol_f (void)
+{
+	unsigned int version, mode, profile;
+
+	if (cmd_source != src_server)
+		return;
+
+	/* Every server update is authoritative, including a malformed revocation. */
+	CL_ResetWeaponContactState ();
+	if (Cmd_Argc () != 4 || !CL_WeaponContactOfferSyntaxValid (Cmd_Args ()) ||
+		!CL_ParseBoundedDecimal (Cmd_Argv (1), VR_WEAPON_CONTACT_PROTOCOL_VERSION,
+			&version) || version != VR_WEAPON_CONTACT_PROTOCOL_VERSION ||
+		!CL_ParseBoundedDecimal (Cmd_Argv (2), VR_WEAPON_CONTACT_CAP_KNOWN,
+			&mode) || (mode & ~VR_WEAPON_CONTACT_CAP_KNOWN) ||
+		!CL_ParseBoundedDecimal (Cmd_Argv (3), VR_WEAPON_CONTACT_PROFILE_COUNT - 1,
+			&profile))
+	{
+		Con_DPrintf2 ("Ignoring malformed weapon-contact capability offer.\n");
+		return;
+	}
+	cl.vr_weapon_contact_mode = mode;
+	cl.vr_weapon_contact_profile = profile;
+}
+
 static void CL_LegacyColor_f (void)
 {
 	// spike -- code to handle the legacy _cl_color cvar (we now use separate qw-style topcolor/bottomcolor userinfo cvars)
@@ -2609,6 +2686,8 @@ void CL_Init (void)
 	// spike -- userinfo stuff
 	Cmd_AddCommand_ServerCommand ("fui", CL_ServerExtension_FullUserinfo_f);
 	Cmd_AddCommand_ServerCommand ("ui", CL_ServerExtension_UserinfoUpdate_f);
+	Cmd_AddCommand_ServerCommand ("vr_weapon_contact_protocol",
+		CL_ServerExtension_WeaponContactProtocol_f);
 
 	Cmd_AddCommand_ServerCommand ("paknames", CL_ServerExtension_Ignore_f);		 // package names in use by the server (including gamedir+extension)
 	Cmd_AddCommand_ServerCommand ("paks", CL_ServerExtension_Ignore_f);			 // provides hashes to go with the paknames list

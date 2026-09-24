@@ -224,6 +224,7 @@ typedef struct client_s
 	unsigned int protocol_qsvr; // selected private wire profile; zero is public
 	unsigned int protocol_pext1;
 	unsigned int protocol_pext2;
+	int weapon_contact_last_mode; // last mode appended to the reliable stream; -1 means not queued
 	/* Optional VRIK pose transport state; unrelated to QSVR movement admission. */
 	qboolean vrik_capable;
 	unsigned char vrik_protocol_version;

@@ -41,6 +41,7 @@ static cvar_t sv_netsort = {"sv_netsort", "1", CVAR_NONE};
 static cvar_t sv_smoothplatformlerps = {"sv_smoothplatformlerps", "1", CVAR_NONE};
 static cvar_t sv_qsvr_private = {"sv_qsvr_private", "0", CVAR_NONE};
 static cvar_t sv_private_pmove_walk = {"sv_private_pmove_walk", "0", CVAR_SERVERINFO};
+static cvar_t sv_weapon_collision = {"sv_weapon_collision", "-1", CVAR_NOTIFY | CVAR_SERVERINFO};
 cvar_t sv_voice = {"sv_voice", "1", CVAR_SERVERINFO};
 cvar_t sv_coop_shared_pickups = {"sv_coop_shared_pickups", "-1", CVAR_ARCHIVE | CVAR_NOTIFY | CVAR_SERVERINFO};
 cvar_t sv_coop_respawn_keep_weapons_ammo = {"sv_coop_respawn_keep_weapons_ammo", "-1", CVAR_ARCHIVE | CVAR_NOTIFY | CVAR_SERVERINFO};
@@ -2185,6 +2186,7 @@ void SV_Init (void)
 	Cvar_RegisterVariable (&sv_smoothplatformlerps);
 	Cvar_RegisterVariable (&sv_qsvr_private);
 	Cvar_RegisterVariable (&sv_private_pmove_walk);
+	Cvar_RegisterVariable (&sv_weapon_collision);
 	Cvar_RegisterVariable (&sv_voice);
 	Cvar_RegisterVariable (&sv_coop_shared_pickups);
 	Cvar_RegisterVariable (&sv_coop_respawn_keep_weapons_ammo);
@@ -2455,6 +2457,7 @@ void SV_SendServerinfo (client_t *client)
 	qboolean	 cantruncate;
 	qboolean	 truncated = false;
 
+	client->weapon_contact_last_mode = -1;
 	client->spawned = false; // need prespawn, spawn, etc
 	client->voice_protocol_offered = false;
 
@@ -4004,6 +4007,48 @@ int SV_SendPrespawnBaselines (int idx)
 SV_SendClientMessages
 =======================
 */
+static void SV_AppendWeaponContactProtocol (client_t *client)
+{
+	unsigned int mode;
+	char command[64];
+	int command_length;
+	size_t required;
+	int previous_size;
+
+	if (!client || !client->active || !client->netconnection ||
+		!client->spawned || client->protocol_qsvr != QSVR_PROTOCOL_PINNED)
+		return;
+
+	mode = sv_weapon_collision.value < 0.0f ?
+		(cls.state != ca_dedicated && svs.maxclients == 1 ?
+		VR_WEAPON_CONTACT_CAP_COLLISION : 0u) :
+		(sv_weapon_collision.value > 0.0f ?
+		VR_WEAPON_CONTACT_CAP_COLLISION : 0u);
+	if (client->weapon_contact_last_mode == (int)mode ||
+		client->message.overflowed || client->message.cursize < 0 ||
+		client->message.maxsize <= 0 ||
+		client->message.cursize > client->message.maxsize)
+		return;
+
+	command_length = q_snprintf (command, sizeof (command),
+		"//vr_weapon_contact_protocol %u %u %u\n",
+		VR_WEAPON_CONTACT_PROTOCOL_VERSION, mode,
+		(unsigned int)VR_WEAPON_CONTACT_PROFILE_NONE);
+	if (command_length <= 0 || (size_t)command_length >= sizeof (command))
+		return;
+
+	required = (size_t)command_length + 2; /* svc_stufftext and NUL */
+	if (required > (size_t)(client->message.maxsize - client->message.cursize))
+		return;
+
+	previous_size = client->message.cursize;
+	MSG_WriteByte (&client->message, svc_stufftext);
+	MSG_WriteString (&client->message, command);
+	if (!client->message.overflowed &&
+		client->message.cursize == previous_size + (int)required)
+		client->weapon_contact_last_mode = (int)mode;
+}
+
 void SV_SendClientMessages (void)
 {
 	int i;
@@ -4029,6 +4074,7 @@ void SV_SendClientMessages (void)
 
 		if (!SV_SendClientDatagram (host_client))
 			continue;
+		SV_AppendWeaponContactProtocol (host_client);
 		if (!host_client->spawned)
 		{
 			// the player isn't totally in the game yet

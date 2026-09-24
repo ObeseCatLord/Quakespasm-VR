@@ -83,6 +83,18 @@ single-player rule: non-dedicated with `maxclients == 1`, regardless of how
 many players happen to be connected. The local `vr_weapon_collision` default
 remains off. The contact capability must never select a wire dialect or imply
 that melee gameplay has been implemented.
+The implementation queues the offer in the ordinary reliable client message
+after `begin`; `Send_Spawn_Info` invalidates the queued-mode marker when it
+clears that message during fastload. The receiver checks the original argument
+spelling as well as bounded numeric tokens, so incomplete quotes/comments
+cannot authorize collision. A focused production-parser GDB smoke passes
+public/private, mode, revocation, malformed syntax and local opt-out cases;
+real network delivery and near-wall shot behavior remain open.
+The subsequent Astra code review found two defects in the first patch: same-map
+fastload could discard an unsent update, and permissive console tokenization
+could accept a malformed quoted/commented offer. Both recommendations were
+adopted in the reset and raw-syntax checks above. The reviewer CLI reported
+`gpt-6-astra` at `xhigh`; backend routing was not independently observable.
 The inherited client defaults `vr_weapon_collision` to on; the current `2.0`
 default of off is a temporary gate while only the Classic Shotgun path exists.
 Before declaring weapon parity, extend collision/contact handling to the

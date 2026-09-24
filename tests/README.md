@@ -362,6 +362,19 @@ quoted/unquoted token overflow before a valid prefix can execute; public
 tokenizer side effects are also checked. It needs GDB and debug symbols, but
 no game assets. It does not exercise a socket, normal startup, or error teardown.
 
+`vr_weapon_contact_policy_smoke.gdb` injects one real `svc_stufftext` offer,
+then checks the production server-command handler and shared
+collision-authorization predicate before engine
+initialization. It covers local-command rejection, public versus pinned-private
+peers, collision and melee bits, malformed-offer revocation, and local opt-out.
+It also rejects incomplete quotes and comments in a wire offer.
+It does not exercise network delivery, server policy updates or a live shot.
+
+```sh
+gdb -nx --batch -x tests/vr_weapon_contact_policy_smoke.gdb --args \
+  build-debug/vkquake -novr
+```
+
 ```sh
 for case_name in fit beyond2k capacity oversized unterminated \
   comment_line comment_block token_overflow token_overflow_quoted ordinary_oversized; do

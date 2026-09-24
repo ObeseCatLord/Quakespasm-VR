@@ -85,6 +85,13 @@ static cvar_t vr_vrik = {"vr_vrik", "1", CVAR_ARCHIVE};
 cvar_t vr_fbt_enabled = {"vr_fbt_enabled", "0", CVAR_ARCHIVE};
 cvar_t vr_weapon_collision = {"vr_weapon_collision", "0", CVAR_ARCHIVE};
 
+qboolean VR_WeaponCollisionAuthorized (void)
+{
+	return cl.protocol_qsvr == QSVR_PROTOCOL_PINNED &&
+		(cl.vr_weapon_contact_mode & VR_WEAPON_CONTACT_CAP_COLLISION) != 0 &&
+		vr_weapon_collision.value != 0.0f;
+}
+
 extern cvar_t vr_aimmode;
 
 static vr_input_hand_state_t vr_input_hands[2];
@@ -2918,7 +2925,7 @@ static void VR_InputPreparePrivatePose (usercmd_t *pending, int dominant,
 	/* First opt-in collision slice: the classic shotgun only. */
 	{
 		const vrxr_frame_t *frame = GL_OpenXRFrame ();
-		const qboolean collision_context = vr_weapon_collision.value != 0.0f &&
+		const qboolean collision_context = VR_WeaponCollisionAuthorized () &&
 			cls.state == ca_connected && cls.signon == SIGNONS &&
 			!cls.demoplayback && key_dest == key_game && !cl.intermission &&
 			cl.stats[STAT_HEALTH] > 0 && cl.viewent.model &&

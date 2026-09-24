@@ -529,7 +529,7 @@ void V_PrepareWeaponCollisionPresentation (void)
 
 	tracked_weapon_collision_frame_valid = false;
 	VectorCopy (vec3_origin, tracked_weapon_collision_offset);
-	if (vr_weapon_collision.value == 0.0f || !frame || !frame->focused ||
+	if (!VR_WeaponCollisionAuthorized () || !frame || !frame->focused ||
 		!frame->should_render || cls.state != ca_connected || cls.signon != SIGNONS ||
 		cls.demoplayback || key_dest != key_game || cl.intermission ||
 		cl.stats[STAT_HEALTH] <= 0 || chase_active.value ||
@@ -582,7 +582,7 @@ qboolean V_TrackedWeaponCollisionPresentation (vec3_t origin, vec3_t offset)
 	if (offset)
 		VectorCopy (vec3_origin, offset);
 	if (!origin || !offset || !tracked_weapon_collision_frame_valid ||
-		vr_weapon_collision.value == 0.0f || !frame || !frame->focused ||
+		!VR_WeaponCollisionAuthorized () || !frame || !frame->focused ||
 		!frame->should_render)
 	{
 		if (tracked_weapon_collision_frame_valid)

@@ -60,6 +60,7 @@ void CL_StopPlayback (void)
 	cls.demofile = NULL;
 	cls.state = ca_disconnected;
 	cls.demo_prespawn_end = 0;
+	CL_ResetWeaponContactState ();
 
 	if (cls.timedemo)
 		CL_FinishTimeDemo ();

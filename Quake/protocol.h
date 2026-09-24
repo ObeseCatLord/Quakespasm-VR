@@ -501,6 +501,7 @@ typedef enum {
 
 // Inherited command data; private transport is admitted separately from FTE bits.
 #define VR_WEAPON_CONTACT_LEFT_VALID 1
+#define VR_WEAPON_CONTACT_PROTOCOL_VERSION 1u
 #define VR_WEAPON_CONTACT_CAP_COLLISION 1
 #define VR_WEAPON_CONTACT_CAP_MELEE 2
 #define VR_WEAPON_CONTACT_CAP_KNOWN 3

@@ -300,6 +300,10 @@ typedef struct
 	unsigned protocol_pext1; // spike -- flag of fte protocol extensions
 	unsigned protocol_pext2; // spike -- flag of fte protocol extensions
 	unsigned protocol_qsvr; // selected private layout; zero until explicit admission, never inferred from FTE bits
+	/* Optional donor-compatible weapon-contact capability, independent of the
+	 * selected QSVR movement profile and local collision preference. */
+	unsigned int vr_weapon_contact_mode;
+	unsigned int vr_weapon_contact_profile;
 	/* Optional inherited VRIK receive capability, independent of the QSVR
 	 * movement profile and local VR/OpenXR initialization. */
 	qboolean vrik_protocol_offered;
@@ -454,6 +458,7 @@ void CL_Disconnect (void);
 void CL_Disconnect_f (void);
 void CL_ResetVRIKPoseCaches (void);
 void CL_ResetVRIKState (void);
+void CL_ResetWeaponContactState (void);
 void CL_ExpireStaleVRIKPoses (void);
 void CL_NextDemo (void);
 
