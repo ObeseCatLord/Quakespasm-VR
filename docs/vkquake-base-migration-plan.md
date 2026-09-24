@@ -241,11 +241,19 @@ coverage cannot use one desktop camera's visibility. Extra effects are optional,
 not presumed performance improvements. Reuse current foveation policy/math and
 proven lifecycle pieces; do not transplant the entire experimental renderer.
 
-Keep fixed foveation off unless explicitly selected, eye tracking off by default,
-and invalid/unavailable gaze at full quality. Preserve full-eye geometry visibility
+Keep fixed foveation off unless explicitly selected, expose eye tracking as an
+independent VR toggle, and render at full quality when gaze is invalid or
+unavailable. Preserve full-eye geometry visibility
 and protected-content depth. Steam Frame streaming and standalone, Beyond 2e on
 Linux/Monado, Windows and other capable headsets remain separate qualification
 cases; donor migration does not supply gaze-provider/runtime support.
+
+Valve's [Steam Frame custom-engine guidance](https://partner.steamgames.com/doc/steamhardware/steamframe/engines/custom)
+recommends Linux ARM64 for native builds and documents
+`XR_VALVE_frame_controller_interaction`, `XR_EXT_eye_gaze_interaction`, and
+the `XR_FB_*`/`XR_META_foveation_eye_tracked` foveation path. The current
+OpenXR adapter requests those advertised extensions; extension presence still
+does not prove active gaze, usable rates, or standalone frame time.
 
 ### 5. Carry only missing large-map improvements
 
