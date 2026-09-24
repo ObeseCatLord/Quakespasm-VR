@@ -53,6 +53,9 @@ void VR_WeaponMenu_SetVRPointer (qboolean tracking_valid, qboolean pointer_valid
 	const float ray_origin[3], const float ray_direction[3], qboolean playspace);
 /* Resolve optional wheel models on the main thread before draw tasks start. */
 void VR_WeaponMenu_PrepareModels (void);
+/* Number of occupied rings in the current visible VR catalog, including the
+ * center slot's ring. */
+int VR_WeaponMenu_VisibleRingCount (void);
 void VR_WeaponMenu_SetVRPanel (const float world_from_ndc[16], qboolean playspace);
 int VR_WeaponMenu_DrawModels (struct cb_context_s *cbx);
 int VR_WeaponMenu_Release (void);

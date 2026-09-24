@@ -1217,6 +1217,7 @@ typedef struct {
 	aliashdr_t *geometry[VR_WEAPON_MENU_MAX_ENTRIES];
 	float world_from_ndc[16];
 	float model_yaw;
+	float outer_radius;
 	qboolean panel_valid;
 	qboolean playspace;
 	char labels[VR_WEAPON_MENU_MAX_ENTRIES][MAX_QPATH];
@@ -1291,6 +1292,35 @@ void VR_WeaponMenu_PrepareModels (void)
 		vr_weapon_menu_assets.geometry[index] =
 			(aliashdr_t *)Mod_Extradata_CheckSkin (model, 0);
 	}
+}
+
+static int VR_WeaponMenu_RingCount (int visible_count)
+{
+	int rings = 1;
+	int capacity = 1;
+
+	if (visible_count <= 0)
+		return 0;
+	while (capacity < visible_count && rings <= VR_WEAPON_MENU_MAX_ENTRIES)
+	{
+		capacity += 8 * rings;
+		++rings;
+	}
+	return rings;
+}
+
+int VR_WeaponMenu_VisibleRingCount (void)
+{
+	const vr_weapon_menu_catalog_t *catalog;
+	vr_weapon_menu_visible_t visible[VR_WEAPON_MENU_MAX_ENTRIES];
+	int visible_count;
+
+	if (!VR_WeaponMenu_IsOpenVR () || !VR_WeaponMenu_SessionValid ())
+		return 0;
+	catalog = VR_WeaponMenu_CurrentCatalog ();
+	visible_count = VR_WeaponMenu_BuildVisible (catalog, cl.stats,
+		MAX_CL_STATS, cl.items, visible, VR_WEAPON_MENU_MAX_ENTRIES);
+	return VR_WeaponMenu_RingCount (visible_count);
 }
 
 static qboolean VR_WeaponMenu_QuickSaveAvailable (void)
@@ -1543,6 +1573,20 @@ static qboolean VR_WeaponMenu_ActionStillValid (
 	}
 }
 
+static void VR_WeaponMenu_SetSlotGeometry (vr_weapon_menu_visible_t *visible,
+	int index, float center_x, float center_y, float scale)
+{
+	const float text_width = visible[index].entry->label ?
+		strlen (visible[index].entry->label) * CHARACTER_SIZE * scale : 0.0f;
+	const float box_width = q_max (text_width + 12.0f * scale, 40.0f * scale);
+	visible[index].center_x = center_x;
+	visible[index].center_y = center_y;
+	visible[index].width = box_width;
+	visible[index].height = 44.0f * scale;
+	visible[index].left = center_x - box_width * 0.5f;
+	visible[index].top = center_y - visible[index].height * 0.5f;
+}
+
 static void VR_WeaponMenu_Layout (vr_weapon_menu_visible_t *visible, int count,
 	float outer_radius, float scale)
 {
@@ -1554,16 +1598,43 @@ static void VR_WeaponMenu_Layout (vr_weapon_menu_visible_t *visible, int count,
 	for (int i = 0; i < count; ++i)
 	{
 		const float angle = -1.57079632679f + angle_step * i;
-		const float text_width = visible[i].entry->label ?
-			strlen (visible[i].entry->label) * CHARACTER_SIZE * scale : 0.0f;
-		const float box_width = q_max (text_width + 12.0f * scale, 40.0f * scale);
-		visible[i].center_x = center_x + cosf (angle) * label_radius;
-		visible[i].center_y = center_y + sinf (angle) * label_radius;
-		visible[i].width = box_width;
-		visible[i].height = 44.0f * scale;
-		visible[i].left = visible[i].center_x - box_width * 0.5f;
-		visible[i].top = visible[i].center_y - visible[i].height * 0.5f;
+		VR_WeaponMenu_SetSlotGeometry (visible, i,
+			center_x + cosf (angle) * label_radius,
+			center_y + sinf (angle) * label_radius, scale);
 	}
+}
+
+static float VR_WeaponMenu_LayoutPlayspace (vr_weapon_menu_visible_t *visible,
+	int count, float world_units_per_pixel, float scale)
+{
+	const float center_x = glwidth * 0.5f;
+	const float center_y = glheight * 0.5f;
+	int index = 0;
+	int ring = 0;
+
+	if (!isfinite (world_units_per_pixel) || world_units_per_pixel <= 0.0f)
+		return 0.0f;
+	if (count <= 0)
+		return 5.0f / world_units_per_pixel;
+	VR_WeaponMenu_SetSlotGeometry (visible, index++, center_x, center_y, scale);
+	if (count == 1)
+		return 5.0f / world_units_per_pixel;
+	for (ring = 1; index < count; ++ring)
+	{
+		const int capacity = 8 * ring;
+		const int in_ring = q_min (capacity, count - index);
+		const float radius = 5.0f * ring / world_units_per_pixel;
+		const float angle_step = 6.28318530718f / in_ring;
+
+		for (int slot = 0; slot < in_ring; ++slot)
+		{
+			const float angle = -1.57079632679f + angle_step * slot;
+			VR_WeaponMenu_SetSlotGeometry (visible, index++,
+				center_x + cosf (angle) * radius,
+				center_y + sinf (angle) * radius, scale);
+		}
+	}
+	return 5.0f * q_max (1, ring - 1) / world_units_per_pixel;
 }
 
 qboolean VR_WeaponMenu_CanOpen (void)
@@ -1607,15 +1678,28 @@ void VR_WeaponMenu_Cancel (void)
 }
 
 static void VR_WeaponMenu_PrepareFrame (const vr_weapon_menu_catalog_t *catalog,
-	float radius, float scale)
+	float radius, float scale, const float world_from_ndc[16],
+	qboolean playspace)
 {
+	float world_units_per_pixel = 0.0f;
+	float layout_radius = radius;
+	if (playspace && world_from_ndc)
+	{
+		world_units_per_pixel = sqrtf (world_from_ndc[8] * world_from_ndc[8] +
+			world_from_ndc[9] * world_from_ndc[9] +
+			world_from_ndc[10] * world_from_ndc[10]);
+	}
 	vr_weapon_menu_frame_valid = false;
 	vr_weapon_menu_frame.panel_valid = false;
 	vr_weapon_menu_frame.count = VR_WeaponMenu_BuildVisible (catalog,
 		cl.stats, MAX_CL_STATS, cl.items, vr_weapon_menu_frame.visible,
 		VR_WEAPON_MENU_MAX_ENTRIES);
-	VR_WeaponMenu_Layout (vr_weapon_menu_frame.visible,
-		vr_weapon_menu_frame.count, radius, scale);
+	if (playspace && isfinite (world_units_per_pixel) && world_units_per_pixel > 0.0f)
+		layout_radius = VR_WeaponMenu_LayoutPlayspace (vr_weapon_menu_frame.visible,
+			vr_weapon_menu_frame.count, world_units_per_pixel, scale);
+	else
+		VR_WeaponMenu_Layout (vr_weapon_menu_frame.visible,
+			vr_weapon_menu_frame.count, radius, scale);
 	for (int i = 0; i < vr_weapon_menu_frame.count; ++i)
 	{
 		vr_weapon_menu_entry_t *copy = &vr_weapon_menu_frame.entries[i];
@@ -1640,8 +1724,9 @@ static void VR_WeaponMenu_PrepareFrame (const vr_weapon_menu_catalog_t *catalog,
 		}
 		vr_weapon_menu_frame.visible[i].entry = copy;
 	}
+	vr_weapon_menu_frame.outer_radius = layout_radius;
 	vr_weapon_menu_frame.action_count = VR_WeaponMenu_BuildActions (catalog,
-		VR_WeaponMenu_QuickSaveAvailable (), radius, scale,
+		VR_WeaponMenu_QuickSaveAvailable (), layout_radius, scale,
 		vr_weapon_menu_frame.actions);
 	vr_weapon_menu_frame.generation = vr_weapon_menu_session_generation;
 	vr_weapon_menu_frame_valid = true;
@@ -1827,7 +1912,7 @@ void VR_WeaponMenu_SetVRPointer (qboolean tracking_valid, qboolean pointer_valid
 	vr_weapon_menu_hover_action_name[0] = '\0';
 
 	catalog = VR_WeaponMenu_CurrentCatalog ();
-	VR_WeaponMenu_PrepareFrame (catalog, radius, scale);
+	VR_WeaponMenu_PrepareFrame (catalog, radius, scale, world_from_ndc, playspace);
 	if (!pointer_valid)
 		return;
 	selected = playspace ? VR_WeaponMenu_HitWorld (&vr_weapon_menu_frame,
@@ -1924,7 +2009,7 @@ int VR_WeaponMenu_Release (void)
 	vr_weapon_menu_action_t actions[VR_WEAPON_MENU_MAX_ACTIONS];
 	int pointer_x = -1, pointer_y = -1;
 	int action_count = 0, action = -1;
-	const float radius = q_min (glwidth, glheight) * 0.32f;
+	float radius = q_min (glwidth, glheight) * 0.32f;
 	const float scale = CLAMP (0.85f, q_min (glwidth, glheight) / 720.0f, 1.5f);
 	qboolean session_ready = vr_weapon_menu_open && VR_WeaponMenu_SessionValid () &&
 		(!vr_weapon_menu_open_vr ||
@@ -1934,6 +2019,10 @@ int VR_WeaponMenu_Release (void)
 	{
 		if (vr_weapon_menu_open_vr)
 		{
+			if (vr_weapon_menu_frame_valid &&
+				vr_weapon_menu_frame.generation == vr_weapon_menu_session_generation &&
+				vr_weapon_menu_frame.playspace)
+				radius = vr_weapon_menu_frame.outer_radius;
 			pointer_x = vr_weapon_menu_pointer_x;
 			pointer_y = vr_weapon_menu_pointer_y;
 		}
@@ -1991,7 +2080,7 @@ void VR_WeaponMenu_DrawCatalog (struct cb_context_s *context,
 	vr_weapon_menu_action_t *actions = local_actions;
 	int count, pointer_x, pointer_y, selected, selected_action, action_count;
 	const float min_dimension = q_min (glwidth, glheight);
-	const float outer_radius = min_dimension * 0.32f;
+	float outer_radius = min_dimension * 0.32f;
 	const float hub_radius = outer_radius * 0.22f;
 	const float scale = CLAMP (0.85f, min_dimension / 720.0f, 1.5f);
 	char ammo_text[48];
@@ -2008,6 +2097,7 @@ void VR_WeaponMenu_DrawCatalog (struct cb_context_s *context,
 		actions = vr_weapon_menu_frame.actions;
 		count = vr_weapon_menu_frame.count;
 		action_count = vr_weapon_menu_frame.action_count;
+		outer_radius = vr_weapon_menu_frame.outer_radius;
 	}
 	else
 	{
@@ -2097,7 +2187,7 @@ void VR_WeaponMenu_DrawCatalog (struct cb_context_s *context,
 			(visible[i].selectable ? 1.0f : 0.55f),
 			is_selected ? (has_vr_model ? 0.55f : 0.10f) :
 			(visible[i].selectable ? 1.0f : 0.55f), 1.0f);
-		if (entry->label)
+		if (entry->label && (!vr_weapon_menu_open_vr || !has_vr_model))
 			Draw_String_Scaled (cbx, visible[i].center_x - label_width * 0.5f,
 				has_vr_model ? visible[i].center_y + 24.0f * scale :
 				visible[i].top + 22.0f * scale, entry->label, scale);
@@ -2112,21 +2202,48 @@ void VR_WeaponMenu_DrawCatalog (struct cb_context_s *context,
 		selected = -1;
 
 	GL_SetCanvasColor (1.0f, 1.0f, 1.0f, 1.0f);
-	Draw_String_Scaled (cbx, glwidth * 0.5f - 56.0f * scale,
-		glheight * 0.5f - 12.0f * scale,
-		selected_action >= 0 ? actions[selected_action].label :
-		(selected >= 0 && visible[selected].entry->label ?
-		 visible[selected].entry->label : "WEAPON"), scale);
-	if (selected_action < 0 && selected >= 0 && visible[selected].ammo >= 0)
 	{
-		q_snprintf (ammo_text, sizeof (ammo_text), "%d / %d",
-			visible[selected].ammo, visible[selected].ammo_max);
-		Draw_String_Scaled (cbx, glwidth * 0.5f - strlen (ammo_text) * 4.0f * scale,
-			glheight * 0.5f + 2.0f * scale, ammo_text, scale);
+		const qboolean playspace_layout = vr_weapon_menu_open_vr &&
+			vr_weapon_menu_frame_valid && vr_weapon_menu_frame.playspace;
+		char playspace_info[MAX_QPATH];
+		const char *info = selected_action >= 0 ? actions[selected_action].label :
+			(selected >= 0 && visible[selected].entry->label ?
+			 visible[selected].entry->label : "WEAPON");
+		float info_y;
+		float info_width;
+		float info_x;
+
+		if (playspace_layout)
+		{
+			VR_WeaponMenu_FitActionLabel (playspace_info, sizeof (playspace_info),
+				info, q_max (0.0f, glwidth - 8.0f * scale), scale);
+			info = playspace_info;
+		}
+		info_width = strlen (info) * CHARACTER_SIZE * scale;
+		info_x = playspace_layout ? q_max (0.0f,
+			q_min (glwidth * 0.5f - info_width * 0.5f, glwidth - info_width)) :
+			glwidth * 0.5f - 56.0f * scale;
+		info_y = playspace_layout ? q_max (0.0f, q_min (glheight * 0.5f +
+			q_max (outer_radius, 28.0f * scale) + 8.0f * scale,
+			q_max (0.0f, glheight - 32.0f * scale))) :
+			glheight * 0.5f - 12.0f * scale;
+
+		Draw_String_Scaled (cbx, info_x, info_y, info, scale);
+		if (selected_action < 0 && selected >= 0 && visible[selected].ammo >= 0)
+		{
+			q_snprintf (ammo_text, sizeof (ammo_text), "%d / %d",
+				visible[selected].ammo, visible[selected].ammo_max);
+			Draw_String_Scaled (cbx, glwidth * 0.5f - strlen (ammo_text) * 4.0f * scale,
+				playspace_layout ? info_y + 10.0f * scale :
+				glheight * 0.5f + 2.0f * scale, ammo_text, scale);
+		}
+		Draw_String_Scaled (cbx, glwidth * 0.5f - 64.0f * scale,
+			playspace_layout ? info_y +
+				((selected_action < 0 && selected >= 0 && visible[selected].ammo >= 0) ?
+					22.0f : 12.0f) * scale :
+			glheight * 0.5f + outer_radius + 10.0f * scale,
+			"RELEASE TO SELECT", scale);
 	}
-	Draw_String_Scaled (cbx, glwidth * 0.5f - 64.0f * scale,
-		glheight * 0.5f + outer_radius + 10.0f * scale,
-		"RELEASE TO SELECT", scale);
 	if (!vr_weapon_menu_open_vr || vr_weapon_menu_pointer_valid)
 	{
 		Draw_Fill (cbx, pointer_x - 5.0f * scale, pointer_y - scale,

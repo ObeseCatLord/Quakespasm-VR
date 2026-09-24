@@ -1897,7 +1897,7 @@ static void SCR_VRWeaponMenuPrepare (void)
 	const vrxr_frame_t *frame = GL_OpenXRFrame ();
 	vec3_t ray_origin, ray_direction, hand_origin, forward, right, up, down, normal, view_angles;
 	int pointer_x = -1, pointer_y = -1;
-	int dominant;
+	int dominant, ring_count;
 	qboolean pointer_valid;
 	float scale, min_dimension;
 	const unsigned int generation = VR_WeaponMenu_SessionGeneration ();
@@ -1932,6 +1932,7 @@ static void SCR_VRWeaponMenuPrepare (void)
 		vr_weapon_menu_anchor.valid = 0;
 		return;
 	}
+	ring_count = q_max (1, VR_WeaponMenu_VisibleRingCount ());
 	if (!vr_weapon_menu_anchor.valid)
 	{
 		if (vr_weapon_menu_anchor_mode == 0)
@@ -1943,7 +1944,6 @@ static void SCR_VRWeaponMenuPrepare (void)
 				return;
 			}
 			VectorCopy (hand_origin, vr_weapon_menu_anchor.base);
-			VectorMA (hand_origin, 10.5f, vr_weapon_menu_anchor_forward, vr_weapon_menu_anchor.center);
 			vr_weapon_menu_anchor.valid = 1;
 		}
 		else
@@ -1962,6 +1962,11 @@ static void SCR_VRWeaponMenuPrepare (void)
 	}
 	if (vr_weapon_menu_anchor_mode == 0)
 	{
+		/* The hand origin/basis stay frozen. Match the donor's extra wheel
+		 * distance when more rings become visible during the held session. */
+		VectorMA (vr_weapon_menu_anchor.base,
+			10.5f + (ring_count - 1) * 2.5f,
+			vr_weapon_menu_anchor_forward, vr_weapon_menu_anchor.center);
 		VectorCopy (vr_weapon_menu_anchor_right, right);
 		VectorCopy (vr_weapon_menu_anchor_up, up);
 		VectorCopy (vr_weapon_menu_anchor_forward, forward);
@@ -1973,9 +1978,11 @@ static void SCR_VRWeaponMenuPrepare (void)
 	min_dimension = q_min ((float)glwidth, (float)glheight);
 	if (vr_weapon_menu_anchor_mode == 0)
 	{
-		/* Match the source playspace ring radius while retaining the current
-		 * Vulkan screen-space wheel layout: its outer edge is 32% of min_dimension. */
-		scale = 5.0f / (0.32f * min_dimension);
+		/* Five Quake units per source ring. Reserve increasing side room for
+		 * quick/co-op labels without pushing outer models beyond the canvas. */
+		const float outer_radius = 5.0f * q_max (1, ring_count - 1);
+		const float margin = 3.0f + (ring_count - 1) * 1.5f;
+		scale = (outer_radius + margin) / (0.45f * min_dimension);
 	}
 	else
 	{
