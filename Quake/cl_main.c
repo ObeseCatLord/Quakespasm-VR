@@ -65,6 +65,34 @@ cvar_t cl_confirmquit = {"cl_confirmquit", "0", CVAR_ARCHIVE};
 
 client_static_t cls;
 client_state_t	cl;
+
+typedef enum
+{
+	cl_autoreconnect_idle,
+	cl_autoreconnect_wait_config,
+	cl_autoreconnect_wait_signon
+} cl_autoreconnect_state_t;
+
+/* Allow frame-synchronized configs and slow map/signon loads, but remain bounded. */
+#define CL_AUTO_RECONNECT_CONFIG_TIMEOUT 90.0
+#define CL_AUTO_RECONNECT_SIGNON_TIMEOUT 90.0
+
+typedef struct
+{
+	cl_autoreconnect_state_t state;
+	unsigned int identity;
+	char endpoint[MAX_OSPATH];
+	char modname[MAX_QPATH];
+	unsigned int legacy_qsvr;
+	double deadline;
+} cl_autoreconnect_t;
+
+static cl_autoreconnect_t cl_autoreconnect;
+static unsigned int cl_autoreconnect_next_identity;
+static char cl_last_connect_endpoint[MAX_OSPATH];
+static unsigned int cl_last_connect_legacy_qsvr;
+static qboolean cl_last_connect_valid;
+
 // FIXME: put these on hunk?
 lightstyle_t	cl_lightstyle[MAX_LIGHTSTYLES];
 dlight_t		cl_dlights[MAX_DLIGHTS];
@@ -272,9 +300,133 @@ qboolean CL_QueueVoicePacket (const voice_packet_t *packet)
 
 void CL_Disconnect_f (void)
 {
+	CL_CancelAutoReconnect ();
 	CL_Disconnect ();
 	if (sv.active)
 		Host_ShutdownServer (false);
+}
+
+void CL_CancelAutoReconnect (void)
+{
+	if (++cl_autoreconnect_next_identity == 0)
+		++cl_autoreconnect_next_identity;
+	cl_autoreconnect.state = cl_autoreconnect_idle;
+	cl_autoreconnect.identity = cl_autoreconnect_next_identity;
+}
+
+static void CL_AutoReconnectFinish (qboolean failed)
+{
+	if (failed)
+		SCR_EndStartupLoadingPlaque ();
+	CL_CancelAutoReconnect ();
+}
+
+static qboolean CL_TryEstablishConnection (const char *host, unsigned int legacy_qsvr)
+{
+	if (cls.state == ca_dedicated || cls.demoplayback ||
+		(legacy_qsvr && legacy_qsvr != QSVR_PROTOCOL_PINNED))
+		return false;
+
+	CL_Disconnect ();
+	cls.legacy_qsvr = legacy_qsvr;
+	cls.netcon = NET_Connect (host);
+	if (!cls.netcon)
+	{
+		cls.legacy_qsvr = 0;
+		return false;
+	}
+
+	Con_DPrintf ("CL_EstablishConnection: connected to %s\n", host);
+	cls.demonum = -1;
+	cls.state = ca_connected;
+	cls.signon = 0;
+	SZ_Clear (&cls.message);
+	MSG_WriteByte (&cls.message, clc_nop); // NAT Fix from ProQuake
+	return true;
+}
+
+void CL_AutoReconnectFrame (void)
+{
+	if (cl_autoreconnect.state == cl_autoreconnect_idle)
+		return;
+	if (cl_autoreconnect.identity != cl_autoreconnect_next_identity)
+	{
+		CL_AutoReconnectFinish (true);
+		return;
+	}
+	if (cl_autoreconnect.state == cl_autoreconnect_wait_config)
+	{
+		if (realtime >= cl_autoreconnect.deadline)
+		{
+			Con_Warning ("Server gamedir switch to %s timed out before configuration settled.\n", cl_autoreconnect.modname);
+			CL_AutoReconnectFinish (true);
+			return;
+		}
+		if (cmd_text.cursize)
+			return;
+
+		SCR_BeginLoadingPlaque ();
+		if (!CL_TryEstablishConnection (cl_autoreconnect.endpoint, cl_autoreconnect.legacy_qsvr))
+		{
+			Con_Warning ("Server gamedir switched to %s, but reconnect to %s failed.\n",
+				cl_autoreconnect.modname, cl_autoreconnect.endpoint);
+			CL_AutoReconnectFinish (true);
+			return;
+		}
+		cl_autoreconnect.state = cl_autoreconnect_wait_signon;
+		cl_autoreconnect.deadline = realtime + CL_AUTO_RECONNECT_SIGNON_TIMEOUT;
+		return;
+	}
+	if (cl_autoreconnect.state != cl_autoreconnect_wait_signon)
+		return;
+	if (cls.state == ca_connected && cls.signon == SIGNONS)
+	{
+		CL_AutoReconnectFinish (false);
+		return;
+	}
+	if (cls.state == ca_connected && realtime < cl_autoreconnect.deadline)
+		return;
+
+	if (cls.state == ca_connected)
+		CL_Disconnect ();
+	Con_Warning ("Reconnect to %s did not complete signon for %s.\n",
+		cl_autoreconnect.endpoint, cl_autoreconnect.modname);
+	CL_AutoReconnectFinish (true);
+}
+
+qboolean CL_MaybeSwitchServerGame (const char *modname)
+{
+	char paths[MAX_QPATH + sizeof (GAMENAME) + 2];
+
+	if (cl_autoreconnect.state != cl_autoreconnect_idle)
+	{
+		Con_Warning ("Server gamedir changed again during reconnect; stopping.\n");
+		CL_Disconnect ();
+		CL_AutoReconnectFinish (true);
+		return true;
+	}
+	if (!modname)
+		return false;
+	if (cls.state != ca_connected || cls.demoplayback || !cl_last_connect_valid)
+		return false;
+
+	if (++cl_autoreconnect_next_identity == 0)
+		++cl_autoreconnect_next_identity;
+	cl_autoreconnect.identity = cl_autoreconnect_next_identity;
+	cl_autoreconnect.state = cl_autoreconnect_wait_config;
+	q_strlcpy (cl_autoreconnect.endpoint, cl_last_connect_endpoint, sizeof (cl_autoreconnect.endpoint));
+	q_strlcpy (cl_autoreconnect.modname, modname, sizeof (cl_autoreconnect.modname));
+	cl_autoreconnect.legacy_qsvr = cl_last_connect_legacy_qsvr;
+	cl_autoreconnect.deadline = realtime + CL_AUTO_RECONNECT_CONFIG_TIMEOUT;
+
+	if (!q_strcasecmp (modname, GAMENAME))
+		q_strlcpy (paths, GAMENAME, sizeof (paths));
+	else
+		q_snprintf (paths, sizeof (paths), "%s;%s", GAMENAME, modname);
+	Con_Printf ("Server requires game %s; switching and reconnecting to %s.\n",
+		modname, cl_autoreconnect.endpoint);
+	COM_SwitchGame (paths);
+	return true;
 }
 
 /*
@@ -292,20 +444,17 @@ void CL_EstablishConnection (const char *host, unsigned int legacy_qsvr)
 	if (cls.demoplayback)
 		return;
 
-	CL_Disconnect ();
+	CL_CancelAutoReconnect ();
 	if (legacy_qsvr && legacy_qsvr != QSVR_PROTOCOL_PINNED)
 		Host_Error ("Unsupported legacy Quakespasm VR layout %u", legacy_qsvr);
-	cls.legacy_qsvr = legacy_qsvr;
-
-	cls.netcon = NET_Connect (host);
-	if (!cls.netcon)
+	q_strlcpy (cl_last_connect_endpoint, host ? host : "", sizeof (cl_last_connect_endpoint));
+	cl_last_connect_legacy_qsvr = legacy_qsvr;
+	cl_last_connect_valid = false;
+	if (!CL_TryEstablishConnection (host, legacy_qsvr))
 		Host_Error ("CL_Connect: connect failed");
-	Con_DPrintf ("CL_EstablishConnection: connected to %s\n", host);
-
-	cls.demonum = -1; // not in the demo loop now
-	cls.state = ca_connected;
-	cls.signon = 0;						   // need all the signon messages before playing
-	MSG_WriteByte (&cls.message, clc_nop); // NAT Fix from ProQuake
+	if (!cl_last_connect_endpoint[0])
+		q_strlcpy (cl_last_connect_endpoint, NET_QSocketGetTrueAddressString (cls.netcon), sizeof (cl_last_connect_endpoint));
+	cl_last_connect_valid = cl_last_connect_endpoint[0] != '\0';
 }
 
 void CL_SendInitialUserinfo (void *ctx, const char *key, const char *val)

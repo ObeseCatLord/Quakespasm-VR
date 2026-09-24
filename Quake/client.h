@@ -414,6 +414,9 @@ qboolean CL_ReplayPlayerMovement (entity_t *ent, vec3_t origin);
 void CL_Init (void);
 
 void CL_EstablishConnection (const char *host, unsigned int legacy_qsvr);
+qboolean CL_MaybeSwitchServerGame (const char *modname);
+void CL_AutoReconnectFrame (void);
+void CL_CancelAutoReconnect (void);
 void CL_Signon1 (void);
 void CL_Signon2 (void);
 void CL_Signon3 (void);

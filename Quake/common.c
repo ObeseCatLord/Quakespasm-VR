@@ -3321,6 +3321,7 @@ static void COM_Game_f (void)
 			}
 		}
 
+		CL_CancelAutoReconnect ();
 		COM_SwitchGame (paths);
 	}
 	else // Diplay the current gamedir

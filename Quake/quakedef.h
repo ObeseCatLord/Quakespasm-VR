@@ -462,6 +462,7 @@ extern byte	   *host_colormap;
 extern int		host_framecount; // incremented every frame, never reset
 extern double	realtime;		 // not bounded in any way, changed at
 								 // start of every frame, never reset
+extern sizebuf_t cmd_text;		 // pending console/config commands
 
 typedef struct filelist_item_s
 {

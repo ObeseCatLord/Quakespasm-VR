@@ -1773,13 +1773,48 @@ static void CL_KeepaliveMessage (void)
 CL_ParseServerInfo
 ==================
 */
-static void CL_ParseServerInfo (void)
+static qboolean CL_ValidServerGameDir (const char *gamedir)
+{
+	const unsigned char *p = (const unsigned char *)gamedir;
+	size_t length = strlen (gamedir);
+
+	if (!length || length >= sizeof (((filelist_item_t *)0)->name) || COM_ModForbiddenChars (gamedir))
+		return false;
+	if (!((*p >= 'A' && *p <= 'Z') || (*p >= 'a' && *p <= 'z') || (*p >= '0' && *p <= '9') || *p == '_'))
+		return false;
+	for (; *p; ++p)
+		if (!((*p >= 'A' && *p <= 'Z') || (*p >= 'a' && *p <= 'z') || (*p >= '0' && *p <= '9') || *p == '_' || *p == '-' || *p == '.'))
+			return false;
+	return true;
+}
+
+static const char *CL_FindInstalledServerGame (const char *gamedir)
+{
+	filelist_item_t *item;
+
+	for (item = modlist; item; item = item->next)
+		if (!q_strcasecmp (item->name, gamedir))
+			return item->name;
+	return NULL;
+}
+
+static qboolean CL_CurrentServerGameMatches (const char *gamedir)
+{
+	const char *current = COM_GetGameNames (false);
+
+	if (!q_strncasecmp (current, "qw;", 3))
+		current += 3;
+	return !q_strcasecmp (current, gamedir);
+}
+
+static qboolean CL_ParseServerInfo (void)
 {
 	const char *str;
 	unsigned int accepted_pext2 = cls.legacy_qsvr == QSVR_PROTOCOL_PINNED ?
 		QSVR_PEXT2_REQUIRED : PEXT2_ACCEPTED_CLIENT;
 	int			i;
 	qboolean	gamedirswitchwarning = false;
+	qboolean	gamedirinvalid = false;
 	int			nummodels, numsounds;
 
 	// temporaries as globals to prevent excessive stack usage,
@@ -1887,14 +1922,38 @@ static void CL_ParseServerInfo (void)
 	{
 		int gamedir_start = msg_readcount;
 		size_t gamedir_length;
+		qboolean private_qsvr;
 
 		MSG_ReadStringBuffer (gamedir, sizeof (gamedir));
 		gamedir_length = strlen (gamedir);
 		if (msg_badread || msg_readcount - gamedir_start != (int)gamedir_length + 1)
 			Host_Error ("CL_ParseServerInfo: truncated gamedir string");
-		if (!COM_GameDirMatches (gamedir))
+		private_qsvr = cls.state == ca_connected && !cls.demoplayback &&
+			cl.protocol_qsvr == QSVR_PROTOCOL_PINNED && (cl.protocol_pext2 & PEXT2_PREDINFO);
+		/* An empty PREDINFO gamedir denotes the base game. */
+		if (gamedir[0] && !CL_ValidServerGameDir (gamedir))
 		{
+			if (private_qsvr)
+				Host_Error ("CL_ParseServerInfo: invalid private gamedir");
 			gamedirswitchwarning = true;
+			gamedirinvalid = true;
+		}
+		else
+		{
+			const char *installed = NULL;
+			const qboolean base_game = !gamedir[0] || !q_strcasecmp (gamedir, GAMENAME);
+
+			if (!COM_GameDirMatches (gamedir))
+				gamedirswitchwarning = true;
+			if (private_qsvr)
+				installed = base_game ? GAMENAME : CL_FindInstalledServerGame (gamedir);
+			if (private_qsvr)
+			{
+				if (CL_CurrentServerGameMatches (base_game ? "" : gamedir))
+					gamedirswitchwarning = false;
+				else if (CL_MaybeSwitchServerGame (installed))
+					return true;
+			}
 		}
 	}
 
@@ -1923,7 +1982,9 @@ static void CL_ParseServerInfo (void)
 	else
 		q_snprintf (protname, sizeof (protname), "%i", cl.protocol);
 	Con_Printf ("Using protocol %s\n", protname);
-	if (gamedirswitchwarning)
+	if (gamedirswitchwarning && gamedirinvalid)
+		Con_Warning ("gamedir mismatch: server supplied an invalid directory name; ours \"%s\"\n", COM_GetGameNames (false));
+	else if (gamedirswitchwarning)
 		Con_Warning ("gamedir mismatch: server \"%s\" ours \"%s\"\n", gamedir, COM_GetGameNames (false));
 
 	// first we go through and touch all of the precache data that still
@@ -2022,6 +2083,7 @@ static void CL_ParseServerInfo (void)
 	// especially when users have a nasty habit of changing config files.
 	if (cl.protocol_pext2 || (cl.protocol_pext1 & PEXT1_CSQC))
 		cl.protocol_particles = true; // doesn't have a pext flag of its own, but at least we know what it is.
+	return false;
 }
 
 /*
@@ -2998,7 +3060,8 @@ void CL_ParseServerMessage (void)
 			break;
 
 		case svc_serverinfo:
-			CL_ParseServerInfo ();
+			if (CL_ParseServerInfo ())
+				return; // game switch disconnected us; discard the rest of this packet
 			received_setangle = false;
 			vid.recalc_refdef = true; // leave intermission full screen
 			break;
