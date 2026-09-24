@@ -73,3 +73,17 @@ Two additional Ironwail candidates qualify as **proposed optional scope**:
 Absence searches covered **103 V renderer/shader files and 34 files at each F/X pin**: `Quake/gl_*`, `r_*`, renderer/model/image families, and V `Shaders/`. **A:** `TextureDither|ScreenDither|DITHER_NOISE|lmsize|whitenoise01`; **B:** `LightClusters|lightcluster|cluster_lights|LIGHT_TILES_[XYZ]`; zero matches. These are bounded absence findings, supported by inspecting the alternative lighting/dithering paths.
 
 Generic alias instancing was excluded from optional extras because F and X already implement it. No performance benefit is claimed for either optional candidate.
+
+## Initial `mj4m1` desktop load observation
+
+On 2026-09-24, the Linux `2.0` Vulkan client loaded the installed 90 MB
+`mj4m1.bsp` from a disposable asset-only game-data shadow, then exited with
+status 0. A single `xvfb-run` command using `-game mjolnir +map mj4m1 +quit`
+took 8.93 seconds wall time and 1,342,160 KB peak child RSS on this machine.
+The log reached the map's `Echoes of eternity.` title and allocated 26,755 KB
+of lightmap compute data and 93,623 KB of acceleration-structure data. The
+timing includes process startup, Vulkan initialization, map loading and
+shutdown; it is **not** a map-only loading benchmark, VR frame-time result, or
+comparison against vkQuake/OpenGL/Ironwail. Repeatable warm/cold runs and an
+in-map route with CPU/GPU frame distributions are still needed before choosing
+or claiming a performance optimization.
