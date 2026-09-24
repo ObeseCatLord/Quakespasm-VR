@@ -257,6 +257,17 @@ static qboolean VR_CalibrationVectorIsFinite(const vec3_t vector)
 	return isfinite(vector[0]) && isfinite(vector[1]) && isfinite(vector[2]);
 }
 
+static qboolean VR_CalibrationPoseTypeIsEnhanced(int poseverttype)
+{
+	return poseverttype == PV_MD5 || poseverttype == PV_MD5_8;
+}
+
+static qboolean VR_CalibrationPoseTypeIsSupported(int poseverttype)
+{
+	return poseverttype == PV_QUAKE1 || poseverttype == PV_QUAKE3 ||
+		VR_CalibrationPoseTypeIsEnhanced(poseverttype);
+}
+
 static qboolean VR_CalibrationEntryHasFields(
 	const vr_weapon_schema_entry_t *entry)
 {
@@ -417,6 +428,18 @@ static qboolean VR_CalibrationLineIsClassicKey(const char *line, size_t len)
 		VR_CalibrationLineStartsWithKey(line, len, "mp_held_offset") ||
 		VR_CalibrationLineStartsWithKey(line, len, "muzzle_offset") ||
 		VR_CalibrationLineStartsWithKey(line, len, "mp_muzzle_offset");
+}
+
+static qboolean VR_CalibrationLineIsEnhancedKey(const char *line, size_t len)
+{
+	return VR_CalibrationLineStartsWithKey(line, len,
+											"enhanced_held_offset") ||
+		VR_CalibrationLineStartsWithKey(line, len,
+										"enhanced_mp_held_offset") ||
+		VR_CalibrationLineStartsWithKey(line, len,
+										"enhanced_muzzle_offset") ||
+		VR_CalibrationLineStartsWithKey(line, len,
+										"enhanced_mp_muzzle_offset");
 }
 
 static qboolean VR_CalibrationFindLineKey(const char *line, size_t len,
@@ -602,14 +625,64 @@ static qboolean VR_CalibrationBlockMatchesViewmodel(const char *block,
 }
 
 static qboolean VR_CalibrationAppendAdjustmentLines(
-	vr_calibration_textbuf_t *buf, int slot)
+	vr_calibration_textbuf_t *buf, int slot, qboolean enhanced_format)
 {
 	char line[192];
-	float held_scale = VR_WeaponOffsetCvar(slot, VR_WOFS_SCALE).value;
+	const vr_weapon_calibration_slot_t *calibration =
+		&vr_weapon_calibration_slots[slot];
 
-	q_snprintf(line, sizeof(line), "held_scale %.7g", held_scale);
-	if (!VR_CalibrationTextAppendLine(buf, line))
-		return false;
+	if (enhanced_format)
+	{
+		if (calibration->has_enhanced_held_offset)
+		{
+			q_snprintf(line, sizeof(line),
+				"enhanced_held_offset %.7g %.7g %.7g",
+				calibration->enhanced_held_offset[0],
+				calibration->enhanced_held_offset[1],
+				calibration->enhanced_held_offset[2]);
+			if (!VR_CalibrationTextAppendLine(buf, line))
+				return false;
+		}
+		if (calibration->has_enhanced_muzzle_offset)
+		{
+			q_snprintf(line, sizeof(line),
+				"enhanced_muzzle_offset %.7g %.7g %.7g",
+				calibration->enhanced_muzzle_offset[0],
+				calibration->enhanced_muzzle_offset[1],
+				calibration->enhanced_muzzle_offset[2]);
+			if (!VR_CalibrationTextAppendLine(buf, line))
+				return false;
+		}
+		if (calibration->has_enhanced_mp_held_offset)
+		{
+			q_snprintf(line, sizeof(line),
+				"enhanced_mp_held_offset %.7g %.7g %.7g",
+				calibration->enhanced_mp_held_offset[0],
+				calibration->enhanced_mp_held_offset[1],
+				calibration->enhanced_mp_held_offset[2]);
+			if (!VR_CalibrationTextAppendLine(buf, line))
+				return false;
+		}
+		if (calibration->has_enhanced_mp_muzzle_offset)
+		{
+			q_snprintf(line, sizeof(line),
+				"enhanced_mp_muzzle_offset %.7g %.7g %.7g",
+				calibration->enhanced_mp_muzzle_offset[0],
+				calibration->enhanced_mp_muzzle_offset[1],
+				calibration->enhanced_mp_muzzle_offset[2]);
+			if (!VR_CalibrationTextAppendLine(buf, line))
+				return false;
+		}
+		return true;
+	}
+
+	{
+		float held_scale = VR_WeaponOffsetCvar(slot, VR_WOFS_SCALE).value;
+
+		q_snprintf(line, sizeof(line), "held_scale %.7g", held_scale);
+		if (!VR_CalibrationTextAppendLine(buf, line))
+			return false;
+	}
 	q_snprintf(line, sizeof(line), "held_offset %.7g %.7g %.7g",
 		VR_WeaponOffsetCvar(slot, VR_WOFS_X).value,
 		VR_WeaponOffsetCvar(slot, VR_WOFS_Y).value,
@@ -643,7 +716,8 @@ static qboolean VR_CalibrationAppendAdjustmentLines(
 }
 
 static qboolean VR_CalibrationWriteUpdatedBlock(
-	vr_calibration_textbuf_t *buf, const char *block, size_t len, int slot)
+	vr_calibration_textbuf_t *buf, const char *block, size_t len, int slot,
+	qboolean enhanced_format)
 {
 	const char *p = block;
 	const char *end = block + len;
@@ -666,8 +740,9 @@ static qboolean VR_CalibrationWriteUpdatedBlock(
 		has_key = VR_CalibrationFindLineKey(p, line_len,
 			&in_block_comment, &key_offset, &key_len);
 
-		if (has_key && VR_CalibrationLineIsClassicKey(p + key_offset,
-			key_len))
+		if (has_key && (enhanced_format ?
+			VR_CalibrationLineIsEnhancedKey(p + key_offset, key_len) :
+			VR_CalibrationLineIsClassicKey(p + key_offset, key_len)))
 		{
 			size_t comment = VR_CalibrationFindComment(p, line_len,
 				key_offset);
@@ -687,7 +762,8 @@ static qboolean VR_CalibrationWriteUpdatedBlock(
 		if (!inserted && has_key &&
 			VR_CalibrationLineStartsWithKey(p + key_offset, key_len, "}"))
 		{
-			if (!VR_CalibrationAppendAdjustmentLines(buf, slot))
+			if (!VR_CalibrationAppendAdjustmentLines(buf, slot,
+				enhanced_format))
 				return false;
 			inserted = true;
 		}
@@ -699,7 +775,8 @@ static qboolean VR_CalibrationWriteUpdatedBlock(
 		p += full_len;
 	}
 
-	if (!inserted && !VR_CalibrationAppendAdjustmentLines(buf, slot))
+	if (!inserted && !VR_CalibrationAppendAdjustmentLines(buf, slot,
+		enhanced_format))
 		return false;
 	return true;
 }
@@ -781,7 +858,8 @@ static qboolean VR_CalibrationSchemaTextIsValid(const char *text)
 }
 
 static qboolean VR_CalibrationAppendNewBlock(vr_calibration_textbuf_t *buf,
-											 const char *model, int slot)
+											 const char *model, int slot,
+											 qboolean enhanced_format)
 {
 	char line[MAX_QPATH + 16];
 
@@ -792,7 +870,7 @@ static qboolean VR_CalibrationAppendNewBlock(vr_calibration_textbuf_t *buf,
 		return false;
 	q_snprintf(line, sizeof(line), "viewmodel %s", model);
 	return VR_CalibrationTextAppendLine(buf, line) &&
-		VR_CalibrationAppendAdjustmentLines(buf, slot) &&
+		VR_CalibrationAppendAdjustmentLines(buf, slot, enhanced_format) &&
 		VR_CalibrationTextAppendLine(buf, "}");
 }
 
@@ -809,6 +887,8 @@ static qboolean VR_WeaponCalibrationSave(void)
 	int model_index;
 	int slot;
 	size_t parsed_count;
+	qboolean enhanced_format;
+	qboolean invalid_values;
 	qboolean updated = false;
 	qboolean ok = false;
 	qboolean post_write_failed = false;
@@ -842,15 +922,9 @@ static qboolean VR_WeaponCalibrationSave(void)
 		Con_Printf("VR: vrweaponsave cannot read the active viewmodel alias header\n");
 		return false;
 	}
-	if (alias_header->poseverttype == PV_MD5 ||
-		alias_header->poseverttype == PV_MD5_8)
-	{
-		Con_Printf("VR: vrweaponsave is classic-only; active viewmodel '%s' uses enhanced MD5 geometry\n",
-			model->name);
-		return false;
-	}
-	if (alias_header->poseverttype != PV_QUAKE1 &&
-		alias_header->poseverttype != PV_QUAKE3)
+	enhanced_format = VR_CalibrationPoseTypeIsEnhanced(
+		alias_header->poseverttype);
+	if (!VR_CalibrationPoseTypeIsSupported(alias_header->poseverttype))
 	{
 		Con_Printf("VR: vrweaponsave cannot save this viewmodel geometry format\n");
 		return false;
@@ -858,26 +932,48 @@ static qboolean VR_WeaponCalibrationSave(void)
 	slot = VR_FindCalibrationSlot(model->name);
 	if (slot < 0)
 	{
-		Con_Printf("VR: no classic calibration slot exists for %s\n", model->name);
+		Con_Printf("VR: no weapon calibration slot exists for %s\n", model->name);
 		return false;
 	}
-	if (!isfinite(VR_WeaponOffsetCvar(slot, VR_WOFS_X).value) ||
-		!isfinite(VR_WeaponOffsetCvar(slot, VR_WOFS_Y).value) ||
-		!isfinite(VR_WeaponOffsetCvar(slot, VR_WOFS_Z).value) ||
-		!isfinite(VR_WeaponOffsetCvar(slot, VR_WOFS_SCALE).value) ||
-		VR_WeaponOffsetCvar(slot, VR_WOFS_SCALE).value <= 0.0f ||
-		!isfinite(VR_WeaponMuzzleCvar(slot, VR_WMUZZLE_X).value) ||
-		!isfinite(VR_WeaponMuzzleCvar(slot, VR_WMUZZLE_Y).value) ||
-		!isfinite(VR_WeaponMuzzleCvar(slot, VR_WMUZZLE_Z).value) ||
-		(vr_weapon_calibration_slots[slot].has_schema_mp_held_offset &&
-		 !VR_CalibrationVectorIsFinite(
-			 vr_weapon_calibration_slots[slot].schema_mp_held_offset)) ||
-		(vr_weapon_calibration_slots[slot].has_schema_mp_muzzle_offset &&
-		 !VR_CalibrationVectorIsFinite(
-			 vr_weapon_calibration_slots[slot].schema_mp_muzzle_offset)))
+	if (enhanced_format)
 	{
-		Con_Printf("VR: cannot save non-finite calibration values or a non-positive held scale for %s\n",
-			model->name);
+		const vr_weapon_calibration_slot_t *calibration =
+			&vr_weapon_calibration_slots[slot];
+		invalid_values =
+			(calibration->has_enhanced_held_offset &&
+			 !VR_CalibrationVectorIsFinite(calibration->enhanced_held_offset)) ||
+			(calibration->has_enhanced_mp_held_offset &&
+			 !VR_CalibrationVectorIsFinite(
+				 calibration->enhanced_mp_held_offset)) ||
+			(calibration->has_enhanced_muzzle_offset &&
+			 !VR_CalibrationVectorIsFinite(
+				 calibration->enhanced_muzzle_offset)) ||
+			(calibration->has_enhanced_mp_muzzle_offset &&
+			 !VR_CalibrationVectorIsFinite(
+				 calibration->enhanced_mp_muzzle_offset));
+	}
+	else
+	{
+		invalid_values =
+			!isfinite(VR_WeaponOffsetCvar(slot, VR_WOFS_X).value) ||
+			!isfinite(VR_WeaponOffsetCvar(slot, VR_WOFS_Y).value) ||
+			!isfinite(VR_WeaponOffsetCvar(slot, VR_WOFS_Z).value) ||
+			!isfinite(VR_WeaponOffsetCvar(slot, VR_WOFS_SCALE).value) ||
+			VR_WeaponOffsetCvar(slot, VR_WOFS_SCALE).value <= 0.0f ||
+			!isfinite(VR_WeaponMuzzleCvar(slot, VR_WMUZZLE_X).value) ||
+			!isfinite(VR_WeaponMuzzleCvar(slot, VR_WMUZZLE_Y).value) ||
+			!isfinite(VR_WeaponMuzzleCvar(slot, VR_WMUZZLE_Z).value) ||
+			(vr_weapon_calibration_slots[slot].has_schema_mp_held_offset &&
+			 !VR_CalibrationVectorIsFinite(
+				 vr_weapon_calibration_slots[slot].schema_mp_held_offset)) ||
+			(vr_weapon_calibration_slots[slot].has_schema_mp_muzzle_offset &&
+			 !VR_CalibrationVectorIsFinite(
+				 vr_weapon_calibration_slots[slot].schema_mp_muzzle_offset));
+	}
+	if (invalid_values)
+	{
+		Con_Printf("VR: cannot save invalid %s calibration values for %s\n",
+			enhanced_format ? "enhanced" : "classic", model->name);
 		return false;
 	}
 
@@ -912,7 +1008,7 @@ static qboolean VR_WeaponCalibrationSave(void)
 			(size_t)(close - open), model->name))
 		{
 			if (!VR_CalibrationWriteUpdatedBlock(&output, open,
-				(size_t)(close - open), slot))
+				(size_t)(close - open), slot, enhanced_format))
 				goto done;
 			updated = true;
 		}
@@ -924,7 +1020,8 @@ static qboolean VR_WeaponCalibrationSave(void)
 
 	if (!updated)
 	{
-		if (!VR_CalibrationAppendNewBlock(&output, model->name, slot))
+		if (!VR_CalibrationAppendNewBlock(&output, model->name, slot,
+			enhanced_format))
 			goto done;
 	}
 	if (output.len > INT_MAX)
@@ -946,14 +1043,14 @@ static qboolean VR_WeaponCalibrationSave(void)
 		post_write_failed = true;
 		goto done;
 	}
-	Con_Printf("VR: saved classic calibration for %s to %s/vr_weapons.txt\n",
-		model->name, com_gamedir);
+	Con_Printf("VR: saved %s calibration for %s to %s/vr_weapons.txt\n",
+		enhanced_format ? "enhanced" : "classic", model->name, com_gamedir);
 	ok = true;
 
 done:
 	if (!ok && output.data && !post_write_failed)
-		Con_Printf("VR: failed to save classic calibration for %s\n",
-			model->name);
+		Con_Printf("VR: failed to save %s calibration for %s\n",
+			enhanced_format ? "enhanced" : "classic", model->name);
 	free(output.data);
 	if (file)
 		Mem_Free(file);
@@ -1116,8 +1213,7 @@ static qboolean VR_CalibrationAdjustStateValid(
 			adjustment->model_name) ||
 		VR_FindCalibrationSlot(adjustment->model_name) != adjustment->slot ||
 		alias_header->poseverttype != adjustment->poseverttype ||
-		(alias_header->poseverttype != PV_QUAKE1 &&
-		 alias_header->poseverttype != PV_QUAKE3))
+		!VR_CalibrationPoseTypeIsSupported(alias_header->poseverttype))
 	{
 		if (reason_out)
 			*reason_out = "viewmodel identity or format changed";
@@ -1191,6 +1287,7 @@ static void VR_WeaponCalibrationAdjustBegin_f(qboolean muzzle_mode)
 	int dominant, model_index, slot, component;
 	qboolean created_slot = false;
 	qboolean multiplayer;
+	qboolean enhanced_format;
 
 	if (adjustment->active)
 	{
@@ -1207,14 +1304,14 @@ static void VR_WeaponCalibrationAdjustBegin_f(qboolean muzzle_mode)
 		else if (adjustment->muzzle_mode == muzzle_mode)
 		{
 			VR_WeaponCalibrationAdjustCancel();
-			Con_Printf("VR: classic %s adjustment canceled\n",
+			Con_Printf("VR: %s adjustment canceled\n",
 				muzzle_mode ? "muzzle recenter" : "grip");
 			return;
 		}
 		else
 		{
 			VR_WeaponCalibrationAdjustCancel();
-			Con_Printf("VR: active classic calibration canceled; starting %s adjustment\n",
+			Con_Printf("VR: active calibration canceled; starting %s adjustment\n",
 				muzzle_mode ? "muzzle" : "grip");
 		}
 	}
@@ -1231,17 +1328,11 @@ static void VR_WeaponCalibrationAdjustBegin_f(qboolean muzzle_mode)
 			muzzle_mode ? "vradjustmuzzle" : "vradjustweapon");
 		return;
 	}
-	if (alias_header->poseverttype == PV_MD5 ||
-		alias_header->poseverttype == PV_MD5_8)
+	enhanced_format = VR_CalibrationPoseTypeIsEnhanced(
+		alias_header->poseverttype);
+	if (!VR_CalibrationPoseTypeIsSupported(alias_header->poseverttype))
 	{
-		Con_Printf("VR: %s is classic-only; '%s' uses enhanced MD5 geometry\n",
-			muzzle_mode ? "vradjustmuzzle" : "vradjustweapon", model->name);
-		return;
-	}
-	if (alias_header->poseverttype != PV_QUAKE1 &&
-		alias_header->poseverttype != PV_QUAKE3)
-	{
-		Con_Printf("VR: %s requires classic Quake 1 or Quake 3 alias geometry\n",
+		Con_Printf("VR: %s requires supported Quake 1, Quake 3, or enhanced MD5 alias geometry\n",
 			muzzle_mode ? "vradjustmuzzle" : "vradjustweapon");
 		return;
 	}
@@ -1268,7 +1359,7 @@ static void VR_WeaponCalibrationAdjustBegin_f(qboolean muzzle_mode)
 		slot = VR_FindFreeCalibrationSlot();
 		if (slot < 0)
 		{
-			Con_Printf("VR: %s has no free classic calibration slot\n",
+			Con_Printf("VR: %s has no free weapon calibration slot\n",
 				muzzle_mode ? "vradjustmuzzle" : "vradjustweapon");
 			return;
 		}
@@ -1279,18 +1370,30 @@ static void VR_WeaponCalibrationAdjustBegin_f(qboolean muzzle_mode)
 	multiplayer = cl.maxclients > 1;
 	if (muzzle_mode)
 	{
-		if (!VR_WeaponCalibrationLookupMuzzle(model->name, false,
+		if (!VR_WeaponCalibrationLookupMuzzle(model->name, enhanced_format,
 			multiplayer, effective_muzzle))
 		{
-			/* Held-only entries use their registered muzzle cvars as the
-			 * starting base until a muzzle offset is authored. */
-			for (component = 0; component < 3; ++component)
-				effective_muzzle[component] =
-					VR_WeaponMuzzleCvar(slot, component).value +
-					(multiplayer &&
-					 vr_weapon_calibration_slots[slot].has_mp_muzzle_offset ?
-					 vr_weapon_calibration_slots[slot].mp_muzzle_offset[component] :
-					 0.0f);
+			if (enhanced_format)
+			{
+				/* A missing base still starts from the active MP overlay. */
+				memset(effective_muzzle, 0, sizeof(effective_muzzle));
+				if (multiplayer &&
+					vr_weapon_calibration_slots[slot].has_enhanced_mp_muzzle_offset)
+					memcpy(effective_muzzle,
+						vr_weapon_calibration_slots[slot].enhanced_mp_muzzle_offset,
+						sizeof(effective_muzzle));
+			}
+			else
+			{
+				/* Held-only classic entries use their muzzle cvar as a base. */
+				for (component = 0; component < 3; ++component)
+					effective_muzzle[component] =
+						VR_WeaponMuzzleCvar(slot, component).value +
+						(multiplayer &&
+						 vr_weapon_calibration_slots[slot].has_mp_muzzle_offset ?
+						 vr_weapon_calibration_slots[slot].mp_muzzle_offset[component] :
+						 0.0f);
+			}
 		}
 		if (!VR_CalibrationVectorIsFinite(effective_muzzle) ||
 			!VR_LocomotionMuzzleOffsetToWorld(effective_muzzle,
@@ -1300,7 +1403,7 @@ static void VR_WeaponCalibrationAdjustBegin_f(qboolean muzzle_mode)
 		{
 			if (created_slot)
 				VR_SetCalibrationSlotDefaults(slot);
-			Con_Printf("VR: vradjustmuzzle could not calculate the current classic muzzle point\n");
+			Con_Printf("VR: vradjustmuzzle could not calculate the current muzzle point\n");
 			return;
 		}
 		VectorAdd(raw_origin, muzzle_world, muzzle_world);
@@ -1333,12 +1436,12 @@ static void VR_WeaponCalibrationAdjustBegin_f(qboolean muzzle_mode)
 	if (muzzle_mode)
 	{
 		VectorCopy(muzzle_world, adjustment->frozen_muzzle_world);
-		Con_Printf("VR: classic muzzle recenter active for %s; move the grip to place the muzzle cue, release the trigger, then press to set it\n",
-			adjustment->model_name);
+		Con_Printf("VR: %s muzzle recenter active for %s; move the grip to place the muzzle cue, release the trigger, then press to set it\n",
+			enhanced_format ? "enhanced" : "classic", adjustment->model_name);
 	}
 	else
-		Con_Printf("VR: classic grip adjustment active for %s; release the trigger, then press to set the grip\n",
-			adjustment->model_name);
+		Con_Printf("VR: %s grip adjustment active for %s; release the trigger, then press to set the grip\n",
+			enhanced_format ? "enhanced" : "classic", adjustment->model_name);
 }
 
 static void VR_WeaponCalibrationAdjustGrip_f(void)
@@ -1353,7 +1456,7 @@ static void VR_WeaponCalibrationAdjustMuzzle_f(void)
 
 static void VR_CalibrationAdjustInputAbort(const char *reason)
 {
-	Con_Printf("VR: classic calibration canceled (%s)\n", reason);
+	Con_Printf("VR: calibration canceled (%s)\n", reason);
 	VR_WeaponCalibrationAdjustCancel();
 }
 
@@ -1368,6 +1471,7 @@ void VR_WeaponCalibrationAdjustInput(int physical_hand,
 	float effective_scale, inverse_scale;
 	int component;
 	qboolean multiplayer;
+	qboolean enhanced_format;
 
 	if (!adjustment->active)
 		return;
@@ -1422,19 +1526,51 @@ void VR_WeaponCalibrationAdjustInput(int physical_hand,
 			return;
 		}
 		multiplayer = cl.maxclients > 1;
+		enhanced_format = VR_CalibrationPoseTypeIsEnhanced(
+			adjustment->poseverttype);
 		for (component = 0; component < 3; ++component)
 		{
 			new_base[component] = local_delta[component];
-			if (multiplayer &&
-				vr_weapon_calibration_slots[adjustment->slot].has_mp_muzzle_offset)
-				new_base[component] -=
-					vr_weapon_calibration_slots[adjustment->slot].mp_muzzle_offset[component];
+			if (multiplayer)
+			{
+				const vr_weapon_calibration_slot_t *calibration =
+					&vr_weapon_calibration_slots[adjustment->slot];
+				if (enhanced_format &&
+					calibration->has_enhanced_mp_muzzle_offset)
+					new_base[component] -=
+						calibration->enhanced_mp_muzzle_offset[component];
+				else if (!enhanced_format &&
+					calibration->has_mp_muzzle_offset)
+					new_base[component] -= calibration->mp_muzzle_offset[component];
+			}
 		}
 		if (!VR_CalibrationVectorIsFinite(new_base))
 		{
 			VR_CalibrationAdjustInputAbort("resulting muzzle offset is invalid");
 			return;
 		}
+		if (enhanced_format)
+		{
+			vr_weapon_calibration_slot_t *calibration =
+				&vr_weapon_calibration_slots[adjustment->slot];
+			const qboolean old_has_offset =
+				calibration->has_enhanced_muzzle_offset;
+			vec3_t old_base;
+			memcpy(old_base, calibration->enhanced_muzzle_offset,
+				sizeof(old_base));
+			memcpy(calibration->enhanced_muzzle_offset, new_base,
+				sizeof(new_base));
+			calibration->has_enhanced_muzzle_offset = true;
+			if (!VR_WeaponCalibrationSave())
+			{
+				memcpy(calibration->enhanced_muzzle_offset, old_base,
+					sizeof(old_base));
+				calibration->has_enhanced_muzzle_offset = old_has_offset;
+				VR_CalibrationAdjustInputAbort("calibration could not be persisted");
+				return;
+			}
+		}
+		else
 		{
 			const float old_base[3] = {
 				VR_WeaponMuzzleCvar(adjustment->slot, VR_WMUZZLE_X).value,
@@ -1458,10 +1594,10 @@ void VR_WeaponCalibrationAdjustInput(int physical_hand,
 				VR_CalibrationAdjustInputAbort("calibration could not be persisted");
 				return;
 			}
+			vr_weapon_calibration_slots[adjustment->slot].has_muzzle_offset = true;
 		}
-		vr_weapon_calibration_slots[adjustment->slot].has_muzzle_offset = true;
-		Con_Printf("VR: classic muzzle recentered for %s; return the grip to its starting point\n",
-			adjustment->model_name);
+		Con_Printf("VR: %s muzzle recentered for %s; return the grip to its starting point\n",
+			enhanced_format ? "enhanced" : "classic", adjustment->model_name);
 		adjustment->created_slot = false;
 		adjustment->return_to_grip = true;
 		return;
@@ -1474,7 +1610,8 @@ void VR_WeaponCalibrationAdjustInput(int physical_hand,
 		!VR_LocomotionWorldToModelOffsetChecked(world_delta,
 			adjustment->frozen_model_angles, inverse_scale,
 			adjustment->physical_hand == 0, local_delta) ||
-		!VR_WeaponCalibrationLookupHeld(adjustment->model_name, false,
+		!VR_WeaponCalibrationLookupHeld(adjustment->model_name,
+			VR_CalibrationPoseTypeIsEnhanced(adjustment->poseverttype),
 			cl.maxclients > 1, effective_offset, &effective_scale))
 	{
 		VR_CalibrationAdjustInputAbort("could not convert the grip movement");
@@ -1482,13 +1619,21 @@ void VR_WeaponCalibrationAdjustInput(int physical_hand,
 	}
 
 	multiplayer = cl.maxclients > 1;
+	enhanced_format = VR_CalibrationPoseTypeIsEnhanced(
+		adjustment->poseverttype);
 	for (component = 0; component < 3; ++component)
 	{
 		new_base[component] = effective_offset[component] + local_delta[component];
-		if (multiplayer &&
-			vr_weapon_calibration_slots[adjustment->slot].has_mp_held_offset)
-			new_base[component] -=
-				vr_weapon_calibration_slots[adjustment->slot].mp_held_offset[component];
+		if (multiplayer)
+		{
+			const vr_weapon_calibration_slot_t *calibration =
+				&vr_weapon_calibration_slots[adjustment->slot];
+			if (enhanced_format && calibration->has_enhanced_mp_held_offset)
+				new_base[component] -=
+					calibration->enhanced_mp_held_offset[component];
+			else if (!enhanced_format && calibration->has_mp_held_offset)
+				new_base[component] -= calibration->mp_held_offset[component];
+		}
 	}
 	if (!VR_CalibrationVectorIsFinite(new_base) || !isfinite(effective_scale) ||
 		effective_scale <= 0.0f)
@@ -1497,6 +1642,27 @@ void VR_WeaponCalibrationAdjustInput(int physical_hand,
 		return;
 	}
 
+	if (enhanced_format)
+	{
+		vr_weapon_calibration_slot_t *calibration =
+			&vr_weapon_calibration_slots[adjustment->slot];
+		const qboolean old_has_offset = calibration->has_enhanced_held_offset;
+		vec3_t old_base;
+		memcpy(old_base, calibration->enhanced_held_offset,
+			sizeof(old_base));
+		memcpy(calibration->enhanced_held_offset, new_base,
+			sizeof(new_base));
+		calibration->has_enhanced_held_offset = true;
+		if (!VR_WeaponCalibrationSave())
+		{
+			memcpy(calibration->enhanced_held_offset, old_base,
+				sizeof(old_base));
+			calibration->has_enhanced_held_offset = old_has_offset;
+			VR_CalibrationAdjustInputAbort("calibration could not be persisted");
+			return;
+		}
+	}
+	else
 	{
 		const float old_base[3] = {
 			VR_WeaponOffsetCvar(adjustment->slot, VR_WOFS_X).value,
@@ -1522,7 +1688,8 @@ void VR_WeaponCalibrationAdjustInput(int physical_hand,
 		}
 	}
 
-	Con_Printf("VR: classic grip adjusted for %s\n", adjustment->model_name);
+	Con_Printf("VR: %s grip adjusted for %s\n",
+		enhanced_format ? "enhanced" : "classic", adjustment->model_name);
 	adjustment->created_slot = false;
 	VR_WeaponCalibrationAdjustCancel();
 }
