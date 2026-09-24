@@ -100,3 +100,23 @@ final cross-play sign-off.
 | `sv_qsvr_private` defaults off and public movement omits VR hand/room-scale data. | **Adopt.** Keep the development gate until VR and mixed-peer gameplay qualify; report public connectivity separately from full VR behavior. |
 | Desktop `2.0` also offers QSVR, so a desktop-plus-VR run may exercise two private clients. | **Adopt.** Include both public/private and private/private pairings; do not infer public compatibility from the latter. |
 | Add a desktop-versus-VR network dialect or duplicate movement owner now. | **Reject.** Current negotiation and movement dispatch are per client; no verified incompatibility requires another layer. Reopen only for a demonstrated mixed-peer failure. |
+
+### Server-mod reconnect senior review disposition
+
+The local Astra xhigh review of `/tmp/qsvr-servermod-review.md` checked the
+donor and inherited parser/connection code before critiquing the adapter.
+This is a design decision for NET-022, not implementation or runtime sign-off.
+
+| Review finding | Disposition |
+| --- | --- |
+| A disconnect in `svc_serverinfo` would leave the parser reading the packet tail. | **Adopt.** Validate the complete bounded gamedir string, then return out of the message dispatcher immediately when redirecting. |
+| Reconnect needs one owner and must preserve the explicit legacy `qsvr1` choice across internal disconnects. | **Adopt.** Keep one client operation with an identity/cancellation token, the original endpoint and explicit legacy selection; renegotiate capabilities on each attempt. Extract a nonfatal connection helper under the current command wrapper and bound retries and signon. |
+| Game switching queues configuration commands. | **Adopt.** Reconnect only after the switch and queued commands settle; a fixed delay alone is insufficient. |
+| Inherited case-insensitive game identity differs from donor exact matching; pak0 presence differs from a valid loose mod. | **Adapt locally.** Resolve actual installed directory spelling for the redirect and compare semantic identity in that operation. Keep donor `COM_GameDirMatches` unchanged and do not use the catalogue pak0 predicate for all installed mods. |
+| Inherited missing-mod flow refreshes automatically and all current catalogue entries are unverified. | **Adapt.** Keep catalogue refresh explicit. Require consent for the exact requested gamedir and unverified package, re-resolve it on acceptance, and cancel only an operation-owned transfer. |
+| Public PEXT2 peer auto-switch policy is a human preference. | **Resolve conservatively.** Retain the donor's warning-only public behavior by default; make public auto-switch an explicit opt-in. Private QSVR switching follows the inherited behavior when enabled. |
+
+The smallest later software proof covers installed/missing gamedirs, malformed
+and oversized strings, cancellation/superseding connects, failed connect,
+stalled signon, repeated mismatch and packet-tail abandonment. The user's live
+mixed-peer testing remains separate from implementation work.
