@@ -243,6 +243,7 @@ endforeach
 
 srcs = [
     'Quake/bgmusic.c',
+    'Quake/addon_catalog.c',
     'Quake/cd_null.c',
     'Quake/cfgfile.c',
     'Quake/chase.c',
@@ -375,6 +376,16 @@ deps = [
     dependency('threads'),
     sdl_dep,
 ]
+
+# The catalogue backend remains available without networking. Meson users can
+# disable auto features to build and verify its no-curl fallback explicitly.
+if not get_option('auto_features').disabled()
+    curl_dep = dependency('libcurl', required : false)
+    if curl_dep.found()
+        deps += curl_dep
+        cflags += '-DUSE_CURL'
+    endif
+endif
 
 # Valve's SDK has no pkg-config file. Explicit paths also allow a native
 # Linux ARM64 build of libphonon instead of assuming the Linux x64 binary.

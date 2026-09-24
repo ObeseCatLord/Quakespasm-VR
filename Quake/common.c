@@ -3395,6 +3395,26 @@ const char *COM_GetWriteRoot (void)
 	return host_parms->userdir == host_parms->basedir ? com_basedir : host_parms->userdir;
 }
 
+/* Catalogue installation state is based on the primary pak, not merely a
+ * leftover game directory. Keep this query beside the filesystem root policy. */
+qboolean COM_GameDirHasPak0 (const char *dir)
+{
+	char path[MAX_OSPATH];
+	int i;
+
+	if (!dir || COM_ModForbiddenChars (dir))
+		return false;
+
+	for (i = 0; i < com_numbasedirs; i++)
+	{
+		int written = q_snprintf (path, sizeof(path), "%s/%s/pak0.pak", com_basedirs[i], dir);
+		if (written >= 0 && (size_t)written < sizeof(path) && Sys_FileType (path) == FS_ENT_FILE)
+			return true;
+	}
+
+	return false;
+}
+
 /*
 =================
 COM_FOpenConfigFile

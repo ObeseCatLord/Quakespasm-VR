@@ -23,6 +23,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 // host.c -- coordinates spawning and killing of local servers
 
 #include "quakedef.h"
+#include "addon_catalog.h"
 #include "bgmusic.h"
 #include "steam.h"
 #include "tasks.h"
@@ -1072,6 +1073,7 @@ static void _Host_Frame (double time)
 
 	if (!isDedicated)
 	{
+		AddonCatalog_Poll ();
 		// get new key events
 		Key_UpdateForDest ();
 		IN_UpdateInputMode ();
@@ -1306,6 +1308,7 @@ void Host_Init (void)
 		V_Init ();
 		Chase_Init ();
 		M_Init ();
+		AddonCatalog_Init ();
 		ExtraMaps_Init (); // johnfitz
 		M_CheckMods ();
 		Modlist_Init ();  // johnfitz
@@ -1386,6 +1389,8 @@ void Host_Shutdown (void)
 	scr_disabled_for_loading = true;
 
 	Host_WriteConfiguration ();
+	if (cls.state != ca_dedicated)
+		AddonCatalog_Shutdown ();
 
 	NET_Shutdown ();
 
