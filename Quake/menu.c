@@ -25,6 +25,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "in_sdl.h"
 #include "r_ssao.h"
 #include "vr_input.h"
+#include "vr_fbt_storage.h"
 #include "view.h"
 
 void (*vid_menucmdfn) (void); // johnfitz
@@ -2491,6 +2492,7 @@ enum
 	VR_FBT_OPT_HIP,
 	VR_FBT_OPT_LEFT_FOOT,
 	VR_FBT_OPT_RIGHT_FOOT,
+	VR_FBT_OPT_PROFILE,
 	VR_FBT_OPT_CALIBRATE_BEGIN,
 	VR_FBT_OPT_CALIBRATE_CAPTURE,
 	VR_FBT_OPT_CALIBRATE_ACCEPT,
@@ -2499,6 +2501,18 @@ enum
 	VR_FBT_OPT_PROFILE_RESET,
 	VR_FBT_OPTIONS_ITEMS
 };
+
+enum
+{
+	VR_FBT_MENU_PROFILE_LIMIT = 128,
+	VR_FBT_MENU_PROFILE_ENTRY_LIMIT = 4096
+};
+
+static char vr_options_fbt_profiles[VR_FBT_MENU_PROFILE_LIMIT][VR_FBT_PROFILE_NAME_MAX];
+static int vr_options_fbt_profile_count;
+static int vr_options_fbt_profile_cursor;
+static int vr_options_fbt_profiles_skipped;
+static qboolean vr_options_fbt_profiles_truncated;
 
 static float M_VROptions_ClampFinite (float value, float fallback, float low, float high)
 {
@@ -2574,11 +2588,150 @@ static void M_VROptions_FormatFBTRole (vr_fbt_role_t role,
 		q_snprintf (value, value_size, "%s", state);
 }
 
+static qboolean M_VROptions_FBTProfileCompatible (const vr_fbt_profile_t *profile)
+{
+	return profile && VR_FBT_StorageNameIsSafe (profile->name) &&
+		profile->schema_version == VR_FBT_PROFILE_SCHEMA_VERSION &&
+		profile->calibration_algorithm == VR_FBT_PROFILE_CALIBRATION_ALGORITHM &&
+		!strcmp (profile->avatar_fingerprint,
+			VR_FBT_PROFILE_AVATAR_FINGERPRINT);
+}
+
+static void M_VROptions_RefreshFBTProfiles (void)
+{
+	const char *write_root = COM_GetWriteRoot ();
+	char directory[MAX_OSPATH];
+	char preferred[VR_FBT_PROFILE_NAME_MAX] = "";
+	findfile_t *find;
+	int path_length;
+	int examined = 0;
+
+	if (vr_options_fbt_profile_count > 0)
+		q_strlcpy (preferred,
+			vr_options_fbt_profiles[vr_options_fbt_profile_cursor], sizeof (preferred));
+	else
+	{
+		vr_input_fbt_calibration_status_t calibration;
+		if (VR_InputFBTGetCalibrationStatus (&calibration) &&
+			calibration.state == VR_INPUT_FBT_CALIBRATION_IDLE &&
+			calibration.profile_valid)
+			q_strlcpy (preferred, calibration.profile_name, sizeof (preferred));
+		else
+			VR_FBT_StorageLoadSelected (preferred, sizeof (preferred), NULL);
+	}
+
+	vr_options_fbt_profile_count = 0;
+	vr_options_fbt_profile_cursor = 0;
+	vr_options_fbt_profiles_skipped = 0;
+	vr_options_fbt_profiles_truncated = false;
+	if (!write_root || !write_root[0])
+		return;
+	path_length = q_snprintf (directory, sizeof (directory), "%s/vrik/profiles",
+		write_root);
+	if (path_length < 0 || (size_t)path_length >= sizeof (directory))
+		return;
+
+	find = Sys_FindFirst (directory, NULL);
+	while (find && examined < VR_FBT_MENU_PROFILE_ENTRY_LIMIT)
+	{
+		const size_t length = strlen (find->name);
+		if (!(find->attribs & FA_DIRECTORY) && length > 4 &&
+			!q_strcasecmp (find->name + length - 4, ".cfg"))
+		{
+			char name[VR_FBT_PROFILE_NAME_MAX];
+			vr_fbt_profile_t profile;
+			vr_fbt_storage_error_t storage_error;
+			if (length - 4 >= sizeof (name))
+				++vr_options_fbt_profiles_skipped;
+			else
+			{
+				memcpy (name, find->name, length - 4);
+				name[length - 4] = '\0';
+				if (!VR_FBT_StorageNameIsSafe (name) ||
+					!VR_FBT_StorageLoadProfile (name, &profile, NULL, &storage_error) ||
+					!M_VROptions_FBTProfileCompatible (&profile))
+					++vr_options_fbt_profiles_skipped;
+				else if (vr_options_fbt_profile_count < VR_FBT_MENU_PROFILE_LIMIT)
+				{
+					int insert = vr_options_fbt_profile_count;
+					while (insert > 0)
+					{
+						const int order = q_strcasecmp (
+							vr_options_fbt_profiles[insert - 1], name);
+						if (order < 0 || (order == 0 &&
+							strcmp (vr_options_fbt_profiles[insert - 1], name) <= 0))
+							break;
+						q_strlcpy (vr_options_fbt_profiles[insert],
+							vr_options_fbt_profiles[insert - 1],
+							sizeof (vr_options_fbt_profiles[insert]));
+						--insert;
+					}
+					q_strlcpy (vr_options_fbt_profiles[insert], name,
+						sizeof (vr_options_fbt_profiles[insert]));
+					++vr_options_fbt_profile_count;
+				}
+				else
+					vr_options_fbt_profiles_truncated = true;
+			}
+		}
+		++examined;
+		find = Sys_FindNext (find);
+	}
+	if (find)
+	{
+		Sys_FindClose (find);
+		vr_options_fbt_profiles_truncated = true;
+	}
+
+	for (int i = 0; i < vr_options_fbt_profile_count; ++i)
+		if (!strcmp (vr_options_fbt_profiles[i], preferred))
+		{
+			vr_options_fbt_profile_cursor = i;
+			break;
+		}
+}
+
+static void M_VROptions_FBTSelectProfile (void)
+{
+	vr_input_fbt_calibration_status_t calibration;
+	vr_fbt_profile_t profile;
+	vr_fbt_profile_error_t profile_error;
+	vr_fbt_storage_error_t storage_error;
+	char command[VR_FBT_PROFILE_NAME_MAX + 32];
+	int command_length;
+	const char *name;
+
+	if (vr_options_fbt_profile_count <= 0)
+		return;
+	name = vr_options_fbt_profiles[vr_options_fbt_profile_cursor];
+	if (!VR_InputFBTGetCalibrationStatus (&calibration))
+	{
+		Con_Printf ("FBT: profile selection is unavailable until VR input is initialized\n");
+		return;
+	}
+	if (!VR_FBT_StorageLoadProfile (name, &profile, &profile_error,
+		&storage_error) || !M_VROptions_FBTProfileCompatible (&profile))
+	{
+		Con_Printf ("FBT: profile %s is unavailable or incompatible; current profile kept\n",
+			name);
+		M_VROptions_RefreshFBTProfiles ();
+		return;
+	}
+	/* The storage API accepts only [A-Za-z0-9_-] names. Reuse the input
+	 * subsystem's transactional selector so role bindings remain serial-based. */
+	command_length = q_snprintf (command, sizeof (command),
+		"vr_fbt_profile_select %s\n", name);
+	if (command_length < 0 || (size_t)command_length >= sizeof (command))
+		return;
+	Cbuf_AddText (command);
+}
+
 static void M_VROptions_FBTAdjust (int direction)
 {
 	static const vr_fbt_role_t roles[] = {
 		VR_FBT_ROLE_HIP, VR_FBT_ROLE_LEFT_FOOT, VR_FBT_ROLE_RIGHT_FOOT
 	};
+	qboolean play_sound = true;
 	if (!direction)
 		return;
 	switch (vr_options_fbt_cursor)
@@ -2591,10 +2744,19 @@ static void M_VROptions_FBTAdjust (int direction)
 	case VR_FBT_OPT_RIGHT_FOOT:
 		VR_InputFBTCycleRole (roles[vr_options_fbt_cursor - VR_FBT_OPT_HIP], direction);
 		break;
+	case VR_FBT_OPT_PROFILE:
+		if (vr_options_fbt_profile_count > 0)
+			vr_options_fbt_profile_cursor = (vr_options_fbt_profile_cursor +
+				(direction > 0 ? 1 : vr_options_fbt_profile_count - 1)) %
+				vr_options_fbt_profile_count;
+		else
+			play_sound = false;
+		break;
 	default:
 		return;
 	}
-	S_LocalSound ("misc/menu3.wav");
+	if (play_sound)
+		S_LocalSound ("misc/menu3.wav");
 }
 
 static void M_VROptions_FBTActivate (void)
@@ -2607,6 +2769,9 @@ static void M_VROptions_FBTActivate (void)
 	case VR_FBT_OPT_LEFT_FOOT:
 	case VR_FBT_OPT_RIGHT_FOOT:
 		M_VROptions_FBTAdjust (1);
+		break;
+	case VR_FBT_OPT_PROFILE:
+		M_VROptions_FBTSelectProfile ();
 		break;
 	case VR_FBT_OPT_CALIBRATE_BEGIN:
 		VR_InputFBTBeginMenuCalibration ();
@@ -2648,11 +2813,15 @@ static void M_VROptions_FBTKey (int key)
 		S_LocalSound ("misc/menu1.wav");
 		vr_options_fbt_cursor = (vr_options_fbt_cursor +
 			VR_FBT_OPTIONS_ITEMS - 1) % VR_FBT_OPTIONS_ITEMS;
+		if (vr_options_fbt_cursor == VR_FBT_OPT_PROFILE)
+			M_VROptions_RefreshFBTProfiles ();
 		break;
 	case K_DOWNARROW:
 		S_LocalSound ("misc/menu1.wav");
 		vr_options_fbt_cursor = (vr_options_fbt_cursor + 1) %
 			VR_FBT_OPTIONS_ITEMS;
+		if (vr_options_fbt_cursor == VR_FBT_OPT_PROFILE)
+			M_VROptions_RefreshFBTProfiles ();
 		break;
 	case K_LEFTARROW:
 		M_VROptions_FBTAdjust (-1);
@@ -2666,16 +2835,20 @@ static void M_VROptions_FBTKey (int key)
 static void M_VROptions_FBTDraw (cb_context_t *cbx, int top)
 {
 	static const char *const labels[VR_FBT_OPTIONS_ITEMS] = {
-		"Full Body Tracking", "Hip", "Left Foot", "Right Foot",
+		"Full Body Tracking", "Hip", "Left Foot", "Right Foot", "Saved Profile",
 		"Begin Calibration", "Capture Neutral Poses", "Accept Calibration",
 		"Cancel Calibration", "Save Selected Profile", "Reset Runtime Profile"
 	};
 	vr_input_fbt_calibration_status_t calibration;
-	char value[40];
+	char value[64];
+	const int previous_cursor = vr_options_fbt_cursor;
 	for (int item = 0; item < VR_FBT_OPTIONS_ITEMS; ++item)
 		M_Print (cbx, MENU_LABEL_X, top + item * CHARACTER_SIZE, labels[item]);
 	M_Mouse_UpdateListCursor (&vr_options_fbt_cursor, MENU_CURSOR_X, 320,
 		top, CHARACTER_SIZE, VR_FBT_OPTIONS_ITEMS, 0);
+	if (previous_cursor != vr_options_fbt_cursor &&
+		vr_options_fbt_cursor == VR_FBT_OPT_PROFILE)
+		M_VROptions_RefreshFBTProfiles ();
 	M_DrawCheckbox (cbx, MENU_VALUE_X, top +
 		CHARACTER_SIZE * VR_FBT_OPT_ENABLED, vr_fbt_enabled.value != 0.0f);
 	M_VROptions_FormatFBTRole (VR_FBT_ROLE_HIP, value, sizeof (value));
@@ -2684,6 +2857,19 @@ static void M_VROptions_FBTDraw (cb_context_t *cbx, int top)
 	M_Print (cbx, 144, top + CHARACTER_SIZE * VR_FBT_OPT_LEFT_FOOT, value);
 	M_VROptions_FormatFBTRole (VR_FBT_ROLE_RIGHT_FOOT, value, sizeof (value));
 	M_Print (cbx, 144, top + CHARACTER_SIZE * VR_FBT_OPT_RIGHT_FOOT, value);
+	if (vr_options_fbt_profile_count > 0)
+	{
+		const qboolean active = VR_InputFBTGetCalibrationStatus (&calibration) &&
+			calibration.state == VR_INPUT_FBT_CALIBRATION_IDLE &&
+			calibration.profile_valid &&
+			!strcmp (calibration.profile_name,
+				vr_options_fbt_profiles[vr_options_fbt_profile_cursor]);
+		q_snprintf (value, sizeof (value), "%.20s%s",
+			vr_options_fbt_profiles[vr_options_fbt_profile_cursor], active ? " *" : "");
+	}
+	else
+		q_strlcpy (value, "No valid profiles", sizeof (value));
+	M_Print (cbx, 144, top + CHARACTER_SIZE * VR_FBT_OPT_PROFILE, value);
 	Draw_Character (cbx, MENU_CURSOR_X,
 		top + vr_options_fbt_cursor * CHARACTER_SIZE,
 		12 + ((int)(realtime * 4) & 1));
@@ -2725,7 +2911,30 @@ static void M_VROptions_FBTDraw (cb_context_t *cbx, int top)
 				(VR_FBT_OPTIONS_ITEMS + 1) * CHARACTER_SIZE, "No selected profile");
 	}
 	M_Print (cbx, 16, top + (VR_FBT_OPTIONS_ITEMS + 3) * CHARACTER_SIZE,
-		"Roles: arrows cycle; unassigned clears");
+		"Enter loads; arrows choose; roles cycle");
+	if (vr_options_fbt_profiles_skipped || vr_options_fbt_profiles_truncated)
+	{
+		if (vr_options_fbt_profiles_skipped && vr_options_fbt_profiles_truncated)
+			q_snprintf (value, sizeof (value), "Skipped %d; list truncated",
+				vr_options_fbt_profiles_skipped);
+		else if (vr_options_fbt_profiles_skipped)
+			q_snprintf (value, sizeof (value), "Skipped %d invalid/unavailable",
+				vr_options_fbt_profiles_skipped);
+		else
+			q_strlcpy (value, "Profile list truncated", sizeof (value));
+		M_Print (cbx, 16, top + (VR_FBT_OPTIONS_ITEMS + 4) * CHARACTER_SIZE, value);
+	}
+	if (vr_options_fbt_profile_count > 0)
+	{
+		const qboolean active = VR_InputFBTGetCalibrationStatus (&calibration) &&
+			calibration.state == VR_INPUT_FBT_CALIBRATION_IDLE &&
+			calibration.profile_valid &&
+			!strcmp (calibration.profile_name,
+				vr_options_fbt_profiles[vr_options_fbt_profile_cursor]);
+		q_snprintf (value, sizeof (value), "%s%s",
+			vr_options_fbt_profiles[vr_options_fbt_profile_cursor], active ? " *" : "");
+		M_Print (cbx, 16, top + (VR_FBT_OPTIONS_ITEMS + 5) * CHARACTER_SIZE, value);
+	}
 }
 
 static void M_VROptions_Adjust (int dir)
@@ -2807,7 +3016,10 @@ static void M_VROptions_Adjust (int dir)
 	}
 	case VR_OPT_FBT_SETUP:
 		if (dir > 0)
+		{
+			M_VROptions_RefreshFBTProfiles ();
 			vr_options_fbt_page = true;
+		}
 		break;
 	}
 }
