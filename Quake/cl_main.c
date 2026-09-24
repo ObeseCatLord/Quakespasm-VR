@@ -1605,14 +1605,8 @@ static qboolean CL_ComputeReplayPlayerMovement (entity_t *ent, cl_replay_result_
 	pmove.jump_secs = private_replay ? cl.statsf[STAT_PRIVATE_JUMP_SECS] : 0;
 	pmove.onground = (ent->netstate.pmovetype & 0x80) != 0;
 	pmove.skipent = -cl.viewentity;
-	if (!shadow && private_replay)
-	{
-		/* The disposable preview may contain the first raw hand sample
-		 * after an ACK. Sample it once, without committing its RESET latch. */
-		CL_PrepareReplayPreview (&preview, true);
-		if (!CL_SetupReplayGorilla (startseq, &preview))
-			return false;
-	}
+	if (!shadow && private_replay && !CL_SetupReplayGorilla (startseq, NULL))
+		return false;
 	PMCL_AddEntities (bounds);
 
 	if (!shadow && cl.move_replay_propagate_sequence[startseq & MOVECMDS_MASK] == startseq)
@@ -1646,8 +1640,17 @@ static qboolean CL_ComputeReplayPlayerMovement (entity_t *ent, cl_replay_result_
 
 	if (!shadow)
 	{
-		if (!private_replay)
-			CL_PrepareReplayPreview (&preview, false);
+		CL_PrepareReplayPreview (&preview, private_replay);
+		/* Preserve the established preview/input ordering. If the journal
+		 * contained no raw sample, the disposable preview can still seed the
+		 * existing solver after an ACK or a fresh RESET. */
+		if (private_replay && !pmove.gorilla_allowed &&
+			preview.vr_gorilla.flags &&
+			!CL_SetupReplayGorilla (startseq, &preview))
+		{
+			CL_ResetReplayPropagation ();
+			return false;
+		}
 		CL_PrepareReplayCommand (&pmove.cmd, &preview, private_replay);
 		if (!CL_ReplayEnsureCommandPhysents (bounds, &pmove.cmd,
 			private_replay))
