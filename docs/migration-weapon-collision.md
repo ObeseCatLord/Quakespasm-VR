@@ -105,3 +105,11 @@ Before declaring weapon parity, extend collision/contact handling to the
 supported weapons and profiles, then restore the inherited default under the
 server capability policy. Fixed foveation's separate opt-in default is not a
 reason to keep weapon collision off.
+
+The opt-in command and presentation path now accepts the seven stock ranged
+viewmodels through one calibration-owned allowlist. Both paths still require a
+valid muzzle calibration, and presentation still waits for the selected model
+to match `cl.viewent.model`. Axe and custom models remain outside this slice:
+the schema has no ranged/melee classification or general cutting-edge
+geometry. This broadens the compiled path but does not prove shots near a wall
+or restore the inherited default.

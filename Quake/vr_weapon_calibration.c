@@ -712,6 +712,23 @@ qboolean VR_WeaponCalibrationLookupMuzzle(const char *model_name,
 	return true;
 }
 
+qboolean VR_WeaponCalibrationStockRangedViewmodel(const char *name)
+{
+	static const char *const models[] = {
+		"progs/v_shot.mdl", "progs/v_shot2.mdl",
+		"progs/v_nail.mdl", "progs/v_nail2.mdl",
+		"progs/v_rock.mdl", "progs/v_rock2.mdl",
+		"progs/v_light.mdl"
+	};
+
+	if (!name)
+		return false;
+	for (size_t i = 0; i < sizeof (models) / sizeof (models[0]); ++i)
+		if (!strcmp (name, models[i]))
+			return true;
+	return false;
+}
+
 qboolean VR_WeaponCalibrationCurrentMuzzle(vec3_t out)
 {
 	qmodel_t *model;

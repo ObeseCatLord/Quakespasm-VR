@@ -27,6 +27,7 @@ qboolean VR_WeaponCalibrationLookupMuzzle(const char *model_name,
 										  qboolean enhanced_format,
 										  qboolean multiplayer, vec3_t out);
 qboolean VR_WeaponCalibrationCurrentMuzzle(vec3_t out);
+qboolean VR_WeaponCalibrationStockRangedViewmodel(const char *name);
 void VR_WeaponCalibrationProjectileSourceOffset(const char *viewmodel,
 	int weapon_bit, const vec3_t angles, float viewheight, vec3_t out);
 
