@@ -5062,6 +5062,53 @@ typedef struct md5animctx_s
 	jointpose_t *posedata;
 } md5animctx_t;
 
+static const char *MD5Anim_ParseToken (const char *buffer, char *token)
+{
+	return COM_ParseExBuffer (buffer, CPE_NOTRUNC, token, COM_PARSE_MAX_TOKEN_SIZE, NULL);
+}
+
+static qboolean MD5Anim_ParseCheck (const char *s, const char **buffer, char *token)
+{
+	if (strcmp (token, s))
+		return false;
+	*buffer = MD5Anim_ParseToken (*buffer, token);
+	return true;
+}
+
+static size_t MD5Anim_ParseUInt (const char **buffer, char *token)
+{
+	size_t i = strtoull (token, NULL, 0);
+	*buffer = MD5Anim_ParseToken (*buffer, token);
+	return i;
+}
+
+static long MD5Anim_ParseSInt (const char **buffer, char *token)
+{
+	long i = strtol (token, NULL, 0);
+	*buffer = MD5Anim_ParseToken (*buffer, token);
+	return i;
+}
+
+static double MD5Anim_ParseFloat (const char **buffer, char *token)
+{
+	double i = strtod (token, NULL);
+	*buffer = MD5Anim_ParseToken (*buffer, token);
+	return i;
+}
+
+#define MD5ANIMEXPECT(s)                                                                                     \
+	do                                                                                                         \
+	{                                                                                                          \
+		if (strcmp (token, s))                                                                                   \
+			MD5ERROR ("Mod_LoadMD5MeshModel(%s): expected \"%s\", found \"%s\"\n", fname, s, token);        \
+		buffer = MD5Anim_ParseToken (buffer, token);                                                             \
+	} while (0)
+#define MD5ANIMUINT()  MD5Anim_ParseUInt (&buffer, token)
+#define MD5ANIMSINT()  MD5Anim_ParseSInt (&buffer, token)
+#define MD5ANIMFLOAT() MD5Anim_ParseFloat (&buffer, token)
+#define MD5ANIMCHECK(s) MD5Anim_ParseCheck (s, &buffer, token)
+#define MD5ANIMIGNORE() buffer = MD5Anim_ParseToken (buffer, token)
+
 /*
 ================
 MD5Anim_Begin
@@ -5114,10 +5161,11 @@ MD5Anim_Load
 static qboolean MD5Anim_Load (md5animctx_t *ctx, jointinfo_t *joints, jointpose_t *joint_poses, size_t numjoints)
 {
 	const char	*fname = ctx->fname;
+	char		token[COM_PARSE_MAX_TOKEN_SIZE];
 	size_t		 rawcount;
 	float		*r;
 	jointpose_t *outposes = NULL;
-	const void	*buffer = COM_Parse (ctx->buffer);
+	const char	*buffer = MD5Anim_ParseToken (ctx->buffer, token);
 	size_t		 animjoints = ctx->numjoints;
 	size_t		 j;
 	TEMP_ALLOC_DECL (md5animjoint_t, ab);
@@ -5133,8 +5181,8 @@ static qboolean MD5Anim_Load (md5animctx_t *ctx, jointinfo_t *joints, jointpose_
 		return true;
 	}
 
-	MD5EXPECT ("numAnimatedComponents");
-	rawcount = MD5UINT ();
+	MD5ANIMEXPECT ("numAnimatedComponents");
+	rawcount = MD5ANIMUINT ();
 
 	TEMP_ALLOC_ASSIGN_ZEROED (raw, rawcount + 6);
 	TEMP_ALLOC_ASSIGN_ZEROED_COND (ab, animjoints, animjoints > 0);
@@ -5158,27 +5206,28 @@ static qboolean MD5Anim_Load (md5animctx_t *ctx, jointinfo_t *joints, jointpose_
 	}
 
 	ctx->posedata = outposes = Mem_Alloc (sizeof (*outposes) * numjoints * ctx->numposes);
-	for (j = 0; j < ctx->numposes; j++)
-		memcpy (outposes + j * numjoints, bindposes, sizeof (*bindposes) * numjoints);
+	if (numjoints)
+		for (j = 0; j < ctx->numposes; j++)
+			memcpy (outposes + j * numjoints, bindposes, sizeof (*bindposes) * numjoints);
 
-	MD5EXPECT ("hierarchy");
-	MD5EXPECT ("{");
+	MD5ANIMEXPECT ("hierarchy");
+	MD5ANIMEXPECT ("{");
 	for (j = 0; j < animjoints; j++)
 	{
 		char		anim_name[sizeof (joints[0].name)];
 		ssize_t		mesh_index = -1;
-		const char *name = com_token;
+		const char *name = token;
 
 		q_strlcpy (anim_name, name, sizeof (anim_name));
-		buffer = COM_Parse (buffer);
-		ab[j].parent = MD5SINT ();
+		buffer = MD5Anim_ParseToken (buffer, token);
+		ab[j].parent = MD5ANIMSINT ();
 		if (ab[j].parent < -1 || ab[j].parent >= (ssize_t)j)
 			MD5ERROR ("%s: joint has bad parent order\n", fname);
 		// new info
-		ab[j].flags = MD5UINT ();
+		ab[j].flags = MD5ANIMUINT ();
 		if (ab[j].flags & ~63)
 			MD5ERROR ("%s: joint has unsupported flags\n", fname);
-		ab[j].offset = MD5UINT ();
+		ab[j].offset = MD5ANIMUINT ();
 		if (ab[j].offset + MD5_CountAnimatedComponents (ab[j].flags) > rawcount)
 			MD5ERROR ("%s: joint has bad offset\n", fname);
 		ab[j].mesh_index = -1;
@@ -5200,7 +5249,7 @@ static qboolean MD5Anim_Load (md5animctx_t *ctx, jointinfo_t *joints, jointpose_
 		ab[j].mesh_index = mesh_index;
 		mesh_to_anim[mesh_index] = (ssize_t)j;
 	}
-	MD5EXPECT ("}");
+	MD5ANIMEXPECT ("}");
 
 	for (j = 0; j < numjoints; j++)
 	{
@@ -5230,54 +5279,54 @@ static qboolean MD5Anim_Load (md5animctx_t *ctx, jointinfo_t *joints, jointpose_
 		joints[mesh_index].poseparent = anim_parent;
 	}
 
-	MD5EXPECT ("bounds");
-	MD5EXPECT ("{");
-	while (MD5CHECK ("("))
+	MD5ANIMEXPECT ("bounds");
+	MD5ANIMEXPECT ("{");
+	while (MD5ANIMCHECK ("("))
 	{
-		MD5IGNORE ();
-		MD5IGNORE ();
-		MD5IGNORE ();
-		MD5EXPECT (")");
+		MD5ANIMIGNORE ();
+		MD5ANIMIGNORE ();
+		MD5ANIMIGNORE ();
+		MD5ANIMEXPECT (")");
 
-		MD5EXPECT ("(");
-		MD5IGNORE ();
-		MD5IGNORE ();
-		MD5IGNORE ();
-		MD5EXPECT (")");
+		MD5ANIMEXPECT ("(");
+		MD5ANIMIGNORE ();
+		MD5ANIMIGNORE ();
+		MD5ANIMIGNORE ();
+		MD5ANIMEXPECT (")");
 	}
-	MD5EXPECT ("}");
+	MD5ANIMEXPECT ("}");
 
-	MD5EXPECT ("baseframe");
-	MD5EXPECT ("{");
+	MD5ANIMEXPECT ("baseframe");
+	MD5ANIMEXPECT ("{");
 	for (j = 0; j < animjoints; j++)
 	{
-		MD5EXPECT ("(");
-		ab[j].basepos[0] = MD5FLOAT ();
-		ab[j].basepos[1] = MD5FLOAT ();
-		ab[j].basepos[2] = MD5FLOAT ();
-		MD5EXPECT (")");
+		MD5ANIMEXPECT ("(");
+		ab[j].basepos[0] = MD5ANIMFLOAT ();
+		ab[j].basepos[1] = MD5ANIMFLOAT ();
+		ab[j].basepos[2] = MD5ANIMFLOAT ();
+		MD5ANIMEXPECT (")");
 
-		MD5EXPECT ("(");
-		ab[j].basequat[0] = MD5FLOAT ();
-		ab[j].basequat[1] = MD5FLOAT ();
-		ab[j].basequat[2] = MD5FLOAT ();
+		MD5ANIMEXPECT ("(");
+		ab[j].basequat[0] = MD5ANIMFLOAT ();
+		ab[j].basequat[1] = MD5ANIMFLOAT ();
+		ab[j].basequat[2] = MD5ANIMFLOAT ();
 		ab[j].basequat[3] = 1 - DotProduct (ab[j].basequat, ab[j].basequat);
 		if (ab[j].basequat[3] < 0)
 			ab[j].basequat[3] = 0;
 		ab[j].basequat[3] = -sqrtf (ab[j].basequat[3]);
-		MD5EXPECT (")");
+		MD5ANIMEXPECT (")");
 	}
-	MD5EXPECT ("}");
+	MD5ANIMEXPECT ("}");
 
-	while (MD5CHECK ("frame"))
+	while (MD5ANIMCHECK ("frame"))
 	{
-		size_t idx = MD5UINT ();
+		size_t idx = MD5ANIMUINT ();
 		if (idx >= ctx->numposes)
 			MD5ERROR ("%s: invalid pose index\n", fname);
-		MD5EXPECT ("{");
+		MD5ANIMEXPECT ("{");
 		for (j = 0; j < rawcount; j++)
-			raw[j] = MD5FLOAT ();
-		MD5EXPECT ("}");
+			raw[j] = MD5ANIMFLOAT ();
+		MD5ANIMEXPECT ("}");
 
 		// okay, we have our raw info, unpack the actual joint info.
 		for (j = 0; j < animjoints; j++)
@@ -5335,6 +5384,13 @@ error:
 	SAFE_FREE (ctx->animfile);
 	return false;
 }
+
+#undef MD5ANIMIGNORE
+#undef MD5ANIMCHECK
+#undef MD5ANIMFLOAT
+#undef MD5ANIMSINT
+#undef MD5ANIMUINT
+#undef MD5ANIMEXPECT
 
 /*
 ===============
