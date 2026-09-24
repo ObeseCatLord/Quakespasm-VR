@@ -52,6 +52,7 @@ typedef enum
 	DRAW_TRANSPARENCY_COMPOSITE,
 	DRAW_OIT_RESOLVE,
 	DRAW_BLENDED_PARTICLES,
+	DRAW_WHEEL_FOREGROUND,
 	DRAW_UI,
 	DRAW_POST_PROCESS,
 } draw_stage_t;
@@ -246,6 +247,8 @@ static void R_DescribeFrame (frame_desc_t *desc, main_render_pass_variant_t vari
 	}
 	R_NextSubpass (&builder, SUBPASS_FTE_PARTICLES);
 	R_AddGraphicsWork (&builder, DRAW_BLENDED_PARTICLES, SCBX_FTE_PARTICLES_BLEND, SCBX_FTE_PARTICLES_BLEND);
+	R_NextSubpass (&builder, SUBPASS_MAIN);
+	R_AddGraphicsWork (&builder, DRAW_WHEEL_FOREGROUND, SCBX_WHEEL_FOREGROUND, SCBX_WHEEL_FOREGROUND);
 	R_EndGraphicsPass (&builder);
 
 	// When disabled, this records the scene-to-GUI memory barrier instead.
@@ -1174,7 +1177,9 @@ static void R_CreateScenePasses (main_render_pass_variant_t variant)
 	subpass_descriptions[SUBPASS_MAIN].pColorAttachments = &scene_color_attachment_reference;
 	subpass_descriptions[SUBPASS_MAIN].pDepthStencilAttachment = &depth_attachment_reference;
 	subpass_descriptions[SUBPASS_MAIN].pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
-	if (resolve && !use_oit)
+	// MAIN is also the terminal wheel/viewmodel subpass; keep its final MSAA
+	// resolve active after that draw for standard, WBOIT and MBOIT frames.
+	if (resolve)
 		subpass_descriptions[SUBPASS_MAIN].pResolveAttachments = &resolve_attachment_reference;
 	subpass_descriptions[SUBPASS_ENTITY_SSAO] = subpass_descriptions[SUBPASS_MAIN];
 	subpass_descriptions[SUBPASS_ENTITY_SSAO].pDepthStencilAttachment = &depth_read_attachment_reference;

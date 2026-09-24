@@ -1929,6 +1929,16 @@ static void R_ShowPointFile (cb_context_t *cbx)
 	R_EndDebugUtilsLabel (cbx);
 }
 
+static void R_ShowViewModelTris (cb_context_t *cbx)
+{
+	entity_t *currententity = &cl.viewent;
+	if (r_drawentities.value && r_drawviewmodel.value && !chase_active.value && cl.stats[STAT_HEALTH] > 0 && !(cl.items & IT_INVISIBILITY) && currententity->model &&
+		currententity->model->type == mod_alias && scr_viewsize.value < 130)
+	{
+		R_DrawAliasModel_ShowTris (cbx, currententity);
+	}
+}
+
 /*
 ================
 R_ShowTris -- johnfitz
@@ -1973,13 +1983,10 @@ void R_ShowTris (cb_context_t *cbx)
 			}
 		}
 
-		// viewmodel
-		entity_t *currententity = &cl.viewent;
-		if (r_drawviewmodel.value && !chase_active.value && cl.stats[STAT_HEALTH] > 0 && !(cl.items & IT_INVISIBILITY) && currententity->model &&
-			currententity->model->type == mod_alias && scr_viewsize.value < 130)
-		{
-			R_DrawAliasModel_ShowTris (cbx, currententity);
-		}
+		// In view-anchored wheel mode the actual viewmodel is deferred with the
+		// wheel, so defer its diagnostic wireframe too.
+		if (!VR_WeaponMenu_UsesForegroundDepth ())
+			R_ShowViewModelTris (cbx);
 	}
 
 	if (r_particles.value)
@@ -2258,21 +2265,56 @@ R_DrawViewModelTask
 */
 static void R_DrawViewModelTask (void *unused)
 {
+	const qboolean foreground_wheel = VR_WeaponMenu_UsesForegroundDepth ();
 	cb_context_t *cbx = vulkan_globals.secondary_cb_contexts[SCBX_VIEW_MODEL];
 	R_SetupContext (cbx);
-	R_DrawViewModel (cbx); // johnfitz -- moved here from R_RenderView
-	/* The wheel is scene geometry, independent of the held weapon's hide gates. */
-	const int wheel_polys = VR_WeaponMenu_DrawModels (cbx);
-	if (wheel_polys)
+	if (!foreground_wheel)
 	{
-		Atomic_AddUInt32 (&rs_aliaspolys, wheel_polys);
-		Atomic_IncrementUInt32 (&rs_aliaspasses);
+		R_DrawViewModel (cbx); // johnfitz -- moved here from R_RenderView
+		/* The wheel is scene geometry, independent of the held weapon's hide gates. */
+		const int wheel_polys = VR_WeaponMenu_DrawModels (cbx);
+		if (wheel_polys)
+		{
+			Atomic_AddUInt32 (&rs_aliaspolys, wheel_polys);
+			Atomic_IncrementUInt32 (&rs_aliaspasses);
+		}
 	}
 	R_ShowTris (cbx);	   // johnfitz
 	R_ShowSkeletons (cbx);
 	R_ShowBoundingBoxes (cbx); // johnfitz
 	R_ShowPointFile (cbx);
 	R_DrawFBTCalibrationVisuals (cbx);
+
+	if (foreground_wheel)
+	{
+		cbx = vulkan_globals.secondary_cb_contexts[SCBX_WHEEL_FOREGROUND];
+		R_SetupContext (cbx);
+		const VkClearAttachment depth_clear = {
+			.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT,
+			.clearValue.depthStencil = {.depth = 0.0f, .stencil = 0},
+		};
+		const VkClearRect clear_rect = {
+			.rect = {{0, 0}, {vid.render_width, vid.render_height}},
+			.baseArrayLayer = 0,
+			.layerCount = 1,
+		};
+		vkCmdClearAttachments (cbx->cb, 1, &depth_clear, 1, &clear_rect);
+
+		/* Clear once, then preserve the legacy wheel-before-held-weapon order. */
+		const int wheel_polys = VR_WeaponMenu_DrawModels (cbx);
+		if (wheel_polys)
+		{
+			Atomic_AddUInt32 (&rs_aliaspolys, wheel_polys);
+			Atomic_IncrementUInt32 (&rs_aliaspasses);
+		}
+		R_DrawViewModel (cbx);
+		if (r_showtris.value >= 1 && r_showtris.value <= 2 && cl.maxclients <= 1 && vulkan_globals.non_solid_fill)
+		{
+			R_BeginDebugUtilsLabel (cbx, "show viewmodel tris");
+			R_ShowViewModelTris (cbx);
+			R_EndDebugUtilsLabel (cbx);
+		}
+	}
 }
 
 /*

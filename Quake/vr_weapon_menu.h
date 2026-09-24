@@ -62,6 +62,7 @@ void VR_WeaponMenu_PrepareModels (void);
  * center slot's ring. */
 int VR_WeaponMenu_VisibleRingCount (void);
 void VR_WeaponMenu_SetVRPanel (const float world_from_ndc[16], qboolean playspace);
+qboolean VR_WeaponMenu_UsesForegroundDepth (void);
 int VR_WeaponMenu_DrawModels (struct cb_context_s *cbx);
 int VR_WeaponMenu_Release (void);
 void VR_WeaponMenu_Draw (struct cb_context_s *cbx);

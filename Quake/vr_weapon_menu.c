@@ -2123,6 +2123,13 @@ void VR_WeaponMenu_SetVRPanel (const float world_from_ndc[16], qboolean playspac
 	vr_weapon_menu_frame.panel_valid = true;
 }
 
+qboolean VR_WeaponMenu_UsesForegroundDepth (void)
+{
+	return VR_WeaponMenu_IsOpenVR () && vr_weapon_menu_frame_valid &&
+		vr_weapon_menu_frame.panel_valid && !vr_weapon_menu_frame.playspace &&
+		vr_weapon_menu_frame.generation == vr_weapon_menu_session_generation;
+}
+
 static void VR_WeaponMenu_SlotWorldOrigin (const vr_weapon_menu_visible_t *visible,
 	const float world_from_ndc[16], const vec3_t right, const vec3_t down,
 	const vec3_t forward, float mesh_scale, vec3_t origin)
