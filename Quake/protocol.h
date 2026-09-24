@@ -347,6 +347,8 @@ typedef struct
 #define svc_localsound	   56
 /* [short entity][long generation][v2 fixed pose or v3 framed pose; v4 uses v3] */
 #define svc_vrikpose	   87
+/* [byte source slot, 1-based][long source generation][voice_packet_t] */
+#define svc_voice	       88
 
 // spike -- some extensions for particles.
 // some extra stuff for fte's pext2_replacementdeltas, including stats
@@ -386,6 +388,7 @@ typedef struct
 #define clc_move		3  // [usercmd_t]
 #define clc_stringcmd	4  // [string] message
 #define clc_vrikpose	5  // v2 [fixed pose], v3/v4 [byte bodylen][codec body]
+#define clc_voice		6  // [short sequence][long timestamp][byte talkspurt][byte flags][short length][Opus]
 #define clcdp_ackframe	50 // [long] frame sequence. reused by fte replacement deltas
 //
 // temp entity events

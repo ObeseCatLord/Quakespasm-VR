@@ -182,6 +182,7 @@ This is also called on Host_Error, so it shouldn't cause any errors
 void CL_Disconnect (void)
 {
 	CL_ResetVRIKState ();
+	CL_ResetVoiceTransportState ();
 	cls.legacy_qsvr = 0;
 	cls.offered_qsvr = 0;
 	cl.protocol_qsvr = 0;
@@ -224,6 +225,44 @@ void CL_Disconnect (void)
 	cl.worldmodel = NULL;
 	cl.sendprespawn = false;
 	SCR_CenterPrintClear ();
+}
+
+qboolean CL_VoiceTransportAvailable (void)
+{
+	return cl.voice_protocol_offered && cl.voice_cap_sent &&
+		cl.voice_protocol_version == VOICE_PROTOCOL_VERSION;
+}
+
+void CL_ResetVoiceTransportState (void)
+{
+	cl.voice_protocol_offered = false;
+	cl.voice_cap_sent = false;
+	cl.voice_protocol_version = 0;
+	memset (cl.voice_outgoing, 0, sizeof (cl.voice_outgoing));
+	cl.voice_outgoing_head = 0;
+	cl.voice_outgoing_count = 0;
+}
+
+qboolean CL_QueueVoicePacket (const voice_packet_t *packet)
+{
+	unsigned int tail;
+
+	if (!CL_VoiceTransportAvailable () || cls.state != ca_connected ||
+		cls.demoplayback || cls.signon != SIGNONS ||
+		!Voice_PacketIsValid (packet))
+		return false;
+	if (cl.voice_outgoing_count >= VOICE_CLIENT_QUEUE_CAPACITY)
+	{
+		/* Capture can outrun a blocked network briefly; retain the freshest audio. */
+		cl.voice_outgoing_head = (cl.voice_outgoing_head + 1) %
+			VOICE_CLIENT_QUEUE_CAPACITY;
+		cl.voice_outgoing_count--;
+	}
+	tail = (cl.voice_outgoing_head + cl.voice_outgoing_count) %
+		VOICE_CLIENT_QUEUE_CAPACITY;
+	cl.voice_outgoing[tail] = *packet;
+	cl.voice_outgoing_count++;
+	return true;
 }
 
 void CL_Disconnect_f (void)
@@ -1709,7 +1748,6 @@ void CL_SendCmd (void)
 		SZ_Clear (&cls.message);
 		return;
 	}
-
 	// send the reliable message
 	if (!cls.message.cursize)
 		return; // no message at all

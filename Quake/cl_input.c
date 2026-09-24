@@ -867,11 +867,62 @@ static void CL_AppendVRIKPose (sizebuf_t *buf)
 	cl.vrik_last_sent_active = active;
 }
 
+static qboolean CL_AppendVoicePacket (sizebuf_t *buf)
+{
+	voice_packet_t *packet;
+	size_t required;
+	int start;
+
+	if (!buf || !buf->data || !CL_VoiceTransportAvailable () ||
+		!cl.voice_outgoing_count || cls.state != ca_connected ||
+		cls.demoplayback || cls.signon != SIGNONS)
+		return false;
+	packet = &cl.voice_outgoing[cl.voice_outgoing_head];
+	if (!Voice_PacketIsValid (packet))
+		return false;
+	required = VOICE_CLC_HEADER_BYTES + packet->payload_bytes;
+	if (required > VOICE_CLIENT_DATAGRAM_BUDGET || buf->overflowed ||
+		buf->cursize < 0 || buf->maxsize < 0 || buf->cursize > buf->maxsize ||
+		required > (size_t)(buf->maxsize - buf->cursize))
+		return false;
+
+	start = buf->cursize;
+	MSG_WriteByte (buf, clc_voice);
+	MSG_WriteShort (buf, packet->sequence);
+	MSG_WriteLong (buf, (int)packet->timestamp);
+	MSG_WriteByte (buf, packet->talkspurt);
+	MSG_WriteByte (buf, packet->flags);
+	MSG_WriteShort (buf, packet->payload_bytes);
+	if (packet->payload_bytes)
+		SZ_Write (buf, packet->payload, packet->payload_bytes);
+	if (buf->overflowed)
+	{
+		buf->cursize = start;
+		return false;
+	}
+	return true;
+}
+
+static void CL_ConsumeSentVoicePacket (void)
+{
+	voice_packet_t *packet;
+
+	if (!cl.voice_outgoing_count)
+		return;
+	packet = &cl.voice_outgoing[cl.voice_outgoing_head];
+	memset (packet, 0, sizeof (*packet));
+	cl.voice_outgoing_head = (cl.voice_outgoing_head + 1) %
+		VOICE_CLIENT_QUEUE_CAPACITY;
+	cl.voice_outgoing_count--;
+}
+
 static void CL_SendPrivateMove (const usercmd_t *cmd)
 {
 	byte data[DATAGRAM_MTU];
 	sizebuf_t buf = {0};
 	usercmd_t sendcmd;
+	qboolean voice_appended;
+	int send_result;
 	int seq, first_seq, packet_cmds = 0;
 	unsigned capabilities = 0;
 	if (cls.demoplayback)
@@ -908,11 +959,15 @@ static void CL_SendPrivateMove (const usercmd_t *cmd)
 		cl.movecmds[seq & MOVECMDS_MASK].seconds = 0;
 		CL_FlushAckFrames ();
 		CL_AppendVRIKPose (&buf);
-		if (buf.cursize && NET_SendUnreliableMessage (cls.netcon, &buf) == -1)
+		voice_appended = CL_AppendVoicePacket (&buf);
+		send_result = buf.cursize ? NET_SendUnreliableMessage (cls.netcon, &buf) : 0;
+		if (send_result < 0)
 		{
 			Con_Printf ("CL_SendMove: lost server connection\n");
 			CL_Disconnect ();
 		}
+		else if (send_result == 1 && voice_appended)
+			CL_ConsumeSentVoicePacket ();
 		return;
 	}
 	if (cl.vr_gorilla_supported && cl.vr_gorilla_allowed)
@@ -934,14 +989,18 @@ static void CL_SendPrivateMove (const usercmd_t *cmd)
 	// Movement precedes transport ACKs; retain any ACKs that do not fit.
 	CL_WriteAckFrames (&buf);
 	CL_AppendVRIKPose (&buf);
+	voice_appended = CL_AppendVoicePacket (&buf);
 	if (!buf.cursize)
 		return;
-	if (NET_SendUnreliableMessage (cls.netcon, &buf) == -1)
+	send_result = NET_SendUnreliableMessage (cls.netcon, &buf);
+	if (send_result < 0)
 	{
 		Con_Printf ("CL_SendMove: lost server connection\n");
 		CL_Disconnect ();
 		return;
 	}
+	if (send_result == 1 && voice_appended)
+		CL_ConsumeSentVoicePacket ();
 	cl.net_move_packets_sent++;
 	cl.net_move_cmds_sent += packet_cmds;
 	cl.net_move_last_packet_cmds = packet_cmds;
@@ -960,12 +1019,15 @@ void CL_SendMove (const usercmd_t *cmd)
 		return;
 	}
 	unsigned int i;
-	sizebuf_t	 buf;
+	qboolean voice_appended;
+	int send_result;
+	sizebuf_t	 buf = {0};
 	byte		 data[1024];
 
 	buf.maxsize = sizeof (data);
 	buf.cursize = 0;
 	buf.data = data;
+	buf.allowoverflow = false;
 
 	for (i = 0; i < cl.ackframes_count; i++)
 	{
@@ -1024,6 +1086,7 @@ void CL_SendMove (const usercmd_t *cmd)
 			buf.cursize = dump;
 	}
 	CL_AppendVRIKPose (&buf);
+	voice_appended = CL_AppendVoicePacket (&buf);
 
 	// fixme: nops if we're still connecting, or something.
 
@@ -1033,11 +1096,15 @@ void CL_SendMove (const usercmd_t *cmd)
 	if (cls.demoplayback || !buf.cursize)
 		return;
 
-	if (NET_SendUnreliableMessage (cls.netcon, &buf) == -1)
+	send_result = NET_SendUnreliableMessage (cls.netcon, &buf);
+	if (send_result < 0)
 	{
 		Con_Printf ("CL_SendMove: lost server connection\n");
 		CL_Disconnect ();
+		return;
 	}
+	if (send_result == 1 && voice_appended)
+		CL_ConsumeSentVoicePacket ();
 }
 
 /*

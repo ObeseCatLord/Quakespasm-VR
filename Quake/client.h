@@ -23,6 +23,8 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #ifndef _CLIENT_H_
 #define _CLIENT_H_
 
+#include "voice_protocol.h"
+
 // client.h
 
 #define CLIENT_USER_INFO_STRING_SIZE 8192
@@ -303,6 +305,13 @@ typedef struct
 	qboolean vrik_protocol_offered;
 	qboolean vrik_cap_sent;
 	unsigned char vrik_protocol_version;
+	/* Optional opaque Opus transport, independent of PEXT and VRIK. */
+	qboolean voice_protocol_offered;
+	qboolean voice_cap_sent;
+	unsigned char voice_protocol_version;
+	voice_packet_t voice_outgoing[VOICE_CLIENT_QUEUE_CAPACITY];
+	unsigned int voice_outgoing_head;
+	unsigned int voice_outgoing_count;
 	/* Newest-pose sender state shares the current client-state lifetime. */
 	unsigned short vrik_next_sequence;
 	double vrik_next_send_time;
@@ -500,6 +509,12 @@ void Chase_UpdateForDrawing (void); // johnfitz
 
 void CL_ResetPredictionSmoothing (void);
 void CL_FlushAckFrames (void);
+
+/* Audio worker boundary. Queueing and callbacks run on the client main thread. */
+qboolean CL_VoiceTransportAvailable (void);
+qboolean CL_QueueVoicePacket (const voice_packet_t *packet);
+void CL_SetVoiceReceiveCallback (voice_receive_callback_t callback, void *opaque);
+void CL_ResetVoiceTransportState (void);
 
 // Body codec only: caller must admit the private dialect before using this.
 void CL_WritePrivateUsercmd (sizebuf_t *buf, const usercmd_t *cmd, unsigned int protocolflags, unsigned int capabilities);

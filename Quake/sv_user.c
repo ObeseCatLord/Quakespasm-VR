@@ -1231,6 +1231,72 @@ static qboolean SV_HandleVRIKCapability(const char *s)
     return true;
 }
 
+static qboolean SV_HandleVoiceCapability (const char *s)
+{
+	const char *value = s;
+	int source_slot;
+
+	while (*value == ' ' || *value == '\t')
+		value++;
+	if (q_strncasecmp (value, "voice_cap", 9) ||
+		(value[9] && value[9] != ' ' && value[9] != '\t'))
+		return false;
+	value += 9;
+	while (*value == ' ' || *value == '\t')
+		value++;
+	if (*value++ != '1')
+		return true;
+	while (*value == ' ' || *value == '\t' || *value == '\r' ||
+		*value == '\n')
+		value++;
+	if (*value || host_client->voice_capable ||
+		!host_client->voice_protocol_offered)
+		return true;
+
+	host_client->voice_capable = true;
+	/* Do not replay packets received before this recipient opted in. */
+	for (source_slot = 0; source_slot < svs.maxclients &&
+		source_slot < MAX_SCOREBOARD; ++source_slot)
+	{
+		host_client->voice_relay_generation[source_slot] =
+			svs.clients[source_slot].voice_generation;
+		host_client->voice_relay_serial[source_slot] =
+			svs.clients[source_slot].voice_next_serial;
+	}
+	Con_DPrintf ("Voice: client %s negotiated protocol %d\n",
+		host_client->name, VOICE_PROTOCOL_VERSION);
+	return true;
+}
+
+static qboolean SV_ReadVoicePacket (qboolean accept)
+{
+	voice_packet_t packet;
+	unsigned int payload_bytes;
+
+	memset (&packet, 0, sizeof (packet));
+	packet.sequence = (uint16_t)MSG_ReadShort ();
+	packet.timestamp = (uint32_t)MSG_ReadLong ();
+	packet.talkspurt = (uint8_t)MSG_ReadByte ();
+	packet.flags = (uint8_t)MSG_ReadByte ();
+	payload_bytes = (uint16_t)MSG_ReadShort ();
+	if (msg_badread)
+		return false;
+	if (net_message.cursize - msg_readcount < (int)payload_bytes)
+	{
+		msg_badread = true;
+		return false;
+	}
+	if (payload_bytes <= VOICE_MAX_PAYLOAD)
+		memcpy (packet.payload, net_message.data + msg_readcount,
+			payload_bytes);
+	msg_readcount += payload_bytes;
+	packet.payload_bytes = (uint16_t)payload_bytes;
+	if (!accept || !Voice_PacketIsValid (&packet))
+		return true;
+	SV_ReceiveVoicePacket (host_client, &packet);
+	return true;
+}
+
 static qboolean SV_ReadVRIKPose(qboolean accept)
 {
     vrik_v2_pose_t pose_v2;
@@ -1299,6 +1365,7 @@ qboolean SV_ReadClientMessage (void)
 	int			ccmd;
     const char *s;
     int vrikcommands = 0;
+    int voicecommands = 0;
 
 	MSG_BeginReading ();
 
@@ -1330,6 +1397,8 @@ qboolean SV_ReadClientMessage (void)
 
 		case clc_stringcmd: {
 			s = MSG_ReadString ();
+			if (SV_HandleVoiceCapability (s))
+				break;
 			if (SV_HandleVRIKCapability (s))
 				break;
 			// The engine must see its protocol offer before a mod's client-command
@@ -1379,6 +1448,16 @@ qboolean SV_ReadClientMessage (void)
 			 * most one pose from any one datagram. */
 			if (!SV_ReadVRIKPose (vrikcommands++ == 0))
 				return false;
+			break;
+
+		case clc_voice:
+			{
+				qboolean accept = host_client->voice_capable &&
+					voicecommands < VOICE_SERVER_MAX_PACKETS_PER_DATAGRAM;
+				voicecommands++;
+				if (!SV_ReadVoicePacket (accept))
+					return false;
+			}
 			break;
 
 		case clcdp_ackframe:

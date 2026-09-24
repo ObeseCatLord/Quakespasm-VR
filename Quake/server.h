@@ -26,8 +26,16 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 // server.h
 
 #include "vrik_codec.h"
+#include "voice_protocol.h"
 
 #define SERVER_INFO_STRING_SIZE 8192
+
+typedef struct server_voice_packet_s
+{
+	uint64_t serial;
+	double arrival_time;
+	voice_packet_t packet;
+} server_voice_packet_t;
 
 typedef struct
 {
@@ -213,6 +221,18 @@ typedef struct client_s
 	unsigned int vrik_relay_generation[MAX_SCOREBOARD];
 	/* Generation admission already appended to each recipient's reliable stream. */
 	unsigned int vrik_admitted_generation[MAX_SCOREBOARD];
+	/* Opaque voice packets are queued per source and relayed per recipient. */
+	qboolean voice_protocol_offered;
+	qboolean voice_capable;
+	unsigned int voice_generation;
+	server_voice_packet_t voice_packets[VOICE_SERVER_QUEUE_CAPACITY];
+	uint64_t voice_next_serial;
+	double voice_rate_window_start;
+	unsigned int voice_rate_packets;
+	unsigned int voice_rate_bytes;
+	uint64_t voice_relay_serial[MAX_SCOREBOARD];
+	unsigned int voice_relay_generation[MAX_SCOREBOARD];
+	unsigned char voice_relay_next_source;
 	unsigned int resendstatsnum[MAX_CL_STATS / 32]; // the stats which need to be resent.
 	unsigned int resendstatsstr[MAX_CL_STATS / 32]; // the stats which need to be resent.
 	int			 oldstats_i[MAX_CL_STATS];			// previous values of stats. if these differ from the current values, reflag resendstats.
@@ -431,6 +451,8 @@ void SV_ReceiveVRIKPoseV2 (client_t *client, const vrik_v2_pose_t *pose,
 	const unsigned char body[VRIK_V2_BODY_BYTES]);
 void SV_ReceiveVRIKPoseV3 (client_t *client, const vrik_codec_pose_t *pose);
 void SV_ExpireVRIKPoses (void);
+void SV_ReceiveVoicePacket (client_t *client, const voice_packet_t *packet);
+extern cvar_t sv_voice;
 void SV_FinishPrivateUsercmds (void);
 qboolean SV_PrivateWalkTrialSelected (client_t *client);
 void SV_PrivateWalkTrialSelectAtBegin (client_t *client);

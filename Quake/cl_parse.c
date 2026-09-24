@@ -98,6 +98,8 @@ static const char *CL_ServerCommandName (int cmd)
 {
 	if (cmd == svc_vrikpose)
 		return "svc_vrikpose";
+	if (cmd == svc_voice)
+		return "svc_voice";
 	if ((unsigned int)cmd < NUM_SVC_STRINGS && svc_strings[cmd])
 		return svc_strings[cmd];
 	return "unknown";
@@ -209,6 +211,56 @@ static qboolean CL_OfferVRIKProtocol (const char *command)
 	}
 	Con_DPrintf ("VRIK: negotiated protocol %d with server\n", version_byte);
 	return true;
+}
+
+static qboolean CL_OfferVoiceProtocol (const char *command)
+{
+	static const char command_name[] = "voice_protocol";
+	const char *version;
+
+	if (strncmp (command, command_name, sizeof (command_name) - 1) ||
+		(command[sizeof (command_name) - 1] &&
+		 command[sizeof (command_name) - 1] != ' ' &&
+		 command[sizeof (command_name) - 1] != '\t'))
+		return false;
+	if (!command[sizeof (command_name) - 1])
+		return true;
+	version = command + sizeof (command_name) - 1;
+	while (*version == ' ' || *version == '\t')
+		version++;
+	if (*version++ != '1')
+		return true;
+	while (*version == ' ' || *version == '\t' || *version == '\r' ||
+		*version == '\n')
+		version++;
+	if (*version || cl.voice_cap_sent)
+		return true;
+	if (!cls.demoplayback &&
+		(cls.message.cursize < 0 || cls.message.maxsize < 0 ||
+		 (size_t)cls.message.cursize + 1 + sizeof ("voice_cap 1") >
+		 (size_t)cls.message.maxsize))
+		return true;
+
+	cl.voice_protocol_offered = true;
+	cl.voice_protocol_version = VOICE_PROTOCOL_VERSION;
+	cl.voice_cap_sent = true;
+	if (!cls.demoplayback)
+	{
+		MSG_WriteByte (&cls.message, clc_stringcmd);
+		MSG_WriteString (&cls.message, "voice_cap 1");
+	}
+	Con_DPrintf ("Voice: negotiated protocol %d with server\n",
+		VOICE_PROTOCOL_VERSION);
+	return true;
+}
+
+static voice_receive_callback_t cl_voice_receive_callback;
+static void *cl_voice_receive_opaque;
+
+void CL_SetVoiceReceiveCallback (voice_receive_callback_t callback, void *opaque)
+{
+	cl_voice_receive_callback = callback;
+	cl_voice_receive_opaque = opaque;
 }
 
 static qboolean CL_ParseVRIKDecimal (const char **cursor,
@@ -519,6 +571,40 @@ static qboolean CL_ParseVRIKPose (void)
 	ent->vrik_sequence_valid = true;
 	if (ent->vrik_pose_count < 2)
 		ent->vrik_pose_count++;
+	return true;
+}
+
+static qboolean CL_ParseVoicePacket (qboolean accept)
+{
+	voice_packet_t packet;
+	unsigned int generation, payload_bytes;
+	int source;
+
+	memset (&packet, 0, sizeof (packet));
+	source = MSG_ReadByte ();
+	generation = (unsigned int)MSG_ReadLong ();
+	packet.sequence = (uint16_t)MSG_ReadShort ();
+	packet.timestamp = (uint32_t)MSG_ReadLong ();
+	packet.talkspurt = (uint8_t)MSG_ReadByte ();
+	packet.flags = (uint8_t)MSG_ReadByte ();
+	payload_bytes = (uint16_t)MSG_ReadShort ();
+	if (msg_badread)
+		return false;
+	if (net_message.cursize - msg_readcount < (int)payload_bytes)
+	{
+		msg_badread = true;
+		return false;
+	}
+	if (payload_bytes <= VOICE_MAX_PAYLOAD)
+		memcpy (packet.payload, net_message.data + msg_readcount, payload_bytes);
+	msg_readcount += payload_bytes;
+	packet.payload_bytes = (uint16_t)payload_bytes;
+	if (!accept || !cl.voice_protocol_offered || !generation || source < 1 ||
+		source > cl.maxclients || !Voice_PacketIsValid (&packet))
+		return true;
+	if (cl_voice_receive_callback)
+		cl_voice_receive_callback (source - 1, generation, &packet,
+			cl_voice_receive_opaque);
 	return true;
 }
 
@@ -1715,6 +1801,7 @@ static void CL_ParseServerInfo (void)
 	CL_ClearState ();
 	/* Serverinfo starts a new map and a fresh VRIK capability negotiation. */
 	CL_ResetVRIKState ();
+	CL_ResetVoiceTransportState ();
 
 	if (sv.loadgame)
 		V_StopPitchDrift ();
@@ -2739,6 +2826,7 @@ void CL_ParseServerMessage (void)
 {
 	int			cmd;
 	int			i;
+	int			voicecommands = 0;
 	const char *str;			   // johnfitz
 	int			total, j, lastcmd; // johnfitz
 	qboolean received_setangle = false;
@@ -2827,6 +2915,12 @@ void CL_ParseServerMessage (void)
 				Host_Error ("CL_ParseServerMessage: malformed VRIK pose");
 			break;
 
+		case svc_voice:
+			if (!CL_ParseVoicePacket (
+				voicecommands++ < VOICE_CLIENT_MAX_PACKETS_PER_DATAGRAM))
+				Host_Error ("CL_ParseServerMessage: malformed voice packet");
+			break;
+
 		case svc_version:
 			i = MSG_ReadLong ();
 			if (cl.protocol_qsvr && (msg_badread || i != PROTOCOL_RMQ))
@@ -2876,6 +2970,8 @@ void CL_ParseServerMessage (void)
 			if (command_length > 2 && str[0] == '/' && str[1] == '/')
 			{
 				if (CL_OfferVRIKProtocol (str + 2))
+					break;
+				if (CL_OfferVoiceProtocol (str + 2))
 					break;
 				if (CL_ParseVRIKRetirement (str + 2))
 					break;
