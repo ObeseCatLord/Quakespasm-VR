@@ -1309,6 +1309,12 @@ static void VR_InputClearPendingRecord (usercmd_t *pending)
 	VectorCopy (vec3_origin, pending->vr_handrot);
 	pending->vr_handpos_relative = false;
 	pending->vr_active = false;
+	pending->vr_akimbo_active = false;
+	pending->vr_akimbo_berserk = false;
+	memset (pending->vr_akimbo_muzzle, 0,
+		sizeof (pending->vr_akimbo_muzzle));
+	memset (pending->vr_akimbo_angles, 0,
+		sizeof (pending->vr_akimbo_angles));
 	pending->vr_pending_move[0] = pending->vr_pending_move[1] = pending->vr_pending_move[2] = 0.0f;
 	pending->vr_pending_angles[0] = pending->vr_pending_angles[1] = pending->vr_pending_angles[2] = 0.0f;
 	pending->vr_pending_move_valid = false;
@@ -3836,6 +3842,10 @@ void VR_InputApplyPending (usercmd_t *cmd)
 		return;
 	}
 	memset (&cmd->vr_contact, 0, sizeof (cmd->vr_contact));
+	cmd->vr_akimbo_active = false;
+	cmd->vr_akimbo_berserk = false;
+	memset (cmd->vr_akimbo_muzzle, 0, sizeof (cmd->vr_akimbo_muzzle));
+	memset (cmd->vr_akimbo_angles, 0, sizeof (cmd->vr_akimbo_angles));
 	if (CL_AngleLocked () || !VR_InputMotionContextAccepted (frame))
 	{
 		VR_InputClearPendingContactRecord (&cl.pendingcmd);
@@ -3855,6 +3865,19 @@ void VR_InputApplyPending (usercmd_t *cmd)
 		cmd->vr_handpos_relative = true;
 		cmd->vr_active = true;
 		private_pose_accepted = true;
+	}
+	if (private_pose_accepted && cl.pendingcmd.vr_akimbo_active &&
+		VR_InputWireVec (cl.pendingcmd.vr_akimbo_muzzle[0]) &&
+		VR_InputWireVec (cl.pendingcmd.vr_akimbo_muzzle[1]) &&
+		VR_InputWireVec (cl.pendingcmd.vr_akimbo_angles[0]) &&
+		VR_InputWireVec (cl.pendingcmd.vr_akimbo_angles[1]))
+	{
+		cmd->vr_akimbo_active = true;
+		cmd->vr_akimbo_berserk = cl.pendingcmd.vr_akimbo_berserk;
+		memcpy (cmd->vr_akimbo_muzzle, cl.pendingcmd.vr_akimbo_muzzle,
+			sizeof (cmd->vr_akimbo_muzzle));
+		memcpy (cmd->vr_akimbo_angles, cl.pendingcmd.vr_akimbo_angles,
+			sizeof (cmd->vr_akimbo_angles));
 	}
 	if (private_pose_accepted &&
 		VR_InputPendingContactAccepted (&cl.pendingcmd, frame))
