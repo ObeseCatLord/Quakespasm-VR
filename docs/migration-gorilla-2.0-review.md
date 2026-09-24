@@ -157,8 +157,8 @@ has qualified the behavior yet.
 
 A further read-only Astra pass was requested at xhigh, but the reviewer could
 not verify its effective effort setting. Treat its findings as an audit, not a
-certified senior-review pass. The reviewer cited five issues; its stated raw
-ACK cost was also incorrect (the proposed payload was 143 bytes). These are
+certified senior-review pass. The reviewer cited five issues. The selected
+raw ACK payload subsequently implemented is 95 bytes when emitted. These are
 the checked dispositions:
 
 | Finding | Disposition |
@@ -175,3 +175,21 @@ loss, teleport, water, ladder and moving-platform cases. The user has deferred
 live device testing; implementation remains open for authoritative/replay
 coherence, mod-specific callbacks and local-host latency before claiming
 predictive Gorilla parity.
+
+## Selected stock-WALK prediction checkpoint
+
+The default-off `sv_private_pmove_walk` trial now accepts structurally valid
+raw hand commands, uses the existing shared PMove Gorilla solver, retains its
+command-matched state, and sends a Gorilla state payload only for initialized
+selected owners. The client can seed a fresh replay from a journaled RESET
+without an inactive-state ACK, and refreshes collision entities when an active
+Gorilla hand envelope leaves the prior collection bounds. Callback relocations
+fence old hand state. A palm contact with an unsupported moving pusher still
+fails the stock trial. Trusted authored motion remains outside this path.
+
+The trial remains opt-in, exact-stock, dry WALK and remote-only. Ordinary
+server physics remains the default Gorilla authority for local play, mods,
+water and other nontrial cases. This checkpoint establishes code and local
+fixture/build coverage, not device or real-map parity. The remaining gates are
+end-to-end command/ACK comparison under loss and mode transitions, special
+QC callbacks, and the deferred live headset and multiplayer checks.

@@ -126,7 +126,10 @@ static void test_command_names (void)
 	for (unsigned int index = 0; index < countof (invalid); index++)
 		assert (!strcmp (CL_ServerCommandName (invalid[index]), "unknown"));
 	for (int opcode = 57; opcode < 128; opcode++)
-		assert (!strcmp (CL_ServerCommandName (opcode), "unknown"));
+		if (opcode != svc_vrikpose && opcode != svc_voice)
+			assert (!strcmp (CL_ServerCommandName (opcode), "unknown"));
+	assert (!strcmp (CL_ServerCommandName (svc_vrikpose), "svc_vrikpose"));
+	assert (!strcmp (CL_ServerCommandName (svc_voice), "svc_voice"));
 	assert (!strcmp (CL_ServerCommandName (svcfte_updateentities), "unknown"));
 
 	const byte ack_then_bad[] = {57, 1, 0, 3, 2, 2, 0, 3, 0, 0, 127};

@@ -227,6 +227,7 @@ typedef struct client_s
 	unsigned int protocol_pext2;
 	qboolean vr_gorilla_capable;
 	vr_gorilla_state_t vr_gorilla_state;
+	unsigned int vr_gorilla_reset_generation;
 	int vr_gorilla_last_sequence;
 	qboolean vr_gorilla_cursor_valid;
 	qboolean vr_gorilla_move_deferred;

@@ -713,8 +713,8 @@ static const char *SV_PrivateWalkTrialAdmissionFailure (client_t *client)
 	if (client->edict->v.movetype != MOVETYPE_WALK ||
 		client->edict->v.solid != SOLID_SLIDEBOX || client->edict->v.waterlevel != 0)
 		return "requires a dry WALK/SOLID_SLIDEBOX owner";
-	if (client->cmd.vr_gorilla.flags || client->cmd.vr_gorilla_motion.flags)
-		return "Gorilla input is outside the trial";
+	if (client->cmd.vr_gorilla_motion.flags)
+		return "trusted Gorilla motion is outside the raw trial";
 	customphysics = GetEdictFieldValue (client->edict, qcvm->extfields.customphysics);
 	if (customphysics && customphysics->function)
 		return "customphysics is active";
@@ -1641,6 +1641,60 @@ static void SVFTE_CalcEntityDeltas (client_t *client)
 	snapshot_numents = 0;
 	snapshot_maxents = (olds != NULL) ? (oldstop - olds) : 0;
 }
+static qboolean SV_GorillaAckStateIsFinite (const client_t *client)
+{
+	const vr_gorilla_state_t *state = &client->vr_gorilla_state;
+	int hand, axis;
+
+	if (state->initialized > 1 ||
+		(state->touching & ~VR_GORILLA_HANDS) ||
+		(state->recovering & ~VR_GORILLA_HANDS))
+		return false;
+	for (hand = 0; hand < 2; hand++)
+	{
+		if (state->surface[hand] < 0 || state->surface[hand] >= MAX_EDICTS ||
+			state->surface_model[hand] >= QSVR_MODEL_LIMIT ||
+			(!state->surface[hand] && state->surface_model[hand]) ||
+			(state->surface[hand] && !state->surface_model[hand]))
+			return false;
+		for (axis = 0; axis < 3; axis++)
+			if (!isfinite (state->anchor[hand][axis]) ||
+				!isfinite (state->recovery_offset[hand][axis]))
+				return false;
+		if (DotProduct (state->recovery_offset[hand], state->recovery_offset[hand]) >
+			VR_GORILLA_MAX_REACH * VR_GORILLA_MAX_REACH)
+			return false;
+	}
+	for (axis = 0; axis < 3; axis++)
+		if (!isfinite (state->velocity[axis]) || !isfinite (state->origin[axis]))
+			return false;
+	return true;
+}
+
+static void SV_WriteGorillaAckState (client_t *client, sizebuf_t *msg)
+{
+	int hand, axis;
+
+	MSG_WriteLong (msg, client->vr_gorilla_last_sequence);
+	MSG_WriteByte (msg, client->vr_gorilla_state.initialized);
+	MSG_WriteByte (msg, client->vr_gorilla_state.touching);
+	MSG_WriteByte (msg, client->vr_gorilla_state.recovering);
+	for (hand = 0; hand < 2; hand++)
+		for (axis = 0; axis < 3; axis++)
+			MSG_WriteFloat (msg, client->vr_gorilla_state.anchor[hand][axis]);
+	for (hand = 0; hand < 2; hand++)
+		for (axis = 0; axis < 3; axis++)
+			MSG_WriteFloat (msg, client->vr_gorilla_state.recovery_offset[hand][axis]);
+	for (axis = 0; axis < 3; axis++)
+		MSG_WriteFloat (msg, client->vr_gorilla_state.velocity[axis]);
+	for (axis = 0; axis < 3; axis++)
+		MSG_WriteFloat (msg, client->vr_gorilla_state.origin[axis]);
+	for (hand = 0; hand < 2; hand++)
+		MSG_WriteLong (msg, client->vr_gorilla_state.surface[hand]);
+	for (hand = 0; hand < 2; hand++)
+		MSG_WriteLong (msg, client->vr_gorilla_state.surface_model[hand]);
+}
+
 static qboolean SVFTE_WriteEntitiesToClient (client_t *client, sizebuf_t *msg,
 	size_t overflowsize, qboolean continuation)
 {
@@ -1650,6 +1704,8 @@ static qboolean SVFTE_WriteEntitiesToClient (client_t *client, sizebuf_t *msg,
 	size_t					   entnum, ownernum = 0, i;
 	qboolean				   selected = client->protocol_qsvr == QSVR_PROTOCOL_PINNED && SV_PrivateWalkTrialSelected (client);
 	qboolean				   worldreset = false, wrote_optional = false;
+	qboolean				   gorilla_ack = false;
+	int					   ack_flags = 0;
 	int						   sequence = NET_QSocketGetSequenceOut (client->netconnection);
 	size_t					   origmaxsize = msg->maxsize;
 	size_t					   rollbacksize; // I'm too lazy to figure out sizes (especially if someone updates this for bone states or whatever)
@@ -1667,16 +1723,26 @@ static qboolean SVFTE_WriteEntitiesToClient (client_t *client, sizebuf_t *msg,
 	frame->numents = 0;
 	if (client->protocol_qsvr == QSVR_PROTOCOL_PINNED)
 	{
+		gorilla_ack = selected && sv_gorilla.value && client->vr_gorilla_capable &&
+			client->vr_gorilla_state.initialized &&
+			client->vr_gorilla_cursor_valid && client->vr_gorilla_last_sequence >= 0 &&
+			client->vr_gorilla_last_sequence == client->private_completed_move &&
+			SV_GorillaAckStateIsFinite (client);
+		if (selected && !sv.paused)
+			ack_flags |= MOVEACK_FLAG_AUTHORITATIVE | MOVEACK_FLAG_PREDICTION_ALLOWED;
+		if (client->private_move_discontinuity_reason != MOVEACK_DISCONTINUITY_NONE)
+			ack_flags |= MOVEACK_FLAG_DISCONTINUITY;
+		if (gorilla_ack)
+			ack_flags |= MOVEACK_FLAG_VR_GORILLA;
 		MSG_WriteShort (msg, (client->private_completed_move & 0xffff));
-		MSG_WriteByte (msg, (selected && !sv.paused ?
-			(MOVEACK_FLAG_AUTHORITATIVE | MOVEACK_FLAG_PREDICTION_ALLOWED) : 0) |
-			(client->private_move_discontinuity_reason != MOVEACK_DISCONTINUITY_NONE ?
-			 MOVEACK_FLAG_DISCONTINUITY : 0));
+		MSG_WriteByte (msg, ack_flags);
 		MSG_WriteByte (msg, SV_PrivateWalkTrialSelected (client) ?
 			MOVE_AUTHORITY_PMOVE_ENGINE_COMPAT : MOVE_AUTHORITY_LEGACY_FRAME);
 		MSG_WriteShort (msg, 0); // mode epoch
 		MSG_WriteShort (msg, client->private_move_discontinuity_epoch);
 		MSG_WriteByte (msg, client->private_move_discontinuity_reason);
+		if (gorilla_ack)
+			SV_WriteGorillaAckState (client, msg);
 	}
 	else if (client->protocol_pext2 & PEXT2_PREDINFO)
 		MSG_WriteShort (msg, (client->lastmovemessage & 0xffff));
@@ -4118,10 +4184,9 @@ static void SV_AppendGorillaProtocol (client_t *client)
 		!client->spawned || client->protocol_qsvr != QSVR_PROTOCOL_PINNED)
 		return;
 
-	/* The opt-in stock WALK trial still rejects Gorilla commands. Keep its
-	 * existing movement owner safe until the ordinary-path adapter is shared. */
-	enabled = sv_gorilla.value != 0.0f &&
-		!SV_PrivateWalkTrialSelected (client);
+	/* The default owner consumes raw hands in the native frame; the opt-in
+	 * stock WALK trial consumes them through its command-time PMove owner. */
+	enabled = sv_gorilla.value != 0.0f;
 	if (client->vr_gorilla_last_advertised == enabled ||
 		client->message.overflowed || client->message.cursize < 0 ||
 		client->message.maxsize <= 0 ||

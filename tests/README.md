@@ -983,8 +983,9 @@ ordinary private/public checks above.
 For this focused Linux loopback probe, use fresh client/server profiles, the
 debug-symbol Linux binary, GDB with Python support, and stock `e1m1` assets. The
 owner must qualify as a live, dry stock WALK/SLIDEBOX player with the pinned
-stock `progs.dat`; Gorilla input, custom physics and riding a pusher are outside
-the trial. Start a fresh selected private server:
+stock `progs.dat`; raw Gorilla hands are accepted, while trusted Gorilla
+motion, custom physics and riding a pusher are outside the trial. Start a fresh
+selected private server:
 
 ```sh
 "$QSVR_BINARY" -dedicated 4 -ip 127.0.0.1 -port 28792 \

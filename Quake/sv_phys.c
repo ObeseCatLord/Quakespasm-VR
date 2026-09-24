@@ -3163,7 +3163,6 @@ static void SV_VRContactInvalidateAccepted (client_t *client)
 {
 	if (!client)
 		return;
-	SV_GorillaInvalidateAccepted (client);
 	SV_ResetPrivateVRContactContinuity (client);
 	if (!client->private_vr_contact_cursor_valid ||
 		client->lastmovemessage > client->private_vr_contact_last_sequence)
@@ -3181,13 +3180,17 @@ void SV_VRContactPlayerRelocated (edict_t *ent)
 		slot = NUM_FOR_EDICT (ent);
 		if (slot >= 1 && slot <= svs.maxclients &&
 			svs.clients[slot - 1].edict == ent)
+		{
+			SV_GorillaInvalidateAccepted (&svs.clients[slot - 1]);
 			SV_VRContactInvalidateAccepted (&svs.clients[slot - 1]);
+		}
 		return;
 	}
 	/* Host commands can place a player without an active server VM. */
 	for (slot = 0; slot < svs.maxclients; slot++)
 		if (svs.clients[slot].edict == ent)
 		{
+			SV_GorillaInvalidateAccepted (&svs.clients[slot]);
 			SV_VRContactInvalidateAccepted (&svs.clients[slot]);
 			return;
 		}
@@ -4364,6 +4367,7 @@ static qboolean SV_VRContactProcessCommand (client_t *client, edict_t *ent,
 
 		if (!SV_VRContactOwnerLive (client, ent))
 		{
+			SV_GorillaInvalidateAccepted (client);
 			SV_VRContactInvalidateAccepted (client);
 			/* Death is a valid QC outcome: let the frame's ordinary death
 			 * observer run when the player entity and connection still exist. */
@@ -4377,6 +4381,8 @@ static qboolean SV_VRContactProcessCommand (client_t *client, edict_t *ent,
 		if (!SV_VRContactSampleValid (client, ent, &command) ||
 			SV_VRContactDistance (ent->v.origin, callback_origin) > 0.01f)
 		{
+			if (SV_VRContactDistance (ent->v.origin, callback_origin) > 0.01f)
+				SV_GorillaInvalidateAccepted (client);
 			SV_VRContactInvalidateAccepted (client);
 			return true;
 		}
@@ -4392,6 +4398,7 @@ static qboolean SV_VRContactProcessCommand (client_t *client, edict_t *ent,
 				SV_VRContactProcessMelee (client, ent, &command, &previous, hand);
 		if (!SV_VRContactOwnerLive (client, ent))
 		{
+			SV_GorillaInvalidateAccepted (client);
 			SV_VRContactInvalidateAccepted (client);
 			return client->active && client->spawned &&
 				client->edict == ent && !ent->free;
@@ -4403,6 +4410,8 @@ static qboolean SV_VRContactProcessCommand (client_t *client, edict_t *ent,
 		if (!SV_VRContactSampleValid (client, ent, &command) ||
 			SV_VRContactDistance (ent->v.origin, callback_origin) > 0.01f)
 		{
+			if (SV_VRContactDistance (ent->v.origin, callback_origin) > 0.01f)
+				SV_GorillaInvalidateAccepted (client);
 			SV_VRContactInvalidateAccepted (client);
 			return true;
 		}
@@ -4512,7 +4521,7 @@ static qboolean SV_RunPrivateVRWeaponThink (edict_t *ent, client_t *client)
 }
 
 /* The private trial is deliberately narrower than the ordinary client owner:
- * stock hull, dry WALK, and no pusher/Gorilla authority. */
+ * stock hull, dry WALK and no moving-pusher authority. */
 static qboolean SV_PrivateWalkTrialStockHull (edict_t *ent)
 {
 	vec3_t mins = {-16, -16, -24};
@@ -4539,8 +4548,11 @@ const char *SV_PrivateWalkTrialStateError (edict_t *ent, client_t *client,
 	if ((int)ent->v.movetype != MOVETYPE_WALK ||
 		!SV_PrivateWalkTrialStockHull (ent))
 		return "owner left stock WALK hull";
-	if (cmd && (cmd->vr_gorilla.flags || cmd->vr_gorilla_motion.flags))
-		return "Gorilla input is outside the trial";
+	if (cmd && cmd->vr_gorilla_motion.flags)
+		return "trusted Gorilla motion is outside the raw trial";
+	if (cmd && cmd->vr_gorilla.flags &&
+		!VRG_InputValid (&cmd->vr_gorilla))
+		return "invalid raw Gorilla input";
 	if ((int)ent->v.flags & FL_WATERJUMP)
 		return "waterjump state is outside the dry trial";
 	for (i = 0; i < 3; i++)
@@ -4575,7 +4587,8 @@ const char *SV_PrivateWalkTrialStateError (edict_t *ent, client_t *client,
 }
 
 static qboolean SV_PrivateWalkTrialBuildBounds (edict_t *ent,
-	const movevars_t *vars, float seconds, vec3_t bounds[2])
+	const movevars_t *vars, float seconds, const usercmd_t *command,
+	vec3_t bounds[2])
 {
 	float speed, reach, acceleration;
 	int i;
@@ -4601,6 +4614,24 @@ static qboolean SV_PrivateWalkTrialBuildBounds (edict_t *ent,
 	{
 		bounds[0][i] = ent->v.origin[i] + ent->v.mins[i] - reach;
 		bounds[1][i] = ent->v.origin[i] + ent->v.maxs[i] + reach;
+		if (command && command->vr_gorilla.flags)
+		{
+			/* PMove traces the head-to-palm reach as well as the body.
+			 * Include those command-owned endpoints, without widening every
+			 * ordinary desktop trial command. */
+			float extra = fmaxf (64.0f, VR_GORILLA_MAX_HAND_SPEED * seconds) +
+				VR_GORILLA_RADIUS;
+			float low = fminf (command->vr_gorilla.head[i],
+				fminf (command->vr_gorilla.hand[0][i],
+					command->vr_gorilla.hand[1][i]));
+			float high = fmaxf (command->vr_gorilla.head[i],
+				fmaxf (command->vr_gorilla.hand[0][i],
+					command->vr_gorilla.hand[1][i]));
+			bounds[0][i] = fminf (bounds[0][i],
+				ent->v.origin[i] + low - reach - extra);
+			bounds[1][i] = fmaxf (bounds[1][i],
+				ent->v.origin[i] + high + reach + extra);
+		}
 		if (!isfinite (bounds[0][i]) || !isfinite (bounds[1][i]))
 			return false;
 	}
@@ -4608,11 +4639,12 @@ static qboolean SV_PrivateWalkTrialBuildBounds (edict_t *ent,
 }
 
 static qboolean SV_PrivateWalkTrialCollect (edict_t *ent,
-	const movevars_t *vars, float seconds, vec3_t bounds[2])
+	const movevars_t *vars, float seconds, const usercmd_t *command,
+	vec3_t bounds[2])
 {
 	int i;
 
-	if (!SV_PrivateWalkTrialBuildBounds (ent, vars, seconds, bounds) ||
+	if (!SV_PrivateWalkTrialBuildBounds (ent, vars, seconds, command, bounds) ||
 		!SV_CollectPMovePhysents (ent, bounds))
 		return false;
 	/* The bounds intentionally cover the maximum reachable command sweep, not
@@ -4658,6 +4690,10 @@ static qboolean SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *clien
 	qboolean command_completed = false, suppress_trigger = false;
 	const char *failure = NULL;
 	float result_jump_secs = 0;
+	vr_gorilla_state_t result_gorilla;
+	vec3_t result_gorilla_origin;
+	unsigned int gorilla_reset_generation;
+	qboolean gorilla_command_cutoff = false;
 	int i;
 
 	ED_Retain (ent);
@@ -4710,10 +4746,21 @@ static qboolean SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *clien
 		memset (&command, 0, sizeof (command));
 		VectorCopy (ent->v.v_angle, command.viewangles);
 	}
+	if (!client->vr_gorilla_capable || !sv_gorilla.value)
+		SV_ResetGorillaClient (client);
+	if (run_command && client->vr_gorilla_cursor_valid &&
+		(int)command.sequence > client->vr_gorilla_last_sequence + 1)
+		SV_ResetGorillaClient (client);
+	if (run_command && client->vr_gorilla_cursor_valid &&
+		(int)command.sequence <= client->vr_gorilla_last_sequence)
+		gorilla_command_cutoff = true;
+	gorilla_reset_generation = client->vr_gorilla_reset_generation;
 	if ((failure = SV_PrivateWalkTrialStateError (ent, client, &command)) != NULL)
 		goto cleanup;
 	if (run_command && (!PMSV_BuildMoveVars (&trial_movevars, ent, sv.protocolflags) ||
-		!SV_PrivateWalkTrialCollect (ent, &trial_movevars, seconds, bounds)))
+		!SV_PrivateWalkTrialCollect (ent, &trial_movevars, seconds,
+			client->vr_gorilla_capable && sv_gorilla.value ?
+				&command : NULL, bounds)))
 	{
 		failure = "PMove preflight failed";
 		goto cleanup;
@@ -4871,7 +4918,9 @@ static qboolean SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *clien
 	if ((failure = SV_PrivateWalkTrialStateError (ent, client, &command)) != NULL)
 		goto cleanup;
 	if (!PMSV_BuildMoveVars (&trial_movevars, ent, sv.protocolflags) ||
-		!SV_PrivateWalkTrialCollect (ent, &trial_movevars, seconds, bounds))
+		!SV_PrivateWalkTrialCollect (ent, &trial_movevars, seconds,
+			client->vr_gorilla_capable && sv_gorilla.value ?
+				&command : NULL, bounds))
 	{
 		failure = "post-QC physent collection failed";
 		goto cleanup;
@@ -4883,6 +4932,9 @@ static qboolean SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *clien
 	pmove.cmd.seconds = seconds;
 	pmove.cmd.msec = command.msec;
 	pmove.cmd.impulse = command.impulse;
+	if (gorilla_command_cutoff || !client->vr_gorilla_capable ||
+		!sv_gorilla.value)
+		memset (&pmove.cmd.vr_gorilla, 0, sizeof (pmove.cmd.vr_gorilla));
 	VectorClear (pmove.cmd.vr_roomscalemove);
 	VectorCopy (ent->v.origin, pmove.origin);
 	VectorCopy (ent->v.velocity, pmove.velocity);
@@ -4899,10 +4951,11 @@ static qboolean SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *clien
 	pmove.watertype = CONTENTBIT_EMPTY;
 	pmove.onladder = false;
 	pmove.safeorigin_known = false;
-	pmove.gorilla_allowed = false;
+	pmove.gorilla_allowed = client->vr_gorilla_capable &&
+		sv_gorilla.value != 0.0f && !gorilla_command_cutoff;
 	pmove.gorilla_prepared = false;
 	pmove.gorilla_authoring = false;
-	memset (&pmove.gorilla, 0, sizeof (pmove.gorilla));
+	pmove.gorilla = client->vr_gorilla_state;
 	pmove.numtouch = 0;
 	pmove.onground = false;
 	pmove.groundent = 0;
@@ -4926,6 +4979,36 @@ static qboolean SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *clien
 		}
 	}
 	PM_PlayerMove (1.0f);
+	result_gorilla = pmove.gorilla;
+	VectorCopy (pmove.origin, result_gorilla_origin);
+	/* Palm traces are not body touchindex entries. The stock trial cannot
+	 * predict a moving brush under a planted hand, so enforce its existing
+	 * pusher exclusion for both fresh and retained hand contacts. */
+	for (i = 0; i < 2; i++)
+	{
+		int contacts[2] = {pmove.gorilla_contact[i], pmove.gorilla.surface[i]};
+		int which;
+		for (which = 0; which < 2; which++)
+		{
+			int number = contacts[which];
+			edict_t *surface;
+			if (number <= 0)
+				continue;
+			if (number >= qcvm->num_edicts)
+			{
+				failure = "Gorilla contact entity is outside the server world";
+				goto cleanup;
+			}
+			surface = EDICT_NUM (number);
+			if (surface->free ||
+				(surface->v.movetype == MOVETYPE_PUSH &&
+				 surface->v.solid == SOLID_BSP))
+			{
+				failure = "Gorilla palm contacted an unsupported moving pusher";
+				goto cleanup;
+			}
+		}
+	}
 	result_jump_secs = pmove.jump_secs;
 	if (pmove.onground && (pmove.groundent < 0 || pmove.groundent >= pmove.numphysent))
 	{
@@ -5035,6 +5118,24 @@ static qboolean SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *clien
 	{
 		failure = "command-time credit changed during callbacks";
 		goto cleanup;
+	}
+	/* A QC relocation, surface replacement or contact callback fences all
+	 * hands accepted at the old origin. Never publish the pre-callback solver
+	 * result as the baseline for a later replay command. */
+	if (!gorilla_command_cutoff && client->vr_gorilla_capable &&
+		sv_gorilla.value &&
+		client->vr_gorilla_reset_generation == gorilla_reset_generation)
+	{
+		vec3_t callback_delta;
+		VectorSubtract (ent->v.origin, result_gorilla_origin, callback_delta);
+		if (VectorLength (callback_delta) <= .01f)
+		{
+			client->vr_gorilla_state = result_gorilla;
+			client->vr_gorilla_last_sequence = (int)command.sequence;
+			client->vr_gorilla_cursor_valid = true;
+		}
+		else
+			SV_GorillaInvalidateAccepted (client);
 	}
 	client->private_completed_move = (int)command.sequence;
 	client->private_pmove_last_cmd = command;

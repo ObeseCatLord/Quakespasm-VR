@@ -1030,6 +1030,7 @@ void SV_ResetGorillaClient (client_t *client)
 	if (!client)
 		return;
 	memset (&client->vr_gorilla_state, 0, sizeof (client->vr_gorilla_state));
+	client->vr_gorilla_reset_generation++;
 	client->vr_gorilla_last_sequence = 0;
 	client->vr_gorilla_cursor_valid = false;
 	/* A callback can invalidate hand continuity mid-frame. Keep the native
@@ -1227,8 +1228,9 @@ static qboolean SV_ReadPrivateClientMove (void)
 			return false;
 		if (host_client->lastmovetime > 0 && realtime - host_client->lastmovetime > 1.0)
 			return SV_PrivateWalkTrialFail (host_client, "more than one second between accepted commands");
-		if (readcmd.vr_gorilla.flags || readcmd.vr_gorilla_motion.flags)
-			return SV_PrivateWalkTrialFail (host_client, "Gorilla input is outside the trial");
+		if (readcmd.vr_gorilla_motion.flags)
+			return SV_PrivateWalkTrialFail (host_client,
+				"trusted Gorilla motion is outside the raw trial");
 	}
 
 	/* A long arrival gap starts a new queue epoch, then this fresh command may

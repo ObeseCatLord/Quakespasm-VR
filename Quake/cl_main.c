@@ -1173,6 +1173,7 @@ static qboolean CL_SetupReplayGorilla (int startseq)
 {
 	const usercmd_t *cmd;
 	qboolean raw_replay = false;
+	qboolean fresh_reset = false;
 	int seq;
 	int hand;
 
@@ -1181,7 +1182,7 @@ static qboolean CL_SetupReplayGorilla (int startseq)
 		pmove.gorilla_allowed = true;
 		return true;
 	}
-	if (!cl.vr_gorilla_supported || !cl.vr_gorilla_allowed || !cl.vr_gorilla_state_valid)
+	if (!cl.vr_gorilla_supported || !cl.vr_gorilla_allowed)
 		return true;
 	/* The pinned client additionally gates raw-state restoration on
 	 * VR_GorillaActive().  That tracked producer/activity owner is not present
@@ -1193,10 +1194,25 @@ static qboolean CL_SetupReplayGorilla (int startseq)
 		if (cmd->vr_gorilla.flags)
 		{
 			raw_replay = true;
+			fresh_reset = (cmd->vr_gorilla.flags & VR_GORILLA_RESET) != 0;
 			break;
 		}
 	}
 	if (!raw_replay)
+		return true;
+	/* A RESET on the first unacknowledged raw sample is self-seeding. This
+	 * permits initial activation and OFF->ON replay after a zero-state ACK
+	 * without a 95-byte empty solver snapshot on every inactive packet. */
+	if ((!cl.vr_gorilla_state_valid ||
+		cl.vr_gorilla_state_sequence != cl.ackedmovemessages) &&
+		fresh_reset && cl.move_ack_prediction_allowed &&
+		cl.move_ack_authority == MOVE_AUTHORITY_PMOVE_ENGINE_COMPAT)
+	{
+		memset (&pmove.gorilla, 0, sizeof (pmove.gorilla));
+		pmove.gorilla_allowed = true;
+		return true;
+	}
+	if (!cl.vr_gorilla_state_valid)
 		return true;
 	if (cl.vr_gorilla_state.initialized &&
 		cl.vr_gorilla_state_sequence != cl.ackedmovemessages)
@@ -1408,6 +1424,51 @@ static void CL_ShadowTraceAppend (const char *path, int target,
 }
 #endif
 
+static qboolean CL_ReplayEnsureCommandPhysents (vec3_t bounds[2],
+	const usercmd_t *command, qboolean private_replay)
+{
+	vec3_t needed[2];
+	qboolean refresh = false;
+	int axis;
+	if (!private_replay || !pmove.gorilla_allowed)
+		return true;
+	for (axis = 0; axis < 3; axis++)
+	{
+		float low = pmove.player_mins[axis];
+		float high = pmove.player_maxs[axis];
+		if (private_replay && pmove.gorilla_allowed &&
+			command->vr_gorilla.flags)
+		{
+			const vr_gorilla_input_t *raw = &command->vr_gorilla;
+			if (!isfinite (raw->head[axis]) ||
+				!isfinite (raw->hand[0][axis]) ||
+				!isfinite (raw->hand[1][axis]) ||
+				fabsf (raw->head[axis]) > 160.0f ||
+				fabsf (raw->hand[0][axis]) > 272.0f ||
+				fabsf (raw->hand[1][axis]) > 272.0f)
+				return false;
+			low = fminf (low, fminf (raw->head[axis],
+				fminf (raw->hand[0][axis], raw->hand[1][axis])));
+			high = fmaxf (high, fmaxf (raw->head[axis],
+				fmaxf (raw->hand[0][axis], raw->hand[1][axis])));
+		}
+		needed[0][axis] = pmove.origin[axis] + low - 256.0f;
+		needed[1][axis] = pmove.origin[axis] + high + 256.0f;
+		if (!isfinite (needed[0][axis]) || !isfinite (needed[1][axis]))
+			return false;
+		if (needed[0][axis] < bounds[0][axis] ||
+			needed[1][axis] > bounds[1][axis])
+			refresh = true;
+	}
+	if (refresh)
+	{
+		VectorCopy (needed[0], bounds[0]);
+		VectorCopy (needed[1], bounds[1]);
+		PMCL_AddEntities (bounds);
+	}
+	return true;
+}
+
 static qboolean CL_ComputeReplayPlayerMovement (entity_t *ent, cl_replay_result_t *result,
 	qboolean shadow, int target_sequence)
 {
@@ -1551,6 +1612,18 @@ static qboolean CL_ComputeReplayPlayerMovement (entity_t *ent, cl_replay_result_
 	{
 		const usercmd_t *histcmd = &cl.movecmds[seq & MOVECMDS_MASK];
 		CL_PrepareReplayCommand (&pmove.cmd, histcmd, private_replay);
+		/* Replay may cross several command-sized regions before the next
+		 * authoritative snapshot. Gorilla also point-traces from the head
+		 * through both palms, beyond the body hull. Refresh only when that
+		 * command's conservative local envelope leaves the collected box. */
+		if (!CL_ReplayEnsureCommandPhysents (bounds, &pmove.cmd,
+			private_replay))
+		{
+			if (shadow)
+				goto shadow_failed;
+			CL_ResetReplayPropagation ();
+			return false;
+		}
 		PM_PlayerMove (1);
 		if (!shadow)
 		{
@@ -1564,6 +1637,12 @@ static qboolean CL_ComputeReplayPlayerMovement (entity_t *ent, cl_replay_result_
 	{
 		CL_PrepareReplayPreview (&preview, private_replay);
 		CL_PrepareReplayCommand (&pmove.cmd, &preview, private_replay);
+		if (!CL_ReplayEnsureCommandPhysents (bounds, &pmove.cmd,
+			private_replay))
+		{
+			CL_ResetReplayPropagation ();
+			return false;
+		}
 		PM_PlayerMove (1);
 	}
 
