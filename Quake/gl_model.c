@@ -734,6 +734,23 @@ qboolean Mod_GetAkimboPairPaths (const char *source, const char *half_paths[2])
 	return false;
 }
 
+qboolean Mod_AkimboPairUsesGeneratedHalves (const char *source)
+{
+	const char *half_paths[2];
+	if (!Mod_GetAkimboPairPaths (source, half_paths))
+		return false;
+	/* Inspect overrides at the main-thread preparation boundary only. A
+	 * topology-compatible custom half may need different contact anchors. */
+	for (int hand = 0; hand < 2; ++hand)
+	{
+		unsigned int override_path_id = 0;
+		if (COM_FileExists (half_paths[hand], &override_path_id) &&
+			override_path_id > 1)
+			return false;
+	}
+	return true;
+}
+
 /*
 ==================
 Mod_GenerateAkimboHalf

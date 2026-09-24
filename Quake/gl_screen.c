@@ -2507,6 +2507,7 @@ void SCR_UpdateScreen (qboolean use_tasks)
 	if (!GL_BeginRendering (use_tasks, &begin_rendering_task, &glwidth, &glheight))
 	{
 		V_ClearWeaponCollisionPresentation ();
+		V_ClearAkimboPair ();
 		in_update_screen = false;
 		return;
 	}
@@ -2531,6 +2532,8 @@ void SCR_UpdateScreen (qboolean use_tasks)
 		V_PrepareWeaponCollisionPresentation ();
 		V_PrepareAkimboPair ();
 	}
+	else
+		V_ClearAkimboPair ();
 	R_PrepareVRCrosshair ();
 
 	if (use_tasks)

@@ -3602,9 +3602,7 @@ static void VR_InputPrepareAkimboPair (usercmd_t *pending,
 		VR_InputRoomscaleCommandAccepted (pending->vr_roomscalemove);
 
 	VR_InputClearPendingAkimboRecord (pending);
-	if (!pending || !pending->vr_active || !pending->vr_handpos_relative ||
-		!VR_InputWireVec (pending->vr_handpos) ||
-		!VR_InputAkimboGameplayAccepted (frame) ||
+	if (!pending || !VR_InputAkimboGameplayAccepted (frame) ||
 		!VR_InputSelectedTwinNailgun (&model, &modelindex) ||
 		!VR_InputAkimboHandDevicesAccepted (frame))
 		return;
@@ -3711,9 +3709,22 @@ static void VR_InputPreparePrivatePose (usercmd_t *pending, int dominant,
 	const qboolean roomscale_accepted =
 		VR_InputRoomscaleCommandAccepted (pending->vr_roomscalemove);
 
-	if (cl.protocol_qsvr != QSVR_PROTOCOL_PINNED || !VR_InputControllerAim () ||
-		!dominant_accepted || dominant < 0 || dominant > 1 ||
-		!V_TrackedHandBodyOffset (dominant, grip) ||
+	if (cl.protocol_qsvr != QSVR_PROTOCOL_PINNED ||
+		!VR_InputControllerAim () || !dominant_accepted ||
+		dominant < 0 || dominant > 1)
+		return;
+
+	VR_InputPrepareAkimboPair (pending, frame);
+	if (pending->vr_akimbo_active)
+	{
+		VectorCopy (pending->vr_akimbo_muzzle[dominant], pending->vr_handpos);
+		VectorCopy (pending->vr_akimbo_angles[dominant], pending->vr_handrot);
+		pending->vr_handpos_relative = true;
+		pending->vr_active = true;
+		return;
+	}
+
+	if (!V_TrackedHandBodyOffset (dominant, grip) ||
 		!V_TrackedMovementAngles (VR_MOVEMENT_MODE_FOLLOW_HAND, dominant, hand_angles) ||
 		!VR_WeaponCalibrationCurrentMuzzle (local_muzzle) ||
 		!VR_LocomotionMuzzleOffsetToWorld (local_muzzle, hand_angles,
@@ -3791,7 +3802,6 @@ static void VR_InputPreparePrivatePose (usercmd_t *pending, int dominant,
 		VR_InputClearPendingContactRecord (pending);
 		return;
 	}
-	VR_InputPrepareAkimboPair (pending, frame);
 	if ((contact_model || axe_candidate) && vr_input_contact_discontinuity)
 	{
 		/* An inactive contact in this accepted command resets the server's

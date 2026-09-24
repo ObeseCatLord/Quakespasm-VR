@@ -528,7 +528,7 @@ static void V_UpdateTrackedViewmodel (qboolean refdef_updated)
 		tracked_viewmodel_pose_applied = false;
 }
 
-static void V_ClearAkimboPair (void)
+void V_ClearAkimboPair (void)
 {
 	akimbo_pair_prepared = false;
 	akimbo_source_model = NULL;
@@ -652,6 +652,7 @@ void V_PrepareAkimboPair (void)
 	V_ClearAkimboPair ();
 	if (!V_AkimboSelectionValid (frame, &source, &modelindex) ||
 		!Mod_GetAkimboPairPaths (source->name, half_paths) ||
+		!Mod_AkimboPairUsesGeneratedHalves (source->name) ||
 		!half_paths[0] || !half_paths[1] || !isfinite (vr_gunmodelpitch.value))
 		return;
 
@@ -762,7 +763,8 @@ int V_AkimboViewmodelHand (const entity_t *e)
 
 entity_t *V_AkimboPairEntity (int physical_hand)
 {
-	return akimbo_pair_prepared && physical_hand >= 0 && physical_hand < 2 ?
+	return vulkan_globals.stereo_active && akimbo_pair_prepared &&
+		physical_hand >= 0 && physical_hand < 2 ?
 		&akimbo_pair_entities[physical_hand] : NULL;
 }
 
@@ -776,29 +778,37 @@ qboolean V_AkimboTransformAnchor (int physical_hand,
 	entity_t *entity;
 	lerpdata_t lerpdata;
 	float matrix[16];
+	vec3_t raw_anchor;
 	if (out_local)
 		VectorCopy (vec3_origin, out_local);
 	if (!out_local || !model_angles || physical_hand < 0 || physical_hand > 1 ||
 		!V_AkimboPairReady ())
 		return false;
 	for (int axis = 0; axis < 3; ++axis)
-		if (!isfinite (model_angles[axis]))
+	{
+		const float scale = akimbo_source_geometry->scale[axis];
+		const float origin = akimbo_source_geometry->scale_origin[axis];
+		if (!isfinite (model_angles[axis]) || !isfinite (scale) ||
+			scale == 0.0f || !isfinite (origin))
 			return false;
+		/* Contact anchors are decoded source MDL coordinates. The alias
+		 * matrix expects the original compressed vertex coordinates. */
+		raw_anchor[axis] = (source_anchors[physical_hand][axis] - origin) / scale;
+		if (!isfinite (raw_anchor[axis]))
+			return false;
+	}
 	entity = &akimbo_pair_entities[physical_hand];
 	memset (&lerpdata, 0, sizeof (lerpdata));
 	VectorCopy (model_angles, lerpdata.angles);
 	if (R_AliasModelMatrix (entity, akimbo_pair_geometry[physical_hand],
 		&lerpdata, matrix) < 0)
 		return false;
-	out_local[0] = matrix[0] * source_anchors[physical_hand][0] +
-		matrix[4] * source_anchors[physical_hand][1] +
-		matrix[8] * source_anchors[physical_hand][2] + matrix[12];
-	out_local[1] = matrix[1] * source_anchors[physical_hand][0] +
-		matrix[5] * source_anchors[physical_hand][1] +
-		matrix[9] * source_anchors[physical_hand][2] + matrix[13];
-	out_local[2] = matrix[2] * source_anchors[physical_hand][0] +
-		matrix[6] * source_anchors[physical_hand][1] +
-		matrix[10] * source_anchors[physical_hand][2] + matrix[14];
+	out_local[0] = matrix[0] * raw_anchor[0] + matrix[4] * raw_anchor[1] +
+		matrix[8] * raw_anchor[2] + matrix[12];
+	out_local[1] = matrix[1] * raw_anchor[0] + matrix[5] * raw_anchor[1] +
+		matrix[9] * raw_anchor[2] + matrix[13];
+	out_local[2] = matrix[2] * raw_anchor[0] + matrix[6] * raw_anchor[1] +
+		matrix[10] * raw_anchor[2] + matrix[14];
 	if (!isfinite (out_local[0]) || !isfinite (out_local[1]) ||
 		!isfinite (out_local[2]))
 	{

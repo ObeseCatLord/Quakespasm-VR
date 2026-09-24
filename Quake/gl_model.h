@@ -777,6 +777,8 @@ void	  Mod_RefreshSkins_f (cvar_t *var);
  * half_paths[0] is the physical left hand; half_paths[1] is the right hand.
  * Returned path strings have static lifetime. */
 qboolean  Mod_GetAkimboPairPaths (const char *source, const char *half_paths[2]);
+/* Main-thread admission for contact anchors tied to the built-in splitter. */
+qboolean  Mod_AkimboPairUsesGeneratedHalves (const char *source);
 qboolean  Mod_GetMD5Skeleton (const qmodel_t *mod, md5_skeleton_view_t *out);
 /* Returns frame 0's pinned stock-axe edge in scaled model-local coordinates.
  * The per-skin selected model must be the original MDL, not an MD5/MD3 replacement. */

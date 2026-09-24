@@ -696,10 +696,15 @@ static int R_AliasModelMatrixInternal (
 		float local_translation[3];
 		for (int axis = 0; axis < 3; ++axis)
 		{
-			double grip_residual = held_offset[axis];
+			double local_offset = (double)header_origin[axis] + (double)held_offset[axis];
 			if (paired_half && pair_hand == 0 && axis == 1)
-				grip_residual = -grip_residual;
-			double local_offset = (double)header_origin[axis] + grip_residual;
+			{
+				/* The split left mesh is already left-handed. Reflect the
+				 * calibrated grip around the MDL's scaled quantization origin,
+				 * exactly as the donor does, without mirroring vertices. */
+				local_offset = 2.0 * (double)held_scale *
+					(double)header_origin[axis] - local_offset;
+			}
 			if (axis == 2)
 				local_offset += (double)gunmodel_y;
 			double scaled_offset = (double)c * local_offset;

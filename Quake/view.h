@@ -67,6 +67,7 @@ qboolean V_AkimboTransformAnchor (int physical_hand,
 	const vec3_t model_angles, vec3_t out_local);
 int V_AkimboViewmodelHand (const entity_t *e);
 entity_t *V_AkimboPairEntity (int physical_hand);
+void V_ClearAkimboPair (void);
 void V_PrepareAkimboPair (void);
 void V_PrepareWeaponCollisionPresentation (void);
 void V_ClearWeaponCollisionPresentation (void);
