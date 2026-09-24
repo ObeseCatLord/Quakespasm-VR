@@ -268,15 +268,15 @@ static void R_DescribeFrame (frame_desc_t *desc, main_render_pass_variant_t vari
 
 bool R_SetupRenderPasses (void)
 {
-	if (r_ssao.value > 0 && !vulkan_globals.screen_effects_sops)
+	if (R_SSAOEnabled () && !vulkan_globals.screen_effects_sops)
 	{
 		Con_Printf ("Entity SSAO requires subgroup operations\n");
-		Cvar_SetValueQuick (&r_ssao, 0);
+		Cvar_SetValueQuick (vulkan_globals.stereo_active ? &vr_ssao : &r_ssao, 0);
 	}
-	if (r_ssao.value > 0 && !vulkan_globals.device_features.shaderStorageImageExtendedFormats)
+	if (R_SSAOEnabled () && !vulkan_globals.device_features.shaderStorageImageExtendedFormats)
 	{
 		Con_Printf ("Entity SSAO requires extended storage image formats\n");
-		Cvar_SetValueQuick (&r_ssao, 0);
+		Cvar_SetValueQuick (vulkan_globals.stereo_active ? &vr_ssao : &r_ssao, 0);
 	}
 	memset (&pending_layout, 0, sizeof (pending_layout));
 	pending_layout.color_format = vulkan_globals.color_format;

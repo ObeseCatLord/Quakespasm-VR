@@ -22,8 +22,10 @@ desktop SSAO code paths and cvar behavior must remain unchanged. A separate
 VR policy may leave the effect opt-in until performance has been measured.
 
 Implementation status: the full-resolution reference is present on `2.0`.
-`vr_ssao 1` enables it in OpenXR; `r_ssao` still selects the quality level,
-and desktop SSAO retains its existing default and shader variants. VR SSAO
+`vr_ssao 1` enables it in OpenXR independently of desktop `r_ssao`. The
+existing `r_ssao` quality value selects the VR sample count when positive;
+otherwise VR uses the lowest quality. Desktop SSAO retains its existing
+default and shader variants. VR SSAO
 defaults off until its frame-time cost and binocular output can be assessed.
 A follow-up Astra xhigh review found no concrete regression in per-eye
 barriers, image views, multiview composite, toggles, or teardown. Local engine
