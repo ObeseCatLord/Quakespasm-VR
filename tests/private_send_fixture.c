@@ -11,6 +11,18 @@ sizebuf_t		net_message;
 double			realtime, host_frametime;
 static byte		packet[DATAGRAM_MTU];
 static int		packet_size, packet_count, disconnects, send_result;
+/* This fixture owns the socket boundary. Optional live VR telemetry is absent,
+ * so keep its producers disabled while exercising the real command codecs. */
+qboolean VR_InputBuildVRIKPose (vrik_codec_pose_t *pose)
+{
+	return false;
+}
+qboolean CL_VoiceTransportAvailable (void)
+{
+	return false;
+}
+void CL_QueueGorillaCapability (void) {}
+void VR_InputCommitGorillaCommand (const usercmd_t *cmd) {}
 void			Host_Error (const char *fmt, ...)
 {
 	abort ();
@@ -328,6 +340,95 @@ static void test_public_and_demo (void)
 	CL_FlushAckFrames ();
 	assert (disconnects == 1);
 }
+
+static void test_public_ignores_vr_command_fields (void)
+{
+	byte baseline[DATAGRAM_MTU];
+	int baseline_size;
+	usercmd_t cmd = {0};
+
+	cmd.servertime = 123.25f;
+	cmd.viewangles[0] = 23.5f;
+	cmd.viewangles[1] = 91.0f;
+	cmd.viewangles[2] = -45.0f;
+	cmd.forwardmove = 123;
+	cmd.sidemove = -45;
+	cmd.upmove = 6;
+	cmd.buttons = (1u << 30) | 5;
+	cmd.impulse = 9;
+	cmd.weapon = 0x12345678;
+
+	setup ();
+	cl.protocol_qsvr = 0;
+	cl.protocol_pext2 = PEXT2_PREDINFO;
+	cl.movemessages = 2;
+	CL_SendMove (&cmd);
+	assert (packet_count == 1 && packet_size == 25);
+	baseline_size = packet_size;
+	memcpy (baseline, packet, baseline_size);
+
+	cmd.vr_active = true;
+	cmd.vr_handpos_relative = true;
+	cmd.vr_akimbo_active = true;
+	cmd.vr_akimbo_berserk = true;
+	cmd.vr_pending_move_valid = true;
+	cmd.vr_pending_angles_valid = true;
+	cmd.vr_pending_move[0] = 1.0f;
+	cmd.vr_pending_angles[1] = 2.0f;
+	cmd.vr_contact_received = 3.0;
+	cmd.vr_contact.flags = VR_WEAPON_CONTACT_LEFT_VALID | VR_WEAPON_CONTACT_RIGHT_VALID;
+	cmd.vr_contact.modelindex = 17;
+	cmd.vr_contact.weapon = 2.0f;
+	cmd.vr_gorilla.flags = VR_GORILLA_HANDS;
+	cmd.vr_gorilla_motion.flags = VR_GORILLA_MOTION_ACTIVE;
+	for (int i = 0; i < 3; ++i)
+	{
+		cmd.vr_handpos[i] = (float)i + 1.0f;
+		cmd.vr_handrot[i] = (float)i + 4.0f;
+		cmd.vr_roomscalemove[i] = (float)i + 7.0f;
+		cmd.vr_gorilla.head[i] = (float)i + 10.0f;
+		cmd.vr_gorilla_motion.displacement[i] = (float)i + 13.0f;
+		for (int hand = 0; hand < 2; ++hand)
+		{
+			cmd.vr_akimbo_muzzle[hand][i] = (float)(hand * 3 + i) + 1.0f;
+			cmd.vr_akimbo_angles[hand][i] = (float)(hand * 3 + i) + 4.0f;
+			cmd.vr_contact.grip[hand][i] = (float)(hand * 3 + i) + 7.0f;
+			cmd.vr_contact.base[hand][i] = (float)(hand * 3 + i) + 10.0f;
+			cmd.vr_contact.tip[hand][i] = (float)(hand * 3 + i) + 13.0f;
+			cmd.vr_gorilla.hand[hand][i] = (float)(hand * 3 + i) + 16.0f;
+			cmd.vr_gorilla.velocity[hand][i] = (float)(hand * 3 + i) + 19.0f;
+			cmd.vr_gorilla_motion.impulse[i] = (float)i + 22.0f;
+		}
+	}
+	cmd.vr_contact.speed[0] = cmd.vr_contact.speed[1] = 25.0f;
+
+	setup ();
+	cl.protocol_qsvr = 0;
+	cl.protocol_pext2 = PEXT2_PREDINFO;
+	cl.movemessages = 2;
+	CL_SendMove (&cmd);
+	assert (packet_count == 1 && packet_size == baseline_size);
+	assert (memcmp (packet, baseline, baseline_size) == 0);
+
+	begin_packet ();
+	assert (MSG_ReadByte () == clc_move);
+	assert ((unsigned short)MSG_ReadShort () == 2);
+	assert (MSG_ReadFloat () == cmd.servertime);
+	for (int i = 0; i < 3; ++i)
+	{
+		float expected = expected_angle16 (cmd.viewangles[i]);
+		if (expected >= 180.0f)
+			expected -= 360.0f;
+		assert (MSG_ReadAngle16 (cl.protocolflags) == expected);
+	}
+	assert (MSG_ReadShort () == cmd.forwardmove);
+	assert (MSG_ReadShort () == cmd.sidemove);
+	assert (MSG_ReadShort () == cmd.upmove);
+	assert (MSG_ReadByte () == (cmd.buttons & 0xff));
+	assert (MSG_ReadByte () == cmd.impulse);
+	assert (MSG_ReadLong () == cmd.weapon);
+	assert (!msg_badread && msg_readcount == packet_size);
+}
 int main (void)
 {
 	test_redundancy ();
@@ -337,5 +438,6 @@ int main (void)
 	test_packet_angles ();
 	test_local_ack_invalidates_snapshot ();
 	test_public_and_demo ();
-	puts ("Private sender: packet angle precision, redundant commands, ACK retention, public framing and demo/error checks passed");
+	test_public_ignores_vr_command_fields ();
+	puts ("Private sender: angles, redundancy, ACKs, public VR isolation and demo/error checks passed");
 }

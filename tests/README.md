@@ -475,11 +475,14 @@ demo suppression and send-error disconnect handling. Public 8-bit/16-bit, public
 predinfo and private packet cases deliberately use prepared command angles that
 differ from global view angles; they verify encoding precision, journal agreement,
 packet widths and complete payload consumption.
+The public-protocol regression case also proves that VR-only and paired-weapon
+fields cannot change desktop packet bytes, while predinfo and the shared weapon
+selection field remain encoded.
 
 ```sh
 cc -std=gnu11 -DUSE_SDL3 -D_GNU_SOURCE -Wno-unused-parameter \
   -ffunction-sections -fdata-sections tests/private_send_fixture.c \
-  Quake/sv_user.c Quake/common.c Quake/mathlib.c -Wl,--gc-sections \
+  Quake/sv_user.c Quake/common.c Quake/mathlib.c Quake/vrik_codec.c -Wl,--gc-sections \
   $(pkg-config --cflags --libs sdl3) -lm -o /tmp/quakespasm-private-send
 /tmp/quakespasm-private-send
 ```
