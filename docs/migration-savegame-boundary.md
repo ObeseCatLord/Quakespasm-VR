@@ -30,3 +30,40 @@ fixtures exercise both parsing and behavioral round trips, including dead and
 disconnected slots, name matching, late joins, hub progression, and autosave
 rotation. A header classifier or emitted file alone does not establish those
 behaviors. This is COOP-010 through COOP-012 in the feature map.
+
+## Astra senior review disposition
+
+Astra xhigh verified the current and pinned source before reviewing the
+boundary. It found that accepting a version-7 header alone would be unsafe:
+vkQuake's free-list rebuild includes empty reserved player edicts, whereas the
+inherited allocator excludes them. This can let a later projectile take a
+player's numbered slot. It also found that whole-edict snapshot copies would
+overwrite vkQuake-owned identity, links and retention metadata.
+
+| Recommendation | Disposition |
+| --- | --- |
+| Retain the donor loader, KEX handling, fastload and common entity/global parser. | **Adopt.** Add dialect branches at the existing owner; no parallel loader. |
+| Exclude reserved world/player edicts from ordinary reuse and normalize empty saved slots before signon. | **Adopt.** Use `qcvm->reserved_edicts` at the allocator/free-list boundary; load restoration must leave absent slots inert and unlinked. |
+| Keep pending snapshots in `server_t`, but copy raw donor edicts. | **Adapt.** Allocate and free the snapshot with server lifetime; preserve vkQuake edict metadata and restore QC payload/serialized attributes only. |
+| Implement co-op inventory and progression inside the save loader. | **Reject.** Port the inherited typed dead-player inventory cache and shared-progression owner first, then call those owners from save/late-join code. |
+| Validate the bounded inherited header before any world mutation. | **Adopt with a limited claim.** Check capacity, finite values, slot names and fixed fields; an opening QuakeC brace or lexical block check cannot prove later entity semantics. Recheck reopened KEX files after mod switching. |
+| Preserve v5 single-player and inherited v7 co-op writing; add autosaves after manual round trip. | **Adopt.** Keep the inherited 16-spawn-parm fixed slot layout, explicitly handle donor-only extra parms, use checked temporary-file publication, and advance autosave rotation only after success. |
+
+The corrected dependency order is: inventory/progression behavior, reserved
+edict and snapshot lifecycle, dialect/sign-on adapter, manual co-op round trip,
+then inherited autosave gates. Sign-on must distinguish a living saved client,
+a dead saved client needing fresh entrance QC and typed inventory restoration,
+and a genuinely new client needing default parms. A per-connection deferred
+defaults flag survives another player's intervening restore. The smallest
+behavior proof uses two named players plus an empty slot, reverse-order
+reconnect, a dead player's exact inventory including zero ammo, a newcomer
+accepted before the last restore, projectile allocation, spent shared keys,
+and map-change snapshot invalidation. Device testing remains separate.
+
+The first prerequisite is implemented at vkQuake's free-list insertion: edicts
+below `qcvm->reserved_edicts` are never queued for ordinary allocation, and
+the free-list diagnostic applies the same rule. Linux curl and no-curl links
+pass. A disposable three-slot dedicated-server GDB probe freed player slot 2,
+rebuilt the free list, and observed `reserved=4`, `slot_free=1`,
+`queued_slot2=0`. The save loader's inert-slot normalization and the larger
+round trip remain open.

@@ -127,6 +127,11 @@ ED_AddToFreeList
 static void ED_AddToFreeList (edict_t *ed)
 {
 	assert (ed->free && !ed->retain_count);
+	/* The first edicts are permanently owned by the world and client slots.
+	 * Loading an empty saved client block may mark its edict free, but an
+	 * ordinary entity must never be allocated in that numbered slot. */
+	if (NUM_FOR_EDICT (ed) < qcvm->reserved_edicts)
+		return;
 
 #if defined(DEBUG) || defined(_DEBUG)
 	if (qcvm->free_list.size >= MAX_EDICTS)
@@ -247,7 +252,7 @@ void ED_CheckFreeList (void)
 		edict_t *e = EDICT_NUM (edict_num);
 
 		// check : e should be free
-		if (!e->free || e->retain_count)
+		if (!e->free || e->retain_count || edict_num < qcvm->reserved_edicts)
 		{
 			Con_Warning ("ED_CheckFreeList: edict %i is not reclaimable but is in free-list\n", edict_num);
 			has_errors = true;
@@ -266,7 +271,7 @@ void ED_CheckFreeList (void)
 		if (e->free)
 		{
 			const qboolean in_free_list = free_list_edicts[i] != 0;
-			const qboolean reusable = !e->retain_count;
+			const qboolean reusable = !e->retain_count && i >= qcvm->reserved_edicts;
 			if (in_free_list != reusable)
 			{
 				Con_Warning ("ED_CheckFreeList: edict %i has an inconsistent retained/free-list state\n", i);
@@ -1009,7 +1014,7 @@ void ED_PrintEdicts (void)
 	// display the non-free ones first
 	for (int i = 0; i < qcvm->num_edicts; i++)
 	{
-		if (EDICT_NUM (i)->free)
+		if (EDICT_NUM (i)->free && !EDICT_NUM (i)->retain_count && i >= qcvm->reserved_edicts)
 		{
 			free_edicts_count++;
 		}
