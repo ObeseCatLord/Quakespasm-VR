@@ -2574,7 +2574,7 @@ void SV_SendServerinfo (client_t *client)
 	client->vr_gorilla_last_advertised = -1;
 	client->weapon_contact_last_mode = -1;
 	client->weapon_contact_last_profile = -1;
-	client->qbj3_akimbo_last_advertised_mask = -1;
+	client->akimbo_last_advertised_mask = -1;
 	client->spawned = false; // need prespawn, spawn, etc
 	client->voice_protocol_offered = false;
 
@@ -4174,14 +4174,14 @@ static void SV_AppendWeaponContactProtocol (client_t *client)
 	}
 }
 
-/* Offer only the client vertical backed by the exact QBJ3 QC program that
- * the command-time hook recognizes. Other recipe slots remain unavailable. */
-static void SV_AppendQBJ3AkimboProtocol (client_t *client)
+/* Offer only paired recipes backed by exact loaded QC program adapters. */
+static void SV_AppendAkimboProtocol (client_t *client)
 {
 	enum
 	{
-		QBJ3_AKIMBO_OFFER_TWIN = 1u << 0,
-		QBJ3_AKIMBO_OFFER_MASK = (1u << 4) - 1u
+		AKIMBO_OFFER_TWIN = 1u << 0,
+		AKIMBO_OFFER_ENYO = 1u << 2,
+		AKIMBO_OFFER_MASK = (1u << 4) - 1u
 	};
 	char command[64];
 	int command_length, previous_size;
@@ -4192,12 +4192,14 @@ static void SV_AppendQBJ3AkimboProtocol (client_t *client)
 		!client->spawned || client->protocol_qsvr != QSVR_PROTOCOL_PINNED)
 		return;
 
-	/* Bits follow the four client command arguments. Only the twin slot is
-	 * currently supported; later live policy changes compare as a full tuple. */
+	/* Bits follow the four client command arguments. Berserk and Dwell stay
+	 * unavailable until their matching client and QC adapters exist. */
 	offer_mask = SV_QBJ3TwinNailgunProgramLoaded () ?
-		QBJ3_AKIMBO_OFFER_TWIN : 0;
-	offer_mask &= QBJ3_AKIMBO_OFFER_MASK;
-	if (client->qbj3_akimbo_last_advertised_mask == (signed char)offer_mask ||
+		AKIMBO_OFFER_TWIN : 0;
+	if (SV_EnyoAkimboProgramLoaded ())
+		offer_mask |= AKIMBO_OFFER_ENYO;
+	offer_mask &= AKIMBO_OFFER_MASK;
+	if (client->akimbo_last_advertised_mask == (signed char)offer_mask ||
 		client->message.overflowed || client->message.cursize < 0 ||
 		client->message.maxsize <= 0 ||
 		client->message.cursize > client->message.maxsize)
@@ -4218,7 +4220,7 @@ static void SV_AppendQBJ3AkimboProtocol (client_t *client)
 	MSG_WriteString (&client->message, command);
 	if (!client->message.overflowed &&
 		client->message.cursize == previous_size + (int)required)
-		client->qbj3_akimbo_last_advertised_mask = (signed char)offer_mask;
+		client->akimbo_last_advertised_mask = (signed char)offer_mask;
 }
 
 static void SV_AppendGorillaProtocol (client_t *client)
@@ -4285,7 +4287,7 @@ void SV_SendClientMessages (void)
 		if (!SV_SendClientDatagram (host_client))
 			continue;
 		SV_AppendWeaponContactProtocol (host_client);
-		SV_AppendQBJ3AkimboProtocol (host_client);
+		SV_AppendAkimboProtocol (host_client);
 		SV_AppendGorillaProtocol (host_client);
 		if (!host_client->spawned)
 		{
@@ -4741,7 +4743,7 @@ void SV_SpawnServer (const char *server)
 		SV_ResetPrivateVRContactState (&svs.clients[i]);
 		svs.clients[i].vr_gorilla_capable = false;
 		svs.clients[i].vr_gorilla_last_advertised = -1;
-		svs.clients[i].qbj3_akimbo_last_advertised_mask = -1;
+		svs.clients[i].akimbo_last_advertised_mask = -1;
 	}
 
 	//

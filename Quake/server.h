@@ -236,7 +236,7 @@ typedef struct client_s
 	int vr_gorilla_last_advertised; // -1 means the current policy has not been queued
 	int weapon_contact_last_mode; // last mode appended to the reliable stream; -1 means not queued
 	int weapon_contact_last_profile; // profile paired with weapon_contact_last_mode
-	signed char qbj3_akimbo_last_advertised_mask; // -1 unsent; bits 0..3 are the queued offer tuple
+	signed char akimbo_last_advertised_mask; // -1 unsent; bits 0..3 are the queued offer tuple
 	/* Optional VRIK pose transport state; unrelated to QSVR movement admission. */
 	qboolean vrik_capable;
 	unsigned char vrik_protocol_version;
@@ -570,6 +570,7 @@ void SV_VRWeaponPoseSetOrigin (edict_t *ent);
 void SV_VRWeaponPoseLinked (edict_t *ent);
 qboolean SV_QBJ3AkimboAim (edict_t *ent, vec3_t muzzle);
 qboolean SV_QBJ3TwinNailgunProgramLoaded (void);
+qboolean SV_EnyoAkimboProgramLoaded (void);
 qboolean SV_EnyoAkimboMakevectors (void);
 qboolean SV_EnyoAkimboAim (edict_t *ent, vec3_t muzzle);
 unsigned int SV_VRStockAxeContactProfile (void);

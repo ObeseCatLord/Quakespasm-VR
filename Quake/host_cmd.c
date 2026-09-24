@@ -2379,7 +2379,7 @@ static void Send_Spawn_Info (client_t *c, qboolean loadgame)
 	/* Fastload can discard unsent optional VR offers without a new
 	 * serverinfo. Queue them again after this spawn completes. */
 	c->weapon_contact_last_mode = -1;
-	c->qbj3_akimbo_last_advertised_mask = -1;
+	c->akimbo_last_advertised_mask = -1;
 
 	// send time of update
 	MSG_WriteByte (&c->message, svc_time);

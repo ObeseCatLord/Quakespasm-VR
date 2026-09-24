@@ -3060,7 +3060,7 @@ static qboolean SV_EnyoSMGFunction (const dfunction_t *function)
 		function->parm_size[0] == 1;
 }
 
-static qboolean SV_EnyoSMGProgramLoaded (void)
+qboolean SV_EnyoAkimboProgramLoaded (void)
 {
 	static const byte expected_sha256[32] = {
 		0xb0, 0xd3, 0x86, 0x5f, 0x11, 0x92, 0xb3, 0x85,
@@ -3080,7 +3080,7 @@ static qboolean SV_EnyoSMGProgramLoaded (void)
 
 static qboolean SV_EnyoSMGWeapon (edict_t *ent)
 {
-	return ent && !ent->free && SV_EnyoSMGProgramLoaded () &&
+	return ent && !ent->free && SV_EnyoAkimboProgramLoaded () &&
 		ent->v.weapon == 4 &&
 		!strcmp (PR_GetString (ent->v.weaponmodel), "progs/ee_v_smgs.mdl");
 }
@@ -3179,7 +3179,7 @@ static void SV_BeginPrivateVRWeaponPose (edict_t *ent, client_t *client,
 	VectorCopy (pr_global_struct->v_up, scope->up);
 
 	if (!scope->akimbo_invalidated &&
-		(SV_QBJ3TwinNailgunProgramLoaded () || SV_EnyoSMGProgramLoaded ()) &&
+		(SV_QBJ3TwinNailgunProgramLoaded () || SV_EnyoAkimboProgramLoaded ()) &&
 		SV_AkimboCommandValid (client, cmd, scope->body_origin))
 	{
 		int hand, axis;
