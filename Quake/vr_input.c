@@ -109,14 +109,6 @@ static uint64_t vr_input_fbt_last_seen_sample_id;
 static uint64_t vr_input_fbt_next_ephemeral_identity = 1;
 static double vr_input_fbt_snapshot_time;
 static qboolean vr_input_fbt_have_snapshot_time;
-typedef enum
-{
-	VR_INPUT_FBT_CALIBRATION_IDLE,
-	VR_INPUT_FBT_CALIBRATION_READY,
-	VR_INPUT_FBT_CALIBRATION_CAPTURING,
-	VR_INPUT_FBT_CALIBRATION_PREVIEW
-} vr_input_fbt_calibration_state_t;
-
 typedef struct
 {
 	vr_fbt_filter_output_t output;
@@ -134,6 +126,7 @@ static vr_fbt_profile_capture_t vr_input_fbt_capture;
 static vr_fbt_profile_t vr_input_fbt_preview_profile;
 static qboolean vr_input_fbt_preview_valid;
 static char vr_input_fbt_calibration_name[VR_FBT_PROFILE_NAME_MAX];
+static qboolean vr_input_fbt_menu_calibration_name;
 static uint64_t vr_input_fbt_capture_last_sample_id;
 static struct
 {
@@ -170,6 +163,7 @@ static void VR_InputFBTCancelCalibration (void)
 	vr_input_fbt_preview_valid = false;
 	vr_input_fbt_calibration_state = VR_INPUT_FBT_CALIBRATION_IDLE;
 	vr_input_fbt_calibration_name[0] = '\0';
+	vr_input_fbt_menu_calibration_name = false;
 	vr_input_fbt_capture_last_sample_id = 0;
 	memset (&vr_input_fbt_visual_raw_snapshot, 0,
 		sizeof (vr_input_fbt_visual_raw_snapshot));
@@ -345,6 +339,178 @@ static qboolean VR_InputFBTParseRole (const char *text, vr_fbt_role_t *role)
 		*role = VR_FBT_ROLE_RIGHT_FOOT;
 	else
 		return false;
+	return true;
+}
+
+qboolean VR_InputFBTGetRoleStatus (vr_fbt_role_t role,
+	vr_fbt_role_status_t *status)
+{
+	return vr_input_fbt_initialized && status &&
+		VR_FBT_GetRoleStatus (&vr_input_fbt_manager, role, status);
+}
+
+static qboolean VR_InputFBTCandidateAssignedElsewhere (
+	const vr_fbt_candidate_status_t *candidate, vr_fbt_role_t requested_role,
+	const vr_fbt_role_status_t roles[VR_FBT_ROLE_COUNT])
+{
+	for (int role = 0; role < VR_FBT_ROLE_COUNT; ++role)
+	{
+		const vr_fbt_role_status_t *assigned = &roles[role];
+		if ((vr_fbt_role_t)role == requested_role)
+			continue;
+		if (assigned->identity_kind == VR_FBT_IDENTITY_SERIAL &&
+			candidate->has_safe_serial &&
+			VR_FBT_SerialIsSafe (assigned->serial) &&
+			!strcmp (assigned->serial, candidate->serial))
+			return true;
+		if (assigned->identity_kind == VR_FBT_IDENTITY_EPHEMERAL &&
+			!candidate->has_safe_serial && candidate->ephemeral_identity &&
+			assigned->ephemeral_identity == candidate->ephemeral_identity)
+			return true;
+	}
+	return false;
+}
+
+static qboolean VR_InputFBTCandidateIsEligible (
+	const vr_fbt_candidate_status_t *candidate, vr_fbt_role_t requested_role,
+	const vr_fbt_role_status_t roles[VR_FBT_ROLE_COUNT])
+{
+	if (!candidate->connected)
+		return false;
+	if (candidate->has_safe_serial)
+	{
+		if (candidate->serial_ambiguous ||
+			!VR_FBT_SerialIsSafe (candidate->serial))
+			return false;
+	}
+	else if (!candidate->ephemeral_identity || candidate->ephemeral_ambiguous)
+		return false;
+	return !VR_InputFBTCandidateAssignedElsewhere (candidate, requested_role,
+		roles);
+}
+
+static qboolean VR_InputFBTCandidateMatchesRole (
+	const vr_fbt_candidate_status_t *candidate,
+	const vr_fbt_role_status_t *role)
+{
+	if (role->identity_kind == VR_FBT_IDENTITY_SERIAL)
+		return candidate->has_safe_serial &&
+			VR_FBT_SerialIsSafe (role->serial) &&
+			!strcmp (candidate->serial, role->serial);
+	if (role->identity_kind == VR_FBT_IDENTITY_EPHEMERAL)
+		return !candidate->has_safe_serial && candidate->ephemeral_identity &&
+			candidate->ephemeral_identity == role->ephemeral_identity;
+	return false;
+}
+
+qboolean VR_InputFBTCycleRole (vr_fbt_role_t requested_role, int direction)
+{
+	vr_fbt_role_status_t roles[VR_FBT_ROLE_COUNT];
+	unsigned int candidate_ordinals[VR_FBT_MAX_CANDIDATES];
+	unsigned int candidate_devices[VR_FBT_MAX_CANDIDATES];
+	unsigned int candidate_count, eligible_count = 0;
+	int current_option = -1, target_option, option_count;
+	if (!vr_input_fbt_initialized || requested_role < 0 ||
+		requested_role >= VR_FBT_ROLE_COUNT || !direction)
+		return false;
+	for (int role = 0; role < VR_FBT_ROLE_COUNT; ++role)
+		if (!VR_FBT_GetRoleStatus (&vr_input_fbt_manager,
+			(vr_fbt_role_t)role, &roles[role]))
+			return false;
+
+	candidate_count = VR_FBT_GetCandidateCount (&vr_input_fbt_manager);
+	if (candidate_count > VR_FBT_MAX_CANDIDATES)
+		candidate_count = VR_FBT_MAX_CANDIDATES;
+	for (unsigned int ordinal = 0; ordinal < candidate_count; ++ordinal)
+	{
+		vr_fbt_candidate_status_t candidate;
+		unsigned int insertion;
+		if (!VR_FBT_GetCandidate (&vr_input_fbt_manager, ordinal, &candidate) ||
+			!VR_InputFBTCandidateIsEligible (&candidate, requested_role, roles))
+			continue;
+		insertion = eligible_count;
+		while (insertion > 0 &&
+			candidate.device_index < candidate_devices[insertion - 1])
+		{
+			candidate_ordinals[insertion] = candidate_ordinals[insertion - 1];
+			candidate_devices[insertion] = candidate_devices[insertion - 1];
+			--insertion;
+		}
+		candidate_ordinals[insertion] = ordinal;
+		candidate_devices[insertion] = candidate.device_index;
+		++eligible_count;
+	}
+
+	if (roles[requested_role].identity_kind == VR_FBT_IDENTITY_NONE)
+		current_option = 0;
+	else
+	{
+		for (unsigned int ordinal = 0; ordinal < eligible_count; ++ordinal)
+		{
+			vr_fbt_candidate_status_t candidate;
+			if (VR_FBT_GetCandidate (&vr_input_fbt_manager,
+				candidate_ordinals[ordinal], &candidate) &&
+				VR_InputFBTCandidateMatchesRole (&candidate,
+					&roles[requested_role]))
+			{
+				current_option = (int)ordinal + 1;
+				break;
+			}
+		}
+	}
+
+	/* Option zero is always unassigned, including when no safe candidate exists. */
+	option_count = (int)eligible_count + 1;
+	if (current_option < 0)
+		target_option = direction < 0 && eligible_count ?
+			(int)eligible_count : 0;
+	else
+		target_option = (current_option +
+			(direction < 0 ? option_count - 1 : 1)) % option_count;
+
+	if (target_option == 0)
+	{
+		if (roles[requested_role].identity_kind == VR_FBT_IDENTITY_NONE ||
+			!VR_FBT_UnassignRole (&vr_input_fbt_manager, requested_role))
+			return false;
+	}
+	else if (!VR_FBT_AssignCandidate (&vr_input_fbt_manager, requested_role,
+		candidate_ordinals[target_option - 1]))
+		return false;
+
+	VR_InputFBTResetFilterState ();
+	VR_InputFBTCancelCalibration ();
+	return true;
+}
+
+qboolean VR_InputFBTGetCalibrationStatus (
+	vr_input_fbt_calibration_status_t *status)
+{
+	double now;
+	vr_fbt_profile_capture_progress_t progress;
+	if (!vr_input_fbt_initialized || !status)
+		return false;
+	memset (status, 0, sizeof (*status));
+	status->state = vr_input_fbt_calibration_state;
+	status->profile_valid = vr_input_fbt_profile_valid;
+	if (vr_input_fbt_calibration_state != VR_INPUT_FBT_CALIBRATION_IDLE)
+		q_strlcpy (status->profile_name, vr_input_fbt_calibration_name,
+			sizeof (status->profile_name));
+	else if (vr_input_fbt_profile_valid)
+		q_strlcpy (status->profile_name, vr_input_fbt_profile.name,
+			sizeof (status->profile_name));
+	if (vr_input_fbt_capture.started)
+	{
+		now = Sys_DoubleTime ();
+		if (!isfinite (now))
+			now = vr_input_fbt_snapshot_time;
+		VR_FBT_ProfileCaptureGetProgress (&vr_input_fbt_capture, now, &progress);
+		status->required_role_mask = progress.required_role_mask;
+		memcpy (status->accepted, progress.accepted, sizeof (status->accepted));
+		memcpy (status->rejected, progress.rejected, sizeof (status->rejected));
+		status->snapshot_rejected = progress.snapshot_rejected;
+		status->elapsed_seconds = progress.elapsed_seconds;
+	}
 	return true;
 }
 
@@ -1357,7 +1523,8 @@ static qboolean VR_InputFBTCalibrationBindingsReady (
 	return mask != 0;
 }
 
-static void VR_InputFBTCalibrateBegin_f (void)
+static qboolean VR_InputFBTCalibrateBegin (const char *name,
+	qboolean menu_generated_name)
 {
 	char serials[VR_FBT_ROLE_COUNT][VR_FBT_SERIAL_MAX];
 	const char *expected[VR_FBT_ROLE_COUNT];
@@ -1368,44 +1535,91 @@ static void VR_InputFBTCalibrateBegin_f (void)
 	entity_t *player;
 	const vrxr_frame_t *frame = GL_OpenXRFrame ();
 
-	if (Cmd_Argc () != 2 || !VR_FBT_StorageNameIsSafe (Cmd_Argv (1)))
+	if (!VR_FBT_StorageNameIsSafe (name))
 	{
-		Con_Printf ("usage: vr_fbt_calibrate_begin <[A-Za-z0-9_-]{1,32}>\n");
-		return;
+		Con_Printf ("FBT: calibration profile name is invalid\n");
+		return false;
 	}
 	if (!vr_fbt_enabled.value)
 	{
 		Con_Printf ("FBT: enable full body tracking before calibration\n");
-		return;
+		return false;
 	}
 	if (!VR_InputFBTCalibrationBindingsReady (serials, &role_mask))
 	{
 		Con_Printf ("FBT: assign at least one tracking safe-serial role before calibration\n");
-		return;
+		return false;
 	}
 	if (!VR_InputFBTProjectReference (frame, &player, &projection_input,
 		&projection))
 	{
 		Con_Printf ("FBT: verified Ranger floor-reference projection is unavailable; capture not started\n");
-		return;
+		return false;
 	}
 	for (int role = 0; role < VR_FBT_ROLE_COUNT; ++role)
 		expected[role] = serials[role];
 	if (!VR_FBT_ProfileCaptureBegin (&capture, role_mask, expected))
 	{
 		Con_Printf ("FBT: calibration setup failed; current profile kept\n");
-		return;
+		return false;
 	}
 	vr_input_fbt_capture = capture;
 	memset (&vr_input_fbt_visual_raw_snapshot, 0,
 		sizeof (vr_input_fbt_visual_raw_snapshot));
-	q_strlcpy (vr_input_fbt_calibration_name, Cmd_Argv (1),
+	q_strlcpy (vr_input_fbt_calibration_name, name,
 		sizeof (vr_input_fbt_calibration_name));
+	vr_input_fbt_menu_calibration_name = menu_generated_name;
 	vr_input_fbt_preview_valid = false;
 	vr_input_fbt_calibration_state = VR_INPUT_FBT_CALIBRATION_READY;
 	vr_input_fbt_capture_last_sample_id = frame->sample_id;
 	Con_Printf ("FBT: calibration ready for %s; stand neutral, then use vr_fbt_calibrate_capture\n",
 		vr_input_fbt_calibration_name);
+	return true;
+}
+
+static void VR_InputFBTCalibrateBegin_f (void)
+{
+	if (Cmd_Argc () != 2 || !VR_FBT_StorageNameIsSafe (Cmd_Argv (1)))
+	{
+		Con_Printf ("usage: vr_fbt_calibrate_begin <[A-Za-z0-9_-]{1,32}>\n");
+		return;
+	}
+	VR_InputFBTCalibrateBegin (Cmd_Argv (1), false);
+}
+
+qboolean VR_InputFBTBeginMenuCalibration (void)
+{
+	char name[VR_FBT_PROFILE_NAME_MAX];
+	vr_fbt_profile_t existing;
+	vr_fbt_profile_error_t profile_error;
+	vr_fbt_storage_error_t storage_error;
+	if (!vr_input_fbt_initialized)
+		return false;
+	if (vr_input_fbt_calibration_state != VR_INPUT_FBT_CALIBRATION_IDLE)
+	{
+		Con_Printf ("FBT: accept or cancel the current calibration first\n");
+		return false;
+	}
+	for (unsigned int suffix = 1; suffix <= 999; ++suffix)
+	{
+		q_snprintf (name, sizeof (name), "menu_fbt_%u", suffix);
+		if (VR_FBT_StorageLoadProfile (name, &existing, &profile_error,
+			&storage_error))
+			continue;
+		if (storage_error == VR_FBT_STORAGE_ERR_NOT_FOUND)
+			return VR_InputFBTCalibrateBegin (name, true);
+		/* A malformed file still occupies its name; skip it instead of
+		 * allowing accept to replace user data. Other storage failures are
+		 * ambiguous, so stop without beginning a calibration. */
+		if (storage_error != VR_FBT_STORAGE_ERR_FORMAT)
+		{
+			Con_Printf ("FBT: could not choose a new calibration profile name (%d)\n",
+				(int)storage_error);
+			return false;
+		}
+	}
+	Con_Printf ("FBT: no unused menu calibration profile name is available\n");
+	return false;
 }
 
 static void VR_InputFBTCalibrateCapture_f (void)
@@ -1506,6 +1720,7 @@ static void VR_InputFBTCaptureSnapshot (const vrxr_frame_t *frame)
 static void VR_InputFBTCalibrateAccept_f (void)
 {
 	vr_fbt_profile_t preview;
+	vr_fbt_profile_t existing;
 	vr_fbt_storage_error_t storage_error = VR_FBT_STORAGE_OK;
 	vr_fbt_profile_error_t profile_error = VR_FBT_PROFILE_OK;
 	qboolean not_durable, profile_visible;
@@ -1519,6 +1734,16 @@ static void VR_InputFBTCalibrateAccept_f (void)
 	{
 		Con_Printf ("FBT: no completed calibration preview to accept\n");
 		return;
+	}
+	if (vr_input_fbt_menu_calibration_name)
+	{
+		if (VR_FBT_StorageLoadProfile (vr_input_fbt_calibration_name, &existing,
+			&profile_error, &storage_error) ||
+			storage_error != VR_FBT_STORAGE_ERR_NOT_FOUND)
+		{
+			Con_Printf ("FBT: generated calibration name is no longer unused; current profile kept\n");
+			return;
+		}
 	}
 	preview = vr_input_fbt_preview_profile;
 	if (!VR_InputFBTSaveAndSelectProfile (&preview, &profile_error,

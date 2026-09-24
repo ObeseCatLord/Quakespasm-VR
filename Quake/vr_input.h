@@ -27,6 +27,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "cvar.h"
 #include "vr_openxr.h"
 #include "vr_fbt.h"
+#include "vr_fbt_profile.h"
 #include "vrik_codec.h"
 
 enum
@@ -37,6 +38,37 @@ enum
 
 void VR_InputInit (void);
 extern cvar_t vr_fbt_enabled;
+
+typedef enum
+{
+	VR_INPUT_FBT_CALIBRATION_IDLE,
+	VR_INPUT_FBT_CALIBRATION_READY,
+	VR_INPUT_FBT_CALIBRATION_CAPTURING,
+	VR_INPUT_FBT_CALIBRATION_PREVIEW
+} vr_input_fbt_calibration_state_t;
+
+typedef struct
+{
+	vr_input_fbt_calibration_state_t state;
+	char profile_name[VR_FBT_PROFILE_NAME_MAX];
+	qboolean profile_valid;
+	unsigned int required_role_mask;
+	unsigned int accepted[VR_FBT_ROLE_COUNT];
+	unsigned int rejected[VR_FBT_ROLE_COUNT];
+	unsigned int snapshot_rejected;
+	double elapsed_seconds;
+} vr_input_fbt_calibration_status_t;
+
+/* Main-thread menu access to the input-owned manager. Candidate cycling only
+ * selects connected, unambiguous identities that are not assigned elsewhere. */
+qboolean VR_InputFBTGetRoleStatus (vr_fbt_role_t role,
+	vr_fbt_role_status_t *status);
+qboolean VR_InputFBTCycleRole (vr_fbt_role_t role, int direction);
+qboolean VR_InputFBTGetCalibrationStatus (
+	vr_input_fbt_calibration_status_t *status);
+/* Starts a menu calibration under the first unused menu_fbt_N profile name. */
+qboolean VR_InputFBTBeginMenuCalibration (void);
+
 void VR_InputCommands (const vrxr_frame_t *frame);
 void VR_InputMenuPanelTrigger (const vrxr_frame_t *frame, qboolean panel_drawn);
 void VR_InputMove (usercmd_t *pending);
