@@ -316,6 +316,9 @@ typedef enum
 const char *COM_Parse (const char *data);
 const char *COM_ParseEx (const char *data, cpe_mode mode);
 const char *COM_ParseExBuffer (const char *data, cpe_mode mode, char *token, size_t token_size, qboolean *parse_error);
+/* As above, with the source span's starting byte for token-preserving edits. */
+const char *COM_ParseExBufferSpan (const char *data, cpe_mode mode, char *token,
+	size_t token_size, qboolean *parse_error, const char **token_start);
 
 typedef struct
 {

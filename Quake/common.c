@@ -1856,12 +1856,15 @@ The mode argument controls how overflow is handled:
 - CPE_ALLOWTRUNC:	truncate token (ignore the extra characters in this token)
 ==============
 */
-const char *COM_ParseExBuffer (const char *data, cpe_mode mode, char *token, size_t token_size, qboolean *parse_error)
+const char *COM_ParseExBufferSpan (const char *data, cpe_mode mode, char *token,
+	size_t token_size, qboolean *parse_error, const char **token_start)
 {
 	int c;
 	size_t len;
 
 	len = 0;
+	if (token_start)
+		*token_start = NULL;
 	if (parse_error)
 		*parse_error = false;
 	if (!token || !token_size)
@@ -1898,6 +1901,8 @@ skipwhite:
 			data += 2;
 		goto skipwhite;
 	}
+	if (token_start)
+		*token_start = data;
 
 	// handle quoted strings specially
 	if (c == '\"')
@@ -1951,6 +1956,13 @@ parseerror:
 	if (parse_error)
 		*parse_error = true;
 	return NULL;
+}
+
+const char *COM_ParseExBuffer (const char *data, cpe_mode mode, char *token,
+	size_t token_size, qboolean *parse_error)
+{
+	return COM_ParseExBufferSpan (data, mode, token, token_size, parse_error,
+		NULL);
 }
 
 const char *COM_ParseEx (const char *data, cpe_mode mode)

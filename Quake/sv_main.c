@@ -2307,6 +2307,7 @@ void SV_Init (void)
 	Cvar_RegisterVariable (&sv_fte_recursivehullckeck);
 	Cvar_RegisterVariable (&sv_fte_createareanode);
 	VR_WeaponCalibrationInit ();
+	VR_WeaponCalibrationRegisterCommands ();
 	if (!VR_WeaponCalibrationReloadGame ())
 		Con_Warning ("VR: invalid weapon calibration schema for active game\n");
 	VR_WeaponMenu_ReloadGame ();

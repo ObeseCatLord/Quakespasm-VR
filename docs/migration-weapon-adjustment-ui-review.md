@@ -95,7 +95,5 @@ and saves through the existing schema owner. The muzzle path shows the frozen
 target through the existing stereo cue and retains the frozen pose until the
 live grip returns within eight Quake units. Classic and enhanced fields share
 one schema rewrite path while preserving the other format's fields. The local
-Linux build links and the schema parser fixture passes. The standalone
-calibration reload fixture needs its command-registration boundary updated
-before it can link against the interactive calibration owner. Hardware behavior
-checks remain.
+Linux build links; the schema parser, save rewrite and calibration reload
+fixtures pass. Hardware behavior checks remain.

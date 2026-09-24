@@ -121,6 +121,7 @@ static int vr_input_last_snap;
 static qboolean vr_input_turn180_queued;
 /* Explicit tracking-yaw rebases must break physical contact history. */
 static qboolean vr_input_contact_discontinuity;
+static qboolean vr_input_calibration_contact_adjusting;
 static qboolean vr_input_gorilla_discontinuity = true;
 static vec3_t vr_input_roomscale_last_position;
 static qboolean vr_input_roomscale_position_valid;
@@ -1284,6 +1285,19 @@ static void VR_InputClearPendingContactRecord (usercmd_t *pending)
 		sizeof (vr_input_pending_contact_identity));
 }
 
+static qboolean VR_InputCalibrationContactAdjustmentActive (void)
+{
+	const qboolean active = VR_WeaponCalibrationAdjustActive ();
+
+	if (active != vr_input_calibration_contact_adjusting)
+	{
+		vr_input_calibration_contact_adjusting = active;
+		vr_input_contact_discontinuity = true;
+		VR_InputClearPendingContactRecord (&cl.pendingcmd);
+	}
+	return active;
+}
+
 static void VR_InputClearPendingRecord (usercmd_t *pending)
 {
 	if (!pending)
@@ -1587,6 +1601,7 @@ static qboolean VR_InputPrepareCollisionContact (usercmd_t *pending,
 
 	if (!pending || !frame || hand < 0 || hand > 1 || !model ||
 		!frame->sample_id || cl.protocol_qsvr != QSVR_PROTOCOL_PINNED ||
+		VR_WeaponCalibrationAdjustActive () ||
 		!VR_WeaponCollisionAuthorized () || !VR_InputControllerAim () ||
 		!V_TrackedSessionActive () ||
 		!VR_InputMotionContextAccepted (frame) || CL_AngleLocked () ||
@@ -1671,6 +1686,7 @@ static qboolean VR_InputPrepareMeleeContact (usercmd_t *pending,
 
 	if (!pending || !frame || hand < 0 || hand > 1 || !model || !geometry ||
 		!edge || !edge->valid || !frame->sample_id ||
+		VR_WeaponCalibrationAdjustActive () ||
 		!VR_InputMeleeAuthorized () ||
 		!VR_InputMotionContextAccepted (frame) || CL_AngleLocked () ||
 		!V_TrackedSessionActive () || !VR_InputControllerAim () ||
@@ -1784,6 +1800,7 @@ static qboolean VR_InputPendingContactAccepted (const usercmd_t *pending,
 	int selected_axe_index, selected_skin;
 
 	if (!pending || !frame || !frame->sample_id ||
+		VR_WeaponCalibrationAdjustActive () ||
 		vr_input_pending_contact_identity.sample_id != frame->sample_id ||
 		vr_input_pending_contact_identity.reset_generation !=
 			vr_input_reset_generation ||
@@ -3299,6 +3316,7 @@ void VR_InputCommands (const vrxr_frame_t *frame)
 		cl.vrik_last_sent_active = false;
 	}
 	++vr_input_commands_depth;
+	(void)VR_InputCalibrationContactAdjustmentActive ();
 	if (!VR_InputMotionContextAccepted (frame) || frame->reference_changed)
 		vr_input_roomscale_position_valid = false;
 	if (frame)
@@ -3424,6 +3442,7 @@ void VR_InputCommands (const vrxr_frame_t *frame)
 		vr_input_adjust_trigger_suppressed = false;
 
 done:
+	(void)VR_InputCalibrationContactAdjustmentActive ();
 	--vr_input_commands_depth;
 }
 
@@ -3574,6 +3593,11 @@ static void VR_InputPreparePrivatePose (usercmd_t *pending, int dominant,
 	VectorCopy (hand_angles, pending->vr_handrot);
 	pending->vr_handpos_relative = true;
 	pending->vr_active = true;
+	if (VR_WeaponCalibrationAdjustActive ())
+	{
+		VR_InputClearPendingContactRecord (pending);
+		return;
+	}
 	if ((contact_model || axe_candidate) && vr_input_contact_discontinuity)
 	{
 		/* An inactive contact in this accepted command resets the server's
@@ -3640,6 +3664,7 @@ void VR_InputMove (usercmd_t *pending)
 	const qboolean controller_aim = VR_InputControllerAim ();
 	vec3_t mapped_head;
 
+	(void)VR_InputCalibrationContactAdjustmentActive ();
 	vr_input_turn180_queued = false;
 	VR_InputClearPendingRecord (pending);
 	if (!pending)
@@ -3804,6 +3829,7 @@ void VR_InputApplyPending (usercmd_t *cmd)
 	qboolean private_pose_accepted = false;
 	vec3_t merged;
 
+	(void)VR_InputCalibrationContactAdjustmentActive ();
 	if (!cmd)
 	{
 		VR_InputClearPendingContactRecord (&cl.pendingcmd);

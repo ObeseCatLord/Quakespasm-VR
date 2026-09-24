@@ -14,6 +14,7 @@ extern cvar_t vr_weapon_muzzle_offset[VR_WEAPON_CALIBRATION_MAX_SLOTS *
 									 VR_WEAPON_CALIBRATION_VARS_PER_MUZZLE];
 
 void VR_WeaponCalibrationInit(void);
+void VR_WeaponCalibrationRegisterCommands(void);
 void VR_WeaponCalibrationReset(void);
 qboolean VR_WeaponCalibrationAdjustActive(void);
 void VR_WeaponCalibrationAdjustCancel(void);

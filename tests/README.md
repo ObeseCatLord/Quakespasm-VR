@@ -77,6 +77,20 @@ cc -std=gnu11 -DUSE_SDL3 -D_GNU_SOURCE -Wall -Wextra -Werror \
 /tmp/quakespasm-vr-weapon-calibration-reload-fixture
 ```
 
+`vr_weapon_calibration_save_fixture.c` exercises the production token-span
+writer on compact mixed-format blocks, trailing comments, absent classic
+muzzles, and new-entry placement before global offsets:
+
+```sh
+cc -std=gnu11 -DUSE_SDL3 -D_GNU_SOURCE -Wall -Wextra -Werror \
+  -Wno-unused-parameter -Wno-sign-compare -Wno-missing-field-initializers \
+  -ffunction-sections -fdata-sections -IQuake \
+  tests/vr_weapon_calibration_save_fixture.c Quake/vr_weapon_schema.c \
+  Quake/common.c -Wl,--gc-sections $(pkg-config --cflags --libs sdl3) -lm \
+  -o /tmp/quakespasm-vr-weapon-calibration-save-fixture
+/tmp/quakespasm-vr-weapon-calibration-save-fixture
+```
+
 `vr_openxr_vulkan_fixture.cpp` is reused from the product OpenXR branch at
 `3080841333fa94000df7e1fb9e549c7158685dd6`, adapted to the Vulkan-only 2.0 backend.
 It checks creation-result ownership, instance/device provenance, version
