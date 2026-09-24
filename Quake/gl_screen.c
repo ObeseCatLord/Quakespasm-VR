@@ -2486,6 +2486,7 @@ void SCR_UpdateScreen (qboolean use_tasks)
 		in_update_screen = false;
 		return;
 	}
+	VR_WeaponMenu_PrepareModels ();
 	/* XR synchronizes the previous GUI task in GL_BeginRendering. Sample the
 	 * current console animation before deciding whether its HUD reserves rows;
 	 * keep desktop console updates in the original setup task. */

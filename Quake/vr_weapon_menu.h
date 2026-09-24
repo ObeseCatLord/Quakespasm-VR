@@ -50,6 +50,8 @@ void VR_WeaponMenu_Cancel (void);
 void VR_WeaponMenu_ReloadGame (void);
 void VR_WeaponMenu_SetVRPointer (qboolean tracking_valid, qboolean pointer_valid,
 	int pointer_x, int pointer_y);
+/* Resolve optional wheel models on the main thread before draw tasks start. */
+void VR_WeaponMenu_PrepareModels (void);
 int VR_WeaponMenu_Release (void);
 void VR_WeaponMenu_Draw (struct cb_context_s *cbx);
 

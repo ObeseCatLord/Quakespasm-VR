@@ -1213,6 +1213,8 @@ typedef struct {
 	int action_count;
 	vr_weapon_menu_visible_t visible[VR_WEAPON_MENU_MAX_ENTRIES];
 	vr_weapon_menu_entry_t entries[VR_WEAPON_MENU_MAX_ENTRIES];
+	qmodel_t *model[VR_WEAPON_MENU_MAX_ENTRIES];
+	aliashdr_t *geometry[VR_WEAPON_MENU_MAX_ENTRIES];
 	char labels[VR_WEAPON_MENU_MAX_ENTRIES][MAX_QPATH];
 	char models[VR_WEAPON_MENU_MAX_ENTRIES][MAX_QPATH];
 	vr_weapon_menu_action_t actions[VR_WEAPON_MENU_MAX_ACTIONS];
@@ -1221,6 +1223,57 @@ typedef struct {
 /* Prepared during setup, then read by both the scene and GUI tasks. Release
  * deliberately rechecks live catalog and inventory instead of trusting it. */
 static vr_weapon_menu_frame_t vr_weapon_menu_frame;
+
+/* Indexed by the active catalog, then copied into the draw frame. Model loading
+ * is only permitted on the SCR_UpdateScreen main-thread side of task dispatch. */
+static struct {
+	unsigned int generation;
+	const vr_weapon_menu_catalog_t *catalog;
+	qmodel_t *model[VR_WEAPON_MENU_MAX_ENTRIES];
+	aliashdr_t *geometry[VR_WEAPON_MENU_MAX_ENTRIES];
+	qboolean missing[VR_WEAPON_MENU_MAX_ENTRIES];
+} vr_weapon_menu_assets;
+
+void VR_WeaponMenu_PrepareModels (void)
+{
+	const vr_weapon_menu_catalog_t *catalog;
+	vr_weapon_menu_visible_t visible[VR_WEAPON_MENU_MAX_ENTRIES];
+	int count;
+
+	if (!VR_WeaponMenu_IsOpenVR () || !VR_WeaponMenu_SessionValid ())
+		return;
+	catalog = VR_WeaponMenu_CurrentCatalog ();
+	if (vr_weapon_menu_assets.generation != vr_weapon_menu_session_generation ||
+		vr_weapon_menu_assets.catalog != catalog)
+	{
+		memset (&vr_weapon_menu_assets, 0, sizeof (vr_weapon_menu_assets));
+		vr_weapon_menu_assets.generation = vr_weapon_menu_session_generation;
+		vr_weapon_menu_assets.catalog = catalog;
+	}
+	count = VR_WeaponMenu_BuildVisible (catalog, cl.stats, MAX_CL_STATS,
+		cl.items, visible, VR_WEAPON_MENU_MAX_ENTRIES);
+	for (int i = 0; i < count; ++i)
+	{
+		const vr_weapon_menu_entry_t *entry = visible[i].entry;
+		const size_t index = (size_t)(entry - catalog->entries);
+		const char *path = entry->model_path;
+		qmodel_t *model;
+		if (index >= VR_WEAPON_MENU_MAX_ENTRIES || !path || !*path ||
+			vr_weapon_menu_assets.missing[index])
+			continue;
+		model = vr_weapon_menu_assets.model[index];
+		if (!model)
+			model = Mod_ForName (path, false);
+		if (!model || model->type != mod_alias)
+		{
+			vr_weapon_menu_assets.missing[index] = true;
+			continue;
+		}
+		vr_weapon_menu_assets.model[index] = model;
+		vr_weapon_menu_assets.geometry[index] =
+			(aliashdr_t *)Mod_Extradata_CheckSkin (model, 0);
+	}
+}
 
 static qboolean VR_WeaponMenu_QuickSaveAvailable (void)
 {
@@ -1547,7 +1600,13 @@ static void VR_WeaponMenu_PrepareFrame (const vr_weapon_menu_catalog_t *catalog,
 	for (int i = 0; i < vr_weapon_menu_frame.count; ++i)
 	{
 		vr_weapon_menu_entry_t *copy = &vr_weapon_menu_frame.entries[i];
-		*copy = *vr_weapon_menu_frame.visible[i].entry;
+		const vr_weapon_menu_entry_t *source = vr_weapon_menu_frame.visible[i].entry;
+		const size_t index = (size_t)(source - catalog->entries);
+		vr_weapon_menu_frame.model[i] = index < catalog->count &&
+			index < VR_WEAPON_MENU_MAX_ENTRIES ? vr_weapon_menu_assets.model[index] : NULL;
+		vr_weapon_menu_frame.geometry[i] = index < catalog->count &&
+			index < VR_WEAPON_MENU_MAX_ENTRIES ? vr_weapon_menu_assets.geometry[index] : NULL;
+		*copy = *source;
 		if (copy->label)
 		{
 			q_strlcpy (vr_weapon_menu_frame.labels[i], copy->label,
