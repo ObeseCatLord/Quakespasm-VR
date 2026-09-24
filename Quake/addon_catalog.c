@@ -46,6 +46,7 @@ static addon_atomic_t addon_cancelled_operation;
 static addon_atomic_t addon_state;
 static addon_atomic_t addon_progress;
 static unsigned int addon_operation_sequence;
+static unsigned int addon_install_committing_operation;
 static char addon_message[160];
 static char addon_message_snapshot[160];
 static addon_catalog_entry_t addon_entry_snapshot;
@@ -91,6 +92,28 @@ static void AddonCatalog_FinishOperation (unsigned int operation_id,
 {
 	SDL_LockMutex (addon_mutex);
 	AddonCatalog_SetOperationResultLocked (operation_id, state, message, cancel_message);
+	SDL_UnlockMutex (addon_mutex);
+}
+
+static void AddonCatalog_FinishInstallOperation (unsigned int operation_id,
+	const char *gamedir, qboolean installed, addon_catalog_state_t state,
+	const char *message, const char *cancel_message)
+{
+	int i;
+
+	SDL_LockMutex (addon_mutex);
+	if (AddonAtomicGet (&addon_operation_id) == (int)operation_id)
+	{
+		if (installed && !AddonCatalog_IsCancelled (operation_id))
+		{
+			for (i = 0; i < addon_count; i++)
+				if (!q_strcasecmp (addon_entries[i].gamedir, gamedir))
+					addon_entries[i].installed = true;
+		}
+		AddonCatalog_SetOperationResultLocked (operation_id, state, message, cancel_message);
+		if (addon_install_committing_operation == operation_id)
+			addon_install_committing_operation = 0;
+	}
 	SDL_UnlockMutex (addon_mutex);
 }
 #endif
@@ -413,7 +436,7 @@ static int AddonCatalog_InstallThread (void *userdata)
 	long status;
 	const char *error;
 	qboolean ok;
-	int i;
+	qboolean final_exists;
 
 	q_strlcpy(base, job->base_url, sizeof(base));
 	if (!base[0] || q_snprintf(url, sizeof(url), "%s/%s", base, job->entry.download) >= sizeof(url) ||
@@ -459,44 +482,47 @@ static int AddonCatalog_InstallThread (void *userdata)
 		free(job);
 		return 1;
 	}
+	final_exists = (Sys_FileType (final) & FS_ENT_FILE) != 0;
+
+	/* Commit point: after this marker, CancelOperation ignores this operation.
+	 * Complete cleanup or rename outside the UI mutex before publishing a result.
+	 */
 	SDL_LockMutex (addon_mutex);
 	if (AddonAtomicGet (&addon_operation_id) != (int)job->operation_id ||
 		AddonCatalog_IsCancelled (job->operation_id))
 	{
-		AddonCatalog_SetOperationResultLocked (job->operation_id, ADDON_CATALOG_ERROR,
-			"Add-on install cancelled", "Add-on download cancelled");
 		SDL_UnlockMutex (addon_mutex);
 		Sys_remove (tmp);
+		AddonCatalog_FinishOperation (job->operation_id, ADDON_CATALOG_ERROR,
+			"Add-on install cancelled", "Add-on download cancelled");
 		free(job);
 		return 1;
 	}
-	if (Sys_FileType (final) & FS_ENT_FILE)
+	addon_install_committing_operation = job->operation_id;
+	SDL_UnlockMutex (addon_mutex);
+
+	if (final_exists)
 	{
-		for (i = 0; i < addon_count; i++)
-			if (!q_strcasecmp (addon_entries[i].gamedir, job->entry.gamedir))
-				addon_entries[i].installed = true;
-		q_strlcpy (addon_message, "Add-on is already installed", sizeof(addon_message));
-		AddonAtomicSet (&addon_state, ADDON_CATALOG_READY);
-		SDL_UnlockMutex (addon_mutex);
 		Sys_remove (tmp);
+		AddonCatalog_FinishInstallOperation (job->operation_id, job->entry.gamedir,
+			true, ADDON_CATALOG_READY, "Add-on is already installed",
+			"Add-on download cancelled");
 		free(job);
 		return 0;
 	}
+
 	if (Sys_rename (tmp, final) != 0)
 	{
-		q_strlcpy (addon_message, "Could not finalize add-on install", sizeof(addon_message));
-		AddonAtomicSet (&addon_state, ADDON_CATALOG_ERROR);
-		SDL_UnlockMutex (addon_mutex);
 		Sys_remove (tmp);
+		AddonCatalog_FinishInstallOperation (job->operation_id, job->entry.gamedir,
+			false, ADDON_CATALOG_ERROR, "Could not finalize add-on install",
+			"Add-on download cancelled");
 		free(job);
 		return 1;
 	}
-	for (i = 0; i < addon_count; i++)
-		if (!q_strcasecmp(addon_entries[i].gamedir, job->entry.gamedir))
-			addon_entries[i].installed = true;
-	q_strlcpy (addon_message, "Add-on installed; select it from Mods", sizeof(addon_message));
-	AddonAtomicSet (&addon_state, ADDON_CATALOG_READY);
-	SDL_UnlockMutex (addon_mutex);
+	AddonCatalog_FinishInstallOperation (job->operation_id, job->entry.gamedir,
+		true, ADDON_CATALOG_READY, "Add-on installed; select it from Mods",
+		"Add-on download cancelled");
 	free(job);
 	return 0;
 }
@@ -508,6 +534,7 @@ void AddonCatalog_Init (void)
 	if (!addon_mutex)
 		return;
 	addon_operation_sequence = 0;
+	addon_install_committing_operation = 0;
 	AddonAtomicSet (&addon_operation_id, 0);
 	AddonAtomicSet (&addon_cancelled_operation, 0);
 	AddonAtomicSet (&addon_progress, 0);
@@ -634,7 +661,8 @@ void AddonCatalog_CancelOperation (unsigned int id)
 	SDL_LockMutex (addon_mutex);
 	state = (addon_catalog_state_t)AddonAtomicGet (&addon_state);
 	if (AddonAtomicGet (&addon_operation_id) == (int)id &&
-		(state == ADDON_CATALOG_REFRESHING || state == ADDON_CATALOG_INSTALLING))
+		(state == ADDON_CATALOG_REFRESHING || state == ADDON_CATALOG_INSTALLING) &&
+		addon_install_committing_operation != id)
 		AddonAtomicSet (&addon_cancelled_operation, (int)id);
 	SDL_UnlockMutex (addon_mutex);
 }
@@ -768,6 +796,7 @@ static qboolean AddonCatalog_StartInstallInternal (int index,
 	}
 	operation_id = AddonCatalog_NextOperationId ();
 	job->operation_id = operation_id;
+	addon_install_committing_operation = 0;
 	AddonAtomicSet (&addon_cancelled_operation, 0);
 	AddonAtomicSet (&addon_progress, 0);
 	AddonAtomicSet (&addon_state, ADDON_CATALOG_INSTALLING);

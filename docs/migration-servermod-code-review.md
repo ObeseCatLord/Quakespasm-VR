@@ -45,3 +45,21 @@ unanswered local endpoint returned promptly from two frame calls and cancel
 released its pending socket. These checks do not prove the complete
 server-directed install/reconnect UI flow, packet loss, headset presentation,
 or Windows/ARM behavior.
+
+## Follow-up Astra review of `1b9d8457`
+
+Astra xhigh found no new high-severity issue. Its three medium findings and
+their dispositions are:
+
+| Finding | Disposition |
+| --- | --- |
+| `quake.rc` may restart a demo and freeze the loading plaque after the earlier release. | **Adopted:** clear the plaque again after config/demo teardown immediately before reconnect. |
+| Reverse DNS display name can replace the reconnect target and lose the original control port; resolving that name in the frame callback can stall VR. | **Adopted:** keep the accepted socket's numeric control endpoint with port separately from its display address. A real-binary local connection returned `control=127.0.0.1:28998` while its display address was `localhost`. |
+| Catalogue finalization performs filesystem work while holding its UI mutex and can publish completion before cleanup. | **Adopted:** move filesystem work outside that mutex and publish terminal status after cleanup, while retaining an explicit cancellation commit point. |
+
+The review also identified an older gap: valid downloaded `pak0.pak` can expose
+an already-present malformed `pak1.pak` when the mod is mounted. Preflight
+existing numbered packages through the filesystem owner before automatic
+mounting. This is separate from validation of the new download and remains
+open in this checkpoint. No headset, Windows or ARM claim follows from this
+review.
