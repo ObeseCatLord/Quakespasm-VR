@@ -61,3 +61,25 @@ The focused private-solid fixture also exercises a received box obstructing
 the production resolver's muzzle path. A subsequent Astra xhigh read-only
 review found no actionable code defect in the scoped integration, including
 its task and audio call ownership. It did not qualify a live shot or headset.
+
+## Server capability adapter disposition
+
+A further Astra xhigh design review checked the donor contact offer against
+the `2.0` signon and command paths. Its effective model setting was not
+inspectable from the reviewer, so the review records the requested setting
+and source findings rather than asserting runtime model provenance.
+
+| Finding | Decision |
+| --- | --- |
+| Command retraction is private-only, but presentation currently accepts a local collision toggle on a public peer. | **Adopt.** Require one effective predicate: pinned private profile, local opt-in and server COLLISION bit. Keep the ordinary gameplay/tracking guards. A public peer cannot activate it with an offer. |
+| `Send_Spawn_Info` clears the reliable client message; an offer queued during signon can be lost. | **Adopt.** Use one bounded post-`begin` per-client offer/update helper. Invalidate its sent mode on each serverinfo/map, retry when the reliable message has room, and avoid a second signon fallback. |
+| The donor's COLLISION mode may produce contact payloads, even without a melee profile. | **Adapt.** Advertise only COLLISION or zero, with profile NONE. Keep the existing decoder compatible, but do not emit or consume contact gameplay samples until that separate feature is ported. |
+| Donor's command handler trusts permissive integer parsing and state resets on map but not necessarily all stop paths. | **Adapt.** Reuse the server-command registry with exact bounded decimal parsing; malformed server offers clear authorization. Reset on map, disconnect and demo stop. |
+| Revocation cannot rewrite commands already sampled or in redundant send history. | **Adopt.** Newly sampled commands use the new mode; the next synchronized view setup restores the raw gun/crosshair. Do not introduce a policy epoch or rewrite pending commands. |
+| A geometry fixture alone does not prove corrected shots. | **Adopt as a later end-to-end gate.** Compare actual offer, corrected gun/crosshair, post-clamp shot and unchanged body at a stock-shotgun wall, then policy-off restoration and public/silent-server cases. |
+
+The server's negative `sv_weapon_collision` policy should retain the donor's
+single-player rule: non-dedicated with `maxclients == 1`, regardless of how
+many players happen to be connected. The local `vr_weapon_collision` default
+remains off. The contact capability must never select a wire dialect or imply
+that melee gameplay has been implemented.
