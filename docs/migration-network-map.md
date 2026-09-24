@@ -103,8 +103,8 @@ final cross-play sign-off.
 
 ### Server-mod reconnect senior review disposition
 
-The local Astra xhigh review of `/tmp/qsvr-servermod-review.md` checked the
-donor and inherited parser/connection code before critiquing the adapter.
+The local Astra xhigh review checked the donor and inherited
+parser/connection code before critiquing the adapter.
 This is a design decision for NET-022, not implementation or runtime sign-off.
 
 | Review finding | Disposition |
