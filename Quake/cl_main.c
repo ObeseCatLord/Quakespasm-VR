@@ -1169,7 +1169,7 @@ static qboolean CL_ReplayCanTrustGorilla (void)
 		cl.move_ack_authority == MOVE_AUTHORITY_PMOVE_ENGINE_COMPAT;
 }
 
-static qboolean CL_SetupReplayGorilla (int startseq)
+static qboolean CL_SetupReplayGorilla (int startseq, const usercmd_t *preview)
 {
 	const usercmd_t *cmd;
 	qboolean raw_replay = false;
@@ -1186,8 +1186,8 @@ static qboolean CL_SetupReplayGorilla (int startseq)
 		return true;
 	/* The pinned client additionally gates raw-state restoration on
 	 * VR_GorillaActive().  That tracked producer/activity owner is not present
-	 * in this slice.  A journaled raw Gorilla command is sufficient provenance
-	 * for replay; protocol permission alone is deliberately not. */
+	 * in this slice. A journaled or disposable preview hand sample is sufficient
+	 * provenance for replay; protocol permission alone is deliberately not. */
 	for (seq = startseq; seq < cl.movemessages; seq++)
 	{
 		cmd = &cl.movecmds[seq & MOVECMDS_MASK];
@@ -1197,6 +1197,11 @@ static qboolean CL_SetupReplayGorilla (int startseq)
 			fresh_reset = (cmd->vr_gorilla.flags & VR_GORILLA_RESET) != 0;
 			break;
 		}
+	}
+	if (!raw_replay && preview && preview->vr_gorilla.flags)
+	{
+		raw_replay = true;
+		fresh_reset = (preview->vr_gorilla.flags & VR_GORILLA_RESET) != 0;
 	}
 	if (!raw_replay)
 		return true;
@@ -1600,8 +1605,14 @@ static qboolean CL_ComputeReplayPlayerMovement (entity_t *ent, cl_replay_result_
 	pmove.jump_secs = private_replay ? cl.statsf[STAT_PRIVATE_JUMP_SECS] : 0;
 	pmove.onground = (ent->netstate.pmovetype & 0x80) != 0;
 	pmove.skipent = -cl.viewentity;
-	if (!shadow && private_replay && !CL_SetupReplayGorilla (startseq))
-		return false;
+	if (!shadow && private_replay)
+	{
+		/* The disposable preview may contain the first raw hand sample
+		 * after an ACK. Sample it once, without committing its RESET latch. */
+		CL_PrepareReplayPreview (&preview, true);
+		if (!CL_SetupReplayGorilla (startseq, &preview))
+			return false;
+	}
 	PMCL_AddEntities (bounds);
 
 	if (!shadow && cl.move_replay_propagate_sequence[startseq & MOVECMDS_MASK] == startseq)
@@ -1635,7 +1646,8 @@ static qboolean CL_ComputeReplayPlayerMovement (entity_t *ent, cl_replay_result_
 
 	if (!shadow)
 	{
-		CL_PrepareReplayPreview (&preview, private_replay);
+		if (!private_replay)
+			CL_PrepareReplayPreview (&preview, false);
 		CL_PrepareReplayCommand (&pmove.cmd, &preview, private_replay);
 		if (!CL_ReplayEnsureCommandPhysents (bounds, &pmove.cmd,
 			private_replay))

@@ -511,6 +511,49 @@ static void check_raw_gorilla_state_provenance (void)
 	assert (observed_gorilla_allowed[1]);
 }
 
+static void check_raw_gorilla_preview_after_ack (void)
+{
+	vec3_t origin;
+
+	reset_client ();
+	admit_private_snapshot ();
+	cl.vr_gorilla_supported = cl.vr_gorilla_allowed = true;
+	cl.movecmds[3 & MOVECMDS_MASK].vr_gorilla.flags = 0;
+	cl.vr_gorilla_state_valid = true;
+	cl.vr_gorilla_state_sequence = cl.ackedmovemessages;
+	cl.vr_gorilla_state.initialized = true;
+	preview_cmd.vr_gorilla.flags = VR_GORILLA_HANDS;
+	assert (CL_ReplayPlayerMovement (&entities[1], origin));
+	assert (preview_calls == 1 && move_calls == 2);
+	assert (observed_gorilla_allowed[1]);
+	assert (observed_cmds[1].vr_gorilla.flags == VR_GORILLA_HANDS);
+
+	reset_probes ();
+	cl.vr_gorilla_state_valid = false;
+	preview_cmd.vr_gorilla.flags = VR_GORILLA_HANDS;
+	assert (CL_ReplayPlayerMovement (&entities[1], origin));
+	assert (!observed_gorilla_allowed[1]);
+
+	reset_probes ();
+	preview_cmd.vr_gorilla.flags = VR_GORILLA_HANDS | VR_GORILLA_RESET;
+	assert (CL_ReplayPlayerMovement (&entities[1], origin));
+	assert (preview_calls == 1 && observed_gorilla_allowed[1]);
+
+	/* With every sent command acknowledged, the preview is the only raw
+	 * sample. It must still seed the existing PMove replay owner. */
+	reset_client ();
+	admit_private_snapshot ();
+	cl.ackedmovemessages = cl.move_snapshot_ack = 3;
+	cl.vr_gorilla_supported = cl.vr_gorilla_allowed = true;
+	cl.vr_gorilla_state_valid = true;
+	cl.vr_gorilla_state_sequence = 3;
+	cl.vr_gorilla_state.initialized = true;
+	preview_cmd.vr_gorilla.flags = VR_GORILLA_HANDS;
+	assert (CL_ReplayPlayerMovement (&entities[1], origin));
+	assert (preview_calls == 1 && move_calls == 1);
+	assert (observed_gorilla_allowed[0]);
+}
+
 static void check_relink_prediction_and_attachment_pose (void)
 {
 	cl_relink_frame_t frame;
@@ -571,6 +614,7 @@ int main (void)
 	check_private_epoch_resets_propagation ();
 	check_trusted_gorilla_generation ();
 	check_raw_gorilla_state_provenance ();
+	check_raw_gorilla_preview_after_ack ();
 	check_relink_prediction_and_attachment_pose ();
 	puts ("QSS-M client replay: shadow WALK, partial preview timing, gating/history/epochs, Gorilla provenance and shared attachment pose passed");
 	return 0;

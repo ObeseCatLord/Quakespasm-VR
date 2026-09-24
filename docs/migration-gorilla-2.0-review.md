@@ -186,6 +186,9 @@ without an inactive-state ACK, and refreshes collision entities when an active
 Gorilla hand envelope leaves the prior collection bounds. Callback relocations
 fence old hand state. A palm contact with an unsupported moving pusher still
 fails the stock trial. Trusted authored motion remains outside this path.
+The disposable client preview also supplies a raw hand sample when the ACK has
+already covered every sent command, so a live first stroke can use the same
+PMove replay owner before its next packet is committed.
 
 The trial remains opt-in, exact-stock, dry WALK and remote-only. Ordinary
 server physics remains the default Gorilla authority for local play, mods,
