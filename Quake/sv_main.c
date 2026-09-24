@@ -937,6 +937,10 @@ void SV_CalcStats (client_t *client, int *statsi, float *statsf, const char **st
 		}
 	}
 
+	/* Keep the movement policy bit authoritative over mod custom stat 240. */
+	if (coop.value && SV_CoopFeatureEnabled (&sv_coop_noplayerclip, true))
+		statsi[STAT_VR_COOP_POLICY] |= VR_COOP_POLICY_NO_PLAYER_CLIP;
+
 }
 
 /*server-side-only flags that re-use encoding bits*/

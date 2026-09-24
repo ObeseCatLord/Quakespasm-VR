@@ -382,6 +382,74 @@ static void SV_AreaTriggerEdicts (edict_t *ent, areanode_t *node, uint16_t *list
 		SV_AreaTriggerEdicts (ent, node->children[1], list, listcount, listspace);
 }
 
+static qboolean SV_IsActiveClientEdict (edict_t *ent)
+{
+	int entnum;
+
+	if (!ent || ent->free)
+		return false;
+
+	entnum = NUM_FOR_EDICT (ent);
+	if (entnum < 1 || entnum > svs.maxclients)
+		return false;
+
+	if (!svs.clients[entnum - 1].active || !svs.clients[entnum - 1].spawned)
+		return false;
+
+	return ((int)ent->v.flags & FL_CLIENT) != 0;
+}
+
+static qboolean SV_IsTelefragClient (edict_t *ent)
+{
+	int num;
+
+	if (!ent || ent->free || !((int)ent->v.flags & FL_CLIENT))
+		return false;
+	num = NUM_FOR_EDICT (ent);
+	if (num < 1 || num > svs.maxclients)
+		return false;
+	/* PutClientInServer creates teledeath before signon reaches "begin". */
+	return svs.clients[num - 1].active && svs.clients[num - 1].edict == ent;
+}
+
+static qboolean SV_ShouldSuppressCoopTelefrag (edict_t *trigger, edict_t *other)
+{
+	const char *classname;
+	edict_t *owner;
+
+	if (!coop.value || !SV_CoopFeatureEnabled (&sv_coop_notelefrag, true))
+		return false;
+	if (!trigger || trigger->free || !SV_IsTelefragClient (other) ||
+	    !trigger->v.classname)
+		return false;
+
+	classname = PR_GetString (trigger->v.classname);
+	if (!classname || (q_strcasecmp (classname, "teledeath") &&
+	                   q_strcasecmp (classname, "teledeath2")))
+		return false;
+
+	owner = PROG_TO_EDICT (trigger->v.owner);
+	return owner != other && SV_IsTelefragClient (owner);
+}
+
+static qboolean SV_IsPointMove (moveclip_t *clip)
+{
+	return clip->mins[0] == clip->maxs[0] &&
+		clip->mins[1] == clip->maxs[1] &&
+		clip->mins[2] == clip->maxs[2];
+}
+
+static qboolean SV_ShouldSkipCoopPlayerClip (moveclip_t *clip, edict_t *touch)
+{
+	if (!coop.value || !SV_CoopFeatureEnabled (&sv_coop_noplayerclip, true))
+		return false;
+	if (!clip->passedict || clip->type == MOVE_MISSILE || SV_IsPointMove (clip))
+		return false;
+
+	return SV_IsActiveClientEdict (clip->passedict) &&
+		SV_IsActiveClientEdict (touch);
+}
+
 /*
 ====================
 SV_TouchLinks
@@ -432,6 +500,8 @@ static void SV_TouchLinks (edict_t *ent)
 			continue;
 		if (ent->v.absmin[0] > touch->v.absmax[0] || ent->v.absmin[1] > touch->v.absmax[1] || ent->v.absmin[2] > touch->v.absmax[2] ||
 			ent->v.absmax[0] < touch->v.absmin[0] || ent->v.absmax[1] < touch->v.absmin[1] || ent->v.absmax[2] < touch->v.absmin[2])
+			continue;
+		if (SV_ShouldSuppressCoopTelefrag (touch, ent))
 			continue;
 
 		pr_global_struct->self = EDICT_TO_PROG (touch);
@@ -1255,6 +1325,8 @@ static void SV_ClipToLinks (areanode_t *node, moveclip_t *clip, const sv_ignore_
 			if (PROG_TO_EDICT (clip->passedict->v.owner) == touch)
 				continue; // don't clip against owner
 		}
+		if (SV_ShouldSkipCoopPlayerClip (clip, touch))
+			continue;
 
 		if (touch->v.skin < 0)
 		{

@@ -85,6 +85,18 @@ cvar_t noexit = {"noexit", "0", CVAR_NOTIFY | CVAR_SERVERINFO};
 cvar_t skill = {"skill", "1", CVAR_NONE};			// 0 - 3
 cvar_t deathmatch = {"deathmatch", "0", CVAR_NONE}; // 0, 1, or 2
 cvar_t coop = {"coop", "0", CVAR_NONE};				// 0 or 1
+cvar_t sv_coop_classic = {"sv_coop_classic", "0", CVAR_ARCHIVE | CVAR_NOTIFY | CVAR_SERVERINFO};
+cvar_t sv_coop_noplayerclip = {"sv_coop_noplayerclip", "-1", CVAR_ARCHIVE | CVAR_NOTIFY | CVAR_SERVERINFO};
+cvar_t sv_coop_notelefrag = {"sv_coop_notelefrag", "-1", CVAR_ARCHIVE | CVAR_NOTIFY | CVAR_SERVERINFO};
+
+/* Co-op compatibility switches use a tri-state value: -1 inherits the
+ * profile, while 0 and 1 are explicit per-feature overrides. */
+qboolean SV_CoopFeatureEnabled (const cvar_t *feature, qboolean modern_default)
+{
+	if (feature && feature->value >= 0.0f)
+		return (int)feature->value;
+	return sv_coop_classic.value ? false : modern_default;
+}
 
 cvar_t pausable = {"pausable", "1", CVAR_NONE};
 
@@ -398,6 +410,12 @@ void Host_InitLocal (void)
 	Cvar_RegisterVariable (&developer);
 	Cvar_RegisterVariable (&map_checks);
 	Cvar_RegisterVariable (&coop);
+	Cvar_RegisterVariable (&sv_coop_classic);
+	Cvar_SetCallback (&sv_coop_classic, Host_Callback_Notify);
+	Cvar_RegisterVariable (&sv_coop_noplayerclip);
+	Cvar_SetCallback (&sv_coop_noplayerclip, Host_Callback_Notify);
+	Cvar_RegisterVariable (&sv_coop_notelefrag);
+	Cvar_SetCallback (&sv_coop_notelefrag, Host_Callback_Notify);
 	Cvar_RegisterVariable (&deathmatch);
 
 	Cvar_RegisterVariable (&campaign);
