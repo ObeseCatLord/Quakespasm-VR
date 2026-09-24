@@ -1642,7 +1642,11 @@ static qboolean CL_ComputeReplayPlayerMovement (entity_t *ent, cl_replay_result_
 		}
 	}
 
-	if (!shadow)
+	/* CSQC_Input_Frame can be stateful and is executed on each actual outgoing
+	 * command. The unsent preview has no corresponding filtered command, so
+	 * replay only committed command history for that mod instead of predicting
+	 * raw buttons/movement which its QC may suppress. */
+	if (!shadow && !cl.qcvm.extfuncs.CSQC_Input_Frame)
 	{
 		CL_PrepareReplayPreview (&preview, private_replay);
 		/* Preserve the established preview/input ordering. If the journal
