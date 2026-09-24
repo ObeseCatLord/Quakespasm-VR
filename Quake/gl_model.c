@@ -705,6 +705,35 @@ static const mod_akimbo_pair_t *Mod_AkimboPairForHalf (const char *name, int *ha
 	return NULL;
 }
 
+static qboolean Mod_AkimboPairGameMatches (const mod_akimbo_pair_t *pair)
+{
+	return !q_strcasecmp (COM_SkipPath (com_gamedir), pair->game) ||
+		(pair->weapon == DWELL_MDL_WEAPON_BERSERK &&
+			!q_strcasecmp (COM_SkipPath (com_gamedir), "dwellv2p2"));
+}
+
+qboolean Mod_GetAkimboPairPaths (const char *source, const char *half_paths[2])
+{
+	if (!half_paths)
+		return false;
+	half_paths[0] = NULL;
+	half_paths[1] = NULL;
+	if (!source)
+		return false;
+
+	for (int weapon = 0; weapon < countof (mod_akimbo_pairs); ++weapon)
+	{
+		const mod_akimbo_pair_t *pair = &mod_akimbo_pairs[weapon];
+		if (!strcmp (source, pair->source) && Mod_AkimboPairGameMatches (pair))
+		{
+			half_paths[0] = pair->halves[0];
+			half_paths[1] = pair->halves[1];
+			return true;
+		}
+	}
+	return false;
+}
+
 /*
 ==================
 Mod_GenerateAkimboHalf
@@ -729,9 +758,7 @@ static byte *Mod_GenerateAkimboHalf (const char *name,
 		return NULL;
 
 	pair = Mod_AkimboPairForHalf (name, &hand);
-	if (!pair || (q_strcasecmp (COM_SkipPath (com_gamedir), pair->game) &&
-		!(pair->weapon == DWELL_MDL_WEAPON_BERSERK &&
-			!q_strcasecmp (COM_SkipPath (com_gamedir), "dwellv2p2"))))
+	if (!pair || !Mod_AkimboPairGameMatches (pair))
 		return NULL;
 
 	/* Files in a higher priority search path are explicit private-model overrides. */

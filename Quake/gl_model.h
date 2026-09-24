@@ -773,6 +773,10 @@ void	 *Mod_Extradata_CheckSkin (qmodel_t *mod, int skinnum);
 void	 *Mod_Extradata (qmodel_t *mod);
 void	  Mod_TouchModel (const char *name);
 void	  Mod_RefreshSkins_f (cvar_t *var);
+/* Returns the recipe's private half paths for the current game, if defined.
+ * half_paths[0] is the physical left hand; half_paths[1] is the right hand.
+ * Returned path strings have static lifetime. */
+qboolean  Mod_GetAkimboPairPaths (const char *source, const char *half_paths[2]);
 qboolean  Mod_GetMD5Skeleton (const qmodel_t *mod, md5_skeleton_view_t *out);
 /* Returns frame 0's pinned stock-axe edge in scaled model-local coordinates.
  * The per-skin selected model must be the original MDL, not an MD5/MD3 replacement. */
