@@ -55,6 +55,10 @@ qboolean V_TrackedPresentationYaw (float *yaw);
 qboolean V_TrackedHandBodyOffset (int physical_hand, vec3_t out);
 qboolean V_TrackedPresentationHandAngles (int physical_hand, vec3_t angles);
 qboolean V_TrackedPresentationHandBodyOffset (int physical_hand, vec3_t out);
+/* Collision-free grip in the same presentation space as cl.viewent, plus
+ * the live hand angles used to orient the viewmodel. */
+qboolean V_TrackedPresentationHandWorldPose (int physical_hand,
+	vec3_t origin, vec3_t hand_angles);
 qboolean V_TrackedBodyOwnsRoomscale (void);
 qboolean V_TrackedViewmodelActive (void);
 qboolean V_TrackedViewmodelShouldHide (void);

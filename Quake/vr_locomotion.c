@@ -225,6 +225,31 @@ static void VR_LocomotionWorldToModelOffset (const float world[3],
 		local[1] = -local[1];
 }
 
+qboolean VR_LocomotionWorldToModelOffsetChecked (const float world[3],
+	const float viewmodel_angles[3], float scale, qboolean mirrored,
+	float local[3])
+{
+	vec3_t world_copy, angles_copy, result;
+
+	if (world)
+		VectorCopy (world, world_copy);
+	if (viewmodel_angles)
+		VectorCopy (viewmodel_angles, angles_copy);
+	if (local)
+		VR_LocomotionZero (local);
+	if (!world || !viewmodel_angles || !local ||
+		!VR_LocomotionFiniteVec3 (world_copy) ||
+		!VR_LocomotionFiniteVec3 (angles_copy) || !isfinite (scale) || scale <= 0.0f)
+		return false;
+
+	VR_LocomotionWorldToModelOffset (world_copy, angles_copy, scale, mirrored, result);
+	if (!VR_LocomotionFiniteVec3 (result))
+		return false;
+
+	VectorCopy (result, local);
+	return true;
+}
+
 qboolean VR_LocomotionMuzzleOffsetToWorld (const float local[3],
 	const float hand_angles[3], float gunmodelscale, float gunmodelpitch,
 	qboolean left_handed, float world[3])
@@ -266,6 +291,65 @@ qboolean VR_LocomotionMuzzleOffsetToWorld (const float local[3],
 	if (!VR_LocomotionFiniteVec3 (result))
 		return false;
 	VectorCopy (result, world);
+	return true;
+}
+
+qboolean VR_LocomotionWorldToMuzzleOffset (const float world[3],
+	const float hand_angles[3], float gunmodelscale, float gunmodelpitch,
+	qboolean left_handed, float local[3])
+{
+	vec3_t world_copy, hand_angles_copy, mutable_angles, model_angles;
+	vec3_t model_offset, aim_world, forward, right, up, result;
+
+	if (world)
+		VectorCopy (world, world_copy);
+	if (hand_angles)
+		VectorCopy (hand_angles, hand_angles_copy);
+	if (local)
+		VR_LocomotionZero (local);
+	if (!world || !hand_angles || !local ||
+		!VR_LocomotionFiniteVec3 (world_copy) ||
+		!VR_LocomotionFiniteVec3 (hand_angles_copy) ||
+		!isfinite (gunmodelscale) || gunmodelscale == 0.0f ||
+		!isfinite (gunmodelpitch))
+		return false;
+
+	if (left_handed)
+	{
+		if (!VR_LocomotionHandRotToViewmodelAngles (hand_angles_copy,
+			model_angles, gunmodelpitch))
+			return false;
+
+		/* Undo the reflected held-model transform, then restore aim space. */
+		VR_LocomotionWorldToModelOffset (world_copy, model_angles, 1.0f,
+			true, model_offset);
+		if (!VR_LocomotionFiniteVec3 (model_offset))
+			return false;
+		VR_LocomotionModelOffsetToWorld (model_offset, model_angles, 1.0f,
+			false, aim_world);
+		if (!VR_LocomotionFiniteVec3 (aim_world))
+			return false;
+	}
+	else
+		VectorCopy (world_copy, aim_world);
+
+	VectorCopy (hand_angles_copy, mutable_angles);
+	AngleVectors (mutable_angles, forward, right, up);
+	if (!VR_LocomotionFiniteVec3 (forward) || !VR_LocomotionFiniteVec3 (right) ||
+		!VR_LocomotionFiniteVec3 (up))
+		return false;
+
+	/* Transpose the orthonormal AngleVectors basis used by AimOffsetToWorld. */
+	result[0] = (right[0] * aim_world[0] + right[1] * aim_world[1] +
+		right[2] * aim_world[2]) / gunmodelscale;
+	result[1] = (up[0] * aim_world[0] + up[1] * aim_world[1] +
+		up[2] * aim_world[2]) / gunmodelscale;
+	result[2] = (forward[0] * aim_world[0] + forward[1] * aim_world[1] +
+		forward[2] * aim_world[2]) / gunmodelscale;
+	if (!VR_LocomotionFiniteVec3 (result))
+		return false;
+
+	VectorCopy (result, local);
 	return true;
 }
 

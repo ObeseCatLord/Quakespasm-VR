@@ -15,6 +15,13 @@ extern cvar_t vr_weapon_muzzle_offset[VR_WEAPON_CALIBRATION_MAX_SLOTS *
 
 void VR_WeaponCalibrationInit(void);
 void VR_WeaponCalibrationReset(void);
+qboolean VR_WeaponCalibrationAdjustActive(void);
+void VR_WeaponCalibrationAdjustCancel(void);
+void VR_WeaponCalibrationAdjustInput(int physical_hand,
+	qboolean trigger_down, qboolean pose_valid, const vec3_t live_origin,
+	const vec3_t live_hand_angles);
+qboolean VR_WeaponCalibrationAdjustPresentation(vec3_t origin,
+	vec3_t angles);
 qboolean VR_WeaponCalibrationReloadGame(void);
 qboolean VR_WeaponCalibrationApplySchema(
 	const vr_weapon_schema_entry_t *entries, size_t count);

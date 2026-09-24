@@ -19,7 +19,7 @@ engine port, so avoid a new weapon registry, input system or renderer.
 | Dominant trigger already has hysteresis and one input owner. Gameplay bindings are published from `VR_InputCommands`; focus/context loss gates and releases inputs. | [verified: `Quake/vr_input.c:3107-3180,3275-3395`] |
 | Local model offset/world and inverse math exists in the locomotion module but is currently private to that file. | [verified: `Quake/vr_locomotion.c:166-227` and header] |
 | The effective MP overlay can be nonzero and is not yet proven redundant on QBJ3/Enyo. | [verified: `docs/migration-weapon-calibration-unification.md`] |
-| Calibration schema persistence is absent from the current committed owner. | [verified: `Quake/vr_weapon_calibration.c:336-620`, search for schema write/cmd registration] |
+| Classic calibration schema persistence and `vrweaponsave` are available in the existing owner. | [verified: `Quake/vr_weapon_calibration.c`, `VR_WeaponCalibrationSave`] |
 
 ## Proposed smallest adapter
 
@@ -84,3 +84,12 @@ tasks enabled, head/wrist movement and a nearby wall, begin-while-held and
 release/repress trigger behavior, cancellation, and save/reload. Add a
 left-handed rolled/pitched enhanced-model case and MP overlay arithmetic before
 claiming broader parity. These remain implementation and integration gates.
+
+## Implementation checkpoint
+
+The first controller adjustment slice now supports classic alias grip recentering
+through `vradjustweapon`. It captures a collision-free presentation pose, freezes
+only that pose, suppresses the dominant trigger until release, preserves the MP
+overlay when editing the shared base offset, and saves through the existing
+schema owner. The local Linux build links. Muzzle adjustment, enhanced MD5
+profile persistence, a frozen muzzle cue, and hardware behavior checks remain.

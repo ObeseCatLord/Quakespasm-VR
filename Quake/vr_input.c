@@ -106,6 +106,9 @@ extern cvar_t vr_aimmode;
 
 static vr_input_hand_state_t vr_input_hands[2];
 static qboolean vr_input_emitted[MAX_KEYS];
+/* A calibration commit consumes only the dominant trigger, through release.
+ * Keep other buttons and movement under the normal input owner. */
+static qboolean vr_input_adjust_trigger_suppressed;
 static qboolean vr_input_context_valid;
 static vr_input_context_t vr_input_context;
 static unsigned int vr_input_reset_generation;
@@ -3117,7 +3120,8 @@ static void VR_InputUpdateTrigger (vr_input_hand_state_t *state, const vrxr_inpu
 }
 
 static void VR_InputBuildHandDesired (qboolean desired[2][MAX_KEYS], int hand,
-	const vrxr_input_t *input, const vr_input_context_t *context)
+	const vrxr_input_t *input, const vr_input_context_t *context,
+	qboolean suppress_trigger)
 {
 	vr_input_hand_state_t *state = &vr_input_hands[hand];
 	const qboolean logical_left = state->role == VR_INPUT_ROLE_LEFT;
@@ -3133,7 +3137,7 @@ static void VR_InputBuildHandDesired (qboolean desired[2][MAX_KEYS], int hand,
 			VR_InputAddKey (desired, hand, K_ABUTTON);
 
 		VR_InputUpdateTrigger (state, input);
-		if (!logical_left && state->trigger_down)
+		if (!logical_left && state->trigger_down && !suppress_trigger)
 			VR_InputAddKey (desired, hand, K_ABUTTON);
 		return;
 	}
@@ -3161,7 +3165,7 @@ static void VR_InputBuildHandDesired (qboolean desired[2][MAX_KEYS], int hand,
 	}
 
 	VR_InputUpdateTrigger (state, input);
-	if (state->trigger_down)
+	if (state->trigger_down && !suppress_trigger)
 	{
 		int trigger_key = logical_left ? K_LTRIGGER : K_RTRIGGER;
 		if (!logical_left && context->destination == key_menu)
@@ -3275,6 +3279,7 @@ void VR_InputInit (void)
 void VR_InputCommands (const vrxr_frame_t *frame)
 {
 	const unsigned int dispatch_epoch = ++vr_input_dispatch_epoch;
+	const int dominant = VR_InputDominantPhysicalHand ();
 	qboolean desired[2][MAX_KEYS] = {{false}};
 	vrxr_input_t input_hands[2];
 	vr_input_context_t context;
@@ -3299,6 +3304,13 @@ void VR_InputCommands (const vrxr_frame_t *frame)
 	if (frame)
 		memcpy (input_hands, frame->hands, sizeof (input_hands));
 	context = VR_InputCurrentContext ();
+	if (VR_WeaponCalibrationAdjustActive ())
+	{
+		vr_input_adjust_trigger_suppressed = true;
+		if (!frame || !frame->focused || frame->reference_changed ||
+			context.destination != key_game || context.input_grab)
+			VR_WeaponCalibrationAdjustCancel ();
+	}
 
 	if (!vr_input_context_valid)
 	{
@@ -3376,11 +3388,24 @@ void VR_InputCommands (const vrxr_frame_t *frame)
 		}
 
 		if (context.input_grab || context.destination == key_game || context.destination == key_menu)
-			VR_InputBuildHandDesired (desired, hand, input, &context);
+			VR_InputBuildHandDesired (desired, hand, input, &context,
+				hand == dominant && vr_input_adjust_trigger_suppressed);
 		else if (role == VR_INPUT_ROLE_LEFT && (input->pressed & (VRXR_BUTTON_SECONDARY | VRXR_BUTTON_MENU)))
 			// Preserve native Escape navigation from the startup console/chat
 			// without dispatching gameplay bindings into those destinations.
 			VR_InputAddKey (desired, hand, K_ESCAPE);
+	}
+
+	if (VR_WeaponCalibrationAdjustActive ())
+	{
+		vec3_t live_origin, live_angles;
+		const qboolean pose_valid = dominant >= 0 && dominant < 2 &&
+			input_hands[dominant].active &&
+			!vr_input_hands[dominant].wait_neutral &&
+			V_TrackedPresentationHandWorldPose (dominant, live_origin, live_angles);
+		VR_WeaponCalibrationAdjustInput (dominant,
+			vr_input_hands[dominant].trigger_down, pose_valid,
+			pose_valid ? live_origin : NULL, pose_valid ? live_angles : NULL);
 	}
 
 	if (context.input_grab)
@@ -3393,6 +3418,10 @@ void VR_InputCommands (const vrxr_frame_t *frame)
 	}
 
 	VR_InputEmitDesired (desired, &context, dispatch_epoch);
+	if (vr_input_adjust_trigger_suppressed && dominant >= 0 && dominant < 2 &&
+		frame && frame->focused && input_hands[dominant].active &&
+		VR_InputTriggerValue (&input_hands[dominant]) < 0.45f)
+		vr_input_adjust_trigger_suppressed = false;
 
 done:
 	--vr_input_commands_depth;
@@ -3863,6 +3892,8 @@ void VR_InputInvalidateMotion (void)
 
 void VR_InputClear (void)
 {
+	VR_WeaponCalibrationAdjustCancel ();
+	vr_input_adjust_trigger_suppressed = false;
 	VR_InputFBTReset ();
 	++vr_input_reset_generation;
 	vr_input_roomscale_position_valid = false;

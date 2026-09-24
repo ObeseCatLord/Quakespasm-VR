@@ -141,6 +141,7 @@ static void V_TrackedAimModeChanged (cvar_t *var)
 void V_ResetTrackedAim (void)
 {
 	V_ClearWeaponCollisionPresentation ();
+	VR_WeaponCalibrationAdjustCancel ();
 	tracked_local_yaw = 0;
 	tracked_body_anchor = false;
 	tracked_viewmodel_active = false;
@@ -458,6 +459,27 @@ qboolean V_TrackedPresentationHandBodyOffset (int physical_hand, vec3_t out)
 	return true;
 }
 
+qboolean V_TrackedPresentationHandWorldPose (int physical_hand,
+	vec3_t origin, vec3_t hand_angles)
+{
+	vec3_t body_offset, angles, position;
+
+	if (!origin || !hand_angles || !cl.entities || cl.viewentity <= 0 ||
+		cl.viewentity >= cl.num_entities ||
+		!V_TrackedPresentationHandBodyOffset (physical_hand, body_offset) ||
+		!V_TrackedPresentationHandAngles (physical_hand, angles))
+		return false;
+
+	VectorAdd (cl.entities[cl.viewentity].origin, body_offset, position);
+	position[2] += view_stair_delta;
+	for (int i = 0; i < 3; ++i)
+		if (!isfinite (position[i]) || !isfinite (angles[i]))
+			return false;
+	VectorCopy (position, origin);
+	VectorCopy (angles, hand_angles);
+	return true;
+}
+
 static void V_UpdateTrackedViewmodel (qboolean refdef_updated)
 {
 	const vrxr_frame_t *frame = GL_OpenXRFrame ();
@@ -470,33 +492,17 @@ static void V_UpdateTrackedViewmodel (qboolean refdef_updated)
 	if (controller_vr)
 	{
 		const int dominant = VR_InputDominantPhysicalHand ();
-		vec3_t body_offset, hand_angles, model_angles, origin;
-		if (V_TrackedPresentationHandBodyOffset (dominant, body_offset) &&
-			V_TrackedPresentationHandAngles (dominant, hand_angles) &&
+		vec3_t hand_angles, model_angles, origin;
+		if (V_TrackedPresentationHandWorldPose (dominant, origin, hand_angles) &&
 			VR_LocomotionHandRotToViewmodelAngles (hand_angles, model_angles,
 			vr_gunmodelpitch.value))
 		{
-			entity_t *ent = &cl.entities[cl.viewentity];
-			qboolean origin_valid = true;
-			for (int i = 0; i < 3; ++i)
-			{
-				origin[i] = ent->origin[i] + body_offset[i];
-				if (i == 2)
-					origin[i] += view_stair_delta;
-				if (!isfinite (origin[i]))
-				{
-					origin_valid = false;
-					break;
-				}
-			}
-			if (origin_valid)
-			{
-				VectorCopy (origin, cl.viewent.origin);
-				VectorCopy (model_angles, cl.viewent.angles);
-				tracked_viewmodel_active = true;
-				tracked_viewmodel_pose_applied = true;
-				return;
-			}
+			VR_WeaponCalibrationAdjustPresentation (origin, model_angles);
+			VectorCopy (origin, cl.viewent.origin);
+			VectorCopy (model_angles, cl.viewent.angles);
+			tracked_viewmodel_active = true;
+			tracked_viewmodel_pose_applied = true;
+			return;
 		}
 		// Once a tracked pose has reached the entity, do not render that stale
 		// transform during transient focus or controller-pose loss.
@@ -529,7 +535,8 @@ void V_PrepareWeaponCollisionPresentation (void)
 
 	tracked_weapon_collision_frame_valid = false;
 	VectorCopy (vec3_origin, tracked_weapon_collision_offset);
-	if (!VR_WeaponCollisionAuthorized () || !frame || !frame->focused ||
+	if (VR_WeaponCalibrationAdjustActive () ||
+		!VR_WeaponCollisionAuthorized () || !frame || !frame->focused ||
 		!frame->should_render || cls.state != ca_connected || cls.signon != SIGNONS ||
 		cls.demoplayback || key_dest != key_game || cl.intermission ||
 		cl.stats[STAT_HEALTH] <= 0 || chase_active.value ||

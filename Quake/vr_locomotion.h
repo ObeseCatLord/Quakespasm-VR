@@ -43,11 +43,24 @@ qboolean VR_LocomotionHandRotToViewmodelAngles (const float handrot[3],
 qboolean VR_LocomotionAimOffsetToWorld (const float local[3],
 	const float angles[3], float scale, float world[3]);
 
+/* Checked inverse of the held viewmodel transform. Requires finite inputs and
+ * a positive scale; local is zeroed on failure. Inputs may alias local. */
+qboolean VR_LocomotionWorldToModelOffsetChecked (const float world[3],
+	const float viewmodel_angles[3], float scale, qboolean mirrored,
+	float local[3]);
+
 /* Convert a source muzzle offset to world space, reflecting it through the
  * held viewmodel's Y plane for left-handed rendering. */
 qboolean VR_LocomotionMuzzleOffsetToWorld (const float local[3],
 	const float hand_angles[3], float gunmodelscale, float gunmodelpitch,
 	qboolean left_handed, float world[3]);
+
+/* Invert MuzzleOffsetToWorld, including the left-handed viewmodel reflection.
+ * Inputs and angles must be finite and gunmodelscale nonzero; local is zeroed
+ * on failure. Inputs may alias local. */
+qboolean VR_LocomotionWorldToMuzzleOffset (const float world[3],
+	const float hand_angles[3], float gunmodelscale, float gunmodelpitch,
+	qboolean left_handed, float local[3]);
 
 /* Convert OpenXR right/up/back tracking positions in metres to the inherited
  * body-relative Quake grip offset. tracking_yaw is a Quake yaw in degrees. */

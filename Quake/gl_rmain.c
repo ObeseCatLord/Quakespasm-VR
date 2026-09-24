@@ -29,6 +29,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "atomics.h"
 #include "vr_aim.h"
 #include "vr_input.h"
+#include "vr_weapon_calibration.h"
 #include "r_vrik_render.h"
 #include "vr_weapon_menu.h"
 
@@ -1131,7 +1132,8 @@ void R_PrepareVRCrosshair (void)
 	float size, alpha, depth, vertical_offset;
 
 	memset (&vr_crosshair_frame, 0, sizeof (vr_crosshair_frame));
-	if (!vulkan_globals.stereo_active || !cl.worldmodel || cls.signon != SIGNONS || cl.intermission ||
+	if (!vulkan_globals.stereo_active || VR_WeaponCalibrationAdjustActive () ||
+		!cl.worldmodel || cls.signon != SIGNONS || cl.intermission ||
 		!isfinite (vr_crosshair.value) ||
 		(vr_crosshair.value != 1.0f && vr_crosshair.value != 2.0f) ||
 		!isfinite (vr_crosshair_size.value) || !isfinite (vr_crosshair_alpha.value))

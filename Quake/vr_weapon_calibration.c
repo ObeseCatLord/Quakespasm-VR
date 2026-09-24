@@ -1,6 +1,12 @@
 #include "quakedef.h"
+#include "console.h"
+#include "keys.h"
+#include "glquake.h"
 #include "vr_locomotion.h"
+#include "vr_aim.h"
+#include "vr_input.h"
 #include "vr_weapon_calibration.h"
+#include "view.h"
 
 #include <limits.h>
 #include <math.h>
@@ -63,6 +69,29 @@ static char vr_weapon_calibration_cvar_names[VR_WEAPON_CALIBRATION_MAX_SLOTS]
 													 VR_WEAPON_CALIBRATION_VARS_PER_MUZZLE]
 													[24];
 static qboolean vr_weapon_calibration_initialized;
+
+extern cvar_t vr_aimmode;
+extern cvar_t vr_world_scale;
+
+typedef struct
+{
+	qboolean active;
+	qboolean armed;
+	qboolean created_slot;
+	int physical_hand;
+	int model_index;
+	int poseverttype;
+	int slot;
+	qmodel_t *model;
+	char model_name[MAX_QPATH];
+	float world_scale;
+	float gunmodelscale;
+	float gunmodelpitch;
+	vec3_t frozen_origin;
+	vec3_t frozen_model_angles;
+} vr_weapon_calibration_adjustment_t;
+
+static vr_weapon_calibration_adjustment_t vr_weapon_calibration_adjustment;
 
 /* Enhanced viewmodel fallbacks from the 2021 rerelease calibration. */
 static const vr_weapon_schema_entry_t vr_enhanced_weapon_fallbacks[] = {
@@ -763,7 +792,7 @@ static qboolean VR_CalibrationAppendNewBlock(vr_calibration_textbuf_t *buf,
 		VR_CalibrationTextAppendLine(buf, "}");
 }
 
-static void VR_WeaponCalibrationSave_f(void)
+static qboolean VR_WeaponCalibrationSave(void)
 {
 	vr_calibration_textbuf_t output = {0};
 	vr_weapon_schema_entry_t parsed[VR_WEAPON_SCHEMA_MAX_ENTRIES];
@@ -784,7 +813,7 @@ static void VR_WeaponCalibrationSave_f(void)
 		cls.signon != SIGNONS || cls.demoplayback)
 	{
 		Con_Printf("VR: vrweaponsave requires a connected, fully signed-on game\n");
-		return;
+		return false;
 	}
 	model_index = cl.stats[STAT_WEAPON];
 	if (model_index < 1 || model_index >= MAX_MODELS ||
@@ -794,39 +823,39 @@ static void VR_WeaponCalibrationSave_f(void)
 		!cl.viewent.model->name[0])
 	{
 		Con_Printf("VR: vrweaponsave requires a valid current alias viewmodel\n");
-		return;
+		return false;
 	}
 	model = cl.viewent.model;
 	if (!VR_CalibrationSafeModelToken(model->name))
 	{
 		Con_Printf("VR: cannot save an unsafe or unterminated viewmodel path token\n");
-		return;
+		return false;
 	}
 	alias_header = (aliashdr_t *)Mod_Extradata_CheckSkin(model,
 		cl.viewent.skinnum);
 	if (!alias_header)
 	{
 		Con_Printf("VR: vrweaponsave cannot read the active viewmodel alias header\n");
-		return;
+		return false;
 	}
 	if (alias_header->poseverttype == PV_MD5 ||
 		alias_header->poseverttype == PV_MD5_8)
 	{
 		Con_Printf("VR: vrweaponsave is classic-only; active viewmodel '%s' uses enhanced MD5 geometry\n",
 			model->name);
-		return;
+		return false;
 	}
 	if (alias_header->poseverttype != PV_QUAKE1 &&
 		alias_header->poseverttype != PV_QUAKE3)
 	{
 		Con_Printf("VR: vrweaponsave cannot save this viewmodel geometry format\n");
-		return;
+		return false;
 	}
 	slot = VR_FindCalibrationSlot(model->name);
 	if (slot < 0)
 	{
 		Con_Printf("VR: no classic calibration slot exists for %s\n", model->name);
-		return;
+		return false;
 	}
 	if (!isfinite(VR_WeaponOffsetCvar(slot, VR_WOFS_X).value) ||
 		!isfinite(VR_WeaponOffsetCvar(slot, VR_WOFS_Y).value) ||
@@ -845,7 +874,7 @@ static void VR_WeaponCalibrationSave_f(void)
 	{
 		Con_Printf("VR: cannot save non-finite calibration values or a non-positive held scale for %s\n",
 			model->name);
-		return;
+		return false;
 	}
 
 	file = COM_LoadFile("vr_weapons.txt", NULL);
@@ -924,6 +953,12 @@ done:
 	free(output.data);
 	if (file)
 		Mem_Free(file);
+	return ok;
+}
+
+static void VR_WeaponCalibrationSave_f(void)
+{
+	(void)VR_WeaponCalibrationSave();
 }
 
 static int VR_FindFreeCalibrationSlot(void)
@@ -966,6 +1001,333 @@ static void VR_ActivateCalibrationSlot(int slot, const char *viewmodel_path)
 	Cvar_SetQuick(&VR_WeaponOffsetCvar(slot, VR_WOFS_ID), viewmodel_path);
 }
 
+static qboolean VR_CalibrationAdjustGameplayContext(int *hand_out)
+{
+	const vrxr_frame_t *frame = GL_OpenXRFrame();
+	const vrxr_device_t *head;
+	const vrxr_device_t *hand;
+	int dominant;
+
+	if (hand_out)
+		*hand_out = -1;
+	if (!vr_weapon_calibration_initialized || !frame || !frame->sample_id ||
+		frame->reference_changed ||
+		!frame->focused || !frame->should_render || !V_UseTrackedView() ||
+		!isfinite(vr_aimmode.value) ||
+		vr_aimmode.value != VR_AIMMODE_CONTROLLER ||
+		cls.state != ca_connected || cls.signon != SIGNONS || cls.demoplayback ||
+		cl.intermission || cl.paused || key_dest != key_game ||
+		Key_InputGrabActive() || con_forcedup || !cl.worldmodel ||
+		cl.worldmodel->needload || !cl.entities || cl.viewentity <= 0 ||
+		cl.viewentity >= cl.num_entities || cl.stats[STAT_HEALTH] <= 0 ||
+		!isfinite(vr_world_scale.value) || vr_world_scale.value <= 0.0f ||
+		!isfinite(vr_gunmodelscale.value) || vr_gunmodelscale.value <= 0.0f ||
+		!isfinite(vr_gunmodelpitch.value))
+		return false;
+
+	head = &frame->devices[0];
+	if (!head->valid || !head->tracked || !head->connected ||
+		head->kind != VRXR_DEVICE_HEAD || head->hand != -1)
+		return false;
+	dominant = VR_InputDominantPhysicalHand();
+	if (dominant < 0 || dominant > 1)
+		return false;
+	hand = &frame->devices[dominant + 1];
+	if (!hand->valid || !hand->tracked || !hand->connected ||
+		hand->kind != VRXR_DEVICE_HAND || hand->hand != dominant)
+		return false;
+
+	if (hand_out)
+		*hand_out = dominant;
+	return true;
+}
+
+static qboolean VR_CalibrationAdjustCurrentModel(qmodel_t **model_out,
+	aliashdr_t **alias_out, int *model_index_out)
+{
+	int model_index = cl.stats[STAT_WEAPON];
+	qmodel_t *model;
+	aliashdr_t *alias_header;
+
+	if (model_out)
+		*model_out = NULL;
+	if (alias_out)
+		*alias_out = NULL;
+	if (model_index_out)
+		*model_index_out = 0;
+	if (!model_out || !alias_out || !model_index_out || model_index < 1 ||
+		model_index >= MAX_MODELS || !cl.viewent.model ||
+		!cl.model_precache[model_index] ||
+		cl.viewent.model != cl.model_precache[model_index] ||
+		cl.viewent.model->needload || cl.viewent.model->type != mod_alias ||
+		!cl.viewent.model->name[0] || cl.viewent.skinnum < 0)
+		return false;
+
+	model = cl.viewent.model;
+	alias_header = (aliashdr_t *)Mod_Extradata_CheckSkin(model,
+		cl.viewent.skinnum);
+	if (!alias_header)
+		return false;
+	*model_out = model;
+	*alias_out = alias_header;
+	*model_index_out = model_index;
+	return true;
+}
+
+qboolean VR_WeaponCalibrationAdjustActive(void)
+{
+	return vr_weapon_calibration_adjustment.active;
+}
+
+void VR_WeaponCalibrationAdjustCancel(void)
+{
+	vr_weapon_calibration_adjustment_t *adjustment =
+		&vr_weapon_calibration_adjustment;
+
+	if (adjustment->active && adjustment->created_slot &&
+		adjustment->slot >= 0 &&
+		adjustment->slot < VR_WEAPON_CALIBRATION_MAX_SLOTS &&
+		!strcmp(VR_WeaponOffsetCvar(adjustment->slot, VR_WOFS_ID).string,
+			adjustment->model_name))
+		VR_SetCalibrationSlotDefaults(adjustment->slot);
+	memset(adjustment, 0, sizeof(*adjustment));
+	adjustment->slot = -1;
+}
+
+qboolean VR_WeaponCalibrationAdjustPresentation(vec3_t origin,
+	vec3_t angles)
+{
+	vr_weapon_calibration_adjustment_t *adjustment =
+		&vr_weapon_calibration_adjustment;
+	if (!adjustment->active || !origin || !angles)
+		return false;
+	/* Network/model changes may arrive after the last input sample. Never show
+	 * a newly equipped weapon at the prior weapon's frozen grip. */
+	if (cl.viewent.model != adjustment->model ||
+		cl.stats[STAT_WEAPON] != adjustment->model_index ||
+		VR_InputDominantPhysicalHand() != adjustment->physical_hand)
+	{
+		VR_WeaponCalibrationAdjustCancel();
+		return false;
+	}
+	VectorCopy(adjustment->frozen_origin, origin);
+	VectorCopy(adjustment->frozen_model_angles, angles);
+	return true;
+}
+
+static void VR_WeaponCalibrationAdjustBegin_f(void)
+{
+	vr_weapon_calibration_adjustment_t *adjustment =
+		&vr_weapon_calibration_adjustment;
+	qmodel_t *model;
+	aliashdr_t *alias_header;
+	vec3_t raw_origin, raw_hand_angles, model_angles;
+	int dominant, model_index, slot;
+	qboolean created_slot = false;
+
+	if (adjustment->active)
+	{
+		VR_WeaponCalibrationAdjustCancel();
+		Con_Printf("VR: classic grip adjustment canceled\n");
+		return;
+	}
+	if (!VR_CalibrationAdjustGameplayContext(&dominant))
+	{
+		Con_Printf("VR: vradjustweapon requires focused, renderable controller aim during live gameplay\n");
+		return;
+	}
+	if (!VR_CalibrationAdjustCurrentModel(&model, &alias_header,
+		&model_index))
+	{
+		Con_Printf("VR: vradjustweapon requires the valid alias viewmodel selected by STAT_WEAPON\n");
+		return;
+	}
+	if (alias_header->poseverttype == PV_MD5 ||
+		alias_header->poseverttype == PV_MD5_8)
+	{
+		Con_Printf("VR: vradjustweapon is classic-only; '%s' uses enhanced MD5 geometry\n",
+			model->name);
+		return;
+	}
+	if (alias_header->poseverttype != PV_QUAKE1 &&
+		alias_header->poseverttype != PV_QUAKE3)
+	{
+		Con_Printf("VR: vradjustweapon requires classic Quake 1 or Quake 3 alias geometry\n");
+		return;
+	}
+	if (!VR_CalibrationSafeModelToken(model->name))
+	{
+		Con_Printf("VR: vradjustweapon cannot save an unsafe or unterminated viewmodel path\n");
+		return;
+	}
+	if (!V_TrackedPresentationHandWorldPose(dominant, raw_origin,
+		raw_hand_angles) || !VR_CalibrationVectorIsFinite(raw_origin) ||
+		!VR_CalibrationVectorIsFinite(raw_hand_angles) ||
+		!VR_LocomotionHandRotToViewmodelAngles(raw_hand_angles, model_angles,
+			vr_gunmodelpitch.value) || !VR_CalibrationVectorIsFinite(model_angles))
+	{
+		Con_Printf("VR: vradjustweapon could not capture the live controller grip pose\n");
+		return;
+	}
+
+	slot = VR_FindCalibrationSlot(model->name);
+	if (slot < 0)
+	{
+		slot = VR_FindFreeCalibrationSlot();
+		if (slot < 0)
+		{
+			Con_Printf("VR: vradjustweapon has no free classic calibration slot\n");
+			return;
+		}
+		VR_ActivateCalibrationSlot(slot, model->name);
+		created_slot = true;
+	}
+
+	memset(adjustment, 0, sizeof(*adjustment));
+	adjustment->active = true;
+	adjustment->physical_hand = dominant;
+	adjustment->model_index = model_index;
+	adjustment->poseverttype = alias_header->poseverttype;
+	adjustment->slot = slot;
+	adjustment->created_slot = created_slot;
+	adjustment->model = model;
+	q_strlcpy(adjustment->model_name, model->name,
+		sizeof(adjustment->model_name));
+	adjustment->world_scale = vr_world_scale.value;
+	adjustment->gunmodelscale = vr_gunmodelscale.value;
+	adjustment->gunmodelpitch = vr_gunmodelpitch.value;
+	VectorCopy(raw_origin, adjustment->frozen_origin);
+	VectorCopy(model_angles, adjustment->frozen_model_angles);
+	Con_Printf("VR: classic grip adjustment active for %s; release the trigger, then press to set the grip\n",
+		adjustment->model_name);
+}
+
+static void VR_CalibrationAdjustInputAbort(const char *reason)
+{
+	Con_Printf("VR: classic grip adjustment canceled (%s)\n", reason);
+	VR_WeaponCalibrationAdjustCancel();
+}
+
+void VR_WeaponCalibrationAdjustInput(int physical_hand,
+	qboolean trigger_down, qboolean pose_valid, const vec3_t live_origin,
+	const vec3_t live_hand_angles)
+{
+	vr_weapon_calibration_adjustment_t *adjustment =
+		&vr_weapon_calibration_adjustment;
+	qmodel_t *model;
+	aliashdr_t *alias_header;
+	vec3_t world_delta, local_delta, effective_offset, new_base;
+	float effective_scale, inverse_scale;
+	int dominant, model_index, component;
+	qboolean multiplayer;
+
+	if (!adjustment->active)
+		return;
+	if (!VR_CalibrationAdjustGameplayContext(&dominant))
+	{
+		VR_CalibrationAdjustInputAbort("gameplay or OpenXR context changed");
+		return;
+	}
+	if (physical_hand != adjustment->physical_hand || dominant != physical_hand)
+	{
+		VR_CalibrationAdjustInputAbort("active controller hand changed");
+		return;
+	}
+	if (!pose_valid || !live_origin || !live_hand_angles ||
+		!VR_CalibrationVectorIsFinite(live_origin) ||
+		!VR_CalibrationVectorIsFinite(live_hand_angles))
+	{
+		VR_CalibrationAdjustInputAbort("controller pose became invalid");
+		return;
+	}
+	if (vr_world_scale.value != adjustment->world_scale ||
+		vr_gunmodelscale.value != adjustment->gunmodelscale ||
+		vr_gunmodelpitch.value != adjustment->gunmodelpitch)
+	{
+		VR_CalibrationAdjustInputAbort("viewmodel scale or pitch changed");
+		return;
+	}
+	if (!VR_CalibrationAdjustCurrentModel(&model, &alias_header,
+		&model_index) || model_index != adjustment->model_index ||
+		model != adjustment->model || strcmp(model->name,
+			adjustment->model_name) ||
+		VR_FindCalibrationSlot(adjustment->model_name) != adjustment->slot ||
+		alias_header->poseverttype != adjustment->poseverttype ||
+		(alias_header->poseverttype != PV_QUAKE1 &&
+		 alias_header->poseverttype != PV_QUAKE3))
+	{
+		VR_CalibrationAdjustInputAbort("viewmodel identity or format changed");
+		return;
+	}
+	if (!adjustment->armed)
+	{
+		if (!trigger_down)
+			adjustment->armed = true;
+		return;
+	}
+	if (!trigger_down)
+		return;
+
+	VectorSubtract(adjustment->frozen_origin, live_origin, world_delta);
+	inverse_scale = (adjustment->world_scale / 0.75f) *
+		adjustment->gunmodelscale;
+	if (!isfinite(inverse_scale) || inverse_scale <= 0.0f ||
+		!VR_LocomotionWorldToModelOffsetChecked(world_delta,
+			adjustment->frozen_model_angles, inverse_scale,
+			adjustment->physical_hand == 0, local_delta) ||
+		!VR_WeaponCalibrationLookupHeld(adjustment->model_name, false,
+			cl.maxclients > 1, effective_offset, &effective_scale))
+	{
+		VR_CalibrationAdjustInputAbort("could not convert the grip movement");
+		return;
+	}
+
+	multiplayer = cl.maxclients > 1;
+	for (component = 0; component < 3; ++component)
+	{
+		new_base[component] = effective_offset[component] + local_delta[component];
+		if (multiplayer &&
+			vr_weapon_calibration_slots[adjustment->slot].has_mp_held_offset)
+			new_base[component] -=
+				vr_weapon_calibration_slots[adjustment->slot].mp_held_offset[component];
+	}
+	if (!VR_CalibrationVectorIsFinite(new_base) || !isfinite(effective_scale) ||
+		effective_scale <= 0.0f)
+	{
+		VR_CalibrationAdjustInputAbort("resulting held offset is invalid");
+		return;
+	}
+
+	{
+		const float old_base[3] = {
+			VR_WeaponOffsetCvar(adjustment->slot, VR_WOFS_X).value,
+			VR_WeaponOffsetCvar(adjustment->slot, VR_WOFS_Y).value,
+			VR_WeaponOffsetCvar(adjustment->slot, VR_WOFS_Z).value
+		};
+		Cvar_SetValueQuick(&VR_WeaponOffsetCvar(adjustment->slot, VR_WOFS_X),
+			new_base[0]);
+		Cvar_SetValueQuick(&VR_WeaponOffsetCvar(adjustment->slot, VR_WOFS_Y),
+			new_base[1]);
+		Cvar_SetValueQuick(&VR_WeaponOffsetCvar(adjustment->slot, VR_WOFS_Z),
+			new_base[2]);
+		if (!VR_WeaponCalibrationSave())
+		{
+			Cvar_SetValueQuick(&VR_WeaponOffsetCvar(adjustment->slot, VR_WOFS_X),
+				old_base[0]);
+			Cvar_SetValueQuick(&VR_WeaponOffsetCvar(adjustment->slot, VR_WOFS_Y),
+				old_base[1]);
+			Cvar_SetValueQuick(&VR_WeaponOffsetCvar(adjustment->slot, VR_WOFS_Z),
+				old_base[2]);
+			VR_CalibrationAdjustInputAbort("calibration could not be persisted");
+			return;
+		}
+	}
+
+	Con_Printf("VR: classic grip adjusted for %s\n", adjustment->model_name);
+	adjustment->created_slot = false;
+	VR_WeaponCalibrationAdjustCancel();
+}
+
 void VR_WeaponCalibrationInit(void)
 {
 	static const char *held_suffixes[VR_WEAPON_CALIBRATION_VARS_PER_WEAPON] = {
@@ -1005,12 +1367,14 @@ void VR_WeaponCalibrationInit(void)
 	}
 	vr_weapon_calibration_initialized = true;
 	Cmd_AddCommand("vrweaponsave", VR_WeaponCalibrationSave_f);
+	Cmd_AddCommand("vradjustweapon", VR_WeaponCalibrationAdjustBegin_f);
 }
 
 void VR_WeaponCalibrationReset(void)
 {
 	int slot;
 
+	VR_WeaponCalibrationAdjustCancel();
 	memset(vr_weapon_calibration_slots, 0,
 		   sizeof(vr_weapon_calibration_slots));
 	if (!vr_weapon_calibration_initialized)
