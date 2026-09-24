@@ -108,6 +108,26 @@ lifetime. This avoids a second model loader or retaining whole pose streams.
 Enhanced replacements need separate geometry/animation pinning before melee
 admission; until then they retain native trigger behavior.
 
+The edge cache alone is not a world-space contact pose. The target's held
+viewmodel matrix is assembled in `Quake/r_alias.c:R_AliasModelMatrix` from the
+loaded alias header, the calibrated held offset and scale, `vr_world_scale`,
+`vr_gunmodelscale`, `vr_gunmodely`, entity scale and optional left-hand Y
+reflection. `Quake/view.c:V_UpdateTrackedViewmodel` owns the tracked origin and
+angles. The client producer must use that same transform (or a shared narrow
+helper extracted from it) for both ready-pose edge points; applying only the
+existing muzzle-offset transform would diverge from the visible axe. The
+physics sample remains raw and unretracted, so presentation wall collision
+must not shorten its physical stroke. This is a required parity check when
+connecting the cached edge to the command producer.
+
+The `2.0` model loader now caches the exact stock MDL ready-pose edge only
+after matching source size/CRC, format, topology, connected vertex pair and
+original scale. `Mod_GetStockAxeEdge` also rejects a selected MD3/MD5 skin
+replacement. The record retains only the two model-local points and is cleared
+on model reload/free. This does not yet send a melee sample or enable the
+server's MELEE capability; the client transform and native-QC outcome adapter
+are the next coupled implementation step.
+
 ## Collision-button implementation checkpoint
 
 The first contact producer now sends a single anatomical hand's raw grip,

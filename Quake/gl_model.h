@@ -351,6 +351,14 @@ typedef enum
 	PV_SIZE
 } poseverttype_t;
 
+/* Source-verified ready-pose edge data for the exact stock v_axe.mdl. */
+typedef struct stockaxe_edge_s
+{
+	qboolean valid;
+	vec3_t base;
+	vec3_t tip;
+} stockaxe_edge_t;
+
 #define MAX_FRAMEGROUPS 4
 
 typedef struct aliashdr_s
@@ -747,6 +755,7 @@ typedef struct qmodel_s
 	//
 	byte *extradata[PV_SIZE]; // only access through Mod_Extradata
 	md5_skeleton_data_t *md5_skeleton; // retained CPU data for MD5 models
+	stockaxe_edge_t stockaxe_edge; // two copied vertices; source poses are not retained
 
 	// Ray tracing
 	VkAccelerationStructureKHR blas;
@@ -765,6 +774,9 @@ void	 *Mod_Extradata (qmodel_t *mod);
 void	  Mod_TouchModel (const char *name);
 void	  Mod_RefreshSkins_f (cvar_t *var);
 qboolean  Mod_GetMD5Skeleton (const qmodel_t *mod, md5_skeleton_view_t *out);
+/* Returns frame 0's pinned stock-axe edge in scaled model-local coordinates.
+ * The per-skin selected model must be the original MDL, not an MD5/MD3 replacement. */
+qboolean  Mod_GetStockAxeEdge (qmodel_t *mod, int skinnum, stockaxe_edge_t *out);
 
 mleaf_t *Mod_PointInLeaf (float *p, qmodel_t *model);
 byte	*Mod_LeafPVS (mleaf_t *leaf, qmodel_t *model);

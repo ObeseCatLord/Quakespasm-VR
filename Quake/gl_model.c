@@ -33,7 +33,8 @@ extern mz_ulong mz_crc32 (mz_ulong crc, const unsigned char *ptr, size_t buf_len
 
 static void		 Mod_LoadSpriteModel (qmodel_t *mod, void *buffer);
 static void		 Mod_LoadBrushModel (qmodel_t *mod, const char *loadname, void *buffer);
-static void		 Mod_LoadAliasModel (qmodel_t *mod, void *buffer);
+static void		 Mod_LoadAliasModel (qmodel_t *mod, void *buffer,
+	qfilesize_t source_size);
 static qboolean	 Mod_LoadMD5MeshModel (qmodel_t *mod, const void *buffer,
 	const char *asset_name, qfilesize_t asset_size);
 static void		 Mod_LoadMD3Model (qmodel_t *mod, const void *buffer);
@@ -331,6 +332,31 @@ void *Mod_Extradata (qmodel_t *mod)
 	return Mod_Extradata_CheckSkin (mod, 0);
 }
 
+qboolean Mod_GetStockAxeEdge (qmodel_t *mod, int skinnum, stockaxe_edge_t *out)
+{
+	aliashdr_t *selected;
+
+	if (!out)
+		return false;
+	memset (out, 0, sizeof (*out));
+	if (!mod || skinnum < 0 || !Mod_LoadModel (mod, false) ||
+		mod->type != mod_alias || strcmp (mod->name, "progs/v_axe.mdl"))
+		return false;
+
+	selected = (aliashdr_t *)Mod_Extradata_CheckSkin (mod, skinnum);
+	if (!selected || selected != (aliashdr_t *)mod->extradata[PV_QUAKE1] ||
+		selected->poseverttype != PV_QUAKE1)
+		return false;
+
+	/* Only Mod_CacheStockAxeEdge can set valid, after checking the original
+	 * source bytes and topology. Model reload/free clears this record. */
+	if (!mod->stockaxe_edge.valid)
+		return false;
+
+	*out = mod->stockaxe_edge;
+	return true;
+}
+
 /*
 ===============
 Mod_PointInLeaf
@@ -493,6 +519,8 @@ Mod_FreeModelMemory
 */
 static void Mod_FreeModelMemory (qmodel_t *mod)
 {
+	memset (&mod->stockaxe_edge, 0, sizeof (mod->stockaxe_edge));
+
 	if (mod->name[0] != '*')
 	{
 		if ((mod->type == mod_sprite) && (mod->extradata[PV_QUAKE1]))
@@ -656,6 +684,9 @@ static qmodel_t *Mod_LoadModel (qmodel_t *mod, qboolean crash)
 	if (!mod->needload)
 		return mod;
 
+	/* The copied edge belongs to this exact load of the source model. */
+	memset (&mod->stockaxe_edge, 0, sizeof (mod->stockaxe_edge));
+
 	InvalidateTraceLineCache ();
 
 	if (mod->type == mod_alias)
@@ -769,7 +800,7 @@ static qmodel_t *Mod_LoadModel (qmodel_t *mod, qboolean crash)
 	switch (mod_type)
 	{
 	case IDPOLYHEADER:
-		Mod_LoadAliasModel (mod, buf);
+		Mod_LoadAliasModel (mod, buf, buf_filesize);
 		break;
 
 	case IDSPRITEHEADER:
@@ -4130,12 +4161,74 @@ static void check_tris_size (size_t numtris)
 	}
 }
 
+static void Mod_CacheStockAxeEdge (qmodel_t *mod, byte *mod_base,
+	qfilesize_t source_size, aliashdr_t *pheader)
+{
+	static const float expected_scale[3] = {
+		0.2244189084f, 0.2454846501f, 0.2942478061f
+	};
+	const int ready_frame = 0;
+	const int base_vertex = 83;
+	const int tip_vertex = 82;
+	stockaxe_edge_t edge;
+	uint32_t source_crc32;
+	qboolean connected = false;
+
+	if (strcmp (mod->name, "progs/v_axe.mdl") || source_size != 57908)
+		return;
+
+	source_crc32 = (uint32_t)mz_crc32 (MZ_CRC32_INIT, mod_base,
+		(size_t)source_size);
+	if (source_crc32 != 0x2aa03605u ||
+		ReadLongUnaligned (mod_base + offsetof (mdl_t, ident)) != IDPOLYHEADER ||
+		ReadLongUnaligned (mod_base + offsetof (mdl_t, version)) != ALIAS_VERSION ||
+		pheader->poseverttype != PV_QUAKE1 || pheader->numverts != 98 ||
+		pheader->numtris != 184 || pheader->numframes != 9 ||
+		pheader->frames[ready_frame].numposes != 1 ||
+		pheader->frames[ready_frame].firstpose != 0 || pheader->numposes < 1 ||
+		!poseverts[pheader->frames[ready_frame].firstpose])
+		return;
+
+	for (int axis = 0; axis < 3; ++axis)
+	{
+		float lower = expected_scale[axis] - 0.0000001f;
+		float upper = expected_scale[axis] + 0.0000001f;
+		if (!(pheader->scale[axis] > lower && pheader->scale[axis] < upper))
+			return;
+	}
+
+	for (int i = 0; i < pheader->numtris && !connected; ++i)
+	{
+		qboolean has_base = false, has_tip = false;
+		for (int j = 0; j < 3; ++j)
+		{
+			has_base |= triangles[i].vertindex[j] == base_vertex;
+			has_tip |= triangles[i].vertindex[j] == tip_vertex;
+		}
+		connected = has_base && has_tip;
+	}
+	if (!connected)
+		return;
+
+	memset (&edge, 0, sizeof (edge));
+	for (int axis = 0; axis < 3; ++axis)
+	{
+		edge.base[axis] = poseverts[0][base_vertex].v[axis] *
+			pheader->scale[axis] + pheader->scale_origin[axis];
+		edge.tip[axis] = poseverts[0][tip_vertex].v[axis] *
+			pheader->scale[axis] + pheader->scale_origin[axis];
+	}
+	edge.valid = true;
+	mod->stockaxe_edge = edge;
+}
+
 /*
 =================
 Mod_LoadAliasModel
 =================
 */
-static void Mod_LoadAliasModel (qmodel_t *mod, void *buffer)
+static void Mod_LoadAliasModel (qmodel_t *mod, void *buffer,
+	qfilesize_t source_size)
 {
 	int	  i, j;
 	byte *pinstverts;
@@ -4260,6 +4353,9 @@ static void Mod_LoadAliasModel (qmodel_t *mod, void *buffer)
 	}
 
 	pheader->numposes = posenum;
+
+	/* Copy only the pinned ready-pose edge while the source pose is live. */
+	Mod_CacheStockAxeEdge (mod, mod_base, source_size, pheader);
 
 	mod->type = mod_alias;
 
