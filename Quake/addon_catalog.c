@@ -342,10 +342,12 @@ static int AddonCatalog_InstallThread (void *userdata)
 	ok = AddonCatalog_Download(url, AddonCatalog_WriteFile, file, &status, &error);
 	if (fclose(file) != 0)
 		ok = false;
-	if (!ok || AddonAtomicGet(&addon_progress) != job->entry.size)
+	if (!ok || AddonAtomicGet(&addon_cancel) ||
+		AddonAtomicGet(&addon_progress) != job->entry.size)
 	{
 		remove(tmp);
-		AddonCatalog_SetMessage(error ? error : "Add-on download failed size check");
+		AddonCatalog_SetMessage(AddonAtomicGet(&addon_cancel) ? "Add-on download cancelled" :
+			(error ? error : "Add-on download failed size check"));
 		AddonAtomicSet(&addon_state, ADDON_CATALOG_ERROR);
 		free(job);
 		return 1;
