@@ -31,6 +31,7 @@ typedef struct {
     float radio_gain, voice_distance;
     float radio_filter, radio_compression, radio_drive, occlusion;
     float reverb, voice_reverb;
+    float underwater_alpha;
     int room_mode, room_rays, room_bounces;
 } sa_settings_t;
 /* Callback-published cursor for one non-stream source. */

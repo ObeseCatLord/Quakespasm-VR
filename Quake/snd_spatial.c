@@ -62,6 +62,7 @@ static sa_settings_t spatial_settings = {
 	.occlusion = 1.0f,
 	.reverb = 0.25f,
 	.voice_reverb = 0.12f,
+	.underwater_alpha = 1.0f,
 	.room_mode = 2,
 	.room_rays = 2048,
 	.room_bounces = 16
@@ -569,6 +570,17 @@ void Spatial_SetSettings(const sa_settings_t *settings)
 	spatial_settings = *settings;
 	Spatial_ApplyCvars();
 	SA_SetSettings(spatial_renderer, &spatial_settings);
+}
+
+void Spatial_SetUnderwaterAlpha(float alpha)
+{
+	if (!isfinite(alpha))
+		alpha = 1.0f;
+	if (alpha < 0.0f)
+		alpha = 0.0f;
+	if (alpha > 1.0f)
+		alpha = 1.0f;
+	spatial_settings.underwater_alpha = alpha;
 }
 
 void Spatial_Listener(const float *origin, const float *forward,

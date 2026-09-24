@@ -54,6 +54,7 @@ struct sa_renderer_s {
     sa_playback_t *playback;
     sa_ring_t *voice, music, self;
     float self_gain, render_self_gain, last_self_gain;
+    float underwater_accum[2];
     sa_atomic_t clock;
     float mono[SA_BLOCK], left[SA_BLOCK], right[SA_BLOCK];
     float mixed[SA_BLOCK * 2], radio_pcm[SA_BLOCK];
@@ -148,6 +149,8 @@ sa_renderer_t *SA_Create(int sources, int streams)
     r->settings.radio_gain = 0.45f;
     r->settings.voice_distance = 768;
     r->settings.radio_filter = r->settings.occlusion = 1;
+    r->settings.underwater_alpha = 1.0f;
+    r->render_settings.underwater_alpha = 1.0f;
     r->listener.forward[0] = 1;
     r->listener.right[1] = -1;
     r->listener.up[2] = 1;
@@ -203,6 +206,7 @@ void SA_Reset(sa_renderer_t *r)
         r->playback[i].effect = effect;
     }
     memset(r->voice, 0, r->streams * sizeof(*r->voice));
+    memset(r->underwater_accum, 0, sizeof(r->underwater_accum));
     SA_ClearMusic(r);
     r->remainder = 0;
     sa_atomic_set(&r->clock, 0);
@@ -560,10 +564,23 @@ void SA_Render(sa_renderer_t *r, float *stereo, int frames)
 {
     rendering = r;
     while (frames > 0) {
-        int count;
+        int count, i;
+        float alpha;
         if (!r->remainder) { render_block(r); r->remainder = SA_BLOCK; }
         count = frames < r->remainder ? frames : r->remainder;
         memcpy(stereo, r->mixed + 2 * (SA_BLOCK - r->remainder), count * 2 * sizeof(float));
+        alpha = clamp01(r->render_settings.underwater_alpha);
+        if (alpha >= 1.0f) {
+            r->underwater_accum[0] = stereo[2 * (count - 1)];
+            r->underwater_accum[1] = stereo[2 * (count - 1) + 1];
+        } else {
+            for (i = 0; i < count; ++i) {
+                r->underwater_accum[0] += alpha * (stereo[2 * i] - r->underwater_accum[0]);
+                r->underwater_accum[1] += alpha * (stereo[2 * i + 1] - r->underwater_accum[1]);
+                stereo[2 * i] = r->underwater_accum[0];
+                stereo[2 * i + 1] = r->underwater_accum[1];
+            }
+        }
         r->remainder -= count; frames -= count; stereo += 2 * count;
         sa_atomic_add(&r->clock, count);
     }

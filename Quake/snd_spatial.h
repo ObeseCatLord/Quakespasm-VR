@@ -32,6 +32,8 @@ void Spatial_Update(void);
 void Spatial_Listener(const float *origin, const float *forward,
 	const float *right, const float *up);
 void Spatial_SetSettings(const sa_settings_t *settings);
+/* Publishes S_SetUnderwaterIntensity's already-smoothed filter coefficient. */
+void Spatial_SetUnderwaterAlpha(float alpha);
 int Spatial_Clock(void);
 unsigned Spatial_ChannelGeneration(int channel);
 /* Zero until finished; otherwise returns the finished source generation. */
@@ -92,6 +94,7 @@ void Spatial_RoomStats(sa_room_stats_t *stats);
 #define Spatial_Update() ((void)0)
 #define Spatial_Listener(origin, forward, right, up) ((void)0)
 #define Spatial_SetSettings(settings) ((void)0)
+#define Spatial_SetUnderwaterAlpha(alpha) ((void)0)
 #define Spatial_Clock() 0
 #define Spatial_ChannelGeneration(channel) 0
 #define Spatial_Finished(channel) 0
