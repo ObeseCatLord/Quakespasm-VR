@@ -23,6 +23,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 
 #include "quakedef.h"
 #include "pmove.h"
+#include "vr_gorilla.h"
 #include "vr_weapon_calibration.h"
 #include "vr_melee_stock_qc.h"
 
@@ -47,6 +48,7 @@ solid_edge items only clip against bsp models.
 cvar_t sv_friction = {"sv_friction", "4", CVAR_NOTIFY | CVAR_SERVERINFO};
 cvar_t sv_stopspeed = {"sv_stopspeed", "100", CVAR_NONE};
 cvar_t sv_gravity = {"sv_gravity", "800", CVAR_NOTIFY | CVAR_SERVERINFO};
+extern cvar_t sv_maxspeed;
 cvar_t sv_maxvelocity = {"sv_maxvelocity", "2000", CVAR_NONE};
 cvar_t sv_nostep = {"sv_nostep", "0", CVAR_NONE};
 cvar_t sv_freezenonclients = {"sv_freezenonclients", "0", CVAR_NONE};
@@ -2866,7 +2868,8 @@ SV_Physics_Client
 Player character actions
 ================
 */
-static void SV_Physics_ClientWalk (edict_t *ent, sv_client_move_frame_t *move_frame)
+static void SV_Physics_ClientWalk (edict_t *ent, sv_client_move_frame_t *move_frame,
+	qboolean gorilla_braced)
 {
 	vec3_t	 move_velocity, old_velocity;
 	qboolean supported_by_pusher;
@@ -2875,7 +2878,8 @@ static void SV_Physics_ClientWalk (edict_t *ent, sv_client_move_frame_t *move_fr
 
 	supported_by_pusher = SV_ClientMoveFrameHasGroundSupport (move_frame);
 	in_water = SV_CheckWater (ent);
-	apply_gravity = !supported_by_pusher && !in_water && !((int)ent->v.flags & FL_WATERJUMP);
+	apply_gravity = !gorilla_braced && !supported_by_pusher && !in_water &&
+		!((int)ent->v.flags & FL_WATERJUMP);
 
 	if (apply_gravity)
 		SV_AddGravity (ent, move_velocity);
@@ -3159,6 +3163,7 @@ static void SV_VRContactInvalidateAccepted (client_t *client)
 {
 	if (!client)
 		return;
+	SV_GorillaInvalidateAccepted (client);
 	SV_ResetPrivateVRContactContinuity (client);
 	if (!client->private_vr_contact_cursor_valid ||
 		client->lastmovemessage > client->private_vr_contact_last_sequence)
@@ -4144,6 +4149,38 @@ static qboolean SV_VRContactButtonTouchAllowed (edict_t *button,
 	return true;
 }
 
+/* Reuse the stock callback check, then admit only donor-audited AD-family
+ * callbacks by exact VM identity. A classname alone is not authorization to
+ * invoke arbitrary mod QC from an extra physical contact path. */
+static qboolean SV_GorillaButtonTouchAllowed (edict_t *button)
+{
+	const char *classname, *name;
+	dfunction_t *touch;
+	int index, statement;
+	if (SV_VRContactButtonTouchAllowed (button, NULL))
+		return true;
+	if (!button || button->free || button->v.solid != SOLID_BSP ||
+		!button->v.touch || !isfinite (button->v.health) ||
+		button->v.health > 0 || !qcvm->progs || !qcvm->functions)
+		return false;
+	classname = PR_GetString (button->v.classname);
+	if (!classname || strcmp (classname, "func_button"))
+		return false;
+	switch (qcvm->progscrc)
+	{
+	case 10963: index = 1790; statement = 85767; break; /* AD */
+	case 10710: index = 1514; statement = 69393; break; /* Ravenkeep */
+	case 43865: index = 3413; statement = 142718; break; /* Mjolnir */
+	default: return false;
+	}
+	if (index >= qcvm->progs->numfunctions || button->v.touch != index)
+		return false;
+	touch = &qcvm->functions[index];
+	name = PR_GetString (touch->s_name);
+	return !touch->numparms && touch->first_statement == statement &&
+		name && !strcmp (name, "func_button_touch");
+}
+
 typedef struct sv_vr_contact_button_hit_s
 {
 	edict_t *button;
@@ -4392,6 +4429,7 @@ static void SV_VRContactObserveSpawn (client_t *client)
 {
 	if (!client->spawned)
 	{
+		SV_GorillaInvalidateAccepted (client);
 		SV_ResetPrivateVRContactContinuity (client);
 		client->private_vr_contact_spawn_seen = false;
 		return;
@@ -4402,6 +4440,7 @@ static void SV_VRContactObserveSpawn (client_t *client)
 	{
 		/* A death observed at the frame boundary breaks pose continuity before
 		 * QC can respawn this player during the same command. */
+		SV_GorillaInvalidateAccepted (client);
 		SV_ResetPrivateVRContactContinuity (client);
 		return;
 	}
@@ -5033,6 +5072,259 @@ cleanup:
 	return command_completed;
 }
 
+typedef struct
+{
+	edict_t *player;
+	edict_t *impacts[8];
+	int num_impacts;
+} sv_gorilla_trace_context_t;
+
+static vr_gorilla_trace_t SV_GorillaTrace (void *context,
+	const float *start, const float *end, int body)
+{
+	sv_gorilla_trace_context_t *ctx = context;
+	edict_t *player = ctx->player;
+	vec3_t from, to;
+	trace_t trace;
+	vr_gorilla_trace_t result;
+	int i;
+
+	VectorCopy (start, from);
+	VectorCopy (end, to);
+	trace = SV_Move (from, body ? player->v.mins : vec3_origin,
+		body ? player->v.maxs : vec3_origin, to,
+		body ? MOVE_NORMAL : MOVE_NOMONSTERS, player);
+	memset (&result, 0, sizeof (result));
+	result.fraction = trace.fraction;
+	result.startsolid = trace.startsolid;
+	result.allsolid = trace.allsolid;
+	VectorCopy (trace.endpos, result.end);
+	VectorCopy (trace.plane.normal, result.normal);
+	result.entity = trace.ent ? NUM_FOR_EDICT (trace.ent) : -1;
+	if (body && trace.ent && trace.fraction < 1)
+	{
+		for (i = 0; i < ctx->num_impacts; i++)
+			if (ctx->impacts[i] == trace.ent)
+				break;
+		if (i == ctx->num_impacts && i < countof (ctx->impacts))
+			ctx->impacts[ctx->num_impacts++] = trace.ent;
+	}
+	return result;
+}
+
+void SV_GorillaInvalidateSurface (edict_t *surface)
+{
+	int model, number, i;
+	if (!surface || qcvm != &sv.qcvm || !svs.clients)
+		return;
+	model = (int)surface->v.modelindex;
+	if (model <= 0 || model >= MAX_MODELS || !sv.models[model] ||
+		sv.models[model]->type != mod_brush)
+		return;
+	number = NUM_FOR_EDICT (surface);
+	for (i = 0; i < svs.maxclients; i++)
+	{
+		client_t *client = &svs.clients[i];
+		if (client->vr_gorilla_state.surface[0] == number ||
+			client->vr_gorilla_state.surface[1] == number)
+			SV_GorillaInvalidateAccepted (client);
+	}
+}
+
+/* Brush anchors use the same origin-only basis as the native body trace. */
+static int SV_GorillaSurface (void *context, int entity, unsigned int *model,
+	const float *point, float *out, int to_world)
+{
+	edict_t *surface;
+	unsigned int index;
+	(void)context;
+	if (entity <= 0 || entity >= qcvm->num_edicts)
+		return 0;
+	surface = EDICT_NUM (entity);
+	index = (unsigned int)surface->v.modelindex;
+	if (surface->free || surface->v.solid != SOLID_BSP || !index ||
+		index >= MAX_MODELS || !sv.models[index] ||
+		sv.models[index]->type != mod_brush ||
+		(to_world && *model != index) || !VRG_Finite (surface->v.origin))
+		return 0;
+	*model = index;
+	if (to_world)
+		VectorAdd (point, surface->v.origin, out);
+	else
+		VectorSubtract (point, surface->v.origin, out);
+	return VRG_Finite (out);
+}
+
+static qboolean SV_GorillaCallbackMoved (client_t *client, edict_t *ent)
+{
+	vec3_t delta;
+	if (!client->vr_gorilla_state.initialized)
+		return false;
+	if (ent->free || ent->v.health <= 0 || ent->v.deadflag)
+		return true;
+	VectorSubtract (ent->v.origin, client->vr_gorilla_state.origin, delta);
+	return !VRG_Finite (delta) || VectorLength (delta) > .01f;
+}
+
+/* Touch only native brush buttons. Their QC callback may relocate the body. */
+static qboolean SV_GorillaTouchButtons (client_t *client, const int contacts[2])
+{
+	edict_t *player = client->edict;
+	int hand;
+	for (hand = 0; hand < 2; hand++)
+	{
+		int number = contacts[hand];
+		edict_t *button = number > 0 && number < qcvm->num_edicts ?
+			EDICT_NUM (number) : NULL;
+		if (!SV_GorillaButtonTouchAllowed (button))
+			number = 0;
+		if (number && number != client->vr_gorilla_button[hand])
+		{
+			int saved_self = pr_global_struct->self;
+			int saved_other = pr_global_struct->other;
+			float saved_time = pr_global_struct->time;
+			client->vr_gorilla_button[hand] = number;
+			ED_Retain (button);
+			pr_global_struct->self = EDICT_TO_PROG (button);
+			pr_global_struct->other = EDICT_TO_PROG (player);
+			pr_global_struct->time = qcvm->time;
+			PR_ExecuteProgram (button->v.touch);
+			pr_global_struct->self = saved_self;
+			pr_global_struct->other = saved_other;
+			pr_global_struct->time = saved_time;
+			ED_Release (button);
+			if (!client->active || !client->spawned || client->edict != player ||
+				player->free || !client->vr_gorilla_cursor_valid ||
+				!client->vr_gorilla_state.initialized ||
+				SV_GorillaCallbackMoved (client, player))
+			{
+				SV_GorillaInvalidateAccepted (client);
+				return false;
+			}
+		}
+		client->vr_gorilla_button[hand] = number;
+	}
+	return true;
+}
+
+/* Drain the existing private command FIFO before the one native WALK/FLY
+ * physics pass. The hand solver only adds constraints/impulses; it does not
+ * take over the server frame, QuakeC lifecycle, or movement clock. */
+static qboolean SV_PrepareGorilla (edict_t *ent, client_t *client,
+	sv_client_move_frame_t *move_frame, int completed_move,
+	qboolean *swim_intent)
+{
+	unsigned int offset;
+	qboolean braced = client->vr_gorilla_state.initialized &&
+		client->vr_gorilla_state.touching &&
+		VectorLength (ent->v.velocity) < 1 && SV_GorillaEligible (client);
+	usercmd_t saved_cmd = client->cmd;
+	eval_t *gravity_field = GetEdictFieldValue (ent, qcvm->extfields.gravity);
+	float gravity = sv_gravity.value *
+		(gravity_field && gravity_field->_float ? gravity_field->_float : 1);
+
+	if (!client->vr_gorilla_capable || client->protocol_qsvr != QSVR_PROTOCOL_PINNED ||
+		!sv_gorilla.value || ent->free || ent->v.health <= 0)
+	{
+		SV_ResetGorillaClient (client);
+		*swim_intent = false;
+		return false;
+	}
+	*swim_intent = false;
+	SV_CheckWater (ent);
+	for (offset = 0; offset < client->private_cmd_queue_count; offset++)
+	{
+		const usercmd_t *sample = &client->private_cmd_queue[
+			(client->private_cmd_queue_head + offset) % SV_PRIVATE_CMD_QUEUE_SIZE];
+		sv_gorilla_trace_context_t context = {0};
+		vr_gorilla_result_t result;
+		vec3_t native_velocity;
+		int i;
+		if ((int)sample->sequence > completed_move)
+			break;
+		if (client->vr_gorilla_cursor_valid &&
+			(int)sample->sequence <= client->vr_gorilla_last_sequence)
+			continue;
+		if (client->vr_gorilla_cursor_valid &&
+			(int)sample->sequence != client->vr_gorilla_last_sequence + 1)
+		{
+			VRG_Reset (&client->vr_gorilla_state);
+			memset (client->vr_gorilla_button, 0, sizeof (client->vr_gorilla_button));
+		}
+		client->vr_gorilla_last_sequence = (int)sample->sequence;
+		client->vr_gorilla_cursor_valid = true;
+		client->cmd = *sample;
+		if ((int)sample->sequence <= client->private_discarded_move ||
+			!SV_GorillaEligible (client))
+		{
+			VRG_Reset (&client->vr_gorilla_state);
+			memset (client->vr_gorilla_button, 0, sizeof (client->vr_gorilla_button));
+			braced = false;
+			continue;
+		}
+		context.player = ent;
+		VectorCopy (ent->v.velocity, native_velocity);
+		result = VRG_Step (&client->vr_gorilla_state, &sample->vr_gorilla,
+			ent->v.origin, ent->v.velocity, sample->seconds, gravity,
+			&context, SV_GorillaTrace, SV_GorillaSurface);
+		if (((int)ent->v.flags & FL_WATERJUMP) ||
+			(ent->v.waterlevel >= 2 && !result.launched))
+		{
+			VectorCopy (native_velocity, ent->v.velocity);
+			result.braced = false;
+		}
+		if (result.stepped && ent->v.waterlevel >= 2 &&
+			!((int)ent->v.flags & FL_WATERJUMP))
+		{
+			unsigned int liquid = 0, solid = 0;
+			for (i = 0; i < 2; i++)
+			{
+				vec3_t palm;
+				int contents;
+				VectorAdd (ent->v.origin, sample->vr_gorilla.hand[i], palm);
+				contents = SV_PointContents (palm);
+				if (contents == CONTENTS_WATER || contents == CONTENTS_SLIME ||
+					contents == CONTENTS_LAVA)
+					liquid |= 1u << i;
+				if (result.contact[i] >= 0)
+					solid |= 1u << i;
+			}
+			*swim_intent |= VRG_SwimImpulse (&sample->vr_gorilla, liquid,
+				solid, sample->seconds, sv_maxspeed.value * .7f, ent->v.velocity);
+		}
+		braced = result.braced;
+		if (result.launched && ent->v.velocity[2] > .01f &&
+			!((int)ent->v.flags & FL_WATERJUMP))
+		{
+			ent->v.flags = (int)ent->v.flags & ~FL_ONGROUND;
+			SV_UpdateClientMoveFrameAfterQC (ent, move_frame);
+		}
+		SV_LinkEdict (ent, false);
+		for (i = 0; i < context.num_impacts && !ent->free; i++)
+		{
+			if (!context.impacts[i]->free)
+				SV_Impact (ent, context.impacts[i]);
+			if (SV_GorillaCallbackMoved (client, ent))
+				break;
+		}
+		if (!client->active || ent->free || !client->vr_gorilla_cursor_valid ||
+			!client->vr_gorilla_state.initialized ||
+			SV_GorillaCallbackMoved (client, ent) ||
+			!SV_GorillaEligible (client) ||
+			!SV_GorillaTouchButtons (client, result.contact))
+		{
+			SV_GorillaInvalidateAccepted (client);
+			braced = false;
+			break;
+		}
+		SV_CheckWater (ent);
+	}
+	client->cmd = saved_cmd;
+	if (*swim_intent && ent->v.waterlevel >= 2)
+		braced = false;
+	return braced;
+}
+
 static void SV_Physics_Client (edict_t *ent, int num)
 {
 	sv_client_move_frame_t move_frame;
@@ -5043,6 +5335,9 @@ static void SV_Physics_Client (edict_t *ent, int num)
 	unsigned queue_offset;
 	qboolean frame_completed = false;
 	qboolean suppress_trigger = false, saved_button0 = false;
+	qboolean gorilla_braced = false;
+	qboolean gorilla_swim_intent = false;
+	vec3_t callback_origin, callback_delta;
 
 	if (!svs.clients[num - 1].active)
 		return; // unconnected slot
@@ -5087,55 +5382,84 @@ static void SV_Physics_Client (edict_t *ent, int num)
 	SV_CoopRespawnRefreshClientInventory (ent);
 	SV_VRStockAxeRefreshTriggerSuppression (client, ent,
 		&client->cmd, &suppress_trigger);
+	VectorCopy (ent->v.origin, callback_origin);
 	PR_ExecuteProgram (pr_global_struct->PlayerPreThink);
 
 	assert_always (!ent->free);
+	VectorSubtract (ent->v.origin, callback_origin, callback_delta);
+	if (VectorLength (callback_delta) > .01f)
+		SV_GorillaInvalidateAccepted (client);
+	SV_GorillaLatchLadder (client, false);
+	SV_GorillaResumeDeferredMove (client);
 
 	SV_UpdateClientMoveFrameAfterQC (ent, &move_frame);
+	if (ent->v.health <= 0 || ent->v.deadflag ||
+		((int)ent->v.movetype != MOVETYPE_WALK &&
+		 (int)ent->v.movetype != MOVETYPE_FLY))
+		SV_ResetGorillaClient (client);
 
 	//
 	// do a move
 	//
 	SV_CheckVelocity (ent);
 
-	//
-	// decide which move function to call
-	//
+	/* Weapon think may change movetype. Run it once, then select the native
+	 * physics owner after any Gorilla touch callbacks have also run. */
 	SV_VRStockAxeRefreshTriggerSuppression (client, ent,
 		&client->cmd, &suppress_trigger);
+	VectorCopy (ent->v.origin, callback_origin);
 	switch ((int)ent->v.movetype)
 	{
 	case MOVETYPE_NONE:
-		if (!SV_RunPrivateVRWeaponThink (ent, client))
-			goto done;
-		break;
-
 	case MOVETYPE_WALK:
+	case MOVETYPE_FLY:
+	case MOVETYPE_NOCLIP:
 		if (!SV_RunPrivateVRWeaponThink (ent, client))
 			goto done;
-		SV_Physics_ClientWalk (ent, &move_frame);
 		break;
+	case MOVETYPE_TOSS:
+	case MOVETYPE_BOUNCE:
+	case MOVETYPE_GIB:
+		break;
+	default:
+		Host_EndGame ("SV_Physics_client: bad movetype %i", (int)ent->v.movetype);
+	}
+	VectorSubtract (ent->v.origin, callback_origin, callback_delta);
+	if (VectorLength (callback_delta) > .01f)
+		SV_GorillaInvalidateAccepted (client);
+	if ((int)ent->v.movetype == MOVETYPE_WALK ||
+		(int)ent->v.movetype == MOVETYPE_FLY)
+	{
+		gorilla_braced = SV_PrepareGorilla (ent, client, &move_frame,
+			completed_move, &gorilla_swim_intent);
+		if (ent->free || !client->active)
+			goto done;
+		SV_GorillaConsumeWater (client, gorilla_swim_intent);
+		SV_UpdateClientMoveFrameAfterQC (ent, &move_frame);
+	}
+	else
+		SV_ResetGorillaClient (client);
 
+	switch ((int)ent->v.movetype)
+	{
+	case MOVETYPE_NONE:
+		break;
+	case MOVETYPE_WALK:
+		SV_Physics_ClientWalk (ent, &move_frame, gorilla_braced);
+		break;
 	case MOVETYPE_TOSS:
 	case MOVETYPE_BOUNCE:
 	case MOVETYPE_GIB:
 		SV_Physics_Toss (ent);
 		break;
-
 	case MOVETYPE_FLY:
-		if (!SV_RunPrivateVRWeaponThink (ent, client))
-			goto done;
 		SV_FlyMove (ent, host_frametime, NULL, NULL, true);
 		break;
-
 	case MOVETYPE_NOCLIP:
-		if (!SV_RunPrivateVRWeaponThink (ent, client))
-			goto done;
 		VectorMA (ent->v.origin, host_frametime, ent->v.velocity, ent->v.origin);
 		if (!SV_TestEntityPosition (ent))
 			VectorCopy (ent->v.origin, ent->v.oldorigin);
 		break;
-
 	default:
 		Host_EndGame ("SV_Physics_client: bad movetype %i", (int)ent->v.movetype);
 	}
@@ -5143,6 +5467,10 @@ static void SV_Physics_Client (edict_t *ent, int num)
 	//
 	// call standard player post-think
 	//
+	/* Native gravity and collision still move the body after hand solving.
+	 * Commit that baseline before callbacks, then reject callback relocations. */
+	if (client->vr_gorilla_state.initialized)
+		VectorCopy (ent->v.origin, client->vr_gorilla_state.origin);
 	SV_LinkEdict (ent, true);
 
 	assert_always (!ent->free);
@@ -5157,6 +5485,9 @@ static void SV_Physics_Client (edict_t *ent, int num)
 	if (client->protocol_qsvr == QSVR_PROTOCOL_PINNED &&
 		!SV_VRContactDrainQueued (ent, client, completed_move))
 		goto done;
+	if (client->vr_gorilla_state.initialized &&
+		(!SV_GorillaEligible (client) || SV_GorillaCallbackMoved (client, ent)))
+		SV_ResetGorillaClient (client);
 	SV_CoopSharedObserveClientDeath (ent, num);
 	frame_completed = true;
 

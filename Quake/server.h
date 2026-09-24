@@ -27,6 +27,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 
 #include "vrik_codec.h"
 #include "voice_protocol.h"
+#include "vr_gorilla_types.h"
 
 #define SERVER_INFO_STRING_SIZE 8192
 
@@ -225,6 +226,12 @@ typedef struct client_s
 	unsigned int protocol_pext1;
 	unsigned int protocol_pext2;
 	qboolean vr_gorilla_capable;
+	vr_gorilla_state_t vr_gorilla_state;
+	int vr_gorilla_last_sequence;
+	qboolean vr_gorilla_cursor_valid;
+	qboolean vr_gorilla_move_deferred;
+	qboolean vr_gorilla_ladder_frame;
+	int vr_gorilla_button[2];
 	int vr_gorilla_last_advertised; // -1 means the current policy has not been queued
 	int weapon_contact_last_mode; // last mode appended to the reliable stream; -1 means not queued
 	int weapon_contact_last_profile; // profile paired with weapon_contact_last_mode
@@ -528,6 +535,13 @@ void SV_ConnectClient (int clientnum); // called from the netcode to add new cli
 void SV_CheckForNewClients (void);
 void SV_RunClients (void);
 void SV_ResetPrivateCommandQueue (client_t *client);
+void SV_ResetGorillaClient (client_t *client);
+void SV_GorillaInvalidateAccepted (client_t *client);
+void SV_GorillaInvalidateSurface (edict_t *surface);
+qboolean SV_GorillaEligible (client_t *client);
+void SV_GorillaLatchLadder (client_t *client, qboolean begin_frame);
+void SV_GorillaResumeDeferredMove (client_t *client);
+void SV_GorillaConsumeWater (client_t *client, qboolean swim_intent);
 void SV_PrivatePlayerTeleported (edict_t *ent);
 void SV_ResetPrivateVRContactState (client_t *client);
 void SV_VRContactPlayerSetOrigin (edict_t *ent, const vec3_t origin);

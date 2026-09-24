@@ -162,6 +162,7 @@ void ED_Free (edict_t *ed)
 		return;
 	}
 
+	SV_GorillaInvalidateSurface (ed);
 	SV_UnlinkEdict (ed); // unlink from world bsp
 
 	ed->free = true;

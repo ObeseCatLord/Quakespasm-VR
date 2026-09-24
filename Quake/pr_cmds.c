@@ -317,6 +317,8 @@ static void PF_sv_setmodel (void)
 		else
 			PR_RunError ("no precache: %s", m);
 	}
+	if ((int)e->v.modelindex != i)
+		SV_GorillaInvalidateSurface (e);
 	e->v.model = PR_SetEngineString (*check);
 	e->v.modelindex = i; // SV_ModelIndex (m);
 
