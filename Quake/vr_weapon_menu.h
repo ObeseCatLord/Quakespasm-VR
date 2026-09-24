@@ -49,7 +49,8 @@ void VR_WeaponMenu_Cancel (void);
 /* Reload the optional active-game wwheel.txt catalog at game transitions. */
 void VR_WeaponMenu_ReloadGame (void);
 void VR_WeaponMenu_SetVRPointer (qboolean tracking_valid, qboolean pointer_valid,
-	int pointer_x, int pointer_y);
+	int pointer_x, int pointer_y, const float world_from_ndc[16],
+	const float ray_origin[3], const float ray_direction[3], qboolean playspace);
 /* Resolve optional wheel models on the main thread before draw tasks start. */
 void VR_WeaponMenu_PrepareModels (void);
 void VR_WeaponMenu_SetVRPanel (const float world_from_ndc[16], qboolean playspace);

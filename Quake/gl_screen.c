@@ -2009,12 +2009,6 @@ static void SCR_VRWeaponMenuPrepare (void)
 		if (VectorLength (remaining) >= 1.0f)
 			pointer_valid = false;
 	}
-	VR_WeaponMenu_SetVRPointer (true, pointer_valid, pointer_x, pointer_y);
-	if (!VR_WeaponMenu_IsOpenVR ())
-	{
-		vr_weapon_menu_anchor.valid = 0;
-		return;
-	}
 	memset (vr_weapon_menu_panel.world_from_ndc, 0, sizeof (vr_weapon_menu_panel.world_from_ndc));
 	for (int i = 0; i < 3; ++i)
 	{
@@ -2032,6 +2026,14 @@ static void SCR_VRWeaponMenuPrepare (void)
 		}
 	}
 	vr_weapon_menu_panel.world_from_ndc[15] = 1.0f;
+	VR_WeaponMenu_SetVRPointer (true, pointer_valid, pointer_x, pointer_y,
+		vr_weapon_menu_panel.world_from_ndc, ray_origin, ray_direction,
+		vr_weapon_menu_anchor_mode == 0);
+	if (!VR_WeaponMenu_IsOpenVR ())
+	{
+		vr_weapon_menu_anchor.valid = 0;
+		return;
+	}
 	vr_weapon_menu_panel.valid = true;
 	VR_WeaponMenu_SetVRPanel (vr_weapon_menu_panel.world_from_ndc,
 		vr_weapon_menu_anchor_mode == 0);

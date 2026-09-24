@@ -1661,6 +1661,80 @@ void VR_WeaponMenu_SetVRPanel (const float world_from_ndc[16], qboolean playspac
 	vr_weapon_menu_frame.panel_valid = true;
 }
 
+static void VR_WeaponMenu_SlotWorldOrigin (const vr_weapon_menu_visible_t *visible,
+	const float world_from_ndc[16], const vec3_t right, const vec3_t down,
+	const vec3_t forward, float mesh_scale, vec3_t origin)
+{
+	const vr_weapon_menu_entry_t *entry = visible->entry;
+	const float x = visible->center_x * (2.0f / glwidth) - 1.0f;
+	const float y = visible->center_y * (2.0f / glheight) - 1.0f;
+	for (int axis = 0; axis < 3; ++axis)
+		origin[axis] = world_from_ndc[12 + axis] + world_from_ndc[axis] * x +
+			world_from_ndc[4 + axis] * y +
+			entry->model_offset[0] * mesh_scale * right[axis] -
+			entry->model_offset[1] * mesh_scale * down[axis] +
+			entry->model_offset[2] * mesh_scale * forward[axis];
+}
+
+static qboolean VR_WeaponMenu_PanelBasis (const float world_from_ndc[16],
+	vec3_t right, vec3_t down, vec3_t forward)
+{
+	for (int axis = 0; axis < 3; ++axis)
+	{
+		right[axis] = world_from_ndc[axis];
+		down[axis] = world_from_ndc[4 + axis];
+		forward[axis] = world_from_ndc[8 + axis];
+	}
+	return VectorNormalize (right) > 0.0f && VectorNormalize (down) > 0.0f &&
+		VectorNormalize (forward) > 0.0f;
+}
+
+static int VR_WeaponMenu_HitWorld (const vr_weapon_menu_frame_t *frame,
+	const float world_from_ndc[16], const vec3_t ray_origin, const vec3_t ray_direction)
+{
+	vec3_t right, down, forward, direction, trace_start;
+	float best_distance_sq = 2.75f * 2.75f;
+	int best = -1;
+	if (!world_from_ndc || !ray_origin || !ray_direction ||
+		!VR_WeaponMenu_PanelBasis (world_from_ndc, right, down, forward))
+		return -1;
+	VectorCopy (ray_direction, direction);
+	VectorCopy (ray_origin, trace_start);
+	if (VectorNormalize (direction) == 0.0f)
+		return -1;
+	for (int i = 0; i < frame->count; ++i)
+	{
+		vec3_t target, to_target, closest, remaining, impact, hit_normal;
+		float along, distance_sq;
+		if (!frame->visible[i].selectable)
+			continue;
+		VR_WeaponMenu_SlotWorldOrigin (&frame->visible[i], world_from_ndc,
+			right, down, forward, 0.28f, target);
+		VectorMA (target, 3.0f * 0.28f, right, target);
+		if (!isfinite (target[0]) || !isfinite (target[1]) || !isfinite (target[2]))
+			continue;
+		VectorSubtract (target, ray_origin, to_target);
+		along = DotProduct (to_target, direction);
+		if (!isfinite (along) || along <= 0.0f || along >= 128.0f)
+			continue;
+		VectorMA (ray_origin, along, direction, closest);
+		VectorSubtract (target, closest, remaining);
+		distance_sq = DotProduct (remaining, remaining);
+		if (!isfinite (distance_sq) || distance_sq >= best_distance_sq)
+			continue;
+		if (cl.worldmodel && !cl.worldmodel->needload)
+		{
+			CL_TraceWorldLine (trace_start, target, impact, hit_normal);
+			VectorSubtract (target, impact, remaining);
+			if (VectorLength (remaining) >= 1.0f)
+				continue;
+		}
+		best_distance_sq = distance_sq;
+		best = i;
+	}
+	return best;
+}
+
 int VR_WeaponMenu_DrawModels (struct cb_context_s *context)
 {
 	cb_context_t *cbx = (cb_context_t *)context;
@@ -1674,14 +1748,7 @@ int VR_WeaponMenu_DrawModels (struct cb_context_s *context)
 		!frame->panel_valid || frame->generation != vr_weapon_menu_session_generation ||
 		glwidth <= 0 || glheight <= 0)
 		return 0;
-	for (int axis = 0; axis < 3; ++axis)
-	{
-		right[axis] = m[axis];
-		down[axis] = m[4 + axis];
-		forward[axis] = m[8 + axis];
-	}
-	if (VectorNormalize (right) == 0.0f || VectorNormalize (down) == 0.0f ||
-		VectorNormalize (forward) == 0.0f)
+	if (!VR_WeaponMenu_PanelBasis (m, right, down, forward))
 		return 0;
 
 	for (int i = 0; i < frame->count; ++i)
@@ -1694,8 +1761,6 @@ int VR_WeaponMenu_DrawModels (struct cb_context_s *context)
 		const float entity_scale = (selected ? 0.40f : 0.25f) * schema_scale;
 		const float layout_scale = (frame->playspace ? 0.25f :
 			(selected ? 0.40f : 0.25f)) * schema_scale * mesh_scale;
-		const float center_x = frame->visible[i].center_x * (2.0f / glwidth) - 1.0f;
-		const float center_y = frame->visible[i].center_y * (2.0f / glheight) - 1.0f;
 		vec3_t tint;
 		entity_t entity;
 
@@ -1703,15 +1768,13 @@ int VR_WeaponMenu_DrawModels (struct cb_context_s *context)
 			entity_scale <= 0.0f || !isfinite (layout_scale))
 			continue;
 		memset (&entity, 0, sizeof (entity));
-		for (int axis = 0; axis < 3; ++axis)
-		{
-			entity.origin[axis] = m[12 + axis] + m[axis] * center_x +
-				m[4 + axis] * center_y +
-				entry->model_offset[0] * mesh_scale * right[axis] -
-				entry->model_offset[1] * mesh_scale * down[axis] +
-				entry->model_offset[2] * mesh_scale * forward[axis] +
-				0.5f * (model->mins[2] + model->maxs[2]) * layout_scale * down[axis];
-		}
+		VR_WeaponMenu_SlotWorldOrigin (&frame->visible[i], m, right, down,
+			forward, mesh_scale, entity.origin);
+		VectorMA (entity.origin, 0.5f * (model->mins[2] + model->maxs[2]) *
+			layout_scale, down, entity.origin);
+		if (!isfinite (entity.origin[0]) || !isfinite (entity.origin[1]) ||
+			!isfinite (entity.origin[2]))
+			continue;
 		entity.angles[YAW] = frame->model_yaw;
 		entity.model = (qmodel_t *)model;
 		entity.colormap = vid.colormap;
@@ -1738,7 +1801,8 @@ int VR_WeaponMenu_DrawModels (struct cb_context_s *context)
 }
 
 void VR_WeaponMenu_SetVRPointer (qboolean tracking_valid, qboolean pointer_valid,
-	int pointer_x, int pointer_y)
+	int pointer_x, int pointer_y, const float world_from_ndc[16],
+	const float ray_origin[3], const float ray_direction[3], qboolean playspace)
 {
 	int selected = -1, action;
 	int previous_hover_id;
@@ -1766,12 +1830,14 @@ void VR_WeaponMenu_SetVRPointer (qboolean tracking_valid, qboolean pointer_valid
 	VR_WeaponMenu_PrepareFrame (catalog, radius, scale);
 	if (!pointer_valid)
 		return;
-	selected = VR_WeaponMenu_Hit (vr_weapon_menu_frame.visible,
-		vr_weapon_menu_frame.count, pointer_x, pointer_y, radius);
+	selected = playspace ? VR_WeaponMenu_HitWorld (&vr_weapon_menu_frame,
+		world_from_ndc, ray_origin, ray_direction) :
+		VR_WeaponMenu_Hit (vr_weapon_menu_frame.visible,
+			vr_weapon_menu_frame.count, pointer_x, pointer_y, radius);
 	action = VR_WeaponMenu_Actions (NULL, vr_weapon_menu_frame.actions,
 		vr_weapon_menu_frame.action_count, scale,
 		pointer_x, pointer_y, false, -1);
-	if (action >= 0)
+	if (action >= 0 && (!playspace || selected < 0))
 	{
 		vr_weapon_menu_hover_id = vr_weapon_menu_frame.actions[action].id;
 		if (vr_weapon_menu_frame.actions[action].kind == VR_WEAPON_MENU_ACTION_COOP_PLAYER)
