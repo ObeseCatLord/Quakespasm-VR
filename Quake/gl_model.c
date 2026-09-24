@@ -5977,7 +5977,11 @@ static qboolean Mod_LoadMD5MeshModelData (qmodel_t *mod, const void *buffer,
 
 		buffer = COM_Parse (buffer);
 		MD5EXPECT ("numverts");
-		surf->numverts_vbo = surf->numverts = MD5UINT ();
+		size_t mesh_numverts = MD5UINT ();
+		if (!mesh_numverts || mesh_numverts > (size_t)UINT16_MAX + 1 ||
+			mesh_numverts > SIZE_MAX / sizeof (md5vertinfo_t) || mesh_numverts > SIZE_MAX / sizeof (md5vert8_t))
+			MD5ERROR ("%s: mesh vertex count is invalid or too large\n", fname);
+		surf->numverts_vbo = surf->numverts = (int)mesh_numverts;
 
 		TEMP_ALLOC_ASSIGN_ZEROED (vinfo, surf->numverts);
 		unsigned int max_mesh_influences = 0;
@@ -5998,6 +6002,8 @@ static qboolean Mod_LoadMD5MeshModelData (qmodel_t *mod, const void *buffer,
 
 		surf->poseverttype = (max_mesh_influences > NUM_JOINT_INFLUENCES_4_WEIGHT) ? PV_MD5_8 : PV_MD5;
 		const size_t md5_vertex_size = (surf->poseverttype == PV_MD5_8) ? sizeof (md5vert8_t) : sizeof (md5vert_t);
+		if ((size_t)surf->numverts > SIZE_MAX / md5_vertex_size)
+			MD5ERROR ("%s: mesh vertex data is too large\n", fname);
 		TEMP_ALLOC_ASSIGN_ZEROED (poutvertexes, surf->numverts * md5_vertex_size);
 
 		// MD5 violation: the skin is a single material. adding prefixes/postfixes here is the wrong thing to do.
@@ -6008,7 +6014,10 @@ static qboolean Mod_LoadMD5MeshModelData (qmodel_t *mod, const void *buffer,
 			Con_Warning ("MD5: %s, no skins found for surf '%s' (%d)\n", fname, shader_name, m);
 
 		MD5EXPECT ("numtris");
-		surf->numtris = MD5UINT ();
+		size_t mesh_numtris = MD5UINT ();
+		if (mesh_numtris > INT_MAX / 3)
+			MD5ERROR ("%s: mesh triangle count is invalid or too large\n", fname);
+		surf->numtris = (int)mesh_numtris;
 		surf->numindexes = surf->numtris * 3;
 		TEMP_ALLOC_ASSIGN_ZEROED (poutindexes, surf->numindexes);
 
@@ -6482,6 +6491,22 @@ static int Mod_LoadMD3SurfaceSkins (
 
 #undef SKIN_PATTERN_FUNC_DEF
 
+static qboolean Mod_CheckedSizeMul (size_t a, size_t b, size_t *result)
+{
+	if (a && b > SIZE_MAX / a)
+		return false;
+	*result = a * b;
+	return true;
+}
+
+static qboolean Mod_CheckedSizeAdd (size_t a, size_t b, size_t *result)
+{
+	if (b > SIZE_MAX - a)
+		return false;
+	*result = a + b;
+	return true;
+}
+
 /*
 =====================
 Mod_LoadMD3Model
@@ -6495,7 +6520,7 @@ static void Mod_LoadMD3Model (qmodel_t *mod, const void *buffer)
 	md3Triangle_t  *pintriangle;
 	md3XyzNormal_t *pinvertexes;
 	md3St_t		   *pinst;
-	size_t			hdrsize;
+	size_t			hdrsize, hdrbase_size, hdrframes_size, hdrallocation_size;
 	int				numsurfs;
 	int				numframes;
 
@@ -6508,10 +6533,13 @@ static void Mod_LoadMD3Model (qmodel_t *mod, const void *buffer)
 	numsurfs = LittleLong (pinheader->numSurfaces);
 	numframes = LittleLong (pinheader->numFrames);
 
+	if (numframes <= 0)
+		Sys_Error ("MD3: %s has no frames", mod->name);
+
 	if (numframes > MAXALIASFRAMES)
 		Sys_Error ("MD3: %s has too many frames (%i vs %i)", mod->name, numframes, MAXALIASFRAMES);
 
-	if (!numsurfs)
+	if (numsurfs <= 0)
 		Sys_Error ("MD3: %s has no surfaces", mod->name);
 
 	if (numsurfs > MAX_SURFACES)
@@ -6524,11 +6552,14 @@ static void Mod_LoadMD3Model (qmodel_t *mod, const void *buffer)
 
 	pinframes = (md3Frame_t *)((byte *)buffer + LittleLong (pinheader->ofsFrames));
 
-	hdrsize = sizeof (*outhdr) - sizeof (outhdr->frames);
-	hdrsize += sizeof (outhdr->frames) * numframes;
+	hdrbase_size = sizeof (*outhdr) - sizeof (outhdr->frames);
+	if (!Mod_CheckedSizeMul (sizeof (outhdr->frames), (size_t)numframes, &hdrframes_size) ||
+		!Mod_CheckedSizeAdd (hdrbase_size, hdrframes_size, &hdrsize) ||
+		!Mod_CheckedSizeMul (hdrsize, (size_t)numsurfs, &hdrallocation_size))
+		Sys_Error ("MD3: %s header allocation is too large", mod->name);
 
 	// alloc all aliashdr_t and their chained nextsurface, a.k.a numsurfs, in one array
-	outhdr = (aliashdr_t *)Mem_Alloc (hdrsize * numsurfs);
+	outhdr = (aliashdr_t *)Mem_Alloc (hdrallocation_size);
 
 	// total_numverts and total_vertexes accumulate all vertices of the surface,
 	// just to be able to Mod_CalcAliasBounds at the end.
@@ -6554,12 +6585,31 @@ static void Mod_LoadMD3Model (qmodel_t *mod, const void *buffer)
 		surf->poseverttype = PV_QUAKE3;
 
 		// the number of vertices per-frame:
-		surf->numverts_vbo = surf->numverts = LittleLong (pinsurface->numVerts);
+		int numverts = LittleLong (pinsurface->numVerts);
+		if (numverts <= 0)
+			Sys_Error ("MD3: %s surface %d has no vertices", mod->name, m);
+		if ((size_t)numverts > (size_t)UINT16_MAX + 1)
+			Sys_Error ("MD3: %s surface %d has too many vertices for 16-bit indexes", mod->name, m);
+		surf->numverts_vbo = surf->numverts = numverts;
+
+		surf->numtris = LittleLong (pinsurface->numTriangles);
+		if (surf->numtris < 0)
+			Sys_Error ("MD3: %s surface %d has an invalid triangle count", mod->name, m);
+		if (surf->numtris > INT_MAX / 3)
+			Sys_Error ("MD3: %s surface %d has too many triangles", mod->name, m);
+		surf->numindexes = surf->numtris * 3;
+
+		size_t surface_vertex_count, surface_vertex_bytes, surface_st_bytes, surface_index_bytes;
+		if (!Mod_CheckedSizeMul ((size_t)numframes, (size_t)numverts, &surface_vertex_count) ||
+			!Mod_CheckedSizeMul (surface_vertex_count, sizeof (md3XyzNormal_t), &surface_vertex_bytes) ||
+			!Mod_CheckedSizeMul ((size_t)numverts, sizeof (aliasmesh_t), &surface_st_bytes) ||
+			!Mod_CheckedSizeMul ((size_t)surf->numindexes, sizeof (unsigned short), &surface_index_bytes))
+			Sys_Error ("MD3: %s surface %d allocation is too large", mod->name, m);
 
 		// All the vertices for this surface, concat of the vertices of each of the numframes, one frame after another:
 		pinvertexes = (md3XyzNormal_t *)((byte *)pinsurface + LittleLong (pinsurface->ofsXyzNormals));
 
-		md3XyzNormal_t *poutvertexes = (md3XyzNormal_t *)Mem_Alloc (numframes * surf->numverts * sizeof (*poutvertexes));
+		md3XyzNormal_t *poutvertexes = (md3XyzNormal_t *)Mem_Alloc (surface_vertex_bytes);
 		// keep track of the original poutvertexes, because we are going to pointer arithmetic below...
 		md3XyzNormal_t *poutvertexes_start = poutvertexes;
 
@@ -6595,19 +6645,21 @@ static void Mod_LoadMD3Model (qmodel_t *mod, const void *buffer)
 		}
 		surf->numframes = numframes;
 
-		surf->numtris = LittleLong (pinsurface->numTriangles);
-		surf->numindexes = surf->numtris * 3;
-
 		pintriangle = (md3Triangle_t *)((byte *)pinsurface + LittleLong (pinsurface->ofsTriangles));
 
-		unsigned short *poutindexes = (unsigned short *)Mem_Alloc (sizeof (*poutindexes) * surf->numindexes);
+		unsigned short *poutindexes = (unsigned short *)Mem_Alloc (surface_index_bytes);
 		// keep track of the original poutindexes, because we are going to pointer arithmetic below...
 		unsigned short *poutindexes_start = poutindexes;
 
 		for (int ival = 0; ival < surf->numtris; ival++, pintriangle++, poutindexes += 3)
 		{
 			for (int j = 0; j < 3; j++)
-				poutindexes[j] = LittleLong (pintriangle->indexes[j]);
+			{
+				int vertex_index = LittleLong (pintriangle->indexes[j]);
+				if (vertex_index < 0 || vertex_index >= numverts)
+					Sys_Error ("MD3: %s surface %d has an invalid vertex index", mod->name, m);
+				poutindexes[j] = (unsigned short)vertex_index;
+			}
 		}
 
 		for (int j = 0; j < 3; j++)
@@ -6623,7 +6675,7 @@ static void Mod_LoadMD3Model (qmodel_t *mod, const void *buffer)
 		// and figure out the texture coords properly, now we know the actual sizes.
 		pinst = (md3St_t *)((byte *)pinsurface + LittleLong (pinsurface->ofsSt));
 
-		aliasmesh_t *poutst = (aliasmesh_t *)Mem_Alloc (sizeof (*poutst) * surf->numverts);
+		aliasmesh_t *poutst = (aliasmesh_t *)Mem_Alloc (surface_st_bytes);
 
 		for (int j = 0; j < surf->numverts; j++)
 		{
@@ -6636,9 +6688,14 @@ static void Mod_LoadMD3Model (qmodel_t *mod, const void *buffer)
 		GLMesh_UploadBuffers (mod, surf, poutindexes_start, (byte *)poutvertexes_start, poutst, NULL, NULL, 0);
 
 		// concat surface vertices to total_vertexes
-		total_vertexes = (md3XyzNormal_t *)Mem_Realloc (total_vertexes, sizeof (*poutvertexes) * (total_numverts + surf->numverts));
-		memcpy ((void *)(total_vertexes + total_numverts), (const void *)poutvertexes_start, sizeof (*poutvertexes) * surf->numverts);
-		total_numverts += surf->numverts;
+		size_t new_total_numverts, total_vertex_bytes, bounds_vertex_bytes;
+		if (!Mod_CheckedSizeAdd (total_numverts, (size_t)surf->numverts, &new_total_numverts) ||
+			!Mod_CheckedSizeMul (new_total_numverts, sizeof (*poutvertexes), &total_vertex_bytes) ||
+			!Mod_CheckedSizeMul ((size_t)surf->numverts, sizeof (*poutvertexes), &bounds_vertex_bytes))
+			Sys_Error ("MD3: %s combined vertex data is too large", mod->name);
+		total_vertexes = (md3XyzNormal_t *)Mem_Realloc (total_vertexes, total_vertex_bytes);
+		memcpy ((void *)(total_vertexes + total_numverts), (const void *)poutvertexes_start, bounds_vertex_bytes);
+		total_numverts = new_total_numverts;
 
 		Mem_Free (poutst);
 		Mem_Free (poutvertexes_start);

@@ -363,21 +363,48 @@ static uint32_t AliasMeshHash (const void *const p)
 	return HashCombine (HashInt32 (&vertindex), HashCombine (HashFloat (&mesh->st[0]), HashFloat (&mesh->st[1])));
 }
 
+static qboolean GLMesh_CheckedSizeMul (size_t a, size_t b, size_t *result)
+{
+	if (a && b > SIZE_MAX / a)
+		return false;
+	*result = a * b;
+	return true;
+}
+
+static qboolean GLMesh_CheckedSizeAdd (size_t a, size_t b, size_t *result)
+{
+	if (b > SIZE_MAX - a)
+		return false;
+	*result = a + b;
+	return true;
+}
+
 void GL_MakeAliasModelDisplayLists (qmodel_t *m, aliashdr_t *paliashdr)
 {
 	assert (paliashdr->poseverttype == PV_QUAKE1);
 
 	Con_DPrintf2 ("meshing %s...\n", m->name);
+	if (paliashdr->numposes <= 0 || paliashdr->numverts <= 0 || paliashdr->numtris < 0 ||
+		paliashdr->numtris > INT_MAX / 3)
+		Sys_Error ("Alias model %s has invalid mesh dimensions", m->name);
+
+	size_t pose_vertex_count;
+	if (!GLMesh_CheckedSizeMul ((size_t)paliashdr->numposes, (size_t)paliashdr->numverts, &pose_vertex_count) ||
+		pose_vertex_count > SIZE_MAX / sizeof (trivertx_t))
+		Sys_Error ("Alias model %s pose vertex data is too large", m->name);
 
 	// first, copy the verts onto the hunk
-	TEMP_ALLOC_ZEROED (trivertx_t, verts, paliashdr->numposes * paliashdr->numverts);
+	TEMP_ALLOC_ZEROED (trivertx_t, verts, pose_vertex_count);
 
 	for (int i = 0; i < paliashdr->numposes; i++)
 		for (int j = 0; j < paliashdr->numverts; j++)
-			verts[i * paliashdr->numverts + j] = poseverts[i][j];
+			verts[(size_t)i * (size_t)paliashdr->numverts + (size_t)j] = poseverts[i][j];
 
 	// there can never be more than this number of verts
 	const int maxverts_vbo = paliashdr->numtris * 3;
+	if ((size_t)maxverts_vbo > SIZE_MAX / sizeof (aliasmesh_t) ||
+		(size_t)maxverts_vbo > SIZE_MAX / sizeof (unsigned short))
+		Sys_Error ("Alias model %s display list is too large", m->name);
 	TEMP_ALLOC_ZEROED (aliasmesh_t, desc, maxverts_vbo);
 	// there will always be this number of indexes
 	TEMP_ALLOC_ZEROED (unsigned short, indexes, maxverts_vbo);
@@ -391,7 +418,10 @@ void GL_MakeAliasModelDisplayLists (qmodel_t *m, aliashdr_t *paliashdr)
 		for (int j = 0; j < 3; j++)
 		{
 			// index into hdr->vertexes
-			unsigned short vertindex = triangles[i].vertindex[j];
+			int raw_vertindex = triangles[i].vertindex[j];
+			if (raw_vertindex < 0 || raw_vertindex >= paliashdr->numverts)
+				Sys_Error ("Alias model %s has an invalid triangle vertex index", m->name);
+			unsigned short vertindex = (unsigned short)raw_vertindex;
 
 			// basic s/t coords
 			int s = stverts[vertindex].s;
@@ -413,6 +443,8 @@ void GL_MakeAliasModelDisplayLists (qmodel_t *m, aliashdr_t *paliashdr)
 			else
 			{
 				// doesn't exist; emit a new vert and index
+				if (paliashdr->numverts_vbo > UINT16_MAX)
+					Sys_Error ("Alias model %s has too many display-list vertices for 16-bit indexes", m->name);
 				index = paliashdr->numverts_vbo;
 				HashMap_Insert (vertex_to_index_map, &mesh, &index);
 				desc[paliashdr->numverts_vbo].vertindex = vertindex;
@@ -509,63 +541,108 @@ void GLMesh_UploadBuffers (
 	qmodel_t *mod, aliashdr_t *hdr, unsigned short *indexes, byte *vertexes, aliasmesh_t *desc, jointpose_t *joints, unsigned short *skeleton_indexes,
 	int num_skeleton_indexes)
 {
-	int		 numindexes = 0;
-	int		 numverts = 0;
+	size_t	 totalvbosize = 0;
+	size_t	 vertex_data_size = 0;
+	size_t	 st_data_size = 0;
+	size_t	 totalindexsize = 0;
+	size_t	 totaljointssize = 0;
+	size_t	 skeleton_index_size = 0;
+	size_t	 input_vertex_count;
+	size_t	 output_vertex_count;
+	size_t	 numverts;
+	size_t	 numindexes;
 	VkResult err;
 	if (!hdr)
 		return;
 	hdr->tracked_cull_qmax = 0.0;
 	hdr->tracked_cull_qmax_valid = false;
 
-	// count how much space we're going to need.
-	int totalvbosize = 0;
+	if (hdr->numverts <= 0 || hdr->numverts_vbo <= 0 ||
+		(size_t)hdr->numverts > (size_t)UINT16_MAX + 1 || (size_t)hdr->numverts_vbo > (size_t)UINT16_MAX + 1 ||
+		hdr->numindexes < 0 || num_skeleton_indexes < 0 ||
+		hdr->numframes < 0 || hdr->numjoints < 0)
+		Sys_Error ("GLMesh_UploadBuffers: %s has invalid mesh dimensions", mod->name);
+	numverts = (size_t)hdr->numverts_vbo;
+	numindexes = (size_t)hdr->numindexes;
+	if (!GLMesh_CheckedSizeMul (numindexes, sizeof (*indexes), &totalindexsize))
+		Sys_Error ("GLMesh_UploadBuffers: %s index buffer is too large", mod->name);
+	if (skeleton_indexes && num_skeleton_indexes > 0 &&
+		!GLMesh_CheckedSizeMul ((size_t)num_skeleton_indexes, sizeof (*skeleton_indexes), &skeleton_index_size))
+		Sys_Error ("GLMesh_UploadBuffers: %s skeleton index buffer is too large", mod->name);
 
 	switch (hdr->poseverttype)
 	{
 	case PV_QUAKE1:
 	{
-		numverts = hdr->numverts_vbo;
-		totalvbosize += (numverts * hdr->numposes * (int)sizeof (meshxyz_t)); // ericw -- what RMQEngine called nummeshframes is called numposes in QuakeSpasm
-		numindexes = hdr->numindexes;
+		if (hdr->numposes <= 0 ||
+			!GLMesh_CheckedSizeMul ((size_t)hdr->numverts, (size_t)hdr->numposes, &input_vertex_count) ||
+			input_vertex_count > SIZE_MAX / sizeof (trivertx_t) ||
+			!GLMesh_CheckedSizeMul (numverts, (size_t)hdr->numposes, &output_vertex_count) ||
+			!GLMesh_CheckedSizeMul (output_vertex_count, sizeof (meshxyz_t), &vertex_data_size))
+			Sys_Error ("GLMesh_UploadBuffers: %s has invalid or oversized MDL vertex data", mod->name);
 	}
 	break;
 	case PV_QUAKE3:
 	{
-		numverts = hdr->numverts_vbo;
-		totalvbosize += (numverts * hdr->numframes * (int)sizeof (meshxyz_t)); // ericw -- what RMQEngine called nummeshframes is called numposes in QuakeSpasm
-		numindexes = hdr->numindexes;
+		if (hdr->numframes <= 0 ||
+			!GLMesh_CheckedSizeMul ((size_t)hdr->numverts, (size_t)hdr->numframes, &input_vertex_count) ||
+			input_vertex_count > SIZE_MAX / sizeof (md3XyzNormal_t) ||
+			!GLMesh_CheckedSizeMul (numverts, (size_t)hdr->numframes, &output_vertex_count) ||
+			!GLMesh_CheckedSizeMul (output_vertex_count, sizeof (meshxyz_t), &vertex_data_size))
+			Sys_Error ("GLMesh_UploadBuffers: %s has invalid or oversized MD3 vertex data", mod->name);
 	}
 	break;
 	case PV_MD5:
 	{
-		assert (hdr->numposes == 1);
-		totalvbosize += hdr->numverts_vbo * (int)sizeof (md5vert_t);
-		numverts = hdr->numverts_vbo;
-		numindexes = hdr->numindexes;
+		if (hdr->numposes != 1 ||
+			!GLMesh_CheckedSizeMul (numverts, sizeof (md5vert_t), &vertex_data_size))
+			Sys_Error ("GLMesh_UploadBuffers: %s has invalid or oversized MD5 vertex data", mod->name);
 	}
 	break;
 	case PV_MD5_8:
 	{
-		assert (hdr->numposes == 1);
-		totalvbosize += hdr->numverts_vbo * (int)sizeof (md5vert8_t);
-		numverts = hdr->numverts_vbo;
-		numindexes = hdr->numindexes;
+		if (hdr->numposes != 1 ||
+			!GLMesh_CheckedSizeMul (numverts, sizeof (md5vert8_t), &vertex_data_size))
+			Sys_Error ("GLMesh_UploadBuffers: %s has invalid or oversized MD5_8 vertex data", mod->name);
 	}
 	break;
 	default:
-		assert (false);
+		Sys_Error ("GLMesh_UploadBuffers: %s has an invalid pose vertex type", mod->name);
 	}
-	if (GLMesh_ComputeTrackedCullQmax (hdr, vertexes, &hdr->tracked_cull_qmax))
-		hdr->tracked_cull_qmax_valid = true;
 
-	const size_t totaljointssize = hdr->numframes * hdr->numjoints * sizeof (jointpose_t);
+	if (joints)
+	{
+		size_t joint_pose_count;
+		if (hdr->numframes <= 0 || hdr->numjoints <= 0 ||
+			!GLMesh_CheckedSizeMul ((size_t)hdr->numframes, (size_t)hdr->numjoints, &joint_pose_count) ||
+			!GLMesh_CheckedSizeMul (joint_pose_count, sizeof (jointpose_t), &totaljointssize))
+			Sys_Error ("GLMesh_UploadBuffers: %s joint buffer is too large", mod->name);
+	}
+	else if (hdr->numframes > 0 && hdr->numjoints > 0)
+	{
+		size_t joint_pose_count;
+		if (!GLMesh_CheckedSizeMul ((size_t)hdr->numframes, (size_t)hdr->numjoints, &joint_pose_count) ||
+			!GLMesh_CheckedSizeMul (joint_pose_count, sizeof (jointpose_t), &totaljointssize))
+			Sys_Error ("GLMesh_UploadBuffers: %s joint data is too large", mod->name);
+	}
 
 	if (hdr->poseverttype == PV_QUAKE1 || hdr->poseverttype == PV_QUAKE3)
 	{
 		// reserve room from ST data starting at vbostofs.
-		hdr->vbostofs = totalvbosize;
-		totalvbosize += (numverts * sizeof (meshst_t));
+		if (vertex_data_size > INT_MAX ||
+			!GLMesh_CheckedSizeMul (numverts, sizeof (meshst_t), &st_data_size) ||
+			!GLMesh_CheckedSizeAdd (vertex_data_size, st_data_size, &totalvbosize))
+			Sys_Error ("GLMesh_UploadBuffers: %s vertex buffer is too large", mod->name);
 	}
+	else
+		totalvbosize = vertex_data_size;
+	if (totalvbosize > INT_MAX)
+		Sys_Error ("GLMesh_UploadBuffers: %s vertex buffer exceeds the int offset limit", mod->name);
+	if (hdr->poseverttype == PV_QUAKE1 || hdr->poseverttype == PV_QUAKE3)
+		hdr->vbostofs = (int)vertex_data_size;
+
+	if (GLMesh_ComputeTrackedCullQmax (hdr, vertexes, &hdr->tracked_cull_qmax))
+		hdr->tracked_cull_qmax_valid = true;
 
 	if (isDedicated)
 		return;
@@ -573,11 +650,12 @@ void GLMesh_UploadBuffers (
 		return;
 	if (!totalvbosize)
 		return;
+	if (!indexes || !vertexes ||
+		((hdr->poseverttype == PV_QUAKE1 || hdr->poseverttype == PV_QUAKE3) && !desc))
+		Sys_Error ("GLMesh_UploadBuffers: %s has missing mesh data", mod->name);
 	hdr->num_skeleton_indexes = num_skeleton_indexes;
 
 	{
-		const size_t totalindexsize = numindexes * sizeof (unsigned short);
-
 		// Allocate index buffer & upload to GPU
 		ZEROED_STRUCT (VkBufferCreateInfo, buffer_create_info);
 		buffer_create_info.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
@@ -616,11 +694,9 @@ void GLMesh_UploadBuffers (
 
 	if (skeleton_indexes && num_skeleton_indexes > 0)
 	{
-		const size_t totalindexsize = (size_t)num_skeleton_indexes * sizeof (*skeleton_indexes);
-
 		ZEROED_STRUCT (VkBufferCreateInfo, buffer_create_info);
 		buffer_create_info.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-		buffer_create_info.size = totalindexsize;
+		buffer_create_info.size = skeleton_index_size;
 		buffer_create_info.usage = VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
 		err = vkCreateBuffer (vulkan_globals.device, &buffer_create_info, NULL, &hdr->skeleton_index_buffer);
 		if (err != VK_SUCCESS)
@@ -641,7 +717,7 @@ void GLMesh_UploadBuffers (
 		if (err != VK_SUCCESS)
 			Sys_Error ("vkBindBufferMemory failed with code %i", (int)err);
 
-		R_StagingUploadBuffer (hdr->skeleton_index_buffer, totalindexsize, (byte *)skeleton_indexes);
+		R_StagingUploadBuffer (hdr->skeleton_index_buffer, skeleton_index_size, (byte *)skeleton_indexes);
 	}
 
 	// create the vertex buffer (empty)
@@ -656,7 +732,7 @@ void GLMesh_UploadBuffers (
 		for (int f = 0; f < hdr->numposes; f++) // ericw -- what RMQEngine called nummeshframes is called numposes in QuakeSpasm
 		{
 			meshxyz_t		 *xyz = (meshxyz_t *)vbodata + vertofs;
-			const trivertx_t *tv = (trivertx_t *)vertexes + (hdr->numverts * f);
+			const trivertx_t *tv = (trivertx_t *)vertexes + ((size_t)hdr->numverts * (size_t)f);
 			vertofs += hdr->numverts_vbo;
 
 			for (int v = 0; v < hdr->numverts_vbo; v++)
@@ -683,7 +759,7 @@ void GLMesh_UploadBuffers (
 		for (int f = 0; f < hdr->numframes; f++) // ericw -- what RMQEngine called nummeshframes is called numposes in QuakeSpasm
 		{
 			meshxyz_t			 *xyz = (meshxyz_t *)vbodata + vertofs;
-			const md3XyzNormal_t *tv = (md3XyzNormal_t *)vertexes + (hdr->numverts * f);
+			const md3XyzNormal_t *tv = (md3XyzNormal_t *)vertexes + ((size_t)hdr->numverts * (size_t)f);
 			vertofs += hdr->numverts_vbo;
 
 			float lat, lng;
