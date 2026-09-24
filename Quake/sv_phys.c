@@ -2945,6 +2945,17 @@ typedef struct sv_vr_weapon_pose_scope_s
 static sv_vr_weapon_pose_scope_t *sv_vr_weapon_pose_scope;
 static void SV_VRContactInvalidateAccepted (client_t *client);
 
+/* One native stock-axe call may borrow one already validated physical trace.
+ * The trace hook is further pinned by QC function and statement in pr_cmds. */
+static struct
+{
+	client_t *client;
+	edict_t *player;
+	const dfunction_t *function;
+	trace_t trace;
+	qboolean active;
+} sv_vr_stock_axe_trace_scope;
+
 void SV_ClearVRWeaponPoseScope (void)
 {
 	/* Host_Error/EndGame can unwind a QC callback past its normal restore. */
@@ -3069,20 +3080,65 @@ static void SV_ResetPrivateVRContactContinuity (client_t *client)
 	client->private_vr_contact_previous_received = 0;
 	memset (client->private_vr_contact_button, 0,
 		sizeof (client->private_vr_contact_button));
+	memset (client->private_vr_melee_arc, 0,
+		sizeof (client->private_vr_melee_arc));
+	memset (client->private_vr_melee_peak_speed, 0,
+		sizeof (client->private_vr_melee_peak_speed));
+	memset (client->private_vr_melee_consumed, 0,
+		sizeof (client->private_vr_melee_consumed));
 }
 
-/* Identity foundation only. The server does not advertise MELEE until the
- * authenticated client path can produce and validate immersive stroke data. */
+/* Profile availability is tied to the complete pinned id1 handler below.
+ * Server policy controls whether that profile is offered to private peers. */
 unsigned int SV_VRStockAxeContactProfile (void)
 {
-	return SV_VRStockAxeDescriptor () ?
+	return SV_VRStockAxeMeleeDescriptor () ?
 		VR_WEAPON_CONTACT_PROFILE_STOCK : VR_WEAPON_CONTACT_PROFILE_NONE;
 }
 
 int SV_VRStockAxeTraceStatement (void)
 {
-	const sv_vr_stock_axe_descriptor_t *descriptor = SV_VRStockAxeDescriptor ();
+	const sv_vr_stock_axe_descriptor_t *descriptor = SV_VRStockAxeMeleeDescriptor ();
 	return descriptor ? descriptor->trace_statement : -1;
+}
+
+void SV_VRStockAxeClearTraceScope (void)
+{
+	sv_vr_stock_axe_trace_scope.active = false;
+	sv_vr_stock_axe_trace_scope.client = NULL;
+	sv_vr_stock_axe_trace_scope.player = NULL;
+	sv_vr_stock_axe_trace_scope.function = NULL;
+}
+
+qboolean SV_VRStockAxeTrace (edict_t *ignore, int nomonsters,
+	const vec3_t start, const vec3_t end, trace_t *trace)
+{
+	const sv_vr_stock_axe_descriptor_t *descriptor;
+	int axis;
+
+	if (!trace || !sv_vr_stock_axe_trace_scope.active ||
+		qcvm != &sv.qcvm || !qcvm->progs ||
+		!(descriptor = SV_VRStockAxeMeleeDescriptor ()) ||
+		!sv_vr_stock_axe_trace_scope.client ||
+		!sv_vr_stock_axe_trace_scope.client->active ||
+		!sv_vr_stock_axe_trace_scope.client->spawned ||
+		sv_vr_stock_axe_trace_scope.client->protocol_qsvr != QSVR_PROTOCOL_PINNED ||
+		sv_vr_stock_axe_trace_scope.client->edict !=
+			sv_vr_stock_axe_trace_scope.player ||
+		!sv_vr_stock_axe_trace_scope.player ||
+		sv_vr_stock_axe_trace_scope.player->free ||
+		ignore != sv_vr_stock_axe_trace_scope.player || nomonsters ||
+		qcvm->xfunction != sv_vr_stock_axe_trace_scope.function ||
+		qcvm->xfunction != &qcvm->functions[descriptor->leaf_index] ||
+		qcvm->xstatement != descriptor->trace_statement ||
+		pr_global_struct->self != EDICT_TO_PROG (sv_vr_stock_axe_trace_scope.player))
+		return false;
+	for (axis = 0; axis < 3; axis++)
+		if (!isfinite (start[axis]) || !isfinite (end[axis]))
+			return false;
+	*trace = sv_vr_stock_axe_trace_scope.trace;
+	SV_VRStockAxeClearTraceScope ();
+	return true;
 }
 
 void SV_ResetPrivateVRContactState (client_t *client)
@@ -3187,9 +3243,11 @@ static qboolean SV_VRContactSampleValid (client_t *client, edict_t *ent,
 	const vr_weapon_contact_t *contact = &cmd->vr_contact;
 	unsigned int hand_flags = VR_WEAPON_CONTACT_LEFT_VALID |
 		VR_WEAPON_CONTACT_RIGHT_VALID;
+	unsigned int hands = contact->flags & hand_flags;
+	qboolean melee = (contact->flags & VR_WEAPON_CONTACT_IMMERSIVE_MELEE) != 0;
 	int hand, axis;
 
-	if (!SV_VRWeaponCollisionEnabled () || !SV_VRContactOwnerLive (client, ent) ||
+	if (!SV_VRContactOwnerLive (client, ent) ||
 		sv.paused || !cmd->vr_active || !cmd->vr_handpos_relative ||
 		cmd->msec < 1 || cmd->msec > 125 || cmd->sequence <= 0 ||
 		!isfinite (client->lastmovetime) || client->lastmovetime <= 0 ||
@@ -3198,11 +3256,25 @@ static qboolean SV_VRContactSampleValid (client_t *client, edict_t *ent,
 		!isfinite (cmd->vr_contact_received) || cmd->vr_contact_received < 0 ||
 		realtime < cmd->vr_contact_received ||
 		realtime - cmd->vr_contact_received > SV_VR_CONTACT_MAX_FRESHNESS ||
-		(contact->flags & ~hand_flags) || !(contact->flags & hand_flags) ||
+		(contact->flags & ~VR_WEAPON_CONTACT_KNOWN_FLAGS) || !hands ||
 		!SV_VRContactWeaponIdentity (ent, contact))
 		return false;
+	if (melee && (SV_VRStockAxeContactProfile () !=
+		VR_WEAPON_CONTACT_PROFILE_STOCK ||
+		(hands != VR_WEAPON_CONTACT_LEFT_VALID &&
+		 hands != VR_WEAPON_CONTACT_RIGHT_VALID) ||
+		!SV_VRStockAxeMeleeEnabled ()))
+		return false;
+	if (!melee && !SV_VRWeaponCollisionEnabled ())
+		return false;
+	if (melee)
+		for (axis = 0; axis < 3; axis++)
+			if (!isfinite (cmd->vr_handrot[axis]) ||
+				fabsf (cmd->vr_handrot[axis]) > 3600.0f)
+				return false;
 
-	/* IMMERSIVE_MELEE and every other non-hand flag are unsupported here. */
+	/* The immersive bit is admitted only by the pinned stock-axe handler;
+	 * other contact samples remain ordinary physical-hand queries. */
 	for (hand = 0; hand < 2; hand++)
 	{
 		if (!(contact->flags & (1u << hand)))
@@ -3225,6 +3297,505 @@ static qboolean SV_VRContactSampleValid (client_t *client, edict_t *ent,
 			return false;
 	}
 	return true;
+}
+
+static qboolean SV_VRContactCommandValid (client_t *client, edict_t *ent,
+	const usercmd_t *cmd)
+{
+	return cmd && !cmd->impulse &&
+		SV_VRContactSampleValid (client, ent, cmd);
+}
+
+static qboolean SV_VRContactSameSample (const vr_weapon_contact_t *a,
+	const vr_weapon_contact_t *b)
+{
+	int hand, axis;
+	if (a->flags != b->flags || a->modelindex != b->modelindex ||
+		a->weapon != b->weapon)
+		return false;
+	for (hand = 0; hand < 2; hand++)
+	{
+		if (a->speed[hand] != b->speed[hand])
+			return false;
+		for (axis = 0; axis < 3; axis++)
+			if (a->grip[hand][axis] != b->grip[hand][axis] ||
+				a->base[hand][axis] != b->base[hand][axis] ||
+				a->tip[hand][axis] != b->tip[hand][axis])
+				return false;
+	}
+	return true;
+}
+
+/* Keep suppression and contact processing on the same continuity contract.
+ * A NULL previous sample validates the first pose after continuity reset. */
+static qboolean SV_VRContactTransitionValid (client_t *client, edict_t *ent,
+	const usercmd_t *cmd, const vr_weapon_contact_t *previous,
+	double previous_received, const vec3_t previous_body_origin)
+{
+	const vr_weapon_contact_t *sample;
+	float seconds;
+	int hand;
+
+	if (!SV_VRContactCommandValid (client, ent, cmd))
+		return false;
+	if (!previous)
+		return true;
+	sample = &cmd->vr_contact;
+	seconds = cmd->msec * 0.001f;
+	if (!isfinite (previous_received) ||
+		cmd->vr_contact_received < previous_received ||
+		cmd->vr_contact_received - previous_received >
+			SV_VR_CONTACT_MAX_FRESHNESS ||
+		sample->modelindex != previous->modelindex ||
+		sample->weapon != previous->weapon ||
+		sample->flags != previous->flags ||
+		SV_VRContactDistance (ent->v.origin, previous_body_origin) > 64.0f)
+		return false;
+
+	for (hand = 0; hand < 2; hand++)
+	{
+		float point_motion;
+		vec3_t old_point, new_point;
+
+		if (!(sample->flags & (1u << hand)))
+			continue;
+		VectorCopy (previous->grip[hand], old_point);
+		VectorCopy (sample->grip[hand], new_point);
+		point_motion = SV_VRContactDistance (old_point, new_point);
+		VectorCopy (previous->base[hand], old_point);
+		VectorCopy (sample->base[hand], new_point);
+		point_motion = fmaxf (point_motion,
+			SV_VRContactDistance (old_point, new_point));
+		VectorCopy (previous->tip[hand], old_point);
+		VectorCopy (sample->tip[hand], new_point);
+		point_motion = fmaxf (point_motion,
+			SV_VRContactDistance (old_point, new_point));
+		if (point_motion > 32.0f ||
+			point_motion > sample->speed[hand] * seconds * 80.0f + 3.0f)
+			return false;
+	}
+	return true;
+}
+
+static qboolean SV_VRStockAxeSelected (client_t *client, edict_t *ent,
+	const usercmd_t *cmd, int *hand)
+{
+	const vr_weapon_contact_t *contact = &cmd->vr_contact;
+	unsigned int hands = contact->flags &
+		(VR_WEAPON_CONTACT_LEFT_VALID | VR_WEAPON_CONTACT_RIGHT_VALID);
+	const char *weaponmodel;
+	int active_hand;
+
+	if (!SV_VRStockAxeMeleeEnabled () ||
+		SV_VRStockAxeContactProfile () != VR_WEAPON_CONTACT_PROFILE_STOCK ||
+		!SV_VRContactOwnerLive (client, ent) ||
+		!(contact->flags & VR_WEAPON_CONTACT_IMMERSIVE_MELEE) ||
+		(hands != VR_WEAPON_CONTACT_LEFT_VALID &&
+		 hands != VR_WEAPON_CONTACT_RIGHT_VALID) ||
+		!isfinite (ent->v.weapon) || ent->v.weapon != IT_AXE)
+		return false;
+	weaponmodel = PR_GetString (ent->v.weaponmodel);
+	if (!weaponmodel || strcmp (weaponmodel, "progs/v_axe.mdl"))
+		return false;
+	active_hand = hands == VR_WEAPON_CONTACT_LEFT_VALID ? 0 : 1;
+	if (SV_VRContactDistance (contact->base[active_hand],
+		contact->tip[active_hand]) > 32.0f)
+		return false;
+	if (hand)
+		*hand = active_hand;
+	return true;
+}
+
+static qboolean SV_VRStockAxeReady (client_t *client, edict_t *ent,
+	const usercmd_t *cmd)
+{
+	const sv_vr_stock_axe_descriptor_t *descriptor =
+		SV_VRStockAxeMeleeDescriptor ();
+	eval_t *cooldown;
+	float qctime;
+
+	if (!descriptor || !SV_VRStockAxeSelected (client, ent, cmd, NULL) ||
+		!isfinite (qcvm->time) || !isfinite (ent->v.nextthink))
+		return false;
+	if (ent->v.think && ent->v.nextthink > 0 &&
+		ent->v.think != descriptor->stand_index &&
+		ent->v.think != descriptor->run_index)
+		return false;
+	cooldown = GetEdictFieldValue (ent,
+		ED_FindFieldOffset ("attack_finished"));
+	qctime = (float)qcvm->time;
+	return cooldown && isfinite (cooldown->_float) &&
+		cooldown->_float <= qctime;
+}
+
+static qboolean SV_VRContactEyeGripClear (edict_t *ent,
+	const vr_weapon_contact_t *contact, int hand)
+{
+	vec3_t eye, grip;
+	trace_t trace;
+	VectorAdd (ent->v.origin, ent->v.view_ofs, eye);
+	VectorAdd (ent->v.origin, contact->grip[hand], grip);
+	trace = SV_Move (eye, vec3_origin, vec3_origin, grip,
+		MOVE_NOMONSTERS, ent);
+	return !trace.startsolid && !trace.allsolid && trace.fraction >= 1.0f;
+}
+
+/* Suppress a duplicate QC trigger only when every retained record from the
+ * contact cursor to this command is contiguous and carries a fresh, valid
+ * immersive sample. A queue gap leaves the ordinary trigger path intact. */
+static qboolean SV_VRStockAxeSuppressNativeTrigger (client_t *client,
+	edict_t *ent, const usercmd_t *cmd)
+{
+	unsigned int offset;
+	int expected;
+	qboolean found = false;
+	vr_weapon_contact_t previous;
+	vec3_t previous_body_origin;
+	double previous_received = 0;
+	qboolean previous_valid;
+
+	if (!client || !cmd || !(cmd->buttons & BUTTON_ATTACK) ||
+		cmd->impulse ||
+		!SV_VRStockAxeSelected (client, ent, cmd, NULL) ||
+		!SV_VRContactCommandValid (client, ent, cmd) ||
+		!client->private_vr_contact_cursor_valid ||
+		client->private_discarded_move > client->private_vr_contact_last_sequence ||
+		client->private_retired_move > client->private_vr_contact_last_sequence)
+		return false;
+
+	/* The most recently accepted fresh pose owns the trigger during idle and
+	 * cooldown frames too. It must still be the exact accepted contact sample. */
+	if (client->private_vr_contact_previous_valid &&
+		(int)cmd->sequence == client->private_vr_contact_last_sequence &&
+		cmd->vr_contact_received == client->private_vr_contact_previous_received &&
+		SV_VRContactSameSample (&cmd->vr_contact,
+			&client->private_vr_contact_previous) &&
+		SV_VRContactDistance (ent->v.origin,
+			client->private_vr_contact_body_origin) <= 64.0f)
+		return true;
+
+	if (client->private_cmd_queue_count > SV_PRIVATE_CMD_QUEUE_SIZE ||
+		client->private_cmd_queue_head >= SV_PRIVATE_CMD_QUEUE_SIZE ||
+		(int)cmd->sequence <= client->private_vr_contact_last_sequence)
+		return false;
+
+	expected = client->private_vr_contact_last_sequence + 1;
+	previous_valid = client->private_vr_contact_previous_valid;
+	VectorClear (previous_body_origin);
+	if (previous_valid)
+	{
+		previous = client->private_vr_contact_previous;
+		VectorCopy (client->private_vr_contact_body_origin, previous_body_origin);
+		previous_received = client->private_vr_contact_previous_received;
+	}
+	for (offset = 0; offset < client->private_cmd_queue_count; offset++)
+	{
+		const usercmd_t *queued = &client->private_cmd_queue[
+			(client->private_cmd_queue_head + offset) % SV_PRIVATE_CMD_QUEUE_SIZE];
+		if ((int)queued->sequence < expected)
+			continue;
+		if ((int)queued->sequence > (int)cmd->sequence)
+			break;
+		if ((int)queued->sequence != expected ||
+			!(queued->vr_contact.flags & VR_WEAPON_CONTACT_IMMERSIVE_MELEE) ||
+			!SV_VRContactTransitionValid (client, ent, queued,
+				previous_valid ? &previous : NULL, previous_received,
+				previous_body_origin))
+			return false;
+		previous = queued->vr_contact;
+		previous_received = queued->vr_contact_received;
+		VectorCopy (ent->v.origin, previous_body_origin);
+		previous_valid = true;
+		if ((int)queued->sequence == (int)cmd->sequence)
+		{
+			found = true;
+			break;
+		}
+		expected++;
+	}
+	return found && previous_valid &&
+		cmd->vr_contact_received == previous_received &&
+		SV_VRContactSameSample (&cmd->vr_contact, &previous);
+}
+
+static void SV_VRStockAxeRefreshTriggerSuppression (client_t *client,
+	edict_t *ent, const usercmd_t *cmd, qboolean *suppressed)
+{
+	if (!*suppressed)
+		return;
+	if (SV_VRStockAxeSuppressNativeTrigger (client, ent, cmd))
+		ent->v.button0 = 0;
+	else
+	{
+		*suppressed = false;
+		ent->v.button0 = (cmd->buttons & BUTTON_ATTACK) != 0;
+	}
+}
+
+static qboolean SV_VRStockAxeSweep (edict_t *ent,
+	const vr_weapon_contact_t *previous, const vr_weapon_contact_t *current,
+	int hand, trace_t *best, qboolean *blocked)
+{
+	vec3_t eye, grip;
+	float first_fraction = FLT_MAX;
+	float first_blocked_fraction = FLT_MAX;
+	qboolean found = false;
+	int best_part = -1, best_point = -1;
+	int part;
+
+	memset (best, 0, sizeof (*best));
+	best->fraction = 1.0f;
+	*blocked = false;
+	VectorAdd (ent->v.origin, ent->v.view_ofs, eye);
+	VectorAdd (ent->v.origin, current->grip[hand], grip);
+	{
+		trace_t reach = SV_Move (eye, vec3_origin, vec3_origin, grip,
+			MOVE_NOMONSTERS, ent);
+		if (reach.startsolid || reach.allsolid || reach.fraction < 1.0f)
+		{
+			*blocked = true;
+			return false;
+		}
+	}
+
+	/* Sweep both the handle (grip to head) and cutting edge (base to tip).
+	 * Historical offsets are expressed in the current body frame, so walking
+	 * cannot itself generate a weapon stroke. */
+	for (part = 0; part < 2; part++)
+	{
+		const vec_t *old_a = part == 0 ? previous->grip[hand] : previous->base[hand];
+		const vec_t *old_b = part == 0 ? previous->base[hand] : previous->tip[hand];
+		const vec_t *new_a = part == 0 ? current->grip[hand] : current->base[hand];
+		const vec_t *new_b = part == 0 ? current->base[hand] : current->tip[hand];
+		float old_length = SV_VRContactDistance (old_a, old_b);
+		float new_length = SV_VRContactDistance (new_a, new_b);
+		int steps = CLAMP (1, (int)ceilf (fmaxf (old_length, new_length) / 3.0f), 32);
+		int point;
+
+		/* The current shaft is an endpoint fallback after all swept points.
+		 * Its trace fraction is spatial, so its event time is one. */
+		for (point = -1; point <= steps; point++)
+		{
+			vec3_t start, end, old_point, new_point, impact;
+			trace_t candidate, reach;
+			float t = point < 0 ? 0.0f : (float)point / steps;
+			float event_time;
+			int axis;
+
+			for (axis = 0; axis < 3; axis++)
+			{
+				old_point[axis] = point < 0 ? new_a[axis] :
+					old_a[axis] + t * (old_b[axis] - old_a[axis]);
+				new_point[axis] = point < 0 ? new_b[axis] :
+					new_a[axis] + t * (new_b[axis] - new_a[axis]);
+				start[axis] = ent->v.origin[axis] + old_point[axis];
+				end[axis] = ent->v.origin[axis] + new_point[axis];
+			}
+			candidate = SV_Move (start, vec3_origin, vec3_origin, end,
+				MOVE_NORMAL, ent);
+			if (candidate.startsolid || candidate.allsolid ||
+				candidate.fraction >= 1.0f || !candidate.ent || candidate.ent->free ||
+				candidate.ent == ent)
+				continue;
+			event_time = point < 0 ? 1.0f : candidate.fraction;
+
+			VectorCopy (candidate.endpos, impact);
+			reach = SV_Move (grip, vec3_origin, vec3_origin, impact,
+				MOVE_NOMONSTERS, ent);
+			if (reach.startsolid || reach.allsolid ||
+				(reach.fraction < 1.0f &&
+				 (reach.ent != candidate.ent ||
+				  SV_VRContactDistance (reach.endpos, candidate.endpos) > 2.0f)))
+			{
+				if (event_time < first_blocked_fraction)
+					first_blocked_fraction = event_time;
+				continue;
+			}
+			/* Point traces share a temporal fraction; the current shaft occurs
+			 * at interval end. Exact ties use stable handle-to-edge order. */
+			if (!found || event_time < first_fraction ||
+				(event_time == first_fraction &&
+				 (part < best_part ||
+				  (part == best_part && point < best_point))))
+			{
+				*best = candidate;
+				first_fraction = event_time;
+				best_part = part;
+				best_point = point;
+				found = true;
+			}
+		}
+	}
+	/* A later reachable contact cannot erase a nearer failure of the grip-to-hit
+	 * reach trace. Equal-time obstruction wins conservatively. */
+	*blocked = first_blocked_fraction < FLT_MAX &&
+		first_blocked_fraction <= first_fraction;
+	return found;
+}
+
+static qboolean SV_VRStockAxeOutcome (client_t *client, edict_t *ent,
+	const usercmd_t *cmd, const trace_t *contact)
+{
+	const sv_vr_stock_axe_descriptor_t *descriptor =
+		SV_VRStockAxeMeleeDescriptor ();
+	globalvars_t saved_globals;
+	float saved_call_globals[OFS_PARM7 + 3 - OFS_RETURN];
+	qcvm_t *saved_vm;
+	dprograms_t *saved_progs;
+	eval_t *cooldown, *hostile;
+	int saved_argc;
+	vec3_t saved_angles;
+	qboolean alive = false;
+
+	if (!descriptor || !SV_VRStockAxeReady (client, ent, cmd) ||
+		(contact && (!contact->ent || contact->ent->free ||
+			contact->fraction < 0 || contact->fraction >= 1.0f)))
+		return false;
+	cooldown = GetEdictFieldValue (ent,
+		ED_FindFieldOffset ("attack_finished"));
+	hostile = GetEdictFieldValue (ent,
+		ED_FindFieldOffset ("show_hostile"));
+	if (!cooldown || !hostile || !isfinite (hostile->_float))
+		return false;
+
+	saved_vm = qcvm;
+	saved_progs = qcvm->progs;
+	saved_globals = *pr_global_struct;
+	saved_argc = qcvm->argc;
+	memcpy (saved_call_globals, qcvm->globals + OFS_RETURN,
+		sizeof (saved_call_globals));
+	VectorCopy (ent->v.v_angle, saved_angles);
+	SV_VRStockAxeClearTraceScope ();
+	VectorCopy (cmd->vr_handrot, ent->v.v_angle);
+	ent->v.v_angle[ROLL] = 0;
+	AngleVectors (ent->v.v_angle, pr_global_struct->v_forward,
+		pr_global_struct->v_right, pr_global_struct->v_up);
+	pr_global_struct->self = EDICT_TO_PROG (ent);
+	pr_global_struct->other = EDICT_TO_PROG (qcvm->edicts);
+	pr_global_struct->time = qcvm->time;
+	qcvm->argc = 0;
+
+	/* W_Attack normally owns these id1 side effects before entering its leaf.
+	 * Keep the stock cooldown and cues while replacing only physical targeting. */
+	hostile->_float = qcvm->time + 1.0f;
+	cooldown->_float = qcvm->time + 0.5f;
+	PR_ExecuteProgram (descriptor->sound_index);
+	SV_StartSound (ent, ent->v.origin, 1, "weapons/ax1.wav", 255, 1);
+	if (contact && !ent->free && ent->v.health > 0 && !ent->v.deadflag)
+	{
+		sv_vr_stock_axe_trace_scope.client = client;
+		sv_vr_stock_axe_trace_scope.player = ent;
+		sv_vr_stock_axe_trace_scope.function =
+			&qcvm->functions[descriptor->leaf_index];
+		sv_vr_stock_axe_trace_scope.trace = *contact;
+		sv_vr_stock_axe_trace_scope.active = true;
+		PR_ExecuteProgram (descriptor->leaf_index);
+		SV_VRStockAxeClearTraceScope ();
+	}
+
+	if (qcvm == saved_vm && qcvm->progs == saved_progs)
+	{
+		qcvm->argc = saved_argc;
+		memcpy (qcvm->globals + OFS_RETURN, saved_call_globals,
+			sizeof (saved_call_globals));
+		if (!ent->free)
+			VectorCopy (saved_angles, ent->v.v_angle);
+		/* Match the donor's borrowed-QC context boundary: retain gameplay
+		 * globals written by the native leaf, restoring only its call context,
+		 * basis and transient trace result. */
+		pr_global_struct->self = saved_globals.self;
+		pr_global_struct->other = saved_globals.other;
+		pr_global_struct->time = saved_globals.time;
+		VectorCopy (saved_globals.v_forward, pr_global_struct->v_forward);
+		VectorCopy (saved_globals.v_right, pr_global_struct->v_right);
+		VectorCopy (saved_globals.v_up, pr_global_struct->v_up);
+		pr_global_struct->trace_allsolid = saved_globals.trace_allsolid;
+		pr_global_struct->trace_startsolid = saved_globals.trace_startsolid;
+		pr_global_struct->trace_fraction = saved_globals.trace_fraction;
+		pr_global_struct->trace_inwater = saved_globals.trace_inwater;
+		pr_global_struct->trace_inopen = saved_globals.trace_inopen;
+		pr_global_struct->trace_plane_dist = saved_globals.trace_plane_dist;
+		pr_global_struct->trace_ent = saved_globals.trace_ent;
+		VectorCopy (saved_globals.trace_endpos, pr_global_struct->trace_endpos);
+		VectorCopy (saved_globals.trace_plane_normal,
+			pr_global_struct->trace_plane_normal);
+		alive = client->active && client->spawned && client->edict == ent &&
+			!ent->free;
+	}
+	else
+		SV_VRStockAxeClearTraceScope ();
+	return alive;
+}
+
+static void SV_VRContactProcessMelee (client_t *client, edict_t *ent,
+	const usercmd_t *cmd, const vr_weapon_contact_t *previous,
+	int hand)
+{
+	const vr_weapon_contact_t *current = &cmd->vr_contact;
+	vec3_t old_point, new_point;
+	float endpoint_motion = 0;
+	float seconds = cmd->msec * 0.001f;
+	trace_t contact;
+	qboolean blocked, hit;
+	int point;
+
+	if (!SV_VRStockAxeSelected (client, ent, cmd, NULL))
+	{
+		client->private_vr_melee_arc[hand] = 0;
+		client->private_vr_melee_peak_speed[hand] = 0;
+		client->private_vr_melee_consumed[hand] = false;
+		return;
+	}
+	if (current->speed[hand] < 0.05f)
+	{
+		if (!client->private_vr_melee_consumed[hand] &&
+			client->private_vr_melee_arc[hand] >= 0.03f &&
+			SV_VRStockAxeReady (client, ent, cmd))
+		{
+			/* A completed armed swing with no contact is the stock axe whiff. */
+			client->private_vr_melee_consumed[hand] = true;
+			SV_VRStockAxeOutcome (client, ent, cmd, NULL);
+		}
+		client->private_vr_melee_arc[hand] = 0;
+		client->private_vr_melee_peak_speed[hand] = 0;
+		client->private_vr_melee_consumed[hand] = false;
+		return;
+	}
+	/* A blocked interval is skipped; later clear intervals can still hit. */
+	if (!SV_VRContactEyeGripClear (ent, current, hand))
+		return;
+	for (point = 0; point < 3; point++)
+	{
+		const vec_t *old = point == 0 ? previous->grip[hand] :
+			point == 1 ? previous->base[hand] : previous->tip[hand];
+		const vec_t *now = point == 0 ? current->grip[hand] :
+			point == 1 ? current->base[hand] : current->tip[hand];
+		VectorCopy (old, old_point);
+		VectorCopy (now, new_point);
+		endpoint_motion = fmaxf (endpoint_motion,
+			SV_VRContactDistance (old_point, new_point));
+	}
+	if (endpoint_motion <= 0.0001f)
+		return;
+	if (current->speed[hand] >= 0.25f)
+	{
+		client->private_vr_melee_arc[hand] += current->speed[hand] * seconds;
+		client->private_vr_melee_peak_speed[hand] = fmaxf (
+			client->private_vr_melee_peak_speed[hand], current->speed[hand]);
+	}
+	if (client->private_vr_melee_consumed[hand] ||
+		client->private_vr_melee_arc[hand] < 0.03f)
+		return;
+
+	/* Cooldown and missed intervals leave the armed stroke live so later
+	 * samples can still sweep a target. Only a valid hit commits its outcome. */
+	if (!SV_VRStockAxeReady (client, ent, cmd))
+		return;
+	hit = SV_VRStockAxeSweep (ent, previous, current, hand, &contact, &blocked);
+	if (blocked || !hit)
+		return;
+	client->private_vr_melee_consumed[hand] = true;
+	SV_VRStockAxeOutcome (client, ent, cmd, &contact);
 }
 
 static qboolean SV_VRContactButtonTouchAllowed (edict_t *button,
@@ -3355,7 +3926,6 @@ static qboolean SV_VRContactProcessCommand (client_t *client, edict_t *ent,
 	vr_weapon_contact_t sample = command.vr_contact;
 	vr_weapon_contact_t previous;
 	vec3_t body_origin;
-	float seconds;
 	int hand;
 
 	if (client->private_vr_contact_cursor_valid &&
@@ -3368,14 +3938,12 @@ static qboolean SV_VRContactProcessCommand (client_t *client, edict_t *ent,
 	client->private_vr_contact_cursor_valid = true;
 
 	if ((int)command.sequence <= client->private_discarded_move ||
-		command.impulse ||
-		!SV_VRContactSampleValid (client, ent, &command))
+		!SV_VRContactCommandValid (client, ent, &command))
 	{
 		SV_ResetPrivateVRContactContinuity (client);
 		return true;
 	}
 
-	seconds = command.msec * 0.001f;
 	if (!client->private_vr_contact_previous_valid)
 	{
 		SV_VRContactRemember (client, ent, &sample,
@@ -3384,47 +3952,19 @@ static qboolean SV_VRContactProcessCommand (client_t *client, edict_t *ent,
 	}
 	previous = client->private_vr_contact_previous;
 	VectorCopy (client->private_vr_contact_body_origin, body_origin);
-	if (!isfinite (client->private_vr_contact_previous_received) ||
-		command.vr_contact_received < client->private_vr_contact_previous_received ||
-		command.vr_contact_received - client->private_vr_contact_previous_received >
-			SV_VR_CONTACT_MAX_FRESHNESS ||
-		sample.modelindex != previous.modelindex || sample.weapon != previous.weapon ||
-		sample.flags != previous.flags ||
-		SV_VRContactDistance (ent->v.origin, body_origin) > 64.0f)
+	if (!SV_VRContactTransitionValid (client, ent, &command, &previous,
+		client->private_vr_contact_previous_received, body_origin))
 	{
 		SV_ResetPrivateVRContactContinuity (client);
 		SV_VRContactRemember (client, ent, &sample,
 			command.vr_contact_received);
 		return true;
 	}
-	for (hand = 0; hand < 2; hand++)
-	{
-		float point_motion;
-		vec3_t old_point, new_point;
-		if (!(sample.flags & (1u << hand)))
-			continue;
-		VectorCopy (previous.grip[hand], old_point);
-		VectorCopy (sample.grip[hand], new_point);
-		point_motion = SV_VRContactDistance (old_point, new_point);
-		VectorCopy (previous.base[hand], old_point);
-		VectorCopy (sample.base[hand], new_point);
-		point_motion = fmaxf (point_motion,
-			SV_VRContactDistance (old_point, new_point));
-		VectorCopy (previous.tip[hand], old_point);
-		VectorCopy (sample.tip[hand], new_point);
-		point_motion = fmaxf (point_motion,
-			SV_VRContactDistance (old_point, new_point));
-		if (point_motion > 32.0f ||
-			point_motion > sample.speed[hand] * seconds * 80.0f + 3.0f)
-		{
-			SV_ResetPrivateVRContactContinuity (client);
-			SV_VRContactRemember (client, ent, &sample,
-				command.vr_contact_received);
-			return true;
-		}
-	}
 
-	for (hand = 0; hand < 2; hand++)
+	if (!SV_VRWeaponCollisionEnabled ())
+		memset (client->private_vr_contact_button, 0,
+			sizeof (client->private_vr_contact_button));
+	for (hand = 0; SV_VRWeaponCollisionEnabled () && hand < 2; hand++)
 	{
 		edict_t *button;
 		int button_number;
@@ -3487,6 +4027,40 @@ static qboolean SV_VRContactProcessCommand (client_t *client, edict_t *ent,
 			SV_VRContactInvalidateAccepted (client);
 			return true;
 		}
+	}
+
+	if (sample.flags & VR_WEAPON_CONTACT_IMMERSIVE_MELEE)
+	{
+		vec3_t callback_origin;
+		VectorCopy (ent->v.origin, callback_origin);
+		for (hand = 0; hand < 2; hand++)
+			if (sample.flags & (1u << hand))
+				SV_VRContactProcessMelee (client, ent, &command, &previous, hand);
+		if (!SV_VRContactOwnerLive (client, ent))
+		{
+			SV_VRContactInvalidateAccepted (client);
+			return client->active && client->spawned &&
+				client->edict == ent && !ent->free;
+		}
+		if (!client->private_vr_contact_cursor_valid)
+			return false;
+		if (client->private_vr_contact_last_sequence != (int)command.sequence)
+			return true;
+		if (!SV_VRContactSampleValid (client, ent, &command) ||
+			SV_VRContactDistance (ent->v.origin, callback_origin) > 0.01f)
+		{
+			SV_VRContactInvalidateAccepted (client);
+			return true;
+		}
+	}
+	else
+	{
+		memset (client->private_vr_melee_arc, 0,
+			sizeof (client->private_vr_melee_arc));
+		memset (client->private_vr_melee_peak_speed, 0,
+			sizeof (client->private_vr_melee_peak_speed));
+		memset (client->private_vr_melee_consumed, 0,
+			sizeof (client->private_vr_melee_consumed));
 	}
 
 	if (!SV_VRContactSampleValid (client, ent, &command))
@@ -3718,14 +4292,14 @@ static qboolean SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *clien
 	movevars_t saved_movevars = movevars, trial_movevars;
 	client_t *saved_host_client = host_client;
 	edict_t *saved_sv_player = sv_player;
-	usercmd_t command, *queued = NULL;
+	usercmd_t command, ownership_command, *queued = NULL;
 	double saved_host_frametime = host_frametime;
 	float saved_qc_frametime = pr_global_struct->frametime;
 	vec3_t bounds[2], prethink_velocity;
 	float seconds, prethink_flags, prethink_teleport_time;
 	int prethink_groundentity;
 	qboolean run_command = false, was_grounded = false, weapon_alive;
-	qboolean command_completed = false;
+	qboolean command_completed = false, suppress_trigger = false;
 	const char *failure = NULL;
 	float result_jump_secs = 0;
 	int i;
@@ -3803,13 +4377,17 @@ static qboolean SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *clien
 			memset (&command, 0, sizeof (command));
 			VectorCopy (ent->v.v_angle, command.viewangles);
 		}
+		ownership_command = command;
+		suppress_trigger = SV_VRStockAxeSuppressNativeTrigger (client, ent,
+			&ownership_command);
 		command.impulse = 0;
 		command.seconds = 0;
 		command.msec = 0;
 		VectorClear (command.vr_roomscalemove);
 		client->cmd = command;
 		VectorCopy (command.viewangles, ent->v.v_angle);
-		ent->v.button0 = (command.buttons & 1) != 0;
+		ent->v.button0 = !suppress_trigger &&
+			(command.buttons & BUTTON_ATTACK) != 0;
 		ent->v.button2 = (command.buttons & 2) != 0;
 		ent->v.impulse = 0;
 		host_frametime = 0;
@@ -3827,6 +4405,8 @@ static qboolean SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *clien
 		if ((failure = SV_PrivateWalkTrialStateError (ent, client, &command)) != NULL)
 			goto cleanup;
 		/* Scheduled Think follows the host clock even without a move command. */
+		SV_VRStockAxeRefreshTriggerSuppression (client, ent,
+			&ownership_command, &suppress_trigger);
 		host_frametime = saved_host_frametime;
 		pr_global_struct->frametime = saved_qc_frametime;
 		if (!SV_RunPrivateVRWeaponThink (ent, client))
@@ -3834,6 +4414,8 @@ static qboolean SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *clien
 			failure = "player removed during maintenance weapon Think";
 			goto cleanup;
 		}
+		SV_VRStockAxeRefreshTriggerSuppression (client, ent,
+			&ownership_command, &suppress_trigger);
 		host_frametime = 0;
 		pr_global_struct->frametime = 0;
 		if ((failure = SV_PrivateWalkTrialStateError (ent, client, &command)) != NULL)
@@ -3850,6 +4432,8 @@ static qboolean SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *clien
 		{
 			sv_vr_weapon_pose_scope_t weapon_scope;
 			SV_BeginPrivateVRWeaponPose (ent, client, &weapon_scope);
+			SV_VRStockAxeRefreshTriggerSuppression (client, ent,
+				&ownership_command, &suppress_trigger);
 			PR_ExecuteProgram (pr_global_struct->PlayerPostThink);
 			SV_EndPrivateVRWeaponPose (ent, &weapon_scope);
 		}
@@ -3866,12 +4450,18 @@ static qboolean SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *clien
 		goto cleanup;
 	}
 
+	/* Suppress only this accepted queue head. Keep original buttons intact for
+	 * retirement and movement semantics. */
+	suppress_trigger = SV_VRStockAxeSuppressNativeTrigger (client, ent,
+		&command);
+	ownership_command = command;
 	/* A complete head is staged exactly once; room-scale is consumed before QC
 	 * and the shared PMove command below cannot apply it a second time. */
 	command.seconds = seconds;
 	client->cmd = command;
 	VectorCopy (command.viewangles, ent->v.v_angle);
-	ent->v.button0 = (command.buttons & 1) != 0;
+	ent->v.button0 = !suppress_trigger &&
+		(command.buttons & BUTTON_ATTACK) != 0;
 	ent->v.button2 = (command.buttons & 2) != 0;
 	ent->v.impulse = command.impulse;
 	host_frametime = seconds;
@@ -3888,6 +4478,8 @@ static qboolean SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *clien
 	pr_global_struct->frametime = seconds;
 	pr_global_struct->self = EDICT_TO_PROG (ent);
 	SV_CoopRespawnRefreshClientInventory (ent);
+	SV_VRStockAxeRefreshTriggerSuppression (client, ent,
+		&ownership_command, &suppress_trigger);
 	PR_ExecuteProgram (pr_global_struct->PlayerPreThink);
 	if (!client->active || ent->free)
 	{
@@ -3906,6 +4498,8 @@ static qboolean SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *clien
 		goto cleanup;
 	/* Weapon Think is scheduled against the world frame, not the packet's
 	 * duration; ordinary PMove below still consumes the complete command. */
+	SV_VRStockAxeRefreshTriggerSuppression (client, ent,
+		&ownership_command, &suppress_trigger);
 	host_frametime = saved_host_frametime;
 	pr_global_struct->frametime = saved_qc_frametime;
 	weapon_alive = SV_RunPrivateVRWeaponThink (ent, client);
@@ -3916,6 +4510,8 @@ static qboolean SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *clien
 		failure = "player removed during weapon Think";
 		goto cleanup;
 	}
+	SV_VRStockAxeRefreshTriggerSuppression (client, ent,
+		&ownership_command, &suppress_trigger);
 	if ((failure = SV_PrivateWalkTrialStateError (ent, client, &command)) != NULL)
 		goto cleanup;
 	if (!PMSV_BuildMoveVars (&trial_movevars, ent, sv.protocolflags) ||
@@ -4066,6 +4662,8 @@ static qboolean SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *clien
 	{
 		sv_vr_weapon_pose_scope_t weapon_scope;
 		SV_BeginPrivateVRWeaponPose (ent, client, &weapon_scope);
+		SV_VRStockAxeRefreshTriggerSuppression (client, ent,
+			&ownership_command, &suppress_trigger);
 		PR_ExecuteProgram (pr_global_struct->PlayerPostThink);
 		SV_EndPrivateVRWeaponPose (ent, &weapon_scope);
 	}
@@ -4096,6 +4694,8 @@ static qboolean SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *clien
 	command_completed = true;
 
 cleanup:
+	if (suppress_trigger && !ent->free)
+		ent->v.button0 = (command.buttons & BUTTON_ATTACK) != 0;
 	/* Only accepted commands refresh the pre-death snapshot.  The refresh
 	 * helper also requires an active, spawned, living client. */
 	if (command_completed && client->active && client->spawned &&
@@ -4125,6 +4725,7 @@ static void SV_Physics_Client (edict_t *ent, int num)
 	int completed_move;
 	unsigned queue_offset;
 	qboolean frame_completed = false;
+	qboolean suppress_trigger = false, saved_button0 = false;
 
 	if (!svs.clients[num - 1].active)
 		return; // unconnected slot
@@ -4158,9 +4759,17 @@ static void SV_Physics_Client (edict_t *ent, int num)
 	//
 	// call standard client pre-think
 	//
+	saved_button0 = ent->v.button0 != 0;
+	if (client->protocol_qsvr == QSVR_PROTOCOL_PINNED)
+		suppress_trigger = SV_VRStockAxeSuppressNativeTrigger (client, ent,
+			&client->cmd);
+	if (suppress_trigger)
+		ent->v.button0 = 0;
 	pr_global_struct->time = qcvm->time;
 	pr_global_struct->self = EDICT_TO_PROG (ent);
 	SV_CoopRespawnRefreshClientInventory (ent);
+	SV_VRStockAxeRefreshTriggerSuppression (client, ent,
+		&client->cmd, &suppress_trigger);
 	PR_ExecuteProgram (pr_global_struct->PlayerPreThink);
 
 	assert_always (!ent->free);
@@ -4175,6 +4784,8 @@ static void SV_Physics_Client (edict_t *ent, int num)
 	//
 	// decide which move function to call
 	//
+	SV_VRStockAxeRefreshTriggerSuppression (client, ent,
+		&client->cmd, &suppress_trigger);
 	switch ((int)ent->v.movetype)
 	{
 	case MOVETYPE_NONE:
@@ -4222,6 +4833,8 @@ static void SV_Physics_Client (edict_t *ent, int num)
 	pr_global_struct->time = qcvm->time;
 	pr_global_struct->self = EDICT_TO_PROG (ent);
 	SV_BeginPrivateVRWeaponPose (ent, client, &weapon_scope);
+	SV_VRStockAxeRefreshTriggerSuppression (client, ent,
+		&client->cmd, &suppress_trigger);
 	PR_ExecuteProgram (pr_global_struct->PlayerPostThink);
 	SV_EndPrivateVRWeaponPose (ent, &weapon_scope);
 	if (client->protocol_qsvr == QSVR_PROTOCOL_PINNED &&
@@ -4231,6 +4844,8 @@ static void SV_Physics_Client (edict_t *ent, int num)
 	frame_completed = true;
 
 done:
+	if (suppress_trigger && !ent->free)
+		ent->v.button0 = saved_button0;
 	/* PlayerPostThink and the weapon think above may both update inventory. */
 	if (frame_completed && client->active && client->spawned &&
 		client->edict == ent && !ent->free)

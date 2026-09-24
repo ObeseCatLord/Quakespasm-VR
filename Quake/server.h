@@ -225,6 +225,7 @@ typedef struct client_s
 	unsigned int protocol_pext1;
 	unsigned int protocol_pext2;
 	int weapon_contact_last_mode; // last mode appended to the reliable stream; -1 means not queued
+	int weapon_contact_last_profile; // profile paired with weapon_contact_last_mode
 	/* Optional VRIK pose transport state; unrelated to QSVR movement admission. */
 	qboolean vrik_capable;
 	unsigned char vrik_protocol_version;
@@ -317,6 +318,9 @@ typedef struct client_s
 	vec3_t private_vr_contact_body_origin;
 	double private_vr_contact_previous_received;
 	int private_vr_contact_button[2];
+	float private_vr_melee_arc[2];
+	float private_vr_melee_peak_speed[2];
+	qboolean private_vr_melee_consumed[2];
 	double	 lastmovetime;
 	unsigned int private_latest_buttons;
 	unsigned int private_latched_buttons;
@@ -521,6 +525,7 @@ void SV_ResetPrivateVRContactState (client_t *client);
 void SV_VRContactPlayerSetOrigin (edict_t *ent, const vec3_t origin);
 void SV_VRContactPlayerRelocated (edict_t *ent);
 qboolean SV_VRWeaponCollisionEnabled (void);
+qboolean SV_VRStockAxeMeleeEnabled (void);
 void SV_ReceiveVRIKPoseV2 (client_t *client, const vrik_v2_pose_t *pose,
 	const unsigned char body[VRIK_V2_BODY_BYTES]);
 void SV_ReceiveVRIKPoseV3 (client_t *client, const vrik_codec_pose_t *pose);
@@ -537,6 +542,7 @@ void SV_VRWeaponPoseSetOrigin (edict_t *ent);
 void SV_VRWeaponPoseLinked (edict_t *ent);
 unsigned int SV_VRStockAxeContactProfile (void);
 int SV_VRStockAxeTraceStatement (void);
+void SV_VRStockAxeClearTraceScope (void);
 void SV_SaveSpawnparms ();
 void SV_SpawnServer (const char *server);
 

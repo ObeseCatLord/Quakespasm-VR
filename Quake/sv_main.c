@@ -42,6 +42,9 @@ static cvar_t sv_smoothplatformlerps = {"sv_smoothplatformlerps", "1", CVAR_NONE
 static cvar_t sv_qsvr_private = {"sv_qsvr_private", "0", CVAR_NONE};
 static cvar_t sv_private_pmove_walk = {"sv_private_pmove_walk", "0", CVAR_SERVERINFO};
 static cvar_t sv_weapon_collision = {"sv_weapon_collision", "-1", CVAR_NOTIFY | CVAR_SERVERINFO};
+/* Keep the first stock-axe adapter explicitly enabled until physical swing
+ * and QC outcome qualification is complete on the release targets. */
+static cvar_t sv_immersive_melee = {"sv_immersive_melee", "0", CVAR_NOTIFY | CVAR_SERVERINFO};
 cvar_t sv_voice = {"sv_voice", "1", CVAR_SERVERINFO};
 cvar_t sv_coop_shared_pickups = {"sv_coop_shared_pickups", "-1", CVAR_ARCHIVE | CVAR_NOTIFY | CVAR_SERVERINFO};
 cvar_t sv_coop_respawn_keep_weapons_ammo = {"sv_coop_respawn_keep_weapons_ammo", "-1", CVAR_ARCHIVE | CVAR_NOTIFY | CVAR_SERVERINFO};
@@ -51,6 +54,19 @@ qboolean SV_VRWeaponCollisionEnabled (void)
 	return sv_weapon_collision.value < 0.0f ?
 		(cls.state != ca_dedicated && svs.maxclients == 1) :
 		(sv_weapon_collision.value > 0.0f);
+}
+
+static qboolean SV_VRContactPolicyEnabled (const cvar_t *policy)
+{
+	return policy->value < 0.0f ?
+		(cls.state != ca_dedicated && svs.maxclients == 1) :
+		(policy->value > 0.0f);
+}
+
+qboolean SV_VRStockAxeMeleeEnabled (void)
+{
+	return SV_VRContactPolicyEnabled (&sv_immersive_melee) &&
+		SV_VRStockAxeContactProfile () == VR_WEAPON_CONTACT_PROFILE_STOCK;
 }
 
 extern cvar_t nomonsters;
@@ -2195,6 +2211,7 @@ void SV_Init (void)
 	Cvar_RegisterVariable (&sv_qsvr_private);
 	Cvar_RegisterVariable (&sv_private_pmove_walk);
 	Cvar_RegisterVariable (&sv_weapon_collision);
+	Cvar_RegisterVariable (&sv_immersive_melee);
 	Cvar_RegisterVariable (&sv_voice);
 	Cvar_RegisterVariable (&sv_coop_shared_pickups);
 	Cvar_RegisterVariable (&sv_coop_respawn_keep_weapons_ammo);
@@ -2467,6 +2484,7 @@ void SV_SendServerinfo (client_t *client)
 
 	SV_ResetPrivateVRContactState (client);
 	client->weapon_contact_last_mode = -1;
+	client->weapon_contact_last_profile = -1;
 	client->spawned = false; // need prespawn, spawn, etc
 	client->voice_protocol_offered = false;
 
@@ -4020,6 +4038,7 @@ SV_SendClientMessages
 static void SV_AppendWeaponContactProtocol (client_t *client)
 {
 	unsigned int mode;
+	unsigned int profile;
 	char command[64];
 	int command_length;
 	size_t required;
@@ -4031,7 +4050,14 @@ static void SV_AppendWeaponContactProtocol (client_t *client)
 
 	mode = SV_VRWeaponCollisionEnabled () ?
 		VR_WEAPON_CONTACT_CAP_COLLISION : 0u;
-	if (client->weapon_contact_last_mode == (int)mode ||
+	profile = VR_WEAPON_CONTACT_PROFILE_NONE;
+	if (SV_VRStockAxeMeleeEnabled ())
+	{
+		mode |= VR_WEAPON_CONTACT_CAP_MELEE;
+		profile = VR_WEAPON_CONTACT_PROFILE_STOCK;
+	}
+	if ((client->weapon_contact_last_mode == (int)mode &&
+		client->weapon_contact_last_profile == (int)profile) ||
 		client->message.overflowed || client->message.cursize < 0 ||
 		client->message.maxsize <= 0 ||
 		client->message.cursize > client->message.maxsize)
@@ -4039,8 +4065,7 @@ static void SV_AppendWeaponContactProtocol (client_t *client)
 
 	command_length = q_snprintf (command, sizeof (command),
 		"//vr_weapon_contact_protocol %u %u %u\n",
-		VR_WEAPON_CONTACT_PROTOCOL_VERSION, mode,
-		(unsigned int)VR_WEAPON_CONTACT_PROFILE_NONE);
+		VR_WEAPON_CONTACT_PROTOCOL_VERSION, mode, profile);
 	if (command_length <= 0 || (size_t)command_length >= sizeof (command))
 		return;
 
@@ -4053,7 +4078,10 @@ static void SV_AppendWeaponContactProtocol (client_t *client)
 	MSG_WriteString (&client->message, command);
 	if (!client->message.overflowed &&
 		client->message.cursize == previous_size + (int)required)
+	{
 		client->weapon_contact_last_mode = (int)mode;
+		client->weapon_contact_last_profile = (int)profile;
+	}
 }
 
 void SV_SendClientMessages (void)

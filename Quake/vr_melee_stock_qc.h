@@ -103,7 +103,7 @@ static qboolean SV_VRStockAxeFunctionStatementPin(
 	if (trace_function >= (unsigned int)qcvm->progs->numfunctions)
 		return false;
 	traceline = ED_FindFunction("traceline");
-	return traceline && traceline->first_statement < 0 &&
+	return traceline && traceline->first_statement == -16 &&
 		trace_function == (unsigned int)(traceline - qcvm->functions) &&
 		descriptor->trace_statement > leaf->first_statement;
 }
@@ -126,6 +126,26 @@ static const sv_vr_stock_axe_descriptor_t *SV_VRStockAxeDescriptor(void)
 			return descriptor;
 	}
 	return NULL;
+}
+
+/* id1 is the only stock program whose immersive attack path is enabled in
+ * this vertical. The other identities remain useful for rejecting a familiar
+ * function layout, but do not grant a negotiated melee profile. */
+static const sv_vr_stock_axe_descriptor_t *SV_VRStockAxeMeleeDescriptor(void)
+{
+	/* id1/pak0.pak progs.dat: 340014 original bytes. A CRC16 and a few
+	 * function pins are not enough to authorize borrowed QuakeC side effects. */
+	static const byte id1_sha256[32] = {
+		0xf9, 0xa2, 0xd6, 0x4e, 0x84, 0xa6, 0x53, 0x02,
+		0x81, 0xc0, 0x16, 0xf1, 0xa5, 0x55, 0x79, 0x24,
+		0x37, 0x0f, 0xdd, 0x9a, 0x1a, 0x10, 0xeb, 0x6e,
+		0x78, 0x5d, 0x49, 0x13, 0x52, 0xff, 0xac, 0xf0
+	};
+	const sv_vr_stock_axe_descriptor_t *descriptor = SV_VRStockAxeDescriptor();
+	return descriptor && descriptor->progscrc == 3064 &&
+		qcvm->progssize == 340014 &&
+		!memcmp (qcvm->progssha256, id1_sha256, sizeof (id1_sha256)) ?
+		descriptor : NULL;
 }
 
 #endif /* QS_VR_MELEE_STOCK_QC_H */

@@ -194,3 +194,27 @@ in-game button activation or melee parity result. Real target/button behavior,
 body relocation paths beyond the explicit hooks, haptics, all other supported
 weapon models, model-exact stock axe, mod QC families, akimbo and parry remain
 open. Keep the current local opt-in and server policy until those gates close.
+
+## Stock axe native adapter review
+
+The first stock id1 axe vertical reuses the accepted private contact queue,
+vkQuake collision queries, and the packed `W_FireAxe` QuakeC leaf through a
+one-shot trace substitution. An Astra xhigh senior review of that adapter found
+the following integration gates. Source inspection and Linux compilation are
+not substitutes for physical swing and native combat outcomes in game.
+
+| Finding | Decision |
+| --- | --- |
+| A held trigger could re-enter native attack during a zero-time maintenance pass after a physical sample claimed the attack. | **Adopt:** physical ownership must persist while eligible and fresh, then release on invalidation. |
+| Suppression could accept a command later rejected by contact processing, including an impulse or discontinuous pair. | **Adopt:** share command/pair eligibility and fail open to native input on rejection. |
+| The initial threshold interval could consume a stroke before the blade reached a target. | **Adopt:** arm at the threshold, continue successive interval sweeps, and finish an empty stroke at rest. |
+| Reported speed could qualify a nearly stationary endpoint. | **Adapt:** retain physical metres/second for world-scale-independent effort as in the inherited implementation, but require measured endpoint movement and bounded geometry. The server currently lacks a trusted units-per-metre value to derive physical speed from world units alone. |
+| Contact ordering mixed shaft position with elapsed swing time and dropped world hits. | **Adopt:** compare actual sweep fractions, preserve reach obstruction, and include native wall contact behavior. |
+| CRC16 and selected QC function pins did not establish an exact stock program. | **Adopt:** hash the original on-disk id1 `progs.dat` with SHA-256 at load time, then retain the function and trace-site checks. Other QC programs remain outside this initial melee profile. |
+
+The independent `sv_immersive_melee` policy and exact id1-only offer are kept.
+The new server policy defaults off while this stock-axe adapter is being
+qualified; an explicit server opt-in can offer it on a development session.
+Runtime qualification still needs a late-contact
+swing, held-trigger maintenance, impulse/tracking fallback, wall impact, and
+one native damage/cooldown/quad result in both server physics paths.

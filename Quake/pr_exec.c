@@ -192,6 +192,9 @@ void PR_RunError (const char *error, ...)
 	va_list argptr;
 	char	string[1024];
 
+	/* A QC error can unwind out of the one-shot native axe trace scope. */
+	SV_VRStockAxeClearTraceScope ();
+
 	va_start (argptr, error);
 	q_vsnprintf (string, sizeof (string), error, argptr);
 	va_end (argptr);
