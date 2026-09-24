@@ -2839,8 +2839,13 @@ void SV_ConnectClient (int clientnum)
 	{
 		// call the progs to get default spawn parms for the new client
 		PR_ExecuteProgram (pr_global_struct->SetNewParms);
-		for (i = 0; i < NUM_TOTAL_SPAWN_PARMS; i++)
+		for (i = 0; i < NUM_BASIC_SPAWN_PARMS; i++)
 			client->spawn_parms[i] = (&pr_global_struct->parm1)[i];
+		for (; i < NUM_TOTAL_SPAWN_PARMS; i++)
+		{
+			ddef_t *g = ED_FindGlobal (va ("parm%i", i + 1));
+			client->spawn_parms[i] = g ? qcvm->globals[g->ofs] : 0;
+		}
 	}
 
 	SV_SendServerinfo (client);
