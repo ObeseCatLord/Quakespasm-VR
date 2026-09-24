@@ -70,6 +70,9 @@ int SA_WriteSelf(sa_renderer_t *r, const int16_t *pcm, int frames);
 sa_renderer_t *SA_Create(int sources, int streams);
 void SA_Destroy(sa_renderer_t *r); /* callback excluded; joins any still-attached room worker */
 void SA_Reset(sa_renderer_t *r); /* callback excluded; retains allocations */
+/* Before freeing a sample, exclude the callback and erase retained snapshots
+ * and progress references as well as the control source. */
+void SA_ForgetSample(sa_renderer_t *r, const sa_sample_t *sample);
 void SA_ResetStream(sa_renderer_t *r, int stream); /* callback excluded */
 void SA_SetSource(sa_renderer_t *r, int index, const sa_source_t *source);
 void SA_SetListener(sa_renderer_t *r, const sa_listener_t *listener);

@@ -208,6 +208,35 @@ void SA_Reset(sa_renderer_t *r)
     sa_atomic_set(&r->clock, 0);
 }
 
+void SA_ForgetSample(sa_renderer_t *r, const sa_sample_t *sample)
+{
+    int i;
+    if (!r || !sample) return;
+    /* The caller excludes SA_Render. Published control alone is insufficient:
+     * an old snapshot and block-progress cursor can survive a missed publish. */
+    sa_spin_lock(&r->control_lock);
+    for (i = 0; i < r->count - r->streams; ++i) {
+        sa_playback_t *p = &r->playback[i];
+        if (r->control[i].sample == sample) {
+            r->control[i].sample = NULL;
+            r->control[i].active = 0;
+            ++r->control[i].generation;
+        }
+        if (r->snapshot[i].sample == sample) {
+            r->snapshot[i].sample = NULL;
+            r->snapshot[i].active = 0;
+            ++r->snapshot[i].generation;
+        }
+        if (p->block_sample == sample) {
+            p->block_sample = NULL;
+            p->block_generation = 0;
+            r->progress[i].generation = 0;
+            r->progress[i].position = 0;
+        }
+    }
+    sa_spin_unlock(&r->control_lock);
+}
+
 void SA_SetSource(sa_renderer_t *r, int index, const sa_source_t *source)
 {
     if (index < 0 || index >= r->count) return;
