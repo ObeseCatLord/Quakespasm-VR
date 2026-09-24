@@ -13,13 +13,13 @@ measurements remain acceptance gates.
 | OIT/transparency and FTE particles | The scene frame builder retains standard, WBOIT and MBOIT variants plus FTE particle subpasses in stereo (`r_passes.c`). | Check per-eye ordering, water boundaries, dense particles and MSAA resolve. |
 | Water warp, palette/polyblend and screen effects | `FRAME_SCREEN_EFFECTS` remains in the stereo frame graph, with 2D-array shader output for stereo (`r_passes.c`, `screen_effects.comp`). | Verify each effect's input and per-eye output with underwater, palette and damage scenes. |
 | Scene upscale | Stereo shader samples the matching `gl_ViewIndex` layer (`scene_upscale.frag`). | Compare scaling modes in both eyes and desktop. |
-| Entity SSAO/contact occlusion | **Missing in stereo.** `r_ssao` defaults to 1, but resource creation, stencil marking, compute steps, composite pipeline and task are currently gated off by `!stereo_active` (`r_ssao.c`, `gl_vidsdl.c`, `gl_rmisc.c`, `r_passes.c`, `gl_rmain.c`). | Adapt vkQuake's existing SSAO pipeline to two eyes, then inspect both-eye AO and measure its cost. |
+| Entity SSAO/contact occlusion | Full-resolution per-eye compute and one multiview composite are implemented. VR Options exposes an independent, default-off `vr_ssao` toggle; desktop retains `r_ssao` behavior. | Inspect both-eye AO, asymmetric frusta, MSAA/OIT/foveation combinations, and measure frame cost. Benchmark a VR-only lower-resolution path before adopting it. |
 | Ray-debug visualization | Explicitly disabled in stereo by `gl_vidsdl.c`; this is a debug view, separate from optional ray-query shadows. | Decide whether the diagnostic itself is useful in VR; it is not a production lighting gate. |
 
-The SSAO design review is comparing a narrow per-eye resource/compute adapter
-with a wider shader rewrite. The former should preserve the existing desktop
-algorithm and one multiview scene draw; Vulkan multiview maps each view to an
-attachment layer and exposes its index to fragment shaders, as specified by
+The [SSAO design and implementation review](migration-vr-ssao-review.md)
+selected a narrow per-eye resource/compute adapter over a shader rewrite.
+It preserves the existing desktop algorithm and one multiview composite draw.
+Vulkan multiview maps each view to an attachment layer and exposes its index to fragment shaders, as specified by
 [Khronos's render-pass chapter](https://docs.vulkan.org/spec/latest/chapters/renderpass.html)
 and [ViewIndex reference](https://docs.vulkan.org/refpages/latest/refpages/source/ViewIndex.html).
 This audit records known gates; it does not certify every visual effect yet.
