@@ -134,3 +134,14 @@ request a pulse. The haptic request precedes the corresponding native
 `Key_Event`, preserving the donor's event order and the bridge's context-change
 invalidation. This is controller-feedback parity only; it does not add a VR
 menu option for the toggle or establish device output on Monado or other runtimes.
+
+## Current haptic integration audit
+
+The later `2.0` tree now includes the archived `vr_haptic` toggle in the native
+VR options (`Quake/menu.c:M_VROptions_Adjust` and `M_VROptions_Draw`). The VR
+weapon wheel calls `VR_InputTriggerHaptic` only when its selectable hover ID
+changes (`Quake/vr_weapon_menu.c:VR_WeaponMenu_SetVRPointer`), so held hover
+does not repeat a pulse. That helper maps the logical weapon hand to the
+physical controller and gates desktop/unfocused sessions. This reconciles the
+earlier checkpoint's pending menu/wheel statements; physical output remains
+the user's deferred device check.
