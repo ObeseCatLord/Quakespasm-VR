@@ -95,6 +95,10 @@ fastload could discard an unsent update, and permissive console tokenization
 could accept a malformed quoted/commented offer. Both recommendations were
 adopted in the reset and raw-syntax checks above. The reviewer CLI reported
 `gpt-6-astra` at `xhigh`; backend routing was not independently observable.
+Command retraction checks the selected `STAT_WEAPON` model used by the current
+muzzle calibration; presentation also requires `cl.viewent.model` to match
+that selection. This avoids applying the shotgun offset for a newly selected
+weapon before the view entity refreshes.
 The inherited client defaults `vr_weapon_collision` to on; the current `2.0`
 default of off is a temporary gate while only the Classic Shotgun path exists.
 Before declaring weapon parity, extend collision/contact handling to the

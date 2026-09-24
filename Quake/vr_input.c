@@ -2922,14 +2922,18 @@ static void VR_InputPreparePrivatePose (usercmd_t *pending, int dominant,
 			dominant == 0, world_muzzle))
 		return;
 
-	/* First opt-in collision slice: the classic shotgun only. */
+	/* First opt-in collision slice: the classic shotgun only. Match the
+	 * command-time model used by CurrentMuzzle, even before viewent refresh. */
 	{
 		const vrxr_frame_t *frame = GL_OpenXRFrame ();
 		const qboolean collision_context = VR_WeaponCollisionAuthorized () &&
 			cls.state == ca_connected && cls.signon == SIGNONS &&
 			!cls.demoplayback && key_dest == key_game && !cl.intermission &&
-			cl.stats[STAT_HEALTH] > 0 && cl.viewent.model &&
-			!strcmp (cl.viewent.model->name, "progs/v_shot.mdl") &&
+			cl.stats[STAT_HEALTH] > 0 &&
+			cl.stats[STAT_WEAPON] > 0 && cl.stats[STAT_WEAPON] < MAX_MODELS &&
+			cl.model_precache[cl.stats[STAT_WEAPON]] &&
+			!strcmp (cl.model_precache[cl.stats[STAT_WEAPON]]->name,
+				"progs/v_shot.mdl") &&
 			cl.worldmodel && !cl.worldmodel->needload && cl.entities &&
 			cl.viewentity > 0 && cl.viewentity < cl.num_entities && frame &&
 			frame->focused && frame->should_render &&

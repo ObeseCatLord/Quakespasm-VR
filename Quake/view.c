@@ -535,7 +535,10 @@ void V_PrepareWeaponCollisionPresentation (void)
 		cl.stats[STAT_HEALTH] <= 0 || chase_active.value ||
 		!cl.worldmodel || cl.worldmodel->needload || !cl.entities ||
 		cl.viewentity <= 0 || cl.viewentity >= cl.num_entities ||
-		!cl.viewent.model || strcmp (cl.viewent.model->name, "progs/v_shot.mdl") ||
+		!cl.viewent.model || cl.stats[STAT_WEAPON] <= 0 ||
+		cl.stats[STAT_WEAPON] >= MAX_MODELS ||
+		cl.viewent.model != cl.model_precache[cl.stats[STAT_WEAPON]] ||
+		strcmp (cl.viewent.model->name, "progs/v_shot.mdl") ||
 		!tracked_viewmodel_active || dominant < 0 || dominant > 1)
 		return;
 
