@@ -15,6 +15,9 @@ USE_CODEC_FLAC = 0
 USE_CODEC_MP3 = 1
 USE_CODEC_VORBIS = 1
 USE_CODEC_OPUS = 0
+USE_STEAMAUDIO ?= 0
+STEAMAUDIO_INCLUDE_DIR ?=
+STEAMAUDIO_LIBRARY_DIR ?=
 # either xmp or mikmod (or modplug)
 USE_CODEC_MIKMOD = 0
 USE_CODEC_XMP = 0
@@ -89,6 +92,18 @@ ifeq ($(USE_CODEC_OPUS),1)
 # prefix and rely on pkg-config. ewww...
 CFLAGS += $(shell pkg-config --cflags opusfile)
 CODECLIBS += $(shell pkg-config --libs opusfile)
+endif
+
+ifeq ($(USE_STEAMAUDIO),1)
+ifeq ($(strip $(STEAMAUDIO_INCLUDE_DIR)),)
+$(error USE_STEAMAUDIO=1 requires STEAMAUDIO_INCLUDE_DIR)
+endif
+ifeq ($(strip $(STEAMAUDIO_LIBRARY_DIR)),)
+$(error USE_STEAMAUDIO=1 requires STEAMAUDIO_LIBRARY_DIR)
+endif
+CFLAGS += -DUSE_STEAMAUDIO -I. -I$(STEAMAUDIO_INCLUDE_DIR)
+LDFLAGS += -L$(STEAMAUDIO_LIBRARY_DIR)
+CODECLIBS += -lphonon
 endif
 
 COMMON_LIBS:= -lm -lpthread

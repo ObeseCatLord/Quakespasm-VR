@@ -147,6 +147,9 @@ COMOBJ_SND := snd_dma.o snd_mix.o snd_mem.o $(MUSIC_OBJS)
 ifeq ($(USE_VOICECHAT),1)
 COMOBJ_SND += voice.o voice_jitter.o voice_vad.o voice_settings.o
 endif
+ifeq ($(USE_STEAMAUDIO),1)
+COMOBJ_SND += snd_spatial.o snd_steamaudio.o snd_room.o
+endif
 SYSOBJ_SND := snd_sdl.o snd_sdl3.o
 SYSOBJ_CDA := cd_sdl.o
 SYSOBJ_INPUT := in_sdl.o in_sdl2.o in_sdl3.o

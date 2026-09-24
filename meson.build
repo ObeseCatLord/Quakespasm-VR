@@ -376,6 +376,30 @@ deps = [
     sdl_dep,
 ]
 
+# Valve's SDK has no pkg-config file. Explicit paths also allow a native
+# Linux ARM64 build of libphonon instead of assuming the Linux x64 binary.
+steam_audio_opt = get_option('use_steam_audio')
+steam_audio_include_dir = get_option('steam_audio_include_dir')
+steam_audio_library_dir = get_option('steam_audio_library_dir')
+steam_audio_paths_set = steam_audio_include_dir != '' and steam_audio_library_dir != ''
+if steam_audio_opt.enabled() or (steam_audio_opt.auto() and steam_audio_paths_set)
+    if not steam_audio_paths_set
+        error('Steam Audio requires both -Dsteam_audio_include_dir and -Dsteam_audio_library_dir')
+    endif
+    phonon_dep = cc.find_library('phonon', dirs : [steam_audio_library_dir], required : true)
+    deps += phonon_dep
+    srcs += [
+        'Quake/snd_steamaudio.c',
+        'Quake/snd_room.c',
+        'Quake/snd_spatial.c',
+    ]
+    cflags += [
+        '-DUSE_STEAMAUDIO',
+        '-I' + (meson.project_source_root() / 'Quake'),
+        '-I' + steam_audio_include_dir,
+    ]
+endif
+
 if host_machine.system() == 'windows'
     foreach syslib : ['ws2_32', 'winmm', 'dbghelp', 'ole32', 'uuid']
         deps += cc.find_library(syslib)
