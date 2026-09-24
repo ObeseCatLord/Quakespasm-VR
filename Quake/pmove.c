@@ -1284,10 +1284,10 @@ PM_CategorizePosition
  * Never apply these exceptions merely because the server offers Gorilla. */
 static qboolean PM_GorillaGroundContact (void)
 {
-	return pmove.gorilla_allowed && pmove.cmd.vr_active &&
-		pmove.cmd.vr_handpos_relative && !pmove.onladder && !pmove.waterjumptime &&
+	return pmove.gorilla_allowed && !pmove.onladder && !pmove.waterjumptime &&
 		pmove.pm_type == PM_NORMAL &&
-		((pmove.cmd.vr_gorilla_motion.flags & VR_GORILLA_MOTION_ACTIVE) ||
+		((pmove.cmd.vr_active && pmove.cmd.vr_handpos_relative &&
+		  (pmove.cmd.vr_gorilla_motion.flags & VR_GORILLA_MOTION_ACTIVE)) ||
 		 VRG_InputValid(&pmove.cmd.vr_gorilla));
 }
 
@@ -1970,7 +1970,7 @@ static void PM_PlayerMoveStep (float gamespeed, qboolean apply_roomscale,
 						pmove.physents[index].modelindex == motion->contact_model[hand])
 						pmove.gorilla_contact[hand] = motion->contact[hand];
 		}
-		else if (pmove.gorilla_allowed && pmove.cmd.vr_active &&
+		else if (pmove.gorilla_allowed &&
 			(pmove.pm_type == PM_NORMAL || pmove.pm_type == PM_FLY) &&
 			!pmove.onladder &&
 			VRG_InputValid(&pmove.cmd.vr_gorilla))

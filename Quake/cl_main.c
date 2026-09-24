@@ -1183,8 +1183,6 @@ static qboolean CL_SetupReplayGorilla (int startseq)
 	}
 	if (!cl.vr_gorilla_supported || !cl.vr_gorilla_allowed || !cl.vr_gorilla_state_valid)
 		return true;
-	if (!cl.vr_gorilla_state.initialized)
-		return true;
 	/* The pinned client additionally gates raw-state restoration on
 	 * VR_GorillaActive().  That tracked producer/activity owner is not present
 	 * in this slice.  A journaled raw Gorilla command is sufficient provenance
@@ -1192,7 +1190,7 @@ static qboolean CL_SetupReplayGorilla (int startseq)
 	for (seq = startseq; seq < cl.movemessages; seq++)
 	{
 		cmd = &cl.movecmds[seq & MOVECMDS_MASK];
-		if (cmd->vr_active && cmd->vr_handpos_relative && cmd->vr_gorilla.flags)
+		if (cmd->vr_gorilla.flags)
 		{
 			raw_replay = true;
 			break;
@@ -1207,7 +1205,9 @@ static qboolean CL_SetupReplayGorilla (int startseq)
 		return true;
 
 	pmove.gorilla = cl.vr_gorilla_state;
-	pmove.gorilla_allowed = cl.vr_gorilla_state.initialized != 0;
+	/* An acknowledged OFF state still allows the next raw command to seed
+	 * a fresh controller without borrowing a weapon-pose validity bit. */
+	pmove.gorilla_allowed = true;
 	for (hand = 0; hand < 2; hand++)
 	{
 		int surface = pmove.gorilla.surface[hand];

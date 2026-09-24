@@ -548,7 +548,9 @@ qboolean SV_ReadPrivateUsercmd (usercmd_t *readcmd, unsigned int sequence,
 		msg_badread = true;
 		return false;
 	}
-	if ((extbits & (MOVEEXT_VR_GORILLA | MOVEEXT_GORILLA_TRUSTED)) != 0 &&
+	/* Raw palms carry their own body-relative head and hand positions. They
+	 * need no weapon pose, unlike authored trusted motion for now. */
+	if ((extbits & MOVEEXT_GORILLA_TRUSTED) != 0 &&
 		(extbits & (MOVEEXT_VR | MOVEEXT_VR_RELATIVE)) !=
 			(MOVEEXT_VR | MOVEEXT_VR_RELATIVE))
 	{

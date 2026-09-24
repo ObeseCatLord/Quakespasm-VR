@@ -3812,16 +3812,6 @@ void VR_InputApplyPending (usercmd_t *cmd)
 		cmd->vr_gorilla = cl.pendingcmd.vr_gorilla;
 		if (vr_input_gorilla_discontinuity)
 			cmd->vr_gorilla.flags |= VR_GORILLA_RESET;
-		/* Gorilla sampling does not depend on weapon calibration. The
-		 * bounded grip is only a neutral wire pose when no muzzle exists. */
-		if (!private_pose_accepted)
-		{
-			VectorCopy (cl.pendingcmd.vr_gorilla.hand[VR_InputDominantPhysicalHand ()],
-				cmd->vr_handpos);
-			VectorCopy (vec3_origin, cmd->vr_handrot);
-			cmd->vr_active = true;
-			cmd->vr_handpos_relative = true;
-		}
 	}
 	if (cl.pendingcmd.vr_pending_angles_valid &&
 		isfinite (cl.pendingcmd.vr_pending_angles[PITCH]) &&
@@ -3849,8 +3839,7 @@ qboolean VR_InputSuppressUncalibratedAttack (const usercmd_t *cmd)
 	return cmd && cl.protocol_qsvr == QSVR_PROTOCOL_PINNED &&
 		V_TrackedSessionActive () && VR_InputControllerAim () &&
 		cl.stats[STAT_HEALTH] > 0 &&
-		(!cmd->vr_active || !cmd->vr_handpos_relative ||
-		 !cl.pendingcmd.vr_active || !cl.pendingcmd.vr_handpos_relative);
+		(!cmd->vr_active || !cmd->vr_handpos_relative);
 }
 
 void VR_InputCommitGorillaCommand (const usercmd_t *cmd)

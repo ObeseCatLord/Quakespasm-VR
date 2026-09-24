@@ -624,8 +624,7 @@ void CL_WritePrivateUsercmd (sizebuf_t *buf, const usercmd_t *cmd,
 		cmd->vr_handpos_relative &&
 		(capabilities & QSVR_MOVE_CAP_GORILLA_TRUSTED))
 		extbits |= MOVEEXT_GORILLA_TRUSTED;
-	else if (cmd->vr_gorilla.flags && cmd->vr_active &&
-		cmd->vr_handpos_relative &&
+	else if (cmd->vr_gorilla.flags &&
 		(capabilities & QSVR_MOVE_CAP_GORILLA_RAW))
 		extbits |= MOVEEXT_VR_GORILLA;
 
