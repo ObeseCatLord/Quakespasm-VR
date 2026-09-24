@@ -3905,9 +3905,13 @@ static char				 mods_search[MODS_SEARCH_MAX + 1];
 static qboolean		 mods_catalogue_view;
 static int				 mods_catalogue_control_hover;
 static int				 mods_catalogue_indices[ADDON_CATALOG_MAX_ENTRIES];
+static addon_catalog_entry_t mods_catalogue_entries[ADDON_CATALOG_MAX_ENTRIES];
 static int				 mods_catalogue_source_count = -1;
 static qboolean		 mods_catalogue_refresh_pending;
 static addon_catalog_state_t mods_catalogue_last_state = ADDON_CATALOG_IDLE;
+static qboolean mods_catalogue_details, mods_catalogue_install_active;
+static addon_catalog_entry_t mods_catalogue_approved;
+static char mods_catalogue_feedback[160];
 
 static qboolean M_Mods_CatalogueMatches (const addon_catalog_entry_t *item)
 {
@@ -3921,17 +3925,10 @@ static qboolean M_Mods_CatalogueMatches (const addon_catalog_entry_t *item)
 /* AddonCatalog_Entry returns a snapshot replaced by the next lookup. */
 static int M_Mods_CatalogueEntry (int match, addon_catalog_entry_t *copy)
 {
-	const addon_catalog_entry_t *item;
-	int index;
 	if (match < 0 || match >= num_mods)
 		return -1;
-	index = mods_catalogue_indices[match];
-	item = AddonCatalog_Entry (index);
-	if (!item)
-		return -1;
-	if (copy)
-		*copy = *item;
-	return index;
+	if (copy) *copy = mods_catalogue_entries[match];
+	return mods_catalogue_indices[match];
 }
 
 static int M_Mods_Compare (const void *a, const void *b)
@@ -3975,8 +3972,11 @@ static void M_Mods_UpdateFilter (void)
 		mods_catalogue_source_count = AddonCatalog_Count ();
 		for (int i = 0; i < mods_catalogue_source_count && count < ADDON_CATALOG_MAX_ENTRIES; ++i)
 		{
-			if (M_Mods_CatalogueMatches (AddonCatalog_Entry (i)))
-				mods_catalogue_indices[count++] = i;
+			const addon_catalog_entry_t *item = AddonCatalog_Entry (i);
+			if (M_Mods_CatalogueMatches (item))
+			{
+			mods_catalogue_indices[count] = i; mods_catalogue_entries[count++] = *item;
+			}
 		}
 		num_mods = count;
 	}
@@ -4012,6 +4012,140 @@ static qboolean M_Mods_SetCatalogue (qboolean catalogue)
 	return true;
 }
 
+static void M_Mods_RebuildInstalled (void)
+{
+	VEC_CLEAR (mods_sorted);
+	for (filelist_item_t *item = modlist; item; item = item->next)
+		VEC_PUSH (mods_sorted, item);
+	if (VEC_SIZE (mods_sorted) > 1)
+		qsort (mods_sorted, VEC_SIZE (mods_sorted), sizeof (*mods_sorted), M_Mods_Compare);
+}
+
+static qboolean M_Mods_IsInstalledGameDir (const char *gamedir)
+{
+	for (filelist_item_t *item = modlist; item; item = item->next)
+		if (!q_strcasecmp (item->name, gamedir)) return true;
+	return false;
+}
+
+static void M_Mods_SelectInstalled (const char *gamedir)
+{
+	int i;
+	M_Mods_SetCatalogue (false);
+	for (i = 0; i < num_mods && q_strcasecmp (mods_filtered[i]->name, gamedir); ++i) { /* search */ }
+	if (i == num_mods)
+	{
+		/* Catalogue filters may match author or description instead of the mod. */
+		mods_search[0] = '\0';
+		M_Mods_UpdateFilter ();
+		for (i = 0; i < num_mods && q_strcasecmp (mods_filtered[i]->name, gamedir); ++i) { /* search */ }
+	}
+	if (i < num_mods)
+	{
+		mods_cursor = i;
+		M_Mods_KeepCursorVisible ();
+	}
+}
+
+static qboolean M_Mods_CatalogueEntryMatches (const addon_catalog_entry_t *a,
+	const addon_catalog_entry_t *b)
+{
+	return !strcmp (a->gamedir, b->gamedir) && !strcmp (a->name, b->name) &&
+		!strcmp (a->author, b->author) && !strcmp (a->description, b->description) && !strcmp (a->download, b->download) &&
+		a->size == b->size && a->verified == b->verified;
+}
+
+static void M_Mods_ConfirmCatalogueInstall (void)
+{
+	addon_catalog_entry_t current;
+	int index;
+	if (AddonCatalog_State () != ADDON_CATALOG_READY)
+	{
+		q_strlcpy (mods_catalogue_feedback, "Catalogue is not ready; return and refresh.", sizeof (mods_catalogue_feedback));
+		return;
+	}
+	index = AddonCatalog_FindGameDir (mods_catalogue_approved.gamedir, &current);
+	if (index < 0 || !M_Mods_CatalogueEntryMatches (&mods_catalogue_approved, &current))
+	{
+		q_strlcpy (mods_catalogue_feedback, "Entry changed. Return and select it again.", sizeof (mods_catalogue_feedback));
+		return;
+	}
+	if (current.installed || M_Mods_IsInstalledGameDir (current.gamedir))
+	{
+		mods_catalogue_details = false;
+		M_Mods_SelectInstalled (current.gamedir);
+		return;
+	}
+	if (AddonCatalog_StartInstall (index, true))
+	{
+		mods_catalogue_install_active = true;
+		mods_catalogue_feedback[0] = '\0';
+	}
+	else
+		q_strlcpy (mods_catalogue_feedback, AddonCatalog_Message (), sizeof (mods_catalogue_feedback));
+}
+
+static void M_Mods_OpenCatalogueEntry (int match)
+{
+	addon_catalog_entry_t item;
+	if (M_Mods_CatalogueEntry (match, &item) < 0)
+		return;
+	if (item.installed || M_Mods_IsInstalledGameDir (item.gamedir))
+	{
+		M_Mods_SelectInstalled (item.gamedir);
+		return;
+	}
+	if (AddonCatalog_State () == ADDON_CATALOG_INSTALLING ||
+		AddonCatalog_State () == ADDON_CATALOG_REFRESHING)
+		return;
+	mods_catalogue_approved = item;
+	mods_catalogue_feedback[0] = '\0';
+	mods_catalogue_details = true;
+}
+
+static void M_Mods_FinishCatalogueInstall (void)
+{
+	addon_catalog_entry_t installed;
+	const addon_catalog_state_t state = AddonCatalog_State ();
+	if (!mods_catalogue_install_active || state == ADDON_CATALOG_INSTALLING)
+		return;
+	mods_catalogue_install_active = false;
+	if (state == ADDON_CATALOG_READY && AddonCatalog_FindGameDir (mods_catalogue_approved.gamedir, &installed) >= 0 && installed.installed)
+	{
+		int i;
+		Modlist_Init ();
+		M_Mods_RebuildInstalled ();
+		M_Mods_UpdateFilter ();
+		if (mods_catalogue_view)
+		{
+			for (i = 0; i < num_mods && q_strcasecmp (mods_catalogue_entries[i].gamedir,
+				mods_catalogue_approved.gamedir); ++i) { /* locate the newly installed row */ }
+			if (i < num_mods)
+				mods_cursor = i;
+		}
+		else
+			M_Mods_SelectInstalled (mods_catalogue_approved.gamedir);
+		M_Mods_KeepCursorVisible ();
+		mods_catalogue_details = false;
+	}
+}
+
+static void M_Mods_PrintWrapped (cb_context_t *cbx, int x, int y, const char *text)
+{
+	const int chars_per_line = 36;
+	const size_t length = strlen (text);
+	for (size_t offset = 0; offset < length; offset += chars_per_line, y += CHARACTER_SIZE)
+	{
+		char line[37];
+		const size_t count = q_min ((size_t)chars_per_line, length - offset);
+		memcpy (line, text + offset, count);
+		line[count] = '\0';
+		M_PrintWhite (cbx, x, y, line);
+	}
+	if (!length)
+		M_PrintWhite (cbx, x, y, "(none)");
+}
+
 static void M_Mods_RefreshCatalogue (void)
 {
 	const addon_catalog_state_t state = AddonCatalog_State ();
@@ -4030,11 +4164,8 @@ static void M_Menu_Mods_f (void)
 	m_entersound = true;
 	mods_search[0] = '\0';
 	mods_catalogue_view = false;
-	VEC_CLEAR (mods_sorted);
-	for (filelist_item_t *item = modlist; item; item = item->next)
-		VEC_PUSH (mods_sorted, item);
-	if (VEC_SIZE (mods_sorted) > 1)
-		qsort (mods_sorted, VEC_SIZE (mods_sorted), sizeof (*mods_sorted), M_Mods_Compare);
+	mods_catalogue_details = false;
+	M_Mods_RebuildInstalled ();
 	M_Mods_UpdateFilter ();
 
 	M_Ticker_Init (&m_mods_ticker);
@@ -4042,6 +4173,7 @@ static void M_Menu_Mods_f (void)
 
 static void M_Mods_Draw (cb_context_t *cbx)
 {
+	M_Mods_FinishCatalogueInstall ();
 	if (mods_catalogue_view)
 	{
 		const addon_catalog_state_t state = AddonCatalog_State ();
@@ -4058,6 +4190,49 @@ static void M_Mods_Draw (cb_context_t *cbx)
 	M_DrawTransPic (cbx, 16, 4, Draw_CachePic ("gfx/qplaque.lmp"));
 	qpic_t *p = Draw_CachePic ("gfx/p_mods.lmp");
 	M_DrawPic (cbx, (320 - p->width) / 2, 4, p);
+	if (mods_catalogue_view && mods_catalogue_details)
+	{
+		const addon_catalog_state_t state = AddonCatalog_State ();
+		const qboolean installing = state == ADDON_CATALOG_INSTALLING;
+		char line[160];
+		M_PrintWhite (cbx, 16, 32, "Name:");
+		M_Mods_PrintWrapped (cbx, 16, 40, mods_catalogue_approved.name);
+		M_PrintWhite (cbx, 16, 56, "Gamedir:");
+		M_Mods_PrintWrapped (cbx, 16, 64, mods_catalogue_approved.gamedir);
+		M_PrintWhite (cbx, 16, 72, "Author:");
+		M_Mods_PrintWrapped (cbx, 16, 80, mods_catalogue_approved.author);
+		M_PrintWhite (cbx, 16, 96, "Description:");
+		M_Mods_PrintWrapped (cbx, 16, 104, mods_catalogue_approved.description);
+		q_snprintf (line, sizeof (line), "Package size: %d bytes", mods_catalogue_approved.size);
+		M_PrintWhite (cbx, 16, 144, line);
+		M_PrintWhite (cbx, 16, 152, mods_catalogue_approved.verified ?
+			"Package verified by catalogue." : "UNVERIFIED: unsigned; no digest.");
+		M_PrintWhite (cbx, 16, 160, "Enter: confirm and start install.");
+		if (installing)
+		{
+			const float raw = AddonCatalog_Progress ();
+			const int bytes = (int)CLAMP (0.0f, raw, (float)mods_catalogue_approved.size);
+			q_snprintf (line, sizeof (line), "Downloading: %d%% (%d/%d bytes)",
+				mods_catalogue_approved.size > 0 ? (int)((double)bytes * 100.0 / mods_catalogue_approved.size) : 0,
+				bytes, mods_catalogue_approved.size);
+			M_PrintWhite (cbx, 16, 168, line);
+			M_PrintScroll (cbx, 16, 176, 288, AddonCatalog_Message (), realtime * 0.25, false);
+			M_PrintWhite (cbx, 16, 184, "Esc/Back/Click: cancel and return");
+			M_Mouse_UpdateCursor (&mods_catalogue_control_hover, 12, 312, 182, 10, 3);
+		}
+		else
+		{
+			const char *status = mods_catalogue_feedback[0] ? mods_catalogue_feedback :
+				(state == ADDON_CATALOG_ERROR ? AddonCatalog_Message () : "");
+			if (*status)
+				M_PrintScroll (cbx, 16, 176, 288, status, realtime * 0.25, false);
+			M_PrintWhite (cbx, 16, 184, "Enter: confirm install");
+			M_PrintWhite (cbx, 208, 184, "Esc/Back: back");
+			M_Mouse_UpdateCursor (&mods_catalogue_control_hover, 12, 200, 182, 10, 2);
+			M_Mouse_UpdateCursor (&mods_catalogue_control_hover, 200, 312, 182, 10, 3);
+		}
+		return;
+	}
 	M_Mods_KeepCursorVisible ();
 	int mods_height = q_min (MAX_MODS_ON_SCREEN, q_max (0, num_mods - first_mod));
 
@@ -4093,7 +4268,8 @@ static void M_Mods_Draw (cb_context_t *cbx)
 				20 * CHARACTER_SIZE, item.name,
 				selected ? m_mods_ticker.scroll_time : 0.0, true);
 			M_PrintWhite (cbx, 240, 32 + i * CHARACTER_SIZE,
-				item.installed ? "Installed" : (item.verified ? "Verified" : "Unverified"));
+				(item.installed || M_Mods_IsInstalledGameDir (item.gamedir)) ? "Installed" :
+				(item.verified ? "Verified" : "Unverified"));
 		}
 		else
 		{
@@ -4121,7 +4297,6 @@ static void M_Mods_Draw (cb_context_t *cbx)
 		else
 			M_PrintWhite (cbx, MENU_LABEL_X, 32, mods_search[0] ? "No installed mods match." : "No installed mods found.");
 	}
-
 	M_PrintWhite (cbx, 16, 160, "Filter:");
 	M_DrawTextBox (cbx, 72, 152, MODS_SEARCH_WIDTH, 1);
 	{
@@ -4147,6 +4322,33 @@ static void M_Mods_Draw (cb_context_t *cbx)
 
 static void M_Mods_Key (int key)
 {
+	if (mods_catalogue_view && mods_catalogue_details)
+	{
+		if (key == K_MOUSE2 || key == K_ESCAPE || key == K_BBUTTON ||
+			(key == K_MOUSE1 && mods_catalogue_control_hover == 3 && M_Mouse_InRect (12, 312, 182, 192)))
+		{
+			if (AddonCatalog_State () == ADDON_CATALOG_INSTALLING)
+				AddonCatalog_Cancel ();
+			mods_catalogue_details = false;
+			S_LocalSound ("misc/menu1.wav");
+			return;
+		}
+		if (key == K_MOUSE1)
+		{
+			if (mods_catalogue_control_hover == 2 && M_Mouse_InRect (12, 200, 182, 192) &&
+				AddonCatalog_State () != ADDON_CATALOG_INSTALLING)
+				M_Mods_ConfirmCatalogueInstall ();
+			return;
+		}
+		if (key == K_ENTER || key == K_KP_ENTER || key == K_ABUTTON)
+		{
+			if (AddonCatalog_State () != ADDON_CATALOG_INSTALLING)
+				M_Mods_ConfirmCatalogueInstall ();
+			return;
+		}
+		return;
+	}
+
 	if (key == K_MOUSE1 && m_mouse_y >= 144 && m_mouse_y < 152)
 	{
 		if (!mods_catalogue_view && m_mouse_x >= 12 && m_mouse_x < 208)
@@ -4157,7 +4359,8 @@ static void M_Mods_Key (int key)
 		}
 		if (mods_catalogue_view && m_mouse_x >= 12 && m_mouse_x < 200)
 		{
-			if (AddonCatalog_State () == ADDON_CATALOG_REFRESHING)
+			if (AddonCatalog_State () == ADDON_CATALOG_REFRESHING ||
+				AddonCatalog_State () == ADDON_CATALOG_INSTALLING)
 				AddonCatalog_Cancel ();
 			M_Mods_SetCatalogue (false);
 			S_LocalSound ("misc/menu1.wav");
@@ -4215,6 +4418,8 @@ static void M_Mods_Key (int key)
 	case K_MOUSE2:
 	case K_ESCAPE:
 	case K_BBUTTON:
+		if (AddonCatalog_State () == ADDON_CATALOG_INSTALLING)
+			AddonCatalog_Cancel ();
 		if (mods_catalogue_view)
 		{
 			if (AddonCatalog_State () == ADDON_CATALOG_REFRESHING)
@@ -4230,13 +4435,18 @@ static void M_Mods_Key (int key)
 			m_mouse_y >= 32 + q_min (MAX_MODS_ON_SCREEN, q_max (0, num_mods - first_mod)) * CHARACTER_SIZE)
 			break;
 		if (mods_catalogue_view)
+		{
+			M_Mods_OpenCatalogueEntry (mods_cursor);
 			break;
+		}
 		/* A mouse click activates only a visible mod row. */
 		/* fall through */
 	case K_ENTER:
 	case K_KP_ENTER:
 	case K_ABUTTON:
-		if (!mods_catalogue_view && num_mods > 0 && mods_cursor >= 0 && mods_cursor < num_mods)
+		if (mods_catalogue_view && num_mods > 0 && mods_cursor >= 0 && mods_cursor < num_mods)
+			M_Mods_OpenCatalogueEntry (mods_cursor);
+		else if (!mods_catalogue_view && num_mods > 0 && mods_cursor >= 0 && mods_cursor < num_mods)
 		{
 			Cbuf_AddText ("game \"");
 			Cbuf_AddText (mods_filtered[mods_cursor]->name);
