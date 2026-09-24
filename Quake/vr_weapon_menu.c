@@ -2296,6 +2296,75 @@ static int VR_WeaponMenu_HitWorldFallback (const vr_weapon_menu_frame_t *frame,
 	return best;
 }
 
+/* Return true only when finite model bounds prove the prepared mesh is outside
+ * the renderer's active frustum. R_CullBox uses the stereo-union frustum when
+ * OpenXR stereo is active. */
+static qboolean VR_WeaponMenu_CullPreparedMesh (const qmodel_t *model,
+	const aliashdr_t *geometry, const vec3_t origin, float entity_scale,
+	float mesh_scale)
+{
+	vec3_t mins, maxs;
+	const double scale = (double)entity_scale * (double)mesh_scale;
+	double radius_squared = 0.0;
+	double rounding_magnitude = 1.0;
+
+	/* The existing stereo frustum encloses both eyes. MDL bounds cover all
+	 * poses, so a sphere about the model origin remains safe under yaw. */
+	if (!model || model->type != mod_alias || !geometry || !origin ||
+		!isfinite (entity_scale) || entity_scale <= 0.0f ||
+		!isfinite (mesh_scale) || mesh_scale <= 0.0f || !isfinite (scale))
+		return false;
+	/* The shared qmodel bounds can belong to an MDL fallback even when enhanced
+	 * geometry is selected. Native MD3 bounds omit later frames, and MD5 applies
+	 * animated joints. Keep all of those formats visible until bounds match the
+	 * exact selected geometry. */
+	if (geometry->poseverttype != PV_QUAKE1 ||
+		geometry != (const aliashdr_t *)model->extradata[PV_QUAKE1])
+		return false;
+
+	for (int axis = 0; axis < 3; ++axis)
+	{
+		const double extent = fmax (fabs ((double)model->mins[axis]),
+			fabs ((double)model->maxs[axis]));
+		double header_magnitude;
+		if (!isfinite (origin[axis]) || !isfinite (model->mins[axis]) ||
+			!isfinite (model->maxs[axis]) || model->mins[axis] > model->maxs[axis] ||
+			!isfinite (geometry->scale_origin[axis]) ||
+			!isfinite (geometry->scale[axis]))
+			return false;
+		radius_squared += extent * extent;
+		/* MDL header translation can nearly cancel 8-bit vertex scale in
+		 * decoded bounds, yet float matrix construction rounds them apart. */
+		header_magnitude = fabs ((double)geometry->scale_origin[axis]) +
+			255.0 * fabs ((double)geometry->scale[axis]);
+		rounding_magnitude = fmax (rounding_magnitude,
+			fabs ((double)origin[axis]) + scale * (extent + header_magnitude));
+	}
+
+	/* Convert the rotation-independent sphere to an AABB. Include pre-cancelled
+	 * header magnitudes and round endpoints outward for GPU float arithmetic. */
+	{
+		const double radius = scale * sqrt (radius_squared) +
+			0.01 + 128.0 * FLT_EPSILON * rounding_magnitude;
+		if (!isfinite (radius) || radius < 0.0)
+			return false;
+		for (int axis = 0; axis < 3; ++axis)
+		{
+			const double lower = (double)origin[axis] - radius;
+			const double upper = (double)origin[axis] + radius;
+			if (!isfinite (lower) || !isfinite (upper) ||
+				lower < -FLT_MAX || upper > FLT_MAX)
+				return false;
+			mins[axis] = nextafterf ((float)lower, -INFINITY);
+			maxs[axis] = nextafterf ((float)upper, INFINITY);
+			if (!isfinite (mins[axis]) || !isfinite (maxs[axis]))
+				return false;
+		}
+	}
+
+	return R_CullBox (mins, maxs);
+}
+
 int VR_WeaponMenu_DrawModels (struct cb_context_s *context)
 {
 	cb_context_t *cbx = (cb_context_t *)context;
@@ -2356,8 +2425,10 @@ int VR_WeaponMenu_DrawModels (struct cb_context_s *context)
 		}
 		else
 			tint[0] = tint[1] = tint[2] = 1.5f;
-		R_DrawPreparedWheelAliasModel (cbx, &entity, frame->geometry[i],
-			tint, mesh_scale, &aliaspolys);
+		if (!VR_WeaponMenu_CullPreparedMesh (model, frame->geometry[i], entity.origin,
+			ENTSCALE_DECODE (entity.netstate.scale), mesh_scale))
+			R_DrawPreparedWheelAliasModel (cbx, &entity, frame->geometry[i],
+				tint, mesh_scale, &aliaspolys);
 		if (frame->playspace && frame->visible[i].ammo >= 0)
 		{
 			/* The source puts ammo above each mesh in the world. Keep the

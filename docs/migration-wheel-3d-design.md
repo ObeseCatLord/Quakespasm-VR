@@ -139,3 +139,25 @@ current Meson build, and an AddressSanitizer build did not reproduce it.
 This establishes desktop startup compatibility, not OpenXR glyph visibility or
 occlusion. Verify glyph appearance, eye agreement, wall hiding, OIT/MSAA
 variants and VR teardown in a later simulated-runtime integration pass.
+
+## Conservative wheel mesh culling
+
+The prepared wheel draw now skips an MDL mesh only when an origin-centered,
+scale-aware bound is wholly outside vkQuake's existing stereo-union frustum.
+The bound covers all MDL poses and includes padding for float cancellation in
+the alias header transform. World-space ammo glyphs remain independently
+submitted so a visible label is not hidden with an offscreen mesh.
+
+The local Astra xhigh review rejected an initial yaw-corner bound because its
+padding could miss a valid mesh when large MDL scale and origin terms cancel.
+The revised sphere resolves that finding. It also identified that vkQuake's
+MD3 loader currently computes shared bounds from frame zero only; a proposed
+global all-frame fix would change the wheel's centering and hit targets while
+the wheel still displays frame zero. That loader change was removed. Native
+MD3, MD5 and enhanced replacement meshes therefore fail open until bounds
+for the selected geometry and pose are available. No alternate culling owner
+or foveation-based geometry rejection was added.
+
+The Linux Meson build and whitespace check pass. Actual stereo-edge imagery
+and net frame-time savings remain unmeasured; this does not establish a
+large-map performance gain.
