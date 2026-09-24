@@ -803,6 +803,8 @@ qboolean R_VRIKSampleEntityPose (const entity_t *entity, vrik_pose_t *out);
 void R_SetupAliasFrame (const entity_t *e, aliashdr_t *paliashdr, lerpdata_t *lerpdata);
 int R_AliasModelMatrix (entity_t *e, const aliashdr_t *paliashdr, lerpdata_t *lerpdata, float model_matrix[16]);
 void R_DrawAliasModel (cb_context_t *cbx, entity_t *e, int *aliaspolys);
+void R_DrawPreparedWheelAliasModel (
+	cb_context_t *cbx, entity_t *e, aliashdr_t *selected_geometry, const vec3_t tint, float mesh_scale, int *aliaspolys);
 void R_DrawBrushModel (cb_context_t *cbx, entity_t *e, int chain, int *brushpolys, qboolean sort, qboolean water_opaque_only, qboolean water_transparent_only);
 void R_DrawSpriteModel (cb_context_t *cbx, entity_t *e);
 void R_DrawIndirectBrushes (cb_context_t *cbx, qboolean draw_water, qboolean transparent_water, qboolean draw_sky, int index);

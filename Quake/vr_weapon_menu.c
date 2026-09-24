@@ -1215,6 +1215,10 @@ typedef struct {
 	vr_weapon_menu_entry_t entries[VR_WEAPON_MENU_MAX_ENTRIES];
 	qmodel_t *model[VR_WEAPON_MENU_MAX_ENTRIES];
 	aliashdr_t *geometry[VR_WEAPON_MENU_MAX_ENTRIES];
+	float world_from_ndc[16];
+	float model_yaw;
+	qboolean panel_valid;
+	qboolean playspace;
 	char labels[VR_WEAPON_MENU_MAX_ENTRIES][MAX_QPATH];
 	char models[VR_WEAPON_MENU_MAX_ENTRIES][MAX_QPATH];
 	vr_weapon_menu_action_t actions[VR_WEAPON_MENU_MAX_ACTIONS];
@@ -1264,6 +1268,20 @@ void VR_WeaponMenu_PrepareModels (void)
 		model = vr_weapon_menu_assets.model[index];
 		if (!model)
 			model = Mod_ForName (path, false);
+		if (!model || model->type != mod_alias)
+		{
+			/* The inherited wheel uses the viewmodel when a mod omits its
+			 * pickup g_ mesh. Keep that fallback on the load owner. */
+			char viewmodel[MAX_QPATH];
+			char *pickup;
+			q_strlcpy (viewmodel, path, sizeof (viewmodel));
+			pickup = strstr (viewmodel, "/g_");
+			if (pickup)
+			{
+				pickup[1] = 'v';
+				model = Mod_ForName (viewmodel, false);
+			}
+		}
 		if (!model || model->type != mod_alias)
 		{
 			vr_weapon_menu_assets.missing[index] = true;
@@ -1592,6 +1610,7 @@ static void VR_WeaponMenu_PrepareFrame (const vr_weapon_menu_catalog_t *catalog,
 	float radius, float scale)
 {
 	vr_weapon_menu_frame_valid = false;
+	vr_weapon_menu_frame.panel_valid = false;
 	vr_weapon_menu_frame.count = VR_WeaponMenu_BuildVisible (catalog,
 		cl.stats, MAX_CL_STATS, cl.items, vr_weapon_menu_frame.visible,
 		VR_WEAPON_MENU_MAX_ENTRIES);
@@ -1626,6 +1645,96 @@ static void VR_WeaponMenu_PrepareFrame (const vr_weapon_menu_catalog_t *catalog,
 		vr_weapon_menu_frame.actions);
 	vr_weapon_menu_frame.generation = vr_weapon_menu_session_generation;
 	vr_weapon_menu_frame_valid = true;
+}
+
+void VR_WeaponMenu_SetVRPanel (const float world_from_ndc[16], qboolean playspace)
+{
+	if (!world_from_ndc || !vr_weapon_menu_frame_valid ||
+		vr_weapon_menu_frame.generation != vr_weapon_menu_session_generation)
+		return;
+	memcpy (vr_weapon_menu_frame.world_from_ndc, world_from_ndc,
+		sizeof (vr_weapon_menu_frame.world_from_ndc));
+	vr_weapon_menu_frame.model_yaw = atan2f (world_from_ndc[9],
+		world_from_ndc[8]) * (180.0f / (float)M_PI) + 180.0f +
+		(float)cl.time * 30.0f;
+	vr_weapon_menu_frame.playspace = playspace;
+	vr_weapon_menu_frame.panel_valid = true;
+}
+
+int VR_WeaponMenu_DrawModels (struct cb_context_s *context)
+{
+	cb_context_t *cbx = (cb_context_t *)context;
+	const vr_weapon_menu_frame_t *frame = &vr_weapon_menu_frame;
+	const float *m = frame->world_from_ndc;
+	vec3_t right, down, forward;
+	const float mesh_scale = frame->playspace ? 0.28f : 1.0f;
+	int aliaspolys = 0;
+
+	if (!cbx || !VR_WeaponMenu_IsOpenVR () || !vr_weapon_menu_frame_valid ||
+		!frame->panel_valid || frame->generation != vr_weapon_menu_session_generation ||
+		glwidth <= 0 || glheight <= 0)
+		return 0;
+	for (int axis = 0; axis < 3; ++axis)
+	{
+		right[axis] = m[axis];
+		down[axis] = m[4 + axis];
+		forward[axis] = m[8 + axis];
+	}
+	if (VectorNormalize (right) == 0.0f || VectorNormalize (down) == 0.0f ||
+		VectorNormalize (forward) == 0.0f)
+		return 0;
+
+	for (int i = 0; i < frame->count; ++i)
+	{
+		const vr_weapon_menu_entry_t *entry = frame->visible[i].entry;
+		const qmodel_t *model = frame->model[i];
+		const float schema_scale = isfinite (entry->model_scale) &&
+			entry->model_scale > 0.0f ? entry->model_scale : 1.0f;
+		const qboolean selected = entry->id == vr_weapon_menu_hover_id;
+		const float entity_scale = (selected ? 0.40f : 0.25f) * schema_scale;
+		const float layout_scale = (frame->playspace ? 0.25f :
+			(selected ? 0.40f : 0.25f)) * schema_scale * mesh_scale;
+		const float center_x = frame->visible[i].center_x * (2.0f / glwidth) - 1.0f;
+		const float center_y = frame->visible[i].center_y * (2.0f / glheight) - 1.0f;
+		vec3_t tint;
+		entity_t entity;
+
+		if (!model || !frame->geometry[i] || !isfinite (entity_scale) ||
+			entity_scale <= 0.0f || !isfinite (layout_scale))
+			continue;
+		memset (&entity, 0, sizeof (entity));
+		for (int axis = 0; axis < 3; ++axis)
+		{
+			entity.origin[axis] = m[12 + axis] + m[axis] * center_x +
+				m[4 + axis] * center_y +
+				entry->model_offset[0] * mesh_scale * right[axis] -
+				entry->model_offset[1] * mesh_scale * down[axis] +
+				entry->model_offset[2] * mesh_scale * forward[axis] +
+				0.5f * (model->mins[2] + model->maxs[2]) * layout_scale * down[axis];
+		}
+		entity.angles[YAW] = frame->model_yaw;
+		entity.model = (qmodel_t *)model;
+		entity.colormap = vid.colormap;
+		entity.netstate.scale = ENTSCALE_ENCODE (entity_scale);
+		entity.alpha = ENTALPHA_ENCODE (1.0f);
+		if (selected)
+		{
+			tint[0] = 0.5f;
+			tint[1] = 4.0f;
+			tint[2] = 0.5f;
+		}
+		else if (frame->visible[i].active)
+		{
+			tint[0] = 4.0f;
+			tint[1] = 4.0f;
+			tint[2] = 0.0f;
+		}
+		else
+			tint[0] = tint[1] = tint[2] = 1.5f;
+		R_DrawPreparedWheelAliasModel (cbx, &entity, frame->geometry[i],
+			tint, mesh_scale, &aliaspolys);
+	}
+	return aliaspolys;
 }
 
 void VR_WeaponMenu_SetVRPointer (qboolean tracking_valid, qboolean pointer_valid,
@@ -1863,34 +1972,36 @@ void VR_WeaponMenu_DrawCatalog (struct cb_context_s *context,
 
 	GL_SetCanvas (cbx, CANVAS_DEFAULT);
 	R_BindGraphicsPipeline (cbx, PIPELINE_BASIC_BLEND);
-	Draw_Fill (cbx, 0, 0, glwidth, glheight, 0, 0.38f);
-
-	/* Draw a low-cost annulus from horizontal Vulkan 2D fills; no renderer or
-	 * task-graph ownership is added for this desktop-only presentation. */
-	for (int band = 0; band < 32; ++band)
+	if (!vr_weapon_menu_open_vr)
 	{
-		const float band_height = 2.0f * outer_radius / 32.0f;
-		const float y = -outer_radius + (band + 0.5f) * band_height;
-		const float outer_half = sqrtf (q_max (0.0f, outer_radius * outer_radius - y * y));
-		if (fabsf (y) < hub_radius)
+		Draw_Fill (cbx, 0, 0, glwidth, glheight, 0, 0.38f);
+		/* The desktop annulus is an opaque UI overlay. A VR wheel draws its
+		 * models earlier in the depth-tested scene pass. */
+		for (int band = 0; band < 32; ++band)
 		{
-			const float inner_half = sqrtf (q_max (0.0f, hub_radius * hub_radius - y * y));
-			Draw_Fill (cbx, glwidth * 0.5f - outer_half, glheight * 0.5f + y,
-				outer_half - inner_half, band_height + 1.0f, 0, 0.78f);
-			Draw_Fill (cbx, glwidth * 0.5f + inner_half, glheight * 0.5f + y,
-				outer_half - inner_half, band_height + 1.0f, 0, 0.78f);
+			const float band_height = 2.0f * outer_radius / 32.0f;
+			const float y = -outer_radius + (band + 0.5f) * band_height;
+			const float outer_half = sqrtf (q_max (0.0f, outer_radius * outer_radius - y * y));
+			if (fabsf (y) < hub_radius)
+			{
+				const float inner_half = sqrtf (q_max (0.0f, hub_radius * hub_radius - y * y));
+				Draw_Fill (cbx, glwidth * 0.5f - outer_half, glheight * 0.5f + y,
+					outer_half - inner_half, band_height + 1.0f, 0, 0.78f);
+				Draw_Fill (cbx, glwidth * 0.5f + inner_half, glheight * 0.5f + y,
+					outer_half - inner_half, band_height + 1.0f, 0, 0.78f);
+			}
+			else
+				Draw_Fill (cbx, glwidth * 0.5f - outer_half, glheight * 0.5f + y,
+					2.0f * outer_half, band_height + 1.0f, 0, 0.78f);
 		}
-		else
-			Draw_Fill (cbx, glwidth * 0.5f - outer_half, glheight * 0.5f + y,
-				2.0f * outer_half, band_height + 1.0f, 0, 0.78f);
-	}
-	for (int band = 0; band < 12; ++band)
-	{
-		const float band_height = 2.0f * hub_radius / 12.0f;
-		const float y = -hub_radius + (band + 0.5f) * band_height;
-		const float half_width = sqrtf (q_max (0.0f, hub_radius * hub_radius - y * y));
-		Draw_Fill (cbx, glwidth * 0.5f - half_width, glheight * 0.5f + y,
-			2.0f * half_width, band_height + 1.0f, 0, 0.88f);
+		for (int band = 0; band < 12; ++band)
+		{
+			const float band_height = 2.0f * hub_radius / 12.0f;
+			const float y = -hub_radius + (band + 0.5f) * band_height;
+			const float half_width = sqrtf (q_max (0.0f, hub_radius * hub_radius - y * y));
+			Draw_Fill (cbx, glwidth * 0.5f - half_width, glheight * 0.5f + y,
+				2.0f * half_width, band_height + 1.0f, 0, 0.88f);
+		}
 	}
 
 	for (int i = 0; i < count; ++i)
@@ -1902,17 +2013,24 @@ void VR_WeaponMenu_DrawCatalog (struct cb_context_s *context,
 		const float icon_height = 18.0f * icon_scale;
 		qpic_t *icon = Sbar_WeaponMenuIcon (entry->selector);
 		float label_width = entry->label ? strlen (entry->label) * CHARACTER_SIZE * scale : 0.0f;
-		Draw_Fill (cbx, visible[i].left, visible[i].top, visible[i].width, visible[i].height,
-			is_selected ? 15 : 0, is_selected ? 0.96f : 0.78f);
-		if (icon)
-			Draw_SubPic (cbx, visible[i].center_x - icon_width * 0.5f,
-				visible[i].top + 2.0f * scale, icon_width, icon_height, icon,
-				0.0f, 0.0f, 1.0f, 1.0f, NULL, 1.0f);
+		const qboolean has_vr_model = vr_weapon_menu_open_vr &&
+			vr_weapon_menu_frame_valid && visible == vr_weapon_menu_frame.visible &&
+			vr_weapon_menu_frame.model[i] && vr_weapon_menu_frame.geometry[i];
+		if (!has_vr_model)
+		{
+			Draw_Fill (cbx, visible[i].left, visible[i].top, visible[i].width, visible[i].height,
+				is_selected ? 15 : 0, is_selected ? 0.96f : 0.78f);
+			if (icon)
+				Draw_SubPic (cbx, visible[i].center_x - icon_width * 0.5f,
+					visible[i].top + 2.0f * scale, icon_width, icon_height, icon,
+					0.0f, 0.0f, 1.0f, 1.0f, NULL, 1.0f);
+		}
 		GL_SetCanvasColor (is_selected ? 0.05f : (visible[i].selectable ? 1.0f : 0.55f),
 			is_selected ? 0.08f : (visible[i].selectable ? 1.0f : 0.55f),
 			is_selected ? 0.10f : (visible[i].selectable ? 1.0f : 0.55f), 1.0f);
 		if (entry->label)
 			Draw_String_Scaled (cbx, visible[i].center_x - label_width * 0.5f,
+				has_vr_model ? visible[i].center_y + 24.0f * scale :
 				visible[i].top + 22.0f * scale, entry->label, scale);
 		GL_SetCanvasColor (1.0f, 1.0f, 1.0f, 1.0f);
 	}

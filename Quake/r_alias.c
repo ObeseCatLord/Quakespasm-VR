@@ -112,7 +112,8 @@ Based on code by MH from RMQEngine
 static void GL_DrawAliasFrame (
 	cb_context_t *cbx, entity_t *e, aliashdr_t *paliashdr, const aliashdr_t *selected_geometry, lerpdata_t lerpdata, gltexture_t *tx, gltexture_t *fb,
 	float model_matrix[16], float entity_alpha,
-	qboolean alphatest, vec3_t shadevector, vec3_t lightcolor, int showtris, qboolean opposite_front_face)
+	qboolean alphatest, vec3_t shadevector, vec3_t lightcolor, int showtris, qboolean opposite_front_face, qboolean force_unlit,
+	qboolean allow_tracked_palette)
 {
 	vulkan_pipeline_t pipeline;
 	const r_vrik_prepared_palette_t *tracked_palette = NULL;
@@ -183,7 +184,7 @@ static void GL_DrawAliasFrame (
 		memcpy (ubo->light_color, lightcolor, 3 * sizeof (float));
 		ubo->flags = (fb != NULL) ? 0x1 : 0x0;
 
-		if (r_fullbright_cheatsafe || (r_lightmap_cheatsafe && r_fullbright.value))
+		if (force_unlit || r_fullbright_cheatsafe || (r_lightmap_cheatsafe && r_fullbright.value))
 			ubo->flags |= 0x2;
 
 		if (paliashdr->poseverttype == PV_QUAKE3)
@@ -207,7 +208,7 @@ static void GL_DrawAliasFrame (
 	case PV_MD5:
 	case PV_MD5_8:
 	{
-		const r_vrik_prepared_palette_t *prepared = R_VRIKRenderLookup (e);
+		const r_vrik_prepared_palette_t *prepared = allow_tracked_palette ? R_VRIKRenderLookup (e) : NULL;
 		if (prepared && prepared->model == e->model && prepared->geometry == selected_geometry &&
 			prepared->joint_count == (uint32_t)paliashdr->numjoints &&
 			prepared->descriptor_set != VK_NULL_HANDLE)
@@ -223,7 +224,7 @@ static void GL_DrawAliasFrame (
 		ubo->blend_factor = tracked_palette ? 0.0f : blend;
 		memcpy (ubo->light_color, lightcolor, 3 * sizeof (float));
 		ubo->flags = (fb != NULL) ? 0x1 : 0x0;
-		if (r_fullbright_cheatsafe || (r_lightmap_cheatsafe && r_fullbright.value))
+		if (force_unlit || r_fullbright_cheatsafe || (r_lightmap_cheatsafe && r_fullbright.value))
 			ubo->flags |= 0x2;
 		ubo->entalpha = entity_alpha;
 		ubo->joints_offsets[0] = tracked_palette ? tracked_palette->joint_offset : lerpdata.pose1 * paliashdr->numjoints;
@@ -647,9 +648,10 @@ R_DrawAliasModel -- johnfitz -- almost completely rewritten
 =================
 */
 /* -1 suppresses an invalid transform; 0/1 select the front-face winding. */
-int R_AliasModelMatrix (entity_t *e, const aliashdr_t *paliashdr, lerpdata_t *lerpdata, float model_matrix[16])
+static int R_AliasModelMatrixInternal (
+	entity_t *e, const aliashdr_t *paliashdr, lerpdata_t *lerpdata, float model_matrix[16], qboolean apply_viewmodel_transforms)
 {
-	if (R_IsVRViewmodel (e))
+	if (apply_viewmodel_transforms && R_IsVRViewmodel (e))
 	{
 		vec3_t origin, angles, header_origin, held_offset = {0.0f, 0.0f, 0.0f};
 		float header_scale[3], geometry_scale[3];
@@ -735,7 +737,7 @@ int R_AliasModelMatrix (entity_t *e, const aliashdr_t *paliashdr, lerpdata_t *le
 	IdentityMatrix (model_matrix);
 
 	float fovscale = 1.0f;
-	if (e == &cl.viewent && r_refdef.basefov > 90.f && cl_gun_fovscale.value)
+	if (apply_viewmodel_transforms && e == &cl.viewent && r_refdef.basefov > 90.f && cl_gun_fovscale.value)
 	{
 		fovscale = tan (r_refdef.basefov * (0.5f * M_PI / 180.f));
 		fovscale = 1.f + (fovscale - 1.f) * cl_gun_fovscale.value;
@@ -743,7 +745,7 @@ int R_AliasModelMatrix (entity_t *e, const aliashdr_t *paliashdr, lerpdata_t *le
 
 	vec3_t origin;
 	VectorCopy (lerpdata->origin, origin);
-	if (e == &cl.viewent)
+	if (apply_viewmodel_transforms && e == &cl.viewent)
 	{
 		VectorMA (origin, cl_gun_x.value * paliashdr->scale[0] * fovscale, vright, origin);
 		VectorMA (origin, cl_gun_y.value * paliashdr->scale[1] * fovscale, vup, origin);
@@ -761,11 +763,81 @@ int R_AliasModelMatrix (entity_t *e, const aliashdr_t *paliashdr, lerpdata_t *le
 	return false;
 }
 
+int R_AliasModelMatrix (entity_t *e, const aliashdr_t *paliashdr, lerpdata_t *lerpdata, float model_matrix[16])
+{
+	return R_AliasModelMatrixInternal (e, paliashdr, lerpdata, model_matrix, true);
+}
+
+static void R_DrawAliasSurfaces (
+	cb_context_t *cbx, entity_t *e, aliashdr_t *geometry, const aliashdr_t *selected_geometry, lerpdata_t lerpdata,
+	float model_matrix[16], float entity_alpha, qboolean alphatest, vec3_t shadevector, vec3_t lightcolor, qboolean force_unlit,
+	qboolean allow_tracked_palette, qboolean opposite_front_face, int *aliaspolys)
+{
+	int skinnum = e->skinnum;
+	const int anim = (int)(cl.time * 10) & 3;
+
+	// Draw each surface of the model independently:
+	for (aliashdr_t *hdr = geometry; hdr != NULL; hdr = hdr->nextsurface)
+	{
+		gltexture_t *tx, *fb;
+
+		//
+		// set up textures
+		//
+		if ((skinnum >= hdr->numskins) || (skinnum < 0))
+		{
+			Con_DPrintf ("R_DrawAliasModel: no such skin # %d for '%s'\n", skinnum, e->model->name);
+			// ericw -- display skin 0 for winquake compatibility
+			skinnum = 0;
+		}
+		tx = hdr->gltextures[skinnum][anim];
+		fb = hdr->fbtextures[skinnum][anim];
+
+		if (e->colormap != vid.colormap && !gl_nocolors.value)
+			if ((uintptr_t)e >= (uintptr_t)&cl.entities[1] && (uintptr_t)e <= (uintptr_t)&cl.entities[cl.maxclients] && playertextures[e - cl.entities - 1])
+				tx = playertextures[e - cl.entities - 1];
+
+		// if there are no texture, force the grey one. (a.k.a lightmap).
+		if (tx == NULL)
+		{
+			tx = greytexture;
+			fb = NULL;
+		}
+
+		if (!gl_fullbrights.value)
+			fb = NULL;
+
+		if (!force_unlit && r_fullbright_cheatsafe)
+		{
+			lightcolor[0] = 0.5f;
+			lightcolor[1] = 0.5f;
+			lightcolor[2] = 0.5f;
+		}
+		if (!force_unlit && r_lightmap_cheatsafe)
+		{
+			tx = greytexture;
+			fb = NULL;
+			if (r_fullbright.value)
+			{
+				lightcolor[0] = 1.0f;
+				lightcolor[1] = 1.0f;
+				lightcolor[2] = 1.0f;
+			}
+		}
+
+		GL_DrawAliasFrame (
+			cbx, e, hdr, selected_geometry, lerpdata, tx, fb, model_matrix, entity_alpha, alphatest, shadevector, lightcolor, false,
+			opposite_front_face, force_unlit, allow_tracked_palette);
+
+		if (aliaspolys)
+			*aliaspolys += hdr->numtris;
+	} // for each surface
+}
+
 void R_DrawAliasModel (cb_context_t *cbx, entity_t *e, int *aliaspolys)
 {
 	aliashdr_t	*paliashdr;
-	int			 anim, skinnum = e->skinnum;
-	gltexture_t *tx, *fb;
+	int			 skinnum = e->skinnum;
 	lerpdata_t	 lerpdata;
 
 	//
@@ -810,62 +882,56 @@ void R_DrawAliasModel (cb_context_t *cbx, entity_t *e, int *aliaspolys)
 	vec3_t shadevector, lightcolor;
 	R_SetupAliasLighting (e, &shadevector, &lightcolor);
 
-	// Draw each surface of the model independently:
-	for (aliashdr_t *hdr = paliashdr; hdr != NULL; hdr = hdr->nextsurface)
+	R_DrawAliasSurfaces (
+		cbx, e, paliashdr, paliashdr, lerpdata, model_matrix, entalpha, alphatest, shadevector, lightcolor, false, true,
+		opposite_front_face, aliaspolys);
+}
+
+void R_DrawPreparedWheelAliasModel (
+	cb_context_t *cbx, entity_t *e, aliashdr_t *selected_geometry, const vec3_t tint, float mesh_scale, int *aliaspolys)
+{
+	if (!cbx || !e || !e->model || !selected_geometry || !tint || !isfinite (mesh_scale) || mesh_scale == 0.0f)
+		return;
+
+	for (int axis = 0; axis < 3; ++axis)
+		if (!isfinite (tint[axis]))
+			return;
+
+	lerpdata_t lerpdata;
+	R_SetupAliasFrame (e, selected_geometry, &lerpdata);
+	R_GetEntityLerpedTransform (e, lerpdata.origin, lerpdata.angles);
+
+	float model_matrix[16];
+	const int matrix_result = R_AliasModelMatrixInternal (e, selected_geometry, &lerpdata, model_matrix, false);
+	if (matrix_result < 0)
+		return;
+	qboolean opposite_front_face = matrix_result > 0;
+	if (mesh_scale != 1.0f)
 	{
-		//
-		// set up textures
-		//
-		anim = (int)(cl.time * 10) & 3;
-		if ((skinnum >= hdr->numskins) || (skinnum < 0))
-		{
-			Con_DPrintf ("R_DrawAliasModel: no such skin # %d for '%s'\n", skinnum, e->model->name);
-			// ericw -- display skin 0 for winquake compatibility
-			skinnum = 0;
-		}
-		tx = hdr->gltextures[skinnum][anim];
-		fb = hdr->fbtextures[skinnum][anim];
+		/* Apply the prepared mesh scale in world space while keeping e->origin fixed. */
+		float centered_scale[16], scale_matrix[16], translation_matrix[16];
+		TranslationMatrix (centered_scale, e->origin[0], e->origin[1], e->origin[2]);
+		ScaleMatrix (scale_matrix, mesh_scale, mesh_scale, mesh_scale);
+		MatrixMultiply (centered_scale, scale_matrix);
+		TranslationMatrix (translation_matrix, -e->origin[0], -e->origin[1], -e->origin[2]);
+		MatrixMultiply (centered_scale, translation_matrix);
+		MatrixMultiply (centered_scale, model_matrix);
+		memcpy (model_matrix, centered_scale, 16 * sizeof (float));
+		if (!R_AliasMatrixIsFinite (model_matrix))
+			return;
+		if (mesh_scale < 0.0f)
+			opposite_front_face = !opposite_front_face;
+	}
+	if (!R_AliasMatrixIsFinite (model_matrix))
+		return;
 
-		if (e->colormap != vid.colormap && !gl_nocolors.value)
-			if ((uintptr_t)e >= (uintptr_t)&cl.entities[1] && (uintptr_t)e <= (uintptr_t)&cl.entities[cl.maxclients] && playertextures[e - cl.entities - 1])
-				tx = playertextures[e - cl.entities - 1];
-
-		// if there are no texture, force the grey one. (a.k.a lightmap).
-		if (tx == NULL)
-		{
-			tx = greytexture;
-			fb = NULL;
-		}
-
-		if (!gl_fullbrights.value)
-			fb = NULL;
-
-		if (r_fullbright_cheatsafe)
-		{
-			lightcolor[0] = 0.5f;
-			lightcolor[1] = 0.5f;
-			lightcolor[2] = 0.5f;
-		}
-		if (r_lightmap_cheatsafe)
-		{
-			tx = greytexture;
-			fb = NULL;
-			if (r_fullbright.value)
-			{
-				lightcolor[0] = 1.0f;
-				lightcolor[1] = 1.0f;
-				lightcolor[2] = 1.0f;
-			}
-		}
-
-		//
-		// draw it
-		//
-		GL_DrawAliasFrame (cbx, e, hdr, paliashdr, lerpdata, tx, fb, model_matrix, entalpha, alphatest, shadevector, lightcolor, false, opposite_front_face);
-
-		// update polycounts
-		*aliaspolys += hdr->numtris;
-	} // e for each surface
+	vec3_t shadevector = {0.0f, 0.0f, 0.0f};
+	/* alias_common.inc multiplies the interpolated color by 2.0. */
+	vec3_t lightcolor = {tint[0] * 0.5f, tint[1] * 0.5f, tint[2] * 0.5f};
+	const qboolean alphatest = !!(e->model->flags & MF_HOLEY);
+	R_DrawAliasSurfaces (
+		cbx, e, selected_geometry, selected_geometry, lerpdata, model_matrix, 1.0f, alphatest, shadevector, lightcolor, true, false,
+		opposite_front_face, aliaspolys);
 }
 
 // johnfitz -- values for shadow matrix
@@ -915,7 +981,7 @@ void R_DrawAliasModel_ShowTris (cb_context_t *cbx, entity_t *e)
 	{
 		GL_DrawAliasFrame (
 			cbx, e, hdr, paliashdr, lerpdata, nulltexture, nulltexture, model_matrix, 0.0f, false, shadevector, lightcolor, r_showtris.value,
-			opposite_front_face);
+			opposite_front_face, false, true);
 	}
 }
 

@@ -2020,6 +2020,8 @@ static void SCR_VRWeaponMenuPrepare (void)
 	}
 	vr_weapon_menu_panel.world_from_ndc[15] = 1.0f;
 	vr_weapon_menu_panel.valid = true;
+	VR_WeaponMenu_SetVRPanel (vr_weapon_menu_panel.world_from_ndc,
+		vr_weapon_menu_anchor_mode == 0);
 }
 
 /* One donor placement rule for classic, CSQC, and modern presentation. */

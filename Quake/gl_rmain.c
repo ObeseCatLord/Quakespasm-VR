@@ -30,6 +30,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "vr_aim.h"
 #include "vr_input.h"
 #include "r_vrik_render.h"
+#include "vr_weapon_menu.h"
 
 #include <float.h>
 #include <math.h>
@@ -2242,6 +2243,13 @@ static void R_DrawViewModelTask (void *unused)
 	cb_context_t *cbx = vulkan_globals.secondary_cb_contexts[SCBX_VIEW_MODEL];
 	R_SetupContext (cbx);
 	R_DrawViewModel (cbx); // johnfitz -- moved here from R_RenderView
+	/* The wheel is scene geometry, independent of the held weapon's hide gates. */
+	const int wheel_polys = VR_WeaponMenu_DrawModels (cbx);
+	if (wheel_polys)
+	{
+		Atomic_AddUInt32 (&rs_aliaspolys, wheel_polys);
+		Atomic_IncrementUInt32 (&rs_aliaspasses);
+	}
 	R_ShowTris (cbx);	   // johnfitz
 	R_ShowSkeletons (cbx);
 	R_ShowBoundingBoxes (cbx); // johnfitz
