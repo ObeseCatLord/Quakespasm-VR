@@ -65,3 +65,26 @@ Then expand through model formats and multi-ring mods. Draw records must remain
 immutable until `draw_done` joins; GPU resource retirement still uses the donor
 fences. The precise scene/UI composition, transparent replacements and legacy
 view-anchored mode remain integration risks until that proof is rendered.
+
+## First implementation checkpoint
+
+The wheel now resolves visible alias assets on the main thread after a successful
+render begin, including the inherited `g_` to `v_` fallback. Its setup frame
+copies resident model and selected geometry references, catalog state and the
+panel transform before scene and UI tasks record. The viewmodel scene task draws
+temporary wheel entities through vkQuake's existing alias material loop; its MD5
+branch uses the model's ordinary joint set rather than a concurrently prepared
+avatar palette. The VR UI no longer paints the desktop annulus or cards over
+available meshes, while missing models retain an icon/card slot. Desktop
+presentation keeps its existing path.
+
+The Linux debug and Meson debugoptimized builds passed. A disposable simulated
+Monado/Xvfb session with GDB-injected tracked head and hand poses opened the
+wheel on stock `start`, recorded 92 prepared alias draws across 46 frames and
+captured rotating models in both compositor eyes. The simulated runtime supplied
+eye views and focus but no tracked devices, so pose injection was needed to
+exercise the wheel; this is not headset input qualification. The check did not
+verify hover/release alignment, world-depth rejection of hidden slots,
+source-equivalent multi-ring layout, depth-tested labels, all model formats or
+runtime focus/reconnect behavior. Those remain open before 3D wheel parity can
+be claimed.
