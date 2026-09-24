@@ -122,6 +122,14 @@ presentation within the shared wheel rectangles; visual/gameplay qualification
 remains open. Interactive weapon calibration remains separate work; compiling
 the 3D model/hit paths does not prove mod gameplay parity.
 
+WPN-012 now has its first asset boundary on `2.0`: the donor's exact MDL
+splitter is reused through vkQuake's model loader for four paired recipes.
+QBJ3 nailgun/berserk halves load with the expected frame and vertex counts;
+embedded skin reloads point at the source MDL. See
+[the loader review](migration-akimbo-loader-review.md). Per-hand presentation,
+tracked commands, attack/contact semantics and complete-pair fallback are
+still required before WPN-012 can be accepted.
+
 ### Co-op and saves
 
 | ID / behavior | Pinned source evidence | Destination / treatment | Acceptance |

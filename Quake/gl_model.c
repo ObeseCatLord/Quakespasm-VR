@@ -26,6 +26,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 
 #include "quakedef.h"
 #include "miniz.h"
+#include "vr_mdl_split.h"
 
 /* miniz.h keeps this declaration disabled in the QuakeSpasm amalgamation,
  * while common.c still links the exported implementation from miniz.c. */
@@ -34,7 +35,7 @@ extern mz_ulong mz_crc32 (mz_ulong crc, const unsigned char *ptr, size_t buf_len
 static void		 Mod_LoadSpriteModel (qmodel_t *mod, void *buffer);
 static void		 Mod_LoadBrushModel (qmodel_t *mod, const char *loadname, void *buffer);
 static void		 Mod_LoadAliasModel (qmodel_t *mod, void *buffer,
-	qfilesize_t source_size);
+	qfilesize_t source_size, const char *skin_source);
 static qboolean	 Mod_LoadMD5MeshModel (qmodel_t *mod, const void *buffer,
 	const char *asset_name, qfilesize_t asset_size);
 static void		 Mod_LoadMD3Model (qmodel_t *mod, const void *buffer);
@@ -670,6 +671,98 @@ void Mod_TouchModel (const char *name)
 	Mod_FindName (name);
 }
 
+typedef struct
+{
+	const char *game;
+	const char *source;
+	const char *halves[2];
+	qbj3_mdl_weapon_t weapon;
+} mod_akimbo_pair_t;
+
+static const mod_akimbo_pair_t mod_akimbo_pairs[] = {
+	{"qbj3", "progs/v_tnailgun.mdl",
+		{"vr/qbj3/progs/v_tnailgun_vr_left.mdl", "vr/qbj3/progs/v_tnailgun_vr_right.mdl"}, QBJ3_MDL_WEAPON_NAIL},
+	{"qbj3", "progs/v_berserk.mdl",
+		{"vr/qbj3/progs/v_berserk_vr_left.mdl", "vr/qbj3/progs/v_berserk_vr_right.mdl"}, QBJ3_MDL_WEAPON_BERSERK},
+	{"enyo", "progs/ee_v_smgs.mdl",
+		{"vr/enyo/progs/ee_v_smgs_vr_left.mdl", "vr/enyo/progs/ee_v_smgs_vr_right.mdl"}, ENYO_MDL_WEAPON_SMG},
+	{"dwell", "progs/v_axeb.mdl",
+		{"vr/dwell/progs/v_axeb_vr_left.mdl", "vr/dwell/progs/v_axeb_vr_right.mdl"}, DWELL_MDL_WEAPON_BERSERK}
+};
+
+static const mod_akimbo_pair_t *Mod_AkimboPairForHalf (const char *name, int *hand_out)
+{
+	if (strncmp (name, "vr/", 3))
+		return NULL;
+	for (int weapon = 0; weapon < countof (mod_akimbo_pairs); ++weapon)
+		for (int hand = 0; hand < 2; ++hand)
+			if (!strcmp (name, mod_akimbo_pairs[weapon].halves[hand]))
+			{
+				if (hand_out)
+					*hand_out = hand;
+				return &mod_akimbo_pairs[weapon];
+			}
+	return NULL;
+}
+
+/*
+==================
+Mod_GenerateAkimboHalf
+==================
+*/
+static byte *Mod_GenerateAkimboHalf (const char *name,
+	unsigned int *source_path_id, size_t *generated_size,
+	const char **skin_source)
+{
+	const mod_akimbo_pair_t *pair;
+	unsigned int override_path_id = 0;
+	unsigned int selected_source_path_id = 0;
+	qfilesize_t source_file_size;
+	qbj3_mdl_side_t side;
+	byte *source, *output = NULL;
+	size_t output_size = 0;
+	int hand, result;
+
+	*generated_size = 0;
+	*skin_source = NULL;
+	if (isDedicated)
+		return NULL;
+
+	pair = Mod_AkimboPairForHalf (name, &hand);
+	if (!pair || (q_strcasecmp (COM_SkipPath (com_gamedir), pair->game) &&
+		!(pair->weapon == DWELL_MDL_WEAPON_BERSERK &&
+			!q_strcasecmp (COM_SkipPath (com_gamedir), "dwellv2p2"))))
+		return NULL;
+
+	/* Files in a higher priority search path are explicit private-model overrides. */
+	if (COM_FileExists (name, &override_path_id) && override_path_id > 1)
+		return NULL;
+
+	source = COM_LoadFile (pair->source, &selected_source_path_id);
+	if (!source)
+		return NULL;
+	source_file_size = com_filesize;
+	if (source_file_size < 0 || (uint64_t)source_file_size > (uint64_t)SIZE_MAX)
+	{
+		Mem_Free (source);
+		return NULL;
+	}
+	side = hand == 0 ? QBJ3_MDL_SIDE_LEFT : QBJ3_MDL_SIDE_RIGHT;
+	result = QBJ3_MDL_Split (source, (size_t)source_file_size, pair->weapon,
+		side, &output, &output_size);
+	Mem_Free (source);
+	if (result != 1)
+	{
+		free (output);
+		return NULL;
+	}
+
+	*source_path_id = selected_source_path_id;
+	*generated_size = output_size;
+	*skin_source = pair->source;
+	return output;
+}
+
 /*
 ==================
 Mod_LoadModel
@@ -680,6 +773,11 @@ Loads a model into the cache
 static qmodel_t *Mod_LoadModel (qmodel_t *mod, qboolean crash)
 {
 	int mod_type;
+	byte *generated_buf;
+	qboolean generated_model = false;
+	size_t generated_size = 0;
+	unsigned int generated_path_id = 0;
+	const char *skin_source = NULL;
 
 	if (!mod->needload)
 		return mod;
@@ -709,6 +807,18 @@ static qmodel_t *Mod_LoadModel (qmodel_t *mod, qboolean crash)
 
 	// 1. Load the original model buffer:
 	buf = COM_LoadFile (mod->name, &mod->path_id);
+	buf_filesize = com_filesize;
+	generated_buf = Mod_GenerateAkimboHalf (mod->name, &generated_path_id,
+		&generated_size, &skin_source);
+	if (generated_buf)
+	{
+		if (buf)
+			Mem_Free (buf);
+		buf = generated_buf;
+		buf_filesize = (qfilesize_t)generated_size;
+		mod->path_id = generated_path_id;
+		generated_model = true;
+	}
 
 	if (!buf)
 	{
@@ -716,10 +826,10 @@ static qmodel_t *Mod_LoadModel (qmodel_t *mod, qboolean crash)
 			Host_Error ("Mod_LoadModel: %s not found", mod->name); // johnfitz -- was "Mod_NumForName"
 		return NULL;
 	}
-	buf_filesize = com_filesize;
 
 	const bool mod_is_mdl = (strcmp (COM_FileGetExtension (mod->name), "mdl") == 0);
-	const bool load_enhanced_model = mod_is_mdl && r_enhancedmodels.value;
+	const bool load_enhanced_model = mod_is_mdl && r_enhancedmodels.value &&
+		!Mod_AkimboPairForHalf (mod->name, NULL);
 
 	// 2. Find MDL "enhanced" complementary models, if any:
 	if (load_enhanced_model && r_allow_replacement_md3models.value)
@@ -800,7 +910,7 @@ static qmodel_t *Mod_LoadModel (qmodel_t *mod, qboolean crash)
 	switch (mod_type)
 	{
 	case IDPOLYHEADER:
-		Mod_LoadAliasModel (mod, buf, buf_filesize);
+		Mod_LoadAliasModel (mod, buf, buf_filesize, skin_source);
 		break;
 
 	case IDSPRITEHEADER:
@@ -836,7 +946,10 @@ static qmodel_t *Mod_LoadModel (qmodel_t *mod, qboolean crash)
 	break;
 	}
 
-	Mem_Free (buf);
+	if (generated_model)
+		free (buf);
+	else
+		Mem_Free (buf);
 	return mod;
 }
 
@@ -3739,6 +3852,7 @@ typedef struct load_skin_task_args_s
 	qmodel_t   *mod;
 	byte	   *mod_base;
 	byte	  **ppskintypes;
+	const char *skin_source;
 } load_skin_task_args_t;
 
 static void Mod_LoadSkinTask (int i, load_skin_task_args_t *args)
@@ -3755,6 +3869,7 @@ static void Mod_LoadSkinTask (int i, load_skin_task_args_t *args)
 	qmodel_t	*mod = args->mod;
 	byte		*mod_base = args->mod_base;
 	aliashdr_t	*pheader = args->pheader;
+	const char	*skin_source = args->skin_source ? args->skin_source : mod->name;
 
 	size = pheader->skinwidth * pheader->skinheight;
 
@@ -3833,16 +3948,16 @@ static void Mod_LoadSkinTask (int i, load_skin_task_args_t *args)
 			if (Mod_CheckFullbrights (skin, size))
 			{
 				pheader->gltextures[i][0] = TexMgr_LoadImage (
-					mod, name, pheader->skinwidth, pheader->skinheight, SRC_INDEXED, skin, mod->name, offset, texflags | TEXPREF_MIPMAP | TEXPREF_NOBRIGHT);
+					mod, name, pheader->skinwidth, pheader->skinheight, SRC_INDEXED, skin, skin_source, offset, texflags | TEXPREF_MIPMAP | TEXPREF_NOBRIGHT);
 				q_snprintf (fbr_mask_name, sizeof (fbr_mask_name), "%s:frame%i_glow", mod->name, i);
 				pheader->fbtextures[i][0] = TexMgr_LoadImage (
-					mod, fbr_mask_name, pheader->skinwidth, pheader->skinheight, SRC_INDEXED, skin, mod->name, offset,
+					mod, fbr_mask_name, pheader->skinwidth, pheader->skinheight, SRC_INDEXED, skin, skin_source, offset,
 					texflags | TEXPREF_MIPMAP | TEXPREF_FULLBRIGHT);
 			}
 			else
 			{
 				pheader->gltextures[i][0] =
-					TexMgr_LoadImage (mod, name, pheader->skinwidth, pheader->skinheight, SRC_INDEXED, skin, mod->name, offset, texflags | TEXPREF_MIPMAP);
+					TexMgr_LoadImage (mod, name, pheader->skinwidth, pheader->skinheight, SRC_INDEXED, skin, skin_source, offset, texflags | TEXPREF_MIPMAP);
 				pheader->fbtextures[i][0] = NULL;
 			}
 		}
@@ -3875,16 +3990,16 @@ static void Mod_LoadSkinTask (int i, load_skin_task_args_t *args)
 			if (Mod_CheckFullbrights (skin, size))
 			{
 				pheader->gltextures[i][j & 3] = TexMgr_LoadImage (
-					mod, name, pheader->skinwidth, pheader->skinheight, SRC_INDEXED, skin, mod->name, offset, texflags | TEXPREF_MIPMAP | TEXPREF_NOBRIGHT);
+					mod, name, pheader->skinwidth, pheader->skinheight, SRC_INDEXED, skin, skin_source, offset, texflags | TEXPREF_MIPMAP | TEXPREF_NOBRIGHT);
 				q_snprintf (fbr_mask_name, sizeof (fbr_mask_name), "%s:frame%i_%i_glow", mod->name, i, j);
 				pheader->fbtextures[i][j & 3] = TexMgr_LoadImage (
-					mod, fbr_mask_name, pheader->skinwidth, pheader->skinheight, SRC_INDEXED, skin, mod->name, offset,
+					mod, fbr_mask_name, pheader->skinwidth, pheader->skinheight, SRC_INDEXED, skin, skin_source, offset,
 					texflags | TEXPREF_MIPMAP | TEXPREF_FULLBRIGHT);
 			}
 			else
 			{
 				pheader->gltextures[i][j & 3] =
-					TexMgr_LoadImage (mod, name, pheader->skinwidth, pheader->skinheight, SRC_INDEXED, skin, mod->name, offset, texflags | TEXPREF_MIPMAP);
+					TexMgr_LoadImage (mod, name, pheader->skinwidth, pheader->skinheight, SRC_INDEXED, skin, skin_source, offset, texflags | TEXPREF_MIPMAP);
 				pheader->fbtextures[i][j & 3] = NULL;
 			}
 			// johnfitz
@@ -3903,7 +4018,8 @@ static void Mod_LoadSkinTask (int i, load_skin_task_args_t *args)
 Mod_LoadAllSkins
 ===============
 */
-void *Mod_LoadAllSkins (aliashdr_t *pheader, qmodel_t *mod, byte *mod_base, int numskins, byte *pskintype)
+void *Mod_LoadAllSkins (aliashdr_t *pheader, qmodel_t *mod, byte *mod_base,
+	int numskins, byte *pskintype, const char *skin_source)
 {
 	assert (pheader->poseverttype == PV_QUAKE1);
 
@@ -3935,6 +4051,7 @@ void *Mod_LoadAllSkins (aliashdr_t *pheader, qmodel_t *mod, byte *mod_base, int 
 		.mod = mod,
 		.mod_base = mod_base,
 		.ppskintypes = ppskintypes,
+		.skin_source = skin_source,
 	};
 	if (!Tasks_IsWorker () && (numskins > 1))
 	{
@@ -4228,7 +4345,7 @@ Mod_LoadAliasModel
 =================
 */
 static void Mod_LoadAliasModel (qmodel_t *mod, void *buffer,
-	qfilesize_t source_size)
+	qfilesize_t source_size, const char *skin_source)
 {
 	int	  i, j;
 	byte *pinstverts;
@@ -4305,7 +4422,8 @@ static void Mod_LoadAliasModel (qmodel_t *mod, void *buffer,
 	// load the skins
 	//
 	pskintype = mod_base + sizeof (mdl_t);
-	pskintype = Mod_LoadAllSkins (pheader, mod, mod_base, pheader->numskins, pskintype);
+	pskintype = Mod_LoadAllSkins (pheader, mod, mod_base, pheader->numskins,
+		pskintype, skin_source);
 
 	//
 	// load base s and t vertices
