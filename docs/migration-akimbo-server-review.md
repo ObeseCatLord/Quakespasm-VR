@@ -42,3 +42,12 @@ The first implementation may add the narrowly gated hook with advertisement
 disabled. Capability negotiation and client paired rendering/input follow only
 after the QC and end-to-end shot proof. Enyo, berserk and Dwell are separate
 later adapters, not reasons to broaden this one.
+
+An Astra xhigh code review of the first server-hook commit found no verified
+source-level blocker. It did find that a rejected nested scope could leave an
+older pose visible to `PF_aim`; the scope now pushes a masking frame even when
+admission fails and pops it without restoring entity state. The review also
+noted that zero-duration maintenance commands would fail the akimbo freshness
+gate, but that maintenance owner currently admits only a stock program, not
+QBJ3. That path remains deferred until QBJ3 can enter it. Native QC shot
+behavior still requires the focused runtime test before advertisement.

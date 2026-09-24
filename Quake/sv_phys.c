@@ -3091,14 +3091,15 @@ static void SV_BeginPrivateVRWeaponPose (edict_t *ent, client_t *client,
 				previous->origin_relocated;
 			break;
 		}
+	/* Even a rejected nested entry must mask an older pose for this entity. */
+	scope->previous = sv_vr_weapon_pose_scope;
+	sv_vr_weapon_pose_scope = scope;
 	if (client->protocol_qsvr != QSVR_PROTOCOL_PINNED ||
 		!cmd->vr_active || !cmd->vr_handpos_relative ||
 		client->lastmovetime <= 0 || realtime - client->lastmovetime > 1.0)
 		return;
 
 	scope->applied = true;
-	scope->previous = sv_vr_weapon_pose_scope;
-	sv_vr_weapon_pose_scope = scope;
 	VectorCopy (ent->v.origin, scope->origin);
 	VectorCopy (ent->v.v_angle, scope->v_angle);
 	VectorCopy (pr_global_struct->v_forward, scope->forward);
@@ -3180,9 +3181,9 @@ qboolean SV_QBJ3AkimboAim (edict_t *ent, vec3_t muzzle)
 static void SV_EndPrivateVRWeaponPose (edict_t *ent,
 	const sv_vr_weapon_pose_scope_t *scope)
 {
+	sv_vr_weapon_pose_scope = scope->previous;
 	if (!scope->applied)
 		return;
-	sv_vr_weapon_pose_scope = scope->previous;
 	if (!ent->free)
 	{
 		if (!scope->origin_relocated)
