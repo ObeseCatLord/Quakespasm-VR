@@ -1311,6 +1311,8 @@ static qboolean SV_ClearPrivateInput (client_t *client)
 	client->cmd.buttons = 0;
 	client->cmd.impulse = 0;
 	memset (client->cmd.vr_roomscalemove, 0, sizeof (client->cmd.vr_roomscalemove));
+	memset (&client->cmd.vr_gorilla, 0, sizeof (client->cmd.vr_gorilla));
+	memset (&client->cmd.vr_gorilla_motion, 0, sizeof (client->cmd.vr_gorilla_motion));
 	client->edict->v.button0 = 0;
 	client->edict->v.button2 = 0;
 	client->edict->v.impulse = 0;
