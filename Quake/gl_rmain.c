@@ -1128,10 +1128,26 @@ static void R_DrawVRCrosshair (cb_context_t *cbx);
 void R_PrepareVRCrosshair (void)
 {
 	vr_crosshair_frame_t prepared;
-	vec3_t forward, right, up, end;
+	vec3_t forward, right, up, end, muzzle_cue;
 	float size, alpha, depth, vertical_offset;
 
 	memset (&vr_crosshair_frame, 0, sizeof (vr_crosshair_frame));
+	/* Show the fixed point the controller must be moved onto while recentering
+	 * the muzzle. Reuse the existing stereo crosshair snapshot/draw path. */
+	if (vulkan_globals.stereo_active && glwidth > 0 && vid.width > 0 &&
+		VR_WeaponCalibrationAdjustMuzzleCue (muzzle_cue))
+	{
+		memset (&prepared, 0, sizeof (prepared));
+		prepared.mode = 1;
+		prepared.valid = true;
+		prepared.size_pixels = q_max (12.0f * (float)glwidth /
+			(float)vid.width, 8.0f);
+		prepared.alpha = 1.0f;
+		VectorCopy (cl.viewent.origin, prepared.start);
+		VectorCopy (muzzle_cue, prepared.impact);
+		vr_crosshair_frame = prepared;
+		return;
+	}
 	if (!vulkan_globals.stereo_active || VR_WeaponCalibrationAdjustActive () ||
 		!cl.worldmodel || cls.signon != SIGNONS || cl.intermission ||
 		!isfinite (vr_crosshair.value) ||

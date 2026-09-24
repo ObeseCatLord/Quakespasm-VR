@@ -22,6 +22,7 @@ void VR_WeaponCalibrationAdjustInput(int physical_hand,
 	const vec3_t live_hand_angles);
 qboolean VR_WeaponCalibrationAdjustPresentation(vec3_t origin,
 	vec3_t angles);
+qboolean VR_WeaponCalibrationAdjustMuzzleCue(vec3_t world);
 qboolean VR_WeaponCalibrationReloadGame(void);
 qboolean VR_WeaponCalibrationApplySchema(
 	const vr_weapon_schema_entry_t *entries, size_t count);

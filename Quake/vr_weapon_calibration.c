@@ -77,6 +77,8 @@ typedef struct
 {
 	qboolean active;
 	qboolean armed;
+	qboolean muzzle_mode;
+	qboolean return_to_grip;
 	qboolean created_slot;
 	int physical_hand;
 	int model_index;
@@ -88,7 +90,9 @@ typedef struct
 	float gunmodelscale;
 	float gunmodelpitch;
 	vec3_t frozen_origin;
+	vec3_t frozen_hand_angles;
 	vec3_t frozen_model_angles;
+	vec3_t frozen_muzzle_world;
 } vr_weapon_calibration_adjustment_t;
 
 static vr_weapon_calibration_adjustment_t vr_weapon_calibration_adjustment;
@@ -1079,6 +1083,51 @@ qboolean VR_WeaponCalibrationAdjustActive(void)
 	return vr_weapon_calibration_adjustment.active;
 }
 
+static qboolean VR_CalibrationAdjustStateValid(
+	const vr_weapon_calibration_adjustment_t *adjustment,
+	const char **reason_out)
+{
+	qmodel_t *model;
+	aliashdr_t *alias_header;
+	int dominant, model_index;
+
+	if (reason_out)
+		*reason_out = "gameplay or OpenXR context changed";
+	if (!adjustment || !adjustment->active ||
+		!VR_CalibrationAdjustGameplayContext(&dominant))
+		return false;
+	if (dominant != adjustment->physical_hand)
+	{
+		if (reason_out)
+			*reason_out = "active controller hand changed";
+		return false;
+	}
+	if (vr_world_scale.value != adjustment->world_scale ||
+		vr_gunmodelscale.value != adjustment->gunmodelscale ||
+		vr_gunmodelpitch.value != adjustment->gunmodelpitch)
+	{
+		if (reason_out)
+			*reason_out = "viewmodel scale or pitch changed";
+		return false;
+	}
+	if (!VR_CalibrationAdjustCurrentModel(&model, &alias_header,
+		&model_index) || model_index != adjustment->model_index ||
+		model != adjustment->model || strcmp(model->name,
+			adjustment->model_name) ||
+		VR_FindCalibrationSlot(adjustment->model_name) != adjustment->slot ||
+		alias_header->poseverttype != adjustment->poseverttype ||
+		(alias_header->poseverttype != PV_QUAKE1 &&
+		 alias_header->poseverttype != PV_QUAKE3))
+	{
+		if (reason_out)
+			*reason_out = "viewmodel identity or format changed";
+		return false;
+	}
+	return true;
+}
+
+static void VR_CalibrationAdjustInputAbort(const char *reason);
+
 void VR_WeaponCalibrationAdjustCancel(void)
 {
 	vr_weapon_calibration_adjustment_t *adjustment =
@@ -1099,15 +1148,14 @@ qboolean VR_WeaponCalibrationAdjustPresentation(vec3_t origin,
 {
 	vr_weapon_calibration_adjustment_t *adjustment =
 		&vr_weapon_calibration_adjustment;
+	const char *reason;
 	if (!adjustment->active || !origin || !angles)
 		return false;
-	/* Network/model changes may arrive after the last input sample. Never show
-	 * a newly equipped weapon at the prior weapon's frozen grip. */
-	if (cl.viewent.model != adjustment->model ||
-		cl.stats[STAT_WEAPON] != adjustment->model_index ||
-		VR_InputDominantPhysicalHand() != adjustment->physical_hand)
+	/* Rendering and input may observe a context or model change on different
+	 * frames. Keep frozen presentation scoped to the captured weapon and hand. */
+	if (!VR_CalibrationAdjustStateValid(adjustment, &reason))
 	{
-		VR_WeaponCalibrationAdjustCancel();
+		VR_CalibrationAdjustInputAbort(reason);
 		return false;
 	}
 	VectorCopy(adjustment->frozen_origin, origin);
@@ -1115,49 +1163,92 @@ qboolean VR_WeaponCalibrationAdjustPresentation(vec3_t origin,
 	return true;
 }
 
-static void VR_WeaponCalibrationAdjustBegin_f(void)
+qboolean VR_WeaponCalibrationAdjustMuzzleCue(vec3_t world)
+{
+	vr_weapon_calibration_adjustment_t *adjustment =
+		&vr_weapon_calibration_adjustment;
+	const char *reason;
+
+	if (!world || !adjustment->active || !adjustment->muzzle_mode)
+		return false;
+	if (!VR_CalibrationAdjustStateValid(adjustment, &reason))
+	{
+		VR_CalibrationAdjustInputAbort(reason);
+		return false;
+	}
+	VectorCopy(adjustment->frozen_muzzle_world, world);
+	return true;
+}
+
+static void VR_WeaponCalibrationAdjustBegin_f(qboolean muzzle_mode)
 {
 	vr_weapon_calibration_adjustment_t *adjustment =
 		&vr_weapon_calibration_adjustment;
 	qmodel_t *model;
 	aliashdr_t *alias_header;
 	vec3_t raw_origin, raw_hand_angles, model_angles;
-	int dominant, model_index, slot;
+	vec3_t effective_muzzle, muzzle_world;
+	int dominant, model_index, slot, component;
 	qboolean created_slot = false;
+	qboolean multiplayer;
 
 	if (adjustment->active)
 	{
-		VR_WeaponCalibrationAdjustCancel();
-		Con_Printf("VR: classic grip adjustment canceled\n");
-		return;
+		if (adjustment->return_to_grip)
+		{
+			VR_WeaponCalibrationAdjustCancel();
+			if (muzzle_mode)
+			{
+				Con_Printf("VR: muzzle recenter return-to-grip hold canceled; run vradjustmuzzle again to begin a new recenter\n");
+				return;
+			}
+			Con_Printf("VR: muzzle recenter return-to-grip hold canceled; starting a fresh grip adjustment\n");
+		}
+		else if (adjustment->muzzle_mode == muzzle_mode)
+		{
+			VR_WeaponCalibrationAdjustCancel();
+			Con_Printf("VR: classic %s adjustment canceled\n",
+				muzzle_mode ? "muzzle recenter" : "grip");
+			return;
+		}
+		else
+		{
+			VR_WeaponCalibrationAdjustCancel();
+			Con_Printf("VR: active classic calibration canceled; starting %s adjustment\n",
+				muzzle_mode ? "muzzle" : "grip");
+		}
 	}
 	if (!VR_CalibrationAdjustGameplayContext(&dominant))
 	{
-		Con_Printf("VR: vradjustweapon requires focused, renderable controller aim during live gameplay\n");
+		Con_Printf("VR: %s requires focused, renderable controller aim during live gameplay\n",
+			muzzle_mode ? "vradjustmuzzle" : "vradjustweapon");
 		return;
 	}
 	if (!VR_CalibrationAdjustCurrentModel(&model, &alias_header,
 		&model_index))
 	{
-		Con_Printf("VR: vradjustweapon requires the valid alias viewmodel selected by STAT_WEAPON\n");
+		Con_Printf("VR: %s requires the valid alias viewmodel selected by STAT_WEAPON\n",
+			muzzle_mode ? "vradjustmuzzle" : "vradjustweapon");
 		return;
 	}
 	if (alias_header->poseverttype == PV_MD5 ||
 		alias_header->poseverttype == PV_MD5_8)
 	{
-		Con_Printf("VR: vradjustweapon is classic-only; '%s' uses enhanced MD5 geometry\n",
-			model->name);
+		Con_Printf("VR: %s is classic-only; '%s' uses enhanced MD5 geometry\n",
+			muzzle_mode ? "vradjustmuzzle" : "vradjustweapon", model->name);
 		return;
 	}
 	if (alias_header->poseverttype != PV_QUAKE1 &&
 		alias_header->poseverttype != PV_QUAKE3)
 	{
-		Con_Printf("VR: vradjustweapon requires classic Quake 1 or Quake 3 alias geometry\n");
+		Con_Printf("VR: %s requires classic Quake 1 or Quake 3 alias geometry\n",
+			muzzle_mode ? "vradjustmuzzle" : "vradjustweapon");
 		return;
 	}
 	if (!VR_CalibrationSafeModelToken(model->name))
 	{
-		Con_Printf("VR: vradjustweapon cannot save an unsafe or unterminated viewmodel path\n");
+		Con_Printf("VR: %s cannot save an unsafe or unterminated viewmodel path\n",
+			muzzle_mode ? "vradjustmuzzle" : "vradjustweapon");
 		return;
 	}
 	if (!V_TrackedPresentationHandWorldPose(dominant, raw_origin,
@@ -1166,7 +1257,8 @@ static void VR_WeaponCalibrationAdjustBegin_f(void)
 		!VR_LocomotionHandRotToViewmodelAngles(raw_hand_angles, model_angles,
 			vr_gunmodelpitch.value) || !VR_CalibrationVectorIsFinite(model_angles))
 	{
-		Con_Printf("VR: vradjustweapon could not capture the live controller grip pose\n");
+		Con_Printf("VR: %s could not capture the live controller grip pose\n",
+			muzzle_mode ? "vradjustmuzzle" : "vradjustweapon");
 		return;
 	}
 
@@ -1176,15 +1268,54 @@ static void VR_WeaponCalibrationAdjustBegin_f(void)
 		slot = VR_FindFreeCalibrationSlot();
 		if (slot < 0)
 		{
-			Con_Printf("VR: vradjustweapon has no free classic calibration slot\n");
+			Con_Printf("VR: %s has no free classic calibration slot\n",
+				muzzle_mode ? "vradjustmuzzle" : "vradjustweapon");
 			return;
 		}
 		VR_ActivateCalibrationSlot(slot, model->name);
 		created_slot = true;
 	}
 
+	multiplayer = cl.maxclients > 1;
+	if (muzzle_mode)
+	{
+		if (!VR_WeaponCalibrationLookupMuzzle(model->name, false,
+			multiplayer, effective_muzzle))
+		{
+			/* Held-only entries use their registered muzzle cvars as the
+			 * starting base until a muzzle offset is authored. */
+			for (component = 0; component < 3; ++component)
+				effective_muzzle[component] =
+					VR_WeaponMuzzleCvar(slot, component).value +
+					(multiplayer &&
+					 vr_weapon_calibration_slots[slot].has_mp_muzzle_offset ?
+					 vr_weapon_calibration_slots[slot].mp_muzzle_offset[component] :
+					 0.0f);
+		}
+		if (!VR_CalibrationVectorIsFinite(effective_muzzle) ||
+			!VR_LocomotionMuzzleOffsetToWorld(effective_muzzle,
+				raw_hand_angles, vr_gunmodelscale.value,
+				vr_gunmodelpitch.value, dominant == 0, muzzle_world) ||
+			!VR_CalibrationVectorIsFinite(muzzle_world))
+		{
+			if (created_slot)
+				VR_SetCalibrationSlotDefaults(slot);
+			Con_Printf("VR: vradjustmuzzle could not calculate the current classic muzzle point\n");
+			return;
+		}
+		VectorAdd(raw_origin, muzzle_world, muzzle_world);
+		if (!VR_CalibrationVectorIsFinite(muzzle_world))
+		{
+			if (created_slot)
+				VR_SetCalibrationSlotDefaults(slot);
+			Con_Printf("VR: vradjustmuzzle calculated an invalid world cue\n");
+			return;
+		}
+	}
+
 	memset(adjustment, 0, sizeof(*adjustment));
 	adjustment->active = true;
+	adjustment->muzzle_mode = muzzle_mode;
 	adjustment->physical_hand = dominant;
 	adjustment->model_index = model_index;
 	adjustment->poseverttype = alias_header->poseverttype;
@@ -1197,14 +1328,32 @@ static void VR_WeaponCalibrationAdjustBegin_f(void)
 	adjustment->gunmodelscale = vr_gunmodelscale.value;
 	adjustment->gunmodelpitch = vr_gunmodelpitch.value;
 	VectorCopy(raw_origin, adjustment->frozen_origin);
+	VectorCopy(raw_hand_angles, adjustment->frozen_hand_angles);
 	VectorCopy(model_angles, adjustment->frozen_model_angles);
-	Con_Printf("VR: classic grip adjustment active for %s; release the trigger, then press to set the grip\n",
-		adjustment->model_name);
+	if (muzzle_mode)
+	{
+		VectorCopy(muzzle_world, adjustment->frozen_muzzle_world);
+		Con_Printf("VR: classic muzzle recenter active for %s; move the grip to place the muzzle cue, release the trigger, then press to set it\n",
+			adjustment->model_name);
+	}
+	else
+		Con_Printf("VR: classic grip adjustment active for %s; release the trigger, then press to set the grip\n",
+			adjustment->model_name);
+}
+
+static void VR_WeaponCalibrationAdjustGrip_f(void)
+{
+	VR_WeaponCalibrationAdjustBegin_f(false);
+}
+
+static void VR_WeaponCalibrationAdjustMuzzle_f(void)
+{
+	VR_WeaponCalibrationAdjustBegin_f(true);
 }
 
 static void VR_CalibrationAdjustInputAbort(const char *reason)
 {
-	Con_Printf("VR: classic grip adjustment canceled (%s)\n", reason);
+	Con_Printf("VR: classic calibration canceled (%s)\n", reason);
 	VR_WeaponCalibrationAdjustCancel();
 }
 
@@ -1214,23 +1363,22 @@ void VR_WeaponCalibrationAdjustInput(int physical_hand,
 {
 	vr_weapon_calibration_adjustment_t *adjustment =
 		&vr_weapon_calibration_adjustment;
-	qmodel_t *model;
-	aliashdr_t *alias_header;
+	const char *reason;
 	vec3_t world_delta, local_delta, effective_offset, new_base;
 	float effective_scale, inverse_scale;
-	int dominant, model_index, component;
+	int component;
 	qboolean multiplayer;
 
 	if (!adjustment->active)
 		return;
-	if (!VR_CalibrationAdjustGameplayContext(&dominant))
-	{
-		VR_CalibrationAdjustInputAbort("gameplay or OpenXR context changed");
-		return;
-	}
-	if (physical_hand != adjustment->physical_hand || dominant != physical_hand)
+	if (physical_hand != adjustment->physical_hand)
 	{
 		VR_CalibrationAdjustInputAbort("active controller hand changed");
+		return;
+	}
+	if (!VR_CalibrationAdjustStateValid(adjustment, &reason))
+	{
+		VR_CalibrationAdjustInputAbort(reason);
 		return;
 	}
 	if (!pose_valid || !live_origin || !live_hand_angles ||
@@ -1240,23 +1388,14 @@ void VR_WeaponCalibrationAdjustInput(int physical_hand,
 		VR_CalibrationAdjustInputAbort("controller pose became invalid");
 		return;
 	}
-	if (vr_world_scale.value != adjustment->world_scale ||
-		vr_gunmodelscale.value != adjustment->gunmodelscale ||
-		vr_gunmodelpitch.value != adjustment->gunmodelpitch)
+	if (adjustment->return_to_grip)
 	{
-		VR_CalibrationAdjustInputAbort("viewmodel scale or pitch changed");
-		return;
-	}
-	if (!VR_CalibrationAdjustCurrentModel(&model, &alias_header,
-		&model_index) || model_index != adjustment->model_index ||
-		model != adjustment->model || strcmp(model->name,
-			adjustment->model_name) ||
-		VR_FindCalibrationSlot(adjustment->model_name) != adjustment->slot ||
-		alias_header->poseverttype != adjustment->poseverttype ||
-		(alias_header->poseverttype != PV_QUAKE1 &&
-		 alias_header->poseverttype != PV_QUAKE3))
-	{
-		VR_CalibrationAdjustInputAbort("viewmodel identity or format changed");
+		VectorSubtract(live_origin, adjustment->frozen_origin, world_delta);
+		if (DotProduct(world_delta, world_delta) <= 64.0f)
+		{
+			Con_Printf("VR: muzzle recenter complete; returned to the starting grip\n");
+			VR_WeaponCalibrationAdjustCancel();
+		}
 		return;
 	}
 	if (!adjustment->armed)
@@ -1267,6 +1406,66 @@ void VR_WeaponCalibrationAdjustInput(int physical_hand,
 	}
 	if (!trigger_down)
 		return;
+
+	if (adjustment->muzzle_mode)
+	{
+		VectorSubtract(adjustment->frozen_muzzle_world, live_origin,
+			world_delta);
+		/* The frozen weapon, not the rotated live wrist, defines the inverse. */
+		if (!VR_LocomotionWorldToMuzzleOffset(world_delta,
+			adjustment->frozen_hand_angles,
+			adjustment->gunmodelscale, adjustment->gunmodelpitch,
+			adjustment->physical_hand == 0, local_delta) ||
+			!VR_CalibrationVectorIsFinite(local_delta))
+		{
+			VR_CalibrationAdjustInputAbort("could not convert the muzzle cue movement");
+			return;
+		}
+		multiplayer = cl.maxclients > 1;
+		for (component = 0; component < 3; ++component)
+		{
+			new_base[component] = local_delta[component];
+			if (multiplayer &&
+				vr_weapon_calibration_slots[adjustment->slot].has_mp_muzzle_offset)
+				new_base[component] -=
+					vr_weapon_calibration_slots[adjustment->slot].mp_muzzle_offset[component];
+		}
+		if (!VR_CalibrationVectorIsFinite(new_base))
+		{
+			VR_CalibrationAdjustInputAbort("resulting muzzle offset is invalid");
+			return;
+		}
+		{
+			const float old_base[3] = {
+				VR_WeaponMuzzleCvar(adjustment->slot, VR_WMUZZLE_X).value,
+				VR_WeaponMuzzleCvar(adjustment->slot, VR_WMUZZLE_Y).value,
+				VR_WeaponMuzzleCvar(adjustment->slot, VR_WMUZZLE_Z).value
+			};
+			Cvar_SetValueQuick(&VR_WeaponMuzzleCvar(adjustment->slot,
+				VR_WMUZZLE_X), new_base[0]);
+			Cvar_SetValueQuick(&VR_WeaponMuzzleCvar(adjustment->slot,
+				VR_WMUZZLE_Y), new_base[1]);
+			Cvar_SetValueQuick(&VR_WeaponMuzzleCvar(adjustment->slot,
+				VR_WMUZZLE_Z), new_base[2]);
+			if (!VR_WeaponCalibrationSave())
+			{
+				Cvar_SetValueQuick(&VR_WeaponMuzzleCvar(adjustment->slot,
+					VR_WMUZZLE_X), old_base[0]);
+				Cvar_SetValueQuick(&VR_WeaponMuzzleCvar(adjustment->slot,
+					VR_WMUZZLE_Y), old_base[1]);
+				Cvar_SetValueQuick(&VR_WeaponMuzzleCvar(adjustment->slot,
+					VR_WMUZZLE_Z), old_base[2]);
+				VR_CalibrationAdjustInputAbort("calibration could not be persisted");
+				return;
+			}
+		}
+		vr_weapon_calibration_slots[adjustment->slot].has_muzzle_offset = true;
+		Con_Printf("VR: classic muzzle recentered for %s; return the grip to its starting point\n",
+			adjustment->model_name);
+		adjustment->created_slot = false;
+		adjustment->return_to_grip = true;
+		return;
+	}
 
 	VectorSubtract(adjustment->frozen_origin, live_origin, world_delta);
 	inverse_scale = (adjustment->world_scale / 0.75f) *
@@ -1367,7 +1566,8 @@ void VR_WeaponCalibrationInit(void)
 	}
 	vr_weapon_calibration_initialized = true;
 	Cmd_AddCommand("vrweaponsave", VR_WeaponCalibrationSave_f);
-	Cmd_AddCommand("vradjustweapon", VR_WeaponCalibrationAdjustBegin_f);
+	Cmd_AddCommand("vradjustweapon", VR_WeaponCalibrationAdjustGrip_f);
+	Cmd_AddCommand("vradjustmuzzle", VR_WeaponCalibrationAdjustMuzzle_f);
 }
 
 void VR_WeaponCalibrationReset(void)

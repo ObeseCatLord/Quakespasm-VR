@@ -87,9 +87,11 @@ claiming broader parity. These remain implementation and integration gates.
 
 ## Implementation checkpoint
 
-The first controller adjustment slice now supports classic alias grip recentering
-through `vradjustweapon`. It captures a collision-free presentation pose, freezes
-only that pose, suppresses the dominant trigger until release, preserves the MP
-overlay when editing the shared base offset, and saves through the existing
-schema owner. The local Linux build links. Muzzle adjustment, enhanced MD5
-profile persistence, a frozen muzzle cue, and hardware behavior checks remain.
+Controller adjustment now supports classic alias grip and muzzle recentering
+through `vradjustweapon` and `vradjustmuzzle`. It captures a collision-free
+presentation pose, freezes only that pose, suppresses the dominant trigger
+until release, preserves the MP overlay when editing the shared base offset,
+and saves through the existing schema owner. The muzzle path shows the frozen
+target through the existing stereo cue and retains the frozen pose until the
+live grip returns within eight Quake units. The local Linux build links.
+Enhanced MD5 profile persistence and hardware behavior checks remain.
