@@ -656,6 +656,7 @@ typedef struct qmodel_s
 	unsigned int path_id;		// path id of the game directory
 								// that this model came from
 	qboolean	 needload;		// bmodels and sprites don't cache normally
+	qboolean	 is_generated_akimbo_half; // current geometry came from Mod_GenerateAkimboHalf
 
 	modtype_t  type;
 	int		   numframes;

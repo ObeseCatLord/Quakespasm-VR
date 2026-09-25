@@ -526,6 +526,7 @@ Mod_FreeModelMemory
 */
 static void Mod_FreeModelMemory (qmodel_t *mod)
 {
+	mod->is_generated_akimbo_half = false;
 	memset (&mod->stockaxe_edge, 0, sizeof (mod->stockaxe_edge));
 
 	if (mod->name[0] != '*')
@@ -659,6 +660,7 @@ qmodel_t *Mod_FindName (const char *name)
 			Sys_Error ("mod_numknown == MAX_MODELS");
 		q_strlcpy (mod->name, name, MAX_QPATH);
 		mod->needload = true;
+		mod->is_generated_akimbo_half = false;
 		mod_numknown++;
 		InvalidateTraceLineCache ();
 	}
@@ -849,6 +851,7 @@ static qmodel_t *Mod_LoadModel (qmodel_t *mod, qboolean crash)
 
 	if (!mod->needload)
 		return mod;
+	mod->is_generated_akimbo_half = false;
 
 	/* The copied edge belongs to this exact load of the source model. */
 	memset (&mod->stockaxe_edge, 0, sizeof (mod->stockaxe_edge));
@@ -983,6 +986,8 @@ static qmodel_t *Mod_LoadModel (qmodel_t *mod, qboolean crash)
 	{
 	case IDPOLYHEADER:
 		Mod_LoadAliasModel (mod, buf, buf_filesize, skin_source);
+		if (generated_model && mod->type == mod_alias)
+			mod->is_generated_akimbo_half = true;
 		break;
 
 	case IDSPRITEHEADER:
