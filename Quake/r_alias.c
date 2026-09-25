@@ -662,6 +662,13 @@ static int R_AliasModelMatrixInternal (
 		const qboolean paired_half = pair_hand >= 0;
 		const char *calibration_name = paired_half && cl.viewent.model ?
 			cl.viewent.model->name : e->model->name;
+		const mod_akimbo_pair_recipe_t *pair_recipe =
+			paired_half && cl.viewent.model ?
+			Mod_GetAkimboPairRecipe (cl.viewent.model->name) : NULL;
+		const qboolean dwell_anchor_centering = pair_recipe &&
+			!strcmp (pair_recipe->game, "dwell") &&
+			!strcmp (pair_recipe->source, "progs/v_axeb.mdl") &&
+			!strcmp (cl.viewent.model->name, pair_recipe->source);
 		const qboolean enhanced_format = paliashdr->poseverttype == PV_MD5 || paliashdr->poseverttype == PV_MD5_8;
 		const qboolean multiplayer = cl.maxclients > 1;
 		const qboolean has_calibration = VR_WeaponCalibrationLookupHeld (calibration_name, enhanced_format, multiplayer, held_offset, &held_scale);
@@ -696,18 +703,31 @@ static int R_AliasModelMatrixInternal (
 		float local_translation[3];
 		for (int axis = 0; axis < 3; ++axis)
 		{
-			double local_offset = (double)header_origin[axis] + (double)held_offset[axis];
-			if (paired_half && pair_hand == 0 && axis == 1)
+			double scaled_offset;
+			if (dwell_anchor_centering)
 			{
-				/* The split left mesh is already left-handed. Reflect the
-				 * calibrated grip around the MDL's scaled quantization origin,
-				 * exactly as the donor does, without mirroring vertices. */
-				local_offset = 2.0 * (double)held_scale *
-					(double)header_origin[axis] - local_offset;
+				const float anchor = pair_recipe->source_anchors[pair_hand][axis];
+				if (!isfinite (anchor))
+					return -1;
+				scaled_offset = -(double)c * (double)held_scale *
+					((double)anchor - (double)header_origin[axis]);
 			}
-			if (axis == 2)
-				local_offset += (double)gunmodel_y;
-			double scaled_offset = (double)c * local_offset;
+			else
+			{
+				double local_offset = (double)header_origin[axis] +
+					(double)held_offset[axis];
+				if (paired_half && pair_hand == 0 && axis == 1)
+				{
+					/* The split left mesh is already left-handed. Reflect the
+					 * calibrated grip around the MDL's scaled quantization origin,
+					 * exactly as the donor does, without mirroring vertices. */
+					local_offset = 2.0 * (double)held_scale *
+						(double)header_origin[axis] - local_offset;
+				}
+				if (axis == 2)
+					local_offset += (double)gunmodel_y;
+				scaled_offset = (double)c * local_offset;
+			}
 			if (!isfinite (scaled_offset) || fabs (scaled_offset) > FLT_MAX)
 				return -1;
 			local_translation[axis] = (float)scaled_offset;
