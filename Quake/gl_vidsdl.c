@@ -2328,6 +2328,7 @@ enum {
 	VID_OPT_FULLSCREEN,
 	VID_OPT_VSYNC,
 	VID_OPT_MSAA,
+	VID_OPT_ANISOTROPY,
 	VID_OPT_TEST,
 	VID_OPT_APPLY,
 	VIDEO_OPTIONS_ITEMS
@@ -2634,6 +2635,37 @@ static void VID_Menu_ChooseNextMSAA (int dir)
 	Cvar_SetValueQuick (&vid_fsaa, (float)samples);
 }
 
+static void VID_Menu_ChooseNextAnisotropy (int dir)
+{
+	cvar_t *var = Cvar_FindVar ("gl_texture_anisotropy");
+	int current, maximum, next;
+
+	if (!var || !gl_anisotropy_able)
+		return;
+
+	maximum = (int)gl_max_anisotropy;
+	if (maximum < 2)
+		return;
+	current = CLAMP (1, (int)var->value, maximum);
+	if (dir > 0)
+	{
+		next = current < 2 ? 2 : current * 2;
+		if (next > maximum)
+			next = current < maximum ? maximum : 1;
+	}
+	else if (current <= 1)
+		next = maximum;
+	else if (current <= 2)
+		next = 1;
+	else
+	{
+		next = 1;
+		while (next * 2 < current)
+			next *= 2;
+	}
+	Cvar_SetValueQuick (var, (float)next);
+}
+
 /*
 ================
 VID_MenuKey
@@ -2686,6 +2718,9 @@ static void VID_MenuKey (int key)
 		case VID_OPT_MSAA:
 			VID_Menu_ChooseNextMSAA (1);
 			break;
+		case VID_OPT_ANISOTROPY:
+			VID_Menu_ChooseNextAnisotropy (1);
+			break;
 		default:
 			break;
 		}
@@ -2712,6 +2747,9 @@ static void VID_MenuKey (int key)
 			break;
 		case VID_OPT_MSAA:
 			VID_Menu_ChooseNextMSAA (-1);
+			break;
+		case VID_OPT_ANISOTROPY:
+			VID_Menu_ChooseNextAnisotropy (-1);
 			break;
 		default:
 			break;
@@ -2741,6 +2779,9 @@ static void VID_MenuKey (int key)
 			break;
 		case VID_OPT_MSAA:
 			VID_Menu_ChooseNextMSAA (1);
+			break;
+		case VID_OPT_ANISOTROPY:
+			VID_Menu_ChooseNextAnisotropy (1);
 			break;
 		case VID_OPT_TEST:
 			Cbuf_AddText ("vid_test\n");
@@ -2851,6 +2892,18 @@ static void VID_MenuDraw (void)
 			else
 				M_Print (184, y, "Off");
 			break;
+		case VID_OPT_ANISOTROPY:
+		{
+			cvar_t *var = Cvar_FindVar ("gl_texture_anisotropy");
+			M_Print (16, y, "Anisotropic filter");
+			if (!gl_anisotropy_able || !var)
+				M_Print (184, y, "N/A");
+			else if (var->value <= 1)
+				M_Print (184, y, "Off");
+			else
+				M_Print (184, y, va("%ix", (int)var->value));
+			break;
+		}
 		case VID_OPT_TEST:
 			y += 8; //separate the test and apply items
 			M_Print (16, y, "      Test changes");
