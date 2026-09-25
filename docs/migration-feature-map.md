@@ -122,13 +122,19 @@ presentation within the shared wheel rectangles; visual/gameplay qualification
 remains open. Interactive weapon calibration remains separate work; compiling
 the 3D model/hit paths does not prove mod gameplay parity.
 
-WPN-012 now has its first asset boundary on `2.0`: the donor's exact MDL
-splitter is reused through vkQuake's model loader for four paired recipes.
-QBJ3 nailgun/berserk halves load with the expected frame and vertex counts;
-embedded skin reloads point at the source MDL. See
-[the loader review](migration-akimbo-loader-review.md). Per-hand presentation,
-tracked commands, attack/contact semantics and complete-pair fallback are
-still required before WPN-012 can be accepted.
+WPN-012 reuses the donor's exact MDL splitter through vkQuake's model loader
+for four paired recipes; see [the loader review](migration-akimbo-loader-review.md).
+QBJ3's twin nailgun has both native QC hand shots, a client-to-server tracked
+path and ordinary-client fallback covered by local regressions. Enyo's SMGs
+have paired presentation and a first-shot tracked path through the pinned QC
+clearance hook, with one nail consumed. A failed paired collision solve now
+drops the complete pair for that frame. The [Enyo integration review](migration-enyo-akimbo-implementation-review.md)
+records what remains unverified: actual Enyo impacts/damage, alternating hands,
+obstruction and callback behavior. QBJ3 berserk fists and Dwell's paired axe
+still need native gameplay adapters. WPN-012 therefore remains partial. These
+VR adaptations must leave ordinary desktop vkQuake viewmodel rendering and
+QuakeC firing intact; shared wheel, netcode and co-op features have separate
+desktop acceptance checks.
 
 ### Co-op and saves
 
