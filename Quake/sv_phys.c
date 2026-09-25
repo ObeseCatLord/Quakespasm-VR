@@ -2945,6 +2945,9 @@ typedef struct sv_vr_weapon_pose_scope_s
 	qboolean applied, origin_relocated, linked, akimbo_invalidated;
 	qboolean akimbo_pose_valid;
 	qboolean enyo_clearance_pending;
+	qboolean qbj3_shotgun_spread;
+	int qbj3_shotgun_weapon;
+	float qbj3_shotgun_roll;
 	vec3_t origin, body_origin, v_angle, forward, right, up;
 	vec3_t akimbo_muzzle[2], akimbo_angles[2];
 	vec3_t enyo_clearance_start, enyo_clearance_end;
@@ -3147,7 +3150,8 @@ static qboolean SV_AkimboCommandValid (client_t *client,
 static void SV_BeginPrivateVRWeaponPose (edict_t *ent, client_t *client,
 	sv_vr_weapon_pose_scope_t *scope)
 {
-	vec3_t muzzle, source_offset;
+	vec3_t muzzle, source_offset, flak_source_angles;
+	qboolean qbj3_flak_source = false;
 	const usercmd_t *cmd = &client->cmd;
 	sv_vr_weapon_pose_scope_t *previous;
 	memset (scope, 0, sizeof (*scope));
@@ -3195,6 +3199,23 @@ static void SV_BeginPrivateVRWeaponPose (edict_t *ent, client_t *client,
 
 	VectorAdd (scope->origin, cmd->vr_handpos, muzzle);
 	VectorCopy (cmd->vr_handrot, ent->v.v_angle);
+	/* Retain raw roll only for the exact pinned QBJ3 pistol/Flak QC. The
+	 * temporary entity angle below remains camera-safe for ordinary QC. */
+	if (SV_QBJ3TwinNailgunProgramLoaded () &&
+		(ent->v.weapon == IT_SHOTGUN || ent->v.weapon == IT_SUPER_SHOTGUN) &&
+		isfinite (ent->v.v_angle[ROLL]))
+	{
+		scope->qbj3_shotgun_spread = true;
+		scope->qbj3_shotgun_weapon = (int)ent->v.weapon;
+		scope->qbj3_shotgun_roll = ent->v.v_angle[ROLL];
+		if (ent->v.weapon == IT_SUPER_SHOTGUN &&
+			isfinite (ent->v.v_angle[PITCH]) &&
+			isfinite (ent->v.v_angle[YAW]))
+		{
+			qbj3_flak_source = true;
+			VectorCopy (ent->v.v_angle, flak_source_angles);
+		}
+	}
 	/* QC roll is camera tilt, while wrist roll belongs to the weapon model. */
 	ent->v.v_angle[ROLL] = 0;
 	AngleVectors (ent->v.v_angle, pr_global_struct->v_forward,
@@ -3202,7 +3223,8 @@ static void SV_BeginPrivateVRWeaponPose (edict_t *ent, client_t *client,
 	SV_ClampVRMuzzleToWorld (ent, muzzle);
 	VR_WeaponCalibrationProjectileSourceOffset (
 		PR_GetString (ent->v.weaponmodel), (int)ent->v.weapon,
-		ent->v.v_angle, ent->v.view_ofs[2], source_offset);
+		qbj3_flak_source ? flak_source_angles :
+			ent->v.v_angle, ent->v.view_ofs[2], source_offset);
 	VectorSubtract (muzzle, source_offset, ent->v.origin);
 }
 
@@ -3257,6 +3279,55 @@ static sv_vr_weapon_pose_scope_t *SV_FindPrivateVRWeaponPose (edict_t *ent)
 		if (scope->ent == ent)
 			return scope; /* The first match masks any older nested pose. */
 	return NULL;
+}
+
+/* QBJ3 labels IT_SHOTGUN as its pistol and IT_SUPER_SHOTGUN as Flak.
+ * Their audited FireBullets/Flak calls use makevectors for spread/source
+ * basis, so restore only the applied private controller's physical wrist roll. */
+qboolean SV_QBJ3ShotgunSpreadBasis (const vec3_t angles)
+{
+	const char *function_name;
+	sv_vr_weapon_pose_scope_t *scope;
+	edict_t *ent;
+	vec3_t spread_angles, forward, right, up;
+	int self;
+
+	if (!angles || !qcvm || qcvm != &sv.qcvm ||
+		!SV_QBJ3TwinNailgunProgramLoaded () || !pr_global_struct ||
+		!qcvm->xfunction || !qcvm->edicts || qcvm->edict_size <= 0)
+		return false;
+
+	function_name = PR_GetString (qcvm->xfunction->s_name);
+	if (strcmp (function_name, "FireBullets") &&
+		strcmp (function_name, "W_FireFlakShotgun"))
+		return false;
+
+	self = pr_global_struct->self;
+	if (self < 0 || self % qcvm->edict_size ||
+		self / qcvm->edict_size >= qcvm->num_edicts)
+		return false;
+	ent = PROG_TO_EDICT (self);
+	if (!ent || ent->free ||
+		(ent->v.weapon != IT_SHOTGUN && ent->v.weapon != IT_SUPER_SHOTGUN))
+		return false;
+
+	scope = SV_FindPrivateVRWeaponPose (ent);
+	if (!scope || !scope->applied || scope->origin_relocated ||
+		scope->ent != ent ||
+		!scope->qbj3_shotgun_spread ||
+		scope->qbj3_shotgun_weapon != (int)ent->v.weapon ||
+		!isfinite (scope->qbj3_shotgun_roll) ||
+		!isfinite (angles[0]) || !isfinite (angles[1]) ||
+		!isfinite (angles[2]))
+		return false;
+
+	VectorCopy (angles, spread_angles);
+	spread_angles[ROLL] = scope->qbj3_shotgun_roll;
+	AngleVectors (spread_angles, forward, right, up);
+	/* PF_makevectors has already computed the ordinary forward. */
+	VectorCopy (right, pr_global_struct->v_right);
+	VectorCopy (up, pr_global_struct->v_up);
+	return true;
 }
 
 qboolean SV_EnyoAkimboMakevectors (void)

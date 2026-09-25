@@ -85,7 +85,7 @@ commands
 end
 disable 3
 
-break sv_phys.c:3197 if sv_vr_weapon_pose_scope && sv_vr_weapon_pose_scope->akimbo_pose_valid
+break sv_phys.c:3200 if sv_vr_weapon_pose_scope && sv_vr_weapon_pose_scope->akimbo_pose_valid
 commands
   silent
   if !svs.clients[0].cmd.vr_akimbo_active || (int)svs.clients[0].edict->v.weapon != 4
@@ -103,7 +103,7 @@ commands
 end
 disable 4
 
-break sv_phys.c:3235
+break sv_phys.c:3272
 commands
   silent
   if !sv_vr_weapon_pose_scope || !sv_vr_weapon_pose_scope->akimbo_pose_valid || !svs.clients[0].cmd.vr_akimbo_active

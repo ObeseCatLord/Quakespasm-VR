@@ -132,7 +132,7 @@ disable 3
 
 # Enyo's licensed progs.dat is identified in SV_EnyoAkimboProgramLoaded;
 # these statement indices pin the three native hooks inside W_FireSMG.
-break sv_phys.c:3353 if qcvm && qcvm->xfunction && qcvm->xfunction->first_statement == 15323 && qcvm->xstatement == 15324 && sv_vr_weapon_pose_scope && sv_vr_weapon_pose_scope->akimbo_pose_valid
+break sv_phys.c:3424 if qcvm && qcvm->xfunction && qcvm->xfunction->first_statement == 15323 && qcvm->xstatement == 15324 && sv_vr_weapon_pose_scope && sv_vr_weapon_pose_scope->akimbo_pose_valid
 commands
   silent
   if !svs.clients[0].cmd.vr_akimbo_active || (int)svs.clients[0].edict->v.weapon != 4
@@ -168,7 +168,7 @@ commands
 end
 disable 4
 
-break sv_phys.c:3369 if qcvm && qcvm->xfunction && qcvm->xfunction->first_statement == 15323 && qcvm->xstatement == 15344
+break sv_phys.c:3440 if qcvm && qcvm->xfunction && qcvm->xfunction->first_statement == 15323 && qcvm->xstatement == 15344
 commands
   silent
   if !$makevectors_ok
@@ -183,7 +183,7 @@ commands
 end
 disable 5
 
-break sv_phys.c:3399 if qcvm && qcvm->xfunction && qcvm->xfunction->first_statement == 15323 && qcvm->xstatement == 15352
+break sv_phys.c:3470 if qcvm && qcvm->xfunction && qcvm->xfunction->first_statement == 15323 && qcvm->xstatement == 15352
 commands
   silent
   if !$aim_ok

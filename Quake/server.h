@@ -570,6 +570,7 @@ void SV_VRWeaponPoseSetOrigin (edict_t *ent);
 void SV_VRWeaponPoseLinked (edict_t *ent);
 qboolean SV_QBJ3AkimboAim (edict_t *ent, vec3_t muzzle);
 qboolean SV_QBJ3TwinNailgunProgramLoaded (void);
+qboolean SV_QBJ3ShotgunSpreadBasis (const vec3_t angles);
 qboolean SV_EnyoAkimboProgramLoaded (void);
 qboolean SV_EnyoAkimboMakevectors (void);
 qboolean SV_EnyoAkimboAim (edict_t *ent, vec3_t muzzle);

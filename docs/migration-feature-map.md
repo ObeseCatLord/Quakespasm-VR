@@ -136,6 +136,13 @@ VR adaptations must leave ordinary desktop vkQuake viewmodel rendering and
 QuakeC firing intact; shared wheel, netcode and co-op features have separate
 desktop acceptance checks.
 
+For WPN-010, the pinned QBJ3 Pistol/Flak private VR shot scope now retains
+controller wrist roll in its QuakeC spread basis, and Flak's calibrated source
+compensation uses the raw controller angles while QuakeC camera roll stays
+zero. The simulated Flak path verifies the basis; projectile impact/damage and
+ordinary desktop firing equivalence remain separate checks. Other vkQuake
+desktop graphics and viewmodel paths are unaffected by this scoped adapter.
+
 ### Co-op and saves
 
 | ID / behavior | Pinned source evidence | Destination / treatment | Acceptance |

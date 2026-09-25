@@ -240,6 +240,7 @@ static void PF_makevectors (void)
 	if (SV_EnyoAkimboMakevectors ())
 		return;
 	AngleVectors (G_VECTOR (OFS_PARM0), pr_global_struct->v_forward, pr_global_struct->v_right, pr_global_struct->v_up);
+	SV_QBJ3ShotgunSpreadBasis (G_VECTOR (OFS_PARM0));
 }
 
 /*

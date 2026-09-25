@@ -373,6 +373,31 @@ XDG_DATA_HOME="$XR_TEST_ROOT/data" SDL_VIDEODRIVER=x11 \
 Require exit 0 and `QBJ3_PIPELINE_PASSED`. The final breakpoint verifies
 one accepted physical-hand shot path; it does not require both hands to fire.
 
+## QBJ3 Flak wrist-roll path
+
+`vr_qbj3_flak_roll.gdb` equips QBJ3's Flak Shotgun under simulated tracked
+OpenXR, writes a 45-degree physical wrist roll into the private command, then
+checks that its native `W_FireFlakShotgun` uses the rolled spread basis while
+QuakeC still sees zero camera roll. It checks the firing path, not projectile
+impact or damage. Use the isolated Monado/QBJ3 setup above and also mount the
+installed weapon profile, which supplies Flak's calibrated muzzle:
+
+```sh
+ln -sfn "$QBJ3_ASSET_SOURCE/qbj3/vr_weapons.txt" \
+  "$XR_TEST_ROOT/game/qbj3/vr_weapons.txt"
+XDG_RUNTIME_DIR="$XR_TEST_ROOT/run" XDG_CONFIG_HOME="$XR_TEST_ROOT/config" \
+XDG_DATA_HOME="$XR_TEST_ROOT/data" SDL_VIDEODRIVER=x11 \
+XR_RUNTIME_JSON=/usr/share/openxr/1/openxr_monado.json \
+  timeout --signal=TERM 90s gdb -nx --return-child-result --batch \
+  -x tests/vr_qbj3_flak_roll.gdb --args "$XR_TEST_BINARY" \
+  -basedir "$XR_TEST_ROOT/game" -game qbj3 -openxr -nosound -window \
+  -width 640 -height 480 +sv_qsvr_private 1 +map start \
+  > "$XR_TEST_ROOT/qbj3-flak-roll.log" 2>&1
+```
+
+Require exit 0 and `FLAK_ROLL_PASSED`. A missing profile leaves the private
+VR pose inactive and makes this probe time out.
+
 ## Enyo paired-SMG first-shot path
 
 `vr_enyo_client_pipeline.gdb` drives the Enyo paired-SMG path through generated
