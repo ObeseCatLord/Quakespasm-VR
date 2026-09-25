@@ -124,3 +124,5 @@ At statement 14565, `W_FireAxe` calls builtin #1 (`makevectors`); at 14578
 and 14586 it calls function #396 (`traceline2`). The helper's statement
 12923 calls builtin #15 (`traceline`). This confirms the hook sites in the
 installed bytecode; it does not yet prove runtime outcome parity.
+The same field table records float offsets 131 for `attack_finished`, 151
+for `berserk_finished`, and 218 for `customflags`.
