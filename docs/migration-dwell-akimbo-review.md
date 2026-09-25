@@ -50,3 +50,28 @@ the Dwell QuakeC trace helper/outcome adapter remain required before the offer
 can be enabled. A future end-to-end proof must compare both hands, dominance,
 combined wrist rotations, nonunit held scale, visible edge alignment, wall
 response and the exact-once native damage outcome.
+
+## Paired contact senior review
+
+Astra xhigh reviewed the staged geometry, client command path, server contact
+owner and donor strike path. The exact Dwell program and active berserk weapon
+predicates are now staged but uncalled. **Keep the pair and melee offers off.**
+
+| Decision | Disposition |
+| --- | --- |
+| Add a second contact transport and identity. | **Reject.** The existing pair identity and two contact slots are sufficient. Prepare a zeroed bilateral contact after pair pose preparation, before its early return; finalize only while the same two tracked devices and generated half models remain valid. |
+| Apply the stock one-hand admission to Dwell. | **Reject.** Require the pinned program, active berserk weapon, bounded pair with berserk bit, both contact hands, immersive flag, freshness and continuity. The client model provenance is not server authority. |
+| Reuse stock contact sweep unchanged. | **Change.** Share reach and trace machinery, but Dwell sweeps its cutting edge and handles eligible initial overlap. Stock retains its existing handle-plus-edge behavior. |
+| Call the stock axe outcome or reschedule the native Dwell swing. | **Reject.** Scheduled weapon think and PostThink precede queued contact draining. A second QuakeC invocation can duplicate damage; physical contact needs a scoped Dwell helper/outcome with audited acquisition, retry-miss, return and cooldown behavior. |
+| Use the dominant hand for every Dwell strike. | **Reject.** Native strikes use Dwell's pinned weaponframe hand mapping at the QuakeC strike site. Physical strikes use the accepted queued contact hand and angles. Defer native pose mutation and restore the existing pose scope. |
+| Inherit stock stop-based rearming. | **Reject.** Dwell reversals can rearm without a sampled stop. Track physical stroke direction in the existing contact owner and use the maximum rigid-point speed of the two edge endpoints. |
+
+Move contact discontinuity handling before the pair producer's early return,
+emit the existing inactive reset on loss, and revalidate owner, program,
+weapon, berserk state, cursor and origin between two hand outcomes. Complete
+the donor helper/scheduler audit first, then implement client contact, server
+admission, Dwell sweep/QC scope, and deferred native pose in that order. Only
+after an exact-program room proves each hand, simultaneous strikes, reversals,
+pending native attacks, obstructions and reset/expiry behavior should the pair
+and Dwell melee offers be enabled together. No such end-to-end test was run in
+this review; desktop Dwell and stock axe must remain comparison cases.
