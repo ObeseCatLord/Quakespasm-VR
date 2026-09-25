@@ -126,6 +126,7 @@ static qboolean tracked_server_yaw_from_setangle;
 static entity_t akimbo_pair_entities[2];
 static qmodel_t *akimbo_pair_models[2];
 static aliashdr_t *akimbo_pair_geometry[2];
+static vec3_t akimbo_pair_collision_offsets[2];
 static const mod_akimbo_pair_recipe_t *akimbo_source_recipe;
 static qmodel_t *akimbo_source_model;
 static aliashdr_t *akimbo_source_geometry;
@@ -541,6 +542,8 @@ void V_ClearAkimboPair (void)
 	akimbo_sample_id = 0;
 	memset (akimbo_pair_models, 0, sizeof (akimbo_pair_models));
 	memset (akimbo_pair_geometry, 0, sizeof (akimbo_pair_geometry));
+	memset (akimbo_pair_collision_offsets, 0,
+		sizeof (akimbo_pair_collision_offsets));
 }
 
 static qboolean V_AkimboFrameDevicesValid (const vrxr_frame_t *frame)
@@ -947,6 +950,7 @@ void V_PrepareAkimboPair (void)
 				if (!CL_ResolveWeaponCollision (torso, pair_origins[hand],
 					base, tip, delta))
 					return;
+				VectorCopy (delta, akimbo_pair_collision_offsets[hand]);
 				VectorAdd (pair_origins[hand], delta, pair_origins[hand]);
 				VectorCopy (pair_origins[hand], akimbo_pair_entities[hand].origin);
 			}
@@ -1014,6 +1018,16 @@ qboolean V_AkimboPairReady (void)
 		else if (akimbo_pair_entities[hand].frame != cl.viewent.frame)
 			return false;
 	return true;
+}
+
+void V_AkimboPairCollisionOffset (int physical_hand, vec3_t out_render_delta)
+{
+	if (!out_render_delta)
+		return;
+	VectorCopy (vec3_origin, out_render_delta);
+	if (physical_hand < 0 || physical_hand > 1 || !V_AkimboPairReady ())
+		return;
+	VectorCopy (akimbo_pair_collision_offsets[physical_hand], out_render_delta);
 }
 
 int V_AkimboViewmodelHand (const entity_t *e)

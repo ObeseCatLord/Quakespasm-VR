@@ -3669,6 +3669,8 @@ static void VR_InputPrepareAkimboPair (usercmd_t *pending,
 	int modelindex, hand;
 	vec3_t collision_torso;
 	qboolean collision_context, collision_torso_valid = false;
+	qboolean dwell_pair = false, collision_yaw_valid = false;
+	float presentation_yaw, mapping_yaw;
 	const qboolean roomscale_accepted = pending &&
 		VR_InputRoomscaleCommandAccepted (pending->vr_roomscalemove);
 
@@ -3677,6 +3679,7 @@ static void VR_InputPrepareAkimboPair (usercmd_t *pending,
 		!VR_InputSelectedAkimboModel (&model, &modelindex, &recipe) ||
 		!VR_InputAkimboHandDevicesAccepted (frame))
 		return;
+	dwell_pair = VR_InputAkimboRecipeIsDwell (recipe, model);
 	collision_context = VR_WeaponCollisionAuthorized () &&
 		V_AkimboRecipeUsesPairedCollision (recipe->source) &&
 		cls.state == ca_connected && cls.signon == SIGNONS && !cls.demoplayback &&
@@ -3713,7 +3716,27 @@ static void VR_InputPrepareAkimboPair (usercmd_t *pending,
 		for (int axis = 0; axis < 3; ++axis)
 			muzzle[hand][axis] = grip[axis] + local_anchor[axis] -
 				(roomscale_accepted ? pending->vr_roomscalemove[axis] : 0.0f);
-		if (collision_context && collision_torso_valid)
+		if (dwell_pair)
+		{
+			vec3_t render_delta, body_delta;
+			V_AkimboPairCollisionOffset (hand, render_delta);
+			if (render_delta[0] != 0.0f || render_delta[1] != 0.0f ||
+				render_delta[2] != 0.0f)
+			{
+				if (!collision_yaw_valid)
+				{
+					if (!V_TrackedPresentationYaw (&presentation_yaw) ||
+						!V_TrackedMappingYaw (&mapping_yaw))
+						return;
+					collision_yaw_valid = true;
+				}
+				if (!VR_InputRenderOffsetToBody (render_delta, presentation_yaw,
+					mapping_yaw, body_delta))
+					return;
+				VectorAdd (muzzle[hand], body_delta, muzzle[hand]);
+			}
+		}
+		else if (collision_context && collision_torso_valid)
 		{
 			vec3_t world_grip, tip, delta;
 			VectorAdd (cl.entities[cl.viewentity].origin, grip, world_grip);
@@ -3853,6 +3876,7 @@ static qboolean VR_InputPrepareDwellAkimboContact (usercmd_t *pending,
 		const vrxr_device_t *device = &frame->devices[hand + 1];
 		vec3_t grip, hand_angles, model_angles;
 		vec3_t render_base, render_tip, body_base, body_tip;
+		vec3_t render_delta, body_delta;
 		float base_speed, tip_speed;
 		if (!VR_InputHandAccepted (frame, hand) || !device->valid ||
 			!device->tracked || device->kind != VRXR_DEVICE_HAND ||
@@ -3865,11 +3889,19 @@ static qboolean VR_InputPrepareDwellAkimboContact (usercmd_t *pending,
 			!VR_InputRenderOffsetToBody (render_base, presentation_yaw,
 				mapping_yaw, body_base) ||
 			!VR_InputRenderOffsetToBody (render_tip, presentation_yaw,
-				mapping_yaw, body_tip) ||
-			!VR_InputContactPointSpeed (device, body_base, mapping_yaw,
-				units_per_metre, &base_speed) ||
+				mapping_yaw, body_tip))
+			return false;
+
+		V_AkimboPairCollisionOffset (hand, render_delta);
+		if (!VR_InputRenderOffsetToBody (render_delta, presentation_yaw,
+			mapping_yaw, body_delta))
+			return false;
+		VectorAdd (body_base, body_delta, body_base);
+		VectorAdd (body_tip, body_delta, body_tip);
+		if (!VR_InputContactPointSpeed (device, body_base, mapping_yaw,
+			units_per_metre, &base_speed) ||
 			!VR_InputContactPointSpeed (device, body_tip, mapping_yaw,
-				units_per_metre, &tip_speed))
+			units_per_metre, &tip_speed))
 			return false;
 
 		VectorCopy (grip, contact.grip[hand]);

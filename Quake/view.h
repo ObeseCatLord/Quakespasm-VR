@@ -63,6 +63,7 @@ qboolean V_TrackedBodyOwnsRoomscale (void);
 qboolean V_TrackedViewmodelActive (void);
 qboolean V_TrackedViewmodelShouldHide (void);
 qboolean V_AkimboPairReady (void);
+void V_AkimboPairCollisionOffset (int physical_hand, vec3_t out_render_delta);
 qboolean V_AkimboRecipeSupported (const char *source_model);
 qboolean V_AkimboRecipeUsesPairedCollision (const char *source_model);
 qboolean V_AkimboModelAngles (const char *source_model, int physical_hand,
