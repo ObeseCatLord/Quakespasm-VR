@@ -27,3 +27,20 @@ certification. Later consolidated acceptance must compare ordinary desktop
 firing and movement, desktop↔OpenXR transitions, and vkQuake SSAO appearance
 and quality settings, along with desktop/VR cross-play. Hardware testing is
 separate from these software checks.
+
+The same desktop boundary applies to subsequent Dwell and co-op work. Dwell's
+paired contact, native trace and weapon-pose hooks require an accepted VR
+command and the exact pinned Dwell QuakeC program; ordinary desktop attacks
+continue through native vkQuake/QuakeC. `sv_nofriendlyfire` is instead an
+intentional shared co-op option: when enabled, its server callback shield must
+cover desktop and VR players equally. It defaults off, independently of the
+VR contact profile and the classic co-op setting.
+
+Consolidated software acceptance should exercise the same local server with
+desktop-only clients, VR-only clients and a desktop/VR pair. Compare desktop
+movement, weapon animations and damage, lighting/SSAO and other vkQuake
+graphics at each existing quality setting, weapon wheel behavior, predictive
+movement, co-op inventory and collision rules, and cross-play effects. Include
+the no-friendly-fire option on and off, native and physical attacks, self
+damage and delayed projectiles. Any difference outside the deliberate shared
+features needs a specific disposition before declaring parity.
