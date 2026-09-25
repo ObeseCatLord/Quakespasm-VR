@@ -2960,16 +2960,25 @@ typedef struct sv_vr_weapon_pose_scope_s
 static sv_vr_weapon_pose_scope_t *sv_vr_weapon_pose_scope;
 static void SV_VRContactInvalidateAccepted (client_t *client);
 
-/* One native stock-axe call may borrow one already validated physical trace.
- * The trace hook is further pinned by QC function and statement in pr_cmds. */
+typedef enum
+{
+	SV_VR_AXE_TRACE_SCOPE_NONE,
+	SV_VR_AXE_TRACE_SCOPE_STOCK,
+	SV_VR_AXE_TRACE_SCOPE_DWELL
+} sv_vr_axe_trace_scope_mode_t;
+
+/* One native axe call may borrow one already validated physical trace. The
+ * stock and Dwell paths share this owner; their QC acquisition rules stay
+ * separate and are pinned again at the builtin boundary. */
 static struct
 {
+	sv_vr_axe_trace_scope_mode_t mode;
 	client_t *client;
 	edict_t *player;
 	const dfunction_t *function;
 	trace_t trace;
-	qboolean active;
-} sv_vr_stock_axe_trace_scope;
+	qboolean active, dwell_force_miss, dwell_has_contact, dwell_invalidated;
+} sv_vr_axe_trace_scope;
 
 void SV_ClearVRWeaponPoseScope (void)
 {
@@ -3732,10 +3741,7 @@ int SV_VRStockAxeTraceStatement (void)
 
 void SV_VRStockAxeClearTraceScope (void)
 {
-	sv_vr_stock_axe_trace_scope.active = false;
-	sv_vr_stock_axe_trace_scope.client = NULL;
-	sv_vr_stock_axe_trace_scope.player = NULL;
-	sv_vr_stock_axe_trace_scope.function = NULL;
+	memset (&sv_vr_axe_trace_scope, 0, sizeof (sv_vr_axe_trace_scope));
 }
 
 qboolean SV_VRStockAxeTrace (edict_t *ignore, int nomonsters,
@@ -3744,29 +3750,177 @@ qboolean SV_VRStockAxeTrace (edict_t *ignore, int nomonsters,
 	const sv_vr_stock_axe_descriptor_t *descriptor;
 	int axis;
 
-	if (!trace || !sv_vr_stock_axe_trace_scope.active ||
+	if (!trace || !sv_vr_axe_trace_scope.active ||
+		sv_vr_axe_trace_scope.mode != SV_VR_AXE_TRACE_SCOPE_STOCK ||
 		qcvm != &sv.qcvm || !qcvm->progs ||
 		!(descriptor = SV_VRStockAxeMeleeDescriptor ()) ||
-		!sv_vr_stock_axe_trace_scope.client ||
-		!sv_vr_stock_axe_trace_scope.client->active ||
-		!sv_vr_stock_axe_trace_scope.client->spawned ||
-		sv_vr_stock_axe_trace_scope.client->protocol_qsvr != QSVR_PROTOCOL_PINNED ||
-		sv_vr_stock_axe_trace_scope.client->edict !=
-			sv_vr_stock_axe_trace_scope.player ||
-		!sv_vr_stock_axe_trace_scope.player ||
-		sv_vr_stock_axe_trace_scope.player->free ||
-		ignore != sv_vr_stock_axe_trace_scope.player || nomonsters ||
-		qcvm->xfunction != sv_vr_stock_axe_trace_scope.function ||
+		!sv_vr_axe_trace_scope.client ||
+		!sv_vr_axe_trace_scope.client->active ||
+		!sv_vr_axe_trace_scope.client->spawned ||
+		sv_vr_axe_trace_scope.client->protocol_qsvr != QSVR_PROTOCOL_PINNED ||
+		sv_vr_axe_trace_scope.client->edict !=
+			sv_vr_axe_trace_scope.player ||
+		!sv_vr_axe_trace_scope.player ||
+		sv_vr_axe_trace_scope.player->free ||
+		ignore != sv_vr_axe_trace_scope.player || nomonsters ||
+		qcvm->xfunction != sv_vr_axe_trace_scope.function ||
 		qcvm->xfunction != &qcvm->functions[descriptor->leaf_index] ||
 		qcvm->xstatement != descriptor->trace_statement ||
-		pr_global_struct->self != EDICT_TO_PROG (sv_vr_stock_axe_trace_scope.player))
+		pr_global_struct->self != EDICT_TO_PROG (sv_vr_axe_trace_scope.player))
 		return false;
 	for (axis = 0; axis < 3; axis++)
 		if (!isfinite (start[axis]) || !isfinite (end[axis]))
 			return false;
-	*trace = sv_vr_stock_axe_trace_scope.trace;
+	*trace = sv_vr_axe_trace_scope.trace;
 	SV_VRStockAxeClearTraceScope ();
 	return true;
+}
+
+/* Dwell's berserk-only W_FireAxe call enters traceline2 once for physical
+ * acquisition. Its helper retries must see a clean world miss so its own
+ * filtering cannot turn the same physical contact into another hit. This
+ * scope is armed by the future contact outcome owner; admission is not part
+ * of this adapter. */
+qboolean SV_VRDwellBerserkTrace (edict_t *ignore, int nomonsters,
+	const vec3_t start, const vec3_t end, trace_t *trace)
+{
+	prstack_t *caller;
+	qboolean finite_end = true;
+	int axis;
+
+	if (!trace || !sv_vr_axe_trace_scope.active ||
+		sv_vr_axe_trace_scope.mode != SV_VR_AXE_TRACE_SCOPE_DWELL ||
+		qcvm != &sv.qcvm || !qcvm->progs || !pr_global_struct ||
+		qcvm->progs->numfunctions <= DWELL_W_FIREAXE_FUNCTION ||
+		qcvm->progs->numfunctions <= DWELL_TRACELINE2_FUNCTION ||
+		qcvm->depth <= 0)
+		return false;
+	caller = &qcvm->stack[qcvm->depth - 1];
+	/* Leave unrelated traceline calls entirely native. Once this exact nested
+	 * bytecode site owns the call, every failed admission check below becomes a
+	 * miss rather than falling through to SV_Move. */
+	if (sv_vr_axe_trace_scope.function !=
+			&qcvm->functions[DWELL_W_FIREAXE_FUNCTION] ||
+		qcvm->xfunction != &qcvm->functions[DWELL_TRACELINE2_FUNCTION] ||
+		qcvm->xstatement != 12923 || caller->f !=
+		sv_vr_axe_trace_scope.function || caller->s != 14578)
+		return false;
+
+	if (!SV_DwellBerserkAkimboProgramLoaded () ||
+		!sv_vr_axe_trace_scope.player ||
+		sv_vr_axe_trace_scope.player->free ||
+		!SV_DwellBerserkAkimboWeaponSelected (sv_vr_axe_trace_scope.player) ||
+		pr_global_struct->self !=
+			EDICT_TO_PROG (sv_vr_axe_trace_scope.player) || nomonsters)
+		sv_vr_axe_trace_scope.dwell_invalidated = true;
+	for (axis = 0; axis < 3; axis++)
+	{
+		if (!isfinite (start[axis]) || !isfinite (end[axis]))
+			sv_vr_axe_trace_scope.dwell_invalidated = true;
+		if (!isfinite (end[axis]))
+			finite_end = false;
+	}
+
+	if (!sv_vr_axe_trace_scope.dwell_force_miss &&
+		!sv_vr_axe_trace_scope.dwell_invalidated)
+	{
+		if (ignore != sv_vr_axe_trace_scope.player ||
+			!sv_vr_axe_trace_scope.dwell_has_contact ||
+			!sv_vr_axe_trace_scope.trace.ent ||
+			sv_vr_axe_trace_scope.trace.ent->free ||
+			!isfinite (sv_vr_axe_trace_scope.trace.fraction) ||
+			sv_vr_axe_trace_scope.trace.fraction < 0 ||
+			sv_vr_axe_trace_scope.trace.fraction >= 1 ||
+			sv_vr_axe_trace_scope.trace.startsolid ||
+			sv_vr_axe_trace_scope.trace.allsolid ||
+			!isfinite (sv_vr_axe_trace_scope.trace.endpos[0]) ||
+			!isfinite (sv_vr_axe_trace_scope.trace.endpos[1]) ||
+			!isfinite (sv_vr_axe_trace_scope.trace.endpos[2]))
+			sv_vr_axe_trace_scope.dwell_invalidated = true;
+	}
+	if (sv_vr_axe_trace_scope.dwell_invalidated)
+		sv_vr_axe_trace_scope.dwell_force_miss = true;
+
+	if (!sv_vr_axe_trace_scope.dwell_force_miss &&
+		!sv_vr_axe_trace_scope.dwell_invalidated)
+	{
+		*trace = sv_vr_axe_trace_scope.trace;
+		sv_vr_axe_trace_scope.dwell_force_miss = true;
+		return true;
+	}
+
+	/* A whiff starts in this phase too. Use the same complete miss shape as
+	 * Quake's regular world trace so traceline2 can safely consume its globals. */
+	memset (trace, 0, sizeof (*trace));
+	trace->fraction = 1;
+	trace->inopen = true;
+	trace->ent = qcvm->edicts;
+	if (finite_end)
+		VectorCopy (end, trace->endpos);
+	return true;
+}
+
+/* Called while the returning function's locals and QC trace globals are still
+ * live. Restore only the accepted spatial fraction after traceline2's retry
+ * filtering, and retire the scope when its W_FireAxe root returns. */
+void SV_VRAxeTraceLeaveFunction (void)
+{
+	prstack_t *caller;
+	const trace_t *contact;
+	int axis;
+
+	if (!sv_vr_axe_trace_scope.active ||
+		sv_vr_axe_trace_scope.mode != SV_VR_AXE_TRACE_SCOPE_DWELL)
+		return;
+	if (qcvm != &sv.qcvm || !qcvm->progs || !pr_global_struct ||
+		!SV_DwellBerserkAkimboProgramLoaded ())
+	{
+		SV_VRStockAxeClearTraceScope ();
+		return;
+	}
+	if (qcvm->xfunction == &qcvm->functions[DWELL_W_FIREAXE_FUNCTION])
+	{
+		SV_VRStockAxeClearTraceScope ();
+		return;
+	}
+	if (qcvm->xfunction != &qcvm->functions[DWELL_TRACELINE2_FUNCTION] ||
+		qcvm->xstatement != 13044 || qcvm->depth <= 0)
+		return;
+
+	caller = &qcvm->stack[qcvm->depth - 1];
+	if (caller->f != &qcvm->functions[DWELL_W_FIREAXE_FUNCTION] ||
+		caller->s != 14578 || !sv_vr_axe_trace_scope.dwell_has_contact)
+		return;
+	if (!sv_vr_axe_trace_scope.dwell_force_miss ||
+		sv_vr_axe_trace_scope.dwell_invalidated ||
+		!sv_vr_axe_trace_scope.player || sv_vr_axe_trace_scope.player->free ||
+		!SV_DwellBerserkAkimboWeaponSelected (sv_vr_axe_trace_scope.player) ||
+		pr_global_struct->self != EDICT_TO_PROG (sv_vr_axe_trace_scope.player) ||
+		G_INT (7680) != pr_global_struct->self ||
+		G_FLOAT (7681) != 0 || G_FLOAT (7689) != 1 ||
+		pr_global_struct->trace_startsolid || pr_global_struct->trace_allsolid)
+	{
+		sv_vr_axe_trace_scope.dwell_invalidated = true;
+		return;
+	}
+
+	contact = &sv_vr_axe_trace_scope.trace;
+	if (!contact->ent || contact->ent->free ||
+		!isfinite (contact->fraction) || contact->fraction < 0 ||
+		contact->fraction >= 1 || contact->startsolid || contact->allsolid ||
+		pr_global_struct->trace_ent != EDICT_TO_PROG (contact->ent))
+	{
+		sv_vr_axe_trace_scope.dwell_invalidated = true;
+		return;
+	}
+	for (axis = 0; axis < 3; axis++)
+		if (!isfinite (contact->endpos[axis]) ||
+			pr_global_struct->trace_endpos[axis] != contact->endpos[axis])
+		{
+			sv_vr_axe_trace_scope.dwell_invalidated = true;
+			return;
+		}
+	pr_global_struct->trace_fraction = contact->fraction;
 }
 
 void SV_ResetPrivateVRContactState (client_t *client)
@@ -4630,12 +4784,13 @@ static qboolean SV_VRStockAxeOutcome (client_t *client, edict_t *ent,
 	}
 	if (contact && !ent->free && ent->v.health > 0 && !ent->v.deadflag)
 	{
-		sv_vr_stock_axe_trace_scope.client = client;
-		sv_vr_stock_axe_trace_scope.player = ent;
-		sv_vr_stock_axe_trace_scope.function =
+		sv_vr_axe_trace_scope.mode = SV_VR_AXE_TRACE_SCOPE_STOCK;
+		sv_vr_axe_trace_scope.client = client;
+		sv_vr_axe_trace_scope.player = ent;
+		sv_vr_axe_trace_scope.function =
 			&qcvm->functions[descriptor->leaf_index];
-		sv_vr_stock_axe_trace_scope.trace = *contact;
-		sv_vr_stock_axe_trace_scope.active = true;
+		sv_vr_axe_trace_scope.trace = *contact;
+		sv_vr_axe_trace_scope.active = true;
 		PR_ExecuteProgram (descriptor->leaf_index);
 		SV_VRStockAxeClearTraceScope ();
 	}

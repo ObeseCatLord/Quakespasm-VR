@@ -580,6 +580,7 @@ qboolean SV_EnyoAkimboAim (edict_t *ent, vec3_t muzzle);
 unsigned int SV_VRStockAxeContactProfile (void);
 int SV_VRStockAxeTraceStatement (void);
 void SV_VRStockAxeClearTraceScope (void);
+void SV_VRAxeTraceLeaveFunction (void);
 void SV_SaveSpawnparms ();
 void SV_SpawnServer (const char *server);
 

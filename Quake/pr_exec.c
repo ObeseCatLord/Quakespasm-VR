@@ -277,6 +277,10 @@ static int PR_LeaveFunction (void)
 	if (qcvm->depth <= 0)
 		Host_Error ("prog stack underflow");
 
+	/* Dwell's scoped traceline2 result must be repaired before this helper's
+	 * locals are restored. The shared trace-scope owner ignores other calls. */
+	SV_VRAxeTraceLeaveFunction ();
+
 	// Restore locals from the stack
 	c = qcvm->xfunction->locals;
 	qcvm->localstack_used -= c;
