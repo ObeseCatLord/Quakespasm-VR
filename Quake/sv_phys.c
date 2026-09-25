@@ -2944,6 +2944,8 @@ typedef struct sv_vr_weapon_pose_scope_s
 	edict_t *ent;
 	qboolean applied, origin_relocated, linked, akimbo_invalidated;
 	qboolean akimbo_pose_valid;
+	/* Set only by a fully admitted Dwell pair path. */
+	qboolean dwell_berserk_pose_valid;
 	qboolean enyo_clearance_pending;
 	qboolean qbj3_shotgun_spread;
 	int qbj3_shotgun_weapon;
@@ -3094,6 +3096,7 @@ qboolean SV_EnyoAkimboProgramLoaded (void)
 #define DWELL_PLAYER_STAND_FUNCTION 549
 #define DWELL_PLAYER_RUN_FUNCTION 550
 #define DWELL_W_FIREAXE_FIRST_STATEMENT 14560
+#define DWELL_W_FIREAXE_MAKEVECTORS_STATEMENT 14565
 #define DWELL_W_FIREAXE_PARM_START 7805
 
 static qboolean SV_DwellFunctionPin (int index, const char *name,
@@ -3218,6 +3221,25 @@ static qboolean SV_EnyoSMGWeapon (edict_t *ent)
 static qboolean SV_EnyoVectorIsFinite (const vec3_t value)
 {
 	return isfinite (value[0]) && isfinite (value[1]) && isfinite (value[2]);
+}
+
+/* Dwell weaponframe is source animation data. Controller indices are
+ * anatomical: 0 is left and 1 is right. */
+static qboolean SV_DwellBerserkStrikeHand (float weaponframe, int *hand)
+{
+	static const char hands[] =
+		"0000000000" "0110011111" "0100000000"
+		"0111000000" "0111000111" "0";
+	int frame;
+
+	if (!hand || !isfinite (weaponframe) || weaponframe < 0.0f ||
+		weaponframe > 50.0f)
+		return false;
+	frame = (int)weaponframe;
+	if (weaponframe != (float)frame)
+		return false;
+	*hand = hands[frame] - '0';
+	return true;
 }
 
 static qboolean SV_EnyoVectorsNear (const vec3_t a, const vec3_t b)
@@ -3407,6 +3429,57 @@ static sv_vr_weapon_pose_scope_t *SV_FindPrivateVRWeaponPose (edict_t *ent)
 		if (scope->ent == ent)
 			return scope; /* The first match masks any older nested pose. */
 	return NULL;
+}
+
+/* Apply the native paired pose only at Dwell's source-pinned native strike
+ * site. QC retains its authored range, trace and damage behavior. */
+qboolean SV_DwellBerserkAkimboMakevectors (void)
+{
+	sv_vr_weapon_pose_scope_t *scope;
+	edict_t *ent;
+	int hand;
+	vec3_t muzzle, temporary_origin, source;
+
+	if (!sv_vr_weapon_pose_scope)
+		return false;
+	ent = SV_EnyoAkimboSelf ();
+	if (!ent || ent->free)
+		return false;
+	scope = SV_FindPrivateVRWeaponPose (ent);
+	if (!scope || !scope->applied || scope->ent != ent ||
+		!scope->dwell_berserk_pose_valid || scope->origin_relocated ||
+		scope->akimbo_invalidated)
+		return false;
+	if (!SV_DwellBerserkAkimboWeaponSelected (ent) || !qcvm->xfunction ||
+		qcvm->xfunction != &qcvm->functions[DWELL_W_FIREAXE_FUNCTION] ||
+		qcvm->xstatement != DWELL_W_FIREAXE_MAKEVECTORS_STATEMENT ||
+		!SV_DwellBerserkStrikeHand (ent->v.weaponframe, &hand) ||
+		!scope->akimbo_pose_valid ||
+		!SV_EnyoVectorIsFinite (scope->body_origin) ||
+		!SV_EnyoVectorIsFinite (ent->v.view_ofs) ||
+		!SV_EnyoVectorIsFinite (scope->akimbo_muzzle[0]) ||
+		!SV_EnyoVectorIsFinite (scope->akimbo_muzzle[1]) ||
+		!SV_EnyoVectorIsFinite (scope->akimbo_angles[0]) ||
+		!SV_EnyoVectorIsFinite (scope->akimbo_angles[1]))
+		return false;
+
+	VectorCopy (scope->akimbo_muzzle[hand], muzzle);
+	VectorCopy (ent->v.origin, temporary_origin);
+	VectorCopy (scope->body_origin, ent->v.origin);
+	SV_ClampVRMuzzleToWorld (ent, muzzle);
+	VectorCopy (temporary_origin, ent->v.origin);
+	if (!SV_EnyoVectorIsFinite (muzzle))
+		return false;
+	VectorSubtract (muzzle, ent->v.view_ofs, source);
+	if (!SV_EnyoVectorIsFinite (source))
+		return false;
+
+	VectorCopy (scope->akimbo_angles[hand], ent->v.v_angle);
+	ent->v.v_angle[ROLL] = 0;
+	AngleVectors (ent->v.v_angle, pr_global_struct->v_forward,
+		pr_global_struct->v_right, pr_global_struct->v_up);
+	VectorCopy (source, ent->v.origin);
+	return true;
 }
 
 /* QBJ3 labels IT_SHOTGUN as its pistol and IT_SUPER_SHOTGUN as Flak.
