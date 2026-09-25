@@ -126,3 +126,8 @@ and 14586 it calls function #396 (`traceline2`). The helper's statement
 installed bytecode; it does not yet prove runtime outcome parity.
 The same field table records float offsets 131 for `attack_finished`, 151
 for `berserk_finished`, and 218 for `customflags`.
+
+The donor invokes `W_FireAxe` under its co-op friendly-fire scope. The 2.0
+base does not yet provide the donor's `sv_nofriendlyfire` policy, so the
+physical outcome must either reuse that policy when migrated or explicitly
+defer its co-op parity claim. It must not invent a Dwell-only damage rule.
