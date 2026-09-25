@@ -3644,8 +3644,8 @@ static void VR_InputPrepareAkimboPair (usercmd_t *pending,
 		if (!V_TrackedHandBodyOffset (hand, grip) ||
 			!V_TrackedMovementAngles (VR_MOVEMENT_MODE_FOLLOW_HAND, hand,
 				physical_angles[hand]) ||
-			!VR_LocomotionHandRotToViewmodelAngles (physical_angles[hand],
-				model_angles, vr_gunmodelpitch.value) ||
+			!V_AkimboModelAngles (model->name, hand,
+				physical_angles[hand], model_angles) ||
 			!V_AkimboTransformAnchor (hand, model_angles, local_anchor))
 			return;
 
