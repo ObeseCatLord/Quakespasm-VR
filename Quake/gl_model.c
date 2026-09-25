@@ -38,11 +38,15 @@ static void		 Mod_LoadAliasModel (qmodel_t *mod, void *buffer,
 	qfilesize_t source_size, const char *skin_source);
 static qboolean	 Mod_LoadMD5MeshModel (qmodel_t *mod, const void *buffer,
 	const char *asset_name, qfilesize_t asset_size);
-static void		 Mod_LoadMD3Model (qmodel_t *mod, const void *buffer);
+static void		 Mod_LoadMD3Model (qmodel_t *mod, const void *buffer,
+	qfilesize_t source_size);
 static qmodel_t *Mod_LoadModel (qmodel_t *mod, qboolean crash);
 static void		 Mod_FreeModelMemory (qmodel_t *mod);
 static qboolean	 Mod_CheckedSizeMul (size_t a, size_t b, size_t *result);
 static qboolean	 Mod_CheckedSizeAdd (size_t a, size_t b, size_t *result);
+static qboolean	 Mod_CheckedMD3Span (size_t offset, size_t span, size_t limit);
+static qboolean	 Mod_CheckedMD3RelativeSpan (size_t base, size_t base_span,
+	int relative_offset, size_t span, size_t limit, size_t *absolute_offset);
 
 cvar_t external_ents = {"external_ents", "1", CVAR_ARCHIVE_GAME};
 cvar_t external_vis = {"external_vis", "1", CVAR_ARCHIVE_GAME};
@@ -946,11 +950,12 @@ static qmodel_t *Mod_LoadModel (qmodel_t *mod, qboolean crash)
 	if (md3_enhanced_path_id)
 	{
 		byte		*md3_buf = COM_LoadFile (md3_name, &md3_enhanced_path_id);
+		qfilesize_t md3_size = com_filesize;
 		// To assure that the external resources associated with MD3
 		// are properly filtered/loaded, we need to set mod->path_id = md3_enhanced_path_id temporarilly
 		unsigned int original_path_id = mod->path_id;
 		mod->path_id = md3_enhanced_path_id;
-		Mod_LoadMD3Model (mod, md3_buf);
+		Mod_LoadMD3Model (mod, md3_buf, md3_size);
 		mod->path_id = original_path_id;
 		Mem_Free (md3_buf);
 	}
@@ -969,6 +974,9 @@ static qmodel_t *Mod_LoadModel (qmodel_t *mod, qboolean crash)
 
 	// 5. Finally, Load the original model, calling the appropriate loader:
 	mod->needload = false;
+
+	if (buf_filesize < (qfilesize_t)sizeof (int))
+		Sys_Error ("Mod_LoadModel: %s has a truncated file header", mod->name);
 
 	mod_type = (buf[0] | (buf[1] << 8) | (buf[2] << 16) | (buf[3] << 24));
 	switch (mod_type)
@@ -997,7 +1005,7 @@ static qmodel_t *Mod_LoadModel (qmodel_t *mod, qboolean crash)
 	{
 		// by construction this is a "native" MD3 model, NOT a .mdl replacement so md3_enhanced_path_id = 0 here
 		assert (md3_enhanced_path_id == 0);
-		Mod_LoadMD3Model (mod, (const void *)buf);
+		Mod_LoadMD3Model (mod, (const void *)buf, buf_filesize);
 	}
 	break;
 
@@ -6545,12 +6553,37 @@ static qboolean Mod_CheckedSizeAdd (size_t a, size_t b, size_t *result)
 	return true;
 }
 
+static qboolean Mod_CheckedMD3Span (size_t offset, size_t span, size_t limit)
+{
+	size_t end;
+
+	return Mod_CheckedSizeAdd (offset, span, &end) && end <= limit;
+}
+
+static qboolean Mod_CheckedMD3RelativeSpan (size_t base, size_t base_span,
+	int relative_offset, size_t span, size_t limit, size_t *absolute_offset)
+{
+	size_t relative, absolute;
+
+	if (relative_offset < 0)
+		return false;
+	relative = (size_t)relative_offset;
+	if (!Mod_CheckedMD3Span (relative, span, base_span) ||
+		!Mod_CheckedSizeAdd (base, relative, &absolute) ||
+		!Mod_CheckedMD3Span (absolute, span, limit))
+		return false;
+
+	*absolute_offset = absolute;
+	return true;
+}
+
 /*
 =====================
 Mod_LoadMD3Model
 =====================
 */
-static void Mod_LoadMD3Model (qmodel_t *mod, const void *buffer)
+static void Mod_LoadMD3Model (qmodel_t *mod, const void *buffer,
+	qfilesize_t source_size)
 {
 	aliashdr_t	   *outhdr, *surf;
 	md3Header_t	   *pinheader;
@@ -6559,10 +6592,19 @@ static void Mod_LoadMD3Model (qmodel_t *mod, const void *buffer)
 	md3XyzNormal_t *pinvertexes;
 	md3St_t		   *pinst;
 	size_t			hdrsize, hdrbase_size, hdrframes_size, hdrallocation_size;
+	size_t			source_bytes, file_end, frames_offset, frames_bytes;
+	size_t			surface_offset;
 	int				numsurfs;
 	int				numframes;
 
+	if (!buffer || source_size < 0 ||
+		(uint64_t)source_size > (uint64_t)SIZE_MAX ||
+		(uint64_t)source_size < sizeof (md3Header_t))
+		Sys_Error ("MD3: %s has a truncated file header", mod->name);
+	source_bytes = (size_t)source_size;
 	pinheader = (md3Header_t *)buffer;
+	if (LittleLong (pinheader->ident) != IDMD3HEADER)
+		Sys_Error ("MD3: %s has an invalid file ident", mod->name);
 
 	int version = LittleLong (pinheader->version);
 	if (version != MD3_VERSION)
@@ -6570,6 +6612,9 @@ static void Mod_LoadMD3Model (qmodel_t *mod, const void *buffer)
 
 	numsurfs = LittleLong (pinheader->numSurfaces);
 	numframes = LittleLong (pinheader->numFrames);
+	int ofs_frames = LittleLong (pinheader->ofsFrames);
+	int ofs_surfaces = LittleLong (pinheader->ofsSurfaces);
+	int ofs_end = LittleLong (pinheader->ofsEnd);
 
 	if (numframes <= 0)
 		Sys_Error ("MD3: %s has no frames", mod->name);
@@ -6582,13 +6627,24 @@ static void Mod_LoadMD3Model (qmodel_t *mod, const void *buffer)
 
 	if (numsurfs > MAX_SURFACES)
 		Sys_Error ("MD3: %s has too many surfaces : %d (max %d)", mod->name, numsurfs, MAX_SURFACES);
+	if (ofs_end < (int)sizeof (md3Header_t) || (size_t)ofs_end > source_bytes)
+		Sys_Error ("MD3: %s has an invalid or truncated file span", mod->name);
+	file_end = (size_t)ofs_end;
+	if (ofs_frames < (int)sizeof (md3Header_t) ||
+		!Mod_CheckedSizeMul ((size_t)numframes, sizeof (md3Frame_t), &frames_bytes) ||
+		!Mod_CheckedMD3Span ((size_t)ofs_frames, frames_bytes, file_end))
+		Sys_Error ("MD3: %s has a truncated or invalid frame span", mod->name);
+	if (ofs_surfaces < (int)sizeof (md3Header_t) ||
+		!Mod_CheckedMD3Span ((size_t)ofs_surfaces, sizeof (md3Surface_t), file_end))
+		Sys_Error ("MD3: %s has a truncated or invalid surface span", mod->name);
 
 	// Collect the skin definitions from .skin files, if any;
 	all_surfaces_def_t *surf_def = Mem_Alloc (sizeof (all_surfaces_def_t));
 
 	Mod_LoadMD3SkinDefinitions (mod, surf_def);
 
-	pinframes = (md3Frame_t *)((byte *)buffer + LittleLong (pinheader->ofsFrames));
+	frames_offset = (size_t)ofs_frames;
+	pinframes = (md3Frame_t *)((byte *)buffer + frames_offset);
 
 	hdrbase_size = sizeof (*outhdr) - sizeof (outhdr->frames);
 	if (!Mod_CheckedSizeMul (sizeof (outhdr->frames), (size_t)numframes, &hdrframes_size) ||
@@ -6605,9 +6661,18 @@ static void Mod_LoadMD3Model (qmodel_t *mod, const void *buffer)
 	md3XyzNormal_t *total_vertexes = NULL;
 
 	// for each of the surfaces :
-	md3Surface_t *pinsurface = (md3Surface_t *)((byte *)buffer + LittleLong (pinheader->ofsSurfaces));
+	surface_offset = (size_t)ofs_surfaces;
 	for (int m = 0; m < numsurfs; m++)
 	{
+		if (!Mod_CheckedMD3Span (surface_offset, sizeof (md3Surface_t), file_end))
+			Sys_Error ("MD3: %s surface chain is truncated at surface %d", mod->name, m);
+		md3Surface_t *pinsurface = (md3Surface_t *)((byte *)buffer + surface_offset);
+		int surface_end = LittleLong (pinsurface->ofsEnd);
+		if (surface_end < (int)sizeof (md3Surface_t) ||
+			!Mod_CheckedMD3Span (surface_offset, (size_t)surface_end, file_end))
+			Sys_Error ("MD3: %s surface chain has an invalid span at surface %d", mod->name, m);
+		size_t surface_span = (size_t)surface_end;
+
 		if (LittleLong (pinsurface->ident) != IDMD3HEADER)
 			Sys_Error ("MD3: %s corrupt surface ident", mod->name);
 		if (LittleLong (pinsurface->numFrames) != numframes)
@@ -6638,14 +6703,28 @@ static void Mod_LoadMD3Model (qmodel_t *mod, const void *buffer)
 		surf->numindexes = surf->numtris * 3;
 
 		size_t surface_vertex_count, surface_vertex_bytes, surface_st_bytes, surface_index_bytes;
+		size_t surface_st_source_bytes, surface_triangle_bytes;
+		size_t vertex_offset, triangle_offset, st_offset;
 		if (!Mod_CheckedSizeMul ((size_t)numframes, (size_t)numverts, &surface_vertex_count) ||
 			!Mod_CheckedSizeMul (surface_vertex_count, sizeof (md3XyzNormal_t), &surface_vertex_bytes) ||
 			!Mod_CheckedSizeMul ((size_t)numverts, sizeof (aliasmesh_t), &surface_st_bytes) ||
-			!Mod_CheckedSizeMul ((size_t)surf->numindexes, sizeof (unsigned short), &surface_index_bytes))
+			!Mod_CheckedSizeMul ((size_t)surf->numindexes, sizeof (unsigned short), &surface_index_bytes) ||
+			!Mod_CheckedSizeMul ((size_t)numverts, sizeof (md3St_t), &surface_st_source_bytes) ||
+			!Mod_CheckedSizeMul ((size_t)surf->numtris, sizeof (md3Triangle_t), &surface_triangle_bytes))
 			Sys_Error ("MD3: %s surface %d allocation is too large", mod->name, m);
+		if (!Mod_CheckedMD3RelativeSpan (surface_offset, surface_span,
+				LittleLong (pinsurface->ofsXyzNormals), surface_vertex_bytes,
+				file_end, &vertex_offset) ||
+			!Mod_CheckedMD3RelativeSpan (surface_offset, surface_span,
+				LittleLong (pinsurface->ofsTriangles), surface_triangle_bytes,
+				file_end, &triangle_offset) ||
+			!Mod_CheckedMD3RelativeSpan (surface_offset, surface_span,
+				LittleLong (pinsurface->ofsSt), surface_st_source_bytes,
+				file_end, &st_offset))
+			Sys_Error ("MD3: %s surface %d has a truncated or invalid vertex, triangle, or st span", mod->name, m);
 
 		// All the vertices for this surface, concat of the vertices of each of the numframes, one frame after another:
-		pinvertexes = (md3XyzNormal_t *)((byte *)pinsurface + LittleLong (pinsurface->ofsXyzNormals));
+		pinvertexes = (md3XyzNormal_t *)((byte *)buffer + vertex_offset);
 
 		md3XyzNormal_t *poutvertexes = (md3XyzNormal_t *)Mem_Alloc (surface_vertex_bytes);
 		// keep track of the original poutvertexes, because we are going to pointer arithmetic below...
@@ -6683,7 +6762,7 @@ static void Mod_LoadMD3Model (qmodel_t *mod, const void *buffer)
 		}
 		surf->numframes = numframes;
 
-		pintriangle = (md3Triangle_t *)((byte *)pinsurface + LittleLong (pinsurface->ofsTriangles));
+		pintriangle = (md3Triangle_t *)((byte *)buffer + triangle_offset);
 
 		unsigned short *poutindexes = (unsigned short *)Mem_Alloc (surface_index_bytes);
 		// keep track of the original poutindexes, because we are going to pointer arithmetic below...
@@ -6711,7 +6790,7 @@ static void Mod_LoadMD3Model (qmodel_t *mod, const void *buffer)
 		// md3Shader_t	   * pinshader = (md3Shader_t *)((byte *)pinsurface + LittleLong (pinsurface->ofsShaders));
 
 		// and figure out the texture coords properly, now we know the actual sizes.
-		pinst = (md3St_t *)((byte *)pinsurface + LittleLong (pinsurface->ofsSt));
+		pinst = (md3St_t *)((byte *)buffer + st_offset);
 
 		aliasmesh_t *poutst = (aliasmesh_t *)Mem_Alloc (surface_st_bytes);
 
@@ -6740,7 +6819,8 @@ static void Mod_LoadMD3Model (qmodel_t *mod, const void *buffer)
 		Mem_Free (poutindexes_start);
 
 		// go to the next surface:
-		pinsurface = (md3Surface_t *)((byte *)pinsurface + LittleLong (pinsurface->ofsEnd));
+		if (!Mod_CheckedSizeAdd (surface_offset, surface_span, &surface_offset))
+			Sys_Error ("MD3: %s surface chain offset overflows", mod->name);
 
 	} // end for surface
 
