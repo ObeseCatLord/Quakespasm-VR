@@ -584,6 +584,13 @@ qboolean V_AkimboRecipeSupported (const char *source_model)
 	return false;
 }
 
+static qboolean V_AkimboRecipeIsDwellAxe (
+	const mod_akimbo_pair_recipe_t *recipe)
+{
+	return recipe && !strcmp (recipe->game, "dwell") &&
+		!strcmp (recipe->source, "progs/v_axeb.mdl");
+}
+
 qboolean V_AkimboRecipeUsesPairedCollision (const char *source_model)
 {
 	const mod_akimbo_pair_recipe_t *recipe = Mod_GetAkimboPairRecipe (source_model);
@@ -591,7 +598,8 @@ qboolean V_AkimboRecipeUsesPairedCollision (const char *source_model)
 		((!strcmp (recipe->game, "qbj3") &&
 			!strcmp (recipe->source, "progs/v_tnailgun.mdl")) ||
 		(!strcmp (recipe->game, "enyo") &&
-			!strcmp (recipe->source, "progs/ee_v_smgs.mdl")));
+			!strcmp (recipe->source, "progs/ee_v_smgs.mdl")) ||
+		V_AkimboRecipeIsDwellAxe (recipe));
 }
 
 /* Dwell held-angle matrices copied from quakespasm-openvr/Quake/vr.c:6265-6275
@@ -603,6 +611,14 @@ static const float dwell_akimbo_viewmodel_correction[2][3][3] = {
 	{{-.503862298f, .131800285f, -.853669415f},
 	 {.317507833f, -.890842899f, -.324942618f},
 	 {-.803312866f, -.434773060f, .407014527f}}
+};
+
+/* Frame-zero cutting edges from generated Dwell halves. These immutable raw
+ * endpoints match the pinned v_axeb source CRC32 69c2bf5e and generated half
+ * CRC32 values 8e5fd44b (left) and f3c035b6 (right). */
+static const vec3_t dwell_akimbo_raw_edges[2][2] = {
+	{{76.0f, 178.0f, 59.0f}, {51.0f, 183.0f, 68.0f}},
+	{{77.0f, 117.0f, 71.0f}, {52.0f, 114.0f, 83.0f}}
 };
 
 qboolean V_AkimboModelAngles (const char *source_model, int physical_hand,
@@ -722,13 +738,15 @@ static qboolean V_AkimboEntityMatrixValid (entity_t *entity,
 	return R_AliasModelMatrix (entity, geometry, &lerpdata, matrix) >= 0;
 }
 
+static qboolean V_AkimboTransformRawPointForPair (const vec3_t model_angles,
+	entity_t *entity, const aliashdr_t *geometry, const vec3_t raw_point,
+	vec3_t out_local);
+
 static qboolean V_AkimboTransformAnchorForPair (int physical_hand,
 	const vec3_t model_angles, const mod_akimbo_pair_recipe_t *recipe,
 	const aliashdr_t *source_geometry, entity_t *entity,
 	const aliashdr_t *geometry, vec3_t out_local)
 {
-	lerpdata_t lerpdata;
-	float matrix[16];
 	vec3_t raw_anchor;
 	if (out_local)
 		VectorCopy (vec3_origin, out_local);
@@ -750,20 +768,60 @@ static qboolean V_AkimboTransformAnchorForPair (int physical_hand,
 		if (!isfinite (raw_anchor[axis]))
 			return false;
 	}
+	return V_AkimboTransformRawPointForPair (model_angles, entity, geometry,
+		raw_anchor, out_local);
+}
+
+static qboolean V_AkimboTransformRawPointForPair (const vec3_t model_angles,
+	entity_t *entity, const aliashdr_t *geometry, const vec3_t raw_point,
+	vec3_t out_local)
+{
+	lerpdata_t lerpdata;
+	float matrix[16];
+	if (out_local)
+		VectorCopy (vec3_origin, out_local);
+	if (!out_local || !model_angles || !entity || !geometry || !raw_point)
+		return false;
+	for (int axis = 0; axis < 3; ++axis)
+		if (!isfinite (model_angles[axis]) || !isfinite (raw_point[axis]))
+			return false;
 	memset (&lerpdata, 0, sizeof (lerpdata));
 	VectorCopy (model_angles, lerpdata.angles);
 	if (R_AliasModelMatrix (entity, geometry, &lerpdata, matrix) < 0)
 		return false;
-	out_local[0] = matrix[0] * raw_anchor[0] + matrix[4] * raw_anchor[1] +
-		matrix[8] * raw_anchor[2] + matrix[12];
-	out_local[1] = matrix[1] * raw_anchor[0] + matrix[5] * raw_anchor[1] +
-		matrix[9] * raw_anchor[2] + matrix[13];
-	out_local[2] = matrix[2] * raw_anchor[0] + matrix[6] * raw_anchor[1] +
-		matrix[10] * raw_anchor[2] + matrix[14];
+	out_local[0] = matrix[0] * raw_point[0] + matrix[4] * raw_point[1] +
+		matrix[8] * raw_point[2] + matrix[12];
+	out_local[1] = matrix[1] * raw_point[0] + matrix[5] * raw_point[1] +
+		matrix[9] * raw_point[2] + matrix[13];
+	out_local[2] = matrix[2] * raw_point[0] + matrix[6] * raw_point[1] +
+		matrix[10] * raw_point[2] + matrix[14];
 	if (!isfinite (out_local[0]) || !isfinite (out_local[1]) ||
 		!isfinite (out_local[2]))
 	{
 		VectorCopy (vec3_origin, out_local);
+		return false;
+	}
+	return true;
+}
+
+static qboolean V_AkimboTransformDwellEdgesForPair (int physical_hand,
+	const vec3_t model_angles, entity_t *entity, const aliashdr_t *geometry,
+	vec3_t out_base, vec3_t out_tip)
+{
+	if (out_base)
+		VectorCopy (vec3_origin, out_base);
+	if (out_tip)
+		VectorCopy (vec3_origin, out_tip);
+	if (!out_base || !out_tip || physical_hand < 0 || physical_hand > 1 ||
+		!V_AkimboTransformRawPointForPair (model_angles, entity, geometry,
+			dwell_akimbo_raw_edges[physical_hand][0], out_base) ||
+		!V_AkimboTransformRawPointForPair (model_angles, entity, geometry,
+			dwell_akimbo_raw_edges[physical_hand][1], out_tip))
+	{
+		if (out_base)
+			VectorCopy (vec3_origin, out_base);
+		if (out_tip)
+			VectorCopy (vec3_origin, out_tip);
 		return false;
 	}
 	return true;
@@ -791,7 +849,9 @@ void V_PrepareAkimboPair (void)
 	{
 		qmodel_t *model = Mod_ForName (recipe->halves[hand], false);
 		if (!model || model->needload || model->type != mod_alias ||
-			strcmp (model->name, recipe->halves[hand]))
+			strcmp (model->name, recipe->halves[hand]) ||
+			(V_AkimboRecipeIsDwellAxe (recipe) &&
+				!model->is_generated_akimbo_half))
 			return;
 		akimbo_pair_models[hand] = model;
 	}
@@ -817,6 +877,14 @@ void V_PrepareAkimboPair (void)
 		akimbo_pair_geometry[hand] = geometry;
 		akimbo_pair_entities[hand] = cl.viewent;
 		akimbo_pair_entities[hand].model = model;
+		if (V_AkimboRecipeIsDwellAxe (recipe))
+		{
+			akimbo_pair_entities[hand].frame = 0;
+			akimbo_pair_entities[hand].lerp.prev_frame = 0;
+			akimbo_pair_entities[hand].lerp.frame_change_time = 0.0;
+			akimbo_pair_entities[hand].lerp.frame_duration = 0.0;
+			akimbo_pair_entities[hand].lerp.snap_frames = 0;
+		}
 		vec3_t hand_angles;
 		if (!V_TrackedPresentationHandWorldPose (hand, pair_origins[hand], hand_angles) ||
 			!V_AkimboModelAngles (source->name, hand, hand_angles,
@@ -848,14 +916,27 @@ void V_PrepareAkimboPair (void)
 			torso[2] += head_height + view_stair_delta;
 			for (int hand = 0; hand < 2; ++hand)
 			{
-				vec3_t anchor, base, tip, delta;
-				if (!V_AkimboTransformAnchorForPair (hand, pair_model_angles[hand],
-					recipe, source_geometry, &akimbo_pair_entities[hand],
-					akimbo_pair_geometry[hand], anchor))
-					return;
-				VectorCopy (pair_origins[hand], base);
-				VectorCopy (base, tip);
-				VectorAdd (tip, anchor, tip);
+				vec3_t base, tip, delta;
+				if (V_AkimboRecipeIsDwellAxe (recipe))
+				{
+					vec3_t edge_base, edge_tip;
+					if (!V_AkimboTransformDwellEdgesForPair (hand,
+						pair_model_angles[hand], &akimbo_pair_entities[hand],
+						akimbo_pair_geometry[hand], edge_base, edge_tip))
+						return;
+					VectorAdd (pair_origins[hand], edge_base, base);
+					VectorAdd (pair_origins[hand], edge_tip, tip);
+				}
+				else
+				{
+					vec3_t anchor;
+					if (!V_AkimboTransformAnchorForPair (hand,
+						pair_model_angles[hand], recipe, source_geometry,
+						&akimbo_pair_entities[hand], akimbo_pair_geometry[hand], anchor))
+						return;
+					VectorCopy (pair_origins[hand], base);
+					VectorAdd (base, anchor, tip);
+				}
 				/* A pair cannot keep an obstructed raw hand when the solve fails.
 				 * The ordinary dominant-hand path remains available this frame. */
 				if (!CL_ResolveWeaponCollision (torso, pair_origins[hand],
@@ -906,14 +987,26 @@ qboolean V_AkimboPairReady (void)
 		if (!recipe->halves[hand] || !akimbo_pair_models[hand] ||
 			akimbo_pair_models[hand]->needload ||
 			strcmp (akimbo_pair_models[hand]->name, recipe->halves[hand]) ||
+			(V_AkimboRecipeIsDwellAxe (recipe) &&
+				!akimbo_pair_models[hand]->is_generated_akimbo_half) ||
 			akimbo_pair_entities[hand].model != akimbo_pair_models[hand] ||
-			akimbo_pair_entities[hand].frame != cl.viewent.frame ||
 			akimbo_pair_entities[hand].skinnum != cl.viewent.skinnum ||
 			!akimbo_pair_geometry[hand] ||
 			akimbo_pair_models[hand]->extradata[PV_QUAKE1] !=
 				(byte *)akimbo_pair_geometry[hand] ||
 			!V_AkimboEntityMatrixValid (&akimbo_pair_entities[hand],
 				akimbo_pair_geometry[hand]))
+			return false;
+		else if (V_AkimboRecipeIsDwellAxe (recipe))
+		{
+			if (akimbo_pair_entities[hand].frame != 0 ||
+				akimbo_pair_entities[hand].lerp.prev_frame != 0 ||
+				akimbo_pair_entities[hand].lerp.frame_change_time != 0.0 ||
+				akimbo_pair_entities[hand].lerp.frame_duration != 0.0 ||
+				akimbo_pair_entities[hand].lerp.snap_frames != 0)
+				return false;
+		}
+		else if (akimbo_pair_entities[hand].frame != cl.viewent.frame)
 			return false;
 	return true;
 }
@@ -946,6 +1039,23 @@ qboolean V_AkimboTransformAnchor (int physical_hand,
 		akimbo_source_recipe, akimbo_source_geometry,
 		&akimbo_pair_entities[physical_hand], akimbo_pair_geometry[physical_hand],
 		out_local);
+}
+
+qboolean V_AkimboDwellEdgeOffsets (int physical_hand,
+	const vec3_t model_angles, vec3_t out_base, vec3_t out_tip)
+{
+	if (out_base)
+		VectorCopy (vec3_origin, out_base);
+	if (out_tip)
+		VectorCopy (vec3_origin, out_tip);
+	if (!out_base || !out_tip || physical_hand < 0 || physical_hand > 1 ||
+		!V_AkimboPairReady () || !V_AkimboRecipeIsDwellAxe (akimbo_source_recipe) ||
+		!akimbo_pair_models[physical_hand] ||
+		!akimbo_pair_models[physical_hand]->is_generated_akimbo_half)
+		return false;
+	return V_AkimboTransformDwellEdgesForPair (physical_hand, model_angles,
+		&akimbo_pair_entities[physical_hand], akimbo_pair_geometry[physical_hand],
+		out_base, out_tip);
 }
 
 void V_ClearWeaponCollisionPresentation (void)

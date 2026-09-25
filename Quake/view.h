@@ -69,6 +69,8 @@ qboolean V_AkimboModelAngles (const char *source_model, int physical_hand,
 	const vec3_t raw_hand_angles, vec3_t out);
 qboolean V_AkimboTransformAnchor (int physical_hand,
 	const vec3_t model_angles, vec3_t out_local);
+qboolean V_AkimboDwellEdgeOffsets (int physical_hand,
+	const vec3_t model_angles, vec3_t out_base, vec3_t out_tip);
 int V_AkimboViewmodelHand (const entity_t *e);
 entity_t *V_AkimboPairEntity (int physical_hand);
 void V_ClearAkimboPair (void);
