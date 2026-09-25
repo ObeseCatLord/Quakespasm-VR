@@ -122,7 +122,8 @@ review. Its 820938 bytes and SHA-256 match the program gate, as do the exact
 statement/function/global counts and all eight helper/idle function records.
 At statement 14565, `W_FireAxe` calls builtin #1 (`makevectors`); at 14578
 and 14586 it calls function #396 (`traceline2`). The helper's statement
-12923 calls builtin #15 (`traceline`). This confirms the hook sites in the
+12923 calls QC function #15, which dispatches builtin #16 (`traceline`).
+This confirms the hook sites in the
 installed bytecode; it does not yet prove runtime outcome parity.
 The same field table records float offsets 131 for `attack_finished`, 151
 for `berserk_finished`, and 218 for `customflags`.
@@ -131,3 +132,13 @@ The donor invokes `W_FireAxe` under its co-op friendly-fire scope. The 2.0
 base does not yet provide the donor's `sv_nofriendlyfire` policy, so the
 physical outcome must either reuse that policy when migrated or explicitly
 defer its co-op parity claim. It must not invent a Dwell-only damage rule.
+
+An Astra Max xhigh code review of the staged shared axe trace scope found no
+actionable regression in stock traces or the Dwell acquisition/return gates.
+Once the exact Dwell helper site owns an acquisition, invalidation produces a
+complete miss; unrelated traces remain native. The helper-return hook repairs
+only the accepted fraction before locals are restored, and the pinned root
+retires the scope. Keep this narrow owner; no separate Dwell trace state
+machine or generic VM nesting layer was justified. The review covered source
+and installed bytecode but did not execute a physical outcome. Arming, whiff
+initialization, callback cleanup and damage behavior remain integration gates.
