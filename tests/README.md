@@ -135,12 +135,14 @@ is required; it does not open a session against an installed runtime.
 ## Presentation image acquisition
 
 `render_acquire_fixture.c` executes the production frame description and recorder
-with Vulkan command spies. Across ordinary transparency, WBOIT, MBOIT, and SSAO
-on/off, it checks that a failed acquisition leaves scene/prepared commands intact
-and executes neither the UI/presentation framebuffer nor screenshot readback.
-The failed-acquisition cases deliberately have no UI framebuffer and an invalid
-image index. Successful acquisition still executes both UI subpasses and readback.
-This does not validate actual GPU execution or task scheduling.
+with Vulkan command spies. Across ordinary transparency, WBOIT, MBOIT, desktop
+and stereo, MSAA off/4x, and SSAO on/off, it checks that a failed acquisition
+leaves scene/prepared commands intact and executes neither the UI/presentation
+framebuffer nor screenshot readback. The failed-acquisition cases deliberately
+have no UI framebuffer and an invalid image index. When SSAO is enabled, it checks
+that both SSAO record steps are scheduled in desktop and stereo. Successful
+acquisition still executes both UI subpasses and readback. This does not validate
+actual GPU execution or task scheduling.
 
 ```sh
 cc -std=gnu11 -DUSE_SDL3 -D_GNU_SOURCE -Wall -Wextra -Werror \
@@ -160,9 +162,10 @@ commands cover this Linux development machine only.
 
 The acquisition fixture also creates the production scene/UI pass descriptions
 with Vulkan creation spies for desktop and stereo, MSAA off/4x and all three
-transparency modes. It checks view masks and final output layouts; SSAO remains
-an effective desktop-only option during this integration checkpoint. These are
-API-shape checks, not driver validation.
+transparency modes. It checks view masks and final output layouts, and checks
+that the shared frame graph schedules both SSAO record steps in either mode
+when SSAO is enabled. These are API-shape and scheduling checks, not driver
+validation.
 
 `vr_openxr_math_fixture.c` compares the production relative clip correction with
 an independently calculated direct eye projection across asymmetric/canted eyes,

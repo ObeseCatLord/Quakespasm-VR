@@ -10,6 +10,10 @@ static qboolean in_pass;
 static unsigned created_passes;
 
 void GL_SetObjectName (uint64_t handle, VkObjectType type, const char *name) {}
+qboolean R_SSAOEnabled (void)
+{
+	return r_ssao.value > 0;
+}
 VKAPI_ATTR VkResult VKAPI_CALL
 vkCreateRenderPass (VkDevice device, const VkRenderPassCreateInfo *info, const VkAllocationCallbacks *allocator, VkRenderPass *pass)
 {
@@ -172,7 +176,7 @@ static void check_variant (main_render_pass_variant_t variant, bool ssao, bool a
 	assert (!in_pass && pass_begins == pass_ends);
 	assert (pass_begins == expected_scene_passes + acquired);
 	assert (scene_commands > 0 && ui_commands == (acquired ? 2 : 0));
-	assert (readbacks == acquired && ssao_steps == (ssao && !stereo ? 2 : 0));
+	assert (readbacks == acquired && ssao_steps == (ssao ? 2 : 0));
 }
 
 int main (void)
