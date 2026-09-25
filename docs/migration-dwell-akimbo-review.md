@@ -92,3 +92,26 @@ clean miss. At helper return statement 13044, restore the accepted spatial
 fraction only if its entity/end point survived the helper's filtering.
 The current VM has a `PF_traceline` interception boundary but no Dwell
 helper-return hook; these are explicit implementation requirements.
+
+A second Astra xhigh QC review approved the narrow adapter but corrected two
+timing assumptions. Ordinary physics drains contact after PostThink; the
+private movement trial drains it before PostThink; maintenance can run a
+scheduled think/PostThink without a new contact. Admission and native-strike
+arbitration must cover all three lifecycles. Dwell consumes a cooldown-rejected
+physical gesture, unlike stock's armed retry. Hands run in anatomical order
+0 then 1 and share `attack_finished`, so the first accepted simultaneous
+stroke advances cooldown and the second is consumed. Consume a terminal
+stroke before invoking side-effecting QC; a callback failure must not replay
+it. The active Dwell subtype also requires finite, unblocked `customflags`
+(`& 2112 == 0`), pinned idle think #549/#550 even when `nextthink` is not due,
+and fresh bilateral contact with its matching berserk pair. Native trigger
+suppression follows qualified contact ownership through idle/cooldown, not
+only the instant a physical strike is ready. Revalidate the VM, player,
+weapon, cursor and origin after each prelude callback and between hands.
+
+The client bilateral producer is staged behind both the server's Dwell pair
+bit and its Dwell melee profile. Neither is currently advertised. It uses
+the existing pair identity and contact wire fields. The remaining view/contact
+alignment check must include paired collision retraction when that option is
+enabled; an unqualified graphics shift cannot authorize a different physical
+hit. The QC return hook and server Dwell admission/outcome remain absent.
