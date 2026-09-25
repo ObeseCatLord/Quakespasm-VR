@@ -726,7 +726,7 @@ void SV_CoopRespawnRestoreSavedInventory (edict_t *ent, edict_t *snapshot)
 #define MIN_WALK_NORMAL		 0.7f
 #define STEPSIZE			 18
 
-static void		SV_Physics_Toss (edict_t *ent);
+static void		SV_Physics_Toss (edict_t *ent, qboolean think_already_ran);
 static edict_t *sv_walk_support_pusher;
 static vec3_t	sv_walk_support_normal;
 
@@ -5855,12 +5855,13 @@ static void SV_Physics_Client (edict_t *ent, int num)
 	sv_vr_weapon_pose_scope_t weapon_scope;
 	client_t *client = &svs.clients[num - 1];
 	edict_t				  *retained_pusher;
-	int completed_move;
+	int completed_move, movetype, dispatch_movetype;
 	unsigned queue_offset;
 	qboolean frame_completed = false;
 	qboolean suppress_trigger = false, saved_button0 = false;
 	qboolean gorilla_braced = false;
 	qboolean gorilla_swim_intent = false;
+	qboolean gorilla_dispatch, weapon_think_ran = false;
 	vec3_t callback_origin, callback_delta;
 
 	if (!svs.clients[num - 1].active)
@@ -5929,17 +5930,24 @@ static void SV_Physics_Client (edict_t *ent, int num)
 	//
 	SV_CheckVelocity (ent);
 
-	/* Weapon think may change movetype. Run it once, then select the native
-	 * physics owner after any Gorilla touch callbacks have also run. */
+	/* Match desktop dispatch by retaining the type selected before the
+	 * scheduled weapon think. Configured Gorilla clients may still reselect
+	 * after their hand-contact callbacks have run. */
+	movetype = (int)ent->v.movetype;
+	dispatch_movetype = movetype;
+	gorilla_dispatch = client->protocol_qsvr == QSVR_PROTOCOL_PINNED &&
+		client->vr_gorilla_capable && sv_gorilla.value;
 	SV_VRStockAxeRefreshTriggerSuppression (client, ent,
 		&client->cmd, &suppress_trigger);
 	VectorCopy (ent->v.origin, callback_origin);
-	switch ((int)ent->v.movetype)
+	switch (movetype)
 	{
 	case MOVETYPE_NONE:
 	case MOVETYPE_WALK:
 	case MOVETYPE_FLY:
 	case MOVETYPE_NOCLIP:
+		weapon_think_ran = ent->v.nextthink > 0 &&
+			ent->v.nextthink <= qcvm->time + host_frametime;
 		if (!SV_RunPrivateVRWeaponThink (ent, client))
 			goto done;
 		break;
@@ -5965,8 +5973,10 @@ static void SV_Physics_Client (edict_t *ent, int num)
 	}
 	else
 		SV_ResetGorillaClient (client);
+	if (gorilla_dispatch)
+		dispatch_movetype = (int)ent->v.movetype;
 
-	switch ((int)ent->v.movetype)
+	switch (dispatch_movetype)
 	{
 	case MOVETYPE_NONE:
 		break;
@@ -5976,7 +5986,7 @@ static void SV_Physics_Client (edict_t *ent, int num)
 	case MOVETYPE_TOSS:
 	case MOVETYPE_BOUNCE:
 	case MOVETYPE_GIB:
-		SV_Physics_Toss (ent);
+		SV_Physics_Toss (ent, weapon_think_ran);
 		break;
 	case MOVETYPE_FLY:
 		SV_FlyMove (ent, host_frametime, NULL, NULL, true);
@@ -6124,14 +6134,14 @@ SV_Physics_Toss
 Toss, bounce, and fly movement.  When onground, do nothing.
 =============
 */
-static void SV_Physics_Toss (edict_t *ent)
+static void SV_Physics_Toss (edict_t *ent, qboolean think_already_ran)
 {
 	trace_t trace;
 	vec3_t	end, move_velocity;
 	float	backoff;
 
 	// regular thinking
-	if (!SV_RunThink (ent))
+	if (!think_already_ran && !SV_RunThink (ent))
 		return;
 
 	// if onground, return without moving
@@ -6397,7 +6407,7 @@ void SV_Physics (void)
 		else if (
 			ent->v.movetype == MOVETYPE_TOSS || ent->v.movetype == MOVETYPE_GIB || ent->v.movetype == MOVETYPE_BOUNCE || ent->v.movetype == MOVETYPE_FLY ||
 			ent->v.movetype == MOVETYPE_FLYMISSILE)
-			SV_Physics_Toss (ent);
+			SV_Physics_Toss (ent, false);
 		else
 			Host_EndGame ("SV_Physics: bad movetype %i", (int)ent->v.movetype);
 
