@@ -102,8 +102,9 @@ static void TexMgr_SetFilterModes(gltexture_t *glt) {
                     glmodes[glmode_idx].magfilter);
     glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER,
                     glmodes[glmode_idx].minfilter);
-    glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY_EXT,
-                    gl_texture_anisotropy.value);
+    if (gl_anisotropy_able)
+      glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY_EXT,
+                      gl_texture_anisotropy.value);
   } else {
     glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER,
                     glmodes[glmode_idx].magfilter);
@@ -179,8 +180,9 @@ static void TexMgr_Anisotropy_f(cvar_t *var) {
                         glmodes[glmode_idx].magfilter);
         glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER,
                         glmodes[glmode_idx].minfilter);
-        glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY_EXT,
-                        gl_texture_anisotropy.value);
+        if (gl_anisotropy_able)
+          glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY_EXT,
+                          gl_texture_anisotropy.value);
       }
     }
   }
@@ -596,8 +598,8 @@ void TexMgr_Init(void) {
 
   Cvar_RegisterVariable(&gl_max_size);
   Cvar_RegisterVariable(&gl_picmip);
-  Cvar_RegisterVariable(&gl_texture_anisotropy);
   Cvar_SetCallback(&gl_texture_anisotropy, &TexMgr_Anisotropy_f);
+  Cvar_RegisterVariable(&gl_texture_anisotropy);
   gl_texturemode.string = glmodes[glmode_idx].name;
   Cvar_RegisterVariable(&gl_texturemode);
   Cvar_SetCallback(&gl_texturemode, &TexMgr_TextureMode_f);
