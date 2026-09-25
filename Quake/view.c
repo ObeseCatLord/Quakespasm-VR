@@ -581,6 +581,11 @@ qboolean V_AkimboRecipeSupported (const char *source_model)
 	if (!strcmp (recipe->game, "enyo") &&
 		!strcmp (recipe->source, "progs/ee_v_smgs.mdl"))
 		return cl.vr_enyo_akimbo_supported;
+	if (!strcmp (recipe->game, "dwell") &&
+		!strcmp (recipe->source, "progs/v_axeb.mdl"))
+		return cl.vr_dwell_berserk_akimbo_supported &&
+			(cl.vr_weapon_contact_mode & VR_WEAPON_CONTACT_CAP_MELEE) != 0 &&
+			cl.vr_weapon_contact_profile == VR_WEAPON_CONTACT_PROFILE_DWELL;
 	return false;
 }
 
