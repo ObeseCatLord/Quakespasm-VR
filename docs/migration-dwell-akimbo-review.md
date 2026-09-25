@@ -112,6 +112,15 @@ weapon, cursor and origin after each prelude callback and between hands.
 The client bilateral producer is staged behind both the server's Dwell pair
 bit and its Dwell melee profile. Neither is currently advertised. It uses
 the existing pair identity and contact wire fields. The remaining view/contact
-alignment check must include paired collision retraction when that option is
-enabled; an unqualified graphics shift cannot authorize a different physical
-hit. The QC return hook and server Dwell admission/outcome remain absent.
+alignment work now feeds the actual paired collision retraction to both the
+command muzzle and contact edge when that option is enabled. This is source
+alignment, not a live proof of the visible hit. The QC return hook and server
+Dwell admission/outcome remain absent.
+
+The installed `dwellv2p2/progs.dat` was independently decoded after the QC
+review. Its 820938 bytes and SHA-256 match the program gate, as do the exact
+statement/function/global counts and all eight helper/idle function records.
+At statement 14565, `W_FireAxe` calls builtin #1 (`makevectors`); at 14578
+and 14586 it calls function #396 (`traceline2`). The helper's statement
+12923 calls builtin #15 (`traceline`). This confirms the hook sites in the
+installed bytecode; it does not yet prove runtime outcome parity.
