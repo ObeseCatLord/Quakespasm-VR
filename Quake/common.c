@@ -3104,6 +3104,18 @@ static void COM_Game_f (void)
 		//Kill the server
 		CL_Disconnect ();
 		Host_ShutdownServer(true);
+		/* The old world's model records are zeroed by Mod_ResetAll below.
+		 * VR still prepares eye visibility while the next map is loading, so
+		 * no client reference may continue to name those records. */
+		cl.worldmodel = NULL;
+		cl.viewent.model = NULL;
+		memset(cl.model_precache, 0, sizeof(cl.model_precache));
+		if (cl.entities)
+		{
+			int i;
+			for (i = 0; i < cl.num_entities && i < cl.max_edicts; ++i)
+				cl.entities[i].model = NULL;
+		}
 
 		//Write config file
 		Host_WriteConfiguration ();

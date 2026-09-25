@@ -376,6 +376,7 @@ void R_NewGame (void)
 	int i;
 
 	R_InvalidateNoVisSurfaceCache ();
+	r_viewleaf = r_oldviewleaf = NULL;
 
 	//clear playertexture pointers (the textures themselves were freed by texmgr_newgame)
 	for (i=0; i<MAX_SCOREBOARD; i++)

@@ -1123,7 +1123,7 @@ void R_PrepareVRStereoVisibility(const vec_t *eye0, const vec_t *eye1)
 	r_vr_sharedvis_prepared = false;
 	r_vr_sharedvis_built = false;
 
-	if (!cl.worldmodel || !eye0 || !eye1)
+	if (!cl.worldmodel || !cl.worldmodel->nodes || !eye0 || !eye1)
 		return;
 
 	r_vr_sharedvis_leaf[0] = Mod_PointInLeaf((vec_t *)eye0, cl.worldmodel);
