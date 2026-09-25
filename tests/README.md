@@ -373,6 +373,68 @@ XDG_DATA_HOME="$XR_TEST_ROOT/data" SDL_VIDEODRIVER=x11 \
 Require exit 0 and `QBJ3_PIPELINE_PASSED`. The final breakpoint verifies
 one accepted physical-hand shot path; it does not require both hands to fire.
 
+## Enyo paired-SMG first-shot path
+
+`vr_enyo_client_pipeline.gdb` drives the Enyo paired-SMG path through generated
+pair readiness, both alias draws, private-usercmd writing, server pose
+acceptance, and successful native Enyo makevectors, aim, and trace hooks. At
+trace-hook return it requires exactly one nail to have been consumed (100 to
+99). It compares each server world muzzle with body origin plus its
+player-relative wire muzzle using a 0.01-unit 3D tolerance and checks that the
+pair remains separated in 3D. The probe grants the local player the SMGs and
+ammo in GDB, then holds attack. It stops before Enyo QC statement 15363
+(`FireBullets2`), so it does not prove projectile creation, a hit, damage, or
+impact. It captures one selected-hand shot and does not prove that both hands
+fired or alternated. A timeout or failed assertion is a failure.
+
+This needs a debug-symbol `build-debug/vkquake`, GDB, a display, licensed Quake
+and Enyo data, and an isolated Monado QWERTY service. In a service terminal,
+set `ENYO_ASSET_SOURCE` to the licensed game root and choose a fresh
+`XR_TEST_ROOT` (use the same root in the client terminal):
+
+```sh
+export ENYO_ASSET_SOURCE=/path/to/licensed/game-root
+export XR_TEST_ROOT=/tmp/enyo-client-pipeline
+test -f "$ENYO_ASSET_SOURCE/id1/pak0.pak"
+test -f "$ENYO_ASSET_SOURCE/enyo/pak0.pak"
+mkdir -p "$XR_TEST_ROOT"/{run,config,data,game/id1,game/enyo}
+chmod 700 "$XR_TEST_ROOT/run"
+for f in "$ENYO_ASSET_SOURCE"/id1/pak*.pak; do
+  [[ ! -f "$f" ]] || ln -s "$f" "$XR_TEST_ROOT/game/id1/${f##*/}"
+done
+for f in "$ENYO_ASSET_SOURCE"/enyo/pak*.pak; do
+  [[ ! -f "$f" ]] || ln -s "$f" "$XR_TEST_ROOT/game/enyo/${f##*/}"
+done
+if [[ -f "$ENYO_ASSET_SOURCE/enyo/vr_weapons.txt" ]]; then
+  ln -s "$ENYO_ASSET_SOURCE/enyo/vr_weapons.txt" "$XR_TEST_ROOT/game/enyo/vr_weapons.txt"
+fi
+XDG_RUNTIME_DIR="$XR_TEST_ROOT/run" XDG_CONFIG_HOME="$XR_TEST_ROOT/config" \
+XDG_DATA_HOME="$XR_TEST_ROOT/data" QWERTY_ENABLE=1 XRT_DEBUG_GUI=1 \
+XRT_COMPOSITOR_FORCE_XCB=1 monado-service
+```
+
+The QWERTY driver uses Monado's debug GUI; its `Qwerty System #1` Help panel
+documents keyboard and mouse controls. In another terminal, use the same
+isolated XDG paths and runtime manifest:
+
+```sh
+export XR_TEST_ROOT=/tmp/enyo-client-pipeline
+XR_TEST_BINARY=${XR_TEST_BINARY:-build-debug/vkquake} \
+XR_RUNTIME_JSON=/usr/share/openxr/1/openxr_monado.json \
+XDG_RUNTIME_DIR="$XR_TEST_ROOT/run" XDG_CONFIG_HOME="$XR_TEST_ROOT/config" \
+XDG_DATA_HOME="$XR_TEST_ROOT/data" SDL_VIDEODRIVER=x11 \
+  timeout --signal=TERM 120s gdb -nx --return-child-result --batch \
+  -x tests/vr_enyo_client_pipeline.gdb --args "$XR_TEST_BINARY" \
+  -basedir "$XR_TEST_ROOT/game" -game enyo -openxr -nosound -window \
+  -width 640 -height 480 +vid_vsync 0 +host_maxfps 144 \
+  +sv_qsvr_private 1 +sv_coop_autosave 0 +coop 1 +map start \
+  > "$XR_TEST_ROOT/enyo-client-pipeline.log" 2>&1
+```
+
+Require exit 0 and `ENYO_PIPELINE_PASSED`. Keep the raw local log private; it
+can contain device identifiers. Reuse or stop only the isolated Monado service
+started for this probe.
+
 ## Staged shared movement solver
 
 `pmove_migration_fixture.c` runs the transplanted PMove algorithm against the
