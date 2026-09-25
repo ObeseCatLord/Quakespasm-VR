@@ -3080,6 +3080,48 @@ qboolean SV_EnyoAkimboProgramLoaded (void)
 	return SV_EnyoSMGFunction (function);
 }
 
+#define DWELL_PROGS_SIZE 820938
+#define DWELL_BERSERK_FINISHED_OFS 151
+#define DWELL_W_FIREAXE_FIRST_STATEMENT 14560
+#define DWELL_W_FIREAXE_PARM_START 7805
+
+static qboolean SV_DwellFireAxeFunction (const dfunction_t *function)
+{
+	return function && !strcmp (PR_GetString (function->s_name), "W_FireAxe") &&
+		function->first_statement == DWELL_W_FIREAXE_FIRST_STATEMENT &&
+		function->parm_start == DWELL_W_FIREAXE_PARM_START &&
+		function->locals == 9 && function->numparms == 0;
+}
+
+qboolean SV_DwellBerserkAkimboProgramLoaded (void)
+{
+	static const byte expected_sha256[32] = {
+		0xfe, 0x7d, 0x21, 0xd4, 0xbd, 0xfd, 0x1a, 0x5e,
+		0x66, 0x72, 0xd1, 0x60, 0x6e, 0xfd, 0x77, 0x4c,
+		0xb7, 0x30, 0xd7, 0xf5, 0xb6, 0x89, 0x41, 0xd8,
+		0x21, 0x75, 0x59, 0x6f, 0x22, 0xe7, 0x19, 0xfd
+	};
+	const char *game;
+	ddef_t *finished;
+	dfunction_t *function;
+
+	if (qcvm != &sv.qcvm)
+		return false;
+	game = COM_SkipPath (com_gamedir);
+	if (!game || (q_strcasecmp (game, "dwell") &&
+		q_strcasecmp (game, "dwellv2p2")) ||
+		qcvm->progssize != DWELL_PROGS_SIZE ||
+		memcmp (qcvm->progssha256, expected_sha256, sizeof (expected_sha256)))
+		return false;
+
+	finished = ED_FindField ("berserk_finished");
+	if (!finished || (finished->type & ~DEF_SAVEGLOBAL) != ev_float ||
+		finished->ofs != DWELL_BERSERK_FINISHED_OFS)
+		return false;
+	function = ED_FindFunction ("W_FireAxe");
+	return SV_DwellFireAxeFunction (function);
+}
+
 static qboolean SV_EnyoSMGWeapon (edict_t *ent)
 {
 	return ent && !ent->free && SV_EnyoAkimboProgramLoaded () &&
