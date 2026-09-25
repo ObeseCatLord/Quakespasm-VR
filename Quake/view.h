@@ -65,6 +65,8 @@ qboolean V_TrackedViewmodelShouldHide (void);
 qboolean V_AkimboPairReady (void);
 qboolean V_AkimboRecipeSupported (const char *source_model);
 qboolean V_AkimboRecipeUsesPairedCollision (const char *source_model);
+qboolean V_AkimboModelAngles (const char *source_model, int physical_hand,
+	const vec3_t raw_hand_angles, vec3_t out);
 qboolean V_AkimboTransformAnchor (int physical_hand,
 	const vec3_t model_angles, vec3_t out_local);
 int V_AkimboViewmodelHand (const entity_t *e);

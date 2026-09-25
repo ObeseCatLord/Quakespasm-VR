@@ -594,6 +594,49 @@ qboolean V_AkimboRecipeUsesPairedCollision (const char *source_model)
 			!strcmp (recipe->source, "progs/ee_v_smgs.mdl")));
 }
 
+/* Dwell held-angle matrices copied from quakespasm-openvr/Quake/vr.c:6265-6275
+ * (vr_dwell_fists.correction), calibrated for its split v_axeb model. */
+static const float dwell_akimbo_viewmodel_correction[2][3][3] = {
+	{{-.294739431f, -.053186399f, -.954096366f},
+	 {.009474343f, -.998563416f, .052738415f},
+	 {-.955530693f, .006504655f, .294819919f}},
+	{{-.503862298f, .131800285f, -.853669415f},
+	 {.317507833f, -.890842899f, -.324942618f},
+	 {-.803312866f, -.434773060f, .407014527f}}
+};
+
+qboolean V_AkimboModelAngles (const char *source_model, int physical_hand,
+	const vec3_t raw_hand_angles, vec3_t out)
+{
+	const mod_akimbo_pair_recipe_t *recipe;
+	vec3_t hand_angles, model_angles;
+	qboolean converted;
+
+	if (!out)
+		return false;
+	if (raw_hand_angles)
+		VectorCopy (raw_hand_angles, hand_angles);
+	VectorCopy (vec3_origin, out);
+	if (!raw_hand_angles || physical_hand < 0 || physical_hand > 1)
+		return false;
+
+	recipe = Mod_GetAkimboPairRecipe (source_model);
+	if (recipe && !strcmp (recipe->game, "dwell") &&
+		!strcmp (recipe->source, "progs/v_axeb.mdl"))
+		converted = VR_LocomotionCorrectedViewmodelAngles (hand_angles,
+			vr_gunmodelpitch.value, dwell_akimbo_viewmodel_correction[physical_hand],
+			model_angles);
+	else
+		converted = VR_LocomotionHandRotToViewmodelAngles (hand_angles,
+			model_angles, vr_gunmodelpitch.value);
+	if (!converted || !isfinite (model_angles[0]) ||
+		!isfinite (model_angles[1]) || !isfinite (model_angles[2]))
+		return false;
+
+	VectorCopy (model_angles, out);
+	return true;
+}
+
 static qboolean V_AkimboSelectionValid (const vrxr_frame_t *frame,
 	qmodel_t **source_out, int *modelindex_out,
 	const mod_akimbo_pair_recipe_t **recipe_out)
@@ -776,8 +819,8 @@ void V_PrepareAkimboPair (void)
 		akimbo_pair_entities[hand].model = model;
 		vec3_t hand_angles;
 		if (!V_TrackedPresentationHandWorldPose (hand, pair_origins[hand], hand_angles) ||
-			!VR_LocomotionHandRotToViewmodelAngles (hand_angles, pair_model_angles[hand],
-				vr_gunmodelpitch.value))
+			!V_AkimboModelAngles (source->name, hand, hand_angles,
+				pair_model_angles[hand]))
 			return;
 		VectorCopy (pair_origins[hand], akimbo_pair_entities[hand].origin);
 		VectorCopy (pair_model_angles[hand], akimbo_pair_entities[hand].angles);
