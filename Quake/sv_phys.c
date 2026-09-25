@@ -3122,6 +3122,24 @@ qboolean SV_DwellBerserkAkimboProgramLoaded (void)
 	return SV_DwellFireAxeFunction (function);
 }
 
+qboolean SV_DwellBerserkAkimboWeaponSelected (edict_t *ent)
+{
+	eval_t *finished;
+	const char *weaponmodel;
+
+	if (!ent || ent->free || !SV_DwellBerserkAkimboProgramLoaded () ||
+		!isfinite (ent->v.weapon) || ent->v.weapon != 4096 ||
+		!isfinite (qcvm->time))
+		return false;
+	weaponmodel = PR_GetString (ent->v.weaponmodel);
+	if (!weaponmodel || strcmp (weaponmodel, "progs/v_axeb.mdl"))
+		return false;
+	finished = GetEdictFieldValue (ent,
+		ED_FindFieldOffset ("berserk_finished"));
+	return finished && isfinite (finished->_float) &&
+		finished->_float > qcvm->time;
+}
+
 static qboolean SV_EnyoSMGWeapon (edict_t *ent)
 {
 	return ent && !ent->free && SV_EnyoAkimboProgramLoaded () &&

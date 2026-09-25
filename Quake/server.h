@@ -573,6 +573,7 @@ qboolean SV_QBJ3TwinNailgunProgramLoaded (void);
 qboolean SV_QBJ3ShotgunSpreadBasis (const vec3_t angles);
 qboolean SV_EnyoAkimboProgramLoaded (void);
 qboolean SV_DwellBerserkAkimboProgramLoaded (void);
+qboolean SV_DwellBerserkAkimboWeaponSelected (edict_t *ent);
 qboolean SV_EnyoAkimboMakevectors (void);
 qboolean SV_EnyoAkimboAim (edict_t *ent, vec3_t muzzle);
 unsigned int SV_VRStockAxeContactProfile (void);
