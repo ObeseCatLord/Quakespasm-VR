@@ -75,3 +75,20 @@ after an exact-program room proves each hand, simultaneous strikes, reversals,
 pending native attacks, obstructions and reset/expiry behavior should the pair
 and Dwell melee offers be enabled together. No such end-to-end test was run in
 this review; desktop Dwell and stock axe must remain comparison cases.
+
+The donor's exact-once boundary is narrower than an attack scheduler. Its
+physical admission requires a live Dwell weapon, a locomotion think rather
+than a pending weapon callback, and `attack_finished <= (float)qcvm->time`.
+On a first accepted physical outcome it calls pinned non-scheduling helpers
+`SuperDamageSound` (#416), `BerserkSound` (#417), `has_haste` (#129) and
+`W_AxeWhiffSound` (#432), then sets cooldown to
+`time + .49 × (haste ? .6 : 1)`. A hit or whiff invokes the native
+`W_FireAxe` leaf (#438) directly under a trace scope; parry does not. It
+must never call `W_AxeSwing`, which installs a delayed authored strike.
+The scope substitutes only `traceline2` (#396) acquisition at statement
+12923 when its immediate caller is #438 at 14578 or 14586. The first
+acquisition supplies the accepted physical trace; helper retries receive a
+clean miss. At helper return statement 13044, restore the accepted spatial
+fraction only if its entity/end point survived the helper's filtering.
+The current VM has a `PF_traceline` interception boundary but no Dwell
+helper-return hook; these are explicit implementation requirements.
