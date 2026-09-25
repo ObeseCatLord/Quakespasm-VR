@@ -25,6 +25,7 @@ FIXTURES := \
 	vrik_relay_fixture \
 	vrik_lowerbody_fixture \
 	vrik_renderer_boundary_fixture \
+	vrik_cache_fixture \
 	avatar_protocol_fixture \
 	avatar_retarget_fixture \
 	voice_primitives_fixture \
@@ -83,6 +84,10 @@ $(BUILD_DIR)/vrik_renderer_boundary_fixture: vrik_renderer_boundary_fixture.c ..
 
 $(BUILD_DIR)/avatar_retarget_fixture: avatar_retarget_fixture.c ../Quake/r_avatar.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(SANITIZE_FLAGS) $^ $(LDFLAGS) $(SANITIZE_FLAGS) $(LDLIBS) -o $@
+
+# Exercise the renderer's resident-header refresh without a GL/VR runtime.
+$(BUILD_DIR)/vrik_cache_fixture: vrik_cache_fixture.c ../Quake/r_alias.c ../Quake/r_vrik.h | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -Wno-error=missing-field-initializers -Wno-error=unused-parameter -DR_ALIAS_CACHE_TEST -ffunction-sections -fdata-sections $(SANITIZE_FLAGS) $(filter %.c,$^) $(LDFLAGS) -Wl,--gc-sections $(SANITIZE_FLAGS) $(LDLIBS) -o $@
 
 $(BUILD_DIR)/avatar_protocol_fixture: avatar_protocol_fixture.c ../Quake/player_avatar.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(SANITIZE_FLAGS) $^ $(LDFLAGS) $(SANITIZE_FLAGS) $(LDLIBS) -o $@
