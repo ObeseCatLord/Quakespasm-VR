@@ -39,6 +39,11 @@ qboolean VR_LocomotionHandAngles (const float matrix[3][4], float tracking_yaw,
 qboolean VR_LocomotionHandRotToViewmodelAngles (const float handrot[3],
 	float viewmodel_angles[3], float gunmodelpitch);
 
+/* Apply a per-hand held-model rotation correction to mapped hand angles.
+ * The correction matrix is interpreted by columns; out is zeroed on failure. */
+qboolean VR_LocomotionCorrectedViewmodelAngles (const float handrot[3],
+	float gunmodelpitch, const float correction[3][3], float out[3]);
+
 /* Rotate and scale a local aim offset using inherited Quake angle vectors. */
 qboolean VR_LocomotionAimOffsetToWorld (const float local[3],
 	const float angles[3], float scale, float world[3]);

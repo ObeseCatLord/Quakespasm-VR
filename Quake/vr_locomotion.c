@@ -190,6 +190,56 @@ static void VR_LocomotionModelOffsetToWorld (const float local[3],
 	world[2] = z2 * scale;
 }
 
+qboolean VR_LocomotionCorrectedViewmodelAngles (const float handrot[3],
+	float gunmodelpitch, const float correction[3][3], float out[3])
+{
+	vec3_t handrot_copy, viewmodel_angles, result;
+	float correction_copy[3][3], axes[3][3];
+
+	if (!out)
+		return false;
+	if (handrot)
+		VectorCopy (handrot, handrot_copy);
+	if (correction)
+		for (int row = 0; row < 3; ++row)
+			for (int column = 0; column < 3; ++column)
+				correction_copy[row][column] = correction[row][column];
+	VR_LocomotionZero (out);
+
+	if (!handrot || !correction || !VR_LocomotionFiniteVec3 (handrot_copy) ||
+		!isfinite (gunmodelpitch))
+		return false;
+	for (int row = 0; row < 3; ++row)
+		for (int column = 0; column < 3; ++column)
+			if (!isfinite (correction_copy[row][column]))
+				return false;
+	if (!VR_LocomotionHandRotToViewmodelAngles (handrot_copy,
+		viewmodel_angles, gunmodelpitch))
+		return false;
+
+	for (int column = 0; column < 3; ++column)
+	{
+		float correction_axis[3] = {
+			correction_copy[0][column],
+			correction_copy[1][column],
+			correction_copy[2][column]
+		};
+
+		VR_LocomotionModelOffsetToWorld (correction_axis, viewmodel_angles,
+			1.0f, false, axes[column]);
+		if (!VR_LocomotionFiniteVec3 (axes[column]))
+			return false;
+	}
+	if (!VR_LocomotionAnglesFromRotMat (axes, result))
+		return false;
+	result[VR_AIM_PITCH] = -result[VR_AIM_PITCH];
+	if (!VR_LocomotionFiniteVec3 (result))
+		return false;
+
+	VectorCopy (result, out);
+	return true;
+}
+
 static void VR_LocomotionWorldToModelOffset (const float world[3],
 	const float viewmodel_angles[3], float scale, qboolean mirrored,
 	float local[3])
