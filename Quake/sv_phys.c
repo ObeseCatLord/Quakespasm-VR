@@ -4829,6 +4829,246 @@ static qboolean SV_VRStockAxeOutcome (client_t *client, edict_t *ent,
 	return alive;
 }
 
+static qboolean SV_VRDwellPhysicalOutcomeVMOwnerValid (client_t *client,
+	edict_t *ent, qcvm_t *saved_vm, dprograms_t *saved_progs,
+	globalvars_t *saved_global_struct, float *saved_vm_globals)
+{
+	if (!saved_vm || qcvm != saved_vm || qcvm != &sv.qcvm ||
+		qcvm->progs != saved_progs || qcvm->globals != saved_vm_globals ||
+		pr_global_struct != saved_global_struct || !saved_progs ||
+		!pr_global_struct || !SV_DwellBerserkAkimboProgramLoaded ())
+		return false;
+	return SV_VRContactOwnerLive (client, ent) &&
+		SV_DwellBerserkAkimboWeaponSelected (ent);
+}
+
+static qboolean SV_VRDwellPhysicalOutcomeContextValid (client_t *client,
+	edict_t *ent, qcvm_t *saved_vm, dprograms_t *saved_progs,
+	globalvars_t *saved_global_struct, float *saved_vm_globals,
+	const vec3_t body_origin, qboolean cursor_valid, int cursor_sequence)
+{
+	eval_t *customflags;
+	int axis, customflags_offset;
+
+	if (!SV_VRDwellPhysicalOutcomeVMOwnerValid (client, ent, saved_vm,
+		saved_progs, saved_global_struct, saved_vm_globals) ||
+		client->private_vr_contact_cursor_valid != cursor_valid ||
+		client->private_vr_contact_last_sequence != cursor_sequence ||
+		(ent->v.think != DWELL_PLAYER_STAND_FUNCTION &&
+		 ent->v.think != DWELL_PLAYER_RUN_FUNCTION))
+		return false;
+	for (axis = 0; axis < 3; ++axis)
+		if (!isfinite (ent->v.origin[axis]) ||
+			ent->v.origin[axis] != body_origin[axis])
+			return false;
+	customflags_offset = ED_FindFieldOffset ("customflags");
+	customflags = customflags_offset >= 0 ?
+		GetEdictFieldValue (ent, customflags_offset) : NULL;
+	return customflags && isfinite (customflags->_float) &&
+		(double)customflags->_float >= -2147483648.0 &&
+		(double)customflags->_float < 2147483648.0 &&
+		((int)customflags->_float & 2112) == 0;
+}
+
+qboolean SV_VRDwellBerserkPhysicalOutcome (client_t *client, edict_t *ent,
+	const usercmd_t *cmd, int anatomical_hand, const trace_t *contact)
+{
+	globalvars_t saved_globals, *saved_global_struct;
+	float saved_call_globals[OFS_PARM7 + 3 - OFS_RETURN];
+	qcvm_t *saved_vm;
+	dprograms_t *saved_progs;
+	float *saved_vm_globals;
+	eval_t *customflags, *cooldown;
+	trace_t accepted_contact;
+	vec3_t accepted_angles, saved_angles, body_origin;
+	float qctime, haste_value = 0, new_cooldown;
+	int saved_argc, axis, cursor_sequence;
+	qboolean has_contact = contact != NULL;
+	qboolean haste, context_saved = false, outcome_ok = false;
+	qboolean cursor_valid;
+
+	/* This owner never nests with another physical axe trace. Retire stale
+	 * state on every admission and callback failure path. */
+	SV_VRStockAxeClearTraceScope ();
+	if (!cmd || (anatomical_hand != 0 && anatomical_hand != 1) ||
+		!SV_DwellBerserkAkimboProgramLoaded () ||
+		!SV_VRContactOwnerLive (client, ent) ||
+		!SV_DwellBerserkAkimboWeaponSelected (ent) ||
+		!cmd->vr_active || !cmd->vr_handpos_relative ||
+		!cmd->vr_akimbo_active || !cmd->vr_akimbo_berserk ||
+		(ent->v.think != DWELL_PLAYER_STAND_FUNCTION &&
+		 ent->v.think != DWELL_PLAYER_RUN_FUNCTION) ||
+		!isfinite (qcvm->time))
+		goto cleanup;
+	qctime = (float)qcvm->time;
+	if (!isfinite (qctime))
+		goto cleanup;
+	VectorCopy (ent->v.origin, body_origin);
+	cursor_valid = client->private_vr_contact_cursor_valid;
+	cursor_sequence = client->private_vr_contact_last_sequence;
+	for (axis = 0; axis < 3; ++axis)
+	{
+		if (!isfinite (body_origin[axis]))
+			goto cleanup;
+		accepted_angles[axis] = cmd->vr_akimbo_angles[anatomical_hand][axis];
+		if (!isfinite (accepted_angles[axis]))
+			goto cleanup;
+	}
+
+	customflags = GetEdictFieldValue (ent, ED_FindFieldOffset ("customflags"));
+	cooldown = GetEdictFieldValue (ent, ED_FindFieldOffset ("attack_finished"));
+	if (!customflags || !isfinite (customflags->_float) ||
+		(double)customflags->_float < -2147483648.0 ||
+		(double)customflags->_float >= 2147483648.0 ||
+		((int)customflags->_float & 2112) != 0 ||
+		!cooldown || !isfinite (cooldown->_float) ||
+		cooldown->_float > qctime)
+		goto cleanup;
+	if (contact)
+	{
+		accepted_contact = *contact;
+		if (!accepted_contact.ent || accepted_contact.ent->free ||
+			!isfinite (accepted_contact.fraction) ||
+			accepted_contact.fraction < 0 || accepted_contact.fraction >= 1 ||
+			accepted_contact.startsolid || accepted_contact.allsolid ||
+			!isfinite (accepted_contact.endpos[0]) ||
+			!isfinite (accepted_contact.endpos[1]) ||
+			!isfinite (accepted_contact.endpos[2]) ||
+			!isfinite (accepted_contact.plane.dist) ||
+			!isfinite (accepted_contact.plane.normal[0]) ||
+			!isfinite (accepted_contact.plane.normal[1]) ||
+			!isfinite (accepted_contact.plane.normal[2]))
+			goto cleanup;
+	}
+
+	if (!qcvm->globals || !pr_global_struct)
+		goto cleanup;
+	saved_vm = qcvm;
+	saved_progs = qcvm->progs;
+	saved_global_struct = pr_global_struct;
+	saved_vm_globals = qcvm->globals;
+	saved_globals = *pr_global_struct;
+	saved_argc = qcvm->argc;
+	memcpy (saved_call_globals, qcvm->globals + OFS_RETURN,
+		sizeof (saved_call_globals));
+	VectorCopy (ent->v.v_angle, saved_angles);
+	context_saved = true;
+
+	VectorCopy (accepted_angles, ent->v.v_angle);
+	AngleVectors (ent->v.v_angle, pr_global_struct->v_forward,
+		pr_global_struct->v_right, pr_global_struct->v_up);
+	pr_global_struct->self = EDICT_TO_PROG (ent);
+	pr_global_struct->other = EDICT_TO_PROG (qcvm->edicts);
+	pr_global_struct->time = qcvm->time;
+	qcvm->argc = 0;
+	PR_ExecuteProgram (DWELL_SUPER_DAMAGE_SOUND_FUNCTION);
+	if (!SV_VRDwellPhysicalOutcomeContextValid (client, ent, saved_vm,
+		saved_progs, saved_global_struct, saved_vm_globals, body_origin,
+		cursor_valid, cursor_sequence))
+		goto cleanup;
+
+	pr_global_struct->self = EDICT_TO_PROG (ent);
+	pr_global_struct->other = EDICT_TO_PROG (qcvm->edicts);
+	pr_global_struct->time = qcvm->time;
+	qcvm->argc = 0;
+	PR_ExecuteProgram (DWELL_BERSERK_SOUND_FUNCTION);
+	if (!SV_VRDwellPhysicalOutcomeContextValid (client, ent, saved_vm,
+		saved_progs, saved_global_struct, saved_vm_globals, body_origin,
+		cursor_valid, cursor_sequence))
+		goto cleanup;
+
+	pr_global_struct->self = EDICT_TO_PROG (ent);
+	pr_global_struct->other = EDICT_TO_PROG (qcvm->edicts);
+	pr_global_struct->time = qcvm->time;
+	G_INT (OFS_PARM0) = EDICT_TO_PROG (ent);
+	qcvm->argc = 1;
+	PR_ExecuteProgram (DWELL_HAS_HASTE_FUNCTION);
+	if (!SV_VRDwellPhysicalOutcomeContextValid (client, ent, saved_vm,
+		saved_progs, saved_global_struct, saved_vm_globals, body_origin,
+		cursor_valid, cursor_sequence))
+		goto cleanup;
+	haste_value = G_FLOAT (OFS_RETURN);
+	if (!isfinite (haste_value))
+		goto cleanup;
+	haste = haste_value != 0;
+
+	pr_global_struct->self = EDICT_TO_PROG (ent);
+	pr_global_struct->other = EDICT_TO_PROG (qcvm->edicts);
+	pr_global_struct->time = qcvm->time;
+	qcvm->argc = 0;
+	PR_ExecuteProgram (DWELL_AXE_WHIFF_SOUND_FUNCTION);
+	if (!SV_VRDwellPhysicalOutcomeContextValid (client, ent, saved_vm,
+		saved_progs, saved_global_struct, saved_vm_globals, body_origin,
+		cursor_valid, cursor_sequence))
+		goto cleanup;
+	qctime = (float)qcvm->time;
+	cooldown = GetEdictFieldValue (ent, ED_FindFieldOffset ("attack_finished"));
+	if (!isfinite (qctime) || !cooldown || !isfinite (cooldown->_float))
+		goto cleanup;
+	new_cooldown = qctime + .49f * (haste ? .6f : 1.0f);
+	if (!isfinite (new_cooldown))
+		goto cleanup;
+	cooldown->_float = new_cooldown;
+	if (!SV_VRDwellPhysicalOutcomeContextValid (client, ent, saved_vm,
+		saved_progs, saved_global_struct, saved_vm_globals, body_origin,
+		cursor_valid, cursor_sequence))
+		goto cleanup;
+
+	/* The Dwell leaf consumes the accepted trace once. A NULL contact is an
+	 * explicit physical whiff, so its first helper acquisition is a miss. */
+	sv_vr_axe_trace_scope.mode = SV_VR_AXE_TRACE_SCOPE_DWELL;
+	sv_vr_axe_trace_scope.client = client;
+	sv_vr_axe_trace_scope.player = ent;
+	sv_vr_axe_trace_scope.function =
+		&qcvm->functions[DWELL_W_FIREAXE_FUNCTION];
+	if (has_contact)
+		sv_vr_axe_trace_scope.trace = accepted_contact;
+	else
+		memset (&sv_vr_axe_trace_scope.trace, 0,
+			sizeof (sv_vr_axe_trace_scope.trace));
+	sv_vr_axe_trace_scope.dwell_has_contact = has_contact;
+	sv_vr_axe_trace_scope.dwell_force_miss = !has_contact;
+	sv_vr_axe_trace_scope.active = true;
+	pr_global_struct->self = EDICT_TO_PROG (ent);
+	pr_global_struct->other = EDICT_TO_PROG (qcvm->edicts);
+	pr_global_struct->time = qcvm->time;
+	qcvm->argc = 0;
+	PR_ExecuteProgram (DWELL_W_FIREAXE_FUNCTION);
+	if (SV_VRDwellPhysicalOutcomeVMOwnerValid (client, ent, saved_vm,
+		saved_progs, saved_global_struct, saved_vm_globals))
+		outcome_ok = true;
+
+cleanup:
+	SV_VRStockAxeClearTraceScope ();
+	if (context_saved && qcvm == saved_vm && qcvm->progs == saved_progs &&
+		qcvm->globals == saved_vm_globals &&
+		pr_global_struct == saved_global_struct)
+	{
+		qcvm->argc = saved_argc;
+		memcpy (qcvm->globals + OFS_RETURN, saved_call_globals,
+			sizeof (saved_call_globals));
+		if (!ent->free)
+			VectorCopy (saved_angles, ent->v.v_angle);
+		pr_global_struct->self = saved_globals.self;
+		pr_global_struct->other = saved_globals.other;
+		pr_global_struct->time = saved_globals.time;
+		VectorCopy (saved_globals.v_forward, pr_global_struct->v_forward);
+		VectorCopy (saved_globals.v_right, pr_global_struct->v_right);
+		VectorCopy (saved_globals.v_up, pr_global_struct->v_up);
+		pr_global_struct->trace_allsolid = saved_globals.trace_allsolid;
+		pr_global_struct->trace_startsolid = saved_globals.trace_startsolid;
+		pr_global_struct->trace_fraction = saved_globals.trace_fraction;
+		pr_global_struct->trace_inwater = saved_globals.trace_inwater;
+		pr_global_struct->trace_inopen = saved_globals.trace_inopen;
+		pr_global_struct->trace_plane_dist = saved_globals.trace_plane_dist;
+		pr_global_struct->trace_ent = saved_globals.trace_ent;
+		VectorCopy (saved_globals.trace_endpos, pr_global_struct->trace_endpos);
+		VectorCopy (saved_globals.trace_plane_normal,
+			pr_global_struct->trace_plane_normal);
+	}
+	return outcome_ok;
+}
+
 static void SV_VRContactProcessMelee (client_t *client, edict_t *ent,
 	const usercmd_t *cmd, const vr_weapon_contact_t *previous,
 	int hand)
