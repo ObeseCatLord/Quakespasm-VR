@@ -3082,19 +3082,66 @@ qboolean SV_EnyoAkimboProgramLoaded (void)
 
 #define DWELL_PROGS_SIZE 820938
 #define DWELL_BERSERK_FINISHED_OFS 151
+#define DWELL_NUMSTATEMENTS 57592
+#define DWELL_NUMFUNCTIONS 4068
+#define DWELL_NUMGLOBALS 10026
+#define DWELL_HAS_HASTE_FUNCTION 129
+#define DWELL_TRACELINE2_FUNCTION 396
+#define DWELL_SUPER_DAMAGE_SOUND_FUNCTION 416
+#define DWELL_BERSERK_SOUND_FUNCTION 417
+#define DWELL_AXE_WHIFF_SOUND_FUNCTION 432
+#define DWELL_W_FIREAXE_FUNCTION 438
+#define DWELL_PLAYER_STAND_FUNCTION 549
+#define DWELL_PLAYER_RUN_FUNCTION 550
 #define DWELL_W_FIREAXE_FIRST_STATEMENT 14560
 #define DWELL_W_FIREAXE_PARM_START 7805
 
-static qboolean SV_DwellFireAxeFunction (const dfunction_t *function)
+static qboolean SV_DwellFunctionPin (int index, const char *name,
+	int first_statement, int parm_start, int locals, int numparms,
+	const byte *parm_sizes)
 {
-	return function && !strcmp (PR_GetString (function->s_name), "W_FireAxe") &&
-		function->first_statement == DWELL_W_FIREAXE_FIRST_STATEMENT &&
-		function->parm_start == DWELL_W_FIREAXE_PARM_START &&
-		function->locals == 9 && function->numparms == 0;
+	dfunction_t *function;
+	const char *function_name;
+	int i;
+
+	if (!qcvm || !qcvm->progs || !qcvm->functions || index < 0 ||
+		index >= qcvm->progs->numfunctions || numparms < -1 ||
+		numparms > MAX_PARMS)
+		return false;
+	function = &qcvm->functions[index];
+	if (function->numparms < 0 || function->numparms > MAX_PARMS ||
+		function->locals < 0 || function->parm_start < 0 ||
+		function->locals > qcvm->progs->numglobals ||
+		function->parm_start > qcvm->progs->numglobals - function->locals ||
+		function->numparms > function->locals)
+		return false;
+	function_name = PR_GetString (function->s_name);
+	if (strcmp (function_name, name) ||
+		function->first_statement != first_statement ||
+		(parm_start >= 0 && function->parm_start != parm_start) ||
+		(locals >= 0 && function->locals != locals) ||
+		(numparms >= 0 && function->numparms != numparms))
+		return false;
+	if (numparms >= 0)
+	{
+		int total_parm_size = 0;
+
+		for (i = 0; i < numparms; ++i)
+		{
+			if (parm_sizes && function->parm_size[i] != parm_sizes[i])
+				return false;
+			total_parm_size += function->parm_size[i];
+		}
+		if (total_parm_size > function->locals)
+			return false;
+	}
+	return true;
 }
 
 qboolean SV_DwellBerserkAkimboProgramLoaded (void)
 {
+	static const byte has_haste_parm_sizes[] = {1};
+	static const byte traceline2_parm_sizes[] = {3, 3, 1, 1};
 	static const byte expected_sha256[32] = {
 		0xfe, 0x7d, 0x21, 0xd4, 0xbd, 0xfd, 0x1a, 0x5e,
 		0x66, 0x72, 0xd1, 0x60, 0x6e, 0xfd, 0x77, 0x4c,
@@ -3105,7 +3152,7 @@ qboolean SV_DwellBerserkAkimboProgramLoaded (void)
 	ddef_t *finished;
 	dfunction_t *function;
 
-	if (qcvm != &sv.qcvm)
+	if (qcvm != &sv.qcvm || !qcvm->progs)
 		return false;
 	game = COM_SkipPath (com_gamedir);
 	if (!game || (q_strcasecmp (game, "dwell") &&
@@ -3113,13 +3160,34 @@ qboolean SV_DwellBerserkAkimboProgramLoaded (void)
 		qcvm->progssize != DWELL_PROGS_SIZE ||
 		memcmp (qcvm->progssha256, expected_sha256, sizeof (expected_sha256)))
 		return false;
+	if (qcvm->progs->numstatements != DWELL_NUMSTATEMENTS ||
+		qcvm->progs->numfunctions != DWELL_NUMFUNCTIONS ||
+		qcvm->progs->numglobals != DWELL_NUMGLOBALS ||
+		!SV_DwellFunctionPin (DWELL_HAS_HASTE_FUNCTION, "has_haste",
+			4038, 7022, 1, 1, has_haste_parm_sizes) ||
+		!SV_DwellFunctionPin (DWELL_TRACELINE2_FUNCTION, "traceline2",
+			12883, 7674, 24, 4, traceline2_parm_sizes) ||
+		!SV_DwellFunctionPin (DWELL_SUPER_DAMAGE_SOUND_FUNCTION,
+			"SuperDamageSound", 13513, 0, 0, 0, NULL) ||
+		!SV_DwellFunctionPin (DWELL_BERSERK_SOUND_FUNCTION,
+			"BerserkSound", 13535, 0, 0, 0, NULL) ||
+		!SV_DwellFunctionPin (DWELL_AXE_WHIFF_SOUND_FUNCTION,
+			"W_AxeWhiffSound", 14468, 0, 0, 0, NULL) ||
+		!SV_DwellFunctionPin (DWELL_W_FIREAXE_FUNCTION, "W_FireAxe",
+			DWELL_W_FIREAXE_FIRST_STATEMENT, DWELL_W_FIREAXE_PARM_START,
+			9, 0, NULL) ||
+		!SV_DwellFunctionPin (DWELL_PLAYER_STAND_FUNCTION,
+			"player_stand1", 20531, 0, 0, 0, NULL) ||
+		!SV_DwellFunctionPin (DWELL_PLAYER_RUN_FUNCTION,
+			"player_run", 20567, 0, 0, 0, NULL))
+		return false;
 
 	finished = ED_FindField ("berserk_finished");
 	if (!finished || (finished->type & ~DEF_SAVEGLOBAL) != ev_float ||
 		finished->ofs != DWELL_BERSERK_FINISHED_OFS)
 		return false;
 	function = ED_FindFunction ("W_FireAxe");
-	return SV_DwellFireAxeFunction (function);
+	return function && function == &qcvm->functions[DWELL_W_FIREAXE_FUNCTION];
 }
 
 qboolean SV_DwellBerserkAkimboWeaponSelected (edict_t *ent)
