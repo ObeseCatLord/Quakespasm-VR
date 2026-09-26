@@ -624,8 +624,9 @@ void R_DestroyFrameBuffers (void)
 		for (uint32_t pass = 0; pass < MAX_FRAME_PASSES; ++pass)
 		{
 			physical_pass_t *physical = &physical_passes[variant][pass];
-			for (uint32_t i = 0; i < physical->framebuffer_count; ++i)
-				vkDestroyFramebuffer (vulkan_globals.device, physical->framebuffers[i], NULL);
+			if (physical->framebuffers)
+				for (uint32_t i = 0; i < physical->framebuffer_count; ++i)
+					vkDestroyFramebuffer (vulkan_globals.device, physical->framebuffers[i], NULL);
 			free (physical->framebuffers);
 			physical->framebuffers = NULL;
 			physical->framebuffer_count = 0;
@@ -648,7 +649,7 @@ void R_DestroyRenderPasses (void)
 			vulkan_globals.secondary_cb_contexts[context][i].render_pass = VK_NULL_HANDLE;
 }
 
-void R_CreateFrameBuffers (const render_framebuffer_images_t *images)
+bool R_CreateFrameBuffers (const render_framebuffer_images_t *images)
 {
 	const main_render_pass_variant_t variant = R_UseMBOIT () ? MAIN_RENDER_PASS_MBOIT : R_UseWBOIT () ? MAIN_RENDER_PASS_OIT : MAIN_RENDER_PASS_STANDARD;
 	const frame_desc_t				*frame = &current_layout.variants[variant];
@@ -661,14 +662,18 @@ void R_CreateFrameBuffers (const render_framebuffer_images_t *images)
 		assert (!physical->framebuffers);
 		if (density && (!images->density_maps || !images->density_map_count ||
 			images->density_map_count != images->swapchain_count || msaa))
-			Sys_Error ("Density scene requires one borrowed map per acquired XR image and single-sample scene targets");
+			return false;
 		if (density && images->density_map_count > UINT32_MAX / NUM_COLOR_BUFFERS)
-			Sys_Error ("Too many borrowed OpenXR density maps");
+			return false;
 		physical->framebuffer_count = ui ? images->swapchain_count :
 			density ? NUM_COLOR_BUFFERS * images->density_map_count : NUM_COLOR_BUFFERS;
 		physical->framebuffers = calloc (physical->framebuffer_count, sizeof (*physical->framebuffers));
 		if (!physical->framebuffers)
+		{
+			if (density)
+				return false;
 			Sys_Error ("Couldn't allocate framebuffers");
+		}
 		for (uint32_t i = 0; i < physical->framebuffer_count; ++i)
 		{
 			VkImageView attachments[MAX_PASS_ATTACHMENTS] = {0};
@@ -705,7 +710,7 @@ void R_CreateFrameBuffers (const render_framebuffer_images_t *images)
 				if (density)
 				{
 					if (next >= MAX_PASS_ATTACHMENTS || !images->density_maps[i % images->density_map_count])
-						Sys_Error ("Borrowed density-map framebuffer attachment is missing");
+						return false;
 					attachments[next++] = images->density_maps[i % images->density_map_count];
 				}
 				if (next != physical->attachment_count)
@@ -720,11 +725,21 @@ void R_CreateFrameBuffers (const render_framebuffer_images_t *images)
 				.height = ui ? images->height : images->render_height,
 				.layers = 1,
 			};
-			const VkResult result = vkCreateFramebuffer (vulkan_globals.device, &info, NULL, &physical->framebuffers[i]);
+			VkFramebuffer created = VK_NULL_HANDLE;
+			const VkResult result = vkCreateFramebuffer (vulkan_globals.device, &info, NULL, &created);
 			if (result != VK_SUCCESS)
+			{
+				if (density)
+				{
+					Con_Printf ("OpenXR borrowed density framebuffer rejected by Vulkan: %d\n", result);
+					return false;
+				}
 				Sys_Error ("Couldn't create framebuffer: %d", result);
+			}
+			physical->framebuffers[i] = created;
 		}
 	}
+	return true;
 }
 
 typedef struct screen_effect_constants_s

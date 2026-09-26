@@ -98,7 +98,9 @@ typedef struct
 	const VkImageView *swapchain;
 } render_framebuffer_images_t;
 
-void	 R_CreateFrameBuffers (const render_framebuffer_images_t *images);
+/* False means an optional borrowed density framebuffer was rejected. The
+ * caller must destroy partial framebuffers and rebuild full-rate passes. */
+bool	 R_CreateFrameBuffers (const render_framebuffer_images_t *images);
 void	 R_DestroyFrameBuffers (void);
 // swapchain_acquired is the actual acquisition result, not the request to
 // present. Without an acquired image, record scene work only; never execute UI

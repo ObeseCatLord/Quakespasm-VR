@@ -112,7 +112,7 @@ static void GL_InitInstance (void);
 static void GL_InitDevice (void);
 static void GL_OpenXRPrepareVulkan (uint32_t loader_api_version);
 static void GL_OpenXRCreationFailed (void);
-static void GL_CreateFrameBuffers (void);
+static bool GL_CreateFrameBuffers (void);
 static void GL_CreateOITBuffers (void);
 static void GL_DestroyOITBuffers (void);
 static void GL_DestroyRenderResources (void);
@@ -1850,6 +1850,7 @@ static void GL_InitDevice (void)
 	}
 	else
 		vkGetPhysicalDeviceFeatures (vulkan_physical_device, &vulkan_globals.device_features);
+	GL_SelectRenderFormats (vulkan_globals.device_features.shaderStorageImageExtendedFormats);
 
 #if defined(VK_EXT_fragment_density_map)
 	if (fragment_density_map_extension && (create_renderpass2_core || create_renderpass2_extension) &&
@@ -1983,7 +1984,6 @@ static void GL_InitDevice (void)
 	const VkBool32 extended_format_support = vulkan_globals.device_features.shaderStorageImageExtendedFormats;
 	const VkBool32 independent_blend = vulkan_globals.device_features.independentBlend;
 	const VkBool32 sampler_anisotropic = vulkan_globals.device_features.samplerAnisotropy;
-	GL_SelectRenderFormats (extended_format_support);
 
 	ZEROED_STRUCT (VkPhysicalDeviceFeatures, device_features);
 	device_features.shaderStorageImageExtendedFormats = extended_format_support;
@@ -3568,7 +3568,7 @@ static void GL_CreateXRImageViews (void)
 	}
 }
 
-static void GL_CreateFrameBuffers (void)
+static bool GL_CreateFrameBuffers (void)
 {
 	const render_framebuffer_images_t images = {
 		.width = vid.width,
@@ -3590,7 +3590,7 @@ static void GL_CreateFrameBuffers (void)
 		.swapchain_count = vulkan_globals.stereo_active ? openxr_image_count : num_swap_chain_images,
 		.swapchain = vulkan_globals.stereo_active ? openxr_image_views : swapchain_images_views,
 	};
-	R_CreateFrameBuffers (&images);
+	return R_CreateFrameBuffers (&images);
 }
 
 /*
@@ -3633,7 +3633,20 @@ static void GL_CreateRenderResources (void)
 		vulkan_globals.openxr_fragment_shading_rate_active = false;
 	R_SetupRenderPasses ();
 	R_CreateRenderPasses ();
-	GL_CreateFrameBuffers ();
+	if (!GL_CreateFrameBuffers ())
+	{
+		// A runtime-provided map is optional. Retire partially created
+		// framebuffers before replacing only the render-pass topology.
+		R_DestroyFrameBuffers ();
+		R_DestroyRenderPasses ();
+		vulkan_globals.openxr_fragment_density_map_active = false;
+		openxr_density_backend_failed = true;
+		Con_Printf ("OpenXR density framebuffers unavailable; continuing with full-rate stereo.\n");
+		R_SetupRenderPasses ();
+		R_CreateRenderPasses ();
+		if (!GL_CreateFrameBuffers ())
+			Sys_Error ("Couldn't create full-rate framebuffers");
+	}
 	R_CreatePipelines ();
 
 	render_resources_created = true;
