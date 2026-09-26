@@ -849,7 +849,7 @@ static byte *Mod_GenerateVRHeldModel (const char *name,
 	qbj3_mdl_side_t side;
 	byte *source, *output = NULL;
 	size_t output_size = 0;
-	int hand, result;
+	int hand = 0, result;
 
 	*generated_size = 0;
 	*skin_source = NULL;

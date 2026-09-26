@@ -144,7 +144,7 @@ qboolean VR_LocomotionAimOffsetToWorld (const float local[3],
 qboolean VR_LocomotionHandRotToViewmodelAngles (const float handrot[3],
 	float viewmodel_angles[3], float gunmodelpitch)
 {
-	vec3_t handrot_copy, result;
+	vec3_t handrot_copy = {0, 0, 0}, result;
 
 	if (handrot)
 		VectorCopy (handrot, handrot_copy);
@@ -193,7 +193,7 @@ static void VR_LocomotionModelOffsetToWorld (const float local[3],
 qboolean VR_LocomotionCorrectedViewmodelAngles (const float handrot[3],
 	float gunmodelpitch, const float correction[3][3], float out[3])
 {
-	vec3_t handrot_copy, viewmodel_angles, result;
+	vec3_t handrot_copy = {0, 0, 0}, viewmodel_angles, result;
 	float correction_copy[3][3], axes[3][3];
 
 	if (!out)
