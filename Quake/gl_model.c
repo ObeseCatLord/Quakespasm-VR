@@ -1560,13 +1560,11 @@ static void Mod_LoadTextures (qmodel_t *mod, byte *mod_base, lump_t *l)
 		if (mt.offsets[0] == 0)
 		{
 			mod->textures[i] = Mod_LoadWadTexture (mod, wads, mt.name);
-			// Mod_LoadWadTexture trust the .wad name in bsp, but its loading may
-			//  fail anyway, so try with regular internal .bsp texture loading as fallback:
-			if (mod->textures[i])
-			{
-				// external texture loading success, skip the regular internal .bsp texture loading below:
-				continue;
-			}
+			// An external-only BSP miptex has no inline pixels or palette. If
+			// the WAD is absent/invalid, leave the entry missing so Texinfo
+			// selects the existing checkerboard texture instead of reading past
+			// the BSP texture lump.
+			continue;
 		}
 
 		pixels = mt.width * mt.height / 64 * 85;
