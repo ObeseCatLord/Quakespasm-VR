@@ -334,6 +334,9 @@ typedef struct client_s
 	float private_vr_melee_arc[2];
 	float private_vr_melee_peak_speed[2];
 	qboolean private_vr_melee_consumed[2];
+	/* Dwell reversals rearm the same contact owner without a sampled stop. */
+	vec3_t private_vr_melee_stroke_direction[2];
+	byte private_vr_melee_stroke_endpoint[2];
 	double	 lastmovetime;
 	unsigned int private_latest_buttons;
 	unsigned int private_latched_buttons;
@@ -558,6 +561,7 @@ void SV_VRContactPlayerSetOrigin (edict_t *ent, const vec3_t origin);
 void SV_VRContactPlayerRelocated (edict_t *ent);
 qboolean SV_VRWeaponCollisionEnabled (void);
 qboolean SV_VRStockAxeMeleeEnabled (void);
+qboolean SV_VRDwellBerserkMeleeEnabled (void);
 void SV_ReceiveVRIKPoseV2 (client_t *client, const vrik_v2_pose_t *pose,
 	const unsigned char body[VRIK_V2_BODY_BYTES]);
 void SV_ReceiveVRIKPoseV3 (client_t *client, const vrik_codec_pose_t *pose);

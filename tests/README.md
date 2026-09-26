@@ -1410,3 +1410,33 @@ successful shadow results, finite values, matching ground state and an earlier
 ACK for each target. Default limits are 0.05 units for position, 0.25 units/s
 for velocity and 0.001 seconds for the jump timer. A stock-WALK desktop
 loopback does not qualify latency correction, moving colliders or VR roomscale.
+
+## Dwell paired-axe server runtime
+
+These Linux headless fixtures use `build-debug/vkquake`, GDB, and the installed
+licensed Quake/Dwell 2.2 assets under `quakespasm_straight`. The launcher makes
+an isolated temporary game tree and does not load the installed user's config.
+
+```sh
+tests/vr_dwell_runtime.sh
+tests/vr_dwell_runtime.sh tests/vr_dwell_physical_outcome.gdb
+tests/vr_dwell_runtime.sh tests/vr_dwell_contact_runtime.gdb
+```
+
+The default policy fixture checks explicit enable/disable and exact-program
+rejection. The outcome fixture executes native whiff and synthetic accepted-hit
+callbacks, cooldown rejection, pending native-think exclusion and float-clock
+expiry, plus native haste and teammate shielding. The contact fixture uses
+linked targets and real edge sweeps, checks
+simultaneous hands, reversals, pending-native continuity, deferred body pose,
+anatomical native strike selection with zero movement duration, ordinary
+physics queue draining, held-trigger suppression and desktop native attacks.
+It reproduced the pending-native continuity failure before its fix. The
+integrated held-trigger assertion clears cooldown so native cooldown cannot
+mask broken engine suppression; desktop input remains the scheduling control.
+
+The direct outcome fixture bypasses admission; the contact fixture exercises
+admission and ordinary physics separately. The private WALK trial remains
+stock-program-only; testing the shared maintenance pose helper does not widen
+that admission. These fixtures do not qualify tracked rendering, alignment,
+headset feel, Windows or ARM.

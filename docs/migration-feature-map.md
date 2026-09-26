@@ -130,8 +130,12 @@ have paired presentation and a first-shot tracked path through the pinned QC
 clearance hook, with one nail consumed. A failed paired collision solve now
 drops the complete pair for that frame. The [Enyo integration review](migration-enyo-akimbo-implementation-review.md)
 records what remains unverified: actual Enyo impacts/damage, alternating hands,
-obstruction and callback behavior. QBJ3 berserk fists and Dwell's paired axe
-still need native gameplay adapters. WPN-012 therefore remains partial. These
+obstruction and callback behavior. Dwell 2.2's paired axes now have native and
+physical gameplay adapters under the current server melee policy, with
+headless sweep, cooldown, reversal, trigger-suppression, anatomical-hand and
+desktop checks; see the [Dwell activation review](migration-dwell-akimbo-review.md).
+QBJ3 berserk fists still need their native gameplay adapter. WPN-012 remains
+partial, and tracked alignment/feel still needs user qualification. These
 VR adaptations must leave ordinary desktop vkQuake viewmodel rendering and
 QuakeC firing intact; shared wheel, netcode and co-op features have separate
 desktop acceptance checks.

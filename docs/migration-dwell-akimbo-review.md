@@ -183,3 +183,51 @@ defaults off, and wraps the Dwell physical `W_FireAxe` leaf. The older note
 above about that policy being absent is historical. Co-op parity remains a
 software acceptance item; the Dwell outcome is still not called by contact
 processing.
+
+## Connected server path and activation review
+
+The current server implementation connects paired Dwell admission, edge-only
+sweeps, reversal rearming, physical outcomes, anatomical-hand native poses,
+and native-trigger suppression through the existing contact owner. Both the
+Dwell melee profile and pair bit use `SV_VRDwellBerserkMeleeEnabled`, the same
+current program/policy predicate used by admission. `sv_immersive_melee` still
+defaults to zero. The older dormant-path notes above describe earlier stages.
+
+Astra's activation review found four concrete lifecycle problems. The main
+agent verified the cited paths and adopted these corrections:
+
+| Recommendation | Disposition |
+| --- | --- |
+| Compare berserk expiry against the float clock QuakeC receives. | **Adopted.** Admission and revalidation now agree with native QC at rounding boundaries. The owned trace also catches the ordinary sibling acquisition and returns a miss. |
+| Keep temporary physical unreadiness separate from callback invalidation. | **Adopted.** A pending native attack consumes a rejected terminal gesture without erasing qualified contact continuity. Strict between-hand checks run after an outcome invocation; VM/reset changes stop the old lifecycle without reviving the cursor. |
+| Defer Dwell origin/angle mutation until the pinned strike. | **Adopted.** The admitted scope preserves body pose through earlier QC; the pinned makevectors hook chooses the anatomical strike hand. |
+| Validate maintenance pose from the original completed command. | **Adopted.** Pose helpers accept that command explicitly while the maintenance movement command retains zero duration. No additional pose cache was introduced. |
+| Run Dwell through the private WALK trial as a release requirement. | **Adapted.** Current admission requires the exact stock Quake program, so Dwell cannot reach this path. Keep admission unchanged and exercise the shared scheduled-Think pose helper with the same zero-duration/current and original-pose command split. |
+
+The local Linux build passes. The headless fixtures execute the installed
+hash-pinned Dwell program and cover policy default/enable/disable/hash rejection;
+physical whiff and accepted-trace damage; shared cooldown; pending native attack
+rejection; the float-expiry counterexample; real edge sweeps; left-first
+simultaneous outcomes; consumed rejected gestures; and reversal rearming.
+They also cover deferred body pose, both anatomical native strike hands with
+zero movement duration, ordinary physics contact draining after PostThink,
+held-trigger suppression, and ordinary desktop attack scheduling.
+
+The pending-native continuity case failed on the initial integration and
+passes after the correction. The direct outcome fixture bypasses contact
+admission; the contact fixture covers that owner and ordinary physics separately.
+These checks do not establish tracked rendering/alignment or headset feel.
+The outcome fixture also passes native haste cooldown scaling and teammate
+protection with restored takedamage state. Filtered-hit and callback
+invalidation coverage remains limited. Windows and ARM qualification remain
+later.
+
+The final bounded Astra review found no proven remaining production activation
+blocker. It verified all four corrections and both current-policy offer paths.
+It caught one test false positive: future cooldown could hide broken trigger
+suppression. **Adopted:** the ordinary held-trigger test now clears cooldown
+first, still prevents native scheduling, and retains a desktop scheduling
+control. That corrected case passes. Offer serialization is source-reviewed;
+the policy fixture does not execute compiler-inlined serialization helpers.
+The expiry fixture verifies admission rejection but does not force execution
+through the sibling fail-closed branch. These are explicit proof limits.
