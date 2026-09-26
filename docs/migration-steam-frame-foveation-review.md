@@ -174,3 +174,21 @@ that separate gaze action to be active. The XR boundary now uses the same
 three-frame stability helper as the KHR path, based on META validity. The
 eventual renderer callsite must still honor `vr_eye_tracking` and request eye
 mode only on appropriate focused frames.
+
+## Renderer integration checkpoint
+
+Commits `b2f69b5b`, `28704b7f`, `2ab8f48f`, and `6beb8f7d` adapt the existing
+vkQuake pass compiler and world draw path for an optional FDM scene: borrowed
+maps are indexed by acquired XR image, eligible world color is recorded in a
+separate density pass, and the same eligible geometry is replayed through a
+vertex-only, color-masked pipeline into freshly cleared full-rate depth before
+protected world draws. The additional world command buffers are allocated only
+for a device committed to the FDM backend. The Linux vkQuake build passes.
+
+This is not an active runtime backend yet. Device feature selection, OpenXR
+density-map attachment, qualified image format/layout/synchronization, profile
+updates at the per-frame callsite, and a validation-backed fallback still need
+integration. The current `openxr_fragment_density_map_enabled` and `_active`
+fields remain false. In particular, a successful Vulkan build is not evidence
+that borrowed runtime images satisfy the FDM contract or that protected content
+has correct depth on either eye.
