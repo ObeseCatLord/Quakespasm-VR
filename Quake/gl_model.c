@@ -5571,6 +5571,9 @@ static qboolean MD5Anim_Load (md5animctx_t *ctx, jointinfo_t *joints, jointpose_
 
 	MD5ANIMEXPECT ("numAnimatedComponents");
 	rawcount = MD5ANIMUINT ();
+	if (rawcount > SIZE_MAX / sizeof (*raw) - 6 ||
+		(ctx->filesize >= 0 && rawcount > (size_t)ctx->filesize))
+		MD5ERROR ("%s: animation component count is invalid or too large\n", fname);
 
 	TEMP_ALLOC_ASSIGN_ZEROED (raw, rawcount + 6);
 	TEMP_ALLOC_ASSIGN_ZEROED_COND (ab, animjoints, animjoints > 0);
@@ -5616,7 +5619,7 @@ static qboolean MD5Anim_Load (md5animctx_t *ctx, jointinfo_t *joints, jointpose_
 		if (ab[j].flags & ~63)
 			MD5ERROR ("%s: joint has unsupported flags\n", fname);
 		ab[j].offset = MD5ANIMUINT ();
-		if (ab[j].offset + MD5_CountAnimatedComponents (ab[j].flags) > rawcount)
+		if (ab[j].offset > rawcount || MD5_CountAnimatedComponents (ab[j].flags) > rawcount - ab[j].offset)
 			MD5ERROR ("%s: joint has bad offset\n", fname);
 		ab[j].mesh_index = -1;
 
