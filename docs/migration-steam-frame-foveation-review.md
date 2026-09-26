@@ -69,7 +69,9 @@ attachment reads become undefined, protected content loses depth/coverage, or
 the implementation duplicates vkQuake pass policy. Hardware capability and
 eye-provider testing remain user-side qualification, not assumptions in code.
 
-The human tradeoff is whether to invest in a subsampled reconstruction bridge
-if Frame lacks `fragmentDensityMapNonSubsampledImages`. Until that is known,
-the engineering-safe behavior is the existing KHR path where available and
+If Frame lacks `fragmentDensityMapNonSubsampledImages`, evaluate the smallest
+subsampled reconstruction bridge against the user's runtime-first preference
+and the protected-depth proof. Reopen the architecture decision if that bridge
+duplicates vkQuake's pass policy or loses a measured performance benefit.
+Until qualification succeeds, keep the existing KHR path where available and
 full-rate rendering otherwise, with no automatic fixed-foveation fallback.
