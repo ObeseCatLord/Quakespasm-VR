@@ -1460,6 +1460,39 @@ static const char *GetDeviceVendorFromDeviceProperties (void)
 	return NULL;
 }
 
+static void GL_SelectRenderFormats (VkBool32 extended_format_support)
+{
+	VkFormatProperties format_properties;
+	vulkan_globals.color_format = VK_FORMAT_R8G8B8A8_UNORM;
+	if (extended_format_support == VK_TRUE)
+	{
+		vkGetPhysicalDeviceFormatProperties (vulkan_physical_device, VK_FORMAT_A2B10G10R10_UNORM_PACK32, &format_properties);
+		if ((format_properties.optimalTilingFeatures & REQUIRED_COLOR_BUFFER_FEATURES) == REQUIRED_COLOR_BUFFER_FEATURES)
+		{
+			Con_Printf ("Using A2B10G10R10 color buffer format\n");
+			vulkan_globals.color_format = VK_FORMAT_A2B10G10R10_UNORM_PACK32;
+		}
+	}
+
+	vkGetPhysicalDeviceFormatProperties (vulkan_physical_device, VK_FORMAT_D24_UNORM_S8_UINT, &format_properties);
+	const qboolean d24_support = (format_properties.optimalTilingFeatures & VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT) != 0;
+	vkGetPhysicalDeviceFormatProperties (vulkan_physical_device, VK_FORMAT_D32_SFLOAT_S8_UINT, &format_properties);
+	const qboolean d32_support = (format_properties.optimalTilingFeatures & VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT) != 0;
+	if (d32_support)
+	{
+		Con_Printf ("Using D32_S8 depth buffer format\n");
+		vulkan_globals.depth_format = VK_FORMAT_D32_SFLOAT_S8_UINT;
+	}
+	else if (d24_support)
+	{
+		Con_Printf ("Using D24_S8 depth buffer format\n");
+		vulkan_globals.depth_format = VK_FORMAT_D24_UNORM_S8_UINT;
+	}
+	else
+		Sys_Error ("Cannot find VK_FORMAT_D24_UNORM_S8_UINT or VK_FORMAT_D32_SFLOAT_S8_UINT depth buffer format");
+	Con_Printf ("\n");
+}
+
 /*
 ===============
 GL_InitDevice
@@ -1950,6 +1983,7 @@ static void GL_InitDevice (void)
 	const VkBool32 extended_format_support = vulkan_globals.device_features.shaderStorageImageExtendedFormats;
 	const VkBool32 independent_blend = vulkan_globals.device_features.independentBlend;
 	const VkBool32 sampler_anisotropic = vulkan_globals.device_features.samplerAnisotropy;
+	GL_SelectRenderFormats (extended_format_support);
 
 	ZEROED_STRUCT (VkPhysicalDeviceFeatures, device_features);
 	device_features.shaderStorageImageExtendedFormats = extended_format_support;
@@ -2092,48 +2126,6 @@ static void GL_InitDevice (void)
 	// donor lock without holding it across runtime error handling or retirement.
 	if (openxr_vulkan_binding && !VRXR_SetVulkanQueueCallbacks (GL_OpenXRLockQueue, GL_OpenXRUnlockQueue, vulkan_globals.queue_mutex))
 		Sys_Error ("Couldn't register OpenXR Vulkan queue synchronization");
-
-	VkFormatProperties format_properties;
-
-	// Find color buffer format
-	vulkan_globals.color_format = VK_FORMAT_R8G8B8A8_UNORM;
-
-	if (extended_format_support == VK_TRUE)
-	{
-		vkGetPhysicalDeviceFormatProperties (vulkan_physical_device, VK_FORMAT_A2B10G10R10_UNORM_PACK32, &format_properties);
-		qboolean a2_b10_g10_r10_support = (format_properties.optimalTilingFeatures & REQUIRED_COLOR_BUFFER_FEATURES) == REQUIRED_COLOR_BUFFER_FEATURES;
-
-		if (a2_b10_g10_r10_support)
-		{
-			Con_Printf ("Using A2B10G10R10 color buffer format\n");
-			vulkan_globals.color_format = VK_FORMAT_A2B10G10R10_UNORM_PACK32;
-		}
-	}
-
-	// Find depth format
-	vkGetPhysicalDeviceFormatProperties (vulkan_physical_device, VK_FORMAT_D24_UNORM_S8_UINT, &format_properties);
-	qboolean x8_d24_support = (format_properties.optimalTilingFeatures & VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT) != 0;
-	vkGetPhysicalDeviceFormatProperties (vulkan_physical_device, VK_FORMAT_D32_SFLOAT_S8_UINT, &format_properties);
-	qboolean d32_support = (format_properties.optimalTilingFeatures & VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT) != 0;
-
-	vulkan_globals.depth_format = VK_FORMAT_UNDEFINED;
-	if (d32_support)
-	{
-		Con_Printf ("Using D32_S8 depth buffer format\n");
-		vulkan_globals.depth_format = VK_FORMAT_D32_SFLOAT_S8_UINT;
-	}
-	else if (x8_d24_support)
-	{
-		Con_Printf ("Using D24_S8 depth buffer format\n");
-		vulkan_globals.depth_format = VK_FORMAT_D24_UNORM_S8_UINT;
-	}
-	else
-	{
-		// This cannot happen with a compliant Vulkan driver. The spec requires support for one of the formats.
-		Sys_Error ("Cannot find VK_FORMAT_D24_UNORM_S8_UINT or VK_FORMAT_D32_SFLOAT_S8_UINT depth buffer format");
-	}
-
-	Con_Printf ("\n");
 
 	GET_GLOBAL_DEVICE_PROC_ADDR (vk_cmd_bind_pipeline, vkCmdBindPipeline);
 	GET_GLOBAL_DEVICE_PROC_ADDR (vk_cmd_push_constants, vkCmdPushConstants);
