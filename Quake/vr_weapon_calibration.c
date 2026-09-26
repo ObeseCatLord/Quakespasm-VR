@@ -2048,10 +2048,12 @@ static qboolean VR_WeaponCalibrationApplyADRootFallbacks(void)
 {
 	const char *game = COM_SkipPath(com_gamedir);
 
-	/* q30a1024 is documented as AD-based; its schema is still applied after
-	 * this baseline and remains authoritative for every field it contains. */
+	/* These installed mods contain byte-identical AD root viewmodels. Their
+	 * own schemas are applied afterward and remain authoritative. */
 	if (!game || (q_strcasecmp(game, "ad") &&
-		q_strcasecmp(game, "q30a1024")))
+		q_strcasecmp(game, "q30a1024") &&
+		q_strcasecmp(game, "gibtropolis") &&
+		q_strcasecmp(game, "hwjam4")))
 		return true;
 	return VR_WeaponCalibrationApplySchema(vr_ad_weapon_fallbacks,
 		sizeof(vr_ad_weapon_fallbacks) /

@@ -402,6 +402,22 @@ int main(void)
 	AssertClassicProfile("progs/ad171/v_shot.mdl", 1.5f, 1.7f, 17.5f,
 		0.33f, 0.0f, 0.0f, 17.5f);
 
+	/* These AD-derived games have byte-identical root viewmodel assets.
+	 * Their own schema still overrides an individual AD default. */
+	strcpy(com_gamedir, "/fixtures/gibtropolis");
+	fixture_file_contents = NULL;
+	assert(VR_WeaponCalibrationReloadGame());
+	AssertADRootProfiles();
+	strcpy(com_gamedir, "/fixtures/hwjam4");
+	fixture_file_contents =
+		"{ viewmodel progs/v_shot.mdl held_scale 0.7 "
+		"held_offset 1 2 3 muzzle_offset 4 5 6 }";
+	assert(VR_WeaponCalibrationReloadGame());
+	AssertClassicProfile("progs/v_shot.mdl", 1.0f, 2.0f, 3.0f,
+		0.7f, 4.0f, 5.0f, 6.0f);
+	AssertClassicProfile("progs/v_shadaxe5.mdl", -1.5f, 43.1f, 41.0f,
+		0.25f, 0.0f, 0.0f, 41.0f);
+
 	puts("VR weapon calibration reload fixture passed");
 	return 0;
 }
