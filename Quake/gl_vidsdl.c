@@ -91,6 +91,7 @@ static qboolean openxr_frame_submitted;
 static vrxr_frame_t openxr_frame;
 static vrf_policy_state_t openxr_foveation_policy;
 static VkImageView *openxr_image_views;
+static VkImageView *openxr_density_image_views;
 static uint32_t openxr_image_count;
 static uint32_t openxr_image_index;
 static int openxr_desktop_width, openxr_desktop_height;
@@ -3474,6 +3475,11 @@ GL_CreateMainFrameBuffers
 static void GL_DestroyXRImageViews (void)
 {
 	for (uint32_t i = 0; i < openxr_image_count; ++i)
+		if (openxr_density_image_views && openxr_density_image_views[i])
+			vkDestroyImageView (vulkan_globals.device, openxr_density_image_views[i], NULL);
+	free (openxr_density_image_views);
+	openxr_density_image_views = NULL;
+	for (uint32_t i = 0; i < openxr_image_count; ++i)
 		vkDestroyImageView (vulkan_globals.device, openxr_image_views[i], NULL);
 	free (openxr_image_views);
 	openxr_image_views = NULL;
@@ -3493,6 +3499,7 @@ static void GL_CreateXRImageViews (void)
 		openxr_image_count = 0;
 		Sys_Error ("Couldn't allocate OpenXR image views");
 	}
+	qboolean density_view_failed = false;
 	for (uint32_t i = 0; i < openxr_image_count; ++i)
 	{
 		vrxr_vulkan_eye_t image;
@@ -3508,6 +3515,41 @@ static void GL_CreateXRImageViews (void)
 		const VkResult result = vkCreateImageView (vulkan_globals.device, &info, NULL, &openxr_image_views[i]);
 		if (result != VK_SUCCESS)
 			Sys_Error ("Couldn't create OpenXR image view: %d", result);
+
+		if (i == 0 && image.density_image)
+			openxr_density_image_views = calloc (openxr_image_count, sizeof (*openxr_density_image_views));
+		if (image.density_image && !openxr_density_image_views)
+			density_view_failed = true;
+		if (openxr_density_image_views && !density_view_failed)
+		{
+			if (!image.density_image || !image.density_width || !image.density_height)
+			{
+				density_view_failed = true;
+				continue;
+			}
+			// XR_FB_foveation_vulkan returns a borrowed image and extent, but
+			// no format. RG8 is the Vulkan-required FDM format and the format
+			// used by existing XR integrations. A rejected view disables only
+			// the optional density-map path, never ordinary stereo output.
+			const VkImageViewCreateInfo density_info = {
+				.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+				.image = image.density_image,
+				.viewType = VK_IMAGE_VIEW_TYPE_2D_ARRAY,
+				.format = VK_FORMAT_R8G8_UNORM,
+				.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 2},
+			};
+			if (vkCreateImageView (vulkan_globals.device, &density_info, NULL, &openxr_density_image_views[i]) != VK_SUCCESS)
+				density_view_failed = true;
+		}
+	}
+	if (density_view_failed)
+	{
+		for (uint32_t i = 0; i < openxr_image_count; ++i)
+			if (openxr_density_image_views && openxr_density_image_views[i])
+				vkDestroyImageView (vulkan_globals.device, openxr_density_image_views[i], NULL);
+		free (openxr_density_image_views);
+		openxr_density_image_views = NULL;
+		Con_Printf ("OpenXR borrowed density-map views unavailable; rendering at full rate.\n");
 	}
 }
 
