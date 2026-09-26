@@ -1440,3 +1440,17 @@ admission and ordinary physics separately. The private WALK trial remains
 stock-program-only; testing the shared maintenance pose helper does not widen
 that admission. These fixtures do not qualify tracked rendering, alignment,
 headset feel, Windows or ARM.
+
+## Stock axe server regression
+
+```sh
+tests/vr_stock_axe_runtime.sh
+```
+
+This headless fixture uses the same debug build and an isolated tree of the
+installed id1 PAKs. It checks the exact stock-program gate, explicit immersive
+melee enablement, queued edge contact through ordinary server physics, native
+damage/cooldown, and consumed-stroke continuity. The held-trigger check clears
+cooldown before verifying suppression; switching to desktop input then confirms
+that native attacks still schedule. It covers shared server behavior changed
+by the Dwell integration, not headset tracking or rendering.

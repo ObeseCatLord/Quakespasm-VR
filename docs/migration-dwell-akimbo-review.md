@@ -231,3 +231,10 @@ control. That corrected case passes. Offer serialization is source-reviewed;
 the policy fixture does not execute compiler-inlined serialization helpers.
 The expiry fixture verifies admission rejection but does not force execution
 through the sibling fail-closed branch. These are explicit proof limits.
+
+After rebuilding the final source, all three Dwell fixtures pass. A separate
+stock id1 regression also passes through ordinary server physics: physical
+contact deals 20 damage and advances native cooldown, accepted contact retains
+held-trigger suppression after cooldown is cleared, and desktop input schedules
+its native attack. This checks the shared suppression changes against the
+existing stock behavior without expanding the supported-program gate.
