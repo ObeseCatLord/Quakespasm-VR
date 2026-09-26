@@ -12,7 +12,7 @@ health writes or to every mod-specific damage path.
 | Design choice | Disposition |
 | --- | --- |
 | Adapt the donor's single shield at the existing server callback boundaries for desktop and VR. | Adopt. Native QuakeC remains the sole damage implementation. |
-| Cover the entire stock and Dwell physical outcome, including sound/rune helpers and whiffs. | Adopt. Do not include unrelated button-touch callbacks. |
+| Cover stock physical callbacks that may damage; for Dwell, scope the pinned `W_FireAxe` leaf on hits and whiffs. | Adopt. The donor starts Dwell shielding at the leaf, after its non-damaging prelude. Do not include unrelated button-touch callbacks. |
 | Restore valid temporary state before shutdown/disconnect QuakeC; discard the snapshot before VM destruction or reload. | Adopt. A frame-end reset alone is too late. |
 | Track a different attacker for nested callbacks. | Reject for this compatibility port; donor behavior keeps outer attribution. |
 | Intercept damage at a generic QuakeC boundary instead. | Defer: stock and Dwell damage ABI/effect order have not been proven equivalent. |
@@ -29,7 +29,9 @@ writes the identical value during the callback.
 Implementation boundaries in the donor are `Quake/sv_phys.c`'s
 `SV_FriendlyFireBegin/End`, scheduled Think, both impact directions and
 PostThink paths. The target should reuse those existing dispatch sites and
-add explicit scope around physical outcomes. `Host_Error` and
+add explicit scope around damage-capable physical callbacks. The donor Dwell
+adapter begins its shield immediately before `W_FireAxe`; its prelude runs
+outside that shield. `Host_Error` and
 `Host_EndGame` can run `ClientDisconnect` during teardown, so restore before
 those callbacks and invalidate before clearing/reloading server QuakeC.
 
