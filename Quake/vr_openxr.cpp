@@ -738,7 +738,7 @@ static bool create_foveation_profiles() {
 	fixed.level=XR_FOVEATION_LEVEL_LOW_FB; fixed.verticalOffset=0.f; fixed.dynamic=XR_FOVEATION_DYNAMIC_DISABLED_FB;
 	XrFoveationProfileCreateInfoFB fixedCreate={XR_TYPE_FOVEATION_PROFILE_CREATE_INFO_FB}; fixedCreate.next=&fixed;
 	g.foveationFixedAvailable=create_foveation_profile("xrCreateFoveationProfileFB fixed",fixedCreate,g.foveationFixed);
-	if(g.terminal) return false;
+	if(g.terminal || (!g.foveationFixedAvailable && g.foveationFixed)) return false;
 	if(g.foveationEyeSupported && g.xr.FoveationEyeTrackedState) {
 		XrFoveationEyeTrackedProfileCreateInfoMETA eye={XR_TYPE_FOVEATION_EYE_TRACKED_PROFILE_CREATE_INFO_META};
 		XrFoveationLevelProfileCreateInfoFB eyeLevel={XR_TYPE_FOVEATION_LEVEL_PROFILE_CREATE_INFO_FB};
@@ -755,7 +755,7 @@ static bool create_foveation_profiles() {
 			eyeLevel.dynamic=XR_FOVEATION_DYNAMIC_DISABLED_FB;
 			g.foveationEyeAvailable=create_foveation_profile("xrCreateFoveationProfileFB static eye",eyeCreate,g.foveationEye);
 		}
-		if(g.terminal) return false;
+		if(g.terminal || (!g.foveationEyeAvailable && g.foveationEye)) return false;
 	}
 	return update_foveation_profile(g.foveationOff);
 }
