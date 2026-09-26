@@ -42,3 +42,15 @@ option off, coop off, classic mode, fractional/negative nonzero values,
 nested callbacks, disconnect/reuse and both abort paths. Dwell needs its
 own comparison once its physical outcome is connected. This design review
 does not certify parity.
+
+An Astra Max review of the first port found one concrete nested lifecycle
+bug: `PF_dropclient` can call `SV_DropClient` synchronously inside a protected
+QuakeC callback. Restoring and clearing the shield at the start of the drop
+left the rest of the outer callback unprotected. The correction in
+`ec5e4761` suspends the one outer snapshot before `ClientDisconnect` and
+resumes it after the drop, protecting surviving players while the original
+callback continues. A nested drop cannot take over that snapshot. Reserved
+client edict slots made extra shield-specific retain/release bookkeeping
+unnecessary, so it was removed. A three-client software case should verify
+that `ClientDisconnect` sees ordinary damageability, the outer callback
+resumes protection, and a final scope exit restores normal state.
