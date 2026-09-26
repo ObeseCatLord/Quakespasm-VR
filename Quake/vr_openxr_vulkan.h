@@ -42,8 +42,10 @@ int VRXR_SetVulkanQueueCallbacks(void (*lock)(void *), void (*unlock)(void *), v
  * command pools. Register the renderer's existing queue mutex with
  * VRXR_SetVulkanQueueCallbacks before attaching. array_layers=2 selects one
  * stereo array swapchain (multiview target); 1 retains separate eye swapchains.
- * density_maps requests borrowed fragment-density-map images. It must remain
- * zero until the renderer has negotiated its image and pass requirements.
+ * density_maps requests borrowed fragment-density-map images. The Vulkan
+ * device must have enabled VK_EXT_fragment_density_map and fragmentDensityMap;
+ * this adapter rejects the request otherwise. It must remain zero until the
+ * renderer has negotiated its image and pass requirements.
  * density_image_flags apply only to the runtime-owned color swapchain images;
  * they allow SUBSAMPLED and FRAGMENT_DENSITY_MAP_OFFSET. Nonzero flags require
  * density_maps and XR_META_vulkan_swapchain_create_info support. */

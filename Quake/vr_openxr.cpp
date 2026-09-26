@@ -139,6 +139,7 @@ struct VulkanBinding {
 	XrSwapchainUsageFlags extraUsage;
 	uint32_t arrayLayers;
 	bool densityMaps;
+	bool fragmentDensityMapEnabled;
 	VkImageCreateFlags densityImageFlags;
 	void (*retireImages)(void *);
 	void *owner;
@@ -146,7 +147,7 @@ struct VulkanBinding {
 	void (*unlockQueue)(void *);
 	void *queueOwner;
 	VulkanBinding() : getProc(0), instance(VK_NULL_HANDLE), physicalDevice(VK_NULL_HANDLE),
-		device(VK_NULL_HANDLE), requirements(), format(VK_FORMAT_UNDEFINED), extraUsage(0), arrayLayers(1), densityMaps(false), densityImageFlags(0), retireImages(0), owner(0), lockQueue(0), unlockQueue(0), queueOwner(0) {}
+		device(VK_NULL_HANDLE), requirements(), format(VK_FORMAT_UNDEFINED), extraUsage(0), arrayLayers(1), densityMaps(false), fragmentDensityMapEnabled(false), densityImageFlags(0), retireImages(0), owner(0), lockQueue(0), unlockQueue(0), queueOwner(0) {}
 };
 struct State {
 	LoaderHandle loader;
@@ -1322,6 +1323,16 @@ extern "C" int VRXR_CreateVulkanDevice(const VkDeviceCreateInfo *info, VkDevice 
 	XrResult xrResult=g.xr.CreateVulkanDevice(g.instance,&create,device,&result);
 	if(!vulkan_result("xrCreateVulkanDeviceKHR",xrResult,result) || !*device) return 0;
 	g.vk.device=*device;
+	bool densityExtensionEnabled=false, densityFeatureEnabled=false;
+	for(uint32_t i=0;i<info->enabledExtensionCount;++i)
+		if(info->ppEnabledExtensionNames && info->ppEnabledExtensionNames[i] &&
+		   !std::strcmp(info->ppEnabledExtensionNames[i],VK_EXT_FRAGMENT_DENSITY_MAP_EXTENSION_NAME))
+			densityExtensionEnabled=true;
+	for(const VkBaseInStructure *next=reinterpret_cast<const VkBaseInStructure*>(info->pNext); next;
+	    next=reinterpret_cast<const VkBaseInStructure*>(next->pNext))
+		if(next->sType==VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FRAGMENT_DENSITY_MAP_FEATURES_EXT)
+			densityFeatureEnabled=reinterpret_cast<const VkPhysicalDeviceFragmentDensityMapFeaturesEXT*>(next)->fragmentDensityMap==VK_TRUE;
+	g.vk.fragmentDensityMapEnabled=densityExtensionEnabled && densityFeatureEnabled;
 	for(uint32_t i=0;i<info->queueCreateInfoCount;++i) {
 		const VkDeviceQueueCreateInfo &queue=info->pQueueCreateInfos[i];
 		VulkanQueue saved={queue.queueFamilyIndex,queue.queueCount,queue.flags}; g.vk.queues.push_back(saved);
@@ -1349,6 +1360,9 @@ extern "C" int VRXR_AttachVulkan(uint32_t queue_family, uint32_t queue_index,
 	   !g.vk.lockQueue || !g.vk.unlockQueue || (array_layers!=1 && array_layers!=kViews)) return 0;
 	if(density_maps && !g.foveationSupported) {
 		say("OpenXR: Vulkan fragment density maps requested but foveation is unavailable"); return 0;
+	}
+	if(density_maps && !g.vk.fragmentDensityMapEnabled) {
+		say("OpenXR: Vulkan fragment density maps require VK_EXT_fragment_density_map and its device feature"); return 0;
 	}
 	const VkImageCreateFlags allowed_density_image_flags=VK_IMAGE_CREATE_SUBSAMPLED_BIT_EXT |
 		VK_IMAGE_CREATE_FRAGMENT_DENSITY_MAP_OFFSET_BIT_QCOM;
