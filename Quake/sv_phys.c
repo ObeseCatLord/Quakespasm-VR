@@ -4614,15 +4614,62 @@ static void SV_VRStockAxeRefreshTriggerSuppression (client_t *client,
 	}
 }
 
-static qboolean SV_VRStockAxeSweep (edict_t *ent,
+typedef enum
+{
+	SV_VR_AXE_SWEEP_STOCK,
+	SV_VR_AXE_SWEEP_DWELL_EDGE
+} sv_vr_axe_sweep_policy_t;
+
+/* Recover an edge point that is already inside a collider by finding that
+ * collider's surface from the attacker's side. A startsolid trace itself has
+ * no usable entry surface; never reinterpret it as a hit or extend the edge
+ * to an unrelated intervening target. */
+static qboolean SV_VRDwellRecoverAxeOverlap (edict_t *ent,
+	vec3_t eye, vec3_t grip, vec3_t start, vec3_t end,
+	trace_t *trace)
+{
+	vec3_t embedded, anchor;
+	int attempt;
+
+	VectorCopy (start, embedded);
+	for (attempt = 0; attempt < 2; attempt++)
+	{
+		trace_t entry, inside, reach;
+		VectorCopy (attempt ? eye : grip, anchor);
+		entry = SV_Move (anchor, vec3_origin, vec3_origin, embedded,
+			MOVE_NORMAL, ent);
+		if (entry.startsolid || entry.allsolid || entry.fraction >= 1.0f ||
+			!entry.ent || entry.ent->free)
+			continue;
+		inside = SV_ClipMoveToEntity (entry.ent, embedded, vec3_origin,
+			vec3_origin, embedded, CONTENTMASK_ANYSOLID);
+		if (!inside.startsolid)
+			continue;
+		reach = SV_Move (grip, vec3_origin, vec3_origin, entry.endpos,
+			MOVE_NOMONSTERS, ent);
+		if (reach.startsolid || reach.allsolid ||
+			(reach.fraction < 1.0f &&
+			 SV_VRContactDistance (reach.endpos, entry.endpos) > 2.0f))
+			continue;
+		VectorCopy (anchor, start);
+		VectorCopy (embedded, end);
+		*trace = entry;
+		return true;
+	}
+	return false;
+}
+
+static qboolean SV_VRAxeSweep (edict_t *ent,
 	const vr_weapon_contact_t *previous, const vr_weapon_contact_t *current,
-	int hand, trace_t *best, qboolean *blocked)
+	int hand, sv_vr_axe_sweep_policy_t policy, trace_t *best,
+	qboolean *blocked)
 {
 	vec3_t eye, grip;
 	float first_fraction = FLT_MAX;
 	float first_blocked_fraction = FLT_MAX;
 	qboolean found = false;
 	int best_part = -1, best_point = -1;
+	int first_part = policy == SV_VR_AXE_SWEEP_DWELL_EDGE ? 1 : 0;
 	int part;
 
 	memset (best, 0, sizeof (*best));
@@ -4640,10 +4687,10 @@ static qboolean SV_VRStockAxeSweep (edict_t *ent,
 		}
 	}
 
-	/* Sweep both the handle (grip to head) and cutting edge (base to tip).
-	 * Historical offsets are expressed in the current body frame, so walking
-	 * cannot itself generate a weapon stroke. */
-	for (part = 0; part < 2; part++)
+	/* Stock covers the handle (grip to head) and edge (base to tip); the
+	 * dormant Dwell policy starts at the edge. Historical offsets stay in the
+	 * current body frame so walking cannot generate a weapon stroke. */
+	for (part = first_part; part < 2; part++)
 	{
 		const vec_t *old_a = part == 0 ? previous->grip[hand] : previous->base[hand];
 		const vec_t *old_b = part == 0 ? previous->base[hand] : previous->tip[hand];
@@ -4660,6 +4707,7 @@ static qboolean SV_VRStockAxeSweep (edict_t *ent,
 		{
 			vec3_t start, end, old_point, new_point, impact;
 			trace_t candidate, reach;
+			qboolean recovered = false;
 			float t = point < 0 ? 0.0f : (float)point / steps;
 			float event_time;
 			int axis;
@@ -4675,11 +4723,18 @@ static qboolean SV_VRStockAxeSweep (edict_t *ent,
 			}
 			candidate = SV_Move (start, vec3_origin, vec3_origin, end,
 				MOVE_NORMAL, ent);
-			if (candidate.startsolid || candidate.allsolid ||
-				candidate.fraction >= 1.0f || !candidate.ent || candidate.ent->free ||
+			if (candidate.startsolid || candidate.allsolid)
+			{
+				if (policy != SV_VR_AXE_SWEEP_DWELL_EDGE ||
+					!SV_VRDwellRecoverAxeOverlap (ent, eye, grip, start, end,
+						&candidate))
+					continue;
+				recovered = true;
+			}
+			if (candidate.fraction >= 1.0f || !candidate.ent || candidate.ent->free ||
 				candidate.ent == ent)
 				continue;
-			event_time = point < 0 ? 1.0f : candidate.fraction;
+			event_time = point < 0 ? 1.0f : recovered ? 0.0f : candidate.fraction;
 
 			VectorCopy (candidate.endpos, impact);
 			reach = SV_Move (grip, vec3_origin, vec3_origin, impact,
@@ -4713,6 +4768,14 @@ static qboolean SV_VRStockAxeSweep (edict_t *ent,
 	*blocked = first_blocked_fraction < FLT_MAX &&
 		first_blocked_fraction <= first_fraction;
 	return found;
+}
+
+static qboolean SV_VRStockAxeSweep (edict_t *ent,
+	const vr_weapon_contact_t *previous, const vr_weapon_contact_t *current,
+	int hand, trace_t *best, qboolean *blocked)
+{
+	return SV_VRAxeSweep (ent, previous, current, hand,
+		SV_VR_AXE_SWEEP_STOCK, best, blocked);
 }
 
 static qboolean SV_VRStockAxeOutcome (client_t *client, edict_t *ent,
