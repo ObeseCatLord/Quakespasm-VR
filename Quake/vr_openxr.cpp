@@ -697,6 +697,13 @@ static bool create_swapchains() {
 			}
 			if(!ok("xrEnumerateSwapchainImages",g.xr.EnumerateSwapchainImages(chain.handle,imageCount,&imageCount,
 				reinterpret_cast<XrSwapchainImageBaseHeader*>(chain.vulkanImages.data())))) return false;
+			if(g.vk.densityMaps) for(uint32_t i=0;i<imageCount;++i) {
+				const XrSwapchainImageFoveationVulkanFB &density=chain.densityImages[i];
+				if(!density.image || !density.width || !density.height) {
+					say("OpenXR: runtime returned an incomplete fragment density map image");
+					return false;
+				}
+			}
 			continue;
 		}
 	}
@@ -1408,7 +1415,14 @@ extern "C" int VRXR_AttachVulkan(uint32_t queue_family, uint32_t queue_index,
 	binding.queueFamilyIndex=queue_family; binding.queueIndex=queue_index;
 	XrSessionCreateInfo create={XR_TYPE_SESSION_CREATE_INFO}; create.systemId=g.system; create.next=&binding;
 	if(!ok("xrCreateSession Vulkan",g.xr.CreateSession(g.instance,&create,&g.session)) || !finish_session() || g.terminal) {
-		VRXR_DetachVulkan(); return 0;
+		const bool retryWithoutDensityMaps=density_maps && !g.terminal;
+		VRXR_DetachVulkan();
+		if(retryWithoutDensityMaps) {
+			say("OpenXR: runtime density-map setup failed; retrying ordinary VR swapchains");
+			return VRXR_AttachVulkan(queue_family,queue_index,extra_image_usage,array_layers,
+				retire_images,owner,0,0);
+		}
+		return 0;
 	}
 	g.stopReason=VRXR_STOP_NONE;
 	say("OpenXR: initialized native Vulkan binding"); return 1;
