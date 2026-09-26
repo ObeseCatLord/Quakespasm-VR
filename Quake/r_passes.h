@@ -110,7 +110,7 @@ uint32_t R_RecordFrame (
 	void (*record_readback) (void *), void *readback_data);
 
 bool R_SetupRenderPasses (void);
-void R_CreateRenderPasses (void);
+bool R_CreateRenderPasses (void);
 void R_DestroyRenderPasses (void);
 
 struct cb_context_s;

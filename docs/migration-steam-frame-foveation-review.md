@@ -263,7 +263,7 @@ default `vid_fsaa 4` therefore leaves this path full rate until explicitly
 changed. The eye profile requires the `vr_eye_tracking` toggle and Vulkan
 per-eye offset support. Missing or invalid gaze selects the off profile, never
 fixed foveation. Density setup failure retries ordinary XR stereo; a rejected
-density framebuffer rebuilds full-rate passes. KHR cannot be resumed on the
+density render pass or framebuffer rebuilds full-rate passes. KHR cannot be resumed on the
 same Vulkan device after FDM feature commitment.
 
 The borrowed image still has no standardized format/layout/creation-flag

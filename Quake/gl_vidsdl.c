@@ -3840,7 +3840,16 @@ static void GL_CreateRenderResources (void)
 	if (vulkan_globals.openxr_fragment_shading_rate_active && !GL_CreateFragmentShadingRateImage ())
 		vulkan_globals.openxr_fragment_shading_rate_active = false;
 	R_SetupRenderPasses ();
-	R_CreateRenderPasses ();
+	if (!R_CreateRenderPasses ())
+	{
+		R_DestroyRenderPasses ();
+		vulkan_globals.openxr_fragment_density_map_active = false;
+		openxr_density_backend_failed = true;
+		Con_Printf ("OpenXR density render passes unavailable; continuing with full-rate stereo.\n");
+		R_SetupRenderPasses ();
+		if (!R_CreateRenderPasses ())
+			Sys_Error ("Couldn't create full-rate render passes");
+	}
 	if (!GL_CreateFrameBuffers ())
 	{
 		// A runtime-provided map is optional. Retire partially created
@@ -3851,7 +3860,8 @@ static void GL_CreateRenderResources (void)
 		openxr_density_backend_failed = true;
 		Con_Printf ("OpenXR density framebuffers unavailable; continuing with full-rate stereo.\n");
 		R_SetupRenderPasses ();
-		R_CreateRenderPasses ();
+		if (!R_CreateRenderPasses ())
+			Sys_Error ("Couldn't create full-rate render passes");
 		if (!GL_CreateFrameBuffers ())
 			Sys_Error ("Couldn't create full-rate framebuffers");
 	}

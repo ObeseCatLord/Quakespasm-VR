@@ -467,7 +467,7 @@ static VkResult R_CreateRateMapRenderPass (
 }
 
 // Subpass types describe attachment use, not draw-stage identity or grouping.
-static void R_CreateGraphicsPasses (
+static bool R_CreateGraphicsPasses (
 	main_render_pass_variant_t variant, frame_target_t target, const VkAttachmentDescription *attachments, uint32_t attachment_count,
 	const VkSubpassDescription *stage_definitions)
 {
@@ -583,10 +583,11 @@ static void R_CreateGraphicsPasses (
 				.pCorrelationMasks = &correlation_mask,
 			};
 			VkResult result;
+			VkRenderPass created = VK_NULL_HANDLE;
 			if (use_fragment_shading_rate || use_density_map)
 				result = R_CreateRateMapRenderPass (
 					pass_attachments, attachment_count, subpasses, desc->subpass_count, dependencies, dependency_count,
-					use_density_map, &physical->handles[stencil]);
+					use_density_map, &created);
 			else
 			{
 				const VkRenderPassCreateInfo info = {
@@ -599,10 +600,18 @@ static void R_CreateGraphicsPasses (
 					.dependencyCount = dependency_count,
 					.pDependencies = dependencies,
 				};
-				result = vkCreateRenderPass (vulkan_globals.device, &info, NULL, &physical->handles[stencil]);
+				result = vkCreateRenderPass (vulkan_globals.device, &info, NULL, &created);
 			}
 			if (result != VK_SUCCESS)
+			{
+				if (use_density_map)
+				{
+					Con_Printf ("OpenXR density render pass rejected by Vulkan: %d\n", result);
+					return false;
+				}
 				Sys_Error ("Couldn't create render pass: %d", result);
+			}
+			physical->handles[stencil] = created;
 			GL_SetObjectName ((uint64_t)physical->handles[stencil], VK_OBJECT_TYPE_RENDER_PASS,
 				target == FRAME_TARGET_UI ? "ui" : target == FRAME_TARGET_DENSITY_SCENE ? "density scene" : "scene");
 			for (uint32_t subpass = 0; subpass < desc->subpass_count; ++subpass)
@@ -616,6 +625,7 @@ static void R_CreateGraphicsPasses (
 		for (uint32_t i = 0; i < attachment_count; ++i)
 			used_before[i] |= used_here[i];
 	}
+	return true;
 }
 
 void R_DestroyFrameBuffers (void)
@@ -1353,10 +1363,10 @@ static void R_CreateScenePasses (main_render_pass_variant_t variant)
 	R_CreateGraphicsPasses (variant, FRAME_TARGET_SCENE, attachment_descriptions, attachment_count, subpass_descriptions);
 }
 
-static void R_CreateDensityScenePasses (main_render_pass_variant_t variant)
+static bool R_CreateDensityScenePasses (main_render_pass_variant_t variant)
 {
 	if (!R_FrameHasTarget (variant, FRAME_TARGET_DENSITY_SCENE))
-		return;
+		return true;
 	if (!current_layout.stereo || current_layout.samples != VK_SAMPLE_COUNT_1_BIT || current_layout.fragment_shading_rate)
 		Sys_Error ("Density scene requires single-sample stereo without KHR shading rate");
 
@@ -1396,7 +1406,7 @@ static void R_CreateDensityScenePasses (main_render_pass_variant_t variant)
 		.pColorAttachments = &color,
 		.pDepthStencilAttachment = &depth,
 	};
-	R_CreateGraphicsPasses (variant, FRAME_TARGET_DENSITY_SCENE, attachments, countof (attachments), stages);
+	return R_CreateGraphicsPasses (variant, FRAME_TARGET_DENSITY_SCENE, attachments, countof (attachments), stages);
 }
 
 static void R_CreateUIPasses (main_render_pass_variant_t variant)
@@ -1445,13 +1455,14 @@ static void R_CreateUIPasses (main_render_pass_variant_t variant)
 	R_CreateGraphicsPasses (variant, FRAME_TARGET_UI, attachment_descriptions, 2, subpass_descriptions);
 }
 
-void R_CreateRenderPasses (void)
+bool R_CreateRenderPasses (void)
 {
 	R_SetupRenderPasses ();
 	current_layout = pending_layout;
 	for (int variant = 0; variant < MAIN_RENDER_PASS_VARIANT_COUNT; ++variant)
 	{
-		R_CreateDensityScenePasses (variant);
+		if (!R_CreateDensityScenePasses (variant))
+			return false;
 		R_CreateScenePasses (variant);
 		R_CreateUIPasses (variant);
 		R_BindFrameContexts (variant);
@@ -1512,6 +1523,7 @@ void R_CreateRenderPasses (void)
 
 		GL_SetObjectName ((uint64_t)vulkan_globals.warp_render_pass, VK_OBJECT_TYPE_RENDER_PASS, "warp");
 	}
+	return true;
 }
 
 static const render_pass_binding_t *R_RenderPassBindingAt (subpass_type_t type, main_render_pass_variant_t variant, uint32_t index)
