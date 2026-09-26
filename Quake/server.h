@@ -444,6 +444,7 @@ extern cvar_t teamplay;
 extern cvar_t skill;
 extern cvar_t deathmatch;
 extern cvar_t coop;
+extern cvar_t sv_nofriendlyfire;
 extern cvar_t sv_save_multiplayer;
 extern cvar_t sv_coop_autosave;
 extern cvar_t sv_coop_autosave_slots;
@@ -459,6 +460,9 @@ extern cvar_t fraglimit;
 extern cvar_t timelimit;
 
 qboolean SV_CoopFeatureEnabled (const cvar_t *feature, qboolean modern_default);
+qboolean SV_CoopFriendlyFireBegin (edict_t *ent);
+void SV_CoopFriendlyFireEnd (void);
+void SV_CoopFriendlyFireReset (void);
 
 extern server_static_t svs; // persistant server info
 extern server_t		   sv;	// local server

@@ -207,6 +207,7 @@ void Host_EndGame (const char *message, ...)
 	q_vsnprintf (string, sizeof (string), message, argptr);
 	va_end (argptr);
 	Con_DPrintf ("Host_EndGame: %s\n", string);
+	SV_CoopFriendlyFireReset ();
 	SV_ClearVRWeaponPoseScope ();
 
 	PR_SwitchQCVM (NULL);
@@ -251,6 +252,7 @@ void Host_Error (const char *error, ...)
 	if (Tasks_IsWorker () && !recover_client_qc)
 		Sys_Error ("Host_Error outside CSQC draw on worker: %s", string);
 	inerror = true;
+	SV_CoopFriendlyFireReset ();
 	SV_ClearVRWeaponPoseScope ();
 
 	Sys_DebugBreak ();
@@ -415,6 +417,8 @@ void Host_InitLocal (void)
 	Cvar_RegisterVariable (&developer);
 	Cvar_RegisterVariable (&map_checks);
 	Cvar_RegisterVariable (&coop);
+	Cvar_RegisterVariable (&sv_nofriendlyfire);
+	Cvar_SetCallback (&sv_nofriendlyfire, Host_Callback_Notify);
 	Cvar_RegisterVariable (&sv_save_multiplayer);
 	Cvar_RegisterVariable (&sv_coop_autosave);
 	Cvar_SetCallback (&sv_coop_autosave, Host_Callback_Notify);
@@ -568,6 +572,7 @@ void SV_DropClient (qboolean crash)
 	client_t *client;
 	const unsigned int retired_generation = host_client->vrik_generation;
 	const int retired_slot = (int)(host_client - svs.clients);
+	SV_CoopFriendlyFireReset ();
 
 	if (!crash)
 	{
@@ -658,6 +663,7 @@ void Host_ShutdownServer (qboolean crash)
 	byte	  message[4];
 	double	  start;
 
+	SV_CoopFriendlyFireReset ();
 	if (!sv.active)
 		return;
 
@@ -726,6 +732,7 @@ not reinitialize anything.
 */
 void Host_ClearMemory (void)
 {
+	SV_CoopFriendlyFireReset ();
 	SV_ClearVRWeaponPoseScope ();
 	if (cl.qcvm.extfuncs.CSQC_Shutdown)
 	{
@@ -843,6 +850,7 @@ void Host_ServerFrame (void)
 	static double clients_ms, physics_ms, stats_ms, send_ms, interval_start;
 	static int	  ticks;
 
+	SV_CoopFriendlyFireReset ();
 	if (sv_speeds.value)
 		t0 = Sys_DoubleTime ();
 
@@ -938,6 +946,7 @@ void Host_ServerFrame (void)
 			interval_start = t4;
 		}
 	}
+	SV_CoopFriendlyFireReset ();
 }
 
 static void CL_LoadCSProgs (void)

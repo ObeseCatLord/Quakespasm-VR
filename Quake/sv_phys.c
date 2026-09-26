@@ -26,6 +26,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "vr_gorilla.h"
 #include "vr_weapon_calibration.h"
 #include "vr_melee_stock_qc.h"
+#include <stdint.h>
 
 /*
 
@@ -50,6 +51,7 @@ cvar_t sv_stopspeed = {"sv_stopspeed", "100", CVAR_NONE};
 cvar_t sv_gravity = {"sv_gravity", "800", CVAR_NOTIFY | CVAR_SERVERINFO};
 extern cvar_t sv_maxspeed;
 cvar_t sv_maxvelocity = {"sv_maxvelocity", "2000", CVAR_NONE};
+cvar_t sv_nofriendlyfire = {"sv_nofriendlyfire", "0", CVAR_NOTIFY | CVAR_SERVERINFO};
 cvar_t sv_nostep = {"sv_nostep", "0", CVAR_NONE};
 cvar_t sv_freezenonclients = {"sv_freezenonclients", "0", CVAR_NONE};
 cvar_t sv_gameplayfix_spawnbeforethinks = {"sv_gameplayfix_spawnbeforethinks", "0", CVAR_NONE};
@@ -58,6 +60,199 @@ cvar_t sv_fastpushmove = {"sv_fastpushmove", "1", CVAR_NONE};								  // 0=old 
 cvar_t sv_analyticphysics = {"sv_analyticphysics", "1", CVAR_NONE}; // gravity/friction integration matches 72Hz physics at any tick rate
 
 qboolean sv_analyticphysics_frame = true; // sv_analyticphysics latched per SV_Physics, QC can flip the cvar mid-tick
+
+/*
+ * Co-op friendly-fire protection is a callback scope, not a replacement
+ * damage path. Keep QuakeC's normal damage code and temporarily make every
+ * other connected player non-damageable while an attributed callback runs.
+ */
+typedef struct
+{
+	edict_t *edict;
+	float takedamage;
+	qboolean protected;
+	qboolean retained;
+} sv_friendly_fire_player_t;
+
+static qboolean ff_active;
+static qcvm_t *ff_saved_vm;
+static edict_t *ff_saved_edicts;
+static dprograms_t *ff_saved_progs;
+static float *ff_saved_globals;
+static globalvars_t *ff_saved_global_struct;
+static client_t *ff_saved_clients;
+static int ff_saved_maxclients;
+static float ff_saved_teamplay;
+static sv_friendly_fire_player_t ff_players[MAX_SCOREBOARD];
+
+static qboolean SV_FriendlyFireServerValid (void)
+{
+	return qcvm == &sv.qcvm && qcvm->edicts && qcvm->progs && qcvm->globals &&
+		pr_global_struct && svs.clients && svs.maxclients > 0 &&
+		svs.maxclients <= MAX_SCOREBOARD && qcvm->edict_size > 0 &&
+		qcvm->num_edicts > svs.maxclients;
+}
+
+static qboolean SV_FriendlyFireEntityNumber (edict_t *ent, int *number)
+{
+	uintptr_t base, address, extent;
+	size_t edict_size;
+	int num_edicts;
+
+	if (!ent || !number || !qcvm || !qcvm->edicts || qcvm->edict_size <= 0 ||
+		qcvm->num_edicts <= 0)
+		return false;
+	edict_size = (size_t)qcvm->edict_size;
+	num_edicts = qcvm->num_edicts;
+	if ((size_t)num_edicts > (size_t)-1 / edict_size)
+		return false;
+	extent = (uintptr_t)((size_t)num_edicts * edict_size);
+	base = (uintptr_t)qcvm->edicts;
+	address = (uintptr_t)ent;
+	if (extent > (uintptr_t)-1 - base || address < base ||
+		address - base >= extent || (address - base) % edict_size)
+		return false;
+	if ((address - base) / edict_size > 2147483647u)
+		return false;
+	*number = (int)((address - base) / edict_size);
+	return true;
+}
+
+static qboolean SV_FriendlyFireOwnerSlot (edict_t *ent, int *owner_slot)
+{
+	int entnum, owner_offset, slot;
+	double owner_value;
+
+	if (!owner_slot || !SV_FriendlyFireServerValid () ||
+		!SV_FriendlyFireEntityNumber (ent, &entnum) || ent->free)
+		return false;
+	if (entnum > 0 && entnum <= svs.maxclients)
+	{
+		*owner_slot = entnum;
+		return true;
+	}
+
+	/* QuakeC edict references are byte offsets into this VM's edict array. */
+	owner_value = (double)ent->v.owner;
+	if (!isfinite (owner_value) || owner_value < 0 ||
+		owner_value >= 2147483648.0 || owner_value != floor (owner_value))
+		return false;
+	owner_offset = (int)owner_value;
+	if (owner_offset % qcvm->edict_size)
+		return false;
+	slot = owner_offset / qcvm->edict_size;
+	if (slot < 1 || slot > svs.maxclients || slot >= qcvm->num_edicts)
+		return false;
+	*owner_slot = slot;
+	return true;
+}
+
+static qboolean SV_FriendlyFireVMMatches (void)
+{
+	return ff_saved_vm && qcvm == ff_saved_vm && qcvm == &sv.qcvm &&
+		qcvm->edicts == ff_saved_edicts && qcvm->progs == ff_saved_progs &&
+		qcvm->globals == ff_saved_globals &&
+		pr_global_struct == ff_saved_global_struct &&
+		qcvm->num_edicts > ff_saved_maxclients;
+}
+
+static void SV_FriendlyFireClearSnapshot (void)
+{
+	ff_active = false;
+	ff_saved_vm = NULL;
+	ff_saved_edicts = NULL;
+	ff_saved_progs = NULL;
+	ff_saved_globals = NULL;
+	ff_saved_global_struct = NULL;
+	ff_saved_clients = NULL;
+	ff_saved_maxclients = 0;
+	ff_saved_teamplay = 0;
+	memset (ff_players, 0, sizeof (ff_players));
+}
+
+qboolean SV_CoopFriendlyFireBegin (edict_t *ent)
+{
+	int owner_slot, i;
+
+	/* Nested callbacks inherit the first callback's attribution and snapshot. */
+	if (ff_active)
+		return false;
+	if (!sv_nofriendlyfire.value || !coop.value ||
+		!SV_FriendlyFireOwnerSlot (ent, &owner_slot))
+		return false;
+
+	ff_saved_vm = qcvm;
+	ff_saved_edicts = qcvm->edicts;
+	ff_saved_progs = qcvm->progs;
+	ff_saved_globals = qcvm->globals;
+	ff_saved_global_struct = pr_global_struct;
+	ff_saved_clients = svs.clients;
+	ff_saved_maxclients = svs.maxclients;
+	ff_saved_teamplay = pr_global_struct->teamplay;
+	ff_active = true;
+	pr_global_struct->teamplay = 0;
+
+	for (i = 0; i < ff_saved_maxclients; i++)
+	{
+		client_t *client = &svs.clients[i];
+		edict_t *player = EDICT_NUM (i + 1);
+		sv_friendly_fire_player_t *snapshot = &ff_players[i];
+
+		if (i + 1 == owner_slot || !client->active || player->free ||
+			client->edict != player || player->v.takedamage == DAMAGE_NO)
+			continue;
+		snapshot->edict = player;
+		snapshot->takedamage = player->v.takedamage;
+		snapshot->protected = true;
+		/* Prevent ED_Free/ED_Alloc from reusing this slot before restoration. */
+		ED_Retain (player);
+		snapshot->retained = true;
+		player->v.takedamage = DAMAGE_NO;
+	}
+	return true;
+}
+
+void SV_CoopFriendlyFireEnd (void)
+{
+	qboolean vm_matches = SV_FriendlyFireVMMatches ();
+	qboolean slots_match = vm_matches && svs.clients == ff_saved_clients &&
+		svs.maxclients == ff_saved_maxclients;
+	int i;
+
+	if (!ff_active)
+		return;
+	if (slots_match)
+	{
+		/* Preserve a different QuakeC teamplay value written by the callback. */
+		if (pr_global_struct->teamplay == 0)
+			pr_global_struct->teamplay = ff_saved_teamplay;
+		for (i = 0; i < ff_saved_maxclients; i++)
+		{
+			sv_friendly_fire_player_t *snapshot = &ff_players[i];
+			client_t *client = &svs.clients[i];
+			edict_t *player = EDICT_NUM (i + 1);
+
+			if (snapshot->protected && player == snapshot->edict &&
+				client->active && client->edict == player && !player->free &&
+				player->v.takedamage == DAMAGE_NO)
+				player->v.takedamage = snapshot->takedamage;
+		}
+	}
+	/* Retained edicts remain valid even if their player disconnected or died. */
+	if (vm_matches)
+		for (i = 0; i < ff_saved_maxclients; i++)
+			if (ff_players[i].retained)
+				ED_Release (ff_players[i].edict);
+	SV_FriendlyFireClearSnapshot ();
+}
+
+void SV_CoopFriendlyFireReset (void)
+{
+	if (ff_active)
+		SV_CoopFriendlyFireEnd ();
+	else
+		SV_FriendlyFireClearSnapshot ();
+}
 
 /*
  * Co-op dead-player save inventory projection.
@@ -1012,7 +1207,7 @@ static qboolean SV_RunThink (edict_t *ent)
 {
 	float	 thinktime;
 	double	 think_start = 0;
-	qboolean alive;
+	qboolean alive, friendly_fire_scope;
 
 	thinktime = ent->v.nextthink;
 	if (thinktime <= 0 || thinktime > qcvm->time + host_frametime)
@@ -1034,7 +1229,10 @@ static qboolean SV_RunThink (edict_t *ent)
 	pr_global_struct->self = EDICT_TO_PROG (ent);
 	pr_global_struct->other = EDICT_TO_PROG (qcvm->edicts);
 	ED_Retain (ent);
+	friendly_fire_scope = SV_CoopFriendlyFireBegin (ent);
 	PR_ExecuteProgram (ent->v.think);
+	if (friendly_fire_scope)
+		SV_CoopFriendlyFireEnd ();
 
 	ent->lastthink = 0;
 	alive = !ent->free;
@@ -1080,7 +1278,7 @@ static void SV_Impact (edict_t *e1, edict_t *e2)
 	assert (!e1->free && !e2->free);
 
 	int old_self, old_other, e1_prog, e2_prog;
-	qboolean coop_touch_sync;
+	qboolean coop_touch_sync, friendly_fire_scope;
 
 	old_self = pr_global_struct->self;
 	old_other = pr_global_struct->other;
@@ -1094,9 +1292,12 @@ static void SV_Impact (edict_t *e1, edict_t *e2)
 	if (e1->v.touch && e1->v.solid != SOLID_NOT)
 	{
 		coop_touch_sync = SV_CoopSharedBeginClientTouch (e2);
+		friendly_fire_scope = SV_CoopFriendlyFireBegin (e1);
 		pr_global_struct->self = e1_prog;
 		pr_global_struct->other = e2_prog;
 		PR_ExecuteProgram (e1->v.touch);
+		if (friendly_fire_scope)
+			SV_CoopFriendlyFireEnd ();
 		if (coop_touch_sync && !e2->free)
 			SV_CoopSharedEndClientTouch (e2);
 	}
@@ -1105,9 +1306,12 @@ static void SV_Impact (edict_t *e1, edict_t *e2)
 	if (!e2->free && e2->v.touch && e2->v.solid != SOLID_NOT)
 	{
 		coop_touch_sync = SV_CoopSharedBeginClientTouch (e1);
+		friendly_fire_scope = SV_CoopFriendlyFireBegin (e2);
 		pr_global_struct->self = e2_prog;
 		pr_global_struct->other = e1_prog;
 		PR_ExecuteProgram (e2->v.touch);
+		if (friendly_fire_scope)
+			SV_CoopFriendlyFireEnd ();
 		if (coop_touch_sync && !e1->free)
 			SV_CoopSharedEndClientTouch (e1);
 	}
@@ -2515,7 +2719,10 @@ static void SV_Physics_Pusher (edict_t *ent)
 		pr_global_struct->self = EDICT_TO_PROG (ent);
 		pr_global_struct->other = EDICT_TO_PROG (qcvm->edicts);
 		ED_Retain (ent);
+		qboolean friendly_fire_scope = SV_CoopFriendlyFireBegin (ent);
 		PR_ExecuteProgram (ent->v.think);
+		if (friendly_fire_scope)
+			SV_CoopFriendlyFireEnd ();
 		ED_Release (ent);
 	}
 
@@ -4790,7 +4997,7 @@ static qboolean SV_VRStockAxeOutcome (client_t *client, edict_t *ent,
 	eval_t *cooldown, *hostile;
 	int saved_argc;
 	vec3_t saved_angles;
-	qboolean rogue;
+	qboolean rogue, friendly_fire_scope;
 	qboolean alive = false;
 
 	if (!descriptor || !SV_VRStockAxeReady (client, ent, cmd) ||
@@ -4813,6 +5020,7 @@ static qboolean SV_VRStockAxeOutcome (client_t *client, edict_t *ent,
 		sizeof (saved_call_globals));
 	VectorCopy (ent->v.v_angle, saved_angles);
 	SV_VRStockAxeClearTraceScope ();
+	friendly_fire_scope = SV_CoopFriendlyFireBegin (ent);
 	VectorCopy (cmd->vr_handrot, ent->v.v_angle);
 	ent->v.v_angle[ROLL] = 0;
 	AngleVectors (ent->v.v_angle, pr_global_struct->v_forward,
@@ -4889,6 +5097,8 @@ static qboolean SV_VRStockAxeOutcome (client_t *client, edict_t *ent,
 	}
 	else
 		SV_VRStockAxeClearTraceScope ();
+	if (friendly_fire_scope)
+		SV_CoopFriendlyFireEnd ();
 	return alive;
 }
 
@@ -4948,6 +5158,7 @@ qboolean SV_VRDwellBerserkPhysicalOutcome (client_t *client, edict_t *ent,
 	int saved_argc, axis, cursor_sequence;
 	qboolean has_contact = contact != NULL;
 	qboolean haste, context_saved = false, outcome_ok = false;
+	qboolean friendly_fire_scope = false;
 	qboolean cursor_valid;
 
 	/* This owner never nests with another physical axe trace. Retire stale
@@ -5096,7 +5307,13 @@ qboolean SV_VRDwellBerserkPhysicalOutcome (client_t *client, edict_t *ent,
 	pr_global_struct->other = EDICT_TO_PROG (qcvm->edicts);
 	pr_global_struct->time = qcvm->time;
 	qcvm->argc = 0;
+	friendly_fire_scope = SV_CoopFriendlyFireBegin (ent);
 	PR_ExecuteProgram (DWELL_W_FIREAXE_FUNCTION);
+	if (friendly_fire_scope)
+	{
+		SV_CoopFriendlyFireEnd ();
+		friendly_fire_scope = false;
+	}
 	if (SV_VRDwellPhysicalOutcomeVMOwnerValid (client, ent, saved_vm,
 		saved_progs, saved_global_struct, saved_vm_globals))
 		outcome_ok = true;
@@ -5129,6 +5346,8 @@ cleanup:
 		VectorCopy (saved_globals.trace_plane_normal,
 			pr_global_struct->trace_plane_normal);
 	}
+	if (friendly_fire_scope)
+		SV_CoopFriendlyFireEnd ();
 	return outcome_ok;
 }
 
@@ -5769,6 +5988,7 @@ static qboolean SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *clien
 	float seconds, prethink_flags, prethink_teleport_time;
 	int prethink_groundentity;
 	qboolean run_command = false, was_grounded = false, weapon_alive;
+	qboolean friendly_fire_scope;
 	qboolean command_completed = false, suppress_trigger = false;
 	const char *failure = NULL;
 	float result_jump_secs = 0;
@@ -5919,7 +6139,10 @@ static qboolean SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *clien
 			SV_BeginPrivateVRWeaponPose (ent, client, &weapon_scope);
 			SV_VRStockAxeRefreshTriggerSuppression (client, ent,
 				&ownership_command, &suppress_trigger);
+			friendly_fire_scope = SV_CoopFriendlyFireBegin (ent);
 			PR_ExecuteProgram (pr_global_struct->PlayerPostThink);
+			if (friendly_fire_scope)
+				SV_CoopFriendlyFireEnd ();
 			SV_EndPrivateVRWeaponPose (ent, &weapon_scope);
 		}
 		if (!client->active || ent->free)
@@ -6185,7 +6408,10 @@ static qboolean SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *clien
 		SV_BeginPrivateVRWeaponPose (ent, client, &weapon_scope);
 		SV_VRStockAxeRefreshTriggerSuppression (client, ent,
 			&ownership_command, &suppress_trigger);
+		friendly_fire_scope = SV_CoopFriendlyFireBegin (ent);
 		PR_ExecuteProgram (pr_global_struct->PlayerPostThink);
+		if (friendly_fire_scope)
+			SV_CoopFriendlyFireEnd ();
 		SV_EndPrivateVRWeaponPose (ent, &weapon_scope);
 	}
 	if (!client->active || ent->free)
@@ -6521,6 +6747,7 @@ static void SV_Physics_Client (edict_t *ent, int num)
 	qboolean gorilla_braced = false;
 	qboolean gorilla_swim_intent = false;
 	qboolean gorilla_dispatch, weapon_think_ran = false;
+	qboolean friendly_fire_scope;
 	vec3_t callback_origin, callback_delta;
 
 	if (!svs.clients[num - 1].active)
@@ -6675,7 +6902,10 @@ static void SV_Physics_Client (edict_t *ent, int num)
 	SV_BeginPrivateVRWeaponPose (ent, client, &weapon_scope);
 	SV_VRStockAxeRefreshTriggerSuppression (client, ent,
 		&client->cmd, &suppress_trigger);
+	friendly_fire_scope = SV_CoopFriendlyFireBegin (ent);
 	PR_ExecuteProgram (pr_global_struct->PlayerPostThink);
+	if (friendly_fire_scope)
+		SV_CoopFriendlyFireEnd ();
 	SV_EndPrivateVRWeaponPose (ent, &weapon_scope);
 	if (client->protocol_qsvr == QSVR_PROTOCOL_PINNED &&
 		!SV_VRContactDrainQueued (ent, client, completed_move))
@@ -6943,6 +7173,7 @@ void SV_Physics (void)
 	ED_AllocHook_func previous_alloc_hook = NULL;
 
 	int physics_mode;
+	SV_CoopFriendlyFireReset ();
 	SV_CoopSharedBeginFrameDeathTracking ();
 	if (qcvm->extglobals.physics_mode)
 		physics_mode = *qcvm->extglobals.physics_mode;
@@ -6957,6 +7188,7 @@ void SV_Physics (void)
 	{
 		SV_CoopSharedEndFrameDeathTracking ();
 		qcvm->time += host_frametime;
+		SV_CoopFriendlyFireReset ();
 		return;
 	}
 	else if (physics_mode == 1)
@@ -6969,6 +7201,7 @@ void SV_Physics (void)
 		}
 		SV_CoopSharedEndFrameDeathTracking ();
 		qcvm->time += host_frametime;
+		SV_CoopFriendlyFireReset ();
 		return;
 	}
 
@@ -7108,4 +7341,5 @@ void SV_Physics (void)
 		for (i = num_pushable_ent_cache - 1; i >= 0; i--)
 			ED_Release (pushable_ent_cache[i]);
 	}
+	SV_CoopFriendlyFireReset ();
 }
