@@ -1177,13 +1177,14 @@ look for an external texture in any of the loaded map wads
 */
 static texture_t *Mod_LoadWadTexture (qmodel_t *mod, wad_t *wads, const char *name)
 {
-	int			   i, pixels;
+	int			   i;
 	lumpinfo_t	  *info;
 	wad_t		  *wad;
 	miptex_t	   mt;
 	texture_t	  *tx;
 	qboolean	   pal;
 	unsigned short colors;
+	size_t pixel_bytes = 0, payload_bytes, allocation_bytes, available_bytes;
 
 	// look for the lump in any of the loaded wads
 	info = W_GetLumpinfoList (wads, name, &wad);
@@ -1194,42 +1195,64 @@ static texture_t *Mod_LoadWadTexture (qmodel_t *mod, wad_t *wads, const char *na
 		Con_Warning ("Missing external texture '%s' in wads, using BSP\n", name);
 		return NULL;
 	}
+	if (info->compression != CMP_NONE || info->filepos < 0 ||
+		info->size < (int)sizeof (mt) ||
+		(qfilesize_t)info->filepos + info->size > wad->fh.length)
+	{
+		Con_Warning ("Invalid external texture '%.16s' in %s\n", info->name, wad->name);
+		return NULL;
+	}
+	available_bytes = (size_t)info->size - sizeof (mt);
 
 	// override the texture from the bsp file
-	FS_fseek (&wad->fh, info->filepos, SEEK_SET);
-	FS_fread (&mt, 1, sizeof (miptex_t), &wad->fh);
+	if (FS_fseek (&wad->fh, info->filepos, SEEK_SET) != 0 ||
+		FS_fread (&mt, 1, sizeof (mt), &wad->fh) != sizeof (mt))
+		return NULL;
 
 	mt.width = LittleLong (mt.width);
 	mt.height = LittleLong (mt.height);
 	for (i = 0; i < MIPLEVELS; i++)
 		mt.offsets[i] = LittleLong (mt.offsets[i]);
 
-	if (mt.width == 0 || mt.height == 0)
+	if (mt.width < 8 || mt.height < 8 ||
+		!Mod_CheckedSizeMul (mt.width, mt.height, &allocation_bytes) ||
+		allocation_bytes > INT_MAX || allocation_bytes % 64 != 0)
 	{
-		Con_Warning ("Zero sized texture %s in %s!\n", mt.name, wad->name);
+		Con_Warning ("Invalid texture dimensions for '%.16s' in %s\n", mt.name, wad->name);
 		return NULL;
 	}
 
 	pal = wad->id == WADID_VALVE && info->type == TYP_MIPTEX_PALETTE;
-
-	pixels = mt.width * mt.height / 64 * 85;
-	// valve textures have a color palette immediately following the pixels
+	/* The Vulkan indexed loader expects four contiguous mip levels followed
+	 * immediately by the palette count. Validate offsets and all arithmetic
+	 * before allocating or reading from an external WAD. */
+	for (i = 0; i < MIPLEVELS; ++i)
+	{
+		size_t level_bytes;
+		if (mt.offsets[i] != sizeof (mt) + pixel_bytes ||
+			!Mod_CheckedSizeMul (mt.width >> i, mt.height >> i, &level_bytes) ||
+			!Mod_CheckedSizeAdd (pixel_bytes, level_bytes, &pixel_bytes))
+			return NULL;
+	}
+	if (pixel_bytes != allocation_bytes / 64 * 85 ||
+		pixel_bytes > available_bytes)
+		return NULL;
+	payload_bytes = pixel_bytes;
+	// Valve textures place a 256-color palette after the four mip levels.
 	if (pal)
 	{
-		if ((pixels + 2) <= info->size)
-		{
-			// the palette is basically garunteed to be 256 colors but,
-			// we might as well use the value since it *does* exist
-			FS_fseek (&wad->fh, info->filepos + pixels, SEEK_SET);
-			FS_fread (&colors, 1, 2, &wad->fh);
-			colors = LittleShort (colors);
-			// add space for the color palette
-			pixels += colors * 3;
-		}
-		// add space for the color count
-		pixels += 2;
+		if (available_bytes < 2 || pixel_bytes > available_bytes - 2 ||
+			FS_fseek (&wad->fh, (qfileofs_t)info->filepos + sizeof (mt) + pixel_bytes, SEEK_SET) != 0 ||
+			FS_fread (&colors, 1, sizeof (colors), &wad->fh) != sizeof (colors) ||
+			LittleShort (colors) != 256)
+			return NULL;
+		if (!Mod_CheckedSizeAdd (pixel_bytes, 2 + 256 * 3, &payload_bytes) ||
+			payload_bytes > available_bytes)
+			return NULL;
 	}
-	tx = (texture_t *)Mem_Alloc (sizeof (texture_t) + pixels);
+	if (!Mod_CheckedSizeAdd (sizeof (*tx), payload_bytes, &allocation_bytes))
+		return NULL;
+	tx = (texture_t *)Mem_Alloc (allocation_bytes);
 
 	memcpy (tx->name, mt.name, sizeof (tx->name));
 	tx->width = mt.width;
@@ -1238,12 +1261,6 @@ static texture_t *Mod_LoadWadTexture (qmodel_t *mod, wad_t *wads, const char *na
 		tx->offsets[i] = mt.offsets[i] + sizeof (texture_t) - sizeof (miptex_t);
 	// the pixels immediately follow the structures
 
-	// check for pixels extending past the end of the lump
-	if (pixels > info->size)
-	{
-		Con_DPrintf ("Texture %s extends past end of lump\n", mt.name);
-		pixels = info->size;
-	}
 	tx->source_file[0] = 0;
 	tx->source_offset = (src_offset_t)(tx + 1);
 
@@ -1253,8 +1270,12 @@ static texture_t *Mod_LoadWadTexture (qmodel_t *mod, wad_t *wads, const char *na
 	tx->shift = 0;								  // Q64 only
 	tx->palette = pal;
 
-	FS_fseek (&wad->fh, info->filepos + sizeof (miptex_t), SEEK_SET);
-	FS_fread (tx + 1, 1, pixels, &wad->fh);
+	if (FS_fseek (&wad->fh, (qfileofs_t)info->filepos + sizeof (mt), SEEK_SET) != 0 ||
+		FS_fread (tx + 1, 1, payload_bytes, &wad->fh) != payload_bytes)
+	{
+		Mem_Free (tx);
+		return NULL;
+	}
 
 	return tx;
 }
