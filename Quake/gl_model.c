@@ -725,17 +725,35 @@ static const mod_akimbo_pair_t mod_akimbo_pairs[] = {
 		 {37.226840504f, -13.465485394f, -18.066500630f}}}, DWELL_MDL_WEAPON_BERSERK}
 };
 
-/* QBJ3's left-authored wrench is a single held mesh. Keep it on the same
- * pinned source/split loader path as the paired hands, without inventing a
- * second model or changing the server's source-model identity. */
-static const char *const mod_qbj3_wrench_source = "progs/v_wrench.mdl";
-static const char *const mod_qbj3_wrench_held =
-	"vr/qbj3/progs/v_wrench_vr_dominant.mdl";
+/* Recipes copied from the OpenVR donor's vr_immersive_melee_profiles.
+ * Both meshes keep their source QC identity and reuse the existing splitter. */
+static const mod_held_melee_recipe_t mod_held_melee_recipes[] = {
+	{"qbj3", "progs/v_wrench.mdl", "vr/qbj3/progs/v_wrench_vr_dominant.mdl",
+	 VR_WEAPON_CONTACT_PROFILE_QBJ3, QBJ3_MDL_WEAPON_WRENCH_DOMINANT,
+	 872, 868, 565, 540, 71, 10, 702244, 0x1bfff189u, {320, 358},
+	 true, true, {158.428571f, 151.0f, 148.714286f}, 70.0f},
+	{"enyo", "progs/ee_v_sword.mdl", "vr/enyo/progs/ee_v_sword_vr_dominant.mdl",
+	 VR_WEAPON_CONTACT_PROFILE_ENYO, ENYO_MDL_WEAPON_KATANA_DOMINANT,
+	 1021, 1039, 669, 679, 35, 0, 344020, 0xa707a071u, {13, 77},
+	 false, false, {0.0f, 0.0f, 0.0f}, 0.0f}
+};
 
-static qboolean Mod_QBJ3WrenchGeneratedName (const char *name)
+const mod_held_melee_recipe_t *Mod_GetHeldMeleeRecipe (const char *source)
 {
-	return name && !strcmp (name, mod_qbj3_wrench_held) &&
-		!q_strcasecmp (COM_SkipPath (com_gamedir), "qbj3");
+	for (size_t i = 0; source && i < countof (mod_held_melee_recipes); ++i)
+		if (!strcmp (source, mod_held_melee_recipes[i].source) &&
+			!q_strcasecmp (COM_SkipPath (com_gamedir), mod_held_melee_recipes[i].game))
+			return &mod_held_melee_recipes[i];
+	return NULL;
+}
+
+static const mod_held_melee_recipe_t *Mod_HeldMeleeRecipeForName (const char *name)
+{
+	for (size_t i = 0; name && i < countof (mod_held_melee_recipes); ++i)
+		if (!strcmp (name, mod_held_melee_recipes[i].held) &&
+			!q_strcasecmp (COM_SkipPath (com_gamedir), mod_held_melee_recipes[i].game))
+			return &mod_held_melee_recipes[i];
+	return NULL;
 }
 
 static const mod_akimbo_pair_t *Mod_AkimboPairForHalf (const char *name, int *hand_out)
@@ -807,13 +825,13 @@ qboolean Mod_AkimboPairUsesGeneratedHalves (const char *source)
 	return true;
 }
 
-/* Generate the existing pairs and the one pinned dominant QBJ3 held mesh. */
+/* Generate pairs and single held meshes with the same source/provenance rules. */
 static byte *Mod_GenerateVRHeldModel (const char *name,
 	unsigned int *source_path_id, size_t *generated_size,
 	const char **skin_source)
 {
 	const mod_akimbo_pair_t *pair;
-	const qboolean wrench = Mod_QBJ3WrenchGeneratedName (name);
+	const mod_held_melee_recipe_t *held = Mod_HeldMeleeRecipeForName (name);
 	const char *source_name;
 	unsigned int override_path_id = 0;
 	unsigned int selected_source_path_id = 0;
@@ -828,10 +846,10 @@ static byte *Mod_GenerateVRHeldModel (const char *name,
 	if (isDedicated)
 		return NULL;
 
-	pair = wrench ? NULL : Mod_AkimboPairForHalf (name, &hand);
-	if (!wrench && (!pair || !Mod_AkimboPairGameMatches (pair)))
+	pair = held ? NULL : Mod_AkimboPairForHalf (name, &hand);
+	if (!held && (!pair || !Mod_AkimboPairGameMatches (pair)))
 		return NULL;
-	source_name = wrench ? mod_qbj3_wrench_source : pair->recipe.source;
+	source_name = held ? held->source : pair->recipe.source;
 
 	/* Files in a higher priority search path are explicit private-model overrides. */
 	if (COM_FileExists (name, &override_path_id) && override_path_id > 1)
@@ -846,10 +864,10 @@ static byte *Mod_GenerateVRHeldModel (const char *name,
 		Mem_Free (source);
 		return NULL;
 	}
-	side = wrench ? QBJ3_MDL_SIDE_DOMINANT :
+	side = held ? QBJ3_MDL_SIDE_DOMINANT :
 		(hand == 0 ? QBJ3_MDL_SIDE_LEFT : QBJ3_MDL_SIDE_RIGHT);
 	result = QBJ3_MDL_Split (source, (size_t)source_file_size,
-		wrench ? QBJ3_MDL_WEAPON_WRENCH_DOMINANT : pair->weapon,
+		held ? held->split_weapon : pair->weapon,
 		side, &output, &output_size);
 	Mem_Free (source);
 	if (result != 1)
@@ -934,7 +952,7 @@ static qmodel_t *Mod_LoadModel (qmodel_t *mod, qboolean crash)
 	const bool mod_is_mdl = (strcmp (COM_FileGetExtension (mod->name), "mdl") == 0);
 	const bool load_enhanced_model = mod_is_mdl && r_enhancedmodels.value &&
 		!Mod_AkimboPairForHalf (mod->name, NULL) &&
-		!Mod_QBJ3WrenchGeneratedName (mod->name);
+		!Mod_HeldMeleeRecipeForName (mod->name);
 
 	// 2. Find MDL "enhanced" complementary models, if any:
 	if (load_enhanced_model && r_allow_replacement_md3models.value)
@@ -1021,8 +1039,8 @@ static qmodel_t *Mod_LoadModel (qmodel_t *mod, qboolean crash)
 	case IDPOLYHEADER:
 		Mod_LoadAliasModel (mod, buf, buf_filesize, skin_source);
 		if (generated_model && mod->type == mod_alias)
-			/* This existing provenance bit also covers the one generated
-			 * dominant mesh; all consumers additionally check its exact name. */
+			/* Single held meshes share this provenance bit; consumers also
+			 * check their exact recipe, topology and cached edge. */
 			mod->is_generated_akimbo_half = true;
 		break;
 
@@ -4463,34 +4481,32 @@ static void Mod_CacheStockAxeEdge (qmodel_t *mod, byte *mod_base,
 	mod->stockaxe_edge = edge;
 }
 
-/* The QBJ3 dominant split has no retained CPU pose stream after upload.
+/* A dominant split has no retained CPU pose stream after upload.
  * Reuse the existing two-point cache while the verified ready pose is live. */
-static void Mod_CacheQBJ3WrenchEdge (qmodel_t *mod, const byte *mod_base,
+static void Mod_CacheHeldMeleeEdge (qmodel_t *mod, const byte *mod_base,
 	qfilesize_t source_size, const aliashdr_t *pheader)
 {
-	const int ready_frame = 10, base_vertex = 320, tip_vertex = 358;
+	const mod_held_melee_recipe_t *recipe = Mod_HeldMeleeRecipeForName (mod->name);
 	int pose;
 	stockaxe_edge_t edge;
 
-	if (strcmp (mod->name, mod_qbj3_wrench_held) ||
-		q_strcasecmp (COM_SkipPath (com_gamedir), "qbj3") ||
-		source_size != 702244 ||
+	if (!recipe || source_size < 0 || (size_t)source_size != recipe->generated_size ||
 		(uint32_t)mz_crc32 (MZ_CRC32_INIT, mod_base,
-			(size_t)source_size) != 0x1bfff189u ||
-		pheader->poseverttype != PV_QUAKE1 || pheader->numverts != 565 ||
-		pheader->numtris != 540 || pheader->numframes != 71)
+			(size_t)source_size) != recipe->generated_crc ||
+		pheader->poseverttype != PV_QUAKE1 || pheader->numverts != recipe->vertices ||
+		pheader->numtris != recipe->triangles || pheader->numframes != recipe->frames)
 		return;
-	pose = pheader->frames[ready_frame].firstpose;
-	if (pheader->frames[ready_frame].numposes != 1 ||
+	pose = pheader->frames[recipe->ready_frame].firstpose;
+	if (pheader->frames[recipe->ready_frame].numposes != 1 ||
 		pose < 0 || pose >= pheader->numposes || !poseverts[pose])
 		return;
 
 	memset (&edge, 0, sizeof (edge));
 	for (int axis = 0; axis < 3; ++axis)
 	{
-		edge.base[axis] = poseverts[pose][base_vertex].v[axis] *
+		edge.base[axis] = poseverts[pose][recipe->edge_vertices[0]].v[axis] *
 			pheader->scale[axis] + pheader->scale_origin[axis];
-		edge.tip[axis] = poseverts[pose][tip_vertex].v[axis] *
+		edge.tip[axis] = poseverts[pose][recipe->edge_vertices[1]].v[axis] *
 			pheader->scale[axis] + pheader->scale_origin[axis];
 	}
 	edge.valid = true;
@@ -4677,7 +4693,7 @@ static void Mod_LoadAliasModel (qmodel_t *mod, void *buffer,
 
 	/* Copy only the pinned ready-pose edge while the source pose is live. */
 	Mod_CacheStockAxeEdge (mod, mod_base, source_size, pheader);
-	Mod_CacheQBJ3WrenchEdge (mod, mod_base, source_size, pheader);
+	Mod_CacheHeldMeleeEdge (mod, mod_base, source_size, pheader);
 	Mod_CacheQBJ3BerserkPalms (mod, mod_base, source_size, pheader);
 
 	mod->type = mod_alias;

@@ -119,6 +119,15 @@ static qboolean VR_InputQBJ3MeleeAuthorized (void)
 		vr_immersive_melee.value != 0.0f;
 }
 
+static qboolean VR_InputHeldMeleeAuthorized (void)
+{
+	return cl.protocol_qsvr == QSVR_PROTOCOL_PINNED &&
+		(cl.vr_weapon_contact_mode & VR_WEAPON_CONTACT_CAP_MELEE) != 0 &&
+		(cl.vr_weapon_contact_profile == VR_WEAPON_CONTACT_PROFILE_QBJ3 ||
+		 cl.vr_weapon_contact_profile == VR_WEAPON_CONTACT_PROFILE_ENYO) &&
+		isfinite (vr_immersive_melee.value) && vr_immersive_melee.value != 0.0f;
+}
+
 extern cvar_t vr_aimmode;
 
 static vr_input_hand_state_t vr_input_hands[2];
@@ -1558,12 +1567,13 @@ static qboolean VR_InputSelectedStockAxe (int *modelindex_out,
 	return true;
 }
 
-static qboolean VR_InputSelectedQBJ3Wrench (int *modelindex_out,
+static qboolean VR_InputSelectedHeldMelee (int *modelindex_out,
 	qmodel_t **model_out, int *skin_out, aliashdr_t **geometry_out)
 {
 	const int modelindex = cl.stats[STAT_WEAPON];
 	qmodel_t *model;
 	aliashdr_t *geometry;
+	const mod_held_melee_recipe_t *recipe;
 
 	if (modelindex_out)
 		*modelindex_out = 0;
@@ -1579,13 +1589,17 @@ static qboolean VR_InputSelectedQBJ3Wrench (int *modelindex_out,
 		return false;
 	model = cl.model_precache[modelindex];
 	if (!model || model->needload || model->type != mod_alias ||
-		model != cl.viewent.model ||
-		strcmp (model->name, "progs/v_wrench.mdl"))
+		model != cl.viewent.model)
+		return false;
+	recipe = Mod_GetHeldMeleeRecipe (model->name);
+	if (!recipe || recipe->contact_profile != cl.vr_weapon_contact_profile)
 		return false;
 	geometry = (aliashdr_t *)model->extradata[PV_QUAKE1];
 	if (!geometry || geometry->poseverttype != PV_QUAKE1 ||
-		geometry->numverts != 872 || geometry->numtris != 868 ||
-		geometry->numframes != 71)
+		geometry->numverts != recipe->source_vertices ||
+		geometry->numtris != recipe->source_triangles ||
+		geometry->numframes != recipe->frames ||
+		cl.viewent.skinnum >= geometry->numskins)
 		return false;
 	*modelindex_out = modelindex;
 	*model_out = model;
@@ -1787,7 +1801,7 @@ static qboolean VR_InputPrepareCollisionContact (usercmd_t *pending,
 static qboolean VR_InputPrepareMeleeContact (usercmd_t *pending,
 	const vrxr_frame_t *frame, int hand, const vec3_t grip, int modelindex,
 	qmodel_t *model, int skin, aliashdr_t *geometry,
-	const stockaxe_edge_t *edge, qboolean wrench)
+	const stockaxe_edge_t *edge, qboolean held_mesh)
 {
 	vr_weapon_contact_t contact;
 	const vrxr_device_t *device;
@@ -1801,9 +1815,9 @@ static qboolean VR_InputPrepareMeleeContact (usercmd_t *pending,
 	int weapon;
 
 	if (!pending || !frame || hand < 0 || hand > 1 || !model || !geometry ||
-		(!wrench && (!edge || !edge->valid)) || !frame->sample_id ||
+		(!held_mesh && (!edge || !edge->valid)) || !frame->sample_id ||
 		VR_WeaponCalibrationAdjustActive () ||
-		!(wrench ? VR_InputQBJ3MeleeAuthorized () :
+		!(held_mesh ? VR_InputHeldMeleeAuthorized () :
 			VR_InputMeleeAuthorized ()) ||
 		!VR_InputMotionContextAccepted (frame) || CL_AngleLocked () ||
 		!V_TrackedSessionActive () || !VR_InputControllerAim () ||
@@ -1825,7 +1839,7 @@ static qboolean VR_InputPrepareMeleeContact (usercmd_t *pending,
 		!V_TrackedPresentationYaw (&presentation_yaw) ||
 		!V_TrackedMappingYaw (&mapping_yaw) ||
 		!V_TrackedPresentationHandAngles (hand, hand_angles) ||
-		(!wrench && !VR_LocomotionHandRotToViewmodelAngles (hand_angles,
+		(!held_mesh && !VR_LocomotionHandRotToViewmodelAngles (hand_angles,
 			model_angles, vr_gunmodelpitch.value)))
 		return false;
 
@@ -1838,9 +1852,9 @@ static qboolean VR_InputPrepareMeleeContact (usercmd_t *pending,
 	if (!isfinite (units_per_metre) || units_per_metre <= 0.0f)
 		return false;
 
-	if (wrench)
+	if (held_mesh)
 	{
-		if (!V_QBJ3WrenchHeldEdgeOffsets (render_base, render_tip, render_delta))
+		if (!V_HeldMeleeEdgeOffsets (render_base, render_tip, render_delta))
 			return false;
 	}
 	else
@@ -1873,7 +1887,7 @@ static qboolean VR_InputPrepareMeleeContact (usercmd_t *pending,
 		!VR_InputContactPointSpeed (device, body_tip, mapping_yaw,
 			units_per_metre, &point_speed))
 		return false;
-	if (wrench)
+	if (held_mesh)
 	{
 		vec3_t body_delta;
 		float base_speed;
@@ -2012,21 +2026,22 @@ static qboolean VR_InputPendingContactAccepted (const usercmd_t *pending,
 
 	if (immersive)
 	{
-		if (cl.vr_weapon_contact_profile == VR_WEAPON_CONTACT_PROFILE_QBJ3)
+		if (cl.vr_weapon_contact_profile == VR_WEAPON_CONTACT_PROFILE_QBJ3 ||
+			cl.vr_weapon_contact_profile == VR_WEAPON_CONTACT_PROFILE_ENYO)
 		{
 			vec3_t base, tip, delta;
-			return VR_InputQBJ3MeleeAuthorized () &&
+			return VR_InputHeldMeleeAuthorized () &&
 				VR_InputControllerAim () && cl.stats[STAT_HEALTH] > 0 &&
 				hand == VR_InputDominantPhysicalHand () &&
 				frame->devices[0].kind == VRXR_DEVICE_HEAD &&
 				frame->devices[0].hand == -1 &&
-				VR_InputSelectedQBJ3Wrench (&selected_axe_index,
+				VR_InputSelectedHeldMelee (&selected_axe_index,
 					&selected_axe, &selected_skin, &selected_geometry) &&
 				selected_axe_index == modelindex && selected_axe == model &&
 				selected_skin == vr_input_pending_contact_identity.skin &&
 				selected_geometry ==
 					vr_input_pending_contact_identity.geometry &&
-				V_QBJ3WrenchHeldEdgeOffsets (base, tip, delta);
+				V_HeldMeleeEdgeOffsets (base, tip, delta);
 		}
 		return VR_InputMeleeAuthorized () && VR_InputControllerAim () &&
 			cl.stats[STAT_HEALTH] > 0 &&
@@ -4072,7 +4087,7 @@ static void VR_InputPreparePrivatePose (usercmd_t *pending, int dominant,
 	stockaxe_edge_t axe_edge;
 	int contact_modelindex = 0;
 	int axe_modelindex = 0, axe_skin = -1;
-	qboolean axe_candidate, wrench_candidate;
+	qboolean axe_candidate, held_candidate;
 	const qboolean roomscale_accepted =
 		VR_InputRoomscaleCommandAccepted (pending->vr_roomscalemove);
 
@@ -4124,8 +4139,8 @@ static void VR_InputPreparePrivatePose (usercmd_t *pending, int dominant,
 	axe_candidate = VR_InputMeleeAuthorized () &&
 		VR_InputSelectedStockAxe (&axe_modelindex, &axe_model, &axe_skin,
 			&axe_geometry, &axe_edge);
-	wrench_candidate = !axe_candidate && VR_InputQBJ3MeleeAuthorized () &&
-		VR_InputSelectedQBJ3Wrench (&axe_modelindex, &axe_model,
+	held_candidate = !axe_candidate && VR_InputHeldMeleeAuthorized () &&
+		VR_InputSelectedHeldMelee (&axe_modelindex, &axe_model,
 			&axe_skin, &axe_geometry);
 
 	/* Stock ranged aliases may use wall retraction; the exact stock axe keeps
@@ -4190,7 +4205,7 @@ static void VR_InputPreparePrivatePose (usercmd_t *pending, int dominant,
 		VR_InputClearPendingContactRecord (pending);
 		return;
 	}
-	if ((contact_model || axe_candidate || wrench_candidate) &&
+	if ((contact_model || axe_candidate || held_candidate) &&
 		vr_input_contact_discontinuity)
 	{
 		/* An inactive contact in this accepted command resets the server's
@@ -4198,10 +4213,10 @@ static void VR_InputPreparePrivatePose (usercmd_t *pending, int dominant,
 		vr_input_contact_discontinuity = false;
 		return;
 	}
-	if (axe_candidate || wrench_candidate)
+	if (axe_candidate || held_candidate)
 		VR_InputPrepareMeleeContact (pending, frame, dominant, grip,
 			axe_modelindex, axe_model, axe_skin, axe_geometry,
-			wrench_candidate ? NULL : &axe_edge, wrench_candidate);
+			held_candidate ? NULL : &axe_edge, held_candidate);
 	else if (contact_model)
 		VR_InputPrepareCollisionContact (pending, GL_OpenXRFrame (), dominant,
 			grip, raw_world_muzzle, contact_modelindex, contact_model);

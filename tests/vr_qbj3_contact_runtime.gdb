@@ -151,10 +151,10 @@ assert integer('SV_VRContactProcessCommand($client,$p,&$client->cmd)'), \
     'accepted QBJ3 callback invalidated player lifecycle'
 assert health() == [940, 940, 1000], \
     'native wrench leaves did not damage exactly two distinct victims'
-assert integer('$client->private_vr_qbj3_hit_count[0]') == 2
+assert integer('$client->private_vr_direct_melee_hit_count[0]') == 2
 assert integer('$client->private_vr_melee_consumed[0]'), 'third victim bypassed cap'
-assert integer('$client->private_vr_qbj3_hit_entities[0][0] == NUM_FOR_EDICT($target0)')
-assert integer('$client->private_vr_qbj3_hit_entities[0][1] == NUM_FOR_EDICT($target1)')
+assert integer('$client->private_vr_direct_melee_hit_entities[0][0] == NUM_FOR_EDICT($target0)')
+assert integer('$client->private_vr_direct_melee_hit_entities[0][1] == NUM_FOR_EDICT($target1)')
 assert abs(number('$cooldown->_float') - number('qcvm->time') - .8) < .001, \
     'follow-up restarted native wrench recovery'
 assert integer('SV_VRMeleeSuppressNativeTrigger($client,$p,&$client->cmd)'), \
@@ -238,7 +238,7 @@ assert health() == [940, 940, 1000]
 # not claims that the installed mod naturally executes those mutations.
 class ContactHands(gdb.Breakpoint):
     def __init__(self):
-        super().__init__('SV_VRContactProcessQBJ3Melee', internal=True)
+        super().__init__('SV_VRContactProcessDirectMelee', internal=True)
         self.hands = []
 
     def stop(self):
@@ -314,8 +314,8 @@ for case, (paired, label, action) in enumerate(faults):
             assert health() == [520 if paired else 940, 1000, 1000], \
                 label + ': damage continued after invalidation'
             assert not integer('$client->private_vr_contact_previous_valid'), label
-            assert not integer('$client->private_vr_qbj3_authorized[0]'), label
-            assert integer('$client->private_vr_qbj3_hit_count[0]') == 0, label
+            assert not integer('$client->private_vr_direct_melee_authorized[0]'), label
+            assert integer('$client->private_vr_direct_melee_hit_count[0]') == 0, label
         finally:
             fault.delete()
             hands.delete()

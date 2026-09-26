@@ -22,19 +22,13 @@ static const vec3_t grip = {158.428571f, 151.0f, 148.714286f};
 
 qboolean V_UseTrackedView (void) { return true; }
 int V_AkimboViewmodelHand (const entity_t *e) { (void)e; return -1; }
-qboolean V_QBJ3WrenchRenderEntity (const entity_t *e) { (void)e; return false; }
+qboolean V_HeldMeleeRenderEntity (const entity_t *e) { (void)e; return false; }
 int VR_InputDominantPhysicalHand (void) { return physical_hand; }
-
-const mod_akimbo_pair_recipe_t *Mod_GetAkimboPairRecipe (const char *name)
-{
-	(void)name;
-	return NULL;
-}
 
 qboolean VR_WeaponCalibrationLookupHeld (const char *name, qboolean enhanced,
 	qboolean multiplayer, vec3_t offset, float *scale)
 {
-	assert (!strcmp (name, "progs/v_wrench.mdl"));
+	assert (!strcmp (name, cl.viewent.model->name));
 	assert (!enhanced);
 	(void)multiplayer;
 	VectorCopy (held_offset, offset);
@@ -100,7 +94,8 @@ int main (void)
 	float matrix[16], offset_changed[16];
 	vec3_t point, actual, expected, aliased;
 
-	strcpy (model.name, "vr/qbj3/progs/v_wrench_vr_dominant.mdl");
+	strcpy (com_gamedir, "qbj3");
+	strcpy (model.name, "progs/v_wrench.mdl");
 	cl.viewent.model = &model;
 	cl.viewent.netstate.scale = ENTSCALE_DEFAULT;
 	geometry.poseverttype = PV_QUAKE1;
@@ -118,7 +113,7 @@ int main (void)
 				assert (VR_LocomotionControllerRollViewmodelAngles (aliased,
 					pitches[pitch], roll, aliased));
 				near_vec (aliased, pose.angles);
-				assert (R_QBJ3WrenchHeldMatrix (&cl.viewent, &geometry, &pose,
+				assert (R_HeldMeleeMatrix (&cl.viewent, &geometry, &pose,
 					matrix) == (physical_hand == 1));
 				/* Source offsets must not displace the controller-centered grip. */
 				transform (matrix, grip, actual);
@@ -133,7 +128,7 @@ int main (void)
 					near_vec (actual, expected);
 				}
 				VectorScale (held_offset, -1.0f, held_offset);
-				assert (R_QBJ3WrenchHeldMatrix (&cl.viewent, &geometry, &pose,
+				assert (R_HeldMeleeMatrix (&cl.viewent, &geometry, &pose,
 					offset_changed) == (physical_hand == 1));
 				for (int i = 0; i < 16; ++i)
 					assert (matrix[i] == offset_changed[i]);
@@ -143,16 +138,50 @@ int main (void)
 	vr_world_scale.value = 1.0f;
 	vr_gunmodelscale.value = .8f;
 	assert (VR_LocomotionControllerRollViewmodelAngles (wrists[1], 21, 70, pose.angles));
-	assert (R_QBJ3WrenchHeldMatrix (&cl.viewent, &geometry, &pose, matrix) == 1);
+	assert (R_HeldMeleeMatrix (&cl.viewent, &geometry, &pose, matrix) == 1);
 	expected_point (grip, &geometry, wrists[1], 21, pose.origin, expected);
 	transform (matrix, grip, actual);
 	near_vec (actual, expected);
 	held_scale = 0.0f;
-	assert (R_QBJ3WrenchHeldMatrix (&cl.viewent, &geometry, &pose, matrix) < 0);
+	assert (R_HeldMeleeMatrix (&cl.viewent, &geometry, &pose, matrix) < 0);
 	assert (!VR_LocomotionControllerRollViewmodelAngles (wrists[1], NAN, 70, aliased));
 	near_vec (aliased, vec3_origin);
 	assert (!VR_LocomotionControllerRollViewmodelAngles (wrists[1], 21, NAN, aliased));
 	near_vec (aliased, vec3_origin);
-	puts ("QBJ3 wrench controller roll, centered grip, scale and winding passed");
+	/* Enyo uses source offsets and ordinary right-authored geometry. It must
+	 * not inherit the wrench's centered grip or opposite handed reflection. */
+	strcpy (com_gamedir, "enyo");
+	strcpy (model.name, "progs/ee_v_sword.mdl");
+	const mod_held_melee_recipe_t *recipe = Mod_GetHeldMeleeRecipe (model.name);
+	assert (recipe && recipe->contact_profile == VR_WEAPON_CONTACT_PROFILE_ENYO);
+	assert (!recipe->centered_grip && !recipe->authored_left && recipe->controller_roll == 0);
+	assert (recipe->ready_frame == 0 && recipe->edge_vertices[0] == 13 && recipe->edge_vertices[1] == 77);
+	held_scale = 1.75f;
+	for (physical_hand = 0; physical_hand < 2; ++physical_hand)
+		for (size_t wrist = 0; wrist < countof (wrists); ++wrist)
+			for (size_t pitch = 0; pitch < countof (pitches); ++pitch)
+			{
+				float rotation[16];
+				vec3_t local;
+				const float c = vr_world_scale.value / .75f * vr_gunmodelscale.value;
+				assert (VR_LocomotionHandRotToViewmodelAngles (wrists[wrist], pose.angles, pitches[pitch]));
+				assert (R_HeldMeleeMatrix (&cl.viewent, &geometry, &pose, matrix) == (physical_hand == 0));
+				IdentityMatrix (rotation);
+				R_RotateForEntity (rotation, pose.origin, pose.angles, ENTSCALE_DEFAULT);
+				for (int axis = 0; axis < 3; ++axis)
+					local[axis] = c * (grip[axis] * geometry.scale[axis] * held_scale +
+						geometry.scale_origin[axis] + held_offset[axis] +
+						(axis == 2 ? vr_gunmodely.value : 0.0f));
+				if (physical_hand == 0)
+					local[1] = -local[1];
+				transform (rotation, local, expected);
+				transform (matrix, grip, actual);
+				near_vec (actual, expected);
+			}
+	assert (!Mod_GetHeldMeleeRecipe (recipe->held));
+	strcpy (com_gamedir, "id1");
+	assert (!Mod_GetHeldMeleeRecipe (model.name));
+	assert (R_HeldMeleeMatrix (&cl.viewent, &geometry, &pose, matrix) < 0);
+	puts ("QBJ3 wrench and Enyo katana held transforms, calibration and winding passed");
 	return 0;
 }

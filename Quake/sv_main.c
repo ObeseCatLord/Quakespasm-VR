@@ -93,6 +93,12 @@ qboolean SV_VRQBJ3MeleeEnabled (void)
 		SV_VRQBJ3MeleeContactProfile () == VR_WEAPON_CONTACT_PROFILE_QBJ3;
 }
 
+qboolean SV_VREnyoMeleeEnabled (void)
+{
+	return SV_VRContactPolicyEnabled (&sv_immersive_melee) &&
+		SV_VREnyoMeleeContactProfile () == VR_WEAPON_CONTACT_PROFILE_ENYO;
+}
+
 extern cvar_t nomonsters;
 
 #define VRIK_SVC_V2_MESSAGE_BYTES (1 + 2 + 4 + VRIK_POSE_WIRE_BYTES)
@@ -4167,6 +4173,11 @@ static void SV_AppendWeaponContactProtocol (client_t *client)
 	{
 		mode |= VR_WEAPON_CONTACT_CAP_MELEE;
 		profile = VR_WEAPON_CONTACT_PROFILE_QBJ3;
+	}
+	else if (SV_VREnyoMeleeEnabled ())
+	{
+		mode |= VR_WEAPON_CONTACT_CAP_MELEE;
+		profile = VR_WEAPON_CONTACT_PROFILE_ENYO;
 	}
 	if ((client->weapon_contact_last_mode == (int)mode &&
 		client->weapon_contact_last_profile == (int)profile) ||

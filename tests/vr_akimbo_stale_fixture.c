@@ -91,13 +91,20 @@ qboolean V_TrackedPresentationHandAngles (int hand, vec3_t out)
 	return false;
 }
 
-qboolean V_QBJ3WrenchHeldEdgeOffsets (vec3_t base, vec3_t tip, vec3_t delta)
+qboolean V_HeldMeleeEdgeOffsets (vec3_t base, vec3_t tip, vec3_t delta)
 {
 	(void)delta;
 	(void)base;
 	(void)tip;
 	++unreachable_admission_calls;
 	return false;
+}
+
+const mod_held_melee_recipe_t *Mod_GetHeldMeleeRecipe (const char *source)
+{
+	(void)source;
+	++unreachable_admission_calls;
+	return NULL;
 }
 
 qboolean VR_WeaponCalibrationStockRangedViewmodel (const char *name)
@@ -159,6 +166,14 @@ int main (void)
 	cl.vr_weapon_contact_profile = VR_WEAPON_CONTACT_PROFILE_DWELL;
 	assert (VR_InputAkimboMeleeAuthorized (&axes, &axe_model));
 	assert (!VR_InputAkimboMeleeAuthorized (&fists, &fist_model));
+	cl.vr_weapon_contact_profile = VR_WEAPON_CONTACT_PROFILE_ENYO;
+	assert (VR_InputHeldMeleeAuthorized ());
+	assert (!VR_InputAkimboMeleeAuthorized (&fists, &fist_model));
+	vr_immersive_melee.value = 0.0f;
+	assert (!VR_InputHeldMeleeAuthorized ());
+	vr_immersive_melee.value = NAN;
+	assert (!VR_InputHeldMeleeAuthorized ());
+	vr_immersive_melee.value = 1.0f;
 	cl.vr_weapon_contact_profile = VR_WEAPON_CONTACT_PROFILE_QBJ3;
 
 	fixture_frame.focused = true;

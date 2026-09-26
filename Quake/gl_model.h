@@ -790,6 +790,23 @@ typedef struct
 } mod_akimbo_pair_recipe_t;
 /* Returns immutable generated-pair geometry/contact metadata for this game. */
 const mod_akimbo_pair_recipe_t *Mod_GetAkimboPairRecipe (const char *source);
+/* Single held meshes use the same pinned splitter and edge cache as pairs.
+ * Calibration always names the QC source model, never the generated path. */
+typedef struct
+{
+	const char *game, *source, *held;
+	unsigned int contact_profile;
+	int split_weapon;
+	int source_vertices, source_triangles;
+	int vertices, triangles, frames, ready_frame;
+	size_t generated_size;
+	uint32_t generated_crc;
+	int edge_vertices[2];
+	qboolean centered_grip, authored_left;
+	vec3_t grip_raw;
+	float controller_roll;
+} mod_held_melee_recipe_t;
+const mod_held_melee_recipe_t *Mod_GetHeldMeleeRecipe (const char *source);
 /* Returns the recipe's private half paths for the current game, if defined.
  * half_paths[0] is the physical left hand; half_paths[1] is the right hand.
  * Returned path strings have static lifetime. */

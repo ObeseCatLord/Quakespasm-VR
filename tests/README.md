@@ -355,14 +355,16 @@ Its Bash and embedded Python syntax pass; GDB execution remains pending because
 the current sandbox denies ptrace. The authored target placement may need
 adjustment when a runtime preflight first runs against the installed map.
 
-## QBJ3 held wrench transform
+## QBJ3 wrench and Enyo katana transforms
 
 `vr_qbj3_wrench_transform_fixture.c` links the production alias matrix,
-entity rotation, locomotion adapter and native math. It compares transformed
-geometry against an independent Rodrigues rotation for both hands, multiple
-pitched/rolled wrists and nonzero gun pitch. It checks controller-centered
+entity rotation, held-mesh recipes, locomotion adapter and native math. It
+compares transformed geometry against an independent Rodrigues rotation for
+both hands, multiple pitched/rolled wrists and nonzero gun pitch. It checks controller-centered
 grip placement, left-authored reflection/winding, source-offset independence,
-scale/global height, output aliasing and rejected invalid values. Session and
+scale/global height, output aliasing and rejected invalid values. The Enyo
+cases verify source offsets, right-authored reflection/winding, no wrench
+centering/roll, and game/source recipe isolation. Session and
 calibration inputs are stubbed; it does not exercise model loading, collision
 traces, Vulkan drawing or contact submission.
 
@@ -371,10 +373,51 @@ cc -std=gnu11 -DUSE_SDL3 -D_GNU_SOURCE -Wall -Wextra -Werror \
   -Wno-unused-parameter -Wno-sign-compare -Wno-missing-field-initializers \
   -ffunction-sections -fdata-sections -IQuake \
   tests/vr_qbj3_wrench_transform_fixture.c Quake/r_alias.c Quake/gl_rmain.c \
-  Quake/vr_locomotion.c Quake/mathlib.c -Wl,--gc-sections \
+  Quake/vr_locomotion.c Quake/mathlib.c Quake/gl_model.c Quake/common.c -Wl,--gc-sections \
   $(pkg-config --cflags --libs sdl3) -lm -o /tmp/qsvr-qbj3-wrench-transform
 /tmp/qsvr-qbj3-wrench-transform
 ```
+
+## Enyo katana native readiness and outcomes
+
+`vr_enyo_melee_state_fixture.c` includes the production server implementation
+and loads the installed Enyo original-index function table. The test executes
+the program/hash/ABI gates and checks pending and overdue sword attacks,
+harmless native hit aftermath, stale unscheduled thinks, invalid times,
+QBJ3's stricter terminal-draw rule, and retirement of shared stroke state.
+It stubs QC string/function lookup; it does not execute the VM or damage.
+The runner extracts assets only into a disposable directory and uses
+ASan/UBSan with leak detection disabled.
+
+```sh
+bash tests/vr_enyo_melee_state.sh
+```
+
+`vr_enyo_melee_outcome.gdb` exercises the native `hitsword` leaf, whiff recovery,
+switch blocking, retained hit aftermath, follow-up behavior, changed-weapon
+and desktop rejection, and cleanup after an injected owner death. It uses the
+shared QBJ3 outcome API with an explicit integer subtype. It does not cover
+the network queue or complete physical contact acquisition. Its execution
+remains pending under the recorded ptrace restriction; syntax checking is
+not runtime proof. Where ptrace is available:
+
+```sh
+bash tests/vr_enyo_melee_outcome.sh
+```
+
+`vr_enyo_contact_runtime.gdb` drives the server command queue drain, preflights
+three reachable victims with real server sweeps, and checks two native katana
+hits, preserved aftermath/recovery, the third-victim cap, trigger suppression,
+duplicate rejection and changed-weapon invalidation. Its geometry is injected
+at the command boundary; it does not prove client model preparation, packet
+decoding or headset presentation. It also remains unexecuted under the
+recorded ptrace restriction. Where ptrace is available:
+
+```sh
+bash tests/vr_enyo_contact_runtime.sh
+```
+
+All three Enyo runners accept `QSVR_TEST_ASSETS` to override the installed game root.
 
 ## QBJ3 scheduled native fist poses
 

@@ -142,7 +142,12 @@ The generated wrench uses the shared alias renderer, controller-forward roll,
 centered grip and prepared render/contact collision offset. Current Linux
 build, transform and stale-input regressions pass; accepted-contact, callback
 fault-injection and native-fist runtime proof remains pending under the ptrace
-restriction. WPN-012 remains partial, and tracked alignment/feel still needs
+restriction. Enyo's pinned katana now uses that same held-mesh and two-target
+contact owner, with its source calibration, right-authored geometry, native
+`hitsword` aftermath and 0.4-second attack/switch recovery. See the
+[Enyo melee integration review](migration-enyo-melee-review.md) for build,
+transform, installed-program readiness and remaining runtime evidence.
+WPN-012 and MOVE-005 remain partial, and tracked alignment/feel still needs
 user qualification. These
 VR adaptations must leave ordinary desktop vkQuake viewmodel rendering and
 QuakeC firing intact; shared wheel, netcode and co-op features have separate

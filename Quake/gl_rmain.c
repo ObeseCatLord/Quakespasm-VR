@@ -1274,7 +1274,7 @@ void R_DrawViewModel (cb_context_t *cbx)
 	}
 	else
 	{
-		entity_t *held = V_QBJ3WrenchHeldEntity ();
+		entity_t *held = V_HeldMeleeEntity ();
 		if (held)
 			currententity = held;
 		R_DrawAliasModel (cbx, currententity, &aliaspolys);
@@ -1980,7 +1980,7 @@ static void R_ShowViewModelTris (cb_context_t *cbx)
 				R_DrawAliasModel_ShowTris (cbx, V_AkimboPairEntity (hand));
 		else
 		{
-			entity_t *held = V_QBJ3WrenchHeldEntity ();
+			entity_t *held = V_HeldMeleeEntity ();
 			R_DrawAliasModel_ShowTris (cbx, held ? held : currententity);
 		}
 	}

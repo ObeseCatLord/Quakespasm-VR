@@ -337,13 +337,13 @@ typedef struct client_s
 	/* Dwell reversals rearm the same contact owner without a sampled stop. */
 	vec3_t private_vr_melee_stroke_direction[2];
 	byte private_vr_melee_stroke_endpoint[2];
-	/* QBJ3 reuses the per-hand stroke owner; its native leaf permits a second
+	/* Direct native melee reuses the per-hand stroke owner and permits a second
 	 * distinct victim before the original recovery deadline. */
-	qboolean private_vr_qbj3_authorized[2];
-	qboolean private_vr_qbj3_berserk[2];
-	float private_vr_qbj3_deadline[2];
-	int private_vr_qbj3_hit_count[2];
-	int private_vr_qbj3_hit_entities[2][2];
+	qboolean private_vr_direct_melee_authorized[2];
+	int private_vr_direct_melee_subtype[2];
+	float private_vr_direct_melee_deadline[2];
+	int private_vr_direct_melee_hit_count[2];
+	int private_vr_direct_melee_hit_entities[2][2];
 	double	 lastmovetime;
 	unsigned int private_latest_buttons;
 	unsigned int private_latched_buttons;
@@ -570,6 +570,7 @@ qboolean SV_VRWeaponCollisionEnabled (void);
 qboolean SV_VRStockAxeMeleeEnabled (void);
 qboolean SV_VRDwellBerserkMeleeEnabled (void);
 qboolean SV_VRQBJ3MeleeEnabled (void);
+qboolean SV_VREnyoMeleeEnabled (void);
 void SV_ReceiveVRIKPoseV2 (client_t *client, const vrik_v2_pose_t *pose,
 	const unsigned char body[VRIK_V2_BODY_BYTES]);
 void SV_ReceiveVRIKPoseV3 (client_t *client, const vrik_codec_pose_t *pose);
@@ -597,6 +598,7 @@ qboolean SV_EnyoAkimboMakevectors (void);
 qboolean SV_EnyoAkimboAim (edict_t *ent, vec3_t muzzle);
 unsigned int SV_VRStockAxeContactProfile (void);
 unsigned int SV_VRQBJ3MeleeContactProfile (void);
+unsigned int SV_VREnyoMeleeContactProfile (void);
 int SV_VRStockAxeTraceStatement (void);
 void SV_VRStockAxeClearTraceScope (void);
 void SV_VRAxeTraceLeaveFunction (void);

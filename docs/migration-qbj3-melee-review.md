@@ -73,7 +73,7 @@ The design review does not certify an unfinished implementation.
 
 ## Initial implementation and historical software evidence
 
-`SV_VRQBJ3PhysicalMeleeOutcome` now reuses the exact installed program pin and
+`SV_VRDirectMeleeOutcome` now reuses the exact installed program pin and
 the explicit native leaves. Initial outcomes validate native readiness, apply
 the donor's 0.8-second wrench or 0.5-second berserk recovery, and preserve the
 sound prelude. A follow-up revalidates the selected subtype without restarting

@@ -87,7 +87,7 @@ static qboolean R_IsVRViewmodel (entity_t *e)
 {
 	return V_UseTrackedView () &&
 		(e == &cl.viewent || V_AkimboViewmodelHand (e) >= 0 ||
-			V_QBJ3WrenchRenderEntity (e));
+			V_HeldMeleeRenderEntity (e));
 }
 
 static qboolean R_AliasMatrixIsFinite (const float model_matrix[16])
@@ -370,7 +370,7 @@ only exist on the entity itself.
 void R_GetEntityLerpedTransform (const entity_t *e, vec3_t out_origin, vec3_t out_angles)
 {
 	if (r_lerpmove.value && e != &cl.viewent && V_AkimboViewmodelHand (e) < 0 &&
-		!V_QBJ3WrenchRenderEntity (e) &&
+		!V_HeldMeleeRenderEntity (e) &&
 		e->lerp.movestep && !e->netstate.tagentity && e->lerp.move_change_time > 0)
 	{
 		double change_time = e->lerp.move_change_time;
@@ -605,7 +605,7 @@ static void R_SetupAliasLighting (entity_t *e, vec3_t *shadevector, vec3_t *ligh
 
 	// minimum light value on gun (24)
 	if (e == &cl.viewent || V_AkimboViewmodelHand (e) >= 0 ||
-		V_QBJ3WrenchRenderEntity (e))
+		V_HeldMeleeRenderEntity (e))
 	{
 		add = 72.0f - ((*lightcolor)[0] + (*lightcolor)[1] + (*lightcolor)[2]);
 		if (add > 0.0f)
@@ -656,19 +656,17 @@ R_DrawAliasModel -- johnfitz -- almost completely rewritten
 static int R_AliasModelMatrixInternal (
 	entity_t *e, const aliashdr_t *paliashdr, lerpdata_t *lerpdata,
 	float model_matrix[16], qboolean apply_viewmodel_transforms,
-	qboolean qbj3_wrench)
+	const mod_held_melee_recipe_t *held_recipe)
 {
-	if (qbj3_wrench || (apply_viewmodel_transforms && R_IsVRViewmodel (e)))
+	if (held_recipe || (apply_viewmodel_transforms && R_IsVRViewmodel (e)))
 	{
-		static const vec3_t wrench_grip_raw =
-			{158.428571f, 151.0f, 148.714286f};
 		vec3_t origin, angles, header_origin, held_offset = {0.0f, 0.0f, 0.0f};
 		float header_scale[3], geometry_scale[3];
 		float held_scale = 1.0f;
 		const int pair_hand = V_AkimboViewmodelHand (e);
 		const qboolean paired_half = pair_hand >= 0;
-		const char *calibration_name = qbj3_wrench ?
-			"progs/v_wrench.mdl" : paired_half && cl.viewent.model ?
+		const char *calibration_name = held_recipe ?
+			held_recipe->source : paired_half && cl.viewent.model ?
 			cl.viewent.model->name : e->model->name;
 		const mod_akimbo_pair_recipe_t *pair_recipe =
 			paired_half && cl.viewent.model ?
@@ -712,12 +710,12 @@ static int R_AliasModelMatrixInternal (
 		for (int axis = 0; axis < 3; ++axis)
 		{
 			double scaled_offset;
-			if (qbj3_wrench)
+			if (held_recipe && held_recipe->centered_grip)
 			{
 				/* The donor applies source scale, then replaces the offset
 				 * with the ready-pose grip. Retain global model height only. */
 				scaled_offset = (double)c *
-					(-(double)wrench_grip_raw[axis] * (double)held_scale *
+					(-(double)held_recipe->grip_raw[axis] * (double)held_scale *
 					 (double)header_scale[axis] +
 					 (axis == 2 ? (double)gunmodel_y : 0.0));
 			}
@@ -762,7 +760,7 @@ static int R_AliasModelMatrixInternal (
 			geometry_scale[axis] = (float)scale_value;
 		}
 
-		const qboolean mirror_model_y = qbj3_wrench ?
+		const qboolean mirror_model_y = held_recipe && held_recipe->authored_left ?
 			VR_InputDominantPhysicalHand () == 1 :
 			(!paired_half && VR_InputDominantPhysicalHand () == 0);
 		if (mirror_model_y)
@@ -826,14 +824,18 @@ static int R_AliasModelMatrixInternal (
 int R_AliasModelMatrix (entity_t *e, const aliashdr_t *paliashdr, lerpdata_t *lerpdata, float model_matrix[16])
 {
 	return R_AliasModelMatrixInternal (e, paliashdr, lerpdata,
-		model_matrix, true, false);
+		model_matrix, true, NULL);
 }
 
-int R_QBJ3WrenchHeldMatrix (entity_t *e, const aliashdr_t *geometry,
+int R_HeldMeleeMatrix (entity_t *e, const aliashdr_t *geometry,
 	lerpdata_t *lerpdata, float matrix[16])
 {
+	const mod_held_melee_recipe_t *recipe = cl.viewent.model ?
+		Mod_GetHeldMeleeRecipe (cl.viewent.model->name) : NULL;
+	if (!recipe)
+		return -1;
 	return R_AliasModelMatrixInternal (e, geometry, lerpdata, matrix,
-		true, true);
+		true, recipe);
 }
 
 static void R_DrawAliasSurfaces (
@@ -908,11 +910,11 @@ void R_DrawAliasModel (cb_context_t *cbx, entity_t *e, int *aliaspolys)
 	int			 skinnum = e->skinnum;
 	lerpdata_t	 lerpdata;
 	const qboolean paired_half = V_AkimboViewmodelHand (e) >= 0;
-	const qboolean wrench_held = V_QBJ3WrenchRenderEntity (e);
+	const qboolean held_melee = V_HeldMeleeRenderEntity (e);
 
 	// A pending reload can change the model bounds, so refresh it before culling.
 	// Loaded models can reject offscreen entities without selecting skin/pose data.
-	if (paired_half || wrench_held)
+	if (paired_half || held_melee)
 	{
 		if (e->model->needload)
 			return;
@@ -920,10 +922,10 @@ void R_DrawAliasModel (cb_context_t *cbx, entity_t *e, int *aliaspolys)
 	}
 	else
 		paliashdr = e->model->needload ? (aliashdr_t *)Mod_Extradata_CheckSkin (e->model, skinnum) : NULL;
-	if (!paired_half && !wrench_held && !R_IsVRViewmodel (e) && R_CullModelForEntity (e))
+	if (!paired_half && !held_melee && !R_IsVRViewmodel (e) && R_CullModelForEntity (e))
 		return;
 
-	if (!paliashdr && !paired_half && !wrench_held)
+	if (!paliashdr && !paired_half && !held_melee)
 		paliashdr = (aliashdr_t *)Mod_Extradata_CheckSkin (e->model, skinnum);
 	if (!paliashdr)
 		return;
@@ -937,8 +939,8 @@ void R_DrawAliasModel (cb_context_t *cbx, entity_t *e, int *aliaspolys)
 	// transform it
 	//
 	float model_matrix[16];
-	const int matrix_result = wrench_held ?
-		R_QBJ3WrenchHeldMatrix (e, paliashdr, &lerpdata, model_matrix) :
+	const int matrix_result = held_melee ?
+		R_HeldMeleeMatrix (e, paliashdr, &lerpdata, model_matrix) :
 		R_AliasModelMatrix (e, paliashdr, &lerpdata, model_matrix);
 	if (matrix_result < 0)
 		return;
@@ -982,7 +984,7 @@ void R_DrawPreparedWheelAliasModel (
 
 	float model_matrix[16];
 	const int matrix_result = R_AliasModelMatrixInternal (e, selected_geometry,
-		&lerpdata, model_matrix, false, false);
+		&lerpdata, model_matrix, false, NULL);
 	if (matrix_result < 0)
 		return;
 	qboolean opposite_front_face = matrix_result > 0;
@@ -1031,12 +1033,12 @@ void R_DrawAliasModel_ShowTris (cb_context_t *cbx, entity_t *e)
 	aliashdr_t *paliashdr;
 	lerpdata_t	lerpdata;
 	const qboolean paired_half = V_AkimboViewmodelHand (e) >= 0;
-	const qboolean wrench_held = V_QBJ3WrenchRenderEntity (e);
+	const qboolean held_melee = V_HeldMeleeRenderEntity (e);
 
 	//
 	// setup pose/lerp data -- do it first so we don't miss updates due to culling
 	//
-	if (paired_half || wrench_held)
+	if (paired_half || held_melee)
 	{
 		if (e->model->needload)
 			return;
@@ -1060,8 +1062,8 @@ void R_DrawAliasModel_ShowTris (cb_context_t *cbx, entity_t *e)
 	// transform it
 	//
 	float model_matrix[16];
-	const int matrix_result = wrench_held ?
-		R_QBJ3WrenchHeldMatrix (e, paliashdr, &lerpdata, model_matrix) :
+	const int matrix_result = held_melee ?
+		R_HeldMeleeMatrix (e, paliashdr, &lerpdata, model_matrix) :
 		R_AliasModelMatrix (e, paliashdr, &lerpdata, model_matrix);
 	if (matrix_result < 0)
 		return;

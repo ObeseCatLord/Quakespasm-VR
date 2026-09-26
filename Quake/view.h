@@ -72,12 +72,12 @@ qboolean V_AkimboTransformAnchor (int physical_hand,
 	const vec3_t model_angles, vec3_t out_local);
 qboolean V_AkimboDwellEdgeOffsets (int physical_hand,
 	const vec3_t model_angles, vec3_t out_base, vec3_t out_tip);
-/* Prepared QBJ3 wrench edges before retraction and the shared render delta.
+/* Prepared single-held-mesh edges before retraction and the shared render delta.
  * Failure to prepare the rendered mesh also rejects physical contacts. */
-qboolean V_QBJ3WrenchHeldEdgeOffsets (vec3_t out_base, vec3_t out_tip,
+qboolean V_HeldMeleeEdgeOffsets (vec3_t out_base, vec3_t out_tip,
 	vec3_t out_collision);
-entity_t *V_QBJ3WrenchHeldEntity (void);
-qboolean V_QBJ3WrenchRenderEntity (const entity_t *e);
+entity_t *V_HeldMeleeEntity (void);
+qboolean V_HeldMeleeRenderEntity (const entity_t *e);
 int V_AkimboViewmodelHand (const entity_t *e);
 entity_t *V_AkimboPairEntity (int physical_hand);
 void V_ClearAkimboPair (void);
