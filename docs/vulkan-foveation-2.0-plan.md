@@ -65,11 +65,12 @@ weapon, HUD, water, cutout, or transparent rendering.
 
 The old `openxr` branch provides reusable gaze freshness, eye-ray and angular
 tile math, plus a prior Vulkan implementation to consult. Its separate renderer
-is not imported. Runtime FB/META fragment-density-map foveation is a later,
-separate device/pass design; its borrowed-image and protected-depth contract
-is not established by the KHR path.
+is not imported. Runtime FB/META fragment-density-map foveation is the
+preferred next backend **after** its borrowed-image and protected-depth
+contract is qualified. The KHR path does not establish that contract and
+remains the fallback for capable devices without a qualified runtime route.
 
-For the Steam Frame standalone target, that later runtime path is a release
+For the Steam Frame standalone target, that runtime path is a release
 feature gap: `GL_OpenXRAttach` currently passes `density_maps=0` to the reused
 backend, and `VRXR_UpdateVulkanFoveation` has no renderer callsite. Valve's
 [custom-engine guide](https://partner.steamgames.com/doc/steamhardware/steamframe/engines/custom)
@@ -80,8 +81,9 @@ useful on GPUs that expose it. No current source evidence proves either path
 works on Steam Frame hardware yet.
 The [Steam Frame FDM senior design review](migration-steam-frame-foveation-review.md)
 sets the implementation boundary: runtime FDM and this KHR backend need
-mutually exclusive Vulkan device features, and protected draws need full-rate
-depth/coverage before the runtime path can be enabled.
+mutually exclusive Vulkan device features. The follow-up review selects a
+separate coarse-world pass followed by full-rate world-depth replay before
+protected draws; a depth prepass is not a portable substitute under FDM.
 
 ## Astra senior-review disposition
 

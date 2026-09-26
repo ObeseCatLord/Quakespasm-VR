@@ -105,8 +105,13 @@ and [uses META gaze state with QCOM density offsets when available](https://gith
 Those are implementation evidence, not normative guarantees for Monado, SteamVR,
 or every headset. The earlier instruction above to avoid blindly copying QCOM
 offsets still stands, but the offset path now has a concrete precedent and must
-be explicitly qualified rather than dismissed. Check the offset feature and
-granularity before adding it; the renderer must remain correct without it.
+be explicitly qualified rather than dismissed. The [Vulkan render-pass rules](https://docs.vulkan.org/spec/latest/chapters/renderpass.html#VkRenderPassFragmentDensityMapCreateInfoEXT)
+allow the default map view to be read by the host when `vkCmdBeginRenderPass`
+is recorded; deferred/dynamic views have different read points. A GPU barrier
+alone does not establish host-read readiness. Per-eye offsets also require the
+offset feature and creation flags on every used framebuffer attachment, plus
+granularity and layer-count compliance. Qualify these before adding offsets;
+if the required path cannot be established, select KHR or full rate.
 
 The user's compatibility preference is runtime-first **after qualification**:
 use XR_FB/XR_META on any runtime/device pair that completes this proof, keep
