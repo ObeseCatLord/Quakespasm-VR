@@ -220,3 +220,29 @@ Commit `be202118` adds minimum borrowed-map extent checks from the queried
 Vulkan density texel limit and exposes whether fixed and eye profiles were
 actually created after session attachment. It does not enable FDM at device
 creation or change the currently working KHR path.
+
+## Astra device-commit review disposition
+
+The follow-up Astra xhigh review on 2026-09-26 verified the current renderer
+and the cited OpenXR/Vulkan rules before challenging the activation gate. The
+renderer now has an inert per-eye offset recording path (`10784814`) and
+selected color/depth formats are available before device feature commitment
+(`53fdaa12`). Neither change proves a runtime-owned image contract.
+
+| Finding | Disposition and implementation consequence |
+| --- | --- |
+| A successful RG8 view import does not prove the borrowed image's actual format, layout, or readiness at the FDM read point. | **Adopt.** Do not auto-select FDM based on extension discovery or `vkCreateImageView` success. Seek runtime documentation/implementation evidence and later validation for each target runtime; retain KHR meanwhile. A speculative barrier with unknown old layout is not a fix. |
+| Per-eye offsets require `VK_IMAGE_CREATE_FRAGMENT_DENSITY_MAP_OFFSET_BIT_EXT` on the borrowed density image itself. `XR_META_vulkan_swapchain_create_info` does not expressly promise it for that auxiliary image. | **Adopt.** Qualify the borrowed image separately. Preflight the actual scene color/depth formats and usage before enabling offset features. **Adapt:** the XR color image is composed in a later full-rate pass and need not itself carry the offset flag for this scene pass. |
+| META's reported center does not specify whether the runtime density image already incorporates that displacement. | **Adopt.** Confirm the runtime addressing convention before applying the ported offset conversion; neither zero offsets nor nonzero offsets are assumed universally correct. |
+| FDM/KHR feature exclusion makes post-attachment failure a full-rate fallback until device recreation. | **Adopt.** Keep a pre-device capability gate separate from accepted post-attachment profiles, map views, matching extent, single-sample scene, and per-frame gaze validity. Explicit fixed foveation need not require eye-offset support. |
+| A rejected optional Vulkan density framebuffer currently exits via `Sys_Error`. | **Adopt.** Return a recoverable density-resource result, retire partial framebuffers and rebuild the existing full-rate passes. Other core framebuffer failures remain fatal. |
+
+The [OpenXR FB Vulkan extension](https://raw.githubusercontent.com/KhronosGroup/OpenXR-Docs/main/specification/sources/chapters/extensions/fb/fb_foveation_vulkan.adoc)
+only publishes the borrowed image handle and extent. The
+[Vulkan offset validity rules](https://docs.vulkan.org/refpages/latest/refpages/source/VkRenderPassFragmentDensityMapOffsetEndInfoEXT.html)
+are stricter than a successful image-view creation. Valve's
+[Steam Frame guidance](https://partner.steamgames.com/doc/steamhardware/steamframe/engines/unreal)
+recommends runtime-provided VRS, but it does not fill those Vulkan contract
+gaps for this renderer. Thus the intended final preference remains FB/META on
+qualified runtime/device pairs, KHR elsewhere, and full-rate on failure; this
+review does not declare automatic FB/META activation complete.
