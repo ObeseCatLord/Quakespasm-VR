@@ -177,4 +177,11 @@ scalar coefficient moves use byte-preserving `memcpy`. A full sanitizer build
 with only those two production-file changes loaded `mj4m1` and exited 0;
 neither prior alignment diagnostic recurred. Fifteen remaining UBSan nonnull
 argument diagnostics in the MD5 animation parser are a separate investigation.
+
+`08d38a79` now rejects MD5 animation component counts that exceed the loaded
+file or overflow the temporary float allocation, and checks joint component
+offsets without overflowing their sum. The Linux build passes. An isolated
+address/undefined-sanitizer build also completed, but its graphical run could
+not initialize SDL video in this sandbox, so it supplies no runtime sanitizer
+result and does not resolve the earlier diagnostics.
 This does not establish an ARM runtime result or resolve the shutdown abort.
