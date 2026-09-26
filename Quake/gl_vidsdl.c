@@ -1538,6 +1538,9 @@ static void GL_InitDevice (void)
 	qboolean fragment_shading_rate_extension = false;
 	qboolean create_renderpass2_extension = false;
 	qboolean create_renderpass2_core = false;
+#if defined(VK_EXT_fragment_density_map)
+	qboolean fragment_density_map_extension = false;
+#endif
 	qboolean fragment_shading_rate_usable = false;
 	qboolean fragment_shading_rate_feature_enabled = false;
 	qboolean fragment_shading_rate_layered = false;
@@ -1578,8 +1581,14 @@ static void GL_InitDevice (void)
 #if defined(VK_KHR_fragment_shading_rate) && defined(VK_KHR_create_renderpass2)
 			if (openxr_vulkan_binding && strcmp (VK_KHR_FRAGMENT_SHADING_RATE_EXTENSION_NAME, device_extensions[i].extensionName) == 0)
 				fragment_shading_rate_extension = true;
+#endif
+#if defined(VK_KHR_create_renderpass2)
 			if (openxr_vulkan_binding && strcmp (VK_KHR_CREATE_RENDERPASS_2_EXTENSION_NAME, device_extensions[i].extensionName) == 0)
 				create_renderpass2_extension = true;
+#endif
+#if defined(VK_EXT_fragment_density_map)
+			if (openxr_vulkan_binding && strcmp (VK_EXT_FRAGMENT_DENSITY_MAP_EXTENSION_NAME, device_extensions[i].extensionName) == 0)
+				fragment_density_map_extension = true;
 #endif
 #if defined(VK_KHR_present_wait2)
 			if (strcmp (VK_KHR_PRESENT_ID_2_EXTENSION_NAME, device_extensions[i].extensionName) == 0)
@@ -1682,6 +1691,10 @@ static void GL_InitDevice (void)
 	ZEROED_STRUCT (VkPhysicalDeviceShaderFloat16Int8Features, shader_float16_features);
 	ZEROED_STRUCT (VkPhysicalDeviceMultiviewProperties, multiview_properties);
 	ZEROED_STRUCT (VkPhysicalDeviceMultiviewFeatures, multiview_features);
+#if defined(VK_EXT_fragment_density_map)
+	ZEROED_STRUCT (VkPhysicalDeviceFragmentDensityMapPropertiesEXT, fragment_density_map_properties);
+	ZEROED_STRUCT (VkPhysicalDeviceFragmentDensityMapFeaturesEXT, fragment_density_map_features);
+#endif
 #if defined(VK_KHR_fragment_shading_rate) && defined(VK_KHR_create_renderpass2)
 	ZEROED_STRUCT (VkPhysicalDeviceFragmentShadingRatePropertiesKHR, fragment_shading_rate_properties);
 	ZEROED_STRUCT (VkPhysicalDeviceFragmentShadingRateFeaturesKHR, fragment_shading_rate_features);
@@ -1714,6 +1727,13 @@ static void GL_InitDevice (void)
 			multiview_properties.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MULTIVIEW_PROPERTIES;
 			CHAIN_PNEXT (device_properties_next, multiview_properties);
 		}
+#if defined(VK_EXT_fragment_density_map)
+		if (fragment_density_map_extension && VRXR_VulkanFoveationSupported ())
+		{
+			fragment_density_map_properties.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FRAGMENT_DENSITY_MAP_PROPERTIES_EXT;
+			CHAIN_PNEXT (device_properties_next, fragment_density_map_properties);
+		}
+#endif
 #if defined(VK_KHR_fragment_shading_rate) && defined(VK_KHR_create_renderpass2)
 		if (fragment_shading_rate_usable)
 		{
@@ -1753,6 +1773,13 @@ static void GL_InitDevice (void)
 			multiview_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MULTIVIEW_FEATURES;
 			CHAIN_PNEXT (device_features_next, multiview_features);
 		}
+#if defined(VK_EXT_fragment_density_map)
+		if (fragment_density_map_extension && VRXR_VulkanFoveationSupported ())
+		{
+			fragment_density_map_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FRAGMENT_DENSITY_MAP_FEATURES_EXT;
+			CHAIN_PNEXT (device_features_next, fragment_density_map_features);
+		}
+#endif
 #if defined(VK_KHR_fragment_shading_rate) && defined(VK_KHR_create_renderpass2)
 		if (fragment_shading_rate_usable)
 		{
@@ -1775,6 +1802,28 @@ static void GL_InitDevice (void)
 	}
 	else
 		vkGetPhysicalDeviceFeatures (vulkan_physical_device, &vulkan_globals.device_features);
+
+#if defined(VK_EXT_fragment_density_map)
+	if (fragment_density_map_extension && (create_renderpass2_core || create_renderpass2_extension) &&
+		VRXR_VulkanFoveationSupported () &&
+		fragment_density_map_features.fragmentDensityMap &&
+		fragment_density_map_properties.maxFragmentDensityTexelSize.width &&
+		fragment_density_map_properties.maxFragmentDensityTexelSize.height)
+	{
+		VkFormatProperties density_format_properties;
+		VkImageFormatProperties density_image_properties;
+		vkGetPhysicalDeviceFormatProperties (vulkan_physical_device, VK_FORMAT_R8G8_UNORM, &density_format_properties);
+		if ((density_format_properties.optimalTilingFeatures & VK_FORMAT_FEATURE_FRAGMENT_DENSITY_MAP_BIT_EXT) &&
+			vkGetPhysicalDeviceImageFormatProperties (vulkan_physical_device, VK_FORMAT_R8G8_UNORM, VK_IMAGE_TYPE_2D,
+				VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_FRAGMENT_DENSITY_MAP_BIT_EXT, 0, &density_image_properties) == VK_SUCCESS &&
+			(density_image_properties.sampleCounts & VK_SAMPLE_COUNT_1_BIT) && density_image_properties.maxArrayLayers >= 2)
+		{
+			Con_Printf ("OpenXR runtime FDM candidate: Vulkan feature and RG8 array format available; eye profile %s, non-subsampled scene images %s. Borrowed-map contract still unverified.\n",
+				VRXR_VulkanFoveationEyeSupported () ? "available" : "unavailable",
+				fragment_density_map_features.fragmentDensityMapNonSubsampledImages ? "supported" : "unsupported");
+		}
+	}
+#endif
 
 #if defined(VK_KHR_fragment_shading_rate) && defined(VK_KHR_create_renderpass2)
 	if (fragment_shading_rate_usable && fragment_shading_rate_features.attachmentFragmentShadingRate &&

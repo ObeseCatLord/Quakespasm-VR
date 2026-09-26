@@ -15,6 +15,13 @@ borrowed-image owner. Add a *conditional* runtime fragment-density-map (FDM)
 adapter only after the protected-content proof below. The current portable
 `VK_KHR_fragment_shading_rate` backend remains operational meanwhile. OpenXR
 extension discovery alone must not switch backends or request density maps.
+Once the runtime path qualifies end to end, prefer it on **any** runtime that
+offers the required XR extensions, eye-foveation system property and Vulkan FDM
+device/image features; use KHR on devices where that runtime route is not
+qualified. This is capability selection, not a Steam Frame or headset-name
+allowlist. Valve [documents the FB/META route for Steam Frame](https://partner.steamgames.com/doc/steamhardware/steamframe/engines/custom),
+and Meta [documents the FB Vulkan route for native OpenXR](https://developers.meta.com/horizon/documentation/native/android/os-fixed-foveated-rendering/);
+neither document proves support on all runtimes or headsets.
 
 | Review finding | Disposition |
 | --- | --- |
@@ -32,7 +39,9 @@ extension discovery alone must not switch backends or request density maps.
    Vulkan device creation. The [OpenXR foveation flag](https://registry.khronos.org/OpenXR/specs/1.1/man/html/XrSwapchainCreateFoveationFlagBitsFB.html)
    requires that Vulkan extension to be enabled. Keep KHR selected until the
    complete FDM path qualifies; do not add a dormant device switch that removes
-   the working KHR backend.
+   the working KHR backend. `gl_vidsdl.c` now reports a query-only FDM candidate
+   when the Vulkan feature, RG8 array-image limits and RenderPass2 are present;
+   it does not enable the feature or request a density swapchain.
 2. Use one stereo array swapchain, matching scene/XR extent and single-sample
    opaque world. Attach the acquired runtime map to a scene graphics pass using
    the existing compiler, and establish its format, layout, read point, layer
@@ -42,7 +51,13 @@ extension discovery alone must not switch backends or request density maps.
    profile off/on/off, moving gaze, lost gaze and thin occluders. Reuse the
    existing gaze freshness/stability policy and profile function; invalid gaze
    selects off/full rate immediately. The [META profile structure](https://registry.khronos.org/OpenXR/specs/1.1/man/html/XrFoveationEyeTrackedProfileCreateInfoMETA.html)
-   has `flags=0`, which the imported backend already uses.
+   has `flags=0`, which the imported backend already uses. The older
+   `openxr` renderer manually applied QCOM density-map offsets from the
+   returned center. Do not copy that step without proving it is needed:
+   [Khronos describes `xrUpdateSwapchainFB` immediately before the META state
+   query](https://registry.khronos.org/OpenXR/specs/1.1/man/html/xrGetFoveationEyeTrackedStateMETA.html)
+   as a request for the runtime to update the foveation pattern. The returned
+   center is observation, not proof of an application offset requirement.
 4. Preserve all established MSAA, OIT, render-scale and desktop settings. If a
    combination cannot satisfy the FDM image/depth contract, render that
    combination full rate. Measure GPU frame time and visual quality on `mj4m1`
