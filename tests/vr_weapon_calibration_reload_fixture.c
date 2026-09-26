@@ -88,6 +88,88 @@ static void AssertVector(const vec3_t actual, float x, float y, float z)
 	assert(fabsf(actual[2] - z) < 0.0001f);
 }
 
+static void AssertClassicProfile(const char *path, float x, float y, float z,
+								float scale, float muzzle_x, float muzzle_y,
+								float muzzle_z)
+{
+	vec3_t held;
+	vec3_t muzzle;
+	float actual_scale;
+
+	assert(VR_WeaponCalibrationLookupHeld(path, false, false, held,
+										   &actual_scale));
+	AssertVector(held, x, y, z);
+	assert(fabsf(actual_scale - scale) < 0.0001f);
+	assert(VR_WeaponCalibrationLookupMuzzle(path, false, false, muzzle));
+	AssertVector(muzzle, muzzle_x, muzzle_y, muzzle_z);
+}
+
+static void AssertADRootProfiles(void)
+{
+	static const struct
+	{
+		const char *path;
+		float x;
+		float y;
+		float z;
+		float scale;
+	} expected[] = {
+		{"progs/v_shadaxe0.mdl", -1.5f, 43.1f, 41.0f, 0.25f},
+		{"progs/v_shadaxe1.mdl", -1.5f, 43.1f, 41.0f, 0.25f},
+		{"progs/v_shadaxe2.mdl", -1.5f, 43.1f, 41.0f, 0.25f},
+		{"progs/v_shadaxe3.mdl", -1.5f, 43.1f, 41.0f, 0.25f},
+		{"progs/v_shadaxe4.mdl", -1.5f, 43.1f, 41.0f, 0.25f},
+		{"progs/v_shadaxe5.mdl", -1.5f, 43.1f, 41.0f, 0.25f},
+		{"progs/v_shot3.mdl", -3.5f, 0.4f, 8.5f, 0.8f},
+		{"progs/v_shot.mdl", 1.5f, 1.7f, 17.5f, 0.33f},
+		{"progs/v_shot2.mdl", -3.5f, 0.4f, 8.5f, 0.8f},
+		{"progs/v_nail.mdl", -9.5f, 3.0f, 17.0f, 0.5f},
+		{"progs/v_nail2.mdl", -6.0f, 3.5f, 20.0f, 0.4f},
+		{"progs/v_rock.mdl", -3.0f, 1.25f, 17.0f, 0.5f},
+		{"progs/v_rock2.mdl", 0.0f, 5.55f, 22.5f, 0.45f},
+		{"progs/v_light.mdl", -4.0f, 3.1f, 13.0f, 0.5f},
+		{"progs/v_plasma.mdl", 2.8f, 1.8f, 22.5f, 0.5f},
+	};
+	size_t index;
+
+	for (index = 0; index < sizeof(expected) / sizeof(expected[0]); ++index)
+		AssertClassicProfile(expected[index].path, expected[index].x,
+			expected[index].y, expected[index].z, expected[index].scale,
+			0.0f, 0.0f, expected[index].z);
+}
+
+static void AssertAD171AliasProfiles(void)
+{
+	static const struct
+	{
+		const char *path;
+		float x;
+		float y;
+		float z;
+		float scale;
+	} expected[] = {
+		{"progs/ad171/v_shot.mdl", 1.5f, 1.7f, 17.5f, 0.33f},
+		{"progs/ad171/v_shot3.mdl", -3.5f, 0.4f, 8.5f, 0.8f},
+		{"progs/ad171/v_rock.mdl", -3.0f, 1.25f, 17.0f, 0.5f},
+		{"progs/ad171/v_rock2.mdl", 0.0f, 5.55f, 22.5f, 0.45f},
+		{"progs/ad171/v_light.mdl", -4.0f, 3.1f, 13.0f, 0.5f},
+		{"progs/ad171/v_plasma.mdl", 2.8f, 1.8f, 22.5f, 0.5f},
+		{"progs/ad171/v_shadaxe0.mdl", -1.5f, 43.1f, 41.0f, 0.25f},
+		{"progs/ad171/v_shadaxe1.mdl", -1.5f, 43.1f, 41.0f, 0.25f},
+		{"progs/ad171/v_shadaxe2.mdl", -1.5f, 43.1f, 41.0f, 0.25f},
+		{"progs/ad171/v_shadaxe3.mdl", -1.5f, 43.1f, 41.0f, 0.25f},
+		{"progs/ad171/v_shadaxe4.mdl", -1.5f, 43.1f, 41.0f, 0.25f},
+		{"progs/ad171/v_shadaxe5.mdl", -1.5f, 43.1f, 41.0f, 0.25f},
+		{"progs/ad171/v_nail2.mdl", -6.0f, 3.5f, 20.0f, 0.4f},
+	};
+	size_t index;
+
+	for (index = 0; index < sizeof(expected) / sizeof(expected[0]); ++index)
+		AssertClassicProfile(expected[index].path, expected[index].x,
+			expected[index].y, expected[index].z, expected[index].scale,
+			0.0f, 0.0f, expected[index].z);
+}
+
 static void AssertFallbackMuzzles(void)
 {
 	static const struct
@@ -168,6 +250,12 @@ int main(void)
 	assert(file_load_count == 1 && file_free_count == 0);
 	assert(registered_cvar_count == CALIBRATION_CVAR_COUNT);
 	AssertFallbackMuzzles();
+	assert(VR_WeaponCalibrationLookupHeld(
+		"progs/v_shot.mdl", false, false, held, &held_scale));
+	AssertVector(held, 0.0f, 0.0f, 0.0f);
+	assert(fabsf(held_scale - 1.0f) < 0.0001f);
+	assert(!VR_WeaponCalibrationLookupHeld(
+		"progs/ad171/v_shot.mdl", false, false, held, &held_scale));
 	assert(!VR_WeaponCalibrationLookupHeld(
 		"progs/ee_v_sword.mdl", false, false, held, &held_scale));
 
@@ -265,6 +353,54 @@ int main(void)
 	assert(VR_WeaponCalibrationLookupMuzzle(
 		"progs/ee_v_pistol.mdl", false, true, muzzle));
 	AssertVector(muzzle, 10.0f, 12.0f, 14.0f);
+
+	/* AD root defaults are scoped to AD-derived game roots. */
+	strcpy(com_gamedir, "/fixtures/ad");
+	fixture_file_contents = NULL;
+	assert(VR_WeaponCalibrationReloadGame());
+	assert(file_load_count == 9 && file_free_count == 5);
+	AssertADRootProfiles();
+
+	/* q30a1024 gets missing AD profiles; authored schema fields still win. */
+	strcpy(com_gamedir, "/fixtures/q30a1024");
+	fixture_file_contents =
+		"{ viewmodel progs/v_shot.mdl held_scale 1 "
+		"held_offset 9 8 7 muzzle_offset 6 5 4 }";
+	assert(VR_WeaponCalibrationReloadGame());
+	assert(file_load_count == 10 && file_free_count == 6);
+	AssertClassicProfile("progs/v_shot.mdl", 9.0f, 8.0f, 7.0f, 1.0f,
+		6.0f, 5.0f, 4.0f);
+	AssertClassicProfile("progs/v_shot3.mdl", -3.5f, 0.4f, 8.5f, 0.8f,
+		0.0f, 0.0f, 8.5f);
+	AssertClassicProfile("progs/v_shadaxe5.mdl", -1.5f, 43.1f, 41.0f,
+		0.25f, 0.0f, 0.0f, 41.0f);
+
+	/* Only hash-confirmed Mjolnir ad171 copies receive canonical AD values. */
+	strcpy(com_gamedir, "/fixtures/mjolnir");
+	fixture_file_contents = NULL;
+	assert(VR_WeaponCalibrationReloadGame());
+	assert(file_load_count == 11 && file_free_count == 6);
+	AssertAD171AliasProfiles();
+	assert(!VR_WeaponCalibrationLookupHeld(
+		"progs/ad171/v_shot2.mdl", false, false, held, &held_scale));
+	assert(!VR_WeaponCalibrationLookupHeld(
+		"progs/ad171/v_nail.mdl", false, false, held, &held_scale));
+
+	/* Mjolnir schema data overrides an alias and reload restores the baseline. */
+	fixture_file_contents =
+		"{ viewmodel progs/ad171/v_shot.mdl held_scale 0.6 "
+		"held_offset 12 13 14 muzzle_offset 2 3 4 }";
+	assert(VR_WeaponCalibrationReloadGame());
+	assert(file_load_count == 12 && file_free_count == 7);
+	AssertClassicProfile("progs/ad171/v_shot.mdl", 12.0f, 13.0f, 14.0f,
+		0.6f, 2.0f, 3.0f, 4.0f);
+	AssertClassicProfile("progs/ad171/v_rock.mdl", -3.0f, 1.25f,
+		17.0f, 0.5f, 0.0f, 0.0f, 17.0f);
+	fixture_file_contents = NULL;
+	assert(VR_WeaponCalibrationReloadGame());
+	assert(file_load_count == 13 && file_free_count == 7);
+	AssertClassicProfile("progs/ad171/v_shot.mdl", 1.5f, 1.7f, 17.5f,
+		0.33f, 0.0f, 0.0f, 17.5f);
 
 	puts("VR weapon calibration reload fixture passed");
 	return 0;

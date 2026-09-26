@@ -173,6 +173,60 @@ static const vr_weapon_schema_entry_t vr_stock_axe_fallback[] = {
 	},
 };
 
+/* Arcane Dimensions defaults from the donor InitAllWeaponCVars AD branch
+ * and the installed AD vr_weapons.txt. Classic muzzle Z follows held Z. */
+#define VR_AD_WEAPON_PROFILE(path, x, y, z, scale) \
+	{ \
+		.viewmodel_path = path, \
+		.held_offset = {x, y, z}, \
+		.has_held_offset = true, \
+		.held_scale = scale, \
+		.has_held_scale = true, \
+		.muzzle_offset = {0.0f, 0.0f, z}, \
+		.has_muzzle_offset = true, \
+	}
+static const vr_weapon_schema_entry_t vr_ad_weapon_fallbacks[] = {
+	VR_AD_WEAPON_PROFILE("progs/v_shadaxe0.mdl", -1.5f, 43.1f, 41.0f, 0.25f),
+	VR_AD_WEAPON_PROFILE("progs/v_shadaxe1.mdl", -1.5f, 43.1f, 41.0f, 0.25f),
+	VR_AD_WEAPON_PROFILE("progs/v_shadaxe2.mdl", -1.5f, 43.1f, 41.0f, 0.25f),
+	VR_AD_WEAPON_PROFILE("progs/v_shadaxe3.mdl", -1.5f, 43.1f, 41.0f, 0.25f),
+	VR_AD_WEAPON_PROFILE("progs/v_shadaxe4.mdl", -1.5f, 43.1f, 41.0f, 0.25f),
+	VR_AD_WEAPON_PROFILE("progs/v_shadaxe5.mdl", -1.5f, 43.1f, 41.0f, 0.25f),
+	VR_AD_WEAPON_PROFILE("progs/v_shot3.mdl", -3.5f, 0.4f, 8.5f, 0.8f),
+	VR_AD_WEAPON_PROFILE("progs/v_shot.mdl", 1.5f, 1.7f, 17.5f, 0.33f),
+	VR_AD_WEAPON_PROFILE("progs/v_shot2.mdl", -3.5f, 0.4f, 8.5f, 0.8f),
+	VR_AD_WEAPON_PROFILE("progs/v_nail.mdl", -9.5f, 3.0f, 17.0f, 0.5f),
+	VR_AD_WEAPON_PROFILE("progs/v_nail2.mdl", -6.0f, 3.5f, 20.0f, 0.4f),
+	VR_AD_WEAPON_PROFILE("progs/v_rock.mdl", -3.0f, 1.25f, 17.0f, 0.5f),
+	VR_AD_WEAPON_PROFILE("progs/v_rock2.mdl", 0.0f, 5.55f, 22.5f, 0.45f),
+	VR_AD_WEAPON_PROFILE("progs/v_light.mdl", -4.0f, 3.1f, 13.0f, 0.5f),
+	VR_AD_WEAPON_PROFILE("progs/v_plasma.mdl", 2.8f, 1.8f, 22.5f, 0.5f),
+};
+#undef VR_AD_WEAPON_PROFILE
+
+/* These Mjolnir paths are hash-confirmed copies of the named AD pak0 models.
+ * Keep this list exact: similarly named AD replacements can have different
+ * geometry and need their own authored schema values. */
+static const struct
+{
+	const char *alias_path;
+	const char *ad_path;
+} vr_ad171_weapon_aliases[] = {
+	{"progs/ad171/v_shot.mdl", "progs/v_shot.mdl"},
+	{"progs/ad171/v_shot3.mdl", "progs/v_shot3.mdl"},
+	{"progs/ad171/v_rock.mdl", "progs/v_rock.mdl"},
+	{"progs/ad171/v_rock2.mdl", "progs/v_rock2.mdl"},
+	{"progs/ad171/v_light.mdl", "progs/v_light.mdl"},
+	{"progs/ad171/v_plasma.mdl", "progs/v_plasma.mdl"},
+	{"progs/ad171/v_shadaxe0.mdl", "progs/v_shadaxe0.mdl"},
+	{"progs/ad171/v_shadaxe1.mdl", "progs/v_shadaxe1.mdl"},
+	{"progs/ad171/v_shadaxe2.mdl", "progs/v_shadaxe2.mdl"},
+	{"progs/ad171/v_shadaxe3.mdl", "progs/v_shadaxe3.mdl"},
+	{"progs/ad171/v_shadaxe4.mdl", "progs/v_shadaxe4.mdl"},
+	{"progs/ad171/v_shadaxe5.mdl", "progs/v_shadaxe5.mdl"},
+	{"progs/ad171/v_nail2.mdl", "progs/v_nail2.mdl"},
+};
+
 /* Classic viewmodel calibration from the donor's Enyo InitWeaponCVars. */
 static const vr_weapon_schema_entry_t vr_enyo_weapon_fallbacks[] = {
 	{
@@ -1990,13 +2044,69 @@ static qboolean VR_WeaponCalibrationApplyEnyoFallbacks(void)
 		sizeof(vr_enyo_weapon_fallbacks[0]));
 }
 
+static qboolean VR_WeaponCalibrationApplyADRootFallbacks(void)
+{
+	const char *game = COM_SkipPath(com_gamedir);
+
+	/* q30a1024 is documented as AD-based; its schema is still applied after
+	 * this baseline and remains authoritative for every field it contains. */
+	if (!game || (q_strcasecmp(game, "ad") &&
+		q_strcasecmp(game, "q30a1024")))
+		return true;
+	return VR_WeaponCalibrationApplySchema(vr_ad_weapon_fallbacks,
+		sizeof(vr_ad_weapon_fallbacks) /
+		sizeof(vr_ad_weapon_fallbacks[0]));
+}
+
+static qboolean VR_WeaponCalibrationApplyAD171Aliases(void)
+{
+	const char *game = COM_SkipPath(com_gamedir);
+	vr_weapon_schema_entry_t entries[
+		sizeof(vr_ad171_weapon_aliases) / sizeof(vr_ad171_weapon_aliases[0])];
+	size_t alias_index;
+
+	if (!game || q_strcasecmp(game, "mjolnir"))
+		return true;
+
+	for (alias_index = 0;
+		 alias_index < sizeof(vr_ad171_weapon_aliases) /
+			sizeof(vr_ad171_weapon_aliases[0]); ++alias_index)
+	{
+		size_t profile_index;
+		const vr_weapon_schema_entry_t *profile = NULL;
+
+		for (profile_index = 0;
+			 profile_index < sizeof(vr_ad_weapon_fallbacks) /
+				sizeof(vr_ad_weapon_fallbacks[0]); ++profile_index)
+		{
+			if (!strcmp(vr_ad_weapon_fallbacks[profile_index].viewmodel_path,
+						vr_ad171_weapon_aliases[alias_index].ad_path))
+			{
+				profile = &vr_ad_weapon_fallbacks[profile_index];
+				break;
+			}
+		}
+		if (!profile)
+			return false;
+
+		entries[alias_index] = *profile;
+		strcpy(entries[alias_index].viewmodel_path,
+			vr_ad171_weapon_aliases[alias_index].alias_path);
+	}
+
+	return VR_WeaponCalibrationApplySchema(entries,
+		sizeof(entries) / sizeof(entries[0]));
+}
+
 static qboolean VR_WeaponCalibrationApplyBuiltinFallbacks(void)
 {
 	return VR_WeaponCalibrationApplyEnhancedFallbacks() &&
 		VR_WeaponCalibrationApplySchema(vr_stock_axe_fallback,
 			sizeof(vr_stock_axe_fallback) /
 			sizeof(vr_stock_axe_fallback[0])) &&
-		VR_WeaponCalibrationApplyEnyoFallbacks();
+		VR_WeaponCalibrationApplyEnyoFallbacks() &&
+		VR_WeaponCalibrationApplyADRootFallbacks() &&
+		VR_WeaponCalibrationApplyAD171Aliases();
 }
 
 qboolean VR_WeaponCalibrationReloadGame(void)
