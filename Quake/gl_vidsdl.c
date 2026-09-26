@@ -2180,7 +2180,9 @@ static void GL_InitCommandBuffers (void)
 
 	for (int scbx_index = 0; scbx_index < SCBX_NUM; ++scbx_index)
 	{
-		const int multiplicity = SECONDARY_CB_MULTIPLICITY[scbx_index];
+		const int multiplicity = R_SecondaryContextCount (scbx_index);
+		if (!multiplicity)
+			continue;
 		vulkan_globals.secondary_cb_contexts[scbx_index] = Mem_Alloc (multiplicity * sizeof (cb_context_t));
 		secondary_command_pools[scbx_index] = Mem_Alloc (multiplicity * sizeof (VkCommandPool));
 		for (int i = 0; i < DOUBLE_BUFFERED; ++i)
@@ -3838,7 +3840,7 @@ void GL_BeginRenderingTask (void *unused)
 
 	for (int scbx_index = 0; scbx_index < SCBX_NUM; ++scbx_index)
 	{
-		for (int i = 0; i < SECONDARY_CB_MULTIPLICITY[scbx_index]; ++i)
+		for (int i = 0; i < R_SecondaryContextCount (scbx_index); ++i)
 		{
 			cb_context_t *cbx = &vulkan_globals.secondary_cb_contexts[scbx_index][i];
 			cbx->cb = secondary_command_buffers[scbx_index][current_cb_index][i];
@@ -4519,7 +4521,7 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 
 	for (int scbx_index = 0; scbx_index < SCBX_NUM; ++scbx_index)
 	{
-		for (int i = 0; i < SECONDARY_CB_MULTIPLICITY[scbx_index]; ++i)
+		for (int i = 0; i < R_SecondaryContextCount (scbx_index); ++i)
 		{
 			cb_context_t *cbx = &vulkan_globals.secondary_cb_contexts[scbx_index][i];
 			R_EndDebugUtilsLabel (cbx);

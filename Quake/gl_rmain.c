@@ -2070,15 +2070,30 @@ static void R_ShowSkeletons (cb_context_t *cbx)
 R_DrawWorldTask
 ================
 */
-static void R_DrawWorldTask (int index, void *use_tasks)
+static void R_DrawWorldChunk (int context, int index, void *use_tasks, r_world_draw_filter_t filter, qboolean depth_only)
 {
-	cb_context_t *cbx = &vulkan_globals.secondary_cb_contexts[SCBX_WORLD][index];
+	cb_context_t *cbx = &vulkan_globals.secondary_cb_contexts[context][index];
+	cbx->depth_only = depth_only;
 	R_SetupContext (cbx);
 	Fog_EnableGFog (cbx);
 	if (indirect)
-		R_DrawIndirectBrushes (cbx, false, false, false, use_tasks ? index : -1);
+		R_DrawIndirectBrushesFiltered (cbx, false, false, false, use_tasks ? index : -1, filter);
 	else
-		R_DrawWorld (cbx, index);
+		R_DrawWorldFiltered (cbx, index, filter);
+}
+
+static void R_DrawWorldTask (int index, void *use_tasks)
+{
+	if (vulkan_globals.openxr_fragment_density_map_active)
+	{
+		// Each group is submitted in full before the next one. In particular,
+		// no protected color can test against incomplete replay depth.
+		R_DrawWorldChunk (SCBX_DENSITY_WORLD, index, use_tasks, R_WORLD_DRAW_FOVEATION_ELIGIBLE, false);
+		R_DrawWorldChunk (SCBX_WORLD_DEPTH_REPLAY, index, use_tasks, R_WORLD_DRAW_FOVEATION_ELIGIBLE, true);
+		R_DrawWorldChunk (SCBX_WORLD, index, use_tasks, R_WORLD_DRAW_FOVEATION_PROTECTED, false);
+	}
+	else
+		R_DrawWorldChunk (SCBX_WORLD, index, use_tasks, R_WORLD_DRAW_ALL, false);
 }
 
 /*

@@ -46,6 +46,8 @@ typedef void (*frame_recorder_t) (cb_context_t *cbx);
 typedef enum
 {
 	DRAW_WORLD,
+	DRAW_DENSITY_WORLD,
+	DRAW_WORLD_DEPTH_REPLAY,
 	DRAW_ENTITIES,
 	DRAW_ENTITY_SSAO,
 	DRAW_POST_ENTITIES,
@@ -93,6 +95,7 @@ typedef struct
 	bool				  upscale;
 	bool stereo;
 	bool fragment_shading_rate;
+	bool fragment_density_map;
 	frame_desc_t		  variants[MAIN_RENDER_PASS_VARIANT_COUNT];
 } frame_layout_t;
 
@@ -209,7 +212,15 @@ static void R_DescribeFrame (frame_desc_t *desc, main_render_pass_variant_t vari
 	R_AddPreparedCommands (&builder, PCBX_UPDATE_LIGHTMAPS);
 	R_AddPreparedCommands (&builder, PCBX_UPDATE_WARP);
 
+	if (pending_layout.fragment_density_map)
+	{
+		R_BeginGraphicsPass (&builder, FRAME_TARGET_DENSITY_SCENE, SUBPASS_MAIN);
+		R_AddGraphicsWork (&builder, DRAW_DENSITY_WORLD, SCBX_DENSITY_WORLD, SCBX_DENSITY_WORLD);
+		R_EndGraphicsPass (&builder);
+	}
 	R_BeginGraphicsPass (&builder, FRAME_TARGET_SCENE, SUBPASS_MAIN);
+	if (pending_layout.fragment_density_map)
+		R_AddGraphicsWork (&builder, DRAW_WORLD_DEPTH_REPLAY, SCBX_WORLD_DEPTH_REPLAY, SCBX_WORLD_DEPTH_REPLAY);
 	R_AddGraphicsWork (&builder, DRAW_WORLD, SCBX_WORLD, SCBX_WORLD);
 	if (R_SSAOEnabled ())
 	{
@@ -284,6 +295,7 @@ bool R_SetupRenderPasses (void)
 	pending_layout.depth_format = vulkan_globals.depth_format;
 	pending_layout.stereo = vulkan_globals.stereo_active;
 	pending_layout.fragment_shading_rate = pending_layout.stereo && vulkan_globals.openxr_fragment_shading_rate_active;
+	pending_layout.fragment_density_map = pending_layout.stereo && vulkan_globals.openxr_fragment_density_map_active;
 	pending_layout.swapchain_format = pending_layout.stereo ? vulkan_globals.stereo_color_format : vulkan_globals.swap_chain_format;
 	pending_layout.samples = vulkan_globals.sample_count;
 	pending_layout.upscale = vid.render_width != vid.width || vid.render_height != vid.height;
@@ -632,7 +644,7 @@ void R_DestroyRenderPasses (void)
 				*handle = VK_NULL_HANDLE;
 			}
 	for (int context = 0; context < SCBX_NUM; ++context)
-		for (int i = 0; i < SECONDARY_CB_MULTIPLICITY[context]; ++i)
+		for (int i = 0; i < R_SecondaryContextCount (context); ++i)
 			vulkan_globals.secondary_cb_contexts[context][i].render_pass = VK_NULL_HANDLE;
 }
 
@@ -920,7 +932,7 @@ static void R_SubmitContexts (VkCommandBuffer command_buffer, int first_context,
 {
 	for (int scbx_index = first_context; scbx_index <= last_context; ++scbx_index)
 	{
-		for (int i = 0; i < SECONDARY_CB_MULTIPLICITY[scbx_index]; ++i)
+		for (int i = 0; i < R_SecondaryContextCount (scbx_index); ++i)
 			vkCmdExecuteCommands (command_buffer, 1, &vulkan_globals.secondary_cb_contexts[scbx_index][i].cb);
 	}
 }
@@ -992,7 +1004,8 @@ uint32_t R_RecordFrame (
 		// UI and density passes reference the acquired XR/WSI image. Keep
 		// prepared scene commands even if acquisition failed.
 		if (!swapchain_acquired && (step->type == FRAME_READBACK ||
-			(step->type != FRAME_PREPARED_COMMANDS && frame->passes[step->pass].target != FRAME_TARGET_SCENE)))
+			(step->type != FRAME_PREPARED_COMMANDS &&
+				(current_layout.fragment_density_map || frame->passes[step->pass].target != FRAME_TARGET_SCENE))))
 			continue;
 		if (step->type == FRAME_PREPARED_COMMANDS || !recording_started)
 		{

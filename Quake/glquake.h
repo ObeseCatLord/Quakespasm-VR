@@ -245,6 +245,8 @@ typedef enum
 	SCBX_GUI,
 	SCBX_POST_PROCESS,
 	SCBX_ENTITY_SSAO,
+	SCBX_DENSITY_WORLD,
+	SCBX_WORLD_DEPTH_REPLAY,
 	SCBX_NUM,
 	// Last pass before UI
 	SCBX_MAIN_OPAQUE_PASS_LAST = SCBX_FTE_PARTICLES_BLEND,
@@ -328,7 +330,9 @@ static const int SECONDARY_CB_MULTIPLICITY[SCBX_NUM] = {
 	1,				  // SCBX_OIT_RESOLVE,
 	1,				  // SCBX_GUI,
 	1,				  // SCBX_POST_PROCESS,
-	1,				  // SCBX_ENTITY_SSAO
+	1,				  // SCBX_ENTITY_SSAO,
+	NUM_WORLD_CBX,  // SCBX_DENSITY_WORLD,
+	NUM_WORLD_CBX,  // SCBX_WORLD_DEPTH_REPLAY,
 };
 
 // A command buffer and its current drawing state. Only one task uses a context
@@ -571,6 +575,13 @@ typedef struct
 } vulkanglobals_t;
 
 extern vulkanglobals_t vulkan_globals;
+
+static inline int R_SecondaryContextCount (int context)
+{
+	if ((context == SCBX_DENSITY_WORLD || context == SCBX_WORLD_DEPTH_REPLAY) && !vulkan_globals.openxr_fragment_density_map_active)
+		return 0;
+	return SECONDARY_CB_MULTIPLICITY[context];
+}
 
 extern qboolean indirect;
 
