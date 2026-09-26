@@ -316,6 +316,15 @@ static bool R_UseFragmentShadingRate (void)
 	return current_layout.fragment_shading_rate;
 }
 
+static bool R_FrameHasTarget (main_render_pass_variant_t variant, frame_target_t target)
+{
+	const frame_desc_t *frame = &current_layout.variants[variant];
+	for (uint32_t i = 0; i < frame->pass_count; ++i)
+		if (frame->passes[i].target == target)
+			return true;
+	return false;
+}
+
 static VkAttachmentReference2 R_CreateAttachmentReference2 (const VkAttachmentReference *reference, VkImageAspectFlags aspect_mask)
 {
 	return (VkAttachmentReference2){
@@ -582,7 +591,8 @@ static void R_CreateGraphicsPasses (
 			}
 			if (result != VK_SUCCESS)
 				Sys_Error ("Couldn't create render pass: %d", result);
-			GL_SetObjectName ((uint64_t)physical->handles[stencil], VK_OBJECT_TYPE_RENDER_PASS, target == FRAME_TARGET_UI ? "ui" : "scene");
+			GL_SetObjectName ((uint64_t)physical->handles[stencil], VK_OBJECT_TYPE_RENDER_PASS,
+				target == FRAME_TARGET_UI ? "ui" : target == FRAME_TARGET_DENSITY_SCENE ? "density scene" : "scene");
 			for (uint32_t subpass = 0; subpass < desc->subpass_count; ++subpass)
 			{
 				render_pass_binding_t *binding = &physical->bindings[subpass];
@@ -1065,6 +1075,7 @@ uint32_t R_RecordFrame (
 static void R_CreateScenePasses (main_render_pass_variant_t variant)
 {
 	const bool resolve = current_layout.samples != VK_SAMPLE_COUNT_1_BIT;
+	const bool after_density = R_FrameHasTarget (variant, FRAME_TARGET_DENSITY_SCENE);
 	ZEROED_STRUCT_ARRAY (VkAttachmentDescription, attachment_descriptions, MAX_PASS_ATTACHMENTS);
 	const qboolean use_wboit = (variant == MAIN_RENDER_PASS_OIT);
 	const qboolean use_mboit = (variant == MAIN_RENDER_PASS_MBOIT);
@@ -1077,11 +1088,14 @@ static void R_CreateScenePasses (main_render_pass_variant_t variant)
 	const uint32_t mboit_moments0_attachment_index = resolve ? 4 : 3;
 	const uint32_t mboit_color_attachment_index = resolve ? 5 : 4;
 
-	attachment_descriptions[0].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+	// The density pass writes scene color first. The ordinary scene starts by
+	// clearing coarse depth and replaying authoritative full-rate world depth.
+	attachment_descriptions[0].initialLayout = after_density ? VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL : VK_IMAGE_LAYOUT_UNDEFINED;
 	attachment_descriptions[0].finalLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
 	attachment_descriptions[0].samples = VK_SAMPLE_COUNT_1_BIT;
 	attachment_descriptions[0].format = vulkan_globals.color_format;
-	attachment_descriptions[0].loadOp = resolve ? VK_ATTACHMENT_LOAD_OP_DONT_CARE : VK_ATTACHMENT_LOAD_OP_CLEAR;
+	attachment_descriptions[0].loadOp = after_density ? VK_ATTACHMENT_LOAD_OP_LOAD :
+		resolve ? VK_ATTACHMENT_LOAD_OP_DONT_CARE : VK_ATTACHMENT_LOAD_OP_CLEAR;
 	attachment_descriptions[0].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
 
 	attachment_descriptions[1].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
@@ -1283,6 +1297,52 @@ static void R_CreateScenePasses (main_render_pass_variant_t variant)
 	R_CreateGraphicsPasses (variant, FRAME_TARGET_SCENE, attachment_descriptions, attachment_count, subpass_descriptions);
 }
 
+static void R_CreateDensityScenePasses (main_render_pass_variant_t variant)
+{
+	if (!R_FrameHasTarget (variant, FRAME_TARGET_DENSITY_SCENE))
+		return;
+	if (!current_layout.stereo || current_layout.samples != VK_SAMPLE_COUNT_1_BIT || current_layout.fragment_shading_rate)
+		Sys_Error ("Density scene requires single-sample stereo without KHR shading rate");
+
+	VkAttachmentDescription attachments[3] = {0};
+	attachments[0] = (VkAttachmentDescription){
+		.format = vulkan_globals.color_format,
+		.samples = VK_SAMPLE_COUNT_1_BIT,
+		.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
+		.storeOp = VK_ATTACHMENT_STORE_OP_STORE,
+		.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+		.finalLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+	};
+	attachments[1] = (VkAttachmentDescription){
+		.format = vulkan_globals.depth_format,
+		.samples = VK_SAMPLE_COUNT_1_BIT,
+		.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
+		.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
+		.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+		.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
+		.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+		.finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+	};
+	attachments[2] = (VkAttachmentDescription){
+		.format = VK_FORMAT_R8G8_UNORM,
+		.samples = VK_SAMPLE_COUNT_1_BIT,
+		.loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+		.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
+		.initialLayout = VK_IMAGE_LAYOUT_FRAGMENT_DENSITY_MAP_OPTIMAL_EXT,
+		.finalLayout = VK_IMAGE_LAYOUT_FRAGMENT_DENSITY_MAP_OPTIMAL_EXT,
+	};
+	const VkAttachmentReference color = {0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
+	const VkAttachmentReference depth = {1, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL};
+	VkSubpassDescription stages[SUBPASS_COUNT] = {0};
+	stages[SUBPASS_MAIN] = (VkSubpassDescription){
+		.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS,
+		.colorAttachmentCount = 1,
+		.pColorAttachments = &color,
+		.pDepthStencilAttachment = &depth,
+	};
+	R_CreateGraphicsPasses (variant, FRAME_TARGET_DENSITY_SCENE, attachments, countof (attachments), stages);
+}
+
 static void R_CreateUIPasses (main_render_pass_variant_t variant)
 {
 	const bool upscale = current_layout.upscale;
@@ -1335,6 +1395,7 @@ void R_CreateRenderPasses (void)
 	current_layout = pending_layout;
 	for (int variant = 0; variant < MAIN_RENDER_PASS_VARIANT_COUNT; ++variant)
 	{
+		R_CreateDensityScenePasses (variant);
 		R_CreateScenePasses (variant);
 		R_CreateUIPasses (variant);
 		R_BindFrameContexts (variant);
