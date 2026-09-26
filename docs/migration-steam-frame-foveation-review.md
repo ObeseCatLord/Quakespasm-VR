@@ -121,6 +121,14 @@ and fixed foveation is only enabled by an explicit user choice. Runtime FDM is
 not active in the current renderer because `GL_OpenXRAttach` still requests
 `density_maps=0`.
 
+`R_DrawWorldFiltered` and `R_DrawIndirectBrushesFiltered` now expose eligible,
+protected and unchanged all-draw selections through the existing world draw
+code. The current frame compiler still calls the all-draw wrappers, so this
+does not split or activate an FDM scene pass. The next integration must bind
+these selections to globally ordered coarse-color, depth-replay and protected
+stages. For large maps, measure the cost of iterating indirect draws multiple
+times and optimize that routing if it erases the fragment savings.
+
 The [META eye-foveation extension](https://raw.githubusercontent.com/KhronosGroup/OpenXR-Docs/main/specification/sources/chapters/extensions/meta/meta_foveation_eye_tracked.adoc)
 has its own system-support and per-frame validity signals; it does not require
 the application to obtain an `XR_EXT_eye_gaze_interaction` action. The imported

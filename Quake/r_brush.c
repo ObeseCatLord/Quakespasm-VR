@@ -929,7 +929,8 @@ void R_DrawBrushModel_ShowTris (cb_context_t *cbx, entity_t *e)
 R_DrawIndirectBrushes
 =============
 */
-void R_DrawIndirectBrushes (cb_context_t *cbx, qboolean draw_water, qboolean transparent_water, qboolean draw_sky, int index)
+void R_DrawIndirectBrushesFiltered (
+	cb_context_t *cbx, qboolean draw_water, qboolean transparent_water, qboolean draw_sky, int index, r_world_draw_filter_t filter)
 {
 	assert (!draw_water || !draw_sky);
 
@@ -970,22 +971,26 @@ void R_DrawIndirectBrushes (cb_context_t *cbx, qboolean draw_water, qboolean tra
 			continue;
 		if (draw_sky != (texture->type == TEXTYPE_SKY))
 			continue;
+		float alpha = 1.0f;
+		if (draw_water)
+		{
+			alpha = GL_WaterAlphaForTextureType (texture->type);
+			if ((alpha < 1.0f) != transparent_water)
+				continue;
+		}
+		const qboolean alpha_test = texture->type == TEXTYPE_CUTOUT;
+		const qboolean alpha_blend = alpha < 1.0f;
+		const qboolean is_decal = indirect_draws[i].is_decal;
+		const qboolean shading_rate_eligible = R_WorldFoveationEligible (
+			!indirect_draws[i].is_bmodel, alpha_test, alpha_blend, is_decal || draw_water || draw_sky);
+		if (!R_WorldDrawFilterAllows (filter, shading_rate_eligible))
+			continue;
 
 		if (!draw_sky && !r_lightmap_cheatsafe && lasttexture != gl_texture)
 		{
 			vulkan_globals.vk_cmd_bind_descriptor_sets (
 				cbx->cb, VK_PIPELINE_BIND_POINT_GRAPHICS, vulkan_globals.world_pipeline_layout.handle, 0, 1, &gl_texture->descriptor_set, 0, NULL);
 			lasttexture = gl_texture;
-		}
-
-		float alpha = 1.0f;
-		if (draw_water)
-		{
-			alpha = GL_WaterAlphaForTextureType (texture->type);
-
-			if ((alpha < 1.0f) != transparent_water)
-				continue;
-
 		}
 
 		qboolean	 fullbright_enabled = false;
@@ -1003,8 +1008,6 @@ void R_DrawIndirectBrushes (cb_context_t *cbx, qboolean draw_water, qboolean tra
 
 		if (!draw_sky)
 		{
-			const qboolean alpha_test = texture->type == TEXTYPE_CUTOUT;
-			const qboolean alpha_blend = alpha < 1.0f;
 			int			   pipeline_index =
 				(fullbright_enabled ? 1 : 0) + (alpha_test ? 2 : 0) + (alpha_blend ? 4 : 0) + (vid_filter.value != 0 && vid_palettize.value != 0 ? 8 : 0);
 			vulkan_pipeline_t pipeline = R_PipelineForSubpassType (
@@ -1016,8 +1019,6 @@ void R_DrawIndirectBrushes (cb_context_t *cbx, qboolean draw_water, qboolean tra
 			const uint32_t instance_base = ((uint32_t)bmodel_instances_index * MAX_MODELS) + 1;
 			assert ((instance_base & 0x80000000u) == 0);
 
-			const qboolean is_decal = indirect_draws[i].is_decal;
-			const qboolean shading_rate_eligible = !indirect_draws[i].is_bmodel && !is_decal && !draw_water && !draw_sky && !alpha_test && !alpha_blend;
 			if (!alpha_test && !alpha_blend)
 				R_SetWorldFragmentShadingRate (cbx, shading_rate_eligible);
 			const qboolean use_zbias = INDIRECT_ZBIAS && gl_zfix.value && !map_checks.value && indirect_draws[i].is_bmodel && !is_decal;
@@ -1038,6 +1039,11 @@ void R_DrawIndirectBrushes (cb_context_t *cbx, qboolean draw_water, qboolean tra
 	}
 
 	R_EndDebugUtilsLabel (cbx);
+}
+
+void R_DrawIndirectBrushes (cb_context_t *cbx, qboolean draw_water, qboolean transparent_water, qboolean draw_sky, int index)
+{
+	R_DrawIndirectBrushesFiltered (cbx, draw_water, transparent_water, draw_sky, index, R_WORLD_DRAW_ALL);
 }
 
 /*

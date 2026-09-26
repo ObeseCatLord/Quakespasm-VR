@@ -788,6 +788,28 @@ qboolean R_IndirectBrush (entity_t *e);
 void	 R_ClearBModelInstanceClaims (void);
 
 void R_DrawWorld (cb_context_t *cbx, int index);
+typedef enum
+{
+	R_WORLD_DRAW_ALL,
+	R_WORLD_DRAW_FOVEATION_ELIGIBLE,
+	R_WORLD_DRAW_FOVEATION_PROTECTED,
+} r_world_draw_filter_t;
+
+/* One material decision drives both KHR per-draw rates and the future FB/META
+ * pass routing. World-owned excludes brush entities; special excludes decals,
+ * tiled/liquid/sky surfaces and any other pass-wide protected content. */
+static inline qboolean R_WorldFoveationEligible (
+	qboolean world_owned, qboolean alpha_test, qboolean alpha_blend, qboolean special)
+{
+	return world_owned && !alpha_test && !alpha_blend && !special;
+}
+
+static inline qboolean R_WorldDrawFilterAllows (r_world_draw_filter_t filter, qboolean eligible)
+{
+	return filter == R_WORLD_DRAW_ALL || (filter == R_WORLD_DRAW_FOVEATION_ELIGIBLE ? eligible : !eligible);
+}
+
+void R_DrawWorldFiltered (cb_context_t *cbx, int index, r_world_draw_filter_t filter);
 void R_SetWorldFragmentShadingRate (cb_context_t *cbx, qboolean eligible);
 
 // johnfitz -- struct for passing lerp information to drawing functions
@@ -814,6 +836,8 @@ void R_DrawPreparedWheelAliasModel (
 void R_DrawBrushModel (cb_context_t *cbx, entity_t *e, int chain, int *brushpolys, qboolean sort, qboolean water_opaque_only, qboolean water_transparent_only);
 void R_DrawSpriteModel (cb_context_t *cbx, entity_t *e);
 void R_DrawIndirectBrushes (cb_context_t *cbx, qboolean draw_water, qboolean transparent_water, qboolean draw_sky, int index);
+void R_DrawIndirectBrushesFiltered (
+	cb_context_t *cbx, qboolean draw_water, qboolean transparent_water, qboolean draw_sky, int index, r_world_draw_filter_t filter);
 void R_DrawIndirectBrushes_ShowTris (cb_context_t *cbx);
 
 void R_DrawTextureChains_Water (cb_context_t *cbx, qmodel_t *model, entity_t *ent, texchain_t chain, qboolean opaque_only, qboolean transparent_only);
