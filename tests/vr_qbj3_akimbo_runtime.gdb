@@ -120,7 +120,7 @@ define fire_vr_phase
   set $forward_before = pr_global_struct->v_forward
   set $right_before = pr_global_struct->v_right
   set $up_before = pr_global_struct->v_up
-  call SV_RunPrivateVRWeaponThink($p,$client)
+  call SV_RunPrivateVRWeaponThink($p,$client,&$client->cmd)
   set $phase = $p->v.weaponframe
   python
 import gdb, math
@@ -201,7 +201,7 @@ set pr_global_struct->v_up[1] = 0
 set pr_global_struct->v_up[2] = 1
 set $ammo_before = $p->v.ammo_nails
 set $body_before = $p->v.origin
-call SV_RunPrivateVRWeaponThink($p,$client)
+call SV_RunPrivateVRWeaponThink($p,$client,&$client->cmd)
 python
 import gdb
 p = gdb.parse_and_eval('$p').dereference()

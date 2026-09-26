@@ -135,6 +135,7 @@ static int akimbo_source_prev_frame, akimbo_source_snap_frames;
 static double akimbo_source_frame_change_time, akimbo_source_frame_duration;
 static uint64_t akimbo_sample_id;
 static qboolean akimbo_pair_prepared;
+static qboolean akimbo_pair_frozen;
 
 static int V_TrackedAimMode (void)
 {
@@ -533,6 +534,7 @@ static void V_UpdateTrackedViewmodel (qboolean refdef_updated)
 void V_ClearAkimboPair (void)
 {
 	akimbo_pair_prepared = false;
+	akimbo_pair_frozen = false;
 	akimbo_source_recipe = NULL;
 	akimbo_source_model = NULL;
 	akimbo_source_geometry = NULL;
@@ -581,6 +583,9 @@ qboolean V_AkimboRecipeSupported (const char *source_model)
 	if (!strcmp (recipe->game, "qbj3") &&
 		!strcmp (recipe->source, "progs/v_tnailgun.mdl"))
 		return cl.vr_qbj3_akimbo_supported;
+	if (!strcmp (recipe->game, "qbj3") &&
+		!strcmp (recipe->source, "progs/v_berserk.mdl"))
+		return cl.vr_qbj3_berserk_akimbo_supported;
 	if (!strcmp (recipe->game, "enyo") &&
 		!strcmp (recipe->source, "progs/ee_v_smgs.mdl"))
 		return cl.vr_enyo_akimbo_supported;
@@ -599,12 +604,32 @@ static qboolean V_AkimboRecipeIsDwellAxe (
 		!strcmp (recipe->source, "progs/v_axeb.mdl");
 }
 
+static qboolean V_AkimboRecipeIsQBJ3Fist (
+	const mod_akimbo_pair_recipe_t *recipe)
+{
+	return recipe && !strcmp (recipe->game, "qbj3") &&
+		!strcmp (recipe->source, "progs/v_berserk.mdl");
+}
+
+/* Presentation policy is separate from the paired-model capability. QBJ3's
+ * native fist animation remains visible if immersive contact is unavailable. */
+static qboolean V_QBJ3FistImmersivePresentation (void)
+{
+	const cvar_t *option = Cvar_FindVar ("vr_immersive_melee");
+	return cl.vr_qbj3_berserk_akimbo_supported && option &&
+		isfinite (option->value) && option->value != 0.0f &&
+		V_TrackedAimMode () == VR_AIMMODE_CONTROLLER &&
+		(cl.vr_weapon_contact_mode & VR_WEAPON_CONTACT_CAP_MELEE) != 0 &&
+		cl.vr_weapon_contact_profile == VR_WEAPON_CONTACT_PROFILE_QBJ3;
+}
+
 qboolean V_AkimboRecipeUsesPairedCollision (const char *source_model)
 {
 	const mod_akimbo_pair_recipe_t *recipe = Mod_GetAkimboPairRecipe (source_model);
 	return recipe &&
 		((!strcmp (recipe->game, "qbj3") &&
 			!strcmp (recipe->source, "progs/v_tnailgun.mdl")) ||
+		V_AkimboRecipeIsQBJ3Fist (recipe) ||
 		(!strcmp (recipe->game, "enyo") &&
 			!strcmp (recipe->source, "progs/ee_v_smgs.mdl")) ||
 		V_AkimboRecipeIsDwellAxe (recipe));
@@ -619,6 +644,17 @@ static const float dwell_akimbo_viewmodel_correction[2][3][3] = {
 	{{-.503862298f, .131800285f, -.853669415f},
 	 {.317507833f, -.890842899f, -.324942618f},
 	 {-.803312866f, -.434773060f, .407014527f}}
+};
+
+/* Donor vr_qbj3_fists: compose the guard-pose correction through the same
+ * model-angle owner used by both presentation and command anchors. */
+static const float qbj3_akimbo_viewmodel_correction[2][3][3] = {
+	{{.293235116f, -.608031630f, .737774155f},
+	 {.608031630f, .714125870f, .346874297f},
+	 {-.737774155f, .346874297f, .579109246f}},
+	{{.295241133f, .603903037f, .740360585f},
+	 {-.603903037f, .718431673f, -.345191327f},
+	 {-.740360585f, -.345191327f, .576809459f}}
 };
 
 /* Frame-zero cutting edges from generated Dwell halves. These immutable raw
@@ -649,6 +685,11 @@ qboolean V_AkimboModelAngles (const char *source_model, int physical_hand,
 		!strcmp (recipe->source, "progs/v_axeb.mdl"))
 		converted = VR_LocomotionCorrectedViewmodelAngles (hand_angles,
 			vr_gunmodelpitch.value, dwell_akimbo_viewmodel_correction[physical_hand],
+			model_angles);
+	else if (recipe && !strcmp (recipe->game, "qbj3") &&
+		!strcmp (recipe->source, "progs/v_berserk.mdl"))
+		converted = VR_LocomotionCorrectedViewmodelAngles (hand_angles,
+			vr_gunmodelpitch.value, qbj3_akimbo_viewmodel_correction[physical_hand],
 			model_angles);
 	else
 		converted = VR_LocomotionHandRotToViewmodelAngles (hand_angles,
@@ -835,6 +876,47 @@ static qboolean V_AkimboTransformDwellEdgesForPair (int physical_hand,
 	return true;
 }
 
+/* Source animation deforms the palms as intended, but its authored lunge
+ * must not translate a controller-held fist. Use the renderer's exact pose
+ * selection and the shared draw matrix's linear part; the ready-pose command
+ * anchors continue to use the unshifted pair transform. */
+static qboolean V_QBJ3CompensateAnimatedPalm (qmodel_t *source, int hand,
+	entity_t *entity, aliashdr_t *geometry)
+{
+	lerpdata_t lerpdata;
+	float matrix[16];
+	vec3_t ready, first, second, raw_delta, world_delta;
+
+	memset (&lerpdata, 0, sizeof (lerpdata));
+	R_SetupAliasFrame (entity, geometry, &lerpdata);
+	if (lerpdata.pose1 < 0 || lerpdata.pose1 >= geometry->numposes ||
+		lerpdata.pose2 < 0 || lerpdata.pose2 >= geometry->numposes ||
+		!isfinite (lerpdata.blend) || lerpdata.blend < 0.0f ||
+		lerpdata.blend > 1.0f ||
+		!Mod_GetQBJ3BerserkPalmCentroid (source, hand, 0, ready) ||
+		!Mod_GetQBJ3BerserkPalmCentroid (source, hand, lerpdata.pose1, first) ||
+		!Mod_GetQBJ3BerserkPalmCentroid (source, hand, lerpdata.pose2, second))
+		return false;
+	VectorCopy (entity->origin, lerpdata.origin);
+	VectorCopy (entity->angles, lerpdata.angles);
+	if (R_AliasModelMatrix (entity, geometry, &lerpdata, matrix) < 0)
+		return false;
+	for (int axis = 0; axis < 3; ++axis)
+		raw_delta[axis] = first[axis] +
+			lerpdata.blend * (second[axis] - first[axis]) - ready[axis];
+	for (int axis = 0; axis < 3; ++axis)
+	{
+		world_delta[axis] = matrix[axis] * raw_delta[0] +
+			matrix[axis + 4] * raw_delta[1] +
+			matrix[axis + 8] * raw_delta[2];
+		if (!isfinite (world_delta[axis]) ||
+			!isfinite (entity->origin[axis] - world_delta[axis]))
+			return false;
+	}
+	VectorSubtract (entity->origin, world_delta, entity->origin);
+	return true;
+}
+
 void V_PrepareAkimboPair (void)
 {
 	const vrxr_frame_t *frame = GL_OpenXRFrame ();
@@ -843,6 +925,7 @@ void V_PrepareAkimboPair (void)
 	aliashdr_t *source_geometry;
 	int modelindex;
 	vec3_t pair_origins[2], pair_model_angles[2];
+	qboolean qbj3_fists, freeze_frame;
 
 	V_ClearAkimboPair ();
 	if (!V_AkimboSelectionValid (frame, &source, &modelindex, &recipe) ||
@@ -850,6 +933,9 @@ void V_PrepareAkimboPair (void)
 		!recipe->halves[0] || !recipe->halves[1] ||
 		!isfinite (vr_gunmodelpitch.value))
 		return;
+	qbj3_fists = V_AkimboRecipeIsQBJ3Fist (recipe);
+	freeze_frame = V_AkimboRecipeIsDwellAxe (recipe) ||
+		(qbj3_fists && V_QBJ3FistImmersivePresentation ());
 
 	/* Pair files and any selected geometry are synchronously prepared here,
 	 * before the renderer can distribute its viewmodel work to tasks. */
@@ -858,7 +944,7 @@ void V_PrepareAkimboPair (void)
 		qmodel_t *model = Mod_ForName (recipe->halves[hand], false);
 		if (!model || model->needload || model->type != mod_alias ||
 			strcmp (model->name, recipe->halves[hand]) ||
-			(V_AkimboRecipeIsDwellAxe (recipe) &&
+			((V_AkimboRecipeIsDwellAxe (recipe) || qbj3_fists) &&
 				!model->is_generated_akimbo_half))
 			return;
 		akimbo_pair_models[hand] = model;
@@ -871,7 +957,9 @@ void V_PrepareAkimboPair (void)
 		source_geometry->numframes != recipe->source_frames ||
 		source_geometry->numverts != recipe->source_vertices ||
 		cl.viewent.frame < 0 || cl.viewent.frame >= recipe->source_frames ||
-		cl.viewent.skinnum < 0 || cl.viewent.skinnum >= source_geometry->numskins)
+		cl.viewent.skinnum < 0 || cl.viewent.skinnum >= source_geometry->numskins ||
+		(qbj3_fists &&
+			Mod_Extradata_CheckSkin (source, cl.viewent.skinnum) != source_geometry))
 		return;
 	for (int hand = 0; hand < 2; ++hand)
 	{
@@ -885,7 +973,7 @@ void V_PrepareAkimboPair (void)
 		akimbo_pair_geometry[hand] = geometry;
 		akimbo_pair_entities[hand] = cl.viewent;
 		akimbo_pair_entities[hand].model = model;
-		if (V_AkimboRecipeIsDwellAxe (recipe))
+		if (freeze_frame)
 		{
 			akimbo_pair_entities[hand].frame = 0;
 			akimbo_pair_entities[hand].lerp.prev_frame = 0;
@@ -956,6 +1044,11 @@ void V_PrepareAkimboPair (void)
 			}
 		}
 	}
+	if (qbj3_fists && !freeze_frame)
+		for (int hand = 0; hand < 2; ++hand)
+			if (!V_QBJ3CompensateAnimatedPalm (source, hand,
+				&akimbo_pair_entities[hand], akimbo_pair_geometry[hand]))
+				return;
 	for (int hand = 0; hand < 2; ++hand)
 		if (!V_AkimboEntityMatrixValid (&akimbo_pair_entities[hand],
 			akimbo_pair_geometry[hand]))
@@ -972,6 +1065,7 @@ void V_PrepareAkimboPair (void)
 	akimbo_source_frame_change_time = cl.viewent.lerp.frame_change_time;
 	akimbo_source_frame_duration = cl.viewent.lerp.frame_duration;
 	akimbo_sample_id = frame->sample_id;
+	akimbo_pair_frozen = freeze_frame;
 	akimbo_pair_prepared = true;
 }
 
@@ -996,7 +1090,8 @@ qboolean V_AkimboPairReady (void)
 		if (!recipe->halves[hand] || !akimbo_pair_models[hand] ||
 			akimbo_pair_models[hand]->needload ||
 			strcmp (akimbo_pair_models[hand]->name, recipe->halves[hand]) ||
-			(V_AkimboRecipeIsDwellAxe (recipe) &&
+			((V_AkimboRecipeIsDwellAxe (recipe) ||
+				V_AkimboRecipeIsQBJ3Fist (recipe)) &&
 				!akimbo_pair_models[hand]->is_generated_akimbo_half) ||
 			akimbo_pair_entities[hand].model != akimbo_pair_models[hand] ||
 			akimbo_pair_entities[hand].skinnum != cl.viewent.skinnum ||
@@ -1006,7 +1101,7 @@ qboolean V_AkimboPairReady (void)
 			!V_AkimboEntityMatrixValid (&akimbo_pair_entities[hand],
 				akimbo_pair_geometry[hand]))
 			return false;
-		else if (V_AkimboRecipeIsDwellAxe (recipe))
+		else if (akimbo_pair_frozen)
 		{
 			if (akimbo_pair_entities[hand].frame != 0 ||
 				akimbo_pair_entities[hand].lerp.prev_frame != 0 ||

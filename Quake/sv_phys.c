@@ -3395,6 +3395,26 @@ static qboolean SV_DwellFunctionPin (int index, const char *name,
 	return true;
 }
 
+/* The installed QBJ3 revision is already identified by the shared exact
+ * progs hash. Pin only the native entries this direct leaf borrows or admits;
+ * the wrench/berserk attack roots and their fan traces are never entered. */
+static qboolean SV_QBJ3MeleeProgramLoaded (void)
+{
+	static const byte leaf_parms[] = {1, 3, 3};
+
+	return SV_QBJ3TwinNailgunProgramLoaded () && qcvm->progs &&
+		SV_DwellFunctionPin (485, "hitwrench", 15218, 8411, 11, 3,
+			leaf_parms) &&
+		SV_DwellFunctionPin (572, "hit_berserker_punch", 19201, 8739,
+			11, 3, leaf_parms) &&
+		SV_DwellFunctionPin (595, "SuperDamageSound", 20453, 0, 0, 0,
+			NULL) &&
+		SV_DwellFunctionPin (569, "weaponanim_idle_melee_loop", 18942,
+			0, 0, 0, NULL) &&
+		SV_DwellFunctionPin (575, "weaponanim_draw_loop", 19624,
+			0, 0, 0, NULL);
+}
+
 qboolean SV_DwellBerserkAkimboProgramLoaded (void)
 {
 	static const byte has_haste_parm_sizes[] = {1};
@@ -5484,6 +5504,322 @@ cleanup:
 	}
 	return outcome_ok;
 }
+
+/* QBJ3's native has_berserk tests the item bit or the float QC expiry. The
+ * model and weapon bit must still be the currently selected melee weapon. */
+static qboolean SV_VRQBJ3MeleeSelected (edict_t *ent, qboolean *berserk)
+{
+	eval_t *items, *finished;
+	const char *model;
+	float qctime;
+	int bits;
+
+	if (!ent || ent->free || !berserk || !SV_QBJ3MeleeProgramLoaded () ||
+		!isfinite (ent->v.weapon) || ent->v.weapon != 4096 ||
+		!isfinite (qcvm->time))
+		return false;
+	qctime = (float)qcvm->time;
+	if (!isfinite (qctime))
+		return false;
+	items = GetEdictFieldValue (ent, ED_FindFieldOffset ("items_qbj"));
+	finished = GetEdictFieldValue (ent,
+		ED_FindFieldOffset ("berserk_finished"));
+	if (!items || !finished || !isfinite (items->_float) ||
+		(double)items->_float < -2147483648.0 ||
+		(double)items->_float >= 2147483648.0 ||
+		!isfinite (finished->_float))
+		return false;
+	bits = (int)items->_float;
+	*berserk = (bits & 4) != 0 || finished->_float > qctime;
+	model = PR_GetString (ent->v.weaponmodel);
+	return model && !strcmp (model, *berserk ? "progs/v_berserk.mdl" :
+		"progs/v_wrench.mdl");
+}
+
+/* The installed draw loop returns without an attack once frame 10 is reached;
+ * any other scheduled weapon think may still fire a native melee stroke. */
+static qboolean SV_VRQBJ3MeleeIdle (edict_t *ent)
+{
+	return isfinite (ent->v.nextthink) &&
+		(ent->v.think == 569 ||
+		 (ent->v.think == 575 && isfinite (ent->v.weaponframe) &&
+		  ent->v.weaponframe >= 10));
+}
+
+static qboolean SV_VRQBJ3OutcomeContextValid (client_t *client, edict_t *ent,
+	qcvm_t *saved_vm, dprograms_t *saved_progs, edict_t *saved_edicts,
+	globalvars_t *saved_global_struct, float *saved_vm_globals,
+	const vec3_t body_origin, qboolean cursor_valid, int cursor_sequence,
+	qboolean berserk, qboolean first_outcome)
+{
+	qboolean selected_berserk;
+	int axis;
+
+	if (qcvm != saved_vm || qcvm != &sv.qcvm ||
+		qcvm->progs != saved_progs || qcvm->edicts != saved_edicts ||
+		qcvm->globals != saved_vm_globals ||
+		pr_global_struct != saved_global_struct ||
+		!SV_VRContactOwnerLive (client, ent) ||
+		!SV_VRQBJ3MeleeSelected (ent, &selected_berserk) ||
+		selected_berserk != berserk ||
+		client->private_vr_contact_cursor_valid != cursor_valid ||
+		client->private_vr_contact_last_sequence != cursor_sequence ||
+		(first_outcome && !SV_VRQBJ3MeleeIdle (ent)))
+		return false;
+	for (axis = 0; axis < 3; axis++)
+		if (!isfinite (ent->v.origin[axis]) ||
+			ent->v.origin[axis] != body_origin[axis])
+			return false;
+	return true;
+}
+
+/* Borrow QBJ3's explicit hit leaf for one trusted physical outcome. The
+ * first outcome owns sound/recovery and may whiff. It returns the live subtype
+ * and deadline. A follow-up can only hit; its caller must authorize a distinct
+ * second victim before that deadline, using the existing per-hand contact
+ * owner and passing back the saved subtype. A first whiff ends the stroke;
+ * the caller also owns VM identity, victim deduplication and the two-hit cap.
+ * Neither path enters the fan/root, schedules a think, or fabricates a trace.
+ * The future queued contact caller is in this file. Keep the staged symbol
+ * available to the direct GDB fixture until that caller is connected. */
+#if defined(__GNUC__) || defined(__clang__)
+#define SV_QBJ3_STAGED_ENTRY __attribute__ ((used))
+#else
+#define SV_QBJ3_STAGED_ENTRY
+#endif
+static SV_QBJ3_STAGED_ENTRY qboolean SV_VRQBJ3PhysicalMeleeOutcome
+	(client_t *client, edict_t *ent,
+	const usercmd_t *cmd, int anatomical_hand, const trace_t *contact,
+	qboolean first_outcome, qboolean *stroke_berserk,
+	float *recovery_deadline)
+{
+	globalvars_t saved_globals, *saved_global_struct;
+	float saved_call_globals[OFS_PARM7 + 3 - OFS_RETURN];
+	qcvm_t *saved_vm;
+	dprograms_t *saved_progs;
+	edict_t *saved_edicts;
+	float *saved_vm_globals;
+	eval_t *cooldown, *hostile, *berserk_sound = NULL;
+	trace_t accepted_contact;
+	vec3_t accepted_angles, saved_angles, body_origin, org, dir;
+	float qctime, new_cooldown, new_hostile;
+	int axis, saved_argc, cursor_sequence;
+	qboolean berserk, cursor_valid, context_saved = false;
+	qboolean friendly_fire_scope = false, outcome_ok = false;
+
+	if (!cmd || !stroke_berserk ||
+		(anatomical_hand != 0 && anatomical_hand != 1) ||
+		(first_outcome ? !recovery_deadline : !contact) ||
+		!SV_VRContactOwnerLive (client, ent) ||
+		!SV_VRQBJ3MeleeSelected (ent, &berserk) ||
+		(!first_outcome && *stroke_berserk != berserk) ||
+		!cmd->vr_active || !cmd->vr_handpos_relative ||
+		(berserk && (!cmd->vr_akimbo_active ||
+			!cmd->vr_akimbo_berserk)) ||
+		!isfinite (qcvm->time) ||
+		(first_outcome && !SV_VRQBJ3MeleeIdle (ent)))
+		goto cleanup;
+	qctime = (float)qcvm->time;
+	if (!isfinite (qctime))
+		goto cleanup;
+	VectorCopy (ent->v.origin, body_origin);
+	cursor_valid = client->private_vr_contact_cursor_valid;
+	cursor_sequence = client->private_vr_contact_last_sequence;
+	for (axis = 0; axis < 3; axis++)
+	{
+		if (!isfinite (body_origin[axis]))
+			goto cleanup;
+		accepted_angles[axis] = berserk ?
+			cmd->vr_akimbo_angles[anatomical_hand][axis] :
+			cmd->vr_handrot[axis];
+		if (!isfinite (accepted_angles[axis]) ||
+			fabsf (accepted_angles[axis]) > SV_VR_AKIMBO_MAX_ANGLE)
+			goto cleanup;
+	}
+	cooldown = GetEdictFieldValue (ent,
+		ED_FindFieldOffset ("attack_finished"));
+	hostile = GetEdictFieldValue (ent,
+		ED_FindFieldOffset ("show_hostile"));
+	if ((first_outcome && (!cooldown || !isfinite (cooldown->_float) ||
+		cooldown->_float > qctime)) || !hostile ||
+		!isfinite (hostile->_float))
+		goto cleanup;
+	if (first_outcome && berserk)
+	{
+		berserk_sound = GetEdictFieldValue (ent,
+			ED_FindFieldOffset ("berserk_sound"));
+		if (!berserk_sound || !isfinite (berserk_sound->_float))
+			goto cleanup;
+	}
+	new_cooldown = first_outcome ? qctime + (berserk ? .5f : .8f) : 0;
+	new_hostile = qctime + 1.0f;
+	if (!isfinite (new_cooldown) || !isfinite (new_hostile))
+		goto cleanup;
+	if (contact)
+	{
+		accepted_contact = *contact;
+		if (!accepted_contact.ent || accepted_contact.ent->free ||
+			accepted_contact.ent == ent ||
+			!isfinite (accepted_contact.fraction) ||
+			accepted_contact.fraction < 0 ||
+			accepted_contact.fraction >= 1 ||
+			accepted_contact.startsolid || accepted_contact.allsolid ||
+			!isfinite (accepted_contact.endpos[0]) ||
+			!isfinite (accepted_contact.endpos[1]) ||
+			!isfinite (accepted_contact.endpos[2]) ||
+			!isfinite (accepted_contact.plane.dist) ||
+			!isfinite (accepted_contact.plane.normal[0]) ||
+			!isfinite (accepted_contact.plane.normal[1]) ||
+			!isfinite (accepted_contact.plane.normal[2]))
+			goto cleanup;
+	}
+	if (!qcvm->globals || !pr_global_struct)
+		goto cleanup;
+	saved_vm = qcvm;
+	saved_progs = qcvm->progs;
+	saved_edicts = qcvm->edicts;
+	saved_global_struct = pr_global_struct;
+	saved_vm_globals = qcvm->globals;
+	saved_globals = *pr_global_struct;
+	saved_argc = qcvm->argc;
+	memcpy (saved_call_globals, qcvm->globals + OFS_RETURN,
+		sizeof (saved_call_globals));
+	VectorCopy (ent->v.v_angle, saved_angles);
+	context_saved = true;
+
+	VectorCopy (accepted_angles, ent->v.v_angle);
+	AngleVectors (ent->v.v_angle, pr_global_struct->v_forward,
+		pr_global_struct->v_right, pr_global_struct->v_up);
+	pr_global_struct->self = EDICT_TO_PROG (ent);
+	pr_global_struct->other = EDICT_TO_PROG (qcvm->edicts);
+	pr_global_struct->time = qcvm->time;
+	qcvm->argc = 0;
+	if (first_outcome)
+	{
+		cooldown->_float = new_cooldown;
+		if (!berserk)
+		{
+			PR_ExecuteProgram (595); /* Native wrench SuperDamageSound. */
+			if (!SV_VRQBJ3OutcomeContextValid (client, ent, saved_vm,
+				saved_progs, saved_edicts, saved_global_struct,
+				saved_vm_globals, body_origin, cursor_valid,
+				cursor_sequence, berserk, first_outcome))
+				goto cleanup;
+		}
+		SV_StartSound (ent, ent->v.origin, 6,
+			"impact/wrench_swing.wav", 255, 1);
+		if (berserk && berserk_sound->_float < qctime)
+		{
+			berserk_sound->_float = new_hostile;
+			SV_StartSound (ent, ent->v.origin, 0,
+				"items/berserk_fire.wav", 255, 1);
+		}
+	}
+	if (!contact)
+	{
+		outcome_ok = SV_VRQBJ3OutcomeContextValid (client, ent,
+			saved_vm, saved_progs, saved_edicts, saved_global_struct,
+			saved_vm_globals, body_origin, cursor_valid,
+			cursor_sequence, berserk, first_outcome);
+		goto cleanup;
+	}
+	if (!SV_VRQBJ3OutcomeContextValid (client, ent, saved_vm,
+			saved_progs, saved_edicts, saved_global_struct,
+			saved_vm_globals, body_origin, cursor_valid,
+			cursor_sequence, berserk, first_outcome) ||
+		accepted_contact.ent->free)
+		goto cleanup;
+
+	/* Preserve QBJ3's native direction and the direct leaf's trace_ent read.
+	 * A sideways physical hit on a solid brush offsets effects outward. */
+	pr_global_struct->self = EDICT_TO_PROG (ent);
+	pr_global_struct->other = EDICT_TO_PROG (qcvm->edicts);
+	pr_global_struct->time = qcvm->time;
+	VectorMA (accepted_contact.endpos, -4.0f,
+		pr_global_struct->v_forward, org);
+	if (!accepted_contact.ent->v.takedamage &&
+		accepted_contact.ent->v.solid == SOLID_BSP &&
+		DotProduct (accepted_contact.plane.normal,
+			accepted_contact.plane.normal) > .5f &&
+		DotProduct (accepted_contact.plane.normal,
+			accepted_contact.plane.normal) < 1.5f)
+		VectorMA (accepted_contact.endpos, 4.0f,
+			accepted_contact.plane.normal, org);
+	VectorScale (pr_global_struct->v_right, 20.0f, dir);
+	VectorMA (dir, -5.0f, pr_global_struct->v_up, dir);
+	pr_global_struct->trace_allsolid = accepted_contact.allsolid;
+	pr_global_struct->trace_startsolid = accepted_contact.startsolid;
+	pr_global_struct->trace_fraction = accepted_contact.fraction;
+	pr_global_struct->trace_inwater = accepted_contact.inwater;
+	pr_global_struct->trace_inopen = accepted_contact.inopen;
+	pr_global_struct->trace_plane_dist = accepted_contact.plane.dist;
+	pr_global_struct->trace_ent = EDICT_TO_PROG (accepted_contact.ent);
+	VectorCopy (accepted_contact.endpos, pr_global_struct->trace_endpos);
+	VectorCopy (accepted_contact.plane.normal,
+		pr_global_struct->trace_plane_normal);
+	hostile->_float = new_hostile;
+	G_INT (OFS_PARM0) = EDICT_TO_PROG (accepted_contact.ent);
+	VectorCopy (org, G_VECTOR (OFS_PARM1));
+	VectorCopy (dir, G_VECTOR (OFS_PARM2));
+	qcvm->argc = 3;
+	friendly_fire_scope = SV_CoopFriendlyFireBegin (ent);
+	PR_ExecuteProgram (berserk ? 572 : 485);
+	if (friendly_fire_scope)
+	{
+		SV_CoopFriendlyFireEnd ();
+		friendly_fire_scope = false;
+	}
+	outcome_ok = SV_VRQBJ3OutcomeContextValid (client, ent, saved_vm,
+		saved_progs, saved_edicts, saved_global_struct,
+		saved_vm_globals, body_origin, cursor_valid, cursor_sequence,
+		berserk, first_outcome);
+
+cleanup:
+	if (outcome_ok && first_outcome)
+	{
+		if (!isfinite (cooldown->_float))
+			outcome_ok = false;
+		else
+		{
+			*stroke_berserk = berserk;
+			*recovery_deadline = cooldown->_float;
+		}
+	}
+	if (friendly_fire_scope)
+		SV_CoopFriendlyFireEnd ();
+	if (context_saved && qcvm == saved_vm && qcvm->progs == saved_progs &&
+		qcvm->edicts == saved_edicts &&
+		qcvm->globals == saved_vm_globals &&
+		pr_global_struct == saved_global_struct)
+	{
+		qcvm->argc = saved_argc;
+		memcpy (qcvm->globals + OFS_RETURN, saved_call_globals,
+			sizeof (saved_call_globals));
+		/* Death rejects another attack, but does not retire this borrowed
+		 * pose. Restore the same owned edict even if QC killed its player. */
+		if (client->active && client->spawned && client->edict == ent &&
+			!ent->free)
+			VectorCopy (saved_angles, ent->v.v_angle);
+		pr_global_struct->self = saved_globals.self;
+		pr_global_struct->other = saved_globals.other;
+		pr_global_struct->time = saved_globals.time;
+		VectorCopy (saved_globals.v_forward, pr_global_struct->v_forward);
+		VectorCopy (saved_globals.v_right, pr_global_struct->v_right);
+		VectorCopy (saved_globals.v_up, pr_global_struct->v_up);
+		pr_global_struct->trace_allsolid = saved_globals.trace_allsolid;
+		pr_global_struct->trace_startsolid = saved_globals.trace_startsolid;
+		pr_global_struct->trace_fraction = saved_globals.trace_fraction;
+		pr_global_struct->trace_inwater = saved_globals.trace_inwater;
+		pr_global_struct->trace_inopen = saved_globals.trace_inopen;
+		pr_global_struct->trace_plane_dist = saved_globals.trace_plane_dist;
+		pr_global_struct->trace_ent = saved_globals.trace_ent;
+		VectorCopy (saved_globals.trace_endpos, pr_global_struct->trace_endpos);
+		VectorCopy (saved_globals.trace_plane_normal,
+			pr_global_struct->trace_plane_normal);
+	}
+	return outcome_ok;
+}
+#undef SV_QBJ3_STAGED_ENTRY
 
 /* Dwell shares the queued contact owner's arc and consumed state. A terminal
  * hit/whiff is consumed before entering QC, including cooldown rejection and

@@ -364,6 +364,21 @@ qboolean Mod_GetStockAxeEdge (qmodel_t *mod, int skinnum, stockaxe_edge_t *out)
 	return true;
 }
 
+qboolean Mod_GetQBJ3BerserkPalmCentroid (const qmodel_t *mod, int hand,
+	int pose, vec3_t out)
+{
+	if (out)
+		VectorCopy (vec3_origin, out);
+	if (!out || !mod || mod->needload || mod->type != mod_alias ||
+		strcmp (mod->name, "progs/v_berserk.mdl") ||
+		!mod->qbj3_palm_centroids || hand < 0 || hand > 1 ||
+		pose < 0 || pose >= mod->qbj3_palm_pose_count ||
+		!mod->extradata[PV_QUAKE1])
+		return false;
+	VectorCopy (mod->qbj3_palm_centroids[hand * mod->qbj3_palm_pose_count + pose], out);
+	return true;
+}
+
 /*
 ===============
 Mod_PointInLeaf
@@ -528,6 +543,8 @@ static void Mod_FreeModelMemory (qmodel_t *mod)
 {
 	mod->is_generated_akimbo_half = false;
 	memset (&mod->stockaxe_edge, 0, sizeof (mod->stockaxe_edge));
+	SAFE_FREE (mod->qbj3_palm_centroids);
+	mod->qbj3_palm_pose_count = 0;
 
 	if (mod->name[0] != '*')
 	{
@@ -852,6 +869,8 @@ static qmodel_t *Mod_LoadModel (qmodel_t *mod, qboolean crash)
 	if (!mod->needload)
 		return mod;
 	mod->is_generated_akimbo_half = false;
+	SAFE_FREE (mod->qbj3_palm_centroids);
+	mod->qbj3_palm_pose_count = 0;
 
 	/* The copied edge belongs to this exact load of the source model. */
 	memset (&mod->stockaxe_edge, 0, sizeof (mod->stockaxe_edge));
@@ -4427,6 +4446,46 @@ static void Mod_CacheStockAxeEdge (qmodel_t *mod, byte *mod_base,
 	mod->stockaxe_edge = edge;
 }
 
+/* The splitter pins these source bytes. Keep only the donor's eight-palm
+ * centroid for each hand/pose; GL_MakeAliasModelDisplayLists discards the
+ * original CPU vertices after upload. Coordinates remain compressed MDL units
+ * so the shared alias matrix supplies scale, rotation and held calibration. */
+static void Mod_CacheQBJ3BerserkPalms (qmodel_t *mod, const byte *mod_base,
+	qfilesize_t source_size, const aliashdr_t *pheader)
+{
+	static const int palms[2][8] = {
+		{499, 497, 498, 496, 501, 490, 424, 446},
+		{213, 210, 211, 209, 214, 203, 137, 159}
+	};
+	vec3_t *means;
+
+	if (strcmp (mod->name, "progs/v_berserk.mdl") ||
+		q_strcasecmp (COM_SkipPath (com_gamedir), "qbj3") ||
+		source_size != (qfilesize_t)QBJ3_MDL_BERSERK_SOURCE_SIZE ||
+		(uint32_t)mz_crc32 (MZ_CRC32_INIT, mod_base, (size_t)source_size) != 0xc3af3566u ||
+		pheader->poseverttype != PV_QUAKE1 || pheader->numverts != 894 ||
+		pheader->numtris != 1240 || pheader->numframes != 101 ||
+		pheader->numposes != 101)
+		return;
+	for (int pose = 0; pose < pheader->numposes; ++pose)
+		if (pheader->frames[pose].numposes != 1 ||
+			pheader->frames[pose].firstpose != pose || !poseverts[pose])
+			return;
+
+	means = Mem_Alloc (2 * (size_t)pheader->numposes * sizeof (*means));
+	for (int hand = 0; hand < 2; ++hand)
+		for (int pose = 0; pose < pheader->numposes; ++pose)
+			for (int axis = 0; axis < 3; ++axis)
+			{
+				float sum = 0.0f;
+				for (int vertex = 0; vertex < 8; ++vertex)
+					sum += poseverts[pose][palms[hand][vertex]].v[axis];
+				means[hand * pheader->numposes + pose][axis] = sum / 8.0f;
+			}
+	mod->qbj3_palm_centroids = means;
+	mod->qbj3_palm_pose_count = pheader->numposes;
+}
+
 /*
 =================
 Mod_LoadAliasModel
@@ -4567,6 +4626,7 @@ static void Mod_LoadAliasModel (qmodel_t *mod, void *buffer,
 
 	/* Copy only the pinned ready-pose edge while the source pose is live. */
 	Mod_CacheStockAxeEdge (mod, mod_base, source_size, pheader);
+	Mod_CacheQBJ3BerserkPalms (mod, mod_base, source_size, pheader);
 
 	mod->type = mod_alias;
 

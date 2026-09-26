@@ -757,6 +757,10 @@ typedef struct qmodel_s
 	byte *extradata[PV_SIZE]; // only access through Mod_Extradata
 	md5_skeleton_data_t *md5_skeleton; // retained CPU data for MD5 models
 	stockaxe_edge_t stockaxe_edge; // two copied vertices; source poses are not retained
+	/* Exact QBJ3 berserk source only: two eight-vertex palm means per pose.
+	 * The complete CPU pose mesh is discarded after alias upload. */
+	vec3_t *qbj3_palm_centroids;
+	int qbj3_palm_pose_count;
 
 	// Ray tracing
 	VkAccelerationStructureKHR blas;
@@ -796,6 +800,8 @@ qboolean  Mod_GetMD5Skeleton (const qmodel_t *mod, md5_skeleton_view_t *out);
 /* Returns frame 0's pinned stock-axe edge in scaled model-local coordinates.
  * The per-skin selected model must be the original MDL, not an MD5/MD3 replacement. */
 qboolean  Mod_GetStockAxeEdge (qmodel_t *mod, int skinnum, stockaxe_edge_t *out);
+qboolean  Mod_GetQBJ3BerserkPalmCentroid (const qmodel_t *mod, int hand,
+	int pose, vec3_t out);
 
 mleaf_t *Mod_PointInLeaf (float *p, qmodel_t *model);
 byte	*Mod_LeafPVS (mleaf_t *leaf, qmodel_t *model);

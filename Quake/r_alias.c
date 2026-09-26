@@ -723,6 +723,13 @@ static int R_AliasModelMatrixInternal (
 					 * exactly as the donor does, without mirroring vertices. */
 					local_offset = 2.0 * (double)held_scale *
 						(double)header_origin[axis] - local_offset;
+					/* QBJ3's fist grips are symmetric around a nonzero Y.
+					 * Preserve the donor's calibrated residual correction after
+					 * reflection; Dwell uses its separate centered-grip path. */
+					if (pair_recipe && !strcmp (pair_recipe->game, "qbj3") &&
+						!strcmp (pair_recipe->source, "progs/v_berserk.mdl"))
+						local_offset -= (double)held_scale *
+							(double)(-18.0f + 17.59557724f);
 				}
 				if (axis == 2)
 					local_offset += (double)gunmodel_y;

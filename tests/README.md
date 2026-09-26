@@ -321,6 +321,22 @@ The test does not validate moving/scaled avatars, eye-only visibility, inherited
 tracked weapons/controller input, headset behavior or performance. Stop only the isolated service
 you started when done. Keep raw logs local; they can contain device identifiers.
 
+## QBJ3 native melee callbacks
+
+The headless native melee callback fixture is available separately:
+
+```sh
+tests/vr_qbj3_melee_outcome.sh
+```
+
+It uses `build-debug/vkquake`, GDB and isolated links to the installed id1/QBJ3
+assets. It covers wrench/berserk native hit leaves, whiffs, recovery timing,
+follow-up hits without a repeated prelude, subtype/expiry rejection, pending
+native attacks and desktop-command rejection. The fixture supplies accepted
+contacts directly; it does not prove stroke authorization, distinct-victim
+limits, contact sweeps or paired rendering. It requires permission to trace
+the child process with GDB.
+
 ## QBJ3 client pair pipeline
 
 `vr_qbj3_client_pipeline.gdb` runs the client through pair preparation, both
