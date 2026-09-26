@@ -23,6 +23,19 @@ allowlist. Valve [documents the FB/META route for Steam Frame](https://partner.s
 and Meta [documents the FB Vulkan route for native OpenXR](https://developers.meta.com/horizon/documentation/native/android/os-fixed-foveated-rendering/);
 neither document proves support on all runtimes or headsets.
 
+Apply that capability rule to both Steam Frame release paths (PC streaming and
+Linux ARM standalone), Beyond 2e through Monado on Linux, and other Windows or
+Linux runtimes. The headset model alone does not establish which OpenXR
+extensions the active runtime exposes or which Vulkan features its selected
+GPU supports. Valve's [Steam Frame custom-engine guide](https://partner.steamgames.com/doc/steamhardware/steamframe/engines/custom)
+explicitly recommends the FB/META extension family and documents
+`XR_EXT_eye_gaze_interaction` separately. Therefore runtime-provided eye
+foveation may be available even when the application's portable gaze-action
+path is absent; the user eye-tracking toggle and valid runtime eye state still
+gate activation. For Beyond 2e/Monado, record actual extension and GPU
+capabilities when eye tracking is configured; do not infer FB/META support from
+the headset's eye cameras. The user has deferred that device test.
+
 The compatibility preference is about runtime support, not a claim that
 FB/META works on more headsets than KHR today. The [FB Vulkan extension](https://registry.khronos.org/OpenXR/specs/1.1/man/html/XR_FB_foveation_vulkan.html)
 defines the borrowed density-map route; the [META eye-tracked extension](https://registry.khronos.org/OpenXR/specs/1.1/man/html/XR_META_foveation_eye_tracked.html)
