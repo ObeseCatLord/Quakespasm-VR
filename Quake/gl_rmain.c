@@ -2484,6 +2484,7 @@ void R_RenderView (
 
 		task_handle_t update_warp_textures = Task_AllocateAndAssignFunc ((task_func_t)R_UpdateWarpTextures, NULL, 0);
 		Task_AddDependency (cull_surfaces, update_warp_textures);
+		Task_AddDependency (store_efrags, update_warp_textures);
 		Task_AddDependency (begin_rendering_task, update_warp_textures);
 		Task_AddDependency (update_warp_textures, draw_done_task);
 

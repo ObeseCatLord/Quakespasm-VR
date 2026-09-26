@@ -468,15 +468,22 @@ static void R_CalcDeps (qmodel_t *model, mleaf_t *leaf)
 R_MarkDeps
 ================
 */
+void R_MarkWarpDeps (int combined_deps)
+{
+	combined_brush_deps *deps = &brush_deps_data[combined_deps];
+	const int water_count = deps->water_count;
+	for (int i = 0; i < water_count; ++i)
+		Atomic_StoreUInt32_Relaxed ((++deps)->update_warp, true);
+}
+
 void R_MarkDeps (int combined_deps, int worker_index)
 {
 	combined_brush_deps *deps = &brush_deps_data[combined_deps];
-	int					 water_count = deps->water_count;
-	int					 lm_count = deps->lm_count;
-	int					 i;
-	for (i = 0; i < water_count; ++i)
-		Atomic_StoreUInt32_Relaxed ((++deps)->update_warp, true);
-	for (i = 0, ++deps; i < lm_count; ++i, ++deps)
+	const int water_count = deps->water_count;
+	const int lm_count = deps->lm_count;
+	R_MarkWarpDeps (combined_deps);
+	deps += 1 + water_count;
+	for (int i = 0; i < lm_count; ++i, ++deps)
 		lightmaps[deps->lightmap_num].modified[worker_index] |= deps->lightmap_styles;
 }
 

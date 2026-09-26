@@ -1349,10 +1349,6 @@ void R_DrawTextureChains_Water (cb_context_t *cbx, qmodel_t *model, entity_t *en
 				vulkan_globals.vk_cmd_bind_descriptor_sets (
 					cbx->cb, VK_PIPELINE_BIND_POINT_GRAPHICS, vulkan_globals.world_pipeline_layout.handle, 0, 1, &gl_texture->descriptor_set, 0, NULL);
 
-			if (model != cl.worldmodel)
-				Atomic_StoreUInt32 (
-					&t->update_warp, true); // FIXME: races against UpdateWarpTextures task, bmodel-only warps may end up updating at half frequency
-
 			for (s = t->texturechains[chain]; s; s = s->texturechains[chain])
 			{
 				if (s->lightmaptexturenum != lastlightmap)

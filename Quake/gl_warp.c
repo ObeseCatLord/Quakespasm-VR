@@ -150,6 +150,19 @@ void R_UpdateWarpTextures (void *unused)
 	if (cl.paused)
 		return;
 
+	/* Efrag collection has completed before this task. Mark visible brush
+	 * liquids here so their first use cannot race the warp updater. Reuse
+	 * the model's precomputed texture dependencies instead of walking faces. */
+	if (r_drawentities.value)
+		for (int j = 0; j < cl_numvisedicts; ++j)
+		{
+			entity_t *entity = cl_visedicts[j];
+			if (entity && entity->model && entity->model->type == mod_brush &&
+				(entity->model->used_specials & SURF_DRAWTURB) &&
+				!(entity->eflags & EFLAGS_EXTERIORMODEL) && !R_CullModelForEntity (entity))
+				R_MarkWarpDeps (entity->model->combined_deps);
+		}
+
 	R_BeginDebugUtilsLabel (cbx, "Update Warp Textures");
 
 	warptess = 128.0 / CLAMP (3.0, floor (r_waterquality.value), 64.0);

@@ -803,6 +803,7 @@ void R_TranslateNewPlayerSkin (int playernum); // johnfitz -- this handles cases
 void R_UpdateWarpTextures (void *unused);
 
 void R_MarkDeps (int combined_deps, int worker_index);
+void R_MarkWarpDeps (int combined_deps);
 
 qboolean R_IndirectBrush (entity_t *e);
 void	 R_ClearBModelInstanceClaims (void);
