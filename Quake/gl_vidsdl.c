@@ -1493,6 +1493,17 @@ static void GL_SelectRenderFormats (VkBool32 extended_format_support)
 	Con_Printf ("\n");
 }
 
+#if defined(VK_QCOM_fragment_density_map_offset)
+static qboolean GL_DensityOffsetSceneFormatSupported (VkFormat format, VkImageUsageFlags usage, uint32_t width, uint32_t height)
+{
+	VkImageFormatProperties properties;
+	return vkGetPhysicalDeviceImageFormatProperties (vulkan_physical_device, format, VK_IMAGE_TYPE_2D,
+		VK_IMAGE_TILING_OPTIMAL, usage, VK_IMAGE_CREATE_FRAGMENT_DENSITY_MAP_OFFSET_BIT_QCOM, &properties) == VK_SUCCESS &&
+		(properties.sampleCounts & VK_SAMPLE_COUNT_1_BIT) && properties.maxArrayLayers >= 2 &&
+		properties.maxExtent.width >= width && properties.maxExtent.height >= height;
+}
+#endif
+
 /*
 ===============
 GL_InitDevice
@@ -1586,8 +1597,18 @@ static void GL_InitDevice (void)
 	qboolean fragment_shading_rate_extension = false;
 	qboolean create_renderpass2_extension = false;
 	qboolean create_renderpass2_core = false;
+	qboolean dynamic_rendering_core = false;
+	qboolean fragment_density_map_feature_enabled = false;
+	qboolean fragment_density_offset_feature_enabled = false;
 #if defined(VK_EXT_fragment_density_map)
 	qboolean fragment_density_map_extension = false;
+#if defined(VK_QCOM_fragment_density_map_offset)
+	qboolean fragment_density_offset_qcom_extension = false;
+	qboolean fragment_density_offset_ext_extension = false;
+	qboolean dynamic_rendering_extension = false;
+	qboolean depth_stencil_resolve_extension = false;
+	qboolean fragment_density_offset_use_ext = false;
+#endif
 #endif
 	qboolean fragment_shading_rate_usable = false;
 	qboolean fragment_shading_rate_feature_enabled = false;
@@ -1598,6 +1619,10 @@ static void GL_InitDevice (void)
 	{
 		create_renderpass2_core = GL_CompareVulkanApiVersions (openxr_vulkan_api_version, VK_API_VERSION_1_2) >= 0 &&
 			GL_CompareVulkanApiVersions (vulkan_globals.device_properties.apiVersion, VK_API_VERSION_1_2) >= 0;
+#if defined(VK_API_VERSION_1_3)
+		dynamic_rendering_core = GL_CompareVulkanApiVersions (openxr_vulkan_api_version, VK_API_VERSION_1_3) >= 0 &&
+			GL_CompareVulkanApiVersions (vulkan_globals.device_properties.apiVersion, VK_API_VERSION_1_3) >= 0;
+#endif
 	}
 	err = vkEnumerateDeviceExtensionProperties (vulkan_physical_device, NULL, &device_extension_count, NULL);
 
@@ -1637,6 +1662,22 @@ static void GL_InitDevice (void)
 #if defined(VK_EXT_fragment_density_map)
 			if (openxr_vulkan_binding && strcmp (VK_EXT_FRAGMENT_DENSITY_MAP_EXTENSION_NAME, device_extensions[i].extensionName) == 0)
 				fragment_density_map_extension = true;
+#if defined(VK_QCOM_fragment_density_map_offset)
+			if (openxr_vulkan_binding && strcmp (VK_QCOM_FRAGMENT_DENSITY_MAP_OFFSET_EXTENSION_NAME, device_extensions[i].extensionName) == 0)
+				fragment_density_offset_qcom_extension = true;
+#if defined(VK_EXT_fragment_density_map_offset)
+			if (openxr_vulkan_binding && strcmp (VK_EXT_FRAGMENT_DENSITY_MAP_OFFSET_EXTENSION_NAME, device_extensions[i].extensionName) == 0)
+				fragment_density_offset_ext_extension = true;
+#endif
+#if defined(VK_KHR_dynamic_rendering)
+			if (openxr_vulkan_binding && strcmp (VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME, device_extensions[i].extensionName) == 0)
+				dynamic_rendering_extension = true;
+#endif
+#if defined(VK_KHR_depth_stencil_resolve)
+			if (openxr_vulkan_binding && strcmp (VK_KHR_DEPTH_STENCIL_RESOLVE_EXTENSION_NAME, device_extensions[i].extensionName) == 0)
+				depth_stencil_resolve_extension = true;
+#endif
+#endif
 #endif
 #if defined(VK_KHR_present_wait2)
 			if (strcmp (VK_KHR_PRESENT_ID_2_EXTENSION_NAME, device_extensions[i].extensionName) == 0)
@@ -1742,6 +1783,14 @@ static void GL_InitDevice (void)
 #if defined(VK_EXT_fragment_density_map)
 	ZEROED_STRUCT (VkPhysicalDeviceFragmentDensityMapPropertiesEXT, fragment_density_map_properties);
 	ZEROED_STRUCT (VkPhysicalDeviceFragmentDensityMapFeaturesEXT, fragment_density_map_features);
+#if defined(VK_QCOM_fragment_density_map_offset)
+	ZEROED_STRUCT (VkPhysicalDeviceFragmentDensityMapOffsetPropertiesQCOM, fragment_density_offset_properties);
+	ZEROED_STRUCT (VkPhysicalDeviceFragmentDensityMapOffsetFeaturesQCOM, fragment_density_offset_features);
+	const qboolean fragment_density_offset_ext_usable = fragment_density_offset_ext_extension &&
+		(dynamic_rendering_core || dynamic_rendering_extension) &&
+		(create_renderpass2_core || depth_stencil_resolve_extension);
+	const qboolean fragment_density_offset_extension = fragment_density_offset_qcom_extension || fragment_density_offset_ext_usable;
+#endif
 #endif
 #if defined(VK_KHR_fragment_shading_rate) && defined(VK_KHR_create_renderpass2)
 	ZEROED_STRUCT (VkPhysicalDeviceFragmentShadingRatePropertiesKHR, fragment_shading_rate_properties);
@@ -1781,6 +1830,13 @@ static void GL_InitDevice (void)
 			fragment_density_map_properties.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FRAGMENT_DENSITY_MAP_PROPERTIES_EXT;
 			CHAIN_PNEXT (device_properties_next, fragment_density_map_properties);
 		}
+#if defined(VK_QCOM_fragment_density_map_offset)
+		if (fragment_density_map_extension && fragment_density_offset_extension && VRXR_VulkanFoveationEyeSupported ())
+		{
+			fragment_density_offset_properties.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FRAGMENT_DENSITY_MAP_OFFSET_PROPERTIES_QCOM;
+			CHAIN_PNEXT (device_properties_next, fragment_density_offset_properties);
+		}
+#endif
 #endif
 #if defined(VK_KHR_fragment_shading_rate) && defined(VK_KHR_create_renderpass2)
 		if (fragment_shading_rate_usable)
@@ -1827,6 +1883,13 @@ static void GL_InitDevice (void)
 			fragment_density_map_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FRAGMENT_DENSITY_MAP_FEATURES_EXT;
 			CHAIN_PNEXT (device_features_next, fragment_density_map_features);
 		}
+#if defined(VK_QCOM_fragment_density_map_offset)
+		if (fragment_density_map_extension && fragment_density_offset_extension && VRXR_VulkanFoveationEyeSupported ())
+		{
+			fragment_density_offset_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FRAGMENT_DENSITY_MAP_OFFSET_FEATURES_QCOM;
+			CHAIN_PNEXT (device_features_next, fragment_density_offset_features);
+		}
+#endif
 #endif
 #if defined(VK_KHR_fragment_shading_rate) && defined(VK_KHR_create_renderpass2)
 		if (fragment_shading_rate_usable)
@@ -1851,10 +1914,19 @@ static void GL_InitDevice (void)
 	else
 		vkGetPhysicalDeviceFeatures (vulkan_physical_device, &vulkan_globals.device_features);
 	GL_SelectRenderFormats (vulkan_globals.device_features.shaderStorageImageExtendedFormats);
+	vulkan_globals.openxr_max_multiview_view_count = multiview_properties.maxMultiviewViewCount;
+	vulkan_globals.openxr_multiview_available = multiview_features.multiview && multiview_properties.maxMultiviewViewCount >= 2 &&
+		vulkan_globals.device_properties.limits.maxBoundDescriptorSets >= 6;
+	if (openxr_vulkan_binding && !vulkan_globals.openxr_multiview_available)
+		Con_Printf ("OpenXR bootstrap: core multiview with two views is unavailable; session is not attached.\n");
 
 #if defined(VK_EXT_fragment_density_map)
+	qboolean fragment_density_map_candidate = false;
+#if defined(VK_QCOM_fragment_density_map_offset)
+	qboolean fragment_density_offset_candidate = false;
+#endif
 	if (fragment_density_map_extension && (create_renderpass2_core || create_renderpass2_extension) &&
-		VRXR_VulkanFoveationSupported () &&
+		vulkan_globals.openxr_multiview_available && VRXR_VulkanFoveationSupported () &&
 		fragment_density_map_features.fragmentDensityMap &&
 		fragment_density_map_properties.maxFragmentDensityTexelSize.width &&
 		fragment_density_map_properties.maxFragmentDensityTexelSize.height)
@@ -1869,9 +1941,23 @@ static void GL_InitDevice (void)
 		{
 			if (fragment_density_map_features.fragmentDensityMapNonSubsampledImages)
 			{
+				fragment_density_map_candidate = true;
 				vulkan_globals.openxr_fragment_density_map_max_texel_size = fragment_density_map_properties.maxFragmentDensityTexelSize;
 				Con_Printf ("OpenXR runtime FDM candidate: Vulkan feature, RG8 array format and non-subsampled scene images available; eye profile %s. Borrowed-map contract still unverified.\n",
 					VRXR_VulkanFoveationEyeSupported () ? "available" : "unavailable");
+#if defined(VK_QCOM_fragment_density_map_offset)
+				fragment_density_offset_candidate = fragment_density_offset_extension && VRXR_VulkanFoveationEyeSupported () &&
+					fragment_density_offset_features.fragmentDensityMapOffset &&
+					fragment_density_offset_properties.fragmentDensityOffsetGranularity.width &&
+					fragment_density_offset_properties.fragmentDensityOffsetGranularity.height &&
+					GL_DensityOffsetSceneFormatSupported (vulkan_globals.color_format,
+						VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT |
+						VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT, 0, 0) &&
+					GL_DensityOffsetSceneFormatSupported (vulkan_globals.depth_format,
+						VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, 0, 0);
+				if (fragment_density_offset_candidate)
+					vulkan_globals.openxr_fragment_density_offset_granularity = fragment_density_offset_properties.fragmentDensityOffsetGranularity;
+#endif
 			}
 			else
 				Con_Printf ("OpenXR runtime FDM requires subsampled scene images; this renderer currently keeps KHR shading rate or full-rate rendering.\n");
@@ -1901,11 +1987,23 @@ static void GL_InitDevice (void)
 	}
 #endif
 
-	vulkan_globals.openxr_max_multiview_view_count = multiview_properties.maxMultiviewViewCount;
-	vulkan_globals.openxr_multiview_available = multiview_features.multiview && multiview_properties.maxMultiviewViewCount >= 2 &&
-		vulkan_globals.device_properties.limits.maxBoundDescriptorSets >= 6;
-	if (openxr_vulkan_binding && !vulkan_globals.openxr_multiview_available)
-		Con_Printf ("OpenXR bootstrap: core multiview with two views is unavailable; session is not attached.\n");
+#if defined(VK_EXT_fragment_density_map)
+	if (COM_CheckParm ("-vk-runtime-foveation") && fragment_density_map_candidate)
+	{
+#if defined(VK_QCOM_fragment_density_map_offset)
+		fragment_density_map_feature_enabled = fragment_density_offset_candidate || !fragment_shading_rate_feature_enabled;
+		fragment_density_offset_feature_enabled = fragment_density_offset_candidate;
+		fragment_density_offset_use_ext = fragment_density_offset_feature_enabled && fragment_density_offset_ext_usable;
+#else
+		fragment_density_map_feature_enabled = !fragment_shading_rate_feature_enabled;
+#endif
+		if (fragment_density_map_feature_enabled)
+		{
+			fragment_shading_rate_feature_enabled = false;
+			Con_Printf ("OpenXR development density-map device selected; runtime image contract still requires validation.\n");
+		}
+	}
+#endif
 
 #ifdef __APPLE__ // MoltenVK lies about this
 	vulkan_globals.device_features.sampleRateShading = false;
@@ -1955,6 +2053,38 @@ static void GL_InitDevice (void)
 		device_extensions[numEnabledExtensions++] = VK_KHR_FRAGMENT_SHADING_RATE_EXTENSION_NAME;
 		if (!create_renderpass2_core)
 			device_extensions[numEnabledExtensions++] = VK_KHR_CREATE_RENDERPASS_2_EXTENSION_NAME;
+	}
+#endif
+#if defined(VK_EXT_fragment_density_map)
+	if (fragment_density_map_feature_enabled)
+	{
+		device_extensions[numEnabledExtensions++] = VK_EXT_FRAGMENT_DENSITY_MAP_EXTENSION_NAME;
+		if (!create_renderpass2_core)
+			device_extensions[numEnabledExtensions++] = VK_KHR_CREATE_RENDERPASS_2_EXTENSION_NAME;
+#if defined(VK_QCOM_fragment_density_map_offset)
+		if (fragment_density_offset_feature_enabled)
+		{
+			if (fragment_density_offset_use_ext)
+			{
+#if defined(VK_EXT_fragment_density_map_offset)
+				device_extensions[numEnabledExtensions++] = VK_EXT_FRAGMENT_DENSITY_MAP_OFFSET_EXTENSION_NAME;
+#endif
+			}
+			else
+				device_extensions[numEnabledExtensions++] = VK_QCOM_FRAGMENT_DENSITY_MAP_OFFSET_EXTENSION_NAME;
+			if (fragment_density_offset_use_ext)
+			{
+#if defined(VK_KHR_dynamic_rendering)
+				if (!dynamic_rendering_core)
+					device_extensions[numEnabledExtensions++] = VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME;
+#endif
+#if defined(VK_KHR_depth_stencil_resolve)
+				if (!create_renderpass2_core)
+					device_extensions[numEnabledExtensions++] = VK_KHR_DEPTH_STENCIL_RESOLVE_EXTENSION_NAME;
+#endif
+			}
+		}
+#endif
 	}
 #endif
 #if defined(VK_EXT_full_screen_exclusive)
@@ -2021,6 +2151,24 @@ static void GL_InitDevice (void)
 		multiview_features.pNext = NULL;
 		CHAIN_PNEXT (device_create_info_next, multiview_features);
 	}
+#if defined(VK_EXT_fragment_density_map)
+	if (fragment_density_map_feature_enabled)
+	{
+		fragment_density_map_features.pNext = NULL;
+		fragment_density_map_features.fragmentDensityMap = VK_TRUE;
+		fragment_density_map_features.fragmentDensityMapDynamic = VK_FALSE;
+		fragment_density_map_features.fragmentDensityMapNonSubsampledImages = VK_TRUE;
+		CHAIN_PNEXT (device_create_info_next, fragment_density_map_features);
+#if defined(VK_QCOM_fragment_density_map_offset)
+		if (fragment_density_offset_feature_enabled)
+		{
+			fragment_density_offset_features.pNext = NULL;
+			fragment_density_offset_features.fragmentDensityMapOffset = VK_TRUE;
+			CHAIN_PNEXT (device_create_info_next, fragment_density_offset_features);
+		}
+#endif
+	}
+#endif
 #if defined(VK_KHR_fragment_shading_rate) && defined(VK_KHR_create_renderpass2)
 	fragment_shading_rate_features.pNext = NULL;
 	if (fragment_shading_rate_feature_enabled)
@@ -2067,20 +2215,36 @@ static void GL_InitDevice (void)
 	GET_DEVICE_PROC_ADDR (GetSwapchainImagesKHR);
 	GET_DEVICE_PROC_ADDR (AcquireNextImageKHR);
 	GET_DEVICE_PROC_ADDR (QueuePresentKHR);
-	if (fragment_shading_rate_feature_enabled)
+	if (fragment_shading_rate_feature_enabled || fragment_density_map_feature_enabled)
 	{
 		const char *create_renderpass2_name = create_renderpass2_core ? "vkCreateRenderPass2" : "vkCreateRenderPass2KHR";
 		vulkan_globals.vk_create_render_pass2 = (PFN_vkCreateRenderPass2KHR)fpGetDeviceProcAddr (vulkan_globals.device, create_renderpass2_name);
-		vulkan_globals.vk_cmd_set_fragment_shading_rate =
-			(PFN_vkCmdSetFragmentShadingRateKHR)fpGetDeviceProcAddr (vulkan_globals.device, "vkCmdSetFragmentShadingRateKHR");
-		if (vulkan_globals.vk_create_render_pass2 && vulkan_globals.vk_cmd_set_fragment_shading_rate)
+		if (fragment_shading_rate_feature_enabled)
 		{
-			vulkan_globals.openxr_fragment_shading_rate_available = true;
-			vulkan_globals.openxr_fragment_shading_rate_texel_size = fragment_shading_rate_texel_size;
-			vulkan_globals.openxr_layered_shading_rate_attachments = fragment_shading_rate_layered;
-			Con_Printf ("OpenXR attachment fragment shading rate capability enabled (%ux%u texels; layered %s).\n",
-				fragment_shading_rate_texel_size.width, fragment_shading_rate_texel_size.height,
-				fragment_shading_rate_layered ? "available" : "unavailable");
+			vulkan_globals.vk_cmd_set_fragment_shading_rate =
+				(PFN_vkCmdSetFragmentShadingRateKHR)fpGetDeviceProcAddr (vulkan_globals.device, "vkCmdSetFragmentShadingRateKHR");
+			if (vulkan_globals.vk_create_render_pass2 && vulkan_globals.vk_cmd_set_fragment_shading_rate)
+			{
+				vulkan_globals.openxr_fragment_shading_rate_available = true;
+				vulkan_globals.openxr_fragment_shading_rate_texel_size = fragment_shading_rate_texel_size;
+				vulkan_globals.openxr_layered_shading_rate_attachments = fragment_shading_rate_layered;
+				Con_Printf ("OpenXR attachment fragment shading rate capability enabled (%ux%u texels; layered %s).\n",
+					fragment_shading_rate_texel_size.width, fragment_shading_rate_texel_size.height,
+					fragment_shading_rate_layered ? "available" : "unavailable");
+			}
+		}
+		if (fragment_density_map_feature_enabled)
+		{
+			const char *begin_name = create_renderpass2_core ? "vkCmdBeginRenderPass2" : "vkCmdBeginRenderPass2KHR";
+			const char *end_name = create_renderpass2_core ? "vkCmdEndRenderPass2" : "vkCmdEndRenderPass2KHR";
+			vulkan_globals.vk_cmd_begin_render_pass2 =
+				(PFN_vkCmdBeginRenderPass2KHR)fpGetDeviceProcAddr (vulkan_globals.device, begin_name);
+			vulkan_globals.vk_cmd_end_render_pass2 =
+				(PFN_vkCmdEndRenderPass2KHR)fpGetDeviceProcAddr (vulkan_globals.device, end_name);
+			vulkan_globals.openxr_fragment_density_map_enabled = vulkan_globals.vk_create_render_pass2 &&
+				vulkan_globals.vk_cmd_begin_render_pass2 && vulkan_globals.vk_cmd_end_render_pass2;
+			vulkan_globals.openxr_fragment_density_offset_enabled =
+				vulkan_globals.openxr_fragment_density_map_enabled && fragment_density_offset_feature_enabled;
 		}
 	}
 
@@ -2259,6 +2423,10 @@ static void GL_CreateDepthBuffer (void)
 	image_create_info.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT;
 	if (R_SSAOEnabled ())
 		image_create_info.usage |= VK_IMAGE_USAGE_SAMPLED_BIT;
+#if defined(VK_QCOM_fragment_density_map_offset)
+	if (vulkan_globals.openxr_fragment_density_map_active && vulkan_globals.openxr_fragment_density_offset_enabled)
+		image_create_info.flags |= VK_IMAGE_CREATE_FRAGMENT_DENSITY_MAP_OFFSET_BIT_QCOM;
+#endif
 
 	assert (depth_buffer == VK_NULL_HANDLE);
 	err = vkCreateImage (vulkan_globals.device, &image_create_info, NULL, &depth_buffer);
@@ -2417,6 +2585,10 @@ static void GL_CreateColorBuffer (void)
 	image_create_info.tiling = VK_IMAGE_TILING_OPTIMAL;
 	image_create_info.usage =
 		VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT;
+#if defined(VK_QCOM_fragment_density_map_offset)
+	if (vulkan_globals.openxr_fragment_density_map_active && vulkan_globals.openxr_fragment_density_offset_enabled)
+		image_create_info.flags |= VK_IMAGE_CREATE_FRAGMENT_DENSITY_MAP_OFFSET_BIT_QCOM;
+#endif
 
 	for (i = 0; i < NUM_COLOR_BUFFERS; ++i)
 	{
@@ -2520,6 +2692,7 @@ static void GL_CreateColorBuffer (void)
 
 		image_create_info.samples = vulkan_globals.sample_count;
 		image_create_info.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+		image_create_info.flags = 0;
 
 		assert (msaa_color_buffer == VK_NULL_HANDLE);
 		err = vkCreateImage (vulkan_globals.device, &image_create_info, NULL, &msaa_color_buffer);
@@ -3609,6 +3782,39 @@ static void VID_GetRenderSize (int *width, int *height)
 	}
 }
 
+static qboolean GL_DensityFoveationRequestedActive (int render_width, int render_height)
+{
+	if (!vulkan_globals.stereo_active || !vulkan_globals.openxr_fragment_density_map_enabled ||
+		openxr_density_backend_failed || !openxr_density_image_views ||
+		render_width != vid.width || render_height != vid.height || vid_fsaa.value >= 2)
+		return false;
+
+	const int mode = VRF_RequestedMode (vr_foveation.value);
+	if (vulkan_globals.openxr_fragment_density_offset_enabled)
+	{
+#if defined(VK_QCOM_fragment_density_map_offset)
+		// Both scene attachments carry the offset bit when this device feature
+		// is enabled, including during an explicitly requested fixed profile.
+		if (!GL_DensityOffsetSceneFormatSupported (vulkan_globals.color_format,
+			VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT |
+			VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT, render_width, render_height) ||
+			!GL_DensityOffsetSceneFormatSupported (vulkan_globals.depth_format,
+				VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+				render_width, render_height))
+			return false;
+#else
+		return false;
+#endif
+	}
+	if (mode == VRF_MODE_FIXED)
+		return VRXR_VulkanFoveationFixedAvailable ();
+	if (mode != VRF_MODE_EYE_TRACKED || !VRF_EyeTrackingEnabled (vr_eye_tracking.value) ||
+		!vulkan_globals.openxr_fragment_density_offset_enabled || !VRXR_VulkanFoveationEyeAvailable ())
+		return false;
+
+	return true;
+}
+
 static void GL_CreateRenderResources (void)
 {
 	if (sv.active && cls.signon < 1) // server has loaded the map but client hasn't called R_NewMap yet - wait until next frame
@@ -3623,6 +3829,8 @@ static void GL_CreateRenderResources (void)
 	if (vulkan_globals.stereo_active)
 		GL_CreateXRImageViews ();
 	VID_GetRenderSize (&vid.render_width, &vid.render_height);
+	vulkan_globals.openxr_fragment_density_map_active =
+		GL_DensityFoveationRequestedActive (vid.render_width, vid.render_height);
 	GL_CreateColorBuffer ();
 	if (vid.render_width != vid.width || vid.render_height != vid.height)
 		GL_CreateUIColorBuffer ();
@@ -4032,7 +4240,8 @@ static void GL_OpenXRAttach (void)
 	GL_DestroyRenderResources ();
 	openxr_desktop_width = vid.width;
 	openxr_desktop_height = vid.height;
-	if (!VRXR_AttachVulkan (vulkan_globals.gfx_queue_family_index, 0, 0, 2, GL_OpenXRRetireImages, NULL, 0, 0))
+	if (!VRXR_AttachVulkan (vulkan_globals.gfx_queue_family_index, 0, 0, 2, GL_OpenXRRetireImages, NULL,
+		vulkan_globals.openxr_fragment_density_map_enabled, 0))
 	{
 		Con_Printf ("OpenXR session attachment failed; keeping desktop output.\n");
 		return;
@@ -4232,8 +4441,13 @@ qboolean GL_BeginRendering (qboolean use_tasks, task_handle_t *begin_rendering_t
 	const qboolean foveation_active = GL_FoveationRequestedActive (render_width, render_height);
 	const qboolean foveation_active_changed = foveation_active != vulkan_globals.openxr_fragment_shading_rate_active;
 	vulkan_globals.openxr_fragment_shading_rate_active = foveation_active;
+	const qboolean density_active = GL_DensityFoveationRequestedActive (render_width, render_height);
+	const qboolean density_active_changed = render_resources_created &&
+		density_active != vulkan_globals.openxr_fragment_density_map_active;
+	if (render_resources_created)
+		vulkan_globals.openxr_fragment_density_map_active = density_active;
 	const qboolean render_pass_setup_changed = R_SetupRenderPasses ();
-	if (vid.restart_next_frame || foveation_active_changed ||
+	if (vid.restart_next_frame || foveation_active_changed || density_active_changed ||
 		(render_resources_created && (oit_mode_changed || render_pass_setup_changed || render_size_changed)))
 	{
 		VID_Restart (false);

@@ -150,9 +150,9 @@ The user's compatibility preference is runtime-first **after qualification**:
 use XR_FB/XR_META on any runtime/device pair that completes this proof, keep
 the working KHR shading-rate path on other capable devices, and use full rate
 otherwise. Eye tracking remains optional; loss or invalid gaze gives full rate,
-and fixed foveation is only enabled by an explicit user choice. Runtime FDM is
-not active in the current renderer because `GL_OpenXRAttach` still requests
-`density_maps=0`.
+and fixed foveation is only enabled by an explicit user choice. At that review
+checkpoint, runtime FDM was inactive because `GL_OpenXRAttach` still requested
+`density_maps=0`; the explicit development path below changes that behavior.
 
 `R_DrawWorldFiltered` and `R_DrawIndirectBrushesFiltered` now expose eligible,
 protected and unchanged all-draw selections through the existing world draw
@@ -185,11 +185,11 @@ vertex-only, color-masked pipeline into freshly cleared full-rate depth before
 protected world draws. The additional world command buffers are allocated only
 for a device committed to the FDM backend. The Linux vkQuake build passes.
 
-This is not an active runtime backend yet. Device feature selection, OpenXR
+At that checkpoint this was not an active runtime backend. Device feature selection, OpenXR
 density-map attachment, qualified image format/layout/synchronization, profile
 updates at the per-frame callsite, and a validation-backed fallback still need
 integration. The current `openxr_fragment_density_map_enabled` and `_active`
-fields remain false. In particular, a successful Vulkan build is not evidence
+fields remained false. In particular, a successful Vulkan build is not evidence
 that borrowed runtime images satisfy the FDM contract or that protected content
 has correct depth on either eye.
 
@@ -246,3 +246,32 @@ recommends runtime-provided VRS, but it does not fill those Vulkan contract
 gaps for this renderer. Thus the intended final preference remains FB/META on
 qualified runtime/device pairs, KHR elsewhere, and full-rate on failure; this
 review does not declare automatic FB/META activation complete.
+
+## Explicit runtime-density development path
+
+`-vk-runtime-foveation` now permits pre-device FDM selection when the runtime
+advertises XR_FB foveation and the Vulkan device has a two-layer RG8 density
+map, non-subsampled scene support, RenderPass2 and (for eye mode) a qualified
+QCOM or EXT offset feature. Without this switch, the existing KHR shading-rate
+backend remains the normal choice. The switch requests borrowed maps on XR
+attachment and connects them to the existing split scene passes; it is a
+development qualification path, **not** automatic runtime preference yet.
+
+FDM scene activation additionally requires an accepted fixed or eye profile,
+borrowed map views, matching scene/XR extents, and `vid_fsaa` below 2. The
+default `vid_fsaa 4` therefore leaves this path full rate until explicitly
+changed. The eye profile requires the `vr_eye_tracking` toggle and Vulkan
+per-eye offset support. Missing or invalid gaze selects the off profile, never
+fixed foveation. Density setup failure retries ordinary XR stereo; a rejected
+density framebuffer rebuilds full-rate passes. KHR cannot be resumed on the
+same Vulkan device after FDM feature commitment.
+
+The borrowed image still has no standardized format/layout/creation-flag
+introspection in `XrSwapchainImageFoveationVulkanFB`. In particular, Vulkan's
+[offset validity rules](https://docs.vulkan.org/refpages/latest/refpages/source/VkRenderPassFragmentDensityMapOffsetEndInfoEXT.html)
+require the offset creation bit on the **borrowed density image** as well as
+the renderer's scene attachments. A successful build or image view does not
+prove that condition. Qualify it with target-runtime source or vendor
+documentation and validation before making FB/META the automatic default.
+The remaining proof includes both-eye protected depth, invalid-gaze behavior,
+pass creation failures, and measured performance on `mj4m1`.
