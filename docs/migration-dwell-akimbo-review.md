@@ -142,3 +142,23 @@ retires the scope. Keep this narrow owner; no separate Dwell trace state
 machine or generic VM nesting layer was justified. The review covered source
 and installed bytecode but did not execute a physical outcome. Arming, whiff
 initialization, callback cleanup and damage behavior remain integration gates.
+
+## Implementation checkpoint after `f927902c`
+
+The client now stages bilateral Dwell contact from the same tracked pair and
+generated model geometry, including the rendered collision retraction. The
+server has exact Dwell program/weapon pins, a dormant native hand pose hook,
+the scoped helper acquisition/return hook, a dormant callback-safe physical
+outcome, and an edge-only sweep policy with guarded initial-overlap recovery.
+The earlier statements above that these individual hooks were absent record
+the review's historical baseline; they are now implemented but remain uncalled
+or gated.
+
+The remaining integration boundary is server admission of a fresh paired
+berserk command and bilateral contact under one current authoritative policy,
+then stroke/reversal processing, qualified native trigger suppression and
+between-hand callback revalidation. The Dwell pair bit and melee profile must
+remain off until those paths are connected and a software comparison proves
+the exact installed QuakeC behavior. Stock axe and ordinary desktop paths
+remain the regression references. The shared co-op friendly-fire decision is
+recorded in `migration-friendly-fire-review.md` and is not Dwell-only.
