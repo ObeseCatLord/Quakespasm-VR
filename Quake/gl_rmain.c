@@ -1274,6 +1274,9 @@ void R_DrawViewModel (cb_context_t *cbx)
 	}
 	else
 	{
+		entity_t *held = V_QBJ3WrenchHeldEntity ();
+		if (held)
+			currententity = held;
 		R_DrawAliasModel (cbx, currententity, &aliaspolys);
 		Atomic_IncrementUInt32 (&rs_aliaspasses);
 	}
@@ -1976,7 +1979,10 @@ static void R_ShowViewModelTris (cb_context_t *cbx)
 			for (int hand = 0; hand < 2; ++hand)
 				R_DrawAliasModel_ShowTris (cbx, V_AkimboPairEntity (hand));
 		else
-			R_DrawAliasModel_ShowTris (cbx, currententity);
+		{
+			entity_t *held = V_QBJ3WrenchHeldEntity ();
+			R_DrawAliasModel_ShowTris (cbx, held ? held : currententity);
+		}
 	}
 }
 

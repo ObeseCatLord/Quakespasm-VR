@@ -337,6 +337,45 @@ contacts directly; it does not prove stroke authorization, distinct-victim
 limits, contact sweeps or paired rendering. It requires permission to trace
 the child process with GDB.
 
+## QBJ3 accepted wrench contact and two-target sweep
+
+```sh
+tests/vr_qbj3_contact_runtime.sh
+```
+
+The headless installed-QBJ3 fixture submits adjacent accepted contact commands,
+queries real server sweeps, and checks native wrench damage on two distinct
+victims while a third remains unharmed. It also checks stale, wrong-model,
+disabled-policy, and desktop fallback. Explicit fault injection at native
+leaf return covers owner relocation, continuity reset, death and subtype
+change, including stopping the other fist before it can run. It calls the
+accepted contact processor directly, so it does not cover network packet queue
+drainage or full fist gameplay.
+Its Bash and embedded Python syntax pass; GDB execution remains pending because
+the current sandbox denies ptrace. The authored target placement may need
+adjustment when a runtime preflight first runs against the installed map.
+
+## QBJ3 held wrench transform
+
+`vr_qbj3_wrench_transform_fixture.c` links the production alias matrix,
+entity rotation, locomotion adapter and native math. It compares transformed
+geometry against an independent Rodrigues rotation for both hands, multiple
+pitched/rolled wrists and nonzero gun pitch. It checks controller-centered
+grip placement, left-authored reflection/winding, source-offset independence,
+scale/global height, output aliasing and rejected invalid values. Session and
+calibration inputs are stubbed; it does not exercise model loading, collision
+traces, Vulkan drawing or contact submission.
+
+```sh
+cc -std=gnu11 -DUSE_SDL3 -D_GNU_SOURCE -Wall -Wextra -Werror \
+  -Wno-unused-parameter -Wno-sign-compare -Wno-missing-field-initializers \
+  -ffunction-sections -fdata-sections -IQuake \
+  tests/vr_qbj3_wrench_transform_fixture.c Quake/r_alias.c Quake/gl_rmain.c \
+  Quake/vr_locomotion.c Quake/mathlib.c -Wl,--gc-sections \
+  $(pkg-config --cflags --libs sdl3) -lm -o /tmp/qsvr-qbj3-wrench-transform
+/tmp/qsvr-qbj3-wrench-transform
+```
+
 ## QBJ3 scheduled native fist poses
 
 ```sh

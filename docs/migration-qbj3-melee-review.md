@@ -33,14 +33,23 @@ native hand selection. It does not itself prove the integrated attack path.
 
 ## Completion boundary
 
-The first implementation adds the explicit physical outcome adapter and a
-native-program fixture. It does not advertise QBJ3 melee or the berserk pair.
-Activation still requires the single-hand wrench integration, server admission
-and two-target gesture processing, and native-trigger suppression. Bilateral
-fist input and native fallback poses are connected below; an ordinary-physics
-proof from accepted contact to native damage with desktop behavior retained
-remains pending. Headset alignment/feel and Windows/ARM checks are
-deferred according to the user's testing scope.
+The client and server implementations are now connected for the pinned
+installed QBJ3 revision. The server advertises the QBJ3 melee profile under
+the existing immersive-melee policy, and native berserk pairs independently
+of that policy. The generated dominant wrench, bilateral fist producer,
+two-target contact owner and qualified native-trigger suppression are wired.
+
+The current Linux debug build and focused numeric/input regressions pass.
+The accepted-contact runtime fixture, scheduled fist fixture and strengthened
+native-leaf cases remain unrun because ptrace is unavailable. Ordinary
+command/physics coverage and render-to-contact agreement therefore remain
+unproven; this is implementation progress, not release qualification or
+completion of WPN-012/MOVE-005. Headset alignment/feel and Windows/ARM checks
+are deferred according to the user's testing scope.
+
+The Astra dispositions below document earlier bounded slices. The current
+combined integration was reviewed locally by the main agent while subagents
+were unavailable; it has no completed independent senior review.
 
 ## Astra design review disposition
 
@@ -62,13 +71,13 @@ cover immersive on/off transitions, all four native striking frames,
 render/contact agreement and ordinary server physics with desktop fallback.
 The design review does not certify an unfinished implementation.
 
-## Staged implementation and software evidence
+## Initial implementation and historical software evidence
 
 `SV_VRQBJ3PhysicalMeleeOutcome` now reuses the exact installed program pin and
 the explicit native leaves. Initial outcomes validate native readiness, apply
 the donor's 0.8-second wrench or 0.5-second berserk recovery, and preserve the
 sound prelude. A follow-up revalidates the selected subtype without restarting
-that prelude. Its future contact caller must own per-hand authorization,
+that prelude. The connected contact caller owns per-hand authorization,
 deadline expiry, victim deduplication, the two-victim cap and termination after
 a whiff. The callback alone does not enforce those stroke rules.
 
@@ -78,7 +87,8 @@ them with the model, and uses `R_SetupAliasFrame` and the shared alias matrix
 to remove the interpolated palm translation. It preserves native animation
 when immersive contact is unavailable and selects frame zero for immersive
 presentation. Source MD3/MD5 replacement selection falls back from this pinned
-pair. No server capability has been enabled by these changes.
+pair. That initial commit did not enable a server capability; current offers
+are described above.
 
 The Linux debug build passes. Before the final cleanup correction below, the
 direct headless fixture `tests/vr_qbj3_melee_outcome.sh` observed native
@@ -94,7 +104,7 @@ obsolete two-argument calls to `SV_RunPrivateVRWeaponThink`; those calls now
 pass the owning command explicitly. Its rerun was blocked by the session's
 new ptrace restriction, so no new passing result is claimed for that fixture.
 
-## Final Astra source review
+## Earlier Astra source review
 
 | Finding | Disposition |
 | --- | --- |
@@ -112,29 +122,66 @@ strengthened exact-damage assertions and corrected twin-nailgun fixture have
 not been rerun because ptrace is unavailable in the current sandbox. Paired
 presentation still requires its software integration proof before activation.
 
-## Next connected slice
+## Connected implementation and current solo review
 
-1. **Connected, pending end-to-end runtime proof:** Extend the existing bilateral producer to QBJ3 grip-to-knuckle contacts,
-   preserving anatomical identity and the berserk command bit. Use raw point
-   velocity for effort and the common held transform for the contact segment.
-2. Add the generated dominant wrench to the existing single-hand profile
-   owner. The donor pins ready pose 10, edge vertices 320/358, raw grip centroid
-   `(158.428571, 151, 148.714286)`, authored left-hand geometry and a 70-degree
-   controller-roll correction. Reuse the generated model and calibration
-   source name instead of treating it as an ordinary stock axe.
-3. Add first/follow-up authorization to the existing per-hand server contact
-   state, with its original deadline and two distinct victim slots. Reuse
-   reversal handling, consume rejected terminal gestures, and revalidate after
-   every native leaf before another outcome or hand can run. Preserve hit
-   obstructions and do not temporarily disable victim solidity.
-4. **Connected, pending runtime proof:** Extend the existing native pose scope for QBJ3's four pre-increment striking
-   frames, retaining the native fan attack and ordinary desktop behavior.
-   Connect suppression to qualified contact ownership, independent of instant
-   cooldown readiness.
-5. Verify ordinary command/physics ownership, two-target behavior and animated
-   versus immersive presentation before enabling the server offers. Remove
-   the staged-entry retention annotation once the real caller references the
-   outcome function. Direct-leaf fixture success is not this activation proof.
+The generated dominant wrench reuses `vr_mdl_split.h`, the existing model
+loader and its two-point edge cache. Its pins remain ready pose 10, edge
+vertices 320/358 and raw grip centroid `(158.428571, 151, 148.714286)`.
+The alias renderer receives a prepared held entity through both ordinary
+viewmodel and debug-triangle dispatch. The source model/QC animation remain
+canonical, while the physical wrench independently displays its ready pose.
+This follows the donor's `native_animation=false` profile; source interpolation
+readiness is not an additional admission requirement.
+
+`VR_LocomotionControllerRollViewmodelAngles` ports the donor's 70-degree roll
+about the tracked controller forward vector, with opposite sign in the left
+hand. It does not roll about the already-pitched model X axis. The shared
+alias matrix preserves source scale, replaces source offsets with the centered
+grip, retains global model height and mirrors this left-authored mesh for the
+right hand. Loaded geometry, ready-pose selection, edge offsets and collision
+displacement are prepared before draw tasks; the command producer consumes
+that same prepared data. Failed preparation cannot independently authorize a
+wrench contact. Point speed is measured before wall retraction.
+
+`SV_VRContactProcessQBJ3Melee` extends the existing per-hand contact state with
+an original recovery deadline and two distinct victim numbers. The shared
+sweep accepts a remaining-motion cutoff and excludes earlier outcomes while
+leaving those entities solid. Stock/Dwell callers retain zero cutoff and no
+exclusions. A world hit, whiff or rejected terminal gesture ends the stroke;
+an accepted second victim does not replay the native recovery or sound prelude.
+The real caller replaces the staged-entry retention annotation.
+
+After every native leaf, including a false result after side effects, the
+caller validates VM/program/edict/global storage, player ownership, exact body
+origin, subtype, contact cursor, continuity, sample and deadline before writing
+stroke state or querying another victim. The outer bilateral loop checks the
+same ownership boundary before another hand runs. Existing reset/relocation
+owners retire the contact; no new scheduler or trace interception was added.
+
+| Finding from the combined source review | Disposition |
+| --- | --- |
+| Prepared wrench was never selected for drawing. | Fixed normal and debug-triangle dispatch; reuse ordinary alias lighting, interpolation and winding. |
+| Local-X correction diverged with nonzero gun pitch. | Ported tracked-forward rotation and added a production-matrix regression against independent Rodrigues geometry. |
+| Source ready/interpolation gate suppressed the frozen physical mesh. | Removed the extra source gate; native attack readiness stays in the server leaf owner. |
+| Source held offsets displaced the centered grip. | Match the donor's replacement semantics; numeric checks vary offsets, scale and global height. |
+| Render and contact collision offsets differed. | Share the prepared edges and collision displacement; compute effort from raw offsets. |
+| State could be written after callback invalidation; the second hand lacked the full QBJ3 check. | Validate immediately before state writes and again at the bilateral boundary. Authored callback fault-injection cases remain unrun. |
+| World impact could retain follow-up authorization. | Consume entity-zero impacts immediately, matching the donor. Runtime world-impact coverage remains outstanding. |
+
+Current checks: `ninja -C build-debug`, the wrench transform fixture and the
+existing locomotion fixture pass. The stale-input fixture passes under
+AddressSanitizer/UndefinedBehaviorSanitizer with leak detection disabled.
+These checks do not execute Vulkan submission, installed native QC contacts,
+network queue drainage or physical headset tracking. The accepted-contact
+fixture adds explicit relocation/reset/death/subtype fault injection and
+checks that neither a follow-up victim nor the other hand runs after the
+first native leaf invalidates its owner. Its runtime results are pending.
+
+Remaining software acceptance includes real accepted-command/physics damage,
+two-target obstruction and world impacts, simultaneous fists, resets and
+native-animation/immersive switching, plus generated-wrench render/contact
+agreement. The other QBJ3 program revision and broader Alkaline/Enyo behavior
+remain separate outstanding requirements.
 
 ## Paired input and native pose connection
 
@@ -157,7 +204,8 @@ The combined Linux debug build passes. The focused input fixture passes under
 AddressSanitizer and UndefinedBehaviorSanitizer with leak detection disabled
 for the restricted environment. It checks family/option authorization and
 clearing stale bilateral contact together with its pair; it does not prove
-the full producer-to-wire-to-damage path. Server offers remain unchanged.
+the full producer-to-wire-to-damage path. That input/pose commit left server
+offers unchanged; the current combined integration enables them as above.
 
 ### Astra input/pose review disposition
 

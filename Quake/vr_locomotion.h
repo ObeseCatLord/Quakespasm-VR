@@ -44,6 +44,11 @@ qboolean VR_LocomotionHandRotToViewmodelAngles (const float handrot[3],
 qboolean VR_LocomotionCorrectedViewmodelAngles (const float handrot[3],
 	float gunmodelpitch, const float correction[3][3], float out[3]);
 
+/* Roll the model about the tracked controller's forward axis, which differs
+ * from the model's pitched local X. Signed roll preserves anatomical mirrors. */
+qboolean VR_LocomotionControllerRollViewmodelAngles (const float handrot[3],
+	float gunmodelpitch, float controller_roll, float out[3]);
+
 /* Rotate and scale a local aim offset using inherited Quake angle vectors. */
 qboolean VR_LocomotionAimOffsetToWorld (const float local[3],
 	const float angles[3], float scale, float world[3]);

@@ -83,6 +83,23 @@ qboolean Mod_GetStockAxeEdge (qmodel_t *model, int skinnum,
 	return false;
 }
 
+qboolean V_TrackedPresentationHandAngles (int hand, vec3_t out)
+{
+	(void)hand;
+	(void)out;
+	++unreachable_admission_calls;
+	return false;
+}
+
+qboolean V_QBJ3WrenchHeldEdgeOffsets (vec3_t base, vec3_t tip, vec3_t delta)
+{
+	(void)delta;
+	(void)base;
+	(void)tip;
+	++unreachable_admission_calls;
+	return false;
+}
+
 qboolean VR_WeaponCalibrationStockRangedViewmodel (const char *name)
 {
 	(void)name;

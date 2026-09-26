@@ -134,13 +134,16 @@ obstruction and callback behavior. Dwell 2.2's paired axes now have native and
 physical gameplay adapters under the current server melee policy, with
 headless sweep, cooldown, reversal, trigger-suppression, anatomical-hand and
 desktop checks; see the [Dwell activation review](migration-dwell-akimbo-review.md).
-QBJ3 wrench/fist native outcome callbacks and animated/frozen paired fist
-presentation are staged; see the [QBJ3 melee review](migration-qbj3-melee-review.md).
-The direct callback fixture covers native damage and recovery, but queued
-two-target stroke ownership still needs connection before the server advertises
-berserk support. Bilateral client contacts and native fist aiming are connected;
-their end-to-end runtime proof remains pending. WPN-012 remains
-partial, and tracked alignment/feel still needs user qualification. These
+QBJ3 wrench/fist native outcome callbacks, two-target contact ownership and
+animated/frozen presentation are connected for the installed pinned revision;
+see the [QBJ3 melee review](migration-qbj3-melee-review.md). The server offers
+the policy-gated melee profile and independently offers native berserk pairs.
+The generated wrench uses the shared alias renderer, controller-forward roll,
+centered grip and prepared render/contact collision offset. Current Linux
+build, transform and stale-input regressions pass; accepted-contact, callback
+fault-injection and native-fist runtime proof remains pending under the ptrace
+restriction. WPN-012 remains partial, and tracked alignment/feel still needs
+user qualification. These
 VR adaptations must leave ordinary desktop vkQuake viewmodel rendering and
 QuakeC firing intact; shared wheel, netcode and co-op features have separate
 desktop acceptance checks.

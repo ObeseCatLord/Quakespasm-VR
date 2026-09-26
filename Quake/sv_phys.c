@@ -3407,12 +3407,22 @@ static qboolean SV_QBJ3MeleeProgramLoaded (void)
 			leaf_parms) &&
 		SV_DwellFunctionPin (572, "hit_berserker_punch", 19201, 8739,
 			11, 3, leaf_parms) &&
+		SV_DwellFunctionPin (565, "weaponanim_berserk_loop", 18858,
+			0, 0, 0, NULL) &&
+		SV_DwellFunctionPin (571, "W_Fire_Berserker_Multi", 18996,
+			8722, 17, 0, NULL) &&
 		SV_DwellFunctionPin (595, "SuperDamageSound", 20453, 0, 0, 0,
 			NULL) &&
 		SV_DwellFunctionPin (569, "weaponanim_idle_melee_loop", 18942,
 			0, 0, 0, NULL) &&
 		SV_DwellFunctionPin (575, "weaponanim_draw_loop", 19624,
 			0, 0, 0, NULL);
+}
+
+unsigned int SV_VRQBJ3MeleeContactProfile (void)
+{
+	return SV_QBJ3MeleeProgramLoaded () ?
+		VR_WEAPON_CONTACT_PROFILE_QBJ3 : VR_WEAPON_CONTACT_PROFILE_NONE;
 }
 
 /* QBJ3's native has_berserk tests the item bit or the float QC expiry. The
@@ -4052,6 +4062,16 @@ static void SV_EndPrivateVRWeaponPose (edict_t *ent,
 #define SV_VR_CONTACT_MAX_FRESHNESS 0.25
 #define SV_VR_CONTACT_MAX_PLAYER_AGE 1.0
 
+static void SV_ResetPrivateVRQBJ3Stroke (client_t *client, int hand)
+{
+	client->private_vr_qbj3_authorized[hand] = false;
+	client->private_vr_qbj3_berserk[hand] = false;
+	client->private_vr_qbj3_deadline[hand] = 0;
+	client->private_vr_qbj3_hit_count[hand] = 0;
+	memset (client->private_vr_qbj3_hit_entities[hand], 0,
+		sizeof (client->private_vr_qbj3_hit_entities[hand]));
+}
+
 static void SV_ResetPrivateVRContactContinuity (client_t *client)
 {
 	client->private_vr_contact_previous_valid = false;
@@ -4071,6 +4091,8 @@ static void SV_ResetPrivateVRContactContinuity (client_t *client)
 		sizeof (client->private_vr_melee_stroke_direction));
 	memset (client->private_vr_melee_stroke_endpoint, 0,
 		sizeof (client->private_vr_melee_stroke_endpoint));
+	for (int hand = 0; hand < 2; hand++)
+		SV_ResetPrivateVRQBJ3Stroke (client, hand);
 }
 
 /* Profile availability is tied to the complete pinned id1 handler below.
@@ -4710,6 +4732,45 @@ static qboolean SV_VRDwellBerserkPairSelected (client_t *client, edict_t *ent,
 	return true;
 }
 
+static qboolean SV_VRQBJ3MeleeContactSelected (client_t *client, edict_t *ent,
+	const usercmd_t *cmd, qboolean *berserk, int *single_hand)
+{
+	const unsigned int hands_mask = VR_WEAPON_CONTACT_LEFT_VALID |
+		VR_WEAPON_CONTACT_RIGHT_VALID;
+	const unsigned int flags = cmd ? cmd->vr_contact.flags : 0;
+	const unsigned int hands = flags & hands_mask;
+	qboolean selected_berserk;
+	int hand;
+
+	if (!cmd || !SV_VRQBJ3MeleeEnabled () ||
+		!SV_VRContactOwnerLive (client, ent) ||
+		!SV_VRQBJ3MeleeSelected (ent, &selected_berserk) ||
+		!(flags & VR_WEAPON_CONTACT_IMMERSIVE_MELEE) ||
+		!SV_VRContactWeaponIdentity (ent, &cmd->vr_contact))
+		return false;
+	if (selected_berserk)
+	{
+		if (hands != hands_mask || !cmd->vr_akimbo_berserk ||
+			!SV_AkimboCommandValid (client, cmd, ent->v.origin))
+			return false;
+	}
+	else if ((hands != VR_WEAPON_CONTACT_LEFT_VALID &&
+		hands != VR_WEAPON_CONTACT_RIGHT_VALID) ||
+		cmd->vr_akimbo_active || cmd->vr_akimbo_berserk)
+		return false;
+	for (hand = 0; hand < 2; hand++)
+		if ((hands & (1u << hand)) &&
+			SV_VRContactDistance (cmd->vr_contact.base[hand],
+				cmd->vr_contact.tip[hand]) > 32.0f)
+			return false;
+	if (berserk)
+		*berserk = selected_berserk;
+	if (single_hand)
+		*single_hand = hands == VR_WEAPON_CONTACT_LEFT_VALID ? 0 :
+			hands == VR_WEAPON_CONTACT_RIGHT_VALID ? 1 : -1;
+	return true;
+}
+
 static qboolean SV_VRContactSampleValid (client_t *client, edict_t *ent,
 	const usercmd_t *cmd)
 {
@@ -4738,7 +4799,8 @@ static qboolean SV_VRContactSampleValid (client_t *client, edict_t *ent,
 			(hands == VR_WEAPON_CONTACT_LEFT_VALID ||
 			 hands == VR_WEAPON_CONTACT_RIGHT_VALID) &&
 			SV_VRStockAxeMeleeEnabled ()) ||
-		  SV_VRDwellBerserkPairSelected (client, ent, cmd)))
+		  SV_VRDwellBerserkPairSelected (client, ent, cmd) ||
+		  SV_VRQBJ3MeleeContactSelected (client, ent, cmd, NULL, NULL)))
 		return false;
 	if (!melee && !SV_VRWeaponCollisionEnabled ())
 		return false;
@@ -4965,7 +5027,8 @@ static qboolean SV_VRMeleeSuppressNativeTrigger (client_t *client,
 	if (!client || !cmd || !(cmd->buttons & BUTTON_ATTACK) ||
 		cmd->impulse ||
 		!(SV_VRStockAxeSelected (client, ent, cmd, NULL) ||
-		  SV_VRDwellBerserkPairSelected (client, ent, cmd)) ||
+		  SV_VRDwellBerserkPairSelected (client, ent, cmd) ||
+		  SV_VRQBJ3MeleeContactSelected (client, ent, cmd, NULL, NULL)) ||
 		!SV_VRContactCommandValid (client, ent, cmd) ||
 		!SV_VRContactBodyOrigin (ent, current_body_origin) ||
 		!client->private_vr_contact_cursor_valid ||
@@ -5009,7 +5072,9 @@ static qboolean SV_VRMeleeSuppressNativeTrigger (client_t *client,
 		if ((int)queued->sequence != expected ||
 			!(queued->vr_contact.flags & VR_WEAPON_CONTACT_IMMERSIVE_MELEE) ||
 			!(SV_VRStockAxeSelected (client, ent, queued, NULL) ||
-			  SV_VRDwellBerserkPairSelected (client, ent, queued)) ||
+			  SV_VRDwellBerserkPairSelected (client, ent, queued) ||
+			  SV_VRQBJ3MeleeContactSelected (client, ent, queued,
+				NULL, NULL)) ||
 			!SV_VRContactTransitionValid (client, ent, queued,
 				previous_valid ? &previous : NULL, previous_received,
 				previous_body_origin))
@@ -5047,7 +5112,8 @@ static void SV_VRMeleeRefreshTriggerSuppression (client_t *client,
 typedef enum
 {
 	SV_VR_AXE_SWEEP_STOCK,
-	SV_VR_AXE_SWEEP_DWELL_EDGE
+	SV_VR_AXE_SWEEP_DWELL_EDGE,
+	SV_VR_AXE_SWEEP_QBJ3_EDGE
 } sv_vr_axe_sweep_policy_t;
 
 /* Recover an edge point that is already inside a collider by finding that
@@ -5091,20 +5157,27 @@ static qboolean SV_VRDwellRecoverAxeOverlap (edict_t *ent,
 
 static qboolean SV_VRAxeSweep (edict_t *ent,
 	const vr_weapon_contact_t *previous, const vr_weapon_contact_t *current,
-	int hand, sv_vr_axe_sweep_policy_t policy, trace_t *best,
-	qboolean *blocked)
+	int hand, sv_vr_axe_sweep_policy_t policy, float min_time,
+	const int *excluded, int excluded_count, trace_t *best,
+	float *best_time, qboolean *blocked)
 {
 	vec3_t eye, grip;
 	float first_fraction = FLT_MAX;
 	float first_blocked_fraction = FLT_MAX;
 	qboolean found = false;
 	int best_part = -1, best_point = -1;
-	int first_part = policy == SV_VR_AXE_SWEEP_DWELL_EDGE ? 1 : 0;
+	int first_part = policy == SV_VR_AXE_SWEEP_STOCK ? 0 : 1;
 	int part;
 
 	memset (best, 0, sizeof (*best));
 	best->fraction = 1.0f;
 	*blocked = false;
+	if (best_time)
+		*best_time = 2.0f;
+	if (!isfinite (min_time) || min_time < 0 || min_time > 1 ||
+		excluded_count < 0 || excluded_count > 2 ||
+		(excluded_count && !excluded))
+		return false;
 	VectorAdd (ent->v.origin, ent->v.view_ofs, eye);
 	VectorAdd (ent->v.origin, current->grip[hand], grip);
 	{
@@ -5150,12 +5223,14 @@ static qboolean SV_VRAxeSweep (edict_t *ent,
 					new_a[axis] + t * (new_b[axis] - new_a[axis]);
 				start[axis] = ent->v.origin[axis] + old_point[axis];
 				end[axis] = ent->v.origin[axis] + new_point[axis];
+				if (point >= 0)
+					start[axis] += min_time * (end[axis] - start[axis]);
 			}
 			candidate = SV_Move (start, vec3_origin, vec3_origin, end,
 				MOVE_NORMAL, ent);
 			if (candidate.startsolid || candidate.allsolid)
 			{
-				if (policy != SV_VR_AXE_SWEEP_DWELL_EDGE ||
+				if (policy == SV_VR_AXE_SWEEP_STOCK ||
 					!SV_VRDwellRecoverAxeOverlap (ent, eye, grip, start, end,
 						&candidate))
 					continue;
@@ -5164,7 +5239,17 @@ static qboolean SV_VRAxeSweep (edict_t *ent,
 			if (candidate.fraction >= 1.0f || !candidate.ent || candidate.ent->free ||
 				candidate.ent == ent)
 				continue;
-			event_time = point < 0 ? 1.0f : recovered ? 0.0f : candidate.fraction;
+			event_time = point < 0 ? 1.0f : recovered ? min_time :
+				min_time + (1.0f - min_time) * candidate.fraction;
+			/* A previous victim stays solid in every real trace. It is only
+			 * excluded from being another outcome of this same stroke. */
+			qboolean already_hit = false;
+			for (int excluded_index = 0; excluded_index < excluded_count;
+				excluded_index++)
+				if (excluded[excluded_index] == NUM_FOR_EDICT (candidate.ent))
+					already_hit = true;
+			if (already_hit)
+				continue;
 
 			VectorCopy (candidate.endpos, impact);
 			reach = SV_Move (grip, vec3_origin, vec3_origin, impact,
@@ -5197,6 +5282,8 @@ static qboolean SV_VRAxeSweep (edict_t *ent,
 	 * reach trace. Equal-time obstruction wins conservatively. */
 	*blocked = first_blocked_fraction < FLT_MAX &&
 		first_blocked_fraction <= first_fraction;
+	if (found && best_time)
+		*best_time = first_fraction;
 	return found;
 }
 
@@ -5205,7 +5292,7 @@ static qboolean SV_VRStockAxeSweep (edict_t *ent,
 	int hand, trace_t *best, qboolean *blocked)
 {
 	return SV_VRAxeSweep (ent, previous, current, hand,
-		SV_VR_AXE_SWEEP_STOCK, best, blocked);
+		SV_VR_AXE_SWEEP_STOCK, 0, NULL, 0, best, NULL, blocked);
 }
 
 static qboolean SV_VRStockAxeOutcome (client_t *client, edict_t *ent,
@@ -5613,14 +5700,8 @@ static qboolean SV_VRQBJ3OutcomeContextValid (client_t *client, edict_t *ent,
  * owner and passing back the saved subtype. A first whiff ends the stroke;
  * the caller also owns VM identity, victim deduplication and the two-hit cap.
  * Neither path enters the fan/root, schedules a think, or fabricates a trace.
- * The future queued contact caller is in this file. Keep the staged symbol
- * available to the direct GDB fixture until that caller is connected. */
-#if defined(__GNUC__) || defined(__clang__)
-#define SV_QBJ3_STAGED_ENTRY __attribute__ ((used))
-#else
-#define SV_QBJ3_STAGED_ENTRY
-#endif
-static SV_QBJ3_STAGED_ENTRY qboolean SV_VRQBJ3PhysicalMeleeOutcome
+ * The queued contact caller owns the two-victim stroke state below. */
+static qboolean SV_VRQBJ3PhysicalMeleeOutcome
 	(client_t *client, edict_t *ent,
 	const usercmd_t *cmd, int anatomical_hand, const trace_t *contact,
 	qboolean first_outcome, qboolean *stroke_berserk,
@@ -5852,7 +5933,187 @@ cleanup:
 	}
 	return outcome_ok;
 }
-#undef SV_QBJ3_STAGED_ENTRY
+
+/* QBJ3 keeps the same queued contact cursor, reversal witness and sweep as
+ * Dwell. Only the native outcome policy differs: two distinct targets can be
+ * struck before the initial recovery deadline. */
+static qboolean SV_VRContactProcessQBJ3Melee (client_t *client, edict_t *ent,
+	const usercmd_t *cmd, const vr_weapon_contact_t *previous, int hand)
+{
+	const vr_weapon_contact_t *current = &cmd->vr_contact;
+	vec3_t movement[2], accepted_direction, body_origin;
+	float motion[2], endpoint_motion, length, contact_time = 0;
+	float speed = current->speed[hand];
+	float seconds = cmd->msec * 0.001f;
+	trace_t contact;
+	qboolean berserk, blocked, hit, rearming = false;
+	qboolean callback_entered = false;
+	qcvm_t *saved_vm = qcvm;
+	dprograms_t *saved_progs = qcvm->progs;
+	edict_t *saved_edicts = qcvm->edicts;
+	globalvars_t *saved_global_struct = pr_global_struct;
+	float *saved_vm_globals = qcvm->globals;
+	int cursor_sequence = client->private_vr_contact_last_sequence;
+	int endpoint;
+
+	if (!SV_VRQBJ3MeleeContactSelected (client, ent, cmd, &berserk, NULL))
+	{
+		client->private_vr_melee_arc[hand] = 0;
+		client->private_vr_melee_peak_speed[hand] = 0;
+		client->private_vr_melee_consumed[hand] = false;
+		VectorClear (client->private_vr_melee_stroke_direction[hand]);
+		SV_ResetPrivateVRQBJ3Stroke (client, hand);
+		return false;
+	}
+	VectorCopy (ent->v.origin, body_origin);
+	VectorSubtract (current->base[hand], previous->base[hand], movement[0]);
+	VectorSubtract (current->tip[hand], previous->tip[hand], movement[1]);
+	motion[0] = VectorLength (movement[0]);
+	motion[1] = VectorLength (movement[1]);
+	endpoint_motion = fmaxf (motion[0], motion[1]);
+	if (client->private_vr_qbj3_authorized[hand] &&
+		(client->private_vr_qbj3_berserk[hand] != berserk ||
+		 !isfinite (qcvm->time) ||
+		 !isfinite (client->private_vr_qbj3_deadline[hand]) ||
+		 (float)qcvm->time >= client->private_vr_qbj3_deadline[hand]))
+	{
+		SV_ResetPrivateVRQBJ3Stroke (client, hand);
+		client->private_vr_melee_consumed[hand] = true;
+	}
+	if (client->private_vr_melee_consumed[hand] && speed >= 0.25f)
+	{
+		endpoint = client->private_vr_melee_stroke_endpoint[hand] ? 1 : 0;
+		length = motion[endpoint];
+		if (length > 0.0001f && length >= 0.5f * endpoint_motion &&
+			DotProduct (movement[endpoint],
+				client->private_vr_melee_stroke_direction[hand]) <
+				-0.5f * length)
+		{
+			client->private_vr_melee_arc[hand] = 0;
+			client->private_vr_melee_peak_speed[hand] = 0;
+			client->private_vr_melee_consumed[hand] = false;
+			SV_ResetPrivateVRQBJ3Stroke (client, hand);
+			rearming = true;
+		}
+	}
+	if (!rearming && speed >= 0.25f && endpoint_motion > 0.0001f)
+	{
+		client->private_vr_melee_arc[hand] += speed * seconds;
+		client->private_vr_melee_peak_speed[hand] = fmaxf (
+			client->private_vr_melee_peak_speed[hand], speed);
+	}
+	if (client->private_vr_melee_consumed[hand] ||
+		client->private_vr_melee_arc[hand] < 0.03f ||
+		!SV_VRContactEyeGripClear (ent, current, hand))
+		goto settle;
+
+	hit = SV_VRAxeSweep (ent, previous, current, hand,
+		SV_VR_AXE_SWEEP_QBJ3_EDGE, 0,
+		client->private_vr_qbj3_hit_entities[hand],
+		client->private_vr_qbj3_hit_count[hand], &contact,
+		&contact_time, &blocked);
+	if (blocked)
+		hit = false;
+	if (!hit && speed >= 0.05f)
+		goto settle;
+
+	endpoint = motion[1] >= motion[0] ? 1 : 0;
+	if (speed >= 0.25f && endpoint_motion > 0.0001f)
+	{
+		VectorCopy (movement[endpoint], accepted_direction);
+		if (VectorNormalize (accepted_direction) > 0.0001f)
+		{
+			client->private_vr_melee_stroke_endpoint[hand] = endpoint;
+			VectorCopy (accepted_direction,
+				client->private_vr_melee_stroke_direction[hand]);
+		}
+	}
+	for (int outcome = 0; outcome < 2 && !client->private_vr_melee_consumed[hand];
+		outcome++)
+	{
+		const qboolean first = !client->private_vr_qbj3_authorized[hand];
+		const int victim = hit ? NUM_FOR_EDICT (contact.ent) : 0;
+		qboolean stroke_berserk = client->private_vr_qbj3_berserk[hand];
+		qboolean accepted;
+		float deadline = client->private_vr_qbj3_deadline[hand];
+
+		if (!first && (!isfinite (qcvm->time) || !isfinite (deadline) ||
+			(float)qcvm->time >= deadline ||
+			client->private_vr_qbj3_berserk[hand] != berserk))
+		{
+			client->private_vr_melee_consumed[hand] = true;
+			break;
+		}
+		if (!first && !hit)
+		{
+			client->private_vr_melee_consumed[hand] = true;
+			break;
+		}
+		callback_entered = true;
+		accepted = SV_VRQBJ3PhysicalMeleeOutcome (client, ent, cmd, hand,
+			hit ? &contact : NULL, first, &stroke_berserk, &deadline);
+		/* A false return may still follow side-effecting native QC. Validate
+		 * before writing stroke state, settling it, retracing or entering the
+		 * other hand. A continuity reset must not be revived here. */
+		if (!SV_VRQBJ3OutcomeContextValid (client, ent, saved_vm,
+			saved_progs, saved_edicts, saved_global_struct, saved_vm_globals,
+			body_origin, true, cursor_sequence, berserk, false) ||
+			!client->private_vr_contact_previous_valid ||
+			!SV_VRQBJ3MeleeContactSelected (client, ent, cmd, NULL, NULL) ||
+			!SV_VRContactSampleValid (client, ent, cmd))
+			return true;
+		if (accepted && hit && (stroke_berserk != berserk ||
+			!isfinite (deadline) || !isfinite (qcvm->time) ||
+			(float)qcvm->time >= deadline))
+			accepted = false;
+		if (!accepted)
+		{
+			client->private_vr_melee_consumed[hand] = true;
+			SV_ResetPrivateVRQBJ3Stroke (client, hand);
+			break;
+		}
+		if (first)
+		{
+			client->private_vr_qbj3_authorized[hand] = hit;
+			client->private_vr_qbj3_berserk[hand] = stroke_berserk;
+			client->private_vr_qbj3_deadline[hand] = deadline;
+		}
+		if (!hit)
+		{
+			client->private_vr_melee_consumed[hand] = true;
+			break;
+		}
+		if (client->private_vr_qbj3_hit_count[hand] < 2)
+			client->private_vr_qbj3_hit_entities[hand][
+				client->private_vr_qbj3_hit_count[hand]++] = victim;
+		SV_VRContactFeedback (client, hand);
+		if (victim == 0 || client->private_vr_qbj3_hit_count[hand] >= 2)
+		{
+			client->private_vr_melee_consumed[hand] = true;
+			break;
+		}
+		/* Previous victims remain solid; query only the remaining motion. */
+		hit = SV_VRAxeSweep (ent, previous, current, hand,
+			SV_VR_AXE_SWEEP_QBJ3_EDGE, contact_time,
+			client->private_vr_qbj3_hit_entities[hand],
+			client->private_vr_qbj3_hit_count[hand], &contact,
+			&contact_time, &blocked);
+		if (blocked || !hit)
+			break;
+	}
+
+settle:
+	if (speed < 0.05f ||
+		(client->private_vr_melee_consumed[hand] && speed < 0.25f))
+	{
+		client->private_vr_melee_arc[hand] = 0;
+		client->private_vr_melee_peak_speed[hand] = 0;
+		client->private_vr_melee_consumed[hand] = false;
+		VectorClear (client->private_vr_melee_stroke_direction[hand]);
+		SV_ResetPrivateVRQBJ3Stroke (client, hand);
+	}
+	return callback_entered;
+}
 
 /* Dwell shares the queued contact owner's arc and consumed state. A terminal
  * hit/whiff is consumed before entering QC, including cooldown rejection and
@@ -5911,7 +6172,7 @@ static qboolean SV_VRContactProcessDwellMelee (client_t *client, edict_t *ent,
 		goto settle;
 
 	hit = SV_VRAxeSweep (ent, previous, current, hand,
-		SV_VR_AXE_SWEEP_DWELL_EDGE, &contact, &blocked);
+		SV_VR_AXE_SWEEP_DWELL_EDGE, 0, NULL, 0, &contact, NULL, &blocked);
 	if (blocked)
 		hit = false;
 	terminal = hit || speed < 0.05f;
@@ -5959,6 +6220,9 @@ static qboolean SV_VRContactProcessMelee (client_t *client, edict_t *ent,
 	trace_t contact;
 	qboolean blocked, hit;
 	int point;
+	if (SV_VRQBJ3MeleeContactSelected (client, ent, cmd, NULL, NULL))
+		return SV_VRContactProcessQBJ3Melee (client, ent, cmd,
+			previous, hand);
 	if (SV_VRDwellBerserkPairSelected (client, ent, cmd))
 	{
 		return SV_VRContactProcessDwellMelee (client, ent, cmd, previous,
@@ -5967,6 +6231,7 @@ static qboolean SV_VRContactProcessMelee (client_t *client, edict_t *ent,
 
 	if (!SV_VRStockAxeSelected (client, ent, cmd, NULL))
 	{
+		SV_ResetPrivateVRQBJ3Stroke (client, hand);
 		client->private_vr_melee_arc[hand] = 0;
 		client->private_vr_melee_peak_speed[hand] = 0;
 		client->private_vr_melee_consumed[hand] = false;
@@ -6299,8 +6564,12 @@ static qboolean SV_VRContactProcessCommand (client_t *client, edict_t *ent,
 		vec3_t callback_origin;
 		qboolean dwell_pair = SV_VRDwellBerserkPairSelected (client, ent,
 			&command);
+		qboolean qbj3_berserk = false;
+		qboolean qbj3_melee = SV_VRQBJ3MeleeContactSelected (client,
+			ent, &command, &qbj3_berserk, NULL);
 		qcvm_t *dwell_vm = qcvm;
 		dprograms_t *dwell_progs = qcvm->progs;
+		edict_t *melee_edicts = qcvm->edicts;
 		globalvars_t *dwell_globals = pr_global_struct;
 		float *dwell_vm_globals = qcvm->globals;
 		VectorCopy (ent->v.origin, callback_origin);
@@ -6312,14 +6581,17 @@ static qboolean SV_VRContactProcessCommand (client_t *client, edict_t *ent,
 				/* The first hand may run side-effecting QC even when its
 				 * outcome returns false. Never let the second hand borrow a
 				 * changed VM, player, origin or contact cursor. */
-				if (dwell_pair && callback_entered)
+				if ((dwell_pair || qbj3_melee) && callback_entered)
 				{
 					/* A reset or VM replacement already retired this cursor.
 					 * Do not revive it through relocation invalidation. */
 					if (qcvm != dwell_vm || qcvm->progs != dwell_progs ||
+						qcvm->edicts != melee_edicts ||
 						qcvm->globals != dwell_vm_globals ||
 						pr_global_struct != dwell_globals ||
-						!SV_DwellBerserkAkimboProgramLoaded () ||
+						!(dwell_pair ?
+							SV_DwellBerserkAkimboProgramLoaded () :
+							SV_QBJ3MeleeProgramLoaded ()) ||
 						!client->private_vr_contact_cursor_valid)
 						return false;
 					if (client->private_vr_contact_last_sequence !=
@@ -6328,12 +6600,22 @@ static qboolean SV_VRContactProcessCommand (client_t *client, edict_t *ent,
 					if (!client->active || !client->spawned ||
 						client->edict != ent || ent->free)
 						return false;
-					if (!SV_VRDwellPhysicalOutcomeContextValid (client, ent,
-							dwell_vm, dwell_progs, dwell_globals,
-							dwell_vm_globals, callback_origin, true,
-							(int)command.sequence) ||
-						!SV_VRDwellBerserkPairSelected (client, ent,
-							&command) ||
+					if ((dwell_pair &&
+							!SV_VRDwellPhysicalOutcomeContextValid (client,
+								ent, dwell_vm, dwell_progs, dwell_globals,
+								dwell_vm_globals, callback_origin, true,
+								(int)command.sequence)) ||
+						(qbj3_melee &&
+							(!SV_VRQBJ3OutcomeContextValid (client, ent,
+								dwell_vm, dwell_progs, melee_edicts, dwell_globals,
+								dwell_vm_globals, callback_origin, true,
+								(int)command.sequence, qbj3_berserk, false) ||
+							 !client->private_vr_contact_previous_valid)) ||
+						!(dwell_pair ?
+							SV_VRDwellBerserkPairSelected (client, ent,
+								&command) :
+							SV_VRQBJ3MeleeContactSelected (client, ent,
+								&command, NULL, NULL)) ||
 						!SV_VRContactSampleValid (client, ent, &command))
 					{
 						SV_GorillaInvalidateAccepted (client);
@@ -6372,6 +6654,8 @@ static qboolean SV_VRContactProcessCommand (client_t *client, edict_t *ent,
 			sizeof (client->private_vr_melee_consumed));
 		memset (client->private_vr_melee_stroke_direction, 0,
 			sizeof (client->private_vr_melee_stroke_direction));
+		for (hand = 0; hand < 2; hand++)
+			SV_ResetPrivateVRQBJ3Stroke (client, hand);
 	}
 
 	if (!SV_VRContactSampleValid (client, ent, &command))

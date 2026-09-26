@@ -87,6 +87,12 @@ qboolean SV_VRDwellBerserkMeleeEnabled (void)
 		SV_DwellBerserkAkimboProgramLoaded ();
 }
 
+qboolean SV_VRQBJ3MeleeEnabled (void)
+{
+	return SV_VRContactPolicyEnabled (&sv_immersive_melee) &&
+		SV_VRQBJ3MeleeContactProfile () == VR_WEAPON_CONTACT_PROFILE_QBJ3;
+}
+
 extern cvar_t nomonsters;
 
 #define VRIK_SVC_V2_MESSAGE_BYTES (1 + 2 + 4 + VRIK_POSE_WIRE_BYTES)
@@ -4157,6 +4163,11 @@ static void SV_AppendWeaponContactProtocol (client_t *client)
 		mode |= VR_WEAPON_CONTACT_CAP_MELEE;
 		profile = VR_WEAPON_CONTACT_PROFILE_DWELL;
 	}
+	else if (SV_VRQBJ3MeleeEnabled ())
+	{
+		mode |= VR_WEAPON_CONTACT_CAP_MELEE;
+		profile = VR_WEAPON_CONTACT_PROFILE_QBJ3;
+	}
 	if ((client->weapon_contact_last_mode == (int)mode &&
 		client->weapon_contact_last_profile == (int)profile) ||
 		client->message.overflowed || client->message.cursize < 0 ||
@@ -4191,6 +4202,7 @@ static void SV_AppendAkimboProtocol (client_t *client)
 	enum
 	{
 		AKIMBO_OFFER_TWIN = 1u << 0,
+		AKIMBO_OFFER_QBJ3_BERSERK = 1u << 1,
 		AKIMBO_OFFER_ENYO = 1u << 2,
 		AKIMBO_OFFER_DWELL = 1u << 3,
 		AKIMBO_OFFER_MASK = (1u << 4) - 1u
@@ -4204,10 +4216,12 @@ static void SV_AppendAkimboProtocol (client_t *client)
 		!client->spawned || client->protocol_qsvr != QSVR_PROTOCOL_PINNED)
 		return;
 
-	/* Bits follow the four client command arguments. Dwell shares the current
-	 * melee policy with contact admission; QBJ3 berserk remains unavailable. */
+	/* Bits follow the four client command arguments. QBJ3's native paired
+	 * animation remains available even if immersive contact is disabled. */
 	offer_mask = SV_QBJ3TwinNailgunProgramLoaded () ?
 		AKIMBO_OFFER_TWIN : 0;
+	if (SV_VRQBJ3MeleeContactProfile () == VR_WEAPON_CONTACT_PROFILE_QBJ3)
+		offer_mask |= AKIMBO_OFFER_QBJ3_BERSERK;
 	if (SV_EnyoAkimboProgramLoaded ())
 		offer_mask |= AKIMBO_OFFER_ENYO;
 	if (SV_VRDwellBerserkMeleeEnabled ())

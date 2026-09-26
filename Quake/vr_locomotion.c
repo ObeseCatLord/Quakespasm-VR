@@ -240,6 +240,42 @@ qboolean VR_LocomotionCorrectedViewmodelAngles (const float handrot[3],
 	return true;
 }
 
+qboolean VR_LocomotionControllerRollViewmodelAngles (const float handrot[3],
+	float gunmodelpitch, float controller_roll, float out[3])
+{
+	vec3_t tracked, original, forward, right, up, axes[3], result;
+
+	if (!out)
+		return false;
+	if (handrot)
+		VectorCopy (handrot, tracked);
+	VR_LocomotionZero (out);
+	if (!handrot || !VR_LocomotionFiniteVec3 (tracked) ||
+		!isfinite (controller_roll) ||
+		!VR_LocomotionHandRotToViewmodelAngles (tracked, original,
+			gunmodelpitch))
+		return false;
+
+	/* Port of VR_ImmersiveMeleeModelAngles in the OpenVR donor. Use native
+	 * math and the shared held-model convention, without a second transform. */
+	AngleVectors (tracked, forward, right, up);
+	for (int axis = 0; axis < 3; ++axis)
+	{
+		vec3_t basis = {0.0f, 0.0f, 0.0f}, world;
+		basis[axis] = 1.0f;
+		VR_LocomotionModelOffsetToWorld (basis, original, 1.0f, false, world);
+		RotatePointAroundVector (axes[axis], forward, world,
+			fmodf (controller_roll, 360.0f));
+	}
+	if (!VR_LocomotionAnglesFromRotMat (axes, result))
+		return false;
+	result[VR_AIM_PITCH] = -result[VR_AIM_PITCH];
+	if (!VR_LocomotionFiniteVec3 (result))
+		return false;
+	VectorCopy (result, out);
+	return true;
+}
+
 static void VR_LocomotionWorldToModelOffset (const float world[3],
 	const float viewmodel_angles[3], float scale, qboolean mirrored,
 	float local[3])

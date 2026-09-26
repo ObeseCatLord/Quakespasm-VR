@@ -136,6 +136,13 @@ static double akimbo_source_frame_change_time, akimbo_source_frame_duration;
 static uint64_t akimbo_sample_id;
 static qboolean akimbo_pair_prepared;
 static qboolean akimbo_pair_frozen;
+static entity_t qbj3_wrench_held_entity;
+static qmodel_t *qbj3_wrench_held_model, *qbj3_wrench_source_model;
+static aliashdr_t *qbj3_wrench_held_geometry;
+static uint64_t qbj3_wrench_sample_id;
+static qboolean qbj3_wrench_held_prepared;
+static int qbj3_wrench_held_hand;
+static vec3_t qbj3_wrench_edge_offsets[2], qbj3_wrench_collision_offset;
 
 static int V_TrackedAimMode (void)
 {
@@ -533,6 +540,13 @@ static void V_UpdateTrackedViewmodel (qboolean refdef_updated)
 
 void V_ClearAkimboPair (void)
 {
+	qbj3_wrench_held_prepared = false;
+	qbj3_wrench_held_model = qbj3_wrench_source_model = NULL;
+	qbj3_wrench_held_geometry = NULL;
+	qbj3_wrench_sample_id = 0;
+	qbj3_wrench_held_hand = -1;
+	memset (qbj3_wrench_edge_offsets, 0, sizeof (qbj3_wrench_edge_offsets));
+	VectorCopy (vec3_origin, qbj3_wrench_collision_offset);
 	akimbo_pair_prepared = false;
 	akimbo_pair_frozen = false;
 	akimbo_source_recipe = NULL;
@@ -621,6 +635,246 @@ static qboolean V_QBJ3FistImmersivePresentation (void)
 		V_TrackedAimMode () == VR_AIMMODE_CONTROLLER &&
 		(cl.vr_weapon_contact_mode & VR_WEAPON_CONTACT_CAP_MELEE) != 0 &&
 		cl.vr_weapon_contact_profile == VR_WEAPON_CONTACT_PROFILE_QBJ3;
+}
+
+/* This single-hand recipe reuses the pair loader's pinned split output and
+ * the existing two-point ready-pose cache. A virtual-path override has no
+ * generated provenance and must never acquire these source-specific points. */
+static qboolean V_QBJ3WrenchHeldGeometry (qmodel_t **model_out,
+	aliashdr_t **geometry_out, stockaxe_edge_t *edge_out)
+{
+	const int modelindex = cl.stats[STAT_WEAPON];
+	qmodel_t *source, *held;
+	aliashdr_t *source_geometry, *geometry;
+	const cvar_t *option = Cvar_FindVar ("vr_immersive_melee");
+
+	if (model_out)
+		*model_out = NULL;
+	if (geometry_out)
+		*geometry_out = NULL;
+	if (edge_out)
+		memset (edge_out, 0, sizeof (*edge_out));
+	if (!model_out || !geometry_out || !edge_out || modelindex < 1 ||
+		modelindex >= MAX_MODELS ||
+		!V_UseTrackedView () || V_TrackedAimMode () != VR_AIMMODE_CONTROLLER ||
+		cl.protocol_qsvr != QSVR_PROTOCOL_PINNED ||
+		(cl.vr_weapon_contact_mode & VR_WEAPON_CONTACT_CAP_MELEE) == 0 ||
+		cl.vr_weapon_contact_profile != VR_WEAPON_CONTACT_PROFILE_QBJ3 ||
+		!option || !isfinite (option->value) || option->value == 0.0f ||
+		cl.stats[STAT_ACTIVEWEAPON] != 4096 ||
+		q_strcasecmp (COM_SkipPath (com_gamedir), "qbj3"))
+		return false;
+	source = cl.model_precache[modelindex];
+	if (!source || source->needload || source->type != mod_alias ||
+		source != cl.viewent.model || strcmp (source->name, "progs/v_wrench.mdl") ||
+		cl.viewent.skinnum < 0)
+		return false;
+	held = Mod_ForName ("vr/qbj3/progs/v_wrench_vr_dominant.mdl", false);
+	if (!held || held->needload || held->type != mod_alias ||
+		!held->is_generated_akimbo_half ||
+		strcmp (held->name, "vr/qbj3/progs/v_wrench_vr_dominant.mdl"))
+		return false;
+	/* Loading the generated model can move cached headers. Resolve the
+	 * source geometry only after that load, as the pair path already does. */
+	source_geometry = (aliashdr_t *)source->extradata[PV_QUAKE1];
+	if (!source_geometry || source_geometry->poseverttype != PV_QUAKE1 ||
+		source_geometry->numverts != 872 || source_geometry->numtris != 868 ||
+		source_geometry->numframes != 71 ||
+		cl.viewent.skinnum >= source_geometry->numskins ||
+		source_geometry->frames[10].numposes != 1)
+		return false;
+	/* The donor freezes this held mesh at frame 10 independently of the QC
+	 * animation. Native readiness remains the server outcome owner's policy. */
+	geometry = (aliashdr_t *)held->extradata[PV_QUAKE1];
+	if (!geometry || geometry->poseverttype != PV_QUAKE1 ||
+		geometry->numverts != 565 || geometry->numtris != 540 ||
+		geometry->numframes != 71 || geometry->numskins <= cl.viewent.skinnum ||
+		geometry->frames[10].numposes != 1 ||
+		geometry->frames[10].firstpose < 0 ||
+		geometry->frames[10].firstpose >= geometry->numposes ||
+		memcmp (source_geometry->scale, geometry->scale,
+			sizeof (geometry->scale)) ||
+		memcmp (source_geometry->scale_origin, geometry->scale_origin,
+			sizeof (geometry->scale_origin)) ||
+		!held->stockaxe_edge.valid)
+		return false;
+	*model_out = held;
+	*geometry_out = geometry;
+	*edge_out = held->stockaxe_edge;
+	return true;
+}
+
+/* The authored left mesh rolls about tracked forward before model reflection. */
+static qboolean V_QBJ3WrenchModelAngles (const vec3_t hand_angles, vec3_t out)
+{
+	const int hand = VR_InputDominantPhysicalHand ();
+	return hand >= 0 && hand <= 1 &&
+		VR_LocomotionControllerRollViewmodelAngles (hand_angles,
+			vr_gunmodelpitch.value, hand == 0 ? -70.0f : 70.0f, out);
+}
+
+static qboolean V_QBJ3WrenchGeometryEdgeOffsets (entity_t *entity,
+	const aliashdr_t *geometry, const stockaxe_edge_t *edge,
+	vec3_t out_base, vec3_t out_tip)
+{
+	lerpdata_t lerpdata;
+	vec3_t raw[2];
+	float matrix[16];
+	const float *points[2] = {edge->base, edge->tip};
+	float *outputs[2] = {out_base, out_tip};
+
+	for (int axis = 0; axis < 3; ++axis)
+	{
+		if (!isfinite (geometry->scale[axis]) || geometry->scale[axis] == 0.0f ||
+			!isfinite (geometry->scale_origin[axis]))
+			return false;
+		for (int point = 0; point < 2; ++point)
+			raw[point][axis] = (points[point][axis] -
+				geometry->scale_origin[axis]) / geometry->scale[axis];
+	}
+	memset (&lerpdata, 0, sizeof (lerpdata));
+	VectorCopy (entity->angles, lerpdata.angles);
+	if (R_QBJ3WrenchHeldMatrix (entity, geometry, &lerpdata,
+		matrix) < 0)
+		return false;
+	for (int point = 0; point < 2; ++point)
+	{
+		for (int axis = 0; axis < 3; ++axis)
+			outputs[point][axis] = matrix[axis] * raw[point][0] +
+				matrix[4 + axis] * raw[point][1] +
+				matrix[8 + axis] * raw[point][2] + matrix[12 + axis];
+		for (int axis = 0; axis < 3; ++axis)
+			if (!isfinite (outputs[point][axis]))
+				return false;
+	}
+	return true;
+}
+
+/* Publish an ordinary alias entity before Vulkan draw tasks start. The
+ * server and source viewent retain the QC model and its animation state. */
+static void V_PrepareQBJ3WrenchHeld (const vrxr_frame_t *frame)
+{
+	qmodel_t *held;
+	aliashdr_t *geometry;
+	stockaxe_edge_t edge;
+	lerpdata_t pose;
+	vec3_t hand_angles, model_angles, base_offset, tip_offset;
+	vec3_t collision_offset = {0.0f, 0.0f, 0.0f};
+	float matrix[16];
+	const int dominant = VR_InputDominantPhysicalHand ();
+
+	if (!frame || !frame->sample_id || !frame->focused ||
+		!frame->should_render || !vulkan_globals.stereo_active ||
+		!tracked_viewmodel_active || VR_WeaponCalibrationAdjustActive () ||
+		key_dest != key_game || cl.stats[STAT_HEALTH] <= 0 ||
+		dominant < 0 || dominant > 1 ||
+		!VR_InputPhysicalHandAccepted (frame, dominant) ||
+		!frame->devices[dominant + 1].valid ||
+		!frame->devices[dominant + 1].tracked ||
+		frame->devices[dominant + 1].kind != VRXR_DEVICE_HAND ||
+		frame->devices[dominant + 1].hand != dominant ||
+		!V_QBJ3WrenchHeldGeometry (&held, &geometry, &edge) ||
+		!V_TrackedPresentationHandAngles (dominant, hand_angles) ||
+		!V_QBJ3WrenchModelAngles (hand_angles, model_angles))
+		return;
+
+	qbj3_wrench_held_entity = cl.viewent;
+	qbj3_wrench_held_entity.model = held;
+	qbj3_wrench_held_entity.frame = 10;
+	qbj3_wrench_held_entity.lerp.prev_frame = 10;
+	qbj3_wrench_held_entity.lerp.frame_change_time = 0.0;
+	qbj3_wrench_held_entity.lerp.frame_duration = 0.0;
+	qbj3_wrench_held_entity.lerp.snap_frames = 0;
+	qbj3_wrench_held_entity.lerp.movestep = false;
+	VectorCopy (model_angles, qbj3_wrench_held_entity.angles);
+	if (!V_QBJ3WrenchGeometryEdgeOffsets (&qbj3_wrench_held_entity,
+		geometry, &edge, base_offset, tip_offset))
+		return;
+	if (VR_WeaponCollisionAuthorized ())
+	{
+		vec3_t torso_offset, torso, base, tip;
+		float head_height;
+		if (!cl.entities || cl.viewentity <= 0 ||
+			cl.viewentity >= cl.num_entities ||
+			!R_TrackedHeadBodyOffset (torso_offset) ||
+			!R_TrackedHeadEyeHeight (cl.stats[STAT_VIEWHEIGHT], &head_height))
+			return;
+		VectorAdd (cl.entities[cl.viewentity].origin, torso_offset, torso);
+		torso[2] += head_height + view_stair_delta;
+		VectorAdd (qbj3_wrench_held_entity.origin, base_offset, base);
+		VectorAdd (qbj3_wrench_held_entity.origin, tip_offset, tip);
+		if (!CL_ResolveWeaponCollision (torso, qbj3_wrench_held_entity.origin,
+			base, tip, collision_offset))
+			return;
+		VectorAdd (qbj3_wrench_held_entity.origin, collision_offset,
+			qbj3_wrench_held_entity.origin);
+	}
+	R_SetupAliasFrame (&qbj3_wrench_held_entity, geometry, &pose);
+	VectorCopy (qbj3_wrench_held_entity.origin, pose.origin);
+	VectorCopy (qbj3_wrench_held_entity.angles, pose.angles);
+	if (pose.pose1 != geometry->frames[10].firstpose ||
+		pose.pose2 != pose.pose1 ||
+		R_QBJ3WrenchHeldMatrix (&qbj3_wrench_held_entity, geometry,
+			&pose, matrix) < 0)
+		return;
+	qbj3_wrench_held_model = held;
+	qbj3_wrench_source_model = cl.viewent.model;
+	qbj3_wrench_held_geometry = geometry;
+	qbj3_wrench_sample_id = frame->sample_id;
+	qbj3_wrench_held_hand = dominant;
+	VectorCopy (base_offset, qbj3_wrench_edge_offsets[0]);
+	VectorCopy (tip_offset, qbj3_wrench_edge_offsets[1]);
+	VectorCopy (collision_offset, qbj3_wrench_collision_offset);
+	qbj3_wrench_held_prepared = true;
+}
+
+entity_t *V_QBJ3WrenchHeldEntity (void)
+{
+	const vrxr_frame_t *frame = GL_OpenXRFrame ();
+	const cvar_t *option = Cvar_FindVar ("vr_immersive_melee");
+	return vulkan_globals.stereo_active && qbj3_wrench_held_prepared &&
+		frame && frame->sample_id == qbj3_wrench_sample_id && frame->focused &&
+		frame->should_render && V_UseTrackedView () &&
+		VR_InputDominantPhysicalHand () == qbj3_wrench_held_hand &&
+		VR_InputPhysicalHandAccepted (frame, qbj3_wrench_held_hand) &&
+		option && isfinite (option->value) && option->value != 0.0f &&
+		cl.protocol_qsvr == QSVR_PROTOCOL_PINNED &&
+		(cl.vr_weapon_contact_mode & VR_WEAPON_CONTACT_CAP_MELEE) &&
+		cl.vr_weapon_contact_profile == VR_WEAPON_CONTACT_PROFILE_QBJ3 &&
+		cl.stats[STAT_ACTIVEWEAPON] == 4096 &&
+		cl.stats[STAT_WEAPON] > 0 && cl.stats[STAT_WEAPON] < MAX_MODELS &&
+		cl.model_precache[cl.stats[STAT_WEAPON]] == qbj3_wrench_source_model &&
+		qbj3_wrench_held_model && !qbj3_wrench_held_model->needload &&
+		qbj3_wrench_held_entity.model == qbj3_wrench_held_model &&
+		qbj3_wrench_held_geometry &&
+		qbj3_wrench_held_model->extradata[PV_QUAKE1] ==
+		(byte *)qbj3_wrench_held_geometry &&
+		cl.viewent.model == qbj3_wrench_source_model &&
+		qbj3_wrench_held_entity.netstate.scale == cl.viewent.netstate.scale &&
+		qbj3_wrench_held_entity.skinnum == cl.viewent.skinnum ?
+		&qbj3_wrench_held_entity : NULL;
+}
+
+qboolean V_QBJ3WrenchHeldEdgeOffsets (vec3_t out_base, vec3_t out_tip,
+	vec3_t out_collision)
+{
+	if (out_base)
+		VectorCopy (vec3_origin, out_base);
+	if (out_tip)
+		VectorCopy (vec3_origin, out_tip);
+	if (out_collision)
+		VectorCopy (vec3_origin, out_collision);
+	if (!out_base || !out_tip || !out_collision || !V_QBJ3WrenchHeldEntity ())
+		return false;
+	VectorCopy (qbj3_wrench_edge_offsets[0], out_base);
+	VectorCopy (qbj3_wrench_edge_offsets[1], out_tip);
+	VectorCopy (qbj3_wrench_collision_offset, out_collision);
+	return true;
+}
+
+qboolean V_QBJ3WrenchRenderEntity (const entity_t *e)
+{
+	return e && e == V_QBJ3WrenchHeldEntity ();
 }
 
 qboolean V_AkimboRecipeUsesPairedCollision (const char *source_model)
@@ -928,6 +1182,7 @@ void V_PrepareAkimboPair (void)
 	qboolean qbj3_fists, freeze_frame;
 
 	V_ClearAkimboPair ();
+	V_PrepareQBJ3WrenchHeld (frame);
 	if (!V_AkimboSelectionValid (frame, &source, &modelindex, &recipe) ||
 		!Mod_AkimboPairUsesGeneratedHalves (source->name) ||
 		!recipe->halves[0] || !recipe->halves[1] ||

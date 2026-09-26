@@ -805,6 +805,9 @@ void R_GetEntityLerpedTransform (const entity_t *e, vec3_t out_origin, vec3_t ou
 qboolean R_VRIKSampleEntityPose (const entity_t *entity, vrik_pose_t *out);
 void R_SetupAliasFrame (const entity_t *e, aliashdr_t *paliashdr, lerpdata_t *lerpdata);
 int R_AliasModelMatrix (entity_t *e, const aliashdr_t *paliashdr, lerpdata_t *lerpdata, float model_matrix[16]);
+/* The held draw and physical edge share this centered, left-authored matrix. */
+int R_QBJ3WrenchHeldMatrix (entity_t *e, const aliashdr_t *geometry,
+	lerpdata_t *lerpdata, float matrix[16]);
 void R_DrawAliasModel (cb_context_t *cbx, entity_t *e, int *aliaspolys);
 void R_DrawPreparedWheelAliasModel (
 	cb_context_t *cbx, entity_t *e, aliashdr_t *selected_geometry, const vec3_t tint, float mesh_scale, int *aliaspolys);
