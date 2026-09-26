@@ -570,9 +570,10 @@ void SV_DropClient (qboolean crash)
 	int		  saveSelf;
 	int		  i;
 	client_t *client;
+	qboolean resume_friendly_fire;
 	const unsigned int retired_generation = host_client->vrik_generation;
 	const int retired_slot = (int)(host_client - svs.clients);
-	SV_CoopFriendlyFireReset ();
+	resume_friendly_fire = SV_CoopFriendlyFireSuspend ();
 
 	if (!crash)
 	{
@@ -646,6 +647,9 @@ void SV_DropClient (qboolean crash)
 			retired_generation)
 			SV_AppendVRIKRetirement (client, retired_slot, retired_generation);
 	}
+
+	if (resume_friendly_fire)
+		SV_CoopFriendlyFireResume ();
 }
 
 /*

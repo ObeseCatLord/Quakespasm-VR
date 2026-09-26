@@ -462,6 +462,8 @@ extern cvar_t timelimit;
 qboolean SV_CoopFeatureEnabled (const cvar_t *feature, qboolean modern_default);
 qboolean SV_CoopFriendlyFireBegin (edict_t *ent);
 void SV_CoopFriendlyFireEnd (void);
+qboolean SV_CoopFriendlyFireSuspend (void);
+void SV_CoopFriendlyFireResume (void);
 void SV_CoopFriendlyFireReset (void);
 
 extern server_static_t svs; // persistant server info

@@ -71,10 +71,10 @@ typedef struct
 	edict_t *edict;
 	float takedamage;
 	qboolean protected;
-	qboolean retained;
 } sv_friendly_fire_player_t;
 
 static qboolean ff_active;
+static qboolean ff_suspended;
 static qcvm_t *ff_saved_vm;
 static edict_t *ff_saved_edicts;
 static dprograms_t *ff_saved_progs;
@@ -121,7 +121,6 @@ static qboolean SV_FriendlyFireEntityNumber (edict_t *ent, int *number)
 static qboolean SV_FriendlyFireOwnerSlot (edict_t *ent, int *owner_slot)
 {
 	int entnum, owner_offset, slot;
-	double owner_value;
 
 	if (!owner_slot || !SV_FriendlyFireServerValid () ||
 		!SV_FriendlyFireEntityNumber (ent, &entnum) || ent->free)
@@ -133,12 +132,8 @@ static qboolean SV_FriendlyFireOwnerSlot (edict_t *ent, int *owner_slot)
 	}
 
 	/* QuakeC edict references are byte offsets into this VM's edict array. */
-	owner_value = (double)ent->v.owner;
-	if (!isfinite (owner_value) || owner_value < 0 ||
-		owner_value >= 2147483648.0 || owner_value != floor (owner_value))
-		return false;
-	owner_offset = (int)owner_value;
-	if (owner_offset % qcvm->edict_size)
+	owner_offset = ent->v.owner;
+	if (owner_offset < 0 || owner_offset % qcvm->edict_size)
 		return false;
 	slot = owner_offset / qcvm->edict_size;
 	if (slot < 1 || slot > svs.maxclients || slot >= qcvm->num_edicts)
@@ -159,6 +154,7 @@ static qboolean SV_FriendlyFireVMMatches (void)
 static void SV_FriendlyFireClearSnapshot (void)
 {
 	ff_active = false;
+	ff_suspended = false;
 	ff_saved_vm = NULL;
 	ff_saved_edicts = NULL;
 	ff_saved_progs = NULL;
@@ -170,12 +166,40 @@ static void SV_FriendlyFireClearSnapshot (void)
 	memset (ff_players, 0, sizeof (ff_players));
 }
 
+static qboolean SV_FriendlyFireSnapshotMatches (void)
+{
+	return SV_FriendlyFireVMMatches () && svs.clients == ff_saved_clients &&
+		svs.maxclients == ff_saved_maxclients;
+}
+
+static void SV_FriendlyFireRestore (void)
+{
+	int i;
+
+	if (!SV_FriendlyFireSnapshotMatches ())
+		return;
+	/* Preserve a different QuakeC teamplay value written by the callback. */
+	if (pr_global_struct->teamplay == 0)
+		pr_global_struct->teamplay = ff_saved_teamplay;
+	for (i = 0; i < ff_saved_maxclients; i++)
+	{
+		sv_friendly_fire_player_t *snapshot = &ff_players[i];
+		client_t *client = &svs.clients[i];
+		edict_t *player = EDICT_NUM (i + 1);
+
+		if (snapshot->protected && player == snapshot->edict &&
+			client->active && client->edict == player && !player->free &&
+			player->v.takedamage == DAMAGE_NO)
+			player->v.takedamage = snapshot->takedamage;
+	}
+}
+
 qboolean SV_CoopFriendlyFireBegin (edict_t *ent)
 {
 	int owner_slot, i;
 
 	/* Nested callbacks inherit the first callback's attribution and snapshot. */
-	if (ff_active)
+	if (ff_active || ff_suspended)
 		return false;
 	if (!sv_nofriendlyfire.value || !coop.value ||
 		!SV_FriendlyFireOwnerSlot (ent, &owner_slot))
@@ -204,9 +228,6 @@ qboolean SV_CoopFriendlyFireBegin (edict_t *ent)
 		snapshot->edict = player;
 		snapshot->takedamage = player->v.takedamage;
 		snapshot->protected = true;
-		/* Prevent ED_Free/ED_Alloc from reusing this slot before restoration. */
-		ED_Retain (player);
-		snapshot->retained = true;
 		player->v.takedamage = DAMAGE_NO;
 	}
 	return true;
@@ -214,36 +235,53 @@ qboolean SV_CoopFriendlyFireBegin (edict_t *ent)
 
 void SV_CoopFriendlyFireEnd (void)
 {
-	qboolean vm_matches = SV_FriendlyFireVMMatches ();
-	qboolean slots_match = vm_matches && svs.clients == ff_saved_clients &&
-		svs.maxclients == ff_saved_maxclients;
-	int i;
-
 	if (!ff_active)
 		return;
-	if (slots_match)
-	{
-		/* Preserve a different QuakeC teamplay value written by the callback. */
-		if (pr_global_struct->teamplay == 0)
-			pr_global_struct->teamplay = ff_saved_teamplay;
-		for (i = 0; i < ff_saved_maxclients; i++)
-		{
-			sv_friendly_fire_player_t *snapshot = &ff_players[i];
-			client_t *client = &svs.clients[i];
-			edict_t *player = EDICT_NUM (i + 1);
-
-			if (snapshot->protected && player == snapshot->edict &&
-				client->active && client->edict == player && !player->free &&
-				player->v.takedamage == DAMAGE_NO)
-				player->v.takedamage = snapshot->takedamage;
-		}
-	}
-	/* Retained edicts remain valid even if their player disconnected or died. */
-	if (vm_matches)
-		for (i = 0; i < ff_saved_maxclients; i++)
-			if (ff_players[i].retained)
-				ED_Release (ff_players[i].edict);
+	if (!ff_suspended)
+		SV_FriendlyFireRestore ();
 	SV_FriendlyFireClearSnapshot ();
+}
+
+qboolean SV_CoopFriendlyFireSuspend (void)
+{
+	if (!ff_active || ff_suspended)
+		return false;
+	if (!SV_FriendlyFireSnapshotMatches ())
+	{
+		SV_FriendlyFireClearSnapshot ();
+		return false;
+	}
+	SV_FriendlyFireRestore ();
+	ff_suspended = true;
+	return true;
+}
+
+void SV_CoopFriendlyFireResume (void)
+{
+	int i;
+
+	if (!ff_active || !ff_suspended)
+		return;
+	if (!SV_FriendlyFireSnapshotMatches ())
+	{
+		SV_FriendlyFireClearSnapshot ();
+		return;
+	}
+	/* Reapply only state ClientDisconnect left at its ordinary value. */
+	if (pr_global_struct->teamplay == ff_saved_teamplay)
+		pr_global_struct->teamplay = 0;
+	for (i = 0; i < ff_saved_maxclients; i++)
+	{
+		sv_friendly_fire_player_t *snapshot = &ff_players[i];
+		client_t *client = &svs.clients[i];
+		edict_t *player = EDICT_NUM (i + 1);
+
+		if (snapshot->protected && player == snapshot->edict &&
+			client->active && client->edict == player && !player->free &&
+			player->v.takedamage == snapshot->takedamage)
+			player->v.takedamage = DAMAGE_NO;
+	}
+	ff_suspended = false;
 }
 
 void SV_CoopFriendlyFireReset (void)
@@ -5310,10 +5348,7 @@ qboolean SV_VRDwellBerserkPhysicalOutcome (client_t *client, edict_t *ent,
 	friendly_fire_scope = SV_CoopFriendlyFireBegin (ent);
 	PR_ExecuteProgram (DWELL_W_FIREAXE_FUNCTION);
 	if (friendly_fire_scope)
-	{
 		SV_CoopFriendlyFireEnd ();
-		friendly_fire_scope = false;
-	}
 	if (SV_VRDwellPhysicalOutcomeVMOwnerValid (client, ent, saved_vm,
 		saved_progs, saved_global_struct, saved_vm_globals))
 		outcome_ok = true;
@@ -5346,8 +5381,6 @@ cleanup:
 		VectorCopy (saved_globals.trace_plane_normal,
 			pr_global_struct->trace_plane_normal);
 	}
-	if (friendly_fire_scope)
-		SV_CoopFriendlyFireEnd ();
 	return outcome_ok;
 }
 
