@@ -734,9 +734,20 @@ static bool create_foveation_profiles() {
 	if(g.terminal) return false;
 	if(g.foveationEyeSupported && g.xr.FoveationEyeTrackedState) {
 		XrFoveationEyeTrackedProfileCreateInfoMETA eye={XR_TYPE_FOVEATION_EYE_TRACKED_PROFILE_CREATE_INFO_META};
-		fixed.next=&eye;
-		g.foveationEyeAvailable=create_foveation_profile("xrCreateFoveationProfileFB eye",fixedCreate,g.foveationEye);
-		fixed.next=0;
+		XrFoveationLevelProfileCreateInfoFB eyeLevel={XR_TYPE_FOVEATION_LEVEL_PROFILE_CREATE_INFO_FB};
+		eyeLevel.next=&eye;
+		eyeLevel.level=XR_FOVEATION_LEVEL_HIGH_FB;
+		eyeLevel.dynamic=XR_FOVEATION_DYNAMIC_LEVEL_ENABLED_FB;
+		XrFoveationProfileCreateInfoFB eyeCreate={XR_TYPE_FOVEATION_PROFILE_CREATE_INFO_FB};
+		eyeCreate.next=&eyeLevel;
+		g.foveationEyeAvailable=create_foveation_profile("xrCreateFoveationProfileFB dynamic eye",eyeCreate,g.foveationEye);
+		if(!g.foveationEyeAvailable && !g.terminal && !g.foveationEye) {
+			// A runtime may support eye-tracked profiles without adjusting their
+			// strength dynamically. This remains gaze-tracked, never fixed fallback.
+			eyeLevel.level=XR_FOVEATION_LEVEL_LOW_FB;
+			eyeLevel.dynamic=XR_FOVEATION_DYNAMIC_DISABLED_FB;
+			g.foveationEyeAvailable=create_foveation_profile("xrCreateFoveationProfileFB static eye",eyeCreate,g.foveationEye);
+		}
 		if(g.terminal) return false;
 	}
 	return update_foveation_profile(g.foveationOff);
