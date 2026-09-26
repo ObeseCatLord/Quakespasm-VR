@@ -176,3 +176,10 @@ second hand. A second callback-free context check after cooldown assignment
 inside the staged outcome can be removed for clarity. Software comparison of
 hit, filtered hit, whiff, haste, shielded teammate and first-hand invalidation
 is still required before the pair and melee offers are enabled.
+
+The shared `sv_nofriendlyfire` callback shield is now staged in `a9e00f5f`.
+It applies to desktop and VR server callbacks when explicitly enabled,
+defaults off, and wraps the Dwell physical `W_FireAxe` leaf. The older note
+above about that policy being absent is historical. Co-op parity remains a
+software acceptance item; the Dwell outcome is still not called by contact
+processing.
