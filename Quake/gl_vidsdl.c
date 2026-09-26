@@ -191,6 +191,7 @@ static VkImageView		fragment_shading_rate_image_view;
 static VkExtent2D		fragment_shading_rate_image_extent;
 static uint32_t			fragment_shading_rate_image_layers;
 static byte				*fragment_shading_rate_map;
+static byte				*fragment_shading_rate_uploaded_map;
 static size_t			fragment_shading_rate_map_size;
 static qboolean		fragment_shading_rate_image_initialized;
 static VkImage			msaa_color_buffer;
@@ -2611,6 +2612,7 @@ static qboolean GL_CreateFragmentShadingRateImage (void)
 	}
 	fragment_shading_rate_map_size = tile_count * layers;
 	fragment_shading_rate_map = Mem_Alloc (fragment_shading_rate_map_size);
+	fragment_shading_rate_uploaded_map = Mem_Alloc (fragment_shading_rate_map_size);
 	memset (fragment_shading_rate_map, 0, fragment_shading_rate_map_size);
 	fragment_shading_rate_image_extent = (VkExtent2D){rate_width, rate_height};
 	fragment_shading_rate_image_layers = layers;
@@ -2678,11 +2680,14 @@ static void GL_DestroyFragmentShadingRateImage (void)
 		R_FreeVulkanMemory (&fragment_shading_rate_image_memory, &num_vulkan_misc_allocations);
 	if (fragment_shading_rate_map)
 		Mem_Free (fragment_shading_rate_map);
+	if (fragment_shading_rate_uploaded_map)
+		Mem_Free (fragment_shading_rate_uploaded_map);
 	fragment_shading_rate_image = VK_NULL_HANDLE;
 	fragment_shading_rate_image_view = VK_NULL_HANDLE;
 	fragment_shading_rate_image_extent = (VkExtent2D){0, 0};
 	fragment_shading_rate_image_layers = 0;
 	fragment_shading_rate_map = NULL;
+	fragment_shading_rate_uploaded_map = NULL;
 	fragment_shading_rate_map_size = 0;
 	fragment_shading_rate_image_initialized = false;
 }
@@ -4037,7 +4042,13 @@ static void GL_UploadFragmentShadingRateMap (void)
 {
 #if defined(VK_KHR_fragment_shading_rate) && defined(VK_KHR_create_renderpass2)
 	if (!vulkan_globals.openxr_fragment_shading_rate_active || fragment_shading_rate_image == VK_NULL_HANDLE ||
-		!fragment_shading_rate_map || !fragment_shading_rate_map_size)
+		!fragment_shading_rate_map || !fragment_shading_rate_uploaded_map || !fragment_shading_rate_map_size)
+		return;
+	// The image and its view persist across frames. A repeated map needs no
+	// layout transition or transfer; the prior contents remain readable by
+	// the next scene pass on the same graphics queue.
+	if (fragment_shading_rate_image_initialized &&
+		!memcmp (fragment_shading_rate_uploaded_map, fragment_shading_rate_map, fragment_shading_rate_map_size))
 		return;
 
 	VkCommandBuffer command_buffer;
@@ -4085,6 +4096,7 @@ static void GL_UploadFragmentShadingRateMap (void)
 	memcpy (staging_memory, fragment_shading_rate_map, fragment_shading_rate_map_size);
 	R_StagingEndCopy ();
 	R_SubmitStagingBuffers ();
+	memcpy (fragment_shading_rate_uploaded_map, fragment_shading_rate_map, fragment_shading_rate_map_size);
 	fragment_shading_rate_image_initialized = true;
 #endif
 }
