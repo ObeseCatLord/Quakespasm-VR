@@ -432,7 +432,19 @@ void R_UpdateEntityDlights (void)
 		{
 			vec3_t offset;
 			VectorSubtract (l->origin, r_refdef.vieworg, offset);
-			const float view_distance = VectorLength (offset);
+			float view_distance = VectorLength (offset);
+			if (vulkan_globals.stereo_active)
+			{
+				// A light visible to either eye must survive the shared scene's
+				// fade-distance rejection. The eye origins are prepared this frame.
+				for (int eye = 0; eye < 2; ++eye)
+				{
+					VectorSubtract (l->origin, r_stereo_origins[eye], offset);
+					const float eye_distance = VectorLength (offset);
+					if (isfinite (eye_distance))
+						view_distance = isfinite (view_distance) ? q_min (view_distance, eye_distance) : eye_distance;
+				}
+			}
 			if (view_distance >= l->end_fade_distance)
 				continue;
 			if ((view_distance > l->start_fade_distance) && (l->end_fade_distance > l->start_fade_distance))

@@ -2421,6 +2421,10 @@ static void SCR_SetupFrame (void *unused)
 		V_SetupFrame ();
 	}
 	R_PrepareStereoFrame ();
+	// Entity-light fading needs the current frame's actual eye origins in VR.
+	// Keep this before surface marking and all consumers of cl_dlights.
+	if (!con_forcedup)
+		R_UpdateEntityDlights ();
 	SCR_VRMenuPrepare ();
 	SCR_VRWeaponMenuPrepare ();
 	SCR_VRClassicSbarPrepare ();

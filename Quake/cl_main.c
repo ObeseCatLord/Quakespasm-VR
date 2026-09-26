@@ -2233,7 +2233,6 @@ void CL_RelinkEntities (void)
 		}
 	}
 
-	R_UpdateEntityDlights (); // 2021 rerelease shadow casting light entities
 }
 
 int CL_GenerateRandomParticlePrecache (const char *pname)
