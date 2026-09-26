@@ -6408,15 +6408,13 @@ static qboolean SV_VRContactProcessMelee (client_t *client, edict_t *ent,
 		{
 			/* A completed armed swing with no contact is the stock axe whiff. */
 			client->private_vr_melee_consumed[hand] = true;
-			if (alkaline)
-			{
-				client->private_vr_melee_arc[hand] = 0;
-				client->private_vr_melee_peak_speed[hand] = 0;
-				VectorClear (client->private_vr_melee_stroke_direction[hand]);
-			}
+			client->private_vr_melee_arc[hand] = 0;
+			client->private_vr_melee_peak_speed[hand] = 0;
+			VectorClear (client->private_vr_melee_stroke_direction[hand]);
+			if (!alkaline)
+				client->private_vr_melee_consumed[hand] = false;
 			SV_VRStockAxeOutcome (client, ent, cmd, NULL);
-			if (alkaline)
-				return true;
+			return true;
 		}
 		client->private_vr_melee_arc[hand] = 0;
 		client->private_vr_melee_peak_speed[hand] = 0;
@@ -6494,7 +6492,7 @@ static qboolean SV_VRContactProcessMelee (client_t *client, edict_t *ent,
 	client->private_vr_melee_consumed[hand] = true;
 	if (SV_VRStockAxeOutcome (client, ent, cmd, &contact))
 		SV_VRContactFeedback (client, hand);
-	return alkaline;
+	return true;
 }
 
 static qboolean SV_VRContactButtonTouchAllowed (edict_t *button,
@@ -6772,8 +6770,8 @@ static qboolean SV_VRContactProcessCommand (client_t *client, edict_t *ent,
 		int direct_subtype = SV_VR_DIRECT_MELEE_NONE;
 		qboolean direct_melee = SV_VRDirectMeleeContactSelected (client,
 			ent, &command, &direct_subtype);
-		qboolean alkaline_axe = SV_VRStockAxeContactProfile () ==
-			VR_WEAPON_CONTACT_PROFILE_ALK &&
+		qboolean selected_axe = SV_VRStockAxeContactProfile () !=
+			VR_WEAPON_CONTACT_PROFILE_NONE &&
 			SV_VRStockAxeSelected (client, ent, &command, NULL);
 		qcvm_t *dwell_vm = qcvm;
 		dprograms_t *dwell_progs = qcvm->progs;
@@ -6789,7 +6787,7 @@ static qboolean SV_VRContactProcessCommand (client_t *client, edict_t *ent,
 				/* The first hand may run side-effecting QC even when its
 				 * outcome returns false. Never let the second hand borrow a
 				 * changed VM, player, origin or contact cursor. */
-				if ((dwell_pair || direct_melee || alkaline_axe) && callback_entered)
+				if ((dwell_pair || direct_melee || selected_axe) && callback_entered)
 				{
 					/* A reset or VM replacement already retired this cursor.
 					 * Do not revive it through relocation invalidation. */
@@ -6799,8 +6797,8 @@ static qboolean SV_VRContactProcessCommand (client_t *client, edict_t *ent,
 						pr_global_struct != dwell_globals ||
 						!(dwell_pair ?
 							SV_DwellBerserkAkimboProgramLoaded () :
-							alkaline_axe ?
-							SV_VRStockAxeContactProfile () == VR_WEAPON_CONTACT_PROFILE_ALK :
+							selected_axe ?
+							SV_VRStockAxeContactProfile () != VR_WEAPON_CONTACT_PROFILE_NONE :
 							(direct_subtype == SV_VR_DIRECT_MELEE_ENYO_SWORD ?
 								SV_EnyoMeleeProgramLoaded () : SV_QBJ3MeleeProgramLoaded ())) ||
 						!client->private_vr_contact_cursor_valid)
@@ -6822,11 +6820,11 @@ static qboolean SV_VRContactProcessCommand (client_t *client, edict_t *ent,
 								dwell_vm_globals, callback_origin, true,
 								(int)command.sequence, direct_subtype, false) ||
 							 !client->private_vr_contact_previous_valid)) ||
-						(alkaline_axe &&
+						(selected_axe &&
 							SV_VRContactDistance (ent->v.origin, callback_origin) > 0.01f) ||
 						!(dwell_pair ?
 							SV_VRDwellBerserkPairSelected (client, ent,
-								&command) : alkaline_axe ?
+								&command) : selected_axe ?
 							SV_VRStockAxeSelected (client, ent, &command, NULL) :
 							SV_VRDirectMeleeContactSelected (client, ent,
 								&command, NULL)) ||
