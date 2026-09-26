@@ -399,6 +399,7 @@ typedef struct
 	uint32_t						 openxr_max_multiview_view_count;
 	qboolean						 openxr_fragment_shading_rate_available;
 	qboolean						 openxr_fragment_shading_rate_active;
+	qboolean						 openxr_fragment_density_map_enabled;
 	qboolean						 openxr_fragment_density_map_active;
 	VkExtent2D						 openxr_fragment_shading_rate_texel_size;
 	qboolean						 openxr_layered_shading_rate_attachments;
@@ -578,7 +579,7 @@ extern vulkanglobals_t vulkan_globals;
 
 static inline int R_SecondaryContextCount (int context)
 {
-	if ((context == SCBX_DENSITY_WORLD || context == SCBX_WORLD_DEPTH_REPLAY) && !vulkan_globals.openxr_fragment_density_map_active)
+	if ((context == SCBX_DENSITY_WORLD || context == SCBX_WORLD_DEPTH_REPLAY) && !vulkan_globals.openxr_fragment_density_map_enabled)
 		return 0;
 	return SECONDARY_CB_MULTIPLICITY[context];
 }

@@ -3909,7 +3909,7 @@ static void R_CreateWorldPipelines ()
 	base.shader_stages[1].pSpecializationInfo = &specialization_info;
 
 	pipeline_create_infos_t infos;
-	if (vulkan_globals.openxr_fragment_density_map_active)
+	if (vulkan_globals.openxr_fragment_density_map_enabled)
 	{
 		// Rebuild authoritative depth after the density pass without
 		// re-running the world fragment shader or touching its coarse color.

@@ -921,6 +921,7 @@ static void GL_ClearOpenXRFragmentShadingRate (void)
 {
 	vulkan_globals.openxr_fragment_shading_rate_available = false;
 	vulkan_globals.openxr_fragment_shading_rate_active = false;
+	vulkan_globals.openxr_fragment_density_map_enabled = false;
 	vulkan_globals.openxr_fragment_density_map_active = false;
 	vulkan_globals.openxr_fragment_shading_rate_texel_size.width = 0;
 	vulkan_globals.openxr_fragment_shading_rate_texel_size.height = 0;
