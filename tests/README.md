@@ -337,6 +337,19 @@ contacts directly; it does not prove stroke authorization, distinct-victim
 limits, contact sweeps or paired rendering. It requires permission to trace
 the child process with GDB.
 
+## QBJ3 scheduled native fist poses
+
+```sh
+tests/vr_qbj3_akimbo_runtime.sh tests/vr_qbj3_fist_pose.gdb
+```
+
+Uses the same installed, hash-pinned QBJ3 assets and debug binary as the twin
+nailgun runner. Checks all four native striking frames, anatomical hand source
+and fan direction, stale-pair and desktop fallback, completed-command ownership
+and scoped state restoration. Requires GDB/ptrace. This new fixture has passed
+embedded Python syntax checking only; runtime execution is pending because the
+current sandbox denies ptrace. It does not exercise physical two-target contact.
+
 ## QBJ3 client pair pipeline
 
 `vr_qbj3_client_pipeline.gdb` runs the client through pair preparation, both

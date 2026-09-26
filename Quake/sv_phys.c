@@ -3396,8 +3396,8 @@ static qboolean SV_DwellFunctionPin (int index, const char *name,
 }
 
 /* The installed QBJ3 revision is already identified by the shared exact
- * progs hash. Pin only the native entries this direct leaf borrows or admits;
- * the wrench/berserk attack roots and their fan traces are never entered. */
+ * progs hash. Pin the entries the physical outcome borrows or admits. Native
+ * scheduled attacks keep their original roots and fan traces. */
 static qboolean SV_QBJ3MeleeProgramLoaded (void)
 {
 	static const byte leaf_parms[] = {1, 3, 3};
@@ -3413,6 +3413,37 @@ static qboolean SV_QBJ3MeleeProgramLoaded (void)
 			0, 0, 0, NULL) &&
 		SV_DwellFunctionPin (575, "weaponanim_draw_loop", 19624,
 			0, 0, 0, NULL);
+}
+
+/* QBJ3's native has_berserk tests the item bit or the float QC expiry. The
+ * model and weapon bit must still be the currently selected melee weapon. */
+static qboolean SV_VRQBJ3MeleeSelected (edict_t *ent, qboolean *berserk)
+{
+	eval_t *items, *finished;
+	const char *model;
+	float qctime;
+	int bits;
+
+	if (!ent || ent->free || !berserk || !SV_QBJ3MeleeProgramLoaded () ||
+		!isfinite (ent->v.weapon) || ent->v.weapon != 4096 ||
+		!isfinite (qcvm->time))
+		return false;
+	qctime = (float)qcvm->time;
+	if (!isfinite (qctime))
+		return false;
+	items = GetEdictFieldValue (ent, ED_FindFieldOffset ("items_qbj"));
+	finished = GetEdictFieldValue (ent,
+		ED_FindFieldOffset ("berserk_finished"));
+	if (!items || !finished || !isfinite (items->_float) ||
+		(double)items->_float < -2147483648.0 ||
+		(double)items->_float >= 2147483648.0 ||
+		!isfinite (finished->_float))
+		return false;
+	bits = (int)items->_float;
+	*berserk = (bits & 4) != 0 || finished->_float > qctime;
+	model = PR_GetString (ent->v.weaponmodel);
+	return model && !strcmp (model, *berserk ? "progs/v_berserk.mdl" :
+		"progs/v_wrench.mdl");
 }
 
 qboolean SV_DwellBerserkAkimboProgramLoaded (void)
@@ -3544,11 +3575,19 @@ static qboolean SV_AkimboCommandValid (client_t *client,
 	const usercmd_t *cmd, const vec3_t body_origin)
 {
 	int hand, axis;
+	qboolean qbj3_berserk = false;
+	if (client && client->edict && cmd && cmd->vr_akimbo_berserk)
+	{
+		qboolean selected_berserk;
+		qbj3_berserk = SV_VRQBJ3MeleeSelected (client->edict,
+			&selected_berserk) && selected_berserk;
+	}
 	if (!client || !client->active || !client->spawned ||
 		client->protocol_qsvr != QSVR_PROTOCOL_PINNED || !cmd ||
 		!cmd->vr_active || !cmd->vr_handpos_relative ||
 		!cmd->vr_akimbo_active ||
 		(cmd->vr_akimbo_berserk &&
+		 !qbj3_berserk &&
 		 (!SV_VRDwellBerserkMeleeEnabled () ||
 		  !SV_DwellBerserkAkimboProgramLoaded ())) ||
 		cmd->sequence <= 0 || cmd->msec < 1 || cmd->msec > 125 ||
@@ -3635,6 +3674,31 @@ static void SV_BeginPrivateVRWeaponPose (edict_t *ent, client_t *client,
 	 * before that site must continue to see the player's body pose. */
 	if (scope->dwell_berserk_pose_valid)
 		return;
+	if (scope->akimbo_pose_valid && cmd->vr_akimbo_berserk)
+	{
+		qboolean berserk = false;
+		if (SV_VRQBJ3MeleeSelected (ent, &berserk) && berserk &&
+			(ent->v.weaponframe == 14 || ent->v.weaponframe == 34 ||
+			 ent->v.weaponframe == 54 || ent->v.weaponframe == 64))
+		{
+			/* QBJ3 tests its striking frame before advancing the native
+			 * animation. Reuse that hand choice and leave all fan traces,
+			 * combo state and damage in its original QuakeC callback. */
+			const int hand = ent->v.weaponframe == 14 || ent->v.weaponframe == 64;
+			vec3_t temporary_origin;
+			VectorCopy (scope->akimbo_muzzle[hand], muzzle);
+			VectorCopy (ent->v.origin, temporary_origin);
+			VectorCopy (scope->body_origin, ent->v.origin);
+			SV_ClampVRMuzzleToWorld (ent, muzzle);
+			VectorCopy (temporary_origin, ent->v.origin);
+			VectorCopy (scope->akimbo_angles[hand], ent->v.v_angle);
+			ent->v.v_angle[ROLL] = 0;
+			AngleVectors (ent->v.v_angle, pr_global_struct->v_forward,
+				pr_global_struct->v_right, pr_global_struct->v_up);
+			VectorSubtract (muzzle, ent->v.view_ofs, ent->v.origin);
+			return;
+		}
+	}
 
 	VectorAdd (scope->origin, cmd->vr_handpos, muzzle);
 	VectorCopy (cmd->vr_handrot, ent->v.v_angle);
@@ -5503,37 +5567,6 @@ cleanup:
 			pr_global_struct->trace_plane_normal);
 	}
 	return outcome_ok;
-}
-
-/* QBJ3's native has_berserk tests the item bit or the float QC expiry. The
- * model and weapon bit must still be the currently selected melee weapon. */
-static qboolean SV_VRQBJ3MeleeSelected (edict_t *ent, qboolean *berserk)
-{
-	eval_t *items, *finished;
-	const char *model;
-	float qctime;
-	int bits;
-
-	if (!ent || ent->free || !berserk || !SV_QBJ3MeleeProgramLoaded () ||
-		!isfinite (ent->v.weapon) || ent->v.weapon != 4096 ||
-		!isfinite (qcvm->time))
-		return false;
-	qctime = (float)qcvm->time;
-	if (!isfinite (qctime))
-		return false;
-	items = GetEdictFieldValue (ent, ED_FindFieldOffset ("items_qbj"));
-	finished = GetEdictFieldValue (ent,
-		ED_FindFieldOffset ("berserk_finished"));
-	if (!items || !finished || !isfinite (items->_float) ||
-		(double)items->_float < -2147483648.0 ||
-		(double)items->_float >= 2147483648.0 ||
-		!isfinite (finished->_float))
-		return false;
-	bits = (int)items->_float;
-	*berserk = (bits & 4) != 0 || finished->_float > qctime;
-	model = PR_GetString (ent->v.weaponmodel);
-	return model && !strcmp (model, *berserk ? "progs/v_berserk.mdl" :
-		"progs/v_wrench.mdl");
 }
 
 /* The installed draw loop returns without an attack once frame 10 is reached;

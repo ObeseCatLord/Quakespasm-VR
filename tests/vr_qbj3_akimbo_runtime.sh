@@ -4,10 +4,13 @@ set -euo pipefail
 root=$(git -C "$(dirname "${BASH_SOURCE[0]}")/.." rev-parse --show-toplevel)
 source=/home/obesecatlord/Windows/Games/quakespasm_straight
 binary="${QSVR_BINARY:-$root/build-debug/vkquake}"
+gdb_script="${1:-$root/tests/vr_qbj3_akimbo_runtime.gdb}"
 game=$(mktemp -d "${TMPDIR:-/tmp}/qbj3-akimbo-runtime.XXXXXX")
 trap 'rm -rf -- "$game"' EXIT
 
+[[ $# -le 1 ]] || { echo "usage: $0 [gdb-script]" >&2; exit 2; }
 [[ -x "$binary" ]] || { echo "missing target executable: $binary" >&2; exit 2; }
+[[ -f "$gdb_script" ]] || { echo "missing GDB script: $gdb_script" >&2; exit 2; }
 [[ -f "$source/id1/pak0.pak" ]] || { echo "missing installed id1 pak0.pak: $source" >&2; exit 2; }
 [[ -f "$source/qbj3/progs.dat" && -f "$source/qbj3/maps/start.bsp" &&
    -f "$source/qbj3/progs/v_tnailgun.mdl" ]] || {
@@ -28,6 +31,6 @@ for file in "$source/qbj3/progs"/*; do
   ln -s -- "$file" "$game/qbj3/progs/${file##*/}"
 done
 
-gdb -q -batch -x "$root/tests/vr_qbj3_akimbo_runtime.gdb" --args \
+gdb -q -batch -x "$gdb_script" --args \
   "$binary" -basedir "$game" -game qbj3 -dedicated 2 -port 0 \
   +sv_coop_autosave 0 +coop 1 +map start

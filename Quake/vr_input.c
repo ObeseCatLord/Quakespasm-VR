@@ -110,6 +110,15 @@ static qboolean VR_InputDwellMeleeAuthorized (void)
 		vr_immersive_melee.value != 0.0f;
 }
 
+static qboolean VR_InputQBJ3MeleeAuthorized (void)
+{
+	return cl.protocol_qsvr == QSVR_PROTOCOL_PINNED &&
+		(cl.vr_weapon_contact_mode & VR_WEAPON_CONTACT_CAP_MELEE) != 0 &&
+		cl.vr_weapon_contact_profile == VR_WEAPON_CONTACT_PROFILE_QBJ3 &&
+		isfinite (vr_immersive_melee.value) &&
+		vr_immersive_melee.value != 0.0f;
+}
+
 extern cvar_t vr_aimmode;
 
 static vr_input_hand_state_t vr_input_hands[2];
@@ -205,6 +214,12 @@ static void VR_InputFBTPrepareCalibrationVisualSnapshot (const vrxr_frame_t *fra
 static qboolean VR_InputFBTMapTrackingVector (const vec3_t tracking,
 	float presentation_yaw, float body_yaw, vec3_t root);
 static qboolean VR_InputAkimboRecipeIsDwell (
+	const mod_akimbo_pair_recipe_t *recipe, const qmodel_t *model);
+static qboolean VR_InputAkimboRecipeIsQBJ3Fist (
+	const mod_akimbo_pair_recipe_t *recipe, const qmodel_t *model);
+static qboolean VR_InputAkimboRecipeIsBerserk (
+	const mod_akimbo_pair_recipe_t *recipe, const qmodel_t *model);
+static qboolean VR_InputAkimboMeleeAuthorized (
 	const mod_akimbo_pair_recipe_t *recipe, const qmodel_t *model);
 static qboolean VR_InputAkimboHandDevicesAccepted (
 	const vrxr_frame_t *frame);
@@ -1913,9 +1928,9 @@ static qboolean VR_InputPendingContactAccepted (const usercmd_t *pending,
 		const mod_akimbo_pair_recipe_t *recipe =
 			Mod_GetAkimboPairRecipe (model->name);
 		return akimbo_accepted && pending->vr_akimbo_active &&
-			pending->vr_akimbo_berserk && VR_InputDwellMeleeAuthorized () &&
+			pending->vr_akimbo_berserk &&
+			VR_InputAkimboMeleeAuthorized (recipe, model) &&
 			VR_InputControllerAim () && cl.stats[STAT_HEALTH] > 0 &&
-			VR_InputAkimboRecipeIsDwell (recipe, model) &&
 			vr_input_pending_akimbo_identity.valid &&
 			vr_input_pending_akimbo_identity.sample_id == frame->sample_id &&
 			vr_input_pending_akimbo_identity.reset_generation ==
@@ -3629,6 +3644,30 @@ static qboolean VR_InputAkimboRecipeIsDwell (
 		!strcmp (model->name, "progs/v_axeb.mdl");
 }
 
+static qboolean VR_InputAkimboRecipeIsQBJ3Fist (
+	const mod_akimbo_pair_recipe_t *recipe, const qmodel_t *model)
+{
+	return recipe && model && !strcmp (recipe->game, "qbj3") &&
+		!strcmp (recipe->source, "progs/v_berserk.mdl") &&
+		!strcmp (model->name, "progs/v_berserk.mdl");
+}
+
+static qboolean VR_InputAkimboRecipeIsBerserk (
+	const mod_akimbo_pair_recipe_t *recipe, const qmodel_t *model)
+{
+	return VR_InputAkimboRecipeIsDwell (recipe, model) ||
+		VR_InputAkimboRecipeIsQBJ3Fist (recipe, model);
+}
+
+static qboolean VR_InputAkimboMeleeAuthorized (
+	const mod_akimbo_pair_recipe_t *recipe, const qmodel_t *model)
+{
+	return (VR_InputAkimboRecipeIsDwell (recipe, model) &&
+		VR_InputDwellMeleeAuthorized ()) ||
+		(VR_InputAkimboRecipeIsQBJ3Fist (recipe, model) &&
+		VR_InputQBJ3MeleeAuthorized ());
+}
+
 static qboolean VR_InputAkimboGameplayAccepted (const vrxr_frame_t *frame)
 {
 	return frame && frame->sample_id && frame->focused && frame->should_render &&
@@ -3669,7 +3708,7 @@ static void VR_InputPrepareAkimboPair (usercmd_t *pending,
 	int modelindex, hand;
 	vec3_t collision_torso;
 	qboolean collision_context, collision_torso_valid = false;
-	qboolean dwell_pair = false, collision_yaw_valid = false;
+	qboolean shared_pair_collision = false, collision_yaw_valid = false;
 	float presentation_yaw, mapping_yaw;
 	const qboolean roomscale_accepted = pending &&
 		VR_InputRoomscaleCommandAccepted (pending->vr_roomscalemove);
@@ -3679,7 +3718,7 @@ static void VR_InputPrepareAkimboPair (usercmd_t *pending,
 		!VR_InputSelectedAkimboModel (&model, &modelindex, &recipe) ||
 		!VR_InputAkimboHandDevicesAccepted (frame))
 		return;
-	dwell_pair = VR_InputAkimboRecipeIsDwell (recipe, model);
+	shared_pair_collision = VR_InputAkimboRecipeIsBerserk (recipe, model);
 	collision_context = VR_WeaponCollisionAuthorized () &&
 		V_AkimboRecipeUsesPairedCollision (recipe->source) &&
 		cls.state == ca_connected && cls.signon == SIGNONS && !cls.demoplayback &&
@@ -3716,7 +3755,7 @@ static void VR_InputPrepareAkimboPair (usercmd_t *pending,
 		for (int axis = 0; axis < 3; ++axis)
 			muzzle[hand][axis] = grip[axis] + local_anchor[axis] -
 				(roomscale_accepted ? pending->vr_roomscalemove[axis] : 0.0f);
-		if (dwell_pair)
+		if (shared_pair_collision)
 		{
 			vec3_t render_delta, body_delta;
 			V_AkimboPairCollisionOffset (hand, render_delta);
@@ -3775,7 +3814,7 @@ static void VR_InputPrepareAkimboPair (usercmd_t *pending,
 		VectorCopy (physical_angles[hand], pending->vr_akimbo_angles[hand]);
 	}
 	pending->vr_akimbo_berserk =
-		VR_InputAkimboRecipeIsDwell (recipe, model);
+		VR_InputAkimboRecipeIsBerserk (recipe, model);
 	vr_input_pending_akimbo_identity.valid = true;
 	pending->vr_akimbo_active = true;
 }
@@ -3806,7 +3845,7 @@ static qboolean VR_InputPendingAkimboAccepted (const usercmd_t *pending,
 		!VR_InputWireVec (pending->vr_akimbo_angles[1]) ||
 		!VR_InputAkimboHandDevicesAccepted (frame))
 		return false;
-	if (VR_InputAkimboRecipeIsDwell (recipe, model) !=
+	if (VR_InputAkimboRecipeIsBerserk (recipe, model) !=
 		(pending->vr_akimbo_berserk != false))
 		return false;
 
@@ -3826,7 +3865,7 @@ static qboolean VR_InputPendingAkimboAccepted (const usercmd_t *pending,
 	return true;
 }
 
-static qboolean VR_InputPrepareDwellAkimboContact (usercmd_t *pending,
+static qboolean VR_InputPrepareBerserkAkimboContact (usercmd_t *pending,
 	const vrxr_frame_t *frame, int dominant)
 {
 	vr_weapon_contact_t contact;
@@ -3835,13 +3874,14 @@ static qboolean VR_InputPrepareDwellAkimboContact (usercmd_t *pending,
 	const int modelindex = cl.stats[STAT_WEAPON];
 	const int weapon = cl.stats[STAT_ACTIVEWEAPON];
 	const aliashdr_t *geometry;
+	qboolean dwell_pair;
 	float presentation_yaw, mapping_yaw, units_per_metre;
 
 	if (!pending || !frame || !frame->sample_id || dominant < 0 || dominant > 1 ||
-		vr_input_contact_discontinuity || !VR_InputDwellMeleeAuthorized () ||
+		vr_input_contact_discontinuity ||
 		!VR_InputControllerAim () || cl.stats[STAT_HEALTH] <= 0 ||
 		!VR_InputSelectedAkimboModel (&model, NULL, &recipe) ||
-		!VR_InputAkimboRecipeIsDwell (recipe, model) ||
+		!VR_InputAkimboMeleeAuthorized (recipe, model) ||
 		!VR_InputPendingAkimboAccepted (pending, frame) ||
 		!VR_InputAkimboHandDevicesAccepted (frame) ||
 		!frame->devices[0].valid || !frame->devices[0].tracked ||
@@ -3852,6 +3892,7 @@ static qboolean VR_InputPrepareDwellAkimboContact (usercmd_t *pending,
 		!V_TrackedPresentationYaw (&presentation_yaw) ||
 		!V_TrackedMappingYaw (&mapping_yaw))
 		return false;
+	dwell_pair = VR_InputAkimboRecipeIsDwell (recipe, model);
 
 	geometry = (const aliashdr_t *)model->extradata[PV_QUAKE1];
 	if (!geometry || model != cl.viewent.model ||
@@ -3875,7 +3916,8 @@ static qboolean VR_InputPrepareDwellAkimboContact (usercmd_t *pending,
 	{
 		const vrxr_device_t *device = &frame->devices[hand + 1];
 		vec3_t grip, hand_angles, model_angles;
-		vec3_t render_base, render_tip, body_base, body_tip;
+		vec3_t render_base = {0.0f, 0.0f, 0.0f}, render_tip;
+		vec3_t body_base, body_tip;
 		vec3_t render_delta, body_delta;
 		float base_speed, tip_speed;
 		if (!VR_InputHandAccepted (frame, hand) || !device->valid ||
@@ -3884,25 +3926,28 @@ static qboolean VR_InputPrepareDwellAkimboContact (usercmd_t *pending,
 			!V_TrackedHandBodyOffset (hand, grip) ||
 			!V_TrackedPresentationHandAngles (hand, hand_angles) ||
 			!V_AkimboModelAngles (model->name, hand, hand_angles, model_angles) ||
-			!V_AkimboDwellEdgeOffsets (hand, model_angles,
-				render_base, render_tip) ||
+			!(dwell_pair ? V_AkimboDwellEdgeOffsets (hand, model_angles,
+				render_base, render_tip) :
+				V_AkimboTransformAnchor (hand, model_angles, render_tip)) ||
 			!VR_InputRenderOffsetToBody (render_base, presentation_yaw,
 				mapping_yaw, body_base) ||
 			!VR_InputRenderOffsetToBody (render_tip, presentation_yaw,
 				mapping_yaw, body_tip))
 			return false;
 
+		/* Swing effort is tracked before wall retraction; transmitted points
+		 * still use the renderer's actual per-hand collision displacement. */
+		if (!VR_InputContactPointSpeed (device, body_base, mapping_yaw,
+			units_per_metre, &base_speed) ||
+			!VR_InputContactPointSpeed (device, body_tip, mapping_yaw,
+			units_per_metre, &tip_speed))
+			return false;
 		V_AkimboPairCollisionOffset (hand, render_delta);
 		if (!VR_InputRenderOffsetToBody (render_delta, presentation_yaw,
 			mapping_yaw, body_delta))
 			return false;
 		VectorAdd (body_base, body_delta, body_base);
 		VectorAdd (body_tip, body_delta, body_tip);
-		if (!VR_InputContactPointSpeed (device, body_base, mapping_yaw,
-			units_per_metre, &base_speed) ||
-			!VR_InputContactPointSpeed (device, body_tip, mapping_yaw,
-			units_per_metre, &tip_speed))
-			return false;
 
 		VectorCopy (grip, contact.grip[hand]);
 		VectorAdd (grip, body_base, contact.base[hand]);
@@ -3965,7 +4010,7 @@ static void VR_InputPreparePrivatePose (usercmd_t *pending, int dominant,
 		pending->vr_active = true;
 		if (frame && vr_input_pending_akimbo_identity.valid &&
 			vr_input_pending_akimbo_identity.sample_id == frame->sample_id &&
-			VR_InputAkimboRecipeIsDwell (
+			VR_InputAkimboRecipeIsBerserk (
 				vr_input_pending_akimbo_identity.recipe,
 				vr_input_pending_akimbo_identity.model) &&
 			V_AkimboPairReady ())
@@ -3978,7 +4023,7 @@ static void VR_InputPreparePrivatePose (usercmd_t *pending, int dominant,
 				VR_InputClearPendingContactRecord (pending);
 			}
 			else
-				(void)VR_InputPrepareDwellAkimboContact (pending, frame,
+				(void)VR_InputPrepareBerserkAkimboContact (pending, frame,
 					dominant);
 		}
 		return;

@@ -35,10 +35,11 @@ native hand selection. It does not itself prove the integrated attack path.
 
 The first implementation adds the explicit physical outcome adapter and a
 native-program fixture. It does not advertise QBJ3 melee or the berserk pair.
-Activation still requires client held transforms and contact production,
-server admission and gesture processing, native fallback poses and suppression,
-then an ordinary-physics proof from accepted contact to native damage with
-desktop behavior retained. Headset alignment/feel and Windows/ARM checks are
+Activation still requires the single-hand wrench integration, server admission
+and two-target gesture processing, and native-trigger suppression. Bilateral
+fist input and native fallback poses are connected below; an ordinary-physics
+proof from accepted contact to native damage with desktop behavior retained
+remains pending. Headset alignment/feel and Windows/ARM checks are
 deferred according to the user's testing scope.
 
 ## Astra design review disposition
@@ -113,7 +114,7 @@ presentation still requires its software integration proof before activation.
 
 ## Next connected slice
 
-1. Extend the existing bilateral producer to QBJ3 grip-to-knuckle contacts,
+1. **Connected, pending end-to-end runtime proof:** Extend the existing bilateral producer to QBJ3 grip-to-knuckle contacts,
    preserving anatomical identity and the berserk command bit. Use raw point
    velocity for effort and the common held transform for the contact segment.
 2. Add the generated dominant wrench to the existing single-hand profile
@@ -126,7 +127,7 @@ presentation still requires its software integration proof before activation.
    reversal handling, consume rejected terminal gestures, and revalidate after
    every native leaf before another outcome or hand can run. Preserve hit
    obstructions and do not temporarily disable victim solidity.
-4. Extend the existing native pose scope for QBJ3's four pre-increment striking
+4. **Connected, pending runtime proof:** Extend the existing native pose scope for QBJ3's four pre-increment striking
    frames, retaining the native fan attack and ordinary desktop behavior.
    Connect suppression to qualified contact ownership, independent of instant
    cooldown readiness.
@@ -134,3 +135,42 @@ presentation still requires its software integration proof before activation.
    versus immersive presentation before enabling the server offers. Remove
    the staged-entry retention annotation once the real caller references the
    outcome function. Direct-leaf fixture success is not this activation proof.
+
+## Paired input and native pose connection
+
+QBJ3's fist recipe now uses the existing berserk command identity and bilateral
+contact finalization. Native paired presentation/commands remain available
+without the immersive option; grip-to-knuckle contact production requires the
+QBJ3 melee profile and local option. Dwell retains its distinct blade-edge
+geometry. Both producers now derive swing effort before applying collision
+retraction, matching the donor; the previous Dwell order incorrectly included
+the retraction offset in the angular-velocity radius.
+
+The existing native pose scope selects the authored right/left fist for frames
+14/64 and 34/54 respectively, clamps the physical muzzle from the body frame,
+and supplies `muzzle - view_ofs` to the original QC fan attack. It uses the same
+fresh, bounded paired command as other native pairs. The selected QBJ3 subtype
+is checked against current model and berserk state, independently of physical
+melee policy; Dwell's later strike hook remains separate.
+
+The combined Linux debug build passes. The focused input fixture passes under
+AddressSanitizer and UndefinedBehaviorSanitizer with leak detection disabled
+for the restricted environment. It checks family/option authorization and
+clearing stale bilateral contact together with its pair; it does not prove
+the full producer-to-wire-to-damage path. Server offers remain unchanged.
+
+### Astra input/pose review disposition
+
+| Recommendation | Disposition |
+| --- | --- |
+| Keep native anatomical hand selection inside the existing pose scope. | **Accepted.** The installed bytecode calls its strike before incrementing the frame; frames 14/64 select right and 34/54 left. |
+| Reuse scoped restoration rather than add another pose context. | **Accepted.** Existing restoration retains body/angles/basis and explicit QC relocation semantics. Dwell retains its deferred strike hook. |
+| Keep native paired input independent of immersive contact authorization. | **Accepted.** Contact requires its matching profile and local option; native pair input does not. |
+| Calculate effort before collision retraction. | **Accepted.** Both paired producers now use raw endpoint offsets for angular velocity radius. |
+| Check lateral native fan rays as well as the forward ray. | **Accepted for the fixture.** A forward ray alone cannot detect an incorrect roll basis. Runtime execution remains pending. |
+
+Astra found no proven production regression in this bounded integration diff.
+The new `tests/vr_qbj3_fist_pose.gdb` is a scheduled native-callback fixture for
+all four striking frames, stale-pair fallback, desktop fallback, command
+ownership and scope restoration. It is **unrun** under the current ptrace
+restriction; source review and syntax checks do not replace runtime evidence.

@@ -51,6 +51,20 @@ qboolean V_AkimboPairReady (void)
 	return false;
 }
 
+qboolean V_AkimboRecipeSupported (const char *source)
+{
+	(void)source;
+	++unreachable_admission_calls;
+	return false;
+}
+
+const mod_akimbo_pair_recipe_t *Mod_GetAkimboPairRecipe (const char *source)
+{
+	(void)source;
+	++unreachable_admission_calls;
+	return NULL;
+}
+
 void *Mod_Extradata_CheckSkin (qmodel_t *model, int skinnum)
 {
 	(void)model;
@@ -106,6 +120,29 @@ static void assert_movement (const usercmd_t *cmd, float forward,
 int main (void)
 {
 	usercmd_t cmd;
+	mod_akimbo_pair_recipe_t fists = {0}, axes = {0};
+	qmodel_t fist_model = {0}, axe_model = {0};
+
+	fists.game = "qbj3";
+	fists.source = "progs/v_berserk.mdl";
+	strcpy (fist_model.name, fists.source);
+	axes.game = "dwell";
+	axes.source = "progs/v_axeb.mdl";
+	strcpy (axe_model.name, axes.source);
+	cl.protocol_qsvr = QSVR_PROTOCOL_PINNED;
+	cl.vr_weapon_contact_mode = VR_WEAPON_CONTACT_CAP_MELEE;
+	vr_immersive_melee.value = 1.0f;
+	cl.vr_weapon_contact_profile = VR_WEAPON_CONTACT_PROFILE_QBJ3;
+	assert (VR_InputAkimboRecipeIsBerserk (&fists, &fist_model));
+	assert (VR_InputAkimboMeleeAuthorized (&fists, &fist_model));
+	assert (!VR_InputAkimboMeleeAuthorized (&axes, &axe_model));
+	vr_immersive_melee.value = 0.0f;
+	assert (!VR_InputAkimboMeleeAuthorized (&fists, &fist_model));
+	vr_immersive_melee.value = 1.0f;
+	cl.vr_weapon_contact_profile = VR_WEAPON_CONTACT_PROFILE_DWELL;
+	assert (VR_InputAkimboMeleeAuthorized (&axes, &axe_model));
+	assert (!VR_InputAkimboMeleeAuthorized (&fists, &fist_model));
+	cl.vr_weapon_contact_profile = VR_WEAPON_CONTACT_PROFILE_QBJ3;
 
 	fixture_frame.focused = true;
 	fixture_frame.sample_id = 41;
@@ -129,6 +166,9 @@ int main (void)
 	cl.pendingcmd.vr_handrot[1] = 25.0f;
 	cl.pendingcmd.vr_handrot[2] = 5.0f;
 	cl.pendingcmd.vr_akimbo_active = true;
+	cl.pendingcmd.vr_akimbo_berserk = true;
+	cl.pendingcmd.vr_contact.flags = VR_WEAPON_CONTACT_LEFT_VALID |
+		VR_WEAPON_CONTACT_RIGHT_VALID | VR_WEAPON_CONTACT_IMMERSIVE_MELEE;
 	for (int hand = 0; hand < 2; ++hand)
 		for (int axis = 0; axis < 3; ++axis)
 		{
@@ -153,6 +193,8 @@ int main (void)
 	assert (!cl.pendingcmd.vr_active);
 	assert (!cl.pendingcmd.vr_handpos_relative);
 	assert (!cl.pendingcmd.vr_akimbo_active);
+	assert (!cl.pendingcmd.vr_contact.flags);
+	assert (!cmd.vr_contact.flags);
 	assert (unreachable_admission_calls == 0);
 
 	/* A second application of the retained movement sample cannot restore pose. */

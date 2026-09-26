@@ -137,8 +137,9 @@ desktop checks; see the [Dwell activation review](migration-dwell-akimbo-review.
 QBJ3 wrench/fist native outcome callbacks and animated/frozen paired fist
 presentation are staged; see the [QBJ3 melee review](migration-qbj3-melee-review.md).
 The direct callback fixture covers native damage and recovery, but queued
-two-target stroke ownership, client contacts and native fist aiming still need
-connection before the server advertises berserk support. WPN-012 remains
+two-target stroke ownership still needs connection before the server advertises
+berserk support. Bilateral client contacts and native fist aiming are connected;
+their end-to-end runtime proof remains pending. WPN-012 remains
 partial, and tracked alignment/feel still needs user qualification. These
 VR adaptations must leave ordinary desktop vkQuake viewmodel rendering and
 QuakeC firing intact; shared wheel, netcode and co-op features have separate
