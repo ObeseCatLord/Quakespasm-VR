@@ -94,6 +94,9 @@ static VkImageView *openxr_image_views;
 static VkImageView *openxr_density_image_views;
 static uint32_t openxr_image_count;
 static uint32_t openxr_image_index;
+static qboolean openxr_density_eye_active;
+static qboolean openxr_density_backend_failed;
+static VkOffset2D openxr_density_offsets[2];
 static int openxr_desktop_width, openxr_desktop_height;
 
 static SDL_Window *draw_context;
@@ -923,11 +926,18 @@ static void GL_ClearOpenXRFragmentShadingRate (void)
 	vulkan_globals.openxr_fragment_shading_rate_active = false;
 	vulkan_globals.openxr_fragment_density_map_enabled = false;
 	vulkan_globals.openxr_fragment_density_map_active = false;
+	vulkan_globals.openxr_fragment_density_offset_enabled = false;
 	vulkan_globals.openxr_fragment_density_map_max_texel_size = (VkExtent2D){0, 0};
+	vulkan_globals.openxr_fragment_density_offset_granularity = (VkExtent2D){0, 0};
 	vulkan_globals.openxr_fragment_shading_rate_texel_size.width = 0;
 	vulkan_globals.openxr_fragment_shading_rate_texel_size.height = 0;
 	vulkan_globals.openxr_layered_shading_rate_attachments = false;
 	vulkan_globals.vk_create_render_pass2 = NULL;
+	vulkan_globals.vk_cmd_begin_render_pass2 = NULL;
+	vulkan_globals.vk_cmd_end_render_pass2 = NULL;
+	openxr_density_eye_active = false;
+	openxr_density_backend_failed = false;
+	memset (openxr_density_offsets, 0, sizeof (openxr_density_offsets));
 	vulkan_globals.vk_cmd_set_fragment_shading_rate = NULL;
 #if defined(VK_KHR_fragment_shading_rate) && defined(VK_KHR_create_renderpass2)
 	fpGetPhysicalDeviceFragmentShadingRatesKHR = NULL;
@@ -4069,6 +4079,45 @@ void GL_EndXRFrame (void)
 	openxr_frame_submitted = false;
 }
 
+static qboolean GL_PrepareRuntimeFoveation (void)
+{
+	openxr_density_eye_active = false;
+	memset (openxr_density_offsets, 0, sizeof (openxr_density_offsets));
+	if (openxr_density_backend_failed)
+		return true;
+	if (!openxr_density_image_views)
+		return true;
+
+	int mode = key_dest == key_menu ? VRF_MODE_OFF : VRF_RequestedMode (vr_foveation.value);
+	const qboolean allow_eye = mode == VRF_MODE_EYE_TRACKED && VRF_EyeTrackingEnabled (vr_eye_tracking.value) &&
+		vulkan_globals.openxr_fragment_density_offset_enabled && VRXR_VulkanFoveationEyeAvailable ();
+	if (mode == VRF_MODE_EYE_TRACKED && !allow_eye)
+		mode = VRF_MODE_OFF;
+	float centers[2][2];
+	int effective = VRXR_UpdateVulkanFoveation (mode, allow_eye, centers);
+	if (effective == VRF_MODE_EYE_TRACKED)
+	{
+		const VkExtent2D granularity = vulkan_globals.openxr_fragment_density_offset_granularity;
+		qboolean offsets_valid = true;
+		for (int eye = 0; eye < 2; ++eye)
+			if (!VRF_DensityOffset (centers[eye][0], vid.render_width, granularity.width, &openxr_density_offsets[eye].x) ||
+				!VRF_DensityOffset (centers[eye][1], vid.render_height, granularity.height, &openxr_density_offsets[eye].y))
+			{
+				offsets_valid = false;
+				break;
+			}
+		if (offsets_valid)
+			openxr_density_eye_active = true;
+		else
+			effective = VRXR_UpdateVulkanFoveation (VRF_MODE_OFF, 0, centers);
+	}
+	if (effective >= 0)
+		return true;
+	openxr_density_backend_failed = true;
+	Con_Printf ("OpenXR runtime foveation could not restore full rate; disabling density passes.\n");
+	return false;
+}
+
 static void GL_PrepareFragmentShadingRateMap (void)
 {
 	if (!vulkan_globals.openxr_fragment_shading_rate_active || !fragment_shading_rate_map ||
@@ -4237,6 +4286,12 @@ qboolean GL_BeginRendering (qboolean use_tasks, task_handle_t *begin_rendering_t
 		openxr_image_index = image.index;
 		openxr_frame_submitted = false;
 		vulkan_globals.stereo_descriptor_set = VK_NULL_HANDLE;
+		if (!GL_PrepareRuntimeFoveation ())
+		{
+			VRXR_AbortFrame ();
+			vid.restart_next_frame = true;
+			return false;
+		}
 		GL_PrepareFragmentShadingRateMap ();
 	}
 	*width = vid.width;
@@ -4666,6 +4721,8 @@ task_handle_t GL_EndRendering (qboolean use_tasks, qboolean swapchain)
 		.render_height = vid.render_height,
 		.time = fmod (cl.time, 2.0 * M_PI),
 		.color_clear_value = vulkan_globals.color_clear_value,
+		.density_eye_active = openxr_density_eye_active,
+		.density_offsets = {openxr_density_offsets[0], openxr_density_offsets[1]},
 		.v_blend[0] = v_blend[0],
 		.v_blend[1] = v_blend[1],
 		.v_blend[2] = v_blend[2],

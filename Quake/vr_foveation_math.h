@@ -2,7 +2,23 @@
 #define QUAKE_VR_FOVEATION_MATH_H
 
 #include <math.h>
+#include <stdint.h>
+#include <limits.h>
 #include "vr_openxr.h"
+
+/* META centers are normalized to [-1,1]. Vulkan density offsets are signed
+ * framebuffer pixels, rounded to the device's required granularity. */
+static inline int VRF_DensityOffset(float center, uint32_t extent,
+                                    uint32_t granularity, int32_t *out) {
+  if (!out || !isfinite(center) || center < -1.f || center > 1.f ||
+      !extent || !granularity) return 0;
+  const double offset = round((double)center * 0.5 * extent / granularity) *
+                        granularity;
+  if (!isfinite(offset) || offset < INT32_MIN || offset > INT32_MAX)
+    return 0;
+  *out = (int32_t)offset;
+  return 1;
+}
 
 /* OpenXR time describes the expressed pose (possibly predicted), not capture
  * time. Runtime tracking flags remain the quality authority. */

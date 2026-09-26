@@ -67,11 +67,13 @@ typedef struct end_rendering_parms_s
 	bool		 polyblend	   : 1;
 	bool		 menu		   : 1;
 	bool		 ray_debug	   : 1;
+	bool		 density_eye_active : 1;
 	uint32_t	 vid_height	   : 20;
 	uint32_t	 render_width;
 	uint32_t	 render_height;
 	float		 time;
 	VkClearValue color_clear_value;
+	VkOffset2D density_offsets[2];
 	uint8_t		 v_blend[4];
 	float		 origin[3];
 	float		 forward[3];

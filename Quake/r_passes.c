@@ -1058,7 +1058,18 @@ uint32_t R_RecordFrame (
 				.clearValueCount = ui ? 0 : physical->attachment_count,
 				.pClearValues = clear_values,
 			};
-			vkCmdBeginRenderPass (command_buffer, &begin, VK_SUBPASS_CONTENTS_SECONDARY_COMMAND_BUFFERS);
+			if (density)
+			{
+				if (!vulkan_globals.vk_cmd_begin_render_pass2)
+					Sys_Error ("Density scene requires vkCmdBeginRenderPass2");
+				const VkSubpassBeginInfo subpass_begin = {
+					.sType = VK_STRUCTURE_TYPE_SUBPASS_BEGIN_INFO,
+					.contents = VK_SUBPASS_CONTENTS_SECONDARY_COMMAND_BUFFERS,
+				};
+				vulkan_globals.vk_cmd_begin_render_pass2 (command_buffer, &begin, &subpass_begin);
+			}
+			else
+				vkCmdBeginRenderPass (command_buffer, &begin, VK_SUBPASS_CONTENTS_SECONDARY_COMMAND_BUFFERS);
 			break;
 		}
 		case FRAME_NEXT_SUBPASS:
@@ -1078,7 +1089,24 @@ uint32_t R_RecordFrame (
 				record_readback (readback_data);
 			break;
 		case FRAME_END_GRAPHICS:
-			vkCmdEndRenderPass (command_buffer);
+			if (frame->passes[step->pass].target == FRAME_TARGET_DENSITY_SCENE)
+			{
+				if (!vulkan_globals.vk_cmd_end_render_pass2)
+					Sys_Error ("Density scene requires vkCmdEndRenderPass2");
+				VkSubpassEndInfo subpass_end = {.sType = VK_STRUCTURE_TYPE_SUBPASS_END_INFO};
+#if defined(VK_QCOM_fragment_density_map_offset)
+				VkSubpassFragmentDensityMapOffsetEndInfoQCOM offset_end = {
+					.sType = VK_STRUCTURE_TYPE_SUBPASS_FRAGMENT_DENSITY_MAP_OFFSET_END_INFO_QCOM,
+					.fragmentDensityOffsetCount = 2,
+					.pFragmentDensityOffsets = parms->density_offsets,
+				};
+				if (parms->density_eye_active && vulkan_globals.openxr_fragment_density_offset_enabled)
+					subpass_end.pNext = &offset_end;
+#endif
+				vulkan_globals.vk_cmd_end_render_pass2 (command_buffer, &subpass_end);
+			}
+			else
+				vkCmdEndRenderPass (command_buffer);
 			break;
 		}
 	}

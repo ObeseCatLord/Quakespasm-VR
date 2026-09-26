@@ -401,10 +401,14 @@ typedef struct
 	qboolean						 openxr_fragment_shading_rate_active;
 	qboolean						 openxr_fragment_density_map_enabled;
 	qboolean						 openxr_fragment_density_map_active;
+	qboolean						 openxr_fragment_density_offset_enabled;
 	VkExtent2D						 openxr_fragment_density_map_max_texel_size;
+	VkExtent2D						 openxr_fragment_density_offset_granularity;
 	VkExtent2D						 openxr_fragment_shading_rate_texel_size;
 	qboolean						 openxr_layered_shading_rate_attachments;
 	PFN_vkCreateRenderPass2KHR		 vk_create_render_pass2;
+	PFN_vkCmdBeginRenderPass2KHR	 vk_cmd_begin_render_pass2;
+	PFN_vkCmdEndRenderPass2KHR	 vk_cmd_end_render_pass2;
 	PFN_vkCmdSetFragmentShadingRateKHR vk_cmd_set_fragment_shading_rate;
 	// Resource mode and one immutable stereo uniform allocation per logical
 	// frame. Runtime handles/lifecycle remain in the OpenXR boundary.
