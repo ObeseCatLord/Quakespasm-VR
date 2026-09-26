@@ -192,3 +192,31 @@ integration. The current `openxr_fragment_density_map_enabled` and `_active`
 fields remain false. In particular, a successful Vulkan build is not evidence
 that borrowed runtime images satisfy the FDM contract or that protected content
 has correct depth on either eye.
+
+## Compatibility preference and offset qualification
+
+Valve's [Steam Frame custom-engine guide](https://partner.steamgames.com/doc/steamhardware/steamframe/engines/custom)
+explicitly lists the FB/META foveation extensions. This makes the runtime
+profile route the first choice for Frame when the runtime and Vulkan device
+qualify. It does **not** establish that FB/META has wider coverage than the
+application-generated KHR rate map on Monado or every other headset. Keep
+selection by discovered capabilities, with KHR/full-rate alternatives and no
+automatic fixed-foveation fallback.
+
+The [Vulkan offset extension](https://docs.vulkan.org/refpages/latest/refpages/source/VK_QCOM_fragment_density_map_offset.html)
+explains that `VK_QCOM_fragment_density_map_offset` was promoted to
+`VK_EXT_fragment_density_map_offset` and that offsets can move a foveal region
+per eye. [Godot's OpenXR implementation](https://raw.githubusercontent.com/godotengine/godot/master/modules/openxr/extensions/platform/openxr_vulkan_extension.cpp)
+uses eye-tracked offsets; that is a portability precedent, not a requirement
+stated by the OpenXR FB image structure. A renderer offset path must qualify
+the device feature, alignment granularity, two-layer count, and image-creation
+flags for **all** attachments in the FDM pass. The
+[Vulkan offset validity rules](https://docs.vulkan.org/refpages/latest/refpages/source/VkRenderPassFragmentDensityMapOffsetEndInfoEXT.html)
+require those flags even on color and depth attachments. If a runtime updates
+the borrowed map in place and zero offsets are correct, establish that with
+runtime evidence and validation; do not infer it from a valid META center.
+
+Commit `be202118` adds minimum borrowed-map extent checks from the queried
+Vulkan density texel limit and exposes whether fixed and eye profiles were
+actually created after session attachment. It does not enable FDM at device
+creation or change the currently working KHR path.
