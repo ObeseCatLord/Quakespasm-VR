@@ -147,6 +147,11 @@ contact owner, with its source calibration, right-authored geometry, native
 `hitsword` aftermath and 0.4-second attack/switch recovery. See the
 [Enyo melee integration review](migration-enyo-melee-review.md) for build,
 transform, installed-program readiness and remaining runtime evidence.
+Alkaline and LimJam's exact installed axe programs now use the stock contact
+queue and native damage leaf with a distinct blade-only profile. The
+[Alkaline review](migration-alk-melee-review.md) records the model/calibration
+pins, reversal and callback corrections, passing Linux checks, and remaining
+physical-swing qualification; chainsaws retain native trigger behavior.
 WPN-012 and MOVE-005 remain partial, and tracked alignment/feel still needs
 user qualification. These
 VR adaptations must leave ordinary desktop vkQuake viewmodel rendering and
