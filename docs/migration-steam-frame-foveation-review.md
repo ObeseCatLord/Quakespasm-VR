@@ -26,7 +26,7 @@ neither document proves support on all runtimes or headsets.
 | Review finding | Disposition |
 | --- | --- |
 | Runtime FDM is pass-wide; the current scene pass mixes opaque world with alpha-tested surfaces, weapons, particles and transparency. | **Adopt.** Isolate eligible opaque rendering in a graphics pass. Do not assume another subpass or KHR draw-level rate state protects those draws. |
-| Coarse rendering can leave depth coverage unsuitable for full-rate protected draws. | **Adopt.** Prove or rebuild authoritative full-rate depth before protected content; thin occluders and both eyes are required visual checks. Pass splitting alone is insufficient. |
+| Coarse rendering can leave depth coverage unsuitable for full-rate protected draws. | **Adopt.** Replay eligible opaque world geometry into cleared, authoritative full-rate depth after the FDM pass and before protected content; thin occluders and both eyes are required visual checks. Pass splitting alone is insufficient. |
 | FDM and KHR fragment-shading-rate device features are mutually exclusive ([VUIDs 04481–04483](https://docs.vulkan.org/refpages/latest/refpages/source/VkDeviceCreateInfo.html)). | **Adopt.** Choose one feature family before device creation. After FDM-device commitment, an FDM failure falls back to full rate; using KHR requires device recreation. Never silently select fixed foveation. |
 | FDM may require subsampled attachments when `fragmentDensityMapNonSubsampledImages` is absent. | **Adopt conditional path.** Prefer non-subsampled scene targets when supported. Otherwise, a bounded subsampled scene/reconstruction bridge must satisfy load, sampler, input-attachment and storage rules before activation; do not blanket-flag existing targets. [Khronos sample](https://docs.vulkan.org/samples/latest/samples/extensions/fragment_density_map/README.html). |
 | Runtime maps belong to acquired XR swapchain image indices, while current scene framebuffers follow internal color-buffer indices. | **Adopt.** Make that mapping explicit and retain borrowed image lifetime under XR ownership. Initially require matching scene and XR extents as a conservative proof constraint, not a claimed OpenXR rule. [OpenXR image contract](https://registry.khronos.org/OpenXR/specs/1.1/man/html/XrSwapchainImageFoveationVulkanFB.html). |
@@ -75,3 +75,43 @@ and the protected-depth proof. Reopen the architecture decision if that bridge
 duplicates vkQuake's pass policy or loses a measured performance benefit.
 Until qualification succeeds, keep the existing KHR path where available and
 full-rate rendering otherwise, with no automatic fixed-foveation fallback.
+
+## Follow-up Astra senior review: depth and borrowed-image contract
+
+The 2026-09-26 follow-up reviewed the narrower pass/depth design against
+`Quake/r_passes.c`, `Quake/r_world.c`, `Quake/r_brush.c`, `Quake/gl_rmisc.c`, and
+the earlier `openxr` branch's renderer. The main thread spot-checked its
+load-bearing claims. The [Vulkan fragment-operations specification](https://docs.vulkan.org/spec/latest/chapters/fragops.html)
+says that depth-sample association is implementation-dependent when a density
+map fragment covers multiple pixels. That makes a full-rate depth *prepass*
+followed by depth-tested FDM color an unreliable protection scheme.
+
+| Follow-up finding | Disposition |
+| --- | --- |
+| An FDM pass cannot share the protected-content draw grouping. | **Adopt.** Add one physical scene pass at the existing frame compiler boundary, then continue the existing scene pass full rate. Do not add a second render graph. |
+| The prepass depth proposal does not give portable coverage under FDM. | **Replace.** Render eligible opaque world color/depth with FDM, then clear authoritative full-rate depth and replay the same eligible geometry depth-only, followed by cutouts, bmodels, entities, weapons, and transparent work. Replay all world chunks before any protected color, including in the threaded path. |
+| The old `openxr` branch already has `VKR_BeginDensityWorld`/`VKR_ReplayDensityWorldDepth` and opaque-bucket replay. | **Reuse the pattern, adapt the implementation.** vkQuake uses reversed depth (`VK_COMPARE_OP_GREATER_OR_EQUAL`, clear zero), so the old renderer's `LESS_OR_EQUAL` state must not be copied. |
+| The direct world texture chains and indirect brush command stream mix eligible and protected draws. | **Adopt.** Route by actual world/texture/instance eligibility, not by the current KHR per-draw shading-rate hint alone. Exclude cutouts, decals, all bmodels, liquid, sky, blends, and dynamic objects from FDM. Both rendering modes must replay exactly the geometry used for coarse color. |
+| Scene framebuffer indices and acquired OpenXR swapchain indices differ. | **Adopt.** Create/map compatible framebuffers for the cross-product of internal scene slot and acquired runtime map, with XR retaining borrowed-image ownership and retirement. |
+| Existing RenderPass2 dispatch is loaded only for KHR shading rate. | **Adopt.** Load it independently for FDM once that backend is selectable. |
+| Some devices require subsampled scene attachments. | **Defer.** First support only `fragmentDensityMapNonSubsampledImages` with matched scene/XR extents and one sample. If unavailable, retain the existing KHR route or full rate while evaluating a bounded bridge. |
+| The FB Vulkan image enumeration exposes image/width/height, but not explicit format, layout, or read readiness. | **Qualify, do not infer.** `VK_FORMAT_R8G8_UNORM` support plus extension enumeration is insufficient to activate FDM. Confirm the runtime image contract and synchronization against validation and runtime implementation/source before selecting it. |
+
+The [FB Vulkan extension text](https://raw.githubusercontent.com/KhronosGroup/OpenXR-Docs/main/specification/sources/chapters/extensions/fb/fb_foveation_vulkan.adoc)
+defines the borrowed `VkImage` and its dimensions but does not spell out a
+format, initial layout, or host-to-GPU readiness guarantee. As a practical
+precedent, [Godot imports the runtime image as an RG8 array texture](https://github.com/godotengine/godot/blob/master/modules/openxr/extensions/platform/openxr_vulkan_extension.cpp)
+and [uses META gaze state with QCOM density offsets when available](https://github.com/godotengine/godot/blob/master/modules/openxr/extensions/openxr_fb_foveation_extension.cpp).
+Those are implementation evidence, not normative guarantees for Monado, SteamVR,
+or every headset. The earlier instruction above to avoid blindly copying QCOM
+offsets still stands, but the offset path now has a concrete precedent and must
+be explicitly qualified rather than dismissed. Check the offset feature and
+granularity before adding it; the renderer must remain correct without it.
+
+The user's compatibility preference is runtime-first **after qualification**:
+use XR_FB/XR_META on any runtime/device pair that completes this proof, keep
+the working KHR shading-rate path on other capable devices, and use full rate
+otherwise. Eye tracking remains optional; loss or invalid gaze gives full rate,
+and fixed foveation is only enabled by an explicit user choice. Runtime FDM is
+not active in the current renderer because `GL_OpenXRAttach` still requests
+`density_maps=0`.
