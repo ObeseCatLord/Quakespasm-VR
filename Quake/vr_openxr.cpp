@@ -1451,7 +1451,7 @@ extern "C" int VRXR_UpdateVulkanFoveation(int mode, int qualified_gaze, float ce
 	XrFoveationProfileFB profile=g.foveationOff;
 	int effective=0;
 	if(mode==1 && g.foveationFixedAvailable) { profile=g.foveationFixed; effective=1; }
-	else if(mode==2 && g.gazeEnabled && g.sessionState==XR_SESSION_STATE_FOCUSED && qualified_gaze && g.foveationEyeAvailable) {
+	else if(mode==2 && g.sessionState==XR_SESSION_STATE_FOCUSED && qualified_gaze && g.foveationEyeAvailable) {
 		profile=g.foveationEye; effective=2;
 	}
 	if(!update_foveation_profile(profile)) {

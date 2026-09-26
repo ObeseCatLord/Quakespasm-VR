@@ -120,3 +120,11 @@ otherwise. Eye tracking remains optional; loss or invalid gaze gives full rate,
 and fixed foveation is only enabled by an explicit user choice. Runtime FDM is
 not active in the current renderer because `GL_OpenXRAttach` still requests
 `density_maps=0`.
+
+The [META eye-foveation extension](https://raw.githubusercontent.com/KhronosGroup/OpenXR-Docs/main/specification/sources/chapters/extensions/meta/meta_foveation_eye_tracked.adoc)
+has its own system-support and per-frame validity signals; it does not require
+the application to obtain an `XR_EXT_eye_gaze_interaction` action. The imported
+XR boundary now accepts a caller-qualified eye-mode request without requiring
+that separate gaze action to be active. The eventual renderer callsite must
+still honor `vr_eye_tracking` and stable, focused frames, and use the META
+validity result to turn the profile off immediately when tracking is lost.

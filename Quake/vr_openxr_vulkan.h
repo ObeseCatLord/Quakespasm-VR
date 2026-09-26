@@ -95,7 +95,10 @@ int VRXR_GetVulkanEye(int eye, vrxr_vulkan_eye_t *target);
  * unsubmitted recording that references acquired images; never submit it later. */
 int VRXR_VulkanEyeSubmitted(int eye);
 /* mode: 0 off, 1 explicit fixed, 2 eye with qualified_gaze supplied by the
- * established freshness/stability/user-option policy. Returns effective mode
+ * caller's user-option and stability policy. This permission is independent
+ * of XR_EXT_eye_gaze_interaction: XR_META_foveation_eye_tracked can be provided
+ * without exposing an application gaze action, and its returned validity is
+ * checked here. Returns effective mode
  * 0/1/2, or -1 when restoration/frame state fails and the caller must abort.
  * Call once after BeginFrame acquired and waited every swapchain, after the
  * renderer fence wait and before commands reference XR images. centers is a
