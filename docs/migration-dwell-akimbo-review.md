@@ -162,3 +162,17 @@ remain off until those paths are connected and a software comparison proves
 the exact installed QuakeC behavior. Stock axe and ordinary desktop paths
 remain the regression references. The shared co-op friendly-fire decision is
 recorded in `migration-friendly-fire-review.md` and is not Dwell-only.
+
+An Astra Max review of the committed dormant physical outcome and exact
+installed Dwell bytecode found no proven reachable regression. The shared
+trace owner, single-use acquisition, helper retries and fraction repair remain
+justified; no new entity-serial subsystem or replacement attack scheduler is
+needed on the current evidence. The donor starts friendly-fire protection at
+`W_FireAxe`, after its non-damaging prelude. Before activation, the future
+contact caller must consume a terminal gesture *before* invoking QC, even if
+the outcome returns false after side effects; it must then revalidate the VM,
+owner, contact cursor, weapon, idle think and origin before processing the
+second hand. A second callback-free context check after cooldown assignment
+inside the staged outcome can be removed for clarity. Software comparison of
+hit, filtered hit, whiff, haste, shielded teammate and first-hand invalidation
+is still required before the pair and melee offers are enabled.
