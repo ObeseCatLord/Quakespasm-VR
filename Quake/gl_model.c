@@ -1280,6 +1280,45 @@ static texture_t *Mod_LoadWadTexture (qmodel_t *mod, wad_t *wads, const char *na
 	return tx;
 }
 
+static textype_t Mod_TextureTypeFromName (const char *texname);
+
+/* Keep the existing external-image lookup available when a BSP references a
+ * missing WAD. The source pixels must still be valid if no replacement image
+ * exists; an external-only BSP miptex contains no inline payload. */
+static texture_t *Mod_MissingExternalMiptex (const miptex_t *mt, qboolean pal)
+{
+	size_t base_pixels, pixel_bytes, payload_bytes, allocation_bytes;
+	texture_t *tx;
+	byte *pixels;
+
+	if (mt->width < 8 || mt->height < 8 ||
+		!Mod_CheckedSizeMul (mt->width, mt->height, &base_pixels) ||
+		base_pixels > INT_MAX || base_pixels % 64 != 0 ||
+		!Mod_CheckedSizeMul (base_pixels / 64, 85, &pixel_bytes) ||
+		pixel_bytes > INT_MAX ||
+		!Mod_CheckedSizeAdd (pixel_bytes, pal ? 2 + 256 * 3 : 0, &payload_bytes) ||
+		!Mod_CheckedSizeAdd (sizeof (*tx), payload_bytes, &allocation_bytes))
+		return NULL;
+
+	tx = (texture_t *)Mem_Alloc (allocation_bytes);
+	memset (tx, 0, allocation_bytes);
+	memcpy (tx->name, mt->name, sizeof (tx->name));
+	tx->width = mt->width;
+	tx->height = mt->height;
+	tx->type = Mod_TextureTypeFromName (tx->name);
+	tx->palette = pal;
+	pixels = (byte *)(tx + 1);
+	tx->source_offset = (src_offset_t)pixels;
+	if (pal)
+	{
+		const unsigned short colors = LittleShort (256);
+		memcpy (pixels + pixel_bytes, &colors, sizeof (colors));
+		pixels[pixel_bytes + 2] = 255;
+		pixels[pixel_bytes + 4] = 255;
+	}
+	return tx;
+}
+
 /*
 =================
 Mod_CheckFullbrights -- johnfitz
@@ -1510,8 +1549,8 @@ static void Mod_LoadTextures (qmodel_t *mod, byte *mod_base, lump_t *l)
 	int		   nummiptex;
 	int		   dataofs;
 	wad_t	  *wads;
+	qboolean	   pal = false;
 #ifdef BSP29_VALVE
-	qboolean	   pal;
 	unsigned short colors;
 #endif
 
@@ -1560,10 +1599,11 @@ static void Mod_LoadTextures (qmodel_t *mod, byte *mod_base, lump_t *l)
 		if (mt.offsets[0] == 0)
 		{
 			mod->textures[i] = Mod_LoadWadTexture (mod, wads, mt.name);
-			// An external-only BSP miptex has no inline pixels or palette. If
-			// the WAD is absent/invalid, leave the entry missing so Texinfo
-			// selects the existing checkerboard texture instead of reading past
-			// the BSP texture lump.
+			if (!mod->textures[i])
+				mod->textures[i] = Mod_MissingExternalMiptex (&mt, pal);
+			// The placeholder keeps the normal PNG/TGA/JPG override search and
+			// safe fallback pixels. If its dimensions are invalid, Texinfo uses
+			// the existing missing-texture entry instead.
 			continue;
 		}
 
