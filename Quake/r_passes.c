@@ -327,11 +327,12 @@ static VkAttachmentReference2 R_CreateAttachmentReference2 (const VkAttachmentRe
 	};
 }
 
-// Adapt the pass compiler's existing descriptions for the KHR render-pass2
-// path. Topology, attachment policy, references and dependencies stay shared.
-static VkResult R_CreateFragmentShadingRateRenderPass (
+// Adapt the pass compiler's existing descriptions for either Vulkan rate-map
+// path. KHR attaches a rate map per subpass; EXT attaches a density map to the
+// whole render pass. Topology, attachment policy and dependencies stay shared.
+static VkResult R_CreateRateMapRenderPass (
 	const VkAttachmentDescription *attachments, uint32_t attachment_count, const VkSubpassDescription *subpasses, uint32_t subpass_count,
-	const VkSubpassDependency *dependencies, uint32_t dependency_count, VkRenderPass *render_pass)
+	const VkSubpassDependency *dependencies, uint32_t dependency_count, bool density_map, VkRenderPass *render_pass)
 {
 	VkAttachmentDescription2 attachment_descriptions2[MAX_PASS_ATTACHMENTS];
 	VkAttachmentReference2	 input_references2[MAX_PASS_SUBPASSES][MAX_PASS_ATTACHMENTS];
@@ -378,20 +379,23 @@ static VkResult R_CreateFragmentShadingRateRenderPass (
 			depth_references2[i] = R_CreateAttachmentReference2 (
 				subpasses[i].pDepthStencilAttachment, VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT);
 
-		shading_rate_references2[i] = (VkAttachmentReference2){
-			.sType = VK_STRUCTURE_TYPE_ATTACHMENT_REFERENCE_2,
-			.attachment = attachment_count - 1,
-			.layout = VK_IMAGE_LAYOUT_FRAGMENT_SHADING_RATE_ATTACHMENT_OPTIMAL_KHR,
-			.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
-		};
-		shading_rate_infos[i] = (VkFragmentShadingRateAttachmentInfoKHR){
-			.sType = VK_STRUCTURE_TYPE_FRAGMENT_SHADING_RATE_ATTACHMENT_INFO_KHR,
-			.pFragmentShadingRateAttachment = &shading_rate_references2[i],
-			.shadingRateAttachmentTexelSize = vulkan_globals.openxr_fragment_shading_rate_texel_size,
-		};
+		if (!density_map)
+		{
+			shading_rate_references2[i] = (VkAttachmentReference2){
+				.sType = VK_STRUCTURE_TYPE_ATTACHMENT_REFERENCE_2,
+				.attachment = attachment_count - 1,
+				.layout = VK_IMAGE_LAYOUT_FRAGMENT_SHADING_RATE_ATTACHMENT_OPTIMAL_KHR,
+				.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+			};
+			shading_rate_infos[i] = (VkFragmentShadingRateAttachmentInfoKHR){
+				.sType = VK_STRUCTURE_TYPE_FRAGMENT_SHADING_RATE_ATTACHMENT_INFO_KHR,
+				.pFragmentShadingRateAttachment = &shading_rate_references2[i],
+				.shadingRateAttachmentTexelSize = vulkan_globals.openxr_fragment_shading_rate_texel_size,
+			};
+		}
 		subpasses2[i] = (VkSubpassDescription2){
 			.sType = VK_STRUCTURE_TYPE_SUBPASS_DESCRIPTION_2,
-			.pNext = &shading_rate_infos[i],
+			.pNext = density_map ? NULL : &shading_rate_infos[i],
 			.flags = subpasses[i].flags,
 			.pipelineBindPoint = subpasses[i].pipelineBindPoint,
 			.viewMask = 3,
@@ -418,9 +422,17 @@ static VkResult R_CreateFragmentShadingRateRenderPass (
 			.dependencyFlags = dependencies[i].dependencyFlags,
 		};
 
+	const VkRenderPassFragmentDensityMapCreateInfoEXT density_info = {
+		.sType = VK_STRUCTURE_TYPE_RENDER_PASS_FRAGMENT_DENSITY_MAP_CREATE_INFO_EXT,
+		.fragmentDensityMapAttachment = {
+			.attachment = attachment_count - 1,
+			.layout = VK_IMAGE_LAYOUT_FRAGMENT_DENSITY_MAP_OPTIMAL_EXT,
+		},
+	};
 	const uint32_t correlated_view_mask = 3;
 	const VkRenderPassCreateInfo2 info = {
 		.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO_2,
+		.pNext = density_map ? &density_info : NULL,
 		.attachmentCount = attachment_count,
 		.pAttachments = attachment_descriptions2,
 		.subpassCount = subpass_count,
@@ -441,10 +453,11 @@ static void R_CreateGraphicsPasses (
 	const frame_desc_t *frame = &current_layout.variants[variant];
 	bool				used_before[MAX_PASS_ATTACHMENTS] = {0};
 	const bool			use_fragment_shading_rate = target == FRAME_TARGET_SCENE && R_UseFragmentShadingRate ();
+	const bool			use_density_map = target == FRAME_TARGET_DENSITY_SCENE;
 	if (attachment_count > MAX_PASS_ATTACHMENTS)
 		Sys_Error ("Too many render pass attachments (%u)", attachment_count);
-	if (use_fragment_shading_rate && attachment_count == 0)
-		Sys_Error ("Fragment shading rate attachment is missing");
+	if ((use_fragment_shading_rate || use_density_map) && attachment_count == 0)
+		Sys_Error ("Render rate map attachment is missing");
 
 	for (uint32_t pass_index = 0; pass_index < frame->pass_count; ++pass_index)
 	{
@@ -475,7 +488,7 @@ static void R_CreateGraphicsPasses (
 				pass_attachments[i].loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
 				pass_attachments[i].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
 			}
-			if (continues && !(use_fragment_shading_rate && i == attachment_count - 1))
+			if (continues && !((use_fragment_shading_rate || use_density_map) && i == attachment_count - 1))
 			{
 				pass_attachments[i].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
 				pass_attachments[i].stencilStoreOp = VK_ATTACHMENT_STORE_OP_STORE;
@@ -505,9 +518,11 @@ static void R_CreateGraphicsPasses (
 											  VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT |
 											  VK_ACCESS_INPUT_ATTACHMENT_READ_BIT | VK_ACCESS_SHADER_READ_BIT;
 		const VkPipelineStageFlags pass_stages = graphics_stages |
-			(use_fragment_shading_rate ? VK_PIPELINE_STAGE_FRAGMENT_SHADING_RATE_ATTACHMENT_BIT_KHR : 0);
+			(use_fragment_shading_rate ? VK_PIPELINE_STAGE_FRAGMENT_SHADING_RATE_ATTACHMENT_BIT_KHR : 0) |
+			(use_density_map ? VK_PIPELINE_STAGE_FRAGMENT_DENSITY_PROCESS_BIT_EXT : 0);
 		const VkAccessFlags pass_access = graphics_access |
-			(use_fragment_shading_rate ? VK_ACCESS_FRAGMENT_SHADING_RATE_ATTACHMENT_READ_BIT_KHR : 0);
+			(use_fragment_shading_rate ? VK_ACCESS_FRAGMENT_SHADING_RATE_ATTACHMENT_READ_BIT_KHR : 0) |
+			(use_density_map ? VK_ACCESS_FRAGMENT_DENSITY_MAP_READ_BIT_EXT : 0);
 		for (uint32_t dst = 0; dst < desc->subpass_count; ++dst)
 		{
 			dependencies[dependency_count++] = (VkSubpassDependency){
@@ -547,10 +562,10 @@ static void R_CreateGraphicsPasses (
 				.pCorrelationMasks = &correlation_mask,
 			};
 			VkResult result;
-			if (use_fragment_shading_rate)
-				result = R_CreateFragmentShadingRateRenderPass (
+			if (use_fragment_shading_rate || use_density_map)
+				result = R_CreateRateMapRenderPass (
 					pass_attachments, attachment_count, subpasses, desc->subpass_count, dependencies, dependency_count,
-					&physical->handles[stencil]);
+					use_density_map, &physical->handles[stencil]);
 			else
 			{
 				const VkRenderPassCreateInfo info = {
