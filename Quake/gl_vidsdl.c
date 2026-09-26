@@ -4080,7 +4080,8 @@ static qboolean GL_PrepareRuntimeFoveation (void)
 	if (!openxr_density_image_views)
 		return true;
 
-	int mode = key_dest == key_menu ? VRF_MODE_OFF : VRF_RequestedMode (vr_foveation.value);
+	int mode = !vulkan_globals.openxr_fragment_density_map_active || key_dest == key_menu ?
+		VRF_MODE_OFF : VRF_RequestedMode (vr_foveation.value);
 	const qboolean allow_eye = mode == VRF_MODE_EYE_TRACKED && VRF_EyeTrackingEnabled (vr_eye_tracking.value) &&
 		vulkan_globals.openxr_fragment_density_offset_enabled && VRXR_VulkanFoveationEyeAvailable ();
 	if (mode == VRF_MODE_EYE_TRACKED && !allow_eye)
@@ -4106,6 +4107,7 @@ static qboolean GL_PrepareRuntimeFoveation (void)
 	if (effective >= 0)
 		return true;
 	openxr_density_backend_failed = true;
+	vulkan_globals.openxr_fragment_density_map_active = false;
 	Con_Printf ("OpenXR runtime foveation could not restore full rate; disabling density passes.\n");
 	return false;
 }
