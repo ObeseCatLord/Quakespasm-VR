@@ -36,6 +36,7 @@ typedef enum
 typedef enum
 {
 	FRAME_TARGET_SCENE,
+	FRAME_TARGET_DENSITY_SCENE,
 	FRAME_TARGET_UI,
 } frame_target_t;
 
@@ -618,9 +619,16 @@ void R_CreateFrameBuffers (const render_framebuffer_images_t *images)
 	for (uint32_t pass = 0; pass < frame->pass_count; ++pass)
 	{
 		const bool		 ui = frame->passes[pass].target == FRAME_TARGET_UI;
+		const bool		 density = frame->passes[pass].target == FRAME_TARGET_DENSITY_SCENE;
 		physical_pass_t *physical = &physical_passes[variant][pass];
 		assert (!physical->framebuffers);
-		physical->framebuffer_count = ui ? images->swapchain_count : NUM_COLOR_BUFFERS;
+		if (density && (!images->density_maps || !images->density_map_count ||
+			images->density_map_count != images->swapchain_count || msaa))
+			Sys_Error ("Density scene requires one borrowed map per acquired XR image and single-sample scene targets");
+		if (density && images->density_map_count > UINT32_MAX / NUM_COLOR_BUFFERS)
+			Sys_Error ("Too many borrowed OpenXR density maps");
+		physical->framebuffer_count = ui ? images->swapchain_count :
+			density ? NUM_COLOR_BUFFERS * images->density_map_count : NUM_COLOR_BUFFERS;
 		physical->framebuffers = calloc (physical->framebuffer_count, sizeof (*physical->framebuffers));
 		if (!physical->framebuffers)
 			Sys_Error ("Couldn't allocate framebuffers");
@@ -634,27 +642,34 @@ void R_CreateFrameBuffers (const render_framebuffer_images_t *images)
 			}
 			else
 			{
-				attachments[0] = images->color[i];
+				const uint32_t scene_slot = density ? i / images->density_map_count : i;
+				attachments[0] = images->color[scene_slot];
 				attachments[1] = images->depth;
 				uint32_t next = 2;
 				if (msaa)
 					attachments[next++] = images->msaa_color;
-				if (variant == MAIN_RENDER_PASS_OIT)
+				if (!density && variant == MAIN_RENDER_PASS_OIT)
 				{
 					attachments[next++] = images->oit_accum;
 					attachments[next++] = images->oit_reveal;
 				}
-				else if (variant == MAIN_RENDER_PASS_MBOIT)
+				else if (!density && variant == MAIN_RENDER_PASS_MBOIT)
 				{
 					attachments[next++] = images->mboit_b0;
 					attachments[next++] = images->mboit_moments;
 					attachments[next++] = images->mboit_color;
 				}
-				if (R_UseFragmentShadingRate ())
+				if (!density && R_UseFragmentShadingRate ())
 				{
 					if (!images->fragment_shading_rate || next >= MAX_PASS_ATTACHMENTS)
 						Sys_Error ("Fragment shading rate framebuffer attachment is missing");
 					attachments[next++] = images->fragment_shading_rate;
+				}
+				if (density)
+				{
+					if (next >= MAX_PASS_ATTACHMENTS || !images->density_maps[i % images->density_map_count])
+						Sys_Error ("Borrowed density-map framebuffer attachment is missing");
+					attachments[next++] = images->density_maps[i % images->density_map_count];
 				}
 				if (next != physical->attachment_count)
 					Sys_Error ("Render pass framebuffer attachment count mismatch (%u != %u)", next, physical->attachment_count);
@@ -949,9 +964,10 @@ uint32_t R_RecordFrame (
 		const frame_step_t *step = &frame->steps[i];
 		if (step->pass >= frame->pass_count)
 			Sys_Error ("Invalid render pass in frame step");
-		// The UI pass includes the swapchain attachment even without a postprocess draw.
-		// Skip the entire pass and its readback unless we own an acquired image.
-		if (!swapchain_acquired && (step->type == FRAME_READBACK || frame->passes[step->pass].target == FRAME_TARGET_UI))
+		// UI and density passes reference the acquired XR/WSI image. Keep
+		// prepared scene commands even if acquisition failed.
+		if (!swapchain_acquired && (step->type == FRAME_READBACK ||
+			(step->type != FRAME_PREPARED_COMMANDS && frame->passes[step->pass].target != FRAME_TARGET_SCENE)))
 			continue;
 		if (step->type == FRAME_PREPARED_COMMANDS || !recording_started)
 		{
@@ -970,8 +986,14 @@ uint32_t R_RecordFrame (
 		case FRAME_BEGIN_GRAPHICS:
 		{
 			const bool			   ui = frame->passes[step->pass].target == FRAME_TARGET_UI;
+			const bool			   density = frame->passes[step->pass].target == FRAME_TARGET_DENSITY_SCENE;
 			const physical_pass_t *physical = &physical_passes[variant][step->pass];
-			const uint32_t		   image = ui ? swapchain_index : screen_effects ? 1 : 0;
+			const uint32_t		   scene_slot = screen_effects ? 1 : 0;
+			const uint32_t		   density_count = density ? physical->framebuffer_count / NUM_COLOR_BUFFERS : 0;
+			if (density && swapchain_index >= density_count)
+				Sys_Error ("Acquired OpenXR image has no matching density framebuffer");
+			const uint32_t		   image = ui ? swapchain_index :
+				density ? scene_slot * density_count + swapchain_index : scene_slot;
 			if (ui && (parms->render_width != parms->vid_width || parms->render_height != parms->vid_height))
 			{
 				// The fullscreen triangle samples the scene before the native-resolution GUI.

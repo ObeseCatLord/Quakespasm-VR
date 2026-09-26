@@ -3570,6 +3570,8 @@ static void GL_CreateFrameBuffers (void)
 		.mboit_moments = mboit_moments0_buffer_view,
 		.mboit_color = mboit_color_buffer_view,
 		.fragment_shading_rate = fragment_shading_rate_image_view,
+		.density_map_count = openxr_density_image_views ? openxr_image_count : 0,
+		.density_maps = openxr_density_image_views,
 		.swapchain_count = vulkan_globals.stereo_active ? openxr_image_count : num_swap_chain_images,
 		.swapchain = vulkan_globals.stereo_active ? openxr_image_views : swapchain_images_views,
 	};
