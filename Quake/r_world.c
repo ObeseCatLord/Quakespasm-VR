@@ -1205,7 +1205,7 @@ static void R_FlushBatch (
 	{
 		int pipeline_index =
 			(fullbright_enabled ? 1 : 0) + (alpha_test ? 2 : 0) + (alpha_blend ? 4 : 0) + (vid_filter.value != 0 && vid_palettize.value != 0 ? 8 : 0);
-		vulkan_pipeline_t pipeline = R_PipelineForSubpassType (
+		vulkan_pipeline_t pipeline = cbx->depth_only ? vulkan_globals.world_depth_replay_pipeline : R_PipelineForSubpassType (
 			cbx->subpass_type, vulkan_globals.world_pipelines[cbx->pipeline_variant][pipeline_index], vulkan_globals.world_wboit_pipelines[pipeline_index],
 			vulkan_globals.world_mboit_moment_pipelines[pipeline_index], vulkan_globals.world_mboit_composite_pipelines[pipeline_index]);
 		R_BindPipeline (cbx, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
@@ -1483,6 +1483,7 @@ R_DrawWorld -- ericw -- moved from R_DrawTextureChains, which is no longer speci
 */
 void R_DrawWorldFiltered (cb_context_t *cbx, int index, r_world_draw_filter_t filter)
 {
+	assert (!cbx->depth_only || filter == R_WORLD_DRAW_FOVEATION_ELIGIBLE);
 	if (!r_drawworld_cheatsafe)
 		return;
 

@@ -356,6 +356,7 @@ typedef struct cb_context_s
 	VkRenderPass			   render_pass;
 	subpass_type_t			   subpass_type;
 	main_render_pass_variant_t pipeline_variant;
+	qboolean				   depth_only;
 	int						   subpass;
 	vulkan_pipeline_t		   current_pipeline;
 	uint32_t				   vbo_indices[MAX_BATCH_SIZE];
@@ -394,6 +395,7 @@ typedef struct
 	uint32_t						 openxr_max_multiview_view_count;
 	qboolean						 openxr_fragment_shading_rate_available;
 	qboolean						 openxr_fragment_shading_rate_active;
+	qboolean						 openxr_fragment_density_map_active;
 	VkExtent2D						 openxr_fragment_shading_rate_texel_size;
 	qboolean						 openxr_layered_shading_rate_attachments;
 	PFN_vkCreateRenderPass2KHR		 vk_create_render_pass2;
@@ -443,6 +445,7 @@ typedef struct
 	vulkan_pipeline_layout_t gui_pipeline_layout;
 	vulkan_pipeline_layout_t gui_stereo_ui_pipeline_layout;
 	vulkan_pipeline_t		 world_pipelines[MAIN_RENDER_PASS_VARIANT_COUNT][WORLD_PIPELINE_COUNT];
+	vulkan_pipeline_t		 world_depth_replay_pipeline;
 	vulkan_pipeline_t		 world_wboit_pipelines[WORLD_PIPELINE_COUNT];
 	vulkan_pipeline_t		 world_mboit_moment_pipelines[WORLD_PIPELINE_COUNT];
 	vulkan_pipeline_t		 world_mboit_composite_pipelines[WORLD_PIPELINE_COUNT];

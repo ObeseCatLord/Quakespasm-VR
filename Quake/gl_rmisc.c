@@ -3909,6 +3909,17 @@ static void R_CreateWorldPipelines ()
 	base.shader_stages[1].pSpecializationInfo = &specialization_info;
 
 	pipeline_create_infos_t infos;
+	if (vulkan_globals.openxr_fragment_density_map_active)
+	{
+		// Rebuild authoritative depth after the density pass without
+		// re-running the world fragment shader or touching its coarse color.
+		R_CopyPipelineCreateInfos (&infos, &base);
+		R_SetPipelineRenderPassVariant (&infos, SUBPASS_MAIN, MAIN_RENDER_PASS_STANDARD);
+		infos.graphics_pipeline.stageCount = 1;
+		infos.blend_attachment_states[0].colorWriteMask = 0;
+		R_CreateGraphicsPipeline (
+			&vulkan_globals.world_depth_replay_pipeline, &infos, vulkan_globals.world_pipeline_layout, "world_depth_replay");
+	}
 	for (int alpha_blend = 0; alpha_blend < 2; ++alpha_blend)
 	{
 		for (int alpha_test = 0; alpha_test < 2; ++alpha_test)
@@ -4715,6 +4726,8 @@ void R_DestroyPipelines (void)
 		vkDestroyPipeline (vulkan_globals.device, vulkan_globals.world_mboit_composite_pipelines[i].handle, NULL);
 		vulkan_globals.world_mboit_composite_pipelines[i].handle = VK_NULL_HANDLE;
 	}
+	vkDestroyPipeline (vulkan_globals.device, vulkan_globals.world_depth_replay_pipeline.handle, NULL);
+	vulkan_globals.world_depth_replay_pipeline.handle = VK_NULL_HANDLE;
 	vkDestroyPipeline (vulkan_globals.device, vulkan_globals.raster_tex_warp_pipeline.handle, NULL);
 	vulkan_globals.raster_tex_warp_pipeline.handle = VK_NULL_HANDLE;
 	vkDestroyPipeline (vulkan_globals.device, vulkan_globals.particle_pipeline.handle, NULL);

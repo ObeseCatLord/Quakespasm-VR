@@ -921,6 +921,7 @@ static void GL_ClearOpenXRFragmentShadingRate (void)
 {
 	vulkan_globals.openxr_fragment_shading_rate_available = false;
 	vulkan_globals.openxr_fragment_shading_rate_active = false;
+	vulkan_globals.openxr_fragment_density_map_active = false;
 	vulkan_globals.openxr_fragment_shading_rate_texel_size.width = 0;
 	vulkan_globals.openxr_fragment_shading_rate_texel_size.height = 0;
 	vulkan_globals.openxr_layered_shading_rate_attachments = false;
@@ -3844,6 +3845,7 @@ void GL_BeginRenderingTask (void *unused)
 			cbx->current_canvas = CANVAS_INVALID;
 			cbx->ui_panel_active = false;
 			cbx->ui_panel_mvp_valid = false;
+			cbx->depth_only = false;
 			memset (&cbx->current_pipeline, 0, sizeof (cbx->current_pipeline));
 
 			{
