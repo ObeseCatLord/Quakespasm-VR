@@ -256,6 +256,9 @@ QCOM or EXT offset feature. Without this switch, the existing KHR shading-rate
 backend remains the normal choice. The switch requests borrowed maps on XR
 attachment and connects them to the existing split scene passes; it is a
 development qualification path, **not** automatic runtime preference yet.
+If KHR is already qualified but the Vulkan eye-offset feature is not, this
+switch retains KHR so an eye-mode request does not lose a working gaze-driven
+rate map. A fixed-mode request can still use KHR when explicitly selected.
 
 FDM scene activation additionally requires an accepted fixed or eye profile,
 borrowed map views, matching scene/XR extents, and `vid_fsaa` below 2. The
@@ -263,8 +266,9 @@ default `vid_fsaa 4` therefore leaves this path full rate until explicitly
 changed. The eye profile requires the `vr_eye_tracking` toggle and Vulkan
 per-eye offset support. Missing or invalid gaze selects the off profile, never
 fixed foveation. Density setup failure retries ordinary XR stereo; a rejected
-density render pass or framebuffer rebuilds full-rate passes. KHR cannot be resumed on the
-same Vulkan device after FDM feature commitment.
+density image view leaves full-rate passes active; a rejected density render
+pass or framebuffer rebuilds full-rate passes.
+KHR cannot be resumed on the same Vulkan device after FDM feature commitment.
 
 The borrowed image still has no standardized format/layout/creation-flag
 introspection in `XrSwapchainImageFoveationVulkanFB`. In particular, Vulkan's
@@ -275,3 +279,15 @@ prove that condition. Qualify it with target-runtime source or vendor
 documentation and validation before making FB/META the automatic default.
 The remaining proof includes both-eye protected depth, invalid-gaze behavior,
 pass creation failures, and measured performance on `mj4m1`.
+
+## Post-integration Astra review disposition
+
+The read-only Astra review of the committed development path found one
+deterministic fallback fault. It did not establish the runtime-owned image
+contract or a hardware result.
+
+| Finding | Disposition |
+| --- | --- |
+| A failed `vkCreateImageView` could leave an undefined value in a density-view array slot, which the cleanup loop might destroy. | **Fixed.** Create into a temporary handle and publish it only on success, matching the render-pass/framebuffer recovery pattern. |
+| The explicit switch kept KHR for fixed mode when KHR was available but eye offsets were not. | **Clarified.** This is deliberate while runtime qualification is incomplete: keep the working KHR eye path and allow explicit fixed KHR. Do not trade eye support for an unproven FB/META backend. |
+| Borrowed image metadata and offset flags, protected depth, gaze transitions, and performance remain runtime-dependent. | **Open.** These still require validation and target-runtime evidence before automatic selection. |

@@ -3726,8 +3726,11 @@ static void GL_CreateXRImageViews (void)
 				.format = VK_FORMAT_R8G8_UNORM,
 				.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 2},
 			};
-			if (vkCreateImageView (vulkan_globals.device, &density_info, NULL, &openxr_density_image_views[i]) != VK_SUCCESS)
+			VkImageView created = VK_NULL_HANDLE;
+			if (vkCreateImageView (vulkan_globals.device, &density_info, NULL, &created) != VK_SUCCESS)
 				density_view_failed = true;
+			else
+				openxr_density_image_views[i] = created;
 		}
 	}
 	if (density_view_failed)
