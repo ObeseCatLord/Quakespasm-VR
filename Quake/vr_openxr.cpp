@@ -17,6 +17,7 @@
 #endif
 #include "vr_openxr_vulkan.h"
 #include "vr_openxr.h"
+#include "vr_foveation_stability.h"
 #include "sha256.h"
 #include <string>
 #include "thirdparty/openxr/openxr_platform.h"
@@ -183,6 +184,7 @@ struct State {
 	bool vulkanSwapchainImageFlagsSupported;
 	bool foveationFixedAvailable, foveationEyeAvailable;
 	XrFoveationProfileFB foveationOff, foveationFixed, foveationEye;
+	vrf_policy_state_t foveationEyePolicy;
 	bool gazeSupported, gazeEnabled, trackerEnabled, xdevSupported, frameSupported, maskSupported, referenceChanged, referencePending;
 	char runtime[XR_MAX_RUNTIME_NAME_SIZE];
 	char systemName[XR_MAX_SYSTEM_NAME_SIZE];
@@ -191,7 +193,7 @@ struct State {
 		handPath(), chain(), trackers(), trackerSources(), trackerVersion(0), htcxSupported(false), trackersDirty(false), xdevList(XR_NULL_HANDLE), views(), frameState(),
 		sessionState(XR_SESSION_STATE_IDLE), appSpaceType(XR_REFERENCE_SPACE_TYPE_LOCAL), pendingReferenceType(XR_REFERENCE_SPACE_TYPE_LOCAL),
 		pendingReferenceTime(0), blend(XR_ENVIRONMENT_BLEND_MODE_OPAQUE), initialized(false), sessionRunning(false), terminal(false),
-		frameBegun(false), shouldRender(false), stopReason(VRXR_STOP_NONE), discoveredGaze(false), discoveredHtcx(false), discoveredXdev(false), foveationSupported(false), foveationEyeSupported(false), vulkanSwapchainImageFlagsSupported(false), foveationFixedAvailable(false), foveationEyeAvailable(false), foveationOff(XR_NULL_HANDLE), foveationFixed(XR_NULL_HANDLE), foveationEye(XR_NULL_HANDLE), gazeSupported(false), gazeEnabled(false), trackerEnabled(false), xdevSupported(false), frameSupported(false), maskSupported(false),
+		frameBegun(false), shouldRender(false), stopReason(VRXR_STOP_NONE), discoveredGaze(false), discoveredHtcx(false), discoveredXdev(false), foveationSupported(false), foveationEyeSupported(false), vulkanSwapchainImageFlagsSupported(false), foveationFixedAvailable(false), foveationEyeAvailable(false), foveationOff(XR_NULL_HANDLE), foveationFixed(XR_NULL_HANDLE), foveationEye(XR_NULL_HANDLE), foveationEyePolicy(), gazeSupported(false), gazeEnabled(false), trackerEnabled(false), xdevSupported(false), frameSupported(false), maskSupported(false),
 		referenceChanged(false), referencePending(false), runtime(), systemName() {}
 };
 static State g;
@@ -760,6 +762,7 @@ static bool create_foveation_profiles() {
 	return update_foveation_profile(g.foveationOff);
 }
 static void destroy_foveation_profiles() {
+	VRF_ResetPolicy(&g.foveationEyePolicy);
 	if(g.foveationEye && g.xr.DestroyFoveationProfile) ok("xrDestroyFoveationProfileFB eye",g.xr.DestroyFoveationProfile(g.foveationEye));
 	if(g.foveationFixed && g.xr.DestroyFoveationProfile) ok("xrDestroyFoveationProfileFB fixed",g.xr.DestroyFoveationProfile(g.foveationFixed));
 	if(g.foveationOff && g.xr.DestroyFoveationProfile) ok("xrDestroyFoveationProfileFB off",g.xr.DestroyFoveationProfile(g.foveationOff));
@@ -1196,6 +1199,7 @@ extern "C" int VRXR_BeginFrame(vrxr_frame_t *frame) {
 extern "C" void VRXR_EndFrame(void) {
 	if(!g.frameBegun) return;
 	bool submit=g.shouldRender && (eye_chain(0).copiedMask&1u) && (eye_chain(1).copiedMask&2u);
+	if(!submit) VRF_ResetPolicy(&g.foveationEyePolicy);
 	if(g.shouldRender && !submit) say("OpenXR: incomplete stereo submission; submitting an empty frame");
 	end_frame(submit);
 	if(g.terminal) destroy_stopped_runtime();
@@ -1204,6 +1208,7 @@ extern "C" void VRXR_EndFrame(void) {
 extern "C" void VRXR_AbortFrame(void) {
 	if(g.terminal) { destroy_stopped_runtime(); return; }
 	if(!g.frameBegun) return;
+	VRF_ResetPolicy(&g.foveationEyePolicy);
 	for(int eye=0;eye<kViews;++eye) if(g.chain[eye].acquired && !g.chain[eye].waited) {
 		g.stopReason=VRXR_STOP_FAILURE;
 		destroy_stopped_runtime(); return; // Host_Error cleanup must not wait again
@@ -1442,19 +1447,21 @@ static bool foveation_frame_ready() {
 static bool restore_foveation_off() {
 	return g.foveationOff && update_foveation_profile(g.foveationOff);
 }
-extern "C" int VRXR_UpdateVulkanFoveation(int mode, int qualified_gaze, float centers[2][2]) {
+extern "C" int VRXR_UpdateVulkanFoveation(int mode, int allow_eye_tracking, float centers[2][2]) {
 	if(!centers) return -1;
 	std::memset(centers,0,sizeof(float)*4);
-	if(!foveation_frame_ready()) return -1;
-	if(!g.vk.densityMaps) return 0;
-	if(!g.foveationOff || !g.xr.UpdateSwapchain) return -1;
+	if(!foveation_frame_ready()) { VRF_ResetPolicy(&g.foveationEyePolicy); return -1; }
+	if(!g.vk.densityMaps) { VRF_ResetPolicy(&g.foveationEyePolicy); return 0; }
+	if(!g.foveationOff || !g.xr.UpdateSwapchain) { VRF_ResetPolicy(&g.foveationEyePolicy); return -1; }
 	XrFoveationProfileFB profile=g.foveationOff;
 	int effective=0;
-	if(mode==1 && g.foveationFixedAvailable) { profile=g.foveationFixed; effective=1; }
-	else if(mode==2 && g.sessionState==XR_SESSION_STATE_FOCUSED && qualified_gaze && g.foveationEyeAvailable) {
+	if(mode==1 && g.sessionState==XR_SESSION_STATE_FOCUSED && g.foveationFixedAvailable) { profile=g.foveationFixed; effective=1; }
+	else if(mode==2 && g.sessionState==XR_SESSION_STATE_FOCUSED && allow_eye_tracking && g.foveationEyeAvailable) {
 		profile=g.foveationEye; effective=2;
 	}
+	if(effective!=2) VRF_ResetPolicy(&g.foveationEyePolicy);
 	if(!update_foveation_profile(profile)) {
+		VRF_ResetPolicy(&g.foveationEyePolicy);
 		if(g.terminal || !restore_foveation_off()) return -1;
 		return 0;
 	}
@@ -1462,15 +1469,21 @@ extern "C" int VRXR_UpdateVulkanFoveation(int mode, int qualified_gaze, float ce
 	XrFoveationEyeTrackedStateMETA state={XR_TYPE_FOVEATION_EYE_TRACKED_STATE_META};
 	if(!g.xr.FoveationEyeTrackedState || !ok("xrGetFoveationEyeTrackedStateMETA",g.xr.FoveationEyeTrackedState(g.session,&state)) ||
 	   !(state.flags&XR_FOVEATION_EYE_TRACKED_STATE_VALID_BIT_META)) {
+		VRF_ResetPolicy(&g.foveationEyePolicy);
 		if(g.terminal || !restore_foveation_off()) return -1;
 		return 0;
 	}
 	for(uint32_t eye=0;eye<XR_FOVEATION_CENTER_SIZE_META;++eye) {
 		const XrVector2f &center=state.foveationCenter[eye];
 		if(!std::isfinite(center.x) || !std::isfinite(center.y) || center.x < -1.f || center.x > 1.f || center.y < -1.f || center.y > 1.f) {
+			VRF_ResetPolicy(&g.foveationEyePolicy);
 			if(!restore_foveation_off()) return -1;
 			return 0;
 		}
+	}
+	if(!VRF_AdvanceEyeStability(&g.foveationEyePolicy,1)) {
+		if(!restore_foveation_off()) { VRF_ResetPolicy(&g.foveationEyePolicy); return -1; }
+		return 0;
 	}
 	// Publish both eyes together; an invalid second eye must not leak the
 	// first eye's center through an off/error result.

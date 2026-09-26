@@ -13,9 +13,12 @@ weapon, HUD, water, cutout, or transparent rendering.
   foveation only where a working gaze path is available. `vr_foveation 1`
   explicitly selects fixed foveation. No capability, gaze failure, or missing
   provider selects fixed foveation automatically.
-- Eye mode requires enabled tracking, a focused rendering frame, a valid and
-  tracked gaze with a known fresh expressed-pose time, and three consecutive
-  usable frames. Any failure returns full-quality shading immediately.
+- KHR eye mode requires enabled tracking, a focused rendering frame, a valid
+  and tracked `XR_EXT_eye_gaze_interaction` ray with a known fresh expressed-pose
+  time, and three consecutive usable frames. The proposed FB/META path uses
+  its own per-frame validity signal and the same three-frame stability rule;
+  it need not expose a separate application gaze action. Any failure returns
+  full-quality shading immediately.
 - The gaze action uses `XR_EXT_eye_gaze_interaction` and may be supplied by any
   conforming runtime/provider. Beyond 2e with Monado, Steam Frame streaming,
   Steam Frame standalone, Windows, and Linux ARM still need physical/runtime

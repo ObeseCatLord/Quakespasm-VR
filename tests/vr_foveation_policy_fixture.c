@@ -14,6 +14,16 @@ static vrxr_gaze_t usable_gaze(void) {
 
 int main(void) {
   vrf_policy_state_t state = {0};
+  vrf_policy_state_t runtime_state = {0};
+  assert(!VRF_AdvanceEyeStability(&runtime_state, 1));
+  assert(!VRF_AdvanceEyeStability(&runtime_state, 0));
+  assert(runtime_state.stable_frames == 0);
+  assert(!VRF_AdvanceEyeStability(&runtime_state, 1));
+  assert(!VRF_AdvanceEyeStability(&runtime_state, 1));
+  assert(VRF_AdvanceEyeStability(&runtime_state, 1));
+  assert(VRF_AdvanceEyeStability(&runtime_state, 1));
+  assert(!VRF_AdvanceEyeStability(&runtime_state, 0));
+  assert(runtime_state.stable_frames == 0);
   vrxr_frame_t frame;
   memset(&frame, 0, sizeof(frame));
   frame.should_render = 1;

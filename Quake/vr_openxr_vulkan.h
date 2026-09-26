@@ -94,12 +94,13 @@ int VRXR_GetVulkanEye(int eye, vrxr_vulkan_eye_t *target);
  * CPU waiting for each eye is unnecessary. Before VRXR_AbortFrame, discard any
  * unsubmitted recording that references acquired images; never submit it later. */
 int VRXR_VulkanEyeSubmitted(int eye);
-/* mode: 0 off, 1 explicit fixed, 2 eye with qualified_gaze supplied by the
- * caller's user-option and stability policy. This permission is independent
- * of XR_EXT_eye_gaze_interaction: XR_META_foveation_eye_tracked can be provided
- * without exposing an application gaze action, and its returned validity is
- * checked here. Returns effective mode
- * 0/1/2, or -1 when restoration/frame state fails and the caller must abort.
+/* mode: 0 off, 1 explicit fixed, 2 eye; allow_eye_tracking comes from the
+ * caller's user option. Three consecutive valid META samples are required
+ * here before eye mode takes effect; any invalid sample resets acquisition.
+ * This permission is independent of XR_EXT_eye_gaze_interaction: META can be
+ * provided without an application gaze action, and its returned validity is
+ * checked here. Returns effective mode 0/1/2, or -1 when restoration/frame
+ * state fails and the caller must abort.
  * Call once after BeginFrame acquired and waited every swapchain, after the
  * renderer fence wait and before commands reference XR images. centers is a
  * mandatory [left,right][x,y] OpenXR NDC output. It is zeroed for effective
@@ -107,7 +108,7 @@ int VRXR_VulkanEyeSubmitted(int eye);
  * profile and centers; the renderer must apply the appropriate density-map
  * offsets and negotiate all attachment/image flags before rendering mode 2.
  * This adapter does not enable QCOM or META image creation flags. */
-int VRXR_UpdateVulkanFoveation(int mode, int qualified_gaze, float centers[2][2]);
+int VRXR_UpdateVulkanFoveation(int mode, int allow_eye_tracking, float centers[2][2]);
 #ifdef __cplusplus
 }
 #endif

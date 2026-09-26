@@ -48,9 +48,9 @@ neither document proves support on all runtimes or headsets.
    count, framebuffer identity, synchronization and retirement under validation.
 3. Continue with full-rate cutouts, weapon, transparency, existing effects and
    postprocessing/UI using proven full-rate depth. Compare both eyes through
-   profile off/on/off, moving gaze, lost gaze and thin occluders. Reuse the
-   existing gaze freshness/stability policy and profile function; invalid gaze
-   selects off/full rate immediately. The [META profile structure](https://registry.khronos.org/OpenXR/specs/1.1/man/html/XrFoveationEyeTrackedProfileCreateInfoMETA.html)
+   profile off/on/off, moving gaze, lost gaze and thin occluders. Use META's
+   per-frame validity signal with the shared three-frame stability helper;
+   invalid state selects off/full rate immediately. The [META profile structure](https://registry.khronos.org/OpenXR/specs/1.1/man/html/XrFoveationEyeTrackedProfileCreateInfoMETA.html)
    has `flags=0`, which the imported backend already uses. The older
    `openxr` renderer manually applied QCOM density-map offsets from the
    returned center. Do not copy that step without proving it is needed:
@@ -124,7 +124,8 @@ not active in the current renderer because `GL_OpenXRAttach` still requests
 The [META eye-foveation extension](https://raw.githubusercontent.com/KhronosGroup/OpenXR-Docs/main/specification/sources/chapters/extensions/meta/meta_foveation_eye_tracked.adoc)
 has its own system-support and per-frame validity signals; it does not require
 the application to obtain an `XR_EXT_eye_gaze_interaction` action. The imported
-XR boundary now accepts a caller-qualified eye-mode request without requiring
-that separate gaze action to be active. The eventual renderer callsite must
-still honor `vr_eye_tracking` and stable, focused frames, and use the META
-validity result to turn the profile off immediately when tracking is lost.
+XR boundary now accepts a user-permitted eye-mode request without requiring
+that separate gaze action to be active. The XR boundary now uses the same
+three-frame stability helper as the KHR path, based on META validity. The
+eventual renderer callsite must still honor `vr_eye_tracking` and request eye
+mode only on appropriate focused frames.
