@@ -136,6 +136,16 @@ offset feature and creation flags on every used framebuffer attachment, plus
 granularity and layer-count compliance. Qualify these before adding offsets;
 if the required path cannot be established, select KHR or full rate.
 
+The [Vulkan format rules](https://docs.vulkan.org/spec/latest/chapters/formats.html)
+require `VK_FORMAT_R8G8_UNORM` density-map format support when the device feature
+is present. That proves a format the application *can* create, not the format
+of the image borrowed from OpenXR: [the FB image structure](https://registry.khronos.org/OpenXR/specs/1.1/man/html/XrSwapchainImageFoveationVulkanFB.html)
+returns only its handle and extent. Before attaching an RG8 view, the runtime
+integration must establish that image compatibility through runtime-specific
+evidence or validation and fail back to full rate on a rejected view. The
+existing Vulkan RG8 capability message is intentionally only a candidate
+diagnostic; it must not select the FDM device feature by itself.
+
 The user's compatibility preference is runtime-first **after qualification**:
 use XR_FB/XR_META on any runtime/device pair that completes this proof, keep
 the working KHR shading-rate path on other capable devices, and use full rate
