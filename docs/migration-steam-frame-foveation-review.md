@@ -32,15 +32,17 @@ the first **qualified** row below without inspecting headset names:
 | Runtime and device capability | Eye mode | Explicit fixed mode | Disabled or invalid gaze |
 | --- | --- | --- | --- |
 | FB/META profile plus a fully validated Vulkan FDM scene path | Runtime eye profile | FB fixed profile, only if requested | Full-rate scene |
-| KHR attachment shading rate and valid gaze action | Application gaze rate map | Application fixed rate map, only if requested | Full-rate rate map |
+| KHR attachment shading rate | Application gaze rate map only with a valid gaze action; full rate otherwise | Application fixed rate map, only if requested | Full-rate rate map |
 | Neither qualified | Full-rate scene | Full-rate scene | Full-rate scene |
 
-The eye-mode choice is also gated by the user-facing eye-tracking toggle. If
-the FB Vulkan path qualifies but the META eye profile does not, it can serve
-an explicitly requested fixed mode; it must not silently replace the eye-mode
-request with fixed foveation. Since the Vulkan FDM and KHR attachment-rate
-features are mutually exclusive, the selected backend is committed before
-device creation; a failure after FDM commitment falls back to full rate until
+The eye-mode choice is also gated by the user-facing eye-tracking toggle. A
+valid gaze action is needed for the KHR eye map, but not for an explicitly
+requested KHR fixed map. If the FB Vulkan path qualifies but the META eye
+profile does not, it can serve an explicitly requested fixed mode; it must
+not silently replace the eye-mode request with fixed foveation. Since the
+Vulkan FDM and KHR attachment-rate features are mutually exclusive, select
+the backend before device creation. A failure after FDM commitment falls back
+to full rate until
 the device can be recreated. This matrix describes the target selection policy,
 not functionality currently active in the renderer.
 
