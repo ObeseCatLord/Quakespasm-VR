@@ -69,7 +69,8 @@ typedef struct
 {
 	texture_t *texture;
 	short	   lightmap_idx;
-	short	   is_bmodel; // for gl_zfix
+	short	   is_bmodel; // existing gl_zfix grouping
+	short	   world_owned; // only static BSP world geometry may be foveated
 	short	   is_decal;
 	int		   max_indices;
 } indirectdraw_t;
@@ -982,7 +983,7 @@ void R_DrawIndirectBrushesFiltered (
 		const qboolean alpha_blend = alpha < 1.0f;
 		const qboolean is_decal = indirect_draws[i].is_decal;
 		const qboolean shading_rate_eligible = R_WorldFoveationEligible (
-			!indirect_draws[i].is_bmodel, alpha_test, alpha_blend, is_decal || draw_water || draw_sky);
+			indirect_draws[i].world_owned, alpha_test, alpha_blend, is_decal || draw_water || draw_sky);
 		if (!R_WorldDrawFilterAllows (filter, shading_rate_eligible))
 			continue;
 
@@ -1374,36 +1375,39 @@ typedef struct
 	texture_t *texture;
 	uint32_t   lightmap_idx;
 	uint32_t   is_bmodel;
+	uint32_t   world_owned;
 } indirectdraw_key_t;
 
 static uint32_t IndirectDrawHash (const void *const value)
 {
 	const indirectdraw_key_t *key = value;
-	return HashCombine (HashPtr (&key->texture), HashCombine (HashInt32 (&key->lightmap_idx), HashInt32 (&key->is_bmodel)));
+	return HashCombine (HashPtr (&key->texture),
+		HashCombine (HashInt32 (&key->lightmap_idx), HashCombine (HashInt32 (&key->is_bmodel), HashInt32 (&key->world_owned))));
 }
 
 static qboolean IndirectDrawEqual (const void *const a, const void *const b)
 {
 	const indirectdraw_key_t *ka = a;
 	const indirectdraw_key_t *kb = b;
-	return ka->texture == kb->texture && ka->lightmap_idx == kb->lightmap_idx && ka->is_bmodel == kb->is_bmodel;
+	return ka->texture == kb->texture && ka->lightmap_idx == kb->lightmap_idx && ka->is_bmodel == kb->is_bmodel &&
+		ka->world_owned == kb->world_owned;
 }
 
-static void UpdateIndirectStructs (msurface_t *surf, qboolean is_bmodel, hash_map_t *draw_map)
+static void UpdateIndirectStructs (msurface_t *surf, qboolean is_bmodel, qboolean world_owned, hash_map_t *draw_map)
 {
 	static int	   last;
 	int			   i;
 	const qboolean split_decal = is_bmodel && surf->texinfo->texture->type == TEXTYPE_CUTOUT;
 	const int	   num_draws = split_decal ? 2 : 1;
 	if (last < used_indirect_draws && indirect_draws[last].lightmap_idx == surf->lightmaptexturenum && indirect_draws[last].texture == surf->texinfo->texture &&
-		indirect_draws[last].is_bmodel == is_bmodel && !indirect_draws[last].is_decal)
+		indirect_draws[last].is_bmodel == is_bmodel && indirect_draws[last].world_owned == world_owned && !indirect_draws[last].is_decal)
 	{
 		surf->indirect_idx = last;
 		for (i = 0; i < num_draws; ++i)
 			indirect_draws[last + i].max_indices += 3 * (surf->numedges - 2);
 		return;
 	}
-	const indirectdraw_key_t key = {surf->texinfo->texture, surf->lightmaptexturenum, is_bmodel};
+	const indirectdraw_key_t key = {surf->texinfo->texture, surf->lightmaptexturenum, is_bmodel, world_owned};
 	const int				*index = HashMap_Lookup (int, draw_map, &key);
 	if (index)
 	{
@@ -1426,6 +1430,7 @@ static void UpdateIndirectStructs (msurface_t *surf, qboolean is_bmodel, hash_ma
 		draw->texture = surf->texinfo->texture;
 		draw->lightmap_idx = surf->lightmaptexturenum;
 		draw->is_bmodel = is_bmodel;
+		draw->world_owned = world_owned;
 		draw->is_decal = split_decal && i == 1;
 		draw->max_indices = 3 * (surf->numedges - 2);
 	}
@@ -2011,7 +2016,8 @@ void GL_BuildLightmaps (void)
 					R_AssignWorkgroupBounds (surf, submodel);
 			}
 			if (indirect_ready)
-				UpdateIndirectStructs (surf, INDIRECT_ZBIAS && surface_index >= indirect_bmodel_start, draw_map);
+				UpdateIndirectStructs (surf, INDIRECT_ZBIAS && surface_index >= indirect_bmodel_start,
+					j == 1 && surface_index < indirect_bmodel_start, draw_map);
 
 			lm_compute_surface_data_t *surf_data = &surface_data[surface_index];
 			surf_data->packed_lightstyles = ((uint32_t)(surf->styles[0]) << 0) | ((uint32_t)(surf->styles[1]) << 8) | ((uint32_t)(surf->styles[2]) << 16) |

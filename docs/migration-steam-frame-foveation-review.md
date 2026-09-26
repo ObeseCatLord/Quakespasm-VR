@@ -128,6 +128,10 @@ does not split or activate an FDM scene pass. The next integration must bind
 these selections to globally ordered coarse-color, depth-replay and protected
 stages. For large maps, measure the cost of iterating indirect draws multiple
 times and optimize that routing if it erases the fragment savings.
+Indirect draws now carry world ownership separately from the existing
+`INDIRECT_ZBIAS` grouping. External BSP models and world submodels therefore
+stay protected even when the z-fighting workaround is disabled, without
+changing which draws receive that workaround.
 
 The [META eye-foveation extension](https://raw.githubusercontent.com/KhronosGroup/OpenXR-Docs/main/specification/sources/chapters/extensions/meta/meta_foveation_eye_tracked.adoc)
 has its own system-support and per-frame validity signals; it does not require
