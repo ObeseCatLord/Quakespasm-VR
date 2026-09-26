@@ -923,6 +923,7 @@ static void GL_ClearOpenXRFragmentShadingRate (void)
 	vulkan_globals.openxr_fragment_shading_rate_active = false;
 	vulkan_globals.openxr_fragment_density_map_enabled = false;
 	vulkan_globals.openxr_fragment_density_map_active = false;
+	vulkan_globals.openxr_fragment_density_map_max_texel_size = (VkExtent2D){0, 0};
 	vulkan_globals.openxr_fragment_shading_rate_texel_size.width = 0;
 	vulkan_globals.openxr_fragment_shading_rate_texel_size.height = 0;
 	vulkan_globals.openxr_layered_shading_rate_attachments = false;
@@ -1823,8 +1824,11 @@ static void GL_InitDevice (void)
 			(density_image_properties.sampleCounts & VK_SAMPLE_COUNT_1_BIT) && density_image_properties.maxArrayLayers >= 2)
 		{
 			if (fragment_density_map_features.fragmentDensityMapNonSubsampledImages)
+			{
+				vulkan_globals.openxr_fragment_density_map_max_texel_size = fragment_density_map_properties.maxFragmentDensityTexelSize;
 				Con_Printf ("OpenXR runtime FDM candidate: Vulkan feature, RG8 array format and non-subsampled scene images available; eye profile %s. Borrowed-map contract still unverified.\n",
 					VRXR_VulkanFoveationEyeSupported () ? "available" : "unavailable");
+			}
 			else
 				Con_Printf ("OpenXR runtime FDM requires subsampled scene images; this renderer currently keeps KHR shading rate or full-rate rendering.\n");
 		}
@@ -3526,7 +3530,12 @@ static void GL_CreateXRImageViews (void)
 			density_view_failed = true;
 		if (openxr_density_image_views && !density_view_failed)
 		{
-			if (!image.density_image || !image.density_width || !image.density_height)
+			const VkExtent2D max_texel = vulkan_globals.openxr_fragment_density_map_max_texel_size;
+			const uint32_t minimum_width = max_texel.width ?
+				(unsigned)vid.width / max_texel.width + ((unsigned)vid.width % max_texel.width != 0) : UINT32_MAX;
+			const uint32_t minimum_height = max_texel.height ?
+				(unsigned)vid.height / max_texel.height + ((unsigned)vid.height % max_texel.height != 0) : UINT32_MAX;
+			if (!image.density_image || image.density_width < minimum_width || image.density_height < minimum_height)
 			{
 				density_view_failed = true;
 				continue;

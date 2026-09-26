@@ -1434,6 +1434,8 @@ extern "C" int VRXR_AttachVulkan(uint32_t queue_family, uint32_t queue_index,
 }
 extern "C" int VRXR_VulkanFoveationSupported(void) { return g.useVulkan && g.foveationSupported ? 1 : 0; }
 extern "C" int VRXR_VulkanFoveationEyeSupported(void) { return g.useVulkan && g.foveationEyeSupported ? 1 : 0; }
+extern "C" int VRXR_VulkanFoveationFixedAvailable(void) { return g.useVulkan && g.session && g.vk.densityMaps && g.foveationFixedAvailable ? 1 : 0; }
+extern "C" int VRXR_VulkanFoveationEyeAvailable(void) { return g.useVulkan && g.session && g.vk.densityMaps && g.foveationEyeAvailable ? 1 : 0; }
 extern "C" int VRXR_VulkanSwapchainImageFlagsSupported(void) { return g.useVulkan && g.vulkanSwapchainImageFlagsSupported ? 1 : 0; }
 extern "C" VkFormat VRXR_VulkanColorFormat(void) {
 	return g.useVulkan && g.initialized && g.session && !g.terminal ? g.vk.format : VK_FORMAT_UNDEFINED;

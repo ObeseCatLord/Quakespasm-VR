@@ -58,6 +58,10 @@ int VRXR_AttachVulkan(uint32_t queue_family, uint32_t queue_index,
  * required. Eye support includes the runtime system property. */
 int VRXR_VulkanFoveationSupported(void);
 int VRXR_VulkanFoveationEyeSupported(void);
+/* Attached-session profiles, after successful creation. Discovery above does
+ * not guarantee the runtime accepted either optional profile. */
+int VRXR_VulkanFoveationFixedAvailable(void);
+int VRXR_VulkanFoveationEyeAvailable(void);
 /* Runtime extension discovery only; this does not prove Vulkan device support. */
 int VRXR_VulkanSwapchainImageFlagsSupported(void);
 /* Attached-session format for pipeline warmup; no image is acquired/exposed.
