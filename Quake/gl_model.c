@@ -1197,14 +1197,17 @@ static texture_t *Mod_LoadWadTexture (qmodel_t *mod, wad_t *wads, const char *na
 		Con_Warning ("Missing external texture '%.16s' in wads; trying image override or placeholder\n", name);
 		return NULL;
 	}
+	const int disk_bytes = LittleLong (info->disksize);
 	if (info->compression != CMP_NONE || info->filepos < 0 ||
-		info->size < (int)sizeof (mt) ||
-		(qfilesize_t)info->filepos + info->size > wad->fh.length)
+		info->size < (int)sizeof (mt) || disk_bytes < (int)sizeof (mt) ||
+		(qfilesize_t)info->filepos + disk_bytes > wad->fh.length)
 	{
 		Con_Warning ("Invalid external texture '%.16s' in %s\n", info->name, wad->name);
 		return NULL;
 	}
-	available_bytes = (size_t)info->size - sizeof (mt);
+	// For uncompressed lumps, the directory's physical span is the upper
+	// bound even if its logical size is larger or was repaired by WAD loading.
+	available_bytes = (size_t)q_min (info->size, disk_bytes) - sizeof (mt);
 
 	// override the texture from the bsp file
 	if (FS_fseek (&wad->fh, info->filepos, SEEK_SET) != 0 ||
