@@ -23,6 +23,27 @@ allowlist. Valve [documents the FB/META route for Steam Frame](https://partner.s
 and Meta [documents the FB Vulkan route for native OpenXR](https://developers.meta.com/horizon/documentation/native/android/os-fixed-foveated-rendering/);
 neither document proves support on all runtimes or headsets.
 
+The compatibility preference is about runtime support, not a claim that
+FB/META works on more headsets than KHR today. The [FB Vulkan extension](https://registry.khronos.org/OpenXR/specs/1.1/man/html/XR_FB_foveation_vulkan.html)
+defines the borrowed density-map route; the [META eye-tracked extension](https://registry.khronos.org/OpenXR/specs/1.1/man/html/XR_META_foveation_eye_tracked.html)
+adds an optional runtime eye profile. Valve lists both for Steam Frame. Select
+the first **qualified** row below without inspecting headset names:
+
+| Runtime and device capability | Eye mode | Explicit fixed mode | Disabled or invalid gaze |
+| --- | --- | --- | --- |
+| FB/META profile plus a fully validated Vulkan FDM scene path | Runtime eye profile | FB fixed profile, only if requested | Full-rate scene |
+| KHR attachment shading rate and valid gaze action | Application gaze rate map | Application fixed rate map, only if requested | Full-rate rate map |
+| Neither qualified | Full-rate scene | Full-rate scene | Full-rate scene |
+
+The eye-mode choice is also gated by the user-facing eye-tracking toggle. If
+the FB Vulkan path qualifies but the META eye profile does not, it can serve
+an explicitly requested fixed mode; it must not silently replace the eye-mode
+request with fixed foveation. Since the Vulkan FDM and KHR attachment-rate
+features are mutually exclusive, the selected backend is committed before
+device creation; a failure after FDM commitment falls back to full rate until
+the device can be recreated. This matrix describes the target selection policy,
+not functionality currently active in the renderer.
+
 | Review finding | Disposition |
 | --- | --- |
 | Runtime FDM is pass-wide; the current scene pass mixes opaque world with alpha-tested surfaces, weapons, particles and transparency. | **Adopt.** Isolate eligible opaque rendering in a graphics pass. Do not assume another subpass or KHR draw-level rate state protects those draws. |

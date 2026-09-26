@@ -1818,9 +1818,11 @@ static void GL_InitDevice (void)
 				VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_FRAGMENT_DENSITY_MAP_BIT_EXT, 0, &density_image_properties) == VK_SUCCESS &&
 			(density_image_properties.sampleCounts & VK_SAMPLE_COUNT_1_BIT) && density_image_properties.maxArrayLayers >= 2)
 		{
-			Con_Printf ("OpenXR runtime FDM candidate: Vulkan feature and RG8 array format available; eye profile %s, non-subsampled scene images %s. Borrowed-map contract still unverified.\n",
-				VRXR_VulkanFoveationEyeSupported () ? "available" : "unavailable",
-				fragment_density_map_features.fragmentDensityMapNonSubsampledImages ? "supported" : "unsupported");
+			if (fragment_density_map_features.fragmentDensityMapNonSubsampledImages)
+				Con_Printf ("OpenXR runtime FDM candidate: Vulkan feature, RG8 array format and non-subsampled scene images available; eye profile %s. Borrowed-map contract still unverified.\n",
+					VRXR_VulkanFoveationEyeSupported () ? "available" : "unavailable");
+			else
+				Con_Printf ("OpenXR runtime FDM requires subsampled scene images; this renderer currently keeps KHR shading rate or full-rate rendering.\n");
 		}
 	}
 #endif
