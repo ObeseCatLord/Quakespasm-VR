@@ -4129,7 +4129,7 @@ qboolean GL_BeginRendering (qboolean use_tasks, task_handle_t *begin_rendering_t
 		// Clean up an abandoned serial refresh before reusing command buffers.
 		VRXR_AbortFrame ();
 		const int requested_mode = VRF_RequestedMode (vr_foveation.value);
-		const int gaze_enabled = vulkan_globals.openxr_fragment_shading_rate_active && requested_mode == VRF_MODE_EYE_TRACKED &&
+		const int gaze_enabled = key_dest != key_menu && vulkan_globals.openxr_fragment_shading_rate_active && requested_mode == VRF_MODE_EYE_TRACKED &&
 			VRF_EyeTrackingEnabled (vr_eye_tracking.value) && VRXR_GazeSupported ();
 		VRXR_SetGazeEnabled (gaze_enabled);
 		const int begun = VRXR_BeginFrame (&openxr_frame);
