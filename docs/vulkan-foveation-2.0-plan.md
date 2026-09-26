@@ -110,6 +110,12 @@ fixture covers gaze movement and one-layer finer-eye mapping, but there is no
 end-to-end gaze-provider or forced nonlayered-GPU proof yet. Profile CPU/GPU
 frame times and visual quality on `mj4m1` and other large maps before claiming
 a performance gain; the shared-image rewrite barrier may serialize frames.
+For Steam Frame standalone, use Valve's [Performance Assessment Overlay](https://partner.steamgames.com/doc/steamhardware/steamframe/compat/perf_criteria)
+to capture effective resolution, frame rate, target frame time, and transient
+violations during normal gameplay. The [standalone review criteria](https://partner.steamgames.com/doc/steamhardware/steamframe/compat)
+require at least 72 fps at 1728×1728 for VR. Compare foveation off, qualified
+eye tracking, and explicit fixed mode at the same render scale and scene; report
+GPU frame time and both-eye visual quality, not only the runtime's chosen profile.
 Physical Beyond/Steam Frame eye tracking, Windows, and Linux ARM verification
 remain deferred as requested.
 
