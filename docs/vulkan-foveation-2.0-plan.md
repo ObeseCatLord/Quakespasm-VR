@@ -78,6 +78,10 @@ recommends runtime-provided VRS. Adding it requires an attachment/image-lifetime
 adapter inside vkQuake's existing pass graph; the portable KHR path remains
 useful on GPUs that expose it. No current source evidence proves either path
 works on Steam Frame hardware yet.
+The [Steam Frame FDM senior design review](migration-steam-frame-foveation-review.md)
+sets the implementation boundary: runtime FDM and this KHR backend need
+mutually exclusive Vulkan device features, and protected draws need full-rate
+depth/coverage before the runtime path can be enabled.
 
 ## Astra senior-review disposition
 
