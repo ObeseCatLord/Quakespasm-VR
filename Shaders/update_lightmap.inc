@@ -17,6 +17,13 @@ layout (push_constant) uniform PushConsts
 	float view_pos_x;
 	float view_pos_y;
 	float view_pos_z;
+	uint  stereo_active;
+	float eye0_x;
+	float eye0_y;
+	float eye0_z;
+	float eye1_x;
+	float eye1_y;
+	float eye1_z;
 #ifdef RAY_QUERIES
 	uint shadow_samples;
 #endif
@@ -274,11 +281,18 @@ void main ()
 			normal = normalize (vec3 (dot (row0.xyz, normal), dot (row1.xyz, normal), dot (row2.xyz, normal)));
 		}
 
-		// texels on surfaces facing away from the camera can't be rasterized this frame, write base
-		// light only; the update runs before rendering, so they are re-lit with dlights on the same
-		// frame the camera turns back to them
+		// A surface facing either eye can be rasterized by multiview. Only skip
+		// dynamic light work when both eyes are behind it. Desktop retains the
+		// original single-view test.
 		const vec3 view_pos = vec3 (push_constants.view_pos_x, push_constants.view_pos_y, push_constants.view_pos_z);
-		if (dot (view_pos - world_pos, normal) > 0.0f)
+		bool facing_view = dot (view_pos - world_pos, normal) > 0.0f;
+		if (push_constants.stereo_active != 0u)
+		{
+			const vec3 eye0 = vec3 (push_constants.eye0_x, push_constants.eye0_y, push_constants.eye0_z);
+			const vec3 eye1 = vec3 (push_constants.eye1_x, push_constants.eye1_y, push_constants.eye1_z);
+			facing_view = dot (eye0 - world_pos, normal) > 0.0f || dot (eye1 - world_pos, normal) > 0.0f;
+		}
+		if (facing_view)
 			for (uint light_mask_index = 0; light_mask_index < LIGHT_MASK_SIZE; ++light_mask_index)
 			{
 				uint mask = light_mask[light_mask_index];
