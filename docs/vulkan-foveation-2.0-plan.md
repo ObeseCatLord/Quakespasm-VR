@@ -20,6 +20,16 @@ weapon, HUD, water, cutout, or transparent rendering.
   conforming runtime/provider. Beyond 2e with Monado, Steam Frame streaming,
   Steam Frame standalone, Windows, and Linux ARM still need physical/runtime
   qualification. Eye tracking is not set up on the user's Beyond yet.
+- Valve's [Steam Frame custom-engine guide](https://partner.steamgames.com/doc/steamhardware/steamframe/engines/custom)
+  explicitly recommends OpenXR and lists `XR_EXT_eye_gaze_interaction` plus
+  the FB/META runtime foveation extensions. Its [standalone deployment guide](https://partner.steamgames.com/doc/steamhardware/steamframe/loadgames)
+  supports a Linux ARM64 binary under Steam Linux Runtime 3.0 ARM64 (Sniper);
+  Android 10 is an alternative target, not a requirement for this fork.
+  Streaming from a PC and running the Linux ARM64 binary on the headset remain
+  separate release checks. Valve's [Frame input guide](https://partner.steamgames.com/doc/steamhardware/steamframe/input)
+  documents the native OpenXR controller profile and Touch fallback. The
+  imported backend suggests both profiles; profile presence alone is not a
+  substitute for testing button and pose behavior on hardware.
 - Desktop Vulkan and headsets without accessible gaze retain their existing
   rendering. Fixed mode is optional even without eye tracking.
 
@@ -58,6 +68,16 @@ tile math, plus a prior Vulkan implementation to consult. Its separate renderer
 is not imported. Runtime FB/META fragment-density-map foveation is a later,
 separate device/pass design; its borrowed-image and protected-depth contract
 is not established by the KHR path.
+
+For the Steam Frame standalone target, that later runtime path is a release
+feature gap: `GL_OpenXRAttach` currently passes `density_maps=0` to the reused
+backend, and `VRXR_UpdateVulkanFoveation` has no renderer callsite. Valve's
+[custom-engine guide](https://partner.steamgames.com/doc/steamhardware/steamframe/engines/custom)
+lists those runtime extensions, while its [Unreal guidance](https://partner.steamgames.com/doc/steamhardware/steamframe/engines/unreal)
+recommends runtime-provided VRS. Adding it requires an attachment/image-lifetime
+adapter inside vkQuake's existing pass graph; the portable KHR path remains
+useful on GPUs that expose it. No current source evidence proves either path
+works on Steam Frame hardware yet.
 
 ## Astra senior-review disposition
 
