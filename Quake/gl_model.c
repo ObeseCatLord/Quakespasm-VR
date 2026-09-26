@@ -1168,6 +1168,8 @@ static wad_t *Mod_LoadWadFiles (qmodel_t *mod)
 	return NULL;
 }
 
+static textype_t Mod_TextureTypeFromName (const char *texname);
+
 /*
 =================
 Mod_LoadWadTexture
@@ -1192,7 +1194,7 @@ static texture_t *Mod_LoadWadTexture (qmodel_t *mod, wad_t *wads, const char *na
 	// ensure we're dealing with a miptex
 	if (!info || (info->type != TYP_MIPTEX && (wad->id != WADID_VALVE || info->type != TYP_MIPTEX_PALETTE)))
 	{
-		Con_Warning ("Missing external texture '%s' in wads, using BSP\n", name);
+		Con_Warning ("Missing external texture '%.16s' in wads; trying image override or placeholder\n", name);
 		return NULL;
 	}
 	if (info->compression != CMP_NONE || info->filepos < 0 ||
@@ -1257,6 +1259,7 @@ static texture_t *Mod_LoadWadTexture (qmodel_t *mod, wad_t *wads, const char *na
 	memcpy (tx->name, mt.name, sizeof (tx->name));
 	tx->width = mt.width;
 	tx->height = mt.height;
+	tx->type = Mod_TextureTypeFromName (tx->name);
 	for (i = 0; i < MIPLEVELS; i++)
 		tx->offsets[i] = mt.offsets[i] + sizeof (texture_t) - sizeof (miptex_t);
 	// the pixels immediately follow the structures
@@ -1279,8 +1282,6 @@ static texture_t *Mod_LoadWadTexture (qmodel_t *mod, wad_t *wads, const char *na
 
 	return tx;
 }
-
-static textype_t Mod_TextureTypeFromName (const char *texname);
 
 /* Keep the existing external-image lookup available when a BSP references a
  * missing WAD. The source pixels must still be valid if no replacement image
