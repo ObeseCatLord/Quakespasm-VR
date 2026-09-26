@@ -78,7 +78,7 @@ static qboolean SV_VRContactPolicyEnabled (const cvar_t *policy)
 qboolean SV_VRStockAxeMeleeEnabled (void)
 {
 	return SV_VRContactPolicyEnabled (&sv_immersive_melee) &&
-		SV_VRStockAxeContactProfile () == VR_WEAPON_CONTACT_PROFILE_STOCK;
+		SV_VRStockAxeContactProfile () != VR_WEAPON_CONTACT_PROFILE_NONE;
 }
 
 qboolean SV_VRDwellBerserkMeleeEnabled (void)
@@ -4162,7 +4162,7 @@ static void SV_AppendWeaponContactProtocol (client_t *client)
 	if (SV_VRStockAxeMeleeEnabled ())
 	{
 		mode |= VR_WEAPON_CONTACT_CAP_MELEE;
-		profile = VR_WEAPON_CONTACT_PROFILE_STOCK;
+		profile = SV_VRStockAxeContactProfile ();
 	}
 	else if (SV_VRDwellBerserkMeleeEnabled ())
 	{

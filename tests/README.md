@@ -1565,3 +1565,35 @@ damage/cooldown, and consumed-stroke continuity. The held-trigger check clears
 cooldown before verifying suppression; switching to desktop input then confirms
 that native attacks still schedule. It covers shared server behavior changed
 by the Dwell integration, not headset tracking or rendering.
+
+## Alkaline/LimJam axe program admission
+
+`vr_alk_program_fixture.c` calls the production axe descriptor gate against the
+installed Alkaline and LimJam `progs.dat` images. It checks the loader's CRC16,
+SHA-256, packed function layouts, and the `W_FireAxe` trace-call site. Mutating
+the hash or trace opcode must close admission. The script extracts read-only PAK
+contents into a disposable test directory; set `QSVR_TEST_ASSETS` if the local
+game root differs.
+
+```sh
+bash tests/vr_alk_program_fixture.sh
+```
+
+This is a program-identity fixture. It does not execute a physical sweep,
+QuakeC damage, controller input, or headset presentation.
+
+`vr_alk_calibration_fixture.c` extends the production calibration reload harness.
+It checks that only the Alkaline and LimJam game roots receive the axe muzzle
+fallback, authored schema entries override it, and a clean reload restores it.
+
+```sh
+cc -std=gnu11 -DUSE_SDL3 -D_GNU_SOURCE -Wall -Wextra -Werror \
+  -Wno-unused-parameter -Wno-sign-compare -Wno-missing-field-initializers \
+  -ffunction-sections -fdata-sections -fsanitize=address,undefined \
+  -fno-sanitize-recover=all -fno-omit-frame-pointer -IQuake \
+  tests/vr_alk_calibration_fixture.c Quake/vr_weapon_calibration.c \
+  Quake/vr_weapon_schema.c Quake/common.c -Wl,--gc-sections \
+  -Wl,--wrap=COM_LoadFile $(pkg-config --cflags --libs sdl3) -lm \
+  -o /tmp/qsvr-alk-calibration-fixture
+ASAN_OPTIONS=detect_leaks=0 /tmp/qsvr-alk-calibration-fixture
+```

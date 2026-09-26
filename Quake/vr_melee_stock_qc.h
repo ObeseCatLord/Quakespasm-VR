@@ -1,5 +1,5 @@
 /*
- * Exact identity gate for the first stock-axe physical-melee vertical.
+ * Exact identity gate for the stock and Alkaline-family axe melee adapters.
  * Keep this narrow: a familiar function name or weapon bit is not enough to
  * authorize a server-side QC trace substitution.
  */
@@ -18,6 +18,7 @@ typedef struct
 	int stand_index, stand_statement;
 	int run_index, run_statement, run_parm_start, run_locals;
 	int weapon_bit;
+	qboolean alkaline;
 } sv_vr_stock_axe_descriptor_t;
 
 /* Verified against the packed progs.dat identities. Rogue is accepted only
@@ -31,7 +32,15 @@ static const sv_vr_stock_axe_descriptor_t sv_vr_stock_axe_descriptors[] = {
 		4828, 298, 10028, 299, 10079, 4899, 2, 4096},
 	{54028, 38916, 3316, 6420,
 		239, 7793, 5625, 284, 10018, 275, 9046, 5739, 283, 9992,
-		7803, 326, 13158, 327, 13196, 0, 0, 2048}
+		7803, 326, 13158, 327, 13196, 0, 0, 2048},
+	/* Alkaline and LimJam retain the same physical trace seam, but have
+	 * different idle and prelude rules from the base-game axe. */
+	{30793, 78671, 5767, 12608,
+		330, 12154, 9431, 377, 14446, 376, 14321, 0, 408, 16031,
+		12167, 469, 19607, 470, 19687, 9771, 1, 4096, true},
+	{32416, 85097, 6131, 13769,
+		354, 13004, 10242, 405, 15600, 404, 15475, 0, 438, 17324,
+		13017, 499, 21050, 500, 21130, 10627, 1, 4096, true}
 };
 
 static qboolean SV_VRStockAxeFunctionPin(int index, const char *name,
@@ -71,7 +80,8 @@ static qboolean SV_VRStockAxeFunctionStatementPin(
 		!SV_VRStockAxeFunctionPin(descriptor->sound_index, "SuperDamageSound",
 		descriptor->sound_statement, 0, 0, 0, NULL) ||
 		!SV_VRStockAxeFunctionPin(descriptor->attack_index, "W_Attack",
-		descriptor->attack_statement, descriptor->attack_parm_start, 1, 0, NULL) ||
+		descriptor->attack_statement, descriptor->attack_parm_start,
+		descriptor->alkaline ? 0 : 1, 0, NULL) ||
 		!SV_VRStockAxeFunctionPin(descriptor->frame_index, "W_WeaponFrame",
 		descriptor->frame_statement, 0, 0, 0, NULL) ||
 		!SV_VRStockAxeFunctionPin(descriptor->stand_index, "player_stand1",
@@ -152,6 +162,18 @@ static const sv_vr_stock_axe_descriptor_t *SV_VRStockAxeMeleeDescriptor(void)
 		0x20, 0x8c, 0xeb, 0xe9, 0x78, 0x04, 0xd3, 0x9f,
 		0x18, 0xfd, 0x69, 0xb7, 0x66, 0x46, 0x27, 0xac
 	};
+	static const byte alk_sha256[32] = {
+		0x8c, 0x74, 0x25, 0xde, 0x5a, 0xc4, 0x4b, 0x26,
+		0xf8, 0x3c, 0x3d, 0xbe, 0x30, 0x92, 0x9f, 0x08,
+		0x47, 0xc0, 0x7d, 0x28, 0x4e, 0x92, 0xf7, 0xae,
+		0x72, 0x65, 0x00, 0x90, 0x4c, 0xbd, 0x25, 0x37
+	};
+	static const byte limjam_sha256[32] = {
+		0xe2, 0x8d, 0xba, 0x32, 0x61, 0xe5, 0x61, 0x24,
+		0x6f, 0xf1, 0x2c, 0x56, 0x78, 0xeb, 0xce, 0xa1,
+		0xdc, 0x67, 0x20, 0x79, 0x8c, 0x34, 0x00, 0x27,
+		0x7f, 0xcc, 0x6e, 0x40, 0x66, 0x6b, 0x9e, 0xeb
+	};
 	const sv_vr_stock_axe_descriptor_t *descriptor = SV_VRStockAxeDescriptor();
 	if (!descriptor)
 		return NULL;
@@ -164,6 +186,12 @@ static const sv_vr_stock_axe_descriptor_t *SV_VRStockAxeMeleeDescriptor(void)
 		return descriptor;
 	if (descriptor->progscrc == 54028 && qcvm->progssize == 577846 &&
 		!memcmp (qcvm->progssha256, rogue_sha256, sizeof (rogue_sha256)))
+		return descriptor;
+	if (descriptor->progscrc == 30793 && qcvm->progssize == 1111198 &&
+		!memcmp (qcvm->progssha256, alk_sha256, sizeof (alk_sha256)))
+		return descriptor;
+	if (descriptor->progscrc == 32416 && qcvm->progssize == 1195538 &&
+		!memcmp (qcvm->progssha256, limjam_sha256, sizeof (limjam_sha256)))
 		return descriptor;
 	return NULL;
 }

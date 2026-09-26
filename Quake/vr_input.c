@@ -98,7 +98,8 @@ static qboolean VR_InputMeleeAuthorized (void)
 {
 	return cl.protocol_qsvr == QSVR_PROTOCOL_PINNED &&
 		(cl.vr_weapon_contact_mode & VR_WEAPON_CONTACT_CAP_MELEE) != 0 &&
-		cl.vr_weapon_contact_profile == VR_WEAPON_CONTACT_PROFILE_STOCK &&
+		(cl.vr_weapon_contact_profile == VR_WEAPON_CONTACT_PROFILE_STOCK ||
+		 cl.vr_weapon_contact_profile == VR_WEAPON_CONTACT_PROFILE_ALK) &&
 		vr_immersive_melee.value != 0.0f;
 }
 
@@ -1531,6 +1532,10 @@ static qboolean VR_InputSelectedStockAxe (int *modelindex_out,
 	stockaxe_edge_t *edge_out)
 {
 	const int modelindex = cl.stats[STAT_WEAPON];
+	const qboolean alkaline = cl.vr_weapon_contact_profile ==
+		VR_WEAPON_CONTACT_PROFILE_ALK;
+	const char *modelname = alkaline ? "progs/v_alkaxe20fps.mdl" :
+		"progs/v_axe.mdl";
 	qmodel_t *model;
 	aliashdr_t *geometry;
 	stockaxe_edge_t edge;
@@ -1552,11 +1557,12 @@ static qboolean VR_InputSelectedStockAxe (int *modelindex_out,
 		return false;
 	model = cl.model_precache[modelindex];
 	if (!model || model->needload || model != cl.viewent.model ||
-		strcmp (model->name, "progs/v_axe.mdl") || skin < 0)
+		strcmp (model->name, modelname) || skin < 0)
 		return false;
 	geometry = (aliashdr_t *)Mod_Extradata_CheckSkin (model, skin);
 	if (!geometry || geometry->poseverttype != PV_QUAKE1 ||
-		!Mod_GetStockAxeEdge (model, skin, &edge) || !edge.valid)
+		!(alkaline ? Mod_GetAlkalineAxeEdge (model, skin, &edge) :
+			Mod_GetStockAxeEdge (model, skin, &edge)) || !edge.valid)
 		return false;
 
 	*modelindex_out = modelindex;

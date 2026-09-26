@@ -173,6 +173,20 @@ static const vr_weapon_schema_entry_t vr_stock_axe_fallback[] = {
 	},
 };
 
+/* Donor Alkaline axe defaults, also present in the installed alk profile.
+ * LimJam uses the same viewmodel but omits its calibration from vr_weapons.txt. */
+static const vr_weapon_schema_entry_t vr_alk_axe_fallback[] = {
+	{
+		.viewmodel_path = "progs/v_alkaxe20fps.mdl",
+		.held_offset = {12.0f, 54.0f, 39.5f},
+		.has_held_offset = true,
+		.held_scale = 0.25f,
+		.has_held_scale = true,
+		.muzzle_offset = {0.0f, 0.0f, 39.5f},
+		.has_muzzle_offset = true,
+	},
+};
+
 /* Arcane Dimensions defaults from the donor InitAllWeaponCVars AD branch
  * and the installed AD vr_weapons.txt. Classic muzzle Z follows held Z. */
 #define VR_AD_WEAPON_PROFILE(path, x, y, z, scale) \
@@ -2044,6 +2058,17 @@ static qboolean VR_WeaponCalibrationApplyEnyoFallbacks(void)
 		sizeof(vr_enyo_weapon_fallbacks[0]));
 }
 
+static qboolean VR_WeaponCalibrationApplyAlkalineAxeFallback(void)
+{
+	const char *game = COM_SkipPath(com_gamedir);
+
+	if (!game || (q_strcasecmp(game, "alk") &&
+		q_strcasecmp(game, "limjam")))
+		return true;
+	return VR_WeaponCalibrationApplySchema(vr_alk_axe_fallback,
+		sizeof(vr_alk_axe_fallback) / sizeof(vr_alk_axe_fallback[0]));
+}
+
 static qboolean VR_WeaponCalibrationApplyADRootFallbacks(void)
 {
 	const char *game = COM_SkipPath(com_gamedir);
@@ -2106,6 +2131,7 @@ static qboolean VR_WeaponCalibrationApplyBuiltinFallbacks(void)
 		VR_WeaponCalibrationApplySchema(vr_stock_axe_fallback,
 			sizeof(vr_stock_axe_fallback) /
 			sizeof(vr_stock_axe_fallback[0])) &&
+		VR_WeaponCalibrationApplyAlkalineAxeFallback() &&
 		VR_WeaponCalibrationApplyEnyoFallbacks() &&
 		VR_WeaponCalibrationApplyADRootFallbacks() &&
 		VR_WeaponCalibrationApplyAD171Aliases();

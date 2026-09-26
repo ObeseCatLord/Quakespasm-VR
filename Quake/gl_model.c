@@ -339,7 +339,8 @@ void *Mod_Extradata (qmodel_t *mod)
 	return Mod_Extradata_CheckSkin (mod, 0);
 }
 
-qboolean Mod_GetStockAxeEdge (qmodel_t *mod, int skinnum, stockaxe_edge_t *out)
+static qboolean Mod_GetPinnedAxeEdge (qmodel_t *mod, int skinnum,
+	const char *name, stockaxe_edge_t *out)
 {
 	aliashdr_t *selected;
 
@@ -347,7 +348,7 @@ qboolean Mod_GetStockAxeEdge (qmodel_t *mod, int skinnum, stockaxe_edge_t *out)
 		return false;
 	memset (out, 0, sizeof (*out));
 	if (!mod || skinnum < 0 || !Mod_LoadModel (mod, false) ||
-		mod->type != mod_alias || strcmp (mod->name, "progs/v_axe.mdl"))
+		mod->type != mod_alias || strcmp (mod->name, name))
 		return false;
 
 	selected = (aliashdr_t *)Mod_Extradata_CheckSkin (mod, skinnum);
@@ -355,13 +356,22 @@ qboolean Mod_GetStockAxeEdge (qmodel_t *mod, int skinnum, stockaxe_edge_t *out)
 		selected->poseverttype != PV_QUAKE1)
 		return false;
 
-	/* Only Mod_CacheStockAxeEdge can set valid, after checking the original
-	 * source bytes and topology. Model reload/free clears this record. */
+	/* Only the source-pinned loaders set valid. Reload/free clears this record. */
 	if (!mod->stockaxe_edge.valid)
 		return false;
 
 	*out = mod->stockaxe_edge;
 	return true;
+}
+
+qboolean Mod_GetStockAxeEdge (qmodel_t *mod, int skinnum, stockaxe_edge_t *out)
+{
+	return Mod_GetPinnedAxeEdge (mod, skinnum, "progs/v_axe.mdl", out);
+}
+
+qboolean Mod_GetAlkalineAxeEdge (qmodel_t *mod, int skinnum, stockaxe_edge_t *out)
+{
+	return Mod_GetPinnedAxeEdge (mod, skinnum, "progs/v_alkaxe20fps.mdl", out);
 }
 
 qboolean Mod_GetQBJ3BerserkPalmCentroid (const qmodel_t *mod, int hand,
@@ -4481,6 +4491,44 @@ static void Mod_CacheStockAxeEdge (qmodel_t *mod, byte *mod_base,
 	mod->stockaxe_edge = edge;
 }
 
+/* Alkaline and LimJam ship identical v_alkaxe20fps.mdl bytes. In frame 0,
+ * vertices 74 and 77 span the adjacent blade triangles 79 and 80. */
+static void Mod_CacheAlkalineAxeEdge (qmodel_t *mod, byte *mod_base,
+	qfilesize_t source_size, const aliashdr_t *pheader)
+{
+	stockaxe_edge_t edge;
+
+	if (strcmp (mod->name, "progs/v_alkaxe20fps.mdl") || source_size != 96428 ||
+		(uint32_t)mz_crc32 (MZ_CRC32_INIT, mod_base, (size_t)source_size) != 0x3003ca78u ||
+		ReadLongUnaligned (mod_base + offsetof (mdl_t, ident)) != IDPOLYHEADER ||
+		ReadLongUnaligned (mod_base + offsetof (mdl_t, version)) != ALIAS_VERSION ||
+		pheader->poseverttype != PV_QUAKE1 || pheader->numverts != 205 ||
+		pheader->numtris != 246 || pheader->numframes != 53 ||
+		pheader->frames[0].numposes != 1 ||
+		pheader->frames[0].firstpose != 0 || pheader->numposes < 1 ||
+		!poseverts[0] ||
+		triangles[79].facesfront != 1 ||
+		triangles[79].vertindex[0] != 81 ||
+		triangles[79].vertindex[1] != 75 ||
+		triangles[79].vertindex[2] != 74 ||
+		triangles[80].facesfront != 1 ||
+		triangles[80].vertindex[0] != 81 ||
+		triangles[80].vertindex[1] != 77 ||
+		triangles[80].vertindex[2] != 75)
+		return;
+
+	memset (&edge, 0, sizeof (edge));
+	for (int axis = 0; axis < 3; ++axis)
+	{
+		edge.base[axis] = poseverts[0][74].v[axis] *
+			pheader->scale[axis] + pheader->scale_origin[axis];
+		edge.tip[axis] = poseverts[0][77].v[axis] *
+			pheader->scale[axis] + pheader->scale_origin[axis];
+	}
+	edge.valid = true;
+	mod->stockaxe_edge = edge;
+}
+
 /* A dominant split has no retained CPU pose stream after upload.
  * Reuse the existing two-point cache while the verified ready pose is live. */
 static void Mod_CacheHeldMeleeEdge (qmodel_t *mod, const byte *mod_base,
@@ -4693,6 +4741,7 @@ static void Mod_LoadAliasModel (qmodel_t *mod, void *buffer,
 
 	/* Copy only the pinned ready-pose edge while the source pose is live. */
 	Mod_CacheStockAxeEdge (mod, mod_base, source_size, pheader);
+	Mod_CacheAlkalineAxeEdge (mod, mod_base, source_size, pheader);
 	Mod_CacheHeldMeleeEdge (mod, mod_base, source_size, pheader);
 	Mod_CacheQBJ3BerserkPalms (mod, mod_base, source_size, pheader);
 

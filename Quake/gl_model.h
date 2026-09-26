@@ -351,7 +351,7 @@ typedef enum
 	PV_SIZE
 } poseverttype_t;
 
-/* Source-verified ready-pose edge data for the exact stock v_axe.mdl. */
+/* Source-verified ready-pose edge data for exact supported axe models. */
 typedef struct stockaxe_edge_s
 {
 	qboolean valid;
@@ -756,7 +756,7 @@ typedef struct qmodel_s
 	//
 	byte *extradata[PV_SIZE]; // only access through Mod_Extradata
 	md5_skeleton_data_t *md5_skeleton; // retained CPU data for MD5 models
-	stockaxe_edge_t stockaxe_edge; // two copied vertices; source poses are not retained
+	stockaxe_edge_t stockaxe_edge; // two copied points; source poses are not retained
 	/* Exact QBJ3 berserk source only: two eight-vertex palm means per pose.
 	 * The complete CPU pose mesh is discarded after alias upload. */
 	vec3_t *qbj3_palm_centroids;
@@ -817,6 +817,8 @@ qboolean  Mod_GetMD5Skeleton (const qmodel_t *mod, md5_skeleton_view_t *out);
 /* Returns frame 0's pinned stock-axe edge in scaled model-local coordinates.
  * The per-skin selected model must be the original MDL, not an MD5/MD3 replacement. */
 qboolean  Mod_GetStockAxeEdge (qmodel_t *mod, int skinnum, stockaxe_edge_t *out);
+/* Exact Alkaline/LimJam v_alkaxe20fps.mdl, frame 0; original MDL only. */
+qboolean  Mod_GetAlkalineAxeEdge (qmodel_t *mod, int skinnum, stockaxe_edge_t *out);
 qboolean  Mod_GetQBJ3BerserkPalmCentroid (const qmodel_t *mod, int hand,
 	int pose, vec3_t out);
 

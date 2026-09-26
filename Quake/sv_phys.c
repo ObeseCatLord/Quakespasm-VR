@@ -4146,8 +4146,11 @@ static void SV_ResetPrivateVRContactContinuity (client_t *client)
  * Server policy controls whether that profile is offered to private peers. */
 unsigned int SV_VRStockAxeContactProfile (void)
 {
-	return SV_VRStockAxeMeleeDescriptor () ?
-		VR_WEAPON_CONTACT_PROFILE_STOCK : VR_WEAPON_CONTACT_PROFILE_NONE;
+	const sv_vr_stock_axe_descriptor_t *descriptor =
+		SV_VRStockAxeMeleeDescriptor ();
+	return !descriptor ? VR_WEAPON_CONTACT_PROFILE_NONE :
+		descriptor->alkaline ? VR_WEAPON_CONTACT_PROFILE_ALK :
+		VR_WEAPON_CONTACT_PROFILE_STOCK;
 }
 
 int SV_VRStockAxeTraceStatement (void)
@@ -4840,8 +4843,8 @@ static qboolean SV_VRContactSampleValid (client_t *client, edict_t *ent,
 		!SV_VRContactWeaponIdentity (ent, contact))
 		return false;
 	if (melee &&
-		!((SV_VRStockAxeContactProfile () ==
-			VR_WEAPON_CONTACT_PROFILE_STOCK &&
+		!((SV_VRStockAxeContactProfile () !=
+			VR_WEAPON_CONTACT_PROFILE_NONE &&
 			(hands == VR_WEAPON_CONTACT_LEFT_VALID ||
 			 hands == VR_WEAPON_CONTACT_RIGHT_VALID) &&
 			SV_VRStockAxeMeleeEnabled ()) ||
@@ -4974,7 +4977,7 @@ static qboolean SV_VRStockAxeSelected (client_t *client, edict_t *ent,
 	int active_hand;
 
 	if (!descriptor || !SV_VRStockAxeMeleeEnabled () ||
-		SV_VRStockAxeContactProfile () != VR_WEAPON_CONTACT_PROFILE_STOCK ||
+		SV_VRStockAxeContactProfile () == VR_WEAPON_CONTACT_PROFILE_NONE ||
 		!SV_VRContactOwnerLive (client, ent) ||
 		!(contact->flags & VR_WEAPON_CONTACT_IMMERSIVE_MELEE) ||
 		(hands != VR_WEAPON_CONTACT_LEFT_VALID &&
@@ -4982,7 +4985,8 @@ static qboolean SV_VRStockAxeSelected (client_t *client, edict_t *ent,
 		!isfinite (ent->v.weapon) || ent->v.weapon != descriptor->weapon_bit)
 		return false;
 	weaponmodel = PR_GetString (ent->v.weaponmodel);
-	if (!weaponmodel || strcmp (weaponmodel, "progs/v_axe.mdl"))
+	if (!weaponmodel || strcmp (weaponmodel, descriptor->alkaline ?
+		"progs/v_alkaxe20fps.mdl" : "progs/v_axe.mdl"))
 		return false;
 	active_hand = hands == VR_WEAPON_CONTACT_LEFT_VALID ? 0 : 1;
 	if (SV_VRContactDistance (contact->base[active_hand],
@@ -5005,6 +5009,10 @@ static qboolean SV_VRStockAxeReady (client_t *client, edict_t *ent,
 		!isfinite (qcvm->time) || !isfinite (ent->v.nextthink))
 		return false;
 	if (ent->v.think && ent->v.nextthink > 0 &&
+		ent->v.think != descriptor->stand_index &&
+		ent->v.think != descriptor->run_index)
+		return false;
+	if (descriptor->alkaline &&
 		ent->v.think != descriptor->stand_index &&
 		ent->v.think != descriptor->run_index)
 		return false;
@@ -5338,7 +5346,19 @@ static qboolean SV_VRStockAxeSweep (edict_t *ent,
 	int hand, trace_t *best, qboolean *blocked)
 {
 	return SV_VRAxeSweep (ent, previous, current, hand,
-		SV_VR_AXE_SWEEP_STOCK, 0, NULL, 0, best, NULL, blocked);
+		SV_VRStockAxeContactProfile () == VR_WEAPON_CONTACT_PROFILE_ALK ?
+		SV_VR_AXE_SWEEP_DWELL_EDGE : SV_VR_AXE_SWEEP_STOCK,
+		0, NULL, 0, best, NULL, blocked);
+}
+
+static qboolean SV_VRStockAxeVMStorageValid (qcvm_t *saved_vm,
+	dprograms_t *saved_progs, edict_t *saved_edicts,
+	globalvars_t *saved_global_struct, float *saved_vm_globals)
+{
+	return qcvm == saved_vm && qcvm == &sv.qcvm &&
+		qcvm->progs == saved_progs && qcvm->edicts == saved_edicts &&
+		qcvm->globals == saved_vm_globals &&
+		pr_global_struct == saved_global_struct;
 }
 
 static qboolean SV_VRStockAxeOutcome (client_t *client, edict_t *ent,
@@ -5350,6 +5370,9 @@ static qboolean SV_VRStockAxeOutcome (client_t *client, edict_t *ent,
 	float saved_call_globals[OFS_PARM7 + 3 - OFS_RETURN];
 	qcvm_t *saved_vm;
 	dprograms_t *saved_progs;
+	edict_t *saved_edicts;
+	globalvars_t *saved_global_struct;
+	float *saved_vm_globals;
 	eval_t *cooldown, *hostile;
 	int saved_argc;
 	vec3_t saved_angles;
@@ -5370,6 +5393,9 @@ static qboolean SV_VRStockAxeOutcome (client_t *client, edict_t *ent,
 
 	saved_vm = qcvm;
 	saved_progs = qcvm->progs;
+	saved_edicts = qcvm->edicts;
+	saved_global_struct = pr_global_struct;
+	saved_vm_globals = qcvm->globals;
 	saved_globals = *pr_global_struct;
 	saved_argc = qcvm->argc;
 	memcpy (saved_call_globals, qcvm->globals + OFS_RETURN,
@@ -5388,26 +5414,49 @@ static qboolean SV_VRStockAxeOutcome (client_t *client, edict_t *ent,
 
 	/* W_Attack normally owns these side effects before entering its leaf.
 	 * Keep the native cues and timing while replacing only physical targeting. */
-	hostile->_float = qcvm->time + 1.0f;
-	if (!rogue)
+	hostile->_float = descriptor->alkaline ? 0.0f : qcvm->time + 1.0f;
+	if (descriptor->alkaline)
+		SV_StartSound (ent, ent->v.origin, 1, "weapons/ax1.wav", 255, 1);
+	if (!rogue && !descriptor->alkaline)
 		cooldown->_float = qcvm->time + 0.5f;
-	PR_ExecuteProgram (descriptor->sound_index);
+	if (!descriptor->alkaline)
+	{
+		PR_ExecuteProgram (descriptor->sound_index);
+		if (!SV_VRStockAxeVMStorageValid (saved_vm, saved_progs,
+			saved_edicts, saved_global_struct, saved_vm_globals))
+			goto cleanup;
+	}
 	if (rogue)
 	{
 		G_INT (OFS_PARM0) = EDICT_TO_PROG (ent);
 		qcvm->argc = 1;
 		PR_ExecuteProgram (122); /* RuneApplyBlackNoise(self) */
+		if (!SV_VRStockAxeVMStorageValid (saved_vm, saved_progs,
+			saved_edicts, saved_global_struct, saved_vm_globals))
+			goto cleanup;
 		qcvm->argc = 0;
 	}
-	SV_StartSound (ent, ent->v.origin, 1, "weapons/ax1.wav", 255, 1);
+	if (!descriptor->alkaline)
+		SV_StartSound (ent, ent->v.origin, 1, "weapons/ax1.wav", 255, 1);
 	if (rogue)
 	{
 		G_FLOAT (OFS_PARM0) = 0.5f;
 		G_INT (OFS_PARM1) = EDICT_TO_PROG (ent);
 		qcvm->argc = 2;
 		PR_ExecuteProgram (124); /* RuneApplyHell(.5, self) */
+		if (!SV_VRStockAxeVMStorageValid (saved_vm, saved_progs,
+			saved_edicts, saved_global_struct, saved_vm_globals))
+			goto cleanup;
 		cooldown->_float = qcvm->time + G_FLOAT (OFS_RETURN);
 		qcvm->argc = 0;
+	}
+	if (descriptor->alkaline)
+	{
+		cooldown->_float = qcvm->time + 0.5f;
+		PR_ExecuteProgram (descriptor->sound_index);
+		if (!SV_VRStockAxeVMStorageValid (saved_vm, saved_progs,
+			saved_edicts, saved_global_struct, saved_vm_globals))
+			goto cleanup;
 	}
 	if (contact && !ent->free && ent->v.health > 0 && !ent->v.deadflag)
 	{
@@ -5422,12 +5471,13 @@ static qboolean SV_VRStockAxeOutcome (client_t *client, edict_t *ent,
 		SV_VRStockAxeClearTraceScope ();
 	}
 
-	if (qcvm == saved_vm && qcvm->progs == saved_progs)
+	if (SV_VRStockAxeVMStorageValid (saved_vm, saved_progs,
+		saved_edicts, saved_global_struct, saved_vm_globals))
 	{
 		qcvm->argc = saved_argc;
 		memcpy (qcvm->globals + OFS_RETURN, saved_call_globals,
 			sizeof (saved_call_globals));
-		if (!ent->free)
+		if (client->edict == ent && !ent->free)
 			VectorCopy (saved_angles, ent->v.v_angle);
 		/* Match the donor's borrowed-QC context boundary: retain gameplay
 		 * globals written by the native leaf, restoring only its call context,
@@ -5453,6 +5503,9 @@ static qboolean SV_VRStockAxeOutcome (client_t *client, edict_t *ent,
 	}
 	else
 		SV_VRStockAxeClearTraceScope ();
+
+cleanup:
+	SV_VRStockAxeClearTraceScope ();
 	if (friendly_fire_scope)
 		SV_CoopFriendlyFireEnd ();
 	return alive;
@@ -6079,7 +6132,8 @@ static qboolean SV_VRContactProcessDirectMelee (client_t *client, edict_t *ent,
 	{
 		endpoint = client->private_vr_melee_stroke_endpoint[hand] ? 1 : 0;
 		length = motion[endpoint];
-		if (length > 0.0001f && length >= 0.5f * endpoint_motion &&
+		if (length > 0.0001f &&
+			length >= 0.5f * fmaxf (motion[0], motion[1]) &&
 			DotProduct (movement[endpoint],
 				client->private_vr_melee_stroke_direction[hand]) <
 				-0.5f * length)
@@ -6309,12 +6363,14 @@ static qboolean SV_VRContactProcessMelee (client_t *client, edict_t *ent,
 	int hand)
 {
 	const vr_weapon_contact_t *current = &cmd->vr_contact;
-	vec3_t old_point, new_point;
+	vec3_t old_point, new_point, movement[2], accepted_direction;
 	float endpoint_motion = 0;
 	float seconds = cmd->msec * 0.001f;
 	trace_t contact;
-	qboolean blocked, hit;
-	int point;
+	qboolean blocked, hit, rearming = false;
+	qboolean alkaline = SV_VRStockAxeContactProfile () ==
+		VR_WEAPON_CONTACT_PROFILE_ALK;
+	int point, endpoint;
 	if (SV_VRDirectMeleeContactSelected (client, ent, cmd, NULL))
 		return SV_VRContactProcessDirectMelee (client, ent, cmd,
 			previous, hand);
@@ -6333,6 +6389,17 @@ static qboolean SV_VRContactProcessMelee (client_t *client, edict_t *ent,
 		VectorClear (client->private_vr_melee_stroke_direction[hand]);
 		return false;
 	}
+	if (alkaline && client->private_vr_melee_consumed[hand] &&
+		current->speed[hand] < 0.25f)
+	{
+		/* A completed Alkaline swing rearms below strike speed, even if the
+		 * hand never reaches the deeper rest threshold. */
+		client->private_vr_melee_arc[hand] = 0;
+		client->private_vr_melee_peak_speed[hand] = 0;
+		client->private_vr_melee_consumed[hand] = false;
+		VectorClear (client->private_vr_melee_stroke_direction[hand]);
+		return false;
+	}
 	if (current->speed[hand] < 0.05f)
 	{
 		if (!client->private_vr_melee_consumed[hand] &&
@@ -6341,16 +6408,22 @@ static qboolean SV_VRContactProcessMelee (client_t *client, edict_t *ent,
 		{
 			/* A completed armed swing with no contact is the stock axe whiff. */
 			client->private_vr_melee_consumed[hand] = true;
+			if (alkaline)
+			{
+				client->private_vr_melee_arc[hand] = 0;
+				client->private_vr_melee_peak_speed[hand] = 0;
+				VectorClear (client->private_vr_melee_stroke_direction[hand]);
+			}
 			SV_VRStockAxeOutcome (client, ent, cmd, NULL);
+			if (alkaline)
+				return true;
 		}
 		client->private_vr_melee_arc[hand] = 0;
 		client->private_vr_melee_peak_speed[hand] = 0;
 		client->private_vr_melee_consumed[hand] = false;
+		VectorClear (client->private_vr_melee_stroke_direction[hand]);
 		return false;
 	}
-	/* A blocked interval is skipped; later clear intervals can still hit. */
-	if (!SV_VRContactEyeGripClear (ent, current, hand))
-		return false;
 	for (point = 0; point < 3; point++)
 	{
 		const vec_t *old = point == 0 ? previous->grip[hand] :
@@ -6364,7 +6437,31 @@ static qboolean SV_VRContactProcessMelee (client_t *client, edict_t *ent,
 	}
 	if (endpoint_motion <= 0.0001f)
 		return false;
-	if (current->speed[hand] >= 0.25f)
+	if (alkaline && client->private_vr_melee_consumed[hand])
+	{
+		float motion[2], length;
+		VectorSubtract (current->base[hand], previous->base[hand], movement[0]);
+		VectorSubtract (current->tip[hand], previous->tip[hand], movement[1]);
+		motion[0] = VectorLength (movement[0]);
+		motion[1] = VectorLength (movement[1]);
+		endpoint = client->private_vr_melee_stroke_endpoint[hand] ? 1 : 0;
+		length = motion[endpoint];
+		if (length > 0.0001f && length >= 0.5f * endpoint_motion &&
+			DotProduct (movement[endpoint],
+				client->private_vr_melee_stroke_direction[hand]) <
+				-0.5f * length)
+		{
+			client->private_vr_melee_arc[hand] = 0;
+			client->private_vr_melee_peak_speed[hand] = 0;
+			client->private_vr_melee_consumed[hand] = false;
+			rearming = true;
+		}
+	}
+	/* A blocked interval is skipped; a consumed Alkaline stroke may still
+	 * observe the physical reversal before the next clear interval. */
+	if (!SV_VRContactEyeGripClear (ent, current, hand))
+		return false;
+	if (!rearming && current->speed[hand] >= 0.25f)
 	{
 		client->private_vr_melee_arc[hand] += current->speed[hand] * seconds;
 		client->private_vr_melee_peak_speed[hand] = fmaxf (
@@ -6381,10 +6478,23 @@ static qboolean SV_VRContactProcessMelee (client_t *client, edict_t *ent,
 	hit = SV_VRStockAxeSweep (ent, previous, current, hand, &contact, &blocked);
 	if (blocked || !hit)
 		return false;
+	if (alkaline)
+	{
+		VectorSubtract (current->base[hand], previous->base[hand], movement[0]);
+		VectorSubtract (current->tip[hand], previous->tip[hand], movement[1]);
+		endpoint = VectorLength (movement[1]) >= VectorLength (movement[0]) ? 1 : 0;
+		VectorCopy (movement[endpoint], accepted_direction);
+		if (VectorNormalize (accepted_direction) > 0.0001f)
+		{
+			client->private_vr_melee_stroke_endpoint[hand] = endpoint;
+			VectorCopy (accepted_direction,
+				client->private_vr_melee_stroke_direction[hand]);
+		}
+	}
 	client->private_vr_melee_consumed[hand] = true;
 	if (SV_VRStockAxeOutcome (client, ent, cmd, &contact))
 		SV_VRContactFeedback (client, hand);
-	return false;
+	return alkaline;
 }
 
 static qboolean SV_VRContactButtonTouchAllowed (edict_t *button,
@@ -6662,6 +6772,9 @@ static qboolean SV_VRContactProcessCommand (client_t *client, edict_t *ent,
 		int direct_subtype = SV_VR_DIRECT_MELEE_NONE;
 		qboolean direct_melee = SV_VRDirectMeleeContactSelected (client,
 			ent, &command, &direct_subtype);
+		qboolean alkaline_axe = SV_VRStockAxeContactProfile () ==
+			VR_WEAPON_CONTACT_PROFILE_ALK &&
+			SV_VRStockAxeSelected (client, ent, &command, NULL);
 		qcvm_t *dwell_vm = qcvm;
 		dprograms_t *dwell_progs = qcvm->progs;
 		edict_t *melee_edicts = qcvm->edicts;
@@ -6676,7 +6789,7 @@ static qboolean SV_VRContactProcessCommand (client_t *client, edict_t *ent,
 				/* The first hand may run side-effecting QC even when its
 				 * outcome returns false. Never let the second hand borrow a
 				 * changed VM, player, origin or contact cursor. */
-				if ((dwell_pair || direct_melee) && callback_entered)
+				if ((dwell_pair || direct_melee || alkaline_axe) && callback_entered)
 				{
 					/* A reset or VM replacement already retired this cursor.
 					 * Do not revive it through relocation invalidation. */
@@ -6686,6 +6799,8 @@ static qboolean SV_VRContactProcessCommand (client_t *client, edict_t *ent,
 						pr_global_struct != dwell_globals ||
 						!(dwell_pair ?
 							SV_DwellBerserkAkimboProgramLoaded () :
+							alkaline_axe ?
+							SV_VRStockAxeContactProfile () == VR_WEAPON_CONTACT_PROFILE_ALK :
 							(direct_subtype == SV_VR_DIRECT_MELEE_ENYO_SWORD ?
 								SV_EnyoMeleeProgramLoaded () : SV_QBJ3MeleeProgramLoaded ())) ||
 						!client->private_vr_contact_cursor_valid)
@@ -6707,9 +6822,12 @@ static qboolean SV_VRContactProcessCommand (client_t *client, edict_t *ent,
 								dwell_vm_globals, callback_origin, true,
 								(int)command.sequence, direct_subtype, false) ||
 							 !client->private_vr_contact_previous_valid)) ||
+						(alkaline_axe &&
+							SV_VRContactDistance (ent->v.origin, callback_origin) > 0.01f) ||
 						!(dwell_pair ?
 							SV_VRDwellBerserkPairSelected (client, ent,
-								&command) :
+								&command) : alkaline_axe ?
+							SV_VRStockAxeSelected (client, ent, &command, NULL) :
 							SV_VRDirectMeleeContactSelected (client, ent,
 								&command, NULL)) ||
 						!SV_VRContactSampleValid (client, ent, &command))
