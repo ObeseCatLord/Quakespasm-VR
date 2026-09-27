@@ -300,6 +300,7 @@ static void _Datagram_ServerControlPacket (sys_socket_t acceptsock, struct qsock
 
 qboolean Datagram_ProcessPacket (unsigned int length, qsocket_t *sock)
 {
+	const unsigned int wire_length = length;
 	unsigned int flags;
 	unsigned int sequence;
 	unsigned int count;
@@ -313,6 +314,11 @@ qboolean Datagram_ProcessPacket (unsigned int length, qsocket_t *sock)
 	length = BigLong (packetBuffer.length);
 	flags = length & (~NETFLAG_LENGTH_MASK);
 	length &= NETFLAG_LENGTH_MASK;
+	if (length < NET_HEADERSIZE || length > wire_length)
+	{
+		shortPacketCount++;
+		return false;
+	}
 
 	if (flags & NETFLAG_CTL)
 		return false; // should only be for OOB packets.
@@ -514,6 +520,7 @@ qsocket_t *Datagram_GetAnyMessage (void)
 int Datagram_GetMessage (qsocket_t *sock)
 {
 	unsigned int	 length;
+	unsigned int	 wire_length;
 	unsigned int	 flags;
 	int				 ret = 0;
 	struct qsockaddr readaddr;
@@ -554,9 +561,15 @@ int Datagram_GetMessage (qsocket_t *sock)
 			continue;
 		}
 
+		wire_length = length;
 		length = BigLong (packetBuffer.length);
 		flags = length & (~NETFLAG_LENGTH_MASK);
 		length &= NETFLAG_LENGTH_MASK;
+		if (length < NET_HEADERSIZE || length > wire_length)
+		{
+			shortPacketCount++;
+			continue;
+		}
 
 		if (flags & NETFLAG_CTL)
 			continue;
