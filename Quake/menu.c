@@ -2533,13 +2533,39 @@ enum
 	VR_OPT_CROSSHAIR_SIZE,
 	VR_OPT_CROSSHAIR_OPACITY,
 	VR_OPT_CROSSHAIR_OFFSET,
+	VR_OPT_GAMEPLAY_SETUP,
 	VR_OPT_FBT_SETUP,
 	VR_OPTIONS_ITEMS
 };
 
 static int vr_options_cursor;
+static qboolean vr_options_gameplay_page;
+static int vr_options_gameplay_cursor;
 static qboolean vr_options_fbt_page;
 static int vr_options_fbt_cursor;
+
+enum
+{
+	VR_GAMEPLAY_LEFT_HANDED,
+	VR_GAMEPLAY_AIM_MODE,
+	VR_GAMEPLAY_AIM_DEADZONE,
+	VR_GAMEPLAY_WORLD_SCALE,
+	VR_GAMEPLAY_FLOOR_OFFSET,
+	VR_GAMEPLAY_MOVEMENT_MODE,
+	VR_GAMEPLAY_SNAP_TURN,
+	VR_GAMEPLAY_TURN_SPEED,
+	VR_GAMEPLAY_180_TURN,
+	VR_GAMEPLAY_IMMERSIVE_MELEE,
+	VR_GAMEPLAY_WEAPON_COLLISION,
+	VR_GAMEPLAY_VRIK,
+	VR_GAMEPLAY_ITEMS
+};
+
+static const char *const vr_gameplay_cvars[VR_GAMEPLAY_ITEMS] = {
+	"vr_lefthanded", "vr_aimmode", "vr_deadzone", "vr_world_scale",
+	"vr_floor_offset", "vr_movement_mode", "vr_snap_turn", "vr_turn_speed",
+	"vr_180_snap_turn", "vr_immersive_melee", "vr_weapon_collision", "vr_vrik"
+};
 
 enum
 {
@@ -2591,6 +2617,7 @@ static void M_Menu_VROptions_f (void)
 	IN_Deactivate (true);
 	key_dest = key_menu;
 	m_state = m_vroptions;
+	vr_options_gameplay_page = false;
 	vr_options_fbt_page = false;
 	m_entersound = true;
 }
@@ -2992,6 +3019,140 @@ static void M_VROptions_FBTDraw (cb_context_t *cbx, int top)
 	}
 }
 
+static void M_VROptions_GameplayAdjust (int dir)
+{
+	cvar_t *var = Cvar_FindVar (vr_gameplay_cvars[vr_options_gameplay_cursor]);
+	float current, next;
+
+	if (!var)
+		return;
+	S_LocalSound ("misc/menu3.wav");
+	current = var->value;
+	switch (vr_options_gameplay_cursor)
+	{
+	case VR_GAMEPLAY_LEFT_HANDED:
+	case VR_GAMEPLAY_180_TURN:
+	case VR_GAMEPLAY_IMMERSIVE_MELEE:
+	case VR_GAMEPLAY_WEAPON_COLLISION:
+	case VR_GAMEPLAY_VRIK:
+		next = !isfinite (current) || current == 0.0f ? 1.0f : 0.0f;
+		break;
+	case VR_GAMEPLAY_AIM_MODE:
+		next = CLAMP (1, (int)M_VROptions_ClampFinite (current, 7.0f, 1.0f, 7.0f) + dir, 7);
+		break;
+	case VR_GAMEPLAY_AIM_DEADZONE:
+		next = CLAMP (0.0f, M_VROptions_ClampFinite (current, 30.0f, 0.0f, 180.0f) + dir * 5.0f, 180.0f);
+		break;
+	case VR_GAMEPLAY_WORLD_SCALE:
+		/* A zero scale is not usable by the tracked-view conversion. */
+		next = CLAMP (0.05f, roundf ((M_VROptions_ClampFinite (current, 1.0f, 0.05f, 2.0f) + dir * 0.05f) * 20.0f) / 20.0f, 2.0f);
+		break;
+	case VR_GAMEPLAY_FLOOR_OFFSET:
+		next = CLAMP (-200.0f, M_VROptions_ClampFinite (current, -16.0f, -200.0f, 200.0f) + dir * 2.5f, 200.0f);
+		break;
+	case VR_GAMEPLAY_MOVEMENT_MODE:
+		next = CLAMP (0, (int)M_VROptions_ClampFinite (current, 0.0f, 0.0f, 2.0f) + dir, 2);
+		break;
+	case VR_GAMEPLAY_SNAP_TURN:
+		next = CLAMP (0, (int)M_VROptions_ClampFinite (current, 0.0f, 0.0f, 90.0f) + dir * 45, 90);
+		break;
+	case VR_GAMEPLAY_TURN_SPEED:
+		next = CLAMP (0.0f, M_VROptions_ClampFinite (current, 2.0f, 0.0f, 10.0f) + dir * 0.25f, 10.0f);
+		break;
+	default:
+		return;
+	}
+	Cvar_SetValueQuick (var, next);
+}
+
+static void M_VROptions_GameplayKey (int key)
+{
+	switch (key)
+	{
+	case K_MOUSE2:
+	case K_ESCAPE:
+	case K_BBUTTON:
+		vr_options_gameplay_page = false;
+		break;
+	case K_MOUSE1:
+	case K_ENTER:
+	case K_KP_ENTER:
+	case K_ABUTTON:
+		M_VROptions_GameplayAdjust (1);
+		break;
+	case K_UPARROW:
+		S_LocalSound ("misc/menu1.wav");
+		vr_options_gameplay_cursor = (vr_options_gameplay_cursor + VR_GAMEPLAY_ITEMS - 1) % VR_GAMEPLAY_ITEMS;
+		break;
+	case K_DOWNARROW:
+		S_LocalSound ("misc/menu1.wav");
+		vr_options_gameplay_cursor = (vr_options_gameplay_cursor + 1) % VR_GAMEPLAY_ITEMS;
+		break;
+	case K_LEFTARROW:
+		M_VROptions_GameplayAdjust (-1);
+		break;
+	case K_RIGHTARROW:
+		M_VROptions_GameplayAdjust (1);
+		break;
+	}
+}
+
+static void M_VROptions_GameplayDraw (cb_context_t *cbx, int top)
+{
+	static const char *const labels[VR_GAMEPLAY_ITEMS] = {
+		"Left Handed", "Aim Mode", "Aim Deadzone", "World Scale",
+		"Floor Offset", "Move Direction", "Turn Mode", "Turn Speed",
+		"180 Snap Turn", "Immersive Melee", "Weapon Collision", "Player VRIK"
+	};
+	static const char *const aim_modes[] = {
+		"Head yaw", "Head yaw+P", "Mouse yaw", "Mouse yaw+P",
+		"Blended", "Blend/no P", "Controller"
+	};
+	static const char *const movement_modes[] = {"Follow head", "Follow hand", "Raw input"};
+	for (int item = 0; item < VR_GAMEPLAY_ITEMS; ++item)
+	{
+		const cvar_t *var = Cvar_FindVar (vr_gameplay_cvars[item]);
+		const float value = var && isfinite (var->value) ? var->value : 0.0f;
+		const int y = top + item * CHARACTER_SIZE;
+		M_Print (cbx, MENU_LABEL_X, y, labels[item]);
+		switch (item)
+		{
+		case VR_GAMEPLAY_LEFT_HANDED:
+		case VR_GAMEPLAY_180_TURN:
+		case VR_GAMEPLAY_IMMERSIVE_MELEE:
+		case VR_GAMEPLAY_WEAPON_COLLISION:
+		case VR_GAMEPLAY_VRIK:
+			M_DrawCheckbox (cbx, MENU_VALUE_X, y, value != 0.0f);
+			break;
+		case VR_GAMEPLAY_AIM_MODE:
+			M_Print (cbx, MENU_VALUE_X, y, aim_modes[(int)CLAMP (1.0f, value, 7.0f) - 1]);
+			break;
+		case VR_GAMEPLAY_AIM_DEADZONE:
+			M_Print (cbx, MENU_VALUE_X, y, value <= 0.0f ? "off" : va ("%.0f deg", value));
+			break;
+		case VR_GAMEPLAY_WORLD_SCALE:
+			M_Print (cbx, MENU_VALUE_X, y, va ("%.2f", value));
+			break;
+		case VR_GAMEPLAY_FLOOR_OFFSET:
+			M_Print (cbx, MENU_VALUE_X, y, va ("%.1f units", value));
+			break;
+		case VR_GAMEPLAY_MOVEMENT_MODE:
+			M_Print (cbx, MENU_VALUE_X, y, movement_modes[(int)CLAMP (0.0f, value, 2.0f)]);
+			break;
+		case VR_GAMEPLAY_SNAP_TURN:
+			M_Print (cbx, MENU_VALUE_X, y, value <= 0.0f ? "Smooth" : va ("%.0f deg", value));
+			break;
+		case VR_GAMEPLAY_TURN_SPEED:
+			M_Print (cbx, MENU_VALUE_X, y, va ("%.2f", value));
+			break;
+		}
+	}
+	M_Mouse_UpdateListCursor (&vr_options_gameplay_cursor, MENU_CURSOR_X, 320,
+		top, CHARACTER_SIZE, VR_GAMEPLAY_ITEMS, 0);
+	Draw_Character (cbx, MENU_CURSOR_X, top + vr_options_gameplay_cursor * CHARACTER_SIZE,
+		12 + ((int)(realtime * 4) & 1));
+}
+
 static void M_VROptions_Adjust (int dir)
 {
 	if (dir)
@@ -3083,6 +3244,10 @@ static void M_VROptions_Adjust (int dir)
 		Cvar_SetValueQuick (&vr_crosshairy, CLAMP (-10.0f, roundf ((current + dir * 0.05f) * 20.0f) / 20.0f, 10.0f));
 		break;
 	}
+	case VR_OPT_GAMEPLAY_SETUP:
+		if (dir > 0)
+			vr_options_gameplay_page = true;
+		break;
 	case VR_OPT_FBT_SETUP:
 		if (dir > 0)
 		{
@@ -3095,6 +3260,11 @@ static void M_VROptions_Adjust (int dir)
 
 static void M_VROptions_Key (int key)
 {
+	if (vr_options_gameplay_page)
+	{
+		M_VROptions_GameplayKey (key);
+		return;
+	}
 	if (vr_options_fbt_page)
 	{
 		M_VROptions_FBTKey (key);
@@ -3160,6 +3330,11 @@ static void M_VROptions_Draw (cb_context_t *cbx)
 	M_DrawTransPic (cbx, 16, 4, Draw_CachePic ("gfx/qplaque.lmp"));
 	p = Draw_CachePic ("gfx/p_option.lmp");
 	M_DrawPic (cbx, (320 - p->width) / 2, 4, p);
+	if (vr_options_gameplay_page)
+	{
+		M_VROptions_GameplayDraw (cbx, top);
+		return;
+	}
 	if (vr_options_fbt_page)
 	{
 		M_VROptions_FBTDraw (cbx, top);
@@ -3212,6 +3387,9 @@ static void M_VROptions_Draw (cb_context_t *cbx)
 
 	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * VR_OPT_CROSSHAIR_OFFSET, "Crosshair Offset");
 	M_Print (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * VR_OPT_CROSSHAIR_OFFSET, va ("%.2f", crosshair_offset));
+
+	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * VR_OPT_GAMEPLAY_SETUP, "Gameplay Setup");
+	M_Print (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * VR_OPT_GAMEPLAY_SETUP, "Open");
 
 	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * VR_OPT_FBT_SETUP, "FBT Setup");
 	M_Print (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * VR_OPT_FBT_SETUP, "Open");
