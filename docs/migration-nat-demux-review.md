@@ -41,3 +41,26 @@ ACK destination, outgoing destination and absence of cross-client state
 mutation. This is software transport evidence; the user's later live
 desktop/VR multiplayer check remains the end-to-end acceptance gate. No
 performance measurement is required for this implementation decision.
+
+## Implementation checkpoint
+
+`bbfdbf5e` added the bounded shared-socket inbox, and `54c12de5` added one
+selector for exact endpoints, recent prior endpoints and uniquely plausible
+same-host port changes. A changed port never wins against an exact endpoint;
+ambiguous packets cannot mutate either peer. The prior port is retained for a
+short straggler interval, and the inherited 300-second established timeout is
+unchanged. `3963e815` bounds control parsing, `c97ccd9f` keeps timeout
+iteration on the active list after a drop, `6e0fe3c0` clamps reliable fragment
+MSS, and `bdca89fa` retires a peer whose reliable fragment cannot fit.
+
+`tests/datagram_rebind_fixture.c` drives the real per-client receive API with
+two same-IP virtual peers and a scripted UDP boundary. It checks deferred
+delivery, unique rebinding, outgoing and ACK destinations, delayed old-port
+packets, ambiguous windows, malformed packets, queue exhaustion/owner cleanup,
+IPv6 scope separation, and the server parser's fatal-fragment disposition.
+The Linux debug build and focused UBSan fixture pass. A local dedicated-server
+probe was attempted with isolated game data, but this sandbox denied UDP socket
+creation; it supplied no multiplayer runtime result. The ordinary server
+`Datagram_GetAnyMessage` control interleaving and complete signon remain
+unverified by this fixture and need a network-capable software run. Hardware
+and performance checks remain with the user after implementation.
