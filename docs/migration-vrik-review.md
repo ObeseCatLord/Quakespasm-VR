@@ -227,3 +227,27 @@ sender now build. Next is the shared visible/shadow MD5 avatar adapter. Judge
 completion by the mixed session and rendered-avatar gates above: a client may
 advertise receive capability while in desktop mode, but pose transmission
 requires valid VR tracking.
+
+## FBT orientation-cue checkpoint
+
+The calibration overlay now includes local X/Y/Z axes for the physical tracker
+and anatomical target, in addition to its position markers, offset line and
+role label. It reuses the source `VR_FBT_VisualDrawAxes` colors and physical
+lengths (0.10 m for a tracker, 0.14 m for a target). Quaternion-to-matrix
+conversion comes from the existing calibration helper. Endpoints pass through
+the existing tracking-to-root-to-world mapping, so scale and yaw follow the
+same owner as the marker origins.
+
+The input owner copies raw tracker orientation with its accepted calibration
+sample. Render setup maps that immutable copy and the projected reference
+target once, then both-eye debug drawing consumes only prepared world points.
+Invalid identities, stale samples, focus/reference loss and bounded-coordinate
+failure clear the complete overlay as before. No tracker polling, calibration
+mutation, model loading or profile writes were added to the draw task. Generic
+markers replace the donor's optional OpenVR tracker render-model lookup.
+
+The Linux SDL3 executable builds and the diff check passes. The source formulas,
+matrix-column convention and colors were compared directly with the inherited
+visual; live cue orientation, depth and both-eye alignment remain for the user's
+later device testing. This is a visual adapter checkpoint, not qualification of
+FBT tracking, lower-body IK, or mixed-session gameplay.

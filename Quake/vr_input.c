@@ -189,6 +189,7 @@ static struct
 	unsigned int role_mask;
 	uint64_t sample_id;
 	vec3_t tracker_tracking[VR_FBT_ROLE_COUNT];
+	vec3_t tracker_axis_tracking[VR_FBT_ROLE_COUNT][3];
 } vr_input_fbt_visual_raw_snapshot;
 static struct
 {
@@ -2242,6 +2243,29 @@ static void VR_InputFBTQuaternionMatrix (const double quaternion[4],
 		matrix[row][3] = 0.0f;
 }
 
+/* Reuse the inherited visual's local-axis endpoints and physical lengths.
+ * These are the normalized transforms already used by calibration, not a
+ * second orientation estimate from the tracker index or role. */
+static qboolean VR_InputFBTVisualAxisEndpoints (
+	const vr_fbt_profile_transform_t *transform, float length,
+	vec3_t endpoints[3])
+{
+	float matrix[3][4];
+	for (int component = 0; component < 4; ++component)
+		if (!isfinite (transform->orientation[component]))
+			return false;
+	VR_InputFBTQuaternionMatrix (transform->orientation, matrix);
+	for (int axis = 0; axis < 3; ++axis)
+		for (int component = 0; component < 3; ++component)
+		{
+			endpoints[axis][component] = (float)(transform->position[component] +
+				length * matrix[component][axis]);
+			if (!isfinite (endpoints[axis][component]))
+				return false;
+		}
+	return true;
+}
+
 static uint64_t VR_InputFBTSerialIdentity (const char *serial)
 {
 	uint64_t hash = UINT64_C (1469598103934665603);
@@ -2662,7 +2686,7 @@ static qboolean VR_InputFBTMapTrackingVector (const vec3_t tracking,
 
 /* Called only by VR_InputCommands on the input/main owner, after reconciling
  * this completed XR sample. The render setup task consumes these detached raw
- * positions; it never reads the mutable tracker manager. */
+ * positions and axis endpoints; it never reads the mutable tracker manager. */
 static void VR_InputFBTPrepareCalibrationVisualSnapshot (const vrxr_frame_t *frame)
 {
 	const unsigned int valid_role_mask = (1u << VR_FBT_ROLE_COUNT) - 1u;
@@ -2706,7 +2730,9 @@ static void VR_InputFBTPrepareCalibrationVisualSnapshot (const vrxr_frame_t *fra
 				(vr_fbt_role_t)role, &status) ||
 			status.identity_kind != VR_FBT_IDENTITY_SERIAL ||
 			strcmp (status.serial, expected) ||
-			!VR_InputFBTRawTransform (&status, &raw))
+			!VR_InputFBTRawTransform (&status, &raw) ||
+			!VR_InputFBTVisualAxisEndpoints (&raw, 0.10f,
+				vr_input_fbt_visual_raw_snapshot.tracker_axis_tracking[role]))
 		{
 			memset (&vr_input_fbt_visual_raw_snapshot, 0,
 				sizeof (vr_input_fbt_visual_raw_snapshot));
@@ -2785,6 +2811,8 @@ qboolean VR_InputFBTCalibrationVisualSnapshot (const vrxr_frame_t *frame,
 	prepared.body_yaw_degrees = body_yaw;
 	for (int role = 0; role < VR_FBT_ROLE_COUNT; ++role)
 	{
+		vr_fbt_profile_transform_t target;
+		vec3_t target_axis_tracking[3];
 		if (!(vr_input_fbt_visual_raw_snapshot.role_mask &
 			VR_FBT_PROFILE_ROLE_BIT (role)))
 			continue;
@@ -2808,6 +2836,32 @@ qboolean VR_InputFBTCalibrationVisualSnapshot (const vrxr_frame_t *frame,
 				fabsf (prepared.tracker_root_metres[role][axis]) > VR_INPUT_WIRE_MAX ||
 				fabsf (prepared.target_root_metres[role][axis]) > VR_INPUT_WIRE_MAX)
 				return false;
+		}
+		for (int axis = 0; axis < 3; ++axis)
+			target.position[axis] = projection.position[role][axis];
+		for (int component = 0; component < 4; ++component)
+			target.orientation[component] = projection.orientation_wxyz[role][component];
+		if (!VR_InputFBTVisualAxisEndpoints (&target, 0.14f, target_axis_tracking))
+			return false;
+		for (int axis = 0; axis < 3; ++axis)
+		{
+			if (!VR_InputFBTMapPointToRoot (frame,
+				vr_input_fbt_visual_raw_snapshot.tracker_axis_tracking[role][axis],
+				presentation_yaw, body_yaw, units_per_metre, head_eye_height, root))
+				return false;
+			VectorScale (root, 1.0f / units_per_metre,
+				prepared.tracker_axis_root_metres[role][axis]);
+			if (!VR_InputFBTMapPointToRoot (frame, target_axis_tracking[axis],
+				presentation_yaw, body_yaw, units_per_metre, head_eye_height, root))
+				return false;
+			VectorScale (root, 1.0f / units_per_metre,
+				prepared.target_axis_root_metres[role][axis]);
+			for (int component = 0; component < 3; ++component)
+				if (!isfinite (prepared.tracker_axis_root_metres[role][axis][component]) ||
+					!isfinite (prepared.target_axis_root_metres[role][axis][component]) ||
+					fabsf (prepared.tracker_axis_root_metres[role][axis][component]) > VR_INPUT_WIRE_MAX ||
+					fabsf (prepared.target_axis_root_metres[role][axis][component]) > VR_INPUT_WIRE_MAX)
+					return false;
 		}
 	}
 	prepared.role_mask = vr_input_fbt_visual_raw_snapshot.role_mask;

@@ -283,8 +283,14 @@ selected mesh and animation match the donor's verified rerelease fingerprints.
 Commit `242d6dbb` adds serial-bound local calibration, persisted acceptance and
 filtered anatomical hip/foot sending. Commit `a0ca86b3` provides an explicit,
 verified rerelease model-only fallback without replacing classic game content.
-Calibration visuals and menu role controls remain open; hardware behavior is
-not qualified by the local build.
+The VR-options FBT page now has role cycling, named-profile selection and
+begin/capture/accept/cancel/save/reset actions. Calibration positions, offset
+lines and labels use one detached frame snapshot in the existing Vulkan debug
+pass. Tracker and anatomical-target orientation axes now preserve the source's
+local X/Y/Z colors and 0.10/0.14-metre lengths, using the same calibration
+quaternions and coordinate mapping. The OpenVR render-model dependency is
+replaced by generic markers. Hardware behavior and both-eye visual alignment
+are not qualified by the local build.
 
 ### QuakeC and mod compatibility
 

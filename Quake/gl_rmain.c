@@ -106,6 +106,8 @@ static struct
 	unsigned int role_mask;
 	vec3_t tracker_world[VR_FBT_ROLE_COUNT];
 	vec3_t target_world[VR_FBT_ROLE_COUNT];
+	vec3_t tracker_axis_world[VR_FBT_ROLE_COUNT][3];
+	vec3_t target_axis_world[VR_FBT_ROLE_COUNT][3];
 } vr_fbt_visual_frame;
 
 cvar_t r_drawentities = {"r_drawentities", "1", CVAR_NONE};
@@ -504,6 +506,17 @@ static void R_PrepareFBTVisualFrame (const vrxr_frame_t *frame)
 			memset (&vr_fbt_visual_frame, 0, sizeof (vr_fbt_visual_frame));
 			return;
 		}
+		for (int axis = 0; axis < 3; ++axis)
+			if (!R_FBTVisualWorldPoint (snapshot.tracker_axis_root_metres[role][axis],
+				snapshot.head_root_metres, snapshot.body_yaw_degrees,
+				units_per_metre, vr_fbt_visual_frame.tracker_axis_world[role][axis]) ||
+				!R_FBTVisualWorldPoint (snapshot.target_axis_root_metres[role][axis],
+				snapshot.head_root_metres, snapshot.body_yaw_degrees,
+				units_per_metre, vr_fbt_visual_frame.target_axis_world[role][axis]))
+			{
+				memset (&vr_fbt_visual_frame, 0, sizeof (vr_fbt_visual_frame));
+				return;
+			}
 	}
 	vr_fbt_visual_frame.role_mask = snapshot.role_mask;
 }
@@ -2478,6 +2491,25 @@ static void R_DrawCoopPlayerOutlines (cb_context_t *cbx)
 	R_EndDebugUtilsLabel (cbx);
 }
 
+static void R_EmitFBTOrientationAxes (cb_context_t *cbx, const vec3_t origin,
+	const vec3_t endpoints[3])
+{
+	/* Same local X/Y/Z colors as the inherited calibration visual. */
+	static const uint32_t colors[3] = {0xfa3333ffu, 0xfa33ff33u, 0xfaff6633u};
+	VkBuffer vertex_buffer;
+	VkDeviceSize vertex_buffer_offset;
+	basicvertex_t *vertices = (basicvertex_t *)R_VertexAllocate (
+		6 * sizeof (basicvertex_t), &vertex_buffer, &vertex_buffer_offset);
+	for (int axis = 0; axis < 3; ++axis)
+	{
+		R_FillDebugVertex (&vertices[axis * 2], origin, colors[axis]);
+		R_FillDebugVertex (&vertices[axis * 2 + 1], endpoints[axis], colors[axis]);
+	}
+	vulkan_globals.vk_cmd_bind_vertex_buffers (cbx->cb, 0, 1,
+		&vertex_buffer, &vertex_buffer_offset);
+	vulkan_globals.vk_cmd_draw (cbx->cb, 6, 1, 0, 0);
+}
+
 static void R_DrawFBTCalibrationVisuals (cb_context_t *cbx)
 {
 	static const char *const labels[VR_FBT_ROLE_COUNT] = {
@@ -2494,6 +2526,10 @@ static void R_DrawFBTCalibrationVisuals (cb_context_t *cbx)
 			continue;
 		R_EmitWirePoint (cbx, vr_fbt_visual_frame.tracker_world[role], 0xff40dfffu);
 		R_EmitWirePoint (cbx, vr_fbt_visual_frame.target_world[role], 0xffff7f40u);
+		R_EmitFBTOrientationAxes (cbx, vr_fbt_visual_frame.tracker_world[role],
+			vr_fbt_visual_frame.tracker_axis_world[role]);
+		R_EmitFBTOrientationAxes (cbx, vr_fbt_visual_frame.target_world[role],
+			vr_fbt_visual_frame.target_axis_world[role]);
 		R_EmitArrow (cbx, vr_fbt_visual_frame.tracker_world[role],
 			vr_fbt_visual_frame.target_world[role], 0xffffbf40u);
 		VectorCopy (vr_fbt_visual_frame.target_world[role], label_origin);

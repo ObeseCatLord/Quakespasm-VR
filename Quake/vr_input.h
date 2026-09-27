@@ -102,6 +102,9 @@ typedef struct vr_input_fbt_visual_snapshot_s
 	vec3_t head_root_metres;
 	vec3_t tracker_root_metres[VR_FBT_ROLE_COUNT];
 	vec3_t target_root_metres[VR_FBT_ROLE_COUNT];
+	/* Endpoints of the tracker/target local X/Y/Z orientation cues. */
+	vec3_t tracker_axis_root_metres[VR_FBT_ROLE_COUNT][3];
+	vec3_t target_axis_root_metres[VR_FBT_ROLE_COUNT][3];
 } vr_input_fbt_visual_snapshot_t;
 
 qboolean VR_InputFBTCalibrationVisualSnapshot (const vrxr_frame_t *frame,
