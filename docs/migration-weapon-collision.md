@@ -122,17 +122,17 @@ mod-defined ranged/melee classification remains unresolved. A Linux build
 passed; mission-pack near-wall behavior and the inherited default are not yet
 qualified.
 
-## Remaining parity boundary
+## Pre-review parity boundary
 
 The donor defaults `vr_weapon_collision` to `1` and resolves the command muzzle
 even for immersive melee, using its actual cutting edge for the collision
-query. The `2.0` command path skips generic retraction for recognized melee;
-its separately retracted held mesh/contact does not always move the private
-firing origin. The current `sv_immersive_melee` default is also `0`, while the
-donor's server default is automatic (`-1`). These gates need a coordinated
+query. At this checkpoint, the `2.0` command path skipped generic retraction
+for recognized melee; its separately retracted held mesh/contact did not
+always move the private firing origin. The `sv_immersive_melee` default remains
+`0`, while the donor's server default is automatic (`-1`). These gates need a coordinated
 review before collision can safely default on.
 
-The present stock-ranged allowlist does not classify mod viewmodels. Muzzle
+That stock-ranged allowlist did not classify mod viewmodels. Muzzle
 calibration alone is insufficient because the supplied calibration data also
 contains melee models. Uncalibrated alias viewmodels currently cannot produce
 an ordinary private controller pose, although the donor uses the raw grip as
@@ -180,3 +180,23 @@ The prepared held model is still required, so a failed or unavailable prepared
 entity can suppress its physical contact and command-edge correction. This
 remaining coupling requires end-to-end qualification before claiming full
 donor parity.
+
+## Calibrated mod-weapon retraction
+
+The opt-in generic retraction path now accepts any selected, loaded alias
+viewmodel with a valid muzzle calibration, including mod-defined models such
+as `q30a1024`'s `v_shot3`. A selected stock axe uses its validated blade edge
+when the server admits immersive MELEE; otherwise it uses the calibrated
+generic muzzle endpoint. Ordinary non-melee contact publication remains on the
+stock-ranged allowlist, so broader pose support does not silently activate
+QuakeC button contact for mod weapons.
+
+View preparation first establishes dedicated held-melee and paired-weapon
+owners, then lets the generic resolver handle only the remaining viewmodel.
+The crosshair follows the owner's corrected presentation muzzle. A focused
+Astra xhigh review found one animation mismatch in the first paired crosshair
+version: compensated QBJ3 fist presentation moved its entity origin but not
+the command muzzle. The crosshair now starts from the tracked hand plus its
+fixed anchor and render collision delta, leaving palm animation compensation
+out of aim. Linux build and diff checks pass; real near-wall impacts remain
+unverified. Collision still defaults off pending the full contact/outcome gate.

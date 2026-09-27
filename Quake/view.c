@@ -1478,7 +1478,8 @@ void V_PrepareWeaponCollisionPresentation (void)
 {
 	const vrxr_frame_t *frame = GL_OpenXRFrame ();
 	const int dominant = VR_InputDominantPhysicalHand ();
-	vec3_t torso_offset, torso, grip, muzzle, tip, hand_angles, delta;
+	vec3_t torso_offset, torso, grip, muzzle, base, tip, hand_angles, delta;
+	vec3_t axe_base, axe_tip;
 	float head_height;
 	entity_t *player;
 
@@ -1494,7 +1495,8 @@ void V_PrepareWeaponCollisionPresentation (void)
 		!cl.viewent.model || cl.stats[STAT_WEAPON] <= 0 ||
 		cl.stats[STAT_WEAPON] >= MAX_MODELS ||
 		cl.viewent.model != cl.model_precache[cl.stats[STAT_WEAPON]] ||
-		!VR_WeaponCalibrationStockRangedViewmodel (cl.viewent.model->name) ||
+		cl.viewent.model->needload || cl.viewent.model->type != mod_alias ||
+		V_AkimboPairReady () || V_HeldMeleeEntity () ||
 		!tracked_viewmodel_active || dominant < 0 || dominant > 1)
 		return;
 
@@ -1523,10 +1525,19 @@ void V_PrepareWeaponCollisionPresentation (void)
 	VectorAdd (player->origin, torso_offset, torso);
 	torso[2] += head_height + view_stair_delta;
 	VectorCopy (cl.viewent.origin, grip);
-	VectorCopy (grip, tip);
-	VectorAdd (tip, muzzle, tip);
+	if (VR_InputStockAxePresentationEdgeOffsets (dominant,
+		axe_base, axe_tip))
+	{
+		VectorAdd (grip, axe_base, base);
+		VectorAdd (grip, axe_tip, tip);
+	}
+	else
+	{
+		VectorCopy (grip, base);
+		VectorAdd (grip, muzzle, tip);
+	}
 	tracked_weapon_collision_frame_valid = true;
-	if (!CL_ResolveWeaponCollision (torso, grip, grip, tip, delta))
+	if (!CL_ResolveWeaponCollision (torso, grip, base, tip, delta))
 		return; /* Keep the raw pose when the two-stage solve is unresolved. */
 
 	VectorAdd (cl.viewent.origin, delta, cl.viewent.origin);

@@ -1649,8 +1649,44 @@ static qboolean VR_InputRenderOffsetToBody (const vec3_t render_offset,
 			body_offset) && VR_InputWireVec (body_offset);
 }
 
-/* Return physical edge offsets in the command body frame. Alias matrices
- * use a zero lerp origin; neither branch inherits stair or wall translation. */
+/* Both command and presentation use this exact selected-axe edge. The alias
+ * matrix has a zero lerp origin, so neither stair nor wall translation enters
+ * the physical offsets. */
+static qboolean VR_InputStockAxeRenderEdgeOffsets (int hand,
+	aliashdr_t *geometry, const stockaxe_edge_t *edge,
+	vec3_t render_base, vec3_t render_tip)
+{
+	lerpdata_t lerpdata;
+	vec3_t hand_angles, model_angles, raw_base, raw_tip;
+	float model_matrix[16];
+
+	if (hand < 0 || hand > 1 || !geometry || !edge || !edge->valid ||
+		!render_base || !render_tip || !isfinite (vr_gunmodelpitch.value) ||
+		!V_TrackedPresentationHandAngles (hand, hand_angles) ||
+		!VR_LocomotionHandRotToViewmodelAngles (hand_angles,
+			model_angles, vr_gunmodelpitch.value))
+		return false;
+	memset (&lerpdata, 0, sizeof (lerpdata));
+	VectorCopy (model_angles, lerpdata.angles);
+	if (R_AliasModelMatrix (&cl.viewent, geometry, &lerpdata,
+		model_matrix) < 0)
+		return false;
+	for (int axis = 0; axis < 3; ++axis)
+	{
+		if (!isfinite (geometry->scale[axis]) ||
+			geometry->scale[axis] == 0.0f ||
+			!isfinite (geometry->scale_origin[axis]))
+			return false;
+		raw_base[axis] = (edge->base[axis] -
+			geometry->scale_origin[axis]) / geometry->scale[axis];
+		raw_tip[axis] = (edge->tip[axis] -
+			geometry->scale_origin[axis]) / geometry->scale[axis];
+	}
+	return VR_InputAliasTransformPoint (model_matrix, raw_base, render_base) &&
+		VR_InputAliasTransformPoint (model_matrix, raw_tip, render_tip);
+}
+
+/* Return physical edge offsets in the command body frame. */
 static qboolean VR_InputMeleeEdgeBodyOffsets (int hand,
 	aliashdr_t *geometry, const stockaxe_edge_t *edge, qboolean held_mesh,
 	float presentation_yaw, float mapping_yaw,
@@ -1669,42 +1705,29 @@ static qboolean VR_InputMeleeEdgeBodyOffsets (int hand,
 				render_base, render_tip))
 			return false;
 	}
-	else
-	{
-		lerpdata_t lerpdata;
-		vec3_t hand_angles, model_angles, raw_base, raw_tip;
-		float model_matrix[16];
-
-		if (!isfinite (vr_gunmodelpitch.value) ||
-			!V_TrackedPresentationHandAngles (hand, hand_angles) ||
-			!VR_LocomotionHandRotToViewmodelAngles (hand_angles,
-				model_angles, vr_gunmodelpitch.value))
-			return false;
-		memset (&lerpdata, 0, sizeof (lerpdata));
-		VectorCopy (model_angles, lerpdata.angles);
-		if (R_AliasModelMatrix (&cl.viewent, geometry, &lerpdata,
-			model_matrix) < 0)
-			return false;
-		for (int axis = 0; axis < 3; ++axis)
-		{
-			if (!isfinite (geometry->scale[axis]) ||
-				geometry->scale[axis] == 0.0f ||
-				!isfinite (geometry->scale_origin[axis]))
-				return false;
-			raw_base[axis] = (edge->base[axis] -
-				geometry->scale_origin[axis]) / geometry->scale[axis];
-			raw_tip[axis] = (edge->tip[axis] -
-				geometry->scale_origin[axis]) / geometry->scale[axis];
-		}
-		if (!VR_InputAliasTransformPoint (model_matrix, raw_base,
-			render_base) ||
-			!VR_InputAliasTransformPoint (model_matrix, raw_tip, render_tip))
-			return false;
-	}
+	else if (!VR_InputStockAxeRenderEdgeOffsets (hand, geometry, edge,
+		render_base, render_tip))
+		return false;
 	return VR_InputRenderOffsetToBody (render_base, presentation_yaw,
 		mapping_yaw, body_base) &&
 		VR_InputRenderOffsetToBody (render_tip, presentation_yaw,
-			mapping_yaw, body_tip);
+		mapping_yaw, body_tip);
+}
+
+qboolean VR_InputStockAxePresentationEdgeOffsets (int hand,
+	vec3_t render_base, vec3_t render_tip)
+{
+	qmodel_t *model;
+	aliashdr_t *geometry;
+	stockaxe_edge_t edge;
+	int modelindex, skin;
+
+	if (!render_base || !render_tip || !VR_InputMeleeAuthorized () ||
+		!VR_InputSelectedStockAxe (&modelindex, &model, &skin,
+			&geometry, &edge))
+		return false;
+	return VR_InputStockAxeRenderEdgeOffsets (hand, geometry, &edge,
+		render_base, render_tip);
 }
 
 static qboolean VR_InputContactSpeedBound (const vrxr_device_t *device,
@@ -4168,19 +4191,25 @@ static void VR_InputPreparePrivatePose (usercmd_t *pending, int dominant,
 	}
 
 	/* Correct the private command muzzle with either the raw calibrated shaft
-	 * or an admitted melee edge. Keep ordinary contact limited to stock ranged
-	 * aliases, and never use a presentation collision offset for this solve. */
+	 * or an admitted melee edge. Calibration, rather than a stock filename,
+	 * admits mod weapons here; ordinary contact remains stock-only. Never use
+	 * a presentation collision offset for this solve. */
 	{
+		const int selected_modelindex = cl.stats[STAT_WEAPON];
+		qmodel_t *selected_model = selected_modelindex > 0 &&
+			selected_modelindex < MAX_MODELS ?
+			cl.model_precache[selected_modelindex] : NULL;
 		const qboolean stock_ranged =
-			cl.stats[STAT_WEAPON] > 0 && cl.stats[STAT_WEAPON] < MAX_MODELS &&
-			cl.model_precache[cl.stats[STAT_WEAPON]] &&
-			VR_WeaponCalibrationStockRangedViewmodel (
-				cl.model_precache[cl.stats[STAT_WEAPON]]->name);
+			selected_model &&
+			VR_WeaponCalibrationStockRangedViewmodel (selected_model->name);
+		const qboolean calibrated_alias = selected_model &&
+			!selected_model->needload && selected_model->type == mod_alias &&
+			selected_model == cl.viewent.model;
 		const qboolean collision_context = VR_WeaponCollisionAuthorized () &&
 			cls.state == ca_connected && cls.signon == SIGNONS &&
 			!cls.demoplayback && key_dest == key_game && !cl.intermission &&
 			cl.stats[STAT_HEALTH] > 0 &&
-			(stock_ranged || melee_edge_valid) &&
+			(stock_ranged || calibrated_alias || melee_edge_valid) &&
 			cl.worldmodel && !cl.worldmodel->needload && cl.entities &&
 			cl.viewentity > 0 && cl.viewentity < cl.num_entities && frame &&
 			frame->focused && frame->should_render &&
@@ -4196,8 +4225,8 @@ static void VR_InputPreparePrivatePose (usercmd_t *pending, int dominant,
 			entity_t *player = &cl.entities[cl.viewentity];
 			if (stock_ranged)
 			{
-				contact_modelindex = cl.stats[STAT_WEAPON];
-				contact_model = cl.model_precache[contact_modelindex];
+				contact_modelindex = selected_modelindex;
+				contact_model = selected_model;
 			}
 			if (R_TrackedHeadBodyOffset (torso_offset) &&
 				R_TrackedHeadEyeHeight (cl.stats[STAT_VIEWHEIGHT], &head_height))
@@ -4273,23 +4302,53 @@ qboolean VR_InputCrosshairAimRay (vec3_t start, vec3_t forward)
 		cls.signon != SIGNONS || cls.demoplayback || cl.intermission ||
 		!cl.entities || cl.viewentity <= 0 || cl.viewentity >= cl.num_entities ||
 		!V_TrackedPresentationHandBodyOffset (dominant, body_offset) ||
-		!V_TrackedPresentationHandAngles (dominant, hand_angles) ||
-		!VR_WeaponCalibrationCurrentMuzzle (local_muzzle) ||
-		!VR_LocomotionMuzzleOffsetToWorld (local_muzzle, hand_angles,
-			vr_gunmodelscale.value, vr_gunmodelpitch.value, dominant == 0,
-			world_muzzle))
+		!V_TrackedPresentationHandAngles (dominant, hand_angles))
 		return false;
 
 	view_player = &cl.entities[cl.viewentity];
-	if (V_TrackedWeaponCollisionPresentation (collision_origin, collision_offset))
+	if (V_AkimboPairReady ())
 	{
-		/* Shared with the held model; this origin already includes the stair
-		 * presentation rebase and the single collision translation. */
-		VectorCopy (collision_origin, start);
+		entity_t *pair = V_AkimboPairEntity (dominant);
+		vec3_t anchor, raw_origin, raw_angles, render_delta;
+		/* The rendered fist may have animation palm compensation. Aiming uses
+		 * the tracked grip and the same fixed anchor as the pair command. */
+		if (!pair || !V_TrackedPresentationHandWorldPose (dominant,
+			raw_origin, raw_angles) ||
+			!V_AkimboTransformAnchor (dominant, pair->angles, anchor))
+			return false;
+		V_AkimboPairCollisionOffset (dominant, render_delta);
+		VectorAdd (raw_origin, render_delta, start);
+		VectorAdd (start, anchor, start);
+	}
+	else if (V_HeldMeleeEntity ())
+	{
+		entity_t *held = V_HeldMeleeEntity ();
+		const int modelindex = cl.stats[STAT_WEAPON];
+		if (modelindex < 1 || modelindex >= MAX_MODELS ||
+			cl.viewent.model != cl.model_precache[modelindex] ||
+			!VR_WeaponCalibrationCurrentMuzzle (local_muzzle) ||
+			!VR_LocomotionMuzzleOffsetToWorld (local_muzzle, hand_angles,
+				vr_gunmodelscale.value, vr_gunmodelpitch.value, dominant == 0,
+				world_muzzle))
+			return false;
+		/* Held origin already includes the render stair and collision delta. */
+		VectorAdd (held->origin, world_muzzle, start);
 	}
 	else
-		VectorAdd (view_player->origin, body_offset, start);
-	VectorAdd (start, world_muzzle, start);
+	{
+		if (!VR_WeaponCalibrationCurrentMuzzle (local_muzzle) ||
+			!VR_LocomotionMuzzleOffsetToWorld (local_muzzle, hand_angles,
+				vr_gunmodelscale.value, vr_gunmodelpitch.value, dominant == 0,
+				world_muzzle))
+			return false;
+		if (V_TrackedWeaponCollisionPresentation (collision_origin,
+			collision_offset))
+			/* The ordinary viewmodel owns this corrected origin. */
+			VectorCopy (collision_origin, start);
+		else
+			VectorAdd (view_player->origin, body_offset, start);
+		VectorAdd (start, world_muzzle, start);
+	}
 	AngleVectors (hand_angles, forward, right, up);
 	for (int i = 0; i < 3; ++i)
 		if (!isfinite (start[i]) || !isfinite (forward[i]))

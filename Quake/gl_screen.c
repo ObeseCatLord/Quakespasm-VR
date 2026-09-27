@@ -2537,8 +2537,8 @@ void SCR_UpdateScreen (qboolean use_tasks)
 		/* CL_TraceWeapon borrows main-thread PMove hull scratch. Prepare the
 		 * tracked viewmodel and its shared eye/crosshair pose before tasks. */
 		V_SetupFrame ();
-		V_PrepareWeaponCollisionPresentation ();
 		V_PrepareAkimboPair ();
+		V_PrepareWeaponCollisionPresentation ();
 	}
 	else
 		V_ClearAkimboPair ();
