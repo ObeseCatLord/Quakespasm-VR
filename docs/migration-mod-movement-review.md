@@ -138,3 +138,20 @@ The adapter needs an explicit takeoff handoff that preserves water/ladder
 classification and permits later landing, while leaving desktop/stock PMove
 unchanged. This probe is a solver observation, not native-vs-selected mod
 parity or proof that q30 should be admitted yet.
+
+## q30 custom-stat compatibility
+
+The same installed SHA-pinned binary registers nine custom stats from
+`worldspawn`: float `moditems` at 40; string `ckeyname1`–`ckeyname4` at 50–53;
+and float `ckeyskin1`–`ckeyskin4` at 55–58 (statement PCs 47982–48014).
+Those slots do not intersect the private movement slots 225, 226–229,
+238–239, or 241–255. Selected admission now checks the actual registered
+slot ranges instead of rejecting every mod custom stat. This removes an
+unrelated admission barrier; the pinned stock-progs check still excludes q30.
+
+The stat sender and client parser already support string updates under
+`PEXT2_REPLACEMENTDELTAS`, but `PR_CustomStat` previously rejected
+`ev_string` registration. The whitelist now permits it, so q30's key-name
+stats can use the existing transport. Vector registration also rejects a
+starting slot too close to the array end. The sandbox blocks UDP sockets,
+so a dedicated-server/client round trip for these stats remains unverified.

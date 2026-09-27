@@ -850,6 +850,8 @@ qboolean SV_PrivateWalkTrialSelected (client_t *client)
 	return client && client->private_pmove_walk_selected;
 }
 
+static qboolean SV_PrivateWalkStatsDisjoint (void);
+
 static const char *SV_PrivateWalkTrialAdmissionFailure (client_t *client)
 {
 	edict_t *ground;
@@ -868,8 +870,8 @@ static const char *SV_PrivateWalkTrialAdmissionFailure (client_t *client)
 	if (qcvm != &sv.qcvm || qcvm->progssize != 340014 || qcvm->progscrc != 0x0bf8 ||
 		qcvm->progshash != 0xcf69c3e2)
 		return "requires the pinned stock progs identity";
-	if (sv.numcustomstats)
-		return "custom stats are outside the stock movement-stat trial";
+	if (!SV_PrivateWalkStatsDisjoint ())
+		return "custom stats overlap private movement stats";
 	terminal = SV_PrivateWalkTrialSelected (client) &&
 		SV_PrivateWalkTrialTerminalState (client);
 	if (!terminal && (client->edict->v.movetype != MOVETYPE_WALK ||
@@ -1039,7 +1041,6 @@ void SV_CalcStats (client_t *client, int *statsi, float *statsf, const char **st
 {
 	size_t	 i;
 	edict_t *ent = client->edict;
-	// FIXME: string stats!
 	int		 items;
 	eval_t	*val = GetEdictFieldValue (ent, qcvm->extfields.items2);
 	if (val)
@@ -1131,7 +1132,7 @@ void SV_CalcStats (client_t *client, int *statsi, float *statsf, const char **st
 			statsf[sv.customstats[i].idx + 1] = eval->vector[1];
 			statsf[sv.customstats[i].idx + 2] = eval->vector[2];
 			break;
-		case ev_string: // not supported in this build... send with svcfte_updatestatstring on change, which is annoying.
+		case ev_string:
 			statss[sv.customstats[i].idx] = PR_GetString (eval->string);
 			break;
 		case ev_void:	  // nothing...
@@ -1608,6 +1609,25 @@ static qboolean SV_IsPrivateMoveStat (int stat)
 		(stat >= STAT_MOVEVARS_TIMESCALE && stat <= STAT_MOVEVARS_STEPHEIGHT);
 }
 
+/* The selected path sends movement slots on its own snapshot. A mod's other
+ * custom stats remain available; only actual overlap would hide their data. */
+static qboolean SV_PrivateWalkStatsDisjoint (void)
+{
+	for (size_t i = 0; i < sv.numcustomstats; ++i)
+	{
+		const int first = sv.customstats[i].idx;
+		const int width = sv.customstats[i].type == ev_vector ? 3 :
+			(sv.customstats[i].type == ev_ext_sint64 ||
+			 sv.customstats[i].type == ev_ext_uint64 ? 2 : 1);
+		if (first < 0 || first > MAX_CL_STATS - width)
+			return false;
+		for (int slot = first; slot < first + width; ++slot)
+			if (SV_IsPrivateMoveStat (slot))
+				return false;
+	}
+	return true;
+}
+
 static qboolean SVFTE_WritePrivateMoveStats (client_t *client, sizebuf_t *msg)
 {
 	movevars_t movevars;
@@ -1621,6 +1641,8 @@ static qboolean SVFTE_WritePrivateMoveStats (client_t *client, sizebuf_t *msg)
 	if (!isfinite (client->private_pmove_waterjump_secs) ||
 		client->private_pmove_waterjump_secs < 0.0f ||
 		client->private_pmove_waterjump_secs > 2.0f)
+		return false;
+	if (!SV_PrivateWalkStatsDisjoint ())
 		return false;
 	if (!PMSV_BuildMoveVars (&movevars, client->edict, sv.protocolflags))
 		return false;

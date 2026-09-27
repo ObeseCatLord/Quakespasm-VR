@@ -4387,13 +4387,15 @@ static void PF_setattachment (void)
 static struct svcustomstat_s *PR_CustomStat (int idx, int type)
 {
 	size_t i;
-	if (idx < 0 || idx >= MAX_CL_STATS)
+	int width = type == ev_vector ? 3 : 1;
+	if (idx < 0 || idx > MAX_CL_STATS - width)
 		return NULL;
 	switch (type)
 	{
 	case ev_ext_integer:
 	case ev_ext_uint32:
 	case ev_float:
+	case ev_string:
 	case ev_vector:
 	case ev_entity:
 		break;
