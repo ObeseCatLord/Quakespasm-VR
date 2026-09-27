@@ -1134,8 +1134,8 @@ void R_DrawIndirectBrushesFiltered (
 				vulkan_globals.world_mboit_moment_pipelines[pipeline_index], vulkan_globals.world_mboit_composite_pipelines[pipeline_index]);
 			if (cbx->hidden_area_masked_world && indirect_draws[i].world_owned && !is_decal &&
 				!draw_water && !draw_sky && !alpha_test && !alpha_blend && !cbx->depth_only &&
-				cbx->subpass_type == SUBPASS_MAIN && cbx->pipeline_variant == MAIN_RENDER_PASS_STANDARD)
-				pipeline = vulkan_globals.world_hidden_area_pipelines[pipeline_index];
+				cbx->subpass_type == SUBPASS_MAIN)
+				pipeline = vulkan_globals.world_hidden_area_pipelines[cbx->pipeline_variant][pipeline_index];
 			R_BindPipeline (cbx, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
 			if (draw_water)
 				R_PushConstants (cbx, VK_SHADER_STAGE_ALL_GRAPHICS, 20 * sizeof (float), sizeof (alpha), &alpha);

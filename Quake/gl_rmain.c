@@ -2090,7 +2090,7 @@ static void R_DrawWorldChunk (int context, int index, void *use_tasks, r_world_d
 	/* The mask uses the postprocess layout. Record it before setup restores the
 	 * world MVP push constants and viewport for this command buffer. */
 	if (!skip_draw && context == SCBX_WORLD && cbx->subpass_type == SUBPASS_MAIN &&
-		cbx->pipeline_variant == MAIN_RENDER_PASS_STANDARD && GL_OpenXRHiddenAreaWorldEligible ())
+		GL_OpenXRHiddenAreaWorldEligible (cbx))
 	{
 		cbx->hidden_area_masked_world = true;
 		if (index == 0)

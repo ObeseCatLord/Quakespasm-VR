@@ -44,8 +44,9 @@ void		  GL_SynchronizeEndRenderingTask (void);
 void		  GL_UpdateDescriptorSets (void);
 
 #include "vr_openxr.h"
+struct cb_context_s;
 const vrxr_frame_t *GL_OpenXRFrame (void);
-qboolean GL_OpenXRHiddenAreaWorldEligible (void);
+qboolean GL_OpenXRHiddenAreaWorldEligible (const struct cb_context_s *cbx);
 void GL_InvalidateXRInput (void);
 void GL_EndXRFrame (void);
 void R_PrepareStereoFrame (void);
@@ -467,8 +468,8 @@ typedef struct
 	vulkan_pipeline_layout_t gui_pipeline_layout;
 	vulkan_pipeline_layout_t gui_stereo_ui_pipeline_layout;
 	vulkan_pipeline_t		 world_pipelines[MAIN_RENDER_PASS_VARIANT_COUNT][WORLD_PIPELINE_COUNT];
-	vulkan_pipeline_t		 world_hidden_area_pipelines[WORLD_PIPELINE_COUNT];
-	vulkan_pipeline_t		 hidden_area_stencil_pipeline;
+	vulkan_pipeline_t		 world_hidden_area_pipelines[MAIN_RENDER_PASS_VARIANT_COUNT][WORLD_PIPELINE_COUNT];
+	vulkan_pipeline_t		 hidden_area_stencil_pipeline[MAIN_RENDER_PASS_VARIANT_COUNT];
 	vulkan_pipeline_t		 world_depth_replay_pipeline;
 	vulkan_pipeline_t		 world_wboit_pipelines[WORLD_PIPELINE_COUNT];
 	vulkan_pipeline_t		 world_mboit_moment_pipelines[WORLD_PIPELINE_COUNT];

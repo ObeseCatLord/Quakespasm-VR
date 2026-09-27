@@ -4826,13 +4826,13 @@ static xr_hidden_area_draw_t GL_PrepareHiddenAreaMesh (void)
 	return draw;
 }
 
-qboolean GL_OpenXRHiddenAreaWorldEligible (void)
+qboolean GL_OpenXRHiddenAreaWorldEligible (const cb_context_t *cbx)
 {
-	return vulkan_globals.stereo_active && openxr_frame.should_render &&
+	return cbx && cbx->pipeline_variant >= 0 && cbx->pipeline_variant < MAIN_RENDER_PASS_VARIANT_COUNT &&
+		vulkan_globals.stereo_active && openxr_frame.should_render &&
 		hidden_area_draws[current_cb_index].vertex_count &&
-		vulkan_globals.hidden_area_stencil_pipeline.handle != VK_NULL_HANDLE &&
-		vulkan_globals.sample_count == VK_SAMPLE_COUNT_1_BIT &&
-		!vulkan_globals.supersampling && !R_SSAOEnabled () && !R_UseOIT () &&
+		vulkan_globals.hidden_area_stencil_pipeline[cbx->pipeline_variant].handle != VK_NULL_HANDLE &&
+		!R_SSAOEnabled () &&
 		!vulkan_globals.openxr_fragment_shading_rate_active &&
 		!vulkan_globals.openxr_fragment_density_map_enabled &&
 		vid.width == vid.render_width && vid.height == vid.render_height &&
@@ -4843,7 +4843,7 @@ qboolean GL_OpenXRHiddenAreaWorldEligible (void)
 void GL_RecordOpenXRHiddenAreaStencil (cb_context_t *cbx)
 {
 	assert (cbx && cbx->subpass_type == SUBPASS_MAIN &&
-		cbx->pipeline_variant == MAIN_RENDER_PASS_STANDARD);
+		cbx->pipeline_variant >= 0 && cbx->pipeline_variant < MAIN_RENDER_PASS_VARIANT_COUNT);
 	const xr_hidden_area_draw_t *mesh = &hidden_area_draws[current_cb_index];
 	const VkClearAttachment clear = {
 		.aspectMask = VK_IMAGE_ASPECT_STENCIL_BIT,
@@ -4853,7 +4853,7 @@ void GL_RecordOpenXRHiddenAreaStencil (cb_context_t *cbx)
 	const VkClearRect rect = {{{0, 0}, {vid.render_width, vid.render_height}}, 0, 1};
 	vkCmdClearAttachments (cbx->cb, 1, &clear, 1, &rect);
 	R_BindPipeline (cbx, VK_PIPELINE_BIND_POINT_GRAPHICS,
-		vulkan_globals.hidden_area_stencil_pipeline);
+		vulkan_globals.hidden_area_stencil_pipeline[cbx->pipeline_variant]);
 	vkCmdBindVertexBuffers (cbx->cb, 0, 1, &mesh->buffer, &mesh->offset);
 	vkCmdDraw (cbx->cb, mesh->vertex_count, 1, 0, 0);
 }

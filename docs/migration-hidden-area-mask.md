@@ -98,10 +98,10 @@ neighboring effects remains.
 
 The frame's projected two-eye mesh is now allocated after dynamic-buffer
 rotation, before the world-record tasks, and reused by the final-black draw.
-In the standard single-sample stereo scene pass, world context zero clears
-stencil and writes bit 7 over the hidden triangles. Only static opaque world
-draws test bit 7; direct and indirect paths select the same two fullbright
-pipeline choices. The mask is recorded before the world MVP setup so the
+In the stereo scene pass, world context zero clears stencil and writes bit 7
+over the hidden triangles. Only static opaque world draws test bit 7; direct
+and indirect paths select the same two fullbright pipeline choices for the
+active standard, WBOIT, or MBOIT main pass. The mask is recorded before the world MVP setup so the
 postprocess-layout bind cannot invalidate world push constants. Later sky,
 entity, SSAO, and UI stencil behavior is untouched.
 
@@ -116,14 +116,19 @@ No new pass or extra stencil barrier is needed for that sequence.
 
 | Review recommendation | Disposition |
 | --- | --- |
-| Treat the restricted gate as a proof, not production-complete masking. | Adopt. Defaults include MSAA, SSAO, and OIT, so normal VR currently uses final black without world-fragment savings. |
+| Treat the restricted gate as a proof, not production-complete masking. | Adopt. Normal VR still enables SSAO, so it currently uses final black without world-fragment savings. |
 | Preserve the world push constants after binding the mask pipeline. | Adopt. Record the mask before `R_SetupContext`. |
 | Limit readers to the static opaque world subset in both direct and indirect paths. | Adopt. Both selectors use the same mask scope; moving brushes and cutouts remain unmasked. |
 | Expand directly into SSAO without restoring hidden-region depth. | Reject. SSAO samples neighboring and mipmapped depth, so final black cannot preserve visible AO by itself. |
 | Reuse a depth-only world replay for SSAO, then qualify MSAA and OIT variants. | Adapt for the next increment. Reuse the existing density-map replay recipe, but measure the added geometry cost and compare visible pixels and depth before enabling defaults. |
 | Add a second frame graph, near-depth masking, or global early stencil tests. | Reject. Existing pass and stencil owners already provide the narrow boundary. |
 
-This Linux build and source review establish integration, not headset-visible
-parity or a measured speedup. The default-mode work must preserve SSAO's
-neighboring depth, MSAA edge coverage, OIT composition, and the density-map
-replay before the mask can be considered a broad performance feature.
+The next increment creates mask-writer and static opaque world-reader pipelines
+for all three main-pass variants. The pipeline multisample state follows
+vkQuake's selected sample count, allowing MSAA and sample shading instead of
+disabling the mask for those modes. OIT transparency still uses its original
+pipeline and pass order. SSAO, rate maps, and neighboring screen effects remain
+gated. The Linux build establishes integration, not headset-visible parity or
+a measured speedup; MSAA boundary coverage and OIT composition still require
+visual qualification. Default-mode work must preserve SSAO's neighboring depth
+and the density-map replay before the mask can be considered broad.
