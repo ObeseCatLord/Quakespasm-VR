@@ -37,13 +37,14 @@ cc -std=gnu11 -DUSE_SDL3 -D_GNU_SOURCE -Wall -Wextra -Werror \
 
 `vr_weapon_calibration_fixture.c` checks the live calibration authority's
 classic cvar names and lifetimes, field-wise schema merging, live classic
-muzzle edits, classic/enhanced multiplayer overlays, invalid and missing
+muzzle edits, shared solo/co-op offsets despite legacy multiplayer fields,
+invalid and missing
 profiles, reset behavior, and all 99 cvar slots. A full-slot insertion failure
 must leave the existing calibration and all free slots unchanged. It also calls
 the production projectile source helper to check the pitched 8-unit forward
 and 16-unit world-up default, grenade origin, schema right/up/forward offsets,
-optional view height, self-origin overrides, and independence from MP muzzle
-overlays.
+optional view height, self-origin overrides, and independence from legacy
+multiplayer muzzle fields.
 
 ```sh
 cc -std=gnu11 -DUSE_SDL3 -D_GNU_SOURCE -Wall -Wextra -Werror \
@@ -60,8 +61,8 @@ cc -std=gnu11 -DUSE_SDL3 -D_GNU_SOURCE -Wall -Wextra -Werror \
 `vr_weapon_model_selector_fixture.c` calls the production command-time muzzle
 selector with a stub for native `Mod_Extradata_CheckSkin`. It covers weapon
 switches before `viewent.model` refresh, invalid indices/models/headers, all
-four supported pose formats, skin forwarding, classic and enhanced multiplayer
-overlays, missing profiles, and nonfinite calibration values.
+four supported pose formats, skin forwarding, shared classic and enhanced
+muzzles in solo/co-op, missing profiles, and nonfinite calibration values.
 
 ```sh
 cc -std=gnu11 -DUSE_SDL3 -D_GNU_SOURCE -Wall -Wextra -Werror \
@@ -76,8 +77,9 @@ cc -std=gnu11 -DUSE_SDL3 -D_GNU_SOURCE -Wall -Wextra -Werror \
 `vr_weapon_calibration_reload_fixture.c` exercises active-game reload with the
 real schema parser, including all eight enhanced muzzle fallbacks, missing-file
 behavior, field-wise file overrides, profile replacement on a later reload,
-all ten Enyo classic held/muzzle defaults, Enyo identity-only schema plus
-global MP overlay, file freeing, and safe built-in retention after malformed input. The file
+all ten Enyo classic held/muzzle defaults, Enyo identity-only schema with a
+parsed but unused global MP overlay, file freeing, and safe built-in retention
+after malformed input. The file
 loader is a fixture boundary; native `COM_LoadFile` supplies active search-path
 behavior in the game.
 
@@ -96,7 +98,8 @@ cc -std=gnu11 -DUSE_SDL3 -D_GNU_SOURCE -Wall -Wextra -Werror \
 
 `vr_weapon_calibration_save_fixture.c` exercises the production token-span
 writer on compact mixed-format blocks, trailing comments, absent classic
-muzzles, and new-entry placement before global offsets:
+muzzles, removal of per-weapon legacy MP offsets from updated blocks, and
+new-entry placement before global offsets:
 
 ```sh
 cc -std=gnu11 -DUSE_SDL3 -D_GNU_SOURCE -Wall -Wextra -Werror \

@@ -688,8 +688,7 @@ static int R_AliasModelMatrixInternal (
 			!strcmp (pair_recipe->source, "progs/v_axeb.mdl") &&
 			!strcmp (cl.viewent.model->name, pair_recipe->source);
 		const qboolean enhanced_format = paliashdr->poseverttype == PV_MD5 || paliashdr->poseverttype == PV_MD5_8;
-		const qboolean multiplayer = cl.maxclients > 1;
-		const qboolean has_calibration = VR_WeaponCalibrationLookupHeld (calibration_name, enhanced_format, multiplayer, held_offset, &held_scale);
+		const qboolean has_calibration = VR_WeaponCalibrationLookupHeld (calibration_name, enhanced_format, held_offset, &held_scale);
 
 		if (!has_calibration)
 		{

@@ -109,13 +109,12 @@ static void AssertVector(const vec3_t actual, float x, float y, float z)
 }
 
 static void AssertHeldFailure(const char *model_name,
-							  qboolean enhanced_format,
-							  qboolean multiplayer)
+							  qboolean enhanced_format)
 {
 	vec3_t offset = {9.0f, 8.0f, 7.0f};
 	float scale = 4.0f;
 	assert(!VR_WeaponCalibrationLookupHeld(model_name, enhanced_format,
-										   multiplayer, offset, &scale));
+										   offset, &scale));
 	AssertVector(offset, 0.0f, 0.0f, 0.0f);
 	assert(scale == 1.0f);
 }
@@ -162,6 +161,14 @@ int main(void)
 	assert(!strcmp(vr_weapon_offset[4].string, "-1"));
 	VR_WeaponCalibrationInit();
 	assert(registered_cvar_count == CALIBRATION_CVAR_COUNT);
+
+	/* A legacy multiplayer-only entry must not create a shared profile. */
+	memset(&entry, 0, sizeof(entry));
+	SetPath(&entry, "progs/mp_only.mdl");
+	entry.has_mp_held_offset = true;
+	entry.mp_held_offset[0] = 4.0f;
+	assert(VR_WeaponCalibrationApplySchema(&entry, 1));
+	AssertHeldFailure("progs/mp_only.mdl", false);
 
 	memset(&entry, 0, sizeof(entry));
 	SetPath(&entry, "progs/v_shot.mdl");
@@ -212,37 +219,21 @@ int main(void)
 	entry.has_muzzle_source_viewofs = true;
 	entry.muzzle_source_viewofs = true;
 	assert(VR_WeaponCalibrationApplySchema(&entry, 1));
-	assert(VR_WeaponCalibrationLookupHeld("progs/v_shot.mdl", false, false,
+	assert(VR_WeaponCalibrationLookupHeld("progs/v_shot.mdl", false,
 										  held, &held_scale));
 	AssertVector(held, 2.0f, 3.0f, 10.0f);
 	assert(held_scale == 0.5f);
-	assert(VR_WeaponCalibrationLookupHeld("progs/v_shot.mdl", false, true,
-										  held, &held_scale));
-	AssertVector(held, 3.0f, 1.0f, 13.0f);
-	assert(held_scale == 0.5f);
-	assert(VR_WeaponCalibrationLookupHeld("progs/v_shot.mdl", true, false,
+	assert(VR_WeaponCalibrationLookupHeld("progs/v_shot.mdl", true,
 										  held, &held_scale));
 	AssertVector(held, 5.0f, 6.0f, 7.0f);
 	assert(held_scale == 1.0f); /* Enhanced neutral scale ignores classic. */
-	assert(VR_WeaponCalibrationLookupHeld("progs/v_shot.mdl", true, true,
-										  held, &held_scale));
-	AssertVector(held, 7.0f, 9.0f, 11.0f);
-	assert(held_scale == 1.0f);
-	assert(VR_WeaponCalibrationLookupMuzzle("progs/v_shot.mdl", false,
-										 false, muzzle));
+	assert(VR_WeaponCalibrationLookupMuzzle("progs/v_shot.mdl", false, muzzle));
 	AssertVector(muzzle, 3.0f, 4.0f, 10.0f); /* held scale is independent */
-	assert(VR_WeaponCalibrationLookupMuzzle("progs/v_shot.mdl", false, true,
-										 muzzle));
-	AssertVector(muzzle, 4.0f, 6.0f, 13.0f);
-	assert(VR_WeaponCalibrationLookupMuzzle("progs/v_shot.mdl", true, false,
-										 muzzle));
+	assert(VR_WeaponCalibrationLookupMuzzle("progs/v_shot.mdl", true,
+									 muzzle));
 	AssertVector(muzzle, 0.0f, 0.0f, 20.0f);
-	assert(VR_WeaponCalibrationLookupMuzzle("progs/v_shot.mdl", true, true,
-										 muzzle));
-	AssertVector(muzzle, 1.0f, 2.0f, 23.0f);
 
-	/* The schema source offset is right/up/forward. MP muzzle overlays remain
-	 * independent: this profile has both classic and enhanced MP overlay data. */
+	/* The schema projectile source remains independent of unused MP fields. */
 	aim_angles[0] = 0.0f;
 	aim_angles[1] = 90.0f;
 	aim_angles[2] = 0.0f;
@@ -286,34 +277,27 @@ int main(void)
 	Cvar_SetQuick(&vr_weapon_offset[1], "2.75");
 	Cvar_SetQuick(&vr_weapon_offset[2], "18.5");
 	Cvar_SetQuick(&vr_weapon_offset[3], "1.25");
-	assert(VR_WeaponCalibrationLookupHeld("progs/v_shot.mdl", false, false,
+	assert(VR_WeaponCalibrationLookupHeld("progs/v_shot.mdl", false,
 										  held, &held_scale));
 	AssertVector(held, -4.25f, 2.75f, 18.5f);
-	assert(held_scale == 1.25f);
-	assert(VR_WeaponCalibrationLookupHeld("progs/v_shot.mdl", false, true,
-										  held, &held_scale));
-	AssertVector(held, -3.25f, 0.75f, 21.5f);
 	assert(held_scale == 1.25f);
 	Cvar_SetQuick(&vr_weapon_offset[0], "2");
 	Cvar_SetQuick(&vr_weapon_offset[1], "3");
 	Cvar_SetQuick(&vr_weapon_offset[2], "10");
 	Cvar_SetQuick(&vr_weapon_offset[3], "0.5");
-	assert(VR_WeaponCalibrationLookupMuzzle("progs/v_shot.mdl", false,
-										 false, muzzle));
+	assert(VR_WeaponCalibrationLookupMuzzle("progs/v_shot.mdl", false, muzzle));
 	AssertVector(muzzle, 9.0f, 4.0f, 10.0f);
 	Cvar_SetQuick(&vr_weapon_offset[4], "progs/v_rekeyed.mdl");
-	assert(!VR_WeaponCalibrationLookupMuzzle("progs/v_shot.mdl", false,
-										  false, muzzle));
-	assert(VR_WeaponCalibrationLookupMuzzle("progs/v_rekeyed.mdl", false,
-										 false, muzzle));
+	assert(!VR_WeaponCalibrationLookupMuzzle("progs/v_shot.mdl", false, muzzle));
+	assert(VR_WeaponCalibrationLookupMuzzle("progs/v_rekeyed.mdl", false, muzzle));
 	AssertVector(muzzle, 9.0f, 4.0f, 10.0f);
 	Cvar_SetQuick(&vr_weapon_offset[4], "progs/v_shot.mdl");
 
-	/* Reapplying effective MP data replaces it; it never adds the global sum twice. */
+	/* Reapplying a schema with legacy MP fields cannot change the shared muzzle. */
 	assert(VR_WeaponCalibrationApplySchema(&entry, 1));
-	assert(VR_WeaponCalibrationLookupMuzzle("progs/v_shot.mdl", false, true,
-										 muzzle));
-	AssertVector(muzzle, 4.0f, 6.0f, 13.0f);
+	assert(VR_WeaponCalibrationLookupMuzzle("progs/v_shot.mdl", false,
+									 muzzle));
+	AssertVector(muzzle, 3.0f, 4.0f, 10.0f);
 
 	memset(&update, 0, sizeof(update));
 	SetPath(&update, "progs/v_shot.mdl");
@@ -327,7 +311,7 @@ int main(void)
 	assert(fabsf(vr_weapon_offset[1].value - 8.0f) < 0.0001f);
 	assert(fabsf(vr_weapon_offset[2].value - 9.0f) < 0.0001f);
 	assert(fabsf(vr_weapon_offset[3].value - 0.5f) < 0.0001f);
-	assert(VR_WeaponCalibrationLookupMuzzle("progs/v_shot.mdl", true, false,
+	assert(VR_WeaponCalibrationLookupMuzzle("progs/v_shot.mdl", true,
 										 muzzle));
 	AssertVector(muzzle, 0.0f, 0.0f, 20.0f);
 
@@ -336,11 +320,9 @@ int main(void)
 	update.has_enhanced_muzzle_offset = true;
 	update.enhanced_muzzle_offset[2] = 17.0f;
 	assert(VR_WeaponCalibrationApplySchema(&update, 1));
-	assert(!VR_WeaponCalibrationLookupMuzzle("progs/v_enhanced_only.mdl", false,
-										  false, muzzle));
+	assert(!VR_WeaponCalibrationLookupMuzzle("progs/v_enhanced_only.mdl", false, muzzle));
 	AssertVector(muzzle, 0.0f, 0.0f, 0.0f);
-	assert(VR_WeaponCalibrationLookupMuzzle("progs/v_enhanced_only.mdl", true,
-										 false, muzzle));
+	assert(VR_WeaponCalibrationLookupMuzzle("progs/v_enhanced_only.mdl", true, muzzle));
 	AssertVector(muzzle, 0.0f, 0.0f, 17.0f);
 
 	memset(&update, 0, sizeof(update));
@@ -352,8 +334,7 @@ int main(void)
 	update.has_held_scale = true;
 	update.held_scale = 0.25f;
 	assert(VR_WeaponCalibrationApplySchema(&update, 1));
-	assert(VR_WeaponCalibrationLookupMuzzle("progs/fallback.mdl", false,
-										 false, muzzle));
+	assert(VR_WeaponCalibrationLookupMuzzle("progs/fallback.mdl", false, muzzle));
 	AssertVector(muzzle, 0.0f, 0.0f, 11.0f);
 
 	memset(&update, 0, sizeof(update));
@@ -368,8 +349,7 @@ int main(void)
 	update.has_held_offset = true;
 	update.held_offset[2] = 44.0f;
 	assert(VR_WeaponCalibrationApplySchema(&update, 1));
-	assert(VR_WeaponCalibrationLookupMuzzle("progs/fallback.mdl", false,
-										 false, muzzle));
+	assert(VR_WeaponCalibrationLookupMuzzle("progs/fallback.mdl", false, muzzle));
 	AssertVector(muzzle, 1.0f, 2.0f, 30.0f);
 
 	memset(&update, 0, sizeof(update));
@@ -377,20 +357,18 @@ int main(void)
 	update.has_offset = true;
 	update.offset[2] = 99.0f;
 	assert(VR_WeaponCalibrationApplySchema(&update, 1));
-	assert(!VR_WeaponCalibrationLookupMuzzle("progs/generic-offset.mdl", false,
-										  false, muzzle));
+	assert(!VR_WeaponCalibrationLookupMuzzle("progs/generic-offset.mdl", false, muzzle));
 
 	Cvar_SetQuick(&vr_weapon_muzzle_offset[0], "nan");
-	assert(!VR_WeaponCalibrationLookupMuzzle("progs/v_shot.mdl", false,
-										 false, muzzle));
+	assert(!VR_WeaponCalibrationLookupMuzzle("progs/v_shot.mdl", false, muzzle));
 	Cvar_SetQuick(&vr_weapon_muzzle_offset[0], "9");
-	AssertHeldFailure("progs/not-registered.mdl", false, false);
+	AssertHeldFailure("progs/not-registered.mdl", false);
 	Cvar_SetQuick(&vr_weapon_offset[3], "nan");
-	AssertHeldFailure("progs/v_shot.mdl", false, false);
+	AssertHeldFailure("progs/v_shot.mdl", false);
 	Cvar_SetQuick(&vr_weapon_offset[3], "0");
-	AssertHeldFailure("progs/v_shot.mdl", false, false);
+	AssertHeldFailure("progs/v_shot.mdl", false);
 	Cvar_SetQuick(&vr_weapon_offset[3], "-1");
-	AssertHeldFailure("progs/v_shot.mdl", false, false);
+	AssertHeldFailure("progs/v_shot.mdl", false);
 	Cvar_SetQuick(&vr_weapon_offset[3], "0.5");
 
 	/* Invalid input and capacity failures are rejected before publishing slots. */
@@ -409,17 +387,17 @@ int main(void)
 	}
 	assert(!VR_WeaponCalibrationApplySchema(too_many,
 										 sizeof(too_many) / sizeof(too_many[0])));
-	assert(!VR_WeaponCalibrationLookupMuzzle("test/0.mdl", false, false,
+	assert(!VR_WeaponCalibrationLookupMuzzle("test/0.mdl", false,
 										 muzzle));
 
 	VR_WeaponCalibrationReset();
 	VR_WeaponCalibrationReset();
 	assert(registered_cvar_count == CALIBRATION_CVAR_COUNT);
 	assert(!strcmp(vr_weapon_offset[4].string, "-1"));
-	assert(!VR_WeaponCalibrationLookupMuzzle("progs/v_shot.mdl", false, false,
+	assert(!VR_WeaponCalibrationLookupMuzzle("progs/v_shot.mdl", false,
 										 muzzle));
 	assert(VR_WeaponCalibrationReloadGame());
-	assert(VR_WeaponCalibrationLookupHeld("progs/v_axe.mdl", true, false,
+	assert(VR_WeaponCalibrationLookupHeld("progs/v_axe.mdl", true,
 										  held, &held_scale));
 	AssertVector(held, -19.72028f, 12.02455f, 23.92703f);
 	assert(held_scale == 1.0f);
@@ -428,8 +406,7 @@ int main(void)
 	update.has_enhanced_muzzle_offset = true;
 	update.enhanced_muzzle_offset[2] = 8.0f;
 	assert(VR_WeaponCalibrationApplySchema(&update, 1));
-	assert(VR_WeaponCalibrationLookupHeld("progs/neutral-only.mdl", true,
-		false, held, &held_scale));
+	assert(VR_WeaponCalibrationLookupHeld("progs/neutral-only.mdl", true, held, &held_scale));
 	AssertVector(held, 0.0f, 0.0f, 0.0f);
 	assert(held_scale == 1.0f);
 	VR_WeaponCalibrationReset();
@@ -452,10 +429,9 @@ int main(void)
 	SetPath(&update, "slot/overflow.mdl");
 	update.has_muzzle_offset = true;
 	assert(!VR_WeaponCalibrationApplySchema(&update, 1));
-	assert(VR_WeaponCalibrationLookupMuzzle("slot/0.mdl", false, false,
+	assert(VR_WeaponCalibrationLookupMuzzle("slot/0.mdl", false,
 										 muzzle));
-	assert(!VR_WeaponCalibrationLookupMuzzle("slot/overflow.mdl", false,
-										 false, muzzle));
+	assert(!VR_WeaponCalibrationLookupMuzzle("slot/overflow.mdl", false, muzzle));
 
 	puts("VR weapon calibration fixture passed");
 	return 0;

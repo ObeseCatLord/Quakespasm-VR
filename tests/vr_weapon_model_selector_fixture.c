@@ -176,12 +176,12 @@ int main(void)
 	cl.stats[STAT_WEAPON] = 3;
 	cl.model_precache[3] = &enhanced_model;
 	cl.maxclients = 2;
-	AssertSelectedMuzzle(PV_MD5, &enhanced_model, 11.0f, 22.0f, 33.0f);
-	AssertSelectedMuzzle(PV_MD5_8, &enhanced_model, 11.0f, 22.0f, 33.0f);
+	AssertSelectedMuzzle(PV_MD5, &enhanced_model, 10.0f, 20.0f, 30.0f);
+	AssertSelectedMuzzle(PV_MD5_8, &enhanced_model, 10.0f, 20.0f, 30.0f);
 
-	/* Classic format also receives the multiplayer overlay. */
+	/* Multiplayer uses the same authored muzzle as a local game. */
 	cl.stats[STAT_WEAPON] = 1;
-	AssertSelectedMuzzle(PV_QUAKE1, &classic_model, 5.0f, 7.0f, 9.0f);
+	AssertSelectedMuzzle(PV_QUAKE1, &classic_model, 1.0f, 2.0f, 3.0f);
 
 	calls_before_rejection = check_skin_calls;
 	cl.stats[STAT_WEAPON] = 0;

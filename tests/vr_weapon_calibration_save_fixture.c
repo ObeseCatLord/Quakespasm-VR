@@ -51,6 +51,10 @@ int main(void)
 	assert(entry.has_held_offset && entry.held_offset[0] == 9.0f);
 	assert(entry.has_enhanced_held_offset &&
 		entry.enhanced_held_offset[0] == 4.0f);
+	FixtureRewrite("{ viewmodel progs/v_shot.mdl held_offset 1 2 3 mp_held_offset 4 5 6 enhanced_mp_muzzle_offset 7 8 9 }",
+		false, &entry);
+	assert(entry.has_held_offset && entry.held_offset[0] == 9.0f);
+	assert(!entry.has_mp_held_offset && !entry.has_enhanced_mp_muzzle_offset);
 
 	FixtureRewrite("{ viewmodel progs/v_shot.mdl held_offset 1 2 3 /* keep */}",
 		false, &entry);
@@ -65,6 +69,10 @@ int main(void)
 	assert(entry.has_held_offset && entry.held_offset[0] == 1.0f);
 	assert(entry.has_enhanced_held_offset &&
 		entry.enhanced_held_offset[0] == 7.0f);
+	FixtureRewrite("{ viewmodel progs/v_shot.mdl enhanced_held_offset 4 5 6 mp_muzzle_offset 1 2 3 enhanced_mp_held_offset 7 8 9 }",
+		true, &entry);
+	assert(entry.has_enhanced_held_offset && entry.enhanced_held_offset[0] == 7.0f);
+	assert(!entry.has_mp_muzzle_offset && !entry.has_enhanced_mp_held_offset);
 
 	vr_weapon_calibration_slots[0].has_muzzle_offset = false;
 	FixtureRewrite("{ viewmodel progs/v_shot.mdl held_offset 1 2 3 }",

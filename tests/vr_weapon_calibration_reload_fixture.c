@@ -96,11 +96,11 @@ static void AssertClassicProfile(const char *path, float x, float y, float z,
 	vec3_t muzzle;
 	float actual_scale;
 
-	assert(VR_WeaponCalibrationLookupHeld(path, false, false, held,
+	assert(VR_WeaponCalibrationLookupHeld(path, false, held,
 										   &actual_scale));
 	AssertVector(held, x, y, z);
 	assert(fabsf(actual_scale - scale) < 0.0001f);
-	assert(VR_WeaponCalibrationLookupMuzzle(path, false, false, muzzle));
+	assert(VR_WeaponCalibrationLookupMuzzle(path, false, muzzle));
 	AssertVector(muzzle, muzzle_x, muzzle_y, muzzle_z);
 }
 
@@ -191,8 +191,7 @@ static void AssertFallbackMuzzles(void)
 
 	for (index = 0; index < sizeof(expected) / sizeof(expected[0]); ++index)
 	{
-		assert(VR_WeaponCalibrationLookupMuzzle(expected[index].path, true,
-											false, muzzle));
+		assert(VR_WeaponCalibrationLookupMuzzle(expected[index].path, true, muzzle));
 		AssertVector(muzzle, 0.0f, 0.0f, expected[index].muzzle_z);
 	}
 }
@@ -225,13 +224,11 @@ static void AssertEnyoFallbacks(void)
 
 	for (index = 0; index < sizeof(expected) / sizeof(expected[0]); ++index)
 	{
-		assert(VR_WeaponCalibrationLookupHeld(expected[index].path, false,
-											 false, held, &scale));
+		assert(VR_WeaponCalibrationLookupHeld(expected[index].path, false, held, &scale));
 		AssertVector(held, expected[index].x, expected[index].y,
 				 expected[index].z);
 		assert(fabsf(scale - expected[index].scale) < 0.0001f);
-		assert(VR_WeaponCalibrationLookupMuzzle(expected[index].path, false,
-												 false, muzzle));
+		assert(VR_WeaponCalibrationLookupMuzzle(expected[index].path, false, muzzle));
 		AssertVector(muzzle, 0.0f, 0.0f, expected[index].z);
 	}
 }
@@ -251,13 +248,13 @@ int main(void)
 	assert(registered_cvar_count == CALIBRATION_CVAR_COUNT);
 	AssertFallbackMuzzles();
 	assert(VR_WeaponCalibrationLookupHeld(
-		"progs/v_shot.mdl", false, false, held, &held_scale));
+		"progs/v_shot.mdl", false, held, &held_scale));
 	AssertVector(held, 0.0f, 0.0f, 0.0f);
 	assert(fabsf(held_scale - 1.0f) < 0.0001f);
 	assert(!VR_WeaponCalibrationLookupHeld(
-		"progs/ad171/v_shot.mdl", false, false, held, &held_scale));
+		"progs/ad171/v_shot.mdl", false, held, &held_scale));
 	assert(!VR_WeaponCalibrationLookupHeld(
-		"progs/ee_v_sword.mdl", false, false, held, &held_scale));
+		"progs/ee_v_sword.mdl", false, held, &held_scale));
 
 	/* Authored classic fields override only themselves; enhanced fallback stays. */
 	fixture_file_contents =
@@ -266,13 +263,13 @@ int main(void)
 	assert(VR_WeaponCalibrationReloadGame());
 	assert(file_load_count == 2 && file_free_count == 1);
 	assert(VR_WeaponCalibrationLookupMuzzle(
-		"progs/v_shot.mdl", false, false, muzzle));
+		"progs/v_shot.mdl", false, muzzle));
 	AssertVector(muzzle, 1.0f, 2.0f, 3.0f);
 	assert(VR_WeaponCalibrationLookupMuzzle(
-		"progs/v_shot.mdl", true, false, muzzle));
+		"progs/v_shot.mdl", true, muzzle));
 	AssertVector(muzzle, 0.0f, 0.0f, 10.0f);
 	assert(VR_WeaponCalibrationLookupMuzzle(
-		"progs/custom.mdl", false, false, muzzle));
+		"progs/custom.mdl", false, muzzle));
 	AssertVector(muzzle, 4.0f, 5.0f, 6.0f);
 
 	/* Held-only schema data seeds classic muzzle Z on enhanced fallback slots. */
@@ -281,10 +278,10 @@ int main(void)
 	assert(VR_WeaponCalibrationReloadGame());
 	assert(file_load_count == 3 && file_free_count == 2);
 	assert(VR_WeaponCalibrationLookupMuzzle(
-		"progs/v_shot.mdl", false, false, muzzle));
+		"progs/v_shot.mdl", false, muzzle));
 	AssertVector(muzzle, 0.0f, 0.0f, 11.0f);
 	assert(VR_WeaponCalibrationLookupMuzzle(
-		"progs/v_shot.mdl", true, false, muzzle));
+		"progs/v_shot.mdl", true, muzzle));
 	AssertVector(muzzle, 0.0f, 0.0f, 10.0f);
 
 	/* A later reload replaces the prior file and applies authored enhanced data. */
@@ -293,14 +290,14 @@ int main(void)
 	assert(VR_WeaponCalibrationReloadGame());
 	assert(file_load_count == 4 && file_free_count == 3);
 	assert(!VR_WeaponCalibrationLookupMuzzle(
-		"progs/custom.mdl", false, false, muzzle));
+		"progs/custom.mdl", false, muzzle));
 	assert(!VR_WeaponCalibrationLookupMuzzle(
-		"progs/v_shot.mdl", false, false, muzzle));
+		"progs/v_shot.mdl", false, muzzle));
 	assert(VR_WeaponCalibrationLookupMuzzle(
-		"progs/v_shot.mdl", true, false, muzzle));
+		"progs/v_shot.mdl", true, muzzle));
 	AssertVector(muzzle, 7.0f, 8.0f, 9.0f);
 	assert(VR_WeaponCalibrationLookupMuzzle(
-		"progs/v_axe.mdl", true, false, muzzle));
+		"progs/v_axe.mdl", true, muzzle));
 	AssertVector(muzzle, 0.0f, 0.0f, 37.0f);
 
 	/* Invalid input is rejected while the known-good built-ins remain active. */
@@ -310,7 +307,7 @@ int main(void)
 	assert(file_load_count == 5 && file_free_count == 4);
 	AssertFallbackMuzzles();
 	assert(!VR_WeaponCalibrationLookupMuzzle(
-		"progs/custom.mdl", false, false, muzzle));
+		"progs/custom.mdl", false, muzzle));
 	assert(!strcmp(vr_weapon_offset[4].string, "progs/v_axe.mdl"));
 
 	/* Missing-file reload discards the old game profile and restores defaults. */
@@ -319,7 +316,7 @@ int main(void)
 	assert(file_load_count == 6 && file_free_count == 4);
 	AssertFallbackMuzzles();
 
-	/* Enyo classic defaults precede identity-only schema entries and MP overlay. */
+	/* Enyo defaults remain usable when a legacy MP overlay is present. */
 	strcpy(com_gamedir, "/fixtures/enyo");
 	fixture_file_contents = NULL;
 	assert(VR_WeaponCalibrationReloadGame());
@@ -334,25 +331,19 @@ int main(void)
 	assert(VR_WeaponCalibrationReloadGame());
 	assert(file_load_count == 8 && file_free_count == 5);
 	assert(VR_WeaponCalibrationLookupHeld(
-		"progs/ee_v_sword.mdl", false, false, held, &held_scale));
+		"progs/ee_v_sword.mdl", false, held, &held_scale));
 	AssertVector(held, 25.0f, 49.0f, 60.0f);
 	assert(fabsf(held_scale - 0.2f) < 0.0001f);
 	assert(VR_WeaponCalibrationLookupMuzzle(
-		"progs/ee_v_sword.mdl", false, false, muzzle));
+		"progs/ee_v_sword.mdl", false, muzzle));
 	AssertVector(muzzle, 0.0f, 0.0f, 60.0f);
-	assert(VR_WeaponCalibrationLookupMuzzle(
-		"progs/ee_v_sword.mdl", false, true, muzzle));
-	AssertVector(muzzle, 1.0f, 2.0f, 63.0f);
 	assert(VR_WeaponCalibrationLookupHeld(
-		"progs/ee_v_pistol.mdl", false, false, held, &held_scale));
+		"progs/ee_v_pistol.mdl", false, held, &held_scale));
 	AssertVector(held, 1.0f, 2.0f, 3.0f);
 	assert(fabsf(held_scale - 0.5f) < 0.0001f);
 	assert(VR_WeaponCalibrationLookupMuzzle(
-		"progs/ee_v_pistol.mdl", false, false, muzzle));
+		"progs/ee_v_pistol.mdl", false, muzzle));
 	AssertVector(muzzle, 9.0f, 10.0f, 11.0f);
-	assert(VR_WeaponCalibrationLookupMuzzle(
-		"progs/ee_v_pistol.mdl", false, true, muzzle));
-	AssertVector(muzzle, 10.0f, 12.0f, 14.0f);
 
 	/* AD root defaults are scoped to AD-derived game roots. */
 	strcpy(com_gamedir, "/fixtures/ad");
@@ -382,9 +373,9 @@ int main(void)
 	assert(file_load_count == 11 && file_free_count == 6);
 	AssertAD171AliasProfiles();
 	assert(!VR_WeaponCalibrationLookupHeld(
-		"progs/ad171/v_shot2.mdl", false, false, held, &held_scale));
+		"progs/ad171/v_shot2.mdl", false, held, &held_scale));
 	assert(!VR_WeaponCalibrationLookupHeld(
-		"progs/ad171/v_nail.mdl", false, false, held, &held_scale));
+		"progs/ad171/v_nail.mdl", false, held, &held_scale));
 
 	/* Mjolnir schema data overrides an alias and reload restores the baseline. */
 	fixture_file_contents =

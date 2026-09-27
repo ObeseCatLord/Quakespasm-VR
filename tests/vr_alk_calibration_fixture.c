@@ -14,14 +14,14 @@ int main(void)
 	strcpy(com_gamedir, "/fixtures/id1");
 	assert(VR_WeaponCalibrationReloadGame());
 	assert(!VR_WeaponCalibrationLookupMuzzle(
-		"progs/v_alkaxe20fps.mdl", false, false, muzzle));
+		"progs/v_alkaxe20fps.mdl", false, muzzle));
 
 	strcpy(com_gamedir, "/fixtures/alk");
 	assert(VR_WeaponCalibrationReloadGame());
 	AssertClassicProfile("progs/v_alkaxe20fps.mdl", 12.0f, 54.0f,
 		39.5f, 0.25f, 0.0f, 0.0f, 39.5f);
 	assert(!VR_WeaponCalibrationLookupMuzzle(
-		"progs/v_alkaxe20fps_vr.mdl", false, false, muzzle));
+		"progs/v_alkaxe20fps_vr.mdl", false, muzzle));
 
 	/* The installed LimJam file names v_axe.mdl, not v_alkaxe20fps.mdl. */
 	strcpy(com_gamedir, "/fixtures/limjam");
@@ -46,7 +46,7 @@ int main(void)
 	strcpy(com_gamedir, "/fixtures/id1");
 	assert(VR_WeaponCalibrationReloadGame());
 	assert(!VR_WeaponCalibrationLookupMuzzle(
-		"progs/v_alkaxe20fps.mdl", false, false, muzzle));
+		"progs/v_alkaxe20fps.mdl", false, muzzle));
 	puts("Alkaline/LimJam calibration fixture passed");
 	return 0;
 }
