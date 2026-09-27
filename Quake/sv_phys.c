@@ -7661,7 +7661,11 @@ static qboolean SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *clien
 		failure = "player invalidated during physical button callback";
 		goto cleanup;
 	}
-	if ((failure = SV_PrivateWalkTrialStateError (ent, client, &command)) != NULL)
+	/* Movement, impacts, triggers and physical contacts have already run.
+	 * A death here still receives this command's PostThink exactly once; the
+	 * fresh native terminal frame starts on the next world tick. */
+	if (!SV_PrivateWalkTrialTerminalState (client) &&
+		(failure = SV_PrivateWalkTrialStateError (ent, client, &command)) != NULL)
 		goto cleanup;
 	pr_global_struct->time = qcvm->time;
 	pr_global_struct->frametime = seconds;

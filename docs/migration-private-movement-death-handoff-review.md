@@ -105,7 +105,7 @@ legacy authority with a mode-epoch change and prediction off until the next
 selected frame. The Linux debug build passes; a live death/respawn proof has not
 run.
 
-This is a partial handoff. Death during selected PreThink, scheduled weapon
+At this checkpoint, death during selected PreThink, scheduled weapon
 Think, movement impact, physical contact, or trigger callbacks still reaches a
 state-error disconnect. Those phases need exact continuation after the callback
 already run, without restarting the native body. Respawn after a long command
@@ -121,7 +121,7 @@ the in-game lifecycle still lacks an end-to-end run.
 
 | Finding | Disposition |
 | --- | --- |
-| PreThink, weapon Think, and movement/contact deaths still disconnect. | **Adopt, open.** Continue each already-entered callback at its exact phase. Never restart the entire native frame after QC has run. |
+| PreThink, weapon Think, and movement/contact deaths still disconnect at the reviewed checkpoint. | **Adopt, partial.** The late contact boundary now reaches the selected PostThink/completion tail. Earlier callbacks still need their exact remaining phases; never restart the entire native frame after QC has run. |
 | The corpse idle-timeout exemption also changed ordinary pinned clients. | **Adopt, fixed.** Require selected trial ownership for the exemption. Ordinary pinned clients retain their original input clearing. |
 | Early terminal queue validation could call `SV_DropClient` with another `host_client` global. | **Adopt, fixed.** The explicit-client drop helper now binds and restores `host_client` and `sv_player`. |
 
@@ -131,3 +131,11 @@ maintenance and clears on the first accepted living command. This closes the
 obvious idle-respawn disconnect in the source path, but packet-level behavior
 remains unverified. Coalesced attack/jump/impulse behavior likewise still needs
 the planned live comparison with ordinary native physics.
+
+The late selected movement boundary now accepts a recognized terminal state
+after impact, trigger, and physical-contact processing, then runs the existing
+selected PostThink and completion tail exactly once. A death inside an earlier
+PreThink or scheduled weapon Think still needs a shared remaining-phase
+continuation. Death from a callback that invalidates the owner remains a
+disconnect. The Linux debug build passes; contact-death behavior has not yet
+been observed on a live stock map.
