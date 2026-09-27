@@ -27,6 +27,7 @@ extern cvar_t vid_gamma;
 extern cvar_t vid_contrast;
 extern cvar_t vr_eye_tracking;
 extern cvar_t vr_foveation;
+extern cvar_t vr_mirror;
 extern cvar_t vr_hidden_area;
 extern cvar_t vr_gunmodelpitch;
 extern cvar_t vr_gunmodelscale;

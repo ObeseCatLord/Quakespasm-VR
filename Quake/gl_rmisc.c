@@ -5517,22 +5517,32 @@ void R_TimeRefresh_f (void)
 R_AllocateVulkanMemory
 ====================
 */
-void R_AllocateVulkanMemory (vulkan_memory_t *memory, VkMemoryAllocateInfo *memory_allocate_info, vulkan_memory_type_t type, atomic_uint32_t *num_allocations)
+VkResult R_TryAllocateVulkanMemory (vulkan_memory_t *memory, VkMemoryAllocateInfo *memory_allocate_info, vulkan_memory_type_t type, atomic_uint32_t *num_allocations)
 {
-	memory->type = type;
-	if (memory->type != VULKAN_MEMORY_TYPE_NONE)
+	VkDeviceMemory handle = VK_NULL_HANDLE;
+	if (type != VULKAN_MEMORY_TYPE_NONE)
 	{
-		VkResult err = vkAllocateMemory (vulkan_globals.device, memory_allocate_info, NULL, &memory->handle);
+		VkResult err = vkAllocateMemory (vulkan_globals.device, memory_allocate_info, NULL, &handle);
 		if (err != VK_SUCCESS)
-			Sys_Error ("vkAllocateMemory failed with code %i", (int)err);
+			return err;
 		if (num_allocations)
 			Atomic_IncrementUInt32 (num_allocations);
 	}
+	memory->handle = handle;
+	memory->type = type;
 	memory->size = memory_allocate_info->allocationSize;
 	if (memory->type == VULKAN_MEMORY_TYPE_DEVICE)
 		Atomic_AddUInt64 (&total_device_vulkan_allocation_size, memory->size);
 	else if (memory->type == VULKAN_MEMORY_TYPE_HOST)
 		Atomic_AddUInt64 (&total_host_vulkan_allocation_size, memory->size);
+	return VK_SUCCESS;
+}
+
+void R_AllocateVulkanMemory (vulkan_memory_t *memory, VkMemoryAllocateInfo *memory_allocate_info, vulkan_memory_type_t type, atomic_uint32_t *num_allocations)
+{
+	const VkResult err = R_TryAllocateVulkanMemory (memory, memory_allocate_info, type, num_allocations);
+	if (err != VK_SUCCESS)
+		Sys_Error ("vkAllocateMemory failed with code %i", (int)err);
 }
 
 /*

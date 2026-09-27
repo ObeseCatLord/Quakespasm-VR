@@ -101,6 +101,22 @@ static qboolean openxr_density_eye_active;
 static qboolean openxr_density_backend_failed;
 static VkOffset2D openxr_density_offsets[2];
 static int openxr_desktop_width, openxr_desktop_height;
+static VkExtent2D openxr_mirror_extent;
+static VkImage openxr_mirror_snapshots[DOUBLE_BUFFERED];
+static vulkan_memory_t openxr_mirror_memory[DOUBLE_BUFFERED];
+static VkCommandPool openxr_mirror_command_pool;
+static VkCommandBuffer openxr_mirror_commands[DOUBLE_BUFFERED];
+static VkFence openxr_mirror_fences[DOUBLE_BUFFERED];
+static VkFence openxr_mirror_acquire_fence;
+static qboolean openxr_mirror_acquire_pending;
+static uint32_t openxr_mirror_acquire_image;
+static int openxr_mirror_acquire_slot;
+static qboolean openxr_mirror_acquire_suboptimal;
+static qboolean openxr_mirror_submitted[DOUBLE_BUFFERED];
+static qboolean openxr_mirror_slot_available[DOUBLE_BUFFERED];
+static qboolean openxr_mirror_snapshot_initialized[DOUBLE_BUFFERED];
+static qboolean openxr_mirror_ready, openxr_mirror_copy_ready;
+static int openxr_mirror_frame_slot;
 
 static SDL_Window *draw_context;
 
@@ -121,6 +137,8 @@ static void GL_DestroyOITBuffers (void);
 static void GL_DestroyRenderResources (void);
 static qboolean GL_CreateFragmentShadingRateImage (void);
 static void GL_DestroyFragmentShadingRateImage (void);
+static void GL_DestroyMirrorResources (void);
+static void GL_DestroySwapChainResources (void);
 
 viddef_t		vid; // global video state
 modestate_t		modestate = MS_UNINIT;
@@ -3393,14 +3411,18 @@ void GL_UpdateDescriptorSets (void)
 GL_CreateSwapChain
 ===============
 */
-static qboolean GL_CreateSwapChain (void)
+static qboolean GL_CreateSwapChain (qboolean mirror)
 {
 	uint32_t i;
 	VkResult err;
+	int width = mirror ? VID_GetCurrentWidth () : vid.width;
+	int height = mirror ? VID_GetCurrentHeight () : vid.height;
+	if (width <= 0 || height <= 0)
+		return false;
 
 #if defined(VK_EXT_full_screen_exclusive)
 	qboolean use_exclusive_full_screen = false;
-	qboolean try_use_exclusive_full_screen =
+	qboolean try_use_exclusive_full_screen = !mirror &&
 		vulkan_globals.full_screen_exclusive && vulkan_globals.want_full_screen_exclusive && has_focus && VID_GetFullscreen ();
 	ZEROED_STRUCT (VkSurfaceFullScreenExclusiveInfoEXT, full_screen_exclusive_info);
 	ZEROED_STRUCT (VkSurfaceFullScreenExclusiveWin32InfoEXT, full_screen_exclusive_win32_info);
@@ -3443,18 +3465,61 @@ static qboolean GL_CreateSwapChain (void)
 	{
 		err = fpGetPhysicalDeviceSurfaceCapabilitiesKHR (vulkan_physical_device, vulkan_surface, &vulkan_surface_capabilities);
 		if (err != VK_SUCCESS)
-			Sys_Error ("Couldn't get surface capabilities with code %i", (int)err);
+		{
+			if (!mirror)
+				Sys_Error ("Couldn't get surface capabilities with code %i", (int)err);
+			Con_Printf ("OpenXR mirror surface capabilities unavailable (%d).\n", err);
+			return false;
+		}
 	}
 
-	if ((vulkan_surface_capabilities.currentExtent.width != 0xFFFFFFFF || vulkan_surface_capabilities.currentExtent.height != 0xFFFFFFFF) &&
-		(vulkan_surface_capabilities.currentExtent.width != vid.width || vulkan_surface_capabilities.currentExtent.height != vid.height))
+	if (mirror && !(vulkan_surface_capabilities.supportedUsageFlags & VK_IMAGE_USAGE_TRANSFER_DST_BIT))
+	{
+		Con_Printf ("OpenXR mirror unavailable: desktop surface cannot accept transfer copies.\n");
+		return false;
+	}
+	if (mirror && !(vulkan_surface_capabilities.supportedTransforms & VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR))
+	{
+		Con_Printf ("OpenXR mirror unavailable: desktop surface requires a rotated presentation transform.\n");
+		return false;
+	}
+	if (mirror && vulkan_surface_capabilities.currentExtent.width != UINT32_MAX &&
+		vulkan_surface_capabilities.currentExtent.height != UINT32_MAX)
+	{
+		if (vulkan_surface_capabilities.currentExtent.width > INT_MAX ||
+			vulkan_surface_capabilities.currentExtent.height > INT_MAX)
+			return false;
+		width = (int)vulkan_surface_capabilities.currentExtent.width;
+		height = (int)vulkan_surface_capabilities.currentExtent.height;
+	}
+	else if (mirror)
+	{
+		uint32_t w = (uint32_t)width, h = (uint32_t)height;
+		if (w < vulkan_surface_capabilities.minImageExtent.width)
+			w = vulkan_surface_capabilities.minImageExtent.width;
+		if (h < vulkan_surface_capabilities.minImageExtent.height)
+			h = vulkan_surface_capabilities.minImageExtent.height;
+		if (w > vulkan_surface_capabilities.maxImageExtent.width)
+			w = vulkan_surface_capabilities.maxImageExtent.width;
+		if (h > vulkan_surface_capabilities.maxImageExtent.height)
+			h = vulkan_surface_capabilities.maxImageExtent.height;
+		if (w > INT_MAX || h > INT_MAX || !w || !h)
+			return false;
+		width = (int)w;
+		height = (int)h;
+	}
+	if (width <= 0 || height <= 0 ||
+		(!mirror && (vulkan_surface_capabilities.currentExtent.width != UINT32_MAX ||
+			vulkan_surface_capabilities.currentExtent.height != UINT32_MAX) &&
+			(vulkan_surface_capabilities.currentExtent.width != (uint32_t)width ||
+				vulkan_surface_capabilities.currentExtent.height != (uint32_t)height)))
 	{
 		return false;
 	}
 
 #if defined(VK_KHR_present_wait2)
 	swapchain_present_wait = false;
-	if (vulkan_globals.present_wait)
+	if (vulkan_globals.present_wait && !mirror)
 	{
 		ZEROED_STRUCT (VkSurfaceCapabilitiesPresentId2KHR, present_id_2_capabilities);
 		present_id_2_capabilities.sType = VK_STRUCTURE_TYPE_SURFACE_CAPABILITIES_PRESENT_ID_2_KHR;
@@ -3478,13 +3543,22 @@ static qboolean GL_CreateSwapChain (void)
 
 	uint32_t format_count;
 	err = fpGetPhysicalDeviceSurfaceFormatsKHR (vulkan_physical_device, vulkan_surface, &format_count, NULL);
-	if (err != VK_SUCCESS)
-		Sys_Error ("Couldn't get surface formats with code %i", (int)err);
+	if (err != VK_SUCCESS || !format_count)
+	{
+		if (!mirror)
+			Sys_Error ("Couldn't get surface formats with code %i", (int)err);
+		return false;
+	}
 
 	VkSurfaceFormatKHR *surface_formats = (VkSurfaceFormatKHR *)Mem_Alloc (format_count * sizeof (VkSurfaceFormatKHR));
 	err = fpGetPhysicalDeviceSurfaceFormatsKHR (vulkan_physical_device, vulkan_surface, &format_count, surface_formats);
 	if (err != VK_SUCCESS)
-		Sys_Error ("fpGetPhysicalDeviceSurfaceFormatsKHR failed with code %i", (int)err);
+	{
+		if (!mirror)
+			Sys_Error ("fpGetPhysicalDeviceSurfaceFormatsKHR failed with code %i", (int)err);
+		Mem_Free (surface_formats);
+		return false;
+	}
 
 	VkFormat		swap_chain_format = VK_FORMAT_B8G8R8A8_UNORM;
 	VkColorSpaceKHR swap_chain_color_space = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR;
@@ -3509,20 +3583,52 @@ static qboolean GL_CreateSwapChain (void)
 			swap_chain_color_space = surface_formats[0].colorSpace;
 		}
 	}
+	if (mirror && (swap_chain_color_space != VK_COLOR_SPACE_SRGB_NONLINEAR_KHR ||
+		(swap_chain_format != VK_FORMAT_B8G8R8A8_UNORM &&
+		 swap_chain_format != VK_FORMAT_R8G8B8A8_UNORM)))
+	{
+		qboolean found = false;
+		for (i = 0; i < format_count; ++i)
+			if ((surface_formats[i].format == VK_FORMAT_B8G8R8A8_UNORM ||
+				 surface_formats[i].format == VK_FORMAT_R8G8B8A8_UNORM) &&
+				surface_formats[i].colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR)
+			{
+				swap_chain_format = surface_formats[i].format;
+				found = true;
+				break;
+			}
+		if (!found)
+		{
+			Mem_Free (surface_formats);
+			Con_Printf ("OpenXR mirror unavailable: desktop surface has no RGBA8 UNORM format.\n");
+			return false;
+		}
+	}
 
 	uint32_t present_mode_count = 0;
 	err = fpGetPhysicalDeviceSurfacePresentModesKHR (vulkan_physical_device, vulkan_surface, &present_mode_count, NULL);
-	if (err != VK_SUCCESS)
-		Sys_Error ("fpGetPhysicalDeviceSurfacePresentModesKHR failed with code %i", (int)err);
+	if (err != VK_SUCCESS || !present_mode_count)
+	{
+		if (!mirror)
+			Sys_Error ("fpGetPhysicalDeviceSurfacePresentModesKHR failed with code %i", (int)err);
+		Mem_Free (surface_formats);
+		return false;
+	}
 
 	VkPresentModeKHR *present_modes = (VkPresentModeKHR *)Mem_Alloc (present_mode_count * sizeof (VkPresentModeKHR));
 	err = fpGetPhysicalDeviceSurfacePresentModesKHR (vulkan_physical_device, vulkan_surface, &present_mode_count, present_modes);
 	if (err != VK_SUCCESS)
-		Sys_Error ("fpGetPhysicalDeviceSurfacePresentModesKHR failed with code %i", (int)err);
+	{
+		if (!mirror)
+			Sys_Error ("fpGetPhysicalDeviceSurfacePresentModesKHR failed with code %i", (int)err);
+		Mem_Free (present_modes);
+		Mem_Free (surface_formats);
+		return false;
+	}
 
 	// VK_PRESENT_MODE_FIFO_KHR is always supported
 	VkPresentModeKHR present_mode = VK_PRESENT_MODE_FIFO_KHR;
-	if (vid_vsync.value == 0)
+	if (vid_vsync.value == 0 || mirror)
 	{
 		qboolean found_immediate = false;
 		qboolean found_mailbox = false;
@@ -3534,9 +3640,11 @@ static qboolean GL_CreateSwapChain (void)
 				found_mailbox = true;
 		}
 
+		if (found_immediate)
+			present_mode = VK_PRESENT_MODE_IMMEDIATE_KHR;
 		if (found_mailbox)
 			present_mode = VK_PRESENT_MODE_MAILBOX_KHR;
-		if (found_immediate)
+		if (!mirror && found_immediate)
 			present_mode = VK_PRESENT_MODE_IMMEDIATE_KHR;
 	}
 
@@ -3562,11 +3670,15 @@ static qboolean GL_CreateSwapChain (void)
 	swapchain_create_info.pNext = NULL;
 	swapchain_create_info.surface = vulkan_surface;
 	swapchain_create_info.minImageCount = q_max ((vid_vsync.value >= 2) ? 3 : 2, vulkan_surface_capabilities.minImageCount);
+	if (mirror && vulkan_surface_capabilities.maxImageCount &&
+		swapchain_create_info.minImageCount > vulkan_surface_capabilities.maxImageCount)
+		swapchain_create_info.minImageCount = vulkan_surface_capabilities.maxImageCount;
 	swapchain_create_info.imageFormat = swap_chain_format;
 	swapchain_create_info.imageColorSpace = swap_chain_color_space;
-	swapchain_create_info.imageExtent.width = vid.width;
-	swapchain_create_info.imageExtent.height = vid.height;
-	swapchain_create_info.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+	swapchain_create_info.imageExtent.width = width;
+	swapchain_create_info.imageExtent.height = height;
+	swapchain_create_info.imageUsage = mirror ? VK_IMAGE_USAGE_TRANSFER_DST_BIT :
+		VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
 	swapchain_create_info.preTransform = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR;
 	swapchain_create_info.imageArrayLayers = 1;
 	swapchain_create_info.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
@@ -3613,9 +3725,14 @@ static qboolean GL_CreateSwapChain (void)
 #endif
 		if (err != VK_SUCCESS)
 		{
-			Sys_Error ("Couldn't create swap chain with code %i", (int)err);
+			if (!mirror)
+				Sys_Error ("Couldn't create swap chain with code %i", (int)err);
+			Con_Printf ("OpenXR mirror swapchain unavailable (Vulkan %i).\n", (int)err);
+			return false;
 		}
 	}
+	if (mirror)
+		openxr_mirror_extent = (VkExtent2D){(uint32_t)width, (uint32_t)height};
 	num_images_acquired = 0;
 #if defined(VK_KHR_present_wait2)
 	current_present_id = 0; // present ids are scoped to the swapchain
@@ -3623,11 +3740,25 @@ static qboolean GL_CreateSwapChain (void)
 
 	for (i = 0; i < num_swap_chain_images; ++i)
 		assert (swapchain_images[i] == VK_NULL_HANDLE);
+	num_swap_chain_images = 0;
 	err = fpGetSwapchainImagesKHR (vulkan_globals.device, vulkan_swapchain, &num_swap_chain_images, NULL);
-	if (err != VK_SUCCESS || num_swap_chain_images > MAX_SWAP_CHAIN_IMAGES)
-		Sys_Error ("Couldn't get swap chain images with code %i", (int)err);
+	if (err != VK_SUCCESS || !num_swap_chain_images || num_swap_chain_images > MAX_SWAP_CHAIN_IMAGES)
+	{
+		if (!mirror)
+			Sys_Error ("Couldn't get swap chain images with code %i", (int)err);
+		num_swap_chain_images = 0;
+		GL_DestroySwapChainResources ();
+		return false;
+	}
 
-	fpGetSwapchainImagesKHR (vulkan_globals.device, vulkan_swapchain, &num_swap_chain_images, swapchain_images);
+	err = fpGetSwapchainImagesKHR (vulkan_globals.device, vulkan_swapchain, &num_swap_chain_images, swapchain_images);
+	if (err != VK_SUCCESS)
+	{
+		if (!mirror)
+			Sys_Error ("Couldn't get swap chain images with code %i", (int)err);
+		GL_DestroySwapChainResources ();
+		return false;
+	}
 
 	ZEROED_STRUCT (VkImageViewCreateInfo, image_view_create_info);
 	image_view_create_info.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
@@ -3650,22 +3781,38 @@ static qboolean GL_CreateSwapChain (void)
 	for (i = 0; i < num_swap_chain_images; ++i)
 	{
 		GL_SetObjectName ((uint64_t)swapchain_images[i], VK_OBJECT_TYPE_IMAGE, "Swap Chain");
+		/* A transfer-only mirror image has no valid image-view usage. The XR
+		 * framebuffers use runtime image views, never these desktop images. */
+		if (mirror)
+			continue;
 
 		assert (swapchain_images_views[i] == VK_NULL_HANDLE);
 		image_view_create_info.image = swapchain_images[i];
 		err = vkCreateImageView (vulkan_globals.device, &image_view_create_info, NULL, &swapchain_images_views[i]);
 		if (err != VK_SUCCESS)
-			Sys_Error ("vkCreateImageView failed with code %i", (int)err);
+		{
+			if (!mirror)
+				Sys_Error ("vkCreateImageView failed with code %i", (int)err);
+			GL_DestroySwapChainResources ();
+			return false;
+		}
 
 		GL_SetObjectName ((uint64_t)swapchain_images_views[i], VK_OBJECT_TYPE_IMAGE_VIEW, "Swap Chain View");
 	}
 
 	for (i = 0; i < DOUBLE_BUFFERED; ++i)
 	{
+		if (mirror)
+			continue;
 		assert (image_aquired_semaphores[i] == VK_NULL_HANDLE);
 		err = vkCreateSemaphore (vulkan_globals.device, &semaphore_create_info, NULL, &image_aquired_semaphores[i]);
 		if (err != VK_SUCCESS)
-			Sys_Error ("vkCreateSemaphore failed with code %i", (int)err);
+		{
+			if (!mirror)
+				Sys_Error ("vkCreateSemaphore failed with code %i", (int)err);
+			GL_DestroySwapChainResources ();
+			return false;
+		}
 	}
 
 	// one draw complete semaphore per swapchain image, indexed by the acquired image: a present keeps
@@ -3676,10 +3823,185 @@ static qboolean GL_CreateSwapChain (void)
 		assert (draw_complete_semaphores[i] == VK_NULL_HANDLE);
 		err = vkCreateSemaphore (vulkan_globals.device, &semaphore_create_info, NULL, &draw_complete_semaphores[i]);
 		if (err != VK_SUCCESS)
-			Sys_Error ("vkCreateSemaphore failed with code %i", (int)err);
+		{
+			if (!mirror)
+				Sys_Error ("vkCreateSemaphore failed with code %i", (int)err);
+			GL_DestroySwapChainResources ();
+			return false;
+		}
 	}
 
 	return true;
+}
+
+static void GL_DestroySwapChainResources (void)
+{
+	for (uint32_t i = 0; i < num_swap_chain_images && i < MAX_SWAP_CHAIN_IMAGES; ++i)
+	{
+		if (swapchain_images_views[i])
+			vkDestroyImageView (vulkan_globals.device, swapchain_images_views[i], NULL);
+		swapchain_images_views[i] = VK_NULL_HANDLE;
+		swapchain_images[i] = VK_NULL_HANDLE;
+		if (draw_complete_semaphores[i])
+			vkDestroySemaphore (vulkan_globals.device, draw_complete_semaphores[i], NULL);
+		draw_complete_semaphores[i] = VK_NULL_HANDLE;
+	}
+	for (int i = 0; i < DOUBLE_BUFFERED; ++i)
+	{
+		if (image_aquired_semaphores[i])
+			vkDestroySemaphore (vulkan_globals.device, image_aquired_semaphores[i], NULL);
+		image_aquired_semaphores[i] = VK_NULL_HANDLE;
+	}
+	if (vulkan_swapchain)
+		fpDestroySwapchainKHR (vulkan_globals.device, vulkan_swapchain, NULL);
+	vulkan_swapchain = VK_NULL_HANDLE;
+	num_swap_chain_images = num_images_acquired = 0;
+	openxr_mirror_extent = (VkExtent2D){0, 0};
+}
+
+static void GL_DestroyMirrorResources (void)
+{
+	openxr_mirror_ready = openxr_mirror_copy_ready = false;
+	if (openxr_mirror_acquire_pending && openxr_mirror_acquire_fence)
+		vkWaitForFences (vulkan_globals.device, 1,
+			&openxr_mirror_acquire_fence, VK_TRUE, UINT64_MAX);
+	openxr_mirror_acquire_pending = false;
+	openxr_mirror_acquire_suboptimal = false;
+	if (openxr_mirror_acquire_fence)
+		vkDestroyFence (vulkan_globals.device, openxr_mirror_acquire_fence, NULL);
+	openxr_mirror_acquire_fence = VK_NULL_HANDLE;
+	for (int slot = 0; slot < DOUBLE_BUFFERED; ++slot)
+	{
+		if (openxr_mirror_fences[slot])
+			vkDestroyFence (vulkan_globals.device, openxr_mirror_fences[slot], NULL);
+		openxr_mirror_fences[slot] = VK_NULL_HANDLE;
+		openxr_mirror_submitted[slot] = false;
+		openxr_mirror_slot_available[slot] = false;
+		openxr_mirror_snapshot_initialized[slot] = false;
+		if (openxr_mirror_snapshots[slot])
+			vkDestroyImage (vulkan_globals.device, openxr_mirror_snapshots[slot], NULL);
+		openxr_mirror_snapshots[slot] = VK_NULL_HANDLE;
+		if (openxr_mirror_memory[slot].handle)
+			R_FreeVulkanMemory (&openxr_mirror_memory[slot], &num_vulkan_misc_allocations);
+	}
+	if (openxr_mirror_command_pool)
+		vkDestroyCommandPool (vulkan_globals.device, openxr_mirror_command_pool, NULL);
+	openxr_mirror_command_pool = VK_NULL_HANDLE;
+	memset (openxr_mirror_commands, 0, sizeof (openxr_mirror_commands));
+	openxr_mirror_extent = (VkExtent2D){0, 0};
+}
+
+/* Store already-encoded XR color bits as UNORM. A later UNORM-to-UNORM blit
+ * resizes them without decoding sRGB into a dark desktop mirror. */
+static qboolean GL_CreateMirrorResources (void)
+{
+	if (!vulkan_globals.stereo_active || !vulkan_swapchain ||
+		!VRXR_VulkanTransferSourceAvailable () || num_swap_chain_images < 2)
+		return false;
+	const VkFormat xr_format = VRXR_VulkanColorFormat ();
+	const VkFormat snapshot_format = xr_format == VK_FORMAT_R8G8B8A8_SRGB ?
+		VK_FORMAT_R8G8B8A8_UNORM : xr_format == VK_FORMAT_B8G8R8A8_SRGB ?
+		VK_FORMAT_B8G8R8A8_UNORM : VK_FORMAT_UNDEFINED;
+	if (snapshot_format == VK_FORMAT_UNDEFINED)
+		return false;
+	VkFormatProperties xr_props, snapshot_props, desktop_props;
+	vkGetPhysicalDeviceFormatProperties (vulkan_physical_device, xr_format, &xr_props);
+	vkGetPhysicalDeviceFormatProperties (vulkan_physical_device, snapshot_format, &snapshot_props);
+	vkGetPhysicalDeviceFormatProperties (vulkan_physical_device, vulkan_globals.swap_chain_format, &desktop_props);
+	if (!(xr_props.optimalTilingFeatures & VK_FORMAT_FEATURE_TRANSFER_SRC_BIT) ||
+		(snapshot_props.optimalTilingFeatures &
+		 (VK_FORMAT_FEATURE_TRANSFER_DST_BIT | VK_FORMAT_FEATURE_TRANSFER_SRC_BIT |
+		  VK_FORMAT_FEATURE_BLIT_SRC_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT)) !=
+		 (VK_FORMAT_FEATURE_TRANSFER_DST_BIT | VK_FORMAT_FEATURE_TRANSFER_SRC_BIT |
+		  VK_FORMAT_FEATURE_BLIT_SRC_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT) ||
+		(desktop_props.optimalTilingFeatures &
+		 (VK_FORMAT_FEATURE_TRANSFER_DST_BIT | VK_FORMAT_FEATURE_BLIT_DST_BIT)) !=
+		 (VK_FORMAT_FEATURE_TRANSFER_DST_BIT | VK_FORMAT_FEATURE_BLIT_DST_BIT))
+	{
+		Con_Printf ("OpenXR mirror unavailable: image formats cannot be linearly blitted.\n");
+		return false;
+	}
+	const VkCommandPoolCreateInfo pool_info = {
+		.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
+		.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT,
+		.queueFamilyIndex = vulkan_globals.gfx_queue_family_index,
+	};
+	if (vkCreateCommandPool (vulkan_globals.device, &pool_info, NULL,
+		&openxr_mirror_command_pool) != VK_SUCCESS)
+		return false;
+	const VkCommandBufferAllocateInfo command_info = {
+		.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+		.commandPool = openxr_mirror_command_pool,
+		.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+		.commandBufferCount = DOUBLE_BUFFERED,
+	};
+	if (vkAllocateCommandBuffers (vulkan_globals.device, &command_info,
+		openxr_mirror_commands) != VK_SUCCESS)
+		goto fail;
+	for (int slot = 0; slot < DOUBLE_BUFFERED; ++slot)
+	{
+		const VkImageCreateInfo image_info = {
+			.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+			.imageType = VK_IMAGE_TYPE_2D,
+			.format = snapshot_format,
+			.extent = {(uint32_t)vid.width, (uint32_t)vid.height, 1},
+			.mipLevels = 1,
+			.arrayLayers = 1,
+			.samples = VK_SAMPLE_COUNT_1_BIT,
+			.tiling = VK_IMAGE_TILING_OPTIMAL,
+			.usage = VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+			.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+		};
+		if (vkCreateImage (vulkan_globals.device, &image_info, NULL,
+			&openxr_mirror_snapshots[slot]) != VK_SUCCESS)
+			goto fail;
+		VkMemoryRequirements requirements;
+		vkGetImageMemoryRequirements (vulkan_globals.device,
+			openxr_mirror_snapshots[slot], &requirements);
+		uint32_t memory_type = UINT32_MAX;
+		for (uint32_t type = 0; type < vulkan_globals.memory_properties.memoryTypeCount; ++type)
+			if ((requirements.memoryTypeBits & (1u << type)) &&
+				(vulkan_globals.memory_properties.memoryTypes[type].propertyFlags &
+				 VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT))
+			{
+				memory_type = type;
+				break;
+			}
+		if (memory_type == UINT32_MAX)
+			goto fail;
+		VkMemoryAllocateInfo allocation = {
+			.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+			.allocationSize = requirements.size,
+			.memoryTypeIndex = memory_type,
+		};
+		if (R_TryAllocateVulkanMemory (&openxr_mirror_memory[slot], &allocation,
+			VULKAN_MEMORY_TYPE_DEVICE, &num_vulkan_misc_allocations) != VK_SUCCESS)
+			goto fail;
+		if (vkBindImageMemory (vulkan_globals.device, openxr_mirror_snapshots[slot],
+			openxr_mirror_memory[slot].handle, 0) != VK_SUCCESS)
+			goto fail;
+		const VkFenceCreateInfo fence_info = {
+			.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
+			.flags = VK_FENCE_CREATE_SIGNALED_BIT,
+		};
+		if (vkCreateFence (vulkan_globals.device, &fence_info, NULL,
+			&openxr_mirror_fences[slot]) != VK_SUCCESS)
+			goto fail;
+		openxr_mirror_slot_available[slot] = true;
+	}
+	const VkFenceCreateInfo acquire_fence_info = {
+		.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
+		.flags = VK_FENCE_CREATE_SIGNALED_BIT,
+	};
+	if (vkCreateFence (vulkan_globals.device, &acquire_fence_info, NULL,
+		&openxr_mirror_acquire_fence) != VK_SUCCESS)
+		goto fail;
+	openxr_mirror_ready = true;
+	return true;
+fail:
+	GL_DestroyMirrorResources ();
+	Con_Printf ("OpenXR mirror snapshot resources unavailable; VR remains active.\n");
+	return false;
 }
 
 /*
@@ -3855,14 +4177,20 @@ static void GL_CreateRenderResources (void)
 	if (sv.active && cls.signon < 1) // server has loaded the map but client hasn't called R_NewMap yet - wait until next frame
 		return;
 
-	if (!vulkan_globals.stereo_active && !GL_CreateSwapChain ())
+	if (!vulkan_globals.stereo_active && !GL_CreateSwapChain (false))
 	{
 		render_resources_created = false;
 		return;
 	}
+	if (vulkan_globals.stereo_active && VRXR_VulkanTransferSourceAvailable () &&
+		!GL_CreateSwapChain (true))
+		Con_Printf ("OpenXR mirror is disabled for this desktop swapchain.\n");
 
 	if (vulkan_globals.stereo_active)
+	{
 		GL_CreateXRImageViews ();
+		GL_CreateMirrorResources ();
+	}
 	VID_GetRenderSize (&vid.render_width, &vid.render_height);
 	vulkan_globals.openxr_fragment_density_map_active =
 		GL_DensityFoveationRequestedActive (vid.render_width, vid.render_height);
@@ -3950,6 +4278,7 @@ static void GL_DestroyRenderResources (void)
 	}
 
 	R_DestroyFrameBuffers ();
+	GL_DestroyMirrorResources ();
 	GL_DestroyXRImageViews ();
 	GL_DestroyFragmentShadingRateImage ();
 
@@ -4002,30 +4331,7 @@ static void GL_DestroyRenderResources (void)
 	depth_buffer_view = VK_NULL_HANDLE;
 	depth_buffer = VK_NULL_HANDLE;
 
-	for (uint32_t i = 0; i < num_swap_chain_images; ++i)
-	{
-		vkDestroyImageView (vulkan_globals.device, swapchain_images_views[i], NULL);
-		swapchain_images_views[i] = VK_NULL_HANDLE;
-
-		// Swapchain images do not need to be destroyed
-		swapchain_images[i] = VK_NULL_HANDLE;
-	}
-
-	for (int i = 0; i < DOUBLE_BUFFERED; ++i)
-	{
-		vkDestroySemaphore (vulkan_globals.device, image_aquired_semaphores[i], NULL);
-		image_aquired_semaphores[i] = VK_NULL_HANDLE;
-	}
-
-	for (uint32_t i = 0; i < num_swap_chain_images; ++i)
-	{
-		vkDestroySemaphore (vulkan_globals.device, draw_complete_semaphores[i], NULL);
-		draw_complete_semaphores[i] = VK_NULL_HANDLE;
-	}
-
-	if (vulkan_swapchain != VK_NULL_HANDLE)
-		fpDestroySwapchainKHR (vulkan_globals.device, vulkan_swapchain, NULL);
-	vulkan_swapchain = VK_NULL_HANDLE;
+	GL_DestroySwapChainResources ();
 
 	R_DestroyRenderPasses ();
 }
@@ -4072,6 +4378,16 @@ void GL_BeginRenderingTask (void *unused)
 			rs_gpuwaitaccum_us += (uint32_t)((Sys_DoubleTime () - wait_start) * 1000000.0);
 	}
 	frame_submitted[current_cb_index] = false;
+	if (openxr_mirror_ready && openxr_mirror_submitted[current_cb_index])
+	{
+		const VkResult mirror_status = vkGetFenceStatus (vulkan_globals.device,
+			openxr_mirror_fences[current_cb_index]);
+		openxr_mirror_slot_available[current_cb_index] = mirror_status == VK_SUCCESS;
+		if (mirror_status == VK_SUCCESS)
+			openxr_mirror_submitted[current_cb_index] = false;
+		else if (mirror_status != VK_NOT_READY)
+			openxr_mirror_ready = false;
+	}
 
 	err = vkResetFences (vulkan_globals.device, 1, &command_buffer_fences[current_cb_index]);
 	if (err != VK_SUCCESS)
@@ -4282,6 +4598,8 @@ void VID_WindowSizeChanged (int width, int height)
 	{
 		// SDL reports the desktop window, including delayed startup events.
 		// Runtime swapchain dimensions remain fixed for this XR attachment.
+		if (width != openxr_desktop_width || height != openxr_desktop_height)
+			vid.restart_next_frame = true;
 		openxr_desktop_width = width;
 		openxr_desktop_height = height;
 		return;
@@ -4326,7 +4644,8 @@ static void GL_OpenXRAttach (void)
 	GL_DestroyRenderResources ();
 	openxr_desktop_width = vid.width;
 	openxr_desktop_height = vid.height;
-	if (!VRXR_AttachVulkan (vulkan_globals.gfx_queue_family_index, 0, 0, 2, GL_OpenXRRetireImages, NULL,
+	if (!VRXR_AttachVulkan (vulkan_globals.gfx_queue_family_index, 0,
+		VK_IMAGE_USAGE_TRANSFER_SRC_BIT, 2, GL_OpenXRRetireImages, NULL,
 		vulkan_globals.openxr_fragment_density_map_enabled, 0))
 	{
 		Con_Printf ("OpenXR session attachment failed; keeping desktop output.\n");
@@ -4401,6 +4720,168 @@ void GL_InvalidateXRInput (void)
 	memset (openxr_frame.hands, 0, sizeof (openxr_frame.hands));
 }
 
+static void GL_SubmitXRMirror (int slot, uint32_t image_index)
+{
+	VkResult result;
+	if (image_index >= num_swap_chain_images)
+	{
+		vid.restart_next_frame = true;
+		return;
+	}
+	VkCommandBuffer cb = openxr_mirror_commands[slot];
+	result = vkResetCommandBuffer (cb, 0);
+	if (result != VK_SUCCESS)
+		goto mirror_fail;
+	const VkCommandBufferBeginInfo begin = {
+		.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+		.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
+	};
+	result = vkBeginCommandBuffer (cb, &begin);
+	if (result != VK_SUCCESS)
+		goto mirror_fail;
+	const VkImageMemoryBarrier before = {
+		.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+		.srcAccessMask = 0,
+		.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
+		.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+		.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+		.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+		.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+		.image = swapchain_images[image_index],
+		.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1},
+	};
+	vkCmdPipelineBarrier (cb, VK_PIPELINE_STAGE_TRANSFER_BIT,
+		VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, NULL, 0, NULL, 1, &before);
+	const VkImageBlit region = {
+		.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},
+		.srcOffsets = {{0, 0, 0}, {vid.width, vid.height, 1}},
+		.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},
+		.dstOffsets = {{0, 0, 0}, {(int)openxr_mirror_extent.width,
+			(int)openxr_mirror_extent.height, 1}},
+	};
+	vkCmdBlitImage (cb, openxr_mirror_snapshots[slot], VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+		swapchain_images[image_index], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+		1, &region, VK_FILTER_LINEAR);
+	const VkImageMemoryBarrier after = {
+		.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+		.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
+		.dstAccessMask = 0,
+		.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+		.newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+		.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+		.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+		.image = swapchain_images[image_index],
+		.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1},
+	};
+	vkCmdPipelineBarrier (cb, VK_PIPELINE_STAGE_TRANSFER_BIT,
+		VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0, 0, NULL, 0, NULL, 1, &after);
+	result = vkEndCommandBuffer (cb);
+	if (result != VK_SUCCESS)
+		goto mirror_fail;
+	result = vkResetFences (vulkan_globals.device, 1, &openxr_mirror_fences[slot]);
+	if (result != VK_SUCCESS)
+		goto mirror_fail;
+	const VkSubmitInfo submit = {
+		.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+		.commandBufferCount = 1,
+		.pCommandBuffers = &cb,
+		.signalSemaphoreCount = 1,
+		.pSignalSemaphores = &draw_complete_semaphores[image_index],
+	};
+	SDL_LockMutex (vulkan_globals.queue_mutex);
+	result = vkQueueSubmit (vulkan_globals.queue, 1, &submit, openxr_mirror_fences[slot]);
+	SDL_UnlockMutex (vulkan_globals.queue_mutex);
+	if (result != VK_SUCCESS)
+		goto mirror_fail;
+	openxr_mirror_submitted[slot] = true;
+	const VkPresentInfoKHR present = {
+		.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
+		.waitSemaphoreCount = 1,
+		.pWaitSemaphores = &draw_complete_semaphores[image_index],
+		.swapchainCount = 1,
+		.pSwapchains = &vulkan_swapchain,
+		.pImageIndices = &image_index,
+	};
+	SDL_LockMutex (vulkan_globals.queue_mutex);
+	result = fpQueuePresentKHR (vulkan_globals.queue, &present);
+	SDL_UnlockMutex (vulkan_globals.queue_mutex);
+	if (result == VK_SUCCESS || result == VK_SUBOPTIMAL_KHR ||
+		result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_ERROR_SURFACE_LOST_KHR)
+	{
+		--num_images_acquired;
+		if (result != VK_SUCCESS || openxr_mirror_acquire_suboptimal)
+			vid.restart_next_frame = true;
+		if (result == VK_ERROR_SURFACE_LOST_KHR)
+			surface_lost = true;
+		return;
+	}
+mirror_fail:
+	Con_Printf ("OpenXR mirror presentation failed (%d); VR remains active.\n", result);
+	openxr_mirror_ready = false;
+	vid.restart_next_frame = true;
+}
+
+static void GL_PresentXRMirror (void)
+{
+	if (!openxr_mirror_ready || !vulkan_swapchain ||
+		!openxr_mirror_extent.width || !openxr_mirror_extent.height)
+		return;
+	/* An acquired WSI image is not necessarily ready yet. Do not enqueue its
+	 * wait on the XR graphics queue: poll the acquire fence on later frames. */
+	if (openxr_mirror_acquire_pending)
+	{
+		const VkResult status = vkGetFenceStatus (vulkan_globals.device,
+			openxr_mirror_acquire_fence);
+		if (status == VK_NOT_READY)
+			return;
+		if (status != VK_SUCCESS)
+		{
+			openxr_mirror_ready = false;
+			vid.restart_next_frame = true;
+			return;
+		}
+		openxr_mirror_acquire_pending = false;
+		GL_SubmitXRMirror (openxr_mirror_acquire_slot, openxr_mirror_acquire_image);
+		if (!openxr_mirror_ready)
+			return;
+	}
+	if (!openxr_mirror_copy_ready || num_images_acquired >= num_swap_chain_images - 1)
+		return;
+	const int slot = openxr_mirror_frame_slot;
+	if (!openxr_mirror_slot_available[slot] ||
+		vkResetFences (vulkan_globals.device, 1, &openxr_mirror_acquire_fence) != VK_SUCCESS)
+		return;
+	uint32_t image_index = 0;
+	VkResult result = fpAcquireNextImageKHR (vulkan_globals.device, vulkan_swapchain,
+		0, VK_NULL_HANDLE, openxr_mirror_acquire_fence, &image_index);
+	if (result == VK_NOT_READY || result == VK_TIMEOUT)
+		return;
+	if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_ERROR_SURFACE_LOST_KHR)
+	{
+		vid.restart_next_frame = true;
+		if (result == VK_ERROR_SURFACE_LOST_KHR)
+			surface_lost = true;
+		return;
+	}
+	if (result != VK_SUCCESS && result != VK_SUBOPTIMAL_KHR)
+	{
+		Con_Printf ("OpenXR mirror acquire failed (%d); disabling mirror until restart.\n", result);
+		openxr_mirror_ready = false;
+		return;
+	}
+	++num_images_acquired;
+	openxr_mirror_acquire_pending = true;
+	openxr_mirror_acquire_image = image_index;
+	openxr_mirror_acquire_slot = slot;
+	openxr_mirror_acquire_suboptimal = result == VK_SUBOPTIMAL_KHR;
+	openxr_mirror_slot_available[slot] = false;
+	if (vkGetFenceStatus (vulkan_globals.device, openxr_mirror_acquire_fence) == VK_SUCCESS)
+	{
+		openxr_mirror_acquire_pending = false;
+		GL_SubmitXRMirror (slot, image_index);
+	}
+}
+
 void GL_EndXRFrame (void)
 {
 	if (!vulkan_globals.stereo_active)
@@ -4413,10 +4894,12 @@ void GL_EndXRFrame (void)
 		VRXR_VulkanEyeSubmitted (0);
 		VRXR_VulkanEyeSubmitted (1);
 		VRXR_EndFrame ();
+		GL_PresentXRMirror ();
 	}
 	else
 		VRXR_AbortFrame ();
 	openxr_frame_submitted = false;
+	openxr_mirror_copy_ready = false;
 }
 
 static qboolean GL_PrepareRuntimeFoveation (void)
@@ -4960,6 +5443,85 @@ void GL_RecordOpenXRHiddenAreaStencil (cb_context_t *cbx)
 	vkCmdDraw (cbx->cb, mesh->vertex_count, 1, 0, 0);
 }
 
+static qboolean GL_RecordXRMirrorSnapshot (VkCommandBuffer cb, int slot)
+{
+	if (!openxr_mirror_ready || !openxr_mirror_slot_available[slot] ||
+		!vulkan_globals.stereo_active || !openxr_frame.should_render)
+		return false;
+	const float setting = vr_mirror.value;
+	const int mode = !isfinite (setting) || setting < 1.0f ? 0 : setting >= 2.0f ? 2 : 1;
+	if (!mode)
+		return false;
+	vrxr_vulkan_eye_t eye;
+	if (!VRXR_GetVulkanEye (mode - 1, &eye) || !eye.image ||
+		eye.width != (uint32_t)vid.width || eye.height != (uint32_t)vid.height)
+		return false;
+	VkImageMemoryBarrier before[2] = {
+		{
+			.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+			.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+			.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT,
+			.oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+			.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+			.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+			.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+			.image = eye.image,
+			.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, eye.array_layer, 1},
+		},
+		{
+			.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+			.srcAccessMask = openxr_mirror_snapshot_initialized[slot] ? VK_ACCESS_TRANSFER_READ_BIT : 0,
+			.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
+			.oldLayout = openxr_mirror_snapshot_initialized[slot] ?
+				VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL : VK_IMAGE_LAYOUT_UNDEFINED,
+			.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+			.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+			.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+			.image = openxr_mirror_snapshots[slot],
+			.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1},
+		},
+	};
+	vkCmdPipelineBarrier (cb, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT |
+		VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0,
+		0, NULL, 0, NULL, countof (before), before);
+	const VkImageCopy region = {
+		.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, eye.array_layer, 1},
+		.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},
+		.extent = {(uint32_t)vid.width, (uint32_t)vid.height, 1},
+	};
+	vkCmdCopyImage (cb, eye.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+		openxr_mirror_snapshots[slot], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+	VkImageMemoryBarrier after[2] = {
+		{
+			.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+			.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT,
+			.dstAccessMask = 0,
+			.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+			.newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+			.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+			.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+			.image = eye.image,
+			.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, eye.array_layer, 1},
+		},
+		{
+			.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+			.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
+			.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT,
+			.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+			.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+			.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+			.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+			.image = openxr_mirror_snapshots[slot],
+			.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1},
+		},
+	};
+	vkCmdPipelineBarrier (cb, VK_PIPELINE_STAGE_TRANSFER_BIT,
+		VK_PIPELINE_STAGE_TRANSFER_BIT | VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+		0, 0, NULL, 0, NULL, countof (after), after);
+	openxr_mirror_snapshot_initialized[slot] = true;
+	return true;
+}
+
 static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 {
 	R_SubmitStagingBuffers ();
@@ -5039,6 +5601,9 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 			submit_cbs, countof (submit_cbs), take_screenshot && swapchain_acquired ? GL_RecordFrameReadback : NULL, &readback,
 			frame_timing_enabled ? timestamp_query_pool : VK_NULL_HANDLE, cb_index * 4 + 2, &ssao_written);
 	ssao_timestamps_written[cb_index] = ssao_written;
+	openxr_mirror_copy_ready = GL_RecordXRMirrorSnapshot (render_passes_cb, cb_index);
+	if (openxr_mirror_copy_ready)
+		openxr_mirror_frame_slot = cb_index;
 
 	if (frame_timing_enabled && (timestamp_query_pool != VK_NULL_HANDLE))
 	{

@@ -1032,6 +1032,7 @@ static inline void R_EndDebugUtilsLabel (cb_context_t *cbx)
 }
 
 void R_AllocateVulkanMemory (vulkan_memory_t *memory, VkMemoryAllocateInfo *memory_allocate_info, vulkan_memory_type_t type, atomic_uint32_t *num_allocations);
+VkResult R_TryAllocateVulkanMemory (vulkan_memory_t *memory, VkMemoryAllocateInfo *memory_allocate_info, vulkan_memory_type_t type, atomic_uint32_t *num_allocations);
 void R_FreeVulkanMemory (vulkan_memory_t *memory, atomic_uint32_t *num_allocations);
 
 void R_CreateBuffer (

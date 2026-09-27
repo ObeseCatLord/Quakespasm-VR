@@ -2519,6 +2519,7 @@ enum
 {
 	VR_OPT_EYE_TRACKING,
 	VR_OPT_FOVEATION,
+	VR_OPT_MIRROR,
 	VR_OPT_HIDDEN_AREA,
 	VR_OPT_HAPTICS,
 	VR_OPT_GORILLA,
@@ -3007,6 +3008,13 @@ static void M_VROptions_Adjust (int dir)
 		Cvar_SetValueQuick (&vr_foveation, (float)mode);
 		break;
 	}
+	case VR_OPT_MIRROR:
+	{
+		const int mode = isfinite (vr_mirror.value) && vr_mirror.value >= 0.0f &&
+			vr_mirror.value <= 2.0f ? (int)vr_mirror.value : 1;
+		Cvar_SetValueQuick (&vr_mirror, (float)((mode + (dir > 0 ? 1 : 2)) % 3));
+		break;
+	}
 	case VR_OPT_HIDDEN_AREA:
 		Cvar_SetValueQuick (&vr_hidden_area, vr_hidden_area.value == 0 ? 1 : 0);
 		break;
@@ -3129,11 +3137,14 @@ static void M_VROptions_Key (int key)
 static void M_VROptions_Draw (cb_context_t *cbx)
 {
 	static const char *const foveation_modes[] = {"off", "fixed", "eye tracked"};
+	static const char *const mirror_modes[] = {"off", "left eye", "right eye"};
 	static const char *const follow_modes[] = {"fixed", "follow", "head locked"};
 	static const char *const crosshair_modes[] = {"off", "point", "line"};
 	qpic_t *p;
 	const int top = MENU_TOP;
 	const int foveation = CLAMP (0, (int)vr_foveation.value, 2);
+	const int mirror = isfinite (vr_mirror.value) && vr_mirror.value >= 0.0f &&
+		vr_mirror.value <= 2.0f ? (int)vr_mirror.value : 1;
 	const int follow = isfinite (vr_menu_follow.value) && vr_menu_follow.value >= 0 &&
 		vr_menu_follow.value <= 2 ? (int)vr_menu_follow.value : 1;
 	const int weapon_menu_mode = isfinite (vr_weaponmenu_mode.value) &&
@@ -3158,6 +3169,8 @@ static void M_VROptions_Draw (cb_context_t *cbx)
 
 	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * VR_OPT_FOVEATION, "Foveation");
 	M_Print (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * VR_OPT_FOVEATION, foveation_modes[foveation]);
+	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * VR_OPT_MIRROR, "Desktop Mirror");
+	M_Print (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * VR_OPT_MIRROR, mirror_modes[mirror]);
 
 	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * VR_OPT_HIDDEN_AREA, "Hidden Area Mask");
 	M_DrawCheckbox (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * VR_OPT_HIDDEN_AREA, vr_hidden_area.value != 0);
