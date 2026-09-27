@@ -6,6 +6,44 @@ remain in place. Eye-tracked foveation is an optional reduction in **opaque
 world fragment shading**; it does not cull geometry or change PVS, frustum,
 weapon, HUD, water, cutout, or transparent rendering.
 
+## Runtime route priority (September 2026)
+
+Prefer the runtime-managed `XR_FB_foveation` +
+`XR_FB_foveation_configuration` + `XR_FB_foveation_vulkan` +
+`XR_FB_swapchain_update_state` + `XR_META_foveation_eye_tracked` route **when
+the complete extension set, Vulkan density-map feature, and end-to-end image
+contract are available and qualified on that runtime/device pair**. Valve
+[lists exactly this route for Steam Frame](https://partner.steamgames.com/doc/steamhardware/steamframe/engines/custom),
+so qualify it first for both PC streaming and Linux ARM standalone. The META
+profile lets the runtime choose the per-eye gaze pattern without requiring an
+application-visible gaze action. Do not use a headset-name allowlist: query the
+active runtime and graphics device. Other headsets exposing this complete route
+may use it after the same qualification.
+
+The route is not universally more compatible. Khronos specifies
+[`XR_META_foveation_eye_tracked`](https://registry.khronos.org/OpenXR/specs/1.1/man/html/XR_META_foveation_eye_tracked.html)
+as an optional, unratified extension dependent on both FB extensions; the
+[Vulkan foveation swapchain flag](https://registry.khronos.org/OpenXR/specs/1.1/man/html/XrSwapchainCreateFoveationFlagBitsFB.html)
+also requires `VK_EXT_fragment_density_map`. The [Khronos runtime inventory](https://github.khronos.org/OpenXR-Inventory/runtime_extension_support.html)
+does not list FB/META foveation for Monado's desktop Linux runtime in its
+published submissions, and is not a substitute for querying the installed
+runtime. Keep `XR_EXT_eye_gaze_interaction` plus vkQuake's existing
+`VK_KHR_fragment_shading_rate` backend for Beyond 2e/Monado and any other
+runtime with gaze but without the complete FB/META route. If neither usable
+path exists, render at full rate. A runtime/device switch currently requires
+a renderer restart because the Vulkan feature selection is made at device
+creation.
+
+This is a priority for qualification, **not** an unconditional default switch:
+the FB/META code remains behind `-vk-runtime-foveation` until borrowed-image
+format, layout/readiness, gaze alignment, protected-depth replay, and net GPU
+frame time are proven on the target runtime. In particular, the extra
+coarse-world/depth-replay passes can erase a density-map shading gain on some
+maps. Compare both routes where available at the same resolution and scene,
+including `mj4m1`, before preferring one for performance. `vr_eye_tracking`
+must still gate eye mode; inaccessible or invalid gaze must restore full-rate
+rendering. Fixed foveation remains explicit opt-in and is never a fallback.
+
 ## User contract
 
 - `vr_eye_tracking` and `vr_foveation` are archived and now default to `1` and
