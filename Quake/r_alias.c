@@ -98,6 +98,44 @@ static qboolean R_AliasMatrixIsFinite (const float model_matrix[16])
 	return true;
 }
 
+static const r_vrik_prepared_palette_t *R_AliasUsablePalette (entity_t *e, const aliashdr_t *geometry)
+{
+	const r_vrik_prepared_palette_t *prepared = R_VRIKRenderLookup (e);
+	if (!prepared || !geometry || prepared->geometry != geometry ||
+		prepared->descriptor_set == VK_NULL_HANDLE ||
+		prepared->joint_count != (uint32_t)geometry->numjoints ||
+		(geometry->poseverttype != PV_MD5 && geometry->poseverttype != PV_MD5_8))
+		return NULL;
+	if (!prepared->alternate_avatar)
+		return prepared->model == e->model ? prepared : NULL;
+	/* Only the admitted built-in mesh may differ from the original player model. */
+	if (!e->model || strcmp (e->model->name, "progs/player.mdl") ||
+		!prepared->model || prepared->model == e->model ||
+		!prepared->model->avatar_builtin || prepared->model->needload ||
+		geometry != (const aliashdr_t *)prepared->model->extradata[PV_MD5])
+		return NULL;
+	for (const aliashdr_t *surface = geometry; surface; surface = surface->nextsurface)
+		if ((surface->poseverttype != PV_MD5 && surface->poseverttype != PV_MD5_8) ||
+			surface->numjoints != (int)prepared->joint_count)
+			return NULL;
+	for (int i = 0; i < 12; ++i)
+		if (!isfinite (prepared->target_to_canonical[i]))
+			return NULL;
+	return prepared;
+}
+
+/* The prepared affine is row-major 3x4; MatrixMultiply expects column-major 4x4. */
+static qboolean R_AliasAppendAvatarPresentation (float model_matrix[16], const r_vrik_prepared_palette_t *avatar)
+{
+	float affine[16];
+	IdentityMatrix (affine);
+	for (int row = 0; row < 3; ++row)
+		for (int column = 0; column < 4; ++column)
+			affine[column * 4 + row] = avatar->target_to_canonical[row * 4 + column];
+	MatrixMultiply (model_matrix, affine);
+	return R_AliasMatrixIsFinite (model_matrix);
+}
+
 /*
 =============
 GL_DrawAliasFrame -- ericw
@@ -220,10 +258,8 @@ static void GL_DrawAliasFrame (
 	case PV_MD5:
 	case PV_MD5_8:
 	{
-		const r_vrik_prepared_palette_t *prepared = allow_tracked_palette ? R_VRIKRenderLookup (e) : NULL;
-		if (prepared && prepared->model == e->model && prepared->geometry == selected_geometry &&
-			prepared->joint_count == (uint32_t)paliashdr->numjoints &&
-			prepared->descriptor_set != VK_NULL_HANDLE)
+		const r_vrik_prepared_palette_t *prepared = allow_tracked_palette ? R_AliasUsablePalette (e, selected_geometry) : NULL;
+		if (prepared && prepared->joint_count == (uint32_t)paliashdr->numjoints)
 			tracked_palette = prepared;
 
 		VkBuffer		uniform_buffer;
@@ -852,7 +888,7 @@ int R_HeldMeleeMatrix (entity_t *e, const aliashdr_t *geometry,
 static void R_DrawAliasSurfaces (
 	cb_context_t *cbx, entity_t *e, aliashdr_t *geometry, const aliashdr_t *selected_geometry, lerpdata_t lerpdata,
 	float model_matrix[16], float entity_alpha, qboolean alphatest, vec3_t shadevector, vec3_t lightcolor, qboolean force_unlit,
-	qboolean allow_tracked_palette, qboolean opposite_front_face, int *aliaspolys)
+	qboolean allow_tracked_palette, qboolean alternate_avatar, qboolean opposite_front_face, int *aliaspolys)
 {
 	int skinnum = e->skinnum;
 	const int anim = (int)(cl.time * 10) & 3;
@@ -867,14 +903,16 @@ static void R_DrawAliasSurfaces (
 		//
 		if ((skinnum >= hdr->numskins) || (skinnum < 0))
 		{
-			Con_DPrintf ("R_DrawAliasModel: no such skin # %d for '%s'\n", skinnum, e->model->name);
+			const r_vrik_prepared_palette_t *avatar = alternate_avatar ? R_AliasUsablePalette (e, selected_geometry) : NULL;
+			Con_DPrintf ("R_DrawAliasModel: no such skin # %d for '%s'\n", skinnum,
+				avatar ? avatar->model->name : e->model->name);
 			// ericw -- display skin 0 for winquake compatibility
 			skinnum = 0;
 		}
 		tx = hdr->gltextures[skinnum][anim];
 		fb = hdr->fbtextures[skinnum][anim];
 
-		if (e->colormap != vid.colormap && !gl_nocolors.value)
+		if (!alternate_avatar && e->colormap != vid.colormap && !gl_nocolors.value)
 			if ((uintptr_t)e >= (uintptr_t)&cl.entities[1] && (uintptr_t)e <= (uintptr_t)&cl.entities[cl.maxclients] && playertextures[e - cl.entities - 1])
 				tx = playertextures[e - cl.entities - 1];
 
@@ -918,6 +956,7 @@ static void R_DrawAliasSurfaces (
 void R_DrawAliasModel (cb_context_t *cbx, entity_t *e, int *aliaspolys)
 {
 	aliashdr_t	*paliashdr;
+	aliashdr_t	*draw_geometry;
 	int			 skinnum = e->skinnum;
 	lerpdata_t	 lerpdata;
 	const qboolean paired_half = V_AkimboViewmodelHand (e) >= 0;
@@ -940,8 +979,12 @@ void R_DrawAliasModel (cb_context_t *cbx, entity_t *e, int *aliaspolys)
 		paliashdr = (aliashdr_t *)Mod_Extradata_CheckSkin (e->model, skinnum);
 	if (!paliashdr)
 		return;
+	const r_vrik_prepared_palette_t *record = R_VRIKRenderLookup (e);
+	const r_vrik_prepared_palette_t *avatar = record && record->alternate_avatar ?
+		R_AliasUsablePalette (e, record->geometry) : NULL;
+	draw_geometry = avatar ? (aliashdr_t *)avatar->geometry : paliashdr;
 
-	qboolean alphatest = !!(e->model->flags & MF_HOLEY);
+	qboolean alphatest = !!((avatar ? avatar->model : e->model)->flags & MF_HOLEY);
 
 	R_SetupAliasFrame (e, paliashdr, &lerpdata);
 	R_GetEntityLerpedTransform (e, lerpdata.origin, lerpdata.angles);
@@ -951,9 +994,11 @@ void R_DrawAliasModel (cb_context_t *cbx, entity_t *e, int *aliaspolys)
 	//
 	float model_matrix[16];
 	const int matrix_result = held_melee ?
-		R_HeldMeleeMatrix (e, paliashdr, &lerpdata, model_matrix) :
-		R_AliasModelMatrix (e, paliashdr, &lerpdata, model_matrix);
+		R_HeldMeleeMatrix (e, draw_geometry, &lerpdata, model_matrix) :
+		R_AliasModelMatrix (e, draw_geometry, &lerpdata, model_matrix);
 	if (matrix_result < 0)
+		return;
+	if (avatar && !R_AliasAppendAvatarPresentation (model_matrix, avatar))
 		return;
 	const qboolean opposite_front_face = matrix_result > 0;
 
@@ -975,11 +1020,12 @@ void R_DrawAliasModel (cb_context_t *cbx, entity_t *e, int *aliaspolys)
 	R_SetupAliasLighting (e, &shadevector, &lightcolor);
 
 	R_DrawAliasSurfaces (
-		cbx, e, paliashdr, paliashdr, lerpdata, model_matrix, entalpha, alphatest, shadevector, lightcolor, false, true,
+		cbx, e, draw_geometry, draw_geometry, lerpdata, model_matrix, entalpha, alphatest, shadevector, lightcolor, false, true,
+		avatar != NULL,
 		opposite_front_face, aliaspolys);
 }
 
-/* Preserve the normal geometry, animation, and prepared VRIK palette path.
+/* Use the same selected geometry and prepared palette as the main alias pass.
  * The caller owns the pass and (for rings) the stencil reference. */
 qboolean R_DrawAliasCoopOverlay (cb_context_t *cbx, entity_t *e, const vec3_t color,
 	float alpha, float inflate, qboolean ring)
@@ -998,13 +1044,19 @@ qboolean R_DrawAliasCoopOverlay (cb_context_t *cbx, entity_t *e, const vec3_t co
 	aliashdr_t *geometry = (aliashdr_t *)Mod_Extradata_CheckSkin (e->model, e->skinnum);
 	if (!geometry || !nulltexture)
 		return false;
+	const r_vrik_prepared_palette_t *record = R_VRIKRenderLookup (e);
+	const r_vrik_prepared_palette_t *avatar = record && record->alternate_avatar ?
+		R_AliasUsablePalette (e, record->geometry) : NULL;
+	aliashdr_t *draw_geometry = avatar ? (aliashdr_t *)avatar->geometry : geometry;
 
 	lerpdata_t lerpdata;
 	R_SetupAliasFrame (e, geometry, &lerpdata);
 	R_GetEntityLerpedTransform (e, lerpdata.origin, lerpdata.angles);
 	float model_matrix[16];
-	if (R_AliasModelMatrix (e, geometry, &lerpdata, model_matrix) < 0 ||
+	if (R_AliasModelMatrix (e, draw_geometry, &lerpdata, model_matrix) < 0 ||
 		!R_AliasMatrixIsFinite (model_matrix))
+		return false;
+	if (avatar && !R_AliasAppendAvatarPresentation (model_matrix, avatar))
 		return false;
 
 	float inflated_matrix[16];
@@ -1012,7 +1064,7 @@ qboolean R_DrawAliasCoopOverlay (cb_context_t *cbx, entity_t *e, const vec3_t co
 	if (inflate != 1.0f)
 	{
 		/* MDL vertices occupy [0,255]; MD3 and MD5 center at zero. */
-		const float center = geometry->poseverttype == PV_QUAKE1 ? 127.5f : 0.0f;
+		const float center = draw_geometry->poseverttype == PV_QUAKE1 ? 127.5f : 0.0f;
 		float scale[16], translate[16];
 		TranslationMatrix (translate, center, center, center);
 		MatrixMultiply (inflated_matrix, translate);
@@ -1029,11 +1081,11 @@ qboolean R_DrawAliasCoopOverlay (cb_context_t *cbx, entity_t *e, const vec3_t co
 	vec3_t overlay_color;
 	VectorCopy (color, overlay_color);
 	if (ring)
-		for (aliashdr_t *surface = geometry; surface; surface = surface->nextsurface)
-			GL_DrawAliasFrame (cbx, e, surface, geometry, lerpdata, nulltexture, NULL,
+		for (aliashdr_t *surface = draw_geometry; surface; surface = surface->nextsurface)
+			GL_DrawAliasFrame (cbx, e, surface, draw_geometry, lerpdata, nulltexture, NULL,
 				model_matrix, 1.0f, false, shadevector, mask_color, 0, false, true, true, COOP_OVERLAY_MASK);
-	for (aliashdr_t *surface = geometry; surface; surface = surface->nextsurface)
-		GL_DrawAliasFrame (cbx, e, surface, geometry, lerpdata, nulltexture, NULL,
+	for (aliashdr_t *surface = draw_geometry; surface; surface = surface->nextsurface)
+		GL_DrawAliasFrame (cbx, e, surface, draw_geometry, lerpdata, nulltexture, NULL,
 			inflated_matrix, alpha, false, shadevector, overlay_color, 0, false, true, true,
 			ring ? COOP_OVERLAY_RING :
 			cbx->subpass_type == SUBPASS_MAIN ? COOP_OVERLAY_FILL_LATE : COOP_OVERLAY_FILL);
@@ -1084,7 +1136,7 @@ void R_DrawPreparedWheelAliasModel (
 	vec3_t lightcolor = {tint[0] * 0.5f, tint[1] * 0.5f, tint[2] * 0.5f};
 	const qboolean alphatest = !!(e->model->flags & MF_HOLEY);
 	R_DrawAliasSurfaces (
-		cbx, e, selected_geometry, selected_geometry, lerpdata, model_matrix, 1.0f, alphatest, shadevector, lightcolor, true, false,
+		cbx, e, selected_geometry, selected_geometry, lerpdata, model_matrix, 1.0f, alphatest, shadevector, lightcolor, true, false, false,
 		opposite_front_face, aliaspolys);
 }
 
@@ -1102,7 +1154,7 @@ R_DrawAliasModel_ShowTris -- johnfitz
 */
 void R_DrawAliasModel_ShowTris (cb_context_t *cbx, entity_t *e)
 {
-	aliashdr_t *paliashdr;
+	aliashdr_t *paliashdr, *draw_geometry;
 	lerpdata_t	lerpdata;
 	const qboolean paired_half = V_AkimboViewmodelHand (e) >= 0;
 	const qboolean held_melee = V_HeldMeleeRenderEntity (e);
@@ -1120,6 +1172,10 @@ void R_DrawAliasModel_ShowTris (cb_context_t *cbx, entity_t *e)
 		paliashdr = (aliashdr_t *)Mod_Extradata_CheckSkin (e->model, e->skinnum);
 	if (!paliashdr)
 		return;
+	const r_vrik_prepared_palette_t *record = R_VRIKRenderLookup (e);
+	const r_vrik_prepared_palette_t *avatar = record && record->alternate_avatar ?
+		R_AliasUsablePalette (e, record->geometry) : NULL;
+	draw_geometry = avatar ? (aliashdr_t *)avatar->geometry : paliashdr;
 
 	R_SetupAliasFrame (e, paliashdr, &lerpdata);
 	R_GetEntityLerpedTransform (e, lerpdata.origin, lerpdata.angles);
@@ -1135,19 +1191,21 @@ void R_DrawAliasModel_ShowTris (cb_context_t *cbx, entity_t *e)
 	//
 	float model_matrix[16];
 	const int matrix_result = held_melee ?
-		R_HeldMeleeMatrix (e, paliashdr, &lerpdata, model_matrix) :
-		R_AliasModelMatrix (e, paliashdr, &lerpdata, model_matrix);
+		R_HeldMeleeMatrix (e, draw_geometry, &lerpdata, model_matrix) :
+		R_AliasModelMatrix (e, draw_geometry, &lerpdata, model_matrix);
 	if (matrix_result < 0)
+		return;
+	if (avatar && !R_AliasAppendAvatarPresentation (model_matrix, avatar))
 		return;
 	const qboolean opposite_front_face = matrix_result > 0;
 
 	vec3_t shadevector = {0.0f, 0.0f, 0.0f};
 	vec3_t lightcolor = {0.0f, 0.0f, 0.0f};
 	// Draw each surface of the model independently:
-	for (aliashdr_t *hdr = paliashdr; hdr != NULL; hdr = hdr->nextsurface)
+	for (aliashdr_t *hdr = draw_geometry; hdr != NULL; hdr = hdr->nextsurface)
 	{
 		GL_DrawAliasFrame (
-			cbx, e, hdr, paliashdr, lerpdata, nulltexture, nulltexture, model_matrix, 0.0f, false, shadevector, lightcolor, r_showtris.value,
+			cbx, e, hdr, draw_geometry, lerpdata, nulltexture, nulltexture, model_matrix, 0.0f, false, shadevector, lightcolor, r_showtris.value,
 			opposite_front_face, false, true, -1);
 	}
 }
@@ -1159,28 +1217,32 @@ R_DrawAliasModel_ShowSkel
 */
 void R_DrawAliasModel_ShowSkel (cb_context_t *cbx, entity_t *e)
 {
-	aliashdr_t *paliashdr;
+	aliashdr_t *paliashdr, *original_geometry;
 	lerpdata_t	lerpdata;
 	const r_vrik_prepared_palette_t *tracked_palette;
 
-	paliashdr = (aliashdr_t *)Mod_Extradata_CheckSkin (e->model, e->skinnum);
+	original_geometry = (aliashdr_t *)Mod_Extradata_CheckSkin (e->model, e->skinnum);
+	if (!original_geometry)
+		return;
+	const r_vrik_prepared_palette_t *record = R_VRIKRenderLookup (e);
+	const r_vrik_prepared_palette_t *avatar = record && record->alternate_avatar ?
+		R_AliasUsablePalette (e, record->geometry) : NULL;
+	paliashdr = avatar ? (aliashdr_t *)avatar->geometry : original_geometry;
 	if ((paliashdr->poseverttype != PV_MD5 && paliashdr->poseverttype != PV_MD5_8) || paliashdr->skeleton_index_buffer == VK_NULL_HANDLE ||
 		paliashdr->num_skeleton_indexes <= 0 || paliashdr->joints_set == VK_NULL_HANDLE)
 		return;
 
-	R_SetupAliasFrame (e, paliashdr, &lerpdata);
+	R_SetupAliasFrame (e, original_geometry, &lerpdata);
 	R_GetEntityLerpedTransform (e, lerpdata.origin, lerpdata.angles);
-	tracked_palette = R_VRIKRenderLookup (e);
-	if (!tracked_palette || tracked_palette->model != e->model || tracked_palette->geometry != paliashdr ||
-		tracked_palette->joint_count != (uint32_t)paliashdr->numjoints ||
-		tracked_palette->descriptor_set == VK_NULL_HANDLE)
-		tracked_palette = NULL;
+	tracked_palette = R_AliasUsablePalette (e, paliashdr);
 
 	if (!R_IsVRViewmodel (e) && R_CullModelForEntity (e))
 		return;
 
 	float model_matrix[16];
 	if (R_AliasModelMatrix (e, paliashdr, &lerpdata, model_matrix) < 0)
+		return;
+	if (avatar && !R_AliasAppendAvatarPresentation (model_matrix, avatar))
 		return;
 
 	float blend = 0.0f;
