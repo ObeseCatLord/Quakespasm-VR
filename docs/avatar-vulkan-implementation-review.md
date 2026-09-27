@@ -53,3 +53,25 @@ and safe frustum-edge behavior. Also exercise avatar switching, tracking
 loss, missing/malformed assets, and task rendering on/off. Synthetic parser
 fixtures and compilation alone cannot establish that behavior; live headset
 testing remains with the user.
+
+## Animation performance decision
+
+Keep the current per-frame Ranger-to-selected-rig palette retargeter for the
+2.0 implementation. It runs once per selected player in frame preparation;
+the resulting matrices feed vkQuake's Vulkan skinning and are shared by the
+eyes and render consumers. The isolated 19-joint measurement above is too
+small to justify hand-porting the action library or reviving a separate CPU
+renderer. The 2.0 custom avatar path currently admits MD5 meshes; the donor's
+direct-VRM Alicia path is an asset-specific OpenGL/CPU-skinning experiment, not
+a reusable general VRM avatar runtime. A VRM importer would still need the
+tracked-pose mapping and would need to use the existing Vulkan palette/skin
+path to meet the performance goal.
+
+For performance qualification, measure full frame preparation by active
+avatar count, rig size, desktop versus tracked pose, and stereo mode. If
+retargeting becomes a material frame cost on large custom rigs or many peers,
+first precompute stable bind inverses, local transforms, and semantic ownership
+per admitted rig; keep the current per-frame pose transfer and GPU skinning.
+Hand-authored desktop animation is an option for a particular avatar only if
+its measured cost and content quality justify maintaining separate clips. It
+cannot replace the live head/hand/FBT solve for tracked players.
