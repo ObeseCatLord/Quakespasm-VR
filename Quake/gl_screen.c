@@ -31,6 +31,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "vr_locomotion.h"
 #include "vr_menu_anchor.h"
 #include "vr_weapon_menu.h"
+#include "r_vrik_render.h"
 
 #include <setjmp.h>
 
@@ -2542,6 +2543,13 @@ void SCR_UpdateScreen (qboolean use_tasks)
 	else
 		V_ClearAkimboPair ();
 	R_PrepareVRCrosshair ();
+	/* Admit optional avatar meshes before render tasks can inspect model or
+	 * texture tables. A first load may join the previous end task; do this
+	 * before that task is transferred to the new begin dependency below. */
+	if (cl.entities && cl.worldmodel && !con_forcedup)
+		for (int player = 1; player <= cl.maxclients && player <= MAX_SCOREBOARD &&
+			player < cl.num_entities; ++player)
+			R_VRIKRenderStageBuiltinAvatar (&cl.entities[player], cl.avatar_ids[player - 1]);
 
 	if (use_tasks)
 	{

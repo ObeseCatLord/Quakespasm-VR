@@ -28,6 +28,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "miniz.h"
 #include "vr_mdl_split.h"
 #include "r_avatar.h"
+#include "r_vrik_render.h"
 
 /* miniz.h keeps this declaration disabled in the QuakeSpasm amalgamation,
  * while common.c still links the exported implementation from miniz.c. */
@@ -681,6 +682,7 @@ void Mod_ResetAll (void)
 		memset (mod, 0, sizeof (qmodel_t));
 	}
 	mod_numknown = 0;
+	R_VRIKRenderResetAdmission ();
 
 	InvalidateTraceLineCache ();
 }

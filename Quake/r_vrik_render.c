@@ -1,5 +1,6 @@
 /* Frame-owned Vulkan palette uploads for the inherited Ranger VRIK solve. */
 #include "quakedef.h"
+#include "r_avatar.h"
 #include "r_vrik.h"
 #include "r_vrik_render.h"
 
@@ -22,15 +23,117 @@ typedef struct r_vrik_candidate_s
 	double tracked_cull_local_bound;
 	vec3_t tracked_cull_origin;
 	qboolean tracked_cull_valid;
+	float target_to_canonical[12];
+	qboolean alternate_avatar;
 } r_vrik_candidate_t;
+
+typedef struct r_vrik_staged_avatar_s
+{
+	const entity_t *entity;
+	const qmodel_t *original_model;
+	qmodel_t *source_model;
+	const aliashdr_t *source_geometry;
+	qmodel_t *target_model;
+	const aliashdr_t *target_geometry;
+	int id;
+	float target_to_canonical[12];
+	qboolean valid;
+} r_vrik_staged_avatar_t;
 
 static r_vrik_candidate_t candidates[MAX_SCOREBOARD];
 static float candidate_palettes[MAX_SCOREBOARD][R_VRIK_RENDER_MAX_JOINTS][12];
+static r_vrik_staged_avatar_t staged[MAX_SCOREBOARD];
+static qmodel_t *builtin_models[PLAYER_AVATAR_COUNT];
+static qboolean builtin_attempted[PLAYER_AVATAR_COUNT];
+static char admission_gamedir[MAX_OSPATH];
 static r_vrik_prepared_palette_t prepared[DOUBLE_BUFFERED][MAX_SCOREBOARD];
 static size_t prepared_count[DOUBLE_BUFFERED];
 static VkDescriptorSet palette_descriptor_sets[DOUBLE_BUFFERED];
 static uint32_t active_frame_slot;
 static qboolean active_frame_valid;
+
+void R_VRIKRenderResetAdmission (void)
+{
+	memset (staged, 0, sizeof (staged));
+	memset (builtin_models, 0, sizeof (builtin_models));
+	memset (builtin_attempted, 0, sizeof (builtin_attempted));
+	q_strlcpy (admission_gamedir, com_gamedir, sizeof (admission_gamedir));
+}
+
+static qmodel_t *R_VRIKRenderBuiltinModel (int id)
+{
+	if (strcmp (admission_gamedir, com_gamedir))
+		R_VRIKRenderResetAdmission ();
+	qmodel_t *model = builtin_models[id];
+	if (model && !model->needload && model->avatar_builtin && model->type == mod_alias &&
+		model->extradata[PV_MD5] && model->md5_skeleton)
+		return model;
+	if (!model && builtin_attempted[id])
+		return NULL;
+
+	/* Model admission may upload textures and buffers. Only the main-thread
+	 * staging caller reaches this path, before this frame's task graph. */
+	GL_SynchronizeEndRenderingTask ();
+	model = Mod_GetAvatarBuiltinModel (id);
+	builtin_models[id] = model;
+	builtin_attempted[id] = true;
+	return model;
+}
+
+qboolean R_VRIKRenderStageBuiltinAvatar (const entity_t *entity, int id)
+{
+	r_vrik_staged_avatar_t selection = {0};
+	qmodel_t *source, *target;
+	md5_skeleton_view_t source_skeleton, target_skeleton;
+	r_avatar_rig_t source_rig, target_rig;
+	int player;
+
+	if (!entity || !cl.entities)
+		return false;
+	for (player = 1; player <= cl.maxclients && player < cl.num_entities && player <= MAX_SCOREBOARD; ++player)
+		if (entity == &cl.entities[player])
+			break;
+	if (player > cl.maxclients || player >= cl.num_entities || player > MAX_SCOREBOARD)
+		return false;
+	/* Replace any prior choice even when admission fails. */
+	staged[player - 1] = selection;
+	if (id == PLAYER_AVATAR_RANGER)
+		return true;
+	if (!R_AvatarProfileForId (id) || !entity->model || entity->model->needload ||
+		entity->model->type != mod_alias || strcmp (entity->model->name, "progs/player.mdl"))
+		return false;
+
+	source = R_VRIKRenderBuiltinModel (PLAYER_AVATAR_RANGER);
+	target = source ? R_VRIKRenderBuiltinModel (id) : NULL;
+	if (!source || !target || !Mod_GetMD5Skeleton (source, &source_skeleton) ||
+		!source_skeleton.from_rerelease || !Mod_GetMD5Skeleton (target, &target_skeleton) ||
+		!R_AvatarResolveRig (R_AvatarProfileForId (PLAYER_AVATAR_RANGER), &source_skeleton, &source_rig) ||
+		!R_AvatarResolveRig (R_AvatarProfileForId (id), &target_skeleton, &target_rig) ||
+		!R_AvatarTargetToCanonicalPresentation (&source_rig, &target_rig, selection.target_to_canonical))
+		return false;
+	selection.source_geometry = (const aliashdr_t *)source->extradata[PV_MD5];
+	selection.target_geometry = (const aliashdr_t *)target->extradata[PV_MD5];
+	if (!selection.source_geometry || !selection.target_geometry ||
+		selection.source_geometry->numjoints != (int)source_skeleton.joint_count ||
+		selection.target_geometry->numjoints != (int)target_skeleton.joint_count ||
+		(selection.source_geometry->poseverttype != PV_MD5 && selection.source_geometry->poseverttype != PV_MD5_8) ||
+		(selection.target_geometry->poseverttype != PV_MD5 && selection.target_geometry->poseverttype != PV_MD5_8))
+		return false;
+	int surface_count = 0;
+	for (const aliashdr_t *surface = selection.target_geometry; surface; surface = surface->nextsurface)
+		if (++surface_count > MAX_SURFACES ||
+			(surface->poseverttype != PV_MD5 && surface->poseverttype != PV_MD5_8) ||
+			surface->numjoints != (int)target_skeleton.joint_count)
+			return false;
+	selection.entity = entity;
+	selection.original_model = entity->model;
+	selection.source_model = source;
+	selection.target_model = target;
+	selection.id = id;
+	selection.valid = true;
+	staged[player - 1] = selection;
+	return true;
+}
 
 static void R_VRIKRenderReleaseDescriptorSet (uint32_t frame_slot)
 {
@@ -41,49 +144,18 @@ static void R_VRIKRenderReleaseDescriptorSet (uint32_t frame_slot)
 	}
 }
 
-static qboolean R_VRIKRenderCandidate (const entity_t *entity, r_vrik_candidate_t *candidate, float (*palette)[12])
+static void R_VRIKRenderCullCandidate (const entity_t *entity, const aliashdr_t *header,
+	uint32_t joint_count, const float (*palette)[12], r_vrik_candidate_t *candidate)
 {
-	aliashdr_t *header;
-	r_vrik_palette_output_t output;
-	r_vrik_lowerbody_targets_t lower_targets;
-	const r_vrik_lowerbody_targets_t *lower_input = NULL;
-
-	if (!entity || !candidate || !palette)
-		return false;
-	if (!R_VRIKSampleEntityPose (entity, &candidate->pose))
-		return false;
-	if (!entity->model || entity->model->type != mod_alias)
-		return false;
-	header = (aliashdr_t *)Mod_Extradata_CheckSkin (entity->model, entity->skinnum);
-	if (!header || (header->poseverttype != PV_MD5 && header->poseverttype != PV_MD5_8) ||
-		header->numjoints <= 0 || header->numjoints > R_VRIK_RENDER_MAX_JOINTS)
-		return false;
-	if (!Mod_GetMD5Skeleton (entity->model, &candidate->skeleton) ||
-		candidate->skeleton.joint_count != (size_t)header->numjoints)
-		return false;
-
-	R_SetupAliasFrame (entity, header, &candidate->lerpdata);
-	candidate->muzzleflash = (entity->effects & EF_MUZZLEFLASH) != 0;
-	if (R_VRIKSampleEntityLowerTargets (entity, &lower_targets))
-		lower_input = &lower_targets;
-	output.matrices = palette;
-	output.capacity = R_VRIK_RENDER_MAX_JOINTS;
-	output.joint_count = 0;
-	if (R_VRIKBuildRangerPalette (
-			&candidate->skeleton, &candidate->lerpdata, &candidate->pose,
-			lower_input, candidate->muzzleflash, &output) != R_VRIK_PALETTE_OK ||
-		output.joint_count > UINT32_MAX)
-		return false;
-
 	/* Inspect the selected surface chain and the actual solved affine matrices. */
 	double max_qmax = 0.0;
 	qboolean tracked_cull_valid = true;
 	int surface_count = 0;
-	for (aliashdr_t *surface = header; surface; surface = surface->nextsurface)
+	for (const aliashdr_t *surface = header; surface; surface = surface->nextsurface)
 	{
 		if (++surface_count > MAX_SURFACES ||
 			(surface->poseverttype != PV_MD5 && surface->poseverttype != PV_MD5_8) ||
-			surface->numjoints != (int)output.joint_count || !surface->tracked_cull_qmax_valid ||
+			surface->numjoints != (int)joint_count || !surface->tracked_cull_qmax_valid ||
 			!isfinite (surface->tracked_cull_qmax) || surface->tracked_cull_qmax < 0.0)
 		{
 			tracked_cull_valid = false;
@@ -96,7 +168,7 @@ static qboolean R_VRIKRenderCandidate (const entity_t *entity, r_vrik_candidate_
 		tracked_cull_valid = false;
 	double max_rotation_norm = 0.0;
 	double max_translation_norm = 0.0;
-	for (size_t joint = 0; tracked_cull_valid && joint < output.joint_count; ++joint)
+	for (size_t joint = 0; tracked_cull_valid && joint < joint_count; ++joint)
 	{
 		const float *matrix = palette[joint];
 		double rotation_sum = 0.0;
@@ -144,13 +216,157 @@ static qboolean R_VRIKRenderCandidate (const entity_t *entity, r_vrik_candidate_
 	for (int axis = 0; axis < 3; ++axis)
 		if (!isfinite (candidate->tracked_cull_origin[axis]) || !isfinite (cull_angles[axis]))
 			tracked_cull_valid = false;
+	candidate->tracked_cull_local_bound = local_bound;
+	candidate->tracked_cull_valid = tracked_cull_valid;
+}
+
+static qboolean R_VRIKRenderCandidate (const entity_t *entity, r_vrik_candidate_t *candidate, float (*palette)[12])
+{
+	aliashdr_t *header;
+	r_vrik_palette_output_t output;
+	r_vrik_lowerbody_targets_t lower_targets;
+	const r_vrik_lowerbody_targets_t *lower_input = NULL;
+
+	if (!entity || !candidate || !palette)
+		return false;
+	if (!R_VRIKSampleEntityPose (entity, &candidate->pose))
+		return false;
+	if (!entity->model || entity->model->needload || entity->model->type != mod_alias)
+		return false;
+	header = (aliashdr_t *)Mod_Extradata_CheckSkin (entity->model, entity->skinnum);
+	if (!header || (header->poseverttype != PV_MD5 && header->poseverttype != PV_MD5_8) ||
+		header->numjoints <= 0 || header->numjoints > R_VRIK_RENDER_MAX_JOINTS)
+		return false;
+	if (!Mod_GetMD5Skeleton (entity->model, &candidate->skeleton) ||
+		candidate->skeleton.joint_count != (size_t)header->numjoints)
+		return false;
+
+	R_SetupAliasFrame (entity, header, &candidate->lerpdata);
+	candidate->muzzleflash = (entity->effects & EF_MUZZLEFLASH) != 0;
+	if (R_VRIKSampleEntityLowerTargets (entity, &lower_targets))
+		lower_input = &lower_targets;
+	output.matrices = palette;
+	output.capacity = R_VRIK_RENDER_MAX_JOINTS;
+	output.joint_count = 0;
+	if (R_VRIKBuildRangerPalette (
+			&candidate->skeleton, &candidate->lerpdata, &candidate->pose,
+			lower_input, candidate->muzzleflash, &output) != R_VRIK_PALETTE_OK ||
+		output.joint_count > UINT32_MAX)
+		return false;
 
 	candidate->entity = entity;
 	candidate->model = entity->model;
 	candidate->geometry = header;
 	candidate->joint_count = (uint32_t)output.joint_count;
-	candidate->tracked_cull_local_bound = local_bound;
-	candidate->tracked_cull_valid = tracked_cull_valid;
+	candidate->alternate_avatar = false;
+	R_VRIKRenderCullCandidate (entity, header, candidate->joint_count, (const float (*)[12])palette, candidate);
+	return candidate->joint_count != 0;
+}
+
+static int R_VRIKRenderCanonicalFrame (const entity_t *entity, const aliashdr_t *source)
+{
+	if (entity->frame >= 0 && entity->frame < source->numframes)
+		return entity->frame;
+	/* The 2.0 parse-side positions are the corresponding two movement samples
+	 * used by the source renderer's out-of-range Ranger frame fallback. */
+	const double dx = (double)entity->msg_origins[0][0] - entity->msg_origins[1][0];
+	const double dy = (double)entity->msg_origins[0][1] - entity->msg_origins[1][1];
+	const double ticks = cl.time * 10.0;
+	const int phase = isfinite (ticks) && ticks >= 0.0 ? (int)fmod (ticks, 30.0) : 0;
+	const qboolean running = isfinite (dx) && isfinite (dy) && dx * dx + dy * dy > 0.25;
+	const int frame = running ? 6 + phase % 6 : 12 + phase % 5;
+	return frame >= 0 && frame < source->numframes ? frame : 0;
+}
+
+static qboolean R_VRIKRenderAlternateCandidate (const entity_t *entity,
+	const r_vrik_staged_avatar_t *selection, r_vrik_candidate_t *candidate, float (*palette)[12])
+{
+	md5_skeleton_view_t source_skeleton, target_skeleton;
+	r_avatar_rig_t source_rig, target_rig;
+	r_vrik_palette_output_t ranger;
+	r_vrik_lowerbody_targets_t lower_targets;
+	const r_vrik_lowerbody_targets_t *lower_input = NULL;
+	vrik_pose_t pose;
+	entity_t canonical_entity;
+	float source_palette[R_VRIK_RENDER_MAX_JOINTS][12];
+	r_vrik_palette_result_t result;
+
+	if (!selection || !selection->valid || selection->entity != entity ||
+		selection->id <= PLAYER_AVATAR_RANGER || selection->id >= PLAYER_AVATAR_COUNT ||
+		!entity->model || entity->model != selection->original_model || entity->model->needload ||
+		strcmp (entity->model->name, "progs/player.mdl") ||
+		!selection->source_model || !selection->target_model ||
+		selection->source_model->needload || selection->target_model->needload ||
+		!selection->source_model->avatar_builtin || !selection->target_model->avatar_builtin ||
+		selection->source_model->extradata[PV_MD5] != (const byte *)selection->source_geometry ||
+		selection->target_model->extradata[PV_MD5] != (const byte *)selection->target_geometry ||
+		!Mod_GetMD5Skeleton (selection->source_model, &source_skeleton) ||
+		!source_skeleton.from_rerelease || !Mod_GetMD5Skeleton (selection->target_model, &target_skeleton) ||
+		source_skeleton.joint_count != (size_t)selection->source_geometry->numjoints ||
+		target_skeleton.joint_count != (size_t)selection->target_geometry->numjoints ||
+		target_skeleton.joint_count > R_VRIK_RENDER_MAX_JOINTS ||
+		!R_AvatarResolveRig (R_AvatarProfileForId (PLAYER_AVATAR_RANGER), &source_skeleton, &source_rig) ||
+		!R_AvatarResolveRig (R_AvatarProfileForId (selection->id), &target_skeleton, &target_rig))
+		return false;
+
+	canonical_entity = *entity;
+	canonical_entity.model = selection->source_model;
+	canonical_entity.frame = R_VRIKRenderCanonicalFrame (entity, selection->source_geometry);
+	if (entity->frame < 0 || entity->frame >= selection->source_geometry->numframes ||
+		canonical_entity.lerp.prev_frame < 0 || canonical_entity.lerp.prev_frame >= selection->source_geometry->numframes)
+	{
+		canonical_entity.lerp.prev_frame = canonical_entity.frame;
+		canonical_entity.lerp.frame_change_time = 0;
+	}
+	R_SetupAliasFrame (&canonical_entity, (aliashdr_t *)selection->source_geometry, &candidate->lerpdata);
+	ranger.matrices = source_palette;
+	ranger.capacity = R_VRIK_RENDER_MAX_JOINTS;
+	ranger.joint_count = 0;
+	if (R_VRIKSampleEntityPose (entity, &pose))
+	{
+		if (R_VRIKSampleEntityLowerTargets (entity, &lower_targets))
+			lower_input = &lower_targets;
+		result = R_VRIKBuildRangerPalette (&source_skeleton, &candidate->lerpdata, &pose,
+			lower_input, (entity->effects & EF_MUZZLEFLASH) != 0, &ranger);
+	}
+	else
+		result = R_VRIKBuildRangerAnimationPalette (&source_skeleton, &candidate->lerpdata, &ranger);
+	if (result != R_VRIK_PALETTE_OK ||
+		!R_AvatarRetargetRangerOutput (&source_rig, &target_rig, &ranger,
+			palette, R_VRIK_RENDER_MAX_JOINTS))
+		return false;
+
+	candidate->entity = entity;
+	candidate->model = selection->target_model;
+	candidate->geometry = selection->target_geometry;
+	candidate->joint_count = (uint32_t)target_skeleton.joint_count;
+	candidate->alternate_avatar = true;
+	memcpy (candidate->target_to_canonical, selection->target_to_canonical,
+		sizeof (candidate->target_to_canonical));
+	R_VRIKRenderCullCandidate (entity, selection->target_geometry, candidate->joint_count,
+		(const float (*)[12])palette, candidate);
+	if (candidate->tracked_cull_valid)
+	{
+		double linear_squared = 0.0;
+		double translation_squared = 0.0;
+		for (int row = 0; row < 3; ++row)
+		{
+			for (int column = 0; column < 3; ++column)
+			{
+				const double value = candidate->target_to_canonical[row * 4 + column];
+				linear_squared += value * value;
+			}
+			const double translation = candidate->target_to_canonical[row * 4 + 3];
+			translation_squared += translation * translation;
+		}
+		/* ||L||_F bounds the spectral norm, including non-unit display scale. */
+		const double bound = sqrt (translation_squared) +
+			sqrt (linear_squared) * candidate->tracked_cull_local_bound;
+		if (isfinite (bound) && bound >= 0.0)
+			candidate->tracked_cull_local_bound = bound;
+		else
+			candidate->tracked_cull_valid = false;
+	}
 	return candidate->joint_count != 0;
 }
 
@@ -179,7 +395,9 @@ void R_VRIKRenderPrepareFrame (uint32_t frame_slot)
 	for (int player = 1; player <= maxclients && player < cl.num_entities; ++player)
 	{
 		r_vrik_candidate_t candidate;
-		if (!R_VRIKRenderCandidate (&cl.entities[player], &candidate, candidate_palettes[candidate_count]))
+		if (!R_VRIKRenderAlternateCandidate (&cl.entities[player], &staged[player - 1],
+			&candidate, candidate_palettes[candidate_count]) &&
+			!R_VRIKRenderCandidate (&cl.entities[player], &candidate, candidate_palettes[candidate_count]))
 			continue;
 		const VkDeviceSize palette_bytes = (VkDeviceSize)candidate.joint_count * sizeof (float[12]);
 		if (palette_bytes > max_range || total_joints > UINT32_MAX - candidate.joint_count ||
@@ -246,6 +464,12 @@ void R_VRIKRenderPrepareFrame (uint32_t frame_slot)
 		record->entity = candidate->entity;
 		record->model = candidate->model;
 		record->geometry = candidate->geometry;
+		record->alternate_avatar = candidate->alternate_avatar;
+		if (candidate->alternate_avatar)
+			memcpy (record->target_to_canonical, candidate->target_to_canonical,
+				sizeof (record->target_to_canonical));
+		else
+			memset (record->target_to_canonical, 0, sizeof (record->target_to_canonical));
 		record->descriptor_set = palette_descriptor_sets[frame_slot];
 		record->joint_offset = (uint32_t)joint_cursor;
 		record->joint_count = candidate->joint_count;
@@ -291,6 +515,7 @@ const r_vrik_prepared_palette_t *R_VRIKRenderLookup (const entity_t *entity)
 
 void R_VRIKRenderShutdown (void)
 {
+	R_VRIKRenderResetAdmission ();
 	active_frame_valid = false;
 	active_frame_slot = 0;
 	for (int slot = 0; slot < DOUBLE_BUFFERED; ++slot)

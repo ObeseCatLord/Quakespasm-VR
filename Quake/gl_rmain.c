@@ -210,8 +210,13 @@ qboolean R_CullModelForEntity (entity_t *e)
 	vec3_t mins, maxs;
 	vec_t  scalefactor, *minbounds, *maxbounds;
 	const r_vrik_prepared_palette_t *tracked = R_VRIKRenderLookup (e);
-	if (tracked && tracked->model == e->model && e->model && e->model->type == mod_alias &&
-		tracked->geometry == (aliashdr_t *)Mod_Extradata_CheckSkin (e->model, e->skinnum))
+	const qboolean prepared_geometry_matches = tracked && tracked->model && e->model &&
+		e->model->type == mod_alias && tracked->model->type == mod_alias &&
+		(tracked->alternate_avatar ?
+			tracked->geometry == (const aliashdr_t *)tracked->model->extradata[PV_MD5] :
+			tracked->model == e->model &&
+			tracked->geometry == (aliashdr_t *)Mod_Extradata_CheckSkin (e->model, e->skinnum));
+	if (prepared_geometry_matches)
 	{
 		const aliashdr_t *header = tracked->geometry;
 		if (!tracked->tracked_cull_valid || !header || !isfinite (tracked->tracked_cull_local_bound) ||
