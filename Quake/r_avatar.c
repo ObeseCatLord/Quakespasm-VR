@@ -513,6 +513,61 @@ qboolean R_AvatarBuildAttachedPropTransform (
 	return true;
 }
 
+/* The inherited desktop animal socket is anchored to the animated Hip and
+ * bind-pose head height. Head and hand animation must not turn its Gun. Keep
+ * the current canonical Gun rotation, which matches its authored barrel. */
+qboolean R_AvatarBuildDesktopWeaponSocket (const r_avatar_rig_t *target,
+	const r_avatar_presentation_context_t *context,
+	const float *target_palette, const float source_gun_pose[12], float out[12])
+{
+	float basis[12], hip[3], bind_hip[3], bind_head[3], origin[3], canonical[3];
+	float height;
+	int hip_joint, head_joint;
+
+	if (!target || !target->valid || !target->profile ||
+		!target->profile->desktop_weapon_socket || !target->live ||
+		!context || !target_palette || !source_gun_pose || !out ||
+		!R_AvatarFiniteMatrix(context->forward) ||
+		!R_AvatarOrthonormal(source_gun_pose) ||
+		!R_AvatarCanonicalToTargetBasis(target, basis))
+		return false;
+	hip_joint = target->joint[MD5_VRIK_HIP];
+	head_joint = target->joint[MD5_VRIK_HEAD];
+	if (hip_joint < 0 || head_joint < 0)
+		return false;
+	for (int axis = 0; axis < 3; ++axis)
+	{
+		hip[axis] = target_palette[hip_joint * 12 + axis * 4 + 3];
+		bind_hip[axis] = target->live->joints[hip_joint].bind[axis * 4 + 3];
+		bind_head[axis] = target->live->joints[head_joint].bind[axis * 4 + 3] -
+			bind_hip[axis];
+	}
+	height = sqrtf(bind_head[0] * bind_head[0] +
+		bind_head[1] * bind_head[1] + bind_head[2] * bind_head[2]);
+	if (!isfinite(height) || height < 0.01f)
+		return false;
+	for (int row = 0; row < 3; ++row)
+	{
+		const float forward = target->profile->basis_policy ==
+			R_AVATAR_BASIS_FEET_UP_HEAD_FORWARD ?
+			-basis[row * 4 + 2] : basis[row * 4];
+		const float up = target->profile->basis_policy ==
+			R_AVATAR_BASIS_FEET_UP_HEAD_FORWARD ?
+			basis[row * 4] : basis[row * 4 + 2];
+		origin[row] = hip[row] + height *
+			(target->profile->desktop_weapon_forward * forward +
+			 target->profile->desktop_weapon_up * up);
+	}
+	if (!isfinite(origin[0]) || !isfinite(origin[1]) || !isfinite(origin[2]))
+		return false;
+	R_AvatarPresentationPoint(context, origin, canonical);
+	if (!isfinite(canonical[0]) || !isfinite(canonical[1]) || !isfinite(canonical[2]))
+		return false;
+	memcpy(out, source_gun_pose, sizeof(float) * 12);
+	out[3] = canonical[0]; out[7] = canonical[1]; out[11] = canonical[2];
+	return true;
+}
+
 qboolean R_AvatarPrepareRetargetBinds (const r_avatar_rig_t *source,
 	const r_avatar_rig_t *target, r_avatar_retarget_binds_t *out)
 {

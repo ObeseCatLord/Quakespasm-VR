@@ -226,6 +226,11 @@ qboolean R_AvatarBuildAttachedPropTransform (
 	const float source_hand_pose[12], const float source_hand_bind[12],
 	const float target_hand_pose[12], const float target_hand_bind[12],
 	const float source_prop_pose[12], float out[12]);
+/* Untracked animal avatars keep the inherited body-relative Gun socket.
+ * The result maps the same canonical prop geometry used by the hand socket. */
+qboolean R_AvatarBuildDesktopWeaponSocket (const r_avatar_rig_t *target,
+	const r_avatar_presentation_context_t *context,
+	const float *target_palette, const float source_gun_pose[12], float out[12]);
 qboolean R_AvatarRetargetPaletteWithContext (const r_avatar_rig_t *source,
 	const r_avatar_rig_t *target, const r_avatar_presentation_context_t *context,
 	const float *source_palette, float *target_palette);
