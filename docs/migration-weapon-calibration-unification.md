@@ -37,16 +37,15 @@ muzzle from the authoritative body and command-relative pose within about
 `0.00003` Quake units. This covers one stock multiplayer path, not QBJ3/Enyo
 shots, a visible barrel, final projectile origin, or damage.
 
-The `2.0` client now also has a `vrweaponsave` console command for the equipped
-classic alias viewmodel. It rewrites that model's classic held/muzzle fields in
-the active game's `vr_weapons.txt`, preserving unrelated blocks, enhanced
-fields, and the authored per-weapon MP contribution. Existing and resulting
-schema text are checked by the same parser used on reload; the exact active-game
-file is checked after writing. Enhanced MD5 geometry is rejected until its
-separate profile has an adjustment/save path. This is persistence for existing
-classic slot values, not yet the inherited controller-driven grip/muzzle UI.
-The command has been built and exercised only with a disposable schema fixture,
-not against the user's installed mod files.
+The `2.0` client has `vrweaponsave` and controller-driven `vradjustweapon` and
+`vradjustmuzzle` commands for the equipped classic or enhanced alias viewmodel.
+The adjustment session freezes the viewmodel, uses the controller trigger to
+commit a grip or muzzle position, and writes the matching fields in the active
+game's `vr_weapons.txt`. The writer preserves unrelated blocks and the other
+format's fields. Existing and resulting schema text are checked by the same
+parser used on reload; the exact active-game file is checked after writing.
+The commands build and the schema writer/reload fixtures pass, but live headset
+calibration and installed-mod gameplay remain unqualified.
 
 The senior review found a separate baseline gap: Enyo's schema carries weapon
 identities and a global MP delta but omits most base held/muzzle values. The

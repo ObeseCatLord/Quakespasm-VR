@@ -149,8 +149,10 @@ unselectable unknown rows and copied model paths across map resets; its
 selector-reuse and mod-gameplay cases remain unqualified. Co-op player labels
 now use the inherited shirt-color palette and action text has an outlined
 presentation within the shared wheel rectangles; visual/gameplay qualification
-remains open. Interactive weapon calibration remains separate work; compiling
-the 3D model/hit paths does not prove mod gameplay parity.
+remains open. `vradjustweapon` and `vradjustmuzzle` now connect the OpenXR
+controller trigger to frozen viewmodel placement, a muzzle cue, and the shared
+`vr_weapons.txt` save path for classic and enhanced alias geometry. Live headset
+calibration and mod gameplay parity remain unqualified.
 
 WPN-012 reuses the donor's exact MDL splitter through vkQuake's model loader
 for four paired recipes; see [the loader review](migration-akimbo-loader-review.md).
