@@ -742,15 +742,7 @@ static qboolean R_VRIKRenderAttachProp (
 		 r_gpulightmapupdate.value &&
 		 r_rtshadows.value > 0 &&
 		 !GLMesh_AvatarPropBLASReady (
-			selection->source_model->avatar_prop_gpu[selected_prop])))
-		return false;
-	/* The source Dog/Fiend desktop presentation anchors an untracked Gun at
-	 * the body. Reuse that pose for both raster and ray-query prop instances. */
-	if (!(!tracked && selected_prop == MD5_AVATAR_PROP_GUN &&
-		profile->desktop_weapon_socket &&
-		R_AvatarBuildDesktopWeaponSocket(target_rig, context,
-			(const float *)target_palette, source_palette[selected_joint],
-			candidate->attached_prop_to_canonical)) &&
+			selection->source_model->avatar_prop_gpu[selected_prop])) ||
 		!R_AvatarBuildAttachedPropTransform(context,
 			source_palette[source_hand],
 			source_rig->live->joints[source_hand].bind,
