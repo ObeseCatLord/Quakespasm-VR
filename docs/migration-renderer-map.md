@@ -95,6 +95,15 @@ shader/executable build and `spirv-val` passed. Moving-brush eye-boundary image
 checks and `mj4m1` draw/frame-time comparisons remain open; no speedup is
 claimed.
 
+An Astra xhigh read-only senior check of commit `50fbc362` found no concrete
+correctness issue in the two-eye brush plane test. It verified that the GLSL
+column constructor transposes the stored model-to-world rows, that the CPU
+pitch convention and inverse scale agree with the local center, and that the
+instance write precedes indirect surface visibility. The strict rejection
+keeps a face when either eye is on its plane. The review did not qualify
+near-plane floating-point edge images, wider visibility/queue lifetimes, or
+GPU cost. Those remain acceptance checks, not assumed wins.
+
 ## Current-branch large-map performance hypothesis
 
 `2.0` still inherits vkQuake's ray-shadow path in
