@@ -19,11 +19,13 @@ does not qualify wet movement or unrestricted private prediction.
 
 The next implementation slice is **stock-QuakeC water in the existing selected
 per-command owner**, preserving the one-command lifecycle and VR weapon pose.
-The server currently seeds `pmove.waterjumptime = 0` and exports only jump
-debounce (`STAT_PRIVATE_JUMP_SECS`); the client replay also seeds waterjump to
-zero and propagates it only through its local command journal. Before permitting
-wet prediction, authoritative waterjump state must be represented across
-snapshots, validated, and restored in replay. The existing `PM_PlayerMove`
+At review time the server seeded `pmove.waterjumptime = 0` and exported only
+jump debounce (`STAT_PRIVATE_JUMP_SECS`). The current adapter now retains and
+exports the authoritative waterjump timer as `STAT_PRIVATE_WATERJUMP_SECS`,
+requires its receipt in selected snapshots, and seeds client replay from it
+before command-journal propagation. The dry-only gate still prevents claiming
+water support. Before permitting wet prediction, QuakeC/PMove water ownership
+and the actual waterjump trajectory must be qualified. The existing `PM_PlayerMove`
 categorizes water and handles swimming, friction, and ledge waterjump; it must
 remain the movement solver for selected commands. Changes to admission,
 snapshot permission, QC velocity ownership, waterjump state, and completed

@@ -1695,7 +1695,8 @@ static qboolean CL_ComputeReplayPlayerMovement (entity_t *ent, cl_replay_result_
 	VectorClear (pmove.gravitydir);
 	pmove.pm_type = pm_type;
 	pmove.safeorigin_known = false;
-	pmove.waterjumptime = 0;
+	pmove.waterjumptime = private_replay ?
+		cl.statsf[STAT_PRIVATE_WATERJUMP_SECS] : 0;
 	pmove.jump_held = (ent->netstate.pmovetype & 0x40) != 0;
 	pmove.onladder = false;
 	pmove.jump_secs = private_replay ? cl.statsf[STAT_PRIVATE_JUMP_SECS] : 0;

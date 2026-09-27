@@ -1356,7 +1356,7 @@ static qboolean cl_move_snapshot_pending_owner_reset;
 static int cl_move_snapshot_pending_ack, cl_move_snapshot_pending_owner;
 static unsigned int cl_move_stat_receipts;
 
-#define CL_MOVE_STAT_RECEIPT_COUNT 21
+#define CL_MOVE_STAT_RECEIPT_COUNT 22
 #define CL_MOVE_STAT_RECEIPTS_COMPLETE ((1u << CL_MOVE_STAT_RECEIPT_COUNT) - 1u)
 
 static int CL_MoveStatReceiptBit (int stat)
@@ -1371,6 +1371,8 @@ static int CL_MoveStatReceiptBit (int stat)
 		return 7 + stat - STAT_MOVEVARS_TIMESCALE;
 	if (stat == STAT_PRIVATE_JUMP_SECS)
 		return 20;
+	if (stat == STAT_PRIVATE_WATERJUMP_SECS)
+		return 21;
 	return -1;
 }
 
@@ -1411,6 +1413,10 @@ static qboolean CL_ReceivedMoveStatsUsable (void)
 			return false;
 	if (!isfinite (cl.statsf[STAT_PRIVATE_JUMP_SECS]) ||
 		cl.statsf[STAT_PRIVATE_JUMP_SECS] < 0.0f)
+		return false;
+	if (!isfinite (cl.statsf[STAT_PRIVATE_WATERJUMP_SECS]) ||
+		cl.statsf[STAT_PRIVATE_WATERJUMP_SECS] < 0.0f ||
+		cl.statsf[STAT_PRIVATE_WATERJUMP_SECS] > 2.0f)
 		return false;
 	return true;
 }
@@ -2861,10 +2867,11 @@ static void CL_ParseStatNumeric (int stat, int ival, float fval)
 }
 static void CL_ParseStatFloat (int stat, float fval)
 {
-	/* Keep ordinary stat 254 integer conversion for existing peers. Avoid
-	 * undefined float-to-int conversion on an invalid private jump seed; the
+	/* Keep ordinary numeric conversion for public stats 254/255. Avoid
+	 * undefined float-to-int conversion on invalid private timer seeds; the
 	 * candidate gate examines the original float and rejects it. */
-	if (stat == STAT_PRIVATE_JUMP_SECS &&
+	if ((stat == STAT_PRIVATE_JUMP_SECS ||
+		stat == STAT_PRIVATE_WATERJUMP_SECS) &&
 		(!isfinite (fval) || (double)fval < INT_MIN || (double)fval > INT_MAX))
 	{
 		CL_ParseStatNumeric (stat, 0, fval);

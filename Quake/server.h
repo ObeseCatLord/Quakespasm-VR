@@ -326,6 +326,7 @@ typedef struct client_s
 	qboolean	 private_pmove_walk_selected; // latched until command-queue/serverinfo reset
 	double	 private_pmove_credit_msec; // fractional milliseconds; physics accrual/cap lives in sv_phys.c
 	float	 private_pmove_jump_secs; // short PMove jump debounce across accepted commands
+	float	 private_pmove_waterjump_secs; // authoritative PMove waterjump timer across accepted commands
 	usercmd_t	 private_pmove_last_cmd; // last command completed through its QC callbacks
 	qboolean	 private_pmove_last_cmd_valid; // distinguishes no completion from a zero-input command
 	usercmd_t private_cmd_queue[SV_PRIVATE_CMD_QUEUE_SIZE];

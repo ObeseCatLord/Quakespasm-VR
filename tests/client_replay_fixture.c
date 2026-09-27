@@ -224,6 +224,7 @@ static void check_private_walk_shadow (void)
 	cl.move_ack_prediction_allowed = false;
 	cl_nopred.value = 1;
 	cl.statsf[STAT_PRIVATE_JUMP_SECS] = 1.25f;
+	cl.statsf[STAT_PRIVATE_WATERJUMP_SECS] = 1.5f;
 	cl.movecmds[3 & MOVECMDS_MASK].vr_active = false;
 	cl.movemessages = 5;
 	cl.movecmds[4 & MOVECMDS_MASK].sequence = 99; /* target 3 must not read past itself */
@@ -261,7 +262,7 @@ static void check_private_walk_shadow (void)
 	assert (preview_calls == 0);
 	assert (observed_cmds[0].sequence == 3 && observed_cmds[0].msec == 100);
 	assert (!observed_cmds[0].vr_active);
-	assert (observed_waterjump_before[0] == 0); /* shadow ignores stale propagation seed */
+	assert (observed_waterjump_before[0] == 1.5f); /* shadow uses authority, not stale propagation */
 	assert (result.origin[0] == 101 && result.velocity[0] == 10);
 	assert (result.onground && !result.inwater);
 	assert (result.target_sequence == 3 && result.jump_secs == 1.25f);
@@ -427,8 +428,9 @@ static void check_private_epoch_resets_propagation (void)
 
 	reset_client ();
 	admit_private_snapshot ();
+	cl.statsf[STAT_PRIVATE_WATERJUMP_SECS] = 1.25f;
 	assert (CL_ReplayPlayerMovement (&entities[1], origin));
-	assert (observed_waterjump_before[0] == 0);
+	assert (observed_waterjump_before[0] == 1.25f);
 	assert (cl.move_replay_propagate_sequence[4 & MOVECMDS_MASK] == 4);
 	assert (cl.move_replay_propagate_waterjumptime[4 & MOVECMDS_MASK] == 53);
 
@@ -450,7 +452,7 @@ static void check_private_epoch_resets_propagation (void)
 	cl.movecmds[5 & MOVECMDS_MASK].sequence = 5;
 	cl.move_ack_mode_epoch++;
 	assert (CL_ReplayPlayerMovement (&entities[1], origin));
-	assert (observed_waterjump_before[0] == 0);
+	assert (observed_waterjump_before[0] == 1.25f);
 }
 
 static void check_trusted_gorilla_generation (void)

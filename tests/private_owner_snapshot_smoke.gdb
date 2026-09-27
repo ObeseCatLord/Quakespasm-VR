@@ -44,7 +44,7 @@ def snapshot(sequence=10, epoch=1, owner=True):
 def movement_stats():
     # Complete movement settings in this one message, including zero values.
     packet = struct.pack('<BBI', 3, 225, 0x80000000)
-    for stat in list(range(226, 230)) + list(range(238, 240)) + list(range(241, 254)):
+    for stat in list(range(226, 230)) + list(range(238, 240)) + list(range(241, 256)):
         packet += struct.pack('<BBf', 79, stat, 0.0)
     return packet
 

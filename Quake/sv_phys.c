@@ -7135,7 +7135,7 @@ static qboolean SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *clien
 	qboolean friendly_fire_scope;
 	qboolean command_completed = false, suppress_trigger = false;
 	const char *failure = NULL;
-	float result_jump_secs = 0;
+	float result_jump_secs = 0, result_waterjump_secs = 0;
 	vr_gorilla_state_t result_gorilla;
 	vec3_t result_gorilla_origin;
 	unsigned int gorilla_reset_generation;
@@ -7146,7 +7146,10 @@ static qboolean SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *clien
 	host_client = client;
 	sv_player = ent;
 	if (!client->private_pmove_last_cmd_valid)
+	{
 		client->private_pmove_jump_secs = 0.0f;
+		client->private_pmove_waterjump_secs = 0.0f;
+	}
 
 	if (!isfinite (client->private_pmove_credit_msec) ||
 		client->private_pmove_credit_msec < 0.0)
@@ -7396,7 +7399,7 @@ static qboolean SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *clien
 	 * must use the release state that existed before that PreThink callback. */
 	pmove.jump_held = (((int)prethink_flags & FL_JUMPRELEASED) == 0);
 	pmove.jump_secs = client->private_pmove_jump_secs;
-	pmove.waterjumptime = 0;
+	pmove.waterjumptime = client->private_pmove_waterjump_secs;
 	pmove.waterlevel = 0;
 	pmove.watertype = CONTENTBIT_EMPTY;
 	pmove.onladder = false;
@@ -7460,6 +7463,7 @@ static qboolean SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *clien
 		}
 	}
 	result_jump_secs = pmove.jump_secs;
+	result_waterjump_secs = pmove.waterjumptime;
 	if (pmove.onground && (pmove.groundent < 0 || pmove.groundent >= pmove.numphysent))
 	{
 		failure = "PMove returned an invalid ground entity";
@@ -7595,6 +7599,7 @@ static qboolean SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *clien
 	client->private_pmove_last_cmd = command;
 	client->private_pmove_last_cmd_valid = true;
 	client->private_pmove_jump_secs = result_jump_secs;
+	client->private_pmove_waterjump_secs = result_waterjump_secs;
 	client->private_pmove_credit_msec -= command.msec;
 	if (client->private_pmove_credit_msec < 0.000001)
 		client->private_pmove_credit_msec = 0;

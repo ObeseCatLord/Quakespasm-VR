@@ -23,6 +23,7 @@ double v_punchangles_times[2];
 struct qsocket_s { int unused; };
 int NET_QSocketGetSequenceIn (const struct qsocket_s *sock) { return 1; }
 void CL_ResetPredictionSmoothing (void) {}
+void VR_InputInvalidateMotion (void) {}
 void CL_FlushAckFrames (void) {}
 void R_TranslateNewPlayerSkin (int playernum) {}
 void R_FreeEntityBLAS (entity_t *ent) {}
@@ -127,8 +128,9 @@ static void reset_client (void)
 	CL_InvalidateMoveSnapshot ();
 }
 
-static void parse_private_update_with_jump_secs (const byte *bytes, int length,
-	qboolean include_jump_secs, float jump_secs)
+static void parse_private_update_with_timers (const byte *bytes, int length,
+	qboolean include_jump_secs, float jump_secs,
+	qboolean include_waterjump_secs, float waterjump_secs)
 {
 	/* Model the complete movement-stat group preceding each private owner
 	 * update. This fixture calls the entity reader directly, so it supplies
@@ -143,10 +145,19 @@ static void parse_private_update_with_jump_secs (const byte *bytes, int length,
 		CL_ParseStatFloat (stat, 0);
 	if (include_jump_secs)
 		CL_ParseStatFloat (STAT_PRIVATE_JUMP_SECS, jump_secs);
+	if (include_waterjump_secs)
+		CL_ParseStatFloat (STAT_PRIVATE_WATERJUMP_SECS, waterjump_secs);
 	net_message.data = (byte *)bytes;
 	net_message.cursize = length;
 	MSG_BeginReading ();
 	CLFTE_ParseEntitiesUpdate ();
+}
+
+static void parse_private_update_with_jump_secs (const byte *bytes, int length,
+	qboolean include_jump_secs, float jump_secs)
+{
+	parse_private_update_with_timers (bytes, length, include_jump_secs,
+		jump_secs, true, 0.0f);
 }
 
 static void parse_private_update (const byte *bytes, int length)
@@ -206,6 +217,30 @@ int main (void)
 
 	reset_client ();
 	length = private_snapshot (packet, 10, 4, 1, true, false, 3.0f);
+	parse_private_update_with_timers (packet, length, true, 0.0f, false, 0.0f);
+	finish_message_if_complete (length);
+	assert (!cl.move_snapshot_valid); // waterjump seed is required even at zero
+
+	reset_client ();
+	length = private_snapshot (packet, 10, 4, 1, true, false, 3.0f);
+	parse_private_update_with_timers (packet, length, true, 0.0f, true, -0.25f);
+	finish_message_if_complete (length);
+	assert (!cl.move_snapshot_valid);
+
+	reset_client ();
+	length = private_snapshot (packet, 10, 4, 1, true, false, 3.0f);
+	parse_private_update_with_timers (packet, length, true, 0.0f, true, NAN);
+	finish_message_if_complete (length);
+	assert (!cl.move_snapshot_valid);
+
+	reset_client ();
+	length = private_snapshot (packet, 10, 4, 1, true, false, 3.0f);
+	parse_private_update_with_timers (packet, length, true, 0.0f, true, 2.5f);
+	finish_message_if_complete (length);
+	assert (!cl.move_snapshot_valid); // beyond PMove's two-second maximum
+
+	reset_client ();
+	length = private_snapshot (packet, 10, 4, 1, true, false, 3.0f);
 	parse_private_update (packet, length);
 	assert (!msg_badread && msg_readcount == length);
 	assert (!cl.move_snapshot_valid); // candidate is private until message end
@@ -218,6 +253,12 @@ int main (void)
 	parse_private_update_with_jump_secs (packet, length, true, 0.125f);
 	finish_message_if_complete (length);
 	assert (cl.move_snapshot_valid && cl.statsf[STAT_PRIVATE_JUMP_SECS] == 0.125f);
+	reset_client ();
+	length = private_snapshot (packet, 10, 4, 1, true, false, 3.0f);
+	parse_private_update_with_timers (packet, length, true, 0.0f, true, 1.25f);
+	finish_message_if_complete (length);
+	assert (cl.move_snapshot_valid &&
+		cl.statsf[STAT_PRIVATE_WATERJUMP_SECS] == 1.25f);
 
 	/* An omitted unreliable fragment cannot poison the next self-contained
 	 * repeated owner reset: deliberately seed the previous decoded state stale. */
@@ -316,6 +357,9 @@ int main (void)
 	CL_ParseStatFloat (STAT_PRIVATE_JUMP_SECS, 2.5f);
 	assert (cl.stats[STAT_PRIVATE_JUMP_SECS] == 2 &&
 		cl.statsf[STAT_PRIVATE_JUMP_SECS] == 2.5f); // public stat 254 keeps donor parsing
+	CL_ParseStatFloat (STAT_PRIVATE_WATERJUMP_SECS, 2.5f);
+	assert (cl.stats[STAT_PRIVATE_WATERJUMP_SECS] == 2 &&
+		cl.statsf[STAT_PRIVATE_WATERJUMP_SECS] == 2.5f); // public stat 255 remains ordinary
 	int public_length = 0;
 	put_float (packet, &public_length, 3.0f);
 	put_short (packet, &public_length, 1);
