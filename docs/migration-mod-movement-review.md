@@ -155,3 +155,26 @@ The stat sender and client parser already support string updates under
 stats can use the existing transport. Vector registration also rejects a
 starting slot too close to the array end. The sandbox blocks UDP sockets,
 so a dedicated-server/client round trip for these stats remains unverified.
+
+## Living q30 command-owner decision
+
+Astra `gpt-6-astra`/`max` reviewed the proposed handoff to vkQuake's native
+movement dispatcher *before* an unsupported q30 command begins. The main
+thread spot-checked the load-bearing paths in `sv_user.c`, `sv_phys.c`,
+`sv_main.c`, and `cl_main.c`. This is a design finding, not a q30 admission or
+gameplay result.
+
+| Recommendation | Disposition |
+| --- | --- |
+| Reuse the selected command queue, completion cursor, retirement, and snapshot transport. | **Adopt.** They already encode completed-command ownership and should not be copied into a new protocol. |
+| Invoke the existing native frame dispatcher for a living selected q30 command that is unsupported by PMove. | **Reject for now.** Selected clients skip `SV_ClientThink`, so the native frame would lack its ordinary input acceleration. Terminal continuation also coalesces commands and uses world-frame time; neither path proves correct living-command actions, Think timing, or rollback. |
+| Rely on `private_move_native_frame` to make a live native fallback safe. | **Reject.** Packet receipt and snapshot admission still require a selected WALK owner and may disconnect after an ability changes state. An older snapshot can also have already authorized client replay before the fallback ACK arrives. |
+| Keep q30 under its existing native owner while qualifying a dry QuakeC jump handoff. | **Adopt as the next implementation direction.** The adapter must preserve QC velocity **and** `FL_JUMPRELEASED`, bypass stock velocity restoration, and keep prediction permission off until matching client replay is proven. |
+
+The smallest software proof is an exact-binary q30 dry static-floor sequence:
+low positive jump, forward movement, held jump through landing, release, then
+another jump. Compare native and selected origin, apex, horizontal travel,
+landing, effects, callback counts and timing, completed ACK, paired commands,
+an intervening zero-time maintenance pass, and a due player Think. Passing
+that proof qualifies only dry jump; boots, grapple, ladder, water, changing
+movetype/custom physics, and general q30 admission remain separate work.
