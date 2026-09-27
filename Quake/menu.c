@@ -28,6 +28,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "vr_fbt_storage.h"
 #include "view.h"
 #include "addon_catalog.h"
+#include "custom_avatar.h"
 
 void (*vid_menucmdfn) (void); // johnfitz
 void (*vid_menukeyfn) (int key);
@@ -1324,8 +1325,8 @@ static void M_MultiPlayer_Key (int key)
 //=============================================================================
 /* SETUP MENU */
 
-int setup_cursor = 4;
-int setup_cursor_table[] = {40, 56, 80, 104, 140};
+int setup_cursor = 5;
+int setup_cursor_table[] = {40, 56, 80, 104, 136, 164};
 
 char setup_hostname[16];
 char setup_myname[16];
@@ -1333,8 +1334,10 @@ int	 setup_oldtop;
 int	 setup_oldbottom;
 int	 setup_top;
 int	 setup_bottom;
+int	 setup_avatar;
+int	 setup_oldavatar;
 
-#define NUM_SETUP_CMDS 5
+#define NUM_SETUP_CMDS 6
 
 static void M_Menu_Setup_f (void)
 {
@@ -1346,6 +1349,10 @@ static void M_Menu_Setup_f (void)
 	q_strlcpy (setup_hostname, hostname.string, sizeof (setup_hostname));
 	setup_top = setup_oldtop = ((int)cl_topcolor.value);
 	setup_bottom = setup_oldbottom = ((int)cl_bottomcolor.value);
+	setup_avatar = CustomAvatar_IdForKey (cl_avatar.string);
+	if (setup_avatar < PLAYER_AVATAR_RANGER)
+		setup_avatar = PLAYER_AVATAR_RANGER;
+	setup_oldavatar = setup_avatar;
 }
 
 static void M_Setup_Draw (cb_context_t *cbx)
@@ -1366,16 +1373,18 @@ static void M_Setup_Draw (cb_context_t *cbx)
 
 	M_Print (cbx, 64, 80, "Shirt color");
 	M_Print (cbx, 64, 104, "Pants color");
+	M_Print (cbx, 64, 120, "Player model");
+	M_Print (cbx, 64, 136, CustomAvatar_DisplayNameForId (setup_avatar));
 
-	M_DrawTextBox (cbx, 64, 140 - 8, 14, 1);
-	M_Print (cbx, 72, 140, "Accept Changes");
+	M_DrawTextBox (cbx, 64, 164 - 8, 14, 1);
+	M_Print (cbx, 72, 164, "Accept Changes");
 
 	p = Draw_CachePic ("gfx/bigbox.lmp");
 	M_DrawTransPic (cbx, 160, 64, p);
 	p = Draw_CachePic ("gfx/menuplyr.lmp");
 	M_DrawTransPicTranslate (cbx, 172, 72, p, setup_top, setup_bottom);
 
-	for (int i = 0; i < 5; ++i)
+	for (int i = 0; i < NUM_SETUP_CMDS; ++i)
 		M_Mouse_UpdateCursor (&setup_cursor, 0, 400, setup_cursor_table[i], 8, i);
 	Draw_Character (cbx, 56, setup_cursor_table[setup_cursor], 12 + ((int)(realtime * 4) & 1));
 
@@ -1411,16 +1420,18 @@ static void M_Setup_Key (int k)
 		break;
 
 	case K_LEFTARROW:
-		if (setup_cursor < 2)
+		if (setup_cursor < 2 || setup_cursor == 5)
 			return;
 		S_LocalSound ("misc/menu3.wav");
 		if (setup_cursor == 2)
 			setup_top = setup_top - 1;
 		if (setup_cursor == 3)
 			setup_bottom = setup_bottom - 1;
+		if (setup_cursor == 4)
+			setup_avatar = setup_avatar - 1;
 		break;
 	case K_RIGHTARROW:
-		if (setup_cursor < 2)
+		if (setup_cursor < 2 || setup_cursor == 5)
 			return;
 	forward:
 		S_LocalSound ("misc/menu3.wav");
@@ -1428,6 +1439,8 @@ static void M_Setup_Key (int k)
 			setup_top = setup_top + 1;
 		if (setup_cursor == 3)
 			setup_bottom = setup_bottom + 1;
+		if (setup_cursor == 4)
+			setup_avatar = setup_avatar + 1;
 		break;
 
 	case K_MOUSE1:
@@ -1437,16 +1450,18 @@ static void M_Setup_Key (int k)
 		if (setup_cursor == 0 || setup_cursor == 1)
 			return;
 
-		if (setup_cursor == 2 || setup_cursor == 3)
+		if (setup_cursor == 2 || setup_cursor == 3 || setup_cursor == 4)
 			goto forward;
 
-		// setup_cursor == 4 (OK)
+		// setup_cursor == 5 (OK)
 		if (strcmp (cl_name.string, setup_myname) != 0)
 			Cbuf_AddText (va ("name \"%s\"\n", setup_myname));
 		if (strcmp (hostname.string, setup_hostname) != 0)
 			Cvar_Set ("hostname", setup_hostname);
 		if (setup_top != setup_oldtop || setup_bottom != setup_oldbottom)
 			Cbuf_AddText (va ("color %i %i\n", setup_top, setup_bottom));
+		if (setup_avatar != setup_oldavatar)
+			Cvar_Set ("cl_avatar", CustomAvatar_KeyForId (setup_avatar));
 		m_entersound = true;
 		M_Menu_MultiPlayer_f ();
 		break;
@@ -1474,6 +1489,10 @@ static void M_Setup_Key (int k)
 		setup_bottom = 0;
 	if (setup_bottom < 0)
 		setup_bottom = 13;
+	if (setup_avatar >= CustomAvatar_TotalCount ())
+		setup_avatar = PLAYER_AVATAR_RANGER;
+	if (setup_avatar < PLAYER_AVATAR_RANGER)
+		setup_avatar = CustomAvatar_TotalCount () - 1;
 }
 
 static void M_Setup_Char (int k)
