@@ -34,6 +34,10 @@ The review corrected an error in the draft brief: the selected queue limit is
 ## Qualification still needed
 
 This source-level change and a Linux build cannot prove native movement parity.
+The next review found and fixed a remaining packet-gate rejection in
+`SV_PrivateWalkTrialStateValid`: it now permits pusher ground only in the same
+robust elevator mode as admission and physics. The regression proof must send
+a new command **after** the lift has become the client's ground entity.
 The focused software proof is one stock lift with an ordinary player and a
 selected remote player: compare one command plus one push, no-command carry,
 queued commands, departure, a blocked push/rollback, snapshot ACK and replay

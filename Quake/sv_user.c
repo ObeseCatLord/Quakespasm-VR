@@ -29,6 +29,7 @@ edict_t *sv_player;
 extern cvar_t sv_friction;
 cvar_t		  sv_edgefriction = {"edgefriction", "2", CVAR_NONE};
 extern cvar_t sv_stopspeed;
+extern cvar_t sv_gameplayfix_elevators;
 
 static vec3_t forward, right, up;
 
@@ -1250,7 +1251,8 @@ static qboolean SV_PrivateWalkTrialStateValid (client_t *client)
 			return SV_PrivateWalkTrialFail (client, "invalid groundentity offset");
 		ground = PROG_TO_EDICT (groundentity);
 		if (!ground->free && ground->v.movetype == MOVETYPE_PUSH &&
-			ground->v.solid == SOLID_BSP)
+			ground->v.solid == SOLID_BSP &&
+			sv_gameplayfix_elevators.value < 3.f)
 			return SV_PrivateWalkTrialFail (client, "owner contacted a pusher");
 	}
 	return true;
