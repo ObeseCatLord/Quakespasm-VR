@@ -179,7 +179,9 @@ static VkCommandBuffer *secondary_command_buffers[SCBX_NUM][DOUBLE_BUFFERED];
 static VkFence			command_buffer_fences[DOUBLE_BUFFERED];
 static qboolean			frame_submitted[DOUBLE_BUFFERED];
 static VkQueryPool		timestamp_query_pool;
+static uint32_t			timestamp_valid_bits;
 static qboolean			timestamps_written[DOUBLE_BUFFERED];
+static qboolean			ssao_timestamps_written[DOUBLE_BUFFERED];
 static qboolean			frame_timing_enabled;
 static VkSemaphore		image_aquired_semaphores[DOUBLE_BUFFERED];
 static VkSemaphore		draw_complete_semaphores[MAX_SWAP_CHAIN_IMAGES];
@@ -1775,6 +1777,8 @@ static void GL_InitDevice (void)
 	}
 
 	Mem_Free (queue_supports_present);
+	if (found_graphics_queue)
+		timestamp_valid_bits = queue_family_properties[vulkan_globals.gfx_queue_family_index].timestampValidBits;
 	Mem_Free (queue_family_properties);
 
 	if (!found_graphics_queue)
@@ -4031,6 +4035,24 @@ static void GL_DestroyRenderResources (void)
 GL_BeginRenderingTask
 =================
 */
+static qboolean GL_TimestampElapsedUs (uint64_t start, uint64_t end, uint32_t *elapsed_us)
+{
+	if (!timestamp_valid_bits || timestamp_valid_bits > 64 || !elapsed_us)
+		return false;
+	const uint64_t mask = timestamp_valid_bits == 64 ? UINT64_MAX : (UINT64_MAX >> (64 - timestamp_valid_bits));
+	start &= mask;
+	end &= mask;
+	/* A wrap makes this interval ambiguous; omit the sample instead of
+	 * reporting an enormous or spuriously small GPU duration. */
+	if (end < start)
+		return false;
+	const double microseconds = (double)(end - start) * (double)vulkan_globals.device_properties.limits.timestampPeriod / 1000.0;
+	if (!(microseconds >= 0.0 && microseconds <= UINT32_MAX))
+		return false;
+	*elapsed_us = (uint32_t)microseconds;
+	return true;
+}
+
 void GL_BeginRenderingTask (void *unused)
 {
 	VkResult err;
@@ -4056,13 +4078,14 @@ void GL_BeginRenderingTask (void *unused)
 		Sys_Error ("vkResetFences failed with code %i", (int)err);
 
 	// Allocate GPU profiling resources only when scr_speeds is first enabled.
-	if (frame_timing_enabled && (timestamp_query_pool == VK_NULL_HANDLE) && vulkan_globals.device_properties.limits.timestampComputeAndGraphics &&
+	if (frame_timing_enabled && (timestamp_query_pool == VK_NULL_HANDLE) && timestamp_valid_bits &&
+		vulkan_globals.device_properties.limits.timestampComputeAndGraphics &&
 		(vulkan_globals.device_properties.limits.timestampPeriod > 0.0f))
 	{
 		ZEROED_STRUCT (VkQueryPoolCreateInfo, query_pool_create_info);
 		query_pool_create_info.sType = VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO;
 		query_pool_create_info.queryType = VK_QUERY_TYPE_TIMESTAMP;
-		query_pool_create_info.queryCount = 2 * DOUBLE_BUFFERED;
+		query_pool_create_info.queryCount = 4 * DOUBLE_BUFFERED;
 		err = vkCreateQueryPool (vulkan_globals.device, &query_pool_create_info, NULL, &timestamp_query_pool);
 		if (err != VK_SUCCESS)
 			Sys_Error ("vkCreateQueryPool failed with code %i", (int)err);
@@ -4070,15 +4093,26 @@ void GL_BeginRenderingTask (void *unused)
 
 	// The fence wait above guarantees this slot's previous timestamps are available.
 	rs_gputime_us = 0;
+	rs_ssaotime_us = 0;
+	rs_ssaotime_valid = false;
 	if (frame_timing_enabled && timestamps_written[current_cb_index])
 	{
 		uint64_t timestamps[2];
 		if (vkGetQueryPoolResults (
-				vulkan_globals.device, timestamp_query_pool, current_cb_index * 2, 2, sizeof (timestamps), timestamps, sizeof (uint64_t),
+				vulkan_globals.device, timestamp_query_pool, current_cb_index * 4, 2, sizeof (timestamps), timestamps, sizeof (uint64_t),
 				VK_QUERY_RESULT_64_BIT) == VK_SUCCESS)
-			rs_gputime_us = (uint32_t)((double)(timestamps[1] - timestamps[0]) * (double)vulkan_globals.device_properties.limits.timestampPeriod / 1000.0);
+			GL_TimestampElapsedUs (timestamps[0], timestamps[1], &rs_gputime_us);
+	}
+	if (frame_timing_enabled && ssao_timestamps_written[current_cb_index])
+	{
+		uint64_t timestamps[2];
+		if (vkGetQueryPoolResults (
+				vulkan_globals.device, timestamp_query_pool, current_cb_index * 4 + 2, 2, sizeof (timestamps), timestamps, sizeof (uint64_t),
+				VK_QUERY_RESULT_64_BIT) == VK_SUCCESS)
+			rs_ssaotime_valid = GL_TimestampElapsedUs (timestamps[0], timestamps[1], &rs_ssaotime_us);
 	}
 	timestamps_written[current_cb_index] = false;
+	ssao_timestamps_written[current_cb_index] = false;
 
 	R_CollectDynamicBufferGarbage ();
 	R_CollectMeshBufferGarbage ();
@@ -4108,8 +4142,8 @@ void GL_BeginRenderingTask (void *unused)
 	if (frame_timing_enabled && (timestamp_query_pool != VK_NULL_HANDLE))
 	{
 		VkCommandBuffer first_cb = vulkan_globals.primary_cb_contexts[0].cb;
-		vkCmdResetQueryPool (first_cb, timestamp_query_pool, current_cb_index * 2, 2);
-		vkCmdWriteTimestamp (first_cb, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, timestamp_query_pool, current_cb_index * 2);
+		vkCmdResetQueryPool (first_cb, timestamp_query_pool, current_cb_index * 4, 4);
+		vkCmdWriteTimestamp (first_cb, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, timestamp_query_pool, current_cb_index * 4);
 	}
 
 	for (int scbx_index = 0; scbx_index < SCBX_NUM; ++scbx_index)
@@ -4992,13 +5026,16 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 
 	frame_readback_t readback = {.commands = render_passes_cb};
 	VkCommandBuffer	 submit_cbs[PCBX_NUM];
+	bool ssao_written = false;
 	const uint32_t	 submit_count =
 		R_RecordFrame (parms, output_acquired, vulkan_globals.stereo_active ? openxr_image_index : current_swapchain_buffer,
-			submit_cbs, countof (submit_cbs), take_screenshot && swapchain_acquired ? GL_RecordFrameReadback : NULL, &readback);
+			submit_cbs, countof (submit_cbs), take_screenshot && swapchain_acquired ? GL_RecordFrameReadback : NULL, &readback,
+			frame_timing_enabled ? timestamp_query_pool : VK_NULL_HANDLE, cb_index * 4 + 2, &ssao_written);
+	ssao_timestamps_written[cb_index] = ssao_written;
 
 	if (frame_timing_enabled && (timestamp_query_pool != VK_NULL_HANDLE))
 	{
-		vkCmdWriteTimestamp (render_passes_cb, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, timestamp_query_pool, (cb_index * 2) + 1);
+		vkCmdWriteTimestamp (render_passes_cb, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, timestamp_query_pool, (cb_index * 4) + 1);
 		timestamps_written[cb_index] = true;
 	}
 

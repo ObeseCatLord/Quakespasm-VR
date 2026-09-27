@@ -38,7 +38,7 @@ through the same matrix. Focused desktop and OpenXR runs at default
 one-layer or two-layer resource path. These runs did not use Vulkan validation
 layers and do not establish binocular appearance or performance acceptance.
 
-Next, instrument total-frame and SSAO GPU time and compare AO-off, the
+Next, compare total-frame and SSAO GPU time for AO-off, the
 full-resolution reference, and a VR-only half-width/half-height candidate with
 depth-aware upsampling. Evaluate p95/p99 frame time and missed-frame risk, not
 only individual dispatch time. Keep the half-resolution path only if it gives a
@@ -46,6 +46,19 @@ repeatable total-frame gain without unacceptable thin-contact loss, halos,
 head-motion shimmer, cross-eye leakage or unequal-eye edges. The existing
 lowest `r_ssao` quality already uses four samples, so fewer samples alone may
 trade too much stability for little gain.
+
+The existing `scr_speeds 3` whole-frame GPU timer now also shows an `ssao
+compute gpu` interval when AO work was recorded. The interval brackets
+`R_ComputeSSAO` in the donor frame graph and includes its depth transition,
+per-eye mip/evaluate/filter dispatches and barriers. It does **not** include
+world-depth preparation or the entity AO composite. The query pool and frame
+fence remain owned by vkQuake's renderer; normal play adds no timestamp
+commands. Query readback masks the selected queue's `timestampValidBits` and
+omits an ambiguous wrap or unavailable result, following the
+[Vulkan timestamp specification](https://docs.vulkan.org/spec/latest/chapters/queries.html)
+and [query-result rules](https://docs.vulkan.org/refpages/latest/refpages/source/vkGetQueryPoolResults.html).
+The Linux build passed. No AO or whole-frame performance comparison has yet
+been captured from this instrumentation.
 
 Source/build review cannot certify this effect. The acceptance scenes need
 entity-on-world contact, thin occluders, asymmetric eye frusta, MSAA, all OIT

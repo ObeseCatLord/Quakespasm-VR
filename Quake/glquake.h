@@ -664,6 +664,8 @@ extern atomic_uint32_t rs_dynamiclightmaps, rs_brushpasses, rs_aliaspasses;
 extern atomic_uint32_t rs_blas_builds, rs_blas_refits, rs_blas_pose_reuses;
 // scr_speeds frame times: all accesses are ordered by the task graph (draw_done -> end_rendering -> begin_rendering -> draw_done)
 extern uint32_t		   rs_cputime_us, rs_gputime_us;
+extern uint32_t		   rs_ssaotime_us;
+extern qboolean		   rs_ssaotime_valid;
 extern uint32_t		   rs_gpuwaittime_us; // time the CPU spent blocked on the GPU during the last completed frame
 extern uint32_t		   rs_gpuwaitaccum_us;
 extern double		   rs_frame_starttime;

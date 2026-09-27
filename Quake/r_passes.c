@@ -1004,8 +1004,11 @@ static void R_BindFrameContexts (main_render_pass_variant_t variant)
 // clear colors, swapchain image indices and compute constants are not topology.
 uint32_t R_RecordFrame (
 	end_rendering_parms_t *parms, bool swapchain_acquired, uint32_t swapchain_index, VkCommandBuffer *submit_buffers, uint32_t submit_capacity,
-	void (*record_readback) (void *), void *readback_data)
+	void (*record_readback) (void *), void *readback_data, VkQueryPool ssao_query_pool, uint32_t ssao_first_query,
+	bool *ssao_timestamps_written)
 {
+	if (ssao_timestamps_written)
+		*ssao_timestamps_written = false;
 	const main_render_pass_variant_t variant = parms->use_mboit ? MAIN_RENDER_PASS_MBOIT : parms->use_oit ? MAIN_RENDER_PASS_OIT : MAIN_RENDER_PASS_STANDARD;
 	const frame_desc_t				*frame = &current_layout.variants[variant];
 	VkCommandBuffer					 command_buffer = vulkan_globals.primary_cb_contexts[PCBX_RENDER_PASSES].cb;
@@ -1104,7 +1107,15 @@ uint32_t R_RecordFrame (
 			R_SubmitContexts (command_buffer, step->first_context, step->last_context);
 			break;
 		case FRAME_RECORD_WORK:
+			if (ssao_query_pool != VK_NULL_HANDLE && step->recorder == R_ComputeSSAO)
+				vkCmdWriteTimestamp (command_buffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, ssao_query_pool, ssao_first_query);
 			step->recorder (&vulkan_globals.primary_cb_contexts[PCBX_RENDER_PASSES]);
+			if (ssao_query_pool != VK_NULL_HANDLE && step->recorder == R_ComputeSSAO)
+			{
+				vkCmdWriteTimestamp (command_buffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, ssao_query_pool, ssao_first_query + 1);
+				if (ssao_timestamps_written)
+					*ssao_timestamps_written = true;
+			}
 			break;
 		case FRAME_SCREEN_EFFECTS:
 			R_ScreenEffects (&vulkan_globals.primary_cb_contexts[PCBX_RENDER_PASSES], screen_effects, parms);

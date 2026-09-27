@@ -49,6 +49,8 @@ atomic_uint32_t rs_brushpolys, rs_aliaspolys, rs_skypolys, rs_particles, rs_fogp
 atomic_uint32_t rs_dynamiclightmaps, rs_brushpasses, rs_aliaspasses;
 atomic_uint32_t rs_blas_builds, rs_blas_refits, rs_blas_pose_reuses;
 uint32_t		rs_cputime_us, rs_gputime_us;
+uint32_t		rs_ssaotime_us;
+qboolean		rs_ssaotime_valid;
 uint32_t		rs_gpuwaittime_us, rs_gpuwaitaccum_us;
 double			rs_frame_starttime;
 char			rs_display_lines[4][40];
@@ -2607,7 +2609,14 @@ static void R_PrintStats (qboolean draw_stats_ready)
 	{
 		q_snprintf (rs_display_lines[0], sizeof (rs_display_lines[0]), "cpu%6.2f gpu%6.2f wait%6.2f ms", cpu_ms, gpu_ms, gpu_wait_ms);
 		if (scr_speeds.value == 3 || !draw_stats_ready)
+		{
 			rs_display_numlines = 1;
+			if (scr_speeds.value == 3 && rs_ssaotime_valid)
+			{
+				q_snprintf (rs_display_lines[1], sizeof (rs_display_lines[1]), "ssao compute gpu%6.2f ms", (double)rs_ssaotime_us / 1000.0);
+				rs_display_numlines = 2;
+			}
+		}
 		else
 		{
 			double lms = r_gpulightmapupdate.value

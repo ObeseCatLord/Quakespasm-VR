@@ -107,7 +107,8 @@ void	 R_DestroyFrameBuffers (void);
 // framebuffer commands or the presentation-image readback callback.
 uint32_t R_RecordFrame (
 	end_rendering_parms_t *parms, bool swapchain_acquired, uint32_t swapchain_index, VkCommandBuffer *submit_buffers, uint32_t submit_capacity,
-	void (*record_readback) (void *), void *readback_data);
+	void (*record_readback) (void *), void *readback_data, VkQueryPool ssao_query_pool, uint32_t ssao_first_query,
+	bool *ssao_timestamps_written);
 
 bool R_SetupRenderPasses (void);
 bool R_CreateRenderPasses (void);
