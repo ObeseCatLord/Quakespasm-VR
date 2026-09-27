@@ -38,6 +38,42 @@ and field lookup remain controlled boundaries. The fuller native dispatcher
 GDB probe is included but unexecuted: this sandbox denies `ptrace`. No real-mod
 callback trajectory or connected-peer prediction is certified by this slice.
 
+## World-frame Think ownership review
+
+Astra `gpt-6-astra` / `max` reviewed the proposed stable native command owner
+against the actual dispatch, QSS-M source and installed q30 bytecode. The main
+agent independently verified the q30 multiply constant and the selected
+batch/Think/TOSS paths before applying this disposition:
+
+| Recommendation | Disposition |
+| --- | --- |
+| Add a continuously living native queued owner | **Rejected for this slice.** Reusing collision does not establish mod callback cadence compatibility and, without replay, adds no immediate prediction capability. It would also require distinguishing queue ownership from solver selection across existing input, Gorilla and snapshot gates. |
+| Keep exact q30 on native frames until a bounded behavioral comparison passes | **Adopted.** q30 statements 54381–54386 multiply velocity by the stored 0.9 constant and clear Z in a ladder branch, without using frametime. This verifies a callback-cadence hazard, not that every repeated callback takes that branch. The existing QC jump handoff remains reusable; stock-only admission stays closed. |
+| Give the selected owner one world Think opportunity | **Adopted and implemented.** A client-local stack window spans the command batch and maintenance/terminal continuations. The first scheduling position consumes it even if no Think is due. Later commands preserve nextthink. TOSS respects the consumed opportunity. Scheduled Think receives the original world duration; the existing QC world time and clamped scheduled time remain unchanged. Scoped durations are restored afterward. |
+| Preserve native clocks, movement and completion/retirement owners | **Adopted.** Native clients pass no window and retain their existing scheduling. Selected movement and Pre/PostThink retain command time; maintenance retains zero-time input from the last completed command. Completion stays after the lifecycle and retirement stays in SV_FinishPrivateUsercmds. No new authority/protocol or queue was added. |
+| Integrate a cooperative SV_RunClientCommand hook | **Deferred.** The installed q30 program has none; adding an unneeded hook owner would not solve its unaware-QC timing contract. |
+
+Before this fix, each selected command reopened the same world Think window.
+A callback rescheduling within it could run multiple times in a batch of up
+to eight commands. The Linux offline native fixture now loads real stock
+assets/QC and executes the production selected dispatcher with diagnostic QC
+callbacks. It covers two/eight commands, a not-due opportunity with later
+PostThink scheduling, maintenance with no queue/insufficient credit, and
+death in Think or a second PreThink followed by TOSS. Completion, retirement,
+clock restoration, pending Think and callback counts are checked. The fuller
+customphysics native dispatcher cases pass in that same fixture, superseding
+the interpreter-only evidence above; the GDB version remains unrun.
+An isolated negative-control build that reopens the consumed Think window
+fails the two-command callback-count assertion; the unchanged production
+build passes both native fixture markers. This demonstrates that the fixture
+detects the scheduling defect, rather than merely exercising the new helper.
+
+Exact-q30 native/selected trajectories, boots/ladder/grapple behavior and
+connected private/public snapshot/replay proof remain separate gates. This
+change neither qualifies q30 nor broadens mod prediction permission. Device
+testing, Windows/ARM checks and performance measurements remain deferred by
+the user.
+
 | Finding / option | Disposition |
 | --- | --- |
 | Removing the stock progs identity check would immediately enable mods. | **Rejected.** The selected handoff removes presumed stock QuakeC water/jump velocity changes before PMove. Its dry jump branch can restore the entire earlier velocity, erasing a mod force. WALK hull and absent `customphysics` do not prove that a mod follows stock movement semantics. |

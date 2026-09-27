@@ -49,7 +49,7 @@ execute('set $owner->v.origin[1] = 11')
 execute('set $owner->v.origin[2] = 24')
 execute('set $owner->v.velocity[0] = 100')
 execute('set host_frametime = 0.02')
-execute('set $completed = SV_Physics_ClientNativeFromPhase($owner, 1, 41, 0, 0)')
+execute('set $completed = SV_Physics_ClientNativeFromPhase($owner, 1, 41, 0, 0, 0)')
 assert integer('$completed') == 1
 assert integer('$owner->v.movetype') == 999  # native dispatch would error
 assert float(gdb.parse_and_eval('$owner->v.nextthink')) == float(gdb.parse_and_eval('$scheduled'))
@@ -59,7 +59,7 @@ assert integer('$owner->retain_count') == 0
 # A custom callback may remove its owner: suppress PostThink and completion.
 execute('set $owner->v.think = $remove')
 execute('set pr_global_struct->PlayerPostThink = $remove')
-execute('set $completed = SV_Physics_ClientNativeFromPhase($owner, 1, 42, 0, 0)')
+execute('set $completed = SV_Physics_ClientNativeFromPhase($owner, 1, 42, 0, 0, 0)')
 assert integer('$completed') == 0 and integer('$owner->free') == 1
 assert integer('$owner->retain_count') == 0
 gdb.write('CUSTOMPHYSICS_NATIVE_PASSED\n')

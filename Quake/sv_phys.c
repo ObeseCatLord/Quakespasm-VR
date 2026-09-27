@@ -7674,13 +7674,52 @@ typedef enum
 	SV_CLIENT_NATIVE_AFTER_WEAPON_THINK
 } sv_client_native_start_t;
 
+/* One scheduling opportunity for the selected client's entire world pass.
+ * Command batching must not repeatedly reopen the same Think deadline. */
+typedef struct
+{
+	qboolean available;
+	double world_frametime;
+	float world_qc_frametime;
+} sv_client_think_window_t;
+
+static qboolean SV_TakeClientThinkWindow (sv_client_think_window_t *window)
+{
+	if (!window)
+		return true; // ordinary native frame scheduling
+	if (!window->available)
+		return false;
+	window->available = false;
+	return true;
+}
+
+static qboolean SV_RunClientWeaponThink (edict_t *ent, client_t *client,
+	const usercmd_t *command, sv_client_think_window_t *window)
+{
+	double saved_host_frametime = host_frametime;
+	float saved_qc_frametime = pr_global_struct->frametime;
+	qboolean alive;
+
+	if (!window)
+		return SV_RunPrivateVRWeaponThink (ent, client, command);
+	if (!SV_TakeClientThinkWindow (window))
+		return !ent->free;
+	host_frametime = window->world_frametime;
+	pr_global_struct->frametime = window->world_qc_frametime;
+	alive = SV_RunPrivateVRWeaponThink (ent, client, command);
+	host_frametime = saved_host_frametime;
+	pr_global_struct->frametime = saved_qc_frametime;
+	return alive;
+}
+
 static qboolean SV_Physics_ClientNativeFromPhase (edict_t *ent, int num,
 	int completed_move, sv_client_native_start_t start,
-	qboolean prior_weapon_think_ran);
+	qboolean prior_weapon_think_ran, sv_client_think_window_t *think_window);
 
 static qboolean SV_PrivateWalkTrialContinueTerminal (edict_t *ent,
 	client_t *client, const usercmd_t *command, sv_client_native_start_t start,
-	double world_frametime, float world_qc_frametime)
+	double world_frametime, float world_qc_frametime,
+	sv_client_think_window_t *think_window)
 {
 	/* The callback that killed the owner has already run. Consume its dead
 	 * contact sample, then let only the remaining native frame phases run.
@@ -7696,13 +7735,14 @@ static qboolean SV_PrivateWalkTrialContinueTerminal (edict_t *ent,
 	pr_global_struct->frametime = world_qc_frametime;
 	return SV_Physics_ClientNativeFromPhase (ent, NUM_FOR_EDICT (ent),
 		client->private_completed_move, start,
-		start == SV_CLIENT_NATIVE_AFTER_WEAPON_THINK);
+		start == SV_CLIENT_NATIVE_AFTER_WEAPON_THINK, think_window);
 }
 
 /* This owner runs only for explicitly selected private peers. Queue retirement
  * remains in SV_FinishPrivateUsercmds, after this function reports completion. */
 static qboolean SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *client,
-	unsigned queue_offset, qboolean accrue_credit)
+	unsigned queue_offset, qboolean accrue_credit,
+	sv_client_think_window_t *think_window)
 {
 	playermove_t saved_pmove = pmove;
 	movevars_t saved_movevars = movevars, trial_movevars;
@@ -7850,7 +7890,7 @@ static qboolean SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *clien
 		{
 			if (!SV_PrivateWalkTrialContinueTerminal (ent, client, &command,
 				SV_CLIENT_NATIVE_AFTER_PRETHINK, saved_host_frametime,
-				saved_qc_frametime))
+				saved_qc_frametime, think_window))
 				failure = "terminal maintenance PreThink continuation failed";
 			goto cleanup;
 		}
@@ -7859,9 +7899,8 @@ static qboolean SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *clien
 		/* Scheduled Think follows the host clock even without a move command. */
 		SV_VRMeleeRefreshTriggerSuppression (client, ent,
 			&ownership_command, &suppress_trigger);
-		host_frametime = saved_host_frametime;
-		pr_global_struct->frametime = saved_qc_frametime;
-		if (!SV_RunPrivateVRWeaponThink (ent, client, &ownership_command))
+		if (!SV_RunClientWeaponThink (ent, client, &ownership_command,
+			think_window))
 		{
 			failure = "player removed during maintenance weapon Think";
 			goto cleanup;
@@ -7874,7 +7913,7 @@ static qboolean SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *clien
 		{
 			if (!SV_PrivateWalkTrialContinueTerminal (ent, client, &command,
 				SV_CLIENT_NATIVE_AFTER_WEAPON_THINK, saved_host_frametime,
-				saved_qc_frametime))
+				saved_qc_frametime, think_window))
 				failure = "terminal maintenance weapon Think continuation failed";
 			goto cleanup;
 		}
@@ -7964,7 +8003,7 @@ static qboolean SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *clien
 	{
 		if (!SV_PrivateWalkTrialContinueTerminal (ent, client, &command,
 			SV_CLIENT_NATIVE_AFTER_PRETHINK, saved_host_frametime,
-			saved_qc_frametime))
+			saved_qc_frametime, think_window))
 		{
 			failure = "terminal PreThink continuation failed";
 			goto cleanup;
@@ -7991,9 +8030,8 @@ static qboolean SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *clien
 	SV_VRMeleeRefreshTriggerSuppression (client, ent,
 		&ownership_command, &suppress_trigger);
 	VectorCopy (ent->v.velocity, preweapon_velocity);
-	host_frametime = saved_host_frametime;
-	pr_global_struct->frametime = saved_qc_frametime;
-	weapon_alive = SV_RunPrivateVRWeaponThink (ent, client, &client->cmd);
+	weapon_alive = SV_RunClientWeaponThink (ent, client, &client->cmd,
+		think_window);
 	host_frametime = seconds;
 	pr_global_struct->frametime = seconds;
 	if (!weapon_alive || !client->active || ent->free)
@@ -8007,7 +8045,7 @@ static qboolean SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *clien
 	{
 		if (!SV_PrivateWalkTrialContinueTerminal (ent, client, &command,
 			SV_CLIENT_NATIVE_AFTER_WEAPON_THINK, saved_host_frametime,
-			saved_qc_frametime))
+			saved_qc_frametime, think_window))
 		{
 			failure = "terminal weapon Think continuation failed";
 			goto cleanup;
@@ -8625,7 +8663,7 @@ static qboolean SV_PrepareGorilla (edict_t *ent, client_t *client,
  * Return success only if PostThink and the owner lifetime completed. */
 static qboolean SV_Physics_ClientNativeFromPhase (edict_t *ent, int num,
 	int completed_move, sv_client_native_start_t start,
-	qboolean prior_weapon_think_ran)
+	qboolean prior_weapon_think_ran, sv_client_think_window_t *think_window)
 {
 	sv_client_move_frame_t move_frame;
 	sv_vr_weapon_pose_scope_t weapon_scope;
@@ -8728,8 +8766,10 @@ after_prethink:
 	case MOVETYPE_NOCLIP:
 		weapon_think_ran = ent->v.nextthink > 0 &&
 			ent->v.nextthink <= qcvm->time + host_frametime;
-		if (!SV_RunPrivateVRWeaponThink (ent, client, &client->cmd))
+		if (!SV_RunClientWeaponThink (ent, client, &client->cmd, think_window))
 			goto done;
+		if (think_window)
+			weapon_think_ran = true; // opportunity consumed, whether due or not
 		break;
 	case MOVETYPE_TOSS:
 	case MOVETYPE_BOUNCE:
@@ -8767,7 +8807,8 @@ after_weapon_think:
 	case MOVETYPE_TOSS:
 	case MOVETYPE_BOUNCE:
 	case MOVETYPE_GIB:
-		SV_Physics_Toss (ent, weapon_think_ran);
+		SV_Physics_Toss (ent,
+			!SV_TakeClientThinkWindow (think_window) || weapon_think_ran);
 		break;
 	case MOVETYPE_FLY:
 		SV_FlyMove (ent, host_frametime, NULL, NULL, true);
@@ -8832,7 +8873,7 @@ static qboolean SV_Physics_ClientNativeFrame (edict_t *ent, int num,
 	int completed_move)
 {
 	return SV_Physics_ClientNativeFromPhase (ent, num, completed_move,
-		SV_CLIENT_NATIVE_FRESH, false);
+		SV_CLIENT_NATIVE_FRESH, false, NULL);
 }
 
 /* A dead selected owner uses the ordinary world-frame dispatcher from its
@@ -8953,12 +8994,14 @@ static void SV_Physics_Client (edict_t *ent, int num)
 
 	if (SV_PrivateWalkTrialSelected (client))
 	{
+		sv_client_think_window_t think_window = {
+			true, host_frametime, pr_global_struct->frametime};
 		/* Bound catch-up work while preserving each command's QC lifecycle. */
 		for (queue_offset = 0; queue_offset < 8; queue_offset++)
 		{
 			if (!client->active || !SV_PrivateWalkTrialSelected (client) ||
 				!SV_Physics_ClientPrivateWalkTrial (ent, client,
-					queue_offset, queue_offset == 0))
+					queue_offset, queue_offset == 0, &think_window))
 				break;
 			if (SV_PrivateWalkTrialTerminalState (client) ||
 				client->private_move_native_frame)

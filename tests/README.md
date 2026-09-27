@@ -36,6 +36,33 @@ otherwise invalid native movetype and preserve scheduled Think and body
 position. A removing callback must skip PostThink and completion. This probe
 has **not run** in the current sandbox because `ptrace` is denied.
 
+The same dispatcher cases now also run without GDB in
+`customphysics_native_fixture.c`. It links the production engine objects with
+an offline dedicated entry point and the real physics source. It loads stock
+`e1m1` and its QC VM, uses real entity allocation/removal, and checks that the
+custom callback bypasses native movement/Think and does not acknowledge a
+removed owner. An isolated asset root is required, as above.
+
+```sh
+make -C Quake -f ../tests/customphysics_native.make \
+  customphysics-native-fixture USE_SDL3=1 -j4
+timeout --signal=TERM 25s /tmp/qsvr-customphysics-native-fixture \
+  -dedicated 3 -noudp -nosound -basedir /tmp/qsvr-customphysics-native \
+  -userdir /tmp/qsvr-customphysics-native
+```
+
+Require exit 0 and both `CUSTOMPHYSICS_NATIVE_PASSED` and
+`SELECTED_THINK_NATIVE_PASSED`. The latter adds diagnostic QC callbacks to
+the loaded VM and exercises the actual selected owner: two/eight-command
+batches with Think rescheduling inside the world window, a not-due first
+opportunity followed by PostThink scheduling, empty-queue and insufficient
+credit maintenance, death during scheduled Think and during a second
+PreThink with a pending Think and TOSS continuation. It checks completion,
+retirement, callback counts, one-shot impulse isolation and restored frame
+durations. The Loop_Init wrapper creates no UDP socket or connected peer;
+this is a dispatcher/QC/real-hull software proof, not wire, headset or exact
+q30 gameplay qualification.
+
 ## Avatar identity and protocol parser
 
 `avatar_retarget_fixture.c` ports the inherited semantic profiles and CPU
