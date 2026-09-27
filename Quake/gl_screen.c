@@ -2549,7 +2549,7 @@ void SCR_UpdateScreen (qboolean use_tasks)
 	if (cl.entities && cl.worldmodel && !con_forcedup)
 		for (int player = 1; player <= cl.maxclients && player <= MAX_SCOREBOARD &&
 			player < cl.num_entities; ++player)
-			R_VRIKRenderStageBuiltinAvatar (&cl.entities[player], cl.avatar_ids[player - 1]);
+			R_VRIKRenderStageAvatar (&cl.entities[player], cl.avatar_ids[player - 1]);
 
 	if (use_tasks)
 	{

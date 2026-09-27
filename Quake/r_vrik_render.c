@@ -1,6 +1,7 @@
 /* Frame-owned Vulkan palette uploads for the inherited Ranger VRIK solve. */
 #include "quakedef.h"
 #include "r_avatar.h"
+#include "custom_avatar.h"
 #include "r_vrik.h"
 #include "r_vrik_render.h"
 
@@ -47,6 +48,8 @@ static float candidate_palettes[MAX_SCOREBOARD][R_VRIK_RENDER_MAX_JOINTS][12];
 static r_vrik_staged_avatar_t staged[MAX_SCOREBOARD];
 static qmodel_t *builtin_models[PLAYER_AVATAR_COUNT];
 static qboolean builtin_attempted[PLAYER_AVATAR_COUNT];
+static qmodel_t *custom_models[CUSTOM_AVATAR_MAX_PACKAGES];
+static qboolean custom_attempted[CUSTOM_AVATAR_MAX_PACKAGES];
 static char admission_gamedir[MAX_OSPATH];
 static r_vrik_prepared_palette_t prepared[DOUBLE_BUFFERED][MAX_SCOREBOARD];
 static size_t prepared_count[DOUBLE_BUFFERED];
@@ -59,6 +62,8 @@ void R_VRIKRenderResetAdmission (void)
 	memset (staged, 0, sizeof (staged));
 	memset (builtin_models, 0, sizeof (builtin_models));
 	memset (builtin_attempted, 0, sizeof (builtin_attempted));
+	memset (custom_models, 0, sizeof (custom_models));
+	memset (custom_attempted, 0, sizeof (custom_attempted));
 	q_strlcpy (admission_gamedir, com_gamedir, sizeof (admission_gamedir));
 }
 
@@ -82,10 +87,39 @@ static qmodel_t *R_VRIKRenderBuiltinModel (int id)
 	return model;
 }
 
-qboolean R_VRIKRenderStageBuiltinAvatar (const entity_t *entity, int id)
+static const r_avatar_profile_t *R_VRIKRenderProfileForId (int id)
+{
+	const custom_avatar_t *custom = CustomAvatar_Get (id);
+	return custom ? &custom->profile : R_AvatarProfileForId (id);
+}
+
+static qmodel_t *R_VRIKRenderCustomModel (int id)
+{
+	const int index = id - PLAYER_AVATAR_COUNT;
+	qmodel_t *model;
+	if (index < 0 || index >= CUSTOM_AVATAR_MAX_PACKAGES || !CustomAvatar_Get (id))
+		return NULL;
+	if (strcmp (admission_gamedir, com_gamedir))
+		R_VRIKRenderResetAdmission ();
+	model = custom_models[index];
+	if (model && Mod_IsAdmittedAvatarModel (model) && model->avatar_custom_id == id)
+		return model;
+	if (custom_attempted[index] && (!model || CustomAvatar_HasFailed (id)))
+		return NULL;
+	/* The first admission can upload mesh and textures, so join the previous
+	 * render task before touching their shared Vulkan and model tables. */
+	GL_SynchronizeEndRenderingTask ();
+	model = Mod_GetAvatarCustomModel (id);
+	custom_models[index] = model;
+	custom_attempted[index] = true;
+	return model;
+}
+
+qboolean R_VRIKRenderStageAvatar (const entity_t *entity, int id)
 {
 	r_vrik_staged_avatar_t selection = {0};
 	qmodel_t *source, *target;
+	const r_avatar_profile_t *profile;
 	md5_skeleton_view_t source_skeleton, target_skeleton;
 	r_avatar_rig_t source_rig, target_rig;
 	int player;
@@ -101,16 +135,18 @@ qboolean R_VRIKRenderStageBuiltinAvatar (const entity_t *entity, int id)
 	staged[player - 1] = selection;
 	if (id == PLAYER_AVATAR_RANGER)
 		return true;
-	if (!R_AvatarProfileForId (id) || !entity->model || entity->model->needload ||
+	profile = R_VRIKRenderProfileForId (id);
+	if (!profile || !entity->model || entity->model->needload ||
 		entity->model->type != mod_alias || strcmp (entity->model->name, "progs/player.mdl"))
 		return false;
 
 	source = R_VRIKRenderBuiltinModel (PLAYER_AVATAR_RANGER);
-	target = source ? R_VRIKRenderBuiltinModel (id) : NULL;
+	target = source ? (id < PLAYER_AVATAR_COUNT ? R_VRIKRenderBuiltinModel (id) :
+		R_VRIKRenderCustomModel (id)) : NULL;
 	if (!source || !target || !Mod_GetMD5Skeleton (source, &source_skeleton) ||
 		!source_skeleton.from_rerelease || !Mod_GetMD5Skeleton (target, &target_skeleton) ||
 		!R_AvatarResolveRig (R_AvatarProfileForId (PLAYER_AVATAR_RANGER), &source_skeleton, &source_rig) ||
-		!R_AvatarResolveRig (R_AvatarProfileForId (id), &target_skeleton, &target_rig) ||
+		!R_AvatarResolveRig (profile, &target_skeleton, &target_rig) ||
 		!R_AvatarTargetToCanonicalPresentation (&source_rig, &target_rig, selection.target_to_canonical))
 		return false;
 	selection.source_geometry = (const aliashdr_t *)source->extradata[PV_MD5];
@@ -300,12 +336,15 @@ static qboolean R_VRIKRenderAlternateCandidate (const entity_t *entity,
 	qboolean tracked;
 
 	if (!selection || !selection->valid || selection->entity != entity ||
-		selection->id <= PLAYER_AVATAR_RANGER || selection->id >= PLAYER_AVATAR_COUNT ||
+		selection->id <= PLAYER_AVATAR_RANGER || !R_VRIKRenderProfileForId (selection->id) ||
 		!entity->model || entity->model != selection->original_model || entity->model->needload ||
 		strcmp (entity->model->name, "progs/player.mdl") ||
 		!selection->source_model || !selection->target_model ||
 		selection->source_model->needload || selection->target_model->needload ||
-		!selection->source_model->avatar_builtin || !selection->target_model->avatar_builtin ||
+		!selection->source_model->avatar_builtin ||
+		!Mod_IsAdmittedAvatarModel (selection->target_model) ||
+		(selection->id < PLAYER_AVATAR_COUNT ? !selection->target_model->avatar_builtin :
+		 selection->target_model->avatar_custom_id != selection->id) ||
 		selection->source_model->extradata[PV_MD5] != (const byte *)selection->source_geometry ||
 		selection->target_model->extradata[PV_MD5] != (const byte *)selection->target_geometry ||
 		!Mod_GetMD5Skeleton (selection->source_model, &source_skeleton) ||
@@ -314,7 +353,7 @@ static qboolean R_VRIKRenderAlternateCandidate (const entity_t *entity,
 		target_skeleton.joint_count != (size_t)selection->target_geometry->numjoints ||
 		target_skeleton.joint_count > R_VRIK_RENDER_MAX_JOINTS ||
 		!R_AvatarResolveRig (R_AvatarProfileForId (PLAYER_AVATAR_RANGER), &source_skeleton, &source_rig) ||
-		!R_AvatarResolveRig (R_AvatarProfileForId (selection->id), &target_skeleton, &target_rig))
+		!R_AvatarResolveRig (R_VRIKRenderProfileForId (selection->id), &target_skeleton, &target_rig))
 		return false;
 
 	canonical_entity = *entity;
