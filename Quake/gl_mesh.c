@@ -118,11 +118,30 @@ static qboolean R_EntityBLASCollectSurfaces (
 static const r_vrik_prepared_palette_t *R_EntityBLASPalette (const entity_t *e, const aliashdr_t *geometry)
 {
 	const r_vrik_prepared_palette_t *prepared = R_VRIKRenderLookup (e);
-	if (!prepared || !e || !e->model || !geometry || prepared->model != e->model || prepared->geometry != geometry ||
+	if (!prepared || !e || !e->model || !geometry || !prepared->model || prepared->geometry != geometry ||
 		prepared->descriptor_set == VK_NULL_HANDLE || !prepared->palette_address ||
 		(geometry->poseverttype != PV_MD5 && geometry->poseverttype != PV_MD5_8) ||
 		geometry->numjoints <= 0 || prepared->joint_count != (uint32_t)geometry->numjoints ||
 		geometry->numverts_vbo <= 0 || geometry->numtris <= 0 || !geometry->vertex_buffer_address || !geometry->index_buffer_address)
+		return NULL;
+	if (prepared->alternate_avatar)
+	{
+		/* The alternate is a built-in MD5 mesh. The original player entity owns
+		 * its BLAS, while the BLAS records the selected model and geometry. */
+		if (strcmp (e->model->name, "progs/player.mdl") || prepared->model == e->model ||
+			!prepared->model->avatar_builtin || prepared->model->needload ||
+			geometry != (const aliashdr_t *)prepared->model->extradata[PV_MD5])
+			return NULL;
+		for (const aliashdr_t *surface = geometry; surface; surface = surface->nextsurface)
+			if ((surface->poseverttype != PV_MD5 && surface->poseverttype != PV_MD5_8) ||
+				surface->numjoints != (int)prepared->joint_count)
+				return NULL;
+		for (int i = 0; i < 12; ++i)
+			if (!isfinite (prepared->target_to_canonical[i]))
+				return NULL;
+	}
+	else if (prepared->model != e->model ||
+		geometry != (const aliashdr_t *)Mod_Extradata_CheckSkin (e->model, e->skinnum))
 		return NULL;
 	return prepared;
 }
@@ -139,15 +158,16 @@ static aliashdr_t *R_EntityBLASGeometry (entity_t *e, qboolean allow_tracked_pal
 	if (!prepared)
 		return selected;
 
-	if (prepared->model != e->model || prepared->geometry != selected || !selected || prepared->descriptor_set == VK_NULL_HANDLE)
+	if (!selected)
 		return NULL;
+	aliashdr_t *geometry = prepared->alternate_avatar ? (aliashdr_t *)prepared->geometry : selected;
 
-	/* This palette would be visible; never substitute skin-zero shadow geometry. */
+	/* A visible tracked mesh must have a matching BLAS, never a Ranger stand-in. */
 	entity_blas_surface_t surfaces[MAX_SURFACES];
 	uint32_t surface_count;
-	return R_EntityBLASPalette (e, selected) &&
-			R_EntityBLASCollectSurfaces (selected, prepared, surfaces, &surface_count) ?
-			selected : NULL;
+	return R_EntityBLASPalette (e, geometry) &&
+			R_EntityBLASCollectSurfaces (geometry, prepared, surfaces, &surface_count) ?
+			geometry : NULL;
 }
 
 static glheap_t	 *mesh_buffer_heap;
@@ -990,9 +1010,9 @@ static void R_AllocateEntityBLASInternal (entity_t *e, qboolean allow_tracked_pa
 	if (modelflags & (EF_ROCKET | EF_GRENADE | EF_TRACER | EF_TRACER2 | EF_TRACER3))
 		return;
 
-	// Efrag collection precedes this frame's palette preparation. Keep an existing
-	// same-model BLAS until the post-preparation reconciliation pass.
-	if (!allow_tracked_palette && e->blas_data && e->blas_data->model == e->model)
+	// Efrag collection precedes this frame's palette preparation. Preserve any
+	// existing BLAS until the post-preparation pass resolves its selected model.
+	if (!allow_tracked_palette && e->blas_data)
 		return;
 
 	aliashdr_t *hdr = R_EntityBLASGeometry (e, allow_tracked_palette);
@@ -1005,6 +1025,7 @@ static void R_AllocateEntityBLASInternal (entity_t *e, qboolean allow_tracked_pa
 	entity_blas_surface_t surface_layout[MAX_SURFACES];
 	uint32_t surface_count = 0;
 	const r_vrik_prepared_palette_t *tracked_palette = R_EntityBLASPalette (e, hdr);
+	qmodel_t *selected_model = tracked_palette ? (qmodel_t *)tracked_palette->model : e->model;
 	if (!R_EntityBLASCollectSurfaces (hdr, tracked_palette, surface_layout, &surface_count))
 	{
 		R_FreeEntityBLAS (e);
@@ -1013,7 +1034,7 @@ static void R_AllocateEntityBLASInternal (entity_t *e, qboolean allow_tracked_pa
 
 	/* Recreate storage whenever any surface/count/input identity changes. UPDATE
 	 * requires the same geometry count and per-geometry primitive counts. */
-	if (e->blas_data && !R_EntityBLASLayoutMatches (e->blas_data, e->model, hdr, surface_layout, surface_count))
+	if (e->blas_data && !R_EntityBLASLayoutMatches (e->blas_data, selected_model, hdr, surface_layout, surface_count))
 		R_FreeEntityBLAS (e);
 	if (e->blas_data)
 		return;
@@ -1093,8 +1114,8 @@ static void R_AllocateEntityBLASInternal (entity_t *e, qboolean allow_tracked_pa
 	e->blas_data->build_scratch_size = blas_sizes_info.buildScratchSize;
 	e->blas_data->update_scratch_size = blas_sizes_info.updateScratchSize;
 
-	// Track which model this BLAS was allocated for
-	e->blas_data->model = e->model;
+	// Track the model whose geometry this original entity's BLAS contains.
+	e->blas_data->model = selected_model;
 	e->blas_data->geometry = hdr;
 }
 
@@ -1182,11 +1203,12 @@ static qboolean R_EntityBLASPoseCacheMatches (
 	const entity_t *e, const aliashdr_t *hdr, int pose1, int pose2, float blend, const r_vrik_prepared_palette_t *tracked_palette)
 {
 	const entity_blas_t *blas = e ? e->blas_data : NULL;
-	if (!blas || !hdr || tracked_palette || !isfinite (blend) || blas->needs_initial_build || !blas->pose_cache_valid || blas->model != e->model ||
+	const qmodel_t *selected_model = tracked_palette ? tracked_palette->model : (e ? e->model : NULL);
+	if (!blas || !hdr || tracked_palette || !isfinite (blend) || blas->needs_initial_build || !blas->pose_cache_valid || blas->model != selected_model ||
 		blas->geometry != hdr)
 		return false;
 
-	return blas->cached_model == e->model && blas->cached_geometry == hdr && blas->cached_pose1 == pose1 && blas->cached_pose2 == pose2 &&
+	return blas->cached_model == selected_model && blas->cached_geometry == hdr && blas->cached_pose1 == pose1 && blas->cached_pose2 == pose2 &&
 		   memcmp (&blas->cached_blend, &blend, sizeof (blend)) == 0;
 }
 
@@ -1340,13 +1362,17 @@ void R_UpdateAnimatedBLASes (cb_context_t *cbx)
 			aliashdr_t *hdr = (aliashdr_t *)e->blas_data->geometry;
 			if (!hdr || !e->blas_data->surface_count)
 				continue;
-			if (e->blas_data->model != e->model || !e->blas_data->geometry)
+			const r_vrik_prepared_palette_t *tracked_palette = R_EntityBLASPalette (e, hdr);
+			const qmodel_t *selected_model = tracked_palette ? tracked_palette->model : e->model;
+			if (e->blas_data->model != selected_model)
 				continue;
-
-			lerpdata_t lerpdata;
-			R_SetupAliasFrame (e, hdr, &lerpdata);
-			if (R_EntityBLASPoseCacheMatches (e, hdr, lerpdata.pose1, lerpdata.pose2, lerpdata.blend, R_EntityBLASPalette (e, hdr)))
-				continue;
+			if (!tracked_palette)
+			{
+				lerpdata_t lerpdata;
+				R_SetupAliasFrame (e, hdr, &lerpdata);
+				if (R_EntityBLASPoseCacheMatches (e, hdr, lerpdata.pose1, lerpdata.pose2, lerpdata.blend, NULL))
+					continue;
+			}
 
 			const VkDeviceSize as_scratch_size = e->blas_data->needs_initial_build ? e->blas_data->build_scratch_size : e->blas_data->update_scratch_size;
 			VkDeviceSize vertex_bytes = 0;
@@ -1427,21 +1453,20 @@ void R_UpdateAnimatedBLASes (cb_context_t *cbx)
 			if (!hdr || hdr->numverts_vbo == 0)
 				continue;
 
-			// Skip if BLAS was allocated for a different model/geometry (model changed but entity not visible yet)
-			if (e->blas_data->model != e->model)
-				continue;
-
-			// Get lerp data for vertex interpolation
-			lerpdata_t lerpdata;
-			R_SetupAliasFrame (e, hdr, &lerpdata);
-			int	  pose1 = lerpdata.pose1;
-			int	  pose2 = lerpdata.pose2;
-			float blend = lerpdata.blend;
+			// Tracked joints already contain the selected avatar's complete pose.
 			const r_vrik_prepared_palette_t *tracked_palette = R_EntityBLASPalette (e, hdr);
-			if (tracked_palette)
+			const qmodel_t *selected_model = tracked_palette ? tracked_palette->model : e->model;
+			if (e->blas_data->model != selected_model)
+				continue;
+			int pose1 = 0, pose2 = 0;
+			float blend = 0.0f;
+			if (!tracked_palette)
 			{
-				pose1 = pose2 = 0;
-				blend = 0.0f;
+				lerpdata_t lerpdata;
+				R_SetupAliasFrame (e, hdr, &lerpdata);
+				pose1 = lerpdata.pose1;
+				pose2 = lerpdata.pose2;
+				blend = lerpdata.blend;
 			}
 			if (!R_EntityBLASPosesFit (e->blas_data, pose1, pose2))
 			{

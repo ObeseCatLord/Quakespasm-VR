@@ -32,12 +32,43 @@ static const r_vrik_prepared_palette_t *R_TLASVRIKPalette (const entity_t *e)
 {
 	const r_vrik_prepared_palette_t *prepared = R_VRIKRenderLookup (e);
 	const aliashdr_t *geometry = (e && e->blas_data) ? e->blas_data->geometry : NULL;
-	if (!prepared || !e || !e->model || !geometry || prepared->model != e->model || prepared->geometry != geometry ||
+	if (!prepared || !e || !e->model || !e->blas_data || !geometry ||
+		prepared->model != e->blas_data->model || prepared->geometry != geometry ||
+		(!prepared->alternate_avatar && prepared->model != e->model) ||
+		(prepared->alternate_avatar && (!prepared->model->avatar_builtin ||
+			geometry != (const aliashdr_t *)prepared->model->extradata[PV_MD5])) ||
 		prepared->descriptor_set == VK_NULL_HANDLE || !prepared->palette_address ||
 		(geometry->poseverttype != PV_MD5 && geometry->poseverttype != PV_MD5_8) ||
 		geometry->numjoints <= 0 || prepared->joint_count != (uint32_t)geometry->numjoints)
 		return NULL;
 	return prepared;
+}
+
+static const qmodel_t *R_TLASAliasModel (const entity_t *e)
+{
+	const r_vrik_prepared_palette_t *prepared = R_VRIKRenderLookup (e);
+	if (prepared && prepared->alternate_avatar)
+		return R_TLASVRIKPalette (e) ? prepared->model : NULL;
+	return e ? e->model : NULL;
+}
+
+static qboolean R_TLASAppendAvatarPresentation (float model_matrix[16], const float affine_3x4[12])
+{
+	float affine[16];
+	IdentityMatrix (affine);
+	for (int row = 0; row < 3; ++row)
+		for (int column = 0; column < 4; ++column)
+		{
+			const float value = affine_3x4[row * 4 + column];
+			if (!isfinite (value))
+				return false;
+			affine[column * 4 + row] = value;
+		}
+	MatrixMultiply (model_matrix, affine);
+	for (int i = 0; i < 16; ++i)
+		if (!isfinite (model_matrix[i]))
+			return false;
+	return true;
 }
 
 int gl_lightmap_format;
@@ -2952,7 +2983,7 @@ void R_BuildTopLevelAccelerationStructure (void *unused)
 			++num_instances;
 		else if (
 			e->model->type == mod_alias && e->blas_data && e->blas_data->blas != VK_NULL_HANDLE && !e->blas_data->needs_initial_build &&
-			e->blas_data->model == e->model)
+			e->blas_data->model && e->blas_data->model == R_TLASAliasModel (e))
 			++num_instances;
 	}
 
@@ -2978,7 +3009,7 @@ void R_BuildTopLevelAccelerationStructure (void *unused)
 		}
 		else if (
 			e->model->type == mod_alias && e->blas_data && e->blas_data->blas != VK_NULL_HANDLE && !e->blas_data->needs_initial_build &&
-			e->blas_data->model == e->model)
+			e->blas_data->model && e->blas_data->model == R_TLASAliasModel (e))
 		{
 			address = e->blas_data->address;
 			is_alias = true;
@@ -2997,6 +3028,9 @@ void R_BuildTopLevelAccelerationStructure (void *unused)
 			R_SetupAliasFrame (e, hdr, &lerpdata);
 			R_GetEntityLerpedTransform (e, lerpdata.origin, lerpdata.angles);
 			if (R_AliasModelMatrix (e, hdr, &lerpdata, model_matrix) < 0)
+				continue;
+			if (tracked_palette->alternate_avatar &&
+				!R_TLASAppendAvatarPresentation (model_matrix, tracked_palette->target_to_canonical))
 				continue;
 		}
 		else
