@@ -618,6 +618,7 @@ extern cvar_t sv_voice;
 void SV_FinishPrivateUsercmds (void);
 qboolean SV_PrivateWalkTrialSelected (client_t *client);
 qboolean SV_PrivateWalkTrialTerminalState (client_t *client);
+qboolean SV_PrivateWalkTrialQ30Program (void);
 void SV_PrivateWalkTrialSelectAtBegin (client_t *client);
 const char *SV_PrivateWalkTrialStateError (edict_t *ent, client_t *client, const usercmd_t *cmd);
 void SV_ClientUpdateAnglesForClient (client_t *client);

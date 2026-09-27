@@ -7694,6 +7694,7 @@ static qboolean SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *clien
 	int prethink_flags, prethink_groundentity, prethink_waterlevel;
 	qboolean qc_waterjump_started;
 	qboolean run_command = false, was_grounded = false, weapon_alive;
+	qboolean q30_program = false, qc_jump_owner = false;
 	qboolean instant_stop_enabled = false;
 	qboolean friendly_fire_scope;
 	qboolean command_completed = false, suppress_trigger = false;
@@ -7921,6 +7922,9 @@ static qboolean SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *clien
 	prethink_health = ent->v.health;
 	prethink_teleport_time = ent->v.teleport_time;
 	was_grounded = (prethink_flags & FL_ONGROUND) != 0;
+	q30_program = SV_PrivateWalkTrialQ30Program ();
+	qc_jump_owner = q30_program &&
+		(command.buttons & BUTTON_JUMP) != 0;
 	pr_global_struct->time = qcvm->time;
 	pr_global_struct->frametime = seconds;
 	pr_global_struct->self = EDICT_TO_PROG (ent);
@@ -7995,13 +7999,15 @@ static qboolean SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *clien
 	}
 	if (VectorCompare (ent->v.velocity, preweapon_velocity))
 	{
-		if (prethink_waterlevel > 0 || ((int)ent->v.flags & FL_WATERJUMP))
+		if (!q30_program &&
+			(prethink_waterlevel > 0 || ((int)ent->v.flags & FL_WATERJUMP)))
 			SV_PrivateWalkTrialReconcileQCWater (ent, prethink_velocity,
 				prethink_flags, prethink_waterlevel, prethink_health,
 				prethink_teleport_time, seconds);
-		/* Stock QC owns jump sounds and flags; PMove owns the dry impulse.
-		 * Preserve a teleporter's deliberate pause at zero velocity. */
-		if (was_grounded && (command.buttons & 2) &&
+		/* Stock QC owns jump sounds and flags; PMove owns its dry impulse.
+		 * Exact q30 QuakeC owns its own impulse. Preserve a teleporter's
+		 * deliberate pause at zero velocity. */
+		if (!qc_jump_owner && was_grounded && (command.buttons & 2) &&
 			ent->v.teleport_time <= qcvm->time &&
 			(prethink_teleport_time <= qcvm->time ||
 			 ent->v.teleport_time == prethink_teleport_time) &&
@@ -8051,9 +8057,11 @@ static qboolean SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *clien
 	VectorSet (pmove.gravitydir, 0, 0, -1);
 	VectorCopy (ent->v.mins, pmove.player_mins);
 	VectorCopy (ent->v.maxs, pmove.player_maxs);
-	/* QC may clear FL_JUMPRELEASED when it emits the stock jump sound. PMove
-	 * must use the release state that existed before that PreThink callback. */
-	pmove.jump_held = (((int)prethink_flags & FL_JUMPRELEASED) == 0);
+	/* Stock QC may clear FL_JUMPRELEASED for a sound; PMove uses the prior
+	 * state. Exact q30 QC owns both the impulse and its updated release latch. */
+	pmove.jump_held = (((int)(qc_jump_owner ? ent->v.flags : prethink_flags) &
+		FL_JUMPRELEASED) == 0);
+	pmove.qc_jump_owner = qc_jump_owner;
 	pmove.jump_secs = client->private_pmove_jump_secs;
 	pmove.waterjumptime = client->private_pmove_waterjump_secs;
 	pmove.waterlevel = 0;

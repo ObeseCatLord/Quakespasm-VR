@@ -1628,10 +1628,7 @@ static qboolean SV_PrivateWalkStatsDisjoint (void)
 	return true;
 }
 
-/* Keep the generic PMove defaults in one owner. This exact q30 image has a
- * map-controlled jump impulse; resolve its named global on every use so map
- * settings and progs reload cannot leave a cached slot or value behind. */
-qboolean SV_PrivateWalkTrialBuildMoveVars (movevars_t *out, edict_t *player)
+qboolean SV_PrivateWalkTrialQ30Program (void)
 {
 	static const byte q30_sha256[32] = {
 		0x5e, 0x69, 0xfe, 0xce, 0x92, 0xfb, 0x43, 0x23,
@@ -1639,14 +1636,22 @@ qboolean SV_PrivateWalkTrialBuildMoveVars (movevars_t *out, edict_t *player)
 		0xf4, 0xf7, 0x0c, 0x31, 0x61, 0xae, 0x17, 0xbe,
 		0xb5, 0x30, 0x63, 0xfe, 0x3e, 0x06, 0xc3, 0x40
 	};
+	return qcvm == &sv.qcvm && qcvm->progssize == 2347206 &&
+		!memcmp (qcvm->progssha256, q30_sha256, sizeof (q30_sha256));
+}
+
+/* Keep the generic PMove defaults in one owner. This exact q30 image has a
+ * map-controlled jump impulse; resolve its named global on every use so map
+ * settings and progs reload cannot leave a cached slot or value behind. */
+qboolean SV_PrivateWalkTrialBuildMoveVars (movevars_t *out, edict_t *player)
+{
 	ddef_t *jumpheight;
 	float speed;
 	extern cvar_t sv_maxvelocity;
 
 	if (!PMSV_BuildMoveVars (out, player, sv.protocolflags))
 		return false;
-	if (qcvm != &sv.qcvm || qcvm->progssize != 2347206 ||
-		memcmp (qcvm->progssha256, q30_sha256, sizeof (q30_sha256)))
+	if (!SV_PrivateWalkTrialQ30Program ())
 		return true;
 	jumpheight = ED_FindGlobal ("map_jumpheight");
 	if (!jumpheight || (jumpheight->type & ~DEF_SAVEGLOBAL) != ev_float ||
@@ -2003,7 +2008,8 @@ static qboolean SVFTE_WriteEntitiesToClient (client_t *client, sizebuf_t *msg,
 			ack_flags |= MOVEACK_FLAG_AUTHORITATIVE;
 			/* Wet movement and an active ledge jump keep the selected command
 			 * owner, but replay requires a live WALK owner and proven dry state. */
-			if (client->edict && !client->edict->free &&
+			if (!SV_PrivateWalkTrialQ30Program () &&
+				client->edict && !client->edict->free &&
 				client->edict->v.health > 0 &&
 				client->edict->v.deadflag == DEAD_NO &&
 				client->edict->v.movetype == MOVETYPE_WALK &&

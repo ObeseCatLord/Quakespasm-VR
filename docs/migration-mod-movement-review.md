@@ -189,3 +189,12 @@ gate remains unchanged, so this boundary alone does not activate q30 selected
 movement or prediction. A q30 map must establish a valid jump height before
 any future selected admission; a zero startup value is not silently replaced
 with vanilla speed.
+
+The same exact-profile handoff now lets q30 QuakeC retain a pressed command's
+jump impulse and post-PreThink release latch if the selected owner is ever
+entered. It bypasses stock whole-velocity restoration and hands the authored
+velocity to `PM_PlayerMove` with `qc_jump_owner`; stock selected movement still
+uses PMove's jump. Selected q30 snapshots withhold client replay permission,
+because a matching client-side QuakeC jump is not implemented. This remains
+inactive while q30 is excluded from admission. It does not qualify boots,
+ladder, grapple, wet movement, or live mod behavior by itself.
