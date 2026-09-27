@@ -3187,15 +3187,19 @@ typedef struct sv_vr_weapon_pose_scope_s
 {
 	struct sv_vr_weapon_pose_scope_s *previous;
 	edict_t *ent;
+	client_t *client;
 	qboolean applied, origin_relocated, linked, akimbo_invalidated;
 	qboolean akimbo_pose_valid;
 	/* Set only by a fully admitted Dwell pair path. */
 	qboolean dwell_berserk_pose_valid;
 	qboolean enyo_clearance_pending;
 	qboolean qbj3_shotgun_spread;
+	qboolean stock_shotgun_muzzle_valid;
+	int stock_shotgun_program; /* 0 unchecked, 1 pinned id1, -1 other */
 	int qbj3_shotgun_weapon;
 	float qbj3_shotgun_roll;
 	vec3_t origin, body_origin, v_angle, forward, right, up;
+	vec3_t stock_shotgun_muzzle;
 	vec3_t akimbo_muzzle[2], akimbo_angles[2];
 	vec3_t enyo_clearance_start, enyo_clearance_end;
 	vec3_t enyo_clearance_adjusted_start;
@@ -3243,6 +3247,7 @@ void SV_VRWeaponPoseSetOrigin (edict_t *ent)
 			scope->akimbo_invalidated = true;
 			scope->akimbo_pose_valid = false;
 			scope->enyo_clearance_pending = false;
+			scope->stock_shotgun_muzzle_valid = false;
 		}
 }
 
@@ -3682,6 +3687,7 @@ static void SV_BeginPrivateVRWeaponPose (edict_t *ent, client_t *client,
 	sv_vr_weapon_pose_scope_t *previous;
 	memset (scope, 0, sizeof (*scope));
 	scope->ent = ent;
+	scope->client = client;
 	VectorCopy (ent->v.origin, scope->body_origin);
 	for (previous = sv_vr_weapon_pose_scope; previous;
 		previous = previous->previous)
@@ -3781,6 +3787,13 @@ static void SV_BeginPrivateVRWeaponPose (edict_t *ent, client_t *client,
 	AngleVectors (ent->v.v_angle, pr_global_struct->v_forward,
 		pr_global_struct->v_right, pr_global_struct->v_up);
 	SV_ClampVRMuzzleToWorld (ent, muzzle);
+	/* A nested same-player scope starts from its parent's temporary source.
+	 * Do not cache that as a new authoritative body-relative muzzle. */
+	if (!previous)
+	{
+		VectorCopy (muzzle, scope->stock_shotgun_muzzle);
+		scope->stock_shotgun_muzzle_valid = true;
+	}
 	VR_WeaponCalibrationProjectileSourceOffset (
 		PR_GetString (ent->v.weaponmodel), (int)ent->v.weapon,
 		qbj3_flak_source ? flak_source_angles :
@@ -4151,6 +4164,63 @@ unsigned int SV_VRStockAxeContactProfile (void)
 	return !descriptor ? VR_WEAPON_CONTACT_PROFILE_NONE :
 		descriptor->alkaline ? VR_WEAPON_CONTACT_PROFILE_ALK :
 		VR_WEAPON_CONTACT_PROFILE_STOCK;
+}
+
+/* Stock id1 FireBullets overwrites src.z with absmin.z + 0.7 * size.z.
+ * Translating self.origin alone therefore cannot move its pellet rays to the
+ * tracked muzzle. Borrow only the exact pinned player's FireBullets trace;
+ * QuakeC still owns spread, pellet count, damage and weapon timing. */
+qboolean SV_VRStockShotgunTrace (edict_t *ignore, int nomonsters,
+	const vec3_t start, const vec3_t end, trace_t *trace)
+{
+	sv_vr_weapon_pose_scope_t *scope;
+	const sv_vr_stock_axe_descriptor_t *descriptor;
+	vec3_t expected, translated_end, delta;
+	int axis;
+
+	if (!trace || !ignore || ignore->free || nomonsters ||
+		qcvm != &sv.qcvm || !qcvm->progs ||
+		qcvm->progs->numfunctions <= 192 ||
+		qcvm->xfunction != &qcvm->functions[192] ||
+		qcvm->xstatement != 3646 ||
+		!pr_global_struct || pr_global_struct->self != EDICT_TO_PROG (ignore) ||
+		(ignore->v.weapon != IT_SHOTGUN &&
+		 ignore->v.weapon != IT_SUPER_SHOTGUN))
+		return false;
+	scope = SV_FindPrivateVRWeaponPose (ignore);
+	if (!scope || !scope->applied || !scope->stock_shotgun_muzzle_valid ||
+		scope->origin_relocated || !scope->client ||
+		!scope->client->active || !scope->client->spawned ||
+		scope->client->protocol_qsvr != QSVR_PROTOCOL_PINNED ||
+		scope->client->edict != ignore)
+		return false;
+	if (!scope->stock_shotgun_program)
+	{
+		descriptor = SV_VRStockAxeMeleeDescriptor ();
+		scope->stock_shotgun_program = descriptor &&
+			descriptor->progscrc == 3064 ? 1 : -1;
+	}
+	if (scope->stock_shotgun_program < 0)
+		return false;
+
+	/* Check the actual QC start before shifting a ray. This leaves an altered
+	 * callback or unexpected source expression on its unmodified path. */
+	VectorMA (ignore->v.origin, 10.0f, pr_global_struct->v_forward, expected);
+	expected[2] = ignore->v.absmin[2] + ignore->v.size[2] * 0.7f;
+	for (axis = 0; axis < 3; ++axis)
+		if (!isfinite (start[axis]) || !isfinite (end[axis]) ||
+			!isfinite (scope->stock_shotgun_muzzle[axis]) ||
+			!isfinite (expected[axis]) ||
+			fabsf (start[axis] - expected[axis]) > 0.125f)
+			return false;
+	VectorSubtract (end, start, delta);
+	VectorAdd (scope->stock_shotgun_muzzle, delta, translated_end);
+	for (axis = 0; axis < 3; ++axis)
+		if (!isfinite (translated_end[axis]))
+			return false;
+	*trace = SV_Move (scope->stock_shotgun_muzzle, vec3_origin, vec3_origin,
+		translated_end, nomonsters, ignore);
+	return true;
 }
 
 int SV_VRStockAxeTraceStatement (void)

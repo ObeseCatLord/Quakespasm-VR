@@ -26,6 +26,8 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
  * definition before client translation units include it. */
 extern qboolean SV_VRStockAxeTrace (edict_t *ignore, int nomonsters,
 	const vec3_t start, const vec3_t end, trace_t *trace);
+extern qboolean SV_VRStockShotgunTrace (edict_t *ignore, int nomonsters,
+	const vec3_t start, const vec3_t end, trace_t *trace);
 extern qboolean SV_VRDwellBerserkTrace (edict_t *ignore, int nomonsters,
 	const vec3_t start, const vec3_t end, trace_t *trace);
 extern qboolean SV_EnyoAkimboTrace (edict_t *ignore, const vec3_t start,
@@ -809,7 +811,8 @@ static void PF_traceline (void)
 
 	if (!SV_VRDwellBerserkTrace (ent, nomonsters, v1, v2, &trace) &&
 		!SV_VRStockAxeTrace (ent, nomonsters, v1, v2, &trace) &&
-		!SV_EnyoAkimboTrace (ent, v1, v2, nomonsters, &trace))
+		!SV_EnyoAkimboTrace (ent, v1, v2, nomonsters, &trace) &&
+		!SV_VRStockShotgunTrace (ent, nomonsters, v1, v2, &trace))
 		trace = SV_Move (v1, vec3_origin, vec3_origin, v2, nomonsters, ent);
 
 	pr_global_struct->trace_allsolid = trace.allsolid;
