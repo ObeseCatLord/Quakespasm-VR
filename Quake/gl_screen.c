@@ -2313,9 +2313,14 @@ static void SCR_DrawGUI (void *unused)
 			M_Draw (cbx);
 			if (vr_menu_panel.pointer_valid)
 			{
-				GL_SetCanvas (cbx, CANVAS_DEFAULT);
-				Draw_Fill (cbx, vr_menu_panel.pointer_x - 4, vr_menu_panel.pointer_y - 1, 9, 3, 15, 1.0f);
-				Draw_Fill (cbx, vr_menu_panel.pointer_x - 1, vr_menu_panel.pointer_y - 4, 3, 9, 15, 1.0f);
+				const float scale = M_MenuCanvasScale ();
+				/* Match M_PixelToMenuCanvasCoord so source units scale with menu glyphs. */
+				const float pointer_x = (vr_menu_panel.pointer_x - (glwidth - 320.0f * scale) * 0.5f) / scale;
+				const float pointer_y = (vr_menu_panel.pointer_y - (glheight - 200.0f * scale) * 0.5f) / scale;
+
+				GL_SetCanvas (cbx, CANVAS_MENU);
+				Draw_Fill (cbx, pointer_x - 4, pointer_y - 1, 9, 3, 15, 1.0f);
+				Draw_Fill (cbx, pointer_x - 1, pointer_y - 4, 3, 9, 15, 1.0f);
 			}
 			GL_EndUIPanel (cbx);
 		}

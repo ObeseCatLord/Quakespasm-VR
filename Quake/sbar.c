@@ -925,9 +925,11 @@ Sbar_DrawClassic
 */
 static void Sbar_DrawClassic (cb_context_t *cbx)
 {
+	const qboolean classic_vr_hud = cbx->ui_panel_active && cbx->ui_panel_classic_hud;
+
 	GL_SetCanvas (cbx, CANVAS_SBAR);
 
-	if (scr_viewsize.value < 110) // johnfitz -- check viewsize instead of sb_lines
+	if (scr_viewsize.value < 110 || classic_vr_hud) // johnfitz -- check viewsize instead of sb_lines
 	{
 		Sbar_DrawInventory (cbx);
 		if (cl.maxclients != 1)
@@ -939,7 +941,7 @@ static void Sbar_DrawClassic (cb_context_t *cbx)
 		Sbar_DrawPicAlpha (cbx, 0, 0, sb_scorebar, scr_sbaralpha.value); // johnfitz -- scr_sbaralpha
 		Sbar_DrawScoreboard (cbx);
 	}
-	else if (scr_viewsize.value < 120) // johnfitz -- check viewsize instead of sb_lines
+	else if (scr_viewsize.value < 120 || classic_vr_hud) // johnfitz -- check viewsize instead of sb_lines
 	{
 		Sbar_DrawPicAlpha (cbx, 0, 0, sb_sbar, scr_sbaralpha.value); // johnfitz -- scr_sbaralpha
 
