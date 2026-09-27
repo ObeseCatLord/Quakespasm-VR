@@ -1477,11 +1477,16 @@ static void _Datagram_ServerControlPacket (sys_socket_t acceptsock, struct qsock
 	int				 plnum;
 	int				 mod; //, mod_ver, mod_flags, mod_passwd;	//proquake extensions
 
+	if (length < sizeof (int) || length > NET_DATAGRAMSIZE)
+		return;
+
 	control = BigLong (*((int *)data));
 	if (control == -1)
 	{
 		if (!sv_public.value)
 			return;
+		if (length == NET_DATAGRAMSIZE)
+			return; // data[length] below needs one byte for a terminator
 		data[length] = 0;
 		Cmd_TokenizeString ((char *)data + 4);
 		if (!strcmp (Cmd_Argv (0), "getinfo") || !strcmp (Cmd_Argv (0), "getstatus"))
@@ -1593,6 +1598,8 @@ static void _Datagram_ServerControlPacket (sys_socket_t acceptsock, struct qsock
 	if ((control & (~NETFLAG_LENGTH_MASK)) != (int)NETFLAG_CTL)
 		return;
 	if ((control & NETFLAG_LENGTH_MASK) != length)
+		return;
+	if (length > (unsigned int)net_message.maxsize)
 		return;
 
 	// sigh... FIXME: potentially abusive memcpy
