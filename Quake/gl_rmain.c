@@ -52,6 +52,8 @@ uint32_t		rs_cputime_us, rs_gputime_us;
 uint32_t		rs_ssaotime_us;
 qboolean		rs_ssaotime_valid;
 uint32_t		rs_avatarprep_us;
+double			rs_avatarretarget_us;
+uint32_t		rs_avatarretarget_count;
 uint32_t		rs_gpuwaittime_us, rs_gpuwaitaccum_us;
 double			rs_frame_starttime;
 char			rs_display_lines[4][40];
@@ -2636,6 +2638,10 @@ static void R_PrintStats (qboolean draw_stats_ready)
 			{
 				q_snprintf (rs_display_lines[rs_display_numlines], sizeof (rs_display_lines[0]),
 					"avatar prep cpu%6.2f ms", (double)rs_avatarprep_us / 1000.0);
+				++rs_display_numlines;
+				q_snprintf (rs_display_lines[rs_display_numlines], sizeof (rs_display_lines[0]),
+					"retarget cpu%6.1f us %u avatars", rs_avatarretarget_us,
+					rs_avatarretarget_count);
 				++rs_display_numlines;
 			}
 		}

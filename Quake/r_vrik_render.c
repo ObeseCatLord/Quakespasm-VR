@@ -1057,8 +1057,11 @@ static qboolean R_VRIKRenderAlternateCandidate (const entity_t *entity,
 	else
 		result = R_VRIKBuildRangerAnimationPalette (source_skeleton, &candidate->lerpdata, &ranger);
 	if (result != R_VRIK_PALETTE_OK ||
-		ranger.joint_count != source_skeleton->joint_count ||
-		(selection->humanoid ?
+		ranger.joint_count != source_skeleton->joint_count)
+		return false;
+	const qboolean profile_retarget = scr_speeds.value == 3;
+	const double retarget_start = profile_retarget ? Sys_DoubleTime () : 0.0;
+	const qboolean retarget_failed = selection->humanoid ?
 			!R_AvatarRetargetHumanoid (source_rig, target_rig,
 				&selection->presentation, &selection->humanoid_map,
 				(const float *)source_palette, (float *)palette) :
@@ -1066,7 +1069,13 @@ static qboolean R_VRIKRenderAlternateCandidate (const entity_t *entity,
 			 * for every generic pose repeats the same rig basis work. */
 			!R_AvatarRetargetPaletteWithContext (source_rig, target_rig,
 				&selection->presentation, (const float *)source_palette,
-				(float *)palette)))
+				(float *)palette);
+	if (profile_retarget)
+	{
+		rs_avatarretarget_us += (Sys_DoubleTime () - retarget_start) * 1000000.0;
+		++rs_avatarretarget_count;
+	}
+	if (retarget_failed)
 		return false;
 	/* Optional tracked repairs retain successful independent stages. The
 	 * canonical palette and supplied lower targets remain authoritative. */
@@ -1153,6 +1162,8 @@ void R_VRIKRenderPrepareFrame (uint32_t frame_slot)
 	size_t candidate_count = 0;
 	size_t total_joints = 0;
 	VkDeviceSize max_range = vulkan_globals.device_properties.limits.maxStorageBufferRange;
+	rs_avatarretarget_us = 0.0;
+	rs_avatarretarget_count = 0;
 
 	if (frame_slot >= DOUBLE_BUFFERED)
 	{

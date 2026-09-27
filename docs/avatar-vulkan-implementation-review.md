@@ -138,6 +138,14 @@ culling bounds, and palette publication, so it is a useful in-game budget but
 does not isolate the retargeter alone. Compare it with the total CPU frame time
 on the same scene before considering per-avatar animation replacements.
 
+`scr_speeds 3` also displays `retarget cpu` and the number of alternate-avatar
+retarget attempts for that frame. It times only Ranger-to-selected-rig palette
+transfer, excluding target IK, model staging, culling, and GPU work. The timer
+itself adds overhead in this profiling mode, especially when only one small
+avatar is present. Compare its scale with `avatar prep cpu` across actual rigs
+and peer counts; do not interpret this isolated number as FPS recovered by
+hand-authoring clips or by importing VRM.
+
 The tracked Dog/Fiend refinement now accepts the floor-corrected presentation
 context already staged by `R_VRIKRenderStageFloor`. The legacy entry point still
 builds its own context for callers without a staged frame. This removes one
