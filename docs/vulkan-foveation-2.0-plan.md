@@ -46,6 +46,23 @@ performance. `vr_eye_tracking`
 must still gate eye mode; inaccessible or invalid gaze must restore full-rate
 rendering. Fixed foveation remains explicit opt-in and is never a fallback.
 
+The September 27 source audit confirms `Quake/view.c` already defaults
+`vr_eye_tracking` to `1` and `vr_foveation` to eye mode (`2`); saved user values
+remain authoritative. The KHR map path requires a working application gaze
+action and three fresh focused frames. The FB/META path can use its own
+per-frame validity signal without that action, but still requires the explicit
+development flag and compatible Vulkan density images. The official
+[FB Vulkan image contract](https://registry.khronos.org/OpenXR/specs/1.1/man/html/XrSwapchainImageFoveationVulkanFB.html)
+defines the borrowed image and dimensions; the
+[META state structure](https://registry.khronos.org/OpenXR/specs/1.1/man/html/XrFoveationEyeTrackedStateMETA.html)
+defines per-eye NDC centers and validity flags. These API contracts alone do
+not qualify the renderer's assumed density format, neighboring-depth replay,
+MSAA coexistence or net frame-time benefit, so the startup backend choice is
+unchanged. Valve's [Steam Frame custom-engine guide](https://partner.steamgames.com/doc/steamhardware/steamframe/engines/custom)
+lists both `XR_EXT_eye_gaze_interaction` and the FB/META route; actual runtime
+capability and working tracking are still queried rather than inferred from
+the headset name.
+
 ## User contract
 
 - `vr_eye_tracking` and `vr_foveation` are archived and now default to `1` and
