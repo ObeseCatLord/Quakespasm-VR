@@ -10,8 +10,8 @@ typedef struct r_vrik_prepared_palette_s
 	const qmodel_t *model;
 	/* Root geometry selected for this frame (admitted MD5 for alternates). */
 	const aliashdr_t *geometry;
-	/* Target model space to canonical Ranger model space; valid for alternates.
-	 * The source renderer's bind-floor correction is not included here. */
+	/* Target model space to canonical Ranger model space, including static
+	 * bind-floor correction; valid for alternates. */
 	float target_to_canonical[12];
 	qboolean alternate_avatar;
 	VkDescriptorSet descriptor_set;

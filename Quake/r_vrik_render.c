@@ -12,6 +12,7 @@
 extern cvar_t r_lerpmodels;
 
 #define R_VRIK_RENDER_MAX_JOINTS 256
+#define R_VRIK_RENDER_MAX_AVATARS (PLAYER_AVATAR_COUNT + CUSTOM_AVATAR_MAX_PACKAGES)
 
 typedef struct r_vrik_candidate_s
 {
@@ -50,6 +51,11 @@ static qmodel_t *builtin_models[PLAYER_AVATAR_COUNT];
 static qboolean builtin_attempted[PLAYER_AVATAR_COUNT];
 static qmodel_t *custom_models[CUSTOM_AVATAR_MAX_PACKAGES];
 static qboolean custom_attempted[CUSTOM_AVATAR_MAX_PACKAGES];
+static const qmodel_t *floor_source_models[R_VRIK_RENDER_MAX_AVATARS];
+static const qmodel_t *floor_target_models[R_VRIK_RENDER_MAX_AVATARS];
+static float floor_correction_z[R_VRIK_RENDER_MAX_AVATARS];
+static qboolean floor_attempted[R_VRIK_RENDER_MAX_AVATARS];
+static qboolean floor_valid[R_VRIK_RENDER_MAX_AVATARS];
 static char admission_gamedir[MAX_OSPATH];
 static r_vrik_prepared_palette_t prepared[DOUBLE_BUFFERED][MAX_SCOREBOARD];
 static size_t prepared_count[DOUBLE_BUFFERED];
@@ -64,6 +70,10 @@ void R_VRIKRenderResetAdmission (void)
 	memset (builtin_attempted, 0, sizeof (builtin_attempted));
 	memset (custom_models, 0, sizeof (custom_models));
 	memset (custom_attempted, 0, sizeof (custom_attempted));
+	memset (floor_source_models, 0, sizeof (floor_source_models));
+	memset (floor_target_models, 0, sizeof (floor_target_models));
+	memset (floor_attempted, 0, sizeof (floor_attempted));
+	memset (floor_valid, 0, sizeof (floor_valid));
 	q_strlcpy (admission_gamedir, com_gamedir, sizeof (admission_gamedir));
 }
 
@@ -115,6 +125,88 @@ static qmodel_t *R_VRIKRenderCustomModel (int id)
 	return model;
 }
 
+/* Admission-time bind contacts use the original MD5 weights, captured before
+ * vkQuake releases the CPU mesh. Match the inherited triangle equipment
+ * filter, then project only the surviving bind vertices into Ranger space. */
+static qboolean R_VRIKRenderMinimumBindZ (const qmodel_t *model,
+	const r_avatar_profile_t *profile, qboolean source, qboolean contacts,
+	const float target_to_canonical[12], double *minimum_out)
+{
+	double minimum = DBL_MAX;
+	int surface_count = 0;
+	if (!model || !model->avatar_bind_surfaces || !minimum_out)
+		return false;
+	for (const md5_avatar_bind_surface_t *surface = model->avatar_bind_surfaces;
+		surface; surface = surface->next)
+	{
+		if (++surface_count > MAX_SURFACES || !surface->vertices || !surface->indexes ||
+			surface->numverts <= 0 || surface->numindexes <= 0 || surface->numindexes % 3)
+			return false;
+		for (int index = 0; index < surface->numindexes; index += 3)
+		{
+			const md5_avatar_bind_vertex_t *vertex[3];
+			float min_weight = 1.0f, max_weight = 0.0f, sum_weight = 0.0f;
+			for (int point = 0; point < 3; ++point)
+			{
+				const unsigned short vertex_index = surface->indexes[index + point];
+				if (vertex_index >= surface->numverts)
+					return false;
+				vertex[point] = &surface->vertices[vertex_index];
+				const float weight = vertex[point]->native_equipment_weight;
+				if (!isfinite (weight) || weight < 0.0f || weight > 1.0001f)
+					return false;
+				min_weight = q_min (min_weight, weight);
+				max_weight = q_max (max_weight, weight);
+				sum_weight += weight;
+			}
+			if (!source && profile->equipment_policy == R_AVATAR_EQUIPMENT_ATTACH_HAND &&
+				(sum_weight / 3.0f >= 0.5f || (min_weight >= 0.25f && max_weight >= 0.75f)))
+				continue;
+			for (int point = 0; point < 3; ++point)
+			{
+				const md5_avatar_bind_vertex_t *v = vertex[point];
+				if (!isfinite (v->contact_weight) || v->contact_weight < 0.0f ||
+					v->contact_weight > 1.0001f)
+					return false;
+				if (contacts && v->contact_weight < 0.25f)
+					continue;
+				if (source && !contacts && (v->ranger_gun_owned || v->ranger_axe_owned))
+					continue;
+				const double z = source ? v->xyz[2] :
+					(double)target_to_canonical[8] * v->xyz[0] +
+					(double)target_to_canonical[9] * v->xyz[1] +
+					(double)target_to_canonical[10] * v->xyz[2] + target_to_canonical[11];
+				if (!isfinite (z))
+					return false;
+				if (z < minimum)
+					minimum = z;
+			}
+		}
+	}
+	if (minimum == DBL_MAX || minimum < -FLT_MAX || minimum > FLT_MAX)
+		return false;
+	*minimum_out = minimum;
+	return true;
+}
+
+static qboolean R_VRIKRenderBindFloorCorrection (const qmodel_t *source,
+	const qmodel_t *target, const r_avatar_profile_t *profile,
+	const float target_to_canonical[12], float *correction_out)
+{
+	double source_floor, target_floor, correction;
+	const qboolean contacts = profile->contact_root[0] != NULL;
+	if (!R_VRIKRenderMinimumBindZ (source, profile, true, contacts,
+		target_to_canonical, &source_floor) ||
+		!R_VRIKRenderMinimumBindZ (target, profile, false, contacts,
+			target_to_canonical, &target_floor))
+		return false;
+	correction = source_floor - target_floor;
+	if (!isfinite (correction) || correction < -FLT_MAX || correction > FLT_MAX)
+		return false;
+	*correction_out = (float)correction;
+	return true;
+}
+
 qboolean R_VRIKRenderStageAvatar (const entity_t *entity, int id)
 {
 	r_vrik_staged_avatar_t selection = {0};
@@ -148,6 +240,23 @@ qboolean R_VRIKRenderStageAvatar (const entity_t *entity, int id)
 		!R_AvatarResolveRig (R_AvatarProfileForId (PLAYER_AVATAR_RANGER), &source_skeleton, &source_rig) ||
 		!R_AvatarResolveRig (profile, &target_skeleton, &target_rig) ||
 		!R_AvatarTargetToCanonicalPresentation (&source_rig, &target_rig, selection.target_to_canonical))
+		return false;
+	if (id < 0 || id >= R_VRIK_RENDER_MAX_AVATARS)
+		return false;
+	if (!floor_attempted[id] || floor_source_models[id] != source || floor_target_models[id] != target)
+	{
+		floor_source_models[id] = source;
+		floor_target_models[id] = target;
+		floor_attempted[id] = true;
+		floor_valid[id] = R_VRIKRenderBindFloorCorrection (source, target, profile,
+			selection.target_to_canonical, &floor_correction_z[id]);
+		if (!floor_valid[id])
+			Con_Warning ("Avatar %s has no valid bind-floor contact; using Ranger\n", profile->key);
+	}
+	if (!floor_valid[id])
+		return false;
+	selection.target_to_canonical[11] += floor_correction_z[id];
+	if (!isfinite (selection.target_to_canonical[11]))
 		return false;
 	selection.source_geometry = (const aliashdr_t *)source->extradata[PV_MD5];
 	selection.target_geometry = (const aliashdr_t *)target->extradata[PV_MD5];

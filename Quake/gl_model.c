@@ -72,6 +72,16 @@ struct md5_skeleton_data_s
 	md5_skeleton_joint_t joints[];
 };
 
+static void Mod_FreeAvatarBindSurfaces (md5_avatar_bind_surface_t *surface)
+{
+	while (surface)
+	{
+		md5_avatar_bind_surface_t *next = surface->next;
+		Mem_Free (surface); /* vertices and indexes share this allocation */
+		surface = next;
+	}
+}
+
 /* Donor common.c verifies the official rerelease Ranger mesh and animation
  * by exact length and CRC32.  Verify the bytes selected by this loader so
  * same-named custom replacements never inherit lower-body provenance. */
@@ -578,6 +588,8 @@ Mod_FreeModelMemory
 */
 static void Mod_FreeModelMemory (qmodel_t *mod)
 {
+	Mod_FreeAvatarBindSurfaces (mod->avatar_bind_surfaces);
+	mod->avatar_bind_surfaces = NULL;
 	mod->is_generated_akimbo_half = false;
 	mod->avatar_builtin = false;
 	if (mod->avatar_custom_rgba[0] || mod->avatar_custom_rgba[1])
@@ -5308,6 +5320,145 @@ typedef struct jointinfo_s
 	jointpose_t inverse;
 } jointinfo_t;
 
+static int MD5_AvatarFindJoint (const jointinfo_t *joints, size_t count,
+	const char *name, qboolean case_insensitive)
+{
+	if (!name || !*name)
+		return -1;
+	for (size_t j = 0; j < count; ++j)
+		if (!(case_insensitive ? q_strcasecmp (joints[j].name, name) :
+			strcmp (joints[j].name, name)))
+			return (int)j;
+	return -1;
+}
+
+static qboolean MD5_AvatarJointDescendsFrom (const jointinfo_t *joints,
+	size_t count, size_t joint, int root)
+{
+	for (size_t depth = 0; depth < count && joint < count; ++depth)
+	{
+		if ((int)joint == root)
+			return true;
+		if (joints[joint].parent < 0)
+			break;
+		joint = (size_t)joints[joint].parent;
+	}
+	return false;
+}
+
+/* Classify ownership using the original float MD5 weights, before Vulkan's
+ * capped/quantized influence stream loses the source floor/filter semantics. */
+static qboolean MD5_AvatarJointMasks (const r_avatar_profile_t *profile,
+	const jointinfo_t *joints, size_t count, byte *contact, byte *equipment,
+	byte *gun, byte *axe, qboolean *has_contact)
+{
+	int contact_roots[4] = {-1, -1, -1, -1};
+	int equipment_roots[4] = {-1, -1, -1, -1};
+	int gun_root = -1, axe_root = -1;
+	qboolean ranger = profile->id == PLAYER_AVATAR_RANGER;
+
+	*has_contact = ranger;
+	for (size_t i = 0; i < countof (contact_roots); ++i)
+	{
+		const char *name = profile->contact_root[i];
+		if (ranger && i < 2)
+			name = profile->joint[i ? MD5_VRIK_FOOT_R : MD5_VRIK_FOOT_L].name;
+		if (!name)
+			continue;
+		contact_roots[i] = MD5_AvatarFindJoint (joints, count, name, false);
+		if (contact_roots[i] < 0)
+			return false;
+		*has_contact = true;
+	}
+	for (size_t i = 0; i < countof (equipment_roots); ++i)
+		equipment_roots[i] = MD5_AvatarFindJoint (joints, count,
+			profile->native_equipment_joint[i], true);
+	if (ranger)
+	{
+		gun_root = MD5_AvatarFindJoint (joints, count,
+			profile->joint[MD5_VRIK_GUN].name, false);
+		axe_root = MD5_AvatarFindJoint (joints, count,
+			profile->joint[MD5_VRIK_AXE].name, false);
+	}
+	for (size_t joint = 0; joint < count; ++joint)
+	{
+		contact[joint] = equipment[joint] = gun[joint] = axe[joint] = 0;
+		for (size_t root = 0; root < countof (contact_roots); ++root)
+			if (contact_roots[root] >= 0 && MD5_AvatarJointDescendsFrom (
+				joints, count, joint, contact_roots[root]))
+				contact[joint] = 1;
+		for (size_t root = 0; root < countof (equipment_roots); ++root)
+			if (equipment_roots[root] >= 0 && MD5_AvatarJointDescendsFrom (
+				joints, count, joint, equipment_roots[root]))
+				equipment[joint] = 1;
+		if (gun_root >= 0)
+			gun[joint] = MD5_AvatarJointDescendsFrom (joints, count, joint, gun_root);
+		if (axe_root >= 0)
+			axe[joint] = MD5_AvatarJointDescendsFrom (joints, count, joint, axe_root);
+	}
+	return true;
+}
+
+static md5_avatar_bind_surface_t *MD5_CaptureAvatarBindSurface (
+	const md5vertinfo_t *vinfo, const md5weightinfo_t *weights,
+	size_t numweights, const byte *baked_vertices, size_t vertex_size,
+	const unsigned short *indexes, int numverts, int numindexes,
+	const byte *contact, const byte *equipment, const byte *gun,
+	const byte *axe, qboolean has_contact, size_t *total_bytes)
+{
+	md5_avatar_bind_surface_t *surface;
+	size_t vertex_bytes, index_bytes, allocation_bytes, new_total;
+
+	if (numverts <= 0 || numindexes <= 0 ||
+		!Mod_CheckedSizeMul ((size_t)numverts, sizeof (md5_avatar_bind_vertex_t), &vertex_bytes) ||
+		!Mod_CheckedSizeMul ((size_t)numindexes, sizeof (*indexes), &index_bytes) ||
+		!Mod_CheckedSizeAdd (sizeof (*surface), vertex_bytes, &allocation_bytes) ||
+		!Mod_CheckedSizeAdd (allocation_bytes, index_bytes, &allocation_bytes) ||
+		!Mod_CheckedSizeAdd (*total_bytes, allocation_bytes, &new_total) ||
+		new_total > 32u * 1024u * 1024u)
+		return NULL;
+	surface = Mem_AllocNonZero (allocation_bytes);
+	if (!surface)
+		return NULL;
+	surface->next = NULL;
+	surface->numverts = numverts;
+	surface->numindexes = numindexes;
+	surface->vertices = (md5_avatar_bind_vertex_t *)(surface + 1);
+	surface->indexes = (unsigned short *)((byte *)surface->vertices + vertex_bytes);
+	memcpy (surface->indexes, indexes, index_bytes);
+	for (int vertex = 0; vertex < numverts; ++vertex)
+	{
+		md5_avatar_bind_vertex_t *out = &surface->vertices[vertex];
+		const md5vert_t *baked = (const md5vert_t *)(baked_vertices + (size_t)vertex * vertex_size);
+		const md5vertinfo_t *info = &vinfo[vertex];
+		float contact_sum = 0, equipment_sum = 0, gun_sum = 0, axe_sum = 0;
+		if (info->firstweight > numweights || info->count > numweights - info->firstweight)
+			goto invalid;
+		VectorCopy (baked->xyz, out->xyz);
+		for (size_t influence = 0; influence < info->count; ++influence)
+		{
+			const md5weightinfo_t *weight = &weights[info->firstweight + influence];
+			size_t joint = weight->joint_index;
+			if (contact[joint]) contact_sum += weight->pos[3];
+			if (equipment[joint]) equipment_sum += weight->pos[3];
+			if (gun[joint]) gun_sum += weight->pos[3];
+			if (axe[joint]) axe_sum += weight->pos[3];
+		}
+		if (!isfinite (contact_sum) || !isfinite (equipment_sum) ||
+			!isfinite (gun_sum) || !isfinite (axe_sum))
+			goto invalid;
+		out->contact_weight = has_contact ? contact_sum : 1.0f;
+		out->native_equipment_weight = CLAMP (0.0f, equipment_sum, 1.0f);
+		out->ranger_gun_owned = gun_sum >= 0.999999f;
+		out->ranger_axe_owned = axe_sum >= 0.999999f;
+	}
+	*total_bytes = new_total;
+	return surface;
+invalid:
+	Mem_Free (surface);
+	return NULL;
+}
+
 typedef struct md5animjoint_s
 {
 	unsigned int flags, offset;
@@ -6319,9 +6470,17 @@ static qboolean Mod_LoadMD5MeshModelData (qmodel_t *mod, const void *buffer,
 	qfilesize_t mesh_size)
 {
 	const char *fname = mod->name;
+	const r_avatar_profile_t *avatar_bind_profile = mod_custom_avatar ?
+		&mod_custom_avatar->profile : (anim_override ? R_AvatarProfileForModelPath (mod->name) : NULL);
 
 	aliashdr_t *outhdr = NULL, *surf;
 	md5_skeleton_data_t *retained_skeleton = NULL;
+	md5_avatar_bind_surface_t *bind_surfaces = NULL;
+	md5_avatar_bind_surface_t **bind_tail = &bind_surfaces;
+	size_t avatar_bind_bytes = 0;
+	byte contact_mask[R_AVATAR_MAX_JOINTS], equipment_mask[R_AVATAR_MAX_JOINTS];
+	byte gun_mask[R_AVATAR_MAX_JOINTS], axe_mask[R_AVATAR_MAX_JOINTS];
+	qboolean has_avatar_contact = false;
 	size_t		hdrsize = 0;
 	size_t		retained_joints_offset, retained_joint_bytes, retained_matrix_count;
 	size_t		retained_pose_bytes, retained_allocation_size;
@@ -6483,6 +6642,10 @@ static qboolean Mod_LoadMD5MeshModelData (qmodel_t *mod, const void *buffer,
 	}
 	else if (!MD5Anim_Load (&anim, joint_infos, joint_poses, numjoints))
 		goto error;
+	if (avatar_bind_profile && !MD5_AvatarJointMasks (avatar_bind_profile,
+		joint_infos, numjoints, contact_mask, equipment_mask, gun_mask,
+		axe_mask, &has_avatar_contact))
+		MD5ERROR ("%s: invalid avatar bind contact roots\n", fname);
 	buffer = COM_Parse (buffer);
 
 	int num_skeleton_indexes = 0;
@@ -6788,6 +6951,18 @@ static qboolean Mod_LoadMD5MeshModelData (qmodel_t *mod, const void *buffer,
 					mod->mins[axis] > mod->maxs[axis])
 					MD5ERROR ("%s: custom avatar bounds are invalid\n", fname);
 		}
+		if (avatar_bind_profile)
+		{
+			md5_avatar_bind_surface_t *bind = MD5_CaptureAvatarBindSurface (
+				vinfo, weight, numweights, poutvertexes, md5_vertex_size,
+				poutindexes, surf->numverts, surf->numindexes, contact_mask,
+				equipment_mask, gun_mask, axe_mask, has_avatar_contact,
+				&avatar_bind_bytes);
+			if (!bind)
+				MD5ERROR ("%s: invalid or oversized avatar bind surface\n", fname);
+			*bind_tail = bind;
+			bind_tail = &bind->next;
+		}
 
 		TEMP_FREE (weight);
 		TEMP_FREE (vinfo);
@@ -6844,7 +7019,9 @@ static qboolean Mod_LoadMD5MeshModelData (qmodel_t *mod, const void *buffer,
 	mod->type = mod_alias;
 	mod->extradata[PV_MD5] = (byte *)outhdr;
 	mod->md5_skeleton = retained_skeleton;
+	mod->avatar_bind_surfaces = bind_surfaces;
 	retained_skeleton = NULL;
+	bind_surfaces = NULL;
 
 	radius = sqrtf (radius);
 	mod->rmins[0] = mod->rmins[1] = mod->rmins[2] = -radius;
@@ -6868,6 +7045,7 @@ static qboolean Mod_LoadMD5MeshModelData (qmodel_t *mod, const void *buffer,
 error:
 	// Recoverable replacement-model failures fall back to the MDL, so release
 	// any partial MD5 state that Sys_Error used to abandon by terminating.
+	Mod_FreeAvatarBindSurfaces (bind_surfaces);
 	TEMP_FREE (weight);
 	TEMP_FREE (vinfo);
 	TEMP_FREE (poutvertexes);

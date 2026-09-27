@@ -506,6 +506,26 @@ typedef struct md5_skeleton_view_s
 
 typedef struct md5_skeleton_data_s md5_skeleton_data_t;
 
+/* Immutable CPU bind geometry retained only by admitted avatar MD5 loads.
+ * The index stream is the original, unfiltered mesh order. */
+typedef struct md5_avatar_bind_vertex_s
+{
+	vec3_t xyz;
+	float contact_weight;
+	float native_equipment_weight;
+	qboolean ranger_gun_owned;
+	qboolean ranger_axe_owned;
+} md5_avatar_bind_vertex_t;
+
+typedef struct md5_avatar_bind_surface_s
+{
+	struct md5_avatar_bind_surface_s *next;
+	int numverts;
+	int numindexes;
+	md5_avatar_bind_vertex_t *vertices;
+	unsigned short *indexes;
+} md5_avatar_bind_surface_t;
+
 /*
 ==============================================================================
 MD3 MODELS
@@ -756,6 +776,7 @@ typedef struct qmodel_s
 	//
 	byte *extradata[PV_SIZE]; // only access through Mod_Extradata
 	md5_skeleton_data_t *md5_skeleton; // retained CPU data for MD5 models
+	md5_avatar_bind_surface_t *avatar_bind_surfaces; // optional private avatar bind geometry
 	qboolean avatar_builtin; // private verified-pack cosmetic admission
 	int avatar_custom_id; // fixed local package ID, -1 unless admitted
 	byte *avatar_custom_rgba[2]; // stable in-memory texture reload sources
