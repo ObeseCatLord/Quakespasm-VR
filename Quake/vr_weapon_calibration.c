@@ -2172,9 +2172,8 @@ qboolean VR_WeaponCalibrationLookupMuzzle(const char *model_name,
 
 qboolean VR_WeaponCalibrationStockRangedViewmodel(const char *name)
 {
-	/* The stock collision endpoint is also valid for the two official
-	 * mission-pack ranged sets. Keep melee axe/hammer models on their
-	 * separate edge/contact path. Mod-defined geometry needs its own policy. */
+	/* Ordinary collision contact publication is pinned to these verified
+	 * stock ranged models; generic pose retraction has broader coverage. */
 	static const char *const models[] = {
 		"progs/v_shot.mdl", "progs/v_shot2.mdl",
 		"progs/v_nail.mdl", "progs/v_nail2.mdl",
@@ -2233,13 +2232,25 @@ qboolean VR_WeaponCalibrationCurrentMuzzle(vec3_t out)
 	}
 
 	if (!VR_WeaponCalibrationLookupMuzzle(model->name, enhanced_format,
-										  out) ||
-		!VR_CalibrationVectorIsFinite(out))
+										  out))
+	{
+		const int slot = vr_weapon_calibration_initialized ?
+			VR_FindCalibrationSlot(model->name) : -1;
+		const qboolean authored_muzzle = slot >= 0 &&
+			(enhanced_format ?
+			vr_weapon_calibration_slots[slot].has_enhanced_muzzle_offset :
+			vr_weapon_calibration_slots[slot].has_muzzle_offset);
+		memset(out, 0, sizeof(vec3_t));
+		/* The donor fires an otherwise valid uncalibrated alias from the
+		 * tracked grip. Do not turn a malformed authored offset into zero. */
+		return !authored_muzzle;
+	}
+
+	if (!VR_CalibrationVectorIsFinite(out))
 	{
 		memset(out, 0, sizeof(vec3_t));
 		return false;
 	}
-
 	return true;
 }
 

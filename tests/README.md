@@ -95,7 +95,8 @@ cc -std=gnu11 -DUSE_SDL3 -D_GNU_SOURCE -Wall -Wextra -Werror \
 selector with a stub for native `Mod_Extradata_CheckSkin`. It covers weapon
 switches before `viewent.model` refresh, invalid indices/models/headers, all
 four supported pose formats, skin forwarding, shared classic and enhanced
-muzzles in solo/co-op, missing profiles, and nonfinite calibration values.
+muzzles in solo/co-op, raw-grip fallback for missing profiles, and rejection
+of nonfinite authored calibration values.
 
 ```sh
 cc -std=gnu11 -DUSE_SDL3 -D_GNU_SOURCE -Wall -Wextra -Werror \

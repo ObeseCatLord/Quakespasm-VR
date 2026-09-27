@@ -200,3 +200,15 @@ the command muzzle. The crosshair now starts from the tracked hand plus its
 fixed anchor and render collision delta, leaving palm animation compensation
 out of aim. Linux build and diff checks pass; real near-wall impacts remain
 unverified. Collision still defaults off pending the full contact/outcome gate.
+
+## Uncalibrated alias fallback
+
+An ordinary selected alias with a valid supported skin/pose but no authored
+muzzle now uses a zero local offset: its private command and crosshair begin at
+the tracked controller grip, as in the donor. This also lets the generic
+opt-in wall retraction use grip geometry for such a weapon. An authored muzzle
+whose values are nonfinite still fails admission rather than silently becoming
+zero. Missing models, unsupported geometry, and invalid tracking remain
+rejected, so the attack gate cannot turn them into body-origin shots. The
+production model-selector fixture covers missing versus malformed calibration;
+it and the Linux build pass. Runtime shot alignment remains unverified.

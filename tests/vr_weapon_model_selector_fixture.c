@@ -108,6 +108,13 @@ static void AssertInvalidMuzzle(void)
 	AssertVector(muzzle, 0.0f, 0.0f, 0.0f);
 }
 
+static void AssertGripMuzzle(void)
+{
+	vec3_t muzzle = {123.0f, 456.0f, 789.0f};
+	assert(VR_WeaponCalibrationCurrentMuzzle(muzzle));
+	AssertVector(muzzle, 0.0f, 0.0f, 0.0f);
+}
+
 static void AssertSelectedMuzzle(poseverttype_t pose_type,
 								qmodel_t *expected_model, float x, float y, float z)
 {
@@ -214,7 +221,7 @@ int main(void)
 
 	strcpy(classic_model.name, "progs/missing.mdl");
 	fixture_alias_header.poseverttype = PV_QUAKE1;
-	AssertInvalidMuzzle();
+	AssertGripMuzzle();
 	strcpy(classic_model.name, "progs/classic.mdl");
 
 	Cvar_SetQuick(&vr_weapon_muzzle_offset[0], "nan");

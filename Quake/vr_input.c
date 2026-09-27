@@ -4628,9 +4628,10 @@ void VR_InputApplyPending (usercmd_t *cmd)
 
 qboolean VR_InputSuppressUncalibratedAttack (const usercmd_t *cmd)
 {
-	/* A missing grip or weapon profile must not turn controller-aim firing
-	 * into an ordinary body-origin shot. Dead players still need attack to
-	 * request respawn through the normal button path. */
+	/* A missing valid tracked grip/model pose must not turn controller-aim
+	 * firing into an ordinary body-origin shot. A valid alias without an
+	 * authored muzzle uses the grip itself. Dead players still need attack
+	 * to request respawn through the normal button path. */
 	return cmd && cl.protocol_qsvr == QSVR_PROTOCOL_PINNED &&
 		V_TrackedSessionActive () && VR_InputControllerAim () &&
 		cl.stats[STAT_HEALTH] > 0 &&
