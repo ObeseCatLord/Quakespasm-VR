@@ -43,6 +43,8 @@ ALIAS MODEL DISPLAY LIST GENERATION
 
 extern cvar_t r_lerpmodels;
 extern cvar_t r_rtshadows;
+extern qmodel_t mod_known[MAX_MODELS];
+extern int mod_numknown;
 
 typedef struct entity_blas_surface_s
 {
@@ -926,11 +928,13 @@ void GLMesh_DeleteAllMeshBuffers (void)
 {
 	qmodel_t *m;
 
-	for (int j = 1; j < MAX_MODELS; j++)
+	/* Cosmetic and other client-local MD5 models may be loaded without a
+	 * server precache slot. They still own Vulkan buffers and must participate
+	 * in the same reset/retirement path as precached alias models. */
+	for (int j = 0; j < mod_numknown; j++)
 	{
-		if (!(m = cl.model_precache[j]))
-			break;
-		if (m->type != mod_alias)
+		m = &mod_known[j];
+		if (m->needload || m->type != mod_alias)
 			continue;
 
 		for (int i = 0; i < PV_SIZE; ++i)
