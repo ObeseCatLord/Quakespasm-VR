@@ -503,6 +503,7 @@ typedef struct
 	vulkan_pipeline_t		 md5_8_mboit_moment_pipelines[MODEL_PIPELINE_COUNT];
 	vulkan_pipeline_t		 md5_8_mboit_composite_pipelines[MODEL_PIPELINE_COUNT];
 	vulkan_pipeline_t		 postprocess_pipeline;
+	vulkan_pipeline_t		 hidden_area_black_pipeline;
 	vulkan_pipeline_t		 wboit_resolve_pipeline;
 	vulkan_pipeline_t		 mboit_resolve_pipeline;
 	vulkan_pipeline_t		 screen_effects_pipeline;

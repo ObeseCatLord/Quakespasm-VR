@@ -2680,6 +2680,8 @@ DECLARE_SHADER_MODULE (sky_cube_stereo_vert);
 DECLARE_SHADER_MODULE (sky_cube_frag);
 DECLARE_SHADER_MODULE (postprocess_vert);
 DECLARE_SHADER_MODULE (postprocess_frag);
+DECLARE_SHADER_MODULE (hidden_area_vert);
+DECLARE_SHADER_MODULE (hidden_area_frag);
 DECLARE_SHADER_MODULE (scene_upscale_frag);
 DECLARE_SHADER_MODULE (scene_upscale_stereo_frag);
 DECLARE_SHADER_MODULE (ssao_composite_frag);
@@ -4404,6 +4406,28 @@ static void R_CreatePostprocessPipelines ()
 	R_SetPipelineRenderPassVariant (&infos, SUBPASS_POST_PROCESS, MAIN_RENDER_PASS_STANDARD);
 	R_CreateGraphicsPipeline (&vulkan_globals.postprocess_pipeline, &infos, vulkan_globals.postprocess_pipeline.layout, "postprocess");
 
+	if (vulkan_globals.stereo_active)
+	{
+		/* The runtime mesh is projected on the CPU for each eye. One vertex
+		 * supplies both clip positions; gl_ViewIndex selects the destination. */
+		const VkVertexInputAttributeDescription attributes[2] = {
+			{0, 0, VK_FORMAT_R32G32_SFLOAT, 0},
+			{1, 0, VK_FORMAT_R32G32_SFLOAT, 2 * sizeof (float)},
+		};
+		const VkVertexInputBindingDescription binding = {0, 4 * sizeof (float), VK_VERTEX_INPUT_RATE_VERTEX};
+		R_CopyPipelineCreateInfos (&infos, &base);
+		infos.multisample_state.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+		infos.vertex_input_state.vertexAttributeDescriptionCount = countof (attributes);
+		infos.vertex_input_state.pVertexAttributeDescriptions = attributes;
+		infos.vertex_input_state.vertexBindingDescriptionCount = 1;
+		infos.vertex_input_state.pVertexBindingDescriptions = &binding;
+		infos.shader_stages[0].module = hidden_area_vert_module;
+		infos.shader_stages[1].module = hidden_area_frag_module;
+		R_SetPipelineRenderPassVariant (&infos, SUBPASS_POST_PROCESS, MAIN_RENDER_PASS_STANDARD);
+		R_CreateGraphicsPipeline (&vulkan_globals.hidden_area_black_pipeline, &infos,
+			vulkan_globals.postprocess_pipeline.layout, "hidden_area_black");
+	}
+
 	R_CopyPipelineCreateInfos (&infos, &base);
 	infos.blend_attachment_states[0].blendEnable = VK_TRUE;
 	infos.blend_attachment_states[0].srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
@@ -4551,6 +4575,8 @@ static void R_CreateShaderModules ()
 	CREATE_SHADER_MODULE (sky_cube_frag);
 	CREATE_SHADER_MODULE (postprocess_vert);
 	CREATE_SHADER_MODULE (postprocess_frag);
+	CREATE_SHADER_MODULE_COND (hidden_area_vert, vulkan_globals.stereo_active);
+	CREATE_SHADER_MODULE_COND (hidden_area_frag, vulkan_globals.stereo_active);
 	CREATE_SHADER_MODULE (scene_upscale_frag);
 	CREATE_SHADER_MODULE_COND (scene_upscale_stereo_frag, vulkan_globals.stereo_active);
 #ifdef _DEBUG
@@ -4690,6 +4716,8 @@ static void R_DestroyShaderModules ()
 	DESTROY_SHADER_MODULE (sky_cube_frag);
 	DESTROY_SHADER_MODULE (postprocess_vert);
 	DESTROY_SHADER_MODULE (postprocess_frag);
+	DESTROY_SHADER_MODULE (hidden_area_vert);
+	DESTROY_SHADER_MODULE (hidden_area_frag);
 	DESTROY_SHADER_MODULE (scene_upscale_frag);
 	DESTROY_SHADER_MODULE (scene_upscale_stereo_frag);
 	DESTROY_SHADER_MODULE (ssao_composite_frag);
@@ -4927,6 +4955,8 @@ void R_DestroyPipelines (void)
 		}
 	vkDestroyPipeline (vulkan_globals.device, vulkan_globals.postprocess_pipeline.handle, NULL);
 	vulkan_globals.postprocess_pipeline.handle = VK_NULL_HANDLE;
+	vkDestroyPipeline (vulkan_globals.device, vulkan_globals.hidden_area_black_pipeline.handle, NULL);
+	vulkan_globals.hidden_area_black_pipeline.handle = VK_NULL_HANDLE;
 	if (vulkan_globals.wboit_resolve_pipeline.handle != VK_NULL_HANDLE)
 	{
 		vkDestroyPipeline (vulkan_globals.device, vulkan_globals.wboit_resolve_pipeline.handle, NULL);

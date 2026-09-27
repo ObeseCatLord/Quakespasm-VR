@@ -86,6 +86,8 @@ DECLARE_SHADER_SPV (sky_cube_stereo_vert);
 DECLARE_SHADER_SPV (sky_cube_frag);
 DECLARE_SHADER_SPV (postprocess_vert);
 DECLARE_SHADER_SPV (postprocess_frag);
+DECLARE_SHADER_SPV (hidden_area_vert);
+DECLARE_SHADER_SPV (hidden_area_frag);
 DECLARE_SHADER_SPV (scene_upscale_frag);
 DECLARE_SHADER_SPV (scene_upscale_stereo_frag);
 DECLARE_SHADER_SPV (ssao_composite_frag);

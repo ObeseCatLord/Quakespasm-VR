@@ -2519,6 +2519,7 @@ enum
 {
 	VR_OPT_EYE_TRACKING,
 	VR_OPT_FOVEATION,
+	VR_OPT_HIDDEN_AREA,
 	VR_OPT_HAPTICS,
 	VR_OPT_GORILLA,
 	VR_OPT_MENU_SCALE,
@@ -3006,6 +3007,9 @@ static void M_VROptions_Adjust (int dir)
 		Cvar_SetValueQuick (&vr_foveation, (float)mode);
 		break;
 	}
+	case VR_OPT_HIDDEN_AREA:
+		Cvar_SetValueQuick (&vr_hidden_area, vr_hidden_area.value == 0 ? 1 : 0);
+		break;
 	case VR_OPT_HAPTICS:
 		Cvar_SetValueQuick (&vr_haptic, vr_haptic.value == 0 ? 1 : 0);
 		break;
@@ -3154,6 +3158,9 @@ static void M_VROptions_Draw (cb_context_t *cbx)
 
 	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * VR_OPT_FOVEATION, "Foveation");
 	M_Print (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * VR_OPT_FOVEATION, foveation_modes[foveation]);
+
+	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * VR_OPT_HIDDEN_AREA, "Hidden Area Mask");
+	M_DrawCheckbox (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * VR_OPT_HIDDEN_AREA, vr_hidden_area.value != 0);
 
 	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * VR_OPT_HAPTICS, "Haptics");
 	M_DrawCheckbox (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * VR_OPT_HAPTICS, vr_haptic.value != 0);

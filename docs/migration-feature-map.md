@@ -102,11 +102,12 @@ Disposition meanings: REUSE/ADAPT keep the source behavior at existing owners; K
 | VR-015 — Optional desktop mirror and hidden-area depth mask | MAIN:Quake/vr.c:1933 (vr_mirror); MAIN:Quake/vr.c:741 (VR_DrawHiddenAreaDepthMask) | Quake/vr.c;donor render passes/WSI; **ADAPT**, P4 | Mirror can be disabled without losing XR submission; conservative per-eye mask never hides visible geometry or UI. |
 | VR-016 — VR MSAA and high-precision color targets | MAIN:Quake/vr.c:1932 (vr_msaa); MAIN:Quake/vr.c:1935 (vr_highprecision_targets) | Quake/gl_vidsdl.c;donor render passes; **DONOR-ADAPT**, P4 | Requested sample counts and color formats survive postprocess/resolve to XR; compare dark ramps and alpha edges. |
 
-For VR-015, the OpenXR backend already exposes per-eye hidden triangles, but
-the Vulkan renderer has no mask draw yet. The [hidden-area mask boundary and
-senior review](migration-hidden-area-mask.md) define the required view-space
-projection, stencil ownership, effect coverage, and final black output. The
-optional desktop mirror remains a separate implementation item.
+For VR-015, the OpenXR backend exposes per-eye hidden triangles and the Vulkan
+postprocess subpass now covers those regions in black after UI. The
+[hidden-area mask boundary and senior review](migration-hidden-area-mask.md)
+define the remaining scene-fragment rejection, stencil ownership, and effect
+qualification. The optional desktop mirror remains a separate implementation
+item.
 
 ### Weapon wheel and calibration
 

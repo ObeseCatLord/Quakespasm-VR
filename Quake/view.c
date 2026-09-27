@@ -87,6 +87,7 @@ cvar_t vr_hud_scale = {"vr_hud_scale", "0.025", CVAR_ARCHIVE};
  * gaze is valid and stable. Fixed foveation remains an explicit menu choice. */
 cvar_t vr_eye_tracking = {"vr_eye_tracking", "1", CVAR_ARCHIVE};
 cvar_t vr_foveation = {"vr_foveation", "2", CVAR_ARCHIVE};
+cvar_t vr_hidden_area = {"vr_hidden_area", "1", CVAR_ARCHIVE};
 cvar_t vr_viewkick = {"vr_viewkick", "0", CVAR_NONE};
 cvar_t vr_aimmode = {"vr_aimmode", "7", CVAR_ARCHIVE};
 cvar_t vr_deadzone = {"vr_deadzone", "30", CVAR_ARCHIVE};
@@ -2552,6 +2553,7 @@ void V_Init (void)
 	Cvar_RegisterVariable (&vr_hud_scale);
 	Cvar_RegisterVariable (&vr_eye_tracking);
 	Cvar_RegisterVariable (&vr_foveation);
+	Cvar_RegisterVariable (&vr_hidden_area);
 	Cvar_RegisterVariable (&vr_viewkick);
 	Cvar_RegisterVariable (&vr_aimmode);
 	Cvar_RegisterVariable (&vr_deadzone);

@@ -45,7 +45,8 @@ inert on missing/invalid data, session recreation and device loss.
 The inherited OpenVR renderer draws a hidden-area depth/color mask after the
 clear, and draws black into hidden regions again after screen and UI output.
 Matching visible behavior therefore requires final black coverage as well as
-scene fragment rejection. SSAO samples neighboring depth, water warp samples
+scene fragment rejection. The Vulkan postprocess subpass now draws the projected
+per-eye mask in black after the ordinary image. SSAO samples neighboring depth, water warp samples
 displaced color, palette work samples nearby pixels, and bicubic upscale has a
 4×4 source footprint. Masked source pixels near the lens boundary could leak
 artifacts into visible pixels. Keep a justified guard region or bypass the mask
@@ -84,8 +85,11 @@ The precise implementation schedule and measured GPU savings are not yet
 established. The current backend mesh export is source readiness, not a working
 Vulkan hidden-area mask.
 
-The per-eye `VRXR_ProjectHiddenAreaVertex` math helper now maps backend
-view-space vertices through the current asymmetric FOV with Vulkan Y inversion.
-Its focused fixture checks unequal eye frusta, corner placement, and invalid
-input handling. No Vulkan mask draw consumes it yet; the scene and final-black
-passes above remain implementation work.
+The per-eye `VRXR_ProjectHiddenAreaVertex` math helper maps backend view-space
+vertices through the current asymmetric FOV with Vulkan Y inversion. Its
+focused fixture checks unequal eye frusta, corner placement, and invalid input
+handling. The final-black Vulkan draw now consumes it, with both eyes packed
+into one multiview vertex stream and extra triangles made degenerate. A missing,
+oversized, or invalid mesh skips both eyes. `vr_hidden_area` controls this draw
+and appears in VR options. The scene still renders into the hidden region;
+world-fragment rejection and qualification of neighboring effects remain.

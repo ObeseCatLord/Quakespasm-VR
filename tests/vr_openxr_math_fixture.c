@@ -97,9 +97,37 @@ static void check_hidden_area_projection (void)
 	assert (!VRXR_ProjectHiddenAreaVertex (&eyes[0], source, NULL));
 	assert (!memcmp (result, sentinel, sizeof result));
 }
+
+static void check_hidden_area_packing (void)
+{
+	const vrxr_view_t eyes[2] = {
+		{.left = -1, .right = 1, .down = -1, .up = 1},
+		{.left = -.8f, .right = 1.2f, .down = -1, .up = 1}
+	};
+	const float left[6] = {-1, 1, 1, 1, 0, -1};
+	const float right[12] = {-1, 1, 1, 1, 0, -1,
+		-.8f, -1, 1.2f, -1, 0, 1};
+	const float *source[2] = {left, right};
+	const uint32_t triangles[2] = {1, 2};
+	float vertices[6][4] = {{0}};
+	assert (VRXR_PackHiddenAreaVertices (eyes, source, triangles, vertices, 6) == 6);
+	for (int i = 3; i < 6; ++i)
+	{
+		assert (vertices[i][0] == vertices[2][0]);
+		assert (vertices[i][1] == vertices[2][1]);
+	}
+	assert (fabsf (vertices[3][2] + 1) < .000001f);
+	assert (fabsf (vertices[3][3] - 1) < .000001f);
+	assert (!VRXR_PackHiddenAreaVertices (eyes, source, triangles, vertices, 5));
+	const uint32_t huge[2] = {UINT32_MAX, 1};
+	assert (!VRXR_PackHiddenAreaVertices (eyes, source, huge, vertices, 6));
+	const float *missing[2] = {left, NULL};
+	assert (!VRXR_PackHiddenAreaVertices (eyes, missing, triangles, vertices, 6));
+}
 int main (void)
 {
 	check_hidden_area_projection ();
+	check_hidden_area_packing ();
 	vrxr_frame_t f = {0};
 	f.devices[0].valid = 1;
 	for (int config = 0; config < 4; ++config)

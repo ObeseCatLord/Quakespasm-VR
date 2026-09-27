@@ -4787,9 +4787,44 @@ static void GL_RecordFrameReadback (void *data)
 	ScheduleScreenshotCopy (readback->commands, &readback->buffer, &readback->memory);
 }
 
+typedef struct
+{
+	VkBuffer buffer;
+	VkDeviceSize offset;
+	uint32_t vertex_count;
+} xr_hidden_area_draw_t;
+
+/* Snapshot both runtime meshes before the dynamic vertex flush. The borrowed
+ * backend arrays can change on the next XR visibility-mask event. Missing or
+ * malformed data disables the draw for both eyes, preserving the full image. */
+static xr_hidden_area_draw_t GL_PrepareHiddenAreaBlack (void)
+{
+	xr_hidden_area_draw_t draw = {0};
+	const float *source[2];
+	uint32_t triangles[2];
+	if (!vulkan_globals.stereo_active || !vr_hidden_area.value)
+		return draw;
+	for (int eye = 0; eye < 2; ++eye)
+	{
+		triangles[eye] = VRXR_GetHiddenAreaMesh (eye, &source[eye]);
+		/* Avoid an unbounded per-frame upload from a broken runtime. */
+		if (!source[eye] || !triangles[eye] || triangles[eye] > 65536)
+			return draw;
+	}
+	const uint32_t vertex_count = 3 * q_max (triangles[0], triangles[1]);
+	float (*vertices)[4] = (float (*)[4])R_VertexAllocate (
+		(int)(vertex_count * sizeof (*vertices)), &draw.buffer, &draw.offset);
+	if (!vertices)
+		return (xr_hidden_area_draw_t){0};
+	draw.vertex_count = VRXR_PackHiddenAreaVertices (openxr_frame.views, source,
+		triangles, vertices, vertex_count);
+	return draw;
+}
+
 static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 {
 	R_SubmitStagingBuffers ();
+	const xr_hidden_area_draw_t hidden_area = GL_PrepareHiddenAreaBlack ();
 	R_FlushDynamicBuffers ();
 
 	VkResult err;
@@ -4833,6 +4868,12 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 			cbx->cb, VK_PIPELINE_BIND_POINT_GRAPHICS, vulkan_globals.postprocess_pipeline.layout.handle, 0, 1, &postprocess_descriptor_set, 0, NULL);
 		R_PushConstants (cbx, VK_SHADER_STAGE_FRAGMENT_BIT, 0, 2 * sizeof (float), postprocess_values);
 		vkCmdDraw (cbx->cb, 3, 1, 0, 0);
+		if (hidden_area.vertex_count)
+		{
+			R_BindPipeline (cbx, VK_PIPELINE_BIND_POINT_GRAPHICS, vulkan_globals.hidden_area_black_pipeline);
+			vkCmdBindVertexBuffers (cbx->cb, 0, 1, &hidden_area.buffer, &hidden_area.offset);
+			vkCmdDraw (cbx->cb, hidden_area.vertex_count, 1, 0, 0);
+		}
 	}
 
 	GL_RecordOITResolveContext (parms, render_area);

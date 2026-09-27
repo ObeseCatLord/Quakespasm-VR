@@ -210,7 +210,9 @@ validation.
 an independently calculated direct eye projection across asymmetric/canted eyes,
 head rotation, translation, IPD, reversed depth and invalid inputs. It also
 checks hidden-area vertices at view-space Z=-1 against each eye's asymmetric
-Vulkan projection, including inverted Y and invalid inputs.
+Vulkan projection, including inverted Y and invalid inputs. It checks one
+multiview vertex stream with unequal per-eye triangle counts and degenerate
+padding.
 
 ```sh
 cc -std=c11 -Wall -Wextra -Werror tests/vr_openxr_math_fixture.c -lm \

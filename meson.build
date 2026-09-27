@@ -63,6 +63,8 @@ shaders = [
     'Shaders/ssao_filter_fp16.comp',
     'Shaders/ssao_composite_msaa.frag',
     'Shaders/postprocess.vert',
+    'Shaders/hidden_area.vert',
+    'Shaders/hidden_area.frag',
     'Shaders/showtris.frag',
     'Shaders/showtris.vert',
     'Shaders/md5_debug.vert',
@@ -213,7 +215,7 @@ fs = import('fs')
 
 shader_jobs = []
 foreach shader : shaders
-    target_env = (shader.contains('sops') or shader.contains('ssao_mip') or shader.contains('_fp16')) ? ['--target-env', 'vulkan1.1'] : []
+    target_env = (shader.contains('sops') or shader.contains('ssao_mip') or shader.contains('_fp16') or shader == 'Shaders/hidden_area.vert') ? ['--target-env', 'vulkan1.1'] : []
     shader_jobs += [[shader, fs.name(shader), target_env]]
 endforeach
 foreach variant : shader_variants
