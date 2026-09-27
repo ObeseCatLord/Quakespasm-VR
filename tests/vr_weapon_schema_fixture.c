@@ -66,14 +66,8 @@ static void test_qbj3_ad_schema(void)
 	assert(!strcmp(entries[0].viewmodel_path, "progs/v_mod.mdl"));
 	assert(entries[0].impulse == 42 && entries[0].scale == 0.75f);
 	assert(entries[0].held_scale == 0.5f && entries[0].held_offset[0] == 2);
-	assert(entries[0].mp_held_offset[0] == 1.1f);
-	assert(entries[0].schema_mp_held_offset[0] == 1);
-	assert(entries[0].mp_muzzle_offset[1] == 0);
-	assert(entries[0].schema_mp_muzzle_offset[0] == 2);
 	assert(entries[0].has_enhanced_held_offset && entries[0].enhanced_held_offset[2] == 7);
-	assert(entries[0].has_enhanced_mp_held_offset && entries[0].enhanced_mp_held_offset[0] == 6);
 	assert(entries[0].has_enhanced_muzzle_offset && entries[0].enhanced_muzzle_offset[0] == 3);
-	assert(entries[0].has_enhanced_mp_muzzle_offset && entries[0].enhanced_mp_muzzle_offset[2] == 0.7f);
 	assert(entries[0].has_muzzle_source_offset && entries[0].muzzle_source_offset[1] == 7);
 	assert(entries[0].has_muzzle_source_viewofs && entries[0].muzzle_source_viewofs);
 	assert(entries[0].spawn_at_self_origin && entries[0].has_spawn_at_self_origin);
@@ -163,8 +157,12 @@ static void test_rejections_and_bounds(void)
 	expect_rejected("{ bitmask 1 owned_mask 2147483648 }", 4);
 	expect_rejected("{ bitmask 1 owned_stat 999 }", 4);
 	expect_rejected("global_held_offset 1 2", 4);
-	expect_rejected("global_mp_held_offset 3.4e38 0 0 "
-				 "{ bitmask 1 mp_held_offset 3.4e38 0 0 }", 4);
+	expect_rejected("global_mp_held_offset 1e999 0 0", 4);
+	expect_rejected("global_mp_muzzle_offset 0 inf 0", 4);
+	expect_rejected("{ bitmask 1 mp_held_offset 1e999 0 0 }", 4);
+	expect_rejected("{ bitmask 1 mp_muzzle_offset 0 inf 0 }", 4);
+	expect_rejected("{ bitmask 1 enhanced_mp_held_offset 0 0 NaN }", 4);
+	expect_rejected("{ bitmask 1 enhanced_mp_muzzle_offset 0 1e999 0 }", 4);
 	expect_rejected("{ bitmask 1 } { bitmask 2 }", 1);
 
 	memset(overlong, 'k', sizeof(overlong) - 1);

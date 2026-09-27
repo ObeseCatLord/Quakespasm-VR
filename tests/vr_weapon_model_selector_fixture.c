@@ -141,10 +141,6 @@ int main(void)
 	entries[0].muzzle_offset[0] = 1.0f;
 	entries[0].muzzle_offset[1] = 2.0f;
 	entries[0].muzzle_offset[2] = 3.0f;
-	entries[0].has_mp_muzzle_offset = true;
-	entries[0].mp_muzzle_offset[0] = 4.0f;
-	entries[0].mp_muzzle_offset[1] = 5.0f;
-	entries[0].mp_muzzle_offset[2] = 6.0f;
 
 	SetPath(&entries[1], "progs/switched.mdl");
 	entries[1].has_muzzle_offset = true;
@@ -157,10 +153,6 @@ int main(void)
 	entries[2].enhanced_muzzle_offset[0] = 10.0f;
 	entries[2].enhanced_muzzle_offset[1] = 20.0f;
 	entries[2].enhanced_muzzle_offset[2] = 30.0f;
-	entries[2].has_enhanced_mp_muzzle_offset = true;
-	entries[2].enhanced_mp_muzzle_offset[0] = 1.0f;
-	entries[2].enhanced_mp_muzzle_offset[1] = 2.0f;
-	entries[2].enhanced_mp_muzzle_offset[2] = 3.0f;
 	assert(VR_WeaponCalibrationApplySchema(entries, 3));
 
 	InitModel(&classic_model, "progs/classic.mdl");

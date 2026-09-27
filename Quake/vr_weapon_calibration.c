@@ -353,30 +353,14 @@ static qboolean VR_CalibrationEntryIsFinite(
 	if ((entry->has_held_offset &&
 		 !VR_CalibrationVectorIsFinite(entry->held_offset)) ||
 		(entry->has_held_scale && !isfinite(entry->held_scale)) ||
-		(entry->has_mp_held_offset &&
-		 !VR_CalibrationVectorIsFinite(entry->mp_held_offset)) ||
-		(entry->has_schema_mp_held_offset &&
-		 !VR_CalibrationVectorIsFinite(entry->schema_mp_held_offset)) ||
 		(entry->has_muzzle_offset &&
 		 !VR_CalibrationVectorIsFinite(entry->muzzle_offset)) ||
-		(entry->has_mp_muzzle_offset &&
-		 !VR_CalibrationVectorIsFinite(entry->mp_muzzle_offset)) ||
-		(entry->has_schema_mp_muzzle_offset &&
-		 !VR_CalibrationVectorIsFinite(entry->schema_mp_muzzle_offset)) ||
 		(entry->has_muzzle_source_offset &&
 		 !VR_CalibrationVectorIsFinite(entry->muzzle_source_offset)) ||
 		(entry->has_enhanced_held_offset &&
 		 !VR_CalibrationVectorIsFinite(entry->enhanced_held_offset)) ||
-		(entry->has_enhanced_mp_held_offset &&
-		 !VR_CalibrationVectorIsFinite(entry->enhanced_mp_held_offset)) ||
 		(entry->has_enhanced_muzzle_offset &&
-		 !VR_CalibrationVectorIsFinite(entry->enhanced_muzzle_offset)) ||
-		(entry->has_enhanced_mp_muzzle_offset &&
-		 !VR_CalibrationVectorIsFinite(entry->enhanced_mp_muzzle_offset)))
-		return false;
-
-	if ((entry->has_schema_mp_held_offset && !entry->has_mp_held_offset) ||
-		(entry->has_schema_mp_muzzle_offset && !entry->has_mp_muzzle_offset))
+		 !VR_CalibrationVectorIsFinite(entry->enhanced_muzzle_offset)))
 		return false;
 
 	return true;
@@ -491,9 +475,7 @@ static qboolean VR_CalibrationLineIsClassicKey(const char *line, size_t len)
 {
 	return VR_CalibrationLineStartsWithKey(line, len, "held_scale") ||
 		VR_CalibrationLineStartsWithKey(line, len, "held_offset") ||
-		VR_CalibrationLineStartsWithKey(line, len, "mp_held_offset") ||
-		VR_CalibrationLineStartsWithKey(line, len, "muzzle_offset") ||
-		VR_CalibrationLineStartsWithKey(line, len, "mp_muzzle_offset");
+		VR_CalibrationLineStartsWithKey(line, len, "muzzle_offset");
 }
 
 static qboolean VR_CalibrationLineIsEnhancedKey(const char *line, size_t len)
@@ -501,11 +483,7 @@ static qboolean VR_CalibrationLineIsEnhancedKey(const char *line, size_t len)
 	return VR_CalibrationLineStartsWithKey(line, len,
 											"enhanced_held_offset") ||
 		VR_CalibrationLineStartsWithKey(line, len,
-										"enhanced_mp_held_offset") ||
-		VR_CalibrationLineStartsWithKey(line, len,
-										"enhanced_muzzle_offset") ||
-		VR_CalibrationLineStartsWithKey(line, len,
-										"enhanced_mp_muzzle_offset");
+										"enhanced_muzzle_offset");
 }
 
 static qboolean VR_CalibrationLineIsMultiplayerKey(const char *line, size_t len)

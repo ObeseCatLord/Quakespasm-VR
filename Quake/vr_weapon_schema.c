@@ -17,13 +17,9 @@ typedef struct
 	float held_scale;
 	vec3_t held_offset;
 	vec3_t muzzle_offset;
-	vec3_t mp_held_offset;
-	vec3_t mp_muzzle_offset;
 	qboolean has_held_scale;
 	qboolean has_held_offset;
 	qboolean has_muzzle_offset;
-	qboolean has_mp_held_offset;
-	qboolean has_mp_muzzle_offset;
 } vr_schema_globals_t;
 
 enum vr_schema_token_result
@@ -205,6 +201,29 @@ static qboolean VR_SchemaReadGlobalVector(vr_schema_parser_t *parser,
 	return VR_SchemaReadVector(parser, first, vector);
 }
 
+static qboolean VR_SchemaIgnoreVector(vr_schema_parser_t *parser,
+									 const char *first_token)
+{
+	vec3_t ignored;
+
+	return VR_SchemaReadVector(parser, first_token, ignored);
+}
+
+static qboolean VR_SchemaIgnoreGlobalVector(vr_schema_parser_t *parser)
+{
+	vec3_t ignored;
+
+	return VR_SchemaReadGlobalVector(parser, ignored);
+}
+
+static qboolean VR_SchemaIsLegacyMultiplayerVectorKey(const char *key)
+{
+	return !strcmp(key, "mp_held_offset") ||
+		!strcmp(key, "mp_muzzle_offset") ||
+		!strcmp(key, "enhanced_mp_held_offset") ||
+		!strcmp(key, "enhanced_mp_muzzle_offset");
+}
+
 static qboolean VR_SchemaFinishEntry(vr_weapon_schema_entry_t *entry,
 									 const vr_schema_globals_t *globals)
 {
@@ -223,30 +242,6 @@ static qboolean VR_SchemaFinishEntry(vr_weapon_schema_entry_t *entry,
 		memcpy(entry->muzzle_offset, globals->muzzle_offset, sizeof(vec3_t));
 		entry->has_muzzle_offset = true;
 	}
-	if (globals->has_mp_held_offset)
-	{
-		int i;
-		for (i = 0; i < 3; i++)
-			entry->mp_held_offset[i] += globals->mp_held_offset[i];
-		entry->has_mp_held_offset = true;
-	}
-	if (globals->has_mp_muzzle_offset)
-	{
-		int i;
-		for (i = 0; i < 3; i++)
-			entry->mp_muzzle_offset[i] += globals->mp_muzzle_offset[i];
-		entry->has_mp_muzzle_offset = true;
-	}
-	{
-		int i;
-		for (i = 0; i < 3; i++)
-			if (!isfinite(entry->mp_held_offset[i]) ||
-				!isfinite(entry->mp_muzzle_offset[i]))
-				return false;
-	}
-
-	/* Legacy MP-only values are accepted for old files but never supply the
-	 * shared held/muzzle presentation used in both solo and multiplayer. */
 	if (!entry->viewmodel_path[0] && entry->model_path[0] &&
 		(entry->has_held_scale || entry->has_held_offset ||
 		 entry->has_muzzle_offset || entry->has_muzzle_source_offset ||
@@ -299,12 +294,10 @@ static qboolean VR_SchemaParseEntry(vr_schema_parser_t *parser,
 			return false;
 
 		if (!strcmp(key, "offset") || !strcmp(key, "held_offset") ||
-			!strcmp(key, "mp_held_offset") || !strcmp(key, "muzzle_offset") ||
-			!strcmp(key, "mp_muzzle_offset") ||
+			VR_SchemaIsLegacyMultiplayerVectorKey(key) ||
+			!strcmp(key, "muzzle_offset") ||
 			!strcmp(key, "enhanced_held_offset") ||
-			!strcmp(key, "enhanced_mp_held_offset") ||
 			!strcmp(key, "enhanced_muzzle_offset") ||
-			!strcmp(key, "enhanced_mp_muzzle_offset") ||
 			!strcmp(key, "muzzle_source_offset"))
 		{
 			if (!VR_SchemaReadValue(parser, value, sizeof(value)))
@@ -319,44 +312,24 @@ static qboolean VR_SchemaParseEntry(vr_schema_parser_t *parser,
 				if (!VR_SchemaReadVector(parser, value, entry->held_offset)) return false;
 				entry->has_held_offset = true;
 			}
-			else if (!strcmp(key, "mp_held_offset"))
+			else if (VR_SchemaIsLegacyMultiplayerVectorKey(key))
 			{
-				if (!VR_SchemaReadVector(parser, value, entry->mp_held_offset)) return false;
-				memcpy(entry->schema_mp_held_offset, entry->mp_held_offset, sizeof(vec3_t));
-				entry->has_mp_held_offset = true;
-				entry->has_schema_mp_held_offset = true;
+				if (!VR_SchemaIgnoreVector(parser, value)) return false;
 			}
 			else if (!strcmp(key, "muzzle_offset"))
 			{
 				if (!VR_SchemaReadVector(parser, value, entry->muzzle_offset)) return false;
 				entry->has_muzzle_offset = true;
 			}
-			else if (!strcmp(key, "mp_muzzle_offset"))
-			{
-				if (!VR_SchemaReadVector(parser, value, entry->mp_muzzle_offset)) return false;
-				memcpy(entry->schema_mp_muzzle_offset, entry->mp_muzzle_offset, sizeof(vec3_t));
-				entry->has_mp_muzzle_offset = true;
-				entry->has_schema_mp_muzzle_offset = true;
-			}
 			else if (!strcmp(key, "enhanced_held_offset"))
 			{
 				if (!VR_SchemaReadVector(parser, value, entry->enhanced_held_offset)) return false;
 				entry->has_enhanced_held_offset = true;
 			}
-			else if (!strcmp(key, "enhanced_mp_held_offset"))
-			{
-				if (!VR_SchemaReadVector(parser, value, entry->enhanced_mp_held_offset)) return false;
-				entry->has_enhanced_mp_held_offset = true;
-			}
 			else if (!strcmp(key, "enhanced_muzzle_offset"))
 			{
 				if (!VR_SchemaReadVector(parser, value, entry->enhanced_muzzle_offset)) return false;
 				entry->has_enhanced_muzzle_offset = true;
-			}
-			else if (!strcmp(key, "enhanced_mp_muzzle_offset"))
-			{
-				if (!VR_SchemaReadVector(parser, value, entry->enhanced_mp_muzzle_offset)) return false;
-				entry->has_enhanced_mp_muzzle_offset = true;
 			}
 			else
 			{
@@ -479,13 +452,11 @@ static qboolean VR_SchemaParseGlobal(vr_schema_parser_t *parser,
 	}
 	else if (!strcmp(key, "global_mp_held_offset"))
 	{
-		if (!VR_SchemaReadGlobalVector(parser, globals->mp_held_offset)) return false;
-		globals->has_mp_held_offset = true;
+		if (!VR_SchemaIgnoreGlobalVector(parser)) return false;
 	}
 	else if (!strcmp(key, "global_mp_muzzle_offset"))
 	{
-		if (!VR_SchemaReadGlobalVector(parser, globals->mp_muzzle_offset)) return false;
-		globals->has_mp_muzzle_offset = true;
+		if (!VR_SchemaIgnoreGlobalVector(parser)) return false;
 	}
 	return true;
 }

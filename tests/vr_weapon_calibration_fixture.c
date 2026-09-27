@@ -162,11 +162,9 @@ int main(void)
 	VR_WeaponCalibrationInit();
 	assert(registered_cvar_count == CALIBRATION_CVAR_COUNT);
 
-	/* A legacy multiplayer-only entry must not create a shared profile. */
+	/* A legacy multiplayer-only entry now has no shared presentation fields. */
 	memset(&entry, 0, sizeof(entry));
 	SetPath(&entry, "progs/mp_only.mdl");
-	entry.has_mp_held_offset = true;
-	entry.mp_held_offset[0] = 4.0f;
 	assert(VR_WeaponCalibrationApplySchema(&entry, 1));
 	AssertHeldFailure("progs/mp_only.mdl", false);
 
@@ -178,40 +176,18 @@ int main(void)
 	entry.held_offset[2] = 10.0f;
 	entry.has_held_scale = true;
 	entry.held_scale = 0.5f;
-	entry.has_mp_held_offset = true;
-	entry.mp_held_offset[0] = 1.0f;
-	entry.mp_held_offset[1] = -2.0f;
-	entry.mp_held_offset[2] = 3.0f;
-	entry.has_schema_mp_held_offset = true;
-	memcpy(entry.schema_mp_held_offset, entry.mp_held_offset, sizeof(vec3_t));
 	entry.has_enhanced_held_offset = true;
 	entry.enhanced_held_offset[0] = 5.0f;
 	entry.enhanced_held_offset[1] = 6.0f;
 	entry.enhanced_held_offset[2] = 7.0f;
-	entry.has_enhanced_mp_held_offset = true;
-	entry.enhanced_mp_held_offset[0] = 2.0f;
-	entry.enhanced_mp_held_offset[1] = 3.0f;
-	entry.enhanced_mp_held_offset[2] = 4.0f;
 	entry.has_muzzle_offset = true;
 	entry.muzzle_offset[0] = 3.0f;
 	entry.muzzle_offset[1] = 4.0f;
 	entry.muzzle_offset[2] = 10.0f;
-	entry.has_mp_muzzle_offset = true;
-	entry.mp_muzzle_offset[0] = 1.0f;
-	entry.mp_muzzle_offset[1] = 2.0f;
-	entry.mp_muzzle_offset[2] = 3.0f;
-	entry.has_schema_mp_muzzle_offset = true;
-	entry.schema_mp_muzzle_offset[0] = 0.25f;
-	entry.schema_mp_muzzle_offset[1] = 0.5f;
-	entry.schema_mp_muzzle_offset[2] = 1.0f;
 	entry.has_enhanced_muzzle_offset = true;
 	entry.enhanced_muzzle_offset[0] = 0.0f;
 	entry.enhanced_muzzle_offset[1] = 0.0f;
 	entry.enhanced_muzzle_offset[2] = 20.0f;
-	entry.has_enhanced_mp_muzzle_offset = true;
-	entry.enhanced_mp_muzzle_offset[0] = 1.0f;
-	entry.enhanced_mp_muzzle_offset[1] = 2.0f;
-	entry.enhanced_mp_muzzle_offset[2] = 3.0f;
 	entry.has_muzzle_source_offset = true;
 	entry.muzzle_source_offset[0] = 2.0f;
 	entry.muzzle_source_offset[1] = 3.0f;
