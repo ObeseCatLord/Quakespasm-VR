@@ -109,12 +109,18 @@ reattachment. Desktop-to-XR hot-connect without the startup binding, terminal
 runtime-loss recovery and live headset verification are still open; see the
 [session-toggle boundary](migration-openxr-session-toggle.md).
 
+For VR-010, weapon-wheel hover, menu navigation, and weapon-contact pulses
+already route through the same `vr_haptic` gate before physical-hand mapping
+and focused OpenXR dispatch. The read-only donor/2.0 call-chain audit found no
+missing haptic adapter. Controller/runtime behavior still needs device proof.
+
 For VR-015, the OpenXR backend exposes per-eye hidden triangles and the Vulkan
 postprocess subpass now covers those regions in black after UI. The
 [hidden-area mask boundary and senior review](migration-hidden-area-mask.md)
 define the remaining scene-fragment rejection, stencil ownership, and effect
-qualification. The optional desktop mirror remains a separate implementation
-item.
+qualification. The optional off/left/right desktop eye mirror now uses the
+existing Vulkan WSI and leaves XR submission owned by the headset path; visual
+and lifecycle qualification remains open.
 
 ### Weapon wheel and calibration
 
@@ -188,6 +194,13 @@ compensation uses the raw controller angles while QuakeC camera roll stays
 zero. The simulated Flak path verifies the basis; projectile impact/damage and
 ordinary desktop firing equivalence remain separate checks. Other vkQuake
 desktop graphics and viewmodel paths are unaffected by this scoped adapter.
+The classic id1, Hipnotic, and Rogue built-in held/muzzle defaults are now
+present even without `vr_weapons.txt`; file overrides still win. The server's
+private weapon scope reconstructs and world-clamps the accepted muzzle, with
+QuakeC source compensation inherited at the narrow firing boundary. Actual
+stock nail Think and grenade/rocket PostThink origins, near-wall impacts, and
+damage remain end-to-end acceptance checks, not established by the calibration
+fixture or code comparison.
 
 ### Co-op and saves
 
