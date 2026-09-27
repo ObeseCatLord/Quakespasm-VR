@@ -43,6 +43,15 @@ Evidence is from pinned Git objects: **I** = Ironwail `08d578136ff43d7d1ef38e636
 
 The asset evidence establishes implemented formats and lookup behavior, not complete QSS compatibility. Keep original file attribution and established subsystem ownership.
 
+The current BSP texture loader also checks the file's 15 lump spans before
+loading, bounds reads from each texture-table entry and payload to the texture lump,
+reads Quake 64 mip offsets after its `shift` field, and keeps inline Valve
+palette payloads in memory for safe texture reloads. A read-only scan of 1,088
+installed BSPs found 49,583 texture entries: eleven already-invalid zero-size
+entries, two truncated inline payloads, and no nonzero dimensions failing the
+64-pixel mip allocation rule. This is compatibility evidence for the installed
+data, not a runtime image comparison or a guarantee for other mods.
+
 ## `mj4m1` alias culling probe
 
 A local Linux desktop probe loaded the installed `mjolnir/mj4m1` assets in a

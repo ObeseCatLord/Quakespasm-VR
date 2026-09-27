@@ -33,7 +33,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 extern mz_ulong mz_crc32 (mz_ulong crc, const unsigned char *ptr, size_t buf_len);
 
 static void		 Mod_LoadSpriteModel (qmodel_t *mod, void *buffer);
-static void		 Mod_LoadBrushModel (qmodel_t *mod, const char *loadname, void *buffer);
+static void		 Mod_LoadBrushModel (qmodel_t *mod, const char *loadname, void *buffer, qfilesize_t buffer_size);
 static void		 Mod_LoadAliasModel (qmodel_t *mod, void *buffer,
 	qfilesize_t source_size, const char *skin_source);
 static qboolean	 Mod_LoadMD5MeshModel (qmodel_t *mod, const void *buffer,
@@ -1082,7 +1082,7 @@ static qmodel_t *Mod_LoadModel (qmodel_t *mod, qboolean crash)
 	{
 		char loadname[MAX_QPATH];
 		COM_FileBase (mod->name, loadname, sizeof (loadname));
-		Mod_LoadBrushModel (mod, loadname, buf);
+		Mod_LoadBrushModel (mod, loadname, buf, buf_filesize);
 	}
 	break;
 	}
@@ -1566,6 +1566,7 @@ static void Mod_LoadTextures (qmodel_t *mod, byte *mod_base, lump_t *l)
 {
 	int		   i, j, pixels, num, maxanim, altmax;
 	miptex_t   mt;
+	size_t	   texture_header_bytes;
 	texture_t *tx, *tx2;
 	texture_t *anims[10];
 	texture_t *altanims[10];
@@ -1588,8 +1589,13 @@ static void Mod_LoadTextures (qmodel_t *mod, byte *mod_base, lump_t *l)
 	}
 	else
 	{
+		if (l->filelen < (int)sizeof (int))
+			Sys_Error ("Mod_LoadTextures: truncated texture table in %s", mod->name);
 		m = mod_base + l->fileofs;
 		nummiptex = ReadLongUnaligned (m + offsetof (dmiptexlump_t, nummiptex));
+		if (nummiptex < 0 || nummiptex > INT_MAX - 2 ||
+			(size_t)nummiptex > ((size_t)l->filelen - sizeof (int)) / sizeof (int))
+			Sys_Error ("Mod_LoadTextures: invalid texture table in %s", mod->name);
 	}
 	// johnfitz
 
@@ -1605,18 +1611,27 @@ static void Mod_LoadTextures (qmodel_t *mod, byte *mod_base, lump_t *l)
 
 	for (i = 0; i < nummiptex; i++)
 	{
+		size_t base_pixels, expected_pixels, available_pixels;
 		dataofs = ReadLongUnaligned (m + offsetof (dmiptexlump_t, dataofs[i]));
 		if (dataofs == -1)
 			continue;
+		texture_header_bytes = mod->bspversion == BSPVERSION_QUAKE64 ? sizeof (miptex64_t) : sizeof (miptex_t);
+		if (dataofs < 0 || (size_t)dataofs > (size_t)l->filelen ||
+			texture_header_bytes > (size_t)l->filelen - (size_t)dataofs)
+		{
+			Con_Warning ("Invalid texture header %d in %s\n", i, mod->name);
+			continue;
+		}
 		memcpy (&mt, m + dataofs, sizeof (miptex_t));
 		mt.width = LittleLong (mt.width);
 		mt.height = LittleLong (mt.height);
 		for (j = 0; j < MIPLEVELS; j++)
-			mt.offsets[j] = LittleLong (mt.offsets[j]);
+			mt.offsets[j] = mod->bspversion == BSPVERSION_QUAKE64 ?
+				ReadLongUnaligned (m + dataofs + offsetof (miptex64_t, offsets) + j * sizeof (unsigned)) : LittleLong (mt.offsets[j]);
 
-		if (mt.width == 0 || mt.height == 0)
+		if (mt.width < 8 || mt.height < 8)
 		{
-			Con_Warning ("Zero sized texture %.16s in %s!\n", mt.name, mod->name);
+			Con_Warning ("Invalid texture size for %.16s in %s\n", mt.name, mod->name);
 			continue;
 		}
 
@@ -1632,23 +1647,33 @@ static void Mod_LoadTextures (qmodel_t *mod, byte *mod_base, lump_t *l)
 			continue;
 		}
 
-		pixels = mt.width * mt.height / 64 * 85;
-		pixels_p = m + dataofs + sizeof (miptex_t);
+		if (!Mod_CheckedSizeMul (mt.width, mt.height, &base_pixels) || base_pixels > INT_MAX || base_pixels % 64 != 0 ||
+			!Mod_CheckedSizeMul (base_pixels / 64, 85, &expected_pixels) || expected_pixels > INT_MAX)
+		{
+			Con_Warning ("Invalid texture dimensions for %.16s in %s\n", mt.name, mod->name);
+			continue;
+		}
+		pixels = (int)expected_pixels;
+		pixels_p = m + dataofs + texture_header_bytes;
+		available_pixels = (size_t)l->filelen - (size_t)dataofs - texture_header_bytes;
 #ifdef BSP29_VALVE
 		// valve textures have a color palette immediately following the pixels
 		if (pal)
 		{
-			if ((pixels_p + pixels + 2) <= (mod_base + l->fileofs + l->filelen))
+			if (available_pixels < expected_pixels || available_pixels - expected_pixels < sizeof (colors))
 			{
-				// the palette is basically garunteed to be 256 colors but,
-				// we might as well use the value since it *does* exist
-				memcpy (&colors, pixels_p + pixels, 2);
-				colors = LittleShort (colors);
-				// add space for the color palette
-				pixels += colors * 3;
+				mod->textures[i] = Mod_MissingExternalMiptex (&mt, pal);
+				continue;
 			}
-			// add space for the color count
-			pixels += 2;
+			memcpy (&colors, pixels_p + expected_pixels, sizeof (colors));
+			colors = LittleShort (colors);
+			if (colors != 256 || expected_pixels > INT_MAX - (2 + 256 * 3) ||
+				available_pixels - expected_pixels - sizeof (colors) < (size_t)colors * 3)
+			{
+				mod->textures[i] = Mod_MissingExternalMiptex (&mt, pal);
+				continue;
+			}
+			pixels += sizeof (colors) + colors * 3;
 		}
 #endif
 		tx = (texture_t *)Mem_Alloc (sizeof (texture_t) + pixels);
@@ -1660,20 +1685,36 @@ static void Mod_LoadTextures (qmodel_t *mod, byte *mod_base, lump_t *l)
 		tx->height = mt.height;
 		tx->type = Mod_TextureTypeFromName (tx->name);
 		for (j = 0; j < MIPLEVELS; j++)
-			tx->offsets[j] = mt.offsets[j] + sizeof (texture_t) - sizeof (miptex_t);
+			tx->offsets[j] = mt.offsets[j] + sizeof (texture_t) - texture_header_bytes;
 		// the pixels immediately follow the structures
 
 		// ericw -- check for pixels extending past the end of the lump.
 		// appears in the wild; e.g. jam2_tronyn.bsp (func_mapjam2),
 		// kellbase1.bsp (quoth), and can lead to a segfault if we read past
 		// the end of the .bsp file buffer
-		if ((pixels_p + pixels) > (mod_base + l->fileofs + l->filelen))
+		if ((size_t)pixels > available_pixels)
 		{
 			Con_DPrintf ("Texture %.16s extends past end of lump\n", mt.name);
-			pixels = q_max (0, (mod_base + l->fileofs + l->filelen) - pixels_p);
+			// Keep the partial image but reload from its zero-padded in-memory
+			// copy, never from beyond the original BSP lump.
+			memset ((byte *)(tx + 1) + available_pixels, 0, (size_t)pixels - available_pixels);
+			pixels = (int)available_pixels;
+			tx->source_file[0] = 0;
+			tx->source_offset = (src_offset_t)(tx + 1);
 		}
-		q_strlcpy (tx->source_file, mod->name, sizeof (tx->source_file));
-		tx->source_offset = (src_offset_t)pixels_p - (src_offset_t)mod_base;
+		else
+		{
+			q_strlcpy (tx->source_file, mod->name, sizeof (tx->source_file));
+			tx->source_offset = (src_offset_t)pixels_p - (src_offset_t)mod_base;
+		}
+		// Palette reloads need all four mip levels and the color table. The
+		// generic file reload reads only base pixels, so keep this validated
+		// payload under the texture owner's in-memory source instead.
+		if (pal)
+		{
+			tx->source_file[0] = 0;
+			tx->source_offset = (src_offset_t)(tx + 1);
+		}
 
 		Atomic_StoreUInt32 (&tx->update_warp, false); // johnfitz
 		tx->warpimage = NULL;						  // johnfitz
@@ -3549,11 +3590,14 @@ static void Mod_SetupSubmodels (qmodel_t *mod)
 Mod_LoadBrushModel
 =================
 */
-static void Mod_LoadBrushModel (qmodel_t *mod, const char *loadname, void *buffer)
+static void Mod_LoadBrushModel (qmodel_t *mod, const char *loadname, void *buffer, qfilesize_t buffer_size)
 {
 	int		   i;
 	int		   bsp2;
 	dheader_t *header;
+
+	if (buffer_size < (qfilesize_t)sizeof (dheader_t))
+		Sys_Error ("Mod_LoadBrushModel: truncated header in %s", mod->name);
 
 	mod->type = mod_brush;
 	mod->is_worldmodel = (sv.modelname[0] && !q_strcasecmp (loadname, sv.name));
@@ -3591,6 +3635,14 @@ static void Mod_LoadBrushModel (qmodel_t *mod, const char *loadname, void *buffe
 
 	for (i = 0; i < (int)sizeof (dheader_t) / 4; i++)
 		((int *)header)[i] = LittleLong (((int *)header)[i]);
+	for (i = 0; i < HEADER_LUMPS; i++)
+	{
+		const lump_t *lump = &header->lumps[i];
+		if (lump->fileofs < 0 || lump->filelen < 0 ||
+			(qfilesize_t)lump->fileofs > buffer_size ||
+			(qfilesize_t)lump->filelen > buffer_size - (qfilesize_t)lump->fileofs)
+			Sys_Error ("Mod_LoadBrushModel: invalid lump %d in %s", i, mod->name);
+	}
 
 	// load into heap
 	Mod_LoadVertexes (mod, mod_base, &header->lumps[LUMP_VERTEXES]);
