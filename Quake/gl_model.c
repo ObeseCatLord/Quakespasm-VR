@@ -77,6 +77,8 @@ static void Mod_FreeAvatarBindSurfaces (md5_avatar_bind_surface_t *surface)
 	while (surface)
 	{
 		md5_avatar_bind_surface_t *next = surface->next;
+		if (surface->skin)
+			Mem_Free (surface->skin); /* optional skin and weights share this allocation */
 		Mem_Free (surface); /* vertices and indexes share this allocation */
 		surface = next;
 	}
@@ -5437,10 +5439,12 @@ static md5_avatar_bind_surface_t *MD5_CaptureAvatarBindSurface (
 	size_t numweights, const byte *baked_vertices, size_t vertex_size,
 	const unsigned short *indexes, int numverts, int numindexes,
 	const byte *contact, const byte *equipment, const byte *gun,
-	const byte *axe, qboolean has_contact, size_t *total_bytes)
+	const byte *axe, qboolean has_contact, qboolean retain_weights,
+	size_t *total_bytes, size_t *total_skin_bytes)
 {
 	md5_avatar_bind_surface_t *surface;
-	size_t vertex_bytes, index_bytes, allocation_bytes, new_total;
+	size_t vertex_bytes, skin_bytes = 0, weight_bytes = 0;
+	size_t index_bytes, allocation_bytes, new_total, new_skin_total = 0;
 
 	if (numverts <= 0 || numindexes <= 0 ||
 		!Mod_CheckedSizeMul ((size_t)numverts, sizeof (md5_avatar_bind_vertex_t), &vertex_bytes) ||
@@ -5456,9 +5460,39 @@ static md5_avatar_bind_surface_t *MD5_CaptureAvatarBindSurface (
 	surface->next = NULL;
 	surface->numverts = numverts;
 	surface->numindexes = numindexes;
+	surface->numweights = 0;
 	surface->vertices = (md5_avatar_bind_vertex_t *)(surface + 1);
+	surface->skin = NULL;
+	surface->weights = NULL;
 	surface->indexes = (unsigned short *)((byte *)surface->vertices + vertex_bytes);
 	memcpy (surface->indexes, indexes, index_bytes);
+	/* Optional data has its own bounded allocation, so a large humanoid can
+	 * still load and use the generic path if reference-skin retention fails. */
+	if (retain_weights && total_skin_bytes && numweights <= UINT32_MAX &&
+		Mod_CheckedSizeMul ((size_t)numverts, sizeof (md5_avatar_bind_vertex_skin_t), &skin_bytes) &&
+		Mod_CheckedSizeMul (numweights, sizeof (md5_avatar_bind_weight_t), &weight_bytes) &&
+		Mod_CheckedSizeAdd (skin_bytes, weight_bytes, &new_skin_total) &&
+		Mod_CheckedSizeAdd (*total_skin_bytes, new_skin_total, &new_skin_total) &&
+		new_skin_total <= 16u * 1024u * 1024u)
+	{
+		surface->skin = Mem_AllocNonZero (skin_bytes + weight_bytes);
+		if (surface->skin)
+		{
+			surface->weights = (md5_avatar_bind_weight_t *)((byte *)surface->skin + skin_bytes);
+			surface->numweights = numweights;
+			*total_skin_bytes = new_skin_total;
+		}
+	}
+	if (surface->skin)
+		for (size_t influence = 0; influence < numweights; ++influence)
+		{
+			const md5weightinfo_t *input = &weights[influence];
+			md5_avatar_bind_weight_t *out = &surface->weights[influence];
+			if (input->joint_index >= R_AVATAR_MAX_JOINTS)
+				goto invalid;
+			out->joint_index = (uint32_t)input->joint_index;
+			Vector4Copy (input->pos, out->pos);
+		}
 	for (int vertex = 0; vertex < numverts; ++vertex)
 	{
 		md5_avatar_bind_vertex_t *out = &surface->vertices[vertex];
@@ -5468,6 +5502,11 @@ static md5_avatar_bind_surface_t *MD5_CaptureAvatarBindSurface (
 		if (info->firstweight > numweights || info->count > numweights - info->firstweight)
 			goto invalid;
 		VectorCopy (baked->xyz, out->xyz);
+		if (surface->skin)
+		{
+			surface->skin[vertex].firstweight = (uint32_t)info->firstweight;
+			surface->skin[vertex].numweights = info->count;
+		}
 		for (size_t influence = 0; influence < info->count; ++influence)
 		{
 			const md5weightinfo_t *weight = &weights[info->firstweight + influence];
@@ -5488,6 +5527,8 @@ static md5_avatar_bind_surface_t *MD5_CaptureAvatarBindSurface (
 	*total_bytes = new_total;
 	return surface;
 invalid:
+	if (surface->skin)
+		Mem_Free (surface->skin);
 	Mem_Free (surface);
 	return NULL;
 }
@@ -6796,6 +6837,7 @@ static qboolean Mod_LoadMD5MeshModelData (qmodel_t *mod, const void *buffer,
 		&ranger_props[MD5_AVATAR_PROP_GUN].surfaces,
 		&ranger_props[MD5_AVATAR_PROP_AXE].surfaces};
 	size_t avatar_bind_bytes = 0;
+	size_t avatar_skin_bytes = 0;
 	size_t ranger_prop_bytes = 0;
 	byte contact_mask[R_AVATAR_MAX_JOINTS], equipment_mask[R_AVATAR_MAX_JOINTS];
 	byte gun_mask[R_AVATAR_MAX_JOINTS], axe_mask[R_AVATAR_MAX_JOINTS];
@@ -7296,7 +7338,8 @@ static qboolean Mod_LoadMD5MeshModelData (qmodel_t *mod, const void *buffer,
 				vinfo, weight, numweights, poutvertexes, md5_vertex_size,
 				poutindexes, surf->numverts, surf->numindexes, contact_mask,
 				equipment_mask, gun_mask, axe_mask, has_avatar_contact,
-				&avatar_bind_bytes);
+				mod_custom_avatar && avatar_bind_profile->family == R_AVATAR_FAMILY_HUMANOID,
+				&avatar_bind_bytes, &avatar_skin_bytes);
 			if (!bind)
 				MD5ERROR ("%s: invalid or oversized avatar bind surface\n", fname);
 			*bind_tail = bind;

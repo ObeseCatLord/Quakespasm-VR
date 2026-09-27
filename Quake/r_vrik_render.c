@@ -140,9 +140,40 @@ static qmodel_t *R_VRIKRenderCustomModel (int id)
 /* Admission-time bind contacts use the original MD5 weights, captured before
  * vkQuake releases the CPU mesh. Match the inherited triangle equipment
  * filter, then project only the surviving bind vertices into Ranger space. */
+static qboolean R_VRIKRenderReferenceVertex (const md5_avatar_bind_surface_t *surface,
+	unsigned short vertex_index, const float (*reference)[12], size_t joint_count,
+	double out[3])
+{
+	const md5_avatar_bind_vertex_skin_t *skin;
+	if (!surface || !surface->skin || !surface->weights || !reference || !out ||
+		vertex_index >= surface->numverts || joint_count == 0 ||
+		joint_count > R_VRIK_RENDER_MAX_JOINTS)
+		return false;
+	skin = &surface->skin[vertex_index];
+	if (!skin->numweights || skin->firstweight > surface->numweights ||
+		skin->numweights > surface->numweights - skin->firstweight)
+		return false;
+	out[0] = out[1] = out[2] = 0.0;
+	for (size_t influence = 0; influence < skin->numweights; ++influence)
+	{
+		const md5_avatar_bind_weight_t *weight =
+			&surface->weights[skin->firstweight + influence];
+		if (weight->joint_index >= joint_count)
+			return false;
+		const float *matrix = reference[weight->joint_index];
+		for (int axis = 0; axis < 3; ++axis)
+			out[axis] += (double)matrix[axis * 4] * weight->pos[0] +
+				(double)matrix[axis * 4 + 1] * weight->pos[1] +
+				(double)matrix[axis * 4 + 2] * weight->pos[2] +
+				(double)matrix[axis * 4 + 3] * weight->pos[3];
+	}
+	return isfinite(out[0]) && isfinite(out[1]) && isfinite(out[2]);
+}
+
 static qboolean R_VRIKRenderMinimumBindZ (const qmodel_t *model,
 	const r_avatar_profile_t *profile, qboolean source, qboolean contacts,
-	const float target_to_canonical[12], double *minimum_out)
+	const float target_to_canonical[12], const float (*reference)[12],
+	size_t reference_joint_count, double *minimum_out)
 {
 	double minimum = DBL_MAX;
 	int surface_count = 0;
@@ -184,10 +215,15 @@ static qboolean R_VRIKRenderMinimumBindZ (const qmodel_t *model,
 					continue;
 				if (source && !contacts && (v->ranger_gun_owned || v->ranger_axe_owned))
 					continue;
-				const double z = source ? v->xyz[2] :
-					(double)target_to_canonical[8] * v->xyz[0] +
-					(double)target_to_canonical[9] * v->xyz[1] +
-					(double)target_to_canonical[10] * v->xyz[2] + target_to_canonical[11];
+				double point_xyz[3] = {v->xyz[0], v->xyz[1], v->xyz[2]};
+				if (reference && !R_VRIKRenderReferenceVertex (surface,
+					surface->indexes[index + point], reference,
+					reference_joint_count, point_xyz))
+					return false;
+				const double z = source ? point_xyz[2] :
+					(double)target_to_canonical[8] * point_xyz[0] +
+					(double)target_to_canonical[9] * point_xyz[1] +
+					(double)target_to_canonical[10] * point_xyz[2] + target_to_canonical[11];
 				if (!isfinite (z))
 					return false;
 				if (z < minimum)
@@ -203,14 +239,15 @@ static qboolean R_VRIKRenderMinimumBindZ (const qmodel_t *model,
 
 static qboolean R_VRIKRenderBindFloorCorrection (const qmodel_t *source,
 	const qmodel_t *target, const r_avatar_profile_t *profile,
-	const float target_to_canonical[12], float *correction_out)
+	const float target_to_canonical[12], const float (*target_reference)[12],
+	size_t target_joint_count, float *correction_out)
 {
 	double source_floor, target_floor, correction;
 	const qboolean contacts = profile->contact_root[0] != NULL;
 	if (!R_VRIKRenderMinimumBindZ (source, profile, true, contacts,
-		target_to_canonical, &source_floor) ||
+		target_to_canonical, NULL, 0, &source_floor) ||
 		!R_VRIKRenderMinimumBindZ (target, profile, false, contacts,
-			target_to_canonical, &target_floor))
+			target_to_canonical, target_reference, target_joint_count, &target_floor))
 		return false;
 	correction = source_floor - target_floor;
 	if (!isfinite (correction) || correction < -FLT_MAX || correction > FLT_MAX)
@@ -262,7 +299,7 @@ qboolean R_VRIKRenderStageAvatar (const entity_t *entity, int id)
 		floor_target_models[id] = target;
 		floor_attempted[id] = true;
 		floor_valid[id] = R_VRIKRenderBindFloorCorrection (source, target, profile,
-			selection.target_to_canonical, &floor_correction_z[id]);
+			selection.target_to_canonical, NULL, 0, &floor_correction_z[id]);
 		if (!floor_valid[id])
 			Con_Warning ("Avatar %s has no valid bind-floor contact; using Ranger\n", profile->key);
 	}

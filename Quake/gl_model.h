@@ -526,12 +526,28 @@ typedef struct md5_avatar_bind_vertex_s
 	qboolean ranger_axe_owned;
 } md5_avatar_bind_vertex_t;
 
+/* Optional custom-humanoid reference-skin input; absent for all other models. */
+typedef struct md5_avatar_bind_vertex_skin_s
+{
+	uint32_t firstweight;
+	uint32_t numweights;
+} md5_avatar_bind_vertex_skin_t;
+
+typedef struct md5_avatar_bind_weight_s
+{
+	uint32_t joint_index;
+	vec4_t pos; /* joint-local xyz multiplied by weight, then weight */
+} md5_avatar_bind_weight_t;
+
 typedef struct md5_avatar_bind_surface_s
 {
 	struct md5_avatar_bind_surface_s *next;
 	int numverts;
 	int numindexes;
+	size_t numweights;
 	md5_avatar_bind_vertex_t *vertices;
+	md5_avatar_bind_vertex_skin_t *skin;
+	md5_avatar_bind_weight_t *weights;
 	unsigned short *indexes;
 } md5_avatar_bind_surface_t;
 
