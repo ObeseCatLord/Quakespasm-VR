@@ -84,6 +84,11 @@ typedef struct r_vrik_rig_cache_s
 	const md5_skeleton_data_t *source_skeleton, *target_skeleton;
 	const r_avatar_profile_t *profile;
 	r_avatar_rig_t source_rig, target_rig;
+	r_avatar_presentation_context_t generic_presentation, humanoid_presentation;
+	r_avatar_humanoid_t humanoid_map;
+	float humanoid_display_scale;
+	qboolean generic_attempted, generic_valid;
+	qboolean humanoid_attempted, humanoid_valid;
 	qboolean valid;
 } r_vrik_rig_cache_t;
 
@@ -357,7 +362,7 @@ static qboolean R_VRIKRenderResolveRigs (r_vrik_staged_avatar_t *selection,
 		cache->source_skeleton != source->md5_skeleton ||
 		cache->target_skeleton != target->md5_skeleton || cache->profile != profile)
 	{
-		cache->valid = false;
+		memset (cache, 0, sizeof (*cache));
 		if (!R_AvatarResolveRig (R_AvatarProfileForId (PLAYER_AVATAR_RANGER),
 			&selection->source_skeleton, &cache->source_rig) ||
 			!R_AvatarResolveRig (profile, &selection->target_skeleton, &cache->target_rig))
@@ -376,6 +381,60 @@ static qboolean R_VRIKRenderResolveRigs (r_vrik_staged_avatar_t *selection,
 	selection->target_rig = cache->target_rig;
 	selection->source_rig.live = &selection->source_skeleton;
 	selection->target_rig.live = &selection->target_skeleton;
+	return true;
+}
+
+static qboolean R_VRIKRenderStageGenericPresentation (r_vrik_staged_avatar_t *selection)
+{
+	r_vrik_rig_cache_t *cache = &rig_cache[selection->id];
+	selection->target_rig.profile = selection->base_profile;
+	if (!cache->generic_attempted)
+	{
+		cache->generic_attempted = true;
+		cache->generic_valid = R_AvatarBuildPresentationContext (
+			&selection->source_rig, &selection->target_rig,
+			&cache->generic_presentation);
+	}
+	if (!cache->generic_valid)
+		return false;
+	selection->presentation = cache->generic_presentation;
+	return true;
+}
+
+static qboolean R_VRIKRenderStageHumanoidPresentation (r_vrik_staged_avatar_t *selection)
+{
+	r_vrik_rig_cache_t *cache = &rig_cache[selection->id];
+	if (!cache->humanoid_attempted)
+	{
+		const float source_height = R_AvatarHumanoidHeight (&selection->source_rig);
+		const float target_height = R_AvatarHumanoidHeight (&selection->target_rig);
+		cache->humanoid_attempted = true;
+		if (source_height > 0.001f && target_height > 0.001f)
+		{
+			r_avatar_profile_t normalized = *selection->base_profile;
+			normalized.display_scale *= source_height / target_height;
+			if (isfinite (normalized.display_scale) && normalized.display_scale > 0.0f)
+			{
+				r_avatar_rig_t target_rig = selection->target_rig;
+				target_rig.profile = &normalized;
+				cache->humanoid_valid = R_AvatarBuildPresentationContext (
+					&selection->source_rig, &target_rig,
+					&cache->humanoid_presentation) &&
+					R_AvatarBuildHumanoid (&selection->source_rig, &target_rig,
+						&cache->humanoid_presentation, &cache->humanoid_map);
+				if (cache->humanoid_valid)
+					cache->humanoid_display_scale = normalized.display_scale;
+			}
+		}
+	}
+	if (!cache->humanoid_valid)
+		return false;
+	selection->normalized_profile = *selection->base_profile;
+	selection->normalized_profile.display_scale = cache->humanoid_display_scale;
+	selection->target_rig.profile = &selection->normalized_profile;
+	selection->presentation = cache->humanoid_presentation;
+	selection->humanoid_map = cache->humanoid_map;
+	selection->humanoid = true;
 	return true;
 }
 
@@ -414,32 +473,9 @@ qboolean R_VRIKRenderStageAvatar (const entity_t *entity, int id)
 		return false;
 	selection.base_profile = profile;
 	if (r_avatar_humanoid.value != 0.0f && CustomAvatar_Get (id))
-	{
-		const float source_height = R_AvatarHumanoidHeight (&selection.source_rig);
-		const float target_height = R_AvatarHumanoidHeight (&selection.target_rig);
-		if (source_height > 0.001f && target_height > 0.001f)
-		{
-			selection.normalized_profile = *profile;
-			selection.normalized_profile.display_scale *= source_height / target_height;
-			if (isfinite(selection.normalized_profile.display_scale) &&
-				selection.normalized_profile.display_scale > 0.0f)
-			{
-				selection.target_rig.profile = &selection.normalized_profile;
-				selection.humanoid = R_AvatarBuildPresentationContext (
-					&selection.source_rig, &selection.target_rig,
-					&selection.presentation) &&
-					R_AvatarBuildHumanoid (&selection.source_rig,
-						&selection.target_rig, &selection.presentation,
-						&selection.humanoid_map);
-			}
-		}
-	}
-	if (!selection.humanoid)
-		selection.target_rig.profile = profile;
+		R_VRIKRenderStageHumanoidPresentation (&selection);
 	selection.humanoid_ik = selection.humanoid && r_avatar_humanoid.value != 2.0f;
-	if ((!selection.humanoid && !R_AvatarBuildPresentationContext (
-		&selection.source_rig, &selection.target_rig,
-		&selection.presentation)) ||
+	if ((!selection.humanoid && !R_VRIKRenderStageGenericPresentation (&selection)) ||
 		!R_VRIKRenderStageFloor (&selection, source, target))
 	{
 		if (!selection.humanoid)
@@ -448,9 +484,7 @@ qboolean R_VRIKRenderStageAvatar (const entity_t *entity, int id)
 		 * package available through its generic retargeting policy. */
 		selection.humanoid = false;
 		selection.humanoid_ik = false;
-		selection.target_rig.profile = profile;
-		if (!R_AvatarBuildPresentationContext (&selection.source_rig,
-			&selection.target_rig, &selection.presentation) ||
+		if (!R_VRIKRenderStageGenericPresentation (&selection) ||
 			!R_VRIKRenderStageFloor (&selection, source, target))
 			return false;
 	}

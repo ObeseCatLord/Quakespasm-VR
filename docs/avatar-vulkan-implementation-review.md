@@ -121,3 +121,12 @@ the cache. This avoids repeating the name-to-joint resolution for every peer
 every frame without changing the canonical animation or live tracking solve.
 The Linux build passes. The earlier 4.2 versus 2.6 microsecond isolated probe
 suggests the possible scale, but no full-frame improvement is claimed.
+
+The same admission cache now stores the generic and opt-in humanoid bind-only
+presentation contexts and the humanoid calibration. Each staged player copies
+the appropriate immutable values before its own floor correction and fresh
+tracked/animated pose. A change in admitted model, retained skeleton, profile,
+or game directory invalidates these values with the rig mapping. Failed
+humanoid admission still falls back to the generic path. The isolated
+3.6-microsecond calibration/setup figure above is an upper-bound motivation,
+not an in-game measurement of the new cache's benefit; the Linux build passes.
