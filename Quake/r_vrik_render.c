@@ -8,6 +8,8 @@
 #include <limits.h>
 #include <math.h>
 
+extern cvar_t r_lerpmodels;
+
 #define R_VRIK_RENDER_MAX_JOINTS 256
 
 typedef struct r_vrik_candidate_s
@@ -263,17 +265,22 @@ static qboolean R_VRIKRenderCandidate (const entity_t *entity, r_vrik_candidate_
 	return candidate->joint_count != 0;
 }
 
+static qboolean R_VRIKRenderFallbackRunning (const entity_t *entity)
+{
+	const double dx = (double)entity->msg_origins[0][0] - entity->msg_origins[1][0];
+	const double dy = (double)entity->msg_origins[0][1] - entity->msg_origins[1][1];
+	return isfinite (dx) && isfinite (dy) && dx * dx + dy * dy > 0.25;
+}
+
 static int R_VRIKRenderCanonicalFrame (const entity_t *entity, const aliashdr_t *source)
 {
 	if (entity->frame >= 0 && entity->frame < source->numframes)
 		return entity->frame;
 	/* The 2.0 parse-side positions are the corresponding two movement samples
 	 * used by the source renderer's out-of-range Ranger frame fallback. */
-	const double dx = (double)entity->msg_origins[0][0] - entity->msg_origins[1][0];
-	const double dy = (double)entity->msg_origins[0][1] - entity->msg_origins[1][1];
 	const double ticks = cl.time * 10.0;
 	const int phase = isfinite (ticks) && ticks >= 0.0 ? (int)fmod (ticks, 30.0) : 0;
-	const qboolean running = isfinite (dx) && isfinite (dy) && dx * dx + dy * dy > 0.25;
+	const qboolean running = R_VRIKRenderFallbackRunning (entity);
 	const int frame = running ? 6 + phase % 6 : 12 + phase % 5;
 	return frame >= 0 && frame < source->numframes ? frame : 0;
 }
@@ -319,6 +326,31 @@ static qboolean R_VRIKRenderAlternateCandidate (const entity_t *entity,
 		canonical_entity.lerp.frame_change_time = 0;
 	}
 	R_SetupAliasFrame (&canonical_entity, (aliashdr_t *)selection->source_geometry, &candidate->lerpdata);
+	if ((entity->frame < 0 || entity->frame >= selection->source_geometry->numframes) &&
+		selection->source_geometry->numframes > 16 && isfinite (cl.time) && cl.time >= 0.0)
+	{
+		/* An out-of-range mod frame uses the stock Ranger run/stand cycle.
+		 * Interpolate adjacent canonical poses without mutating entity lerp
+		 * state; otherwise the fallback advances in visible 100 ms steps. */
+		const qboolean running = R_VRIKRenderFallbackRunning (entity);
+		const int first = running ? 6 : 12;
+		const int count = running ? 6 : 5;
+		const double phase = fmod (cl.time * 10.0, (double)count);
+		if (isfinite (phase) && phase >= 0.0)
+		{
+			const int current = (int)phase;
+			const int next = (current + 1) % count;
+			candidate->lerpdata.pose1 = selection->source_geometry->frames[first + current].firstpose;
+			candidate->lerpdata.pose2 = selection->source_geometry->frames[first + next].firstpose;
+			candidate->lerpdata.blend = (float)(phase - current);
+			if (!r_lerpmodels.value ||
+				(selection->source_model->flags & MOD_NOLERP && r_lerpmodels.value != 2))
+			{
+				candidate->lerpdata.pose2 = candidate->lerpdata.pose1;
+				candidate->lerpdata.blend = 1.0f;
+			}
+		}
+	}
 	ranger.matrices = source_palette;
 	ranger.capacity = R_VRIK_RENDER_MAX_JOINTS;
 	ranger.joint_count = 0;
