@@ -7962,8 +7962,9 @@ static qboolean SV_PrepareGorilla (edict_t *ent, client_t *client,
 
 /* The existing world-frame QuakeC and native movement owner. Pass the exact
  * sequence whose input this frame consumed; a future selected-state adapter
- * must never substitute the latest accepted (possibly still queued) tail. */
-static void SV_Physics_ClientNativeFrame (edict_t *ent, int num, int completed_move)
+ * must never substitute the latest accepted (possibly still queued) tail.
+ * Return success only if PostThink and the owner lifetime completed. */
+static qboolean SV_Physics_ClientNativeFrame (edict_t *ent, int num, int completed_move)
 {
 	sv_client_move_frame_t move_frame;
 	sv_vr_weapon_pose_scope_t weapon_scope;
@@ -8124,16 +8125,17 @@ static void SV_Physics_ClientNativeFrame (edict_t *ent, int num, int completed_m
 done:
 	if (suppress_trigger && !ent->free)
 		ent->v.button0 = saved_button0;
+	const qboolean owner_completed = frame_completed && client->active &&
+		client->spawned && client->edict == ent && !ent->free;
 	/* PlayerPostThink and the weapon think above may both update inventory. */
-	if (frame_completed && client->active && client->spawned &&
-		client->edict == ent && !ent->free)
+	if (owner_completed)
 		SV_CoopRespawnRefreshClientInventory (ent);
-	if (frame_completed && client->active && client->spawned && client->edict == ent && !ent->free &&
-		client->protocol_qsvr == QSVR_PROTOCOL_PINNED)
+	if (owner_completed && client->protocol_qsvr == QSVR_PROTOCOL_PINNED)
 		client->private_completed_move = completed_move;
 	if (retained_pusher)
 		ED_Release (retained_pusher);
 	ED_Release (ent);
+	return owner_completed;
 }
 
 static void SV_Physics_Client (edict_t *ent, int num)

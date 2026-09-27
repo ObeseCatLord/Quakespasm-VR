@@ -65,3 +65,27 @@ terminal-state adapter: do not call the native frame after a selected command
 has already run callbacks, and do not pass the selected queue's accepted tail
 as the completed sequence. The Linux debug binary builds with the extraction;
 no death/respawn behavior is qualified by that build.
+
+## Native-frame adapter follow-up review
+
+Astra Max verified the extracted native body, private parser/retirement, and
+client metadata behavior. The native body now returns whether PostThink and
+the same owner lifetime completed; its existing ACK assignment uses that same
+condition. The ordinary caller ignores the result, preserving its behavior.
+The server also withholds prediction permission unless the selected owner is
+alive, WALK/SLIDEBOX, dry and outside waterjump/teleport.
+
+| Finding | Disposition |
+| --- | --- |
+| A fresh-frame terminal owner can reuse `SV_Physics_ClientNativeFrame` with an explicitly staged queue head and its sequence. Invoking the entire native body after selected PreThink, weapon Think, impact or PostThink would repeat callbacks. | **Adopt narrowly.** Reuse only on entry before any selected callback; earlier-phase transitions need continuation at their exact boundary. |
+| PostThink death currently fails eligibility before `private_completed_move` advances. | **Adopt.** Give a recognized terminal state a distinct successful command-end outcome, then stop batching; do not silently treat it as invalid input. |
+| One terminal queue head per world frame preserves order but can fall behind sustained client arrivals and overflow the eight-command queue. | **Adopt as a blocker for general support.** A one-head path can prove lifecycle correctness, but release behavior needs an explicit bounded-arrival or native-style coalescing contract without lost one-shot actions. |
+| A commandless corpse still needs one world-time native frame with held levels and no impulse or room-scale debt. | **Adopt.** Keep the completed ACK unchanged when no head was consumed. |
+| Parser and snapshot also reject non-WALK state; authority is currently derived only from selection and the mode epoch is zero. | **Adopt.** Separate queue ownership from published simulation mode, permit only recognized terminal states at each boundary, and publish a mode-epoch transition with replay off; keep respawn native through its current frame. |
+| Add another command retirement owner. | **Reject.** Stage the exact head and use `SV_FinishPrivateUsercmds` after a successful frame. |
+
+The next behavioral implementation must cover death already present at frame
+entry, commandless corpse motion, and a queued respawn input without an ACK
+jump. It must then handle death inside selected callbacks and after later
+world entities run. Live stock-QC parity and sustainable queue throughput are
+not established by this review or by the current Linux build.

@@ -1892,8 +1892,12 @@ static qboolean SVFTE_WriteEntitiesToClient (client_t *client, sizebuf_t *msg,
 		{
 			ack_flags |= MOVEACK_FLAG_AUTHORITATIVE;
 			/* Wet movement and an active ledge jump keep the selected command
-			 * owner, but replay remains gated until QC/PMove parity is proven. */
+			 * owner, but replay requires a live WALK owner and proven dry state. */
 			if (client->edict && !client->edict->free &&
+				client->edict->v.health > 0 &&
+				client->edict->v.deadflag == DEAD_NO &&
+				client->edict->v.movetype == MOVETYPE_WALK &&
+				client->edict->v.solid == SOLID_SLIDEBOX &&
 				client->edict->v.waterlevel == 0 &&
 				!((int)client->edict->v.flags & FL_WATERJUMP) &&
 				client->private_pmove_waterjump_secs == 0.0f &&
