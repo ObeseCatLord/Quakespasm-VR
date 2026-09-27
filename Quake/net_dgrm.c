@@ -71,6 +71,24 @@ static struct
 	byte		 data[MAX_DATAGRAM];
 } packetBuffer;
 
+#define MAX_PENDING_DATAGRAMS 16
+
+typedef struct
+{
+	qboolean		 valid;
+	qsocket_t		*owner; // NULL for a deferred control packet
+	unsigned int	 order;
+	int			 driver;
+	int			 landriver;
+	sys_socket_t	 socket;
+	struct qsockaddr addr;
+	unsigned int	 wire_length;
+	byte			 data[NET_DATAGRAMSIZE];
+} pending_datagram_t;
+
+static pending_datagram_t pendingDatagrams[MAX_PENDING_DATAGRAMS];
+static unsigned int	  pendingDatagramOrder;
+
 static int myDriverLevel;
 
 extern qboolean m_return_onerror;
@@ -86,6 +104,174 @@ static char *StrAddr (struct qsockaddr *addr)
 	for (n = 0; n < 16; n++)
 		q_snprintf (buf + n * 2, sizeof (buf) - (n * 2), "%02x", *p++);
 	return buf;
+}
+
+static qboolean Datagram_QueuedPacketOwnerIsActive (pending_datagram_t *packet)
+{
+	qsocket_t *sock;
+
+	if (!packet->owner || packet->landriver < 0 || packet->landriver >= net_numlandrivers)
+		return false;
+
+	for (sock = net_activeSockets; sock; sock = sock->next)
+	{
+		if (sock != packet->owner)
+			continue;
+		if (sock->disconnected || !sock->isvirtual)
+			return false;
+		if (sock->driver != packet->driver || sock->landriver != packet->landriver || sock->socket != packet->socket)
+			return false;
+		return net_landrivers[packet->landriver].AddrCompare (&packet->addr, &sock->addr) == 0;
+	}
+
+	return false;
+}
+
+static void Datagram_ClearQueuedPackets (void)
+{
+	memset (pendingDatagrams, 0, sizeof (pendingDatagrams));
+	pendingDatagramOrder = 0;
+}
+
+static void Datagram_DropQueuedPackets (qsocket_t *sock)
+{
+	int i;
+
+	for (i = 0; i < MAX_PENDING_DATAGRAMS; i++)
+	{
+		if (pendingDatagrams[i].valid && pendingDatagrams[i].owner == sock)
+			pendingDatagrams[i].valid = false;
+	}
+}
+
+static void Datagram_QueuePacket (qsocket_t *owner, int driver, int landriver, sys_socket_t socket, struct qsockaddr *addr,
+	unsigned int wire_length)
+{
+	int		  i;
+	int		  slot = -1;
+	unsigned int oldest_order = 0;
+
+	if (wire_length > sizeof (packetBuffer))
+		return;
+
+	for (i = 0; i < MAX_PENDING_DATAGRAMS; i++)
+	{
+		if (!pendingDatagrams[i].valid)
+		{
+			slot = i;
+			break;
+		}
+		if (slot < 0 || pendingDatagrams[i].order < oldest_order)
+		{
+			slot = i;
+			oldest_order = pendingDatagrams[i].order;
+		}
+	}
+
+	pendingDatagrams[slot].valid = true;
+	pendingDatagrams[slot].owner = owner;
+	pendingDatagrams[slot].order = ++pendingDatagramOrder;
+	if (!pendingDatagramOrder)
+		pendingDatagramOrder = pendingDatagrams[slot].order = 1;
+	pendingDatagrams[slot].driver = driver;
+	pendingDatagrams[slot].landriver = landriver;
+	pendingDatagrams[slot].socket = socket;
+	pendingDatagrams[slot].addr = *addr;
+	pendingDatagrams[slot].wire_length = wire_length;
+	memcpy (pendingDatagrams[slot].data, &packetBuffer, wire_length);
+}
+
+static qboolean Datagram_DequeuePacket (qsocket_t *owner, unsigned int *wire_length, struct qsockaddr *addr)
+{
+	int i;
+	int slot;
+
+	if (!owner->isvirtual)
+		return false;
+
+	while (1)
+	{
+		slot = -1;
+		for (i = 0; i < MAX_PENDING_DATAGRAMS; i++)
+		{
+			if (!pendingDatagrams[i].valid || pendingDatagrams[i].owner != owner)
+				continue;
+			if (!Datagram_QueuedPacketOwnerIsActive (&pendingDatagrams[i]))
+			{
+				pendingDatagrams[i].valid = false;
+				continue;
+			}
+			if (slot < 0 || pendingDatagrams[i].order < pendingDatagrams[slot].order)
+				slot = i;
+		}
+
+		if (slot < 0)
+			return false;
+
+		*wire_length = pendingDatagrams[slot].wire_length;
+		*addr = pendingDatagrams[slot].addr;
+		memcpy (&packetBuffer, pendingDatagrams[slot].data, *wire_length);
+		pendingDatagrams[slot].valid = false;
+		return true;
+	}
+}
+
+static qboolean Datagram_DequeueAnyPacket (qsocket_t **owner, sys_socket_t *socket, struct qsockaddr *addr, unsigned int *wire_length)
+{
+	int i;
+	int slot;
+
+	while (1)
+	{
+		slot = -1;
+		for (i = 0; i < MAX_PENDING_DATAGRAMS; i++)
+		{
+			if (!pendingDatagrams[i].valid || pendingDatagrams[i].driver != net_driverlevel ||
+				pendingDatagrams[i].landriver != net_landriverlevel)
+				continue;
+			if (pendingDatagrams[i].owner && !Datagram_QueuedPacketOwnerIsActive (&pendingDatagrams[i]))
+			{
+				pendingDatagrams[i].valid = false;
+				continue;
+			}
+			if (slot < 0 || pendingDatagrams[i].order < pendingDatagrams[slot].order)
+				slot = i;
+		}
+
+		if (slot < 0)
+			return false;
+
+		*owner = pendingDatagrams[slot].owner;
+		*socket = pendingDatagrams[slot].socket;
+		*addr = pendingDatagrams[slot].addr;
+		*wire_length = pendingDatagrams[slot].wire_length;
+		memcpy (&packetBuffer, pendingDatagrams[slot].data, *wire_length);
+		pendingDatagrams[slot].valid = false;
+		return true;
+	}
+}
+
+static qboolean Datagram_QueueIfForAnotherSocket (qsocket_t *sock, struct qsockaddr *addr, unsigned int wire_length)
+{
+	qsocket_t *other;
+
+	if (!sock->isvirtual)
+		return false;
+
+	for (other = net_activeSockets; other; other = other->next)
+	{
+		if (other == sock || other->disconnected || !other->isvirtual)
+			continue;
+		if (other->driver != sock->driver || other->landriver != sock->landriver || other->socket != sock->socket)
+			continue;
+		if (net_landrivers[sock->landriver].AddrCompare (addr, &other->addr) == 0)
+		{
+			Datagram_QueuePacket (other, other->driver, other->landriver, other->socket, addr, wire_length);
+			return true;
+		}
+	}
+
+	return false;
 }
 
 #ifdef BAN_TEST
@@ -437,18 +623,35 @@ qsocket_t *Datagram_GetAnyMessage (void)
 	qsocket_t		*s;
 	struct qsockaddr addr;
 	int				 length;
+	unsigned int	 queued_length;
 	for (net_landriverlevel = 0; net_landriverlevel < net_numlandrivers; net_landriverlevel++)
 	{
-		sys_socket_t sock;
+		sys_socket_t acceptsock;
+		sys_socket_t queued_socket;
 		if (!dfunc.initialized)
 			continue;
-		sock = dfunc.listeningSock;
-		if (sock == INVALID_SOCKET)
+		acceptsock = dfunc.listeningSock;
+		if (acceptsock == INVALID_SOCKET)
 			continue;
+
+		while (Datagram_DequeueAnyPacket (&s, &queued_socket, &addr, &queued_length))
+		{
+			if (s == NULL)
+			{
+				_Datagram_ServerControlPacket (queued_socket, &addr, (byte *)&packetBuffer, queued_length);
+				continue;
+			}
+
+			if (Datagram_ProcessPacket (queued_length, s))
+			{
+				s->lastMessageTime = net_time;
+				return s;
+			}
+		}
 
 		while (1)
 		{
-			length = dfunc.Read (sock, (byte *)&packetBuffer, NET_DATAGRAMSIZE, &addr);
+			length = dfunc.Read (acceptsock, (byte *)&packetBuffer, NET_DATAGRAMSIZE, &addr);
 			if (length == -1 || !length)
 			{
 				// no more packets, move on to the next.
@@ -459,7 +662,7 @@ qsocket_t *Datagram_GetAnyMessage (void)
 				continue;
 			if (BigLong (packetBuffer.length) & NETFLAG_CTL)
 			{
-				_Datagram_ServerControlPacket (sock, &addr, (byte *)&packetBuffer, length);
+				_Datagram_ServerControlPacket (acceptsock, &addr, (byte *)&packetBuffer, length);
 				continue;
 			}
 
@@ -471,6 +674,8 @@ qsocket_t *Datagram_GetAnyMessage (void)
 				if (s->disconnected)
 					continue;
 				if (!s->isvirtual)
+					continue;
+				if (s->landriver != net_landriverlevel || s->socket != acceptsock)
 					continue;
 				if (dfunc.AddrCompare (&addr, &s->addr) == 0)
 				{
@@ -526,6 +731,7 @@ int Datagram_GetMessage (qsocket_t *sock)
 	struct qsockaddr readaddr;
 	unsigned int	 sequence;
 	unsigned int	 count;
+	qboolean		 from_queue;
 
 	if (!sock->canSend)
 		if ((net_time - sock->lastSendTime) > 1.0)
@@ -533,26 +739,39 @@ int Datagram_GetMessage (qsocket_t *sock)
 
 	while (1)
 	{
-		length = (unsigned int)sfunc.Read (sock->socket, (byte *)&packetBuffer, NET_DATAGRAMSIZE, &readaddr);
-
-		//	if ((rand() & 255) > 220)
-		//		continue;
-
-		if (length == 0)
-			break;
-
-		if (length == (unsigned int)-1)
+		from_queue = Datagram_DequeuePacket (sock, &length, &readaddr);
+		if (!from_queue)
 		{
-			Con_Printf ("Read error\n");
-			return -1;
-		}
+			length = (unsigned int)sfunc.Read (sock->socket, (byte *)&packetBuffer, NET_DATAGRAMSIZE, &readaddr);
 
-		if (sfunc.AddrCompare (&readaddr, &sock->addr) != 0)
-		{
-			Con_Printf ("Stray/Forged packet received\n");
-			Con_Printf ("Expected: %s\n", sfunc.AddrToString (&sock->addr, false));
-			Con_Printf ("Received: %s\n", sfunc.AddrToString (&readaddr, false));
-			continue;
+			//	if ((rand() & 255) > 220)
+			//		continue;
+
+			if (length == 0)
+				break;
+
+			if (length == (unsigned int)-1)
+			{
+				Con_Printf ("Read error\n");
+				return -1;
+			}
+
+			if (sock->isvirtual && length >= sizeof (unsigned int) && (BigLong (packetBuffer.length) & NETFLAG_CTL))
+			{
+				Datagram_QueuePacket (NULL, sock->driver, sock->landriver, sock->socket, &readaddr, length);
+				continue;
+			}
+
+			if (Datagram_QueueIfForAnotherSocket (sock, &readaddr, length))
+				continue;
+
+			if (sfunc.AddrCompare (&readaddr, &sock->addr) != 0)
+			{
+				Con_Printf ("Stray/Forged packet received\n");
+				Con_Printf ("Expected: %s\n", sfunc.AddrToString (&sock->addr, false));
+				Con_Printf ("Received: %s\n", sfunc.AddrToString (&readaddr, false));
+				continue;
+			}
 		}
 
 		if (length < NET_HEADERSIZE)
@@ -1067,6 +1286,7 @@ void Datagram_Shutdown (void)
 {
 	int i;
 
+	Datagram_ClearQueuedPackets ();
 	NET_DatagramConnectCancel ();
 	Datagram_Listen (false);
 
@@ -1085,6 +1305,7 @@ void Datagram_Shutdown (void)
 
 void Datagram_Close (qsocket_t *sock)
 {
+	Datagram_DropQueuedPackets (sock);
 	if (sock->isvirtual)
 	{
 		sock->isvirtual = false;
@@ -1100,6 +1321,7 @@ void Datagram_Listen (qboolean state)
 	int		   i;
 	qboolean   islistening = false;
 
+	Datagram_ClearQueuedPackets ();
 	heartbeat_time = 0; // reset it
 
 	for (i = 0; i < net_numlandrivers; i++)
