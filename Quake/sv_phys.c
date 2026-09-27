@@ -6966,7 +6966,7 @@ static qboolean SV_RunPrivateVRWeaponThink (edict_t *ent, client_t *client,
 }
 
 /* The private trial is deliberately narrower than the ordinary client owner:
- * stock hull, dry WALK and no moving-pusher authority. */
+ * stock hull, WALK (including water), and no moving-pusher authority. */
 static qboolean SV_PrivateWalkTrialStockHull (edict_t *ent)
 {
 	vec3_t mins = {-16, -16, -24};

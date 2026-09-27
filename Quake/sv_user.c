@@ -1182,9 +1182,10 @@ static qboolean SV_PrivateWalkTrialStateValid (client_t *client)
 		return SV_PrivateWalkTrialFail (client, "server paused");
 	if (!client->active || !client->edict || client->edict->free ||
 		client->edict->v.movetype != MOVETYPE_WALK ||
-		client->edict->v.solid != SOLID_SLIDEBOX ||
-		client->edict->v.waterlevel != 0)
-		return SV_PrivateWalkTrialFail (client, "owner left dry WALK/SOLID_SLIDEBOX state");
+		client->edict->v.solid != SOLID_SLIDEBOX)
+		return SV_PrivateWalkTrialFail (client, "owner left WALK/SOLID_SLIDEBOX state");
+	/* A selected client keeps the same per-command owner in water. Physics
+	 * validates the water level and the snapshot withholds wet prediction. */
 
 	customphysics = GetEdictFieldValue (client->edict, qcvm->extfields.customphysics);
 	if (customphysics && customphysics->function)

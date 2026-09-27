@@ -144,6 +144,14 @@ existing behavior. The production-solver fixture crosses a narrow water region
 and finishes dry, and the client fixture checks both journal and unsent-preview
 suppression. This closes the local gate leak, not wet prediction parity.
 
+The selected packet reader had one remaining dry-only admission check in
+`SV_PrivateWalkTrialStateValid`: it disconnected a selected owner as soon as
+`waterlevel` became nonzero, before the wet-capable physics owner could consume
+the command. That check has been removed. The physics command boundary still
+validates the water level, and the snapshot still withholds wet prediction.
+The Linux debug target builds with this correction; real-map continuity and
+ACK behavior still need the acceptance proof below.
+
 ## Acceptance proof for the water slice
 
 Run one selected remote stock-QC client and one public-protocol observer on a
