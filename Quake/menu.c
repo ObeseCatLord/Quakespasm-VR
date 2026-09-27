@@ -6769,7 +6769,7 @@ void M_UpdateMouse (void)
 			M_GameOptions_AdjustSliders (0, true);
 		else if (keydown[K_MOUSE1] && (m_state == m_graphics) && graphic_option_has_sliders)
 			M_GraphicsOptions_AdjustSliders (0, true);
-		else if (keydown[K_MOUSE1] && (m_state == m_sound) && (graphics_options_cursor >= SOUND_OPT_SNDVOL) && (graphics_options_cursor <= SOUND_OPT_MUSICVOL))
+		else if (keydown[K_MOUSE1] && (m_state == m_sound) && (sound_options_cursor >= SOUND_OPT_SNDVOL) && (sound_options_cursor <= SOUND_OPT_MUSICVOL))
 			M_SoundOptions_AdjustSliders (0, true);
 		else
 			slider_grab = false;
