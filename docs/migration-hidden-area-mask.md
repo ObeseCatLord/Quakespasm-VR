@@ -185,6 +185,17 @@ rules](https://docs.vulkan.org/spec/latest/chapters/fragops.html) define the
 stencil test per sample, and the [fragment-shading-rate rules](https://docs.vulkan.org/spec/latest/chapters/primsrast.html#primsrast-fragment-shading-rate)
 define the default 1×1 rate and `KEEP` combiners when no rate state is supplied.
 This is a source-level compatibility argument; no headset image comparison or
-net timing has been performed with both features enabled. The separate
-FB/META fragment-density-map path remains gated because it uses a coarse color
-pass and full-rate depth replay with different stencil/sample behavior.
+net timing has been performed with both features enabled.
+
+## FB/META full-rate fallback coexistence
+
+The FB/META fragment-density-map backend can also coexist with the mask on a
+frame that draws the entire world at full rate in the ordinary scene pass.
+This includes a configured backend whose eye-tracked mode is unavailable or
+whose foveation is temporarily off. The compiled density scene pass stays
+empty for those frames; the world, hidden-area stencil writer, and optional
+SSAO depth replay all run in the ordinary scene pass. The existing pipeline
+alternatives bind those draws to that pass. Actual density-map coarse-color
+frames remain gated because their separate color pass and full-rate depth
+replay need a different stencil/sample policy. This is a source-level
+compatibility argument, not a measured speedup or headset image validation.
