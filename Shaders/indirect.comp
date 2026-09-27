@@ -85,28 +85,40 @@ void main ()
 										  : vec3 (push_constants.vieworg_x, push_constants.vieworg_y, push_constants.vieworg_z);
 	const float dist = surfaces[surf].dist;
 	const bool	backface = (surfaces[surf].packed_tex_edgecount & 0x8000) != 0;
-	if (submodel == 0 && push_constants.eye_radius > 0.0)
+	if (push_constants.eye_radius > 0.0)
 	{
-		// World surfaces use the actual two eye origins. A surrounding sphere
-		// admits extra backfaces, especially when the gaze plane is tangential.
-		const float dp0 = dot (surf_normal, vec3 (push_constants.eye0_x, push_constants.eye0_y, push_constants.eye0_z));
-		const float dp1 = dot (surf_normal, vec3 (push_constants.eye1_x, push_constants.eye1_y, push_constants.eye1_z));
-		if ((backface && dp0 > dist && dp1 > dist) || (!backface && dp0 < dist && dp1 < dist))
+		vec3 eye0 = vec3 (push_constants.eye0_x, push_constants.eye0_y, push_constants.eye0_z);
+		vec3 eye1 = vec3 (push_constants.eye1_x, push_constants.eye1_y, push_constants.eye1_z);
+		bool can_cull = true;
+		if (submodel != 0)
+		{
+			// R_RotateForEntity produces an orthogonal, uniformly scaled
+			// transform. Its transposed rows map world-eye deltas back to the
+			// same model space as local_vieworg and the surface plane.
+			const bmodel_instance_t instance = bmodel_instances[push_constants.instance_base + submodel];
+			const vec3 row0 = instance.transform[0].xyz;
+			const vec3 row1 = instance.transform[1].xyz;
+			const vec3 row2 = instance.transform[2].xyz;
+			const float scale_squared = dot (row0, row0);
+			if (scale_squared > 0.0)
+			{
+				const mat3 inverse_rows = mat3 (row0, row1, row2);
+				const vec3 center = vec3 (push_constants.vieworg_x, push_constants.vieworg_y, push_constants.vieworg_z);
+				eye0 = vieworg + inverse_rows * (eye0 - center) / scale_squared;
+				eye1 = vieworg + inverse_rows * (eye1 - center) / scale_squared;
+			}
+			else
+				can_cull = false; // Invalid scale must never hide a visible brush.
+		}
+		const float dp0 = dot (surf_normal, eye0);
+		const float dp1 = dot (surf_normal, eye1);
+		if (can_cull && ((backface && dp0 > dist && dp1 > dist) || (!backface && dp0 < dist && dp1 < dist)))
 			return;
 	}
 	else
 	{
-		// Moved/scaled submodels retain the conservative local-space bound.
-		float radius = push_constants.eye_radius;
-		if (radius > 0.0 && submodel != 0)
-		{
-			const vec3 row = bmodel_instances[push_constants.instance_base + submodel].transform[0].xyz;
-			const float scale_squared = dot (row, row);
-			radius = scale_squared > 0.0 ? radius * inversesqrt (scale_squared) : 1e30;
-		}
 		const float dp = dot (surf_normal, vieworg);
-		const float margin = radius * dot (abs (surf_normal), vec3 (1.0));
-		if ((backface && dp > dist + margin) || (!backface && dp < dist - margin))
+		if ((backface && dp > dist) || (!backface && dp < dist))
 			return;
 	}
 

@@ -20,7 +20,7 @@ Evidence is from pinned Git objects: **I** = Ironwail `08d578136ff43d7d1ef38e636
 | PERF-010 | Jumbo BSP formats | I `gl_model.c:2412`, V `:3106` `Mod_LoadBrushModel`: BSP29, 2PSB, BSP2 paths | P | Preserve V widened formats and loader. | Large BSP2 loads with correct surfaces, leaves, and submodels. |
 | PERF-011 | Named maps without `-heapsize` | Allocator evidence PERF-006; I README names `tershib/shib1_drake`, `peril/tavistock` | U | First validate existing V allocation behavior. | Both maps reach playable state without `-heapsize`; record peak RSS. |
 | PERF-012 | Reduced jumbo loading time | Concrete mechanisms PERF-003–010; no timing evidence inspected | U | Measure existing stages before selecting further changes. | Same assets/settings: cold/warm load durations, stage times, peak memory. |
-| PERF-013 | PVS/frustum/backface culling | I `r_world.c:58` GPU marking; V `r_world.c:459` `R_MarkLeafsSIMD`; `Shaders/indirect.comp:68` visibility/backface rejection | S | Keep V marking/indirect chain; represent visibility conservatively for both eyes. | No geometry disappears at eye/frustum/PVS boundaries. |
+| PERF-013 | PVS/frustum/backface culling | I `r_world.c:58` GPU marking; V `r_world.c:459` `R_MarkLeafsSIMD`; `Shaders/indirect.comp:68` visibility/backface rejection | S, two-eye indirect plane adapter built | Keep V marking/indirect chain; represent visibility conservatively for both eyes. | No geometry disappears at eye/frustum/PVS boundaries. |
 | PERF-014 | Brush batching | I `r_world.c:231` `R_FlushBModelCalls`, bindless multidraw `:263`; V `r_brush.c:1019` indirect draw per material group | S | Reuse V groups/descriptors; preserve material and transparency boundaries. | Equal scene content; capture draw counts and CPU/GPU costs. |
 | PERF-015 | GPU lightmap updates | V `r_brush.c:3590` `R_UpdateLightmapsAndIndirect`; I `gl_shaders.h:641` instead combines style samples while shading | A, partial; visual proof pending | Retain V updater and shared lightmap; current branch admits dynamic lights for surfaces facing either eye through its existing compute push constants. Rerelease entity lights use the nearer eye for fade and survive either-eye distance rejection. See [stereo lightmap review](migration-lightmap-stereo-review.md). | Animated/dynamic lighting agrees between eyes, including moving brush models. |
 | PERF-016 | Existing no-VIS optimization | F `r_world.c:712` `R_EnsureNoVisSurfaceCache`; `:1062` GPU path has no-VIS and lighting restrictions | P, source | Preserve observable no-VIS behavior through V visibility machinery; avoid duplicating caches. | No-VIS map retains sky, liquids, dynamic lights, and fallback correctness. |
@@ -84,14 +84,16 @@ frame time and both-eye visibility before claiming a gain.
 ## Current-branch two-eye indirect culling
 
 The indirect compute pass now tests world-surface backfaces against both actual
-eye origins. It rejects a world surface only when neither eye can see its front
-side; desktop keeps the vkQuake center-origin test. This reuses the existing
-PVS/frustum union and indirect draw pipeline. Transformed brush models retain
-their conservative model-space radius until their per-eye origins can be
-qualified without changing the shared instance-buffer layout. The shader's
-56-byte push-constant block remains under Vulkan's guaranteed 128-byte limit.
-The Linux shader and executable build passed. Eye-boundary image checks and
-`mj4m1` draw/frame-time comparisons remain open; no speedup is claimed.
+eye origins. It rejects a surface only when neither eye can see its front side;
+desktop keeps the vkQuake center-origin test. For transformed brush models,
+the shader uses the existing uniformly scaled instance transform to map each
+world-eye displacement into model space, relative to the already supplied local
+center eye. A degenerate transform disables that brush's plane rejection. This
+reuses the existing PVS/frustum union, indirect draw pipeline and 64-byte
+instance layout; the 56-byte push-constant layout is unchanged. The Linux
+shader/executable build and `spirv-val` passed. Moving-brush eye-boundary image
+checks and `mj4m1` draw/frame-time comparisons remain open; no speedup is
+claimed.
 
 ## Current-branch large-map performance hypothesis
 
