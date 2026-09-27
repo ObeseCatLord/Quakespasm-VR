@@ -959,6 +959,25 @@ void R_MarkVisSurfaces (qboolean *use_tasks)
 	R_SetupWorldCBXTexRanges (*use_tasks);
 }
 
+/* SV_FatPVS walks both sides of a split within 8 world units. If this eye
+ * never approaches a split, its fat PVS is exactly its leaf PVS. Return the
+ * leaf too, avoiding a second BSP walk through Mod_PointInLeaf. */
+static mleaf_t *R_StereoEyeLeaf (const vec3_t origin, qboolean *needs_fat_pvs)
+{
+	mnode_t *node = cl.worldmodel->nodes;
+
+	*needs_fat_pvs = false;
+	while (node->contents >= 0)
+	{
+		const mplane_t *plane = node->plane;
+		const float distance = DotProduct (origin, plane->normal) - plane->dist;
+		if (!(distance > 8.0f || distance < -8.0f))
+			*needs_fat_pvs = true;
+		node = node->children[distance > 0.0f ? 0 : 1];
+	}
+	return (mleaf_t *)node;
+}
+
 /*
 ===============
 R_MarkSurfacesPrepare
@@ -990,12 +1009,25 @@ static void R_MarkSurfacesPrepare (void *unused)
 		const size_t bytes = ((numleafs + 31) / 32) * sizeof (uint32_t);
 		byte *combined = cl.worldmodel->stereo_vis;
 		memcpy (combined, mark_surfaces_state.vis, bytes);
-		for (int eye = 0; eye < 2; ++eye)
+		/* An all-visible center PVS already contains both eyes. */
+		if (!r_novis.value && r_viewleaf->contents != CONTENTS_SOLID && r_viewleaf->contents != CONTENTS_SKY)
 		{
-			mleaf_t *leaf = Mod_PointInLeaf (r_stereo_origins[eye], cl.worldmodel);
-			const byte *eye_vis = leaf->contents == CONTENTS_SOLID || leaf->contents == CONTENTS_SKY
-				? Mod_NoVisPVS (cl.worldmodel) : SV_FatPVS (r_stereo_origins[eye], cl.worldmodel);
-			for (size_t i = 0; i < bytes; ++i) combined[i] |= eye_vis[i];
+			for (int eye = 0; eye < 2; ++eye)
+			{
+				qboolean needs_fat_pvs;
+				mleaf_t *leaf = R_StereoEyeLeaf (r_stereo_origins[eye], &needs_fat_pvs);
+				const byte *eye_vis;
+				if (leaf == r_viewleaf && !needs_fat_pvs)
+					continue;
+				if (leaf->contents == CONTENTS_SOLID || leaf->contents == CONTENTS_SKY)
+					eye_vis = Mod_NoVisPVS (cl.worldmodel);
+				else if (needs_fat_pvs)
+					eye_vis = SV_FatPVS (r_stereo_origins[eye], cl.worldmodel);
+				else
+					eye_vis = Mod_LeafPVS (leaf, cl.worldmodel);
+				for (size_t i = 0; i < bytes; ++i)
+					combined[i] |= eye_vis[i];
+			}
 		}
 		mark_surfaces_state.vis = combined;
 	}
