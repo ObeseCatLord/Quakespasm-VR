@@ -13,6 +13,31 @@ PostThink for each completed command (`Quake/sv_phys.c`,
 `SV_Physics_ClientPrivateWalkTrial`). It then publishes the completed command
 cursor. This command lifecycle is worth reusing.
 
+## Native customphysics adapter
+
+The inherited branch and QSS-M both dispatch the `customphysics` entity field;
+the vkQuake-based branch declared that field but previously never called it.
+The native client dispatcher now uses that QSS-M boundary after PreThink and
+velocity validation. A populated callback replaces scheduled Think, engine
+movement and Gorilla movement for that frame, then uses the existing native
+link/PostThink/completion tail. A removing callback skips that tail. Other
+entities use the same callback before native movetype dispatch; their callback
+owns linking and Think, as in QSS-M.
+
+`SV_RunCustomPhysics` retains the entity across QC and uses the existing
+friendly-fire callback scope. It intentionally runs at the body origin, since
+the temporary VR weapon muzzle pose is inappropriate for a callback that can
+move the body. `SV_GorillaEligible` excludes an active customphysics callback
+so ordinary input acceleration is not deferred to hand locomotion. The selected
+PMove owner continues to reject customphysics; this adapter does not expand
+prediction permission or trial admission.
+
+The Linux SDL3 build and ASan/UBSan interpreter fixture pass. The fixture uses
+real QC bytecode for body relocation and callback removal, while allocation
+and field lookup remain controlled boundaries. The fuller native dispatcher
+GDB probe is included but unexecuted: this sandbox denies `ptrace`. No real-mod
+callback trajectory or connected-peer prediction is certified by this slice.
+
 | Finding / option | Disposition |
 | --- | --- |
 | Removing the stock progs identity check would immediately enable mods. | **Rejected.** The selected handoff removes presumed stock QuakeC water/jump velocity changes before PMove. Its dry jump branch can restore the entire earlier velocity, erasing a mod force. WALK hull and absent `customphysics` do not prove that a mod follows stock movement semantics. |

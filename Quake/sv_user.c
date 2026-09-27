@@ -493,6 +493,7 @@ void SV_GorillaLatchLadder (client_t *client, qboolean begin_frame)
 qboolean SV_GorillaEligible (client_t *client)
 {
 	edict_t *ent;
+	eval_t *customphysics;
 	if (!client || !client->active || !client->spawned ||
 		SV_PrivateWalkTrialSelected (client) ||
 		client->protocol_qsvr != QSVR_PROTOCOL_PINNED ||
@@ -500,7 +501,12 @@ qboolean SV_GorillaEligible (client_t *client)
 		(client->cmd.vr_gorilla.flags & VR_GORILLA_HANDS) != VR_GORILLA_HANDS)
 		return false;
 	ent = client->edict;
-	return ent && !ent->free && ent->v.health > 0 && !ent->v.deadflag &&
+	if (!ent || ent->free)
+		return false;
+	customphysics = GetEdictFieldValue (ent, qcvm->extfields.customphysics);
+	if (customphysics && customphysics->function)
+		return false;
+	return ent->v.health > 0 && !ent->v.deadflag &&
 		((int)ent->v.movetype == MOVETYPE_WALK ||
 		 (int)ent->v.movetype == MOVETYPE_FLY) &&
 		!client->vr_gorilla_ladder_frame && !SV_GorillaNativeLadder (ent);

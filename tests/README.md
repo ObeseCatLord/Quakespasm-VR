@@ -1,5 +1,41 @@
 # Migration boundary fixtures
 
+## Custom QuakeC physics
+
+`customphysics_fixture.c` executes the production callback adapter with the
+real QuakeC interpreter. Bytecode moves a body, clears its callback, and calls
+an observer while friendly-fire protection and entity retention are active.
+It verifies scope restoration, absent/zero callbacks and removal of the owner.
+Field lookup and entity allocation are fixture boundaries; it does not prove
+native dispatcher ordering, real-map trajectories or network prediction.
+
+```sh
+cc -std=gnu11 -DUSE_SDL3 -D_GNU_SOURCE -Wall -Wextra \
+  -Wno-unused-parameter -Wno-sign-compare -Wno-missing-field-initializers \
+  -ffunction-sections -fdata-sections -fsanitize=address,undefined \
+  -fno-sanitize-recover=all -fno-omit-frame-pointer \
+  tests/customphysics_fixture.c Quake/common.c -Wl,--gc-sections \
+  $(pkg-config --cflags --libs sdl3) -lm -o /tmp/qsvr-customphysics-asan
+ASAN_OPTIONS=detect_leaks=0 /tmp/qsvr-customphysics-asan
+```
+
+`customphysics_native_smoke.gdb` is the fuller production dispatcher probe.
+Use an isolated asset root containing stock `id1/pak*.pak` symlinks:
+
+```sh
+timeout --signal=TERM 35s gdb -nx --return-child-result --batch \
+  -x tests/customphysics_native_smoke.gdb --args Quake/vkquake \
+  -dedicated 3 -noudp -nosound -basedir /tmp/qsvr-customphysics-native \
+  -userdir /tmp/qsvr-customphysics-native +sv_coop_autosave 0 +map e1m1
+```
+
+Require exit 0 and `CUSTOMPHYSICS_NATIVE_PASSED`. It aliases the stock `think`
+field to the extension slot and enables Loop_Init only for offline headless
+initialization; it tests no packets. A no-op custom callback must bypass an
+otherwise invalid native movetype and preserve scheduled Think and body
+position. A removing callback must skip PostThink and completion. This probe
+has **not run** in the current sandbox because `ptrace` is denied.
+
 ## Avatar identity and protocol parser
 
 `avatar_retarget_fixture.c` ports the inherited semantic profiles and CPU

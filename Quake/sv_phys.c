@@ -1286,6 +1286,29 @@ void SV_CheckVelocity (edict_t *ent)
 	}
 }
 
+/* QSS-M's customphysics callback replaces the native movement/Think
+ * dispatcher. Keep the entity's body origin: this callback may move it,
+ * so it must not enter the temporary VR weapon muzzle pose. */
+static qboolean SV_RunCustomPhysics (edict_t *ent)
+{
+	eval_t *value = GetEdictFieldValue (ent, qcvm->extfields.customphysics);
+	func_t function;
+	qboolean friendly_fire_scope;
+
+	if (!value || !value->function)
+		return false;
+	function = value->function;
+	ED_Retain (ent);
+	pr_global_struct->time = qcvm->time;
+	pr_global_struct->self = EDICT_TO_PROG (ent);
+	friendly_fire_scope = SV_CoopFriendlyFireBegin (ent);
+	PR_ExecuteProgram (function);
+	if (friendly_fire_scope)
+		SV_CoopFriendlyFireEnd ();
+	ED_Release (ent);
+	return true;
+}
+
 /*
 =============
 SV_RunThink
@@ -8677,6 +8700,16 @@ after_prethink:
 	//
 	SV_CheckVelocity (ent);
 
+	/* Reuse the QSS-M native callback boundary after PreThink and velocity
+ * validation, before scheduled Think or any engine/Gorilla movement. */
+	if (SV_RunCustomPhysics (ent))
+	{
+		SV_ResetGorillaClient (client);
+		if (ent->free || !client->active || client->edict != ent)
+			goto done;
+		goto after_native_move;
+	}
+
 	/* Match desktop dispatch by retaining the type selected before the
 	 * scheduled weapon think. Configured Gorilla clients may still reselect
 	 * after their hand-contact callbacks have run. */
@@ -8748,6 +8781,7 @@ after_weapon_think:
 		Host_EndGame ("SV_Physics_client: bad movetype %i", (int)ent->v.movetype);
 	}
 
+after_native_move:
 	//
 	// call standard player post-think
 	//
@@ -9293,6 +9327,10 @@ void SV_Physics (void)
 
 		if (i > 0 && i <= svs.maxclients && qcvm == &sv.qcvm)
 			SV_Physics_Client (ent, i);
+		else if (SV_RunCustomPhysics (ent))
+		{
+			/* The callback owns linking and Think for non-client entities. */
+		}
 		else if (ent->v.movetype == MOVETYPE_PUSH)
 			SV_Physics_Pusher (ent);
 		else if (ent->v.movetype == MOVETYPE_NONE)
