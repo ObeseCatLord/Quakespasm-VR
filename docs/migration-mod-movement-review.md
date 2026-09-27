@@ -109,3 +109,32 @@ grapple, water and general q30 admission remain separate gates. No headset or
 performance measurement is required for this proof. Until the executed QC
 branch and PMove takeoff ownership are qualified, keep q30 excluded from the
 selected path.
+
+## Exact q30 jump branches and PMove takeoff boundary
+
+A follow-up read-only decode of the installed SHA-pinned `progs.dat` qualified
+these bytecode branches in `PlayerJump` (function 1145, statements 54831–55074):
+
+| Branch | Verified predicate and write |
+| --- | --- |
+| Ground boots | `moditems & IT_ARTJUMPBOOTS`, `FL_ONGROUND`, and `FL_JUMPRELEASED` at 54875–54884; adds `map_jumpheight` to vertical velocity at 54913–54915. |
+| Ordinary ground | Without the boots branch and outside the ladder branch, requires `FL_ONGROUND` and `FL_JUMPRELEASED` at 55044–55050; adds `map_jumpheight` at 55071–55073. |
+| Boots extras | Air boots set vertical velocity to `jumpboots_height` at 54957–54959; positive `jumpboots_forward` and lower horizontal speed gate the forward velocity write at 55015. |
+| Ladder jump | `PlayerPreThink` calls `PlayerJump` for `onladder == LADDER_VEL` with `button2`; statements 55017–55042 replace velocity with `v_forward * map_jumpheight`. The boots branch has priority if both are set. |
+
+The bytecode predicates support letting QuakeC own q30 jump selection and
+velocity, instead of classifying an impulse from the final velocity delta.
+They do not qualify grapple, water, callback side effects, or client
+prediction. Exact source-file correspondence remains unproven.
+
+A temporary, uncommitted probe reused the real donor floor hull and
+`PM_PlayerMove` from `tests/pmove_migration_fixture.c`. With the jump button
+suppressed and a QC-authored initial upward velocity, 120 units/s was
+re-grounded to zero at the floor for both untimed and 100 ms commands; 300
+units/s moved upward and stayed airborne. The threshold comes from
+`PM_CategorizePosition`, not q30 QuakeC. Consequently, simply masking the
+PMove jump button is insufficient when a map sets a low `map_jumpheight`.
+The adapter needs an explicit takeoff handoff that preserves water/ladder
+classification and permits later landing, while leaving desktop/stock PMove
+unchanged. This probe is a solver observation, not native-vs-selected mod
+parity or proof that q30 should be admitted yet.
