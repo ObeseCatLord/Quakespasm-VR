@@ -22,7 +22,9 @@ qboolean CL_VoiceTransportAvailable (void)
 	return false;
 }
 void CL_QueueGorillaCapability (void) {}
+void CL_QueueInstantStopCapability (void) {}
 void VR_InputCommitGorillaCommand (const usercmd_t *cmd) {}
+qboolean VR_InputSuppressUncalibratedAttack (const usercmd_t *cmd) { return false; }
 void			Host_Error (const char *fmt, ...)
 {
 	abort ();
@@ -144,6 +146,132 @@ static void test_ack_queue (void)
 		assert (MSG_ReadLong () == i);
 	}
 	assert (!msg_badread && msg_readcount == packet_size);
+}
+
+static void test_private_resume_marker (void)
+{
+	byte reliable[128];
+	usercmd_t cmd = {0};
+	usercmd_t received;
+	int marker_size;
+
+	setup ();
+	cls.message.data = reliable;
+	cls.message.maxsize = sizeof reliable;
+	MSG_WriteByte (&cls.message, clc_stringcmd);
+	MSG_WriteString (&cls.message, "existing");
+	cl.movemessages = 42;
+	cl.move_ack_authority = MOVE_AUTHORITY_PMOVE_ENGINE_COMPAT;
+	cl.move_ack_selected_owner = true;
+	cl.move_ack_resume_pending = true;
+	cl.move_ack_discontinuity_reason = MOVEACK_DISCONTINUITY_GAP;
+	cl.move_ack_discontinuity_epoch = 33;
+	memset (&in_attack, 0, sizeof (in_attack));
+	in_attack.state = 2; /* attack tap sampled before the resume ACK */
+	in_impulse = 7;
+	cl.pendingcmd.vr_roomscalemove[0] = 5;
+	CL_PrivateMoveResumeObserved ();
+	assert (!in_attack.state && !in_impulse &&
+		!cl.pendingcmd.vr_roomscalemove[0]);
+	CL_FinishMove (&cmd);
+	assert (!(cmd.buttons & 1) && !cmd.impulse);
+	cmd.forwardmove = 11; /* input sampled after the observed resume survives */
+	CL_SendMove (&cmd);
+	assert (cl.movemessages == 43 && cl.move_resume_marker_epoch_valid &&
+		cl.move_resume_marker_first_sequence == 42);
+	net_message.data = cls.message.data;
+	net_message.cursize = cls.message.cursize;
+	MSG_BeginReading ();
+	assert (MSG_ReadByte () == clc_stringcmd);
+	assert (!strcmp (MSG_ReadString (), "existing"));
+	assert (MSG_ReadByte () == clc_stringcmd);
+	assert (!strcmp (MSG_ReadString (), "qsvr_resume 33 42"));
+	assert (!msg_badread && msg_readcount == cls.message.cursize);
+	marker_size = cls.message.cursize;
+	begin_packet ();
+	assert (MSG_ReadByte () == clc_stringcmd);
+	assert (!strcmp (MSG_ReadString (), "qsvr_resume 33 42"));
+	assert (MSG_ReadByte () == clc_move &&
+		(unsigned short)MSG_ReadShort () == 42);
+	assert (SV_ReadPrivateUsercmd (&received, 42, 0, 0) &&
+		!(received.buttons & 1) && !received.impulse &&
+		received.forwardmove == 11);
+
+	CL_SendMove (&cmd);
+	assert (cl.movemessages == 44 && cls.message.cursize == marker_size);
+	begin_packet ();
+	assert (MSG_ReadByte () == clc_stringcmd);
+	assert (!strcmp (MSG_ReadString (), "qsvr_resume 33 42"));
+	assert (MSG_ReadByte () == clc_move &&
+		(unsigned short)MSG_ReadShort () == 42);
+	cl.ackedmovemessages = 43;
+	CL_SendMove (&cmd);
+	begin_packet ();
+	assert (MSG_ReadByte () == clc_move);
+	cl.move_ack_discontinuity_epoch = 0;
+	cl.movemessages = 65536;
+	CL_SendMove (&cmd);
+	assert (cl.movemessages == 65537 &&
+		cl.move_resume_marker_epoch_sent == 0 &&
+		cls.message.cursize > marker_size);
+
+	setup ();
+	cls.message.data = reliable;
+	cls.message.maxsize = sizeof reliable;
+	cl.movemessages = 7;
+	cl.move_ack_authority = MOVE_AUTHORITY_PMOVE_QC_COMMAND;
+	cl.move_ack_resume_pending = true;
+	cl.move_ack_discontinuity_reason = MOVEACK_DISCONTINUITY_GAP;
+	cl.move_ack_discontinuity_epoch = 34;
+	CL_SendMove (&cmd);
+	assert (cl.movemessages == 8 && !cls.message.cursize &&
+		!cl.move_resume_marker_epoch_valid);
+	/* Selected terminal authority still needs the resume marker for respawn. */
+	cl.move_ack_selected_owner = true;
+	cl.move_ack_authority = MOVE_AUTHORITY_LEGACY_FRAME;
+	CL_SendMove (&cmd);
+	assert (cl.movemessages == 9 && cl.move_resume_marker_epoch_valid &&
+		cl.move_resume_marker_first_sequence == 8);
+
+	setup ();
+	cls.message.data = reliable;
+	cls.message.maxsize = sizeof reliable;
+	cl.movemessages = 9;
+	cl.move_ack_authority = MOVE_AUTHORITY_PMOVE_ENGINE_COMPAT;
+	cl.move_ack_selected_owner = true;
+	cl.move_ack_resume_pending = true;
+	cl.move_ack_discontinuity_reason = MOVEACK_DISCONTINUITY_GAP;
+	cl.move_ack_discontinuity_epoch = 35;
+	cl.paused = true;
+	cl.ackframes[0] = 123;
+	cl.ackframes_count = 1;
+	CL_SendMove (&cmd);
+	assert (cl.movemessages == 9 && !cls.message.cursize &&
+		!cl.move_resume_marker_epoch_valid && !cl.ackframes_count &&
+		packet_count == 1 && cl.move_msec_sample_valid &&
+		cl.move_msec_sample_time == realtime &&
+		cl.move_msec_fractional_carry == 0);
+	begin_packet ();
+	assert (MSG_ReadByte () == clcdp_ackframe && MSG_ReadLong () == 123);
+	assert (!msg_badread && msg_readcount == packet_size);
+
+	setup ();
+	cls.message.data = reliable;
+	cls.message.maxsize = 1;
+	cls.message.cursize = 1;
+	cl.movemessages = 10;
+	cl.move_ack_authority = MOVE_AUTHORITY_PMOVE_ENGINE_COMPAT;
+	cl.move_ack_selected_owner = true;
+	cl.move_ack_resume_pending = true;
+	cl.move_ack_discontinuity_reason = MOVEACK_DISCONTINUITY_GAP;
+	cl.move_ack_discontinuity_epoch = 36;
+	CL_SendMove (&cmd);
+	assert (cl.movemessages == 11 && cl.move_resume_marker_epoch_valid &&
+		cl.move_resume_marker_first_sequence == 10 &&
+		cls.message.cursize == 1);
+	begin_packet ();
+	assert (MSG_ReadByte () == clc_stringcmd &&
+		!strcmp (MSG_ReadString (), "qsvr_resume 36 10"));
 }
 static void test_full_bundle_and_wrap (void)
 {
@@ -434,6 +562,7 @@ int main (void)
 	test_redundancy ();
 	test_clock ();
 	test_ack_queue ();
+	test_private_resume_marker ();
 	test_full_bundle_and_wrap ();
 	test_packet_angles ();
 	test_local_ack_invalidates_snapshot ();

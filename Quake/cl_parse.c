@@ -1300,14 +1300,13 @@ static void CL_EntitiesDeltaed (void)
 	}
 }
 
-static int CL_ExpandMoveAck16 (int ack16)
+static int CL_ExpandMoveAck16 (int ack16, int reference)
 {
 	int ack;
-	int reference = cl.ackedmovemessages;
 
-	/* A pause can leave the completed ACK unchanged while the producer's
-	 * sequence counter advances. Expand against the last completed ACK,
-	 * not the newest command, so an old ACK cannot jump ahead by 65536. */
+	/* A pause can leave completion unchanged while the producer advances.
+	 * Usually anchor to the last completion; once the server confirms the
+	 * resume fence, its full first sequence resolves a larger gap. */
 	if (reference < 0)
 		reference = cl.movemessages;
 	ack = (reference & ~0xffff) | (ack16 & 0xffff);
@@ -2937,7 +2936,15 @@ static qboolean CL_ParseMoveAckPayload (qboolean *ack_accepted)
 	discontinuity_epoch = MSG_ReadShort () & 0xffff;
 	reason = MSG_ReadByte ();
 	if (flags & ~(MOVEACK_FLAG_AUTHORITATIVE | MOVEACK_FLAG_PREDICTION_ALLOWED |
-		MOVEACK_FLAG_DISCONTINUITY | MOVEACK_FLAG_VR_GORILLA | MOVEACK_FLAG_GORILLA_TRUSTED) ||
+		MOVEACK_FLAG_DISCONTINUITY | MOVEACK_FLAG_VR_GORILLA |
+		MOVEACK_FLAG_GORILLA_TRUSTED | MOVEACK_FLAG_SELECTED |
+		MOVEACK_FLAG_RESUME_COMPLETED | MOVEACK_FLAG_RESUME_PENDING) ||
+		((flags & MOVEACK_FLAG_RESUME_COMPLETED) &&
+		 !(flags & MOVEACK_FLAG_SELECTED)) ||
+		((flags & MOVEACK_FLAG_RESUME_PENDING) &&
+		 !(flags & MOVEACK_FLAG_SELECTED)) ||
+		((flags & MOVEACK_FLAG_RESUME_PENDING) &&
+		 (flags & MOVEACK_FLAG_RESUME_COMPLETED)) ||
 		authority < MOVE_AUTHORITY_UNKNOWN || authority > MOVE_AUTHORITY_PMOVE_QC_COMMAND)
 	{
 		msg_badread = true;
@@ -3017,10 +3024,39 @@ static qboolean CL_ParseMoveAckPayload (qboolean *ack_accepted)
 			}
 	}
 
-	/* Validate the whole payload before moving the accepted replay baseline.
-	 * Stale ACKs must not restore metadata from before a mode change. */
-	if (!CL_UpdateMoveAck (CL_ExpandMoveAck16 (ack16)))
+	/* Validate the whole payload before moving the replay baseline. The
+	 * resume marker gives the full first post-resume sequence.
+	 * Until completion, old ACKs remain anchored to the previous completion;
+	 * afterward the marker resolves even a gap spanning a 16-bit wrap. */
+	int ack_reference = cl.ackedmovemessages;
+	if (cl.move_ack_selected_owner && (flags & MOVEACK_FLAG_SELECTED) &&
+		(unsigned short)(discontinuity_epoch -
+			cl.move_ack_discontinuity_epoch) > 0x8000)
+		return true; /* an older selected snapshot cannot restore its epoch */
+	if ((flags & MOVEACK_FLAG_RESUME_COMPLETED) &&
+		cl.move_resume_marker_epoch_valid &&
+		(unsigned short)(discontinuity_epoch -
+			cl.move_resume_marker_epoch_sent) < 0x8000 &&
+		cl.move_resume_marker_first_sequence > ack_reference)
+		ack_reference = cl.move_resume_marker_first_sequence;
+	if (cl.move_resume_marker_epoch_valid &&
+		cl.ackedmovemessages >= cl.move_resume_marker_first_sequence &&
+		cl.move_resume_marker_first_sequence > 0 &&
+		(flags & MOVEACK_FLAG_SELECTED) &&
+		!(flags & MOVEACK_FLAG_RESUME_COMPLETED) &&
+		discontinuity_epoch == cl.move_resume_marker_epoch_sent)
+		return true; /* delayed pre-completion metadata from this generation */
+	if (!CL_UpdateMoveAck (CL_ExpandMoveAck16 (ack16, ack_reference)))
 		return true;
+	if ((flags & MOVEACK_FLAG_SELECTED) &&
+		(flags & MOVEACK_FLAG_RESUME_PENDING) &&
+		(!cl.move_ack_resume_pending ||
+		 discontinuity_epoch != cl.move_ack_discontinuity_epoch))
+	{
+		cl.move_resume_marker_epoch_valid = false;
+		cl.move_resume_marker_first_sequence = 0;
+		CL_PrivateMoveResumeObserved ();
+	}
 	CL_InvalidateMoveSnapshot ();
 	if (ack_accepted)
 		*ack_accepted = true;
@@ -3031,6 +3067,8 @@ static qboolean CL_ParseMoveAckPayload (qboolean *ack_accepted)
 		CL_ResetPredictionSmoothing ();
 
 	cl.move_ack_authority = (move_authority_t)authority;
+	cl.move_ack_selected_owner = (flags & MOVEACK_FLAG_SELECTED) != 0;
+	cl.move_ack_resume_pending = (flags & MOVEACK_FLAG_RESUME_PENDING) != 0;
 	cl.move_ack_prediction_allowed = (flags & MOVEACK_FLAG_PREDICTION_ALLOWED) != 0;
 	cl.move_ack_mode_epoch = (unsigned short)mode_epoch;
 	cl.move_ack_discontinuity_epoch = (unsigned short)discontinuity_epoch;

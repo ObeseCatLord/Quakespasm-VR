@@ -17,10 +17,12 @@ double v_punchangles_times[2];
 struct qsocket_s { int unused; };
 static struct qsocket_s socket_stub;
 static int smoothing_resets;
+static int resume_resets;
 static int flushes;
 static qboolean parse_ack_accepted;
 int NET_QSocketGetSequenceIn (const struct qsocket_s *sock) { return 77; }
 void CL_ResetPredictionSmoothing (void) { smoothing_resets++; }
+void CL_PrivateMoveResumeObserved (void) { resume_resets++; }
 void CL_FlushAckFrames (void) { flushes++; }
 void Con_DPrintf (const char *fmt, ...) {}
 void Con_Printf (const char *fmt, ...) {}
@@ -96,6 +98,7 @@ static void reset_client (void)
 	cl.ackedmovemessages = -1;
 	cl.vr_gorilla_state_sequence = -1;
 	smoothing_resets = 0;
+	resume_resets = 0;
 	flushes = 0;
 	parse_ack_accepted = false;
 }
@@ -198,15 +201,63 @@ int main (void)
 	reset_client ();
 	cl.movemessages = 65636;
 	cl.ackedmovemessages = 100;
-	length = moveack (packet, 100, 0, MOVE_AUTHORITY_PMOVE_ENGINE_COMPAT,
+	length = moveack (packet, 100,
+		MOVEACK_FLAG_SELECTED | MOVEACK_FLAG_RESUME_PENDING,
+		MOVE_AUTHORITY_PMOVE_ENGINE_COMPAT,
 		1, 2, MOVEACK_DISCONTINUITY_GAP, false, false, 0);
 	assert (parse (packet, length) && cl.ackedmovemessages == 100 &&
-		cl.net_move_acks == 0 && !cl.move_ack_prediction_allowed);
+		cl.net_move_acks == 0 && !cl.move_ack_prediction_allowed &&
+		cl.move_ack_selected_owner && resume_resets == 1);
 	/* A stale pre-wrap ACK stays stale even with a far-ahead producer. */
 	length = moveack (packet, 99, 0, MOVE_AUTHORITY_UNKNOWN,
 		1, 1, MOVEACK_DISCONTINUITY_NONE, false, false, 0);
 	assert (parse (packet, length) && !parse_ack_accepted &&
 		cl.ackedmovemessages == 100 && cl.net_move_stale_acks == 1);
+	cl.move_resume_marker_epoch_valid = true;
+	cl.move_resume_marker_epoch_sent = 2;
+	cl.move_resume_marker_first_sequence = 65636;
+	cl.movemessages = 65638;
+	length = moveack (packet, 100,
+		MOVEACK_FLAG_SELECTED | MOVEACK_FLAG_RESUME_COMPLETED,
+		MOVE_AUTHORITY_LEGACY_FRAME, 1, 2, MOVEACK_DISCONTINUITY_GAP,
+		false, false, 0);
+	assert (parse (packet, length) && cl.ackedmovemessages == 65636 &&
+		cl.move_ack_selected_owner && cl.net_move_acks == 1 &&
+		resume_resets == 1);
+	length = moveack (packet, 100, MOVEACK_FLAG_SELECTED,
+		MOVE_AUTHORITY_UNKNOWN, 1, 2, MOVEACK_DISCONTINUITY_GAP,
+		false, false, 0);
+	assert (parse (packet, length) && cl.ackedmovemessages == 65636 &&
+		cl.move_ack_authority == MOVE_AUTHORITY_LEGACY_FRAME);
+	length = moveack (packet, 100, MOVEACK_FLAG_SELECTED,
+		MOVE_AUTHORITY_UNKNOWN, 1, 1, MOVEACK_DISCONTINUITY_NONE,
+		false, false, 0);
+	assert (parse (packet, length) && cl.ackedmovemessages == 65636 &&
+		cl.move_ack_discontinuity_epoch == 2 &&
+		cl.move_ack_authority == MOVE_AUTHORITY_LEGACY_FRAME);
+	reset_client ();
+	cl.movemessages = 40002;
+	cl.ackedmovemessages = 100;
+	cl.move_resume_marker_epoch_valid = true;
+	cl.move_resume_marker_epoch_sent = 4;
+	cl.move_resume_marker_first_sequence = 40000;
+	length = moveack (packet, 40000,
+		MOVEACK_FLAG_SELECTED | MOVEACK_FLAG_RESUME_COMPLETED,
+		MOVE_AUTHORITY_PMOVE_ENGINE_COMPAT, 1, 4, MOVEACK_DISCONTINUITY_GAP,
+		false, false, 0);
+	assert (parse (packet, length) && cl.ackedmovemessages == 40000);
+	reset_client ();
+	cl.movemessages = 500;
+	cl.ackedmovemessages = 100;
+	cl.move_ack_selected_owner = true;
+	cl.move_ack_discontinuity_epoch = 4;
+	length = moveack (packet, 100,
+		MOVEACK_FLAG_SELECTED | MOVEACK_FLAG_RESUME_PENDING,
+		MOVE_AUTHORITY_LEGACY_FRAME, 1, 5,
+		MOVEACK_DISCONTINUITY_RESET_TELEPORT, false, false, 0);
+	assert (parse (packet, length) && resume_resets == 1 &&
+		cl.move_ack_resume_pending &&
+		cl.move_ack_discontinuity_reason == MOVEACK_DISCONTINUITY_RESET_TELEPORT);
 	cl = before_long_pause;
 	cl.movemessages = 0x20002;
 
@@ -214,6 +265,12 @@ int main (void)
 	cl.protocol_qsvr = 0;
 	assert_rejected_unchanged (packet, length);
 	cl.protocol_qsvr = QSVR_PROTOCOL_PINNED;
+	length = moveack (packet, 1,
+		MOVEACK_FLAG_SELECTED | MOVEACK_FLAG_RESUME_PENDING |
+		MOVEACK_FLAG_RESUME_COMPLETED,
+		MOVE_AUTHORITY_PMOVE_ENGINE_COMPAT, 1, 1,
+		MOVEACK_DISCONTINUITY_GAP, false, false, 0);
+	assert_rejected_unchanged (packet, length);
 
 	/* Gorilla state requires both capability and a valid private model identity. */
 	length = moveack (packet, 1, MOVEACK_FLAG_PREDICTION_ALLOWED |

@@ -23,6 +23,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 
 #include "quakedef.h"
 #include "player_avatar.h"
+#include <limits.h>
 
 edict_t *sv_player;
 
@@ -1127,6 +1128,8 @@ void SV_ResetPrivateCommandQueue (client_t *client)
 	client->private_move_published_authority_valid = false;
 	client->private_move_native_frame = false;
 	client->private_move_resume_pending = false;
+	client->private_input_phase = PRIVATE_INPUT_RUNNING;
+	client->private_resume_first_sequence = 0;
 	client->private_pmove_walk_selected = false;
 	client->private_pmove_pusher_interaction = false;
 	client->private_pmove_credit_msec = 0.0;
@@ -1258,6 +1261,93 @@ static qboolean SV_PrivateWalkTrialStateValid (client_t *client)
 	return true;
 }
 
+/* Selected movement has one command owner. A pause discards its pending work
+ * and transient input, while the completed ACK and physical player remain
+ * unchanged. The resume marker fences delayed redundant move datagrams. */
+static void SV_PrivateSyncPauseState (client_t *client)
+{
+	const qboolean suspended = sv.paused ||
+		(svs.maxclients <= 1 && key_dest != key_game);
+
+	if (!SV_PrivateWalkTrialSelected (client))
+		return;
+	if (suspended)
+	{
+		if (client->private_input_phase == PRIVATE_INPUT_SUSPENDED)
+			return;
+		SV_DiscardPrivateCommandQueue (client, client->lastmovemessage);
+		SV_ResetPrivateVRContactState (client);
+		client->private_pmove_last_cmd_valid = false;
+		memset (&client->private_pmove_last_cmd, 0,
+			sizeof (client->private_pmove_last_cmd));
+		client->private_pmove_credit_msec = 0.0;
+		client->private_latest_buttons = 0;
+		client->private_latched_buttons = 0;
+		client->private_latched_impulse = 0;
+		client->cmd.forwardmove = 0;
+		client->cmd.sidemove = 0;
+		client->cmd.upmove = 0;
+		client->cmd.buttons = 0;
+		client->cmd.impulse = 0;
+		memset (client->cmd.vr_roomscalemove, 0,
+			sizeof (client->cmd.vr_roomscalemove));
+		memset (&client->cmd.vr_gorilla, 0, sizeof (client->cmd.vr_gorilla));
+		memset (&client->cmd.vr_gorilla_motion, 0,
+			sizeof (client->cmd.vr_gorilla_motion));
+		if (client->edict && !client->edict->free)
+		{
+			client->edict->v.button0 = 0;
+			client->edict->v.button2 = 0;
+			SV_SetClientExtraButtons (client->edict, 0);
+			client->edict->v.impulse = 0;
+		}
+		client->private_resume_first_sequence = 0;
+		client->private_input_phase = PRIVATE_INPUT_SUSPENDED;
+		return;
+	}
+	if (client->private_input_phase == PRIVATE_INPUT_SUSPENDED)
+	{
+		/* Publish the new generation only after the server has resumed. A
+		 * command tagged at pause entry could still have been produced while
+		 * paused, then arrive after resume. */
+		client->private_move_discontinuity_epoch++;
+		client->private_move_discontinuity_reason = MOVEACK_DISCONTINUITY_GAP;
+		client->private_input_phase = PRIVATE_INPUT_AWAIT_MARKER;
+	}
+}
+
+static qboolean SV_HandlePrivateResumeMarker (const char *s)
+{
+	unsigned int epoch, first_sequence;
+	char trailing;
+	client_t *client = host_client;
+
+	if (strncmp (s, "qsvr_resume", 11) ||
+		(s[11] != ' ' && s[11] != '\t'))
+		return false;
+	/* This private engine command must never reach a mod's QC handler. */
+	if (!SV_PrivateWalkTrialSelected (client))
+		return true;
+	SV_PrivateSyncPauseState (client);
+	if (sscanf (s + 11, "%u %u %c", &epoch, &first_sequence,
+		&trailing) != 2 || epoch > 0xffff || first_sequence < 2 ||
+		first_sequence > INT_MAX ||
+		(int)first_sequence <= client->private_completed_move ||
+		client->private_input_phase != PRIVATE_INPUT_AWAIT_MARKER ||
+		epoch != client->private_move_discontinuity_epoch)
+		return true;
+	client->private_resume_first_sequence = (int)first_sequence;
+	/* The producer sends its full sequence in this reliable marker. It also
+	 * restores 16-bit move expansion if generation crossed a wrap during the
+	 * suspension before the client learned that it was paused. */
+	if (client->lastmovemessage < (int)first_sequence - 1)
+		client->lastmovemessage = (int)first_sequence - 1;
+	SV_DiscardPrivateCommandQueue (client, client->lastmovemessage);
+	client->lastmovetime = realtime;
+	client->private_input_phase = PRIVATE_INPUT_AWAIT_COMPLETION;
+	return true;
+}
+
 static qboolean SV_ReadPrivateClientMove (void)
 {
 	usercmd_t readcmd;
@@ -1267,6 +1357,7 @@ static qboolean SV_ReadPrivateClientMove (void)
 	vec3_t roomscale;
 	float horizontal;
 
+	SV_PrivateSyncPauseState (host_client);
 	if (msg_badread)
 		return false;
 	if (sequence - last > 0x8000)
@@ -1279,11 +1370,22 @@ static qboolean SV_ReadPrivateClientMove (void)
 		return true;
 	if (SV_PrivateWalkTrialSelected (host_client))
 	{
+		if (host_client->private_input_phase == PRIVATE_INPUT_SUSPENDED ||
+			host_client->private_input_phase == PRIVATE_INPUT_AWAIT_MARKER ||
+			(host_client->private_input_phase == PRIVATE_INPUT_AWAIT_COMPLETION &&
+			 sequence < host_client->private_resume_first_sequence))
+		{
+			host_client->lastmovemessage = sequence;
+			host_client->lastmovetime = realtime;
+			SV_DiscardPrivateCommandQueue (host_client, sequence);
+			return true;
+		}
 		if (!SV_PrivateWalkTrialTerminalState (host_client) &&
 			!SV_PrivateWalkTrialStateValid (host_client))
 			return false;
 		if (!SV_PrivateWalkTrialTerminalState (host_client) &&
 			!host_client->private_move_resume_pending &&
+			host_client->private_input_phase == PRIVATE_INPUT_RUNNING &&
 			host_client->lastmovetime > 0 &&
 			realtime - host_client->lastmovetime > 1.0)
 			return SV_PrivateWalkTrialFail (host_client, "more than one second between accepted commands");
@@ -1782,6 +1884,8 @@ qboolean SV_ReadClientMessage (void)
 
 		case clc_stringcmd: {
 			s = MSG_ReadString ();
+			if (SV_HandlePrivateResumeMarker (s))
+				break;
 			if (SV_HandleAvatarCapability (s) ||
 				SV_HandleCustomAvatarCapability (s) ||
 				SV_HandleAvatarSet (s) ||
@@ -1903,12 +2007,14 @@ void SV_RunClients (void)
 			continue;
 
 		sv_player = host_client->edict;
+		SV_PrivateSyncPauseState (host_client);
 
 		if (!host_client->spawned)
 		{
 			// clear client movement until a new packet is received
 			memset (&host_client->cmd, 0, sizeof (host_client->cmd));
 			if (host_client->protocol_qsvr == QSVR_PROTOCOL_PINNED &&
+				!SV_PrivateWalkTrialSelected (host_client) &&
 				!SV_ClearPrivateInput (host_client))
 			{
 				SV_DropClient (false);
@@ -1923,7 +2029,20 @@ void SV_RunClients (void)
 			host_client->cmd.viewangles[1] = host_client->edict->v.v_angle[1];
 			host_client->cmd.viewangles[2] = host_client->edict->v.v_angle[2];
 		}
+		if (SV_PrivateWalkTrialSelected (host_client) &&
+			host_client->private_input_phase == PRIVATE_INPUT_RUNNING &&
+			host_client->lastmovetime > 0 &&
+			realtime - host_client->lastmovetime > 1.0 &&
+			!SV_PrivateWalkTrialTerminalState (host_client) &&
+			!host_client->private_move_resume_pending)
+		{
+			SV_PrivateWalkTrialFail (host_client,
+				"more than one second between accepted commands");
+			SV_DropClient (false);
+			continue;
+		}
 		if (host_client->protocol_qsvr == QSVR_PROTOCOL_PINNED &&
+			!SV_PrivateWalkTrialSelected (host_client) &&
 			(sv.paused || (svs.maxclients <= 1 && key_dest != key_game) ||
 			 (host_client->lastmovetime > 0 &&
 			  realtime - host_client->lastmovetime > 1.0 &&

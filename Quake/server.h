@@ -170,6 +170,13 @@ typedef struct
 #define SV_PRIVATE_CMD_QUEUE_SIZE 32
 #define SV_PRIVATE_CMD_QUEUE_MAX_MSEC 250 // bound pending command history to a quarter second
 
+typedef enum {
+	PRIVATE_INPUT_RUNNING = 0,
+	PRIVATE_INPUT_SUSPENDED,
+	PRIVATE_INPUT_AWAIT_MARKER,
+	PRIVATE_INPUT_AWAIT_COMPLETION
+} private_input_phase_t;
+
 typedef struct client_s
 {
 	qboolean active;   // false = client is free
@@ -331,6 +338,8 @@ typedef struct client_s
 	qboolean private_move_published_authority_valid;
 	qboolean private_move_native_frame; // native terminal/respawn frame has not yielded to selected PMove
 	qboolean private_move_resume_pending; // first post-respawn command may follow a long corpse interval
+	private_input_phase_t private_input_phase; // selected pause/resume fence, separate from respawn
+	int private_resume_first_sequence; // first command generated after the client observed resume
 	qboolean	 private_pmove_walk_selected; // latched until command-queue/serverinfo reset
 	qboolean	 private_pmove_pusher_interaction; // world-frame pusher ground/contact/carry forbids client replay
 	double	 private_pmove_credit_msec; // fractional milliseconds; physics accrual/cap lives in sv_phys.c

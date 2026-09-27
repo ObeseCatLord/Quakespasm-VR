@@ -172,8 +172,14 @@ typedef struct
 	// Pinned private movement state; public protocol still uses its donor path.
 	move_authority_t move_ack_authority;
 	qboolean move_ack_prediction_allowed;
+	qboolean move_ack_selected_owner;
+	qboolean move_ack_resume_pending;
 	unsigned short move_ack_mode_epoch, move_ack_discontinuity_epoch;
 	unsigned char move_ack_discontinuity_reason;
+	/* The valid bit distinguishes an unsent epoch zero from a wrapped epoch. */
+	qboolean move_resume_marker_epoch_valid;
+	unsigned short move_resume_marker_epoch_sent;
+	int move_resume_marker_first_sequence;
 	/* A semantic teleport is consumed only with its complete owner snapshot. */
 	qboolean move_teleport_epoch_valid;
 	unsigned short move_teleport_epoch_consumed;
@@ -506,6 +512,7 @@ void	 CL_InitInput (void);
 void	 CL_AccumulateCmd (void);
 void	 CL_SendCmd (void);
 void	 CL_SendMove (const usercmd_t *cmd);
+void CL_PrivateMoveResumeObserved (void);
 int		 CL_ReadFromServer (void);
 qboolean CL_AngleLocked (void);
 void	 CL_AdjustAngles (void);

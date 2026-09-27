@@ -1919,6 +1919,14 @@ static qboolean SVFTE_WriteEntitiesToClient (client_t *client, sizebuf_t *msg,
 	{
 		move_authority_t authority = selected_engine ?
 			MOVE_AUTHORITY_PMOVE_ENGINE_COMPAT : MOVE_AUTHORITY_LEGACY_FRAME;
+		if (selected)
+			ack_flags |= MOVEACK_FLAG_SELECTED;
+		if (selected && client->private_input_phase == PRIVATE_INPUT_AWAIT_MARKER)
+			ack_flags |= MOVEACK_FLAG_RESUME_PENDING;
+		if (selected && client->private_input_phase == PRIVATE_INPUT_RUNNING &&
+			client->private_resume_first_sequence > 0 &&
+			client->private_completed_move >= client->private_resume_first_sequence)
+			ack_flags |= MOVEACK_FLAG_RESUME_COMPLETED;
 		if (!client->private_move_published_authority_valid)
 		{
 			client->private_move_published_authority = authority;
@@ -1935,7 +1943,8 @@ static qboolean SVFTE_WriteEntitiesToClient (client_t *client, sizebuf_t *msg,
 			client->vr_gorilla_last_sequence == client->private_completed_move &&
 			SV_GorillaAckStateIsFinite (client) &&
 			SV_GorillaAckOriginMatchesOwner (client);
-		if (selected_engine && !sv.paused)
+		if (selected_engine && !sv.paused &&
+			client->private_input_phase == PRIVATE_INPUT_RUNNING)
 		{
 			ack_flags |= MOVEACK_FLAG_AUTHORITATIVE;
 			/* Wet movement and an active ledge jump keep the selected command

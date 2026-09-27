@@ -887,6 +887,21 @@ pacing, actual tracking producers or prediction. Those remain integration gates.
 
 ## Private movement ACKs and command diagnostics
 
+`private_pause_server_fixture.c` executes the selected server's production
+pause transition, resume marker parser and private move reader. It
+checks that queued actions and held state are discarded without completing the
+ACK, a stale or malformed marker is ignored, first post-marker input is queued,
+and a second pause or pre-marker relocation fences that generation. It does not
+execute QuakeC physics callbacks or a live network connection.
+
+```sh
+cc -std=gnu11 -DUSE_SDL3 -D_GNU_SOURCE -Wno-unused-parameter \
+  -ffunction-sections -fdata-sections tests/private_pause_server_fixture.c \
+  Quake/common.c Quake/mathlib.c -Wl,--gc-sections \
+  $(pkg-config --cflags --libs sdl3) -lm -o /tmp/quakespasm-private-pause
+/tmp/quakespasm-private-pause
+```
+
 `private_moveack_fixture.c` includes the production ACK parser and links real
 MSG readers. It checks accepted/stale/equal ACKs, 16-bit expansion, the QuakeC
 command frame, epoch-triggered smoothing reset calls, Gorilla capability gates,
@@ -896,6 +911,10 @@ duplicate/overflow handling. Smoothing reset and flush calls are fixture spies;
 the fixture does not execute the actual smoothing reset or network flush.
 Truncated prefixes retain a larger backing array, so they check logical message
 bounds rather than physically truncated allocations.
+The sender and ACK fixtures also check the selected resume marker, clearing of
+pre-observation key edges and accumulated roomscale, fresh input after that
+boundary, terminal-authority marker production, unreliable marker-before-move
+ordering, and full-sequence ACK recovery across half/full wraps.
 
 The command-name regression feeds literal svc 57/ACK bytes followed by opcode
 127 through the real MSG/ACK owners, then calls the production diagnostic lookup.

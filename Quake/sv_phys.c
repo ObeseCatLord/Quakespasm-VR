@@ -7651,7 +7651,8 @@ static qboolean SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *clien
 	host_client = client;
 	sv_player = ent;
 	client->private_move_native_frame = false;
-	if (!client->private_pmove_last_cmd_valid)
+	if (!client->private_pmove_last_cmd_valid &&
+		client->private_input_phase == PRIVATE_INPUT_RUNNING)
 	{
 		client->private_pmove_jump_secs = 0.0f;
 		client->private_pmove_waterjump_secs = 0.0f;
@@ -8232,6 +8233,9 @@ static qboolean SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *clien
 	}
 complete_terminal_command:
 	client->private_completed_move = (int)command.sequence;
+	if (client->private_input_phase == PRIVATE_INPUT_AWAIT_COMPLETION &&
+		(int)command.sequence >= client->private_resume_first_sequence)
+		client->private_input_phase = PRIVATE_INPUT_RUNNING;
 	client->private_pmove_last_cmd = command;
 	client->private_pmove_last_cmd_valid = true;
 	client->private_pmove_jump_secs = terminal_completed ? 0.0f : result_jump_secs;
@@ -8807,6 +8811,9 @@ static void SV_Physics_ClientTerminalFrame (edict_t *ent, int num,
 	client->vr_gorilla_cursor_valid = true;
 	if (SV_Physics_ClientNativeFrame (ent, num, completed_move) && consumed)
 	{
+		if (client->private_input_phase == PRIVATE_INPUT_AWAIT_COMPLETION &&
+			completed_move >= client->private_resume_first_sequence)
+			client->private_input_phase = PRIVATE_INPUT_RUNNING;
 		last.impulse = 0;
 		VectorClear (last.vr_roomscalemove);
 		client->private_pmove_last_cmd = last;

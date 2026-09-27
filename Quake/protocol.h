@@ -468,6 +468,9 @@ extern entity_state_t nullentitystate; // note: not all null.
 #define MOVEACK_FLAG_DISCONTINUITY 0x04
 #define MOVEACK_FLAG_VR_GORILLA 0x08 /* [long state_sequence][state] */
 #define MOVEACK_FLAG_GORILLA_TRUSTED 0x10 /* negotiated [long motion generation] */
+#define MOVEACK_FLAG_SELECTED 0x20 /* this private peer owns selected PMove, even while dead */
+#define MOVEACK_FLAG_RESUME_COMPLETED 0x40 /* completed ACK crossed the latest resume fence */
+#define MOVEACK_FLAG_RESUME_PENDING 0x80 /* echo a resume marker before admitting commands */
 
 typedef enum {
   MOVE_AUTHORITY_UNKNOWN = 0,

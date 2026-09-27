@@ -962,6 +962,54 @@ static void CL_ConsumeSentVoicePacket (void)
 	cl.voice_outgoing_count--;
 }
 
+/* Called when a selected server's new resume epoch is parsed, before the
+ * next host-side command is built. Preserve held keys, but drop edges and
+ * tracking accumulated before the client knew the server had resumed. */
+void CL_PrivateMoveResumeObserved (void)
+{
+	kbutton_t *buttons[] = {
+		&in_mlook, &in_klook,
+		&in_left, &in_right, &in_forward, &in_back,
+		&in_lookup, &in_lookdown, &in_moveleft, &in_moveright,
+		&in_strafe, &in_speed, &in_use, &in_jump, &in_attack,
+		&in_up, &in_down, &in_button4, &in_button5,
+		&in_button6, &in_button7, &in_button8
+	};
+	for (size_t i = 0; i < countof (buttons); ++i)
+		buttons[i]->state &= 1;
+	in_impulse = 0;
+	memset (&cl.pendingcmd, 0, sizeof (cl.pendingcmd));
+	cl.pendingcmd.servertime = cl.time;
+	cl.move_msec_sample_valid = true;
+	cl.move_msec_sample_time = realtime;
+	cl.move_msec_fractional_carry = 0;
+}
+
+static qboolean CL_QueuePrivateResumeMarker (void)
+{
+	char command[64];
+	int length;
+	size_t required;
+
+	length = q_snprintf (command, sizeof (command), "qsvr_resume %u %d",
+		(unsigned)cl.move_ack_discontinuity_epoch, cl.movemessages);
+	if (length < 0 || length >= (int)sizeof (command))
+		return false;
+	required = 1 + (size_t)length + 1;
+	if (!cls.message.overflowed && cls.message.cursize >= 0 &&
+		cls.message.maxsize >= 0 &&
+		cls.message.cursize <= cls.message.maxsize &&
+		required <= (size_t)(cls.message.maxsize - cls.message.cursize))
+	{
+		MSG_WriteByte (&cls.message, clc_stringcmd);
+		MSG_WriteString (&cls.message, command);
+	}
+	cl.move_resume_marker_epoch_sent = cl.move_ack_discontinuity_epoch;
+	cl.move_resume_marker_first_sequence = cl.movemessages;
+	cl.move_resume_marker_epoch_valid = true;
+	return true;
+}
+
 static void CL_SendPrivateMove (const usercmd_t *cmd)
 {
 	byte data[DATAGRAM_MTU];
@@ -973,6 +1021,30 @@ static void CL_SendPrivateMove (const usercmd_t *cmd)
 	unsigned capabilities = 0;
 	if (cls.demoplayback)
 		return;
+	if (cl.paused)
+	{
+		/* Paused time is not command duration to replay on resume. */
+		cl.move_msec_sample_valid = true;
+		cl.move_msec_sample_time = realtime;
+		cl.move_msec_fractional_carry = 0;
+		CL_FlushAckFrames ();
+		return;
+	}
+	if (cl.protocol_qsvr == QSVR_PROTOCOL_PINNED &&
+		cl.move_ack_selected_owner &&
+		cl.move_ack_resume_pending &&
+		(!cl.move_resume_marker_epoch_valid ||
+			cl.move_resume_marker_epoch_sent != cl.move_ack_discontinuity_epoch))
+	{
+		/* The parser cleared older latches at the observed epoch. This marker
+		 * also rides before moves in the current datagram, so reliable-channel
+		 * backpressure cannot stall resumed input. */
+		if (!CL_QueuePrivateResumeMarker ())
+		{
+			CL_FlushAckFrames ();
+			return;
+		}
+	}
 	/* A full reliable buffer at offer time defers the capability reply until
 	 * the next command, without making the unreliable pose claim admission. */
 	CL_QueueGorillaCapability ();
@@ -1025,6 +1097,19 @@ static void CL_SendPrivateMove (const usercmd_t *cmd)
 		capabilities |= QSVR_MOVE_CAP_GORILLA_RAW;
 	if (cl.vr_gorilla_trusted_supported && cl.vr_gorilla_trusted_cap_sent)
 		capabilities |= QSVR_MOVE_CAP_GORILLA_TRUSTED;
+	if (cl.move_ack_selected_owner && cl.move_resume_marker_epoch_valid &&
+		cl.move_resume_marker_epoch_sent == cl.move_ack_discontinuity_epoch &&
+		cl.move_resume_marker_first_sequence > 0 &&
+		cl.ackedmovemessages < cl.move_resume_marker_first_sequence)
+	{
+		/* Put the marker before moves in the same datagram. Repeating it
+		 * until completion avoids losing early resumed actions while an older
+		 * reliable message delays the separately queued marker. */
+		MSG_WriteByte (&buf, clc_stringcmd);
+		MSG_WriteString (&buf, va ("qsvr_resume %u %d",
+			(unsigned)cl.move_resume_marker_epoch_sent,
+			cl.move_resume_marker_first_sequence));
+	}
 
 	first_seq = q_max (2, seq - 2);
 	for (int previous = first_seq; previous <= seq; ++previous)
