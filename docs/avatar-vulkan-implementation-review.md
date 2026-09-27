@@ -54,7 +54,7 @@ loss, missing/malformed assets, and task rendering on/off. Synthetic parser
 fixtures and compilation alone cannot establish that behavior; live headset
 testing remains with the user.
 
-## Animation performance decision
+## Follow-up animation performance decision (2026-09-27)
 
 Keep the current per-frame Ranger-to-selected-rig palette retargeter for the
 2.0 implementation. It runs once per selected player in frame preparation;
