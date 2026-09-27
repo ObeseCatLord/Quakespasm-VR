@@ -1649,6 +1649,64 @@ static qboolean VR_InputRenderOffsetToBody (const vec3_t render_offset,
 			body_offset) && VR_InputWireVec (body_offset);
 }
 
+/* Return physical edge offsets in the command body frame. Alias matrices
+ * use a zero lerp origin; neither branch inherits stair or wall translation. */
+static qboolean VR_InputMeleeEdgeBodyOffsets (int hand,
+	aliashdr_t *geometry, const stockaxe_edge_t *edge, qboolean held_mesh,
+	float presentation_yaw, float mapping_yaw,
+	vec3_t body_base, vec3_t body_tip)
+{
+	vec3_t render_base, render_tip;
+
+	if (hand < 0 || hand > 1 || !geometry || !body_base || !body_tip ||
+		(!held_mesh && (!edge || !edge->valid)))
+		return false;
+	if (held_mesh)
+	{
+		vec3_t hand_angles;
+		if (!V_TrackedPresentationHandAngles (hand, hand_angles) ||
+			!V_HeldMeleeRawEdgeOffsets (hand_angles,
+				render_base, render_tip))
+			return false;
+	}
+	else
+	{
+		lerpdata_t lerpdata;
+		vec3_t hand_angles, model_angles, raw_base, raw_tip;
+		float model_matrix[16];
+
+		if (!isfinite (vr_gunmodelpitch.value) ||
+			!V_TrackedPresentationHandAngles (hand, hand_angles) ||
+			!VR_LocomotionHandRotToViewmodelAngles (hand_angles,
+				model_angles, vr_gunmodelpitch.value))
+			return false;
+		memset (&lerpdata, 0, sizeof (lerpdata));
+		VectorCopy (model_angles, lerpdata.angles);
+		if (R_AliasModelMatrix (&cl.viewent, geometry, &lerpdata,
+			model_matrix) < 0)
+			return false;
+		for (int axis = 0; axis < 3; ++axis)
+		{
+			if (!isfinite (geometry->scale[axis]) ||
+				geometry->scale[axis] == 0.0f ||
+				!isfinite (geometry->scale_origin[axis]))
+				return false;
+			raw_base[axis] = (edge->base[axis] -
+				geometry->scale_origin[axis]) / geometry->scale[axis];
+			raw_tip[axis] = (edge->tip[axis] -
+				geometry->scale_origin[axis]) / geometry->scale[axis];
+		}
+		if (!VR_InputAliasTransformPoint (model_matrix, raw_base,
+			render_base) ||
+			!VR_InputAliasTransformPoint (model_matrix, raw_tip, render_tip))
+			return false;
+	}
+	return VR_InputRenderOffsetToBody (render_base, presentation_yaw,
+		mapping_yaw, body_base) &&
+		VR_InputRenderOffsetToBody (render_tip, presentation_yaw,
+			mapping_yaw, body_tip);
+}
+
 static qboolean VR_InputContactSpeedBound (const vrxr_device_t *device,
 	const vec3_t offset, float units_per_metre, float *speed)
 {
@@ -1807,21 +1865,19 @@ static qboolean VR_InputPrepareCollisionContact (usercmd_t *pending,
 static qboolean VR_InputPrepareMeleeContact (usercmd_t *pending,
 	const vrxr_frame_t *frame, int hand, const vec3_t grip, int modelindex,
 	qmodel_t *model, int skin, aliashdr_t *geometry,
-	const stockaxe_edge_t *edge, qboolean held_mesh)
+	const stockaxe_edge_t *edge, qboolean held_mesh,
+	const vec3_t body_base, const vec3_t body_tip, float mapping_yaw)
 {
 	vr_weapon_contact_t contact;
 	const vrxr_device_t *device;
 	const vr_input_hand_state_t *hand_state;
-	lerpdata_t lerpdata;
-	vec3_t hand_angles, model_angles, raw_base, raw_tip;
-	vec3_t render_base, render_tip, body_base, body_tip;
-	vec3_t render_delta;
-	float model_matrix[16], presentation_yaw, mapping_yaw;
 	float units_per_metre, point_speed;
 	int weapon;
 
 	if (!pending || !frame || hand < 0 || hand > 1 || !model || !geometry ||
-		(!held_mesh && (!edge || !edge->valid)) || !frame->sample_id ||
+		(!held_mesh && (!edge || !edge->valid)) || !body_base || !body_tip ||
+		!VR_InputWireVec (body_base) || !VR_InputWireVec (body_tip) ||
+		!frame->sample_id ||
 		VR_WeaponCalibrationAdjustActive () ||
 		!(held_mesh ? VR_InputHeldMeleeAuthorized () :
 			VR_InputMeleeAuthorized ()) ||
@@ -1841,12 +1897,7 @@ static qboolean VR_InputPrepareMeleeContact (usercmd_t *pending,
 		cl.viewent.model != model || cl.viewent.skinnum != skin ||
 		cl.stats[STAT_HEALTH] <= 0 || !cl.worldmodel ||
 		cl.worldmodel->needload || !cl.entities || cl.viewentity <= 0 ||
-		cl.viewentity >= cl.num_entities || !isfinite (vr_gunmodelpitch.value) ||
-		!V_TrackedPresentationYaw (&presentation_yaw) ||
-		!V_TrackedMappingYaw (&mapping_yaw) ||
-		!V_TrackedPresentationHandAngles (hand, hand_angles) ||
-		(!held_mesh && !VR_LocomotionHandRotToViewmodelAngles (hand_angles,
-			model_angles, vr_gunmodelpitch.value)))
+		cl.viewentity >= cl.num_entities || !isfinite (mapping_yaw))
 		return false;
 
 	weapon = cl.stats[STAT_ACTIVEWEAPON];
@@ -1858,55 +1909,17 @@ static qboolean VR_InputPrepareMeleeContact (usercmd_t *pending,
 	if (!isfinite (units_per_metre) || units_per_metre <= 0.0f)
 		return false;
 
-	if (held_mesh)
-	{
-		if (!V_HeldMeleeEdgeOffsets (render_base, render_tip, render_delta))
-			return false;
-	}
-	else
-	{
-		/* The stock axe retains its established source-model matrix. */
-		memset (&lerpdata, 0, sizeof (lerpdata));
-		VectorCopy (model_angles, lerpdata.angles);
-		if (R_AliasModelMatrix (&cl.viewent, geometry, &lerpdata,
-			model_matrix) < 0)
-			return false;
-		for (int axis = 0; axis < 3; ++axis)
-		{
-			if (!isfinite (geometry->scale[axis]) ||
-				geometry->scale[axis] == 0.0f ||
-				!isfinite (geometry->scale_origin[axis]))
-				return false;
-			raw_base[axis] = (edge->base[axis] - geometry->scale_origin[axis]) /
-				geometry->scale[axis];
-			raw_tip[axis] = (edge->tip[axis] - geometry->scale_origin[axis]) /
-				geometry->scale[axis];
-		}
-		if (!VR_InputAliasTransformPoint (model_matrix, raw_base, render_base) ||
-			!VR_InputAliasTransformPoint (model_matrix, raw_tip, render_tip))
-			return false;
-	}
-	if (!VR_InputRenderOffsetToBody (render_base, presentation_yaw,
-			mapping_yaw, body_base) ||
-		!VR_InputRenderOffsetToBody (render_tip, presentation_yaw,
-			mapping_yaw, body_tip) ||
-		!VR_InputContactPointSpeed (device, body_tip, mapping_yaw,
+	if (!VR_InputContactPointSpeed (device, body_tip, mapping_yaw,
 			units_per_metre, &point_speed))
 		return false;
 	if (held_mesh)
 	{
-		vec3_t body_delta;
 		float base_speed;
-		/* Effort uses raw tracked point motion. Contact follows exactly the
-		 * collision displacement of the already prepared held mesh. */
+		/* Both contact endpoints and effort use the raw tracked edge. */
 		if (!VR_InputContactPointSpeed (device, body_base, mapping_yaw,
-			units_per_metre, &base_speed) ||
-			!VR_InputRenderOffsetToBody (render_delta, presentation_yaw,
-				mapping_yaw, body_delta))
+			units_per_metre, &base_speed))
 			return false;
 		point_speed = fmaxf (point_speed, base_speed);
-		VectorAdd (body_base, body_delta, body_base);
-		VectorAdd (body_tip, body_delta, body_tip);
 	}
 
 	memset (&contact, 0, sizeof (contact));
@@ -4019,7 +4032,6 @@ static qboolean VR_InputPrepareBerserkAkimboContact (usercmd_t *pending,
 		vec3_t grip, hand_angles, model_angles;
 		vec3_t render_base = {0.0f, 0.0f, 0.0f}, render_tip;
 		vec3_t body_base, body_tip;
-		vec3_t render_delta, body_delta;
 		float base_speed, tip_speed;
 		if (!VR_InputHandAccepted (frame, hand) || !device->valid ||
 			!device->tracked || device->kind != VRXR_DEVICE_HAND ||
@@ -4036,19 +4048,13 @@ static qboolean VR_InputPrepareBerserkAkimboContact (usercmd_t *pending,
 				mapping_yaw, body_tip))
 			return false;
 
-		/* Swing effort is tracked before wall retraction; transmitted points
-		 * still use the renderer's actual per-hand collision displacement. */
+		/* Physical sweep endpoints and effort both use the raw tracked edge;
+		 * the paired presentation offset belongs only to the visible model. */
 		if (!VR_InputContactPointSpeed (device, body_base, mapping_yaw,
 			units_per_metre, &base_speed) ||
 			!VR_InputContactPointSpeed (device, body_tip, mapping_yaw,
-			units_per_metre, &tip_speed))
+				units_per_metre, &tip_speed))
 			return false;
-		V_AkimboPairCollisionOffset (hand, render_delta);
-		if (!VR_InputRenderOffsetToBody (render_delta, presentation_yaw,
-			mapping_yaw, body_delta))
-			return false;
-		VectorAdd (body_base, body_delta, body_base);
-		VectorAdd (body_tip, body_delta, body_tip);
 
 		VectorCopy (grip, contact.grip[hand]);
 		VectorAdd (grip, body_base, contact.base[hand]);
@@ -4087,13 +4093,15 @@ static void VR_InputPreparePrivatePose (usercmd_t *pending, int dominant,
 {
 	const vrxr_frame_t *frame = GL_OpenXRFrame ();
 	vec3_t grip, hand_angles, local_muzzle, world_muzzle, raw_world_muzzle, relative;
+	vec3_t melee_body_base, melee_body_tip;
 	qmodel_t *contact_model = NULL;
 	qmodel_t *axe_model = NULL;
 	aliashdr_t *axe_geometry = NULL;
 	stockaxe_edge_t axe_edge;
 	int contact_modelindex = 0;
 	int axe_modelindex = 0, axe_skin = -1;
-	qboolean axe_candidate, held_candidate;
+	qboolean axe_candidate, held_candidate, melee_edge_valid = false;
+	float melee_mapping_yaw = 0.0f;
 	const qboolean roomscale_accepted =
 		VR_InputRoomscaleCommandAccepted (pending->vr_roomscalemove);
 
@@ -4148,19 +4156,31 @@ static void VR_InputPreparePrivatePose (usercmd_t *pending, int dominant,
 	held_candidate = !axe_candidate && VR_InputHeldMeleeAuthorized () &&
 		VR_InputSelectedHeldMelee (&axe_modelindex, &axe_model,
 			&axe_skin, &axe_geometry);
-
-	/* Stock ranged aliases may use wall retraction; the exact stock axe keeps
-	 * the raw calibrated muzzle and blade. Use STAT_WEAPON before the
-	 * presentation viewent is refreshed. */
+	if (axe_candidate || held_candidate)
 	{
+		float presentation_yaw;
+		melee_edge_valid = V_TrackedPresentationYaw (&presentation_yaw) &&
+			V_TrackedMappingYaw (&melee_mapping_yaw) &&
+			VR_InputMeleeEdgeBodyOffsets (dominant, axe_geometry,
+				held_candidate ? NULL : &axe_edge, held_candidate,
+				presentation_yaw, melee_mapping_yaw,
+				melee_body_base, melee_body_tip);
+	}
+
+	/* Correct the private command muzzle with either the raw calibrated shaft
+	 * or an admitted melee edge. Keep ordinary contact limited to stock ranged
+	 * aliases, and never use a presentation collision offset for this solve. */
+	{
+		const qboolean stock_ranged =
+			cl.stats[STAT_WEAPON] > 0 && cl.stats[STAT_WEAPON] < MAX_MODELS &&
+			cl.model_precache[cl.stats[STAT_WEAPON]] &&
+			VR_WeaponCalibrationStockRangedViewmodel (
+				cl.model_precache[cl.stats[STAT_WEAPON]]->name);
 		const qboolean collision_context = VR_WeaponCollisionAuthorized () &&
 			cls.state == ca_connected && cls.signon == SIGNONS &&
 			!cls.demoplayback && key_dest == key_game && !cl.intermission &&
 			cl.stats[STAT_HEALTH] > 0 &&
-			cl.stats[STAT_WEAPON] > 0 && cl.stats[STAT_WEAPON] < MAX_MODELS &&
-			cl.model_precache[cl.stats[STAT_WEAPON]] &&
-			VR_WeaponCalibrationStockRangedViewmodel (
-				cl.model_precache[cl.stats[STAT_WEAPON]]->name) &&
+			(stock_ranged || melee_edge_valid) &&
 			cl.worldmodel && !cl.worldmodel->needload && cl.entities &&
 			cl.viewentity > 0 && cl.viewentity < cl.num_entities && frame &&
 			frame->focused && frame->should_render &&
@@ -4174,16 +4194,27 @@ static void VR_InputPreparePrivatePose (usercmd_t *pending, int dominant,
 			vec3_t corrected_muzzle;
 			float head_height;
 			entity_t *player = &cl.entities[cl.viewentity];
-			contact_modelindex = cl.stats[STAT_WEAPON];
-			contact_model = cl.model_precache[contact_modelindex];
+			if (stock_ranged)
+			{
+				contact_modelindex = cl.stats[STAT_WEAPON];
+				contact_model = cl.model_precache[contact_modelindex];
+			}
 			if (R_TrackedHeadBodyOffset (torso_offset) &&
 				R_TrackedHeadEyeHeight (cl.stats[STAT_VIEWHEIGHT], &head_height))
 			{
 				VectorAdd (player->origin, torso_offset, torso);
 				torso[2] += head_height;
 				VectorAdd (player->origin, grip, world_grip);
-				VectorCopy (world_grip, base);
-				VectorAdd (world_grip, world_muzzle, tip);
+				if (melee_edge_valid)
+				{
+					VectorAdd (world_grip, melee_body_base, base);
+					VectorAdd (world_grip, melee_body_tip, tip);
+				}
+				else
+				{
+					VectorCopy (world_grip, base);
+					VectorAdd (world_grip, world_muzzle, tip);
+				}
 				if (CL_ResolveWeaponCollision (torso, world_grip, base, tip, delta))
 				{
 					/* Correct before applying the existing roomscale offset once. */
@@ -4219,10 +4250,11 @@ static void VR_InputPreparePrivatePose (usercmd_t *pending, int dominant,
 		vr_input_contact_discontinuity = false;
 		return;
 	}
-	if (axe_candidate || held_candidate)
+	if ((axe_candidate || held_candidate) && melee_edge_valid)
 		VR_InputPrepareMeleeContact (pending, frame, dominant, grip,
 			axe_modelindex, axe_model, axe_skin, axe_geometry,
-			held_candidate ? NULL : &axe_edge, held_candidate);
+			held_candidate ? NULL : &axe_edge, held_candidate,
+			melee_body_base, melee_body_tip, melee_mapping_yaw);
 	else if (contact_model)
 		VR_InputPrepareCollisionContact (pending, GL_OpenXRFrame (), dominant,
 			grip, raw_world_muzzle, contact_modelindex, contact_model);

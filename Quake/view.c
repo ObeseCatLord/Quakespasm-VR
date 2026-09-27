@@ -890,6 +890,25 @@ qboolean V_HeldMeleeEdgeOffsets (vec3_t out_base, vec3_t out_tip,
 	return true;
 }
 
+qboolean V_HeldMeleeRawEdgeOffsets (const vec3_t hand_angles,
+	vec3_t out_base, vec3_t out_tip)
+{
+	entity_t raw_entity;
+	vec3_t model_angles;
+
+	if (!hand_angles || !out_base || !out_tip || !V_HeldMeleeEntity () ||
+		!held_melee_model->stockaxe_edge.valid ||
+		!V_HeldMeleeModelAngles (held_melee_recipe, hand_angles, model_angles))
+		return false;
+	/* The prepared model and ready edge are validated above. Rebuild only its
+	 * orientation from this command's hand sample, before stair and wall offsets. */
+	raw_entity = held_melee_entity;
+	VectorCopy (model_angles, raw_entity.angles);
+	return V_HeldMeleeGeometryEdgeOffsets (&raw_entity,
+		held_melee_geometry, &held_melee_model->stockaxe_edge,
+		out_base, out_tip);
+}
+
 qboolean V_HeldMeleeRenderEntity (const entity_t *e)
 {
 	return e && e == V_HeldMeleeEntity ();

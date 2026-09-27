@@ -76,6 +76,8 @@ qboolean V_AkimboDwellEdgeOffsets (int physical_hand,
  * Failure to prepare the rendered mesh also rejects physical contacts. */
 qboolean V_HeldMeleeEdgeOffsets (vec3_t out_base, vec3_t out_tip,
 	vec3_t out_collision);
+qboolean V_HeldMeleeRawEdgeOffsets (const vec3_t hand_angles,
+	vec3_t out_base, vec3_t out_tip);
 entity_t *V_HeldMeleeEntity (void);
 qboolean V_HeldMeleeRenderEntity (const entity_t *e);
 int V_AkimboViewmodelHand (const entity_t *e);

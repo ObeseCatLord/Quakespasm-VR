@@ -163,3 +163,20 @@ an axe with and without MELEE authorization, an exact held/pair path,
 obstruction, and contact-history reset. Resolver-only fixtures cannot establish
 those outcomes. Runtime cost on a large map remains to be measured before a
 broadphase or other trace optimization is added.
+
+The first parity slice now shares a raw-edge calculation between recognized
+melee command correction and physical contact. Stock axe geometry is rebuilt
+from the current hand sample. Held-mesh geometry reuses the validated prepared
+model but recomputes its edge from current hand angles; it does not reuse a
+pre-turn render edge or its collision offset. Paired contact endpoints also
+remain raw. The local Linux build passes. Collision remains opt-in, and this
+does not qualify near-wall shots or button outcomes.
+
+A follow-up Astra xhigh code review caught the held-edge yaw hazard before
+commit: local turning can occur after the cached render edge is prepared, so
+converting that edge with current yaw would mix two orientations. The patch
+was changed to recompute the held edge with the existing model matrix helper.
+The prepared held model is still required, so a failed or unavailable prepared
+entity can suppress its physical contact and command-edge correction. This
+remaining coupling requires end-to-end qualification before claiming full
+donor parity.
