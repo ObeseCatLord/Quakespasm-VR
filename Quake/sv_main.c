@@ -2454,6 +2454,7 @@ void SV_Init (void)
 	extern cvar_t sv_friction;
 	extern cvar_t sv_edgefriction;
 	extern cvar_t sv_stopspeed;
+	extern cvar_t vr_movement_instant_stop;
 	extern cvar_t sv_maxspeed;
 	extern cvar_t sv_accelerate;
 	extern cvar_t sv_idealpitchscale;
@@ -2471,6 +2472,7 @@ void SV_Init (void)
 	Cvar_SetCallback (&sv_friction, Host_Callback_Notify);
 	Cvar_RegisterVariable (&sv_edgefriction);
 	Cvar_RegisterVariable (&sv_stopspeed);
+	Cvar_RegisterVariable (&vr_movement_instant_stop);
 	Cvar_RegisterVariable (&sv_maxspeed);
 	Cvar_SetCallback (&sv_maxspeed, Host_Callback_Notify);
 	Cvar_RegisterVariable (&sv_accelerate);

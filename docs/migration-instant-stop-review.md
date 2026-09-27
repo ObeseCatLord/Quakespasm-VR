@@ -1,9 +1,10 @@
 # Optional VR instant-stop movement: senior review
 
-This is a pending migration design for the source `vr_movement_instant_stop`
-setting. It is **not implemented** on `2.0`. The setting defaults off in the
-source and must remain off unless explicitly selected. Desktop movement must
-retain vkQuake behavior.
+This is a migration design for the source `vr_movement_instant_stop` setting.
+The classic server path is implemented on `2.0`; selected private predictive
+movement remains pending, so the feature is not yet fully migrated. The
+setting defaults off in the source and in `2.0`. Desktop movement must retain
+vkQuake behavior.
 
 ## Verified movement owners
 
@@ -15,6 +16,9 @@ retain vkQuake behavior.
   Selected private clients use `Quake/sv_phys.c:SV_PrivateWalkTrial` and the
   shared `Quake/pmove.c:PM_PlayerMove`; the latter is also used by client
   replay in `Quake/cl_main.c`.
+- `Quake/sv_user.c:SV_AirMove` now applies the default-off setting only to
+  active VR commands on the classic path. It retains shallow-water stopping
+  and excludes native ladder contact, which this fork can route to `SV_AirMove`.
 - The private server already exports movement flags through `STAT_MOVEFLAGS`
   (`PMSV_ExportMoveStats` and `SVFTE_WritePrivateMoveStats`).
 - Classic source movement is processed before `PlayerPreThink`. The selected

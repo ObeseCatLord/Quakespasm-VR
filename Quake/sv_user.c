@@ -42,8 +42,11 @@ static qboolean sv_gorilla_swim_intent;
 
 static usercmd_t cmd;
 
+static qboolean SV_GorillaNativeLadder (edict_t *ent);
+
 cvar_t sv_idealpitchscale = {"sv_idealpitchscale", "0.8", CVAR_NONE};
 cvar_t sv_altnoclip = {"sv_altnoclip", "1", CVAR_ARCHIVE_GAME}; // johnfitz
+cvar_t vr_movement_instant_stop = {"vr_movement_instant_stop", "0", CVAR_ARCHIVE};
 
 /*
 ===============
@@ -430,8 +433,19 @@ void SV_AirMove (void)
 	}
 	else if (onground)
 	{
-		SV_UserFriction ();
-		SV_Accelerate (wishspeed, wishdir);
+		if (vr_movement_instant_stop.value && host_client &&
+			host_client->cmd.vr_active && wishspeed == 0 &&
+			!SV_GorillaEligible (host_client) &&
+			!SV_GorillaNativeLadder (sv_player))
+		{
+			velocity[0] = 0;
+			velocity[1] = 0;
+		}
+		else
+		{
+			SV_UserFriction ();
+			SV_Accelerate (wishspeed, wishdir);
+		}
 	}
 	else
 	{ // not on ground, so little effect on velocity
