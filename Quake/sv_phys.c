@@ -976,6 +976,7 @@ static int		num_pushable_ent_cache;
 // oversized entities bypass the grid and are always tested.
 #define PUSH_GRID_CELL_SHIFT 8 // 256 unit cells
 #define PUSH_GRID_MAX_LARGE	 1024
+#define PUSH_GRID_MAX_QUERY_CELLS 4096
 
 typedef struct
 {
@@ -1082,6 +1083,34 @@ static void PushGrid_Insert (edict_t *ent)
 			}
 }
 
+static int PushGrid_CompareEdictNumbers (edict_t *a, edict_t *b)
+{
+	/* Grid/cache entries already belong to this QCVM; sorting needs only their
+	 * contiguous edict-array positions, without checked function calls. */
+	const int a_num = NUM_FOR_EDICT_NO_CHECK (a);
+	const int b_num = NUM_FOR_EDICT_NO_CHECK (b);
+
+	return (a_num > b_num) - (a_num < b_num);
+}
+
+static void PushGrid_SiftDown (edict_t **out, int root, int count)
+{
+	edict_t *key = out[root];
+	int		 child;
+
+	while ((child = root * 2 + 1) < count)
+	{
+		if (child + 1 < count &&
+			PushGrid_CompareEdictNumbers (out[child], out[child + 1]) < 0)
+			child++;
+		if (PushGrid_CompareEdictNumbers (key, out[child]) >= 0)
+			break;
+		out[root] = out[child];
+		root = child;
+	}
+	out[root] = key;
+}
+
 /*
 ============
 SV_PushGridEntityLinked
@@ -1114,6 +1143,7 @@ tick and the caller must scan the full cache.
 static int PushGrid_GatherCandidates (const vec3_t mins, const vec3_t maxs, edict_t **out)
 {
 	int num = 0;
+	int query_cells = 1;
 
 	if (!push_grid_valid)
 		return -1;
@@ -1124,7 +1154,20 @@ static int PushGrid_GatherCandidates (const vec3_t mins, const vec3_t maxs, edic
 	// ONGROUND/groundentity state outlives actual contact by a small gap (the
 	// elevator DIST_EPSILON nudge, float drift); it almost never adds a cell.
 	int lo[3], hi[3];
+	for (int axis = 0; axis < 3; ++axis)
+		if (!isfinite (mins[axis]) || !isfinite (maxs[axis]) ||
+			mins[axis] > maxs[axis])
+			return -1;
 	PushGrid_CellRange (mins, maxs, 2.0f, lo, hi);
+	/* A very long pusher sweep can span far more cells than a canonical edict
+	 * scan. Bound hash probes and use that scan rather than stalling here. */
+	for (int axis = 0; axis < 3; ++axis)
+	{
+		const int span = hi[axis] - lo[axis] + 1;
+		if (span <= 0 || span > PUSH_GRID_MAX_QUERY_CELLS / query_cells)
+			return -1;
+		query_cells *= span;
+	}
 
 	for (int x = lo[0]; x <= hi[0]; x++)
 		for (int y = lo[1]; y <= hi[1]; y++)
@@ -1150,18 +1193,35 @@ static int PushGrid_GatherCandidates (const vec3_t mins, const vec3_t maxs, edic
 	for (int i = push_grid_tail_start; i < num_pushable_ent_cache; i++)
 		out[num++] = pushable_ent_cache[i];
 
-	// restore vanilla processing order (blocked pushers roll back everything
-	// moved so far, so order is observable) and drop multi-cell duplicates
-	for (int i = 1; i < num; i++)
+	// Restore vanilla processing order (blocked pushers roll back everything
+	// moved so far, so order is observable) and drop multi-cell duplicates.
+	// Small lists are cheaper with insertion sort; larger ones use in-place
+	// heapsort to avoid quadratic candidate ordering.
+	if (num <= 16)
 	{
-		edict_t *key = out[i];
-		int		 j = i - 1;
-		while (j >= 0 && out[j] > key)
+		for (int i = 1; i < num; i++)
 		{
-			out[j + 1] = out[j];
-			j--;
+			edict_t *key = out[i];
+			int		 j = i - 1;
+			while (j >= 0 && PushGrid_CompareEdictNumbers (out[j], key) > 0)
+			{
+				out[j + 1] = out[j];
+				j--;
+			}
+			out[j + 1] = key;
 		}
-		out[j + 1] = key;
+	}
+	else
+	{
+		for (int root = num / 2 - 1; root >= 0; root--)
+			PushGrid_SiftDown (out, root, num);
+		for (int end = num - 1; end > 0; end--)
+		{
+			edict_t *key = out[end];
+			out[end] = out[0];
+			out[0] = key;
+			PushGrid_SiftDown (out, 0, end);
+		}
 	}
 	int unique = 0;
 	for (int i = 0; i < num; i++)

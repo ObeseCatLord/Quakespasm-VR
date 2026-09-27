@@ -44,3 +44,16 @@ queued commands, departure, a blocked push/rollback, snapshot ACK and replay
 permission, and the next raw-hand command after carry. Check origin and support
 as well as callback count. It can run after the wider implementation work; the
 user will handle live headset, eye tracking and performance tests separately.
+
+## Dense-map pusher candidate ordering
+
+The existing spatial grid can gather the same pushable edict from several
+cells. `PushGrid_GatherCandidates` must order and deduplicate those candidates
+by edict number before `SV_PushMove` processes them: blocked-push rollback is
+order-sensitive. Its prior insertion sort cost grows quadratically for a dense
+candidate list. Small lists still use insertion sort; larger lists now use an
+in-place heapsort with no extra allocation and the same edict order. A pusher
+sweep covering more than 4096 grid cells falls back to the canonical edict scan
+instead of probing an enormous region. Invalid query bounds take that fallback
+too. This removes two potential large-map CPU spikes; it does not establish a
+measured frame-time improvement on `mj4m1` or any other map.
