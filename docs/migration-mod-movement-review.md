@@ -68,3 +68,44 @@ mod states. The first AD adapter must prove how PMove receives the dynamic
 jump value and when QuakeC, rather than PMove, owns a boots/ladder/grapple
 impulse. Keeping server replay off alone does not fix authoritative double
 movement.
+
+## q30a1024 handoff follow-up review
+
+A bounded review of the installed q30 binary found two `map_jumpheight`
+additions, a boots-height Z replacement, a whole-velocity replacement, and
+`onladder` clears. These are opcode-level observations, **not** proof of all
+branch predicates or exact correspondence with the available source-like
+files. The existing selected owner restores the whole pre-PreThink velocity
+for a grounded jump and then gives PMove the original jump button and
+pre-PreThink release state. A q30 force can therefore be erased or followed
+by another jump. Merely using the post-PreThink velocity delta or the final
+`onladder` field cannot reliably identify which QC branch ran.
+
+An Astra senior review (effective `gpt-6-astra` / `max`) challenged the
+proposed subtract-and-readd jump adapter. Its key additional finding was
+that the selected path can execute zero-time maintenance callbacks and up to
+eight completed command lifecycles per world frame. The q30 contract must
+cover those callback frequencies, not only one PreThink per visible frame.
+It also found that ACK authority and client prediction permission are
+separate; a server-correct ordinary jump is not yet predictive boots or
+grapple support.
+
+| Recommendation | Disposition |
+| --- | --- |
+| Qualify exact q30 binary by SHA-256 and resolve named QC global/field definitions | **Adopt.** Identity pins the target, while validated runtime values remain necessary. Do not cache a stale VM offset across progs reload. |
+| Build a new dispatch/movement owner | **Reject.** Reuse the selected command queue, callbacks, contacts, stat export and ACK tail. |
+| Infer ordinary jump from post-QC velocity delta and subtract/readd it | **Reject.** Boots, ladder and grapple can replace or add velocity in overlapping callbacks; final state is insufficient branch evidence. |
+| Let QC own a proven jump impulse and suppress PMove's corresponding jump | **Investigate as the smaller adapter.** It must also preserve takeoff, ground classification, release state and timers: PMove can reground a small upward velocity even with jump suppressed. This is not yet general q30 admission. |
+| Use dynamic `map_jumpheight` as a movevar | **Adapt.** Validate the live value and its update timing before export; the binary's initial value is zero, so a zero-valued startup snapshot is not a usable jump speed. |
+| Fall back to native physics after an unsupported live command starts | **Reject for this slice.** Phase-aware terminal continuation is not qualified for living q30 commands, and callbacks must not run twice. Keep unknown mods on native movement before selection. |
+| Enable client prediction after server parity | **Defer until branch state is available to replay.** Existing `MOVEACK_FLAG_PREDICTION_ALLOWED` checks stock conditions, not boots/ladder/grapple state. Server-authoritative correction is an intermediate proof only. |
+
+The next software proof should use the exact installed binary with a remote
+pinned client, compare native and selected ordinary takeoff and a ground boots
+jump with forward input, then repeat across a zero-time maintenance interval
+and two commands in one world frame. Record visible takeoff, apex, horizontal
+travel, landing, boots state and completed ACK with declared tolerances. Ladder,
+grapple, water and general q30 admission remain separate gates. No headset or
+performance measurement is required for this proof. Until the executed QC
+branch and PMove takeoff ownership are qualified, keep q30 excluded from the
+selected path.
