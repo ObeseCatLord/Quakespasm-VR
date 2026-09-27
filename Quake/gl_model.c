@@ -1259,7 +1259,8 @@ static texture_t *Mod_LoadWadTexture (qmodel_t *mod, wad_t *wads, const char *na
 		return NULL;
 	tx = (texture_t *)Mem_Alloc (allocation_bytes);
 
-	memcpy (tx->name, mt.name, sizeof (tx->name));
+	memcpy (tx->name, mt.name, sizeof (mt.name));
+	tx->name[sizeof (mt.name)] = 0;
 	tx->width = mt.width;
 	tx->height = mt.height;
 	tx->type = Mod_TextureTypeFromName (tx->name);
@@ -1306,7 +1307,8 @@ static texture_t *Mod_MissingExternalMiptex (const miptex_t *mt, qboolean pal)
 
 	tx = (texture_t *)Mem_Alloc (allocation_bytes);
 	memset (tx, 0, allocation_bytes);
-	memcpy (tx->name, mt->name, sizeof (tx->name));
+	memcpy (tx->name, mt->name, sizeof (mt->name));
+	tx->name[sizeof (mt->name)] = 0;
 	tx->width = mt->width;
 	tx->height = mt->height;
 	tx->type = Mod_TextureTypeFromName (tx->name);
@@ -1595,7 +1597,7 @@ static void Mod_LoadTextures (qmodel_t *mod, byte *mod_base, lump_t *l)
 
 		if (mt.width == 0 || mt.height == 0)
 		{
-			Con_Warning ("Zero sized texture %s in %s!\n", mt.name, mod->name);
+			Con_Warning ("Zero sized texture %.16s in %s!\n", mt.name, mod->name);
 			continue;
 		}
 
@@ -1633,7 +1635,8 @@ static void Mod_LoadTextures (qmodel_t *mod, byte *mod_base, lump_t *l)
 		tx = (texture_t *)Mem_Alloc (sizeof (texture_t) + pixels);
 		mod->textures[i] = tx;
 
-		memcpy (tx->name, mt.name, sizeof (tx->name));
+		memcpy (tx->name, mt.name, sizeof (mt.name));
+		tx->name[sizeof (mt.name)] = 0;
 		tx->width = mt.width;
 		tx->height = mt.height;
 		tx->type = Mod_TextureTypeFromName (tx->name);
@@ -1647,7 +1650,7 @@ static void Mod_LoadTextures (qmodel_t *mod, byte *mod_base, lump_t *l)
 		// the end of the .bsp file buffer
 		if ((pixels_p + pixels) > (mod_base + l->fileofs + l->filelen))
 		{
-			Con_DPrintf ("Texture %s extends past end of lump\n", mt.name);
+			Con_DPrintf ("Texture %.16s extends past end of lump\n", mt.name);
 			pixels = q_max (0, (mod_base + l->fileofs + l->filelen) - pixels_p);
 		}
 		q_strlcpy (tx->source_file, mod->name, sizeof (tx->source_file));

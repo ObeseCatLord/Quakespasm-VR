@@ -33,10 +33,8 @@ void SwapPic (qpic_t *pic);
 ==================
 W_CleanupName
 
-Lowercases name and pads with spaces and a terminating 0 to the length of
-lumpinfo_t->name.
-Used so lumpname lookups can proceed rapidly by comparing 4 chars at a time
-Space padding is so names can be printed nicely in tables.
+Lowercases a 16-byte lump name and zero-pads names shorter than 16 bytes.
+A full-width name has no terminator, so callers compare all 16 bytes.
 Can safely be performed in place.
 ==================
 */
@@ -149,7 +147,7 @@ static lumpinfo_t *W_GetLumpinfo (lumpinfo_t *lumps, int numlumps, const char *n
 
 	for (lump_p = lumps, i = 0; i < numlumps; i++, lump_p++)
 	{
-		if (!strcmp (clean, lump_p->name))
+		if (!memcmp (clean, lump_p->name, sizeof (clean)))
 			return lump_p;
 	}
 

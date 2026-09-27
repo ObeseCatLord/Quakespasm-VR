@@ -105,7 +105,7 @@ typedef enum
 
 typedef struct texture_s
 {
-	char				name[16];
+	char				name[17]; // 16-byte BSP/WAD name plus a terminator
 	unsigned			width, height;
 	unsigned			shift; // Q64
 	textype_t			type;
