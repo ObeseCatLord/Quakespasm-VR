@@ -27,6 +27,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "quakedef.h"
 #include "miniz.h"
 #include "vr_mdl_split.h"
+#include "r_avatar.h"
 
 /* miniz.h keeps this declaration disabled in the QuakeSpasm amalgamation,
  * while common.c still links the exported implementation from miniz.c. */
@@ -37,7 +38,8 @@ static void		 Mod_LoadBrushModel (qmodel_t *mod, const char *loadname, void *buf
 static void		 Mod_LoadAliasModel (qmodel_t *mod, void *buffer,
 	qfilesize_t source_size, const char *skin_source);
 static qboolean	 Mod_LoadMD5MeshModel (qmodel_t *mod, const void *buffer,
-	const char *asset_name, qfilesize_t asset_size);
+	const char *asset_name, qfilesize_t asset_size, const void *anim_override,
+	qfilesize_t anim_override_size);
 static void		 Mod_LoadMD3Model (qmodel_t *mod, const void *buffer,
 	qfilesize_t source_size);
 static qmodel_t *Mod_LoadModel (qmodel_t *mod, qboolean crash);
@@ -574,6 +576,7 @@ Mod_FreeModelMemory
 static void Mod_FreeModelMemory (qmodel_t *mod)
 {
 	mod->is_generated_akimbo_half = false;
+	mod->avatar_builtin = false;
 	memset (&mod->stockaxe_edge, 0, sizeof (mod->stockaxe_edge));
 	SAFE_FREE (mod->qbj3_palm_centroids);
 	mod->qbj3_palm_pose_count = 0;
@@ -1054,7 +1057,7 @@ static qmodel_t *Mod_LoadModel (qmodel_t *mod, qboolean crash)
 		// are properly filtered/loaded, we need to set mod->path_id = md5_enhanced_path_id temporarilly
 		unsigned int original_path_id = mod->path_id;
 		mod->path_id = md5_enhanced_path_id;
-		Mod_LoadMD5MeshModel (mod, md5_buf, md5_name, md5_size);
+		Mod_LoadMD5MeshModel (mod, md5_buf, md5_name, md5_size, NULL, -1);
 		mod->path_id = original_path_id;
 		Mem_Free (md5_buf);
 	}
@@ -1086,7 +1089,7 @@ static qmodel_t *Mod_LoadModel (qmodel_t *mod, qboolean crash)
 		// by construction this is a "native" MD5 model, NOT a .mdl replacement so md5_enhanced_path_id = 0 here
 		assert (md5_enhanced_path_id == 0);
 		if (!Mod_LoadMD5MeshModel (mod, (const void *)buf, mod->name,
-			buf_filesize))
+			buf_filesize, NULL, -1))
 			Sys_Error ("Mod_LoadModel: failed to load %s", mod->name);
 	}
 	break;
@@ -5604,6 +5607,7 @@ typedef struct md5animctx_s
 	const void	*buffer;
 	char		 fname[MAX_QPATH];
 	qfilesize_t	filesize;
+	qboolean	 override_required;
 	size_t		 numposes;
 	size_t		 numjoints;
 	jointpose_t *posedata;
@@ -5662,14 +5666,30 @@ MD5Anim_Begin
 This is split into two because aliashdr_t has silly trailing framegroup info.
 ================
 */
-static qboolean MD5Anim_Begin (md5animctx_t *ctx, const char *fname)
+static qboolean MD5Anim_Begin (md5animctx_t *ctx, const char *fname,
+	const void *anim_override, qfilesize_t anim_override_size)
 {
 	// Load an md5anim into it, if we can.
+	ctx->override_required = anim_override != NULL;
 	COM_StripExtension (fname, ctx->fname, sizeof (ctx->fname));
 	COM_AddExtension (ctx->fname, ".md5anim", sizeof (ctx->fname));
 	fname = ctx->fname;
-	ctx->animfile = COM_LoadFile (fname, NULL);
-	ctx->filesize = ctx->animfile ? com_filesize : -1;
+	if (anim_override)
+	{
+		if (anim_override_size < 0 || (uint64_t)anim_override_size >= SIZE_MAX)
+			return false;
+		ctx->animfile = Mem_AllocNonZero ((size_t)anim_override_size + 1);
+		if (!ctx->animfile)
+			return false;
+		memcpy (ctx->animfile, anim_override, (size_t)anim_override_size);
+		((byte *)ctx->animfile)[anim_override_size] = 0;
+		ctx->filesize = anim_override_size;
+	}
+	else
+	{
+		ctx->animfile = COM_LoadFile (fname, NULL);
+		ctx->filesize = ctx->animfile ? com_filesize : -1;
+	}
 	ctx->numposes = 0;
 
 	if (ctx->animfile)
@@ -5725,12 +5745,13 @@ static qboolean MD5Anim_Load (md5animctx_t *ctx, jointinfo_t *joints, jointpose_
 	if (!buffer)
 	{
 		SAFE_FREE (ctx->animfile);
-		return true;
+		return !ctx->override_required;
 	}
 
 	MD5ANIMEXPECT ("numAnimatedComponents");
 	rawcount = MD5ANIMUINT ();
 	if (rawcount > SIZE_MAX / sizeof (*raw) - 6 ||
+		(ctx->override_required && rawcount > animjoints * 6) ||
 		(ctx->filesize >= 0 && rawcount > (size_t)ctx->filesize))
 		MD5ERROR ("%s: animation component count is invalid or too large\n", fname);
 
@@ -6177,7 +6198,9 @@ SKIN_PATTERN_FUNC_DEF (MD5_Skin_Name)
 }
 
 static qboolean Mod_LoadMD5MeshModelData (qmodel_t *mod, const void *buffer,
-	size_t numjoints, size_t nummeshes, qboolean verified_rerelease_mesh)
+	size_t numjoints, size_t nummeshes, qboolean verified_rerelease_mesh,
+	const void *anim_override, qfilesize_t anim_override_size,
+	qfilesize_t mesh_size)
 {
 	const char *fname = mod->name;
 
@@ -6199,8 +6222,12 @@ static qboolean Mod_LoadMD5MeshModelData (qmodel_t *mod, const void *buffer,
 	TEMP_ALLOC_DECL (jointpose_t, skinning_joints);
 	TEMP_ALLOC_DECL (jointpose_t, concat_joints);
 
-	if (!MD5Anim_Begin (&anim, fname))
+	if (!MD5Anim_Begin (&anim, fname, anim_override, anim_override_size))
 		return false;
+	if (anim_override && (numjoints > R_AVATAR_MAX_JOINTS ||
+		nummeshes > MAX_SURFACES || anim.numjoints > R_AVATAR_MAX_JOINTS ||
+		anim.numposes > MAXALIASFRAMES))
+		MD5ERROR ("%s: built-in avatar dimensions are too large\n", fname);
 	verified_rerelease_mesh = verified_rerelease_mesh &&
 		Mod_IsVerifiedRereleaseRangerAsset (anim.fname,
 			"progs/player.md5anim", anim.animfile, anim.filesize,
@@ -6367,6 +6394,7 @@ static qboolean Mod_LoadMD5MeshModelData (qmodel_t *mod, const void *buffer,
 		MD5EXPECT ("numverts");
 		size_t mesh_numverts = MD5UINT ();
 		if (!mesh_numverts || mesh_numverts > (size_t)UINT16_MAX + 1 ||
+			(anim_override && mesh_numverts > (size_t)mesh_size / 8) ||
 			mesh_numverts > SIZE_MAX / sizeof (md5vertinfo_t) || mesh_numverts > SIZE_MAX / sizeof (md5vert8_t))
 			MD5ERROR ("%s: mesh vertex count is invalid or too large\n", fname);
 		surf->numverts_vbo = surf->numverts = (int)mesh_numverts;
@@ -6403,7 +6431,10 @@ static qboolean Mod_LoadMD5MeshModelData (qmodel_t *mod, const void *buffer,
 
 		MD5EXPECT ("numtris");
 		size_t mesh_numtris = MD5UINT ();
-		if (mesh_numtris > INT_MAX / 3)
+		/* A rejected private avatar must have a buffer on every surface so
+		 * GLMesh_DeleteMeshBuffers can retire the entire chain. */
+		if ((anim_override && (!mesh_numtris || mesh_numtris > (size_t)mesh_size / 8)) ||
+			mesh_numtris > INT_MAX / 3)
 			MD5ERROR ("%s: mesh triangle count is invalid or too large\n", fname);
 		surf->numtris = (int)mesh_numtris;
 		surf->numindexes = surf->numtris * 3;
@@ -6427,7 +6458,8 @@ static qboolean Mod_LoadMD5MeshModelData (qmodel_t *mod, const void *buffer,
 		// md5 is a gpu-unfriendly interchange format. :(
 		MD5EXPECT ("numweights");
 		size_t numweights = MD5UINT ();
-		if (numweights > SIZE_MAX / sizeof (*weight))
+		if ((anim_override && numweights > (size_t)mesh_size / 8) ||
+			numweights > SIZE_MAX / sizeof (*weight))
 			MD5ERROR ("%s: weight count is too large\n", fname);
 		TEMP_ALLOC_ASSIGN_ZEROED (weight, numweights);
 
@@ -6460,6 +6492,9 @@ static qboolean Mod_LoadMD5MeshModelData (qmodel_t *mod, const void *buffer,
 		for (size_t j = 0; j < (size_t)surf->numverts; j++)
 		{
 			md5vert_t *poutvertex = (md5vert_t *)(poutvertexes + j * md5_vertex_size);
+			if (anim_override && (!isfinite (poutvertex->xyz[0]) ||
+				!isfinite (poutvertex->xyz[1]) || !isfinite (poutvertex->xyz[2])))
+				MD5ERROR ("%s: built-in avatar has nonfinite vertices\n", fname);
 			for (size_t k = 0; k < 3; k++)
 			{
 				mod->mins[k] = q_min (mod->mins[k], poutvertex->xyz[k]);
@@ -6564,7 +6599,8 @@ error:
 }
 
 static qboolean Mod_LoadMD5MeshModel (qmodel_t *mod, const void *buffer,
-	const char *asset_name, qfilesize_t asset_size)
+	const char *asset_name, qfilesize_t asset_size, const void *anim_override,
+	qfilesize_t anim_override_size)
 {
 	const char *fname = mod->name;
 	size_t		numjoints;
@@ -6594,10 +6630,132 @@ static qboolean Mod_LoadMD5MeshModel (qmodel_t *mod, const void *buffer,
 		MD5ERROR ("Mod_LoadMD5MeshModel(%s): expected \"%s\", found \"%s\"\n", fname, "joints", com_token);
 
 	return Mod_LoadMD5MeshModelData (mod, buffer, numjoints, nummeshes,
-		verified_rerelease_mesh);
+		verified_rerelease_mesh, anim_override, anim_override_size, asset_size);
 
 error:
 	return false;
+}
+
+/* The rerelease pack is admitted and marked by common.c at mount time.
+ * Read its member directly: ordinary VFS lookup could pick a mod override. */
+static byte *Mod_LoadAvatarPackAsset (const char *path, unsigned int *path_id,
+	qfilesize_t *asset_size)
+{
+	searchpath_t *search;
+	const packfile_t *file = NULL;
+	byte *data = NULL;
+	int handle;
+
+	for (search = com_searchpaths; search; search = search->next)
+	{
+		if (!search->rerelease_models || !search->pack)
+			continue;
+		for (int i = 0; i < search->pack->numfiles; ++i)
+			if (!strcmp (search->pack->files[i].name, path))
+			{
+				file = &search->pack->files[i];
+				break;
+			}
+		if (file)
+			break;
+	}
+	if (!file || file->filepos < 0 || file->filelen <= 0 ||
+		file->filelen > 16 * 1024 * 1024)
+		return NULL;
+
+	data = malloc ((size_t)file->filelen + 1);
+	if (!data)
+		return NULL;
+	handle = Sys_DuplicateHandle (search->pack->handle);
+	if (handle < 0)
+		goto error;
+	if (Sys_FileSeek (handle, file->filepos) != 0 ||
+		Sys_FileRead (handle, data, file->filelen) != file->filelen)
+	{
+		Sys_FileClose (handle);
+		goto error;
+	}
+	Sys_FileClose (handle);
+	data[file->filelen] = 0;
+	*path_id = search->path_id;
+	*asset_size = file->filelen;
+	return data;
+
+error:
+	free (data);
+	return NULL;
+}
+
+qmodel_t *Mod_GetAvatarBuiltinModel (int id)
+{
+	const r_avatar_profile_t *profile = R_AvatarProfileForId (id);
+	md5_skeleton_view_t skeleton;
+	r_avatar_rig_t rig;
+	qmodel_t *mod;
+	byte *mesh = NULL, *anim = NULL;
+	qfilesize_t mesh_size, anim_size;
+	unsigned int mesh_path_id, anim_path_id;
+	char cache_name[MAX_QPATH], anim_path[MAX_QPATH], saved_name[MAX_QPATH];
+	qboolean loaded;
+
+	if (isDedicated || !profile || !profile->model_path ||
+		profile->id != id || R_AvatarProfileForModelPath (profile->model_path) != profile)
+		return NULL;
+	if ((size_t)q_snprintf (cache_name, sizeof (cache_name),
+		"progs/@builtin_avatar_%d.md5mesh", id) >= sizeof (cache_name))
+		return NULL;
+	if (mod_numknown == MAX_MODELS)
+	{
+		int i;
+		for (i = 0; i < mod_numknown; ++i)
+			if (!strcmp (mod_known[i].name, cache_name))
+				break;
+		if (i == mod_numknown)
+			return NULL;
+	}
+	mod = Mod_FindName (cache_name);
+	if (!mod->needload)
+		return mod->avatar_builtin && mod->type == mod_alias &&
+			mod->extradata[PV_MD5] && mod->md5_skeleton ? mod : NULL;
+	if (mod->extradata[PV_MD5] || mod->md5_skeleton)
+		return NULL; /* An unrelated load already owns this private key. */
+
+	COM_StripExtension (profile->model_path, anim_path, sizeof (anim_path));
+	COM_AddExtension (anim_path, ".md5anim", sizeof (anim_path));
+	mesh = Mod_LoadAvatarPackAsset (profile->model_path, &mesh_path_id, &mesh_size);
+	if (!mesh)
+		return NULL;
+	anim = Mod_LoadAvatarPackAsset (anim_path, &anim_path_id, &anim_size);
+	if (!anim || anim_path_id != mesh_path_id)
+	{
+		free (mesh);
+		free (anim);
+		return NULL;
+	}
+
+	q_strlcpy (saved_name, mod->name, sizeof (saved_name));
+	q_strlcpy (mod->name, profile->model_path, sizeof (mod->name));
+	mod->path_id = mesh_path_id;
+	loaded = Mod_LoadMD5MeshModel (mod, mesh, profile->model_path,
+		mesh_size, anim, anim_size);
+	q_strlcpy (mod->name, saved_name, sizeof (mod->name));
+	free (mesh);
+	free (anim);
+	if (loaded && Mod_GetMD5Skeleton (mod, &skeleton) &&
+		(id != PLAYER_AVATAR_RANGER || skeleton.from_rerelease) &&
+		R_AvatarResolveRig (profile, &skeleton, &rig))
+	{
+		mod->avatar_builtin = true;
+		mod->needload = false;
+		return mod;
+	}
+
+	if (mod->extradata[PV_MD5])
+		GLMesh_DeleteMeshBuffers ((aliashdr_t *)mod->extradata[PV_MD5]);
+	Mod_FreeModelMemory (mod);
+	mod->path_id = 0;
+	mod->needload = true;
+	return NULL;
 }
 
 /*

@@ -482,8 +482,13 @@ void GLMesh_DeleteMeshBuffers (aliashdr_t *mainhdr)
 	// Delete all surfaces:
 	for (aliashdr_t *hdr = mainhdr; hdr != NULL; hdr = hdr->nextsurface)
 	{
-		if (!hdr || (hdr->vertex_buffer == VK_NULL_HANDLE))
-			return;
+		if (hdr->vertex_buffer == VK_NULL_HANDLE)
+		{
+			/* A failed multi-surface load can leave later surfaces uploaded. */
+			for (int i = 0; i < MAX_SKINS; ++i)
+				SAFE_FREE (hdr->texels[i]);
+			continue;
+		}
 
 		if (in_update_screen)
 		{
