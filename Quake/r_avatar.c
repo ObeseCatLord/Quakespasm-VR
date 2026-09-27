@@ -917,8 +917,314 @@ static qboolean R_AvatarRepairInwardOuterLegs(const r_avatar_rig_t *rig,float *p
 	return true;
 }
 
+static void R_AvatarOrigin(const float matrix[12],float out[3])
+{
+	out[0]=matrix[3];out[1]=matrix[7];out[2]=matrix[11];
+}
+
+static float R_AvatarLength3(const float v[3])
+{
+	return sqrtf(DotProduct(v,v));
+}
+
+static qboolean R_AvatarBuildRotationToward(const float from[3],const float to[3],float out[12])
+{
+	float a[3],b[3],axis[3],fallback[3],cosine,sine,one;
+	memcpy(a,from,sizeof(a));memcpy(b,to,sizeof(b));
+	if(!R_AvatarNormalize3(a)||!R_AvatarNormalize3(b))return false;
+	cosine=fmaxf(-1.0f,fminf(1.0f,DotProduct(a,b)));
+	axis[0]=a[1]*b[2]-a[2]*b[1];axis[1]=a[2]*b[0]-a[0]*b[2];axis[2]=a[0]*b[1]-a[1]*b[0];
+	sine=R_AvatarLength3(axis);
+	if(sine<0.000001f) {
+		if(cosine>0.0f){R_AvatarIdentity(out);return true;}
+		fallback[0]=0;fallback[1]=1;fallback[2]=0;
+		if(fabsf(DotProduct(fallback,a))>.9f){fallback[0]=0;fallback[1]=0;fallback[2]=1;}
+		axis[0]=a[1]*fallback[2]-a[2]*fallback[1];axis[1]=a[2]*fallback[0]-a[0]*fallback[2];axis[2]=a[0]*fallback[1]-a[1]*fallback[0];
+		if(!R_AvatarNormalize3(axis))return false;
+		sine=0;
+	} else for(int i=0;i<3;++i)axis[i]/=sine;
+	one=1.0f-cosine;R_AvatarIdentity(out);
+	out[0]=cosine+axis[0]*axis[0]*one;out[1]=axis[0]*axis[1]*one-axis[2]*sine;out[2]=axis[0]*axis[2]*one+axis[1]*sine;
+	out[4]=axis[1]*axis[0]*one+axis[2]*sine;out[5]=cosine+axis[1]*axis[1]*one;out[6]=axis[1]*axis[2]*one-axis[0]*sine;
+	out[8]=axis[2]*axis[0]*one-axis[1]*sine;out[9]=axis[2]*axis[1]*one+axis[0]*sine;out[10]=cosine+axis[2]*axis[2]*one;
+	return R_AvatarOrthonormal(out);
+}
+
+static void R_AvatarTransformSubtree(const r_avatar_rig_t *rig,float *palette,
+	int root,const float delta[12])
+{
+	int joint;
+	for(joint=0;joint<R_AvatarJointCount(rig->live);++joint)if(joint!=root&&R_AvatarDescendant(rig->live,joint,root))
+		R_AvatarMultiply(delta,palette+joint*12,palette+joint*12);
+}
+
+static qboolean R_AvatarRotateSubtreeToward(const r_avatar_rig_t *rig,float *palette,
+	int root,const float from[3],const float to[3])
+{
+	float before[12],desired[12],inverse[12],delta[12];
+	if(root<0||root>=R_AvatarJointCount(rig->live)||!R_AvatarBuildRotationToward(from,to,delta))return false;
+	memcpy(before,palette+root*12,sizeof(before));R_AvatarMultiply(delta,before,desired);
+	/* This is a pivoted branch rotation: preserve the root origin before
+	 * deriving the global delta applied to each child. */
+	desired[3]=before[3];desired[7]=before[7];desired[11]=before[11];
+	memcpy(palette+root*12,desired,sizeof(desired));
+	R_AvatarInverseRigid(before,inverse);R_AvatarMultiply(desired,inverse,delta);
+	R_AvatarTransformSubtree(rig,palette,root,delta);
+	return true;
+}
+
+static qboolean R_AvatarSetSubtreeTransform(const r_avatar_rig_t *rig,float *palette,
+	int root,const float desired[12])
+{
+	float inverse[12],delta[12];int joint;
+	if(root<0||root>=R_AvatarJointCount(rig->live)||!R_AvatarOrthonormal(desired))return false;
+	R_AvatarInverseRigid(palette+root*12,inverse);R_AvatarMultiply(desired,inverse,delta);
+	for(joint=0;joint<R_AvatarJointCount(rig->live);++joint)if(R_AvatarDescendant(rig->live,joint,root)) {
+		if(joint==root)memcpy(palette+joint*12,desired,sizeof(float)*12);
+		else R_AvatarMultiply(delta,palette+joint*12,palette+joint*12);
+	}
+	return true;
+}
+
+static qboolean R_AvatarBuildPaletteBodyBasis(const r_avatar_rig_t *rig,const float *palette,
+	float lateral[3],float forward[3],float up[3])
+{
+	float left[3],right[3],hip[3],head[3];int l=rig->joint[MD5_VRIK_SHOULDER_L],r=rig->joint[MD5_VRIK_SHOULDER_R];
+	if(l<0||r<0||rig->joint[MD5_VRIK_HIP]<0||rig->joint[MD5_VRIK_HEAD]<0)return false;
+	R_AvatarOrigin(palette+l*12,left);R_AvatarOrigin(palette+r*12,right);
+	for(int i=0;i<3;++i)lateral[i]=right[i]-left[i];
+	if(!R_AvatarNormalize3(lateral)) {
+		l=rig->joint[MD5_VRIK_UPPERARM_L];r=rig->joint[MD5_VRIK_UPPERARM_R];if(l<0||r<0)return false;
+		R_AvatarOrigin(palette+l*12,left);R_AvatarOrigin(palette+r*12,right);for(int i=0;i<3;++i)lateral[i]=right[i]-left[i];
+		if(!R_AvatarNormalize3(lateral))return false;
+	}
+	R_AvatarOrigin(palette+rig->joint[MD5_VRIK_HIP]*12,hip);R_AvatarOrigin(palette+rig->joint[MD5_VRIK_HEAD]*12,head);
+	for(int i=0;i<3;++i)up[i]=head[i]-hip[i];
+	if(!R_AvatarNormalize3(up))return false;
+	forward[0]=up[1]*lateral[2]-up[2]*lateral[1];forward[1]=up[2]*lateral[0]-up[0]*lateral[2];forward[2]=up[0]*lateral[1]-up[1]*lateral[0];
+	if(!R_AvatarNormalize3(forward))return false;
+	up[0]=lateral[1]*forward[2]-lateral[2]*forward[1];up[1]=lateral[2]*forward[0]-lateral[0]*forward[2];up[2]=lateral[0]*forward[1]-lateral[1]*forward[0];
+	return R_AvatarNormalize3(up);
+}
+
+/* The physical Dog/Fiend paths include joints semantic retargeting may skip.
+ * FABRIK selects positions; subtree rotations and translations then preserve
+ * every target-model parent link and the retargeted endpoint basis. */
+static qboolean R_AvatarSolvePhysicalPath(const r_avatar_rig_t *rig,float *palette,
+	int root,int endpoint,const float target[3],const float endpointbasis[12])
+{
+	int chain[8],count=0,i,iteration,jointcount=R_AvatarJointCount(rig->live);float position[8][3],solved[8][3],length[7],direction[3],endpointtarget[3],total=0,rootdistance,extension=1;float intended[12];
+	if(root<0||endpoint<0||root>=jointcount||endpoint>=jointcount||!R_AvatarOrthonormal(endpointbasis))return false;
+	memcpy(intended,endpointbasis,sizeof(intended));
+	for(i=endpoint;i>=0&&count<8;i=rig->live->joints[i].parent){chain[count++]=i;if(i==root)break;}
+	if(count<3||chain[count-1]!=root)return false;
+	for(i=0;i<count/2;++i){int swap=chain[i];chain[i]=chain[count-1-i];chain[count-1-i]=swap;}
+	for(i=0;i<count;++i)R_AvatarOrigin(palette+chain[i]*12,position[i]);
+	for(i=0;i+1<count;++i){for(int a=0;a<3;++a)direction[a]=position[i+1][a]-position[i][a];length[i]=R_AvatarLength3(direction);if(!isfinite(length[i])||length[i]<.001f)return false;total+=length[i];}
+	memcpy(endpointtarget,target,sizeof(endpointtarget));for(i=0;i<3;++i)direction[i]=endpointtarget[i]-position[0][i];rootdistance=R_AvatarLength3(direction);if(!isfinite(rootdistance)||rootdistance<.0001f)return false;
+	if(rootdistance>total){extension=fminf(rootdistance/total,1.10f);for(i=0;i+1<count;++i)length[i]*=extension;total*=extension;if(rootdistance>total){for(i=0;i<3;++i)endpointtarget[i]=position[0][i]+direction[i]*total/rootdistance;}}
+	memcpy(solved,position,(size_t)count*sizeof(position[0]));
+	for(i=0;i<3;++i)direction[i]=endpointtarget[i]-position[0][i];
+	rootdistance=R_AvatarLength3(direction);
+	if(rootdistance>=total-.001f){if(!R_AvatarNormalize3(direction))return false;for(i=1;i<count;++i)for(int a=0;a<3;++a)solved[i][a]=solved[i-1][a]+length[i-1]*direction[a];}
+	else {
+		float original[3], side[3] = {0}, perpendicular[3], transport[12];
+		float strongest = 0, deficit;
+		for(i=0;i<3;++i)original[i]=position[count-1][i]-position[0][i];
+		if(!R_AvatarNormalize3(original)||!R_AvatarNormalize3(direction))return false;
+		/* A reachable point on a straight chain has no FABRIK bend side.
+		 * Select one in the authored frame and transport it toward the goal. */
+		for(i=1;i+1<count;++i){
+			float projection,magnitude;
+			for(int a=0;a<3;++a)perpendicular[a]=position[i][a]-position[0][a];
+			projection=DotProduct(perpendicular,original);
+			for(int a=0;a<3;++a)perpendicular[a]-=projection*original[a];
+			magnitude=R_AvatarLength3(perpendicular);
+			if(magnitude>strongest){strongest=magnitude;for(int a=0;a<3;++a)side[a]=perpendicular[a]/magnitude;}
+		}
+		if(strongest==0){
+			for(i=0;i<3;++i){
+				float projection;
+				for(int a=0;a<3;++a)perpendicular[a]=intended[a*4+i];
+				projection=DotProduct(perpendicular,original);
+				for(int a=0;a<3;++a)perpendicular[a]-=projection*original[a];
+				if(R_AvatarNormalize3(perpendicular)){memcpy(side,perpendicular,sizeof(side));break;}
+			}
+			if(i==3)return false;
+		}
+		if(!R_AvatarBuildRotationToward(original,direction,transport))return false;
+		for(i=0;i<3;++i)
+			perpendicular[i]=transport[i*4]*side[0]+transport[i*4+1]*side[1]+transport[i*4+2]*side[2];
+		{
+			float projection=DotProduct(perpendicular,direction);
+			for(i=0;i<3;++i)perpendicular[i]-=projection*direction[i];
+		}
+		if(!R_AvatarNormalize3(perpendicular))return false;
+		deficit=sqrtf(fmaxf(0,total*total-rootdistance*rootdistance));
+		for(i=1;i+1<count;++i){
+			float fraction=(float)i/(float)(count-1);
+			for(int a=0;a<3;++a)solved[i][a]=position[0][a]+fraction*rootdistance*direction[a]+
+				.5f*deficit*sinf((float)M_PI*fraction)*perpendicular[a];
+		}
+		memcpy(solved[0],position[0],sizeof(position[0]));
+		memcpy(solved[count-1],endpointtarget,sizeof(endpointtarget));
+		for(iteration=0;iteration<256;++iteration){
+			memcpy(solved[count-1],endpointtarget,sizeof(endpointtarget));
+			for(i=count-2;i>=0;--i){
+				for(int a=0;a<3;++a)direction[a]=solved[i][a]-solved[i+1][a];
+				if(!R_AvatarNormalize3(direction))return false;
+				for(int a=0;a<3;++a)solved[i][a]=solved[i+1][a]+length[i]*direction[a];
+			}
+			memcpy(solved[0],position[0],sizeof(position[0]));
+			for(i=1;i<count;++i){
+				for(int a=0;a<3;++a)direction[a]=solved[i][a]-solved[i-1][a];
+				if(!R_AvatarNormalize3(direction))return false;
+				for(int a=0;a<3;++a)solved[i][a]=solved[i-1][a]+length[i-1]*direction[a];
+			}
+			for(i=0;i<3;++i)direction[i]=endpointtarget[i]-solved[count-1][i];
+			if(R_AvatarLength3(direction)<.001f)break;
+		}
+	}
+	for(i=0;i<3;++i)direction[i]=endpointtarget[i]-solved[count-1][i];
+	if(R_AvatarLength3(direction)>=.01f)return false;
+	for(i=0;i+1<count;++i){float oldnext[3],oldroot[3];R_AvatarOrigin(palette+chain[i]*12,oldroot);R_AvatarOrigin(palette+chain[i+1]*12,oldnext);for(int a=0;a<3;++a){oldnext[a]-=oldroot[a];direction[a]=solved[i+1][a]-solved[i][a];}if(!R_AvatarRotateSubtreeToward(rig,palette,chain[i],oldnext,direction))return false;}
+	for(i=1;i<count;++i){float current[3],delta[3];R_AvatarOrigin(palette+chain[i]*12,current);for(int a=0;a<3;++a)delta[a]=solved[i][a]-current[a];if(R_AvatarLength3(delta)>.0001f)for(int j=0;j<jointcount;++j)if(R_AvatarDescendant(rig->live,j,chain[i]))for(int a=0;a<3;++a)palette[j*12+a*4+3]+=delta[a];}
+	for(i=0;i<3;++i)intended[i*4+3]=endpointtarget[i];
+	return R_AvatarSetSubtreeTransform(rig,palette,endpoint,intended);
+}
+
+static qboolean R_AvatarRepairTrackedAnimalUpperBody(const r_avatar_rig_t *source,
+	const r_avatar_rig_t *target,const r_avatar_presentation_context_t *context,
+	const float *sourcepalette,float *palette)
+{
+	const r_avatar_profile_t *profile=target->profile;int semantics[3]={MD5_VRIK_HEAD,MD5_VRIK_HAND_L,MD5_VRIK_HAND_R},endpoint[3],hip=target->joint[MD5_VRIK_HIP],root=target->joint[profile->desktop_upperbody_bind_root],i,joint;float saved[3][12],targetbasis[12],inverse[12],solved[12],turn[12],desired[12],pitch[12],sourceleft[3],sourceforward[3],sourceup[3],tr[3],tf[3],tu[3],hiporigin[3],bindhip[3],current[3];
+	if(hip<0||root<0||!R_AvatarDescendant(target->live,root,hip)||!R_AvatarBuildPaletteBodyBasis(source,sourcepalette,sourceleft,sourceforward,sourceup)||!R_AvatarCanonicalToTargetBasis(target,targetbasis))return false;
+	for(i=0;i<3;++i){endpoint[i]=target->joint[semantics[i]];if(endpoint[i]<0||!R_AvatarDescendant(target->live,endpoint[i],root))return false;memcpy(saved[i],palette+endpoint[i]*12,sizeof(saved[i]));}
+	for(i=0;i<3;++i){tr[i]=context->inverse[i*4]*sourceleft[0]+context->inverse[i*4+1]*sourceleft[1]+context->inverse[i*4+2]*sourceleft[2];tf[i]=context->inverse[i*4]*sourceforward[0]+context->inverse[i*4+1]*sourceforward[1]+context->inverse[i*4+2]*sourceforward[2];tu[i]=context->inverse[i*4]*sourceup[0]+context->inverse[i*4+1]*sourceup[1]+context->inverse[i*4+2]*sourceup[2];}
+	if(!R_AvatarNormalize3(tr)||!R_AvatarNormalize3(tf)||!R_AvatarNormalize3(tu))return false;
+	R_AvatarIdentity(solved);for(i=0;i<3;++i){solved[i*4]=tu[i];solved[i*4+1]=-tr[i];solved[i*4+2]=-tf[i];}
+	R_AvatarInverseRigid(targetbasis,inverse);R_AvatarMultiply(solved,inverse,turn);R_AvatarOrigin(palette+hip*12,hiporigin);R_AvatarOrigin(target->live->joints[hip].bind,bindhip);
+	for(i=0;i<3;++i)turn[i*4+3]=hiporigin[i]-(turn[i*4]*bindhip[0]+turn[i*4+1]*bindhip[1]+turn[i*4+2]*bindhip[2]);
+	R_AvatarMultiply(turn,target->live->joints[root].bind,desired);R_AvatarOrigin(desired,current);for(i=0;i<3;++i)current[i]-=hiporigin[i];
+	if(!R_AvatarLimitedTurn(current,tu,profile->posture_degrees,pitch))return false;
+	for(joint=0;joint<R_AvatarJointCount(target->live);++joint)if(joint==root||R_AvatarDescendant(target->live,joint,root))R_AvatarMultiply(turn,target->live->joints[joint].bind,palette+joint*12);
+	for(joint=0;joint<R_AvatarJointCount(target->live);++joint)if(R_AvatarDescendant(target->live,joint,root)){float old[3],moved[12];R_AvatarOrigin(palette+joint*12,old);for(i=0;i<3;++i)old[i]-=hiporigin[i];R_AvatarMultiply(pitch,palette+joint*12,moved);for(i=0;i<3;++i)moved[i*4+3]=hiporigin[i]+pitch[i*4]*old[0]+pitch[i*4+1]*old[1]+pitch[i*4+2]*old[2];memcpy(palette+joint*12,moved,sizeof(moved));}
+	for(i=0;i<3;++i){R_AvatarOrigin(palette+endpoint[i]*12,current);saved[i][3]=current[0];saved[i][7]=current[1];saved[i][11]=current[2];if(!R_AvatarSetSubtreeTransform(target,palette,endpoint[i],saved[i]))return false;}
+	return true;
+}
+
+static qboolean R_AvatarPaletteValid(const r_avatar_rig_t *rig,const float *palette)
+{
+	for(int joint=0;joint<R_AvatarJointCount(rig->live);++joint)
+		if(!R_AvatarOrthonormal(palette+joint*12))return false;
+	return true;
+}
+
+/* Retargeting preserves an animal's authored Hip basis for its unmapped
+ * branches. A supplied tracker restores the canonical Hip turn to just those
+ * branches; semantic branches already carry the retargeted source pose. */
+static qboolean R_AvatarApplyTrackedAnimalHip(const r_avatar_rig_t *source,
+	const r_avatar_rig_t *target,const r_avatar_presentation_context_t *context,
+	const float *sourcepalette,float *palette,const float *before)
+{
+	int hip=target->joint[MD5_VRIK_HIP],sourcehip=source->joint[MD5_VRIK_HIP];
+	float inverse[12],delta[12],mapped[12],desired[12];
+	if(hip<0||sourcehip<0)return false;
+	R_AvatarInverseRigid(source->live->joints[sourcehip].bind,inverse);
+	R_AvatarMultiply(sourcepalette+sourcehip*12,inverse,delta);
+	delta[3]=delta[7]=delta[11]=0;
+	R_AvatarMultiply(delta,context->rotation,mapped);
+	R_AvatarInverseRigid(context->rotation,inverse);
+	R_AvatarMultiply(inverse,mapped,delta);
+	R_AvatarMultiply(delta,palette+hip*12,desired);
+	desired[3]=palette[hip*12+3];
+	desired[7]=palette[hip*12+7];
+	desired[11]=palette[hip*12+11];
+	if(!R_AvatarSetSubtreeTransform(target,palette,hip,desired))return false;
+	for(int joint=0;joint<R_AvatarJointCount(target->live);++joint){
+		int ancestor=joint,semantic;
+		if(joint==hip||!R_AvatarDescendant(target->live,joint,hip))continue;
+		while(ancestor>=0&&ancestor!=hip){
+			for(semantic=0;semantic<MD5_VRIK_JOINT_COUNT;++semantic)
+				if(target->joint[semantic]==ancestor&&!(target->virtual_mask&(1u<<semantic)))break;
+			if(semantic<MD5_VRIK_JOINT_COUNT){
+				memcpy(palette+joint*12,before+joint*12,sizeof(float)*12);
+				break;
+			}
+			ancestor=target->live->joints[ancestor].parent;
+		}
+	}
+	return true;
+}
+
+static qboolean R_AvatarRefineTrackedAnimalPalette(const r_avatar_rig_t *source,
+	const r_avatar_rig_t *target,const float *sourcepalette,
+	float floor_correction_z,unsigned char tracked_lower_mask,float *palette)
+{
+	r_avatar_presentation_context_t context;
+	float saved[R_AVATAR_MAX_JOINTS*12],footbasis[2][12],targetpoint[3];
+	size_t bytes=(size_t)R_AvatarJointCount(target->live)*12*sizeof(float);
+	qboolean complete=true,uppervalid;
+	int side,head=target->joint[MD5_VRIK_HEAD];
+	if(!isfinite(floor_correction_z)||
+		!R_AvatarBuildPresentationContext(source,target,&context))return false;
+	for(side=0;side<2;++side){
+		int foot=target->joint[side?MD5_VRIK_FOOT_R:MD5_VRIK_FOOT_L];
+		if(foot<0)return false;
+		memcpy(footbasis[side],palette+foot*12,sizeof(footbasis[side]));
+	}
+	memcpy(saved,palette,bytes);
+	if((tracked_lower_mask&R_AVATAR_TRACKED_HIP)&&target->profile->preserve_hip_rotation){
+		if(!R_AvatarApplyTrackedAnimalHip(source,target,&context,sourcepalette,palette,saved)||
+			!R_AvatarPaletteValid(target,palette)){
+			memcpy(palette,saved,bytes);
+			complete=false;
+		}
+	}
+	R_AvatarPresentationAddCanonicalZ(&context,floor_correction_z);
+	memcpy(saved,palette,bytes);
+	uppervalid=R_AvatarRepairTrackedAnimalUpperBody(source,target,&context,sourcepalette,palette);
+	for(side=0;uppervalid&&side<2;++side){
+		int arm=side?MD5_VRIK_HAND_R:MD5_VRIK_HAND_L;
+		int root=target->joint[side?MD5_VRIK_UPPERARM_R:MD5_VRIK_UPPERARM_L];
+		if(target->profile->id==PLAYER_AVATAR_FIEND)
+			root=target->joint[side?MD5_VRIK_SHOULDER_R:MD5_VRIK_SHOULDER_L];
+		R_AvatarOrigin(sourcepalette+source->joint[arm]*12,targetpoint);
+		R_AvatarPresentationInversePoint(&context,targetpoint,targetpoint);
+		uppervalid=R_AvatarSolvePhysicalPath(target,palette,root,target->joint[arm],
+			targetpoint,palette+target->joint[arm]*12);
+	}
+	if(uppervalid){
+		float desired[12];
+		R_AvatarOrigin(sourcepalette+source->joint[MD5_VRIK_HEAD]*12,targetpoint);
+		R_AvatarPresentationInversePoint(&context,targetpoint,targetpoint);
+		memcpy(desired,palette+head*12,sizeof(desired));
+		for(int axis=0;axis<3;++axis)desired[axis*4+3]=targetpoint[axis];
+		uppervalid=R_AvatarSetSubtreeTransform(target,palette,head,desired)&&
+			R_AvatarPaletteValid(target,palette);
+	}
+	if(!uppervalid){memcpy(palette,saved,bytes);complete=false;}
+	for(side=0;side<2;++side){
+		int leg=side?MD5_VRIK_FOOT_R:MD5_VRIK_FOOT_L;
+		int upperleg=side?MD5_VRIK_UPPERLEG_R:MD5_VRIK_UPPERLEG_L;
+		if(!(tracked_lower_mask&(1u<<side)))continue;
+		memcpy(saved,palette,bytes);
+		R_AvatarOrigin(sourcepalette+source->joint[leg]*12,targetpoint);
+		R_AvatarPresentationInversePoint(&context,targetpoint,targetpoint);
+		if(!R_AvatarSolvePhysicalPath(target,palette,target->joint[upperleg],
+			target->joint[leg],targetpoint,footbasis[side])||
+			!R_AvatarPaletteValid(target,palette)){
+			memcpy(palette,saved,bytes);
+			complete=false;
+		}
+	}
+	return complete;
+}
+
 qboolean R_AvatarRefineBuiltinPalette(const r_avatar_rig_t *source,
 	const r_avatar_rig_t *target,qboolean tracked,
+	const float (*source_palette)[12],float floor_correction_z,
+	unsigned char tracked_lower_mask,
 	float (*target_palette)[12],size_t target_capacity)
 {
 	r_avatar_presentation_context_t context;
@@ -929,18 +1235,24 @@ qboolean R_AvatarRefineBuiltinPalette(const r_avatar_rig_t *source,
 	if(!source||!target||!source->valid||!target->valid||!target->profile||
 		!target_palette||R_AvatarJointCount(target->live)>R_AVATAR_MAX_JOINTS||
 		target_capacity<target->live->joint_count)return false;
+	if(tracked&&(!source_palette||R_AvatarJointCount(source->live)>R_AVATAR_MAX_JOINTS))return false;
+	if(tracked)for(joint=0;joint<R_AvatarJointCount(source->live);++joint)
+		if(!R_AvatarOrthonormal(source_palette[joint]))return false;
 	profile=target->profile;
-	if(tracked || (profile->id!=PLAYER_AVATAR_DOG &&
+	if(tracked&&(profile->id==PLAYER_AVATAR_DOG||profile->id==PLAYER_AVATAR_FIEND))
+		return R_AvatarRefineTrackedAnimalPalette(source,target,(const float *)source_palette,
+			floor_correction_z,tracked_lower_mask,(float *)target_palette);
+	if(!tracked && (profile->id!=PLAYER_AVATAR_DOG &&
 		profile->id!=PLAYER_AVATAR_FIEND && !profile->mirror_outer_leg_poles))
 		return true;
 	bytes=target->live->joint_count*12*sizeof(float);
 	memcpy(saved,target_palette,bytes);
-	if(((profile->id==PLAYER_AVATAR_DOG||profile->id==PLAYER_AVATAR_FIEND) &&
+	if((!tracked && (profile->id==PLAYER_AVATAR_DOG||profile->id==PLAYER_AVATAR_FIEND) &&
 		(!R_AvatarBuildPresentationContext(source,target,&context)||
 		 !R_AvatarStabilizeDesktopUpperBody(target,(float *)target_palette)||
 		 !R_AvatarApplyDesktopUprightPosture(target,&context,(float *)target_palette)||
 		 !R_AvatarRebuildDesktopAnimalArms(target,saved,(float *)target_palette)))||
-		(profile->mirror_outer_leg_poles &&
+		(!tracked && profile->mirror_outer_leg_poles &&
 		 !R_AvatarRepairInwardOuterLegs(target,(float *)target_palette)))
 		goto rollback;
 	for(joint=0;joint<R_AvatarJointCount(target->live);++joint)

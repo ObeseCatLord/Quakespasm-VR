@@ -517,10 +517,23 @@ static qboolean R_VRIKRenderAlternateCandidate (const entity_t *entity,
 		!R_AvatarRetargetRangerOutput (&source_rig, &target_rig, &ranger,
 			palette, R_VRIK_RENDER_MAX_JOINTS))
 		return false;
-	/* Optional target-only repairs roll back on failure. The canonical tracked
-	 * palette and its real lower targets remain the authority for this frame. */
+	/* Optional tracked repairs retain successful independent stages. The
+	 * canonical palette and supplied lower targets remain authoritative. */
+	unsigned char tracked_lower_mask = 0;
+	if (lower_input)
+	{
+		const unsigned char usable = lower_input->present_mask &
+			(lower_input->tracked_mask | lower_input->predicted_mask);
+		if (usable & R_VRIK_LOWER_BIT (R_VRIK_LOWER_LEFT_FOOT))
+			tracked_lower_mask |= R_AVATAR_TRACKED_FOOT_L;
+		if (usable & R_VRIK_LOWER_BIT (R_VRIK_LOWER_RIGHT_FOOT))
+			tracked_lower_mask |= R_AVATAR_TRACKED_FOOT_R;
+		if (usable & R_VRIK_LOWER_BIT (R_VRIK_LOWER_HIP))
+			tracked_lower_mask |= R_AVATAR_TRACKED_HIP;
+	}
 	R_AvatarRefineBuiltinPalette (&source_rig, &target_rig, tracked,
-		palette, R_VRIK_RENDER_MAX_JOINTS);
+		(const float (*)[12])source_palette, floor_correction_z[selection->id],
+		tracked_lower_mask, palette, R_VRIK_RENDER_MAX_JOINTS);
 
 	candidate->entity = entity;
 	candidate->model = selection->target_model;

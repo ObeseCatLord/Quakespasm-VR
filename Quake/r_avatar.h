@@ -207,10 +207,18 @@ qboolean R_AvatarRetargetPalette (const r_avatar_rig_t *source,
 qboolean R_AvatarRetargetRangerOutput (const r_avatar_rig_t *source,
 	const r_avatar_rig_t *target, const r_vrik_palette_output_t *ranger,
 	float (*target_palette)[12], size_t target_capacity);
-/* Optional built-in target-palette repairs. A numerical or hierarchy failure
- * leaves the already retargeted palette unchanged. */
+/* Optional built-in target-palette repairs. source_palette is the Ranger
+ * global palette which produced target_palette. floor_correction_z is the
+ * cached canonical floor translation for tracked endpoint mapping. Lower bits
+ * must be set only for real/predicted targets. Tracked upper and each lower
+ * path roll back independently if an optional repair fails. */
+#define R_AVATAR_TRACKED_FOOT_L (1u << 0)
+#define R_AVATAR_TRACKED_FOOT_R (1u << 1)
+#define R_AVATAR_TRACKED_HIP    (1u << 2)
 qboolean R_AvatarRefineBuiltinPalette (const r_avatar_rig_t *source,
 	const r_avatar_rig_t *target, qboolean tracked,
+	const float (*source_palette)[12], float floor_correction_z,
+	unsigned char tracked_lower_mask,
 	float (*target_palette)[12], size_t target_capacity);
 
 /* Single-rig semantic body bases: canonical body forward/left/up to this
