@@ -978,6 +978,14 @@ static mleaf_t *R_StereoEyeLeaf (const vec3_t origin, qboolean *needs_fat_pvs)
 	return (mleaf_t *)node;
 }
 
+static qboolean R_LeafTouchesWaterPortal (const mleaf_t *leaf)
+{
+	for (int i = 0; i < leaf->nummarksurfaces; ++i)
+		if (cl.worldmodel->surfaces[leaf->firstmarksurface[i]].flags & SURF_DRAWTURB)
+			return true;
+	return false;
+}
+
 /*
 ===============
 R_MarkSurfacesPrepare
@@ -989,15 +997,8 @@ static void R_MarkSurfacesPrepare (void *unused)
 	qboolean nearwaterportal;
 	int		 numleafs = cl.worldmodel->numleafs;
 
-	// check this leaf for water portals
-	// TODO: loop through all water surfs and use distance to leaf cullbox
-	nearwaterportal = false;
-	for (i = 0; i < r_viewleaf->nummarksurfaces; i++)
-		if (cl.worldmodel->surfaces[r_viewleaf->firstmarksurface[i]].flags & SURF_DRAWTURB)
-		{
-			nearwaterportal = true;
-			break;
-		}
+	// Both the center and either eye need the same water-portal PVS rule.
+	nearwaterportal = R_LeafTouchesWaterPortal (r_viewleaf);
 
 	// choose vis data
 	if (r_novis.value || r_viewleaf->contents == CONTENTS_SOLID || r_viewleaf->contents == CONTENTS_SKY)
@@ -1024,7 +1025,7 @@ static void R_MarkSurfacesPrepare (void *unused)
 					continue;
 				if (leaf->contents == CONTENTS_SOLID || leaf->contents == CONTENTS_SKY)
 					eye_vis = Mod_NoVisPVS (cl.worldmodel);
-				else if (needs_fat_pvs)
+				else if (needs_fat_pvs || R_LeafTouchesWaterPortal (leaf))
 					eye_vis = SV_FatPVS (r_stereo_origins[eye], cl.worldmodel);
 				else
 					eye_vis = Mod_LeafPVS (leaf, cl.worldmodel);
