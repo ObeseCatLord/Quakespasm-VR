@@ -4216,7 +4216,14 @@ void GL_BeginRenderingTask (void *unused)
 
 void GL_PrepareVRIKRenderTask (void *unused)
 {
+	const qboolean profile = scr_speeds.value == 3;
+	const double start = profile ? Sys_DoubleTime () : 0.0;
 	R_VRIKRenderPrepareFrame (current_cb_index);
+	if (profile)
+	{
+		const double us = (Sys_DoubleTime () - start) * 1000000.0;
+		rs_avatarprep_us = us >= 0.0 && us <= UINT32_MAX ? (uint32_t)us : 0;
+	}
 }
 
 /*

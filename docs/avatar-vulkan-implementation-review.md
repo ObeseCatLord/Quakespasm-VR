@@ -130,3 +130,10 @@ or game directory invalidates these values with the rig mapping. Failed
 humanoid admission still falls back to the generic path. The isolated
 3.6-microsecond calibration/setup figure above is an upper-bound motivation,
 not an in-game measurement of the new cache's benefit; the Linux build passes.
+
+`scr_speeds 3` now displays `avatar prep cpu` for the complete frame-owned
+avatar preparation task. The timing runs only in that profiler mode. It includes
+all active player candidates, canonical animation or tracking, retargeting,
+culling bounds, and palette publication, so it is a useful in-game budget but
+does not isolate the retargeter alone. Compare it with the total CPU frame time
+on the same scene before considering per-avatar animation replacements.

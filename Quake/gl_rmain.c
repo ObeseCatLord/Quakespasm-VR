@@ -51,6 +51,7 @@ atomic_uint32_t rs_blas_builds, rs_blas_refits, rs_blas_pose_reuses;
 uint32_t		rs_cputime_us, rs_gputime_us;
 uint32_t		rs_ssaotime_us;
 qboolean		rs_ssaotime_valid;
+uint32_t		rs_avatarprep_us;
 uint32_t		rs_gpuwaittime_us, rs_gpuwaitaccum_us;
 double			rs_frame_starttime;
 char			rs_display_lines[4][40];
@@ -2615,6 +2616,12 @@ static void R_PrintStats (qboolean draw_stats_ready)
 			{
 				q_snprintf (rs_display_lines[1], sizeof (rs_display_lines[1]), "ssao compute gpu%6.2f ms", (double)rs_ssaotime_us / 1000.0);
 				rs_display_numlines = 2;
+			}
+			if (scr_speeds.value == 3)
+			{
+				q_snprintf (rs_display_lines[rs_display_numlines], sizeof (rs_display_lines[0]),
+					"avatar prep cpu%6.2f ms", (double)rs_avatarprep_us / 1000.0);
+				++rs_display_numlines;
 			}
 		}
 		else
