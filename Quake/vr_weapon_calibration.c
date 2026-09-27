@@ -2321,7 +2321,13 @@ void VR_WeaponCalibrationProjectileSourceOffset(const char *viewmodel,
 	vec3_t source_world;
 	int slot;
 	int component;
-	qboolean spawn_at_self_origin = weapon_bit == IT_GRENADE_LAUNCHER;
+	/* Hipnotic W_FireProximityGrenade calls setorigin(missile, self.origin).
+	 * Keep this QC source correction scoped to its game, weapon and model;
+	 * an authored vr_weapons.txt source setting still takes precedence. */
+	qboolean spawn_at_self_origin = weapon_bit == IT_GRENADE_LAUNCHER ||
+		(weapon_bit == HIT_PROXIMITY_GUN && viewmodel &&
+		 !q_strcasecmp(COM_SkipPath(com_gamedir), "hipnotic") &&
+		 !q_strcasecmp(viewmodel, "progs/v_prox.mdl"));
 
 	if (!out)
 		return;

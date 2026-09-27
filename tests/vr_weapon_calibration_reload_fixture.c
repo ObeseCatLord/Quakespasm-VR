@@ -466,6 +466,36 @@ int main(void)
 	AssertClassicProfile("progs/v_shadaxe5.mdl", -1.5f, 43.1f, 41.0f,
 		0.25f, 0.0f, 0.0f, 41.0f);
 
+	/* Hipnotic proximity bombs originate at self.origin in its QuakeC.
+	 * Ordinary weapons and other game roots retain their source offsets. */
+	{
+		vec3_t source, angles = {0, 0, 0};
+		strcpy(com_gamedir, "/fixtures/hipnotic");
+		fixture_file_contents = NULL;
+		assert(VR_WeaponCalibrationReloadGame());
+		VR_WeaponCalibrationProjectileSourceOffset("progs/v_prox.mdl",
+			HIT_PROXIMITY_GUN, angles, 22.0f, source);
+		AssertVector(source, 0.0f, 0.0f, 0.0f);
+		VR_WeaponCalibrationProjectileSourceOffset("progs/v_rock.mdl",
+			IT_ROCKET_LAUNCHER, angles, 22.0f, source);
+		AssertVector(source, 8.0f, 0.0f, 16.0f);
+		VR_WeaponCalibrationProjectileSourceOffset("progs/v_prox.mdl",
+			IT_ROCKET_LAUNCHER, angles, 22.0f, source);
+		AssertVector(source, 8.0f, 0.0f, 16.0f);
+		fixture_file_contents =
+			"{ viewmodel progs/v_prox.mdl spawn_at_self_origin 0 }";
+		assert(VR_WeaponCalibrationReloadGame());
+		VR_WeaponCalibrationProjectileSourceOffset("progs/v_prox.mdl",
+			HIT_PROXIMITY_GUN, angles, 22.0f, source);
+		AssertVector(source, 8.0f, 0.0f, 16.0f);
+		strcpy(com_gamedir, "/fixtures/id1");
+		fixture_file_contents = NULL;
+		assert(VR_WeaponCalibrationReloadGame());
+		VR_WeaponCalibrationProjectileSourceOffset("progs/v_prox.mdl",
+			HIT_PROXIMITY_GUN, angles, 22.0f, source);
+		AssertVector(source, 8.0f, 0.0f, 16.0f);
+	}
+
 	puts("VR weapon calibration reload fixture passed");
 	return 0;
 }
