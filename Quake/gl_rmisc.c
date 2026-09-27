@@ -5241,6 +5241,7 @@ R_NewGame -- johnfitz -- handle a game switch
 void R_NewGame (void)
 {
 	int i;
+	r_viewleaf = r_oldviewleaf = NULL;
 
 	// clear playertexture pointers (the textures themselves were freed by texmgr_newgame)
 	for (i = 0; i < MAX_SCOREBOARD; i++)

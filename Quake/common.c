@@ -3364,6 +3364,14 @@ void COM_SwitchGame (const char *paths)
 	SCR_EndStartupLoadingPlaque ();
 	cls.demonum = -1;
 	Host_ShutdownServer (true);
+	/* Mod_ResetAll below zeroes the old model records. Frames rendered while
+	 * the next game loads must not retain client references to those records. */
+	cl.worldmodel = NULL;
+	cl.viewent.model = NULL;
+	memset (cl.model_precache, 0, sizeof (cl.model_precache));
+	if (cl.entities)
+		for (int i = 0; i < cl.num_entities && i < cl.max_edicts; ++i)
+			cl.entities[i].model = NULL;
 
 	SCR_CenterPrintClear ();
 
