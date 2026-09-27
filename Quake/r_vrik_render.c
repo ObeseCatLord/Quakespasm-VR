@@ -75,6 +75,18 @@ typedef struct r_vrik_floor_cache_s
 	qboolean attempted, valid;
 } r_vrik_floor_cache_t;
 
+/* The semantic names and skeleton hierarchy do not change between frames.
+ * Keep only model-owned identity and resolved joint indexes here; each staged
+ * player still receives its own live skeleton views and pose palette. */
+typedef struct r_vrik_rig_cache_s
+{
+	const qmodel_t *source_model, *target_model;
+	const md5_skeleton_data_t *source_skeleton, *target_skeleton;
+	const r_avatar_profile_t *profile;
+	r_avatar_rig_t source_rig, target_rig;
+	qboolean valid;
+} r_vrik_rig_cache_t;
+
 static r_vrik_candidate_t candidates[MAX_SCOREBOARD];
 static float candidate_palettes[MAX_SCOREBOARD][R_VRIK_RENDER_MAX_JOINTS][12];
 static r_vrik_staged_avatar_t staged[MAX_SCOREBOARD];
@@ -83,6 +95,7 @@ static qboolean builtin_attempted[PLAYER_AVATAR_COUNT];
 static qmodel_t *custom_models[CUSTOM_AVATAR_MAX_PACKAGES];
 static qboolean custom_attempted[CUSTOM_AVATAR_MAX_PACKAGES];
 static r_vrik_floor_cache_t floor_cache[R_VRIK_RENDER_MAX_AVATARS][2];
+static r_vrik_rig_cache_t rig_cache[R_VRIK_RENDER_MAX_AVATARS];
 static char admission_gamedir[MAX_OSPATH];
 static r_vrik_prepared_palette_t prepared[DOUBLE_BUFFERED][MAX_SCOREBOARD];
 static size_t prepared_count[DOUBLE_BUFFERED];
@@ -98,6 +111,7 @@ void R_VRIKRenderResetAdmission (void)
 	memset (custom_models, 0, sizeof (custom_models));
 	memset (custom_attempted, 0, sizeof (custom_attempted));
 	memset (floor_cache, 0, sizeof (floor_cache));
+	memset (rig_cache, 0, sizeof (rig_cache));
 	q_strlcpy (admission_gamedir, com_gamedir, sizeof (admission_gamedir));
 }
 
@@ -335,6 +349,36 @@ static qboolean R_VRIKRenderStageFloor (r_vrik_staged_avatar_t *selection,
 	return true;
 }
 
+static qboolean R_VRIKRenderResolveRigs (r_vrik_staged_avatar_t *selection,
+	const qmodel_t *source, const qmodel_t *target, const r_avatar_profile_t *profile)
+{
+	r_vrik_rig_cache_t *cache = &rig_cache[selection->id];
+	if (!cache->valid || cache->source_model != source || cache->target_model != target ||
+		cache->source_skeleton != source->md5_skeleton ||
+		cache->target_skeleton != target->md5_skeleton || cache->profile != profile)
+	{
+		cache->valid = false;
+		if (!R_AvatarResolveRig (R_AvatarProfileForId (PLAYER_AVATAR_RANGER),
+			&selection->source_skeleton, &cache->source_rig) ||
+			!R_AvatarResolveRig (profile, &selection->target_skeleton, &cache->target_rig))
+			return false;
+		cache->source_model = source;
+		cache->target_model = target;
+		cache->source_skeleton = source->md5_skeleton;
+		cache->target_skeleton = target->md5_skeleton;
+		cache->profile = profile;
+		/* Never retain a pointer to this caller's stack-owned skeleton view. */
+		cache->source_rig.live = NULL;
+		cache->target_rig.live = NULL;
+		cache->valid = true;
+	}
+	selection->source_rig = cache->source_rig;
+	selection->target_rig = cache->target_rig;
+	selection->source_rig.live = &selection->source_skeleton;
+	selection->target_rig.live = &selection->target_skeleton;
+	return true;
+}
+
 qboolean R_VRIKRenderStageAvatar (const entity_t *entity, int id)
 {
 	r_vrik_staged_avatar_t selection = {0};
@@ -361,16 +405,13 @@ qboolean R_VRIKRenderStageAvatar (const entity_t *entity, int id)
 	source = R_VRIKRenderBuiltinModel (PLAYER_AVATAR_RANGER);
 	target = source ? (id < PLAYER_AVATAR_COUNT ? R_VRIKRenderBuiltinModel (id) :
 		R_VRIKRenderCustomModel (id)) : NULL;
-	if (!source || !target || !Mod_GetMD5Skeleton (source, &selection.source_skeleton) ||
+	selection.id = id;
+	if (id < 0 || id >= R_VRIK_RENDER_MAX_AVATARS ||
+		!source || !target || !Mod_GetMD5Skeleton (source, &selection.source_skeleton) ||
 		!selection.source_skeleton.from_rerelease ||
 		!Mod_GetMD5Skeleton (target, &selection.target_skeleton) ||
-		!R_AvatarResolveRig (R_AvatarProfileForId (PLAYER_AVATAR_RANGER),
-			&selection.source_skeleton, &selection.source_rig) ||
-		!R_AvatarResolveRig (profile, &selection.target_skeleton, &selection.target_rig))
+		!R_VRIKRenderResolveRigs (&selection, source, target, profile))
 		return false;
-	if (id < 0 || id >= R_VRIK_RENDER_MAX_AVATARS)
-		return false;
-	selection.id = id;
 	selection.base_profile = profile;
 	if (r_avatar_humanoid.value != 0.0f && CustomAvatar_Get (id))
 	{

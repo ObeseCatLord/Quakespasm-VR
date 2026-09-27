@@ -112,3 +112,12 @@ during that frame's avatar staging instead of recomputing its bind-only body
 bases during palette preparation. A fixture compares the old bridge and the
 staged-context output after floor correction; both produce the same palette.
 This removes redundant setup, but no in-game frame-time gain is claimed.
+
+The staging path now also caches resolved semantic joint indexes per admitted
+avatar ID, keyed by the source/target models, their retained skeletons, and the
+target profile. It still validates both skeleton views on each use and binds
+each player's staged rig to that player's current views; admission reset clears
+the cache. This avoids repeating the name-to-joint resolution for every peer
+every frame without changing the canonical animation or live tracking solve.
+The Linux build passes. The earlier 4.2 versus 2.6 microsecond isolated probe
+suggests the possible scale, but no full-frame improvement is claimed.
