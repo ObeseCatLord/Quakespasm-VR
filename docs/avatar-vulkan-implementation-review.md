@@ -25,6 +25,27 @@ Static rig resolution and repeated consumer validation are candidates for
 centralization once the custom path settles. Preserve distinct main-thread
 admission and frame-owned GPU publication; they have different lifetimes.
 
+## CPU retarget cost and asset alternatives
+
+An isolated `-O2` Linux timing probe using the existing synthetic 19-joint
+avatar fixture measured about 2.6 microseconds per call to
+`R_AvatarRetargetPalette`, or 4.2 microseconds including two
+`R_AvatarResolveRig` calls. It ran 200,000 iterations on this machine; it did
+not include model-specific posture/IK refinement, full frame preparation,
+GPU skinning, or rendering. These numbers are a scale check, not an in-game
+budget or a guarantee for larger rigs. Profile actual selected avatars and
+multiple peers before claiming a frame-time improvement.
+
+The inherited direct-VRM Alicia path is explicitly an asset-fingerprinted
+experiment (`quakespasm-openvr/Quake/r_alicia_spike.c`), not a general VRM
+importer. Converting a selected body to VRM would still require mapping
+canonical/tracked motion into its skeleton. Hand-authoring desktop animations
+could avoid desktop retargeting for that particular body, but tracked VR motion
+would still need a pose solve. The current branch now reuses same-frame
+validated rig mappings at the existing staging boundary, eliminating the
+second skeleton/semantic-name resolution in palette preparation. No new
+animation format or cross-frame cache is justified by the available timing.
+
 The smallest remaining implementation proof is two tracked peers and one
 desktop peer using the same equipped alternate, with independent poses,
 reference posture and floor contact, matching visible/shadow silhouettes,
