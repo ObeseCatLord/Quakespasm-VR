@@ -267,11 +267,14 @@ static void PF_setorigin (void)
 {
 	edict_t *e;
 	float	*org;
+	vec3_t vr_origin;
 
 	e = G_EDICT (OFS_PARM0);
 	org = G_VECTOR (OFS_PARM1);
 	if (qcvm == &sv.qcvm)
 	{
+		if (SV_VRStockNailSetOrigin (e, org, vr_origin))
+			org = vr_origin;
 		SV_VRWeaponPoseSetOrigin (e);
 		SV_VRContactPlayerSetOrigin (e, org);
 	}

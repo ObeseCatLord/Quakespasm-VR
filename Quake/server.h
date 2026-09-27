@@ -610,6 +610,8 @@ const char *SV_PrivateWalkTrialStateError (edict_t *ent, client_t *client, const
 void SV_ClientUpdateAnglesForClient (client_t *client);
 void SV_ClearVRWeaponPoseScope (void);
 void SV_VRWeaponPoseSetOrigin (edict_t *ent);
+qboolean SV_VRStockNailSetOrigin (edict_t *projectile, const vec3_t authored,
+	vec3_t translated);
 void SV_VRWeaponPoseLinked (edict_t *ent);
 qboolean SV_QBJ3AkimboAim (edict_t *ent, vec3_t muzzle);
 qboolean SV_QBJ3TwinNailgunProgramLoaded (void);

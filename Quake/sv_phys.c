@@ -3194,12 +3194,12 @@ typedef struct sv_vr_weapon_pose_scope_s
 	qboolean dwell_berserk_pose_valid;
 	qboolean enyo_clearance_pending;
 	qboolean qbj3_shotgun_spread;
-	qboolean stock_shotgun_muzzle_valid;
-	int stock_shotgun_program; /* 0 unchecked, 1 pinned id1, -1 other */
+	qboolean stock_id1_muzzle_valid;
+	int stock_id1_program; /* 0 unchecked, 1 pinned id1, -1 other */
 	int qbj3_shotgun_weapon;
 	float qbj3_shotgun_roll;
 	vec3_t origin, body_origin, v_angle, forward, right, up;
-	vec3_t stock_shotgun_muzzle;
+	vec3_t stock_id1_muzzle;
 	vec3_t akimbo_muzzle[2], akimbo_angles[2];
 	vec3_t enyo_clearance_start, enyo_clearance_end;
 	vec3_t enyo_clearance_adjusted_start;
@@ -3247,7 +3247,7 @@ void SV_VRWeaponPoseSetOrigin (edict_t *ent)
 			scope->akimbo_invalidated = true;
 			scope->akimbo_pose_valid = false;
 			scope->enyo_clearance_pending = false;
-			scope->stock_shotgun_muzzle_valid = false;
+			scope->stock_id1_muzzle_valid = false;
 		}
 }
 
@@ -3791,8 +3791,8 @@ static void SV_BeginPrivateVRWeaponPose (edict_t *ent, client_t *client,
 	 * Do not cache that as a new authoritative body-relative muzzle. */
 	if (!previous)
 	{
-		VectorCopy (muzzle, scope->stock_shotgun_muzzle);
-		scope->stock_shotgun_muzzle_valid = true;
+		VectorCopy (muzzle, scope->stock_id1_muzzle);
+		scope->stock_id1_muzzle_valid = true;
 	}
 	VR_WeaponCalibrationProjectileSourceOffset (
 		PR_GetString (ent->v.weaponmodel), (int)ent->v.weapon,
@@ -4188,19 +4188,19 @@ qboolean SV_VRStockShotgunTrace (edict_t *ignore, int nomonsters,
 		 ignore->v.weapon != IT_SUPER_SHOTGUN))
 		return false;
 	scope = SV_FindPrivateVRWeaponPose (ignore);
-	if (!scope || !scope->applied || !scope->stock_shotgun_muzzle_valid ||
+	if (!scope || !scope->applied || !scope->stock_id1_muzzle_valid ||
 		scope->origin_relocated || !scope->client ||
 		!scope->client->active || !scope->client->spawned ||
 		scope->client->protocol_qsvr != QSVR_PROTOCOL_PINNED ||
 		scope->client->edict != ignore)
 		return false;
-	if (!scope->stock_shotgun_program)
+	if (!scope->stock_id1_program)
 	{
 		descriptor = SV_VRStockAxeMeleeDescriptor ();
-		scope->stock_shotgun_program = descriptor &&
+		scope->stock_id1_program = descriptor &&
 			descriptor->progscrc == 3064 ? 1 : -1;
 	}
-	if (scope->stock_shotgun_program < 0)
+	if (scope->stock_id1_program < 0)
 		return false;
 
 	/* Check the actual QC start before shifting a ray. This leaves an altered
@@ -4209,17 +4209,106 @@ qboolean SV_VRStockShotgunTrace (edict_t *ignore, int nomonsters,
 	expected[2] = ignore->v.absmin[2] + ignore->v.size[2] * 0.7f;
 	for (axis = 0; axis < 3; ++axis)
 		if (!isfinite (start[axis]) || !isfinite (end[axis]) ||
-			!isfinite (scope->stock_shotgun_muzzle[axis]) ||
+			!isfinite (scope->stock_id1_muzzle[axis]) ||
 			!isfinite (expected[axis]) ||
 			fabsf (start[axis] - expected[axis]) > 0.125f)
 			return false;
 	VectorSubtract (end, start, delta);
-	VectorAdd (scope->stock_shotgun_muzzle, delta, translated_end);
+	VectorAdd (scope->stock_id1_muzzle, delta, translated_end);
 	for (axis = 0; axis < 3; ++axis)
 		if (!isfinite (translated_end[axis]))
 			return false;
-	*trace = SV_Move (scope->stock_shotgun_muzzle, vec3_origin, vec3_origin,
+	*trace = SV_Move (scope->stock_id1_muzzle, vec3_origin, vec3_origin,
 		translated_end, nomonsters, ignore);
+	return true;
+}
+
+/* The pinned stock id1 launch_spike callback passes self.origin + 16 up,
+ * optionally plus four units of QC v_right, to setorigin. Generic weapon
+ * source compensation leaves its nails eight units behind a tracked muzzle.
+ * Move only this projectile at the existing spawn/link boundary; QuakeC
+ * retains its ammo, alternating barrels, velocity, damage and effects. */
+qboolean SV_VRStockNailSetOrigin (edict_t *projectile, const vec3_t authored,
+	vec3_t translated)
+{
+	sv_vr_weapon_pose_scope_t *scope;
+	const sv_vr_stock_axe_descriptor_t *descriptor;
+	edict_t *player;
+	vec3_t expected, lateral, barrel, candidate, difference;
+	trace_t clearance;
+	float safe_fraction;
+	int axis;
+
+	if (!projectile || projectile->free || qcvm != &sv.qcvm ||
+		!qcvm->progs || qcvm->progs->numfunctions <= 209 ||
+		qcvm->xfunction != &qcvm->functions[209] ||
+		qcvm->xstatement != 4169)
+		return false;
+	player = SV_EnyoAkimboSelf ();
+	if (!player || player->free || player == projectile ||
+		projectile->v.owner != EDICT_TO_PROG (player) ||
+		(player->v.weapon != IT_NAILGUN &&
+		 player->v.weapon != IT_SUPER_NAILGUN))
+		return false;
+	scope = SV_FindPrivateVRWeaponPose (player);
+	if (!scope || !scope->applied || !scope->stock_id1_muzzle_valid ||
+		scope->origin_relocated || !scope->client ||
+		!scope->client->active || !scope->client->spawned ||
+		scope->client->protocol_qsvr != QSVR_PROTOCOL_PINNED ||
+		scope->client->edict != player)
+		return false;
+	if (!scope->stock_id1_program)
+	{
+		descriptor = SV_VRStockAxeMeleeDescriptor ();
+		scope->stock_id1_program = descriptor &&
+			descriptor->progscrc == 3064 ? 1 : -1;
+	}
+	if (scope->stock_id1_program < 0)
+		return false;
+
+	VectorCopy (player->v.origin, expected);
+	expected[2] += 16.0f;
+	VectorSubtract (authored, expected, lateral);
+	for (axis = 0; axis < 3; ++axis)
+		if (!isfinite (authored[axis]) ||
+			!isfinite (scope->stock_id1_muzzle[axis]) ||
+			!isfinite (pr_global_struct->v_right[axis]) ||
+			!isfinite (lateral[axis]))
+			return false;
+	VectorScale (pr_global_struct->v_right, 4.0f, barrel);
+	VectorSubtract (lateral, barrel, difference);
+	if (!SV_EnyoVectorsNear (lateral, vec3_origin) &&
+		!SV_EnyoVectorsNear (difference, vec3_origin))
+	{
+		VectorAdd (lateral, barrel, difference);
+		if (!SV_EnyoVectorsNear (difference, vec3_origin))
+			return false;
+	}
+	VectorAdd (scope->stock_id1_muzzle, lateral, candidate);
+	for (axis = 0; axis < 3; ++axis)
+		if (!isfinite (candidate[axis]))
+			return false;
+	/* The center was clamped against the world at scope entry. Sweep the
+	 * displaced barrel too; otherwise a nearby corner can embed a nail.
+	 * Even a centered spike needs a start-solid check: the earlier clamp can
+	 * fall back to an eye position that is itself inside solid geometry. */
+	clearance = SV_Move (scope->stock_id1_muzzle, vec3_origin, vec3_origin,
+		candidate, MOVE_NOMONSTERS, player);
+	if (clearance.startsolid || clearance.allsolid)
+		return false;
+	if (!isfinite (clearance.fraction) || clearance.fraction < 0.0f ||
+		clearance.fraction > 1.0f)
+		return false;
+	if (SV_EnyoVectorsNear (lateral, vec3_origin))
+	{
+		VectorCopy (scope->stock_id1_muzzle, translated);
+		return true;
+	}
+	/* The verified barrel offset is at most four units. Back off up to one
+	 * unit along that short sweep when it meets the world. */
+	safe_fraction = clearance.fraction < 1.0f ?
+		q_max (0.0f, clearance.fraction - 0.25f) : 1.0f;
+	VectorMA (scope->stock_id1_muzzle, safe_fraction, lateral, translated);
 	return true;
 }
 
