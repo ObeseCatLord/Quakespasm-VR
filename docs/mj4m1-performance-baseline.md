@@ -70,5 +70,11 @@ and p95 frame interval and missed-refresh count separately for desktop and VR.
 If RSS is measured, record peak process RSS for the same run. Record the
 telemetry tool/version and route so later runs can repeat them.
 
+For 2.0 runs, also record the `avatar prep cpu` line added in `d4430c59`.
+Compare one player with multiple visible and offscreen co-op peers. This line
+times the whole palette-preparation task, including retargeting and upload
+setup; it is not a per-rig retarget-only measurement. Keep desktop and tracked
+VR samples separate before deciding whether an avatar needs specialized clips.
+
 `tests/README.md` documents `scr_speeds 3`: it shows CPU/GPU/wait timings, keeps
 indirect rendering eligible under its normal conditions, and omits draw counts.
