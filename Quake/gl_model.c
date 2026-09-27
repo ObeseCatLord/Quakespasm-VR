@@ -5492,6 +5492,51 @@ invalid:
 	return NULL;
 }
 
+/* Apply the inherited native-equipment triangle test once while admitting a
+ * private built-in alternate. Keep the bind view and Vulkan upload in lockstep:
+ * both raster draws and the animated BLAS then see the same body-only indices.
+ * A wholly filtered surface cannot be represented by the current MD5 surface
+ * chain, so reject the alternate and retain the complete Ranger presentation. */
+static qboolean MD5_FilterAvatarBodyIndexes (unsigned short *indexes,
+	int *numindexes, md5_avatar_bind_surface_t *bind)
+{
+	int retained = 0;
+
+	if (!indexes || !numindexes || !bind || !bind->vertices || !bind->indexes ||
+		*numindexes <= 0 || (*numindexes % 3) || bind->numindexes != *numindexes ||
+		bind->numverts <= 0)
+		return false;
+	for (int index = 0; index < *numindexes; index += 3)
+	{
+		float minimum = 1.0f, maximum = 0.0f, sum = 0.0f;
+		for (int corner = 0; corner < 3; ++corner)
+		{
+			const unsigned short vertex = indexes[index + corner];
+			float weight;
+			if (vertex >= bind->numverts)
+				return false;
+			weight = bind->vertices[vertex].native_equipment_weight;
+			if (!isfinite (weight) || weight < 0.0f || weight > 1.0001f)
+				return false;
+			minimum = q_min (minimum, weight);
+			maximum = q_max (maximum, weight);
+			sum += weight;
+		}
+		if (sum / 3.0f >= 0.5f || (minimum >= 0.25f && maximum >= 0.75f))
+			continue;
+		for (int corner = 0; corner < 3; ++corner)
+		{
+			const unsigned short vertex = indexes[index + corner];
+			indexes[retained] = vertex;
+			bind->indexes[retained++] = vertex;
+		}
+	}
+	if (!retained)
+		return false;
+	*numindexes = bind->numindexes = retained;
+	return true;
+}
+
 /* The private Ranger's Gun and Axe are leaf-joint, single-weight meshes.
  * Preserve only triangles wholly owned by one prop, compacting their vertices
  * before the MD5 parser releases source weights and texture coordinates. */
@@ -7271,6 +7316,18 @@ static qboolean Mod_LoadMD5MeshModelData (qmodel_t *mod, const void *buffer,
 					ranger_props[prop].numverts += piece->numverts;
 					ranger_props[prop].numindexes += piece->numindexes;
 				}
+			if (anim_override && !mod_custom_avatar &&
+				avatar_bind_profile->equipment_policy == R_AVATAR_EQUIPMENT_ATTACH_HAND)
+			{
+				const int original_indexes = surf->numindexes;
+				if (!MD5_FilterAvatarBodyIndexes (poutindexes, &surf->numindexes, bind))
+					MD5ERROR ("%s: invalid or empty built-in avatar body surface\n", fname);
+				surf->numtris = surf->numindexes / 3;
+				/* Removed weapon faces must not influence surviving hand normals. */
+				if (surf->numindexes != original_indexes)
+					MD5_ComputeNormals (poutvertexes, md5_vertex_size,
+						surf->numverts, poutindexes, surf->numindexes);
+			}
 		}
 
 		TEMP_FREE (weight);

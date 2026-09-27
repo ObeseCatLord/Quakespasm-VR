@@ -197,6 +197,15 @@ void R_AvatarPresentationPoint (const r_avatar_presentation_context_t *context,
 	const float in[3], float out[3]);
 void R_AvatarPresentationInversePoint (const r_avatar_presentation_context_t *context,
 	const float in[3], float out[3]);
+/* Source-compatible rigid weapon socket. source_prop_pose maps a verified
+ * Ranger Gun/Axe bone-local vertex to canonical model space. The returned
+ * matrix does the same after attaching that prop to the target hand. Body
+ * presentation scale affects the hand origin, never the prop's dimensions. */
+qboolean R_AvatarBuildAttachedPropTransform (
+	const r_avatar_presentation_context_t *context,
+	const float source_hand_pose[12], const float source_hand_bind[12],
+	const float target_hand_pose[12], const float target_hand_bind[12],
+	const float source_prop_pose[12], float out[12]);
 qboolean R_AvatarRetargetPaletteWithContext (const r_avatar_rig_t *source,
 	const r_avatar_rig_t *target, const r_avatar_presentation_context_t *context,
 	const float *source_palette, float *target_palette);

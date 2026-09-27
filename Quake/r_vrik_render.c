@@ -29,6 +29,10 @@ typedef struct r_vrik_candidate_s
 	qboolean tracked_cull_valid;
 	float target_to_canonical[12];
 	qboolean alternate_avatar;
+	const aliashdr_t *attached_prop_geometry;
+	float attached_prop_to_canonical[12];
+	double attached_prop_local_bound;
+	qboolean attached_prop_valid;
 } r_vrik_candidate_t;
 
 typedef struct r_vrik_staged_avatar_s
@@ -367,6 +371,158 @@ static void R_VRIKRenderCullCandidate (const entity_t *entity, const aliashdr_t 
 	candidate->tracked_cull_valid = tracked_cull_valid;
 }
 
+/* The source owns both private meshes. A partial upload, unusable material or
+ * stale view rejects the entire alternate, including its body selection. */
+static qboolean R_VRIKRenderValidatePropView (const qmodel_t *source, int prop,
+	int skinnum, double *qmax_out)
+{
+	const md5_avatar_prop_surface_t *cpu;
+	const aliashdr_t *gpu;
+	double qmax = 0.0;
+	int surface_count = 0;
+	int total_verts = 0, total_indexes = 0;
+
+	if (!source || prop < 0 || prop >= MD5_AVATAR_PROP_COUNT || !qmax_out ||
+		!source->avatar_props[prop].surfaces || !source->avatar_prop_gpu[prop] ||
+		source->avatar_props[prop].numverts <= 0 ||
+		source->avatar_props[prop].numindexes <= 0)
+		return false;
+	for (cpu = source->avatar_props[prop].surfaces,
+		gpu = source->avatar_prop_gpu[prop]; cpu && gpu;
+		cpu = cpu->next, gpu = gpu->nextsurface)
+	{
+		if (++surface_count > MAX_SURFACES || !cpu->vertices || !cpu->indexes ||
+			cpu->numverts <= 0 || cpu->numindexes <= 0 ||
+			gpu->numverts_vbo != cpu->numverts ||
+			gpu->numindexes != cpu->numindexes ||
+			gpu->numtris != cpu->numindexes / 3 ||
+			gpu->poseverttype != PV_MD5 || gpu->numjoints != 1 ||
+			gpu->numframes != 1 || gpu->numposes != 1 ||
+			!gpu->avatar_static_prop || gpu->numskins < 1 ||
+			gpu->numskins > MAX_SKINS ||
+			gpu->vertex_buffer == VK_NULL_HANDLE ||
+			gpu->index_buffer == VK_NULL_HANDLE ||
+			gpu->joints_buffer == VK_NULL_HANDLE ||
+			gpu->joints_set == VK_NULL_HANDLE ||
+			!gpu->tracked_cull_qmax_valid ||
+			!isfinite(gpu->tracked_cull_qmax) || gpu->tracked_cull_qmax < 0.0)
+			return false;
+		for (int axis = 0; axis < 3; ++axis)
+			if (gpu->scale[axis] != 1.0f || gpu->scale_origin[axis] != 0.0f)
+				return false;
+		const int skin = skinnum >= 0 && skinnum < gpu->numskins ? skinnum : 0;
+		const int anim = (int)(cl.time * 10) & 3;
+		const gltexture_t *tx = gpu->gltextures[skin][anim];
+		const gltexture_t *fb = gpu->fbtextures[skin][anim];
+		if (!tx || tx->descriptor_set == VK_NULL_HANDLE ||
+			(fb && fb->descriptor_set == VK_NULL_HANDLE))
+			return false;
+		if (qmax < gpu->tracked_cull_qmax)
+			qmax = gpu->tracked_cull_qmax;
+		if (total_verts > INT_MAX - cpu->numverts ||
+			total_indexes > INT_MAX - cpu->numindexes)
+			return false;
+		total_verts += cpu->numverts;
+		total_indexes += cpu->numindexes;
+	}
+	if (cpu || gpu || !surface_count ||
+		total_verts != source->avatar_props[prop].numverts ||
+		total_indexes != source->avatar_props[prop].numindexes)
+		return false;
+	*qmax_out = qmax;
+	return true;
+}
+
+static qboolean R_VRIKRenderAttachProp (
+	const r_vrik_staged_avatar_t *selection,
+	const r_avatar_rig_t *source_rig, const r_avatar_rig_t *target_rig,
+	const vrik_pose_t *pose, qboolean tracked,
+	const float (*source_palette)[12], const float (*target_palette)[12],
+	r_vrik_candidate_t *candidate)
+{
+	const r_avatar_profile_t *profile = target_rig->profile;
+	r_avatar_presentation_context_t context;
+	int hand_semantic, source_hand, target_hand;
+	int selected_prop = -1, selected_joint = -1;
+	double closest = DBL_MAX, qmax;
+	double rotation_squared = 0.0, translation_squared = 0.0;
+
+	candidate->attached_prop_geometry = NULL;
+	candidate->attached_prop_valid = false;
+	candidate->attached_prop_local_bound = 0.0;
+	memset(candidate->attached_prop_to_canonical, 0,
+		sizeof(candidate->attached_prop_to_canonical));
+	/* Native custom packages keep their skinned props. The default Ranger
+	 * policy attaches this prop; package authors must omit embedded gear,
+	 * since the custom manifest has no native-equipment joint names to filter. */
+	if (profile->equipment_policy != R_AVATAR_EQUIPMENT_ATTACH_HAND)
+		return profile->equipment_policy == R_AVATAR_EQUIPMENT_RANGER;
+	if (!pose)
+		return false;
+	hand_semantic = tracked && (pose->flags & VRIK_FLAG_DOMINANT_LEFT) ?
+		MD5_VRIK_HAND_L : MD5_VRIK_HAND_R;
+	source_hand = source_rig->joint[hand_semantic];
+	target_hand = target_rig->joint[hand_semantic];
+	if (source_hand < 0 || target_hand < 0 ||
+		!selection->source_model->avatar_builtin ||
+		!R_AvatarBuildPresentationContext(source_rig, target_rig, &context) ||
+		!isfinite(floor_correction_z[selection->id]))
+		return false;
+	R_AvatarPresentationAddCanonicalZ(&context, floor_correction_z[selection->id]);
+	for (int prop = 0; prop < MD5_AVATAR_PROP_COUNT; ++prop)
+	{
+		const int semantic = prop == MD5_AVATAR_PROP_GUN ? MD5_VRIK_GUN : MD5_VRIK_AXE;
+		const int joint = source_rig->joint[semantic];
+		double squared = 0.0;
+		if (joint < 0)
+			continue;
+		for (int axis = 0; axis < 3; ++axis)
+		{
+			const double delta = (double)source_palette[joint][axis * 4 + 3] -
+				source_palette[source_hand][axis * 4 + 3];
+			squared += delta * delta;
+		}
+		if (!isfinite(squared))
+			return false;
+		if (squared < closest) /* Source chooses Gun on an exact tie. */
+		{
+			closest = squared;
+			selected_prop = prop;
+			selected_joint = joint;
+		}
+	}
+	if (selected_prop < 0 || closest > 64.0 * 64.0 ||
+		!R_VRIKRenderValidatePropView(selection->source_model,
+			selected_prop, selection->entity->skinnum, &qmax) ||
+		!R_AvatarBuildAttachedPropTransform(&context,
+			source_palette[source_hand],
+			source_rig->live->joints[source_hand].bind,
+			target_palette[target_hand],
+			target_rig->live->joints[target_hand].bind,
+			source_palette[selected_joint],
+			candidate->attached_prop_to_canonical))
+		return false;
+	for (int row = 0; row < 3; ++row)
+	{
+		for (int column = 0; column < 3; ++column)
+		{
+			const double value = candidate->attached_prop_to_canonical[row * 4 + column];
+			rotation_squared += value * value;
+		}
+		const double value = candidate->attached_prop_to_canonical[row * 4 + 3];
+		translation_squared += value * value;
+	}
+	candidate->attached_prop_local_bound =
+		sqrt(translation_squared) + sqrt(rotation_squared) * qmax;
+	if (!isfinite(candidate->attached_prop_local_bound) ||
+		candidate->attached_prop_local_bound < 0.0)
+		return false;
+	candidate->attached_prop_geometry =
+		selection->source_model->avatar_prop_gpu[selected_prop];
+	candidate->attached_prop_valid = true;
+	return true;
+}
+
 static qboolean R_VRIKRenderCandidate (const entity_t *entity, r_vrik_candidate_t *candidate, float (*palette)[12])
 {
 	aliashdr_t *header;
@@ -406,6 +562,11 @@ static qboolean R_VRIKRenderCandidate (const entity_t *entity, r_vrik_candidate_
 	candidate->geometry = header;
 	candidate->joint_count = (uint32_t)output.joint_count;
 	candidate->alternate_avatar = false;
+	candidate->attached_prop_geometry = NULL;
+	candidate->attached_prop_valid = false;
+	candidate->attached_prop_local_bound = 0.0;
+	memset(candidate->attached_prop_to_canonical, 0,
+		sizeof(candidate->attached_prop_to_canonical));
 	R_VRIKRenderCullCandidate (entity, header, candidate->joint_count, (const float (*)[12])palette, candidate);
 	return candidate->joint_count != 0;
 }
@@ -534,6 +695,10 @@ static qboolean R_VRIKRenderAlternateCandidate (const entity_t *entity,
 	R_AvatarRefineBuiltinPalette (&source_rig, &target_rig, tracked,
 		(const float (*)[12])source_palette, floor_correction_z[selection->id],
 		tracked_lower_mask, palette, R_VRIK_RENDER_MAX_JOINTS);
+	if (!R_VRIKRenderAttachProp(selection, &source_rig, &target_rig,
+		&pose, tracked, (const float (*)[12])source_palette,
+		(const float (*)[12])palette, candidate))
+		return false;
 
 	candidate->entity = entity;
 	candidate->model = selection->target_model;
@@ -566,6 +731,9 @@ static qboolean R_VRIKRenderAlternateCandidate (const entity_t *entity,
 		else
 			candidate->tracked_cull_valid = false;
 	}
+	if (candidate->tracked_cull_valid && candidate->attached_prop_valid &&
+		candidate->tracked_cull_local_bound < candidate->attached_prop_local_bound)
+		candidate->tracked_cull_local_bound = candidate->attached_prop_local_bound;
 	return candidate->joint_count != 0;
 }
 
@@ -664,6 +832,11 @@ void R_VRIKRenderPrepareFrame (uint32_t frame_slot)
 		record->model = candidate->model;
 		record->geometry = candidate->geometry;
 		record->alternate_avatar = candidate->alternate_avatar;
+		record->attached_prop_geometry = candidate->attached_prop_geometry;
+		record->attached_prop_valid = candidate->attached_prop_valid;
+		memcpy(record->attached_prop_to_canonical,
+			candidate->attached_prop_to_canonical,
+			sizeof(record->attached_prop_to_canonical));
 		if (candidate->alternate_avatar)
 			memcpy (record->target_to_canonical, candidate->target_to_canonical,
 				sizeof (record->target_to_canonical));

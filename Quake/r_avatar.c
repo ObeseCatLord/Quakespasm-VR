@@ -464,6 +464,55 @@ void R_AvatarPresentationInversePoint (const r_avatar_presentation_context_t *co
 	int r; for (r = 0; r < 3; ++r) out[r] = context->inverse[r * 4] * point[0] + context->inverse[r * 4 + 1] * point[1] + context->inverse[r * 4 + 2] * point[2] + context->inverse[r * 4 + 3];
 }
 
+qboolean R_AvatarBuildAttachedPropTransform (
+	const r_avatar_presentation_context_t *context,
+	const float source_hand_pose[12], const float source_hand_bind[12],
+	const float target_hand_pose[12], const float target_hand_bind[12],
+	const float source_prop_pose[12], float out[12])
+{
+	float target_hand_canonical[12], target_bind_canonical[12];
+	float source_bind_rotation[12], inverse[12], correction[12];
+	float attach[12], result[12];
+	float hand_origin[3], canonical_origin[3];
+
+	if (!context || !source_hand_pose || !source_hand_bind ||
+		!target_hand_pose || !target_hand_bind || !source_prop_pose || !out ||
+		!R_AvatarOrthonormal(context->rotation) ||
+		!R_AvatarFiniteMatrix(context->forward) ||
+		!R_AvatarOrthonormal(source_hand_pose) ||
+		!R_AvatarOrthonormal(source_hand_bind) ||
+		!R_AvatarOrthonormal(target_hand_pose) ||
+		!R_AvatarOrthonormal(target_hand_bind) ||
+		!R_AvatarOrthonormal(source_prop_pose))
+		return false;
+	/* Match the inherited socket: presentation maps only the hand origin.
+	 * The target/source bind rotations calibrate the two authored grips. */
+	R_AvatarMultiply(context->rotation, target_hand_pose,
+		target_hand_canonical);
+	hand_origin[0] = target_hand_pose[3];
+	hand_origin[1] = target_hand_pose[7];
+	hand_origin[2] = target_hand_pose[11];
+	R_AvatarPresentationPoint(context, hand_origin, canonical_origin);
+	target_hand_canonical[3] = canonical_origin[0];
+	target_hand_canonical[7] = canonical_origin[1];
+	target_hand_canonical[11] = canonical_origin[2];
+	R_AvatarMultiply(context->rotation, target_hand_bind,
+		target_bind_canonical);
+	target_bind_canonical[3] = target_bind_canonical[7] = target_bind_canonical[11] = 0;
+	memcpy(source_bind_rotation, source_hand_bind, sizeof(source_bind_rotation));
+	source_bind_rotation[3] = source_bind_rotation[7] = source_bind_rotation[11] = 0;
+	R_AvatarInverseRigid(target_bind_canonical, inverse);
+	R_AvatarMultiply(inverse, source_bind_rotation, correction);
+	R_AvatarMultiply(target_hand_canonical, correction, target_hand_canonical);
+	R_AvatarInverseRigid(source_hand_pose, inverse);
+	R_AvatarMultiply(target_hand_canonical, inverse, attach);
+	R_AvatarMultiply(attach, source_prop_pose, result);
+	if (!R_AvatarOrthonormal(result))
+		return false;
+	memcpy(out, result, sizeof(result));
+	return true;
+}
+
 qboolean R_AvatarRetargetPaletteWithContext (const r_avatar_rig_t *source,
 	const r_avatar_rig_t *target, const r_avatar_presentation_context_t *context,
 	const float *source_palette, float *target_palette)

@@ -124,29 +124,80 @@ static const r_vrik_prepared_palette_t *R_AliasUsablePalette (entity_t *e, const
 	return prepared;
 }
 
-/* The prepared affine is row-major 3x4; MatrixMultiply expects column-major 4x4. */
-static qboolean R_AliasAppendAvatarPresentation (float model_matrix[16], const r_vrik_prepared_palette_t *avatar)
+/* Prepared affines are row-major 3x4; MatrixMultiply expects column-major 4x4. */
+static qboolean R_AliasAppendAffine (float model_matrix[16], const float transform[12])
 {
 	float affine[16];
 	IdentityMatrix (affine);
 	for (int row = 0; row < 3; ++row)
 		for (int column = 0; column < 4; ++column)
-			affine[column * 4 + row] = avatar->target_to_canonical[row * 4 + column];
+		{
+			const float value = transform[row * 4 + column];
+			if (!isfinite (value))
+				return false;
+			affine[column * 4 + row] = value;
+		}
 	MatrixMultiply (model_matrix, affine);
 	return R_AliasMatrixIsFinite (model_matrix);
 }
 
-/* MD5 lighting dots target-space skinned normals against shade_vector. The
- * presentation matrix rotates those normals into Ranger space for drawing,
- * so express the ordinary Ranger shade direction in target space too. */
-static qboolean R_AliasAvatarShadeVector (const r_vrik_prepared_palette_t *avatar, vec3_t shade)
+static qboolean R_AliasAppendAvatarPresentation (float model_matrix[16], const r_vrik_prepared_palette_t *avatar)
+{
+	return R_AliasAppendAffine (model_matrix, avatar->target_to_canonical);
+}
+
+/* A private Ranger prop uses its own identity joint palette. Validate the
+ * whole surface chain before issuing any draws, so a partial upload cannot
+ * leave half of the equipment visible. */
+static const aliashdr_t *R_AliasUsableAttachedProp (const r_vrik_prepared_palette_t *avatar, int skinnum)
+{
+	const aliashdr_t *prop;
+	int surface_count = 0;
+	if (!avatar || !avatar->alternate_avatar || !avatar->attached_prop_valid ||
+		!(prop = avatar->attached_prop_geometry))
+		return NULL;
+	for (int i = 0; i < 12; ++i)
+		if (!isfinite (avatar->attached_prop_to_canonical[i]))
+			return NULL;
+	for (const aliashdr_t *surface = prop; surface; surface = surface->nextsurface)
+	{
+		const int skin = skinnum >= 0 && skinnum < surface->numskins ? skinnum : 0;
+		const int anim = (int)(cl.time * 10) & 3;
+		gltexture_t *tx;
+		gltexture_t *fb;
+		if (++surface_count > MAX_SURFACES || !surface->avatar_static_prop ||
+			surface->poseverttype != PV_MD5 || surface->numjoints != 1 ||
+			surface->numframes != 1 || surface->numposes != 1 ||
+			surface->numverts_vbo <= 0 || surface->numindexes <= 0 ||
+			surface->numskins < 1 || surface->numskins > MAX_SKINS ||
+			surface->vertex_buffer == VK_NULL_HANDLE ||
+			surface->index_buffer == VK_NULL_HANDLE ||
+			surface->joints_buffer == VK_NULL_HANDLE ||
+			surface->joints_set == VK_NULL_HANDLE)
+			return NULL;
+		for (int axis = 0; axis < 3; ++axis)
+			if (surface->scale[axis] != 1.0f || surface->scale_origin[axis] != 0.0f)
+				return NULL;
+		tx = surface->gltextures[skin][anim];
+		fb = surface->fbtextures[skin][anim];
+		if ((tx && tx->descriptor_set == VK_NULL_HANDLE) ||
+			(fb && fb->descriptor_set == VK_NULL_HANDLE))
+			return NULL;
+	}
+	return prop;
+}
+
+/* MD5 lighting dots skinned normals in geometry space. Express the ordinary
+ * Ranger shade direction there with the transpose of geometry-to-canonical;
+ * for a rigid prop attachment this is its inverse rotation. */
+static qboolean R_AliasAffineShadeVector (const float transform[12], vec3_t shade)
 {
 	vec3_t transformed;
 	for (int column = 0; column < 3; ++column)
 	{
 		double value = 0.0;
 		for (int row = 0; row < 3; ++row)
-			value += (double)avatar->target_to_canonical[row * 4 + column] * shade[row];
+			value += (double)transform[row * 4 + column] * shade[row];
 		if (!isfinite (value) || fabs (value) > FLT_MAX)
 			return false;
 		transformed[column] = (float)value;
@@ -155,6 +206,11 @@ static qboolean R_AliasAvatarShadeVector (const r_vrik_prepared_palette_t *avata
 		return false;
 	VectorCopy (transformed, shade);
 	return true;
+}
+
+static qboolean R_AliasAvatarShadeVector (const r_vrik_prepared_palette_t *avatar, vec3_t shade)
+{
+	return R_AliasAffineShadeVector (avatar->target_to_canonical, shade);
 }
 
 /*
@@ -895,6 +951,26 @@ int R_AliasModelMatrix (entity_t *e, const aliashdr_t *paliashdr, lerpdata_t *le
 		model_matrix, true, NULL);
 }
 
+/* The private view has unit scale and zero scale origin. Start from the
+ * player's ordinary entity transform, then place its bone-local vertices in
+ * canonical Ranger space. Target-body presentation must not enter this path. */
+static int R_AliasAttachedPropMatrix (entity_t *e, const aliashdr_t *prop,
+	const r_vrik_prepared_palette_t *avatar, lerpdata_t *lerpdata, float model_matrix[16])
+{
+	const int result = R_AliasModelMatrix (e, prop, lerpdata, model_matrix);
+	if (result < 0 || !R_AliasMatrixIsFinite (model_matrix) ||
+		!R_AliasAppendAffine (model_matrix, avatar->attached_prop_to_canonical))
+		return -1;
+	return result;
+}
+
+static lerpdata_t R_AliasAttachedPropLerp (lerpdata_t lerpdata)
+{
+	lerpdata.pose1 = lerpdata.pose2 = 0;
+	lerpdata.blend = 0.0f;
+	return lerpdata;
+}
+
 int R_HeldMeleeMatrix (entity_t *e, const aliashdr_t *geometry,
 	lerpdata_t *lerpdata, float matrix[16])
 {
@@ -978,6 +1054,7 @@ void R_DrawAliasModel (cb_context_t *cbx, entity_t *e, int *aliaspolys)
 {
 	aliashdr_t	*paliashdr;
 	aliashdr_t	*draw_geometry;
+	const aliashdr_t *prop_geometry;
 	int			 skinnum = e->skinnum;
 	lerpdata_t	 lerpdata;
 	const qboolean paired_half = V_AkimboViewmodelHand (e) >= 0;
@@ -1004,6 +1081,7 @@ void R_DrawAliasModel (cb_context_t *cbx, entity_t *e, int *aliaspolys)
 	const r_vrik_prepared_palette_t *avatar = record && record->alternate_avatar ?
 		R_AliasUsablePalette (e, record->geometry) : NULL;
 	draw_geometry = avatar ? (aliashdr_t *)avatar->geometry : paliashdr;
+	prop_geometry = R_AliasUsableAttachedProp (avatar, skinnum);
 
 	qboolean alphatest = !!((avatar ? avatar->model : e->model)->flags & MF_HOLEY);
 
@@ -1022,6 +1100,11 @@ void R_DrawAliasModel (cb_context_t *cbx, entity_t *e, int *aliaspolys)
 	if (avatar && !R_AliasAppendAvatarPresentation (model_matrix, avatar))
 		return;
 	const qboolean opposite_front_face = matrix_result > 0;
+	float prop_matrix[16];
+	int prop_matrix_result = -1;
+	if (prop_geometry)
+		prop_matrix_result = R_AliasAttachedPropMatrix (e, prop_geometry, avatar,
+			&lerpdata, prop_matrix);
 
 	//
 	// set up for alpha blending
@@ -1039,13 +1122,44 @@ void R_DrawAliasModel (cb_context_t *cbx, entity_t *e, int *aliaspolys)
 	//
 	vec3_t shadevector, lightcolor;
 	R_SetupAliasLighting (e, &shadevector, &lightcolor);
+	vec3_t prop_shadevector;
+	VectorCopy (shadevector, prop_shadevector);
 	if (avatar && !R_AliasAvatarShadeVector (avatar, shadevector))
 		return;
+	if (prop_matrix_result >= 0 &&
+		!R_AliasAffineShadeVector (avatar->attached_prop_to_canonical, prop_shadevector))
+		prop_matrix_result = -1;
 
 	R_DrawAliasSurfaces (
 		cbx, e, draw_geometry, draw_geometry, lerpdata, model_matrix, entalpha, alphatest, shadevector, lightcolor, false, true,
 		avatar != NULL,
 		opposite_front_face, aliaspolys);
+	if (prop_matrix_result >= 0)
+		R_DrawAliasSurfaces (cbx, e, (aliashdr_t *)prop_geometry, prop_geometry,
+			R_AliasAttachedPropLerp (lerpdata), prop_matrix, entalpha,
+			!!(e->model->flags & MF_HOLEY),
+			prop_shadevector, lightcolor, false, false, true,
+			prop_matrix_result > 0, aliaspolys);
+}
+
+static qboolean R_AliasInflateMatrix (const aliashdr_t *geometry,
+	const float model_matrix[16], float inflate, float inflated_matrix[16])
+{
+	memcpy (inflated_matrix, model_matrix, 16 * sizeof (float));
+	if (inflate != 1.0f)
+	{
+		/* MDL vertices occupy [0,255]; MD3 and MD5 center at zero. The
+		 * private prop's local origin is its Ranger attachment joint. */
+		const float center = geometry->poseverttype == PV_QUAKE1 ? 127.5f : 0.0f;
+		float scale[16], translate[16];
+		TranslationMatrix (translate, center, center, center);
+		MatrixMultiply (inflated_matrix, translate);
+		ScaleMatrix (scale, inflate, inflate, inflate);
+		MatrixMultiply (inflated_matrix, scale);
+		TranslationMatrix (translate, -center, -center, -center);
+		MatrixMultiply (inflated_matrix, translate);
+	}
+	return R_AliasMatrixIsFinite (inflated_matrix);
 }
 
 /* Use the same selected geometry and prepared palette as the main alias pass.
@@ -1071,6 +1185,7 @@ qboolean R_DrawAliasCoopOverlay (cb_context_t *cbx, entity_t *e, const vec3_t co
 	const r_vrik_prepared_palette_t *avatar = record && record->alternate_avatar ?
 		R_AliasUsablePalette (e, record->geometry) : NULL;
 	aliashdr_t *draw_geometry = avatar ? (aliashdr_t *)avatar->geometry : geometry;
+	const aliashdr_t *prop_geometry = R_AliasUsableAttachedProp (avatar, e->skinnum);
 
 	lerpdata_t lerpdata;
 	R_SetupAliasFrame (e, geometry, &lerpdata);
@@ -1083,33 +1198,40 @@ qboolean R_DrawAliasCoopOverlay (cb_context_t *cbx, entity_t *e, const vec3_t co
 		return false;
 
 	float inflated_matrix[16];
-	memcpy (inflated_matrix, model_matrix, sizeof (inflated_matrix));
-	if (inflate != 1.0f)
-	{
-		/* MDL vertices occupy [0,255]; MD3 and MD5 center at zero. */
-		const float center = draw_geometry->poseverttype == PV_QUAKE1 ? 127.5f : 0.0f;
-		float scale[16], translate[16];
-		TranslationMatrix (translate, center, center, center);
-		MatrixMultiply (inflated_matrix, translate);
-		ScaleMatrix (scale, inflate, inflate, inflate);
-		MatrixMultiply (inflated_matrix, scale);
-		TranslationMatrix (translate, -center, -center, -center);
-		MatrixMultiply (inflated_matrix, translate);
-		if (!R_AliasMatrixIsFinite (inflated_matrix))
-			return false;
-	}
+	if (!R_AliasInflateMatrix (draw_geometry, model_matrix, inflate, inflated_matrix))
+		return false;
+	float prop_matrix[16], prop_inflated_matrix[16];
+	if (prop_geometry &&
+		(R_AliasAttachedPropMatrix (e, prop_geometry, avatar, &lerpdata,
+			prop_matrix) < 0 ||
+		 !R_AliasInflateMatrix (prop_geometry, prop_matrix, inflate,
+			prop_inflated_matrix)))
+		prop_geometry = NULL;
+	const lerpdata_t prop_lerpdata = R_AliasAttachedPropLerp (lerpdata);
 
 	vec3_t shadevector = {0.0f, 0.0f, 0.0f};
 	vec3_t mask_color = {0.0f, 0.0f, 0.0f};
 	vec3_t overlay_color;
 	VectorCopy (color, overlay_color);
 	if (ring)
+	{
 		for (aliashdr_t *surface = draw_geometry; surface; surface = surface->nextsurface)
 			GL_DrawAliasFrame (cbx, e, surface, draw_geometry, lerpdata, nulltexture, NULL,
 				model_matrix, 1.0f, false, shadevector, mask_color, 0, false, true, true, COOP_OVERLAY_MASK);
+		for (const aliashdr_t *surface = prop_geometry; surface; surface = surface->nextsurface)
+			GL_DrawAliasFrame (cbx, e, (aliashdr_t *)surface, prop_geometry, prop_lerpdata,
+				nulltexture, NULL, prop_matrix, 1.0f, false, shadevector, mask_color,
+				0, false, true, false, COOP_OVERLAY_MASK);
+	}
 	for (aliashdr_t *surface = draw_geometry; surface; surface = surface->nextsurface)
 		GL_DrawAliasFrame (cbx, e, surface, draw_geometry, lerpdata, nulltexture, NULL,
 			inflated_matrix, alpha, false, shadevector, overlay_color, 0, false, true, true,
+			ring ? COOP_OVERLAY_RING :
+			cbx->subpass_type == SUBPASS_MAIN ? COOP_OVERLAY_FILL_LATE : COOP_OVERLAY_FILL);
+	for (const aliashdr_t *surface = prop_geometry; surface; surface = surface->nextsurface)
+		GL_DrawAliasFrame (cbx, e, (aliashdr_t *)surface, prop_geometry, prop_lerpdata,
+			nulltexture, NULL, prop_inflated_matrix, alpha, false, shadevector,
+			overlay_color, 0, false, true, false,
 			ring ? COOP_OVERLAY_RING :
 			cbx->subpass_type == SUBPASS_MAIN ? COOP_OVERLAY_FILL_LATE : COOP_OVERLAY_FILL);
 	return true;

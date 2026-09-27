@@ -14,6 +14,11 @@ typedef struct r_vrik_prepared_palette_s
 	 * bind-floor correction; valid for alternates. */
 	float target_to_canonical[12];
 	qboolean alternate_avatar;
+	/* Rigid source-equipment view and its bone-local to canonical transform.
+	 * Published only with a complete alternate body/prop selection. */
+	const aliashdr_t *attached_prop_geometry;
+	float attached_prop_to_canonical[12];
+	qboolean attached_prop_valid;
 	VkDescriptorSet descriptor_set;
 	/* Joint index relative to descriptor_set's aggregate palette slice. */
 	uint32_t joint_offset;
