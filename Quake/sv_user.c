@@ -1127,6 +1127,7 @@ void SV_ResetPrivateCommandQueue (client_t *client)
 	client->private_move_native_frame = false;
 	client->private_move_resume_pending = false;
 	client->private_pmove_walk_selected = false;
+	client->private_pmove_pusher_interaction = false;
 	client->private_pmove_credit_msec = 0.0;
 	client->private_pmove_jump_secs = 0.0f;
 	client->private_pmove_waterjump_secs = 0.0f;

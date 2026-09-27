@@ -2560,6 +2560,18 @@ static void SV_PushMove (edict_t *pusher, float movetime)
 		if (!SV_IsPushable (check))
 			continue;
 
+		/* Client movement ran earlier in this world frame. Native pusher
+		 * carry/contact remains authoritative, so withhold private replay. */
+		if (qcvm == &sv.qcvm)
+		{
+			int slot = NUM_FOR_EDICT (check);
+			if (slot > 0 && slot <= svs.maxclients &&
+				svs.clients[slot - 1].active &&
+				svs.clients[slot - 1].edict == check &&
+				svs.clients[slot - 1].private_pmove_walk_selected)
+				svs.clients[slot - 1].private_pmove_pusher_interaction = true;
+		}
+
 		// remove the onground flag for non-players. riders keep it under robust
 		// push: the support layer owns their ground state, and a transient clear
 		// that survives a blocked rollback reads as the rider leaving the ground,
@@ -7436,7 +7448,11 @@ const char *SV_PrivateWalkTrialStateError (edict_t *ent, client_t *client,
 		if (ground->free)
 			return "stale ground entity";
 		if (ground->v.movetype == MOVETYPE_PUSH && ground->v.solid == SOLID_BSP)
-			return "owner is riding a pusher";
+		{
+			client->private_pmove_pusher_interaction = true;
+			if (sv_gameplayfix_elevators.value < 3.f)
+				return "owner is riding a pusher";
+		}
 	}
 	return NULL;
 }
@@ -8052,6 +8068,17 @@ static qboolean SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *clien
 		failure = "PMove returned an invalid ground entity";
 		goto cleanup;
 	}
+	if (pmove.onground)
+	{
+		int number = pmove.physents[pmove.groundent].info;
+		if (number > 0 && number < qcvm->num_edicts)
+		{
+			edict_t *ground = EDICT_NUM (number);
+			if (!ground->free && ground->v.movetype == MOVETYPE_PUSH &&
+				ground->v.solid == SOLID_BSP)
+				client->private_pmove_pusher_interaction = true;
+		}
+	}
 	for (i = 0; i < pmove.numtouch; i++)
 		if (pmove.touchindex[i] < 0 || pmove.touchindex[i] >= pmove.numphysent)
 		{
@@ -8067,8 +8094,12 @@ static qboolean SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *clien
 			if (!other->free && other->v.movetype == MOVETYPE_PUSH &&
 				other->v.solid == SOLID_BSP)
 			{
-				failure = "PMove contacted a moving pusher";
-				goto cleanup;
+				client->private_pmove_pusher_interaction = true;
+				if (sv_gameplayfix_elevators.value < 3.f)
+				{
+					failure = "PMove contacted a moving pusher";
+					goto cleanup;
+				}
 			}
 		}
 	}
@@ -8797,6 +8828,7 @@ static void SV_Physics_Client (edict_t *ent, int num)
 
 	if (!client->active)
 		return; // unconnected slot
+	client->private_pmove_pusher_interaction = false;
 	if (ent->free || ent->v.health <= 0 || ent->v.deadflag != DEAD_NO)
 		SV_ClearRecentInstantTeleportTriggerForClientSlot (num - 1);
 	SV_VRContactObserveSpawn (client);

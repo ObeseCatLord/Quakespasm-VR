@@ -179,6 +179,7 @@ static cvar_t sv_skyroom_pvs = {"sv_skyroom_pvs", "0", CVAR_NONE};
 static cvar_t sv_smoothplatformlerps = {"sv_smoothplatformlerps", "1", CVAR_NONE};
 static cvar_t sv_qsvr_private = {"sv_qsvr_private", "0", CVAR_NONE};
 static cvar_t sv_private_pmove_walk = {"sv_private_pmove_walk", "0", CVAR_SERVERINFO};
+extern cvar_t sv_gameplayfix_elevators;
 static void SV_AddSkyRoomPVS (const vec3_t org, qmodel_t *worldmodel);
 
 cvar_t sv_gorilla = {"sv_gorilla", "1", CVAR_NOTIFY | CVAR_SERVERINFO};
@@ -891,7 +892,8 @@ static const char *SV_PrivateWalkTrialAdmissionFailure (client_t *client)
 			groundentity % qcvm->edict_size)
 			return "owner has an invalid groundentity offset";
 		ground = PROG_TO_EDICT (groundentity);
-		if (!ground->free && ground->v.movetype == MOVETYPE_PUSH && ground->v.solid == SOLID_BSP)
+		if (!ground->free && ground->v.movetype == MOVETYPE_PUSH &&
+			ground->v.solid == SOLID_BSP && sv_gameplayfix_elevators.value < 3.f)
 			return "owner is riding a pusher";
 	}
 	return NULL;
@@ -1845,6 +1847,22 @@ static qboolean SV_GorillaAckStateIsFinite (const client_t *client)
 	return true;
 }
 
+static qboolean SV_GorillaAckOriginMatchesOwner (const client_t *client)
+{
+	vec3_t delta;
+	float distance;
+	int axis;
+
+	if (!client->edict || client->edict->free)
+		return false;
+	for (axis = 0; axis < 3; axis++)
+		if (!isfinite (client->edict->v.origin[axis]))
+			return false;
+	VectorSubtract (client->edict->v.origin, client->vr_gorilla_state.origin, delta);
+	distance = VectorLength (delta);
+	return isfinite (distance) && distance <= .01f;
+}
+
 static void SV_WriteGorillaAckState (client_t *client, sizebuf_t *msg)
 {
 	int hand, axis;
@@ -1915,7 +1933,8 @@ static qboolean SVFTE_WriteEntitiesToClient (client_t *client, sizebuf_t *msg,
 			client->vr_gorilla_state.initialized &&
 			client->vr_gorilla_cursor_valid && client->vr_gorilla_last_sequence >= 0 &&
 			client->vr_gorilla_last_sequence == client->private_completed_move &&
-			SV_GorillaAckStateIsFinite (client);
+			SV_GorillaAckStateIsFinite (client) &&
+			SV_GorillaAckOriginMatchesOwner (client);
 		if (selected_engine && !sv.paused)
 		{
 			ack_flags |= MOVEACK_FLAG_AUTHORITATIVE;
@@ -1929,6 +1948,7 @@ static qboolean SVFTE_WriteEntitiesToClient (client_t *client, sizebuf_t *msg,
 				client->edict->v.waterlevel == 0 &&
 				!((int)client->edict->v.flags & FL_WATERJUMP) &&
 				client->private_pmove_waterjump_secs == 0.0f &&
+				!client->private_pmove_pusher_interaction &&
 				qcvm->time >= client->edict->v.teleport_time)
 				ack_flags |= MOVEACK_FLAG_PREDICTION_ALLOWED;
 		}
@@ -2451,7 +2471,6 @@ void SV_Init (void)
 	extern cvar_t sv_freezenonclients;
 	extern cvar_t sv_gameplayfix_spawnbeforethinks;
 	extern cvar_t sv_gameplayfix_bouncedownslopes;
-	extern cvar_t sv_gameplayfix_elevators;
 	extern cvar_t sv_fastpushmove;
 	extern cvar_t sv_analyticphysics;
 	extern cvar_t sv_friction;
