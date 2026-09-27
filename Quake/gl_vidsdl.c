@@ -35,6 +35,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "vr_openxr.h"
 #include "vr_openxr_vulkan.h"
 #include "vr_openxr_math.h"
+#include "vr_input.h"
 #include "vr_foveation_rate_map.h"
 #include "r_vrik_render.h"
 
@@ -87,6 +88,8 @@ static qboolean openxr_vulkan_binding = false;
 static uint32_t openxr_vulkan_api_version;
 static uint32_t openxr_vulkan_minimum_version;
 static qboolean openxr_attach_attempted;
+static qboolean openxr_session_wanted;
+static qboolean openxr_session_change_pending;
 static qboolean openxr_frame_submitted;
 static vrxr_frame_t openxr_frame;
 static vrf_policy_state_t openxr_foveation_policy;
@@ -924,6 +927,7 @@ static void GL_OpenXRPrepareVulkan (uint32_t loader_api_version)
 
 	openxr_vulkan_minimum_version = minimum_version;
 	openxr_vulkan_binding = true;
+	openxr_session_wanted = true;
 	Con_Printf ("OpenXR bootstrap: requesting Vulkan %u.%u; session is not attached.\n", VK_API_VERSION_MAJOR (openxr_vulkan_api_version),
 		VK_API_VERSION_MINOR (openxr_vulkan_api_version));
 }
@@ -1119,6 +1123,9 @@ static void GL_OpenXRCreationFailed (void)
 	}
 	vulkan_physical_device = VK_NULL_HANDLE;
 	openxr_vulkan_binding = false;
+	openxr_session_wanted = false;
+	openxr_session_change_pending = false;
+	openxr_attach_attempted = false;
 	openxr_vulkan_api_version = 0;
 	openxr_vulkan_minimum_version = 0;
 	vulkan_globals.openxr_vulkan_available = false;
@@ -4266,7 +4273,7 @@ static void GL_OpenXRRetireImages (void *unused)
 
 static void GL_OpenXRAttach (void)
 {
-	if (!openxr_vulkan_binding || openxr_attach_attempted)
+	if (!openxr_vulkan_binding || !openxr_session_wanted || openxr_attach_attempted)
 		return;
 	openxr_attach_attempted = true;
 	if (!vulkan_globals.openxr_multiview_available)
@@ -4301,6 +4308,44 @@ static void GL_OpenXRAttach (void)
 	vid.height = height;
 	vid.recalc_refdef = true;
 	Con_Printf ("OpenXR stereo session attached: %ux%u per eye.\n", width, height);
+}
+
+/* The Vulkan device is selected against OpenXR at startup. Toggle only its
+ * session here; rediscovery after a lost runtime needs a new device binding. */
+static void GL_OpenXREnable_f (void)
+{
+	const char *value = Cmd_Argv (1);
+	if (Cmd_Argc () != 2 || (strcmp (value, "0") && strcmp (value, "1")))
+	{
+		Con_Printf ("vr_enable 0|1 (currently %d)\n", openxr_session_wanted ? 1 : 0);
+		return;
+	}
+	if (!openxr_vulkan_binding)
+	{
+		Con_Printf ("OpenXR needs a startup-selected Vulkan binding; restart with -openxr.\n");
+		return;
+	}
+	const qboolean enable = value[0] == '1';
+	if (enable && VRXR_StopReason () != VRXR_STOP_NONE)
+	{
+		Con_Printf ("OpenXR runtime stopped; restart with -openxr to select a fresh system/device.\n");
+		return;
+	}
+	if (enable && vulkan_globals.stereo_active)
+	{
+		/* Consecutive console commands can cancel a queued disable before
+		 * the renderer reaches its next frame boundary. */
+		if (openxr_session_change_pending && !openxr_session_wanted)
+		{
+			openxr_session_wanted = true;
+			openxr_session_change_pending = false;
+		}
+		return;
+	}
+	if (!enable && !openxr_session_wanted && !vulkan_globals.stereo_active)
+		return;
+	openxr_session_wanted = enable;
+	openxr_session_change_pending = true;
 }
 
 const vrxr_frame_t *GL_OpenXRFrame (void)
@@ -4470,6 +4515,19 @@ static void GL_UploadFragmentShadingRateMap (void)
 
 qboolean GL_BeginRendering (qboolean use_tasks, task_handle_t *begin_rendering_task, int *width, int *height)
 {
+	if (openxr_session_change_pending)
+	{
+		GL_SynchronizeEndRenderingTask ();
+		if (!openxr_session_wanted)
+		{
+			/* Release VR-owned keys and pending motion before the session's
+			 * borrowed images and action spaces are retired. */
+			VR_InputCommands (NULL);
+			VRXR_DetachVulkan ();
+		}
+		openxr_attach_attempted = false;
+		openxr_session_change_pending = false;
+	}
 	GL_OpenXRAttach ();
 	if (!use_tasks || vulkan_globals.stereo_active)
 		GL_SynchronizeEndRenderingTask ();
@@ -5467,6 +5525,7 @@ void VID_Init (void)
 	Cmd_AddCommand ("vid_test", VID_Test);		   // johnfitz
 	Cmd_AddCommand ("vid_describecurrentmode", VID_DescribeCurrentMode_f);
 	Cmd_AddCommand ("vid_describemodes", VID_DescribeModes_f);
+	Cmd_AddCommand ("vr_enable", GL_OpenXREnable_f);
 
 #ifdef _DEBUG
 	Cmd_AddCommand ("create_palette_octree", CreatePaletteOctree_f);
