@@ -1,5 +1,20 @@
 # Migration boundary fixtures
 
+## Avatar identity and protocol parser
+
+`avatar_protocol_fixture.c` links the source master pure parser. It checks
+builtin identities, canonical protocol commands, capability latching, custom
+key and digest validation, and custom slot updates and clears. The module is
+compiled into vkQuake, but this slice does not wire gameplay, client, or server
+callers to it.
+
+```sh
+cc -std=c11 -Wall -Wextra -Werror \
+  tests/avatar_protocol_fixture.c Quake/player_avatar.c \
+  -o /tmp/avatar-protocol-fixture
+/tmp/avatar-protocol-fixture
+```
+
 `vr_akimbo_stale_fixture.c` includes the production input implementation and
 checks stale QBJ3 pair admission in `VR_InputApplyPending`: a pair with the
 default invalid producer identity clears the private pose and akimbo payload,

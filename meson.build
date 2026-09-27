@@ -297,6 +297,7 @@ srcs = [
     'Quake/net_loop.c',
     'Quake/net_main.c',
     'Quake/palette.c',
+    'Quake/player_avatar.c',
     'Quake/pmove.c',
     'Quake/pr_cmds.c',
     'Quake/pr_edict.c',
