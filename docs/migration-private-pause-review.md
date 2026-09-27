@@ -19,7 +19,7 @@ machinery, with an explicit suspension phase. No new movement owner is needed.
 | Snapshot publication currently reopens prediction whenever the server is unpaused and the ordinary owner predicate passes. | Require resumed-command completion before publishing prediction permission and a coherent completed baseline. |
 | `GAP` does not purge client command history; replay can begin after the unchanged completed ACK. | Do not use GAP or the discard cursor alone as a freshness fence. |
 | The sender repeats up to three commands. A packet arriving after resume may include unseen pre-resume commands. | Do not equate receive time with production time. Establish a producer/resume fence before claiming that paused attack, impulse or movement cannot execute after resume. |
-| Client ACK16 expansion uses the current outgoing command counter as its high bits. | Account for long suspension where outgoing commands can advance by 65536 or more; otherwise an old completed ACK can be misexpanded. |
+| Client ACK16 expansion used the current outgoing command counter as its high bits. | Fixed in `cl_parse.c`: expand against the last completed ACK and reject a future ACK. A focused fixture covers an unchanged ACK after 65536 generated commands. This does not solve input admission across pause. |
 
 The minimal server adapter is a running/suspended/awaiting-completion phase on
 the selected owner. The phase observes server pause and single-player menu
@@ -31,11 +31,15 @@ On resume, prediction stays disabled until a fresh command has completed.
 
 The unresolved design point is *freshness*: a late redundant sample is not
 necessarily a post-resume sample. The client command producer and existing
-protocol must be checked for a sufficient generation/timing fence. If none
-exists, add the smallest private-profile fence at that boundary, rather than
-another movement queue or a guessed time threshold. ACK expansion has the
-same long-pause requirement. This document is a review disposition, not a
-claim that the pause fix has been implemented.
+protocol have no sufficient generation/timing fence. A follow-up read-only
+review proposed tagging private commands with an input epoch echoed from
+server ACK metadata. The server must issue that epoch on **resume**, or a
+command produced while still paused after receiving a pause-entry ACK could
+carry the new epoch and execute when its packet arrives late. This needs a
+private-profile capability or a reliable resume marker so the unchanged pinned
+server's command layout stays compatible; the wire and admission decision is
+still open. This document is a review disposition, not a claim that the pause
+fix has been implemented.
 
 Software qualification should cover queued attack/impulse/roomscale/contact
 input, no packets while paused, a delay over one second, repeated pause,

@@ -183,13 +183,32 @@ int main (void)
 	assert (cl.move_ack_mode_epoch == 4 && cl.move_ack_discontinuity_reason == MOVEACK_DISCONTINUITY_GAP);
 	assert (smoothing_resets == 2);
 
-	/* A low 16-bit wrap expands in the command epoch containing movemessages. */
+	/* A low 16-bit wrap expands relative to the last completed command. */
 	reset_client ();
 	cl.movemessages = 0x20001;
 	cl.ackedmovemessages = 0x1ffff;
 	length = moveack (packet, 0, MOVEACK_FLAG_PREDICTION_ALLOWED,
 		MOVE_AUTHORITY_LEGACY_FRAME, 1, 1, 0, false, false, 0);
 	assert (parse (packet, length) && cl.ackedmovemessages == 0x20000);
+	client_state_t before_long_pause = cl;
+
+	/* A long pause can leave the completion cursor one entire 16-bit epoch
+	 * behind generation. Its unchanged ACK must not falsely complete 65536
+	 * commands or reopen replay against a nonexistent owner baseline. */
+	reset_client ();
+	cl.movemessages = 65636;
+	cl.ackedmovemessages = 100;
+	length = moveack (packet, 100, 0, MOVE_AUTHORITY_PMOVE_ENGINE_COMPAT,
+		1, 2, MOVEACK_DISCONTINUITY_GAP, false, false, 0);
+	assert (parse (packet, length) && cl.ackedmovemessages == 100 &&
+		cl.net_move_acks == 0 && !cl.move_ack_prediction_allowed);
+	/* A stale pre-wrap ACK stays stale even with a far-ahead producer. */
+	length = moveack (packet, 99, 0, MOVE_AUTHORITY_UNKNOWN,
+		1, 1, MOVEACK_DISCONTINUITY_NONE, false, false, 0);
+	assert (parse (packet, length) && !parse_ack_accepted &&
+		cl.ackedmovemessages == 100 && cl.net_move_stale_acks == 1);
+	cl = before_long_pause;
+	cl.movemessages = 0x20002;
 
 	/* The selected private layout always requires the extended payload. */
 	cl.protocol_qsvr = 0;

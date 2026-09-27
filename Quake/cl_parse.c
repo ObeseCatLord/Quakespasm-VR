@@ -1303,15 +1303,28 @@ static void CL_EntitiesDeltaed (void)
 static int CL_ExpandMoveAck16 (int ack16)
 {
 	int ack;
+	int reference = cl.ackedmovemessages;
 
-	ack = (cl.movemessages & ~0xffff) | (ack16 & 0xffff);
-	if (ack > cl.movemessages)
+	/* A pause can leave the completed ACK unchanged while the producer's
+	 * sequence counter advances. Expand against the last completed ACK,
+	 * not the newest command, so an old ACK cannot jump ahead by 65536. */
+	if (reference < 0)
+		reference = cl.movemessages;
+	ack = (reference & ~0xffff) | (ack16 & 0xffff);
+	if (ack - reference > 0x8000)
 		ack -= 0x10000;
+	else if (reference - ack > 0x8000)
+		ack += 0x10000;
 	return ack;
 }
 
 static qboolean CL_UpdateMoveAck (int ack)
 {
+	if (ack >= cl.movemessages)
+	{
+		cl.net_move_stale_acks++;
+		return false;
+	}
 	if (ack < cl.ackedmovemessages)
 	{
 		cl.net_move_stale_acks++;
