@@ -33,6 +33,7 @@ enum
 typedef struct
 {
 	qboolean has_muzzle_offset;
+	qboolean muzzle_seeded_from_held;
 	qboolean has_mp_muzzle_offset;
 	vec3_t mp_muzzle_offset; /* Effective authored + global overlay. */
 	qboolean has_schema_mp_muzzle_offset;
@@ -158,20 +159,31 @@ static const vr_weapon_schema_entry_t vr_enhanced_weapon_fallbacks[] = {
 	},
 };
 
-/* The inherited id1 VR weapon profile supplies this classic axe calibration.
- * Keep its native-trigger muzzle valid even when no external schema is installed;
- * a mod's vr_weapons.txt can still replace these values on game reload. */
-static const vr_weapon_schema_entry_t vr_stock_axe_fallback[] = {
-	{
-		.viewmodel_path = "progs/v_axe.mdl",
-		.held_offset = {-4.0f, 24.0f, 37.0f},
-		.has_held_offset = true,
-		.held_scale = 0.33f,
-		.has_held_scale = true,
-		.muzzle_offset = {0.0f, 0.0f, 37.0f},
-		.has_muzzle_offset = true,
-	},
+/* Donor classic id1/Hipnotic/Rogue defaults. InitWeaponCVars derives muzzle Z
+ * from held Z; keep that implicit relation until a schema authors a muzzle. */
+#define VR_CLASSIC_FALLBACK(model, x, y, z, scale) \
+	{ .viewmodel_path = "progs/" model ".mdl", \
+	  .held_offset = {x, y, z}, .has_held_offset = true, \
+	  .held_scale = scale, .has_held_scale = true }
+static const vr_weapon_schema_entry_t vr_stock_classic_fallbacks[] = {
+	VR_CLASSIC_FALLBACK("v_axe",   -4.0f, 24.0f, 37.0f, 0.33f),
+	VR_CLASSIC_FALLBACK("v_shot",   1.5f,  1.0f, 10.0f, 0.5f),
+	VR_CLASSIC_FALLBACK("v_shot2", -3.5f,  1.0f,  8.5f, 0.8f),
+	VR_CLASSIC_FALLBACK("v_nail",  -5.0f,  3.0f, 15.0f, 0.5f),
+	VR_CLASSIC_FALLBACK("v_nail2",  0.0f,  3.0f, 19.0f, 0.5f),
+	VR_CLASSIC_FALLBACK("v_rock",  10.0f,  1.5f, 13.0f, 0.5f),
+	VR_CLASSIC_FALLBACK("v_rock2", 10.0f,  7.0f, 19.0f, 0.5f),
+	VR_CLASSIC_FALLBACK("v_light",  3.0f,  4.0f, 13.0f, 0.5f),
+	VR_CLASSIC_FALLBACK("v_hammer", -4.0f, 17.5f, 36.0f, 0.33f),
+	VR_CLASSIC_FALLBACK("v_laserg", 65.0f, 3.7f, 15.0f, 0.33f),
+	VR_CLASSIC_FALLBACK("v_prox",  10.0f,  1.5f, 13.0f, 0.5f),
+	VR_CLASSIC_FALLBACK("v_lava",  -5.0f,  3.0f, 15.0f, 0.5f),
+	VR_CLASSIC_FALLBACK("v_lava2",  0.0f,  3.0f, 19.0f, 0.5f),
+	VR_CLASSIC_FALLBACK("v_multi", 10.0f,  1.5f, 13.0f, 0.5f),
+	VR_CLASSIC_FALLBACK("v_multi2",10.0f,  7.0f, 19.0f, 0.5f),
+	VR_CLASSIC_FALLBACK("v_plasma", 3.0f,  4.0f, 13.0f, 0.5f),
 };
+#undef VR_CLASSIC_FALLBACK
 
 /* Donor Alkaline axe defaults, also present in the installed alk profile.
  * LimJam uses the same viewmodel but omits its calibration from vr_weapons.txt. */
@@ -1841,12 +1853,17 @@ qboolean VR_WeaponCalibrationApplySchema(
 		calibration = &vr_weapon_calibration_slots[slot];
 
 		if (VR_CalibrationEntryHasHeldFields(entry) &&
-			!entry->has_muzzle_offset && !calibration->has_muzzle_offset)
+			!entry->has_muzzle_offset &&
+			(!calibration->has_muzzle_offset ||
+			 calibration->muzzle_seeded_from_held))
 		{
-			/* InitWeaponCVars seeds classic muzzle Z from held Z. */
-			Cvar_SetValueQuick(&VR_WeaponMuzzleCvar(slot, VR_WMUZZLE_Z),
-						   entry->has_held_offset ? entry->held_offset[2] : 0.0f);
+			/* Keep an implicit muzzle at the held Z across later held-only
+			 * overrides; an explicitly authored muzzle stays independent. */
+			if (entry->has_held_offset)
+				Cvar_SetValueQuick(&VR_WeaponMuzzleCvar(slot, VR_WMUZZLE_Z),
+							   entry->held_offset[2]);
 			calibration->has_muzzle_offset = true;
+			calibration->muzzle_seeded_from_held = true;
 		}
 		if (entry->has_held_offset)
 		{
@@ -1869,6 +1886,7 @@ qboolean VR_WeaponCalibrationApplySchema(
 			Cvar_SetValueQuick(&VR_WeaponMuzzleCvar(slot, VR_WMUZZLE_Z),
 						   entry->muzzle_offset[2]);
 			calibration->has_muzzle_offset = true;
+			calibration->muzzle_seeded_from_held = false;
 		}
 		if (entry->has_mp_held_offset)
 		{
@@ -2034,9 +2052,9 @@ static qboolean VR_WeaponCalibrationApplyAD171Aliases(void)
 static qboolean VR_WeaponCalibrationApplyBuiltinFallbacks(void)
 {
 	return VR_WeaponCalibrationApplyEnhancedFallbacks() &&
-		VR_WeaponCalibrationApplySchema(vr_stock_axe_fallback,
-			sizeof(vr_stock_axe_fallback) /
-			sizeof(vr_stock_axe_fallback[0])) &&
+		VR_WeaponCalibrationApplySchema(vr_stock_classic_fallbacks,
+			sizeof(vr_stock_classic_fallbacks) /
+			sizeof(vr_stock_classic_fallbacks[0])) &&
 		VR_WeaponCalibrationApplyAlkalineAxeFallback() &&
 		VR_WeaponCalibrationApplyEnyoFallbacks() &&
 		VR_WeaponCalibrationApplyADRootFallbacks() &&
