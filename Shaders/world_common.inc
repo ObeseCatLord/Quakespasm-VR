@@ -1,8 +1,10 @@
 vec4 WorldFragmentColor ()
 {
 	vec4 diffuse = texture (diffuse_tex, in_texcoords.xy);
+#if !HIDDEN_AREA_OPAQUE
 	if (use_alpha_test && diffuse.a < 0.666f)
 		discard;
+#endif
 
 	float lm_multiplier = scaled_lm ? 8.0f : 2.0f;
 	vec3  light;

@@ -152,6 +152,7 @@ shader_variants = [
     ['Shaders/basic.frag', 'basic_mboit_composite.frag', ['-DMBOIT=1', '-DMBOIT_COMPOSITE=1']],
     ['Shaders/basic.frag', 'basic_mboit_composite_msaa.frag', ['-DMBOIT=1', '-DMBOIT_COMPOSITE=1', '-DMSAA=1']],
     ['Shaders/world.frag', 'world.frag', []],
+    ['Shaders/world.frag', 'world_hidden_area.frag', ['-DHIDDEN_AREA_OPAQUE=1']],
     ['Shaders/world.frag', 'world_oit.frag', ['-DWBOIT=1']],
     ['Shaders/world.frag', 'world_mboit_moment.frag', ['-DMBOIT=1']],
     ['Shaders/world.frag', 'world_mboit_composite.frag', ['-DMBOIT=1', '-DMBOIT_COMPOSITE=1']],

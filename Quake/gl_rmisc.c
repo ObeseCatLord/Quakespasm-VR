@@ -2645,6 +2645,7 @@ DECLARE_SHADER_MODULE (draw_pic_xbr_ui_stereo_vert);
 DECLARE_SHADER_MODULE (world_vert);
 DECLARE_SHADER_MODULE (world_stereo_vert);
 DECLARE_SHADER_MODULE (world_frag);
+DECLARE_SHADER_MODULE (world_hidden_area_frag);
 DECLARE_SHADER_MODULE (world_oit_frag);
 DECLARE_SHADER_MODULE (world_mboit_moment_frag);
 DECLARE_SHADER_MODULE (world_mboit_composite_frag);
@@ -3963,6 +3964,26 @@ static void R_CreateWorldPipelines ()
 		R_CreateGraphicsPipeline (
 			&vulkan_globals.world_depth_replay_pipeline, &infos, vulkan_globals.world_pipeline_layout, "world_depth_replay");
 	}
+	if (vulkan_globals.stereo_active)
+	{
+		/* SSAO still needs authoritative depth outside the visible lens.
+		 * Replay the static opaque world there without fragment shading. */
+		R_CopyPipelineCreateInfos (&infos, &base);
+		infos.graphics_pipeline.stageCount = 1;
+		infos.blend_attachment_states[0].colorWriteMask = 0;
+		infos.depth_stencil_state.stencilTestEnable = VK_TRUE;
+		infos.depth_stencil_state.front = (VkStencilOpState){
+			VK_STENCIL_OP_KEEP, VK_STENCIL_OP_KEEP, VK_STENCIL_OP_KEEP,
+			VK_COMPARE_OP_EQUAL, 0x80, 0, 0x80};
+		infos.depth_stencil_state.back = infos.depth_stencil_state.front;
+		for (int variant = 0; variant < MAIN_RENDER_PASS_VARIANT_COUNT; ++variant)
+		{
+			R_SetPipelineRenderPassVariant (&infos, SUBPASS_MAIN, variant);
+			R_CreateGraphicsPipeline (
+				&vulkan_globals.world_hidden_area_depth_replay_pipeline[variant], &infos,
+				vulkan_globals.world_pipeline_layout, va ("world_hidden_area_depth_replay %d", variant));
+		}
+	}
 	for (int alpha_blend = 0; alpha_blend < 2; ++alpha_blend)
 	{
 		for (int alpha_test = 0; alpha_test < 2; ++alpha_test)
@@ -4001,6 +4022,7 @@ static void R_CreateWorldPipelines ()
 								VK_STENCIL_OP_KEEP, VK_STENCIL_OP_KEEP, VK_STENCIL_OP_KEEP,
 								VK_COMPARE_OP_EQUAL, 0x80, 0, 0};
 							infos.depth_stencil_state.back = infos.depth_stencil_state.front;
+							infos.shader_stages[1].module = world_hidden_area_frag_module;
 							R_CreateGraphicsPipeline (&vulkan_globals.world_hidden_area_pipelines[variant][pipeline_index],
 								&infos, vulkan_globals.world_pipeline_layout,
 								va ("world_hidden_area %d %d", variant, pipeline_index));
@@ -4584,6 +4606,7 @@ static void R_CreateShaderModules ()
 	CREATE_SHADER_MODULE (world_vert);
 	CREATE_SHADER_MODULE_COND (world_stereo_vert, vulkan_globals.stereo_active);
 	CREATE_SHADER_MODULE (world_frag);
+	CREATE_SHADER_MODULE_COND (world_hidden_area_frag, vulkan_globals.stereo_active);
 	CREATE_SHADER_MODULE (world_oit_frag);
 	CREATE_SHADER_MODULE (world_mboit_moment_frag);
 	CREATE_SHADER_MODULE (world_mboit_composite_frag);
@@ -4725,6 +4748,7 @@ static void R_DestroyShaderModules ()
 	DESTROY_SHADER_MODULE (world_vert);
 	DESTROY_SHADER_MODULE (world_stereo_vert);
 	DESTROY_SHADER_MODULE (world_frag);
+	DESTROY_SHADER_MODULE (world_hidden_area_frag);
 	DESTROY_SHADER_MODULE (world_oit_frag);
 	DESTROY_SHADER_MODULE (world_mboit_moment_frag);
 	DESTROY_SHADER_MODULE (world_mboit_composite_frag);
@@ -4893,6 +4917,8 @@ void R_DestroyPipelines (void)
 	{
 		vkDestroyPipeline (vulkan_globals.device, vulkan_globals.hidden_area_stencil_pipeline[variant].handle, NULL);
 		vulkan_globals.hidden_area_stencil_pipeline[variant].handle = VK_NULL_HANDLE;
+		vkDestroyPipeline (vulkan_globals.device, vulkan_globals.world_hidden_area_depth_replay_pipeline[variant].handle, NULL);
+		vulkan_globals.world_hidden_area_depth_replay_pipeline[variant].handle = VK_NULL_HANDLE;
 	}
 	vkDestroyPipeline (vulkan_globals.device, vulkan_globals.world_depth_replay_pipeline.handle, NULL);
 	vulkan_globals.world_depth_replay_pipeline.handle = VK_NULL_HANDLE;

@@ -132,3 +132,43 @@ gated. The Linux build establishes integration, not headset-visible parity or
 a measured speedup; MSAA boundary coverage and OIT composition still require
 visual qualification. Default-mode work must preserve SSAO's neighboring depth
 and the density-map replay before the mask can be considered broad.
+
+## Default SSAO depth candidate
+
+The next code slice removes the SSAO gate only where an opaque static-world
+depth replay is available. Each world secondary records masked color, then
+reuses the existing direct/indirect world traversal with the same static opaque
+eligibility filter. Its vertex-only depth pipeline tests bit 7 and writes only
+hidden samples before `R_PrepareSSAOWorldDepth` builds the SSAO pyramid. Cutout
+world surfaces, moving brushes, and entities remain on vkQuake's ordinary
+depth path. This preserves a full depth image for AO sampling without running
+the costly world fragment shader over hidden samples. The replay adds vertex
+work; on the direct path it also regenerates index batches, so net performance
+must be measured before claiming a gain.
+
+The masked opaque color pipeline now uses a separate shader variant with
+`layout(early_fragment_tests) in`, and the cutout `discard` code is compiled
+out of that variant. The ordinary world shader and its alpha-test behavior are
+unchanged. This makes stencil rejection occur before world fragment shading as
+specified by the [Khronos GLSL early-fragment-tests rule](https://docs.vulkan.org/glsl/latest/chapters/variables.html).
+The generated SPIR-V was validated and contains `EarlyFragmentTests` with no
+`OpKill`. No VR GPU time or headset image comparison has yet been collected.
+
+Qualification should compare `vr_hidden_area 0` and `1` at matched resolution,
+MSAA, SSAO quality, and OIT mode, including a large static map such as mj4m1.
+Check visible AO at the mask edge, both-eye MSAA boundaries, depth-based
+effects, and whole-frame GPU/CPU timing. If replay costs more than masking
+saves, keep final black coverage and leave scene rejection off for that mode
+until a smaller guard or replay region is demonstrated.
+
+The follow-up `gpt-6-astra`/`max` read-only review found no source-level
+rendering blocker in the updated design. Main spot-checked the shader selection,
+per-sample SSAO depth resolve, frame order, and build wiring. The review did not
+run the program or measure GPU time.
+
+| Review recommendation | Disposition |
+| --- | --- |
+| Force early tests only for masked opaque material. | Adopt. The dedicated variant has `EarlyFragmentTests`; cutouts keep the ordinary shader. |
+| Reuse the world traversal for hidden-sample depth replay. | Adopt. Replay runs in the existing world secondary before SSAO preparation. |
+| Treat default SSAO as performance-qualified now. | Reject. Direct replay regenerates index batches and both routes repeat geometry work; compare complete frame times before claiming a gain. |
+| Limit to indirect rendering or replace replay with a fixed guard immediately. | Defer. Neither policy is justified by measured cost or a conservative AO sampling bound. |

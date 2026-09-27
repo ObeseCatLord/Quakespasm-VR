@@ -3,6 +3,12 @@
 #extension GL_ARB_shading_language_420pack : enable
 #extension GL_GOOGLE_include_directive : enable
 
+#if HIDDEN_AREA_OPAQUE
+// This variant is used only with opaque, non-cutout world materials. Force
+// stencil rejection before costly lightmap/fullbright/fog fragment shading.
+layout (early_fragment_tests) in;
+#endif
+
 // Compiled in multiple variants: WBOIT writes weighted blended OIT accumulation,
 // MBOIT writes power moments, MBOIT + MBOIT_COMPOSITE reconstructs transmittance
 // from them and MSAA reads multisampled moment buffers

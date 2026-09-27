@@ -1237,7 +1237,9 @@ static void R_FlushBatch (
 	{
 		int pipeline_index =
 			(fullbright_enabled ? 1 : 0) + (alpha_test ? 2 : 0) + (alpha_blend ? 4 : 0) + (vid_filter.value != 0 && vid_palettize.value != 0 ? 8 : 0);
-		vulkan_pipeline_t pipeline = cbx->depth_only ? vulkan_globals.world_depth_replay_pipeline : R_PipelineForSubpassType (
+		vulkan_pipeline_t pipeline = cbx->depth_only ?
+			(cbx->hidden_area_masked_world ? vulkan_globals.world_hidden_area_depth_replay_pipeline[cbx->pipeline_variant] :
+			 vulkan_globals.world_depth_replay_pipeline) : R_PipelineForSubpassType (
 			cbx->subpass_type, vulkan_globals.world_pipelines[cbx->pipeline_variant][pipeline_index], vulkan_globals.world_wboit_pipelines[pipeline_index],
 			vulkan_globals.world_mboit_moment_pipelines[pipeline_index], vulkan_globals.world_mboit_composite_pipelines[pipeline_index]);
 		if (cbx->hidden_area_masked_world && !alpha_blend && !alpha_test && !cbx->depth_only &&
@@ -1485,7 +1487,8 @@ static void R_DrawTextureChains_Multitexture (
 		R_FlushBatch (cbx, fullbright_enabled, alpha_test, alpha_blend, alpha, texture_zbias, shading_rate_eligible, lightmap_texture, &brushpasses);
 	}
 
-	Atomic_AddUInt32 (&rs_brushpasses, brushpasses);
+	if (!cbx->depth_only)
+		Atomic_AddUInt32 (&rs_brushpasses, brushpasses);
 }
 
 /*
@@ -1519,7 +1522,7 @@ void R_DrawWorldFiltered (cb_context_t *cbx, int index, r_world_draw_filter_t fi
 		return;
 
 	R_BeginDebugUtilsLabel (cbx, "World");
-	if (!r_gpulightmapupdate.value)
+	if (!cbx->depth_only && !r_gpulightmapupdate.value)
 		R_UploadLightmaps ();
 	R_DrawTextureChains_Multitexture (cbx, cl.worldmodel, NULL, chain_world, 1, world_texstart[index], world_texend[index], filter);
 	R_EndDebugUtilsLabel (cbx);

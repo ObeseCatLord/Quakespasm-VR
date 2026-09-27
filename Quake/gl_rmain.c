@@ -2121,6 +2121,20 @@ static void R_DrawWorldTask (int index, void *use_tasks)
 	}
 	else
 		R_DrawWorldChunk (SCBX_WORLD, index, use_tasks, R_WORLD_DRAW_ALL, false, false);
+
+	cb_context_t *cbx = &vulkan_globals.secondary_cb_contexts[SCBX_WORLD][index];
+	if (cbx->hidden_area_masked_world && R_SSAOEnabled ())
+	{
+		/* SSAO samples neighboring and mipmapped world depth. Rebuild only the
+		 * hidden samples after masked color, using the same static opaque subset
+		 * and the existing world traversal/indirect draw path. */
+		cbx->depth_only = true;
+		if (indirect)
+			R_DrawIndirectBrushesFiltered (cbx, false, false, false,
+				use_tasks ? index : -1, R_WORLD_DRAW_FOVEATION_ELIGIBLE);
+		else
+			R_DrawWorldFiltered (cbx, index, R_WORLD_DRAW_FOVEATION_ELIGIBLE);
+	}
 }
 
 /*

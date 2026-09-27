@@ -4832,7 +4832,7 @@ qboolean GL_OpenXRHiddenAreaWorldEligible (const cb_context_t *cbx)
 		vulkan_globals.stereo_active && openxr_frame.should_render &&
 		hidden_area_draws[current_cb_index].vertex_count &&
 		vulkan_globals.hidden_area_stencil_pipeline[cbx->pipeline_variant].handle != VK_NULL_HANDLE &&
-		!R_SSAOEnabled () &&
+		vulkan_globals.world_hidden_area_depth_replay_pipeline[cbx->pipeline_variant].handle != VK_NULL_HANDLE &&
 		!vulkan_globals.openxr_fragment_shading_rate_active &&
 		!vulkan_globals.openxr_fragment_density_map_enabled &&
 		vid.width == vid.render_width && vid.height == vid.render_height &&
