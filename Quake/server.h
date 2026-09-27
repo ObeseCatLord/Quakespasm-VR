@@ -327,6 +327,7 @@ typedef struct client_s
 	unsigned char private_move_published_authority;
 	qboolean private_move_published_authority_valid;
 	qboolean private_move_native_frame; // native terminal/respawn frame has not yielded to selected PMove
+	qboolean private_move_resume_pending; // first post-respawn command may follow a long corpse interval
 	qboolean	 private_pmove_walk_selected; // latched until command-queue/serverinfo reset
 	double	 private_pmove_credit_msec; // fractional milliseconds; physics accrual/cap lives in sv_phys.c
 	float	 private_pmove_jump_secs; // short PMove jump debounce across accepted commands

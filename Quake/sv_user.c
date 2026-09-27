@@ -1081,6 +1081,7 @@ void SV_ResetPrivateCommandQueue (client_t *client)
 	client->private_move_published_authority = MOVE_AUTHORITY_UNKNOWN;
 	client->private_move_published_authority_valid = false;
 	client->private_move_native_frame = false;
+	client->private_move_resume_pending = false;
 	client->private_pmove_walk_selected = false;
 	client->private_pmove_credit_msec = 0.0;
 	client->private_pmove_jump_secs = 0.0f;
@@ -1235,6 +1236,7 @@ static qboolean SV_ReadPrivateClientMove (void)
 			!SV_PrivateWalkTrialStateValid (host_client))
 			return false;
 		if (!SV_PrivateWalkTrialTerminalState (host_client) &&
+			!host_client->private_move_resume_pending &&
 			host_client->lastmovetime > 0 &&
 			realtime - host_client->lastmovetime > 1.0)
 			return SV_PrivateWalkTrialFail (host_client, "more than one second between accepted commands");
@@ -1261,6 +1263,8 @@ static qboolean SV_ReadPrivateClientMove (void)
 			memset (readcmd.vr_roomscalemove, 0, sizeof (readcmd.vr_roomscalemove));
 		if (!SV_QueuePrivateCommand (host_client, &readcmd, realtime))
 			return false;
+		if (!SV_PrivateWalkTrialTerminalState (host_client))
+			host_client->private_move_resume_pending = false;
 		host_client->lastmovemessage = sequence;
 		host_client->lastmovetime = realtime;
 		host_client->ping_times[host_client->num_pings % NUM_PING_TIMES] =
@@ -1852,7 +1856,9 @@ void SV_RunClients (void)
 			(sv.paused || (svs.maxclients <= 1 && key_dest != key_game) ||
 			 (host_client->lastmovetime > 0 &&
 			  realtime - host_client->lastmovetime > 1.0 &&
-			  !SV_PrivateWalkTrialTerminalState (host_client))))
+			  !(SV_PrivateWalkTrialSelected (host_client) &&
+			    (SV_PrivateWalkTrialTerminalState (host_client) ||
+			     host_client->private_move_resume_pending)))))
 		{
 			if (!SV_ClearPrivateInput (host_client))
 			{

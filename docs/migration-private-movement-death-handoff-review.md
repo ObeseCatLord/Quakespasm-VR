@@ -112,3 +112,22 @@ already run, without restarting the native body. Respawn after a long command
 silence, paused selected sessions, and command coalescing behavior still need
 qualification. The default-off trial must not be described as full death
 parity on the strength of this checkpoint.
+
+## Astra follow-up on the checkpoint
+
+Astra reviewed commit `01b78180` against the current server owners and ranked
+three findings. The fixes below are source-reviewed and Linux-build checked;
+the in-game lifecycle still lacks an end-to-end run.
+
+| Finding | Disposition |
+| --- | --- |
+| PreThink, weapon Think, and movement/contact deaths still disconnect. | **Adopt, open.** Continue each already-entered callback at its exact phase. Never restart the entire native frame after QC has run. |
+| The corpse idle-timeout exemption also changed ordinary pinned clients. | **Adopt, fixed.** Require selected trial ownership for the exemption. Ordinary pinned clients retain their original input clearing. |
+| Early terminal queue validation could call `SV_DropClient` with another `host_client` global. | **Adopt, fixed.** The explicit-client drop helper now binds and restores `host_client` and `sv_player`. |
+
+The native terminal frame now also grants one fresh selected command after a
+long corpse interval: `private_move_resume_pending` survives commandless
+maintenance and clears on the first accepted living command. This closes the
+obvious idle-respawn disconnect in the source path, but packet-level behavior
+remains unverified. Coalesced attack/jump/impulse behavior likewise still needs
+the planned live comparison with ordinary native physics.

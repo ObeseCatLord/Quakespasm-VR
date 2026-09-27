@@ -7137,10 +7137,18 @@ static qboolean SV_PrivateWalkTrialCollect (edict_t *ent,
 
 static void SV_PrivateWalkTrialDrop (client_t *client, const char *reason)
 {
+	client_t *saved_host_client = host_client;
+	edict_t *saved_sv_player = sv_player;
 	Sys_Printf ("%s: private WALK trial disconnected: %s\n",
 		client->name[0] ? client->name : "client", reason);
 	if (client->active)
+	{
+		host_client = client;
+		sv_player = client->edict;
 		SV_DropClient (false);
+		host_client = saved_host_client;
+		sv_player = saved_sv_player;
+	}
 }
 
 /* The pinned stock PreThink owns water sounds, damage and flags. Its velocity
@@ -8240,6 +8248,7 @@ static void SV_Physics_ClientTerminalFrame (edict_t *ent, int num,
 		return;
 	}
 	client->private_move_native_frame = true;
+	client->private_move_resume_pending = true;
 	client->private_pmove_credit_msec = 0.0;
 	client->private_pmove_jump_secs = 0.0f;
 	client->private_pmove_waterjump_secs = 0.0f;
