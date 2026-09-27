@@ -1300,15 +1300,36 @@ static void Sbar_DrawVoiceStatus (cb_context_t *cbx)
 	const char *mic_state;
 	canvastype saved_canvas;
 	int i, y = 4;
+	int talking_count = 0;
+	qboolean talking[MAX_SCOREBOARD] = {0};
 	int x = q_max (8, glwidth - 184);
 	int meter;
 	int meter_x = x + 88;
+	const qboolean native_vr_hud = cbx->ui_panel_active &&
+		(cbx->ui_panel_classic_hud || cbx->ui_panel_modern_hud);
 
 	if (!Voice_HUDEnabled ())
 		return;
 
 	saved_canvas = cbx->current_canvas;
-	GL_SetCanvas (cbx, CANVAS_DEFAULT);
+	if (native_vr_hud)
+	{
+		/* MENU is the panel-local score surface, with room above the
+		 * classic bar for the microphone and active speakers. */
+		x = 8;
+		y = cbx->ui_panel_classic_hud ? 108 : 104;
+		for (i = 0; i < cl.maxclients && i < MAX_SCOREBOARD; ++i)
+		{
+			talking[i] = Voice_SpeakerTalking (i);
+			if (talking[i])
+				++talking_count;
+		}
+		/* Keep the whole list inside the source clip even when all 16
+		 * clients are speaking; a short list stays by the wrist. */
+		y = q_min (y, 188 - 12 - 10 * talking_count);
+		meter_x = x + 88;
+	}
+	GL_SetCanvas (cbx, native_vr_hud ? CANVAS_MENU : CANVAS_DEFAULT);
 	mic_state = !Voice_TransmitEnabled () ? "OFF" :
 		(Voice_IsTransmitting () ? "LIVE" :
 		(Voice_CaptureReady () ? "READY" : "NO DEV"));
@@ -1322,7 +1343,7 @@ static void Sbar_DrawVoiceStatus (cb_context_t *cbx)
 	y += 12;
 	for (i = 0; i < cl.maxclients && i < MAX_SCOREBOARD; ++i)
 	{
-		if (!Voice_SpeakerTalking (i))
+		if (!(native_vr_hud ? talking[i] : Voice_SpeakerTalking (i)))
 			continue;
 		q_snprintf (text, sizeof (text), "> %s",
 			cl.scores[i].name[0] ? cl.scores[i].name : "player");
@@ -1559,7 +1580,8 @@ void Sbar_MiniDeathmatchOverlay (cb_context_t *cbx)
 	scale = CLAMP (1.0, scr_sbarscale.value, (float)glwidth / 320.0); // johnfitz
 
 	// MAX_SCOREBOARDNAME = 32, so total width for this overlay plus sbar is 632, but we can cut off some i guess
-	if ((glwidth / scale < 512 && scr_style.value < 2.0f) || scr_viewsize.value >= 120) // johnfitz -- test should consider scr_sbarscale
+	if (scr_viewsize.value >= 120 ||
+		(scr_style.value < 2.0f && (cbx->ui_panel_classic_hud || glwidth / scale < 512)))
 		return;
 
 	// scores

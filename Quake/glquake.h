@@ -346,6 +346,7 @@ typedef struct cb_context_s
 	canvastype				   current_canvas;
 	qboolean				   ui_panel_active;
 	qboolean				   ui_panel_modern_hud;
+	qboolean				   ui_panel_classic_hud;
 	qboolean				   ui_panel_mvp_valid;
 	float					   ui_panel_world_from_ndc[16];
 	float					   canvas_ortho_matrix[16];

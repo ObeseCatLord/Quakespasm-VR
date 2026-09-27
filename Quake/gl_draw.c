@@ -1333,6 +1333,7 @@ void GL_BeginUIPanel (cb_context_t *cbx, const float world_from_ndc[16])
 	memcpy (cbx->ui_panel_world_from_ndc, world_from_ndc, sizeof (cbx->ui_panel_world_from_ndc));
 	cbx->ui_panel_active = true;
 	cbx->ui_panel_modern_hud = false;
+	cbx->ui_panel_classic_hud = false;
 	cbx->ui_panel_mvp_valid = false;
 	GL_ClearUIPanelSourceClip (cbx);
 	cbx->current_canvas = CANVAS_INVALID;
@@ -1345,6 +1346,7 @@ void GL_EndUIPanel (cb_context_t *cbx)
 	GL_ClearUIPanelSourceClip (cbx);
 	cbx->ui_panel_active = false;
 	cbx->ui_panel_modern_hud = false;
+	cbx->ui_panel_classic_hud = false;
 	cbx->ui_panel_mvp_valid = false;
 	cbx->current_canvas = CANVAS_INVALID;
 	GL_SetUIPanelFullScissor (cbx);
@@ -1365,6 +1367,7 @@ static qboolean GL_SetModernHUDCanvas (cb_context_t *cbx, canvastype canvas)
 {
 	float fitting_scale;
 	float origin_x, origin_y, canvas_x, canvas_y;
+	float canvas_width = 320.0f;
 	float canvas_height = 200.0f;
 
 	if (!cbx->ui_panel_modern_hud)
@@ -1391,10 +1394,17 @@ static qboolean GL_SetModernHUDCanvas (cb_context_t *cbx, canvastype canvas)
 		canvas_y = 200.0f;
 		break;
 	case CANVAS_SBAR:
-		/* Modern solo score/death is a centered 320x48 strip at the panel base. */
+		/* Modern score/death is a centered 320x48 strip at the panel base. */
 		canvas_x = 160.0f;
 		canvas_y = 352.0f;
 		canvas_height = 48.0f;
+		break;
+	case CANVAS_MENU:
+		/* Keep long player names inside the score canvas. The first 320
+		 * units retain their position relative to the status bar. */
+		canvas_x = 160.0f;
+		canvas_y = 200.0f;
+		canvas_width = 416.0f;
 		break;
 	case CANVAS_TOPRIGHT:
 		canvas_x = 320.0f;
@@ -1404,10 +1414,10 @@ static qboolean GL_SetModernHUDCanvas (cb_context_t *cbx, canvastype canvas)
 		return false;
 	}
 
-	GL_OrthoMatrix (cbx, 0, 320, canvas_height, 0, -99999, 99999);
+	GL_OrthoMatrix (cbx, 0, canvas_width, canvas_height, 0, -99999, 99999);
 	GL_Viewport (cbx, origin_x + canvas_x * fitting_scale,
 		glheight - (origin_y + (canvas_y + canvas_height) * fitting_scale),
-		320.0f * fitting_scale, canvas_height * fitting_scale, 0.0f, 1.0f);
+		canvas_width * fitting_scale, canvas_height * fitting_scale, 0.0f, 1.0f);
 	return true;
 }
 
@@ -1443,11 +1453,25 @@ void GL_SetCanvas (cb_context_t *cbx, canvastype newcanvas)
 		GL_Viewport (cbx, 0, 0, glwidth, glheight, 0.0f, 1.0f);
 		break;
 	case CANVAS_MENU:
-		s = M_MenuCanvasScale ();
-		u = (glwidth - (320.0f * s)) / (2.0f * s);
-		v = (glheight - (200.0f * s)) / (2.0f * s);
-		GL_OrthoMatrix (cbx, -u, 320.0f + u, 200.0f + v, -v, -99999, 99999);
-		GL_Viewport (cbx, 0, 0, glwidth, glheight, 0.0f, 1.0f);
+		if (!GL_SetModernHUDCanvas (cbx, newcanvas))
+		{
+			if (cbx->ui_panel_classic_hud)
+			{
+				/* The 200-high score surface ends at the classic bar's base. */
+				s = CLAMP (1.0f, scr_sbarscale.value, (float)glwidth / 320.0f);
+				GL_OrthoMatrix (cbx, 0, 416, 200, 0, -99999, 99999);
+				GL_Viewport (cbx, (glwidth - 320.0f * s) * 0.5f,
+					0, 416.0f * s, 200.0f * s, 0.0f, 1.0f);
+			}
+			else
+			{
+				s = M_MenuCanvasScale ();
+				u = (glwidth - (320.0f * s)) / (2.0f * s);
+				v = (glheight - (200.0f * s)) / (2.0f * s);
+				GL_OrthoMatrix (cbx, -u, 320.0f + u, 200.0f + v, -v, -99999, 99999);
+				GL_Viewport (cbx, 0, 0, glwidth, glheight, 0.0f, 1.0f);
+			}
+		}
 		break;
 	case CANVAS_CSQC:
 	{
@@ -1460,7 +1484,7 @@ void GL_SetCanvas (cb_context_t *cbx, canvastype newcanvas)
 		if (!GL_SetModernHUDCanvas (cbx, newcanvas))
 		{
 			s = CLAMP (1.0, scr_sbarscale.value, (float)glwidth / 320.0);
-			if (cl.gametype == GAME_DEATHMATCH && scr_style.value < 2.0f)
+			if (cl.gametype == GAME_DEATHMATCH && scr_style.value < 2.0f && !cbx->ui_panel_classic_hud)
 			{
 				GL_OrthoMatrix (cbx, 0, glwidth / s, 48, 0, -99999, 99999);
 				GL_Viewport (cbx, 0, 0, glwidth, 48 * s, 0.0f, 1.0f);
