@@ -114,6 +114,12 @@ already route through the same `vr_haptic` gate before physical-hand mapping
 and focused OpenXR dispatch. The read-only donor/2.0 call-chain audit found no
 missing haptic adapter. Controller/runtime behavior still needs device proof.
 
+For VR-009, `vr_defaultbindings` now reuses the inherited controller actions
+to fill only unbound keys. The first completed XR sample applies them after
+configuration loading; existing desktop and custom bindings stay intact. The
+focused sanitizer fixture checks the fill-in and desktop guard. Physical
+Index/Vive/Touch/Frame controls still need device qualification.
+
 For VR-011 and WPN-012, an admitted akimbo pair now prepares two independent
 controller aim rays using the existing per-hand pair anchors and renders both
 pointers in the stereo scene. Ordinary weapons, non-controller aim modes, and

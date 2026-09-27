@@ -3502,8 +3502,50 @@ static qboolean VR_InputEmitDesired (qboolean desired[2][MAX_KEYS],
 	return true;
 }
 
+typedef struct
+{
+	int key;
+	const char *binding;
+} vr_default_binding_t;
+
+/* The inherited VR defaults fill controls absent from vkQuake's desktop
+ * config. Existing user/gamepad bindings remain authoritative. */
+static const vr_default_binding_t vr_default_bindings[] = {
+	{K_LTRIGGER, "+jump"},
+	{K_RTRIGGER, "+attack"},
+	{K_BBUTTON, "impulse 10"},
+	{K_LTHUMB, "+speed"},
+	{K_RTHUMB, "+jump"},
+	{K_VR_ALTFIRE, "+button3"},
+	{K_LSHOULDER, "+showscores"},
+	{K_RSHOULDER, "+showscores"},
+	{K_ABUTTON, "+showscores"},
+	{K_XBUTTON, "impulse 12"},
+	{K_VR_RIGHT_STICK_UP, "+vr_weaponmenu"},
+};
+
+static qboolean vr_default_bindings_applied;
+
+static void VR_InputApplyDefaultBindings (void)
+{
+	for (size_t i = 0; i < countof (vr_default_bindings); ++i)
+	{
+		const int key = vr_default_bindings[i].key;
+		if (key >= 0 && key < MAX_KEYS &&
+			(!keybindings[key] || !keybindings[key][0]))
+			Key_SetBinding (key, vr_default_bindings[i].binding);
+	}
+}
+
+static void VR_InputDefaultBindings_f (void)
+{
+	if (V_TrackedSessionActive ())
+		VR_InputApplyDefaultBindings ();
+}
+
 void VR_InputInit (void)
 {
+	vr_default_bindings_applied = false;
 	VR_InputFBTReset ();
 	Cvar_RegisterVariable (&vr_lefthanded);
 	Cvar_RegisterVariable (&vr_haptic);
@@ -3527,6 +3569,7 @@ void VR_InputInit (void)
 	Cvar_SetCallback (&vr_snap_turn, VR_InputMotionSettingsChanged);
 	Cvar_SetCallback (&vr_fbt_enabled, VR_InputFBTEnabledChanged);
 	Cmd_AddCommand ("vr_turn180", VR_InputTurn180_f);
+	Cmd_AddCommand ("vr_defaultbindings", VR_InputDefaultBindings_f);
 	Cmd_AddCommand ("vr_fbt_list", VR_InputFBTList_f);
 	Cmd_AddCommand ("vr_fbt_assign", VR_InputFBTAssign_f);
 	Cmd_AddCommand ("vr_fbt_unassign", VR_InputFBTUnassign_f);
@@ -3549,6 +3592,13 @@ void VR_InputCommands (const vrxr_frame_t *frame)
 	qboolean desired[2][MAX_KEYS] = {{false}};
 	vrxr_input_t input_hands[2];
 	vr_input_context_t context;
+	/* The first completed XR frame follows config loading. Fill only missing
+	 * VR actions once, so later user unbinds are respected. */
+	if (!vr_default_bindings_applied && frame && frame->sample_id)
+	{
+		VR_InputApplyDefaultBindings ();
+		vr_default_bindings_applied = true;
+	}
 	/* Reapply the archived preference each input pass: OpenXR teardown resets
 	 * runtime state, while this also lets users enable tracking mid-session. */
 	VRXR_SetTrackerEnabled (vr_fbt_enabled.value != 0.0f);

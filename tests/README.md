@@ -1161,6 +1161,22 @@ cc -std=gnu11 -DUSE_SDL3 -Wall -Wextra -Werror \
 /tmp/qsvr-controller-input-asan
 ```
 
+The broad input fixture's standalone link currently needs updated FBT,
+weapon-menu and calibration stubs after later source ports. Its command above
+is retained as a coverage target; a Linux build does not substitute for it.
+The focused production-source default-binding fixture runs independently:
+
+```sh
+cc -std=gnu11 -DUSE_SDL3 -D_GNU_SOURCE -Wall -Wextra -Werror \
+  -Wno-unused-parameter -Wno-unused-function -Wno-sign-compare \
+  -Wno-missing-field-initializers -ffunction-sections -fdata-sections \
+  -fsanitize=address,undefined -fno-omit-frame-pointer -IQuake \
+  tests/vr_default_bindings_fixture.c -Wl,--gc-sections \
+  $(pkg-config --cflags --libs sdl3) -lm \
+  -o /tmp/qsvr-default-bindings-fixture
+ASAN_OPTIONS=detect_leaks=0 /tmp/qsvr-default-bindings-fixture
+```
+
 `vr_input_keys_fixture.c` links the production key-name converters and checks
 that existing gamepad/alternate key codes remain unchanged and the three VR
 names round-trip within the native table capacity:

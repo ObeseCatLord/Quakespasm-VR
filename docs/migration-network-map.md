@@ -155,3 +155,13 @@ connect checks. DNS resolution remains synchronous initially, matching the
 QSS-M reference; profile it before adding a resolver owner. Reopen the design
 if the shared handshake refactor duplicates transport policy or changes public
 desktop connection results.
+
+The current `2.0` code has this shared handshake in `Quake/net_dgrm.c`:
+`NET_DatagramConnectStart/Frame/Cancel` advance the reconnect once per host
+frame, and synchronous `Datagram_Connect` uses the same parser. `CL_AutoReconnectFrame`
+starts and polls it after the game switch; disconnect/cancellation closes the
+pending socket. The earlier blocking description above records the reason for
+the design, not the current reconnect call path. Source inspection and Linux
+compilation establish the integration boundary; unanswered-endpoint timing,
+cancel/socket accounting, redirect success, and IPv4/IPv6 behavior remain to be
+qualified.
