@@ -344,6 +344,11 @@ void CL_Disconnect (void)
 	cls.legacy_qsvr = 0;
 	cls.offered_qsvr = 0;
 	cl.protocol_qsvr = 0;
+	cl.vr_instant_stop_supported = false;
+	cl.vr_instant_stop_cap_sent = false;
+	cl.vr_instant_stop_policy_seen = false;
+	cl.vr_instant_stop_policy = false;
+	cl.vr_instant_stop_resume_ack = 0;
 	cl.move_snapshot_valid = false;
 	V_ResetTrackedAim ();
 	if (key_dest == key_message)
@@ -2855,6 +2860,42 @@ void CL_QueueGorillaCapability (void)
 	cl.vr_gorilla_cap_sent = true;
 }
 
+void CL_QueueInstantStopCapability (void)
+{
+	const size_t required = 1 + sizeof ("vr_instant_stop_cap 1");
+
+	if (!cl.vr_instant_stop_supported || cl.vr_instant_stop_cap_sent ||
+		cl.protocol_qsvr != QSVR_PROTOCOL_PINNED || cls.state != ca_connected ||
+		cls.demoplayback || cls.message.overflowed ||
+		cls.message.cursize < 0 || cls.message.maxsize < 0 ||
+		cls.message.cursize > cls.message.maxsize ||
+		required > (size_t)(cls.message.maxsize - cls.message.cursize))
+		return;
+	MSG_WriteByte (&cls.message, clc_stringcmd);
+	MSG_WriteString (&cls.message, "vr_instant_stop_cap 1");
+	cl.vr_instant_stop_cap_sent = true;
+}
+
+static void CL_ServerExtension_InstantStopProtocol_f (void)
+{
+	unsigned int version;
+
+	if (cmd_source != src_server)
+		return;
+	/* Replacement offers revoke a prior negotiation unless they are valid. */
+	cl.vr_instant_stop_supported = false;
+	cl.vr_instant_stop_cap_sent = false;
+	if (cl.protocol_qsvr != QSVR_PROTOCOL_PINNED || Cmd_Argc () != 2 ||
+		!CL_ServerNumericOfferSyntaxValid (Cmd_Args (), 1) ||
+		!CL_ParseBoundedDecimal (Cmd_Argv (1), 1, &version) || version != 1)
+	{
+		Con_DPrintf2 ("Ignoring malformed VR instant-stop capability offer.\n");
+		return;
+	}
+	cl.vr_instant_stop_supported = true;
+	CL_QueueInstantStopCapability ();
+}
+
 static void CL_ServerExtension_AkimboProtocol_f (void)
 {
 	unsigned int qbj3_akimbo, qbj3_berserk_akimbo, enyo_akimbo,
@@ -3033,6 +3074,8 @@ void CL_Init (void)
 		CL_ServerExtension_WeaponContactProtocol_f);
 	Cmd_AddCommand_ServerCommand ("vr_gorilla_protocol",
 		CL_ServerExtension_GorillaProtocol_f);
+	Cmd_AddCommand_ServerCommand ("vr_instant_stop_protocol",
+		CL_ServerExtension_InstantStopProtocol_f);
 
 	Cmd_AddCommand_ServerCommand ("paknames", CL_ServerExtension_Ignore_f);		 // package names in use by the server (including gamedir+extension)
 	Cmd_AddCommand_ServerCommand ("paks", CL_ServerExtension_Ignore_f);			 // provides hashes to go with the paknames list

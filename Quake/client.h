@@ -197,6 +197,9 @@ typedef struct
 	qboolean vr_enyo_akimbo_supported;
 	qboolean vr_dwell_berserk_akimbo_supported;
 	qboolean vr_gorilla_supported, vr_gorilla_allowed, vr_gorilla_cap_sent;
+	qboolean vr_instant_stop_supported, vr_instant_stop_cap_sent;
+	qboolean vr_instant_stop_policy_seen, vr_instant_stop_policy;
+	int vr_instant_stop_resume_ack;
 	qboolean vr_gorilla_trusted_supported, vr_gorilla_trusted_cap_sent;
 	qboolean vr_gorilla_state_valid;
 	int vr_gorilla_state_sequence;
@@ -480,6 +483,7 @@ void CL_ResetVRIKPoseCaches (void);
 void CL_ResetVRIKState (void);
 void CL_ResetWeaponContactState (void);
 void CL_QueueGorillaCapability (void);
+void CL_QueueInstantStopCapability (void);
 void CL_ExpireStaleVRIKPoses (void);
 void CL_NextDemo (void);
 

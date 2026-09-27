@@ -80,6 +80,37 @@ static qboolean PM_IsVRMove (void)
 	return pmove.cmd.vr_active;
 }
 
+qboolean PM_VRInstantStopNeutralInput (const usercmd_t *cmd,
+	qboolean block_teleport_backmove)
+{
+	float forward;
+
+	if (!cmd)
+		return false;
+	forward = cmd->forwardmove;
+	if (block_teleport_backmove && forward < 0.0f)
+		forward = 0.0f;
+	/* WALK ignores upmove, and orthogonal forward/right vectors cannot cancel. */
+	return forward == 0.0f && cmd->sidemove == 0.0f;
+}
+
+static qboolean PM_VRInstantStopEligible (void)
+{
+	if (!(movevars.flags & MOVEFLAG_VR_INSTANT_STOP) || !PM_IsVRMove () ||
+		pmove.pm_type != PM_NORMAL || !pmove.onground ||
+		pmove.waterlevel >= 2 || pmove.onladder || pmove.waterjumptime ||
+		!PM_VRInstantStopNeutralInput (&pmove.cmd,
+			pmove.block_teleport_backmove))
+		return false;
+	/* Gorilla owns the command while its accepted hand input is eligible,
+	 * including an idle hand that is still carrying body momentum. */
+	if (pmove.gorilla_allowed &&
+		(((pmove.cmd.vr_gorilla.flags & VR_GORILLA_HANDS) == VR_GORILLA_HANDS) ||
+		 (pmove.cmd.vr_gorilla_motion.flags & VR_GORILLA_MOTION_ACTIVE)))
+		return false;
+	return true;
+}
+
 static float PM_VRJumpScale (void)
 {
 	if (PM_IsVRMove () && movevars.jumpspeed > PM_VANILLA_JUMP_VELOCITY)
@@ -1933,6 +1964,15 @@ static void PM_PlayerMoveStep (float gamespeed, qboolean apply_roomscale,
 		PM_ApplyVRRoomScaleMove (command_seconds);
 		PM_CategorizePosition ();
 	}
+	/* The selected server evaluates this before QuakeC. Its later PMove pass
+	 * must retain any velocity authored by PreThink or weapon Think. Replay
+	 * evaluates the same input once, before Gorilla and native friction. */
+	if (prepare_gorilla && !pmove.vr_instant_stop_preapplied &&
+		PM_VRInstantStopEligible ())
+	{
+		pmove.velocity[0] = 0.0f;
+		pmove.velocity[1] = 0.0f;
+	}
 
 	/* Only actual ladder contact restores sticks. Water retains its native
 	 * drag/timers while physical palms can still push solid surfaces. */
@@ -2587,6 +2627,9 @@ qboolean PMCL_SetMoveVars (void)
 
 		movevars.stepheight = cl.statsf[STAT_MOVEVARS_STEPHEIGHT];
 		movevars.flags = cl.stats[STAT_MOVEFLAGS];
+		if (!private_move || !cl.vr_instant_stop_supported ||
+			!cl.vr_instant_stop_cap_sent)
+			movevars.flags &= ~MOVEFLAG_VR_INSTANT_STOP;
 		movevars.gravity = cl.statsf[STAT_MOVEVARS_GRAVITY];
 		movevars.stopspeed = cl.statsf[STAT_MOVEVARS_STOPSPEED];
 		movevars.maxspeed = cl.statsf[STAT_MOVEVARS_MAXSPEED];
@@ -2610,6 +2653,32 @@ qboolean PMCL_SetMoveVars (void)
 			if (movevars.entgravity <= 0)
 				movevars.entgravity = 1.0f;
 		}
+	}
+	if (!private_move)
+	{
+		cl.vr_instant_stop_policy_seen = false;
+		cl.vr_instant_stop_resume_ack = 0;
+	}
+	else
+	{
+		const qboolean enabled = (movevars.flags & MOVEFLAG_VR_INSTANT_STOP) != 0;
+		if (!cl.vr_instant_stop_policy_seen)
+		{
+			cl.vr_instant_stop_policy_seen = true;
+			cl.vr_instant_stop_policy = enabled;
+			cl.vr_instant_stop_resume_ack = enabled && cl.movemessages > 0 ?
+				cl.movemessages - 1 : 0;
+		}
+		else if (enabled != cl.vr_instant_stop_policy)
+		{
+			cl.vr_instant_stop_policy = enabled;
+			cl.vr_instant_stop_resume_ack = cl.movemessages > 0 ?
+				cl.movemessages - 1 : 0;
+		}
+		/* Do not replay older outstanding commands with a newly received
+		 * server rule. Resume once their authoritative ACK has arrived. */
+		if (cl.ackedmovemessages < cl.vr_instant_stop_resume_ack)
+			return false;
 	}
 	return true;
 }

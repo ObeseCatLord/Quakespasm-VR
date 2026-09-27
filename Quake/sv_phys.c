@@ -3183,6 +3183,58 @@ static void SV_ApplyPrivateRoomScaleMove (edict_t *ent, client_t *client)
 	SV_LinkEdict (ent, false);
 }
 
+/* Source instant stop precedes PlayerPreThink. Do it here for the selected
+ * private owner so a subsequent QuakeC velocity write survives PMove. */
+static qboolean SV_PrivateInstantStopHasGround (edict_t *ent)
+{
+	vec3_t point, gravitydir = {0, 0, -1}, bounce;
+	trace_t trace;
+
+	/* The room-scale sweep restores the previous ground flag. Prediction
+	 * categorizes at the swept position, so check that same one-unit support
+	 * before allowing the server's pre-QuakeC stop. */
+	if (ent->v.velocity[2] > 180.0f)
+		return false;
+	VectorCopy (ent->v.origin, point);
+	point[2] -= 1.0f;
+	trace = SV_Move (ent->v.origin, ent->v.mins, ent->v.maxs,
+		point, MOVE_NORMAL, ent);
+	if (!trace.startsolid && trace.fraction < 1.0f &&
+		trace.plane.normal[2] < 0.7f)
+	{
+		/* Match PM_CategorizePosition's second trace at a slope base. */
+		ClipVelocity (gravitydir, trace.plane.normal, bounce, 2.0f);
+		VectorMA (trace.endpos, 1.0f - trace.fraction, bounce, point);
+		trace = SV_Move (trace.endpos, ent->v.mins, ent->v.maxs,
+			point, MOVE_NORMAL, ent);
+	}
+	return !trace.startsolid && trace.fraction < 1.0f &&
+		trace.plane.normal[2] >= 0.7f;
+}
+
+static void SV_PrivateInstantStopBeforeQC (edict_t *ent, client_t *client,
+	const usercmd_t *command, qboolean enabled, qboolean pground)
+{
+	if (!enabled || !ent || !client || !command || !command->vr_active ||
+		(int)ent->v.movetype != MOVETYPE_WALK ||
+		(pground && !((int)ent->v.flags & FL_ONGROUND)) ||
+		((int)ent->v.flags & FL_WATERJUMP) ||
+		client->private_pmove_waterjump_secs > 0.0f ||
+		ent->v.waterlevel >= 2 || ent->v.watertype == CONTENTS_LADDER ||
+		SV_GorillaNativeLadder (ent) ||
+		!PM_VRInstantStopNeutralInput (command,
+			qcvm->time < ent->v.teleport_time))
+		return;
+	if (client->vr_gorilla_capable && sv_gorilla.value &&
+		(((command->vr_gorilla.flags & VR_GORILLA_HANDS) == VR_GORILLA_HANDS) ||
+		 (command->vr_gorilla_motion.flags & VR_GORILLA_MOTION_ACTIVE)))
+		return;
+	if (!SV_PrivateInstantStopHasGround (ent))
+		return;
+	ent->v.velocity[0] = 0.0f;
+	ent->v.velocity[1] = 0.0f;
+}
+
 typedef struct sv_vr_weapon_pose_scope_s
 {
 	struct sv_vr_weapon_pose_scope_s *previous;
@@ -7566,6 +7618,7 @@ static qboolean SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *clien
 	int prethink_flags, prethink_groundentity, prethink_waterlevel;
 	qboolean qc_waterjump_started;
 	qboolean run_command = false, was_grounded = false, weapon_alive;
+	qboolean instant_stop_enabled = false;
 	qboolean friendly_fire_scope;
 	qboolean command_completed = false, suppress_trigger = false;
 	qboolean terminal_completed = false;
@@ -7780,6 +7833,9 @@ static qboolean SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *clien
 	SV_ClientUpdateAnglesForClient (client);
 	SV_ApplyPrivateRoomScaleMove (ent, client);
 	SV_CheckWater (ent);
+	instant_stop_enabled = SV_ClientInstantStopEnabled (client);
+	SV_PrivateInstantStopBeforeQC (ent, client, &command,
+		instant_stop_enabled, trial_movevars.pground);
 
 	VectorCopy (ent->v.velocity, prethink_velocity);
 	prethink_flags = (int)ent->v.flags;
@@ -7887,6 +7943,8 @@ static qboolean SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *clien
 		failure = "post-QC physent collection failed";
 		goto cleanup;
 	}
+	if (instant_stop_enabled)
+		trial_movevars.flags |= MOVEFLAG_VR_INSTANT_STOP;
 
 	movevars = trial_movevars;
 	pmove.pm_type = PM_NORMAL;
@@ -7897,6 +7955,7 @@ static qboolean SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *clien
 		client->private_pmove_waterjump_secs == 0.0f &&
 		qcvm->time < ent->v.teleport_time;
 	pmove.cmd = client->cmd;
+	pmove.vr_instant_stop_preapplied = true;
 	/* Native SV_AirMove accelerates using ent->angles. QuakeC teleporters
 	 * and respawn relocation hold that orientation with fixangle until the
 	 * setangle snapshot; this command may still face the old way. */

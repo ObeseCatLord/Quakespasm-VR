@@ -207,6 +207,67 @@ static void check_transient_fluid_crossing (void)
 	assert (pmove.waterlevel == 0 && !pmove.fluid_contacted);
 }
 
+static void check_vr_instant_stop (void)
+{
+	usercmd_t input = {0};
+	input.forwardmove = -200;
+	assert (PM_VRInstantStopNeutralInput (&input, true));
+	assert (!PM_VRInstantStopNeutralInput (&input, false));
+	input.sidemove = 20;
+	assert (!PM_VRInstantStopNeutralInput (&input, true));
+
+	prepare ();
+	pmove.cmd.msec = 100;
+	pmove.cmd.vr_active = true;
+	pmove.velocity[0] = 200;
+	PM_PlayerMove (1);
+	assert (pmove.velocity[0] > 0); /* default-off friction */
+
+	prepare ();
+	movevars.flags |= MOVEFLAG_VR_INSTANT_STOP;
+	pmove.cmd.msec = 100;
+	pmove.cmd.vr_active = true;
+	pmove.velocity[0] = 200;
+	PM_PlayerMove (1);
+	near_value (pmove.velocity[0], 0, .01f);
+	near_value (pmove.origin[0], 0, .01f);
+
+	prepare ();
+	movevars.flags |= MOVEFLAG_VR_INSTANT_STOP;
+	pmove.cmd.msec = 100;
+	pmove.velocity[0] = 200;
+	PM_PlayerMove (1);
+	assert (pmove.velocity[0] > 0); /* desktop stays on vkQuake friction */
+
+	prepare ();
+	movevars.flags |= MOVEFLAG_VR_INSTANT_STOP;
+	pmove.cmd.msec = 100;
+	pmove.cmd.vr_active = true;
+	pmove.cmd.forwardmove = 100;
+	pmove.velocity[0] = 200;
+	PM_PlayerMove (1);
+	assert (pmove.velocity[0] > 0); /* moving stick is not a stop */
+
+	prepare ();
+	movevars.flags |= MOVEFLAG_VR_INSTANT_STOP;
+	pmove.cmd.msec = 100;
+	pmove.cmd.vr_active = true;
+	pmove.vr_instant_stop_preapplied = true;
+	pmove.velocity[0] = 200;
+	PM_PlayerMove (1);
+	assert (pmove.velocity[0] > 0); /* preserve post-PreThink impulse */
+
+	prepare ();
+	movevars.flags |= MOVEFLAG_VR_INSTANT_STOP;
+	pmove.cmd.msec = 100;
+	pmove.cmd.vr_active = true;
+	pmove.cmd.buttons = BUTTON_JUMP;
+	pmove.velocity[0] = 200;
+	PM_PlayerMove (1);
+	near_value (pmove.velocity[0], 0, .01f);
+	assert (pmove.velocity[2] > 0); /* stop does not consume the jump */
+}
+
 static void check_teleport_backmove (void)
 {
 	vec3_t blocked, unrestricted;
@@ -262,6 +323,7 @@ int main (void)
 		sv_fte_recursivehullckeck.value = fast;
 		check_teleport_backmove ();
 		check_transient_fluid_crossing ();
+		check_vr_instant_stop ();
 		prepare ();
 		pmove.cmd.forwardmove = 320;
 		for (int i = 0; i < 10; ++i)

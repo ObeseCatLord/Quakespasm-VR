@@ -665,6 +665,8 @@ function: backward input is suppressed during the deadline while sideways
 input remains effective; ordinary air movement remains unrestricted.
 It also checks inherited VR ladder pitch independence against the ordinary QSS-M
 ladder path, and raised-jump-speed non-VR swimming against explicit VR swimming.
+The optional instant-stop cases cover default-off and desktop friction, an idle
+VR stop, moving input, jump preservation, and the post-QuakeC PMove exemption.
 Both touch policies are checked through the production helper, including impact
 velocities; real collision and nudging exercise fallback to a distinct saved
 valid position. The fixture does not run QuakeC touch callbacks or waterjump
@@ -711,6 +713,9 @@ rejected oversized tokens, and preservation of settings after missing arguments.
 Fractional booleans follow QSS server nonzero semantics. Callback dispatch and
 warning output are fixture boundaries; full resource teardown, complete-stat
 receipt, network command dispatch and replay are not covered.
+The private instant-stop move flag is accepted only after the feature
+capability, is masked for public and older private peers, and pauses replay
+until previously sent commands are acknowledged when the rule changes.
 
 ```sh
 cc -std=gnu11 -DUSE_SDL3 -D_GNU_SOURCE -Wall -Wextra -Werror \

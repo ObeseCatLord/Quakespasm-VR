@@ -42,11 +42,19 @@ static qboolean sv_gorilla_swim_intent;
 
 static usercmd_t cmd;
 
-static qboolean SV_GorillaNativeLadder (edict_t *ent);
-
 cvar_t sv_idealpitchscale = {"sv_idealpitchscale", "0.8", CVAR_NONE};
 cvar_t sv_altnoclip = {"sv_altnoclip", "1", CVAR_ARCHIVE_GAME}; // johnfitz
 cvar_t vr_movement_instant_stop = {"vr_movement_instant_stop", "0", CVAR_ARCHIVE};
+
+qboolean SV_ClientInstantStopEnabled (const client_t *client)
+{
+	return client && client->active && client->spawned &&
+		client->protocol_qsvr == QSVR_PROTOCOL_PINNED &&
+		client->private_pmove_walk_selected &&
+		client->vr_instant_stop_offered && client->vr_instant_stop_capable &&
+		isfinite (vr_movement_instant_stop.value) &&
+		vr_movement_instant_stop.value != 0.0f;
+}
 
 /*
 ===============
@@ -433,7 +441,8 @@ void SV_AirMove (void)
 	}
 	else if (onground)
 	{
-		if (vr_movement_instant_stop.value && host_client &&
+		if (isfinite (vr_movement_instant_stop.value) &&
+			vr_movement_instant_stop.value != 0.0f && host_client &&
 			host_client->cmd.vr_active && wishspeed == 0 &&
 			!SV_GorillaEligible (host_client) &&
 			!SV_GorillaNativeLadder (sv_player))
@@ -453,7 +462,7 @@ void SV_AirMove (void)
 	}
 }
 
-static qboolean SV_GorillaNativeLadder (edict_t *ent)
+qboolean SV_GorillaNativeLadder (edict_t *ent)
 {
 	eval_t *value;
 	if (!ent)
@@ -1585,6 +1594,25 @@ static qboolean SV_HandleGorillaCapability (const char *s)
 	return true;
 }
 
+static qboolean SV_HandleInstantStopCapability (const char *s)
+{
+	static const char command[] = "vr_instant_stop_cap";
+	const size_t length = sizeof (command) - 1;
+
+	if (strncmp (s, command, length) ||
+		(s[length] && s[length] != ' ' && s[length] != '\t' &&
+		 s[length] != '\r' && s[length] != '\n'))
+		return false;
+	/* Reserve the command before the mod hook, but latch only the exact reply. */
+	if (!strcmp (s, "vr_instant_stop_cap 1") && host_client->active &&
+		host_client->spawned &&
+		host_client->protocol_qsvr == QSVR_PROTOCOL_PINNED &&
+		SV_PrivateWalkTrialSelected (host_client) &&
+		host_client->vr_instant_stop_offered)
+		host_client->vr_instant_stop_capable = true;
+	return true;
+}
+
 static qboolean SV_HandleVoiceCapability (const char *s)
 {
 	const char *value = s;
@@ -1757,6 +1785,8 @@ qboolean SV_ReadClientMessage (void)
 				SV_HandleCustomAvatarSet (s))
 				break;
 			if (SV_HandleGorillaCapability (s))
+				break;
+			if (SV_HandleInstantStopCapability (s))
 				break;
 			if (SV_HandleVoiceCapability (s))
 				break;

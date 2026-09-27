@@ -2560,6 +2560,7 @@ enum
 	VR_GAMEPLAY_IMMERSIVE_MELEE,
 	VR_GAMEPLAY_WEAPON_COLLISION,
 	VR_GAMEPLAY_VRIK,
+	VR_GAMEPLAY_INSTANT_STOP,
 	VR_GAMEPLAY_JOYSTICK_SETUP,
 	VR_GAMEPLAY_ITEMS
 };
@@ -2567,7 +2568,8 @@ enum
 static const char *const vr_gameplay_cvars[VR_GAMEPLAY_JOYSTICK_SETUP] = {
 	"vr_lefthanded", "vr_aimmode", "vr_deadzone", "vr_world_scale",
 	"vr_floor_offset", "vr_movement_mode", "vr_snap_turn", "vr_turn_speed",
-	"vr_180_snap_turn", "vr_immersive_melee", "vr_weapon_collision", "vr_vrik"
+	"vr_180_snap_turn", "vr_immersive_melee", "vr_weapon_collision", "vr_vrik",
+	"vr_movement_instant_stop"
 };
 
 enum
@@ -3057,6 +3059,11 @@ static void M_VROptions_GameplayAdjust (int dir)
 	var = Cvar_FindVar (vr_gameplay_cvars[vr_options_gameplay_cursor]);
 	if (!var)
 		return;
+	/* A remote server owns this movement rule; changing a local archive cvar
+	 * while connected there would leave the player's actual motion unchanged. */
+	if (vr_options_gameplay_cursor == VR_GAMEPLAY_INSTANT_STOP &&
+		cls.state == ca_connected && !sv.active)
+		return;
 	S_LocalSound ("misc/menu3.wav");
 	current = var->value;
 	switch (vr_options_gameplay_cursor)
@@ -3066,6 +3073,7 @@ static void M_VROptions_GameplayAdjust (int dir)
 	case VR_GAMEPLAY_IMMERSIVE_MELEE:
 	case VR_GAMEPLAY_WEAPON_COLLISION:
 	case VR_GAMEPLAY_VRIK:
+	case VR_GAMEPLAY_INSTANT_STOP:
 		next = !isfinite (current) || current == 0.0f ? 1.0f : 0.0f;
 		break;
 	case VR_GAMEPLAY_AIM_MODE:
@@ -3134,6 +3142,7 @@ static void M_VROptions_GameplayDraw (cb_context_t *cbx, int top)
 		"Left Handed", "Aim Mode", "Aim Deadzone", "World Scale",
 		"Floor Offset", "Move Direction", "Turn Mode", "Turn Speed",
 		"180 Snap Turn", "Immersive Melee", "Weapon Collision", "Player VRIK",
+		"Instant Stop",
 		"Joystick Tuning"
 	};
 	static const char *const aim_modes[] = {
@@ -3156,6 +3165,12 @@ static void M_VROptions_GameplayDraw (cb_context_t *cbx, int top)
 		case VR_GAMEPLAY_WEAPON_COLLISION:
 		case VR_GAMEPLAY_VRIK:
 			M_DrawCheckbox (cbx, MENU_VALUE_X, y, value != 0.0f);
+			break;
+		case VR_GAMEPLAY_INSTANT_STOP:
+			if (cls.state == ca_connected && !sv.active)
+				M_Print (cbx, MENU_VALUE_X, y, "server only");
+			else
+				M_DrawCheckbox (cbx, MENU_VALUE_X, y, value != 0.0f);
 			break;
 		case VR_GAMEPLAY_AIM_MODE:
 			M_Print (cbx, MENU_VALUE_X, y, aim_modes[(int)CLAMP (1.0f, value, 7.0f) - 1]);

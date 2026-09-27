@@ -79,6 +79,8 @@ typedef struct
 	float		waterjumptime;
 	/* Server-only QuakeC teleport deadline: native AirMove ignores back input. */
 	qboolean		block_teleport_backmove;
+	/* Selected server evaluated instant stop before QuakeC callbacks. */
+	qboolean		vr_instant_stop_preapplied;
 	int			pm_type;
 	vec3_t		player_mins;
 	vec3_t		player_maxs;
@@ -169,6 +171,7 @@ typedef struct {
 #define MOVEFLAG_PM_BUNNYFRICTION				0x01000000
 #define MOVEFLAG_PM_WALLJUMP_SHIFT				25
 #define MOVEFLAG_PM_WALLJUMP_MASK				0x06000000
+#define MOVEFLAG_VR_INSTANT_STOP				0x08000000 /* private QSVR movevars only */
 #define MOVEFLAG_QWCOMPAT						(MOVEFLAG_NOGRAVITYONGROUND|MOVEFLAG_QWEDGEBOX)
 
 #define MASK_PLAYERSOLID	CONTENTMASK_ANYSOLID
@@ -186,6 +189,9 @@ extern	movevars_t		movevars;
 extern	playermove_t	pmove;
 
 void PM_PlayerMove (float gamespeed);
+/* Zero effective WALK intent after native teleport backward suppression. */
+qboolean PM_VRInstantStopNeutralInput (const usercmd_t *cmd,
+	qboolean block_teleport_backmove);
 /* Apply only the active command's room-scale displacement before QuakeC.
  * The caller must save/relink player state and dispatch touches outside this
  * helper, and clear pmove.cmd.vr_roomscalemove before a later PM_PlayerMove

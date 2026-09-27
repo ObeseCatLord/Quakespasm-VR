@@ -239,6 +239,7 @@ typedef struct client_s
 	unsigned short avatar_dirty_slots;
 	unsigned char avatar_offer_pending; // numeric/custom offers awaiting reliable space
 	qboolean vr_gorilla_capable;
+	qboolean vr_instant_stop_offered, vr_instant_stop_capable;
 	vr_gorilla_state_t vr_gorilla_state;
 	unsigned int vr_gorilla_reset_generation;
 	int vr_gorilla_last_sequence;
@@ -582,6 +583,8 @@ void SV_ResetGorillaClient (client_t *client);
 void SV_GorillaInvalidateAccepted (client_t *client);
 void SV_GorillaInvalidateSurface (edict_t *surface);
 qboolean SV_GorillaEligible (client_t *client);
+qboolean SV_GorillaNativeLadder (edict_t *ent);
+qboolean SV_ClientInstantStopEnabled (const client_t *client);
 void SV_GorillaLatchLadder (client_t *client, qboolean begin_frame);
 void SV_GorillaResumeDeferredMove (client_t *client);
 void SV_GorillaConsumeWater (client_t *client, qboolean swim_intent);

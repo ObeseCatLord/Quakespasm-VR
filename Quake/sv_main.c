@@ -1620,8 +1620,11 @@ static qboolean SVFTE_WritePrivateMoveStats (client_t *client, sizebuf_t *msg)
 		client->private_pmove_waterjump_secs < 0.0f ||
 		client->private_pmove_waterjump_secs > 2.0f)
 		return false;
-	if (!PMSV_BuildMoveVars (&movevars, client->edict, sv.protocolflags) ||
-		!PMSV_ExportMoveStats (&movevars, statsf, statsi))
+	if (!PMSV_BuildMoveVars (&movevars, client->edict, sv.protocolflags))
+		return false;
+	if (SV_ClientInstantStopEnabled (client))
+		movevars.flags |= MOVEFLAG_VR_INSTANT_STOP;
+	if (!PMSV_ExportMoveStats (&movevars, statsf, statsi))
 		return false;
 	statsf[STAT_PRIVATE_JUMP_SECS] = client->private_pmove_jump_secs;
 	statsf[STAT_PRIVATE_WATERJUMP_SECS] = client->private_pmove_waterjump_secs;
@@ -2774,6 +2777,8 @@ void SV_SendServerinfo (client_t *client)
 	SV_ResetPrivateVRContactState (client);
 	client->vr_gorilla_capable = false;
 	client->vr_gorilla_last_advertised = -1;
+	client->vr_instant_stop_offered = false;
+	client->vr_instant_stop_capable = false;
 	client->weapon_contact_last_mode = -1;
 	client->weapon_contact_last_profile = -1;
 	client->akimbo_last_advertised_mask = -1;
@@ -4517,6 +4522,29 @@ static void SV_AppendGorillaProtocol (client_t *client)
 		client->vr_gorilla_last_advertised = enabled;
 }
 
+static void SV_AppendInstantStopProtocol (client_t *client)
+{
+	static const char command[] = "//vr_instant_stop_protocol 1\n";
+	const size_t required = 1 + sizeof (command);
+	int previous_size;
+
+	if (!client || !client->active || !client->netconnection ||
+		!client->spawned || client->protocol_qsvr != QSVR_PROTOCOL_PINNED ||
+		!SV_PrivateWalkTrialSelected (client) || client->vr_instant_stop_offered ||
+		client->message.overflowed || client->message.cursize < 0 ||
+		client->message.maxsize <= 0 ||
+		client->message.cursize > client->message.maxsize ||
+		required > (size_t)(client->message.maxsize - client->message.cursize))
+		return;
+
+	previous_size = client->message.cursize;
+	MSG_WriteByte (&client->message, svc_stufftext);
+	MSG_WriteString (&client->message, command);
+	if (!client->message.overflowed &&
+		client->message.cursize == previous_size + (int)required)
+		client->vr_instant_stop_offered = true;
+}
+
 void SV_SendClientMessages (void)
 {
 	int i;
@@ -4546,6 +4574,7 @@ void SV_SendClientMessages (void)
 		SV_AppendWeaponContactProtocol (host_client);
 		SV_AppendAkimboProtocol (host_client);
 		SV_AppendGorillaProtocol (host_client);
+		SV_AppendInstantStopProtocol (host_client);
 		if (!host_client->spawned)
 		{
 			// the player isn't totally in the game yet
@@ -5002,6 +5031,8 @@ void SV_SpawnServer (const char *server)
 		SV_ResetPrivateVRContactState (&svs.clients[i]);
 		svs.clients[i].vr_gorilla_capable = false;
 		svs.clients[i].vr_gorilla_last_advertised = -1;
+		svs.clients[i].vr_instant_stop_offered = false;
+		svs.clients[i].vr_instant_stop_capable = false;
 		svs.clients[i].akimbo_last_advertised_mask = -1;
 	}
 

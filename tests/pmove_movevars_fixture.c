@@ -100,7 +100,8 @@ int main (void)
 	assert (PMCL_SetMoveVars ());
 	assert (movevars.protocolflags == PRFL_FLOATCOORD);
 
-	cl.stats[STAT_MOVEFLAGS] = MOVEFLAG_VALID | MOVEFLAG_NOGRAVITYONGROUND;
+	cl.stats[STAT_MOVEFLAGS] = MOVEFLAG_VALID | MOVEFLAG_NOGRAVITYONGROUND |
+		MOVEFLAG_VR_INSTANT_STOP;
 	cl.statsf[STAT_MOVEVARS_GRAVITY] = 350;
 	cl.statsf[STAT_MOVEVARS_STEPHEIGHT] = 24;
 	cl.statsf[STAT_MOVEVARS_JUMPVELOCITY] = 297;
@@ -115,6 +116,7 @@ int main (void)
 	near_value (movevars.entgravity, 0);
 	near_value (movevars.ktjump, 12);
 	assert (movevars.slidefix && movevars.bunnyfriction);
+	assert (!(movevars.flags & MOVEFLAG_VR_INSTANT_STOP)); /* public PREDINFO */
 
 	cl.protocol_qsvr = QSVR_PROTOCOL_PINNED;
 	assert (!PMCL_SetMoveVars ()); // Missing the private prerequisites.
@@ -124,12 +126,30 @@ int main (void)
 	cl.stats[STAT_MOVEFLAGS] |= MOVEFLAG_VALID;
 	assert (PMCL_SetMoveVars ());
 	near_value (movevars.ktjump, 99);
+	assert (!(movevars.flags & MOVEFLAG_VR_INSTANT_STOP)); /* old private peer */
+	cl.vr_instant_stop_supported = true;
+	cl.vr_instant_stop_cap_sent = true;
+	assert (PMCL_SetMoveVars ());
+	assert (movevars.flags & MOVEFLAG_VR_INSTANT_STOP);
 	near_value (movevars.entgravity, 1);
 	assert (!movevars.slidefix && !movevars.bunnyfriction);
 	cl.stats[STAT_MOVEFLAGS] |= MOVEFLAG_PM_SLIDEFIX | MOVEFLAG_PM_BUNNYFRICTION |
 		(2u << MOVEFLAG_PM_WALLJUMP_SHIFT);
 	assert (PMCL_SetMoveVars ());
 	assert (movevars.slidefix && movevars.bunnyfriction && movevars.walljump == 2);
+	/* A live rule change pauses replay until commands sent under the old
+	 * policy have received their authoritative ACK. */
+	cl.movemessages = 30;
+	cl.ackedmovemessages = 27;
+	cl.stats[STAT_MOVEFLAGS] &= ~MOVEFLAG_VR_INSTANT_STOP;
+	assert (!PMCL_SetMoveVars ());
+	cl.ackedmovemessages = 29;
+	assert (PMCL_SetMoveVars ());
+	cl.movemessages = 32;
+	cl.stats[STAT_MOVEFLAGS] |= MOVEFLAG_VR_INSTANT_STOP;
+	assert (!PMCL_SetMoveVars ());
+	cl.ackedmovemessages = 31;
+	assert (PMCL_SetMoveVars ());
 	cl.statsf[STAT_MOVEVARS_STEPHEIGHT] = INFINITY;
 	assert (!PMCL_SetMoveVars ());
 	cl.statsf[STAT_MOVEVARS_STEPHEIGHT] = 1e30f;
@@ -139,6 +159,7 @@ int main (void)
 	assert (!PMCL_SetMoveVars ());
 	cl.protocol_qsvr = 0;
 	assert (PMCL_SetMoveVars ()); // Public protocol doesn't consume private stats.
+	assert (!(movevars.flags & MOVEFLAG_VR_INSTANT_STOP));
 	cl.protocol_qsvr = QSVR_PROTOCOL_PINNED + 1;
 	assert (!PMCL_SetMoveVars ());
 

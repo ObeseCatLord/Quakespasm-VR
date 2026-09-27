@@ -976,6 +976,7 @@ static void CL_SendPrivateMove (const usercmd_t *cmd)
 	/* A full reliable buffer at offer time defers the capability reply until
 	 * the next command, without making the unreliable pose claim admission. */
 	CL_QueueGorillaCapability ();
+	CL_QueueInstantStopCapability ();
 	if (!cmd)
 	{
 		CL_FlushAckFrames ();
