@@ -3195,11 +3195,15 @@ typedef struct sv_vr_weapon_pose_scope_s
 	qboolean enyo_clearance_pending;
 	qboolean qbj3_shotgun_spread;
 	qboolean stock_id1_muzzle_valid;
+	qboolean stock_lightning_trace_applied;
+	qboolean stock_lightning_damage_started;
 	int stock_id1_program; /* 0 unchecked, 1 pinned id1, -1 other */
 	int qbj3_shotgun_weapon;
 	float qbj3_shotgun_roll;
 	vec3_t origin, body_origin, v_angle, forward, right, up;
 	vec3_t stock_id1_muzzle;
+	vec3_t stock_lightning_end;
+	vec3_t stock_lightning_damage_end;
 	vec3_t akimbo_muzzle[2], akimbo_angles[2];
 	vec3_t enyo_clearance_start, enyo_clearance_end;
 	vec3_t enyo_clearance_adjusted_start;
@@ -3248,6 +3252,8 @@ void SV_VRWeaponPoseSetOrigin (edict_t *ent)
 			scope->akimbo_pose_valid = false;
 			scope->enyo_clearance_pending = false;
 			scope->stock_id1_muzzle_valid = false;
+			scope->stock_lightning_trace_applied = false;
+			scope->stock_lightning_damage_started = false;
 		}
 }
 
@@ -3677,6 +3683,20 @@ static qboolean SV_AkimboCommandValid (client_t *client,
 			return false;
 	}
 	return true;
+}
+
+static qboolean SV_VRStockID1Program (sv_vr_weapon_pose_scope_t *scope)
+{
+	const sv_vr_stock_axe_descriptor_t *descriptor;
+	if (!scope)
+		return false;
+	if (!scope->stock_id1_program)
+	{
+		descriptor = SV_VRStockAxeMeleeDescriptor ();
+		scope->stock_id1_program = descriptor &&
+			descriptor->progscrc == 3064 ? 1 : -1;
+	}
+	return scope->stock_id1_program > 0;
 }
 
 static void SV_BeginPrivateVRWeaponPose (edict_t *ent, client_t *client,
@@ -4174,7 +4194,6 @@ qboolean SV_VRStockShotgunTrace (edict_t *ignore, int nomonsters,
 	const vec3_t start, const vec3_t end, trace_t *trace)
 {
 	sv_vr_weapon_pose_scope_t *scope;
-	const sv_vr_stock_axe_descriptor_t *descriptor;
 	vec3_t expected, translated_end, delta;
 	int axis;
 
@@ -4194,13 +4213,7 @@ qboolean SV_VRStockShotgunTrace (edict_t *ignore, int nomonsters,
 		scope->client->protocol_qsvr != QSVR_PROTOCOL_PINNED ||
 		scope->client->edict != ignore)
 		return false;
-	if (!scope->stock_id1_program)
-	{
-		descriptor = SV_VRStockAxeMeleeDescriptor ();
-		scope->stock_id1_program = descriptor &&
-			descriptor->progscrc == 3064 ? 1 : -1;
-	}
-	if (scope->stock_id1_program < 0)
+	if (!SV_VRStockID1Program (scope))
 		return false;
 
 	/* Check the actual QC start before shifting a ray. This leaves an altered
@@ -4232,7 +4245,6 @@ qboolean SV_VRStockNailSetOrigin (edict_t *projectile, const vec3_t authored,
 	vec3_t translated)
 {
 	sv_vr_weapon_pose_scope_t *scope;
-	const sv_vr_stock_axe_descriptor_t *descriptor;
 	edict_t *player;
 	vec3_t expected, lateral, barrel, candidate, difference;
 	trace_t clearance;
@@ -4257,13 +4269,7 @@ qboolean SV_VRStockNailSetOrigin (edict_t *projectile, const vec3_t authored,
 		scope->client->protocol_qsvr != QSVR_PROTOCOL_PINNED ||
 		scope->client->edict != player)
 		return false;
-	if (!scope->stock_id1_program)
-	{
-		descriptor = SV_VRStockAxeMeleeDescriptor ();
-		scope->stock_id1_program = descriptor &&
-			descriptor->progscrc == 3064 ? 1 : -1;
-	}
-	if (scope->stock_id1_program < 0)
+	if (!SV_VRStockID1Program (scope))
 		return false;
 
 	VectorCopy (player->v.origin, expected);
@@ -4309,6 +4315,172 @@ qboolean SV_VRStockNailSetOrigin (edict_t *projectile, const vec3_t authored,
 	safe_fraction = clearance.fraction < 1.0f ?
 		q_max (0.0f, clearance.fraction - 0.25f) : 1.0f;
 	VectorMA (scope->stock_id1_muzzle, safe_fraction, lateral, translated);
+	return true;
+}
+
+static sv_vr_weapon_pose_scope_t *SV_VRStockLightningScope (void)
+{
+	sv_vr_weapon_pose_scope_t *scope;
+	edict_t *player = SV_EnyoAkimboSelf ();
+
+	if (!player || player->free || player->v.weapon != IT_LIGHTNING ||
+		!qcvm->progs || qcvm->progs->numfunctions <= 205)
+		return NULL;
+	scope = SV_FindPrivateVRWeaponPose (player);
+	if (!scope || !scope->applied || !scope->stock_id1_muzzle_valid ||
+		scope->origin_relocated || !scope->client ||
+		!scope->client->active || !scope->client->spawned ||
+		scope->client->protocol_qsvr != QSVR_PROTOCOL_PINNED ||
+		scope->client->edict != player ||
+		!SV_VRStockID1Program (scope))
+		return NULL;
+	return scope;
+}
+
+/* Stock W_FireLightning first traces from self.origin + 16 up. The generic
+ * temporary QC source is eight forward and 16 up behind the physical muzzle;
+ * borrow only this exact world-only trace so the beam endpoint follows the
+ * tracked aim. The beam's three start coordinates are patched separately at
+ * their WriteCoord sites, leaving all QC globals and the message owner intact. */
+qboolean SV_VRStockLightningBeamTrace (edict_t *ignore, int nomonsters,
+	const vec3_t start, const vec3_t end, trace_t *trace)
+{
+	sv_vr_weapon_pose_scope_t *scope;
+	vec3_t expected_start, expected_end, delta, translated_end;
+	int axis;
+
+	if (!trace || !nomonsters || qcvm != &sv.qcvm || !qcvm->progs ||
+		qcvm->progs->numfunctions <= 205 ||
+		qcvm->xfunction != &qcvm->functions[205] ||
+		qcvm->xstatement != 3983 ||
+		!(scope = SV_VRStockLightningScope ()) || ignore != scope->ent)
+		return false;
+	/* A second shot in the same QC scope must earn its own beam/trace pair. */
+	scope->stock_lightning_trace_applied = false;
+	scope->stock_lightning_damage_started = false;
+	VectorCopy (ignore->v.origin, expected_start);
+	expected_start[2] += 16.0f;
+	VectorMA (expected_start, 600.0f, pr_global_struct->v_forward,
+		expected_end);
+	for (axis = 0; axis < 3; ++axis)
+		if (!isfinite (start[axis]) || !isfinite (end[axis]) ||
+			!isfinite (expected_start[axis]) ||
+			!isfinite (expected_end[axis]) ||
+			!isfinite (scope->stock_id1_muzzle[axis]))
+			return false;
+	if (!SV_EnyoVectorsNear (start, expected_start) ||
+		!SV_EnyoVectorsNear (end, expected_end))
+		return false;
+	VectorSubtract (end, start, delta);
+	VectorAdd (scope->stock_id1_muzzle, delta, translated_end);
+	for (axis = 0; axis < 3; ++axis)
+		if (!isfinite (translated_end[axis]))
+			return false;
+	*trace = SV_Move (scope->stock_id1_muzzle, vec3_origin, vec3_origin,
+		translated_end, nomonsters, ignore);
+	if (trace->startsolid || trace->allsolid)
+		return false;
+	for (axis = 0; axis < 3; ++axis)
+		if (!isfinite (trace->endpos[axis]))
+			return false;
+	VectorCopy (trace->endpos, scope->stock_lightning_end);
+	scope->stock_lightning_trace_applied = true;
+	return true;
+}
+
+qboolean SV_VRStockLightningBeamCoord (float authored, float *translated)
+{
+	sv_vr_weapon_pose_scope_t *scope;
+	int axis;
+	float expected;
+
+	if (!translated || qcvm != &sv.qcvm || !qcvm->progs ||
+		qcvm->progs->numfunctions <= 205 ||
+		qcvm->xfunction != &qcvm->functions[205] ||
+		!(scope = SV_VRStockLightningScope ()) ||
+		!scope->stock_lightning_trace_applied ||
+		pr_global_struct->self != EDICT_TO_PROG (scope->ent) ||
+		(int)G_FLOAT (OFS_PARM0) != MSG_BROADCAST)
+		return false;
+	switch (qcvm->xstatement)
+	{
+	case 3995: axis = 0; break;
+	case 3998: axis = 1; break;
+	case 4001: axis = 2; break;
+	default: return false;
+	}
+	expected = scope->ent->v.origin[axis] + (axis == 2 ? 16.0f : 0.0f);
+	if (!isfinite (authored) || !isfinite (expected) ||
+		!isfinite (scope->stock_id1_muzzle[axis]) ||
+		fabsf (authored - expected) > 0.125f)
+		return false;
+	*translated = scope->stock_id1_muzzle[axis];
+	return true;
+}
+
+/* Preserve stock LightningDamage's three authored side offsets, including
+ * its unusual unnormalized QC arithmetic. Move only their starts to the
+ * physical muzzle; QC still determines trace endpoints, target uniqueness,
+ * particles and damage. A blocked translated start is an admitted miss,
+ * not an invitation to damage from the old source behind the beam. */
+qboolean SV_VRStockLightningDamageTrace (edict_t *ignore, int nomonsters,
+	const vec3_t start, const vec3_t end, trace_t *trace)
+{
+	sv_vr_weapon_pose_scope_t *scope;
+	vec3_t side, expected_end, translated_start, target;
+	trace_t clearance;
+	int axis;
+
+	if (!trace || nomonsters || qcvm != &sv.qcvm || !qcvm->progs ||
+		qcvm->progs->numfunctions <= 204 ||
+		qcvm->xfunction != &qcvm->functions[204] ||
+		(qcvm->xstatement != 3860 && qcvm->xstatement != 3891 &&
+		 qcvm->xstatement != 3914) ||
+		!(scope = SV_VRStockLightningScope ()) ||
+		!scope->stock_lightning_trace_applied || ignore != scope->ent)
+		return false;
+	if (qcvm->xstatement != 3860 && !scope->stock_lightning_damage_started)
+		return false;
+	VectorSubtract (start, ignore->v.origin, side);
+	if (qcvm->xstatement == 3860)
+		VectorMA (scope->stock_lightning_end, 4.0f,
+			pr_global_struct->v_forward, expected_end);
+	else
+		VectorCopy (scope->stock_lightning_damage_end, expected_end);
+	VectorAdd (expected_end, side, expected_end);
+	VectorAdd (scope->stock_id1_muzzle, side, translated_start);
+	for (axis = 0; axis < 3; ++axis)
+		if (!isfinite (start[axis]) || !isfinite (end[axis]) ||
+			!isfinite (side[axis]) || !isfinite (expected_end[axis]) ||
+			!isfinite (translated_start[axis]))
+			return false;
+	if (!SV_EnyoVectorsNear (end, expected_end) ||
+		(qcvm->xstatement == 3860 &&
+		 !SV_EnyoVectorsNear (side, vec3_origin)) ||
+		(qcvm->xstatement != 3860 &&
+		 (fabsf (side[2]) > 0.125f ||
+		  fabsf (side[0] - side[1]) > 0.125f)))
+		return false;
+	clearance = SV_Move (translated_start, vec3_origin, vec3_origin,
+		translated_start, MOVE_NOMONSTERS, ignore);
+	if (clearance.startsolid || clearance.allsolid)
+	{
+		*trace = clearance;
+		trace->ent = qcvm->edicts; /* world cannot take LightningDamage */
+		trace->fraction = 0.0f;
+		VectorCopy (translated_start, trace->endpos);
+	}
+	else
+	{
+		VectorCopy (end, target);
+		*trace = SV_Move (translated_start, vec3_origin, vec3_origin,
+			target, nomonsters, ignore);
+	}
+	if (qcvm->xstatement == 3860)
+	{
+		VectorCopy (end, scope->stock_lightning_damage_end);
+		scope->stock_lightning_damage_started = true;
+	}
 	return true;
 }
 

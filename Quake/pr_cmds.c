@@ -28,6 +28,10 @@ extern qboolean SV_VRStockAxeTrace (edict_t *ignore, int nomonsters,
 	const vec3_t start, const vec3_t end, trace_t *trace);
 extern qboolean SV_VRStockShotgunTrace (edict_t *ignore, int nomonsters,
 	const vec3_t start, const vec3_t end, trace_t *trace);
+extern qboolean SV_VRStockLightningBeamTrace (edict_t *ignore, int nomonsters,
+	const vec3_t start, const vec3_t end, trace_t *trace);
+extern qboolean SV_VRStockLightningDamageTrace (edict_t *ignore, int nomonsters,
+	const vec3_t start, const vec3_t end, trace_t *trace);
 extern qboolean SV_VRDwellBerserkTrace (edict_t *ignore, int nomonsters,
 	const vec3_t start, const vec3_t end, trace_t *trace);
 extern qboolean SV_EnyoAkimboTrace (edict_t *ignore, const vec3_t start,
@@ -815,7 +819,9 @@ static void PF_traceline (void)
 	if (!SV_VRDwellBerserkTrace (ent, nomonsters, v1, v2, &trace) &&
 		!SV_VRStockAxeTrace (ent, nomonsters, v1, v2, &trace) &&
 		!SV_EnyoAkimboTrace (ent, v1, v2, nomonsters, &trace) &&
-		!SV_VRStockShotgunTrace (ent, nomonsters, v1, v2, &trace))
+		!SV_VRStockShotgunTrace (ent, nomonsters, v1, v2, &trace) &&
+		!SV_VRStockLightningBeamTrace (ent, nomonsters, v1, v2, &trace) &&
+		!SV_VRStockLightningDamageTrace (ent, nomonsters, v1, v2, &trace))
 		trace = SV_Move (v1, vec3_origin, vec3_origin, v2, nomonsters, ent);
 
 	pr_global_struct->trace_allsolid = trace.allsolid;
@@ -1748,7 +1754,10 @@ static void PF_sv_WriteAngle (void)
 
 static void PF_sv_WriteCoord (void)
 {
-	MSG_WriteCoord (WriteDest (), G_FLOAT (OFS_PARM1), sv.protocolflags);
+	float coord = G_FLOAT (OFS_PARM1);
+	if (qcvm == &sv.qcvm)
+		SV_VRStockLightningBeamCoord (coord, &coord);
+	MSG_WriteCoord (WriteDest (), coord, sv.protocolflags);
 }
 
 static void PF_sv_WriteString (void)

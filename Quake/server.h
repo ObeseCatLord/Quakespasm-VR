@@ -612,6 +612,7 @@ void SV_ClearVRWeaponPoseScope (void);
 void SV_VRWeaponPoseSetOrigin (edict_t *ent);
 qboolean SV_VRStockNailSetOrigin (edict_t *projectile, const vec3_t authored,
 	vec3_t translated);
+qboolean SV_VRStockLightningBeamCoord (float authored, float *translated);
 void SV_VRWeaponPoseLinked (edict_t *ent);
 qboolean SV_QBJ3AkimboAim (edict_t *ent, vec3_t muzzle);
 qboolean SV_QBJ3TwinNailgunProgramLoaded (void);

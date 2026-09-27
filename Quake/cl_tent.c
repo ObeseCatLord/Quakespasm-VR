@@ -345,11 +345,12 @@ void CL_UpdateTEnts (void)
 {
 	int		  i, j; // johnfitz -- use j instead of using i twice, so we don't corrupt memory
 	beam_t	 *b;
-	vec3_t	  dist, org;
+	vec3_t	  dist, org, beam_start;
 	float	  d;
 	entity_t *ent;
 	float	  yaw, pitch;
 	float	  forward;
+	const qboolean tracked = V_TrackedSessionActive ();
 
 	num_temp_entities = 0;
 
@@ -361,15 +362,33 @@ void CL_UpdateTEnts (void)
 	{
 		if (!b->model || b->endtime < cl.time)
 			continue;
+		VectorCopy (b->start, beam_start);
 
-		// if coming from the player, update the start position
-		if (b->entity == cl.viewentity && cl.entities)
+		// Keep the inherited VR local-beam attachment on the tracked weapon.
+		// The accepted private command carries its calibrated muzzle relative
+		// to the current body; on lost tracking retain the server beam start.
+		if (b->entity == cl.viewentity && cl.entities &&
+			cl.viewentity > 0 && cl.viewentity < cl.num_entities)
 		{
-			VectorCopy (cl.entities[cl.viewentity].origin, b->start);
+			if (!tracked)
+				VectorCopy (cl.entities[cl.viewentity].origin, beam_start);
+			else if (cl.protocol_qsvr == QSVR_PROTOCOL_PINNED &&
+				cl.pendingcmd.vr_active &&
+				cl.pendingcmd.vr_handpos_relative &&
+				isfinite (cl.pendingcmd.vr_handpos[0]) &&
+				isfinite (cl.pendingcmd.vr_handpos[1]) &&
+				isfinite (cl.pendingcmd.vr_handpos[2]))
+			{
+				VectorAdd (cl.entities[cl.viewentity].origin,
+					cl.pendingcmd.vr_handpos, org);
+				if (isfinite (org[0]) && isfinite (org[1]) &&
+					isfinite (org[2]))
+					VectorCopy (org, beam_start);
+			}
 		}
 
 		// calculate pitch and yaw
-		VectorSubtract (b->end, b->start, dist);
+		VectorSubtract (b->end, beam_start, dist);
 
 		if (dist[1] == 0 && dist[0] == 0)
 		{
@@ -392,7 +411,7 @@ void CL_UpdateTEnts (void)
 		}
 
 		// add new entities for the lightning
-		VectorCopy (b->start, org);
+		VectorCopy (beam_start, org);
 		d = VectorNormalize (dist);
 		while (d > 0)
 		{
