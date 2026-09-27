@@ -551,9 +551,41 @@ static void test_humanoid_lengths_and_contacts(void)
 	assert(!memcmp(saved,pose,sizeof(pose)));
 }
 
+static void test_large_humanoid_branch(void)
+{
+	fixture_t target;
+	r_avatar_rig_t rig;
+	float palette[R_AVATAR_MAX_JOINTS * 12], before[R_AVATAR_MAX_JOINTS * 12];
+	float endpoint[12], pole[3];
+	int count = 19;
+	ranger(&target,1);
+	/* Interleave an unrelated right-hand prop before a long left-hand chain.
+	 * Rotating the left arm must move the whole chain but leave that prop alone. */
+	add(&target,&count,"right_prop",12,0.125f,0,0);
+	for(int i=20;i<R_AVATAR_MAX_JOINTS;++i) {
+		char name[32];
+		snprintf(name,sizeof(name),"left_finger_%d",i);
+		add(&target,&count,name,i==20?8:i-1,0.125f,0,0);
+	}
+	target.live.joint_count=count;
+	assert(R_AvatarResolveRig(R_AvatarProfileForId(PLAYER_AVATAR_RANGER),&target.live,&rig));
+	for(int i=0;i<count;++i)
+		memcpy(palette+i*12,target.joints[i].bind,12*sizeof(float));
+	memcpy(before,palette,sizeof(before));
+	memcpy(endpoint,palette+8*12,sizeof(endpoint));
+	endpoint[3]+=0.25f;
+	for(int axis=0;axis<3;++axis)
+		pole[axis]=palette[7*12+axis*4+3];
+	assert(R_AvatarSolveHumanoidLimb(&rig,palette,MD5_VRIK_UPPERARM_L,endpoint,pole)>=0);
+	assert_physical_lengths(&target,palette);
+	assert(!memcmp(palette+19*12,before+19*12,12*sizeof(float)));
+	assert(fabsf(palette[255*12+3]-before[255*12+3])>0.01f);
+}
+
 int main(void)
 {
 	test_humanoid_lengths_and_contacts();
+	test_large_humanoid_branch();
 	test_identity_and_locals(); test_rotation_and_basis(); test_dynamic_presentation_basis(); test_profile_basis_policies(); test_ancestor_translation_applied_once(); test_rejection_and_monsters(); test_all_profile_palettes_are_bounded(); test_absolute_global_transport(); test_preserve_hip_rotation(); test_nonunit_presentation_roundtrips();
 	puts("avatar retarget fixture: ok"); return 0;
 }

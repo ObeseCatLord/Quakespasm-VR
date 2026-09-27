@@ -782,7 +782,8 @@ qboolean R_AvatarHumanoidDesktopSupportEndpoint (
 /* Rotate a whole physical subtree about a joint, never translate an endpoint
  * independently. The opposite-vector case gets a deterministic rotation axis. */
 static qboolean R_AvatarAimBranch(const r_avatar_rig_t *rig,float *palette,int root,
-	const float from[3],const float to[3])
+	const float from[3],const float to[3],const unsigned char *branch,
+	unsigned char branch_bit)
 {
 	float a[3],b[3],axis[3],m[12],dot,sine;int i,r,c;
 	memcpy(a,from,sizeof(a));memcpy(b,to,sizeof(b));
@@ -800,10 +801,8 @@ static qboolean R_AvatarAimBranch(const r_avatar_rig_t *rig,float *palette,int r
 	for(r=0;r<3;++r)for(c=0;c<3;++c)m[r*4+c]=(r==c?dot:0)+(1-dot)*axis[r]*axis[c];
 	m[1]-=sine*axis[2];m[2]+=sine*axis[1];m[4]+=sine*axis[2];m[6]-=sine*axis[0];m[8]-=sine*axis[1];m[9]+=sine*axis[0];
 	for(r=0;r<3;++r)m[r*4+3]=palette[root*12+r*4+3]-(m[r*4]*palette[root*12+3]+m[r*4+1]*palette[root*12+7]+m[r*4+2]*palette[root*12+11]);
-	for(i=root;i<R_AvatarJointCount(rig->live);++i) {
-		int ancestor=i;while(ancestor>=0 && ancestor!=root)ancestor=rig->live->joints[ancestor].parent;
-		if(ancestor==root)R_AvatarMultiply(m,palette+i*12,palette+i*12);
-	}
+	for(i=root;i<R_AvatarJointCount(rig->live);++i)
+		if(branch[i]&branch_bit)R_AvatarMultiply(m,palette+i*12,palette+i*12);
 	return true;
 }
 
@@ -811,6 +810,7 @@ float R_AvatarSolveHumanoidLimb(const r_avatar_rig_t *rig,float *palette,
 	int upper_semantic,const float endpoint[12],const float pole[3])
 {
 	float saved[R_AVATAR_MAX_JOINTS*12],a[3],b[3],tip[3],direction[3],bend[3],from[3],to[3];
+	unsigned char branch[R_AVATAR_MAX_JOINTS] = {0};
 	float l1,l2,d,raw,projection,along,height;int upper,lower,end,r,i;
 	if(!rig || !rig->valid || !palette || !endpoint || !pole || !R_AvatarOrthonormal(endpoint))return -1;
 	if(R_AvatarJointCount(rig->live)>R_AVATAR_MAX_JOINTS)return -1;
@@ -818,6 +818,14 @@ float R_AvatarSolveHumanoidLimb(const r_avatar_rig_t *rig,float *palette,
 	if(upper_semantic!=6 && upper_semantic!=10 && upper_semantic!=13 && upper_semantic!=16)return -1;
 	upper=rig->joint[upper_semantic];lower=rig->joint[upper_semantic+1];end=rig->joint[upper_semantic+2];
 	if(upper<0 || lower<0 || end<0)return -1;
+	/* Rig admission requires parent < child. Propagate all three subtree bits
+	 * once, rather than walking each joint's ancestors for every rotation. */
+	for(i=upper;i<R_AvatarJointCount(rig->live);++i) {
+		int parent=rig->live->joints[i].parent;
+		if(parent<-1 || parent>=i)return -1;
+		branch[i]=(parent>=0?branch[parent]:0) |
+			(i==upper?1:0) | (i==lower?2:0) | (i==end?4:0);
+	}
 	l1=R_AvatarJointDistance(palette+upper*12,palette+lower*12);
 	l2=R_AvatarJointDistance(palette+lower*12,palette+end*12);
 	if(l1<.001f || l2<.001f)return -1;
@@ -835,14 +843,14 @@ float R_AvatarSolveHumanoidLimb(const r_avatar_rig_t *rig,float *palette,
 	along=(l1*l1-l2*l2+d*d)/(2*d);height=sqrtf(fmaxf(0,l1*l1-along*along));
 	for(r=0;r<3;++r){from[r]=b[r]-a[r];to[r]=direction[r]*along+bend[r]*height;tip[r]=a[r]+direction[r]*d;}
 	memcpy(saved,palette,R_AvatarJointCount(rig->live)*12*sizeof(float));
-	if(!R_AvatarAimBranch(rig,palette,upper,from,to))goto fail;
+	if(!R_AvatarAimBranch(rig,palette,upper,from,to,branch,1))goto fail;
 	for(r=0;r<3;++r){from[r]=palette[end*12+r*4+3]-palette[lower*12+r*4+3];to[r]=tip[r]-palette[lower*12+r*4+3];}
-	if(!R_AvatarAimBranch(rig,palette,lower,from,to))goto fail;
+	if(!R_AvatarAimBranch(rig,palette,lower,from,to,branch,2))goto fail;
 	/* Apply endpoint orientation to its descendants as well (fingers/toes). */
 	{float inv[12],desired[12],delta[12];int i;
 	 memcpy(desired,endpoint,sizeof(desired));for(r=3;r<12;r+=4)desired[r]=palette[end*12+r];
 	 R_AvatarInverseRigid(palette+end*12,inv);R_AvatarMultiply(desired,inv,delta);
-	 for(i=end;i<R_AvatarJointCount(rig->live);++i){int p=i;while(p>=0 && p!=end)p=rig->live->joints[p].parent;if(p==end)R_AvatarMultiply(delta,palette+i*12,palette+i*12);}
+	 for(i=end;i<R_AvatarJointCount(rig->live);++i)if(branch[i]&4)R_AvatarMultiply(delta,palette+i*12,palette+i*12);
 	}
 	return R_AvatarJointDistance(palette+end*12,endpoint);
 fail:

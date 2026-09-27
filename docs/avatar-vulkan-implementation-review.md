@@ -86,6 +86,18 @@ measurement. Calibration currently runs when each avatar is staged each frame,
 while the retargeted palette is prepared once per player and reused by both
 eyes. The profile's reference floor correction is already cached separately.
 
+The tracked humanoid limb solver also rotated the upper arm/leg, lower
+arm/leg, and endpoint subtrees by walking each physical joint's parent chain
+three times. A bounded local branch mask now propagates those three subtree
+memberships in one parent-ordered pass, using the existing rig-admission
+invariant. In an isolated `-O2` 10,000-iteration probe, a synthetic 256-joint
+rig with a long hand-descendant chain fell from about 141 to 9 microseconds
+per limb solve; a 19-joint rig stayed near 0.4 microseconds. Old and new
+palette hashes matched in both cases. The fixture now also checks a full
+256-joint branch, an unrelated interleaved prop, and preserved physical link
+lengths. This is a worst-case CPU microbenchmark, not a measured in-game FPS
+gain or proof of a typical avatar's cost.
+
 For performance qualification, measure full frame preparation by active
 avatar count, rig size, desktop versus tracked pose, and stereo mode. If
 retargeting becomes a material frame cost on large custom rigs or many peers,

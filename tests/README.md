@@ -5,8 +5,9 @@
 `avatar_retarget_fixture.c` ports the inherited semantic profiles and CPU
 retarget checks to the donor `md5_skeleton_view_t`. It covers all built-in
 profile maps, global palette transport, presentation transforms, humanoid
-limb lengths, calibrated desktop support-hand motion, and the checked bridge
-from an `R_VRIKBuildRangerPalette` output. The bridge test uses a synthetic
+limb lengths (including a 256-joint descendant branch), calibrated desktop
+support-hand motion, and the checked bridge from an
+`R_VRIKBuildRangerPalette` output. The bridge test uses a synthetic
 solved palette; it does not run the VRIK solver or render a model. Run it on
 Linux with:
 
