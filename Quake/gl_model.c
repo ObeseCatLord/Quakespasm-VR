@@ -1186,7 +1186,9 @@ static texture_t *Mod_LoadWadTexture (qmodel_t *mod, wad_t *wads, const char *na
 	texture_t	  *tx;
 	qboolean	   pal;
 	unsigned short colors;
-	size_t pixel_bytes = 0, payload_bytes, allocation_bytes, available_bytes;
+	size_t pixel_bytes = 0, payload_bytes, allocation_bytes, lump_bytes;
+	size_t source_end = sizeof (mt), compact_offsets[MIPLEVELS], level_bytes[MIPLEVELS];
+	qboolean compact_mips = true;
 
 	// look for the lump in any of the loaded wads
 	info = W_GetLumpinfoList (wads, name, &wad);
@@ -1207,7 +1209,7 @@ static texture_t *Mod_LoadWadTexture (qmodel_t *mod, wad_t *wads, const char *na
 	}
 	// For uncompressed lumps, the directory's physical span is the upper
 	// bound even if its logical size is larger or was repaired by WAD loading.
-	available_bytes = (size_t)q_min (info->size, disk_bytes) - sizeof (mt);
+	lump_bytes = (size_t)q_min (info->size, disk_bytes);
 
 	// override the texture from the bsp file
 	if (FS_fseek (&wad->fh, info->filepos, SEEK_SET) != 0 ||
@@ -1228,31 +1230,34 @@ static texture_t *Mod_LoadWadTexture (qmodel_t *mod, wad_t *wads, const char *na
 	}
 
 	pal = wad->id == WADID_VALVE && info->type == TYP_MIPTEX_PALETTE;
-	/* The Vulkan indexed loader expects four contiguous mip levels followed
-	 * immediately by the palette count. Validate offsets and all arithmetic
-	 * before allocating or reading from an external WAD. */
+	/* The Vulkan indexed loader expects compact mip levels. WAD miptexes carry
+	 * source offsets, so accept bounded gaps and repack them below. */
 	for (i = 0; i < MIPLEVELS; ++i)
 	{
-		size_t level_bytes;
-		if (mt.offsets[i] != sizeof (mt) + pixel_bytes ||
-			!Mod_CheckedSizeMul (mt.width >> i, mt.height >> i, &level_bytes) ||
-			!Mod_CheckedSizeAdd (pixel_bytes, level_bytes, &pixel_bytes))
+		if (!Mod_CheckedSizeMul (mt.width >> i, mt.height >> i, &level_bytes[i]) ||
+			mt.offsets[i] < source_end || level_bytes[i] > lump_bytes ||
+			mt.offsets[i] > lump_bytes - level_bytes[i])
+			return NULL;
+		compact_offsets[i] = pixel_bytes;
+		if (mt.offsets[i] != sizeof (mt) + pixel_bytes)
+			compact_mips = false;
+		source_end = (size_t)mt.offsets[i] + level_bytes[i];
+		if (!Mod_CheckedSizeAdd (pixel_bytes, level_bytes[i], &pixel_bytes))
 			return NULL;
 	}
-	if (pixel_bytes != allocation_bytes / 64 * 85 ||
-		pixel_bytes > available_bytes)
+	if (pixel_bytes != allocation_bytes / 64 * 85 || pixel_bytes > INT_MAX)
 		return NULL;
 	payload_bytes = pixel_bytes;
 	// Valve textures place a 256-color palette after the four mip levels.
 	if (pal)
 	{
-		if (available_bytes < 2 || pixel_bytes > available_bytes - 2 ||
-			FS_fseek (&wad->fh, (qfileofs_t)info->filepos + sizeof (mt) + pixel_bytes, SEEK_SET) != 0 ||
+		if (source_end > lump_bytes || lump_bytes - source_end < 2 ||
+			FS_fseek (&wad->fh, (qfileofs_t)info->filepos + source_end, SEEK_SET) != 0 ||
 			FS_fread (&colors, 1, sizeof (colors), &wad->fh) != sizeof (colors) ||
 			LittleShort (colors) != 256)
 			return NULL;
 		if (!Mod_CheckedSizeAdd (pixel_bytes, 2 + 256 * 3, &payload_bytes) ||
-			payload_bytes > available_bytes)
+			lump_bytes - source_end < 2 + 256 * 3)
 			return NULL;
 	}
 	if (!Mod_CheckedSizeAdd (sizeof (*tx), payload_bytes, &allocation_bytes))
@@ -1265,7 +1270,7 @@ static texture_t *Mod_LoadWadTexture (qmodel_t *mod, wad_t *wads, const char *na
 	tx->height = mt.height;
 	tx->type = Mod_TextureTypeFromName (tx->name);
 	for (i = 0; i < MIPLEVELS; i++)
-		tx->offsets[i] = mt.offsets[i] + sizeof (texture_t) - sizeof (miptex_t);
+		tx->offsets[i] = sizeof (*tx) + compact_offsets[i];
 	// the pixels immediately follow the structures
 
 	tx->source_file[0] = 0;
@@ -1277,14 +1282,28 @@ static texture_t *Mod_LoadWadTexture (qmodel_t *mod, wad_t *wads, const char *na
 	tx->shift = 0;								  // Q64 only
 	tx->palette = pal;
 
-	if (FS_fseek (&wad->fh, (qfileofs_t)info->filepos + sizeof (mt), SEEK_SET) != 0 ||
-		FS_fread (tx + 1, 1, payload_bytes, &wad->fh) != payload_bytes)
+	if (compact_mips)
 	{
-		Mem_Free (tx);
-		return NULL;
+		if (FS_fseek (&wad->fh, (qfileofs_t)info->filepos + sizeof (mt), SEEK_SET) != 0 ||
+			FS_fread (tx + 1, 1, payload_bytes, &wad->fh) != payload_bytes)
+			goto read_failed;
+	}
+	else
+	{
+		for (i = 0; i < MIPLEVELS; ++i)
+			if (FS_fseek (&wad->fh, (qfileofs_t)info->filepos + mt.offsets[i], SEEK_SET) != 0 ||
+				FS_fread ((byte *)(tx + 1) + compact_offsets[i], 1, level_bytes[i], &wad->fh) != level_bytes[i])
+				goto read_failed;
+		if (pal && (FS_fseek (&wad->fh, (qfileofs_t)info->filepos + source_end, SEEK_SET) != 0 ||
+			FS_fread ((byte *)(tx + 1) + pixel_bytes, 1, 2 + 256 * 3, &wad->fh) != 2 + 256 * 3))
+			goto read_failed;
 	}
 
 	return tx;
+
+read_failed:
+	Mem_Free (tx);
+	return NULL;
 }
 
 /* Keep the existing external-image lookup available when a BSP references a
