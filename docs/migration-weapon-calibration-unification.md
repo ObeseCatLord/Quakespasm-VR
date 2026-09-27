@@ -70,6 +70,8 @@ lookup for viewmodel placement, while `VR_WeaponCalibrationCurrentMuzzle` and
 reconstructs and clamps that physical muzzle at its existing weapon-use
 boundary. The separate `muzzle_source_offset` corrects a mod's QuakeC firing
 expression and is independent of player count.
+Legacy MP-only schema blocks no longer create a presentation profile or infer
+a viewmodel; a block with shared held/muzzle fields still loads normally.
 
 The editor exposes only shared held and muzzle adjustment commands. On an
 explicit save, it removes legacy per-weapon MP keys from the selected block;

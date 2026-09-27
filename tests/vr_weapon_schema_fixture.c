@@ -126,6 +126,24 @@ static void test_aliases_and_stat_names(void)
 	assert(entries[16].has_spawn_at_self_origin && !entries[16].spawn_at_self_origin);
 }
 
+static void test_multiplayer_only_offsets_do_not_create_weapon(void)
+{
+	static const char text[] =
+		"global_mp_held_offset 1 2 3\n"
+		"global_mp_muzzle_offset 4 5 6\n"
+		"{ model progs/mp_only.mdl mp_held_offset 7 8 9 "
+		"enhanced_mp_muzzle_offset 2 3 4 }\n"
+		"{ model progs/shared.mdl held_offset 1 2 3 }\n";
+	vr_weapon_schema_entry_t entries[2];
+	size_t count = 0;
+
+	assert(VR_WeaponSchemaParse(text, entries, 2, &count));
+	assert(count == 1);
+	assert(!strcmp(entries[0].model_path, "progs/shared.mdl"));
+	assert(!strcmp(entries[0].viewmodel_path, "progs/shared.mdl"));
+	assert(entries[0].has_held_offset);
+}
+
 static void test_rejections_and_bounds(void)
 {
 	char input[16384];
@@ -184,6 +202,7 @@ int main(void)
 	test_installed_id1_schema();
 	test_qbj3_ad_schema();
 	test_aliases_and_stat_names();
+	test_multiplayer_only_offsets_do_not_create_weapon();
 	test_rejections_and_bounds();
 	puts("weapon schema fixture passed");
 	return 0;

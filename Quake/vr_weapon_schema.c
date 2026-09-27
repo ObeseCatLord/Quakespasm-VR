@@ -245,13 +245,13 @@ static qboolean VR_SchemaFinishEntry(vr_weapon_schema_entry_t *entry,
 				return false;
 	}
 
+	/* Legacy MP-only values are accepted for old files but never supply the
+	 * shared held/muzzle presentation used in both solo and multiplayer. */
 	if (!entry->viewmodel_path[0] && entry->model_path[0] &&
 		(entry->has_held_scale || entry->has_held_offset ||
-		 entry->has_mp_held_offset || entry->has_muzzle_offset ||
-		 entry->has_mp_muzzle_offset || entry->has_muzzle_source_offset ||
+		 entry->has_muzzle_offset || entry->has_muzzle_source_offset ||
 		 entry->has_muzzle_source_viewofs || entry->has_spawn_at_self_origin ||
-		 entry->has_enhanced_held_offset || entry->has_enhanced_mp_held_offset ||
-		 entry->has_enhanced_muzzle_offset || entry->has_enhanced_mp_muzzle_offset))
+		 entry->has_enhanced_held_offset || entry->has_enhanced_muzzle_offset))
 		memcpy(entry->viewmodel_path, entry->model_path, sizeof(entry->model_path));
 	if (!entry->model_path[0] && entry->viewmodel_path[0])
 		memcpy(entry->model_path, entry->viewmodel_path, sizeof(entry->model_path));
@@ -268,11 +268,9 @@ static qboolean VR_SchemaHasHeldPresentation(const vr_weapon_schema_entry_t *ent
 {
 	return entry->viewmodel_path[0] &&
 		(entry->has_held_scale || entry->has_held_offset ||
-		 entry->has_mp_held_offset || entry->has_muzzle_offset ||
-		 entry->has_mp_muzzle_offset || entry->has_muzzle_source_offset ||
+		 entry->has_muzzle_offset || entry->has_muzzle_source_offset ||
 		 entry->has_muzzle_source_viewofs || entry->has_spawn_at_self_origin ||
-		 entry->has_enhanced_held_offset || entry->has_enhanced_mp_held_offset ||
-		 entry->has_enhanced_muzzle_offset || entry->has_enhanced_mp_muzzle_offset);
+		 entry->has_enhanced_held_offset || entry->has_enhanced_muzzle_offset);
 }
 
 static qboolean VR_SchemaParseEntry(vr_schema_parser_t *parser,
