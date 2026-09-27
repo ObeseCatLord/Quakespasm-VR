@@ -838,8 +838,9 @@ cc -std=gnu11 -DUSE_SDL3 -D_GNU_SOURCE -Wno-unused-parameter \
 path with a scripted UDP boundary. It covers two clients behind one IP,
 cross-client packet deferral, a uniquely identified source-port change, outgoing
 destination, old-port stragglers, reliable retransmit ACK routing, ambiguous
-new ports, oversized packets, bounded inbox eviction, socket-owner cleanup, and
-IPv6 scope separation. It does not replace a live multiplayer check or measure
+new ports, oversized packets and server-side reliable-fragment retirement,
+bounded inbox eviction, socket-owner cleanup, and IPv6 scope separation. It
+does not replace a live multiplayer check or measure
 performance.
 
 ```sh

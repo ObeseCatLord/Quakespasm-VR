@@ -11,6 +11,8 @@ static struct {
 } incoming[64];
 static int in_count, in_next, writes;
 static struct qsockaddr last_written;
+static client_t server_client;
+static int server_drops;
 
 qsocket_t *net_activeSockets;
 net_landriver_t net_landrivers[1];
@@ -20,6 +22,16 @@ double net_time = 100;
 sizebuf_t net_message;
 int (*BigLong) (int) = NULL;
 int messagesReceived, unreliableMessagesReceived;
+server_static_t svs;
+client_t *host_client;
+
+void SV_DropClient (qboolean crash)
+{
+	assert (!crash && host_client == &server_client);
+	server_drops++;
+	host_client->netconnection = NULL;
+}
+void NET_Close (qsocket_t *sock) { sock->disconnected = true; }
 
 static int identity (int value) { return value; }
 static struct qsockaddr ipv4 (unsigned int ip, unsigned short port)
@@ -191,6 +203,21 @@ int main (void)
 		assert (!Datagram_SameHost (0, &first, &second));
 	}
 #endif
+
+	/* The server poll must retire a peer whose reliable fragment cannot fit,
+	 * without ACKing it or returning stale application data. */
+	svs.clients = &server_client;
+	svs.maxclients = 1;
+	server_client.netconnection = &a;
+	a.receiveSequence = 1;
+	packetBuffer.length = NETFLAG_DATA | NETFLAG_EOM | (NET_HEADERSIZE + sizeof message_data + 1);
+	packetBuffer.sequence = 1;
+	{
+		const int old_writes = writes;
+		assert (Datagram_ProcessServerPacket (NET_HEADERSIZE + sizeof message_data + 1, &a, &a_new, false) == -1);
+		assert (server_drops == 1 && server_client.netconnection == NULL);
+		assert (a.receiveSequence == 1 && writes == old_writes);
+	}
 
 	puts ("datagram rebinding fixture: ok");
 	return 0;

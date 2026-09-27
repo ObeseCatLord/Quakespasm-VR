@@ -710,6 +710,28 @@ static int Datagram_ProcessPacket (unsigned int length, qsocket_t *sock, struct 
 	return 0;
 }
 
+static int Datagram_ProcessServerPacket (unsigned int length, qsocket_t *sock, struct qsockaddr *source, qboolean rebind)
+{
+	const int result = Datagram_ProcessPacket (length, sock, source, rebind, true);
+	if (result < 0)
+	{
+		/* A rejected reliable fragment cannot advance this stream. Retire the
+		 * connection instead of accepting repeated retransmits indefinitely. */
+		for (int i = 0; i < svs.maxclients; ++i)
+		{
+			if (svs.clients[i].netconnection != sock)
+				continue;
+			host_client = &svs.clients[i];
+			SV_DropClient (false);
+			return result;
+		}
+		NET_Close (sock);
+	}
+	else if (result > 0)
+		sock->lastMessageTime = net_time;
+	return result;
+}
+
 qsocket_t *Datagram_GetAnyMessage (void)
 {
 	qsocket_t		*s;
@@ -739,11 +761,8 @@ qsocket_t *Datagram_GetAnyMessage (void)
 			if (Datagram_FindVirtualSocketForPacket (net_driverlevel, net_landriverlevel, queued_socket,
 				&addr, queued_length, &rebind) != s)
 				continue;
-			if (Datagram_ProcessPacket (queued_length, s, &addr, rebind, true) > 0)
-			{
-				s->lastMessageTime = net_time;
+			if (Datagram_ProcessServerPacket (queued_length, s, &addr, rebind) > 0)
 				return s;
-			}
 		}
 
 		while (1)
@@ -767,11 +786,8 @@ qsocket_t *Datagram_GetAnyMessage (void)
 			// uniquely identifiable source-port change.
 			s = Datagram_FindVirtualSocketForPacket (net_driverlevel, net_landriverlevel, acceptsock,
 				&addr, length, &rebind);
-			if (s && Datagram_ProcessPacket (length, s, &addr, rebind, true) > 0)
-			{
-				s->lastMessageTime = net_time;
+			if (s && Datagram_ProcessServerPacket (length, s, &addr, rebind) > 0)
 				return s;
-			}
 			// stray packet... ignore it and just try the next
 		}
 	}
