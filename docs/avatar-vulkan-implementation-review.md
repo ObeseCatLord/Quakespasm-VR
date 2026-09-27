@@ -106,3 +106,9 @@ per admitted rig; keep the current per-frame pose transfer and GPU skinning.
 Hand-authored desktop animation is an option for a particular avatar only if
 its measured cost and content quality justify maintaining separate clips. It
 cannot replace the live head/hand/FBT solve for tracked players.
+
+The generic Vulkan path now reuses the presentation context already built
+during that frame's avatar staging instead of recomputing its bind-only body
+bases during palette preparation. A fixture compares the old bridge and the
+staged-context output after floor correction; both produce the same palette.
+This removes redundant setup, but no in-game frame-time gain is claimed.

@@ -125,7 +125,7 @@ static void named_profile(fixture_t *f, const r_avatar_profile_t *profile)
 
 static void test_identity_and_locals(void)
 {
-	fixture_t source, target; r_avatar_rig_t sr, tr; float solved[R_AVATAR_MAX_JOINTS * 12], output[R_AVATAR_MAX_JOINTS * 12], wrapped[R_AVATAR_MAX_JOINTS][12];
+	fixture_t source, target; r_avatar_rig_t sr, tr; r_avatar_presentation_context_t staged_context; float solved[R_AVATAR_MAX_JOINTS * 12], output[R_AVATAR_MAX_JOINTS * 12], wrapped[R_AVATAR_MAX_JOINTS][12];
 	r_vrik_palette_output_t ranger_output;
 	int i;
 	ranger(&source, 1); ranger(&target, 2);
@@ -139,6 +139,13 @@ static void test_identity_and_locals(void)
 	ranger_output.joint_count = source.live.joint_count;
 	assert(R_AvatarRetargetRangerOutput(&sr, &tr, &ranger_output,
 		wrapped, R_AVATAR_MAX_JOINTS));
+	assert(!memcmp(output, wrapped, target.live.joint_count * sizeof(wrapped[0])));
+	assert(R_AvatarBuildPresentationContext(&sr, &tr, &staged_context));
+	R_AvatarPresentationAddCanonicalZ(&staged_context, 7.0f);
+	assert(R_AvatarRetargetPaletteWithContext(&sr, &tr, &staged_context,
+		solved, (float *)wrapped));
+	/* Floor correction changes the display transform, not bind-relative
+	 * pose transfer; the staged context must preserve the old palette. */
 	assert(!memcmp(output, wrapped, target.live.joint_count * sizeof(wrapped[0])));
 	assert(!R_AvatarRetargetRangerOutput(&sr, &tr, &ranger_output,
 		wrapped, target.live.joint_count - 1));

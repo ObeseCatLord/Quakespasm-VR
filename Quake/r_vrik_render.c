@@ -982,12 +982,16 @@ static qboolean R_VRIKRenderAlternateCandidate (const entity_t *entity,
 	else
 		result = R_VRIKBuildRangerAnimationPalette (source_skeleton, &candidate->lerpdata, &ranger);
 	if (result != R_VRIK_PALETTE_OK ||
+		ranger.joint_count != source_skeleton->joint_count ||
 		(selection->humanoid ?
 			!R_AvatarRetargetHumanoid (source_rig, target_rig,
 				&selection->presentation, &selection->humanoid_map,
 				(const float *)source_palette, (float *)palette) :
-			!R_AvatarRetargetRangerOutput (source_rig, target_rig, &ranger,
-				palette, R_VRIK_RENDER_MAX_JOINTS)))
+			/* Staging already resolved this bind-only transform. Rebuilding it
+			 * for every generic pose repeats the same rig basis work. */
+			!R_AvatarRetargetPaletteWithContext (source_rig, target_rig,
+				&selection->presentation, (const float *)source_palette,
+				(float *)palette)))
 		return false;
 	/* Optional tracked repairs retain successful independent stages. The
 	 * canonical palette and supplied lower targets remain authoritative. */
