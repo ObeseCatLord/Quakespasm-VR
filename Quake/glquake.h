@@ -408,6 +408,7 @@ typedef struct
 	qboolean						 openxr_fragment_shading_rate_active;
 	qboolean						 openxr_fragment_density_map_enabled;
 	qboolean						 openxr_fragment_density_map_active;
+	qboolean						 openxr_fragment_density_frame_active;
 	qboolean						 openxr_fragment_density_offset_enabled;
 	VkExtent2D						 openxr_fragment_density_map_max_texel_size;
 	VkExtent2D						 openxr_fragment_density_offset_granularity;

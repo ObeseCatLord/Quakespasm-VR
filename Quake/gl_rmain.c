@@ -2072,11 +2072,13 @@ static void R_ShowSkeletons (cb_context_t *cbx)
 R_DrawWorldTask
 ================
 */
-static void R_DrawWorldChunk (int context, int index, void *use_tasks, r_world_draw_filter_t filter, qboolean depth_only)
+static void R_DrawWorldChunk (int context, int index, void *use_tasks, r_world_draw_filter_t filter, qboolean depth_only, qboolean skip_draw)
 {
 	cb_context_t *cbx = &vulkan_globals.secondary_cb_contexts[context][index];
 	cbx->depth_only = depth_only;
 	R_SetupContext (cbx);
+	if (skip_draw)
+		return;
 	Fog_EnableGFog (cbx);
 	if (indirect)
 		R_DrawIndirectBrushesFiltered (cbx, false, false, false, use_tasks ? index : -1, filter);
@@ -2088,14 +2090,17 @@ static void R_DrawWorldTask (int index, void *use_tasks)
 {
 	if (vulkan_globals.openxr_fragment_density_map_active)
 	{
-		// Each group is submitted in full before the next one. In particular,
-		// no protected color can test against incomplete replay depth.
-		R_DrawWorldChunk (SCBX_DENSITY_WORLD, index, use_tasks, R_WORLD_DRAW_FOVEATION_ELIGIBLE, false);
-		R_DrawWorldChunk (SCBX_WORLD_DEPTH_REPLAY, index, use_tasks, R_WORLD_DRAW_FOVEATION_ELIGIBLE, true);
-		R_DrawWorldChunk (SCBX_WORLD, index, use_tasks, R_WORLD_DRAW_FOVEATION_PROTECTED, false);
+		const qboolean coarse = vulkan_globals.openxr_fragment_density_frame_active;
+		// A lost gaze uses the runtime's full-rate profile. Keep the compiled
+		// pass topology and record its secondary buffers, but draw the world
+		// once in the ordinary scene instead of replaying its depth.
+		R_DrawWorldChunk (SCBX_DENSITY_WORLD, index, use_tasks, R_WORLD_DRAW_FOVEATION_ELIGIBLE, false, !coarse);
+		R_DrawWorldChunk (SCBX_WORLD_DEPTH_REPLAY, index, use_tasks, R_WORLD_DRAW_FOVEATION_ELIGIBLE, true, !coarse);
+		// When coarse, replay completes before protected color can depth-test.
+		R_DrawWorldChunk (SCBX_WORLD, index, use_tasks, coarse ? R_WORLD_DRAW_FOVEATION_PROTECTED : R_WORLD_DRAW_ALL, false, false);
 	}
 	else
-		R_DrawWorldChunk (SCBX_WORLD, index, use_tasks, R_WORLD_DRAW_ALL, false);
+		R_DrawWorldChunk (SCBX_WORLD, index, use_tasks, R_WORLD_DRAW_ALL, false, false);
 }
 
 /*

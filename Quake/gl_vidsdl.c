@@ -926,6 +926,7 @@ static void GL_ClearOpenXRFragmentShadingRate (void)
 	vulkan_globals.openxr_fragment_shading_rate_active = false;
 	vulkan_globals.openxr_fragment_density_map_enabled = false;
 	vulkan_globals.openxr_fragment_density_map_active = false;
+	vulkan_globals.openxr_fragment_density_frame_active = false;
 	vulkan_globals.openxr_fragment_density_offset_enabled = false;
 	vulkan_globals.openxr_fragment_density_map_max_texel_size = (VkExtent2D){0, 0};
 	vulkan_globals.openxr_fragment_density_offset_granularity = (VkExtent2D){0, 0};
@@ -4323,6 +4324,7 @@ void GL_EndXRFrame (void)
 static qboolean GL_PrepareRuntimeFoveation (void)
 {
 	openxr_density_eye_active = false;
+	vulkan_globals.openxr_fragment_density_frame_active = false;
 	memset (openxr_density_offsets, 0, sizeof (openxr_density_offsets));
 	if (openxr_density_backend_failed)
 		return true;
@@ -4354,7 +4356,10 @@ static qboolean GL_PrepareRuntimeFoveation (void)
 			effective = VRXR_UpdateVulkanFoveation (VRF_MODE_OFF, 0, centers);
 	}
 	if (effective >= 0)
+	{
+		vulkan_globals.openxr_fragment_density_frame_active = effective != VRF_MODE_OFF;
 		return true;
+	}
 	openxr_density_backend_failed = true;
 	vulkan_globals.openxr_fragment_density_map_active = false;
 	Con_Printf ("OpenXR runtime foveation could not restore full rate; disabling density passes.\n");

@@ -213,6 +213,13 @@ fixture covers gaze movement and one-layer finer-eye mapping, but there is no
 end-to-end gaze-provider or forced nonlayered-GPU proof yet. Profile CPU/GPU
 frame times and visual quality on `mj4m1` and other large maps before claiming
 a performance gain; the shared-image rewrite barrier may serialize frames.
+On the FB development path, a runtime off-profile response now records empty
+secondary buffers for the density and depth-replay steps and draws the entire
+opaque world once in the ordinary scene. This avoids duplicate geometry and
+depth work on invalid-gaze frames without rebuilding pipelines each time.
+The density pass still begins and clears because the compiled pass topology is
+unchanged. Linux compilation passed; image and frame-time effects remain
+unmeasured on hardware.
 For Steam Frame standalone, use Valve's [Performance Assessment Overlay](https://partner.steamgames.com/doc/steamhardware/steamframe/compat/perf_criteria)
 to capture effective resolution, frame rate, target frame time, and transient
 violations during normal gameplay. The [standalone review criteria](https://partner.steamgames.com/doc/steamhardware/steamframe/compat)
