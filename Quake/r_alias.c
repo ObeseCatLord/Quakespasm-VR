@@ -136,6 +136,27 @@ static qboolean R_AliasAppendAvatarPresentation (float model_matrix[16], const r
 	return R_AliasMatrixIsFinite (model_matrix);
 }
 
+/* MD5 lighting dots target-space skinned normals against shade_vector. The
+ * presentation matrix rotates those normals into Ranger space for drawing,
+ * so express the ordinary Ranger shade direction in target space too. */
+static qboolean R_AliasAvatarShadeVector (const r_vrik_prepared_palette_t *avatar, vec3_t shade)
+{
+	vec3_t transformed;
+	for (int column = 0; column < 3; ++column)
+	{
+		double value = 0.0;
+		for (int row = 0; row < 3; ++row)
+			value += (double)avatar->target_to_canonical[row * 4 + column] * shade[row];
+		if (!isfinite (value) || fabs (value) > FLT_MAX)
+			return false;
+		transformed[column] = (float)value;
+	}
+	if (VectorNormalize (transformed) <= 0.0f)
+		return false;
+	VectorCopy (transformed, shade);
+	return true;
+}
+
 /*
 =============
 GL_DrawAliasFrame -- ericw
@@ -1018,6 +1039,8 @@ void R_DrawAliasModel (cb_context_t *cbx, entity_t *e, int *aliaspolys)
 	//
 	vec3_t shadevector, lightcolor;
 	R_SetupAliasLighting (e, &shadevector, &lightcolor);
+	if (avatar && !R_AliasAvatarShadeVector (avatar, shadevector))
+		return;
 
 	R_DrawAliasSurfaces (
 		cbx, e, draw_geometry, draw_geometry, lerpdata, model_matrix, entalpha, alphatest, shadevector, lightcolor, false, true,
