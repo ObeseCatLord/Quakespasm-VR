@@ -160,6 +160,14 @@ static VkSwapchainKHR			vulkan_swapchain;
 static uint32_t			num_swap_chain_images;
 static qboolean			render_resources_created = false;
 static uint32_t			current_cb_index;
+typedef struct
+{
+	VkBuffer buffer;
+	VkDeviceSize offset;
+	uint32_t vertex_count;
+} xr_hidden_area_draw_t;
+static xr_hidden_area_draw_t hidden_area_draws[DOUBLE_BUFFERED];
+static xr_hidden_area_draw_t GL_PrepareHiddenAreaMesh (void);
 static VkCommandPool	primary_command_pools[PCBX_NUM];
 static VkCommandPool   *secondary_command_pools[SCBX_NUM];
 static VkCommandPool	transient_command_pool;
@@ -4107,6 +4115,7 @@ void GL_BeginRenderingTask (void *unused)
 			cbx->ui_panel_active = false;
 			cbx->ui_panel_mvp_valid = false;
 			cbx->depth_only = false;
+			cbx->hidden_area_masked_world = false;
 			memset (&cbx->current_pipeline, 0, sizeof (cbx->current_pipeline));
 
 			{
@@ -4159,6 +4168,9 @@ void GL_BeginRenderingTask (void *unused)
 	}
 
 	R_SwapDynamicBuffers ();
+	/* The world record tasks need this vertex stream before they start. The
+	 * frame's dynamic mapping has just been reset and is flushed at submit. */
+	hidden_area_draws[current_cb_index] = GL_PrepareHiddenAreaMesh ();
 }
 
 void GL_PrepareVRIKRenderTask (void *unused)
@@ -4787,17 +4799,10 @@ static void GL_RecordFrameReadback (void *data)
 	ScheduleScreenshotCopy (readback->commands, &readback->buffer, &readback->memory);
 }
 
-typedef struct
-{
-	VkBuffer buffer;
-	VkDeviceSize offset;
-	uint32_t vertex_count;
-} xr_hidden_area_draw_t;
-
 /* Snapshot both runtime meshes before the dynamic vertex flush. The borrowed
  * backend arrays can change on the next XR visibility-mask event. Missing or
  * malformed data disables the draw for both eyes, preserving the full image. */
-static xr_hidden_area_draw_t GL_PrepareHiddenAreaBlack (void)
+static xr_hidden_area_draw_t GL_PrepareHiddenAreaMesh (void)
 {
 	xr_hidden_area_draw_t draw = {0};
 	const float *source[2];
@@ -4821,14 +4826,46 @@ static xr_hidden_area_draw_t GL_PrepareHiddenAreaBlack (void)
 	return draw;
 }
 
+qboolean GL_OpenXRHiddenAreaWorldEligible (void)
+{
+	return vulkan_globals.stereo_active && openxr_frame.should_render &&
+		hidden_area_draws[current_cb_index].vertex_count &&
+		vulkan_globals.hidden_area_stencil_pipeline.handle != VK_NULL_HANDLE &&
+		vulkan_globals.sample_count == VK_SAMPLE_COUNT_1_BIT &&
+		!vulkan_globals.supersampling && !R_SSAOEnabled () && !R_UseOIT () &&
+		!vulkan_globals.openxr_fragment_shading_rate_active &&
+		!vulkan_globals.openxr_fragment_density_map_enabled &&
+		vid.width == vid.render_width && vid.height == vid.render_height &&
+		!render_warp && !vid_palettize.value && !(gl_polyblend.value && v_blend[3]) &&
+		key_dest != key_menu;
+}
+
+void GL_RecordOpenXRHiddenAreaStencil (cb_context_t *cbx)
+{
+	assert (cbx && cbx->subpass_type == SUBPASS_MAIN &&
+		cbx->pipeline_variant == MAIN_RENDER_PASS_STANDARD);
+	const xr_hidden_area_draw_t *mesh = &hidden_area_draws[current_cb_index];
+	const VkClearAttachment clear = {
+		.aspectMask = VK_IMAGE_ASPECT_STENCIL_BIT,
+		.clearValue.depthStencil.stencil = 0,
+	};
+	/* Multiview broadcasts this single layer rect to both eye layers. */
+	const VkClearRect rect = {{{0, 0}, {vid.render_width, vid.render_height}}, 0, 1};
+	vkCmdClearAttachments (cbx->cb, 1, &clear, 1, &rect);
+	R_BindPipeline (cbx, VK_PIPELINE_BIND_POINT_GRAPHICS,
+		vulkan_globals.hidden_area_stencil_pipeline);
+	vkCmdBindVertexBuffers (cbx->cb, 0, 1, &mesh->buffer, &mesh->offset);
+	vkCmdDraw (cbx->cb, mesh->vertex_count, 1, 0, 0);
+}
+
 static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 {
 	R_SubmitStagingBuffers ();
-	const xr_hidden_area_draw_t hidden_area = GL_PrepareHiddenAreaBlack ();
 	R_FlushDynamicBuffers ();
 
 	VkResult err;
 	int		 cb_index = current_cb_index;
+	const xr_hidden_area_draw_t hidden_area = hidden_area_draws[cb_index];
 
 	VkRect2D render_area;
 	render_area.offset.x = 0;

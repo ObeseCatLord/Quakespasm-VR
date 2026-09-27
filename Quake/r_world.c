@@ -1240,6 +1240,9 @@ static void R_FlushBatch (
 		vulkan_pipeline_t pipeline = cbx->depth_only ? vulkan_globals.world_depth_replay_pipeline : R_PipelineForSubpassType (
 			cbx->subpass_type, vulkan_globals.world_pipelines[cbx->pipeline_variant][pipeline_index], vulkan_globals.world_wboit_pipelines[pipeline_index],
 			vulkan_globals.world_mboit_moment_pipelines[pipeline_index], vulkan_globals.world_mboit_composite_pipelines[pipeline_index]);
+		if (cbx->hidden_area_masked_world && !alpha_blend && !alpha_test && !cbx->depth_only &&
+			cbx->subpass_type == SUBPASS_MAIN && cbx->pipeline_variant == MAIN_RENDER_PASS_STANDARD)
+			pipeline = vulkan_globals.world_hidden_area_pipelines[pipeline_index];
 		R_BindPipeline (cbx, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
 		if (alpha_blend)
 			R_PushConstants (cbx, VK_SHADER_STAGE_ALL_GRAPHICS, 20 * sizeof (float), sizeof (alpha), &alpha);

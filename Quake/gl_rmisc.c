@@ -3991,6 +3991,20 @@ static void R_CreateWorldPipelines ()
 						R_CreateGraphicsPipeline (
 							&vulkan_globals.world_pipelines[variant][pipeline_index], &infos, vulkan_globals.world_pipeline_layout,
 							va (variant ? "world_main_oit %d" : "world %d", pipeline_index));
+						if (vulkan_globals.stereo_active && variant == MAIN_RENDER_PASS_STANDARD &&
+							!alpha_blend && !alpha_test && !quantize_lm)
+						{
+							/* The first scene mask owns bit 7 only while opaque world
+							 * chunks draw. Later sky/SSAO stencil owners stay unchanged. */
+							infos.depth_stencil_state.stencilTestEnable = VK_TRUE;
+							infos.depth_stencil_state.front = (VkStencilOpState){
+								VK_STENCIL_OP_KEEP, VK_STENCIL_OP_KEEP, VK_STENCIL_OP_KEEP,
+								VK_COMPARE_OP_EQUAL, 0x80, 0, 0};
+							infos.depth_stencil_state.back = infos.depth_stencil_state.front;
+							R_CreateGraphicsPipeline (&vulkan_globals.world_hidden_area_pipelines[pipeline_index],
+								&infos, vulkan_globals.world_pipeline_layout,
+								va ("world_hidden_area %d", pipeline_index));
+						}
 					}
 
 					if (alpha_blend)
@@ -4029,6 +4043,33 @@ static void R_CreateWorldPipelines ()
 				}
 			}
 		}
+	}
+	if (vulkan_globals.stereo_active)
+	{
+		const VkVertexInputAttributeDescription attributes[2] = {
+			{0, 0, VK_FORMAT_R32G32_SFLOAT, 0},
+			{1, 0, VK_FORMAT_R32G32_SFLOAT, 2 * sizeof (float)},
+		};
+		const VkVertexInputBindingDescription binding = {0, 4 * sizeof (float), VK_VERTEX_INPUT_RATE_VERTEX};
+		R_CopyPipelineCreateInfos (&infos, &base);
+		infos.vertex_input_state.vertexAttributeDescriptionCount = countof (attributes);
+		infos.vertex_input_state.pVertexAttributeDescriptions = attributes;
+		infos.vertex_input_state.vertexBindingDescriptionCount = 1;
+		infos.vertex_input_state.pVertexBindingDescriptions = &binding;
+		infos.shader_stages[0].module = hidden_area_vert_module;
+		infos.graphics_pipeline.stageCount = 1;
+		infos.rasterization_state.cullMode = VK_CULL_MODE_NONE;
+		infos.depth_stencil_state.depthTestEnable = VK_FALSE;
+		infos.depth_stencil_state.depthWriteEnable = VK_FALSE;
+		infos.depth_stencil_state.stencilTestEnable = VK_TRUE;
+		infos.depth_stencil_state.front = (VkStencilOpState){
+			VK_STENCIL_OP_KEEP, VK_STENCIL_OP_REPLACE, VK_STENCIL_OP_KEEP,
+			VK_COMPARE_OP_ALWAYS, 0x80, 0x80, 0x80};
+		infos.depth_stencil_state.back = infos.depth_stencil_state.front;
+		infos.blend_attachment_states[0].colorWriteMask = 0;
+		R_SetPipelineRenderPassVariant (&infos, SUBPASS_MAIN, MAIN_RENDER_PASS_STANDARD);
+		R_CreateGraphicsPipeline (&vulkan_globals.hidden_area_stencil_pipeline, &infos,
+			vulkan_globals.postprocess_pipeline.layout, "hidden_area_stencil");
 	}
 }
 
@@ -4833,6 +4874,8 @@ void R_DestroyPipelines (void)
 			vkDestroyPipeline (vulkan_globals.device, vulkan_globals.world_pipelines[variant][i].handle, NULL);
 			vulkan_globals.world_pipelines[variant][i].handle = VK_NULL_HANDLE;
 		}
+		vkDestroyPipeline (vulkan_globals.device, vulkan_globals.world_hidden_area_pipelines[i].handle, NULL);
+		vulkan_globals.world_hidden_area_pipelines[i].handle = VK_NULL_HANDLE;
 		vkDestroyPipeline (vulkan_globals.device, vulkan_globals.world_wboit_pipelines[i].handle, NULL);
 		vulkan_globals.world_wboit_pipelines[i].handle = VK_NULL_HANDLE;
 		vkDestroyPipeline (vulkan_globals.device, vulkan_globals.world_mboit_moment_pipelines[i].handle, NULL);
@@ -4840,6 +4883,8 @@ void R_DestroyPipelines (void)
 		vkDestroyPipeline (vulkan_globals.device, vulkan_globals.world_mboit_composite_pipelines[i].handle, NULL);
 		vulkan_globals.world_mboit_composite_pipelines[i].handle = VK_NULL_HANDLE;
 	}
+	vkDestroyPipeline (vulkan_globals.device, vulkan_globals.hidden_area_stencil_pipeline.handle, NULL);
+	vulkan_globals.hidden_area_stencil_pipeline.handle = VK_NULL_HANDLE;
 	vkDestroyPipeline (vulkan_globals.device, vulkan_globals.world_depth_replay_pipeline.handle, NULL);
 	vulkan_globals.world_depth_replay_pipeline.handle = VK_NULL_HANDLE;
 	vkDestroyPipeline (vulkan_globals.device, vulkan_globals.raster_tex_warp_pipeline.handle, NULL);

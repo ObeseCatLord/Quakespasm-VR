@@ -4,10 +4,10 @@
 visible lens area. The OpenXR backend already negotiates the optional extension,
 refreshes its per-eye mask on the runtime change event, and exports finite,
 index-checked, flattened hidden triangles through `VRXR_GetHiddenAreaMesh`.
-The vkQuake Vulkan frame recorder does not consume that mesh yet. Missing masks
-must leave full scene quality; no headset-specific mask is assumed. This remains
-an inherited VR behavior to migrate, even if the first implementation must be
-limited to configurations whose effects are qualified. The [official OpenXR
+The vkQuake Vulkan frame recorder now snapshots that mesh for final black
+coverage and a restricted opaque-world stencil path. Missing masks leave full
+scene quality; no headset-specific mask is assumed. This remains an inherited
+VR behavior to finish across the normal rendering modes. The [official OpenXR
 extension](https://registry.khronos.org/OpenXR/specs/1.1/man/html/XR_KHR_visibility_mask.html)
 defines the optional per-view mask, and the [visibility-mask structure](https://registry.khronos.org/OpenXR/specs/1.0/man/html/XrVisibilityMaskKHR.html)
 specifies that its XY coordinates lie in the view-space Z=−1 plane and must be
@@ -82,8 +82,7 @@ shaders. The reviewer made no edits or builds.
 | Add a new frame graph or use the near-depth shortcut. | Reject; both conflict with the existing renderer or depth behavior. |
 
 The precise implementation schedule and measured GPU savings are not yet
-established. The current backend mesh export is source readiness, not a working
-Vulkan hidden-area mask.
+established. Backend mesh export alone is not proof of GPU savings.
 
 The per-eye `VRXR_ProjectHiddenAreaVertex` math helper maps backend view-space
 vertices through the current asymmetric FOV with Vulkan Y inversion. Its
@@ -92,4 +91,39 @@ handling. The final-black Vulkan draw now consumes it, with both eyes packed
 into one multiview vertex stream and extra triangles made degenerate. A missing,
 oversized, or invalid mesh skips both eyes. `vr_hidden_area` controls this draw
 and appears in VR options. The scene still renders into the hidden region;
-world-fragment rejection and qualification of neighboring effects remain.
+world-fragment rejection now has a restricted first path; qualification of
+neighboring effects remains.
+
+## Scene stencil proof and follow-up review, 2026-09-27
+
+The frame's projected two-eye mesh is now allocated after dynamic-buffer
+rotation, before the world-record tasks, and reused by the final-black draw.
+In the standard single-sample stereo scene pass, world context zero clears
+stencil and writes bit 7 over the hidden triangles. Only static opaque world
+draws test bit 7; direct and indirect paths select the same two fullbright
+pipeline choices. The mask is recorded before the world MVP setup so the
+postprocess-layout bind cannot invalidate world push constants. Later sky,
+entity, SSAO, and UI stencil behavior is untouched.
+
+The `gpt-6-astra`/`max` read-only follow-up review checked the live code. Main
+spot-checked its ordering and pipeline observations against `r_passes.c`,
+`gl_rmain.c`, `gl_rmisc.c`, `r_world.c`, and `r_brush.c`. The [Vulkan clear
+rules](https://docs.vulkan.org/spec/latest/chapters/clears.html),
+[rasterization ordering](https://docs.vulkan.org/spec/latest/chapters/primsrast.html),
+and [secondary command execution](https://docs.vulkan.org/refpages/latest/refpages/source/vkCmdExecuteCommands.html)
+support clear → mask write → stencil reads within the ordered scene subpass.
+No new pass or extra stencil barrier is needed for that sequence.
+
+| Review recommendation | Disposition |
+| --- | --- |
+| Treat the restricted gate as a proof, not production-complete masking. | Adopt. Defaults include MSAA, SSAO, and OIT, so normal VR currently uses final black without world-fragment savings. |
+| Preserve the world push constants after binding the mask pipeline. | Adopt. Record the mask before `R_SetupContext`. |
+| Limit readers to the static opaque world subset in both direct and indirect paths. | Adopt. Both selectors use the same mask scope; moving brushes and cutouts remain unmasked. |
+| Expand directly into SSAO without restoring hidden-region depth. | Reject. SSAO samples neighboring and mipmapped depth, so final black cannot preserve visible AO by itself. |
+| Reuse a depth-only world replay for SSAO, then qualify MSAA and OIT variants. | Adapt for the next increment. Reuse the existing density-map replay recipe, but measure the added geometry cost and compare visible pixels and depth before enabling defaults. |
+| Add a second frame graph, near-depth masking, or global early stencil tests. | Reject. Existing pass and stencil owners already provide the narrow boundary. |
+
+This Linux build and source review establish integration, not headset-visible
+parity or a measured speedup. The default-mode work must preserve SSAO's
+neighboring depth, MSAA edge coverage, OIT composition, and the density-map
+replay before the mask can be considered a broad performance feature.
