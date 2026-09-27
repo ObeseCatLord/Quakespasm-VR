@@ -187,6 +187,26 @@ static void check_roomscale_invalid_duration (float seconds)
 	near_value (pmove.velocity[2], 0, .01f);
 }
 
+static void check_transient_fluid_crossing (void)
+{
+	prepare ();
+	pmove.numphysent = 2;
+	pmove.physents[1].info = 1;
+	pmove.physents[1].forcecontentsmask = CONTENTBIT_WATER;
+	VectorSet (pmove.physents[1].mins, 4, -100, 0);
+	VectorSet (pmove.physents[1].maxs, 12, 100, 80);
+	pmove.cmd.msec = 100;
+	pmove.cmd.seconds = .1f;
+	pmove.cmd.forwardmove = 320;
+	pmove.velocity[0] = 320;
+	PM_PlayerMove (1);
+	assert (pmove.origin[0] > 12);
+	assert (pmove.waterlevel == 0);
+	assert (pmove.fluid_contacted);
+	PM_PlayerMove (1);
+	assert (pmove.waterlevel == 0 && !pmove.fluid_contacted);
+}
+
 int main (void)
 {
 	floor_model.type = mod_brush;
@@ -208,6 +228,7 @@ int main (void)
 	{
 		pr_checkextension.value = 1;
 		sv_fte_recursivehullckeck.value = fast;
+		check_transient_fluid_crossing ();
 		prepare ();
 		pmove.cmd.forwardmove = 320;
 		for (int i = 0; i < 10; ++i)

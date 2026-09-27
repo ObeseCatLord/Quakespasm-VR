@@ -7,7 +7,9 @@ sets `MOVEACK_FLAG_AUTHORITATIVE | MOVEACK_FLAG_PREDICTION_ALLOWED` in
 `Quake/sv_main.c:1884-1894`, and the client publishes successful replay in
 `Quake/cl_main.c:1837`. The trial remains default-off. The water adapter now
 admits wet states after a dry selection but withholds prediction while wet or
-waterjumping; its real-map behavior remains unqualified.
+waterjumping. Client replay also stops if a dry snapshot's pending command
+touches fluid, including a crossing that ends dry. Real-map behavior remains
+unqualified.
 
 ## Verified architecture and decision
 
@@ -69,6 +71,15 @@ can change `teleport_time` after PreThink, and restoring the earlier value at
 PMove publication would erase that change. The zero-waterjump publication now
 preserves a Think-written deadline. Reachability with the pinned stock weapon
 Think and real-map timer behavior remain unverified.
+
+A dry ACK alone cannot guarantee that every pending client command stays dry.
+The shared PMove solver now latches fluid contact across all substeps in one
+command. Live replay under the selected PMove-engine authority discards its
+speculative result and propagation at that crossing; public replay, the
+separate QC-command authority, and diagnostic shadow comparison retain their
+existing behavior. The production-solver fixture crosses a narrow water region
+and finishes dry, and the client fixture checks both journal and unsent-preview
+suppression. This closes the local gate leak, not wet prediction parity.
 
 ## Acceptance proof for the water slice
 

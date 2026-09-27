@@ -656,6 +656,9 @@ started for this probe.
 real vkQuake hull functions in `world.c`. It covers walking/floor contact, jumping,
 frozen commands, once-per-command roomscale across substeps, outlier rejection,
 entity boxes, rotated brush normals, stationary/startsolid, water contents and source-equivalent raw clip leaves.
+It also latches a transient fluid crossing across an explicitly timed command's
+substeps, even when that command finishes dry, then clears the latch on the next
+command.
 It also checks inherited VR ladder pitch independence against the ordinary QSS-M
 ladder path, and raised-jump-speed non-VR swimming against explicit VR swimming.
 Both touch policies are checked through the production helper, including impact
@@ -1105,6 +1108,9 @@ order. The raw-Gorilla replay check includes a first RESET and the disposable
 preview when all sent commands are acknowledged. It also checks that an OFF
 journal command clears the old planted-hand snapshot before preview and that a
 raw command with no reconstructible baseline suppresses prediction.
+The selected private PMove-engine dry-snapshot check discards replay after a
+fluid crossing in either the journal or the unsent preview; public replay and
+the separate QC-command authority remain unaffected.
 `client_replay_solver_fixture.c`
 instead uses the actual shared PM solver
 and donor collision functions to check empty-history, zero-duration underwater

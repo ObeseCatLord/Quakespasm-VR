@@ -1727,6 +1727,16 @@ static qboolean CL_ComputeReplayPlayerMovement (entity_t *ent, cl_replay_result_
 			return false;
 		}
 		PM_PlayerMove (1);
+		if (private_replay && !shadow &&
+			cl.move_ack_authority == MOVE_AUTHORITY_PMOVE_ENGINE_COMPAT &&
+			pmove.fluid_contacted)
+		{
+			/* A dry ACK can authorize commands that cross into liquid before
+			 * the next snapshot. Do not present unqualified wet replay, even if
+			 * the last substep exits the liquid again. */
+			CL_ResetReplayPropagation ();
+			return false;
+		}
 		if (!shadow)
 		{
 			cl.move_replay_propagate_sequence[(seq + 1) & MOVECMDS_MASK] = seq + 1;
@@ -1779,6 +1789,13 @@ static qboolean CL_ComputeReplayPlayerMovement (entity_t *ent, cl_replay_result_
 			return false;
 		}
 		PM_PlayerMove (1);
+		if (private_replay &&
+			cl.move_ack_authority == MOVE_AUTHORITY_PMOVE_ENGINE_COMPAT &&
+			pmove.fluid_contacted)
+		{
+			CL_ResetReplayPropagation ();
+			return false;
+		}
 	}
 
 	VectorCopy (pmove.origin, result->origin);

@@ -111,6 +111,7 @@ typedef struct
 								// when onground is true
 	int			waterlevel;
 	int			watertype;
+	qboolean		fluid_contacted; /* latched across command substeps for replay policy */
 
 	struct world_s		*world;
 } playermove_t;

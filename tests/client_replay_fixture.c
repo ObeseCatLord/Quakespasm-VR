@@ -14,6 +14,7 @@ cvar_t r_lerpturn = {"r_lerpturn", "1", CVAR_NONE};
 static qboolean selector_result = true;
 static qboolean selector_mutates_movevars;
 static int selector_calls, collector_calls, move_calls, preview_calls;
+static int fluid_contact_call = -1;
 static usercmd_t preview_cmd;
 static usercmd_t observed_cmds[66];
 static int observed_pm_types[66];
@@ -57,6 +58,10 @@ void PM_PlayerMove (float gamespeed)
 	if (!pmove.cmd.vr_gorilla.flags)
 		memset (&pmove.gorilla, 0, sizeof (pmove.gorilla));
 	pmove.origin[0] += 1;
+	/* The production solver latches a transient fluid crossing even when the
+	 * command's final categorized position is dry. */
+	pmove.fluid_contacted = move_calls == fluid_contact_call;
+	pmove.waterlevel = 0;
 	pmove.waterjumptime = 50 + pmove.cmd.sequence;
 	pmove.onground = true;
 	move_calls++;
@@ -70,6 +75,7 @@ static void reset_probes (void)
 	selector_result = true;
 	selector_mutates_movevars = false;
 	selector_calls = collector_calls = move_calls = preview_calls = 0;
+	fluid_contact_call = -1;
 	memset (&preview_cmd, 0, sizeof(preview_cmd));
 	memset (observed_cmds, 0, sizeof(observed_cmds));
 	memset (observed_pm_types, 0, sizeof(observed_pm_types));
@@ -455,6 +461,35 @@ static void check_private_epoch_resets_propagation (void)
 	assert (observed_waterjump_before[0] == 1.25f);
 }
 
+static void check_private_replay_stops_at_fluid_crossing (void)
+{
+	vec3_t origin;
+
+	reset_client ();
+	admit_private_snapshot ();
+	fluid_contact_call = 0;
+	assert (!CL_ReplayPlayerMovement (&entities[1], origin));
+	assert (move_calls == 1 && preview_calls == 0);
+	assert (cl.move_replay_propagate_sequence[4 & MOVECMDS_MASK] == 0);
+
+	reset_client ();
+	admit_private_snapshot ();
+	fluid_contact_call = 1;
+	assert (!CL_ReplayPlayerMovement (&entities[1], origin));
+	assert (move_calls == 2 && preview_calls == 1);
+	assert (cl.move_replay_propagate_sequence[4 & MOVECMDS_MASK] == 0);
+
+	reset_client ();
+	fluid_contact_call = 0;
+	assert (CL_ReplayPlayerMovement (&entities[1], origin));
+
+	reset_client ();
+	admit_private_snapshot ();
+	cl.move_ack_authority = MOVE_AUTHORITY_PMOVE_QC_COMMAND;
+	fluid_contact_call = 0;
+	assert (CL_ReplayPlayerMovement (&entities[1], origin));
+}
+
 static void check_trusted_gorilla_generation (void)
 {
 	vec3_t origin;
@@ -638,6 +673,7 @@ int main (void)
 	check_history_loss_and_selector_failure ();
 	check_pause_death_and_move_modes ();
 	check_private_epoch_resets_propagation ();
+	check_private_replay_stops_at_fluid_crossing ();
 	check_trusted_gorilla_generation ();
 	check_raw_gorilla_state_provenance ();
 	check_raw_gorilla_preview_after_ack ();

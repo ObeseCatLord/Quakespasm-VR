@@ -1408,6 +1408,7 @@ void PM_CategorizePosition (void)
 
 	if (cont & CONTENTBITS_FLUID)
 	{
+		pmove.fluid_contacted = true;
 		pmove.watertype = cont;
 		pmove.waterlevel = 1;
 		point[2] = pmove.origin[2] + (pmove.player_mins[2] + pmove.player_maxs[2])*0.5;
@@ -2145,6 +2146,7 @@ void PM_PlayerMove (float gamespeed)
 	int			i;
 
 	PM_EnsureInitialized ();
+	pmove.fluid_contacted = false;
 	memset(&pmove.gorilla_authored_motion, 0, sizeof(pmove.gorilla_authored_motion));
 	pmove.numtouch = 0;
 	pmove.gorilla_contact[0] = pmove.gorilla_contact[1] = -1;
